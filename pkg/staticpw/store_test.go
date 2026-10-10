@@ -15,20 +15,32 @@ package staticpw
 
 import (
 	"context"
+	"errors"
 	"testing"
 	"time"
 
-	"github.com/jeremyhahn/go-xkms/pkg/storage"
+	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+
+	"github.com/jeremyhahn/go-xkms/pkg/dao"
 )
 
-func newTestStore() *BackendStore {
-	return NewStore(storage.New())
+// newMemoryDAOs returns a DAO factory over a fresh in-memory go-qrdb store.
+func newMemoryDAOs() *qrdbsdk.DAOFactory {
+	return dao.NewStoreFactory(qrdbsdk.NewMemoryKVStore())
 }
 
-func TestBackendStore_Add_Success(t *testing.T) {
-	s := newTestStore()
+// newTestStore returns the platform store over a fresh in-memory store.
+func newTestStore(t testing.TB) *DAOStore {
+	t.Helper()
+	s, err := NewStore(newMemoryDAOs())
+	require.NoError(t, err)
+	return s
+}
+
+func TestDAOStore_Add_Success(t *testing.T) {
+	s := newTestStore(t)
 	defer func() { _ = s.Close() }()
 
 	pw := &StaticPassword{Name: "gmail", Password: "secret123"}
@@ -39,12 +51,12 @@ func TestBackendStore_Add_Success(t *testing.T) {
 	assert.False(t, pw.UpdatedAt.IsZero())
 }
 
-// TestBackendStore_Add_PersistsAttributes proves the generic Attributes bag
+// TestDAOStore_Add_PersistsAttributes proves the generic Attributes bag
 // (added for xkey/pkg/secretservice's Secret Service item model) survives a
 // round trip through JSON marshal/unmarshal in Add and Get, the same as
 // every other field.
-func TestBackendStore_Add_PersistsAttributes(t *testing.T) {
-	s := newTestStore()
+func TestDAOStore_Add_PersistsAttributes(t *testing.T) {
+	s := newTestStore(t)
 	defer func() { _ = s.Close() }()
 
 	pw := &StaticPassword{
@@ -60,12 +72,12 @@ func TestBackendStore_Add_PersistsAttributes(t *testing.T) {
 	assert.Equal(t, "https", got.Attributes["protocol"])
 }
 
-// TestBackendStore_Add_NilAttributesRoundTrips proves an entry with no
+// TestDAOStore_Add_NilAttributesRoundTrips proves an entry with no
 // Attributes at all (the common case for anything not created through the
 // Secret Service object model) round-trips cleanly rather than gaining an
 // empty map.
-func TestBackendStore_Add_NilAttributesRoundTrips(t *testing.T) {
-	s := newTestStore()
+func TestDAOStore_Add_NilAttributesRoundTrips(t *testing.T) {
+	s := newTestStore(t)
 	defer func() { _ = s.Close() }()
 
 	pw := &StaticPassword{Name: "gmail", Password: "secret123"}
@@ -76,24 +88,24 @@ func TestBackendStore_Add_NilAttributesRoundTrips(t *testing.T) {
 	assert.Empty(t, got.Attributes)
 }
 
-func TestBackendStore_Add_MissingName(t *testing.T) {
-	s := newTestStore()
+func TestDAOStore_Add_MissingName(t *testing.T) {
+	s := newTestStore(t)
 	defer func() { _ = s.Close() }()
 
 	pw := &StaticPassword{Password: "secret123"}
 	assert.ErrorIs(t, s.Add(pw), ErrInvalidName)
 }
 
-func TestBackendStore_Add_MissingPassword(t *testing.T) {
-	s := newTestStore()
+func TestDAOStore_Add_MissingPassword(t *testing.T) {
+	s := newTestStore(t)
 	defer func() { _ = s.Close() }()
 
 	pw := &StaticPassword{Name: "gmail"}
 	assert.ErrorIs(t, s.Add(pw), ErrEmptyPassword)
 }
 
-func TestBackendStore_Add_DuplicateName(t *testing.T) {
-	s := newTestStore()
+func TestDAOStore_Add_DuplicateName(t *testing.T) {
+	s := newTestStore(t)
 	defer func() { _ = s.Close() }()
 
 	pw1 := &StaticPassword{Name: "gmail", Password: "secret1"}
@@ -103,8 +115,8 @@ func TestBackendStore_Add_DuplicateName(t *testing.T) {
 	assert.ErrorIs(t, s.Add(pw2), ErrPasswordExists)
 }
 
-func TestBackendStore_Get_ByID(t *testing.T) {
-	s := newTestStore()
+func TestDAOStore_Get_ByID(t *testing.T) {
+	s := newTestStore(t)
 	defer func() { _ = s.Close() }()
 
 	pw := &StaticPassword{Name: "gmail", Password: "secret123"}
@@ -117,8 +129,8 @@ func TestBackendStore_Get_ByID(t *testing.T) {
 	assert.Equal(t, "secret123", retrieved.Password)
 }
 
-func TestBackendStore_Get_ByName(t *testing.T) {
-	s := newTestStore()
+func TestDAOStore_Get_ByName(t *testing.T) {
+	s := newTestStore(t)
 	defer func() { _ = s.Close() }()
 
 	pw := &StaticPassword{Name: "gmail", Password: "secret123"}
@@ -129,8 +141,8 @@ func TestBackendStore_Get_ByName(t *testing.T) {
 	assert.Equal(t, pw.ID, retrieved.ID)
 }
 
-func TestBackendStore_Get_CaseInsensitiveName(t *testing.T) {
-	s := newTestStore()
+func TestDAOStore_Get_CaseInsensitiveName(t *testing.T) {
+	s := newTestStore(t)
 	defer func() { _ = s.Close() }()
 
 	pw := &StaticPassword{Name: "Gmail", Password: "secret123"}
@@ -141,16 +153,16 @@ func TestBackendStore_Get_CaseInsensitiveName(t *testing.T) {
 	assert.Equal(t, pw.ID, retrieved.ID)
 }
 
-func TestBackendStore_Get_NotFound(t *testing.T) {
-	s := newTestStore()
+func TestDAOStore_Get_NotFound(t *testing.T) {
+	s := newTestStore(t)
 	defer func() { _ = s.Close() }()
 
 	_, err := s.Get("nonexistent")
 	assert.ErrorIs(t, err, ErrPasswordNotFound)
 }
 
-func TestBackendStore_List_Empty(t *testing.T) {
-	s := newTestStore()
+func TestDAOStore_List_Empty(t *testing.T) {
+	s := newTestStore(t)
 	defer func() { _ = s.Close() }()
 
 	entries, err := s.List()
@@ -158,8 +170,8 @@ func TestBackendStore_List_Empty(t *testing.T) {
 	assert.Empty(t, entries)
 }
 
-func TestBackendStore_List_MultipleEntries(t *testing.T) {
-	s := newTestStore()
+func TestDAOStore_List_MultipleEntries(t *testing.T) {
+	s := newTestStore(t)
 	defer func() { _ = s.Close() }()
 
 	require.NoError(t, s.Add(&StaticPassword{Name: "a", Password: "pass1"}))
@@ -171,8 +183,8 @@ func TestBackendStore_List_MultipleEntries(t *testing.T) {
 	assert.Len(t, entries, 3)
 }
 
-func TestBackendStore_Update_Success(t *testing.T) {
-	s := newTestStore()
+func TestDAOStore_Update_Success(t *testing.T) {
+	s := newTestStore(t)
 	defer func() { _ = s.Close() }()
 
 	pw := &StaticPassword{Name: "gmail", Password: "old-pass"}
@@ -191,8 +203,8 @@ func TestBackendStore_Update_Success(t *testing.T) {
 	assert.True(t, retrieved.UpdatedAt.After(retrieved.CreatedAt) || retrieved.UpdatedAt.Equal(retrieved.CreatedAt))
 }
 
-func TestBackendStore_Update_ByName(t *testing.T) {
-	s := newTestStore()
+func TestDAOStore_Update_ByName(t *testing.T) {
+	s := newTestStore(t)
 	defer func() { _ = s.Close() }()
 
 	pw := &StaticPassword{Name: "gmail", Password: "old-pass"}
@@ -211,16 +223,16 @@ func TestBackendStore_Update_ByName(t *testing.T) {
 	assert.Equal(t, "new-pass", retrieved.Password)
 }
 
-func TestBackendStore_Update_NotFound(t *testing.T) {
-	s := newTestStore()
+func TestDAOStore_Update_NotFound(t *testing.T) {
+	s := newTestStore(t)
 	defer func() { _ = s.Close() }()
 
 	pw := &StaticPassword{ID: "nonexistent-id", Name: "nonexistent", Password: "pass"}
 	assert.ErrorIs(t, s.Update(pw), ErrPasswordNotFound)
 }
 
-func TestBackendStore_Update_ReadOnly(t *testing.T) {
-	s := newTestStore()
+func TestDAOStore_Update_ReadOnly(t *testing.T) {
+	s := newTestStore(t)
 	defer func() { _ = s.Close() }()
 
 	pw := &StaticPassword{Name: "readonly", Password: "pass", ReadOnly: true}
@@ -230,8 +242,8 @@ func TestBackendStore_Update_ReadOnly(t *testing.T) {
 	assert.ErrorIs(t, s.Update(updated), ErrPasswordReadOnly)
 }
 
-func TestBackendStore_Delete_Success(t *testing.T) {
-	s := newTestStore()
+func TestDAOStore_Delete_Success(t *testing.T) {
+	s := newTestStore(t)
 	defer func() { _ = s.Close() }()
 
 	pw := &StaticPassword{Name: "gmail", Password: "pass"}
@@ -243,8 +255,8 @@ func TestBackendStore_Delete_Success(t *testing.T) {
 	assert.ErrorIs(t, err, ErrPasswordNotFound)
 }
 
-func TestBackendStore_Delete_ByName(t *testing.T) {
-	s := newTestStore()
+func TestDAOStore_Delete_ByName(t *testing.T) {
+	s := newTestStore(t)
 	defer func() { _ = s.Close() }()
 
 	pw := &StaticPassword{Name: "gmail", Password: "pass"}
@@ -256,15 +268,15 @@ func TestBackendStore_Delete_ByName(t *testing.T) {
 	assert.ErrorIs(t, err, ErrPasswordNotFound)
 }
 
-func TestBackendStore_Delete_NotFound(t *testing.T) {
-	s := newTestStore()
+func TestDAOStore_Delete_NotFound(t *testing.T) {
+	s := newTestStore(t)
 	defer func() { _ = s.Close() }()
 
 	assert.ErrorIs(t, s.Delete("nonexistent"), ErrPasswordNotFound)
 }
 
-func TestBackendStore_Delete_ReadOnly(t *testing.T) {
-	s := newTestStore()
+func TestDAOStore_Delete_ReadOnly(t *testing.T) {
+	s := newTestStore(t)
 	defer func() { _ = s.Close() }()
 
 	pw := &StaticPassword{Name: "readonly", Password: "pass", ReadOnly: true}
@@ -273,8 +285,8 @@ func TestBackendStore_Delete_ReadOnly(t *testing.T) {
 	assert.ErrorIs(t, s.Delete(pw.ID), ErrPasswordReadOnly)
 }
 
-func TestBackendStore_ForceDelete_ReadOnly(t *testing.T) {
-	s := newTestStore()
+func TestDAOStore_ForceDelete_ReadOnly(t *testing.T) {
+	s := newTestStore(t)
 	defer func() { _ = s.Close() }()
 
 	pw := &StaticPassword{Name: "readonly", Password: "pass", ReadOnly: true}
@@ -287,8 +299,8 @@ func TestBackendStore_ForceDelete_ReadOnly(t *testing.T) {
 	assert.ErrorIs(t, err, ErrPasswordNotFound)
 }
 
-func TestBackendStore_ForceDelete_ByName(t *testing.T) {
-	s := newTestStore()
+func TestDAOStore_ForceDelete_ByName(t *testing.T) {
+	s := newTestStore(t)
 	defer func() { _ = s.Close() }()
 
 	pw := &StaticPassword{Name: "target", Password: "pass", ReadOnly: true}
@@ -300,22 +312,22 @@ func TestBackendStore_ForceDelete_ByName(t *testing.T) {
 	assert.ErrorIs(t, err, ErrPasswordNotFound)
 }
 
-func TestBackendStore_ForceDelete_NotFound(t *testing.T) {
-	s := newTestStore()
+func TestDAOStore_ForceDelete_NotFound(t *testing.T) {
+	s := newTestStore(t)
 	defer func() { _ = s.Close() }()
 
 	assert.ErrorIs(t, s.ForceDelete("nonexistent"), ErrPasswordNotFound)
 }
 
-func TestBackendStore_ForceDelete_Closed(t *testing.T) {
-	s := newTestStore()
+func TestDAOStore_ForceDelete_Closed(t *testing.T) {
+	s := newTestStore(t)
 	require.NoError(t, s.Close())
 
 	assert.ErrorIs(t, s.ForceDelete("anything"), ErrStoreClosed)
 }
 
-func TestBackendStore_ListByFolder(t *testing.T) {
-	s := newTestStore()
+func TestDAOStore_ListByFolder(t *testing.T) {
+	s := newTestStore(t)
 	defer func() { _ = s.Close() }()
 
 	require.NoError(t, s.Add(&StaticPassword{Name: "a", Password: "p", FolderPath: "email"}))
@@ -331,8 +343,8 @@ func TestBackendStore_ListByFolder(t *testing.T) {
 	assert.Len(t, socialPws, 1)
 }
 
-func TestBackendStore_ListByFolder_Empty(t *testing.T) {
-	s := newTestStore()
+func TestDAOStore_ListByFolder_Empty(t *testing.T) {
+	s := newTestStore(t)
 	defer func() { _ = s.Close() }()
 
 	pws, err := s.ListByFolder("nonexistent")
@@ -340,8 +352,8 @@ func TestBackendStore_ListByFolder_Empty(t *testing.T) {
 	assert.Empty(t, pws)
 }
 
-func TestBackendStore_ListFolders(t *testing.T) {
-	s := newTestStore()
+func TestDAOStore_ListFolders(t *testing.T) {
+	s := newTestStore(t)
 	defer func() { _ = s.Close() }()
 
 	require.NoError(t, s.Add(&StaticPassword{Name: "a", Password: "p", FolderPath: "email"}))
@@ -355,8 +367,8 @@ func TestBackendStore_ListFolders(t *testing.T) {
 	assert.Contains(t, folders, "social")
 }
 
-func TestBackendStore_ListFolders_NoFolders(t *testing.T) {
-	s := newTestStore()
+func TestDAOStore_ListFolders_NoFolders(t *testing.T) {
+	s := newTestStore(t)
 	defer func() { _ = s.Close() }()
 
 	require.NoError(t, s.Add(&StaticPassword{Name: "a", Password: "p"}))
@@ -366,8 +378,8 @@ func TestBackendStore_ListFolders_NoFolders(t *testing.T) {
 	assert.Empty(t, folders)
 }
 
-func TestBackendStore_MoveToFolder_Success(t *testing.T) {
-	s := newTestStore()
+func TestDAOStore_MoveToFolder_Success(t *testing.T) {
+	s := newTestStore(t)
 	defer func() { _ = s.Close() }()
 
 	pw := &StaticPassword{Name: "gmail", Password: "pass", FolderPath: "email"}
@@ -382,8 +394,8 @@ func TestBackendStore_MoveToFolder_Success(t *testing.T) {
 	assert.Equal(t, GenerateID("gmail", "work"), moved.ID)
 }
 
-func TestBackendStore_MoveToFolder_SameFolder(t *testing.T) {
-	s := newTestStore()
+func TestDAOStore_MoveToFolder_SameFolder(t *testing.T) {
+	s := newTestStore(t)
 	defer func() { _ = s.Close() }()
 
 	pw := &StaticPassword{Name: "gmail", Password: "pass", FolderPath: "email"}
@@ -392,8 +404,8 @@ func TestBackendStore_MoveToFolder_SameFolder(t *testing.T) {
 	assert.ErrorIs(t, s.MoveToFolder(pw.ID, "email"), ErrMoveToSameFolder)
 }
 
-func TestBackendStore_MoveToFolder_ReadOnly(t *testing.T) {
-	s := newTestStore()
+func TestDAOStore_MoveToFolder_ReadOnly(t *testing.T) {
+	s := newTestStore(t)
 	defer func() { _ = s.Close() }()
 
 	pw := &StaticPassword{Name: "readonly", Password: "pass", FolderPath: "a", ReadOnly: true}
@@ -402,15 +414,15 @@ func TestBackendStore_MoveToFolder_ReadOnly(t *testing.T) {
 	assert.ErrorIs(t, s.MoveToFolder(pw.ID, "b"), ErrPasswordReadOnly)
 }
 
-func TestBackendStore_MoveToFolder_NotFound(t *testing.T) {
-	s := newTestStore()
+func TestDAOStore_MoveToFolder_NotFound(t *testing.T) {
+	s := newTestStore(t)
 	defer func() { _ = s.Close() }()
 
 	assert.ErrorIs(t, s.MoveToFolder("nonexistent", "folder"), ErrPasswordNotFound)
 }
 
-func TestBackendStore_Close_PreventsFurtherOps(t *testing.T) {
-	s := newTestStore()
+func TestDAOStore_Close_PreventsFurtherOps(t *testing.T) {
+	s := newTestStore(t)
 	require.NoError(t, s.Close())
 
 	_, err := s.Get("anything")
@@ -432,8 +444,8 @@ func TestBackendStore_Close_PreventsFurtherOps(t *testing.T) {
 	assert.ErrorIs(t, s.RemoveFolder("f"), ErrStoreClosed)
 }
 
-func TestBackendStore_Add_GeneratesDeterministicID(t *testing.T) {
-	s := newTestStore()
+func TestDAOStore_Add_GeneratesDeterministicID(t *testing.T) {
+	s := newTestStore(t)
 	defer func() { _ = s.Close() }()
 
 	pw := &StaticPassword{Name: "Test", Password: "pass"}
@@ -453,8 +465,8 @@ func TestBackendStore_Add_GeneratesDeterministicID(t *testing.T) {
 	assert.Equal(t, expectedID, retrieved.ID)
 }
 
-func TestBackendStore_Update_PreservesCreatedAt(t *testing.T) {
-	s := newTestStore()
+func TestDAOStore_Update_PreservesCreatedAt(t *testing.T) {
+	s := newTestStore(t)
 	defer func() { _ = s.Close() }()
 
 	pw := &StaticPassword{Name: "test", Password: "pass"}
@@ -478,7 +490,7 @@ func TestBackendStore_Update_PreservesCreatedAt(t *testing.T) {
 // Tenant store tests
 
 func TestNewTenantStore_ValidID(t *testing.T) {
-	s, err := NewTenantStore(storage.New(), "tenant-123")
+	s, err := NewTenantStore(newMemoryDAOs(), "tenant-123")
 	require.NoError(t, err)
 	defer func() { _ = s.Close() }()
 
@@ -491,12 +503,12 @@ func TestNewTenantStore_ValidID(t *testing.T) {
 }
 
 func TestNewTenantStore_EmptyID(t *testing.T) {
-	_, err := NewTenantStore(storage.New(), "")
+	_, err := NewTenantStore(newMemoryDAOs(), "")
 	assert.ErrorIs(t, err, ErrInvalidTenantID)
 }
 
 func TestNewTenantStore_InvalidChars(t *testing.T) {
-	_, err := NewTenantStore(storage.New(), "tenant/invalid")
+	_, err := NewTenantStore(newMemoryDAOs(), "tenant/invalid")
 	assert.ErrorIs(t, err, ErrInvalidTenantID)
 }
 
@@ -505,32 +517,32 @@ func TestNewTenantStore_TooLong(t *testing.T) {
 	for len(longID) <= 64 {
 		longID += "a"
 	}
-	_, err := NewTenantStore(storage.New(), longID)
+	_, err := NewTenantStore(newMemoryDAOs(), longID)
 	assert.ErrorIs(t, err, ErrInvalidTenantID)
 }
 
 func TestNewTenantStore_HyphenAtStart(t *testing.T) {
-	_, err := NewTenantStore(storage.New(), "-invalid")
+	_, err := NewTenantStore(newMemoryDAOs(), "-invalid")
 	assert.ErrorIs(t, err, ErrInvalidTenantID)
 }
 
 func TestNewTenantStore_HyphenAtEnd(t *testing.T) {
 	// Trailing hyphens are valid per the regex pattern.
-	s, err := NewTenantStore(storage.New(), "valid-")
+	s, err := NewTenantStore(newMemoryDAOs(), "valid-")
 	assert.NoError(t, err)
 	assert.NotNil(t, s)
 	defer func() { _ = s.Close() }()
 }
 
 func TestNewTenantStore_SingleChar(t *testing.T) {
-	s, err := NewTenantStore(storage.New(), "a")
+	s, err := NewTenantStore(newMemoryDAOs(), "a")
 	require.NoError(t, err)
 	assert.NotNil(t, s)
 	defer func() { _ = s.Close() }()
 }
 
 func TestTenantStore_Isolation(t *testing.T) {
-	backend := storage.New()
+	backend := newMemoryDAOs()
 
 	s1, err := NewTenantStore(backend, "tenant1")
 	require.NoError(t, err)
@@ -558,14 +570,14 @@ func TestTenantStore_Isolation(t *testing.T) {
 	assert.Len(t, list2, 1)
 }
 
-func TestBackendStore_ImplementsStoreInterface(t *testing.T) {
-	var _ Store = (*BackendStore)(nil)
+func TestDAOStore_ImplementsStoreInterface(t *testing.T) {
+	var _ Store = (*DAOStore)(nil)
 }
 
 // --- NewSharedTenantStore ---
 
 func TestNewSharedTenantStore_Success(t *testing.T) {
-	s, err := NewSharedTenantStore(storage.New(), "tenant-1")
+	s, err := NewSharedTenantStore(newMemoryDAOs(), "tenant-1")
 	require.NoError(t, err)
 	defer func() { _ = s.Close() }()
 
@@ -578,36 +590,48 @@ func TestNewSharedTenantStore_Success(t *testing.T) {
 }
 
 func TestNewSharedTenantStore_InvalidTenantID(t *testing.T) {
-	_, err := NewSharedTenantStore(storage.New(), "")
+	_, err := NewSharedTenantStore(newMemoryDAOs(), "")
 	assert.ErrorIs(t, err, ErrInvalidTenantID)
 
-	_, err = NewSharedTenantStore(storage.New(), "bad/id")
+	_, err = NewSharedTenantStore(newMemoryDAOs(), "bad/id")
 	assert.ErrorIs(t, err, ErrInvalidTenantID)
 }
 
 func TestNewSharedTenantStore_KeyPrefix(t *testing.T) {
-	backend := storage.New()
-	s, err := NewSharedTenantStore(backend, "acme")
+	s, err := NewSharedTenantStore(newMemoryDAOs(), "acme")
 	require.NoError(t, err)
 	defer func() { _ = s.Close() }()
 
 	pw := &StaticPassword{Name: "test", Password: "p"}
 	require.NoError(t, s.Add(pw))
 
-	// The storage key uses the hashed ID, not the raw name.
-	expectedKey := "acme/staticpw/shared/" + GenerateID("test", "") + ".json"
+	// The record path uses the hashed ID, not the raw name.
+	assertEntryPaths(t, s, "acme/staticpw/shared/entry/"+GenerateID("test", ""))
+}
 
-	// Verify the key prefix is correct by listing from the backend directly.
-	keys, err := backend.List(context.Background(), "acme/staticpw/shared/")
+// assertEntryPaths asserts the store's entry records are exactly want.
+func assertEntryPaths(t *testing.T, s *DAOStore, want ...string) {
+	t.Helper()
+	all, err := s.records.list(context.Background(), s.dir(nameKindEntry))
 	require.NoError(t, err)
-	assert.Len(t, keys, 1)
-	assert.Equal(t, expectedKey, keys[0])
+	paths := make([]string, 0, len(all))
+	for _, r := range all {
+		paths = append(paths, r.Path)
+	}
+	assert.ElementsMatch(t, want, paths)
+}
+
+// putRawEntry stores body as the entry record of id, bypassing encoding.
+func putRawEntry(t *testing.T, s *DAOStore, id string, body []byte) {
+	t.Helper()
+	r := &record{Path: s.entryPath(id), Dir: s.dir(nameKindEntry), Body: body}
+	require.NoError(t, s.records.put(context.Background(), r))
 }
 
 // --- NewPersonalTenantStore ---
 
 func TestNewPersonalTenantStore_Success(t *testing.T) {
-	s, err := NewPersonalTenantStore(storage.New(), "tenant-1", "alice")
+	s, err := NewPersonalTenantStore(newMemoryDAOs(), "tenant-1", "alice")
 	require.NoError(t, err)
 	defer func() { _ = s.Close() }()
 
@@ -620,45 +644,39 @@ func TestNewPersonalTenantStore_Success(t *testing.T) {
 }
 
 func TestNewPersonalTenantStore_InvalidTenantID(t *testing.T) {
-	_, err := NewPersonalTenantStore(storage.New(), "", "alice")
+	_, err := NewPersonalTenantStore(newMemoryDAOs(), "", "alice")
 	assert.ErrorIs(t, err, ErrInvalidTenantID)
 }
 
 func TestNewPersonalTenantStore_InvalidUserID(t *testing.T) {
-	_, err := NewPersonalTenantStore(storage.New(), "tenant-1", "")
+	_, err := NewPersonalTenantStore(newMemoryDAOs(), "tenant-1", "")
 	assert.ErrorIs(t, err, ErrInvalidUserID)
 
-	_, err = NewPersonalTenantStore(storage.New(), "tenant-1", "bad/user")
+	_, err = NewPersonalTenantStore(newMemoryDAOs(), "tenant-1", "bad/user")
 	assert.ErrorIs(t, err, ErrInvalidUserID)
 }
 
 func TestNewPersonalTenantStore_KeyPrefix(t *testing.T) {
-	backend := storage.New()
-	s, err := NewPersonalTenantStore(backend, "acme", "alice@acme.com")
+	s, err := NewPersonalTenantStore(newMemoryDAOs(), "acme", "alice@acme.com")
 	require.NoError(t, err)
 	defer func() { _ = s.Close() }()
 
 	pw := &StaticPassword{Name: "test", Password: "p"}
 	require.NoError(t, s.Add(pw))
 
-	// The storage key uses the hashed ID, not the raw name.
-	expectedKey := "acme/staticpw/users/alice@acme.com/" + GenerateID("test", "") + ".json"
-
-	keys, err := backend.List(context.Background(), "acme/staticpw/users/alice@acme.com/")
-	require.NoError(t, err)
-	assert.Len(t, keys, 1)
-	assert.Equal(t, expectedKey, keys[0])
+	// The record path uses the hashed ID, not the raw name.
+	assertEntryPaths(t, s, "acme/staticpw/users/alice@acme.com/entry/"+GenerateID("test", ""))
 }
 
 func TestNewPersonalTenantStore_EmailUserID(t *testing.T) {
-	s, err := NewPersonalTenantStore(storage.New(), "acme", "user@example.com")
+	s, err := NewPersonalTenantStore(newMemoryDAOs(), "acme", "user@example.com")
 	require.NoError(t, err)
 	assert.NotNil(t, s)
 	defer func() { _ = s.Close() }()
 }
 
 func TestNewPersonalTenantStore_DotUserID(t *testing.T) {
-	s, err := NewPersonalTenantStore(storage.New(), "acme", "first.last")
+	s, err := NewPersonalTenantStore(newMemoryDAOs(), "acme", "first.last")
 	require.NoError(t, err)
 	assert.NotNil(t, s)
 	defer func() { _ = s.Close() }()
@@ -667,7 +685,7 @@ func TestNewPersonalTenantStore_DotUserID(t *testing.T) {
 // --- Personal vs Shared Isolation ---
 
 func TestSharedAndPersonal_Isolation(t *testing.T) {
-	backend := storage.New()
+	backend := newMemoryDAOs()
 
 	shared, err := NewSharedTenantStore(backend, "acme")
 	require.NoError(t, err)
@@ -751,8 +769,8 @@ func TestIsValidUserID_MaxLength(t *testing.T) {
 
 // --- Targeted coverage tests ---
 
-func TestBackendStore_TenantID(t *testing.T) {
-	backend := storage.New()
+func TestDAOStore_TenantID(t *testing.T) {
+	backend := newMemoryDAOs()
 
 	// Tenant store returns its tenant ID.
 	tenantStore, err := NewTenantStore(backend, "my-tenant")
@@ -761,19 +779,27 @@ func TestBackendStore_TenantID(t *testing.T) {
 	_ = tenantStore.Close()
 
 	// System store has empty tenant ID.
-	sysStore := NewStore(backend)
+	sysStore, err := NewStore(backend)
+	require.NoError(t, err)
 	assert.Equal(t, "", sysStore.TenantID())
 	_ = sysStore.Close()
 }
 
-func TestBackendStore_Get_CorruptedJSON(t *testing.T) {
-	backend := storage.New()
+func TestNewStore_NilFactory(t *testing.T) {
+	_, err := NewStore(nil)
+	var creation ErrDAOCreation
+	require.ErrorAs(t, err, &creation)
+	assert.ErrorIs(t, err, dao.ErrNilFactory)
 
-	// Write corrupted data directly to the backend at the expected key path.
-	require.NoError(t, backend.Put(context.Background(), "staticpw/bad-entry.json", []byte("not-valid-json")))
+	_, err = NewTenantStore(nil, "acme")
+	assert.ErrorIs(t, err, dao.ErrNilFactory)
+}
 
-	store := NewStore(backend)
+func TestDAOStore_Get_CorruptedJSON(t *testing.T) {
+	store := newTestStore(t)
 	defer func() { _ = store.Close() }()
+
+	putRawEntry(t, store, "bad-entry", []byte("not-valid-json"))
 
 	// Lookup by ID (exact key match) should fail with unmarshal error.
 	_, err := store.Get("bad-entry")
@@ -781,8 +807,8 @@ func TestBackendStore_Get_CorruptedJSON(t *testing.T) {
 	assert.ErrorIs(t, err, ErrUnmarshalFailed)
 }
 
-func TestBackendStore_Delete_ReadOnlyByName(t *testing.T) {
-	store := newTestStore()
+func TestDAOStore_Delete_ReadOnlyByName(t *testing.T) {
+	store := newTestStore(t)
 	defer func() { _ = store.Close() }()
 
 	pw := &StaticPassword{Name: "Protected", Password: "p", ReadOnly: true}
@@ -807,108 +833,41 @@ func TestBackendStore_Delete_ReadOnlyByName(t *testing.T) {
 	assert.ErrorIs(t, err, ErrPasswordReadOnly)
 }
 
-func TestBackendStore_List_SkipsCorruptedEntries(t *testing.T) {
-	backend := storage.New()
-	store := NewStore(backend)
+// A record that does not decode fails List loudly rather than vanishing
+// from it, so a damaged entry is never silently dropped.
+func TestDAOStore_List_CorruptedEntryFails(t *testing.T) {
+	store := newTestStore(t)
+	defer func() { _ = store.Close() }()
 
-	// Add a valid entry.
 	require.NoError(t, store.Add(&StaticPassword{Name: "Valid", Password: "p"}))
+	putRawEntry(t, store, "corrupt", []byte("not-json"))
 
-	// Inject a corrupted entry directly into the backend.
-	require.NoError(t, backend.Put(context.Background(), "staticpw/corrupt.json", []byte("not-json")))
-
-	// List should skip the corrupted entry and return only valid ones.
-	entries, err := store.List()
-	require.NoError(t, err)
-	assert.Len(t, entries, 1)
-	assert.Equal(t, "Valid", entries[0].Name)
-
-	_ = store.Close()
+	_, err := store.List()
+	assert.ErrorIs(t, err, ErrUnmarshalFailed)
 }
 
-func TestBackendStore_FindByName_SkipsCorruptedEntries(t *testing.T) {
-	backend := storage.New()
-	store := NewStore(backend)
+func TestDAOStore_Get_ByIDDespiteCorruptedEntry(t *testing.T) {
+	store := newTestStore(t)
+	defer func() { _ = store.Close() }()
 
-	// Add a valid entry.
 	require.NoError(t, store.Add(&StaticPassword{Name: "Target", Password: "p"}))
+	putRawEntry(t, store, "aaa-corrupt", []byte("{bad json}"))
 
-	// Inject a corrupted entry that precedes "Target" alphabetically.
-	require.NoError(t, backend.Put(context.Background(), "staticpw/aaa-corrupt.json", []byte("{bad json}")))
-
-	// Get by name should skip the corrupted entry and find "Target".
+	// A root-level name resolves through its hashed ID without a scan.
 	pw, err := store.Get("Target")
 	require.NoError(t, err)
 	assert.Equal(t, "Target", pw.Name)
 
-	_ = store.Close()
+	// A name scan meets the corrupted entry and reports it.
+	_, err = store.Get("absent")
+	assert.ErrorIs(t, err, ErrUnmarshalFailed)
 }
 
-func TestBackendStore_CheckNameConflict_ExcludeID(t *testing.T) {
-	backend := storage.New()
-	store := NewStore(backend)
+func TestDAOStore_Update_CorruptedExistingEntry(t *testing.T) {
+	store := newTestStore(t)
 	defer func() { _ = store.Close() }()
 
-	// Add two entries.
-	alphaPW := &StaticPassword{Name: "Alpha", Password: "p"}
-	require.NoError(t, store.Add(alphaPW))
-	require.NoError(t, store.Add(&StaticPassword{Name: "Beta", Password: "p"}))
-
-	alphaID := alphaPW.ID
-
-	// Directly call checkNameConflict with excludeID to verify it skips the
-	// excluded entry. This exercises the excludeID != "" path.
-	// Checking for "Alpha" excluding its own ID should return nil (no conflict).
-	store.mu.Lock()
-	err := store.checkNameConflict("Alpha", "", alphaID)
-	store.mu.Unlock()
-	assert.NoError(t, err, "checkNameConflict should skip the excluded ID")
-
-	// Checking for "Beta" excluding Alpha's ID should return ErrPasswordExists.
-	store.mu.Lock()
-	err = store.checkNameConflict("Beta", "", alphaID)
-	store.mu.Unlock()
-	assert.ErrorIs(t, err, ErrPasswordExists)
-
-	// Checking for "Gamma" (no conflict) should return nil regardless of excludeID.
-	store.mu.Lock()
-	err = store.checkNameConflict("Gamma", "", alphaID)
-	store.mu.Unlock()
-	assert.NoError(t, err)
-}
-
-func TestBackendStore_CheckNameConflict_SkipsCorruptedEntries(t *testing.T) {
-	backend := storage.New()
-	store := NewStore(backend)
-	defer func() { _ = store.Close() }()
-
-	// Add a valid entry.
-	require.NoError(t, store.Add(&StaticPassword{Name: "Valid", Password: "p"}))
-
-	// Inject a corrupted entry.
-	require.NoError(t, backend.Put(context.Background(), "staticpw/corrupt.json", []byte("not-json")))
-
-	// checkNameConflict should skip the corrupted entry and not report a false
-	// conflict for a name that doesn't match any valid entry.
-	store.mu.Lock()
-	err := store.checkNameConflict("NoMatch", "", "")
-	store.mu.Unlock()
-	assert.NoError(t, err)
-
-	// But it should still detect conflicts against valid entries.
-	store.mu.Lock()
-	err = store.checkNameConflict("Valid", "", "")
-	store.mu.Unlock()
-	assert.ErrorIs(t, err, ErrPasswordExists)
-}
-
-func TestBackendStore_Update_CorruptedExistingEntry(t *testing.T) {
-	backend := storage.New()
-	store := NewStore(backend)
-	defer func() { _ = store.Close() }()
-
-	// Inject a corrupted entry directly.
-	require.NoError(t, backend.Put(context.Background(), "staticpw/corrupted.json", []byte("not-json")))
+	putRawEntry(t, store, "corrupted", []byte("not-json"))
 
 	// Attempt to update the corrupted entry by its ID.
 	pw := &StaticPassword{ID: "corrupted", Name: "corrupted", Password: "new-pass"}
@@ -917,10 +876,107 @@ func TestBackendStore_Update_CorruptedExistingEntry(t *testing.T) {
 	assert.ErrorIs(t, err, ErrUnmarshalFailed)
 }
 
+// Two stores over one table see each other's writes: the guarded writes
+// keep a stale writer from overwriting or deleting a newer record.
+func TestDAOStore_SharedTable_RoundTrip(t *testing.T) {
+	daos := newMemoryDAOs()
+	first, err := NewTenantStore(daos, "acme")
+	require.NoError(t, err)
+	second, err := NewTenantStore(daos, "acme")
+	require.NoError(t, err)
+
+	pw := &StaticPassword{Name: "db", Password: "one"}
+	require.NoError(t, first.Add(pw))
+	assert.ErrorIs(t, second.Add(&StaticPassword{Name: "DB", Password: "two"}), ErrPasswordExists)
+
+	pw.Password = "updated"
+	require.NoError(t, first.Update(pw))
+	got, err := second.Get("db")
+	require.NoError(t, err)
+	assert.Equal(t, "updated", got.Password)
+
+	require.NoError(t, second.Delete("db"))
+	_, err = first.Get("db")
+	assert.ErrorIs(t, err, ErrPasswordNotFound)
+}
+
+func TestDAOStore_Update_RenameToTakenName(t *testing.T) {
+	store := newTestStore(t)
+	defer func() { _ = store.Close() }()
+
+	alpha := &StaticPassword{Name: "alpha", Password: "p"}
+	require.NoError(t, store.Add(alpha))
+	require.NoError(t, store.Add(&StaticPassword{Name: "beta", Password: "p"}))
+
+	alpha.Name = "beta"
+	assert.ErrorIs(t, store.Update(alpha), ErrPasswordExists)
+
+	// The failed rename leaves both entries in place.
+	entries, err := store.List()
+	require.NoError(t, err)
+	assert.Len(t, entries, 2)
+}
+
+func TestRecords_RenameUndoesOnConflict(t *testing.T) {
+	store := newTestStore(t)
+	ctx := context.Background()
+
+	current := &record{Path: store.entryPath("a"), Dir: store.dir(nameKindEntry), Body: []byte("1")}
+	stored, err := store.records.create(ctx, current)
+	require.NoError(t, err)
+	require.True(t, stored)
+
+	// A stale copy of current no longer matches the stored record.
+	stale := *current
+	stale.Body = []byte("stale")
+	next := &record{Path: store.entryPath("b"), Dir: store.dir(nameKindEntry), Body: []byte("2")}
+
+	var conflict *ConflictError
+	require.ErrorAs(t, store.records.rename(ctx, &stale, next), &conflict)
+	assert.Equal(t, "rename", conflict.Op)
+	assert.Contains(t, conflict.Error(), "changed concurrently")
+
+	// The write of next was undone; current is untouched.
+	assertEntryPaths(t, store, current.Path)
+}
+
+// errReadFailed is the failure failingReads reports.
+var errReadFailed = errors.New("read failed")
+
+// failingReads is an in-memory store whose reads fail.
+type failingReads struct {
+	*qrdbsdk.MemoryKVStore
+}
+
+func (failingReads) Get(context.Context, string) ([]byte, error)    { return nil, errReadFailed }
+func (failingReads) Exists(context.Context, string) (bool, error)   { return false, errReadFailed }
+func (failingReads) List(context.Context, string) ([]string, error) { return nil, errReadFailed }
+func (failingReads) Scan(context.Context, string, func(string, []byte) error) error {
+	return errReadFailed
+}
+func (failingReads) QueryIndex(context.Context, string, []byte) ([][]byte, error) {
+	return nil, errReadFailed
+}
+
+func TestRecords_StoreErrorOnFailedRead(t *testing.T) {
+	store, err := NewStore(dao.NewStoreFactory(failingReads{qrdbsdk.NewMemoryKVStore()}))
+	require.NoError(t, err)
+
+	var storeErr *StoreError
+	_, err = store.Get("x")
+	require.ErrorAs(t, err, &storeErr)
+	assert.Equal(t, "get", storeErr.Op)
+	assert.ErrorIs(t, err, errReadFailed)
+	assert.Contains(t, storeErr.Error(), "staticpw: get")
+
+	_, err = store.ListFolders()
+	assert.ErrorIs(t, err, errReadFailed)
+}
+
 // --- CreateFolder / RemoveFolder ---
 
-func TestBackendStore_CreateFolder(t *testing.T) {
-	s := newTestStore()
+func TestDAOStore_CreateFolder(t *testing.T) {
+	s := newTestStore(t)
 	defer func() { _ = s.Close() }()
 
 	require.NoError(t, s.CreateFolder("work"))
@@ -932,22 +988,22 @@ func TestBackendStore_CreateFolder(t *testing.T) {
 	assert.Contains(t, folders, "personal/email")
 }
 
-func TestBackendStore_CreateFolder_Empty(t *testing.T) {
-	s := newTestStore()
+func TestDAOStore_CreateFolder_Empty(t *testing.T) {
+	s := newTestStore(t)
 	defer func() { _ = s.Close() }()
 
 	assert.ErrorIs(t, s.CreateFolder(""), ErrFolderEmpty)
 }
 
-func TestBackendStore_CreateFolder_Closed(t *testing.T) {
-	s := newTestStore()
+func TestDAOStore_CreateFolder_Closed(t *testing.T) {
+	s := newTestStore(t)
 	require.NoError(t, s.Close())
 
 	assert.ErrorIs(t, s.CreateFolder("work"), ErrStoreClosed)
 }
 
-func TestBackendStore_RemoveFolder(t *testing.T) {
-	s := newTestStore()
+func TestDAOStore_RemoveFolder(t *testing.T) {
+	s := newTestStore(t)
 	defer func() { _ = s.Close() }()
 
 	require.NoError(t, s.CreateFolder("work"))
@@ -961,30 +1017,30 @@ func TestBackendStore_RemoveFolder(t *testing.T) {
 	assert.NotContains(t, folders, "work")
 }
 
-func TestBackendStore_RemoveFolder_Nonexistent(t *testing.T) {
-	s := newTestStore()
+func TestDAOStore_RemoveFolder_Nonexistent(t *testing.T) {
+	s := newTestStore(t)
 	defer func() { _ = s.Close() }()
 
 	// Should be idempotent.
 	require.NoError(t, s.RemoveFolder("nonexistent"))
 }
 
-func TestBackendStore_RemoveFolder_Empty(t *testing.T) {
-	s := newTestStore()
+func TestDAOStore_RemoveFolder_Empty(t *testing.T) {
+	s := newTestStore(t)
 	defer func() { _ = s.Close() }()
 
 	assert.ErrorIs(t, s.RemoveFolder(""), ErrFolderEmpty)
 }
 
-func TestBackendStore_RemoveFolder_Closed(t *testing.T) {
-	s := newTestStore()
+func TestDAOStore_RemoveFolder_Closed(t *testing.T) {
+	s := newTestStore(t)
 	require.NoError(t, s.Close())
 
 	assert.ErrorIs(t, s.RemoveFolder("work"), ErrStoreClosed)
 }
 
-func TestBackendStore_SetAlias(t *testing.T) {
-	s := newTestStore()
+func TestDAOStore_SetAlias(t *testing.T) {
+	s := newTestStore(t)
 	defer func() { _ = s.Close() }()
 
 	require.NoError(t, s.SetAlias("custom", "Work"))
@@ -995,8 +1051,8 @@ func TestBackendStore_SetAlias(t *testing.T) {
 	assert.Equal(t, "Work", folder)
 }
 
-func TestBackendStore_SetAlias_EmptyNameRefused(t *testing.T) {
-	s := newTestStore()
+func TestDAOStore_SetAlias_EmptyNameRefused(t *testing.T) {
+	s := newTestStore(t)
 	defer func() { _ = s.Close() }()
 
 	assert.ErrorIs(t, s.SetAlias("", "Work"), ErrAliasNameEmpty)
@@ -1005,8 +1061,8 @@ func TestBackendStore_SetAlias_EmptyNameRefused(t *testing.T) {
 	assert.ErrorIs(t, err, ErrAliasNameEmpty)
 }
 
-func TestBackendStore_SetAlias_EmptyFolderRemovesAlias(t *testing.T) {
-	s := newTestStore()
+func TestDAOStore_SetAlias_EmptyFolderRemovesAlias(t *testing.T) {
+	s := newTestStore(t)
 	defer func() { _ = s.Close() }()
 
 	require.NoError(t, s.SetAlias("custom", "Work"))
@@ -1017,8 +1073,8 @@ func TestBackendStore_SetAlias_EmptyFolderRemovesAlias(t *testing.T) {
 	assert.False(t, found)
 }
 
-func TestBackendStore_GetAlias_Unset(t *testing.T) {
-	s := newTestStore()
+func TestDAOStore_GetAlias_Unset(t *testing.T) {
+	s := newTestStore(t)
 	defer func() { _ = s.Close() }()
 
 	folder, found, err := s.GetAlias("never-set")
@@ -1027,26 +1083,26 @@ func TestBackendStore_GetAlias_Unset(t *testing.T) {
 	assert.Empty(t, folder)
 }
 
-func TestBackendStore_SetAlias_Closed(t *testing.T) {
-	s := newTestStore()
+func TestDAOStore_SetAlias_Closed(t *testing.T) {
+	s := newTestStore(t)
 	require.NoError(t, s.Close())
 
 	assert.ErrorIs(t, s.SetAlias("custom", "Work"), ErrStoreClosed)
 }
 
-func TestBackendStore_GetAlias_Closed(t *testing.T) {
-	s := newTestStore()
+func TestDAOStore_GetAlias_Closed(t *testing.T) {
+	s := newTestStore(t)
 	require.NoError(t, s.Close())
 
 	_, _, err := s.GetAlias("custom")
 	assert.ErrorIs(t, err, ErrStoreClosed)
 }
 
-// TestBackendStore_AliasMarkersExcludedFromList proves an alias marker
+// TestDAOStore_AliasMarkersExcludedFromList proves an alias marker
 // never shows up as a password entry via List/ListByFolder*, the same
 // invariant folder markers already have.
-func TestBackendStore_AliasMarkersExcludedFromList(t *testing.T) {
-	s := newTestStore()
+func TestDAOStore_AliasMarkersExcludedFromList(t *testing.T) {
+	s := newTestStore(t)
 	defer func() { _ = s.Close() }()
 
 	require.NoError(t, s.SetAlias("custom", "Work"))
@@ -1058,8 +1114,8 @@ func TestBackendStore_AliasMarkersExcludedFromList(t *testing.T) {
 	assert.Equal(t, "a", passwords[0].Name)
 }
 
-func TestBackendStore_ListFolders_MergesImplicitAndExplicit(t *testing.T) {
-	s := newTestStore()
+func TestDAOStore_ListFolders_MergesImplicitAndExplicit(t *testing.T) {
+	s := newTestStore(t)
 	defer func() { _ = s.Close() }()
 
 	// Add an entry with folder "email".
@@ -1073,8 +1129,8 @@ func TestBackendStore_ListFolders_MergesImplicitAndExplicit(t *testing.T) {
 	assert.Contains(t, folders, "work")
 }
 
-func TestBackendStore_CreateFolder_DoesNotPolluteList(t *testing.T) {
-	s := newTestStore()
+func TestDAOStore_CreateFolder_DoesNotPolluteList(t *testing.T) {
+	s := newTestStore(t)
 	defer func() { _ = s.Close() }()
 
 	require.NoError(t, s.CreateFolder("empty-folder"))

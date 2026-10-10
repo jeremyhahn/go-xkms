@@ -17,8 +17,6 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
-	"io"
-	"log/slog"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -29,7 +27,7 @@ import (
 	"github.com/jeremyhahn/go-xkms/pkg/auth"
 	"github.com/jeremyhahn/go-xkms/pkg/seal"
 	"github.com/jeremyhahn/go-xkms/pkg/staticpw"
-	"github.com/jeremyhahn/go-xkms/pkg/storage"
+	"github.com/jeremyhahn/go-xkms/pkg/testutil"
 	"github.com/jeremyhahn/go-xkms/pkg/testutil/kdftest"
 	"github.com/jeremyhahn/go-xkms/pkg/testutil/vaulttest"
 	"github.com/jeremyhahn/go-xkms/pkg/xkms"
@@ -44,70 +42,50 @@ const (
 	pwUserB   = "bob"
 )
 
-// passwordTestRegistry builds a BarrierRegistry whose system barrier and two
-// tenant barriers (pwTenantA, pwTenantB) are initialized and unsealed, plus
-// the system store and a TenantPasswordStoreManager over them.
-func passwordTestRegistry(t *testing.T) (*seal.BarrierRegistry, *staticpw.BackendStore, *staticpw.TenantPasswordStoreManager) {
+// newTestPasswordStore returns a system password store over an in-memory DAO
+// factory.
+func newTestPasswordStore(t *testing.T) *staticpw.DAOStore {
+	t.Helper()
+	store, err := staticpw.NewStore(testutil.NewMemoryDAOFactory())
+	require.NoError(t, err)
+	return store
+}
+
+// passwordTestStores builds in-memory tenant stores, the system store and a
+// TenantPasswordStoreManager over them.
+func passwordTestStores(t *testing.T) (*testutil.TenantStores, *staticpw.DAOStore, *staticpw.TenantPasswordStoreManager) {
 	t.Helper()
 
-	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
-	sysBackend, err := storage.NewMemoryBackend()
+	stores := testutil.NewTenantStores()
+	systemStore := newTestPasswordStore(t)
+	manager, err := staticpw.NewTenantPasswordStoreManager(stores, systemStore, staticpw.WithPasskeyRelyingParty("kms.example.com"), staticpw.WithPassphraseKDFParams(kdftest.CheapPassphraseParams))
 	require.NoError(t, err)
-	sysBarrier, err := seal.NewBarrier(
-		logger,
-		sysBackend,
-		seal.BarrierConfig{
-			RootKeyPath:     "root-key",
-			PreferenceOrder: []seal.StrategyID{seal.StrategyPassphrase},
-		},
-		seal.NewSoftwareStrategy(),
-	)
-	require.NoError(t, err)
-
-	ctx := context.Background()
-	sysCreds := seal.MustCredentials(t.Context(), []byte("test-pw"))
-	defer sysCreds.Secret.Destroy()
-	require.NoError(t, sysBarrier.Initialize(ctx, sysCreds))
-
-	registry, err := seal.NewBarrierRegistry(sysBarrier)
-	require.NoError(t, err)
-	for _, tenant := range []string{pwTenantA, pwTenantB} {
-		_, err = registry.RegisterTenantDefault(tenant)
-		require.NoError(t, err)
-		creds := seal.MustCredentials(t.Context(), []byte(tenant+"-pw"))
-		require.NoError(t, registry.InitializeTenant(ctx, tenant, creds))
-		creds.Secret.Destroy()
-	}
-
-	systemStore := staticpw.NewStore(storage.New())
-	manager, err := staticpw.NewTenantPasswordStoreManager(registry, systemStore, staticpw.WithPasskeyRelyingParty("kms.example.com"), staticpw.WithPassphraseKDFParams(kdftest.CheapPassphraseParams))
-	require.NoError(t, err)
-	return registry, systemStore, manager
+	return stores, systemStore, manager
 }
 
 // passwordServer is an MCP server over a real XKMSService wired with a real
-// TenantPasswordStoreManager and BarrierRegistry. It holds no package-global
-// state, so tests using it may run in parallel.
+// TenantPasswordStoreManager and in-memory tenant stores. It holds no
+// package-global state, so tests using it may run in parallel.
 type passwordServer struct {
 	*Server
-	registry *seal.BarrierRegistry
-	manager  *staticpw.TenantPasswordStoreManager
+	stores  *testutil.TenantStores
+	manager *staticpw.TenantPasswordStoreManager
 }
 
 // newPasswordServer builds a passwordServer.
 func newPasswordServer(t *testing.T) *passwordServer {
 	t.Helper()
 
-	registry, systemStore, manager := passwordTestRegistry(t)
+	stores, systemStore, manager := passwordTestStores(t)
 
 	svc := &xkms.XKMSService{}
 	svc.SetPasswordStore(systemStore)
 	svc.SetPasswordStoreManager(manager)
 
 	return &passwordServer{
-		Server:   &Server{xkmsService: svc},
-		registry: registry,
-		manager:  manager,
+		Server:  &Server{xkmsService: svc},
+		stores:  stores,
+		manager: manager,
 	}
 }
 
@@ -502,10 +480,10 @@ func TestHandlePasswordLock(t *testing.T) {
 		assert.ErrorIs(t, err, xkms.ErrOperationNotSupported)
 	})
 
-	t.Run("unknown tenant", func(t *testing.T) {
-		_, err := s.handlePasswordLock(pwCtx("no-such-tenant", pwUserA), pwRPC(t, "password.lock", nil))
-		requireCode(t, err, sdkssh.JSONRPCCodeNotFound)
-		assert.ErrorIs(t, err, seal.ErrTenantNotFound)
+	t.Run("invalid tenant", func(t *testing.T) {
+		_, err := s.handlePasswordLock(pwCtx("bad/tenant", pwUserA), pwRPC(t, "password.lock", nil))
+		requireCode(t, err, ErrCodeInvalidParams)
+		assert.ErrorIs(t, err, staticpw.ErrInvalidTenantID)
 	})
 }
 
@@ -519,9 +497,10 @@ func TestHandlePasswordUnlock_Errors(t *testing.T) {
 		assert.ErrorIs(t, err, xkms.ErrOperationNotSupported)
 	})
 
-	t.Run("unknown tenant", func(t *testing.T) {
-		_, err := s.handlePasswordUnlock(pwCtx("no-such-tenant", pwUserA), pwRPC(t, "password.unlock", pwPasskey(pwUserA)))
-		requireCode(t, err, sdkssh.JSONRPCCodeNotFound)
+	t.Run("invalid tenant", func(t *testing.T) {
+		_, err := s.handlePasswordUnlock(pwCtx("bad/tenant", pwUserA), pwRPC(t, "password.unlock", pwPasskey(pwUserA)))
+		requireCode(t, err, ErrCodeInvalidParams)
+		assert.ErrorIs(t, err, staticpw.ErrInvalidTenantID)
 	})
 
 	t.Run("already unlocked", func(t *testing.T) {
@@ -533,7 +512,7 @@ func TestHandlePasswordUnlock_Errors(t *testing.T) {
 	})
 
 	t.Run("sealed tenant", func(t *testing.T) {
-		require.NoError(t, s.registry.SealTenant(pwTenantB))
+		s.stores.Seal(pwTenantB)
 		_, err := s.handlePasswordUnlock(pwCtx(pwTenantB, pwUserA), pwRPC(t, "password.unlock", pwPasskey(pwUserA)))
 		requireCode(t, err, ErrCodeInternalError)
 		assert.ErrorIs(t, err, seal.ErrTenantSealed)
@@ -558,8 +537,9 @@ func TestHandlePasswordStatus(t *testing.T) {
 	assert.Equal(t, 2, open.PasswordCount)
 	assert.Equal(t, "Password store status retrieved", open.Message)
 
-	_, err := s.handlePasswordStatus(pwCtx("no-such-tenant", pwUserA), pwRPC(t, "password.status", nil))
-	requireCode(t, err, sdkssh.JSONRPCCodeNotFound)
+	_, err := s.handlePasswordStatus(pwCtx("bad/tenant", pwUserA), pwRPC(t, "password.status", nil))
+	requireCode(t, err, ErrCodeInvalidParams)
+	assert.ErrorIs(t, err, staticpw.ErrInvalidTenantID)
 }
 
 // --- isolation: users, tenants, and the system tenant ---
@@ -879,7 +859,6 @@ func TestMapPasswordStoreError(t *testing.T) {
 		{"ErrTenantNotFound", seal.ErrTenantNotFound, sdkssh.JSONRPCCodeNotFound, seal.ErrTenantNotFound},
 		{"staticpw.ErrNotConfigured", staticpw.ErrNotConfigured, ErrCodeServiceUnavailable, ErrPasswordStoreNotConfigured},
 		{"xkms.ErrNotConfigured", xkms.ErrNotConfigured, ErrCodeServiceUnavailable, ErrPasswordStoreNotConfigured},
-		{"ErrNoSystemBarrier", staticpw.ErrNoSystemBarrier, ErrCodeServiceUnavailable, ErrPasswordStoreNotConfigured},
 		{"ErrNilRequest", xkms.ErrNilRequest, ErrCodeInvalidParams, xkms.ErrNilRequest},
 		{"ErrInvalidUserID", staticpw.ErrInvalidUserID, ErrCodeInvalidParams, staticpw.ErrInvalidUserID},
 		{"ErrNotOwner", staticpw.ErrNotOwner, ErrCodeForbidden, staticpw.ErrNotOwner},

@@ -756,7 +756,7 @@ type fido2Device struct {
 	running         bool
 	keyboard        *keyboard.Keyboard
 	ipcServer       *ipc.Server
-	pwStore         *xkms.StaticPasswordBackendStore
+	pwStore         *xkms.StaticPasswordDAOStore
 	socketHandler   *authenticator.SocketHandler
 	notifier        notify.Notifier
 	defaultPassword string
@@ -1040,13 +1040,13 @@ func (d *fido2Device) initSupplementarySubsystems(ctx context.Context) {
 
 	// Open password store
 	if d.cfg.PasswordStorePath != "" {
-		backend, err := xkms.NewFileStorageBackend(d.cfg.PasswordStorePath)
+		pwStore, err := openPasswordStore(d.cfg.PasswordStorePath)
 		if err != nil {
 			d.logger.Warn("password store unavailable",
 				slog.String("error", err.Error()),
 				slog.String("path", d.cfg.PasswordStorePath))
 		} else {
-			d.pwStore = xkms.NewStaticPasswordStore(backend)
+			d.pwStore = pwStore
 			d.logger.Info("password store opened",
 				slog.String("path", d.cfg.PasswordStorePath))
 		}

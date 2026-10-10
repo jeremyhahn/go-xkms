@@ -38,9 +38,6 @@ const (
 	KindAuthorizedKeys Kind = "authorized_keys"
 )
 
-// scopes is every scope, in the order Match tries their keyspaces.
-var scopes = [...]Scope{Tenant, User, Service}
-
 // Valid reports whether k is one of the three kinds.
 func (k Kind) Valid() bool {
 	switch k {
@@ -86,59 +83,21 @@ func (k Kind) RecordPath(sc Scope, owner, name string) (string, error) {
 	return prefix + string(k) + "/" + name, nil
 }
 
-// ListPrefix returns the storage prefix a listing filtered by (sc, owner)
-// scans. It spans every kind, so the caller keeps only the keys its kind
-// Matches:
-//
-//   - sc empty: "ssh/", every scope (owner is ignored);
-//   - owner empty, or sc Tenant: the scope's root across owners
-//     ("ssh/shared/", "ssh/users/", "ssh/services/") -- a Tenant-scoped path
-//     carries no owner, so the caller filters those records by their owner;
-//   - otherwise: the owner's keyspace ("ssh/users/<owner>/",
-//     "ssh/services/<owner>/").
-//
-// Returns *ScopeInvalidError for an invalid non-empty sc and
+// ValidateFilter validates the (sc, owner) filter of a listing: an empty sc
+// lists every scope and ignores owner; an empty owner lists every owner
+// within sc. Returns *ScopeInvalidError for an invalid non-empty sc and
 // *KeyIDMalformedError for an owner containing "/".
-func ListPrefix(sc Scope, owner string) (string, error) {
+func ValidateFilter(sc Scope, owner string) error {
 	if sc == "" {
-		return Feature + "/", nil
+		return nil
 	}
 	if !sc.Valid() {
-		return "", &ScopeInvalidError{Value: string(sc)}
+		return &ScopeInvalidError{Value: string(sc)}
 	}
 	if strings.ContainsRune(owner, '/') {
-		return "", &KeyIDMalformedError{Field: "owner", Reason: "contains separator"}
+		return &KeyIDMalformedError{Field: "owner", Reason: "contains separator"}
 	}
-	if owner == "" || sc == Tenant {
-		return scope.ScopeRoot(Feature, sc)
-	}
-	return scope.FeaturePrefix(Feature, sc, owner)
-}
-
-// Match reports whether key is the storage path of a record of kind k, in
-// the layout RecordPath builds. It lets a listing that scans a prefix shared
-// by every kind keep only its own records.
-func (k Kind) Match(key string) bool {
-	for _, sc := range scopes {
-		root, err := scope.ScopeRoot(Feature, sc)
-		if err != nil {
-			return false
-		}
-		rest, ok := strings.CutPrefix(key, root)
-		if !ok {
-			continue
-		}
-		if sc != Tenant {
-			var owner string
-			owner, rest, ok = strings.Cut(rest, "/")
-			if !ok || owner == "" {
-				return false
-			}
-		}
-		kind, name, ok := strings.Cut(rest, "/")
-		return ok && Kind(kind) == k && name != "" && !strings.ContainsRune(name, '/')
-	}
-	return false
+	return nil
 }
 
 // validateComponent refuses an owner or name that is empty or contains the

@@ -19,25 +19,18 @@ import (
 	"time"
 
 	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
-	"github.com/jeremyhahn/go-xkms/pkg/storage"
-	"github.com/jeremyhahn/go-xkms/pkg/storage/kvadapter"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+
+	"github.com/jeremyhahn/go-xkms/pkg/dao"
 )
 
-// newTestTeamStore creates a DAOTeamStore backed by in-memory storage for testing.
+// newTestTeamStore creates a DAOTeamStore over an in-memory go-qrdb store.
 func newTestTeamStore(t *testing.T) *DAOTeamStore {
 	t.Helper()
-	backend := storage.NewMemory()
-	t.Cleanup(func() { require.NoError(t, backend.Close()) })
-
-	kvStore, err := kvadapter.New(backend)
-	require.NoError(t, err)
-
-	store, err := NewDAOTeamStore(kvStore)
+	store, err := NewDAOTeamStore(newMemoryDAOs())
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, store.Close()) })
-
 	return store
 }
 
@@ -533,29 +526,24 @@ func TestTeamStore_Close_Idempotent(t *testing.T) {
 	require.NoError(t, store.Close())
 }
 
-func TestTeamStore_NilKVStore(t *testing.T) {
+func TestTeamStore_NilFactory(t *testing.T) {
 	_, err := NewDAOTeamStore(nil)
-	assert.ErrorAs(t, err, &ErrNilKVStore{})
+	assert.ErrorAs(t, err, &ErrDAOCreation{})
+	assert.ErrorIs(t, err, dao.ErrNilFactory)
 }
 
 // TestTeamStore_Create_DuplicateLookupFailureSurfaces proves that a
 // findByName failure other than ErrTeamNotFound aborts Create instead of
-// being silently treated as "no such team" (go-xkms#1347). Closing the
-// underlying storage out from under the store forces the duplicate-name
-// lookup to fail with a real, non-not-found error.
+// being silently treated as "no such team" (go-xkms#1347). A store whose
+// reads fail forces the duplicate-name lookup to fail with a real,
+// non-not-found error.
 func TestTeamStore_Create_DuplicateLookupFailureSurfaces(t *testing.T) {
-	backend := storage.NewMemory()
-	kvStore, err := kvadapter.New(backend)
+	store, err := NewDAOTeamStore(dao.NewStoreFactory(failingReads{qrdbsdk.NewMemoryKVStore()}))
 	require.NoError(t, err)
-
-	store, err := NewDAOTeamStore(kvStore)
-	require.NoError(t, err)
-
-	require.NoError(t, backend.Close())
 
 	err = store.Create(context.Background(), &TeamEntity{Name: "engineering", OwnerID: "alice"})
 	require.Error(t, err)
-	assert.ErrorIs(t, err, storage.ErrClosed,
+	assert.ErrorIs(t, err, errReadFailed,
 		"the duplicate-name lookup failure must reach the caller instead of being discarded")
 	assert.NotErrorIs(t, err, ErrTeamExists,
 		"a lookup failure must never be reported as a duplicate-name conflict")

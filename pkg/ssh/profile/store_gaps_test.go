@@ -18,51 +18,89 @@ import (
 	"errors"
 	"testing"
 
+	"github.com/jeremyhahn/go-xkms/pkg/dao"
 	"github.com/jeremyhahn/go-xkms/pkg/storage"
+	"github.com/jeremyhahn/go-xkms/pkg/storage/kvadapter"
 )
 
+var errInjected = errors.New("injected backend failure")
+
 // faultBackend wraps a real in-memory backend and lets a test force an error
-// from a chosen method, exercising the store's storage-error branches.
+// from a chosen class of operation, exercising the store's storage-error
+// branches. It forwards the guarded writes, so the DAO over it is atomic.
 type faultBackend struct {
 	storage.Backend
-	failExists bool
-	failPut    bool
+	failWrite  bool
 	failDelete bool
-	failList   bool
+	failScan   bool
+	corrupt    bool
 }
 
-func (f *faultBackend) Exists(ctx context.Context, key string) (bool, error) {
-	if f.failExists {
-		return false, errors.New("injected exists failure")
+func (f *faultBackend) Get(ctx context.Context, key string) ([]byte, error) {
+	value, err := f.Backend.Get(ctx, key)
+	if err == nil && f.corrupt {
+		return []byte("{not json"), nil
 	}
-	return f.Backend.Exists(ctx, key)
+	return value, err
 }
 
 func (f *faultBackend) Put(ctx context.Context, key string, value []byte) error {
-	if f.failPut {
-		return errors.New("injected put failure")
+	if f.failWrite {
+		return errInjected
 	}
 	return f.Backend.Put(ctx, key, value)
 }
 
+func (f *faultBackend) PutIfAbsent(ctx context.Context, key string, value []byte) (bool, error) {
+	if f.failWrite {
+		return false, errInjected
+	}
+	return f.Backend.PutIfAbsent(ctx, key, value)
+}
+
+func (f *faultBackend) CompareAndSwap(ctx context.Context, key string, expected, next []byte) (bool, []byte, error) {
+	if f.failWrite {
+		return false, nil, errInjected
+	}
+	return f.Backend.(storage.CompareAndSwapper).CompareAndSwap(ctx, key, expected, next)
+}
+
 func (f *faultBackend) Delete(ctx context.Context, key string) error {
 	if f.failDelete {
-		return errors.New("injected delete failure")
+		return errInjected
 	}
 	return f.Backend.Delete(ctx, key)
 }
 
+func (f *faultBackend) CompareAndDelete(ctx context.Context, key string, expected []byte) (bool, error) {
+	if f.failDelete {
+		return false, errInjected
+	}
+	return f.Backend.(storage.CompareAndDeleter).CompareAndDelete(ctx, key, expected)
+}
+
 func (f *faultBackend) List(ctx context.Context, prefix string) ([]string, error) {
-	if f.failList {
-		return nil, errors.New("injected list failure")
+	if f.failScan {
+		return nil, errInjected
 	}
 	return f.Backend.List(ctx, prefix)
 }
 
-func newFaultStore(t *testing.T) (*BackendStore, *faultBackend) {
+func (f *faultBackend) Scan(ctx context.Context, prefix string, fn func(string, []byte) error) error {
+	if f.failScan {
+		return errInjected
+	}
+	return f.Backend.Scan(ctx, prefix, fn)
+}
+
+func newFaultStore(t *testing.T) (*DAOStore, *faultBackend) {
 	t.Helper()
 	fb := &faultBackend{Backend: storage.New()}
-	st, err := NewStore(fb)
+	kv, err := kvadapter.New(fb)
+	if err != nil {
+		t.Fatalf("kvadapter.New: %v", err)
+	}
+	st, err := NewStore(dao.NewStoreFactory(kv))
 	if err != nil {
 		t.Fatalf("NewStore: %v", err)
 	}
@@ -144,8 +182,8 @@ func TestStore_RenameFolder_SameName(t *testing.T) {
 	}
 }
 
-// TestStore_RemoveFolder_Missing is idempotent: removing an absent marker
-// swallows storage.ErrNotFound and returns nil.
+// TestStore_RemoveFolder_Missing is idempotent: removing an absent folder
+// returns nil.
 func TestStore_RemoveFolder_Missing(t *testing.T) {
 	st := newStore(t)
 	if err := st.RemoveFolder("never/created"); err != nil {
@@ -330,44 +368,33 @@ func TestStore_GetByName_HashedID(t *testing.T) {
 	}
 }
 
-// TestStore_CorruptData covers the unmarshalProfile error path: a value that is
-// not valid JSON at a profile key surfaces ErrUnmarshalFailed on a direct Get,
-// and is skipped by List.
+// TestStore_CorruptData proves an undecodable stored profile surfaces as
+// ErrStorage on a direct Get rather than reading as absent.
 func TestStore_CorruptData(t *testing.T) {
 	st, fb := newFaultStore(t)
-	// Write invalid JSON directly at a profile storage key.
-	id := generateID("broken", "")
-	key := st.storageKey(id)
-	if err := fb.Backend.Put(context.Background(), key, []byte("{not json")); err != nil {
-		t.Fatalf("seed corrupt data: %v", err)
+	if err := st.Add(&Profile{Name: "broken", Host: "h"}); err != nil {
+		t.Fatalf("Add: %v", err)
 	}
-
-	if _, err := st.Get(id); !errors.Is(err, ErrUnmarshalFailed) {
-		t.Fatalf("Get(corrupt): expected ErrUnmarshalFailed, got %v", err)
-	}
-	// List silently skips the unparseable entry.
-	all, err := st.List()
-	if err != nil {
-		t.Fatalf("List: %v", err)
-	}
-	if len(all) != 0 {
-		t.Fatalf("List should skip corrupt entry, got %d", len(all))
+	fb.corrupt = true
+	if _, err := st.Get(generateID("broken", "")); !errors.Is(err, ErrStorage) {
+		t.Fatalf("Get(corrupt): expected ErrStorage, got %v", err)
 	}
 }
 
-// TestStore_StorageErrors covers the injected storage-failure branches on the
-// mutating paths.
+// TestStore_StorageErrors proves a failing datastore surfaces as ErrStorage
+// carrying the cause on every path.
 func TestStore_StorageErrors(t *testing.T) {
 	st, fb := newFaultStore(t)
 
-	// Add: Exists probe failure wraps ErrExists.
-	fb.failExists = true
-	if err := st.Add(&Profile{Name: "n", Host: "h"}); !errors.Is(err, ErrExists) {
-		t.Fatalf("Add with Exists failure: expected ErrExists, got %v", err)
+	fb.failWrite = true
+	if err := st.Add(&Profile{Name: "n", Host: "h"}); !errors.Is(err, ErrStorage) || !errors.Is(err, errInjected) {
+		t.Fatalf("Add with write failure: expected ErrStorage wrapping the cause, got %v", err)
 	}
-	fb.failExists = false
+	if err := st.CreateFolder("f"); !errors.Is(err, ErrStorage) {
+		t.Fatalf("CreateFolder with write failure: expected ErrStorage, got %v", err)
+	}
+	fb.failWrite = false
 
-	// Add succeeds so later operations have something to act on.
 	if err := st.Add(&Profile{Name: "n", FolderPath: "a", Host: "h"}); err != nil {
 		t.Fatalf("Add: %v", err)
 	}
@@ -376,19 +403,87 @@ func TestStore_StorageErrors(t *testing.T) {
 		t.Fatalf("Get: %v", err)
 	}
 
-	// MoveToFolder: Delete of the old key failure wraps ErrNotFound.
+	fb.failWrite = true
+	entry.Host = "h2"
+	if err := st.Update(entry); !errors.Is(err, ErrStorage) {
+		t.Fatalf("Update with write failure: expected ErrStorage, got %v", err)
+	}
+	fb.failWrite = false
+
 	fb.failDelete = true
-	if err := st.MoveToFolder(entry.ID, "b"); !errors.Is(err, ErrNotFound) {
-		t.Fatalf("MoveToFolder with Delete failure: expected ErrNotFound, got %v", err)
+	if err := st.Delete(entry.ID); !errors.Is(err, ErrStorage) {
+		t.Fatalf("Delete with delete failure: expected ErrStorage, got %v", err)
+	}
+	if err := st.MoveToFolder(entry.ID, "b"); !errors.Is(err, ErrStorage) {
+		t.Fatalf("MoveToFolder with delete failure: expected ErrStorage, got %v", err)
 	}
 	fb.failDelete = false
 
-	// List failure surfaces as ErrNotFound through listUnlocked.
-	fb.failList = true
-	if _, err := st.List(); !errors.Is(err, ErrNotFound) {
-		t.Fatalf("List with backend failure: expected ErrNotFound, got %v", err)
+	fb.failScan = true
+	if _, err := st.List(); !errors.Is(err, ErrStorage) {
+		t.Fatalf("List with scan failure: expected ErrStorage, got %v", err)
 	}
-	fb.failList = false
+	if _, err := st.Get("no-such-name"); !errors.Is(err, ErrStorage) {
+		t.Fatalf("Get by name with scan failure: expected ErrStorage, got %v", err)
+	}
+	fb.failScan = false
+}
+
+// TestStore_ListFolders_StorageError proves a failing folder listing is
+// reported, not read as no folders.
+func TestStore_ListFolders_StorageError(t *testing.T) {
+	st, fb := newFaultStore(t)
+	fb.failScan = true
+	if _, err := st.ListFolders(); !errors.Is(err, ErrStorage) {
+		t.Fatalf("ListFolders with scan failure: expected ErrStorage, got %v", err)
+	}
+}
+
+// TestStore_RemoveFolder_GetError proves RemoveFolder reports a failed
+// lookup instead of treating the folder as absent.
+func TestStore_RemoveFolder_GetError(t *testing.T) {
+	st, fb := newFaultStore(t)
+	if err := st.CreateFolder("f"); err != nil {
+		t.Fatalf("CreateFolder: %v", err)
+	}
+	fb.corrupt = true
+	if err := st.RemoveFolder("f"); !errors.Is(err, ErrStorage) {
+		t.Fatalf("RemoveFolder over corrupt record: expected ErrStorage, got %v", err)
+	}
+}
+
+// TestStore_MoveToTakenName_KeepsSource proves a move or rename onto a name
+// the destination already holds fails with ErrExists and loses nothing.
+func TestStore_MoveToTakenName_KeepsSource(t *testing.T) {
+	st := newStore(t)
+	for _, p := range []*Profile{
+		{Name: "box", FolderPath: "a", Host: "src"},
+		{Name: "box", FolderPath: "b", Host: "dst"},
+		{Name: "other", FolderPath: "a", Host: "o"},
+	} {
+		if err := st.Add(p); err != nil {
+			t.Fatalf("Add %s/%s: %v", p.FolderPath, p.Name, err)
+		}
+	}
+	src := generateID("box", "a")
+	if err := st.MoveToFolder(src, "b"); !errors.Is(err, ErrExists) {
+		t.Fatalf("MoveToFolder onto taken name: expected ErrExists, got %v", err)
+	}
+	if got, err := st.Get(src); err != nil || got.Host != "src" {
+		t.Fatalf("source lost by refused move: %+v, %v", got, err)
+	}
+
+	other, err := st.Get(generateID("other", "a"))
+	if err != nil {
+		t.Fatalf("Get other: %v", err)
+	}
+	other.Name = "box"
+	if err := st.Update(other); !errors.Is(err, ErrExists) {
+		t.Fatalf("Update onto taken name: expected ErrExists, got %v", err)
+	}
+	if got, err := st.Get(generateID("other", "a")); err != nil || got.Host != "o" {
+		t.Fatalf("source lost by refused rename: %+v, %v", got, err)
+	}
 }
 
 // TestStore_Update_Rename covers the ID-regeneration branch: renaming a
@@ -431,20 +526,8 @@ func TestStore_Update_RenameDeleteError(t *testing.T) {
 	}
 	entry.Name = "moved"
 	fb.failDelete = true
-	if err := st.Update(entry); !errors.Is(err, ErrNotFound) {
-		t.Fatalf("Update(rename) with Delete failure: expected ErrNotFound, got %v", err)
-	}
-}
-
-// TestStore_PutErrors covers the Put-failure branches on Add and CreateFolder.
-func TestStore_PutErrors(t *testing.T) {
-	st, fb := newFaultStore(t)
-	fb.failPut = true
-	if err := st.Add(&Profile{Name: "n", Host: "h"}); err == nil {
-		t.Fatalf("Add with Put failure: expected error")
-	}
-	if err := st.CreateFolder("f"); err == nil {
-		t.Fatalf("CreateFolder with Put failure: expected error")
+	if err := st.Update(entry); !errors.Is(err, ErrStorage) {
+		t.Fatalf("Update(rename) with Delete failure: expected ErrStorage, got %v", err)
 	}
 }
 
@@ -487,6 +570,3 @@ func contains(ss []string, want string) bool {
 	}
 	return false
 }
-
-// ensure the storage package import is exercised even if the helper changes.
-var _ = storage.New

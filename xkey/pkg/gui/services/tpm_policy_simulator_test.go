@@ -36,6 +36,7 @@ import (
 	xkms "github.com/jeremyhahn/go-xkms/sdk/go"
 	"github.com/jeremyhahn/go-xkms/sdk/go/localtpm"
 	"github.com/jeremyhahn/go-xkms/sdk/go/transport"
+	"github.com/jeremyhahn/go-xkms/sdk/go/xkmstest"
 )
 
 // simPCR is the PCR the test policies select: an application PCR a
@@ -74,7 +75,7 @@ func openSimTPM(t *testing.T) *simTPM {
 		assert.NoError(t, factory.Close())
 	})
 	require.NoError(t, tpm.Provision(nil))
-	require.NoError(t, xkms.EnrollSimulatorPlatformSRK(tpm, &cfg))
+	require.NoError(t, xkmstest.EnrollPlatformSRK(tpm, &cfg))
 	return &simTPM{tpm: tpm, keys: factory.KeyBackend()}
 }
 

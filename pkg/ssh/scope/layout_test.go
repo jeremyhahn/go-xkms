@@ -67,9 +67,6 @@ func TestRecordPath_Layout(t *testing.T) {
 			if got != tt.want {
 				t.Fatalf("RecordPath = %q, want %q", got, tt.want)
 			}
-			if !tt.kind.Match(got) {
-				t.Fatalf("%q.Match(%q) = false, want true", tt.kind, got)
-			}
 		})
 	}
 }
@@ -145,74 +142,36 @@ func TestRecordPath_Errors(t *testing.T) {
 	})
 }
 
-func TestListPrefix(t *testing.T) {
-	tests := []struct {
+func TestValidateFilter(t *testing.T) {
+	valid := []struct {
 		scope scope.Scope
 		owner string
-		want  string
 	}{
-		{"", "", "ssh/"},
-		{"", "alice", "ssh/"},
-		{scope.Tenant, "", "ssh/shared/"},
-		{scope.Tenant, "acme", "ssh/shared/"},
-		{scope.User, "", "ssh/users/"},
-		{scope.User, "alice", "ssh/users/alice/"},
-		{scope.Service, "", "ssh/services/"},
-		{scope.Service, "ci", "ssh/services/ci/"},
+		{"", ""},
+		{"", "a/b"}, // owner is ignored without a scope
+		{scope.Tenant, ""},
+		{scope.Tenant, "acme"},
+		{scope.User, "alice"},
+		{scope.Service, "ci"},
 	}
-	for _, tt := range tests {
-		got, err := scope.ListPrefix(tt.scope, tt.owner)
-		if err != nil {
-			t.Fatalf("ListPrefix(%q, %q): %v", tt.scope, tt.owner, err)
-		}
-		if got != tt.want {
-			t.Errorf("ListPrefix(%q, %q) = %q, want %q", tt.scope, tt.owner, got, tt.want)
+	for _, tt := range valid {
+		if err := scope.ValidateFilter(tt.scope, tt.owner); err != nil {
+			t.Fatalf("ValidateFilter(%q, %q): %v", tt.scope, tt.owner, err)
 		}
 	}
 }
 
-func TestListPrefix_Errors(t *testing.T) {
-	_, err := scope.ListPrefix(scope.Scope("admin"), "")
+func TestValidateFilter_Errors(t *testing.T) {
+	err := scope.ValidateFilter(scope.Scope("admin"), "")
 	var serr *scope.ScopeInvalidError
 	if !errors.As(err, &serr) {
 		t.Fatalf("invalid scope: want *ScopeInvalidError, got %T: %v", err, err)
 	}
 	for _, sc := range []scope.Scope{scope.Tenant, scope.User, scope.Service} {
-		_, err = scope.ListPrefix(sc, "a/b")
+		err = scope.ValidateFilter(sc, "a/b")
 		var mal *scope.KeyIDMalformedError
 		if !errors.As(err, &mal) || mal.Field != "owner" {
 			t.Fatalf("%s owner separator: want *KeyIDMalformedError{owner}, got %T: %v", sc, err, err)
-		}
-	}
-}
-
-func TestKindMatch(t *testing.T) {
-	tests := []struct {
-		key  string
-		kind scope.Kind
-		want bool
-	}{
-		{"ssh/shared/keys/deploy", scope.KindKeys, true},
-		{"ssh/shared/keys/deploy", scope.KindKnownHosts, false},
-		{"ssh/users/alice/known_hosts/github.com", scope.KindKnownHosts, true},
-		{"ssh/users/alice/known_hosts/github.com", scope.KindKeys, false},
-		{"ssh/services/ci/authorized_keys/ops", scope.KindAuthorizedKeys, true},
-		// Other SSH features sharing the view.
-		{"ssh/sessions/abc", scope.KindKeys, false},
-		{"ssh/profiles/web", scope.KindKeys, false},
-		// Malformed shapes.
-		{"ssh/shared/keys/", scope.KindKeys, false},
-		{"ssh/shared/keys", scope.KindKeys, false},
-		{"ssh/shared/keys/a/b", scope.KindKeys, false},
-		{"ssh/users//keys/n", scope.KindKeys, false},
-		{"ssh/users/alice", scope.KindKeys, false},
-		{"ssh/users/alice/keys/a/b", scope.KindKeys, false},
-		{"other/shared/keys/n", scope.KindKeys, false},
-		{"", scope.KindKeys, false},
-	}
-	for _, tt := range tests {
-		if got := tt.kind.Match(tt.key); got != tt.want {
-			t.Errorf("%q.Match(%q) = %v, want %v", tt.kind, tt.key, got, tt.want)
 		}
 	}
 }

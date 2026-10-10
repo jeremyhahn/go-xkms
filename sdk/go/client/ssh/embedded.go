@@ -26,16 +26,16 @@ import (
 	pkgknownhosts "github.com/jeremyhahn/go-xkms/pkg/ssh/known_hosts"
 	pkgscope "github.com/jeremyhahn/go-xkms/pkg/ssh/scope"
 	pkgsession "github.com/jeremyhahn/go-xkms/pkg/ssh/session"
-	"github.com/jeremyhahn/go-xkms/pkg/storage"
 	secure "github.com/jeremyhahn/go-xkms/sdk/go/secure"
 )
 
 // EmbeddedOptions configures the embedded (in-process) Client. All key
-// material lives in the supplied storage.Backend; there is no
-// cross-process transport.
+// material lives in the supplied Stores; there is no cross-process
+// transport.
 type EmbeddedOptions struct {
-	// Backend is the shared storage used by every sub-client. Required.
-	Backend storage.Backend
+	// Stores are the stores every sub-client works over. Required. The
+	// caller owns them; Close leaves them open.
+	Stores *Stores
 
 	// BackendProvider, when set, enables backend-backed key generation:
 	// a GenerateRequest carrying a Backend ID mints the key on that crypto
@@ -46,28 +46,23 @@ type EmbeddedOptions struct {
 }
 
 // NewEmbedded constructs the embedded Client. Returns *NilInputError
-// when required options are missing.
+// naming the first missing store when opts.Stores or any store in it is
+// nil: a missing store would otherwise surface as a panic on first use.
 func NewEmbedded(opts EmbeddedOptions) (Client, error) {
-	if opts.Backend == nil {
-		return nil, &NilInputError{Field: "Backend"}
-	}
-	keyStore, err := pkgkeys.NewBackendStore(opts.Backend)
-	if err != nil {
-		return nil, err
-	}
-	hostStore, err := pkgknownhosts.NewBackendStore(opts.Backend)
-	if err != nil {
-		return nil, err
-	}
-	authStore, err := pkgauthorized.NewBackendStore(opts.Backend)
-	if err != nil {
-		return nil, err
+	switch {
+	case opts.Stores == nil:
+		return nil, &NilInputError{Field: "Stores"}
+	case opts.Stores.Keys == nil:
+		return nil, &NilInputError{Field: "Stores.Keys"}
+	case opts.Stores.KnownHosts == nil:
+		return nil, &NilInputError{Field: "Stores.KnownHosts"}
+	case opts.Stores.Authorized == nil:
+		return nil, &NilInputError{Field: "Stores.Authorized"}
 	}
 	return &embeddedClient{
-		backend:      opts.Backend,
-		keyStore:     keyStore,
-		hostStore:    hostStore,
-		authStore:    authStore,
+		keyStore:     opts.Stores.Keys,
+		hostStore:    opts.Stores.KnownHosts,
+		authStore:    opts.Stores.Authorized,
 		backendKeyer: opts.BackendProvider,
 	}, nil
 }
@@ -75,7 +70,6 @@ func NewEmbedded(opts EmbeddedOptions) (Client, error) {
 // embeddedClient is the concrete Client for the in-process transport.
 // It delegates directly to the pkg/ssh/* implementations.
 type embeddedClient struct {
-	backend      storage.Backend
 	keyStore     pkgkeys.Store
 	hostStore    pkgknownhosts.Store
 	authStore    pkgauthorized.Store
@@ -122,12 +116,7 @@ func (c *embeddedClient) Console(ctx context.Context, req ConsoleConnectRequest,
 
 // Close implements Client.Close.
 func (c *embeddedClient) Close() error {
-	if c.backend == nil {
-		return nil
-	}
-	err := c.backend.Close()
-	c.backend = nil
-	return err
+	return nil
 }
 
 // embeddedKeysClient is the embedded KeysClient.

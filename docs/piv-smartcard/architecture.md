@@ -1,6 +1,6 @@
 # PIV Smartcard — Architecture
 
-> **Status: NORMATIVE** · Feature: `piv-smartcard` · Repo: `go-xkms` · Last verified: 2026-09-21
+> **Status: NORMATIVE** · Feature: `piv-smartcard` · Repo: `go-xkms` · Last verified: 2026-10-09
 
 ## The problem
 
@@ -37,7 +37,7 @@ Storage is chosen independently (`PIVStorageType`):
 
 | Type | Constant | Backing |
 |---|---|---|
-| `file` | `StorageTypeFile` | file system (`pkg/pivcert/file`) |
+| `file` | `StorageTypeFile` | go-qrdb DAO records in the `pivcert` database (`pkg/pivcert/file`) |
 | `tpm2` | `StorageTypeTPM2` | TPM2 NV storage (`pkg/pivcert/tpm2`) |
 | `pkcs11` | `StorageTypePKCS11` | PKCS#11 token objects (`pkg/pivcert/pkcs11`) |
 
@@ -54,6 +54,12 @@ Rejected alternatives:
   the boundary is worth more than a runtime failure inside a card.
 - **A separate implementation per storage type.** Rejected — that is three
   copies of the slot model.
+- **A file layout of its own for the software store** (per-slot DER/PEM files
+  plus a metadata index). Rejected: it duplicated what go-qrdb's DAO layer
+  already provides — atomic writes, natural-key lookup, listing — and kept a
+  metadata index that could disagree with the certificates. The software store
+  is one DAO record per slot over the factory the composition root injects,
+  and metadata is derived from the certificate when listed.
 
 ## Component boundaries
 
@@ -62,7 +68,7 @@ Rejected alternatives:
 | Slot model, storage types, config, errors | `pkg/pivcert/pivcert.go` |
 | Slot occupancy / registry model | `pkg/pivcert/slotmodel.go`, `slotinfo.go` |
 | Chain verification and thumbprints | `pkg/pivcert/verify.go` |
-| File storage | `pkg/pivcert/file` |
+| Software storage (go-qrdb DAO) | `pkg/pivcert/file` |
 | TPM2 NV storage | `pkg/pivcert/tpm2` |
 | PKCS#11 storage | `pkg/pivcert/pkcs11` |
 | Key generation / operations in the keystore | `pkg/xkms/piv_*.go` (`piv_manager.go`, `piv_ops.go`, `piv_keygen_backend.go`, `piv_keygen_software.go`) |

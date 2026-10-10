@@ -135,23 +135,12 @@ func TestApp_InitializeDataDir_PropagatesError(t *testing.T) {
 }
 
 // PostUnlockInitialize's success path is deliberately NOT covered here: past
-// initializeDataDir it calls postDataDirStartup, which unconditionally calls
-// startIPCServer, which spawns `go srv.Serve(a.ctx)` with no nil guard on
-// a.ctx. In production a.ctx is always bound by the Wails startup hook
-// before either method can be reached from the frontend, but a plain-Go
-// test App has no such binding:
-//   - a.ctx left nil: Serve's `<-ctx.Done()` calls a method on a nil
-//     context.Context interface, which panics -- and panics in a spawned
-//     goroutine crash the whole test binary, not just the one test.
-//   - a.ctx set to any non-Wails context.Context (context.Background(), a
-//     context.WithValue, etc.): the next EmitEvent call reaches
-//     wailsapp/wails/v2/pkg/runtime.getEvents, which calls log.Fatalf (i.e.
-//     os.Exit(1)) when the context carries no "events" value -- also fatal
-//     to the whole test binary, not a recoverable per-test failure.
-//
-// See the (b)/(c) section of the go-xkms#704 coverage report for the seam
-// this needs (an ipc.Server/startIPCServer construction hook, or a nil-ctx
-// guard in startIPCServer) before this path can be exercised safely.
+// initializeDataDir it emits frontend events, and a plain-Go test App has no
+// Wails context to emit them on. With a.ctx set to any non-Wails
+// context.Context (context.Background(), a context.WithValue, etc.) the
+// EmitEvent call reaches wailsapp/wails/v2/pkg/runtime.getEvents, which calls
+// log.Fatalf (i.e. os.Exit(1)) when the context carries no "events" value --
+// fatal to the whole test binary, not a recoverable per-test failure.
 
 // TestApp_PostUnlockInitialize_PropagatesError verifies PostUnlockInitialize
 // returns the initializeDataDir error and does not proceed to

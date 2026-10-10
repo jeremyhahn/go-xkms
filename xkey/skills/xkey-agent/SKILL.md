@@ -171,12 +171,13 @@ xkey fido2 policy delete --rpid example.com         # also: policy get --rpid <r
 xkey browser launch --include-extensions [url]            # --browser <path>, --extension <id>
 xkey extension install all          # native-messaging manifest: chrome|firefox|all
 xkey extension status
+xkey app-access enable              # local app access (off by default): serve refuses without it
 xkey extension serve --barrier-password-file <file> --auto-lock-minutes 15 &   # headless autofill server
 xkey extension unpair               # forget the paired extension (pair-status shows it)
 xkey extension uninstall all
 ```
 
-With a tpm2 barrier, `extension serve` tries TPM auto-unseal first. `--so-pin-stdin` honours a sealed enterprise policy.
+With a tpm2 barrier, `extension serve` tries TPM auto-unseal first. `--so-pin-stdin` honours a sealed enterprise policy. With local app access on, the GUI also serves the extension, but only while it is open and unlocked. `xkey app-access status|enable|disable` changes the setting, and a running GUI picks it up on its next start.
 
 **Typed passwords.** `xkey password type [name]` or `xkey touch --password <name>` types a stored password through the virtual keyboard of a running `fido2` daemon.
 
@@ -311,7 +312,7 @@ xkey cert export --slot 9a --file client.pem
 
 For PIV slots on a paired phone, use `piv phone-list`, `piv phone-generate <slot>`, `piv phone-pull-cert <slot>` and `piv phone-push-cert <slot> <cert-file>`. Each takes `--device`.
 
-`xkey usb device start --device-backend tpm2 --transport uhid` presents xKey as a CCID smartcard reader with PIV and OpenPGP applets, for OpenSC, GPG and VMs. Check and stop it with `usb device status` and `usb device stop`.
+`xkey usb device start --device-backend tpm2 --transport uhid` presents xKey as a CCID smartcard reader with PIV and OpenPGP applets, for OpenSC, GPG and VMs. Check and stop it with `usb device status` and `usb device stop`. With local app access off it opens the keys itself. With it on, it uses the unlocked GUI's keys and fails if no GUI is listening.
 
 ## Certificate authority (xkmsd)
 

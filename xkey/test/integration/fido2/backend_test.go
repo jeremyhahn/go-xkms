@@ -35,6 +35,7 @@ import (
 
 	"github.com/fxamacker/cbor/v2"
 	xkms "github.com/jeremyhahn/go-xkms/sdk/go"
+	"github.com/jeremyhahn/go-xkms/sdk/go/xkmstest"
 	"github.com/jeremyhahn/go-xkms/xkey/pkg/authenticator"
 	"github.com/jeremyhahn/go-xkms/xkey/pkg/authenticator/keybackend"
 	"github.com/stretchr/testify/assert"
@@ -296,7 +297,7 @@ func initTPM2BackendAdapter() (keybackend.FIDO2KeyBackend, error) {
 	// Shared SRK. xkms.NewTPM2BackendWithTPM below resolves its storage
 	// parent exclusively off the Platform SRK -- never the Shared SRK -- so
 	// it must be enrolled here too, whenever it is not already present.
-	if psrkErr := xkms.EnrollSimulatorPlatformSRK(tpm, &tpmConfig); psrkErr != nil {
+	if psrkErr := xkmstest.EnrollPlatformSRK(tpm, &tpmConfig); psrkErr != nil {
 		tpm.Close()
 		return nil, &WrappedError{Msg: "failed to enroll Platform SRK", Err: psrkErr}
 	}

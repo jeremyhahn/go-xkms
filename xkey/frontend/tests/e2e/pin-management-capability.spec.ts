@@ -95,7 +95,7 @@ const BASE_MOCK_SCRIPT = () => {
           app_lock_on_screen_lock: false,
           setup_complete: true,
           api_explorer_sandbox_policy: 'strict',
-          browser_extension_enabled: false,
+          local_app_access_enabled: false,
           fido2_require_user_presence: true,
           fido2_user_intent_check: true,
           developer_tools: false,

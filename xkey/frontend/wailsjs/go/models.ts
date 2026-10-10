@@ -2513,7 +2513,7 @@ export namespace services {
 	    app_lock_on_screen_lock: boolean;
 	    sealer_backend?: string;
 	    api_explorer_sandbox_policy: string;
-	    browser_extension_enabled: boolean;
+	    local_app_access_enabled: boolean;
 	    developer_tools: boolean;
 	    fido2_require_user_presence: boolean;
 	    fido2_user_intent_check: boolean;
@@ -2557,7 +2557,7 @@ export namespace services {
 	        this.app_lock_on_screen_lock = source["app_lock_on_screen_lock"];
 	        this.sealer_backend = source["sealer_backend"];
 	        this.api_explorer_sandbox_policy = source["api_explorer_sandbox_policy"];
-	        this.browser_extension_enabled = source["browser_extension_enabled"];
+	        this.local_app_access_enabled = source["local_app_access_enabled"];
 	        this.developer_tools = source["developer_tools"];
 	        this.fido2_require_user_presence = source["fido2_require_user_presence"];
 	        this.fido2_user_intent_check = source["fido2_user_intent_check"];

@@ -81,9 +81,9 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     && rm -rf /var/lib/apt/lists/*
 
 # ---------------------------------------------------------------------------
-# Go 1.27.1 (GOTOOLCHAIN=auto will fetch exact version if needed)
+# Go 1.27.2 (GOTOOLCHAIN=auto will fetch exact version if needed)
 # ---------------------------------------------------------------------------
-RUN curl -fsSL https://go.dev/dl/go1.27.1.linux-amd64.tar.gz | tar -C /usr/local -xzf -
+RUN curl -fsSL https://go.dev/dl/go1.27.2.linux-amd64.tar.gz | tar -C /usr/local -xzf -
 ENV PATH="/usr/local/go/bin:/root/go/bin:${PATH}"
 
 # ---------------------------------------------------------------------------

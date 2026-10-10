@@ -36,7 +36,10 @@ echo "Verifying seeded data..."
 xkey password list --store "$PW_STORE"
 xkey oath list --store "$OATH_STORE"
 
-# 4. Start headless IPC server (no-barrier mode for testing)
+# 4. Start headless IPC server (no-barrier mode for testing).
+# The server refuses to start unless local app access is on.
+xkey app-access enable
+
 SOCKET="${XKEY_HOME}/xkey.sock"
 echo "Starting headless autofill server..."
 xkey extension serve \

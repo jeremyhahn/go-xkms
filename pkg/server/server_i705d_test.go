@@ -175,12 +175,13 @@ func TestBuildRESTConfig_TLSEnabledBuildsTLSConfig(t *testing.T) {
 // (GetCABundle, IssueCertificate, etc.) live on XKMSService, not the raw CA.
 func TestBuildRESTConfig_CAServicerSetWhenComposed(t *testing.T) {
 	// A composed XKMSService makes buildRESTConfig build the SSH client,
-	// whose storage view defaults to Pebble at a path relative to the
-	// working directory, which would be the source tree. Keep it in memory.
+	// which opens the "ssh" database on the server's datastore. Keep it in
+	// memory.
 	s := newMinimalServer(t, &config.Config{
 		Server:    config.ServerConfig{Host: "127.0.0.1", RESTPort: 8443},
 		Datastore: config.DatastoreConfig{Engine: "memory"},
 	})
+	openInMemoryDatastore(t, s)
 	s.ca = &mockTrustedCA{initialized: true}
 	s.xkmsService = &xkms.XKMSService{}
 

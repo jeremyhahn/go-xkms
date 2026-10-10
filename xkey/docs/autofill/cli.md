@@ -1,6 +1,6 @@
 # Browser Extension AutoFill — CLI
 
-> **Status: NORMATIVE** · Feature: `autofill` · Module: `go-xkms/xkey` · Last verified: 2026-10-07
+> **Status: NORMATIVE** · Feature: `autofill` · Module: `go-xkms/xkey` · Last verified: 2026-10-09
 
 Every flag below is read from `cmd/xkey/cmd/extension.go`/`extension_serve.go`'s
 `init()` and matches `xkey extension <verb> --help` built from this
@@ -79,6 +79,13 @@ Runs a production-grade headless autofill IPC server — the non-GUI
 equivalent of the desktop app's extension-facing side, for servers and SSH
 sessions with no desktop environment.
 
+It requires local app access, the same setting the GUI's socket follows (see
+[../gui/cli.md](../gui/cli.md)). When the setting is off, `serve` checks it
+before anything else and exits with `ErrServeLocalAppAccessDisabled`
+(`extension_serve.go:151-156`): it opens no socket and creates nothing. An
+unreadable settings file fails with `ErrAppAccessLoadFailed`. Unlike the GUI,
+`serve` keeps its socket for as long as it runs.
+
 | Flag | Default | Description |
 |---|---|---|
 | `--socket` | auto-detect | IPC Unix socket path |
@@ -102,6 +109,9 @@ process cannot collect an operator quorum. See
 [engineering.md](engineering.md)'s error table.
 
 ```bash
+# Once: allow local apps to use your keys
+xkey app-access enable
+
 # Production: barrier-encrypted
 echo -n "my-secret" | xkey extension serve --barrier-password-stdin
 XKEY_BARRIER_PASSWORD=secret xkey extension serve

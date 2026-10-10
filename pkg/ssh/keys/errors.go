@@ -144,21 +144,6 @@ func (e *StorageError) Error() string {
 // Unwrap returns the underlying storage error.
 func (e *StorageError) Unwrap() error { return e.Err }
 
-// SerializationError is returned when the stored envelope cannot be
-// decoded (e.g., truncated JSON, missing fields).
-type SerializationError struct {
-	Op  string
-	Err error
-}
-
-// Error implements the error interface.
-func (e *SerializationError) Error() string {
-	return "ssh/keys: serialize " + e.Op + ": " + e.Err.Error()
-}
-
-// Unwrap returns the underlying error.
-func (e *SerializationError) Unwrap() error { return e.Err }
-
 // ClosedSignerError is returned by Sign on a persistentSigner whose
 // closer has already run. Callers MUST NOT reuse a signer after closing
 // it; the returned error signals a programming mistake.

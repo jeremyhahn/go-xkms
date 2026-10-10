@@ -27,7 +27,7 @@ import (
 
 	"github.com/jeremyhahn/go-xkms/pkg/ssh/keys"
 	"github.com/jeremyhahn/go-xkms/pkg/ssh/scope"
-	"github.com/jeremyhahn/go-xkms/pkg/storage"
+	"github.com/jeremyhahn/go-xkms/pkg/testutil"
 	secure "github.com/jeremyhahn/go-xkms/sdk/go/secure"
 )
 
@@ -371,11 +371,10 @@ func TestKey_DestroyIdempotent(t *testing.T) {
 
 // --- Store round-trip tests using the in-memory storage backend. ---
 
-func TestBackendStore_RoundTrip(t *testing.T) {
-	backend := storage.NewMemory()
-	store, err := keys.NewBackendStore(backend)
+func TestDAOStore_RoundTrip(t *testing.T) {
+	store, err := keys.NewDAOStore(testutil.NewMemoryDAOFactory())
 	if err != nil {
-		t.Fatalf("NewBackendStore: %v", err)
+		t.Fatalf("NewDAOStore: %v", err)
 	}
 
 	key, err := keys.Generate(t.Context(), keys.GenerateOptions{Algorithm: keys.AlgorithmEd25519, Comment: "hello"})
@@ -419,11 +418,10 @@ func TestBackendStore_RoundTrip(t *testing.T) {
 	}
 }
 
-func TestBackendStore_GetMissing(t *testing.T) {
-	backend := storage.NewMemory()
-	store, err := keys.NewBackendStore(backend)
+func TestDAOStore_GetMissing(t *testing.T) {
+	store, err := keys.NewDAOStore(testutil.NewMemoryDAOFactory())
 	if err != nil {
-		t.Fatalf("NewBackendStore: %v", err)
+		t.Fatalf("NewDAOStore: %v", err)
 	}
 	_, err = store.Get(context.Background(), scope.User, "nobody", "nothing")
 	var nfErr *keys.KeyNotFoundError
@@ -432,11 +430,10 @@ func TestBackendStore_GetMissing(t *testing.T) {
 	}
 }
 
-func TestBackendStore_DeleteMissing(t *testing.T) {
-	backend := storage.NewMemory()
-	store, err := keys.NewBackendStore(backend)
+func TestDAOStore_DeleteMissing(t *testing.T) {
+	store, err := keys.NewDAOStore(testutil.NewMemoryDAOFactory())
 	if err != nil {
-		t.Fatalf("NewBackendStore: %v", err)
+		t.Fatalf("NewDAOStore: %v", err)
 	}
 	err = store.Delete(context.Background(), scope.User, "x", "y")
 	var nfErr *keys.KeyNotFoundError
@@ -445,11 +442,10 @@ func TestBackendStore_DeleteMissing(t *testing.T) {
 	}
 }
 
-func TestBackendStore_DeleteExisting(t *testing.T) {
-	backend := storage.NewMemory()
-	store, err := keys.NewBackendStore(backend)
+func TestDAOStore_DeleteExisting(t *testing.T) {
+	store, err := keys.NewDAOStore(testutil.NewMemoryDAOFactory())
 	if err != nil {
-		t.Fatalf("NewBackendStore: %v", err)
+		t.Fatalf("NewDAOStore: %v", err)
 	}
 	key, _ := keys.Generate(t.Context(), keys.GenerateOptions{Algorithm: keys.AlgorithmEd25519})
 	key.Scope = scope.User
@@ -471,11 +467,10 @@ func TestBackendStore_DeleteExisting(t *testing.T) {
 	}
 }
 
-func TestBackendStore_List(t *testing.T) {
-	backend := storage.NewMemory()
-	store, err := keys.NewBackendStore(backend)
+func TestDAOStore_List(t *testing.T) {
+	store, err := keys.NewDAOStore(testutil.NewMemoryDAOFactory())
 	if err != nil {
-		t.Fatalf("NewBackendStore: %v", err)
+		t.Fatalf("NewDAOStore: %v", err)
 	}
 	ctx := context.Background()
 
@@ -529,17 +524,16 @@ func TestBackendStore_List(t *testing.T) {
 	}
 }
 
-func TestBackendStore_NilBackend(t *testing.T) {
-	_, err := keys.NewBackendStore(nil)
+func TestDAOStore_NilFactory(t *testing.T) {
+	_, err := keys.NewDAOStore(nil)
 	var nErr *keys.NilInputError
 	if !errors.As(err, &nErr) {
 		t.Fatalf("expected NilInputError, got %T", err)
 	}
 }
 
-func TestBackendStore_PutNilKey(t *testing.T) {
-	backend := storage.NewMemory()
-	store, _ := keys.NewBackendStore(backend)
+func TestDAOStore_PutNilKey(t *testing.T) {
+	store, _ := keys.NewDAOStore(testutil.NewMemoryDAOFactory())
 	err := store.Put(context.Background(), nil)
 	var nErr *keys.NilInputError
 	if !errors.As(err, &nErr) {
@@ -547,9 +541,8 @@ func TestBackendStore_PutNilKey(t *testing.T) {
 	}
 }
 
-func TestBackendStore_PutNoMaterial(t *testing.T) {
-	backend := storage.NewMemory()
-	store, _ := keys.NewBackendStore(backend)
+func TestDAOStore_PutNoMaterial(t *testing.T) {
+	store, _ := keys.NewDAOStore(testutil.NewMemoryDAOFactory())
 	k := &keys.Key{Scope: scope.User, Owner: "alice", Name: "laptop"}
 	err := store.Put(context.Background(), k)
 	var nErr *keys.NilInputError

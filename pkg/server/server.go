@@ -71,6 +71,7 @@ import (
 	"github.com/jeremyhahn/go-xkms/pkg/ratelimit"
 	"github.com/jeremyhahn/go-xkms/pkg/seal"
 	credentialspkg "github.com/jeremyhahn/go-xkms/pkg/server/credentials"
+	sshrecords "github.com/jeremyhahn/go-xkms/pkg/ssh/records"
 	"github.com/jeremyhahn/go-xkms/pkg/staticpw"
 	"github.com/jeremyhahn/go-xkms/pkg/storage"
 	tpmpolicy "github.com/jeremyhahn/go-xkms/pkg/tpm2/policy"
@@ -264,6 +265,10 @@ type Server struct {
 	// a node seal.
 	barrierRegistry *seal.BarrierRegistry
 
+	// tenantStores resolves each tenant's system-database store, behind that
+	// tenant's barrier; nil without a node seal.
+	tenantStores qrdbsdk.TenantStoreResolver
+
 	// nodeSealEnabled indicates the qrdb node's barrier is engaged:
 	// Datastore.Mode=="standalone" && Barrier.Enabled. When true, the node
 	// encrypts its data-plane KV (encfs) and s.barrier/s.barrierRegistry/
@@ -302,7 +307,7 @@ type Server struct {
 	pinManager qrdbsdk.PINBackend
 
 	// Password store
-	passwordStore *staticpw.BackendStore
+	passwordStore *staticpw.DAOStore
 
 	// passwordManager routes Password Manager entries to per-tenant stores.
 	// One instance serves the XKMSService and the REST surface.
@@ -498,7 +503,7 @@ func (s *Server) SetMetricsListener(l net.Listener) {
 // transport (REST/gRPC/QUIC/MCP/unix). It is the tenant-binding SSH service
 // (pkg/ssh/tenancy): each request's scope and owner are bound to the
 // authenticated caller and served from that caller's tenant partition of the
-// "ssh" storage view, so no request can address another tenant's or another
+// "ssh" database, so no request can address another tenant's or another
 // user's SSH assets (go-xkms#1230). Key generation and signing are delegated
 // to the server's configured crypto backends through an unscoped resolver
 // that the service narrows to each partition's tenant, so a remote
@@ -510,7 +515,12 @@ func (s *Server) ensureSSHClient() sdkssh.Client {
 		if s.xkmsService == nil {
 			return
 		}
-		client, err := compose.BuildSSHClient(s.createStorage, s.xkmsService.LookupBackend, s.xkmsService)
+		daos, err := s.daoFactory(sshrecords.DatabaseName)
+		if err != nil {
+			s.logger.Error("Failed to open the SSH database", slog.Any("error", err))
+			return
+		}
+		client, err := compose.BuildSSHClient(daos, s.xkmsService.LookupBackend, s.xkmsService)
 		if err != nil {
 			s.logger.Error("Failed to build SSH client", slog.Any("error", err))
 			return
@@ -945,15 +955,15 @@ func (s *Server) passkeyRelyingParty() string {
 // compose.Stores.Wire -- the publish step an embedding host's module runs
 // too. xkmsd builds each store at its own point of the start-up sequence;
 // the per-tenant password manager, which needs both the password store and
-// the barrier registry, is built here, once both exist, and kept on the
-// server so the REST surface routes through the same instance. The
+// the node's tenant store resolver, is built here, once both exist, and kept
+// on the server so the REST surface routes through the same instance. The
 // enrollment-invitation store (go-xkms#1294 part B) needs only storage, so
 // it is built here too, through compose.BuildInviteStore(s.createStorage)
 // — the one construction path an embedding host's module also takes, never
 // a separate block wiring a server-local type.
 func (s *Server) composedStores() *compose.Stores {
-	if s.passwordStore != nil && s.barrierRegistry != nil {
-		manager, err := compose.BuildTenantPasswordManager(s.barrierRegistry, s.passwordStore, s.passkeyRelyingParty())
+	if s.passwordStore != nil && s.tenantStores != nil {
+		manager, err := compose.BuildTenantPasswordManager(s.tenantStores, s.passwordStore, s.passkeyRelyingParty())
 		if err != nil {
 			s.logger.Warn("Per-tenant password routing is off", "error", err)
 		} else {
@@ -1601,26 +1611,20 @@ func (s *Server) initializeKeyVersionStore() error {
 	return nil
 }
 
-// initializePasswordStore initializes the static password store.
+// initializePasswordStore builds the system password store through
+// compose.BuildPasswordStore -- the path an embedding host's module takes --
+// over its database on the server's datastore.
 func (s *Server) initializePasswordStore() error {
-	store, err := compose.BuildPasswordStore(s.createStorage)
+	daos, err := s.daoFactory(staticpw.DatabaseName)
+	if err != nil {
+		return err
+	}
+	store, err := compose.BuildPasswordStore(daos)
 	if err != nil {
 		return &ErrStorageCreate{Resource: "password storage", Err: err}
 	}
 	s.passwordStore = store
-
-	// createStorage above is the actual storage seam: it always prefixes a
-	// view over the single shared datastore, which ignores datastore.path
-	// directly. datastore.path is therefore empty here only for
-	// datastore.mode "remote" (config.Validate requires it for
-	// "standalone"), and there is no on-disk location to name in that case;
-	// report the datastore mode instead of joining an empty root into a path
-	// that would look absolute but mean nothing.
-	if s.config.Datastore.Path == "" {
-		s.logger.Info("Password store initialized", "datastore_mode", s.config.Datastore.Mode)
-		return nil
-	}
-	s.logger.Info("Password store initialized", "path", filepath.Join(s.config.Datastore.Path, "passwords"))
+	s.logger.Info("Password store initialized", "database", staticpw.DatabaseName)
 	return nil
 }
 
@@ -1794,7 +1798,7 @@ func (s *Server) PINBackend() qrdbsdk.PINBackend {
 }
 
 // PasswordStore returns the password store instance.
-func (s *Server) PasswordStore() *staticpw.BackendStore {
+func (s *Server) PasswordStore() *staticpw.DAOStore {
 	return s.passwordStore
 }
 
@@ -2437,8 +2441,13 @@ func (s *Server) Start() error {
 	// TLS-only UDS is deliberately not used for this plane
 	// (buildXKMSQRDBConfig leaves the node's Unix protocol off).
 	if s.config.Protocols.Unix {
-		s.wg.Add(1)
-		go s.startUnix()
+		// The server is built and stored before Start returns, so the
+		// listener accessors are valid as soon as Start does; only the
+		// blocking accept loop runs on its own goroutine.
+		if grpcServer := s.prepareUnix(); grpcServer != nil {
+			s.wg.Add(1)
+			go s.startUnix(grpcServer)
+		}
 	}
 
 	// Loopback desktop engine: serve REST on the injected pre-bound
@@ -2495,10 +2504,20 @@ func (s *Server) startWebAuthnSessionSweeper() {
 	}()
 }
 
-// startUnix starts the Unix domain socket server (IPC, HTTP or gRPC based on configuration)
-func (s *Server) startUnix() {
+// startUnix runs the accept loop of the Unix domain socket server built by
+// prepareUnix. It blocks until the server stops.
+func (s *Server) startUnix(grpcServer *unix.GRPCServer) {
 	defer s.wg.Done()
 
+	if err := grpcServer.Start(); err != nil {
+		s.logger.Error("Unix gRPC server error", slog.Any("error", err))
+	}
+}
+
+// prepareUnix builds the Unix domain socket server from configuration and
+// stores it so Shutdown can stop it. It returns nil when no server is to be
+// run: the protocol is unknown, construction failed, or Shutdown already began.
+func (s *Server) prepareUnix() *unix.GRPCServer {
 	// Determine socket path
 	socketPath := s.config.Unix.SocketPath
 	if socketPath == "" {
@@ -2547,27 +2566,23 @@ func (s *Server) startUnix() {
 		grpcServer, err := unix.NewGRPCServer(grpcConfig)
 		if err != nil {
 			s.logger.Error("Failed to create Unix gRPC server", slog.Any("error", err))
-			return
+			return nil
 		}
 
 		// Store the server so Shutdown can stop it. If Shutdown already began
-		// (ctx cancelled) before we got here, do not start — return so this
-		// goroutine releases its wg slot instead of blocking in Start (which
-		// Shutdown could not stop, since it copied a nil reference).
+		// (ctx cancelled), do not run it: Shutdown could not stop a server it
+		// never saw.
 		s.mu.Lock()
+		defer s.mu.Unlock()
 		if s.ctx.Err() != nil {
-			s.mu.Unlock()
-			return
+			return nil
 		}
 		s.unixGRPCServer = grpcServer
-		s.mu.Unlock()
-
-		if err := grpcServer.Start(); err != nil {
-			s.logger.Error("Unix gRPC server error", slog.Any("error", err))
-		}
+		return grpcServer
 
 	default:
 		s.logger.Error("Unknown Unix socket protocol", "protocol", protocol)
+		return nil
 	}
 }
 

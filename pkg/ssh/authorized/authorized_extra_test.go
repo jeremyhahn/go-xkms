@@ -18,15 +18,19 @@ import (
 	"errors"
 	"testing"
 
+	"github.com/jeremyhahn/go-xkms/pkg/dao"
 	"github.com/jeremyhahn/go-xkms/pkg/ssh/authorized"
 	"github.com/jeremyhahn/go-xkms/pkg/ssh/keys"
 	"github.com/jeremyhahn/go-xkms/pkg/ssh/scope"
 	"github.com/jeremyhahn/go-xkms/pkg/storage"
+	"github.com/jeremyhahn/go-xkms/pkg/storage/kvadapter"
+	"github.com/jeremyhahn/go-xkms/pkg/testutil"
 )
 
 // ---------------------------------------------------------------------------
 // failingBackend is a storage.Backend whose operations always return errFail.
-// Used to exercise StorageError wrapping paths.
+// It implements the guarded writes, so the DAO over it is atomic and every
+// failure is the backend's. Used to exercise StorageError wrapping paths.
 // ---------------------------------------------------------------------------
 
 var errFail = errors.New("injected backend failure")
@@ -38,8 +42,9 @@ func (failingBackend) Put(_ context.Context, _ string, _ []byte) error { return 
 func (failingBackend) PutIfAbsent(_ context.Context, _ string, _ []byte) (bool, error) {
 	return false, errFail
 }
-
-// CompareAndDelete mirrors failingBackend.Delete: it always returns errFail.
+func (failingBackend) CompareAndSwap(_ context.Context, _ string, _, _ []byte) (bool, []byte, error) {
+	return false, nil, errFail
+}
 func (failingBackend) CompareAndDelete(_ context.Context, _ string, _ []byte) (bool, error) {
 	return false, errFail
 }
@@ -53,28 +58,72 @@ func (failingBackend) Scan(_ context.Context, _ string, _ func(string, []byte) e
 func (failingBackend) Exists(_ context.Context, _ string) (bool, error) { return false, errFail }
 func (failingBackend) Close() error                                     { return nil }
 
-// corruptBackend returns corrupt JSON for every Get and reports Exists=false.
-type corruptBackend struct{ failingBackend }
+// corruptBackend serves every value it stores as undecodable bytes.
+type corruptBackend struct{ storage.Backend }
 
-func (corruptBackend) Exists(_ context.Context, _ string) (bool, error) { return false, nil }
-func (corruptBackend) Get(_ context.Context, _ string) ([]byte, error) {
+// CompareAndSwap forwards to the wrapped backend, keeping the DAO atomic.
+func (b corruptBackend) CompareAndSwap(ctx context.Context, key string, expected, next []byte) (bool, []byte, error) {
+	return b.Backend.(storage.CompareAndSwapper).CompareAndSwap(ctx, key, expected, next)
+}
+
+// CompareAndDelete forwards to the wrapped backend, keeping the DAO atomic.
+func (b corruptBackend) CompareAndDelete(ctx context.Context, key string, expected []byte) (bool, error) {
+	return b.Backend.(storage.CompareAndDeleter).CompareAndDelete(ctx, key, expected)
+}
+
+func (b corruptBackend) Get(ctx context.Context, key string) ([]byte, error) {
+	if _, err := b.Backend.Get(ctx, key); err != nil {
+		return nil, err
+	}
 	return []byte("not-json{{{"), nil
 }
-func (corruptBackend) Put(_ context.Context, _ string, _ []byte) error { return nil }
-func (corruptBackend) Scan(_ context.Context, prefix string, fn func(string, []byte) error) error {
-	return fn(prefix+"authorized_keys/k", []byte("not-json{{{"))
+func (b corruptBackend) Scan(ctx context.Context, prefix string, fn func(string, []byte) error) error {
+	return b.Backend.Scan(ctx, prefix, func(key string, _ []byte) error {
+		return fn(key, []byte("not-json{{{"))
+	})
 }
 
-// putFailBackend reports Exists=false but fails on Put.
-type putFailBackend struct{ failingBackend }
+// newStore returns a DAOStore over a fresh in-memory DAO factory.
+func newStore(t *testing.T) *authorized.DAOStore {
+	t.Helper()
+	store, err := authorized.NewDAOStore(testutil.NewMemoryDAOFactory())
+	if err != nil {
+		t.Fatalf("store: %v", err)
+	}
+	return store
+}
 
-func (putFailBackend) Exists(_ context.Context, _ string) (bool, error) { return false, nil }
+// storeOver returns the DAOStore over backend.
+func storeOver(t *testing.T, backend storage.Backend) *authorized.DAOStore {
+	t.Helper()
+	kv, err := kvadapter.New(backend)
+	if err != nil {
+		t.Fatalf("kvadapter.New: %v", err)
+	}
+	store, err := authorized.NewDAOStore(dao.NewStoreFactory(kv))
+	if err != nil {
+		t.Fatalf("store: %v", err)
+	}
+	return store
+}
 
-// removeErrBackend fails Delete with a non-ErrNotFound error.
-type removeErrBackend struct{ failingBackend }
-
-func (removeErrBackend) Exists(_ context.Context, _ string) (bool, error) { return false, nil }
-func (removeErrBackend) Delete(_ context.Context, _ string) error         { return errFail }
+// corruptStore returns a DAOStore whose records -- the user entry
+// alice/laptop and the tenant entry acme/deploy -- read back undecodable.
+func corruptStore(t *testing.T) *authorized.DAOStore {
+	t.Helper()
+	backend := storage.New()
+	clean := storeOver(t, backend)
+	k := generateKey(t, keys.AlgorithmEd25519)
+	defer k.Destroy()
+	ctx := context.Background()
+	if err := clean.Add(ctx, scope.User, "alice", "laptop", &authorized.Entry{Key: k}); err != nil {
+		t.Fatalf("seed user entry: %v", err)
+	}
+	if err := clean.Add(ctx, scope.Tenant, "acme", "deploy", &authorized.Entry{Key: k}); err != nil {
+		t.Fatalf("seed tenant entry: %v", err)
+	}
+	return storeOver(t, corruptBackend{Backend: backend})
+}
 
 // ---------------------------------------------------------------------------
 // Error type string/unwrap coverage
@@ -128,17 +177,6 @@ func TestStorageError_ErrorAndUnwrap(t *testing.T) {
 	}
 	if !errors.Is(e, inner) {
 		t.Fatal("StorageError.Unwrap() must expose inner error")
-	}
-}
-
-func TestSerializationError_ErrorAndUnwrap(t *testing.T) {
-	inner := errors.New("invalid JSON")
-	e := &authorized.SerializationError{Op: "marshal envelope", Err: inner}
-	if e.Error() == "" {
-		t.Fatal("SerializationError.Error() empty")
-	}
-	if !errors.Is(e, inner) {
-		t.Fatal("SerializationError.Unwrap() must expose inner error")
 	}
 }
 
@@ -245,23 +283,17 @@ func TestParseLine_AllAlgorithms(t *testing.T) {
 // Store edge cases: invalid scope, name, owner
 // ---------------------------------------------------------------------------
 
-func TestNewBackendStore_NilBackend(t *testing.T) {
-	_, err := authorized.NewBackendStore(nil)
+func TestNewDAOStore_NilFactory(t *testing.T) {
+	_, err := authorized.NewDAOStore(nil)
 	var nie *authorized.NilInputError
 	if !errors.As(err, &nie) {
-		t.Fatalf("expected NilInputError for nil backend, got %T: %v", err, err)
+		t.Fatalf("expected NilInputError for nil factory, got %T: %v", err, err)
 	}
 }
 
 func TestStore_Add_InvalidScope(t *testing.T) {
-	backend, err := storage.NewMemoryBackend()
-	if err != nil {
-		t.Fatalf("backend: %v", err)
-	}
-	store, err := authorized.NewBackendStore(backend)
-	if err != nil {
-		t.Fatalf("store: %v", err)
-	}
+	store := newStore(t)
+	var err error
 	k := generateKey(t, keys.AlgorithmEd25519)
 	defer k.Destroy()
 	err = store.Add(context.Background(), scope.Scope("bogus"), "owner", "name", &authorized.Entry{Key: k})
@@ -271,14 +303,8 @@ func TestStore_Add_InvalidScope(t *testing.T) {
 }
 
 func TestStore_Add_EmptyOwner(t *testing.T) {
-	backend, err := storage.NewMemoryBackend()
-	if err != nil {
-		t.Fatalf("backend: %v", err)
-	}
-	store, err := authorized.NewBackendStore(backend)
-	if err != nil {
-		t.Fatalf("store: %v", err)
-	}
+	store := newStore(t)
+	var err error
 	k := generateKey(t, keys.AlgorithmEd25519)
 	defer k.Destroy()
 	err = store.Add(context.Background(), scope.User, "", "name", &authorized.Entry{Key: k})
@@ -288,14 +314,8 @@ func TestStore_Add_EmptyOwner(t *testing.T) {
 }
 
 func TestStore_Add_OwnerWithSlash(t *testing.T) {
-	backend, err := storage.NewMemoryBackend()
-	if err != nil {
-		t.Fatalf("backend: %v", err)
-	}
-	store, err := authorized.NewBackendStore(backend)
-	if err != nil {
-		t.Fatalf("store: %v", err)
-	}
+	store := newStore(t)
+	var err error
 	k := generateKey(t, keys.AlgorithmEd25519)
 	defer k.Destroy()
 	err = store.Add(context.Background(), scope.User, "alice/mallory", "name", &authorized.Entry{Key: k})
@@ -305,14 +325,8 @@ func TestStore_Add_OwnerWithSlash(t *testing.T) {
 }
 
 func TestStore_Add_EmptyName(t *testing.T) {
-	backend, err := storage.NewMemoryBackend()
-	if err != nil {
-		t.Fatalf("backend: %v", err)
-	}
-	store, err := authorized.NewBackendStore(backend)
-	if err != nil {
-		t.Fatalf("store: %v", err)
-	}
+	store := newStore(t)
+	var err error
 	k := generateKey(t, keys.AlgorithmEd25519)
 	defer k.Destroy()
 	err = store.Add(context.Background(), scope.User, "alice", "", &authorized.Entry{Key: k})
@@ -326,14 +340,8 @@ func TestStore_Add_EmptyName(t *testing.T) {
 }
 
 func TestStore_Add_NameWithSlash(t *testing.T) {
-	backend, err := storage.NewMemoryBackend()
-	if err != nil {
-		t.Fatalf("backend: %v", err)
-	}
-	store, err := authorized.NewBackendStore(backend)
-	if err != nil {
-		t.Fatalf("store: %v", err)
-	}
+	store := newStore(t)
+	var err error
 	k := generateKey(t, keys.AlgorithmEd25519)
 	defer k.Destroy()
 	err = store.Add(context.Background(), scope.User, "alice", "path/separator", &authorized.Entry{Key: k})
@@ -347,15 +355,8 @@ func TestStore_Add_NameWithSlash(t *testing.T) {
 }
 
 func TestStore_Add_NilEntry(t *testing.T) {
-	backend, err := storage.NewMemoryBackend()
-	if err != nil {
-		t.Fatalf("backend: %v", err)
-	}
-	store, err := authorized.NewBackendStore(backend)
-	if err != nil {
-		t.Fatalf("store: %v", err)
-	}
-	err = store.Add(context.Background(), scope.User, "alice", "laptop", nil)
+	store := newStore(t)
+	err := store.Add(context.Background(), scope.User, "alice", "laptop", nil)
 	if err == nil {
 		t.Fatal("expected error for nil entry")
 	}
@@ -366,15 +367,8 @@ func TestStore_Add_NilEntry(t *testing.T) {
 }
 
 func TestStore_Remove_NotFound(t *testing.T) {
-	backend, err := storage.NewMemoryBackend()
-	if err != nil {
-		t.Fatalf("backend: %v", err)
-	}
-	store, err := authorized.NewBackendStore(backend)
-	if err != nil {
-		t.Fatalf("store: %v", err)
-	}
-	err = store.Remove(context.Background(), scope.User, "alice", "ghost")
+	store := newStore(t)
+	err := store.Remove(context.Background(), scope.User, "alice", "ghost")
 	var nf *authorized.NotFoundError
 	if !errors.As(err, &nf) {
 		t.Fatalf("expected NotFoundError on missing remove, got %T: %v", err, err)
@@ -382,29 +376,16 @@ func TestStore_Remove_NotFound(t *testing.T) {
 }
 
 func TestStore_Remove_InvalidScope(t *testing.T) {
-	backend, err := storage.NewMemoryBackend()
-	if err != nil {
-		t.Fatalf("backend: %v", err)
-	}
-	store, err := authorized.NewBackendStore(backend)
-	if err != nil {
-		t.Fatalf("store: %v", err)
-	}
-	err = store.Remove(context.Background(), scope.Scope("badscope"), "alice", "laptop")
+	store := newStore(t)
+	err := store.Remove(context.Background(), scope.Scope("badscope"), "alice", "laptop")
 	if err == nil {
 		t.Fatal("expected error for invalid scope in Remove")
 	}
 }
 
 func TestStore_Get_InvalidScope(t *testing.T) {
-	backend, err := storage.NewMemoryBackend()
-	if err != nil {
-		t.Fatalf("backend: %v", err)
-	}
-	store, err := authorized.NewBackendStore(backend)
-	if err != nil {
-		t.Fatalf("store: %v", err)
-	}
+	store := newStore(t)
+	var err error
 	_, err = store.Get(context.Background(), scope.Scope("badscope"), "alice", "laptop")
 	if err == nil {
 		t.Fatal("expected error for invalid scope in Get")
@@ -412,14 +393,8 @@ func TestStore_Get_InvalidScope(t *testing.T) {
 }
 
 func TestStore_List_AllScopes(t *testing.T) {
-	backend, err := storage.NewMemoryBackend()
-	if err != nil {
-		t.Fatalf("backend: %v", err)
-	}
-	store, err := authorized.NewBackendStore(backend)
-	if err != nil {
-		t.Fatalf("store: %v", err)
-	}
+	store := newStore(t)
+	var err error
 	ctx := context.Background()
 
 	// Add entries under two different scopes.
@@ -445,14 +420,8 @@ func TestStore_List_AllScopes(t *testing.T) {
 }
 
 func TestStore_List_InvalidScope(t *testing.T) {
-	backend, err := storage.NewMemoryBackend()
-	if err != nil {
-		t.Fatalf("backend: %v", err)
-	}
-	store, err := authorized.NewBackendStore(backend)
-	if err != nil {
-		t.Fatalf("store: %v", err)
-	}
+	store := newStore(t)
+	var err error
 	_, err = store.List(context.Background(), scope.Scope("invalid"), "")
 	if err == nil {
 		t.Fatal("expected error for invalid scope in List")
@@ -460,14 +429,8 @@ func TestStore_List_InvalidScope(t *testing.T) {
 }
 
 func TestStore_List_OwnerWithSlash(t *testing.T) {
-	backend, err := storage.NewMemoryBackend()
-	if err != nil {
-		t.Fatalf("backend: %v", err)
-	}
-	store, err := authorized.NewBackendStore(backend)
-	if err != nil {
-		t.Fatalf("store: %v", err)
-	}
+	store := newStore(t)
+	var err error
 	_, err = store.List(context.Background(), scope.User, "alice/bad")
 	if err == nil {
 		t.Fatal("expected error for owner with slash in List")
@@ -489,14 +452,8 @@ func TestVerify_NilStore(t *testing.T) {
 }
 
 func TestVerify_NilReceived(t *testing.T) {
-	backend, err := storage.NewMemoryBackend()
-	if err != nil {
-		t.Fatalf("backend: %v", err)
-	}
-	store, err := authorized.NewBackendStore(backend)
-	if err != nil {
-		t.Fatalf("store: %v", err)
-	}
+	store := newStore(t)
+	var err error
 	_, err = authorized.Verify(context.Background(), store, scope.User, "alice", nil)
 	var nie *authorized.NilInputError
 	if !errors.As(err, &nie) {
@@ -536,14 +493,8 @@ func TestParseLine_CommentLine_ErrorString(t *testing.T) {
 // ---------------------------------------------------------------------------
 
 func TestStore_Add_NameWithNUL(t *testing.T) {
-	backend, err := storage.NewMemoryBackend()
-	if err != nil {
-		t.Fatalf("backend: %v", err)
-	}
-	store, err := authorized.NewBackendStore(backend)
-	if err != nil {
-		t.Fatalf("store: %v", err)
-	}
+	store := newStore(t)
+	var err error
 	k := generateKey(t, keys.AlgorithmEd25519)
 	defer k.Destroy()
 	err = store.Add(context.Background(), scope.User, "alice", "name\x00bad", &authorized.Entry{Key: k})
@@ -561,10 +512,8 @@ func TestStore_Add_NameWithNUL(t *testing.T) {
 // ---------------------------------------------------------------------------
 
 func TestStore_Add_StorageError_Exists(t *testing.T) {
-	store, err := authorized.NewBackendStore(failingBackend{})
-	if err != nil {
-		t.Fatalf("store: %v", err)
-	}
+	store := storeOver(t, failingBackend{})
+	var err error
 	k := generateKey(t, keys.AlgorithmEd25519)
 	defer k.Destroy()
 	err = store.Add(context.Background(), scope.User, "alice", "laptop", &authorized.Entry{Key: k})
@@ -575,10 +524,8 @@ func TestStore_Add_StorageError_Exists(t *testing.T) {
 }
 
 func TestStore_Get_StorageError(t *testing.T) {
-	store, err := authorized.NewBackendStore(failingBackend{})
-	if err != nil {
-		t.Fatalf("store: %v", err)
-	}
+	store := storeOver(t, failingBackend{})
+	var err error
 	_, err = store.Get(context.Background(), scope.User, "alice", "laptop")
 	var se *authorized.StorageError
 	if !errors.As(err, &se) {
@@ -587,10 +534,8 @@ func TestStore_Get_StorageError(t *testing.T) {
 }
 
 func TestStore_List_StorageError(t *testing.T) {
-	store, err := authorized.NewBackendStore(failingBackend{})
-	if err != nil {
-		t.Fatalf("store: %v", err)
-	}
+	store := storeOver(t, failingBackend{})
+	var err error
 	_, err = store.List(context.Background(), scope.User, "alice")
 	var se *authorized.StorageError
 	if !errors.As(err, &se) {
@@ -599,50 +544,19 @@ func TestStore_List_StorageError(t *testing.T) {
 }
 
 func TestStore_Remove_StorageError(t *testing.T) {
-	store, err := authorized.NewBackendStore(failingBackend{})
-	if err != nil {
-		t.Fatalf("store: %v", err)
-	}
-	err = store.Remove(context.Background(), scope.User, "alice", "laptop")
+	store := storeOver(t, failingBackend{})
+	err := store.Remove(context.Background(), scope.User, "alice", "laptop")
 	var se *authorized.StorageError
 	if !errors.As(err, &se) {
 		t.Fatalf("expected StorageError, got %T: %v", err, err)
 	}
 }
 
-func TestStore_Remove_NonNotFoundStorageError(t *testing.T) {
-	store, err := authorized.NewBackendStore(removeErrBackend{})
-	if err != nil {
-		t.Fatalf("store: %v", err)
-	}
-	err = store.Remove(context.Background(), scope.User, "alice", "laptop")
-	var se *authorized.StorageError
-	if !errors.As(err, &se) {
-		t.Fatalf("expected StorageError on non-ErrNotFound delete, got %T: %v", err, err)
-	}
-}
-
-func TestStore_Add_PutStorageError(t *testing.T) {
-	store, err := authorized.NewBackendStore(putFailBackend{})
-	if err != nil {
-		t.Fatalf("store: %v", err)
-	}
-	k := generateKey(t, keys.AlgorithmEd25519)
-	defer k.Destroy()
-	err = store.Add(context.Background(), scope.User, "alice", "laptop", &authorized.Entry{Key: k})
-	var se *authorized.StorageError
-	if !errors.As(err, &se) {
-		t.Fatalf("expected StorageError on put failure, got %T: %v", err, err)
-	}
-}
-
 // TestVerify_ListError ensures Verify propagates list errors.
 func TestVerify_ListError(t *testing.T) {
 	// Use a store whose List fails.
-	store, err := authorized.NewBackendStore(failingBackend{})
-	if err != nil {
-		t.Fatalf("store: %v", err)
-	}
+	store := storeOver(t, failingBackend{})
+	var err error
 	k := generateKey(t, keys.AlgorithmEd25519)
 	defer k.Destroy()
 	_, err = authorized.Verify(context.Background(), store, scope.User, "alice", k.PublicKey)
@@ -669,29 +583,14 @@ func TestParseAll_MalformedLine(t *testing.T) {
 }
 
 // ---------------------------------------------------------------------------
-// decodeEnvelope: corrupt JSON triggers SerializationError from Get path
+// Undecodable records surface as StorageError
 // ---------------------------------------------------------------------------
 
-func TestStore_Get_CorruptEnvelope(t *testing.T) {
-	store, err := authorized.NewBackendStore(corruptBackend{})
-	if err != nil {
-		t.Fatalf("store: %v", err)
-	}
-	_, err = store.Get(context.Background(), scope.User, "alice", "laptop")
-	var se *authorized.SerializationError
+func TestStore_Get_CorruptRecord(t *testing.T) {
+	_, err := corruptStore(t).Get(context.Background(), scope.User, "alice", "laptop")
+	var se *authorized.StorageError
 	if !errors.As(err, &se) {
-		t.Fatalf("expected SerializationError for corrupt envelope, got %T: %v", err, err)
-	}
-}
-
-func TestStore_List_CorruptEnvelope(t *testing.T) {
-	store, err := authorized.NewBackendStore(corruptBackend{})
-	if err != nil {
-		t.Fatalf("store: %v", err)
-	}
-	_, err = store.List(context.Background(), scope.User, "alice")
-	if err == nil {
-		t.Fatal("expected error for corrupt envelope in List")
+		t.Fatalf("expected StorageError for corrupt record, got %T: %v", err, err)
 	}
 }
 

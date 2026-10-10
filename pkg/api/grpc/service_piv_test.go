@@ -18,10 +18,11 @@ import (
 	"errors"
 	"testing"
 
+	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
 	pb "github.com/jeremyhahn/go-xkms/pkg/api/grpc/proto/xkmsv1"
+	"github.com/jeremyhahn/go-xkms/pkg/dao"
 	"github.com/jeremyhahn/go-xkms/pkg/pivcert"
 	pivfile "github.com/jeremyhahn/go-xkms/pkg/pivcert/file"
-	"github.com/jeremyhahn/go-xkms/pkg/storage"
 	"github.com/jeremyhahn/go-xkms/pkg/xkms"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
@@ -52,11 +53,8 @@ func setupPIVTest(t *testing.T) func() {
 
 	xkms.ResetPIV()
 
-	memBackend := storage.NewMemory()
 	store, err := pivfile.NewFileBackend(&pivcert.FileStorageConfig{
-		Backend:    memBackend,
-		DEREnabled: true,
-		PEMEnabled: true,
+		DAOs: dao.NewStoreFactory(qrdbsdk.NewMemoryKVStore()),
 	})
 	if err != nil {
 		t.Fatalf("failed to create PIV file backend: %v", err)

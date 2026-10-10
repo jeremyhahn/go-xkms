@@ -48,6 +48,15 @@ import (
 	"github.com/jeremyhahn/go-xkms/xkey/pkg/staticpw"
 )
 
+// newTestPasswordStore opens a static password store over backend through a
+// go-qrdb DAO factory.
+func newTestPasswordStore(t *testing.T, backend xkms.StorageBackend) *staticpw.DAOStore {
+	t.Helper()
+	store, err := staticpw.NewBackendStore(backend)
+	require.NoError(t, err)
+	return store
+}
+
 // extensionOrigin is the browser extension's origin, the one the browser
 // names the native host with.
 const extensionOrigin = "chrome-extension://xkeyvaultintegrationtest/"
@@ -120,7 +129,7 @@ func newXKeyApp(t *testing.T, u *vaultUser) (*xkeyApp, string) {
 	t.Cleanup(func() { _ = client.Close() })
 
 	app := &xkeyApp{ctx: ctx, codes: make(chan string, 1)}
-	app.svc = services.NewStaticPasswordService(staticpw.NewStore(xkms.NewStorageMemory()))
+	app.svc = services.NewStaticPasswordService(newTestPasswordStore(t, xkms.NewStorageMemory()))
 	app.svc.SetContext(ctx)
 	app.svc.SetClient(client)
 	app.svc.SetEventEmitter(func(evt events.Event) {

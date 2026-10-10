@@ -27,7 +27,7 @@ same package; neither repeats the other's tables.
 | `keyBackend` | `keybackend.FIDO2KeyBackend` | Where private keys live |
 | `keyboard` | `keyboard.Keyboard` | Types stored passwords |
 | `ipcServer` | `ipc.Server` | The daemon's IPC socket |
-| `pwStore` | `xkms.StaticPasswordBackendStore` | Backs `xkey touch --password` and browser-extension autofill |
+| `pwStore` | `xkms.StaticPasswordDAOStore` | Backs `xkey touch --password` and browser-extension autofill |
 | `socketHandler` | `authenticator.SocketHandler` | Turns an IPC `touch` into a CTAP2 presence answer |
 | `notifier` | `notify.Notifier` | Tells a human a touch is pending |
 | `cdpBridge` | `cdp.Bridge` | Alternative to UHID under `--cdp` |

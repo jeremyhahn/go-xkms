@@ -1,6 +1,6 @@
 # Password Vault — API
 
-> **Status: NORMATIVE** · Feature: `password-vault` · Repo: `go-xkms` · Last verified: 2026-10-01
+> **Status: NORMATIVE** · Feature: `password-vault` · Repo: `go-xkms` · Last verified: 2026-10-09
 
 Transport shapes: [`../key-management/api.md`](../key-management/api.md)
 §"How the six transports are shaped".
@@ -124,9 +124,9 @@ changes are scoped separately (go-xkms#691).
 There is no per-request decryption step and no plaintext/metadata split:
 `PasswordGet` returns the password field the same way on every call
 (`pkg/xkms/servicer_password.go:168`). Confidentiality at rest is provided by
-the tenant barrier at the storage layer, and every store reachable through
-this servicer -- `staticpw.BackendStore`, `staticpw.ScopedStore`,
-`staticpw.DAOStore` -- returns the entry as stored; none implements a
+the tenant's go-qrdb system database, sealed by that tenant's barrier, and
+every store reachable through this servicer -- `staticpw.DAOStore` and
+`staticpw.ScopedStore` -- returns the entry as stored; none implements a
 field-level decryption entry point. `PasswordList` never returns plaintext
 under any parameter, matching `PasswordGet`.
 

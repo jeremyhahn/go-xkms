@@ -25,6 +25,17 @@ import (
 	xkms "github.com/jeremyhahn/go-xkms/sdk/go"
 )
 
+// newTestPasswordStore opens a static password store over backend through a
+// go-qrdb DAO factory.
+func newTestPasswordStore(t *testing.T, backend xkms.StorageBackend) *xkms.StaticPasswordDAOStore {
+	t.Helper()
+	daos, err := xkms.NewBackendDAOFactory(backend)
+	require.NoError(t, err)
+	store, err := xkms.NewStaticPasswordStore(daos)
+	require.NoError(t, err)
+	return store
+}
+
 // memoryStore is a simple in-memory implementation for testing.
 type memoryStore struct {
 	passwords map[string]*xkms.StaticPassword
@@ -633,7 +644,7 @@ func TestDaemon_ReadWriteAlias(t *testing.T) {
 
 func TestDaemon_ReadWriteAlias_Persisted(t *testing.T) {
 	memBackend := xkms.NewStorageMemory()
-	store := xkms.NewStaticPasswordStore(memBackend)
+	store := newTestPasswordStore(t, memBackend)
 	daemon, err := NewDaemon(store, newTestBarrier(t), nil, nil)
 	require.NoError(t, err)
 
@@ -694,7 +705,7 @@ func TestDaemon_IsRunning(t *testing.T) {
 func TestNewDaemon_WithRealStore(t *testing.T) {
 	// Test with a real xkms.StaticPasswordBackendStore
 	memBackend := xkms.NewStorageMemory()
-	store := xkms.NewStaticPasswordStore(memBackend)
+	store := newTestPasswordStore(t, memBackend)
 
 	daemon, err := NewDaemon(store, newTestBarrier(t), nil, nil)
 	require.NoError(t, err)
@@ -739,7 +750,7 @@ func TestNewDaemon_WithRealStore(t *testing.T) {
 func TestDaemon_BarrierBackedStore(t *testing.T) {
 	barrier := newTestBarrier(t)
 	backend := xkms.NewBarrierBackend(barrier)
-	store := xkms.NewStaticPasswordStore(backend)
+	store := newTestPasswordStore(t, backend)
 
 	daemon, err := NewDaemon(store, barrier, nil, nil)
 	require.NoError(t, err)

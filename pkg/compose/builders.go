@@ -45,9 +45,7 @@ import (
 // resolves them under its own namespace. They are part of the persisted
 // layout: renaming one orphans existing data.
 const (
-	StoragePasswords      = "passwords"
 	StoragePlatformStore  = "platform-store"
-	StorageSSH            = "ssh"
 	StorageCASerials      = "ca-serials"
 	StorageCARevocations  = "ca-revocations"
 	StorageTPMKeys        = "tpm-keys"
@@ -72,16 +70,17 @@ type PlatformSealer struct {
 	Sealer types.Sealer
 }
 
-// BuildPasswordStore builds the Password Manager's system store.
-func BuildPasswordStore(open StorageFactory) (*staticpw.BackendStore, error) {
-	if open == nil {
-		return nil, &NilDependencyError{Feature: FeaturePasswords, Dependency: "storage factory"}
+// BuildPasswordStore builds the Password Manager's system store over the
+// staticpw.DatabaseName database daos serves.
+func BuildPasswordStore(daos *qrdbsdk.DAOFactory) (*staticpw.DAOStore, error) {
+	if daos == nil {
+		return nil, &NilDependencyError{Feature: FeaturePasswords, Dependency: "DAO factory"}
 	}
-	backend, err := open(StoragePasswords)
+	store, err := staticpw.NewStore(daos)
 	if err != nil {
 		return nil, &FeatureBuildError{Feature: FeaturePasswords, Err: err}
 	}
-	return staticpw.NewStore(backend), nil
+	return store, nil
 }
 
 // BuildKeyVersionStore builds the key-version record store over the
@@ -101,18 +100,18 @@ func BuildKeyVersionStore(daos *qrdbsdk.DAOFactory) (*keyversion.Store, error) {
 }
 
 // BuildTenantPasswordManager builds the per-tenant Password Manager routing:
-// tenant-scoped entries go to a store behind that tenant's barrier, system
-// entries to store. passkeyRP is the WebAuthn relying party ID (the web
+// tenant-scoped entries go to the tenant's own go-qrdb store, which stores
+// resolves behind that tenant's barrier, system entries to store. passkeyRP is the WebAuthn relying party ID (the web
 // console's domain, webauthn.rp_id) vault passkeys are created for; "" leaves
 // passkey factors unavailable.
-func BuildTenantPasswordManager(registry *seal.BarrierRegistry, store *staticpw.BackendStore, passkeyRP string) (*staticpw.TenantPasswordStoreManager, error) {
-	if registry == nil {
-		return nil, &NilDependencyError{Feature: FeatureTenantPasswords, Dependency: "barrier registry"}
+func BuildTenantPasswordManager(stores qrdbsdk.TenantStoreResolver, store *staticpw.DAOStore, passkeyRP string) (*staticpw.TenantPasswordStoreManager, error) {
+	if stores == nil {
+		return nil, &NilDependencyError{Feature: FeatureTenantPasswords, Dependency: "tenant store resolver"}
 	}
 	if store == nil {
 		return nil, &NilDependencyError{Feature: FeatureTenantPasswords, Dependency: "password store"}
 	}
-	manager, err := staticpw.NewTenantPasswordStoreManager(registry, store, staticpw.WithPasskeyRelyingParty(passkeyRP))
+	manager, err := staticpw.NewTenantPasswordStoreManager(stores, store, staticpw.WithPasskeyRelyingParty(passkeyRP))
 	if err != nil {
 		return nil, &FeatureBuildError{Feature: FeatureTenantPasswords, Err: err}
 	}
@@ -171,17 +170,14 @@ func BuildCredentialService(logger *slog.Logger, strategy string, platformStore 
 // signing for a request naming a backend resolve through backends, narrowed
 // to the caller's tenant, so a hardware-backed SSH key never leaves its
 // device. permissions answers the ssh:service check a service-scoped address
-// requires; nil closes the service scope.
-func BuildSSHClient(open StorageFactory, backends BackendLookup, permissions tenancy.PermissionChecker) (sdkssh.Client, error) {
-	if open == nil {
-		return nil, &NilDependencyError{Feature: FeatureSSH, Dependency: "storage factory"}
+// requires; nil closes the service scope. The SSH stores persist in the
+// sshrecords.DatabaseName database daos serves.
+func BuildSSHClient(daos *qrdbsdk.DAOFactory, backends BackendLookup, permissions tenancy.PermissionChecker) (sdkssh.Client, error) {
+	if daos == nil {
+		return nil, &NilDependencyError{Feature: FeatureSSH, Dependency: "DAO factory"}
 	}
 	if backends == nil {
 		return nil, &NilDependencyError{Feature: FeatureSSH, Dependency: "backend lookup"}
-	}
-	sshStorage, err := open(StorageSSH)
-	if err != nil {
-		return nil, &FeatureBuildError{Feature: FeatureSSH, Err: err}
 	}
 	resolver := sshbackend.ResolverFunc(func(_ context.Context, backendID string) (types.KeyProvider, error) {
 		b, err := backends(backendID)
@@ -190,7 +186,7 @@ func BuildSSHClient(open StorageFactory, backends BackendLookup, permissions ten
 		}
 		return b.KeyProvider(), nil
 	})
-	client, err := tenancy.New(tenancy.Options{Storage: sshStorage, Resolver: resolver, Permissions: permissions})
+	client, err := tenancy.New(tenancy.Options{DAOs: daos, Resolver: resolver, Permissions: permissions})
 	if err != nil {
 		return nil, &FeatureBuildError{Feature: FeatureSSH, Err: err}
 	}

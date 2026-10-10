@@ -14,6 +14,8 @@
 package xkms
 
 import (
+	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
+
 	"github.com/jeremyhahn/go-xkms/pkg/dao"
 	"github.com/jeremyhahn/go-xkms/pkg/storage"
 	"github.com/jeremyhahn/go-xkms/pkg/storage/kvadapter"
@@ -51,6 +53,18 @@ var NewKVStoreAdapter = kvadapter.New
 // default database and every named one: the factory a host without a go-qrdb
 // node injects into features such as the OIDC token store.
 var NewStoreDAOFactory = dao.NewStoreFactory
+
+// NewBackendDAOFactory returns a DAO factory serving every database from one
+// storage.Backend, adapted with NewKVStoreAdapter: the factory a host without a
+// go-qrdb node, such as the xkey CLI and GUI, injects into features such as the
+// static password store. The caller keeps ownership of backend.
+func NewBackendDAOFactory(backend storage.Backend) (*qrdbsdk.DAOFactory, error) {
+	kv, err := kvadapter.New(backend)
+	if err != nil {
+		return nil, err
+	}
+	return dao.NewStoreFactory(kv), nil
+}
 
 // ErrIndexingNotSupported is reported by every secondary-index operation on a
 // KVStoreAdapter. The adapter cannot maintain an index: doing so requires

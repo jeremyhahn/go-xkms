@@ -1,6 +1,6 @@
 # Signing — Engineering Contract
 
-> **Status: NORMATIVE** · Feature: `signing` · Repo: `go-xkms` · Last verified: 2026-09-24
+> **Status: NORMATIVE** · Feature: `signing` · Repo: `go-xkms` · Last verified: 2026-10-09
 
 ## Exported surface
 
@@ -64,8 +64,9 @@ it nil — `Checksum` keys its lookup by `KeyAttributes.CN`, and `kid`, not
 SignerStore() store.SignerStorer
 ```
 
-One per `Backend`, built in `New()` from the same `storage.Backend` passed as
-`BackendConfig.CertStorage`. `TenantScopedBackend.SignerStore()`
+One per `Backend`, built in `New()` by `newSignerStore`: a
+`dao.NewStoreFactory` over `kvadapter.New(BackendConfig.CertStorage)`, so the
+records share the certificates' storage. `TenantScopedBackend.SignerStore()`
 (`pkg/xkms/backend_tenant.go`) does **not** pass this through unchanged: it
 wraps the base store in `tenantScopedSignerStore`, which prefixes
 `KeyAttributes.CN` with `"{tenantID}/"` on every method before delegating —
@@ -89,8 +90,23 @@ type SignerStorer interface {
 }
 ```
 
+### `store.NewSignerStore` — `pkg/signing/store/store.go`
+
+```go
+const DatabaseName = "signing"
+
+func NewSignerStore(logger *slog.Logger, daos *qrdbsdk.DAOFactory) (*SignerStore, error)
+```
+
+The composition root injects the go-qrdb DAO factory; the store opens its own
+`signing` database from it, with two entity types: `signers` (`SignerEntry`)
+and `signatures` (`SignatureEntry`). A nil factory returns
+`ErrNilDAOFactory`; a factory that cannot serve the database or entity types
+returns `*StoreOpenError`, which unwraps to the cause (for example
+`*dao.DatabaseUnavailableError`).
+
 `pkg/signing/store` has no TPM (or other hardware) dependency: it is a plain
-`storage.Backend` client, distinct from `pkg/tpm2/store` (blob and PCR-policy
+go-qrdb DAO client, distinct from `pkg/tpm2/store` (blob and PCR-policy
 storage, genuinely TPM-specific, unaffected by this feature). The two
 packages happen to share a `SignerOpts` type name for unrelated purposes —
 `pkg/tpm2/store.SignerOpts` (`KeyAttributes`, `Backend`, `PSSOptions`,
@@ -101,7 +117,10 @@ call sites named `store.SignerOpts` — check the import path.
 `SaveSignature`/`GetSignature` key their record by
 `fmt.Sprintf("%s.%s.sig", KeyAttributes.CN, BlobCN)` (or `"%s.sig"` when
 `BlobCN` is empty) — `signatureKey` in `store.go` is the one place that
-format is written, so the two operations cannot drift on it. The record is
+format is written, so the two operations cannot drift on it. That key is the
+`SignatureEntry.Key` natural key; signers use `SignerEntry.CN`. Both entity
+IDs are `qrdbsdk.NewCryptoFieldHashGenerator` hashes of those fields, and
+every read goes through `GetByNaturalKey`. The record is
 `"digest=%x\nsignature=%x\n"`; `parseSignatureData` is its only reader.
 `KeyAttributes.TenantID` plays no part in this key: `pkg/signing/store` is
 not itself multi-tenant-aware (see `tenantScopedSignerStore` above for where
@@ -123,7 +142,7 @@ that is handled).
   returned, unwrapped, so a store outage surfaces as that store's typed error
   (e.g. `*store.ErrSignatureGet`) rather than a false positive.
 - **`SaveSignature`/`GetSignature`/`Checksum` are backend-agnostic.** They
-  operate on `storage.Backend`, not on anything TPM2-specific; `Sign`/`Verify`
+  operate on go-qrdb DAOs, not on anything TPM2-specific; `Sign`/`Verify`
   reach them through `Backend.SignerStore()` for every `xkms.Backend`, not
   through a TPM2-only path.
 - **Persistence is opt-in per call, not per key.** A key signed once with
@@ -145,9 +164,12 @@ All new errors are typed values, `errors.Is`/`errors.As`-compatible:
 | `ErrChecksumProviderRequired` | `types` | `IntegrityCheck` set, no provider resolvable |
 | `ErrIntegrityCheckFailed` | `types` | Digest does not match the persisted checksum (wrapped with the `BlobCN` via `errs.Detail`) |
 | `ErrSignatureNotFound` | `pkg/signing/store` | No record for this `CN`/`BlobCN` |
-| `ErrSignatureGet` | `pkg/signing/store` | The underlying `storage.Backend` read failed |
+| `ErrNilDAOFactory` | `pkg/signing/store` | `NewSignerStore` was given a nil DAO factory |
+| `StoreOpenError` | `pkg/signing/store` | The factory could not open the `signing` database or its entity types |
+| `ErrSignerNotFound` | `pkg/signing/store` | No signer for this `CN` |
+| `ErrSignatureGet` | `pkg/signing/store` | The DAO read failed |
 | `ErrSignatureParse` | `pkg/signing/store` | A persisted record's `digest=`/`signature=` fields did not hex-decode, wraps `ErrMalformedSignatureData` |
-| `ErrSignatureSave` | `pkg/signing/store` | The underlying `storage.Backend` write failed (pre-existing; unchanged) |
+| `ErrSignatureSave` | `pkg/signing/store` | The DAO write failed |
 
 ## Configuration
 
@@ -157,13 +179,14 @@ carrying `CertStorage storage.Backend` — every deployment that constructs a
 
 ## Persistence
 
-Through the caller-supplied `storage.Backend`, in the `"signatures"`
-qrdb-DAO collection (`"signatures/<xxhash64(key)>"`), disjoint from the
-`"certs/"` namespace `CertStorage` uses on the same backend and from the
-`"signers"` collection `Save`/`Get` use for key material. In-memory or file
-storage per deployment, matching `CertStorage`'s own durability. A
-`TenantScopedBackend`'s records live in the same collections, under CNs
-prefixed `"{tenantID}/"`.
+Through go-qrdb DAOs in the `signing` database: `signers` entities for key
+material and `signatures` entities for signature records. `xkms.New` serves
+that database from the caller's `CertStorage` through `kvadapter`, so its
+durability matches `CertStorage`. The KV store must support atomic
+conditional writes (`CompareAndSwap` / `PutIfAbsent`); DAO creates fail
+without them. A `TenantScopedBackend`'s records live in the same entity
+types, under CNs prefixed `"{tenantID}/"`. There is no migration: records
+written by the earlier raw-KV layout are not read.
 
 ## Test strategy
 
@@ -175,8 +198,12 @@ prefixed `"{tenantID}/"`.
   the two required-input refusals.
 - `pkg/signing/store/store_test.go`: `GetSignature`/`Checksum` round-trip a
   `SaveSignature` record with and without `BlobCN`, a missing record reports
-  `ErrSignatureNotFound`, a backend read failure reports `ErrSignatureGet`,
-  and a corrupted record reports `ErrSignatureParse`.
+  `ErrSignatureNotFound`, a KV read failure reports `ErrSignatureGet`,
+  and a corrupted record reports `ErrSignatureParse`. Every store runs on a
+  real in-process DAO factory over `qrdbsdk.NewMemoryKVStore()`;
+  `TestSignerStore_PersistsAcrossStores` reads back through a second store
+  what the first wrote, and `TestNewSignerStore_Refusals` covers the nil and
+  unavailable factory.
 - `pkg/xkms/service_test.go`: `Sign` with `BlobCN` persists a record readable
   back through `SignerStore().GetSignature`; without `BlobCN` it does not.
   `Verify` end to end: the exact blob signed under a `BlobCN` passes with
@@ -194,5 +221,5 @@ prefixed `"{tenantID}/"`.
 
 None added. `store.SignerStore` logs `Debug` on save/read when constructed
 with a non-nil `*slog.Logger`; `compositeBackend` constructs it with `nil`
-today (`pkg/xkms/keystore.go New`), matching `CertStorage`'s own lack of a
+today (`pkg/xkms/keystore.go newSignerStore`), matching `CertStorage`'s own lack of a
 dedicated logger at that layer.

@@ -13,7 +13,10 @@
 
 package staticpw
 
-import "errors"
+import (
+	"errors"
+	"fmt"
+)
 
 // ErrDAOCreation is returned when the DAO layer fails to initialize.
 type ErrDAOCreation struct {
@@ -30,12 +33,31 @@ func (e ErrDAOCreation) Unwrap() error {
 	return e.Cause
 }
 
-// ErrNilKVStore is returned when a nil kvstore.KVStore is provided.
-type ErrNilKVStore struct{}
+// StoreError wraps a failure reading or writing the password record at Key.
+type StoreError struct {
+	Op  string
+	Key string
+	Err error
+}
 
 // Error implements the error interface.
-func (e ErrNilKVStore) Error() string {
-	return "staticpw: nil kvstore"
+func (e *StoreError) Error() string {
+	return fmt.Sprintf("staticpw: %s %q: %v", e.Op, e.Key, e.Err)
+}
+
+// Unwrap returns the underlying cause.
+func (e *StoreError) Unwrap() error { return e.Err }
+
+// ConflictError reports a write to the password record at Key that kept
+// losing the race against concurrent writers of the same record.
+type ConflictError struct {
+	Op  string
+	Key string
+}
+
+// Error implements the error interface.
+func (e *ConflictError) Error() string {
+	return fmt.Sprintf("staticpw: %s %q: the record changed concurrently", e.Op, e.Key)
 }
 
 var (
@@ -104,9 +126,9 @@ var (
 	// ErrStoreAlreadyLocked is returned when Lock is called on an already-locked store.
 	ErrStoreAlreadyLocked = errors.New("staticpw: store is already locked")
 
-	// ErrNilBarrierRegistry is returned when a nil BarrierRegistry is provided
-	// to the TenantPasswordStoreManager constructor.
-	ErrNilBarrierRegistry = errors.New("staticpw: barrier registry is nil")
+	// ErrNilTenantStores is returned when no tenant store resolver is
+	// provided to the TenantPasswordStoreManager constructor.
+	ErrNilTenantStores = errors.New("staticpw: tenant store resolver is nil")
 
 	// ErrNotConfigured is returned when a required component (manager or store)
 	// has not been configured.

@@ -31,6 +31,37 @@ func newTestBarrierService(t *testing.T) *BarrierService {
 	return NewBarrierService(t.TempDir(), slog.Default())
 }
 
+// The seal-state hook fires once per successful transition, after the state
+// has changed, so a listener reading IsSealed sees the new state.
+func TestBarrierService_SealStateHookFollowsTransitions(t *testing.T) {
+	svc := newTestBarrierService(t)
+	var seen []bool
+	svc.SetSealStateHook(func() { seen = append(seen, svc.IsSealed()) })
+
+	require.NoError(t, svc.Initialize("hook-test-password", "passphrase"))
+	require.NoError(t, svc.Seal())
+	require.NoError(t, svc.Unseal("hook-test-password", ""))
+
+	assert.Equal(t, []bool{false, true, false}, seen)
+}
+
+// A failed transition leaves the state unchanged and must not notify.
+func TestBarrierService_SealStateHookSkipsFailures(t *testing.T) {
+	svc := newTestBarrierService(t)
+	calls := 0
+	svc.SetSealStateHook(func() { calls++ })
+
+	require.ErrorIs(t, svc.Seal(), ErrBarrierNotInitialized)
+	assert.False(t, svc.IsSealed(), "no barrier held, so not sealed")
+
+	require.NoError(t, svc.Initialize("hook-test-password", "passphrase"))
+	require.NoError(t, svc.Seal())
+	calls = 0
+	require.Error(t, svc.Unseal("wrong-password", ""))
+	assert.Zero(t, calls)
+	assert.True(t, svc.IsSealed())
+}
+
 // mockSealer is a minimal types.Sealer that always reports CanSeal as true.
 // It stores the data in the SealedData ciphertext field so Unseal can return it.
 type mockSealer struct {

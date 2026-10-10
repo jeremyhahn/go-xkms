@@ -1,6 +1,6 @@
 # Signing — CLI
 
-> **Status: NORMATIVE** · Feature: `signing` · Repo: `go-xkms` · Last verified: 2026-09-23
+> **Status: NORMATIVE** · Feature: `signing` · Repo: `go-xkms` · Last verified: 2026-10-09
 
 No CLI surface: `SignOptions.BlobCN` and `VerifyOpts.IntegrityCheck` are
 reachable only through the embedded Go SDK's package-level `xkms.Sign` /

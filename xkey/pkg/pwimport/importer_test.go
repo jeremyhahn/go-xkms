@@ -23,10 +23,25 @@ import (
 	xkms "github.com/jeremyhahn/go-xkms/sdk/go"
 )
 
+// newTestPasswordStore opens a static password store over backend through a
+// go-qrdb DAO factory.
+func newTestPasswordStore(t *testing.T, backend xkms.StorageBackend) *xkms.StaticPasswordDAOStore {
+	t.Helper()
+	daos, err := xkms.NewBackendDAOFactory(backend)
+	if err != nil {
+		t.Fatalf("password DAO factory: %v", err)
+	}
+	store, err := xkms.NewStaticPasswordStore(daos)
+	if err != nil {
+		t.Fatalf("password store: %v", err)
+	}
+	return store
+}
+
 func newTestImporter(t *testing.T) *Importer {
 	t.Helper()
 	backend := xkms.NewStorageMemory()
-	store := xkms.NewStaticPasswordStore(backend)
+	store := newTestPasswordStore(t, backend)
 	return NewImporter(store)
 }
 
@@ -277,7 +292,7 @@ func TestImporter_Import_GetErrorOtherThanNotFound(t *testing.T) {
 	}
 
 	backend := xkms.NewStorageMemory()
-	realStore := xkms.NewStaticPasswordStore(backend)
+	realStore := newTestPasswordStore(t, backend)
 	getErr := errors.New("backend read failure")
 	store := &getErrorStore{StaticPasswordStore: realStore, getErr: getErr}
 	imp := NewImporter(store)
@@ -347,7 +362,7 @@ func TestImporter_Preview(t *testing.T) {
 
 	// Verify entries are not stored.
 	backend := xkms.NewStorageMemory()
-	store := xkms.NewStaticPasswordStore(backend)
+	store := newTestPasswordStore(t, backend)
 	list, _ := store.List()
 	if len(list) != 0 {
 		t.Error("Preview() should not store entries")
@@ -366,7 +381,7 @@ func TestImporter_Import_WithTargetFolder(t *testing.T) {
 	}
 
 	backend := xkms.NewStorageMemory()
-	store := xkms.NewStaticPasswordStore(backend)
+	store := newTestPasswordStore(t, backend)
 	imp := NewImporter(store)
 
 	result, err := imp.Import(t.Context(), &ImportOptions{

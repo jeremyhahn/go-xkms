@@ -108,7 +108,7 @@ async function installBrowserViewInitScript(
             sealer_backend: 'software',
             api_explorer_sandbox_policy: 'allow-same-origin allow-scripts allow-forms',
             developer_tools: true,
-            browser_extension_enabled: false,
+            local_app_access_enabled: false,
           }),
           GetDeveloperTools: async () => true,
         },

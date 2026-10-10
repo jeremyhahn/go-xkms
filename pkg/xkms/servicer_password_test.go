@@ -3,7 +3,6 @@ package xkms
 import (
 	"context"
 	"errors"
-	"log/slog"
 	"testing"
 
 	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
@@ -11,7 +10,6 @@ import (
 	"github.com/jeremyhahn/go-xkms/pkg/auth"
 	"github.com/jeremyhahn/go-xkms/pkg/seal"
 	"github.com/jeremyhahn/go-xkms/pkg/staticpw"
-	"github.com/jeremyhahn/go-xkms/pkg/storage"
 	"github.com/jeremyhahn/go-xkms/pkg/testutil"
 	"github.com/jeremyhahn/go-xkms/pkg/testutil/kdftest"
 	"github.com/stretchr/testify/assert"
@@ -125,8 +123,8 @@ func TestPasswordGenerate_NotConfigured(t *testing.T) {
 func setupServiceWithPasswordStore(t *testing.T) *XKMSService {
 	t.Helper()
 	svc, _, _ := setupServiceWithProviders(t)
-	backend := storage.NewMemory()
-	store := staticpw.NewStore(backend)
+	store, err := staticpw.NewStore(testutil.NewMemoryDAOFactory())
+	require.NoError(t, err)
 	svc.SetPasswordStore(store)
 	return svc
 }
@@ -627,56 +625,23 @@ func openPersonalVault(svc *XKMSService, ctx context.Context) error {
 }
 
 // setupServiceWithPasswordManager creates an XKMSService with a
-// TenantPasswordStoreManager backed by a registered and unsealed tenant. No
-// PIN backend is wired: personal sessions open with the user's own vault
-// factors, never a deployment-wide PIN.
-func setupServiceWithPasswordManager(t *testing.T) (*XKMSService, *seal.BarrierRegistry) {
+// TenantPasswordStoreManager over in-memory tenant stores. No PIN backend is
+// wired: personal sessions open with the user's own vault factors, never a
+// deployment-wide PIN.
+func setupServiceWithPasswordManager(t *testing.T) (*XKMSService, *testutil.TenantStores) {
 	t.Helper()
 	svc, _, _ := setupServiceWithProviders(t)
 
-	// Create a system barrier with a software strategy.
-	sysBackend, err := storage.NewMemoryBackend()
+	systemStore, err := staticpw.NewStore(testutil.NewMemoryDAOFactory())
 	require.NoError(t, err)
-	sysBarrier, err := seal.NewBarrier(
-		slog.Default(),
-		sysBackend,
-		seal.BarrierConfig{
-			RootKeyPath:     "root-key",
-			PreferenceOrder: []seal.StrategyID{seal.StrategyPassphrase},
-		},
-		seal.NewSoftwareStrategy(),
-	)
-	require.NoError(t, err)
-
-	ctx := context.Background()
-	sysCreds, err := seal.CredentialsFor(t.Context(), []byte("test-pw"))
-	require.NoError(t, err)
-	defer sysCreds.Secret.Destroy()
-	err = sysBarrier.Initialize(ctx, sysCreds)
-	require.NoError(t, err)
-
-	// Create registry and register a tenant.
-	registry, err := seal.NewBarrierRegistry(sysBarrier)
-	require.NoError(t, err)
-
-	_, err = registry.RegisterTenantDefault("tenant-1")
-	require.NoError(t, err)
-	tenantCreds, err := seal.CredentialsFor(t.Context(), []byte("tenant-pw"))
-	require.NoError(t, err)
-	defer tenantCreds.Secret.Destroy()
-	err = registry.InitializeTenant(ctx, "tenant-1", tenantCreds)
-	require.NoError(t, err)
-
-	// Create system password store and tenant manager.
-	systemBackend := storage.NewMemory()
-	systemStore := staticpw.NewStore(systemBackend)
 	svc.SetPasswordStore(systemStore)
 
-	manager, err := staticpw.NewTenantPasswordStoreManager(registry, systemStore, staticpw.WithPasskeyRelyingParty("kms.example.com"), staticpw.WithPassphraseKDFParams(kdftest.CheapPassphraseParams))
+	stores := testutil.NewTenantStores()
+	manager, err := staticpw.NewTenantPasswordStoreManager(stores, systemStore, staticpw.WithPasskeyRelyingParty("kms.example.com"), staticpw.WithPassphraseKDFParams(kdftest.CheapPassphraseParams))
 	require.NoError(t, err)
 	svc.SetPasswordStoreManager(manager)
 
-	return svc, registry
+	return svc, stores
 }
 
 // contextWithTenant returns a context with an auth identity containing the given tenant ID.
@@ -740,14 +705,13 @@ func TestPasswordStoreUnlock_NoTenantID(t *testing.T) {
 }
 
 func TestPasswordStoreUnlock_TenantSealed(t *testing.T) {
-	svc, registry := setupServiceWithPasswordManager(t)
+	svc, stores := setupServiceWithPasswordManager(t)
 	ctx := contextWithTenant("tenant-1")
 
 	// Seal the tenant barrier so unlock fails.
-	err := registry.SealTenant("tenant-1")
-	require.NoError(t, err)
+	stores.Seal("tenant-1")
 
-	err = openPersonalVault(svc, ctx)
+	err := openPersonalVault(svc, ctx)
 	require.Error(t, err)
 	assert.ErrorIs(t, err, seal.ErrTenantSealed)
 }

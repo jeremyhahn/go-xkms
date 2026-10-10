@@ -34,19 +34,19 @@ import (
 	gossh "golang.org/x/crypto/ssh"
 
 	"github.com/jeremyhahn/go-xkms/pkg/api/rest"
-	"github.com/jeremyhahn/go-xkms/pkg/storage"
+	"github.com/jeremyhahn/go-xkms/pkg/testutil"
 	sdkssh "github.com/jeremyhahn/go-xkms/sdk/go/client/ssh"
 )
 
 // newSSHTestServer constructs an httptest.Server fronted by the real
-// SSH handlers backed by an in-memory storage.Backend.
+// SSH handlers backed by an in-memory DAO factory.
 func newSSHTestServer(t *testing.T) (*httptest.Server, sdkssh.Client, func()) {
 	t.Helper()
-	backend, err := storage.NewMemoryBackend()
+	stores, err := sdkssh.NewStores(testutil.NewMemoryDAOFactory())
 	if err != nil {
-		t.Fatalf("backend: %v", err)
+		t.Fatalf("NewStores: %v", err)
 	}
-	embedded, err := sdkssh.NewEmbedded(sdkssh.EmbeddedOptions{Backend: backend})
+	embedded, err := sdkssh.NewEmbedded(sdkssh.EmbeddedOptions{Stores: stores})
 	if err != nil {
 		t.Fatalf("NewEmbedded: %v", err)
 	}

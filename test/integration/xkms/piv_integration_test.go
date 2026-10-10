@@ -27,8 +27,10 @@ import (
 	"os"
 	"testing"
 
+	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
 	"github.com/jeremyhahn/go-xkms/pkg/backend/software"
 	"github.com/jeremyhahn/go-xkms/pkg/backend/tpm2"
+	"github.com/jeremyhahn/go-xkms/pkg/dao"
 	"github.com/jeremyhahn/go-xkms/pkg/pivcert"
 	pivcertfile "github.com/jeremyhahn/go-xkms/pkg/pivcert/file"
 	"github.com/jeremyhahn/go-xkms/pkg/storage"
@@ -56,13 +58,7 @@ func setupPIVTest(t *testing.T, backendName string) func() {
 	xkms.ResetPIV()
 	xkms.Reset()
 
-	// Create PIV certificate storage backed by in-memory storage
-	pivStore, err := pivcertfile.NewFileBackend(&pivcert.FileStorageConfig{
-		Backend:    storage.New(),
-		DEREnabled: true,
-		PEMEnabled: true,
-	})
-	require.NoError(t, err, "failed to create PIV cert store")
+	pivStore := newPIVCertStore(t)
 
 	// Create software backend for key operations
 	softwareBackend, err := software.NewBackend(&software.Config{
@@ -155,13 +151,7 @@ func requireTPM2PIV(t *testing.T) func() {
 	})
 	require.NoError(t, err, "failed to initialize XKMS service")
 
-	// Create PIV cert store for TPM2
-	tpm2PivStore, err := pivcertfile.NewFileBackend(&pivcert.FileStorageConfig{
-		Backend:    storage.New(),
-		DEREnabled: true,
-		PEMEnabled: true,
-	})
-	require.NoError(t, err, "failed to create TPM2 PIV cert store")
+	tpm2PivStore := newPIVCertStore(t)
 
 	err = xkms.InitializePIV(&xkms.PIVManagerConfig{
 		Stores: map[string]pivcert.PIVCertificateStorage{
@@ -183,14 +173,12 @@ func requireTPM2PIV(t *testing.T) func() {
 	}
 }
 
-// newPIVCertStore creates a new file-backed PIV certificate store with
-// in-memory storage for testing.
+// newPIVCertStore creates a PIV certificate store over an in-memory go-qrdb
+// DAO factory.
 func newPIVCertStore(t *testing.T) pivcert.PIVCertificateStorage {
 	t.Helper()
 	store, err := pivcertfile.NewFileBackend(&pivcert.FileStorageConfig{
-		Backend:    storage.New(),
-		DEREnabled: true,
-		PEMEnabled: true,
+		DAOs: dao.NewStoreFactory(qrdbsdk.NewMemoryKVStore()),
 	})
 	require.NoError(t, err, "failed to create PIV cert store")
 	return store

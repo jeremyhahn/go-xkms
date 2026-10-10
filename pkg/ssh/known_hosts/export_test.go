@@ -26,7 +26,7 @@ import (
 	"golang.org/x/crypto/ssh"
 
 	"github.com/jeremyhahn/go-xkms/pkg/ssh/scope"
-	"github.com/jeremyhahn/go-xkms/pkg/storage"
+	"github.com/jeremyhahn/go-xkms/pkg/testutil"
 )
 
 func testHostKey(t *testing.T) ssh.PublicKey {
@@ -44,7 +44,7 @@ func testHostKey(t *testing.T) ssh.PublicKey {
 
 func TestEmit_RoundTripThroughStore(t *testing.T) {
 	ctx := context.Background()
-	store, err := NewBackendStore(storage.New())
+	store, err := NewDAOStore(testutil.NewMemoryDAOFactory())
 	if err != nil {
 		t.Fatalf("NewBackendStore: %v", err)
 	}
@@ -82,7 +82,7 @@ func TestEmit_RoundTripThroughStore(t *testing.T) {
 
 func TestEmitAll_AndImport_SyncBack(t *testing.T) {
 	ctx := context.Background()
-	src, _ := NewBackendStore(storage.New())
+	src, _ := NewDAOStore(testutil.NewMemoryDAOFactory())
 	for _, h := range []string{"a.example.com", "b.example.com"} {
 		if err := src.Add(ctx, PinFromPublicKey(h, scope.User, "alice", testHostKey(t), SourceManual)); err != nil {
 			t.Fatalf("Add %s: %v", h, err)
@@ -103,7 +103,7 @@ func TestEmitAll_AndImport_SyncBack(t *testing.T) {
 	}
 
 	// ImportKnownHostsFile into a fresh store (simulating sync-back).
-	dst, _ := NewBackendStore(storage.New())
+	dst, _ := NewDAOStore(testutil.NewMemoryDAOFactory())
 	added, err := ImportKnownHostsFile(ctx, dst, scope.User, "alice", khFile, SourceFirstContact)
 	if err != nil {
 		t.Fatalf("Import: %v", err)
@@ -154,7 +154,7 @@ func TestImportKnownHostsFile_FailsClosedOnStoreError(t *testing.T) {
 		t.Fatalf("write: %v", err)
 	}
 
-	base, _ := NewBackendStore(storage.New())
+	base, _ := NewDAOStore(testutil.NewMemoryDAOFactory())
 	broken := &failingGetStore{Store: base, err: errors.New("store is down")}
 
 	added, err := ImportKnownHostsFile(context.Background(), broken, scope.User, "alice", path, SourceFirstContact)
@@ -177,7 +177,7 @@ func TestImportKnownHostsFile_CancelledContextIsNotAnEmptyStore(t *testing.T) {
 		t.Fatalf("write: %v", err)
 	}
 
-	base, _ := NewBackendStore(storage.New())
+	base, _ := NewDAOStore(testutil.NewMemoryDAOFactory())
 	broken := &failingGetStore{Store: base, err: context.DeadlineExceeded}
 
 	added, err := ImportKnownHostsFile(context.Background(), broken, scope.User, "alice", path, SourceFirstContact)

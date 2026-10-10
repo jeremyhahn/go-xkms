@@ -44,6 +44,11 @@ var (
 
 	// ErrUSBDeviceTransportCreateFailed indicates the PKCS#11 transport could not be created.
 	ErrUSBDeviceTransportCreateFailed = errors.New("usb device: PKCS#11 transport creation failed")
+
+	// ErrUSBDeviceGUINotListening indicates local app access is on, so the
+	// keys are reached through the running xKey, but no xKey answered on
+	// its socket. The device does not fall back to opening the keys itself.
+	ErrUSBDeviceGUINotListening = errors.New("usb device: local app access is on but no unlocked xKey is listening; open and unlock xKey, or turn local app access off with 'xkey app-access disable'")
 )
 
 // Default USB device configuration values.
@@ -219,10 +224,13 @@ func runUSBDeviceStart(_ *cobra.Command, _ []string) error {
 		slog.String("serial", ccid.CCIDDeviceSerial),
 	)
 
-	// Create PKCS#11 embedded transport.
-	pkcs11Transport, err := pkcs11.NewEmbeddedTransport()
+	// Setup signal handling for graceful shutdown.
+	ctx, cancel := setupUSBDeviceSignalHandler(logger)
+	defer cancel()
+
+	pkcs11Transport, err := usbDevicePKCS11Transport(ctx)
 	if err != nil {
-		return errors.Join(ErrUSBDeviceTransportCreateFailed, err)
+		return err
 	}
 
 	// Create the PKCS#11 bridge that translates APDUs to PKCS#11 operations.
@@ -232,16 +240,36 @@ func runUSBDeviceStart(_ *cobra.Command, _ []string) error {
 	}
 	bridge.SetDefaultBackend(backend)
 
-	// Setup signal handling for graceful shutdown.
-	ctx, cancel := setupUSBDeviceSignalHandler(logger)
-	defer cancel()
-
 	switch gadget.TransportType(transportMode) {
 	case gadget.TransportGadget:
 		return runUSBDeviceGadget(ctx, bridge, logger)
 	default:
 		return runUSBDeviceUHID(ctx, bridge, logger)
 	}
+}
+
+// usbDevicePKCS11Transport picks the device's PKCS#11 transport from the
+// local app access setting. On, the keys stay in the running xKey and the
+// device reaches them over its socket; off, the device opens them
+// in-process. A setting that says IPC with no xKey answering is an error,
+// never a silent switch to the in-process transport.
+func usbDevicePKCS11Transport(ctx context.Context) (ccid.PKCS11Transport, error) {
+	enabled, err := localAppAccessEnabled()
+	if err != nil {
+		return nil, err
+	}
+	if !enabled {
+		transport, embeddedErr := pkcs11.NewEmbeddedTransport()
+		if embeddedErr != nil {
+			return nil, errors.Join(ErrUSBDeviceTransportCreateFailed, embeddedErr)
+		}
+		return transport, nil
+	}
+	transport := pkcs11.NewIPCTransport("")
+	if err := transport.Connect(ctx); err != nil {
+		return nil, &SentinelCauseError{Sentinel: ErrUSBDeviceGUINotListening, Cause: err}
+	}
+	return transport, nil
 }
 
 // runUSBDeviceUHID starts the CCID device using UHID software HID emulation.

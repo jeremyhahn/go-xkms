@@ -30,6 +30,10 @@ export function IsInitialized() {
   return window['go']['services']['BarrierService']['IsInitialized']();
 }
 
+export function IsSealed() {
+  return window['go']['services']['BarrierService']['IsSealed']();
+}
+
 export function IsUnsealed() {
   return window['go']['services']['BarrierService']['IsUnsealed']();
 }
@@ -68,6 +72,10 @@ export function SetLastStrategy(arg1) {
 
 export function SetPostUnsealHook(arg1) {
   return window['go']['services']['BarrierService']['SetPostUnsealHook'](arg1);
+}
+
+export function SetSealStateHook(arg1) {
+  return window['go']['services']['BarrierService']['SetSealStateHook'](arg1);
 }
 
 export function SetTPMSealerFunc(arg1) {

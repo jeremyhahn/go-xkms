@@ -1,6 +1,6 @@
 # PKCS#11 — Architecture
 
-> **Status: NORMATIVE** · Feature: `pkcs11` · Module: `go-xkms/xkey` · Last verified: 2026-09-27
+> **Status: NORMATIVE** · Feature: `pkcs11` · Module: `go-xkms/xkey` · Last verified: 2026-10-10
 
 ## Scope
 
@@ -43,15 +43,22 @@ owns two implementations of it.
 ## Shape chosen: two `PKCS11Transport` implementations, one per call site
 
 `xkey/pkg/pkcs11.EmbeddedTransport` (`service.go`) delegates every
-operation directly to the local `xkms` singleton (`xkms.Get()` /
-`xkms.GetBackend()`) — no IPC, no socket. It implements all 20 operations
+operation directly to the matching method of the local `xkms` singleton
+(`xkms.Get()`) — no IPC, no socket, and no key logic of its own. It implements all 21 operations
 of `xkms.PKCS11Transport`: key generation, sign/verify, symmetric and
 asymmetric encrypt/decrypt, key derivation (HKDF / ECDH), key wrap/unwrap
 and import/export, and the seven PIV slot operations. It is the transport
 `xkey usb device start` hands to `ccid.NewPKCS11Bridge`
-(`xkey/cmd/xkey/cmd/usb_device.go`) so the virtual CCID smartcard device
-translates APDUs into PKCS#11 calls in-process, and it is what
-`PKCS11IPCHandler` (below) delegates to on the server side.
+(`xkey/cmd/xkey/cmd/usb_device.go`) while local app access is off, so the
+virtual CCID smartcard device translates APDUs into PKCS#11 calls
+in-process, and it is what `PKCS11IPCHandler` (below) delegates to on the
+server side.
+
+While local app access is on, `xkey usb device start` uses `IPCTransport`
+instead, to reach the keys the unlocked GUI holds. If no GUI answers, it
+fails with `ErrUSBDeviceGUINotListening` rather than falling back to
+in-process keys: the setting says which process holds the keys, and a silent
+switch would open a second copy of the store behind the user's back.
 
 `xkey/pkg/pkcs11.IPCTransport` (`ipc_transport.go`) is a JSON-over-Unix-socket
 client for the out-of-process case: a caller that is not the xkey process
@@ -64,33 +71,30 @@ instance socket, then the XDG runtime default). Each request opens a fresh
 connection (`sendMessage`) and closes it; `Close` is a no-op because there
 is no persistent connection to release.
 
-## Shape chosen: the IPC wire surface is a deliberate subset, not the full 20
+## Shape chosen: one wire action per transport operation
 
-`IPCTransport` implements only `Connect` (round-trips a `barrier_status`
-request to prove the socket is live), `Sign`, `ListPIVSlots`, and
-`GetPIVCertificate`. Every other method — `GenerateKey`, `Verify`,
-`Encrypt`, `EncryptAsym`, `Decrypt`, `DeriveKey`, `DeriveKeyECDH`,
-`WrapKeyByID`, `UnwrapKeyByID`, `ExportKeyMaterial`,
-`GetImportParameters`, `ImportKey`, `GeneratePIVKey`,
-`Store`/`Delete`/`Import`/`ExportPIVCertificate`, `GeneratePIVCSR` —
-returns the typed sentinel `ErrIPCNotImplemented`. This mirrors the wire
-protocol exactly: `xkey/pkg/ipc`'s `PKCS11Payload` and `PKCS11Handler`
-interface (`pkg/ipc/protocol.go`, `pkg/ipc/server.go`) define only four
-actions (`ActionSign`, `ActionGetPIVCertificate`, `ActionListPIVSlots`,
-`ActionBarrierStatus`) — the operations an out-of-process signing helper
-and the PIV/CCID bridge actually need today. Widening the IPC surface to
-match `EmbeddedTransport`'s full 20 operations means growing the wire
-protocol (a new `PKCS11Payload` field, handler method, and dispatch entry)
-per operation; that has not been done for the operations this MVP does not
-carry. This is a scope gap, not a design decision to leave unfinished —
-see the note in [engineering.md](engineering.md#known-gaps).
+`IPCTransport` carries every `PKCS11Transport` operation: `Connect`
+round-trips a `barrier_status` request to prove the socket is live, and
+each other method is one action whose request and result are the SDK
+transport types themselves (`xkey/pkg/ipc` `PKCS11Payload` /
+`PKCS11Result`). Reusing those types keeps one definition of each
+operation's fields, so the wire cannot drift from the contract it carries.
+Dispatch and validation are map-based (`pkcs11Handlers`,
+`pkcs11Validators` in `xkey/pkg/ipc`): a request missing its body or a
+required field is rejected before any handler runs.
+
+Rejected: a subset carrying only signing and PIV certificate reads. A
+caller that picks the IPC transport (local app access on) would get a
+`PKCS11Transport` that fails most of its contract, and the in-process and
+socket paths would behave differently for the same token.
 
 ## Shape chosen: barrier-gated on the server side, not the client side
 
 `PKCS11IPCHandler` (`xkey/pkg/gui/services/pkcs11_ipc_handler.go`) is the
 IPC-server-side counterpart: it implements `ipc.PKCS11Handler` by
-delegating to an `EmbeddedTransport` it holds, decoding/encoding the
-base64 payload fields the wire format uses. Every handler method except
+delegating each method to the matching method of an `EmbeddedTransport` it
+holds, so the socket can release nothing the in-process call would not.
+Every handler method except
 `HandlePKCS11BarrierStatus` calls `checkBarrier()` first and fails closed
 with `ipc.ErrBarrierSealed` when the caller-supplied `isSealed` callback
 reports the barrier sealed — `barrier_status` itself must never require an

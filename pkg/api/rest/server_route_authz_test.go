@@ -33,8 +33,6 @@ import (
 	"github.com/jeremyhahn/go-xkms/pkg/auth"
 	"github.com/jeremyhahn/go-xkms/pkg/seal"
 	credentialspkg "github.com/jeremyhahn/go-xkms/pkg/server/credentials"
-	"github.com/jeremyhahn/go-xkms/pkg/staticpw"
-	"github.com/jeremyhahn/go-xkms/pkg/storage"
 	"github.com/jeremyhahn/go-xkms/pkg/testutil/tpmpolicytest"
 	tpmpolicy "github.com/jeremyhahn/go-xkms/pkg/tpm2/policy"
 	"github.com/jeremyhahn/go-xkms/pkg/xkms"
@@ -243,7 +241,7 @@ func newGatedRouteServer(t *testing.T, rbac qrdbtransport.RBACClient, authn auth
 		Logger:          logger,
 		XKMSService:     svc,
 		BarrierRegistry: registry,
-		PasswordStore:   staticpw.NewStore(storage.NewMemory()),
+		PasswordStore:   newTestPasswordStore(t),
 		CA:              ca,
 		EnableRBAC:      true,
 		RBACAuthorizer:  auth.NewAuthorizer(rbac),

@@ -15,27 +15,28 @@ package keys_test
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"testing"
 
+	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
+
 	"github.com/jeremyhahn/go-xkms/pkg/ssh/keys"
+	"github.com/jeremyhahn/go-xkms/pkg/ssh/records"
 	"github.com/jeremyhahn/go-xkms/pkg/ssh/scope"
-	"github.com/jeremyhahn/go-xkms/pkg/storage"
+	"github.com/jeremyhahn/go-xkms/pkg/testutil"
 )
 
-// newLayoutStore returns a BackendStore over a fresh in-memory backend,
-// and the backend so a test can inspect the raw storage keys.
-func newLayoutStore(t *testing.T) (*keys.BackendStore, storage.Backend) {
+// newLayoutStore returns a DAOStore over a fresh in-memory DAO factory, and
+// the factory so a test can inspect the stored records.
+func newLayoutStore(t *testing.T) (*keys.DAOStore, *qrdbsdk.DAOFactory) {
 	t.Helper()
-	backend, err := storage.NewMemoryBackend()
-	if err != nil {
-		t.Fatalf("backend: %v", err)
-	}
-	store, err := keys.NewBackendStore(backend)
+	daos := testutil.NewMemoryDAOFactory()
+	store, err := keys.NewDAOStore(daos)
 	if err != nil {
 		t.Fatalf("store: %v", err)
 	}
-	return store, backend
+	return store, daos
 }
 
 // putKey generates a software ed25519 key at (sc, owner, name) and stores it.
@@ -50,35 +51,44 @@ func putKey(t *testing.T, store keys.Store, sc scope.Scope, owner, name string) 
 	return store.Put(context.Background(), k)
 }
 
-// storedKeys returns every raw key in backend.
-func storedKeys(t *testing.T, backend storage.Backend) []string {
+// storedPaths returns the path of every record of kind in the platform
+// partition of daos.
+func storedPaths(t *testing.T, daos *qrdbsdk.DAOFactory, kind scope.Kind) []string {
 	t.Helper()
-	all, err := backend.List(context.Background(), "")
+	table, err := records.New[json.RawMessage](daos, kind)
 	if err != nil {
-		t.Fatalf("list backend: %v", err)
+		t.Fatalf("records.New: %v", err)
 	}
-	return all
+	all, err := table.List(context.Background(), "", "")
+	if err != nil {
+		t.Fatalf("list records: %v", err)
+	}
+	paths := make([]string, 0, len(all))
+	for _, e := range all {
+		paths = append(paths, e.Path)
+	}
+	return paths
 }
 
-func TestBackendStore_WritesScopeLayoutPath(t *testing.T) {
+func TestDAOStore_WritesScopeLayoutPath(t *testing.T) {
 	tests := []struct {
 		scope scope.Scope
 		owner string
 		want  string
 	}{
-		{scope.Tenant, "acme", "ssh/shared/keys/deploy"},
-		{scope.User, "alice", "ssh/users/alice/keys/deploy"},
-		{scope.Service, "ci", "ssh/services/ci/keys/deploy"},
+		{scope.Tenant, "acme", "system/ssh/shared/keys/deploy"},
+		{scope.User, "alice", "system/ssh/users/alice/keys/deploy"},
+		{scope.Service, "ci", "system/ssh/services/ci/keys/deploy"},
 	}
 	for _, tt := range tests {
 		t.Run(string(tt.scope), func(t *testing.T) {
-			store, backend := newLayoutStore(t)
+			store, daos := newLayoutStore(t)
 			if err := putKey(t, store, tt.scope, tt.owner, "deploy"); err != nil {
 				t.Fatalf("Put: %v", err)
 			}
-			got := storedKeys(t, backend)
+			got := storedPaths(t, daos, scope.KindKeys)
 			if len(got) != 1 || got[0] != tt.want {
-				t.Fatalf("stored keys = %v, want [%s]", got, tt.want)
+				t.Fatalf("stored paths = %v, want [%s]", got, tt.want)
 			}
 			k, err := store.Get(context.Background(), tt.scope, tt.owner, "deploy")
 			if err != nil {
@@ -92,13 +102,43 @@ func TestBackendStore_WritesScopeLayoutPath(t *testing.T) {
 	}
 }
 
-// TestBackendStore_TenantOwnerIsAuthoritative proves a tenant-scoped key,
+// TestDAOStore_PartitionsAreDisjoint proves a tenant partition neither
+// sees nor alters the platform partition's keys.
+func TestDAOStore_PartitionsAreDisjoint(t *testing.T) {
+	ctx := context.Background()
+	store, daos := newLayoutStore(t)
+	acme, err := store.Partition("acme")
+	if err != nil {
+		t.Fatalf("Partition: %v", err)
+	}
+	if err := putKey(t, store, scope.User, "alice", "deploy"); err != nil {
+		t.Fatalf("Put platform: %v", err)
+	}
+	var nf *keys.KeyNotFoundError
+	if _, err := acme.Get(ctx, scope.User, "alice", "deploy"); !errors.As(err, &nf) {
+		t.Fatalf("Get through tenant partition: want *KeyNotFoundError, got %T: %v", err, err)
+	}
+	if err := putKey(t, acme, scope.User, "alice", "deploy"); err != nil {
+		t.Fatalf("Put tenant: %v", err)
+	}
+	if got, err := acme.List(ctx, "", ""); err != nil || len(got) != 1 {
+		t.Fatalf("tenant List = %d keys, err %v; want 1", len(got), err)
+	}
+	if got := storedPaths(t, daos, scope.KindKeys); len(got) != 1 {
+		t.Fatalf("platform partition holds %v, want its one key", got)
+	}
+	if _, err := store.Partition("bad/tenant"); err == nil {
+		t.Fatal("Partition(bad/tenant) succeeded")
+	}
+}
+
+// TestDAOStore_TenantOwnerIsAuthoritative proves a tenant-scoped key,
 // whose path carries no owner, is never aliased by another owner: it
 // answers as missing, survives Delete, refuses overwrite and is filtered
 // from the other owner's listing.
-func TestBackendStore_TenantOwnerIsAuthoritative(t *testing.T) {
+func TestDAOStore_TenantOwnerIsAuthoritative(t *testing.T) {
 	ctx := context.Background()
-	store, backend := newLayoutStore(t)
+	store, daos := newLayoutStore(t)
 	if err := putKey(t, store, scope.Tenant, "acme", "deploy"); err != nil {
 		t.Fatalf("Put: %v", err)
 	}
@@ -113,7 +153,7 @@ func TestBackendStore_TenantOwnerIsAuthoritative(t *testing.T) {
 	if err := store.Delete(ctx, scope.Tenant, "globex", "deploy"); !errors.As(err, &nf) {
 		t.Fatalf("Delete as other owner: want *KeyNotFoundError, got %T: %v", err, err)
 	}
-	if got := storedKeys(t, backend); len(got) != 1 {
+	if got := storedPaths(t, daos, scope.KindKeys); len(got) != 1 {
 		t.Fatalf("Delete as other owner removed the key: %v", got)
 	}
 
@@ -152,22 +192,22 @@ func TestBackendStore_TenantOwnerIsAuthoritative(t *testing.T) {
 	}
 }
 
-// TestBackendStore_List_FiltersByKind proves a listing keeps only key
-// records: a known_hosts pin and an authorized_keys entry under the same
-// scope and owner, and other SSH features sharing the view, never leak in.
-func TestBackendStore_List_FiltersByKind(t *testing.T) {
+// TestDAOStore_List_FiltersByKind proves a listing keeps only key records:
+// a known_hosts pin and an authorized_keys entry under the same scope, owner
+// and name never leak in.
+func TestDAOStore_List_FiltersByKind(t *testing.T) {
 	ctx := context.Background()
-	store, backend := newLayoutStore(t)
+	store, daos := newLayoutStore(t)
 	if err := putKey(t, store, scope.User, "alice", "laptop"); err != nil {
 		t.Fatalf("Put: %v", err)
 	}
-	for _, foreign := range []string{
-		"ssh/users/alice/known_hosts/laptop",
-		"ssh/users/alice/authorized_keys/laptop",
-		"ssh/sessions/laptop",
-	} {
-		if err := backend.Put(ctx, foreign, []byte("{not a key envelope")); err != nil {
-			t.Fatalf("put %s: %v", foreign, err)
+	for _, kind := range []scope.Kind{scope.KindKnownHosts, scope.KindAuthorizedKeys} {
+		table, err := records.New[json.RawMessage](daos, kind)
+		if err != nil {
+			t.Fatalf("records.New(%s): %v", kind, err)
+		}
+		if _, err := table.Put(ctx, scope.User, "alice", "laptop", json.RawMessage(`{"line":"x"}`)); err != nil {
+			t.Fatalf("put %s: %v", kind, err)
 		}
 	}
 	for _, f := range []struct {
@@ -184,7 +224,7 @@ func TestBackendStore_List_FiltersByKind(t *testing.T) {
 	}
 }
 
-func TestBackendStore_Put_OwnerCheckStorageErrors(t *testing.T) {
+func TestDAOStore_Put_StorageErrors(t *testing.T) {
 	k, err := keys.Generate(t.Context(), keys.GenerateOptions{Algorithm: keys.AlgorithmEd25519})
 	if err != nil {
 		t.Fatalf("generate: %v", err)
@@ -192,24 +232,15 @@ func TestBackendStore_Put_OwnerCheckStorageErrors(t *testing.T) {
 	defer k.Destroy()
 	k.Scope, k.Owner, k.Name = scope.Tenant, "acme", "deploy"
 
-	failing, err := keys.NewBackendStore(keysFailingBackend{})
-	if err != nil {
-		t.Fatalf("store: %v", err)
-	}
 	var se *keys.StorageError
-	if err := failing.Put(context.Background(), k); !errors.As(err, &se) || se.Op != "get" {
-		t.Fatalf("Put over failing backend: want *StorageError{get}, got %T: %v", err, err)
+	if err := storeOver(t, keysFailingBackend{}).Put(context.Background(), k); !errors.As(err, &se) || se.Op != "put" {
+		t.Fatalf("Put over failing backend: want *StorageError{put}, got %T: %v", err, err)
 	}
-
-	corrupt, err := keys.NewBackendStore(keysCorruptBackend{})
-	if err != nil {
-		t.Fatalf("store: %v", err)
+	corrupt := corruptStore(t)
+	if err := corrupt.Put(context.Background(), k); !errors.As(err, &se) {
+		t.Fatalf("Put over corrupt record: want *StorageError, got %T: %v", err, err)
 	}
-	var ser *keys.SerializationError
-	if err := corrupt.Put(context.Background(), k); !errors.As(err, &ser) {
-		t.Fatalf("Put over corrupt record: want *SerializationError, got %T: %v", err, err)
-	}
-	if err := corrupt.Delete(context.Background(), scope.Tenant, "acme", "deploy"); !errors.As(err, &ser) {
-		t.Fatalf("Delete over corrupt record: want *SerializationError, got %T: %v", err, err)
+	if err := corrupt.Delete(context.Background(), scope.Tenant, "acme", "deploy"); !errors.As(err, &se) {
+		t.Fatalf("Delete over corrupt record: want *StorageError, got %T: %v", err, err)
 	}
 }

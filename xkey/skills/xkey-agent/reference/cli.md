@@ -108,6 +108,30 @@ Stop the agent server
 
 Usage: `xkey agent stop`
 
+## xkey app-access
+
+Let other apps use your keys while xKey is open
+
+Usage: `xkey app-access`
+
+## xkey app-access disable
+
+Stop other apps from using your keys
+
+Usage: `xkey app-access disable`
+
+## xkey app-access enable
+
+Let other apps use your keys while xKey is open
+
+Usage: `xkey app-access enable`
+
+## xkey app-access status
+
+Show whether local app access is on
+
+Usage: `xkey app-access status`
+
 ## xkey auth
 
 Manage server authentication

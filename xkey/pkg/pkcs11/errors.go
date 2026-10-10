@@ -29,6 +29,9 @@ var (
 	// ErrNilRequest indicates a nil request was provided.
 	ErrNilRequest = errors.New("xkey/pkcs11: request is nil")
 
+	// ErrKeyGenerationFailed indicates a key generation operation failed.
+	ErrKeyGenerationFailed = errors.New("xkey/pkcs11: key generation failed")
+
 	// ErrSigningFailed indicates a signing operation failed.
 	ErrSigningFailed = errors.New("xkey/pkcs11: signing failed")
 
@@ -58,24 +61,20 @@ var (
 	// a key-import ceremony could not be obtained from the backend.
 	ErrGetImportParamsFailed = errors.New("xkey/pkcs11: get import parameters failed")
 
-	// ErrImportTemplateUnsupported indicates a requested key template names a
-	// kind the embedded transport does not negotiate imports for. The transport
-	// generates only asymmetric keys, so symmetric imports are refused here
-	// rather than negotiated for the wrong key spec.
 	// ErrImportKeyFailed indicates the backend rejected the wrapped key
 	// material. It wraps the backend's cause so a bad import token is
 	// distinguishable from malformed material.
 	ErrImportKeyFailed = errors.New("pkcs11: import key failed")
 
-	ErrImportTemplateUnsupported = errors.New("xkey/pkcs11: import key template not supported by the embedded transport")
-
 	// ErrIPCConnectionFailed indicates the IPC transport could not connect
 	// to the xkey daemon socket.
 	ErrIPCConnectionFailed = errors.New("xkey/pkcs11: ipc connection failed")
 
-	// ErrIPCNotImplemented indicates the operation is not yet supported
-	// via the IPC transport MVP.
-	ErrIPCNotImplemented = errors.New("xkey/pkcs11: operation not implemented in ipc transport")
+	// ErrIPCRequestCanceled indicates the caller's context ended before the
+	// xkey instance answered: an already-ended context sends nothing, and one
+	// ending mid-exchange abandons the connection, which cancels the request
+	// on the xkey side.
+	ErrIPCRequestCanceled = errors.New("xkey/pkcs11: ipc request canceled")
 )
 
 // DetailError appends detail text directly after a wrapped error while
@@ -96,17 +95,6 @@ func (e *DetailError) Unwrap() error {
 	return e.Err
 }
 
-// MessageError is a typed error that carries a preformatted message. It
-// replaces inline formatted-error constructions that do not wrap a cause.
-type MessageError struct {
-	Msg string
-}
-
-// Error implements the error interface.
-func (e *MessageError) Error() string {
-	return e.Msg
-}
-
 // SentinelCauseError attaches an underlying cause to a package sentinel
 // error so errors.Is matches both the sentinel and the cause.
 type SentinelCauseError struct {
@@ -122,22 +110,4 @@ func (e *SentinelCauseError) Error() string {
 // Unwrap returns the sentinel and the cause for errors.Is / errors.As.
 func (e *SentinelCauseError) Unwrap() []error {
 	return []error{e.Sentinel, e.Cause}
-}
-
-// WrappedError wraps an underlying cause with a contextual message while
-// preserving errors.Is / errors.As matching through Unwrap. It replaces
-// inline formatted-error constructions that wrap another error.
-type WrappedError struct {
-	Msg string
-	Err error
-}
-
-// Error implements the error interface.
-func (e *WrappedError) Error() string {
-	return e.Msg + ": " + e.Err.Error()
-}
-
-// Unwrap returns the wrapped cause.
-func (e *WrappedError) Unwrap() error {
-	return e.Err
 }

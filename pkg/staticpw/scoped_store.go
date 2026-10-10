@@ -21,7 +21,7 @@ import (
 )
 
 // ScopedStore is a composite Store that routes password operations to
-// separate personal and shared BackendStores. Personal passwords are
+// separate personal and shared DAOStores. Personal passwords are
 // namespaced per-user, while shared passwords are visible tenant-wide.
 //
 // Get, Delete, and MoveToFolder try the personal store first, then fall
@@ -33,15 +33,15 @@ import (
 // every operation that needs the personal entries reports ErrStoreLocked,
 // and a listing of all entries holds the shared ones only.
 type ScopedStore struct {
-	shared   *BackendStore
-	personal *BackendStore // nil while the personal session is locked
+	shared   *DAOStore
+	personal *DAOStore // nil while the personal session is locked
 	ownerID  string
 }
 
 // NewScopedStore creates a ScopedStore wrapping a shared and personal
-// BackendStore. The ownerID is stamped on every password added through
+// DAOStore. The ownerID is stamped on every password added through
 // this store.
-func NewScopedStore(shared *BackendStore, personal *BackendStore, ownerID string) (*ScopedStore, error) {
+func NewScopedStore(shared *DAOStore, personal *DAOStore, ownerID string) (*ScopedStore, error) {
 	if shared == nil || personal == nil {
 		return nil, ErrNilStore
 	}
@@ -57,7 +57,7 @@ func NewScopedStore(shared *BackendStore, personal *BackendStore, ownerID string
 
 // NewLockedScopedStore creates the ScopedStore of a user whose personal
 // session is locked: shared entries only.
-func NewLockedScopedStore(shared *BackendStore, ownerID string) (*ScopedStore, error) {
+func NewLockedScopedStore(shared *DAOStore, ownerID string) (*ScopedStore, error) {
 	if shared == nil {
 		return nil, ErrNilStore
 	}
@@ -71,7 +71,7 @@ func NewLockedScopedStore(shared *BackendStore, ownerID string) (*ScopedStore, e
 func (s *ScopedStore) PersonalLocked() bool { return s.personal == nil }
 
 // personalStore returns the personal store, or ErrStoreLocked.
-func (s *ScopedStore) personalStore() (*BackendStore, error) {
+func (s *ScopedStore) personalStore() (*DAOStore, error) {
 	if s.personal == nil {
 		return nil, ErrStoreLocked
 	}
@@ -81,7 +81,7 @@ func (s *ScopedStore) personalStore() (*BackendStore, error) {
 // sharedOrLocked runs op on the personal store when it is open, then on the
 // shared store. With the personal session locked, an entry the shared store
 // does not hold may be a personal one, so its absence is ErrStoreLocked.
-func (s *ScopedStore) sharedOrLocked(op func(*BackendStore) error) error {
+func (s *ScopedStore) sharedOrLocked(op func(*DAOStore) error) error {
 	if s.personal != nil {
 		if err := op(s.personal); err == nil {
 			return nil
@@ -113,7 +113,7 @@ func (s *ScopedStore) Add(pw *StaticPassword) error {
 // first, falling back to the shared store.
 func (s *ScopedStore) Get(idOrName string) (*StaticPassword, error) {
 	var found *StaticPassword
-	err := s.sharedOrLocked(func(b *BackendStore) error {
+	err := s.sharedOrLocked(func(b *DAOStore) error {
 		pw, err := b.Get(idOrName)
 		found = pw
 		return err
@@ -161,30 +161,30 @@ func (s *ScopedStore) Update(pw *StaticPassword) error {
 	if pw.Shared {
 		return s.shared.Update(pw)
 	}
-	return s.sharedOrLocked(func(b *BackendStore) error { return b.Update(pw) })
+	return s.sharedOrLocked(func(b *DAOStore) error { return b.Update(pw) })
 }
 
 // Delete removes a password by ID or name. It tries the personal store
 // first, falling back to the shared store.
 func (s *ScopedStore) Delete(idOrName string) error {
-	return s.sharedOrLocked(func(b *BackendStore) error { return b.Delete(idOrName) })
+	return s.sharedOrLocked(func(b *DAOStore) error { return b.Delete(idOrName) })
 }
 
 // ForceDelete removes a password by ID or name, bypassing the read-only
 // check. Tries personal first, then shared.
 func (s *ScopedStore) ForceDelete(idOrName string) error {
-	return s.sharedOrLocked(func(b *BackendStore) error { return b.ForceDelete(idOrName) })
+	return s.sharedOrLocked(func(b *DAOStore) error { return b.ForceDelete(idOrName) })
 }
 
 // ListByFolder returns entries from both stores within the folder and subfolders.
 func (s *ScopedStore) ListByFolder(folderPath string) ([]*StaticPassword, error) {
-	return s.mergeFrom(func(b *BackendStore) ([]*StaticPassword, error) { return b.ListByFolder(folderPath) })
+	return s.mergeFrom(func(b *DAOStore) ([]*StaticPassword, error) { return b.ListByFolder(folderPath) })
 }
 
 // ListByFolderDirect returns entries from both stores directly in the folder,
 // excluding subfolders.
 func (s *ScopedStore) ListByFolderDirect(folderPath string) ([]*StaticPassword, error) {
-	return s.mergeFrom(func(b *BackendStore) ([]*StaticPassword, error) { return b.ListByFolderDirect(folderPath) })
+	return s.mergeFrom(func(b *DAOStore) ([]*StaticPassword, error) { return b.ListByFolderDirect(folderPath) })
 }
 
 // ListFolders returns the deduplicated union of folder paths from both stores.
@@ -229,7 +229,7 @@ func (s *ScopedStore) RemoveFolder(path string) error {
 // MoveToFolder moves a password to a new folder. Tries personal first,
 // then shared.
 func (s *ScopedStore) MoveToFolder(idOrName string, folderPath string) error {
-	return s.sharedOrLocked(func(b *BackendStore) error { return b.MoveToFolder(idOrName, folderPath) })
+	return s.sharedOrLocked(func(b *DAOStore) error { return b.MoveToFolder(idOrName, folderPath) })
 }
 
 // Close closes the underlying stores.
@@ -243,15 +243,15 @@ func (s *ScopedStore) Close() error {
 
 // stores returns the stores the user can read now: personal (when open),
 // then shared.
-func (s *ScopedStore) stores() []*BackendStore {
+func (s *ScopedStore) stores() []*DAOStore {
 	if s.personal == nil {
-		return []*BackendStore{s.shared}
+		return []*DAOStore{s.shared}
 	}
-	return []*BackendStore{s.personal, s.shared}
+	return []*DAOStore{s.personal, s.shared}
 }
 
 // mergeFrom concatenates list over every readable store, sorted by name.
-func (s *ScopedStore) mergeFrom(list func(*BackendStore) ([]*StaticPassword, error)) ([]*StaticPassword, error) {
+func (s *ScopedStore) mergeFrom(list func(*DAOStore) ([]*StaticPassword, error)) ([]*StaticPassword, error) {
 	var merged []*StaticPassword
 	for _, b := range s.stores() {
 		entries, err := list(b)
@@ -268,5 +268,5 @@ func (s *ScopedStore) mergeFrom(list func(*BackendStore) ([]*StaticPassword, err
 
 // mergedList returns the union of both stores sorted by name.
 func (s *ScopedStore) mergedList() ([]*StaticPassword, error) {
-	return s.mergeFrom(func(b *BackendStore) ([]*StaticPassword, error) { return b.List() })
+	return s.mergeFrom(func(b *DAOStore) ([]*StaticPassword, error) { return b.List() })
 }

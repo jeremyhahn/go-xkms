@@ -208,7 +208,7 @@ it is a local-only platform store (`ErrNotSupported` on every network transport)
   embedded (`ErrNotSupported` — offline mode uses local storage per D4; **one-line
   maintainer confirm**). Server side: new `pkg/xkms/servicer_pkcs11state.go` against
   `qrdbsdk.KVStore`/`GenericDAO`; composition in `pkg/server/server.go` (~line 1592,
-  like `s.passwordStore = staticpw.NewStore(backend)`).
+  like `staticpw.NewStore(daos)` over the injected DAO factory).
 - **D2 (blocking) + D3 (server-authoritative + CAS)** are already decided; the store
   uses qrdb's atomic `PutIfAbsent`/CAS for the lockout counter.
 | R2 | `storage.Backend` adapter speaking those RPCs over the active `transport.Client` | **DONE** — `storage_remote.go`: `remoteBackend` implements all 8 `storage.Backend` methods over `PKCS11StateClient` (Scan/Exists composed; Get-absent→`storage.ErrNotFound`); compile-time checks pin gRPC/Unix `Transport` to the interface; `storage_remote_test.go` (fake client) |

@@ -132,9 +132,9 @@ client that wrote `protocol`/`host`/`username` via `CreateItem` (as
 `SetAlias(name, folder string) error` / `GetAlias(name string) (string,
 bool, error)` — that `Daemon.ReadAlias`/`SetAlias` probe for via a type
 assertion on the `xkms.StaticPasswordStore` they were constructed with.
-Implemented by `staticpw.BackendStore` (the canonical barrier-backed store
-xkey always uses); a `Store` implementation that lacks it (in-memory test
-doubles, or the DAO/encrypted/scoped stores quicbaas uses) simply cannot
+Implemented by `staticpw.DAOStore` (the canonical store, which xkey always
+opens over its barrier backend); a `Store` implementation that lacks it
+(in-memory test doubles, or the scoped store) simply cannot
 persist an alias — `SetAlias` still succeeds (it is not an error to lack
 optional persistence) but the mapping does not survive a restart, and
 `ReadAlias` falls back to `PathMapper.FolderFromAlias`'s built-in

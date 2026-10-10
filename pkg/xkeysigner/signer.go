@@ -15,6 +15,7 @@ package xkeysigner
 
 import (
 	"crypto"
+	"crypto/rsa"
 	"crypto/x509"
 	"encoding/base64"
 	"encoding/json"
@@ -81,15 +82,18 @@ type ipcMessage struct {
 type ipcPKCS11 struct {
 	Action  string         `json:"action"`
 	Sign    *ipcSignParams `json:"sign,omitempty"`
-	PIVCert *ipcPIVCert    `json:"piv_cert,omitempty"`
+	PIVCert *ipcPIVCert    `json:"get_piv_certificate,omitempty"`
 }
 
 // ipcSignParams contains parameters for a sign operation.
 type ipcSignParams struct {
-	Backend string `json:"backend"`
-	KeyID   string `json:"key_id"`
-	Data    string `json:"data"`
-	Hash    string `json:"hash,omitempty"`
+	Backend      string `json:"backend"`
+	KeyID        string `json:"key_id"`
+	Data         string `json:"data"`
+	Hash         string `json:"hash,omitempty"`
+	DataIsDigest bool   `json:"data_is_digest,omitempty"`
+	Padding      string `json:"padding,omitempty"`
+	SaltLength   int    `json:"salt_length,omitempty"`
 }
 
 // ipcPIVCert contains parameters for a PIV certificate operation.
@@ -109,7 +113,7 @@ type ipcResponse struct {
 // ipcPKCS11Result carries PKCS#11-specific response data.
 type ipcPKCS11Result struct {
 	Sign    *ipcSignResult    `json:"sign,omitempty"`
-	PIVCert *ipcPIVCertResult `json:"piv_cert,omitempty"`
+	PIVCert *ipcPIVCertResult `json:"get_piv_certificate,omitempty"`
 }
 
 // ipcSignResult contains the result of a sign operation.
@@ -117,18 +121,39 @@ type ipcSignResult struct {
 	Signature string `json:"signature"`
 }
 
-// ipcPIVCertResult contains the certificate data.
+// ipcPIVCertResult contains the certificate data. Certificate is the
+// certificate in the requested format; JSON carries it base64-encoded.
 type ipcPIVCertResult struct {
-	Certificate string `json:"certificate"`
 	Slot        string `json:"slot"`
-	Subject     string `json:"subject"`
-	Issuer      string `json:"issuer"`
-	NotAfter    string `json:"not_after"`
+	Certificate []byte `json:"certificate"`
+	Format      string `json:"format"`
 }
 
 // NewSigner creates a new IPC-backed crypto.Signer. It validates the config,
 // connects to the xkey daemon to fetch the PIV certificate, and extracts the
 // public key. The signer is ready to use for TLS client authentication.
+// signParams builds the sign request for a crypto.Signer call: a non-zero
+// hash marks data as that hash's digest, and *rsa.PSSOptions selects PSS.
+func signParams(data []byte, opts crypto.SignerOpts) (*ipcSignParams, error) {
+	params := &ipcSignParams{Data: base64.StdEncoding.EncodeToString(data)}
+	if opts == nil || opts.HashFunc() == 0 {
+		return params, nil
+	}
+
+	name, ok := hashNames[opts.HashFunc()]
+	if !ok {
+		return nil, ErrUnsupportedHash
+	}
+	params.Hash = name
+	params.DataIsDigest = true
+
+	if pss, isPSS := opts.(*rsa.PSSOptions); isPSS {
+		params.Padding = "pss"
+		params.SaltLength = pss.SaltLength
+	}
+	return params, nil
+}
+
 func NewSigner(config *SignerConfig) (*Signer, error) {
 	if config == nil {
 		return nil, ErrNilConfig
@@ -174,30 +199,27 @@ func (s *Signer) Public() crypto.PublicKey {
 	return s.publicKey
 }
 
-// Sign delegates the signing operation to the xkey daemon via IPC. The digest
-// parameter should be the pre-hashed message. The opts parameter specifies the
-// hash function used to produce the digest.
+// Sign delegates the signing operation to the xkey daemon via IPC. As the
+// crypto.Signer contract requires, digest is the message already hashed with
+// opts.HashFunc(), so it is sent as a digest and never hashed again. A zero
+// HashFunc (Ed25519) means digest is the message itself. *rsa.PSSOptions
+// selects RSASSA-PSS with its salt length; any other opts select PKCS#1 v1.5.
 func (s *Signer) Sign(_ io.Reader, digest []byte, opts crypto.SignerOpts) ([]byte, error) {
 	if s.closed.Load() {
 		return nil, ErrClosed
 	}
 
-	hashName := ""
-	if opts != nil {
-		if name, ok := hashNames[opts.HashFunc()]; ok {
-			hashName = name
-		}
+	params, err := signParams(digest, opts)
+	if err != nil {
+		return nil, err
 	}
+	params.KeyID = "piv-" + s.slot
 
 	msg := &ipcMessage{
 		Type: "pkcs11",
 		PKCS11: &ipcPKCS11{
 			Action: "sign",
-			Sign: &ipcSignParams{
-				KeyID: "piv-" + s.slot,
-				Data:  base64.StdEncoding.EncodeToString(digest),
-				Hash:  hashName,
-			},
+			Sign:   params,
 		},
 	}
 
@@ -254,11 +276,11 @@ func (s *Signer) Certificate() (*x509.Certificate, error) {
 	}
 
 	certPEM := resp.PKCS11.PIVCert.Certificate
-	if certPEM == "" {
+	if len(certPEM) == 0 {
 		return nil, ErrNoCertificate
 	}
 
-	block, _ := pem.Decode([]byte(certPEM))
+	block, _ := pem.Decode(certPEM)
 	if block == nil {
 		return nil, ErrInvalidCertFormat
 	}

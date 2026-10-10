@@ -195,7 +195,7 @@ env:
   # moved to 1.27.1 with go-qrdb v0.46.0-alpha, whose go.mod declares it. Bump
   # the patch version here as 1.27.x releases ship; re-run the swiss/pebble
   # compatibility check above before ever bumping the minor version again.
-  GO_VERSION: '1.27.1'
+  GO_VERSION: '1.27.2'
   # ANALYSIS TOOL PINS (#189). These are the versions BAKED INTO the
   # self-hosted runner image; .github/scripts/require-tool.sh asserts the
   # binary on PATH self-reports exactly this and fails the job otherwise.

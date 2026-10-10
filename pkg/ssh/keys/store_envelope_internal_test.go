@@ -18,17 +18,17 @@ import (
 	"testing"
 )
 
-// TestStoredEnvelope_Wipe proves wipe zeroes the PEM's backing array and
-// drops the reference, and tolerates an envelope that holds none.
-func TestStoredEnvelope_Wipe(t *testing.T) {
+// TestEnvelope_Wipe proves Wipe zeroes the PEM's backing array and drops
+// the reference, and tolerates an envelope that holds none.
+func TestEnvelope_Wipe(t *testing.T) {
 	pem := []byte("secret pem")
-	env := &storedEnvelope{MaterialPEM: pem}
-	env.wipe()
+	env := &envelope{MaterialPEM: pem}
+	env.Wipe()
 	if env.MaterialPEM != nil {
 		t.Errorf("MaterialPEM = %q, want nil", env.MaterialPEM)
 	}
 	if !bytes.Equal(pem, make([]byte, len(pem))) {
 		t.Errorf("backing array not zeroed: %q", pem)
 	}
-	(&storedEnvelope{}).wipe()
+	(&envelope{}).Wipe()
 }

@@ -16,17 +16,16 @@ package staticpw
 import (
 	"context"
 	"encoding/json"
-	"errors"
-	"fmt"
 	"regexp"
 	"sort"
 	"strings"
-	"sync"
+	"sync/atomic"
 	"time"
+
+	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
 
 	"github.com/jeremyhahn/go-xkms/pkg/errs"
 	"github.com/jeremyhahn/go-xkms/pkg/scope"
-	"github.com/jeremyhahn/go-xkms/pkg/storage"
 )
 
 const defaultKeyPrefix = Feature + "/"
@@ -35,15 +34,6 @@ const defaultKeyPrefix = Feature + "/"
 // (pkg/scope): shared entries live under "{tenant}/staticpw/shared/" and a
 // user's personal entries under "{tenant}/staticpw/users/{subject}/".
 const Feature = "staticpw"
-
-// folderMarkerSuffix is the sub-prefix used to persist empty folder markers
-// so they survive across restarts even without entries.
-const folderMarkerSuffix = "__folders__/"
-
-// aliasMarkerSuffix is the sub-prefix used to persist name -> folder-path
-// alias mappings (e.g. the freedesktop Secret Service collection aliases
-// used by xkey/pkg/secretservice) so they survive across restarts.
-const aliasMarkerSuffix = "__aliases__/"
 
 // maxTenantIDLength is the maximum allowed length for a tenant identifier.
 const maxTenantIDLength = 64
@@ -107,32 +97,39 @@ type Store interface {
 	Close() error
 }
 
-// BackendStore implements Store backed by a storage.Backend with optional
-// multi-tenant support.
-type BackendStore struct {
-	mu        sync.RWMutex
-	backend   storage.Backend
-	tenantID  string
-	keyPrefix string
-	names     entryNames
-	closed    bool
+// DAOStore implements Store over the go-qrdb password record table. Its
+// records -- entries, folder markers and aliases -- are filed under the
+// store's prefix, so the system store, a tenant's shared store and each
+// user's personal store share one table without seeing each other.
+//
+// Every write is a guarded go-qrdb DAO write: a create never overwrites, and
+// an update or delete applies only to the record it read, so concurrent
+// writers never lose each other's changes silently.
+type DAOStore struct {
+	records  *records
+	tenantID string
+	prefix   string
+	names    entryNames
+	sealer   sealer
+	closed   atomic.Bool
 }
 
-// NewStore creates a new BackendStore wrapping the provided storage backend
-// with no tenant isolation (single-tenant mode).
-func NewStore(backend storage.Backend) *BackendStore {
-	return &BackendStore{
-		backend:   backend,
-		keyPrefix: defaultKeyPrefix,
+// NewStore returns the platform's password store (no tenant) over the
+// staticpw database of daos.
+func NewStore(daos *qrdbsdk.DAOFactory) (*DAOStore, error) {
+	t, err := openRecords(daos)
+	if err != nil {
+		return nil, err
 	}
+	return &DAOStore{records: t, prefix: defaultKeyPrefix}, nil
 }
 
-// NewTenantStore creates a new BackendStore with tenant isolation. All keys
-// are prefixed with the tenant ID to provide namespace separation. The
-// tenantID must be non-empty, at most 64 characters, start with an
-// alphanumeric character, and contain only alphanumeric characters, hyphens,
-// and underscores.
-func NewTenantStore(backend storage.Backend, tenantID string) (*BackendStore, error) {
+// NewTenantStore returns tenantID's password store, filed under the
+// tenant's feature root "{tenantID}/staticpw/" (scope.Root). The tenantID
+// must be non-empty, at most 64 characters, start with an alphanumeric
+// character, and contain only alphanumeric characters, hyphens, and
+// underscores.
+func NewTenantStore(daos *qrdbsdk.DAOFactory, tenantID string) (*DAOStore, error) {
 	if !isValidTenantID(tenantID) {
 		return nil, ErrInvalidTenantID
 	}
@@ -140,17 +137,12 @@ func NewTenantStore(backend storage.Backend, tenantID string) (*BackendStore, er
 	if err != nil {
 		return nil, &errs.Detail{Err: ErrInvalidTenantID, Detail: err.Error()}
 	}
-	return &BackendStore{
-		backend:   backend,
-		tenantID:  tenantID,
-		keyPrefix: root,
-	}, nil
+	return newTenantStore(daos, tenantID, root)
 }
 
-// NewSharedTenantStore creates a BackendStore for tenant-wide shared passwords.
-// Keys are prefixed with the tenant's shared keyspace,
-// "{tenantID}/staticpw/shared/" (scope.SharedPrefix).
-func NewSharedTenantStore(backend storage.Backend, tenantID string) (*BackendStore, error) {
+// NewSharedTenantStore returns the store of tenantID's shared passwords,
+// filed under "{tenantID}/staticpw/shared/" (scope.SharedPrefix).
+func NewSharedTenantStore(daos *qrdbsdk.DAOFactory, tenantID string) (*DAOStore, error) {
 	if !isValidTenantID(tenantID) {
 		return nil, ErrInvalidTenantID
 	}
@@ -158,17 +150,15 @@ func NewSharedTenantStore(backend storage.Backend, tenantID string) (*BackendSto
 	if err != nil {
 		return nil, &errs.Detail{Err: ErrInvalidTenantID, Detail: err.Error()}
 	}
-	return &BackendStore{
-		backend:   backend,
-		tenantID:  tenantID,
-		keyPrefix: prefix,
-	}, nil
+	return newTenantStore(daos, tenantID, prefix)
 }
 
-// NewPersonalTenantStore creates a BackendStore for a specific user's personal
-// passwords within a tenant. Keys are prefixed with the user's personal
-// keyspace, "{tenantID}/staticpw/users/{userID}/" (scope.PersonalPrefix).
-func NewPersonalTenantStore(backend storage.Backend, tenantID string, userID string) (*BackendStore, error) {
+// NewPersonalTenantStore returns the store of userID's personal passwords
+// in tenantID, filed under "{tenantID}/staticpw/users/{userID}/"
+// (scope.PersonalPrefix). It neither names nor seals its records with a
+// user key: the TenantPasswordStoreManager serves a user's vault-sealed
+// personal store.
+func NewPersonalTenantStore(daos *qrdbsdk.DAOFactory, tenantID, userID string) (*DAOStore, error) {
 	if !isValidTenantID(tenantID) {
 		return nil, ErrInvalidTenantID
 	}
@@ -179,30 +169,45 @@ func NewPersonalTenantStore(backend storage.Backend, tenantID string, userID str
 	if err != nil {
 		return nil, &errs.Detail{Err: ErrInvalidUserID, Detail: err.Error()}
 	}
-	return &BackendStore{
-		backend:   backend,
-		tenantID:  tenantID,
-		keyPrefix: prefix,
-	}, nil
+	return newTenantStore(daos, tenantID, prefix)
+}
+
+// newSealedPersonalStore returns userID's personal store in tenantID with
+// every record named and sealed with keys of session's DEK. The store reads
+// and writes nothing once the session ends.
+func newSealedPersonalStore(daos *qrdbsdk.DAOFactory, tenantID, userID string, session *userSession) (*DAOStore, error) {
+	s, err := NewPersonalTenantStore(daos, tenantID, userID)
+	if err != nil {
+		return nil, err
+	}
+	s.names = session.names
+	s.sealer = sealer{session: session}
+	return s, nil
+}
+
+// newTenantStore returns tenantID's store filed under prefix.
+func newTenantStore(daos *qrdbsdk.DAOFactory, tenantID, prefix string) (*DAOStore, error) {
+	t, err := openRecords(daos)
+	if err != nil {
+		return nil, err
+	}
+	return &DAOStore{records: t, tenantID: tenantID, prefix: prefix}, nil
 }
 
 // TenantID returns the tenant identifier for this store, or an empty string
-// if running in single-tenant mode.
-func (s *BackendStore) TenantID() string {
+// for the platform's store.
+func (s *DAOStore) TenantID() string {
 	return s.tenantID
 }
 
-// Add stores a new static password entry. It validates the password, generates
-// a deterministic ID from the name and folder path, checks for duplicates by
-// both ID and name (case-insensitive), and persists the entry as JSON.
-func (s *BackendStore) Add(pw *StaticPassword) error {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-
-	if s.closed {
+// Add stores a new static password entry. It validates the password and
+// derives the entry's ID from its name and folder path; names are
+// case-insensitive, so an entry of the same name in the same folder is
+// ErrPasswordExists.
+func (s *DAOStore) Add(pw *StaticPassword) error {
+	if s.closed.Load() {
 		return ErrStoreClosed
 	}
-
 	if err := pw.Validate(); err != nil {
 		return err
 	}
@@ -212,182 +217,144 @@ func (s *BackendStore) Add(pw *StaticPassword) error {
 	pw.CreatedAt = now
 	pw.UpdatedAt = now
 
-	// Check for duplicate by ID (exact key lookup).
-	key := s.storageKey(pw.ID)
-	exists, err := s.backend.Exists(context.Background(), key)
+	next, err := s.entryRecord(pw)
 	if err != nil {
-		return &errs.Detail{Err: ErrInvalidPassword, Detail: fmt.Sprintf("%v", err)}
-	}
-	if exists {
-		return ErrPasswordExists
-	}
-
-	// Check for duplicate by name (case-insensitive scan).
-	if err := s.checkNameConflict(pw.Name, pw.FolderPath, ""); err != nil {
 		return err
 	}
-
-	data, err := json.Marshal(pw) // #nosec G117 -- staticpw IS the password store; Password is the stored secret, persisted to the encrypted backend
+	stored, err := s.records.create(context.Background(), next)
 	if err != nil {
-		return &errs.Detail{Err: ErrMarshalFailed, Detail: fmt.Sprintf("%v", err)}
+		return err
 	}
-
-	return s.backend.Put(context.Background(), key, data)
+	if !stored {
+		return ErrPasswordExists
+	}
+	return nil
 }
 
-// Get retrieves a static password by ID or name. It first attempts an exact
-// key lookup by treating idOrName as an ID. If that fails, it hashes the
-// input as a name (with empty folder) for an O(1) lookup. Finally, it scans
-// all entries for a case-insensitive name match.
-func (s *BackendStore) Get(idOrName string) (*StaticPassword, error) {
-	s.mu.RLock()
-	defer s.mu.RUnlock()
-
-	if s.closed {
+// Get retrieves a static password by ID or name. It first looks idOrName up
+// as an ID, then as the name of a root-level entry, and finally scans for a
+// case-insensitive name match in any folder.
+func (s *DAOStore) Get(idOrName string) (*StaticPassword, error) {
+	if s.closed.Load() {
 		return nil, ErrStoreClosed
 	}
-
-	return s.getUnlocked(idOrName)
+	_, pw, err := s.find(context.Background(), idOrName)
+	return pw, err
 }
 
 // List returns all stored static passwords sorted by name (case-insensitive).
-func (s *BackendStore) List() ([]*StaticPassword, error) {
-	s.mu.RLock()
-	defer s.mu.RUnlock()
-
-	if s.closed {
+func (s *DAOStore) List() ([]*StaticPassword, error) {
+	if s.closed.Load() {
 		return nil, ErrStoreClosed
 	}
-
-	keys, err := s.backend.List(context.Background(), s.keyPrefix)
+	_, passwords, err := s.entries(context.Background())
 	if err != nil {
-		return nil, &errs.Detail{Err: ErrPasswordNotFound, Detail: fmt.Sprintf("%v", err)}
+		return nil, err
 	}
-
-	passwords := make([]*StaticPassword, 0, len(keys))
-	for _, key := range keys {
-		if s.isFolderMarkerKey(key) {
-			continue
-		}
-		data, getErr := s.backend.Get(context.Background(), key)
-		if getErr != nil {
-			continue
-		}
-		pw, unmarshalErr := unmarshalPassword(data)
-		if unmarshalErr != nil {
-			continue
-		}
-		passwords = append(passwords, pw)
-	}
-
 	sort.Slice(passwords, func(i, j int) bool {
 		return strings.ToLower(passwords[i].Name) < strings.ToLower(passwords[j].Name)
 	})
-
 	return passwords, nil
 }
 
 // Update modifies an existing static password entry. The entry must already
 // exist by its ID. The UpdatedAt timestamp is refreshed automatically.
 // Read-only entries cannot be updated. If the name or folder changes, the
-// old entry is deleted and a new entry is created with the updated ID.
-func (s *BackendStore) Update(pw *StaticPassword) error {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-
-	if s.closed {
+// entry moves to its new ID; ErrPasswordExists reports that ID taken.
+func (s *DAOStore) Update(pw *StaticPassword) error {
+	if s.closed.Load() {
 		return ErrStoreClosed
 	}
-
 	if err := pw.Validate(); err != nil {
 		return err
 	}
 
-	// Verify the entry exists by ID and preserve CreatedAt.
-	oldKey := s.storageKey(pw.ID)
-	existingData, err := s.backend.Get(context.Background(), oldKey)
-	if err != nil {
-		return ErrPasswordNotFound
-	}
-	existing, err := unmarshalPassword(existingData)
-	if err != nil {
-		return err
-	}
-
-	if existing.ReadOnly {
-		return ErrPasswordReadOnly
-	}
-
-	pw.CreatedAt = existing.CreatedAt
-	pw.UpdatedAt = time.Now()
-
-	// Recompute ID in case name or folder changed.
-	newID := s.names.entryID(pw.Name, pw.FolderPath)
-
-	if newID != pw.ID {
-		// Name or folder changed — delete old entry, write under new key.
-		if err := s.backend.Delete(context.Background(), oldKey); err != nil {
-			return &errs.Detail{Err: ErrPasswordNotFound, Detail: fmt.Sprintf("%v", err)}
+	ctx := context.Background()
+	oldPath := s.entryPath(pw.ID)
+	for range maxAttempts {
+		current, err := s.records.load(ctx, oldPath)
+		if err != nil {
+			return err
 		}
-		pw.ID = newID
-	}
+		if current == nil {
+			return ErrPasswordNotFound
+		}
+		existing, err := s.decodeEntry(current)
+		if err != nil {
+			return err
+		}
+		if existing.ReadOnly {
+			return ErrPasswordReadOnly
+		}
 
-	newKey := s.storageKey(pw.ID)
-	data, err := json.Marshal(pw) // #nosec G117 -- staticpw IS the password store; Password is the stored secret, persisted to the encrypted backend
-	if err != nil {
-		return &errs.Detail{Err: ErrMarshalFailed, Detail: fmt.Sprintf("%v", err)}
-	}
+		updated := *pw
+		updated.CreatedAt = existing.CreatedAt
+		updated.UpdatedAt = time.Now()
+		updated.ID = s.names.entryID(pw.Name, pw.FolderPath)
+		next, err := s.entryRecord(&updated)
+		if err != nil {
+			return err
+		}
 
-	return s.backend.Put(context.Background(), newKey, data)
+		if next.Path != current.Path {
+			if err := s.records.rename(ctx, current, next); err != nil {
+				return err
+			}
+			*pw = updated
+			return nil
+		}
+		swapped, err := s.records.swap(ctx, current, next)
+		if err != nil {
+			return err
+		}
+		if swapped {
+			*pw = updated
+			return nil
+		}
+	}
+	return &ConflictError{Op: "update", Key: oldPath}
 }
 
-// Delete removes a static password by ID or name. It first attempts an exact
-// key lookup by treating idOrName as an ID, then tries a hashed-ID lookup,
-// and finally scans for a case-insensitive name match.
+// Delete removes a static password by ID or name, looked up as Get does.
 // Read-only entries cannot be deleted.
-func (s *BackendStore) Delete(idOrName string) error {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-
-	if s.closed {
-		return ErrStoreClosed
-	}
-
-	pw, err := s.getUnlocked(idOrName)
-	if err != nil {
-		return err
-	}
-
-	if pw.ReadOnly {
-		return ErrPasswordReadOnly
-	}
-
-	return s.backend.Delete(context.Background(), s.storageKey(pw.ID))
+func (s *DAOStore) Delete(idOrName string) error {
+	return s.delete(idOrName, false)
 }
 
 // ForceDelete removes a static password by ID or name, bypassing the
 // read-only check. Used for administrative cleanup operations.
-func (s *BackendStore) ForceDelete(idOrName string) error {
-	s.mu.Lock()
-	defer s.mu.Unlock()
+func (s *DAOStore) ForceDelete(idOrName string) error {
+	return s.delete(idOrName, true)
+}
 
-	if s.closed {
+// delete removes the entry idOrName names, refusing a read-only entry
+// unless force is set.
+func (s *DAOStore) delete(idOrName string, force bool) error {
+	if s.closed.Load() {
 		return ErrStoreClosed
 	}
-
-	pw, err := s.getUnlocked(idOrName)
-	if err != nil {
-		return err
+	ctx := context.Background()
+	for range maxAttempts {
+		current, pw, err := s.find(ctx, idOrName)
+		if err != nil {
+			return err
+		}
+		if pw.ReadOnly && !force {
+			return ErrPasswordReadOnly
+		}
+		deleted, err := s.records.removeIfMatch(ctx, current)
+		if err != nil || deleted {
+			return err
+		}
 	}
-
-	return s.backend.Delete(context.Background(), s.storageKey(pw.ID))
+	return &ConflictError{Op: "delete", Key: idOrName}
 }
 
 // ListByFolder returns all entries within the given folder path and its subfolders.
 // This supports hierarchical folder navigation: querying "Work" returns passwords
 // in "Work", "Work/Email", "Work/Email/Personal", etc.
 // An empty folderPath returns all entries (root includes everything).
-func (s *BackendStore) ListByFolder(folderPath string) ([]*StaticPassword, error) {
+func (s *DAOStore) ListByFolder(folderPath string) ([]*StaticPassword, error) {
 	all, err := s.List()
 	if err != nil {
 		return nil, err
@@ -395,11 +362,7 @@ func (s *BackendStore) ListByFolder(folderPath string) ([]*StaticPassword, error
 
 	result := make([]*StaticPassword, 0)
 	for _, pw := range all {
-		if folderPath == "" {
-			// Root: include all entries
-			result = append(result, pw)
-		} else if pw.FolderPath == folderPath || strings.HasPrefix(pw.FolderPath, folderPath+"/") {
-			// Include exact match AND all subfolders
+		if folderPath == "" || pw.FolderPath == folderPath || strings.HasPrefix(pw.FolderPath, folderPath+"/") {
 			result = append(result, pw)
 		}
 	}
@@ -410,7 +373,7 @@ func (s *BackendStore) ListByFolder(folderPath string) ([]*StaticPassword, error
 // excluding entries in subfolders. This is useful for displaying only immediate
 // children of a folder without nested content.
 // An empty folderPath returns only root-level entries (entries with no folder).
-func (s *BackendStore) ListByFolderDirect(folderPath string) ([]*StaticPassword, error) {
+func (s *DAOStore) ListByFolderDirect(folderPath string) ([]*StaticPassword, error) {
 	all, err := s.List()
 	if err != nil {
 		return nil, err
@@ -429,7 +392,7 @@ func (s *BackendStore) ListByFolderDirect(folderPath string) ([]*StaticPassword,
 // Parent paths are derived from nested folders (e.g. "Work/Email" also
 // yields "Work"). Persisted folder markers are merged with implicit
 // folders derived from entry FolderPath fields.
-func (s *BackendStore) ListFolders() ([]string, error) {
+func (s *DAOStore) ListFolders() ([]string, error) {
 	all, err := s.List()
 	if err != nil {
 		return nil, err
@@ -443,19 +406,20 @@ func (s *BackendStore) ListFolders() ([]string, error) {
 		// Add the full path and all parent segments.
 		parts := strings.Split(pw.FolderPath, "/")
 		for i := range parts {
-			parent := strings.Join(parts[:i+1], "/")
-			unique[parent] = struct{}{}
+			unique[strings.Join(parts[:i+1], "/")] = struct{}{}
 		}
 	}
 
-	// Merge persisted folder markers.
-	s.mu.RLock()
-	markers, listErr := s.folderMarkers()
-	s.mu.RUnlock()
-	if listErr == nil {
-		for _, folder := range markers {
-			unique[folder] = struct{}{}
+	markers, err := s.records.list(context.Background(), s.dir(nameKindFolder))
+	if err != nil {
+		return nil, err
+	}
+	for _, marker := range markers {
+		folder, err := s.sealer.open(marker.Path, marker.Body)
+		if err != nil {
+			return nil, err
 		}
+		unique[string(folder)] = struct{}{}
 	}
 
 	folders := make([]string, 0, len(unique))
@@ -466,90 +430,65 @@ func (s *BackendStore) ListFolders() ([]string, error) {
 	return folders, nil
 }
 
-// MoveToFolder moves an entry to a new folder. The entry is deleted under
-// its old key, the FolderPath and ID are updated, and it is re-added.
-// Read-only entries cannot be moved.
-func (s *BackendStore) MoveToFolder(idOrName string, folderPath string) error {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-
-	if s.closed {
+// MoveToFolder moves an entry to a new folder, regenerating its ID.
+// Read-only entries cannot be moved; ErrPasswordExists reports an entry of
+// the same name in the destination.
+func (s *DAOStore) MoveToFolder(idOrName string, folderPath string) error {
+	if s.closed.Load() {
 		return ErrStoreClosed
 	}
 
-	// Find the entry (need to inline the lookup since we hold the lock).
-	pw, err := s.getUnlocked(idOrName)
+	ctx := context.Background()
+	current, pw, err := s.find(ctx, idOrName)
 	if err != nil {
 		return err
 	}
-
 	if pw.ReadOnly {
 		return ErrPasswordReadOnly
 	}
-
 	if pw.FolderPath == folderPath {
 		return ErrMoveToSameFolder
 	}
 
-	// Delete the old entry.
-	oldKey := s.storageKey(pw.ID)
-	if delErr := s.backend.Delete(context.Background(), oldKey); delErr != nil {
-		return &errs.Detail{Err: ErrPasswordNotFound, Detail: fmt.Sprintf("%v", delErr)}
-	}
-
-	// Update folder and regenerate ID.
 	pw.FolderPath = folderPath
 	pw.ID = s.names.entryID(pw.Name, pw.FolderPath)
 	pw.UpdatedAt = time.Now()
-
-	// Check for duplicate at new location.
-	newKey := s.storageKey(pw.ID)
-	exists, err := s.backend.Exists(context.Background(), newKey)
+	next, err := s.entryRecord(pw)
 	if err != nil {
-		return &errs.Detail{Err: ErrInvalidPassword, Detail: fmt.Sprintf("%v", err)}
+		return err
 	}
-	if exists {
-		return ErrPasswordExists
-	}
-
-	data, err := json.Marshal(pw) // #nosec G117 -- staticpw IS the password store; Password is the stored secret, persisted to the encrypted backend
-	if err != nil {
-		return &errs.Detail{Err: ErrMarshalFailed, Detail: fmt.Sprintf("%v", err)}
-	}
-
-	return s.backend.Put(context.Background(), newKey, data)
+	return s.records.rename(ctx, current, next)
 }
 
 // CreateFolder persists an empty folder marker so the folder survives
-// across restarts even without entries.
-func (s *BackendStore) CreateFolder(path string) error {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	if s.closed {
+// across restarts even without entries. Creating an existing folder is not
+// an error.
+func (s *DAOStore) CreateFolder(path string) error {
+	if s.closed.Load() {
 		return ErrStoreClosed
 	}
 	if path == "" {
 		return ErrFolderEmpty
 	}
-	return s.backend.Put(context.Background(), s.folderMarkerKey(path), s.folderMarkerValue(path))
+	marker, err := s.markerRecord(nameKindFolder, path, path)
+	if err != nil {
+		return err
+	}
+	_, err = s.records.create(context.Background(), marker)
+	return err
 }
 
 // RemoveFolder removes a persisted folder marker. Does not affect
 // entries within the folder. The operation is idempotent; removing a
 // non-existent folder is not an error.
-func (s *BackendStore) RemoveFolder(path string) error {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	if s.closed {
+func (s *DAOStore) RemoveFolder(path string) error {
+	if s.closed.Load() {
 		return ErrStoreClosed
 	}
 	if path == "" {
 		return ErrFolderEmpty
 	}
-	err := s.backend.Delete(context.Background(), s.folderMarkerKey(path))
-	if err != nil && errors.Is(err, storage.ErrNotFound) {
-		return nil
-	}
+	_, err := s.records.remove(context.Background(), s.markerPath(nameKindFolder, path))
 	return err
 }
 
@@ -559,233 +498,164 @@ func (s *BackendStore) RemoveFolder(path string) error {
 // alias instead of storing one, matching the Secret Service SetAlias
 // contract where unsetting an alias is a valid call.
 //
-// This is not part of the Store interface: it is a capability of the
-// canonical barrier-backed BackendStore, probed via a local interface
-// assertion by callers that need it (see xkey/pkg/secretservice), so the
-// narrower Store implementations (DAO, encrypted, scoped) are not forced to
-// carry alias bookkeeping they have no caller for.
-func (s *BackendStore) SetAlias(name string, folderPath string) error {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	if s.closed {
+// This is not part of the Store interface: it is a capability of DAOStore,
+// probed via a local interface assertion by callers that need it (see
+// xkey/pkg/secretservice), so the composite ScopedStore is not forced to
+// carry alias bookkeeping it has no caller for.
+func (s *DAOStore) SetAlias(name string, folderPath string) error {
+	if s.closed.Load() {
 		return ErrStoreClosed
 	}
 	if name == "" {
 		return ErrAliasNameEmpty
 	}
-	key := s.aliasKey(name)
+	ctx := context.Background()
 	if folderPath == "" {
-		err := s.backend.Delete(context.Background(), key)
-		if err != nil && errors.Is(err, storage.ErrNotFound) {
-			return nil
-		}
+		_, err := s.records.remove(ctx, s.markerPath(nameKindAlias, name))
 		return err
 	}
-	return s.backend.Put(context.Background(), key, []byte(folderPath))
+	alias, err := s.markerRecord(nameKindAlias, name, folderPath)
+	if err != nil {
+		return err
+	}
+	return s.records.put(ctx, alias)
 }
 
 // GetAlias returns the folder path persisted for name, and false if no
 // alias with that name has been set.
-func (s *BackendStore) GetAlias(name string) (string, bool, error) {
-	s.mu.RLock()
-	defer s.mu.RUnlock()
-	if s.closed {
+func (s *DAOStore) GetAlias(name string) (string, bool, error) {
+	if s.closed.Load() {
 		return "", false, ErrStoreClosed
 	}
 	if name == "" {
 		return "", false, ErrAliasNameEmpty
 	}
-	key := s.aliasKey(name)
-	exists, err := s.backend.Exists(context.Background(), key)
+	alias, err := s.records.load(context.Background(), s.markerPath(nameKindAlias, name))
+	if err != nil || alias == nil {
+		return "", false, err
+	}
+	folderPath, err := s.sealer.open(alias.Path, alias.Body)
 	if err != nil {
 		return "", false, err
 	}
-	if !exists {
-		return "", false, nil
-	}
-	data, err := s.backend.Get(context.Background(), key)
+	return string(folderPath), true, nil
+}
+
+// Close marks the store as closed. The DAO factory belongs to the
+// composition root that injected it, so nothing else is released.
+func (s *DAOStore) Close() error {
+	s.closed.Store(true)
+	return nil
+}
+
+// dir returns the directory the store files records of kind under.
+func (s *DAOStore) dir(kind string) string {
+	return s.prefix + kind + "/"
+}
+
+// entryPath returns the path of the entry with the given ID.
+func (s *DAOStore) entryPath(id string) string {
+	return s.dir(nameKindEntry) + id
+}
+
+// markerPath returns the path of the marker of kind named name.
+func (s *DAOStore) markerPath(kind, name string) string {
+	return s.dir(kind) + s.names.segment(kind, name)
+}
+
+// entryRecord returns the record storing pw at its ID.
+func (s *DAOStore) entryRecord(pw *StaticPassword) (*record, error) {
+	data, err := json.Marshal(pw) // #nosec G117 -- staticpw IS the password store; Password is the stored secret, persisted to the encrypted backend
 	if err != nil {
-		return "", false, err
+		return nil, &errs.Detail{Err: ErrMarshalFailed, Detail: err.Error()}
 	}
-	return string(data), true, nil
+	return s.newRecord(nameKindEntry, s.entryPath(pw.ID), data)
 }
 
-// Close marks the store as closed and closes the underlying backend.
-func (s *BackendStore) Close() error {
-	s.mu.Lock()
-	defer s.mu.Unlock()
+// markerRecord returns the record of the marker of kind named name,
+// storing value.
+func (s *DAOStore) markerRecord(kind, name, value string) (*record, error) {
+	return s.newRecord(kind, s.markerPath(kind, name), []byte(value))
+}
 
-	if s.closed {
-		return nil
+// newRecord returns the record of kind at path holding body, sealed for
+// the store.
+func (s *DAOStore) newRecord(kind, path string, body []byte) (*record, error) {
+	sealed, err := s.sealer.seal(path, body)
+	if err != nil {
+		return nil, err
 	}
-
-	s.closed = true
-	return s.backend.Close()
+	return &record{Path: path, Dir: s.dir(kind), Body: sealed}, nil
 }
 
-// isFolderMarkerKey returns true if the key belongs to a folder marker or an
-// alias marker rather than a password entry.
-func (s *BackendStore) isFolderMarkerKey(key string) bool {
-	return strings.Contains(key, folderMarkerSuffix) || strings.Contains(key, aliasMarkerSuffix)
-}
-
-// folderMarkerKey returns the backend key of the folder marker for path.
-func (s *BackendStore) folderMarkerKey(path string) string {
-	return s.keyPrefix + folderMarkerSuffix + s.names.segment(nameKindFolder, path)
-}
-
-// folderMarkerValue returns what the folder marker for path stores. A public
-// marker's key names its folder, so it stores nothing; an opaque marker's
-// key does not, so it stores the path, which the personal store seals.
-func (s *BackendStore) folderMarkerValue(path string) []byte {
-	if s.names.opaque() {
-		return []byte(path)
+// decodeEntry returns the password r stores.
+func (s *DAOStore) decodeEntry(r *record) (*StaticPassword, error) {
+	data, err := s.sealer.open(r.Path, r.Body)
+	if err != nil {
+		return nil, err
 	}
-	return []byte(`{}`)
+	return unmarshalPassword(data)
 }
 
-// folderMarkers returns the folder paths of the persisted folder markers.
-// Must be called while holding at least a read lock.
-func (s *BackendStore) folderMarkers() ([]string, error) {
-	markerPrefix := s.keyPrefix + folderMarkerSuffix
-	var folders []string
-	if !s.names.opaque() {
-		keys, err := s.backend.List(context.Background(), markerPrefix)
+// entries returns every entry record of the store with the password each
+// holds, in the same order.
+func (s *DAOStore) entries(ctx context.Context) ([]*record, []*StaticPassword, error) {
+	all, err := s.records.list(ctx, s.dir(nameKindEntry))
+	if err != nil {
+		return nil, nil, err
+	}
+	passwords := make([]*StaticPassword, 0, len(all))
+	for _, r := range all {
+		pw, err := s.decodeEntry(r)
 		if err != nil {
-			return nil, err
+			return nil, nil, err
 		}
-		for _, key := range keys {
-			if folder := strings.TrimPrefix(key, markerPrefix); folder != "" {
-				folders = append(folders, folder)
-			}
-		}
-		return folders, nil
+		passwords = append(passwords, pw)
 	}
-	err := s.backend.Scan(context.Background(), markerPrefix, func(_ string, value []byte) error {
-		if len(value) > 0 {
-			folders = append(folders, string(value))
+	return all, passwords, nil
+}
+
+// find returns the entry idOrName names and the password it holds.
+//
+// Lookup order:
+//  1. idOrName as an entry ID.
+//  2. idOrName as the name of a root-level entry.
+//  3. A case-insensitive name match among all entries.
+func (s *DAOStore) find(ctx context.Context, idOrName string) (*record, *StaticPassword, error) {
+	ids := []string{idOrName}
+	if hashed := s.names.entryID(idOrName, ""); hashed != idOrName {
+		ids = append(ids, hashed)
+	}
+	for _, id := range ids {
+		r, err := s.records.load(ctx, s.entryPath(id))
+		if err != nil {
+			return nil, nil, err
 		}
-		return nil
-	})
-	return folders, err
-}
+		if r != nil {
+			pw, err := s.decodeEntry(r)
+			return r, pw, err
+		}
+	}
 
-// aliasKey returns the backend key of the alias name.
-func (s *BackendStore) aliasKey(name string) string {
-	return s.keyPrefix + aliasMarkerSuffix + s.names.segment(nameKindAlias, name)
-}
-
-// storageKey returns the backend key for the given password ID,
-// incorporating the tenant prefix when present.
-func (s *BackendStore) storageKey(id string) string {
-	return s.keyPrefix + id + ".json"
+	all, passwords, err := s.entries(ctx)
+	if err != nil {
+		return nil, nil, err
+	}
+	for i, pw := range passwords {
+		if strings.EqualFold(pw.Name, idOrName) {
+			return all[i], pw, nil
+		}
+	}
+	return nil, nil, ErrPasswordNotFound
 }
 
 // unmarshalPassword deserializes a StaticPassword from JSON bytes.
 func unmarshalPassword(data []byte) (*StaticPassword, error) {
 	var pw StaticPassword
 	if err := json.Unmarshal(data, &pw); err != nil {
-		return nil, &errs.Detail{Err: ErrUnmarshalFailed, Detail: fmt.Sprintf("%v", err)}
+		return nil, &errs.Detail{Err: ErrUnmarshalFailed, Detail: err.Error()}
 	}
 	return &pw, nil
-}
-
-// getUnlocked retrieves a password without acquiring the lock.
-// Must be called while holding the appropriate lock.
-//
-// Lookup order:
-//  1. Exact key lookup treating idOrName as an ID.
-//  2. Hash idOrName as a name (empty folder) for an O(1) hashed-ID lookup.
-//  3. Full scan for a case-insensitive name match (covers legacy entries
-//     and entries in folders).
-func (s *BackendStore) getUnlocked(idOrName string) (*StaticPassword, error) {
-	// 1. Exact ID key lookup.
-	key := s.storageKey(idOrName)
-	data, err := s.backend.Get(context.Background(), key)
-	if err == nil {
-		pw, unmarshalErr := unmarshalPassword(data)
-		if unmarshalErr != nil {
-			return nil, unmarshalErr
-		}
-		return pw, nil
-	}
-
-	// 2. Hash the input as a name (no folder) and try O(1) lookup.
-	hashedID := s.names.entryID(idOrName, "")
-	if hashedID != idOrName {
-		key = s.storageKey(hashedID)
-		data, err = s.backend.Get(context.Background(), key)
-		if err == nil {
-			pw, unmarshalErr := unmarshalPassword(data)
-			if unmarshalErr != nil {
-				return nil, unmarshalErr
-			}
-			return pw, nil
-		}
-	}
-
-	// 3. Scan for case-insensitive name match.
-	return s.findByName(idOrName)
-}
-
-// findByName scans all stored passwords for a case-insensitive name match.
-// Must be called while holding at least a read lock.
-func (s *BackendStore) findByName(name string) (*StaticPassword, error) {
-	keys, err := s.backend.List(context.Background(), s.keyPrefix)
-	if err != nil {
-		return nil, ErrPasswordNotFound
-	}
-
-	for _, key := range keys {
-		if s.isFolderMarkerKey(key) {
-			continue
-		}
-		data, getErr := s.backend.Get(context.Background(), key)
-		if getErr != nil {
-			continue
-		}
-		pw, unmarshalErr := unmarshalPassword(data)
-		if unmarshalErr != nil {
-			continue
-		}
-		if strings.EqualFold(pw.Name, name) {
-			return pw, nil
-		}
-	}
-
-	return nil, ErrPasswordNotFound
-}
-
-// checkNameConflict scans all stored passwords for a case-insensitive name
-// collision within the same folder, optionally excluding an ID (for update
-// scenarios). Must be called while holding the write lock.
-func (s *BackendStore) checkNameConflict(name string, folderPath string, excludeID string) error {
-	keys, err := s.backend.List(context.Background(), s.keyPrefix)
-	if err != nil {
-		return nil
-	}
-
-	for _, key := range keys {
-		if s.isFolderMarkerKey(key) {
-			continue
-		}
-		data, getErr := s.backend.Get(context.Background(), key)
-		if getErr != nil {
-			continue
-		}
-		pw, unmarshalErr := unmarshalPassword(data)
-		if unmarshalErr != nil {
-			continue
-		}
-		if excludeID != "" && pw.ID == excludeID {
-			continue
-		}
-		if strings.EqualFold(pw.Name, name) && pw.FolderPath == folderPath {
-			return ErrPasswordExists
-		}
-	}
-
-	return nil
 }
 
 // isValidTenantID checks that a tenant ID is non-empty, at most 64 characters,

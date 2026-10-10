@@ -659,6 +659,76 @@ func TestServer_CloseRemovesSocketFile(t *testing.T) {
 	assert.True(t, os.IsNotExist(err))
 }
 
+// blockingStatusHandler holds every status request until release is closed,
+// so a test can stop the server while a handler is still running.
+type blockingStatusHandler struct {
+	mockHandler
+	entered chan struct{}
+	release chan struct{}
+}
+
+func (h *blockingStatusHandler) HandleStatus() (*Response, error) {
+	close(h.entered)
+	<-h.release
+	return OKResponse(ActionDaemonReady), nil
+}
+
+func TestServer_StopDoesNotWaitForInFlightHandlers(t *testing.T) {
+	sockPath := testSocketPath(t)
+	handler := &blockingStatusHandler{
+		entered: make(chan struct{}),
+		release: make(chan struct{}),
+	}
+
+	srv, err := NewServer(sockPath, handler, testLogger())
+	require.NoError(t, err)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	go srv.Serve(ctx)
+
+	conn, err := net.Dial("unix", sockPath)
+	require.NoError(t, err)
+	defer conn.Close()
+	require.NoError(t, json.NewEncoder(conn).Encode(Message{Type: MessageTypeStatus}))
+	<-handler.entered
+
+	stopped := make(chan error, 1)
+	go func() { stopped <- srv.Stop() }()
+	select {
+	case stopErr := <-stopped:
+		require.NoError(t, stopErr)
+	case <-time.After(2 * time.Second):
+		t.Fatal("Stop blocked on an in-flight handler")
+	}
+
+	assert.False(t, srv.IsRunning())
+	_, err = os.Stat(sockPath)
+	assert.True(t, os.IsNotExist(err), "Stop must remove the socket file")
+
+	// The path is free at once: a new server binds it while the old
+	// handler is still running.
+	next, err := NewServer(sockPath, &mockHandler{}, testLogger())
+	require.NoError(t, err)
+
+	close(handler.release)
+	require.NoError(t, srv.Close())
+
+	// Draining the old server must not unlink the new server's socket.
+	_, err = os.Stat(sockPath)
+	assert.NoError(t, err)
+	require.NoError(t, next.Close())
+}
+
+func TestServer_StopIsIdempotent(t *testing.T) {
+	srv, err := NewServer(testSocketPath(t), &mockHandler{}, testLogger())
+	require.NoError(t, err)
+
+	assert.NoError(t, srv.Stop())
+	assert.NoError(t, srv.Stop())
+	assert.NoError(t, srv.Close())
+}
+
 func TestServer_ClientDisconnectsImmediately(t *testing.T) {
 	sockPath := testSocketPath(t)
 	handler := &mockHandler{

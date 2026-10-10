@@ -81,7 +81,7 @@ async function installTrustStrapInitScript(
         AppService: {
           GetConfig: async () => ({
             developer_tools: true,
-            browser_extension_enabled: false,
+            local_app_access_enabled: false,
           }),
         },
         TrustService: {

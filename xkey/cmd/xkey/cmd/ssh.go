@@ -17,6 +17,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"log/slog"
 	"os"
 	"path/filepath"
@@ -24,6 +25,8 @@ import (
 
 	"github.com/spf13/cobra"
 	gossh "golang.org/x/crypto/ssh"
+
+	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
 
 	xkmssdk "github.com/jeremyhahn/go-xkms/sdk/go"
 	sshsdk "github.com/jeremyhahn/go-xkms/sdk/go/client/ssh"
@@ -225,16 +228,18 @@ var sshAuthorizedRemoveCmd = &cobra.Command{
 	RunE:    runSSHAuthorizedRemove,
 }
 
-// closeSSHClientQuiet returns a func() that closes client and logs a
-// failure at debug level. Its signature matches what sshClient and
-// sshClientForServer hand back to the caller as the closer half of their
-// (client, closer, error) result: there is no error return on that path
-// for a close failure to travel through, so it is logged instead of
-// dropped.
-func closeSSHClientQuiet(client sshsdk.Client) func() {
+// closeSSHQuiet returns a func() that closes each closer in order and logs a
+// failure at debug level. Its signature matches what sshClient,
+// sshClientForEndpoint and the SSH store helpers hand back to the caller as
+// the closer half of their (value, closer, error) result: there is no error
+// return on that path for a close failure to travel through, so it is logged
+// instead of dropped.
+func closeSSHQuiet(closers ...io.Closer) func() {
 	return func() {
-		if err := client.Close(); err != nil {
-			slog.Default().Debug("ssh: failed to close client", "error", err)
+		for _, c := range closers {
+			if err := c.Close(); err != nil {
+				slog.Default().Debug("ssh: close failed", "error", err)
+			}
 		}
 	}
 }
@@ -247,6 +252,53 @@ func closeSSHClientQuiet(client sshsdk.Client) func() {
 // call presents XKMSD_TOKEN or the stored login, and the XKMSD_TLS_*
 // trust and client credential, on every transport.
 func sshClient(cmd *cobra.Command) (sshsdk.Client, func(), error) {
+	endpoint, remote, err := sshServerEndpoint(cmd)
+	if err != nil {
+		return nil, nil, err
+	}
+	if remote {
+		return sshClientForEndpoint(endpoint)
+	}
+	client, _, closer, err := openLocalSSHClient()
+	return client, closer, err
+}
+
+// sshClientWithHostKeys returns the SSH client and the local host-key pin
+// store for a command that needs both, with one closer for the pair. On the
+// local shared SSH store both run over the one backend the client opened:
+// the Pebble engine refuses a second open in the same process while the
+// first is still held.
+func sshClientWithHostKeys(cmd *cobra.Command) (sshsdk.Client, sshsdk.HostKeyStore, func(), error) {
+	endpoint, remote, err := sshServerEndpoint(cmd)
+	if err != nil {
+		return nil, nil, nil, err
+	}
+	if !remote {
+		client, stores, closer, err := openLocalSSHClient()
+		if err != nil {
+			return nil, nil, nil, err
+		}
+		return client, stores.KnownHosts, closer, nil
+	}
+
+	client, closeClient, err := sshClientForEndpoint(endpoint)
+	if err != nil {
+		return nil, nil, nil, err
+	}
+	hostKeys, closeHostKeys, err := xkeyHostKeyStore()
+	if err != nil {
+		closeClient()
+		return nil, nil, nil, err
+	}
+	return client, hostKeys, func() {
+		closeHostKeys()
+		closeClient()
+	}, nil
+}
+
+// sshServerEndpoint resolves the xkmsd endpoint an SSH command acts on. It
+// reports false when the command runs on the local shared SSH store instead.
+func sshServerEndpoint(cmd *cobra.Command) (XKMSdEndpoint, bool, error) {
 	if server := strings.TrimSpace(commandFlagString(cmd, "server")); server != "" {
 		endpoint, err := withXKMSdToken(XKMSdEndpoint{
 			URL:         server,
@@ -255,32 +307,42 @@ func sshClient(cmd *cobra.Command) (sshsdk.Client, func(), error) {
 			TLSKeyFile:  strings.TrimSpace(os.Getenv(envXKMSdTLSKey)),
 		})
 		if err != nil {
-			return nil, nil, err
+			return XKMSdEndpoint{}, false, err
 		}
-		return sshClientForEndpoint(endpoint)
+		return endpoint, true, nil
 	}
 
 	useServer, err := sshUseServer(cmd)
+	if err != nil || !useServer {
+		return XKMSdEndpoint{}, false, err
+	}
+	endpoint, err := resolveXKMSdEndpoint(cmd)
 	if err != nil {
-		return nil, nil, err
+		return XKMSdEndpoint{}, false, err
 	}
-	if useServer {
-		endpoint, err := resolveXKMSdEndpoint(cmd)
-		if err != nil {
-			return nil, nil, err
-		}
-		return sshClientForEndpoint(endpoint)
-	}
+	return endpoint, true, nil
+}
 
-	backend, err := xkeySSHBackend()
+// openLocalSSHClient builds the embedded SSH client over the local shared SSH
+// store. It also returns the stores the client runs on, so a caller that
+// needs one of them directly shares the client's backend instead of opening
+// a second one.
+func openLocalSSHClient() (sshsdk.Client, *sshsdk.Stores, func(), error) {
+	daos, backend, err := xkeySSHDAOs()
 	if err != nil {
-		return nil, nil, err
+		return nil, nil, nil, err
 	}
-	client, err := sshsdk.NewEmbedded(sshsdk.EmbeddedOptions{Backend: backend})
+	stores, err := sshsdk.NewStores(daos)
 	if err != nil {
-		return nil, nil, &SentinelCauseError{Sentinel: ErrSSHClientConstruct, Cause: err}
+		return nil, nil, nil, errors.Join(&SentinelCauseError{Sentinel: ErrSSHClientConstruct, Cause: err}, backend.Close())
 	}
-	return client, closeSSHClientQuiet(client), nil
+	client, err := sshsdk.NewEmbedded(sshsdk.EmbeddedOptions{Stores: stores})
+	if err != nil {
+		return nil, nil, nil, errors.Join(&SentinelCauseError{Sentinel: ErrSSHClientConstruct, Cause: err}, backend.Close())
+	}
+	// The embedded client treats its stores as caller-owned, so its Close
+	// leaves the backend open: close the backend after it.
+	return client, stores, closeSSHQuiet(client, backend), nil
 }
 
 // sshUseServer reports whether an SSH command acts on the server's SSH
@@ -312,7 +374,7 @@ func sshClientForEndpoint(endpoint XKMSdEndpoint) (sshsdk.Client, func(), error)
 	if err != nil {
 		return nil, nil, &SentinelCauseError{Sentinel: ErrSSHClientConstruct, Cause: err}
 	}
-	return client, closeSSHClientQuiet(client), nil
+	return client, closeSSHQuiet(client), nil
 }
 
 // firstNonEmpty returns the first non-empty trimmed string.
@@ -375,6 +437,37 @@ func xkeySSHBackend() (xkmssdk.StorageBackend, error) {
 		return nil, ErrSSHStoreBarrierEncrypted
 	}
 	return sshstore.ResolveBackend(dataDir, xkeySSHStorageEngineKind(), nil)
+}
+
+// xkeySSHDAOs returns the DAO factory the CLI's SSH stores persist through,
+// together with the backend xkeySSHBackend resolves under it. Nothing built
+// on the factory owns the backend: the caller closes it once done, so that a
+// second command in the same process can open it again.
+func xkeySSHDAOs() (*qrdbsdk.DAOFactory, xkmssdk.StorageBackend, error) {
+	backend, err := xkeySSHBackend()
+	if err != nil {
+		return nil, nil, err
+	}
+	kv, err := xkmssdk.NewKVStoreAdapter(backend)
+	if err != nil {
+		return nil, nil, errors.Join(err, backend.Close())
+	}
+	return xkmssdk.NewStoreDAOFactory(kv), backend, nil
+}
+
+// openSSHStore builds one SSH store over the CLI's shared backend and returns
+// it with the closer that releases the backend.
+func openSSHStore[S any](build func(*qrdbsdk.DAOFactory) (S, error)) (S, func(), error) {
+	var none S
+	daos, backend, err := xkeySSHDAOs()
+	if err != nil {
+		return none, nil, err
+	}
+	store, err := build(daos)
+	if err != nil {
+		return none, nil, errors.Join(err, backend.Close())
+	}
+	return store, closeSSHQuiet(backend), nil
 }
 
 // sshPassphraseProvider returns a provider appropriate to the CLI's

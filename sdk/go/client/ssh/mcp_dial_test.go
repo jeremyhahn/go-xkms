@@ -27,7 +27,6 @@ import (
 	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
 
 	pkgknownhosts "github.com/jeremyhahn/go-xkms/pkg/ssh/known_hosts"
-	"github.com/jeremyhahn/go-xkms/pkg/storage"
 	sdkssh "github.com/jeremyhahn/go-xkms/sdk/go/client/ssh"
 )
 
@@ -67,11 +66,7 @@ type mcpTestKnownHostVerifyParams struct {
 // table instead of standing up the whole daemon.
 func newMCPSSHFixture(t *testing.T) sdkssh.Client {
 	t.Helper()
-	backend, err := storage.NewMemoryBackend()
-	if err != nil {
-		t.Fatalf("backend: %v", err)
-	}
-	embedded, err := sdkssh.NewEmbedded(sdkssh.EmbeddedOptions{Backend: backend})
+	embedded, err := sdkssh.NewEmbedded(sdkssh.EmbeddedOptions{Stores: newStores(t)})
 	if err != nil {
 		t.Fatalf("NewEmbedded: %v", err)
 	}

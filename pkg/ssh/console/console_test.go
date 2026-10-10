@@ -28,7 +28,7 @@ import (
 
 	"github.com/jeremyhahn/go-xkms/pkg/ssh/known_hosts"
 	"github.com/jeremyhahn/go-xkms/pkg/ssh/scope"
-	"github.com/jeremyhahn/go-xkms/pkg/storage"
+	"github.com/jeremyhahn/go-xkms/pkg/testutil"
 )
 
 // echoSSHServer is an in-process SSH server that grants a PTY and echoes
@@ -145,7 +145,7 @@ func clientSigner(t *testing.T) ssh.Signer {
 
 func pinnedHosts(t *testing.T, host string, hostPub ssh.PublicKey) known_hosts.Store {
 	t.Helper()
-	store, err := known_hosts.NewBackendStore(storage.New())
+	store, err := known_hosts.NewDAOStore(testutil.NewMemoryDAOFactory())
 	if err != nil {
 		t.Fatalf("known_hosts store: %v", err)
 	}
@@ -205,7 +205,7 @@ func TestConsole_DialEchoResizeClose(t *testing.T) {
 
 func TestConsole_DialValidation(t *testing.T) {
 	ctx := context.Background()
-	store, _ := known_hosts.NewBackendStore(storage.New())
+	store, _ := known_hosts.NewDAOStore(testutil.NewMemoryDAOFactory())
 	if _, err := Dial(ctx, DialRequest{Host: "h", KnownHosts: store}, Config{}); err == nil {
 		t.Fatal("expected error for missing signer")
 	}

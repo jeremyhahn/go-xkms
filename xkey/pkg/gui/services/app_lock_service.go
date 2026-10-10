@@ -150,6 +150,11 @@ type AppLockService struct {
 	// later notifications without stalling the state transitions themselves.
 	emitMu sync.Mutex
 
+	// lockStateHook runs after every lock transition, once both transitionMu
+	// and emitMu are released, so the application can follow the lock state
+	// (e.g. start or stop the IPC listener).
+	lockStateHook atomic.Pointer[func()]
+
 	// autoLockUnit is the real-time duration of one "minute" of the
 	// inactivity timeout, in nanoseconds. It exists so a test can drive the
 	// actual time.AfterFunc path — the one that fires in production —
@@ -196,6 +201,24 @@ func (s *AppLockService) SetContext(ctx context.Context) {
 // SetEmitFunc sets the Wails event emitter for lock/unlock notifications.
 func (s *AppLockService) SetEmitFunc(fn func(string, any)) {
 	s.emitFunc = fn
+}
+
+// SetLockStateHook registers fn to run after every lock transition: Lock,
+// Unlock (including a barrier-only unseal), AutoUnlock and LockForStartup.
+// fn runs with no service lock held. A nil fn clears the hook.
+func (s *AppLockService) SetLockStateHook(fn func()) {
+	if fn == nil {
+		s.lockStateHook.Store(nil)
+		return
+	}
+	s.lockStateHook.Store(&fn)
+}
+
+// notifyLockState runs the lock-state hook, if one is registered.
+func (s *AppLockService) notifyLockState() {
+	if hook := s.lockStateHook.Load(); hook != nil {
+		(*hook)()
+	}
 }
 
 // SetBarrierStrategy sets the barrier strategy ID used for unseal operations.
@@ -321,11 +344,12 @@ func (s *AppLockService) SetLockOnScreenLock(enabled bool) {
 // read the initial lock state via GetStatus on mount.
 func (s *AppLockService) LockForStartup() {
 	s.transitionMu.Lock()
-	defer s.transitionMu.Unlock()
-
 	s.stopAutoLockTimer()
 	s.locked.Store(true)
+	s.transitionMu.Unlock()
+
 	s.log.Info("app locked for startup")
+	s.notifyLockState()
 }
 
 // Lock sets the app to the locked state. Returns ErrAppLockAlreadyLocked
@@ -346,12 +370,14 @@ func (s *AppLockService) Lock() error {
 	// so the listener does not stall the next transition.
 	s.emitMu.Lock()
 	s.transitionMu.Unlock()
-	defer s.emitMu.Unlock()
 
 	s.log.Info("app locked", "barrier_sealed", sealErr == nil)
 	if s.emitFunc != nil {
 		s.emitFunc("app:locked", nil)
 	}
+	s.emitMu.Unlock()
+
+	s.notifyLockState()
 	return sealErr
 }
 
@@ -400,6 +426,13 @@ func (s *AppLockService) Unlock(pin string) error {
 		return ErrAppLockPINRequired
 	}
 
+	err := s.unlock(pin)
+	s.notifyLockState()
+	return err
+}
+
+// unlock performs Unlock's transition under transitionMu.
+func (s *AppLockService) unlock(pin string) error {
 	s.transitionMu.Lock()
 	defer s.transitionMu.Unlock()
 
@@ -653,12 +686,14 @@ func (s *AppLockService) AutoUnlock() {
 	s.resetAutoLockTimer()
 	s.emitMu.Lock()
 	s.transitionMu.Unlock()
-	defer s.emitMu.Unlock()
 
 	s.log.Info("app auto-unlocked")
 	if s.emitFunc != nil {
 		s.emitFunc("app:unlocked", nil)
 	}
+	s.emitMu.Unlock()
+
+	s.notifyLockState()
 }
 
 // IsLocked returns whether the app is currently locked.

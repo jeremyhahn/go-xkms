@@ -1,6 +1,6 @@
 module github.com/jeremyhahn/go-xkms
 
-go 1.27.1
+go 1.27.2
 
 require (
 	cloud.google.com/go/kms v1.31.0
@@ -64,7 +64,7 @@ require (
 	github.com/weppos/publicsuffix-go v0.50.3
 	github.com/youmark/pkcs8 v0.0.0-20240726163527-a2c0da244d78
 	golang.org/x/crypto v0.57.0
-	golang.org/x/net v0.59.0
+	golang.org/x/net v0.60.0
 	golang.org/x/oauth2 v0.37.0
 	golang.org/x/sys v0.48.0
 	golang.org/x/term v0.46.0

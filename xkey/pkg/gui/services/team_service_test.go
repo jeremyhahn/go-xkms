@@ -33,7 +33,7 @@ func newTestTeamService(t *testing.T) *TeamService {
 	kvStore, err := xkms.NewKVStoreAdapter(backend)
 	require.NoError(t, err)
 
-	store, err := xkms.NewStaticPasswordDAOTeamStore(kvStore)
+	store, err := xkms.NewStaticPasswordDAOTeamStore(xkms.NewStoreDAOFactory(kvStore))
 	require.NoError(t, err)
 	t.Cleanup(func() { store.Close() })
 

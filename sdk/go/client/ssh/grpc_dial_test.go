@@ -27,23 +27,18 @@ import (
 
 	apigrpc "github.com/jeremyhahn/go-xkms/pkg/api/grpc"
 	pb "github.com/jeremyhahn/go-xkms/pkg/api/grpc/proto/xkmsv1"
-	"github.com/jeremyhahn/go-xkms/pkg/storage"
 	sdkssh "github.com/jeremyhahn/go-xkms/sdk/go/client/ssh"
 )
 
 // newGRPCSSHServerFixture boots a real KeystoreService (pkg/api/grpc,
 // the production RPC implementation, not the fakeKeystore test double used
 // by the wire-marshalling tests elsewhere in this package) backed by an
-// embedded SSH client over an in-memory storage.Backend, listening on lis.
+// embedded SSH client over in-memory Stores, listening on lis.
 // Session.Dial needs genuine cryptographic signing and host-key
 // verification, which fakeKeystore's canned responses cannot provide.
 func newGRPCSSHServerFixture(t *testing.T, lis net.Listener) {
 	t.Helper()
-	backend, err := storage.NewMemoryBackend()
-	if err != nil {
-		t.Fatalf("backend: %v", err)
-	}
-	embedded, err := sdkssh.NewEmbedded(sdkssh.EmbeddedOptions{Backend: backend})
+	embedded, err := sdkssh.NewEmbedded(sdkssh.EmbeddedOptions{Stores: newStores(t)})
 	if err != nil {
 		t.Fatalf("NewEmbedded: %v", err)
 	}

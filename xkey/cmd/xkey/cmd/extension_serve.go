@@ -72,6 +72,11 @@ var (
 	// way to collect that quorum, so it is refused rather than left to hang
 	// waiting for shares that will never arrive.
 	ErrServeShamirStrategyUnavailable = errors.New("extension serve: shamir barrier strategy needs an operator quorum a headless process cannot collect; unseal interactively with 'xkey barrier unseal'")
+
+	// ErrServeLocalAppAccessDisabled indicates the local app access setting
+	// is off, so no process may open the IPC socket that would expose the
+	// keys to other apps.
+	ErrServeLocalAppAccessDisabled = errors.New("extension serve: local app access is off; enable it with 'xkey app-access enable' or in xKey Settings")
 )
 
 // extensionServeCmd starts the headless autofill IPC server.
@@ -86,6 +91,9 @@ and remote deployments where the GUI cannot run.
 
 The server communicates with the browser extension via the same Unix socket IPC protocol
 used by the GUI, ensuring full compatibility.
+
+The server opens that socket only with local app access on; it refuses to
+start otherwise. Turn it on with "xkey app-access enable".
 
 Examples:
   # Start with barrier encryption (production)
@@ -139,6 +147,16 @@ func init() {
 
 // runExtensionServe is the entry point for the headless IPC server command.
 func runExtensionServe(cmd *cobra.Command, _ []string) error {
+	// 0. Refuse before touching anything unless the user let other apps
+	// use their keys.
+	enabled, err := localAppAccessEnabled()
+	if err != nil {
+		return err
+	}
+	if !enabled {
+		return ErrServeLocalAppAccessDisabled
+	}
+
 	// 1. Resolve xKey home directory.
 	home, err := xhome.Resolve()
 	if err != nil {
@@ -722,11 +740,11 @@ func resolveBarrierPassword(cmd *cobra.Command) (string, error) {
 // and `xkey oath add --store` is visible to the headless server.
 func initPlainStores(dataDir string, passwordSvc *services.StaticPasswordService, oathSvc *services.OATHService) error {
 	// Password store: same as CLI default (data/staticpw subdirectory).
-	pwBackend, err := xkms.NewFileStorageBackend(filepath.Join(dataDir, "staticpw"))
+	pwStore, err := openPasswordStore(filepath.Join(dataDir, "staticpw"))
 	if err != nil {
 		return err
 	}
-	passwordSvc.SetStore(staticpw.NewStore(pwBackend))
+	passwordSvc.SetStore(pwStore)
 
 	// OATH store: same as CLI default (data/oath.json file).
 	oathStore, err := oath.NewFileStore(filepath.Join(dataDir, "oath.json"))
@@ -744,7 +762,11 @@ func initBarrierStores(barrierSvc *services.BarrierService, passwordSvc *service
 	if backend == nil {
 		return ErrServeStoreInitFailed
 	}
-	passwordSvc.SetStore(staticpw.NewStore(backend))
+	pwStore, err := staticpw.NewBackendStore(backend)
+	if err != nil {
+		return err
+	}
+	passwordSvc.SetStore(pwStore)
 
 	oathStore, err := oath.NewBackendStore(backend, "oath/")
 	if err != nil {

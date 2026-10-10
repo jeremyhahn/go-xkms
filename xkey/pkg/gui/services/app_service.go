@@ -124,7 +124,7 @@ type GUIConfigData struct {
 	AppLockOnScreenLock       bool                 `json:"app_lock_on_screen_lock"`
 	SealerBackend             string               `json:"sealer_backend,omitempty"`
 	APIExplorerSandboxPolicy  string               `json:"api_explorer_sandbox_policy"`
-	BrowserExtensionEnabled   bool                 `json:"browser_extension_enabled"`
+	LocalAppAccessEnabled     bool                 `json:"local_app_access_enabled"`
 	DeveloperTools            bool                 `json:"developer_tools"`
 	FIDO2RequireUserPresence  bool                 `json:"fido2_require_user_presence"`
 	FIDO2UserIntentCheck      bool                 `json:"fido2_user_intent_check"`
@@ -572,8 +572,8 @@ func configChangedFields(old, new *GUIConfigData) []string {
 	if old.AppLockOnScreenLock != new.AppLockOnScreenLock {
 		fields = append(fields, "app_lock_on_screen_lock")
 	}
-	if old.BrowserExtensionEnabled != new.BrowserExtensionEnabled {
-		fields = append(fields, "browser_extension_enabled")
+	if old.LocalAppAccessEnabled != new.LocalAppAccessEnabled {
+		fields = append(fields, "local_app_access_enabled")
 	}
 	if old.DeveloperTools != new.DeveloperTools {
 		fields = append(fields, "developer_tools")

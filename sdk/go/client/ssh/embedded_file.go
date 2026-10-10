@@ -16,7 +16,10 @@ package ssh
 import (
 	"os"
 
+	"github.com/jeremyhahn/go-xkms/pkg/dao"
+	"github.com/jeremyhahn/go-xkms/pkg/storage"
 	"github.com/jeremyhahn/go-xkms/pkg/storage/file"
+	"github.com/jeremyhahn/go-xkms/pkg/storage/kvadapter"
 )
 
 // EmbeddedFileOptions configures a file-backed embedded Client. The
@@ -24,15 +27,15 @@ import (
 // callers don't need to pre-provision it. The mode is chosen to match
 // the OpenSSH ~/.ssh convention.
 type EmbeddedFileOptions struct {
-	// RootDir is the filesystem directory used as the SSH key store
-	// root. The directory is created (mode 0700) if missing. Required.
+	// RootDir is the filesystem directory holding the client's go-qrdb
+	// datastore. The directory is created (mode 0700) if missing. Required.
 	RootDir string
 }
 
-// NewEmbeddedFile constructs an embedded Client backed by a local
-// directory. It is a convenience over NewEmbedded for callers (such as
-// the xkey CLI) that want a standalone mode without taking a direct
-// dependency on pkg/storage.
+// NewEmbeddedFile constructs an embedded Client whose Stores live in a
+// go-qrdb datastore kept in a local directory. It is the composition root
+// for callers (such as the xkmsctl CLI) that run without a server. Closing
+// the Client closes the datastore.
 func NewEmbeddedFile(opts EmbeddedFileOptions) (Client, error) {
 	if opts.RootDir == "" {
 		return nil, &NilInputError{Field: "RootDir"}
@@ -44,7 +47,30 @@ func NewEmbeddedFile(opts EmbeddedFileOptions) (Client, error) {
 	if err != nil {
 		return nil, &EmbeddedFileStoreError{Op: "open", Path: opts.RootDir, Err: err}
 	}
-	return NewEmbedded(EmbeddedOptions{Backend: backend})
+	kv, err := kvadapter.New(backend)
+	if err != nil {
+		return nil, &EmbeddedFileStoreError{Op: "open", Path: opts.RootDir, Err: err}
+	}
+	stores, err := NewStores(dao.NewStoreFactory(kv))
+	if err != nil {
+		return nil, err
+	}
+	client, err := NewEmbedded(EmbeddedOptions{Stores: stores})
+	if err != nil {
+		return nil, err
+	}
+	return &fileClient{Client: client, backend: backend}, nil
+}
+
+// fileClient is an embedded Client that owns its datastore's backend.
+type fileClient struct {
+	Client
+	backend storage.Backend
+}
+
+// Close closes the datastore backend.
+func (c *fileClient) Close() error {
+	return c.backend.Close()
 }
 
 // EmbeddedFileStoreError wraps a filesystem failure encountered while

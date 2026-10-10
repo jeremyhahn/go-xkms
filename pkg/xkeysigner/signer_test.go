@@ -18,6 +18,7 @@ import (
 	"crypto/ecdsa"
 	"crypto/elliptic"
 	"crypto/rand"
+	"crypto/rsa"
 	"crypto/x509"
 	"crypto/x509/pkix"
 	"encoding/base64"
@@ -117,11 +118,8 @@ func certHandler(certPEM string) func(raw json.RawMessage) []byte {
 				Status: "ok",
 				PKCS11: &ipcPKCS11Result{
 					PIVCert: &ipcPIVCertResult{
-						Certificate: certPEM,
+						Certificate: []byte(certPEM),
 						Slot:        msg.PKCS11.PIVCert.Slot,
-						Subject:     "CN=test-signer",
-						Issuer:      "CN=test-signer",
-						NotAfter:    "2030-01-01T00:00:00Z",
 					},
 				},
 			}
@@ -316,7 +314,7 @@ func TestSigner_Sign_IPCError(t *testing.T) {
 				Status: "ok",
 				PKCS11: &ipcPKCS11Result{
 					PIVCert: &ipcPIVCertResult{
-						Certificate: certPEM,
+						Certificate: []byte(certPEM),
 						Slot:        "9a",
 					},
 				},
@@ -383,6 +381,108 @@ func TestSigner_Sign_VariousHashes(t *testing.T) {
 	}
 }
 
+// TestSignParams covers how Sign describes its input to xkey: a hash in the
+// signer options means the bytes are that digest, so xkey must sign them as
+// is; PSS options carry the padding and salt length; no hash sends the
+// bytes as data for xkey to hash itself.
+func TestSignParams(t *testing.T) {
+	data := []byte("0123456789abcdef0123456789abcdef")
+
+	tests := []struct {
+		name string
+		opts crypto.SignerOpts
+		want ipcSignParams
+	}{
+		{
+			name: "sha256 digest",
+			opts: crypto.SHA256,
+			want: ipcSignParams{Hash: "SHA-256", DataIsDigest: true},
+		},
+		{
+			name: "sha512 digest",
+			opts: crypto.SHA512,
+			want: ipcSignParams{Hash: "SHA-512", DataIsDigest: true},
+		},
+		{
+			name: "pss with explicit salt",
+			opts: &rsa.PSSOptions{Hash: crypto.SHA384, SaltLength: 48},
+			want: ipcSignParams{Hash: "SHA-384", DataIsDigest: true, Padding: "pss", SaltLength: 48},
+		},
+		{
+			name: "pss salt equals hash",
+			opts: &rsa.PSSOptions{Hash: crypto.SHA256, SaltLength: rsa.PSSSaltLengthEqualsHash},
+			want: ipcSignParams{Hash: "SHA-256", DataIsDigest: true, Padding: "pss", SaltLength: rsa.PSSSaltLengthEqualsHash},
+		},
+		{
+			name: "nil opts",
+			opts: nil,
+			want: ipcSignParams{},
+		},
+		{
+			name: "no hash",
+			opts: crypto.Hash(0),
+			want: ipcSignParams{},
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got, err := signParams(data, tt.opts)
+			require.NoError(t, err)
+
+			tt.want.Data = base64.StdEncoding.EncodeToString(data)
+			assert.Equal(t, tt.want, *got)
+		})
+	}
+}
+
+// TestSignParams_UnsupportedHash covers a hash xkey has no name for: the
+// signer refuses it instead of sending a digest xkey would mislabel.
+func TestSignParams_UnsupportedHash(t *testing.T) {
+	_, err := signParams([]byte("digest"), crypto.SHA1)
+	require.ErrorIs(t, err, ErrUnsupportedHash)
+}
+
+// TestSigner_Sign_SendsDigestFlag covers the request on the wire: a
+// crypto.Signer receives a digest, so the sign request must say so.
+func TestSigner_Sign_SendsDigestFlag(t *testing.T) {
+	certPEM, _ := generateTestCert(t)
+	handler := certHandler(certPEM)
+	received := make(chan ipcSignParams, 1)
+	sockPath := startMockIPCServer(t, func(raw json.RawMessage) []byte {
+		var msg ipcMessage
+		if err := json.Unmarshal(raw, &msg); err == nil && msg.PKCS11 != nil && msg.PKCS11.Sign != nil {
+			received <- *msg.PKCS11.Sign
+		}
+		return handler(raw)
+	})
+
+	signer, err := NewSigner(&SignerConfig{SocketPath: sockPath, Slot: "9c"})
+	require.NoError(t, err)
+
+	digest := make([]byte, 32)
+	_, err = signer.Sign(rand.Reader, digest, crypto.SHA256)
+	require.NoError(t, err)
+
+	got := <-received
+	assert.Equal(t, "piv-9c", got.KeyID)
+	assert.Equal(t, "SHA-256", got.Hash)
+	assert.True(t, got.DataIsDigest)
+	assert.Empty(t, got.Padding)
+}
+
+// TestSigner_Sign_UnsupportedHash covers Sign refusing a hash it cannot
+// name before anything is sent.
+func TestSigner_Sign_UnsupportedHash(t *testing.T) {
+	certPEM, _ := generateTestCert(t)
+	sockPath := startMockIPCServer(t, certHandler(certPEM))
+
+	signer, err := NewSigner(&SignerConfig{SocketPath: sockPath, Slot: "9a"})
+	require.NoError(t, err)
+
+	_, err = signer.Sign(rand.Reader, make([]byte, 20), crypto.SHA1)
+	require.ErrorIs(t, err, ErrUnsupportedHash)
+}
+
 func TestSigner_Certificate_Success(t *testing.T) {
 	certPEM, _ := generateTestCert(t)
 	sockPath := startMockIPCServer(t, certHandler(certPEM))
@@ -420,7 +520,7 @@ func TestSigner_Certificate_InvalidPEM(t *testing.T) {
 			Status: "ok",
 			PKCS11: &ipcPKCS11Result{
 				PIVCert: &ipcPIVCertResult{
-					Certificate: "not-valid-pem-data",
+					Certificate: []byte("not-valid-pem-data"),
 					Slot:        "9a",
 				},
 			},
@@ -444,8 +544,7 @@ func TestSigner_Certificate_EmptyCert(t *testing.T) {
 			Status: "ok",
 			PKCS11: &ipcPKCS11Result{
 				PIVCert: &ipcPIVCertResult{
-					Certificate: "",
-					Slot:        "9a",
+					Slot: "9a",
 				},
 			},
 		}
@@ -532,7 +631,7 @@ func TestSigner_Sign_NilPKCS11Result(t *testing.T) {
 				Status: "ok",
 				PKCS11: &ipcPKCS11Result{
 					PIVCert: &ipcPIVCertResult{
-						Certificate: certPEM,
+						Certificate: []byte(certPEM),
 						Slot:        "9a",
 					},
 				},
@@ -574,7 +673,7 @@ func TestSigner_Sign_InvalidBase64Signature(t *testing.T) {
 				Status: "ok",
 				PKCS11: &ipcPKCS11Result{
 					PIVCert: &ipcPIVCertResult{
-						Certificate: certPEM,
+						Certificate: []byte(certPEM),
 						Slot:        "9a",
 					},
 				},

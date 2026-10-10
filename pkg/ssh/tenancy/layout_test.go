@@ -15,6 +15,7 @@ package tenancy
 
 import (
 	"context"
+	"encoding/json"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -22,27 +23,49 @@ import (
 
 	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
 
-	"github.com/jeremyhahn/go-xkms/pkg/storage"
+	"github.com/jeremyhahn/go-xkms/pkg/ssh/records"
+	pkgscope "github.com/jeremyhahn/go-xkms/pkg/ssh/scope"
+	"github.com/jeremyhahn/go-xkms/pkg/testutil"
 	sdkssh "github.com/jeremyhahn/go-xkms/sdk/go/client/ssh"
 )
 
-// newLayoutClient returns the tenancy client and the shared storage it
-// writes, so a test can inspect the raw storage keys.
-func newLayoutClient(t *testing.T) (sdkssh.Client, storage.Backend) {
+// newLayoutClient returns the tenancy client and the DAO factory it writes
+// through, so a test can inspect the stored record paths.
+func newLayoutClient(t *testing.T) (sdkssh.Client, *qrdbsdk.DAOFactory) {
 	t.Helper()
-	backend, err := storage.NewMemoryBackend()
-	require.NoError(t, err)
-	c, err := New(Options{Storage: backend, Permissions: serviceGrants})
+	daos := testutil.NewMemoryDAOFactory()
+	c, err := New(Options{DAOs: daos, Permissions: serviceGrants})
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, c.Close()) })
-	return c, backend
+	return c, daos
 }
 
-// TestPartitions_ScopeLayout pins the storage layout every transport's
-// writes land in: "{tenant}/ssh/shared|users/{subject}|services/{owner}/..."
+// storedPaths returns the path of every SSH record in the platform, tenant A
+// and tenant B partitions of daos.
+func storedPaths(t *testing.T, daos *qrdbsdk.DAOFactory) []string {
+	t.Helper()
+	var paths []string
+	for _, kind := range []pkgscope.Kind{pkgscope.KindKeys, pkgscope.KindKnownHosts, pkgscope.KindAuthorizedKeys} {
+		table, err := records.New[json.RawMessage](daos, kind)
+		require.NoError(t, err)
+		for _, tenantID := range []string{"", tenantA, tenantB} {
+			partition, err := table.Partition(tenantID)
+			require.NoError(t, err)
+			all, err := partition.List(context.Background(), "", "")
+			require.NoError(t, err)
+			for _, e := range all {
+				paths = append(paths, e.Path)
+			}
+		}
+	}
+	return paths
+}
+
+// TestPartitions_ScopeLayout pins the record paths every transport's
+// writes land at: "{tenant}/ssh/shared|users/{subject}|services/{owner}/..."
 // with the platform partition rooted at "system/".
 func TestPartitions_ScopeLayout(t *testing.T) {
-	c, backend := newLayoutClient(t)
+	c, daos := newLayoutClient(t)
 	line, _ := publicLine(t)
 
 	generate(t, c, aliceA, "user", "alice", "laptop")
@@ -54,8 +77,6 @@ func TestPartitions_ScopeLayout(t *testing.T) {
 	require.NoError(t, c.KnownHosts().Add(as(aliceA), sdkssh.AddKnownHostRequest{Scope: "user", Owner: "alice", Host: "web.example.com", PublicKey: line}))
 	require.NoError(t, c.AuthorizedKeys().Add(as(adminB), sdkssh.AddAuthorizedKeyRequest{Scope: "tenant", Owner: tenantB, Name: "ops", Line: line}))
 
-	got, err := backend.List(context.Background(), "")
-	require.NoError(t, err)
 	assert.ElementsMatch(t, []string{
 		"tenant-a/ssh/users/alice/keys/laptop",
 		"tenant-a/ssh/shared/keys/deploy",
@@ -65,26 +86,22 @@ func TestPartitions_ScopeLayout(t *testing.T) {
 		"tenant-b/ssh/shared/keys/platform-made",
 		"tenant-a/ssh/users/alice/known_hosts/web.example.com",
 		"tenant-b/ssh/shared/authorized_keys/ops",
-	}, got)
+	}, storedPaths(t, daos))
 }
 
 // TestPartitions_SameSubjectInTwoTenants proves equal subjects in two
 // tenants address distinct records: each lands under its own tenant root and
 // deleting one leaves the other.
 func TestPartitions_SameSubjectInTwoTenants(t *testing.T) {
-	c, backend := newLayoutClient(t)
+	c, daos := newLayoutClient(t)
 	generate(t, c, aliceA, "user", "alice", "laptop")
 	generate(t, c, aliceB, "user", "alice", "laptop")
 
-	got, err := backend.List(context.Background(), "")
-	require.NoError(t, err)
 	assert.ElementsMatch(t, []string{
 		"tenant-a/ssh/users/alice/keys/laptop",
 		"tenant-b/ssh/users/alice/keys/laptop",
-	}, got)
+	}, storedPaths(t, daos))
 
 	require.NoError(t, c.Keys().Delete(as(aliceA), sdkssh.DeleteKeyRequest{Scope: "user", Owner: "alice", Name: "laptop"}))
-	got, err = backend.List(context.Background(), "")
-	require.NoError(t, err)
-	assert.Equal(t, []string{"tenant-b/ssh/users/alice/keys/laptop"}, got)
+	assert.Equal(t, []string{"tenant-b/ssh/users/alice/keys/laptop"}, storedPaths(t, daos))
 }

@@ -35,7 +35,7 @@ import (
 
 	"github.com/jeremyhahn/go-xkms/pkg/auth"
 	"github.com/jeremyhahn/go-xkms/pkg/ssh/tenancy"
-	"github.com/jeremyhahn/go-xkms/pkg/storage"
+	"github.com/jeremyhahn/go-xkms/pkg/testutil"
 	sdkssh "github.com/jeremyhahn/go-xkms/sdk/go/client/ssh"
 )
 
@@ -68,12 +68,10 @@ func sshAs(id *auth.Identity) context.Context {
 }
 
 // newSSHTenancyClient builds the SSH client xkmsd wires into every transport,
-// over empty in-memory storage.
+// over an empty in-memory DAO factory.
 func newSSHTenancyClient(t *testing.T) sdkssh.Client {
 	t.Helper()
-	backend, err := storage.NewMemoryBackend()
-	require.NoError(t, err)
-	client, err := tenancy.New(tenancy.Options{Storage: backend})
+	client, err := tenancy.New(tenancy.Options{DAOs: testutil.NewMemoryDAOFactory()})
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, client.Close()) })
 	return client

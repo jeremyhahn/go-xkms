@@ -414,12 +414,9 @@ func initTestPIVManager(t *testing.T) {
 	t.Helper()
 	xkms.XKMSResetPIV()
 
-	memBackend := xkms.NewStorageMemory()
-	pivStore, err := xkms.NewPIVFileBackend(&xkms.PIVFileStorageConfig{
-		Backend:    memBackend,
-		DEREnabled: true,
-		PEMEnabled: true,
-	})
+	daos, err := xkms.NewBackendDAOFactory(xkms.NewStorageMemory())
+	require.NoError(t, err)
+	pivStore, err := xkms.NewPIVFileBackend(&xkms.PIVFileStorageConfig{DAOs: daos})
 	require.NoError(t, err)
 
 	err = xkms.InitializePIV(&xkms.PIVManagerConfig{

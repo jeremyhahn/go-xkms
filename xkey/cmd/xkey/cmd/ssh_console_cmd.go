@@ -74,30 +74,28 @@ func runSSHConsole(cmd *cobra.Command, args []string) error {
 	}
 
 	host := target
-	if store, err := xkeyProfileStore(); err == nil {
-		if p, gerr := store.Get(target); gerr == nil {
-			host = p.Host
-			if port == 0 {
-				port = p.EffectivePort()
+	if p, ok := lookupSSHProfile(target); ok {
+		host = p.Host
+		if port == 0 {
+			port = p.EffectivePort()
+		}
+		if user == "" {
+			user = p.User
+		}
+		if keyName == "" {
+			keyName = p.KeyName
+			if p.KeyScope != "" {
+				keyScope = p.KeyScope
 			}
-			if user == "" {
-				user = p.User
+			if p.KeyOwner != "" {
+				keyOwner = p.KeyOwner
 			}
-			if keyName == "" {
-				keyName = p.KeyName
-				if p.KeyScope != "" {
-					keyScope = p.KeyScope
-				}
-				if p.KeyOwner != "" {
-					keyOwner = p.KeyOwner
-				}
-			}
-			if p.KeySource == "local" {
-				local = true
-			}
-			if identity == "" {
-				identity = p.LocalIdentity
-			}
+		}
+		if p.KeySource == "local" {
+			local = true
+		}
+		if identity == "" {
+			identity = p.LocalIdentity
 		}
 	}
 	if at := strings.Index(host, "@"); at >= 0 {
@@ -132,10 +130,11 @@ func runSSHConsole(cmd *cobra.Command, args []string) error {
 		if rerr != nil {
 			return rerr
 		}
-		hostKeys, herr := xkeyHostKeyStore()
+		hostKeys, closeHostKeys, herr := xkeyHostKeyStore()
 		if herr != nil {
 			return herr
 		}
+		defer closeHostKeys()
 		cons, err := sshsdk.OpenConsoleWithSigners(context.Background(), signers, sshsdk.ConsoleRequest{
 			Host: host, Port: port, User: user,
 			HostKeys: hostKeys, Scope: keyScope, Owner: keyOwner,

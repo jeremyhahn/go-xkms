@@ -207,12 +207,28 @@ func WithPIVLogin(opts *rest.PIVLoginOptions) Option {
 type BarrierRegistryResolver func() *qrdbsdk.BarrierRegistry
 
 // WithBarrierRegistry wires the host's tenant barrier registry into the
-// module's host composition (pkg/compose). It enables per-tenant Password
-// Manager routing (each tenant's entries behind that tenant's barrier) and
-// the "barrier" credential strategy. Only consulted when the module self-builds (no WithRESTServer).
+// module's host composition (pkg/compose). It enables the "barrier"
+// credential strategy and the barrier-backed features. Only consulted when
+// the module self-builds (no WithRESTServer).
 func WithBarrierRegistry(resolve BarrierRegistryResolver) Option {
 	return func(m *Module) {
 		m.resolveBarrierRegistry = resolve
+	}
+}
+
+// TenantStoresResolver returns the host's per-tenant store resolver (an
+// embedded qrdb node's Services().StoreResolver), or nil when the host has
+// none.
+type TenantStoresResolver func() qrdbsdk.TenantStoreResolver
+
+// WithTenantStores wires the host's per-tenant store resolver into the
+// module's host composition (pkg/compose). It enables per-tenant Password
+// Manager routing: each tenant's entries live in that tenant's system
+// database, behind that tenant's barrier. Only consulted when the module
+// self-builds (no WithRESTServer).
+func WithTenantStores(resolve TenantStoresResolver) Option {
+	return func(m *Module) {
+		m.resolveTenantStores = resolve
 	}
 }
 
@@ -279,7 +295,7 @@ func WithVTPM(cfg *vtpm.Config) Option {
 // WithWebAuthnConfig, WithSessionOptions, WithPIVLogin) — see module_host.go.
 // A self-built module also composes xkms's store-backed features (Password
 // Manager, platform store, credentials, SSH, CA, TPM policies) from the
-// host's dependencies (WithBarrierRegistry, WithPINBackend,
+// host's dependencies (WithBarrierRegistry, WithTenantStores, WithPINBackend,
 // WithPlatformSealer, WithCredentialStrategy, WithCA, WithVTPM, and the
 // XKMSService's TPM2 backend) through pkg/compose, the path xkmsd builds them
 // through.
@@ -300,6 +316,7 @@ type Module struct {
 	// Host composition inputs (module_host.go): the dependencies the module
 	// builds its store-backed features from when it self-builds.
 	resolveBarrierRegistry BarrierRegistryResolver
+	resolveTenantStores    TenantStoresResolver
 	pinBackend             qrdbsdk.PINBackend
 	platformSealer         *compose.PlatformSealer
 	credentialStrategy     string

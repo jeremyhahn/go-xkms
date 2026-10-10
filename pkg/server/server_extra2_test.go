@@ -38,6 +38,7 @@ import (
 	"github.com/jeremyhahn/go-xkms/pkg/datastore"
 	"github.com/jeremyhahn/go-xkms/pkg/pinselect"
 	"github.com/jeremyhahn/go-xkms/pkg/seal"
+	"github.com/jeremyhahn/go-xkms/pkg/staticpw"
 	"github.com/jeremyhahn/go-xkms/pkg/storage"
 	"github.com/jeremyhahn/go-xkms/pkg/types"
 	"github.com/jeremyhahn/go-xkms/pkg/webauthn"
@@ -590,15 +591,19 @@ func TestInitializeCA_NilConfig(t *testing.T) {
 // per-subsystem private engine left to select), so the separate
 // file/memory-engine variants this used to have collapsed into one.
 func TestInitializePasswordStore_Success(t *testing.T) {
-	s := newMinimalServer(t, &config.Config{
-		Datastore: config.DatastoreConfig{Engine: "file", Path: t.TempDir()},
-	})
-	var err error
-	s.qrdbStorage, err = storage.NewMemoryBackend()
-	require.NoError(t, err)
+	s := newQRDBTestServer(t)
+	s.ctx = context.Background()
+	t.Cleanup(func() { _ = s.closeQRDBStorage() })
 
 	require.NoError(t, s.initializePasswordStore())
-	assert.NotNil(t, s.passwordStore)
+	require.NotNil(t, s.passwordStore)
+
+	// The store persists through the staticpw database on the server's
+	// datastore: an entry written through it reads back.
+	require.NoError(t, s.passwordStore.Add(&staticpw.StaticPassword{Name: "db", Password: "s3cret-Passw0rd!"}))
+	got, err := s.passwordStore.Get("db")
+	require.NoError(t, err)
+	assert.Equal(t, "db", got.Name)
 }
 
 // ============================================================================
@@ -2069,7 +2074,7 @@ func TestInitializePINManager_UnknownStrategy(t *testing.T) {
 // ============================================================================
 
 // TestServer_StartUnix_UnknownProtocolVariant exercises the default branch of
-// the protocol switch in startUnix with a value not tested elsewhere.
+// the protocol switch in prepareUnix with a value not tested elsewhere.
 //
 // config.Validate rejects an unrecognized unix.protocol, so this cannot reach
 // here through New(); it constructs the server directly with newMinimalServer
@@ -2082,18 +2087,8 @@ func TestServer_StartUnix_UnknownProtocolVariant(t *testing.T) {
 
 	server := newMinimalServer(t, cfg)
 
-	server.wg.Add(1)
-	done := make(chan struct{})
-	go func() {
-		server.startUnix()
-		close(done)
-	}()
-
-	select {
-	case <-done:
-	case <-time.After(2 * time.Second):
-		t.Fatal("startUnix did not return on unknown protocol")
-	}
+	assert.Nil(t, server.prepareUnix())
+	assert.Nil(t, server.UnixGRPCServer())
 }
 
 // ============================================================================
@@ -2478,26 +2473,6 @@ func TestCloseQRDBStorage_StorageCloseError(t *testing.T) {
 	err := s.closeQRDBStorage()
 	require.Error(t, err)
 	assert.ErrorIs(t, err, inner)
-}
-
-// ============================================================================
-// Tests — initializePasswordStore with empty path (default fallback)
-// ============================================================================
-
-// TestInitializePasswordStore_EmptyPath verifies that a storage path without
-// an explicit dir is handled (uses in-memory or creates a temp path).
-func TestInitializePasswordStore_EmptyPath(t *testing.T) {
-	s := newMinimalServer(t, &config.Config{
-		Datastore: config.DatastoreConfig{Engine: "memory", Path: ""}, // no base path
-	})
-	// newMinimalServer bypasses New(), so s.qrdbStorage is never built;
-	// give this test a real one.
-	var err error
-	s.qrdbStorage, err = storage.NewMemoryBackend()
-	require.NoError(t, err)
-
-	require.NoError(t, s.initializePasswordStore())
-	assert.NotNil(t, s.passwordStore)
 }
 
 // ============================================================================
@@ -2889,18 +2864,17 @@ func TestServer_StartUnix_EmptyProtocolDefaultsToGRPC(t *testing.T) {
 	server, err := New(cfg)
 	require.NoError(t, err)
 
+	grpcServer := server.prepareUnix()
+	require.NotNil(t, grpcServer, "Unix gRPC server was not built")
+	require.Same(t, grpcServer, server.UnixGRPCServer())
+
 	server.wg.Add(1)
 	done := make(chan struct{})
 	go func() {
-		server.startUnix()
+		server.startUnix(grpcServer)
 		close(done)
 	}()
 
-	// Wait for the gRPC server field to be set instead of sleeping a fixed
-	// duration.
-	require.Eventually(t, func() bool {
-		return server.UnixGRPCServer() != nil
-	}, 10*time.Second, 10*time.Millisecond, "Unix gRPC server was not set")
 	require.NoError(t, server.Shutdown())
 
 	select {
@@ -3477,8 +3451,8 @@ func TestShutdown_AuditLoggerCloseError(t *testing.T) {
 // Tests — startUnix unknown protocol (lines 1719-1720)
 // ============================================================================
 
-// TestStartUnix_UnknownProtocol verifies that startUnix logs an error and
-// returns immediately when the Unix socket protocol is not recognized.
+// TestStartUnix_UnknownProtocol verifies that prepareUnix logs an error and
+// builds no server when the Unix socket protocol is not recognized.
 //
 // config.Validate rejects an unrecognized unix.protocol, so this cannot reach
 // here through New(); see TestServer_StartUnix_UnknownProtocolVariant for the
@@ -3486,23 +3460,12 @@ func TestShutdown_AuditLoggerCloseError(t *testing.T) {
 func TestStartUnix_UnknownProtocol(t *testing.T) {
 	cfg := createMinimalConfig(t)
 	cfg.Unix.SocketPath = filepath.Join(t.TempDir(), "unknown-proto.sock")
-	cfg.Unix.Protocol = "badproto" // triggers default: logger.Error + return
+	cfg.Unix.Protocol = "badproto" // triggers default: logger.Error + return nil
 
 	server := newMinimalServer(t, cfg)
 
-	server.wg.Add(1)
-	done := make(chan struct{})
-	go func() {
-		server.startUnix()
-		close(done)
-	}()
-
-	select {
-	case <-done:
-		// Expected: returns immediately on unknown protocol.
-	case <-time.After(2 * time.Second):
-		t.Fatal("startUnix did not return for unknown protocol")
-	}
+	assert.Nil(t, server.prepareUnix())
+	assert.Nil(t, server.UnixGRPCServer())
 }
 
 // ============================================================================

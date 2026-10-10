@@ -29,7 +29,9 @@ LDFLAGS := -X $(LDFLAGS_PKG).Version=$(VERSION) \
 # Auto-detect: use webkit2_41 only if 4.0 is not available
 WEBKIT_TAG := $(shell pkg-config --exists webkit2gtk-4.0 2>/dev/null && echo "" || echo " webkit2_41")
 
-# PKCS#11 support: enabled by default, set WITH_PKCS11=0 to disable
+# Optional features (handbook conventions/build-tags.md). Every feature is
+# compiled in by default; opt out with WITH_X=0. build-full sets every toggle
+# in FEATURE_TOGGLES to 1 and build-minimal every one to 0.
 WITH_PKCS11 ?= 1
 ifeq ($(WITH_PKCS11),0)
   PKCS11_TAG :=
@@ -38,27 +40,31 @@ else
 endif
 
 # Object-storage (go-objstore) cloud backends for the embedded qrdb datastore.
-# Desktop default: OFF (lean binary, no cloud SDKs). Opt in per backend (e.g.
-# WITH_AWS_S3=1) or per provider (WITH_AWS=1). Tag names match go-objstore.
-WITH_AWS_S3        ?= 0
-WITH_MINIO         ?= 0
-WITH_GCP_STORAGE   ?= 0
-WITH_AZURE_BLOB    ?= 0
-WITH_GLACIER       ?= 0
-WITH_AZURE_ARCHIVE ?= 0
-WITH_AWS   ?= 0
-WITH_GCP   ?= 0
-WITH_AZURE ?= 0
-ifeq ($(WITH_AWS),1)
-  WITH_AWS_S3 := 1
-  WITH_GLACIER := 1
+# Tag names match go-objstore.
+WITH_AWS_S3        ?= 1
+WITH_MINIO         ?= 1
+WITH_GCP_STORAGE   ?= 1
+WITH_AZURE_BLOB    ?= 1
+WITH_GLACIER       ?= 1
+WITH_AZURE_ARCHIVE ?= 1
+FEATURE_TOGGLES := WITH_PKCS11 WITH_AWS_S3 WITH_MINIO WITH_GCP_STORAGE \
+	WITH_AZURE_BLOB WITH_GLACIER WITH_AZURE_ARCHIVE
+
+# Provider umbrellas: unset by default. WITH_AWS=0 (or 1) sets the provider's
+# whole object-storage family, overriding the individual toggles.
+WITH_AWS   ?=
+WITH_GCP   ?=
+WITH_AZURE ?=
+ifneq ($(WITH_AWS),)
+  WITH_AWS_S3 := $(WITH_AWS)
+  WITH_GLACIER := $(WITH_AWS)
 endif
-ifeq ($(WITH_GCP),1)
-  WITH_GCP_STORAGE := 1
+ifneq ($(WITH_GCP),)
+  WITH_GCP_STORAGE := $(WITH_GCP)
 endif
-ifeq ($(WITH_AZURE),1)
-  WITH_AZURE_BLOB := 1
-  WITH_AZURE_ARCHIVE := 1
+ifneq ($(WITH_AZURE),)
+  WITH_AZURE_BLOB := $(WITH_AZURE)
+  WITH_AZURE_ARCHIVE := $(WITH_AZURE)
 endif
 OBJSTORE_TAGS :=
 ifeq ($(WITH_AWS_S3),1)
@@ -80,14 +86,16 @@ ifeq ($(WITH_AZURE_ARCHIVE),1)
   OBJSTORE_TAGS += azurearchive
 endif
 
-BUILD_TAGS := ble production codec_json $(PKCS11_TAG)$(WEBKIT_TAG) $(OBJSTORE_TAGS)
+# ble and usb are the phone's BLE and USB (AOA) transports. The root
+# Makefile reads this list through print-build-tags, so it is the only one.
+BUILD_TAGS := ble usb production codec_json $(PKCS11_TAG)$(WEBKIT_TAG) $(OBJSTORE_TAGS)
 
 # Development tags: exclude "production" because the Wails CLI injects the
 # "dev" tag automatically during `wails dev`, and wails's internal app
 # package has separate files guarded by //go:build dev and //go:build
 # production that each declare App.Run and CreateApp. Including both tags
 # produces "method App.Run already declared" at link time.
-DEV_TAGS := ble codec_json $(PKCS11_TAG)$(WEBKIT_TAG) $(OBJSTORE_TAGS)
+DEV_TAGS := ble usb codec_json $(PKCS11_TAG)$(WEBKIT_TAG) $(OBJSTORE_TAGS)
 
 # Unit test tags: exclude "ble" so BLE stub is used (fast, no hardware).
 # The ble tag enables real bluetooth.DefaultAdapter.Enable() which blocks
@@ -203,6 +211,11 @@ build: builder-image
 	@echo "$(GREEN)  Run with GUI:  ./$(BIN_DIR)/xkey$(RESET)"
 	@echo "$(GREEN)  Run as CLI:    ./$(BIN_DIR)/xkey --no-gui$(RESET)"
 
+.PHONY: print-build-tags
+## print-build-tags: Print the production build tags (the root Makefile builds xkey with them)
+print-build-tags:
+	$(info $(BUILD_TAGS))
+
 .PHONY: builder-image
 ## builder-image: Build the Docker builder image with all CGO dependencies
 builder-image:
@@ -218,6 +231,27 @@ build-local: frontend-build extension-build
 	@echo "$(GREEN)Binary built: $(BIN_DIR)/xkey$(RESET)"
 	@echo "$(GREEN)  Run with GUI:  ./$(BIN_DIR)/xkey$(RESET)"
 	@echo "$(GREEN)  Run as CLI:    ./$(BIN_DIR)/xkey --no-gui$(RESET)"
+
+.PHONY: build-full
+## build-full: Compile every package and build xkey locally with every WITH_* feature on (committed frontend)
+build-full:
+	@$(MAKE) --no-print-directory build-profile BUILD_PROFILE=full $(addsuffix =1,$(FEATURE_TOGGLES))
+
+.PHONY: build-minimal
+## build-minimal: Compile every package and build xkey locally with every WITH_* feature off (committed frontend)
+build-minimal:
+	@$(MAKE) --no-print-directory build-profile BUILD_PROFILE=minimal $(addsuffix =0,$(FEATURE_TOGGLES))
+
+# build-profile compiles the module and links xkey under the feature toggles
+# its caller sets, embedding the committed frontend/dist; build-local rebuilds
+# the frontend first.
+.PHONY: build-profile
+build-profile:
+	@echo "$(CYAN)$(BOLD)Building the $(BUILD_PROFILE) profile [tags: $(strip $(BUILD_TAGS))]$(RESET)"
+	@mkdir -p $(BIN_DIR)
+	@CGO_ENABLED=1 $(GO) build -buildvcs=false -tags "$(BUILD_TAGS)" ./...
+	@CGO_ENABLED=1 $(GOBUILD) -o $(BIN_DIR)/xkey ./cmd/xkey
+	@echo "$(GREEN)$(BUILD_PROFILE) profile built: $(BIN_DIR)/xkey$(RESET)"
 
 .PHONY: dev
 ## dev: Development mode with Wails hot reload (frontend + backend)

@@ -26,7 +26,7 @@ import (
 
 	"github.com/jeremyhahn/go-xkms/pkg/ssh/known_hosts"
 	"github.com/jeremyhahn/go-xkms/pkg/ssh/scope"
-	"github.com/jeremyhahn/go-xkms/pkg/storage"
+	"github.com/jeremyhahn/go-xkms/pkg/testutil"
 )
 
 // freshHostStore returns a Store with NO pin for any host — used to exercise
@@ -34,7 +34,7 @@ import (
 // the connection outright, per known_hosts.CallbackWithConfirm semantics).
 func freshHostStore(t *testing.T) known_hosts.Store {
 	t.Helper()
-	store, err := known_hosts.NewBackendStore(storage.New())
+	store, err := known_hosts.NewDAOStore(testutil.NewMemoryDAOFactory())
 	if err != nil {
 		t.Fatalf("known_hosts store: %v", err)
 	}

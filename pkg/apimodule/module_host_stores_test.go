@@ -61,10 +61,11 @@ var tenantUser = &auth.Identity{Subject: "alice", TenantID: "acme", Roles: []str
 // hostMount is the module mounted the way an embedding host mounts it: no
 // WithRESTServer, so the module self-builds its surface from host inputs.
 type hostMount struct {
-	module   *Module
-	routes   *[]captured
-	svc      *xkms.XKMSService
-	registry *seal.BarrierRegistry
+	module       *Module
+	routes       *[]captured
+	svc          *xkms.XKMSService
+	registry     *seal.BarrierRegistry
+	tenantStores *testutil.TenantStores
 }
 
 // mountLikeHost builds the module over a software-backed XKMSService and a
@@ -85,6 +86,7 @@ func mountLikeHost(t *testing.T, client *qrdbsdk.Client, opts ...Option) *hostMo
 func (h *hostMount) fullHostOptions(t *testing.T) []Option {
 	return []Option{
 		WithBarrierRegistry(func() *qrdbsdk.BarrierRegistry { return h.registry }),
+		WithTenantStores(func() qrdbsdk.TenantStoreResolver { return h.tenantStores }),
 		WithPINBackend(hostdeps.NewPINBackend(t, hostSOPIN, hostUserPIN)),
 		WithPlatformSealer("passphrase", hostdeps.NewSealer(t)),
 		WithCA(hostdeps.NewCAConfig("Host Mount Root")),
@@ -117,7 +119,7 @@ func newFullHostMountWithClient(t *testing.T, client *qrdbsdk.Client, extra ...O
 	// The registry must exist before the options that resolve it, so the
 	// mount is built in two steps sharing one service and registry.
 	svc := hostdeps.NewService(t)
-	h := &hostMount{svc: svc, registry: hostdeps.NewBarrierRegistry(t)}
+	h := &hostMount{svc: svc, registry: hostdeps.NewBarrierRegistry(t), tenantStores: testutil.NewTenantStores()}
 	hostdeps.RegisterTenant(t, h.registry, tenantUser.TenantID)
 	opts := append([]Option{WithQRDBClient(func() *qrdbsdk.Client { return client })}, h.fullHostOptions(t)...)
 	opts = append(opts, extra...)
@@ -186,8 +188,8 @@ func TestModule_HostMount_EveryStoreAnswers(t *testing.T) {
 		w = h.callAs(t, tenantUser, http.MethodPost, "/api/v1/password-vault/unlock", "/api/v1/password-vault/unlock", nil, passkey)
 		require.Equal(t, http.StatusOK, w.Code, w.Body.String())
 
-		// ... and the entry is routed to the tenant's store behind its own
-		// barrier (WithBarrierRegistry), not to a process-wide store.
+		// ... and the entry is routed to the tenant's own store
+		// (WithTenantStores), not to a process-wide store.
 		w = h.callAs(t, tenantUser, http.MethodPost, "/api/v1/passwords/", "/api/v1/passwords/", nil,
 			rest.PasswordAddRequest{Name: "gitea", Username: "agent", Password: "s3cret-Passw0rd!"})
 		require.Equal(t, http.StatusCreated, w.Code, w.Body.String())
@@ -269,9 +271,10 @@ func TestModule_HostMount_MissingDependenciesAreTypedAndOff(t *testing.T) {
 	require.NoError(t, err)
 	h := mountLikeHost(t, client)
 
-	// First use composes: the Password Manager and SSH need only storage.
+	// First use composes. SSH persists through DAOs, so without a DAO factory
+	// it is off and answers "not configured".
 	w := h.call(t, http.MethodGet, "/xkms/v1/ssh/keys", "/xkms/v1/ssh/keys", nil, nil)
-	assert.Equal(t, http.StatusOK, w.Code, w.Body.String())
+	assert.Equal(t, http.StatusNotImplemented, w.Code, w.Body.String())
 
 	stores := h.module.HostStores()
 	require.NotNil(t, stores)
@@ -282,13 +285,14 @@ func TestModule_HostMount_MissingDependenciesAreTypedAndOff(t *testing.T) {
 		missing[disabled.Feature] = disabled.Missing
 	}
 	assert.Equal(t, map[compose.Feature]string{
-		compose.FeatureTenantPasswords: "barrier registry",
+		compose.FeaturePasswords:       "DAO factory",
 		compose.FeaturePIN:             "PIN backend",
 		compose.FeaturePlatformStore:   "platform sealer",
 		compose.FeatureCA:              "CA configuration",
 		compose.FeatureTPMPolicies:     "TPM2 backend",
 		compose.FeatureOIDCCredentials: "barrier registry",
 		compose.FeatureKeyVersions:     "DAO factory",
+		compose.FeatureSSH:             "DAO factory",
 	}, missing)
 
 	w = h.call(t, http.MethodGet, "/api/v1/ca/certificate", "/api/v1/ca/certificate", nil, nil)
@@ -318,5 +322,5 @@ func TestModule_HostMount_NoQRDBClientLeavesStoresOff(t *testing.T) {
 	for _, reason := range m.HostStores().Disabled {
 		reasons = append(reasons, reason.Error())
 	}
-	assert.Contains(t, strings.Join(reasons, "\n"), "compose: passwords is off: no storage was supplied")
+	assert.Contains(t, strings.Join(reasons, "\n"), "compose: passwords is off: no DAO factory was supplied")
 }

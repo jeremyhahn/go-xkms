@@ -24,6 +24,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	xkms "github.com/jeremyhahn/go-xkms/sdk/go"
+	"github.com/jeremyhahn/go-xkms/sdk/go/xkmstest"
 
 	"github.com/jeremyhahn/go-xkms/xkey/pkg/config"
 )
@@ -46,7 +47,7 @@ func useBarrierTPMSimulator(t *testing.T) {
 	t.Cleanup(func() { require.NoError(t, opened.Close()) })
 	require.NoError(t, opened.TPM().Provision(nil))
 	cfg := xkms.DefaultTPMConfig
-	require.NoError(t, xkms.EnrollSimulatorPlatformSRK(opened.TPM(), &cfg))
+	require.NoError(t, xkmstest.EnrollPlatformSRK(opened.TPM(), &cfg))
 
 	savedSimulator := barrierTPMSimulator
 	savedOpen := openBarrierPresealTPM

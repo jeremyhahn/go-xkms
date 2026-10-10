@@ -1,6 +1,6 @@
 # PKCS#11 — CLI
 
-> **Status: NORMATIVE** · Feature: `pkcs11` · Module: `go-xkms/xkey` · Last verified: 2026-09-27
+> **Status: NORMATIVE** · Feature: `pkcs11` · Module: `go-xkms/xkey` · Last verified: 2026-10-09
 
 Binary: `xkey`. **There is no `xkey pkcs11` command.** PKCS#11 is a backend
 choice accepted by several otherwise-unrelated commands. Every flag below
@@ -93,10 +93,21 @@ See [`../ssh/cli.md`](../ssh/cli.md) for the rest of `xkey ssh keys`.
 xkey usb device start --device-backend pkcs11
 ```
 
-`start` builds a `pkcs11.EmbeddedTransport` (this feature) and hands it to
+`start` picks the PKCS#11 transport from the local app access setting
+(`usbDevicePKCS11Transport`, `cmd/xkey/cmd/usb_device.go`) and hands it to
 `ccid.NewPKCS11Bridge`, which translates smartcard APDUs presented over
-the virtual USB device into PKCS#11 operations against the selected
-backend — see [architecture.md](architecture.md).
+the virtual USB device into PKCS#11 operations — see
+[architecture.md](architecture.md):
+
+| Local app access | Transport | No GUI listening |
+|---|---|---|
+| off (default) | `pkcs11.EmbeddedTransport`: keys opened in this process | — |
+| on | `pkcs11.IPCTransport`: the unlocked GUI's keys, over its socket | Fails with `ErrUSBDeviceGUINotListening` (wrapping `ErrIPCConnectionFailed`) |
+
+It never falls back from one transport to the other. With the setting on,
+open and unlock xKey first, or turn the setting off with `xkey app-access
+disable`. Both transports carry every PKCS#11 transport operation, so the
+same APDUs work either way; over IPC a sealed barrier fails each one.
 
 ## GUI-only: no CLI equivalent
 

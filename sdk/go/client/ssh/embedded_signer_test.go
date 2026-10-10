@@ -42,17 +42,14 @@ func TestEmbeddedKeysClient_Signer_KeyNotFound(t *testing.T) {
 
 // TestEmbeddedKeysClient_Signer_BackendUnavailable pins that a
 // backend-backed key resolved through a *different* embedded client over
-// the SAME shared storage — one constructed with no BackendProvider —
+// the SAME shared Stores — one constructed with no BackendProvider —
 // fails with *BackendUnavailableError instead of a nil-pointer panic or a
 // silent fallback to a software signer. This is the realistic shape of the
 // gap: the key's backend reference persists in storage independent of
 // which process (or process configuration) later opens it.
 func TestEmbeddedKeysClient_Signer_BackendUnavailable(t *testing.T) {
 	ctx := context.Background()
-	backend, err := storage.NewMemoryBackend()
-	if err != nil {
-		t.Fatalf("backend: %v", err)
-	}
+	stores := newStores(t)
 
 	kp, err := software.NewBackend(&software.Config{KeyStorage: storage.New()})
 	if err != nil {
@@ -65,7 +62,7 @@ func TestEmbeddedKeysClient_Signer_BackendUnavailable(t *testing.T) {
 		t.Fatalf("sshbackend.New: %v", err)
 	}
 
-	writer, err := sdkssh.NewEmbedded(sdkssh.EmbeddedOptions{Backend: backend, BackendProvider: provider})
+	writer, err := sdkssh.NewEmbedded(sdkssh.EmbeddedOptions{Stores: stores, BackendProvider: provider})
 	if err != nil {
 		t.Fatalf("NewEmbedded (writer): %v", err)
 	}
@@ -77,7 +74,7 @@ func TestEmbeddedKeysClient_Signer_BackendUnavailable(t *testing.T) {
 		t.Fatalf("Generate: %v", err)
 	}
 
-	reader, err := sdkssh.NewEmbedded(sdkssh.EmbeddedOptions{Backend: backend})
+	reader, err := sdkssh.NewEmbedded(sdkssh.EmbeddedOptions{Stores: stores})
 	if err != nil {
 		t.Fatalf("NewEmbedded (reader): %v", err)
 	}
@@ -101,10 +98,7 @@ func TestEmbeddedKeysClient_Signer_BackendUnavailable(t *testing.T) {
 // sign.
 func TestEmbeddedKeysClient_Signer_BackendResolutionFails(t *testing.T) {
 	ctx := context.Background()
-	backend, err := storage.NewMemoryBackend()
-	if err != nil {
-		t.Fatalf("backend: %v", err)
-	}
+	stores := newStores(t)
 
 	kp, err := software.NewBackend(&software.Config{KeyStorage: storage.New()})
 	if err != nil {
@@ -117,7 +111,7 @@ func TestEmbeddedKeysClient_Signer_BackendResolutionFails(t *testing.T) {
 		t.Fatalf("sshbackend.New (working): %v", err)
 	}
 
-	writer, err := sdkssh.NewEmbedded(sdkssh.EmbeddedOptions{Backend: backend, BackendProvider: workingProvider})
+	writer, err := sdkssh.NewEmbedded(sdkssh.EmbeddedOptions{Stores: stores, BackendProvider: workingProvider})
 	if err != nil {
 		t.Fatalf("NewEmbedded (writer): %v", err)
 	}
@@ -136,7 +130,7 @@ func TestEmbeddedKeysClient_Signer_BackendResolutionFails(t *testing.T) {
 	if err != nil {
 		t.Fatalf("sshbackend.New (broken): %v", err)
 	}
-	reader, err := sdkssh.NewEmbedded(sdkssh.EmbeddedOptions{Backend: backend, BackendProvider: brokenProvider})
+	reader, err := sdkssh.NewEmbedded(sdkssh.EmbeddedOptions{Stores: stores, BackendProvider: brokenProvider})
 	if err != nil {
 		t.Fatalf("NewEmbedded (reader): %v", err)
 	}

@@ -23,6 +23,7 @@ import (
 	"crypto/rsa"
 	"crypto/x509"
 	"crypto/x509/pkix"
+	"encoding/base64"
 	"math/big"
 	"testing"
 	"time"
@@ -30,8 +31,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	"github.com/jeremyhahn/go-xkms/pkg/scope"
-	"github.com/jeremyhahn/go-xkms/pkg/storage"
+	"github.com/jeremyhahn/go-xkms/pkg/testutil"
 	"github.com/jeremyhahn/go-xkms/pkg/vaultkey"
 )
 
@@ -108,7 +108,7 @@ func TestKeyFactor_EnrollAndUnlock(t *testing.T) {
 	for _, typ := range []FactorType{FactorPIV, FactorCertificate, FactorTPM} {
 		for name, holder := range map[string]func(*testing.T) *keyHolder{"EC": newECHolder, "RSA": newRSAHolder} {
 			t.Run(string(typ)+"/"+name, func(t *testing.T) {
-				mgr, _, _ := vaultFixture(t)
+				mgr, _ := vaultFixture(t)
 				ctx := context.Background()
 				h := holder(t)
 
@@ -143,7 +143,7 @@ func TestKeyFactor_EnrollAndUnlock(t *testing.T) {
 // client detects it before sending (vaultkey.ErrWrongKey), and a secret
 // from another key is rejected by the server without saying why.
 func TestKeyFactor_WrongTokenIsRefused(t *testing.T) {
-	mgr, _, _ := vaultFixture(t)
+	mgr, _ := vaultFixture(t)
 	ctx := context.Background()
 	right, wrong := newECHolder(t), newECHolder(t)
 	res, err := mgr.EnrollFactor(ctx, "tenant-a", "alice", right.enrollCred(t, FactorPIV))
@@ -168,7 +168,7 @@ func TestKeyFactor_WrongTokenIsRefused(t *testing.T) {
 // key-check value included -- does not contain it, and the DEK unwraps only
 // with the secret the private key recovers.
 func TestKeyFactor_ServerCannotUnlockAlone(t *testing.T) {
-	mgr, _, raw := vaultFixture(t)
+	mgr, stores := vaultFixture(t)
 	ctx := context.Background()
 	h := newRSAHolder(t)
 	res, err := mgr.EnrollFactor(ctx, "tenant-a", "alice", h.enrollCred(t, FactorCertificate))
@@ -179,16 +179,15 @@ func TestKeyFactor_ServerCannotUnlockAlone(t *testing.T) {
 	plaintext, err := cred.Secret.Open(t.Context())
 	require.NoError(t, err)
 	defer plaintext.Destroy()
-	vault, err := scope.PersonalPrefix("tenant-a", VaultFeature, "alice")
-	require.NoError(t, err)
-	require.NoError(t, raw.Scan(ctx, vault, func(key string, value []byte) error {
-		assert.False(t, bytes.Contains(value, plaintext.Bytes()), "factor %s stores its secret", key)
-		return nil
-	}))
+	encoded := []byte(base64.StdEncoding.EncodeToString(plaintext.Bytes()))
+	for _, value := range storedValues(t, stores, "tenant-a") {
+		assert.False(t, bytes.Contains(value, plaintext.Bytes()), "a factor stores its secret")
+		assert.False(t, bytes.Contains(value, encoded), "a factor stores its secret, encoded")
+	}
 }
 
 func TestKeyFactor_EnrollmentRefusals(t *testing.T) {
-	mgr, _, _ := vaultFixture(t)
+	mgr, _ := vaultFixture(t)
 	ctx := context.Background()
 	h := newECHolder(t)
 
@@ -216,7 +215,7 @@ func TestKeyFactor_EnrollmentRefusals(t *testing.T) {
 // TestKeyFactor_RotateAndRemove proves a key factor rotates to a new key
 // and is removable while another factor remains.
 func TestKeyFactor_RotateAndRemove(t *testing.T) {
-	mgr, _, _ := vaultFixture(t)
+	mgr, _ := vaultFixture(t)
 	ctx := context.Background()
 	unlocked(t, mgr, "tenant-a", "alice")
 	oldKey, newKey := newECHolder(t), newECHolder(t)
@@ -241,7 +240,7 @@ func TestKeyFactor_RotateAndRemove(t *testing.T) {
 // TestKeyFactor_RecoverWithAKey proves the recovery code can enroll a key
 // factor when the others are lost.
 func TestKeyFactor_RecoverWithAKey(t *testing.T) {
-	mgr, _, _ := vaultFixture(t)
+	mgr, _ := vaultFixture(t)
 	ctx := context.Background()
 	first, err := mgr.EnrollFactor(ctx, "tenant-a", "alice", pass(t, "alice"))
 	require.NoError(t, err)
@@ -260,7 +259,7 @@ func TestKeyFactor_RecoverWithAKey(t *testing.T) {
 // relying party: status advertises it, a factor records it, another one is
 // refused, and a deployment without one offers no passkeys.
 func TestPasskey_RelyingParty(t *testing.T) {
-	mgr, _, _ := vaultFixture(t)
+	mgr, _ := vaultFixture(t)
 	ctx := context.Background()
 
 	status, err := mgr.VaultStatus(ctx, "tenant-a", "alice")
@@ -276,9 +275,7 @@ func TestPasskey_RelyingParty(t *testing.T) {
 	_, err = mgr.EnrollFactor(ctx, "tenant-a", "alice", other)
 	assert.ErrorIs(t, err, ErrVaultRelyingPartyMismatch)
 
-	reg := newTestRegistry(t)
-	registerAndInitTenant(t, reg, "tenant-a")
-	bare, err := NewTenantPasswordStoreManager(reg, NewStore(storage.New()))
+	bare, err := NewTenantPasswordStoreManager(testutil.NewTenantStores(), newTestStore(t))
 	require.NoError(t, err)
 	_, err = bare.EnrollFactor(ctx, "tenant-a", "bob", passkey(t, "k3", 0x33))
 	assert.ErrorIs(t, err, ErrVaultPasskeyUnavailable)

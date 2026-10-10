@@ -1,14 +1,18 @@
 # PKCS#11 Provider Module — Engineering Contract
 
-> **Status: NORMATIVE** · Feature: `pkcs11-provider-module` · Repo: `go-xkms` · Last verified: 2026-10-08
+> **Status: NORMATIVE** · Feature: `pkcs11-provider-module` · Repo: `go-xkms` · Last verified: 2026-10-10
 
 ## Build
 
 ```
-CGO_ENABLED=1 go build -buildmode=c-shared -o build/lib/libxkms_pkcs11.so ./cmd/pkcs11-module
+make build-pkcs11-module        # build/lib/libxkms_pkcs11.so
+make build-pkcs11-module-fips   # build/lib/libxkms_pkcs11_fips.so
 ```
 
-`GOFIPS140` is honoured by the build (`Makefile:2004`, `:2011`). The artifact is
+Both targets pass the root build's tag set (`TAG_FLAGS`), so the `WITH_*`
+toggles choose the backends: `WITH_TPM2=1` (the default) compiles in
+`pkg/pkcs11/module/backend_tpm2.go`, which a plain `go build` with no `-tags`
+silently leaves out. `GOFIPS140` is honoured by the build. The artifact is
 a Cryptoki `.so`; there is no separate binary.
 
 ## Exported surface

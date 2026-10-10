@@ -13,74 +13,51 @@
 
 // Package vaultservice builds the real service the personal-vault transport
 // tests run against: an XKMSService over a real TenantPasswordStoreManager
-// and BarrierRegistry.
+// and in-memory tenant stores.
 package vaultservice
 
 import (
-	"context"
-	"log/slog"
 	"testing"
 
 	"github.com/stretchr/testify/require"
 
-	"github.com/jeremyhahn/go-xkms/pkg/seal"
 	"github.com/jeremyhahn/go-xkms/pkg/staticpw"
-	"github.com/jeremyhahn/go-xkms/pkg/storage"
+	"github.com/jeremyhahn/go-xkms/pkg/testutil"
 	"github.com/jeremyhahn/go-xkms/pkg/testutil/kdftest"
 	"github.com/jeremyhahn/go-xkms/pkg/xkms"
 )
 
-// Tenant is the tenant New registers, initializes and unseals.
+// Tenant is the tenant the fixture's tests act in.
 const Tenant = "tenant-1"
 
-// Fixture is an XKMSService whose password store manager serves Tenant over
-// a real, unsealed tenant barrier, and the barrier registry behind it.
+// Fixture is an XKMSService whose password store manager serves tenants over
+// in-memory tenant stores, and the tenant stores behind it.
 type Fixture struct {
-	Service  *xkms.XKMSService
-	Registry *seal.BarrierRegistry
+	Service *xkms.XKMSService
+	Stores  *testutil.TenantStores
 }
 
 // New builds a Fixture around a new XKMSService.
 func New(t testing.TB) *Fixture {
 	t.Helper()
 	svc := &xkms.XKMSService{}
-	return &Fixture{Service: svc, Registry: Wire(t, svc)}
+	return &Fixture{Service: svc, Stores: Wire(t, svc)}
 }
 
-// Wire gives svc a system password store and a password store manager that
-// serves Tenant over a real, unsealed tenant barrier, and returns the
-// barrier registry behind them. A test that needs a fully configured
-// service (backends, keystore) wires the vault into it with Wire.
-func Wire(t testing.TB, svc *xkms.XKMSService) *seal.BarrierRegistry {
+// Wire gives svc a system password store and a password store manager over
+// in-memory tenant stores, and returns the tenant stores behind them. A test
+// that needs a fully configured service (backends, keystore) wires the vault
+// into it with Wire.
+func Wire(t testing.TB, svc *xkms.XKMSService) *testutil.TenantStores {
 	t.Helper()
-	ctx := context.Background()
 
-	sysBackend, err := storage.NewMemoryBackend()
+	systemStore, err := staticpw.NewStore(testutil.NewMemoryDAOFactory())
 	require.NoError(t, err)
-	sysBarrier, err := seal.NewBarrier(
-		slog.New(slog.DiscardHandler),
-		sysBackend,
-		seal.BarrierConfig{RootKeyPath: "root-key", PreferenceOrder: []seal.StrategyID{seal.StrategyPassphrase}},
-		seal.NewSoftwareStrategy(),
-	)
-	require.NoError(t, err)
-	sysCreds := seal.MustCredentials(ctx, []byte("system-passphrase"))
-	defer sysCreds.Secret.Destroy()
-	require.NoError(t, sysBarrier.Initialize(ctx, sysCreds))
-
-	registry, err := seal.NewBarrierRegistry(sysBarrier)
-	require.NoError(t, err)
-	_, err = registry.RegisterTenantDefault(Tenant)
-	require.NoError(t, err)
-	tenantCreds := seal.MustCredentials(ctx, []byte("tenant-passphrase"))
-	defer tenantCreds.Secret.Destroy()
-	require.NoError(t, registry.InitializeTenant(ctx, Tenant, tenantCreds))
-
-	systemStore := staticpw.NewStore(storage.NewMemory())
-	manager, err := staticpw.NewTenantPasswordStoreManager(registry, systemStore, staticpw.WithPasskeyRelyingParty("kms.example.com"), staticpw.WithPassphraseKDFParams(kdftest.CheapPassphraseParams))
+	stores := testutil.NewTenantStores()
+	manager, err := staticpw.NewTenantPasswordStoreManager(stores, systemStore, staticpw.WithPasskeyRelyingParty("kms.example.com"), staticpw.WithPassphraseKDFParams(kdftest.CheapPassphraseParams))
 	require.NoError(t, err)
 
 	svc.SetPasswordStore(systemStore)
 	svc.SetPasswordStoreManager(manager)
-	return registry
+	return stores
 }

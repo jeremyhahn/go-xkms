@@ -1,6 +1,6 @@
 # xkeysigner — Engineering
 
-> **Status: NORMATIVE** · Feature: `xkeysigner` · Module: `go-xkms/xkey` · Last verified: 2026-09-24
+> **Status: NORMATIVE** · Feature: `xkeysigner` · Module: `go-xkms/xkey` · Last verified: 2026-10-09
 
 `pkg/xkeysigner` lives in the **root `go-xkms` module**
 (`github.com/jeremyhahn/go-xkms/pkg/xkeysigner`), not `xkey`; it is
@@ -45,7 +45,7 @@ client options; it is one functional option among the others in
 ## Wire format
 
 JSON over a Unix domain socket, one request/response pair per connection
-(`signer.go:73-126`):
+(`signer.go:74-126`):
 
 ```go
 type ipcMessage struct {
@@ -55,24 +55,39 @@ type ipcMessage struct {
 type ipcPKCS11 struct {
     Action  string         `json:"action"`        // "sign" | "get_piv_certificate"
     Sign    *ipcSignParams `json:"sign,omitempty"`
-    PIVCert *ipcPIVCert    `json:"piv_cert,omitempty"`
+    PIVCert *ipcPIVCert    `json:"get_piv_certificate,omitempty"`
 }
 type ipcSignParams struct {
-    Backend string `json:"backend"`
-    KeyID   string `json:"key_id"`               // "piv-" + slot, e.g. "piv-9a"
-    Data    string `json:"data"`                 // base64
-    Hash    string `json:"hash,omitempty"`        // "SHA-256" | "SHA-384" | "SHA-512"
+    Backend      string `json:"backend"`
+    KeyID        string `json:"key_id"`                   // "piv-" + slot, e.g. "piv-9a"
+    Data         string `json:"data"`                     // base64
+    Hash         string `json:"hash,omitempty"`           // "SHA-256" | "SHA-384" | "SHA-512"
+    DataIsDigest bool   `json:"data_is_digest,omitempty"` // true whenever opts names a hash
+    Padding      string `json:"padding,omitempty"`        // "pss" for *rsa.PSSOptions
+    SaltLength   int    `json:"salt_length,omitempty"`    // PSSOptions.SaltLength
 }
 type ipcPIVCert struct {
     Backend string `json:"backend"`
     Slot    string `json:"slot"`
     Format  string `json:"format,omitempty"`      // "pem"
 }
+type ipcPKCS11Result struct {
+    Sign    *ipcSignResult    `json:"sign,omitempty"`               // {"signature": base64}
+    PIVCert *ipcPIVCertResult `json:"get_piv_certificate,omitempty"` // {"slot", "certificate": base64, "format"}
+}
 ```
 
-This is the client-side half of `xkey/pkg/ipc`'s `MessageTypePKCS11`
-protocol (`ipc.PKCS11Payload`, `ipc.SignParams`, `ipc.PIVCertParams`, ...,
-`xkey/pkg/ipc/pkcs11_types.go`); the server side that answers it is
+`Sign` receives a digest, as `crypto.Signer` defines, so whenever `opts`
+names a hash the request sets `data_is_digest` and xkey signs the bytes as
+is; `*rsa.PSSOptions` adds `padding: "pss"` and the salt length. A hash
+outside the three above fails with `ErrUnsupportedHash` before anything is
+sent (`signParams`, `signer.go`).
+
+This is a client-side mirror of two actions of `xkey/pkg/ipc`'s
+`MessageTypePKCS11` protocol, whose payloads are the SDK transport types
+`SignRequest`/`SignResponse` and
+`GetPIVCertificateRequest`/`GetPIVCertificateResponse`
+(`xkey/pkg/ipc/pkcs11_types.go`); the server side that answers it is
 `services.PKCS11IPCHandler` (`architecture.md`).
 
 ## Errors (`pkg/xkeysigner/errors.go`)
@@ -82,6 +97,7 @@ protocol (`ipc.PKCS11Payload`, `ipc.SignParams`, `ipc.PIVCertParams`, ...,
 | `xkeysigner.ErrSocketNotFound` | `net.DialTimeout` got `os.IsNotExist` — no GUI IPC server listening |
 | `xkeysigner.ErrConnectionFailed` | dial, deadline, encode, or decode failed for any other reason |
 | `xkeysigner.ErrSignFailed` | response status was not `"ok"`, or the sign result was missing |
+| `xkeysigner.ErrUnsupportedHash` | `opts` names a hash other than SHA-256/384/512 |
 | `xkeysigner.ErrClosed` | `Sign`/`Certificate` called after `Close()` |
 | `xkeysigner.ErrInvalidSlot` | slot not one of `9a`/`9c`/`9d`/`9e` |
 | `xkeysigner.ErrNoCertificate` | response status was not `"ok"`, the PIV cert result was missing, or the certificate PEM was empty |
@@ -108,6 +124,6 @@ module back into `xkey`.
 
 | Layer | File | What it proves |
 |---|---|---|
-| `pkg/xkeysigner` | `signer_test.go` | valid/nil/default config resolution, all four valid slots, invalid slot, connection failure, `Public`/`Sign`/`Certificate` success and every error path above, `Close` idempotency, `itoa` |
+| `pkg/xkeysigner` | `signer_test.go` | valid/nil/default config resolution, all four valid slots, invalid slot, connection failure, `signParams` digest/PSS/no-hash/unsupported-hash encoding and the `data_is_digest` flag on the wire, `Public`/`Sign`/`Certificate` success and every error path above, `Close` idempotency, `itoa` |
 | `pkg/xkeysigner` | `tls_test.go` | `TLSCertificate`/`TLSClientConfig` success, nil config, no certificate available, invalid slot, CA cert / server name wiring, invalid/empty CA PEM |
 | `sdk/go` | `xkey_auth_test.go` | `WithXKeyAuth` success/empty-path/no-server, `xkeyAuthResolver.ResolveTLSConfig`/`HasCertificate` true and false paths |

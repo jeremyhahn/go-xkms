@@ -34,7 +34,6 @@ import (
 
 	apigrpc "github.com/jeremyhahn/go-xkms/pkg/api/grpc"
 	pb "github.com/jeremyhahn/go-xkms/pkg/api/grpc/proto/xkmsv1"
-	"github.com/jeremyhahn/go-xkms/pkg/storage"
 	sdkssh "github.com/jeremyhahn/go-xkms/sdk/go/client/ssh"
 )
 
@@ -62,11 +61,7 @@ func (r *authRecorder) values() []string {
 // given server options, recording each RPC's authorization metadata.
 func serveSSHKeystore(t *testing.T, lis net.Listener, opts ...googlegrpc.ServerOption) *authRecorder {
 	t.Helper()
-	backend, err := storage.NewMemoryBackend()
-	if err != nil {
-		t.Fatalf("backend: %v", err)
-	}
-	embedded, err := sdkssh.NewEmbedded(sdkssh.EmbeddedOptions{Backend: backend})
+	embedded, err := sdkssh.NewEmbedded(sdkssh.EmbeddedOptions{Stores: newStores(t)})
 	if err != nil {
 		t.Fatalf("NewEmbedded: %v", err)
 	}

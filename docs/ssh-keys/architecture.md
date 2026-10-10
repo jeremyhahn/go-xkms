@@ -1,6 +1,6 @@
 # SSH Keys, Known Hosts & Authorized Keys — Architecture
 
-> **Status: NORMATIVE** · Feature: `ssh-keys` · Repo: `go-xkms` · Last verified: 2026-09-30
+> **Status: NORMATIVE** · Feature: `ssh-keys` · Repo: `go-xkms` · Last verified: 2026-10-08
 
 ## Scope of this folder
 
@@ -76,20 +76,21 @@ sdk/go/client/ssh.Client   (embedded | REST | gRPC | unix | QUIC | MCP — dispa
         |
         v
 xkmsd: s.ensureSSHClient() builds ONE tenancy client, shared by every transport
-        |                          (pkg/server/server.go:486-512)
+        |                          (pkg/server/server.go:508-527)
         v
 pkg/ssh/tenancy: bind (scope, owner) to the caller, pick the partition
         |
         v  per request: an embedded sdkssh.Client over one partition
-        +-- storage "ssh" view + "{tenant}/" --> pkg/ssh/keys.BackendStore        (SSH key envelopes)
-        +-- pkg/ssh/known_hosts.Store                                            (host-key pins)
-        +-- pkg/ssh/authorized.Store                                             (authorized_keys entries)
+        +-- go-qrdb "ssh" database, "{tenant}/" partition:
+        |     pkg/ssh/keys.DAOStore                                   (SSH key envelopes)
+        |     pkg/ssh/known_hosts.DAOStore                            (host-key pins)
+        |     pkg/ssh/authorized.DAOStore                             (authorized_keys entries)
         +-- pkg/ssh/backend.Provider --> tenant KeyProvider view
                                           --> s.xkmsService.LookupBackend(backendID)
                                           --> any configured crypto backend
 ```
 
-`ensureSSHClient` (`pkg/server/server.go:486`) builds this lazily, once, the
+`ensureSSHClient` (`pkg/server/server.go:508`) builds this lazily, once, the
 first time any transport needs it, and only if `s.xkmsService != nil` — REST,
 gRPC, and MCP all call through the *same* client object, so a key generated
 over gRPC is immediately visible over REST to the same caller. There is no
@@ -241,9 +242,7 @@ shares one backend-key namespace.
 
 `known_hosts.Pin` (`pkg/ssh/known_hosts/pin.go:54`) stores the full SSH
 wire-format public key (`PublicKey []byte`), not only its SHA-256
-fingerprint — required since a pin created before this field existed decodes
-as `*LegacyPinError` rather than silently as an empty-key `Pin`
-(`pkg/ssh/known_hosts/errors.go:45`). This is what lets a pin be re-emitted
+fingerprint; `Add` refuses a pin without it (`*PublicKeyRequiredError`). This is what lets a pin be re-emitted
 as an OpenSSH `known_hosts` line and matched byte-for-byte, not just by
 fingerprint collision odds. `Verify` compares the full key.
 

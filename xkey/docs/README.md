@@ -20,7 +20,7 @@ tell.
 | [device](device/) | The `xkey device` CLI namespace: client-side agent enrollment (`enroll`/`connect`) and QR-code pairing | `device/README.md`, `device/pairing.md`, `device/qr-pairing.md`, `device/tcp-relay.md` |
 | [browser-trust-injection](browser-trust-injection/) | Injecting xkey trust-store CA certificates into Chrome- and Firefox-family browsers via a pure-Go NSS `cert9.db` writer, isolated/shared profile modes, and Chrome extension import | [`../../docs/browser/README.md`](../../docs/browser/README.md) — stale on the Firefox mechanism; see `architecture.md` |
 | [fido2](fido2/) | The `xkey fido2` daemon process, IPC-facing verbs (`touch`, `unlock`, `status`, `provision-attestation`), the GUI's FIDO2 device/service host, and a PIN/hmac-secret/SO-token protocol reference for `xkey/pkg/authenticator` | `fido2/README.md`, `fido2/overview.md`, `fido2/authenticator-*.md`, `fido2/daemon-*.md` (with `virtual-authenticator`) |
-| [gui](gui/) | The Wails v2 desktop GUI: the `App` composition root, the ~44-service Wails-bound backend surface, the Unix-socket IPC server, events, and the Svelte frontend | `gui/architecture.md` (`gui/README.md`, `gui/features.md`, `gui/design-system.md`, `gui/setup-wizard.md`, `gui/api-explorer.md`, `gui/browser-settings.md`, `gui/ROADMAP.md` remain as superseded background) |
+| [gui](gui/) | The Wails v2 desktop GUI: the `App` composition root, the ~44-service Wails-bound backend surface, the opt-in Unix-socket IPC server (local app access, `xkey app-access`), events, and the Svelte frontend | `gui/architecture.md` (`gui/README.md`, `gui/features.md`, `gui/design-system.md`, `gui/setup-wizard.md`, `gui/api-explorer.md`, `gui/browser-settings.md`, `gui/ROADMAP.md` remain as superseded background) |
 | [ble](ble/) | The Bluetooth Low Energy transport for the phone-as-HSM pairing protocol: GATT wire shape, central and peripheral roles, BlueZ integration | `ble/README.md`, `ble/architecture.md`, `ble/protocol.md`, `ble/android-app.md`, `ble/testing.md` |
 | [headless-webauthn](headless-webauthn/) | Programmatic WebAuthn ceremonies without a browser or a human | `fido2/` (with `virtual-authenticator`) |
 | [autofill](autofill/) | Browser extension credential/TOTP autofill: native messaging, extension pairing, CTAP2 assertion verification, policy | `autofill/README.md`, `autofill/compliance.md`, `autofill/extension.md`, `autofill/policy.md` |
@@ -173,6 +173,18 @@ xKey operates in two modes:
 cd xkey && go build -o xkey ./cmd/xkey
 ```
 
+A plain `go build` passes no tags. `xkey/Makefile` compiles every optional
+feature in by default (`WITH_PKCS11` and the object-store toggles, all `1`);
+opt one out with `WITH_<FEATURE>=0`. Two profiles build `build/bin/xkey`
+from the committed frontend:
+
+```bash
+make -C xkey build-full      # every WITH_* feature on
+make -C xkey build-minimal   # every WITH_* feature off
+```
+
+The toggle list is in [Build System](../../docs/configuration/build-system.md).
+
 ### Requirements
 
 - Linux kernel 4.2+ (UHID support)
@@ -234,7 +246,7 @@ reference — is [virtual-authenticator](virtual-authenticator/).
 ### [GUI](gui/)
 - [Architecture](gui/architecture.md) -- the Wails v2 app, the `App` composition root, the Wails-bound service surface, and the Unix-socket IPC server
 - [Engineering](gui/engineering.md) -- exported surface, the ~44-service inventory, invariants, errors
-- [CLI](gui/cli.md) -- the GUI/CLI dispatch in the `xkey` binary
+- [CLI](gui/cli.md) -- the GUI/CLI dispatch in the `xkey` binary, and `xkey app-access`
 - [API](gui/api.md) -- the Wails-bound service surface, grouped by method
 - [User Guide](gui/user.md) -- task-oriented usage
 - Superseded background, unconverted: [Overview](gui/README.md), [Features](gui/features.md), [Design System](gui/design-system.md), [Setup Wizard](gui/setup-wizard.md), [API Explorer](gui/api-explorer.md), [Browser Settings](gui/browser-settings.md), [Roadmap](gui/ROADMAP.md)

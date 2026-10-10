@@ -29,12 +29,21 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+// newTestPasswordStore opens a static password store over backend through a
+// go-qrdb DAO factory.
+func newTestPasswordStore(t *testing.T, backend xkms.StorageBackend) *staticpw.DAOStore {
+	t.Helper()
+	store, err := staticpw.NewBackendStore(backend)
+	require.NoError(t, err)
+	return store
+}
+
 // newTestStaticPWService creates a StaticPasswordService backed by an in-memory
 // storage backend for testing.
 func newTestStaticPWService(t *testing.T) (*StaticPasswordService, staticpw.Store) {
 	t.Helper()
 	backend := xkms.NewStorageMemory()
-	store := staticpw.NewStore(backend)
+	store := newTestPasswordStore(t, backend)
 	svc := NewStaticPasswordService(store)
 	svc.SetContext(context.Background())
 	return svc, store
@@ -1129,7 +1138,7 @@ func TestStaticPasswordService_SetStore(t *testing.T) {
 	// Wire a real store.
 	backend, backendErr := xkms.NewFileStorageBackend(filepath.Join(t.TempDir(), "staticpw"))
 	require.NoError(t, backendErr)
-	store := staticpw.NewStore(backend)
+	store := newTestPasswordStore(t, backend)
 	svc.SetStore(store)
 
 	// Now listing should work.
@@ -1237,7 +1246,7 @@ func (m *mockPasswordStoreClient) PasswordGenerate(_ context.Context, req *trans
 func newTestStaticPWServiceWithClient(t *testing.T) (*StaticPasswordService, *mockPasswordStoreClient) {
 	t.Helper()
 	backend := xkms.NewStorageMemory()
-	store := staticpw.NewStore(backend)
+	store := newTestPasswordStore(t, backend)
 	svc := NewStaticPasswordService(store)
 	svc.SetContext(context.Background())
 	mock := newMockPasswordStoreClient()

@@ -24,7 +24,6 @@ import (
 	"github.com/jeremyhahn/go-xkms/pkg/ssh/authorized"
 	"github.com/jeremyhahn/go-xkms/pkg/ssh/keys"
 	"github.com/jeremyhahn/go-xkms/pkg/ssh/scope"
-	"github.com/jeremyhahn/go-xkms/pkg/storage"
 )
 
 // generateKey produces a fresh *keys.Key with public material for the
@@ -180,14 +179,8 @@ func TestEmitAll_RoundTrip(t *testing.T) {
 
 // TestStore_AddGetListRemove is the happy-path storage flow.
 func TestStore_AddGetListRemove(t *testing.T) {
-	backend, err := storage.NewMemoryBackend()
-	if err != nil {
-		t.Fatalf("backend: %v", err)
-	}
-	store, err := authorized.NewBackendStore(backend)
-	if err != nil {
-		t.Fatalf("store: %v", err)
-	}
+	store := newStore(t)
+	var err error
 	ctx := context.Background()
 
 	k := generateKey(t, keys.AlgorithmEd25519)
@@ -231,14 +224,8 @@ func TestStore_AddGetListRemove(t *testing.T) {
 
 // TestStore_Duplicate confirms Add is non-idempotent.
 func TestStore_Duplicate(t *testing.T) {
-	backend, err := storage.NewMemoryBackend()
-	if err != nil {
-		t.Fatalf("backend: %v", err)
-	}
-	store, err := authorized.NewBackendStore(backend)
-	if err != nil {
-		t.Fatalf("store: %v", err)
-	}
+	store := newStore(t)
+	var err error
 	ctx := context.Background()
 
 	k := generateKey(t, keys.AlgorithmEd25519)
@@ -256,14 +243,8 @@ func TestStore_Duplicate(t *testing.T) {
 
 // TestVerify_Match locates a stored Entry by fingerprint.
 func TestVerify_Match(t *testing.T) {
-	backend, err := storage.NewMemoryBackend()
-	if err != nil {
-		t.Fatalf("backend: %v", err)
-	}
-	store, err := authorized.NewBackendStore(backend)
-	if err != nil {
-		t.Fatalf("store: %v", err)
-	}
+	store := newStore(t)
+	var err error
 	ctx := context.Background()
 
 	k := generateKey(t, keys.AlgorithmEd25519)
@@ -300,14 +281,8 @@ func TestVerify_Match(t *testing.T) {
 
 // TestVerify_NotFound returns NotFoundError for a non-matching key.
 func TestVerify_NotFound(t *testing.T) {
-	backend, err := storage.NewMemoryBackend()
-	if err != nil {
-		t.Fatalf("backend: %v", err)
-	}
-	store, err := authorized.NewBackendStore(backend)
-	if err != nil {
-		t.Fatalf("store: %v", err)
-	}
+	store := newStore(t)
+	var err error
 	ctx := context.Background()
 
 	stored := generateKey(t, keys.AlgorithmEd25519)

@@ -1638,15 +1638,25 @@ type mockExtendedKeyStore struct {
 	signerStore store.SignerStorer
 }
 
-func newMockExtendedKeyStore(name string, backendType types.BackendType) *mockExtendedKeyStore {
+func newMockExtendedKeyStore(t *testing.T, name string, backendType types.BackendType) *mockExtendedKeyStore {
+	t.Helper()
 	return &mockExtendedKeyStore{
 		name:        name,
 		backendImpl: newMockExtendedBackend(backendType),
 		certs:       make(map[string]*x509.Certificate),
 		certChains:  make(map[string][]*x509.Certificate),
 		tlsCerts:    make(map[string]tls.Certificate),
-		signerStore: store.NewSignerStore(nil, storage.New()),
+		signerStore: newTestSignerStore(t),
 	}
+}
+
+// newTestSignerStore returns a signer store over a fresh in-memory storage,
+// built the way New builds a compositeBackend's.
+func newTestSignerStore(t *testing.T) *store.SignerStore {
+	t.Helper()
+	signers, err := newSignerStore(storage.New())
+	require.NoError(t, err)
+	return signers
 }
 
 // Backend interface implementation
@@ -1800,8 +1810,8 @@ func setupExtendedService(t *testing.T) (*mockExtendedKeyStore, *mockExtendedKey
 	t.Helper()
 	Reset()
 
-	software := newMockExtendedKeyStore("software", types.BackendTypeSoftware)
-	pkcs11 := newMockExtendedKeyStore("pkcs11", types.BackendTypePKCS11)
+	software := newMockExtendedKeyStore(t, "software", types.BackendTypeSoftware)
+	pkcs11 := newMockExtendedKeyStore(t, "pkcs11", types.BackendTypePKCS11)
 
 	err := Initialize(&ServiceConfig{
 		Backends: map[string]Backend{

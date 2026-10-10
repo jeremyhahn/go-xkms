@@ -214,6 +214,44 @@ func GetBackendFactory(name BackendType) (BackendFactory, bool) {
 	return f, ok
 }
 
+// featureBuild names the Makefile toggle and build tag that compile a
+// backend in.
+type featureBuild struct {
+	toggle string
+	tag    string
+}
+
+// backendFeatures maps each backend that has a Makefile feature toggle to
+// that toggle and its build tag.
+var backendFeatures = map[BackendType]featureBuild{
+	BackendTPM2:    {toggle: "WITH_TPM2", tag: "tpm2"},
+	BackendPKCS11:  {toggle: "WITH_PKCS11", tag: "pkcs11"},
+	BackendPKCS8:   {toggle: "WITH_PKCS8", tag: "pkcs8"},
+	BackendAWSKMS:  {toggle: "WITH_AWS_KMS", tag: "awskms"},
+	BackendGCPKMS:  {toggle: "WITH_GCP_KMS", tag: "gcpkms"},
+	BackendAzureKV: {toggle: "WITH_AZURE_KV", tag: "azurekv"},
+	BackendVault:   {toggle: "WITH_VAULT", tag: "vault"},
+	BackendFROST:   {toggle: "WITH_FROST", tag: "frost"},
+}
+
+// RequireBackend returns the backend's registered factory, or a
+// *FeatureNotCompiledError when the backend was not compiled into this
+// binary. Callers that act on configuration naming a backend use it instead
+// of GetBackendFactory so an absent feature fails closed rather than being
+// skipped.
+func RequireBackend(name BackendType) (BackendFactory, error) {
+	factory, ok := GetBackendFactory(name)
+	if !ok || !IsBackendSupported(name) {
+		feature := backendFeatures[name]
+		return nil, &FeatureNotCompiledError{
+			Feature: string(name),
+			Toggle:  feature.toggle,
+			Tag:     feature.tag,
+		}
+	}
+	return factory, nil
+}
+
 // sortBackends sorts a slice of BackendType alphabetically using insertion sort.
 // Insertion sort is efficient for small slices (< 20 elements) which is our case.
 func sortBackends(backends []BackendType) {

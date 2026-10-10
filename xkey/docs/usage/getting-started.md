@@ -14,83 +14,63 @@ go get github.com/jeremyhahn/go-xkms
 
 ## Build Configuration
 
-go-xkms uses build tags to enable conditional compilation of cryptographic backends. By default, **only the software backend is enabled**. You can selectively enable additional backends by setting their corresponding variables to 1.
+go-xkms uses build tags to compile its optional backends. Through `make`,
+**every backend is compiled in by default**; opt one out with its
+`WITH_*=0` variable. A configuration that names a backend the binary was
+built without fails `AutoInitialize` with an `*xkms.FeatureNotCompiledError`
+naming the toggle to set — it never starts without it.
 
-### Default Build
-
-```bash
-# Builds with software backend only (default, minimal build)
-go build ./...
-
-# Or using Make
-make build
-```
-
-### Enabling Backends
-
-Use Makefile variables to enable specific backends:
+### Build Profiles
 
 ```bash
-# Build with PKCS#11 HSM support
-make build WITH_PKCS11=1
+# Every backend (the default)
+make build-full
 
-# Build with software and hardware backends
-make build WITH_PKCS11=1 WITH_TPM2=1
+# No optional backend: software, TPM 2.0, symmetric and post-quantum only
+make build-minimal
 
-# Build with cloud providers
-make build WITH_AWS_KMS=1 WITH_GCP_KMS=1 WITH_AZURE_KV=1
+# The default build without the cloud providers
+make build WITH_AWS=0 WITH_GCP=0 WITH_AZURE=0
 
-# Build with all backends
-make build WITH_PKCS11=1 WITH_TPM2=1 WITH_AWS_KMS=1 WITH_GCP_KMS=1 WITH_AZURE_KV=1 WITH_VAULT=1
+# The default build without PKCS#11 and Vault
+make build WITH_PKCS11=0 WITH_VAULT=0
 ```
 
 ### Using Build Tags Directly
 
-You can also use Go build tags directly:
+A plain `go build ./...` passes no tags, so it builds the minimal set. Pass
+the tags yourself to choose backends:
 
 ```bash
-# Build with all backends (default)
-go build -tags "software tpm2 pkcs11 awskms gcpkms azurekv" ./...
+# Every backend
+go build -tags "pkcs8 tpm2 pkcs11 awskms gcpkms azurekv vault frost" ./...
 
-# Build with only specific backends
-go build -tags "software awskms" ./...
-
-# Run tests with specific backends
-go test -tags "software tpm2" ./...
+# Software plus AWS KMS
+go build -tags "awskms" ./...
 ```
 
 ### Backend Build Tags
 
-| Backend | Build Tag | Default | Makefile Variable |
-|---------|-----------|---------|-------------------|
-| Software | `software` | Enabled | WITH_SOFTWARE=1 |
-| TPM2 | `tpm2` | Disabled | WITH_TPM2=0 |
-| PKCS#11 | `pkcs11` | Disabled | WITH_PKCS11=0 |
-| AWS KMS | `awskms` | Disabled | WITH_AWS_KMS=0 |
-| GCP KMS | `gcpkms` | Disabled | WITH_GCP_KMS=0 |
-| Azure Key Vault | `azurekv` | Disabled | WITH_AZURE_KV=0 |
-| HashiCorp Vault | `vault` | Disabled | WITH_VAULT=0 |
+| Backend | Build Tag | Make Default | Makefile Variable |
+|---------|-----------|--------------|-------------------|
+| Software | none | Always | — |
+| TPM2 | none (the `tpm2` tag adds the PKCS#11 module's TPM slot) | Always | `WITH_TPM2` |
+| PKCS#11 | `pkcs11` | Enabled | `WITH_PKCS11` |
+| AWS KMS | `awskms` | Enabled | `WITH_AWS_KMS` |
+| GCP KMS | `gcpkms` | Enabled | `WITH_GCP_KMS` |
+| Azure Key Vault | `azurekv` | Enabled | `WITH_AZURE_KV` |
+| HashiCorp Vault | `vault` | Enabled | `WITH_VAULT` |
+| FROST | `frost` | Enabled | `WITH_FROST` |
 
-### Why Use Build Tags?
+The full toggle list, provider umbrellas and profile targets are in
+[Build System](../../../docs/configuration/build-system.md).
+
+### Why Opt Out?
 
 - **Reduced Binary Size**: Exclude backends you don't need
 - **Faster Compilation**: Skip unused dependencies
 - **Simplified Deployment**: Avoid cloud SDK dependencies for on-premise deployments
 - **Security**: Minimize attack surface by excluding unused code
-
-### Example: Cloud-Only Build
-
-```bash
-# Build for AWS deployment only (includes software and AWS KMS)
-make build WITH_AWS_KMS=1
-```
-
-### Example: On-Premise Build
-
-```bash
-# Build for on-premise with hardware backends
-make build WITH_PKCS11=1 WITH_TPM2=1
-```
 
 ## Quick Start (Pattern A: Auto-Initialize)
 
@@ -728,7 +708,7 @@ key, _ := xkms.GenerateKey(&types.KeyAttributes{
 Combine backends for different security levels:
 
 ```go
-// Build with: make build WITH_PKCS11=1 WITH_AWS_KMS=1
+// Needs PKCS#11 and AWS KMS, both in the default make build
 err := xkms.AutoInitialize(&xkms.AutoConfig{
     DataDir:        "/var/lib/xkms",
     DefaultBackend: "software",
@@ -951,10 +931,12 @@ func configureCloudKMS() *awskms.Config {
 
 ### Common Issues
 
-**Issue: "no backends available"**
+**Issue: "backend ... is not compiled into this binary"**
 ```
-Build with backend tags enabled:
-  make build WITH_PKCS11=1 WITH_TPM2=1
+AutoInitialize returned *xkms.FeatureNotCompiledError: the configuration
+names a backend the build opted out of. Rebuild with the toggle the error
+names, for example:
+  make build WITH_VAULT=1
 Or check compiled backends:
   fmt.Println(xkms.SupportedBackends())
 ```

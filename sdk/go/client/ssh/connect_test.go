@@ -22,7 +22,7 @@ import (
 
 	gossh "golang.org/x/crypto/ssh"
 
-	"github.com/jeremyhahn/go-xkms/pkg/storage"
+	"github.com/jeremyhahn/go-xkms/pkg/testutil"
 	sdkssh "github.com/jeremyhahn/go-xkms/sdk/go/client/ssh"
 )
 
@@ -40,9 +40,9 @@ func testConnectSigner(t *testing.T) gossh.Signer {
 }
 
 // TestNewHostKeyStore_Opens verifies the re-export constructs a usable
-// HostKeyStore over a storage.Backend.
+// HostKeyStore over a DAO factory.
 func TestNewHostKeyStore_Opens(t *testing.T) {
-	store, err := sdkssh.NewHostKeyStore(storage.NewMemory())
+	store, err := sdkssh.NewHostKeyStore(testutil.NewMemoryDAOFactory())
 	if err != nil {
 		t.Fatalf("NewHostKeyStore: %v", err)
 	}
@@ -56,7 +56,7 @@ func TestNewHostKeyStore_Opens(t *testing.T) {
 // naming the target, exactly as the system ssh client expects.
 func TestStartConnect_BuildsArgvAndAgent(t *testing.T) {
 	ctx := context.Background()
-	store, err := sdkssh.NewHostKeyStore(storage.NewMemory())
+	store, err := sdkssh.NewHostKeyStore(testutil.NewMemoryDAOFactory())
 	if err != nil {
 		t.Fatalf("NewHostKeyStore: %v", err)
 	}

@@ -64,9 +64,9 @@ func TestSessionOrigin_ProfileTakesPrecedenceOverAlias(t *testing.T) {
 func TestXkeySessionStore_RoundTrip(t *testing.T) {
 	withCLIHome(t)
 
-	store, err := xkeySessionStore()
+	store, closeStore, err := xkeySessionStore()
 	require.NoError(t, err)
-	defer func() { _ = store.Close() }()
+	defer closeStore()
 
 	rec := &sshsdk.ConsoleSessionRecord{Title: "test@host", Host: "host", User: "test"}
 	require.NoError(t, store.Save(rec))
@@ -92,7 +92,7 @@ func TestRunSSHSessionsList_Empty(t *testing.T) {
 func TestRunSSHSessionsList_WithRecords(t *testing.T) {
 	withCLIHome(t)
 
-	store, err := xkeySessionStore()
+	store, closeStore, err := xkeySessionStore()
 	require.NoError(t, err)
 	rec := &sshsdk.ConsoleSessionRecord{
 		Title:           "prod@bastion",
@@ -100,7 +100,7 @@ func TestRunSSHSessionsList_WithRecords(t *testing.T) {
 		LastConnectedAt: time.Date(2026, 1, 2, 3, 4, 5, 0, time.UTC),
 	}
 	require.NoError(t, store.Save(rec))
-	require.NoError(t, store.Close())
+	closeStore()
 
 	cmd := &cobra.Command{}
 	var buf bytes.Buffer
@@ -116,11 +116,11 @@ func TestRunSSHSessionsList_WithRecords(t *testing.T) {
 func TestRunSSHSessionsRemove_Success(t *testing.T) {
 	withCLIHome(t)
 
-	store, err := xkeySessionStore()
+	store, closeStore, err := xkeySessionStore()
 	require.NoError(t, err)
 	rec := &sshsdk.ConsoleSessionRecord{Title: "to-delete", Host: "h"}
 	require.NoError(t, store.Save(rec))
-	require.NoError(t, store.Close())
+	closeStore()
 
 	cmd := &cobra.Command{}
 	var buf bytes.Buffer
@@ -129,9 +129,9 @@ func TestRunSSHSessionsRemove_Success(t *testing.T) {
 	require.NoError(t, runSSHSessionsRemove(cmd, []string{rec.ID}))
 	require.Contains(t, buf.String(), rec.ID)
 
-	store2, err := xkeySessionStore()
+	store2, closeStore2, err := xkeySessionStore()
 	require.NoError(t, err)
-	defer func() { _ = store2.Close() }()
+	defer closeStore2()
 	all, err := store2.List()
 	require.NoError(t, err)
 	require.Empty(t, all)

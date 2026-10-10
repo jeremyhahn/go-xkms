@@ -179,7 +179,7 @@ type Config struct {
 	AuditLogger interface{}
 
 	// PasswordStore is the optional static password store
-	PasswordStore *staticpw.BackendStore
+	PasswordStore *staticpw.DAOStore
 
 	// BarrierRegistry is the optional barrier registry for multi-tenant isolation
 	BarrierRegistry *seal.BarrierRegistry

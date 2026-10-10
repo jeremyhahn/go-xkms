@@ -13,7 +13,7 @@
 
 ## Overview
 
-The `staticpw` package provides a password manager for static credentials (login usernames, passwords, URLs, and notes). It supports multi-tenant isolation, hierarchical folder organization, case-insensitive name lookups, and a session-based access-control mode. Encryption at rest is a property of whichever `storage.Backend` the store is constructed with, not of `pkg/staticpw` itself — see "Encryption" below.
+The `staticpw` package provides a password manager for static credentials (login usernames, passwords, URLs, and notes). It supports multi-tenant isolation, hierarchical folder organization, case-insensitive name lookups, and a session-based access-control mode. Encryption at rest is a property of the barrier-sealed go-qrdb store the records live in, not of `pkg/staticpw` itself (bar the personal DEK) — see "Encryption" below.
 
 **Package**: `github.com/jeremyhahn/go-xkms/pkg/staticpw`
 
@@ -21,16 +21,16 @@ The `staticpw` package provides a password manager for static credentials (login
 
 ```mermaid
 graph TD
-    A[Application] --> B[BackendStore / ScopedStore / TeamScopedStore]
-    B -->|JSON persistence| C[storage.Backend]
-    C --> D[File / Memory backend: plaintext]
-    C --> E[seal.BarrierBackend: AES-256-GCM, barrier-managed]
+    A[Application] --> B[DAOStore / ScopedStore]
+    B -->|GenericDAO records| C[go-qrdb staticpw database]
+    C --> D[the tenant's barrier-sealed store]
 ```
 
-The store has one concrete implementation and no decorator chain:
+The store has one concrete implementation and no decorator chain. The
+normative description is [password-vault](../password-vault/engineering.md).
 
-1. **BackendStore** (`store.go:107`) -- core CRUD over `storage.Backend`, handles JSON serialization, folder operations, and tenant/scope key prefixes. It has no encryption or access-control logic of its own.
-2. **ScopedStore** (`scoped_store.go`) and **TeamScopedStore** (`team_scoped_store.go`) each compose two `BackendStore`s to route personal/shared or team/tenant reads and writes; they do not add encryption or PIN/session gating either.
+1. **DAOStore** (`store.go:108`) -- core CRUD over go-qrdb `GenericDAO` records in the `staticpw` database (`records.go`), with folder operations and tenant/scope path prefixes. A personal store seals each record body with the user's DEK; at-rest encryption is otherwise the store's barrier.
+2. **ScopedStore** (`scoped_store.go`) composes a shared and a personal `DAOStore` to route reads and writes by the entry's `Shared` flag.
 
 ## Data Model
 
@@ -79,33 +79,23 @@ type Store interface {
 
 ## Multi-Tenant Support
 
-`BackendStore` supports tenant isolation through key prefixes:
+`DAOStore` persists through the go-qrdb DAO factory its composition root injects:
 
 ```go
-// Single-tenant (default prefix: "staticpw/")
-store := staticpw.NewStore(backend)
+// The system store, on the composition root's datastore.
+store, err := staticpw.NewStore(daos)
 
-// Multi-tenant (prefix: "<tenantID>/staticpw/")
-store, err := staticpw.NewTenantStore(backend, "org-42")
+// A tenant's store, path-prefixed by the tenant ID.
+store, err := staticpw.NewTenantStore(daos, "org-42")
 ```
 
-Tenant IDs must be 1-64 characters, start with an alphanumeric character, and contain only alphanumeric characters, hyphens, and underscores. Each tenant's data is fully isolated by its key prefix.
+Tenant IDs must be 1-64 characters, start with an alphanumeric character, and contain only alphanumeric characters, hyphens, and underscores (`ErrInvalidTenantID` otherwise). `TenantPasswordStoreManager` takes go-qrdb's `TenantStoreResolver` and opens each tenant's stores in that tenant's own system database, behind that tenant's barrier.
 
 ## Encryption
 
-`pkg/staticpw` has no field-level encryption of its own: there is no `EncryptedStore` type in this package, and `BackendStore.Add`/`Update` write the whole `StaticPassword` entry as plain JSON (`store.go:211`, `json.Marshal(pw)`) to whatever `storage.Backend` it was constructed with:
+Shared entries are encrypted at rest by the barrier of the go-qrdb store they live in; `pkg/staticpw` adds no cipher of its own for them. Personal entries are additionally sealed with the owner's DEK (`records.go`). Encryption, key management, and seal/unseal state otherwise belong entirely to the barrier (owned by go-qrdb) — see [Sealing and Barrier](../sealing-and-barrier/architecture.md). `Get`/`List` return entries exactly as stored; there is no `GetDecrypted` call.
 
-```go
-// Not encrypted at rest: a File or Memory backend stores the JSON as-is.
-store := staticpw.NewStore(fileBackend)
-
-// Encrypted at rest: a tenant barrier, wrapped as a storage.Backend,
-// transparently encrypts every Put/Get.
-backend := seal.NewBarrierBackend(tenantBarrier.Barrier())
-store, err := staticpw.NewSharedTenantStore(backend, "org-42")
-```
-
-This is exactly how `TenantPasswordStoreManager` builds its per-tenant stores (`tenant_store_manager.go:176`, `seal.NewBarrierBackend(tb.Barrier())`). Encryption, key management, and seal/unseal state belong entirely to the barrier (owned by go-qrdb, composed here through `pkg/seal`) — see [Sealing and Barrier](../sealing-and-barrier/architecture.md). `Get`/`List` return entries exactly as stored; there is no `GetDecrypted` call and no `ENC:`-prefixed value to reason about.
+A host without a go-qrdb node (xkey) builds its DAO factory with `sdk/go.NewBackendDAOFactory` over its barrier backend, so its entries are sealed by its own barrier.
 
 ## Access Modes
 
@@ -124,7 +114,7 @@ entries, err := store.List()           // works once unlocked
 err = manager.LockTenant("org-42")     // always permitted; no credential needed
 ```
 
-There is no `Unlock`/`Lock` method on `Store` or `BackendStore` themselves, and no `GetDecrypted(id, pin)` call: session state lives in `TenantPasswordStoreManager`, one level above the store.
+There is no `Unlock`/`Lock` method on `Store` or `DAOStore` themselves, and no `GetDecrypted(id, pin)` call: session state lives in `TenantPasswordStoreManager`, one level above the store.
 
 ## Folder Organization
 
@@ -190,7 +180,7 @@ All errors are declared as typed package-level variables:
 | `ErrInvalidTenantID` | Invalid tenant identifier |
 | `ErrStoreNotLocked` | `UnlockTenant` called when already unlocked |
 | `ErrStoreAlreadyLocked` | `LockTenant` called when already locked |
-| `ErrNilBarrierRegistry` | Barrier registry is nil |
+| `ErrNilTenantStores` | Tenant store resolver is nil |
 | `ErrNotConfigured` | Password store not configured |
 
 ## Personal and Shared Password Scoping
@@ -212,7 +202,7 @@ staticpw/{id}.json
 
 ### ScopedStore
 
-`ScopedStore` is a composite `Store` that wraps a shared `BackendStore` and a personal `BackendStore`. It routes operations based on the password's `Shared` flag:
+`ScopedStore` is a composite `Store` that wraps a shared `DAOStore` and a personal `DAOStore`. It routes operations based on the password's `Shared` flag:
 
 ```go
 // Create stores for a specific user within a tenant.
@@ -310,10 +300,10 @@ graph TD
     A[REST / gRPC / QUIC] -->|auth.Identity| B[TenantPasswordStoreManager]
     B -->|empty TenantID| C[System Store]
     B -->|TenantID set| D[tenantPasswordState]
-    D --> E[BackendStore]
+    D --> E[DAOStore]
     D --> F[atomic.Bool locked]
-    E -->|NewTenantStore| G[TenantBarrier]
-    G -->|per-tenant DEK| H[storage.Backend]
+    E -->|TenantStoreResolver| G[tenant system database]
+    G -->|sealed by| H[tenant barrier]
 ```
 
 ### Usage
@@ -344,7 +334,7 @@ Two independent protection layers:
 
 | Layer | Scope | Controls | Reset |
 |-------|-------|----------|-------|
-| **Barrier seal** | Per-tenant DEK | Encryption/decryption of stored data | `UnsealTenant` on `BarrierRegistry` |
+| **Barrier seal** | Per-tenant DEK | Encryption/decryption of stored data | go-qrdb tenant unseal |
 | **Session lock** | Per-tenant session | API-level access gating | `UnlockTenant` / `LockTenant` |
 
 - Tenant stores start **locked** (session lock is true by default)
@@ -397,7 +387,7 @@ authoritative table is [api.md](../password-vault/api.md).
 
 ## Thread Safety
 
-`BackendStore` uses a `sync.RWMutex` for all operations. `TenantPasswordStoreManager` uses `sync.Map` and `atomic.Bool` for lock-free session-lock and tenant-state transitions across tenants.
+`DAOStore` serializes concurrent writers of one record with go-qrdb's guarded writes (read, compare, retry). `TenantPasswordStoreManager` uses `sync.Map` and `atomic.Bool` for lock-free session-lock and tenant-state transitions across tenants.
 
 ## See Also
 

@@ -1,6 +1,6 @@
 # Host Embedding — Architecture
 
-> **Status: NORMATIVE** · Feature: `host-embedding` · Repo: `go-xkms` · Last verified: 2026-10-04
+> **Status: NORMATIVE** · Feature: `host-embedding` · Repo: `go-xkms` · Last verified: 2026-10-09
 
 ## The problem
 
@@ -24,6 +24,7 @@ configuration file. A host therefore served routes that answered 404, 501 or
  ─────────────────────────────────────           ─────────────────────────────
  qrdb node client   ──WithQRDBClient────────┐
  tenant barrier registry ─WithBarrierRegistry┤    pkg/apimodule.Module
+ tenant store resolver ──WithTenantStores────┤
  PIN backend        ──WithPINBackend─────────┤      hostStores() — once
  sealer             ──WithPlatformSealer─────┼──►   │
  CA identity config ──WithCA─────────────────┤      ▼
@@ -46,8 +47,8 @@ configuration file. A host therefore served routes that answered 404, 501 or
   `Stores.Wire`, so a store is never built two different ways.
 - **Dependencies, not configuration.** The module does not read a
   configuration file. Each option supplies one thing only the host has: its
-  qrdb client (storage), its tenant barrier registry, its PIN backend, a
-  sealer, a CA identity hierarchy, a PCR reader.
+  qrdb client (storage), its tenant barrier registry, its per-tenant store
+  resolver, its PIN backend, a sealer, a CA identity hierarchy, a PCR reader.
 - **Missing means off, and says so.** A feature whose dependency is absent
   stays off. `compose.Build` records a typed `*FeatureDisabledError` (or a
   `*FeatureBuildError` when construction failed) per feature, logs each one,
@@ -64,8 +65,9 @@ configuration file. A host therefore served routes that answered 404, 501 or
 
 xkms registers no barrier, custodian, share or init route family: the barrier
 and its holder/quorum ceremony are go-qrdb's, served by the host's own node.
-The tenant barrier registry is a data-plane dependency that backs per-tenant
-Password Manager stores.
+The per-tenant store resolver is the data-plane dependency that backs
+per-tenant Password Manager stores: each tenant's entries live in that
+tenant's go-qrdb system database, sealed by that tenant's barrier.
 
 ## Rejected alternatives
 

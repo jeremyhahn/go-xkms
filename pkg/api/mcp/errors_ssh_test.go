@@ -161,17 +161,13 @@ func TestMapSSHError_InternalErrorClassification(t *testing.T) {
 	}{
 		{"keys material", &pkgkeys.KeyMaterialError{Op: "op", Err: errors.New("x")}},
 		{"keys storage", &pkgkeys.StorageError{Op: "op", Err: errors.New("x")}},
-		{"keys serialization", &pkgkeys.SerializationError{Op: "op", Err: errors.New("x")}},
 		{"keys closed signer", &pkgkeys.ClosedSignerError{}},
 		{"known_hosts storage", &pkgknownhosts.StorageError{Op: "op", Err: errors.New("x")}},
 		{"known_hosts serialization", &pkgknownhosts.SerializationError{Op: "op", Err: errors.New("x")}},
 		{"known_hosts no public key", &pkgknownhosts.NoPublicKeyError{Host: "h"}},
-		{"known_hosts legacy pin", &pkgknownhosts.LegacyPinError{Host: "h"}},
 		{"known_hosts rejected", &pkgknownhosts.RejectedError{Host: "h"}},
 		{"known_hosts public key required", &pkgknownhosts.PublicKeyRequiredError{Host: "h"}},
 		{"authorized storage", &pkgauthorized.StorageError{Op: "op", Err: errors.New("x")}},
-		{"authorized serialization", &pkgauthorized.SerializationError{Op: "op", Err: errors.New("x")}},
-		{"authorized unsupported version", &pkgauthorized.UnsupportedVersionError{Found: 9, Supported: 2}},
 		{"unclassified", errors.New("something unexpected")},
 	}
 	for _, tt := range tests {

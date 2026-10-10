@@ -29,6 +29,7 @@ import (
 	xkms "github.com/jeremyhahn/go-xkms/sdk/go"
 	"github.com/jeremyhahn/go-xkms/xkey/pkg/audit"
 	"github.com/jeremyhahn/go-xkms/xkey/pkg/secretservice"
+	"github.com/jeremyhahn/go-xkms/xkey/pkg/staticpw"
 )
 
 // Secret Service command sentinel errors.
@@ -131,8 +132,10 @@ func runSecretService(cmd *cobra.Command, args []string) (err error) {
 		}
 	}()
 
-	backend := xkms.NewBarrierBackend(barrier)
-	store := xkms.NewStaticPasswordStore(backend)
+	store, err := staticpw.NewBackendStore(xkms.NewBarrierBackend(barrier))
+	if err != nil {
+		return err
+	}
 
 	config := secretservice.DefaultConfig()
 	config.Bus = secretServiceBus

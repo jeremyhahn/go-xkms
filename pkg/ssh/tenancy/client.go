@@ -45,8 +45,8 @@
 // A subject is unique only within its tenant -- the mTLS authenticator uses
 // the username -- so user- and service-scoped assets of equal subjects in two
 // tenants would share an address in one flat store. Every tenant therefore
-// has its own storage partition, rooted at the tenant root "{tenant}/"
-// (scope.TenantRoot) of the shared SSH storage view, and its own backend-key
+// has its own partition of the SSH records, keyed under the tenant root
+// "{tenant}/" (scope.TenantRoot) in the shared "ssh" database, and its own backend-key
 // namespace (the backend KeyProvider sees the tenant in
 // types.KeyAttributes.TenantID, exactly as a xkms.TenantScopedBackend scopes
 // it). The platform is the ordinary tenant "system": its partition is
@@ -64,12 +64,11 @@ package tenancy
 
 import (
 	"context"
-	"errors"
-	"sync"
 
 	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
 
 	"github.com/jeremyhahn/go-xkms/pkg/auth"
+	"github.com/jeremyhahn/go-xkms/pkg/dao"
 	"github.com/jeremyhahn/go-xkms/pkg/scope"
 	sshbackend "github.com/jeremyhahn/go-xkms/pkg/ssh/backend"
 	pkgscope "github.com/jeremyhahn/go-xkms/pkg/ssh/scope"
@@ -80,9 +79,9 @@ import (
 
 // Options configures New.
 type Options struct {
-	// Storage is the SSH storage view shared by every partition. Required.
-	// The Client owns it and closes it on Close.
-	Storage storage.Backend
+	// DAOs builds the SSH stores every partition is a view of. Required.
+	// The caller owns the datastore behind it; Close leaves it open.
+	DAOs *qrdbsdk.DAOFactory
 
 	// Resolver resolves a crypto backend's KeyProvider by backend ID,
 	// unscoped. The Client narrows it to each partition's tenant. Optional:
@@ -105,37 +104,38 @@ type PermissionChecker interface {
 
 // client is the tenant-binding sdkssh.Client.
 type client struct {
-	storage     storage.Backend
+	stores      *sdkssh.Stores
 	resolver    sshbackend.Resolver
 	permissions PermissionChecker
 
-	// empty is a partition over storage nothing is ever written to: it
+	// empty is a partition over a datastore nothing is ever written to: it
 	// serves only refusals, which read, delete and look up through it, and
 	// Emit, which reads no store. Its answer to any address is therefore the
 	// answer for an asset that does not exist.
 	empty sdkssh.Client
-
-	closeOnce sync.Once
-	closeErr  error
 }
 
 var _ sdkssh.Client = (*client)(nil)
 
-// New returns the tenant-binding SSH client over opts.Storage. Returns
-// *NilInputError when opts.Storage is nil.
+// New returns the tenant-binding SSH client over the stores opts.DAOs
+// builds. Returns *NilInputError when opts.DAOs is nil.
 func New(opts Options) (sdkssh.Client, error) {
-	if opts.Storage == nil {
-		return nil, &NilInputError{Field: "Storage"}
+	if opts.DAOs == nil {
+		return nil, &NilInputError{Field: "DAOs"}
 	}
-	nothing, err := storage.NewMemoryBackend()
+	stores, err := sdkssh.NewStores(opts.DAOs)
 	if err != nil {
 		return nil, err
 	}
-	empty, err := sdkssh.NewEmbedded(sdkssh.EmbeddedOptions{Backend: nothing})
+	nothing, err := sdkssh.NewStores(dao.NewStoreFactory(qrdbsdk.NewMemoryKVStore()))
 	if err != nil {
 		return nil, err
 	}
-	return &client{storage: opts.Storage, resolver: opts.Resolver, permissions: opts.Permissions, empty: empty}, nil
+	empty, err := sdkssh.NewEmbedded(sdkssh.EmbeddedOptions{Stores: nothing})
+	if err != nil {
+		return nil, err
+	}
+	return &client{stores: stores, resolver: opts.Resolver, permissions: opts.Permissions, empty: empty}, nil
 }
 
 // Keys implements sdkssh.Client.
@@ -165,12 +165,10 @@ func (c *client) Console(ctx context.Context, req sdkssh.ConsoleConnectRequest, 
 	return session, nil
 }
 
-// Close closes the shared storage view. Idempotent.
+// Close implements sdkssh.Client. The datastore behind Options.DAOs is the
+// caller's, so there is nothing to release.
 func (c *client) Close() error {
-	c.closeOnce.Do(func() {
-		c.closeErr = errors.Join(c.empty.Close(), c.storage.Close())
-	})
-	return c.closeErr
+	return nil
 }
 
 // ------------------------------------------------------------------
@@ -345,20 +343,15 @@ func validatePartitionTenant(tenantID string) error {
 }
 
 // open returns the embedded client over tenantID's partition ("" is the
-// platform partition, rooted at "system/"). A partition is a view -- the
-// tenant root (scope.TenantRoot) as a key prefix over the shared storage and
-// a tenant-narrowed backend resolver -- so opening one allocates no
-// resources that need releasing.
+// platform partition, the "system" tenant). A partition is a view -- the
+// stores narrowed to the tenant and a tenant-narrowed backend resolver -- so
+// opening one allocates no resources that need releasing.
 func (c *client) open(tenantID string) (sdkssh.Client, error) {
-	root, err := scope.TenantRoot(tenantID)
+	stores, err := c.stores.Partition(tenantID)
 	if err != nil {
 		return nil, err
 	}
-	view, err := storage.NewPrefixBackend(c.storage, root)
-	if err != nil {
-		return nil, err
-	}
-	opts := sdkssh.EmbeddedOptions{Backend: view}
+	opts := sdkssh.EmbeddedOptions{Stores: stores}
 	if c.resolver != nil {
 		provider, err := sshbackend.New(c.tenantResolver(tenantID))
 		if err != nil {

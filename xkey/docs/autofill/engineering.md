@@ -1,6 +1,6 @@
 # Browser Extension AutoFill — Engineering
 
-> **Status: NORMATIVE** · Feature: `autofill` · Module: `go-xkms/xkey` · Last verified: 2026-10-07
+> **Status: NORMATIVE** · Feature: `autofill` · Module: `go-xkms/xkey` · Last verified: 2026-10-09
 
 See [architecture.md](architecture.md) for the component map and data flow
 before reading this document.
@@ -256,7 +256,10 @@ Emits Wails events `extension:pairing_request` and `extension:paired`/
 `cmd/xkey/cmd/extension.go`: `ErrExtensionInstallFailed`,
 `ErrExtensionUninstallFailed`, `ErrExtensionInvalidBrowser`,
 `ErrExtensionHostFailed`, `ErrExtensionUnpairFailed`,
-`ErrExtensionPairStatusFailed`. `cmd/xkey/cmd/extension_serve.go` adds a
+`ErrExtensionPairStatusFailed`. `cmd/xkey/cmd/app_access.go`:
+`ErrAppAccessLoadFailed`, `ErrAppAccessSaveFailed`.
+`cmd/xkey/cmd/extension_serve.go` adds `ErrServeLocalAppAccessDisabled`
+(local app access is off; the message names `xkey app-access enable`) and a
 long list of headless-startup-specific errors (barrier strategy refusals
 for a `shamir` strategy, and unseal failures for `pkcs11`/cloud-KMS
 strategies whose backend cannot be built — see the doc comments at each sentinel in that file).
@@ -265,7 +268,8 @@ strategies whose backend cannot be built — see the doc comments at each sentin
 
 | Setting | Resolution | Notes |
 |---|---|---|
-| IPC socket | `--socket` (GUI: fixed path; headless: flag) → `ipc.DefaultSocketPath()` | Shared by the GUI and `xkey extension serve` |
+| Local app access | `local_app_access_enabled` in `$XDG_CONFIG_HOME/xkey/gui.json`; Settings → Browser or `xkey app-access` | Off by default. Gates the GUI socket, `xkey extension serve`, and `AutoFillService.SetEnabled` |
+| IPC socket | `--socket` (GUI: fixed path; headless: flag) → `ipc.DefaultSocketPath()` | Shared by the GUI and `xkey extension serve`; the GUI's exists only while local app access is on and xKey is unlocked |
 | Native messaging manifest | Installed by `xkey extension install`; browser launches the host via `os.Executable()`'s resolved path | See [cli.md](cli.md) |
 | Pairing state | `<data dir>/extension/pairing.json`, created only by `extension host`/`extension serve` (never by a read-only command) | `--no-pairing` skips identity verification (development only) |
 | Pairing rate limits | `<data dir>/extension/pairing-limits.json` (0600), derived from the pairing state path (`limitsPathFor`, `pairing_limits.go:62`); shared by the GUI and every native host instance | Deleting it by hand clears a lockout; a corrupt file refuses pairing until removed |
@@ -282,6 +286,8 @@ strategies whose backend cannot be built — see the doc comments at each sentin
 | `xkey/pkg/ipc/server_autofill_test.go`, `autofill_types_test.go` | (none) | IPC dispatch, payload validation |
 | `xkey/pkg/gui/services/pairing_service_test.go` | (none) | GUI pairing service, event emission |
 | `xkey/cmd/xkey/cmd/extension_test.go`, `extension_serve_test.go`, `extension_serve_policy_test.go`, `extension_agent_piv_test.go` | `ble codec_json` | CLI verbs, headless barrier-strategy handling, enterprise policy wiring |
+| `xkey/cmd/xkey/cmd/app_access_test.go` | `ble codec_json` | `app-access` verbs persist the setting; `serve` refuses with no socket while it is off |
+| `xkey/pkg/gui/ipc_server_test.go` | `ble codec_json` | GUI socket follows the setting, the app lock and the barrier seal |
 | `xkey/test/integration/extension/tests/autofill.spec.ts`, `ipc-autofill.spec.ts` | (Playwright, `make integration-test`) | Extension-side end-to-end fill flow |
 
 Run the root-module package tests:

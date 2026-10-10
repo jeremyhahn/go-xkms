@@ -24,9 +24,8 @@ import (
 	"google.golang.org/grpc/status"
 
 	pb "github.com/jeremyhahn/go-xkms/pkg/api/grpc/proto/xkmsv1"
-	"github.com/jeremyhahn/go-xkms/pkg/seal"
 	"github.com/jeremyhahn/go-xkms/pkg/staticpw"
-	"github.com/jeremyhahn/go-xkms/pkg/storage"
+	"github.com/jeremyhahn/go-xkms/pkg/testutil"
 	"github.com/jeremyhahn/go-xkms/pkg/testutil/kdftest"
 	"github.com/jeremyhahn/go-xkms/pkg/xkms"
 )
@@ -47,8 +46,17 @@ import (
 func newPasswordGRPCService(t *testing.T) *Service {
 	t.Helper()
 	xkmsSvc := &xkms.XKMSService{}
-	xkmsSvc.SetPasswordStore(staticpw.NewStore(storage.NewMemory()))
+	xkmsSvc.SetPasswordStore(newTestPasswordStore(t))
 	return NewService(nil, nil, xkmsSvc)
+}
+
+// newTestPasswordStore returns a system password store over an in-memory DAO
+// factory.
+func newTestPasswordStore(t *testing.T) *staticpw.DAOStore {
+	t.Helper()
+	store, err := staticpw.NewStore(testutil.NewMemoryDAOFactory())
+	require.NoError(t, err)
+	return store
 }
 
 func TestServicePasswordAdd_Success(t *testing.T) {
@@ -289,42 +297,14 @@ func TestMapSealStoreError_UnclassifiedFallsBackToInternal(t *testing.T) {
 // RPCs have their own tests in service_password_vault_test.go.
 
 // newTenantPasswordGRPCService wires an XKMSService with a
-// TenantPasswordStoreManager backed by a registered, unsealed tenant barrier,
-// and returns the gRPC Service in front of it together with a context scoped
-// to a user of that tenant.
+// TenantPasswordStoreManager over in-memory tenant stores, and returns the
+// gRPC Service in front of it together with a context scoped to a user of
+// vaultTenant.
 func newTenantPasswordGRPCService(t *testing.T) (*Service, context.Context) {
 	t.Helper()
-	ctx := context.Background()
 
-	sysBackend := storage.NewMemory()
-	sysBarrier, err := seal.NewBarrier(
-		discardLogger(),
-		sysBackend,
-		seal.BarrierConfig{
-			RootKeyPath:     "core/seal",
-			PreferenceOrder: []seal.StrategyID{seal.StrategyPassphrase},
-		},
-		seal.NewSoftwareStrategy(),
-	)
-	require.NoError(t, err)
-
-	sysCreds, err := seal.CredentialsFor(t.Context(), []byte("system-password"))
-	require.NoError(t, err)
-	defer sysCreds.Secret.Destroy()
-	require.NoError(t, sysBarrier.Initialize(ctx, sysCreds))
-
-	registry, err := seal.NewBarrierRegistry(sysBarrier)
-	require.NoError(t, err)
-
-	_, err = registry.RegisterTenantDefault(vaultTenant)
-	require.NoError(t, err)
-	tenantCreds, err := seal.CredentialsFor(t.Context(), []byte("tenant-password"))
-	require.NoError(t, err)
-	defer tenantCreds.Secret.Destroy()
-	require.NoError(t, registry.InitializeTenant(ctx, vaultTenant, tenantCreds))
-
-	systemStore := staticpw.NewStore(storage.NewMemory())
-	manager, err := staticpw.NewTenantPasswordStoreManager(registry, systemStore, staticpw.WithPasskeyRelyingParty("kms.example.com"), staticpw.WithPassphraseKDFParams(kdftest.CheapPassphraseParams))
+	systemStore := newTestPasswordStore(t)
+	manager, err := staticpw.NewTenantPasswordStoreManager(testutil.NewTenantStores(), systemStore, staticpw.WithPasskeyRelyingParty("kms.example.com"), staticpw.WithPassphraseKDFParams(kdftest.CheapPassphraseParams))
 	require.NoError(t, err)
 
 	xkmsSvc := &xkms.XKMSService{}

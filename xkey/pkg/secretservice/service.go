@@ -30,7 +30,7 @@ import (
 )
 
 // aliasStore is implemented by store backends that can persist a Secret
-// Service alias name -> folder-path mapping (xkms.StaticPasswordBackendStore
+// Service alias name -> folder-path mapping (xkms.StaticPasswordDAOStore
 // does; see pkg/staticpw/store.go SetAlias/GetAlias). It is not part of the
 // narrower xkms.StaticPasswordStore interface, so Daemon probes for it with
 // a type assertion: a store that lacks it still answers ReadAlias/SetAlias

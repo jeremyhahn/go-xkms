@@ -25,7 +25,8 @@ import "github.com/jeremyhahn/go-xkms/pkg/pivcert"
 // PIVCertificateStorage is the slot-addressable certificate storage interface.
 type PIVCertificateStorage = pivcert.PIVCertificateStorage
 
-// PIVFileStorageConfig configures the file-backed PIV certificate store.
+// PIVFileStorageConfig configures the software PIV certificate store, which
+// persists slots through an injected go-qrdb DAO factory.
 type PIVFileStorageConfig = pivcert.FileStorageConfig
 
 // PIVPKCS11StorageConfig configures the PKCS#11-backed PIV certificate store.
@@ -134,12 +135,12 @@ var (
 	ErrPIVInvalidFormat = pivcert.ErrInvalidFormat
 	// ErrPIVInvalidSlot is returned for an invalid slot value.
 	ErrPIVInvalidSlot = pivcert.ErrInvalidSlot
-	// ErrPIVMissingBackend is returned when no storage backend is configured.
-	ErrPIVMissingBackend = pivcert.ErrMissingBackend
+	// ErrPIVMissingDAOFactory is returned when the file store has no DAO factory.
+	ErrPIVMissingDAOFactory = pivcert.ErrMissingDAOFactory
+	// ErrPIVConflict is returned when a slot changed concurrently.
+	ErrPIVConflict = pivcert.ErrConflict
 	// ErrPIVNoAvailableSlot is returned when no slot is free.
 	ErrPIVNoAvailableSlot = pivcert.ErrNoAvailableSlot
-	// ErrPIVNoFormatEnabled is returned when no certificate format is enabled.
-	ErrPIVNoFormatEnabled = pivcert.ErrNoFormatEnabled
 	// ErrPIVPKCS11NotAvailable is returned when the PKCS#11 backend is unavailable.
 	ErrPIVPKCS11NotAvailable = pivcert.ErrPKCS11NotAvailable
 	// ErrPIVTPMNotAvailable is returned when the TPM cannot be reached.

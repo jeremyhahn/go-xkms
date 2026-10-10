@@ -1,6 +1,6 @@
 # xKey Desktop GUI — Architecture
 
-> **Status: NORMATIVE** · Feature: `gui` · Module: `go-xkms/xkey` · Last verified: 2026-09-30
+> **Status: NORMATIVE** · Feature: `gui` · Module: `go-xkms/xkey` · Last verified: 2026-10-10
 
 This file replaces the pre-convention `gui/architecture.md`. The other files
 in this folder — `README.md`, `features.md`, `design-system.md`,
@@ -67,24 +67,81 @@ The GUI is reachable two ways, and they are architecturally distinct:
 1. **Wails bindings** — in-process, generated at build time, the frontend's
    only channel to the Go backend. This is what [api.md](api.md) documents.
 2. **A Unix-domain-socket IPC server** (`ipc.Server`, field
-   `ipcServer *ipc.Server` at `app.go:196`) that lets *other processes*
+   `ipcServer *ipc.Server` at `app.go:197`) that lets *other processes*
    running as the same user reach the live GUI: the CLI's `xkey touch`,
-   `xkey pin status`, `xkey barrier status`, and the browser extension's
-   native-messaging host. `guiIPCHandler` implements four separate
-   interfaces for this — `ipc.Handler` (touch/password/status),
-   `ipc.AutofillHandler`, `ipc.PairingHandler`, and `ipc.StateHandler`
-   (`app.go:3159-3164`, `xkey/pkg/gui/ipc_state.go:32-33`). The state
+   `xkey pin status`, `xkey barrier status`, the browser extension's
+   native-messaging host, and the PKCS#11 IPC transport (`xkey usb device
+   start` with local app access on). `guiIPCHandler` (`app.go:3242`)
+   implements `ipc.Handler` (touch/password/status), `ipc.AutofillHandler`,
+   `ipc.PairingHandler`, `ipc.StateHandler` (`ipc_state.go:34`) and, through
+   its embedded `services.PKCS11IPCHandler`, the PKCS#11 operations. The state
    queries exist specifically so `xkey pin status`/`xkey barrier status`
    report this process's live (possibly unsealed) state instead of a fresh
    process's false-negative read of the sealed on-disk data directory
    (comment at `ipc_state.go:22-30`). No PIN, password value, or key
    material is ever returned over it; the socket's only authentication is
-   filesystem permission — a `0700` directory the server refuses to reuse
-   if it is a symlink or another user's. On startup a socket already held by
-   a live listener is taken over only when `ipc.ReclaimSocket` confirms the
-   directory and the socket are this user's (`app.go:3330-3337`,
-   `xkey/pkg/ipc/socketdir.go:135`); see
+   filesystem permission — a `0600` socket in a `0700` directory the server
+   refuses to reuse if it is a symlink or another user's. A socket already
+   held by a live listener is taken over only when `ipc.ReclaimSocket`
+   confirms the directory and the socket are this user's
+   (`app.go:3433-3438`, `xkey/pkg/ipc/socketdir.go:135`); see
    [agent-automation/engineering.md](../agent-automation/engineering.md).
+
+### The socket is opt-in and follows the lock
+
+The IPC server runs only while **local app access** is on and xKey is open
+and unlocked. Local app access is one setting, `GUIConfig.LocalAppAccessEnabled`
+(`config.go:166`, JSON `local_app_access_enabled`), shown in Settings →
+Browser as "Let other apps use my keys while xKey is open". It is off by
+default, so a fresh install runs no socket at all.
+
+The setting is the user's request. An enterprise policy can refuse it: when
+the verified policy section sets `extension_enabled` to false,
+`AutoFillService` rejects the setting and `AutoFillService.IsEnabled`
+reports off whatever the setting says (`services/autofill_service.go`). That
+one effective answer gates both the socket and the autofill operations, so
+there is no second copy of the setting to drift from it.
+
+`ipcServerWanted` (`app.go:3461`) is the whole rule: local app access is in
+effect (`AutoFillService.IsEnabled`), the data directory is open
+(`dataReady`), the app lock is unlocked, and the barrier, if one exists, is
+unsealed. `syncIPCServer` (`app.go:3479`) reconciles the listener with that
+rule and is called on every change to one of its inputs:
+
+| Event | Caller |
+|---|---|
+| Settings save | `AppService` config updater (`app.go:2441`) |
+| Verified enterprise policy applied | `applyVerifiedEnterprisePolicy` (`enterprise_policy.go:229`) |
+| Data directory opened | `postDataDirStartup` (`app.go:3181`) |
+| Lock or unlock | `AppLockService.SetLockStateHook` (`app.go:2403`) |
+| Seal or unseal | `BarrierService.SetSealStateHook` (`app.go:2404`) |
+
+`NewApp` locks the app for startup, so the socket first appears after the
+unlock (auto-unlock or PIN), never during startup itself. A lock, seal or
+disable calls `stopIPCServer` (`app.go:3495`): it closes the listener and
+removes the socket at once, but does not wait for in-flight handlers,
+because a lock transition can run underneath one (an IPC unlock request).
+The stopped server drains on a background goroutine counted by
+`ipcDrains`. Shutdown calls `closeIPCServer` (`app.go:3524`) first, before
+the barrier is sealed: it stops the live server, stops any later event from
+starting one, and waits on `ipcDrains`, so a handler from a server a lock or
+seal already stopped also finishes before the stores it uses close. That
+wait has no timeout, unlike the shutdown steps after it: key generation on
+hardware can take minutes and need not honour cancellation, and sealing
+under it would close its stores mid-operation.
+
+Rejected alternative for the drain: keep the stopped server in a field for
+shutdown to close. A lock, an unlock and a second lock stop two servers
+before shutdown, and one field forgets the first; the wait group counts
+every one.
+
+The CLI changes the same setting with `xkey app-access` (see [cli.md](cli.md)).
+A running GUI reads it only at startup and on its own settings saves, so a
+change made from the CLI takes effect when xKey is next started.
+
+Rejected alternative: a separate `BrowserExtensionEnabled` flag beside a
+socket that always ran. Two overlapping settings let the socket stay open
+with the extension "off". The one setting now gates the socket itself.
 
 ## Systray
 

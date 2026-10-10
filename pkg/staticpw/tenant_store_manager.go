@@ -19,16 +19,14 @@ import (
 	"errors"
 	"sync"
 
+	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
+
 	"github.com/jeremyhahn/go-xkms/pkg/crypto/kdf"
+	"github.com/jeremyhahn/go-xkms/pkg/dao"
 	"github.com/jeremyhahn/go-xkms/pkg/scope"
 	"github.com/jeremyhahn/go-xkms/pkg/seal"
-	"github.com/jeremyhahn/go-xkms/pkg/storage"
 	secure "github.com/jeremyhahn/go-xkms/sdk/go/secure"
 )
-
-// ErrNoSystemBarrier is returned when the system tenant's password store is
-// addressed and the barrier registry holds no system barrier.
-var ErrNoSystemBarrier = errors.New("staticpw: the barrier registry has no system barrier")
 
 // TenantStoreStatus is the password store status one user sees: whether the
 // user's personal session is locked, whether the tenant barrier is sealed,
@@ -62,45 +60,52 @@ type EnrollResult struct {
 	RecoveryCode string
 }
 
-// sealProbe reports whether a barrier is sealed. *seal.TenantBarrier and the
-// system *seal.Barrier both satisfy it.
-type sealProbe interface {
-	IsSealed() bool
-}
-
 // userSession is an open personal session: the user's DEK, unwrapped, and
-// the personal store that seals entries with it.
+// the naming key derived from it.
 type userSession struct {
+	mu    sync.RWMutex
+	ended bool
 	dek   []byte
-	store *BackendStore
+	names entryNames
 }
 
-// end zeroes the DEK and the naming key derived from it. The store is
-// dropped with the session.
+// end zeroes the DEK and the naming key derived from it. A store still
+// holding the session reads and writes nothing after it.
 func (s *userSession) end() {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.ended = true
 	clear(s.dek)
-	clear(s.store.names.key)
+	clear(s.names.key)
 }
 
-// tenantPasswordState holds one tenant's shared store and its users' open
-// personal sessions.
-type tenantPasswordState struct {
-	shared   *BackendStore   // the tenant-shared entries
-	sessions sync.Map        // subject -> *userSession
-	keyLocks sync.Map        // subject -> *sync.Mutex: serializes a user's vault changes
-	backend  storage.Backend // the tenant barrier, as a storage backend
-	barrier  sealProbe
-	tenantID string
-}
-
-// sealed reports whether the tenant barrier is sealed. Sealing ends every
-// personal session: a barrier unsealed again later does not resume them.
-func (st *tenantPasswordState) sealed() bool {
-	if !st.barrier.IsSealed() {
-		return false
+// withDEK calls fn with the session's DEK, which fn must not retain, and
+// reports ErrStoreLocked once the session has ended.
+func (s *userSession) withDEK(fn func(dek []byte) error) error {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	if s.ended {
+		return ErrStoreLocked
 	}
-	st.endSessions()
-	return true
+	return fn(s.dek)
+}
+
+// wrap builds a factor of cred's type on keyring wrapping the session's DEK.
+func (s *userSession) wrap(ctx context.Context, keyring *vaultKeyring, cred VaultCredential) (*vaultFactor, error) {
+	var f *vaultFactor
+	err := s.withDEK(func(dek []byte) error {
+		var err error
+		f, err = keyring.wrap(ctx, cred, dek)
+		return err
+	})
+	return f, err
+}
+
+// tenantPasswordState holds one tenant's open personal sessions.
+type tenantPasswordState struct {
+	sessions sync.Map // subject -> *userSession
+	keyLocks sync.Map // subject -> *sync.Mutex: serializes a user's vault changes
+	tenantID string
 }
 
 // endSessions ends every personal session, zeroing its DEK.
@@ -127,24 +132,32 @@ func (st *tenantPasswordState) keyLock(subject string) *sync.Mutex {
 	return val.(*sync.Mutex)
 }
 
+// tenantView is a tenant's state with the DAO factory over the store the
+// tenant resolved to for the operation at hand.
+type tenantView struct {
+	*tenantPasswordState
+	daos *qrdbsdk.DAOFactory
+}
+
 // TenantPasswordStoreManager routes password operations to per-tenant stores
 // under the xkms scope model (pkg/scope):
 //
 //   - Shared entries ("{tenant}/staticpw/shared/") are readable and writable
-//     by every authenticated user of the tenant whenever the tenant barrier
-//     is unsealed. They have no session of their own.
+//     by every authenticated user of the tenant whenever the tenant is
+//     unsealed. They have no session of their own.
 //   - A user's personal entries ("{tenant}/staticpw/users/{subject}/") are
 //     sealed with the user's own DEK and are readable only while the user's
 //     personal session is open. The DEK is stored only wrapped under the
-//     user's factors (vault.go), so the tenant barrier alone reads none of
+//     user's factors (vault.go), so the tenant's store alone reads none of
 //     them. Each user locks and unlocks independently.
 //
-// Each tenant's data is encrypted by its TenantBarrier from the
-// BarrierRegistry. The system tenant is an ordinary tenant whose data is
-// encrypted by the system barrier. The systemStore serves only requests that
-// carry no identity (internal callers, authentication disabled).
+// Each tenant's records live in the store the go-qrdb tenant store resolver
+// routes the tenant to: a barrier-isolated tenant's own TenantBarrier, or the
+// system store confined to the tenant's keyspace. The system tenant is an
+// ordinary tenant. The systemStore serves only requests that carry no
+// identity (internal callers, authentication disabled).
 type TenantPasswordStoreManager struct {
-	registry            *seal.BarrierRegistry
+	stores              qrdbsdk.TenantStoreResolver
 	systemStore         Store
 	tenants             sync.Map // tenant scope name -> *tenantPasswordState
 	passphraseKDFParams func() *kdf.KDFParams
@@ -180,17 +193,17 @@ func WithPasskeyRelyingParty(rpID string) Option {
 	return func(m *TenantPasswordStoreManager) { m.passkeyRP = rpID }
 }
 
-// NewTenantPasswordStoreManager creates a manager over registry. systemStore
-// serves requests with no identity.
-func NewTenantPasswordStoreManager(registry *seal.BarrierRegistry, systemStore Store, opts ...Option) (*TenantPasswordStoreManager, error) {
-	if registry == nil {
-		return nil, ErrNilBarrierRegistry
+// NewTenantPasswordStoreManager creates a manager over the tenant stores
+// stores resolves. systemStore serves requests with no identity.
+func NewTenantPasswordStoreManager(stores qrdbsdk.TenantStoreResolver, systemStore Store, opts ...Option) (*TenantPasswordStoreManager, error) {
+	if stores == nil {
+		return nil, ErrNilTenantStores
 	}
 	if systemStore == nil {
 		return nil, ErrNilStore
 	}
 	m := &TenantPasswordStoreManager{
-		registry:            registry,
+		stores:              stores,
 		systemStore:         systemStore,
 		passphraseKDFParams: defaultPassphraseKDFParams,
 	}
@@ -234,63 +247,39 @@ func (m *TenantPasswordStoreManager) SystemStore() Store {
 // tenant and the system tenant are both the system tenant.
 func (m *TenantPasswordStoreManager) tenantState(tenantID string) (*tenantPasswordState, error) {
 	name := scope.TenantName(tenantID)
-	if val, ok := m.tenants.Load(name); ok {
-		return val.(*tenantPasswordState), nil
+	if !isValidTenantID(name) {
+		return nil, ErrInvalidTenantID
 	}
-
-	backend, probe, err := m.barrierFor(name)
-	if err != nil {
-		return nil, err
-	}
-	shared, err := NewSharedTenantStore(backend, name)
-	if err != nil {
-		return nil, err
-	}
-	state := &tenantPasswordState{
-		shared:   shared,
-		backend:  backend,
-		barrier:  probe,
-		tenantID: name,
-	}
-
-	// A concurrent first use may have stored its state first. The duplicate
-	// is dropped, never closed: its backend is the tenant barrier itself,
-	// and closing it would seal the tenant under the state that won.
-	actual, _ := m.tenants.LoadOrStore(name, state)
-	return actual.(*tenantPasswordState), nil
+	val, _ := m.tenants.LoadOrStore(name, &tenantPasswordState{tenantID: name})
+	return val.(*tenantPasswordState), nil
 }
 
-// barrierFor returns the barrier holding tenant name's entries, as a storage
-// backend and as a seal probe.
-func (m *TenantPasswordStoreManager) barrierFor(name string) (storage.Backend, sealProbe, error) {
-	if name == scope.SystemTenant {
-		system := m.registry.SystemBarrier()
-		if system == nil {
-			return nil, nil, ErrNoSystemBarrier
-		}
-		return seal.NewBarrierBackend(system), system, nil
-	}
-	tb, err := m.registry.Tenant(name)
-	if err != nil {
-		return nil, nil, err
-	}
-	return seal.NewBarrierBackend(tb.Barrier()), tb, nil
-}
-
-// userState returns the state of tenantID for a vault operation of userID:
-// the tenant must exist and be unsealed, and userID must be valid.
-func (m *TenantPasswordStoreManager) userState(tenantID, userID string) (*tenantPasswordState, error) {
-	if !isValidUserID(userID) {
-		return nil, ErrInvalidUserID
-	}
+// resolve returns tenantID's state over the store the tenant resolves to.
+// A sealed tenant ends every personal session -- a tenant unsealed again
+// later does not resume them -- and is seal.ErrTenantSealed.
+func (m *TenantPasswordStoreManager) resolve(ctx context.Context, tenantID string) (*tenantView, error) {
 	state, err := m.tenantState(tenantID)
 	if err != nil {
 		return nil, err
 	}
-	if state.sealed() {
+	kv, err := m.stores.Resolve(ctx, state.tenantID)
+	if errors.Is(err, qrdbsdk.ErrTenantStoreSealed) {
+		state.endSessions()
 		return nil, seal.ErrTenantSealed
 	}
-	return state, nil
+	if err != nil {
+		return nil, &StoreError{Op: "resolve", Key: state.tenantID, Err: err}
+	}
+	return &tenantView{tenantPasswordState: state, daos: dao.NewStoreFactory(kv)}, nil
+}
+
+// userState returns the state of tenantID for a vault operation of userID:
+// the tenant must be unsealed, and userID must be valid.
+func (m *TenantPasswordStoreManager) userState(ctx context.Context, tenantID, userID string) (*tenantView, error) {
+	if !isValidUserID(userID) {
+		return nil, ErrInvalidUserID
+	}
+	return m.resolve(ctx, tenantID)
 }
 
 // ResolveScopedStore returns the store userID sees in tenantID: the tenant's
@@ -300,33 +289,39 @@ func (m *TenantPasswordStoreManager) userState(tenantID, userID string) (*tenant
 //
 // An empty tenantID is a request without an identity and gets the
 // systemStore. An empty userID gets the shared entries only. Returns
-// seal.ErrTenantSealed while the tenant barrier is sealed.
-func (m *TenantPasswordStoreManager) ResolveScopedStore(tenantID, userID string) (Store, error) {
+// seal.ErrTenantSealed while the tenant is sealed.
+func (m *TenantPasswordStoreManager) ResolveScopedStore(ctx context.Context, tenantID, userID string) (Store, error) {
 	if tenantID == "" {
 		return m.systemStore, nil
 	}
-	state, err := m.tenantState(tenantID)
+	state, err := m.resolve(ctx, tenantID)
 	if err != nil {
 		return nil, err
 	}
-	if state.sealed() {
-		return nil, seal.ErrTenantSealed
+	shared, err := NewSharedTenantStore(state.daos, state.tenantID)
+	if err != nil {
+		return nil, err
 	}
 	if userID == "" {
-		return state.shared, nil
+		return shared, nil
 	}
 	if !isValidUserID(userID) {
 		return nil, ErrInvalidUserID
 	}
-	if session := state.session(userID); session != nil {
-		return NewScopedStore(state.shared, session.store, userID)
+	session := state.session(userID)
+	if session == nil {
+		return NewLockedScopedStore(shared, userID)
 	}
-	return NewLockedScopedStore(state.shared, userID)
+	personal, err := newSealedPersonalStore(state.daos, state.tenantID, userID, session)
+	if err != nil {
+		return nil, err
+	}
+	return NewScopedStore(shared, personal, userID)
 }
 
 // VaultStatus returns userID's vault status in tenantID.
 func (m *TenantPasswordStoreManager) VaultStatus(ctx context.Context, tenantID, userID string) (*VaultStatus, error) {
-	state, err := m.userState(tenantID, userID)
+	state, err := m.userState(ctx, tenantID, userID)
 	if err != nil {
 		return nil, err
 	}
@@ -347,8 +342,8 @@ func (m *TenantPasswordStoreManager) VaultStatus(ctx context.Context, tenantID, 
 }
 
 // factors returns userID's stored factors.
-func (m *TenantPasswordStoreManager) factors(ctx context.Context, state *tenantPasswordState, userID string) ([]*vaultFactor, error) {
-	keyring, err := newVaultKeyring(state.backend, state.tenantID, userID, m.passphraseKDFParams)
+func (m *TenantPasswordStoreManager) factors(ctx context.Context, state *tenantView, userID string) ([]*vaultFactor, error) {
+	keyring, err := newVaultKeyring(state.daos, state.tenantID, userID, m.passphraseKDFParams)
 	if err != nil {
 		return nil, err
 	}
@@ -370,7 +365,7 @@ func (m *TenantPasswordStoreManager) UnlockUser(ctx context.Context, tenantID, u
 	if err := cred.validate(ctx, false); err != nil {
 		return err
 	}
-	state, err := m.userState(tenantID, userID)
+	state, err := m.userState(ctx, tenantID, userID)
 	if err != nil {
 		return err
 	}
@@ -396,8 +391,8 @@ func (m *TenantPasswordStoreManager) UnlockUser(ctx context.Context, tenantID, u
 }
 
 // keyring returns userID's keyring and its factors.
-func (m *TenantPasswordStoreManager) keyring(ctx context.Context, state *tenantPasswordState, userID string) (*vaultKeyring, []*vaultFactor, error) {
-	keyring, err := newVaultKeyring(state.backend, state.tenantID, userID, m.passphraseKDFParams)
+func (m *TenantPasswordStoreManager) keyring(ctx context.Context, state *tenantView, userID string) (*vaultKeyring, []*vaultFactor, error) {
+	keyring, err := newVaultKeyring(state.daos, state.tenantID, userID, m.passphraseKDFParams)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -431,19 +426,15 @@ func unwrapWith(ctx context.Context, keyring *vaultKeyring, factors []*vaultFact
 
 // openSession records userID's open session over dek, which it takes
 // ownership of.
-func (m *TenantPasswordStoreManager) openSession(state *tenantPasswordState, userID string, dek []byte) error {
-	store, err := NewPersonalTenantStore(newDEKBackend(state.backend, dek), state.tenantID, userID)
+func (m *TenantPasswordStoreManager) openSession(state *tenantView, userID string, dek []byte) error {
+	// Entry IDs and marker paths are keyed by the DEK, so the tenant's
+	// store alone reveals no names or folders (see entryNames).
+	names, err := newPersonalNames(dek)
 	if err != nil {
 		clear(dek)
 		return err
 	}
-	// Entry IDs and marker keys are keyed by the DEK, so the tenant barrier
-	// key alone reveals no names or folders (see entryNames).
-	if store.names, err = newPersonalNames(dek); err != nil {
-		clear(dek)
-		return err
-	}
-	session := &userSession{dek: dek, store: store}
+	session := &userSession{dek: dek, names: names}
 	if previous, loaded := state.sessions.Swap(userID, session); loaded {
 		previous.(*userSession).end()
 	}
@@ -462,7 +453,7 @@ func (m *TenantPasswordStoreManager) EnrollFactor(ctx context.Context, tenantID,
 	if err := m.validateEnrollment(ctx, cred); err != nil {
 		return nil, err
 	}
-	state, err := m.userState(tenantID, userID)
+	state, err := m.userState(ctx, tenantID, userID)
 	if err != nil {
 		return nil, err
 	}
@@ -485,7 +476,7 @@ func (m *TenantPasswordStoreManager) EnrollFactor(ctx context.Context, tenantID,
 	if err := checkUnique(factors, cred, nil); err != nil {
 		return nil, err
 	}
-	f, err := keyring.wrap(ctx, cred, session.dek)
+	f, err := session.wrap(ctx, keyring, cred)
 	if err != nil {
 		return nil, err
 	}
@@ -497,7 +488,7 @@ func (m *TenantPasswordStoreManager) EnrollFactor(ctx context.Context, tenantID,
 
 // initVault mints userID's DEK and wraps it under cred and a new recovery
 // code, then opens the session.
-func (m *TenantPasswordStoreManager) initVault(ctx context.Context, state *tenantPasswordState, keyring *vaultKeyring, userID string, cred VaultCredential) (*EnrollResult, error) {
+func (m *TenantPasswordStoreManager) initVault(ctx context.Context, state *tenantView, keyring *vaultKeyring, userID string, cred VaultCredential) (*EnrollResult, error) {
 	dek, err := randomBytes(dekLength)
 	if err != nil {
 		return nil, err
@@ -572,7 +563,7 @@ func (m *TenantPasswordStoreManager) RotateFactor(ctx context.Context, tenantID,
 	if err := m.validateEnrollment(ctx, cred); err != nil {
 		return nil, err
 	}
-	state, err := m.userState(tenantID, userID)
+	state, err := m.userState(ctx, tenantID, userID)
 	if err != nil {
 		return nil, err
 	}
@@ -594,7 +585,7 @@ func (m *TenantPasswordStoreManager) RotateFactor(ctx context.Context, tenantID,
 	if err := checkUnique(factors, cred, old); err != nil {
 		return nil, err
 	}
-	f, err := keyring.wrap(ctx, cred, session.dek)
+	f, err := session.wrap(ctx, keyring, cred)
 	if err != nil {
 		return nil, err
 	}
@@ -613,7 +604,7 @@ func (m *TenantPasswordStoreManager) RotateFactor(ctx context.Context, tenantID,
 // the recovery factor cannot be removed, and the last passphrase or passkey
 // cannot be removed.
 func (m *TenantPasswordStoreManager) RemoveFactor(ctx context.Context, tenantID, userID, id string) error {
-	state, err := m.userState(tenantID, userID)
+	state, err := m.userState(ctx, tenantID, userID)
 	if err != nil {
 		return err
 	}
@@ -643,7 +634,7 @@ func (m *TenantPasswordStoreManager) RemoveFactor(ctx context.Context, tenantID,
 // openVault returns the keyring, factors and open session of userID, or
 // ErrVaultNotInitialized / ErrStoreLocked. The caller holds the user's key
 // lock.
-func (m *TenantPasswordStoreManager) openVault(ctx context.Context, state *tenantPasswordState, userID string) (*vaultKeyring, []*vaultFactor, *userSession, error) {
+func (m *TenantPasswordStoreManager) openVault(ctx context.Context, state *tenantView, userID string) (*vaultKeyring, []*vaultFactor, *userSession, error) {
 	keyring, factors, err := m.keyring(ctx, state, userID)
 	if err != nil {
 		return nil, nil, nil, err
@@ -683,7 +674,7 @@ func (m *TenantPasswordStoreManager) RecoverVault(ctx context.Context, tenantID,
 	if len(recoveryCode) == 0 {
 		return nil, ErrVaultInvalidCredential
 	}
-	state, err := m.userState(tenantID, userID)
+	state, err := m.userState(ctx, tenantID, userID)
 	if err != nil {
 		return nil, err
 	}
@@ -770,14 +761,14 @@ func (m *TenantPasswordStoreManager) LockUser(tenantID, userID string) error {
 }
 
 // IsUserLocked reports whether userID's personal session in tenantID is
-// locked. Sessions start locked.
-func (m *TenantPasswordStoreManager) IsUserLocked(tenantID, userID string) (bool, error) {
-	state, err := m.tenantState(tenantID)
+// locked. Sessions start locked, and a sealed tenant locks every session.
+func (m *TenantPasswordStoreManager) IsUserLocked(ctx context.Context, tenantID, userID string) (bool, error) {
+	state, err := m.resolve(ctx, tenantID)
+	if errors.Is(err, seal.ErrTenantSealed) {
+		return true, nil
+	}
 	if err != nil {
 		return false, err
-	}
-	if state.sealed() {
-		return true, nil
 	}
 	return state.session(userID) == nil, nil
 }
@@ -785,7 +776,7 @@ func (m *TenantPasswordStoreManager) IsUserLocked(tenantID, userID string) (bool
 // UserStoreStatus returns the status userID sees in tenantID. PasswordCount
 // counts the entries the user can read now: the shared entries, and the
 // personal ones while the session is open.
-func (m *TenantPasswordStoreManager) UserStoreStatus(tenantID, userID string) (*TenantStoreStatus, error) {
+func (m *TenantPasswordStoreManager) UserStoreStatus(ctx context.Context, tenantID, userID string) (*TenantStoreStatus, error) {
 	if userID != "" && !isValidUserID(userID) {
 		return nil, ErrInvalidUserID
 	}
@@ -793,15 +784,14 @@ func (m *TenantPasswordStoreManager) UserStoreStatus(tenantID, userID string) (*
 	if err != nil {
 		return nil, err
 	}
-	if state.sealed() {
+	store, err := m.ResolveScopedStore(ctx, state.tenantID, userID)
+	if errors.Is(err, seal.ErrTenantSealed) {
 		return &TenantStoreStatus{IsLocked: true, BarrierSealed: true}, nil
 	}
-	status := &TenantStoreStatus{IsLocked: state.session(userID) == nil}
-
-	store, err := m.ResolveScopedStore(state.tenantID, userID)
 	if err != nil {
 		return nil, err
 	}
+	status := &TenantStoreStatus{IsLocked: state.session(userID) == nil}
 	entries, err := store.List()
 	if err != nil {
 		return nil, err
@@ -810,17 +800,13 @@ func (m *TenantPasswordStoreManager) UserStoreStatus(tenantID, userID string) (*
 	return status, nil
 }
 
-// Close closes all cached tenant stores and ends every session.
+// Close ends every personal session. The tenant stores belong to the
+// resolver, so nothing else is released.
 func (m *TenantPasswordStoreManager) Close() error {
-	var lastErr error
 	m.tenants.Range(func(key, value any) bool {
-		state := value.(*tenantPasswordState)
-		state.endSessions()
-		if err := state.shared.Close(); err != nil {
-			lastErr = err
-		}
+		value.(*tenantPasswordState).endSessions()
 		m.tenants.Delete(key)
 		return true
 	})
-	return lastErr
+	return nil
 }

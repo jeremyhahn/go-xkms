@@ -36,21 +36,21 @@ import (
 
 	gossh "golang.org/x/crypto/ssh"
 
-	"github.com/jeremyhahn/go-xkms/pkg/storage"
+	"github.com/jeremyhahn/go-xkms/pkg/testutil"
 	sdkssh "github.com/jeremyhahn/go-xkms/sdk/go/client/ssh"
 )
 
 // signingKeyEmail is the identity the test signs and verifies commits under.
 const signingKeyEmail = "alice@example.com"
 
-// newClient returns a fresh embedded SDK client over an in-memory backend.
+// newClient returns a fresh embedded SDK client over an in-memory DAO factory.
 func newClient(t *testing.T) sdkssh.Client {
 	t.Helper()
-	backend, err := storage.NewMemoryBackend()
+	stores, err := sdkssh.NewStores(testutil.NewMemoryDAOFactory())
 	if err != nil {
-		t.Fatalf("backend: %v", err)
+		t.Fatalf("NewStores: %v", err)
 	}
-	client, err := sdkssh.NewEmbedded(sdkssh.EmbeddedOptions{Backend: backend})
+	client, err := sdkssh.NewEmbedded(sdkssh.EmbeddedOptions{Stores: stores})
 	if err != nil {
 		t.Fatalf("NewEmbedded: %v", err)
 	}

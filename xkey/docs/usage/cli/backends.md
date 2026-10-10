@@ -274,25 +274,25 @@ Backend availability depends on build tags used during compilation. See the [Bui
 
 ### Default Build
 ```bash
-# Software backend is enabled by default
+# Every backend is compiled in by default
 make build
-xkmsctl backends list  # Shows: software
+xkmsctl backends list
 ```
 
-### Custom Build
+### Opting Out
 ```bash
-# Build with all backends
-make build WITH_PKCS11=1 WITH_TPM2=1 WITH_AWS_KMS=1 WITH_GCP_KMS=1 WITH_AZURE_KV=1 WITH_VAULT=1
+# Drop backends the deployment does not use
+make build WITH_VAULT=0 WITH_AZURE=0
 
-# Verify all backends are available
-xkmsctl backends list
+# Or build with no optional backend at all
+make build-minimal
 ```
 
 ## Troubleshooting
 
 ### Backend Not Listed
 
-If an expected backend is missing:
+If an expected backend is missing, the build opted it out:
 
 1. Check your build configuration:
    ```bash
@@ -300,15 +300,14 @@ If an expected backend is missing:
    xkmsctl backends list
    ```
 
-2. Rebuild with required backend:
+2. Rebuild with the backend's toggle back on (or drop the `=0`):
    ```bash
-   make build WITH_TPM2=1  # Example: enable TPM2
+   make build WITH_VAULT=1  # Example: Vault
    ```
 
-3. Verify build tags:
-   ```bash
-   go build -tags "software tpm2" ./...
-   ```
+A server whose configuration names a backend it was built without refuses to
+start with `backend "<name>" is not compiled into this binary; build with
+WITH_<FEATURE>=1`.
 
 ### Remote Server Connection Failed
 

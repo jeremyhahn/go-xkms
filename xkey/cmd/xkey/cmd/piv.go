@@ -676,12 +676,15 @@ func createPIVStorage(cfg *PIVConfig, logger *slog.Logger) (xkms.PIVCertificateS
 		if err != nil {
 			return nil, &WrappedError{Msg: "failed to create file storage backend", Err: err}
 		}
-		fileConfig := &xkms.PIVFileStorageConfig{
-			Backend:    backend,
-			DEREnabled: true,
-			PEMEnabled: true,
+		daos, err := xkms.NewBackendDAOFactory(backend)
+		if err != nil {
+			return nil, errors.Join(&WrappedError{Msg: "failed to open PIV database", Err: err}, backend.Close())
 		}
-		return xkms.NewPIVFileBackend(fileConfig)
+		store, err := xkms.NewPIVFileBackend(&xkms.PIVFileStorageConfig{DAOs: daos})
+		if err != nil {
+			return nil, errors.Join(err, backend.Close())
+		}
+		return &ownedPIVStore{PIVCertificateStorage: store, backend: backend}, nil
 
 	case PIVStorageTypeTPM2:
 		return createTPM2PIVStorage(cfg, logger)
@@ -692,6 +695,18 @@ func createPIVStorage(cfg *PIVConfig, logger *slog.Logger) (xkms.PIVCertificateS
 	default:
 		return nil, ErrPIVInvalidStorageType
 	}
+}
+
+// ownedPIVStore is a PIV certificate store that also releases the storage
+// backend it was opened over.
+type ownedPIVStore struct {
+	xkms.PIVCertificateStorage
+	backend xkms.StorageBackend
+}
+
+// Close closes the store, then its storage backend.
+func (s *ownedPIVStore) Close() error {
+	return errors.Join(s.PIVCertificateStorage.Close(), s.backend.Close())
 }
 
 // runPIVList executes the piv list command.

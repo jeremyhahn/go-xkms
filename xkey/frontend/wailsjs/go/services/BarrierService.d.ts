@@ -20,6 +20,8 @@ export function Initialize(arg1:string,arg2:string):Promise<void>;
 
 export function IsInitialized():Promise<boolean>;
 
+export function IsSealed():Promise<boolean>;
+
 export function IsUnsealed():Promise<boolean>;
 
 export function ProbeStrategies():Promise<Array<services.BarrierStrategyInfo>>;
@@ -39,6 +41,8 @@ export function SetExternalStrategyFunc(arg1:any):Promise<void>;
 export function SetLastStrategy(arg1:string):Promise<void>;
 
 export function SetPostUnsealHook(arg1:any):Promise<void>;
+
+export function SetSealStateHook(arg1:any):Promise<void>;
 
 export function SetTPMSealerFunc(arg1:any):Promise<void>;
 

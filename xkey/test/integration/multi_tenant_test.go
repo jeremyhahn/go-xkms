@@ -36,10 +36,10 @@ func TestTenantIsolatedPasswordStores(t *testing.T) {
 	require.NoError(t, err)
 	t.Cleanup(func() { backend.Close() })
 
-	storeA, err := xkms.NewStaticPasswordTenantStore(backend, "tenant-A")
+	storeA, err := xkms.NewStaticPasswordTenantStore(newTestPasswordDAOs(t, backend), "tenant-A")
 	require.NoError(t, err)
 
-	storeB, err := xkms.NewStaticPasswordTenantStore(backend, "tenant-B")
+	storeB, err := xkms.NewStaticPasswordTenantStore(newTestPasswordDAOs(t, backend), "tenant-B")
 	require.NoError(t, err)
 
 	// Add a password to tenant-A.
@@ -90,10 +90,10 @@ func TestTenantIsolatedPasswordStores_SameNameDifferentTenants(t *testing.T) {
 	require.NoError(t, err)
 	t.Cleanup(func() { backend.Close() })
 
-	storeA, err := xkms.NewStaticPasswordTenantStore(backend, "tenant-A")
+	storeA, err := xkms.NewStaticPasswordTenantStore(newTestPasswordDAOs(t, backend), "tenant-A")
 	require.NoError(t, err)
 
-	storeB, err := xkms.NewStaticPasswordTenantStore(backend, "tenant-B")
+	storeB, err := xkms.NewStaticPasswordTenantStore(newTestPasswordDAOs(t, backend), "tenant-B")
 	require.NoError(t, err)
 
 	// Both tenants add a password with the same name.
@@ -141,11 +141,11 @@ func TestTenantIsolatedTeamStores(t *testing.T) {
 	kvStoreB, err := xkms.NewKVStoreAdapter(backendB)
 	require.NoError(t, err)
 
-	teamStoreA, err := xkms.NewStaticPasswordDAOTeamStore(kvStoreA)
+	teamStoreA, err := xkms.NewStaticPasswordDAOTeamStore(xkms.NewStoreDAOFactory(kvStoreA))
 	require.NoError(t, err)
 	t.Cleanup(func() { teamStoreA.Close() })
 
-	teamStoreB, err := xkms.NewStaticPasswordDAOTeamStore(kvStoreB)
+	teamStoreB, err := xkms.NewStaticPasswordDAOTeamStore(xkms.NewStoreDAOFactory(kvStoreB))
 	require.NoError(t, err)
 	t.Cleanup(func() { teamStoreB.Close() })
 
@@ -199,7 +199,7 @@ func TestTenantIsolatedTeamStores_ListByTenant(t *testing.T) {
 	kvStore, err := xkms.NewKVStoreAdapter(sharedBackend)
 	require.NoError(t, err)
 
-	teamStore, err := xkms.NewStaticPasswordDAOTeamStore(kvStore)
+	teamStore, err := xkms.NewStaticPasswordDAOTeamStore(xkms.NewStoreDAOFactory(kvStore))
 	require.NoError(t, err)
 	t.Cleanup(func() { teamStore.Close() })
 
@@ -257,10 +257,10 @@ func TestTenantCleanupIsolation(t *testing.T) {
 	require.NoError(t, err)
 	t.Cleanup(func() { backend.Close() })
 
-	storeA, err := xkms.NewStaticPasswordTenantStore(backend, "tenant-A")
+	storeA, err := xkms.NewStaticPasswordTenantStore(newTestPasswordDAOs(t, backend), "tenant-A")
 	require.NoError(t, err)
 
-	storeB, err := xkms.NewStaticPasswordTenantStore(backend, "tenant-B")
+	storeB, err := xkms.NewStaticPasswordTenantStore(newTestPasswordDAOs(t, backend), "tenant-B")
 	require.NoError(t, err)
 
 	// Populate both tenants.
@@ -332,7 +332,7 @@ func TestTenantStore_InvalidTenantID(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			_, err := xkms.NewStaticPasswordTenantStore(backend, tt.tenantID)
+			_, err := xkms.NewStaticPasswordTenantStore(newTestPasswordDAOs(t, backend), tt.tenantID)
 			assert.ErrorIs(t, err, xkms.ErrStaticPasswordInvalidTenantID)
 		})
 	}
@@ -347,10 +347,10 @@ func TestTenantIsolatedFolders(t *testing.T) {
 	require.NoError(t, err)
 	t.Cleanup(func() { backend.Close() })
 
-	storeA, err := xkms.NewStaticPasswordTenantStore(backend, "tenant-A")
+	storeA, err := xkms.NewStaticPasswordTenantStore(newTestPasswordDAOs(t, backend), "tenant-A")
 	require.NoError(t, err)
 
-	storeB, err := xkms.NewStaticPasswordTenantStore(backend, "tenant-B")
+	storeB, err := xkms.NewStaticPasswordTenantStore(newTestPasswordDAOs(t, backend), "tenant-B")
 	require.NoError(t, err)
 
 	// Create a folder in each tenant.

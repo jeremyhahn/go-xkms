@@ -23,8 +23,6 @@ import (
 	"google.golang.org/grpc/status"
 
 	pb "github.com/jeremyhahn/go-xkms/pkg/api/grpc/proto/xkmsv1"
-	"github.com/jeremyhahn/go-xkms/pkg/staticpw"
-	"github.com/jeremyhahn/go-xkms/pkg/storage"
 	"github.com/jeremyhahn/go-xkms/pkg/xkms"
 )
 
@@ -48,9 +46,8 @@ func TestWithLocalTrust(t *testing.T) {
 
 func newSystemPasswordGRPCService(t *testing.T) *Service {
 	t.Helper()
-	store := staticpw.NewStore(storage.NewMemory())
 	xkmsSvc := &xkms.XKMSService{}
-	xkmsSvc.SetPasswordStore(store)
+	xkmsSvc.SetPasswordStore(newTestPasswordStore(t))
 	return NewService(nil, nil, xkmsSvc)
 }
 

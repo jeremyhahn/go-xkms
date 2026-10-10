@@ -15,17 +15,14 @@ package authorized
 
 import (
 	"context"
-	"encoding/json"
-	"errors"
 	"strings"
 	"time"
 
-	"github.com/jeremyhahn/go-xkms/pkg/ssh/scope"
-	"github.com/jeremyhahn/go-xkms/pkg/storage"
-)
+	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
 
-// envelopeVersion is the current on-disk envelope format.
-const envelopeVersion = 1
+	"github.com/jeremyhahn/go-xkms/pkg/ssh/records"
+	"github.com/jeremyhahn/go-xkms/pkg/ssh/scope"
+)
 
 // Store is the persistence interface for authorized_keys Entries.
 // Writes take an Entry — the parsed line — while reads return a Record,
@@ -55,177 +52,134 @@ type Store interface {
 	Remove(ctx context.Context, sc scope.Scope, owner, name string) error
 }
 
-// BackendStore implements Store on top of a storage.Backend. Records live
-// at scope.KindAuthorizedKeys.RecordPath -- e.g.
-// "ssh/users/<owner>/authorized_keys/<name>". A tenant-scoped path carries
-// no owner, so the envelope's Owner is authoritative: an entry held by
-// another owner answers as missing.
-type BackendStore struct {
-	backend storage.Backend
+// DAOStore implements Store over go-qrdb DAOs: each entry is a
+// records.Entity of kind scope.KindAuthorizedKeys in the records.DatabaseName
+// database. A tenant-scoped entry's path carries no owner, so the stored
+// Owner is authoritative: an entry held by another owner answers as missing.
+type DAOStore struct {
+	table *records.Table[envelope]
 }
 
-// NewBackendStore returns a BackendStore. Errors with *NilInputError if
-// backend is nil.
-func NewBackendStore(backend storage.Backend) (*BackendStore, error) {
-	if backend == nil {
-		return nil, &NilInputError{Field: "backend"}
-	}
-	return &BackendStore{backend: backend}, nil
-}
+var _ Store = (*DAOStore)(nil)
 
-// storedEnvelope is the on-disk JSON representation of an Entry. We
-// store the emitted authorized_keys line verbatim — on read we re-parse
-// it to reconstruct the Entry. This keeps the envelope small and
-// removes a JSON migration path for every future field added to Entry.
-type storedEnvelope struct {
-	Version int       `json:"v"`
-	Scope   string    `json:"scope"`
-	Owner   string    `json:"owner"`
-	Name    string    `json:"name"`
+// envelope is the stored body of an entry. The emitted authorized_keys line
+// is kept verbatim and re-parsed on read, so a field added to Entry needs no
+// change here.
+type envelope struct {
 	AddedAt time.Time `json:"added"`
 	Line    string    `json:"line"`
 }
 
-// Add implements Store.Add.
-func (s *BackendStore) Add(ctx context.Context, sc scope.Scope, owner, name string, entry *Entry) error {
-	path, err := buildPath(sc, owner, name)
+// NewDAOStore returns the DAOStore over the DAOs daos builds, viewed
+// through the platform partition. Errors with *NilInputError if daos is nil.
+func NewDAOStore(daos *qrdbsdk.DAOFactory) (*DAOStore, error) {
+	if daos == nil {
+		return nil, &NilInputError{Field: "daos"}
+	}
+	table, err := records.New[envelope](daos, scope.KindAuthorizedKeys)
 	if err != nil {
+		return nil, &StorageError{Op: "open", Err: err}
+	}
+	return &DAOStore{table: table}, nil
+}
+
+// Partition returns the view of s through tenantID's partition ("" is the
+// platform partition). The view shares s's DAO.
+func (s *DAOStore) Partition(tenantID string) (*DAOStore, error) {
+	table, err := s.table.Partition(tenantID)
+	if err != nil {
+		return nil, err
+	}
+	return &DAOStore{table: table}, nil
+}
+
+// Add implements Store.Add.
+func (s *DAOStore) Add(ctx context.Context, sc scope.Scope, owner, name string, entry *Entry) error {
+	if err := validate(sc, owner, name); err != nil {
 		return err
 	}
 	if entry == nil {
 		return &NilInputError{Field: "entry"}
 	}
-
-	present, existsErr := s.backend.Exists(ctx, path)
-	if existsErr != nil {
-		return &StorageError{Op: "exists", Err: existsErr}
+	line, err := Emit(entry)
+	if err != nil {
+		return err
 	}
-	if present {
+	stored, err := s.table.Create(ctx, sc, owner, name, envelope{AddedAt: time.Now().UTC(), Line: line})
+	if err != nil {
+		return &StorageError{Op: "put", Err: err}
+	}
+	if !stored {
 		return &DuplicateError{Scope: string(sc), Owner: owner, Name: name}
-	}
-
-	line, emitErr := Emit(entry)
-	if emitErr != nil {
-		return emitErr
-	}
-	env := storedEnvelope{
-		Version: envelopeVersion,
-		Scope:   string(sc),
-		Owner:   owner,
-		Name:    name,
-		AddedAt: time.Now().UTC(),
-		Line:    line,
-	}
-	data, jerr := json.Marshal(&env)
-	if jerr != nil {
-		return &SerializationError{Op: "marshal envelope", Err: jerr}
-	}
-	if perr := s.backend.Put(ctx, path, data); perr != nil {
-		return &StorageError{Op: "put", Err: perr}
 	}
 	return nil
 }
 
 // Get implements Store.Get.
-func (s *BackendStore) Get(ctx context.Context, sc scope.Scope, owner, name string) (*Record, error) {
-	path, err := buildPath(sc, owner, name)
-	if err != nil {
+func (s *DAOStore) Get(ctx context.Context, sc scope.Scope, owner, name string) (*Record, error) {
+	if err := validate(sc, owner, name); err != nil {
 		return nil, err
 	}
-	env, err := s.load(ctx, path, sc, owner, name)
+	e, found, err := s.table.Get(ctx, sc, owner, name)
 	if err != nil {
-		return nil, err
+		return nil, &StorageError{Op: "get", Err: err}
 	}
-	return env.record()
+	if !found {
+		return nil, &NotFoundError{Scope: string(sc), Owner: owner, Name: name}
+	}
+	return record(e)
 }
 
-// List implements Store.List.
-func (s *BackendStore) List(ctx context.Context, sc scope.Scope, owner string) ([]*Record, error) {
-	prefix, err := scope.ListPrefix(sc, owner)
-	if err != nil {
+// List implements Store.List. Records are returned in path order.
+func (s *DAOStore) List(ctx context.Context, sc scope.Scope, owner string) ([]*Record, error) {
+	if err := scope.ValidateFilter(sc, owner); err != nil {
 		return nil, err
 	}
-	var out []*Record
-	err = s.backend.Scan(ctx, prefix, func(key string, value []byte) error {
-		if !scope.KindAuthorizedKeys.Match(key) {
-			return nil
-		}
-		env, derr := decodeEnvelope(value)
-		if derr != nil {
-			return derr
-		}
-		if sc != "" && owner != "" && env.Owner != owner {
-			return nil
-		}
-		rec, rerr := env.record()
-		if rerr != nil {
-			return rerr
+	entities, err := s.table.List(ctx, sc, owner)
+	if err != nil {
+		return nil, &StorageError{Op: "list", Err: err}
+	}
+	out := make([]*Record, 0, len(entities))
+	for _, e := range entities {
+		rec, err := record(e)
+		if err != nil {
+			return nil, err
 		}
 		out = append(out, rec)
-		return nil
-	})
-	if err != nil {
-		return nil, &StorageError{Op: "scan", Err: err}
 	}
 	return out, nil
 }
 
-// Remove implements Store.Remove. A tenant-scoped entry is read first so an
-// entry held by another owner answers as missing and survives.
-func (s *BackendStore) Remove(ctx context.Context, sc scope.Scope, owner, name string) error {
-	path, err := buildPath(sc, owner, name)
-	if err != nil {
+// Remove implements Store.Remove.
+func (s *DAOStore) Remove(ctx context.Context, sc scope.Scope, owner, name string) error {
+	if err := validate(sc, owner, name); err != nil {
 		return err
 	}
-	if sc == scope.Tenant {
-		if _, lerr := s.load(ctx, path, sc, owner, name); lerr != nil {
-			return lerr
-		}
+	deleted, err := s.table.Delete(ctx, sc, owner, name)
+	if err != nil {
+		return &StorageError{Op: "delete", Err: err}
 	}
-	if derr := s.backend.Delete(ctx, path); derr != nil {
-		if errors.Is(derr, storage.ErrNotFound) {
-			return &NotFoundError{Scope: string(sc), Owner: owner, Name: name}
-		}
-		return &StorageError{Op: "delete", Err: derr}
+	if !deleted {
+		return &NotFoundError{Scope: string(sc), Owner: owner, Name: name}
 	}
 	return nil
 }
 
-// load returns the envelope at path, the entry of (sc, owner, name). A
-// missing entry, or one held by another owner, is *NotFoundError.
-func (s *BackendStore) load(ctx context.Context, path string, sc scope.Scope, owner, name string) (*storedEnvelope, error) {
-	data, err := s.backend.Get(ctx, path)
-	if err != nil {
-		if errors.Is(err, storage.ErrNotFound) {
-			return nil, &NotFoundError{Scope: string(sc), Owner: owner, Name: name}
-		}
-		return nil, &StorageError{Op: "get", Err: err}
-	}
-	env, err := decodeEnvelope(data)
-	if err != nil {
-		return nil, err
-	}
-	if env.Owner != owner {
-		return nil, &NotFoundError{Scope: string(sc), Owner: owner, Name: name}
-	}
-	return env, nil
-}
-
-// buildPath validates components and returns the entry's storage path
-// (scope.KindAuthorizedKeys.RecordPath). The name is validated first so a
-// malformed name reports *InvalidNameError.
-func buildPath(sc scope.Scope, owner, name string) (string, error) {
+// validate checks the coordinates of an entry. The name is validated first
+// so a malformed name reports *InvalidNameError; the rest is validated as
+// scope.KindAuthorizedKeys.RecordPath validates it.
+func validate(sc scope.Scope, owner, name string) error {
 	if !sc.Valid() {
-		return "", &scope.ScopeInvalidError{Value: string(sc)}
+		return &scope.ScopeInvalidError{Value: string(sc)}
 	}
 	if err := validateName(name); err != nil {
-		return "", err
+		return err
 	}
-	return scope.KindAuthorizedKeys.RecordPath(sc, owner, name)
+	_, err := scope.KindAuthorizedKeys.RecordPath(sc, owner, name)
+	return err
 }
 
-// validateName enforces the same rules used by buildPath: non-empty, no
-// '/', no NUL.
+// validateName refuses an empty name or one containing '/' or NUL.
 func validateName(name string) error {
 	if name == "" {
 		return &InvalidNameError{Value: name, Reason: "empty"}
@@ -239,37 +193,18 @@ func validateName(name string) error {
 	return nil
 }
 
-// decodeEnvelope unmarshals a JSON envelope.
-func decodeEnvelope(data []byte) (*storedEnvelope, error) {
-	var env storedEnvelope
-	if jerr := json.Unmarshal(data, &env); jerr != nil {
-		return nil, &SerializationError{Op: "unmarshal envelope", Err: jerr}
-	}
-	return &env, nil
-}
-
-// record rehydrates the *Record env stores: the Entry comes from
-// re-parsing the stored authorized_keys line, the coordinates from the
-// envelope's own metadata fields.
-func (env *storedEnvelope) record() (*Record, error) {
-	// Add stamps every envelope with the format version, but nothing read it
-	// back, so a future bump would have been misparsed as v1 and silently
-	// mishandled. Refuse a newer format instead: a binary that predates the
-	// bump cannot know what changed. Versions at or below the current one stay
-	// readable, which keeps every envelope written so far (v1, and a zero value
-	// from any envelope written before the field existed) working untouched.
-	if env.Version > envelopeVersion {
-		return nil, &UnsupportedVersionError{Found: env.Version, Supported: envelopeVersion}
-	}
-	entry, err := ParseLine(env.Line)
+// record rehydrates the *Record e stores: the Entry comes from re-parsing
+// the stored authorized_keys line, the coordinates from the record.
+func record(e *records.Entity[envelope]) (*Record, error) {
+	entry, err := ParseLine(e.Body.Line)
 	if err != nil {
 		return nil, err
 	}
 	return &Record{
-		Scope:   scope.Scope(env.Scope),
-		Owner:   env.Owner,
-		Name:    env.Name,
-		AddedAt: env.AddedAt,
+		Scope:   e.Scope,
+		Owner:   e.Owner,
+		Name:    e.Name,
+		AddedAt: e.Body.AddedAt,
 		Entry:   entry,
 	}, nil
 }

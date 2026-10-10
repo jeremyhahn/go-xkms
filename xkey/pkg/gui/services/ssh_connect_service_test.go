@@ -28,9 +28,34 @@ import (
 
 	"golang.org/x/crypto/ssh"
 
+	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
+
 	"github.com/jeremyhahn/go-xkms/pkg/storage"
+	xkmssdk "github.com/jeremyhahn/go-xkms/sdk/go"
 	sshclient "github.com/jeremyhahn/go-xkms/sdk/go/client/ssh"
 )
+
+// sshDAOs returns a DAO factory over backend, the way the GUI wires its SSH
+// stores over the SSH storage.
+func sshDAOs(t *testing.T, backend storage.Backend) *qrdbsdk.DAOFactory {
+	t.Helper()
+	kv, err := xkmssdk.NewKVStoreAdapter(backend)
+	if err != nil {
+		t.Fatalf("NewKVStoreAdapter: %v", err)
+	}
+	return xkmssdk.NewStoreDAOFactory(kv)
+}
+
+// sshStores returns the SSH key, known-hosts and authorized-keys stores over
+// daos.
+func sshStores(t *testing.T, daos *qrdbsdk.DAOFactory) *sshclient.Stores {
+	t.Helper()
+	stores, err := sshclient.NewStores(daos)
+	if err != nil {
+		t.Fatalf("NewStores: %v", err)
+	}
+	return stores
+}
 
 // setupConnect builds a connect service backed by a real embedded SSH client
 // with a software key, plus injected lookPath/execCommand so no real terminal
@@ -38,9 +63,9 @@ import (
 func setupConnect(t *testing.T) (*SSHConnectService, *capturedExec) {
 	t.Helper()
 	ctx := context.Background()
-	backend := storage.New()
+	daos := sshDAOs(t, storage.New())
 
-	client, err := sshclient.NewEmbedded(sshclient.EmbeddedOptions{Backend: backend})
+	client, err := sshclient.NewEmbedded(sshclient.EmbeddedOptions{Stores: sshStores(t, daos)})
 	if err != nil {
 		t.Fatalf("NewEmbedded: %v", err)
 	}
@@ -49,7 +74,7 @@ func setupConnect(t *testing.T) (*SSHConnectService, *capturedExec) {
 	}); err != nil {
 		t.Fatalf("Generate: %v", err)
 	}
-	hostKeys, err := sshclient.NewHostKeyStore(backend)
+	hostKeys, err := sshclient.NewHostKeyStore(daos)
 	if err != nil {
 		t.Fatalf("NewHostKeyStore: %v", err)
 	}
@@ -246,7 +271,7 @@ func TestSSHConnect_ConnectProfile_NotFound(t *testing.T) {
 	svc, _ := setupConnect(t)
 	defer svc.StopAll()
 
-	store, err := sshclient.NewProfileStore(storage.New())
+	store, err := sshclient.NewProfileStore(sshDAOs(t, storage.New()))
 	if err != nil {
 		t.Fatalf("NewProfileStore: %v", err)
 	}
@@ -261,8 +286,7 @@ func TestSSHConnect_ConnectProfile_Success(t *testing.T) {
 	svc, cap := setupConnect(t)
 	defer svc.StopAll()
 
-	backend := storage.New()
-	store, err := sshclient.NewProfileStore(backend)
+	store, err := sshclient.NewProfileStore(sshDAOs(t, storage.New()))
 	if err != nil {
 		t.Fatalf("NewProfileStore: %v", err)
 	}
@@ -406,6 +430,17 @@ func (w *wedgedStore) Get(ctx context.Context, key string) ([]byte, error) {
 	return w.Backend.Get(ctx, key)
 }
 
+// CompareAndSwap forwards to the wrapped backend so the DAO layer keeps its
+// guarded writes; embedding alone does not promote it.
+func (w *wedgedStore) CompareAndSwap(ctx context.Context, key string, expected, value []byte) (bool, []byte, error) {
+	return w.Backend.(storage.CompareAndSwapper).CompareAndSwap(ctx, key, expected, value)
+}
+
+// CompareAndDelete forwards to the wrapped backend; see CompareAndSwap.
+func (w *wedgedStore) CompareAndDelete(ctx context.Context, key string, expected []byte) (bool, error) {
+	return w.Backend.(storage.CompareAndDeleter).CompareAndDelete(ctx, key, expected)
+}
+
 // TestSSHConnect_WatcherShutdownIsNotBlockedByAWedgedStore covers the failure
 // StopAll cannot recover from on its own. The watcher polls Sync; if that call
 // is synchronous, a store that ignores its context parks the loop inside it and
@@ -427,7 +462,7 @@ func TestSSHConnect_WatcherShutdownIsNotBlockedByAWedgedStore(t *testing.T) {
 	}
 	defer close(wedged.release)
 
-	hostKeys, err := sshclient.NewHostKeyStore(wedged)
+	hostKeys, err := sshclient.NewHostKeyStore(sshDAOs(t, wedged))
 	if err != nil {
 		t.Fatalf("NewHostKeyStore: %v", err)
 	}

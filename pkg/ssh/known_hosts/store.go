@@ -15,18 +15,13 @@ package known_hosts
 
 import (
 	"context"
-	"encoding/base64"
-	"encoding/json"
-	"errors"
 	"time"
 
-	"github.com/jeremyhahn/go-xkms/pkg/ssh/scope"
-	"github.com/jeremyhahn/go-xkms/pkg/storage"
-)
+	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
 
-// envelopeVersion is the current on-disk envelope format. Incremented
-// on incompatible schema changes.
-const envelopeVersion = 2
+	"github.com/jeremyhahn/go-xkms/pkg/ssh/records"
+	"github.com/jeremyhahn/go-xkms/pkg/ssh/scope"
+)
 
 // Store is the pluggable persistence interface for host-key pins. All
 // methods take a context.Context so storage backends can propagate
@@ -43,10 +38,9 @@ type Store interface {
 	// when absent or held by another owner.
 	Get(ctx context.Context, sc scope.Scope, owner, host string) (*Pin, error)
 
-	// List returns all pins under the requested prefix. When sc is
+	// List returns all pins under the requested filter. When sc is
 	// empty every scope is returned; when owner is empty every owner
-	// under sc is returned. Returned order is stable (backend-
-	// determined prefix scan).
+	// under sc is returned. Pins are returned in record-path order.
 	List(ctx context.Context, sc scope.Scope, owner string) ([]*Pin, error)
 
 	// Remove deletes the pin. Returns *NotFoundError if it is already
@@ -54,53 +48,59 @@ type Store interface {
 	Remove(ctx context.Context, sc scope.Scope, owner, host string) error
 }
 
-// storedEnvelope is the on-disk JSON shape for a pin. It is a small
-// document because pins carry no secret material and no structured
-// algorithm parameters.
-type storedEnvelope struct {
-	Version     int       `json:"v"`
-	Scope       string    `json:"scope"`
-	Owner       string    `json:"owner"`
-	Host        string    `json:"host"`
+// envelope is the stored body of a pin. Pins carry no secret material and
+// no structured algorithm parameters; the host is the record's name.
+type envelope struct {
 	Fingerprint string    `json:"fp"`
 	Algorithm   string    `json:"algo,omitempty"`
 	AddedAt     time.Time `json:"added"`
 	Source      string    `json:"source,omitempty"`
 
-	// PublicKey is the base64 (std) SSH wire-format host key. Required from
-	// envelope v2 onward; storedEnvelope.pin rejects a pre-v2 envelope that
-	// lacks it with *LegacyPinError rather than reconstructing a
-	// fingerprint-only Pin.
-	PublicKey string `json:"pub,omitempty"`
+	// PublicKey is the SSH wire-format host key.
+	PublicKey []byte `json:"pub"`
 }
 
-// BackendStore is the production Store. It serializes Pins into JSON
-// envelopes and persists them at scope.KindKnownHosts.RecordPath -- e.g.
-// "ssh/users/<owner>/known_hosts/<host>" -- in the supplied
-// storage.Backend.
+// DAOStore is the production Store. Each pin is a records.Entity of kind
+// scope.KindKnownHosts in the records.DatabaseName database, named by its
+// host.
 //
-// A tenant-scoped path carries no owner, so the envelope's Owner is
+// A tenant-scoped pin's path carries no owner, so the stored Owner is
 // authoritative: a pin held by another owner answers as missing.
-type BackendStore struct {
-	backend storage.Backend
+type DAOStore struct {
+	table *records.Table[envelope]
 }
 
-// NewBackendStore constructs a BackendStore. Returns *NilInputError if
-// backend is nil.
-func NewBackendStore(backend storage.Backend) (*BackendStore, error) {
-	if backend == nil {
-		return nil, &NilInputError{Field: "backend"}
+var _ Store = (*DAOStore)(nil)
+
+// NewDAOStore constructs the DAOStore over the DAOs daos builds, viewed
+// through the platform partition. Returns *NilInputError if daos is nil.
+func NewDAOStore(daos *qrdbsdk.DAOFactory) (*DAOStore, error) {
+	if daos == nil {
+		return nil, &NilInputError{Field: "daos"}
 	}
-	return &BackendStore{backend: backend}, nil
+	table, err := records.New[envelope](daos, scope.KindKnownHosts)
+	if err != nil {
+		return nil, &StorageError{Op: "open", Err: err}
+	}
+	return &DAOStore{table: table}, nil
+}
+
+// Partition returns the view of s through tenantID's partition ("" is the
+// platform partition). The view shares s's DAO.
+func (s *DAOStore) Partition(tenantID string) (*DAOStore, error) {
+	table, err := s.table.Partition(tenantID)
+	if err != nil {
+		return nil, err
+	}
+	return &DAOStore{table: table}, nil
 }
 
 // Add implements Store.Add.
-func (s *BackendStore) Add(ctx context.Context, pin *Pin) error {
+func (s *DAOStore) Add(ctx context.Context, pin *Pin) error {
 	if pin == nil {
 		return &NilInputError{Field: "pin"}
 	}
-	path, err := buildPath(pin.Scope, pin.Owner, pin.Host)
-	if err != nil {
+	if err := validate(pin.Scope, pin.Owner, pin.Host); err != nil {
 		return err
 	}
 	if err := ValidateFingerprint(pin.Fingerprint); err != nil {
@@ -110,182 +110,97 @@ func (s *BackendStore) Add(ctx context.Context, pin *Pin) error {
 		return &PublicKeyRequiredError{Host: pin.Host}
 	}
 
-	// Duplicate check. The backend's Exists is advisory (TOCTOU
-	// window) but Store contract says Add is the explicit-pin path;
-	// callers racing rotation should serialize through higher layers.
-	present, existsErr := s.backend.Exists(ctx, path)
-	if existsErr != nil {
-		return &StorageError{Op: "exists", Err: existsErr}
-	}
-	if present {
-		return &DuplicateError{Scope: string(pin.Scope), Owner: pin.Owner, Host: pin.Host}
-	}
-
-	env := storedEnvelope{
-		Version:     envelopeVersion,
-		Scope:       string(pin.Scope),
-		Owner:       pin.Owner,
-		Host:        pin.Host,
+	env := envelope{
 		Fingerprint: pin.Fingerprint,
 		Algorithm:   pin.Algorithm,
 		AddedAt:     pin.AddedAt,
 		Source:      pin.Source,
-		PublicKey:   base64.StdEncoding.EncodeToString(pin.PublicKey),
+		PublicKey:   pin.PublicKey,
 	}
 	if env.AddedAt.IsZero() {
 		env.AddedAt = time.Now().UTC()
 	}
-
-	data, jerr := json.Marshal(&env)
-	if jerr != nil {
-		return &SerializationError{Op: "marshal envelope", Err: jerr}
+	stored, err := s.table.Create(ctx, pin.Scope, pin.Owner, pin.Host, env)
+	if err != nil {
+		return &StorageError{Op: "put", Err: err}
 	}
-	if perr := s.backend.Put(ctx, path, data); perr != nil {
-		return &StorageError{Op: "put", Err: perr}
+	if !stored {
+		return &DuplicateError{Scope: string(pin.Scope), Owner: pin.Owner, Host: pin.Host}
 	}
 	return nil
 }
 
 // Get implements Store.Get.
-func (s *BackendStore) Get(ctx context.Context, sc scope.Scope, owner, host string) (*Pin, error) {
-	path, err := buildPath(sc, owner, host)
-	if err != nil {
+func (s *DAOStore) Get(ctx context.Context, sc scope.Scope, owner, host string) (*Pin, error) {
+	if err := validate(sc, owner, host); err != nil {
 		return nil, err
 	}
-	env, err := s.load(ctx, path, sc, owner, host)
+	e, found, err := s.table.Get(ctx, sc, owner, host)
 	if err != nil {
-		return nil, err
+		return nil, &StorageError{Op: "get", Err: err}
 	}
-	return env.pin()
+	if !found {
+		return nil, &NotFoundError{Scope: string(sc), Owner: owner, Host: host}
+	}
+	return pin(e), nil
 }
 
 // List implements Store.List.
-func (s *BackendStore) List(ctx context.Context, sc scope.Scope, owner string) ([]*Pin, error) {
-	prefix, err := scope.ListPrefix(sc, owner)
-	if err != nil {
+func (s *DAOStore) List(ctx context.Context, sc scope.Scope, owner string) ([]*Pin, error) {
+	if err := scope.ValidateFilter(sc, owner); err != nil {
 		return nil, err
 	}
-
-	var out []*Pin
-	scanErr := s.backend.Scan(ctx, prefix, func(key string, value []byte) error {
-		if !scope.KindKnownHosts.Match(key) {
-			return nil
-		}
-		env, derr := decodeEnvelope(value)
-		if derr != nil {
-			return derr
-		}
-		if sc != "" && owner != "" && env.Owner != owner {
-			return nil
-		}
-		pin, perr := env.pin()
-		if perr != nil {
-			// A single unmatchable legacy (pre-v2) pin must not block
-			// listing every other pin in scope — List is the discovery
-			// path an operator uses to find which hosts still need
-			// re-pinning, so it skips rather than aborts. Get and Verify
-			// (single-host lookups) still fail closed on the same pin.
-			var legacy *LegacyPinError
-			if errors.As(perr, &legacy) {
-				return nil
-			}
-			return perr
-		}
-		out = append(out, pin)
-		return nil
-	})
-	if scanErr != nil {
-		return nil, &StorageError{Op: "scan", Err: scanErr}
+	entities, err := s.table.List(ctx, sc, owner)
+	if err != nil {
+		return nil, &StorageError{Op: "list", Err: err}
+	}
+	out := make([]*Pin, 0, len(entities))
+	for _, e := range entities {
+		out = append(out, pin(e))
 	}
 	return out, nil
 }
 
-// Remove implements Store.Remove. A tenant-scoped pin is read first so a
-// pin held by another owner answers as missing and survives.
-func (s *BackendStore) Remove(ctx context.Context, sc scope.Scope, owner, host string) error {
-	path, err := buildPath(sc, owner, host)
-	if err != nil {
+// Remove implements Store.Remove. A pin held by another owner answers as
+// missing and survives.
+func (s *DAOStore) Remove(ctx context.Context, sc scope.Scope, owner, host string) error {
+	if err := validate(sc, owner, host); err != nil {
 		return err
 	}
-	if sc == scope.Tenant {
-		if _, lerr := s.load(ctx, path, sc, owner, host); lerr != nil {
-			return lerr
-		}
+	deleted, err := s.table.Delete(ctx, sc, owner, host)
+	if err != nil {
+		return &StorageError{Op: "delete", Err: err}
 	}
-	if derr := s.backend.Delete(ctx, path); derr != nil {
-		if errors.Is(derr, storage.ErrNotFound) {
-			return &NotFoundError{Scope: string(sc), Owner: owner, Host: host}
-		}
-		return &StorageError{Op: "delete", Err: derr}
+	if !deleted {
+		return &NotFoundError{Scope: string(sc), Owner: owner, Host: host}
 	}
 	return nil
 }
 
-// load returns the envelope at path, the pin of (sc, owner, host). A
-// missing pin, or one held by another owner, is *NotFoundError.
-func (s *BackendStore) load(ctx context.Context, path string, sc scope.Scope, owner, host string) (*storedEnvelope, error) {
-	data, err := s.backend.Get(ctx, path)
-	if err != nil {
-		if errors.Is(err, storage.ErrNotFound) {
-			return nil, &NotFoundError{Scope: string(sc), Owner: owner, Host: host}
-		}
-		return nil, &StorageError{Op: "get", Err: err}
-	}
-	env, err := decodeEnvelope(data)
-	if err != nil {
-		return nil, err
-	}
-	if env.Owner != owner {
-		return nil, &NotFoundError{Scope: string(sc), Owner: owner, Host: host}
-	}
-	return env, nil
-}
-
-// buildPath validates the components and returns the pin's storage path
-// (scope.KindKnownHosts.RecordPath). The host is validated first so a
-// malformed host reports *InvalidHostError.
-func buildPath(sc scope.Scope, owner, host string) (string, error) {
+// validate checks the coordinates of a pin. The host is validated first so
+// a malformed host reports *InvalidHostError; the rest is validated as
+// scope.KindKnownHosts.RecordPath validates it.
+func validate(sc scope.Scope, owner, host string) error {
 	if !sc.Valid() {
-		return "", &scope.ScopeInvalidError{Value: string(sc)}
+		return &scope.ScopeInvalidError{Value: string(sc)}
 	}
 	if err := ValidateHost(host); err != nil {
-		return "", err
+		return err
 	}
-	return scope.KindKnownHosts.RecordPath(sc, owner, host)
+	_, err := scope.KindKnownHosts.RecordPath(sc, owner, host)
+	return err
 }
 
-// decodeEnvelope unmarshals a JSON envelope.
-func decodeEnvelope(data []byte) (*storedEnvelope, error) {
-	var env storedEnvelope
-	if jerr := json.Unmarshal(data, &env); jerr != nil {
-		return nil, &SerializationError{Op: "unmarshal envelope", Err: jerr}
-	}
-	return &env, nil
-}
-
-// pin reconstructs the *Pin env stores. Returns *LegacyPinError for a
-// pre-v2 envelope that carries no PublicKey: such a pin can no longer be
-// trusted for matching and must be re-pinned.
-func (env *storedEnvelope) pin() (*Pin, error) {
-	sc, err := scope.Parse(env.Scope)
-	if err != nil {
-		return nil, err
-	}
-	if env.PublicKey == "" {
-		return nil, &LegacyPinError{Host: env.Host}
-	}
-	raw, derr := base64.StdEncoding.DecodeString(env.PublicKey)
-	if derr != nil {
-		return nil, &SerializationError{Op: "decode public key", Err: derr}
-	}
+// pin reconstructs the *Pin e stores.
+func pin(e *records.Entity[envelope]) *Pin {
 	return &Pin{
-		Host:        env.Host,
-		Fingerprint: env.Fingerprint,
-		Algorithm:   env.Algorithm,
-		Scope:       sc,
-		Owner:       env.Owner,
-		AddedAt:     env.AddedAt,
-		Source:      env.Source,
-		PublicKey:   raw,
-	}, nil
+		Host:        e.Name,
+		Fingerprint: e.Body.Fingerprint,
+		Algorithm:   e.Body.Algorithm,
+		Scope:       e.Scope,
+		Owner:       e.Owner,
+		AddedAt:     e.Body.AddedAt,
+		Source:      e.Body.Source,
+		PublicKey:   e.Body.PublicKey,
+	}
 }

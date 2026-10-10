@@ -224,6 +224,10 @@ func (a *App) applyVerifiedEnterprisePolicy(pol *config.PolicySection) error {
 	if a.autofillService != nil {
 		applyExtensionPolicy(a.autofillService, pol)
 	}
+	// The verified section may turn local app access off (or back on):
+	// reconcile the IPC socket with it now rather than at the next lock,
+	// seal or settings change.
+	a.syncIPCServer()
 	applyCapabilityPolicy(a.appService, a.pinService, a.trustService, a.auditService, a.sealService, a.apiExplorerService, pol)
 
 	// PhoneService's attested-application allow-list is wired directly here,

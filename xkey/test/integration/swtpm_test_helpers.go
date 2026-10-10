@@ -45,6 +45,7 @@ import (
 	"time"
 
 	xkms "github.com/jeremyhahn/go-xkms/sdk/go"
+	"github.com/jeremyhahn/go-xkms/sdk/go/xkmstest"
 )
 
 // swtpm lifecycle errors.
@@ -222,7 +223,7 @@ func provisionSwtpm(sockPath string) error {
 				// storage parent exclusively off the Platform SRK -- never
 				// the Shared SRK -- so it must be enrolled here too, on this
 				// same one-shot provisioning connection.
-				psrkErr := xkms.EnrollSimulatorPlatformSRK(tpm, &cfg)
+				psrkErr := xkmstest.EnrollPlatformSRK(tpm, &cfg)
 				_ = tpm.Close()
 				if psrkErr != nil {
 					return &SentinelCauseError{Sentinel: ErrSwtpmProvisionFailed, Cause: psrkErr}

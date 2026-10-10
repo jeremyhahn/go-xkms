@@ -1,6 +1,6 @@
 # SSH Connect & Console Sessions — User Guide
 
-> **Status: NORMATIVE** · Feature: `ssh-sessions` · Repo: `go-xkms` · Last verified: 2026-09-24
+> **Status: NORMATIVE** · Feature: `ssh-sessions` · Repo: `go-xkms` · Last verified: 2026-10-08
 
 ## Who this is for
 
@@ -92,5 +92,5 @@ interfaces and the re-exported error sentinels.
   [`architecture.md`](architecture.md) for why this is a deliberate
   security boundary, not a missing feature.
 - **No `xkmsd`-side connection profile or session-history storage.** These
-  stores are constructed directly against a `storage.Backend` by the
+  stores are constructed directly against a go-qrdb DAO factory by the
   embedding application; there is no REST resource for them.

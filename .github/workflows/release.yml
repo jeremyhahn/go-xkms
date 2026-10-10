@@ -55,11 +55,11 @@ env:
   # drift apart: there is one pin, and unpinning is one edit.
   #
   # The image tag must therefore stay a real published tag. go.mod declares
-  # `go 1.27.1`, which this image satisfies, so the GOTOOLCHAIN=auto in the
+  # `go 1.27.2`, which this image satisfies, so the GOTOOLCHAIN=auto in the
   # generated Dockerfile does not fetch anything -- the pin holds.
   #
   # Bump together with ci.yml's pin as 1.27.x patch releases ship.
-  GO_VERSION: '1.27.1'
+  GO_VERSION: '1.27.2'
   REGISTRY: ghcr.io
   IMAGE_NAME_SERVER: jeremyhahn/xkms-server
   IMAGE_NAME_CLI: jeremyhahn/xkms-cli

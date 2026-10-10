@@ -1,6 +1,6 @@
 # PIV Smartcard — User Guide
 
-> **Status: NORMATIVE** · Feature: `piv-smartcard` · Repo: `go-xkms` · Last verified: 2026-09-21
+> **Status: NORMATIVE** · Feature: `piv-smartcard` · Repo: `go-xkms` · Last verified: 2026-10-09
 
 ## What PIV gives you
 

@@ -148,7 +148,7 @@ func TestLoadGUIConfig_ViperOverlayAllKeys(t *testing.T) {
 		BarrierAutoUnsealEnabled:  overlay["gui.barrier_auto_unseal_enabled"].(bool),
 		SealerBackend:             "tpm2",
 		APIExplorerSandboxPolicy:  "allow-forms",
-		BrowserExtensionEnabled:   defaults.BrowserExtensionEnabled, // no viper overlay for this field
+		LocalAppAccessEnabled:     defaults.LocalAppAccessEnabled, // no viper overlay for this field
 		DeveloperTools:            overlay["gui.developer_tools"].(bool),
 		FIDO2RequireUserPresence:  overlay["gui.fido2_require_user_presence"].(bool),
 		FIDO2UserIntentCheck:      overlay["gui.fido2_user_intent_check"].(bool),

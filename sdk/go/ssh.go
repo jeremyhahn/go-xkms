@@ -34,9 +34,9 @@ var SSHParsePEM = sshkeys.ParsePEM
 // SSHKnownHostsStore is the known-hosts store interface.
 type SSHKnownHostsStore = sshknownhosts.Store
 
-// NewSSHKnownHostsBackendStore constructs a storage.Backend-backed
-// known-hosts store.
-var NewSSHKnownHostsBackendStore = sshknownhosts.NewBackendStore
+// NewSSHKnownHostsStore constructs the known-hosts store over the go-qrdb
+// DAOs a DAO factory builds.
+var NewSSHKnownHostsStore = sshknownhosts.NewDAOStore
 
 // SSHKnownHostsPin is a single pinned host-key envelope persisted by an
 // SSHKnownHostsStore.

@@ -28,9 +28,6 @@ import (
 //
 //   - *NotFoundError when no pin exists — the caller decides whether to
 //     treat that as reject-by-default (recommended) or prompt for TOFU.
-//   - *LegacyPinError when the pin predates full-key storage (v1,
-//     fingerprint-only) — such a pin can no longer be matched and must be
-//     re-pinned; propagated unchanged from store.Get.
 //   - *MismatchError when the pin exists but the received key differs
 //     (MITM indicator). Expected/Received carry the OpenSSH fingerprint
 //     form for safe logging even though the comparison itself is

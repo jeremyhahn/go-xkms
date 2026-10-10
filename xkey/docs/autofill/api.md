@@ -1,6 +1,6 @@
 # Browser Extension AutoFill — API
 
-> **Status: NORMATIVE** · Feature: `autofill` · Module: `go-xkms/xkey` · Last verified: 2026-09-27
+> **Status: NORMATIVE** · Feature: `autofill` · Module: `go-xkms/xkey` · Last verified: 2026-10-09
 
 Three transports carry this feature's traffic, all local to the machine
 running xKey — none of it crosses the network.
@@ -24,7 +24,9 @@ extension serve`'s process for the headless case) — see [cli.md](cli.md).
 ## IPC (host ↔ GUI or headless server)
 
 Unix domain socket (mode `0600`, directory mode `0700`), JSON message
-framing, map-based O(1) dispatch (`pkg/ipc`). Two message types this
+framing, map-based O(1) dispatch (`pkg/ipc`). It exists only while local
+app access is on: in the GUI, only while xKey is also unlocked. With the
+setting off, the native host finds no socket. Two message types this
 feature owns:
 
 - `autofill` — `AutofillPayload{Action, Domain, ID, Challenge, Username,

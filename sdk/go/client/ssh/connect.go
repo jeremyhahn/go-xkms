@@ -16,12 +16,12 @@ package ssh
 import (
 	"context"
 
+	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
 	gossh "golang.org/x/crypto/ssh"
 
 	pkgconnect "github.com/jeremyhahn/go-xkms/pkg/ssh/connect"
 	pkgknownhosts "github.com/jeremyhahn/go-xkms/pkg/ssh/known_hosts"
 	pkgscope "github.com/jeremyhahn/go-xkms/pkg/ssh/scope"
-	"github.com/jeremyhahn/go-xkms/pkg/storage"
 )
 
 // HostKeyStore is the host-key pin store used by the connection launcher.
@@ -31,11 +31,11 @@ type HostKeyStore = pkgknownhosts.Store
 // with Args/Env, then call SyncAndStop when it exits.
 type ConnectSession = pkgconnect.Session
 
-// NewHostKeyStore builds a folder-namespaced host-key pin store over a storage
-// backend (barrier-routed in the GUI). It is the same store the SSH client's
-// KnownHosts() sub-client persists pins into.
-func NewHostKeyStore(backend storage.Backend) (HostKeyStore, error) {
-	return pkgknownhosts.NewBackendStore(backend)
+// NewHostKeyStore builds the host-key pin store over the DAOs daos builds.
+// It is the same store the SSH client's KnownHosts() sub-client persists
+// pins into.
+func NewHostKeyStore(daos *qrdbsdk.DAOFactory) (HostKeyStore, error) {
+	return pkgknownhosts.NewDAOStore(daos)
 }
 
 // ConnectOptions configures StartConnect. Scope is the string form

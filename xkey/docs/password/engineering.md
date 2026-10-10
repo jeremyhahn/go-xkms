@@ -1,6 +1,6 @@
 # Static Passwords — Engineering
 
-> **Status: NORMATIVE** · Feature: `password` · Module: `go-xkms/xkey` · Last verified: 2026-10-01
+> **Status: NORMATIVE** · Feature: `password` · Module: `go-xkms/xkey` · Last verified: 2026-10-09
 
 See [architecture.md](architecture.md) for the store hierarchy and the
 "store location vs. session state" split before reading this document.
@@ -15,19 +15,30 @@ per the SDK boundary in `xkey/CLAUDE.md`:
 // xkey/pkg/staticpw (all type aliases / re-exported vars)
 type StaticPassword = xkms.StaticPassword
 type Store = xkms.StaticPasswordStore
-type BackendStore = xkms.StaticPasswordBackendStore
+type DAOStore = xkms.StaticPasswordDAOStore
 type ExpiryChecker = xkms.StaticPasswordExpiryChecker
 type TeamStore = xkms.StaticPasswordTeamStore       // multi-tenant, no xkey CLI/GUI surface
 type TeamEntity = xkms.StaticPasswordTeamEntity
 type DAOTeamStore = xkms.StaticPasswordDAOTeamStore
 
-var NewStore = xkms.NewStaticPasswordStore
-var NewTenantStore = xkms.NewStaticPasswordTenantStore
+var NewStore = xkms.NewStaticPasswordStore             // (*qrdbsdk.DAOFactory) (*DAOStore, error)
+var NewTenantStore = xkms.NewStaticPasswordTenantStore // (*qrdbsdk.DAOFactory, tenantID)
 var NewExpiryChecker = xkms.NewStaticPasswordExpiryChecker
 var GeneratePassword = xkms.GenerateStaticPassword
 var GenerateID = xkms.GenerateStaticPasswordID
-var NewDAOTeamStore = xkms.NewStaticPasswordDAOTeamStore
+var NewDAOTeamStore = xkms.NewStaticPasswordDAOTeamStore // (*qrdbsdk.DAOFactory)
+
+// NewBackendStore opens a DAOStore over the barrier or file backend xkey
+// keeps its data in, through xkms.NewBackendDAOFactory.
+func NewBackendStore(backend xkms.StorageBackend) (*DAOStore, error)
 ```
+
+xkey has no go-qrdb node, so every store persists as go-qrdb DAO records
+served from its own storage backend: `xkms.NewBackendDAOFactory` adapts the
+backend to a KVStore (`xkms.NewKVStoreAdapter`) and serves every database from
+it. Creates are atomic conditional writes, so the backend must offer
+`CompareAndSwap`/`CompareAndDelete`; the file backend and the barrier backend
+(`seal.BarrierBackend`) both do.
 
 `StaticPassword` fields (`go-xkms/pkg/staticpw/types.go:28`): `ID`, `Name`,
 `Title`, `Username`, `Password`, `URL`, `MatchPatterns []string`, `Notes`,
@@ -37,8 +48,8 @@ bool`.
 `Store` interface (`go-xkms/pkg/staticpw/store.go:52`): `Add`, `Get`,
 `List`, `Update`, `Delete`, `ForceDelete`, `ListByFolder`,
 `ListByFolderDirect`, `ListFolders`, `CreateFolder`, `RemoveFolder`,
-`MoveToFolder`, `Close`. `BackendStore` (`store.go:102`) is the concrete
-type every constructor above returns.
+`MoveToFolder`, `Close`. `DAOStore` (`store.go`) is the concrete type
+every constructor above returns.
 
 Constants: `xkms.StaticPasswordCharsetAll`,
 `StaticPasswordCharsetAlphanumeric`, `StaticPasswordDefaultLength` (32),
@@ -56,7 +67,7 @@ type PasswordStoreClientService interface {
 	PasswordStoreStatus(ctx context.Context) (*transport.PasswordStoreStatusResponse, error)
 	PasswordStoreSetAccessMode(ctx context.Context, req *transport.PasswordStoreSetAccessModeRequest) error
 }
-func openPasswordStore(storePath string) (*xkms.StaticPasswordBackendStore, error)
+func openPasswordStore(storePath string) (*xkms.StaticPasswordDAOStore, error)
 func connectPasswordStore() (PasswordStoreClientService, error)
 type PasswordStoreError struct{ Operation, Message string; Err error }
 ```
@@ -254,7 +265,7 @@ tampered header/ciphertext is `ErrRestoreDecryptFailed`
 
 | File | Tags | Covers |
 |---|---|---|
-| `go-xkms/pkg/staticpw/*_test.go` (root module) | (none) | `StaticPassword` validation, `BackendStore`/scoped/team/tenant behavior, `TenantPasswordStoreManager` session-lock state |
+| `go-xkms/pkg/staticpw/*_test.go` (root module) | (none) | `StaticPassword` validation, `DAOStore`/scoped/team/tenant behavior, `TenantPasswordStoreManager` session-lock state |
 | `xkey/cmd/xkey/cmd/password_test.go`, `password_ssh_cert_test.go` | `ble codec_json` | CLI verbs, `--source` resolution, IPC-vs-disk list/status behavior |
 | `xkey/cmd/xkey/cmd/touch_test.go` | `ble codec_json` | `xkey touch` IPC round-trip |
 | `xkey/pkg/gui/services/staticpw_service_test.go` | (none) | GUI CRUD, folders, backup/restore, import, session verbs |

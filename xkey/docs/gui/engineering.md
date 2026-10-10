@@ -1,6 +1,6 @@
 # xKey Desktop GUI — Engineering Contract
 
-> **Status: NORMATIVE** · Feature: `gui` · Module: `go-xkms/xkey` · Last verified: 2026-09-30
+> **Status: NORMATIVE** · Feature: `gui` · Module: `go-xkms/xkey` · Last verified: 2026-10-10
 
 ## Exported surface — `*App` itself
 
@@ -109,6 +109,27 @@ beyond the type name.)
   (`ipc_state.go`) are deliberately read-only and return no secret material,
   because that socket's only access control is filesystem permission (see
   [architecture.md](architecture.md)).
+- **The IPC socket exists only while `ipcServerWanted` holds** (`app.go:3461`):
+  local app access in effect, data directory open, app unlocked, barrier
+  unsealed. "In effect" is `AutoFillService.IsEnabled`, the one source of
+  truth: the setting as `SetEnabled` accepted it, and off whenever the
+  verified enterprise policy disables the extension. Every input change,
+  including `applyVerifiedEnterprisePolicy`, calls `syncIPCServer`
+  (`app.go:3479`), which is idempotent and serialized by `ipcMu`. Lock, seal
+  and disable use `stopIPCServer` (`app.go:3495`), which removes the socket at
+  once and drains the stopped server on a goroutine counted by `ipcDrains`,
+  because a lock transition can run underneath an in-flight handler. Only
+  shutdown uses `closeIPCServer` (`app.go:3524`), before the barrier seals: it
+  sets `ipcShutdown` so no later event restarts the server, cancels the
+  handlers' context, then waits on `ipcDrains` for every stopped server's
+  handlers. Shutdown runs it outside the per-step timeouts: a handler that
+  ignores cancellation, such as a hardware key generation, holds the barrier
+  seal and every store close until it returns. `dataReady` is an
+  `atomic.Bool` because the lock and seal hooks fire on other goroutines.
+  Tests: `TestLocalAppAccess_VerifiedPolicyClosesSocket`,
+  `TestLocalAppAccess_SettingRefusedByPolicyKeepsSocketClosed`,
+  `TestCloseIPCServer_WaitsForHandlerOfStoppedServer`,
+  `TestShutdown_WaitsForSlowHandlerBeforeSealing` (`ipc_server_test.go`).
 - **A GUI settings save can never silently wipe a `GUIConfig` field the
   frontend does not edit.** `services.GUIConfigData` (`services/app_service.go:81`)
   is a DTO carrying only the GUI-editable subset of `GUIConfig`
@@ -146,6 +167,19 @@ through the same config precedence the CLI uses (flags > env > config file).
 enterprise policy that can apply before the Security Officer has logged in —
 see [../setup-wizard/](../setup-wizard/engineering.md).
 
+The settings file is `$XDG_CONFIG_HOME/xkey/gui.json` (`os.UserConfigDir()`).
+Its `local_app_access_enabled` key (`GUIConfig.LocalAppAccessEnabled`,
+`config.go:166`, default `false`; an enterprise policy with
+`extension_enabled` false overrides it) gates the IPC socket, `xkey extension
+serve`, and the PKCS#11 transport `xkey usb device start` picks. The GUI
+writes it from Settings → Browser and the CLI from `xkey app-access`, both
+through `SaveGUIConfig`.
+
+| IPC socket path | Resolution |
+|---|---|
+| `XKEY_IPC_SOCKET` | Overrides the path, for the GUI and every client |
+| default | `ipc.DefaultSocketPath()`: the `XKEY_HOME`-derived instance socket, then the XDG runtime default |
+
 ## Tests
 
 `xkey/pkg/gui` and `xkey/pkg/gui/services` are two of the largest test
@@ -158,4 +192,15 @@ tests rather than the whole module during development:
 
 ```
 cd xkey && GOWORK=off go test -tags 'ble codec_json' ./pkg/gui/services/... -run TestPhoneService
+```
+
+The socket lifecycle is covered by `ipc_server_test.go`
+(`TestLocalAppAccess_*`: off never opens a socket; the socket follows the app
+lock, the barrier seal and the setting; shutdown closes it for good) and
+`app_headless_test.go`. They use real sockets in a private `t.TempDir()`
+directory through `XKEY_IPC_SOCKET`, and isolate the settings file with
+`XDG_CONFIG_HOME`:
+
+```
+make -C xkey test-gui TEST_FLAGS="-race -run 'TestLocalAppAccess'"
 ```

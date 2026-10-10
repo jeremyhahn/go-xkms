@@ -1,6 +1,6 @@
 # Password Vault — Architecture
 
-> **Status: NORMATIVE** · Feature: `password-vault` · Repo: `go-xkms` · Last verified: 2026-10-01
+> **Status: NORMATIVE** · Feature: `password-vault` · Repo: `go-xkms` · Last verified: 2026-10-09
 
 ## The problem
 
@@ -29,10 +29,13 @@ The core is a set of small, composable stores rather than one type:
 | Generation | `generator.go` |
 | Validation, errors | `validation.go`, `errors.go` |
 
-`store.go`'s `BackendStore` is the only concrete `Store`. Shared entries are
-encrypted at rest by the tenant barrier alone. Personal entries additionally
-pass through `dek_backend.go`, which seals every value with the owner's own
-data key before it reaches the barrier (see "The personal vault" below).
+`store.go`'s `DAOStore` is the only concrete `Store`: every record lives in
+the go-qrdb `staticpw` database through a `GenericDAO` (`records.go`), the
+system store on the composition root's datastore and each tenant's in the
+store go-qrdb's tenant resolver returns for it. Shared entries are encrypted
+at rest by the tenant barrier alone. A personal store additionally seals
+every record body with the owner's own data key before it reaches the
+barrier (see "The personal vault" below).
 
 The design decision that shapes everything else is **access mode**
 (`access.go:23`):
@@ -92,7 +95,7 @@ locking locked everyone, and one user unlocking opened every user's session.
 ### The personal vault
 
 Personal entries are sealed with a random per-user **data key (DEK)**
-(`vault.go`, `dek_backend.go`), so reading them takes one of the user's own
+(`vault.go`, `records.go`), so reading them takes one of the user's own
 factors: the tenant barrier key alone opens nothing.
 
 ```
@@ -314,7 +317,7 @@ the core.
 ```
 add:     xkmsctl password add NAME --password -
            → validation → entity → scoped/team/tenant store
-             → storage.Backend → the barrier
+             → go-qrdb DAO (staticpw database) → the tenant barrier
 
 read:    xkmsctl password get ID
            → shared entry: served while the tenant barrier is unsealed

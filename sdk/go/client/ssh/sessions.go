@@ -14,8 +14,9 @@
 package ssh
 
 import (
+	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
+
 	pkgsessions "github.com/jeremyhahn/go-xkms/pkg/ssh/sessions"
-	"github.com/jeremyhahn/go-xkms/pkg/storage"
 )
 
 // ConsoleSessionRecord is one persisted embedded-console session: a display
@@ -28,10 +29,10 @@ type ConsoleSessionRecord = pkgsessions.Session
 // ConsoleSessionStore is the persisted-session store interface.
 type ConsoleSessionStore = pkgsessions.Store
 
-// NewConsoleSessionStore constructs a session store over the given storage
-// backend (barrier-routed in the GUI).
-func NewConsoleSessionStore(backend storage.Backend) (ConsoleSessionStore, error) {
-	return pkgsessions.NewStore(backend)
+// NewConsoleSessionStore constructs a session store over the DAOs daos
+// builds.
+func NewConsoleSessionStore(daos *qrdbsdk.DAOFactory) (ConsoleSessionStore, error) {
+	return pkgsessions.NewStore(daos)
 }
 
 // Re-exported session error sentinels for errors.Is checks.
@@ -39,4 +40,5 @@ var (
 	ErrConsoleSessionNotFound      = pkgsessions.ErrNotFound
 	ErrConsoleSessionInvalidTitle  = pkgsessions.ErrInvalidTitle
 	ErrConsoleSessionInvalidOrigin = pkgsessions.ErrInvalidOrigin
+	ErrConsoleSessionNilDAOFactory = pkgsessions.ErrNilDAOFactory
 )

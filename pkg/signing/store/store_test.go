@@ -12,16 +12,15 @@ import (
 	"crypto/rand"
 	"crypto/rsa"
 	"crypto/x509"
-	"encoding/json"
 	"encoding/pem"
 	"errors"
-	"fmt"
 	"io"
 	"log/slog"
 	"testing"
 
-	"github.com/cespare/xxhash/v2"
-	"github.com/jeremyhahn/go-xkms/pkg/storage"
+	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
+
+	"github.com/jeremyhahn/go-xkms/pkg/dao"
 	"github.com/jeremyhahn/go-xkms/pkg/types"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -32,136 +31,129 @@ func testLogger() *slog.Logger {
 	return slog.New(slog.NewTextHandler(io.Discard, nil))
 }
 
-// errorBackend is a mock storage.Backend that returns errors for testing.
-// A near-identical fake lives in pkg/tpm2/store's own test suite -- kept
-// separate rather than shared, since sharing it would need a new exported
-// test-utility package for ~30 lines used by two packages.
-type errorBackend struct {
-	getError    error
-	putError    error
-	deleteError error
-	existsError error
-}
-
-func (e *errorBackend) Get(_ context.Context, key string) ([]byte, error) {
-	if e.getError != nil {
-		return nil, e.getError
-	}
-	return nil, storage.ErrNotFound
-}
-
-func (e *errorBackend) Put(_ context.Context, key string, value []byte) error {
-	return e.putError
-}
-
-// PutIfAbsent mirrors errorBackend.Put: it returns putError, otherwise
-// reports the value as stored.
-func (e *errorBackend) PutIfAbsent(_ context.Context, key string, value []byte) (bool, error) {
-	if e.putError != nil {
-		return false, e.putError
-	}
-	return true, nil
-}
-
-func (e *errorBackend) Delete(_ context.Context, key string) error {
-	return e.deleteError
-}
-
-func (e *errorBackend) List(_ context.Context, prefix string) ([]string, error) {
-	return nil, nil
-}
-
-func (e *errorBackend) Exists(_ context.Context, key string) (bool, error) {
-	return false, e.existsError
-}
-
-func (e *errorBackend) Scan(_ context.Context, prefix string, fn func(key string, value []byte) error) error {
-	return nil
-}
-
-func (e *errorBackend) Close() error {
-	return nil
-}
-
-// putSignerEntry writes a SignerEntry directly to the backend using the DAO's
-// key format ("signers/<xxhash64>"). This is used to inject entries with
-// alternative PEM formats (PKCS1, EC) to test the parsing fallback paths.
-func putSignerEntry(t *testing.T, backend storage.Backend, cn string, pemData []byte, algo string) {
+// newTestStore returns a SignerStore over an in-memory go-qrdb store.
+func newTestStore(t *testing.T, logger *slog.Logger) *SignerStore {
 	t.Helper()
-
-	entityID := xxhash.Sum64String(cn)
-
-	entry := &SignerEntry{
-		ID:        entityID,
-		CN:        cn,
-		KeyPEM:    pemData,
-		Algorithm: algo,
-	}
-
-	data, err := json.Marshal(entry)
+	store, err := NewSignerStore(logger, dao.NewStoreFactory(qrdbsdk.NewMemoryKVStore()))
 	require.NoError(t, err)
-
-	key := fmt.Sprintf("signers/%d", entityID)
-	err = backend.Put(context.Background(), key, data)
-	require.NoError(t, err)
+	return store
 }
 
-// putSignatureEntry writes a SignatureEntry directly to the backend using the
-// DAO's key format ("signatures/<xxhash64>"), with an arbitrary Data payload.
-// This is used to inject a malformed record to test GetSignature's parse
-// error path, which SaveSignature itself can never produce.
-func putSignatureEntry(t *testing.T, backend storage.Backend, sigKey, data string) {
-	t.Helper()
-
-	entityID := xxhash.Sum64String(sigKey)
-
-	entry := &SignatureEntry{
-		ID:   entityID,
-		Key:  sigKey,
-		Data: data,
-	}
-
-	encoded, err := json.Marshal(entry)
-	require.NoError(t, err)
-
-	key := fmt.Sprintf("signatures/%d", entityID)
-	err = backend.Put(context.Background(), key, encoded)
-	require.NoError(t, err)
+// failingKV is an in-memory KVStore whose reads, writes or deletes fail with
+// the configured error, so the store's error wrapping can be observed.
+type failingKV struct {
+	qrdbsdk.KVStore
+	getErr    error
+	putErr    error
+	deleteErr error
 }
 
-// getSignatureData reads a SignatureEntry directly from the backend using the
-// DAO's key format ("signatures/<xxhash64>") and returns the Data field.
-func getSignatureData(t *testing.T, backend storage.Backend, sigKey string) string {
+func (f failingKV) Get(ctx context.Context, key string) ([]byte, error) {
+	if f.getErr != nil {
+		return nil, f.getErr
+	}
+	return f.KVStore.Get(ctx, key)
+}
+
+func (f failingKV) Put(ctx context.Context, key string, value []byte) error {
+	if f.putErr != nil {
+		return f.putErr
+	}
+	return f.KVStore.Put(ctx, key, value)
+}
+
+func (f failingKV) Delete(ctx context.Context, key string) error {
+	if f.deleteErr != nil {
+		return f.deleteErr
+	}
+	return f.KVStore.Delete(ctx, key)
+}
+
+// newFailingStore returns a SignerStore over kv, backed by a fresh in-memory
+// store.
+func newFailingStore(t *testing.T, kv failingKV) *SignerStore {
 	t.Helper()
-
-	entityID := xxhash.Sum64String(sigKey)
-
-	key := fmt.Sprintf("signatures/%d", entityID)
-	data, err := backend.Get(context.Background(), key)
+	if kv.KVStore == nil {
+		kv.KVStore = qrdbsdk.NewMemoryKVStore()
+	}
+	store, err := NewSignerStore(testLogger(), dao.NewStoreFactory(kv))
 	require.NoError(t, err)
+	return store
+}
 
-	var entry SignatureEntry
-	err = json.Unmarshal(data, &entry)
+// putSignerEntry saves a SignerEntry through the store's DAO, bypassing Save,
+// to inject entries with alternative PEM formats (PKCS1, EC) and test the
+// parsing fallback paths.
+func putSignerEntry(t *testing.T, store *SignerStore, cn string, pemData []byte, algo string) {
+	t.Helper()
+	entry := &SignerEntry{CN: cn, KeyPEM: pemData, Algorithm: algo}
+	require.NoError(t, store.dao.Save(context.Background(), entry))
+}
+
+// putSignatureEntry saves a SignatureEntry with an arbitrary Data payload
+// through the store's DAO, to inject a malformed record SaveSignature itself
+// can never produce.
+func putSignatureEntry(t *testing.T, store *SignerStore, sigKey, data string) {
+	t.Helper()
+	entry := &SignatureEntry{Key: sigKey, Data: data}
+	require.NoError(t, store.sigDAO.Save(context.Background(), entry))
+}
+
+// getSignatureData reads the Data field of the SignatureEntry stored under
+// sigKey through the store's DAO.
+func getSignatureData(t *testing.T, store *SignerStore, sigKey string) string {
+	t.Helper()
+	entry, err := store.sigDAO.GetByNaturalKey(context.Background(), sigKey)
 	require.NoError(t, err)
-
 	return entry.Data
 }
 
 // =============================================================================
 // SignerStore Tests
 // =============================================================================
-func TestSignerStore_NewSignerStore(t *testing.T) {
-	logger := testLogger()
-	backend := storage.NewMemory()
 
-	store := NewSignerStore(logger, backend)
-	assert.NotNil(t, store)
+// A signer saved through one store reads back through a second store over the
+// same go-qrdb store: the records persist, keyed by CN.
+func TestSignerStore_PersistsAcrossStores(t *testing.T) {
+	daos := dao.NewStoreFactory(qrdbsdk.NewMemoryKVStore())
+	first, err := NewSignerStore(testLogger(), daos)
+	require.NoError(t, err)
+
+	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	require.NoError(t, err)
+	attrs := &types.KeyAttributes{CN: "persisted", KeyAlgorithm: x509.ECDSA}
+	require.NoError(t, first.Save(attrs, key))
+	require.NoError(t, first.SaveSignature(&SignerOpts{KeyAttributes: attrs}, []byte("sig"), []byte("digest")))
+
+	second, err := NewSignerStore(testLogger(), daos)
+	require.NoError(t, err)
+	got, err := second.Get(attrs)
+	require.NoError(t, err)
+	assert.True(t, key.Equal(got))
+	digest, signature, err := second.GetSignature(&SignerOpts{KeyAttributes: attrs})
+	require.NoError(t, err)
+	assert.Equal(t, []byte("digest"), digest)
+	assert.Equal(t, []byte("sig"), signature)
+}
+
+// Without a DAO factory, or with one that serves no store, there is no store.
+func TestNewSignerStore_Refusals(t *testing.T) {
+	store, err := NewSignerStore(testLogger(), nil)
+	assert.ErrorIs(t, err, ErrNilDAOFactory)
+	assert.Nil(t, store)
+
+	store, err = NewSignerStore(testLogger(), dao.NewStoreFactory(nil))
+	var openErr *StoreOpenError
+	require.ErrorAs(t, err, &openErr)
+	assert.Contains(t, err.Error(), DatabaseName)
+	var unavailable *dao.DatabaseUnavailableError
+	assert.ErrorAs(t, err, &unavailable, "the cause must stay reachable")
+	assert.Nil(t, store)
 }
 
 func TestSignerStore_SaveAndGet_RSA(t *testing.T) {
 	logger := testLogger()
-	backend := storage.NewMemory()
-	store := NewSignerStore(logger, backend)
+	store := newTestStore(t, logger)
 
 	t.Run("save and get RSA key via PKCS8", func(t *testing.T) {
 		rsaKey, err := rsa.GenerateKey(rand.Reader, 2048)
@@ -202,7 +194,7 @@ func TestSignerStore_SaveAndGet_RSA(t *testing.T) {
 		pemData := pem.EncodeToMemory(pemBlock)
 
 		// Inject a DAO entry with PKCS1-encoded PEM directly into the backend.
-		putSignerEntry(t, backend, attrs.CN, pemData, "RSA")
+		putSignerEntry(t, store, attrs.CN, pemData, "RSA")
 
 		// Get using store -- should use PKCS1 fallback parsing.
 		retrieved, err := store.Get(attrs)
@@ -217,8 +209,7 @@ func TestSignerStore_SaveAndGet_RSA(t *testing.T) {
 
 func TestSignerStore_SaveAndGet_ECDSA(t *testing.T) {
 	logger := testLogger()
-	backend := storage.NewMemory()
-	store := NewSignerStore(logger, backend)
+	store := newTestStore(t, logger)
 
 	t.Run("save and get ECDSA key via PKCS8", func(t *testing.T) {
 		ecKey, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
@@ -260,7 +251,7 @@ func TestSignerStore_SaveAndGet_ECDSA(t *testing.T) {
 		pemData := pem.EncodeToMemory(pemBlock)
 
 		// Inject a DAO entry with EC-encoded PEM directly into the backend.
-		putSignerEntry(t, backend, attrs.CN, pemData, "ECDSA")
+		putSignerEntry(t, store, attrs.CN, pemData, "ECDSA")
 
 		// Get using store -- should use EC fallback parsing.
 		retrieved, err := store.Get(attrs)
@@ -275,8 +266,7 @@ func TestSignerStore_SaveAndGet_ECDSA(t *testing.T) {
 
 func TestSignerStore_SaveAndGet_Ed25519(t *testing.T) {
 	logger := testLogger()
-	backend := storage.NewMemory()
-	store := NewSignerStore(logger, backend)
+	store := newTestStore(t, logger)
 
 	pubKey, privKey, err := ed25519.GenerateKey(rand.Reader)
 	require.NoError(t, err)
@@ -300,8 +290,7 @@ func TestSignerStore_SaveAndGet_Ed25519(t *testing.T) {
 
 func TestSignerStore_Save_ErrorCases(t *testing.T) {
 	logger := testLogger()
-	backend := storage.NewMemory()
-	store := NewSignerStore(logger, backend)
+	store := newTestStore(t, logger)
 
 	t.Run("save nil signer returns error", func(t *testing.T) {
 		attrs := &types.KeyAttributes{
@@ -329,8 +318,7 @@ func TestSignerStore_Save_ErrorCases(t *testing.T) {
 
 func TestSignerStore_Get_ErrorCases(t *testing.T) {
 	logger := testLogger()
-	backend := storage.NewMemory()
-	store := NewSignerStore(logger, backend)
+	store := newTestStore(t, logger)
 
 	t.Run("get non-existent signer returns error", func(t *testing.T) {
 		attrs := &types.KeyAttributes{
@@ -351,7 +339,7 @@ func TestSignerStore_Get_ErrorCases(t *testing.T) {
 		}
 
 		// Inject a DAO entry with invalid PEM data.
-		putSignerEntry(t, backend, attrs.CN, []byte("not valid pem"), "RSA")
+		putSignerEntry(t, store, attrs.CN, []byte("not valid pem"), "RSA")
 
 		signer, err := store.Get(attrs)
 		assert.Error(t, err)
@@ -371,7 +359,7 @@ func TestSignerStore_Get_ErrorCases(t *testing.T) {
 			Bytes: []byte("invalid key data"),
 		}
 		pemData := pem.EncodeToMemory(pemBlock)
-		putSignerEntry(t, backend, attrs.CN, pemData, "RSA")
+		putSignerEntry(t, store, attrs.CN, pemData, "RSA")
 
 		signer, err := store.Get(attrs)
 		assert.Error(t, err)
@@ -391,7 +379,7 @@ func TestSignerStore_Get_ErrorCases(t *testing.T) {
 			Bytes: []byte("invalid key data"),
 		}
 		pemData := pem.EncodeToMemory(pemBlock)
-		putSignerEntry(t, backend, attrs.CN, pemData, "ECDSA")
+		putSignerEntry(t, store, attrs.CN, pemData, "ECDSA")
 
 		signer, err := store.Get(attrs)
 		assert.Error(t, err)
@@ -411,7 +399,7 @@ func TestSignerStore_Get_ErrorCases(t *testing.T) {
 			Bytes: []byte("invalid key data"),
 		}
 		pemData := pem.EncodeToMemory(pemBlock)
-		putSignerEntry(t, backend, attrs.CN, pemData, "Ed25519")
+		putSignerEntry(t, store, attrs.CN, pemData, "Ed25519")
 
 		signer, err := store.Get(attrs)
 		assert.Error(t, err)
@@ -435,7 +423,7 @@ func TestSignerStore_Get_ErrorCases(t *testing.T) {
 			Bytes: keyData,
 		}
 		pemData := pem.EncodeToMemory(pemBlock)
-		putSignerEntry(t, backend, attrs.CN, pemData, "DSA")
+		putSignerEntry(t, store, attrs.CN, pemData, "DSA")
 
 		signer, err := store.Get(attrs)
 		assert.Error(t, err)
@@ -506,8 +494,7 @@ func TestSignerStore_Get_ErrorCases(t *testing.T) {
 
 func TestSignerStore_Delete(t *testing.T) {
 	logger := testLogger()
-	backend := storage.NewMemory()
-	store := NewSignerStore(logger, backend)
+	store := newTestStore(t, logger)
 
 	t.Run("delete existing signer", func(t *testing.T) {
 		rsaKey, err := rsa.GenerateKey(rand.Reader, 2048)
@@ -542,8 +529,7 @@ func TestSignerStore_Delete(t *testing.T) {
 
 func TestSignerStore_SaveSignature(t *testing.T) {
 	logger := testLogger()
-	backend := storage.NewMemory()
-	store := NewSignerStore(logger, backend)
+	store := newTestStore(t, logger)
 
 	t.Run("save signature with blob CN", func(t *testing.T) {
 		opts := &SignerOpts{
@@ -561,7 +547,7 @@ func TestSignerStore_SaveSignature(t *testing.T) {
 
 		// Verify stored via DAO key format.
 		sigKey := "sig-key.test-blob.sig"
-		data := getSignatureData(t, backend, sigKey)
+		data := getSignatureData(t, store, sigKey)
 		assert.Contains(t, data, "digest=")
 		assert.Contains(t, data, "signature=")
 	})
@@ -581,7 +567,7 @@ func TestSignerStore_SaveSignature(t *testing.T) {
 
 		// Verify stored via DAO key format.
 		sigKey := "sig-key-no-blob.sig"
-		data := getSignatureData(t, backend, sigKey)
+		data := getSignatureData(t, store, sigKey)
 		assert.Contains(t, data, "digest=")
 		assert.Contains(t, data, "signature=")
 	})
@@ -602,7 +588,7 @@ func TestSignerStore_SaveSignature(t *testing.T) {
 
 		// Verify stored (should use key without blob CN).
 		sigKey := "sig-key-empty-blob.sig"
-		data := getSignatureData(t, backend, sigKey)
+		data := getSignatureData(t, store, sigKey)
 		assert.Contains(t, data, "digest=")
 	})
 
@@ -625,8 +611,7 @@ func TestSignerStore_SaveSignature(t *testing.T) {
 
 func TestSignerStore_GetSignature(t *testing.T) {
 	logger := testLogger()
-	backend := storage.NewMemory()
-	store := NewSignerStore(logger, backend)
+	store := newTestStore(t, logger)
 
 	t.Run("round-trips a signature saved with a blob CN", func(t *testing.T) {
 		opts := &SignerOpts{
@@ -686,9 +671,7 @@ func TestSignerStore_GetSignature(t *testing.T) {
 }
 
 func TestSignerStore_GetSignature_GetError(t *testing.T) {
-	logger := testLogger()
-	backend := &errorBackend{getError: errors.New("get failed")}
-	store := NewSignerStore(logger, backend)
+	store := newFailingStore(t, failingKV{getErr: errors.New("get failed")})
 
 	opts := &SignerOpts{KeyAttributes: &types.KeyAttributes{CN: "get-error-sig"}}
 
@@ -703,11 +686,10 @@ func TestSignerStore_GetSignature_GetError(t *testing.T) {
 
 func TestSignerStore_GetSignature_MalformedRecord(t *testing.T) {
 	logger := testLogger()
-	backend := storage.NewMemory()
-	store := NewSignerStore(logger, backend)
+	store := newTestStore(t, logger)
 
 	opts := &SignerOpts{KeyAttributes: &types.KeyAttributes{CN: "malformed-sig"}}
-	putSignatureEntry(t, backend, "malformed-sig.sig", "not a valid record")
+	putSignatureEntry(t, store, "malformed-sig.sig", "not a valid record")
 
 	digest, signature, err := store.GetSignature(opts)
 	require.Error(t, err)
@@ -720,8 +702,7 @@ func TestSignerStore_GetSignature_MalformedRecord(t *testing.T) {
 
 func TestSignerStore_Checksum(t *testing.T) {
 	logger := testLogger()
-	backend := storage.NewMemory()
-	store := NewSignerStore(logger, backend)
+	store := newTestStore(t, logger)
 
 	t.Run("returns the persisted digest for BlobCN", func(t *testing.T) {
 		saveOpts := &SignerOpts{
@@ -770,8 +751,7 @@ var _ types.ChecksumProvider = (*SignerStore)(nil)
 // =============================================================================
 func TestSignerStore_Save_CryptoSigner(t *testing.T) {
 	logger := testLogger()
-	backend := storage.NewMemory()
-	store := NewSignerStore(logger, backend)
+	store := newTestStore(t, logger)
 
 	// Test the crypto.Signer branch in Save method
 	// This tests when the signer is passed as crypto.Signer interface
@@ -895,8 +875,7 @@ func (m *mockUnknownSigner) Sign(rand io.Reader, digest []byte, opts crypto.Sign
 
 func TestSignerStore_Save_CryptoSignerErrorPaths(t *testing.T) {
 	logger := testLogger()
-	backend := storage.NewMemory()
-	store := NewSignerStore(logger, backend)
+	store := newTestStore(t, logger)
 
 	t.Run("unable to extract RSA private key from crypto.Signer", func(t *testing.T) {
 		rsaKey, err := rsa.GenerateKey(rand.Reader, 2048)
@@ -961,9 +940,7 @@ func TestSignerStore_Save_CryptoSignerErrorPaths(t *testing.T) {
 }
 
 func TestSignerStore_SavePutError(t *testing.T) {
-	logger := testLogger()
-	backend := &errorBackend{putError: errors.New("put failed")}
-	store := NewSignerStore(logger, backend)
+	store := newFailingStore(t, failingKV{putErr: errors.New("put failed")})
 
 	rsaKey, err := rsa.GenerateKey(rand.Reader, 2048)
 	require.NoError(t, err)
@@ -979,9 +956,7 @@ func TestSignerStore_SavePutError(t *testing.T) {
 }
 
 func TestSignerStore_SaveSignaturePutError(t *testing.T) {
-	logger := testLogger()
-	backend := &errorBackend{putError: errors.New("put failed")}
-	store := NewSignerStore(logger, backend)
+	store := newFailingStore(t, failingKV{putErr: errors.New("put failed")})
 
 	opts := &SignerOpts{
 		KeyAttributes: &types.KeyAttributes{
@@ -995,25 +970,28 @@ func TestSignerStore_SaveSignaturePutError(t *testing.T) {
 }
 
 func TestSignerStore_DeleteError(t *testing.T) {
-	logger := testLogger()
-	backend := &errorBackend{deleteError: errors.New("delete failed")}
-	store := NewSignerStore(logger, backend)
-
 	attrs := &types.KeyAttributes{
 		CN:           "delete-error-signer",
 		KeyAlgorithm: x509.RSA,
 	}
 
-	err := store.Delete(attrs)
+	// Seed the signer through a store with full KV support, then delete it
+	// through one whose Delete fails over the same data.
+	mem := qrdbsdk.NewMemoryKVStore()
+	seed, err := NewSignerStore(testLogger(), dao.NewStoreFactory(mem))
+	require.NoError(t, err)
+	putSignerEntry(t, seed, attrs.CN, []byte("pem"), "RSA")
+
+	store := newFailingStore(t, failingKV{KVStore: mem, deleteErr: errors.New("delete failed")})
+
+	err = store.Delete(attrs)
 	assert.Error(t, err)
 	assert.Contains(t, err.Error(), "failed to delete signer")
 }
 
 func TestSignerStore_GetError(t *testing.T) {
-	logger := testLogger()
 	// Return a non-ErrNotFound error
-	backend := &errorBackend{getError: errors.New("get failed")}
-	store := NewSignerStore(logger, backend)
+	store := newFailingStore(t, failingKV{getErr: errors.New("get failed")})
 
 	attrs := &types.KeyAttributes{
 		CN:           "get-error-signer",
@@ -1030,8 +1008,7 @@ func TestSignerStore_GetError(t *testing.T) {
 // Additional Edge Cases
 // =============================================================================
 func TestSignerStore_NilLogger(t *testing.T) {
-	backend := storage.NewMemory()
-	store := NewSignerStore(nil, backend)
+	store := newTestStore(t, nil)
 
 	rsaKey, err := rsa.GenerateKey(rand.Reader, 2048)
 	require.NoError(t, err)
@@ -1056,8 +1033,7 @@ func TestSignerStore_NilLogger(t *testing.T) {
 }
 
 func TestSignerStore_DeleteWithNilLoggerNotFound(t *testing.T) {
-	backend := storage.NewMemory()
-	store := NewSignerStore(nil, backend)
+	store := newTestStore(t, nil)
 
 	attrs := &types.KeyAttributes{
 		CN:           "nil-logger-not-found",
@@ -1067,36 +1043,4 @@ func TestSignerStore_DeleteWithNilLoggerNotFound(t *testing.T) {
 	// Delete non-existent with nil logger - tests the logger nil check path
 	err := store.Delete(attrs)
 	assert.NoError(t, err)
-}
-
-func TestNewSignerStore_NilBackend(t *testing.T) {
-	t.Run("nil backend with logger returns non-nil store that returns errors", func(t *testing.T) {
-		logger := testLogger()
-		store := NewSignerStore(logger, nil)
-		assert.NotNil(t, store)
-
-		attrs := &types.KeyAttributes{
-			CN:           "test",
-			KeyAlgorithm: x509.RSA,
-		}
-
-		_, err := store.Get(attrs)
-		assert.ErrorIs(t, err, ErrSignerStoreNotInitialized)
-
-		err = store.Save(attrs, nil)
-		assert.ErrorIs(t, err, ErrSignerStoreNotInitialized)
-	})
-
-	t.Run("nil backend with nil logger returns non-nil store that returns errors", func(t *testing.T) {
-		store := NewSignerStore(nil, nil)
-		assert.NotNil(t, store)
-
-		attrs := &types.KeyAttributes{
-			CN:           "test",
-			KeyAlgorithm: x509.RSA,
-		}
-
-		_, err := store.Get(attrs)
-		assert.ErrorIs(t, err, ErrSignerStoreNotInitialized)
-	})
 }

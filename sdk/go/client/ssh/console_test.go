@@ -22,7 +22,7 @@ import (
 
 	gossh "golang.org/x/crypto/ssh"
 
-	"github.com/jeremyhahn/go-xkms/pkg/storage"
+	"github.com/jeremyhahn/go-xkms/pkg/testutil"
 	sdkssh "github.com/jeremyhahn/go-xkms/sdk/go/client/ssh"
 )
 
@@ -83,7 +83,7 @@ func TestNewConsoleWSHandler_ResolverErrorIsForbidden(t *testing.T) {
 // *InvalidScopeError -> 403 path as a resolver-level authorization failure,
 // rather than reaching the dial stage with a zero-value scope.
 func TestNewConsoleWSHandler_InvalidScopeIsForbidden(t *testing.T) {
-	store, err := sdkssh.NewHostKeyStore(storage.NewMemory())
+	store, err := sdkssh.NewHostKeyStore(testutil.NewMemoryDAOFactory())
 	if err != nil {
 		t.Fatalf("NewHostKeyStore: %v", err)
 	}
@@ -109,7 +109,7 @@ func TestNewConsoleWSHandler_InvalidScopeIsForbidden(t *testing.T) {
 // distinct from the 403 the two error-path tests above pin, proving
 // resolution and scope parsing both succeeded.
 func TestNewConsoleWSHandler_ValidScopeReachesUpgrade(t *testing.T) {
-	store, err := sdkssh.NewHostKeyStore(storage.NewMemory())
+	store, err := sdkssh.NewHostKeyStore(testutil.NewMemoryDAOFactory())
 	if err != nil {
 		t.Fatalf("NewHostKeyStore: %v", err)
 	}
@@ -134,7 +134,7 @@ func TestNewConsoleWSHandler_ValidScopeReachesUpgrade(t *testing.T) {
 // TestOpenConsole_NilSigner rejects a nil signer with NilInputError before
 // attempting to dial.
 func TestOpenConsole_NilSigner(t *testing.T) {
-	store, err := sdkssh.NewHostKeyStore(storage.NewMemory())
+	store, err := sdkssh.NewHostKeyStore(testutil.NewMemoryDAOFactory())
 	if err != nil {
 		t.Fatalf("NewHostKeyStore: %v", err)
 	}
@@ -157,7 +157,7 @@ func TestOpenConsole_NilHostKeys(t *testing.T) {
 
 // TestOpenConsole_InvalidScope rejects an unrecognized scope string.
 func TestOpenConsole_InvalidScope(t *testing.T) {
-	store, err := sdkssh.NewHostKeyStore(storage.NewMemory())
+	store, err := sdkssh.NewHostKeyStore(testutil.NewMemoryDAOFactory())
 	if err != nil {
 		t.Fatalf("NewHostKeyStore: %v", err)
 	}
@@ -171,7 +171,7 @@ func TestOpenConsole_InvalidScope(t *testing.T) {
 // TestOpenConsoleWithSigners_NoSigners rejects an empty signer list with
 // NilInputError before attempting to dial.
 func TestOpenConsoleWithSigners_NoSigners(t *testing.T) {
-	store, err := sdkssh.NewHostKeyStore(storage.NewMemory())
+	store, err := sdkssh.NewHostKeyStore(testutil.NewMemoryDAOFactory())
 	if err != nil {
 		t.Fatalf("NewHostKeyStore: %v", err)
 	}
@@ -195,7 +195,7 @@ func TestOpenConsoleWithSigners_NilHostKeys(t *testing.T) {
 // TestOpenConsoleWithSigners_InvalidScope rejects an unrecognized scope
 // string.
 func TestOpenConsoleWithSigners_InvalidScope(t *testing.T) {
-	store, err := sdkssh.NewHostKeyStore(storage.NewMemory())
+	store, err := sdkssh.NewHostKeyStore(testutil.NewMemoryDAOFactory())
 	if err != nil {
 		t.Fatalf("NewHostKeyStore: %v", err)
 	}
@@ -213,7 +213,7 @@ func TestOpenConsoleWithSigners_InvalidScope(t *testing.T) {
 // not be *InvalidScopeError, proving the scope was accepted rather than
 // rejected before the dial was attempted.
 func TestOpenConsole_ValidScopeReachesDial(t *testing.T) {
-	store, err := sdkssh.NewHostKeyStore(storage.NewMemory())
+	store, err := sdkssh.NewHostKeyStore(testutil.NewMemoryDAOFactory())
 	if err != nil {
 		t.Fatalf("NewHostKeyStore: %v", err)
 	}
@@ -233,7 +233,7 @@ func TestOpenConsole_ValidScopeReachesDial(t *testing.T) {
 // TestOpenConsoleWithSigners_ValidScopeReachesDial mirrors
 // TestOpenConsole_ValidScopeReachesDial for the multi-signer entry point.
 func TestOpenConsoleWithSigners_ValidScopeReachesDial(t *testing.T) {
-	store, err := sdkssh.NewHostKeyStore(storage.NewMemory())
+	store, err := sdkssh.NewHostKeyStore(testutil.NewMemoryDAOFactory())
 	if err != nil {
 		t.Fatalf("NewHostKeyStore: %v", err)
 	}

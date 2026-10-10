@@ -16,13 +16,13 @@ package pkcs11
 import (
 	"testing"
 
-	xkms "github.com/jeremyhahn/go-xkms/sdk/go"
+	"github.com/jeremyhahn/go-xkms/sdk/go/xkmstest"
 )
 
 // TestPKCS11V3Suite runs the shared PKCS#11 v3.0 conformance suite
 // against a module backed by the CryptoMockClient which provides real
 // cryptographic operations using Go stdlib crypto.
 func TestPKCS11V3Suite(t *testing.T) {
-	suite := xkms.NewPKCS11TestSuite(xkms.NewPKCS11TestModuleFactory)
+	suite := xkmstest.NewPKCS11Suite(xkmstest.NewPKCS11ModuleFactory)
 	suite.RunAll(t)
 }

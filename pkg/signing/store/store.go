@@ -26,24 +26,32 @@ import (
 	"log/slog"
 	"strings"
 
-	"github.com/cespare/xxhash/v2"
-
 	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
+
+	"github.com/jeremyhahn/go-xkms/pkg/dao"
 	"github.com/jeremyhahn/go-xkms/pkg/errs"
-	"github.com/jeremyhahn/go-xkms/pkg/storage"
-	"github.com/jeremyhahn/go-xkms/pkg/storage/kvadapter"
 	"github.com/jeremyhahn/go-xkms/pkg/types"
 )
 
-// SignerStore implements SignerStorer using a go-qrdb GenericDAO for
-// signer persistence and a separate DAO for signature storage.
-// The storage.Backend interface is compatible with external object storage
-// libraries like go-objstore.
+const (
+	// DatabaseName is the go-qrdb database signer and signature records live
+	// in. A composition root opens it on the datastore before calling
+	// NewSignerStore.
+	DatabaseName = "signing"
+
+	// signerEntityType is the DAO entity type of a signer record.
+	signerEntityType = "signers"
+
+	// signatureEntityType is the DAO entity type of a signature record.
+	signatureEntityType = "signatures"
+)
+
+// SignerStore implements SignerStorer with two go-qrdb GenericDAOs: one of
+// signers keyed by CN, one of signatures keyed by signatureKey.
 type SignerStore struct {
 	logger *slog.Logger
 	dao    qrdbsdk.GenericDAO[*SignerEntry]
 	sigDAO qrdbsdk.GenericDAO[*SignatureEntry]
-	idGen  *signerEntryIDGenerator
 }
 
 // Compile-time interface compliance checks: SignerStore satisfies
@@ -55,60 +63,25 @@ var (
 	_ types.ChecksumProvider = (*SignerStore)(nil)
 )
 
-// NewSignerStore creates a new signer store using the storage.Backend interface.
-// The backend can be any implementation of storage.Backend, including custom
-// adapters that wrap external storage libraries like go-objstore.
-func NewSignerStore(logger *slog.Logger, backend storage.Backend) SignerStorer {
-	kvStore, err := kvadapter.New(backend)
-	if err != nil {
-		// Backend should never be nil when called correctly. If it is, fall
-		// back to a no-op store that returns errors. In practice this path
-		// should not be hit since callers validate inputs.
-		if logger != nil {
-			logger.Error("failed to create KVStore adapter for signer store", slog.String("error", err.Error()))
-		}
-		return &SignerStore{logger: logger}
+// NewSignerStore returns a SignerStore whose DAOs daos builds over
+// DatabaseName. A nil logger disables logging.
+func NewSignerStore(logger *slog.Logger, daos *qrdbsdk.DAOFactory) (*SignerStore, error) {
+	if daos == nil {
+		return nil, ErrNilDAOFactory
 	}
-
-	idGen := &signerEntryIDGenerator{}
-
-	signerDAO, daoErr := qrdbsdk.NewDAO(
-		kvStore,
-		"signers",
+	signers, err := dao.New(daos, DatabaseName, signerEntityType,
 		func() *SignerEntry { return &SignerEntry{} },
-		qrdbsdk.WithIDGenerator(idGen),
-	)
-	if daoErr != nil {
-		if logger != nil {
-			logger.Error("failed to create signer DAO", slog.String("error", daoErr.Error()))
-		}
-		return &SignerStore{logger: logger}
+		qrdbsdk.WithIDGenerator(qrdbsdk.NewCryptoFieldHashGenerator("CN")))
+	if err != nil {
+		return nil, &StoreOpenError{Cause: err}
 	}
-
-	sigDAO, sigErr := qrdbsdk.NewDAO(
-		kvStore,
-		"signatures",
+	signatures, err := dao.New(daos, DatabaseName, signatureEntityType,
 		func() *SignatureEntry { return &SignatureEntry{} },
-		qrdbsdk.WithIDGenerator(idGen),
-	)
-	if sigErr != nil {
-		if logger != nil {
-			logger.Error("failed to create signature DAO", slog.String("error", sigErr.Error()))
-		}
-		return &SignerStore{logger: logger, dao: signerDAO}
+		qrdbsdk.WithIDGenerator(qrdbsdk.NewCryptoFieldHashGenerator("Key")))
+	if err != nil {
+		return nil, &StoreOpenError{Cause: err}
 	}
-
-	return &SignerStore{
-		logger: logger,
-		dao:    signerDAO,
-		sigDAO: sigDAO,
-		idGen:  idGen,
-	}
-}
-
-// computeSignerID computes the deterministic entity ID for a CN.
-func computeSignerID(cn string) uint64 {
-	return xxhash.Sum64String(cn)
+	return &SignerStore{logger: logger, dao: signers, sigDAO: signatures}, nil
 }
 
 // decodePEM decodes a PEM block. It is a local, minimal copy of
@@ -129,8 +102,7 @@ func (s *SignerStore) Get(attrs *types.KeyAttributes) (interface{}, error) {
 		return nil, ErrSignerStoreNotInitialized
 	}
 
-	entryID := computeSignerID(attrs.CN)
-	entry, err := s.dao.Get(context.Background(), entryID)
+	entry, err := s.dao.GetByNaturalKey(context.Background(), attrs.CN)
 	if err != nil {
 		if qrdbsdk.IsDAONotFound(err) {
 			return nil, &ErrSignerNotFound{CN: attrs.CN}
@@ -177,13 +149,12 @@ func (s *SignerStore) Save(attrs *types.KeyAttributes, signer interface{}) error
 	}
 	pemData := pem.EncodeToMemory(pemBlock)
 
-	// Create entry with deterministic ID.
+	// The DAO derives the entry's ID from its CN.
 	entry := &SignerEntry{
 		CN:        attrs.CN,
 		KeyPEM:    pemData,
 		Algorithm: attrs.KeyAlgorithm.String(),
 	}
-	entry.SetEntityID(computeSignerID(attrs.CN))
 
 	if err := s.dao.Save(context.Background(), entry); err != nil {
 		return &ErrSignerSave{CN: attrs.CN, Cause: err}
@@ -202,19 +173,20 @@ func (s *SignerStore) Delete(attrs *types.KeyAttributes) error {
 		return ErrSignerStoreNotInitialized
 	}
 
-	entryID := computeSignerID(attrs.CN)
-
-	stub := &SignerEntry{}
-	stub.SetEntityID(entryID)
-	if err := s.dao.Delete(context.Background(), stub); err != nil {
-		// DAO Delete is idempotent for the underlying kvstore, but we check
-		// for real errors. Not-found is not an error for delete operations.
-		if !qrdbsdk.IsDAONotFound(err) {
-			return &ErrSignerDelete{CN: attrs.CN, Cause: err}
-		}
+	// An absent signer is not an error for a delete.
+	ctx := context.Background()
+	entry, err := s.dao.GetByNaturalKey(ctx, attrs.CN)
+	if qrdbsdk.IsDAONotFound(err) {
 		if s.logger != nil {
 			s.logger.Debug("signer not found for deletion", slog.String("cn", attrs.CN))
 		}
+		return nil
+	}
+	if err == nil {
+		err = s.dao.Delete(ctx, entry)
+	}
+	if err != nil && !qrdbsdk.IsDAONotFound(err) {
+		return &ErrSignerDelete{CN: attrs.CN, Cause: err}
 	}
 
 	if s.logger != nil {
@@ -254,7 +226,6 @@ func (s *SignerStore) SaveSignature(opts *SignerOpts, signature, digest []byte) 
 		Key:  key,
 		Data: data,
 	}
-	entry.SetEntityID(computeSignerID(key))
 
 	if err := s.sigDAO.Save(context.Background(), entry); err != nil {
 		return &ErrSignatureSave{Key: key, Cause: err}
@@ -279,9 +250,7 @@ func (s *SignerStore) GetSignature(opts *SignerOpts) (digest, signature []byte, 
 	}
 
 	key := signatureKey(opts.KeyAttributes.CN, opts.BlobCN)
-	entryID := computeSignerID(key)
-
-	entry, getErr := s.sigDAO.Get(context.Background(), entryID)
+	entry, getErr := s.sigDAO.GetByNaturalKey(context.Background(), key)
 	if getErr != nil {
 		if qrdbsdk.IsDAONotFound(getErr) {
 			return nil, nil, &ErrSignatureNotFound{Key: key}

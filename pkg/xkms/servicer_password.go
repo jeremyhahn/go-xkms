@@ -70,7 +70,7 @@ func (s *XKMSService) resolvePasswordStore(ctx context.Context) (staticpw.Store,
 	passwordStore := s.passwordStore.load()
 	if passwordStoreManager != nil {
 		if tenantID, subject, ok := passwordCaller(ctx); ok {
-			return passwordStoreManager.ResolveScopedStore(tenantID, subject)
+			return passwordStoreManager.ResolveScopedStore(ctx, tenantID, subject)
 		}
 	}
 	if passwordStore != nil {
@@ -393,7 +393,7 @@ func (s *XKMSService) PasswordStoreStatus(ctx context.Context) (*transport.Passw
 	passwordStore := s.passwordStore.load()
 	if passwordStoreManager != nil {
 		if tenantID, subject, ok := passwordCaller(ctx); ok {
-			status, err := passwordStoreManager.UserStoreStatus(tenantID, subject)
+			status, err := passwordStoreManager.UserStoreStatus(ctx, tenantID, subject)
 			if err != nil {
 				return nil, err
 			}

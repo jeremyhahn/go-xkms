@@ -26,8 +26,6 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/jeremyhahn/go-xkms/pkg/auth"
-	"github.com/jeremyhahn/go-xkms/pkg/staticpw"
-	"github.com/jeremyhahn/go-xkms/pkg/storage"
 	"github.com/jeremyhahn/go-xkms/pkg/xkms"
 )
 
@@ -50,7 +48,7 @@ func newPasswordRouteServer(t *testing.T) *Server {
 	server := newGatedRouteServer(t, allowAllRBACClient{}, auth.NewNoOpAuthenticator(), &mockTCGCAServicer{}, "")
 	svc, err := xkms.Get()
 	require.NoError(t, err)
-	svc.SetPasswordStore(staticpw.NewStore(storage.NewMemory()))
+	svc.SetPasswordStore(newTestPasswordStore(t))
 	return server
 }
 

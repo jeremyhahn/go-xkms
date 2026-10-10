@@ -34,13 +34,16 @@ type AutoConfig struct {
 	Datastore storage.Backend
 
 	// DefaultBackend overrides the default backend selection.
-	// When empty, defaults to "software". If the specified backend
-	// is not available, the first successfully initialized backend is used.
+	// When empty, defaults to "software". Naming a known backend this
+	// binary was built without fails AutoInitialize with a
+	// *FeatureNotCompiledError; if the named backend is compiled in but
+	// fails to initialize, the first successfully initialized backend is
+	// used.
 	DefaultBackend string
 
-	// BackendConfigs provides per-backend configuration overrides.
-	// Only backends returned by SupportedBackends() with registered
-	// factories will be initialized. Keys are BackendType constants.
+	// BackendConfigs provides per-backend configuration overrides. Keys are
+	// BackendType constants; a key naming a backend this binary was built
+	// without fails AutoInitialize with a *FeatureNotCompiledError.
 	//
 	// Common configuration keys supported by most backends:
 	//   - "key_storage" (storage.Backend): pre-built key storage, overriding
@@ -57,15 +60,31 @@ type AutoConfig struct {
 // If config is nil, sensible defaults are used: in-memory storage for all
 // backends with "software" as the default backend.
 //
-// Backends that fail to initialize (e.g., no TPM hardware available) are
-// skipped with a warning log. Only backends with both a registered type
-// AND a registered factory function are attempted.
+// Backends that fail to initialize at run time (e.g., no TPM hardware
+// available) are skipped with a warning log. Configuration is never skipped:
+// a BackendConfigs entry or DefaultBackend naming a backend this binary was
+// built without returns a *FeatureNotCompiledError, and a backend whose key
+// storage cannot be derived from Datastore returns a *BackendStorageError.
 //
 // Returns ErrNoBackendsAvailable if no backends could be initialized.
 // Returns an error from Initialize if the service is already initialized.
 func AutoInitialize(config *AutoConfig) error {
 	if config == nil {
 		config = &AutoConfig{}
+	}
+
+	// A configuration that names a backend this binary was built without
+	// fails closed: skipping it would run without a feature the caller
+	// asked for.
+	for bt := range config.BackendConfigs {
+		if _, err := RequireBackend(bt); err != nil {
+			return err
+		}
+	}
+	if bt := BackendType(config.DefaultBackend); bt.IsValid() {
+		if _, err := RequireBackend(bt); err != nil {
+			return err
+		}
 	}
 
 	supported := SupportedBackends()
@@ -85,19 +104,14 @@ func AutoInitialize(config *AutoConfig) error {
 	backends := make(map[string]Backend, len(supported))
 	keyProviders := make(map[string]Backend)
 	for _, bt := range supported {
-		factory, ok := GetBackendFactory(bt)
-		if !ok {
-			slog.Warn("no factory registered for backend, skipping",
-				"backend", string(bt))
-			continue
+		factory, reqErr := RequireBackend(bt)
+		if reqErr != nil {
+			return reqErr
 		}
 
 		backendConfig, cfgErr := resolveBackendConfig(config, bt)
 		if cfgErr != nil {
-			slog.Warn("failed to resolve backend storage, skipping",
-				"backend", string(bt),
-				"error", cfgErr)
-			continue
+			return &BackendStorageError{Backend: string(bt), Err: cfgErr}
 		}
 
 		kp, factoryErr := factory(backendConfig)

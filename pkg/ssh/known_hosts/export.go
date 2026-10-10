@@ -49,8 +49,7 @@ func PinFromPublicKey(host string, sc scope.Scope, owner string, pub ssh.PublicK
 //
 //	<host> <algorithm> <base64-key>
 //
-// It returns *NoPublicKeyError when the pin carries no PublicKey (legacy pins
-// recorded as fingerprint-only cannot be emitted — only verified in-process).
+// It returns *NoPublicKeyError when the pin carries no PublicKey.
 func Emit(pin *Pin) (string, error) {
 	if pin == nil {
 		return "", &NilInputError{Field: "pin"}
@@ -67,9 +66,8 @@ func Emit(pin *Pin) (string, error) {
 }
 
 // EmitAll renders every pin under (sc, owner) into a single OpenSSH
-// known_hosts file body. Store.List already excludes legacy (pre-v2,
-// fingerprint-only) pins that fail to decode — see BackendStore.List — so
-// every pin reaching Emit here carries a PublicKey. The returned bytes are
+// known_hosts file body. Store.Add refuses a pin without a PublicKey, so
+// every stored pin reaching Emit here carries one. The returned bytes are
 // suitable for writing to a temp UserKnownHostsFile.
 func EmitAll(ctx context.Context, store Store, sc scope.Scope, owner string) ([]byte, error) {
 	pins, err := store.List(ctx, sc, owner)

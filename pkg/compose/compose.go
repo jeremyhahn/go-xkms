@@ -27,6 +27,7 @@ import (
 	"github.com/jeremyhahn/go-xkms/pkg/oidc/credential"
 	"github.com/jeremyhahn/go-xkms/pkg/seal"
 	credentialspkg "github.com/jeremyhahn/go-xkms/pkg/server/credentials"
+	sshrecords "github.com/jeremyhahn/go-xkms/pkg/ssh/records"
 	"github.com/jeremyhahn/go-xkms/pkg/staticpw"
 	tpmpolicy "github.com/jeremyhahn/go-xkms/pkg/tpm2/policy"
 	"github.com/jeremyhahn/go-xkms/pkg/tpm2/vtpm"
@@ -43,14 +44,19 @@ type Deps struct {
 	// whose backends back SSH and the CA. Required.
 	Service *xkms.XKMSService
 
-	// Storage opens the backend each feature persists under. Enables the
-	// Password Manager, SSH, and — together with their own dependency — the
-	// platform store, CA and TPM policies.
+	// Storage opens the backend each feature persists under. Enables SSH
+	// and — together with their own dependency — the platform store, CA and
+	// TPM policies.
 	Storage StorageFactory
 
-	// BarrierRegistry is the tenant barrier registry. Enables per-tenant
-	// Password Manager routing and the "barrier" credential strategy.
+	// BarrierRegistry is the tenant barrier registry. Enables the "barrier"
+	// credential strategy.
 	BarrierRegistry *seal.BarrierRegistry
+
+	// TenantStores resolves each tenant's go-qrdb store, behind that
+	// tenant's barrier (the node's StoreResolver). With DAOs it enables
+	// per-tenant Password Manager routing.
+	TenantStores qrdbsdk.TenantStoreResolver
 
 	// PIN is the PIN backend whose user PIN opens a tenant Password
 	// Manager session. Without it a tenant's password store cannot be
@@ -71,7 +77,7 @@ type Deps struct {
 
 	// DAOs serves the go-qrdb database of each feature that persists through
 	// DAOs; Databases names them, for the composition root to open first.
-	// Enables key versions; with CA and Storage, the Certificate Authority;
+	// Enables key versions and the Password Manager; with CA and Storage, the Certificate Authority;
 	// with TPMBackend and Storage, the TPM policy service.
 	DAOs *qrdbsdk.DAOFactory
 
@@ -109,7 +115,7 @@ type Deps struct {
 // off; Disabled explains each one.
 type Stores struct {
 	// PasswordStore is the Password Manager's system store.
-	PasswordStore *staticpw.BackendStore
+	PasswordStore *staticpw.DAOStore
 
 	// PasswordManager routes Password Manager entries to per-tenant stores.
 	PasswordManager *staticpw.TenantPasswordStoreManager
@@ -153,7 +159,7 @@ type Stores struct {
 // each on its datastore and sets d.DAOs to the factory serving them before
 // Build; a root that opens none leaves those features off.
 func Databases(d Deps) []string {
-	databases := []string{keyversion.DatabaseName}
+	databases := []string{keyversion.DatabaseName, sshrecords.DatabaseName, staticpw.DatabaseName}
 	if d.CA != nil {
 		databases = append(databases, certstore.DatabaseName)
 	}
@@ -183,14 +189,14 @@ func Build(ctx context.Context, d Deps) (*Stores, error) {
 	}
 
 	// Password Manager: the system store, then per-tenant routing.
-	if b.need(FeaturePasswords, d.Storage != nil, "storage") {
-		st.PasswordStore = built(b, FeaturePasswords, func() (*staticpw.BackendStore, error) {
-			return BuildPasswordStore(d.Storage)
+	if b.need(FeaturePasswords, d.DAOs != nil, "DAO factory") {
+		st.PasswordStore = built(b, FeaturePasswords, func() (*staticpw.DAOStore, error) {
+			return BuildPasswordStore(d.DAOs)
 		})
 	}
-	if st.PasswordStore != nil && b.need(FeatureTenantPasswords, d.BarrierRegistry != nil, "barrier registry") {
+	if st.PasswordStore != nil && b.need(FeatureTenantPasswords, d.TenantStores != nil, "tenant store resolver") {
 		st.PasswordManager = built(b, FeatureTenantPasswords, func() (*staticpw.TenantPasswordStoreManager, error) {
-			return BuildTenantPasswordManager(d.BarrierRegistry, st.PasswordStore, d.PasskeyRelyingParty)
+			return BuildTenantPasswordManager(d.TenantStores, st.PasswordStore, d.PasskeyRelyingParty)
 		})
 	}
 
@@ -208,9 +214,9 @@ func Build(ctx context.Context, d Deps) (*Stores, error) {
 	}
 	b.credentials(d.CredentialStrategy, systemBarrier)
 
-	if b.need(FeatureSSH, d.Storage != nil, "storage") {
+	if b.need(FeatureSSH, d.DAOs != nil, "DAO factory") {
 		st.SSH = built(b, FeatureSSH, func() (sdkssh.Client, error) {
-			return BuildSSHClient(d.Storage, d.Service.LookupBackend, d.Service)
+			return BuildSSHClient(d.DAOs, d.Service.LookupBackend, d.Service)
 		})
 	}
 

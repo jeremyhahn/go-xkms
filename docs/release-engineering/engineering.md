@@ -1,7 +1,7 @@
 # Release engineering — engineering
 
 **Status:** implemented.
-**Last verified:** 2026-09-27.
+**Last verified:** 2026-10-08.
 
 ## Surface
 
@@ -137,7 +137,8 @@ function of its arguments alone.
 | `changelog_has_heading file version` | `## [version]` at the **start** of a line |
 | `changelog_entries_pending dir` | true when `dir` holds at least one non-`README.md` entry file |
 | `escape_dots s` | BRE-literal dots |
-| `remote_repo_path url` | `<owner>/<repo>` (no `.git`) from an `ssh://`, `http(s)://` or scp-like remote URL; empty for an unrecognized shape |
+| `forge_repo_url url` | the forge's web URL for the repository, `<scheme>://<host>[:<port>]/<owner>/<repo>` (no `.git`, no userinfo), from an `ssh://`, scp-like or `http(s)://` remote URL; an SSH remote maps to `http` on `GITEA_HTTP_PORT` (default `3001`); empty for a local path, a `file://` URL, or a path that is not exactly `<owner>/<repo>` |
+| `json_string s` | `s` as a JSON string literal, `\` and `"` escaped |
 
 Sourcing either script with `RELEASE_ALPHA_LIB=1` defines these and returns
 before anything touches the repository.
@@ -253,6 +254,15 @@ the run, naming every added symbol.
   the operator's prior `HEAD` — commits the version bump, the pin rewrite and
   the assembled changelog onto that one branch, and pushes **only that
   branch**. `main` (local or remote) is never written.
+- `release-alpha.sh` opens the release pull request itself, titled exactly
+  `chore(release): <version>` (the release commit's subject), from
+  `release/<version>` into `--branch`, on the forge named by `--remote`'s
+  configured URL (`git config remote.<name>.url`, so an `insteadOf` rewrite
+  does not change which forge is meant). The forge URL and `FORGE_TOKEN` are
+  both proven, by a read of the repository through the forge API, before
+  anything is fetched or written, in a dry run as well as a real cut. The
+  token reaches `curl` as a header read from a file descriptor, never as a
+  command-line argument.
 - `release-tag.sh` asserts, every time, fetched fresh: local `HEAD` is exactly
   `--branch`, checked out and byte-identical to the just-fetched
   `--remote`/`--branch`; `VERSION` at that commit (read from the object, not
@@ -282,6 +292,11 @@ ref to return to:
 ```
 Nothing was pushed; undo the local state with: git checkout <previous-ref> -q && git branch -D release/<version>
 ```
+
+The one `release-alpha.sh` failure after its push is the forge refusing the
+pull request (any status other than `201`, for example `409` when one is
+already open). The branch is already pushed, so the message gives the status,
+the exact title and the `compare/` URL to open the pull request by hand.
 
 `release-tag.sh` refusals *after* a tag is created (but before the atomic
 push) route through its own `cleanup_hint`, which names only the local tags —
@@ -340,19 +355,28 @@ with.
 `release-alpha.test.sh` covers the pure functions directly — the `v0.7.9 ->
 v0.7.10` carry, the `0.9.10 > 0.9.9` ordering that lexical comparison gets
 wrong, the `replace`-block-first shape of `xkey/go.mod`, stale/deleted/missing
-edges, `bump_level`'s MAJOR-then-MINOR precedence, and `remote_repo_path`'s
-three URL shapes — and then, end to end, a throwaway fixture repository (under
+edges, `bump_level`'s MAJOR-then-MINOR precedence, and `forge_repo_url` over
+the ssh, scp-like, http and https remote forms and the shapes that name no
+forge — and then, end to end, a throwaway fixture repository (under
 `mktemp -d`, host git config disabled) with its own **bare `dev` remote**: a
 fixture with no remote cannot exercise a script whose entire job is fetching
-one. The end-to-end cases assert: a dry run reads the network but writes
-nothing (asserted through the `$GIT` seam, not just tree identity); prepare
+one. The `dev` remote is configured with a forge URL and an `insteadOf`
+rewrite to the bare repository, and the forge API is a fake `$CURL` that
+records each request. The end-to-end cases assert: a dry run reads the network
+but writes nothing (asserted through the `$GIT` seam, not just tree identity)
+and opens no pull request; a missing `FORGE_TOKEN`, a remote that names no
+forge, an unknown remote and a token the forge rejects are each refused before
+anything is written; prepare
 validates against what was JUST FETCHED, not a stale local checkout, even when
 the local checkout has never seen the remote's real state; a duplicate release
 branch (local or remote) is refused; the exported-API growth gate refuses an
 implied or explicit PATCH that grew the API and allows the identical growth
 under MINOR; and a real cut lands the release commit on a new branch, leaves
-`main` (local and remote) untouched, pushes only the branch, and refuses to
-prepare the same version twice.
+`main` (local and remote) untouched, pushes only the branch, opens the pull
+request on the forge its http remote names, titled exactly
+`chore(release): <version>` from the release branch into `main`, prints the
+pull request's URL, and refuses to prepare the same version twice; and a pull
+request the forge refuses fails the run with the hand-opening instructions.
 
 `release-tag.test.sh` covers the same shape of fixture, extended with a real
 `chore(release): <version>` commit (`mkrelease_commit`, reproducing exactly

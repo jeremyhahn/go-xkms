@@ -25,20 +25,39 @@ import (
 	"path/filepath"
 	"testing"
 
+	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
+
 	xkmssdk "github.com/jeremyhahn/go-xkms/sdk/go"
 	sshsdk "github.com/jeremyhahn/go-xkms/sdk/go/client/ssh"
 	"github.com/jeremyhahn/go-xkms/xkey/pkg/sshstore"
 )
 
-// seedPersistedSession writes a session record into the helper's shared SSH
-// store exactly the way the GUI does (sdk store over sshstore.ResolveBackend).
-func seedPersistedSession(t *testing.T, h *SSHTestHelper, rec *sshsdk.ConsoleSessionRecord) string {
+// sharedSSHDAOs opens the helper's shared SSH store exactly the way the GUI
+// does (a DAO factory over sshstore.ResolveBackend) and closes it when the
+// test ends.
+func sharedSSHDAOs(t *testing.T, h *SSHTestHelper) *qrdbsdk.DAOFactory {
 	t.Helper()
 	backend, err := sshstore.ResolveBackend(filepath.Join(h.HomeDir(), "data"), xkmssdk.StorageEngineFile, nil)
 	if err != nil {
 		t.Fatalf("ResolveBackend: %v", err)
 	}
-	store, err := sshsdk.NewConsoleSessionStore(backend)
+	t.Cleanup(func() {
+		if cerr := backend.Close(); cerr != nil {
+			t.Errorf("close ssh store: %v", cerr)
+		}
+	})
+	kv, err := xkmssdk.NewKVStoreAdapter(backend)
+	if err != nil {
+		t.Fatalf("NewKVStoreAdapter: %v", err)
+	}
+	return xkmssdk.NewStoreDAOFactory(kv)
+}
+
+// seedPersistedSession writes a session record into the helper's shared SSH
+// store exactly the way the GUI does.
+func seedPersistedSession(t *testing.T, h *SSHTestHelper, rec *sshsdk.ConsoleSessionRecord) string {
+	t.Helper()
+	store, err := sshsdk.NewConsoleSessionStore(sharedSSHDAOs(t, h))
 	if err != nil {
 		t.Fatalf("NewConsoleSessionStore: %v", err)
 	}
@@ -119,11 +138,7 @@ func TestSSHProfileAddPersistSession(t *testing.T) {
 		t.Fatalf("profile add failed: %s", add.Combined())
 	}
 
-	backend, err := sshstore.ResolveBackend(filepath.Join(h.HomeDir(), "data"), xkmssdk.StorageEngineFile, nil)
-	if err != nil {
-		t.Fatalf("ResolveBackend: %v", err)
-	}
-	store, err := sshsdk.NewProfileStore(backend)
+	store, err := sshsdk.NewProfileStore(sharedSSHDAOs(t, h))
 	if err != nil {
 		t.Fatalf("NewProfileStore: %v", err)
 	}

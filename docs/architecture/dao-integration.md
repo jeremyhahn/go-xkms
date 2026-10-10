@@ -13,7 +13,8 @@ Three entity stores have been migrated to the DAO pattern:
 | Store | Package | Entity | ID Strategy |
 |-------|---------|--------|-------------|
 | TPM2 BlobStore | `pkg/tpm2/store` | `BlobEntry` | `FieldHashGenerator("Name")` |
-| SignerStore | `pkg/tpm2/store` | `SignerEntry` | Custom `signerEntryIDGenerator` (xxhash64 of CN) |
+| SignerStore | `pkg/signing/store` | `SignerEntry`, `SignatureEntry` | `NewCryptoFieldHashGenerator("CN")` / `("Key")` |
+| PIV certificate store | `pkg/pivcert/file` | `certEntity` | `NewCryptoFieldHashGenerator("Slot")` |
 
 ## KVStore Adapter (`pkg/storage/kvadapter`)
 
@@ -138,13 +139,20 @@ Stores binary blobs (sealed secrets, TPM key blobs) by name. Uses `FieldHashGene
 - Entity: `BlobEntry` (ID, Name, Data)
 - Operations: `Read(name)`, `Write(name, data)`, `Delete(name)`
 
-### SignerStore (`pkg/tpm2/store`)
+### SignerStore (`pkg/signing/store`)
 
-Persists `crypto.Signer` instances as PEM-encoded PKCS8 private keys. Uses a custom `signerEntryIDGenerator` that hashes the CN field, supporting both `SignerEntry` (signers) and `SignatureEntry` (audit signatures) through the same generator.
+Persists `crypto.Signer` instances as PEM-encoded PKCS8 private keys, and signature records for integrity checks. `NewSignerStore(logger, daos)` takes the injected go-qrdb DAO factory and opens the `signing` database with two entity types: `signers` (ID = `NewCryptoFieldHashGenerator("CN")`) and `signatures` (ID = `NewCryptoFieldHashGenerator("Key")`). Lookups use `GetByNaturalKey`. See `docs/signing/`.
 
-- Entity: `SignerEntry` (ID, CN, KeyPEM, Algorithm)
-- Operations: `Get(attrs)`, `Save(attrs, signer)`, `Delete(attrs)`, `SaveSignature(opts, sig, digest)`
+- Entities: `SignerEntry` (ID, CN, KeyPEM, Algorithm), `SignatureEntry` (ID, Key, Data)
+- Operations: `Get(attrs)`, `Save(attrs, signer)`, `Delete(attrs)`, `SaveSignature(opts, sig, digest)`, `GetSignature(opts)`, `Checksum(opts)`
 - Supports RSA, ECDSA, and Ed25519 key types with PKCS8/PKCS1/EC fallback parsing
+
+### PIV certificate store (`pkg/pivcert/file`)
+
+Persists the certificate in each PIV slot. `NewFileBackend(&pivcert.FileStorageConfig{DAOs: daos})` opens the `pivcert` database with one entity type, `piv_certificates` (ID = `NewCryptoFieldHashGenerator("Slot")`). Lookups use `GetByNaturalKey`; `Delete` is `DeleteIfMatch` and reports `ErrConflict` when the slot was replaced concurrently. See `docs/piv-smartcard/`.
+
+- Entity: `certEntity` (ID, Slot, DER, StoredAt)
+- Operations: `Store(slot, cert)`, `Retrieve(slot)`, `Delete(slot)`, `List()`, `Import`, `Export`
 
 ## UnitOfWork for Cross-Store Atomic Operations
 

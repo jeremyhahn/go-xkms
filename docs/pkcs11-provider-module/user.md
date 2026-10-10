@@ -1,6 +1,6 @@
 # PKCS#11 Provider Module — User Guide
 
-> **Status: NORMATIVE** · Feature: `pkcs11-provider-module` · Repo: `go-xkms` · Last verified: 2026-10-08
+> **Status: NORMATIVE** · Feature: `pkcs11-provider-module` · Repo: `go-xkms` · Last verified: 2026-10-10
 
 ## What you get
 
@@ -24,8 +24,11 @@ are opposites:
 ## Building it
 
 ```
-CGO_ENABLED=1 go build -buildmode=c-shared -o build/lib/libxkms_pkcs11.so ./cmd/pkcs11-module
+make build-pkcs11-module
 ```
+
+This writes `build/lib/libxkms_pkcs11.so` with every default backend,
+including TPM 2.0. Pass `WITH_TPM2=0` to leave the TPM backend out.
 
 ## Offline mode — no server needed
 

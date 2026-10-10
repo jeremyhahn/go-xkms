@@ -35,22 +35,17 @@ import (
 	gossh "golang.org/x/crypto/ssh"
 
 	"github.com/jeremyhahn/go-xkms/pkg/api/rest"
-	"github.com/jeremyhahn/go-xkms/pkg/storage"
 	sdkssh "github.com/jeremyhahn/go-xkms/sdk/go/client/ssh"
 	secure "github.com/jeremyhahn/go-xkms/sdk/go/secure"
 )
 
 // newRESTFixture boots an httptest.Server fronted by the real
-// xkmsd SSH handlers backed by an in-memory storage.Backend. Returns
-// the BaseURL, a REST client bound to it, and a cleanup closure.
+// xkmsd SSH handlers over in-memory Stores. Returns the BaseURL, a REST
+// client bound to it, and a cleanup closure.
 func newRESTFixture(t *testing.T) (baseURL string, client sdkssh.Client, cleanup func()) {
 	t.Helper()
 
-	backend, err := storage.NewMemoryBackend()
-	if err != nil {
-		t.Fatalf("backend: %v", err)
-	}
-	embedded, err := sdkssh.NewEmbedded(sdkssh.EmbeddedOptions{Backend: backend})
+	embedded, err := sdkssh.NewEmbedded(sdkssh.EmbeddedOptions{Stores: newStores(t)})
 	if err != nil {
 		t.Fatalf("NewEmbedded: %v", err)
 	}

@@ -1,6 +1,6 @@
 # SSH Keys, Known Hosts & Authorized Keys — API
 
-> **Status: NORMATIVE** · Feature: `ssh-keys` · Repo: `go-xkms` · Last verified: 2026-09-30
+> **Status: NORMATIVE** · Feature: `ssh-keys` · Repo: `go-xkms` · Last verified: 2026-10-08
 
 Transport model: [`../key-management/api.md`](../key-management/api.md)
 §"How the six transports are shaped". Unlike FROST and the PKCS#11 backend,
@@ -168,9 +168,12 @@ transport"). It is out of this folder's scope regardless.
 
 Any Go program can use `pkg/ssh/keys`, `pkg/ssh/known_hosts`,
 `pkg/ssh/authorized` directly, or obtain an `sdkssh.Client` via
-`sdkssh.NewEmbedded(EmbeddedOptions{Backend: storageBackend, BackendProvider:
-provider})` without a running `xkmsd` at all. The embedded client trusts its
-caller: it applies no owner binding. A multi-tenant server wraps storage and
-backends in `tenancy.New(tenancy.Options{Storage, Resolver})`
-(`pkg/ssh/tenancy/client.go:103-116`), exactly as `ensureSSHClient` does
+`sdkssh.NewEmbedded(EmbeddedOptions{Stores: stores, BackendProvider:
+provider})`, where `stores, err := sdkssh.NewStores(daos)` and `daos` is a
+go-qrdb `*qrdbsdk.DAOFactory` serving the `ssh` database, without a running
+`xkmsd` at all. A `Stores` missing any of its three stores is refused with
+`*NilInputError` naming it (`Stores.Keys`, ...). The embedded client trusts its caller: it applies no owner
+binding. A multi-tenant server wraps the DAO factory and backends in
+`tenancy.New(tenancy.Options{DAOs, Resolver, Permissions})`
+(`pkg/ssh/tenancy/client.go:81-139`), exactly as `ensureSSHClient` does
 inside the daemon (see architecture.md).

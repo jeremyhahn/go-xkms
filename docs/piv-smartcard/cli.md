@@ -1,6 +1,6 @@
 # PIV Smartcard — CLI
 
-> **Status: NORMATIVE** · Feature: `piv-smartcard` · Repo: `go-xkms` · Last verified: 2026-09-03
+> **Status: NORMATIVE** · Feature: `piv-smartcard` · Repo: `go-xkms` · Last verified: 2026-10-09
 
 Binary: `xkmsctl`, group `piv` (`cmd/xkmsctl/piv.go`). Global flags —
 `--backend`, `--pkcs11-module`, `--pkcs11-slot`, `--pkcs11-pin`, `--transport`,

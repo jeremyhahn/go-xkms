@@ -17,7 +17,6 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
-	"log/slog"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
@@ -30,7 +29,7 @@ import (
 	"github.com/jeremyhahn/go-xkms/pkg/auth"
 	"github.com/jeremyhahn/go-xkms/pkg/seal"
 	"github.com/jeremyhahn/go-xkms/pkg/staticpw"
-	"github.com/jeremyhahn/go-xkms/pkg/storage"
+	"github.com/jeremyhahn/go-xkms/pkg/testutil"
 	"github.com/jeremyhahn/go-xkms/pkg/testutil/kdftest"
 	"github.com/jeremyhahn/go-xkms/pkg/testutil/vaulttest"
 	"github.com/jeremyhahn/go-xkms/pkg/xkms"
@@ -47,73 +46,53 @@ const (
 	userB   = "bob"
 )
 
-// testPasswordSetup creates a BarrierRegistry whose system barrier and two
-// tenant barriers (tenantA, tenantB) are initialized and unsealed. Returns the
-// registry, the system store, and a manager over both.
-func testPasswordSetup(t *testing.T) (*seal.BarrierRegistry, *staticpw.BackendStore, *staticpw.TenantPasswordStoreManager) {
+// newTestPasswordStore returns a system password store over an in-memory DAO
+// factory.
+func newTestPasswordStore(t *testing.T) *staticpw.DAOStore {
+	t.Helper()
+	store, err := staticpw.NewStore(testutil.NewMemoryDAOFactory())
+	require.NoError(t, err)
+	return store
+}
+
+// testPasswordSetup creates in-memory tenant stores, the system store, and a
+// manager over both.
+func testPasswordSetup(t *testing.T) (*testutil.TenantStores, *staticpw.DAOStore, *staticpw.TenantPasswordStoreManager) {
 	t.Helper()
 
-	sysBackend, err := storage.NewMemoryBackend()
-	require.NoError(t, err)
-	sysBarrier, err := seal.NewBarrier(
-		slog.Default(),
-		sysBackend,
-		seal.BarrierConfig{
-			RootKeyPath:     "root-key",
-			PreferenceOrder: []seal.StrategyID{seal.StrategyPassphrase},
-		},
-		seal.NewSoftwareStrategy(),
-	)
+	stores := testutil.NewTenantStores()
+	systemStore := newTestPasswordStore(t)
+	manager, err := staticpw.NewTenantPasswordStoreManager(stores, systemStore, staticpw.WithPasskeyRelyingParty("kms.example.com"), staticpw.WithPassphraseKDFParams(kdftest.CheapPassphraseParams))
 	require.NoError(t, err)
 
-	ctx := context.Background()
-	sysCreds := seal.MustCredentials(t.Context(), []byte("test-pw"))
-	defer sysCreds.Secret.Destroy()
-	require.NoError(t, sysBarrier.Initialize(ctx, sysCreds))
-
-	registry, err := seal.NewBarrierRegistry(sysBarrier)
-	require.NoError(t, err)
-
-	for _, tenant := range []string{tenantA, tenantB} {
-		_, err = registry.RegisterTenantDefault(tenant)
-		require.NoError(t, err)
-		tenantCreds := seal.MustCredentials(t.Context(), []byte(tenant+"-pw"))
-		require.NoError(t, registry.InitializeTenant(ctx, tenant, tenantCreds))
-		tenantCreds.Secret.Destroy()
-	}
-
-	systemStore := staticpw.NewStore(storage.NewMemory())
-	manager, err := staticpw.NewTenantPasswordStoreManager(registry, systemStore, staticpw.WithPasskeyRelyingParty("kms.example.com"), staticpw.WithPassphraseKDFParams(kdftest.CheapPassphraseParams))
-	require.NoError(t, err)
-
-	return registry, systemStore, manager
+	return stores, systemStore, manager
 }
 
 // passwordFixture is a real XKMSService wired with a real
-// TenantPasswordStoreManager over a real BarrierRegistry, and the REST
+// TenantPasswordStoreManager over in-memory tenant stores, and the REST
 // password routes mounted over it.
 type passwordFixture struct {
-	svc      *xkms.XKMSService
-	registry *seal.BarrierRegistry
-	manager  *staticpw.TenantPasswordStoreManager
-	router   chi.Router
+	svc     *xkms.XKMSService
+	stores  *testutil.TenantStores
+	manager *staticpw.TenantPasswordStoreManager
+	router  chi.Router
 }
 
 // newPasswordFixture builds a passwordFixture.
 func newPasswordFixture(t *testing.T) *passwordFixture {
 	t.Helper()
 
-	registry, systemStore, manager := testPasswordSetup(t)
+	stores, systemStore, manager := testPasswordSetup(t)
 
 	svc := &xkms.XKMSService{}
 	svc.SetPasswordStore(systemStore)
 	svc.SetPasswordStoreManager(manager)
 
 	return &passwordFixture{
-		svc:      svc,
-		registry: registry,
-		manager:  manager,
-		router:   passwordRouter(NewPasswordHandlers(svc)),
+		svc:     svc,
+		stores:  stores,
+		manager: manager,
+		router:  passwordRouter(NewPasswordHandlers(svc)),
 	}
 }
 
@@ -302,7 +281,7 @@ func TestUnlockHandler_OpensCallersSession(t *testing.T) {
 	assert.False(t, resp.IsLocked)
 	assert.Equal(t, "Store unlocked successfully", resp.Message)
 
-	locked, err := f.manager.IsUserLocked(tenantA, userA)
+	locked, err := f.manager.IsUserLocked(t.Context(), tenantA, userA)
 	require.NoError(t, err)
 	assert.False(t, locked)
 }
@@ -345,7 +324,7 @@ func TestUnlockHandler_RejectionsLeaveSessionLocked(t *testing.T) {
 			assert.Equal(t, tc.wantStatus, w.Code)
 			assert.Contains(t, errorMessage(t, w), tc.wantMessage)
 
-			locked, err := f.manager.IsUserLocked(tenantA, userA)
+			locked, err := f.manager.IsUserLocked(t.Context(), tenantA, userA)
 			require.NoError(t, err)
 			assert.True(t, locked)
 		})
@@ -385,7 +364,7 @@ func TestUnlockHandler_SystemTenantUserUnlocks(t *testing.T) {
 
 	f.unlock(t, admin)
 
-	locked, err := f.manager.IsUserLocked(qrdbsdk.SystemTenantID, "admin")
+	locked, err := f.manager.IsUserLocked(t.Context(), qrdbsdk.SystemTenantID, "admin")
 	require.NoError(t, err)
 	assert.False(t, locked)
 }
@@ -397,7 +376,7 @@ func TestUnlockHandler_TenantErrors(t *testing.T) {
 		t.Parallel()
 
 		f := newPasswordFixture(t)
-		require.NoError(t, f.registry.SealTenant(tenantA))
+		f.stores.Seal(tenantA)
 
 		alice := user(tenantA, userA)
 
@@ -406,14 +385,14 @@ func TestUnlockHandler_TenantErrors(t *testing.T) {
 		assert.Equal(t, http.StatusServiceUnavailable, w.Code)
 	})
 
-	t.Run("unknown tenant", func(t *testing.T) {
+	t.Run("invalid tenant", func(t *testing.T) {
 		t.Parallel()
 
 		f := newPasswordFixture(t)
 
-		w := f.do(t, user("no-such-tenant", userA), http.MethodPost, "/api/v1/password-vault/unlock", jsonBody(t, passkeyFor(user("no-such-tenant", userA))))
+		w := f.do(t, user("bad/tenant", userA), http.MethodPost, "/api/v1/password-vault/unlock", jsonBody(t, passkeyFor(user("bad/tenant", userA))))
 
-		assert.Equal(t, http.StatusNotFound, w.Code)
+		assert.Equal(t, http.StatusBadRequest, w.Code)
 	})
 
 	t.Run("no password store configured", func(t *testing.T) {
@@ -457,7 +436,7 @@ func TestLockHandler_Errors(t *testing.T) {
 	}{
 		{"already locked", user(tenantA, userA), http.StatusConflict},
 		{"no identity", nil, http.StatusNotImplemented},
-		{"unknown tenant", user("no-such-tenant", userA), http.StatusNotFound},
+		{"invalid tenant", user("bad/tenant", userA), http.StatusBadRequest},
 	}
 
 	for _, tc := range cases {
@@ -499,14 +478,14 @@ func TestStatusHandler_ReportsCallersView(t *testing.T) {
 func TestStatusHandler_Errors(t *testing.T) {
 	t.Parallel()
 
-	t.Run("unknown tenant", func(t *testing.T) {
+	t.Run("invalid tenant", func(t *testing.T) {
 		t.Parallel()
 
 		f := newPasswordFixture(t)
 
-		w := f.do(t, user("no-such-tenant", userA), http.MethodGet, "/api/v1/password-vault/session", "")
+		w := f.do(t, user("bad/tenant", userA), http.MethodGet, "/api/v1/password-vault/session", "")
 
-		assert.Equal(t, http.StatusNotFound, w.Code)
+		assert.Equal(t, http.StatusBadRequest, w.Code)
 	})
 
 	t.Run("no password store configured", func(t *testing.T) {
@@ -649,7 +628,7 @@ func TestListPasswordsHandler_SealedTenant(t *testing.T) {
 	t.Parallel()
 
 	f := newPasswordFixture(t)
-	require.NoError(t, f.registry.SealTenant(tenantA))
+	f.stores.Seal(tenantA)
 
 	w := f.do(t, user(tenantA, userA), http.MethodGet, "/api/v1/passwords/", "")
 
@@ -923,7 +902,7 @@ func TestPasswordHandlers_NoIdentityUsesSystemStore(t *testing.T) {
 func TestPasswordHandlers_StoreClosed(t *testing.T) {
 	t.Parallel()
 
-	store := staticpw.NewStore(storage.NewMemory())
+	store := newTestPasswordStore(t)
 	svc := &xkms.XKMSService{}
 	svc.SetPasswordStore(store)
 	router := passwordRouter(NewPasswordHandlers(svc))
@@ -1102,6 +1081,7 @@ func TestPasswordWriteServiceError_Mapping(t *testing.T) {
 		{staticpw.ErrInvalidFolderPath, http.StatusBadRequest},
 		{staticpw.ErrFolderPathTooDeep, http.StatusBadRequest},
 		{staticpw.ErrInvalidUserID, http.StatusBadRequest},
+		{staticpw.ErrInvalidTenantID, http.StatusBadRequest},
 		{xkms.ErrNilRequest, http.StatusBadRequest},
 		{staticpw.ErrPasswordReadOnly, http.StatusForbidden},
 		{staticpw.ErrNotOwner, http.StatusForbidden},
@@ -1109,7 +1089,6 @@ func TestPasswordWriteServiceError_Mapping(t *testing.T) {
 		{staticpw.ErrStoreClosed, http.StatusServiceUnavailable},
 		{seal.ErrTenantSealed, http.StatusServiceUnavailable},
 		{seal.ErrTenantNotFound, http.StatusNotFound},
-		{staticpw.ErrNoSystemBarrier, http.StatusServiceUnavailable},
 		{staticpw.ErrNotConfigured, http.StatusServiceUnavailable},
 		{xkms.ErrNotConfigured, http.StatusServiceUnavailable},
 	}
@@ -1150,7 +1129,7 @@ func TestPasswordWriteUnlockError_Mapping(t *testing.T) {
 		{staticpw.ErrInvalidUserID, http.StatusBadRequest},
 		{seal.ErrTenantSealed, http.StatusServiceUnavailable},
 		{seal.ErrTenantNotFound, http.StatusNotFound},
-		{staticpw.ErrNoSystemBarrier, http.StatusServiceUnavailable},
+		{staticpw.ErrInvalidTenantID, http.StatusBadRequest},
 		{xkms.ErrNilRequest, http.StatusBadRequest},
 		{xkms.ErrNotConfigured, http.StatusServiceUnavailable},
 		{xkms.ErrOperationNotSupported, http.StatusNotImplemented},

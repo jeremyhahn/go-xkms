@@ -15,26 +15,26 @@ package profile
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
-	"fmt"
 	"sort"
 	"strings"
 	"sync"
 	"time"
 
-	"github.com/jeremyhahn/go-xkms/pkg/errs"
+	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
 
-	"github.com/jeremyhahn/go-xkms/pkg/storage"
+	"github.com/jeremyhahn/go-xkms/pkg/dao"
+	"github.com/jeremyhahn/go-xkms/pkg/errs"
+	"github.com/jeremyhahn/go-xkms/pkg/ssh/records"
 )
 
 const (
-	// defaultKeyPrefix is the storage namespace for profile entries.
-	defaultKeyPrefix = "ssh/profiles/"
+	// profileEntityType is the go-qrdb entity type of a profile record.
+	profileEntityType = "ssh_profiles"
 
-	// folderMarkerSuffix sub-namespaces empty folder markers so folders
-	// survive restarts even without entries.
-	folderMarkerSuffix = "__folders__/"
+	// folderEntityType is the go-qrdb entity type of an explicit folder,
+	// which keeps a folder alive while it holds no profile.
+	folderEntityType = "ssh_profile_folders"
 )
 
 // Store is the persistence interface for SSH connection profiles. It mirrors
@@ -68,24 +68,67 @@ type Store interface {
 	Close() error
 }
 
-// BackendStore implements Store over a storage.Backend.
-type BackendStore struct {
-	mu        sync.RWMutex
-	backend   storage.Backend
-	keyPrefix string
-	closed    bool
+// record is one stored profile, keyed by its profile ID.
+type record struct {
+	ID      uint64  `json:"id"`
+	Key     string  `json:"key"`
+	Profile Profile `json:"profile"`
 }
 
-// NewStore constructs a BackendStore. Returns ErrNilBackend if backend is nil.
-func NewStore(backend storage.Backend) (*BackendStore, error) {
-	if backend == nil {
-		return nil, ErrNilBackend
+// EntityID returns the record's ID.
+func (r *record) EntityID() uint64 { return r.ID }
+
+// SetEntityID sets the record's ID.
+func (r *record) SetEntityID(id uint64) { r.ID = id }
+
+// folder is one explicit folder, keyed by its path.
+type folder struct {
+	ID   uint64 `json:"id"`
+	Path string `json:"path"`
+}
+
+// EntityID returns the folder's ID.
+func (f *folder) EntityID() uint64 { return f.ID }
+
+// SetEntityID sets the folder's ID.
+func (f *folder) SetEntityID(id uint64) { f.ID = id }
+
+// DAOStore implements Store as go-qrdb entities in the records.DatabaseName
+// database. The mutex serializes the compound operations (rename, move)
+// that span more than one record.
+type DAOStore struct {
+	mu       sync.RWMutex
+	profiles qrdbsdk.GenericDAO[*record]
+	folders  qrdbsdk.GenericDAO[*folder]
+	closed   bool
+}
+
+var _ Store = (*DAOStore)(nil)
+
+// NewStore constructs the DAOStore over the DAOs daos builds. Returns
+// ErrNilDAOFactory if daos is nil.
+func NewStore(daos *qrdbsdk.DAOFactory) (*DAOStore, error) {
+	if daos == nil {
+		return nil, ErrNilDAOFactory
 	}
-	return &BackendStore{backend: backend, keyPrefix: defaultKeyPrefix}, nil
+	profiles, err := dao.New(daos, records.DatabaseName, profileEntityType,
+		func() *record { return &record{} },
+		qrdbsdk.WithIDGenerator(qrdbsdk.NewCryptoFieldHashGenerator("Key")))
+	if err != nil {
+		return nil, &errs.Joined{Lead: ErrStorage, Detail: "open profiles", Cause: err}
+	}
+	folders, err := dao.New(daos, records.DatabaseName, folderEntityType,
+		func() *folder { return &folder{} },
+		qrdbsdk.WithIDGenerator(qrdbsdk.NewCryptoFieldHashGenerator("Path")))
+	if err != nil {
+		return nil, &errs.Joined{Lead: ErrStorage, Detail: "open folders", Cause: err}
+	}
+	return &DAOStore{profiles: profiles, folders: folders}, nil
 }
 
-// Add stores a new profile, generating its deterministic ID.
-func (s *BackendStore) Add(p *Profile) error {
+// Add persists a new profile, deriving its ID from name and folder. Returns
+// ErrExists if that folder already holds a profile of that name.
+func (s *DAOStore) Add(p *Profile) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if s.closed {
@@ -98,61 +141,37 @@ func (s *BackendStore) Add(p *Profile) error {
 	now := time.Now().UTC()
 	p.CreatedAt = now
 	p.UpdatedAt = now
-
-	key := s.storageKey(p.ID)
-	exists, err := s.backend.Exists(context.Background(), key)
-	if err != nil {
-		return &errs.Detail{Err: ErrExists, Detail: fmt.Sprintf("%v", err)}
-	}
-	if exists {
-		return ErrExists
-	}
-	data, err := json.Marshal(p)
-	if err != nil {
-		return &errs.Detail{Err: ErrMarshalFailed, Detail: fmt.Sprintf("%v", err)}
-	}
-	return s.backend.Put(context.Background(), key, data)
+	return s.create(p)
 }
 
-// Get retrieves a profile by ID or (case-insensitive) name.
-func (s *BackendStore) Get(idOrName string) (*Profile, error) {
+// Get retrieves a profile by ID, or by name when no ID matches.
+func (s *DAOStore) Get(idOrName string) (*Profile, error) {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 	if s.closed {
 		return nil, ErrStoreClosed
 	}
-	return s.getUnlocked(idOrName)
+	r, err := s.find(idOrName)
+	if err != nil {
+		return nil, err
+	}
+	return &r.Profile, nil
 }
 
-// List returns all profiles sorted by name.
-func (s *BackendStore) List() ([]*Profile, error) {
+// List returns every profile, sorted by name (case-insensitive).
+func (s *DAOStore) List() ([]*Profile, error) {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 	if s.closed {
 		return nil, ErrStoreClosed
 	}
-	return s.listUnlocked()
-}
-
-func (s *BackendStore) listUnlocked() ([]*Profile, error) {
-	keys, err := s.backend.List(context.Background(), s.keyPrefix)
+	all, err := s.all()
 	if err != nil {
-		return nil, &errs.Detail{Err: ErrNotFound, Detail: fmt.Sprintf("%v", err)}
+		return nil, err
 	}
-	out := make([]*Profile, 0, len(keys))
-	for _, key := range keys {
-		if s.isFolderMarkerKey(key) {
-			continue
-		}
-		data, getErr := s.backend.Get(context.Background(), key)
-		if getErr != nil {
-			continue
-		}
-		p, uErr := unmarshalProfile(data)
-		if uErr != nil {
-			continue
-		}
-		out = append(out, p)
+	out := make([]*Profile, 0, len(all))
+	for _, r := range all {
+		out = append(out, &r.Profile)
 	}
 	sort.Slice(out, func(i, j int) bool {
 		return strings.ToLower(out[i].Name) < strings.ToLower(out[j].Name)
@@ -160,8 +179,10 @@ func (s *BackendStore) listUnlocked() ([]*Profile, error) {
 	return out, nil
 }
 
-// Update modifies an existing profile, regenerating its ID if name/folder moved.
-func (s *BackendStore) Update(p *Profile) error {
+// Update replaces the profile p.ID names, preserving its CreatedAt. A
+// changed name or folder moves the profile to its new ID; ErrExists is
+// returned, and nothing changes, if that ID is already taken.
+func (s *DAOStore) Update(p *Profile) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if s.closed {
@@ -170,48 +191,35 @@ func (s *BackendStore) Update(p *Profile) error {
 	if err := p.Validate(); err != nil {
 		return err
 	}
-	oldKey := s.storageKey(p.ID)
-	existingData, err := s.backend.Get(context.Background(), oldKey)
-	if err != nil {
-		return ErrNotFound
-	}
-	existing, err := unmarshalProfile(existingData)
+	existing, err := s.load(p.ID)
 	if err != nil {
 		return err
 	}
-	p.CreatedAt = existing.CreatedAt
+	p.CreatedAt = existing.Profile.CreatedAt
 	p.UpdatedAt = time.Now().UTC()
-
-	newID := generateID(p.Name, p.FolderPath)
-	if newID != p.ID {
-		if delErr := s.backend.Delete(context.Background(), oldKey); delErr != nil {
-			return &errs.Detail{Err: ErrNotFound, Detail: fmt.Sprintf("%v", delErr)}
-		}
-		p.ID = newID
-	}
-	data, err := json.Marshal(p)
-	if err != nil {
-		return &errs.Detail{Err: ErrMarshalFailed, Detail: fmt.Sprintf("%v", err)}
-	}
-	return s.backend.Put(context.Background(), s.storageKey(p.ID), data)
+	return s.replace(existing, p)
 }
 
 // Delete removes a profile by ID or name.
-func (s *BackendStore) Delete(idOrName string) error {
+func (s *DAOStore) Delete(idOrName string) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if s.closed {
 		return ErrStoreClosed
 	}
-	p, err := s.getUnlocked(idOrName)
+	r, err := s.find(idOrName)
 	if err != nil {
 		return err
 	}
-	return s.backend.Delete(context.Background(), s.storageKey(p.ID))
+	if err := s.profiles.Delete(context.Background(), r); err != nil {
+		return &errs.Joined{Lead: ErrStorage, Detail: "delete " + r.Key, Cause: err}
+	}
+	return nil
 }
 
-// ListByFolder returns entries in folderPath and its subfolders.
-func (s *BackendStore) ListByFolder(folderPath string) ([]*Profile, error) {
+// ListByFolder returns the profiles in folderPath and all its subfolders;
+// an empty folderPath returns every profile.
+func (s *DAOStore) ListByFolder(folderPath string) ([]*Profile, error) {
 	all, err := s.List()
 	if err != nil {
 		return nil, err
@@ -225,8 +233,8 @@ func (s *BackendStore) ListByFolder(folderPath string) ([]*Profile, error) {
 	return out, nil
 }
 
-// ListByFolderDirect returns entries directly in folderPath (no subfolders).
-func (s *BackendStore) ListByFolderDirect(folderPath string) ([]*Profile, error) {
+// ListByFolderDirect returns the profiles directly in folderPath.
+func (s *DAOStore) ListByFolderDirect(folderPath string) ([]*Profile, error) {
 	all, err := s.List()
 	if err != nil {
 		return nil, err
@@ -240,8 +248,9 @@ func (s *BackendStore) ListByFolderDirect(folderPath string) ([]*Profile, error)
 	return out, nil
 }
 
-// ListFolders returns all unique folder paths (derived + persisted markers).
-func (s *BackendStore) ListFolders() ([]string, error) {
+// ListFolders returns every folder path, sorted: each ancestor of a
+// profile's folder plus every explicit folder.
+func (s *DAOStore) ListFolders() ([]string, error) {
 	all, err := s.List()
 	if err != nil {
 		return nil, err
@@ -256,16 +265,12 @@ func (s *BackendStore) ListFolders() ([]string, error) {
 			unique[strings.Join(parts[:i+1], "/")] = struct{}{}
 		}
 	}
-	s.mu.RLock()
-	markerPrefix := s.keyPrefix + folderMarkerSuffix
-	markerKeys, listErr := s.backend.List(context.Background(), markerPrefix)
-	s.mu.RUnlock()
-	if listErr == nil {
-		for _, key := range markerKeys {
-			if folder := strings.TrimPrefix(key, markerPrefix); folder != "" {
-				unique[folder] = struct{}{}
-			}
-		}
+	explicit, err := s.folders.Find(context.Background()).Execute()
+	if err != nil {
+		return nil, &errs.Joined{Lead: ErrStorage, Detail: "list folders", Cause: err}
+	}
+	for _, f := range explicit {
+		unique[f.Path] = struct{}{}
 	}
 	folders := make([]string, 0, len(unique))
 	for f := range unique {
@@ -275,44 +280,31 @@ func (s *BackendStore) ListFolders() ([]string, error) {
 	return folders, nil
 }
 
-// MoveToFolder moves an entry to folderPath, regenerating its ID.
-func (s *BackendStore) MoveToFolder(idOrName, folderPath string) error {
+// MoveToFolder moves a profile to folderPath, regenerating its ID. Returns
+// ErrMoveToSameFolder if it is already there, and ErrExists, changing
+// nothing, if the destination already holds a profile of that name.
+func (s *DAOStore) MoveToFolder(idOrName, folderPath string) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if s.closed {
 		return ErrStoreClosed
 	}
-	p, err := s.getUnlocked(idOrName)
+	existing, err := s.find(idOrName)
 	if err != nil {
 		return err
 	}
-	if p.FolderPath == folderPath {
+	if existing.Profile.FolderPath == folderPath {
 		return ErrMoveToSameFolder
 	}
-	oldKey := s.storageKey(p.ID)
-	if delErr := s.backend.Delete(context.Background(), oldKey); delErr != nil {
-		return &errs.Detail{Err: ErrNotFound, Detail: fmt.Sprintf("%v", delErr)}
-	}
-	p.FolderPath = folderPath
-	p.ID = generateID(p.Name, p.FolderPath)
-	p.UpdatedAt = time.Now().UTC()
-	newKey := s.storageKey(p.ID)
-	exists, err := s.backend.Exists(context.Background(), newKey)
-	if err != nil {
-		return &errs.Detail{Err: ErrExists, Detail: fmt.Sprintf("%v", err)}
-	}
-	if exists {
-		return ErrExists
-	}
-	data, err := json.Marshal(p)
-	if err != nil {
-		return &errs.Detail{Err: ErrMarshalFailed, Detail: fmt.Sprintf("%v", err)}
-	}
-	return s.backend.Put(context.Background(), newKey, data)
+	moved := existing.Profile
+	moved.FolderPath = folderPath
+	moved.UpdatedAt = time.Now().UTC()
+	return s.replace(existing, &moved)
 }
 
-// CreateFolder persists an empty folder marker.
-func (s *BackendStore) CreateFolder(path string) error {
+// CreateFolder records an explicit folder, so it survives holding no
+// profile. Creating an existing folder is a no-op.
+func (s *DAOStore) CreateFolder(path string) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if s.closed {
@@ -321,11 +313,15 @@ func (s *BackendStore) CreateFolder(path string) error {
 	if path == "" {
 		return ErrFolderEmpty
 	}
-	return s.backend.Put(context.Background(), s.keyPrefix+folderMarkerSuffix+path, []byte(`{}`))
+	if err := s.folders.Save(context.Background(), &folder{Path: path}); err != nil {
+		return &errs.Joined{Lead: ErrStorage, Detail: "create folder " + path, Cause: err}
+	}
+	return nil
 }
 
-// RemoveFolder removes a folder marker (idempotent). Does not affect entries.
-func (s *BackendStore) RemoveFolder(path string) error {
+// RemoveFolder removes an explicit folder; profiles in it are untouched.
+// Removing an absent folder is a no-op.
+func (s *DAOStore) RemoveFolder(path string) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if s.closed {
@@ -334,15 +330,22 @@ func (s *BackendStore) RemoveFolder(path string) error {
 	if path == "" {
 		return ErrFolderEmpty
 	}
-	err := s.backend.Delete(context.Background(), s.keyPrefix+folderMarkerSuffix+path)
-	if err != nil && errors.Is(err, storage.ErrNotFound) {
+	f, err := s.folders.GetByNaturalKey(context.Background(), path)
+	if qrdbsdk.IsDAONotFound(err) {
 		return nil
 	}
-	return err
+	if err != nil {
+		return &errs.Joined{Lead: ErrStorage, Detail: "get folder " + path, Cause: err}
+	}
+	if err := s.folders.Delete(context.Background(), f); err != nil {
+		return &errs.Joined{Lead: ErrStorage, Detail: "remove folder " + path, Cause: err}
+	}
+	return nil
 }
 
-// RenameFolder renames a folder and every entry and marker beneath it.
-func (s *BackendStore) RenameFolder(oldPath, newPath string) error {
+// RenameFolder renames a folder, moving every profile and explicit folder
+// beneath it.
+func (s *DAOStore) RenameFolder(oldPath, newPath string) error {
 	if oldPath == "" || newPath == "" {
 		return ErrFolderEmpty
 	}
@@ -361,7 +364,6 @@ func (s *BackendStore) RenameFolder(oldPath, newPath string) error {
 			}
 		}
 	}
-	// Migrate folder markers.
 	folders, err := s.ListFolders()
 	if err != nil {
 		return err
@@ -379,8 +381,9 @@ func (s *BackendStore) RenameFolder(oldPath, newPath string) error {
 	return nil
 }
 
-// DeleteFolder removes a folder, its markers, and all entries within it.
-func (s *BackendStore) DeleteFolder(path string) error {
+// DeleteFolder removes a folder, every explicit folder beneath it, and
+// every profile within it.
+func (s *DAOStore) DeleteFolder(path string) error {
 	if path == "" {
 		return ErrFolderEmpty
 	}
@@ -407,8 +410,9 @@ func (s *BackendStore) DeleteFolder(path string) error {
 	return nil
 }
 
-// Search returns profiles whose name/host/user/folder contains query (case-insensitive).
-func (s *BackendStore) Search(query string) ([]*Profile, error) {
+// Search returns the profiles whose name, host, user or folder contains
+// query (case-insensitive); an empty query returns every profile.
+func (s *DAOStore) Search(query string) ([]*Profile, error) {
 	all, err := s.List()
 	if err != nil {
 		return nil, err
@@ -429,70 +433,89 @@ func (s *BackendStore) Search(query string) ([]*Profile, error) {
 	return out, nil
 }
 
-// Close marks the store closed and closes the backend.
-func (s *BackendStore) Close() error {
+// Close marks the store closed; subsequent operations fail with
+// ErrStoreClosed. The DAO factory is owned by the caller.
+func (s *DAOStore) Close() error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	if s.closed {
+	s.closed = true
+	return nil
+}
+
+// create stores p under its ID, or returns ErrExists if the ID is taken.
+func (s *DAOStore) create(p *Profile) error {
+	stored, err := s.profiles.SaveIfAbsent(context.Background(), &record{Key: p.ID, Profile: *p})
+	if err != nil {
+		return &errs.Joined{Lead: ErrStorage, Detail: "create " + p.ID, Cause: err}
+	}
+	if !stored {
+		return &errs.Detail{Err: ErrExists, Detail: p.Name}
+	}
+	return nil
+}
+
+// replace stores p in place of existing. When p's name or folder moved it
+// to a new ID, the new record is created first, so a taken destination
+// leaves existing untouched.
+func (s *DAOStore) replace(existing *record, p *Profile) error {
+	p.ID = generateID(p.Name, p.FolderPath)
+	if p.ID == existing.Key {
+		if err := s.profiles.Save(context.Background(), &record{Key: p.ID, Profile: *p}); err != nil {
+			return &errs.Joined{Lead: ErrStorage, Detail: "save " + p.ID, Cause: err}
+		}
 		return nil
 	}
-	s.closed = true
-	return s.backend.Close()
-}
-
-func (s *BackendStore) isFolderMarkerKey(key string) bool {
-	return strings.Contains(key, folderMarkerSuffix)
-}
-
-func (s *BackendStore) storageKey(id string) string {
-	return s.keyPrefix + id + ".json"
-}
-
-func unmarshalProfile(data []byte) (*Profile, error) {
-	var p Profile
-	if err := json.Unmarshal(data, &p); err != nil {
-		return nil, &errs.Detail{Err: ErrUnmarshalFailed, Detail: fmt.Sprintf("%v", err)}
+	if err := s.create(p); err != nil {
+		return err
 	}
-	return &p, nil
+	if err := s.profiles.Delete(context.Background(), existing); err != nil {
+		return &errs.Joined{Lead: ErrStorage, Detail: "delete " + existing.Key, Cause: err}
+	}
+	return nil
 }
 
-// getUnlocked resolves a profile by exact ID, hashed-name ID, then name scan.
-func (s *BackendStore) getUnlocked(idOrName string) (*Profile, error) {
-	key := s.storageKey(idOrName)
-	if data, err := s.backend.Get(context.Background(), key); err == nil {
-		return unmarshalProfile(data)
+// find returns the record of a profile ID, of a root-folder profile name's
+// ID, or of the first profile with that name; ErrNotFound otherwise.
+func (s *DAOStore) find(idOrName string) (*record, error) {
+	r, err := s.load(idOrName)
+	if !errors.Is(err, ErrNotFound) {
+		return r, err
 	}
-	if hashedID := generateID(idOrName, ""); hashedID != idOrName {
-		if data, err := s.backend.Get(context.Background(), s.storageKey(hashedID)); err == nil {
-			return unmarshalProfile(data)
+	if hashed := generateID(idOrName, ""); hashed != idOrName {
+		r, err = s.load(hashed)
+		if !errors.Is(err, ErrNotFound) {
+			return r, err
 		}
 	}
-	return s.findByName(idOrName)
-}
-
-func (s *BackendStore) findByName(name string) (*Profile, error) {
-	keys, err := s.backend.List(context.Background(), s.keyPrefix)
+	all, err := s.all()
 	if err != nil {
-		return nil, ErrNotFound
+		return nil, err
 	}
-	for _, key := range keys {
-		if s.isFolderMarkerKey(key) {
-			continue
-		}
-		data, getErr := s.backend.Get(context.Background(), key)
-		if getErr != nil {
-			continue
-		}
-		p, uErr := unmarshalProfile(data)
-		if uErr != nil {
-			continue
-		}
-		if strings.EqualFold(p.Name, name) {
-			return p, nil
+	for _, r := range all {
+		if strings.EqualFold(r.Profile.Name, idOrName) {
+			return r, nil
 		}
 	}
-	return nil, ErrNotFound
+	return nil, &errs.Detail{Err: ErrNotFound, Detail: idOrName}
 }
 
-// compile-time interface assertion.
-var _ Store = (*BackendStore)(nil)
+// load returns the record of profile id, or ErrNotFound.
+func (s *DAOStore) load(id string) (*record, error) {
+	r, err := s.profiles.GetByNaturalKey(context.Background(), id)
+	if qrdbsdk.IsDAONotFound(err) {
+		return nil, &errs.Detail{Err: ErrNotFound, Detail: id}
+	}
+	if err != nil {
+		return nil, &errs.Joined{Lead: ErrStorage, Detail: "get " + id, Cause: err}
+	}
+	return r, nil
+}
+
+// all returns every profile record.
+func (s *DAOStore) all() ([]*record, error) {
+	all, err := s.profiles.Find(context.Background()).Execute()
+	if err != nil {
+		return nil, &errs.Joined{Lead: ErrStorage, Detail: "list", Cause: err}
+	}
+	return all, nil
+}

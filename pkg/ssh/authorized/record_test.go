@@ -15,31 +15,16 @@ package authorized_test
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
-	"strconv"
 	"testing"
 	"time"
 
 	"github.com/jeremyhahn/go-xkms/pkg/ssh/authorized"
 	"github.com/jeremyhahn/go-xkms/pkg/ssh/keys"
+	"github.com/jeremyhahn/go-xkms/pkg/ssh/records"
 	"github.com/jeremyhahn/go-xkms/pkg/ssh/scope"
-	"github.com/jeremyhahn/go-xkms/pkg/storage"
+	"github.com/jeremyhahn/go-xkms/pkg/testutil"
 )
-
-// newStore returns a BackendStore over a fresh in-memory backend.
-func newStore(t *testing.T) (*authorized.BackendStore, storage.Backend) {
-	t.Helper()
-	backend, err := storage.NewMemoryBackend()
-	if err != nil {
-		t.Fatalf("backend: %v", err)
-	}
-	store, err := authorized.NewBackendStore(backend)
-	if err != nil {
-		t.Fatalf("store: %v", err)
-	}
-	return store, backend
-}
 
 // TestStore_List_NamesRoundTripToGetAndRemove is the regression test for
 // the bug where List discarded the stored name: every listed Record must
@@ -47,7 +32,7 @@ func newStore(t *testing.T) (*authorized.BackendStore, storage.Backend) {
 // to Get and then Remove the entry. That is the user journey — list,
 // then act on what you listed — that the old []*Entry return broke.
 func TestStore_List_NamesRoundTripToGetAndRemove(t *testing.T) {
-	store, _ := newStore(t)
+	store := newStore(t)
 	ctx := context.Background()
 
 	names := []string{"laptop", "desktop", "phone", "backup-runner"}
@@ -131,7 +116,7 @@ func TestStore_List_NamesRoundTripToGetAndRemove(t *testing.T) {
 // select correctly, and that each Record reports the coordinates it was
 // actually stored under rather than the ones the caller asked for.
 func TestStore_List_ScopeOwnerFiltering(t *testing.T) {
-	store, _ := newStore(t)
+	store := newStore(t)
 	ctx := context.Background()
 
 	type fixture struct {
@@ -193,119 +178,41 @@ func TestStore_List_ScopeOwnerFiltering(t *testing.T) {
 	}
 }
 
-// persistedEnvelope mirrors the on-disk JSON envelope written by
-// BackendStore.Add. It is redeclared here (rather than exported from the
-// package) so the test pins the wire format independently of the
-// implementation: if the shape drifts, this test fails.
-type persistedEnvelope struct {
-	Version int       `json:"v"`
-	Scope   string    `json:"scope"`
-	Owner   string    `json:"owner"`
-	Name    string    `json:"name"`
+// plantedEnvelope is an authorized_keys record body written around the
+// store, so a test can plant a record the store itself never writes.
+type plantedEnvelope struct {
 	AddedAt time.Time `json:"added"`
 	Line    string    `json:"line"`
 }
 
-// writeEnvelope stores env at the canonical authorized-key path.
-func writeEnvelope(t *testing.T, backend storage.Backend, env persistedEnvelope) {
+// storeWithPlanted returns a DAOStore whose user-scoped record alice/name
+// holds env.
+func storeWithPlanted(t *testing.T, name string, env plantedEnvelope) *authorized.DAOStore {
 	t.Helper()
-	data, err := json.Marshal(&env)
+	daos := testutil.NewMemoryDAOFactory()
+	table, err := records.New[plantedEnvelope](daos, scope.KindAuthorizedKeys)
 	if err != nil {
-		t.Fatalf("marshal envelope: %v", err)
+		t.Fatalf("records.New: %v", err)
 	}
-	path, err := scope.KindAuthorizedKeys.RecordPath(scope.Scope(env.Scope), env.Owner, env.Name)
+	if _, err := table.Put(context.Background(), scope.User, "alice", name, env); err != nil {
+		t.Fatalf("plant record: %v", err)
+	}
+	store, err := authorized.NewDAOStore(daos)
 	if err != nil {
-		t.Fatalf("record path: %v", err)
+		t.Fatalf("store: %v", err)
 	}
-	if err := backend.Put(context.Background(), path, data); err != nil {
-		t.Fatalf("put envelope: %v", err)
-	}
+	return store
 }
 
-// TestStore_ReadsPreexistingEnvelope proves the Record change requires no
-// migration: an envelope written in the established JSON shape — not
-// through Add — still reads back with its name, scope, owner and
-// timestamp intact through both Get and List.
-func TestStore_ReadsPreexistingEnvelope(t *testing.T) {
-	store, backend := newStore(t)
-	ctx := context.Background()
-
-	k := generateKey(t, keys.AlgorithmEd25519)
-	defer k.Destroy()
-	line, err := authorized.Emit(&authorized.Entry{
-		Key:     k,
-		Options: []string{"no-port-forwarding"},
-		Comment: "legacy@host",
-	})
-	if err != nil {
-		t.Fatalf("Emit: %v", err)
-	}
-	added := time.Date(2024, 3, 1, 12, 0, 0, 0, time.UTC)
-	writeEnvelope(t, backend, persistedEnvelope{
-		Version: 1,
-		Scope:   "user",
-		Owner:   "alice",
-		Name:    "pre-existing",
-		AddedAt: added,
-		Line:    line,
-	})
-
-	got, err := store.Get(ctx, scope.User, "alice", "pre-existing")
-	if err != nil {
-		t.Fatalf("Get: %v", err)
-	}
-	if got.Name != "pre-existing" {
-		t.Fatalf("Get Name = %q, want pre-existing", got.Name)
-	}
-	if got.Scope != scope.User || got.Owner != "alice" {
-		t.Fatalf("Get coordinates = %s/%s, want user/alice", got.Scope, got.Owner)
-	}
-	if !got.AddedAt.Equal(added) {
-		t.Fatalf("Get AddedAt = %s, want %s", got.AddedAt, added)
-	}
-	if got.Entry.Key.Fingerprint != k.Fingerprint {
-		t.Fatalf("Get fingerprint mismatch")
-	}
-	if got.Entry.Comment != "legacy@host" {
-		t.Fatalf("Get Comment = %q, want legacy@host", got.Entry.Comment)
-	}
-
-	list, err := store.List(ctx, scope.User, "alice")
-	if err != nil {
-		t.Fatalf("List: %v", err)
-	}
-	if len(list) != 1 {
-		t.Fatalf("List returned %d records, want 1", len(list))
-	}
-	if list[0].Name != "pre-existing" {
-		t.Fatalf("List Name = %q, want pre-existing", list[0].Name)
-	}
-	if !list[0].AddedAt.Equal(added) {
-		t.Fatalf("List AddedAt = %s, want %s", list[0].AddedAt, added)
-	}
-
-	// The record read from pre-existing data is directly actionable.
-	if err := store.Remove(ctx, list[0].Scope, list[0].Owner, list[0].Name); err != nil {
-		t.Fatalf("Remove from listed pre-existing record: %v", err)
-	}
-}
-
-// TestStore_PreexistingEnvelope_MalformedLine is the bad-input companion:
-// a structurally valid envelope whose line is garbage must surface a
-// *MalformedLineError from both Get and List, not a partially populated
-// Record.
-func TestStore_PreexistingEnvelope_MalformedLine(t *testing.T) {
-	store, backend := newStore(t)
-	ctx := context.Background()
-
-	writeEnvelope(t, backend, persistedEnvelope{
-		Version: 1,
-		Scope:   "user",
-		Owner:   "alice",
-		Name:    "corrupt-line",
+// TestStore_StoredRecordMalformedLine is the bad-input companion: a record
+// whose line is garbage must surface a *MalformedLineError from both Get and
+// List, not a partially populated Record.
+func TestStore_StoredRecordMalformedLine(t *testing.T) {
+	store := storeWithPlanted(t, "corrupt-line", plantedEnvelope{
 		AddedAt: time.Now().UTC(),
 		Line:    "this is not an authorized_keys line",
 	})
+	ctx := context.Background()
 
 	got, err := store.Get(ctx, scope.User, "alice", "corrupt-line")
 	var malformed *authorized.MalformedLineError
@@ -329,7 +236,7 @@ func TestStore_PreexistingEnvelope_MalformedLine(t *testing.T) {
 // entry granted access — previously impossible, since it returned a bare
 // Entry.
 func TestVerify_ReturnsNamedRecord(t *testing.T) {
-	store, _ := newStore(t)
+	store := newStore(t)
 	ctx := context.Background()
 
 	decoy := generateKey(t, keys.AlgorithmEd25519)
@@ -360,92 +267,5 @@ func TestVerify_ReturnsNamedRecord(t *testing.T) {
 	}
 	if _, err := authorized.Verify(ctx, store, scope.User, "alice", match.PublicKey); err == nil {
 		t.Fatal("expected Verify to fail after the named entry was removed")
-	}
-}
-
-// TestStore_RejectsNewerEnvelopeVersion covers the format guard. Add stamps
-// every envelope with a version, but nothing read it back, so an envelope
-// written by a future binary would have been decoded as the current format and
-// silently mishandled. Reading a newer version must fail loudly instead: a
-// build that predates the bump cannot know what changed.
-func TestStore_RejectsNewerEnvelopeVersion(t *testing.T) {
-	store, backend := newStore(t)
-	ctx := context.Background()
-
-	k := generateKey(t, keys.AlgorithmEd25519)
-	defer k.Destroy()
-	line, err := authorized.Emit(&authorized.Entry{Key: k, Comment: "future@alice"})
-	if err != nil {
-		t.Fatalf("Emit: %v", err)
-	}
-
-	writeEnvelope(t, backend, persistedEnvelope{
-		Version: 99,
-		Scope:   string(scope.User),
-		Owner:   "alice",
-		Name:    "from-the-future",
-		AddedAt: time.Now().UTC(),
-		Line:    line,
-	})
-
-	var versionErr *authorized.UnsupportedVersionError
-
-	rec, err := store.Get(ctx, scope.User, "alice", "from-the-future")
-	if !errors.As(err, &versionErr) {
-		t.Fatalf("Get: want *UnsupportedVersionError, got %T: %v", err, err)
-	}
-	if rec != nil {
-		t.Fatal("Get must not return a record it could not decode")
-	}
-	if versionErr.Found != 99 {
-		t.Errorf("Found = %d, want 99", versionErr.Found)
-	}
-
-	list, err := store.List(ctx, scope.User, "alice")
-	if !errors.As(err, &versionErr) {
-		t.Fatalf("List: want *UnsupportedVersionError, got %T: %v", err, err)
-	}
-	if list != nil {
-		t.Fatal("List must not return partial results across an undecodable envelope")
-	}
-}
-
-// TestStore_ReadsEnvelopeAtOrBelowCurrentVersion is the companion guard: the
-// version check must not reject data that already exists. Version 1 is what Add
-// writes today, and 0 is what an envelope written before the field existed
-// would unmarshal to; both must still read.
-func TestStore_ReadsEnvelopeAtOrBelowCurrentVersion(t *testing.T) {
-	for _, version := range []int{0, 1} {
-		t.Run("v"+strconv.Itoa(version), func(t *testing.T) {
-			store, backend := newStore(t)
-			ctx := context.Background()
-
-			k := generateKey(t, keys.AlgorithmEd25519)
-			defer k.Destroy()
-			line, err := authorized.Emit(&authorized.Entry{Key: k, Comment: "legacy@alice"})
-			if err != nil {
-				t.Fatalf("Emit: %v", err)
-			}
-
-			writeEnvelope(t, backend, persistedEnvelope{
-				Version: version,
-				Scope:   string(scope.User),
-				Owner:   "alice",
-				Name:    "legacy",
-				AddedAt: time.Now().UTC(),
-				Line:    line,
-			})
-
-			rec, err := store.Get(ctx, scope.User, "alice", "legacy")
-			if err != nil {
-				t.Fatalf("Get: %v", err)
-			}
-			if rec.Name != "legacy" {
-				t.Errorf("Name = %q, want %q", rec.Name, "legacy")
-			}
-			if rec.Entry == nil || rec.Entry.Key == nil {
-				t.Fatal("Get returned a record with no key")
-			}
-		})
 	}
 }

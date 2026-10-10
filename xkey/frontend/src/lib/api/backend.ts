@@ -79,7 +79,7 @@ export interface GUIConfig {
   app_lock_on_screen_lock: boolean;
   setup_complete: boolean;
   api_explorer_sandbox_policy: string;
-  browser_extension_enabled: boolean;
+  local_app_access_enabled: boolean;
   fido2_require_user_presence: boolean;
   fido2_user_intent_check: boolean;
   developer_tools: boolean;

@@ -1,6 +1,6 @@
 # SSH — Architecture
 
-> **Status: NORMATIVE** · Feature: `ssh` · Module: `go-xkms/xkey` · Last verified: 2026-09-27
+> **Status: NORMATIVE** · Feature: `ssh` · Module: `go-xkms/xkey` · Last verified: 2026-10-08
 
 ## Scope
 
@@ -31,8 +31,12 @@ other; a host-key pin accepted in one has to be honored by the other.
 `xkey/pkg/sshstore.ResolveBackend(dataDir, engineKind, barrierBackend)` is
 the single construction point for the SSH key/profile/host-key-pin
 `xkmssdk.StorageBackend` both front ends build their `sdk/go/client/ssh`
-store types on top of (`NewProfileStore`, `NewHostKeyStore`,
-`NewConsoleSessionStore`, and the key store the embedded `Client` uses):
+store types on top of. The `sdk/go/client/ssh` stores persist through go-qrdb
+DAOs, so each front end wraps the resolved backend in
+`xkmssdk.NewKVStoreAdapter` and `xkmssdk.NewStoreDAOFactory` and hands that
+one DAO factory to `NewProfileStore`, `NewHostKeyStore`,
+`NewConsoleSessionStore` and `NewStores` (the key, known_hosts and
+authorized_keys stores the embedded `Client` uses):
 
 - **Barrier initialized** — `barrierBackend != nil` selects
   `xkmssdk.NewStoragePrefixBackend(barrierBackend, "ssh/")`: SSH data is

@@ -211,22 +211,46 @@ eq "minor outranks a simultaneous patch difference" "minor" "$(bump_level v0.9.4
 eq "a major difference" "major" "$(bump_level v0.9.4-alpha v1.0.0-alpha)"
 eq "major outranks minor and patch together" "major" "$(bump_level v0.9.4-alpha v1.1.1-alpha)"
 
-# --- remote_repo_path: the PR URL's path half --------------------------------
+# --- forge_repo_url: the forge the pull request is opened on -----------------
 #
-# Mirrors scripts/gitea-host.sh's own case structure over the HOST half of the
-# same URL, deliberately: the two compose into one PR URL without either
-# script guessing at the shape the other already handles.
+# Host and repository path both come from the one remote URL the release
+# branch is pushed through, in each shape the fleet's remotes use.
 
-section "remote_repo_path"
-eq "an ssh:// remote" "jeremyhahn/go-xkms" \
-	"$(remote_repo_path 'ssh://git@192.0.2.50:2222/jeremyhahn/go-xkms.git')"
-eq "an http remote" "jeremyhahn/go-xkms" \
-	"$(remote_repo_path 'http://192.0.2.50:3001/jeremyhahn/go-xkms.git')"
-eq "an scp-like remote" "jeremyhahn/go-xkms" \
-	"$(remote_repo_path 'git@192.0.2.50:jeremyhahn/go-xkms.git')"
-eq "an unrecognized shape yields nothing, not a guess" "" \
-	"$(remote_repo_path '/media/local4tb/git/go-xkms.git')"
-eq "the empty string yields nothing" "" "$(remote_repo_path '')"
+section "forge_repo_url"
+unset GITEA_HTTP_PORT
+eq "an ssh:// remote maps its SSH port to the forge's HTTP port" \
+	"http://192.0.2.50:3001/jeremyhahn/go-xkms" \
+	"$(forge_repo_url 'ssh://git@192.0.2.50:2222/jeremyhahn/go-xkms.git')"
+eq "an ssh:// remote with no user or port" "http://forge.example.com:3001/jeremyhahn/go-xkms" \
+	"$(forge_repo_url 'ssh://forge.example.com/jeremyhahn/go-xkms')"
+eq "an ssh:// remote honours GITEA_HTTP_PORT" "http://192.0.2.50:8080/jeremyhahn/go-xkms" \
+	"$(GITEA_HTTP_PORT=8080 forge_repo_url 'ssh://git@192.0.2.50:2222/jeremyhahn/go-xkms.git')"
+eq "an scp-like remote" "http://192.0.2.50:3001/jeremyhahn/go-xkms" \
+	"$(forge_repo_url 'git@192.0.2.50:jeremyhahn/go-xkms.git')"
+eq "an scp-like remote with no user" "http://forge.example.com:3001/jeremyhahn/go-xkms" \
+	"$(forge_repo_url 'forge.example.com:jeremyhahn/go-xkms.git')"
+eq "an scp-like remote with no user honours GITEA_HTTP_PORT" "http://forge.example.com:8080/jeremyhahn/go-xkms" \
+	"$(GITEA_HTTP_PORT=8080 forge_repo_url 'forge.example.com:jeremyhahn/go-xkms')"
+eq "a local path with a colon after a slash names no forge" "" \
+	"$(forge_repo_url './srv:jeremyhahn/go-xkms')"
+eq "an scp-like remote with no host names no forge" "" "$(forge_repo_url ':jeremyhahn/go-xkms')"
+eq "an http remote keeps its host and port" "http://192.0.2.50:3001/jeremyhahn/go-xkms" \
+	"$(forge_repo_url 'http://192.0.2.50:3001/jeremyhahn/go-xkms.git')"
+eq "an https remote drops its credentials" "https://forge.example.com/jeremyhahn/go-xkms" \
+	"$(forge_repo_url 'https://agent:secret@forge.example.com/jeremyhahn/go-xkms')"
+eq "a trailing slash is not part of the repository" "http://192.0.2.50:3001/jeremyhahn/go-xkms" \
+	"$(forge_repo_url 'http://192.0.2.50:3001/jeremyhahn/go-xkms/')"
+eq "a local path names no forge" "" "$(forge_repo_url '/srv/git/go-xkms.git')"
+eq "a file:// URL names no forge" "" "$(forge_repo_url 'file:///srv/git/jeremyhahn/go-xkms.git')"
+eq "a URL with no owner names no repository" "" "$(forge_repo_url 'http://192.0.2.50:3001/go-xkms.git')"
+eq "a URL nested deeper than owner/repo names no repository" "" \
+	"$(forge_repo_url 'http://192.0.2.50:3001/a/b/go-xkms')"
+eq "a URL with no host names no forge" "" "$(forge_repo_url 'ssh:///jeremyhahn/go-xkms')"
+eq "the empty string names no forge" "" "$(forge_repo_url '')"
+
+section "json_string"
+eq "plain text is quoted" '"chore(release): v0.2.0-alpha"' "$(json_string 'chore(release): v0.2.0-alpha')"
+eq "quotes and backslashes are escaped" '"a\"b\\c"' "$(json_string 'a"b\c')"
 
 # --- the declared edge set matches the repository ---------------------------
 #
@@ -297,6 +321,43 @@ section "--dry-run against a real tree (end to end)"
 
 FXROOT=$(mktemp -d)
 
+FX_SSH_URL=ssh://git@forge.example.invalid:2222/jeremyhahn/go-xkms.git
+FX_HTTP_URL=http://forge.example.invalid:3001/jeremyhahn/go-xkms.git
+FX_FORGE=http://forge.example.invalid:3001/jeremyhahn/go-xkms
+FX_API=http://forge.example.invalid:3001/api/v1/repos/jeremyhahn/go-xkms
+
+# The forge API is reached through $CURL. This fake records each request as
+# "<method> <url> <auth header>" then the request body on the next line, and
+# answers the repository read with FAKE_GET_CODE and the pull request with
+# FAKE_POST_CODE (default 200 and 201), never touching the network.
+cat >"$FXROOT/curl-fake" <<'FAKE'
+#!/usr/bin/env bash
+out="" method="" url="" auth="" data=""
+while [ $# -gt 0 ]; do
+	case $1 in
+	-o) out=$2; shift 2 ;;
+	-w) shift 2 ;;
+	-X) method=$2; shift 2 ;;
+	-H) case $2 in @*) auth=$(cat "${2#@}") ;; esac; shift 2 ;;
+	--data-binary) data=$2; shift 2 ;;
+	-*) shift ;;
+	*) url=$1; shift ;;
+	esac
+done
+printf '%s %s %s\n%s\n' "$method" "$url" "$auth" "$data" >>"$CURLLOG"
+if [ "$method" = POST ]; then
+	printf '{"number":7,"user":{"html_url":"http://forge.example.invalid:3001/agent-go-xkms"},"html_url":"http://forge.example.invalid:3001/jeremyhahn/go-xkms/pulls/7"}' >"$out"
+	printf '%s' "${FAKE_POST_CODE:-201}"
+else
+	printf '{}' >"$out"
+	printf '%s' "${FAKE_GET_CODE:-200}"
+fi
+FAKE
+chmod +x "$FXROOT/curl-fake"
+CURLLOG="$FXROOT/curl-calls"
+: >"$CURLLOG"
+export CURL="$FXROOT/curl-fake" CURLLOG FORGE_TOKEN=test-forge-token
+
 fxgit() { # fxgit <repo> <args...>
 	local r=$1
 	shift
@@ -327,9 +388,14 @@ mkbare() {
 # heading, pending entries, copies of both scripts plus exportsurface (the
 # growth gate shells out to `go build` on it) -- commits it, tags the commit
 # v0.1.0-alpha (the baseline the growth gate's tests compare against), adds a
-# bare "dev" remote and pushes main to it. Prints the bare remote's path.
+# "dev" remote and pushes main to it. Prints the bare remote's path.
+#
+# The dev remote is configured with a forge URL -- $2, default FX_SSH_URL --
+# and an insteadOf rewrite routes that URL to a bare repository beside the
+# fixture: the script derives the forge from the configured URL while every
+# fetch and push stays local.
 mkfixture() {
-	local r=$1 x=github.com/jeremyhahn/go-xkms bare
+	local r=$1 url=${2:-$FX_SSH_URL} x=github.com/jeremyhahn/go-xkms bare
 	mkdir -p "$r/scripts/exportsurface" "$r/.changelog/unreleased"
 	printf '0.1.0-alpha\n' >"$r/VERSION"
 	fxmod "$r" go.mod "$x" "$x/sdk/go" "$x/xkey"
@@ -349,7 +415,8 @@ mkfixture() {
 		-c commit.gpgsign=false commit -q -m "fixture"
 	fxgit "$r" tag v0.1.0-alpha
 	bare=$(mkbare)
-	fxgit "$r" remote add dev "$bare"
+	fxgit "$r" remote add dev "$url"
+	fxgit "$r" config "url.$bare.insteadOf" "$url"
 	fxgit "$r" push -q dev main
 	printf '%s' "$bare"
 }
@@ -420,6 +487,47 @@ true_ "the preview names the release branch, not a tag" \
 	grep -q 'push release/v0.2.0-alpha to dev' <<<"$OUT"
 false_ "the preview never mentions tagging -- that is release-tag.sh's job now" \
 	grep -q 'sdk/go/v0.2.0-alpha' <<<"$OUT"
+true_ "the preview names the pull request title and the forge the ssh remote names" \
+	grep -qF "\"chore(release): v0.2.0-alpha\" on $FX_FORGE" <<<"$OUT"
+eq "a dry run reads the repository through the forge API with the token" \
+	"GET $FX_API Authorization: token test-forge-token" "$(grep '^GET ' "$CURLLOG")"
+eq "a dry run opens no pull request" "" "$(grep '^POST ' "$CURLLOG")"
+
+# Error handling: a release that could not open its pull request is refused
+# before anything is fetched or written, in a dry run and a real cut alike.
+section "the forge preconditions"
+
+FXFORGE="$FXROOT/forge"
+mkfixture "$FXFORGE" >/dev/null
+fxgit "$FXFORGE" config user.name test
+fxgit "$FXFORGE" config user.email test@example.invalid
+fxgit "$FXFORGE" config commit.gpgsign false
+
+OUT=$(FORGE_TOKEN= fxrelease "$FXFORGE" --version 0.2.0-alpha --dry-run)
+RC=$?
+eq "a missing FORGE_TOKEN is refused" "1" "$RC"
+true_ "the refusal names FORGE_TOKEN" grep -q 'FORGE_TOKEN is not set' <<<"$OUT"
+
+fxgit "$FXFORGE" remote add local /srv/git/go-xkms.git
+OUT=$(fxrelease "$FXFORGE" --version 0.2.0-alpha --remote local --dry-run)
+RC=$?
+eq "a remote that names no forge is refused" "1" "$RC"
+true_ "the refusal names the remote and its URL" \
+	grep -qF "remote 'local' (/srv/git/go-xkms.git) names no forge repository" <<<"$OUT"
+
+OUT=$(fxrelease "$FXFORGE" --version 0.2.0-alpha --remote nosuch --dry-run)
+RC=$?
+eq "an unknown remote is refused" "1" "$RC"
+true_ "the refusal names the remote" grep -q "no git remote named 'nosuch'" <<<"$OUT"
+
+OUT=$(FAKE_GET_CODE=401 fxrelease "$FXFORGE" --version 0.2.0-alpha --bump minor)
+RC=$?
+eq "a token the forge rejects refuses a real cut" "1" "$RC"
+true_ "the refusal names the forge and the HTTP status" \
+	grep -qF "cannot read $FX_FORGE through the forge API (HTTP 401)" <<<"$OUT"
+eq "a refused real cut created no release branch" "" "$(fxgit "$FXFORGE" branch --list 'release/*')"
+false_ "a refused real cut pushed nothing" \
+	fxgit "$FXFORGE" ls-remote --exit-code --heads dev release/v0.2.0-alpha
 
 # Error handling: a malformed entry name must fail the rehearsal, and must
 # fail it without having consumed anything either. The bad entry is pushed to
@@ -512,12 +620,13 @@ eq "an explicit --bump patch is refused exactly like an implied one" "1" "$RC"
 section "a real cut prepares a pull request branch, and stops"
 
 FXREAL="$FXROOT/real"
-BARE=$(mkfixture "$FXREAL")
+BARE=$(mkfixture "$FXREAL" "$FX_HTTP_URL")
 fxgit "$FXREAL" config user.name test
 fxgit "$FXREAL" config user.email test@example.invalid
 fxgit "$FXREAL" config commit.gpgsign false
 STARTHEAD=$(fxgit "$FXREAL" rev-parse HEAD)
 
+: >"$CURLLOG"
 OUT=$(fxrelease "$FXREAL" --version 0.2.0-alpha --bump minor)
 RC=$?
 
@@ -542,8 +651,13 @@ true_ "the entries README survived" test -f "$FXREAL/.changelog/unreleased/READM
 true_ "the pins moved" grep -q 'go-xkms/sdk/go v0.2.0-alpha' "$FXREAL/go.mod"
 eq "the commit message is the release commit" "chore(release): v0.2.0-alpha" \
 	"$(fxgit "$FXREAL" log -1 --format=%s)"
-true_ "the run names the pull request URL or says it could not" \
-	grep -qE 'open a pull request|could not determine the repository URL' <<<"$OUT"
+eq "the pull request is opened on the forge the http remote names, with the token" \
+	"POST $FX_API/pulls Authorization: token test-forge-token" "$(grep '^POST ' "$CURLLOG")"
+eq "the pull request is titled exactly as the release commit, from the release branch into main" \
+	'{"title":"chore(release): v0.2.0-alpha","head":"release/v0.2.0-alpha","base":"main",' \
+	"$(grep -A1 '^POST ' "$CURLLOG" | tail -n 1 | grep -oE '^\{"title":[^,]*,"head":[^,]*,"base":[^,]*,')"
+true_ "the run prints the opened pull request's URL" \
+	grep -qF "opened pull request \"chore(release): v0.2.0-alpha\": http://forge.example.invalid:3001/jeremyhahn/go-xkms/pulls/7" <<<"$OUT"
 true_ "the run names release-tag as the next step" \
 	grep -q 'make release-tag VERSION=0.2.0-alpha' <<<"$OUT"
 
@@ -554,6 +668,19 @@ RC2=$?
 eq "preparing an already-prepared version is refused" "1" "$RC2"
 true_ "the refusal names the existing local branch" \
 	grep -q "local branch 'release/v0.2.0-alpha' already exists" <<<"$OUT2"
+
+# Error handling: the forge refusing the pull request (here 409, one already
+# open) fails the run, after the push, with the way to open it by hand.
+FXPRFAIL="$FXROOT/prfail"
+mkfixture "$FXPRFAIL" >/dev/null
+fxgit "$FXPRFAIL" config user.name test
+fxgit "$FXPRFAIL" config user.email test@example.invalid
+fxgit "$FXPRFAIL" config commit.gpgsign false
+OUT=$(FAKE_POST_CODE=409 fxrelease "$FXPRFAIL" --version 0.2.0-alpha --bump minor)
+RC=$?
+eq "a refused pull request fails the run" "1" "$RC"
+true_ "the failure gives the status, the title and the compare URL" \
+	grep -qF "(HTTP 409) although release/v0.2.0-alpha is pushed. Open it by hand, titled 'chore(release): v0.2.0-alpha': $FX_FORGE/compare/main...release/v0.2.0-alpha" <<<"$OUT"
 
 rm -rf "$FXROOT"
 

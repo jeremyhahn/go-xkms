@@ -233,6 +233,81 @@ func TestAutoConfig_DefaultValues(t *testing.T) {
 	assert.Nil(t, config.BackendConfigs)
 }
 
+// TestAutoInitialize_UnregisteredBackendConfigFailsClosed proves a
+// BackendConfigs entry for a backend no build option registers (avr has no
+// factory) fails AutoInitialize instead of being skipped, and leaves the
+// service uninitialized.
+func TestAutoInitialize_UnregisteredBackendConfigFailsClosed(t *testing.T) {
+	t.Cleanup(func() { Reset() })
+
+	err := AutoInitialize(&AutoConfig{
+		BackendConfigs: map[BackendType]map[string]interface{}{
+			BackendSoftware: {},
+			BackendAVR:      {},
+		},
+	})
+	require.ErrorIs(t, err, ErrFeatureNotCompiled)
+
+	var featureErr *FeatureNotCompiledError
+	require.True(t, errors.As(err, &featureErr))
+	assert.Equal(t, string(BackendAVR), featureErr.Feature)
+	assert.Empty(t, featureErr.Toggle)
+	assert.False(t, IsInitialized())
+}
+
+// TestAutoInitialize_UnknownBackendConfigFailsClosed proves a misspelled
+// BackendConfigs key is reported, not silently ignored.
+func TestAutoInitialize_UnknownBackendConfigFailsClosed(t *testing.T) {
+	t.Cleanup(func() { Reset() })
+
+	err := AutoInitialize(&AutoConfig{
+		BackendConfigs: map[BackendType]map[string]interface{}{
+			BackendType("softwre"): {},
+		},
+	})
+	require.ErrorIs(t, err, ErrFeatureNotCompiled)
+	assert.False(t, IsInitialized())
+}
+
+// TestAutoInitialize_UnregisteredDefaultBackendFailsClosed proves a
+// DefaultBackend naming a known backend that is not compiled in fails
+// closed rather than falling back to software.
+func TestAutoInitialize_UnregisteredDefaultBackendFailsClosed(t *testing.T) {
+	t.Cleanup(func() { Reset() })
+
+	err := AutoInitialize(&AutoConfig{DefaultBackend: string(BackendAVR)})
+	require.ErrorIs(t, err, ErrFeatureNotCompiled)
+	assert.False(t, IsInitialized())
+}
+
+func TestRequireBackend(t *testing.T) {
+	factory, err := RequireBackend(BackendSoftware)
+	require.NoError(t, err)
+	assert.NotNil(t, factory)
+
+	factory, err = RequireBackend(BackendType("nonexistent-backend"))
+	require.ErrorIs(t, err, ErrFeatureNotCompiled)
+	assert.Nil(t, factory)
+	assert.Equal(t, `xkms: backend "nonexistent-backend" is not compiled into this binary`, err.Error())
+}
+
+func TestFeatureNotCompiledError_NamesToggle(t *testing.T) {
+	err := &FeatureNotCompiledError{Feature: "vault", Toggle: "WITH_VAULT", Tag: "vault"}
+
+	assert.Equal(t,
+		`xkms: backend "vault" is not compiled into this binary; build with WITH_VAULT=1 (build tag "vault")`,
+		err.Error())
+	assert.ErrorIs(t, err, ErrFeatureNotCompiled)
+}
+
+func TestBackendStorageError(t *testing.T) {
+	err := &BackendStorageError{Backend: "tpm2", Err: storage.ErrEmptyPrefix}
+
+	assert.ErrorIs(t, err, ErrBackendStorageUnresolved)
+	assert.ErrorIs(t, err, storage.ErrEmptyPrefix)
+	assert.Contains(t, err.Error(), `backend "tpm2"`)
+}
+
 func TestResolveDefaultBackend_PrefersSoftware(t *testing.T) {
 	backends := map[string]Backend{
 		string(BackendSoftware):  newMockKeyStore(string(BackendSoftware)),

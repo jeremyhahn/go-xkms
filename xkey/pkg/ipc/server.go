@@ -27,6 +27,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/jeremyhahn/go-xkms/sdk/go/transport"
 	"github.com/jeremyhahn/go-xkms/xkey/pkg/audit"
 )
 
@@ -50,11 +51,31 @@ type Handler interface {
 
 // PKCS11Handler processes PKCS#11 IPC requests. Implementations provide
 // access to barrier-protected keys and certificates via the running xkey
-// GUI instance.
+// GUI instance. There is one method per xkms.PKCS11Transport operation,
+// taking and returning that operation's SDK transport types, plus the
+// barrier status probe.
 type PKCS11Handler interface {
-	HandlePKCS11Sign(params *SignParams) (*SignResult, error)
-	HandlePKCS11GetPIVCertificate(params *PIVCertParams) (*PIVCertResult, error)
-	HandlePKCS11ListPIVSlots(params *PIVSlotsParams) (*PIVSlotsResult, error)
+	HandlePKCS11GenerateKey(ctx context.Context, req *transport.GenerateKeyRequest) (*transport.GenerateKeyResponse, error)
+	HandlePKCS11Sign(ctx context.Context, req *transport.SignRequest) (*transport.SignResponse, error)
+	HandlePKCS11Verify(ctx context.Context, req *transport.VerifyRequest) (*transport.VerifyResponse, error)
+	HandlePKCS11Encrypt(ctx context.Context, req *transport.EncryptRequest) (*transport.EncryptResponse, error)
+	HandlePKCS11EncryptAsym(ctx context.Context, req *transport.EncryptAsymRequest) (*transport.EncryptAsymResponse, error)
+	HandlePKCS11Decrypt(ctx context.Context, req *transport.DecryptRequest) (*transport.DecryptResponse, error)
+	HandlePKCS11DeriveKey(ctx context.Context, req *transport.DeriveKeyRequest) (*transport.DeriveKeyResponse, error)
+	HandlePKCS11DeriveKeyECDH(ctx context.Context, req *transport.DeriveKeyECDHRequest) (*transport.DeriveKeyECDHResponse, error)
+	HandlePKCS11WrapKeyByID(ctx context.Context, req *transport.WrapKeyByIDRequest) (*transport.WrapKeyByIDResponse, error)
+	HandlePKCS11UnwrapKeyByID(ctx context.Context, req *transport.UnwrapKeyByIDRequest) (*transport.UnwrapKeyByIDResponse, error)
+	HandlePKCS11ExportKeyMaterial(ctx context.Context, req *transport.ExportKeyMaterialRequest) (*transport.ExportKeyMaterialResponse, error)
+	HandlePKCS11GetImportParameters(ctx context.Context, req *transport.GetImportParametersRequest) (*transport.GetImportParametersResponse, error)
+	HandlePKCS11ImportKey(ctx context.Context, req *transport.ImportKeyRequest) (*transport.ImportKeyResponse, error)
+	HandlePKCS11ListPIVSlots(ctx context.Context, req *transport.ListPIVSlotsRequest) (*transport.ListPIVSlotsResponse, error)
+	HandlePKCS11GetPIVCertificate(ctx context.Context, req *transport.GetPIVCertificateRequest) (*transport.GetPIVCertificateResponse, error)
+	HandlePKCS11GeneratePIVKey(ctx context.Context, req *transport.GeneratePIVKeyRequest) (*transport.GeneratePIVKeyResponse, error)
+	HandlePKCS11StorePIVCertificate(ctx context.Context, req *transport.StorePIVCertificateRequest) error
+	HandlePKCS11DeletePIVCertificate(ctx context.Context, req *transport.DeletePIVCertificateRequest) error
+	HandlePKCS11ImportPIVCertificate(ctx context.Context, req *transport.StorePIVCertificateRequest) error
+	HandlePKCS11ExportPIVCertificate(ctx context.Context, req *transport.GetPIVCertificateRequest) (*transport.GetPIVCertificateResponse, error)
+	HandlePKCS11GeneratePIVCSR(ctx context.Context, req *transport.GeneratePIVCSRRequest) (*transport.GeneratePIVCSRResponse, error)
 	HandlePKCS11BarrierStatus() (*BarrierStatusResult, error)
 }
 
@@ -110,21 +131,22 @@ type UnlockHandler interface {
 	HandleUnlock(pin string) (*UnlockResult, error)
 }
 
-// dispatchFunc is the function signature for message dispatch handlers.
-type dispatchFunc func(Handler, *Message) (*Response, error)
+// dispatchFunc is the function signature for message dispatch handlers. ctx
+// is the request's context (see Server.requestContext).
+type dispatchFunc func(context.Context, Handler, *Message) (*Response, error)
 
 // handlers maps message types to their dispatch functions for O(1) lookup.
 var handlers = map[string]dispatchFunc{
-	MessageTypeTouch: func(h Handler, _ *Message) (*Response, error) {
+	MessageTypeTouch: func(_ context.Context, h Handler, _ *Message) (*Response, error) {
 		return h.HandleTouch()
 	},
-	MessageTypeTypePassword: func(h Handler, m *Message) (*Response, error) {
+	MessageTypeTypePassword: func(_ context.Context, h Handler, m *Message) (*Response, error) {
 		return h.HandleTypePassword(m.Name)
 	},
-	MessageTypeStatus: func(h Handler, _ *Message) (*Response, error) {
+	MessageTypeStatus: func(_ context.Context, h Handler, _ *Message) (*Response, error) {
 		return h.HandleStatus()
 	},
-	MessageTypePKCS11: func(h Handler, m *Message) (*Response, error) {
+	MessageTypePKCS11: func(ctx context.Context, h Handler, m *Message) (*Response, error) {
 		pkcs11Handler, ok := h.(PKCS11Handler)
 		if !ok {
 			return nil, &DetailError{Err: ErrHandlerFailed, Detail: ": handler does not implement PKCS11Handler"}
@@ -135,9 +157,9 @@ var handlers = map[string]dispatchFunc{
 		if err := m.PKCS11.Validate(); err != nil {
 			return nil, err
 		}
-		return dispatchPKCS11(pkcs11Handler, m.PKCS11)
+		return dispatchPKCS11(ctx, pkcs11Handler, m.PKCS11)
 	},
-	MessageTypeAutofill: func(h Handler, m *Message) (*Response, error) {
+	MessageTypeAutofill: func(_ context.Context, h Handler, m *Message) (*Response, error) {
 		afHandler, ok := h.(AutofillHandler)
 		if !ok {
 			return nil, &DetailError{Err: ErrHandlerFailed, Detail: ": handler does not implement AutofillHandler"}
@@ -150,7 +172,7 @@ var handlers = map[string]dispatchFunc{
 		}
 		return dispatchAutofill(afHandler, m.Autofill)
 	},
-	MessageTypePairing: func(h Handler, m *Message) (*Response, error) {
+	MessageTypePairing: func(_ context.Context, h Handler, m *Message) (*Response, error) {
 		pairingHandler, ok := h.(PairingHandler)
 		if !ok {
 			return nil, &DetailError{Err: ErrHandlerFailed, Detail: ": handler does not implement PairingHandler"}
@@ -163,7 +185,7 @@ var handlers = map[string]dispatchFunc{
 		}
 		return dispatchPairing(pairingHandler, m.Pairing)
 	},
-	MessageTypeState: func(h Handler, m *Message) (*Response, error) {
+	MessageTypeState: func(_ context.Context, h Handler, m *Message) (*Response, error) {
 		stateHandler, ok := h.(StateHandler)
 		if !ok {
 			// Not an error the caller should abort on: the daemon is alive,
@@ -183,7 +205,7 @@ var handlers = map[string]dispatchFunc{
 		}
 		return dispatchState(stateHandler, m.State)
 	},
-	MessageTypeVault: func(h Handler, m *Message) (*Response, error) {
+	MessageTypeVault: func(_ context.Context, h Handler, m *Message) (*Response, error) {
 		vaultHandler, ok := h.(VaultHandler)
 		if !ok {
 			return &Response{Status: StatusError, Action: ActionUnsupported, Error: ErrVaultUnsupported.Error()}, nil
@@ -203,7 +225,7 @@ var handlers = map[string]dispatchFunc{
 		}
 		return &Response{Status: StatusOK, Vault: result}, nil
 	},
-	MessageTypeUnlock: func(h Handler, m *Message) (*Response, error) {
+	MessageTypeUnlock: func(_ context.Context, h Handler, m *Message) (*Response, error) {
 		unlockHandler, ok := h.(UnlockHandler)
 		if !ok {
 			return nil, &DetailError{Err: ErrHandlerFailed, Detail: ": handler does not implement UnlockHandler"}
@@ -299,53 +321,120 @@ func stateOKResponse(result *StateResult) *Response {
 	}
 }
 
-// pkcs11DispatchFunc is the function signature for PKCS#11 action dispatch handlers.
-type pkcs11DispatchFunc func(PKCS11Handler, *PKCS11Payload) (*Response, error)
+// pkcs11DispatchFunc is the function signature for PKCS#11 action dispatch
+// handlers. ctx is the request's context (see Server.requestContext).
+type pkcs11DispatchFunc func(context.Context, PKCS11Handler, *PKCS11Payload) (*Response, error)
 
 // pkcs11Handlers maps PKCS#11 actions to their dispatch functions for O(1) lookup.
 var pkcs11Handlers = map[string]pkcs11DispatchFunc{
-	ActionSign: func(h PKCS11Handler, p *PKCS11Payload) (*Response, error) {
-		result, err := h.HandlePKCS11Sign(p.Sign)
-		if err != nil {
-			return nil, err
-		}
-		return pkcs11OKResponse(&PKCS11Result{Sign: result}), nil
+	ActionGenerateKey: func(ctx context.Context, h PKCS11Handler, p *PKCS11Payload) (*Response, error) {
+		result, err := h.HandlePKCS11GenerateKey(ctx, p.GenerateKey)
+		return pkcs11Reply(err, &PKCS11Result{GenerateKey: result})
 	},
-	ActionGetPIVCertificate: func(h PKCS11Handler, p *PKCS11Payload) (*Response, error) {
-		result, err := h.HandlePKCS11GetPIVCertificate(p.PIVCert)
-		if err != nil {
-			return nil, err
-		}
-		return pkcs11OKResponse(&PKCS11Result{PIVCert: result}), nil
+	ActionSign: func(ctx context.Context, h PKCS11Handler, p *PKCS11Payload) (*Response, error) {
+		result, err := h.HandlePKCS11Sign(ctx, p.Sign)
+		return pkcs11Reply(err, &PKCS11Result{Sign: result})
 	},
-	ActionListPIVSlots: func(h PKCS11Handler, p *PKCS11Payload) (*Response, error) {
-		params := p.PIVSlots
-		if params == nil {
-			params = &PIVSlotsParams{}
-		}
-		result, err := h.HandlePKCS11ListPIVSlots(params)
-		if err != nil {
-			return nil, err
-		}
-		return pkcs11OKResponse(&PKCS11Result{PIVSlots: result}), nil
+	ActionVerify: func(ctx context.Context, h PKCS11Handler, p *PKCS11Payload) (*Response, error) {
+		result, err := h.HandlePKCS11Verify(ctx, p.Verify)
+		return pkcs11Reply(err, &PKCS11Result{Verify: result})
 	},
-	ActionBarrierStatus: func(h PKCS11Handler, _ *PKCS11Payload) (*Response, error) {
+	ActionEncrypt: func(ctx context.Context, h PKCS11Handler, p *PKCS11Payload) (*Response, error) {
+		result, err := h.HandlePKCS11Encrypt(ctx, p.Encrypt)
+		return pkcs11Reply(err, &PKCS11Result{Encrypt: result})
+	},
+	ActionEncryptAsym: func(ctx context.Context, h PKCS11Handler, p *PKCS11Payload) (*Response, error) {
+		result, err := h.HandlePKCS11EncryptAsym(ctx, p.EncryptAsym)
+		return pkcs11Reply(err, &PKCS11Result{EncryptAsym: result})
+	},
+	ActionDecrypt: func(ctx context.Context, h PKCS11Handler, p *PKCS11Payload) (*Response, error) {
+		result, err := h.HandlePKCS11Decrypt(ctx, p.Decrypt)
+		return pkcs11Reply(err, &PKCS11Result{Decrypt: result})
+	},
+	ActionDeriveKey: func(ctx context.Context, h PKCS11Handler, p *PKCS11Payload) (*Response, error) {
+		result, err := h.HandlePKCS11DeriveKey(ctx, p.DeriveKey)
+		return pkcs11Reply(err, &PKCS11Result{DeriveKey: result})
+	},
+	ActionDeriveKeyECDH: func(ctx context.Context, h PKCS11Handler, p *PKCS11Payload) (*Response, error) {
+		result, err := h.HandlePKCS11DeriveKeyECDH(ctx, p.DeriveKeyECDH)
+		return pkcs11Reply(err, &PKCS11Result{DeriveKeyECDH: result})
+	},
+	ActionWrapKeyByID: func(ctx context.Context, h PKCS11Handler, p *PKCS11Payload) (*Response, error) {
+		result, err := h.HandlePKCS11WrapKeyByID(ctx, p.WrapKeyByID)
+		return pkcs11Reply(err, &PKCS11Result{WrapKeyByID: result})
+	},
+	ActionUnwrapKeyByID: func(ctx context.Context, h PKCS11Handler, p *PKCS11Payload) (*Response, error) {
+		result, err := h.HandlePKCS11UnwrapKeyByID(ctx, p.UnwrapKeyByID)
+		return pkcs11Reply(err, &PKCS11Result{UnwrapKeyByID: result})
+	},
+	ActionExportKeyMaterial: func(ctx context.Context, h PKCS11Handler, p *PKCS11Payload) (*Response, error) {
+		result, err := h.HandlePKCS11ExportKeyMaterial(ctx, p.ExportKeyMaterial)
+		return pkcs11Reply(err, &PKCS11Result{ExportKeyMaterial: result})
+	},
+	ActionGetImportParameters: func(ctx context.Context, h PKCS11Handler, p *PKCS11Payload) (*Response, error) {
+		result, err := h.HandlePKCS11GetImportParameters(ctx, p.GetImportParameters)
+		return pkcs11Reply(err, &PKCS11Result{GetImportParameters: result})
+	},
+	ActionImportKey: func(ctx context.Context, h PKCS11Handler, p *PKCS11Payload) (*Response, error) {
+		result, err := h.HandlePKCS11ImportKey(ctx, p.ImportKey)
+		return pkcs11Reply(err, &PKCS11Result{ImportKey: result})
+	},
+	ActionListPIVSlots: func(ctx context.Context, h PKCS11Handler, p *PKCS11Payload) (*Response, error) {
+		req := p.ListPIVSlots
+		if req == nil {
+			req = &transport.ListPIVSlotsRequest{}
+		}
+		result, err := h.HandlePKCS11ListPIVSlots(ctx, req)
+		return pkcs11Reply(err, &PKCS11Result{ListPIVSlots: result})
+	},
+	ActionGetPIVCertificate: func(ctx context.Context, h PKCS11Handler, p *PKCS11Payload) (*Response, error) {
+		result, err := h.HandlePKCS11GetPIVCertificate(ctx, p.GetPIVCertificate)
+		return pkcs11Reply(err, &PKCS11Result{GetPIVCertificate: result})
+	},
+	ActionGeneratePIVKey: func(ctx context.Context, h PKCS11Handler, p *PKCS11Payload) (*Response, error) {
+		result, err := h.HandlePKCS11GeneratePIVKey(ctx, p.GeneratePIVKey)
+		return pkcs11Reply(err, &PKCS11Result{GeneratePIVKey: result})
+	},
+	ActionStorePIVCertificate: func(ctx context.Context, h PKCS11Handler, p *PKCS11Payload) (*Response, error) {
+		return pkcs11Reply(h.HandlePKCS11StorePIVCertificate(ctx, p.StorePIVCertificate), &PKCS11Result{})
+	},
+	ActionDeletePIVCertificate: func(ctx context.Context, h PKCS11Handler, p *PKCS11Payload) (*Response, error) {
+		return pkcs11Reply(h.HandlePKCS11DeletePIVCertificate(ctx, p.DeletePIVCertificate), &PKCS11Result{})
+	},
+	ActionImportPIVCertificate: func(ctx context.Context, h PKCS11Handler, p *PKCS11Payload) (*Response, error) {
+		return pkcs11Reply(h.HandlePKCS11ImportPIVCertificate(ctx, p.ImportPIVCertificate), &PKCS11Result{})
+	},
+	ActionExportPIVCertificate: func(ctx context.Context, h PKCS11Handler, p *PKCS11Payload) (*Response, error) {
+		result, err := h.HandlePKCS11ExportPIVCertificate(ctx, p.ExportPIVCertificate)
+		return pkcs11Reply(err, &PKCS11Result{ExportPIVCertificate: result})
+	},
+	ActionGeneratePIVCSR: func(ctx context.Context, h PKCS11Handler, p *PKCS11Payload) (*Response, error) {
+		result, err := h.HandlePKCS11GeneratePIVCSR(ctx, p.GeneratePIVCSR)
+		return pkcs11Reply(err, &PKCS11Result{GeneratePIVCSR: result})
+	},
+	ActionBarrierStatus: func(_ context.Context, h PKCS11Handler, _ *PKCS11Payload) (*Response, error) {
 		result, err := h.HandlePKCS11BarrierStatus()
-		if err != nil {
-			return nil, err
-		}
-		return pkcs11OKResponse(&PKCS11Result{BarrierStatus: result}), nil
+		return pkcs11Reply(err, &PKCS11Result{BarrierStatus: result})
 	},
+}
+
+// pkcs11Reply turns a PKCS#11 handler's outcome into a dispatch result: the
+// handler's error as is, or a success response carrying result.
+func pkcs11Reply(err error, result *PKCS11Result) (*Response, error) {
+	if err != nil {
+		return nil, err
+	}
+	return pkcs11OKResponse(result), nil
 }
 
 // dispatchPKCS11 routes a PKCS#11 payload to the appropriate handler using
 // map-based O(1) dispatch.
-func dispatchPKCS11(h PKCS11Handler, p *PKCS11Payload) (*Response, error) {
+func dispatchPKCS11(ctx context.Context, h PKCS11Handler, p *PKCS11Payload) (*Response, error) {
 	fn, ok := pkcs11Handlers[p.Action]
 	if !ok {
 		return nil, &DetailError{Err: ErrInvalidMessage, Detail: fmt.Sprintf(": unknown pkcs11 action %q", p.Action)}
 	}
-	return fn(h, p)
+	return fn(ctx, h, p)
 }
 
 // pkcs11OKResponse creates a success response with the given PKCS#11 result.
@@ -636,7 +725,7 @@ func (s *Server) Serve(ctx context.Context) error {
 
 		go func() {
 			defer s.wg.Done()
-			s.handleConnection(conn)
+			s.handleConnection(ctx, conn)
 		}()
 	}
 }
@@ -651,9 +740,12 @@ func (s *Server) IsRunning() bool {
 	return !s.closed.Load()
 }
 
-// Close shuts down the server by closing the listener and waiting for all
-// in-flight connections to finish. It removes the socket file on shutdown.
-func (s *Server) Close() error {
+// Stop closes the listener and removes the socket file without waiting for
+// in-flight connections. A caller that must not block on a running handler
+// (for example a lock transition that a handler is itself waiting on) stops
+// the server with Stop and leaves the drain to Close. After Stop returns the
+// socket path is free, so a new Server may bind it immediately.
+func (s *Server) Stop() error {
 	if !s.closed.CompareAndSwap(false, true) {
 		return nil
 	}
@@ -669,8 +761,6 @@ func (s *Server) Close() error {
 	s.shutdownMu.Lock()
 	s.shutdownMu.Unlock() //nolint:staticcheck,gocritic // SA2001/badLock: intentional empty critical section used as a happens-before barrier, see comment above
 
-	s.wg.Wait()
-
 	// Best-effort removal of the socket file; fold any failure into the
 	// returned error rather than dropping it.
 	if removeErr := os.Remove(s.socketPath); removeErr != nil && !errors.Is(removeErr, os.ErrNotExist) {
@@ -680,10 +770,24 @@ func (s *Server) Close() error {
 	return err
 }
 
+// Close stops the server (see Stop) and waits for all in-flight connections
+// to finish.
+func (s *Server) Close() error {
+	err := s.Stop()
+
+	// Pass the shutdownMu barrier even when an earlier Stop already closed
+	// the server: this Close must observe every wg.Add before it Waits.
+	s.shutdownMu.Lock()
+	s.shutdownMu.Unlock() //nolint:staticcheck,gocritic // SA2001/badLock: happens-before barrier, see Stop
+
+	s.wg.Wait()
+	return err
+}
+
 // handleConnection processes a single client connection: verifies the
 // client's uid, reads one JSON message, dispatches to the appropriate
-// handler, and writes the JSON response.
-func (s *Server) handleConnection(conn net.Conn) {
+// handler under the request's context, and writes the JSON response.
+func (s *Server) handleConnection(ctx context.Context, conn net.Conn) {
 	defer func() {
 		if err := conn.Close(); err != nil {
 			s.logger.Error("close connection failed", "error", err)
@@ -734,7 +838,15 @@ func (s *Server) handleConnection(conn net.Conn) {
 		return
 	}
 
-	resp, err := fn(s.handler, &msg)
+	reqCtx, stopWatching, err := s.requestContext(ctx, conn)
+	if err != nil {
+		s.logger.Error("watch connection failed", "error", err)
+		auditLogFailure(s.logIPCEvent(audit.OpIPCMessageFailed, false, err, map[string]any{"message_type": msg.Type}))
+		s.writeResponse(conn, ErrorResponse(ErrHandlerFailed.Error()))
+		return
+	}
+	resp, err := fn(reqCtx, s.handler, &msg)
+	stopWatching()
 	if err != nil {
 		s.logger.Error("handler failed", "type", msg.Type, "error", err)
 		auditLogFailure(s.logIPCEvent(audit.OpIPCMessageFailed, false, err, map[string]any{"message_type": msg.Type}))
@@ -744,6 +856,54 @@ func (s *Server) handleConnection(conn net.Conn) {
 
 	auditLogFailure(s.logIPCEvent(audit.OpIPCMessageDispatched, true, nil, map[string]any{"message_type": msg.Type}))
 	s.writeResponse(conn, resp)
+}
+
+// requestContext returns the context a request read from conn runs under. It
+// ends when ctx does (the server is shutting down) or when the client closes
+// the connection: a client sends one message and then only waits for the
+// response, so closing the connection is how it abandons a request, and a
+// handler still running for it should stop rather than finish work, such as
+// a key generation, whose result nobody will receive.
+//
+// The connection's read deadline, which bounded reading the request, is
+// cleared so the watch lasts as long as the handler runs. stop ends the
+// watch and must be called before the response is written.
+func (s *Server) requestContext(ctx context.Context, conn net.Conn) (reqCtx context.Context, stop func(), err error) {
+	if err := conn.SetReadDeadline(time.Time{}); err != nil {
+		return nil, nil, err
+	}
+
+	reqCtx, cancel := context.WithCancel(ctx)
+	watched := make(chan struct{})
+	go func() {
+		defer close(watched)
+		var discard [64]byte
+		for {
+			// Anything a client sends after its message is not part of the
+			// protocol and is dropped; only the end of the stream matters.
+			if _, readErr := conn.Read(discard[:]); readErr != nil {
+				if !errors.Is(readErr, os.ErrDeadlineExceeded) {
+					cancel()
+				}
+				return
+			}
+		}
+	}()
+
+	stop = func() {
+		// Expiring the read deadline releases the watching read; the watch
+		// is drained so it cannot outlive the request.
+		if deadlineErr := conn.SetReadDeadline(time.Now()); deadlineErr != nil {
+			// The watch cannot be released early; it ends when the
+			// connection is closed.
+			s.logger.Error("release connection watch failed", "error", deadlineErr)
+			cancel()
+			return
+		}
+		<-watched
+		cancel()
+	}
+	return reqCtx, stop, nil
 }
 
 // admitPeer reports whether the process at the other end of conn runs as a

@@ -31,6 +31,21 @@ import (
 	"github.com/spf13/pflag"
 )
 
+// newTestPasswordStore opens a static password store over backend through a
+// go-qrdb DAO factory.
+func newTestPasswordStore(t *testing.T, backend xkms.StorageBackend) *xkms.StaticPasswordDAOStore {
+	t.Helper()
+	daos, err := xkms.NewBackendDAOFactory(backend)
+	if err != nil {
+		t.Fatalf("password DAO factory: %v", err)
+	}
+	store, err := xkms.NewStaticPasswordStore(daos)
+	if err != nil {
+		t.Fatalf("password store: %v", err)
+	}
+	return store
+}
+
 // resetPasswordFlags resets all password subcommand flags to their default
 // values. This is necessary because Cobra retains flag state across
 // RootCmd.Execute() calls within the same process, which causes test
@@ -361,7 +376,7 @@ func TestPasswordCmd_AddFromStdin(t *testing.T) {
 	if err != nil {
 		t.Fatalf("failed to open store backend: %v", err)
 	}
-	store := xkms.NewStaticPasswordStore(backend)
+	store := newTestPasswordStore(t, backend)
 	defer func() { _ = store.Close() }()
 
 	pw, err := store.Get("StdinEntry")
@@ -530,7 +545,7 @@ func TestPasswordCmd_AddAndList(t *testing.T) {
 	if err != nil {
 		t.Fatalf("failed to open store backend: %v", err)
 	}
-	store := xkms.NewStaticPasswordStore(backend)
+	store := newTestPasswordStore(t, backend)
 	defer func() { _ = store.Close() }()
 
 	pw, err := store.Get("TestService")
@@ -587,7 +602,7 @@ func TestPasswordCmd_AddGenerated(t *testing.T) {
 	if err != nil {
 		t.Fatalf("failed to open store backend: %v", err)
 	}
-	store := xkms.NewStaticPasswordStore(backend)
+	store := newTestPasswordStore(t, backend)
 	defer func() { _ = store.Close() }()
 
 	pw, err := store.Get("GeneratedEntry")
@@ -606,16 +621,15 @@ func TestPasswordCmd_AddGenerated(t *testing.T) {
 		t.Errorf("generated password length = %d, want %d", len(pw.Password), xkms.StaticPasswordDefaultLength)
 	}
 
-	// Verify the entry is stored under its ID. The staticpw store uses an
-	// xxhash-based ID as the storage key, not the entry name.
+	// Verify the entry is stored under its ID. The staticpw store keys each
+	// entry by an xxhash-based ID, not the entry name.
 	entryID := xkms.GenerateStaticPasswordID("GeneratedEntry", "")
-	entryKey := "staticpw/" + entryID + ".json"
-	exists, err := backend.Exists(t.Context(), entryKey)
+	byID, err := store.Get(entryID)
 	if err != nil {
-		t.Fatalf("backend.Exists(%s) failed: %v", entryKey, err)
+		t.Fatalf("store.Get(%s) failed: %v", entryID, err)
 	}
-	if !exists {
-		t.Errorf("generated entry not found under %s", entryKey)
+	if byID.ID != entryID {
+		t.Errorf("entry ID = %q, want %q", byID.ID, entryID)
 	}
 }
 
@@ -656,7 +670,7 @@ func TestPasswordCmd_AddWithMetadata(t *testing.T) {
 	if err != nil {
 		t.Fatalf("failed to open store backend: %v", err)
 	}
-	store := xkms.NewStaticPasswordStore(backend)
+	store := newTestPasswordStore(t, backend)
 	defer func() { _ = store.Close() }()
 
 	pw, err := store.Get("GitHubWork")
@@ -714,7 +728,7 @@ func TestPasswordCmd_AddWithoutMetadata(t *testing.T) {
 	if err != nil {
 		t.Fatalf("failed to open store backend: %v", err)
 	}
-	store := xkms.NewStaticPasswordStore(backend)
+	store := newTestPasswordStore(t, backend)
 	defer func() { _ = store.Close() }()
 
 	pw, err := store.Get("SimplePW")

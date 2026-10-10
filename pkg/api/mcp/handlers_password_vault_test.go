@@ -305,7 +305,7 @@ func TestVaultMethods_NotConfiguredIsServiceUnavailable(t *testing.T) {
 func TestVaultMethods_SealedTenant(t *testing.T) {
 	t.Parallel()
 	s := newVaultServer(t)
-	require.NoError(t, s.registry.SealTenant(pwTenantA))
+	s.stores.Seal(pwTenantA)
 
 	_, err := s.invoke(t, pwCtx(pwTenantA, pwUserA), "password.vault.status", nil)
 	requireCode(t, err, ErrCodeInternalError)

@@ -2,7 +2,7 @@
 # Supports PKCS#11 (SoftHSM2), TPM 2.0 (SWTPM), and quantum-safe cryptography (ML-DSA, ML-KEM)
 
 # Stage 1: Builder stage - compile dependencies and prepare environment
-FROM golang:1.27.1-bookworm AS builder
+FROM golang:1.27.2-bookworm AS builder
 
 # Allow Go to automatically download the required toolchain version
 ENV GOTOOLCHAIN=auto
@@ -46,7 +46,7 @@ COPY scripts/build-softhsm.sh /build/build-softhsm.sh
 RUN DESTDIR=/build/softhsm-install sh /build/build-softhsm.sh
 
 # Stage 2: Test runtime environment
-FROM golang:1.27.1-bookworm
+FROM golang:1.27.2-bookworm
 
 LABEL maintainer="go-xkms"
 LABEL description="Integration testing environment for go-xkms with PKCS#11 and TPM 2.0 support"

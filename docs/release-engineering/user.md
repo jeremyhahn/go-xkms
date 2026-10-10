@@ -1,7 +1,7 @@
 # Release engineering — user guide
 
 **Status:** implemented.
-**Last verified:** 2026-09-25.
+**Last verified:** 2026-10-08.
 
 ## Cutting a release, in two steps (go-xkms#419, go-xkms#211)
 
@@ -64,10 +64,17 @@ make release-alpha VERSION=0.10.0-alpha BUMP=minor
 
 This checks out a new local branch `release/v0.10.0-alpha`, commits the
 version bump, the pin rewrite and the assembled changelog onto it, and pushes
-**that branch only** — never `main`. It prints a pull request URL and the
-follow-up command.
+**that branch only** — never `main`. It then opens the pull request into
+`main`, titled `chore(release): v0.10.0-alpha`, on the forge your `dev` remote
+points at, and prints its URL and the follow-up command.
 
-**5. Open the pull request and get it reviewed.** This is the step the old,
+Both the rehearsal and the cut need the project agent's forge token in
+`FORGE_TOKEN`. Without it, or with a token the forge rejects, they refuse
+before fetching or writing anything. If the forge refuses the pull request
+after the push (one is already open, say), the run prints the `compare/` URL
+and the exact title, so you can open it by hand.
+
+**5. Get the pull request reviewed.** This is the step the old,
 one-script flow had no room for. Nothing is published yet: `main` — local or
 remote — was never touched, and no tag exists anywhere.
 

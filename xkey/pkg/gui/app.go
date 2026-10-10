@@ -54,6 +54,7 @@ import (
 	"github.com/jeremyhahn/go-xkms/xkey/pkg/nativemsg"
 	"github.com/jeremyhahn/go-xkms/xkey/pkg/notify"
 	"github.com/jeremyhahn/go-xkms/xkey/pkg/oath"
+	pkcs11svc "github.com/jeremyhahn/go-xkms/xkey/pkg/pkcs11"
 	"github.com/jeremyhahn/go-xkms/xkey/pkg/serverregistry"
 	"github.com/jeremyhahn/go-xkms/xkey/pkg/sshstore"
 	"github.com/jeremyhahn/go-xkms/xkey/pkg/staticpw"
@@ -191,8 +192,21 @@ type App struct {
 	deviceNotifier notify.Notifier
 
 	// ipcServer exposes autofill + PKCS#11 services to the native messaging
-	// host and PKCS#11 module via Unix domain socket.
-	ipcServer *ipc.Server
+	// host and PKCS#11 module via Unix domain socket. It runs only while
+	// ipcServerWanted holds; syncIPCServer starts and stops it. ipcMu guards
+	// ipcServer, ipcCancel and ipcShutdown.
+	ipcServer   *ipc.Server
+	ipcCancel   context.CancelFunc
+	ipcShutdown bool
+	ipcMu       sync.Mutex
+
+	// ipcDrains counts stopped IPC servers whose in-flight handlers are still
+	// draining, so shutdown can wait for them before closing what they use.
+	ipcDrains sync.WaitGroup
+
+	// dataReady records that postDataDirStartup has run: the stores the IPC
+	// handlers serve from are open.
+	dataReady atomic.Bool
 
 	tray    *TrayManager
 	running atomic.Bool
@@ -264,7 +278,7 @@ func configToData(cfg *GUIConfig) *services.GUIConfigData {
 		BarrierAutoUnsealEnabled:  cfg.BarrierAutoUnsealEnabled,
 		SealerBackend:             cfg.SealerBackend,
 		APIExplorerSandboxPolicy:  cfg.APIExplorerSandboxPolicy,
-		BrowserExtensionEnabled:   cfg.BrowserExtensionEnabled,
+		LocalAppAccessEnabled:     cfg.LocalAppAccessEnabled,
 		DeveloperTools:            cfg.DeveloperTools,
 		FIDO2RequireUserPresence:  cfg.FIDO2RequireUserPresence,
 		FIDO2UserIntentCheck:      cfg.FIDO2UserIntentCheck,
@@ -312,7 +326,7 @@ func applyDataToConfig(base *GUIConfig, d *services.GUIConfigData) *GUIConfig {
 	cfg.SealerBackend = d.SealerBackend
 	cfg.BarrierAutoUnsealEnabled = d.BarrierAutoUnsealEnabled
 	cfg.APIExplorerSandboxPolicy = d.APIExplorerSandboxPolicy
-	cfg.BrowserExtensionEnabled = d.BrowserExtensionEnabled
+	cfg.LocalAppAccessEnabled = d.LocalAppAccessEnabled
 	cfg.DeveloperTools = d.DeveloperTools
 	cfg.FIDO2RequireUserPresence = d.FIDO2RequireUserPresence
 	cfg.FIDO2UserIntentCheck = d.FIDO2UserIntentCheck
@@ -570,13 +584,8 @@ func initLocalPIV(log *slog.Logger, dir string, barrierBackend xkmssdk.StorageBa
 		pivBackend = fb
 	}
 
-	// The software backend uses the root path (no prefix) for backward
-	// compatibility with certificates stored before per-backend namespacing.
-	pivFileStore, err := xkmssdk.NewPIVFileBackend(&xkmssdk.PIVFileStorageConfig{
-		Backend:    pivBackend,
-		DEREnabled: true,
-		PEMEnabled: true,
-	})
+	// The software backend uses the root path (no prefix).
+	pivFileStore, err := newPIVFileStore(pivBackend)
 	if err != nil {
 		log.Warn("failed to create PIV file store", "error", err)
 		if barrierBackend == nil {
@@ -586,8 +595,7 @@ func initLocalPIV(log *slog.Logger, dir string, barrierBackend xkmssdk.StorageBa
 	}
 
 	// Create per-backend PIV stores with namespaced storage paths.
-	// The software backend reuses the root-level store for backward
-	// compatibility. Other backends (tpm2, pkcs11, etc.) get isolated
+	// The software backend reuses the root-level store. Other backends (tpm2, pkcs11, etc.) get isolated
 	// namespaces under "backends/{category}/" so certificates from one
 	// backend never appear when listing another.
 	stores := make(map[string]xkmssdk.PIVCertificateStorage, len(backendIDs)*2)
@@ -599,7 +607,7 @@ func initLocalPIV(log *slog.Logger, dir string, barrierBackend xkmssdk.StorageBa
 			}
 		}
 
-		// Software backend uses root path (backward compatible).
+		// Software backend uses the root path.
 		if cat == "software" {
 			stores[id] = pivFileStore
 			if cat != id {
@@ -624,11 +632,7 @@ func initLocalPIV(log *slog.Logger, dir string, barrierBackend xkmssdk.StorageBa
 			continue
 		}
 
-		nsStore, nsStoreErr := xkmssdk.NewPIVFileBackend(&xkmssdk.PIVFileStorageConfig{
-			Backend:    ns,
-			DEREnabled: true,
-			PEMEnabled: true,
-		})
+		nsStore, nsStoreErr := newPIVFileStore(ns)
 		if nsStoreErr != nil {
 			log.Warn("failed to create namespaced PIV store, using shared store",
 				"backend", id, "category", cat, "error", nsStoreErr)
@@ -664,11 +668,7 @@ func initLocalPIV(log *slog.Logger, dir string, barrierBackend xkmssdk.StorageBa
 		if nsErr != nil {
 			return nil, nsErr
 		}
-		return xkmssdk.NewPIVFileBackend(&xkmssdk.PIVFileStorageConfig{
-			Backend:    ns,
-			DEREnabled: true,
-			PEMEnabled: true,
-		})
+		return newPIVFileStore(ns)
 	}
 
 	if err := xkmssdk.InitializePIV(&xkmssdk.PIVManagerConfig{
@@ -682,6 +682,20 @@ func initLocalPIV(log *slog.Logger, dir string, barrierBackend xkmssdk.StorageBa
 	log.Info("local PIV storage initialized", "dir", dir,
 		"barrier_active", barrierBackend != nil, "backends", len(stores))
 	return pivFileStore, pivBackend, true
+}
+
+// newPIVFileStore returns a software PIV certificate store persisting through
+// a DAO factory over backend. The caller keeps ownership of backend.
+func newPIVFileStore(backend xkmssdk.StorageBackend) (xkmssdk.PIVCertificateStorage, error) {
+	daos, err := xkmssdk.NewBackendDAOFactory(backend)
+	if err != nil {
+		return nil, err
+	}
+	store, err := xkmssdk.NewPIVFileBackend(&xkmssdk.PIVFileStorageConfig{DAOs: daos})
+	if err != nil {
+		return nil, err
+	}
+	return store, nil
 }
 
 // closeBackend is a helper that closes a xkmssdk.StorageBackend and logs any error.
@@ -836,17 +850,22 @@ func (a *App) initializeDataDir() error {
 
 	// Static password storage — encrypted via barrier or plain file fallback.
 	if barrierBackend != nil {
-		spwStore := staticpw.NewStore(barrierBackend)
-		a.staticpwStore = spwStore
-		a.staticpwBackendKind = staticPWBackendBarrier
-		a.staticPWService.SetStore(spwStore)
-		a.log.Info("static password store using barrier backend")
+		spwStore, spwErr := staticpw.NewBackendStore(barrierBackend)
+		if spwErr != nil {
+			a.log.Warn("failed to create barrier password store", "error", spwErr)
+		} else {
+			a.staticpwStore = spwStore
+			a.staticpwBackendKind = staticPWBackendBarrier
+			a.staticPWService.SetStore(spwStore)
+			a.log.Info("static password store using barrier backend")
+		}
 	} else {
 		spwBackend, spwErr := a.openStore(filepath.Join(dir, "passwords"))
 		if spwErr != nil {
 			a.log.Warn("failed to create password file store", "error", spwErr)
+		} else if spwStore, storeErr := staticpw.NewBackendStore(spwBackend); storeErr != nil {
+			a.log.Warn("failed to create password store", "error", storeErr)
 		} else {
-			spwStore := staticpw.NewStore(spwBackend)
 			a.staticpwStore = spwStore
 			a.staticpwBackendKind = staticPWBackendFile
 			a.staticPWService.SetStore(spwStore)
@@ -869,11 +888,11 @@ func (a *App) initializeDataDir() error {
 			}
 		}
 		if teamBackend != nil {
-			kvStore, kvErr := xkmssdk.NewKVStoreAdapter(teamBackend)
-			if kvErr != nil {
-				a.log.Warn("failed to create team kv adapter", "error", kvErr)
+			teamDAOs, daoErr := xkmssdk.NewBackendDAOFactory(teamBackend)
+			if daoErr != nil {
+				a.log.Warn("failed to create team DAO factory", "error", daoErr)
 			} else {
-				teamStore, tsErr := staticpw.NewDAOTeamStore(kvStore)
+				teamStore, tsErr := staticpw.NewDAOTeamStore(teamDAOs)
 				if tsErr != nil {
 					a.log.Warn("failed to create team store", "error", tsErr)
 				} else {
@@ -1069,6 +1088,17 @@ func (a *App) initializeSSHServices(dir string, barrierBackend xkmssdk.StorageBa
 		a.log.Warn("SSH service disabled: failed to open ssh store", "error", sshStoreErr)
 		return
 	}
+	sshKV, kverr := xkmssdk.NewKVStoreAdapter(sshStorage)
+	if kverr != nil {
+		a.log.Warn("SSH service disabled: failed to adapt ssh store", "error", kverr)
+		return
+	}
+	sshDAOs := xkmssdk.NewStoreDAOFactory(sshKV)
+	sshStores, serr := sshclient.NewStores(sshDAOs)
+	if serr != nil {
+		a.log.Warn("SSH service disabled: failed to build ssh stores", "error", serr)
+		return
+	}
 
 	provider, perr := sshclient.NewBackendProvider(func(_ context.Context, backendID string) (xkmssdk.KeyProvider, error) {
 		b, gerr := xkmssdk.GetBackend(backendID)
@@ -1083,7 +1113,7 @@ func (a *App) initializeSSHServices(dir string, barrierBackend xkmssdk.StorageBa
 	}
 
 	sshEmbedded, cerr := sshclient.NewEmbedded(sshclient.EmbeddedOptions{
-		Backend:         sshStorage,
+		Stores:          sshStores,
 		BackendProvider: provider,
 	})
 	if cerr != nil {
@@ -1098,7 +1128,7 @@ func (a *App) initializeSSHServices(dir string, barrierBackend xkmssdk.StorageBa
 	a.log.Info("SSH service initialized", "barrier_routed", barrierBackend != nil)
 
 	// SSH connection profiles (folder hierarchy) share the SSH storage.
-	if profileStore, pserr := sshclient.NewProfileStore(sshStorage); pserr != nil {
+	if profileStore, pserr := sshclient.NewProfileStore(sshDAOs); pserr != nil {
 		a.log.Warn("SSH profiles disabled: failed to build profile store", "error", pserr)
 	} else {
 		a.sshProfileService.SetStore(profileStore)
@@ -1106,7 +1136,7 @@ func (a *App) initializeSSHServices(dir string, barrierBackend xkmssdk.StorageBa
 
 	// SSH connection launcher: serves the chosen key over an in-process
 	// agent and seeds/syncs host-key pins for the system ssh client.
-	hostKeyStore, hkerr := sshclient.NewHostKeyStore(sshStorage)
+	hostKeyStore, hkerr := sshclient.NewHostKeyStore(sshDAOs)
 	if hkerr != nil {
 		a.log.Warn("SSH connect disabled: failed to build host-key store", "error", hkerr)
 		return
@@ -1127,7 +1157,7 @@ func (a *App) initializeSSHServices(dir string, barrierBackend xkmssdk.StorageBa
 
 	// Persisted console sessions (opt-in per session) share the SSH storage;
 	// memory-only sessions never touch this store.
-	if sessionStore, sserr := sshclient.NewConsoleSessionStore(sshStorage); sserr != nil {
+	if sessionStore, sserr := sshclient.NewConsoleSessionStore(sshDAOs); sserr != nil {
 		a.log.Warn("SSH persistent sessions disabled: failed to build session store", "error", sserr)
 	} else {
 		a.sshConsoleService.SetSessionStore(sessionStore)
@@ -1385,7 +1415,7 @@ func (a *App) initLocalKeyStore(barrierBackend xkmssdk.StorageBackend) {
 	if a.pivStorageBE != nil {
 		for _, name := range xkmssdk.Backends() {
 			if name == "software" {
-				// Software uses the root path (backward compatible).
+				// Software uses the root path.
 				if a.pivFileStore != nil {
 					if regErr := xkmssdk.RegisterPIVStore(name, a.pivFileStore); regErr != nil {
 						a.log.Debug("PIV store registration failed", "backend", name, "error", regErr)
@@ -1398,11 +1428,7 @@ func (a *App) initLocalKeyStore(barrierBackend xkmssdk.StorageBackend) {
 				a.log.Warn("failed to create namespaced PIV store", "backend", name, "error", nsErr)
 				continue
 			}
-			nsStore, storeErr := xkmssdk.NewPIVFileBackend(&xkmssdk.PIVFileStorageConfig{
-				Backend:    ns,
-				DEREnabled: true,
-				PEMEnabled: true,
-			})
+			nsStore, storeErr := newPIVFileStore(ns)
 			if storeErr != nil {
 				a.log.Warn("failed to create PIV file store for backend", "backend", name, "error", storeErr)
 				continue
@@ -1862,7 +1888,7 @@ func NewApp(cfg *GUIConfig) *App {
 
 	// Create autofill service for browser extension integration.
 	autofillSvc := services.NewAutoFillService(staticPWSvc, oathSvc, appLockSvc, auditStore, log)
-	if setErr := autofillSvc.SetEnabled(cfg.BrowserExtensionEnabled); setErr != nil {
+	if setErr := autofillSvc.SetEnabled(cfg.LocalAppAccessEnabled); setErr != nil {
 		log.Warn("failed to enable autofill service", "error", setErr)
 	}
 	if cfg.AutoFillPolicy != nil {
@@ -2372,6 +2398,12 @@ func NewApp(cfg *GUIConfig) *App {
 		}
 	})
 
+	// The IPC socket follows the effective local-app-access setting (the
+	// user's choice as enterprise policy allows it), the app lock and the
+	// barrier's seal state; every change to one of them re-evaluates it.
+	appLockSvc.SetLockStateHook(a.syncIPCServer)
+	barrierSvc.SetSealStateHook(a.syncIPCServer)
+
 	// Wire callbacks to break the gui -> services -> gui import cycle.
 	appSvc.SetConfigUpdater(func(data *services.GUIConfigData) error {
 		guiCfg := applyDataToConfig(a.config, data)
@@ -2387,7 +2419,7 @@ func NewApp(cfg *GUIConfig) *App {
 		clipboardSvc.SetTimeout(guiCfg.ClipboardTimeout)
 		appLockSvc.SetAutoLockMinutes(guiCfg.AppAutoLockMinutes)
 		appLockSvc.SetLockOnScreenLock(guiCfg.AppLockOnScreenLock)
-		if setErr := autofillSvc.SetEnabled(guiCfg.BrowserExtensionEnabled); setErr != nil {
+		if setErr := autofillSvc.SetEnabled(guiCfg.LocalAppAccessEnabled); setErr != nil {
 			a.log.Warn("enterprise policy prevents enabling extension", "error", setErr)
 		}
 		if guiCfg.AutoFillPolicy != nil {
@@ -2404,6 +2436,10 @@ func NewApp(cfg *GUIConfig) *App {
 		// Sync FIDO2 authenticator settings.
 		a.fido2DeviceService.SetRequireUserPresence(guiCfg.FIDO2RequireUserPresence)
 		a.fido2DeviceService.SetUserIntentCheck(guiCfg.FIDO2UserIntentCheck)
+
+		// The socket follows what the autofill service accepted above, not
+		// the requested value: policy may have refused it.
+		a.syncIPCServer()
 
 		return nil
 	})
@@ -3140,8 +3176,10 @@ func (a *App) postDataDirStartup() {
 		a.fido2DeviceService.SetLastError("authenticator disabled in settings")
 	}
 
-	// Start IPC server for native messaging host and PKCS#11 module.
-	a.startIPCServer()
+	// The stores are open: start the IPC server for the native messaging
+	// host and PKCS#11 module if local app access is on.
+	a.dataReady.Store(true)
+	a.syncIPCServer()
 }
 
 // initPINService creates a qrdbsdk.PINService with the appropriate backend
@@ -3211,10 +3249,13 @@ func (a *App) ToggleFIDO2Authenticator(enabled bool) error {
 
 // guiIPCHandler bridges the IPC server to the GUI services. It implements
 // ipc.Handler (basic touch/password/status), ipc.AutofillHandler (browser
-// extension autofill), and ipc.PairingHandler (extension pairing ceremony),
-// allowing the native messaging host and PKCS#11 module to communicate with
-// the running GUI application.
+// extension autofill), ipc.PairingHandler (extension pairing ceremony) and
+// ipc.PKCS11Handler (key operations for the PKCS#11 module), allowing the
+// native messaging host and PKCS#11 module to communicate with the running
+// GUI application. The embedded PKCS11IPCHandler supplies every
+// ipc.PKCS11Handler method.
 type guiIPCHandler struct {
+	*services.PKCS11IPCHandler
 	app *App
 }
 
@@ -3358,27 +3399,19 @@ func (h *guiIPCHandler) HandlePairingCompleted(origin string) error {
 // startIPCServer starts the Unix domain socket IPC server so the native
 // messaging host and PKCS#11 module can communicate with the GUI.
 func (a *App) startIPCServer() {
-	// Guard against double-start (e.g., if PostBarrierUnseal runs after
-	// normal startup already started the IPC server).
-	if a.ipcServer != nil {
-		a.log.Debug("IPC server already running, skipping start")
-		return
-	}
-
-	// The spawned goroutine below watches a.ctx.Done() to know when to
-	// close the listener. In production a.ctx is always bound by the
-	// Wails startup hook before postDataDirStartup can be reached from the
-	// frontend, so this never fires there; it guards a nil context.Context
-	// (a nil interface, not merely an empty one) from panicking the
-	// goroutine on Done(), which a plain-Go caller -- chiefly tests -- can
-	// otherwise reach.
+	// The spawned goroutine below watches a context to know when to drain
+	// the server. In production a.ctx is always bound by the Wails startup
+	// hook before postDataDirStartup can be reached from the frontend, so
+	// this never fires there; it guards a nil context.Context (a nil
+	// interface, not merely an empty one) from panicking, which a plain-Go
+	// caller -- chiefly tests -- can otherwise reach.
 	if a.ctx == nil {
 		a.log.Warn("IPC server not started: application context not bound")
 		return
 	}
 
 	socketPath := ipc.DefaultSocketPath()
-	handler := &guiIPCHandler{app: a}
+	handler := &guiIPCHandler{PKCS11IPCHandler: a.newPKCS11IPCHandler(), app: a}
 
 	srv, err := ipc.NewServer(socketPath, handler, a.log)
 	if err != nil {
@@ -3404,17 +3437,112 @@ func (a *App) startIPCServer() {
 			return
 		}
 	}
+	serveCtx, cancel := context.WithCancel(a.ctx)
 	a.ipcServer = srv
+	a.ipcCancel = cancel
 	srv.SetAuditLogger(a.auditStore)
 	a.pairingService.SetIPCProvider(srv)
 
 	go func() {
-		if serveErr := srv.Serve(a.ctx); serveErr != nil && !errors.Is(serveErr, ipc.ErrServerClosed) {
+		if serveErr := srv.Serve(serveCtx); serveErr != nil && !errors.Is(serveErr, ipc.ErrServerClosed) {
 			a.log.Error("IPC server error", "error", serveErr)
 		}
 	}()
 
 	a.log.Info("IPC server started", "socket", socketPath)
+}
+
+// ipcServerWanted reports whether the IPC server should be running: local
+// app access is in effect, the data stores are open, the app is not locked
+// and the barrier, if this process holds one, is unsealed.
+//
+// Local app access is in effect when the autofill service reports it
+// enabled: the user's setting as enterprise policy allows it. That one
+// answer gates both the socket and every autofill operation behind it.
+func (a *App) ipcServerWanted() bool {
+	if a.autofillService == nil || !a.autofillService.IsEnabled() || !a.dataReady.Load() {
+		return false
+	}
+	if a.appLockService != nil && a.appLockService.IsLocked() {
+		return false
+	}
+	return a.barrierService == nil || !a.barrierService.IsSealed()
+}
+
+// syncIPCServer starts or stops the IPC server so that it runs exactly when
+// ipcServerWanted holds. It is idempotent and is called on every change to
+// an input of ipcServerWanted: a settings save, the end of data-directory
+// startup, and every lock or seal transition.
+//
+// It never waits for in-flight IPC handlers: it runs from inside the app
+// lock's transition, which a handler (an IPC unlock) may itself be waiting
+// on.
+func (a *App) syncIPCServer() {
+	a.ipcMu.Lock()
+	defer a.ipcMu.Unlock()
+
+	if a.ipcServerWanted() && !a.ipcShutdown {
+		if a.ipcServer == nil {
+			a.startIPCServer()
+		}
+		return
+	}
+	a.stopIPCServer()
+}
+
+// stopIPCServer closes the IPC listener and removes its socket at once, then
+// lets in-flight handlers drain in the background, counted in ipcDrains so
+// that closeIPCServer can wait for them. The caller must hold ipcMu.
+func (a *App) stopIPCServer() {
+	srv := a.ipcServer
+	if srv == nil {
+		return
+	}
+	a.ipcServer = nil
+	a.pairingService.SetIPCProvider(nil)
+	if err := srv.Stop(); err != nil {
+		a.log.Warn("IPC server stop failed", "error", err)
+	}
+	// Cancelling the serve context ends the server's context watcher; the
+	// drain itself runs here, off the caller's goroutine.
+	a.ipcCancel()
+	a.ipcCancel = nil
+	a.ipcDrains.Add(1)
+	go func() {
+		defer a.ipcDrains.Done()
+		if err := srv.Close(); err != nil {
+			a.log.Warn("IPC server drain failed", "error", err)
+		}
+	}()
+	a.log.Info("IPC server stopped", "socket", srv.SocketPath())
+}
+
+// closeIPCServer stops the IPC server for good: no later setting, unlock or
+// unseal starts it again. It cancels the in-flight handlers' context and,
+// unlike a lock transition, waits for them to return before shutdown tears
+// down what they use -- including those of a server an earlier lock or seal
+// already stopped.
+func (a *App) closeIPCServer() {
+	a.ipcMu.Lock()
+	a.ipcShutdown = true
+	a.stopIPCServer()
+	a.ipcMu.Unlock()
+	// Every Add happened under ipcMu before ipcShutdown was set, and none
+	// can follow it, so this Wait sees them all.
+	a.ipcDrains.Wait()
+}
+
+// newPKCS11IPCHandler builds the PKCS#11 half of the IPC handler over the
+// in-process key service. An unavailable key service yields a handler that
+// answers every key operation with ipc.ErrPKCS11Operation.
+func (a *App) newPKCS11IPCHandler() *services.PKCS11IPCHandler {
+	transport, err := pkcs11svc.NewEmbeddedTransport()
+	if err != nil {
+		a.log.Warn("PKCS#11 over IPC unavailable", "error", err)
+	}
+	return services.NewPKCS11IPCHandler(transport, a.log, func() bool {
+		return a.barrierService != nil && a.barrierService.IsSealed()
+	})
 }
 
 // shutdown is the Wails OnShutdown lifecycle callback.
@@ -3432,8 +3560,16 @@ func (a *App) shutdown(ctx context.Context) {
 			a.sshConsoleService.Shutdown()
 		}
 
-		// Each step has its own timeout to prevent any single operation
-		// from blocking the entire shutdown sequence.
+		// Local apps go first: no new request is accepted, the handlers in
+		// flight are cancelled, and shutdown waits for every one of them to
+		// return before the barrier is sealed and their stores close. This
+		// wait has no timeout: a hardware operation such as key generation
+		// can run for minutes without honouring cancellation, and tearing
+		// its stores down under it is worse than a slow exit.
+		a.closeIPCServer()
+
+		// Each later step has its own timeout to prevent any single
+		// operation from blocking the entire shutdown sequence.
 
 		shutdownStep(a.log, "reseal", 3*time.Second, func() error {
 			if a.config.AutoUnsealEnabled && a.config.AutoUnsealBlobID != "" {
@@ -3474,13 +3610,6 @@ func (a *App) shutdown(ctx context.Context) {
 			status := a.agentService.GetServerStatus()
 			if status != nil && status.Running {
 				return a.agentService.StopServer()
-			}
-			return nil
-		})
-
-		shutdownStep(a.log, "ipc-server-stop", 1*time.Second, func() error {
-			if a.ipcServer != nil {
-				return a.ipcServer.Close()
 			}
 			return nil
 		})

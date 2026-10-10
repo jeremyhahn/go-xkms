@@ -31,7 +31,6 @@ import (
 	"github.com/jeremyhahn/go-xkms/sdk/go/transport/embedded"
 	"github.com/jeremyhahn/go-xkms/sdk/go/vaultpasskey"
 	"github.com/jeremyhahn/go-xkms/xkey/pkg/audit"
-	"github.com/jeremyhahn/go-xkms/xkey/pkg/staticpw"
 )
 
 // vaultSimKey is the shared simulated security key (vaulttest.SimulatedKey).
@@ -55,7 +54,7 @@ func newPasskeyVault(t *testing.T, key *vaultSimKey) *passkeyVault {
 	require.NoError(t, err)
 	ctx := auth.WithIdentity(context.Background(), &auth.Identity{Subject: "alice", TenantID: vaultservice.Tenant})
 
-	svc := NewStaticPasswordService(staticpw.NewStore(xkms.NewStorageMemory()))
+	svc := NewStaticPasswordService(newTestPasswordStore(t, xkms.NewStorageMemory()))
 	svc.SetContext(ctx)
 	svc.SetClient(tr)
 	rec := &spwRecordingAuditLogger{}

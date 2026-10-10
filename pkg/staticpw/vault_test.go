@@ -16,6 +16,7 @@ package staticpw
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"strings"
 	"sync"
 	"testing"
@@ -23,9 +24,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	"github.com/jeremyhahn/go-xkms/pkg/scope"
-	"github.com/jeremyhahn/go-xkms/pkg/seal"
-	"github.com/jeremyhahn/go-xkms/pkg/storage"
+	"github.com/jeremyhahn/go-xkms/pkg/testutil"
 )
 
 // passkey returns a passkey credential: a credential ID, the PRF salt the
@@ -42,19 +41,45 @@ func passkey(t *testing.T, id string, output byte) VaultCredential {
 	}
 }
 
-// vaultFixture is a manager with tenant-a registered and the tenant's raw
-// barrier backend, to inspect what is stored.
-func vaultFixture(t *testing.T) (*TenantPasswordStoreManager, *seal.BarrierRegistry, storage.Backend) {
+// vaultFixture is a manager over in-memory tenant stores, and the stores, to
+// inspect what a tenant holds.
+func vaultFixture(t *testing.T) (*TenantPasswordStoreManager, *testutil.TenantStores) {
 	t.Helper()
-	mgr, reg := newTestManager(t)
-	registerAndInitTenant(t, reg, "tenant-a")
-	tb, err := reg.Tenant("tenant-a")
-	require.NoError(t, err)
-	return mgr, reg, seal.NewBarrierBackend(tb.Barrier())
+	return newTestManager(t)
+}
+
+// storedValues returns every key tenantID's store holds with its value -- a
+// record's path, directory and raw body decoded from the record's JSON --
+// which is everything a reader holding the tenant's key sees.
+func storedValues(t *testing.T, stores *testutil.TenantStores, tenantID string) [][]byte {
+	t.Helper()
+	var values [][]byte
+	require.NoError(t, stores.Store(tenantID).Scan(t.Context(), "", func(key string, value []byte) error {
+		text := key + "\n" + string(value)
+		var r record
+		if json.Unmarshal(value, &r) == nil && r.Path != "" {
+			text = key + "\n" + r.Path + "\n" + r.Dir + "\n" + string(r.Body)
+		}
+		values = append(values, []byte(text))
+		return nil
+	}))
+	require.NotEmpty(t, values)
+	return values
+}
+
+// storedTexts returns storedValues lowercased, to search for names.
+func storedTexts(t *testing.T, stores *testutil.TenantStores, tenantID string) []string {
+	t.Helper()
+	values := storedValues(t, stores, tenantID)
+	texts := make([]string, 0, len(values))
+	for _, v := range values {
+		texts = append(texts, strings.ToLower(string(v)))
+	}
+	return texts
 }
 
 func TestVault_FirstEnrollmentInitializesAndIssuesRecoveryCode(t *testing.T) {
-	mgr, _, _ := vaultFixture(t)
+	mgr, _ := vaultFixture(t)
 	ctx := context.Background()
 
 	status, err := mgr.VaultStatus(ctx, "tenant-a", "alice")
@@ -82,28 +107,15 @@ func TestVault_FirstEnrollmentInitializesAndIssuesRecoveryCode(t *testing.T) {
 // barrier, so everything the barrier holds for it -- the entry and the
 // wrapped DEKs -- is opaque without one of the user's factors.
 func TestVault_TenantKeyAloneCannotReadPersonalEntries(t *testing.T) {
-	mgr, _, raw := vaultFixture(t)
-	ctx := context.Background()
+	mgr, stores := vaultFixture(t)
 	alice := unlocked(t, mgr, "tenant-a", "alice")
 	require.NoError(t, alice.Add(&StaticPassword{Name: "bank", Username: "alice", Password: "correct horse battery staple"}))
 
-	personal, err := scope.PersonalPrefix("tenant-a", Feature, "alice")
-	require.NoError(t, err)
-	found := 0
-	require.NoError(t, raw.Scan(ctx, personal, func(key string, value []byte) error {
-		found++
-		assert.NotContains(t, string(value), "correct horse", "entry %s is readable with the tenant key", key)
-		assert.NotContains(t, string(value), "bank")
-		return nil
-	}))
-	require.Equal(t, 1, found)
-
-	vault, err := scope.PersonalPrefix("tenant-a", VaultFeature, "alice")
-	require.NoError(t, err)
-	require.NoError(t, raw.Scan(ctx, vault, func(_ string, value []byte) error {
-		assert.NotContains(t, string(value), "passphrase-of-alice")
-		return nil
-	}))
+	for _, text := range storedTexts(t, stores, "tenant-a") {
+		assert.NotContains(t, text, "correct horse", "a record is readable with the tenant key")
+		assert.NotContains(t, text, "bank")
+		assert.NotContains(t, text, "passphrase-of-alice")
+	}
 
 	// And the entry reads back through the user's own session.
 	got, err := alice.Get("bank")
@@ -112,7 +124,7 @@ func TestVault_TenantKeyAloneCannotReadPersonalEntries(t *testing.T) {
 }
 
 func TestVault_UnlockWithPassphrase(t *testing.T) {
-	mgr, _, _ := vaultFixture(t)
+	mgr, _ := vaultFixture(t)
 	ctx := context.Background()
 	alice := unlocked(t, mgr, "tenant-a", "alice")
 	require.NoError(t, alice.Add(entry("mine", false)))
@@ -129,7 +141,7 @@ func TestVault_UnlockWithPassphrase(t *testing.T) {
 }
 
 func TestVault_PasskeyFactor(t *testing.T) {
-	mgr, _, _ := vaultFixture(t)
+	mgr, _ := vaultFixture(t)
 	ctx := context.Background()
 
 	// A passkey can be the first factor.
@@ -155,7 +167,7 @@ func TestVault_PasskeyFactor(t *testing.T) {
 }
 
 func TestVault_BothFactorsOpenTheSameEntries(t *testing.T) {
-	mgr, _, _ := vaultFixture(t)
+	mgr, _ := vaultFixture(t)
 	ctx := context.Background()
 	alice := unlocked(t, mgr, "tenant-a", "alice")
 	require.NoError(t, alice.Add(entry("mine", false)))
@@ -174,7 +186,7 @@ func TestVault_BothFactorsOpenTheSameEntries(t *testing.T) {
 }
 
 func TestVault_LaterEnrollmentNeedsTheSession(t *testing.T) {
-	mgr, _, _ := vaultFixture(t)
+	mgr, _ := vaultFixture(t)
 	ctx := context.Background()
 	unlocked(t, mgr, "tenant-a", "alice")
 	require.NoError(t, mgr.LockUser("tenant-a", "alice"))
@@ -184,7 +196,7 @@ func TestVault_LaterEnrollmentNeedsTheSession(t *testing.T) {
 }
 
 func TestVault_RotateFactorKeepsTheDEK(t *testing.T) {
-	mgr, _, _ := vaultFixture(t)
+	mgr, _ := vaultFixture(t)
 	ctx := context.Background()
 	alice := unlocked(t, mgr, "tenant-a", "alice")
 	require.NoError(t, alice.Add(entry("mine", false)))
@@ -218,7 +230,7 @@ func TestVault_RotateFactorKeepsTheDEK(t *testing.T) {
 }
 
 func TestVault_RemoveFactor(t *testing.T) {
-	mgr, _, _ := vaultFixture(t)
+	mgr, _ := vaultFixture(t)
 	ctx := context.Background()
 	unlocked(t, mgr, "tenant-a", "alice")
 	res, err := mgr.EnrollFactor(ctx, "tenant-a", "alice", passkey(t, "cred-1", 0x11))
@@ -247,7 +259,7 @@ func TestVault_RemoveFactor(t *testing.T) {
 }
 
 func TestVault_RecoveryIsOneTime(t *testing.T) {
-	mgr, _, _ := vaultFixture(t)
+	mgr, _ := vaultFixture(t)
 	ctx := context.Background()
 	res, err := mgr.EnrollFactor(ctx, "tenant-a", "alice", pass(t, "alice"))
 	require.NoError(t, err)
@@ -289,7 +301,7 @@ func TestVault_RecoveryIsOneTime(t *testing.T) {
 }
 
 func TestVault_RecoverRefusals(t *testing.T) {
-	mgr, _, _ := vaultFixture(t)
+	mgr, _ := vaultFixture(t)
 	ctx := context.Background()
 	_, err := mgr.RecoverVault(ctx, "tenant-a", "alice", []byte("CODE"), pass(t, "alice"))
 	assert.ErrorIs(t, err, ErrVaultNotInitialized)
@@ -300,7 +312,7 @@ func TestVault_RecoverRefusals(t *testing.T) {
 }
 
 func TestVault_InvalidCredentials(t *testing.T) {
-	mgr, _, _ := vaultFixture(t)
+	mgr, _ := vaultFixture(t)
 	ctx := context.Background()
 	cases := map[string]VaultCredential{
 		"short passphrase":    {Type: FactorPassphrase, Secret: testSecret(t, []byte("short"))},
@@ -322,10 +334,10 @@ func TestVault_InvalidCredentials(t *testing.T) {
 // TestVault_WrapsAreBoundToTheirUser proves a wrapped DEK copied into another
 // user's keyring does not open there, even with the right secret.
 func TestVault_WrapsAreBoundToTheirUser(t *testing.T) {
-	_, _, raw := vaultFixture(t)
-	alice, err := newVaultKeyring(raw, "tenant-a", "alice", cheapKDFParams)
+	daos := newMemoryDAOs()
+	alice, err := newVaultKeyring(daos, "tenant-a", "alice", cheapKDFParams)
 	require.NoError(t, err)
-	bob, err := newVaultKeyring(raw, "tenant-a", "bob", cheapKDFParams)
+	bob, err := newVaultKeyring(daos, "tenant-a", "bob", cheapKDFParams)
 	require.NoError(t, err)
 
 	dek := bytes.Repeat([]byte{7}, dekLength)
@@ -338,45 +350,61 @@ func TestVault_WrapsAreBoundToTheirUser(t *testing.T) {
 	assert.ErrorIs(t, err, ErrVaultCredentialRejected)
 }
 
-// TestDEKBackend_EntriesAreBoundToTheirKey proves a sealed entry moved under
-// another key does not open.
-func TestDEKBackend_EntriesAreBoundToTheirKey(t *testing.T) {
-	ctx := context.Background()
-	inner := storage.New()
-	b := newDEKBackend(inner, bytes.Repeat([]byte{9}, dekLength))
-	require.NoError(t, b.Put(ctx, "a", []byte("secret")))
+// TestSealer_RecordsAreBoundToTheirPath proves a sealed record moved to
+// another path does not open, and that an ended session seals nothing.
+func TestSealer_RecordsAreBoundToTheirPath(t *testing.T) {
+	session := &userSession{dek: bytes.Repeat([]byte{9}, dekLength)}
+	s := sealer{session: session}
 
-	sealed, err := inner.Get(ctx, "a")
+	sealed, err := s.seal("a", []byte("secret"))
 	require.NoError(t, err)
 	assert.NotContains(t, string(sealed), "secret")
-	require.NoError(t, inner.Put(ctx, "b", sealed))
-	_, err = b.Get(ctx, "b")
-	var decrypt *PersonalEntryDecryptError
-	require.ErrorAs(t, err, &decrypt)
-
-	got, err := b.Get(ctx, "a")
+	got, err := s.open("a", sealed)
 	require.NoError(t, err)
 	assert.Equal(t, "secret", string(got))
-	stored, err := b.PutIfAbsent(ctx, "c", []byte("v"))
-	require.NoError(t, err)
-	assert.True(t, stored)
-	keys, err := b.List(ctx, "")
-	require.NoError(t, err)
-	assert.ElementsMatch(t, []string{"a", "b", "c"}, keys)
-	exists, err := b.Exists(ctx, "c")
-	require.NoError(t, err)
-	assert.True(t, exists)
-	require.NoError(t, b.Delete(ctx, "c"))
-	require.ErrorAs(t, b.Scan(ctx, "", func(string, []byte) error { return nil }), &decrypt, "the moved entry fails the scan")
-	require.NoError(t, b.Close())
-	_, err = inner.Get(ctx, "a")
-	require.NoError(t, err, "Close leaves the tenant barrier open")
+
+	_, err = s.open("b", sealed)
+	var decrypt *PersonalEntryDecryptError
+	require.ErrorAs(t, err, &decrypt)
+	assert.Equal(t, "b", decrypt.Key)
+	assert.NotNil(t, decrypt.Unwrap())
+
+	session.end()
+	assert.Equal(t, make([]byte, dekLength), session.dek, "end zeroes the DEK")
+	_, err = s.seal("a", []byte("late"))
+	assert.ErrorIs(t, err, ErrStoreLocked)
+	_, err = s.open("a", sealed)
+	assert.ErrorIs(t, err, ErrStoreLocked)
+}
+
+// TestSealer_WrongKeyLengthFails proves a DEK of the wrong size is a
+// *VaultCryptoError rather than a store of unsealed data.
+func TestSealer_WrongKeyLengthFails(t *testing.T) {
+	s := sealer{session: &userSession{dek: []byte("short")}}
+	_, err := s.seal("a", []byte("secret"))
+	var crypto *VaultCryptoError
+	require.ErrorAs(t, err, &crypto)
+	assert.Equal(t, "seal entry", crypto.Op)
+}
+
+// TestUserSessions_StoreHeldPastLockReadsNothing proves a personal store a
+// caller still holds after the session ends neither reads nor writes: its
+// DEK is gone, so it never seals with a zeroed key.
+func TestUserSessions_StoreHeldPastLockReadsNothing(t *testing.T) {
+	mgr, _ := vaultFixture(t)
+	personal := unlocked(t, mgr, "tenant-a", "alice").personal
+	require.NoError(t, personal.Add(entry("mine", false)))
+
+	require.NoError(t, mgr.LockUser("tenant-a", "alice"))
+	assert.ErrorIs(t, personal.Add(entry("late", false)), ErrStoreLocked)
+	_, err := personal.Get("mine")
+	assert.ErrorIs(t, err, ErrStoreLocked)
 }
 
 // TestVault_ConcurrentFirstEnrollmentsShareOneDEK proves two first
 // enrollments racing mint one DEK: both factors open the same entries.
 func TestVault_ConcurrentFirstEnrollmentsShareOneDEK(t *testing.T) {
-	mgr, _, _ := vaultFixture(t)
+	mgr, _ := vaultFixture(t)
 	ctx := context.Background()
 	creds := []VaultCredential{pass(t, "alice"), passkey(t, "cred-1", 0x11)}
 
@@ -403,23 +431,21 @@ func TestVault_ConcurrentFirstEnrollmentsShareOneDEK(t *testing.T) {
 	}
 }
 
-// TestTenantState_ConcurrentFirstUseDoesNotSealTheTenant is the regression
-// for the duplicate tenant state a racing first use builds: dropping it used
-// to close its store, whose backend is the tenant barrier, sealing the
-// tenant under the state that won.
-func TestTenantState_ConcurrentFirstUseDoesNotSealTheTenant(t *testing.T) {
-	mgr, reg, _ := vaultFixture(t)
+// TestTenantState_ConcurrentFirstUse proves racing first uses of a tenant
+// share one tenant state: every request resolves, and a session opened
+// afterwards is visible to all of them.
+func TestTenantState_ConcurrentFirstUse(t *testing.T) {
+	mgr, _ := vaultFixture(t)
 	var wg sync.WaitGroup
-	for i := 0; i < 16; i++ {
+	for range 16 {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
-			_, err := mgr.ResolveScopedStore("tenant-a", "alice")
+			_, err := mgr.ResolveScopedStore(t.Context(), "tenant-a", "alice")
 			assert.NoError(t, err)
 		}()
 	}
 	wg.Wait()
-	tb, err := reg.Tenant("tenant-a")
-	require.NoError(t, err)
-	assert.False(t, tb.IsSealed())
+	unlocked(t, mgr, "tenant-a", "alice")
+	assert.False(t, scoped(t, mgr, "tenant-a", "alice").PersonalLocked())
 }

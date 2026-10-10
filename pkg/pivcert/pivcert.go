@@ -26,14 +26,10 @@
 //
 // Example usage:
 //
-//	backend := storage.NewMemory() // or file.New("/var/lib/xkey/piv")
+//	// daos is the go-qrdb DAO factory the composition root injects.
 //	config := &pivcert.PIVConfig{
 //	    StorageType: pivcert.StorageTypeFile,
-//	    FileConfig: &pivcert.FileStorageConfig{
-//	        Backend:    backend,
-//	        DEREnabled: true,
-//	        PEMEnabled: true,
-//	    },
+//	    FileConfig:  &pivcert.FileStorageConfig{DAOs: daos},
 //	}
 //
 //	storage, err := pivcert.NewPIVCertificateStorage(config)
@@ -51,7 +47,8 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/jeremyhahn/go-xkms/pkg/storage"
+	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
+
 	secure "github.com/jeremyhahn/go-xkms/sdk/go/secure"
 )
 
@@ -400,19 +397,12 @@ func (c *PIVConfig) Validate() error {
 	return nil
 }
 
-// FileStorageConfig contains file backend configuration.
+// FileStorageConfig configures the software PIV certificate store, which
+// persists one go-qrdb DAO record per slot.
 type FileStorageConfig struct {
-	// Backend is the storage backend for certificate persistence.
-	// This can be any storage.Backend implementation (memory, file, etc.).
-	Backend storage.Backend
-
-	// DEREnabled controls whether DER files are written.
-	// When true, certificates are stored in binary DER format.
-	DEREnabled bool
-
-	// PEMEnabled controls whether PEM files are written.
-	// When true, certificates are stored in base64 PEM format.
-	PEMEnabled bool
+	// DAOs is the go-qrdb DAO factory the composition root injects. The
+	// store opens its own database from it.
+	DAOs *qrdbsdk.DAOFactory
 }
 
 // Validate checks if the file storage configuration is valid.
@@ -421,17 +411,10 @@ func (c *FileStorageConfig) Validate() error {
 		return ErrInvalidConfig
 	}
 
-	if c.Backend == nil {
+	if c.DAOs == nil {
 		return &PIVStorageError{
 			Op:  "validate",
-			Err: ErrMissingBackend,
-		}
-	}
-
-	if !c.DEREnabled && !c.PEMEnabled {
-		return &PIVStorageError{
-			Op:  "validate",
-			Err: ErrNoFormatEnabled,
+			Err: ErrMissingDAOFactory,
 		}
 	}
 
@@ -673,17 +656,18 @@ var (
 	// ErrMissingConfig indicates a required configuration section is missing.
 	ErrMissingConfig = errors.New("pivcert: missing configuration")
 
-	// ErrMissingBackend indicates the storage backend is not set.
-	ErrMissingBackend = errors.New("pivcert: missing storage backend")
+	// ErrMissingDAOFactory indicates the go-qrdb DAO factory is not set.
+	ErrMissingDAOFactory = errors.New("pivcert: missing DAO factory")
+
+	// ErrConflict indicates the slot changed concurrently while an operation
+	// was guarding against the value it read.
+	ErrConflict = errors.New("pivcert: concurrent modification")
 
 	// ErrMissingDevicePath indicates the TPM device path is not set.
 	ErrMissingDevicePath = errors.New("pivcert: missing device path")
 
 	// ErrMissingLibraryPath indicates the PKCS#11 library path is not set.
 	ErrMissingLibraryPath = errors.New("pivcert: missing library path")
-
-	// ErrNoFormatEnabled indicates neither DER nor PEM format is enabled.
-	ErrNoFormatEnabled = errors.New("pivcert: no format enabled")
 
 	// ErrTPMNotAvailable indicates the TPM device is not available.
 	ErrTPMNotAvailable = errors.New("pivcert: TPM not available")

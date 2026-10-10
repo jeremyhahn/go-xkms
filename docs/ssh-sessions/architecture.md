@@ -1,6 +1,6 @@
 # SSH Connect & Console Sessions — Architecture
 
-> **Status: NORMATIVE** · Feature: `ssh-sessions` · Repo: `go-xkms` · Last verified: 2026-09-24
+> **Status: NORMATIVE** · Feature: `ssh-sessions` · Repo: `go-xkms` · Last verified: 2026-10-08
 
 ## Scope of this folder
 
@@ -166,8 +166,8 @@ stores key material — the doc comment on the package draws the parallel
 directly: "mirroring the static-password manager (`pkg/staticpw`)"
 (`pkg/ssh/profile/profile.go` package doc). `profile.Store`
 (`store.go:43`) is a full folder tree (`ListByFolder`, `MoveToFolder`,
-`CreateFolder`/`RemoveFolder`/`RenameFolder`, `Search`) over a
-`storage.Backend`.
+`CreateFolder`/`RemoveFolder`/`RenameFolder`, `Search`) whose profiles and
+folders are go-qrdb DAO entities in the `ssh` database.
 
 `sessions.Session` (`pkg/ssh/sessions/types.go:25`) is the *record* of an
 already-open embedded-console tab, not a live connection — "a session's

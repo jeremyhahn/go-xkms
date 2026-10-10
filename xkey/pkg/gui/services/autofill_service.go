@@ -188,8 +188,14 @@ func (s *AutoFillService) SetEnabled(enabled bool) error {
 	return nil
 }
 
-// IsEnabled reports whether the autofill extension is enabled.
+// IsEnabled reports whether the autofill extension is in effect: the master
+// toggle is on and the enterprise policy, if any, does not disable it. A
+// toggle set before the policy arrived does not outlive a policy that turns
+// the extension off.
 func (s *AutoFillService) IsEnabled() bool {
+	if ep := s.enterprisePolicy.Load(); ep != nil && !ep.Enabled {
+		return false
+	}
 	return s.enabled.Load()
 }
 
@@ -626,7 +632,7 @@ func (s *AutoFillService) GetStatus() *ipc.AutofillStatus {
 		Available:        s.passwordSvc != nil,
 		AppLocked:        appLocked,
 		FillMode:         string(policy.FillMode),
-		ExtensionEnabled: s.enabled.Load(),
+		ExtensionEnabled: s.IsEnabled(),
 	}
 }
 
@@ -969,11 +975,8 @@ func (s *AutoFillService) saveRegistration(pubKeyCOSE []byte) {
 // checkPreconditions verifies the master toggle, enterprise policy, and
 // app lock state.
 func (s *AutoFillService) checkPreconditions() error {
-	// Enterprise policy can disable the extension entirely.
-	if ep := s.enterprisePolicy.Load(); ep != nil && !ep.Enabled {
-		return ErrAutoFillDisabled
-	}
-	if !s.enabled.Load() {
+	// Off by the user's toggle or by enterprise policy.
+	if !s.IsEnabled() {
 		return ErrAutoFillDisabled
 	}
 	if s.appLockSvc != nil && s.appLockSvc.IsLocked() {

@@ -22,9 +22,27 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
 	xkms "github.com/jeremyhahn/go-xkms/sdk/go"
 	"github.com/jeremyhahn/go-xkms/xkey/pkg/gui/services"
 )
+
+// newTestPasswordDAOs returns a go-qrdb DAO factory serving backend.
+func newTestPasswordDAOs(t *testing.T, backend xkms.StorageBackend) *qrdbsdk.DAOFactory {
+	t.Helper()
+	daos, err := xkms.NewBackendDAOFactory(backend)
+	require.NoError(t, err)
+	return daos
+}
+
+// newTestPasswordStore opens a static password store over backend through a
+// go-qrdb DAO factory.
+func newTestPasswordStore(t *testing.T, backend xkms.StorageBackend) *xkms.StaticPasswordDAOStore {
+	t.Helper()
+	store, err := xkms.NewStaticPasswordStore(newTestPasswordDAOs(t, backend))
+	require.NoError(t, err)
+	return store
+}
 
 // newFileBackedTeamService creates a TeamService backed by file-based storage
 // in a temporary directory. The directory and all resources are cleaned up
@@ -41,7 +59,7 @@ func newFileBackedTeamService(t *testing.T) *services.TeamService {
 	kvStore, err := xkms.NewKVStoreAdapter(backend)
 	require.NoError(t, err)
 
-	teamStore, err := xkms.NewStaticPasswordDAOTeamStore(kvStore)
+	teamStore, err := xkms.NewStaticPasswordDAOTeamStore(xkms.NewStoreDAOFactory(kvStore))
 	require.NoError(t, err)
 	t.Cleanup(func() { teamStore.Close() })
 
@@ -59,7 +77,7 @@ func newFileBackedPasswordStore(t *testing.T, dir string) xkms.StaticPasswordSto
 	require.NoError(t, err)
 	t.Cleanup(func() { backend.Close() })
 
-	store := xkms.NewStaticPasswordStore(backend)
+	store := newTestPasswordStore(t, backend)
 	t.Cleanup(func() { store.Close() })
 	return store
 }
@@ -76,7 +94,7 @@ func newFileBackedTeamStore(t *testing.T, dir string) xkms.StaticPasswordTeamSto
 	kvStore, err := xkms.NewKVStoreAdapter(backend)
 	require.NoError(t, err)
 
-	teamStore, err := xkms.NewStaticPasswordDAOTeamStore(kvStore)
+	teamStore, err := xkms.NewStaticPasswordDAOTeamStore(xkms.NewStoreDAOFactory(kvStore))
 	require.NoError(t, err)
 	t.Cleanup(func() { teamStore.Close() })
 	return teamStore
@@ -302,7 +320,7 @@ func TestTeamPersistenceAcrossServiceInstances(t *testing.T) {
 		kvStore, err := xkms.NewKVStoreAdapter(backend)
 		require.NoError(t, err)
 
-		teamStore, err := xkms.NewStaticPasswordDAOTeamStore(kvStore)
+		teamStore, err := xkms.NewStaticPasswordDAOTeamStore(xkms.NewStoreDAOFactory(kvStore))
 		require.NoError(t, err)
 		defer teamStore.Close()
 
@@ -323,7 +341,7 @@ func TestTeamPersistenceAcrossServiceInstances(t *testing.T) {
 	kvStore, err := xkms.NewKVStoreAdapter(backend)
 	require.NoError(t, err)
 
-	teamStore, err := xkms.NewStaticPasswordDAOTeamStore(kvStore)
+	teamStore, err := xkms.NewStaticPasswordDAOTeamStore(xkms.NewStoreDAOFactory(kvStore))
 	require.NoError(t, err)
 	defer teamStore.Close()
 

@@ -30,6 +30,7 @@ import (
 
 	xkms "github.com/jeremyhahn/go-xkms/sdk/go"
 	"github.com/jeremyhahn/go-xkms/sdk/go/localtpm"
+	"github.com/jeremyhahn/go-xkms/sdk/go/xkmstest"
 	"github.com/jeremyhahn/go-xkms/xkey/pkg/gui/services"
 )
 
@@ -43,7 +44,7 @@ func localSimTPMPolicies(t *testing.T, dataDir string) (*localtpm.Host, *slog.Lo
 	require.NoError(t, err)
 	require.NoError(t, opened.TPM().Provision(nil))
 	cfg := xkms.DefaultTPMConfig
-	require.NoError(t, xkms.EnrollSimulatorPlatformSRK(opened.TPM(), &cfg))
+	require.NoError(t, xkmstest.EnrollPlatformSRK(opened.TPM(), &cfg))
 
 	local, err := localtpm.Open(localtpm.Params{
 		TPM:       opened.TPM(),

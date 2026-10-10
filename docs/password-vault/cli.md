@@ -1,6 +1,6 @@
 # Password Vault — CLI
 
-> **Status: NORMATIVE** · Feature: `password-vault` · Repo: `go-xkms` · Last verified: 2026-10-01
+> **Status: NORMATIVE** · Feature: `password-vault` · Repo: `go-xkms` · Last verified: 2026-10-09
 
 Binary: `xkmsctl`, group `password` (`cmd/xkmsctl/password.go`). Global flags:
 [`../key-management/cli.md`](../key-management/cli.md).
@@ -132,7 +132,7 @@ password field, comes back exactly as stored
 (`pkg/xkms/servicer_password.go:168`). There is no per-request decrypt option:
 confidentiality at rest is provided by the tenant barrier, not by a decryption
 step on `get`, and every store reachable through this servicer
-(`staticpw.BackendStore`, `staticpw.ScopedStore`, `staticpw.DAOStore`) returns
+(`staticpw.DAOStore`, `staticpw.ScopedStore`) returns
 entries the same way. `xkmsctl` never accepted a `--decrypt` or `--user-pin`
 flag on `get`; earlier revisions of this page described one, but the servicer
 never implemented it (removed in #1061).

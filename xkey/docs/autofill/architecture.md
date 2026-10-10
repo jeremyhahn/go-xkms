@@ -1,6 +1,6 @@
 # Browser Extension AutoFill — Architecture
 
-> **Status: NORMATIVE** · Feature: `autofill` · Module: `go-xkms/xkey` · Last verified: 2026-09-28
+> **Status: NORMATIVE** · Feature: `autofill` · Module: `go-xkms/xkey` · Last verified: 2026-10-10
 
 ## Scope
 
@@ -48,6 +48,17 @@ desktop GUI (`pkg/gui/app.go`, Wails) and the headless daemon (`xkey
 extension serve`) for servers/SSH sessions with no desktop. Both speak the
 identical native-messaging and IPC protocol, so the extension does not know
 or care which one it is talking to.
+
+Neither runs unless **local app access** is on (`GUIConfig.LocalAppAccessEnabled`,
+off by default) and in effect: a verified enterprise policy with
+`extension_enabled` false turns it off whatever the setting says. The GUI
+opens its socket only while local app access is in effect and xKey is
+unlocked, and closes it on lock, seal, disable, a disabling policy and
+shutdown (see
+[../gui/architecture.md](../gui/architecture.md)). `xkey extension serve`
+refuses to start while the setting is off. The same setting enables
+`AutoFillService`, replacing the former `BrowserExtensionEnabled` flag, which
+left the socket running even with the extension off.
 
 ## Components
 

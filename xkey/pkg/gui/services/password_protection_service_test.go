@@ -34,7 +34,7 @@ func newTestPasswordProtectionService(t *testing.T) (
 	t.Helper()
 
 	backend := xkms.NewStorageMemory()
-	store := staticpw.NewStore(backend)
+	store := newTestPasswordStore(t, backend)
 	staticPWSvc := NewStaticPasswordService(store)
 	staticPWSvc.SetContext(context.Background())
 

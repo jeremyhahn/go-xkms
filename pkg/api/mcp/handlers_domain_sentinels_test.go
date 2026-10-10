@@ -134,7 +134,7 @@ func TestInvokeMethod_PasswordUnlock_SystemTenant(t *testing.T) {
 	status, ok := result.(PasswordStoreStatusResult)
 	require.True(t, ok)
 	assert.False(t, status.IsLocked)
-	locked, err := s.manager.IsUserLocked("system", "webauthn-user")
+	locked, err := s.manager.IsUserLocked(t.Context(), "system", "webauthn-user")
 	require.NoError(t, err)
 	assert.False(t, locked)
 }

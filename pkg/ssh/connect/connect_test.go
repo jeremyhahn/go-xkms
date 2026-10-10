@@ -36,6 +36,7 @@ import (
 	"github.com/jeremyhahn/go-xkms/pkg/ssh/known_hosts"
 	"github.com/jeremyhahn/go-xkms/pkg/ssh/scope"
 	"github.com/jeremyhahn/go-xkms/pkg/storage"
+	"github.com/jeremyhahn/go-xkms/pkg/testutil"
 )
 
 func testSigner(t *testing.T) ssh.Signer {
@@ -75,7 +76,7 @@ func contains(args []string, want string) bool {
 
 func TestStart_ArgsEnvAndSeed(t *testing.T) {
 	ctx := context.Background()
-	store, _ := known_hosts.NewBackendStore(storage.New())
+	store, _ := known_hosts.NewDAOStore(testutil.NewMemoryDAOFactory())
 	// Pre-pin the target so it is seeded into the known_hosts file.
 	if err := store.Add(ctx, known_hosts.PinFromPublicKey("server.example.com", scope.User, "alice", testHostPub(t), known_hosts.SourceManual)); err != nil {
 		t.Fatalf("Add pin: %v", err)
@@ -130,7 +131,7 @@ func TestStart_ArgsEnvAndSeed(t *testing.T) {
 
 func TestStart_SyncBackImportsNewHost(t *testing.T) {
 	ctx := context.Background()
-	store, _ := known_hosts.NewBackendStore(storage.New())
+	store, _ := known_hosts.NewDAOStore(testutil.NewMemoryDAOFactory())
 
 	sess, err := Start(ctx, Request{
 		Host:            "fresh.example.com",
@@ -164,7 +165,7 @@ func TestStart_SyncBackImportsNewHost(t *testing.T) {
 
 func TestStart_Validation(t *testing.T) {
 	ctx := context.Background()
-	store, _ := known_hosts.NewBackendStore(storage.New())
+	store, _ := known_hosts.NewDAOStore(testutil.NewMemoryDAOFactory())
 	if _, err := Start(ctx, Request{Signer: testSigner(t), KnownHostsStore: store}); err == nil {
 		t.Fatal("expected error for missing host")
 	}
@@ -188,7 +189,7 @@ func TestStart_AgentSessionFailureIsALaunchError(t *testing.T) {
 	if err := os.WriteFile(occupied, []byte("not a socket"), 0o600); err != nil {
 		t.Fatalf("write: %v", err)
 	}
-	store, _ := known_hosts.NewBackendStore(storage.New())
+	store, _ := known_hosts.NewDAOStore(testutil.NewMemoryDAOFactory())
 
 	_, err := Start(context.Background(), Request{
 		Host:            "host.example.com",
@@ -220,7 +221,7 @@ func TestStart_AgentSessionFailureIsALaunchError(t *testing.T) {
 // clean up, one it created.
 func TestStart_CreatesASuppliedWorkDir(t *testing.T) {
 	fresh := filepath.Join(t.TempDir(), "not-created-yet")
-	store, _ := known_hosts.NewBackendStore(storage.New())
+	store, _ := known_hosts.NewDAOStore(testutil.NewMemoryDAOFactory())
 
 	sess, err := Start(context.Background(), Request{
 		Host:            "host.example.com",
@@ -256,7 +257,7 @@ func TestStart_CreatesASuppliedWorkDir(t *testing.T) {
 func TestStart_RelativeWorkDirYieldsAbsoluteArtifactPaths(t *testing.T) {
 	base := t.TempDir()
 	t.Chdir(base)
-	store, _ := known_hosts.NewBackendStore(storage.New())
+	store, _ := known_hosts.NewDAOStore(testutil.NewMemoryDAOFactory())
 
 	sess, err := Start(context.Background(), Request{
 		Host:            "host.example.com",
@@ -307,7 +308,7 @@ func TestStart_RelativeWorkDirYieldsAbsoluteArtifactPaths(t *testing.T) {
 // out from under an import that is reading it.
 func TestSession_SyncRacesStop(t *testing.T) {
 	for i := 0; i < 40; i++ {
-		store, _ := known_hosts.NewBackendStore(storage.New())
+		store, _ := known_hosts.NewDAOStore(testutil.NewMemoryDAOFactory())
 		sess, err := Start(context.Background(), Request{
 			Host:            "host.example.com",
 			User:            "root",
@@ -357,6 +358,14 @@ func (b *blockingStore) Get(ctx context.Context, key string) ([]byte, error) {
 	return b.Backend.Get(ctx, key)
 }
 
+func (b *blockingStore) CompareAndSwap(ctx context.Context, key string, expected, next []byte) (bool, []byte, error) {
+	return b.Backend.(storage.CompareAndSwapper).CompareAndSwap(ctx, key, expected, next)
+}
+
+func (b *blockingStore) CompareAndDelete(ctx context.Context, key string, expected []byte) (bool, error) {
+	return b.Backend.(storage.CompareAndDeleter).CompareAndDelete(ctx, key, expected)
+}
+
 // TestSession_StopIsNotHeldHostageByAStalledSync is the shutdown-liveness
 // guarantee. Sync imports against a caller-supplied store over a context this
 // session does not control, so holding the lifecycle lock across that import
@@ -371,9 +380,9 @@ func TestSession_StopIsNotHeldHostageByAStalledSync(t *testing.T) {
 	}
 	defer close(blocked.release)
 
-	store, err := known_hosts.NewBackendStore(blocked)
+	store, err := pinStoreOver(blocked)
 	if err != nil {
-		t.Fatalf("NewBackendStore: %v", err)
+		t.Fatalf("pinStoreOver: %v", err)
 	}
 	sess, err := Start(context.Background(), Request{
 		Host:            "host.example.com",
@@ -440,7 +449,7 @@ func TestSession_SyncAndStopHonoursItsBound(t *testing.T) {
 	}
 	t.Cleanup(blocked.Release)
 
-	store, _ := known_hosts.NewBackendStore(storage.New())
+	store, _ := known_hosts.NewDAOStore(testutil.NewMemoryDAOFactory())
 	sess, err := Start(context.Background(), Request{
 		Host:            "host.example.com",
 		User:            "root",
@@ -519,9 +528,9 @@ func TestSession_SyncAndStopStopsTheAgentDespiteAStalledStore(t *testing.T) {
 	}
 	defer close(blocked.release)
 
-	store, err := known_hosts.NewBackendStore(blocked)
+	store, err := pinStoreOver(blocked)
 	if err != nil {
-		t.Fatalf("NewBackendStore: %v", err)
+		t.Fatalf("pinStoreOver: %v", err)
 	}
 	sess, err := Start(context.Background(), Request{
 		Host:            "host.example.com",
@@ -578,9 +587,9 @@ func TestSession_SyncAndStopKillsTheAgentBeforeWaiting(t *testing.T) {
 	}
 	defer close(blocked.release)
 
-	store, err := known_hosts.NewBackendStore(blocked)
+	store, err := pinStoreOver(blocked)
 	if err != nil {
-		t.Fatalf("NewBackendStore: %v", err)
+		t.Fatalf("pinStoreOver: %v", err)
 	}
 	sess, err := Start(context.Background(), Request{
 		Host:            "host.example.com",
@@ -652,9 +661,9 @@ func TestSession_SyncAndStopReturnsNearTheDeadline(t *testing.T) {
 	}
 	defer close(blocked.release)
 
-	store, err := known_hosts.NewBackendStore(blocked)
+	store, err := pinStoreOver(blocked)
 	if err != nil {
-		t.Fatalf("NewBackendStore: %v", err)
+		t.Fatalf("pinStoreOver: %v", err)
 	}
 	sess, err := Start(context.Background(), Request{
 		Host:            "host.example.com",
@@ -709,10 +718,9 @@ func TestSession_SyncAndStopPinsHostsDespiteAWedgedSigner(t *testing.T) {
 	}
 	t.Cleanup(blocked.Release)
 
-	backend := storage.New()
-	store, err := known_hosts.NewBackendStore(backend)
+	store, err := known_hosts.NewDAOStore(testutil.NewMemoryDAOFactory())
 	if err != nil {
-		t.Fatalf("NewBackendStore: %v", err)
+		t.Fatalf("NewDAOStore: %v", err)
 	}
 	sess, err := Start(context.Background(), Request{
 		Host:            "host.example.com",
@@ -781,7 +789,7 @@ func TestSession_RepeatedStopKeepsReportingTheAbandonment(t *testing.T) {
 	}
 	t.Cleanup(blocked.Release)
 
-	store, _ := known_hosts.NewBackendStore(storage.New())
+	store, _ := known_hosts.NewDAOStore(testutil.NewMemoryDAOFactory())
 	sess, err := Start(context.Background(), Request{
 		Host:            "host.example.com",
 		User:            "root",
@@ -840,7 +848,7 @@ func TestSession_RepeatedStopKeepsReportingTheAbandonment(t *testing.T) {
 // temp known_hosts, so the accepted key was gone and the next connection was
 // first contact again with nobody told.
 func TestSession_SyncFailsWhenTheSystemMirrorFails(t *testing.T) {
-	store, _ := known_hosts.NewBackendStore(storage.New())
+	store, _ := known_hosts.NewDAOStore(testutil.NewMemoryDAOFactory())
 
 	// A mirror destination that cannot be written: a directory where a file
 	// must go.
@@ -901,9 +909,9 @@ func TestSession_RepeatedReapDoesNotLeakWaiters(t *testing.T) {
 	}
 	defer close(blocked.release)
 
-	store, err := known_hosts.NewBackendStore(blocked)
+	store, err := pinStoreOver(blocked)
 	if err != nil {
-		t.Fatalf("NewBackendStore: %v", err)
+		t.Fatalf("pinStoreOver: %v", err)
 	}
 	sess, err := Start(context.Background(), Request{
 		Host:            "host.example.com",
@@ -965,9 +973,9 @@ func TestSession_SyncIsSingleFlight(t *testing.T) {
 	}
 	defer close(blocked.release)
 
-	store, err := known_hosts.NewBackendStore(blocked)
+	store, err := pinStoreOver(blocked)
 	if err != nil {
-		t.Fatalf("NewBackendStore: %v", err)
+		t.Fatalf("pinStoreOver: %v", err)
 	}
 	sess, err := Start(context.Background(), Request{
 		Host:            "host.example.com",

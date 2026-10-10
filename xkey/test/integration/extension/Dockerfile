@@ -1,5 +1,5 @@
 # Stage 1: Build xkey Go binary
-FROM golang:1.27.1-bookworm AS go-builder
+FROM golang:1.27.2-bookworm AS go-builder
 
 # Allow Go to automatically download the required toolchain version
 ENV GOTOOLCHAIN=auto

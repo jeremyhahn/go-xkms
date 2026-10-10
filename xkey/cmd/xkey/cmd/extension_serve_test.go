@@ -363,6 +363,7 @@ func TestExtensionServeCmd_NoBarrier_IPCConnectivity(t *testing.T) {
 
 	// Set xhome override so Resolve() uses our temp directory.
 	xhome.SetRoot(tmpDir)
+	enableLocalAppAccessForTest(t)
 	defer xhome.ResetRoot()
 
 	socketPath := filepath.Join(privateTempDir(t), "test-serve.sock")
@@ -465,6 +466,7 @@ func TestExtensionServeCmd_BarrierMode_IPCConnectivity(t *testing.T) {
 
 	// Set xhome override so Resolve() uses our temp directory.
 	xhome.SetRoot(tmpDir)
+	enableLocalAppAccessForTest(t)
 	defer xhome.ResetRoot()
 
 	socketPath := filepath.Join(privateTempDir(t), "test-barrier-serve.sock")
@@ -750,6 +752,7 @@ func TestExtensionServe_PKCS11Strategy_UnconfiguredFailsClosed(t *testing.T) {
 	loadedConfig = config.DefaultConfig()
 	t.Cleanup(func() { loadedConfig = saved })
 	xhome.SetRoot(tmpDir)
+	enableLocalAppAccessForTest(t)
 	defer xhome.ResetRoot()
 
 	writeSealedRootKey(t, filepath.Join(tmpDir, "data"), "pkcs11")
@@ -778,6 +781,7 @@ func TestExtensionServe_PKCS11Strategy_UnconfiguredFailsClosed(t *testing.T) {
 func TestExtensionServe_ShamirStrategy_Refused(t *testing.T) {
 	tmpDir := t.TempDir()
 	xhome.SetRoot(tmpDir)
+	enableLocalAppAccessForTest(t)
 	defer xhome.ResetRoot()
 
 	writeSealedRootKey(t, filepath.Join(tmpDir, "data"), "shamir")
@@ -814,6 +818,7 @@ func TestExtensionServe_CloudKMSStrategy_Attempted(t *testing.T) {
 		t.Run(strategy, func(t *testing.T) {
 			tmpDir := t.TempDir()
 			xhome.SetRoot(tmpDir)
+			enableLocalAppAccessForTest(t)
 			defer xhome.ResetRoot()
 
 			writeSealedRootKey(t, filepath.Join(tmpDir, "data"), strategy)
@@ -957,6 +962,7 @@ func TestExtensionServeCmd_NoAuth_NoBarrier(t *testing.T) {
 
 	// Set xhome override so Resolve() uses our temp directory.
 	xhome.SetRoot(tmpDir)
+	enableLocalAppAccessForTest(t)
 	defer xhome.ResetRoot()
 
 	socketPath := filepath.Join(privateTempDir(t), "test-noauth-serve.sock")

@@ -13,7 +13,7 @@
 
 // Package staticpw provides static password management for xkey.
 //
-// Core types (StaticPassword, Store, BackendStore, ExpiryChecker) and their
+// Core types (StaticPassword, Store, DAOStore, ExpiryChecker) and their
 // helpers are re-exported from the go-xkms library package. This package
 // adds xkey-specific encrypted store, encryption configuration, and
 // AES-256-GCM crypto helpers.
@@ -31,8 +31,8 @@ type (
 	// Store defines the interface for static password persistence.
 	Store = xkms.StaticPasswordStore
 
-	// BackendStore implements Store backed by a storage.Backend.
-	BackendStore = xkms.StaticPasswordBackendStore
+	// DAOStore implements Store as go-qrdb DAO records.
+	DAOStore = xkms.StaticPasswordDAOStore
 
 	// ExpiryChecker periodically checks for expired password entries.
 	ExpiryChecker = xkms.StaticPasswordExpiryChecker
@@ -49,10 +49,10 @@ type (
 
 // Re-export constructors.
 var (
-	// NewStore creates a new BackendStore wrapping the provided storage backend.
+	// NewStore creates a DAOStore over the provided go-qrdb DAO factory.
 	NewStore = xkms.NewStaticPasswordStore
 
-	// NewTenantStore creates a new BackendStore with tenant isolation.
+	// NewTenantStore creates a DAOStore with tenant isolation.
 	NewTenantStore = xkms.NewStaticPasswordTenantStore
 
 	// NewExpiryChecker creates a new ExpiryChecker that periodically scans
@@ -66,9 +66,20 @@ var (
 	// and optional folder path.
 	GenerateID = xkms.GenerateStaticPasswordID
 
-	// NewDAOTeamStore creates a new DAOTeamStore using a kvstore.KVStore.
+	// NewDAOTeamStore creates a DAOTeamStore over a go-qrdb DAO factory.
 	NewDAOTeamStore = xkms.NewStaticPasswordDAOTeamStore
 )
+
+// NewBackendStore creates a DAOStore over a storage backend, the barrier or
+// plain file backend xkey keeps its data in. The caller keeps ownership of
+// backend.
+func NewBackendStore(backend xkms.StorageBackend) (*DAOStore, error) {
+	daos, err := xkms.NewBackendDAOFactory(backend)
+	if err != nil {
+		return nil, err
+	}
+	return NewStore(daos)
+}
 
 // Re-export error sentinels.
 var (

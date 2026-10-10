@@ -18,7 +18,9 @@ import (
 	"errors"
 	"testing"
 
-	"github.com/jeremyhahn/go-xkms/pkg/storage"
+	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
+
+	"github.com/jeremyhahn/go-xkms/pkg/dao"
 )
 
 func TestPIVStorageType_IsValid(t *testing.T) {
@@ -891,30 +893,8 @@ func TestFileStorageConfig_Validate(t *testing.T) {
 		wantErr error
 	}{
 		{
-			name: "valid config with both formats",
-			config: &FileStorageConfig{
-				Backend:    storage.NewMemory(),
-				DEREnabled: true,
-				PEMEnabled: true,
-			},
-			wantErr: nil,
-		},
-		{
-			name: "valid config with DER only",
-			config: &FileStorageConfig{
-				Backend:    storage.NewMemory(),
-				DEREnabled: true,
-				PEMEnabled: false,
-			},
-			wantErr: nil,
-		},
-		{
-			name: "valid config with PEM only",
-			config: &FileStorageConfig{
-				Backend:    storage.NewMemory(),
-				DEREnabled: false,
-				PEMEnabled: true,
-			},
+			name:    "valid config",
+			config:  &FileStorageConfig{DAOs: dao.NewStoreFactory(qrdbsdk.NewMemoryKVStore())},
 			wantErr: nil,
 		},
 		{
@@ -923,22 +903,9 @@ func TestFileStorageConfig_Validate(t *testing.T) {
 			wantErr: ErrInvalidConfig,
 		},
 		{
-			name: "empty base path",
-			config: &FileStorageConfig{
-				Backend:    nil,
-				DEREnabled: true,
-				PEMEnabled: true,
-			},
-			wantErr: ErrMissingBackend,
-		},
-		{
-			name: "no format enabled",
-			config: &FileStorageConfig{
-				Backend:    storage.NewMemory(),
-				DEREnabled: false,
-				PEMEnabled: false,
-			},
-			wantErr: ErrNoFormatEnabled,
+			name:    "missing DAO factory",
+			config:  &FileStorageConfig{},
+			wantErr: ErrMissingDAOFactory,
 		},
 	}
 
@@ -1071,8 +1038,7 @@ func TestPIVConfig_Validate(t *testing.T) {
 			config: &PIVConfig{
 				StorageType: StorageTypeFile,
 				FileConfig: &FileStorageConfig{
-					Backend:    storage.NewMemory(),
-					DEREnabled: true,
+					DAOs: dao.NewStoreFactory(qrdbsdk.NewMemoryKVStore()),
 				},
 			},
 			wantErr: nil,
@@ -1134,11 +1100,9 @@ func TestPIVConfig_Validate(t *testing.T) {
 			name: "file config validation error",
 			config: &PIVConfig{
 				StorageType: StorageTypeFile,
-				FileConfig: &FileStorageConfig{
-					Backend: nil, // Invalid: empty
-				},
+				FileConfig:  &FileStorageConfig{},
 			},
-			wantErr: ErrMissingBackend,
+			wantErr: ErrMissingDAOFactory,
 		},
 		{
 			name: "tpm2 config validation error",
@@ -1519,10 +1483,10 @@ func TestSentinelErrors(t *testing.T) {
 		"ErrInvalidConfig":       ErrInvalidConfig,
 		"ErrInvalidStorageType":  ErrInvalidStorageType,
 		"ErrMissingConfig":       ErrMissingConfig,
-		"ErrMissingBackend":      ErrMissingBackend,
+		"ErrMissingDAOFactory":   ErrMissingDAOFactory,
+		"ErrConflict":            ErrConflict,
 		"ErrMissingDevicePath":   ErrMissingDevicePath,
 		"ErrMissingLibraryPath":  ErrMissingLibraryPath,
-		"ErrNoFormatEnabled":     ErrNoFormatEnabled,
 		"ErrTPMNotAvailable":     ErrTPMNotAvailable,
 		"ErrPKCS11NotAvailable":  ErrPKCS11NotAvailable,
 		"ErrNVIndexExists":       ErrNVIndexExists,

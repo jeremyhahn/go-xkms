@@ -30,7 +30,7 @@ import (
 
 	"github.com/jeremyhahn/go-xkms/pkg/auth"
 	"github.com/jeremyhahn/go-xkms/pkg/ssh/tenancy"
-	"github.com/jeremyhahn/go-xkms/pkg/storage"
+	"github.com/jeremyhahn/go-xkms/pkg/testutil"
 	sdkssh "github.com/jeremyhahn/go-xkms/sdk/go/client/ssh"
 )
 
@@ -62,15 +62,13 @@ func mcpSSHAs(id *auth.Identity) context.Context {
 }
 
 // newMCPSSHTenancyServer returns an MCP server over the SSH client xkmsd
-// wires into every transport, on empty in-memory storage.
+// wires into every transport, over an empty in-memory DAO factory.
 func newMCPSSHTenancyServer(t *testing.T) (*Server, sdkssh.Client) {
 	t.Helper()
 	svc := setupTestXKMS(t)
 	t.Cleanup(cleanupXKMS)
 
-	backend, err := storage.NewMemoryBackend()
-	require.NoError(t, err)
-	client, err := tenancy.New(tenancy.Options{Storage: backend})
+	client, err := tenancy.New(tenancy.Options{DAOs: testutil.NewMemoryDAOFactory()})
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, client.Close()) })
 

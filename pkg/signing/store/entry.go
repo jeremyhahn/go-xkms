@@ -13,11 +13,6 @@
 
 package store
 
-import (
-	"github.com/cespare/xxhash/v2"
-	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
-)
-
 // SignerEntry represents a persisted crypto.Signer as a DAO entity.
 // The private key is stored in PEM-encoded PKCS8 format.
 type SignerEntry struct {
@@ -57,26 +52,3 @@ func (e *SignatureEntry) EntityID() uint64 { return e.ID }
 
 // SetEntityID sets the entity's unique identifier.
 func (e *SignatureEntry) SetEntityID(id uint64) { e.ID = id }
-
-// signerEntryIDGenerator generates deterministic IDs by hashing the CN
-// of a SignerEntry using xxhash64.
-type signerEntryIDGenerator struct{}
-
-// Compile-time interface compliance check.
-var _ qrdbsdk.IDGenerator = (*signerEntryIDGenerator)(nil)
-
-// NextID computes the xxhash64 of the entity's CN field.
-// Supports both SignerEntry and SignatureEntry.
-func (g *signerEntryIDGenerator) NextID(entity qrdbsdk.Entity) uint64 {
-	var key string
-	switch e := entity.(type) {
-	case *SignerEntry:
-		key = e.CN
-	case *SignatureEntry:
-		key = e.Key
-	default:
-		return 0
-	}
-
-	return xxhash.Sum64String(key)
-}

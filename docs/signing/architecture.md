@@ -1,6 +1,6 @@
 # Signing — Architecture
 
-> **Status: NORMATIVE** · Feature: `signing` · Repo: `go-xkms` · Last verified: 2026-09-24
+> **Status: NORMATIVE** · Feature: `signing` · Repo: `go-xkms` · Last verified: 2026-10-09
 
 ## The problem
 
@@ -50,6 +50,18 @@ metadata, `New()` builds one `store.SignerStore` from that same
 backend, unconditionally. A signature record is metadata about a signing
 operation the same way a certificate is metadata about a key; it persists the
 same way, through the same seam, for the same reason.
+
+`store.SignerStore` persists through go-qrdb DAOs only:
+`NewSignerStore(logger, daos *qrdbsdk.DAOFactory)` opens two entity types in
+the `signing` database (`store.DatabaseName`): `signers` (`SignerEntry`, ID
+derived from `CN`) and `signatures` (`SignatureEntry`, ID derived from the
+`Key` field, `"{cn}.sig"` or `"{cn}.{blobCN}.sig"`). Both IDs come from
+`qrdbsdk.NewCryptoFieldHashGenerator`, so lookups go through
+`GetByNaturalKey` with the same CN or key the caller already holds.
+`xkms.New` builds the factory with `dao.NewStoreFactory` over a
+`kvadapter.New(BackendConfig.CertStorage)` KV store, which keeps signature
+records beside the certificates. Records written by the earlier raw-KV
+layout are not read.
 
 `store.SignerStore` gained the read-back half, `GetSignature`, and a
 `Checksum(opts *types.VerifyOpts) ([]byte, error)` method that satisfies

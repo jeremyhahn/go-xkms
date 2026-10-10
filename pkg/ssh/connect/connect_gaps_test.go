@@ -21,9 +21,12 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/jeremyhahn/go-xkms/pkg/dao"
 	"github.com/jeremyhahn/go-xkms/pkg/ssh/known_hosts"
 	"github.com/jeremyhahn/go-xkms/pkg/ssh/scope"
 	"github.com/jeremyhahn/go-xkms/pkg/storage"
+	"github.com/jeremyhahn/go-xkms/pkg/storage/kvadapter"
+	"github.com/jeremyhahn/go-xkms/pkg/testutil"
 )
 
 // faultScanBackend wraps an in-memory backend and forces Scan to fail, so a
@@ -35,6 +38,23 @@ type faultScanBackend struct {
 
 func (faultScanBackend) Scan(context.Context, string, func(string, []byte) error) error {
 	return errors.New("injected scan failure")
+}
+
+func (b faultScanBackend) CompareAndSwap(ctx context.Context, key string, expected, next []byte) (bool, []byte, error) {
+	return b.Backend.(storage.CompareAndSwapper).CompareAndSwap(ctx, key, expected, next)
+}
+
+func (b faultScanBackend) CompareAndDelete(ctx context.Context, key string, expected []byte) (bool, error) {
+	return b.Backend.(storage.CompareAndDeleter).CompareAndDelete(ctx, key, expected)
+}
+
+// pinStoreOver returns the known_hosts DAOStore over backend.
+func pinStoreOver(backend storage.Backend) (*known_hosts.DAOStore, error) {
+	kv, err := kvadapter.New(backend)
+	if err != nil {
+		return nil, err
+	}
+	return known_hosts.NewDAOStore(dao.NewStoreFactory(kv))
 }
 
 // TestTarget covers both the bare-host and user@host rendering branches.
@@ -125,7 +145,7 @@ func TestMirrorKnownHosts(t *testing.T) {
 // after the agent is already up.
 func TestStart_WriteKnownHostsError(t *testing.T) {
 	ctx := context.Background()
-	store, _ := known_hosts.NewBackendStore(storage.New())
+	store, _ := known_hosts.NewDAOStore(testutil.NewMemoryDAOFactory())
 
 	workDir := privateDir(t)
 	// Occupy the known_hosts path with a directory so WriteFile fails.
@@ -156,9 +176,9 @@ func TestStart_WriteKnownHostsError(t *testing.T) {
 // store whose List fails makes EmitAll error during seeding.
 func TestStart_EmitKnownHostsError(t *testing.T) {
 	ctx := context.Background()
-	store, err := known_hosts.NewBackendStore(faultScanBackend{Backend: storage.New()})
+	store, err := pinStoreOver(faultScanBackend{Backend: storage.New()})
 	if err != nil {
-		t.Fatalf("NewBackendStore: %v", err)
+		t.Fatalf("pinStoreOver: %v", err)
 	}
 
 	_, err = Start(ctx, Request{
@@ -192,7 +212,7 @@ func TestMirrorKnownHosts_MissingSource(t *testing.T) {
 // extraFiles mirror loop.
 func TestStart_ExtraFilesAndOptions(t *testing.T) {
 	ctx := context.Background()
-	store, _ := known_hosts.NewBackendStore(storage.New())
+	store, _ := known_hosts.NewDAOStore(testutil.NewMemoryDAOFactory())
 
 	// An external known_hosts file that will be seeded and mirrored to.
 	extDir := t.TempDir()
@@ -268,7 +288,7 @@ func TestStart_ExtraFilesAndOptions(t *testing.T) {
 // denied, a stray open handle) was reported as a perfectly clean shutdown.
 func TestSyncAndStop_WorkDirCleanupFailureSurfacesViaErr(t *testing.T) {
 	ctx := context.Background()
-	store, _ := known_hosts.NewBackendStore(storage.New())
+	store, _ := known_hosts.NewDAOStore(testutil.NewMemoryDAOFactory())
 
 	sess, err := Start(ctx, Request{
 		Host:            "cleanup-fail.example.com",

@@ -280,7 +280,7 @@ func TestTenantScopedBackend_InterfaceCompliance(t *testing.T) {
 // back through it, but not under its original (unscoped) CN on the base
 // store directly.
 func TestTenantScopedBackend_SignerStore_Delegates(t *testing.T) {
-	baseStore := store.NewSignerStore(nil, storage.New())
+	baseStore := newTestSignerStore(t)
 	base := &recordingBackend{signerStoreMock: baseStore}
 	tsb := NewTenantScopedBackend(base, "acme")
 
@@ -323,7 +323,7 @@ func TestTenantScopedBackend_SignerStore_IsolatesTenantsOnSameBlobCN(t *testing.
 	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
 	require.NoError(t, err)
 
-	sharedStore := store.NewSignerStore(nil, storage.New())
+	sharedStore := newTestSignerStore(t)
 	base := &recordingBackend{signerStoreMock: sharedStore}
 
 	tenantA := NewTenantScopedBackend(base, "tenant-a")

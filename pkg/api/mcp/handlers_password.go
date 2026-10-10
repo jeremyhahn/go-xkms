@@ -561,9 +561,6 @@ func mapPasswordError(err error) error {
 		return &KeyOpError{Code: ErrCodeInvalidParams, Err: staticpw.ErrInvalidLength}
 	case errors.Is(err, staticpw.ErrInvalidCharset):
 		return &KeyOpError{Code: ErrCodeInvalidParams, Err: staticpw.ErrInvalidCharset}
-	case errors.Is(err, staticpw.ErrInvalidTenantID):
-		// Matches gRPC's codes.InvalidArgument (service_password.go).
-		return &KeyOpError{Code: ErrCodeInvalidParams, Err: staticpw.ErrInvalidTenantID}
 	case errors.Is(err, staticpw.ErrInvalidFolderPath):
 		return &KeyOpError{Code: ErrCodeInvalidParams, Err: staticpw.ErrInvalidFolderPath}
 	case errors.Is(err, staticpw.ErrFolderPathTooDeep):
@@ -630,13 +627,15 @@ func mapPasswordStoreError(err error) error {
 	switch {
 	case errors.Is(err, ErrPasswordStoreNotConfigured),
 		errors.Is(err, staticpw.ErrNotConfigured),
-		errors.Is(err, xkms.ErrNotConfigured),
-		errors.Is(err, staticpw.ErrNoSystemBarrier):
+		errors.Is(err, xkms.ErrNotConfigured):
 		return errPasswordStoreNotConfigured()
 	case errors.Is(err, xkms.ErrNilRequest):
 		return &KeyOpError{Code: ErrCodeInvalidParams, Err: xkms.ErrNilRequest}
 	case errors.Is(err, seal.ErrTenantNotFound):
 		return &KeyOpError{Code: sdkssh.JSONRPCCodeNotFound, Err: seal.ErrTenantNotFound}
+	case errors.Is(err, staticpw.ErrInvalidTenantID):
+		// Matches gRPC's codes.InvalidArgument (service_password.go).
+		return &KeyOpError{Code: ErrCodeInvalidParams, Err: staticpw.ErrInvalidTenantID}
 	case errors.Is(err, staticpw.ErrInvalidUserID):
 		return &KeyOpError{Code: ErrCodeInvalidParams, Err: staticpw.ErrInvalidUserID}
 	case errors.Is(err, staticpw.ErrInvalidScope):

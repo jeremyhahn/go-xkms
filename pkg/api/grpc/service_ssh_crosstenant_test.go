@@ -32,7 +32,7 @@ import (
 	pb "github.com/jeremyhahn/go-xkms/pkg/api/grpc/proto/xkmsv1"
 	"github.com/jeremyhahn/go-xkms/pkg/auth"
 	"github.com/jeremyhahn/go-xkms/pkg/ssh/tenancy"
-	"github.com/jeremyhahn/go-xkms/pkg/storage"
+	"github.com/jeremyhahn/go-xkms/pkg/testutil"
 	sdkssh "github.com/jeremyhahn/go-xkms/sdk/go/client/ssh"
 )
 
@@ -63,13 +63,11 @@ func grpcSSHAs(id *auth.Identity) context.Context {
 }
 
 // newGRPCSSHTenancyService returns a Service over the SSH client xkmsd wires
-// into every transport, on empty in-memory storage, with no authorizer so
-// the owner binding is the only check under test.
+// into every transport, over an empty in-memory DAO factory, with no
+// authorizer so the owner binding is the only check under test.
 func newGRPCSSHTenancyService(t *testing.T) (*Service, sdkssh.Client) {
 	t.Helper()
-	backend, err := storage.NewMemoryBackend()
-	require.NoError(t, err)
-	client, err := tenancy.New(tenancy.Options{Storage: backend})
+	client, err := tenancy.New(tenancy.Options{DAOs: testutil.NewMemoryDAOFactory()})
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, client.Close()) })
 	svc := NewService(nil, nil, nil)

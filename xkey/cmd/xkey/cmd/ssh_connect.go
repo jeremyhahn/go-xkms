@@ -128,22 +128,16 @@ func init() {
 	sshProfileMoveCmd.Flags().String("folder", "", "Destination folder (required)")
 }
 
-// xkeyProfileStore builds the shared SSH profile store (see xkey/pkg/sshstore).
-func xkeyProfileStore() (sshsdk.ProfileStore, error) {
-	backend, err := xkeySSHBackend()
-	if err != nil {
-		return nil, err
-	}
-	return sshsdk.NewProfileStore(backend)
+// xkeyProfileStore builds the shared SSH profile store (see xkey/pkg/sshstore)
+// and the closer that releases its backend.
+func xkeyProfileStore() (sshsdk.ProfileStore, func(), error) {
+	return openSSHStore(sshsdk.NewProfileStore)
 }
 
-// xkeyHostKeyStore builds the shared SSH host-key pin store (see xkey/pkg/sshstore).
-func xkeyHostKeyStore() (sshsdk.HostKeyStore, error) {
-	backend, err := xkeySSHBackend()
-	if err != nil {
-		return nil, err
-	}
-	return sshsdk.NewHostKeyStore(backend)
+// xkeyHostKeyStore builds the shared SSH host-key pin store (see
+// xkey/pkg/sshstore) and the closer that releases its backend.
+func xkeyHostKeyStore() (sshsdk.HostKeyStore, func(), error) {
+	return openSSHStore(sshsdk.NewHostKeyStore)
 }
 
 // sshConnectResolved is the fully-resolved connection target for `ssh
@@ -200,36 +194,57 @@ func resolveSSHConnect(cmd *cobra.Command, args []string) (*sshConnectResolved, 
 
 	r.Host = target
 	// If the target matches a saved profile, use its settings.
-	if store, err := xkeyProfileStore(); err == nil && target != "" {
-		if p, gerr := store.Get(target); gerr == nil {
-			r.Host = p.Host
-			if r.Port == 0 {
-				r.Port = p.EffectivePort()
-			}
-			if r.User == "" {
-				r.User = p.User
-			}
-			if r.Name == "" {
-				r.Name = p.KeyName
-				if p.KeyScope != "" {
-					r.KeyScope = p.KeyScope
-				}
-				if p.KeyOwner != "" {
-					r.KeyOwner = p.KeyOwner
-				}
-			}
-			if p.KeySource == "local" {
-				r.Local = true
-			}
-			if r.Alias == "" {
-				r.Alias = p.SSHConfigAlias
-			}
-			if r.Identity == "" {
-				r.Identity = p.LocalIdentity
-			}
+	p, ok := lookupSSHProfile(target)
+	if !ok {
+		return r, nil
+	}
+	r.Host = p.Host
+	if r.Port == 0 {
+		r.Port = p.EffectivePort()
+	}
+	if r.User == "" {
+		r.User = p.User
+	}
+	if r.Name == "" {
+		r.Name = p.KeyName
+		if p.KeyScope != "" {
+			r.KeyScope = p.KeyScope
+		}
+		if p.KeyOwner != "" {
+			r.KeyOwner = p.KeyOwner
 		}
 	}
+	if p.KeySource == "local" {
+		r.Local = true
+	}
+	if r.Alias == "" {
+		r.Alias = p.SSHConfigAlias
+	}
+	if r.Identity == "" {
+		r.Identity = p.LocalIdentity
+	}
 	return r, nil
+}
+
+// lookupSSHProfile returns the saved profile named name. It reports false
+// when name is empty, names no profile, or the profile store cannot be
+// opened: a target that is not a profile is a plain host. The store is
+// closed before it returns, so the caller may open the shared SSH store
+// again.
+func lookupSSHProfile(name string) (*sshsdk.Profile, bool) {
+	if name == "" {
+		return nil, false
+	}
+	store, closeStore, err := xkeyProfileStore()
+	if err != nil {
+		return nil, false
+	}
+	defer closeStore()
+	p, err := store.Get(name)
+	if err != nil {
+		return nil, false
+	}
+	return p, true
 }
 
 func runSSHConnect(cmd *cobra.Command, args []string) error {
@@ -257,17 +272,13 @@ func runSSHConnect(cmd *cobra.Command, args []string) error {
 		return ErrSSHConnectTarget
 	}
 
-	client, closer, err := sshClient(cmd)
+	client, hostKeys, closer, err := sshClientWithHostKeys(cmd)
 	if err != nil {
 		return err
 	}
 	defer closer()
 
 	signer, err := client.Keys().Signer(context.Background(), sshsdk.GetKeyRequest{Scope: r.KeyScope, Owner: r.KeyOwner, Name: r.Name})
-	if err != nil {
-		return err
-	}
-	hostKeys, err := xkeyHostKeyStore()
 	if err != nil {
 		return err
 	}
@@ -418,10 +429,11 @@ func runSSHProfileAdd(cmd *cobra.Command, _ []string) error {
 		keySource = "local"
 	}
 
-	store, err := xkeyProfileStore()
+	store, closeStore, err := xkeyProfileStore()
 	if err != nil {
 		return err
 	}
+	defer closeStore()
 	if aerr := store.Add(&sshsdk.Profile{
 		Name: name, FolderPath: folder, Host: host, Port: port, User: user,
 		KeyScope: keyScope, KeyOwner: keyOwner, KeyName: keyName, Notes: notes,
@@ -437,10 +449,11 @@ func runSSHProfileAdd(cmd *cobra.Command, _ []string) error {
 func runSSHProfileList(cmd *cobra.Command, _ []string) error {
 	out := cmd.OutOrStdout()
 	folder, _ := cmd.Flags().GetString("folder")
-	store, err := xkeyProfileStore()
+	store, closeStore, err := xkeyProfileStore()
 	if err != nil {
 		return err
 	}
+	defer closeStore()
 	var profiles []*sshsdk.Profile
 	if folder != "" {
 		profiles, err = store.ListByFolder(folder)
@@ -466,10 +479,11 @@ func runSSHProfileList(cmd *cobra.Command, _ []string) error {
 
 func runSSHProfileGet(cmd *cobra.Command, args []string) error {
 	out := cmd.OutOrStdout()
-	store, err := xkeyProfileStore()
+	store, closeStore, err := xkeyProfileStore()
 	if err != nil {
 		return err
 	}
+	defer closeStore()
 	p, err := store.Get(args[0])
 	if err != nil {
 		return err
@@ -481,10 +495,11 @@ func runSSHProfileGet(cmd *cobra.Command, args []string) error {
 
 func runSSHProfileRemove(cmd *cobra.Command, args []string) error {
 	out := cmd.OutOrStdout()
-	store, err := xkeyProfileStore()
+	store, closeStore, err := xkeyProfileStore()
 	if err != nil {
 		return err
 	}
+	defer closeStore()
 	if derr := store.Delete(args[0]); derr != nil {
 		return derr
 	}
@@ -498,10 +513,11 @@ func runSSHProfileMove(cmd *cobra.Command, args []string) error {
 	if folder == "" {
 		return ErrSSHProfileMoveFolder
 	}
-	store, err := xkeyProfileStore()
+	store, closeStore, err := xkeyProfileStore()
 	if err != nil {
 		return err
 	}
+	defer closeStore()
 	if merr := store.MoveToFolder(args[0], folder); merr != nil {
 		return merr
 	}

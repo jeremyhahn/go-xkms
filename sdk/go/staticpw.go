@@ -17,8 +17,9 @@ import "github.com/jeremyhahn/go-xkms/pkg/staticpw"
 
 // Static-password (password-manager) surface re-exported so the xkey GUI/CLI
 // reach the canonical pkg/staticpw store through the SDK. The generic Store and
-// BackendStore identifiers are prefixed StaticPassword* to stay unambiguous in
-// the flat SDK namespace.
+// DAOStore identifiers are prefixed StaticPassword* to stay unambiguous in the
+// flat SDK namespace. Every store persists through a go-qrdb DAO factory (see
+// NewStoreDAOFactory) serving the staticpw database.
 
 // --- Core types ---
 
@@ -28,8 +29,8 @@ type StaticPassword = staticpw.StaticPassword
 // StaticPasswordStore is the password store interface.
 type StaticPasswordStore = staticpw.Store
 
-// StaticPasswordBackendStore is the barrier-backed password store.
-type StaticPasswordBackendStore = staticpw.BackendStore
+// StaticPasswordDAOStore is the password store kept as go-qrdb DAO records.
+type StaticPasswordDAOStore = staticpw.DAOStore
 
 // StaticPasswordExpiryChecker periodically checks for expired passwords.
 type StaticPasswordExpiryChecker = staticpw.ExpiryChecker
@@ -45,7 +46,7 @@ type StaticPasswordDAOTeamStore = staticpw.DAOTeamStore
 
 // --- Constructors ---
 
-// NewStaticPasswordStore constructs a barrier-backed password store.
+// NewStaticPasswordStore constructs the platform password store over a DAO factory.
 var NewStaticPasswordStore = staticpw.NewStore
 
 // NewStaticPasswordTenantStore constructs a tenant-scoped password store.

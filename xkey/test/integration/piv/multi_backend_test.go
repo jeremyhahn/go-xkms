@@ -52,6 +52,20 @@ func generateTestCert(t *testing.T) *x509.Certificate {
 	return cert
 }
 
+// newPIVStore returns a PIV certificate store persisting through a DAO factory
+// over backend.
+func newPIVStore(backend xkms.StorageBackend) (xkms.PIVCertificateStorage, error) {
+	daos, err := xkms.NewBackendDAOFactory(backend)
+	if err != nil {
+		return nil, err
+	}
+	store, err := xkms.NewPIVFileBackend(&xkms.PIVFileStorageConfig{DAOs: daos})
+	if err != nil {
+		return nil, err
+	}
+	return store, nil
+}
+
 // TestPIVMultiBackend_CertificateIsolation verifies that certificates stored
 // under one backend are NOT visible when listing another backend's slots.
 // This is the regression test for the shared-storage bug where all backends
@@ -65,20 +79,12 @@ func TestPIVMultiBackend_CertificateIsolation(t *testing.T) {
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, baseBackend.Close()) })
 
-	softwareStore, err := xkms.NewPIVFileBackend(&xkms.PIVFileStorageConfig{
-		Backend:    baseBackend,
-		DEREnabled: true,
-		PEMEnabled: true,
-	})
+	softwareStore, err := newPIVStore(baseBackend)
 	require.NoError(t, err)
 
 	tpm2NS, err := xkms.NewStoragePrefixBackend(baseBackend, "backends/tpm2/")
 	require.NoError(t, err)
-	tpm2Store, err := xkms.NewPIVFileBackend(&xkms.PIVFileStorageConfig{
-		Backend:    tpm2NS,
-		DEREnabled: true,
-		PEMEnabled: true,
-	})
+	tpm2Store, err := newPIVStore(tpm2NS)
 	require.NoError(t, err)
 
 	// Initialize PIV manager with per-backend stores and a factory.
@@ -153,11 +159,7 @@ func TestPIVMultiBackend_LazyStoreFactory(t *testing.T) {
 	t.Cleanup(func() { require.NoError(t, baseBackend.Close()) })
 
 	// Initialize with only "software" pre-registered and a factory for others.
-	softwareStore, err := xkms.NewPIVFileBackend(&xkms.PIVFileStorageConfig{
-		Backend:    baseBackend,
-		DEREnabled: true,
-		PEMEnabled: true,
-	})
+	softwareStore, err := newPIVStore(baseBackend)
 	require.NoError(t, err)
 
 	factory := func(backendName string) (xkms.PIVCertificateStorage, error) {
@@ -165,11 +167,7 @@ func TestPIVMultiBackend_LazyStoreFactory(t *testing.T) {
 		if nsErr != nil {
 			return nil, nsErr
 		}
-		return xkms.NewPIVFileBackend(&xkms.PIVFileStorageConfig{
-			Backend:    ns,
-			DEREnabled: true,
-			PEMEnabled: true,
-		})
+		return newPIVStore(ns)
 	}
 
 	xkms.XKMSResetPIV()

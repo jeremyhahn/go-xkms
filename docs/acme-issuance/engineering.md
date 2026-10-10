@@ -1493,10 +1493,11 @@ server" section.
   `compliance_attestation_test.go` (including `findPCRValue` refusing PCR
   data no TPM produces and oversized PCR data, and preferring the SHA-256
   bank). `swtpm_helper_test.go`'s
-  `SwtpmConnection.Provision` enrolls the Platform SRK and installs a
-  throwaway IAK certificate via the same
-  `xkmssdk.EnrollSimulatorPlatformSRK`/`xkmssdk.ProvisionSimulatorIAKCertificate`
-  helpers `pkg/acme/client/service.openDeviceTPM` uses for the in-process
+  `SwtpmConnection.Provision` enrolls the Platform SRK
+  (`xkmstest.EnrollPlatformSRK`, the test-only `sdk/go/xkmstest`) and
+  installs a throwaway IAK certificate with
+  `service.ProvisionSimulatorIAKCertificate`, the function
+  `pkg/acme/client/service.openDeviceTPM` uses for the in-process
   simulator, so `TestDeviceAttest_CompleteWorkflow` and the other
   device-attest-01 swtpm tests certify a certificate key under the Platform
   SRK exactly as production device-attest-01 does.

@@ -17,18 +17,19 @@ import (
 	"context"
 	"crypto/rand"
 	"encoding/hex"
-	"encoding/json"
-	"fmt"
 	"sort"
-	"sync"
+	"sync/atomic"
 	"time"
 
+	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
+
+	"github.com/jeremyhahn/go-xkms/pkg/dao"
 	"github.com/jeremyhahn/go-xkms/pkg/errs"
-	"github.com/jeremyhahn/go-xkms/pkg/storage"
+	"github.com/jeremyhahn/go-xkms/pkg/ssh/records"
 )
 
-// defaultKeyPrefix is the storage namespace for session records.
-const defaultKeyPrefix = "ssh/sessions/"
+// entityType is the go-qrdb entity type of a session record.
+const entityType = "ssh_sessions"
 
 // Store is the persistence interface for embedded-console session records.
 // Implementations MUST be safe for concurrent use.
@@ -42,26 +43,46 @@ type Store interface {
 	Close() error
 }
 
-// BackendStore implements Store over a storage.Backend.
-type BackendStore struct {
-	mu      sync.RWMutex
-	backend storage.Backend
-	closed  bool
+// record is one stored session, keyed by its session ID.
+type record struct {
+	ID      uint64  `json:"id"`
+	Key     string  `json:"key"`
+	Session Session `json:"session"`
 }
 
-// NewStore constructs a BackendStore. Returns ErrNilBackend if backend is nil.
-func NewStore(backend storage.Backend) (*BackendStore, error) {
-	if backend == nil {
-		return nil, ErrNilBackend
+// EntityID returns the record's ID.
+func (r *record) EntityID() uint64 { return r.ID }
+
+// SetEntityID sets the record's ID.
+func (r *record) SetEntityID(id uint64) { r.ID = id }
+
+// DAOStore implements Store as go-qrdb entities in the records.DatabaseName
+// database.
+type DAOStore struct {
+	records qrdbsdk.GenericDAO[*record]
+	closed  atomic.Bool
+}
+
+var _ Store = (*DAOStore)(nil)
+
+// NewStore constructs the DAOStore over the DAOs daos builds. Returns
+// ErrNilDAOFactory if daos is nil.
+func NewStore(daos *qrdbsdk.DAOFactory) (*DAOStore, error) {
+	if daos == nil {
+		return nil, ErrNilDAOFactory
 	}
-	return &BackendStore{backend: backend}, nil
+	sessions, err := dao.New(daos, records.DatabaseName, entityType,
+		func() *record { return &record{} },
+		qrdbsdk.WithIDGenerator(qrdbsdk.NewCryptoFieldHashGenerator("Key")))
+	if err != nil {
+		return nil, &errs.Joined{Lead: ErrStorage, Detail: "open", Cause: err}
+	}
+	return &DAOStore{records: sessions}, nil
 }
 
 // Save persists a session record (see Store.Save).
-func (s *BackendStore) Save(sess *Session) error {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	if s.closed {
+func (s *DAOStore) Save(sess *Session) error {
+	if s.closed.Load() {
 		return ErrStoreClosed
 	}
 	if err := sess.Validate(); err != nil {
@@ -82,49 +103,36 @@ func (s *BackendStore) Save(sess *Session) error {
 	if sess.LastConnectedAt.IsZero() {
 		sess.LastConnectedAt = now
 	}
-	data, err := json.Marshal(sess)
-	if err != nil {
-		return &errs.Detail{Err: ErrMarshalFailed, Detail: fmt.Sprintf("%v", err)}
+	if err := s.records.Save(context.Background(), &record{Key: sess.ID, Session: *sess}); err != nil {
+		return &errs.Joined{Lead: ErrStorage, Detail: "save " + sess.ID, Cause: err}
 	}
-	return s.backend.Put(context.Background(), defaultKeyPrefix+sess.ID, data)
+	return nil
 }
 
 // Get retrieves a session record by ID.
-func (s *BackendStore) Get(id string) (*Session, error) {
-	s.mu.RLock()
-	defer s.mu.RUnlock()
-	if s.closed {
+func (s *DAOStore) Get(id string) (*Session, error) {
+	if s.closed.Load() {
 		return nil, ErrStoreClosed
 	}
-	data, err := s.backend.Get(context.Background(), defaultKeyPrefix+id)
+	r, err := s.load(id)
 	if err != nil {
-		return nil, &errs.Detail{Err: ErrNotFound, Detail: fmt.Sprintf("%v", err)}
+		return nil, err
 	}
-	return unmarshalSession(data)
+	return &r.Session, nil
 }
 
 // List returns all session records, most recently connected first.
-func (s *BackendStore) List() ([]*Session, error) {
-	s.mu.RLock()
-	defer s.mu.RUnlock()
-	if s.closed {
+func (s *DAOStore) List() ([]*Session, error) {
+	if s.closed.Load() {
 		return nil, ErrStoreClosed
 	}
-	keys, err := s.backend.List(context.Background(), defaultKeyPrefix)
+	all, err := s.records.Find(context.Background()).Execute()
 	if err != nil {
-		return nil, &errs.Detail{Err: ErrNotFound, Detail: fmt.Sprintf("%v", err)}
+		return nil, &errs.Joined{Lead: ErrStorage, Detail: "list", Cause: err}
 	}
-	out := make([]*Session, 0, len(keys))
-	for _, key := range keys {
-		data, getErr := s.backend.Get(context.Background(), key)
-		if getErr != nil {
-			continue
-		}
-		sess, uErr := unmarshalSession(data)
-		if uErr != nil {
-			continue
-		}
-		out = append(out, sess)
+	out := make([]*Session, 0, len(all))
+	for _, r := range all {
+		out = append(out, &r.Session)
 	}
 	sort.Slice(out, func(i, j int) bool {
 		return out[i].LastConnectedAt.After(out[j].LastConnectedAt)
@@ -133,42 +141,44 @@ func (s *BackendStore) List() ([]*Session, error) {
 }
 
 // Delete removes a session record by ID.
-func (s *BackendStore) Delete(id string) error {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	if s.closed {
+func (s *DAOStore) Delete(id string) error {
+	if s.closed.Load() {
 		return ErrStoreClosed
 	}
-	key := defaultKeyPrefix + id
-	exists, err := s.backend.Exists(context.Background(), key)
-	if err != nil || !exists {
-		return &errs.Detail{Err: ErrNotFound, Detail: id}
+	r, err := s.load(id)
+	if err != nil {
+		return err
 	}
-	return s.backend.Delete(context.Background(), key)
-}
-
-// Close marks the store closed; subsequent operations fail with
-// ErrStoreClosed. The underlying backend is owned by the caller.
-func (s *BackendStore) Close() error {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	s.closed = true
+	if err := s.records.Delete(context.Background(), r); err != nil {
+		return &errs.Joined{Lead: ErrStorage, Detail: "delete " + id, Cause: err}
+	}
 	return nil
 }
 
-func unmarshalSession(data []byte) (*Session, error) {
-	var sess Session
-	if err := json.Unmarshal(data, &sess); err != nil {
-		return nil, &errs.Detail{Err: ErrUnmarshalFailed, Detail: fmt.Sprintf("%v", err)}
+// Close marks the store closed; subsequent operations fail with
+// ErrStoreClosed. The DAO factory is owned by the caller.
+func (s *DAOStore) Close() error {
+	s.closed.Store(true)
+	return nil
+}
+
+// load returns the record of session id, or ErrNotFound.
+func (s *DAOStore) load(id string) (*record, error) {
+	r, err := s.records.GetByNaturalKey(context.Background(), id)
+	if qrdbsdk.IsDAONotFound(err) {
+		return nil, &errs.Detail{Err: ErrNotFound, Detail: id}
 	}
-	return &sess, nil
+	if err != nil {
+		return nil, &errs.Joined{Lead: ErrStorage, Detail: "get " + id, Cause: err}
+	}
+	return r, nil
 }
 
 // randomID returns a 16-hex-char random session identifier.
 func randomID() (string, error) {
 	b := make([]byte, 8)
 	if _, err := rand.Read(b); err != nil {
-		return "", &errs.Detail{Err: ErrMarshalFailed, Detail: fmt.Sprintf("%v", err)}
+		return "", &errs.Joined{Lead: ErrRandomID, Cause: err}
 	}
 	return hex.EncodeToString(b), nil
 }

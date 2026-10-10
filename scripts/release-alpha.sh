@@ -20,6 +20,8 @@
 #	--branch    The branch releases are cut from (default: main). Overriding
 #	            it is the only way to rehearse against a branch other than
 #	            main.
+#	FORGE_TOKEN Environment, REQUIRED. The project agent's forge API token,
+#	            used to open the pull request.
 #
 # WHAT THIS SCRIPT DOES, and where the rest of the release happens
 # (go-xkms#419, go-xkms#211 "option B"):
@@ -34,7 +36,9 @@
 #	3. On a real (non-dry-run) cut: checks out a new branch
 #	   release/X.Y.Z-alpha from the fetched tip, assembles the changelog,
 #	   moves the pins, bumps VERSION, commits, and pushes THE BRANCH ONLY.
-#	   It prints the pull request URL and stops.
+#	   It then opens the pull request into --branch, titled exactly
+#	   "chore(release): vX.Y.Z-alpha", on the forge --remote's own URL names
+#	   (ssh, scp-like or http form), prints its URL and stops.
 #
 # It used to also create the three lockstep tags and push them, atomically,
 # to main — with no pull request anywhere in that path (go-xkms#419: two
@@ -65,6 +69,7 @@ REMOTE=${REMOTE:-dev}
 RELEASE_BRANCH=${RELEASE_BRANCH:-main}
 GIT=${GIT:-git}
 GO=${GO:-go}
+CURL=${CURL:-curl}
 
 # The lockstep tag namespaces. Every release publishes exactly one tag in each,
 # all pointing at the same commit (release-versioning.md P2). web/desktop is a
@@ -302,34 +307,59 @@ changelog_entries_pending() {
 	[ -n "$(find "$1" -maxdepth 1 -name '*.md' ! -name 'README.md' -print -quit 2>/dev/null)" ]
 }
 
-# remote_repo_path prints "<owner>/<repo>" (no trailing .git) from a git
-# remote URL in any of the three shapes this fabric's remotes use: ssh://,
-# http(s)://, or scp-like user@host:path. Mirrors the case structure of
-# scripts/gitea-host.sh, which resolves the HOST half of the same URL; this
-# resolves the PATH half, so the two compose into one PR URL without either
-# script guessing at the other's job. Prints nothing for a shape it does not
-# recognize -- the PR URL this feeds is a convenience, never worth failing a
-# prepared release over.
-remote_repo_path() {
-	local url=$1 rest path
+# forge_repo_url prints the forge's web URL for a repository,
+# "<scheme>://<host>[:<port>]/<owner>/<repo>" (no trailing .git), from the
+# git remote URL it is pushed through. Both halves come from the one URL, so
+# the pull request lands on the server the branch was pushed to:
+#
+#	ssh://[user@]host[:sshport]/owner/repo   -> http://host:3001/owner/repo
+#	[user@]host:owner/repo                   -> http://host:3001/owner/repo
+#	http[s]://[user[:pass]@]host[:port]/owner/repo -> as written, minus userinfo
+#
+# An SSH remote names the SSH port, not the web one, so it maps to
+# GITEA_HTTP_PORT (default 3001), as scripts/gitea-host.sh does for origin.
+# Prints nothing for a shape that names no forge (a local path, a file://
+# URL, an empty string) or that has no owner/repo path.
+forge_repo_url() {
+	local url=$1 scheme=http hostport path
 	case "$url" in
 	ssh://*)
-		rest=${url#ssh://}
-		rest=${rest#*@}
-		path=${rest#*/}
+		hostport=${url#ssh://}
+		path=${hostport#*/}
+		hostport=${hostport%%/*}
+		hostport="${hostport%%:*}:${GITEA_HTTP_PORT:-3001}"
 		;;
 	http://* | https://*)
-		rest=${url#*://}
-		rest=${rest#*@}
-		path=${rest#*/}
+		scheme=${url%%://*}
+		hostport=${url#*://}
+		path=${hostport#*/}
+		hostport=${hostport%%/*}
 		;;
-	*@*:*)
-		rest=${url#*@}
-		path=${rest#*:}
+	*://*) return 0 ;;
+	*:*)
+		# git reads a colon before any slash as scp-like syntax; a slash
+		# first makes it a local path such as ./dir:name.
+		hostport=${url%%:*}
+		[[ $hostport != */* ]] || return 0
+		path=${url#*:}
+		hostport="${hostport}:${GITEA_HTTP_PORT:-3001}"
 		;;
-	*) path="" ;;
+	*) return 0 ;;
 	esac
-	printf '%s' "${path%.git}"
+	hostport=${hostport##*@}
+	path=${path%/}
+	path=${path%.git}
+	[[ -n ${hostport%%:*} && $path == */* && $path != */*/* ]] || return 0
+	printf '%s://%s/%s' "$scheme" "$hostport" "$path"
+}
+
+# json_string prints $1 as a JSON string literal, escaping the backslash and
+# the double quote. That is complete for every value the pull request is
+# built from: a validated version, fixed text, and branch names, in which
+# git check-ref-format already forbids control characters.
+json_string() {
+	local s=${1//\\/\\\\}
+	printf '"%s"' "${s//\"/\\\"}"
 }
 
 # Sourced by the unit tests for the functions above; nothing below runs.
@@ -356,7 +386,7 @@ while [ $# -gt 0 ]; do
 	--branch) [ $# -ge 2 ] || die "--branch needs a value"; RELEASE_BRANCH=$2; shift 2 ;;
 	--branch=*) RELEASE_BRANCH=${1#--branch=}; shift ;;
 	--dry-run) DRY_RUN=1; shift ;;
-	-h | --help) sed -n '3,22p' "$0"; exit 0 ;;
+	-h | --help) sed -n '3,24p' "$0"; exit 0 ;;
 	*) die "unknown argument '$1'" ;;
 	esac
 done
@@ -389,6 +419,9 @@ cd "$($GIT rev-parse --show-toplevel)" || die "could not reach the repository ro
 	die "the working tree is not clean. A release commit must contain this release and nothing else; commit or stash your changes first"
 
 BRANCH_NAME="release/$NEXT"
+# The release commit's subject and the pull request's title, exactly:
+# scripts/release-tag.sh looks for this commit on --branch before tagging.
+RELEASE_TITLE="chore(release): $NEXT"
 
 # Scratch directories this run creates, removed on every exit path. Declared
 # before the first mktemp call, not after: a die() between here and the first
@@ -411,6 +444,43 @@ cleanup_hint() {
 			"$PREVIOUS_REF" "$BRANCH_NAME"
 	fi
 }
+
+# ---------------------------------------------------------------------------
+# The forge the pull request is opened on, derived from --remote's configured
+# URL so it is the server the release branch is pushed to. Read with
+# `git config` rather than `git remote get-url`, which applies insteadOf
+# rewrites: those are a transport detail, and the configured URL is the one
+# that names the forge. Checked, and the token proven against the forge API,
+# before anything is fetched or written: a real cut that pushed its branch
+# and only then found it could not open the pull request would leave a
+# half-prepared release behind. A dry run checks the same.
+# ---------------------------------------------------------------------------
+
+REMOTE_URL=$($GIT config --get "remote.$REMOTE.url") || die "no git remote named '$REMOTE'"
+FORGE_REPO=$(forge_repo_url "$REMOTE_URL")
+[ -n "$FORGE_REPO" ] ||
+	die "remote '$REMOTE' ($REMOTE_URL) names no forge repository -- it must be an ssh://, scp-like or http(s):// URL ending in <owner>/<repo>"
+FORGE_BASE=${FORGE_REPO%/*/*}
+FORGE_API="$FORGE_BASE/api/v1/repos/${FORGE_REPO#"$FORGE_BASE"/}"
+[ -n "${FORGE_TOKEN:-}" ] ||
+	die "FORGE_TOKEN is not set -- the release pull request is opened on $FORGE_REPO as the project agent"
+
+FORGE_RESPONSE=$(mktemp) || die "could not create a scratch file for forge API responses"
+SCRATCH_DIRS+=("$FORGE_RESPONSE")
+
+# forge_api METHOD PATH [BODY] calls the repository's forge API and prints the
+# HTTP status; the response body is left in $FORGE_RESPONSE. The token reaches
+# curl as a header read from a file descriptor, never on its command line.
+forge_api() {
+	$CURL -sS -o "$FORGE_RESPONSE" -w '%{http_code}' -X "$1" \
+		-H @<(printf 'Authorization: token %s\n' "$FORGE_TOKEN") \
+		-H 'Content-Type: application/json' \
+		${3:+--data-binary "$3"} "$FORGE_API$2"
+}
+
+code=$(forge_api GET "") || code=000
+[ "$code" = 200 ] ||
+	die "cannot read $FORGE_REPO through the forge API (HTTP $code) -- check FORGE_TOKEN and the '$REMOTE' remote"
 
 # ---------------------------------------------------------------------------
 # Fetch the tip this release is cut from. Read from THIS, never from whatever
@@ -623,36 +693,35 @@ if [ "$DRY_RUN" = 1 ]; then
 	fi
 	printf 'release-alpha: DRY RUN -- would push %s to %s and open a pull request into %s:\n' \
 		"$BRANCH_NAME" "$REMOTE" "$RELEASE_BRANCH"
-	REPO_PATH=$(remote_repo_path "$($GIT remote get-url "$REMOTE" 2>/dev/null || true)")
-	HOST=$(bash scripts/gitea-host.sh 2>/dev/null || true)
-	if [ -n "$HOST" ] && [ -n "$REPO_PATH" ]; then
-		printf '  http://%s/%s/compare/%s...%s\n' "$HOST" "$REPO_PATH" "$RELEASE_BRANCH" "$BRANCH_NAME"
-	fi
+	printf '  "%s" on %s\n' "$RELEASE_TITLE" "$FORGE_REPO"
 	printf 'release-alpha: nothing was changed\n'
 	exit 0
 fi
 
 # ---------------------------------------------------------------------------
-# The release commit and the branch push. NOTHING beyond this point is
-# reachable from --dry-run.
+# The release commit, the branch push and the pull request. NOTHING beyond
+# this point is reachable from --dry-run.
 # ---------------------------------------------------------------------------
 
 $GIT add -- "${RELEASE_FILES[@]}" || die "could not stage the release files. $(cleanup_hint)"
-$GIT commit -q -m "chore(release): $NEXT" || die "the release commit failed. $(cleanup_hint)"
+$GIT commit -q -m "$RELEASE_TITLE" || die "the release commit failed. $(cleanup_hint)"
 RELEASE_COMMIT=$($GIT rev-parse HEAD) || die "could not resolve the release commit"
 
 $GIT push -u "$REMOTE" "$BRANCH_NAME" ||
 	die "the branch push was refused, so nothing was published. The commit is still local on $BRANCH_NAME. $(cleanup_hint)"
-
-REPO_PATH=$(remote_repo_path "$($GIT remote get-url "$REMOTE" 2>/dev/null || true)")
-HOST=$(bash scripts/gitea-host.sh 2>/dev/null || true)
-
 printf 'release-alpha: pushed %s to %s at %s\n' "$BRANCH_NAME" "$REMOTE" "$RELEASE_COMMIT"
-if [ -n "$HOST" ] && [ -n "$REPO_PATH" ]; then
-	printf 'release-alpha: open a pull request: http://%s/%s/compare/%s...%s\n' \
-		"$HOST" "$REPO_PATH" "$RELEASE_BRANCH" "$BRANCH_NAME"
-else
-	printf 'release-alpha: could not determine the repository URL for %s -- open a pull request from %s into %s manually\n' \
-		"$REMOTE" "$BRANCH_NAME" "$RELEASE_BRANCH"
-fi
+
+PR_REQUEST=$(printf '{"title":%s,"head":%s,"base":%s,"body":%s}' \
+	"$(json_string "$RELEASE_TITLE")" "$(json_string "$BRANCH_NAME")" "$(json_string "$RELEASE_BRANCH")" \
+	"$(json_string "Prepared by scripts/release-alpha.sh. Once this is reviewed and merged, run: make release-tag VERSION=${NEXT#v}")")
+code=$(forge_api POST /pulls "$PR_REQUEST") || code=000
+[ "$code" = 201 ] ||
+	die "the forge refused to open the pull request (HTTP $code) although $BRANCH_NAME is pushed. Open it by hand, titled '$RELEASE_TITLE': $FORGE_REPO/compare/$RELEASE_BRANCH...$BRANCH_NAME"
+
+# The response's only html_url under /pulls/ is the pull request's own; the
+# user and repository objects it embeds carry html_urls of their own too.
+PR_URL=$(grep -oE '"html_url":"[^"]*/pulls/[0-9]+"' "$FORGE_RESPONSE") || PR_URL=""
+PR_URL=${PR_URL#*:\"}
+PR_URL=${PR_URL%\"}
+printf 'release-alpha: opened pull request "%s": %s\n' "$RELEASE_TITLE" "${PR_URL:-$FORGE_REPO/pulls}"
 printf 'release-alpha: once that pull request is reviewed and merged, run: make release-tag VERSION=%s\n' "${NEXT#v}"

@@ -34,22 +34,6 @@ func TestDetailError_ComposesAndUnwraps(t *testing.T) {
 	}
 }
 
-// TestMessageError_CarriesItsMessageVerbatim verifies MessageError has no
-// wrapped cause to preserve: it is a leaf error whose Error() returns
-// exactly the preformatted message it was constructed with.
-func TestMessageError_CarriesItsMessageVerbatim(t *testing.T) {
-	err := &MessageError{Msg: "unsupported key type: string"}
-
-	if got, want := err.Error(), "unsupported key type: string"; got != want {
-		t.Errorf("Error() = %q, want %q", got, want)
-	}
-	// A MessageError must never accidentally satisfy errors.Is against an
-	// unrelated sentinel just because both are *MessageError values.
-	if errors.Is(err, ErrKeyNotFound) {
-		t.Error("errors.Is(err, ErrKeyNotFound) = true, want false (no relation)")
-	}
-}
-
 // TestSentinelCauseError_MatchesBothSentinelAndCause verifies the
 // documented purpose of SentinelCauseError: errors.Is must match both the
 // package sentinel and the backend's underlying cause, since a caller may
@@ -63,21 +47,6 @@ func TestSentinelCauseError_MatchesBothSentinelAndCause(t *testing.T) {
 	}
 	if !errors.Is(err, ErrSigningFailed) {
 		t.Error("errors.Is(err, ErrSigningFailed) = false, want true")
-	}
-	if !errors.Is(err, cause) {
-		t.Error("errors.Is(err, cause) = false, want true")
-	}
-}
-
-// TestWrappedError_ComposesAndUnwraps verifies WrappedError's documented
-// contract: Error() joins Msg and the wrapped cause with ": ", and Unwrap()
-// exposes the cause to errors.Is/errors.As.
-func TestWrappedError_ComposesAndUnwraps(t *testing.T) {
-	cause := errors.New("x509: malformed curve point")
-	err := &WrappedError{Msg: "invalid curve", Err: cause}
-
-	if got, want := err.Error(), "invalid curve: x509: malformed curve point"; got != want {
-		t.Errorf("Error() = %q, want %q", got, want)
 	}
 	if !errors.Is(err, cause) {
 		t.Error("errors.Is(err, cause) = false, want true")

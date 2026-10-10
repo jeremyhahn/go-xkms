@@ -148,10 +148,11 @@ func TestResolveSSHConnect_LocalFlagAndAlias(t *testing.T) {
 
 func TestResolveSSHConnect_ProfileOverridesKeySource(t *testing.T) {
 	withCLIHome(t)
-	store, err := xkeyProfileStore()
+	store, closeStore, err := xkeyProfileStore()
 	if err != nil {
 		t.Fatalf("xkeyProfileStore: %v", err)
 	}
+	defer closeStore()
 	if err := store.Add(&sshsdk.Profile{
 		Name: "bastion-profile", Host: "bastion.example.com",
 		KeySource: "local", SSHConfigAlias: "bastion-alias",
@@ -171,10 +172,11 @@ func TestResolveSSHConnect_ProfileOverridesKeySource(t *testing.T) {
 
 func TestResolveSSHConnect_ManagedFlowUnaffected(t *testing.T) {
 	withCLIHome(t)
-	store, err := xkeyProfileStore()
+	store, closeStore, err := xkeyProfileStore()
 	if err != nil {
 		t.Fatalf("xkeyProfileStore: %v", err)
 	}
+	defer closeStore()
 	if err := store.Add(&sshsdk.Profile{
 		Name: "managed-profile", Host: "managed.example.com",
 		KeyScope: "user", KeyOwner: "local", KeyName: "laptop",

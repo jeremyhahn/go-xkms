@@ -30,7 +30,7 @@ import (
 
 	"github.com/jeremyhahn/go-xkms/pkg/ssh/known_hosts"
 	"github.com/jeremyhahn/go-xkms/pkg/ssh/scope"
-	"github.com/jeremyhahn/go-xkms/pkg/storage"
+	"github.com/jeremyhahn/go-xkms/pkg/testutil"
 )
 
 // TestNoopHostKeyStore_ListAndRemove exercises the trivial List/Remove
@@ -70,7 +70,7 @@ func writeKnownHostsFile(t *testing.T, host string, pub ssh.PublicKey) string {
 // into the (empty) store.
 func TestDial_KnownHostsExtraFiles_Known(t *testing.T) {
 	srv := startEchoSSHServer(t)
-	store, err := known_hosts.NewBackendStore(storage.New())
+	store, err := known_hosts.NewDAOStore(testutil.NewMemoryDAOFactory())
 	if err != nil {
 		t.Fatalf("known_hosts store: %v", err)
 	}
@@ -112,7 +112,7 @@ func TestDial_KnownHostsExtraFiles_Known(t *testing.T) {
 // conflicting pin, external-file or store.
 func TestDial_KnownHostsExtraFiles_Mismatch(t *testing.T) {
 	srv := startEchoSSHServer(t)
-	store, err := known_hosts.NewBackendStore(storage.New())
+	store, err := known_hosts.NewDAOStore(testutil.NewMemoryDAOFactory())
 	if err != nil {
 		t.Fatalf("known_hosts store: %v", err)
 	}
@@ -160,7 +160,7 @@ func TestDial_KnownHostsExtraFiles_Mismatch(t *testing.T) {
 // KnownHostsExtraFiles entry, in addition to being pinned in the store.
 func TestDial_HostKeyConfirm_FreshAcceptMirrorsIntoExtraFiles(t *testing.T) {
 	srv := startEchoSSHServer(t)
-	store, err := known_hosts.NewBackendStore(storage.New())
+	store, err := known_hosts.NewDAOStore(testutil.NewMemoryDAOFactory())
 	if err != nil {
 		t.Fatalf("known_hosts store: %v", err)
 	}

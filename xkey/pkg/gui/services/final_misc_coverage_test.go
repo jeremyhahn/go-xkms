@@ -33,7 +33,6 @@ import (
 	xkms "github.com/jeremyhahn/go-xkms/sdk/go"
 	"github.com/jeremyhahn/go-xkms/sdk/go/transport"
 	"github.com/jeremyhahn/go-xkms/xkey/pkg/oath"
-	"github.com/jeremyhahn/go-xkms/xkey/pkg/staticpw"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -557,7 +556,7 @@ func TestFM_FindMatchingTrustRoot_EmptyChain(t *testing.T) {
 // TestFM_PasswordProtection_GetStatus_NilConfig covers line 141-143:
 // GetStatus with nil config returns mode "none".
 func TestFM_PasswordProtection_GetStatus_NilConfig(t *testing.T) {
-	pwStore := staticpw.NewStore(xkms.NewStorageMemory())
+	pwStore := newTestPasswordStore(t, xkms.NewStorageMemory())
 	staticSvc := NewStaticPasswordService(pwStore)
 	svc := NewPasswordProtectionService(staticSvc, nil)
 

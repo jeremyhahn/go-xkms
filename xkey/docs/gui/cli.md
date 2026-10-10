@@ -1,8 +1,9 @@
 # xKey Desktop GUI — CLI
 
-> **Status: NORMATIVE** · Feature: `gui` · Module: `go-xkms/xkey` · Last verified: 2026-09-24
+> **Status: NORMATIVE** · Feature: `gui` · Module: `go-xkms/xkey` · Last verified: 2026-10-09
 
-The GUI has no subcommand of its own — `xkey` is one binary that launches
+The GUI has no launch subcommand of its own (`xkey app-access`, below, only
+changes one of its settings) — `xkey` is one binary that launches
 either the GUI or the Cobra CLI tree depending on how it is invoked. This page
 documents that dispatch, implemented in `xkey/cmd/xkey/main.go:41-94`.
 
@@ -53,6 +54,26 @@ When the GUI launches, `--log-level` and `--log-file` are parsed from the
 CLI args *before* Wails starts, so they configure the global `slog` logger
 for the whole GUI process (`initGUILogging`, referenced at `main.go:68-70`)
 — the same flags the CLI subcommands use.
+
+## `xkey app-access status|enable|disable`
+
+Shows or changes **local app access**, the Settings → Browser toggle "Let
+other apps use my keys while xKey is open" (`cmd/xkey/cmd/app_access.go`).
+It writes `local_app_access_enabled` in the GUI settings file. When it is on,
+the GUI opens its IPC socket while it is open and unlocked. When it is off
+(the default), nothing listens and `xkey extension serve` refuses to start.
+No flags.
+
+```
+xkey app-access status    # Local app access: off
+xkey app-access enable    # Local app access: on
+xkey app-access disable   # Local app access: off
+```
+
+A running GUI reads the file only at startup, so restart xKey after
+changing the setting here, or use the Settings toggle, which applies at
+once. An unreadable settings file fails with `ErrAppAccessLoadFailed`, and a
+failed write fails with `ErrAppAccessSaveFailed`.
 
 ## Browser native messaging
 

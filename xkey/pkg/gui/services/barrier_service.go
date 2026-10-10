@@ -87,6 +87,11 @@ type BarrierService struct {
 	// mutex to allow re-entrant access to BarrierService methods.
 	postUnsealHook func() error
 
+	// sealStateHook is called after every successful Seal, Unseal and
+	// Initialize, outside the mutex, so the application can follow the
+	// barrier's seal state (e.g. start or stop the IPC listener).
+	sealStateHook func()
+
 	// auditLog stores the audit logger for security event logging.
 	auditLog atomic.Pointer[audit.Logger]
 
@@ -151,6 +156,26 @@ func (s *BarrierService) SetPostUnsealHook(fn func() error) {
 	s.mu.Lock()
 	s.postUnsealHook = fn
 	s.mu.Unlock()
+}
+
+// SetSealStateHook registers fn to run after every successful seal-state
+// change: Seal, Unseal (including a re-unseal in place) and Initialize. fn
+// runs outside the service mutex and may call back into the service.
+func (s *BarrierService) SetSealStateHook(fn func()) {
+	s.mu.Lock()
+	s.sealStateHook = fn
+	s.mu.Unlock()
+}
+
+// notifySealState runs the seal-state hook, if one is registered. The caller
+// must not hold s.mu.
+func (s *BarrierService) notifySealState() {
+	s.mu.Lock()
+	hook := s.sealStateHook
+	s.mu.Unlock()
+	if hook != nil {
+		hook()
+	}
 }
 
 // SetLastStrategy records the barrier strategy from persisted config so
@@ -357,11 +382,13 @@ func (s *BarrierService) Initialize(password, strategyID string) error {
 	s.lastStrategy = strategyID
 	hook := s.postUnsealHook
 	s.log.Info("barrier initialized", slog.String("strategy", strategyID))
-	if auditErr := s.logBarrierEvent(audit.OpBarrierInitialized, true, nil, map[string]any{"strategy": strategyID}); auditErr != nil {
-		return auditErr
-	}
+	auditErr := s.logBarrierEvent(audit.OpBarrierInitialized, true, nil, map[string]any{"strategy": strategyID})
 	unlocked = true
 	s.mu.Unlock()
+	if auditErr != nil {
+		s.notifySealState()
+		return auditErr
+	}
 
 	// Run the post-unseal hook outside the mutex. Initialize leaves the
 	// barrier in the unsealed state, so barrier-dependent services (data
@@ -371,6 +398,7 @@ func (s *BarrierService) Initialize(password, strategyID string) error {
 			s.log.Warn("post-init hook failed", "error", err)
 		}
 	}
+	s.notifySealState()
 	return nil
 }
 
@@ -415,12 +443,10 @@ func (s *BarrierService) Unseal(password, strategyID string) error {
 			return s.barrierAuditErr(audit.OpBarrierUnsealed, false, err, map[string]any{"strategy": s.lastStrategy})
 		}
 		s.log.Info("barrier re-unsealed in place", slog.String("strategy", s.lastStrategy))
-		if auditErr := s.logBarrierEvent(audit.OpBarrierUnsealed, true, nil, map[string]any{"strategy": s.lastStrategy}); auditErr != nil {
-			s.mu.Unlock()
-			return auditErr
-		}
+		auditErr := s.logBarrierEvent(audit.OpBarrierUnsealed, true, nil, map[string]any{"strategy": s.lastStrategy})
 		s.mu.Unlock()
-		return nil
+		s.notifySealState()
+		return auditErr
 	}
 
 	// When the frontend calls Unseal with only a password, strategyID
@@ -497,6 +523,7 @@ func (s *BarrierService) Unseal(password, strategyID string) error {
 	auditErr := s.logBarrierEvent(audit.OpBarrierUnsealed, true, nil, map[string]any{"strategy": strategyID})
 	s.mu.Unlock()
 	if auditErr != nil {
+		s.notifySealState()
 		return auditErr
 	}
 
@@ -507,6 +534,7 @@ func (s *BarrierService) Unseal(password, strategyID string) error {
 			s.log.Warn("post-unseal hook failed", "error", err)
 		}
 	}
+	s.notifySealState()
 	return nil
 }
 
@@ -515,16 +543,20 @@ func (s *BarrierService) Unseal(password, strategyID string) error {
 // not been created.
 func (s *BarrierService) Seal() error {
 	s.mu.Lock()
-	defer s.mu.Unlock()
-
 	if s.barrier == nil {
+		s.mu.Unlock()
 		return ErrBarrierNotInitialized
 	}
-	err := s.barrier.Seal()
-	if err != nil {
-		return s.barrierAuditErr(audit.OpBarrierSealed, false, err, nil)
+	if err := s.barrier.Seal(); err != nil {
+		auditErr := s.barrierAuditErr(audit.OpBarrierSealed, false, err, nil)
+		s.mu.Unlock()
+		return auditErr
 	}
-	return s.logBarrierEvent(audit.OpBarrierSealed, true, nil, nil)
+	auditErr := s.logBarrierEvent(audit.OpBarrierSealed, true, nil, nil)
+	s.mu.Unlock()
+
+	s.notifySealState()
+	return auditErr
 }
 
 // ChangePassword re-seals the barrier root key with new credentials.
@@ -582,6 +614,17 @@ func (s *BarrierService) IsUnsealed() bool {
 		return false
 	}
 	return !s.barrier.IsSealed()
+}
+
+// IsSealed reports whether this process holds a barrier that is currently
+// sealed. Unlike IsInitialized it never touches storage, so it is cheap
+// enough to call from a seal-state hook. A process that holds no barrier
+// (storage without one, or a barrier not yet opened) is not sealed.
+func (s *BarrierService) IsSealed() bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	return s.barrier != nil && s.barrier.IsSealed()
 }
 
 // GetBarrier returns the underlying barrier for callers that need its direct

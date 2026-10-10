@@ -16,6 +16,8 @@
 package ssh
 
 import (
+	"crypto/ed25519"
+	"crypto/rand"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
@@ -23,6 +25,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	gossh "golang.org/x/crypto/ssh"
 )
 
 // ----------------------------------------------------------------------------
@@ -438,15 +442,26 @@ func TestSSHKeysAliases(t *testing.T) {
 // including the known-hosts alias.
 func TestSSHHostKeys(t *testing.T) {
 	h := NewSSHTestHelper(t)
-	const (
-		host = "bastion.example.com"
-		fp   = "SHA256:gNZpZodns8KO+9w2XAYG6dvi8FOHV0dDAUF5WfCMyDQ"
-	)
+	const host = "bastion.example.com"
+	pub, _, err := ed25519.GenerateKey(rand.Reader)
+	if err != nil {
+		t.Fatalf("generate host key: %v", err)
+	}
+	hostKey, err := gossh.NewPublicKey(pub)
+	if err != nil {
+		t.Fatalf("host public key: %v", err)
+	}
+	fp := gossh.FingerprintSHA256(hostKey)
+
+	// The key is read from a file here; the console suite pins with --key.
+	keyFile := filepath.Join(t.TempDir(), "host_ed25519.pub")
+	if err := os.WriteFile(keyFile, gossh.MarshalAuthorizedKey(hostKey), 0o600); err != nil {
+		t.Fatalf("write host key: %v", err)
+	}
 
 	add := h.RunSSHHostKeys("add",
 		"--scope", "user", "--owner", "alice",
-		"--host", host, "--fingerprint", fp,
-		"--algorithm", "ssh-ed25519", "--source", "manual")
+		"--host", host, "--file", keyFile, "--source", "manual")
 	if !add.Success() {
 		t.Fatalf("host-keys add failed: %s", add.Combined())
 	}
@@ -485,7 +500,7 @@ func TestSSHHostKeysErrors(t *testing.T) {
 	h := NewSSHTestHelper(t)
 
 	t.Run("add_missing_host", func(t *testing.T) {
-		result := h.RunSSHHostKeys("add", "--fingerprint", "SHA256:abc")
+		result := h.RunSSHHostKeys("add", "--key", "ssh-ed25519 AAAA")
 		if result.Success() {
 			t.Fatal("add without --host should fail")
 		}
@@ -494,13 +509,30 @@ func TestSSHHostKeysErrors(t *testing.T) {
 		}
 	})
 
-	t.Run("add_missing_fingerprint", func(t *testing.T) {
+	t.Run("add_missing_key", func(t *testing.T) {
 		result := h.RunSSHHostKeys("add", "--host", "h.example.com")
 		if result.Success() {
-			t.Fatal("add without --fingerprint should fail")
+			t.Fatal("add without --key or --file should fail")
 		}
-		if !result.OutputContains("fingerprint is required") {
-			t.Errorf("expected fingerprint-required error, got: %s", result.Combined())
+		if !result.OutputContains("--key or --file is required") {
+			t.Errorf("expected key-required error, got: %s", result.Combined())
+		}
+	})
+
+	t.Run("add_unparseable_key", func(t *testing.T) {
+		result := h.RunSSHHostKeys("add", "--host", "h.example.com", "--key", "not-a-key")
+		if result.Success() {
+			t.Fatal("add with an unparseable --key should fail")
+		}
+		if !result.OutputContains("cannot parse host public key") {
+			t.Errorf("expected parse error, got: %s", result.Combined())
+		}
+	})
+
+	t.Run("add_removed_fingerprint_flag", func(t *testing.T) {
+		result := h.RunSSHHostKeys("add", "--host", "h.example.com", "--fingerprint", "SHA256:abc")
+		if result.Success() || !result.OutputContains("unknown flag: --fingerprint") {
+			t.Errorf("--fingerprint was removed and must be rejected, got: %s", result.Combined())
 		}
 	})
 

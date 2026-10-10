@@ -26,7 +26,6 @@ import (
 
 	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
 	xkms "github.com/jeremyhahn/go-xkms/sdk/go"
-	"github.com/jeremyhahn/go-xkms/xkey/pkg/staticpw"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -45,7 +44,7 @@ func newSOPINWizardFixture(t *testing.T) *soPINWizardFixture {
 
 	memBackend, err := xkms.NewMemoryBackend()
 	require.NoError(t, err)
-	pwSvc := NewStaticPasswordService(staticpw.NewStore(memBackend))
+	pwSvc := NewStaticPasswordService(newTestPasswordStore(t, memBackend))
 
 	barrierSvc := NewBarrierService(t.TempDir(), slog.Default())
 	barrierSvc.SetContext(context.Background())

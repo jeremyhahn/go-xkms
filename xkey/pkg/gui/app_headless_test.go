@@ -379,15 +379,16 @@ func TestApp_RegisterPKCS11XKMSBackend_YubiKeyWithoutSOPIN(t *testing.T) {
 // TestApp_PostDataDirStartup_Headless verifies postDataDirStartup, run
 // after a plain-file (no-barrier) initializeDataDir, seeds trust roots,
 // starts the password expiry checker, records the FIDO2 authenticator's
-// disabled reason, and starts the IPC server -- all without a Wails
-// runtime context (a.ctx is a plain, cancelable context.Context; nothing
+// disabled reason, and leaves the IPC socket closed because local app
+// access is off by default -- all without a Wails runtime context (a.ctx is a plain, cancelable context.Context; nothing
 // here calls wailsruntime.EventsEmit synchronously: the expiry checker's
 // callback only fires on its hourly ticker, never at Start()).
 func TestApp_PostDataDirStartup_Headless(t *testing.T) {
 	app := newMinimalApp(t)
 	sockDir := t.TempDir()
 	require.NoError(t, os.Chmod(sockDir, 0o700))
-	t.Setenv(ipc.EnvSocketPath, filepath.Join(sockDir, "xkey.sock"))
+	sockPath := filepath.Join(sockDir, "xkey.sock")
+	t.Setenv(ipc.EnvSocketPath, sockPath)
 	// Keep the virtual FIDO2 HID authenticator disabled: starting it would
 	// open a real /dev/uhid device node, which this headless test must not
 	// depend on being present or usable.
@@ -412,7 +413,8 @@ func TestApp_PostDataDirStartup_Headless(t *testing.T) {
 	})
 
 	assert.NotNil(t, app.expiryChecker, "the password expiry checker must start once staticpwStore is wired")
-	assert.NotNil(t, app.ipcServer, "the IPC server must start")
+	assert.Nil(t, app.ipcServer, "no IPC server may start while local app access is off")
+	assertNoSocket(t, sockPath)
 	assert.Equal(t, "authenticator disabled in settings", app.fido2DeviceService.GetStatus().RawReason,
 		"FIDO2AuthenticatorEnabled is false in DefaultGUIConfig, so the device service must record why it did not start")
 }
@@ -451,46 +453,66 @@ func TestApp_StartupReturningUser_BarrierNeverInitialized_WaitsForPassword(t *te
 // verifies that a returning user configured for non-barrier storage skips
 // the barrier wait entirely and proceeds straight through
 // initializeDataDir and postDataDirStartup, matching a LUKS-backed or
-// legacy plain-file deployment.
-//
-// Unlike the barrier-wait test above, this path reaches postDataDirStartup,
-// which reaches startIPCServer -- and startIPCServer spawns
-// `go srv.Serve(a.ctx)` with no nil guard. a.ctx (not the ctx parameter
-// passed to startupReturningUser) must therefore be a real context.Context
-// before this call, or that goroutine panics on a nil interface. It is set
-// to a plain, non-Wails context here rather than through startup(), so it
-// must never reach a direct wailsruntime call -- which is exactly why
-// AutoUnsealEnabled/StorageType=="barrier" are kept out of this path.
+// legacy plain-file deployment. Local app access is off by default, so no
+// IPC socket may appear.
 func TestApp_StartupReturningUser_NonBarrierStorage_InitializesDataDir(t *testing.T) {
+	app, sockPath := startReturningUserApp(t, false)
+
+	assert.True(t, app.dataDirInit, "a non-barrier storage type must proceed straight to data dir initialization")
+	assert.Nil(t, app.ipcServer, "no IPC server may start while local app access is off")
+	assertNoSocket(t, sockPath)
+}
+
+// startReturningUserApp builds a fully wired App and runs the returning-user
+// startup for non-barrier storage, so the data directory opens and
+// postDataDirStartup runs. The IPC socket is sandboxed in a private
+// directory; its path is returned. The App is shut down at cleanup.
+//
+// a.ctx is a plain context rather than the one Wails supplies, so startup
+// must never reach a direct wailsruntime call -- which is why
+// AutoUnsealEnabled and StorageType "barrier" are kept off this path.
+func startReturningUserApp(t *testing.T, localAppAccess bool) (*App, string) {
+	t.Helper()
 	isolateAppEnv(t)
 
-	sockDir := t.TempDir()
-	require.NoError(t, os.Chmod(sockDir, 0o700))
-	t.Setenv(ipc.EnvSocketPath, filepath.Join(sockDir, "xkey.sock"))
+	sockDir := filepath.Join(t.TempDir(), "run")
+	require.NoError(t, os.Mkdir(sockDir, 0o700))
+	sockPath := filepath.Join(sockDir, "xkey.sock")
+	t.Setenv(ipc.EnvSocketPath, sockPath)
 
 	cfg := DefaultGUIConfig()
 	cfg.AutoTray = false
 	cfg.AutoUnsealEnabled = false
 	cfg.StorageType = "luks"
 	cfg.FIDO2AuthenticatorEnabled = false
+	cfg.LocalAppAccessEnabled = localAppAccess
 
 	app := NewApp(cfg)
 	ctx, cancel := context.WithCancel(context.Background())
-	t.Cleanup(cancel)
 	app.ctx = ctx
-
 	t.Cleanup(xkmssdk.Reset)
 	t.Cleanup(func() {
-		if app.ipcServer != nil {
-			_ = app.ipcServer.Close()
-		}
-		if app.expiryChecker != nil {
-			app.expiryChecker.Stop()
-		}
+		app.shutdown(ctx)
+		cancel()
 	})
 
 	app.startupReturningUser(ctx)
+	require.True(t, app.dataDirInit, "precondition: the data directory must open")
+	return app, sockPath
+}
 
-	assert.True(t, app.dataDirInit, "a non-barrier storage type must proceed straight to data dir initialization")
-	assert.NotNil(t, app.ipcServer, "postDataDirStartup must run and start the IPC server")
+// assertNoSocket fails the test if anything exists at sockPath.
+func assertNoSocket(t *testing.T, sockPath string) {
+	t.Helper()
+	_, err := os.Lstat(sockPath)
+	assert.ErrorIs(t, err, os.ErrNotExist, "no IPC socket may exist at %s", sockPath)
+}
+
+// assertSocket fails the test unless a socket exists at sockPath.
+func assertSocket(t *testing.T, sockPath string) {
+	t.Helper()
+	info, err := os.Lstat(sockPath)
+	if assert.NoError(t, err, "the IPC socket must exist at %s", sockPath) {
+		assert.Equal(t, os.ModeSocket, info.Mode().Type())
+	}
 }

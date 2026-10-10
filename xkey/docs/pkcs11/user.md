@@ -1,6 +1,6 @@
 # PKCS#11 — User Guide
 
-> **Status: NORMATIVE** · Feature: `pkcs11` · Module: `go-xkms/xkey` · Last verified: 2026-09-27
+> **Status: NORMATIVE** · Feature: `pkcs11` · Module: `go-xkms/xkey` · Last verified: 2026-10-09
 
 ## What this is
 
@@ -63,13 +63,17 @@ scripted or headless PIV/SSH/barrier operations.
 
 ## Limitations
 
-- **No IPC coverage for key generation or PIV certificate writes.** An
-  external application that reaches xkey over its local IPC socket (the
-  PKCS#11 module, a `crypto.Signer` helper) can only sign, list PIV slots,
-  and read a PIV certificate through that socket — generating a key,
-  writing a certificate, or any encrypt/decrypt/wrap/derive operation
-  requires being in-process with xkey itself (the CLI, or `xkey usb
-  device`). See [engineering.md](engineering.md#known-gaps).
+- **The socket works only while xKey is unsealed.** An external
+  application reaching xkey over its local IPC socket (the PKCS#11 module,
+  a `crypto.Signer` helper) can use every key operation — generate, sign,
+  verify, encrypt, decrypt, derive, wrap, import, and PIV key and
+  certificate management — but each one fails while the barrier is sealed.
+  Keys marked non-exportable stay non-exportable over the socket.
+- **The IPC socket is off by default.** Turn on **Settings → Browser → Let
+  other apps use my keys while xKey is open** (or `xkey app-access enable`)
+  and unlock xKey before an external application can reach it. With the
+  setting on, `xkey usb device start` uses the open xKey's keys and fails if
+  no unlocked xKey is listening; with it off, it opens the keys itself.
 - **Token initialization and slot browsing are GUI-only.** There is no
   `xkey pkcs11 init-token` or equivalent CLI verb.
 

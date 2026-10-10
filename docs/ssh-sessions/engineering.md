@@ -1,6 +1,6 @@
 # SSH Connect & Console Sessions — Engineering
 
-> **Status: NORMATIVE** · Feature: `ssh-sessions` · Repo: `go-xkms` · Last verified: 2026-09-24
+> **Status: NORMATIVE** · Feature: `ssh-sessions` · Repo: `go-xkms` · Last verified: 2026-10-08
 
 ## Exported surface
 
@@ -61,8 +61,10 @@
   `Alias`), `CreatedAt`/`LastConnectedAt`. `Validate()` (`types.go:57`)
   enforces the "exactly one origin" invariant.
 - `Store` interface (`store.go:35`): `Save`, `Get(id)`, `List()`,
-  `Delete(id)`, `Close()`. `NewStore(backend storage.Backend)
-  (*BackendStore, error)` (`store.go:53`) is the only implementation.
+  `Delete(id)`, `Close()`. `NewStore(daos *qrdbsdk.DAOFactory)
+  (*DAOStore, error)` (`store.go:69`) is the only implementation: each
+  session is a go-qrdb DAO entity in the `ssh` database (nil `daos` →
+  `ErrNilDAOFactory`).
 
 ### `pkg/ssh/profile`
 
@@ -75,8 +77,10 @@
   `Delete`) plus folder operations
   (`ListByFolder`/`ListByFolderDirect`/`ListFolders`/`MoveToFolder`/
   `CreateFolder`/`RemoveFolder`/`RenameFolder`/`DeleteFolder`) and
-  `Search(query)`. `NewStore(backend storage.Backend) (*BackendStore,
-  error)` (`store.go:80`) is the only implementation.
+  `Search(query)`. `NewStore(daos *qrdbsdk.DAOFactory) (*DAOStore,
+  error)` (`store.go:109`) is the only implementation: profiles and
+  folders are go-qrdb DAO entities in the `ssh` database (nil `daos` →
+  `ErrNilDAOFactory`).
 
 ### `pkg/ssh/local`
 
@@ -117,13 +121,13 @@
   ...pkgconsole.HandlerOption) http.Handler` (`console.go:108`) — the SDK
   re-export of `pkg/ssh/console.NewWSHandler`, documented in
   [`architecture.md`](architecture.md).
-- `NewProfileStore(backend storage.Backend) (ProfileStore, error)`
-  (`profile.go:33`) and `NewConsoleSessionStore(backend storage.Backend)
-  (ConsoleSessionStore, error)` (`sessions.go:31`) are thin re-exports of
+- `NewProfileStore(daos *qrdbsdk.DAOFactory) (ProfileStore, error)`
+  (`profile.go:33`) and `NewConsoleSessionStore(daos *qrdbsdk.DAOFactory)
+  (ConsoleSessionStore, error)` (`sessions.go:33`) are thin re-exports of
   `pkg/ssh/profile.NewStore` and `pkg/ssh/sessions.NewStore` — "so SDK
   consumers (the xkey GUI/CLI) never import `pkg/ssh/profile` directly"
-  (`profile.go:21-22`). `NewHostKeyStore(backend storage.Backend)
-  (HostKeyStore, error)` (`connect.go:37`) is the equivalent for
+  (`profile.go:21-22`). `NewHostKeyStore(daos *qrdbsdk.DAOFactory)
+  (HostKeyStore, error)` (`connect.go:36`) is the equivalent for
   `known_hosts.Store`. Each file also re-exports the package's error
   sentinels under an SDK-prefixed name (e.g. `ErrProfileNotFound`,
   `ErrConsoleSessionInvalidOrigin`, `profile.go:39-46`,

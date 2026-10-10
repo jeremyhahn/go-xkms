@@ -482,3 +482,14 @@ var ServiceBuildAlgorithmsResponse = pkgxkms.BuildAlgorithmsResponse
 
 // ServiceErrOperationNotSupported indicates the operation is not supported.
 var ServiceErrOperationNotSupported = pkgxkms.ErrOperationNotSupported
+
+// ServiceErrEd25519DigestInput is returned when a sign or verify request
+// hands an Ed25519 key a digest instead of the message.
+var ServiceErrEd25519DigestInput = pkgxkms.ErrEd25519DigestInput
+
+// ServiceErrKeyNotFound is returned when the requested key does not exist.
+var ServiceErrKeyNotFound = pkgxkms.ErrKeyNotFound
+
+// ServiceErrBackendNotFound is returned when the named backend is not
+// registered.
+var ServiceErrBackendNotFound = pkgxkms.ErrBackendNotFound

@@ -45,7 +45,7 @@ func TestEmbedded_BackendBackedKey(t *testing.T) {
 	}
 
 	client, err := sdkssh.NewEmbedded(sdkssh.EmbeddedOptions{
-		Backend:         storage.New(),
+		Stores:          newStores(t),
 		BackendProvider: provider,
 	})
 	if err != nil {
@@ -116,7 +116,7 @@ func TestEmbedded_DefaultAlgorithms(t *testing.T) {
 	if err != nil {
 		t.Fatalf("sshbackend.New: %v", err)
 	}
-	client, err := sdkssh.NewEmbedded(sdkssh.EmbeddedOptions{Backend: storage.New(), BackendProvider: provider})
+	client, err := sdkssh.NewEmbedded(sdkssh.EmbeddedOptions{Stores: newStores(t), BackendProvider: provider})
 	if err != nil {
 		t.Fatalf("NewEmbedded: %v", err)
 	}
@@ -186,7 +186,7 @@ func TestEmbedded_DefaultAlgorithms(t *testing.T) {
 // no provider configured is rejected rather than silently downgraded.
 func TestEmbedded_BackendRequestedButUnavailable(t *testing.T) {
 	ctx := context.Background()
-	client, err := sdkssh.NewEmbedded(sdkssh.EmbeddedOptions{Backend: storage.New()})
+	client, err := sdkssh.NewEmbedded(sdkssh.EmbeddedOptions{Stores: newStores(t)})
 	if err != nil {
 		t.Fatalf("NewEmbedded: %v", err)
 	}

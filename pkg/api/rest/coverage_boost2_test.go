@@ -29,7 +29,6 @@ import (
 	"github.com/jeremyhahn/go-xkms/pkg/auth"
 
 	"github.com/jeremyhahn/go-xkms/pkg/seal"
-	"github.com/jeremyhahn/go-xkms/pkg/staticpw"
 	"github.com/jeremyhahn/go-xkms/pkg/storage"
 	"github.com/jeremyhahn/go-xkms/pkg/xkms"
 	xkmsmocks "github.com/jeremyhahn/go-xkms/pkg/xkms/mocks"
@@ -138,7 +137,7 @@ func TestNewServer_WithBarrierRegistry(t *testing.T) {
 // store is configured, so the "passwords" capability flag stays honest.
 func TestNewServer_WithPasswordStore(t *testing.T) {
 	ks := newMockKeyStore()
-	pwStore := staticpw.NewStore(storage.NewMemory())
+	pwStore := newTestPasswordStore(t)
 	svc := &xkms.XKMSService{}
 	svc.SetPasswordStore(pwStore)
 
@@ -156,7 +155,7 @@ func TestNewServer_WithPasswordStore(t *testing.T) {
 
 func TestNewServer_PasswordHandlersRequireStoreAndService(t *testing.T) {
 	ks := newMockKeyStore()
-	pwStore := staticpw.NewStore(storage.NewMemory())
+	pwStore := newTestPasswordStore(t)
 
 	cases := map[string]*Config{
 		"no password store": {XKMSService: &xkms.XKMSService{}},
@@ -178,7 +177,7 @@ func TestNewServer_PasswordHandlersRequireStoreAndService(t *testing.T) {
 func TestNewServer_WithPasswordStoreAndRegistry(t *testing.T) {
 	ks := newMockKeyStore()
 	memStore := storage.NewMemory()
-	pwStore := staticpw.NewStore(memStore)
+	pwStore := newTestPasswordStore(t)
 	sealStrategy := seal.NewSoftwareStrategy()
 
 	barrier, err := seal.NewBarrier(

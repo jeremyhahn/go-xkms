@@ -302,8 +302,9 @@ func TestRunSSHProfileAdd_LocalIdentityImpliesLocalKeySource(t *testing.T) {
 	require.NoError(t, setFlagForTest(t, add.Flags(), "identity", "~/.ssh/id_ed25519"))
 	require.NoError(t, runSSHProfileAdd(add, nil))
 
-	store, err := xkeyProfileStore()
+	store, closeStore, err := xkeyProfileStore()
 	require.NoError(t, err)
+	defer closeStore()
 	p, err := store.Get("legacy")
 	require.NoError(t, err)
 	assert.Equal(t, "local", p.KeySource,
@@ -328,8 +329,9 @@ func TestRunSSHProfileAdd_SSHConfigAliasWithoutHostIsRejectedByTheStore(t *testi
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "host is required")
 
-	store, err := xkeyProfileStore()
+	store, closeStore, err := xkeyProfileStore()
 	require.NoError(t, err)
+	defer closeStore()
 	_, err = store.Get("legacy")
 	assert.Error(t, err, "a rejected add must not leave a partial profile behind")
 }
@@ -354,8 +356,9 @@ func TestRunSSHProfileMove_RequiresFolder(t *testing.T) {
 func TestXKeyHostKeyStore_OpensUnderResolvedHome(t *testing.T) {
 	withCLIHome(t)
 
-	store, err := xkeyHostKeyStore()
+	store, closeStore, err := xkeyHostKeyStore()
 	require.NoError(t, err)
+	defer closeStore()
 	require.NotNil(t, store)
 }
 

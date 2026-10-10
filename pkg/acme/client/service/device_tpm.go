@@ -201,11 +201,11 @@ func provisionSimulatorIdentity(name string, tpm xkmssdk.TrustedPlatformModule, 
 // the simulator, in the WebAuthn Level 2 section 8.3.1 shape a "tpm"
 // attestation statement's x5c[0] must have. It is development and testing
 // tooling only -- see openDeviceTPM's simulator gate. The certificate itself
-// is minted by xkmssdk.ProvisionSimulatorIAKCertificate (pkg/tpm2/tpm2test),
-// the same helper test/integration/acme-tpm's swtpm fixtures use, so the
-// shape of a throwaway IAK certificate is defined in exactly one place.
+// is minted by ProvisionSimulatorIAKCertificate, the same function
+// test/integration/acme-tpm's swtpm fixtures use, so the shape of a throwaway
+// IAK certificate is defined in exactly one place.
 func provisionSimulatorIAKCertificate(name string, tpm xkmssdk.TrustedPlatformModule) error {
-	if err := xkmssdk.ProvisionSimulatorIAKCertificate(tpm); err != nil {
+	if err := ProvisionSimulatorIAKCertificate(tpm); err != nil {
 		return ErrDeviceTPMProvisionFailed{Name: name, Err: err}
 	}
 	return nil

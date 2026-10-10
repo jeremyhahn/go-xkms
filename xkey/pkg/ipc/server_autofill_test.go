@@ -780,7 +780,7 @@ func TestDispatchTable_ValidatesPayloadIndependently(t *testing.T) {
 			fn, ok := handlers[tt.msg.Type]
 			require.True(t, ok)
 
-			resp, err := fn(handler, tt.msg)
+			resp, err := fn(context.Background(), handler, tt.msg)
 			require.Error(t, err)
 			assert.Nil(t, resp)
 			assert.ErrorIs(t, err, ErrInvalidMessage)

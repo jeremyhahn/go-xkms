@@ -17,14 +17,15 @@ FROST signatures are generated through a two-round protocol:
 
 ## Build Requirements
 
-The FROST CLI requires the `frost` build tag:
+The FROST CLI requires the `frost` build tag, which the Makefile sets by
+default (`WITH_FROST=1`):
 
 ```bash
-# Build with FROST support
-go build -tags frost ./cmd/xkms
+# Default make build includes FROST
+make build
 
-# Or using Make
-make build WITH_FROST=1
+# Direct go build
+go build -tags frost ./cmd/xkmsctl
 ```
 
 ## Supported Algorithms

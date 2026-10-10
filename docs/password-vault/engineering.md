@@ -1,6 +1,6 @@
 # Password Vault — Engineering Contract
 
-> **Status: NORMATIVE** · Feature: `password-vault` · Repo: `go-xkms` · Last verified: 2026-10-01
+> **Status: NORMATIVE** · Feature: `password-vault` · Repo: `go-xkms` · Last verified: 2026-10-09
 
 ## Exported surface — `pkg/staticpw`
 
@@ -27,7 +27,7 @@ barrier seals. There is no store implementation of `AccessPINPerOperation`:
 already equals the store's active mode, and the active mode for a tenant
 store is always `AccessSessionBased`.
 
-### The personal vault (`vault.go`, `dek_backend.go`)
+### The personal vault (`vault.go`, `records.go`)
 
 ```go
 type FactorType string // FactorPassphrase, FactorPasskey, FactorRecovery,
@@ -140,10 +140,14 @@ xkey's local GUI; no password is shared through it.
 
 ### Stores
 
-`store.go`: `BackendStore` (`store.go:107`), wrapping a `storage.Backend` --
-at-rest confidentiality is the backend's (the tenant barrier), not a
-`staticpw`-owned cipher. `scoped_store.go`: `ScopedStore`, splitting personal
-and shared entries over two `BackendStore`s. Both implement `Store`
+`store.go`: `DAOStore` (`store.go:108`), the one concrete store. It keeps
+every entry, folder marker, alias and vault factor as a `record`
+(`records.go:43`) in the go-qrdb `staticpw` database through a `GenericDAO`
+from the injected DAO factory (`NewStore`, `NewTenantStore`,
+`NewSharedTenantStore`, `NewPersonalTenantStore`). At-rest confidentiality is
+the go-qrdb store's (the tenant barrier); a personal store additionally seals
+each record body with the user's DEK (`records.go:195`). `scoped_store.go`:
+`ScopedStore`, splitting personal and shared entries over two `DAOStore`s. Both implement `Store`
 and share one `Get` contract: return the entry exactly as stored, with no
 decrypt- or PIN-aware variant. Entries: `entity.go`, `team_entity.go`,
 `types.go`. Support: `generator.go`, `expiry.go`, `validation.go`,
@@ -184,8 +188,9 @@ type PasswordService interface {
   invalidates the credential.
 - **Generation has one implementation.** `generator.go`. A second generator at a
   call site is a defect.
-- **Encryption is the barrier's.** `BackendStore` delegates to `storage.Backend`
-  (`store.go:105`-`117`); `staticpw` does not implement a cipher.
+- **Encryption is the barrier's.** `DAOStore` persists through go-qrdb's DAO
+  over the tenant's barrier-sealed store; the only `staticpw` cipher is the
+  personal DEK sealing of a record body (`records.go:195`-`236`).
 - **Concurrency.** Stores are safe for concurrent use. Session state in
   `TenantPasswordStoreManager` is a lock-free `sync.Map` of open sessions per
   tenant, keyed by subject: `UnlockUser`/`LockUser` touch only the caller's
@@ -195,7 +200,7 @@ type PasswordService interface {
   plus personal ones while the session is open; `""` tenant is the unscoped
   system store for identity-less requests), `UnlockUser`, `LockUser`,
   `IsUserLocked`, `UserStoreStatus`. The system tenant (`"system"`) is served
-  over the registry's system barrier. The transports never call the manager:
+  by the system store the manager was built with. The transports never call the manager:
   they call the `XKMSService` password servicer, which resolves the caller
   with `scope.TenantName(identity.TenantID)` and `identity.Subject`.
 
@@ -235,9 +240,20 @@ desktop-local store.
 
 ## Persistence
 
-Through `BackendStore` to a `storage.Backend` that is the tenant barrier for
-encryption at rest, under the `pkg/scope` keyspace. Tenant and user scoping is
-`tenant_store_manager.go` + `scoped_store.go`.
+Through `DAOStore` to go-qrdb `GenericDAO` records of entity type
+`staticpw_records` in the `staticpw` database (`records.go:28`-`31`), looked
+up by their path and listed by their indexed directory. The system store
+comes from the composition root's DAO factory; a tenant's stores come from
+the go-qrdb `TenantStoreResolver` handed to `NewTenantPasswordStoreManager`,
+so each tenant's records live in that tenant's own barrier-sealed store. A
+tenant ID that names no valid tenant is refused with `ErrInvalidTenantID`.
+Tenant and user scoping is `tenant_store_manager.go` + `scoped_store.go`.
+
+A host without a go-qrdb node (xkey) builds its factory with
+`sdk/go.NewBackendDAOFactory` over its own storage backend, which must offer
+guarded writes (`CompareAndSwap`/`CompareAndDelete`); the file backend and
+`seal.BarrierBackend` both do. Records written by the earlier key-per-entry
+layout are not read.
 
 There is no dedicated migration file in this package; entry-layout changes
 go through the same `Store`/DAO surface as any other change (no-backward-compat:

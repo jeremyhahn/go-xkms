@@ -161,10 +161,10 @@ func TestMapPasswordError(t *testing.T) {
 			expectedMsg:  "password store not initialized",
 		},
 		{
-			name:         "nil barrier registry",
-			inputErr:     staticpw.ErrNilBarrierRegistry,
+			name:         "nil tenant stores",
+			inputErr:     staticpw.ErrNilTenantStores,
 			expectedCode: codes.Internal,
-			expectedMsg:  "barrier registry not configured",
+			expectedMsg:  "tenant password stores not configured",
 		},
 		{
 			name:         "xkms not configured",

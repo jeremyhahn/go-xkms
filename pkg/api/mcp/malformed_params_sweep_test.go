@@ -23,7 +23,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/jeremyhahn/go-xkms/pkg/auth"
-	"github.com/jeremyhahn/go-xkms/pkg/storage"
+	"github.com/jeremyhahn/go-xkms/pkg/testutil"
 	sdkssh "github.com/jeremyhahn/go-xkms/sdk/go/client/ssh"
 )
 
@@ -98,12 +98,12 @@ func newMalformedParamsTestServer(t *testing.T) *Server {
 
 	server := createTestServer(t)
 
-	_, _, manager := passwordTestRegistry(t)
+	_, _, manager := passwordTestStores(t)
 	server.xkmsService.SetPasswordStoreManager(manager)
 
-	backend, err := storage.NewMemoryBackend()
+	stores, err := sdkssh.NewStores(testutil.NewMemoryDAOFactory())
 	require.NoError(t, err)
-	sshClient, err := sdkssh.NewEmbedded(sdkssh.EmbeddedOptions{Backend: backend})
+	sshClient, err := sdkssh.NewEmbedded(sdkssh.EmbeddedOptions{Stores: stores})
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = sshClient.Close() })
 	server.sshClient = sshClient

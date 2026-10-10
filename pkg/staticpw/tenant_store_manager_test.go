@@ -15,14 +15,14 @@ package staticpw
 
 import (
 	"context"
-	"log/slog"
-	"os"
 	"testing"
+
+	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
 
 	"github.com/jeremyhahn/go-xkms/pkg/crypto/kdf"
 	"github.com/jeremyhahn/go-xkms/pkg/scope"
 	"github.com/jeremyhahn/go-xkms/pkg/seal"
-	"github.com/jeremyhahn/go-xkms/pkg/storage"
+	"github.com/jeremyhahn/go-xkms/pkg/testutil"
 	secure "github.com/jeremyhahn/go-xkms/sdk/go/secure"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -37,69 +37,15 @@ func cheapKDFParams() *kdf.KDFParams {
 	return &kdf.KDFParams{Algorithm: kdf.AlgorithmArgon2id, Memory: 64, Time: 1, Threads: 1, KeyLength: 32}
 }
 
-// testBarrierConfig returns a BarrierConfig suitable for test barriers.
-func testBarrierConfig() seal.BarrierConfig {
-	return seal.BarrierConfig{
-		RootKeyPath:     "core/seal",
-		PreferenceOrder: []seal.StrategyID{seal.StrategyPassphrase},
-	}
-}
-
-// testLogger returns a quiet logger for test output.
-func testLogger() *slog.Logger {
-	return slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelError}))
-}
-
-// newTestBarrier creates an initialized (unsealed) system barrier for testing.
-func newTestBarrier(t *testing.T) *seal.Barrier {
+// newTestManager creates a TenantPasswordStoreManager over in-memory tenant
+// stores, with a system store, and returns the stores to seal and inspect.
+func newTestManager(t *testing.T) (*TenantPasswordStoreManager, *testutil.TenantStores) {
 	t.Helper()
-	backend := storage.NewMemory()
-	barrier, err := seal.NewBarrier(
-		testLogger(),
-		backend,
-		testBarrierConfig(),
-		seal.NewSoftwareStrategy(),
-	)
+	stores := testutil.NewTenantStores()
+	systemStore := newTestStore(t)
+	mgr, err := NewTenantPasswordStoreManager(stores, systemStore, WithPasskeyRelyingParty(testRelyingParty), WithPassphraseKDFParams(cheapKDFParams))
 	require.NoError(t, err)
-	creds, err := seal.CredentialsFor(t.Context(), []byte("test-system-pw"))
-	require.NoError(t, err)
-	defer creds.Secret.Destroy()
-	err = barrier.Initialize(context.Background(), creds)
-	require.NoError(t, err)
-	return barrier
-}
-
-// newTestRegistry creates a BarrierRegistry backed by an initialized system barrier.
-func newTestRegistry(t *testing.T) *seal.BarrierRegistry {
-	t.Helper()
-	barrier := newTestBarrier(t)
-	reg, err := seal.NewBarrierRegistry(barrier)
-	require.NoError(t, err)
-	return reg
-}
-
-// registerAndInitTenant registers a tenant in the registry, initializes it,
-// and returns the BarrierRegistry. The tenant barrier is unsealed.
-func registerAndInitTenant(t *testing.T, reg *seal.BarrierRegistry, tenantID string) {
-	t.Helper()
-	_, err := reg.RegisterTenantDefault(tenantID)
-	require.NoError(t, err)
-	creds, err := seal.CredentialsFor(t.Context(), []byte("pw-"+tenantID))
-	require.NoError(t, err)
-	defer creds.Secret.Destroy()
-	err = reg.InitializeTenant(context.Background(), tenantID, creds)
-	require.NoError(t, err)
-}
-
-// newTestManager creates a TenantPasswordStoreManager with a valid registry
-// and system store for testing.
-func newTestManager(t *testing.T) (*TenantPasswordStoreManager, *seal.BarrierRegistry) {
-	t.Helper()
-	reg := newTestRegistry(t)
-	systemStore := NewStore(storage.New())
-	mgr, err := NewTenantPasswordStoreManager(reg, systemStore, WithPasskeyRelyingParty(testRelyingParty), WithPassphraseKDFParams(cheapKDFParams))
-	require.NoError(t, err)
-	return mgr, reg
+	return mgr, stores
 }
 
 // testRelyingParty is the WebAuthn relying party the test managers create
@@ -109,27 +55,24 @@ const testRelyingParty = "kms.example.com"
 // --- NewTenantPasswordStoreManager ---
 
 func TestNewTenantPasswordStoreManager_Success(t *testing.T) {
-	reg := newTestRegistry(t)
-	systemStore := NewStore(storage.New())
+	systemStore := newTestStore(t)
 
-	mgr, err := NewTenantPasswordStoreManager(reg, systemStore)
+	mgr, err := NewTenantPasswordStoreManager(testutil.NewTenantStores(), systemStore)
 	require.NoError(t, err)
 	require.NotNil(t, mgr)
 	assert.Same(t, systemStore, mgr.SystemStore())
 }
 
-func TestNewTenantPasswordStoreManager_NilRegistry(t *testing.T) {
-	systemStore := NewStore(storage.New())
+func TestNewTenantPasswordStoreManager_NilTenantStores(t *testing.T) {
+	systemStore := newTestStore(t)
 
 	mgr, err := NewTenantPasswordStoreManager(nil, systemStore)
 	assert.Nil(t, mgr)
-	assert.ErrorIs(t, err, ErrNilBarrierRegistry)
+	assert.ErrorIs(t, err, ErrNilTenantStores)
 }
 
 func TestNewTenantPasswordStoreManager_NilStore(t *testing.T) {
-	reg := newTestRegistry(t)
-
-	mgr, err := NewTenantPasswordStoreManager(reg, nil)
+	mgr, err := NewTenantPasswordStoreManager(testutil.NewTenantStores(), nil)
 	assert.Nil(t, mgr)
 	assert.ErrorIs(t, err, ErrNilStore)
 }
@@ -137,20 +80,8 @@ func TestNewTenantPasswordStoreManager_NilStore(t *testing.T) {
 func TestNewTenantPasswordStoreManager_BothNil(t *testing.T) {
 	mgr, err := NewTenantPasswordStoreManager(nil, nil)
 	assert.Nil(t, mgr)
-	// nil registry is checked first
-	assert.ErrorIs(t, err, ErrNilBarrierRegistry)
-}
-
-// --- SystemStore ---
-
-func TestSystemStore_ReturnsSystemStore(t *testing.T) {
-	reg := newTestRegistry(t)
-	systemStore := NewStore(storage.New())
-	mgr, err := NewTenantPasswordStoreManager(reg, systemStore)
-	require.NoError(t, err)
-
-	result := mgr.SystemStore()
-	assert.Same(t, systemStore, result)
+	// The tenant stores are checked first.
+	assert.ErrorIs(t, err, ErrNilTenantStores)
 }
 
 // --- helpers ---
@@ -158,7 +89,7 @@ func TestSystemStore_ReturnsSystemStore(t *testing.T) {
 // scoped resolves userID's store in tenantID and asserts it is a ScopedStore.
 func scoped(t *testing.T, mgr *TenantPasswordStoreManager, tenantID, userID string) *ScopedStore {
 	t.Helper()
-	store, err := mgr.ResolveScopedStore(tenantID, userID)
+	store, err := mgr.ResolveScopedStore(t.Context(), tenantID, userID)
 	require.NoError(t, err)
 	s, ok := store.(*ScopedStore)
 	require.True(t, ok, "expected *ScopedStore, got %T", store)
@@ -207,26 +138,24 @@ func entry(name string, shared bool) *StaticPassword {
 
 func TestResolveScopedStore_NoIdentityGetsSystemStore(t *testing.T) {
 	mgr, _ := newTestManager(t)
-	store, err := mgr.ResolveScopedStore("", "alice")
+	store, err := mgr.ResolveScopedStore(t.Context(), "", "alice")
 	require.NoError(t, err)
 	assert.Same(t, mgr.SystemStore(), store)
 }
 
 func TestResolveScopedStore_Refusals(t *testing.T) {
-	mgr, reg := newTestManager(t)
-	registerAndInitTenant(t, reg, "tenant-a")
+	mgr, _ := newTestManager(t)
 
-	_, err := mgr.ResolveScopedStore("nonexistent", "alice")
-	assert.ErrorIs(t, err, seal.ErrTenantNotFound)
+	_, err := mgr.ResolveScopedStore(t.Context(), "bad/tenant", "alice")
+	assert.ErrorIs(t, err, ErrInvalidTenantID)
 
-	_, err = mgr.ResolveScopedStore("tenant-a", "bad/user")
+	_, err = mgr.ResolveScopedStore(t.Context(), "tenant-a", "bad/user")
 	assert.ErrorIs(t, err, ErrInvalidUserID)
 }
 
 func TestResolveScopedStore_NoUserGetsSharedOnly(t *testing.T) {
-	mgr, reg := newTestManager(t)
-	registerAndInitTenant(t, reg, "tenant-a")
-	store, err := mgr.ResolveScopedStore("tenant-a", "")
+	mgr, _ := newTestManager(t)
+	store, err := mgr.ResolveScopedStore(t.Context(), "tenant-a", "")
 	require.NoError(t, err)
 	_, isScoped := store.(*ScopedStore)
 	assert.False(t, isScoped, "no subject means the shared store alone")
@@ -234,12 +163,11 @@ func TestResolveScopedStore_NoUserGetsSharedOnly(t *testing.T) {
 }
 
 func TestResolveScopedStore_SessionsStartLocked(t *testing.T) {
-	mgr, reg := newTestManager(t)
-	registerAndInitTenant(t, reg, "tenant-a")
+	mgr, _ := newTestManager(t)
 	s := scoped(t, mgr, "tenant-a", "alice")
 	assert.True(t, s.PersonalLocked())
 	assert.ErrorIs(t, s.Add(entry("mine", false)), ErrStoreLocked)
-	locked, err := mgr.IsUserLocked("tenant-a", "alice")
+	locked, err := mgr.IsUserLocked(t.Context(), "tenant-a", "alice")
 	require.NoError(t, err)
 	assert.True(t, locked)
 }
@@ -248,8 +176,7 @@ func TestResolveScopedStore_SessionsStartLocked(t *testing.T) {
 // for their owner only ---
 
 func TestSharedEntries_VisibleToEveryTenantUserWhileLocked(t *testing.T) {
-	mgr, reg := newTestManager(t)
-	registerAndInitTenant(t, reg, "tenant-a")
+	mgr, _ := newTestManager(t)
 
 	alice := scoped(t, mgr, "tenant-a", "alice")
 	require.NoError(t, alice.Add(entry("wiki", true)))
@@ -265,8 +192,7 @@ func TestSharedEntries_VisibleToEveryTenantUserWhileLocked(t *testing.T) {
 }
 
 func TestPersonalEntries_PrivateToTheirOwner(t *testing.T) {
-	mgr, reg := newTestManager(t)
-	registerAndInitTenant(t, reg, "tenant-a")
+	mgr, _ := newTestManager(t)
 
 	alice := unlocked(t, mgr, "tenant-a", "alice")
 	secret := entry("alice-bank", false)
@@ -291,17 +217,16 @@ func TestPersonalEntries_PrivateToTheirOwner(t *testing.T) {
 // --- per-user sessions ---
 
 func TestUserSessions_AreIndependent(t *testing.T) {
-	mgr, reg := newTestManager(t)
-	registerAndInitTenant(t, reg, "tenant-a")
+	mgr, _ := newTestManager(t)
 
 	unlocked(t, mgr, "tenant-a", "alice")
-	bobLocked, err := mgr.IsUserLocked("tenant-a", "bob")
+	bobLocked, err := mgr.IsUserLocked(t.Context(), "tenant-a", "bob")
 	require.NoError(t, err)
 	assert.True(t, bobLocked, "alice unlocking must not unlock bob")
 
 	unlocked(t, mgr, "tenant-a", "bob")
 	require.NoError(t, mgr.LockUser("tenant-a", "alice"))
-	bobLocked, err = mgr.IsUserLocked("tenant-a", "bob")
+	bobLocked, err = mgr.IsUserLocked(t.Context(), "tenant-a", "bob")
 	require.NoError(t, err)
 	assert.False(t, bobLocked, "alice locking must not lock bob")
 	assert.False(t, scoped(t, mgr, "tenant-a", "bob").PersonalLocked())
@@ -309,8 +234,7 @@ func TestUserSessions_AreIndependent(t *testing.T) {
 }
 
 func TestUserSessions_LockHidesPersonalEntries(t *testing.T) {
-	mgr, reg := newTestManager(t)
-	registerAndInitTenant(t, reg, "tenant-a")
+	mgr, _ := newTestManager(t)
 
 	alice := unlocked(t, mgr, "tenant-a", "alice")
 	personal := entry("mine", false)
@@ -336,8 +260,7 @@ func TestUserSessions_LockHidesPersonalEntries(t *testing.T) {
 }
 
 func TestUserSessions_Errors(t *testing.T) {
-	mgr, reg := newTestManager(t)
-	registerAndInitTenant(t, reg, "tenant-a")
+	mgr, _ := newTestManager(t)
 	ctx := context.Background()
 
 	assert.ErrorIs(t, mgr.UnlockUser(ctx, "tenant-a", "alice", pass(t, "alice")), ErrVaultNotInitialized)
@@ -348,38 +271,53 @@ func TestUserSessions_Errors(t *testing.T) {
 
 	assert.ErrorIs(t, mgr.UnlockUser(ctx, "tenant-a", "bad/user", pass(t, "x")), ErrInvalidUserID)
 	assert.ErrorIs(t, mgr.LockUser("tenant-a", ""), ErrInvalidUserID)
-	assert.ErrorIs(t, mgr.UnlockUser(ctx, "nonexistent", "alice", pass(t, "alice")), seal.ErrTenantNotFound)
-	assert.ErrorIs(t, mgr.LockUser("nonexistent", "alice"), seal.ErrTenantNotFound)
-	_, err := mgr.IsUserLocked("nonexistent", "alice")
-	assert.ErrorIs(t, err, seal.ErrTenantNotFound)
+	assert.ErrorIs(t, mgr.UnlockUser(ctx, "bad/tenant", "alice", pass(t, "alice")), ErrInvalidTenantID)
+	assert.ErrorIs(t, mgr.LockUser("bad/tenant", "alice"), ErrInvalidTenantID)
+	_, err := mgr.IsUserLocked(t.Context(), "bad/tenant", "alice")
+	assert.ErrorIs(t, err, ErrInvalidTenantID)
 }
 
 func TestUserSessions_SealingEndsThem(t *testing.T) {
-	mgr, reg := newTestManager(t)
-	registerAndInitTenant(t, reg, "tenant-a")
+	mgr, stores := newTestManager(t)
 	unlocked(t, mgr, "tenant-a", "alice")
 
-	require.NoError(t, reg.SealTenant("tenant-a"))
-	_, err := mgr.ResolveScopedStore("tenant-a", "alice")
+	stores.Seal("tenant-a")
+	_, err := mgr.ResolveScopedStore(t.Context(), "tenant-a", "alice")
 	assert.ErrorIs(t, err, seal.ErrTenantSealed)
 	assert.ErrorIs(t, mgr.UnlockUser(context.Background(), "tenant-a", "alice", pass(t, "alice")), seal.ErrTenantSealed)
-	locked, err := mgr.IsUserLocked("tenant-a", "alice")
+	locked, err := mgr.IsUserLocked(t.Context(), "tenant-a", "alice")
 	require.NoError(t, err)
 	assert.True(t, locked)
 
-	creds, err := seal.CredentialsFor(t.Context(), []byte("pw-tenant-a"))
-	require.NoError(t, err)
-	defer creds.Secret.Destroy()
-	require.NoError(t, reg.UnsealTenant(context.Background(), "tenant-a", creds))
+	stores.Unseal("tenant-a")
 	assert.True(t, scoped(t, mgr, "tenant-a", "alice").PersonalLocked(), "an unseal must not resume a session the seal ended")
+}
+
+// A tenant store that fails to resolve for any reason but a seal is a
+// *StoreError naming the tenant.
+func TestResolveScopedStore_ResolveFailure(t *testing.T) {
+	mgr, err := NewTenantPasswordStoreManager(failingTenantStores{}, newTestStore(t))
+	require.NoError(t, err)
+
+	_, err = mgr.ResolveScopedStore(t.Context(), "tenant-a", "alice")
+	var storeErr *StoreError
+	require.ErrorAs(t, err, &storeErr)
+	assert.Equal(t, "resolve", storeErr.Op)
+	assert.Equal(t, "tenant-a", storeErr.Key)
+	assert.ErrorIs(t, err, errReadFailed)
+}
+
+// failingTenantStores resolves no tenant.
+type failingTenantStores struct{}
+
+func (failingTenantStores) Resolve(context.Context, string) (qrdbsdk.KVStore, error) {
+	return nil, errReadFailed
 }
 
 // --- tenant and system isolation ---
 
 func TestTenants_AreIsolated(t *testing.T) {
-	mgr, reg := newTestManager(t)
-	registerAndInitTenant(t, reg, "tenant-a")
-	registerAndInitTenant(t, reg, "tenant-b")
+	mgr, _ := newTestManager(t)
 
 	a := unlocked(t, mgr, "tenant-a", "alice")
 	require.NoError(t, a.Add(entry("a-shared", true)))
@@ -395,8 +333,7 @@ func TestTenants_AreIsolated(t *testing.T) {
 }
 
 func TestSystemTenant_HasItsOwnStore(t *testing.T) {
-	mgr, reg := newTestManager(t)
-	registerAndInitTenant(t, reg, "tenant-a")
+	mgr, stores := newTestManager(t)
 
 	root := unlocked(t, mgr, scope.SystemTenant, "root")
 	require.NoError(t, root.Add(entry("sys-shared", true)))
@@ -418,67 +355,65 @@ func TestSystemTenant_HasItsOwnStore(t *testing.T) {
 	require.NoError(t, err)
 	assert.Empty(t, flat)
 
-	// The system tenant's barrier is the system barrier: sealing it closes
-	// the system tenant's store.
-	require.NoError(t, reg.SystemBarrier().Seal())
-	_, err = mgr.ResolveScopedStore(scope.SystemTenant, "root")
+	// Sealing the system tenant closes the system tenant's store.
+	stores.Seal(scope.SystemTenant)
+	_, err = mgr.ResolveScopedStore(t.Context(), scope.SystemTenant, "root")
 	assert.ErrorIs(t, err, seal.ErrTenantSealed)
 }
 
 // --- UserStoreStatus ---
 
 func TestUserStoreStatus_CountsWhatTheUserCanRead(t *testing.T) {
-	mgr, reg := newTestManager(t)
-	registerAndInitTenant(t, reg, "tenant-a")
+	mgr, _ := newTestManager(t)
 
 	alice := unlocked(t, mgr, "tenant-a", "alice")
 	require.NoError(t, alice.Add(entry("shared", true)))
 	require.NoError(t, alice.Add(entry("personal", false)))
 
-	status, err := mgr.UserStoreStatus("tenant-a", "alice")
+	status, err := mgr.UserStoreStatus(t.Context(), "tenant-a", "alice")
 	require.NoError(t, err)
 	assert.Equal(t, TenantStoreStatus{IsLocked: false, PasswordCount: 2}, *status)
 
-	status, err = mgr.UserStoreStatus("tenant-a", "bob")
+	status, err = mgr.UserStoreStatus(t.Context(), "tenant-a", "bob")
 	require.NoError(t, err)
 	assert.Equal(t, TenantStoreStatus{IsLocked: true, PasswordCount: 1}, *status)
 }
 
-func TestUserStoreStatus_SealedAndUnknown(t *testing.T) {
-	mgr, reg := newTestManager(t)
-	registerAndInitTenant(t, reg, "tenant-a")
-	require.NoError(t, reg.SealTenant("tenant-a"))
+func TestUserStoreStatus_SealedAndInvalid(t *testing.T) {
+	mgr, stores := newTestManager(t)
+	stores.Seal("tenant-a")
 
-	status, err := mgr.UserStoreStatus("tenant-a", "alice")
+	status, err := mgr.UserStoreStatus(t.Context(), "tenant-a", "alice")
 	require.NoError(t, err)
 	assert.Equal(t, TenantStoreStatus{IsLocked: true, BarrierSealed: true}, *status)
 
-	_, err = mgr.UserStoreStatus("nonexistent", "alice")
-	assert.ErrorIs(t, err, seal.ErrTenantNotFound)
-	_, err = mgr.UserStoreStatus("tenant-a", "bad/user")
+	_, err = mgr.UserStoreStatus(t.Context(), "bad/tenant", "alice")
+	assert.ErrorIs(t, err, ErrInvalidTenantID)
+	_, err = mgr.UserStoreStatus(t.Context(), "tenant-a", "bad/user")
 	assert.Error(t, err)
 }
 
 // --- caching and Close ---
 
-func TestResolveScopedStore_CachesStores(t *testing.T) {
-	mgr, reg := newTestManager(t)
-	registerAndInitTenant(t, reg, "tenant-a")
+func TestResolveScopedStore_SharesTheSession(t *testing.T) {
+	mgr, _ := newTestManager(t)
 	first := unlocked(t, mgr, "tenant-a", "alice")
+	require.NoError(t, first.Add(entry("mine", false)))
+
 	second := scoped(t, mgr, "tenant-a", "alice")
-	assert.Same(t, first.shared, second.shared)
-	assert.Same(t, first.personal, second.personal)
+	got, err := second.Get("mine")
+	require.NoError(t, err, "every resolution serves the one open session")
+	assert.Equal(t, "pw-mine", got.Password)
 }
 
-func TestClose_ClosesStoresAndEndsSessions(t *testing.T) {
-	mgr, reg := newTestManager(t)
-	registerAndInitTenant(t, reg, "tenant-a")
+func TestClose_EndsSessions(t *testing.T) {
+	mgr, _ := newTestManager(t)
 	s := unlocked(t, mgr, "tenant-a", "alice")
 
 	require.NoError(t, mgr.Close())
-	assert.ErrorIs(t, s.shared.Add(entry("late", true)), ErrStoreClosed)
-	assert.Error(t, s.personal.Add(entry("late", false)), "the personal store writes through the closed tenant barrier")
-	locked, err := mgr.IsUserLocked("tenant-a", "alice")
+	assert.ErrorIs(t, s.personal.Add(entry("late", false)), ErrStoreLocked,
+		"a personal store held past Close has no key to seal with")
+	locked, err := mgr.IsUserLocked(t.Context(), "tenant-a", "alice")
 	require.NoError(t, err)
 	assert.True(t, locked, "Close ends every session")
 

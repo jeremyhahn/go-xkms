@@ -1,6 +1,6 @@
 # Host Embedding — User Guide
 
-> **Status: NORMATIVE** · Feature: `host-embedding` · Repo: `go-xkms` · Last verified: 2026-10-04
+> **Status: NORMATIVE** · Feature: `host-embedding` · Repo: `go-xkms` · Last verified: 2026-10-09
 
 For a developer embedding go-xkms in a daemon that hosts a go-qrdb node.
 

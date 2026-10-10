@@ -16,16 +16,19 @@ package keys_test
 import (
 	"context"
 	"crypto/rand"
-	"encoding/json"
 	"errors"
 	"strings"
 	"testing"
 
 	"golang.org/x/crypto/ssh"
 
+	"github.com/jeremyhahn/go-xkms/pkg/dao"
 	"github.com/jeremyhahn/go-xkms/pkg/ssh/keys"
+	"github.com/jeremyhahn/go-xkms/pkg/ssh/records"
 	"github.com/jeremyhahn/go-xkms/pkg/ssh/scope"
 	"github.com/jeremyhahn/go-xkms/pkg/storage"
+	"github.com/jeremyhahn/go-xkms/pkg/storage/kvadapter"
+	"github.com/jeremyhahn/go-xkms/pkg/testutil"
 	secure "github.com/jeremyhahn/go-xkms/sdk/go/secure"
 )
 
@@ -99,17 +102,6 @@ func TestStorageError_ErrorAndUnwrap(t *testing.T) {
 	}
 	if !errors.Is(e, inner) {
 		t.Fatal("StorageError.Unwrap() must expose inner error")
-	}
-}
-
-func TestSerializationError_ErrorAndUnwrap(t *testing.T) {
-	inner := errors.New("json: unexpected end")
-	e := &keys.SerializationError{Op: "unmarshal envelope", Err: inner}
-	if e.Error() == "" {
-		t.Fatal("SerializationError.Error() empty")
-	}
-	if !errors.Is(e, inner) {
-		t.Fatal("SerializationError.Unwrap() must expose inner error")
 	}
 }
 
@@ -371,6 +363,8 @@ func TestSignerWithClose_NilPublicKey(t *testing.T) {
 // errKeysFail is the error every failing backend in this file returns.
 var errKeysFail = errors.New("injected backend failure")
 
+// keysFailingBackend fails every operation. It implements the guarded writes,
+// so the DAO over it is atomic and every failure is the backend's.
 type keysFailingBackend struct{}
 
 func (keysFailingBackend) Get(_ context.Context, _ string) ([]byte, error) {
@@ -380,9 +374,9 @@ func (keysFailingBackend) Put(_ context.Context, _ string, _ []byte) error { ret
 func (keysFailingBackend) PutIfAbsent(_ context.Context, _ string, _ []byte) (bool, error) {
 	return false, errKeysFail
 }
-
-// CompareAndDelete mirrors keysFailingBackend.Delete: it always returns
-// errKeysFail.
+func (keysFailingBackend) CompareAndSwap(_ context.Context, _ string, _, _ []byte) (bool, []byte, error) {
+	return false, nil, errKeysFail
+}
 func (keysFailingBackend) CompareAndDelete(_ context.Context, _ string, _ []byte) (bool, error) {
 	return false, errKeysFail
 }
@@ -398,197 +392,161 @@ func (keysFailingBackend) Exists(_ context.Context, _ string) (bool, error) {
 }
 func (keysFailingBackend) Close() error { return nil }
 
-// keysCorruptBackend returns corrupt JSON from Get/Scan.
-type keysCorruptBackend struct{ keysFailingBackend }
+// keysCorruptBackend serves every value it stores as undecodable bytes.
+type keysCorruptBackend struct{ storage.Backend }
 
-func (keysCorruptBackend) Get(_ context.Context, _ string) ([]byte, error) {
+// CompareAndSwap forwards to the wrapped backend, keeping the DAO atomic.
+func (b keysCorruptBackend) CompareAndSwap(ctx context.Context, key string, expected, next []byte) (bool, []byte, error) {
+	return b.Backend.(storage.CompareAndSwapper).CompareAndSwap(ctx, key, expected, next)
+}
+
+// CompareAndDelete forwards to the wrapped backend, keeping the DAO atomic.
+func (b keysCorruptBackend) CompareAndDelete(ctx context.Context, key string, expected []byte) (bool, error) {
+	return b.Backend.(storage.CompareAndDeleter).CompareAndDelete(ctx, key, expected)
+}
+
+func (b keysCorruptBackend) Get(ctx context.Context, key string) ([]byte, error) {
+	if _, err := b.Backend.Get(ctx, key); err != nil {
+		return nil, err
+	}
 	return []byte("{{{not json"), nil
 }
-func (keysCorruptBackend) Scan(_ context.Context, prefix string, fn func(string, []byte) error) error {
-	return fn(prefix+"keys/k", []byte("{{{not json"))
-}
-func (keysCorruptBackend) Delete(_ context.Context, _ string) error { return errKeysFail }
-
-// keysPayloadBackend returns caller-provided bytes for Get and Scan, and
-// succeeds on all other operations.
-type keysPayloadBackend struct {
-	data []byte
+func (b keysCorruptBackend) Scan(ctx context.Context, prefix string, fn func(string, []byte) error) error {
+	return b.Backend.Scan(ctx, prefix, func(key string, _ []byte) error {
+		return fn(key, []byte("{{{not json"))
+	})
 }
 
-func (b *keysPayloadBackend) Get(_ context.Context, _ string) ([]byte, error) {
-	return b.data, nil
-}
-func (b *keysPayloadBackend) Scan(_ context.Context, prefix string, fn func(string, []byte) error) error {
-	return fn(prefix+"keys/k", b.data)
-}
-func (b *keysPayloadBackend) Put(_ context.Context, _ string, _ []byte) error { return nil }
-func (b *keysPayloadBackend) PutIfAbsent(_ context.Context, _ string, _ []byte) (bool, error) {
-	return true, nil
-}
-
-// CompareAndDelete mirrors keysPayloadBackend.Delete, which always succeeds:
-// it reports the key as removed.
-func (b *keysPayloadBackend) CompareAndDelete(_ context.Context, _ string, _ []byte) (bool, error) {
-	return true, nil
-}
-func (b *keysPayloadBackend) Delete(_ context.Context, _ string) error           { return nil }
-func (b *keysPayloadBackend) List(_ context.Context, _ string) ([]string, error) { return nil, nil }
-func (b *keysPayloadBackend) Exists(_ context.Context, _ string) (bool, error)   { return true, nil }
-func (b *keysPayloadBackend) Close() error                                       { return nil }
-
-func TestBackendStore_Put_StorageError(t *testing.T) {
-	store, err := keys.NewBackendStore(keysFailingBackend{})
-	if err != nil {
-		t.Fatalf("NewBackendStore: %v", err)
+// corruptStore returns a DAOStore whose records -- the user key alice/laptop
+// and the tenant key acme/deploy -- all read back undecodable.
+func corruptStore(t *testing.T) *keys.DAOStore {
+	t.Helper()
+	backend := storage.New()
+	clean := storeOver(t, backend)
+	if err := putKey(t, clean, scope.User, "alice", "laptop"); err != nil {
+		t.Fatalf("seed user key: %v", err)
 	}
+	if err := putKey(t, clean, scope.Tenant, "acme", "deploy"); err != nil {
+		t.Fatalf("seed tenant key: %v", err)
+	}
+	return storeOver(t, keysCorruptBackend{Backend: backend})
+}
+
+// storeOver returns the DAOStore over backend.
+func storeOver(t *testing.T, backend storage.Backend) *keys.DAOStore {
+	t.Helper()
+	kv, err := kvadapter.New(backend)
+	if err != nil {
+		t.Fatalf("kvadapter.New: %v", err)
+	}
+	store, err := keys.NewDAOStore(dao.NewStoreFactory(kv))
+	if err != nil {
+		t.Fatalf("NewDAOStore: %v", err)
+	}
+	return store
+}
+
+func TestDAOStore_Put_StorageError(t *testing.T) {
+	store := storeOver(t, keysFailingBackend{})
 	k, _ := keys.Generate(t.Context(), keys.GenerateOptions{Algorithm: keys.AlgorithmEd25519})
 	k.Scope = scope.User
 	k.Owner = "alice"
 	k.Name = "laptop"
 	defer k.Destroy()
-	err = store.Put(context.Background(), k)
+	err := store.Put(context.Background(), k)
 	var se *keys.StorageError
 	if !errors.As(err, &se) {
 		t.Fatalf("expected StorageError on put failure, got %T: %v", err, err)
 	}
 }
 
-func TestBackendStore_Get_StorageError(t *testing.T) {
-	store, err := keys.NewBackendStore(keysFailingBackend{})
-	if err != nil {
-		t.Fatalf("NewBackendStore: %v", err)
-	}
-	_, err = store.Get(context.Background(), scope.User, "alice", "laptop")
+func TestDAOStore_Get_StorageError(t *testing.T) {
+	store := storeOver(t, keysFailingBackend{})
+	_, err := store.Get(context.Background(), scope.User, "alice", "laptop")
 	var se *keys.StorageError
 	if !errors.As(err, &se) {
 		t.Fatalf("expected StorageError on get failure, got %T: %v", err, err)
 	}
 }
 
-func TestBackendStore_Get_CorruptEnvelope(t *testing.T) {
-	store, err := keys.NewBackendStore(keysCorruptBackend{})
-	if err != nil {
-		t.Fatalf("NewBackendStore: %v", err)
-	}
-	_, err = store.Get(context.Background(), scope.User, "alice", "laptop")
-	var se *keys.SerializationError
+func TestDAOStore_Get_CorruptRecord(t *testing.T) {
+	store := corruptStore(t)
+	_, err := store.Get(context.Background(), scope.User, "alice", "laptop")
+	var se *keys.StorageError
 	if !errors.As(err, &se) {
-		t.Fatalf("expected SerializationError on corrupt envelope, got %T: %v", err, err)
+		t.Fatalf("expected StorageError on corrupt record, got %T: %v", err, err)
 	}
 }
 
-func TestBackendStore_Delete_StorageError(t *testing.T) {
-	store, err := keys.NewBackendStore(keysFailingBackend{})
-	if err != nil {
-		t.Fatalf("NewBackendStore: %v", err)
-	}
-	err = store.Delete(context.Background(), scope.User, "alice", "laptop")
+func TestDAOStore_Delete_StorageError(t *testing.T) {
+	store := storeOver(t, keysFailingBackend{})
+	err := store.Delete(context.Background(), scope.User, "alice", "laptop")
 	var se *keys.StorageError
 	if !errors.As(err, &se) {
 		t.Fatalf("expected StorageError on delete failure, got %T: %v", err, err)
 	}
 }
 
-func TestBackendStore_List_StorageError(t *testing.T) {
-	store, err := keys.NewBackendStore(keysFailingBackend{})
-	if err != nil {
-		t.Fatalf("NewBackendStore: %v", err)
-	}
-	_, err = store.List(context.Background(), scope.User, "alice")
+func TestDAOStore_List_StorageError(t *testing.T) {
+	store := storeOver(t, keysFailingBackend{})
+	_, err := store.List(context.Background(), scope.User, "alice")
 	var se *keys.StorageError
 	if !errors.As(err, &se) {
-		t.Fatalf("expected StorageError on list scan failure, got %T: %v", err, err)
+		t.Fatalf("expected StorageError on list failure, got %T: %v", err, err)
 	}
 }
 
-func TestBackendStore_List_CorruptEnvelope(t *testing.T) {
-	store, err := keys.NewBackendStore(keysCorruptBackend{})
+func TestDAOStore_List_InvalidScope(t *testing.T) {
+	store, err := keys.NewDAOStore(testutil.NewMemoryDAOFactory())
 	if err != nil {
-		t.Fatalf("NewBackendStore: %v", err)
+		t.Fatalf("NewDAOStore: %v", err)
 	}
-	_, err = store.List(context.Background(), scope.User, "alice")
-	if err == nil {
-		t.Fatal("expected error for corrupt envelope in List scan")
-	}
-}
-
-func TestBackendStore_List_InvalidScope(t *testing.T) {
-	store, err := keys.NewBackendStore(storage.NewMemory())
-	if err != nil {
-		t.Fatalf("NewBackendStore: %v", err)
-	}
-	_, err = store.List(context.Background(), scope.Scope("badscope"), "")
-	if err == nil {
-		t.Fatal("expected error for invalid scope in List")
+	var scopeErr *scope.ScopeInvalidError
+	if _, err := store.List(context.Background(), scope.Scope("badscope"), ""); !errors.As(err, &scopeErr) {
+		t.Fatalf("List(badscope) = %v, want *ScopeInvalidError", err)
 	}
 }
 
-// testEnvJSON is a helper that marshals a minimal test envelope. The pub
-// and pemB64 fields can be arbitrary strings for error-path tests.
-func testEnvJSON(t *testing.T, sc, pub, pemB64 string) []byte {
+// plantedBody is a keys record body written around the store, so a test can
+// plant a record the store itself never writes.
+type plantedBody struct {
+	Algorithm string `json:"algo"`
+	PublicKey string `json:"pub"`
+}
+
+// storeWithPlanted returns a DAOStore whose record alice/laptop (user scope)
+// holds body.
+func storeWithPlanted(t *testing.T, body plantedBody) *keys.DAOStore {
 	t.Helper()
-	type env struct {
-		V           int    `json:"v"`
-		Scope       string `json:"scope"`
-		Owner       string `json:"owner"`
-		Name        string `json:"name"`
-		Algo        string `json:"algo"`
-		FP          string `json:"fp"`
-		Created     string `json:"created"`
-		PublicKey   string `json:"pub"`
-		MaterialPEM string `json:"pem_b64"`
-	}
-	b, err := json.Marshal(env{
-		V:           1,
-		Scope:       sc,
-		Owner:       "alice",
-		Name:        "laptop",
-		Algo:        "ed25519",
-		Created:     "2025-01-01T00:00:00Z",
-		PublicKey:   pub,
-		MaterialPEM: pemB64,
-	})
+	daos := testutil.NewMemoryDAOFactory()
+	table, err := records.New[plantedBody](daos, scope.KindKeys)
 	if err != nil {
-		t.Fatalf("testEnvJSON marshal: %v", err)
+		t.Fatalf("records.New: %v", err)
 	}
-	return b
+	if _, err := table.Put(context.Background(), scope.User, "alice", "laptop", body); err != nil {
+		t.Fatalf("plant record: %v", err)
+	}
+	store, err := keys.NewDAOStore(daos)
+	if err != nil {
+		t.Fatalf("NewDAOStore: %v", err)
+	}
+	return store
 }
 
-// TestBackendStore_Get_InvalidScopeInEnvelope exercises envelopeToKey's
-// scope.Parse error path by injecting a valid JSON envelope with a bogus
-// scope string.
-func TestBackendStore_Get_InvalidScopeInEnvelope(t *testing.T) {
-	data := testEnvJSON(t, "INVALID", "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIAAAAAAAAAAAAAAAAAAaAA test", "dummypem")
-	store, err := keys.NewBackendStore(&keysPayloadBackend{data: data})
-	if err != nil {
-		t.Fatalf("NewBackendStore: %v", err)
-	}
-	_, err = store.Get(context.Background(), scope.User, "alice", "laptop")
-	if err == nil {
-		t.Fatal("expected error for invalid scope in stored envelope")
-	}
-}
-
-// TestBackendStore_Get_BadPublicKeyInEnvelope exercises envelopeToKey's
+// TestDAOStore_Get_BadPublicKey exercises entityToKeyMetaOnly's
 // ssh.ParseAuthorizedKey error path.
-func TestBackendStore_Get_BadPublicKeyInEnvelope(t *testing.T) {
-	data := testEnvJSON(t, "user", "not-a-valid-pub-key", "dummypem")
-	store, err := keys.NewBackendStore(&keysPayloadBackend{data: data})
-	if err != nil {
-		t.Fatalf("NewBackendStore: %v", err)
-	}
-	_, err = store.Get(context.Background(), scope.User, "alice", "laptop")
+func TestDAOStore_Get_BadPublicKey(t *testing.T) {
+	store := storeWithPlanted(t, plantedBody{Algorithm: "ed25519", PublicKey: "not-a-valid-pub-key"})
+	_, err := store.Get(context.Background(), scope.User, "alice", "laptop")
 	var pe *keys.PEMParseError
 	if !errors.As(err, &pe) {
 		t.Fatalf("expected PEMParseError for bad public key, got %T: %v", err, err)
 	}
 }
 
-// TestBackendStore_Get_EmptyMaterialInEnvelope exercises envelopeToKey's
-// empty-MaterialPEM error path.
-func TestBackendStore_Get_EmptyMaterialInEnvelope(t *testing.T) {
-	// Generate a valid key to get a real public key line, then embed it
-	// into an envelope with empty pem_b64.
+// TestDAOStore_Get_EmptyMaterial exercises entityToKey's empty-PEM error
+// path: a software key record without material.
+func TestDAOStore_Get_EmptyMaterial(t *testing.T) {
 	k, err := keys.Generate(t.Context(), keys.GenerateOptions{Algorithm: keys.AlgorithmEd25519})
 	if err != nil {
 		t.Fatalf("Generate: %v", err)
@@ -596,11 +554,7 @@ func TestBackendStore_Get_EmptyMaterialInEnvelope(t *testing.T) {
 	pubLine := strings.TrimRight(string(ssh.MarshalAuthorizedKey(k.PublicKey)), "\n")
 	k.Destroy()
 
-	data := testEnvJSON(t, "user", pubLine, "")
-	store, err := keys.NewBackendStore(&keysPayloadBackend{data: data})
-	if err != nil {
-		t.Fatalf("NewBackendStore: %v", err)
-	}
+	store := storeWithPlanted(t, plantedBody{Algorithm: "ed25519", PublicKey: pubLine})
 	_, err = store.Get(context.Background(), scope.User, "alice", "laptop")
 	var kme *keys.KeyMaterialError
 	if !errors.As(err, &kme) {
@@ -608,44 +562,25 @@ func TestBackendStore_Get_EmptyMaterialInEnvelope(t *testing.T) {
 	}
 }
 
-// TestBackendStore_List_InvalidScopeInEnvelope exercises envelopeToKeyMetaOnly's
-// scope.Parse error path.
-func TestBackendStore_List_InvalidScopeInEnvelope(t *testing.T) {
-	data := testEnvJSON(t, "INVALID", "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIAAAAAAAAAAAAAAAAAAaAA test", "dummypem")
-	store, err := keys.NewBackendStore(&keysPayloadBackend{data: data})
-	if err != nil {
-		t.Fatalf("NewBackendStore: %v", err)
-	}
-	_, err = store.List(context.Background(), scope.User, "alice")
-	if err == nil {
-		t.Fatal("expected error for invalid scope in List envelope")
-	}
-}
-
-// TestBackendStore_List_BadPublicKeyInEnvelope exercises envelopeToKeyMetaOnly's
-// ssh.ParseAuthorizedKey error path.
-func TestBackendStore_List_BadPublicKeyInEnvelope(t *testing.T) {
-	data := testEnvJSON(t, "user", "not-valid-pub", "dummypem")
-	store, err := keys.NewBackendStore(&keysPayloadBackend{data: data})
-	if err != nil {
-		t.Fatalf("NewBackendStore: %v", err)
-	}
-	_, err = store.List(context.Background(), scope.User, "alice")
+// TestDAOStore_List_BadPublicKey exercises the List path of
+// entityToKeyMetaOnly's ssh.ParseAuthorizedKey error.
+func TestDAOStore_List_BadPublicKey(t *testing.T) {
+	store := storeWithPlanted(t, plantedBody{Algorithm: "ed25519", PublicKey: "not-valid-pub"})
+	_, err := store.List(context.Background(), scope.User, "alice")
 	var pe *keys.PEMParseError
 	if !errors.As(err, &pe) {
 		t.Fatalf("expected PEMParseError for bad public key in list, got %T: %v", err, err)
 	}
 }
 
-// TestBackendStore_Delete_InvalidScope exercises the Delete buildKeyID error.
-func TestBackendStore_Delete_InvalidScope(t *testing.T) {
-	store, err := keys.NewBackendStore(storage.NewMemory())
+func TestDAOStore_Delete_InvalidScope(t *testing.T) {
+	store, err := keys.NewDAOStore(testutil.NewMemoryDAOFactory())
 	if err != nil {
-		t.Fatalf("NewBackendStore: %v", err)
+		t.Fatalf("NewDAOStore: %v", err)
 	}
-	err = store.Delete(context.Background(), scope.Scope("badscope"), "alice", "laptop")
-	if err == nil {
-		t.Fatal("expected error for invalid scope in Delete")
+	var scopeErr *scope.ScopeInvalidError
+	if err := store.Delete(context.Background(), scope.Scope("badscope"), "alice", "laptop"); !errors.As(err, &scopeErr) {
+		t.Fatalf("Delete(badscope) = %v, want *ScopeInvalidError", err)
 	}
 }
 
@@ -692,10 +627,10 @@ func destroyedMaterialKey(t *testing.T) *keys.Key {
 // Put: Material.Open() failure → KeyMaterialError
 // ---------------------------------------------------------------------------
 
-func TestBackendStore_Put_MaterialOpenError(t *testing.T) {
-	store, err := keys.NewBackendStore(storage.NewMemory())
+func TestDAOStore_Put_MaterialOpenError(t *testing.T) {
+	store, err := keys.NewDAOStore(testutil.NewMemoryDAOFactory())
 	if err != nil {
-		t.Fatalf("NewBackendStore: %v", err)
+		t.Fatalf("NewDAOStore: %v", err)
 	}
 	k := destroyedMaterialKey(t)
 	k.Scope = scope.User

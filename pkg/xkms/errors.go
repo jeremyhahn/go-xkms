@@ -98,6 +98,11 @@ var (
 	// ErrInvalidHashFunction indicates an unsupported or invalid hash function.
 	ErrInvalidHashFunction = errors.New("keystore: invalid hash function")
 
+	// ErrEd25519DigestInput indicates a request handed an Ed25519 key a
+	// digest (data_is_digest). Ed25519 signs the message itself (RFC 8032),
+	// so a signature over a digest would verify only against that digest.
+	ErrEd25519DigestInput = errors.New("keystore: Ed25519 signs the message, not a digest")
+
 	// ErrInvalidKDFAlgorithm indicates a key derivation function algorithm name
 	// that this binary does not implement. It exists so an unrecognized name is
 	// refused rather than answered with the HKDF default: a caller that asked

@@ -1,6 +1,6 @@
 # PKCS#11 Provider Module — CLI
 
-> **Status: NORMATIVE** · Feature: `pkcs11-provider-module` · Repo: `go-xkms` · Last verified: 2026-08-19
+> **Status: NORMATIVE** · Feature: `pkcs11-provider-module` · Repo: `go-xkms` · Last verified: 2026-10-10
 
 The module itself has **no CLI**: it is a `.so` that other programs load. Its
 entire configuration surface is environment variables
@@ -11,8 +11,11 @@ Two CLIs are adjacent to it.
 ## Building and loading the module
 
 ```
-CGO_ENABLED=1 go build -buildmode=c-shared -o build/lib/libxkms_pkcs11.so ./cmd/pkcs11-module
+make build-pkcs11-module
 ```
+
+The target builds with the project's tag set; a plain `go build` without
+`-tags` leaves out the tag-gated backends such as TPM 2.0.
 
 Then point any Cryptoki consumer at it:
 

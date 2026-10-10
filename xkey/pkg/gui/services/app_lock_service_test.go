@@ -1114,6 +1114,50 @@ func TestAppLockStatus_Fields(t *testing.T) {
 }
 
 // ---------------------------------------------------------------------------
+// SetLockStateHook
+// ---------------------------------------------------------------------------
+
+// lockStateRecorder registers a lock-state hook that records the lock state
+// at each call and proves no transition lock is held while the hook runs.
+func lockStateRecorder(t *testing.T, svc *AppLockService) *[]bool {
+	t.Helper()
+	seen := &[]bool{}
+	svc.SetLockStateHook(func() {
+		require.True(t, svc.transitionMu.TryLock(), "hook ran under transitionMu")
+		svc.transitionMu.Unlock()
+		require.True(t, svc.emitMu.TryLock(), "hook ran under emitMu")
+		svc.emitMu.Unlock()
+		*seen = append(*seen, svc.IsLocked())
+	})
+	return seen
+}
+
+func TestAppLockService_LockStateHookFollowsTransitions(t *testing.T) {
+	svc := newTestAppLockService(t, nil)
+	seen := lockStateRecorder(t, svc)
+
+	svc.LockForStartup()
+	require.NoError(t, svc.Unlock("123456"))
+	require.NoError(t, svc.Lock())
+	svc.AutoUnlock()
+
+	assert.Equal(t, []bool{true, false, true, false}, *seen)
+}
+
+func TestAppLockService_LockStateHookSkipsRejectedCalls(t *testing.T) {
+	svc := newLockedTestAppLockService(t, nil)
+	seen := lockStateRecorder(t, svc)
+
+	require.ErrorIs(t, svc.Unlock(""), ErrAppLockPINRequired)
+	require.ErrorIs(t, svc.Lock(), ErrAppLockAlreadyLocked)
+	assert.Empty(t, *seen)
+
+	svc.SetLockStateHook(nil)
+	require.NoError(t, svc.Unlock("123456"))
+	assert.Empty(t, *seen, "a cleared hook must not run")
+}
+
+// ---------------------------------------------------------------------------
 // UnlockVerified / HandleUnlock (go-xkms #250 defect 2)
 // ---------------------------------------------------------------------------
 

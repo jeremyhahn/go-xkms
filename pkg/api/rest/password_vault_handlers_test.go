@@ -297,7 +297,7 @@ func TestVaultHandlers_NotConfiguredAndSealed(t *testing.T) {
 		t.Parallel()
 
 		f := newPasswordFixture(t)
-		require.NoError(t, f.registry.SealTenant(tenantA))
+		f.stores.Seal(tenantA)
 		alice := user(tenantA, userA)
 
 		assert.Equal(t, http.StatusServiceUnavailable, f.do(t, alice, http.MethodGet, "/api/v1/password-vault", "").Code)

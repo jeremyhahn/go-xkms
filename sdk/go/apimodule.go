@@ -155,10 +155,19 @@ const ServiceModuleHostStoragePrefix = apimodule.HostStoragePrefix
 type ServiceModuleBarrierRegistryResolver = apimodule.BarrierRegistryResolver
 
 // WithServiceModuleBarrierRegistry supplies the host's tenant barrier
-// registry: per-tenant Password Manager stores live behind each tenant's
-// barrier, and it backs the "barrier" credential strategy and
+// registry: it backs the "barrier" credential strategy and
 // WithServiceModuleBarrierRoutes.
 var WithServiceModuleBarrierRegistry = apimodule.WithBarrierRegistry
+
+// ServiceModuleTenantStoresResolver returns the host's per-tenant store
+// resolver (an embedded qrdb node's Services().StoreResolver), or nil when
+// the host has none.
+type ServiceModuleTenantStoresResolver = apimodule.TenantStoresResolver
+
+// WithServiceModuleTenantStores supplies the host's per-tenant store
+// resolver: each tenant's Password Manager entries live in that tenant's
+// system database, behind that tenant's barrier.
+var WithServiceModuleTenantStores = apimodule.WithTenantStores
 
 // WithServiceModulePINBackend supplies the host's PIN backend, whose user
 // PIN opens a tenant's Password Manager session. It also mounts the

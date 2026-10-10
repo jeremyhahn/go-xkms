@@ -16,14 +16,13 @@ package staticpw
 import (
 	"testing"
 
-	"github.com/jeremyhahn/go-xkms/pkg/storage"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
 
-// TestBackendStore_ListByFolderDirect exercises the uncovered ListByFolderDirect method.
-func TestBackendStore_ListByFolderDirect(t *testing.T) {
-	s := NewStore(storage.New())
+// TestDAOStore_ListByFolderDirect exercises the uncovered ListByFolderDirect method.
+func TestDAOStore_ListByFolderDirect(t *testing.T) {
+	s := newTestStore(t)
 	defer func() { _ = s.Close() }()
 
 	require.NoError(t, s.Add(&StaticPassword{Name: "root1", Password: "pw"}))
@@ -58,18 +57,18 @@ func TestBackendStore_ListByFolderDirect(t *testing.T) {
 	})
 }
 
-// TestBackendStore_Close_AlreadyClosed exercises the double-close guard.
-func TestBackendStore_Close_AlreadyClosed(t *testing.T) {
-	s := NewStore(storage.New())
+// TestDAOStore_Close_AlreadyClosed exercises the double-close guard.
+func TestDAOStore_Close_AlreadyClosed(t *testing.T) {
+	s := newTestStore(t)
 
 	require.NoError(t, s.Close())
 	assert.NoError(t, s.Close())
 }
 
-// TestBackendStore_FindByName_CaseInsensitive exercises case-insensitive name lookup
+// TestDAOStore_FindByName_CaseInsensitive exercises case-insensitive name lookup
 // via the getUnlocked fallback scan path.
-func TestBackendStore_FindByName_CaseInsensitive(t *testing.T) {
-	s := NewStore(storage.New())
+func TestDAOStore_FindByName_CaseInsensitive(t *testing.T) {
+	s := newTestStore(t)
 	defer func() { _ = s.Close() }()
 
 	require.NoError(t, s.Add(&StaticPassword{Name: "MyGmail", Password: "pw"}))
@@ -79,9 +78,9 @@ func TestBackendStore_FindByName_CaseInsensitive(t *testing.T) {
 	assert.Equal(t, "MyGmail", pw.Name)
 }
 
-// TestBackendStore_MoveToFolder_ClosedStore exercises the closed-store guard.
-func TestBackendStore_MoveToFolder_ClosedStore(t *testing.T) {
-	s := NewStore(storage.New())
+// TestDAOStore_MoveToFolder_ClosedStore exercises the closed-store guard.
+func TestDAOStore_MoveToFolder_ClosedStore(t *testing.T) {
+	s := newTestStore(t)
 	require.NoError(t, s.Add(&StaticPassword{Name: "test", Password: "pw"}))
 	require.NoError(t, s.Close())
 
@@ -89,9 +88,9 @@ func TestBackendStore_MoveToFolder_ClosedStore(t *testing.T) {
 	assert.ErrorIs(t, err, ErrStoreClosed)
 }
 
-// TestBackendStore_MoveToFolder_DuplicateAtDestination exercises the conflict check.
-func TestBackendStore_MoveToFolder_DuplicateAtDestination(t *testing.T) {
-	s := NewStore(storage.New())
+// TestDAOStore_MoveToFolder_DuplicateAtDestination exercises the conflict check.
+func TestDAOStore_MoveToFolder_DuplicateAtDestination(t *testing.T) {
+	s := newTestStore(t)
 	defer func() { _ = s.Close() }()
 
 	pw1 := &StaticPassword{Name: "dup", Password: "pw1", FolderPath: "A"}
@@ -103,9 +102,9 @@ func TestBackendStore_MoveToFolder_DuplicateAtDestination(t *testing.T) {
 	assert.ErrorIs(t, err, ErrPasswordExists)
 }
 
-// TestBackendStore_CheckNameConflict_AcrossFolders exercises same name in different folders.
-func TestBackendStore_CheckNameConflict_AcrossFolders(t *testing.T) {
-	s := NewStore(storage.New())
+// TestDAOStore_CheckNameConflict_AcrossFolders exercises same name in different folders.
+func TestDAOStore_CheckNameConflict_AcrossFolders(t *testing.T) {
+	s := newTestStore(t)
 	defer func() { _ = s.Close() }()
 
 	require.NoError(t, s.Add(&StaticPassword{Name: "conflict", Password: "pw", FolderPath: "Work"}))

@@ -31,12 +31,12 @@ import (
 
 	"github.com/jeremyhahn/go-xkms/pkg/auth"
 	pkgknownhosts "github.com/jeremyhahn/go-xkms/pkg/ssh/known_hosts"
-	"github.com/jeremyhahn/go-xkms/pkg/storage"
+	"github.com/jeremyhahn/go-xkms/pkg/testutil"
 	sdkssh "github.com/jeremyhahn/go-xkms/sdk/go/client/ssh"
 )
 
 // newSSHServer returns an MCP server wired to the embedded SSH client over an
-// in-memory storage backend. The embedded client is the real production
+// in-memory DAO factory. The embedded client is the real production
 // implementation — the handlers under test exercise the same code path an
 // xkmsd deployment uses, without a mock in the way.
 func newSSHServer(t *testing.T) *Server {
@@ -45,10 +45,10 @@ func newSSHServer(t *testing.T) *Server {
 	svc := setupTestXKMS(t)
 	t.Cleanup(cleanupXKMS)
 
-	backend, err := storage.NewMemoryBackend()
+	stores, err := sdkssh.NewStores(testutil.NewMemoryDAOFactory())
 	require.NoError(t, err)
 
-	sshClient, err := sdkssh.NewEmbedded(sdkssh.EmbeddedOptions{Backend: backend})
+	sshClient, err := sdkssh.NewEmbedded(sdkssh.EmbeddedOptions{Stores: stores})
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = sshClient.Close() })
 

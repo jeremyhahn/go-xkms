@@ -159,8 +159,11 @@ type GUIConfig struct {
 	// config.ValidateAPIExplorerSandboxPolicy and Validate below (go-xkms#1274).
 	APIExplorerSandboxPolicy string `mapstructure:"api_explorer_sandbox_policy" json:"api_explorer_sandbox_policy"`
 
-	// BrowserExtensionEnabled enables browser extension autofill integration.
-	BrowserExtensionEnabled bool `mapstructure:"browser_extension_enabled" json:"browser_extension_enabled"`
+	// LocalAppAccessEnabled lets other local apps -- the browser extension's
+	// native-messaging host and the PKCS#11 module -- use xKey's keys while
+	// xKey is open and unlocked. When it is off (the default) the GUI runs no
+	// IPC socket at all and `xkey extension serve` refuses to start.
+	LocalAppAccessEnabled bool `mapstructure:"local_app_access_enabled" json:"local_app_access_enabled"`
 
 	// FIDO2RequireUserPresence controls whether the FIDO2 authenticator requires
 	// physical touch (user presence) for operations. When false, the authenticator
@@ -210,7 +213,7 @@ func DefaultGUIConfig() *GUIConfig {
 		AppLockOnScreenLock:       true,
 		SetupComplete:             false,
 		APIExplorerSandboxPolicy:  config.SafeDefaultAPIExplorerSandboxPolicy,
-		BrowserExtensionEnabled:   true,
+		LocalAppAccessEnabled:     false,
 		DeveloperTools:            true,
 		FIDO2RequireUserPresence:  true,
 		FIDO2UserIntentCheck:      true,

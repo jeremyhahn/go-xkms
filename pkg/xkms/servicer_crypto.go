@@ -357,6 +357,9 @@ func signWith(ctx context.Context, b Backend, attrs *types.KeyAttributes, req *t
 	// selected the Ed25519ctx or Ed25519ph variant (RFC 8032 Table 73,
 	// threaded from CKM_EDDSA via req.PreHash/req.Context).
 	if attrs.KeyAlgorithm == x509.Ed25519 {
+		if req.DataIsDigest {
+			return nil, &ErrValidation{Sentinel: ErrEd25519DigestInput, Detail: "send the message, or set pre_hash for Ed25519ph"}
+		}
 		if req.PreHash || len(req.Context) > 0 {
 			sig, signErr := signEd25519Variant(signer, req.Data, req.PreHash, req.Context)
 			if signErr != nil {
@@ -587,6 +590,9 @@ func verifyWith(ctx context.Context, b Backend, attrs *types.KeyAttributes, req 
 		edPub, edOK := pubKey.(ed25519.PublicKey)
 		if !edOK {
 			return nil, &ErrOperationWrap{Sentinel: ErrVerificationFailed, Detail: "invalid Ed25519 public key type"}
+		}
+		if req.DataIsDigest {
+			return nil, &ErrValidation{Sentinel: ErrEd25519DigestInput, Detail: "send the message, or set pre_hash for Ed25519ph"}
 		}
 		if req.PreHash || len(req.Context) > 0 {
 			valid := verifyEd25519Variant(edPub, req.Data, req.Signature, req.PreHash, req.Context)

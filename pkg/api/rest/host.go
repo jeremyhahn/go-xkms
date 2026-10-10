@@ -659,7 +659,7 @@ type HostConfig struct {
 
 	// PasswordStore enables the Password Manager routes. Nil leaves them
 	// answering "not configured".
-	PasswordStore *staticpw.BackendStore
+	PasswordStore *staticpw.DAOStore
 
 	// SSHClient enables the /xkms/v1/ssh routes. Nil leaves them
 	// answering "not configured".

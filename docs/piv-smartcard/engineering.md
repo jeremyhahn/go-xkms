@@ -1,6 +1,6 @@
 # PIV Smartcard — Engineering Contract
 
-> **Status: NORMATIVE** · Feature: `piv-smartcard` · Repo: `go-xkms` · Last verified: 2026-09-28 (#1227)
+> **Status: NORMATIVE** · Feature: `piv-smartcard` · Repo: `go-xkms` · Last verified: 2026-10-09
 
 ## Exported surface — `pkg/pivcert`
 
@@ -385,7 +385,9 @@ falls back to file storage when the configured hardware is unavailable.
 
 `PIVConfig` selects the storage type and carries the matching sub-config:
 
-- **`FileStorageConfig`** — the directory holding certificates.
+- **`FileStorageConfig`** — `DAOs`, the go-qrdb DAO factory the composition
+  root injects. A nil factory is refused with `ErrMissingDAOFactory`; the
+  store never closes the factory.
 - **`TPM2StorageConfig`** — the NV base index. `GetNVIndex` derives per-slot
   indices from it. Choose a base that does not collide with other NV users on
   the same TPM.
@@ -399,9 +401,20 @@ falls back to file storage when the configured hardware is unavailable.
 
 ## Persistence
 
-Per storage type: files on disk, TPM2 NV indices, or PKCS#11 token objects.
-`SlotOccupancyInfo` reports what is actually in a slot, which is the only
-reliable way to know — the three stores have no shared index.
+Per storage type: go-qrdb DAO records, TPM2 NV indices, or PKCS#11 token
+objects. `SlotOccupancyInfo` reports what is actually in a slot, which is the
+only reliable way to know — the three stores have no shared index.
+
+The software store (`pkg/pivcert/file`) keeps one `piv_certificates` record
+per slot in the `pivcert` database, with the ID derived from the slot
+identifier and lookups by it. The record holds the DER encoding and the time
+it was stored; PEM is produced on export, and `List` derives each
+`PIVSlotInfo` from the certificate (`NewSlotInfo`), sorted by slot. `Delete`
+removes the record only if it is unchanged since it was read, and returns
+`ErrConflict` when a concurrent `Store` replaced it. A record whose DER does
+not parse reads as `ErrInvalidCertificate`. Hosts without a go-qrdb node
+(xkey) build the factory over a `storage.Backend` with
+`sdk/go.NewBackendDAOFactory`, one factory per backend namespace.
 
 Compatibility: slot identifiers and PIV certificate encodings are NIST-defined
 and stable. The TPM2 NV index derivation is ours; changing `GetNVIndex` would
@@ -411,6 +424,9 @@ orphan every existing NV-stored certificate and is a migration, not a change.
 
 - **Unit** — `pkg/pivcert/pivcert_test.go`, `slotinfo_test.go`,
   `verify_test.go`; per-storage suites under `pkg/pivcert/{file,tpm2,pkcs11}`.
+  The file suite runs over a real in-memory go-qrdb DAO factory: round trip,
+  persistence across stores on one factory, not-found, conflict on delete,
+  corrupt records, and KV failures surfacing through `PIVStorageError`.
 - **Keystore side** — `pkg/xkms/piv_manager_test.go`, `piv_ops_test.go`,
   `piv_keygen_backend_test.go`, `piv_keygen_software_test.go`,
   `piv_attest_level_test.go` (`PIVAttestLevelReporter` on both generators,

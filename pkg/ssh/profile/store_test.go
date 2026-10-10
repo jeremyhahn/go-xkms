@@ -17,12 +17,12 @@ import (
 	"errors"
 	"testing"
 
-	"github.com/jeremyhahn/go-xkms/pkg/storage"
+	"github.com/jeremyhahn/go-xkms/pkg/testutil"
 )
 
-func newStore(t *testing.T) *BackendStore {
+func newStore(t *testing.T) *DAOStore {
 	t.Helper()
-	st, err := NewStore(storage.New())
+	st, err := NewStore(testutil.NewMemoryDAOFactory())
 	if err != nil {
 		t.Fatalf("NewStore: %v", err)
 	}
@@ -226,7 +226,7 @@ func TestStore_Search(t *testing.T) {
 }
 
 func TestNewStore_NilBackend(t *testing.T) {
-	if _, err := NewStore(nil); !errors.Is(err, ErrNilBackend) {
-		t.Fatalf("expected ErrNilBackend, got %v", err)
+	if _, err := NewStore(nil); !errors.Is(err, ErrNilDAOFactory) {
+		t.Fatalf("expected ErrNilDAOFactory, got %v", err)
 	}
 }

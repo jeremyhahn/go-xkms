@@ -29,13 +29,14 @@ import (
 	"github.com/jeremyhahn/go-xkms/pkg/auth"
 	"github.com/jeremyhahn/go-xkms/pkg/backend/software"
 	"github.com/jeremyhahn/go-xkms/pkg/storage"
+	"github.com/jeremyhahn/go-xkms/pkg/testutil"
 	"github.com/jeremyhahn/go-xkms/pkg/xkms"
 	sdkssh "github.com/jeremyhahn/go-xkms/sdk/go/client/ssh"
 )
 
 // startSSHRoundTripMCPServer wires a real xkms MCP surface (pkg/api/mcp),
 // with a real embedded SSH sub-system (sdk/go/client/ssh's in-process
-// Client, backed by an in-memory storage.Backend), onto a real mcp-go
+// Client, backed by an in-memory DAO factory), onto a real mcp-go
 // Streamable HTTP server through the same module registration path
 // production uses (Module.RegisterMCP). It returns the "host:port" the
 // SDK's MCP SSH client can dial — go-xkms#792: proving the raw mcp://
@@ -62,9 +63,9 @@ func startSSHRoundTripMCPServer(t *testing.T) string {
 	svc, err := xkms.Get()
 	require.NoError(t, err)
 
-	sshBackend, err := storage.NewMemoryBackend()
+	sshStores, err := sdkssh.NewStores(testutil.NewMemoryDAOFactory())
 	require.NoError(t, err)
-	embeddedSSH, err := sdkssh.NewEmbedded(sdkssh.EmbeddedOptions{Backend: sshBackend})
+	embeddedSSH, err := sdkssh.NewEmbedded(sdkssh.EmbeddedOptions{Stores: sshStores})
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = embeddedSSH.Close() })
 

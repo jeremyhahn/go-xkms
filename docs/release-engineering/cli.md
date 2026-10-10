@@ -1,7 +1,7 @@
 # Release engineering — CLI
 
 **Status:** implemented.
-**Last verified:** 2026-09-27.
+**Last verified:** 2026-10-08.
 
 Cutting a release is two commands, run at different times by possibly
 different people: `make release-alpha` PREPARES a pull request and stops;
@@ -19,7 +19,8 @@ make release-alpha VERSION=<X.Y.Z-alpha> [BUMP=patch|minor|major] [DRY_RUN=1] [R
 | `VERSION` | yes | The exact version to prepare. Defaults to the `VERSION` file, which is never greater than itself, so omitting it is refused. |
 | `BUMP` | no | Declares the kind of release. Refused unless `next_version(current, BUMP)` equals `VERSION`. The exported-API growth gate below does not need this to be set. |
 | `DRY_RUN` | no | Rehearse everything against a scratch copy of the fetched remote tip. Writes nothing, pushes nothing. |
-| `RELEASE_REMOTE` | no | Remote to fetch from and push the release branch to. Default `dev`. |
+| `RELEASE_REMOTE` | no | Remote to fetch from and push the release branch to. Default `dev`. Its URL also names the forge the pull request is opened on. |
+| `FORGE_TOKEN` | yes (environment) | The project agent's forge API token. The pull request is opened with it, and a run without it, or with one the forge rejects, is refused before anything is fetched or written. A dry run checks it too. |
 
 ## The script directly
 
@@ -34,13 +35,31 @@ the only way to rehearse against a branch other than `main`.
 A real (non-`--dry-run`) cut fetches `--branch`, checks out a new local branch
 `release/X.Y.Z-alpha` from that fetched tip, assembles the changelog, moves
 the pins, bumps `VERSION`, commits, and pushes **the branch only** — never
-`main`. It prints the pull request URL and the follow-up command:
+`main`. It then opens the pull request from that branch into `--branch`,
+titled exactly `chore(release): vX.Y.Z-alpha`, and prints its URL and the
+follow-up command:
 
 ```
-release-alpha: pushed release/0.10.0-alpha to dev at a1b2c3d...
-release-alpha: open a pull request: http://gitea.example.com:3001/jeremyhahn/go-xkms/compare/main...release/0.10.0-alpha
+release-alpha: pushed release/v0.10.0-alpha to dev at a1b2c3d...
+release-alpha: opened pull request "chore(release): v0.10.0-alpha": http://kms.example.com:3001/jeremyhahn/go-xkms/pulls/42
 release-alpha: once that pull request is reviewed and merged, run: make release-tag VERSION=0.10.0-alpha
 ```
+
+The forge comes from the `--remote` remote's configured URL, in any of its
+forms:
+
+| Remote URL | Forge repository |
+|---|---|
+| `ssh://git@kms.example.com:2222/jeremyhahn/go-xkms.git` | `http://kms.example.com:3001/jeremyhahn/go-xkms` |
+| `git@kms.example.com:jeremyhahn/go-xkms.git` | `http://kms.example.com:3001/jeremyhahn/go-xkms` |
+| `http://kms.example.com:3001/jeremyhahn/go-xkms.git` | `http://kms.example.com:3001/jeremyhahn/go-xkms` |
+| `https://user:pass@kms.example.com/jeremyhahn/go-xkms` | `https://kms.example.com/jeremyhahn/go-xkms` |
+
+An SSH remote names the SSH port, so the forge's web port comes from
+`GITEA_HTTP_PORT` (default `3001`). A remote that is a local path or a
+`file://` URL names no forge, and the run is refused. If the forge refuses the
+pull request after the push (one is already open, say), the run fails and
+prints the `compare/` URL and the exact title, so you can open it by hand.
 
 ## `make release-tag`
 
@@ -90,6 +109,8 @@ would be assembled into, and each entry a real cut would consume is named:
 +- **thing** ...
 release-alpha: would remove .changelog/unreleased/fixed-thing-1.md
 release-alpha: DRY RUN -- would push release/v0.9.2-alpha to dev and open a pull request into main:
+  "chore(release): v0.9.2-alpha" on http://kms.example.com:3001/jeremyhahn/go-xkms
+release-alpha: nothing was changed
 ```
 
 The assembly runs in the scratch copy: the entry files are still there on the

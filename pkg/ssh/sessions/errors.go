@@ -29,10 +29,12 @@ var (
 	// ErrStoreClosed indicates an operation on a closed store.
 	ErrStoreClosed = errors.New("ssh/sessions: store is closed")
 
-	// ErrMarshalFailed / ErrUnmarshalFailed wrap (de)serialization failures.
-	ErrMarshalFailed   = errors.New("ssh/sessions: failed to marshal session")
-	ErrUnmarshalFailed = errors.New("ssh/sessions: failed to unmarshal session")
+	// ErrStorage wraps a failed datastore operation; the cause is joined.
+	ErrStorage = errors.New("ssh/sessions: storage failure")
 
-	// ErrNilBackend indicates a nil storage backend was supplied.
-	ErrNilBackend = errors.New("ssh/sessions: nil storage backend")
+	// ErrRandomID indicates a fresh session ID could not be generated.
+	ErrRandomID = errors.New("ssh/sessions: failed to generate session id")
+
+	// ErrNilDAOFactory indicates a nil DAO factory was supplied.
+	ErrNilDAOFactory = errors.New("ssh/sessions: nil DAO factory")
 )

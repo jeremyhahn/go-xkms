@@ -37,9 +37,11 @@ import (
 	"github.com/google/go-tpm/tpm2/transport"
 	"github.com/jeremyhahn/go-objstore/pkg/common"
 	"github.com/jeremyhahn/go-objstore/pkg/local"
+	"github.com/jeremyhahn/go-xkms/pkg/acme/client/service"
 	caerrors "github.com/jeremyhahn/go-xkms/pkg/acme/errors"
 	"github.com/jeremyhahn/go-xkms/pkg/ca"
 	xkmssdk "github.com/jeremyhahn/go-xkms/sdk/go"
+	"github.com/jeremyhahn/go-xkms/sdk/go/xkmstest"
 	"github.com/stretchr/testify/require"
 )
 
@@ -291,11 +293,11 @@ func (s *SwtpmConnection) Provision() error {
 		return caerrors.TPMErr("failed to provision TPM: %v", err)
 	}
 
-	if err := xkmssdk.EnrollSimulatorPlatformSRK(s.tpmModule, s.tpmConfig); err != nil {
+	if err := xkmstest.EnrollPlatformSRK(s.tpmModule, s.tpmConfig); err != nil {
 		return caerrors.TPMErr("failed to enroll platform SRK: %v", err)
 	}
 
-	if err := xkmssdk.ProvisionSimulatorIAKCertificate(s.tpmModule); err != nil {
+	if err := service.ProvisionSimulatorIAKCertificate(s.tpmModule); err != nil {
 		return caerrors.TPMErr("failed to provision IAK certificate: %v", err)
 	}
 
@@ -505,7 +507,7 @@ func (s *SwtpmConnection) generateEKCertificate() ([]byte, error) {
 	// refuses the certificate outright (ErrTCGEKManufacturerUnknown) before
 	// chain verification is even reached. Read from swtpm itself via
 	// TPM2_GetCapability (FixedProperties) rather than hardcoding, the same
-	// pattern pkg/tpm2/tpm2test.ProvisionIAKCertificate already uses for the
+	// pattern service.ProvisionSimulatorIAKCertificate already uses for the
 	// IAK certificate this same test binary provisions.
 	props, err := s.tpmModule.FixedProperties()
 	if err != nil {

@@ -1,6 +1,6 @@
 # USB — CLI
 
-> **Status: NORMATIVE** · Feature: `usb` · Module: `go-xkms/xkey` · Last verified: 2026-09-25
+> **Status: NORMATIVE** · Feature: `usb` · Module: `go-xkms/xkey` · Last verified: 2026-10-09
 
 All USB commands live under `xkey usb` and are exempt from the LUKS unlock
 gate (`xkey/docs/luks/cli.md` "The unlock gate") — they must be reachable
@@ -78,6 +78,16 @@ sudo xkey usb device start [flags]
 Runs in the foreground until `Ctrl+C` or `SIGTERM`. Requires root or access
 to `/dev/uhid`.
 
+The keys come from the local app access setting
+(`usbDevicePKCS11Transport`, `cmd/xkey/cmd/usb_device.go`). Off (the
+default): the device opens the keys in this process. On: it uses the keys of
+the open, unlocked xKey over its socket, and fails with
+`ErrUSBDeviceGUINotListening` if none answers. It never falls back. Under
+`sudo`, both the settings file (`$XDG_CONFIG_HOME/xkey/gui.json`) and the
+socket path come from the environment `sudo` passes on, which is usually
+root's. Set `XKEY_IPC_SOCKET` to reach your own GUI's socket. See
+[../pkcs11/cli.md](../pkcs11/cli.md).
+
 ```bash
 sudo xkey usb device start                                   # UHID, software backend
 sudo xkey usb device start --device-backend tpm2
@@ -113,6 +123,9 @@ kill -TERM $(pgrep -f "xkey usb device start")
 - **"device not available" / UHID errors** — confirm `/dev/uhid` exists
   and is accessible (root, or membership in whatever group your
   distribution grants `/dev/uhid` access to).
+- **"no unlocked xKey is listening"** — local app access is on, so the
+  device wants the open xKey's keys. Open and unlock xKey, or run `xkey
+  app-access disable` to use in-process keys.
 - **`--transport gadget` fails to bind** — needs real OTG hardware with a
   UDC; `--udc` lets you pick one explicitly when auto-detection picks the
   wrong controller or more than one is present.

@@ -20,7 +20,6 @@ import (
 	pb "github.com/jeremyhahn/go-xkms/pkg/api/grpc/proto/xkmsv1"
 	"github.com/jeremyhahn/go-xkms/pkg/api/transport"
 	"github.com/jeremyhahn/go-xkms/pkg/backend/software"
-	"github.com/jeremyhahn/go-xkms/pkg/staticpw"
 	"github.com/jeremyhahn/go-xkms/pkg/storage"
 	"github.com/jeremyhahn/go-xkms/pkg/xkms"
 	"github.com/stretchr/testify/assert"
@@ -60,9 +59,7 @@ func setupTestWithPasswordStore(t *testing.T) *Service {
 	xkmsSvc, err := xkms.Get()
 	require.NoError(t, err)
 
-	pwBackend := storage.NewMemory()
-	store := staticpw.NewStore(pwBackend)
-	xkmsSvc.SetPasswordStore(store)
+	xkmsSvc.SetPasswordStore(newTestPasswordStore(t))
 
 	return NewService(nil, nil, xkmsSvc)
 }

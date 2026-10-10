@@ -14,8 +14,8 @@
 package file
 
 import (
-	"bytes"
 	"context"
+	"crypto"
 	"crypto/ecdsa"
 	"crypto/ed25519"
 	"crypto/elliptic"
@@ -30,1552 +30,476 @@ import (
 	"testing"
 	"time"
 
+	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
+
+	"github.com/jeremyhahn/go-xkms/pkg/dao"
 	"github.com/jeremyhahn/go-xkms/pkg/pivcert"
-	"github.com/jeremyhahn/go-xkms/pkg/storage"
 )
 
-// errMockBackend is a typed error for mock backend failures.
-var errMockBackend = errors.New("mock backend error")
+// errKV is the failure failingKV injects.
+var errKV = errors.New("kv failure")
 
-// mockErrorBackend implements storage.Backend and allows injecting errors
-// for specific operations.
-type mockErrorBackend struct {
-	storage.Backend
-	inner       storage.Backend
-	existsErr   error
-	getErr      error
-	putErr      error
-	deleteErr   error
-	existsVal   *bool // if set, overrides inner.Exists result
-	getVal      []byte
-	getOverride bool
+// failingKV is an atomic KV store that fails the operations it is told to.
+type failingKV struct {
+	qrdbsdk.AtomicKVStore
+
+	// getErr fails every read.
+	getErr error
+
+	// writeErr fails every write and delete.
+	writeErr error
+
+	// deleteMisses makes every guarded delete report that the stored value
+	// changed, as a concurrent writer would.
+	deleteMisses bool
 }
 
-func newMockErrorBackend(inner storage.Backend) *mockErrorBackend {
-	return &mockErrorBackend{inner: inner}
-}
-
-func (m *mockErrorBackend) Get(_ context.Context, key string) ([]byte, error) {
-	if m.getErr != nil {
-		return nil, m.getErr
+func (f *failingKV) Get(ctx context.Context, key string) ([]byte, error) {
+	if f.getErr != nil {
+		return nil, f.getErr
 	}
-	if m.getOverride {
-		return m.getVal, nil
+	return f.AtomicKVStore.Get(ctx, key)
+}
+
+func (f *failingKV) Put(ctx context.Context, key string, value []byte) error {
+	if f.writeErr != nil {
+		return f.writeErr
 	}
-	return m.inner.Get(context.Background(), key)
+	return f.AtomicKVStore.Put(ctx, key, value)
 }
 
-func (m *mockErrorBackend) Put(_ context.Context, key string, value []byte) error {
-	if m.putErr != nil {
-		return m.putErr
+func (f *failingKV) PutIfAbsent(ctx context.Context, key string, value []byte) (bool, error) {
+	if f.writeErr != nil {
+		return false, f.writeErr
 	}
-	return m.inner.Put(context.Background(), key, value)
+	return f.AtomicKVStore.PutIfAbsent(ctx, key, value)
 }
 
-func (m *mockErrorBackend) Delete(_ context.Context, key string) error {
-	if m.deleteErr != nil {
-		return m.deleteErr
+func (f *failingKV) CompareAndSwap(ctx context.Context, key string, expected, next []byte) (bool, error) {
+	if f.writeErr != nil {
+		return false, f.writeErr
 	}
-	return m.inner.Delete(context.Background(), key)
+	return f.AtomicKVStore.CompareAndSwap(ctx, key, expected, next)
 }
 
-func (m *mockErrorBackend) List(_ context.Context, prefix string) ([]string, error) {
-	return m.inner.List(context.Background(), prefix)
-}
-
-func (m *mockErrorBackend) Exists(_ context.Context, key string) (bool, error) {
-	if m.existsErr != nil {
-		return false, m.existsErr
+func (f *failingKV) CompareAndDelete(ctx context.Context, key string, expected []byte) (bool, error) {
+	if f.writeErr != nil {
+		return false, f.writeErr
 	}
-	if m.existsVal != nil {
-		return *m.existsVal, nil
+	if f.deleteMisses {
+		return false, nil
 	}
-	return m.inner.Exists(context.Background(), key)
+	return f.AtomicKVStore.CompareAndDelete(ctx, key, expected)
 }
 
-func (m *mockErrorBackend) Scan(ctx context.Context, prefix string, fn func(key string, value []byte) error) error {
-	return m.inner.Scan(ctx, prefix, fn)
-}
-func (m *mockErrorBackend) Close() error {
-	return m.inner.Close()
+func (f *failingKV) Delete(ctx context.Context, key string) error {
+	if f.writeErr != nil {
+		return f.writeErr
+	}
+	return f.AtomicKVStore.Delete(ctx, key)
 }
 
-// generateTestCertificate creates a self-signed test certificate with ECDSA P-256.
+// newMemoryKV returns an empty in-memory atomic KV store.
+func newMemoryKV(t *testing.T) qrdbsdk.AtomicKVStore {
+	t.Helper()
+	return qrdbsdk.NewMemoryKVStore()
+}
+
+// newStore returns a store over kv.
+func newStore(t *testing.T, kv qrdbsdk.KVStore) *FileBackend {
+	t.Helper()
+	fb, err := NewFileBackend(&pivcert.FileStorageConfig{DAOs: dao.NewStoreFactory(kv)})
+	require.NoError(t, err)
+	return fb
+}
+
+// newTestStore returns a store over a fresh in-memory KV store.
+func newTestStore(t *testing.T) *FileBackend {
+	t.Helper()
+	return newStore(t, newMemoryKV(t))
+}
+
+// newCertificate returns a self-signed certificate for key.
+func newCertificate(t *testing.T, subject string, key crypto.Signer, extensions ...pkix.Extension) *x509.Certificate {
+	t.Helper()
+
+	serial, err := rand.Int(rand.Reader, new(big.Int).Lsh(big.NewInt(1), 128))
+	require.NoError(t, err)
+
+	template := &x509.Certificate{
+		SerialNumber:          serial,
+		Subject:               pkix.Name{CommonName: subject, Organization: []string{"Test Organization"}},
+		NotBefore:             time.Now(),
+		NotAfter:              time.Now().Add(24 * time.Hour),
+		KeyUsage:              x509.KeyUsageDigitalSignature,
+		ExtKeyUsage:           []x509.ExtKeyUsage{x509.ExtKeyUsageClientAuth},
+		BasicConstraintsValid: true,
+		ExtraExtensions:       extensions,
+	}
+	der, err := x509.CreateCertificate(rand.Reader, template, template, key.Public(), key)
+	require.NoError(t, err)
+
+	cert, err := x509.ParseCertificate(der)
+	require.NoError(t, err)
+	return cert
+}
+
+// generateTestCertificate returns a self-signed ECDSA P-256 certificate.
 func generateTestCertificate(t *testing.T, subject string) *x509.Certificate {
 	t.Helper()
-
-	privateKey, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
-	if err != nil {
-		t.Fatalf("failed to generate private key: %v", err)
-	}
-
-	serialNumber, err := rand.Int(rand.Reader, new(big.Int).Lsh(big.NewInt(1), 128))
-	if err != nil {
-		t.Fatalf("failed to generate serial number: %v", err)
-	}
-
-	template := x509.Certificate{
-		SerialNumber: serialNumber,
-		Subject: pkix.Name{
-			CommonName:   subject,
-			Organization: []string{"Test Organization"},
-		},
-		NotBefore:             time.Now(),
-		NotAfter:              time.Now().Add(24 * time.Hour),
-		KeyUsage:              x509.KeyUsageDigitalSignature | x509.KeyUsageKeyEncipherment,
-		ExtKeyUsage:           []x509.ExtKeyUsage{x509.ExtKeyUsageClientAuth},
-		BasicConstraintsValid: true,
-	}
-
-	certDER, err := x509.CreateCertificate(rand.Reader, &template, &template, &privateKey.PublicKey, privateKey)
-	if err != nil {
-		t.Fatalf("failed to create certificate: %v", err)
-	}
-
-	cert, err := x509.ParseCertificate(certDER)
-	if err != nil {
-		t.Fatalf("failed to parse certificate: %v", err)
-	}
-
-	return cert
+	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	require.NoError(t, err)
+	return newCertificate(t, subject, key)
 }
 
-// generateRSACertificate creates a self-signed test certificate with RSA-2048.
+// generateRSACertificate returns a self-signed RSA-2048 certificate.
 func generateRSACertificate(t *testing.T, subject string) *x509.Certificate {
 	t.Helper()
-
-	privateKey, err := rsa.GenerateKey(rand.Reader, 2048)
-	if err != nil {
-		t.Fatalf("failed to generate RSA private key: %v", err)
-	}
-
-	serialNumber, err := rand.Int(rand.Reader, new(big.Int).Lsh(big.NewInt(1), 128))
-	if err != nil {
-		t.Fatalf("failed to generate serial number: %v", err)
-	}
-
-	template := x509.Certificate{
-		SerialNumber: serialNumber,
-		Subject: pkix.Name{
-			CommonName:   subject,
-			Organization: []string{"Test Organization"},
-		},
-		NotBefore:             time.Now(),
-		NotAfter:              time.Now().Add(24 * time.Hour),
-		KeyUsage:              x509.KeyUsageDigitalSignature | x509.KeyUsageKeyEncipherment,
-		ExtKeyUsage:           []x509.ExtKeyUsage{x509.ExtKeyUsageClientAuth},
-		BasicConstraintsValid: true,
-	}
-
-	certDER, err := x509.CreateCertificate(rand.Reader, &template, &template, &privateKey.PublicKey, privateKey)
-	if err != nil {
-		t.Fatalf("failed to create RSA certificate: %v", err)
-	}
-
-	cert, err := x509.ParseCertificate(certDER)
-	if err != nil {
-		t.Fatalf("failed to parse RSA certificate: %v", err)
-	}
-
-	return cert
+	key, err := rsa.GenerateKey(rand.Reader, 2048)
+	require.NoError(t, err)
+	return newCertificate(t, subject, key)
 }
 
-// generateEd25519Certificate creates a self-signed test certificate with Ed25519.
+// generateEd25519Certificate returns a self-signed Ed25519 certificate.
 func generateEd25519Certificate(t *testing.T, subject string) *x509.Certificate {
 	t.Helper()
-
-	_, privateKey, err := ed25519.GenerateKey(rand.Reader)
-	if err != nil {
-		t.Fatalf("failed to generate Ed25519 private key: %v", err)
-	}
-
-	serialNumber, err := rand.Int(rand.Reader, new(big.Int).Lsh(big.NewInt(1), 128))
-	if err != nil {
-		t.Fatalf("failed to generate serial number: %v", err)
-	}
-
-	template := x509.Certificate{
-		SerialNumber: serialNumber,
-		Subject: pkix.Name{
-			CommonName:   subject,
-			Organization: []string{"Test Organization"},
-		},
-		NotBefore:             time.Now(),
-		NotAfter:              time.Now().Add(24 * time.Hour),
-		KeyUsage:              x509.KeyUsageDigitalSignature,
-		ExtKeyUsage:           []x509.ExtKeyUsage{x509.ExtKeyUsageClientAuth},
-		BasicConstraintsValid: true,
-	}
-
-	certDER, err := x509.CreateCertificate(rand.Reader, &template, &template, privateKey.Public(), privateKey)
-	if err != nil {
-		t.Fatalf("failed to create Ed25519 certificate: %v", err)
-	}
-
-	cert, err := x509.ParseCertificate(certDER)
-	if err != nil {
-		t.Fatalf("failed to parse Ed25519 certificate: %v", err)
-	}
-
-	return cert
+	_, key, err := ed25519.GenerateKey(rand.Reader)
+	require.NoError(t, err)
+	return newCertificate(t, subject, key)
 }
 
-// generateLargeCertificate creates a certificate that exceeds the maximum file storage size.
+// generateLargeCertificate returns a certificate larger than
+// pivcert.MaxCertSizeFile.
 func generateLargeCertificate(t *testing.T) *x509.Certificate {
 	t.Helper()
-
-	privateKey, err := rsa.GenerateKey(rand.Reader, 4096)
-	if err != nil {
-		t.Fatalf("failed to generate RSA private key: %v", err)
+	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	require.NoError(t, err)
+	padding := pkix.Extension{
+		Id:    []int{1, 2, 3, 4, 5, 6, 7, 8, 9, 10},
+		Value: make([]byte, pivcert.MaxCertSizeFile+1024),
 	}
-
-	serialNumber, err := rand.Int(rand.Reader, new(big.Int).Lsh(big.NewInt(1), 128))
-	if err != nil {
-		t.Fatalf("failed to generate serial number: %v", err)
-	}
-
-	// Create a large extension to make the certificate exceed 16KB
-	largeExtension := make([]byte, pivcert.MaxCertSizeFile+1024)
-	for i := range largeExtension {
-		largeExtension[i] = byte(i % 256)
-	}
-
-	template := x509.Certificate{
-		SerialNumber: serialNumber,
-		Subject: pkix.Name{
-			CommonName:   "large-cert",
-			Organization: []string{"Test Organization"},
-		},
-		NotBefore:             time.Now(),
-		NotAfter:              time.Now().Add(24 * time.Hour),
-		KeyUsage:              x509.KeyUsageDigitalSignature,
-		BasicConstraintsValid: true,
-		ExtraExtensions: []pkix.Extension{
-			{
-				Id:       []int{1, 2, 3, 4, 5, 6, 7, 8, 9, 10}, // Arbitrary OID
-				Critical: false,
-				Value:    largeExtension,
-			},
-		},
-	}
-
-	certDER, err := x509.CreateCertificate(rand.Reader, &template, &template, &privateKey.PublicKey, privateKey)
-	if err != nil {
-		t.Fatalf("failed to create large certificate: %v", err)
-	}
-
-	cert, err := x509.ParseCertificate(certDER)
-	if err != nil {
-		t.Fatalf("failed to parse large certificate: %v", err)
-	}
-
-	return cert
-}
-
-// createValidConfig creates a valid FileStorageConfig with a memory backend.
-func createValidConfig() *pivcert.FileStorageConfig {
-	return &pivcert.FileStorageConfig{
-		Backend:    storage.NewMemory(),
-		DEREnabled: true,
-		PEMEnabled: true,
-	}
+	return newCertificate(t, "large-cert", key, padding)
 }
 
 func TestNewFileBackend(t *testing.T) {
-	t.Run("valid config creates backend", func(t *testing.T) {
-		config := createValidConfig()
-
-		backend, err := NewFileBackend(config)
-		if err != nil {
-			t.Fatalf("NewFileBackend() error = %v", err)
-		}
-		if backend == nil {
-			t.Fatal("NewFileBackend() returned nil backend")
-		}
-		defer func() { _ = backend.Close() }()
-
-		// Verify metadata was initialized
-		exists, err := config.Backend.Exists(context.Background(), "metadata/slots.json")
-		if err != nil {
-			t.Fatalf("failed to check metadata existence: %v", err)
-		}
-		if !exists {
-			t.Error("slots.json metadata was not created")
-		}
+	t.Run("valid config", func(t *testing.T) {
+		fb := newTestStore(t)
+		assert.Equal(t, pivcert.StorageTypeFile, fb.Type())
 	})
 
-	t.Run("nil config returns error", func(t *testing.T) {
-		backend, err := NewFileBackend(nil)
-		if err == nil {
-			t.Error("NewFileBackend(nil) expected error, got nil")
-			if backend != nil {
-				_ = backend.Close()
-			}
-			return
-		}
-		if !errors.Is(err, pivcert.ErrInvalidConfig) {
-			t.Errorf("NewFileBackend(nil) error = %v, want %v", err, pivcert.ErrInvalidConfig)
-		}
+	t.Run("nil config", func(t *testing.T) {
+		_, err := NewFileBackend(nil)
+		assert.ErrorIs(t, err, pivcert.ErrInvalidConfig)
 	})
 
-	t.Run("nil backend returns error", func(t *testing.T) {
-		config := &pivcert.FileStorageConfig{
-			Backend:    nil,
-			DEREnabled: true,
-		}
-
-		backend, err := NewFileBackend(config)
-		if err == nil {
-			t.Error("NewFileBackend() with nil backend expected error, got nil")
-			if backend != nil {
-				_ = backend.Close()
-			}
-			return
-		}
-		if !errors.Is(err, pivcert.ErrMissingBackend) {
-			t.Errorf("NewFileBackend() error = %v, want %v", err, pivcert.ErrMissingBackend)
-		}
+	t.Run("missing DAO factory", func(t *testing.T) {
+		_, err := NewFileBackend(&pivcert.FileStorageConfig{})
+		assert.ErrorIs(t, err, pivcert.ErrMissingDAOFactory)
 	})
 
-	t.Run("no format enabled returns error", func(t *testing.T) {
-		config := &pivcert.FileStorageConfig{
-			Backend:    storage.NewMemory(),
-			DEREnabled: false,
-			PEMEnabled: false,
-		}
-
-		backend, err := NewFileBackend(config)
-		if err == nil {
-			t.Error("NewFileBackend() with no format enabled expected error, got nil")
-			if backend != nil {
-				_ = backend.Close()
-			}
-			return
-		}
-		if !errors.Is(err, pivcert.ErrNoFormatEnabled) {
-			t.Errorf("NewFileBackend() error = %v, want %v", err, pivcert.ErrNoFormatEnabled)
-		}
-	})
-
-	t.Run("DER only config is valid", func(t *testing.T) {
-		config := &pivcert.FileStorageConfig{
-			Backend:    storage.NewMemory(),
-			DEREnabled: true,
-			PEMEnabled: false,
-		}
-
-		backend, err := NewFileBackend(config)
-		if err != nil {
-			t.Fatalf("NewFileBackend() error = %v", err)
-		}
-		defer func() { _ = backend.Close() }()
-	})
-
-	t.Run("PEM only config is valid", func(t *testing.T) {
-		config := &pivcert.FileStorageConfig{
-			Backend:    storage.NewMemory(),
-			DEREnabled: false,
-			PEMEnabled: true,
-		}
-
-		backend, err := NewFileBackend(config)
-		if err != nil {
-			t.Fatalf("NewFileBackend() error = %v", err)
-		}
-		defer func() { _ = backend.Close() }()
-	})
-
-	t.Run("metadata initialization error propagates", func(t *testing.T) {
-		mock := newMockErrorBackend(storage.NewMemory())
-		mock.existsErr = errMockBackend
-
-		config := &pivcert.FileStorageConfig{
-			Backend:    mock,
-			DEREnabled: true,
-			PEMEnabled: true,
-		}
-
-		backend, err := NewFileBackend(config)
-		if err == nil {
-			t.Error("NewFileBackend() expected error from Exists failure, got nil")
-			if backend != nil {
-				_ = backend.Close()
-			}
-			return
-		}
-		if !errors.Is(err, errMockBackend) {
-			t.Errorf("NewFileBackend() error = %v, want %v", err, errMockBackend)
-		}
+	t.Run("unavailable database", func(t *testing.T) {
+		_, err := NewFileBackend(&pivcert.FileStorageConfig{DAOs: dao.NewStoreFactory(nil)})
+		var unavailable *dao.DatabaseUnavailableError
+		assert.ErrorAs(t, err, &unavailable)
+		assert.ErrorContains(t, err, DatabaseName)
 	})
 }
 
-func TestFileBackend_Store(t *testing.T) {
-	t.Run("store valid certificate", func(t *testing.T) {
-		config := createValidConfig()
-		backend, err := NewFileBackend(config)
-		if err != nil {
-			t.Fatalf("NewFileBackend() error = %v", err)
-		}
-		defer func() { _ = backend.Close() }()
+func TestFileBackend_StoreRetrieve(t *testing.T) {
+	fb := newTestStore(t)
+	cert := generateTestCertificate(t, "round-trip")
 
-		cert := generateTestCertificate(t, "test-store")
-		err = backend.Store(pivcert.PIVSlotAuthentication, cert)
-		if err != nil {
-			t.Errorf("Store() error = %v", err)
-		}
+	require.NoError(t, fb.Store(pivcert.PIVSlotAuthentication, cert))
 
-		// Verify DER was stored
-		exists, err := config.Backend.Exists(context.Background(), "certificates/9a.der")
-		if err != nil {
-			t.Fatalf("failed to check DER existence: %v", err)
-		}
-		if !exists {
-			t.Error("DER file was not created")
-		}
+	got, err := fb.Retrieve(pivcert.PIVSlotAuthentication)
+	require.NoError(t, err)
+	assert.Equal(t, cert.Raw, got.Raw)
+}
 
-		// Verify PEM was stored
-		exists, err = config.Backend.Exists(context.Background(), "certificates/9a.pem")
-		if err != nil {
-			t.Fatalf("failed to check PEM existence: %v", err)
-		}
-		if !exists {
-			t.Error("PEM file was not created")
-		}
+// TestFileBackend_PersistsAcrossStores verifies the certificate lives in the
+// DAO factory, not in the store: a second store over the same factory reads
+// what the first wrote.
+func TestFileBackend_PersistsAcrossStores(t *testing.T) {
+	daos := dao.NewStoreFactory(newMemoryKV(t))
+	cert := generateTestCertificate(t, "persisted")
+
+	first, err := NewFileBackend(&pivcert.FileStorageConfig{DAOs: daos})
+	require.NoError(t, err)
+	require.NoError(t, first.Store(pivcert.PIVSlotDigitalSignature, cert))
+	require.NoError(t, first.Close())
+
+	second, err := NewFileBackend(&pivcert.FileStorageConfig{DAOs: daos})
+	require.NoError(t, err)
+	got, err := second.Retrieve(pivcert.PIVSlotDigitalSignature)
+	require.NoError(t, err)
+	assert.Equal(t, cert.Raw, got.Raw)
+}
+
+func TestFileBackend_Store_Errors(t *testing.T) {
+	cert := generateTestCertificate(t, "store-errors")
+
+	t.Run("invalid slot", func(t *testing.T) {
+		err := newTestStore(t).Store(pivcert.PIVSlot("invalid"), cert)
+		assert.ErrorIs(t, err, pivcert.ErrInvalidSlot)
 	})
 
-	t.Run("store updates metadata", func(t *testing.T) {
-		config := createValidConfig()
-		backend, err := NewFileBackend(config)
-		if err != nil {
-			t.Fatalf("NewFileBackend() error = %v", err)
-		}
-		defer func() { _ = backend.Close() }()
-
-		cert := generateTestCertificate(t, "test-metadata")
-		err = backend.Store(pivcert.PIVSlotAuthentication, cert)
-		if err != nil {
-			t.Errorf("Store() error = %v", err)
-		}
-
-		// Verify metadata contains slot information
-		slots, err := backend.List()
-		if err != nil {
-			t.Fatalf("List() error = %v", err)
-		}
-		if len(slots) != 1 {
-			t.Errorf("expected 1 slot, got %d", len(slots))
-		}
-		if len(slots) > 0 && slots[0].Slot != pivcert.PIVSlotAuthentication {
-			t.Errorf("expected slot 9a, got %s", slots[0].Slot)
-		}
+	t.Run("nil certificate", func(t *testing.T) {
+		err := newTestStore(t).Store(pivcert.PIVSlotAuthentication, nil)
+		assert.ErrorIs(t, err, pivcert.ErrInvalidCertificate)
 	})
 
-	t.Run("store invalid slot returns error", func(t *testing.T) {
-		config := createValidConfig()
-		backend, err := NewFileBackend(config)
-		if err != nil {
-			t.Fatalf("NewFileBackend() error = %v", err)
-		}
-		defer func() { _ = backend.Close() }()
-
-		cert := generateTestCertificate(t, "test-invalid-slot")
-		err = backend.Store(pivcert.PIVSlot("invalid"), cert)
-		if err == nil {
-			t.Error("Store() with invalid slot expected error, got nil")
-			return
-		}
-		if !errors.Is(err, pivcert.ErrInvalidSlot) {
-			t.Errorf("Store() error = %v, want %v", err, pivcert.ErrInvalidSlot)
-		}
+	t.Run("certificate too large", func(t *testing.T) {
+		err := newTestStore(t).Store(pivcert.PIVSlotAuthentication, generateLargeCertificate(t))
+		assert.ErrorIs(t, err, pivcert.ErrCertificateTooLarge)
 	})
 
-	t.Run("store nil certificate returns error", func(t *testing.T) {
-		config := createValidConfig()
-		backend, err := NewFileBackend(config)
-		if err != nil {
-			t.Fatalf("NewFileBackend() error = %v", err)
-		}
-		defer func() { _ = backend.Close() }()
-
-		err = backend.Store(pivcert.PIVSlotAuthentication, nil)
-		if err == nil {
-			t.Error("Store() with nil certificate expected error, got nil")
-			return
-		}
-		if !errors.Is(err, pivcert.ErrInvalidCertificate) {
-			t.Errorf("Store() error = %v, want %v", err, pivcert.ErrInvalidCertificate)
-		}
+	t.Run("closed", func(t *testing.T) {
+		fb := newTestStore(t)
+		require.NoError(t, fb.Close())
+		assert.ErrorIs(t, fb.Store(pivcert.PIVSlotAuthentication, cert), pivcert.ErrStorageClosed)
 	})
 
-	t.Run("store on closed backend returns error", func(t *testing.T) {
-		config := createValidConfig()
-		backend, err := NewFileBackend(config)
-		if err != nil {
-			t.Fatalf("NewFileBackend() error = %v", err)
-		}
-
-		_ = backend.Close()
-
-		cert := generateTestCertificate(t, "test-closed")
-		err = backend.Store(pivcert.PIVSlotAuthentication, cert)
-		if err == nil {
-			t.Error("Store() on closed backend expected error, got nil")
-			return
-		}
-		if !errors.Is(err, pivcert.ErrStorageClosed) {
-			t.Errorf("Store() error = %v, want %v", err, pivcert.ErrStorageClosed)
-		}
-	})
-
-	t.Run("store large certificate returns error", func(t *testing.T) {
-		config := createValidConfig()
-		backend, err := NewFileBackend(config)
-		if err != nil {
-			t.Fatalf("NewFileBackend() error = %v", err)
-		}
-		defer func() { _ = backend.Close() }()
-
-		cert := generateLargeCertificate(t)
-		err = backend.Store(pivcert.PIVSlotAuthentication, cert)
-		if err == nil {
-			t.Error("Store() with large certificate expected error, got nil")
-			return
-		}
-		if !errors.Is(err, pivcert.ErrCertificateTooLarge) {
-			t.Errorf("Store() error = %v, want %v", err, pivcert.ErrCertificateTooLarge)
-		}
-	})
-
-	t.Run("store DER only", func(t *testing.T) {
-		memBackend := storage.NewMemory()
-		config := &pivcert.FileStorageConfig{
-			Backend:    memBackend,
-			DEREnabled: true,
-			PEMEnabled: false,
-		}
-		backend, err := NewFileBackend(config)
-		if err != nil {
-			t.Fatalf("NewFileBackend() error = %v", err)
-		}
-		defer func() { _ = backend.Close() }()
-
-		cert := generateTestCertificate(t, "test-der-only")
-		err = backend.Store(pivcert.PIVSlotAuthentication, cert)
-		if err != nil {
-			t.Errorf("Store() error = %v", err)
-		}
-
-		// Verify DER was stored
-		exists, err := memBackend.Exists(context.Background(), "certificates/9a.der")
-		if err != nil {
-			t.Fatalf("failed to check DER existence: %v", err)
-		}
-		if !exists {
-			t.Error("DER file was not created")
-		}
-
-		// Verify PEM was NOT stored
-		exists, err = memBackend.Exists(context.Background(), "certificates/9a.pem")
-		if err != nil {
-			t.Fatalf("failed to check PEM existence: %v", err)
-		}
-		if exists {
-			t.Error("PEM file should not have been created")
-		}
-	})
-
-	t.Run("store PEM only", func(t *testing.T) {
-		memBackend := storage.NewMemory()
-		config := &pivcert.FileStorageConfig{
-			Backend:    memBackend,
-			DEREnabled: false,
-			PEMEnabled: true,
-		}
-		backend, err := NewFileBackend(config)
-		if err != nil {
-			t.Fatalf("NewFileBackend() error = %v", err)
-		}
-		defer func() { _ = backend.Close() }()
-
-		cert := generateTestCertificate(t, "test-pem-only")
-		err = backend.Store(pivcert.PIVSlotAuthentication, cert)
-		if err != nil {
-			t.Errorf("Store() error = %v", err)
-		}
-
-		// Verify PEM was stored
-		exists, err := memBackend.Exists(context.Background(), "certificates/9a.pem")
-		if err != nil {
-			t.Fatalf("failed to check PEM existence: %v", err)
-		}
-		if !exists {
-			t.Error("PEM file was not created")
-		}
-
-		// Verify DER was NOT stored
-		exists, err = memBackend.Exists(context.Background(), "certificates/9a.der")
-		if err != nil {
-			t.Fatalf("failed to check DER existence: %v", err)
-		}
-		if exists {
-			t.Error("DER file should not have been created")
-		}
-	})
-
-	t.Run("store DER put error propagates", func(t *testing.T) {
-		inner := storage.NewMemory()
-		mock := newMockErrorBackend(inner)
-
-		config := &pivcert.FileStorageConfig{
-			Backend:    mock,
-			DEREnabled: true,
-			PEMEnabled: false,
-		}
-		backend, err := NewFileBackend(config)
-		if err != nil {
-			t.Fatalf("NewFileBackend() error = %v", err)
-		}
-		defer func() { _ = backend.Close() }()
-
-		// Enable error after initialization
-		mock.putErr = errMockBackend
-
-		cert := generateTestCertificate(t, "test-put-err")
-		err = backend.Store(pivcert.PIVSlotAuthentication, cert)
-		if err == nil {
-			t.Error("Store() expected error from Put failure, got nil")
-			return
-		}
-		if !errors.Is(err, errMockBackend) {
-			t.Errorf("Store() error = %v, want %v", err, errMockBackend)
-		}
+	t.Run("write failure", func(t *testing.T) {
+		fb := newStore(t, &failingKV{AtomicKVStore: newMemoryKV(t), writeErr: errKV})
+		err := fb.Store(pivcert.PIVSlotAuthentication, cert)
+		assert.ErrorIs(t, err, errKV)
+		var storageErr *pivcert.PIVStorageError
+		assert.ErrorAs(t, err, &storageErr)
 	})
 }
 
-func TestFileBackend_Retrieve(t *testing.T) {
-	t.Run("retrieve stored certificate", func(t *testing.T) {
-		config := createValidConfig()
-		backend, err := NewFileBackend(config)
-		if err != nil {
-			t.Fatalf("NewFileBackend() error = %v", err)
-		}
-		defer func() { _ = backend.Close() }()
-
-		cert := generateTestCertificate(t, "test-retrieve")
-		err = backend.Store(pivcert.PIVSlotAuthentication, cert)
-		if err != nil {
-			t.Fatalf("Store() error = %v", err)
-		}
-
-		retrieved, err := backend.Retrieve(pivcert.PIVSlotAuthentication)
-		if err != nil {
-			t.Errorf("Retrieve() error = %v", err)
-		}
-		if retrieved == nil {
-			t.Fatal("Retrieve() returned nil certificate")
-		}
-		if !bytes.Equal(retrieved.Raw, cert.Raw) {
-			t.Error("retrieved certificate does not match stored certificate")
-		}
+func TestFileBackend_Retrieve_Errors(t *testing.T) {
+	t.Run("not found", func(t *testing.T) {
+		_, err := newTestStore(t).Retrieve(pivcert.PIVSlotAuthentication)
+		assert.ErrorIs(t, err, pivcert.ErrCertificateNotFound)
 	})
 
-	t.Run("retrieve non-existent certificate returns error", func(t *testing.T) {
-		config := createValidConfig()
-		backend, err := NewFileBackend(config)
-		if err != nil {
-			t.Fatalf("NewFileBackend() error = %v", err)
-		}
-		defer func() { _ = backend.Close() }()
-
-		_, err = backend.Retrieve(pivcert.PIVSlotAuthentication)
-		if err == nil {
-			t.Error("Retrieve() non-existent certificate expected error, got nil")
-			return
-		}
-		if !errors.Is(err, pivcert.ErrCertificateNotFound) {
-			t.Errorf("Retrieve() error = %v, want %v", err, pivcert.ErrCertificateNotFound)
-		}
+	t.Run("invalid slot", func(t *testing.T) {
+		_, err := newTestStore(t).Retrieve(pivcert.PIVSlot("invalid"))
+		assert.ErrorIs(t, err, pivcert.ErrInvalidSlot)
 	})
 
-	t.Run("retrieve with invalid slot returns error", func(t *testing.T) {
-		config := createValidConfig()
-		backend, err := NewFileBackend(config)
-		if err != nil {
-			t.Fatalf("NewFileBackend() error = %v", err)
-		}
-		defer func() { _ = backend.Close() }()
-
-		_, err = backend.Retrieve(pivcert.PIVSlot("invalid"))
-		if err == nil {
-			t.Error("Retrieve() with invalid slot expected error, got nil")
-			return
-		}
-		if !errors.Is(err, pivcert.ErrInvalidSlot) {
-			t.Errorf("Retrieve() error = %v, want %v", err, pivcert.ErrInvalidSlot)
-		}
+	t.Run("closed", func(t *testing.T) {
+		fb := newTestStore(t)
+		require.NoError(t, fb.Store(pivcert.PIVSlotAuthentication, generateTestCertificate(t, "closed")))
+		require.NoError(t, fb.Close())
+		_, err := fb.Retrieve(pivcert.PIVSlotAuthentication)
+		assert.ErrorIs(t, err, pivcert.ErrStorageClosed)
 	})
 
-	t.Run("retrieve on closed backend returns error", func(t *testing.T) {
-		config := createValidConfig()
-		backend, err := NewFileBackend(config)
-		if err != nil {
-			t.Fatalf("NewFileBackend() error = %v", err)
-		}
-
-		cert := generateTestCertificate(t, "test-closed")
-		err = backend.Store(pivcert.PIVSlotAuthentication, cert)
-		if err != nil {
-			t.Fatalf("Store() error = %v", err)
-		}
-
-		_ = backend.Close()
-
-		_, err = backend.Retrieve(pivcert.PIVSlotAuthentication)
-		if err == nil {
-			t.Error("Retrieve() on closed backend expected error, got nil")
-			return
-		}
-		if !errors.Is(err, pivcert.ErrStorageClosed) {
-			t.Errorf("Retrieve() error = %v, want %v", err, pivcert.ErrStorageClosed)
-		}
+	t.Run("corrupt record", func(t *testing.T) {
+		fb := newTestStore(t)
+		require.NoError(t, fb.certs.Save(context.Background(), &certEntity{Slot: string(pivcert.PIVSlotAuthentication), DER: []byte("not DER")}))
+		_, err := fb.Retrieve(pivcert.PIVSlotAuthentication)
+		assert.ErrorIs(t, err, pivcert.ErrInvalidCertificate)
 	})
 
-	t.Run("retrieve from PEM only storage", func(t *testing.T) {
-		memBackend := storage.NewMemory()
-		config := &pivcert.FileStorageConfig{
-			Backend:    memBackend,
-			DEREnabled: false,
-			PEMEnabled: true,
-		}
-		backend, err := NewFileBackend(config)
-		if err != nil {
-			t.Fatalf("NewFileBackend() error = %v", err)
-		}
-		defer func() { _ = backend.Close() }()
-
-		cert := generateTestCertificate(t, "test-pem-retrieve")
-		err = backend.Store(pivcert.PIVSlotAuthentication, cert)
-		if err != nil {
-			t.Fatalf("Store() error = %v", err)
-		}
-
-		retrieved, err := backend.Retrieve(pivcert.PIVSlotAuthentication)
-		if err != nil {
-			t.Errorf("Retrieve() error = %v", err)
-		}
-		if retrieved == nil {
-			t.Fatal("Retrieve() returned nil certificate")
-		}
-		if !bytes.Equal(retrieved.Raw, cert.Raw) {
-			t.Error("retrieved certificate does not match stored certificate")
-		}
-	})
-
-	t.Run("retrieve invalid DER returns error", func(t *testing.T) {
-		memBackend := storage.NewMemory()
-		config := &pivcert.FileStorageConfig{
-			Backend:    memBackend,
-			DEREnabled: true,
-			PEMEnabled: false,
-		}
-		backend, err := NewFileBackend(config)
-		if err != nil {
-			t.Fatalf("NewFileBackend() error = %v", err)
-		}
-		defer func() { _ = backend.Close() }()
-
-		// Store invalid DER data directly
-		err = memBackend.Put(context.Background(), "certificates/9a.der", []byte("invalid-der-data"))
-		if err != nil {
-			t.Fatalf("failed to write invalid DER: %v", err)
-		}
-
-		_, err = backend.Retrieve(pivcert.PIVSlotAuthentication)
-		if err == nil {
-			t.Error("Retrieve() with invalid DER expected error, got nil")
-			return
-		}
-		if !errors.Is(err, pivcert.ErrInvalidCertificate) {
-			t.Errorf("Retrieve() error = %v, want %v", err, pivcert.ErrInvalidCertificate)
-		}
-	})
-
-	t.Run("retrieve invalid PEM returns error", func(t *testing.T) {
-		memBackend := storage.NewMemory()
-		config := &pivcert.FileStorageConfig{
-			Backend:    memBackend,
-			DEREnabled: false,
-			PEMEnabled: true,
-		}
-		backend, err := NewFileBackend(config)
-		if err != nil {
-			t.Fatalf("NewFileBackend() error = %v", err)
-		}
-		defer func() { _ = backend.Close() }()
-
-		// Store invalid PEM data directly
-		err = memBackend.Put(context.Background(), "certificates/9a.pem", []byte("invalid-pem-data"))
-		if err != nil {
-			t.Fatalf("failed to write invalid PEM: %v", err)
-		}
-
-		_, err = backend.Retrieve(pivcert.PIVSlotAuthentication)
-		if err == nil {
-			t.Error("Retrieve() with invalid PEM expected error, got nil")
-			return
-		}
-		if !errors.Is(err, pivcert.ErrInvalidFormat) {
-			t.Errorf("Retrieve() error = %v, want %v", err, pivcert.ErrInvalidFormat)
-		}
-	})
-
-	t.Run("retrieve PEM with wrong block type returns error", func(t *testing.T) {
-		memBackend := storage.NewMemory()
-		config := &pivcert.FileStorageConfig{
-			Backend:    memBackend,
-			DEREnabled: false,
-			PEMEnabled: true,
-		}
-		backend, err := NewFileBackend(config)
-		if err != nil {
-			t.Fatalf("NewFileBackend() error = %v", err)
-		}
-		defer func() { _ = backend.Close() }()
-
-		// Store PEM with wrong block type
-		wrongPEM := pem.EncodeToMemory(&pem.Block{
-			Type:  "PRIVATE KEY",
-			Bytes: []byte("some-data"),
-		})
-		err = memBackend.Put(context.Background(), "certificates/9a.pem", wrongPEM)
-		if err != nil {
-			t.Fatalf("failed to write wrong PEM: %v", err)
-		}
-
-		_, err = backend.Retrieve(pivcert.PIVSlotAuthentication)
-		if err == nil {
-			t.Error("Retrieve() with wrong PEM type expected error, got nil")
-			return
-		}
-		if !errors.Is(err, pivcert.ErrInvalidFormat) {
-			t.Errorf("Retrieve() error = %v, want %v", err, pivcert.ErrInvalidFormat)
-		}
-	})
-
-	t.Run("retrieve PEM with invalid cert bytes returns error", func(t *testing.T) {
-		memBackend := storage.NewMemory()
-		config := &pivcert.FileStorageConfig{
-			Backend:    memBackend,
-			DEREnabled: false,
-			PEMEnabled: true,
-		}
-		backend, err := NewFileBackend(config)
-		if err != nil {
-			t.Fatalf("NewFileBackend() error = %v", err)
-		}
-		defer func() { _ = backend.Close() }()
-
-		// Store PEM with correct type but invalid cert bytes
-		invalidPEM := pem.EncodeToMemory(&pem.Block{
-			Type:  "CERTIFICATE",
-			Bytes: []byte("not-valid-der-cert-data"),
-		})
-		err = memBackend.Put(context.Background(), "certificates/9a.pem", invalidPEM)
-		if err != nil {
-			t.Fatalf("failed to write invalid PEM cert: %v", err)
-		}
-
-		_, err = backend.Retrieve(pivcert.PIVSlotAuthentication)
-		if err == nil {
-			t.Error("Retrieve() with invalid PEM cert data expected error, got nil")
-			return
-		}
-		if !errors.Is(err, pivcert.ErrInvalidCertificate) {
-			t.Errorf("Retrieve() error = %v, want %v", err, pivcert.ErrInvalidCertificate)
-		}
-	})
-
-	t.Run("retrieve PEM fallback non-ErrNotFound error propagates", func(t *testing.T) {
-		inner := storage.NewMemory()
-		mock := newMockErrorBackend(inner)
-
-		config := &pivcert.FileStorageConfig{
-			Backend:    mock,
-			DEREnabled: true,
-			PEMEnabled: true,
-		}
-		backend, err := NewFileBackend(config)
-		if err != nil {
-			t.Fatalf("NewFileBackend() error = %v", err)
-		}
-		defer func() { _ = backend.Close() }()
-
-		// Make all Gets fail with a non-ErrNotFound error
-		mock.getErr = errMockBackend
-
-		_, err = backend.Retrieve(pivcert.PIVSlotAuthentication)
-		if err == nil {
-			t.Error("Retrieve() expected error from Get failure, got nil")
-			return
-		}
-		if !errors.Is(err, errMockBackend) {
-			t.Errorf("Retrieve() error = %v, want %v", err, errMockBackend)
-		}
+	t.Run("read failure", func(t *testing.T) {
+		fb := newStore(t, &failingKV{AtomicKVStore: newMemoryKV(t), getErr: errKV})
+		_, err := fb.Retrieve(pivcert.PIVSlotAuthentication)
+		assert.ErrorIs(t, err, errKV)
+		assert.NotErrorIs(t, err, pivcert.ErrCertificateNotFound)
 	})
 }
 
 func TestFileBackend_Delete(t *testing.T) {
-	t.Run("delete stored certificate", func(t *testing.T) {
-		config := createValidConfig()
-		backend, err := NewFileBackend(config)
-		if err != nil {
-			t.Fatalf("NewFileBackend() error = %v", err)
-		}
-		defer func() { _ = backend.Close() }()
+	fb := newTestStore(t)
+	require.NoError(t, fb.Store(pivcert.PIVSlotAuthentication, generateTestCertificate(t, "delete")))
 
-		cert := generateTestCertificate(t, "test-delete")
-		err = backend.Store(pivcert.PIVSlotAuthentication, cert)
-		if err != nil {
-			t.Fatalf("Store() error = %v", err)
-		}
+	require.NoError(t, fb.Delete(pivcert.PIVSlotAuthentication))
 
-		err = backend.Delete(pivcert.PIVSlotAuthentication)
-		if err != nil {
-			t.Errorf("Delete() error = %v", err)
-		}
+	_, err := fb.Retrieve(pivcert.PIVSlotAuthentication)
+	assert.ErrorIs(t, err, pivcert.ErrCertificateNotFound)
+	assert.ErrorIs(t, fb.Delete(pivcert.PIVSlotAuthentication), pivcert.ErrCertificateNotFound)
+}
 
-		// Verify certificate was deleted
-		_, err = backend.Retrieve(pivcert.PIVSlotAuthentication)
-		if !errors.Is(err, pivcert.ErrCertificateNotFound) {
-			t.Errorf("expected ErrCertificateNotFound after delete, got %v", err)
-		}
+func TestFileBackend_Delete_Errors(t *testing.T) {
+	cert := generateTestCertificate(t, "delete-errors")
+
+	// seeded returns a store over a KV holding cert in the authentication
+	// slot, with kv's failures switched on after seeding.
+	seeded := func(t *testing.T, kv *failingKV) *FileBackend {
+		t.Helper()
+		mem := newMemoryKV(t)
+		require.NoError(t, newStore(t, mem).Store(pivcert.PIVSlotAuthentication, cert))
+		kv.AtomicKVStore = mem
+		return newStore(t, kv)
+	}
+
+	t.Run("invalid slot", func(t *testing.T) {
+		assert.ErrorIs(t, newTestStore(t).Delete(pivcert.PIVSlot("invalid")), pivcert.ErrInvalidSlot)
 	})
 
-	t.Run("delete updates metadata", func(t *testing.T) {
-		config := createValidConfig()
-		backend, err := NewFileBackend(config)
-		if err != nil {
-			t.Fatalf("NewFileBackend() error = %v", err)
-		}
-		defer func() { _ = backend.Close() }()
-
-		cert := generateTestCertificate(t, "test-delete-metadata")
-		err = backend.Store(pivcert.PIVSlotAuthentication, cert)
-		if err != nil {
-			t.Fatalf("Store() error = %v", err)
-		}
-
-		err = backend.Delete(pivcert.PIVSlotAuthentication)
-		if err != nil {
-			t.Errorf("Delete() error = %v", err)
-		}
-
-		// Verify metadata was updated
-		slots, err := backend.List()
-		if err != nil {
-			t.Fatalf("List() error = %v", err)
-		}
-		if len(slots) != 0 {
-			t.Errorf("expected 0 slots after delete, got %d", len(slots))
-		}
+	t.Run("closed", func(t *testing.T) {
+		fb := newTestStore(t)
+		require.NoError(t, fb.Close())
+		assert.ErrorIs(t, fb.Delete(pivcert.PIVSlotAuthentication), pivcert.ErrStorageClosed)
 	})
 
-	t.Run("delete non-existent certificate returns error", func(t *testing.T) {
-		config := createValidConfig()
-		backend, err := NewFileBackend(config)
-		if err != nil {
-			t.Fatalf("NewFileBackend() error = %v", err)
-		}
-		defer func() { _ = backend.Close() }()
-
-		err = backend.Delete(pivcert.PIVSlotAuthentication)
-		if err == nil {
-			t.Error("Delete() non-existent certificate expected error, got nil")
-			return
-		}
-		if !errors.Is(err, pivcert.ErrCertificateNotFound) {
-			t.Errorf("Delete() error = %v, want %v", err, pivcert.ErrCertificateNotFound)
-		}
+	t.Run("concurrent replacement", func(t *testing.T) {
+		fb := seeded(t, &failingKV{deleteMisses: true})
+		assert.ErrorIs(t, fb.Delete(pivcert.PIVSlotAuthentication), pivcert.ErrConflict)
 	})
 
-	t.Run("delete with invalid slot returns error", func(t *testing.T) {
-		config := createValidConfig()
-		backend, err := NewFileBackend(config)
-		if err != nil {
-			t.Fatalf("NewFileBackend() error = %v", err)
-		}
-		defer func() { _ = backend.Close() }()
-
-		err = backend.Delete(pivcert.PIVSlot("invalid"))
-		if err == nil {
-			t.Error("Delete() with invalid slot expected error, got nil")
-			return
-		}
-		if !errors.Is(err, pivcert.ErrInvalidSlot) {
-			t.Errorf("Delete() error = %v, want %v", err, pivcert.ErrInvalidSlot)
-		}
+	t.Run("delete failure", func(t *testing.T) {
+		fb := seeded(t, &failingKV{writeErr: errKV})
+		assert.ErrorIs(t, fb.Delete(pivcert.PIVSlotAuthentication), errKV)
 	})
 
-	t.Run("delete on closed backend returns error", func(t *testing.T) {
-		config := createValidConfig()
-		backend, err := NewFileBackend(config)
-		if err != nil {
-			t.Fatalf("NewFileBackend() error = %v", err)
-		}
-
-		cert := generateTestCertificate(t, "test-closed")
-		err = backend.Store(pivcert.PIVSlotAuthentication, cert)
-		if err != nil {
-			t.Fatalf("Store() error = %v", err)
-		}
-
-		_ = backend.Close()
-
-		err = backend.Delete(pivcert.PIVSlotAuthentication)
-		if err == nil {
-			t.Error("Delete() on closed backend expected error, got nil")
-			return
-		}
-		if !errors.Is(err, pivcert.ErrStorageClosed) {
-			t.Errorf("Delete() error = %v, want %v", err, pivcert.ErrStorageClosed)
-		}
-	})
-
-	t.Run("delete DER backend error propagates", func(t *testing.T) {
-		inner := storage.NewMemory()
-		mock := newMockErrorBackend(inner)
-
-		config := &pivcert.FileStorageConfig{
-			Backend:    mock,
-			DEREnabled: true,
-			PEMEnabled: true,
-		}
-		backend, err := NewFileBackend(config)
-		if err != nil {
-			t.Fatalf("NewFileBackend() error = %v", err)
-		}
-		defer func() { _ = backend.Close() }()
-
-		// Store a cert first (before error injection)
-		cert := generateTestCertificate(t, "test-delete-err")
-		err = backend.Store(pivcert.PIVSlotAuthentication, cert)
-		if err != nil {
-			t.Fatalf("Store() error = %v", err)
-		}
-
-		// Enable delete error
-		mock.deleteErr = errMockBackend
-
-		err = backend.Delete(pivcert.PIVSlotAuthentication)
-		if err == nil {
-			t.Error("Delete() expected error from backend Delete failure, got nil")
-			return
-		}
-		if !errors.Is(err, errMockBackend) {
-			t.Errorf("Delete() error = %v, want %v", err, errMockBackend)
-		}
-	})
-
-	t.Run("delete Exists backend error propagates", func(t *testing.T) {
-		// Before #701, Delete discarded the error from both Exists calls it
-		// makes to decide what to remove: a storage failure while checking
-		// existence looked identical to "nothing here", so Delete reported
-		// ErrCertificateNotFound instead of the real I/O failure.
-		inner := storage.NewMemory()
-		mock := newMockErrorBackend(inner)
-
-		config := &pivcert.FileStorageConfig{
-			Backend:    mock,
-			DEREnabled: true,
-			PEMEnabled: true,
-		}
-		backend, err := NewFileBackend(config)
-		if err != nil {
-			t.Fatalf("NewFileBackend() error = %v", err)
-		}
-		defer func() { _ = backend.Close() }()
-
-		cert := generateTestCertificate(t, "test-delete-exists-err")
-		if err := backend.Store(pivcert.PIVSlotAuthentication, cert); err != nil {
-			t.Fatalf("Store() error = %v", err)
-		}
-
-		mock.existsErr = errMockBackend
-
-		err = backend.Delete(pivcert.PIVSlotAuthentication)
-		if err == nil {
-			t.Fatal("Delete() expected error from backend Exists failure, got nil")
-		}
-		if !errors.Is(err, errMockBackend) {
-			t.Errorf("Delete() error = %v, want %v", err, errMockBackend)
-		}
-		if errors.Is(err, pivcert.ErrCertificateNotFound) {
-			t.Error("Delete() must not report ErrCertificateNotFound when Exists itself failed")
-		}
+	t.Run("read failure", func(t *testing.T) {
+		fb := seeded(t, &failingKV{getErr: errKV})
+		assert.ErrorIs(t, fb.Delete(pivcert.PIVSlotAuthentication), errKV)
 	})
 }
 
 func TestFileBackend_List(t *testing.T) {
-	t.Run("list empty storage", func(t *testing.T) {
-		config := createValidConfig()
-		backend, err := NewFileBackend(config)
-		if err != nil {
-			t.Fatalf("NewFileBackend() error = %v", err)
-		}
-		defer func() { _ = backend.Close() }()
-
-		slots, err := backend.List()
-		if err != nil {
-			t.Errorf("List() error = %v", err)
-		}
-		if len(slots) != 0 {
-			t.Errorf("expected 0 slots, got %d", len(slots))
-		}
+	t.Run("empty", func(t *testing.T) {
+		infos, err := newTestStore(t).List()
+		require.NoError(t, err)
+		assert.Empty(t, infos)
 	})
 
-	t.Run("list multiple certificates", func(t *testing.T) {
-		config := createValidConfig()
-		backend, err := NewFileBackend(config)
-		if err != nil {
-			t.Fatalf("NewFileBackend() error = %v", err)
-		}
-		defer func() { _ = backend.Close() }()
+	t.Run("derives slot info from each certificate, sorted by slot", func(t *testing.T) {
+		fb := newTestStore(t)
+		signature := generateRSACertificate(t, "signature")
+		authentication := generateTestCertificate(t, "authentication")
+		before := time.Now().UTC().Add(-time.Second)
+		require.NoError(t, fb.Store(pivcert.PIVSlotDigitalSignature, signature))
+		require.NoError(t, fb.Store(pivcert.PIVSlotAuthentication, authentication))
 
-		// Store certificates in multiple slots
-		slots := []pivcert.PIVSlot{
-			pivcert.PIVSlotAuthentication,
-			pivcert.PIVSlotDigitalSignature,
-			pivcert.PIVSlotKeyManagement,
-		}
+		infos, err := fb.List()
+		require.NoError(t, err)
+		require.Len(t, infos, 2)
 
-		for i, slot := range slots {
-			cert := generateTestCertificate(t, "test-list-"+string(slot))
-			err = backend.Store(slot, cert)
-			if err != nil {
-				t.Fatalf("Store() slot %s error = %v", slot, err)
-			}
+		assert.Equal(t, pivcert.PIVSlotAuthentication, infos[0].Slot)
+		assert.Equal(t, "ECDSA", infos[0].Algorithm)
+		assert.Equal(t, 256, infos[0].KeySize)
+		assert.Equal(t, authentication.Subject.String(), infos[0].Subject)
+		assert.Equal(t, pivcert.ThumbprintSHA256(authentication), infos[0].Fingerprint)
+		assert.True(t, infos[0].StoredAt.After(before))
 
-			// Verify count increases
-			result, err := backend.List()
-			if err != nil {
-				t.Fatalf("List() error = %v", err)
-			}
-			if len(result) != i+1 {
-				t.Errorf("expected %d slots, got %d", i+1, len(result))
-			}
-		}
+		assert.Equal(t, pivcert.PIVSlotDigitalSignature, infos[1].Slot)
+		assert.Equal(t, "RSA", infos[1].Algorithm)
+		assert.Equal(t, 2048, infos[1].KeySize)
 	})
 
-	t.Run("list on closed backend returns error", func(t *testing.T) {
-		config := createValidConfig()
-		backend, err := NewFileBackend(config)
-		if err != nil {
-			t.Fatalf("NewFileBackend() error = %v", err)
-		}
-
-		_ = backend.Close()
-
-		_, err = backend.List()
-		if err == nil {
-			t.Error("List() on closed backend expected error, got nil")
-			return
-		}
-		if !errors.Is(err, pivcert.ErrStorageClosed) {
-			t.Errorf("List() error = %v, want %v", err, pivcert.ErrStorageClosed)
-		}
+	t.Run("closed", func(t *testing.T) {
+		fb := newTestStore(t)
+		require.NoError(t, fb.Close())
+		_, err := fb.List()
+		assert.ErrorIs(t, err, pivcert.ErrStorageClosed)
 	})
 
-	t.Run("list contains correct metadata", func(t *testing.T) {
-		config := createValidConfig()
-		backend, err := NewFileBackend(config)
-		if err != nil {
-			t.Fatalf("NewFileBackend() error = %v", err)
-		}
-		defer func() { _ = backend.Close() }()
-
-		cert := generateRSACertificate(t, "test-list-metadata")
-		err = backend.Store(pivcert.PIVSlotAuthentication, cert)
-		if err != nil {
-			t.Fatalf("Store() error = %v", err)
-		}
-
-		slots, err := backend.List()
-		if err != nil {
-			t.Fatalf("List() error = %v", err)
-		}
-		if len(slots) != 1 {
-			t.Fatalf("expected 1 slot, got %d", len(slots))
-		}
-
-		slotInfo := slots[0]
-		if slotInfo.Slot != pivcert.PIVSlotAuthentication {
-			t.Errorf("expected slot 9a, got %s", slotInfo.Slot)
-		}
-		if slotInfo.Algorithm != "RSA" {
-			t.Errorf("expected algorithm RSA, got %s", slotInfo.Algorithm)
-		}
-		if slotInfo.KeySize != 2048 {
-			t.Errorf("expected key size 2048, got %d", slotInfo.KeySize)
-		}
-		if slotInfo.Fingerprint == "" {
-			t.Error("expected non-empty fingerprint")
-		}
-	})
-
-	t.Run("list with backend Get error propagates", func(t *testing.T) {
-		inner := storage.NewMemory()
-		mock := newMockErrorBackend(inner)
-
-		config := &pivcert.FileStorageConfig{
-			Backend:    mock,
-			DEREnabled: true,
-			PEMEnabled: true,
-		}
-		backend, err := NewFileBackend(config)
-		if err != nil {
-			t.Fatalf("NewFileBackend() error = %v", err)
-		}
-		defer func() { _ = backend.Close() }()
-
-		// Make Get fail with non-ErrNotFound error
-		mock.getErr = errMockBackend
-
-		_, err = backend.List()
-		if err == nil {
-			t.Error("List() expected error from Get failure, got nil")
-			return
-		}
-		if !errors.Is(err, errMockBackend) {
-			t.Errorf("List() error = %v, want %v", err, errMockBackend)
-		}
-	})
-
-	t.Run("list with corrupt StoredAt metadata reports an error", func(t *testing.T) {
-		// Before #701, List discarded time.Parse's error on StoredAt and
-		// silently substituted the zero time, so corrupt metadata was
-		// indistinguishable from a certificate genuinely stored at the Unix
-		// epoch.
-		config := createValidConfig()
-		backend, err := NewFileBackend(config)
-		if err != nil {
-			t.Fatalf("NewFileBackend() error = %v", err)
-		}
-		defer func() { _ = backend.Close() }()
-
-		cert := generateTestCertificate(t, "test-list-corrupt-storedat")
-		if err := backend.Store(pivcert.PIVSlotAuthentication, cert); err != nil {
-			t.Fatalf("Store() error = %v", err)
-		}
-
-		metadata, err := backend.loadMetadata()
-		if err != nil {
-			t.Fatalf("loadMetadata() error = %v", err)
-		}
-		meta := metadata.Slots[string(pivcert.PIVSlotAuthentication)]
-		meta.StoredAt = "not-a-timestamp"
-		metadata.Slots[string(pivcert.PIVSlotAuthentication)] = meta
-		if err := backend.saveMetadata(metadata); err != nil {
-			t.Fatalf("saveMetadata() error = %v", err)
-		}
-
-		_, err = backend.List()
-		if err == nil {
-			t.Fatal("List() expected error from corrupt StoredAt metadata, got nil")
-		}
+	t.Run("corrupt record", func(t *testing.T) {
+		fb := newTestStore(t)
+		require.NoError(t, fb.certs.Save(context.Background(), &certEntity{Slot: string(pivcert.PIVSlotDigitalSignature), DER: []byte("not DER")}))
+		_, err := fb.List()
+		assert.ErrorIs(t, err, pivcert.ErrInvalidCertificate)
 	})
 }
 
-func TestFileBackend_Import(t *testing.T) {
-	t.Run("import DER format", func(t *testing.T) {
-		config := createValidConfig()
-		backend, err := NewFileBackend(config)
-		if err != nil {
-			t.Fatalf("NewFileBackend() error = %v", err)
-		}
-		defer func() { _ = backend.Close() }()
+func TestFileBackend_OverwriteCertificate(t *testing.T) {
+	fb := newTestStore(t)
+	first := generateTestCertificate(t, "first")
+	second := generateTestCertificate(t, "second")
 
-		cert := generateTestCertificate(t, "test-import-der")
+	require.NoError(t, fb.Store(pivcert.PIVSlotAuthentication, first))
+	require.NoError(t, fb.Store(pivcert.PIVSlotAuthentication, second))
 
-		err = backend.Import(pivcert.PIVSlotAuthentication, cert.Raw, pivcert.FormatDER)
-		if err != nil {
-			t.Errorf("Import() error = %v", err)
-		}
+	got, err := fb.Retrieve(pivcert.PIVSlotAuthentication)
+	require.NoError(t, err)
+	assert.Equal(t, second.Raw, got.Raw)
 
-		retrieved, err := backend.Retrieve(pivcert.PIVSlotAuthentication)
-		if err != nil {
-			t.Fatalf("Retrieve() error = %v", err)
-		}
-		if !bytes.Equal(retrieved.Raw, cert.Raw) {
-			t.Error("imported certificate does not match original")
-		}
-	})
-
-	t.Run("import PEM format", func(t *testing.T) {
-		config := createValidConfig()
-		backend, err := NewFileBackend(config)
-		if err != nil {
-			t.Fatalf("NewFileBackend() error = %v", err)
-		}
-		defer func() { _ = backend.Close() }()
-
-		cert := generateTestCertificate(t, "test-import-pem")
-		pemData := pem.EncodeToMemory(&pem.Block{
-			Type:  "CERTIFICATE",
-			Bytes: cert.Raw,
-		})
-
-		err = backend.Import(pivcert.PIVSlotAuthentication, pemData, pivcert.FormatPEM)
-		if err != nil {
-			t.Errorf("Import() error = %v", err)
-		}
-
-		retrieved, err := backend.Retrieve(pivcert.PIVSlotAuthentication)
-		if err != nil {
-			t.Fatalf("Retrieve() error = %v", err)
-		}
-		if !bytes.Equal(retrieved.Raw, cert.Raw) {
-			t.Error("imported certificate does not match original")
-		}
-	})
-
-	t.Run("import empty data returns error", func(t *testing.T) {
-		config := createValidConfig()
-		backend, err := NewFileBackend(config)
-		if err != nil {
-			t.Fatalf("NewFileBackend() error = %v", err)
-		}
-		defer func() { _ = backend.Close() }()
-
-		err = backend.Import(pivcert.PIVSlotAuthentication, []byte{}, pivcert.FormatDER)
-		if err == nil {
-			t.Error("Import() with empty data expected error, got nil")
-			return
-		}
-		if !errors.Is(err, pivcert.ErrInvalidCertificate) {
-			t.Errorf("Import() error = %v, want %v", err, pivcert.ErrInvalidCertificate)
-		}
-	})
-
-	t.Run("import invalid DER returns error", func(t *testing.T) {
-		config := createValidConfig()
-		backend, err := NewFileBackend(config)
-		if err != nil {
-			t.Fatalf("NewFileBackend() error = %v", err)
-		}
-		defer func() { _ = backend.Close() }()
-
-		err = backend.Import(pivcert.PIVSlotAuthentication, []byte("invalid-der"), pivcert.FormatDER)
-		if err == nil {
-			t.Error("Import() with invalid DER expected error, got nil")
-			return
-		}
-		if !errors.Is(err, pivcert.ErrInvalidCertificate) {
-			t.Errorf("Import() error = %v, want %v", err, pivcert.ErrInvalidCertificate)
-		}
-	})
-
-	t.Run("import invalid PEM returns error", func(t *testing.T) {
-		config := createValidConfig()
-		backend, err := NewFileBackend(config)
-		if err != nil {
-			t.Fatalf("NewFileBackend() error = %v", err)
-		}
-		defer func() { _ = backend.Close() }()
-
-		err = backend.Import(pivcert.PIVSlotAuthentication, []byte("invalid-pem"), pivcert.FormatPEM)
-		if err == nil {
-			t.Error("Import() with invalid PEM expected error, got nil")
-			return
-		}
-		if !errors.Is(err, pivcert.ErrInvalidFormat) {
-			t.Errorf("Import() error = %v, want %v", err, pivcert.ErrInvalidFormat)
-		}
-	})
-
-	t.Run("import unknown format returns error", func(t *testing.T) {
-		config := createValidConfig()
-		backend, err := NewFileBackend(config)
-		if err != nil {
-			t.Fatalf("NewFileBackend() error = %v", err)
-		}
-		defer func() { _ = backend.Close() }()
-
-		cert := generateTestCertificate(t, "test-import-unknown")
-		err = backend.Import(pivcert.PIVSlotAuthentication, cert.Raw, pivcert.CertFormat(99))
-		if err == nil {
-			t.Error("Import() with unknown format expected error, got nil")
-			return
-		}
-		if !errors.Is(err, pivcert.ErrInvalidFormat) {
-			t.Errorf("Import() error = %v, want %v", err, pivcert.ErrInvalidFormat)
-		}
-	})
-
-	t.Run("import PEM with invalid cert bytes returns error", func(t *testing.T) {
-		config := createValidConfig()
-		backend, err := NewFileBackend(config)
-		if err != nil {
-			t.Fatalf("NewFileBackend() error = %v", err)
-		}
-		defer func() { _ = backend.Close() }()
-
-		// Valid PEM block but invalid certificate DER inside
-		invalidPEM := pem.EncodeToMemory(&pem.Block{
-			Type:  "CERTIFICATE",
-			Bytes: []byte("not-valid-cert-data"),
-		})
-
-		err = backend.Import(pivcert.PIVSlotAuthentication, invalidPEM, pivcert.FormatPEM)
-		if err == nil {
-			t.Error("Import() with invalid PEM cert expected error, got nil")
-			return
-		}
-		if !errors.Is(err, pivcert.ErrInvalidCertificate) {
-			t.Errorf("Import() error = %v, want %v", err, pivcert.ErrInvalidCertificate)
-		}
-	})
+	infos, err := fb.List()
+	require.NoError(t, err)
+	require.Len(t, infos, 1)
+	assert.Equal(t, second.Subject.String(), infos[0].Subject)
 }
 
-func TestFileBackend_Export(t *testing.T) {
-	t.Run("export DER format", func(t *testing.T) {
-		config := createValidConfig()
-		backend, err := NewFileBackend(config)
-		if err != nil {
-			t.Fatalf("NewFileBackend() error = %v", err)
-		}
-		defer func() { _ = backend.Close() }()
+func TestFileBackend_AllSlots(t *testing.T) {
+	fb := newTestStore(t)
+	cert := generateEd25519Certificate(t, "all-slots")
+	slots := pivcert.AllSlots()
 
-		cert := generateTestCertificate(t, "test-export-der")
-		err = backend.Store(pivcert.PIVSlotAuthentication, cert)
-		if err != nil {
-			t.Fatalf("Store() error = %v", err)
-		}
-
-		data, err := backend.Export(pivcert.PIVSlotAuthentication, pivcert.FormatDER)
-		if err != nil {
-			t.Errorf("Export() error = %v", err)
-		}
-		if !bytes.Equal(data, cert.Raw) {
-			t.Error("exported DER does not match certificate")
-		}
-	})
-
-	t.Run("export PEM format", func(t *testing.T) {
-		config := createValidConfig()
-		backend, err := NewFileBackend(config)
-		if err != nil {
-			t.Fatalf("NewFileBackend() error = %v", err)
-		}
-		defer func() { _ = backend.Close() }()
-
-		cert := generateTestCertificate(t, "test-export-pem")
-		err = backend.Store(pivcert.PIVSlotAuthentication, cert)
-		if err != nil {
-			t.Fatalf("Store() error = %v", err)
-		}
-
-		data, err := backend.Export(pivcert.PIVSlotAuthentication, pivcert.FormatPEM)
-		if err != nil {
-			t.Errorf("Export() error = %v", err)
-		}
-
-		// Decode PEM and verify
-		block, _ := pem.Decode(data)
-		if block == nil || block.Type != "CERTIFICATE" {
-			t.Error("exported PEM is invalid")
-		}
-		if !bytes.Equal(block.Bytes, cert.Raw) {
-			t.Error("exported PEM content does not match certificate")
-		}
-	})
-
-	t.Run("export non-existent certificate returns error", func(t *testing.T) {
-		config := createValidConfig()
-		backend, err := NewFileBackend(config)
-		if err != nil {
-			t.Fatalf("NewFileBackend() error = %v", err)
-		}
-		defer func() { _ = backend.Close() }()
-
-		_, err = backend.Export(pivcert.PIVSlotAuthentication, pivcert.FormatDER)
-		if err == nil {
-			t.Error("Export() non-existent certificate expected error, got nil")
-			return
-		}
-		if !errors.Is(err, pivcert.ErrCertificateNotFound) {
-			t.Errorf("Export() error = %v, want %v", err, pivcert.ErrCertificateNotFound)
-		}
-	})
-
-	t.Run("export unknown format returns error", func(t *testing.T) {
-		config := createValidConfig()
-		backend, err := NewFileBackend(config)
-		if err != nil {
-			t.Fatalf("NewFileBackend() error = %v", err)
-		}
-		defer func() { _ = backend.Close() }()
-
-		cert := generateTestCertificate(t, "test-export-unknown")
-		err = backend.Store(pivcert.PIVSlotAuthentication, cert)
-		if err != nil {
-			t.Fatalf("Store() error = %v", err)
-		}
-
-		_, err = backend.Export(pivcert.PIVSlotAuthentication, pivcert.CertFormat(99))
-		if err == nil {
-			t.Error("Export() with unknown format expected error, got nil")
-			return
-		}
-		if !errors.Is(err, pivcert.ErrInvalidFormat) {
-			t.Errorf("Export() error = %v, want %v", err, pivcert.ErrInvalidFormat)
-		}
-	})
-}
-
-func TestFileBackend_Type(t *testing.T) {
-	config := createValidConfig()
-	backend, err := NewFileBackend(config)
-	if err != nil {
-		t.Fatalf("NewFileBackend() error = %v", err)
+	for _, slot := range slots {
+		require.NoError(t, fb.Store(slot, cert), "slot %s", slot)
 	}
-	defer func() { _ = backend.Close() }()
 
-	if backend.Type() != pivcert.StorageTypeFile {
-		t.Errorf("Type() = %v, want %v", backend.Type(), pivcert.StorageTypeFile)
+	infos, err := fb.List()
+	require.NoError(t, err)
+	assert.Len(t, infos, len(slots))
+	for _, slot := range slots {
+		got, err := fb.Retrieve(slot)
+		require.NoError(t, err, "slot %s", slot)
+		assert.Equal(t, cert.Raw, got.Raw)
 	}
 }
 
+func TestFileBackend_ImportExport(t *testing.T) {
+	cert := generateTestCertificate(t, "import-export")
+	pemData := pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: cert.Raw})
+
+	t.Run("DER", func(t *testing.T) {
+		fb := newTestStore(t)
+		require.NoError(t, fb.Import(pivcert.PIVSlotAuthentication, cert.Raw, pivcert.FormatDER))
+		got, err := fb.Export(pivcert.PIVSlotAuthentication, pivcert.FormatDER)
+		require.NoError(t, err)
+		assert.Equal(t, cert.Raw, got)
+	})
+
+	t.Run("PEM", func(t *testing.T) {
+		fb := newTestStore(t)
+		require.NoError(t, fb.Import(pivcert.PIVSlotAuthentication, pemData, pivcert.FormatPEM))
+		got, err := fb.Export(pivcert.PIVSlotAuthentication, pivcert.FormatPEM)
+		require.NoError(t, err)
+		assert.Equal(t, pemData, got)
+	})
+
+	t.Run("import refusals", func(t *testing.T) {
+		fb := newTestStore(t)
+		wrongBlock := pem.EncodeToMemory(&pem.Block{Type: "PRIVATE KEY", Bytes: cert.Raw})
+		badPEMBody := pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: []byte("not DER")})
+
+		assert.ErrorIs(t, fb.Import(pivcert.PIVSlotAuthentication, nil, pivcert.FormatDER), pivcert.ErrInvalidCertificate)
+		assert.ErrorIs(t, fb.Import(pivcert.PIVSlotAuthentication, []byte("not DER"), pivcert.FormatDER), pivcert.ErrInvalidCertificate)
+		assert.ErrorIs(t, fb.Import(pivcert.PIVSlotAuthentication, []byte("not PEM"), pivcert.FormatPEM), pivcert.ErrInvalidFormat)
+		assert.ErrorIs(t, fb.Import(pivcert.PIVSlotAuthentication, wrongBlock, pivcert.FormatPEM), pivcert.ErrInvalidFormat)
+		assert.ErrorIs(t, fb.Import(pivcert.PIVSlotAuthentication, badPEMBody, pivcert.FormatPEM), pivcert.ErrInvalidCertificate)
+		assert.ErrorIs(t, fb.Import(pivcert.PIVSlotAuthentication, cert.Raw, pivcert.CertFormat(99)), pivcert.ErrInvalidFormat)
+	})
+
+	t.Run("export refusals", func(t *testing.T) {
+		fb := newTestStore(t)
+		_, err := fb.Export(pivcert.PIVSlotAuthentication, pivcert.FormatDER)
+		assert.ErrorIs(t, err, pivcert.ErrCertificateNotFound)
+
+		require.NoError(t, fb.Store(pivcert.PIVSlotAuthentication, cert))
+		_, err = fb.Export(pivcert.PIVSlotAuthentication, pivcert.CertFormat(99))
+		assert.ErrorIs(t, err, pivcert.ErrInvalidFormat)
+	})
+}
+
+// TestFileBackend_Close verifies Close leaves the injected factory usable:
+// the factory belongs to the composition root.
 func TestFileBackend_Close(t *testing.T) {
-	t.Run("close marks backend as closed", func(t *testing.T) {
-		config := createValidConfig()
-		backend, err := NewFileBackend(config)
-		if err != nil {
-			t.Fatalf("NewFileBackend() error = %v", err)
-		}
+	daos := dao.NewStoreFactory(newMemoryKV(t))
+	cert := generateTestCertificate(t, "close")
 
-		err = backend.Close()
-		if err != nil {
-			t.Errorf("Close() error = %v", err)
-		}
+	fb, err := NewFileBackend(&pivcert.FileStorageConfig{DAOs: daos})
+	require.NoError(t, err)
+	require.NoError(t, fb.Close())
+	require.NoError(t, fb.Close(), "Close is idempotent")
 
-		// Verify operations fail after close
-		cert := generateTestCertificate(t, "test-closed")
-		err = backend.Store(pivcert.PIVSlotAuthentication, cert)
-		if !errors.Is(err, pivcert.ErrStorageClosed) {
-			t.Errorf("Store() after Close() error = %v, want %v", err, pivcert.ErrStorageClosed)
-		}
-	})
+	other, err := NewFileBackend(&pivcert.FileStorageConfig{DAOs: daos})
+	require.NoError(t, err)
+	assert.NoError(t, other.Store(pivcert.PIVSlotAuthentication, cert))
 }
 
 func TestFileBackend_ConcurrentAccess(t *testing.T) {
-	config := createValidConfig()
-	backend, err := NewFileBackend(config)
-	if err != nil {
-		t.Fatalf("NewFileBackend() error = %v", err)
-	}
-	defer func() { _ = backend.Close() }()
-
-	// Create test certificates for different slots
+	fb := newTestStore(t)
+	cert := generateTestCertificate(t, "concurrent")
 	slots := []pivcert.PIVSlot{
 		pivcert.PIVSlotAuthentication,
 		pivcert.PIVSlotDigitalSignature,
@@ -1584,493 +508,77 @@ func TestFileBackend_ConcurrentAccess(t *testing.T) {
 	}
 
 	var wg sync.WaitGroup
-	errChan := make(chan error, len(slots)*3)
-
-	// Concurrent stores
+	errs := make(chan error, len(slots)*2)
 	for _, slot := range slots {
-		wg.Add(1)
-		go func(s pivcert.PIVSlot) {
-			defer wg.Done()
-			cert := generateTestCertificate(t, "concurrent-"+string(s))
-			if err := backend.Store(s, cert); err != nil {
-				errChan <- err
-			}
-		}(slot)
-	}
-
-	wg.Wait()
-
-	// Concurrent retrieves
-	for _, slot := range slots {
-		wg.Add(1)
-		go func(s pivcert.PIVSlot) {
-			defer wg.Done()
-			if _, err := backend.Retrieve(s); err != nil {
-				errChan <- err
-			}
-		}(slot)
-	}
-
-	wg.Wait()
-
-	// Concurrent list
-	for i := 0; i < 4; i++ {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
-			if _, err := backend.List(); err != nil {
-				errChan <- err
+			if err := fb.Store(slot, cert); err != nil {
+				errs <- err
+				return
+			}
+			if _, err := fb.Retrieve(slot); err != nil {
+				errs <- err
 			}
 		}()
 	}
-
 	wg.Wait()
-	close(errChan)
+	close(errs)
 
-	for err := range errChan {
-		t.Errorf("concurrent operation error: %v", err)
+	for err := range errs {
+		assert.NoError(t, err)
 	}
+	infos, err := fb.List()
+	require.NoError(t, err)
+	assert.Len(t, infos, len(slots))
 }
 
-func TestFileBackend_AllSlots(t *testing.T) {
-	config := createValidConfig()
-	backend, err := NewFileBackend(config)
-	if err != nil {
-		t.Fatalf("NewFileBackend() error = %v", err)
-	}
-	defer func() { _ = backend.Close() }()
-
-	// Test all primary slots
-	primarySlots := pivcert.PrimarySlots()
-	for _, slot := range primarySlots {
-		t.Run("primary_slot_"+string(slot), func(t *testing.T) {
-			cert := generateTestCertificate(t, "primary-"+string(slot))
-			err := backend.Store(slot, cert)
-			if err != nil {
-				t.Errorf("Store() error = %v", err)
-				return
-			}
-
-			retrieved, err := backend.Retrieve(slot)
-			if err != nil {
-				t.Errorf("Retrieve() error = %v", err)
-				return
-			}
-
-			if !bytes.Equal(retrieved.Raw, cert.Raw) {
-				t.Error("retrieved certificate does not match stored certificate")
-			}
-
-			err = backend.Delete(slot)
-			if err != nil {
-				t.Errorf("Delete() error = %v", err)
-			}
-		})
-	}
-}
-
-func TestFileBackend_KeyAlgorithms(t *testing.T) {
-	t.Run("ECDSA certificate", func(t *testing.T) {
-		config := createValidConfig()
-		backend, err := NewFileBackend(config)
-		if err != nil {
-			t.Fatalf("NewFileBackend() error = %v", err)
-		}
-		defer func() { _ = backend.Close() }()
-
-		cert := generateTestCertificate(t, "ecdsa-cert")
-		err = backend.Store(pivcert.PIVSlotAuthentication, cert)
-		if err != nil {
-			t.Fatalf("Store() error = %v", err)
-		}
-
-		slots, err := backend.List()
-		if err != nil {
-			t.Fatalf("List() error = %v", err)
-		}
-		if len(slots) != 1 {
-			t.Fatalf("expected 1 slot, got %d", len(slots))
-		}
-		if slots[0].Algorithm != "ECDSA" {
-			t.Errorf("expected algorithm ECDSA, got %s", slots[0].Algorithm)
-		}
-	})
-
-	t.Run("RSA certificate", func(t *testing.T) {
-		config := createValidConfig()
-		backend, err := NewFileBackend(config)
-		if err != nil {
-			t.Fatalf("NewFileBackend() error = %v", err)
-		}
-		defer func() { _ = backend.Close() }()
-
-		cert := generateRSACertificate(t, "rsa-cert")
-		err = backend.Store(pivcert.PIVSlotAuthentication, cert)
-		if err != nil {
-			t.Fatalf("Store() error = %v", err)
-		}
-
-		slots, err := backend.List()
-		if err != nil {
-			t.Fatalf("List() error = %v", err)
-		}
-		if len(slots) != 1 {
-			t.Fatalf("expected 1 slot, got %d", len(slots))
-		}
-		if slots[0].Algorithm != "RSA" {
-			t.Errorf("expected algorithm RSA, got %s", slots[0].Algorithm)
-		}
-		if slots[0].KeySize != 2048 {
-			t.Errorf("expected key size 2048, got %d", slots[0].KeySize)
-		}
-	})
-
-	t.Run("Ed25519 certificate", func(t *testing.T) {
-		config := createValidConfig()
-		backend, err := NewFileBackend(config)
-		if err != nil {
-			t.Fatalf("NewFileBackend() error = %v", err)
-		}
-		defer func() { _ = backend.Close() }()
-
-		cert := generateEd25519Certificate(t, "ed25519-cert")
-		err = backend.Store(pivcert.PIVSlotAuthentication, cert)
-		if err != nil {
-			t.Fatalf("Store() error = %v", err)
-		}
-
-		slots, err := backend.List()
-		if err != nil {
-			t.Fatalf("List() error = %v", err)
-		}
-		if len(slots) != 1 {
-			t.Fatalf("expected 1 slot, got %d", len(slots))
-		}
-		if slots[0].Algorithm != "Ed25519" {
-			t.Errorf("expected algorithm Ed25519, got %s", slots[0].Algorithm)
-		}
-		if slots[0].KeySize != 256 {
-			t.Errorf("expected key size 256, got %d", slots[0].KeySize)
-		}
-	})
-}
-
-func TestFileBackend_OverwriteCertificate(t *testing.T) {
-	config := createValidConfig()
-	backend, err := NewFileBackend(config)
-	if err != nil {
-		t.Fatalf("NewFileBackend() error = %v", err)
-	}
-	defer func() { _ = backend.Close() }()
-
-	// Store first certificate
-	cert1 := generateTestCertificate(t, "cert-1")
-	err = backend.Store(pivcert.PIVSlotAuthentication, cert1)
-	if err != nil {
-		t.Fatalf("Store() first cert error = %v", err)
-	}
-
-	// Store second certificate in same slot
-	cert2 := generateTestCertificate(t, "cert-2")
-	err = backend.Store(pivcert.PIVSlotAuthentication, cert2)
-	if err != nil {
-		t.Fatalf("Store() second cert error = %v", err)
-	}
-
-	// Retrieve should return second certificate
-	retrieved, err := backend.Retrieve(pivcert.PIVSlotAuthentication)
-	if err != nil {
-		t.Fatalf("Retrieve() error = %v", err)
-	}
-	if !bytes.Equal(retrieved.Raw, cert2.Raw) {
-		t.Error("retrieved certificate should be the second one")
-	}
-
-	// List should only show one slot
-	slots, err := backend.List()
-	if err != nil {
-		t.Fatalf("List() error = %v", err)
-	}
-	if len(slots) != 1 {
-		t.Errorf("expected 1 slot, got %d", len(slots))
-	}
-}
-
-// TestKeyAlgorithmName_DSA verifies that a DSA key returns "DSA".
 func TestKeyAlgorithmName_DSA(t *testing.T) {
-	cert := &x509.Certificate{
-		PublicKeyAlgorithm: x509.DSA,
-	}
-	name := pivcert.KeyAlgorithmName(cert)
-	if name != "DSA" {
-		t.Errorf("pivcert.KeyAlgorithmName() = %q, want %q", name, "DSA")
-	}
+	cert := &x509.Certificate{PublicKeyAlgorithm: x509.DSA}
+	assert.Equal(t, "DSA", pivcert.KeyAlgorithmName(cert))
 }
 
-// TestKeyAlgorithmName_Unknown verifies that an unknown algorithm returns "Unknown".
 func TestKeyAlgorithmName_Unknown(t *testing.T) {
-	cert := &x509.Certificate{
-		PublicKeyAlgorithm: x509.PublicKeyAlgorithm(99),
-	}
-	name := pivcert.KeyAlgorithmName(cert)
-	if name != "Unknown" {
-		t.Errorf("pivcert.KeyAlgorithmName() = %q, want %q", name, "Unknown")
-	}
+	cert := &x509.Certificate{PublicKeyAlgorithm: x509.PublicKeyAlgorithm(99)}
+	assert.Equal(t, "Unknown", pivcert.KeyAlgorithmName(cert))
 }
 
-// TestKeySize_UnknownAlgorithm verifies that an unknown key type returns 0
-// when the algorithm is not Ed25519.
 func TestKeySize_UnknownAlgorithm(t *testing.T) {
 	cert := &x509.Certificate{
 		PublicKeyAlgorithm: x509.PublicKeyAlgorithm(99),
 		PublicKey:          "not-a-real-key", // string has no Size() or Params() method
 	}
-	size := pivcert.KeySize(cert)
-	if size != 0 {
-		t.Errorf("pivcert.KeySize() = %d, want 0", size)
-	}
+	assert.Equal(t, 0, pivcert.KeySize(cert))
 }
 
-// TestKeySize_Ed25519 verifies that an Ed25519 key returns 256 bits.
 func TestKeySize_Ed25519(t *testing.T) {
-	cert := generateEd25519Certificate(t, "ed25519-keysize")
-	size := pivcert.KeySize(cert)
-	if size != 256 {
-		t.Errorf("pivcert.KeySize() = %d, want 256", size)
-	}
+	assert.Equal(t, 256, pivcert.KeySize(generateEd25519Certificate(t, "ed25519-keysize")))
 }
 
-// TestKeySize_RSA verifies that an RSA-2048 key returns 2048 bits via Size()*8.
 func TestKeySize_RSA(t *testing.T) {
-	cert := generateRSACertificate(t, "rsa-keysize")
-	size := pivcert.KeySize(cert)
-	if size != 2048 {
-		t.Errorf("pivcert.KeySize() = %d, want 2048", size)
-	}
+	assert.Equal(t, 2048, pivcert.KeySize(generateRSACertificate(t, "rsa-keysize")))
 }
 
 // TestKeySize_ECDSA verifies a real standard-library ECDSA certificate reports
-// its curve size.
-//
-// This previously asserted 0. The file backend carried its own keySize whose
-// ECDSA case was `interface{ Params() interface{ BitSize() int } }`, which
-// *ecdsa.PublicKey cannot satisfy — its Params returns *elliptic.CurveParams,
-// and Go requires an exact method signature match. Every ECDSA certificate fell
-// through to the default branch and was recorded with KeySize 0, and the test
-// pinned that wrong answer in place. The backend now uses the canonical
-// pivcert.KeySize, which type-switches on the concrete key types.
+// its curve size. A former backend-local keySize matched *ecdsa.PublicKey
+// against a method signature it cannot satisfy and recorded every ECDSA
+// certificate with KeySize 0.
 func TestKeySize_ECDSA(t *testing.T) {
-	cert := generateTestCertificate(t, "ecdsa-keysize")
-	if size := pivcert.KeySize(cert); size != 256 {
-		t.Errorf("KeySize() = %d, want 256 for a P-256 ECDSA key", size)
-	}
+	assert.Equal(t, 256, pivcert.KeySize(generateTestCertificate(t, "ecdsa-keysize")))
 }
 
 // TestKeySize_ECDSA_P384 covers a second curve so the result tracks the actual
 // curve rather than a constant.
 func TestKeySize_ECDSA_P384(t *testing.T) {
 	key, err := ecdsa.GenerateKey(elliptic.P384(), rand.Reader)
-	if err != nil {
-		t.Fatalf("generate P-384 key: %v", err)
-	}
-	cert := &x509.Certificate{
-		PublicKeyAlgorithm: x509.ECDSA,
-		PublicKey:          &key.PublicKey,
-	}
-	if size := pivcert.KeySize(cert); size != 384 {
-		t.Errorf("KeySize() = %d, want 384 for a P-384 ECDSA key", size)
-	}
+	require.NoError(t, err)
+	cert := &x509.Certificate{PublicKeyAlgorithm: x509.ECDSA, PublicKey: &key.PublicKey}
+	assert.Equal(t, 384, pivcert.KeySize(cert))
 }
 
 // TestKeySize_ECDSA_NilCurve verifies a malformed ECDSA key with no curve
 // reports 0 rather than panicking.
 func TestKeySize_ECDSA_NilCurve(t *testing.T) {
-	cert := &x509.Certificate{
-		PublicKeyAlgorithm: x509.ECDSA,
-		PublicKey:          &ecdsa.PublicKey{},
-	}
-	if size := pivcert.KeySize(cert); size != 0 {
-		t.Errorf("KeySize() = %d, want 0 for an ECDSA key with no curve", size)
-	}
-}
-
-// TestStoredMetadata_RecordsECDSAKeySize is the end-to-end guard: the value the
-// backend actually persists for an ECDSA certificate must be the curve size,
-// not 0. This is what a caller reading slot metadata sees.
-func TestStoredMetadata_RecordsECDSAKeySize(t *testing.T) {
-	fb, err := NewFileBackend(createValidConfig())
-	if err != nil {
-		t.Fatalf("NewFileBackend: %v", err)
-	}
-	cert := generateTestCertificate(t, "ecdsa-metadata")
-
-	if err := fb.Store(pivcert.PIVSlotAuthentication, cert); err != nil {
-		t.Fatalf("Store: %v", err)
-	}
-
-	infos, listErr := fb.List()
-	if listErr != nil {
-		t.Fatalf("List: %v", listErr)
-	}
-	if len(infos) != 1 {
-		t.Fatalf("List returned %d slots, want 1", len(infos))
-	}
-	if infos[0].KeySize != 256 {
-		t.Errorf("persisted KeySize = %d, want 256", infos[0].KeySize)
-	}
-	if infos[0].Algorithm != "ECDSA" {
-		t.Errorf("persisted Algorithm = %q, want %q", infos[0].Algorithm, "ECDSA")
-	}
-}
-
-// TestLoadMetadata_CorruptedJSON verifies that corrupted JSON in the metadata
-// file returns an error.
-func TestLoadMetadata_CorruptedJSON(t *testing.T) {
-	memBackend := storage.NewMemory()
-	config := &pivcert.FileStorageConfig{
-		Backend:    memBackend,
-		DEREnabled: true,
-		PEMEnabled: true,
-	}
-	backend, err := NewFileBackend(config)
-	if err != nil {
-		t.Fatalf("NewFileBackend() error = %v", err)
-	}
-	defer func() { _ = backend.Close() }()
-
-	// Corrupt the metadata file
-	err = memBackend.Put(context.Background(), "metadata/slots.json", []byte("{invalid json"))
-	if err != nil {
-		t.Fatalf("failed to corrupt metadata: %v", err)
-	}
-
-	// Try to list - should fail when loading metadata
-	_, err = backend.List()
-	if err == nil {
-		t.Error("List() with corrupted metadata expected error, got nil")
-	}
-}
-
-// TestLoadMetadata_NilSlotsMap verifies that loadMetadata initializes a nil
-// Slots map to an empty map.
-func TestLoadMetadata_NilSlotsMap(t *testing.T) {
-	memBackend := storage.NewMemory()
-	config := &pivcert.FileStorageConfig{
-		Backend:    memBackend,
-		DEREnabled: true,
-		PEMEnabled: true,
-	}
-	backend, err := NewFileBackend(config)
-	if err != nil {
-		t.Fatalf("NewFileBackend() error = %v", err)
-	}
-	defer func() { _ = backend.Close() }()
-
-	// Write metadata with null slots field
-	err = memBackend.Put(context.Background(), "metadata/slots.json", []byte(`{"version":"1.0","slots":null}`))
-	if err != nil {
-		t.Fatalf("failed to write metadata with null slots: %v", err)
-	}
-
-	// List should still work and return empty
-	slots, err := backend.List()
-	if err != nil {
-		t.Fatalf("List() with null slots error = %v", err)
-	}
-	if len(slots) != 0 {
-		t.Errorf("expected 0 slots, got %d", len(slots))
-	}
-}
-
-// TestEnsureMetadataInitialized_PutError verifies that a Put error during
-// metadata initialization is propagated.
-func TestEnsureMetadataInitialized_PutError(t *testing.T) {
-	inner := storage.NewMemory()
-	mock := newMockErrorBackend(inner)
-	// Make Put fail (metadata initialization calls Put)
-	mock.putErr = errMockBackend
-
-	config := &pivcert.FileStorageConfig{
-		Backend:    mock,
-		DEREnabled: true,
-		PEMEnabled: true,
-	}
-
-	_, err := NewFileBackend(config)
-	if err == nil {
-		t.Error("NewFileBackend() expected error from Put failure, got nil")
-		return
-	}
-	if !errors.Is(err, errMockBackend) {
-		t.Errorf("NewFileBackend() error = %v, want %v", err, errMockBackend)
-	}
-}
-
-// TestRemoveMetadata_LoadError verifies that removeMetadata propagates
-// a loadMetadata error.
-func TestRemoveMetadata_LoadError(t *testing.T) {
-	inner := storage.NewMemory()
-	mock := newMockErrorBackend(inner)
-
-	config := &pivcert.FileStorageConfig{
-		Backend:    mock,
-		DEREnabled: true,
-		PEMEnabled: true,
-	}
-	backend, err := NewFileBackend(config)
-	if err != nil {
-		t.Fatalf("NewFileBackend() error = %v", err)
-	}
-	defer func() { _ = backend.Close() }()
-
-	// Store a cert
-	cert := generateTestCertificate(t, "test-rm-meta-err")
-	err = backend.Store(pivcert.PIVSlotAuthentication, cert)
-	if err != nil {
-		t.Fatalf("Store() error = %v", err)
-	}
-
-	// Now inject metadata load error on Get
-	mock.getErr = errMockBackend
-
-	// Delete will try to removeMetadata which calls loadMetadata
-	err = backend.Delete(pivcert.PIVSlotAuthentication)
-	if err == nil {
-		t.Error("Delete() expected error from metadata load failure, got nil")
-		return
-	}
-	if !errors.Is(err, errMockBackend) {
-		t.Errorf("Delete() error = %v, want %v", err, errMockBackend)
-	}
-}
-
-// TestUpdateMetadata_LoadError verifies that updateMetadata propagates
-// a loadMetadata error.
-func TestUpdateMetadata_LoadError(t *testing.T) {
-	inner := storage.NewMemory()
-	mock := newMockErrorBackend(inner)
-
-	config := &pivcert.FileStorageConfig{
-		Backend:    mock,
-		DEREnabled: true,
-		PEMEnabled: true,
-	}
-	backend, err := NewFileBackend(config)
-	if err != nil {
-		t.Fatalf("NewFileBackend() error = %v", err)
-	}
-	defer func() { _ = backend.Close() }()
-
-	// Inject error so loadMetadata fails during Store
-	mock.getErr = errMockBackend
-
-	cert := generateTestCertificate(t, "test-update-meta-err")
-	err = backend.Store(pivcert.PIVSlotAuthentication, cert)
-	if err == nil {
-		t.Error("Store() expected error from metadata load failure, got nil")
-		return
-	}
-	if !errors.Is(err, errMockBackend) {
-		t.Errorf("Store() error = %v, want %v", err, errMockBackend)
-	}
+	cert := &x509.Certificate{PublicKeyAlgorithm: x509.ECDSA, PublicKey: &ecdsa.PublicKey{}}
+	assert.Equal(t, 0, pivcert.KeySize(cert))
 }

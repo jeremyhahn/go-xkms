@@ -134,6 +134,44 @@ func TestVerify_Ed25519_InvalidSignature(t *testing.T) {
 	assert.False(t, verifyResp.Valid)
 }
 
+// TestSignVerify_Ed25519_DigestRefused covers an Ed25519 key handed a digest
+// instead of the message: Ed25519 hashes the message internally, so signing
+// the digest would produce a signature over the wrong input. Both Sign and
+// Verify refuse it with ErrEd25519DigestInput.
+func TestSignVerify_Ed25519_DigestRefused(t *testing.T) {
+	software, _ := setupService(t)
+	svc, err := Get()
+	require.NoError(t, err)
+	ctx := context.Background()
+
+	_, err = software.GenerateEd25519(ctx, &types.KeyAttributes{
+		CN:           "ed25519-digest",
+		KeyAlgorithm: x509.Ed25519,
+	})
+	require.NoError(t, err)
+
+	digest := sha256.Sum256([]byte("a message hashed by the caller"))
+
+	_, err = svc.Sign(ctx, &transport.SignRequest{
+		Backend:      "software",
+		KeyID:        "ed25519-digest",
+		Data:         digest[:],
+		Hash:         "SHA-256",
+		DataIsDigest: true,
+	})
+	require.ErrorIs(t, err, ErrEd25519DigestInput)
+
+	_, err = svc.Verify(ctx, &transport.VerifyRequest{
+		Backend:      "software",
+		KeyID:        "ed25519-digest",
+		Data:         digest[:],
+		Signature:    make([]byte, ed25519.SignatureSize),
+		Hash:         "SHA-256",
+		DataIsDigest: true,
+	})
+	require.ErrorIs(t, err, ErrEd25519DigestInput)
+}
+
 // TestSign_Ed25519ctx_RoundTrip covers CKM_EDDSA's Ed25519ctx variant (RFC
 // 8032 Table 73: phFlag=false, context present), threaded end to end from
 // transport.SignRequest.Context through to the signature.

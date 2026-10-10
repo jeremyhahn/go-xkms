@@ -14,8 +14,9 @@
 package ssh
 
 import (
+	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
+
 	pkgprofile "github.com/jeremyhahn/go-xkms/pkg/ssh/profile"
-	"github.com/jeremyhahn/go-xkms/pkg/storage"
 )
 
 // Profile is an SSH host connection profile (folder-organized). Re-exported so
@@ -28,20 +29,20 @@ type ProfileStore = pkgprofile.Store
 // GenerateProfileID returns the deterministic ID for a (name, folderPath).
 var GenerateProfileID = pkgprofile.GenerateID
 
-// NewProfileStore constructs a folder-aware SSH profile store over the given
-// storage backend (barrier-routed in the GUI).
-func NewProfileStore(backend storage.Backend) (ProfileStore, error) {
-	return pkgprofile.NewStore(backend)
+// NewProfileStore constructs a folder-aware SSH profile store over the DAOs
+// daos builds.
+func NewProfileStore(daos *qrdbsdk.DAOFactory) (ProfileStore, error) {
+	return pkgprofile.NewStore(daos)
 }
 
 // Re-exported profile error sentinels for errors.Is checks.
 var (
-	ErrProfileNotFound    = pkgprofile.ErrNotFound
-	ErrProfileExists      = pkgprofile.ErrExists
-	ErrProfileInvalidName = pkgprofile.ErrInvalidName
-	ErrProfileInvalidHost = pkgprofile.ErrInvalidHost
-	ErrProfileFolderEmpty = pkgprofile.ErrFolderEmpty
-	ErrProfileSameFolder  = pkgprofile.ErrMoveToSameFolder
-	ErrProfileStoreClosed = pkgprofile.ErrStoreClosed
-	ErrProfileNilBackend  = pkgprofile.ErrNilBackend
+	ErrProfileNotFound      = pkgprofile.ErrNotFound
+	ErrProfileExists        = pkgprofile.ErrExists
+	ErrProfileInvalidName   = pkgprofile.ErrInvalidName
+	ErrProfileInvalidHost   = pkgprofile.ErrInvalidHost
+	ErrProfileFolderEmpty   = pkgprofile.ErrFolderEmpty
+	ErrProfileSameFolder    = pkgprofile.ErrMoveToSameFolder
+	ErrProfileStoreClosed   = pkgprofile.ErrStoreClosed
+	ErrProfileNilDAOFactory = pkgprofile.ErrNilDAOFactory
 )

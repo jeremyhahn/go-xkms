@@ -299,7 +299,7 @@
   let extensionFullStatus: ExtensionFullStatus | null = null;
   let extensionLoading = false;
   let extensionUnpairing = false;
-  let extensionEnabled = true;
+  let localAppAccess = false;
   let requireAutofillAuth = true;
 
   // Storage state
@@ -737,9 +737,9 @@
       extensionFullStatus = fullStatus;
       extensionPairedList = fullStatus.paired_extensions || [];
     }
-    const enabled = await callBackend<boolean>('AutoFillService', 'IsEnabled');
-    if (enabled !== null && enabled !== undefined) {
-      extensionEnabled = enabled;
+    const config = await callBackend<GUIConfig>('AppService', 'GetConfig');
+    if (config) {
+      localAppAccess = config.local_app_access_enabled;
     }
     const authRequired = await callBackend<boolean>('AutoFillService', 'GetRequireAuthentication');
     if (authRequired !== null && authRequired !== undefined) {
@@ -768,21 +768,26 @@
     }
   }
 
-  async function handleToggleExtensionEnabled(newValue: boolean): Promise<void> {
-    const { error } = await callBackendWithError<void>('AutoFillService', 'SetEnabled', newValue);
-    if (error) {
-      extensionEnabled = !newValue;
-      addNotification('error', `Failed to update extension setting: ${error}`);
-    } else {
-      // Persist in config so it survives restart.
-      const current = await callBackend<GUIConfig>('AppService', 'GetConfig');
-      if (current) {
-        await callBackendVoid('AppService', 'UpdateConfig', { ...current, browser_extension_enabled: newValue });
-      }
-      addNotification('success', newValue
-        ? 'Browser extension autofill enabled'
-        : 'Browser extension autofill disabled');
+  // The backend's config updater applies the setting: it switches autofill
+  // and starts or stops the local IPC socket, then the status is re-read so
+  // the IPC Service badge shows the result.
+  async function handleToggleLocalAppAccess(newValue: boolean): Promise<void> {
+    const current = await callBackend<GUIConfig>('AppService', 'GetConfig');
+    if (!current) {
+      localAppAccess = !newValue;
+      addNotification('error', 'Failed to update local app access: settings unavailable');
+      return;
     }
+    const { error } = await callBackendWithError<void>('AppService', 'UpdateConfig', { ...current, local_app_access_enabled: newValue });
+    if (error) {
+      localAppAccess = !newValue;
+      addNotification('error', `Failed to update local app access: ${error}`);
+      return;
+    }
+    addNotification('success', newValue
+      ? 'Other apps can use your keys while xKey is open and unlocked'
+      : 'Other apps can no longer use your keys');
+    await loadExtensionPairingStatus();
   }
 
   async function handleDevToolsToggle(e: CustomEvent<boolean>): Promise<void> {
@@ -2081,17 +2086,17 @@
 
                 <!-- Per-browser manifest install lives in Applications → Browser. -->
 
-                <!-- Extension Enabled Toggle -->
+                <!-- Local App Access Toggle -->
                 <div class="setting-row">
                   <div class="setting-info">
-                    <span class="text-title-small">Enable browser extension autofill</span>
+                    <span class="text-title-small">Let other apps use my keys while xKey is open</span>
                     <span class="text-body-small setting-desc">
-                      Allow the browser extension to search and fill credentials from xKey.
+                      Opens a private local socket, only while xKey is unlocked, for the browser extension and the PKCS#11 module. Off: nothing listens.
                     </span>
                   </div>
                   <Toggle
-                    bind:checked={extensionEnabled}
-                    onChange={handleToggleExtensionEnabled}
+                    bind:checked={localAppAccess}
+                    onChange={handleToggleLocalAppAccess}
                     disabled={$isEnterpriseMode && ($enterprisePolicy?.extension_enabled === false || $enterprisePolicy?.user_can_configure_extension === false)}
                   />
                 </div>

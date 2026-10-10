@@ -30,17 +30,13 @@ import (
 	"github.com/jeremyhahn/go-xkms/pkg/ssh/keys"
 	"github.com/jeremyhahn/go-xkms/pkg/ssh/known_hosts"
 	"github.com/jeremyhahn/go-xkms/pkg/ssh/scope"
-	"github.com/jeremyhahn/go-xkms/pkg/storage"
+	"github.com/jeremyhahn/go-xkms/pkg/testutil"
 )
 
-// newStore returns a BackendStore wired to an in-memory storage.Backend.
-func newStore(t *testing.T) *known_hosts.BackendStore {
+// newStore returns a DAOStore over a fresh in-memory DAO factory.
+func newStore(t *testing.T) *known_hosts.DAOStore {
 	t.Helper()
-	backend, err := storage.NewMemoryBackend()
-	if err != nil {
-		t.Fatalf("new backend: %v", err)
-	}
-	s, err := known_hosts.NewBackendStore(backend)
+	s, err := known_hosts.NewDAOStore(testutil.NewMemoryDAOFactory())
 	if err != nil {
 		t.Fatalf("new store: %v", err)
 	}

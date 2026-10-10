@@ -20,7 +20,6 @@ import (
 	"context"
 	"crypto"
 	"crypto/ecdsa"
-	"crypto/ed25519"
 	"crypto/elliptic"
 	"crypto/rand"
 	"crypto/rsa"
@@ -54,7 +53,7 @@ func TestEmbeddedTransport_GenerateKey(t *testing.T) {
 
 	t.Run("rsa default size", func(t *testing.T) {
 		resp, err := tr.GenerateKey(ctx, &transport.GenerateKeyRequest{
-			KeyID: "rsa-default", Backend: deriveBackend, KeyType: "RSA",
+			KeyID: "rsa-default", Backend: deriveBackend, Algorithm: "RSA",
 		})
 		if err != nil {
 			t.Fatalf("GenerateKey() error = %v", err)
@@ -66,7 +65,7 @@ func TestEmbeddedTransport_GenerateKey(t *testing.T) {
 
 	t.Run("ecdsa explicit curve", func(t *testing.T) {
 		resp, err := tr.GenerateKey(ctx, &transport.GenerateKeyRequest{
-			KeyID: "ecdsa-p384", Backend: deriveBackend, KeyType: "ECDSA", Curve: "P-384",
+			KeyID: "ecdsa-p384", Backend: deriveBackend, Algorithm: "ECDSA", Curve: "P-384",
 		})
 		if err != nil {
 			t.Fatalf("GenerateKey() error = %v", err)
@@ -78,7 +77,7 @@ func TestEmbeddedTransport_GenerateKey(t *testing.T) {
 
 	t.Run("ecdsa invalid curve", func(t *testing.T) {
 		_, err := tr.GenerateKey(ctx, &transport.GenerateKeyRequest{
-			KeyID: "ecdsa-bad-curve", Backend: deriveBackend, KeyType: "ECDSA", Curve: "not-a-curve",
+			KeyID: "ecdsa-bad-curve", Backend: deriveBackend, Algorithm: "ECDSA", Curve: "not-a-curve",
 		})
 		if err == nil {
 			t.Fatal("expected an error for an unrecognised curve")
@@ -87,7 +86,7 @@ func TestEmbeddedTransport_GenerateKey(t *testing.T) {
 
 	t.Run("ed25519", func(t *testing.T) {
 		resp, err := tr.GenerateKey(ctx, &transport.GenerateKeyRequest{
-			KeyID: "ed25519-key", Backend: deriveBackend, KeyType: "Ed25519",
+			KeyID: "ed25519-key", Backend: deriveBackend, Algorithm: "Ed25519",
 		})
 		if err != nil {
 			t.Fatalf("GenerateKey() error = %v", err)
@@ -99,16 +98,86 @@ func TestEmbeddedTransport_GenerateKey(t *testing.T) {
 
 	t.Run("unsupported algorithm", func(t *testing.T) {
 		_, err := tr.GenerateKey(ctx, &transport.GenerateKeyRequest{
-			KeyID: "mystery-key", Backend: deriveBackend, KeyType: "DSA",
+			KeyID: "mystery-key", Backend: deriveBackend, Algorithm: "DSA",
 		})
-		if err == nil {
-			t.Fatal("expected an error for an unsupported algorithm")
+		if !errors.Is(err, ErrKeyGenerationFailed) {
+			t.Fatalf("GenerateKey() error = %v, want ErrKeyGenerationFailed", err)
+		}
+	})
+
+	t.Run("symmetric key encrypts and decrypts", func(t *testing.T) {
+		resp, err := tr.GenerateKey(ctx, &transport.GenerateKeyRequest{
+			KeyID: "aes-gen", Backend: deriveBackend, Algorithm: "Symmetric", KeySize: 256,
+		})
+		if err != nil {
+			t.Fatalf("GenerateKey(Symmetric) error = %v", err)
+		}
+		if resp.PublicKeyPEM != "" {
+			t.Errorf("symmetric key response carries a public key: %q", resp.PublicKeyPEM)
+		}
+
+		plaintext := []byte("secret-key round trip")
+		enc, err := tr.Encrypt(ctx, &transport.EncryptRequest{
+			Backend: deriveBackend, KeyID: "aes-gen", Plaintext: plaintext,
+		})
+		if err != nil {
+			t.Fatalf("Encrypt() error = %v", err)
+		}
+		dec, err := tr.Decrypt(ctx, &transport.DecryptRequest{
+			Backend: deriveBackend, KeyID: "aes-gen", Ciphertext: enc.Ciphertext,
+			Nonce: enc.Nonce, Tag: enc.Tag, GCMNonceMode: enc.GCMNonceMode,
+		})
+		if err != nil {
+			t.Fatalf("Decrypt() error = %v", err)
+		}
+		if !bytes.Equal(dec.Plaintext, plaintext) {
+			t.Errorf("Decrypt() = %q, want %q", dec.Plaintext, plaintext)
+		}
+	})
+
+	t.Run("symmetric key stores exportable and sensitive", func(t *testing.T) {
+		for _, key := range []struct {
+			id        string
+			sensitive bool
+		}{{"aes-readable", false}, {"aes-sensitive", true}} {
+			if _, err := tr.GenerateKey(ctx, &transport.GenerateKeyRequest{
+				KeyID: key.id, Backend: deriveBackend, Algorithm: "Symmetric", KeySize: 128,
+				Exportable: true, Sensitive: key.sensitive,
+			}); err != nil {
+				t.Fatalf("GenerateKey(%s) error = %v", key.id, err)
+			}
+		}
+
+		exported, err := tr.ExportKeyMaterial(ctx, &transport.ExportKeyMaterialRequest{
+			Backend: deriveBackend, KeyID: "aes-readable",
+		})
+		if err != nil {
+			t.Fatalf("ExportKeyMaterial(aes-readable) error = %v", err)
+		}
+		if len(exported.KeyMaterial) != 16 {
+			t.Errorf("exported %d bytes, want 16 for an AES-128 key", len(exported.KeyMaterial))
+		}
+
+		_, err = tr.ExportKeyMaterial(ctx, &transport.ExportKeyMaterialRequest{
+			Backend: deriveBackend, KeyID: "aes-sensitive",
+		})
+		if !errors.Is(err, ErrExportFailed) {
+			t.Fatalf("ExportKeyMaterial(aes-sensitive) error = %v, want ErrExportFailed", err)
+		}
+	})
+
+	t.Run("symmetric key size not an AES size", func(t *testing.T) {
+		_, err := tr.GenerateKey(ctx, &transport.GenerateKeyRequest{
+			KeyID: "aes-bad-size", Backend: deriveBackend, Algorithm: "Symmetric", KeySize: 512,
+		})
+		if !errors.Is(err, ErrKeyGenerationFailed) {
+			t.Fatalf("GenerateKey() error = %v, want ErrKeyGenerationFailed", err)
 		}
 	})
 
 	t.Run("backend not found", func(t *testing.T) {
 		_, err := tr.GenerateKey(ctx, &transport.GenerateKeyRequest{
-			KeyID: "x", Backend: "does-not-exist", KeyType: "RSA",
+			KeyID: "x", Backend: "does-not-exist", Algorithm: "RSA",
 		})
 		if !errors.Is(err, ErrBackendNotFound) {
 			t.Fatalf("GenerateKey() error = %v, want ErrBackendNotFound", err)
@@ -131,12 +200,12 @@ func TestEmbeddedTransport_SignVerify(t *testing.T) {
 	ctx := context.Background()
 
 	if _, err := tr.GenerateKey(ctx, &transport.GenerateKeyRequest{
-		KeyID: "sign-ecdsa", Backend: deriveBackend, KeyType: "ECDSA", Curve: "P-256",
+		KeyID: "sign-ecdsa", Backend: deriveBackend, Algorithm: "ECDSA", Curve: "P-256",
 	}); err != nil {
 		t.Fatalf("GenerateKey(ECDSA) error = %v", err)
 	}
 	if _, err := tr.GenerateKey(ctx, &transport.GenerateKeyRequest{
-		KeyID: "sign-ed25519", Backend: deriveBackend, KeyType: "Ed25519",
+		KeyID: "sign-ed25519", Backend: deriveBackend, Algorithm: "Ed25519",
 	}); err != nil {
 		t.Fatalf("GenerateKey(Ed25519) error = %v", err)
 	}
@@ -324,12 +393,12 @@ func TestEmbeddedTransport_EncryptAsym(t *testing.T) {
 	ctx := context.Background()
 
 	if _, err := tr.GenerateKey(ctx, &transport.GenerateKeyRequest{
-		KeyID: "oaep-rsa", Backend: deriveBackend, KeyType: "RSA", KeySize: 2048,
+		KeyID: "oaep-rsa", Backend: deriveBackend, Algorithm: "RSA", KeySize: 2048,
 	}); err != nil {
 		t.Fatalf("GenerateKey(RSA) error = %v", err)
 	}
 	if _, err := tr.GenerateKey(ctx, &transport.GenerateKeyRequest{
-		KeyID: "oaep-ecdsa", Backend: deriveBackend, KeyType: "ECDSA", Curve: "P-256",
+		KeyID: "oaep-ecdsa", Backend: deriveBackend, Algorithm: "ECDSA", Curve: "P-256",
 	}); err != nil {
 		t.Fatalf("GenerateKey(ECDSA) error = %v", err)
 	}
@@ -408,7 +477,7 @@ func TestEmbeddedTransport_DeriveKeyECDH(t *testing.T) {
 	ctx := context.Background()
 
 	if _, err := tr.GenerateKey(ctx, &transport.GenerateKeyRequest{
-		KeyID: "ecdh-local", Backend: deriveBackend, KeyType: "ECDSA", Curve: "P-256",
+		KeyID: "ecdh-local", Backend: deriveBackend, Algorithm: "ECDSA", Curve: "P-256",
 	}); err != nil {
 		t.Fatalf("GenerateKey(ECDSA) error = %v", err)
 	}
@@ -444,7 +513,9 @@ func TestEmbeddedTransport_DeriveKeyECDH(t *testing.T) {
 	})
 
 	t.Run("backend not found", func(t *testing.T) {
-		_, err := tr.DeriveKeyECDH(ctx, &transport.DeriveKeyECDHRequest{Backend: "does-not-exist"})
+		_, err := tr.DeriveKeyECDH(ctx, &transport.DeriveKeyECDHRequest{
+			Backend: "does-not-exist", KeyID: "ecdh-local", PeerPublicKey: []byte("peer"),
+		})
 		if !errors.Is(err, ErrBackendNotFound) {
 			t.Fatalf("DeriveKeyECDH() error = %v, want ErrBackendNotFound", err)
 		}
@@ -481,8 +552,8 @@ func TestEmbeddedTransport_GetImportParameters(t *testing.T) {
 		_, err := tr.GetImportParameters(ctx, &transport.GetImportParametersRequest{
 			Backend: deriveBackend, KeyType: "not-an-algorithm",
 		})
-		if !errors.Is(err, ErrImportTemplateUnsupported) {
-			t.Fatalf("GetImportParameters() error = %v, want ErrImportTemplateUnsupported", err)
+		if !errors.Is(err, ErrGetImportParamsFailed) {
+			t.Fatalf("GetImportParameters() error = %v, want ErrGetImportParamsFailed", err)
 		}
 	})
 
@@ -497,8 +568,8 @@ func TestEmbeddedTransport_GetImportParameters(t *testing.T) {
 			Backend: "does-not-exist", KeyID: "import-target", KeyType: "RSA", KeySize: 2048,
 			Algorithm: string(xkms.WrappingAlgorithmRSAES_OAEP_SHA_256),
 		})
-		if !errors.Is(err, ErrGetImportParamsFailed) {
-			t.Fatalf("GetImportParameters() error = %v, want ErrGetImportParamsFailed", err)
+		if !errors.Is(err, ErrBackendNotFound) {
+			t.Fatalf("GetImportParameters() error = %v, want ErrBackendNotFound", err)
 		}
 	})
 }
@@ -537,125 +608,6 @@ func TestEmbeddedTransport_PIVDelegation(t *testing.T) {
 	if _, err := tr.GeneratePIVCSR(ctx, &transport.GeneratePIVCSRRequest{Backend: deriveBackend}); err == nil {
 		t.Error("GeneratePIVCSR() = nil error, want an error")
 	}
-}
-
-// TestParseHashAlgorithm covers the name-to-crypto.Hash table, including the
-// case-insensitive and hyphenated spellings PKCS#11 callers use, and the
-// SHA-256 fallback for an unrecognised name.
-func TestParseHashAlgorithm(t *testing.T) {
-	tests := []struct {
-		name string
-		want string
-	}{
-		{"sha256", "SHA-256"}, {"SHA256", "SHA-256"}, {"sha-256", "SHA-256"}, {"SHA-256", "SHA-256"},
-		{"sha384", "SHA-384"}, {"sha512", "SHA-512"}, {"sha1", "SHA-1"},
-		{"", "SHA-256"}, {"not-a-hash", "SHA-256"},
-	}
-	for _, tc := range tests {
-		t.Run(tc.name, func(t *testing.T) {
-			if got := parseHashAlgorithm(tc.name).String(); got != tc.want {
-				t.Errorf("parseHashAlgorithm(%q) = %s, want %s", tc.name, got, tc.want)
-			}
-		})
-	}
-}
-
-// TestExtractPublicKeyPEM covers each key type extractPublicKeyPEM
-// recognises and the type it must refuse.
-func TestExtractPublicKeyPEM(t *testing.T) {
-	t.Run("ecdsa", func(t *testing.T) {
-		priv, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
-		if err != nil {
-			t.Fatalf("ecdsa.GenerateKey() error = %v", err)
-		}
-		pem, err := extractPublicKeyPEM(priv)
-		if err != nil {
-			t.Fatalf("extractPublicKeyPEM() error = %v", err)
-		}
-		if pem == "" {
-			t.Error("expected a non-empty PEM block")
-		}
-	})
-
-	t.Run("unsupported type", func(t *testing.T) {
-		_, err := extractPublicKeyPEM("not-a-key")
-		if err == nil {
-			t.Fatal("expected an error for an unsupported private key type")
-		}
-	})
-}
-
-// TestVerifySignatureHelper covers the three key-algorithm branches and the
-// default case for an algorithm the helper does not recognise.
-func TestVerifySignatureHelper(t *testing.T) {
-	priv, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
-	if err != nil {
-		t.Fatalf("ecdsa.GenerateKey() error = %v", err)
-	}
-	data := []byte("verify me")
-
-	t.Run("wrong public key type for algorithm", func(t *testing.T) {
-		// An RSA-shaped verification against an ECDSA public key must fail
-		// closed (type assertion miss), not panic.
-		if verifySignature(&priv.PublicKey, data, []byte("sig"), "SHA256", x509.RSA) {
-			t.Error("verifySignature() = true for a type mismatch, want false")
-		}
-	})
-
-	t.Run("ecdsa-shaped verification against a non-ECDSA key", func(t *testing.T) {
-		edPub, _, err := ed25519.GenerateKey(rand.Reader)
-		if err != nil {
-			t.Fatalf("ed25519.GenerateKey() error = %v", err)
-		}
-		if verifySignature(edPub, data, []byte("sig"), "SHA256", x509.ECDSA) {
-			t.Error("verifySignature() = true for a type mismatch, want false")
-		}
-	})
-
-	t.Run("unrecognised algorithm", func(t *testing.T) {
-		if verifySignature(&priv.PublicKey, data, []byte("sig"), "SHA256", x509.UnknownPublicKeyAlgorithm) {
-			t.Error("verifySignature() = true for an unrecognised algorithm, want false")
-		}
-	})
-
-	t.Run("rsa genuine and tampered", func(t *testing.T) {
-		rsaPriv, err := rsa.GenerateKey(rand.Reader, 2048)
-		if err != nil {
-			t.Fatalf("rsa.GenerateKey() error = %v", err)
-		}
-		digest := sha256.Sum256(data)
-		sig, err := rsa.SignPKCS1v15(rand.Reader, rsaPriv, crypto.SHA256, digest[:])
-		if err != nil {
-			t.Fatalf("rsa.SignPKCS1v15() error = %v", err)
-		}
-		if !verifySignature(&rsaPriv.PublicKey, data, sig, "SHA256", x509.RSA) {
-			t.Error("verifySignature() = false for a genuine RSA signature, want true")
-		}
-		badSig := append([]byte{}, sig...)
-		badSig[0] ^= 0xFF
-		if verifySignature(&rsaPriv.PublicKey, data, badSig, "SHA256", x509.RSA) {
-			t.Error("verifySignature() = true for a tampered RSA signature, want false")
-		}
-	})
-
-	t.Run("ed25519 genuine and tampered, and a type mismatch", func(t *testing.T) {
-		edPub, edPriv, err := ed25519.GenerateKey(rand.Reader)
-		if err != nil {
-			t.Fatalf("ed25519.GenerateKey() error = %v", err)
-		}
-		sig := ed25519.Sign(edPriv, data)
-		if !verifySignature(edPub, data, sig, "", x509.Ed25519) {
-			t.Error("verifySignature() = false for a genuine Ed25519 signature, want true")
-		}
-		badSig := append([]byte{}, sig...)
-		badSig[0] ^= 0xFF
-		if verifySignature(edPub, data, badSig, "", x509.Ed25519) {
-			t.Error("verifySignature() = true for a tampered Ed25519 signature, want false")
-		}
-		if verifySignature(&priv.PublicKey, data, sig, "", x509.Ed25519) {
-			t.Error("verifySignature() = true for an ECDSA key claimed as Ed25519, want false")
-		}
-	})
 }
 
 // TestNewEmbeddedTransport_NotInitialized covers the guard that refuses to
@@ -749,7 +701,7 @@ func TestEmbeddedTransport_WrapUnwrapKeyByID_RSAOAEP_RoundTrip(t *testing.T) {
 	ctx := context.Background()
 
 	if _, err := tr.GenerateKey(ctx, &transport.GenerateKeyRequest{
-		KeyID: "wrap-kek-oaep", Backend: deriveBackend, KeyType: "RSA", KeySize: 2048,
+		KeyID: "wrap-kek-oaep", Backend: deriveBackend, Algorithm: "RSA", KeySize: 2048,
 	}); err != nil {
 		t.Fatalf("GenerateKey(RSA) error = %v", err)
 	}
@@ -816,8 +768,8 @@ func TestEmbeddedTransport_WrapUnwrapKeyByID_ErrorPaths(t *testing.T) {
 			TargetKeyBackend: deriveBackend, TargetKeyID: "no-such-target-key",
 			Algorithm: wrapAESKW,
 		})
-		if !errors.Is(err, ErrWrappingFailed) {
-			t.Fatalf("WrapKeyByID() error = %v, want ErrWrappingFailed", err)
+		if !errors.Is(err, ErrKeyNotFound) {
+			t.Fatalf("WrapKeyByID() error = %v, want ErrKeyNotFound", err)
 		}
 	})
 
@@ -827,8 +779,8 @@ func TestEmbeddedTransport_WrapUnwrapKeyByID_ErrorPaths(t *testing.T) {
 			TargetKeyBackend: deriveBackend, TargetKeyID: targetKey.CN,
 			Algorithm: wrapAESKW,
 		})
-		if !errors.Is(err, ErrWrappingFailed) {
-			t.Fatalf("WrapKeyByID() error = %v, want ErrWrappingFailed", err)
+		if !errors.Is(err, ErrKeyNotFound) {
+			t.Fatalf("WrapKeyByID() error = %v, want ErrKeyNotFound", err)
 		}
 	})
 
@@ -856,8 +808,8 @@ func TestEmbeddedTransport_WrapUnwrapKeyByID_ErrorPaths(t *testing.T) {
 			TargetKeyBackend: deriveBackend, TargetKeyID: "unwrap-error-target",
 			TargetKeyType: "AES",
 		})
-		if !errors.Is(err, ErrWrappingFailed) {
-			t.Fatalf("UnwrapKeyByID() error = %v, want ErrWrappingFailed", err)
+		if !errors.Is(err, ErrKeyNotFound) {
+			t.Fatalf("UnwrapKeyByID() error = %v, want ErrKeyNotFound", err)
 		}
 	})
 
@@ -951,8 +903,8 @@ func TestEmbeddedTransport_ImportKey_ErrorPaths(t *testing.T) {
 		_, err := tr.ImportKey(ctx, &transport.ImportKeyRequest{
 			Backend: deriveBackend, KeyID: "bad-template", KeyType: "not-an-algorithm",
 		})
-		if !errors.Is(err, ErrImportTemplateUnsupported) {
-			t.Fatalf("ImportKey() error = %v, want ErrImportTemplateUnsupported", err)
+		if !errors.Is(err, ErrImportKeyFailed) {
+			t.Fatalf("ImportKey() error = %v, want ErrImportKeyFailed", err)
 		}
 	})
 

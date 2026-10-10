@@ -1,6 +1,6 @@
 # Browser Extension AutoFill — User Guide
 
-> **Status: NORMATIVE** · Feature: `autofill` · Module: `go-xkms/xkey` · Last verified: 2026-09-27
+> **Status: NORMATIVE** · Feature: `autofill` · Module: `go-xkms/xkey` · Last verified: 2026-10-09
 
 ## Install the browser extension
 
@@ -15,11 +15,21 @@
 2. Load the extension itself (from `xkey/extension/dist/` for a development
    build, or your browser's extension store for a packaged release).
 
-3. Run xKey — either the desktop GUI, or headless:
+3. Turn on local app access, which is off by default: **Settings → Browser →
+   Let other apps use my keys while xKey is open**, or:
+
+   ```bash
+   xkey app-access enable
+   ```
+
+4. Run xKey and unlock it — either the desktop GUI, or headless:
 
    ```bash
    echo -n "my-secret" | xkey extension serve --barrier-password-stdin
    ```
+
+   The GUI listens for the extension only while it is unlocked. Locking it
+   disconnects the extension until you unlock again.
 
 ## Pair the extension (first connection only)
 
@@ -77,7 +87,8 @@ xkey extension serve --tpm-device /dev/tpmrm0
 ```
 
 The extension talks to this the same way it talks to the desktop GUI — pair
-it the same way described above.
+it the same way described above. `serve` refuses to start while local app
+access is off and tells you to run `xkey app-access enable`.
 
 ## Uninstall
 

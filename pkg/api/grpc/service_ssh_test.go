@@ -21,6 +21,7 @@ import (
 	"github.com/jeremyhahn/go-xkms/pkg/backend/software"
 	sshbackend "github.com/jeremyhahn/go-xkms/pkg/ssh/backend"
 	"github.com/jeremyhahn/go-xkms/pkg/storage"
+	"github.com/jeremyhahn/go-xkms/pkg/testutil"
 	"github.com/jeremyhahn/go-xkms/pkg/types"
 	sdkssh "github.com/jeremyhahn/go-xkms/sdk/go/client/ssh"
 )
@@ -39,7 +40,11 @@ func newSSHService(t *testing.T) *Service {
 	if err != nil {
 		t.Fatalf("sshbackend.New: %v", err)
 	}
-	client, err := sdkssh.NewEmbedded(sdkssh.EmbeddedOptions{Backend: storage.New(), BackendProvider: provider})
+	stores, err := sdkssh.NewStores(testutil.NewMemoryDAOFactory())
+	if err != nil {
+		t.Fatalf("NewStores: %v", err)
+	}
+	client, err := sdkssh.NewEmbedded(sdkssh.EmbeddedOptions{Stores: stores, BackendProvider: provider})
 	if err != nil {
 		t.Fatalf("NewEmbedded: %v", err)
 	}

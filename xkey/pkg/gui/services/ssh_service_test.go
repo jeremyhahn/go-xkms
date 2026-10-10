@@ -43,7 +43,7 @@ func newTestSSHService(t *testing.T) *SSHService {
 		t.Fatalf("NewBackendProvider: %v", err)
 	}
 	embedded, err := sshclient.NewEmbedded(sshclient.EmbeddedOptions{
-		Backend:         storage.New(),
+		Stores:          sshStores(t, sshDAOs(t, storage.New())),
 		BackendProvider: provider,
 	})
 	if err != nil {
@@ -195,7 +195,7 @@ func TestSSHService_Setters(t *testing.T) {
 		t.Fatalf("NewBackendProvider: %v", err)
 	}
 	embedded, err := sshclient.NewEmbedded(sshclient.EmbeddedOptions{
-		Backend:         storage.New(),
+		Stores:          sshStores(t, sshDAOs(t, storage.New())),
 		BackendProvider: provider,
 	})
 	if err != nil {
@@ -246,7 +246,7 @@ func registerRemoteSSHBackend(t *testing.T, svc *SSHService) {
 // xkmsd: its own store, distinct from the service's local one.
 func newServerSSHClient(t *testing.T) sshclient.Client {
 	t.Helper()
-	server, err := sshclient.NewEmbedded(sshclient.EmbeddedOptions{Backend: storage.New()})
+	server, err := sshclient.NewEmbedded(sshclient.EmbeddedOptions{Stores: sshStores(t, sshDAOs(t, storage.New()))})
 	if err != nil {
 		t.Fatalf("NewEmbedded: %v", err)
 	}

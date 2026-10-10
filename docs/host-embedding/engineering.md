@@ -1,6 +1,6 @@
 # Host Embedding — Engineering
 
-> **Status: NORMATIVE** · Feature: `host-embedding` · Repo: `go-xkms` · Last verified: 2026-10-04
+> **Status: NORMATIVE** · Feature: `host-embedding` · Repo: `go-xkms` · Last verified: 2026-10-09
 
 ## Exported surface
 
@@ -21,7 +21,8 @@
 | Option | SDK name | Enables |
 |---|---|---|
 | `WithQRDBClient(func() *qrdbsdk.Client)` | `WithServiceModuleQRDBClient` | Storage for every store (host KV under `xkms/`); the WebAuthn and mTLS/PIV login plane |
-| `WithBarrierRegistry(func() *qrdbsdk.BarrierRegistry)` | `WithServiceModuleBarrierRegistry` | Per-tenant Password Manager stores; the `barrier` credential strategy |
+| `WithBarrierRegistry(func() *qrdbsdk.BarrierRegistry)` | `WithServiceModuleBarrierRegistry` | The `barrier` credential strategy |
+| `WithTenantStores(func() qrdbsdk.TenantStoreResolver)` | `WithServiceModuleTenantStores` | Per-tenant Password Manager stores: each tenant's entries in that tenant's go-qrdb system database, behind its barrier |
 | `WithPINBackend(qrdbsdk.PINBackend)` | `WithServiceModulePINBackend` | Unlocking a tenant Password Manager session (user PIN); the `/api/v1/pin/*` routes |
 | `WithPlatformSealer(strategy string, types.Sealer)` | `WithServiceModulePlatformSealer` | The platform sealed-secret store (`/api/v1/platform/*`) |
 | `WithCredentialStrategy(string)` | `WithServiceModuleCredentialStrategy` | The credential service's seal strategy (default `manual`) |
@@ -55,7 +56,7 @@ tenant barriers are go-qrdb's, and that gate belongs in qrdb's middleware.
 | Feature | Needs | Off reason recorded |
 |---|---|---|
 | `passwords` | storage | `no storage was supplied` |
-| `tenant-passwords` | storage + barrier registry | `no barrier registry was supplied` |
+| `tenant-passwords` | storage + tenant store resolver | `no tenant store resolver was supplied` |
 | `pin` | PIN backend | `no PIN backend was supplied` |
 | `platform-store` | storage + sealer | `no platform sealer was supplied` |
 | `credentials` | strategy's store (`barrier` → registry, platform strategies → platform store) | `no barrier registry` / `no platform store` |

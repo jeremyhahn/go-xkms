@@ -552,6 +552,7 @@ var passwordServiceErrorMappings = []passwordErrorMapping{
 	{staticpw.ErrInvalidFolderPath, "Invalid folder path", http.StatusBadRequest},
 	{staticpw.ErrFolderPathTooDeep, "Folder path exceeds maximum depth", http.StatusBadRequest},
 	{staticpw.ErrInvalidUserID, "Invalid user identity", http.StatusBadRequest},
+	{staticpw.ErrInvalidTenantID, "Invalid tenant identity", http.StatusBadRequest},
 	{staticpw.ErrInvalidLength, "Invalid password length (min 8, max 128)", http.StatusBadRequest},
 	{staticpw.ErrInvalidCharset, "Invalid charset", http.StatusBadRequest},
 	{xkms.ErrNilRequest, "Invalid request", http.StatusBadRequest},
@@ -561,7 +562,6 @@ var passwordServiceErrorMappings = []passwordErrorMapping{
 	{staticpw.ErrStoreClosed, "Password store is closed", http.StatusServiceUnavailable},
 	{seal.ErrTenantSealed, "Tenant barrier is sealed", http.StatusServiceUnavailable},
 	{seal.ErrTenantNotFound, "Tenant not found", http.StatusNotFound},
-	{staticpw.ErrNoSystemBarrier, "System password store is unavailable", http.StatusServiceUnavailable},
 	{staticpw.ErrNotConfigured, "Password store not configured", http.StatusServiceUnavailable},
 	{xkms.ErrNotConfigured, "Password store not configured", http.StatusServiceUnavailable},
 }

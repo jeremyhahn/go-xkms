@@ -27,7 +27,7 @@ import (
 	"golang.org/x/crypto/ssh"
 
 	"github.com/jeremyhahn/go-xkms/pkg/ssh/scope"
-	"github.com/jeremyhahn/go-xkms/pkg/storage"
+	"github.com/jeremyhahn/go-xkms/pkg/testutil"
 )
 
 // fakeBackendProvider is an in-memory BackendProvider: it mints real
@@ -125,9 +125,9 @@ func TestGenerateOnBackend_RoundTripAndSign(t *testing.T) {
 func TestGenerateOnBackend_StorePutGetList(t *testing.T) {
 	ctx := context.Background()
 	p := newFakeProvider()
-	st, err := NewBackendStore(storage.New())
+	st, err := NewDAOStore(testutil.NewMemoryDAOFactory())
 	if err != nil {
-		t.Fatalf("NewBackendStore: %v", err)
+		t.Fatalf("NewDAOStore: %v", err)
 	}
 
 	key, err := GenerateOnBackend(ctx, p, "pkcs11", GenerateOptions{Algorithm: AlgorithmECDSAP256}, scope.User, "bob", "yubikey")
@@ -279,9 +279,9 @@ func TestBackendSigner_UnsupportedPublicKeyType(t *testing.T) {
 // backend fields) still decodes after the v2 schema bump.
 func TestEnvelopeV1BackwardCompat(t *testing.T) {
 	ctx := context.Background()
-	st, err := NewBackendStore(storage.New())
+	st, err := NewDAOStore(testutil.NewMemoryDAOFactory())
 	if err != nil {
-		t.Fatalf("NewBackendStore: %v", err)
+		t.Fatalf("NewDAOStore: %v", err)
 	}
 	sw, err := Generate(t.Context(), GenerateOptions{Algorithm: AlgorithmEd25519})
 	if err != nil {

@@ -32,17 +32,17 @@ func TestFactoryStorage_PrefixedViewsOverTheFactory(t *testing.T) {
 	open, err := FactoryStorage(qrdbsdk.NewDAOFactory(func(uint64) qrdbsdk.KVStore { return store }), "xkms/")
 	require.NoError(t, err)
 
-	passwords, err := open(StoragePasswords)
+	serials, err := open(StorageCASerials)
 	require.NoError(t, err)
-	require.NoError(t, passwords.Put(ctx, "k", []byte("v")))
+	require.NoError(t, serials.Put(ctx, "k", []byte("v")))
 
-	raw, err := store.Get(ctx, "xkms/passwords/k")
+	raw, err := store.Get(ctx, "xkms/ca-serials/k")
 	require.NoError(t, err)
 	assert.Equal(t, []byte("v"), raw)
 
-	ssh, err := open(StorageSSH)
+	platform, err := open(StoragePlatformStore)
 	require.NoError(t, err)
-	exists, err := ssh.Exists(ctx, "k")
+	exists, err := platform.Exists(ctx, "k")
 	require.NoError(t, err)
 	assert.False(t, exists)
 }

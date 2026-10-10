@@ -11,10 +11,11 @@
 // 2. Commercial License
 //    Contact licensing@automatethethings.com for commercial licensing options.
 
-// Package staticpw provides static password management with pluggable
-// storage backends and multi-tenant support. Confidentiality at rest is
-// provided by the storage.Backend each store wraps (the tenant barrier);
-// this package does not implement its own cipher.
+// Package staticpw provides static password management with multi-tenant
+// support, persisted as go-qrdb DAO records. Confidentiality at rest is
+// provided by the store behind the DAO factory (a tenant's system database,
+// behind that tenant's barrier); personal entries are additionally sealed
+// under the user's vault key.
 package staticpw
 
 import (

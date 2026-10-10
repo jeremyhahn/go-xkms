@@ -27,20 +27,14 @@ import (
 
 	gossh "golang.org/x/crypto/ssh"
 
-	"github.com/jeremyhahn/go-xkms/pkg/storage"
 	sdkssh "github.com/jeremyhahn/go-xkms/sdk/go/client/ssh"
 	secure "github.com/jeremyhahn/go-xkms/sdk/go/secure"
 )
 
-// newClient returns a fresh embedded Client backed by an in-memory
-// storage.Backend.
+// newClient returns a fresh embedded Client over in-memory Stores.
 func newClient(t *testing.T) sdkssh.Client {
 	t.Helper()
-	backend, err := storage.NewMemoryBackend()
-	if err != nil {
-		t.Fatalf("backend: %v", err)
-	}
-	client, err := sdkssh.NewEmbedded(sdkssh.EmbeddedOptions{Backend: backend})
+	client, err := sdkssh.NewEmbedded(sdkssh.EmbeddedOptions{Stores: newStores(t)})
 	if err != nil {
 		t.Fatalf("NewEmbedded: %v", err)
 	}
@@ -52,24 +46,37 @@ func newClient(t *testing.T) sdkssh.Client {
 	return client
 }
 
-// TestNewEmbedded_NilBackend rejects a nil backend with NilInputError.
-func TestNewEmbedded_NilBackend(t *testing.T) {
+// TestNewEmbedded_NilStores rejects missing Stores with NilInputError.
+func TestNewEmbedded_NilStores(t *testing.T) {
 	_, err := sdkssh.NewEmbedded(sdkssh.EmbeddedOptions{})
 	var nie *sdkssh.NilInputError
-	if !errors.As(err, &nie) {
-		t.Fatalf("expected NilInputError, got %T: %v", err, err)
+	if !errors.As(err, &nie) || nie.Field != "Stores" {
+		t.Fatalf("expected NilInputError{Stores}, got %T: %v", err, err)
 	}
 }
 
-// TestClient_Close_IsIdempotent pins that closing an already-closed
-// embedded Client is a no-op rather than a double-close panic/error — the
-// backend is only closed once, and repeated Close calls afterward succeed.
-func TestClient_Close_IsIdempotent(t *testing.T) {
-	backend, err := storage.NewMemoryBackend()
-	if err != nil {
-		t.Fatalf("backend: %v", err)
+// TestNewEmbedded_IncompleteStores rejects a Stores bundle missing any store
+// at construction, naming the store, rather than panicking on first use.
+func TestNewEmbedded_IncompleteStores(t *testing.T) {
+	full := newStores(t)
+	cases := map[string]*sdkssh.Stores{
+		"Stores.Keys":       {},
+		"Stores.KnownHosts": {Keys: full.Keys, Authorized: full.Authorized},
+		"Stores.Authorized": {Keys: full.Keys, KnownHosts: full.KnownHosts},
 	}
-	client, err := sdkssh.NewEmbedded(sdkssh.EmbeddedOptions{Backend: backend})
+	for field, stores := range cases {
+		client, err := sdkssh.NewEmbedded(sdkssh.EmbeddedOptions{Stores: stores})
+		var nie *sdkssh.NilInputError
+		if client != nil || !errors.As(err, &nie) || nie.Field != field {
+			t.Errorf("expected NilInputError{%s}, got client=%v err=%T: %v", field, client, err, err)
+		}
+	}
+}
+
+// TestClient_Close_IsIdempotent pins that closing an embedded Client twice
+// succeeds both times: the Stores are the caller's and stay open.
+func TestClient_Close_IsIdempotent(t *testing.T) {
+	client, err := sdkssh.NewEmbedded(sdkssh.EmbeddedOptions{Stores: newStores(t)})
 	if err != nil {
 		t.Fatalf("NewEmbedded: %v", err)
 	}

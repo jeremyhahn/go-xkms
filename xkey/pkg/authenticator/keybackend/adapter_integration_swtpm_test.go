@@ -40,6 +40,7 @@ import (
 	"time"
 
 	xkms "github.com/jeremyhahn/go-xkms/sdk/go"
+	"github.com/jeremyhahn/go-xkms/sdk/go/xkmstest"
 	"github.com/stretchr/testify/require"
 )
 
@@ -130,7 +131,7 @@ func provisionSwtpmOnce() {
 				// xkms.NewTPM2BackendWithTPM below resolves its storage
 				// parent exclusively off the Platform SRK -- never the
 				// Shared SRK -- so it must be enrolled here too.
-				if psrkErr := xkms.EnrollSimulatorPlatformSRK(tpm, &cfg); psrkErr != nil {
+				if psrkErr := xkmstest.EnrollPlatformSRK(tpm, &cfg); psrkErr != nil {
 					_ = tpm.Close()
 					swtpmErr = &WrappedError{Msg: "swtpm Platform SRK enrollment", Err: psrkErr}
 					return

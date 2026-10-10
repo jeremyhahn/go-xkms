@@ -16,7 +16,6 @@ package staticpw
 import (
 	"testing"
 
-	"github.com/jeremyhahn/go-xkms/pkg/storage"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -24,7 +23,7 @@ import (
 // newTestScopedStore creates a ScopedStore with fresh in-memory backends.
 func newTestScopedStore(t *testing.T) *ScopedStore {
 	t.Helper()
-	backend := storage.New()
+	backend := newMemoryDAOs()
 	shared, err := NewSharedTenantStore(backend, "acme")
 	require.NoError(t, err)
 	personal, err := NewPersonalTenantStore(backend, "acme", "alice")
@@ -41,7 +40,7 @@ func TestScopedStore_ImplementsStoreInterface(t *testing.T) {
 // --- NewScopedStore ---
 
 func TestNewScopedStore_Success(t *testing.T) {
-	backend := storage.New()
+	backend := newMemoryDAOs()
 	shared, err := NewSharedTenantStore(backend, "acme")
 	require.NoError(t, err)
 	personal, err := NewPersonalTenantStore(backend, "acme", "alice")
@@ -53,7 +52,7 @@ func TestNewScopedStore_Success(t *testing.T) {
 }
 
 func TestNewScopedStore_NilShared(t *testing.T) {
-	backend := storage.New()
+	backend := newMemoryDAOs()
 	personal, err := NewPersonalTenantStore(backend, "acme", "alice")
 	require.NoError(t, err)
 
@@ -62,7 +61,7 @@ func TestNewScopedStore_NilShared(t *testing.T) {
 }
 
 func TestNewScopedStore_NilPersonal(t *testing.T) {
-	backend := storage.New()
+	backend := newMemoryDAOs()
 	shared, err := NewSharedTenantStore(backend, "acme")
 	require.NoError(t, err)
 
@@ -71,7 +70,7 @@ func TestNewScopedStore_NilPersonal(t *testing.T) {
 }
 
 func TestNewScopedStore_InvalidOwnerID(t *testing.T) {
-	backend := storage.New()
+	backend := newMemoryDAOs()
 	shared, err := NewSharedTenantStore(backend, "acme")
 	require.NoError(t, err)
 	personal, err := NewPersonalTenantStore(backend, "acme", "alice")
@@ -457,7 +456,7 @@ func TestScopedStore_Close(t *testing.T) {
 // --- Cross-user isolation ---
 
 func TestScopedStore_CrossUserIsolation(t *testing.T) {
-	backend := storage.New()
+	backend := newMemoryDAOs()
 
 	// Alice's scoped store.
 	aliceShared, err := NewSharedTenantStore(backend, "acme")
@@ -523,7 +522,7 @@ func TestScopedStore_CrossUserIsolation(t *testing.T) {
 // backend.
 func newLockedPair(t *testing.T) (open, locked *ScopedStore) {
 	t.Helper()
-	backend := storage.New()
+	backend := newMemoryDAOs()
 	shared, err := NewSharedTenantStore(backend, "acme")
 	require.NoError(t, err)
 	personal, err := NewPersonalTenantStore(backend, "acme", "alice")
@@ -538,7 +537,7 @@ func newLockedPair(t *testing.T) (open, locked *ScopedStore) {
 func TestNewLockedScopedStore_Validation(t *testing.T) {
 	_, err := NewLockedScopedStore(nil, "alice")
 	assert.ErrorIs(t, err, ErrNilStore)
-	shared, err := NewSharedTenantStore(storage.New(), "acme")
+	shared, err := NewSharedTenantStore(newMemoryDAOs(), "acme")
 	require.NoError(t, err)
 	_, err = NewLockedScopedStore(shared, "bad/user")
 	assert.ErrorIs(t, err, ErrInvalidUserID)

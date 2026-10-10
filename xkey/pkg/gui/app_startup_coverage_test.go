@@ -16,11 +16,10 @@ package gui
 // Coverage for the post-data-dir startup sequence (postDataDirStartup,
 // startIPCServer, PostUnlockInitialize, PostBarrierUnseal) that a plain-Go
 // test App could not previously reach at all. See app_lifecycle_test.go's
-// comment above TestApp_PostUnlockInitialize_PropagatesError for why: with
-// a.ctx left nil, postDataDirStartup unconditionally reached startIPCServer,
-// which spawns a goroutine calling `<-a.ctx.Done()` on a nil context.Context --
-// a nil interface with no concrete type -- panicking the whole test binary,
-// not just one test.
+// comment above TestApp_PostUnlockInitialize_PropagatesError for why. With
+// a.ctx left nil, startIPCServer used to spawn a goroutine calling
+// `<-a.ctx.Done()` on a nil context.Context -- a nil interface with no
+// concrete type -- panicking the whole test binary, not just one test.
 //
 // startIPCServer now guards a.ctx == nil the same way EmitEvent/ShowWindow/
 // HideWindow/Quit already do elsewhere in this file: it is a no-op, logging
@@ -31,15 +30,10 @@ package gui
 // sequence observable without a live Wails runtime.
 
 import (
-	"context"
-	"os"
-	"path/filepath"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
-
-	"github.com/jeremyhahn/go-xkms/xkey/pkg/ipc"
 )
 
 // --- startIPCServer ---
@@ -56,46 +50,6 @@ func TestApp_StartIPCServer_NilContext_NoOp(t *testing.T) {
 		app.startIPCServer()
 	})
 	assert.Nil(t, app.ipcServer, "no server must be created without a bound context")
-}
-
-// TestApp_StartIPCServer_StartsAndGuardsDoubleStart verifies the success path
-// (a real *ipc.Server is created and starts serving) and the double-start
-// guard added for PostBarrierUnseal running after ordinary startup already
-// started the server. The socket path is sandboxed via XKEY_IPC_SOCKET so
-// nothing is written outside the test's temp directory.
-func TestApp_StartIPCServer_StartsAndGuardsDoubleStart(t *testing.T) {
-	app := newMinimalApp(t)
-
-	// ensureSocketDir refuses a socket directory that is not private to
-	// this user (mode 0700): t.TempDir() itself is not guaranteed to be
-	// that restrictive, so the socket lives in an explicitly-permissioned
-	// subdirectory instead.
-	sockDir := filepath.Join(t.TempDir(), "run")
-	require.NoError(t, os.Mkdir(sockDir, 0700))
-	sockPath := filepath.Join(sockDir, "xkey-test.sock")
-	t.Setenv(ipc.EnvSocketPath, sockPath)
-
-	ctx, cancel := context.WithCancel(context.Background())
-	app.ctx = ctx
-	t.Cleanup(func() {
-		cancel()
-		if app.ipcServer != nil {
-			_ = app.ipcServer.Close()
-		}
-	})
-
-	app.startIPCServer()
-	require.NotNil(t, app.ipcServer, "a bound context must start the IPC server")
-	first := app.ipcServer
-
-	if _, err := os.Stat(sockPath); err != nil {
-		t.Fatalf("expected the IPC socket to exist at %s: %v", sockPath, err)
-	}
-
-	// A second call must hit the double-start guard: same server, no
-	// attempt to rebind the socket.
-	app.startIPCServer()
-	assert.Same(t, first, app.ipcServer, "a second call must not replace the running server")
 }
 
 // --- postDataDirStartup: FIDO2 virtual device switch ---

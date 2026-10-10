@@ -93,7 +93,7 @@ func TestDAOTeamStore_RoundTrip_ThroughBarrier(t *testing.T) {
 	kvStore, err := xkms.NewKVStoreAdapter(barrier)
 	require.NoError(t, err, "failed to create kvstore adapter")
 
-	store, err := xkms.NewStaticPasswordDAOTeamStore(kvStore)
+	store, err := xkms.NewStaticPasswordDAOTeamStore(xkms.NewStoreDAOFactory(kvStore))
 	require.NoError(t, err, "failed to create DAO team store")
 	t.Cleanup(func() { store.Close() })
 
@@ -160,7 +160,7 @@ func TestDAOTeamStore_EncryptionVerification(t *testing.T) {
 	kvStore, err := xkms.NewKVStoreAdapter(barrier)
 	require.NoError(t, err, "failed to create kvstore adapter")
 
-	store, err := xkms.NewStaticPasswordDAOTeamStore(kvStore)
+	store, err := xkms.NewStaticPasswordDAOTeamStore(xkms.NewStoreDAOFactory(kvStore))
 	require.NoError(t, err, "failed to create DAO team store")
 	t.Cleanup(func() { store.Close() })
 
@@ -220,7 +220,7 @@ func TestDAOTeamStore_EncryptionVerification(t *testing.T) {
 func TestStaticPasswordStore_RoundTrip_ThroughBarrier(t *testing.T) {
 	barrier, _ := setupBarrier(t)
 
-	store := xkms.NewStaticPasswordStore(barrier)
+	store := newTestPasswordStore(t, barrier)
 	t.Cleanup(func() { store.Close() })
 
 	// Add a password entry.
@@ -278,7 +278,7 @@ func TestStaticPasswordStore_RoundTrip_ThroughBarrier(t *testing.T) {
 func TestStaticPasswordStore_EncryptionVerification(t *testing.T) {
 	barrier, tmpDir := setupBarrier(t)
 
-	store := xkms.NewStaticPasswordStore(barrier)
+	store := newTestPasswordStore(t, barrier)
 	t.Cleanup(func() { store.Close() })
 
 	// Use a distinctive password value that would be easy to find in raw bytes.
@@ -329,12 +329,12 @@ func TestCrossStoreIsolation_TeamAndPassword(t *testing.T) {
 	kvStore, err := xkms.NewKVStoreAdapter(barrier)
 	require.NoError(t, err, "failed to create kvstore adapter")
 
-	teamStore, err := xkms.NewStaticPasswordDAOTeamStore(kvStore)
+	teamStore, err := xkms.NewStaticPasswordDAOTeamStore(xkms.NewStoreDAOFactory(kvStore))
 	require.NoError(t, err, "failed to create DAO team store")
 	t.Cleanup(func() { teamStore.Close() })
 
 	// Create a StaticPassword BackendStore.
-	pwStore := xkms.NewStaticPasswordStore(barrier)
+	pwStore := newTestPasswordStore(t, barrier)
 	t.Cleanup(func() { pwStore.Close() })
 
 	// Write data to both stores.
@@ -382,11 +382,11 @@ func TestCrossStoreIsolation_TwoTeamStores(t *testing.T) {
 	kvStore, err := xkms.NewKVStoreAdapter(barrier)
 	require.NoError(t, err, "failed to create kvstore adapter")
 
-	store1, err := xkms.NewStaticPasswordDAOTeamStore(kvStore)
+	store1, err := xkms.NewStaticPasswordDAOTeamStore(xkms.NewStoreDAOFactory(kvStore))
 	require.NoError(t, err, "failed to create first DAO team store")
 	t.Cleanup(func() { store1.Close() })
 
-	store2, err := xkms.NewStaticPasswordDAOTeamStore(kvStore)
+	store2, err := xkms.NewStaticPasswordDAOTeamStore(xkms.NewStoreDAOFactory(kvStore))
 	require.NoError(t, err, "failed to create second DAO team store")
 	t.Cleanup(func() { store2.Close() })
 
@@ -450,7 +450,7 @@ func TestDAOTeamStore_PersistenceAcrossSealUnseal(t *testing.T) {
 	kvStore, err := xkms.NewKVStoreAdapter(barrier)
 	require.NoError(t, err, "failed to create kvstore adapter")
 
-	store, err := xkms.NewStaticPasswordDAOTeamStore(kvStore)
+	store, err := xkms.NewStaticPasswordDAOTeamStore(xkms.NewStoreDAOFactory(kvStore))
 	require.NoError(t, err, "failed to create DAO team store")
 
 	err = store.Create(ctx, &xkms.StaticPasswordTeamEntity{
@@ -474,7 +474,7 @@ func TestDAOTeamStore_PersistenceAcrossSealUnseal(t *testing.T) {
 	kvStore2, err := xkms.NewKVStoreAdapter(barrier)
 	require.NoError(t, err, "failed to create kvstore adapter after re-unseal")
 
-	store2, err := xkms.NewStaticPasswordDAOTeamStore(kvStore2)
+	store2, err := xkms.NewStaticPasswordDAOTeamStore(xkms.NewStoreDAOFactory(kvStore2))
 	require.NoError(t, err, "failed to create DAO team store after re-unseal")
 	t.Cleanup(func() { store2.Close() })
 

@@ -271,7 +271,7 @@ func TestAppService_Coverage_ConfigChangedFields_AllFieldChanges(t *testing.T) {
 		BarrierStrategy:           "tpm2",
 		AppAutoLockMinutes:        15,
 		AppLockOnScreenLock:       true,
-		BrowserExtensionEnabled:   true,
+		LocalAppAccessEnabled:     true,
 		DeveloperTools:            true,
 	}
 
@@ -293,7 +293,7 @@ func TestAppService_Coverage_ConfigChangedFields_AllFieldChanges(t *testing.T) {
 	assert.Contains(t, fields, "barrier_strategy")
 	assert.Contains(t, fields, "app_auto_lock_minutes")
 	assert.Contains(t, fields, "app_lock_on_screen_lock")
-	assert.Contains(t, fields, "browser_extension_enabled")
+	assert.Contains(t, fields, "local_app_access_enabled")
 	assert.Contains(t, fields, "developer_tools")
 }
 

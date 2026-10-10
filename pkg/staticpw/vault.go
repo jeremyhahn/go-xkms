@@ -28,10 +28,11 @@ import (
 	"golang.org/x/crypto/argon2"
 	"golang.org/x/crypto/hkdf"
 
+	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
+
 	"github.com/jeremyhahn/go-xkms/pkg/crypto/aesgcm"
 	"github.com/jeremyhahn/go-xkms/pkg/crypto/kdf"
 	"github.com/jeremyhahn/go-xkms/pkg/scope"
-	"github.com/jeremyhahn/go-xkms/pkg/storage"
 	"github.com/jeremyhahn/go-xkms/pkg/vaultkey"
 	secure "github.com/jeremyhahn/go-xkms/sdk/go/secure"
 )
@@ -344,48 +345,50 @@ func secretSize(ctx context.Context, secret *secure.Secret) (int, error) {
 	return buf.Size(), nil
 }
 
-// vaultKeyring persists one user's factors in the tenant barrier.
+// vaultKeyring persists one user's factors in the tenant's password record
+// table.
 type vaultKeyring struct {
-	backend   storage.Backend
-	prefix    string
+	records   *records
+	dir       string
 	tenantID  string
 	subject   string
 	kdfParams func() *kdf.KDFParams
 }
 
-// newVaultKeyring returns subject's keyring in tenantID over backend. New
-// passphrase factors wrap the DEK at the Argon2id cost kdfParams returns.
-func newVaultKeyring(backend storage.Backend, tenantID, subject string, kdfParams func() *kdf.KDFParams) (*vaultKeyring, error) {
+// newVaultKeyring returns subject's keyring in tenantID over the record
+// table of daos. New passphrase factors wrap the DEK at the Argon2id cost
+// kdfParams returns.
+func newVaultKeyring(daos *qrdbsdk.DAOFactory, tenantID, subject string, kdfParams func() *kdf.KDFParams) (*vaultKeyring, error) {
 	prefix, err := scope.PersonalPrefix(tenantID, VaultFeature, subject)
 	if err != nil {
 		return nil, err
 	}
+	t, err := openRecords(daos)
+	if err != nil {
+		return nil, err
+	}
 	return &vaultKeyring{
-		backend:   backend,
-		prefix:    prefix + factorsSegment,
+		records:   t,
+		dir:       prefix + factorsSegment,
 		tenantID:  tenantID,
 		subject:   subject,
 		kdfParams: kdfParams,
 	}, nil
 }
 
-// factors returns every stored factor, oldest first.
+// factors returns the keyring's factors, oldest first.
 func (k *vaultKeyring) factors(ctx context.Context) ([]*vaultFactor, error) {
-	var out []*vaultFactor
-	err := k.backend.Scan(ctx, k.prefix, func(key string, value []byte) error {
+	all, err := k.records.list(ctx, k.dir)
+	if err != nil {
+		return nil, &VaultStoreError{Op: "list", Key: k.dir, Err: err}
+	}
+	out := make([]*vaultFactor, 0, len(all))
+	for _, r := range all {
 		var f vaultFactor
-		if err := json.Unmarshal(value, &f); err != nil {
-			return &VaultStoreError{Op: "decode", Key: key, Err: err}
+		if err := json.Unmarshal(r.Body, &f); err != nil {
+			return nil, &VaultStoreError{Op: "decode", Key: r.Path, Err: err}
 		}
 		out = append(out, &f)
-		return nil
-	})
-	if err != nil {
-		var storeErr *VaultStoreError
-		if errors.As(err, &storeErr) {
-			return nil, err
-		}
-		return nil, &VaultStoreError{Op: "scan", Key: k.prefix, Err: err}
 	}
 	sort.Slice(out, func(i, j int) bool {
 		if out[i].CreatedAt.Equal(out[j].CreatedAt) {
@@ -396,25 +399,27 @@ func (k *vaultKeyring) factors(ctx context.Context) ([]*vaultFactor, error) {
 	return out, nil
 }
 
-// put stores f.
+// put stores f, replacing the factor of the same ID.
 func (k *vaultKeyring) put(ctx context.Context, f *vaultFactor) error {
 	data, err := json.Marshal(f)
 	if err != nil {
 		return &VaultStoreError{Op: "encode", Key: f.ID, Err: err}
 	}
-	if err := k.backend.Put(ctx, k.prefix+f.ID, data); err != nil {
+	r := &record{Path: k.dir + f.ID, Dir: k.dir, Body: data}
+	if err := k.records.put(ctx, r); err != nil {
 		return &VaultStoreError{Op: "put", Key: f.ID, Err: err}
 	}
 	return nil
 }
 
-// remove deletes the factor id.
+// remove deletes the factor id, or reports ErrVaultFactorNotFound.
 func (k *vaultKeyring) remove(ctx context.Context, id string) error {
-	if err := k.backend.Delete(ctx, k.prefix+id); err != nil {
-		if errors.Is(err, storage.ErrNotFound) {
-			return ErrVaultFactorNotFound
-		}
+	removed, err := k.records.remove(ctx, k.dir+id)
+	if err != nil {
 		return &VaultStoreError{Op: "delete", Key: id, Err: err}
+	}
+	if !removed {
+		return ErrVaultFactorNotFound
 	}
 	return nil
 }

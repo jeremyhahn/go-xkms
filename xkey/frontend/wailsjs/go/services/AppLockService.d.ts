@@ -32,6 +32,8 @@ export function SetEmitFunc(arg1:any):Promise<void>;
 
 export function SetLockOnScreenLock(arg1:boolean):Promise<void>;
 
+export function SetLockStateHook(arg1:any):Promise<void>;
+
 export function Unlock(arg1:string):Promise<void>;
 
 export function UnlockVerified(arg1:string):Promise<services.UnlockOutcome>;

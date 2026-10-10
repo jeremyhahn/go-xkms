@@ -22,6 +22,8 @@ import (
 	"time"
 
 	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
+
+	"github.com/jeremyhahn/go-xkms/pkg/dao"
 )
 
 // TeamStore defines the interface for team persistence and membership management.
@@ -74,18 +76,15 @@ type DAOTeamStore struct {
 // Compile-time interface compliance check.
 var _ TeamStore = (*DAOTeamStore)(nil)
 
-// NewDAOTeamStore creates a new DAOTeamStore using the given kvstore.KVStore.
-// The entity type namespace is "teams".
-func NewDAOTeamStore(kvStore qrdbsdk.KVStore) (*DAOTeamStore, error) {
-	if kvStore == nil {
-		return nil, ErrNilKVStore{}
-	}
-
+// NewDAOTeamStore returns the team store over the staticpw database of
+// daos. Teams are the "staticpw_teams" entity type.
+func NewDAOTeamStore(daos *qrdbsdk.DAOFactory) (*DAOTeamStore, error) {
 	idGen := qrdbsdk.NewFieldHashGenerator("Name")
 
-	teamDAO, err := qrdbsdk.NewDAO[*TeamEntity](
-		kvStore,
-		"teams",
+	teamDAO, err := dao.New(
+		daos,
+		DatabaseName,
+		"staticpw_teams",
 		func() *TeamEntity { return &TeamEntity{} },
 		qrdbsdk.WithIDGenerator(idGen),
 	)

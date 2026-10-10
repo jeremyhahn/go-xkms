@@ -53,13 +53,10 @@ func init() {
 }
 
 // xkeySessionStore builds the shared persistent-session store (same shared
-// SSH store as profiles/host keys — see xkey/pkg/sshstore).
-func xkeySessionStore() (sshsdk.ConsoleSessionStore, error) {
-	backend, err := xkeySSHBackend()
-	if err != nil {
-		return nil, err
-	}
-	return sshsdk.NewConsoleSessionStore(backend)
+// SSH store as profiles/host keys — see xkey/pkg/sshstore) and the closer that
+// releases its backend.
+func xkeySessionStore() (sshsdk.ConsoleSessionStore, func(), error) {
+	return openSSHStore(sshsdk.NewConsoleSessionStore)
 }
 
 // sessionOrigin renders a record's reconnect origin for display.
@@ -83,10 +80,11 @@ func sessionOrigin(s *sshsdk.ConsoleSessionRecord) string {
 
 func runSSHSessionsList(cmd *cobra.Command, _ []string) error {
 	out := cmd.OutOrStdout()
-	store, err := xkeySessionStore()
+	store, closeStore, err := xkeySessionStore()
 	if err != nil {
 		return err
 	}
+	defer closeStore()
 	all, err := store.List()
 	if err != nil {
 		return err
@@ -104,10 +102,11 @@ func runSSHSessionsList(cmd *cobra.Command, _ []string) error {
 
 func runSSHSessionsRemove(cmd *cobra.Command, args []string) error {
 	out := cmd.OutOrStdout()
-	store, err := xkeySessionStore()
+	store, closeStore, err := xkeySessionStore()
 	if err != nil {
 		return err
 	}
+	defer closeStore()
 	if derr := store.Delete(args[0]); derr != nil {
 		return derr
 	}

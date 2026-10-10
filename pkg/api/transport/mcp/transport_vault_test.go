@@ -50,10 +50,10 @@ func newVaultTransport(t *testing.T) *Transport {
 	svc, err := xkms.Get()
 	require.NoError(t, err)
 
+	vaultservice.Wire(t, svc)
 	srv, err := xkmsmcp.NewServer(&xkmsmcp.Config{
-		XKMSService:     svc,
-		Authenticator:   auth.NewNoOpAuthenticator(),
-		BarrierRegistry: vaultservice.Wire(t, svc),
+		XKMSService:   svc,
+		Authenticator: auth.NewNoOpAuthenticator(),
 	})
 	require.NoError(t, err)
 	return connectInProcessToModule(t, srv)

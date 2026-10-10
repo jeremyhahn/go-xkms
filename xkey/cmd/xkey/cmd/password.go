@@ -27,6 +27,7 @@ import (
 	secure "github.com/jeremyhahn/go-xkms/sdk/go/secure"
 	"github.com/jeremyhahn/go-xkms/sdk/go/transport"
 	"github.com/jeremyhahn/go-xkms/xkey/pkg/ipc"
+	"github.com/jeremyhahn/go-xkms/xkey/pkg/staticpw"
 	"github.com/spf13/cobra"
 )
 
@@ -1051,12 +1052,16 @@ func connectPasswordStore() (PasswordStoreClientService, error) {
 
 // openPasswordStore creates a BackendStore backed by file storage at the
 // given path. The file backend creates the directory if it does not exist.
-func openPasswordStore(storePath string) (*xkms.StaticPasswordBackendStore, error) {
+func openPasswordStore(storePath string) (*xkms.StaticPasswordDAOStore, error) {
 	backend, err := xkms.NewFileStorageBackend(storePath)
 	if err != nil {
 		return nil, &SentinelCauseError{Sentinel: ErrPasswordStoreOpenFailed, Cause: err}
 	}
-	return xkms.NewStaticPasswordStore(backend), nil
+	store, err := staticpw.NewBackendStore(backend)
+	if err != nil {
+		return nil, &SentinelCauseError{Sentinel: ErrPasswordStoreOpenFailed, Cause: errors.Join(err, backend.Close())}
+	}
+	return store, nil
 }
 
 // PasswordStoreError represents a password store operation error.

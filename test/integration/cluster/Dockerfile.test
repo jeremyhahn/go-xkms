@@ -9,7 +9,7 @@
 # instead of erroring, leaving /workspace without a go.mod (same failure
 # class runner-log-proven for test/integration/pkcs8, task 3001).
 
-FROM golang:1.27.1-bookworm
+FROM golang:1.27.2-bookworm
 
 ENV GOTOOLCHAIN=auto
 ENV GOWORK=off

@@ -19,9 +19,24 @@ import (
 	"fmt"
 )
 
-// ErrSignerStoreNotInitialized is returned when the signer store DAO
-// was not properly initialized (e.g., nil backend or codec failure).
+// ErrSignerStoreNotInitialized is returned by a SignerStore that was not
+// built by NewSignerStore.
 var ErrSignerStoreNotInitialized = errors.New("signer store: not initialized")
+
+// ErrNilDAOFactory is returned by NewSignerStore without a DAO factory.
+var ErrNilDAOFactory = errors.New("signer store: a DAO factory is required")
+
+// StoreOpenError is returned by NewSignerStore when the factory cannot build
+// the store's DAOs.
+type StoreOpenError struct {
+	Cause error
+}
+
+func (e *StoreOpenError) Error() string {
+	return fmt.Sprintf("signer store: open database %s: %v", DatabaseName, e.Cause)
+}
+
+func (e *StoreOpenError) Unwrap() error { return e.Cause }
 
 // ErrInvalidSignerOpts is returned when SaveSignature, GetSignature, or
 // Checksum is called with nil opts or nil opts.KeyAttributes.

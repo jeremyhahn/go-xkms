@@ -52,7 +52,7 @@ func TestBarrierStaticPW_EncryptionEndToEnd(t *testing.T) {
 	// ---------------------------------------------------------------
 	// Step 2: Create a static password store and add an entry.
 	// ---------------------------------------------------------------
-	store := xkms.NewStaticPasswordStore(backend)
+	store := newTestPasswordStore(t, backend)
 
 	entry := &xkms.StaticPassword{
 		Name:     "TestPassword",
@@ -68,10 +68,11 @@ func TestBarrierStaticPW_EncryptionEndToEnd(t *testing.T) {
 	// ---------------------------------------------------------------
 	// Step 3: Read the raw stored bytes beneath the barrier.
 	// The file storage root is configDir/barrier/ and the staticpw
-	// store writes keys as "staticpw/<id>.json".
+	// store keeps each entry as one go-qrdb DAO record.
 	// ---------------------------------------------------------------
-	expectedID := xkms.GenerateStaticPasswordID("TestPassword", "")
-	rawBytes := readRawBarrierEntry(t, filepath.Join(configDir, "barrier"), "staticpw/"+expectedID+".json")
+	records := readRawPasswordRecords(t, filepath.Join(configDir, "barrier"))
+	require.Len(t, records, 1, "one entry must be one record")
+	rawBytes := records[0]
 	require.NotEmpty(t, rawBytes, "raw entry must not be empty")
 
 	// The raw bytes must NOT be valid JSON. If the barrier encryption is
@@ -131,7 +132,7 @@ func TestBarrierStaticPW_EncryptionEndToEnd(t *testing.T) {
 	newBackend := svc.GetBackend()
 	require.NotNil(t, newBackend, "GetBackend must return non-nil after unseal")
 
-	store2 := xkms.NewStaticPasswordStore(newBackend)
+	store2 := newTestPasswordStore(t, newBackend)
 
 	retrieved2, err := store2.Get("TestPassword")
 	require.NoError(t, err, "reading password after unseal must succeed")
@@ -159,7 +160,7 @@ func TestBarrierStaticPW_WrongPasswordCannotDecrypt(t *testing.T) {
 	err := svc.Initialize(correctPassword, "passphrase")
 	require.NoError(t, err)
 
-	store := xkms.NewStaticPasswordStore(svc.GetBackend())
+	store := newTestPasswordStore(t, svc.GetBackend())
 	err = store.Add(&xkms.StaticPassword{
 		Name:     "SecretEntry",
 		Password: "very-secret",
@@ -185,7 +186,7 @@ func TestBarrierStaticPW_MultipleEntries(t *testing.T) {
 	err := svc.Initialize(password, "passphrase")
 	require.NoError(t, err)
 
-	store := xkms.NewStaticPasswordStore(svc.GetBackend())
+	store := newTestPasswordStore(t, svc.GetBackend())
 
 	entries := []xkms.StaticPassword{
 		{Name: "GitHub", Password: "gh-token-abc", Username: "dev"},
@@ -200,14 +201,17 @@ func TestBarrierStaticPW_MultipleEntries(t *testing.T) {
 
 	// Verify all entries are stored encrypted beneath the barrier.
 	barrierDir := filepath.Join(configDir, "barrier")
-	for _, entry := range entries {
-		key := "staticpw/" + xkms.GenerateStaticPasswordID(entry.Name, "") + ".json"
-		rawBytes := readRawBarrierEntry(t, barrierDir, key)
-
+	records := readRawPasswordRecords(t, barrierDir)
+	require.Len(t, records, len(entries), "each entry must be one record")
+	for i, rawBytes := range records {
 		var probe map[string]any
 		jsonErr := json.Unmarshal(rawBytes, &probe)
 		assert.Error(t, jsonErr,
-			"entry %s must contain encrypted data, not plaintext JSON", key)
+			"record %d must contain encrypted data, not plaintext JSON", i)
+		for _, entry := range entries {
+			assert.NotContains(t, string(rawBytes), entry.Password,
+				"plaintext password must never appear in the raw on-disk record")
+		}
 	}
 
 	// Verify retrieval through the store.
@@ -222,7 +226,7 @@ func TestBarrierStaticPW_MultipleEntries(t *testing.T) {
 	err = svc.Unseal(password, "passphrase")
 	require.NoError(t, err)
 
-	store2 := xkms.NewStaticPasswordStore(svc.GetBackend())
+	store2 := newTestPasswordStore(t, svc.GetBackend())
 	listed2, err := store2.List()
 	require.NoError(t, err)
 	require.Len(t, listed2, 3)
@@ -241,15 +245,26 @@ func TestBarrierStaticPW_MultipleEntries(t *testing.T) {
 	}
 }
 
-// readRawBarrierEntry returns the bytes the go-qrdb file engine under dir
-// holds for key, bypassing the barrier: the ciphertext the barrier wrote.
-func readRawBarrierEntry(t *testing.T, dir, key string) []byte {
+// passwordRecordPrefix is where go-qrdb's DAO keeps the staticpw records:
+// one key per entry, named by the entity type and a hash of the record id.
+const passwordRecordPrefix = "staticpw_records/"
+
+// readRawPasswordRecords returns the bytes the go-qrdb file engine under dir
+// holds for every password record, bypassing the barrier: the ciphertext the
+// barrier wrote.
+func readRawPasswordRecords(t *testing.T, dir string) [][]byte {
 	t.Helper()
 
 	backend, err := xkms.NewFileStorageBackend(dir)
 	require.NoError(t, err)
 	defer func() { require.NoError(t, backend.Close()) }()
-	data, err := backend.Get(t.Context(), key)
-	require.NoError(t, err, "storage under %s must hold %s", dir, key)
-	return data
+	keys, err := backend.List(t.Context(), passwordRecordPrefix)
+	require.NoError(t, err)
+	records := make([][]byte, 0, len(keys))
+	for _, key := range keys {
+		data, err := backend.Get(t.Context(), key)
+		require.NoError(t, err)
+		records = append(records, data)
+	}
+	return records
 }

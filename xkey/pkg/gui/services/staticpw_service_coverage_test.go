@@ -1257,7 +1257,7 @@ func TestStaticPWService_Coverage_SetStore_ReplaceStore(t *testing.T) {
 
 	// Set a store.
 	backend := xkms.NewStorageMemory()
-	store := staticpw.NewStore(backend)
+	store := newTestPasswordStore(t, backend)
 	svc.SetStore(store)
 
 	// Now it should work.

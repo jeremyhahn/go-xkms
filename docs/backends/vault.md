@@ -1163,27 +1163,17 @@ echo "✓ Vault Transit engine ready"
 
 ### Makefile Integration
 
-Add to your Makefile:
-```makefile
-# Enable Vault backend
-WITH_VAULT ?= 0
-
-ifeq ($(WITH_VAULT),1)
-	BUILD_TAGS += vault
-endif
-```
+The Vault backend is compiled in by default (`WITH_VAULT ?= 1` adds the
+`vault` build tag). See [Build System](../configuration/build-system.md).
 
 ### Building with Vault Support
 
 ```bash
-# Build without Vault (default)
+# Build with Vault (default)
 make build
 
-# Build with Vault
-make build WITH_VAULT=1
-
-# Run tests with Vault
-make test WITH_VAULT=1
+# Build without Vault
+make build WITH_VAULT=0
 
 # Run integration tests
 make integration-test-vault

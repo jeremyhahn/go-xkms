@@ -25,9 +25,8 @@ func (e *NilInputError) Error() string {
 	return "ssh/known_hosts: nil input: " + e.Field
 }
 
-// NoPublicKeyError is returned by Emit when a pin carries no PublicKey (a
-// legacy fingerprint-only pin) and therefore cannot be rendered as an OpenSSH
-// known_hosts line.
+// NoPublicKeyError is returned by Emit when a pin carries no PublicKey and
+// therefore cannot be rendered as an OpenSSH known_hosts line.
 type NoPublicKeyError struct {
 	Host string
 }
@@ -35,20 +34,6 @@ type NoPublicKeyError struct {
 // Error implements the error interface.
 func (e *NoPublicKeyError) Error() string {
 	return "ssh/known_hosts: pin for host " + e.Host + " has no public key to emit"
-}
-
-// LegacyPinError is returned by Get / Verify / List when a stored pin
-// predates envelope v2 (it carries a fingerprint but no full SSH wire-format
-// public key). Fingerprint-only matching is no longer supported: the host
-// must be re-pinned (Remove then Add with a current PinFromPublicKey) so the
-// full key is on file.
-type LegacyPinError struct {
-	Host string
-}
-
-// Error implements the error interface.
-func (e *LegacyPinError) Error() string {
-	return "ssh/known_hosts: pin for host " + e.Host + " predates full-key storage (v1) and must be re-pinned"
 }
 
 // NotFoundError is returned by Get / Verify / Remove when no pin exists
@@ -163,8 +148,8 @@ func (e *StorageError) Error() string {
 // Unwrap returns the underlying storage error.
 func (e *StorageError) Unwrap() error { return e.Err }
 
-// SerializationError is returned when the stored pin envelope cannot be
-// encoded or decoded (truncated JSON, missing required fields).
+// SerializationError is returned by Emit when a pin's PublicKey is not a
+// valid SSH wire-format key.
 type SerializationError struct {
 	Op  string
 	Err error

@@ -32,7 +32,7 @@ import (
 
 	"github.com/jeremyhahn/go-xkms/pkg/ssh/known_hosts"
 	"github.com/jeremyhahn/go-xkms/pkg/ssh/scope"
-	"github.com/jeremyhahn/go-xkms/pkg/storage"
+	"github.com/jeremyhahn/go-xkms/pkg/testutil"
 )
 
 // TestWSHandler_NonWebSocketRequestIsRejected verifies a plain HTTP request
@@ -89,7 +89,7 @@ func TestWriteJSON_ReportsMarshalFailure(t *testing.T) {
 func TestWSHandler_AskMalformedResponseAborts(t *testing.T) {
 	srv := startSessionServer(t, sessionServerOptions{})
 
-	store, err := known_hosts.NewBackendStore(storage.New())
+	store, err := known_hosts.NewDAOStore(testutil.NewMemoryDAOFactory())
 	if err != nil {
 		t.Fatalf("known_hosts store: %v", err)
 	}
@@ -160,7 +160,7 @@ func TestDial_ExtraKnownHostsFileUnreadableFailsClosed(t *testing.T) {
 		t.Fatalf("mkdir: %v", err)
 	}
 
-	store, err := known_hosts.NewBackendStore(storage.New())
+	store, err := known_hosts.NewDAOStore(testutil.NewMemoryDAOFactory())
 	if err != nil {
 		t.Fatalf("known_hosts store: %v", err)
 	}
@@ -205,7 +205,7 @@ func TestDial_ExtraKnownHostsFileForOtherHostDoesNotAuthorize(t *testing.T) {
 		t.Fatalf("write known_hosts: %v", err)
 	}
 
-	store, err := known_hosts.NewBackendStore(storage.New())
+	store, err := known_hosts.NewDAOStore(testutil.NewMemoryDAOFactory())
 	if err != nil {
 		t.Fatalf("known_hosts store: %v", err)
 	}

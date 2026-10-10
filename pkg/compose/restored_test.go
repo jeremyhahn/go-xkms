@@ -101,11 +101,11 @@ func TestBuild_NoDependenciesLeavesEveryFeatureOffWithTypedReasons(t *testing.T)
 		}
 	}
 	assert.Equal(t, map[Feature]string{
-		FeaturePasswords:       "storage",
+		FeaturePasswords:       "DAO factory",
 		FeaturePIN:             "PIN backend",
 		FeaturePlatformStore:   "storage",
 		FeatureCredentials:     "barrier registry",
-		FeatureSSH:             "storage",
+		FeatureSSH:             "DAO factory",
 		FeatureCA:              "CA configuration",
 		FeatureTPMPolicies:     "TPM2 backend",
 		FeatureKeyVersions:     "DAO factory",

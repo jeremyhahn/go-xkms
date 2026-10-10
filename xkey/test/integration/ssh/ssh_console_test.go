@@ -49,9 +49,9 @@ import (
 
 // startConsoleEchoServer stands up a loopback SSH server that grants a PTY,
 // echoes every byte it receives, and closes the channel once it sees "exit". It
-// returns the host, port, and the SHA256 fingerprint of its host key (for
-// pinning). The listener is torn down on test cleanup.
-func startConsoleEchoServer(t *testing.T) (host string, port int, fingerprint string) {
+// returns the host, port, and its host key as an authorized_keys-format line
+// (for pinning). The listener is torn down on test cleanup.
+func startConsoleEchoServer(t *testing.T) (host string, port int, hostKey string) {
 	return startConsoleEchoServerOn(t, "127.0.0.1")
 }
 
@@ -59,7 +59,7 @@ func startConsoleEchoServer(t *testing.T) (host string, port int, fingerprint st
 // tests give each server its own IP: host-key pins are keyed by host (not
 // host:port), so two fresh host keys on one IP would be a pin mismatch —
 // a hard failure by design.
-func startConsoleEchoServerOn(t *testing.T, bindIP string) (host string, port int, fingerprint string) {
+func startConsoleEchoServerOn(t *testing.T, bindIP string) (host string, port int, hostKey string) {
 	t.Helper()
 
 	_, hostPriv, err := ed25519.GenerateKey(rand.Reader)
@@ -99,7 +99,7 @@ func startConsoleEchoServerOn(t *testing.T, bindIP string) (host string, port in
 		}
 	}()
 
-	return h, port, gossh.FingerprintSHA256(hostSigner.PublicKey())
+	return h, port, strings.TrimSpace(string(gossh.MarshalAuthorizedKey(hostSigner.PublicKey())))
 }
 
 // serveConsoleEcho handles a single SSH connection: it grants a PTY and a shell,
@@ -205,7 +205,7 @@ func runConsole(t *testing.T, h *SSHTestHelper, stdin string, timeout time.Durat
 // pinConsoleHost generates an SSH key and pins the echo server's host key so the
 // console can verify it (host-key trust is MITM-safe: a pin must exist before
 // dial). Returns the key name used for authentication.
-func pinConsoleHost(t *testing.T, h *SSHTestHelper, host, fingerprint string) string {
+func pinConsoleHost(t *testing.T, h *SSHTestHelper, host, hostKey string) string {
 	t.Helper()
 
 	keyName := "console-key"
@@ -218,8 +218,8 @@ func pinConsoleHost(t *testing.T, h *SSHTestHelper, host, fingerprint string) st
 
 	pin := h.RunSSHHostKeys("add",
 		"--scope", "user", "--owner", h.User(),
-		"--host", host, "--fingerprint", fingerprint,
-		"--algorithm", "ssh-ed25519", "--source", "manual")
+		"--host", host, "--key", hostKey,
+		"--source", "manual")
 	if !pin.Success() {
 		t.Fatalf("pin host key failed: %s", pin.Combined())
 	}
@@ -230,8 +230,8 @@ func pinConsoleHost(t *testing.T, h *SSHTestHelper, host, fingerprint string) st
 // server and asserts the console byte stream round-trips end-to-end.
 func TestSSHConsoleEmbedded(t *testing.T) {
 	h := NewSSHTestHelper(t)
-	host, port, fingerprint := startConsoleEchoServer(t)
-	keyName := pinConsoleHost(t, h, host, fingerprint)
+	host, port, hostKey := startConsoleEchoServer(t)
+	keyName := pinConsoleHost(t, h, host, hostKey)
 
 	marker := "xkey-console-roundtrip-7f3a"
 	res := runConsole(t, h, marker+"\nexit\n", 20*time.Second,
@@ -254,8 +254,8 @@ func TestSSHConsoleEmbedded(t *testing.T) {
 // user, key) by name, the same path the GUI uses.
 func TestSSHConsoleProfile(t *testing.T) {
 	h := NewSSHTestHelper(t)
-	host, port, fingerprint := startConsoleEchoServer(t)
-	keyName := pinConsoleHost(t, h, host, fingerprint)
+	host, port, hostKey := startConsoleEchoServer(t)
+	keyName := pinConsoleHost(t, h, host, hostKey)
 
 	add := h.RunSSH("profile", "add",
 		"--name", "echo-box",
@@ -357,12 +357,12 @@ func serveTestAgentSocket(t *testing.T, keyring sshagent.Agent) string {
 
 // pinConsoleHostOnly pins the echo server's host key without generating an
 // xkey-managed key (for local-identity flows that never touch the store).
-func pinConsoleHostOnly(t *testing.T, h *SSHTestHelper, host, fingerprint string) {
+func pinConsoleHostOnly(t *testing.T, h *SSHTestHelper, host, hostKey string) {
 	t.Helper()
 	pin := h.RunSSHHostKeys("add",
 		"--scope", "user", "--owner", h.User(),
-		"--host", host, "--fingerprint", fingerprint,
-		"--algorithm", "ssh-ed25519", "--source", "manual")
+		"--host", host, "--key", hostKey,
+		"--source", "manual")
 	if !pin.Success() {
 		t.Fatalf("pin host key failed: %s", pin.Combined())
 	}
@@ -374,8 +374,8 @@ func pinConsoleHostOnly(t *testing.T, h *SSHTestHelper, host, fingerprint string
 // round-trips.
 func TestSSHConsoleLocalIdentityFile(t *testing.T) {
 	h := NewSSHTestHelper(t)
-	host, port, fingerprint := startConsoleEchoServer(t)
-	pinConsoleHostOnly(t, h, host, fingerprint)
+	host, port, hostKey := startConsoleEchoServer(t)
+	pinConsoleHostOnly(t, h, host, hostKey)
 
 	// Write an unencrypted OpenSSH identity file + .pub pair.
 	_, priv, err := ed25519.GenerateKey(rand.Reader)
@@ -423,8 +423,8 @@ func TestSSHConsoleLocalIdentityFile(t *testing.T) {
 // embedded console's "No key" option.
 func TestSSHConsoleNoKeyAgentFallback(t *testing.T) {
 	h := NewSSHTestHelper(t)
-	host, port, fingerprint := startConsoleEchoServer(t)
-	pinConsoleHostOnly(t, h, host, fingerprint)
+	host, port, hostKey := startConsoleEchoServer(t)
+	pinConsoleHostOnly(t, h, host, hostKey)
 
 	t.Setenv("HOME", t.TempDir()) // no ~/.ssh — the agent is the only source
 	_, priv, err := ed25519.GenerateKey(rand.Reader)
@@ -467,13 +467,13 @@ type consoleRunResult struct {
 func TestSSHConsoleConcurrentSessions(t *testing.T) {
 	h := NewSSHTestHelper(t)
 
-	hostA, portA, fpA := startConsoleEchoServerOn(t, "127.0.0.1")
-	hostB, portB, fpB := startConsoleEchoServerOn(t, "127.0.0.2")
-	keyName := pinConsoleHost(t, h, hostA, fpA)
+	hostA, portA, hostKeyA := startConsoleEchoServerOn(t, "127.0.0.1")
+	hostB, portB, hostKeyB := startConsoleEchoServerOn(t, "127.0.0.2")
+	keyName := pinConsoleHost(t, h, hostA, hostKeyA)
 	pin := h.RunSSHHostKeys("add",
 		"--scope", "user", "--owner", h.User(),
-		"--host", hostB, "--fingerprint", fpB,
-		"--algorithm", "ssh-ed25519", "--source", "manual")
+		"--host", hostB, "--key", hostKeyB,
+		"--source", "manual")
 	if !pin.Success() {
 		t.Fatalf("pin host B failed: %s", pin.Combined())
 	}

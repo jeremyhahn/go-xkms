@@ -83,7 +83,7 @@ func newTestAutoFillService(t *testing.T) (*AutoFillService, *audit.BackendStore
 	// Static password store backed by in-memory storage.
 	memBackend, err := xkms.NewMemoryBackend()
 	require.NoError(t, err)
-	pwStore := staticpw.NewStore(memBackend)
+	pwStore := newTestPasswordStore(t, memBackend)
 
 	// Add test passwords.
 	require.NoError(t, pwStore.Add(&staticpw.StaticPassword{
@@ -1247,6 +1247,23 @@ func TestAutoFillService_SetEnabled_PolicyGate(t *testing.T) {
 			}
 		})
 	}
+}
+
+// TestAutoFillService_IsEnabled_FollowsEnterprisePolicy covers the startup
+// order: the user toggle is applied before the verified policy arrives, and a
+// policy that disables the extension must win over it.
+func TestAutoFillService_IsEnabled_FollowsEnterprisePolicy(t *testing.T) {
+	auditStore, err := audit.NewBackendStore(xkms.NewStorageMemory(), 100, slog.Default())
+	require.NoError(t, err)
+	svc := NewAutoFillService(nil, nil, nil, auditStore, nil)
+	require.NoError(t, svc.SetEnabled(true))
+
+	svc.SetEnterprisePolicy(&EnterpriseExtensionPolicy{Enabled: false, UserCanConfigure: true})
+	assert.False(t, svc.IsEnabled())
+	assert.False(t, svc.GetStatus().ExtensionEnabled)
+
+	svc.SetEnterprisePolicy(&EnterpriseExtensionPolicy{Enabled: true, UserCanConfigure: true})
+	assert.True(t, svc.IsEnabled(), "the user toggle applies again once the policy allows it")
 }
 
 // TestAutoFillService_HandleAutofillFocus pins the current contract: an

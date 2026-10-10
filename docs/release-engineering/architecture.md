@@ -1,7 +1,7 @@
 # Release engineering — architecture
 
 **Status:** implemented.
-**Last verified:** 2026-09-21 against `scripts/release-alpha.sh` and
+**Last verified:** 2026-10-08 against `scripts/release-alpha.sh` and
 `scripts/release-tag.sh`.
 
 ## What a release is
@@ -38,7 +38,9 @@ The fix is two scripts with one job each, not one script with a flag:
 1. **`scripts/release-alpha.sh` / `make release-alpha` PREPARES.** It fetches
    the release branch, validates everything a release must satisfy, writes the
    version bump and pin rewrite to a **new branch** (`release/<version>`), and
-   pushes **that branch only**. It prints the pull request URL and stops.
+   pushes **that branch only**. It opens the pull request itself, titled
+   exactly `chore(release): <version>`, on the forge the pushed-to remote's
+   own URL names, prints its URL and stops.
    Nothing is tagged, nothing is published to `main`. This is what
    go-xkms#419 calls "option 1": the tag step becomes a separate command run
    against a merge commit that has already passed CI and review, restoring the

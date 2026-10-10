@@ -1,6 +1,6 @@
 # xKey Desktop GUI — API
 
-> **Status: NORMATIVE** · Feature: `gui` · Module: `go-xkms/xkey` · Last verified: 2026-09-30
+> **Status: NORMATIVE** · Feature: `gui` · Module: `go-xkms/xkey` · Last verified: 2026-10-09
 
 The GUI's API is the set of Go types Wails binds to the frontend — there is
 no separate network protocol for it (the Unix-socket IPC server is a
@@ -36,7 +36,7 @@ full method-by-method detail instead of repeating it.
 
 | Service | Method groups | File |
 |---|---|---|
-| `AppService` | Status/config/theme (`GetStatus`, `GetConfig`, `UpdateConfig`, `GetTheme`, `SetTheme`); identity (`GetIdentity`, `UpdateIdentity`); window (`MinimizeToTray`, `ToggleFIDO2Authenticator`); file save (`SaveTextFile`, `SavePEMFile`); ~15 `SetXxxFunc` wiring hooks other services report status through | `app_service.go` |
+| `AppService` | Status/config/theme (`GetStatus`, `GetConfig`, `UpdateConfig`, `GetTheme`, `SetTheme`; `GUIConfigData.local_app_access_enabled` is the local app access setting, and saving it opens or closes the IPC socket at once); identity (`GetIdentity`, `UpdateIdentity`); window (`MinimizeToTray`, `ToggleFIDO2Authenticator`); file save (`SaveTextFile`, `SavePEMFile`); ~15 `SetXxxFunc` wiring hooks other services report status through | `app_service.go` |
 | `TPMService` | Device/EK/IAK/IDevID/SRK info and cert import/export; PCR read/quote/event-log; key provisioning, listing, certify; NV index define/read/write/extend/delete; lockout; factory/force clear — the largest single service | `tpm_service.go` |
 | `TPMPolicyService` | Named TPM policies ([docs/tpm-policies](../../../docs/tpm-policies/api.md)): `GetStatus`, `CreatePolicy`, `ListPolicies` (with object counts, built-in `platform` first), `GetPolicy`, `UpdatePolicy`, `RevokePolicy`, `VerifyPolicy`, `DeletePolicy` (refused while objects are bound), `PolicyObjects`, `KeyPolicy`, `SetAutoUnseal`, `RotateAuthority` — on the connected server, else on xKey's own TPM | `tpm_policy_service.go` |
 | `AuditService` | `GetEntries`, `ExportEntries` | `audit_service.go` |
@@ -73,8 +73,9 @@ full method-by-method detail instead of repeating it.
 ## What is not part of this API
 
 - The Unix-domain-socket IPC server (`guiIPCHandler`) — a separate,
-  non-Wails transport for the CLI and browser extension; see
-  [architecture.md](architecture.md).
+  non-Wails transport for the CLI, the browser extension and the PKCS#11 IPC
+  transport. It runs only while local app access is on and xKey is unlocked;
+  see [architecture.md](architecture.md).
 - `xkey/pkg/backend/phone` and other `go-xkms` SDK-level backend
   implementations — the GUI reaches them through the services above, not
   directly.

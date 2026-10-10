@@ -81,7 +81,7 @@ async function installBackendInitScript(page: Page): Promise<void> {
             setup_complete: true,
             storage_type: 'file',
             barrier_initialized: false,
-            browser_extension_enabled: false,
+            local_app_access_enabled: false,
             server_protocol: 'rest',
             server_address: '',
             server_tls_enabled: false,

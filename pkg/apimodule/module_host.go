@@ -177,6 +177,9 @@ func (m *Module) hostStores(x *xkms.XKMSService) *compose.Stores {
 	if m.resolveBarrierRegistry != nil {
 		deps.BarrierRegistry = m.resolveBarrierRegistry()
 	}
+	if m.resolveTenantStores != nil {
+		deps.TenantStores = m.resolveTenantStores()
+	}
 
 	// Build fails only for a nil Service, which the callers have already
 	// excluded; every feature failure is recorded in Stores.Disabled.

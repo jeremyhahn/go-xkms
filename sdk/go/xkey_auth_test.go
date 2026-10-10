@@ -28,6 +28,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/jeremyhahn/go-xkms/sdk/go/transport"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -53,7 +54,9 @@ func generateTestCertPEM(t *testing.T) string {
 	return string(pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: certDER}))
 }
 
-// ipcCertResponse is a simplified IPC response structure for testing.
+// ipcCertResponse is the xkey IPC response envelope for testing. The
+// get_piv_certificate payload is the SDK transport response, exactly as the
+// xkey daemon sends it.
 type ipcCertResponse struct {
 	Status string               `json:"status"`
 	Error  string               `json:"error,omitempty"`
@@ -61,15 +64,7 @@ type ipcCertResponse struct {
 }
 
 type ipcCertPKCS11Result struct {
-	PIVCert *ipcCertPIVResult `json:"piv_cert,omitempty"`
-}
-
-type ipcCertPIVResult struct {
-	Certificate string `json:"certificate"`
-	Slot        string `json:"slot"`
-	Subject     string `json:"subject"`
-	Issuer      string `json:"issuer"`
-	NotAfter    string `json:"not_after"`
+	GetPIVCertificate *transport.GetPIVCertificateResponse `json:"get_piv_certificate,omitempty"`
 }
 
 // startTestIPCServer starts a mock IPC server that serves a certificate.
@@ -97,12 +92,10 @@ func startTestIPCServer(t *testing.T, certPEM string) string {
 				resp := ipcCertResponse{
 					Status: "ok",
 					PKCS11: &ipcCertPKCS11Result{
-						PIVCert: &ipcCertPIVResult{
-							Certificate: certPEM,
+						GetPIVCertificate: &transport.GetPIVCertificateResponse{
 							Slot:        "9a",
-							Subject:     "CN=test-signer",
-							Issuer:      "CN=test-signer",
-							NotAfter:    "2030-01-01T00:00:00Z",
+							Certificate: []byte(certPEM),
+							Format:      "pem",
 						},
 					},
 				}

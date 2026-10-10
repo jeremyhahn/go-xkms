@@ -492,8 +492,8 @@ func mapPasswordError(err error) error {
 	// Configuration/nil errors
 	case errors.Is(err, staticpw.ErrNilStore):
 		return status.Error(codes.Internal, "password store not initialized")
-	case errors.Is(err, staticpw.ErrNilBarrierRegistry):
-		return status.Error(codes.Internal, "barrier registry not configured")
+	case errors.Is(err, staticpw.ErrNilTenantStores):
+		return status.Error(codes.Internal, "tenant password stores not configured")
 
 	// xkms errors
 	case errors.Is(err, xkms.ErrNotConfigured):

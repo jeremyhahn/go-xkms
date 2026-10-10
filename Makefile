@@ -13,20 +13,21 @@ LDFLAGS := -X github.com/jeremyhahn/go-xkms/pkg/cli.Version=$(VERSION) \
            -X github.com/jeremyhahn/go-xkms/pkg/cli.GitCommit=$(GIT_COMMIT) \
            -X github.com/jeremyhahn/go-xkms/pkg/cli.BuildDate=$(BUILD_DATE)
 
-# Optional backend features (set to 1 to enable)
-# Default: Software backends enabled, hardware/cloud backends disabled
+# Optional features (handbook conventions/build-tags.md). Every feature is
+# compiled in by default; opt out with WITH_X=0 to drop it, and its SDKs, from
+# the build. A binary built without a feature fails closed when a
+# configuration names it (xkms.FeatureNotCompiledError).
 WITH_PKCS8 ?= 1
-WITH_TPM2 ?= 0
-WITH_AWS_KMS ?= 0
-WITH_GCP_KMS ?= 0
-WITH_AZURE_KV ?= 0
-WITH_VAULT ?= 0
-WITH_PKCS11 ?= 0
+WITH_TPM2 ?= 1
+WITH_AWS_KMS ?= 1
+WITH_GCP_KMS ?= 1
+WITH_AZURE_KV ?= 1
+WITH_VAULT ?= 1
+WITH_PKCS11 ?= 1
 
 # Object-storage (go-objstore) backends used by the embedded qrdb datastore for
-# object-store KV and backup/restore targets. Default on (server posture); the
-# tag names match go-objstore exactly (awss3/minio/gcpstorage/azureblob/glacier/
-# azurearchive). Set to 0 to drop the corresponding cloud SDK from the build.
+# object-store KV and backup/restore targets. The tag names match go-objstore
+# exactly (awss3/minio/gcpstorage/azureblob/glacier/azurearchive).
 WITH_AWS_S3 ?= 1
 WITH_MINIO ?= 1
 WITH_GCP_STORAGE ?= 1
@@ -37,31 +38,34 @@ WITH_AZURE_ARCHIVE ?= 1
 # Quantum-safe cryptography (ML-DSA, ML-KEM) is always enabled.
 # Uses pure-Go implementations (circl, crypto/mlkem). No external libraries required.
 
-# FROST threshold signatures support (RFC 9591)
-# Default: Enabled - FROST threshold signatures compiled in by default
+# FROST threshold signatures (RFC 9591)
 WITH_FROST ?= 1
 
-# Group variables (convenience flags to enable all backends for a provider)
-# Setting these will override individual backend flags
-WITH_AWS ?= 0
-WITH_GCP ?= 0
-WITH_AZURE ?= 0
+# Every per-feature toggle, in one list: build-full sets each to 1 and
+# build-minimal each to 0.
+FEATURE_TOGGLES := WITH_PKCS8 WITH_TPM2 WITH_AWS_KMS WITH_GCP_KMS WITH_AZURE_KV \
+	WITH_VAULT WITH_PKCS11 WITH_FROST WITH_AWS_S3 WITH_MINIO WITH_GCP_STORAGE \
+	WITH_AZURE_BLOB WITH_GLACIER WITH_AZURE_ARCHIVE
 
-# Apply group flags — each umbrella drives BOTH the KMS backend and the
-# object-storage family for that provider.
-ifeq ($(WITH_AWS),1)
-	WITH_AWS_KMS := 1
-	WITH_AWS_S3 := 1
-	WITH_GLACIER := 1
+# Provider umbrellas: unset by default. WITH_AWS=0 (or 1) sets the provider's
+# KMS backend and object-storage family together, overriding the individual
+# toggles; left unset, the individual toggles decide.
+WITH_AWS ?=
+WITH_GCP ?=
+WITH_AZURE ?=
+ifneq ($(WITH_AWS),)
+	WITH_AWS_KMS := $(WITH_AWS)
+	WITH_AWS_S3 := $(WITH_AWS)
+	WITH_GLACIER := $(WITH_AWS)
 endif
-ifeq ($(WITH_GCP),1)
-	WITH_GCP_KMS := 1
-	WITH_GCP_STORAGE := 1
+ifneq ($(WITH_GCP),)
+	WITH_GCP_KMS := $(WITH_GCP)
+	WITH_GCP_STORAGE := $(WITH_GCP)
 endif
-ifeq ($(WITH_AZURE),1)
-	WITH_AZURE_KV := 1
-	WITH_AZURE_BLOB := 1
-	WITH_AZURE_ARCHIVE := 1
+ifneq ($(WITH_AZURE),)
+	WITH_AZURE_KV := $(WITH_AZURE)
+	WITH_AZURE_BLOB := $(WITH_AZURE)
+	WITH_AZURE_ARCHIVE := $(WITH_AZURE)
 endif
 
 
@@ -79,8 +83,8 @@ BUILD_TAGS := codec_cbor codec_json codec_msgpack
 ifeq ($(WITH_PKCS8),1)
 	BUILD_TAGS += pkcs8
 endif
-ifeq ($(WITH_TPM_SIMULATOR),1)
-	BUILD_TAGS += 
+ifeq ($(WITH_TPM2),1)
+	BUILD_TAGS += tpm2
 endif
 ifeq ($(WITH_AWS_KMS),1)
 	BUILD_TAGS += awskms
@@ -128,11 +132,20 @@ else
 	TAG_FLAGS :=
 endif
 
+# xkey's production tag set comes from xkey/Makefile, the one place it is
+# declared; its WITH_* toggles pass through from this command line. Deferred
+# (=) so only the recipes that build xkey pay for the sub-make.
+XKEY_BUILD_TAGS = $(shell $(MAKE) -s --no-print-directory -C xkey print-build-tags)
+
+# The pure-Go xkmsctl carries every selected feature except pkcs11, which
+# needs cgo.
+CLI_TAGS := $(filter-out pkcs11,$(BUILD_TAGS)) gms_pure_go
+
 # Go parameters
 #
 # The module declares the Go it needs in go.mod's `go` directive, and the
 # fleet pins GOTOOLCHAIN=local on hosts, under which a host go older than that
-# directive refuses every target ("go: go.mod requires go >= 1.27.1 (running
+# directive refuses every target ("go: go.mod requires go >= 1.27.2 (running
 # go 1.26.4; GOTOOLCHAIN=local)") while the Docker builder, which runs with
 # GOTOOLCHAIN=auto, quietly downloads the right one. Select the declared
 # toolchain explicitly for every recipe: the host go then acts only as the
@@ -462,6 +475,27 @@ build: lib build-cli build-servers build-xkey
 ## build-local: Build everything locally without Docker (requires dev packages)
 build-local: lib build-cli build-xkey-local
 
+.PHONY: build-full
+## build-full: Compile every package and build xkmsctl + xkmsd locally with every WITH_* feature on
+build-full:
+	@$(MAKE) --no-print-directory build-profile BUILD_PROFILE=full $(addsuffix =1,$(FEATURE_TOGGLES))
+
+.PHONY: build-minimal
+## build-minimal: Compile every package and build xkmsctl + xkmsd locally with every WITH_* feature off
+build-minimal:
+	@$(MAKE) --no-print-directory build-profile BUILD_PROFILE=minimal $(addsuffix =0,$(FEATURE_TOGGLES))
+
+# build-profile compiles the module and links xkmsctl and xkmsd under the
+# feature toggles its caller sets; build-full and build-minimal drive it.
+.PHONY: build-profile
+build-profile:
+	@echo "$(CYAN)$(BOLD)→ Building the $(BUILD_PROFILE) profile [tags: $(BUILD_TAGS)]$(RESET)"
+	@mkdir -p $(BIN_DIR)
+	@CGO_ENABLED=1 $(GO) build -buildvcs=false $(TAG_FLAGS) ./...
+	@$(MAKE) --no-print-directory build-cli
+	@CGO_ENABLED=1 $(GOBUILD) -o $(BIN_DIR)/xkmsd ./cmd/xkmsd
+	@echo "$(GREEN)✓ $(BUILD_PROFILE) profile built: $(BIN_DIR)/xkmsctl $(BIN_DIR)/xkmsd$(RESET)"
+
 .PHONY: builder-image
 ## builder-image: Build the Docker builder image for CGO builds (lib, server)
 builder-image:
@@ -473,7 +507,7 @@ builder-image:
 build-cli:
 	@echo "$(CYAN)$(BOLD)→ Building xkmsctl CLI...$(RESET)"
 	@mkdir -p $(BIN_DIR)
-	@CGO_ENABLED=0 $(GOBUILD) -tags gms_pure_go -o $(BIN_DIR)/xkmsctl ./cmd/xkmsctl
+	@CGO_ENABLED=0 $(GO) build -buildvcs=false -tags "$(CLI_TAGS)" -ldflags "$(LDFLAGS)" -o $(BIN_DIR)/xkmsctl ./cmd/xkmsctl
 	@echo "$(GREEN)✓ CLI binary built: $(BIN_DIR)/xkmsctl$(RESET)"
 
 .PHONY: build-server
@@ -520,7 +554,7 @@ build-xkey:
 		$(BUILDER_MODULE_ENV) \
 		-w /workspace/xkey \
 		$(XKEY_BUILDER_IMAGE) \
-		bash -c "CGO_ENABLED=1 go build -tags 'ble,usb,production,codec_json,pkcs11,webkit2_41' -buildvcs=false -ldflags '-X github.com/jeremyhahn/go-xkms/xkey/cmd/xkey/cmd.Version=$(VERSION) -X github.com/jeremyhahn/go-xkms/xkey/cmd/xkey/cmd.Commit=$(GIT_COMMIT) -X github.com/jeremyhahn/go-xkms/xkey/cmd/xkey/cmd.Date=$(BUILD_DATE)' -o /workspace/$(BIN_DIR)/xkey ./cmd/xkey && chown $(shell id -u):$(shell id -g) /workspace/$(BIN_DIR)/xkey"
+		bash -c "CGO_ENABLED=1 go build -tags '$(XKEY_BUILD_TAGS)' -buildvcs=false -ldflags '-X github.com/jeremyhahn/go-xkms/xkey/cmd/xkey/cmd.Version=$(VERSION) -X github.com/jeremyhahn/go-xkms/xkey/cmd/xkey/cmd.Commit=$(GIT_COMMIT) -X github.com/jeremyhahn/go-xkms/xkey/cmd/xkey/cmd.Date=$(BUILD_DATE)' -o /workspace/$(BIN_DIR)/xkey ./cmd/xkey && chown $(shell id -u):$(shell id -g) /workspace/$(BIN_DIR)/xkey"
 	@echo "$(GREEN)✓ xkey binary built: $(BIN_DIR)/xkey$(RESET)"
 	@echo "$(GREEN)  GUI mode:  ./$(BIN_DIR)/xkey$(RESET)"
 	@echo "$(GREEN)  CLI mode:  ./$(BIN_DIR)/xkey --no-gui$(RESET)"
@@ -727,7 +761,7 @@ coverage-web: coverage-sdk-ts coverage-svelte-auth coverage-web-app
 build-pkcs11-module:
 	@echo "$(CYAN)$(BOLD)→ Building PKCS#11 shared library (GOFIPS140=$(GOFIPS140))...$(RESET)"
 	@mkdir -p $(LIB_DIR)
-	@GOFIPS140=$(GOFIPS140) CGO_ENABLED=1 $(GO) build -buildmode=c-shared \
+	@GOFIPS140=$(GOFIPS140) CGO_ENABLED=1 $(GO) build $(TAG_FLAGS) -buildmode=c-shared \
 		-o $(LIB_DIR)/libxkms_pkcs11.so \
 		./cmd/pkcs11-module
 	@echo "$(GREEN)✓ PKCS#11 module built: $(LIB_DIR)/libxkms_pkcs11.so$(RESET)"
@@ -737,7 +771,7 @@ build-pkcs11-module:
 build-pkcs11-module-fips:
 	@echo "$(CYAN)$(BOLD)→ Building FIPS 140-3 PKCS#11 shared library (GOFIPS140=$(GOFIPS140_FIPS))...$(RESET)"
 	@mkdir -p $(LIB_DIR)
-	@GOFIPS140=$(GOFIPS140_FIPS) CGO_ENABLED=1 $(GO) build -buildmode=c-shared \
+	@GOFIPS140=$(GOFIPS140_FIPS) CGO_ENABLED=1 $(GO) build $(TAG_FLAGS) -buildmode=c-shared \
 		-o $(LIB_DIR)/libxkms_pkcs11_fips.so \
 		./cmd/pkcs11-module
 	@echo "$(GREEN)✓ FIPS PKCS#11 module built: $(LIB_DIR)/libxkms_pkcs11_fips.so$(RESET)"
@@ -994,6 +1028,7 @@ test-scripts:
 	@bash test/scripts/retry.test.sh
 	@bash test/scripts/softhsm-pin.test.sh
 	@bash test/scripts/check-public-literals.test.sh
+	@bash test/scripts/check-test-helpers.test.sh
 	@echo "$(GREEN)✓ Shell script tests passed$(RESET)"
 
 .PHONY: test-go
@@ -2562,14 +2597,14 @@ define run_with_server
 		{ $(DOCKER_COMPOSE) up -d devcontainer --wait 2>/dev/null || $(DOCKER_COMPOSE) up -d devcontainer; } && \
 		$(ci_sync_devcontainer_workspace) && \
 		echo "$(CYAN)$(BOLD)→ Building PKCS#11 shared library in devcontainer...$(RESET)" && \
-		$(DOCKER_COMPOSE) exec -T devcontainer bash -c "cd $(DEVCONTAINER_REPO) && mkdir -p build/lib && GOFIPS140=$(GOFIPS140) CGO_ENABLED=1 go build -buildvcs=false -buildmode=c-shared -o build/lib/libxkms_pkcs11.so ./cmd/pkcs11-module" && \
+		$(DOCKER_COMPOSE) exec -T devcontainer bash -c "cd $(DEVCONTAINER_REPO) && mkdir -p build/lib && GOFIPS140=$(GOFIPS140) CGO_ENABLED=1 go build -buildvcs=false -tags '$(BUILD_TAGS)' -buildmode=c-shared -o build/lib/libxkms_pkcs11.so ./cmd/pkcs11-module" && \
 		echo "$(GREEN)✓ PKCS#11 module built in devcontainer$(RESET)" || \
 		{ echo "$(RED)✗ Could not build the PKCS#11 module; the suite would run against a stale .so$(RESET)"; exit 1; }; \
 	fi
 	$(call compose_up_xkms_server)
 	@if [ -n "$$XKMS_DEVCONTAINER" ]; then \
 		echo "$(CYAN)$(BOLD)→ Building PKCS#11 shared library...$(RESET)"; \
-		mkdir -p build/lib && GOFIPS140=$(GOFIPS140) CGO_ENABLED=1 go build -buildmode=c-shared -o build/lib/libxkms_pkcs11.so ./cmd/pkcs11-module || \
+		mkdir -p build/lib && GOFIPS140=$(GOFIPS140) CGO_ENABLED=1 go build $(TAG_FLAGS) -buildmode=c-shared -o build/lib/libxkms_pkcs11.so ./cmd/pkcs11-module || \
 			{ echo "$(RED)✗ Could not build the PKCS#11 module; the suite would run against a stale .so$(RESET)"; exit 1; }; \
 		echo "$(GREEN)✓ PKCS#11 module built: build/lib/libxkms_pkcs11.so$(RESET)"; \
 		echo "$(CYAN)$(BOLD)→ Ensuring an xkms server is listening...$(RESET)"; \
@@ -2867,7 +2902,7 @@ integration-test-xkey-ctap:
 .PHONY: integration-test-xkey-luks
 ## integration-test-xkey-luks: Run LUKS encrypted storage integration tests (requires root for cryptsetup)
 integration-test-xkey-luks:
-	$(call run_in_devcontainer,mkdir -p build/bin && cd xkey && /usr/local/go/bin/go build -buildvcs=false -tags='ble$(comma)production$(comma)codec_json$(comma)pkcs11$(comma)webkit2_41' -o ../build/bin/xkey ./cmd/xkey && sudo /usr/local/go/bin/go test -v -tags='integration$(comma)linux$(comma)codec_json' ./test/integration/luks/... -timeout 10m,integration-test-xkey-luks)
+	$(call run_in_devcontainer,mkdir -p build/bin && cd xkey && /usr/local/go/bin/go build -buildvcs=false -tags='$(XKEY_BUILD_TAGS)' -o ../build/bin/xkey ./cmd/xkey && sudo /usr/local/go/bin/go test -v -tags='integration$(comma)linux$(comma)codec_json' ./test/integration/luks/... -timeout 10m,integration-test-xkey-luks)
 
 .PHONY: integration-test-xkey
 ## integration-test-xkey: Run all xkey integration tests (FIDO2, CTAP, OIDC, PIV, OATH, Password, Touch, SSH, LUKS)
@@ -3704,6 +3739,20 @@ check-public-literals:
 	@echo "$(CYAN)$(BOLD)→ Checking for internal literals (lab/fleet/owner)...$(RESET)"
 	@bash scripts/check-public-literals.sh
 
+# GOFLAGS takes one comma-separated -tags value.
+EMPTY :=
+SPACE := $(EMPTY) $(EMPTY)
+COMMA := ,
+BUILD_TAGS_CSV = $(subst $(SPACE),$(COMMA),$(strip $(BUILD_TAGS)))
+
+.PHONY: check-test-helpers
+## check-test-helpers: Fail if a production package imports a test-only helper (go list -deps, all modules, default and feature tags)
+check-test-helpers:
+	@echo "$(CYAN)$(BOLD)→ Checking that production code imports no test-only helper...$(RESET)"
+	@bash scripts/check-test-helpers.sh
+	@GOFLAGS=-tags=$(BUILD_TAGS_CSV) bash scripts/check-test-helpers.sh
+	@echo "$(GREEN)✓ No production package imports a test-only helper$(RESET)"
+
 
 # Modules that `vet` and `lint` cover. Go tooling does not cross module
 # boundaries, so `./...` from the root reaches the root module ONLY -- this
@@ -4162,28 +4211,35 @@ help:
 		awk 'BEGIN {FS = ":.*?## "}; {printf "  $(YELLOW)%-25s$(RESET) %s\n", $$1, $$2}' | \
 		sed 's/^## //'
 	@echo ""
-	@echo "$(BOLD)Backend Build Variables:$(RESET)"
-	@echo "  Control which cryptographic backends are included in the build:"
-	@echo "  $(GREEN)WITH_PKCS8=1/0$(RESET)       PKCS#8 software keys (default: $(WITH_PKCS8))"
-	@echo "  $(GREEN)WITH_TPM2=1/0$(RESET)        TPM 2.0 hardware keys (default: $(WITH_TPM2))"
-	@echo "  $(GREEN)WITH_AWS_KMS=1/0$(RESET)     AWS KMS cloud keys (default: $(WITH_AWS_KMS))"
-	@echo "  $(GREEN)WITH_GCP_KMS=1/0$(RESET)     GCP KMS cloud keys (default: $(WITH_GCP_KMS))"
-	@echo "  $(GREEN)WITH_AZURE_KV=1/0$(RESET)    Azure Key Vault keys (default: $(WITH_AZURE_KV))"
-	@echo "  $(GREEN)WITH_PKCS11=1/0$(RESET)      PKCS#11 HSM keys (default: $(WITH_PKCS11))"
+	@echo "$(BOLD)Feature Build Variables:$(RESET)"
+	@echo "  Every feature is compiled in by default; opt out with WITH_X=0:"
+	@echo "  $(GREEN)WITH_PKCS8=1/0$(RESET)          PKCS#8 software keys (default: $(WITH_PKCS8))"
+	@echo "  $(GREEN)WITH_TPM2=1/0$(RESET)           TPM 2.0 hardware keys (default: $(WITH_TPM2))"
+	@echo "  $(GREEN)WITH_PKCS11=1/0$(RESET)         PKCS#11 HSM keys (default: $(WITH_PKCS11))"
+	@echo "  $(GREEN)WITH_AWS_KMS=1/0$(RESET)        AWS KMS cloud keys (default: $(WITH_AWS_KMS))"
+	@echo "  $(GREEN)WITH_GCP_KMS=1/0$(RESET)        GCP KMS cloud keys (default: $(WITH_GCP_KMS))"
+	@echo "  $(GREEN)WITH_AZURE_KV=1/0$(RESET)       Azure Key Vault keys (default: $(WITH_AZURE_KV))"
+	@echo "  $(GREEN)WITH_VAULT=1/0$(RESET)          HashiCorp Vault keys (default: $(WITH_VAULT))"
+	@echo "  $(GREEN)WITH_FROST=1/0$(RESET)          FROST threshold signatures (default: $(WITH_FROST))"
+	@echo "  $(GREEN)WITH_AWS_S3=1/0$(RESET)         S3 object storage (default: $(WITH_AWS_S3))"
+	@echo "  $(GREEN)WITH_MINIO=1/0$(RESET)          MinIO object storage (default: $(WITH_MINIO))"
+	@echo "  $(GREEN)WITH_GCP_STORAGE=1/0$(RESET)    GCS object storage (default: $(WITH_GCP_STORAGE))"
+	@echo "  $(GREEN)WITH_AZURE_BLOB=1/0$(RESET)     Azure Blob object storage (default: $(WITH_AZURE_BLOB))"
+	@echo "  $(GREEN)WITH_GLACIER=1/0$(RESET)        Glacier archive storage (default: $(WITH_GLACIER))"
+	@echo "  $(GREEN)WITH_AZURE_ARCHIVE=1/0$(RESET)  Azure archive storage (default: $(WITH_AZURE_ARCHIVE))"
 	@echo ""
-	@echo "$(BOLD)Group Variables (enable all backends for a provider):$(RESET)"
-	@echo "  $(GREEN)WITH_AWS=1/0$(RESET)         Enable all AWS backends (default: $(WITH_AWS))"
-	@echo "  $(GREEN)WITH_GCP=1/0$(RESET)         Enable all GCP backends (default: $(WITH_GCP))"
-	@echo "  $(GREEN)WITH_AZURE=1/0$(RESET)       Enable all Azure backends (default: $(WITH_AZURE))"
+	@echo "$(BOLD)Provider Variables (unset by default; set a whole provider at once):$(RESET)"
+	@echo "  $(GREEN)WITH_AWS=1/0$(RESET)            AWS KMS, S3 and Glacier"
+	@echo "  $(GREEN)WITH_GCP=1/0$(RESET)            GCP KMS and Cloud Storage"
+	@echo "  $(GREEN)WITH_AZURE=1/0$(RESET)          Azure Key Vault, Blob and archive storage"
 	@echo ""
 	@echo "  $(CYAN)Examples:$(RESET)"
-	@echo "    make build                                    # Default: minimal build"
-	@echo "    make build WITH_AWS=1                         # Enable all AWS backends"
-	@echo "    make build WITH_AWS_KMS=1 WITH_GCP_KMS=1      # Enable AWS and GCP KMS"
-	@echo "    make build WITH_PKCS11=1 WITH_TPM2=1          # Enable hardware backends"
-	@echo "    make test WITH_AWS=0 WITH_GCP=0 WITH_AZURE=0  # Test without cloud backends"
+	@echo "    make build-full                               # Every feature"
+	@echo "    make build-minimal                            # Every WITH_* feature at 0"
+	@echo "    make build WITH_AWS=0 WITH_GCP=0 WITH_AZURE=0 # Drop the cloud providers"
+	@echo "    make build WITH_PKCS11=0 WITH_TPM2=0          # Drop the hardware backends"
 	@echo ""
-	@echo "  $(YELLOW)Active backend tags:$(RESET) $(BUILD_TAGS)"
+	@echo "  $(YELLOW)Active feature tags:$(RESET) $(BUILD_TAGS)"
 	@echo ""
 	@echo "$(BOLD)Build Targets:$(RESET)"
 	@echo "  $(GREEN)Library:$(RESET)             make lib"
@@ -4969,8 +5025,9 @@ export GOWORK=off
 
 ## release-alpha: PREPARE an -alpha release as a pull request. VERSION is
 ## REQUIRED. Publishes nothing -- it pushes only the release branch and
-## prints the pull request URL.
-## Usage: make release-alpha VERSION=0.9.2-alpha [BUMP=minor] [DRY_RUN=1]
+## opens its pull request, titled chore(release): vVERSION, on the forge the
+## dev remote names, as the agent whose API token is in FORGE_TOKEN.
+## Usage: FORGE_TOKEN=... make release-alpha VERSION=0.9.2-alpha [BUMP=minor] [DRY_RUN=1]
 ## The version is stated, never guessed; BUMP, when given, declares what kind
 ## of release this is and is refused unless it agrees with VERSION. Also
 ## refuses an effective PATCH bump that grew the exported Go API.

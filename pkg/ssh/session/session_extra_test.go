@@ -27,7 +27,7 @@ import (
 	"github.com/jeremyhahn/go-xkms/pkg/ssh/known_hosts"
 	"github.com/jeremyhahn/go-xkms/pkg/ssh/scope"
 	"github.com/jeremyhahn/go-xkms/pkg/ssh/session"
-	"github.com/jeremyhahn/go-xkms/pkg/storage"
+	"github.com/jeremyhahn/go-xkms/pkg/testutil"
 )
 
 // ---------------------------------------------------------------------------
@@ -277,11 +277,7 @@ func TestDial_DestroyedKey_MaterialNil(t *testing.T) {
 // ---------------------------------------------------------------------------
 
 func TestDial_ZeroPortDefaultsTo22_ThenFails(t *testing.T) {
-	backend, err := storage.NewMemoryBackend()
-	if err != nil {
-		t.Fatalf("backend: %v", err)
-	}
-	store, err := known_hosts.NewBackendStore(backend)
+	store, err := known_hosts.NewDAOStore(testutil.NewMemoryDAOFactory())
 	if err != nil {
 		t.Fatalf("store: %v", err)
 	}
@@ -347,11 +343,7 @@ func TestDial_AcceptsButNoHandshake(t *testing.T) {
 		c.Close()
 	}()
 
-	backend, err := storage.NewMemoryBackend()
-	if err != nil {
-		t.Fatalf("backend: %v", err)
-	}
-	store, err := known_hosts.NewBackendStore(backend)
+	store, err := known_hosts.NewDAOStore(testutil.NewMemoryDAOFactory())
 	if err != nil {
 		t.Fatalf("store: %v", err)
 	}
@@ -501,11 +493,7 @@ func TestShell_HappyPath(t *testing.T) {
 		<-serverDone
 	}()
 
-	backend, berr := storage.NewMemoryBackend()
-	if berr != nil {
-		t.Fatalf("backend: %v", berr)
-	}
-	store, serr := known_hosts.NewBackendStore(backend)
+	store, serr := known_hosts.NewDAOStore(testutil.NewMemoryDAOFactory())
 	if serr != nil {
 		t.Fatalf("store: %v", serr)
 	}
@@ -610,11 +598,7 @@ func TestShell_ContextCancellation(t *testing.T) {
 		ln.Close()
 	}()
 
-	backend, berr := storage.NewMemoryBackend()
-	if berr != nil {
-		t.Fatalf("backend: %v", berr)
-	}
-	store, serr := known_hosts.NewBackendStore(backend)
+	store, serr := known_hosts.NewDAOStore(testutil.NewMemoryDAOFactory())
 	if serr != nil {
 		t.Fatalf("store: %v", serr)
 	}

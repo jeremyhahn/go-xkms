@@ -29,6 +29,15 @@ import (
 	"github.com/jeremyhahn/go-xkms/xkey/pkg/staticpw"
 )
 
+// newTestPasswordStore opens a static password store over backend through a
+// go-qrdb DAO factory.
+func newTestPasswordStore(t *testing.T, backend xkms.StorageBackend) *staticpw.DAOStore {
+	t.Helper()
+	store, err := staticpw.NewBackendStore(backend)
+	require.NoError(t, err)
+	return store
+}
+
 // testLogger returns a logger that discards output.
 func stateTestLogger() *slog.Logger {
 	return slog.New(slog.NewTextHandler(io.Discard, nil))
@@ -41,7 +50,7 @@ func newStatePWStore(t *testing.T) staticpw.Store {
 
 	backend, err := xkms.NewFileStorageBackend(t.TempDir())
 	require.NoError(t, err)
-	return staticpw.NewStore(backend)
+	return newTestPasswordStore(t, backend)
 }
 
 // newStatePINService builds a software-backed PIN service in a temp

@@ -15,15 +15,14 @@
 // session establishment.
 //
 // Fingerprints are public material (OpenSSH "SHA256:..." form) and are
-// persisted via the same storage.Backend used by pkg/ssh/keys. Because
-// pins carry no secret material, they are not wrapped in memguard
-// enclaves; storage-layer integrity (HMAC tag on QRDB's sealed backend,
-// or file permissions for the local file backend) is sufficient.
+// persisted as go-qrdb DAO entities in the same "ssh" database as
+// pkg/ssh/keys. Because pins carry no secret material, they are not
+// wrapped in memguard enclaves; the datastore's integrity is sufficient.
 //
 // # Layering
 //
 // known_hosts depends on pkg/ssh/scope for identifier construction and
-// on pkg/storage for persistence. It knows nothing about pkg/ssh/keys or
+// on pkg/ssh/records for persistence. It knows nothing about pkg/ssh/keys or
 // pkg/ssh/session — the session package composes known_hosts+keys.
 //
 // # Typical call graph

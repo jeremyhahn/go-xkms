@@ -81,7 +81,7 @@ type XKMSService struct {
 	tenantService qrdbsdk.ServiceTenantServicer
 
 	pinManager    subsystem[qrdbsdk.PINBackend]
-	passwordStore subsystem[*staticpw.BackendStore]
+	passwordStore subsystem[*staticpw.DAOStore]
 
 	// pkcs11StateStore persists a remote-mode PKCS#11 module's durable token and
 	// object state (token metadata, PIN hashes, lockout counters, object
@@ -259,7 +259,7 @@ func (s *XKMSService) SPIFFETrustDomain() string {
 func (s *XKMSService) SetPINManager(p qrdbsdk.PINBackend) { s.pinManager.store(p) }
 
 // SetPasswordStore sets the static password management subsystem.
-func (s *XKMSService) SetPasswordStore(p *staticpw.BackendStore) { s.passwordStore.store(p) }
+func (s *XKMSService) SetPasswordStore(p *staticpw.DAOStore) { s.passwordStore.store(p) }
 
 // SetPKCS11StateStore wires the remote-mode PKCS#11 state persistence store.
 func (s *XKMSService) SetPKCS11StateStore(p *pkcs11state.Store) { s.pkcs11StateStore = p }

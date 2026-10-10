@@ -146,7 +146,7 @@ func TestMapPasswordUnlockError(t *testing.T) {
 	}
 
 	// A store that is not wired reports the one not-configured error.
-	for _, err := range []error{xkms.ErrNotConfigured, staticpw.ErrNoSystemBarrier} {
+	for _, err := range []error{xkms.ErrNotConfigured, staticpw.ErrNotConfigured} {
 		got := mapPasswordUnlockError(err)
 		requireCode(t, got, ErrCodeServiceUnavailable)
 		assert.ErrorIs(t, got, ErrPasswordStoreNotConfigured)

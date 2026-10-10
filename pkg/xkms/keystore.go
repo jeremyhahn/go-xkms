@@ -20,8 +20,10 @@ import (
 	"crypto/x509"
 
 	"github.com/jeremyhahn/go-xkms/pkg/certstore"
+	"github.com/jeremyhahn/go-xkms/pkg/dao"
 	"github.com/jeremyhahn/go-xkms/pkg/signing/store"
 	"github.com/jeremyhahn/go-xkms/pkg/storage"
+	"github.com/jeremyhahn/go-xkms/pkg/storage/kvadapter"
 	"github.com/jeremyhahn/go-xkms/pkg/types"
 )
 
@@ -255,16 +257,31 @@ func New(config *BackendConfig) (Backend, error) {
 	// certificate-specific operations (SaveCert, GetCert, etc.)
 	certAdapter := storage.NewCertAdapter(config.CertStorage)
 
-	// The signer store shares the same external storage.Backend as
-	// certificates. See the SignerStore doc comment on the Backend interface
-	// for why that is the right home for it.
-	signerStore := store.NewSignerStore(nil, config.CertStorage)
+	// The signer store shares the same external storage as certificates: its
+	// records live in the signing database of a DAO factory over CertStorage.
+	// See the SignerStore doc comment on the Backend interface for why that is
+	// the right home for it.
+	signerStore, err := newSignerStore(config.CertStorage)
+	if err != nil {
+		return nil, err
+	}
 
 	return &compositeBackend{
 		backend:     config.Backend,
 		certStorage: certAdapter,
 		signerStore: signerStore,
 	}, nil
+}
+
+// newSignerStore returns the signer store over certStorage: a DAO factory
+// serving every database from that one storage, so signatures persist beside
+// the certificates whatever store the composition root chose.
+func newSignerStore(certStorage storage.Backend) (*store.SignerStore, error) {
+	kv, err := kvadapter.New(certStorage)
+	if err != nil {
+		return nil, err
+	}
+	return store.NewSignerStore(nil, dao.NewStoreFactory(kv))
 }
 
 // compositeBackend is the internal implementation of Backend.

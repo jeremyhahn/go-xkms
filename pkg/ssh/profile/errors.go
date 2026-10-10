@@ -38,10 +38,9 @@ var (
 	// ErrMoveToSameFolder indicates a move whose destination equals the source.
 	ErrMoveToSameFolder = errors.New("ssh/profile: already in target folder")
 
-	// ErrMarshalFailed / ErrUnmarshalFailed wrap (de)serialization failures.
-	ErrMarshalFailed   = errors.New("ssh/profile: failed to marshal profile")
-	ErrUnmarshalFailed = errors.New("ssh/profile: failed to unmarshal profile")
+	// ErrStorage wraps a failed datastore operation; the cause is joined.
+	ErrStorage = errors.New("ssh/profile: storage failure")
 
-	// ErrNilBackend indicates a nil storage backend was supplied.
-	ErrNilBackend = errors.New("ssh/profile: nil storage backend")
+	// ErrNilDAOFactory indicates a nil DAO factory was supplied.
+	ErrNilDAOFactory = errors.New("ssh/profile: nil DAO factory")
 )

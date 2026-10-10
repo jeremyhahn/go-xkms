@@ -15,13 +15,21 @@ package cmd
 
 import (
 	"bytes"
+	"context"
 	"errors"
+	"io"
+	"log/slog"
+	"path/filepath"
 	"testing"
 
 	"github.com/spf13/cobra"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+
+	"github.com/jeremyhahn/go-xkms/xkey/pkg/gui/services"
+	"github.com/jeremyhahn/go-xkms/xkey/pkg/ipc"
+	"github.com/jeremyhahn/go-xkms/xkey/pkg/pkcs11"
 )
 
 // --- Parent device command structure ---
@@ -212,10 +220,95 @@ func TestRunUSBDeviceStart_TransportNotInitialized(t *testing.T) {
 	// virtual CCID device and block until a signal.
 	newPIVProcess()
 	t.Cleanup(newPIVProcess)
+	isolateGUISettings(t)
 	err := runUSBDeviceStart(usbDeviceStartCmd, nil)
 	require.Error(t, err)
 	assert.True(t, errors.Is(err, ErrUSBDeviceTransportCreateFailed),
 		"should wrap ErrUSBDeviceTransportCreateFailed, got: %v", err)
+}
+
+// --- PKCS#11 transport selection ---
+
+// listeningGUIHandler answers on the socket the way an unlocked xKey GUI
+// does: its PKCS#11 side is the GUI's own handler. The transport's probe
+// never reaches the base Handler methods.
+type listeningGUIHandler struct {
+	*services.PKCS11IPCHandler
+}
+
+func (listeningGUIHandler) HandleTouch() (*ipc.Response, error) { return nil, ipc.ErrHandlerFailed }
+func (listeningGUIHandler) HandleTypePassword(string) (*ipc.Response, error) {
+	return nil, ipc.ErrHandlerFailed
+}
+func (listeningGUIHandler) HandleStatus() (*ipc.Response, error) { return nil, ipc.ErrHandlerFailed }
+
+// serveGUISocket runs a real IPC server at a private socket that the IPC
+// transport resolves by default, and returns its path.
+func serveGUISocket(t *testing.T) string {
+	t.Helper()
+	sockPath := filepath.Join(privateTempDir(t), "xkey.sock")
+	t.Setenv(ipc.EnvSocketPath, sockPath)
+
+	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
+	handler := listeningGUIHandler{services.NewPKCS11IPCHandler(nil, logger, func() bool { return false })}
+	srv, err := ipc.NewServer(sockPath, handler, logger)
+	require.NoError(t, err)
+	ctx, cancel := context.WithCancel(context.Background())
+	go func() { _ = srv.Serve(ctx) }()
+	t.Cleanup(func() {
+		cancel()
+		require.NoError(t, srv.Close())
+	})
+	return sockPath
+}
+
+func TestUSBDevicePKCS11Transport_OffOpensKeysInProcess(t *testing.T) {
+	newPIVProcess()
+	t.Cleanup(newPIVProcess)
+	isolateGUISettings(t)
+	serveGUISocket(t)
+
+	transport, err := usbDevicePKCS11Transport(context.Background())
+
+	assert.Nil(t, transport)
+	assert.ErrorIs(t, err, pkcs11.ErrServiceNotInitialized,
+		"with the setting off the in-process transport is chosen even while a GUI listens")
+	assert.NotErrorIs(t, err, ErrUSBDeviceGUINotListening)
+}
+
+func TestUSBDevicePKCS11Transport_OnUsesListeningGUI(t *testing.T) {
+	enableLocalAppAccessForTest(t)
+	sockPath := serveGUISocket(t)
+
+	transport, err := usbDevicePKCS11Transport(context.Background())
+
+	require.NoError(t, err)
+	ipcTransport, ok := transport.(*pkcs11.IPCTransport)
+	require.True(t, ok, "with the setting on the device must use the IPC transport, got %T", transport)
+	assert.Equal(t, sockPath, ipcTransport.SocketPath())
+}
+
+func TestUSBDevicePKCS11Transport_OnWithoutGUIFails(t *testing.T) {
+	newPIVProcess()
+	t.Cleanup(newPIVProcess)
+	enableLocalAppAccessForTest(t)
+	t.Setenv(ipc.EnvSocketPath, filepath.Join(privateTempDir(t), "xkey.sock"))
+
+	transport, err := usbDevicePKCS11Transport(context.Background())
+
+	assert.Nil(t, transport)
+	assert.ErrorIs(t, err, ErrUSBDeviceGUINotListening)
+	assert.ErrorIs(t, err, pkcs11.ErrIPCConnectionFailed)
+	assert.NotErrorIs(t, err, pkcs11.ErrServiceNotInitialized, "no silent fallback to the in-process transport")
+}
+
+func TestUSBDevicePKCS11Transport_UnreadableSettings(t *testing.T) {
+	writeGUISettings(t, []byte("{not json"))
+
+	transport, err := usbDevicePKCS11Transport(context.Background())
+
+	assert.Nil(t, transport)
+	assert.ErrorIs(t, err, ErrAppAccessLoadFailed)
 }
 
 // --- Default backend constant ---

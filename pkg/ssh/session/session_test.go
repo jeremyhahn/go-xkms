@@ -31,7 +31,7 @@ import (
 	"github.com/jeremyhahn/go-xkms/pkg/ssh/known_hosts"
 	"github.com/jeremyhahn/go-xkms/pkg/ssh/scope"
 	"github.com/jeremyhahn/go-xkms/pkg/ssh/session"
-	"github.com/jeremyhahn/go-xkms/pkg/storage"
+	"github.com/jeremyhahn/go-xkms/pkg/testutil"
 )
 
 // testServer is a minimal single-connection SSH server used by the
@@ -180,15 +180,11 @@ func generateClientKey(t *testing.T) *keys.Key {
 	return k
 }
 
-// pinHost registers hostSigner's public key in a fresh BackendStore
+// pinHost registers hostSigner's public key in a fresh DAOStore
 // scoped to (user, owner).
-func pinHost(t *testing.T, host string, hostSigner ssh.Signer, owner string) (*known_hosts.BackendStore, scope.Scope) {
+func pinHost(t *testing.T, host string, hostSigner ssh.Signer, owner string) (*known_hosts.DAOStore, scope.Scope) {
 	t.Helper()
-	backend, err := storage.NewMemoryBackend()
-	if err != nil {
-		t.Fatalf("backend: %v", err)
-	}
-	store, err := known_hosts.NewBackendStore(backend)
+	store, err := known_hosts.NewDAOStore(testutil.NewMemoryDAOFactory())
 	if err != nil {
 		t.Fatalf("store: %v", err)
 	}
@@ -252,11 +248,7 @@ func TestDial_MITMRejected(t *testing.T) {
 	// Pin a DIFFERENT host key than the server actually uses.
 	attacker := generateHostSigner(t)
 
-	backend, err := storage.NewMemoryBackend()
-	if err != nil {
-		t.Fatalf("backend: %v", err)
-	}
-	store, err := known_hosts.NewBackendStore(backend)
+	store, err := known_hosts.NewDAOStore(testutil.NewMemoryDAOFactory())
 	if err != nil {
 		t.Fatalf("store: %v", err)
 	}
@@ -309,11 +301,7 @@ func TestDial_MissingKnownHost(t *testing.T) {
 	srv := newTestServer(t, hostSigner, echoHandler)
 	defer srv.close()
 
-	backend, err := storage.NewMemoryBackend()
-	if err != nil {
-		t.Fatalf("backend: %v", err)
-	}
-	store, err := known_hosts.NewBackendStore(backend)
+	store, err := known_hosts.NewDAOStore(testutil.NewMemoryDAOFactory())
 	if err != nil {
 		t.Fatalf("store: %v", err)
 	}
@@ -353,11 +341,7 @@ func TestDial_ValidationFailures(t *testing.T) {
 	validKey := generateClientKey(t)
 	defer validKey.Destroy()
 
-	backend, err := storage.NewMemoryBackend()
-	if err != nil {
-		t.Fatalf("backend: %v", err)
-	}
-	store, err := known_hosts.NewBackendStore(backend)
+	store, err := known_hosts.NewDAOStore(testutil.NewMemoryDAOFactory())
 	if err != nil {
 		t.Fatalf("store: %v", err)
 	}
@@ -480,11 +464,7 @@ func TestDial_ContextCancelledMidDial(t *testing.T) {
 	}
 	defer ln.Close()
 
-	backend, err := storage.NewMemoryBackend()
-	if err != nil {
-		t.Fatalf("backend: %v", err)
-	}
-	store, err := known_hosts.NewBackendStore(backend)
+	store, err := known_hosts.NewDAOStore(testutil.NewMemoryDAOFactory())
 	if err != nil {
 		t.Fatalf("store: %v", err)
 	}

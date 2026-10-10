@@ -1,13 +1,13 @@
 # Host Embedding — API
 
-> **Status: NORMATIVE** · Feature: `host-embedding` · Repo: `go-xkms` · Last verified: 2026-10-04
+> **Status: NORMATIVE** · Feature: `host-embedding` · Repo: `go-xkms` · Last verified: 2026-10-09
 
 Host embedding adds no wire endpoints. It makes the existing xkms surfaces
 answer on a host that mounts the `xkms` ServiceModule:
 
 | Surface | REST | gRPC (`xkms.v1.KeystoreService`) | Enabled by |
 |---|---|---|---|
-| Password Manager | `/api/v1/passwords/*` | `Password*` | `WithQRDBClient` (+ `WithBarrierRegistry`, `WithPINBackend` for tenant stores) |
+| Password Manager | `/api/v1/passwords/*` | `Password*` | `WithQRDBClient` (+ `WithTenantStores`, `WithPINBackend` for tenant stores) |
 | SSH | `/xkms/v1/ssh/*` | `SSH*` | `WithQRDBClient` |
 | Certificate Authority | `/api/v1/ca/*` | `GetCACertificate`, `SignCSR`, … | `WithCA` + `WithQRDBClient` |
 | Platform sealed secrets | `/api/v1/platform/*` | `SealStore*` | `WithPlatformSealer` + `WithQRDBClient` |
@@ -38,6 +38,7 @@ import (
 module, err := xkmssdk.NewServiceModule(resolveXKMSService,
     xkmssdk.WithServiceModuleQRDBClient(func() *qrdbsdk.Client { return node.Client() }),
     xkmssdk.WithServiceModuleBarrierRegistry(func() *qrdbsdk.BarrierRegistry { return node.BarrierRegistry() }),
+    xkmssdk.WithServiceModuleTenantStores(func() qrdbsdk.TenantStoreResolver { return node.Services().StoreResolver }),
     xkmssdk.WithServiceModulePINBackend(pinBackend),
     xkmssdk.WithServiceModuleCA(caConfig),               // *xkmssdk.TrustedCAMultiIdentityConfig
     xkmssdk.WithServiceModulePlatformSealer("tpm2", tpmSealer),

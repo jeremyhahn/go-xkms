@@ -57,10 +57,28 @@ const (
 // PKCS#11 action constants identify the specific operation within a PKCS#11
 // IPC message. Used for map-based O(1) dispatch.
 const (
-	ActionSign              = "sign"
-	ActionGetPIVCertificate = "get_piv_certificate"
-	ActionListPIVSlots      = "list_piv_slots"
-	ActionBarrierStatus     = "barrier_status"
+	ActionGenerateKey          = "generate_key"
+	ActionSign                 = "sign"
+	ActionVerify               = "verify"
+	ActionEncrypt              = "encrypt"
+	ActionEncryptAsym          = "encrypt_asym"
+	ActionDecrypt              = "decrypt"
+	ActionDeriveKey            = "derive_key"
+	ActionDeriveKeyECDH        = "derive_key_ecdh"
+	ActionWrapKeyByID          = "wrap_key_by_id"
+	ActionUnwrapKeyByID        = "unwrap_key_by_id"
+	ActionExportKeyMaterial    = "export_key_material"
+	ActionGetImportParameters  = "get_import_parameters"
+	ActionImportKey            = "import_key"
+	ActionListPIVSlots         = "list_piv_slots"
+	ActionGetPIVCertificate    = "get_piv_certificate"
+	ActionGeneratePIVKey       = "generate_piv_key"
+	ActionStorePIVCertificate  = "store_piv_certificate"
+	ActionDeletePIVCertificate = "delete_piv_certificate"
+	ActionImportPIVCertificate = "import_piv_certificate"
+	ActionExportPIVCertificate = "export_piv_certificate"
+	ActionGeneratePIVCSR       = "generate_piv_csr"
+	ActionBarrierStatus        = "barrier_status"
 )
 
 // validMessageTypes is the set of recognized message types for O(1) lookup.

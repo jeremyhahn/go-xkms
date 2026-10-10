@@ -33,7 +33,7 @@ const (
 	FeaturePasswords Feature = "passwords"
 
 	// FeatureTenantPasswords is the per-tenant Password Manager routing
-	// over the tenant barrier registry.
+	// over go-qrdb's per-tenant stores.
 	FeatureTenantPasswords Feature = "tenant-passwords"
 
 	// FeaturePIN is the PIN backend: the user PIN that opens a tenant

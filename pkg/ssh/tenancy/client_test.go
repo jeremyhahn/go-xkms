@@ -37,6 +37,7 @@ import (
 	pkgkeys "github.com/jeremyhahn/go-xkms/pkg/ssh/keys"
 	pkgknownhosts "github.com/jeremyhahn/go-xkms/pkg/ssh/known_hosts"
 	"github.com/jeremyhahn/go-xkms/pkg/storage"
+	"github.com/jeremyhahn/go-xkms/pkg/testutil"
 	"github.com/jeremyhahn/go-xkms/pkg/types"
 	sdkssh "github.com/jeremyhahn/go-xkms/sdk/go/client/ssh"
 )
@@ -77,14 +78,13 @@ func (g grants) AuthorizeCaller(ctx context.Context, resource, action string) er
 // serviceGrants holds ssh:service for alice of tenant A and tenant B's admin.
 var serviceGrants = grants{tenantA + "/alice": true, tenantB + "/b-admin": true}
 
-// newTestClient returns the tenancy client over empty in-memory storage and,
-// when withBackend is set, a software crypto backend named "software".
+// newTestClient returns the tenancy client over an empty in-memory datastore
+// and, when withBackend is set, a software crypto backend named "software".
 func newTestClient(t *testing.T, withBackend bool) (sdkssh.Client, types.KeyProvider) {
 	t.Helper()
-	backend, err := storage.NewMemoryBackend()
-	require.NoError(t, err)
-	opts := Options{Storage: backend, Permissions: serviceGrants}
+	opts := Options{DAOs: testutil.NewMemoryDAOFactory(), Permissions: serviceGrants}
 	var kp types.KeyProvider
+	var err error
 	if withBackend {
 		kp, err = software.NewBackend(&software.Config{KeyStorage: storage.New()})
 		require.NoError(t, err)
@@ -128,18 +128,16 @@ func requireRefusedAsMissing(t *testing.T, err, miss error) {
 	assert.Equal(t, miss.Error(), err.Error(), "the refusal must render as the genuine miss")
 }
 
-func TestNew_RequiresStorage(t *testing.T) {
+func TestNew_RequiresDAOs(t *testing.T) {
 	_, err := New(Options{})
 	var nilErr *NilInputError
 	require.True(t, errors.As(err, &nilErr))
-	assert.Equal(t, "Storage", nilErr.Field)
-	assert.Equal(t, "ssh/tenancy: nil input: Storage", err.Error())
+	assert.Equal(t, "DAOs", nilErr.Field)
+	assert.Equal(t, "ssh/tenancy: nil input: DAOs", err.Error())
 }
 
 func TestClose_Idempotent(t *testing.T) {
-	backend, err := storage.NewMemoryBackend()
-	require.NoError(t, err)
-	c, err := New(Options{Storage: backend})
+	c, err := New(Options{DAOs: testutil.NewMemoryDAOFactory()})
 	require.NoError(t, err)
 	require.NoError(t, c.Close())
 	require.NoError(t, c.Close())
@@ -256,9 +254,7 @@ func TestKeys_ServiceScope(t *testing.T) {
 	assert.Equal(t, theirs.Fingerprint, got.Fingerprint)
 
 	// With no permission checker the scope is closed, even to alice.
-	backend, err := storage.NewMemoryBackend()
-	require.NoError(t, err)
-	closed, err := New(Options{Storage: backend})
+	closed, err := New(Options{DAOs: testutil.NewMemoryDAOFactory()})
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, closed.Close()) })
 	_, err = closed.Keys().Generate(as(aliceA), sdkssh.GenerateRequest{Scope: "service", Owner: "ci", Name: "deploy", Algorithm: "ed25519"})
@@ -663,12 +659,10 @@ func TestBackendKeys_UnknownBackend(t *testing.T) {
 // TestTenantResolver_NilProvider proves a resolver answering no provider is
 // the backend-not-found error, never a nil provider.
 func TestTenantResolver_NilProvider(t *testing.T) {
-	backend, err := storage.NewMemoryBackend()
-	require.NoError(t, err)
-	c := &client{storage: backend, resolver: sshbackend.ResolverFunc(func(context.Context, string) (types.KeyProvider, error) {
+	c := &client{resolver: sshbackend.ResolverFunc(func(context.Context, string) (types.KeyProvider, error) {
 		return nil, nil
 	})}
-	_, err = c.tenantResolver(tenantA).ResolveKeyProvider(context.Background(), "hw")
+	_, err := c.tenantResolver(tenantA).ResolveKeyProvider(context.Background(), "hw")
 	var notFound *sshbackend.BackendNotFoundError
 	require.True(t, errors.As(err, &notFound))
 	assert.Equal(t, "hw", notFound.BackendID)

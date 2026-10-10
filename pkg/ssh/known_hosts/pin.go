@@ -49,8 +49,7 @@ const (
 //
 // Pin carries no secret material — every field is safe to log or ship
 // over a plain REST boundary. Integrity against tampering is the
-// responsibility of the underlying storage.Backend (HMAC tags on the
-// sealed backend; file permissions elsewhere).
+// responsibility of the go-qrdb datastore holding the pin.
 type Pin struct {
 	// Host is the canonical host identifier. Format is free-form but
 	// must be safe for use as a storage-path component — use
@@ -86,8 +85,7 @@ type Pin struct {
 	// PublicKey (*PublicKeyRequiredError), and Verify compares the full key,
 	// not just the Fingerprint. It also lets the pin be emitted as an
 	// OpenSSH known_hosts line (Emit / EmitAll). Non-secret; safe to
-	// log/ship. A pin persisted before this field existed decodes as
-	// *LegacyPinError, not as a Pin with an empty PublicKey.
+	// log/ship.
 	PublicKey []byte
 }
 

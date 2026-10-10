@@ -18,13 +18,12 @@ import (
 	"testing"
 	"time"
 
-	"github.com/jeremyhahn/go-xkms/pkg/storage"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
 
 func TestExpiryChecker_CheckExpired_NoExpiredEntries(t *testing.T) {
-	s := NewStore(storage.New())
+	s := newTestStore(t)
 	defer func() { _ = s.Close() }()
 
 	require.NoError(t, s.Add(&StaticPassword{
@@ -40,7 +39,7 @@ func TestExpiryChecker_CheckExpired_NoExpiredEntries(t *testing.T) {
 }
 
 func TestExpiryChecker_CheckExpired_WithExpiredEntries(t *testing.T) {
-	s := NewStore(storage.New())
+	s := newTestStore(t)
 	defer func() { _ = s.Close() }()
 
 	require.NoError(t, s.Add(&StaticPassword{
@@ -62,7 +61,7 @@ func TestExpiryChecker_CheckExpired_WithExpiredEntries(t *testing.T) {
 }
 
 func TestExpiryChecker_CheckExpired_NoExpirySet(t *testing.T) {
-	s := NewStore(storage.New())
+	s := newTestStore(t)
 	defer func() { _ = s.Close() }()
 
 	// Entry with zero ExpiresAt should not be considered expired
@@ -78,7 +77,7 @@ func TestExpiryChecker_CheckExpired_NoExpirySet(t *testing.T) {
 }
 
 func TestExpiryChecker_CheckExpired_MultipleExpired(t *testing.T) {
-	s := NewStore(storage.New())
+	s := newTestStore(t)
 	defer func() { _ = s.Close() }()
 
 	past := time.Now().UTC().Add(-time.Hour)
@@ -99,7 +98,7 @@ func TestExpiryChecker_CheckExpired_MultipleExpired(t *testing.T) {
 }
 
 func TestExpiryChecker_CheckExpired_EmptyStore(t *testing.T) {
-	s := NewStore(storage.New())
+	s := newTestStore(t)
 	defer func() { _ = s.Close() }()
 
 	checker := NewExpiryChecker(s, time.Hour, nil)
@@ -109,7 +108,7 @@ func TestExpiryChecker_CheckExpired_EmptyStore(t *testing.T) {
 }
 
 func TestExpiryChecker_CheckExpired_ExactlyNowNotExpired(t *testing.T) {
-	s := NewStore(storage.New())
+	s := newTestStore(t)
 	defer func() { _ = s.Close() }()
 
 	// An entry expiring exactly now should be expired (Before check)
@@ -127,7 +126,7 @@ func TestExpiryChecker_CheckExpired_ExactlyNowNotExpired(t *testing.T) {
 }
 
 func TestExpiryChecker_StartStop(t *testing.T) {
-	s := NewStore(storage.New())
+	s := newTestStore(t)
 	defer func() { _ = s.Close() }()
 
 	require.NoError(t, s.Add(&StaticPassword{
@@ -155,7 +154,7 @@ func TestExpiryChecker_StartStop(t *testing.T) {
 }
 
 func TestExpiryChecker_StopMultipleTimes(t *testing.T) {
-	s := NewStore(storage.New())
+	s := newTestStore(t)
 	defer func() { _ = s.Close() }()
 
 	checker := NewExpiryChecker(s, time.Hour, func(pw *StaticPassword) {})
@@ -168,7 +167,7 @@ func TestExpiryChecker_StopMultipleTimes(t *testing.T) {
 }
 
 func TestExpiryChecker_CallbackReceivesCorrectEntry(t *testing.T) {
-	s := NewStore(storage.New())
+	s := newTestStore(t)
 	defer func() { _ = s.Close() }()
 
 	require.NoError(t, s.Add(&StaticPassword{
@@ -195,7 +194,7 @@ func TestExpiryChecker_CallbackReceivesCorrectEntry(t *testing.T) {
 }
 
 func TestExpiryChecker_CheckExpired_ClosedStore(t *testing.T) {
-	s := NewStore(storage.New())
+	s := newTestStore(t)
 	_ = s.Close()
 
 	checker := NewExpiryChecker(s, time.Hour, nil)
@@ -204,7 +203,7 @@ func TestExpiryChecker_CheckExpired_ClosedStore(t *testing.T) {
 }
 
 func TestExpiryChecker_MixedExpiryAndNonExpiry(t *testing.T) {
-	s := NewStore(storage.New())
+	s := newTestStore(t)
 	defer func() { _ = s.Close() }()
 
 	past := time.Now().UTC().Add(-time.Hour)

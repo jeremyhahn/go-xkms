@@ -1,366 +1,113 @@
 # Build System
 
-go-xkms uses a modular build system that allows you to include only the backends you need, reducing binary size, compilation time, and dependencies.
+Every optional feature of go-xkms is compiled in by default. A build opts a
+feature out with `WITH_<FEATURE>=0`, and a binary built without a feature
+**fails closed** when its configuration asks for it: `xkms.AutoInitialize`
+returns an `*xkms.FeatureNotCompiledError` naming the feature and the toggle
+that compiles it in, rather than starting without it.
 
-## Quick Start
+The `xkey` module follows the same convention through `xkey/Makefile`.
 
-```bash
-# Build with all backends (default)
-make lib
-
-# Build with only PKCS#8 (minimal, 6.4MB)
-make lib WITH_PKCS11=0 WITH_TPM2=0 WITH_AWSKMS=0 WITH_GCPKMS=0 WITH_AZUREKV=0
-
-# Build with software + hardware backends (no cloud)
-make lib WITH_AWSKMS=0 WITH_GCPKMS=0 WITH_AZUREKV=0
-
-# Show current configuration
-make show-backends
-```
-
-## Backend Configuration
-
-### WITH_* Variables
-
-Control which backends are included in the build:
-
-| Variable | Default | Description |
-|----------|---------|-------------|
-| `WITH_PKCS8` | 1 | Software key storage (filesystem) |
-| `WITH_PKCS11` | 0 | Hardware Security Modules (HSM) |
-| `WITH_TPM2` | 0 | Trusted Platform Module 2.0 |
-| `WITH_AWS_KMS` | 0 | AWS Key Management Service |
-| `WITH_GCP_KMS` | 0 | Google Cloud Platform KMS |
-| `WITH_AZURE_KV` | 0 | Microsoft Azure Key Vault |
-| `WITH_VAULT` | 0 | HashiCorp Vault |
-
-### Server Feature Configuration
-
-Control which server interfaces are included:
-
-| Variable | Default | Description |
-|----------|---------|-------------|
-| `WITH_CLI` | 1 | Command-line interface |
-| `WITH_REST` | 1 | HTTP/JSON REST API |
-| `WITH_GRPC` | 1 | gRPC API |
-| `WITH_QUIC` | 1 | HTTP/3 over QUIC |
-| `WITH_MCP` | 1 | Model Context Protocol (AI) |
-
-## Usage Examples
-
-### Minimal Build (PKCS#8 Only)
-
-For embedded systems or when you only need software key storage:
+## Quick start
 
 ```bash
-make lib
-# Default build is already minimal (PKCS#8 only)
+make build-full                      # every WITH_* feature on
+make build-minimal                   # every WITH_* feature off
+make build WITH_VAULT=0              # the default build without Vault
+make build WITH_AWS=0 WITH_GCP=0 WITH_AZURE=0   # drop the cloud providers
+make show-backends                   # the backends the current settings compile
+make help                            # every toggle with its current value
 ```
 
-**Binary Size**: ~6-8MB
-**Dependencies**: None (Go standard library only)
-**Use Cases**: Testing, development, lightweight applications
+The Makefile turns the `WITH_*` toggles into Go build tags. A plain
+`go build ./...` passes no tags and so builds the minimal set; build through
+`make`, or pass the tags yourself, to get the default full set.
 
-### Software + Hardware Build
+## Feature toggles
 
-For on-premises deployments with HSM or TPM:
+| Variable | Default | Build tag | What it compiles in |
+|----------|---------|-----------|---------------------|
+| `WITH_PKCS8` | 1 | `pkcs8` | Tag for PKCS#8 software keys; the PKCS#8 backend itself is always compiled |
+| `WITH_TPM2` | 1 | `tpm2` | The TPM 2.0 slot of the PKCS#11 provider module (`pkg/pkcs11/module`); the TPM 2.0 backend itself is always compiled |
+| `WITH_PKCS11` | 1 | `pkcs11` | PKCS#11 / HSM backend (needs cgo) |
+| `WITH_AWS_KMS` | 1 | `awskms` | AWS KMS backend |
+| `WITH_GCP_KMS` | 1 | `gcpkms` | Google Cloud KMS backend |
+| `WITH_AZURE_KV` | 1 | `azurekv` | Azure Key Vault backend |
+| `WITH_VAULT` | 1 | `vault` | HashiCorp Vault Transit backend |
+| `WITH_FROST` | 1 | `frost` | FROST threshold-signing backend |
+| `WITH_AWS_S3` | 1 | `awss3` | AWS S3 object store |
+| `WITH_MINIO` | 1 | `minio` | MinIO object store |
+| `WITH_GCP_STORAGE` | 1 | `gcpstorage` | Google Cloud Storage object store |
+| `WITH_AZURE_BLOB` | 1 | `azureblob` | Azure Blob object store |
+| `WITH_GLACIER` | 1 | `glacier` | AWS Glacier archive store |
+| `WITH_AZURE_ARCHIVE` | 1 | `azurearchive` | Azure Archive store |
 
-```bash
-make lib WITH_PKCS11=1 WITH_TPM2=1
+The software, symmetric and post-quantum backends have no toggle and are
+always compiled. The CBOR, JSON and MessagePack codecs (`codec_cbor`,
+`codec_json`, `codec_msgpack`) are always on.
+
+### Provider umbrellas
+
+`WITH_AWS`, `WITH_GCP` and `WITH_AZURE` are unset by default. When set, each
+overrides every toggle of its provider:
+
+| Umbrella | Sets |
+|----------|------|
+| `WITH_AWS` | `WITH_AWS_KMS`, `WITH_AWS_S3`, `WITH_GLACIER` |
+| `WITH_GCP` | `WITH_GCP_KMS`, `WITH_GCP_STORAGE` |
+| `WITH_AZURE` | `WITH_AZURE_KV`, `WITH_AZURE_BLOB`, `WITH_AZURE_ARCHIVE` |
+
+### Toggles in `xkey/Makefile`
+
+`xkey` compiles `WITH_PKCS11` and the six object-store toggles above, all
+defaulting to 1, plus the same provider umbrellas. It has no KMS toggles of
+its own.
+
+## Build profiles
+
+| Target | Root module | `xkey` module |
+|--------|-------------|---------------|
+| `build-full` | Compiles every package and builds `xkmsctl` and `xkmsd` into `build/bin/` with every toggle at 1 | Compiles every package and builds `xkey` into `build/bin/` with every toggle at 1 |
+| `build-minimal` | The same with every toggle at 0 | The same with every toggle at 0 |
+
+Both profiles build on the host (cgo, no Docker). The `xkey` profiles use the
+committed `frontend/dist`, so they need no npm. `xkmsctl` is always built with
+`CGO_ENABLED=0`, so its tag set drops `pkcs11`.
+
+## Failing closed
+
+A configuration that names a backend the binary was built without is an
+error, not a silent skip:
+
+| Where | Configured as | Result |
+|-------|---------------|--------|
+| `AutoConfig.BackendConfigs` | a key whose backend is not registered | `*FeatureNotCompiledError` |
+| `AutoConfig.DefaultBackend` | a known backend that is not registered | `*FeatureNotCompiledError` |
+| `AutoConfig.Datastore` | key storage cannot be derived for a backend | `*BackendStorageError` |
+
+Both errors match a sentinel with `errors.Is` — `xkms.ErrFeatureNotCompiled`
+and `xkms.ErrBackendStorageUnresolved`. `FeatureNotCompiledError` carries the
+feature, its `WITH_*` toggle and its build tag:
+
+```
+xkms: backend "vault" is not compiled into this binary; build with WITH_VAULT=1 (build tag "vault")
 ```
 
-**Dependencies**: SoftHSM2 or hardware HSM, libtss2 for TPM
-**Use Cases**: Enterprise deployments, FIPS compliance, hardware-backed keys
-
-### Cloud-Only Build
-
-For cloud-native applications:
-
-```bash
-make lib WITH_AWS_KMS=1 WITH_GCP_KMS=1 WITH_AZURE_KV=1
-```
-
-**Dependencies**: AWS SDK, GCP SDK, Azure SDK
-**Use Cases**: Cloud deployments, serverless, managed services
-
-### Full Build (All Backends)
-
-For development, testing, or maximum flexibility:
-
-```bash
-# Enable all backends
-make lib WITH_PKCS11=1 WITH_TPM2=1 WITH_AWS_KMS=1 WITH_GCP_KMS=1 WITH_AZURE_KV=1 WITH_VAULT=1
-```
-
-**Binary Size**: ~23MB
-**Dependencies**: All backend dependencies
-**Use Cases**: Development, testing, migration scenarios
-
-## Direct Go Builds
-
-You can also use Go build tags directly:
-
-```bash
-# Minimal build
-go build -tags="software" -o xkms ./cmd/cli
-
-# Custom combination
-go build -tags="software,pkcs11,awskms" -o xkms ./cmd/cli
-
-# Server with specific backends and features
-go build -tags="software,awskms,rest,grpc" -o server ./cmd/server
-```
-
-## Build Targets
-
-### Library Builds
-
-```bash
-make lib                  # Build shared library (.so)
-make build-minimal        # PKCS#8 only
-make build-software       # Software backends
-make build-hardware       # Hardware backends (PKCS11, TPM2)
-make build-cloud          # Cloud backends
-make build-full           # All backends
-make build-matrix         # Build all configurations
-```
-
-### Binary Builds
-
-```bash
-make build                # Build CLI binary
-make build-server         # Build server binary
-make server               # Build server with current config
-make cli                  # Build CLI with current config
-```
-
-### Testing
-
-```bash
-make test                    # Run unit tests
-make integration-test        # Run all integration tests
-make integration-test-software # Run software backend integration tests
-make integration-test-pkcs11 # Run PKCS#11/SoftHSM integration tests
-make integration-test-tpm2   # Run TPM2 simulator integration tests
-make integration-test-awskms # Run AWS KMS/Floci integration tests
-make integration-test-gcpkms # Run GCP KMS integration tests
-make integration-test-azurekv # Run Azure Key Vault integration tests
-make integration-test-vault  # Run HashiCorp Vault integration tests
-make coverage                # Generate coverage report
-```
-
-## How It Works
-
-### Build Tags
-
-Each backend is protected by Go build tags:
-
-```go
-//go:build software
-
-package software
-
-// This file only compiles when software tag is specified
-```
-
-### Backend Registry
-
-The backend registry at `pkg/backend/registry.go` automatically registers only the backends that are compiled:
-
-```go
-// Each backend self-registers via init()
-func init() {
-    RegisterBackend(BackendInfo{
-        Name:        "pkcs11",
-        Type:        "hardware",
-        Description: "PKCS#11 HSM backend",
-        Features:    []string{"rsa", "ecdsa"},
-        Available:   true,
-    })
-}
-```
-
-### Server Layer Exclusion
-
-Server handlers automatically exclude references to unavailable backends:
-
-- CLI commands check `registry.IsBackendAvailable("pkcs11")` before showing PKCS#11 options
-- REST API endpoints return 404 for unavailable backends
-- gRPC services return UNIMPLEMENTED for unavailable backends
-- QUIC handlers skip unavailable backend routes
-- MCP tools exclude unavailable backend operations
-
-## Makefile Helpers
-
-### Show Current Configuration
-
-```bash
-make show-backends
-```
-
-Output:
-```
-Current Backend Configuration:
-
-  Software Backends:
-    ✓ Software (Software key storage)
-
-  Hardware Backends:
-    ✗ PKCS11
-    ✗ TPM2
-
-  Cloud Backends:
-    ✗ AWS KMS
-    ✗ GCP KMS
-    ✗ Azure Key Vault
-
-  Build Tags: software
-```
-
-### Backend Help
-
-```bash
-make help-backends
-```
-
-Shows detailed information about each backend, dependencies, and example builds.
-
-### Size Comparison
-
-```bash
-make size-comparison
-```
-
-Builds multiple configurations and compares binary sizes.
-
-## Binary Size Impact
-
-| Configuration | Binary Size | Savings |
-|--------------|-------------|---------|
-| Minimal (PKCS#8) | 6.4MB | Baseline |
-| + PKCS#11 | ~10MB | +56% |
-| + TPM2 | ~15MB | +134% |
-| Full (all 6) | ~23MB | +259% |
-
-## Dependencies by Backend
-
-### PKCS#8
-- **Runtime**: None (Go standard library)
-- **Build**: None
-
-### PKCS#11
-- **Runtime**: PKCS#11 library (e.g., SoftHSM2, CloudHSM, Luna HSM)
-- **Build**: None (dynamically loaded)
-
-### TPM 2.0
-- **Runtime**: libtss2
-- **Build**: CGO enabled, tss2 headers
-
-### AWS KMS
-- **Runtime**: Network access to AWS
-- **Build**: AWS SDK for Go v2
-
-### GCP KMS
-- **Runtime**: Network access to GCP
-- **Build**: Google Cloud Go libraries
-
-### Azure Key Vault
-- **Runtime**: Network access to Azure
-- **Build**: Azure SDK for Go
-
-## Environment Variables
-
-You can set WITH_* variables as environment variables:
-
-```bash
-export WITH_PKCS8=1
-export WITH_PKCS11=0
-export WITH_TPM2=0
-export WITH_AWSKMS=1
-export WITH_GCPKMS=1
-export WITH_AZUREKV=0
-
-make lib  # Uses environment variables
-```
-
-## CI/CD Integration
-
-### Build Matrix Example
-
-```yaml
-# .github/workflows/build.yml
-strategy:
-  matrix:
-    config:
-      - name: minimal
-        backends: "WITH_PKCS11=0 WITH_TPM2=0 WITH_AWSKMS=0 WITH_GCPKMS=0 WITH_AZUREKV=0"
-      - name: full
-        backends: "WITH_SOFTWARE=1 WITH_PKCS11=1 WITH_TPM2=1 WITH_AWSKMS=1 WITH_GCPKMS=1 WITH_AZUREKV=1"
-
-steps:
-  - name: Build
-    run: make lib ${{ matrix.backends }}
-```
-
-## Troubleshooting
-
-### Backend Not Available at Runtime
-
-If you get "backend not available" errors:
-
-1. Check which backends are compiled: `make show-backends`
-2. Verify build tags were used: `go version -m ./build/lib/libxkms.so | grep build`
-3. Rebuild with required backend: `make lib WITH_<BACKEND>=1`
-
-### Linker Errors
-
-If you get undefined symbol errors:
-
-1. Ensure all required backends are enabled
-2. Check that CGO is enabled for TPM2: `CGO_ENABLED=1 make lib WITH_TPM2=1`
-3. Verify system dependencies are installed
-
-### Large Binary Size
-
-If your binary is larger than expected:
-
-1. Check which backends are enabled: `make show-backends`
-2. Disable unused backends
-3. Use `make build-minimal` for smallest size
-4. Strip debug symbols: `go build -ldflags="-s -w"`
-
-## Best Practices
-
-1. **Development**: Use full build for maximum flexibility
-   ```bash
-   make lib
-   ```
-
-2. **Production**: Include only required backends
-   ```bash
-   make lib WITH_PKCS8=1 WITH_AWSKMS=1  # Example: software + AWS
-   ```
-
-3. **Testing**: Use build matrix to test all configurations
-   ```bash
-   make build-matrix
-   make test-matrix
-   ```
-
-4. **Containers**: Use minimal build to reduce image size
-   ```bash
-   make build-minimal
-   ```
-
-5. **Security**: Minimize attack surface by excluding unused backends
-   ```bash
-   # Only include what you need
-   make lib WITH_TPM2=0 WITH_AWSKMS=0 WITH_GCPKMS=0 WITH_AZUREKV=0
-   ```
-
-## See Also
-
+`xkms.RequireBackend(name)` performs the same check for callers that look up
+a backend factory directly. A compiled-in backend whose hardware or service
+is absent at run time (no TPM device, no reachable KMS) is still logged and
+skipped by auto-discovery; only a build-time absence fails closed.
+
+## Tests
+
+`make test` and the `test-<package>` targets use their own fixed tag set
+(`TEST_TAGS`), so the `WITH_*` toggles do not change unit tests. The
+`integration-test-<feature>` targets add the `WITH_*` tags and run in the
+devcontainer (Docker); for example `make integration-test-vault` or
+`make integration-test-pkcs11`.
+
+## See also
+
+- `pkg/xkms/registry.go` and `pkg/xkms/register_*.go` — backend registration
+  and the feature-to-toggle map
 - [Getting Started](../../xkey/docs/usage/getting-started.md)
-- Backend Registry - no standalone document yet; see `pkg/xkms/registry.go` and the `pkg/xkms/register_*.go` files
-- [Storage Architecture](../architecture/storage.md)
-- [Architecture Overview](../architecture/overview.md)

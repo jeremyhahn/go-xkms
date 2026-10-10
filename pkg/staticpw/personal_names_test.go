@@ -15,24 +15,18 @@ package staticpw
 
 import (
 	"context"
-	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
-
-	"github.com/jeremyhahn/go-xkms/pkg/scope"
 )
 
 // personalSession returns the open personal store of userID in tenant-a.
-func personalSession(t *testing.T, mgr *TenantPasswordStoreManager, userID string) *BackendStore {
+func personalSession(t *testing.T, mgr *TenantPasswordStoreManager, userID string) *DAOStore {
 	t.Helper()
-	unlocked(t, mgr, "tenant-a", userID)
-	state, err := mgr.tenantState("tenant-a")
-	require.NoError(t, err)
-	session := state.session(userID)
-	require.NotNil(t, session)
-	return session.store
+	personal := unlocked(t, mgr, "tenant-a", userID).personal
+	require.NotNil(t, personal)
+	return personal
 }
 
 // TestPersonalNames_TenantKeyRevealsNoNamesOrFolders is the owner's rule for
@@ -40,8 +34,7 @@ func personalSession(t *testing.T, mgr *TenantPasswordStoreManager, userID strin
 // entry's name, nor its folder, nor a public hash of either. Every storage
 // key under the user's personal keyspace is opaque without the user's DEK.
 func TestPersonalNames_TenantKeyRevealsNoNamesOrFolders(t *testing.T) {
-	mgr, _, raw := vaultFixture(t)
-	ctx := context.Background()
+	mgr, stores := vaultFixture(t)
 	alice := personalSession(t, mgr, "alice")
 
 	require.NoError(t, alice.Add(&StaticPassword{Name: "bank", FolderPath: "Finance/Taxes", Password: "pw"}))
@@ -53,26 +46,26 @@ func TestPersonalNames_TenantKeyRevealsNoNamesOrFolders(t *testing.T) {
 		"bank", "router", "finance", "taxes", "secret", "projects", "login",
 		GenerateID("bank", "Finance/Taxes"), GenerateID("router", ""),
 	}
-	personal, err := scope.PersonalPrefix("tenant-a", Feature, "alice")
-	require.NoError(t, err)
-	keys := 0
-	require.NoError(t, raw.Scan(ctx, personal, func(key string, value []byte) error {
-		keys++
-		segment := strings.ToLower(strings.TrimPrefix(key, personal))
+	for _, text := range storedTexts(t, stores, "tenant-a") {
 		for _, s := range revealing {
-			assert.NotContains(t, segment, s, "storage key %s reveals %q", key, s)
-			assert.NotContains(t, strings.ToLower(string(value)), s, "value of %s reveals %q", key, s)
+			assert.NotContains(t, text, s, "a stored key or value reveals %q", s)
 		}
-		return nil
-	}))
-	assert.Equal(t, 4, keys, "two entries, a folder marker and an alias")
+	}
+
+	records := 0
+	for _, kind := range []string{nameKindEntry, nameKindFolder, nameKindAlias} {
+		all, err := alice.records.list(t.Context(), alice.dir(kind))
+		require.NoError(t, err)
+		records += len(all)
+	}
+	assert.Equal(t, 4, records, "two entries, a folder marker and an alias")
 }
 
 // TestPersonalNames_TheOwnerSeesEverything proves the opaque keys change
 // nothing the owner sees: lookups by name, folders, aliases, renames and
 // moves work through the session as they do on a shared store.
 func TestPersonalNames_TheOwnerSeesEverything(t *testing.T) {
-	mgr, _, _ := vaultFixture(t)
+	mgr, _ := vaultFixture(t)
 	alice := personalSession(t, mgr, "alice")
 
 	require.NoError(t, alice.Add(&StaticPassword{Name: "bank", FolderPath: "Finance/Taxes", Password: "pw"}))
@@ -125,7 +118,7 @@ func TestPersonalNames_TheOwnerSeesEverything(t *testing.T) {
 // MAC: the same name gets different IDs for different users, none equal to
 // the public ID, and the same ID across that user's sessions.
 func TestPersonalNames_IDsAreKeyedPerUser(t *testing.T) {
-	mgr, _, _ := vaultFixture(t)
+	mgr, _ := vaultFixture(t)
 	ctx := context.Background()
 
 	alice := personalSession(t, mgr, "alice")
@@ -152,7 +145,7 @@ func TestPersonalNames_IDsAreKeyedPerUser(t *testing.T) {
 // TestPersonalNames_SharedStoreKeepsPublicIDs proves the shared scope, which
 // every tenant user reads, keeps the public deterministic ID scheme.
 func TestPersonalNames_SharedStoreKeepsPublicIDs(t *testing.T) {
-	mgr, _, _ := vaultFixture(t)
+	mgr, _ := vaultFixture(t)
 	alice := unlocked(t, mgr, "tenant-a", "alice")
 	require.NoError(t, alice.Add(&StaticPassword{Name: "wifi", Password: "pw", Shared: true}))
 	got, err := alice.Get("wifi")

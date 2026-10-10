@@ -1,6 +1,6 @@
 # Signing — User Guide
 
-> **Status: NORMATIVE** · Feature: `signing` · Repo: `go-xkms` · Last verified: 2026-09-23
+> **Status: NORMATIVE** · Feature: `signing` · Repo: `go-xkms` · Last verified: 2026-10-09
 
 ## When to use this
 

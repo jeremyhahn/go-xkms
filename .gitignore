@@ -61,11 +61,12 @@ Thumbs.db
 # addresses, workstation paths and agent principal names.
 .claude/
 
-# Serena (semantic code-retrieval tooling): tool config plus AI-generated
-# analysis notes, rewritten on every review round. It was tracked until #170;
-# the notes carried workstation absolute paths, which this repo's public
-# mirror must not publish. Ignored, not deleted — the tool keeps using it.
-.serena/
+# Serena (semantic code-retrieval tooling). .serena/project.yml and
+# .serena/memories/ are committed. Memories are published like docs/, so they
+# must carry no internal hosts, addresses, workstation paths or agent principal
+# names (#170). The cache and project.local.yml are per machine and per checkout.
+.serena/cache/
+.serena/project.local.yml
 
 # SoftHSM2 test files
 softhsm2.conf

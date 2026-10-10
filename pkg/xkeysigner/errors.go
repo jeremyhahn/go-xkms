@@ -25,6 +25,10 @@ var (
 	// ErrSignFailed is returned when a signing operation fails.
 	ErrSignFailed = errors.New("xkeysigner: signing operation failed")
 
+	// ErrUnsupportedHash is returned when Sign is asked for a digest produced
+	// by a hash the xkey signing path does not accept.
+	ErrUnsupportedHash = errors.New("xkeysigner: unsupported hash function")
+
 	// ErrConnectionFailed is returned when the IPC connection cannot be established.
 	ErrConnectionFailed = errors.New("xkeysigner: IPC connection failed")
 

@@ -58,6 +58,10 @@ export function SetLockOnScreenLock(arg1) {
   return window['go']['services']['AppLockService']['SetLockOnScreenLock'](arg1);
 }
 
+export function SetLockStateHook(arg1) {
+  return window['go']['services']['AppLockService']['SetLockStateHook'](arg1);
+}
+
 export function Unlock(arg1) {
   return window['go']['services']['AppLockService']['Unlock'](arg1);
 }

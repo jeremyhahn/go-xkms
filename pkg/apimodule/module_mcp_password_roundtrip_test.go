@@ -16,8 +16,6 @@ package apimodule
 import (
 	"context"
 	"errors"
-	"io"
-	"log/slog"
 	"net/http/httptest"
 	"strings"
 	"testing"
@@ -28,28 +26,21 @@ import (
 	xkmsmcp "github.com/jeremyhahn/go-xkms/pkg/api/mcp"
 	"github.com/jeremyhahn/go-xkms/pkg/api/transport"
 	mcpclient "github.com/jeremyhahn/go-xkms/pkg/api/transport/mcp"
-	"github.com/jeremyhahn/go-xkms/pkg/seal"
 	"github.com/jeremyhahn/go-xkms/pkg/staticpw"
-	"github.com/jeremyhahn/go-xkms/pkg/storage"
+	"github.com/jeremyhahn/go-xkms/pkg/testutil"
 	"github.com/jeremyhahn/go-xkms/pkg/testutil/kdftest"
 	"github.com/jeremyhahn/go-xkms/pkg/xkms"
 )
 
 // newRoundTripPasswordManager builds a real TenantPasswordStoreManager
-// backed by in-memory storage, mirroring pkg/api/mcp's own
-// createPasswordManager test helper. It exists here too because the two
+// over in-memory tenant stores, mirroring pkg/api/mcp's own
+// passwordTestStores test helper. It exists here too because the two
 // packages must not import each other's _test.go files.
 func newRoundTripPasswordManager(t *testing.T) *staticpw.TenantPasswordStoreManager {
 	t.Helper()
-	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
-	base := storage.New()
-	strategy := seal.NewSoftwareStrategy()
-	barrier, err := seal.NewBarrier(logger, base, seal.BarrierConfig{}, strategy)
+	store, err := staticpw.NewStore(testutil.NewMemoryDAOFactory())
 	require.NoError(t, err)
-	registry, err := seal.NewBarrierRegistry(barrier)
-	require.NoError(t, err)
-	store := staticpw.NewStore(storage.New())
-	mgr, err := staticpw.NewTenantPasswordStoreManager(registry, store, staticpw.WithPasskeyRelyingParty("kms.example.com"), staticpw.WithPassphraseKDFParams(kdftest.CheapPassphraseParams))
+	mgr, err := staticpw.NewTenantPasswordStoreManager(testutil.NewTenantStores(), store, staticpw.WithPasskeyRelyingParty("kms.example.com"), staticpw.WithPassphraseKDFParams(kdftest.CheapPassphraseParams))
 	require.NoError(t, err)
 	return mgr
 }

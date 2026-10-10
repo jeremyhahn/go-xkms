@@ -27,6 +27,8 @@ import (
 	"github.com/jeremyhahn/go-xkms/pkg/dao"
 	"github.com/jeremyhahn/go-xkms/pkg/keyversion"
 	credentialspkg "github.com/jeremyhahn/go-xkms/pkg/server/credentials"
+	sshrecords "github.com/jeremyhahn/go-xkms/pkg/ssh/records"
+	"github.com/jeremyhahn/go-xkms/pkg/staticpw"
 	"github.com/jeremyhahn/go-xkms/pkg/storage"
 	"github.com/jeremyhahn/go-xkms/pkg/testutil"
 	"github.com/jeremyhahn/go-xkms/pkg/testutil/barriertest"
@@ -82,6 +84,7 @@ func fullDeps(t *testing.T, svc *xkms.XKMSService) Deps {
 		Storage:            memoryStorage(t),
 		DAOs:               testutil.NewMemoryDAOFactory(),
 		BarrierRegistry:    hostdeps.NewBarrierRegistry(t),
+		TenantStores:       testutil.NewTenantStores(),
 		PIN:                hostdeps.NewPINBackend(t, "so-pin-123456", "user-pin-654321"),
 		PlatformSealer:     &PlatformSealer{Strategy: "passphrase", Sealer: hostdeps.NewSealer(t)},
 		CredentialStrategy: "barrier",
@@ -145,12 +148,14 @@ func TestBuild_StorageFailureIsABuildErrorPerFeature(t *testing.T) {
 			assert.ErrorIs(t, reason, errStorageDown)
 		}
 	}
-	for _, f := range []Feature{FeaturePasswords, FeaturePlatformStore, FeatureSSH, FeatureCA, FeatureInvite} {
+	for _, f := range []Feature{FeaturePlatformStore, FeatureCA, FeatureInvite} {
 		assert.True(t, failed[f], "%s must fail on storage", f)
 	}
 	// Features with no storage of their own still compose.
 	assert.NotNil(t, st.Credentials)
+	assert.NotNil(t, st.PasswordManager, "password records persist through DAOs, not storage")
 	assert.NotNil(t, st.KeyVersions, "key versions persist through DAOs, not storage")
+	assert.NotNil(t, st.SSH, "SSH records persist through DAOs, not storage")
 }
 
 // TestBuildCA_ReloadsPersistedRoot proves a second CA over the same DAO
@@ -278,7 +283,7 @@ func TestBuildCA_InvalidInput(t *testing.T) {
 // backend is refused rather than silently falling back to a software key.
 func TestBuildSSHClient_ResolvesBackendKeysThroughService(t *testing.T) {
 	svc := hostdeps.NewService(t)
-	client, err := BuildSSHClient(memoryStorage(t), svc.LookupBackend, svc)
+	client, err := BuildSSHClient(testutil.NewMemoryDAOFactory(), svc.LookupBackend, svc)
 	require.NoError(t, err)
 
 	ctx := auth.WithIdentity(context.Background(), &auth.Identity{Subject: "alice", TenantID: "acme"})
@@ -299,7 +304,7 @@ func TestBuilders_RejectNilDependencies(t *testing.T) {
 	assert.ErrorAs(t, err, &nilDep)
 	_, err = BuildTenantPasswordManager(nil, nil, "")
 	assert.ErrorAs(t, err, &nilDep)
-	_, err = BuildTenantPasswordManager(hostdeps.NewBarrierRegistry(t), nil, "")
+	_, err = BuildTenantPasswordManager(testutil.NewTenantStores(), nil, "")
 	assert.ErrorAs(t, err, &nilDep)
 	_, err = BuildPlatformStore(nil, nil, PlatformSealer{})
 	assert.ErrorAs(t, err, &nilDep)
@@ -307,8 +312,10 @@ func TestBuilders_RejectNilDependencies(t *testing.T) {
 	assert.ErrorAs(t, err, &nilDep)
 	_, err = BuildSSHClient(nil, nil, nil)
 	assert.ErrorAs(t, err, &nilDep)
-	_, err = BuildSSHClient(memoryStorage(t), nil, nil)
+	assert.Contains(t, err.Error(), "DAO factory")
+	_, err = BuildSSHClient(testutil.NewMemoryDAOFactory(), nil, nil)
 	assert.ErrorAs(t, err, &nilDep)
+	assert.Contains(t, err.Error(), "backend lookup")
 	_, err = BuildTPMPolicyService(TPMPolicyParams{Storage: memoryStorage(t)})
 	assert.ErrorAs(t, err, &nilDep)
 	assert.Contains(t, err.Error(), "TPM2 backend")
@@ -321,15 +328,16 @@ func TestBuilders_RejectNilDependencies(t *testing.T) {
 }
 
 // TestDatabases_FollowTheSuppliedDependencies proves every root opens the
-// key-version database, which needs nothing else, and is asked to open
-// another feature's database only when it supplies that feature's other
-// dependency — the CA's for a CA configuration, the TPM policy registry's for
-// a TPM2 backend.
+// key-version, SSH and password databases, which need nothing else, and is
+// asked to open another feature's database only when it supplies that
+// feature's other dependency — the CA's for a CA configuration, the TPM policy
+// registry's for a TPM2 backend.
 func TestDatabases_FollowTheSuppliedDependencies(t *testing.T) {
-	assert.Equal(t, []string{keyversion.DatabaseName}, Databases(Deps{}))
-	assert.Equal(t, []string{keyversion.DatabaseName, certstore.DatabaseName}, Databases(Deps{CA: hostdeps.NewCAConfig("Root")}))
-	assert.Equal(t, []string{keyversion.DatabaseName, tpmpolicy.DatabaseName}, Databases(Deps{TPMBackend: &tpm2backend.Backend{}}))
-	assert.Equal(t, []string{keyversion.DatabaseName, certstore.DatabaseName, tpmpolicy.DatabaseName},
+	always := []string{keyversion.DatabaseName, sshrecords.DatabaseName, staticpw.DatabaseName}
+	assert.Equal(t, always, Databases(Deps{}))
+	assert.Equal(t, append(always, certstore.DatabaseName), Databases(Deps{CA: hostdeps.NewCAConfig("Root")}))
+	assert.Equal(t, append(always, tpmpolicy.DatabaseName), Databases(Deps{TPMBackend: &tpm2backend.Backend{}}))
+	assert.Equal(t, append(always, certstore.DatabaseName, tpmpolicy.DatabaseName),
 		Databases(Deps{CA: hostdeps.NewCAConfig("Root"), TPMBackend: &tpm2backend.Backend{}}))
 }
 
@@ -363,18 +371,16 @@ func TestBuild_TPMPoliciesNeedTheDAOFactory(t *testing.T) {
 func TestBuilders_StorageFailureIsFeatureBuildError(t *testing.T) {
 	var buildErr *FeatureBuildError
 
-	_, err := BuildPasswordStore(failingStorage)
+	_, err := BuildPasswordStore(dao.NewStoreFactory(nil))
 	require.ErrorAs(t, err, &buildErr)
 	assert.Equal(t, FeaturePasswords, buildErr.Feature)
+	var unavailable *dao.DatabaseUnavailableError
+	require.ErrorAs(t, err, &unavailable)
+	assert.Equal(t, staticpw.DatabaseName, unavailable.Database)
 
 	_, err = BuildPlatformStore(nil, failingStorage, PlatformSealer{Strategy: "passphrase", Sealer: hostdeps.NewSealer(t)})
 	require.ErrorAs(t, err, &buildErr)
 	assert.Equal(t, FeaturePlatformStore, buildErr.Feature)
-
-	svc := hostdeps.NewService(t)
-	_, err = BuildSSHClient(failingStorage, svc.LookupBackend, svc)
-	require.ErrorAs(t, err, &buildErr)
-	assert.Equal(t, FeatureSSH, buildErr.Feature)
 
 	// A backend whose TPM is not a pkg/tpm2 TPM cannot run the TPM policy
 	// service; it is refused before any storage is opened.
