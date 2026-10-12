@@ -284,12 +284,16 @@ resolved path is fixed for the `Manager`'s lifetime (gosec G204).
 
 `Manager.Status(tenant).Running` and `Manager.Transport(tenant)` both key off
 the tenant's `instance.running` flag, which only becomes true once the
-vTPM's command socket accepts a connection -- never the instant the `swtpm`
+vTPM answers a command -- never the instant the `swtpm`
 process merely starts, which `exec.Cmd.Start` can report before swtpm has
 created the socket file. `Start` and a supervisor restart both enforce this
 the same way: `spawn` starts the process and returns without touching
-`running`; the caller then calls `awaitReady` (poll the socket, capped at
-`readyTimeout`) and only sets `running` once it succeeds. Before this was
+`running`; the caller then calls `awaitReady` (poll with a one-byte
+TPM2_GetRandom round trip, `probeReady`, capped at `readyTimeout`) and only
+sets `running` once it succeeds. A bare socket connect is not enough: swtpm
+binds its socket before it decrypts and loads its state, so under load a
+vTPM started over state encrypted under another key accepted the connect and
+only then exited, and `Start` reported success. Before this was
 true of restarts too, a `Transport.Send` racing a restart's socket creation
 surfaced the raw `dial unix: ...: no such file or directory` instead of the
 documented `ErrConnectionLost` retry-once contract (`transport.go`).

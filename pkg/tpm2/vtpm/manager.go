@@ -53,6 +53,11 @@ const (
 	// readyPoll is how often Start probes the socket while waiting.
 	readyPoll = 20 * time.Millisecond
 
+	// readyProbeTimeout bounds one readiness probe's connect and round trip,
+	// so a probe never holds Start past a process exit or cancellation for
+	// longer than this.
+	readyProbeTimeout = time.Second
+
 	// stopTimeout is how long Stop waits after SIGTERM before SIGKILL.
 	stopTimeout = 5 * time.Second
 
@@ -178,8 +183,9 @@ func resolveBinary(binary string) (string, error) {
 	return binary, nil
 }
 
-// Start starts the tenant's vTPM and returns once its command socket accepts
-// connections. Starting a running vTPM is a no-op.
+// Start starts the tenant's vTPM and returns once it answers a command, which
+// it does only after its state has decrypted and loaded. Starting a running
+// vTPM is a no-op.
 func (m *Manager) Start(ctx context.Context, tenant string) error {
 	if m.closed.Load() {
 		return ErrManagerClosed
@@ -386,7 +392,7 @@ func (m *Manager) spawn(inst *instance) (*process, error) {
 	return proc, nil
 }
 
-// awaitReady waits until inst's command socket accepts a connection, the
+// awaitReady waits until inst's vTPM answers a command (see probeReady), the
 // process exits, the context ends, or readyTimeout passes.
 func (m *Manager) awaitReady(ctx context.Context, inst *instance, proc *process) error {
 	deadline := time.NewTimer(readyTimeout)
@@ -403,13 +409,43 @@ func (m *Manager) awaitReady(ctx context.Context, inst *instance, proc *process)
 		case <-deadline.C:
 			return &StartError{Tenant: inst.tenant, Err: context.DeadlineExceeded}
 		case <-poll.C:
-			conn, err := net.Dial("unix", inst.socket)
-			if err != nil {
-				continue
+			if probeReady(inst.socket) == nil {
+				return nil
 			}
-			return conn.Close()
 		}
 	}
+}
+
+// readyProbe is TPM2_GetRandom for one byte: the cheapest command a started
+// TPM answers.
+var readyProbe = []byte{
+	0x80, 0x01, // TPM_ST_NO_SESSIONS
+	0x00, 0x00, 0x00, 0x0c, // commandSize
+	0x00, 0x00, 0x01, 0x7b, // TPM_CC_GetRandom
+	0x00, 0x01, // bytesRequested
+}
+
+// probeReady reports whether the vTPM at socket answers a command. swtpm
+// binds its socket before it decrypts and loads its state, so a successful
+// connect alone does not mean the state loaded: under load, a vTPM started
+// over state encrypted under another key accepted the connect and only then
+// exited. Any response, success or TPM error code, is answered by a TPM whose
+// state loaded.
+func probeReady(socket string) error {
+	conn, err := net.DialTimeout("unix", socket, readyProbeTimeout)
+	if err != nil {
+		return err
+	}
+	if err := conn.SetDeadline(time.Now().Add(readyProbeTimeout)); err != nil {
+		return errors.Join(err, conn.Close())
+	}
+	if _, err := conn.Write(readyProbe); err != nil {
+		return errors.Join(err, conn.Close())
+	}
+	if _, err := readResponse(conn); err != nil {
+		return errors.Join(err, conn.Close())
+	}
+	return conn.Close()
 }
 
 // kill terminates a process that failed to become ready and waits for it.

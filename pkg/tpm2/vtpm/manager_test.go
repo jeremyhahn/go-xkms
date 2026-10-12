@@ -17,6 +17,8 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"io"
+	"net"
 	"os"
 	"path/filepath"
 	"sync"
@@ -169,6 +171,55 @@ func TestManager_StatePersistsAcrossRestartUnderItsKey(t *testing.T) {
 	err = m.Start(ctx, "acme")
 	var startErr *StartError
 	require.True(t, errors.As(err, &startErr), "a vTPM must not start over state encrypted under another key, got %v", err)
+}
+
+// listenOnce serves one connection on a fresh unix socket with serve and
+// returns the socket path and a channel carrying serve's result.
+func listenOnce(t *testing.T, serve func(conn net.Conn) error) (string, <-chan error) {
+	t.Helper()
+	socket := filepath.Join(t.TempDir(), "vtpm.sock")
+	ln, err := net.Listen("unix", socket)
+	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, ln.Close()) })
+	served := make(chan error, 1)
+	go func() {
+		conn, err := ln.Accept()
+		if err != nil {
+			served <- err
+			return
+		}
+		served <- errors.Join(serve(conn), conn.Close())
+	}()
+	return socket, served
+}
+
+func TestProbeReady_AnsweredCommandIsReady(t *testing.T) {
+	cmd := make([]byte, len(readyProbe))
+	socket, served := listenOnce(t, func(conn net.Conn) error {
+		if _, err := io.ReadFull(conn, cmd); err != nil {
+			return err
+		}
+		// A TPM error code still proves the TPM is serving commands.
+		_, err := conn.Write(response(0x100))
+		return err
+	})
+
+	require.NoError(t, probeReady(socket))
+	require.NoError(t, <-served)
+	assert.Equal(t, readyProbe, cmd)
+}
+
+// A vTPM that accepts the connect but exits before answering -- swtpm over
+// state encrypted under another key -- must not count as ready.
+func TestProbeReady_AcceptedButUnansweredIsNotReady(t *testing.T) {
+	socket, served := listenOnce(t, func(net.Conn) error { return nil })
+
+	assert.Error(t, probeReady(socket))
+	require.NoError(t, <-served)
+}
+
+func TestProbeReady_NoSocketIsNotReady(t *testing.T) {
+	assert.Error(t, probeReady(filepath.Join(t.TempDir(), "absent.sock")))
 }
 
 // TestManager_RestartsACrashedVTPMAndTheTransportFollows proves the
