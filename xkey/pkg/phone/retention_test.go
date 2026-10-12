@@ -19,6 +19,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/flynn/noise"
+
 	"github.com/jeremyhahn/go-xkms/xkey/pkg/pairing"
 )
 
@@ -28,20 +30,20 @@ import (
 // finalized and reclaimed while a live goroutine still reads them through an
 // aliased DHKey.
 //
-// The claim is plausible and wrong. memguard allocates outside the Go heap,
-// so a slice into a buffer genuinely does NOT keep the owning object alive —
-// that half is right. What it misses is that memguard registers every buffer
-// it creates in a package-level list (core/buffer.go: `buffers = new(bufferList)`,
-// `buffers.add(b)` on creation, `buffers.remove(b)` on destroy) which holds a
-// strong reference for the buffer's whole life. That list is how Purge finds
-// every buffer to wipe. runtime.SetFinalizer appears nowhere in memguard
-// outside its own tests. So an unreferenced StaticKey is not collectable, no
-// finalizer exists to run, and the only releases are an explicit Destroy or a
-// process-wide Purge.
+// The claim is plausible and wrong. go-enclave maps its pages outside the Go
+// heap, so a slice into them genuinely does NOT keep the owning object alive —
+// that half is right. What it misses is that go-enclave records every enclave
+// it constructs in a package-level ledger (registry.go: `live`, a map from
+// *MemoryEnclave, added on construction and removed on release) which holds a
+// strong reference for the enclave's whole life. That ledger is how WipeAll
+// finds every enclave to wipe. go-enclave registers no finalizer or cleanup
+// outside its own tests. So an unreferenced StaticKey's scalar is not
+// collectable, nothing runs to release it, and the only releases are an
+// explicit Destroy or a process-wide WipeAll.
 //
 // This test exists rather than a rebuttal in prose because the assumption is
-// upstream and invisible from here: if memguard ever adds a finalizer, or
-// stops registering buffers, the retention paths in this package silently
+// upstream and invisible from here: if go-enclave ever adds a finalizer, or
+// stops registering enclaves, the retention paths in this package silently
 // become the use-after-free they were written to avoid — and this fails
 // instead.
 func TestRetainedPagesSurviveLosingEveryGoReference(t *testing.T) {
@@ -50,10 +52,18 @@ func TestRetainedPagesSurviveLosingEveryGoReference(t *testing.T) {
 		t.Fatalf("GenerateStaticKey: %v", err)
 	}
 
-	// What a live session holds: a DHKey whose Private slice aliases the
-	// protected pages. This is the reader a retention path is protecting.
-	alias := key.DHKey
-	want := append([]byte(nil), alias.Private...)
+	// What a live session holds: flynn/noise keeps the DHKey it was handed,
+	// whose Private slice aliases the protected pages past the borrow that
+	// lent it. This is the reader a retention path is protecting.
+	var alias []byte
+	var want []byte
+	if err := key.WithDHKey(func(dh noise.DHKey) error {
+		alias = dh.Private
+		want = bytes.Clone(dh.Private)
+		return nil
+	}); err != nil {
+		t.Fatalf("WithDHKey: %v", err)
+	}
 	if len(want) == 0 {
 		t.Fatal("generated key has no private scalar")
 	}
@@ -72,9 +82,9 @@ func TestRetainedPagesSurviveLosingEveryGoReference(t *testing.T) {
 		time.Sleep(10 * time.Millisecond)
 	}
 
-	if !bytes.Equal(alias.Private, want) {
+	if !bytes.Equal(alias, want) {
 		t.Fatal("the protected pages were wiped after the owning StaticKey " +
-			"became unreachable; memguard's buffer registry or finalizer " +
+			"became unreachable; go-enclave's ledger or finalizer " +
 			"behaviour has changed and every retention path in this package " +
 			"is now a use-after-free")
 	}

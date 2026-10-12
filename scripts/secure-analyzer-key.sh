@@ -25,29 +25,30 @@
 
 # rule_for classifies MSG ($1, a diagnostic's text after "file:line:col: ")
 # as a securecheck rule number, matching the Reportf messages of the pinned
-# go-qrdb pkg/secure/analyzer (verbatim, v0.25: analyzer.go, unborrowed.go and
-# copyout.go). Prints nothing and fails on anything else: an unrecognized
+# go-qrdb pkg/secure/analyzer (verbatim, v0.47: analyzer.go and copyout.go). Prints nothing and fails on anything else: an unrecognized
 # shape is a hard failure, never a silently unkeyed finding.
 #
-#   1  raw memguard import            (allowlistable, go-truststrap#60 class)
+#   1  raw memguard import            (allowlistable; no entry today)
 #   2  ssh.ParsePrivateKey call       (allowlistable, upstream narrowing class)
 #   3  sensitive-named string/[]byte  (allowlistable, pre-existing residue)
-#   4  secure.Buffer.Bytes read with no borrow held
-#   5  malformed //secure:unborrowed directive
-#   6  string(...) of protected bytes
-#   7  copy of protected bytes that is never wiped, returned or consumed
+#   4  string(...) of protected bytes
+#   5  copy of protected bytes that is never wiped, returned or consumed
 #
-# Rules 4-7 are never allowlistable: they have no symbol to key on, and the
+# There is no unborrowed-read rule: go-enclave scopes every borrow to a
+# callback, so secure.Buffer has no accessor that returns its bytes outside
+# one (WithBytes and secure.CopyOut are the only reads), and the compiler
+# enforces what securecheck's Buffer.Bytes rule and its //secure:unborrowed
+# directive used to.
+#
+# Rules 4-5 are never allowlistable: they have no symbol to key on, and the
 # fix is always in the code. process_diagnostics fails them on sight.
 rule_for() {
 	case "$1" in
 	'import of '*' is forbidden; use github.com/jeremyhahn/go-qrdb/pkg/secure or github.com/jeremyhahn/go-enclave instead') echo 1 ;;
 	'call to '*' is forbidden; use '*) echo 2 ;;
 	'field '*' holds sensitive material as '*) echo 3 ;;
-	'secure.Buffer.Bytes holds no borrow across the read; use WithBytes or secure.CopyOut, or justify it with //secure:unborrowed <injected-interface|allocates-protected|nested-enclave> <reason> on this line or on a line of its own directly above') echo 4 ;;
-	'malformed //secure:unborrowed directive: it must name a kind (injected-interface|allocates-protected|nested-enclave) and then a reason') echo 5 ;;
-	*' converts protected bytes to a string, which can never be wiped; keep them as []byte and wipe them, or justify it with '*' <reason>') echo 6 ;;
-	*' copies protected bytes into ordinary memory that is never wiped, returned or consumed; defer secure.Wipe on the copy, or justify it with '*' <reason>') echo 7 ;;
+	*' converts protected bytes to a string, which can never be wiped; keep them as []byte and wipe them, or justify it with '*' <reason>') echo 4 ;;
+	*' copies protected bytes into ordinary memory that is never wiped, returned or consumed; defer secure.Wipe on the copy, or justify it with '*' <reason>') echo 5 ;;
 	*) return 1 ;;
 	esac
 }
@@ -122,7 +123,7 @@ process_diagnostics() {
 			continue
 		}
 		case "$rule" in
-		4|5|6|7)
+		4|5)
 			# Lifetime rules carry no allowlist key: never exempt, always fail.
 			fails=$((fails + 1))
 			echo "  FAIL $fullpath [rule $rule]: $diagline"

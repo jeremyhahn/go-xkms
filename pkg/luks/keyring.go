@@ -14,12 +14,14 @@
 package luks
 
 import (
-	"github.com/jeremyhahn/go-luks2/pkg/luks2"
+	"context"
+
+	"github.com/jeremyhahn/go-luks2/pkg/dmcrypt"
 )
 
 // checkKeyringAvailable is go-luks2's keyring preflight. It is a variable so
 // tests can stand in for the kernel.
-var checkKeyringAvailable = luks2.CheckKeyringAvailable
+var checkKeyringAvailable = dmcrypt.CheckKeyring
 
 // EnsureKeyringAvailable proves, before a volume key is handled, that this
 // process can place one in the kernel keyring. go-luks2 hands dm-crypt the
@@ -43,7 +45,13 @@ var checkKeyringAvailable = luks2.CheckKeyringAvailable
 // release of a 32-byte key, so running it per operation costs nothing that
 // matters.
 func EnsureKeyringAvailable() error {
-	if err := checkKeyringAvailable(); err != nil {
+	return ensureKeyringAvailable(context.Background())
+}
+
+// ensureKeyringAvailable is EnsureKeyringAvailable bound to the caller's
+// context, for the Executor operations that have one.
+func ensureKeyringAvailable(ctx context.Context) error {
+	if err := checkKeyringAvailable(ctx); err != nil {
 		return &KeyringError{Err: err}
 	}
 	return nil

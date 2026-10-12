@@ -44,7 +44,10 @@ func TestSealSeedLeavesSourceIntact(t *testing.T) {
 	buf, err := sealed.Open(t.Context())
 	require.NoError(t, err)
 	defer buf.Destroy()
-	assert.Equal(t, before, buf.Bytes(), "the enclave must hold what it was given")
+	require.NoError(t, buf.WithBytes(func(seed []byte) error {
+		assert.Equal(t, before, seed, "the enclave must hold what it was given")
+		return nil
+	}))
 }
 
 func TestSealSeed_RejectsEmpty(t *testing.T) {

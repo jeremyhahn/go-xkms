@@ -9,7 +9,7 @@ require (
 	github.com/Azure/azure-sdk-for-go/sdk/resourcemanager/dns/armdns v1.2.0
 	github.com/Azure/azure-sdk-for-go/sdk/security/keyvault/azkeys v1.5.0
 	github.com/Azure/azure-sdk-for-go/sdk/security/keyvault/azsecrets v1.5.0
-	github.com/awnumar/memguard v0.23.0
+	github.com/awnumar/memguard v0.23.0 // indirect
 	github.com/aws/aws-sdk-go-v2 v1.43.5
 	github.com/aws/aws-sdk-go-v2/config v1.32.36
 	github.com/aws/aws-sdk-go-v2/credentials v1.19.35
@@ -35,13 +35,13 @@ require (
 	github.com/hashicorp/vault/api v1.23.0
 	github.com/jeremyhahn/arduino-generic/sdk/go v0.7.0-alpha
 	github.com/jeremyhahn/go-codec v1.4.0
-	github.com/jeremyhahn/go-enclave v0.7.0-alpha
+	github.com/jeremyhahn/go-enclave v0.8.0-alpha
 	github.com/jeremyhahn/go-frost v0.3.0-alpha
-	github.com/jeremyhahn/go-luks2 v0.5.0-alpha
-	github.com/jeremyhahn/go-objstore v0.3.0-alpha
-	github.com/jeremyhahn/go-qrdb v0.46.0-alpha
-	github.com/jeremyhahn/go-qrdb/sdk/go v0.46.0-alpha
-	github.com/jeremyhahn/go-truststrap v0.4.0-alpha
+	github.com/jeremyhahn/go-luks2 v1.0.0-rc.4
+	github.com/jeremyhahn/go-objstore v0.4.0-alpha
+	github.com/jeremyhahn/go-qrdb v0.47.0-alpha
+	github.com/jeremyhahn/go-qrdb/sdk/go v0.47.0-alpha
+	github.com/jeremyhahn/go-truststrap v0.6.0-alpha
 	github.com/jeremyhahn/go-xkms/sdk/go v0.51.0-alpha
 	github.com/jeremyhahn/go-xkms/xkey v0.51.0-alpha
 	github.com/kevinburke/ssh_config v1.6.0
@@ -185,7 +185,7 @@ require (
 	github.com/invopop/jsonschema v0.13.0 // indirect
 	github.com/jackc/pgx/v5 v5.11.0 // indirect
 	github.com/jchv/go-winloader v0.0.0-20250406163304-c1995be93bd1 // indirect
-	github.com/jeremyhahn/go-quicraft v0.19.0 // indirect
+	github.com/jeremyhahn/go-quicraft v0.20.0 // indirect
 	github.com/jeroenrinzema/psql-wire v0.18.0 // indirect
 	github.com/jmespath/go-jmespath v0.4.0 // indirect
 	github.com/json-iterator/go v1.1.12 // indirect

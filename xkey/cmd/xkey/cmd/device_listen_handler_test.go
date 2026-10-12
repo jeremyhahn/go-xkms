@@ -36,7 +36,7 @@ func validNoisePublicKeyForTest(t *testing.T) string {
 	key, err := pairing.GenerateStaticKey()
 	require.NoError(t, err)
 	defer key.Destroy()
-	return base64.StdEncoding.EncodeToString(key.Public)
+	return base64.StdEncoding.EncodeToString(key.PublicBytes())
 }
 
 func validLocalNoisePrivateKeyForTest(t *testing.T) string {
@@ -44,7 +44,12 @@ func validLocalNoisePrivateKeyForTest(t *testing.T) string {
 	key, err := pairing.GenerateStaticKey()
 	require.NoError(t, err)
 	defer key.Destroy()
-	return base64.StdEncoding.EncodeToString(key.Private)
+	var encoded string
+	require.NoError(t, pairing.WithPrivateKey(key, func(privateKey []byte) error {
+		encoded = base64.StdEncoding.EncodeToString(privateKey)
+		return nil
+	}))
+	return encoded
 }
 
 // --- allowPhoneSyncExport ---

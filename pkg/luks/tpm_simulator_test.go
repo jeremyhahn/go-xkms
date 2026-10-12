@@ -135,7 +135,10 @@ func TestTPMSealer_PSRK_SealUnsealRoundTrip(t *testing.T) {
 
 	unsealed, err := s.UnsealPassphrase(context.Background(), res.Token)
 	require.NoError(t, err)
-	require.True(t, bytes.Equal(unsealed, res.Passphrase.Bytes()))
+	require.NoError(t, res.Passphrase.WithBytes(func(passphrase []byte) error {
+		require.True(t, bytes.Equal(unsealed, passphrase))
+		return nil
+	}))
 }
 
 // TestTPMSealer_PSRK_Seal_PolicyBindsPCRState proves that extending a
@@ -284,5 +287,8 @@ func TestTPMSealer_SSRK_SealedObjectEnforcesPCRPolicy(t *testing.T) {
 		},
 	}).Execute(tpm.Transport())
 	require.NoError(t, err, "the PolicyPCR session must unseal the passphrase")
-	require.True(t, bytes.Equal(res.Passphrase.Bytes(), out.OutData.Buffer))
+	require.NoError(t, res.Passphrase.WithBytes(func(passphrase []byte) error {
+		require.True(t, bytes.Equal(passphrase, out.OutData.Buffer))
+		return nil
+	}))
 }

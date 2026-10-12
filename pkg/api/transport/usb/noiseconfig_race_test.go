@@ -20,6 +20,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/jeremyhahn/go-enclave"
+	"github.com/jeremyhahn/go-xkms/xkey/pkg/pairing"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -45,6 +47,7 @@ func TestWithNoiseConfigDoesNotRaceConnect(t *testing.T) {
 		return
 	}
 	t.Cleanup(rotated.Destroy)
+	rotatedPrivate := privateKeyBytes(t, rotated)
 
 	// Both the transport's configured key and the session key a successful
 	// Connect retains are protected allocations owned by the transport, not by
@@ -66,7 +69,7 @@ func TestWithNoiseConfigDoesNotRaceConnect(t *testing.T) {
 
 	go func() {
 		defer wg.Done()
-		tr.WithNoiseConfig(&NoiseConfig{LocalStaticPrivateKey: rotated.Private})
+		tr.WithNoiseConfig(&NoiseConfig{LocalStaticPrivateKey: rotatedPrivate})
 	}()
 
 	done := make(chan struct{})
@@ -104,8 +107,8 @@ func TestWithNoiseConfigCopiesTheCallersConfig(t *testing.T) {
 	}
 	t.Cleanup(source.Destroy)
 
-	local := bytes.Clone(source.Private)
-	wantPublic := bytes.Clone(source.Public)
+	local := privateKeyBytes(t, source)
+	wantPublic := bytes.Clone(source.PublicBytes())
 	remote := bytes.Repeat([]byte{0x02}, 32)
 	fingerprint := bytes.Repeat([]byte{0x03}, 32)
 
@@ -135,7 +138,7 @@ func TestWithNoiseConfigCopiesTheCallersConfig(t *testing.T) {
 	cfg.ExpectedDeviceFingerprint = nil
 
 	require.NotNil(t, tr.noise.localKey, "the private key must have loaded")
-	assert.Equal(t, wantPublic, []byte(tr.noise.localKey.Public),
+	assert.Equal(t, wantPublic, []byte(tr.noise.localKey.PublicBytes()),
 		"the loaded key must not be reachable through the caller's slice")
 	assert.Equal(t, bytes.Repeat([]byte{0x02}, 32), tr.noise.expectedRemoteStatic,
 		"the expected remote static must not be reachable through the caller's slice")
@@ -155,11 +158,11 @@ func TestWithNoiseConfigHoldsThePrivateKeyInProtectedMemory(t *testing.T) {
 
 	tr, err := New()
 	require.NoError(t, err)
-	tr.WithNoiseConfig(&NoiseConfig{LocalStaticPrivateKey: bytes.Clone(source.Private)})
+	tr.WithNoiseConfig(&NoiseConfig{LocalStaticPrivateKey: privateKeyBytes(t, source)})
 	t.Cleanup(func() { tr.noise.destroy() })
 
 	require.NotNil(t, tr.noise.localKey)
-	assert.Equal(t, []byte(source.Public), []byte(tr.noise.localKey.Public),
+	assert.Equal(t, []byte(source.PublicBytes()), []byte(tr.noise.localKey.PublicBytes()),
 		"the transport's key must be the one that was configured")
 }
 
@@ -181,18 +184,19 @@ func TestWithNoiseConfigDestroysTheDisplacedKey(t *testing.T) {
 	tr, err := New()
 	require.NoError(t, err)
 
-	tr.WithNoiseConfig(&NoiseConfig{LocalStaticPrivateKey: bytes.Clone(first.Private)})
+	tr.WithNoiseConfig(&NoiseConfig{LocalStaticPrivateKey: privateKeyBytes(t, first)})
 	displaced := tr.noise.localKey
 	require.NotNil(t, displaced)
 
-	tr.WithNoiseConfig(&NoiseConfig{LocalStaticPrivateKey: bytes.Clone(second.Private)})
+	tr.WithNoiseConfig(&NoiseConfig{LocalStaticPrivateKey: privateKeyBytes(t, second)})
 	t.Cleanup(func() { tr.noise.destroy() })
 
-	// Destroy clears the embedded key pair, so an emptied DHKey is the
+	// Destroy releases the private scalar's enclave, so a refused borrow is the
 	// observable evidence that the pages were released rather than dropped.
-	assert.Empty(t, displaced.Private, "the displaced key's private scalar was not destroyed")
-	assert.Empty(t, displaced.Public, "the displaced key was not cleared")
-	assert.Equal(t, []byte(second.Public), []byte(tr.noise.localKey.Public),
+	err = pairing.WithPrivateKey(displaced, func([]byte) error { return nil })
+	assert.ErrorIs(t, err, enclave.ErrEnclaveDestroyed, "the displaced key's private scalar was not destroyed")
+	assert.Empty(t, displaced.PublicBytes(), "the displaced key was not cleared")
+	assert.Equal(t, []byte(second.PublicBytes()), []byte(tr.noise.localKey.PublicBytes()),
 		"the replacement key must be the one just configured")
 }
 

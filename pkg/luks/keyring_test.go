@@ -14,10 +14,11 @@
 package luks
 
 import (
+	"context"
 	"errors"
 	"testing"
 
-	"github.com/jeremyhahn/go-luks2/pkg/luks2"
+	"github.com/jeremyhahn/go-luks2/pkg/dmcrypt"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -28,7 +29,7 @@ func withKeyringCheck(t *testing.T, check func() error) *int {
 	t.Helper()
 	previous := checkKeyringAvailable
 	calls := new(int)
-	checkKeyringAvailable = func() error { *calls++; return check() }
+	checkKeyringAvailable = func(context.Context) error { *calls++; return check() }
 	t.Cleanup(func() {
 		checkKeyringAvailable = previous
 	})
@@ -39,13 +40,13 @@ func withKeyringCheck(t *testing.T, check func() error) *int {
 // preflight is a KeyringError: ErrKeyringUnavailable to errors.Is, go-luks2's
 // classification reachable beneath it, and its message carried.
 func TestEnsureKeyringAvailable_RefusalIsTypedAndKeepsTheCause(t *testing.T) {
-	cause := &luks2.KeyringUnavailableError{Op: "add the volume key to the session keyring", Kind: luks2.ErrKeyringBlocked, Err: errors.New("operation not permitted")}
+	cause := &dmcrypt.KeyringError{Op: "add the volume key to the session keyring", Kind: dmcrypt.ErrKeyringBlocked, Err: errors.New("operation not permitted")}
 	withKeyringCheck(t, func() error { return cause })
 
 	err := EnsureKeyringAvailable()
 	require.Error(t, err)
 	assert.True(t, errors.Is(err, ErrKeyringUnavailable))
-	assert.True(t, errors.Is(err, luks2.ErrKeyringBlocked), "go-luks2's classification must stay reachable: %v", err)
+	assert.True(t, errors.Is(err, dmcrypt.ErrKeyringBlocked), "go-luks2's classification must stay reachable: %v", err)
 	var keyring *KeyringError
 	require.True(t, errors.As(err, &keyring))
 	assert.Contains(t, err.Error(), "kernel keyring preflight failed")
@@ -61,7 +62,7 @@ func TestEnsureKeyringAvailable_ProbesEveryCall(t *testing.T) {
 	failing := true
 	calls := withKeyringCheck(t, func() error {
 		if failing {
-			return luks2.ErrKeyringBlocked
+			return dmcrypt.ErrKeyringBlocked
 		}
 		return nil
 	})

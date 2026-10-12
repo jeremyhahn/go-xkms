@@ -83,7 +83,7 @@ methods and new package functions appear automatically).
 | `NewCredentialChallenge(ekPub crypto.PublicKey, activationKeyName []byte) (*CredentialChallenge, secret []byte, error)` | builds a `TPM2_MakeCredential` challenge (`TPM2B_ID_OBJECT` + `TPM2B_ENCRYPTED_SECRET`) entirely in software; the caller needs no TPM |
 | `ActivationKeyName(publicArea []byte) ([]byte, error)` | computes the TPM Name of a marshaled `TPMT_PUBLIC` a verifier received off the wire (a TCG-CSR-IDEVID's `AttestPub`, or an `ActivationKey.Public`), for use as `NewCredentialChallenge`'s `activationKeyName` |
 | `(*TPM2).CreateActivationKey() (*ActivationKey, error)` | creates a transient, unrestricted signing key in the null hierarchy (no hierarchy auth), used only to answer a credential challenge before any persistent identity key exists |
-| `(*TPM2).AnswerCredentialChallenge(key *ActivationKey, challenge *CredentialChallenge) ([]byte, error)` | answers a challenge using a `CreateActivationKey` object; generalises `ActivateCredential`'s hardcoded IAK path. Flushes the key when done |
+| `(*TPM2).AnswerCredentialChallenge(key *ActivationKey, challenge *CredentialChallenge) ([]byte, error)` | answers a challenge using a `CreateActivationKey` object; generalises `ActivateCredential`'s hardcoded IAK path. Flushes the key when done. With no persistent EK it uses a transient EK recreated from the NV EK certificate's TCG template and verified against it |
 
 `pkg/ca`'s `VerifyTCG_CSR_IDevIDBytes` (below) uses `NewCredentialChallenge` +
 `ActivationKeyName` and no longer requires a TPM of its own; enroll-01's

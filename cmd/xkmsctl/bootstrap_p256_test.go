@@ -19,7 +19,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/awnumar/memguard"
+	"github.com/jeremyhahn/go-enclave"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
@@ -35,11 +35,43 @@ func newTestP256KeyHex(t *testing.T) string {
 	require.NoError(t, err)
 	defer key.Destroy()
 
-	buf := memguard.NewBuffer(p256proto.HexKeySize)
-	defer buf.Destroy()
+	alloc, err := enclave.ProcessAllocator()
+	require.NoError(t, err)
+	buf, err := alloc.NewSized(p256proto.HexKeySize)
+	require.NoError(t, err)
+	defer func() { require.NoError(t, buf.Destroy()) }()
 	require.NoError(t, p256proto.EncodeStaticKey(buf, key))
 
-	return string(buf.Bytes())
+	var encoded string
+	require.NoError(t, buf.WithBytes(func(b []byte) error {
+		encoded = string(b)
+		return nil
+	}))
+	return encoded
+}
+
+// TestDecodeP256PublicKey_WipesInput verifies the hex scalar handed in is
+// moved into protected memory, not copied: the caller's slice is zeroed
+// whether or not the decode succeeds.
+func TestDecodeP256PublicKey_WipesInput(t *testing.T) {
+	hexKey := []byte(newTestP256KeyHex(t))
+
+	public, err := decodeP256PublicKey(hexKey)
+	require.NoError(t, err)
+	assert.Len(t, public, p256proto.PublicKeySize)
+	assert.Equal(t, make([]byte, len(hexKey)), hexKey, "the caller's hex scalar must be wiped")
+}
+
+// TestDecodeP256PublicKey_Errors verifies each failure is reported under the
+// sentinel that names its stage, so an operator can tell a key that does not
+// decode from a host that refused the protected buffer.
+func TestDecodeP256PublicKey_Errors(t *testing.T) {
+	_, err := decodeP256PublicKey(nil)
+	assert.ErrorIs(t, err, ErrProtectedKeyBufferFailed)
+	assert.ErrorIs(t, err, enclave.ErrEmptyEnclave)
+
+	_, err = decodeP256PublicKey([]byte(strings.Repeat("zz", 32)))
+	assert.ErrorIs(t, err, ErrDecodeKeyFailed)
 }
 
 // TestP256GenerateKey_RequiresOutputFile covers the same ruling the Noise verb

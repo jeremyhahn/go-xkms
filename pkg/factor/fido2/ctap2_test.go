@@ -275,8 +275,13 @@ func TestLocalCeremony_ForwardsThePIN(t *testing.T) {
 		t.Fatalf("open forwarded PIN: %v", err)
 	}
 	defer buf.Destroy()
-	if string(buf.Bytes()) != "123456" {
-		t.Errorf("PIN = %q, want it forwarded to the authenticator ceremony", buf.Bytes())
+	pin, err := secure.CopyOut(buf)
+	if err != nil {
+		t.Fatalf("read forwarded PIN: %v", err)
+	}
+	defer secure.Wipe(pin)
+	if string(pin) != "123456" {
+		t.Errorf("PIN = %q, want it forwarded to the authenticator ceremony", pin)
 	}
 }
 

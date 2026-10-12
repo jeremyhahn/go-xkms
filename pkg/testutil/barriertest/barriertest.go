@@ -40,7 +40,7 @@ func NewRegistry(t testing.TB) *seal.BarrierRegistry {
 	require.NoError(t, err)
 
 	creds := seal.MustCredentials(t.Context(), []byte("host-barrier-passphrase"))
-	defer creds.Secret.Destroy()
+	defer func() { require.NoError(t, creds.Secret.Destroy()) }()
 	require.NoError(t, barrier.Initialize(context.Background(), creds))
 
 	registry, err := seal.NewBarrierRegistry(barrier)
@@ -55,6 +55,6 @@ func RegisterTenant(t testing.TB, registry *seal.BarrierRegistry, tenantID strin
 	_, err := registry.RegisterTenantDefault(tenantID)
 	require.NoError(t, err)
 	creds := seal.MustCredentials(t.Context(), []byte(tenantID+"-passphrase"))
-	defer creds.Secret.Destroy()
+	defer func() { require.NoError(t, creds.Secret.Destroy()) }()
 	require.NoError(t, registry.InitializeTenant(context.Background(), tenantID, creds))
 }

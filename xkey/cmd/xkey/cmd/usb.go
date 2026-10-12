@@ -240,7 +240,7 @@ func runUSBCreate(cmd *cobra.Command, args []string) error {
 func runUSBStatus(cmd *cobra.Command, args []string) error {
 	targetPath := args[0]
 
-	status, err := usb.Status(targetPath)
+	status, err := usb.Status(cmd.Context(), targetPath)
 	if err != nil {
 		return &USBCmdError{Operation: "get_status", Err: err}
 	}
@@ -306,7 +306,7 @@ func runUSBUpdate(cmd *cobra.Command, args []string) error {
 
 	_, _ = fmt.Fprintf(cmd.OutOrStdout(), "Updating binaries on %s...\n", targetPath)
 
-	if err := usb.UpdateBinaries(targetPath, binaries); err != nil {
+	if err := usb.UpdateBinaries(cmd.Context(), targetPath, binaries); err != nil {
 		return &USBCmdError{Operation: "update_binaries", Err: err}
 	}
 

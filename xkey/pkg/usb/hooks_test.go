@@ -14,12 +14,16 @@
 package usb
 
 import (
+	"context"
 	"errors"
 	"io/fs"
 	"os"
 	"testing"
 	"time"
 
+	"github.com/jeremyhahn/go-enclave"
+	"github.com/jeremyhahn/go-luks2/pkg/dmcrypt"
+	"github.com/jeremyhahn/go-luks2/pkg/filesystem"
 	"github.com/jeremyhahn/go-luks2/pkg/luks2"
 	"github.com/stretchr/testify/assert"
 )
@@ -33,13 +37,13 @@ const testDevicePath = "/dev/xkey-test-usb0"
 type savedHooks struct {
 	execCommand        func(string, ...string) error
 	getEUID            func() int
-	luksSetupLoop      func(string) (string, error)
-	luksDetachLoop     func(string) error
-	luksFormat         func(luks2.FormatOptions) error
-	luksUnlock         func(string, []byte, string) error
-	luksMakeFilesystem func(string, string, string) error
-	luksLock           func(string) error
-	luksIsUnlocked     func(string) bool
+	luksSetupLoop      func(context.Context, string) (string, error)
+	luksDetachLoop     func(context.Context, string) error
+	luksFormat         func(context.Context, string, *enclave.MemoryEnclave, luks2.FormatParams) error
+	luksUnlock         func(context.Context, string, *enclave.MemoryEnclave, string) (*dmcrypt.Mapping, error)
+	luksMakeFilesystem func(context.Context, string, filesystem.Type, filesystem.MakeParams) error
+	luksLock           func(context.Context, string) error
+	luksIsUnlocked     func(context.Context, string) bool
 	luksCheckKeyring   func() error
 	readMountsFile     func() ([]byte, error)
 	statPath           func(string) (os.FileInfo, error)
@@ -88,13 +92,15 @@ func saveHooks(t *testing.T) func() {
 func mockAllCommandsSuccess(t *testing.T) {
 	t.Helper()
 	execCommand = func(name string, args ...string) error { return nil }
-	luksSetupLoopDevice = func(file string) (string, error) { return "/dev/loop99", nil }
-	luksDetachLoopDevice = func(device string) error { return nil }
-	luksFormat = func(opts luks2.FormatOptions) error { return nil }
-	luksUnlock = func(device string, passphrase []byte, name string) error { return nil }
-	luksMakeFilesystem = func(device, fstype, label string) error { return nil }
-	luksLock = func(name string) error { return nil }
-	luksIsUnlocked = func(name string) bool { return false }
+	luksSetupLoopDevice = func(_ context.Context, file string) (string, error) { return "/dev/loop99", nil }
+	luksDetachLoopDevice = func(_ context.Context, device string) error { return nil }
+	luksFormat = func(context.Context, string, *enclave.MemoryEnclave, luks2.FormatParams) error { return nil }
+	luksUnlock = func(_ context.Context, _ string, _ *enclave.MemoryEnclave, name string) (*dmcrypt.Mapping, error) {
+		return &dmcrypt.Mapping{Name: name}, nil
+	}
+	luksMakeFilesystem = func(context.Context, string, filesystem.Type, filesystem.MakeParams) error { return nil }
+	luksLock = func(_ context.Context, name string) error { return nil }
+	luksIsUnlocked = func(_ context.Context, name string) bool { return false }
 	luksCheckKeyring = func() error { return nil }
 	readMountsFile = func() ([]byte, error) { return []byte(""), nil }
 }

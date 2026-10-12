@@ -215,13 +215,17 @@ func (b *TPM2Backend) ResetLockout(lockoutAuth string) error {
 }
 
 // VerifyFIDO2Hash compares the supplied CTAP2 PIN hash against the cached
-// MemoryEnclave using constant-time comparison. A nil or destroyed enclave
-// reports false, matching the fail-closed behavior of enclave.EqualTo.
+// MemoryEnclave using constant-time comparison. It fails closed: a nil or
+// destroyed enclave (enclave.ErrEnclaveDestroyed) reports false.
 func (b *TPM2Backend) VerifyFIDO2Hash(hash []byte) bool {
 	if len(hash) != qrdbsdk.FIDO2PINHashSize {
 		return false
 	}
-	return b.fido2Enclave.Load().EqualTo(hash)
+	match, err := b.fido2Enclave.Load().EqualTo(hash)
+	if err != nil {
+		return false
+	}
+	return match
 }
 
 // Close destroys the MemoryEnclave holding the FIDO2 hash. Safe to call

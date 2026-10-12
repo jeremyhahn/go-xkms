@@ -538,6 +538,7 @@ var (
 	ErrTPMPolicyInvalidDigest         = tpm2.ErrPolicyInvalidDigest
 	ErrTPMPolicyEmptyPCRs             = tpm2.ErrPolicyEmptyPCRs
 	ErrTPMPolicyAuthValueRequired     = tpm2.ErrPolicyAuthValueRequired
+	ErrTPMAuthFailed                  = tpm2.ErrAuthFailed
 
 	// Platform key store errors
 	ErrPlatformKeyStoreNilTPM             = tpm2.ErrPlatformKeyStoreNilTPM

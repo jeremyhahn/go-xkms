@@ -81,7 +81,7 @@ func TestStartNoiseBootstrap_PublishesAndWithdrawsListenerKeys(t *testing.T) {
 
 	resp, err := srv.xkmsService.BootstrapListenerKeys(ctx)
 	require.NoError(t, err)
-	assert.Equal(t, hex.EncodeToString(liveKey.Public), resp.NoisePublicKey)
+	assert.Equal(t, hex.EncodeToString(liveKey.PublicBytes()), resp.NoisePublicKey)
 
 	// The reported hex must be exactly what a first-contact client pastes
 	// into NoiseConfig.ServerStaticKey: pin the discovered key and complete

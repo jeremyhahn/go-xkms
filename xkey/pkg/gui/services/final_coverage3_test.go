@@ -1071,7 +1071,7 @@ func TestFC3_SudoElevator_Run_PasswordNotOwned(t *testing.T) {
 	// SudoElevator does not own its lifecycle.
 	_, _ = e.Run([]string{"hello"}, nil)
 
-	assert.Equal(t, "testpass123", string(pwBuf.Bytes()))
+	assert.Equal(t, "testpass123", bufferString(t, pwBuf))
 }
 
 // TestFC3_SudoElevator_Run_WithStdinData exercises the stdinData concatenation

@@ -194,13 +194,8 @@ func TestRootCmd_PKCS11PINFlagSealsSecret(t *testing.T) {
 	if globalConfig.PKCS11PIN == nil {
 		t.Fatal("expected --pkcs11-pin to seal a non-nil secret")
 	}
-	sealed, err := globalConfig.PKCS11PIN.Open(t.Context())
-	if err != nil {
-		t.Fatalf("Open() failed: %v", err)
-	}
-	defer sealed.Destroy()
-	if string(sealed.Bytes()) != "s3cr3t" {
-		t.Errorf("sealed PIN = %q, want %q", string(sealed.Bytes()), "s3cr3t")
+	if got := openTestPIN(t, globalConfig.PKCS11PIN); got != "s3cr3t" {
+		t.Errorf("sealed PIN = %q, want %q", got, "s3cr3t")
 	}
 }
 

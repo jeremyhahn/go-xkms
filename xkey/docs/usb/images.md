@@ -126,8 +126,8 @@ The `xkey/pkg/usb` package provides the programmatic interface.
 | Function | Description |
 |----------|-------------|
 | `CreateImage(ctx, cfg ImageConfig)` | Create a partitioned image or prepare a block device |
-| `Status(path string)` | Query the status of an existing image or device |
-| `UpdateBinaries(path string, binaries []string)` | Replace binaries on the FAT32 partition |
+| `Status(ctx context.Context, path string)` | Query the status of an existing image or device |
+| `UpdateBinaries(ctx context.Context, path string, binaries []string)` | Replace binaries on the FAT32 partition |
 | `DetectUSBDevices()` | Scan for removable USB mass storage devices |
 | `IsBlockDevice(path string)` | Check if a path is a block device |
 | `ValidateBlockDevice(path string)` | Verify a device is safe to write (not a system disk) |

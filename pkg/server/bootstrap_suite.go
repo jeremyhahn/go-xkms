@@ -15,27 +15,13 @@ package server
 
 import (
 	"encoding/hex"
+	"errors"
 
-	"github.com/awnumar/memguard"
+	"github.com/jeremyhahn/go-enclave"
 
 	"github.com/jeremyhahn/go-xkms/pkg/api/transport"
 	"github.com/jeremyhahn/go-xkms/pkg/trust/bootstrap"
 )
-
-// The raw memguard import above is forced, not a convenience:
-// bootstrap.DecodeP256StaticKey and bootstrap.EncodeP256StaticKey
-// (go-truststrap v0.4.0-alpha's p256proto.{Decode,Encode}StaticKey) take a
-// *memguard.LockedBuffer directly, and secure.Buffer wraps its LockedBuffer
-// in an unexported field with no accessor -- correctly, since exposing it
-// would hand back the handle the boundary exists to withhold. Filed as
-// jeremyhahn/go-truststrap#60; secure-analyzer exemption until it lands.
-//
-// This is the ONLY file in the package that imports memguard, and
-// decodeP256StaticKey/encodeP256StaticKeyHex are the only two functions that
-// need to: every other P-256 (and all Noise) custody code in
-// bootstrap_key_custody.go works with sdk/go/secure buffers and plain []byte
-// it wipes with secure.Wipe, and calls into these two helpers for the one
-// step go-truststrap's API forces through raw memguard.
 
 // Suite resolution for the bootstrap listener.
 //
@@ -102,7 +88,7 @@ func (k *bootstrapKeys) publicKeysResponse() *transport.BootstrapListenerKeysRes
 	resp := &transport.BootstrapListenerKeysResponse{}
 
 	if k.noise != nil {
-		resp.NoisePublicKey = hex.EncodeToString(k.noise.Public)
+		resp.NoisePublicKey = hex.EncodeToString(k.noise.PublicBytes())
 	}
 
 	if k.p256 != nil {
@@ -163,12 +149,14 @@ func (s *Server) loadBootstrapKeys() (*bootstrapKeys, error) {
 // go-xkms#35) lives in bootstrap_key_custody.go, alongside its Noise
 // counterpart.
 
-// decodeP256StaticKey moves a hex-encoded private scalar into protected memory
-// and decodes it there, so the sensitive hex form never sits in an ordinary
-// heap slice for longer than the caller's own buffer.
+// decodeP256StaticKey moves a hex-encoded private scalar into a locked enclave
+// admitted through the process allocator and decodes it there, so the
+// sensitive hex form never sits in an ordinary heap slice for longer than the
+// caller's own buffer. A failure to wipe and release the enclave is returned
+// alongside the key rather than dropped; the key is destroyed in that case.
 //
-// The length is checked before the buffer is built rather than left to the
-// decoder, so memguard is never asked to size a protected buffer from input
+// The length is checked before the enclave is built rather than left to the
+// decoder, so the allocator is never asked to size a protected buffer from input
 // this function has not looked at.
 //
 // Note what this check CANNOT catch: a Curve25519 scalar and a P-256 scalar are
@@ -177,16 +165,28 @@ func (s *Server) loadBootstrapKeys() (*bootstrapKeys, error) {
 // key -- the server then serves a responder key no client has pinned. Nothing at
 // this layer can distinguish the two; use `xkmsctl bootstrap noise show-p256-key`
 // to confirm the public key matches what clients were given.
-func decodeP256StaticKey(hexKey []byte) (*bootstrap.P256StaticKey, error) {
+func decodeP256StaticKey(hexKey []byte) (key *bootstrap.P256StaticKey, err error) {
 	if len(hexKey) != bootstrap.P256HexKeySize {
 		return nil, &ErrP256KeyLength{Got: len(hexKey), Want: bootstrap.P256HexKeySize}
 	}
 
-	// NewBufferFromBytes wipes hexKey as it copies, which is why the callers'
-	// own deferred wipe is a backstop for the untrimmed remainder rather than
-	// the primary erasure.
-	buf := memguard.NewBufferFromBytes(hexKey)
-	defer buf.Destroy()
+	alloc, err := enclave.ProcessAllocator()
+	if err != nil {
+		return nil, err
+	}
+	// New wipes hexKey as it moves it into the enclave, which is why the
+	// callers' own deferred wipe is a backstop for the untrimmed remainder
+	// rather than the primary erasure.
+	buf, err := alloc.New(hexKey)
+	if err != nil {
+		return nil, err
+	}
+	defer func() {
+		if destroyErr := buf.Destroy(); destroyErr != nil {
+			key.Destroy()
+			key, err = nil, errors.Join(err, destroyErr)
+		}
+	}()
 
 	return bootstrap.DecodeP256StaticKey(buf)
 }
@@ -194,21 +194,38 @@ func decodeP256StaticKey(hexKey []byte) (*bootstrap.P256StaticKey, error) {
 // encodeP256StaticKeyHex is decodeP256StaticKey's inverse: it hex-encodes
 // key's private scalar and hands the result back as a []byte, so
 // bootstrap_key_custody.go's sealing/persisting paths (go-xkms#35) can reach
-// go-truststrap's P-256 encode step without importing memguard themselves.
+// go-truststrap's P-256 encode step, which writes only into a locked enclave.
 //
-// The memguard.LockedBuffer bootstrap.EncodeP256StaticKey writes into is
-// destroyed before this function returns. The hex bytes are copied out of it
-// because the barrier and the key file both take a []byte; the caller owns the
-// result and must wipe it with secure.Wipe on every path.
-func encodeP256StaticKeyHex(key *bootstrap.P256StaticKey) ([]byte, error) {
-	memBuf := memguard.NewBuffer(bootstrap.P256HexKeySize)
-	defer memBuf.Destroy()
+// That enclave is destroyed before this function returns. The hex bytes are
+// copied out of it because the barrier and the key file both take a []byte;
+// the caller owns the result and must wipe it with secure.Wipe on every path.
+// A failure to wipe the enclave is returned, and the copy wiped with it.
+func encodeP256StaticKeyHex(key *bootstrap.P256StaticKey) (hexKey []byte, err error) {
+	alloc, err := enclave.ProcessAllocator()
+	if err != nil {
+		return nil, err
+	}
+	buf, err := alloc.NewSized(bootstrap.P256HexKeySize)
+	if err != nil {
+		return nil, err
+	}
+	defer func() {
+		if destroyErr := buf.Destroy(); destroyErr != nil {
+			enclave.Wipe(hexKey)
+			hexKey, err = nil, errors.Join(err, destroyErr)
+		}
+	}()
 
-	if err := bootstrap.EncodeP256StaticKey(memBuf, key); err != nil {
+	if err := bootstrap.EncodeP256StaticKey(buf, key); err != nil {
 		return nil, err
 	}
 
-	hexKey := make([]byte, memBuf.Size())
-	copy(hexKey, memBuf.Bytes())
+	hexKey = make([]byte, bootstrap.P256HexKeySize)
+	if err := buf.WithBytes(func(encoded []byte) error {
+		copy(hexKey, encoded)
+		return nil
+	}); err != nil {
+		return nil, err
+	}
 	return hexKey, nil
 }

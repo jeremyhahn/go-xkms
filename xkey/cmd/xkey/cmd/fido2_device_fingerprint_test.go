@@ -16,7 +16,6 @@
 package cmd
 
 import (
-	"encoding/base64"
 	"errors"
 	"io"
 	"log/slog"
@@ -30,7 +29,6 @@ import (
 	"github.com/stretchr/testify/require"
 	"gopkg.in/yaml.v3"
 
-	"github.com/jeremyhahn/go-xkms/xkey/pkg/pairing"
 	"github.com/jeremyhahn/go-xkms/xkey/pkg/phone"
 )
 
@@ -46,17 +44,13 @@ func writeDevicesConfigForTest(t *testing.T, fingerprint string) {
 	// sudo, which would send the lookup outside the temp directory.
 	t.Setenv("SUDO_USER", "")
 
-	key, err := pairing.GenerateStaticKey()
-	require.NoError(t, err)
-	defer key.Destroy()
-
 	cfg := &DevicesConfig{
 		Devices: []PairedDevice{
 			{
 				Name:                 "Pixel 9",
 				Address:              "AA:BB:CC:DD:EE:01",
-				NoisePublicKey:       base64.StdEncoding.EncodeToString(key.Public),
-				LocalNoisePrivateKey: base64.StdEncoding.EncodeToString(key.Private),
+				NoisePublicKey:       validNoisePublicKeyForTest(t),
+				LocalNoisePrivateKey: validLocalNoisePrivateKeyForTest(t),
 				DeviceFingerprint:    fingerprint,
 				PairedAt:             time.Now().UTC(),
 			},

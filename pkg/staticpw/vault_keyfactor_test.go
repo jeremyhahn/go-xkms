@@ -33,6 +33,7 @@ import (
 
 	"github.com/jeremyhahn/go-xkms/pkg/testutil"
 	"github.com/jeremyhahn/go-xkms/pkg/vaultkey"
+	"github.com/jeremyhahn/go-xkms/sdk/go/secure"
 )
 
 // keyHolder is a client holding a key factor's private key.
@@ -179,9 +180,12 @@ func TestKeyFactor_ServerCannotUnlockAlone(t *testing.T) {
 	plaintext, err := cred.Secret.Open(t.Context())
 	require.NoError(t, err)
 	defer plaintext.Destroy()
-	encoded := []byte(base64.StdEncoding.EncodeToString(plaintext.Bytes()))
+	secret, err := secure.CopyOut(plaintext)
+	require.NoError(t, err)
+	defer secure.Wipe(secret)
+	encoded := []byte(base64.StdEncoding.EncodeToString(secret))
 	for _, value := range storedValues(t, stores, "tenant-a") {
-		assert.False(t, bytes.Contains(value, plaintext.Bytes()), "a factor stores its secret")
+		assert.False(t, bytes.Contains(value, secret), "a factor stores its secret")
 		assert.False(t, bytes.Contains(value, encoded), "a factor stores its secret, encoded")
 	}
 }

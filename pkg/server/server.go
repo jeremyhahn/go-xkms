@@ -187,8 +187,8 @@ type Server struct {
 	// life of the process, which is the deliberate trade against freeing
 	// memory a live handshake is reading.
 	//
-	// They are kept REACHABLE rather than simply dropped. memguard already
-	// pins every live buffer in a package-level list, so an unreferenced
+	// They are kept REACHABLE rather than simply dropped. go-enclave already
+	// tracks every live enclave for its WipeAll sweep, so an unreferenced
 	// StaticKey is not collectable and its pages cannot be reclaimed — but
 	// "we are retaining this" and "we dropped the only pointer to it" should
 	// not look identical in the source, and holding the owner is what would
@@ -3207,7 +3207,7 @@ func (s *Server) startNoiseBootstrap() {
 		// and destroys them. A nil key means that suite is not offered, and
 		// the listener refuses its suite byte per connection; loadBootstrapKeys
 		// has already guaranteed at least one is set.
-		StaticKey:      bootstrap.NoiseServerStaticKey(keys.noise),
+		StaticKey:      keys.noise,
 		P256StaticKey:  keys.p256,
 		CABundler:      bundler,
 		MaxConnections: maxConns,

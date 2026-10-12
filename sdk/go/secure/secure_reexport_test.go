@@ -74,8 +74,8 @@ func TestAliasedValuesCrossTheModuleBoundary(t *testing.T) {
 	}
 	defer opened.Destroy()
 
-	if !bytes.Equal(opened.Bytes(), []byte("cross-boundary")) {
-		t.Errorf("round trip = %q", opened.Bytes())
+	if got := copyOut(t, opened); !bytes.Equal(got, []byte("cross-boundary")) {
+		t.Errorf("round trip = %q", got)
 	}
 }
 
@@ -105,8 +105,8 @@ func TestNewSecretFromBuffer_RoundTrip(t *testing.T) {
 	}
 	defer opened.Destroy()
 
-	if !bytes.Equal(opened.Bytes(), []byte(plaintext)) {
-		t.Errorf("Open() = %q, want %q", opened.Bytes(), plaintext)
+	if got := copyOut(t, opened); !bytes.Equal(got, []byte(plaintext)) {
+		t.Errorf("Open() = %q, want %q", got, plaintext)
 	}
 }
 
@@ -126,9 +126,10 @@ func TestNewSecretFromBuffer_ConsumesBuffer(t *testing.T) {
 	}
 	t.Cleanup(sec.Destroy)
 
-	// The source buffer must no longer expose the plaintext.
-	if got := buf.Bytes(); bytes.Equal(got, []byte("consume-me")) {
-		t.Errorf("source buffer still holds plaintext after being consumed: %q", got)
+	// The source buffer must no longer lend out the plaintext.
+	var nilBuf *secure.NilBufferError
+	if err := buf.WithBytes(func([]byte) error { return nil }); !errors.As(err, &nilBuf) {
+		t.Errorf("consumed source buffer still lends its bytes: got %v, want *NilBufferError", err)
 	}
 }
 
@@ -200,7 +201,7 @@ func TestNewStdinProvider_ReadsPassphrase(t *testing.T) {
 
 	// A retained newline would be silently folded into the passphrase and
 	// change every derived key.
-	if got := string(buf.Bytes()); got != "correct horse battery staple" {
+	if got := string(copyOut(t, buf)); got != "correct horse battery staple" {
 		t.Errorf("Passphrase() = %q, want the line without its terminator", got)
 	}
 }

@@ -66,10 +66,12 @@ func newPKCS11Adapter(t *testing.T) *BackendAdapter {
 	t.Helper()
 	requireSoftHSM(t)
 	lib := softHSMLibPath()
+	pin, err := xkms.NewLiteralSecretValue(t.Context(), []byte("123456"))
+	require.NoError(t, err)
 	config := &xkms.PKCS11BackendConfig{
 		Library:     lib,
 		TokenLabel:  "e2e-piv-test",
-		PIN:         "123456",
+		PIN:         pin,
 		KeyStorage:  xkms.NewStorageMemory(),
 		CertStorage: xkms.NewStorageMemory(),
 	}

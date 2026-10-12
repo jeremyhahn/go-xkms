@@ -40,7 +40,6 @@ project_name: "go-xkms"
 language_servers:
 - go
 - typescript
-- svelte
 - cpp
 - python
 - bash

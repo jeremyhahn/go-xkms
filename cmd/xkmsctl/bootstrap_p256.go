@@ -16,22 +16,16 @@ package main
 import (
 	"bytes"
 	"encoding/hex"
+	"errors"
 	"fmt"
 	"os"
 
-	"github.com/awnumar/memguard"
+	"github.com/jeremyhahn/go-enclave"
 	"github.com/spf13/cobra"
 
 	"github.com/jeremyhahn/go-xkms/sdk/go/bootstrap"
 	"github.com/jeremyhahn/go-xkms/sdk/go/secure"
 )
-
-// The raw memguard import above is forced, not a convenience: go-truststrap
-// v0.4.0-alpha's p256proto.{NewStaticKey,EncodeStaticKey,DecodeStaticKey} take
-// a *memguard.LockedBuffer directly, and secure.Buffer wraps its LockedBuffer
-// in an unexported field with no accessor -- correctly, since exposing it
-// would hand back the handle the boundary exists to withhold. Filed as
-// jeremyhahn/go-truststrap#60; secure-analyzer exemption until it lands.
 
 // Operator-side key management for the FIPS-approved bootstrap suite,
 // TSBOOT1_P256_AESGCM_SHA256, alongside the Noise_NK verbs in
@@ -116,29 +110,66 @@ func generateP256Key(outputFile string) {
 	}
 	defer key.Destroy()
 
-	// The hex encoding is as sensitive as the scalar it encodes, so it gets a
-	// guard-paged, swap-locked buffer outside the Go heap. The SDK's encoder
-	// takes the LockedBuffer itself rather than a slice of it, which is why
-	// this differs from the Noise path in shape but not in intent.
-	buf := memguard.NewBuffer(bootstrap.P256HexKeySize + 1)
-	defer buf.Destroy()
-
-	if err := bootstrap.EncodeP256StaticKey(buf, key); err != nil {
-		handleError(&WrappedError{Sentinel: ErrEncodeKeyFailed, Err: err})
+	if err := writeP256KeyFile(outputFile, key); err != nil {
+		handleError(err)
 		return
 	}
-	encoded := buf.Bytes()
-	encoded[bootstrap.P256HexKeySize] = '\n'
 
 	publicHex := hex.EncodeToString(key.PublicBytes())
 
-	if err := writeNoiseKeyFile(outputFile, encoded); err != nil {
-		handleError(&WrappedError{Sentinel: ErrWriteKeyFileFailed, Err: err})
-		return
-	}
-
 	fmt.Printf("Private key written to: %s\n", outputFile)
 	fmt.Printf("Public key:  %s\n", publicHex)
+}
+
+// writeP256KeyFile writes key's hex-encoded private scalar, newline
+// terminated, to outputFile.
+//
+// The hex encoding is as sensitive as the scalar it encodes, so it is built
+// in a locked enclave admitted through the process allocator -- the
+// destination the SDK's encoder takes -- and written to the file inside the
+// borrow, so the plaintext is only reachable while the enclave's pages are
+// mapped. A failure to wipe the enclave afterwards is reported, not dropped.
+func writeP256KeyFile(outputFile string, key *bootstrap.P256StaticKey) (err error) {
+	alloc, err := keyAllocator()
+	if err != nil {
+		return err
+	}
+	buf, err := alloc.NewSized(bootstrap.P256HexKeySize + 1)
+	if err != nil {
+		return &WrappedError{Sentinel: ErrProtectedKeyBufferFailed, Err: err}
+	}
+	defer func() { err = errors.Join(err, destroyKeyEnclave(buf)) }()
+
+	if err := bootstrap.EncodeP256StaticKey(buf, key); err != nil {
+		return &WrappedError{Sentinel: ErrEncodeKeyFailed, Err: err}
+	}
+	return buf.WithBytes(func(encoded []byte) error {
+		encoded[bootstrap.P256HexKeySize] = '\n'
+		if err := writeNoiseKeyFile(outputFile, encoded); err != nil {
+			return &WrappedError{Sentinel: ErrWriteKeyFileFailed, Err: err}
+		}
+		return nil
+	})
+}
+
+// keyAllocator returns the process allocator that key-material enclaves are
+// admitted through. Every library in the process shares it, so together they
+// stay within the one RLIMIT_MEMLOCK ceiling.
+func keyAllocator() (*enclave.Allocator, error) {
+	alloc, err := enclave.ProcessAllocator()
+	if err != nil {
+		return nil, &WrappedError{Sentinel: ErrProtectedKeyBufferFailed, Err: err}
+	}
+	return alloc, nil
+}
+
+// destroyKeyEnclave wipes and releases buf. A failure means key material may
+// still be resident, so it is returned rather than discarded.
+func destroyKeyEnclave(buf *enclave.MemoryEnclave) error {
+	if err := buf.Destroy(); err != nil {
+		return &WrappedError{Sentinel: ErrProtectedKeyBufferFailed, Err: err}
+	}
+	return nil
 }
 
 // showP256Key derives and prints the public point from a stored private key.
@@ -174,16 +205,35 @@ func showP256Key(keyFile, keyHex string) {
 		return
 	}
 
-	// NewBufferFromBytes wipes hexKey as it copies it into protected memory.
-	protected := memguard.NewBufferFromBytes(hexKey)
-	defer protected.Destroy()
+	public, err := decodeP256PublicKey(hexKey)
+	if err != nil {
+		handleError(err)
+		return
+	}
+
+	fmt.Printf("Public key: %s\n", hex.EncodeToString(public))
+}
+
+// decodeP256PublicKey derives the public point from a hex-encoded private
+// scalar. The hex is moved into a locked enclave -- the form the SDK's
+// decoder takes -- which wipes hexKey on the way in, and the enclave is wiped
+// and released before returning.
+func decodeP256PublicKey(hexKey []byte) (public []byte, err error) {
+	alloc, err := keyAllocator()
+	if err != nil {
+		return nil, err
+	}
+	protected, err := alloc.New(hexKey)
+	if err != nil {
+		return nil, &WrappedError{Sentinel: ErrProtectedKeyBufferFailed, Err: err}
+	}
+	defer func() { err = errors.Join(err, destroyKeyEnclave(protected)) }()
 
 	key, err := bootstrap.DecodeP256StaticKey(protected)
 	if err != nil {
-		handleError(&WrappedError{Sentinel: ErrDecodeKeyFailed, Err: err})
-		return
+		return nil, &WrappedError{Sentinel: ErrDecodeKeyFailed, Err: err}
 	}
 	defer key.Destroy()
 
-	fmt.Printf("Public key: %s\n", hex.EncodeToString(key.PublicBytes()))
+	return key.PublicBytes(), nil
 }

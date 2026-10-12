@@ -32,6 +32,18 @@ func testSecretBuffer(t *testing.T, s string) *secure.Buffer {
 	return buf
 }
 
+// bufferString returns a heap copy of a protected buffer's contents, for
+// asserting on test fixtures only.
+func bufferString(t *testing.T, buf *secure.Buffer) string {
+	t.Helper()
+	var s string
+	require.NoError(t, buf.WithBytes(func(b []byte) error {
+		s = string(b)
+		return nil
+	}))
+	return s
+}
+
 // mockElevator implements the Elevator interface for testing.
 type mockElevator struct {
 	available bool
@@ -160,7 +172,7 @@ func TestSudoElevator_PasswordNotDestroyedOnEarlyReturn(t *testing.T) {
 
 	// With execPath empty, Run returns before touching the password
 	// buffer at all -- the caller-owned buffer must be left intact.
-	assert.Equal(t, "secretpass", string(pwBuf.Bytes()))
+	assert.Equal(t, "secretpass", bufferString(t, pwBuf))
 }
 
 // --- zeroBytes tests ---
@@ -297,7 +309,7 @@ func TestSudoElevator_PasswordStored(t *testing.T) {
 	pwBuf := testSecretBuffer(t, "mypassword")
 	defer pwBuf.Destroy()
 	e := NewSudoElevator(pwBuf)
-	assert.Equal(t, "mypassword", string(e.password.Bytes()))
+	assert.Equal(t, "mypassword", bufferString(t, e.password))
 }
 
 // --- SudoElevator constructor with nil password ---

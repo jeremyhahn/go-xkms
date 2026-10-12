@@ -63,8 +63,8 @@ wrap ConfigFS/FunctionFS filesystem failures with the operation and cause.
 | `usb.ImageConfig` | type | `Path string`, `SizeBytes int64`, `Passphrase *secure.Secret`, `Binaries []string` |
 | `usb.ImageStatus` | type | `Path`, `IsBlockDevice`, `TotalSize`, `FAT32Size`, `LUKSSize`, `LUKSMounted`, `Binaries` |
 | `usb.CreateImage(ctx context.Context, cfg ImageConfig) error` | func | refuses `SizeBytes < MinImageSize` for a file target; ignored for a block device |
-| `usb.Status(path) (*ImageStatus, error)` | func | — |
-| `usb.UpdateBinaries(path string, binaries []string) error` | func | — |
+| `usb.Status(ctx context.Context, path string) (*ImageStatus, error)` | func | — |
+| `usb.UpdateBinaries(ctx context.Context, path string, binaries []string) error` | func | — |
 | `usb.DetectUSBDevices() ([]USBDevice, error)` | func | scans for removable block devices |
 | `usb.USBDevice` | type | — |
 | `usb.IsBlockDevice(path) bool` / `usb.ValidateBlockDevice(path) error` | func | `ValidateBlockDevice` checks `/proc/mounts` to refuse a device that looks like a system disk |

@@ -41,7 +41,7 @@ func TestWipeAll(t *testing.T) {
 	if _, err := xkmssecure.WipeAll(context.Background()); err != nil {
 		t.Fatalf("WipeAll: %v", err)
 	}
-	if b := buf.Bytes(); len(b) != 0 {
-		t.Fatalf("the buffer survived WipeAll: %d bytes", len(b))
+	if err := buf.WithBytes(func([]byte) error { return nil }); err == nil {
+		t.Fatal("the buffer survived WipeAll: it still lends its bytes")
 	}
 }

@@ -109,7 +109,7 @@ func TestNewPhoneKeyBackendWithTransport_ExpectedRemoteStaticIsTrusted(t *testin
 	require.NoError(t, err)
 
 	backend, err := NewPhoneKeyBackendWithTransport(&PhoneKeyBackendConfig{
-		ExpectedRemoteStatic: key.Public,
+		ExpectedRemoteStatic: key.PublicBytes(),
 		Logger:               nil, // exercises the default-logger path
 	}, transport)
 	require.NoError(t, err)
@@ -117,7 +117,7 @@ func TestNewPhoneKeyBackendWithTransport_ExpectedRemoteStaticIsTrusted(t *testin
 	defer func() { _ = backend.Close() }()
 
 	assert.NotEmpty(t, backend.LocalStaticPublicKey())
-	assert.Equal(t, key.Public, backend.RemoteStaticPublicKey(),
+	assert.Equal(t, key.PublicBytes(), backend.RemoteStaticPublicKey(),
 		"the pinned peer key must be reported before the handshake runs")
 }
 

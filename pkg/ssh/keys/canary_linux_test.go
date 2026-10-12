@@ -77,8 +77,13 @@ func TestCanary_PEMNotOnHeap(t *testing.T) {
 		// and it must live there, since that's literally what Open
 		// returns. This guard is the positive-control half of the
 		// test: the needle IS recoverable via Open().
-		if !bytes.Contains(buf.Bytes(), needle) {
-			t.Error("needle not found in opened Buffer — PEM not recoverable")
+		if err := buf.WithBytes(func(b []byte) error {
+			if !bytes.Contains(b, needle) {
+				t.Error("needle not found in opened Buffer — PEM not recoverable")
+			}
+			return nil
+		}); err != nil {
+			t.Errorf("borrow opened Buffer: %v", err)
 		}
 		buf.Destroy()
 	}

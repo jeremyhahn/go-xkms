@@ -639,6 +639,11 @@ var (
 	// ErrEncodeKeyFailed is the sentinel error "failed to encode key".
 	ErrEncodeKeyFailed = errors.New("failed to encode key")
 
+	// ErrProtectedKeyBufferFailed is the sentinel error "protected key buffer
+	// failed": locked memory for a private key's encoding could not be
+	// allocated, or could not be wiped and released afterwards.
+	ErrProtectedKeyBufferFailed = errors.New("protected key buffer failed")
+
 	// ErrLabelRequired is the sentinel error "--label is required".
 	ErrLabelRequired = errors.New("--label is required")
 

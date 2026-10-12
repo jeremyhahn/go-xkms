@@ -161,7 +161,7 @@ func TestTeardownLeavesAConnectionPublishedDuringItsDrainReportedConnected(t *te
 	if !stillPublished {
 		t.Fatal("teardown cleared the connection that replaced it")
 	}
-	if len(oldKey.Private) != 0 {
+	if !destroyed(oldKey) {
 		t.Fatal("teardown left its own generation's key resident after a clean drain")
 	}
 
@@ -284,7 +284,7 @@ func TestTeardownReportsDisconnectedWhenNothingReplacedIt(t *testing.T) {
 	if len(seen) != 1 || seen[0] {
 		t.Fatalf("status callback saw %v, want exactly one disconnected transition", seen)
 	}
-	if len(key.Private) != 0 {
+	if !destroyed(key) {
 		t.Fatal("teardown left the static key resident after a clean drain")
 	}
 }
@@ -346,7 +346,7 @@ func TestUnpairReportsTheRecordRemovalAndSurfacesRetentionInServiceState(t *test
 		t.Fatalf("RetainedKeyCount is %d, want 1: an incomplete drain left no "+
 			"observable record that the protected key is still resident", n)
 	}
-	if len(key.Private) == 0 {
+	if destroyed(key) {
 		t.Fatal("the connection's static key was destroyed while an operation still held it")
 	}
 	if svc.IsConnected() {
@@ -372,7 +372,7 @@ func TestUnpairSucceedsAndRetainsNothingOnACleanDrain(t *testing.T) {
 	if n := svc.RetainedKeyCount(); n != 0 {
 		t.Fatalf("RetainedKeyCount is %d after a clean drain, want 0", n)
 	}
-	if len(key.Private) != 0 {
+	if !destroyed(key) {
 		t.Fatal("Unpair left the connection's static key resident after a clean drain")
 	}
 }
@@ -564,7 +564,7 @@ func TestPublishConnectionRefusesAnUnpairThatBeganDuringItsDrain(t *testing.T) {
 		t.Fatalf("status transitions were %v, want one connected then one "+
 			"disconnected: the refusal must emit the transition it decided", seen)
 	}
-	if len(previous.Private) != 0 {
+	if !destroyed(previous) {
 		t.Fatal("the previous generation's key was not released by a clean drain")
 	}
 }
@@ -764,7 +764,7 @@ func TestARefusedPublicationLeavesAnotherDevicesConnectionAlone(t *testing.T) {
 		t.Fatalf("a refused publication tore down the connection to %q: "+
 			"activeDevice=%q still_published=%v", "Galaxy S25", device, stillLive)
 	}
-	if len(live.Private) == 0 {
+	if destroyed(live) {
 		t.Fatal("a refused publication destroyed another device's protected key")
 	}
 	if !svc.IsConnected() || svc.ConnectedDeviceName() != "Galaxy S25" {

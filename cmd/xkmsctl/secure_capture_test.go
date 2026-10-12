@@ -67,7 +67,12 @@ func readAllSecret(r io.Reader, limit int) (*secure.Buffer, int, error) {
 		return nil, 0, fmt.Errorf("allocating protected memory for the capture: %w", err)
 	}
 
-	n, err := io.ReadFull(r, buf.Bytes())
+	var n int
+	err = buf.WithBytes(func(b []byte) error {
+		var readErr error
+		n, readErr = io.ReadFull(r, b)
+		return readErr
+	})
 	switch {
 	case err == nil, errors.Is(err, io.EOF), errors.Is(err, io.ErrUnexpectedEOF):
 		// ReadFull reports EOF for an empty reader and ErrUnexpectedEOF for
@@ -87,7 +92,7 @@ func readAllSecret(r io.Reader, limit int) (*secure.Buffer, int, error) {
 
 // captureStdoutSecret runs fn with os.Stdout redirected, capturing up to limit
 // bytes of output into mlocked memory. The caller owns the returned buffer
-// and must Destroy it; the output is Bytes()[:n].
+// and must Destroy it; the output is the first n bytes WithBytes lends.
 func captureStdoutSecret(t *testing.T, limit int, fn func()) (*secure.Buffer, int) {
 	t.Helper()
 
@@ -122,6 +127,20 @@ func lowerASCIIInPlace(b []byte) {
 	}
 }
 
+// capturedString returns the first n captured bytes as a string, for the tests
+// of the capture helper itself, whose input is not secret.
+func capturedString(t *testing.T, buf *secure.Buffer, n int) string {
+	t.Helper()
+	var got string
+	if err := buf.WithBytes(func(b []byte) error {
+		got = string(b[:n])
+		return nil
+	}); err != nil {
+		t.Fatalf("borrowing the capture: %v", err)
+	}
+	return got
+}
+
 func TestReadAllSecret_ReadsExactly(t *testing.T) {
 	const want = "public: abcdef\n"
 
@@ -134,7 +153,7 @@ func TestReadAllSecret_ReadsExactly(t *testing.T) {
 	if n != len(want) {
 		t.Fatalf("read %d bytes, want %d", n, len(want))
 	}
-	if got := string(buf.Bytes()[:n]); got != want {
+	if got := capturedString(t, buf, n); got != want {
 		t.Errorf("captured %q, want %q", got, want)
 	}
 }
@@ -180,7 +199,7 @@ func TestReadAllSecret_ExactFitIsNotOverflow(t *testing.T) {
 	if n != limit {
 		t.Fatalf("read %d bytes, want %d", n, limit)
 	}
-	if got := string(buf.Bytes()[:n]); got != src {
+	if got := capturedString(t, buf, n); got != src {
 		t.Errorf("captured %q, want %q", got, src)
 	}
 }

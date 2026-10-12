@@ -81,3 +81,44 @@ type SSHSessionDialRequest = sshsession.DialRequest
 
 // SSHSessionDial establishes an outbound SSH session.
 var SSHSessionDial = sshsession.Dial
+
+// SSHSessionClientParams are the inputs to SSHSessionDialClient: an
+// already-resolved signer (software, TPM, PKCS#11, cloud or a remote
+// signing proxy) and a host-key callback.
+type SSHSessionClientParams = sshsession.ClientParams
+
+// SSHSessionDialClient performs the TCP dial, SSH handshake and host-key
+// verification and returns a live *ssh.Client the caller owns. It is the
+// signer-based dial that SSHSessionDial and the SDK SessionClient build on.
+var SSHSessionDialClient = sshsession.DialClient
+
+// SSHNewSession wraps a dialed *ssh.Client as an SSHSession. The optional
+// closers run in LIFO order when the session is closed.
+var SSHNewSession = sshsession.NewSession
+
+// SSHKnownHostsCallback builds a fail-closed host-key callback over an
+// SSHKnownHostsStore for SSHSessionClientParams.HostKeyCallback. An
+// unpinned host fails with *SSHKnownHostsNotFoundError and a changed key
+// with *SSHKnownHostsMismatchError.
+var SSHKnownHostsCallback = sshknownhosts.Callback
+
+// SSHKnownHostsNotFoundError reports a host with no pinned key.
+type SSHKnownHostsNotFoundError = sshknownhosts.NotFoundError
+
+// SSHKnownHostsMismatchError reports a host whose key differs from its pin.
+type SSHKnownHostsMismatchError = sshknownhosts.MismatchError
+
+// SSHSessionNilInputError reports a missing required dial input.
+type SSHSessionNilInputError = sshsession.NilInputError
+
+// SSHSessionDialError reports a failure to establish the TCP connection.
+type SSHSessionDialError = sshsession.DialError
+
+// SSHSessionHandshakeError reports a failed SSH handshake. It wraps the
+// cause, so a host-key error or a signer's own error is reachable through
+// errors.As.
+type SSHSessionHandshakeError = sshsession.HandshakeError
+
+// SSHSessionTimeoutError reports a dial or session operation that exceeded
+// its deadline.
+type SSHSessionTimeoutError = sshsession.TimeoutError

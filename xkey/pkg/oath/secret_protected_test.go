@@ -143,10 +143,10 @@ func TestCredentialSetSecret(t *testing.T) {
 		cred := &Credential{}
 		require.NoError(t, cred.SetSecret([]byte("JBSWY3DPEHPK3PXP")))
 		old := cred.secret
-		require.NotNil(t, old.Bytes())
+		require.NotZero(t, old.Size())
 
 		require.NoError(t, cred.SetSecret([]byte("GEZDGNBVGY3TQOJQ")))
-		require.Nil(t, old.Bytes(), "replaced secret buffer must be destroyed (wiped and unmapped)")
+		require.Zero(t, old.Size(), "replaced secret buffer must be destroyed (wiped and unmapped)")
 		require.Equal(t, "GEZDGNBVGY3TQOJQ", secretText(cred))
 	})
 
@@ -157,7 +157,7 @@ func TestCredentialSetSecret(t *testing.T) {
 
 		require.NoError(t, cred.SetSecret([]byte("")))
 		require.False(t, cred.HasSecret())
-		require.Nil(t, old.Bytes(), "cleared secret buffer must be destroyed")
+		require.Zero(t, old.Size(), "cleared secret buffer must be destroyed")
 		require.Equal(t, "", secretText(cred))
 	})
 }

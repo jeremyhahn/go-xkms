@@ -44,21 +44,33 @@ var (
 	_ *xkmssecure.CallbackProvider  = (*qrdbsecure.CallbackProvider)(nil)
 )
 
+// copyOut copies b's protected bytes out for a test assertion and wipes the
+// copy when the test ends.
+func copyOut(t *testing.T, b xkmssecure.Borrower) []byte {
+	t.Helper()
+	out, err := xkmssecure.CopyOut(b)
+	if err != nil {
+		t.Fatalf("CopyOut: %v", err)
+	}
+	t.Cleanup(func() { xkmssecure.Wipe(out) })
+	return out
+}
+
 // TestNewBufferRoundTrip writes a known plaintext into a Buffer, reads
-// it back, destroys, and verifies Bytes() returns nil after destroy.
+// it back, destroys, and verifies a destroyed Buffer refuses the borrow.
 func TestNewBufferRoundTrip(t *testing.T) {
 	want := []byte("sdk-re-export-round-trip-needle")
 	buf, err := xkmssecure.NewBufferFromBytes(append([]byte(nil), want...))
 	if err != nil {
 		t.Fatalf("NewBufferFromBytes: %v", err)
 	}
-	got := buf.Bytes()
-	if !bytes.Equal(got, want) {
+	if got := copyOut(t, buf); !bytes.Equal(got, want) {
 		t.Fatalf("Bytes mismatch: got %q want %q", got, want)
 	}
 	buf.Destroy()
-	if after := buf.Bytes(); after != nil {
-		t.Fatalf("Bytes after Destroy: got %v want nil", after)
+	var nilBuf *xkmssecure.NilBufferError
+	if err := buf.WithBytes(func([]byte) error { return nil }); !errors.As(err, &nilBuf) {
+		t.Fatalf("WithBytes after Destroy: got %v, want *NilBufferError", err)
 	}
 }
 
@@ -77,7 +89,7 @@ func TestNewSecretRoundTrip(t *testing.T) {
 		t.Fatalf("Open: %v", err)
 	}
 	defer buf.Destroy()
-	if !bytes.Equal(buf.Bytes(), want) {
+	if !bytes.Equal(copyOut(t, buf), want) {
 		t.Fatalf("opened bytes mismatch")
 	}
 }
@@ -122,7 +134,7 @@ func TestCallbackProvider(t *testing.T) {
 		t.Fatalf("Passphrase: %v", err)
 	}
 	defer buf.Destroy()
-	if !bytes.Equal(buf.Bytes(), want) {
+	if !bytes.Equal(copyOut(t, buf), want) {
 		t.Fatalf("buffer mismatch")
 	}
 }

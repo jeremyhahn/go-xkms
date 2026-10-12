@@ -50,8 +50,8 @@ func secretBytes(t *testing.T, sec *secure.Secret) []byte {
 	buf, err := sec.Open(t.Context())
 	require.NoError(t, err)
 	defer buf.Destroy()
-	out := make([]byte, buf.Size())
-	copy(out, buf.Bytes())
+	out, err := secure.CopyOut(buf)
+	require.NoError(t, err)
 	return out
 }
 

@@ -648,7 +648,10 @@ func TestSSHStaticPassphraseProvider(t *testing.T) {
 	require.NotNil(t, buf)
 	defer buf.Destroy()
 
-	assert.Equal(t, []byte("hunter2"), buf.Bytes())
+	require.NoError(t, buf.WithBytes(func(b []byte) error {
+		assert.Equal(t, []byte("hunter2"), b)
+		return nil
+	}))
 }
 
 // TestSSHStaticPassphraseProvider_IndependentCopy proves each call returns a

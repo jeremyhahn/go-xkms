@@ -484,11 +484,25 @@ var (
 	// ErrCredentialChallengeRequired reports that AnswerCredentialChallenge
 	// was called with a nil CredentialChallenge.
 	ErrCredentialChallengeRequired = errors.New("tpm: credential challenge is required")
-	ErrEKConfigNil                 = errors.New("tpm: EK config is nil")
-	ErrIAKConfigNil                = errors.New("tpm: IAK config is nil")
-	ErrIDevIDConfigNil             = errors.New("tpm: IDevID config is nil")
-	ErrLAKConfigNil                = errors.New("tpm: LAK config is nil")
-	ErrSSRKConfigNil               = errors.New("tpm: SSRK config is nil")
+
+	// ErrEKCertNotInNV reports that no EK is loaded at the configured
+	// persistent handle and no EK certificate could be read from NV, so
+	// there is no certificate to select and verify a transient EK against.
+	ErrEKCertNotInNV = errors.New("tpm: no persistent EK and no EK certificate in NV")
+
+	// ErrEKTemplateUnsupported reports that the NV EK certificate's key
+	// matches no TCG EK Credential Profile low-range template (RSA-2048,
+	// ECC NIST P-256), so its EK cannot be recreated transiently.
+	ErrEKTemplateUnsupported = errors.New("tpm: no EK template matches the EK certificate")
+
+	// ErrEKPublicKeyMismatch reports that the EK created transiently from
+	// the TCG template is not the key the NV EK certificate certifies.
+	ErrEKPublicKeyMismatch = errors.New("tpm: transient EK does not match the EK certificate")
+	ErrEKConfigNil         = errors.New("tpm: EK config is nil")
+	ErrIAKConfigNil        = errors.New("tpm: IAK config is nil")
+	ErrIDevIDConfigNil     = errors.New("tpm: IDevID config is nil")
+	ErrLAKConfigNil        = errors.New("tpm: LAK config is nil")
+	ErrSSRKConfigNil       = errors.New("tpm: SSRK config is nil")
 
 	// Handle enumeration errors
 	ErrListPersistentHandles = errors.New("tpm: list persistent handles")

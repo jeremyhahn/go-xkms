@@ -24,7 +24,6 @@ import (
 	"strings"
 	"testing"
 
-	secure "github.com/jeremyhahn/go-xkms/sdk/go/secure"
 	"github.com/jeremyhahn/go-xkms/xkey/pkg/pairing"
 )
 
@@ -52,7 +51,6 @@ func TestNoiseGenerateKeyCmd_Run(t *testing.T) {
 		cmd.Run(cmd, nil)
 	})
 	defer stdoutBuf.Destroy()
-	stdout := stdoutBuf.Bytes()[:stdoutLen]
 
 	info, err := os.Stat(keyPath)
 	if err != nil {
@@ -84,72 +82,79 @@ func TestNoiseGenerateKeyCmd_Run(t *testing.T) {
 	}
 	defer encBuf.Destroy()
 
-	// Trimmed as BYTES, and a sub-slice of the protected buffer rather than a
-	// copy. strings.TrimSpace(string(raw)) would mint the unwipeable copy this
-	// is avoiding.
-	encoded := bytes.TrimSpace(encBuf.Bytes()[:encLen])
+	// Borrowed in place: the encoded key and the captured stdout are each read
+	// inside their own protected buffer's borrow, never copied out of it. The
+	// two are different buffers, so holding both borrows at once is safe.
+	err = encBuf.WithBytes(func(enc []byte) error {
+		// Trimmed as BYTES, and a sub-slice of the protected buffer rather than
+		// a copy. strings.TrimSpace(string(raw)) would mint the unwipeable copy
+		// this is avoiding.
+		encoded := bytes.TrimSpace(enc[:encLen])
 
-	privBuf, err := secure.NewBuffer(hex.DecodedLen(len(encoded)))
+		// The key has to be the real one: decode it straight into protected
+		// memory, derive its public half, and require the command to have
+		// printed exactly that.
+		key, err := pairing.DecodeStaticKey(encoded)
+		if err != nil {
+			t.Fatalf("the written key does not load: %v", err)
+		}
+		defer key.Destroy()
+		if err := pairing.WithPrivateKey(key, func(priv []byte) error {
+			if len(priv) != 32 {
+				t.Fatalf("private key is %d bytes, want 32", len(priv))
+			}
+			if allZeroBytes(priv) {
+				t.Fatal("private key is all zeroes")
+			}
+			return nil
+		}); err != nil {
+			t.Fatalf("borrowing the written key: %v", err)
+		}
+
+		return stdoutBuf.WithBytes(func(out []byte) error {
+			stdout := out[:stdoutLen]
+
+			// Both checks run over stdout normalised IN PLACE, inside the
+			// protected buffer it was captured into. bytes.ToLower would
+			// allocate an ordinary heap copy, and on the failure path that copy
+			// is where the leaked key would be.
+			//
+			// stdout is the output of a command under test, so on the failure
+			// path it is exactly where a leaked private key would be. An
+			// earlier version printed it verbatim in the failure message --
+			// meaning the first regression to print the key would copy it into
+			// CI output, permanently, before the no-leak assertion below ever
+			// ran. A test for a leak must not be the thing that publishes it.
+			//
+			// So nothing here reports raw output. Failures carry lengths and a
+			// yes/no, which is enough to diagnose.
+			lowerASCIIInPlace(stdout)
+
+			// The public half is not secret; it is what the command is
+			// supposed to print. hex.EncodeToString already emits lowercase.
+			wantPub := hex.EncodeToString(key.PublicBytes())
+			if !bytes.Contains(stdout, []byte(wantPub)) {
+				t.Errorf("stdout does not contain the public key derived from the written private key "+
+					"(stdout was %d bytes; not printed here, it is where a leaked private key would be)",
+					stdoutLen)
+			}
+
+			// The private key must never reach stdout -- terminal scrollback,
+			// shell history, pipes and CI logs cannot be wiped.
+			//
+			// Compared as bytes against the encoded key lowercased in place in
+			// its own protected buffer, rather than through
+			// strings.ToLower(hexKey), which would materialise the secret as a
+			// string for the sole purpose of proving it is not leaked.
+			lowerASCIIInPlace(encoded)
+			if bytes.Contains(stdout, encoded) {
+				t.Error("the private key was printed to stdout")
+			}
+			return nil
+		})
+	})
 	if err != nil {
-		t.Fatalf("allocating protected memory for the key: %v", err)
-	}
-	defer privBuf.Destroy()
-
-	n, err := hex.Decode(privBuf.Bytes(), encoded)
-	if err != nil {
-		t.Fatalf("key file is not hex-encoded: %v", err)
-	}
-	priv := privBuf.Bytes()[:n]
-	if len(priv) != 32 {
-		t.Fatalf("private key is %d bytes, want 32", len(priv))
-	}
-	if allZeroBytes(priv) {
-		t.Fatal("private key is all zeroes")
-	}
-
-	// The key has to be the real one: derive its public half and require the
-	// command to have printed exactly that.
-	key, err := pairing.LoadStaticKey(priv)
-	if err != nil {
-		t.Fatalf("the written key does not load: %v", err)
-	}
-	defer key.Destroy()
-
-	// Both checks run over stdout normalised IN PLACE, inside the protected
-	// buffer it was captured into. bytes.ToLower would allocate an ordinary
-	// heap copy, and on the failure path that copy is where the leaked key
-	// would be.
-	//
-	// stdout is the output of a command under test, so on the failure path it
-	// is exactly where a leaked private key would be. An earlier version
-	// printed it verbatim in the failure message -- meaning the first
-	// regression to print the key would copy it into CI output, permanently,
-	// before the no-leak assertion below ever ran. A test for a leak must not
-	// be the thing that publishes it.
-	//
-	// So nothing here reports raw output. Failures carry lengths and a
-	// yes/no, which is enough to diagnose.
-	lowerASCIIInPlace(stdout)
-
-	// The public half is not secret; it is what the command is supposed to
-	// print. hex.EncodeToString already emits lowercase.
-	wantPub := hex.EncodeToString(key.Public)
-	if !bytes.Contains(stdout, []byte(wantPub)) {
-		t.Errorf("stdout does not contain the public key derived from the written private key "+
-			"(stdout was %d bytes; not printed here, it is where a leaked private key would be)",
-			stdoutLen)
-	}
-
-	// The private key must never reach stdout -- terminal scrollback, shell
-	// history, pipes and CI logs cannot be wiped.
-	//
-	// Compared as bytes against the encoded key lowercased in place in its own
-	// protected buffer, rather than through strings.ToLower(hexKey), which
-	// would materialise the secret as a string for the sole purpose of proving
-	// it is not leaked.
-	lowerASCIIInPlace(encoded)
-	if bytes.Contains(stdout, encoded) {
-		t.Error("the private key was printed to stdout")
+		t.Fatalf("borrowing the captured output: %v", err)
 	}
 }
 

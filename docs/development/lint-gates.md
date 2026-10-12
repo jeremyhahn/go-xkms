@@ -1,6 +1,6 @@
 # Lint gates
 
-Status: current. Last verified: 2026-10-11.
+Status: current. Last verified: 2026-10-12.
 
 What CI's Lint job (`.github/workflows/ci.yml`) enforces on every push and
 pull request, in order, and the Make target behind each step so a developer
@@ -15,7 +15,7 @@ runs the identical check locally before pushing.
 | 3 | actionlint | `make lint` (`make actionlint`) | Every workflow in `.github/workflows/` passes actionlint at `ACTIONLINT_VERSION` (Makefile): syntax, expressions, runner labels, and every `run:` script through shellcheck when it is installed. A missing or different actionlint is replaced by the pin (`make install-actionlint`); a pin that cannot be installed fails the target. The installed version must match the pin exactly. The target fails at once when `.github/actionlint.yaml` is missing: it lists the self-hosted runner labels the workflows request (`qwen`), and must name exactly those. `make install-trivy` builds Trivy at `TRIVY_VERSION` with `go install`, stamping the version as Trivy's release build does; no install script is piped into a shell. A missing Trivy, or one that does not report the pin, is replaced by the pin, and an install that does not report the pin fails the target. `.github/scripts/make-gates-test.sh` proves this gate, and `make trivy`/`make trivy-image`, fail closed with the tool absent (go-xkms#1434). |
 | 4 | golangci-lint | `make lint` | The pinned `golangci-lint` version (`GOLANGCI_LINT_VERSION` in `ci.yml`) against `.golangci.yml`, over the same `LINT_MODULES` × tags matrix as `go vet`. CI requires the exact pinned version (`.github/scripts/require-tool.sh`) rather than falling back to an install, so a version drift fails loudly instead of scanning with an unknown tool. |
 | 5 | secure-analyzer selftest | `make secure-analyzer-selftest` | Proves the next gate can still find a known violation and stays silent on its compliant counterpart, before that gate's own result is trusted. See below. |
-| 6 | secure-analyzer | `make secure-analyzer` | go-qrdb's `pkg/secure/analyzer` rules (raw `memguard` imports, `ssh.ParsePrivateKey`, sensitive-named `string`/`[]byte` struct fields, unborrowed `Buffer.Bytes`, string conversions of protected bytes, unwiped copy-outs) over every module under every declared tag combination. See below. |
+| 6 | secure-analyzer | `make secure-analyzer` | go-qrdb's `pkg/secure/analyzer` rules (raw `memguard` imports, `ssh.ParsePrivateKey`, sensitive-named `string`/`[]byte` struct fields, string conversions of protected bytes, unwiped copy-outs) over every module under every declared tag combination. See below. |
 
 `make ci-gate` (the `ci-gate` job) is the umbrella that all of the above,
 plus the other jobs (`test`, `security`, `build`, `race`, ...), must pass
@@ -27,7 +27,11 @@ before a PR is mergeable — this page covers the Lint job's steps only.
 
 go-qrdb's `pkg/secure/analyzer` (`pkg/secure/analyzer/analyzer.go`,
 vendored as a dependency, not code in this repository) is a `go vet` plugin
-enforcing seven rules on sensitive-material handling (`securecheck` v0.25, rules 1-3, and `securecopy`, rules 4-7):
+enforcing five rules on sensitive-material handling (`securecheck`, rules 1-3,
+and `securecopy`, rules 4-5, as pinned at go-qrdb v0.47.0-alpha). The
+numbers are this repository's: `rule_for` in `scripts/secure-analyzer-key.sh`
+(lines 45-54) maps each analyzer message to one, verbatim, and fails on any
+message it does not know.
 
 1. No `import "github.com/awnumar/memguard"` outside `pkg/secure` /
    `sdk/go/secure` (in go-qrdb) — absolute, no scope.
@@ -39,19 +43,31 @@ enforcing seven rules on sensitive-material handling (`securecheck` v0.25, rules
    `pkg/secure/analyzer/scope.go` (generated files, codec-tagged transport
    fields, command-line flag targets, `_test.go` files). Read that file
    before assuming a rule-3 finding is a false positive.
-4. `secure.Buffer.Bytes()` is read with no borrow held. Use `WithBytes` or
-   `secure.CopyOut`.
-5. A malformed `//secure:unborrowed` directive.
-6. `string(...)` of protected bytes, which can never be wiped.
-7. A copy of protected bytes into ordinary memory that is never wiped,
+4. `string(...)` of protected bytes, which can never be wiped.
+5. A copy of protected bytes into ordinary memory that is never wiped,
    returned or consumed. The analyzer follows the copy: a function that
    returns one makes every caller answerable for it, across packages, so a
    copy must end in a `secure.Wipe`, a `return`, or a consumer such as
    `secure.NewBufferFromBytes` in the function that holds it.
 
-Rules 4-7 have no key to allowlist and this repository uses none of the
-analyzer's `//secure:` directives: the fix is always in the code. See
+Rules 4-5 have no key to allowlist (`process_diagnostics` fails them on
+sight, `scripts/secure-analyzer-key.sh:126`): the fix is in the code. See
 "Handling a secret without tripping the gate" below.
+
+There is no rule for an unborrowed read any more. Earlier go-qrdb releases
+reported a `secure.Buffer.Bytes()` read with no borrow held, and a malformed
+`//secure:unborrowed` directive that exempted one. From v0.47.0-alpha
+`secure.Buffer` is backed by go-enclave and its only reads are `WithBytes`
+and `secure.CopyOut`: it has no method that returns its bytes outside a
+borrow, so the compiler rejects what that rule caught, and the analyzer
+dropped the rule and the directive with it
+(`scripts/secure-analyzer-key.sh:37-41`).
+
+The selftest's bad fixture plants one violation per rule
+(`test/lint/secure/_fixtures/bad/bad.go`: rule 4 at line 59, rule 5 at line
+68) and `expect_hit` (`scripts/secure-analyzer-selftest.sh:81-102`) fails
+unless each rule is reported exactly once; the clean fixture beside it must
+produce no diagnostic at all.
 
 The analyzer enforces these rules only where its own `go vet -vettool=...`
 invocation runs. Nothing in go-qrdb reaches into this repository — each
@@ -84,7 +100,7 @@ nothing.
 `scripts/secure-analyzer-allowlist.txt` is the exemption list — not a
 baseline. Every entry is
 `<repo-relative path><TAB><rule><TAB><symbol><TAB><reason>`: `<rule>` is `1`,
-`2` or `3` (rules 4-7 are never allowlisted), and `<symbol>` is the finding's own stable text — the forbidden
+`2` or `3` (rules 4-5 are never allowlisted), and `<symbol>` is the finding's own stable text — the forbidden
 import path for rule 1, the call expression's source text for rule 2
 (e.g. `ssh.ParsePrivateKey(pem)`), or `<Struct>.<Field>` for rule 3
 (e.g. `PKCS11Config.PIN`). The sweep matches a diagnostic's path + rule +
@@ -108,13 +124,13 @@ rule-2 key — correct when, as in `pkg/ssh/keys/signer.go`, they really are
 the same shape for the same reason. (`pkg/ssh/keys` now parses in one helper,
 `parseSealedPEM`, so its entry names a single call.)
 
-The file's own header documents three classes:
+The file's own header documents two classes. Rule 1 has none: no file in
+this repository imports `memguard` any more, now that the bootstrap P-256
+static key is encoded and decoded through a go-enclave buffer rather than a
+`*memguard.LockedBuffer` (`decodeP256StaticKey`,
+`pkg/server/bootstrap_suite.go:168-192`), so the four go-truststrap#60 entries were removed
+when they went stale.
 
-- **A go-truststrap-forced signature** (rule 1): a small number of sites
-  where an upstream function (`p256proto.{NewStaticKey,EncodeStaticKey,
-  DecodeStaticKey}` in go-truststrap v0.4.0-alpha) takes a
-  `*memguard.LockedBuffer` directly, and `secure.Buffer` has no accessor to
-  produce one. Tracked upstream as `jeremyhahn/go-truststrap#60`.
 - **A rule-2 narrowing filed on go-qrdb**: sites in `pkg/ssh/keys` that
   already parse only `*secure.Buffer`/`*secure.Secret`-backed bytes, where
   `ssh.ParsePrivateKey` is called only to detect an unencrypted key before
@@ -164,8 +180,8 @@ make secure-analyzer            # the real sweep
 ```
 
 Both exit non-zero on failure. A new finding not covered by one of the
-three allowlist classes above must be fixed, not silenced — adding a
-fourth reason to the allowlist without one of those three labels is not
+two allowlist classes above must be fixed, not silenced — adding a
+third reason to the allowlist without one of those two labels is not
 how this gate is meant to be extended; ask before adding a new class.
 
 ## Accepted residue: stdlib copies no exported API can wipe

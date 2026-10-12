@@ -209,12 +209,12 @@ fi
 
 if [ "$fails" -ne 0 ]; then
 	die "" "secure-analyzer: $fails unresolved finding(s) across $rungs_run rung(s)." \
-		"  Rules 1 and 2 are absolute outside scripts/secure-analyzer-allowlist.txt's" \
-		"  two named exemption classes. Rule 3 is scoped by" \
+		"  Rule 1 is absolute. Rule 2 is absolute outside" \\
+		"  scripts/secure-analyzer-allowlist.txt's one named exemption class. Rule 3 is scoped by" \\
 		"  pkg/secure/analyzer/scope.go's four clauses -- read it before assuming a" \
 		"  finding is a false positive, and before adding an allowlist entry for" \
-		"  anything other than a pre-existing finding or one of the two named classes." \
-		"  Rules 4-7 (unborrowed Bytes, string conversion, unwiped copy-out) are never" \
+		"  anything other than a pre-existing finding or the named rule-2 class." \
+		"  Rules 4-5 (string conversion, unwiped copy-out) are never" \
 		"  allowlisted and carry no //secure: directive in this repository: fix the" \
 		"  site with WithBytes / secure.CopyOut and a wipe, or keep the value as []byte."
 fi

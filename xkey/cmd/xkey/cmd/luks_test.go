@@ -22,7 +22,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	"github.com/jeremyhahn/go-luks2/pkg/luks2"
+	"github.com/jeremyhahn/go-luks2/pkg/dmcrypt"
 	"github.com/jeremyhahn/go-xkms/xkey/pkg/luks"
 )
 
@@ -669,7 +669,7 @@ func TestMigrateError_Unwrap(t *testing.T) {
 func TestMigrateKeyringPreflight_Refuses(t *testing.T) {
 	saved := luksEnsureKeyring
 	defer func() { luksEnsureKeyring = saved }()
-	luksEnsureKeyring = func() error { return &luks.KeyringError{Err: luks2.ErrKeyringBlocked} }
+	luksEnsureKeyring = func() error { return &luks.KeyringError{Err: dmcrypt.ErrKeyringBlocked} }
 
 	err := migrateKeyringPreflight()
 	require.Error(t, err)
@@ -678,7 +678,7 @@ func TestMigrateKeyringPreflight_Refuses(t *testing.T) {
 	require.True(t, errors.As(err, &migrateErr))
 	assert.Equal(t, "keyring_preflight", migrateErr.Operation)
 	assert.True(t, errors.Is(err, luks.ErrKeyringUnavailable))
-	assert.True(t, errors.Is(err, luks2.ErrKeyringBlocked))
+	assert.True(t, errors.Is(err, dmcrypt.ErrKeyringBlocked))
 	assert.Contains(t, err.Error(), "migrate: keyring_preflight: luks: kernel keyring preflight failed")
 }
 

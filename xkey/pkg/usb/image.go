@@ -23,6 +23,8 @@ import (
 	"path/filepath"
 	"strings"
 
+	"github.com/jeremyhahn/go-enclave"
+	"github.com/jeremyhahn/go-luks2/pkg/filesystem"
 	"github.com/jeremyhahn/go-luks2/pkg/luks2"
 
 	secure "github.com/jeremyhahn/go-xkms/sdk/go/secure"
@@ -153,7 +155,7 @@ func createOnImageFile(ctx context.Context, cfg ImageConfig) error {
 	}
 
 	// Set up loop device.
-	loopDev, err := luksSetupLoopDevice(cfg.Path)
+	loopDev, err := luksSetupLoopDevice(ctx, cfg.Path)
 	if err != nil {
 		return &USBError{Operation: "setup_loop", Path: cfg.Path, Err: errors.Join(err, os.Remove(cfg.Path))}
 	}
@@ -161,12 +163,12 @@ func createOnImageFile(ctx context.Context, cfg ImageConfig) error {
 	slog.Info("loop device attached", "device", loopDev, "image", cfg.Path)
 
 	if err := partitionAndFormat(ctx, loopDev, cfg); err != nil {
-		detachErr := luksDetachLoopDevice(loopDev)
+		detachErr := luksDetachLoopDevice(ctx, loopDev)
 		removeErr := os.Remove(cfg.Path)
 		return errors.Join(err, detachErr, removeErr)
 	}
 
-	if err := luksDetachLoopDevice(loopDev); err != nil {
+	if err := luksDetachLoopDevice(ctx, loopDev); err != nil {
 		slog.Warn("failed to detach loop device", "device", loopDev, "error", err)
 	}
 
@@ -290,47 +292,64 @@ func formatLUKS(ctx context.Context, partition string, passphrase *secure.Secret
 	}
 	defer buf.Destroy()
 
-	return buf.WithBytes(func(pass []byte) error {
-		opts := luks2.FormatOptions{
-			Device:     partition,
-			Passphrase: pass,
+	var pass *enclave.MemoryEnclave
+	if err := buf.WithBytes(func(b []byte) error {
+		var copyErr error
+		pass, copyErr = enclave.NewMemoryEnclaveCopy(b)
+		return copyErr
+	}); err != nil {
+		return &USBError{
+			Operation: "protect_passphrase",
+			Path:      partition,
+			Err:       err,
 		}
-		if err := luksFormat(opts); err != nil {
-			return &USBError{
-				Operation: "format_luks",
-				Path:      partition,
-				Err:       &SentinelCauseError{Sentinel: ErrFormatFailed, Cause: err},
-			}
-		}
+	}
 
-		// Unlock, create ext4 filesystem, then lock.
-		if err := luksUnlock(partition, pass, luksMapperName); err != nil {
-			return &USBError{
-				Operation: "unlock_luks",
-				Path:      partition,
-				Err:       err,
-			}
-		}
+	err = formatAndInitLUKS(ctx, partition, pass)
+	if destroyErr := pass.Destroy(); destroyErr != nil {
+		err = errors.Join(err, &USBError{Operation: "destroy_passphrase", Path: partition, Err: destroyErr})
+	}
+	return err
+}
 
-		if err := luksMakeFilesystem(luksMapperName, "ext4", luksLabel); err != nil {
-			lockErr := luksLock(luksMapperName)
-			return &USBError{
-				Operation: "create_ext4",
-				Path:      partition,
-				Err:       &SentinelCauseError{Sentinel: ErrFormatFailed, Cause: errors.Join(err, lockErr)},
-			}
+// formatAndInitLUKS formats partition as LUKS2 under pass, then unlocks it
+// long enough to create the ext4 data filesystem and locks it again.
+func formatAndInitLUKS(ctx context.Context, partition string, pass *enclave.MemoryEnclave) error {
+	if err := luksFormat(ctx, partition, pass, luks2.FormatParams{}); err != nil {
+		return &USBError{
+			Operation: "format_luks",
+			Path:      partition,
+			Err:       &SentinelCauseError{Sentinel: ErrFormatFailed, Cause: err},
 		}
+	}
 
-		if err := luksLock(luksMapperName); err != nil {
-			return &USBError{
-				Operation: "lock_luks",
-				Path:      partition,
-				Err:       err,
-			}
+	mapping, err := luksUnlock(ctx, partition, pass, luksMapperName)
+	if err != nil {
+		return &USBError{
+			Operation: "unlock_luks",
+			Path:      partition,
+			Err:       err,
 		}
+	}
 
-		return nil
-	})
+	if err := luksMakeFilesystem(ctx, mapping.Path(), filesystem.Ext4, filesystem.MakeParams{Label: luksLabel}); err != nil {
+		lockErr := luksLock(ctx, luksMapperName)
+		return &USBError{
+			Operation: "create_ext4",
+			Path:      partition,
+			Err:       &SentinelCauseError{Sentinel: ErrFormatFailed, Cause: errors.Join(err, lockErr)},
+		}
+	}
+
+	if err := luksLock(ctx, luksMapperName); err != nil {
+		return &USBError{
+			Operation: "lock_luks",
+			Path:      partition,
+			Err:       err,
+		}
+	}
+
+	return nil
 }
 
 // populateFAT32 mounts the FAT32 partition, copies binaries and
@@ -440,7 +459,7 @@ func copyBinary(srcPath, dstDir string) (err error) {
 }
 
 // Status returns the status of an existing image or block device.
-func Status(path string) (*ImageStatus, error) {
+func Status(ctx context.Context, path string) (*ImageStatus, error) {
 	info, err := statPath(path)
 	if err != nil {
 		if os.IsNotExist(err) {
@@ -475,7 +494,7 @@ func Status(path string) (*ImageStatus, error) {
 	}
 
 	// Check if the LUKS partition is mounted.
-	status.LUKSMounted = luksIsUnlocked(luksMapperName)
+	status.LUKSMounted = luksIsUnlocked(ctx, luksMapperName)
 
 	// Try to detect binaries on the FAT32 partition.
 	status.Binaries = detectBinaries(path)
@@ -485,7 +504,7 @@ func Status(path string) (*ImageStatus, error) {
 
 // UpdateBinaries updates xkey binaries on the FAT32 partition of an
 // existing image or device.
-func UpdateBinaries(path string, binaries []string) (err error) {
+func UpdateBinaries(ctx context.Context, path string, binaries []string) (err error) {
 	if getEUID() != 0 {
 		return ErrPermissionDenied
 	}
@@ -504,12 +523,12 @@ func UpdateBinaries(path string, binaries []string) (err error) {
 		part1, _ = partitionDevices(path)
 	} else {
 		// For image files, set up a loop device.
-		loopDev, loopErr := luksSetupLoopDevice(path)
+		loopDev, loopErr := luksSetupLoopDevice(ctx, path)
 		if loopErr != nil {
 			return &USBError{Operation: "setup_loop", Path: path, Err: loopErr}
 		}
 		defer func() {
-			if detachErr := luksDetachLoopDevice(loopDev); detachErr != nil {
+			if detachErr := luksDetachLoopDevice(ctx, loopDev); detachErr != nil {
 				err = errors.Join(err, &USBError{Operation: "detach_loop", Path: loopDev, Err: detachErr})
 			}
 		}()

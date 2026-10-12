@@ -34,14 +34,19 @@ func credentialPassword(ctx context.Context, creds Credentials) (types.Password,
 	if err != nil {
 		return nil, err
 	}
-	secret, strErr := opened.OpenString()
+	var password types.Password
+	copyErr := opened.WithBytes(func(secret []byte) error {
+		var pwErr error
+		password, pwErr = types.NewPassword(secret)
+		return pwErr
+	})
 	if destroyErr := opened.Destroy(); destroyErr != nil {
 		return nil, &errs.Joined{Lead: ErrCredentialViewDestroyFailed, Cause: destroyErr}
 	}
-	if strErr != nil {
-		return nil, strErr
+	if copyErr != nil {
+		return nil, copyErr
 	}
-	return types.NewPasswordFromString(secret)
+	return password, nil
 }
 
 // TPM2Strategy wraps an existing types.Sealer that uses TPM 2.0 hardware

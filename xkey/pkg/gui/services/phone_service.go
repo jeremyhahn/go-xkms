@@ -851,7 +851,12 @@ func (s *PhoneService) pairOverTransport(
 	// trusted from that earlier check: nothing in this package should assume
 	// the barrier's state is unchanged across a long-running BLE exchange
 	// and attestation round trip.
-	noiseKeyField, err := s.sealOrWarnLocalNoiseKey(phoneName, localKey.Private)
+	var noiseKeyField string
+	err = pairing.WithPrivateKey(localKey, func(priv []byte) error {
+		var sealErr error
+		noiseKeyField, sealErr = s.sealOrWarnLocalNoiseKey(phoneName, priv)
+		return sealErr
+	})
 	if err != nil {
 		s.log.Error("pairing refused: failed to seal the local Noise private key",
 			"device", phoneName, "error", err)

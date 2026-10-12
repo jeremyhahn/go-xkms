@@ -72,7 +72,7 @@ func (a *probeAdvertiser) Start() error {
 func (a *probeAdvertiser) Stop() error {
 	a.stopCalls++
 	if key := a.p.generatedStaticKey; key != nil {
-		a.keyDestroyedAtStop = len(key.Private) == 0
+		a.keyDestroyedAtStop = destroyed(key)
 	}
 	return a.stopErr
 }
@@ -263,7 +263,7 @@ func TestStopReportsIncompleteWhenAdvertisingCannotBeStopped(t *testing.T) {
 	if probe.stopCalls != 1 {
 		t.Fatalf("adv.Stop was called %d times, want 1", probe.stopCalls)
 	}
-	if len(key.Private) != 0 {
+	if !destroyed(key) {
 		t.Fatal("Stop retained the static key over an advertisement failure, " +
 			"which no reader of those pages can be reached through")
 	}
@@ -295,7 +295,7 @@ func TestStopRetainsTheKeyWhenAConnectionDidNotFinish(t *testing.T) {
 	if probe.stopCalls != 1 {
 		t.Fatalf("adv.Stop was called %d times, want 1", probe.stopCalls)
 	}
-	if len(key.Private) == 0 {
+	if destroyed(key) {
 		t.Fatal("Stop destroyed the static key while a connection was still running")
 	}
 
@@ -332,7 +332,7 @@ func TestStopReleasesTheKeyWhenAdvertisingStops(t *testing.T) {
 		t.Fatal("the static key was already destroyed when advertising was " +
 			"taken down: the peripheral advertised a service backed by freed pages")
 	}
-	if len(key.Private) != 0 {
+	if !destroyed(key) {
 		t.Fatal("Stop left the static key resident after a confirmed shutdown")
 	}
 

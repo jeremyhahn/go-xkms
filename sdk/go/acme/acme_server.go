@@ -165,6 +165,19 @@ type ACMEErrURISANNotIA5 = acmehandler.ErrURISANNotIA5
 // unchanged.
 var NewACMEPermanentIdentifierURISANHook = acmehandler.NewPermanentIdentifierURISANHook
 
+// ACMEDeviceProfile is the expected state of a device, returned by the lookup
+// function of a device-profile pre-issuance hook.
+type ACMEDeviceProfile = acmehandler.DeviceProfile
+
+// ACMEDeviceProfileError is returned by a device-profile hook when the profile
+// lookup fails; it unwraps to the lookup function's error.
+type ACMEDeviceProfileError = acmehandler.DeviceProfileError
+
+// NewACMEDeviceProfileHook returns a pre-issuance hook that validates a
+// TCG-CSR enrollment against the profile its lookup function returns for the
+// device's product serial and model. A nil profile admits the device.
+var NewACMEDeviceProfileHook = acmehandler.NewDeviceProfileHook
+
 // =============================================================================
 // ACME Storage Types
 // =============================================================================

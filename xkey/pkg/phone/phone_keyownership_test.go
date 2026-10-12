@@ -21,6 +21,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/jeremyhahn/go-enclave"
+
 	"github.com/jeremyhahn/go-xkms/xkey/pkg/pairing"
 )
 
@@ -30,10 +32,11 @@ import (
 const testWait = 5 * time.Second
 
 // destroyed reports whether a static key's protected pages have been released.
-// Destroy clears the embedded key pair, so an empty private half is the
-// observable difference between a live key and a freed one.
+// Borrowing the private scalar of a destroyed key fails with
+// enclave.ErrEnclaveDestroyed, which is the observable difference between a
+// live key and a freed one.
 func destroyed(key *pairing.StaticKey) bool {
-	return key == nil || len(key.Private) == 0
+	return key == nil || errors.Is(staticKeyAlive(key), enclave.ErrEnclaveDestroyed)
 }
 
 // TestNewPhoneKeyBackend_OwnedKeyDestroyedOnTrustFailure covers the ownership

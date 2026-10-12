@@ -621,7 +621,7 @@ func TestInteractiveHandler_ReadPIN_TrimsAndSealsPIN(t *testing.T) {
 			}
 			defer buf.Destroy()
 
-			if got := string(buf.Bytes()); got != tt.want {
+			if got := string(bufferBytes(t, buf)); got != tt.want {
 				t.Errorf("readPIN = %q, want %q", got, tt.want)
 			}
 		})

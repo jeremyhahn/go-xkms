@@ -14,6 +14,7 @@
 package usb
 
 import (
+	"bytes"
 	"crypto/fips140"
 	"testing"
 
@@ -48,4 +49,18 @@ func requireStaticKey(t *testing.T) (*pairing.StaticKey, bool) {
 		return nil, false
 	}
 	return key, true
+}
+
+// privateKeyBytes copies key's private scalar onto the heap for a test that
+// must hand it to NoiseConfig.LocalStaticPrivateKey, the []byte field a caller
+// configures the transport with. The copy is wiped when the test ends.
+func privateKeyBytes(t *testing.T, key *pairing.StaticKey) []byte {
+	t.Helper()
+	var private []byte
+	require.NoError(t, pairing.WithPrivateKey(key, func(privateKey []byte) error {
+		private = bytes.Clone(privateKey)
+		return nil
+	}))
+	t.Cleanup(func() { clear(private) })
+	return private
 }

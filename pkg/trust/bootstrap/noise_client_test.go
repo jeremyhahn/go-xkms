@@ -75,8 +75,8 @@ func startListener(t *testing.T, withNoise bool) *bootstrapListener {
 		noiseKey, err := GenerateNoiseStaticKey()
 		require.NoError(t, err)
 		t.Cleanup(noiseKey.Destroy)
-		cfg.StaticKey = NoiseServerStaticKey(noiseKey)
-		l.noiseHex = hex.EncodeToString(noiseKey.Public)
+		cfg.StaticKey = noiseKey
+		l.noiseHex = hex.EncodeToString(noiseKey.PublicBytes())
 	}
 
 	srv, err := NewNoiseServer(cfg)
@@ -192,7 +192,7 @@ func TestFetch_NoiseNKOnlyIsUnchangedWhereRunnable(t *testing.T) {
 	pem := newTestPEMBundle(t)
 	srv, err := NewNoiseServer(&NoiseServerConfig{
 		ListenAddr: "127.0.0.1:0",
-		StaticKey:  NoiseServerStaticKey(noiseKey),
+		StaticKey:  noiseKey,
 		CABundler:  &testBundler{pem: pem},
 		Logger:     slog.New(slog.NewTextHandler(io.Discard, nil)),
 	})
@@ -205,13 +205,13 @@ func TestFetch_NoiseNKOnlyIsUnchangedWhereRunnable(t *testing.T) {
 	}()
 
 	l := &bootstrapListener{addr: srv.Addr().String(), pem: pem}
-	bundle, err := fetchNoiseFrom(t, l, &NoiseConfig{ServerStaticKey: hex.EncodeToString(noiseKey.Public)})
+	bundle, err := fetchNoiseFrom(t, l, &NoiseConfig{ServerStaticKey: hex.EncodeToString(noiseKey.PublicBytes())})
 	require.NoError(t, err)
 	requireBundle(t, l, bundle)
 
 	// And pinning it explicitly is the same handshake.
 	bundle, err = fetchNoiseFrom(t, l, &NoiseConfig{
-		ServerStaticKey: hex.EncodeToString(noiseKey.Public),
+		ServerStaticKey: hex.EncodeToString(noiseKey.PublicBytes()),
 		Suite:           SuiteNoiseNK,
 	})
 	require.NoError(t, err)

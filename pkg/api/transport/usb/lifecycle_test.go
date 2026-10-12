@@ -96,7 +96,7 @@ func newGatedTransport(t *testing.T) (*Transport, *gatedPhone, bool) {
 	tr, err := New()
 	require.NoError(t, err)
 	tr.phoneUSB = g
-	tr.WithNoiseConfig(&NoiseConfig{LocalStaticPrivateKey: key.Private})
+	tr.WithNoiseConfig(&NoiseConfig{LocalStaticPrivateKey: privateKeyBytes(t, key)})
 	return tr, g, true
 }
 
@@ -247,7 +247,7 @@ func TestConnectRejectsResidualStateAfterFailedRequest(t *testing.T) {
 	tr, err := New()
 	require.NoError(t, err)
 	tr.phoneUSB = fake
-	tr.WithNoiseConfig(&NoiseConfig{LocalStaticPrivateKey: key.Private})
+	tr.WithNoiseConfig(&NoiseConfig{LocalStaticPrivateKey: privateKeyBytes(t, key)})
 
 	require.NoError(t, tr.Connect(context.Background()))
 	fake.handshakeDone = true
@@ -309,7 +309,7 @@ func TestCloseDiscardsTheBusTransport(t *testing.T) {
 	if err != nil {
 		t.Fatalf("New: %v", err)
 	}
-	tr.WithNoiseConfig(&NoiseConfig{LocalStaticPrivateKey: key.Private})
+	tr.WithNoiseConfig(&NoiseConfig{LocalStaticPrivateKey: privateKeyBytes(t, key)})
 
 	first := &terminalPhone{}
 	tr.phoneUSB = first

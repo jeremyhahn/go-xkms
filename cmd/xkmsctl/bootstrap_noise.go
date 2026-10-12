@@ -145,7 +145,7 @@ func generateNoiseKey(outputFile string) {
 		return
 	}
 
-	publicHex := hex.EncodeToString(key.Public)
+	publicHex := hex.EncodeToString(key.PublicBytes())
 
 	fmt.Printf("Private key written to: %s\n", outputFile)
 	fmt.Printf("Public key:  %s\n", publicHex)
@@ -189,7 +189,7 @@ func showNoiseKey(keyFile, keyHex string) {
 	}
 	defer key.Destroy()
 
-	fmt.Printf("Public key: %s\n", hex.EncodeToString(key.Public))
+	fmt.Printf("Public key: %s\n", hex.EncodeToString(key.PublicBytes()))
 }
 
 func showSPKIPin(certFile string) {

@@ -236,7 +236,12 @@ func openSecretString(t *testing.T, secret *secure.Secret) string {
 	buf, err := secret.Open(t.Context())
 	require.NoError(t, err)
 	defer buf.Destroy()
-	return string(buf.Bytes())
+	var s string
+	require.NoError(t, buf.WithBytes(func(b []byte) error {
+		s = string(b)
+		return nil
+	}))
+	return s
 }
 
 func TestReadUSBPassphrase_RejectsMismatchedPipedLines(t *testing.T) {

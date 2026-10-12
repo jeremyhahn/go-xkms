@@ -189,9 +189,8 @@ func (s *Server) loadSealedNoiseStaticKey() (*noiseproto.StaticKey, error) {
 // the key file both take a []byte, so the hex form is on the heap for exactly
 // as long as the caller holds this slice.
 //
-// That heap window is the price of holding no //secure:unborrowed directive.
-// Keeping the hex in a secure.Buffer across the barrier's Put needs either a
-// bare Buffer.Bytes (rule 4) or a borrow around Put, and Put encrypts through
+// Keeping the hex in a secure.Buffer across the barrier's Put instead needs a
+// borrow around Put (a Buffer has no read outside one), and Put encrypts through
 // protected memory of its own, which pkg/secure does not allow inside a
 // borrow. A barrier Put that takes a Borrower would close it; that is a
 // go-qrdb API.
@@ -231,10 +230,9 @@ func (s *Server) loadSealedP256StaticKey() (*bootstrap.P256StaticKey, error) {
 }
 
 // sealP256StaticKey is sealNoiseStaticKey's P-256 counterpart. It delegates
-// the encode step to bootstrap_suite.go's encodeP256StaticKeyHex, the one
-// place in this package go-truststrap's P-256 API forces a raw
-// *memguard.LockedBuffer (go-truststrap#60); everything here works with the
-// []byte that helper hands back.
+// the encode step to bootstrap_suite.go's encodeP256StaticKeyHex, which owns
+// the locked enclave go-truststrap's P-256 encoder writes into; everything
+// here works with the []byte that helper hands back.
 func (s *Server) sealP256StaticKey(key *bootstrap.P256StaticKey) error {
 	hexKey, err := encodeP256StaticKeyHex(key)
 	if err != nil {

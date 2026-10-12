@@ -41,5 +41,12 @@ func openSecretString(t *testing.T, secret *secure.Secret) string {
 		t.Fatalf("openSecretString: %v", err)
 	}
 	defer buf.Destroy()
-	return string(buf.Bytes())
+	var s string
+	if err := buf.WithBytes(func(b []byte) error {
+		s = string(b)
+		return nil
+	}); err != nil {
+		t.Fatalf("openSecretString: %v", err)
+	}
+	return s
 }

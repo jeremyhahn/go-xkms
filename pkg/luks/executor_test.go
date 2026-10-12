@@ -20,58 +20,81 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
+	"github.com/jeremyhahn/go-enclave"
+	"github.com/jeremyhahn/go-luks2/pkg/dmcrypt"
+	"github.com/jeremyhahn/go-luks2/pkg/filesystem"
+	"github.com/jeremyhahn/go-luks2/pkg/loop"
 	"github.com/jeremyhahn/go-luks2/pkg/luks2"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
+
+// fakeLoop is a loop device that records its detaches and fails them with
+// err when set.
+type fakeLoop struct {
+	detaches int
+	err      error
+}
+
+func (l *fakeLoop) Path() string { return "/dev/loop-test0" }
+
+func (l *fakeLoop) Detach(context.Context) (loop.DetachState, error) {
+	l.detaches++
+	return loop.Released, l.err
+}
 
 // stubLoopSeams replaces every go-luks2 kernel-facing primitive LibExecutor
 // uses with a deterministic fake and restores the originals on cleanup.
 // Every test that drives LibExecutor past its filesystem-only checks must
 // call this first: the defaults point at the real kernel and would try to
 // attach a loop device, format a filesystem or mount a device on the host.
-func stubLoopSeams(t *testing.T) {
+// It returns the loop device every attach and find hands out.
+func stubLoopSeams(t *testing.T) *fakeLoop {
 	t.Helper()
 
 	origSetup := setupLoopDevice
-	origDetach := detachLoopDevice
 	origFind := findLoopDeviceFn
 	origFormat := formatLUKS
 	origUnlock := unlockLUKS
 	origLock := lockLUKS
+	origLookup := lookupMapping
 	origMakeFS := makeFilesystem
 	origMount := mountLUKS
 	origUnmount := unmountLUKS
 	origIsMounted := isMountedFn
-	origIsUnlocked := isUnlockedFn
 	origChmod := chmodFn
 	t.Cleanup(func() {
 		setupLoopDevice = origSetup
-		detachLoopDevice = origDetach
 		findLoopDeviceFn = origFind
 		formatLUKS = origFormat
 		unlockLUKS = origUnlock
 		lockLUKS = origLock
+		lookupMapping = origLookup
 		makeFilesystem = origMakeFS
 		mountLUKS = origMount
 		unmountLUKS = origUnmount
 		isMountedFn = origIsMounted
-		isUnlockedFn = origIsUnlocked
 		chmodFn = origChmod
 	})
 
-	setupLoopDevice = func(string) (string, error) { return "/dev/loop-test0", nil }
-	detachLoopDevice = func(string) error { return nil }
-	findLoopDeviceFn = func(string) (string, error) { return "/dev/loop-test0", nil }
-	formatLUKS = func(luks2.FormatOptions) error { return nil }
-	unlockLUKS = func(string, []byte, string) error { return nil }
-	lockLUKS = func(string) error { return nil }
-	makeFilesystem = func(string, string, string) error { return nil }
-	mountLUKS = func(luks2.MountOptions) error { return nil }
-	unmountLUKS = func(string, int) error { return nil }
-	isMountedFn = func(string) (bool, error) { return false, nil }
-	isUnlockedFn = func(string) bool { return false }
+	dev := &fakeLoop{}
+	setupLoopDevice = func(context.Context, string) (loopDevice, error) { return dev, nil }
+	findLoopDeviceFn = func(context.Context, string) (loopDevice, error) { return dev, nil }
+	formatLUKS = func(context.Context, string, *enclave.MemoryEnclave, luks2.FormatParams) error { return nil }
+	unlockLUKS = func(_ context.Context, _ string, _ *enclave.MemoryEnclave, name string) (*dmcrypt.Mapping, error) {
+		return &dmcrypt.Mapping{Name: name}, nil
+	}
+	lockLUKS = func(context.Context, string) error { return nil }
+	lookupMapping = func(_ context.Context, name string) (*dmcrypt.Mapping, error) {
+		return &dmcrypt.Mapping{Name: name}, nil
+	}
+	makeFilesystem = func(context.Context, string, filesystem.Type, filesystem.MakeParams) error { return nil }
+	mountLUKS = func(context.Context, filesystem.MountParams) error { return nil }
+	unmountLUKS = func(context.Context, string, filesystem.UnmountFlags) error { return nil }
+	isMountedFn = func(context.Context, string) (bool, error) { return false, nil }
+	return dev
 }
 
 func testConfig(dir string) *VolumeConfig {
@@ -87,7 +110,7 @@ func testConfig(dir string) *VolumeConfig {
 // ---------------------------------------------------------------------------
 
 func TestLibExecutor_Create_RefusesBeforeCreatingTheContainer(t *testing.T) {
-	withKeyringCheck(t, func() error { return luks2.ErrKeyringUnsupported })
+	withKeyringCheck(t, func() error { return dmcrypt.ErrKeyringUnsupported })
 	dir := t.TempDir()
 	cfg := testConfig(dir)
 	e := NewLibExecutor()
@@ -95,7 +118,7 @@ func TestLibExecutor_Create_RefusesBeforeCreatingTheContainer(t *testing.T) {
 	err := e.Create(context.Background(), cfg, 1<<20, "passphrase")
 	require.Error(t, err)
 	assert.ErrorIs(t, err, ErrKeyringUnavailable)
-	assert.ErrorIs(t, err, luks2.ErrKeyringUnsupported)
+	assert.ErrorIs(t, err, dmcrypt.ErrKeyringUnsupported)
 	assert.NoFileExists(t, cfg.LUKSPath)
 }
 
@@ -108,6 +131,25 @@ func TestLibExecutor_Create_AlreadyExists(t *testing.T) {
 	e := NewLibExecutor()
 	err := e.Create(context.Background(), cfg, 1<<20, "passphrase")
 	assert.ErrorIs(t, err, ErrVolumeAlreadyExists)
+}
+
+// TestLibExecutor_Create_EmptyPassphrase verifies an empty passphrase is
+// refused before a container file exists: go-luks2 takes credentials only as
+// enclaves, and there is no enclave over empty material.
+func TestLibExecutor_Create_EmptyPassphrase(t *testing.T) {
+	withKeyringCheck(t, func() error { return nil })
+	stubLoopSeams(t)
+	dir := t.TempDir()
+	cfg := testConfig(dir)
+
+	err := NewLibExecutor().Create(context.Background(), cfg, 1<<20, "")
+	require.Error(t, err)
+
+	var execErr *ExecutorError
+	require.ErrorAs(t, err, &execErr)
+	assert.Equal(t, "protect_passphrase", execErr.Operation)
+	assert.ErrorIs(t, err, enclave.ErrEmptyEnclave)
+	assert.NoFileExists(t, cfg.LUKSPath)
 }
 
 // TestLibExecutor_Create_CreateFileFails covers the create_file error
@@ -177,7 +219,7 @@ func TestLibExecutor_Create_TruncateFails(t *testing.T) {
 func TestLibExecutor_Create_SetupLoopDeviceFails(t *testing.T) {
 	withKeyringCheck(t, func() error { return nil })
 	stubLoopSeams(t)
-	setupLoopDevice = func(string) (string, error) { return "", errors.New("no free loop devices") }
+	setupLoopDevice = func(context.Context, string) (loopDevice, error) { return nil, errors.New("no free loop devices") }
 
 	dir := t.TempDir()
 	cfg := testConfig(dir)
@@ -194,11 +236,10 @@ func TestLibExecutor_Create_SetupLoopDeviceFails(t *testing.T) {
 
 func TestLibExecutor_Create_FormatFails(t *testing.T) {
 	withKeyringCheck(t, func() error { return nil })
-	stubLoopSeams(t)
-
-	detachCalls := 0
-	detachLoopDevice = func(string) error { detachCalls++; return nil }
-	formatLUKS = func(luks2.FormatOptions) error { return errors.New("format rejected") }
+	dev := stubLoopSeams(t)
+	formatLUKS = func(context.Context, string, *enclave.MemoryEnclave, luks2.FormatParams) error {
+		return errors.New("format rejected")
+	}
 
 	dir := t.TempDir()
 	cfg := testConfig(dir)
@@ -210,17 +251,19 @@ func TestLibExecutor_Create_FormatFails(t *testing.T) {
 	var execErr *ExecutorError
 	require.ErrorAs(t, err, &execErr)
 	assert.Equal(t, "luks_format", execErr.Operation)
-	assert.Equal(t, 1, detachCalls)
+	assert.Equal(t, 1, dev.detaches)
 	assert.NoFileExists(t, cfg.LUKSPath)
 }
 
 func TestLibExecutor_Create_FormatFails_JoinsCleanupError(t *testing.T) {
 	withKeyringCheck(t, func() error { return nil })
-	stubLoopSeams(t)
+	dev := stubLoopSeams(t)
 
 	detachErr := errors.New("detach failed")
-	detachLoopDevice = func(string) error { return detachErr }
-	formatLUKS = func(luks2.FormatOptions) error { return errors.New("format rejected") }
+	dev.err = detachErr
+	formatLUKS = func(context.Context, string, *enclave.MemoryEnclave, luks2.FormatParams) error {
+		return errors.New("format rejected")
+	}
 
 	dir := t.TempDir()
 	cfg := testConfig(dir)
@@ -233,8 +276,10 @@ func TestLibExecutor_Create_FormatFails_JoinsCleanupError(t *testing.T) {
 
 func TestLibExecutor_Create_UnlockFails(t *testing.T) {
 	withKeyringCheck(t, func() error { return nil })
-	stubLoopSeams(t)
-	unlockLUKS = func(string, []byte, string) error { return errors.New("wrong key") }
+	dev := stubLoopSeams(t)
+	unlockLUKS = func(context.Context, string, *enclave.MemoryEnclave, string) (*dmcrypt.Mapping, error) {
+		return nil, errors.New("wrong key")
+	}
 
 	dir := t.TempDir()
 	cfg := testConfig(dir)
@@ -246,16 +291,19 @@ func TestLibExecutor_Create_UnlockFails(t *testing.T) {
 	var execErr *ExecutorError
 	require.ErrorAs(t, err, &execErr)
 	assert.Equal(t, "luks_unlock", execErr.Operation)
+	assert.Equal(t, 1, dev.detaches)
 	assert.NoFileExists(t, cfg.LUKSPath)
 }
 
 func TestLibExecutor_Create_MakeFilesystemFails(t *testing.T) {
 	withKeyringCheck(t, func() error { return nil })
-	stubLoopSeams(t)
+	dev := stubLoopSeams(t)
 
 	lockCalls := 0
-	lockLUKS = func(string) error { lockCalls++; return nil }
-	makeFilesystem = func(string, string, string) error { return errors.New("mkfs failed") }
+	lockLUKS = func(context.Context, string) error { lockCalls++; return nil }
+	makeFilesystem = func(context.Context, string, filesystem.Type, filesystem.MakeParams) error {
+		return errors.New("mkfs failed")
+	}
 
 	dir := t.TempDir()
 	cfg := testConfig(dir)
@@ -268,16 +316,14 @@ func TestLibExecutor_Create_MakeFilesystemFails(t *testing.T) {
 	require.ErrorAs(t, err, &execErr)
 	assert.Equal(t, "create_fs", execErr.Operation)
 	assert.Equal(t, 1, lockCalls)
+	assert.Equal(t, 1, dev.detaches)
 	assert.NoFileExists(t, cfg.LUKSPath)
 }
 
 func TestLibExecutor_Create_LockFails(t *testing.T) {
 	withKeyringCheck(t, func() error { return nil })
-	stubLoopSeams(t)
-
-	detachCalls := 0
-	detachLoopDevice = func(string) error { detachCalls++; return nil }
-	lockLUKS = func(string) error { return errors.New("busy") }
+	dev := stubLoopSeams(t)
+	lockLUKS = func(context.Context, string) error { return errors.New("busy") }
 
 	dir := t.TempDir()
 	cfg := testConfig(dir)
@@ -289,13 +335,13 @@ func TestLibExecutor_Create_LockFails(t *testing.T) {
 	var execErr *ExecutorError
 	require.ErrorAs(t, err, &execErr)
 	assert.Equal(t, "luks_lock", execErr.Operation)
-	assert.Equal(t, 1, detachCalls)
+	assert.Equal(t, 1, dev.detaches)
 }
 
 func TestLibExecutor_Create_DetachFails(t *testing.T) {
 	withKeyringCheck(t, func() error { return nil })
-	stubLoopSeams(t)
-	detachLoopDevice = func(string) error { return errors.New("device busy") }
+	dev := stubLoopSeams(t)
+	dev.err = errors.New("device busy")
 
 	dir := t.TempDir()
 	cfg := testConfig(dir)
@@ -310,12 +356,40 @@ func TestLibExecutor_Create_DetachFails(t *testing.T) {
 	assert.FileExists(t, cfg.LUKSPath, "a container whose format succeeded must not be removed for a detach failure")
 }
 
+// TestLibExecutor_Create_Success verifies the whole sequence reaches
+// go-luks2 with what it needs: the loop device to format and unlock, the
+// configured KDF, the passphrase as a live enclave, and the mapping's device
+// path (never its bare name) for mkfs.
 func TestLibExecutor_Create_Success(t *testing.T) {
 	withKeyringCheck(t, func() error { return nil })
-	stubLoopSeams(t)
+	dev := stubLoopSeams(t)
+
+	var formatDevice string
+	var params luks2.FormatParams
+	formatLUKS = func(_ context.Context, device string, pass *enclave.MemoryEnclave, p luks2.FormatParams) error {
+		formatDevice, params = device, p
+		return pass.WithBytes(func(b []byte) error {
+			assert.Equal(t, "passphrase", string(b))
+			return nil
+		})
+	}
+	var unlockDevice string
+	unlockLUKS = func(_ context.Context, device string, _ *enclave.MemoryEnclave, name string) (*dmcrypt.Mapping, error) {
+		unlockDevice = device
+		return &dmcrypt.Mapping{Name: name}, nil
+	}
+	var mkfsDevice string
+	var mkfsType filesystem.Type
+	var mkfsParams filesystem.MakeParams
+	makeFilesystem = func(_ context.Context, device string, fs filesystem.Type, p filesystem.MakeParams) error {
+		mkfsDevice, mkfsType, mkfsParams = device, fs, p
+		return nil
+	}
 
 	dir := t.TempDir()
 	cfg := testConfig(dir)
+	cfg.KDF = KDFPBKDF2
+	cfg.PBKDFIterTime = 1500
 	e := NewLibExecutor()
 
 	require.NoError(t, e.Create(context.Background(), cfg, 1<<20, "passphrase"))
@@ -324,6 +398,15 @@ func TestLibExecutor_Create_Success(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, int64(1<<20), info.Size())
 	assert.Equal(t, os.FileMode(0600), info.Mode().Perm(), "container file must not be group/world readable")
+
+	assert.Equal(t, dev.Path(), formatDevice)
+	assert.Equal(t, dev.Path(), unlockDevice)
+	assert.Equal(t, luks2.KDFPBKDF2, params.KDF.Type)
+	assert.Equal(t, 1500*time.Millisecond, params.KDF.IterTime)
+	assert.Equal(t, "/dev/mapper/"+cfg.MapperName, mkfsDevice)
+	assert.Equal(t, filesystem.Ext4, mkfsType)
+	assert.Equal(t, filesystemLabel, mkfsParams.Label)
+	assert.Equal(t, 1, dev.detaches)
 }
 
 func TestLibExecutor_Create_ContextCanceled(t *testing.T) {
@@ -352,7 +435,7 @@ func TestLibExecutor_Unlock_NotFound(t *testing.T) {
 }
 
 func TestLibExecutor_Unlock_RefusesBeforeTouchingTheLoopDevice(t *testing.T) {
-	withKeyringCheck(t, func() error { return luks2.ErrKeyringBlocked })
+	withKeyringCheck(t, func() error { return dmcrypt.ErrKeyringBlocked })
 	dir := t.TempDir()
 	cfg := testConfig(dir)
 	require.NoError(t, os.WriteFile(cfg.LUKSPath, make([]byte, 4096), 0600))
@@ -365,10 +448,26 @@ func TestLibExecutor_Unlock_RefusesBeforeTouchingTheLoopDevice(t *testing.T) {
 	assert.False(t, errors.As(err, &execErr), "no loop device may have been attempted: %v", err)
 }
 
+func TestLibExecutor_Unlock_EmptyPassphrase(t *testing.T) {
+	withKeyringCheck(t, func() error { return nil })
+	stubLoopSeams(t)
+	attached := false
+	setupLoopDevice = func(context.Context, string) (loopDevice, error) { attached = true; return &fakeLoop{}, nil }
+
+	dir := t.TempDir()
+	cfg := testConfig(dir)
+	require.NoError(t, os.WriteFile(cfg.LUKSPath, []byte("container"), 0600))
+
+	err := NewLibExecutor().Unlock(context.Background(), cfg, "")
+	require.Error(t, err)
+	assert.ErrorIs(t, err, enclave.ErrEmptyEnclave)
+	assert.False(t, attached, "no loop device may be attached for a passphrase that cannot be used")
+}
+
 func TestLibExecutor_Unlock_SetupLoopDeviceFails(t *testing.T) {
 	withKeyringCheck(t, func() error { return nil })
 	stubLoopSeams(t)
-	setupLoopDevice = func(string) (string, error) { return "", errors.New("no free loop devices") }
+	setupLoopDevice = func(context.Context, string) (loopDevice, error) { return nil, errors.New("no free loop devices") }
 
 	dir := t.TempDir()
 	cfg := testConfig(dir)
@@ -385,11 +484,10 @@ func TestLibExecutor_Unlock_SetupLoopDeviceFails(t *testing.T) {
 
 func TestLibExecutor_Unlock_UnlockFails(t *testing.T) {
 	withKeyringCheck(t, func() error { return nil })
-	stubLoopSeams(t)
-
-	detachCalls := 0
-	detachLoopDevice = func(string) error { detachCalls++; return nil }
-	unlockLUKS = func(string, []byte, string) error { return errors.New("wrong passphrase") }
+	dev := stubLoopSeams(t)
+	unlockLUKS = func(context.Context, string, *enclave.MemoryEnclave, string) (*dmcrypt.Mapping, error) {
+		return nil, errors.New("wrong passphrase")
+	}
 
 	dir := t.TempDir()
 	cfg := testConfig(dir)
@@ -402,12 +500,17 @@ func TestLibExecutor_Unlock_UnlockFails(t *testing.T) {
 	var execErr *ExecutorError
 	require.ErrorAs(t, err, &execErr)
 	assert.Equal(t, "luks_unlock", execErr.Operation)
-	assert.Equal(t, 1, detachCalls)
+	assert.Equal(t, 1, dev.detaches)
 }
 
 func TestLibExecutor_Unlock_Success(t *testing.T) {
 	withKeyringCheck(t, func() error { return nil })
-	stubLoopSeams(t)
+	dev := stubLoopSeams(t)
+	var unlockDevice, unlockName string
+	unlockLUKS = func(_ context.Context, device string, _ *enclave.MemoryEnclave, name string) (*dmcrypt.Mapping, error) {
+		unlockDevice, unlockName = device, name
+		return &dmcrypt.Mapping{Name: name}, nil
+	}
 
 	dir := t.TempDir()
 	cfg := testConfig(dir)
@@ -415,6 +518,9 @@ func TestLibExecutor_Unlock_Success(t *testing.T) {
 
 	e := NewLibExecutor()
 	require.NoError(t, e.Unlock(context.Background(), cfg, "passphrase"))
+	assert.Equal(t, dev.Path(), unlockDevice)
+	assert.Equal(t, cfg.MapperName, unlockName)
+	assert.Equal(t, 0, dev.detaches, "an unlocked volume keeps its loop device")
 }
 
 // ---------------------------------------------------------------------------
@@ -438,9 +544,28 @@ func TestLibExecutor_Mount_MkdirMountpointFails(t *testing.T) {
 	assert.Equal(t, "create_mountpoint", execErr.Operation)
 }
 
+// TestLibExecutor_Mount_MappingNotActive verifies Mount refuses a volume
+// whose mapping does not exist instead of handing mount a guessed path.
+func TestLibExecutor_Mount_MappingNotActive(t *testing.T) {
+	stubLoopSeams(t)
+	mounted := false
+	lookupMapping = func(context.Context, string) (*dmcrypt.Mapping, error) { return nil, dmcrypt.ErrNotActive }
+	mountLUKS = func(context.Context, filesystem.MountParams) error { mounted = true; return nil }
+
+	cfg := testConfig(t.TempDir())
+	err := NewLibExecutor().Mount(context.Background(), cfg)
+	require.Error(t, err)
+
+	var execErr *ExecutorError
+	require.ErrorAs(t, err, &execErr)
+	assert.Equal(t, "lookup_mapping", execErr.Operation)
+	assert.ErrorIs(t, err, dmcrypt.ErrNotActive)
+	assert.False(t, mounted)
+}
+
 func TestLibExecutor_Mount_MountFails(t *testing.T) {
 	stubLoopSeams(t)
-	mountLUKS = func(luks2.MountOptions) error { return errors.New("mount failed") }
+	mountLUKS = func(context.Context, filesystem.MountParams) error { return errors.New("mount failed") }
 
 	dir := t.TempDir()
 	cfg := testConfig(dir)
@@ -457,8 +582,8 @@ func TestLibExecutor_Mount_MountFails(t *testing.T) {
 func TestLibExecutor_Mount_Success(t *testing.T) {
 	stubLoopSeams(t)
 
-	var mountedOpts luks2.MountOptions
-	mountLUKS = func(opts luks2.MountOptions) error { mountedOpts = opts; return nil }
+	var mounted filesystem.MountParams
+	mountLUKS = func(_ context.Context, p filesystem.MountParams) error { mounted = p; return nil }
 
 	dir := t.TempDir()
 	cfg := testConfig(dir)
@@ -469,8 +594,9 @@ func TestLibExecutor_Mount_Success(t *testing.T) {
 	info, err := os.Stat(cfg.MountPoint)
 	require.NoError(t, err)
 	assert.True(t, info.IsDir())
-	assert.Equal(t, cfg.MapperName, mountedOpts.Device)
-	assert.Equal(t, cfg.MountPoint, mountedOpts.MountPoint)
+	assert.Equal(t, "/dev/mapper/"+cfg.MapperName, mounted.Source)
+	assert.Equal(t, cfg.MountPoint, mounted.Target)
+	assert.Equal(t, filesystem.Ext4, mounted.Type)
 }
 
 func TestLibExecutor_Mount_ChmodsMountPointAfterMount(t *testing.T) {
@@ -478,8 +604,8 @@ func TestLibExecutor_Mount_ChmodsMountPointAfterMount(t *testing.T) {
 
 	// Simulate the ext4 root inode's default permissions replacing the
 	// mount point's mode as part of the mount call itself.
-	mountLUKS = func(opts luks2.MountOptions) error {
-		return os.Chmod(opts.MountPoint, 0755)
+	mountLUKS = func(_ context.Context, p filesystem.MountParams) error {
+		return os.Chmod(p.Target, 0755)
 	}
 
 	dir := t.TempDir()
@@ -497,7 +623,7 @@ func TestLibExecutor_Mount_ChmodMountPointFails(t *testing.T) {
 	stubLoopSeams(t)
 
 	unmountCalls := 0
-	unmountLUKS = func(string, int) error { unmountCalls++; return nil }
+	unmountLUKS = func(context.Context, string, filesystem.UnmountFlags) error { unmountCalls++; return nil }
 	chmodErr := errors.New("chmod failed")
 	chmodFn = func(string, os.FileMode) error { return chmodErr }
 
@@ -517,7 +643,7 @@ func TestLibExecutor_Mount_ChmodMountPointFails(t *testing.T) {
 
 func TestLibExecutor_Unmount_Fails(t *testing.T) {
 	stubLoopSeams(t)
-	unmountLUKS = func(string, int) error { return errors.New("target is busy") }
+	unmountLUKS = func(context.Context, string, filesystem.UnmountFlags) error { return errors.New("target is busy") }
 
 	dir := t.TempDir()
 	cfg := testConfig(dir)
@@ -546,7 +672,7 @@ func TestLibExecutor_Unmount_Success(t *testing.T) {
 
 func TestLibExecutor_Lock_LockFails(t *testing.T) {
 	stubLoopSeams(t)
-	lockLUKS = func(string) error { return errors.New("device or resource busy") }
+	lockLUKS = func(context.Context, string) error { return errors.New("device or resource busy") }
 
 	dir := t.TempDir()
 	cfg := testConfig(dir)
@@ -561,9 +687,8 @@ func TestLibExecutor_Lock_LockFails(t *testing.T) {
 }
 
 func TestLibExecutor_Lock_DetachFails(t *testing.T) {
-	stubLoopSeams(t)
-	findLoopDeviceFn = func(string) (string, error) { return "/dev/loop-test0", nil }
-	detachLoopDevice = func(string) error { return errors.New("device busy") }
+	dev := stubLoopSeams(t)
+	dev.err = errors.New("device busy")
 
 	dir := t.TempDir()
 	cfg := testConfig(dir)
@@ -578,26 +703,41 @@ func TestLibExecutor_Lock_DetachFails(t *testing.T) {
 }
 
 func TestLibExecutor_Lock_NoLoopDeviceFound(t *testing.T) {
-	stubLoopSeams(t)
-	findLoopDeviceFn = func(string) (string, error) { return "", errors.New("not found") }
-	detachCalls := 0
-	detachLoopDevice = func(string) error { detachCalls++; return nil }
+	dev := stubLoopSeams(t)
+	findLoopDeviceFn = func(context.Context, string) (loopDevice, error) { return nil, loop.ErrNotFound }
 
 	dir := t.TempDir()
 	cfg := testConfig(dir)
 	e := NewLibExecutor()
 
 	require.NoError(t, e.Lock(context.Background(), cfg))
-	assert.Equal(t, 0, detachCalls, "detach must not run when no loop device is found")
+	assert.Equal(t, 0, dev.detaches, "detach must not run when no loop device is found")
+}
+
+// TestLibExecutor_Lock_FindFails verifies a loop lookup that fails for any
+// reason other than "none attached" is reported, not read as nothing to do:
+// treating it as success would leave the container's loop device attached.
+func TestLibExecutor_Lock_FindFails(t *testing.T) {
+	dev := stubLoopSeams(t)
+	findErr := errors.New("permission denied")
+	findLoopDeviceFn = func(context.Context, string) (loopDevice, error) { return nil, findErr }
+
+	cfg := testConfig(t.TempDir())
+	err := NewLibExecutor().Lock(context.Background(), cfg)
+	require.Error(t, err)
+
+	var execErr *ExecutorError
+	require.ErrorAs(t, err, &execErr)
+	assert.Equal(t, "find_loop", execErr.Operation)
+	assert.ErrorIs(t, err, findErr)
+	assert.Equal(t, 0, dev.detaches)
 }
 
 func TestLibExecutor_Lock_Success(t *testing.T) {
-	stubLoopSeams(t)
+	dev := stubLoopSeams(t)
 
-	lockCalls, detachCalls := 0, 0
-	lockLUKS = func(string) error { lockCalls++; return nil }
-	findLoopDeviceFn = func(string) (string, error) { return "/dev/loop-test0", nil }
-	detachLoopDevice = func(string) error { detachCalls++; return nil }
+	lockCalls := 0
+	lockLUKS = func(context.Context, string) error { lockCalls++; return nil }
 
 	dir := t.TempDir()
 	cfg := testConfig(dir)
@@ -605,7 +745,7 @@ func TestLibExecutor_Lock_Success(t *testing.T) {
 
 	require.NoError(t, e.Lock(context.Background(), cfg))
 	assert.Equal(t, 1, lockCalls)
-	assert.Equal(t, 1, detachCalls)
+	assert.Equal(t, 1, dev.detaches)
 }
 
 // ---------------------------------------------------------------------------
@@ -614,25 +754,27 @@ func TestLibExecutor_Lock_Success(t *testing.T) {
 
 func TestLibExecutor_IsMounted_DelegatesAndSwallowsError(t *testing.T) {
 	stubLoopSeams(t)
-	isMountedFn = func(string) (bool, error) { return false, errors.New("unreadable mountinfo") }
+	isMountedFn = func(context.Context, string) (bool, error) { return false, errors.New("unreadable mountinfo") }
 
 	dir := t.TempDir()
 	cfg := testConfig(dir)
 	e := NewLibExecutor()
 	assert.False(t, e.IsMounted(cfg), "an undeterminable mount state must not report true")
 
-	isMountedFn = func(string) (bool, error) { return true, nil }
+	isMountedFn = func(context.Context, string) (bool, error) { return true, nil }
 	assert.True(t, e.IsMounted(cfg))
 }
 
 func TestLibExecutor_IsUnlocked_Delegates(t *testing.T) {
 	stubLoopSeams(t)
-	isUnlockedFn = func(string) bool { return true }
 
 	dir := t.TempDir()
 	cfg := testConfig(dir)
 	e := NewLibExecutor()
 	assert.True(t, e.IsUnlocked(cfg))
+
+	lookupMapping = func(context.Context, string) (*dmcrypt.Mapping, error) { return nil, dmcrypt.ErrNotActive }
+	assert.False(t, e.IsUnlocked(cfg))
 }
 
 // ---------------------------------------------------------------------------

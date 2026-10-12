@@ -57,7 +57,7 @@ func TestNoiseStop_NilIsAuthoritative(t *testing.T) {
 
 	srv, err := bootstrap.NewNoiseServer(&bootstrap.NoiseServerConfig{
 		ListenAddr:    "127.0.0.1:0",
-		StaticKey:     bootstrap.NoiseServerStaticKey(keys.noise),
+		StaticKey:     keys.noise,
 		P256StaticKey: keys.p256,
 		CABundler:     bundler,
 		// The held worker must outlive every deadline below.

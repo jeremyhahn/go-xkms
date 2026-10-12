@@ -16,20 +16,22 @@
 package cmd
 
 import (
-	"errors"
 	"log/slog"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+
+	"github.com/jeremyhahn/go-xkms/pkg/tpm2"
 )
 
 // TestOpenTPMModule_SimulatorUnavailable proves that requesting the
 // in-process simulator in a build without TPM simulator support fails with
-// the typed WrappedError wrapping pkg/tpm2.ErrSimulatorNotAvailable,
-// reachable with errors.Is, rather than an untyped fmt.Errorf value. This
-// lives behind !tpm_simulator (#985): with the tag present the simulator is
-// compiled in and openTPMModule succeeds, so this proof does not apply.
+// pkg/tpm2.ErrSimulatorNotAvailable, reachable with errors.Is, rather than an
+// untyped error. localtpm's typed errors pass through openTPMModule unwrapped,
+// as TestOpenTPMModule_DeviceNotFound shows for a missing device. This lives
+// behind !tpm_simulator (#985): with the tag present the simulator is compiled
+// in and openTPMModule succeeds, so this proof does not apply.
 func TestOpenTPMModule_SimulatorUnavailable(t *testing.T) {
 	logger := slog.Default()
 	dataDir := t.TempDir()
@@ -39,8 +41,5 @@ func TestOpenTPMModule_SimulatorUnavailable(t *testing.T) {
 	require.Error(t, err)
 	assert.Nil(t, tpm)
 	assert.Nil(t, closer)
-
-	var wrapped *WrappedError
-	require.True(t, errors.As(err, &wrapped), "err = %v, want *WrappedError", err)
-	assert.Contains(t, err.Error(), "open tpm")
+	assert.ErrorIs(t, err, tpm2.ErrSimulatorNotAvailable)
 }

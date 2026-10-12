@@ -97,7 +97,7 @@ func TestBLEPeripheral_StopBoundsTheConnectionJoin(t *testing.T) {
 
 	// Bounding the join is not permission to free the key. The connection
 	// still running may be encrypting through those pages.
-	if len(key.Private) == 0 {
+	if destroyed(key) {
 		t.Fatal("Stop destroyed the static key while a connection was still running")
 	}
 
@@ -135,7 +135,7 @@ func TestBLEPeripheral_StopDestroysTheKeyOnACleanJoin(t *testing.T) {
 		t.Fatalf("Stop returned %v on a clean shutdown, want nil", err)
 	}
 
-	if len(key.Private) != 0 {
+	if !destroyed(key) {
 		t.Fatal("Stop left the static key resident after every connection finished")
 	}
 }
@@ -182,7 +182,7 @@ func TestAdoptedStaticKeyIsSeparateFromTheGeneratedOne(t *testing.T) {
 	if err := p.Stop(); err != nil {
 		t.Fatalf("Stop: %v", err)
 	}
-	if len(key.Private) != 0 {
+	if !destroyed(key) {
 		t.Fatal("Stop left the adopted key resident after a clean join")
 	}
 }

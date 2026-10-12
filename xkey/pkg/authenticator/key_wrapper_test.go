@@ -42,8 +42,21 @@ func protectedBytes(t *testing.T, b []byte) *secure.Buffer {
 	buf, err := secure.NewBuffer(len(b))
 	require.NoError(t, err)
 	t.Cleanup(buf.Destroy)
-	copy(buf.Bytes(), b)
+	require.NoError(t, buf.WithBytes(func(dst []byte) error {
+		copy(dst, b)
+		return nil
+	}))
 	return buf
+}
+
+// bufferBytes returns a heap copy of a protected buffer's contents for
+// assertions. The copy is wiped at cleanup.
+func bufferBytes(t *testing.T, buf *secure.Buffer) []byte {
+	t.Helper()
+	b, err := secure.CopyOut(buf)
+	require.NoError(t, err)
+	t.Cleanup(func() { secure.Wipe(b) })
+	return b
 }
 
 // wrapForTest stages heap plaintext into protected memory and wraps it
@@ -58,7 +71,12 @@ func wrapForTest(w KeyWrapper, plaintext []byte) ([]byte, error) {
 		return nil, err
 	}
 	defer src.Destroy()
-	copy(src.Bytes(), plaintext)
+	if err := src.WithBytes(func(dst []byte) error {
+		copy(dst, plaintext)
+		return nil
+	}); err != nil {
+		return nil, err
+	}
 	return w.WrapFrom(src)
 }
 

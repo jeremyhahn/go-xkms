@@ -1,6 +1,6 @@
 # TPM 2.0 — Engineering Contract
 
-> **Status: NORMATIVE** · Feature: `tpm2` · Repo: `go-xkms` · Last verified: 2026-10-02
+> **Status: NORMATIVE** · Feature: `tpm2` · Repo: `go-xkms` · Last verified: 2026-10-12
 
 ## Exported surface — `pkg/tpm2`
 
@@ -84,6 +84,16 @@ whole package. `pkg/tpm2/store` holds the key-backend types (`KeyBackend` in
   (`TPM_RH_NULL`, re-randomized every TPM reset), so it needs no hierarchy
   auth, and `AnswerCredentialChallenge` flushes it once the challenge has
   been answered — it is a one-shot object, not a key a caller reuses.
+- **`AnswerCredentialChallenge` works without a persistent EK.** When no EK
+  is loaded at `EKConfig.Handle` but the EK certificate is in NV (the state
+  `TPM2_Clear` leaves), `createTransientEK` (`activation_key.go`) recreates
+  the EK under the endorsement hierarchy from the TCG low-range template
+  matching the certificate's key (`transientEKTemplate`: `RSAEKTemplate` for
+  RSA-2048, `ECCEKTemplate` for P-256), refuses it unless its public key
+  equals the certificate's, and flushes it on every path. The persistent EK
+  is never created or re-persisted there. High-range certificates
+  (index `0x01C00012` and above) are refused: their H templates carry a
+  PolicyOR auth policy `activateCredential` does not satisfy.
 - **An ECC public area is only ever accepted as a point on its curve.** Every
   reconstruction of an `ecdsa.PublicKey` from a `TPMT_PUBLIC` goes through the
   one unexported helper `eccPublicKey` (`eccpub.go`), which delegates to
@@ -625,6 +635,9 @@ vocabulary. The categories that need distinguishing:
 | `ErrEKPublicRequired`, `ErrActivationKeyNameRequired` | `NewCredentialChallenge` was called with a nil EK public key or an empty activation key Name |
 | `ErrActivationKeyCreate` | `CreateActivationKey`'s `TPM2_CreatePrimary` (null hierarchy) failed |
 | `ErrActivationKeyRequired`, `ErrCredentialChallengeRequired` | `AnswerCredentialChallenge` was called with a nil `*ActivationKey` or `*CredentialChallenge` |
+| `ErrEKCertNotInNV` | `AnswerCredentialChallenge` found no persistent EK and could not read an EK certificate from NV |
+| `ErrEKTemplateUnsupported` | the NV EK certificate is in the high range, or its key is neither RSA-2048 nor ECC P-256, so no transient EK template matches it |
+| `ErrEKPublicKeyMismatch` | the transient EK's public key is not the key the NV EK certificate certifies; the EK is flushed and the challenge refused |
 
 **Fail closed:** every one of these refuses. Nothing degrades to a software key
 or an unverified acceptance.

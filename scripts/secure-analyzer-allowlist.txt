@@ -43,28 +43,15 @@
 # call. A file whose sites differ in any way (different variable, different
 # argument) still gets one entry per distinct call text.
 #
-# This file is not a baseline. Rules 1 and 2 (raw memguard import,
-# ssh.ParsePrivateKey) are absolute everywhere except the two classes below;
-# nothing here is a general suppression of either rule, and a new violation
-# of any other shape fails the gate the same as it would with an empty file.
+# This file is not a baseline. Rule 1 (raw memguard import) is absolute
+# everywhere, with no exemption. Rule 2 (ssh.ParsePrivateKey) is absolute
+# everywhere except the one class below; nothing here is a general
+# suppression of it, and a new violation of any other shape fails the gate
+# the same as it would with an empty file.
 #
-# Two exemption classes:
+# One exemption class:
 #
-# 1. go-truststrap#60 (rule 1) -- go-truststrap v0.4.0-alpha's p256proto
-#    functions (NewStaticKey, EncodeStaticKey, DecodeStaticKey) take a
-#    *memguard.LockedBuffer directly. go-qrdb's secure.Buffer wraps its
-#    LockedBuffer in an unexported field with no accessor -- correctly,
-#    since exposing it would hand back the handle the boundary exists to
-#    withhold -- so a caller of those three functions has no way to reach
-#    them without importing memguard itself. Filed upstream as
-#    jeremyhahn/go-truststrap#60, with noiseproto's plain-[]byte
-#    EncodeStaticKey/DecodeStaticKey cited as the shape that already works.
-#    Every other memguard call in each of these files IS the SDK wrapper
-#    (secure.Wipe, secure.Buffer) and is not part of the exemption; only the
-#    import line is listed -- the symbol is always the banned import path
-#    itself, and a file only ever imports a given path once.
-#
-# 2. rule-2 narrowing filed on go-qrdb (rule 2) -- pkg/ssh/keys already
+# 1. rule-2 narrowing filed on go-qrdb (rule 2) -- pkg/ssh/keys already
 #    parses only *secure.Buffer/*secure.Secret-backed bytes at every one of
 #    these sites (see pkg/ssh/keys/parse.go's ParsePEM and signer.go's
 #    enclaveSigner). ssh.ParsePrivateKey is called first ONLY to distinguish
@@ -76,15 +63,9 @@
 #    second half already holds at every site below; the narrowing needed is
 #    upstream, in the rule's detection, not in this package.
 #
-# A third class -- pre-existing rule-3 findings -- is listed at the bottom.
-# These are NOT rule-1/rule-2 exemptions and none of the reasoning above
-# applies to them; see that section's own header.
-
-# --- go-truststrap#60: forced *memguard.LockedBuffer (rule 1) --------------
-cmd/xkmsctl/bootstrap_p256.go	1	github.com/awnumar/memguard	go-truststrap#60: p256proto.{NewStaticKey,EncodeStaticKey,DecodeStaticKey} take *memguard.LockedBuffer; secure.Buffer exposes no accessor to supply one
-cmd/xkmsctl/bootstrap_p256_test.go	1	github.com/awnumar/memguard	go-truststrap#60: exercises the same forced p256proto signature directly
-pkg/server/bootstrap_suite.go	1	github.com/awnumar/memguard	go-truststrap#60: bootstrap.{Decode,Encode}P256StaticKey (p256proto.{Decode,Encode}StaticKey) force a *memguard.LockedBuffer
-pkg/trust/bootstrap/suite_test.go	1	github.com/awnumar/memguard	go-truststrap#60: exercises p256proto.EncodeStaticKey/DecodeStaticKey's forced *memguard.LockedBuffer signature directly
+# A second class -- pre-existing rule-3 findings -- is listed at the bottom.
+# These are NOT rule-2 exemptions and none of the reasoning above applies
+# to them; see that section's own header.
 
 # --- rule-2 narrowing filed on go-qrdb: already Buffer/Secret-backed -------
 pkg/ssh/keys/parse.go	2	ssh.ParsePrivateKey(pemBytes)	rule-2 narrowing filed on go-qrdb: pemBytes is the caller's *secure.Buffer-backed bytes (see ParsePEM's pemBuf parameter); ParsePrivateKey is the only way to detect an unencrypted key before falling back to ParsePrivateKeyWithPassphrase
@@ -92,7 +73,7 @@ pkg/ssh/keys/signer.go	2	ssh.ParsePrivateKey(pem)	rule-2 narrowing filed on go-q
 
 # --- Pre-existing rule-3 findings (holder fields typed string/[]byte) ------
 #
-# NOT a rule-1/rule-2 exemption class, and none of the reasoning at the top
+# NOT a rule-2 exemption class, and none of the reasoning at the top
 # of this file applies here. Every entry below predates this gate: the field
 # was already string/[]byte before secure-analyzer was wired in, wiring the
 # gate did not introduce any of them, and each one's fix is

@@ -12,8 +12,8 @@
 # reason. All four print approximately the same thing. The instrument has to
 # find a KNOWN violation first, or a green result is not a measurement.
 #
-# test/lint/secure/_fixtures holds the known instances: bad/bad.go trips all
-# three rules and clean/clean.go trips none, same shape otherwise. Both are
+# test/lint/secure/_fixtures holds the known instances: bad/bad.go trips
+# every rule once and clean/clean.go trips none, same shape otherwise. Both are
 # under a directory named with a leading underscore, which the Go toolchain
 # excludes from `./...` package discovery (`go help packages`) -- so this is
 # the ONLY thing in the repository that ever builds, vets or lints them, and
@@ -78,12 +78,16 @@ else
 	note "ok: bad fixture exit status $bad_rc -- the gate blocks"
 fi
 
+# Each rule has exactly one violation in the bad fixture, so exactly one
+# report: none means the rule went blind, two means a fixture case trips a
+# rule it was not written for.
 expect_hit() {
-	if grep -q "$1" "$bad_out"; then
-		note "ok: reported -- $2"
-	else
-		fail "NOT REPORTED in the bad fixture: $2"
-	fi
+	hits=$(grep -c "$1" "$bad_out" || true)
+	case "$hits" in
+	1) note "ok: reported once -- $2" ;;
+	0) fail "NOT REPORTED in the bad fixture: $2" ;;
+	*) fail "reported $hits times in the bad fixture, expected once: $2" ;;
+	esac
 }
 expect_hit 'import of "github.com/awnumar/memguard" is forbidden' \
 	'rule 1: raw memguard import'
@@ -92,16 +96,12 @@ expect_hit 'call to ssh.ParsePrivateKey is forbidden' \
 expect_hit 'field "Password" holds sensitive material as string' \
 	'rule 3: a holder field with no scope-clause cover'
 
-expect_hit 'secure.Buffer.Bytes holds no borrow across the read' \
-	'rule 4: Buffer.Bytes with no borrow held'
-expect_hit 'malformed //secure:unborrowed directive' \
-	'rule 5: malformed unborrowed directive'
 expect_hit 'string(...) converts protected bytes to a string' \
-	'rule 6: string() of protected bytes'
+	'rule 4: string() of protected bytes'
 expect_hit 'copies protected bytes into ordinary memory that is never wiped' \
-	'rule 7: an unwiped copy of protected bytes'
+	'rule 5: an unwiped copy of protected bytes'
 
-# --- Every diagnostic must classify under a known rule and FAIL (rules 4-7
+# --- Every diagnostic must classify under a known rule and FAIL (rules 4-5
 #     are never allowlistable), so a reworded upstream message cannot slip
 #     through as "unrecognised" and a new finding cannot slip through as
 #     allowed. Uses the real process_diagnostics against an empty allowlist.
@@ -115,7 +115,7 @@ ALLOWLIST="$WORK/empty-allowlist.txt"
 classify_out="$WORK/classify.out"
 before=$fails
 process_diagnostics "$bad_out" "" "$(cd "$ROOT" && pwd)" >"$classify_out"
-# process_diagnostics fails every rule 4-7 finding by design; those are the
+# process_diagnostics fails every rule 4-5 finding by design; those are the
 # findings under test, not selftest failures. Reset here, before the
 # assertions below, so a failed assertion still counts.
 fails=$before
@@ -125,7 +125,7 @@ if grep -q 'does not match any known securecheck rule message' "$classify_out"; 
 else
 	note "ok: every bad-fixture diagnostic classifies under a known rule"
 fi
-for r in 4 5 6 7; do
+for r in 4 5; do
 	if grep -q "\[rule $r\]" "$classify_out"; then
 		note "ok: rule $r findings fail the gate, classified under their rule"
 	else
@@ -136,7 +136,7 @@ done
 # --- The clean fixture must stay silent AND exit 0. -------------------------
 if [ "$clean_rc" -ne 0 ]; then
 	fail "go vet exited $clean_rc on the clean fixture, which trips none of
-      the three rules; the analyzer, or the fixture, regressed."
+      the rules; the analyzer, or the fixture, regressed."
 else
 	note "ok: clean fixture exit status 0"
 fi

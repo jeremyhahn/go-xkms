@@ -71,19 +71,19 @@ func New(base storage.Backend, rootKeyPath string, logger *slog.Logger) (*Contro
 // barrier passphrase. It initializes the barrier on first use, so the first
 // user login keys the store; subsequent logins just unseal. Both "already
 // initialized" and "already unsealed" are benign and tolerated.
-func (c *Controller) Unseal(passphrase []byte) error {
+func (c *Controller) Unseal(passphrase []byte) (err error) {
 	ctx := context.Background()
 	creds, credErr := seal.CredentialsFor(ctx, passphrase)
 	if credErr != nil {
 		return credErr
 	}
-	defer creds.Secret.Destroy()
+	defer func() { err = errors.Join(err, creds.Secret.Destroy()) }()
 
-	if err := c.barrier.Initialize(ctx, creds); err != nil && !isAlreadyInitialized(err) {
-		return err
+	if initErr := c.barrier.Initialize(ctx, creds); initErr != nil && !isAlreadyInitialized(initErr) {
+		return initErr
 	}
-	if err := c.barrier.Unseal(ctx, creds); err != nil && !isAlreadyUnsealed(err) {
-		return err
+	if unsealErr := c.barrier.Unseal(ctx, creds); unsealErr != nil && !isAlreadyUnsealed(unsealErr) {
+		return unsealErr
 	}
 	return nil
 }
@@ -120,7 +120,7 @@ func (c *Controller) Seal() error {
 // error, when non-nil, is joined onto the failure that triggered the reseal
 // so both are visible to the caller, not because the barrier's state is in
 // doubt.
-func (c *Controller) Rekey(oldPassphrase, newPassphrase []byte) error {
+func (c *Controller) Rekey(oldPassphrase, newPassphrase []byte) (err error) {
 	ctx := context.Background()
 
 	wasSealed := c.barrier.IsSealed()
@@ -129,13 +129,13 @@ func (c *Controller) Rekey(oldPassphrase, newPassphrase []byte) error {
 		if credErr != nil {
 			return credErr
 		}
-		defer oldCreds.Secret.Destroy()
-		err := c.barrier.Unseal(ctx, oldCreds)
-		if isUninitialized(err) {
+		defer func() { err = errors.Join(err, oldCreds.Secret.Destroy()) }()
+		unsealErr := c.barrier.Unseal(ctx, oldCreds)
+		if isUninitialized(unsealErr) {
 			return nil // no barrier yet; first login will key it to the new PIN
 		}
-		if err != nil && !isAlreadyUnsealed(err) {
-			return err
+		if unsealErr != nil && !isAlreadyUnsealed(unsealErr) {
+			return unsealErr
 		}
 	}
 
@@ -148,14 +148,14 @@ func (c *Controller) Rekey(oldPassphrase, newPassphrase []byte) error {
 		}
 		return credErr
 	}
-	defer newCreds.Secret.Destroy()
-	if err := c.barrier.ChangePassword(ctx, newCreds); err != nil {
+	defer func() { err = errors.Join(err, newCreds.Secret.Destroy()) }()
+	if changeErr := c.barrier.ChangePassword(ctx, newCreds); changeErr != nil {
 		if wasSealed {
 			if sealErr := c.barrier.Seal(); sealErr != nil {
-				return errors.Join(err, sealErr)
+				return errors.Join(changeErr, sealErr)
 			}
 		}
-		return err
+		return changeErr
 	}
 
 	if wasSealed {

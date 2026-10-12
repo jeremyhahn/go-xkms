@@ -168,7 +168,10 @@ func (h *pairingHarness) pair(device *attesttest.Phone, exchanges int, address s
 	localKey, err := pairing.GenerateStaticKey()
 	require.NoError(h.t, err)
 	defer localKey.Destroy()
-	h.lastLocalPrivate = append([]byte(nil), localKey.Private...)
+	require.NoError(h.t, pairing.WithPrivateKey(localKey, func(privateKey []byte) error {
+		h.lastLocalPrivate = bytes.Clone(privateKey)
+		return nil
+	}))
 
 	session, err := pairing.NewNoiseSession(&pairing.NoiseSessionConfig{
 		LocalStaticKey: localKey,

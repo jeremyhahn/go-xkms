@@ -494,7 +494,7 @@ func TestPairedDeviceBackendConfigCarriesEveryIdentityCheck(t *testing.T) {
 		Name:                       "bound",
 		Address:                    "00:11:22:33:44:55",
 		LocalNoisePrivateKey:       base64.StdEncoding.EncodeToString(raw),
-		NoisePublicKey:             base64.StdEncoding.EncodeToString(remote.Public),
+		NoisePublicKey:             base64.StdEncoding.EncodeToString(remote.PublicBytes()),
 		DeviceFingerprint:          hex.EncodeToString(dak.Fingerprint()),
 		AttestationProtocolVersion: pairing.AttestProtocolV2,
 	}
@@ -510,7 +510,7 @@ func TestPairedDeviceBackendConfigCarriesEveryIdentityCheck(t *testing.T) {
 			"demanding the proof without a verifier is a refusal at connect; both must be set together")
 		assert.Equal(t, dak.Fingerprint(), cfg.ExpectedDeviceFingerprint,
 			"the stored fingerprint must bind the prologue; none of the five call sites used to set it")
-		assert.Equal(t, remote.Public, cfg.ExpectedRemoteStatic)
+		assert.Equal(t, remote.PublicBytes(), cfg.ExpectedRemoteStatic)
 		assert.True(t, cfg.OwnsStaticKey,
 			"these helpers keep nothing, so the backend must own the key or it is never released")
 	})

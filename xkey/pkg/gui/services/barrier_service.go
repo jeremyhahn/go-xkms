@@ -257,7 +257,7 @@ func (s *BarrierService) BestStrategy() (*BarrierStrategyInfo, error) {
 //
 // A password is required when the strategy is passphrase.
 // After initialization the barrier transitions to the unsealed state.
-func (s *BarrierService) Initialize(password, strategyID string) error {
+func (s *BarrierService) Initialize(password, strategyID string) (err error) {
 	s.mu.Lock()
 	// NOTE: mu is manually unlocked before the post-unseal hook (same
 	// pattern as Unseal) to allow re-entrant BarrierService calls.
@@ -365,7 +365,7 @@ func (s *BarrierService) Initialize(password, strategyID string) error {
 		s.log.Error("barrier: CredentialsFor failed", "error", credErr)
 		return errors.Join(credErr, closeErr)
 	}
-	defer creds.Secret.Destroy()
+	defer func() { err = errors.Join(err, creds.Secret.Destroy()) }()
 
 	if initErr := barrier.Initialize(ctx, creds); initErr != nil {
 		closeErr := base.Close()
@@ -410,7 +410,7 @@ func (s *BarrierService) Initialize(password, strategyID string) error {
 // The strategyID parameter specifies which sealing strategy was used to
 // initialize the barrier. This must match the strategy persisted in config
 // — no auto-detection or fallback is performed.
-func (s *BarrierService) Unseal(password, strategyID string) error {
+func (s *BarrierService) Unseal(password, strategyID string) (err error) {
 	s.mu.Lock()
 
 	// Re-unseal in place when this process already holds the barrier and
@@ -436,7 +436,7 @@ func (s *BarrierService) Unseal(password, strategyID string) error {
 			s.mu.Unlock()
 			return s.barrierAuditErr(audit.OpBarrierUnsealed, false, credErr, map[string]any{"strategy": s.lastStrategy})
 		}
-		defer creds.Secret.Destroy()
+		defer func() { err = errors.Join(err, creds.Secret.Destroy()) }()
 
 		if err := s.barrier.Unseal(ctx, creds); err != nil {
 			s.mu.Unlock()
@@ -507,7 +507,7 @@ func (s *BarrierService) Unseal(password, strategyID string) error {
 		s.mu.Unlock()
 		return errors.Join(s.barrierAuditErr(audit.OpBarrierUnsealed, false, credErr, map[string]any{"strategy": strategyID}), closeErr)
 	}
-	defer creds.Secret.Destroy()
+	defer func() { err = errors.Join(err, creds.Secret.Destroy()) }()
 
 	if err := barrier.Unseal(ctx, creds); err != nil {
 		closeErr := base.Close()
@@ -563,7 +563,7 @@ func (s *BarrierService) Seal() error {
 // The barrier must be initialized and unsealed. For hardware-backed
 // strategies this is a no-op because those strategies do not use
 // password-derived wrapping keys.
-func (s *BarrierService) ChangePassword(newPassword string) error {
+func (s *BarrierService) ChangePassword(newPassword string) (err error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
@@ -579,7 +579,7 @@ func (s *BarrierService) ChangePassword(newPassword string) error {
 	if credErr != nil {
 		return s.barrierAuditErr(audit.OpBarrierPasswordChanged, false, credErr, nil)
 	}
-	defer creds.Secret.Destroy()
+	defer func() { err = errors.Join(err, creds.Secret.Destroy()) }()
 
 	if err := s.barrier.ChangePassword(ctx, creds); err != nil {
 		return s.barrierAuditErr(audit.OpBarrierPasswordChanged, false, err, nil)

@@ -181,14 +181,6 @@ var (
 	// into protected memory. The caller's encoded bytes remain theirs to wipe.
 	DecodeNoiseStaticKey = pkgbootstrap.DecodeNoiseStaticKey
 
-	// NoiseServerStaticKey adapts a protected NoiseStaticKey to the key pair
-	// NoiseServerConfig.StaticKey takes. Without it an SDK-only consumer can
-	// generate a protected key and has no way to give it to the server —
-	// GenerateNoiseStaticKey and NoiseServerConfig were re-exported here
-	// while the adapter that joins them was not, so the two halves compiled
-	// individually and could not be used together.
-	NoiseServerStaticKey = pkgbootstrap.NoiseServerStaticKey
-
 	// WipeNoiseBytes zeroes a buffer that held Noise key material. Re-exported
 	// because EncodeNoiseStaticKey hands the caller the responsibility for the
 	// buffer it wrote into.

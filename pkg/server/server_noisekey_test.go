@@ -17,8 +17,10 @@ import (
 	"testing"
 	"time"
 
+	"github.com/flynn/noise"
 	"github.com/stretchr/testify/require"
 
+	"github.com/jeremyhahn/go-enclave"
 	"github.com/jeremyhahn/go-truststrap/pkg/p256proto"
 
 	"github.com/jeremyhahn/go-xkms/pkg/trust/bootstrap"
@@ -87,7 +89,7 @@ func TestNoiseBootstrapKeySurvivesStart(t *testing.T) {
 	require.NotNil(t, p256Key, "the approved suite is available in every build")
 
 	if noiseRunnable {
-		require.NotEmpty(t, noiseKey.Private,
+		require.NoError(t, noiseKey.WithDHKey(func(noise.DHKey) error { return nil }),
 			"the Noise static key was destroyed while the accept loop was still running")
 	}
 	// NewResponder refuses a destroyed key, which is the only exported way to
@@ -101,7 +103,7 @@ func TestNoiseBootstrapKeySurvivesStart(t *testing.T) {
 
 	// And Shutdown is where they get released, once Stop has drained.
 	if noiseRunnable {
-		require.Empty(t, noiseKey.Private,
+		require.ErrorIs(t, noiseKey.WithDHKey(func(noise.DHKey) error { return nil }), enclave.ErrEnclaveDestroyed,
 			"Shutdown left the Noise static key resident after a clean stop")
 	}
 	_, err = p256proto.NewResponder(p256Key)

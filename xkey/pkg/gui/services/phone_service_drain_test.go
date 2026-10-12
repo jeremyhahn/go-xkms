@@ -14,8 +14,11 @@
 package services
 
 import (
+	"errors"
 	"testing"
 	"time"
+
+	"github.com/jeremyhahn/go-enclave"
 
 	"github.com/jeremyhahn/go-xkms/xkey/pkg/pairing"
 	"github.com/jeremyhahn/go-xkms/xkey/pkg/phone"
@@ -76,9 +79,13 @@ func teardown(t *testing.T, svc *PhoneService, within time.Duration) bool {
 }
 
 // destroyed reports whether a StaticKey has had its protected pages released.
-// Destroy zeroes the embedded key pair, so an empty private half is the
-// observable difference without reading freed memory.
-func destroyed(key *pairing.StaticKey) bool { return len(key.Private) == 0 }
+// Borrowing a destroyed key's private scalar fails with
+// enclave.ErrEnclaveDestroyed, which is the observable difference without
+// reading freed memory.
+func destroyed(key *pairing.StaticKey) bool {
+	err := pairing.WithPrivateKey(key, func([]byte) error { return nil })
+	return errors.Is(err, enclave.ErrEnclaveDestroyed)
+}
 
 // TestCloseActiveConnection_BoundsTheDrain covers the hang this branch
 // introduced into the GUI's teardown path. An attestation holds its lease

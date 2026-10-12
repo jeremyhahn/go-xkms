@@ -14,8 +14,6 @@
 package bootstrap
 
 import (
-	"github.com/flynn/noise"
-
 	"github.com/jeremyhahn/go-truststrap/pkg/noiseproto"
 	noiseboot "github.com/jeremyhahn/go-truststrap/pkg/noiseproto/bootstrap"
 	"github.com/jeremyhahn/go-truststrap/pkg/truststrap"
@@ -36,7 +34,8 @@ type BundleProvider = truststrap.BundleProvider
 // Its private scalar lives in protected memory outside the Go heap; the owner
 // must Destroy it once every session built from it has finished.
 //
-// Pass it to a NoiseServerConfig with NoiseServerStaticKey.
+// NoiseServerConfig.StaticKey takes it directly; the server borrows it per
+// handshake and never destroys it.
 type NoiseStaticKey = noiseproto.StaticKey
 
 // NoiseHexKeySize is the required length of an EncodeNoiseStaticKey
@@ -72,31 +71,6 @@ var (
 	ErrNoiseServerNotStarted     = noiseboot.ErrServerNotStarted
 	ErrNoiseServerAlreadyStarted = noiseboot.ErrServerAlreadyStarted
 )
-
-// NoiseServerStaticKey adapts a protected NoiseStaticKey to the key pair
-// NoiseServerConfig.StaticKey takes:
-//
-//	key, err := bootstrap.GenerateNoiseStaticKey()
-//	...
-//	cfg := &bootstrap.NoiseServerConfig{
-//		StaticKey: bootstrap.NoiseServerStaticKey(key),
-//		...
-//	}
-//
-// It exists because the two re-exports do not otherwise compose. NoiseStaticKey
-// holds its private scalar in protected memory, while the server config takes a
-// plain key pair, so assigning one to the other does not type-check and a
-// consumer would have to reach into the embedded field itself — which means
-// importing flynn/noise just to name a type this package already re-exports.
-//
-// The returned pair ALIASES key's protected pages. It stays valid exactly as
-// long as key does, and destroying key invalidates any server still holding it.
-func NoiseServerStaticKey(key *NoiseStaticKey) *noise.DHKey {
-	if key == nil {
-		return nil
-	}
-	return &key.DHKey
-}
 
 // GenerateNoiseStaticKey generates a Curve25519 static key pair for the
 // Noise_NK handshake, with the private scalar drawn straight into protected

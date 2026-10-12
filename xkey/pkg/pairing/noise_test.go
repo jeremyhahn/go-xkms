@@ -21,6 +21,7 @@ import (
 	"errors"
 	"testing"
 
+	"github.com/jeremyhahn/go-enclave"
 	"github.com/jeremyhahn/go-truststrap/pkg/noiseproto"
 	secure "github.com/jeremyhahn/go-xkms/sdk/go/secure"
 	"github.com/stretchr/testify/assert"
@@ -28,6 +29,76 @@ import (
 	"golang.org/x/crypto/chacha20poly1305"
 	"golang.org/x/crypto/curve25519"
 )
+
+// privateCopy returns a heap copy of key's private scalar for comparison,
+// wiped when the test ends.
+func privateCopy(t *testing.T, key *StaticKey) []byte {
+	t.Helper()
+	var private []byte
+	require.NoError(t, WithPrivateKey(key, func(privateKey []byte) error {
+		private = bytes.Clone(privateKey)
+		return nil
+	}))
+	t.Cleanup(func() { WipeBytes(private) })
+	return private
+}
+
+func TestWithPrivateKey(t *testing.T) {
+	key, err := GenerateStaticKey()
+	require.NoError(t, err)
+	defer key.Destroy()
+
+	var lent int
+	require.NoError(t, WithPrivateKey(key, func(privateKey []byte) error {
+		lent = len(privateKey)
+		return nil
+	}))
+	assert.Equal(t, NoiseKeySize, lent)
+
+	sentinel := errors.New("callback failed")
+	err = WithPrivateKey(key, func([]byte) error { return sentinel })
+	assert.ErrorIs(t, err, sentinel, "the callback's error must reach the caller")
+}
+
+func TestWithPrivateKey_DestroyedKey(t *testing.T) {
+	key, err := GenerateStaticKey()
+	require.NoError(t, err)
+	key.Destroy()
+
+	called := false
+	err = WithPrivateKey(key, func([]byte) error {
+		called = true
+		return nil
+	})
+	assert.ErrorIs(t, err, enclave.ErrEnclaveDestroyed)
+	assert.False(t, called, "a destroyed key must not lend its scalar")
+}
+
+func TestCloneStaticKey(t *testing.T) {
+	original, err := GenerateStaticKey()
+	require.NoError(t, err)
+	defer original.Destroy()
+
+	clone, err := CloneStaticKey(original)
+	require.NoError(t, err)
+
+	assert.Equal(t, privateCopy(t, original), privateCopy(t, clone))
+	assert.Equal(t, original.PublicBytes(), clone.PublicBytes())
+
+	clone.Destroy()
+	assert.Equal(t, NoiseKeySize, len(privateCopy(t, original)),
+		"destroying the clone must leave the original usable")
+}
+
+func TestCloneStaticKey_DestroyedKey(t *testing.T) {
+	key, err := GenerateStaticKey()
+	require.NoError(t, err)
+	key.Destroy()
+
+	clone, err := CloneStaticKey(key)
+	assert.ErrorIs(t, err, enclave.ErrEnclaveDestroyed)
+	assert.Nil(t, clone)
+}
 
 func TestNoiseConstants(t *testing.T) {
 	assert.Equal(t, "Noise_XX_25519_ChaChaPoly_SHA256", NoiseProtocolName)
@@ -40,10 +111,10 @@ func TestGenerateStaticKey(t *testing.T) {
 	require.NoError(t, err)
 	require.NotNil(t, key)
 
-	assert.Len(t, key.Private, NoiseKeySize)
-	assert.Len(t, key.Public, NoiseKeySize)
-	assert.False(t, bytes.Equal(key.Private, make([]byte, NoiseKeySize)))
-	assert.False(t, bytes.Equal(key.Public, make([]byte, NoiseKeySize)))
+	assert.Len(t, privateCopy(t, key), NoiseKeySize)
+	assert.Len(t, key.PublicBytes(), NoiseKeySize)
+	assert.False(t, bytes.Equal(privateCopy(t, key), make([]byte, NoiseKeySize)))
+	assert.False(t, bytes.Equal(key.PublicBytes(), make([]byte, NoiseKeySize)))
 }
 
 func TestGenerateStaticKey_Uniqueness(t *testing.T) {
@@ -53,20 +124,20 @@ func TestGenerateStaticKey_Uniqueness(t *testing.T) {
 	key2, err := GenerateStaticKey()
 	require.NoError(t, err)
 
-	assert.False(t, bytes.Equal(key1.Private, key2.Private))
-	assert.False(t, bytes.Equal(key1.Public, key2.Public))
+	assert.False(t, bytes.Equal(privateCopy(t, key1), privateCopy(t, key2)))
+	assert.False(t, bytes.Equal(key1.PublicBytes(), key2.PublicBytes()))
 }
 
 func TestLoadStaticKey(t *testing.T) {
 	original, err := GenerateStaticKey()
 	require.NoError(t, err)
 
-	loaded, err := LoadStaticKey(original.Private)
+	loaded, err := LoadStaticKey(privateCopy(t, original))
 	require.NoError(t, err)
 	require.NotNil(t, loaded)
 
-	assert.Equal(t, original.Private, loaded.Private)
-	assert.Equal(t, original.Public, loaded.Public)
+	assert.Equal(t, privateCopy(t, original), privateCopy(t, loaded))
+	assert.Equal(t, original.PublicBytes(), loaded.PublicBytes())
 }
 
 func TestLoadStaticKey_InvalidLength(t *testing.T) {
@@ -92,7 +163,7 @@ func TestLoadStaticKeyFromBuffer(t *testing.T) {
 	require.NoError(t, err)
 	defer original.Destroy()
 
-	scalar := append([]byte(nil), original.Private...)
+	scalar := append([]byte(nil), privateCopy(t, original)...)
 	buf, err := secure.NewBufferFromBytes(scalar)
 	require.NoError(t, err)
 	defer buf.Destroy()
@@ -101,8 +172,8 @@ func TestLoadStaticKeyFromBuffer(t *testing.T) {
 	require.NoError(t, err)
 	defer loaded.Destroy()
 
-	assert.Equal(t, original.Private, loaded.Private)
-	assert.Equal(t, original.Public, loaded.Public)
+	assert.Equal(t, privateCopy(t, original), privateCopy(t, loaded))
+	assert.Equal(t, original.PublicBytes(), loaded.PublicBytes())
 }
 
 func TestLoadStaticKeyFromBuffer_Invalid(t *testing.T) {
@@ -143,8 +214,8 @@ func TestEncodeDecodeStaticKey(t *testing.T) {
 	require.NoError(t, err)
 	defer decoded.Destroy()
 
-	assert.Equal(t, key.Private, decoded.Private)
-	assert.Equal(t, key.Public, decoded.Public)
+	assert.Equal(t, privateCopy(t, key), privateCopy(t, decoded))
+	assert.Equal(t, key.PublicBytes(), decoded.PublicBytes())
 }
 
 // TestEncodeStaticKey_ShortBuffer covers the buffer-form contract: the caller
@@ -200,7 +271,7 @@ func TestNewNoiseSession_WithProvidedKey(t *testing.T) {
 	// The public half identifies the scalar the session is using: it is
 	// derived from it, so matching it proves the supplied key was adopted.
 	// There is deliberately no way to read the private half back out.
-	assert.Equal(t, key.Public, session.LocalStaticPublicKey())
+	assert.Equal(t, key.PublicBytes(), session.LocalStaticPublicKey())
 }
 
 func TestNoiseSession_InitHandshake(t *testing.T) {
@@ -355,7 +426,7 @@ func TestNoiseSession_StaticKeyMismatch(t *testing.T) {
 	require.NoError(t, err)
 
 	initiator, err := NewNoiseSession(&NoiseSessionConfig{
-		ExpectedRemoteStatic: expectedKey.Public,
+		ExpectedRemoteStatic: expectedKey.PublicBytes(),
 		IsInitiator:          true,
 	})
 	require.NoError(t, err)

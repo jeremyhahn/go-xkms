@@ -79,7 +79,7 @@ func TestTCPPairingServer_PinRefusesAnUnexpectedInitiator(t *testing.T) {
 		ListenAddr:           "127.0.0.1:0",
 		RequestHandler:       handler,
 		LiveAttest:           alwaysLiveAttestForTest,
-		ExpectedRemoteStatic: expectedKey.Public,
+		ExpectedRemoteStatic: expectedKey.PublicBytes(),
 	})
 	if err != nil {
 		t.Fatalf("NewTCPPairingServer: %v", err)

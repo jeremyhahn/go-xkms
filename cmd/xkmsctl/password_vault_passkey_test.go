@@ -276,10 +276,7 @@ func TestResolveVaultPasskeyPIN_Sources(t *testing.T) {
 		pin, err := resolveVaultPasskeyPIN(t.Context(), passwordUnlockCmd)
 		require.NoError(t, err)
 		defer pin.Destroy()
-		buf, err := pin.Open(t.Context())
-		require.NoError(t, err)
-		defer buf.Destroy()
-		assert.Equal(t, "246810", string(buf.Bytes()))
+		assert.Equal(t, "246810", openTestPIN(t, pin))
 	})
 	t.Run("empty terminal entry", func(t *testing.T) {
 		t.Setenv(pinEnvVar, "")

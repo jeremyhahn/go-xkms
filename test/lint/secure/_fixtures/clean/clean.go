@@ -12,7 +12,7 @@
 //    Contact licensing@automatethethings.com for commercial licensing options.
 
 // Package clean is the compliant counterpart of the bad fixture beside it:
-// same shape, none of the three secure-analyzer rules apply. Together the
+// same shape, none of the secure-analyzer rules apply. Together the
 // pair is what `make secure-analyzer-selftest` proves the gate can tell
 // apart -- a sweep that cannot find a known violation, or that flags a
 // compliant file, is measuring something other than this repository.
@@ -38,8 +38,8 @@ func parseWithPassphrase(pemBytes, passphrase []byte) (ssh.Signer, error) {
 	return ssh.ParsePrivateKeyWithPassphrase(pemBytes, passphrase)
 }
 
-// readBorrowed is the compliant counterpart of bad.readUnborrowed and
-// bad.toString: the read happens inside a held borrow and no copy leaves it.
+// readBorrowed is the compliant counterpart of bad.toString: the read
+// happens inside a held borrow and no copy leaves it.
 func readBorrowed(b *sdksecure.Buffer) (byte, error) {
 	var first byte
 	err := b.WithBytes(func(p []byte) error {

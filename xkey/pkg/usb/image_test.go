@@ -14,12 +14,16 @@
 package usb
 
 import (
+	"context"
 	"errors"
 	"io"
 	"os"
 	"path/filepath"
 	"testing"
 
+	"github.com/jeremyhahn/go-enclave"
+	"github.com/jeremyhahn/go-luks2/pkg/dmcrypt"
+	"github.com/jeremyhahn/go-luks2/pkg/filesystem"
 	"github.com/jeremyhahn/go-luks2/pkg/luks2"
 
 	secure "github.com/jeremyhahn/go-xkms/sdk/go/secure"
@@ -43,7 +47,12 @@ func openSecretString(t *testing.T, secret *secure.Secret) string {
 	buf, err := secret.Open(t.Context())
 	require.NoError(t, err)
 	defer buf.Destroy()
-	return string(buf.Bytes())
+	var s string
+	require.NoError(t, buf.WithBytes(func(b []byte) error {
+		s = string(b)
+		return nil
+	}))
+	return s
 }
 
 // ---------------------------------------------------------------------------
@@ -155,7 +164,7 @@ func TestCreateOnImageFile_LoopSetupFails(t *testing.T) {
 	defer restore()
 
 	loopErr := errors.New("losetup failed")
-	luksSetupLoopDevice = func(file string) (string, error) {
+	luksSetupLoopDevice = func(_ context.Context, file string) (string, error) {
 		return "", loopErr
 	}
 
@@ -183,10 +192,10 @@ func TestCreateOnImageFile_PartitionFails(t *testing.T) {
 	defer restore()
 
 	detached := false
-	luksSetupLoopDevice = func(file string) (string, error) {
+	luksSetupLoopDevice = func(_ context.Context, file string) (string, error) {
 		return "/dev/loop99", nil
 	}
-	luksDetachLoopDevice = func(device string) error {
+	luksDetachLoopDevice = func(_ context.Context, device string) error {
 		detached = true
 		return nil
 	}
@@ -240,7 +249,7 @@ func TestCreateOnImageFile_DetachWarning(t *testing.T) {
 	mockAllCommandsSuccess(t)
 
 	// Override detach to fail.
-	luksDetachLoopDevice = func(device string) error {
+	luksDetachLoopDevice = func(_ context.Context, device string) error {
 		return errors.New("detach failed")
 	}
 
@@ -322,7 +331,7 @@ func TestPartitionAndFormat_LUKSFormatFails(t *testing.T) {
 	defer restore()
 	mockAllCommandsSuccess(t)
 
-	luksFormat = func(opts luks2.FormatOptions) error {
+	luksFormat = func(context.Context, string, *enclave.MemoryEnclave, luks2.FormatParams) error {
 		return errors.New("luks format failed")
 	}
 
@@ -526,10 +535,12 @@ func TestFormatLUKS_Success(t *testing.T) {
 	restore := saveHooks(t)
 	defer restore()
 
-	luksFormat = func(opts luks2.FormatOptions) error { return nil }
-	luksUnlock = func(device string, passphrase []byte, name string) error { return nil }
-	luksMakeFilesystem = func(device, fstype, label string) error { return nil }
-	luksLock = func(name string) error { return nil }
+	luksFormat = func(context.Context, string, *enclave.MemoryEnclave, luks2.FormatParams) error { return nil }
+	luksUnlock = func(_ context.Context, _ string, _ *enclave.MemoryEnclave, name string) (*dmcrypt.Mapping, error) {
+		return &dmcrypt.Mapping{Name: name}, nil
+	}
+	luksMakeFilesystem = func(context.Context, string, filesystem.Type, filesystem.MakeParams) error { return nil }
+	luksLock = func(_ context.Context, name string) error { return nil }
 
 	err := formatLUKS(t.Context(), "/dev/sdb2", testSecret(t, "test-passphrase"))
 	require.NoError(t, err)
@@ -540,7 +551,7 @@ func TestFormatLUKS_FormatFails(t *testing.T) {
 	restore := saveHooks(t)
 	defer restore()
 
-	luksFormat = func(opts luks2.FormatOptions) error {
+	luksFormat = func(context.Context, string, *enclave.MemoryEnclave, luks2.FormatParams) error {
 		return errors.New("format failed")
 	}
 
@@ -558,9 +569,9 @@ func TestFormatLUKS_UnlockFails(t *testing.T) {
 	restore := saveHooks(t)
 	defer restore()
 
-	luksFormat = func(opts luks2.FormatOptions) error { return nil }
-	luksUnlock = func(device string, passphrase []byte, name string) error {
-		return errors.New("unlock failed")
+	luksFormat = func(context.Context, string, *enclave.MemoryEnclave, luks2.FormatParams) error { return nil }
+	luksUnlock = func(context.Context, string, *enclave.MemoryEnclave, string) (*dmcrypt.Mapping, error) {
+		return nil, errors.New("unlock failed")
 	}
 
 	err := formatLUKS(t.Context(), "/dev/sdb2", testSecret(t, "test-passphrase"))
@@ -588,8 +599,11 @@ func TestCreateImage_KeyringUnavailable(t *testing.T) {
 		return nil
 	}
 	formatCalled := false
-	luksFormat = func(opts luks2.FormatOptions) error { formatCalled = true; return nil }
-	luksCheckKeyring = func() error { return &luks.KeyringError{Err: luks2.ErrKeyringBlocked} }
+	luksFormat = func(context.Context, string, *enclave.MemoryEnclave, luks2.FormatParams) error {
+		formatCalled = true
+		return nil
+	}
+	luksCheckKeyring = func() error { return &luks.KeyringError{Err: dmcrypt.ErrKeyringBlocked} }
 
 	cfg := ImageConfig{
 		Path:       filepath.Join(t.TempDir(), "test.img"),
@@ -604,7 +618,7 @@ func TestCreateImage_KeyringUnavailable(t *testing.T) {
 	assert.Equal(t, "keyring_preflight", usbErr.Operation)
 	assert.Equal(t, cfg.Path, usbErr.Path)
 	assert.True(t, errors.Is(err, luks.ErrKeyringUnavailable))
-	assert.True(t, errors.Is(err, luks2.ErrKeyringBlocked))
+	assert.True(t, errors.Is(err, dmcrypt.ErrKeyringBlocked))
 	assert.Empty(t, commands, "no partitioning or formatting command may run when the volume could never be unlocked")
 	assert.False(t, formatCalled, "the LUKS partition must not be formatted")
 	assert.NoFileExists(t, cfg.Path, "the image file must not be created")
@@ -617,12 +631,14 @@ func TestFormatLUKS_MakeFilesystemFails(t *testing.T) {
 	defer restore()
 
 	lockCalled := false
-	luksFormat = func(opts luks2.FormatOptions) error { return nil }
-	luksUnlock = func(device string, passphrase []byte, name string) error { return nil }
-	luksMakeFilesystem = func(device, fstype, label string) error {
+	luksFormat = func(context.Context, string, *enclave.MemoryEnclave, luks2.FormatParams) error { return nil }
+	luksUnlock = func(_ context.Context, _ string, _ *enclave.MemoryEnclave, name string) (*dmcrypt.Mapping, error) {
+		return &dmcrypt.Mapping{Name: name}, nil
+	}
+	luksMakeFilesystem = func(context.Context, string, filesystem.Type, filesystem.MakeParams) error {
 		return errors.New("mkfs failed")
 	}
-	luksLock = func(name string) error {
+	luksLock = func(_ context.Context, name string) error {
 		lockCalled = true
 		return nil
 	}
@@ -642,10 +658,12 @@ func TestFormatLUKS_LockFails(t *testing.T) {
 	restore := saveHooks(t)
 	defer restore()
 
-	luksFormat = func(opts luks2.FormatOptions) error { return nil }
-	luksUnlock = func(device string, passphrase []byte, name string) error { return nil }
-	luksMakeFilesystem = func(device, fstype, label string) error { return nil }
-	luksLock = func(name string) error {
+	luksFormat = func(context.Context, string, *enclave.MemoryEnclave, luks2.FormatParams) error { return nil }
+	luksUnlock = func(_ context.Context, _ string, _ *enclave.MemoryEnclave, name string) (*dmcrypt.Mapping, error) {
+		return &dmcrypt.Mapping{Name: name}, nil
+	}
+	luksMakeFilesystem = func(context.Context, string, filesystem.Type, filesystem.MakeParams) error { return nil }
+	luksLock = func(_ context.Context, name string) error {
 		return errors.New("lock failed")
 	}
 
@@ -817,7 +835,7 @@ func TestCopyBinary_LargeFile(t *testing.T) {
 // TestStatus_NonExistent verifies that Status returns ErrImageNotFound
 // for a path that does not exist.
 func TestStatus_NonExistent(t *testing.T) {
-	_, err := Status("/nonexistent/path/image.img")
+	_, err := Status(t.Context(), "/nonexistent/path/image.img")
 	assert.Error(t, err)
 	assert.True(t, errors.Is(err, ErrImageNotFound))
 }
@@ -826,7 +844,7 @@ func TestStatus_NonExistent(t *testing.T) {
 func TestStatus_RegularFile(t *testing.T) {
 	restore := saveHooks(t)
 	defer restore()
-	luksIsUnlocked = func(name string) bool { return false }
+	luksIsUnlocked = func(_ context.Context, name string) bool { return false }
 
 	tmpDir := t.TempDir()
 	imgPath := filepath.Join(tmpDir, "test.img")
@@ -835,7 +853,7 @@ func TestStatus_RegularFile(t *testing.T) {
 	require.NoError(t, f.Truncate(2*GB))
 	f.Close()
 
-	status, err := Status(imgPath)
+	status, err := Status(t.Context(), imgPath)
 	require.NoError(t, err)
 
 	assert.Equal(t, imgPath, status.Path)
@@ -851,7 +869,7 @@ func TestStatus_RegularFile(t *testing.T) {
 func TestStatus_SmallFile(t *testing.T) {
 	restore := saveHooks(t)
 	defer restore()
-	luksIsUnlocked = func(name string) bool { return false }
+	luksIsUnlocked = func(_ context.Context, name string) bool { return false }
 
 	tmpDir := t.TempDir()
 	imgPath := filepath.Join(tmpDir, "small.img")
@@ -860,7 +878,7 @@ func TestStatus_SmallFile(t *testing.T) {
 	require.NoError(t, f.Truncate(100*MB))
 	f.Close()
 
-	status, err := Status(imgPath)
+	status, err := Status(t.Context(), imgPath)
 	require.NoError(t, err)
 
 	assert.Equal(t, int64(100*MB), status.TotalSize)
@@ -873,7 +891,7 @@ func TestStatus_SmallFile(t *testing.T) {
 func TestStatus_LUKSMounted(t *testing.T) {
 	restore := saveHooks(t)
 	defer restore()
-	luksIsUnlocked = func(name string) bool { return true }
+	luksIsUnlocked = func(_ context.Context, name string) bool { return true }
 
 	tmpDir := t.TempDir()
 	imgPath := filepath.Join(tmpDir, "test.img")
@@ -882,7 +900,7 @@ func TestStatus_LUKSMounted(t *testing.T) {
 	require.NoError(t, f.Truncate(2*GB))
 	f.Close()
 
-	status, err := Status(imgPath)
+	status, err := Status(t.Context(), imgPath)
 	require.NoError(t, err)
 	assert.True(t, status.LUKSMounted)
 }
@@ -892,7 +910,7 @@ func TestStatus_LUKSMounted(t *testing.T) {
 func TestStatus_ExactlyFAT32PartitionSize(t *testing.T) {
 	restore := saveHooks(t)
 	defer restore()
-	luksIsUnlocked = func(name string) bool { return false }
+	luksIsUnlocked = func(_ context.Context, name string) bool { return false }
 
 	tmpDir := t.TempDir()
 	imgPath := filepath.Join(tmpDir, "exact.img")
@@ -901,7 +919,7 @@ func TestStatus_ExactlyFAT32PartitionSize(t *testing.T) {
 	require.NoError(t, f.Truncate(FAT32PartitionSize))
 	f.Close()
 
-	status, err := Status(imgPath)
+	status, err := Status(t.Context(), imgPath)
 	require.NoError(t, err)
 	assert.Equal(t, FAT32PartitionSize, status.TotalSize)
 	assert.Equal(t, int64(0), status.LUKSSize)
@@ -917,7 +935,7 @@ func TestUpdateBinaries_RequiresRoot(t *testing.T) {
 	defer restore()
 	mockNonRootUser()
 
-	err := UpdateBinaries("/some/path", []string{"/some/binary"})
+	err := UpdateBinaries(t.Context(), "/some/path", []string{"/some/binary"})
 	assert.ErrorIs(t, err, ErrPermissionDenied)
 }
 
@@ -928,7 +946,7 @@ func TestUpdateBinaries_ImageNotFound(t *testing.T) {
 	defer restore()
 	mockRootUser()
 
-	err := UpdateBinaries("/nonexistent/image.img", []string{"/some/binary"})
+	err := UpdateBinaries(t.Context(), "/nonexistent/image.img", []string{"/some/binary"})
 	assert.Error(t, err)
 	assert.True(t, errors.Is(err, ErrImageNotFound))
 }
@@ -940,14 +958,14 @@ func TestUpdateBinaries_ImageFile_LoopSetupFails(t *testing.T) {
 	defer restore()
 	mockRootUser()
 
-	luksSetupLoopDevice = func(file string) (string, error) {
+	luksSetupLoopDevice = func(_ context.Context, file string) (string, error) {
 		return "", errors.New("loop setup failed")
 	}
 
 	imgPath := filepath.Join(t.TempDir(), "test.img")
 	require.NoError(t, os.WriteFile(imgPath, []byte("data"), 0600))
 
-	err := UpdateBinaries(imgPath, []string{"/some/binary"})
+	err := UpdateBinaries(t.Context(), imgPath, []string{"/some/binary"})
 	require.Error(t, err)
 
 	var usbErr *USBError
@@ -961,8 +979,8 @@ func TestUpdateBinaries_ImageFile_MountFails(t *testing.T) {
 	defer restore()
 	mockRootUser()
 
-	luksSetupLoopDevice = func(file string) (string, error) { return "/dev/loop99", nil }
-	luksDetachLoopDevice = func(device string) error { return nil }
+	luksSetupLoopDevice = func(_ context.Context, file string) (string, error) { return "/dev/loop99", nil }
+	luksDetachLoopDevice = func(_ context.Context, device string) error { return nil }
 	execCommand = func(name string, args ...string) error {
 		if name == "mount" {
 			return errors.New("mount failed")
@@ -973,7 +991,7 @@ func TestUpdateBinaries_ImageFile_MountFails(t *testing.T) {
 	imgPath := filepath.Join(t.TempDir(), "test.img")
 	require.NoError(t, os.WriteFile(imgPath, []byte("data"), 0600))
 
-	err := UpdateBinaries(imgPath, []string{"/some/binary"})
+	err := UpdateBinaries(t.Context(), imgPath, []string{"/some/binary"})
 	require.Error(t, err)
 	assert.True(t, errors.Is(err, ErrMountFailed))
 }
@@ -995,7 +1013,7 @@ func TestUpdateBinaries_ImageFile_Success(t *testing.T) {
 	binPath := filepath.Join(binDir, "xkey-linux-amd64")
 	require.NoError(t, os.WriteFile(binPath, []byte("binary"), 0755))
 
-	err := UpdateBinaries(imgPath, []string{binPath})
+	err := UpdateBinaries(t.Context(), imgPath, []string{binPath})
 	require.NoError(t, err)
 }
 
@@ -1010,7 +1028,7 @@ func TestUpdateBinaries_ImageFile_BinaryCopyFails(t *testing.T) {
 	imgPath := filepath.Join(t.TempDir(), "test.img")
 	require.NoError(t, os.WriteFile(imgPath, []byte("data"), 0600))
 
-	err := UpdateBinaries(imgPath, []string{"/nonexistent/binary"})
+	err := UpdateBinaries(t.Context(), imgPath, []string{"/nonexistent/binary"})
 	require.Error(t, err)
 	assert.True(t, errors.Is(err, ErrBinaryNotFound))
 }
@@ -1475,13 +1493,13 @@ func TestPopulateFAT32_WritesAllFiles(t *testing.T) {
 func TestStatus_ZeroSizeFile(t *testing.T) {
 	restore := saveHooks(t)
 	defer restore()
-	luksIsUnlocked = func(name string) bool { return false }
+	luksIsUnlocked = func(_ context.Context, name string) bool { return false }
 
 	tmpDir := t.TempDir()
 	imgPath := filepath.Join(tmpDir, "zero.img")
 	require.NoError(t, os.WriteFile(imgPath, nil, 0600))
 
-	status, err := Status(imgPath)
+	status, err := Status(t.Context(), imgPath)
 	require.NoError(t, err)
 	assert.Equal(t, int64(0), status.TotalSize)
 	assert.Equal(t, int64(0), status.LUKSSize)
@@ -1493,7 +1511,7 @@ func TestStatus_ZeroSizeFile(t *testing.T) {
 func TestStatus_SymlinkTarget(t *testing.T) {
 	restore := saveHooks(t)
 	defer restore()
-	luksIsUnlocked = func(name string) bool { return false }
+	luksIsUnlocked = func(_ context.Context, name string) bool { return false }
 
 	tmpDir := t.TempDir()
 	imgPath := filepath.Join(tmpDir, "test.img")
@@ -1505,7 +1523,7 @@ func TestStatus_SymlinkTarget(t *testing.T) {
 	linkPath := filepath.Join(tmpDir, "link.img")
 	require.NoError(t, os.Symlink(imgPath, linkPath))
 
-	status, err := Status(linkPath)
+	status, err := Status(t.Context(), linkPath)
 	require.NoError(t, err)
 	assert.Equal(t, linkPath, status.Path)
 	assert.Equal(t, 2*GB, status.TotalSize)
@@ -1525,7 +1543,7 @@ func TestUpdateBinaries_NoBinaries(t *testing.T) {
 	imgPath := filepath.Join(t.TempDir(), "test.img")
 	require.NoError(t, os.WriteFile(imgPath, []byte("data"), 0600))
 
-	err := UpdateBinaries(imgPath, nil)
+	err := UpdateBinaries(t.Context(), imgPath, nil)
 	require.NoError(t, err)
 }
 
@@ -1538,7 +1556,7 @@ func TestUpdateBinaries_DetachCalledOnImageFile(t *testing.T) {
 	mockAllCommandsSuccess(t)
 
 	detached := false
-	luksDetachLoopDevice = func(device string) error {
+	luksDetachLoopDevice = func(_ context.Context, device string) error {
 		detached = true
 		return nil
 	}
@@ -1550,7 +1568,7 @@ func TestUpdateBinaries_DetachCalledOnImageFile(t *testing.T) {
 	binPath := filepath.Join(binDir, "xkey-linux-amd64")
 	require.NoError(t, os.WriteFile(binPath, []byte("binary"), 0755))
 
-	err := UpdateBinaries(imgPath, []string{binPath})
+	err := UpdateBinaries(t.Context(), imgPath, []string{binPath})
 	require.NoError(t, err)
 	assert.True(t, detached, "loop device should be detached after update")
 }
@@ -1627,25 +1645,30 @@ func TestFormatLUKS_PassphraseForwarded(t *testing.T) {
 	restore := saveHooks(t)
 	defer restore()
 
-	// The forwarded slices are borrowed from the passphrase's protected
-	// buffer and are wiped once formatLUKS returns, so the hooks copy
-	// their contents rather than retaining the slice header.
-	var formatPassphrase, unlockPassphrase []byte
-	luksFormat = func(opts luks2.FormatOptions) error {
-		formatPassphrase = append([]byte(nil), opts.Passphrase...)
-		return nil
+	// The forwarded enclave is destroyed once formatLUKS returns, so the
+	// hooks compare its contents while they hold it.
+	want := []byte("my-secret-passphrase")
+	var formatMatched, unlockMatched bool
+	luksFormat = func(_ context.Context, _ string, pass *enclave.MemoryEnclave, _ luks2.FormatParams) error {
+		var err error
+		formatMatched, err = pass.EqualTo(want)
+		return err
 	}
-	luksUnlock = func(device string, passphrase []byte, name string) error {
-		unlockPassphrase = append([]byte(nil), passphrase...)
-		return nil
+	luksUnlock = func(_ context.Context, _ string, pass *enclave.MemoryEnclave, name string) (*dmcrypt.Mapping, error) {
+		var err error
+		unlockMatched, err = pass.EqualTo(want)
+		if err != nil {
+			return nil, err
+		}
+		return &dmcrypt.Mapping{Name: name}, nil
 	}
-	luksMakeFilesystem = func(device, fstype, label string) error { return nil }
-	luksLock = func(name string) error { return nil }
+	luksMakeFilesystem = func(context.Context, string, filesystem.Type, filesystem.MakeParams) error { return nil }
+	luksLock = func(context.Context, string) error { return nil }
 
 	err := formatLUKS(t.Context(), "/dev/sdb2", testSecret(t, "my-secret-passphrase"))
 	require.NoError(t, err)
-	assert.Equal(t, []byte("my-secret-passphrase"), formatPassphrase)
-	assert.Equal(t, []byte("my-secret-passphrase"), unlockPassphrase)
+	assert.True(t, formatMatched, "format must receive the passphrase")
+	assert.True(t, unlockMatched, "unlock must receive the passphrase")
 }
 
 // TestFormatLUKS_NilPassphrase verifies that formatLUKS returns an error
@@ -1733,10 +1756,10 @@ func TestStatus_DeviceNodeBlockDevice(t *testing.T) {
 	defer restore()
 
 	mockDeviceNode(testDevicePath)
-	luksIsUnlocked = func(name string) bool { return false }
+	luksIsUnlocked = func(_ context.Context, name string) bool { return false }
 	readMountsFile = func() ([]byte, error) { return []byte(""), nil }
 
-	status, err := Status(testDevicePath)
+	status, err := Status(t.Context(), testDevicePath)
 	require.NoError(t, err)
 	assert.True(t, status.IsBlockDevice)
 	assert.Equal(t, testDevicePath, status.Path)
@@ -1762,7 +1785,7 @@ func TestUpdateBinaries_BlockDevice_MountFails(t *testing.T) {
 		return nil
 	}
 
-	err := UpdateBinaries(testDevicePath, []string{"/some/binary"})
+	err := UpdateBinaries(t.Context(), testDevicePath, []string{"/some/binary"})
 	require.Error(t, err)
 	assert.True(t, errors.Is(err, ErrMountFailed))
 }
@@ -1781,6 +1804,6 @@ func TestUpdateBinaries_BlockDevice_Success(t *testing.T) {
 	binPath := filepath.Join(binDir, "xkey-linux-amd64")
 	require.NoError(t, os.WriteFile(binPath, []byte("binary"), 0755))
 
-	err := UpdateBinaries(testDevicePath, []string{binPath})
+	err := UpdateBinaries(t.Context(), testDevicePath, []string{binPath})
 	require.NoError(t, err)
 }

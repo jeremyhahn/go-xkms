@@ -14,9 +14,15 @@
 package tpm2
 
 import (
+	"crypto"
+	"crypto/ecdsa"
+	"crypto/elliptic"
+	"crypto/rsa"
+	"crypto/x509"
 	"fmt"
 
 	"github.com/jeremyhahn/go-xkms/pkg/errs"
+	"github.com/jeremyhahn/go-xkms/pkg/types"
 
 	"github.com/google/go-tpm/tpm2"
 )
@@ -100,6 +106,12 @@ func (tpm *TPM2) CreateActivationKey() (*ActivationKey, error) {
 // whether or not activation succeeds: CreateActivationKey/
 // AnswerCredentialChallenge is a single challenge-response round trip, not
 // a key the caller reuses.
+//
+// When no EK is loaded at the configured persistent handle -- the EK
+// certificate is in NV but the EK was never persisted, or TPM2_Clear
+// evicted it -- the EK is created transiently instead (see
+// createTransientEK) and flushed before AnswerCredentialChallenge returns.
+// The persistent EK is never created or re-persisted here.
 func (tpm *TPM2) AnswerCredentialChallenge(
 	key *ActivationKey, challenge *CredentialChallenge) ([]byte, error) {
 
@@ -113,10 +125,129 @@ func (tpm *TPM2) AnswerCredentialChallenge(
 
 	ekAttrs, err := tpm.EKAttributes()
 	if err != nil {
+		// EKAttributes reports an absent persistent EK only when no EK
+		// certificate is in NV either.
+		if isAbsentHandle(err) {
+			return nil, &errs.Joined{Lead: ErrEKCertNotInNV, Cause: err}
+		}
 		return nil, err
+	}
+
+	_, _, err = tpm.ReadHandle(ekAttrs.TPMAttributes.Handle)
+	if err != nil {
+		if !isAbsentHandle(err) {
+			return nil, err
+		}
+		ekAttrs, err = tpm.createTransientEK(ekAttrs)
+		if err != nil {
+			return nil, err
+		}
+		defer tpm.flushSilent(ekAttrs.TPMAttributes.Handle)
 	}
 
 	return tpm.activateCredential(
 		ekAttrs, key.Handle, key.Name, tpm2.PasswordAuth(nil),
 		challenge.CredentialBlob, challenge.EncryptedSecret)
+}
+
+// ekCertHighRangeStart is the first EK certificate NV index of the TCG EK
+// Credential Profile high range. High-range EKs come from the H templates,
+// whose auth policy is not the TPM2_PolicySecret(RH_ENDORSEMENT) policy
+// activateCredential satisfies.
+const ekCertHighRangeStart = 0x01C00012
+
+// createTransientEK recreates, as a transient object, the EK that the
+// certificate at ekAttrs' NV certificate index certifies. The EK is a
+// primary key, so the endorsement seed derives the same key from the same
+// template every time; the template is the TCG EK Credential Profile
+// low-range template matching the certificate's key (see transientEKTemplate).
+//
+// The created key is checked against the certificate before it is used: a
+// mismatch is flushed and refused with ErrEKPublicKeyMismatch rather than
+// answering a challenge with a key the certificate does not vouch for. On
+// success the returned attributes name the transient handle, which the
+// caller flushes.
+func (tpm *TPM2) createTransientEK(ekAttrs *types.KeyAttributes) (*types.KeyAttributes, error) {
+	certIndex := ekAttrs.TPMAttributes.CertHandle
+	cert, err := tpm.readEKCertFromNV(certIndex)
+	if err != nil {
+		return nil, &errs.Joined{Lead: ErrEKCertNotInNV, Cause: err}
+	}
+
+	template, err := transientEKTemplate(certIndex, cert)
+	if err != nil {
+		return nil, err
+	}
+
+	var hierarchyAuth []byte
+	if ekAttrs.TPMAttributes.HierarchyAuth != nil {
+		hierarchyAuth = ekAttrs.TPMAttributes.HierarchyAuth.Bytes()
+	}
+	rsp, err := tpm.createPrimary(tpm2.TPMRHEndorsement, hierarchyAuth, tpm2.CreatePrimary{
+		InPublic: tpm2.New2B(template),
+	})
+	if err != nil {
+		return nil, err
+	}
+
+	ekPub, err := ExtractPublicKeyFromTPMPublic(rsp.OutPublic.Bytes())
+	if err != nil {
+		tpm.flushSilent(rsp.ObjectHandle)
+		return nil, &errs.Joined{Lead: ErrEKPublicRead, Cause: err}
+	}
+	certPub, ok := cert.PublicKey.(interface{ Equal(crypto.PublicKey) bool })
+	if !ok || !certPub.Equal(ekPub) {
+		tpm.flushSilent(rsp.ObjectHandle)
+		return nil, &errs.Detail{
+			Err:    ErrEKPublicKeyMismatch,
+			Detail: fmt.Sprintf("certificate at NV index 0x%08X", certIndex),
+		}
+	}
+
+	return &types.KeyAttributes{
+		KeyType:   types.KeyTypeEndorsement,
+		StoreType: types.StoreTPM2,
+		TPMAttributes: &types.TPMAttributes{
+			CertHandle:    certIndex,
+			Handle:        rsp.ObjectHandle,
+			HandleType:    tpm2.TPMHTTransient,
+			Hierarchy:     tpm2.TPMRHEndorsement,
+			HierarchyAuth: ekAttrs.TPMAttributes.HierarchyAuth,
+			Name:          rsp.Name,
+		},
+	}, nil
+}
+
+// transientEKTemplate returns the TCG EK Credential Profile low-range
+// template for the key cert certifies -- template L-1 for RSA-2048, L-2 for
+// ECC NIST P-256 -- the same templates EKAttributesFromConfig provisions an
+// EK from. A certificate in the high range, or for any other key, has no
+// template here and is refused with ErrEKTemplateUnsupported.
+func transientEKTemplate(certIndex tpm2.TPMHandle, cert *x509.Certificate) (tpm2.TPMTPublic, error) {
+	if certIndex >= ekCertHighRangeStart {
+		return tpm2.TPMTPublic{}, &errs.Detail{
+			Err:    ErrEKTemplateUnsupported,
+			Detail: fmt.Sprintf("high-range certificate index 0x%08X", certIndex),
+		}
+	}
+
+	var keyDesc string
+	switch key := cert.PublicKey.(type) {
+	case *rsa.PublicKey:
+		if key.N.BitLen() == 2048 {
+			return tpm2.RSAEKTemplate, nil
+		}
+		keyDesc = fmt.Sprintf("RSA-%d", key.N.BitLen())
+	case *ecdsa.PublicKey:
+		if key.Curve == elliptic.P256() {
+			return tpm2.ECCEKTemplate, nil
+		}
+		keyDesc = key.Curve.Params().Name
+	default:
+		keyDesc = fmt.Sprintf("%T", key)
+	}
+	return tpm2.TPMTPublic{}, &errs.Detail{
+		Err:    ErrEKTemplateUnsupported,
+		Detail: fmt.Sprintf("certificate key %s", keyDesc),
+	}
 }

@@ -25,8 +25,16 @@ import (
 	"testing"
 	"time"
 
+	"github.com/jeremyhahn/go-enclave"
+
 	"github.com/jeremyhahn/go-xkms/xkey/pkg/pairing"
 )
+
+// staticKeyAlive returns nil while key still holds its private scalar, and
+// the borrow error (enclave.ErrEnclaveDestroyed) once it has been destroyed.
+func staticKeyAlive(key *pairing.StaticKey) error {
+	return pairing.WithPrivateKey(key, func([]byte) error { return nil })
+}
 
 // mockRequestHandler is a test helper that echoes back the request as a response
 // or returns a configurable error.
@@ -406,7 +414,7 @@ func TestTCPPairingServer_LocalStaticPublicKey(t *testing.T) {
 	}
 
 	// The public key should match the provided key.
-	for i, b := range key.Public {
+	for i, b := range key.PublicBytes() {
 		if pubKey[i] != b {
 			t.Fatalf("public key byte %d mismatch: got %02x, want %02x", i, pubKey[i], b)
 		}
@@ -1019,11 +1027,10 @@ func TestTCPPairingServer_StopKeepsSuppliedKey(t *testing.T) {
 		t.Fatalf("Stop: %v", err)
 	}
 
-	// Still intact: Destroy zeroes the key pair, so a live private half is
-	// what distinguishes "left alone" from "freed".
-	if len(key.Private) != pairing.NoiseKeySize {
-		t.Fatalf("supplied key was destroyed by Stop: private half is %d bytes, want %d",
-			len(key.Private), pairing.NoiseKeySize)
+	// Still intact: a destroyed key refuses to lend its private half, so a
+	// successful borrow is what distinguishes "left alone" from "freed".
+	if err := staticKeyAlive(key); err != nil {
+		t.Fatalf("supplied key was destroyed by Stop: %v", err)
 	}
 	if _, err := pairing.NewNoiseSession(&pairing.NoiseSessionConfig{LocalStaticKey: key, IsInitiator: true}); err != nil {
 		t.Fatalf("supplied key unusable after Stop: %v", err)
@@ -1055,9 +1062,8 @@ func TestTCPPairingServer_StopReleasesGeneratedKey(t *testing.T) {
 	if generated == nil {
 		t.Fatal("server claimed ownership of a nil key")
 	}
-	if len(generated.Private) != pairing.NoiseKeySize {
-		t.Fatalf("generated key private half is %d bytes, want %d",
-			len(generated.Private), pairing.NoiseKeySize)
+	if err := staticKeyAlive(generated); err != nil {
+		t.Fatalf("generated key unusable before Stop: %v", err)
 	}
 
 	if err := srv.Start(); err != nil {
@@ -1067,13 +1073,12 @@ func TestTCPPairingServer_StopReleasesGeneratedKey(t *testing.T) {
 		t.Fatalf("Stop: %v", err)
 	}
 
-	if len(generated.Private) != 0 {
-		t.Fatalf("Stop left the generated key resident: private half is %d bytes",
-			len(generated.Private))
+	if err := staticKeyAlive(generated); !errors.Is(err, enclave.ErrEnclaveDestroyed) {
+		t.Fatalf("Stop left the generated key resident: borrow error %v, want %v",
+			err, enclave.ErrEnclaveDestroyed)
 	}
-	if len(generated.Public) != 0 {
-		t.Fatalf("Stop left the generated key pair populated: public half is %d bytes",
-			len(generated.Public))
+	if got := generated.PublicBytes(); got != nil {
+		t.Fatalf("Stop left the generated key pair populated: public half %x", got)
 	}
 	if srv.localStaticKey != nil {
 		t.Fatal("Stop left the generated key in place")
@@ -1235,8 +1240,8 @@ func TestSecondStopDoesNotDestroyARetainedKey(t *testing.T) {
 	if srv.localStaticKey == nil {
 		t.Fatal("the second Stop destroyed a key the first had retained")
 	}
-	if len(srv.localStaticKey.Private) == 0 {
-		t.Fatal("the retained key's protected pages were wiped by the second Stop")
+	if err := staticKeyAlive(srv.localStaticKey); err != nil {
+		t.Fatalf("the retained key's protected pages were wiped by the second Stop: %v", err)
 	}
 }
 
@@ -1279,9 +1284,9 @@ func TestTCPPairingServer_OwnsSuppliedKey(t *testing.T) {
 	if err := srv.Stop(); err != nil {
 		t.Fatalf("Stop: %v", err)
 	}
-	if len(key.Private) != 0 {
-		t.Fatalf("Stop left the owned key resident: private half is %d bytes, want 0",
-			len(key.Private))
+	if err := staticKeyAlive(key); !errors.Is(err, enclave.ErrEnclaveDestroyed) {
+		t.Fatalf("Stop left the owned key resident: borrow error %v, want %v",
+			err, enclave.ErrEnclaveDestroyed)
 	}
 }
 

@@ -46,26 +46,11 @@ func TestReExportsCompose(t *testing.T) {
 	// have drifted apart again.
 	cfg := &NoiseServerConfig{
 		ListenAddr: "127.0.0.1:0",
-		StaticKey:  NoiseServerStaticKey(key),
+		StaticKey:  key,
 	}
 
-	if cfg.StaticKey == nil {
-		t.Fatal("NoiseServerStaticKey returned nil for a live key")
-	}
-	if len(cfg.StaticKey.Private) != len(key.Private) {
-		t.Fatalf("adapted key pair does not carry the private half: %d vs %d",
-			len(cfg.StaticKey.Private), len(key.Private))
-	}
-	if len(cfg.StaticKey.Public) == 0 {
-		t.Fatal("adapted key pair has no public half")
-	}
-}
-
-// TestNoiseServerStaticKeyNil keeps the adapter total: a nil key yields a nil
-// pair rather than dereferencing.
-func TestNoiseServerStaticKeyNil(t *testing.T) {
-	if got := NoiseServerStaticKey(nil); got != nil {
-		t.Fatalf("expected nil for a nil key, got %v", got)
+	if got := cfg.StaticKey.PublicBytes(); len(got) == 0 {
+		t.Fatal("the configured static key has no public half")
 	}
 }
 

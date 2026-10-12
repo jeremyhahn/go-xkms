@@ -23,8 +23,8 @@ import (
 )
 
 // TestPasswordField_UnmarshalJSON_Happy covers the mainline path:
-// base64 JSON string decodes into a right-sized Buffer and Bytes()
-// matches the original plaintext.
+// base64 JSON string decodes into a right-sized Buffer whose bytes
+// match the original plaintext.
 func TestPasswordField_UnmarshalJSON_Happy(t *testing.T) {
 	tests := []struct {
 		name      string
@@ -56,7 +56,14 @@ func TestPasswordField_UnmarshalJSON_Happy(t *testing.T) {
 			if buf == nil {
 				t.Fatal("Buffer() returned nil")
 			}
-			if !bytes.Equal(buf.Bytes(), tc.plaintext) {
+			var match bool
+			if err := buf.WithBytes(func(b []byte) error {
+				match = bytes.Equal(b, tc.plaintext)
+				return nil
+			}); err != nil {
+				t.Fatalf("borrow: %v", err)
+			}
+			if !match {
 				t.Fatalf("plaintext mismatch")
 			}
 		})

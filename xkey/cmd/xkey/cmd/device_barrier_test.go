@@ -156,7 +156,10 @@ func TestOpenDeviceBarrierWithPassword_RoundTripsASealedValue(t *testing.T) {
 	buf, err := pairing.UnsealLocalNoiseKey(barrier, sealed)
 	require.NoError(t, err)
 	defer buf.Destroy()
-	assert.Equal(t, priv, buf.Bytes())
+	require.NoError(t, buf.WithBytes(func(b []byte) error {
+		assert.Equal(t, priv, b)
+		return nil
+	}))
 }
 
 // attestDeviceCommand and listenCommand return bare commands carrying the

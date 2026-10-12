@@ -87,7 +87,9 @@ func newPKCS11Resolver(config *PKCS11Config) (Resolver, error) {
 		// miekg/pkcs11's Login takes a Go string, so this converts the
 		// opened buffer into an unwipeable copy for the duration of the
 		// call -- an unavoidable copy at that library boundary.
-		loginErr := ctx.Login(session, pkcs11.CKU_USER, string(buf.Bytes()))
+		loginErr := buf.WithBytes(func(pin []byte) error {
+			return ctx.Login(session, pkcs11.CKU_USER, string(pin))
+		})
 		buf.Destroy()
 		if loginErr != nil {
 			closeErr := ctx.CloseSession(session)

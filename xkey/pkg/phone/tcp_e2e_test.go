@@ -265,7 +265,7 @@ func TestTCPPairingServer_RemoteKeyMismatchAbortsHandshake(t *testing.T) {
 	require.NoError(t, transport.Connect(context.Background()))
 
 	backend, err := NewPhoneKeyBackendWithTransport(&PhoneKeyBackendConfig{
-		ExpectedRemoteStatic: wrongKey.Public,
+		ExpectedRemoteStatic: wrongKey.PublicBytes(),
 		Logger:               slog.New(slog.DiscardHandler),
 	}, transport)
 	require.NoError(t, err)

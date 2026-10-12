@@ -157,9 +157,9 @@ func (e *ExecutorError) Unwrap() error { return e.Err }
 
 // KeyringError reports a failed kernel keyring preflight. It is
 // ErrKeyringUnavailable to errors.Is, and it unwraps to go-luks2's own
-// classification (luks2.ErrKeyringBlocked for a seccomp policy,
-// luks2.ErrKeyringUnsupported for a kernel without key support,
-// luks2.ErrKeyringQuotaExhausted, luks2.ErrKeyringFailed), whose message
+// classification (dmcrypt.ErrKeyringBlocked for a seccomp policy,
+// dmcrypt.ErrKeyringUnsupported for a kernel without key support,
+// dmcrypt.ErrKeyringQuotaExhausted, dmcrypt.ErrKeyringFailed), whose message
 // names the syscalls and the remedy.
 type KeyringError struct {
 	// Err is go-luks2's classified error.

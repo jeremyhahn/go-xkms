@@ -155,7 +155,7 @@ func TestBootstrapListener_CompletesApprovedHandshake(t *testing.T) {
 	// and the goroutine that owns it.
 	srv, err := bootstrap.NewNoiseServer(&bootstrap.NoiseServerConfig{
 		ListenAddr:    "127.0.0.1:0",
-		StaticKey:     bootstrap.NoiseServerStaticKey(keys.noise),
+		StaticKey:     keys.noise,
 		P256StaticKey: keys.p256,
 		CABundler:     bundler,
 		Logger:        slog.New(slog.NewTextHandler(io.Discard, nil)),

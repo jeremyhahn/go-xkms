@@ -175,7 +175,7 @@ func TestPhoneKeyBackendConfig_Validation(t *testing.T) {
 		require.NoError(t, err)
 
 		cfg := &PhoneKeyBackendConfig{
-			ExpectedRemoteStatic: key.Public,
+			ExpectedRemoteStatic: key.PublicBytes(),
 			ScanTimeout:          ScanTimeout,
 			ConnectTimeout:       ConnectTimeout,
 			OperationTimeout:     OperationTimeout,

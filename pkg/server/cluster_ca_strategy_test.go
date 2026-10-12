@@ -22,6 +22,7 @@ import (
 	"github.com/jeremyhahn/go-xkms/pkg/config"
 	credentialspkg "github.com/jeremyhahn/go-xkms/pkg/server/credentials"
 	"github.com/jeremyhahn/go-xkms/pkg/types"
+	secure "github.com/jeremyhahn/go-xkms/sdk/go/secure"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -97,7 +98,10 @@ func TestResolveClusterCAKeyPassphrase_CredentialReference(t *testing.T) {
 	buf, err := sec.Open(t.Context())
 	require.NoError(t, err)
 	defer buf.Destroy()
-	assert.Equal(t, credValue, string(buf.Bytes()))
+	passphrase, err := secure.CopyOut(buf)
+	require.NoError(t, err)
+	defer secure.Wipe(passphrase)
+	assert.Equal(t, credValue, string(passphrase))
 }
 
 // TestResolveClusterCAKeyPassphrase_CredentialReferenceMissing verifies that

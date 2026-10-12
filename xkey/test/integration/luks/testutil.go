@@ -18,6 +18,8 @@ package luks
 
 import (
 	"bytes"
+	"context"
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -28,7 +30,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/jeremyhahn/go-luks2/pkg/luks2"
+	"github.com/jeremyhahn/go-luks2/pkg/dmcrypt"
+	"github.com/jeremyhahn/go-luks2/pkg/filesystem"
+	"github.com/jeremyhahn/go-luks2/pkg/loop"
 	"github.com/stretchr/testify/require"
 )
 
@@ -109,7 +113,9 @@ func ensureCleanState(t *testing.T) {
 	for _, name := range mapperNames {
 		if isLUKSOpen(name) {
 			t.Logf("Found leftover mapper device %s, closing...", name)
-			_ = luks2.Lock(name)
+			if err := dmcrypt.Deactivate(context.Background(), name); err != nil {
+				t.Logf("cleanup: deactivate %s: %v", name, err)
+			}
 		}
 	}
 
@@ -155,37 +161,29 @@ func cleanupLUKS(t *testing.T, paths *LUKSPaths) {
 		return
 	}
 
-	// Try to unmount if mounted using go-luks2
-	if isMountPoint(paths.MountPoint) {
-		_ = luks2.Unmount(paths.MountPoint, 0) // Ignore errors, volume might not be mounted
-	}
-
-	// Try to unmount any old mount points from migration tests
-	oldMountPoint := paths.MountPoint + ".old-migrate"
-	if isMountPoint(oldMountPoint) {
-		_ = luks2.Unmount(oldMountPoint, 0)
-	}
-
-	// Try to close LUKS devices using the correct mapper name "xkey"
-	// The code uses "xkey" as the mapper name, not a derived name
-	mapperNames := []string{"xkey", "xkey_old"}
-	for _, mapperName := range mapperNames {
-		if isLUKSOpen(mapperName) {
-			_ = luks2.Lock(mapperName) // Ignore errors
+	// Cleanup is best-effort: the volume may already be unmounted, locked or
+	// detached, so failures are logged rather than failing the test.
+	ctx := context.Background()
+	for _, mountPoint := range []string{paths.MountPoint, paths.MountPoint + ".old-migrate"} {
+		if isMountPoint(mountPoint) {
+			if err := filesystem.Unmount(ctx, mountPoint, 0); err != nil {
+				t.Logf("cleanup: unmount %s: %v", mountPoint, err)
+			}
 		}
 	}
 
-	// Find and detach any loop devices associated with our LUKS file using go-luks2
-	loopDev, err := luks2.FindLoopDevice(paths.LUKSFile)
-	if err == nil && loopDev != "" {
-		_ = luks2.DetachLoopDevice(loopDev)
+	// The code under test uses "xkey" as the mapper name, not a derived name.
+	for _, mapperName := range []string{"xkey", "xkey_old"} {
+		if isLUKSOpen(mapperName) {
+			if err := dmcrypt.Deactivate(ctx, mapperName); err != nil {
+				t.Logf("cleanup: deactivate %s: %v", mapperName, err)
+			}
+		}
 	}
 
-	// Also check for .old backup file (from migration tests)
-	oldLUKSFile := paths.LUKSFile + ".old"
-	loopDevOld, err := luks2.FindLoopDevice(oldLUKSFile)
-	if err == nil && loopDevOld != "" {
-		_ = luks2.DetachLoopDevice(loopDevOld)
+	// Detach the loop devices backing the container and its migration backup.
+	for _, file := range []string{paths.LUKSFile, paths.LUKSFile + ".old"} {
+		detachLoopFor(t, file)
 	}
 
 	// Remove temporary directory
@@ -194,6 +192,24 @@ func cleanupLUKS(t *testing.T, paths *LUKSPaths) {
 		if err != nil {
 			t.Logf("Warning: failed to clean up temp directory %s: %v", paths.BaseDir, err)
 		}
+	}
+}
+
+// detachLoopFor detaches the loop device backing file, if one is attached.
+// A file with no loop device is the normal case and is not logged.
+func detachLoopFor(t *testing.T, file string) {
+	t.Helper()
+	ctx := context.Background()
+	dev, err := loop.Find(ctx, file)
+	if errors.Is(err, loop.ErrNotFound) {
+		return
+	}
+	if err != nil {
+		t.Logf("cleanup: find loop device for %s: %v", file, err)
+		return
+	}
+	if _, err := dev.Detach(ctx); err != nil {
+		t.Logf("cleanup: detach %s: %v", dev.Path(), err)
 	}
 }
 

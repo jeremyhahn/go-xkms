@@ -173,7 +173,7 @@ func newPairedTransport(t *testing.T, fake *fakePhone) (*Transport, bool) {
 	tr, err := New()
 	require.NoError(t, err)
 	tr.phoneUSB = fake
-	tr.WithNoiseConfig(&NoiseConfig{LocalStaticPrivateKey: key.Private})
+	tr.WithNoiseConfig(&NoiseConfig{LocalStaticPrivateKey: privateKeyBytes(t, key)})
 
 	require.NoError(t, tr.Connect(context.Background()))
 	return tr, true
@@ -273,7 +273,7 @@ func TestConnectBindsDeviceFingerprintIntoPrologue(t *testing.T) {
 	fake := &fakePhone{fingerprint: fingerprint}
 	tr.phoneUSB = fake
 	tr.WithNoiseConfig(&NoiseConfig{
-		LocalStaticPrivateKey:     key.Private,
+		LocalStaticPrivateKey:     privateKeyBytes(t, key),
 		ExpectedDeviceFingerprint: fingerprint,
 	})
 
@@ -295,7 +295,7 @@ func TestConnectRejectsFingerprintMismatch(t *testing.T) {
 	require.NoError(t, err)
 	tr.phoneUSB = &fakePhone{fingerprint: phoneFingerprint}
 	tr.WithNoiseConfig(&NoiseConfig{
-		LocalStaticPrivateKey:     key.Private,
+		LocalStaticPrivateKey:     privateKeyBytes(t, key),
 		ExpectedDeviceFingerprint: expected,
 	})
 
@@ -314,7 +314,7 @@ func TestConnectFailsWhenBusUnavailable(t *testing.T) {
 	tr, err := New()
 	require.NoError(t, err)
 	tr.phoneUSB = &fakePhone{connectErr: errors.New("no accessory")}
-	tr.WithNoiseConfig(&NoiseConfig{LocalStaticPrivateKey: key.Private})
+	tr.WithNoiseConfig(&NoiseConfig{LocalStaticPrivateKey: privateKeyBytes(t, key)})
 
 	err = tr.Connect(context.Background())
 	require.Error(t, err)
@@ -708,7 +708,7 @@ func TestConnectFailsWithoutUSBDevice(t *testing.T) {
 
 	tr, err := New()
 	require.NoError(t, err)
-	tr.WithNoiseConfig(&NoiseConfig{LocalStaticPrivateKey: key.Private})
+	tr.WithNoiseConfig(&NoiseConfig{LocalStaticPrivateKey: privateKeyBytes(t, key)})
 
 	err = tr.Connect(context.Background())
 	require.Error(t, err)
@@ -727,7 +727,7 @@ func TestConnectWithCustomTimeout(t *testing.T) {
 		return nil
 	})
 	require.NoError(t, err)
-	tr.WithNoiseConfig(&NoiseConfig{LocalStaticPrivateKey: key.Private})
+	tr.WithNoiseConfig(&NoiseConfig{LocalStaticPrivateKey: privateKeyBytes(t, key)})
 
 	err = tr.Connect(context.Background())
 	require.Error(t, err)
@@ -742,7 +742,7 @@ func TestConnectWithZeroTimeout(t *testing.T) {
 
 	tr, err := NewWithConfig(&transport.Config{Timeout: 0})
 	require.NoError(t, err)
-	tr.WithNoiseConfig(&NoiseConfig{LocalStaticPrivateKey: key.Private})
+	tr.WithNoiseConfig(&NoiseConfig{LocalStaticPrivateKey: privateKeyBytes(t, key)})
 
 	err = tr.Connect(context.Background())
 	require.Error(t, err)

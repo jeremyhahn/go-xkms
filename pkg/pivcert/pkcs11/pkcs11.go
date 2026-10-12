@@ -294,7 +294,14 @@ func pinPlaintext(sec *secure.Secret) (string, error) {
 		return "", err
 	}
 	defer buf.Destroy()
-	return string(buf.Bytes()), nil
+	var pin string
+	if err := buf.WithBytes(func(b []byte) error {
+		pin = string(b)
+		return nil
+	}); err != nil {
+		return "", err
+	}
+	return pin, nil
 }
 
 // NewFromPool creates a PKCS#11 PIV certificate storage that reuses an existing
@@ -601,7 +608,9 @@ func newSessionPool(ctx *p11.Ctx, slotID uint, pin *secure.Secret, size int) (*s
 		// miekg/pkcs11's Login takes a Go string, so this converts the
 		// opened buffer into an unwipeable copy for the duration of the
 		// call -- an unavoidable copy at that library boundary.
-		loginErr := ctx.Login(sess, p11.CKU_USER, string(buf.Bytes()))
+		loginErr := buf.WithBytes(func(b []byte) error {
+			return ctx.Login(sess, p11.CKU_USER, string(b))
+		})
 		buf.Destroy()
 		pool.ch <- sess
 		if loginErr != nil && !isPKCS11Error(loginErr, p11.CKR_USER_ALREADY_LOGGED_IN) {

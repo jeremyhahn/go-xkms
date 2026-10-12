@@ -30,7 +30,7 @@ import (
 
 	"golang.org/x/crypto/ssh" // rule 2: paired with the banned call below
 
-	"github.com/jeremyhahn/go-xkms/sdk/go/secure" // rules 4-7, through the SDK like every consumer
+	"github.com/jeremyhahn/go-xkms/sdk/go/secure" // rules 4-5, through the SDK like every consumer
 )
 
 // holder is a rule-3 finding with no scope-clause cover: not generated, not
@@ -52,18 +52,7 @@ func useParsePrivateKey(pemBytes []byte) (ssh.Signer, error) {
 	return ssh.ParsePrivateKey(pemBytes)
 }
 
-// readUnborrowed exercises rule 4: Bytes read with no borrow held.
-func readUnborrowed(b *secure.Buffer) byte {
-	return b.Bytes()[0]
-}
-
-// readMalformed exercises rule 5: an unborrowed directive with no kind.
-func readMalformed(b *secure.Buffer) byte {
-	//secure:unborrowed
-	return b.Bytes()[0]
-}
-
-// toString exercises rule 6: protected bytes converted to a string.
+// toString exercises rule 4: protected bytes converted to a string.
 func toString(b *secure.Buffer) (string, error) {
 	var out string
 	err := b.WithBytes(func(p []byte) error {
@@ -73,7 +62,7 @@ func toString(b *secure.Buffer) (string, error) {
 	return out, err
 }
 
-// copyUnwiped exercises rule 7: a copy of protected bytes nobody wipes.
+// copyUnwiped exercises rule 5: a copy of protected bytes nobody wipes.
 func copyUnwiped(b *secure.Buffer) error {
 	return b.WithBytes(func(p []byte) error {
 		cp := append([]byte(nil), p...)

@@ -36,7 +36,12 @@ func openTestPIN(t *testing.T, secret *secure.Secret) string {
 		t.Fatalf("open resolved PIN: %v", err)
 	}
 	defer buf.Destroy()
-	return string(buf.Bytes())
+	pin, err := secure.CopyOut(buf)
+	if err != nil {
+		t.Fatalf("read resolved PIN: %v", err)
+	}
+	defer secure.Wipe(pin)
+	return string(pin)
 }
 
 // These tests cover the input half of go-xkms#309: the xkmsctl WebAuthn verbs

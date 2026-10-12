@@ -14,13 +14,28 @@
 package bootstrap
 
 import (
+	"bytes"
 	"errors"
 	"testing"
 
-	"github.com/awnumar/memguard"
+	"github.com/jeremyhahn/go-enclave"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
+
+// newKeyEnclave admits a writable, zeroed enclave of n bytes through the
+// process allocator -- the destination EncodeP256StaticKey takes -- and
+// destroys it when the test ends.
+func newKeyEnclave(t *testing.T, n int) *enclave.MemoryEnclave {
+	t.Helper()
+
+	alloc, err := enclave.ProcessAllocator()
+	require.NoError(t, err)
+	buf, err := alloc.NewSized(n)
+	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, buf.Destroy()) })
+	return buf
+}
 
 // The approved suite must be available in EVERY build. If this ever fails, a
 // FIPS deployment has no bootstrap handshake at all, which is the state
@@ -62,8 +77,7 @@ func TestP256StaticKey_EncodeDecodeRoundTrip(t *testing.T) {
 
 	require.Len(t, key.PublicBytes(), P256PublicKeySize)
 
-	encoded := memguard.NewBuffer(P256HexKeySize)
-	defer encoded.Destroy()
+	encoded := newKeyEnclave(t, P256HexKeySize)
 	require.NoError(t, EncodeP256StaticKey(encoded, key))
 
 	decoded, err := DecodeP256StaticKey(encoded)
@@ -76,13 +90,13 @@ func TestP256StaticKey_EncodeDecodeRoundTrip(t *testing.T) {
 
 // A decode failure must not be mistaken for a suite problem.
 func TestDecodeP256StaticKey_RejectsGarbage(t *testing.T) {
-	buf := memguard.NewBuffer(P256HexKeySize)
-	defer buf.Destroy()
-	for i := range buf.Bytes() {
-		buf.Bytes()[i] = 'z' // not hex
-	}
+	alloc, err := enclave.ProcessAllocator()
+	require.NoError(t, err)
+	buf, err := alloc.New(bytes.Repeat([]byte{'z'}, P256HexKeySize)) // not hex
+	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, buf.Destroy()) })
 
-	_, err := DecodeP256StaticKey(buf)
+	_, err = DecodeP256StaticKey(buf)
 	require.Error(t, err)
 	assert.False(t, errors.Is(err, ErrSuiteUnavailable))
 }

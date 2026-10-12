@@ -157,17 +157,12 @@ func useFakeTransport(t *testing.T, transport *fakeDeviceTransport) {
 func pairTestDevice(t *testing.T, name string) {
 	t.Helper()
 
-	localKey, err := pairing.GenerateStaticKey()
-	require.NoError(t, err)
-	remoteKey, err := pairing.GenerateStaticKey()
-	require.NoError(t, err)
-
 	require.NoError(t, saveDevicesConfig(&DevicesConfig{
 		Devices: []PairedDevice{{
 			Name:                 name,
 			Address:              "AA:BB:CC:DD:EE:FF",
-			NoisePublicKey:       base64.StdEncoding.EncodeToString(remoteKey.Public),
-			LocalNoisePrivateKey: base64.StdEncoding.EncodeToString(localKey.Private),
+			NoisePublicKey:       validNoisePublicKeyForTest(t),
+			LocalNoisePrivateKey: validLocalNoisePrivateKeyForTest(t),
 			PairedAt:             time.Now().UTC(),
 		}},
 		DefaultDevice: name,
@@ -602,21 +597,19 @@ func TestBackupToDevice_InvalidPhoneNoiseKey(t *testing.T) {
 	home := isolatedBackupHome(t)
 	seedBackupStores(t, home)
 
-	localKey, err := pairing.GenerateStaticKey()
-	require.NoError(t, err)
 	require.NoError(t, saveDevicesConfig(&DevicesConfig{
 		Devices: []PairedDevice{{
 			Name:                 "Broken Phone",
 			Address:              "AA:BB:CC:DD:EE:FF",
 			NoisePublicKey:       "not-base64!!",
-			LocalNoisePrivateKey: base64.StdEncoding.EncodeToString(localKey.Private),
+			LocalNoisePrivateKey: validLocalNoisePrivateKeyForTest(t),
 		}},
 		DefaultDevice: "Broken Phone",
 	}))
 
 	useFakeTransport(t, &fakeDeviceTransport{})
 
-	_, err = runDeviceCmd(t, backupToDeviceCmd, runBackupToDevice, map[string]string{
+	_, err := runDeviceCmd(t, backupToDeviceCmd, runBackupToDevice, map[string]string{
 		"password": "device-backup-password",
 	})
 	require.Error(t, err)

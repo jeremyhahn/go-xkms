@@ -222,7 +222,12 @@ func openTestPasskeyPIN(t *testing.T, secret *secure.Secret) string {
 		t.Fatalf("open resolved passkey PIN: %v", err)
 	}
 	defer buf.Destroy()
-	return string(buf.Bytes())
+	pin, err := secure.CopyOut(buf)
+	if err != nil {
+		t.Fatalf("read resolved passkey PIN: %v", err)
+	}
+	defer secure.Wipe(pin)
+	return string(pin)
 }
 
 func TestResolvePasskeyPIN(t *testing.T) {

@@ -92,16 +92,11 @@ type NoiseSessionConfig struct {
 
 // NewNoiseSession creates a new Noise session configured for the XX handshake pattern.
 func NewNoiseSession(cfg *NoiseSessionConfig) (*NoiseSession, error) {
-	// The embedded DHKey aliases the protected private scalar, so the session
-	// reads the key in place rather than copying it onto the Go heap.
-	var localStatic *flynnNoise.DHKey
-	if cfg.LocalStaticKey != nil {
-		localStatic = &cfg.LocalStaticKey.DHKey
-	}
-
+	// The session borrows the protected private scalar in place rather than
+	// copying it onto the Go heap.
 	session, err := noiseproto.NewSession(&noiseproto.SessionConfig{
 		Pattern:        flynnNoise.HandshakeXX,
-		LocalStaticKey: localStatic,
+		LocalStaticKey: cfg.LocalStaticKey,
 		PeerStaticKey:  cfg.ExpectedRemoteStatic,
 		IsInitiator:    cfg.IsInitiator,
 		Prologue:       cfg.Prologue,
@@ -239,6 +234,34 @@ func LoadStaticKeyFromBuffer(src *secure.Buffer) (*StaticKey, error) {
 		return nil, err
 	}
 	return key, nil
+}
+
+// WithPrivateKey lends key's private scalar to fn for exactly the duration of
+// the call. The slice aliases the key's protected pages and the key's borrow
+// is held throughout, so a concurrent Destroy waits for fn; fn must not
+// retain the slice or destroy key. A destroyed key returns an error and fn is
+// not called.
+func WithPrivateKey(key *StaticKey, fn func(privateKey []byte) error) error {
+	return key.WithDHKey(func(dh flynnNoise.DHKey) error {
+		return fn(dh.Private)
+	})
+}
+
+// CloneStaticKey copies key into a new, independently owned StaticKey, so a
+// holder can destroy its copy without freeing pages the original's owner
+// still reads. The scalar goes from key's protected pages straight into the
+// clone's, never touching the Go heap. The caller owns the clone and must
+// Destroy it.
+func CloneStaticKey(key *StaticKey) (*StaticKey, error) {
+	var clone *StaticKey
+	if err := WithPrivateKey(key, func(privateKey []byte) error {
+		var loadErr error
+		clone, loadErr = LoadStaticKey(privateKey)
+		return loadErr
+	}); err != nil {
+		return nil, err
+	}
+	return clone, nil
 }
 
 // EncodeStaticKey hex-encodes the private component of key into dst for

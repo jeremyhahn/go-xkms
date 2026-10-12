@@ -118,7 +118,7 @@ func main() {
 	//   XKEY_PROBE_STATIC_KEY=<base64 32-byte private key>
 	staticKey, err := probeStaticKey()
 	fatalIf(err, "load static key")
-	fmt.Println("OK   static public key:", base64.StdEncoding.EncodeToString(staticKey.Public))
+	fmt.Println("OK   static public key:", base64.StdEncoding.EncodeToString(staticKey.PublicBytes()))
 
 	// Teardown is one ordered block rather than three defers, because defer
 	// LIFO gave Stop -> Close -> Destroy with no join in between: Stop does not
@@ -164,7 +164,7 @@ func main() {
 	session, err := pairing.NewNoiseSession(&pairing.NoiseSessionConfig{LocalStaticKey: staticKey, IsInitiator: true})
 	fatalIf(err, "create noise session")
 	fatalIf(pairing.PerformHandshake(ctx, &pairing.HandshakeConfig{
-		Transport: tr, Session: session, Logger: logger, LocalStaticPublicKey: staticKey.Public,
+		Transport: tr, Session: session, Logger: logger, LocalStaticPublicKey: staticKey.PublicBytes(),
 	}), "noise handshake")
 	fmt.Println("OK   noise handshake (identity exchange + XX)")
 
@@ -196,7 +196,7 @@ func main() {
 	// --- Pairing ---
 	p.requiredCall("pairing.confirm", "pairing.confirm", map[string]interface{}{
 		"deviceName":   "e2eprobe",
-		"publicKeyHex": hex.EncodeToString(staticKey.Public),
+		"publicKeyHex": hex.EncodeToString(staticKey.PublicBytes()),
 	})
 
 	// --- Base methods ---

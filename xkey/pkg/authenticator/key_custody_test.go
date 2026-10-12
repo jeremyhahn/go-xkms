@@ -107,8 +107,8 @@ func TestAdoptKeyMaterialTakesOwnershipAndWipesSource(t *testing.T) {
 }
 
 // TestAdoptKeyMaterialDestroysThePreviousBuffer proves re-adoption does not
-// leak the buffer it replaces. memguard reclaims only through a process-wide
-// purge, so a leaked buffer is locked pages held for the life of the process.
+// leak the buffer it replaces. go-enclave reclaims only through Destroy or a
+// process-wide WipeAll, so a leaked buffer is locked pages held for the life of the process.
 func TestAdoptKeyMaterialDestroysThePreviousBuffer(t *testing.T) {
 	first := make([]byte, 32)
 	for i := range first {
@@ -127,7 +127,7 @@ func TestAdoptKeyMaterialDestroysThePreviousBuffer(t *testing.T) {
 	defer dst.Destroy()
 
 	require.NotSame(t, previous, dst, "re-adoption must install a new buffer")
-	require.Nil(t, previous.Bytes(), "the replaced buffer must be destroyed, not leaked")
+	require.Zero(t, previous.Size(), "the replaced buffer must be destroyed, not leaked")
 
 	require.NoError(t, dst.WithBytes(func(b []byte) error {
 		require.Equal(t, byte(0xB2), b[0], "the current buffer holds the newest key")

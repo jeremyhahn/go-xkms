@@ -123,7 +123,7 @@ func TestNewRandomKeyBuffer(t *testing.T) {
 		require.NoError(t, err)
 		defer b.Destroy()
 
-		require.NotEqual(t, a.Bytes(), b.Bytes())
+		require.NotEqual(t, bufferBytes(t, a), bufferBytes(t, b))
 	})
 
 	t.Run("zero size returns ErrKeyManagerProtectedMemory", func(t *testing.T) {
@@ -155,13 +155,13 @@ func TestInitializeSOPIN_KeysAreBornProtected(t *testing.T) {
 	ak, err := unwrapIntoProtected(smk, state.WrappedAK)
 	require.NoError(t, err)
 	defer ak.Destroy()
-	require.Equal(t, adminKey.Bytes(), ak.Bytes())
+	require.Equal(t, bufferBytes(t, adminKey), bufferBytes(t, ak))
 
 	// The SO copy of the CMK unwraps under the AK to the cached CMK.
 	cmkSO, err := unwrapIntoProtected(adminKey, state.WrappedCMKSO)
 	require.NoError(t, err)
 	defer cmkSO.Destroy()
-	require.Equal(t, cmk.Bytes(), cmkSO.Bytes())
+	require.Equal(t, bufferBytes(t, cmk), bufferBytes(t, cmkSO))
 
 	// Both attestation copies unwrap to the same PKCS#8 ECDSA key.
 	attestSO, err := unwrapIntoProtected(adminKey, state.WrappedAttestSO)
@@ -170,8 +170,8 @@ func TestInitializeSOPIN_KeysAreBornProtected(t *testing.T) {
 	attestUser, err := unwrapIntoProtected(cmk, state.WrappedAttestUser)
 	require.NoError(t, err)
 	defer attestUser.Destroy()
-	require.Equal(t, attestSO.Bytes(), attestUser.Bytes())
-	parsed, err := x509.ParsePKCS8PrivateKey(attestSO.Bytes())
+	require.Equal(t, bufferBytes(t, attestSO), bufferBytes(t, attestUser))
+	parsed, err := x509.ParsePKCS8PrivateKey(bufferBytes(t, attestSO))
 	require.NoError(t, err)
 	require.IsType(t, &ecdsa.PrivateKey{}, parsed)
 }
@@ -197,7 +197,7 @@ func TestKeyManager_WrapAttestationKey_ProtectedSource(t *testing.T) {
 		src := protectedBytes(t, pkcs8)
 
 		require.NoError(t, km.WrapAttestationKey(src))
-		require.Equal(t, pkcs8, src.Bytes())
+		require.Equal(t, pkcs8, bufferBytes(t, src))
 	})
 }
 

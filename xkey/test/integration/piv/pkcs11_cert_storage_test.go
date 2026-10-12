@@ -148,7 +148,7 @@ func generateTestCertWithSubject(t *testing.T, cn string) *x509.Certificate {
 func newPKCS11Storage(t *testing.T, libPath string, slotID int) *xkms.PIVPKCS11Backend {
 	t.Helper()
 
-	pin, err := secure.NewSecret([]byte(testPIN))
+	pin, err := secure.NewSecret(t.Context(), []byte(testPIN))
 	require.NoError(t, err)
 	storage, err := xkms.NewPIVPKCS11Backend(&xkms.PIVPKCS11StorageConfig{
 		LibraryPath: libPath,

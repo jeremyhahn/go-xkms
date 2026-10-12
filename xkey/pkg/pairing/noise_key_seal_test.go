@@ -71,7 +71,10 @@ func TestSealLocalNoiseKey_RoundTripsThroughUnseal(t *testing.T) {
 	require.NoError(t, err)
 	defer buf.Destroy()
 
-	assert.Equal(t, priv, buf.Bytes())
+	require.NoError(t, buf.WithBytes(func(b []byte) error {
+		assert.Equal(t, priv, b)
+		return nil
+	}))
 }
 
 func TestSealLocalNoiseKey_NoBarrierIsRefused(t *testing.T) {
@@ -103,7 +106,10 @@ func TestUnsealLocalNoiseKey_LegacyPlaintextNeedsNoBarrier(t *testing.T) {
 	require.NoError(t, err, "reading an existing legacy pairing must not require a barrier")
 	defer buf.Destroy()
 
-	assert.Equal(t, priv, buf.Bytes())
+	require.NoError(t, buf.WithBytes(func(b []byte) error {
+		assert.Equal(t, priv, b)
+		return nil
+	}))
 }
 
 func TestUnsealLocalNoiseKey_SealedFormWithoutBarrierIsRefused(t *testing.T) {

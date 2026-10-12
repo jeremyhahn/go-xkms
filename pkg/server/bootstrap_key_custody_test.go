@@ -102,7 +102,7 @@ func TestNoiseKeyCustody_SealedRoundTrip(t *testing.T) {
 	require.NoError(t, err)
 	defer key2.Destroy()
 
-	assert.Equal(t, key1.Public, key2.Public,
+	assert.Equal(t, key1.PublicBytes(), key2.PublicBytes(),
 		"the second construction must load the key the first one sealed, not generate a new one")
 }
 
@@ -159,7 +159,7 @@ func TestNoiseKeyCustody_NoBarrierPersistsToFileAndReloads(t *testing.T) {
 	require.NoError(t, err)
 	defer key2.Destroy()
 
-	assert.Equal(t, key1.Public, key2.Public, "the second construction must load the persisted key, not generate a new one")
+	assert.Equal(t, key1.PublicBytes(), key2.PublicBytes(), "the second construction must load the persisted key, not generate a new one")
 	assert.NotContains(t, logBuf2.String(), "No barrier configured", "a key already persisted must not re-warn on every boot")
 }
 
@@ -222,7 +222,7 @@ func TestNoiseKeyCustody_ThroughNodeAdoptedBarrier(t *testing.T) {
 	require.NoError(t, err)
 	defer key2.Destroy()
 
-	assert.Equal(t, key.Public, key2.Public)
+	assert.Equal(t, key.PublicBytes(), key2.PublicBytes())
 }
 
 // ============================================================================

@@ -19,19 +19,11 @@ import (
 	"net"
 	"testing"
 	"time"
-	"unsafe"
 )
 
 // TestSDKNoiseSurfaceComposes walks the whole protected-key flow using only
 // what this package re-exports, because that is the only surface consumers
 // are allowed to use.
-//
-// The same defect has now appeared at two layers, one after the other:
-// pkg/trust/bootstrap re-exported a protected NoiseStaticKey and a config
-// that could not accept it, and once that was fixed this package re-exported
-// the two halves and not the adapter joining them. Each half compiled. The
-// combination did not exist anywhere, so nothing failed until a consumer
-// tried it.
 //
 // A test that only constructs a key proves nothing here. This one performs
 // every step a consumer performs, in order.
@@ -45,25 +37,10 @@ func TestSDKNoiseSurfaceComposes(t *testing.T) {
 	// 1. Hand the protected key to the server config.
 	cfg := &NoiseServerConfig{
 		ListenAddr: "127.0.0.1:0",
-		StaticKey:  NoiseServerStaticKey(key),
+		StaticKey:  key,
 	}
-	if cfg.StaticKey == nil {
-		t.Fatal("NoiseServerStaticKey returned nil for a live key")
-	}
-	if len(cfg.StaticKey.Public) == 0 {
-		t.Fatal("adapted key pair has no public half")
-	}
-
-	// The adapter must ALIAS the protected pages, not copy them.
-	//
-	// Comparing contents cannot tell the difference — a copy is equal — and a
-	// copy is the failure that matters: it puts the private scalar on the Go
-	// heap, where it is unwipeable and outside every guarantee the protected
-	// type provides, while every other assertion here still passes. So this
-	// compares the backing pointers.
-	if unsafe.SliceData(cfg.StaticKey.Private) != unsafe.SliceData(key.Private) {
-		t.Fatal("the adapter copied the private scalar onto the Go heap instead " +
-			"of aliasing the protected pages")
+	if len(cfg.StaticKey.PublicBytes()) == 0 {
+		t.Fatal("the configured static key has no public half")
 	}
 
 	// 2. Persist it. The buffer has to be sized from the re-exported
@@ -81,7 +58,7 @@ func TestSDKNoiseSurfaceComposes(t *testing.T) {
 	}
 	defer restored.Destroy()
 
-	if !bytes.Equal(restored.Public, key.Public) {
+	if !bytes.Equal(restored.PublicBytes(), key.PublicBytes()) {
 		t.Fatal("the decoded key is not the one that was encoded")
 	}
 
@@ -102,7 +79,7 @@ func TestSDKNoiseSurfaceComposes(t *testing.T) {
 	//    exactly the half that goes missing without anything failing.
 	srv, err := NewNoiseServer(&NoiseServerConfig{
 		ListenAddr: "127.0.0.1:0",
-		StaticKey:  NoiseServerStaticKey(key),
+		StaticKey:  key,
 		CABundler:  staticBundler{bundle: []byte("test-ca-bundle")},
 	})
 	if err != nil {

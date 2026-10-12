@@ -29,13 +29,13 @@ func TestSimulatedLiveHandshake(t *testing.T) {
 	goStaticKey, err := GenerateStaticKey()
 	require.NoError(t, err)
 	defer goStaticKey.Destroy()
-	t.Logf("Go static pub: %x", goStaticKey.Public)
+	t.Logf("Go static pub: %x", goStaticKey.PublicBytes())
 
 	// Generate Android's static key (simulated)
 	androidStaticKey, err := GenerateStaticKey()
 	require.NoError(t, err)
 	defer androidStaticKey.Destroy()
-	t.Logf("Android static pub: %x", androidStaticKey.Public)
+	t.Logf("Android static pub: %x", androidStaticKey.PublicBytes())
 
 	// Create Go's handshake state (initiator)
 	goCipherSuite := noise.NewCipherSuite(noise.DH25519, noise.CipherChaChaPoly, noise.HashSHA256)
@@ -45,8 +45,8 @@ func TestSimulatedLiveHandshake(t *testing.T) {
 		Initiator:   true,
 		Prologue:    nil, // Empty prologue
 		StaticKeypair: noise.DHKey{
-			Private: goStaticKey.Private,
-			Public:  goStaticKey.Public,
+			Private: privateCopy(t, goStaticKey),
+			Public:  goStaticKey.PublicBytes(),
 		},
 	}
 	goHS, err := noise.NewHandshakeState(goConfig)
@@ -60,8 +60,8 @@ func TestSimulatedLiveHandshake(t *testing.T) {
 		Initiator:   false,
 		Prologue:    nil, // Empty prologue - MUST match Go!
 		StaticKeypair: noise.DHKey{
-			Private: androidStaticKey.Private,
-			Public:  androidStaticKey.Public,
+			Private: privateCopy(t, androidStaticKey),
+			Public:  androidStaticKey.PublicBytes(),
 		},
 	}
 	androidHS, err := noise.NewHandshakeState(androidConfig)
@@ -106,7 +106,7 @@ func TestSimulatedLiveHandshake(t *testing.T) {
 	} else {
 		t.Log("Go successfully read msg2!")
 		t.Logf("Go sees Android static: %x", goHS.PeerStatic())
-		require.Equal(t, androidStaticKey.Public, goHS.PeerStatic(), "Static keys should match")
+		require.Equal(t, androidStaticKey.PublicBytes(), goHS.PeerStatic(), "Static keys should match")
 
 		msg3, cs1, cs2, err := goHS.WriteMessage(nil, nil)
 		require.NoError(t, err)
@@ -123,7 +123,7 @@ func TestSimulatedLiveHandshake(t *testing.T) {
 		require.NotNil(t, cs4, "Android should have cipher 4")
 
 		t.Logf("Android sees Go static: %x", androidHS.PeerStatic())
-		require.Equal(t, goStaticKey.Public, androidHS.PeerStatic(), "Go static should match")
+		require.Equal(t, goStaticKey.PublicBytes(), androidHS.PeerStatic(), "Go static should match")
 
 		t.Log("✓ Full XX handshake completed successfully!")
 	}
@@ -138,14 +138,14 @@ func TestAndroidLikeHandshake(t *testing.T) {
 	goStaticKey, err := LoadStaticKey(goStaticPriv)
 	require.NoError(t, err)
 	defer goStaticKey.Destroy()
-	t.Logf("Go static: pub=%x", goStaticKey.Public)
+	t.Logf("Go static: pub=%x", goStaticKey.PublicBytes())
 
 	// Android responder setup (simulated)
 	androidStaticPriv, _ := hex.DecodeString("2000000000000000000000000000000000000000000000000000000000000002")
 	androidStaticKey, err := LoadStaticKey(androidStaticPriv)
 	require.NoError(t, err)
 	defer androidStaticKey.Destroy()
-	t.Logf("Android static: pub=%x", androidStaticKey.Public)
+	t.Logf("Android static: pub=%x", androidStaticKey.PublicBytes())
 
 	// Use our NoiseSession wrapper (Go side)
 	goSession, err := NewNoiseSession(&NoiseSessionConfig{
@@ -200,8 +200,8 @@ func TestAndroidLikeHandshake(t *testing.T) {
 		require.True(t, done, "Android should be done after msg3")
 
 		// Verify keys exchanged correctly
-		require.Equal(t, goStaticKey.Public, androidSession.RemoteStaticPublicKey())
-		require.Equal(t, androidStaticKey.Public, goSession.RemoteStaticPublicKey())
+		require.Equal(t, goStaticKey.PublicBytes(), androidSession.RemoteStaticPublicKey())
+		require.Equal(t, androidStaticKey.PublicBytes(), goSession.RemoteStaticPublicKey())
 
 		t.Log("✓ NoiseSession handshake completed successfully!")
 

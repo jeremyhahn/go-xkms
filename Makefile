@@ -4013,9 +4013,8 @@ lint: actionlint
 # needs cgo + WebKit headers `make vet`/`make lint` do not carry).
 #
 # scripts/secure-analyzer-allowlist.txt is the exemption list -- not a
-# baseline. Its own header documents the two named, reasoned exemption
-# classes (a go-truststrap-forced signature; an upstream rule-2 narrowing)
-# and the pre-existing rule-3 residue reported for triage rather than
+# baseline. Its own header documents the one named, reasoned exemption
+# class (an upstream rule-2 narrowing) and the pre-existing rule-3 residue reported for triage rather than
 # guessed at in the change that only wires the gate. An entry that stops
 # matching anything fails the sweep as stale rather than aging out silently.
 # LINT_TAGS_root (declared with LINT_MODULES above) is the same TEST_TAGS,

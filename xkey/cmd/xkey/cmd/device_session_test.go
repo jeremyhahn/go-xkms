@@ -17,12 +17,9 @@ package cmd
 
 import (
 	"context"
-	"encoding/base64"
 	"testing"
 
 	"github.com/stretchr/testify/require"
-
-	"github.com/jeremyhahn/go-xkms/xkey/pkg/pairing"
 )
 
 // TestOpenDeviceSession_BadLocalKey exercises the failure branch that fires
@@ -45,7 +42,7 @@ func TestOpenDeviceSession_BadRemoteKey(t *testing.T) {
 	device := PairedDevice{
 		Name:                 "A",
 		Address:              "11:22:33:44:55:66",
-		LocalNoisePrivateKey: validPlaintextNoiseKey(t),
+		LocalNoisePrivateKey: validLocalNoisePrivateKeyForTest(t),
 		NoisePublicKey:       "not valid base64!!!",
 	}
 
@@ -53,13 +50,4 @@ func TestOpenDeviceSession_BadRemoteKey(t *testing.T) {
 	require.Nil(t, session)
 	require.Nil(t, cleanup)
 	require.ErrorIs(t, err, ErrSessionKeyDecode)
-}
-
-// validPlaintextNoiseKey generates a real, unsealed (legacy plaintext-form)
-// Noise static private key, base64 encoded the way devices.yaml stores it.
-func validPlaintextNoiseKey(t *testing.T) string {
-	t.Helper()
-	key, err := pairing.GenerateStaticKey()
-	require.NoError(t, err)
-	return base64.StdEncoding.EncodeToString(key.Private)
 }

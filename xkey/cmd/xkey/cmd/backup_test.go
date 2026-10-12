@@ -588,7 +588,10 @@ func TestResolveBackupCredential_PasswordTakesPrecedence(t *testing.T) {
 	require.NoError(t, err)
 	t.Cleanup(credential.wipe)
 	require.NotNil(t, credential.password)
-	assert.Equal(t, []byte("wins"), credential.password.Bytes())
+	require.NoError(t, credential.password.WithBytes(func(b []byte) error {
+		assert.Equal(t, []byte("wins"), b)
+		return nil
+	}))
 	assert.Nil(t, credential.key)
 }
 

@@ -146,7 +146,7 @@ func NewPhone(t *testing.T, dak *DAK) *Phone {
 		DAK:       dak,
 		Name:      "attesttest phone",
 		staticKey: key,
-		staticPub: append([]byte(nil), key.Public...),
+		staticPub: key.PublicBytes(),
 	}
 }
 

@@ -42,7 +42,7 @@ func TestEncodeNoiseStaticKeyHex_RoundTrips(t *testing.T) {
 	decoded, err := noiseproto.DecodeStaticKey(hexKey)
 	require.NoError(t, err)
 	defer decoded.Destroy()
-	assert.Equal(t, key.Public, decoded.Public)
+	assert.Equal(t, key.PublicBytes(), decoded.PublicBytes())
 }
 
 // TestRetainNoiseKey_AppendsKey proves a non-nil key is parked on the

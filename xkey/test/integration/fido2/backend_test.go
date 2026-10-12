@@ -21,6 +21,7 @@
 package fido2
 
 import (
+	"context"
 	"crypto/ecdsa"
 	"crypto/rand"
 	"crypto/sha256"
@@ -331,11 +332,11 @@ func newPKCS11BackendAdapter() (keybackend.FIDO2KeyBackend, error) {
 		return nil, err
 	}
 
-	pinSecret, err := xkms.NewLiteralSecretValue([]byte(pin))
+	pinSecret, err := xkms.NewLiteralSecretValue(context.Background(), []byte(pin))
 	if err != nil {
 		return nil, err
 	}
-	soPINSecret, err := xkms.NewLiteralSecretValue([]byte(soPin))
+	soPINSecret, err := xkms.NewLiteralSecretValue(context.Background(), []byte(soPin))
 	if err != nil {
 		return nil, err
 	}

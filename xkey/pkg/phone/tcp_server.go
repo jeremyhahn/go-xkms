@@ -420,9 +420,7 @@ func (s *TCPPairingServer) LocalStaticPublicKey() []byte {
 	if s.localStaticKey == nil {
 		return nil
 	}
-	cp := make([]byte, len(s.localStaticKey.Public))
-	copy(cp, s.localStaticKey.Public)
-	return cp
+	return s.localStaticKey.PublicBytes()
 }
 
 // acceptLoop runs in its own goroutine and accepts incoming TCP connections.

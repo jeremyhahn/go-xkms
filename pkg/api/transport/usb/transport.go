@@ -343,7 +343,7 @@ func (t *Transport) Connect(ctx context.Context) error {
 	// the session must not destroy a key the configuration still owns. The
 	// source scalar goes from protected memory straight back into protected
 	// memory, never touching the Go heap in between.
-	localKey, err := pairing.LoadStaticKey(noise.localKey.Private)
+	localKey, err := pairing.CloneStaticKey(noise.localKey)
 	if err != nil {
 		return &errs.Detail{Err: ErrNoiseNotConfigured, Detail: fmt.Sprintf("%v", err)}
 	}

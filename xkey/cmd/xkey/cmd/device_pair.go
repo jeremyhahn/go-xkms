@@ -464,10 +464,15 @@ func runDevicePair(cmd *cobra.Command, args []string) (err error) {
 
 	// Seal the local Noise static private key before it is written anywhere,
 	// or fall back to the legacy plaintext form with a warning if no barrier
-	// is initialized on this host at all (#42). localKey.Private is still
-	// valid here: it is destroyed by the deferred localKey.Destroy() above,
-	// which has not run yet.
-	noiseKeyField, err := sealOrWarnLocalNoiseKey(logger, deviceName, barrier, localKey.Private)
+	// is initialized on this host at all (#42). localKey is still live here:
+	// it is destroyed by the deferred localKey.Destroy() above, which has not
+	// run yet.
+	var noiseKeyField string
+	err = pairing.WithPrivateKey(localKey, func(priv []byte) error {
+		var sealErr error
+		noiseKeyField, sealErr = sealOrWarnLocalNoiseKey(logger, deviceName, barrier, priv)
+		return sealErr
+	})
 	if err != nil {
 		return err
 	}
