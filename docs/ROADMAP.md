@@ -41,7 +41,7 @@ This document tracks the development progress of go-xkms.
 - [x] **QUIC Backend** - HTTP/3 transport via SDK (`sdk/go/transport/quic/`)
 - [x] **PIV Integration** - Full PIV slot discovery, certificate retrieval, and object mapping (`pkg/pkcs11/module/module_piv.go`)
 - [x] **Testing** - Unit tests (~58k lines across `pkg/pkcs11/module/*_test.go`), integration tests (24 files in `test/integration/pkcs11/module/`), conformance suite, pkcs11-tool compatibility (`make test-pkcs11-compat`), OpenSSL/SSH interop
-- [x] **Documentation** - Architecture, configuration, usage, mechanisms, API reference, security (`docs/pkcs11/module/`)
+- [x] **Documentation** - Architecture, configuration, usage, mechanisms, API reference, security (`docs/pkcs11-provider-module/`)
 
 ### Authentication & FIDO2
 - [x] **WebAuthn** - Server-side WebAuthn/FIDO2 registration and authentication (`pkg/webauthn/`)
@@ -55,10 +55,10 @@ This document tracks the development progress of go-xkms.
 - [ ] **Key Versioning** - Version lifecycle (list/enable/disable individual and all versions). The RPCs are declared in `pkg/api/grpc/proto/xkmsv1/xkms.proto` and the Go SDK lists them, but no server implements them; rotation is the only version operation that currently ships.
 
 ### Security Infrastructure
-- [x] **Barrier Encryption** - AES-256-GCM data-at-rest encryption with seal/unseal lifecycle. The barrier implementation itself is go-qrdb's `StorageBarrier`, consumed through `go-qrdb/sdk/go`; xkms composes it and owns the hardware/cloud seal strategies. There is one barrier, the embedded node's: xkms injects its strategy through `pkg/embeddednode` (`NodeSealOptions`) and adopts the node's registry (`pkg/server/qrdb_node.go`). See [seal/README.md](seal/README.md).
+- [x] **Barrier Encryption** - AES-256-GCM data-at-rest encryption with seal/unseal lifecycle. The barrier implementation itself is go-qrdb's `StorageBarrier`, consumed through `go-qrdb/sdk/go`; xkms composes it and owns the hardware/cloud seal strategies. There is one barrier, the embedded node's: xkms injects its strategy through `pkg/embeddednode` (`NodeSealOptions`) and adopts the node's registry (`pkg/server/qrdb_node.go`). See [sealing-and-barrier/](sealing-and-barrier/architecture.md).
 - [x] **Shamir Secret Sharing** - Threshold-based barrier key management with quorum unsealing (owned by go-qrdb's barrier; see [custodian/README.md](custodian/README.md) for the custodian roster that names the share holders)
 - [x] **Recovery Keys** - Disaster recovery with root token generation, exposed on the barrier surface as `BarrierGenerateRecoveryKeys` / `BarrierRecoverWithKeys` / `BarrierDeleteRecoveryKeys` / `BarrierHasRecoveryKeys` / `BarrierGenerateRootToken` (`pkg/api/transport/client.go:193-205`)
-- [x] **Bootstrap Trust** - Canonical mode dispatch in `pkg/trust/bootstrap`: `auto`, `dane`, `noise`, `spki`, `direct`, and `tofu` (`pkg/trust/bootstrap/bootstrap.go:63-92`), composing `github.com/jeremyhahn/go-truststrap` (`go.mod:30`). Re-exported to SDK consumers via `sdk/go/bootstrap`. See [trust/bootstrap.md](trust/bootstrap.md).
+- [x] **Bootstrap Trust** - Canonical mode dispatch in `pkg/trust/bootstrap`: `auto`, `dane`, `noise`, `spki`, `direct`, and `tofu` (`pkg/trust/bootstrap/bootstrap.go:63-92`), composing `github.com/jeremyhahn/go-truststrap` (`go.mod:30`). Re-exported to SDK consumers via `sdk/go/bootstrap`. See [trust-bootstrap/](trust-bootstrap/architecture.md).
 - [x] **Init System** - Ceremony service with threshold initialization, credential strategies, RBAC roles (`pkg/init/`)
 
 ### Binaries & SDK
@@ -157,8 +157,8 @@ test-pkcs11-compat: build-pkcs11-module
 - [PKCS#11 v3.2 Specification](https://docs.oasis-open.org/pkcs11/pkcs11-spec/v3.2/pkcs11-spec-v3.2.html)
 - [PKCS#11 Base Specification v3.0](https://docs.oasis-open.org/pkcs11/pkcs11-base/v3.0/pkcs11-base-v3.0.html)
 - [PKCS#11 Profiles v3.0](https://docs.oasis-open.org/pkcs11/pkcs11-profiles/v3.0/pkcs11-profiles-v3.0.html)
-- [PKCS#11 Module Documentation](pkcs11/module/README.md)
+- [PKCS#11 Module Documentation](pkcs11-provider-module/architecture.md)
 - Unix IPC: the gRPC-over-Unix-socket server is `pkg/api/unix/grpc_server.go`; it has no
   standalone document yet. The socket configuration keys are covered in
-  [configs/README.md](../configs/README.md), and the ACME variant is documented in
-  [acme/protocols/unix-socket.md](acme/protocols/unix-socket.md).
+  [configs/README.md](../configs/README.md), and the ACME admin variant is documented in
+  [acme-issuance/api.md](acme-issuance/api.md#transport-adapters).

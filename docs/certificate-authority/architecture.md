@@ -1,6 +1,6 @@
 # Certificate Authority — Architecture
 
-> **Status: NORMATIVE** · Feature: `certificate-authority` · Repo: `go-xkms` · Last verified: 2026-10-08
+> **Status: NORMATIVE** · Feature: `certificate-authority` · Repo: `go-xkms` · Last verified: 2026-10-12
 
 ## The problem
 
@@ -61,6 +61,8 @@ Rejected alternatives:
 | Piece | Package | Owner |
 |---|---|---|
 | `TrustedCA`, issuance, revocation, CRL, chains | `pkg/ca` | go-xkms |
+| The one signing seam every issuance path uses (`Issuer`, `CertificateSpec`) | `pkg/ca/issuance.go` | go-xkms |
+| Certificate profiles (KU, EKU, basic constraints) | `pkg/ca/profiles.go`, `profile_*.go` | go-xkms |
 | Cross-signing | `pkg/ca/cross_signing.go` | go-xkms |
 | Hybrid / PQ certificate paths | `pkg/ca/hybrid.go` | go-xkms |
 | TPM attestation import and verification | `pkg/ca/attestation.go` | go-xkms |
@@ -69,12 +71,22 @@ Rejected alternatives:
 | Signing keys | `pkg/xkms` keystore — see [`../crypto-backends/`](../crypto-backends/architecture.md) | go-xkms |
 | Certificate records (DAO, database, node) | `go-qrdb/sdk/go` | **go-qrdb** |
 | Ceremony that drives first CA creation | go-qrdb's ceremony; `pkg/init` `CAAdapter` bridges `TrustedCA` → qrdb's `CeremonyCA` | **go-qrdb** owns the seam |
-| ACME RFC 8555 on top of this CA | `pkg/acme` — see [`../acme/`](../acme/architecture.md) | go-xkms |
+| ACME RFC 8555 on top of this CA | `pkg/acme` — see [`../acme-issuance/`](../acme-issuance/architecture.md) | go-xkms |
 
 This is capability row **"`TrustedCA`, ACME RFC-8555, DANE, AIA, cross-sign"
 (tier 1)**. ACME is documented in its own folder because it is a protocol
-surface with its own client, server, transports and challenge types; DANE and
-AIA are here.
+surface with its own client, server, transports and challenge types. AIA is
+here. DANE is not part of `TrustedCA`: TLSA records are built and handed to an
+application-supplied publisher by `pkg/trust/dane`, documented with
+[`../trust-bootstrap/`](../trust-bootstrap/architecture.md).
+
+Issuance has a single signing point. Callers own the certificate's contents
+(serial, subject, names, validity) in a `CertificateSpec`; the profile owns
+its policy (key usage, EKU, basic constraints); `Issuer.Sign` is the only
+place in `pkg/ca` that calls `x509.CreateCertificate`. A profile change
+therefore reaches every path at once, and the `TestCertificatePolicy_*`
+suites fail if a path bypasses the seam. Details are in
+[`engineering.md`](engineering.md) §Canonical issuance.
 
 ## Data flow
 
@@ -323,7 +335,7 @@ trust domain. The package is a leaf with no go-xkms imports.
 ## What this feature deliberately does not do
 
 - **No ACME here.** Protocol handling, challenges, orders, nonces and accounts
-  are [`../acme/`](../acme/architecture.md).
+  are [`../acme-issuance/`](../acme-issuance/architecture.md).
 - **It does not own the ceremony.** First-boot CA creation runs inside go-qrdb's
   ceremony through the `CeremonyCA` seam; go-xkms supplies the adapter, not the
   orchestration. See [`../init-ceremony/`](../init-ceremony/architecture.md).

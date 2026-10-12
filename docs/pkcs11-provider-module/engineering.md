@@ -1,6 +1,6 @@
 # PKCS#11 Provider Module — Engineering Contract
 
-> **Status: NORMATIVE** · Feature: `pkcs11-provider-module` · Repo: `go-xkms` · Last verified: 2026-10-10
+> **Status: NORMATIVE** · Feature: `pkcs11-provider-module` · Repo: `go-xkms` · Last verified: 2026-10-12
 
 ## Build
 
@@ -63,11 +63,53 @@ Other sentinels: `ErrProvisionClientRequired`, `ErrProvisionStorageRequired`,
 module's `ErrPINIncorrect` under `ProvisionError{Step: "C_Login(CKU_USER)"}`.
 The same names are re-exported by `sdk/go/signserver`.
 
-## Configuration — environment only
+### `pkg/pkcs11/manager`
 
-Cryptoki consumers cannot pass configuration, so everything is environment.
-Constants are in `pkg/pkcs11/module/config.go` and
-`cmd/pkcs11-module/offline.go`.
+Loads third-party Cryptoki libraries and manages their tokens for the CLI and
+GUI. The real implementation is build-tagged `pkcs11`
+(`manager_pkcs11.go:1`); without the tag every call returns
+`ErrPKCS11Disabled` (`errors.go:21`, `manager_stub.go`).
+
+| Name | Contract |
+|---|---|
+| `New(opts ...Option) Manager` (`manager_pkcs11.go:54`), `WithLogger` (`manager.go:264`) | constructor |
+| `Manager` (`manager.go:48-97`) | `IsAvailable`, `RegisterModule(path, name) (id, error)`, `UnregisterModule`, `RefreshSlots` (hot-plug), `GetModule`, `ListModules`, `ListTokens`, `InitializeToken(id, slot, label, soPin, userPin)` (`C_InitToken` + `C_InitPIN`), `TestLogin`, `Connect(id, slot, userPin, soPin) (Backend, error)`, `Disconnect`, `GetConnection`, `ListConnections`, `Close` |
+| `ProbeModulePaths`, `ProbeModulesWithNames` (`probe.go:84`, `:102`) | find installed Cryptoki libraries |
+| `DeriveModuleID` (`probe.go:191`), `DetectDevice` (`detect.go:61`) | stable module ID; device type, `IsHardwareBacked` (`:149`) |
+
+## Configuration — environment and an optional file
+
+Cryptoki consumers cannot pass configuration, so the module reads it itself.
+Constants are in `pkg/pkcs11/module/config.go` (environment names at `:48-61`)
+and `cmd/pkcs11-module/offline.go`.
+
+- **Remote mode** — `C_Initialize` (`cmd/pkcs11-module/exports.go:226`) calls
+  `Module.Initialize(nil)`, which runs `Load()` (`module.go:496`) →
+  `LoadWithPath(DefaultConfigPath)` (`config.go:632-663`). That reads the INI
+  file `/etc/xkms/pkcs11.conf` (`config.go:34`) **if it exists**
+  (`LoadFromFile`, `:532`), then applies the environment over it
+  (`applyEnvOverrides`, `:666` — **the environment wins**), fills defaults and
+  validates. Any failure answers `CKR_GENERAL_ERROR` (`module.go:498`).
+- **Offline mode** reads the environment only (`LoadFromEnv`, `offline.go:162`,
+  `config.go:431`).
+
+The file is refused unless its mode grants nothing to group or other
+(`checkConfigFilePermissions`, `config.go:507-512`, `ErrConfigFilePermissions`).
+Its keys (`config.go:588-620`) mirror the remote-mode variables below:
+`target`, `tls_enabled`, `tls_cert`, `tls_key`, `tls_ca`,
+`allow_insecure_transport`, `timeout`, `default_backend`, `auto_init_token`,
+`so_pin`, `user_pin`, `token_label`, `storage_type`, `storage_path`,
+`piv_backends`. `TenantID` (`config.go:158`) is settable from Go only.
+
+Defaults: target `unix:///var/run/xkms/xkms.sock` (`config.go:40`), timeout 30s
+(`:37`), backend `software` (`:43`).
+
+`Validate` (`config.go:203`) refuses: a nil config (`ErrNilConfig`, `:205`), an
+empty target (`ErrEmptyTarget`, `:209`), a non-`unix://` target without TLS
+unless insecure transport is allowed (`ErrInsecureRemoteTarget`, `:228`;
+`isLocalTarget`, `:252-254`), a non-positive timeout (`ErrInvalidTimeout`,
+`:233`), inconsistent storage settings (`:319-333`), incomplete TLS material
+(`:342-362`), and an MCP target (`ErrMCPTargetNotSupported`, `:405`).
 
 ### Mode selection
 
@@ -113,7 +155,8 @@ sees the same token, PINs and keys.
 | `XKMS_PKCS11_TOKEN_LABEL` | token label presented to consumers |
 | `XKMS_PKCS11_AUTO_INIT_TOKEN` | initialize the token on first use |
 | `XKMS_PKCS11_STORAGE_TYPE` / `_STORAGE_PATH` | state storage |
-| `XKMS_PKCS11_PIV_BACKENDS` | PIV backends exposed through the token |
+| `XKMS_PKCS11_PIV_BACKENDS` | PIV backends exposed through the token; see [PIV objects](#piv-objects) |
+| `XKMS_PKCS11_ALLOW_WEAK_HASH_SIGNING` | `true`/`1`/`yes`/`on` keeps `CKF_SIGN` on `CKM_SHA1_RSA_PKCS` and `CKM_ECDSA_SHA1`; otherwise they advertise verify only (`mechanism.go:2351-2376`). Both modes |
 
 **Build-tag trap, documented at `config.go:266`:**
 `XKMS_PKCS11_DEFAULT_BACKEND=vault` fails `C_Initialize` when the module was
@@ -126,13 +169,14 @@ naming a backend is this, not a configuration typo.
 - **`C_Initialize` fails closed.** An unreachable target, an unavailable
   backend, a missing tag, or unusable storage all fail initialization rather
   than degrading. A consumer that got a function list has a working token.
+  Loading PIV objects is the one best-effort step (see [PIV objects](#piv-objects)).
 - **The module never builds its own sealer.** Offline at-rest protection uses
   go-qrdb's barrier (`offline.go`). A local sealer would be a second,
   unreviewed barrier.
 - **The secure seal strategy is the default.** `passphrase` unless explicitly
   set to `none`.
 - **`CKR_FUNCTION_NOT_SUPPORTED` is a contract, not a failure.**
-  `crypto.go:3327` states the intent: the caller must be able to distinguish
+  `crypto.go:3351`, `:3367` and `:3390` state the intent: the caller must be able to distinguish
   "this token will never do that" from "that operation failed". Do not collapse
   it into a generic error.
 - **Remote token state is CAS-guarded.** `PKCS11StateCAS` and
@@ -231,7 +275,7 @@ P-384, and it verifies under OpenSSL.
 
 The PIN budget belongs to the token, not to the process: every process that
 opens the same token shares one counter per PIN (`MaxPINAttempts`,
-`pkg/pkcs11/module/session.go:1205`) under the dedicated keys
+3, `pkg/pkcs11/module/session.go:1204`) under the dedicated keys
 `pkcs11/counters/token/<slot>/failed_{user,so}` (`storage.go:220`).
 
 - **An attempt is spent before it is checked** (#1144).
@@ -285,16 +329,169 @@ opens the same token shares one counter per PIN (`MaxPINAttempts`,
   read-modify-write that interleaves within one swap can still lose an update.
   Remote tokens have no such window.
 
-## v3.2 status
+## Interfaces and v3.2 status
 
-Four surfaces ship the API and answer `CKR_FUNCTION_NOT_SUPPORTED`:
-`module_kem.go` / `module_kem_quantum.go` (KEM), `module_authwrap.go`
-(authenticated wrapping), `module_verifysig.go` /
-`module_verifysig_quantum.go` (signature-first PQC verification, 9 functions),
-`module_async.go` (asynchronous operations). Each has tests asserting the
-not-supported answer, so the behaviour is deliberate. Compliance detail:
-`docs/pkcs11/module/v32-compliance.md`; changes from v3.0:
-`docs/references/pkcs11-v3.0-to-v3.2-changes.md`.
+`C_GetInterface` (`exports.go:320-382`) accepts only the name `"PKCS 11"`
+(`:350`) and refuses any non-zero flags, `CKF_INTERFACE_FORK_SAFE` included
+(`:338`). A NULL name or version returns v3.2; version 2 returns the v2.40
+list, 3.0 the 3.0 list, 3.2 the 3.2 list; anything else is
+`CKR_ARGUMENTS_BAD`. The v3.2 functions are only in `functionList32`
+(`function_list.go:342`; `C_EncapsulateKey` at `:443`).
+
+Implemented v3.2 surfaces:
+
+| Surface | Where |
+|---|---|
+| KEM — `C_EncapsulateKey` / `C_DecapsulateKey` | `module_kem.go`, `module_kem_quantum.go` |
+| Authenticated wrapping | `module_authwrap.go:429` (wrap), `:853` (unwrap) |
+| Signature-first verification — `C_VerifySignature*` | `module_verifysig.go:49`, `:151`, `:206`, `:254` |
+| `C_GetSessionValidationFlags` | `module_validation.go:58-83` |
+
+Authenticated wrap refuses a wrapping key whose value is shorter than the
+target key's with `CKR_WRAPPING_KEY_SIZE_RANGE`
+(`requireWrappingKeyStrength`, `module_authwrap.go:109-115`); the wrap
+(`:590`) and its size query (`:780`) apply it, unwrap and plain `C_WrapKey`
+do not.
+
+Only these answer `CKR_FUNCTION_NOT_SUPPORTED`: the asynchronous functions
+(`module_async.go:58`, `:78`, `:94`, `:114`, `:131`, `:151`) and
+`C_WaitForSlotEvent` without `CKF_DONT_BLOCK` (`exports.go:2081-2087`). The
+message-based signature-first verification functions
+(`C_MessageVerifySignatureInit` and its siblings) do not exist; ordinary message
+verification does (`module.go:5466-5669`). Changes from v3.0:
+[`../references/pkcs11-v3.0-to-v3.2-changes.md`](../references/pkcs11-v3.0-to-v3.2-changes.md).
+
+## Mechanisms
+
+Three registries describe every mechanism: `mechanismRegistry`
+(`mechanism.go:1362`, 48 entries), `v32MechanismRegistry`
+(`mechanism_v32.go:271`, 34, merged at `mechanism.go:686-691`) and
+`quantumMechanismRegistry` (`mechanism_quantum.go:196`, 15, merged at
+`:373-380`). 46 of the 97 are advertised. The descriptor at each cited line is
+the authority for flags and key sizes.
+
+`C_GetMechanismList` / `C_GetMechanismInfo` read `defaultMechanismInfo`
+(`token.go:1026-1054`): unadvertised entries are skipped, non-FIPS entries are
+skipped when FIPS mode is on (`:1035`), and key sizes and flags come from
+`effectiveKeySizeRange` (`mechanism.go:2478-2486`) and
+`effectiveMechanismFlags` (`:2385-2390`).
+
+| Family | Advertised (`mechanism.go` line) |
+|---|---|
+| RSA | `CKM_RSA_PKCS_KEY_PAIR_GEN` 1370, `CKM_RSA_PKCS` 1381, `CKM_RSA_PKCS_OAEP` 1434, `CKM_RSA_PKCS_PSS` 1447, `CKM_SHA1_RSA_PKCS`\* 1460, `CKM_SHA256/384/512_RSA_PKCS` 1471/1482/1493, `CKM_SHA256/384/512_RSA_PKCS_PSS` 1504/1517/1530 |
+| EC | `CKM_EC_KEY_PAIR_GEN` 1550, `CKM_ECDSA` 1560, `CKM_ECDSA_SHA1`\* 1584, `CKM_ECDSA_SHA224/256/384/512` 1593/1603/1613/1623, `CKM_ECDH1_DERIVE` 1639, `CKM_ECDH1_COFACTOR_DERIVE` 1668 |
+| EdDSA | `CKM_EC_EDWARDS_KEY_PAIR_GEN` 1687, `CKM_EDDSA` 1697 (FIPS-approved, `:1700`) |
+| AES | `CKM_AES_KEY_GEN` 1763, `CKM_AES_ECB` 1773, `CKM_AES_CBC` 1797, `CKM_AES_CBC_PAD` 1809, `CKM_AES_GCM` 1821, `CKM_AES_KEY_WRAP` 1840, `CKM_AES_KEY_WRAP_KWP` 1860, `CKM_AES_KEY_WRAP_PAD` 1870 |
+| Digest | `CKM_SHA_1` 1888, `CKM_SHA256` 1896, `CKM_SHA384` 1904, `CKM_SHA512` 1912, `CKM_SHA224` 1920, `CKM_SHA512_224` 1939, `CKM_SHA512_256` 1947 |
+| KDF | `CKM_HKDF_DERIVE`\* 2048, `CKM_HKDF_DATA`\* 2059, `CKM_SP800_108_COUNTER_KDF` 2089, `CKM_SP800_108_FEEDBACK_KDF` 2101, `CKM_SP800_108_DOUBLE_PIPELINE_KDF` 2113 |
+| PQC (`mechanism_v32.go`) | `CKM_ML_KEM_KEY_PAIR_GEN` 276, `CKM_ML_KEM` 293, `CKM_ML_DSA_KEY_PAIR_GEN` 315, `CKM_ML_DSA` 327 (advertised at `:286`, `:304`, `:322`, `:334`) |
+
+\* Not FIPS-approved: withheld from both list and info in FIPS mode. SHA-1 and
+ECDSA-SHA1 signing is additionally withheld unless
+`XKMS_PKCS11_ALLOW_WEAK_HASH_SIGNING` is set (`weakHashSignatureMechanisms`,
+`mechanism.go:2358-2361`). RSA keys are 2048 (`:1331`) to 4096 bits (`:1351`),
+3072 at most in FIPS mode (`:1358`).
+
+Registered but **not advertised** (`mechanismsAwaitingAnImplementation`,
+`mechanism_conformance_test.go:312`, reasons at `:322-339`):
+
+| Mechanism | Reason |
+|---|---|
+| `CKM_RSA_X_509` (`mechanism.go:1425`) | only verify-recover is performed (`CKF_VERIFY_RECOVER`, `:1432`) |
+| `CKM_SHA256/384/512_HMAC` (`:2001`, `:2009`, `:2017`) | no backend performs a symmetric MAC; the constants remain KDF PRF selectors |
+| `CKM_EC_MONTGOMERY_KEY_PAIR_GEN` (`:1714`) | no backend generates an X25519/X448 pair |
+| `CKM_GENERIC_SECRET_KEY_GEN` (`:2153`) | generates only AES sizes, so no truthful key-size range exists |
+| the rest of `mechanism_v32.go` (HashML-DSA `351-431`, SLH-DSA `441`/`448`, HashSLH-DSA `471-531`, HSS `539`/`546`, XMSS `563`/`570`, XMSS^MT `587`/`594`) and every vendor entry in `mechanism_quantum.go` (ML-DSA-44/65/87 `202-251`, ML-KEM-512/768/1024 `285-361`) | descriptors with no end-to-end operation |
+
+`TestNoMechanismIsUndiscoverableButUsable` (`mechanism_conformance_test.go:356`)
+and `TestEveryDigestMechanismIsBothRegisteredAndImplemented` (`:72`) keep the
+list and the implementations aligned. There is no SHA-3 digest, HMAC or CMAC
+signing, AES-CTR or AES-CCM, and no DSA, DH, DES, RC2, RC4 or IDEA mechanism.
+
+### Key derivation
+
+`C_DeriveKey` sends the base key's `CKA_VALUE` when it has one, otherwise its
+backend key identifier, so the KDF runs inside the backend over the key it
+already holds (`module.go:7672-7675`). A base key with neither is
+`CKR_KEY_HANDLE_INVALID`. Backends implementing `types.SymmetricKeyDeriver`
+(`pkg/types/kdf.go:137`): software (`pkg/backend/software/software.go:458`),
+the symmetric key provider (`pkg/keyprovider/symmetric/kdf.go:42`), TPM 2.0
+(`pkg/backend/tpm2/kdf.go:50`) and PKCS#11 (`pkg/backend/pkcs11/pkcs11_kdf.go:48`).
+A derivation naming any other backend is refused.
+
+### Daemon policy
+
+Advertising is the module's; performing is the daemon's. Two `crypto` settings
+in `pkg/config/config.go` refuse operations the module still lists:
+
+- `allow_weak_hashes` (`:120`, default off) refuses SHA-1 signing in the
+  service layer.
+- `allow_legacy_key_wrap` (`:143`, default off) refuses `CKM_RSA_PKCS`,
+  `CKM_AES_CBC_PAD` and `CKM_AES_CBC` for wrap/unwrap and RSA PKCS#1 v1.5
+  decrypt (`pkg/xkms/servicer_wrapkey.go:105`, `:179`, `:651`, `:720`, `:832`;
+  `servicer_crypto.go:773`, `:788`, `:838`, `:987`); xkmsd warns when it is on
+  (`pkg/server/server.go:621`). In FIPS mode `types.SetAllowLegacyKeyWrap`
+  ignores a request to enable it (`pkg/types/wrappolicy.go:93-97`).
+
+## Deviations and limits
+
+- **Init gates on registration only.** `validateInitMechanism`
+  (`module.go:2984-2992`) checks `GetMechanismDescriptor`, so a registered but
+  unadvertised mechanism passes `C_*Init` and fails at the operation.
+- **No raw RSA sign or decrypt.** `CKM_RSA_X_509` is verify-recover only.
+- **RSA-PSS** (`validateRSAPSSParams`, `crypto.go:1206-1250`): parameters are
+  required; `hashAlg` must match the mechanism's hash; `mgf` must be the
+  matching MGF1; `sLen` 0 is `CKR_MECHANISM_PARAM_INVALID`. There is no upper
+  bound on `sLen`.
+- **RSA-OAEP** (`ValidateRSAOAEPParams`, `mechanism.go:766-786`): `mgf` 0 or the
+  matching MGF1; `source` 0 or `CKZ_DATA_SPECIFIED`, which source data requires.
+- **ECDH peer points** (`ValidateECDHPeerPoint`, `mechanism.go:967-982`) must be
+  uncompressed (`0x04`), of the curve's length and on the curve, else
+  `CKR_MECHANISM_PARAM_INVALID`.
+- **Caller-supplied digests.** `CKM_RSA_PKCS` and `CKM_ECDSA` are sent with hash
+  `"NONE"` (`crypto.go:2218-2282`).
+- **One-way attributes.** Once reached, `CKA_SENSITIVE` and
+  `CKA_WRAP_WITH_TRUSTED` true, and `CKA_EXTRACTABLE` and `CKA_COPYABLE` false,
+  cannot be reversed (`oneWayBoolAttributes`, `object.go:914-919`;
+  `checkOneWayTransition`, `:928`). Setting `CKA_TRUSTED` is SO-gated, and a
+  trusted certificate is immutable (`checkTrustedAssertion`, `:964-974`).
+- **Objects are not slot-scoped** (`destroyTokenObjects`, `module.go:3021`).
+- **`C_InitToken` on an initialized token** requires its existing SO PIN
+  (`module.go:1447-1448`).
+- **`*Update` length queries** do not consume input (`exports.go:1000`,
+  `:1144`).
+- **No fork safety**; `CKF_INTERFACE_FORK_SAFE` is refused.
+- **Finalize** destroys session objects and zeroizes the object manager
+  (`module.go:1079`, `:1087`; `ObjectManager.Zeroize`, `object.go:3212`).
+  `C_CloseAllSessions` destroys the slot's session objects (`module.go:1796`).
+
+## PIV objects
+
+With `piv_backends` set, `Initialize` calls `LoadPIVObjects`
+(`module_piv.go:304`) for each listed backend (`module.go:597-607`). This is
+**best effort**: a failure is logged (`logInitWarning`, `:605`) and does not
+fail `C_Initialize`.
+
+Each occupied slot yields a certificate, public key and private key sharing
+`CKA_ID` = first 20 bytes of SHA-256 over the certificate's SubjectPublicKeyInfo
+(`computePIVObjectID`, `module_piv.go:265-267`) and `CKA_LABEL` `piv:<slot>`
+(`:358`).
+
+| Object | Attributes |
+|---|---|
+| Certificate | `CKA_SUBJECT`, `CKA_ISSUER`, `CKA_SERIAL_NUMBER`, `CKA_PRIVATE` false (`:394-408`) |
+| Public key | `CKA_PRIVATE` false, `CKA_VERIFY`, `CKA_ENCRYPT` (`:427-429`) |
+| Private key | `CKA_PRIVATE` per slot, `CKA_SENSITIVE`, `CKA_SIGN`, `CKA_DECRYPT`, `CKA_EXTRACTABLE` false, `CKA_NEVER_EXTRACTABLE`, `CKA_ALWAYS_SENSITIVE` (`:458-465`) |
+
+Slot policy (`pivSlotPolicies`, `:124-126`): `9c` is private with
+`CKA_ALWAYS_AUTHENTICATE`; `9e` is not private; every other slot is private
+(`:132`). A slot's objects are replaced, not accumulated
+(`DestroyObjectsForKey`, `:366`), and `DeletePIVCertificate` removes them
+(`:679`). The Go methods `StorePIVCertificate`, `DeletePIVCertificate`,
+`ImportPIVCertificate`, `ExportPIVCertificate`, `GeneratePIVCSR` and
+`GeneratePIVKeyPair` (`:489`) maintain the objects; no Cryptoki function routes
+to `GeneratePIVKeyPair`, and its private key is always `CKA_PRIVATE` true
+(`:561`).
 
 ## Test strategy
 

@@ -1,6 +1,6 @@
 # Browser Trust Injection — Engineering Contract
 
-> **Status: NORMATIVE** · Feature: `browser-trust-injection` · Repo: `go-xkms` (`xkey/`) · Last verified: 2026-09-24
+> **Status: NORMATIVE** · Feature: `browser-trust-injection` · Repo: `go-xkms` (`xkey/`) · Last verified: 2026-10-12
 
 ## Exported surface — `xkey/pkg/gui/services`
 
@@ -75,7 +75,7 @@ certificate whose current trust object is valid (`nssdb.go:268-379`).
   produced signatures NSS silently rejected as untrusted.
 - **Shared-mode Chrome's `~/.pki/nssdb` is only ever probed for existence,
   never written to as xkey bookkeeping** (`browserStorePresent`,
-  `secure_browser_service.go:701-712`) — the trust-hash file itself always
+  `secure_browser_service.go:733-742`) — the trust-hash file itself always
   lives under xkey's own `baseDir`, never inside the user's real NSS
   directory.
 - **`Clean`/`Close`-style teardown is idempotent everywhere in this feature**:
@@ -123,14 +123,39 @@ There is no separate on-disk configuration file for
 mode fields (`ChromeProfileMode`, `FirefoxProfileMode`) live off the
 `BrowserService` it was constructed with.
 
+### On-disk layout under `baseDir`
+
+| Path | Written by | Source |
+|---|---|---|
+| `trust_hash.<family>.<mode>` | last-synced trust hash, one per resolved target store, mode `0600` | `trustHashPath`, `writeTrustHash` (`secure_browser_service.go:781`, `:799`) |
+| `chrome/profile/` | isolated Chrome profile; HOME is redirected here | `secure_browser_service.go:236` |
+| `chrome/profile/.pki/nssdb/` | isolated Chrome NSS database | `chromeNSSDBDir` (`:698`) |
+| `firefox/profile/` | isolated Firefox profile; its `cert9.db` sits directly in it | `firefoxNSSDBDir` (`:715`) |
+| `firefox/certs/<sha256-fingerprint>.pem` | one PEM per CA, operator aid only | `firefoxCertsDir` (`:703`), `:462` |
+| `firefox/policies.json` | operator aid only, not read by the launched browser | `firefoxPoliciesPath` (`:708`) |
+
+Shared-mode Chrome writes the user's `~/.pki/nssdb` instead; no bookkeeping
+file is ever written there (`targetNSSDBDir`, `:753`).
+
+### Auto-detection candidates
+
+`DetectBrowsers` walks a fixed per-OS list (`knownBrowsersForGOOS`,
+`browser_service.go:467`): on Linux `/usr/bin/firefox`, `/usr/bin/chromium`,
+`/usr/bin/chromium-browser`, `/usr/bin/google-chrome` and
+`/usr/bin/brave-browser`; on macOS the Safari, Firefox, Google Chrome and
+Brave app bundles; no other OS. Any other binary is reachable by passing its
+path with `--browser`. Its family is then the first keyword its base name
+contains (`classifyBrowser`, `secure_browser_service.go:811`): `chrome`,
+`chromium`, `brave`, `edge`, `opera`, `vivaldi` for Chrome; `firefox`,
+`librewolf`, `waterfox` for Firefox.
+
 ## What is absent, half-built, or misdescribed
 
-- **The legacy `docs/browser/README.md` describes the Firefox mechanism
-  incorrectly.** It states Firefox trust is established via
-  `policies.json`/`MOZ_POLICIES_FILE`; the actual, current mechanism is
-  direct NSS `cert9.db` injection into the isolated profile — see
-  [`architecture.md`](architecture.md). `policies.json` is still written,
-  but only as an operator-facing artifact.
+- **Firefox trust is not established via `policies.json`/`MOZ_POLICIES_FILE`**
+  (the claim of the legacy `docs/browser/README.md`, absorbed and deleted,
+  go-xkms#1433); the actual mechanism is direct NSS `cert9.db` injection
+  into the isolated profile — see [`architecture.md`](architecture.md).
+  `policies.json` is still written, but only as an operator-facing artifact.
 - **No REST/gRPC/network transport surface** — this feature is reachable
   only through the xkey CLI and the Wails-bound GUI service methods. See
   [`api.md`](api.md).

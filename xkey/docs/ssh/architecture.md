@@ -1,6 +1,6 @@
 # SSH — Architecture
 
-> **Status: NORMATIVE** · Feature: `ssh` · Module: `go-xkms/xkey` · Last verified: 2026-10-08
+> **Status: NORMATIVE** · Feature: `ssh` · Module: `go-xkms/xkey` · Last verified: 2026-10-12
 
 ## Scope
 
@@ -11,7 +11,8 @@ one store and one view of the operator's local SSH tooling. It does not
 cover `pkg/ssh/*` (key lifecycle, host-key pinning, sessions, the console
 wire protocol) or `sdk/go/client/ssh` (the transport-agnostic client) —
 both are root-owned and documented at
-[`../../../docs/ssh/README.md`](../../../docs/ssh/README.md). Agent-only
+[`../../../docs/ssh-keys/`](../../../docs/ssh-keys/) and
+[`../../../docs/ssh-sessions/`](../../../docs/ssh-sessions/). Agent-only
 signing sessions (no connection target — `git commit -S`,
 `ssh-keygen -Y sign`) are a separate, already-converted feature: see
 [`../../../docs/ssh-agent-sessions/`](../../../docs/ssh-agent-sessions/),
@@ -161,5 +162,5 @@ instead.
 - [CLI](cli.md) — every `xkey ssh` verb and flag
 - [API](api.md) — GUI bindings and the local package surface
 - [User Guide](user.md) — task-oriented usage
-- Root SSH library and SDK: [`../../../docs/ssh/README.md`](../../../docs/ssh/README.md)
+- Root SSH library and SDK: [`../../../docs/ssh-keys/`](../../../docs/ssh-keys/), [`../../../docs/ssh-sessions/`](../../../docs/ssh-sessions/)
 - Agent-only sessions (no connection target): [`../../../docs/ssh-agent-sessions/`](../../../docs/ssh-agent-sessions/)

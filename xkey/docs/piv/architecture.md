@@ -1,6 +1,6 @@
 # PIV Certificate Management — Architecture
 
-> **Status: NORMATIVE** · Feature: `piv` · Module: `go-xkms/xkey` · Last verified: 2026-09-28
+> **Status: NORMATIVE** · Feature: `piv` · Module: `go-xkms/xkey` · Last verified: 2026-10-12
 
 ## Scope: the xkey CLI/GUI surface, not the PIV storage implementation
 
@@ -12,11 +12,9 @@ PIV slot, across three key/storage backends.
 The slot semantics, the certificate storage backends themselves (file,
 TPM2 NV, PKCS#11), and their wire-level detail are owned by the go-xkms SDK
 and documented in the root module: **[docs/piv-smartcard](../../../docs/piv-smartcard/)**
-is the converted, normative feature folder for that layer; the older
-**[docs/piv](../../../docs/piv/)** (`certificate-storage-architecture.md`,
-`tpm2-nv-storage.md`) covers the same storage backends from before that
-conversion. This folder links to both rather than re-describing slot NV
-offsets, file layout, or PKCS#11 object attributes.
+is the normative feature folder for that layer, including the TPM2 NV and
+PKCS#11 storage detail. This folder links there rather than re-describing slot
+NV offsets, file layout, or PKCS#11 object attributes.
 
 ## Shape chosen: a thin cobra layer over the SDK's PIV manager
 

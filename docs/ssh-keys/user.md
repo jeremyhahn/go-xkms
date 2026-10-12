@@ -1,6 +1,6 @@
 # SSH Keys, Known Hosts & Authorized Keys — User Guide
 
-> **Status: NORMATIVE** · Feature: `ssh-keys` · Repo: `go-xkms` · Last verified: 2026-09-28
+> **Status: NORMATIVE** · Feature: `ssh-keys` · Repo: `go-xkms` · Last verified: 2026-10-12
 
 ## What this is for
 
@@ -52,7 +52,8 @@ connection (rather than just producing signatures on demand) is the job of
 [`../ssh-agent-sessions/`](../ssh-agent-sessions/) — start there for the
 `git commit -S`-style hostless signing walkthrough — or the `xkey` desktop
 app's connection manager, documented in
-[`../ssh/README.md`](../ssh/README.md).
+[`../ssh-sessions/`](../ssh-sessions/) and
+[`../../xkey/docs/ssh/`](../../xkey/docs/ssh/).
 
 ## Pin a host key before you trust it
 

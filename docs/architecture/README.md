@@ -19,19 +19,7 @@ This directory contains the complete architecture and implementation guidance fo
    - **Audience:** Project stakeholders, managers, new developers
    - **Contents:** System overview, key features, component relationships
 
-3. **[server-architecture.md](./server-architecture.md)** (30KB)
-   - **Purpose:** Complete technical architecture document
-   - **Audience:** Architects, senior developers
-   - **Contents:**
-     - System architecture diagrams
-     - Detailed directory structure with descriptions
-     - Component design and responsibilities
-     - Configuration management
-     - Error handling strategy
-     - Security considerations
-     - Testing strategy
-     - Common patterns and best practices
-     - Deployment considerations
+3. **Server architecture** — absorbed into [host-embedding](../host-embedding/engineering.md) (the unified API server and module registration) and [xkmsd-configuration](../xkmsd-configuration/engineering.md) (configuration) (go-xkms#1433)
 
 4. **[api-specifications.md](./api-specifications.md)** (22KB)
    - **Purpose:** Complete API reference for all protocols
@@ -49,15 +37,7 @@ This directory contains the complete architecture and implementation guidance fo
 
 ### Feature & Component Documentation
 
-5. **[storage.md](./storage.md)**
-   - **Purpose:** Consolidated storage architecture
-   - **Audience:** Backend developers, platform engineers
-   - **Contents:**
-     - Storage abstraction layer design
-     - BlobStorer interface specifications
-     - Backend implementations (filesystem, memory, cloud)
-     - Integration patterns
-     - Migration guides
+5. **Storage** — absorbed into [datastore](../datastore/engineering.md) (go-xkms#1433)
 
 6. **[adapter-framework.md](./adapter-framework.md)**
    - **Purpose:** Authentication, logging, and adapter patterns
@@ -68,64 +48,25 @@ This directory contains the complete architecture and implementation guidance fo
      - Logging adapters
      - Custom adapter development
 
-7. **[rbac.md](./rbac.md)**
-   - **Purpose:** Role-based access control documentation
-   - **Audience:** Developers implementing authorization
-   - **Contents:**
-     - The qrdb-backed `auth.Authorizer` seam
-     - Why RBAC requires `storage.backend: "qrdb"`
-     - Permission model (resource:action pairs)
-     - The six canonical roles (so, admin, operator, user, auditor, custodian)
-     - Per-transport authorization gates
+7. **[RBAC](../rbac/architecture.md)** — moved to the `docs/rbac/` feature folder.
 
-8. **[unified-keyid-jwk-integration.md](./unified-keyid-jwk-integration.md)**
-   - **Purpose:** Key ID format and JWK integration guide
-   - **Audience:** Key management developers
-   - **Contents:**
-     - Key ID format specifications
-     - JWK integration patterns
-     - Quick reference for common operations
-     - Best practices
+8. **[Key ID format](../key-management/engineering.md#key-id-format--pkgxkmskeyidgo)** — moved to the `docs/key-management/` feature folder.
 
-9. **[hardware-certificate-storage.md](./hardware-certificate-storage.md)**
-   - **Purpose:** Hardware-backed certificate storage
-   - **Audience:** Security engineers, PKI developers
-   - **Contents:**
-     - HSM/TPM integration
-     - Certificate chain storage
-     - Hardware key attestation
+9. **Hardware certificate storage** — absorbed into [certificate-authority](../certificate-authority/engineering.md#hardware-certificate-storage--pkgstoragehardware) (go-xkms#1433)
 
-10. **[correlation-ids.md](./correlation-ids.md)**
-    - **Purpose:** Request tracing and correlation
-    - **Audience:** Platform developers, SREs
-    - **Contents:**
-      - Correlation ID propagation
-      - Distributed tracing patterns
-      - Logging integration
+10. **Correlation IDs** — absorbed into [host-embedding](../host-embedding/engineering.md) (go-xkms#1433)
 
-11. **[objstore-integration.md](./objstore-integration.md)**
-    - **Purpose:** Cloud object storage integration
-    - **Audience:** Platform engineers
-    - **Contents:**
-      - go-objstore integration
-      - Cloud provider backends
-      - Migration strategies
+11. **Object storage** — absorbed into [datastore](../datastore/engineering.md) (go-xkms#1433)
 
-12. **[post-quantum-cryptography.md](./post-quantum-cryptography.md)**
-    - **Purpose:** Post-quantum cryptography support
-    - **Audience:** Cryptography engineers
-    - **Contents:**
-      - PQC algorithm support
-      - Hybrid key schemes
-      - Migration planning
+12. **[Post-quantum cryptography](../post-quantum/architecture.md)** — moved to the `docs/post-quantum/` feature folder.
 
-13. **[symmetric-encryption.md](./symmetric-encryption.md)**
+13. **[symmetric-aead/](../symmetric-aead/)**
     - **Purpose:** Symmetric encryption capabilities
     - **Audience:** Security developers
     - **Contents:**
-      - AES-GCM support
-      - ChaCha20-Poly1305 implementation
-      - Key derivation patterns
+      - AES-GCM, ChaCha20-Poly1305 and XChaCha20-Poly1305
+      - Nonce-reuse guard and per-key byte budget
+      - Derivation from a stored key
 
 ## Quick Start
 
@@ -143,7 +84,7 @@ This directory contains the complete architecture and implementation guidance fo
    - Understand the system at a high level
    - Learn about key components and their relationships
 
-2. **Deep dive:** [server-architecture.md](./server-architecture.md)
+2. **Deep dive:** [host-embedding](../host-embedding/engineering.md)
    - Understand the overall design
    - Review the architecture diagrams
    - Familiarize yourself with design principles
@@ -156,9 +97,9 @@ This directory contains the complete architecture and implementation guidance fo
    - Validate against provided examples
 
 4. **Component-specific:** Review relevant feature documents
-   - [storage.md](./storage.md) - For storage layer work
-   - [rbac.md](./rbac.md) - For authorization implementation
-   - [unified-keyid-jwk-integration.md](./unified-keyid-jwk-integration.md) - For key management
+   - [datastore](../datastore/engineering.md) - For storage layer work
+   - [rbac/](../rbac/architecture.md) - For authorization implementation
+   - [key-management/](../key-management/architecture.md) - For key management
 
 ### For API Users / Integrators
 
@@ -557,7 +498,7 @@ make docker-test       # Run integration tests in Docker
 ## Next Steps
 
 1. **Begin Development:** Start with Core Infrastructure components
-2. **Follow Architecture:** Review server-architecture.md for implementation details
+2. **Follow Architecture:** Review the feature folders (`docs/<feature>/`) for implementation details
 3. **Test Continuously:** Run tests after each component
 4. **Document Changes:** Update docs as you implement
 5. **Review Regularly:** Ensure consistency across protocols
@@ -569,19 +510,19 @@ make docker-test       # Run integration tests in Docker
 
 The following documents have been consolidated to reduce duplication and improve maintainability:
 
-**Merged into [storage.md](./storage.md):**
+**Merged into `storage.md` (since absorbed into [datastore](../datastore/engineering.md), go-xkms#1433):**
 - `storage-abstraction.md` - Storage abstraction concepts
 - `storage-interfaces.md` - BlobStorer interface details
 
-**Merged into [unified-keyid-jwk-integration.md](./unified-keyid-jwk-integration.md):**
+**Merged into `unified-keyid-jwk-integration.md`** (itself absorbed into [key-management/](../key-management/engineering.md) and deleted, go-xkms#1433):
 - `keyid-jwk-quick-reference.md` - Quick reference content
 
 **Removed (outdated):**
-- `backend-registry.md` - Superseded by server-architecture.md
+- `backend-registry.md` - Superseded by `server-architecture.md` (since absorbed, go-xkms#1433)
 - `blobstorer-refactoring.md` - Internal development notes
 
 **Condensed:**
-- `hardware-certificate-storage.md` - Streamlined for clarity
+- `hardware-certificate-storage.md` - Streamlined for clarity (since absorbed into certificate-authority, go-xkms#1433)
 
 
 ## Support Resources
@@ -589,10 +530,10 @@ The following documents have been consolidated to reduce duplication and improve
 ### Internal Documentation
 - [Quick Reference](./quick-reference.md) - One-page cheat sheet
 - [Overview](./overview.md) - High-level architecture
-- [Server Architecture](./server-architecture.md) - Complete technical design
+- [Host Embedding](../host-embedding/engineering.md) - Unified API server design
 - [API Specifications](./api-specifications.md) - Complete API reference
-- [Storage Architecture](./storage.md) - Storage layer design
-- [RBAC](./rbac.md) - Role-based access control
+- [Datastore](../datastore/engineering.md) - Storage layer design
+- [RBAC](../rbac/architecture.md) - Role-based access control
 - [KeyStore Interface](../../pkg/xkms/keystore.go) - Core interface
 - [Backend Interface](../../pkg/xkms/keystore.go) - `Backend` contract (`pkg/xkms/keystore.go:36`)
 - [Existing Tests](../../test/integration/api/) - Integration test suite
@@ -630,12 +571,12 @@ When implementing components, ensure:
 These architecture documents should be updated when:
 
 - Adding new protocols or endpoints → Update [api-specifications.md](./api-specifications.md) and [quick-reference.md](./quick-reference.md)
-- Changing error handling strategies → Update [server-architecture.md](./server-architecture.md)
-- Modifying configuration structure → Update [server-architecture.md](./server-architecture.md) and [quick-reference.md](./quick-reference.md)
-- Updating security requirements → Update [rbac.md](./rbac.md) and [adapter-framework.md](./adapter-framework.md)
+- Changing the unified API server → Update [host-embedding](../host-embedding/engineering.md)
+- Modifying configuration structure → Update [xkmsd-configuration](../xkmsd-configuration/engineering.md) and [quick-reference.md](./quick-reference.md)
+- Updating security requirements → Update [rbac/](../rbac/architecture.md) and [adapter-framework.md](./adapter-framework.md)
 - Adding new features or capabilities → Update [overview.md](./overview.md) and relevant feature documents
-- Changing storage implementation → Update [storage.md](./storage.md)
-- Modifying key management → Update [unified-keyid-jwk-integration.md](./unified-keyid-jwk-integration.md)
+- Changing storage implementation → Update [datastore](../datastore/engineering.md)
+- Modifying key management → Update [key-management/](../key-management/engineering.md)
 
 ### Documentation Structure Guidelines
 

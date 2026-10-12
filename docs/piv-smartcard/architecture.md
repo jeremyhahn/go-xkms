@@ -1,6 +1,6 @@
 # PIV Smartcard — Architecture
 
-> **Status: NORMATIVE** · Feature: `piv-smartcard` · Repo: `go-xkms` · Last verified: 2026-10-09
+> **Status: NORMATIVE** · Feature: `piv-smartcard` · Repo: `go-xkms` · Last verified: 2026-10-12
 
 ## The problem
 
@@ -102,9 +102,10 @@ use:
   auth:   pkg/factor/piv  →  challenge signed by the slot's key
 ```
 
-TPM2 storage maps each slot to an NV index — `GetNVIndex(slot, baseIndex)`
-computes it from a configured base, so a deployment controls where in NV space
-its PIV data lives.
+TPM2 storage maps each slot to an NV index derived from a configured base and
+the slot's fixed certificate ID (`pkg/pivcert/tpm2/slotmodel.go:55-81`), so a
+deployment controls where in NV space its PIV data lives — see
+[`engineering.md`](engineering.md) §"TPM2 NV storage".
 
 ## Trust boundaries
 

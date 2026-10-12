@@ -1,6 +1,6 @@
 # PKCS#11 Provider Module — Architecture
 
-> **Status: NORMATIVE** · Feature: `pkcs11-provider-module` · Repo: `go-xkms` · Last verified: 2026-10-08
+> **Status: NORMATIVE** · Feature: `pkcs11-provider-module` · Repo: `go-xkms` · Last verified: 2026-10-12
 
 ## The problem
 
@@ -197,20 +197,16 @@ make remote-mode token state unavailable while that tenant is sealed, and it
 needs a per-tenant store resolver like the password vault's
 (`resolvePasswordStore`). This is recorded, not decided.
 
-## Known state: v3.2 is partially implemented
+## Known state: v3.2
 
-Four v3.2 surfaces exist as API and return `CKR_FUNCTION_NOT_SUPPORTED`:
-
-| Surface | File |
-|---|---|
-| KEM operations | `pkg/pkcs11/module/module_kem.go`, `module_kem_quantum.go` |
-| Authenticated wrapping | `module_authwrap.go` |
-| Signature-first PQC verification (9 functions) | `module_verifysig.go`, `module_verifysig_quantum.go` |
-| Asynchronous operations | `module_async.go` |
-
-Each has a test suite covering the not-supported path, so the behaviour is
-intentional rather than accidental. Implementing them is feature work, tracked
-in `docs/pkcs11/ROADMAP.md`.
+KEM (`module_kem.go`, `module_kem_quantum.go`), authenticated wrapping
+(`module_authwrap.go`), `C_VerifySignature*` (`module_verifysig.go`) and
+`C_GetSessionValidationFlags` (`module_validation.go`) are implemented and
+reachable only through the v3.2 function list. Asynchronous operations
+(`module_async.go`) answer `CKR_FUNCTION_NOT_SUPPORTED`, and message-based
+signature-first verification is absent. Remaining work is tracked in
+[`../pkcs11/ROADMAP.md`](../pkcs11/ROADMAP.md); detail is in
+[engineering.md](engineering.md#interfaces-and-v32-status).
 
 ## What this feature deliberately does not do
 

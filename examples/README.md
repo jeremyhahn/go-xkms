@@ -826,7 +826,7 @@ tlsConfig := &tls.Config{
 ## Additional Resources
 
 - [Getting Started Guide](../docs/getting-started.md)
-- [Backend Documentation](../docs/backends/)
+- [Backend Documentation](../docs/crypto-backends/)
 - [Testing Guide](../docs/testing/)
 
 ## Contributing

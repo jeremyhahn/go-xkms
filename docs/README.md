@@ -101,116 +101,82 @@ done
 ```
 
 Test for **all five files**, not just `architecture.md`. Several legacy folders
-— `docs/acme/`, `docs/ca/`, `xkey/docs/ble/`, `xkey/docs/gui/` —
+— `docs/acme/`, `xkey/docs/ble/`, `xkey/docs/gui/` —
 already contain a file called `architecture.md`, so the shorter form overcounts
-by four and reports unconverted folders as converted.
+by three and reports unconverted folders as converted.
 
 ### Legacy paths superseded by a feature folder
 
 | Feature folder | Legacy paths it supersedes |
 |---|---|
-| [key-management](key-management/) | `architecture/unified-keyid-jwk-integration.md`, `key-agreement.md` |
-| [crypto-backends](crypto-backends/) | `backends/` |
+| [key-management](key-management/) | `architecture/unified-keyid-jwk-integration.md` — **absorbed and deleted** (go-xkms#1433): the key ID format and validation rules moved to [`key-management/engineering.md`](key-management/engineering.md) §"Key ID format"; its JWK xKMS helpers (`FromxKMS`, `LoadKeyFromxKMS`, …), JWT examples and YAML config do not exist and were dropped. `key-agreement.md` |
+| [crypto-backends](crypto-backends/) | `backends/` (README, software, pkcs8, tpm2, pkcs11, nitrokey-hsm, awskms, gcpkms, azurekv, vault) — **absorbed and deleted** (go-xkms#1433). Each claim was re-verified against `pkg/backend/*`, `pkg/config` and `pkg/xkms/register_*.go`. Per-backend config keys, credential resolution and generated algorithms moved to [`crypto-backends/engineering.md`](crypto-backends/engineering.md#per-backend-configuration); TPM 2.0 and PKCS#11 detail was already in [`tpm2/`](tpm2/) and [`pkcs11-backend/`](pkcs11-backend/). Dropped as unsupported by the code: Vault AppRole/Kubernetes/certificate auth, AWS/Azure generation beyond RSA-2048/P-256, software RSA 6144/8192, a persistent AEAD tracker, and pricing, IAM, compliance and latency prose; `architecture/security-levels.md` — **absorbed and deleted** (go-xkms#1433): the `SecurityLevel` ordering and per-backend levels moved to [`crypto-backends/engineering.md`](crypto-backends/engineering.md); its FIPS-level claims, UI prose and sort examples were dropped; `configuration/build-system.md` — **absorbed and deleted** (go-xkms#1433): the object-store toggles, the codec seed in `BUILD_TAGS`, `make show-backends` and the xkey Makefile's toggle set moved to [`crypto-backends/engineering.md`](crypto-backends/engineering.md#build-toggles) |
 | [frost-threshold-signing](frost-threshold-signing/) | `frost/` — **absorbed and deleted** (go-xkms#1433): every claim was re-verified against `pkg/keyprovider/frost`; the true ones moved into the feature folder (the security checklist became the procedure in [`frost-threshold-signing/user.md`](frost-threshold-signing/user.md) §"Operating a FROST group securely"), and the fictional `xkms frost` CLI, per-backend Go config, env vars and compliance prose were dropped |
 | [tpm2](tpm2/) | `configuration/tpm2-session-encryption.md` — **absorbed and deleted** (go-xkms#1147): it documented the removed `EncryptSession` switch and an encrypted-versus-unencrypted comparison that no longer exists; session encryption is unconditional and documented in [`tpm2/engineering.md`](tpm2/engineering.md) §"Bus protection", its capture tests under §"Test strategy" |
 | [attestation-verifier](attestation-verifier/) | `attestation/README.md` — **absorbed and deleted** |
-| [pkcs11-provider-module](pkcs11-provider-module/) | `pkcs11/module/`, `references/pkcs11-v3.0-to-v3.2-changes.md`, `pkcs11/manager.md` |
-| [pkcs11-backend](pkcs11-backend/) | `pkcs11/backend/` (architecture.md, configuration.md, operations.md, runbook.md, security.md, README.md) — also corrects that folder's config.Pin/SOPIN description (now `*types.SecretValue`, credential-resolved) and its AttestKey "placeholder" claim (now fully implemented) |
-| [certificate-authority](certificate-authority/) | `ca/`, `ca-multi-keystore-design.md`, `architecture/hardware-certificate-storage.md` |
-| [trust-bootstrap](trust-bootstrap/) | `trust/`, `bootstrap/`, `configuration/bootstrap.md` |
-| [certificate-authority](certificate-authority/) | `ca/api-reference.md`, `ca/architecture.md`, `ca/certificate-types.md`, `ca/configuration.md`, `ca/multi-keystore.md`, `ca/protocol-parity.md`, `ca/README.md`, `ca-multi-keystore-design.md`, `architecture/hardware-certificate-storage.md` |
-| [acme-issuance](acme-issuance/) | **absorbed and deleted** (go-xkms#942): `acme/configuration.md`, `acme/quickstart.md`, `acme/implementation-plan.md`, `acme/cli/cactl.md`, `acme/cli/trusted-acme-server.md`, `acme/cli/trusted-acme-client.md`, `acme/cli/README.md`, `acme/deployment/README.md`, `acme/deployment/bare-metal.md`, `acme/deployment/docker.md`, `acme/deployment/monitoring.md`, `acme/deployment/troubleshooting.md` — all pre-merge go-trusted-ca documentation for a `trusted-acme-server`/`cactl` binary pair and `TRUSTEDCA_*`/`CACTL_*` env prefixes that never existed in this repository. `acme/admin/configuration.md`, `acme/deployment/operations.md` (the retained operator checklists), `acme/gui/*` and `acme/protocols/*` were corrected in place instead of deleted — see the note below. A previous pass of this row claimed `acme/architecture.md`, `acme/client.md`, `acme/challenges.md`, `acme/challenge-resolver.md` were also absorbed and deleted; they are still present in the tree and that claim does not hold — see the note below. |
-| [trust-bootstrap](trust-bootstrap/) | `trust/`, `bootstrap/`, `configuration/bootstrap.md` |
+| [pkcs11-provider-module](pkcs11-provider-module/) | `pkcs11/module/`, `pkcs11/manager.md` — **absorbed and deleted** (go-xkms#1433); `module/security.md` became `user.md` "Hardening". `references/pkcs11-v3.0-to-v3.2-changes.md` is kept as the spec delta and linked from [`engineering.md`](pkcs11-provider-module/engineering.md#interfaces-and-v32-status) |
+| [pkcs11-backend](pkcs11-backend/) | `pkcs11/backend/` (architecture.md, configuration.md, operations.md, runbook.md, security.md, README.md) — **absorbed and deleted** (go-xkms#1433); also corrects that folder's config.Pin/SOPIN description (now `*types.SecretValue`, credential-resolved) and its AttestKey "placeholder" claim (now fully implemented) |
+| [certificate-authority](certificate-authority/) | `ca/` (`ca/api-reference.md`, `ca/architecture.md`, `ca/certificate-types.md`, `ca/configuration.md`, `ca/multi-keystore.md`, `ca/protocol-parity.md`, `ca/README.md`) — **absorbed and deleted** (go-xkms#1433): the canonical `Issuer` seam, built-in profiles, the FIDO2 attestation profile, multi-keystore routing, TCG naming and defaults, CA-backed server TLS and the `SignCSR` attestation gate are in [`certificate-authority/engineering.md`](certificate-authority/engineering.md); claims the code no longer supports (a `quantum_safe` build tag, fixed root/intermediate path lengths, the pre-qrdb object-store layout, constructor signatures without `ctx`) were dropped. Also `ca-multi-keystore-design.md`; `architecture/hardware-certificate-storage.md` — **absorbed and deleted** (go-xkms#1433): storage modes, hybrid fallback, per-ID records and the TPM2 NV layout moved to [`certificate-authority/engineering.md`](certificate-authority/engineering.md#hardware-certificate-storage--pkgstoragehardware); its FNV-1a index hash, TPM2 `CreateCertificateStorage`, `HybridStorageInfo`, NV retry loop and performance tables do not match the code and were dropped |
+| [trust-bootstrap](trust-bootstrap/) | `trust/`, `bootstrap/`, `configuration/bootstrap.md` — **absorbed and deleted** (go-xkms#1433): the `pkg/trust/resolver` surface, the bootstrap sub-configs and TOFU pin store, the `protocols.noise` listener gate and env overrides are in [`trust-bootstrap/engineering.md`](trust-bootstrap/engineering.md), and the `bootstrap auto --config` resolution in [`trust-bootstrap/cli.md`](trust-bootstrap/cli.md); the client-side `bootstrap.*` YAML, the DANE/SPKI server examples, the first-boot SPKI-pin file and the cross-repo consumer history have no code and were dropped. `ca/bootstrap.md`, `ca/bootstrap-integration.md`, `ca/dane.md` — **absorbed and deleted** (go-xkms#1433): the `pkg/trust/dane` publisher hook and the `bootstrap.noise` listener limits are in [`trust-bootstrap/engineering.md`](trust-bootstrap/engineering.md); their pre-truststrap SDK (`Bootstrapper`, `CABundleRequest`, `pkg/ca/dane`) and error names no longer exist and were dropped |
+| [acme-issuance](acme-issuance/) | **absorbed and deleted** (go-xkms#942): `acme/configuration.md`, `acme/quickstart.md`, `acme/implementation-plan.md`, `acme/cli/cactl.md`, `acme/cli/trusted-acme-server.md`, `acme/cli/trusted-acme-client.md`, `acme/cli/README.md`, `acme/deployment/README.md`, `acme/deployment/bare-metal.md`, `acme/deployment/docker.md`, `acme/deployment/monitoring.md`, `acme/deployment/troubleshooting.md` — all pre-merge go-trusted-ca documentation for a `trusted-acme-server`/`cactl` binary pair and `TRUSTEDCA_*`/`CACTL_*` env prefixes that never existed in this repository. **Absorbed and deleted** (go-xkms#1433), the rest of the tree except `acme/gui/`: `acme/README.md` (its JWS algorithm list is now in `api.md`), `acme/admin/` (all five files: the `/admin` routes, query parameters and the library server's gRPC/MCP/Unix authorization moved to `api.md`; its JWT auth, policy engine and routes, response envelope, error-code table, rate-limit headers and config keys were not in the code and were dropped), `acme/api/grpc.md` (described RPCs `api/proto/admin.proto` does not define; dropped), `acme/protocols/` (corrected into `api.md` §"Transport adapters": xkmsd serves the admin plane only as REST; gRPC, QUIC, MCP and Unix exist only on the library `MultiProtocolServer`), `acme/sdk/README.md` (SDK `NewClient` transports in `engineering.md`), `acme/auth/README.md` (`pkg/acme/auth` in `engineering.md`), `acme/audit/README.md` (to [`audit-log/`](audit-log/api.md#acme-audit-trail)), `acme/deployment/operations.md`, `acme/deployment/security.md`, `acme/docker.md` (stale operator checklists naming config keys, images and procedures the code does not have; dropped), `acme/examples/multi-account.yaml` (did not decode against `service.Config`; dropped), and `acme/specs/` (moved to [`references/`](references/README.md), `RFC_8555_COMPLIANCE.md` rewritten as a section-to-code map). **Absorbed and deleted** (go-xkms#1433), each claim re-verified against the code: `acme/architecture.md`, `acme/client.md`, `acme/challenges.md`, `acme/challenge-resolver.md`, `acme/api-reference.md`, `acme/dns-01-providers.md`, `acme/dns-01/` (README and the azure, clouddns, cloudflare and route53 provider pages) — client library, resolver, DNS-01 providers and the client service's `challenge.dns01` keys, http-01 responder, enroll-01 endpoints and finalize bundle in `engineering.md` and `api.md` — and the ACME tenant CA hierarchy and admin tenant routes from `acme/multi-tenancy.md`. Claims the code does not support were dropped. |
 | [webauthn](webauthn/) | `webauthn/README.md`, `webauthn/client.md` — **absorbed and deleted** |
-| [fido2-ctap2](fido2-ctap2/) | `fido2/README.md` |
-| [piv-smartcard](piv-smartcard/) | `piv/` |
-| [auth-factors](auth-factors/) | `auth/factors.md`, `auth/layering.md` |
-| [pin-management](pin-management/) | `pin/`, `seal/pin.md`, `architecture/pin-architecture.md` |
-| [sealing-and-barrier](sealing-and-barrier/) | `seal/` (except `seal/tenant-barriers.md`, superseded by `multi-tenancy` below), `seal/barrier.md` — **absorbed and deleted** (go-xkms#707): its layered LUKS+barrier architecture, the `pkg/storage/luks.Backend` gate, and barrier auto-unseal content are now covered by [`../xkey/docs/luks/architecture.md`](../xkey/docs/luks/architecture.md) §"The gate: `pkg/storage/luks.Backend`", [`../xkey/docs/seal/`](../xkey/docs/seal/) (policy-based barrier auto-unseal), [`../xkey/docs/setup-wizard/`](../xkey/docs/setup-wizard/) (the GUI's separate LUKS-volume TPM auto-unseal, `BarrierAutoUnsealBlobID`), and [`../xkey/docs/password/`](../xkey/docs/password/) (static-password-behind-the-barrier layering) — re-verified against all four for this pass, `sealed-storage/`, `architecture/barrier-integration.md` |
+| [fido2-ctap2](fido2-ctap2/) | `fido2/README.md`, `fido2/authenticator/architecture.md` — **absorbed and deleted** (go-xkms#1433): the hmac-secret derivation moved to [`fido2-ctap2/engineering.md`](fido2-ctap2/engineering.md); its Quick Start constructors and the `PINCoordinator` / PIN-subscriber design do not exist and were dropped |
+| [piv-smartcard](piv-smartcard/) | `piv/README.md`, `piv/certificate-storage-architecture.md`, `piv/tpm2-nv-storage.md` — **absorbed and deleted** (go-xkms#1433): output formats, CA profiles, key-generator resolution, the storage interface, TPM2 NV mapping and the PKCS#11 CKA_ID mapping moved to [`piv-smartcard/engineering.md`](piv-smartcard/engineering.md) and [`api.md`](piv-smartcard/api.md); the pre-implementation storage design (fixed NV indices, file layout, metrics) and the unverified xkey CLI examples were dropped, and the feature folder's own `GetNVIndex` claims were corrected |
+| [auth-factors](auth-factors/) | `auth/factors.md`, `auth/layering.md` — **absorbed and deleted** (go-xkms#1433): the `auth factor` / `auth login` CLI and the SDK login plane moved to [`auth-factors/cli.md`](auth-factors/cli.md) and [`api.md`](auth-factors/api.md); the layering split is in [`rbac/`](rbac/), [`init-ceremony/`](init-ceremony/) and [`certificate-authority/`](certificate-authority/); the obsolete qrdb registry sample and wrong CLI flags were dropped; `configuration/auth.md` (client-side mTLS flags and PKCS#11 client certificates) — **absorbed and deleted** (go-xkms#1433); see the [xkmsd-configuration](xkmsd-configuration/) row |
+| [pin-management](pin-management/) | `pin/` — **absorbed and deleted** (go-xkms#1433): the `PlatformAuthProvider` contract and the TPM2 backend's PIN-length, auth-failure, lockout-error and FIDO2-hash behaviour moved to [`pin-management/engineering.md`](pin-management/engineering.md); its software backend, `HashConfig`, `PINRecord`, PIN service and sentinel list are go-qrdb's and were dropped; `architecture/pin-architecture.md` — **absorbed and deleted** (go-xkms#1433): its `PINCoordinator`/`pkg/pin` design has no code and was dropped; the real `UnifiedPIN` FIDO2 link is noted in [`pin-management/architecture.md`](pin-management/architecture.md); `seal/pin.md` — **absorbed and deleted** (go-xkms#1433): its Platform SRK enrollment, auth-readiness and dictionary-attack facts moved to [`pin-management/engineering.md`](pin-management/engineering.md); its software backend, hashing and `pkg/pin` API were go-qrdb's or no longer exist |
+| [sealing-and-barrier](sealing-and-barrier/) | `seal/README.md`, `seal/api.md`, `seal/pcr-policies.md` — **absorbed and deleted** (go-xkms#1433): the `PlatformSealer` contract moved to [`sealing-and-barrier/engineering.md`](sealing-and-barrier/engineering.md); the barrier internals, Shamir, recovery and the `/api/v1/barrier/*` routes are go-qrdb's, and named PCR policies are [`tpm-policies/`](tpm-policies/). `seal/barrier.md` — **absorbed and deleted** (go-xkms#707): its layered LUKS+barrier architecture, the `pkg/storage/luks.Backend` gate, and barrier auto-unseal content are now covered by [`../xkey/docs/luks/architecture.md`](../xkey/docs/luks/architecture.md) §"The gate: `pkg/storage/luks.Backend`", [`../xkey/docs/seal/`](../xkey/docs/seal/) (policy-based barrier auto-unseal), [`../xkey/docs/setup-wizard/`](../xkey/docs/setup-wizard/) (the GUI's separate LUKS-volume TPM auto-unseal, `BarrierAutoUnsealBlobID`), and [`../xkey/docs/password/`](../xkey/docs/password/) (static-password-behind-the-barrier layering) — re-verified against all four for this pass; `architecture/barrier-integration.md` — **absorbed and deleted** (go-xkms#1433): `BarrierConfig` and the strategy constructors moved to [`sealing-and-barrier/engineering.md`](sealing-and-barrier/engineering.md); the epoch/storage barrier internals and the barrier servicer table are go-quicraft's and go-qrdb's, and its claim that an omitted `PreferenceOrder` falls back to a default was false; `sealed-storage/` — **absorbed and deleted** (go-xkms#1433): the `pkg/storage/sealed` decorator moved to [`sealing-and-barrier/engineering.md`](sealing-and-barrier/engineering.md); its passthrough `Scan`, eight-sealer table and constructor examples did not match the code and were dropped |
 | [init-ceremony](init-ceremony/) | `init/ceremony.md`, `init/roles.md`, `init/threshold.md`, `init/README.md`, `auth/bootstrap.md` — **deleted**; the M-of-N officer ceremony they described was removed (go-qrdb holder/quorum model) |
 | [backend-credentials](backend-credentials/) | `init/credentials.md` — **absorbed and deleted** (go-xkms#1450). It had been filed as cross-cutting, but it documents one feature. Its per-strategy `credentials.<strategy>.*` config blocks, `CredentialSealer` interface, `Enter User PIN:` prompt and `storage.backend: qrdb` precondition never matched the code, and it presented `pkcs11`, `vault` and `passphrase` as working when `xkmsd` refuses all three at startup |
-| [multi-tenancy](multi-tenancy/) | `architecture/multi-tenant.md`, `seal/tenant-barriers.md`, `acme/multi-tenancy.md` |
+| [multi-tenancy](multi-tenancy/) | `architecture/multi-tenant.md` — **absorbed and deleted** (go-xkms#1433): the `pkg/api/tenantgate` decision and its per-transport mapping moved to [`multi-tenancy/engineering.md`](multi-tenancy/engineering.md); its `staticpw` tenant DAO factory, `BuildTenantInfra`, `BarrierRegistryAccessor` and OU-based tenant extraction do not exist and were dropped; `seal/tenant-barriers.md` — **absorbed and deleted** (go-xkms#1433): its default volume-pool path moved to [`multi-tenancy/engineering.md`](multi-tenancy/engineering.md); its `BarrierRegistry`/`TenantBarrier` tables are go-qrdb's, and `TenantBarrierConfig` is read by nothing; `acme/multi-tenancy.md` — **absorbed and deleted** (go-xkms#1433): its ACME tenant CA hierarchy and admin routes went to [`acme-issuance/`](acme-issuance/engineering.md#acme-tenant-ca-hierarchy) |
 | [escrow](escrow/) | `escrow/README.md` — **absorbed and deleted** |
-| [password-vault](password-vault/) | `staticpw/` |
-| [platform-secrets](platform-secrets/) | `platform-store/` |
-| [post-quantum](post-quantum/) | `architecture/post-quantum-cryptography.md`, `backends/quantum.md` |
-| [symmetric-aead](symmetric-aead/) | `architecture/symmetric-encryption.md`, `configuration/aead-auto-selection.md`, `configuration/symmetric-encryption.md` |
-| [audit-log](audit-log/) | — |
-| [cluster](cluster/) | `cluster/README.md` — **absorbed and deleted**; `cluster/ca-key-custody.md` retained as a companion deep-dive, linked from [`cluster/architecture.md`](cluster/architecture.md) |
+| [password-vault](password-vault/) | `staticpw/README.md`, `staticpw/teams.md` — **absorbed and deleted** (go-xkms#1433): key layout, entry IDs, `ScopedStore` routing, the generator, `ExpiryChecker` and the team store's member semantics moved to [`password-vault/engineering.md`](password-vault/engineering.md). Its tenant-level unlock API, `TeamScopedStore`, per-tenant DAO factory, `/v1/teams` routes and team RBAC no longer exist, and its "ID is the lowercase path" claim was wrong; all were dropped |
+| [platform-secrets](platform-secrets/) | `platform-store/README.md` — **absorbed and deleted** (go-xkms#1433): the `platform-store/` key prefix, well-known secret names, lock granularity and constructor/name errors moved to [`platform-secrets/engineering.md`](platform-secrets/engineering.md); its example and links to pages that do not exist were dropped |
+| [post-quantum](post-quantum/) | `architecture/post-quantum-cryptography.md` — **absorbed and deleted** (go-xkms#1433): every true claim was already in the folder; its performance figures, nonce-tracking flow, "ML-KEM-512 unsupported" and hybrid-signature claims were false or unverified and were dropped; `backends/quantum.md` — **absorbed and deleted** (go-xkms#1433): ML-DSA/ML-KEM, the AEAD tracker and the configuration it described were already in the feature folder; its key and signature size tables and performance figures are not in the code and were dropped |
+| [symmetric-aead](symmetric-aead/) | `architecture/symmetric-encryption.md`, `configuration/aead-auto-selection.md`, `configuration/symmetric-encryption.md`, `configuration/aead-bytes-tracking.md` — absorbed and deleted (go-xkms#1433); `crypto/kdf.md` stays as the cross-cutting KDF reference |
+| [audit-log](audit-log/) | `acme/audit/README.md` — **absorbed and deleted** (go-xkms#1433): the `acme.audit` config and `GET /admin/audit` are in [`audit-log/engineering.md`](audit-log/engineering.md#acme-audit-trail) and [`audit-log/api.md`](audit-log/api.md#acme-audit-trail) |
 | [luks](luks/) | — |
 | [signing](signing/) | `verification/` — **absorbed and deleted** (its `ChecksumProvider` was never wired to a live verifier; superseded by `types.ChecksumProvider`) |
 | [ssh-agent-sessions](ssh-agent-sessions/) | — (new surface; supersedes nothing) |
+| [ssh-keys](ssh-keys/), [ssh-sessions](ssh-sessions/) | `ssh/README.md` — **absorbed and deleted** (go-xkms#1433), together with [ssh-agent-sessions](ssh-agent-sessions/) and [`../xkey/docs/ssh/`](../xkey/docs/ssh/): the cross-transport error table moved to [`ssh-keys/engineering.md`](ssh-keys/engineering.md), and the console wire protocol and host-key policy to [`ssh-sessions/engineering.md`](ssh-sessions/engineering.md); its MCP `wire.Code` column and GUI badge notes were not re-verified and were dropped |
 | [user-onboarding](user-onboarding/) | — (new surface; supersedes nothing) |
-| [host-embedding](host-embedding/) | — (new surface; `architecture/server-architecture.md` §"Unified API Server" points here for host mode) |
-| [xkmsd-configuration](xkmsd-configuration/) | `architecture/server-architecture.md` §"Configuration Management" (its `XKMS_REST_ADDRESS`-style names never existed) |
+| [host-embedding](host-embedding/) | `architecture/server-architecture.md` §"Unified API Server" — **absorbed and deleted** (go-xkms#1433): module registration on each transport, unified-server TLS and the composition roots moved to [`host-embedding/engineering.md`](host-embedding/engineering.md); its service-layer types (`KeyManager`, `BackendRegistry`), per-transport servers and route/RPC listings no longer exist and were dropped. `architecture/correlation-ids.md` — **absorbed and deleted** (go-xkms#1433): ID generation and middleware placement moved there; its context-logging adapter, log field name and benchmark figures were dropped |
+| [xkmsd-configuration](xkmsd-configuration/) | `architecture/server-architecture.md` §"Configuration Management" — **absorbed and deleted** (go-xkms#1433): the network-serving requirement moved to [`xkmsd-configuration/engineering.md`](xkmsd-configuration/engineering.md); its YAML example and `XKMS_REST_ADDRESS`-style names never existed; `configuration/auth.md` — **absorbed and deleted** (go-xkms#1433): `auth.type`, `tls.client_auth` and the client-CA pool are in [`xkmsd-configuration/engineering.md`](xkmsd-configuration/engineering.md#authentication-and-client-certificate-settings), the storeless mTLS identity and admin cert binding in [rbac](rbac/), client flags in [auth-factors](auth-factors/); its adaptive authenticator, OIDC `auth.type`, `watch_cert_files` reload and certificate workflow (`xkmsctl key create`, `cert create --is-ca`, …) do not exist and were dropped |
 | [clustering](clustering/) | `cluster/` (`cluster/README.md`, `cluster/ca-key-custody.md`) — **absorbed and deleted**. The legacy `README.md`'s `/api/v1/cluster/*` REST routes and `admin:add_member`/`admin:remove_member` permissions described a proxy plane that was since deleted; `ca-key-custody.md` is retained as a companion deep-dive, now [`clustering/ca-key-custody.md`](clustering/ca-key-custody.md), linked from [`clustering/architecture.md`](clustering/architecture.md). A separate `docs/cluster/` five-file folder landed briefly (go-xkms#847, the read-only REST cluster status/membership surface for the web console) and duplicated this one; it was merged into `clustering/` in the same pass rather than kept as two folders for one feature. |
-| [rbac](rbac/) | `architecture/rbac.md` |
-| [datastore](datastore/) | `storage/` — the legacy `README.md`'s `objstore` backend example (`storage.backend: objstore` with S3/GCS/Azure options) is not reachable through `xkmsd`'s own datastore, same as before. Also supersedes this repo's own now-deleted `storage-engines/` folder (go-xkms#1345): the old per-subsystem `storage.backend` (file/pebble/memory as private, unreplicated alternatives to `qrdb`) was replaced by one global, always-qrdb-backed `datastore.engine`/`datastore.mode`. |
-| [web-console](web-console/) | `web/` |
+| [rbac](rbac/) | `architecture/rbac.md` — **absorbed and deleted** (go-xkms#1433): every true claim was already in the folder; its `storage.backend: "qrdb"` precondition, `ssh:use` permission and audit-chain claim no longer match the code and were dropped; `configuration/auth.md` (storeless mTLS identity, public methods, admin cert binding) — **absorbed and deleted** (go-xkms#1433); see the [xkmsd-configuration](xkmsd-configuration/) row |
+| [datastore](datastore/) | `storage/README.md` — **absorbed and deleted** (go-xkms#1433): `pkg/storage.OpenEngine`'s engine kinds and errors moved to [`datastore/engineering.md`](datastore/engineering.md), and xkmsctl's `--storage-path`/`XKMS_STORAGE_PATH` to [`datastore/cli.md`](datastore/cli.md). Its `storage:` config block, `~/.xkms/data` default, performance table and provider build tags match no code and were dropped; its `objstore` backend is not reachable through `xkmsd`'s own datastore. Also supersedes this repo's own now-deleted `storage-engines/` folder (go-xkms#1345): the old per-subsystem `storage.backend` (file/pebble/memory as private, unreplicated alternatives to `qrdb`) was replaced by one global, always-qrdb-backed `datastore.engine`/`datastore.mode`. `architecture/storage.md`, `architecture/dao-integration.md`, `architecture/dao-storage.md`, `architecture/objstore-integration.md` — **absorbed and deleted** (go-xkms#1433): guarded writes, the KV adapter and the entity layer moved to [`datastore/engineering.md`](datastore/engineering.md); their store lists, `UnitOfWork`, `TenantDAOFactory`, `storage.backend` config, old `Scan` signature, performance table and S3/Azure/GCS examples do not match the code and were dropped |
+| [web-console](web-console/) | `web/` (`README.md`, `parity.md`, `running.md`, `screens.md`, `testing.md`) — **absorbed and deleted** (go-xkms#1433), each claim re-verified against the code: the `ui:`/`cors:`/`auth.piv_login:`/`auth.session:` keys went to [`web-console/user.md`](web-console/user.md), the per-entry RBAC/capability gates and signed-out routes to [`web-console/api.md`](web-console/api.md), the Playwright tier internals and the native-`<dialog>` modal to [`web-console/engineering.md`](web-console/engineering.md). Dropped: the Barrier & Seal, Audit, Custodians, Shares and Init Ceremony screens, the `#/policies` route and `ssh:use` gate, the barrier/audit live spec and the `/health` readiness wait — none exist in `web/app` or `test/integration/web` |
 
 Several of these need a note rather than a row:
 
-- **`architecture/pin-architecture.md`** and `fido2/authenticator/architecture.md`
-  describe a `PINCoordinator` and a `pkg/pin` package. **Neither exists in this
-  repository.** [`pin-management/architecture.md`](pin-management/architecture.md)
-  documents what does — `pkg/pinselect` and `pkg/pintpm2` — and says so
-  explicitly. Whether that design is a roadmap item or a stale document is an
-  open question.
+- **`architecture/pin-architecture.md`** and **`fido2/authenticator/architecture.md`**,
+  both absorbed and deleted (go-xkms#1433), described a `PINCoordinator` and a
+  `pkg/pin` package. **Neither exists in this repository.**
+  [`pin-management/architecture.md`](pin-management/architecture.md) documents
+  what does — `pkg/pinselect` and `pkg/pintpm2` — and says so explicitly.
 - **`acme/cli/cactl.md`** documented a binary that was never in this
   repository and whose project has been retired; it, and the rest of
   `acme/cli/`, were deleted by go-xkms#942 — see
   [`acme-issuance/cli.md`](acme-issuance/cli.md).
-- **`acme/` is mostly still legacy, not superseded.** The table above lists
-  only the specific root files `acme-issuance/` actually absorbed and
-  deleted. The bulk of the tree — `acme/gui/` (dual-mode admin+client SPA,
-  `pkg/acme/gui/{admin,client,guard,webui}`; go-xkms#942 corrected its
-  `cactl`/`trusted-acme-server`/`TRUSTEDCA_*` references in place and
-  flagged that `pkg/acme/gui/admin` and `pkg/acme/api/server` — which
-  would mount its web build at `/ui/admin/` — have no confirmed `cmd/`
-  caller; the admin web UI actually wired into `xkmsd` is a separate
-  implementation, `pkg/acme/web/packages/admin` at `/admin-ui`,
-  `cmd/xkmsd/admin.go:73`; reconciling the two is unresolved), `acme/admin/`
-  (5 files: the Admin REST plane, `pkg/acme/admin` — handlers, RBAC, tenant
-  and barrier ceremony endpoints; `configuration.md` is a retained operator
-  checklist, corrected in place by go-xkms#942, the rest unconverted),
-  `acme/protocols/` (5 files: the six-transport wiring; go-xkms#942
-  corrected their `cactl`/`trusted-acme-server`/`TRUSTEDCA_*` references in
-  place, and flagged that `unix-socket.md`'s premise conflicts with
-  `acme-issuance/cli.md`'s own statement that the ACME admin plane has no
-  Unix adapter), `acme/dns-01/` (6 files: per-provider DNS-01
-  configuration), `acme/sdk/README.md`,
-  `acme/api-reference.md`, `acme/audit/`, `acme/auth/`, `acme/docker.md`,
-  `acme/multi-tenancy.md` (superseded by [`multi-tenancy/`](multi-tenancy/),
-  see the table above), and `acme/deployment/` (`security.md` and
-  `operations.md` are the retained operator checklists — `operations.md`'s
-  `trusted-acme-server` binary reference was corrected in place by
-  go-xkms#942; the rest of `acme/deployment/` was fictional pre-merge
-  go-trusted-ca documentation and was deleted by go-xkms#942) remain
-  unconverted. `acme/boulder-comparison-enhancements.md` is deliberately
-  retained as a reference, not absorbed
-  ([`acme-issuance/architecture.md`](acme-issuance/architecture.md) cites
-  it directly). A previous pass over this README claimed `acme-issuance/`
-  superseded all of `acme/` except `ROADMAP.md`; that claim did not hold up
-  against the code and has been narrowed here — and a later pass claimed
-  `acme/architecture.md`, `acme/client.md`, `acme/challenges.md` and
-  `acme/challenge-resolver.md` were absorbed and deleted, which is also not
-  true: all four are still present. Whether their content is actually
-  covered by `acme-issuance/` is unverified and out of go-xkms#942's scope
-  (it addressed only nonexistent-binary/env-prefix references, not a full
-  content audit).
-- **`ca/dane.md`, `ca/bootstrap.md` and `ca/bootstrap-integration.md` are not
-  superseded** by `certificate-authority/` or by `trust-bootstrap/`. Their
-  DANE/TLSA field-semantics tables, DNSSEC walkthrough and per-project
-  bootstrap integration recipes are not duplicated in either folder's five
-  files (`trust-bootstrap/` covers the `dane generate-tlsa` CLI verb and the
-  mode's place in the DANE/Noise/SPKI/Direct dispatch, nothing deeper).
-  `ca/dane.md`'s own "Using the Go API" section is additionally **stale**:
-  it imports `github.com/jeremyhahn/go-xkms/pkg/ca/dane`, a package that no
-  longer exists — the DANE resolver now lives upstream, in
-  `github.com/jeremyhahn/go-truststrap/pkg/dane`, consumed by
-  `pkg/trust/bootstrap/tlsconfig.go`. `ca/bootstrap.md`'s "API Reference"
-  section (`Bootstrapper`, `CABundleRequest`, `CABundleResponse`) describes
-  the same pre-truststrap-composition shape and is stale the same way.
+- **What remains of `acme/`.** Everything except three things was absorbed
+  and deleted by go-xkms#942 and go-xkms#1433 (see the table above):
+  - `acme/gui/` is still legacy: the dual-mode admin+client SPA,
+    `pkg/acme/gui/{admin,client,guard,webui}`. go-xkms#942 corrected its
+    `cactl`/`trusted-acme-server`/`TRUSTEDCA_*` references in place. The
+    admin web UI xkmsd actually serves is a separate implementation,
+    `pkg/acme/web/packages/admin` at `/admin-ui` (`cmd/xkmsd/admin.go:54`);
+    reconciling the two is unresolved.
+  - `acme/ROADMAP.md` is kept on purpose (see "Roadmaps stay out" below).
+  - `acme/boulder-comparison-enhancements.md` is kept on purpose as a
+    reference ([`acme-issuance/architecture.md`](acme-issuance/architecture.md)
+    cites it directly).
+- **`ca/dane.md`, `ca/bootstrap.md` and `ca/bootstrap-integration.md` —
+  absorbed and deleted** (go-xkms#1433). Generic DNSSEC and TLSA background
+  that made no claim about this code was not carried over; the record fields
+  go-xkms uses are in
+  [`trust-bootstrap/engineering.md`](trust-bootstrap/engineering.md)
+  §"Exported surface — `pkg/trust/dane`". Their "Using the Go API" and "API
+  Reference" sections (`pkg/ca/dane`, `Bootstrapper`, `CABundleRequest`,
+  `CABundleResponse`) described a package and SDK shape that no longer exist.
 - **`cli/barrier.md` — deleted**: `xkmsctl barrier` was removed (go-qrdb owns the barrier surface).
 - **`cli/trust-platform.md` — absorbed and deleted** (this pass). It split
   three ways, across two modules: the `xkey browser launch` section (NSS
@@ -291,28 +257,16 @@ module) by the time they were re-verified for this pass.
 | Datastore | [`datastore/`](datastore/) |
 | Backend credentials (found missing by the 2026-10-11 audit, go-xkms#1450) | [`backend-credentials/`](backend-credentials/) |
 
-[`ssh-keys/`](ssh-keys/), [`ssh-agent-sessions/`](ssh-agent-sessions/) and
-[`ssh-sessions/`](ssh-sessions/) are all NORMATIVE folders, but no single
-one of the three fully absorbs [`ssh/README.md`](ssh/README.md) on
-its own, so none gets its own "legacy paths superseded" row above — the
-detail is recorded here instead:
-
 - **SSH** — [`ssh-keys/`](ssh-keys/) is NORMATIVE for SSH keys,
   known-hosts, and authorized-keys (plus the backend bridge and the
   shared key-ID layout). [`ssh-agent-sessions/`](ssh-agent-sessions/) is
   NORMATIVE for hostless agent-only signing sessions.
   [`ssh-sessions/`](ssh-sessions/) (go-xkms#707) is NORMATIVE for
-  everything [`ssh-keys/architecture.md`](ssh-keys/architecture.md) named
-  as still legacy when it was written — interactive console sessions, the
-  `xkey` connection-profile manager, session history, and local
-  `ssh_config`/agent discovery (`pkg/ssh/{console,connect,session,
-  sessions,profile,local}`). Between the three, every subpackage of
-  `pkg/ssh` (`agent`, `authorized`, `backend`, `connect`, `console`,
-  `keys`, `known_hosts`, `local`, `profile`, `scope`, `session`,
-  `sessions`) now has a NORMATIVE home, so `ssh/README.md` is fully
-  covered — it is not deleted in this pass because no folder singly
-  absorbs it end to end, but a future pass could reasonably delete it in
-  favor of the three folders above.
+  interactive console sessions, the `xkey` connection-profile manager,
+  session history, and local `ssh_config`/agent discovery
+  (`pkg/ssh/{console,connect,session,sessions,profile,local}`). Between the
+  three, every subpackage of `pkg/ssh` has a NORMATIVE home, so the legacy
+  `ssh/README.md` was absorbed into them and deleted (go-xkms#1433).
 
 Browser trust injection is converted, but the code and its folder live in the
 xkey module, not here — see
@@ -321,9 +275,8 @@ and the superseded-path row in `xkey/docs/README.md`. That folder also
 covers `xkey browser launch`'s NSS `cert9.db` and Firefox `policies.json`
 mechanics — one of the three pieces `cli/trust-platform.md` (deleted this
 pass) split into; see the "absorbed and deleted" note above (§"Legacy paths
-superseded") for the other two. The legacy [`browser/`](browser/) path in
-*this* tree is a stale duplicate the xkey folder does not track; it is left
-as-is per this repository's no-deletion rule for legacy docs.
+superseded") for the other two. The legacy `browser/README.md` in *this*
+tree was absorbed into that folder and deleted (go-xkms#1433).
 
 ### Cross-cutting, and never getting a folder
 
@@ -338,12 +291,12 @@ build, operational and contributor documentation, not features.
 `cli-gui-parity.md`, `acme/ROADMAP.md` and `pkcs11/ROADMAP.md` are future work
 and stay where they are.
 
-**Operator checklists are procedure, not backlog.** The checklists in
-`acme/deployment/security.md`, `acme/deployment/operations.md`,
-`acme/admin/configuration.md` and `pkcs11/module/security.md` are deployment and hardening procedure. They belong
-in the relevant feature's `user.md` or under `deployment/`, and are retained
-where they are until that absorption happens. Their unchecked boxes are not a
-work queue.
+**Operator checklists.** `pkcs11/module/security.md` became
+[`pkcs11-provider-module/user.md`](pkcs11-provider-module/user.md#hardening)
+§"Hardening" (go-xkms#1433). The ACME checklists (`acme/deployment/security.md`,
+`acme/deployment/operations.md`, `acme/admin/configuration.md`) were
+re-verified by go-xkms#1433; they named config keys, images and procedures the
+code does not have, and were deleted rather than absorbed.
 
 ## Documentation Structure
 
@@ -351,52 +304,41 @@ work queue.
 Core architectural concepts, design patterns, and technical specifications:
 - [Overview](architecture/overview.md) - System architecture and design philosophy
 - [API Specifications](architecture/api-specifications.md) - API design and interface contracts
-- [Server Architecture](architecture/server-architecture.md) - Server design and backend registry
-- [Storage](architecture/storage.md) - Storage interfaces and abstraction layer
-- [Symmetric Encryption](architecture/symmetric-encryption.md) - Symmetric key support architecture
-- [Hardware Certificate Storage](architecture/hardware-certificate-storage.md) - HSM certificate storage design
-- [RBAC](architecture/rbac.md) - Role-based access control
+- [RBAC](rbac/architecture.md) - Role-based access control
 
-### [Backends](backends/)
-Backend-specific documentation for all supported storage systems:
-- **Software**: [Software](backends/software.md) (asymmetric + symmetric, default backend; [PKCS#8](backends/pkcs8.md) key provider)
-- **Hardware**: [TPM 2.0](backends/tpm2.md), [PKCS#11](backends/pkcs11.md), [Nitrokey HSM](backends/nitrokey-hsm.md)
-- **Cloud**: [AWS KMS](backends/awskms.md), [GCP KMS](backends/gcpkms.md), [Azure Key Vault](backends/azurekv.md), [HashiCorp Vault](backends/vault.md)
-- **Quantum**: [Post-Quantum Cryptography](backends/quantum.md)
+### [Backends](crypto-backends/)
+The `Backend` contract, the capability matrix and each backend's configuration:
+- **All backends**: [Crypto Backends](crypto-backends/) (software, PKCS#8, cloud KMS, Vault — [per-backend configuration](crypto-backends/engineering.md#per-backend-configuration))
+- **Hardware**: [TPM 2.0](tpm2/), [PKCS#11](pkcs11-backend/) (including Nitrokey HSM)
+- **Quantum**: [Post-Quantum Cryptography](post-quantum/)
 
 ### [Configuration](configuration/)
 Configuration guides for various components:
-- [Build System](configuration/build-system.md) - Build tags and compilation options
-- [AEAD Configuration](configuration/aead-auto-selection.md) - Authenticated encryption setup
-- [Symmetric Encryption](configuration/symmetric-encryption.md) - Symmetric key configuration
+- [Build toggles](crypto-backends/engineering.md#build-toggles) - Build tags and compilation options
 - [TPM2 Session Encryption](tpm2/engineering.md#bus-protection) - TPM session security
 
-### [Bootstrap](bootstrap/)
-Secure trust establishment and server initialization:
-- [Overview](bootstrap/README.md) - Bootstrap architecture, DANE/Noise/SPKI/Direct trust methods
-
-### [Trust](trust/)
-Canonical trust-bootstrap dispatch library:
-- [Trust Bootstrap Library](trust/bootstrap.md) - `pkg/trust/bootstrap` Mode enum, Fetch entry point, and the four consumers (xkmsctl, xkey GUI, QuicBaaS SDK, go-trusted-platform via SDK)
+### [Trust Bootstrap](trust-bootstrap/)
+Converted to the five-file feature layout — see [Feature documentation](#feature-documentation) below.
+- [Engineering](trust-bootstrap/engineering.md) - `pkg/trust/bootstrap` modes and `Fetch`, the `pkg/trust/resolver` scope chain, the Noise bootstrap listener's configuration
 
 ### [Init](init-ceremony/)
 First-boot server initialization ceremony. Backend credential seal strategies
 are now [backend-credentials](backend-credentials/).
 
-### [Auth](auth/)
-Authentication, authorization, and bootstrap:
-- [Layering](auth/layering.md) - Identity (qrdb) vs key-domain (xkms) split, Factor adapter composition
+### [Auth factors](auth-factors/)
+Converted to the five-file feature layout — see [Feature documentation](#feature-documentation) below.
+- [Architecture](auth-factors/architecture.md) - Identity (qrdb) vs key-domain (xkms) split, factor registration
 
 ### [WebAuthn](webauthn/)
 Converted to the five-file feature layout — see [Feature documentation](#feature-documentation) below.
 - [Architecture](webauthn/architecture.md) - Canonical RP implementation consumed by every binary in the stack via the QuicBaaS SDK re-export
 - [Engineering](webauthn/engineering.md) - Exported surface, ceremony invariants, the headless client used by `xkmsctl` and tests
 
-### [PIN](pin/)
-- [PIN Management](pin/README.md) - PIN service (qrdb) + TPM2 backend (xkms `pkg/pintpm2`) + composition via `WithPINBackend`
+### [PIN](pin-management/)
+- [Engineering](pin-management/engineering.md) - backend selection (`pkg/pinselect`), the TPM2 backend (`pkg/pintpm2`) and the Platform SRK
 
-### [Seal](seal/)
-- [Barrier Encryption Architecture](seal/README.md) - qrdb owns the barrier and StrategyRegistry; xkms owns every hardware/cloud strategy
+### [Sealing and Barrier](sealing-and-barrier/)
+- [Architecture](sealing-and-barrier/architecture.md) - qrdb owns the barrier and StrategyRegistry; xkms owns every hardware/cloud strategy
 
 ### [Usage](../xkey/docs/usage/)
 CLI usage guides and tutorials have moved to [xkey/docs/usage/](../xkey/docs/usage/README.md).
@@ -414,11 +356,11 @@ Deployment guides and production configurations:
 - [Docker Deployment](deployment/docker.md) - Complete Docker deployment guide
 - [Docker Quick Start](deployment/docker-quickstart.md) - 5-minute Docker setup
 
-### [Sealed Storage](sealed-storage/)
+### Sealed storage and credentials
 Encrypted-at-rest storage and credential management:
-- [Sealed Backend](sealed-storage/README.md) - Transparent value encryption via types.Sealer
-- [PlatformStore](platform-store/README.md) - Named-secret credential store (macOS Keychain analog)
-- [Static Passwords](staticpw/README.md) - Password manager with multi-tenant support and encryption
+- [Sealed value decorator](sealing-and-barrier/engineering.md) - `pkg/storage/sealed`, transparent value encryption via `types.Sealer`
+- [Platform Secrets](platform-secrets/architecture.md) - Named-secret store over a sealed backend
+- [Password Vault](password-vault/architecture.md) - Password manager with per-user vaults and tenant sharing
 
 ### [FIPS 140](fips/)
 FIPS compliance and algorithm selection:

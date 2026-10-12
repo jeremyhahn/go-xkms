@@ -1,6 +1,6 @@
 # RBAC — Engineering Contract
 
-> **Status: NORMATIVE** · Feature: `rbac` · Repo: `go-xkms` · Last verified: 2026-10-02 (#1114, #1115, #1226, #1227, #1230, #1232, #1249)
+> **Status: NORMATIVE** · Feature: `rbac` · Repo: `go-xkms` · Last verified: 2026-10-12 (#1114, #1115, #1226, #1227, #1230, #1232, #1249, #1433)
 
 ## Exported surface
 
@@ -371,7 +371,7 @@ specific permission before assuming a non-Admin role holds it.
 - **Plan management is platform-only.** Entitlements and quotas are gated on
   qrdb's dedicated `tenants:set_entitlements` / `tenants:set_quotas`
   (`pkg/auth/permissions.go:154-155`), never `tenants:update`, on every
-  transport: `pkg/api/rest/routes.go:293-294`, `pkg/api/mcp/authz.go:239-240`,
+  transport: `pkg/api/rest/routes.go:300-301`, `pkg/api/mcp/authz.go:239-240`,
   `pkg/api/grpc/service_tenant.go:896,922`, and the
   `qrdb.v1.permission` options at `pkg/api/grpc/proto/xkmsv1/xkms.proto:647,654`.
   Because both permissions are self-scoped in qrdb and qrdb's built-in Admin
@@ -418,7 +418,11 @@ specific permission before assuming a non-Admin role holds it.
   else stands between it and the handler. During an outage it would also
   admit an account the store would have refused. Only an authenticator built
   without a store (`pkg/auth/mtls.go:275`, used when no qrdb identity plane
-  is hosted) derives an identity from certificate fields.
+  is hosted) derives an identity from certificate fields: the subject is
+  the CN, else the first DNS SAN, else the serial (`defaultExtractSubject`,
+  `mtls.go:330-341`); the tenant is the first OU (`certIdentity`,
+  `mtls.go:282-283`); and it carries no roles, so with RBAC enabled it holds
+  no grants.
 
 - **The OIDC authenticator bounds what it reads from the identity
   provider.** The discovery document, the JWKS and the userinfo response are
@@ -506,13 +510,19 @@ constructs `pkg/server` directly with a non-`qrdb` backend and
 
 | Transport | Gate | Notes |
 |---|---|---|
-| REST | `RBACMiddleware.RequirePermission(resource, action)` (`pkg/api/rest/rbac_middleware.go`), applied per `RouteSpec` in `pkg/api/rest/routes.go` where `Auth == RouteAuthPermission`, ahead of the route's body bound (`pkg/api/rest/server.go:724`), so a denied caller gets 403 before its body is read | table-driven; a route's `Enabled` guard can also remove it entirely when its subsystem is unconfigured |
+| REST | `RBACMiddleware.RequirePermission(resource, action)` (`pkg/api/rest/rbac_middleware.go`), applied per `RouteSpec` in `pkg/api/rest/routes.go` where `Auth == RouteAuthPermission`, ahead of the route's body bound (`pkg/api/rest/server.go:563-565`), so a denied caller gets 403 before its body is read | table-driven; a route's `Enabled` guard can also remove it entirely when its subsystem is unconfigured |
 | gRPC | `Service.authorize(ctx, resource, action, resourceID)` (`pkg/api/grpc/service.go`) | emits an `audit.Event` (`Outcome: OutcomeAllow`/`OutcomeDeny`) on every call — see Observability |
 | QUIC | Same as REST — HTTP/3 on the unified REST listener, no separate package | |
 | MCP | `Server.authorizeMethod` / the `methodPermissions` table (`pkg/api/mcp/authz.go`) | fails closed at `NewServer` if RBAC is enabled without a usable authorizer |
 
 Authentication is mandatory on every transport whether or not RBAC is
 enabled; RBAC only governs authorization once an identity is established.
+
+MCP reports a missing identity as JSON-RPC `-32002` and a missing grant as
+`-32003` (`ErrCodeUnauthorized`, `ErrCodeForbidden`,
+`pkg/api/mcp/types.go:65`, `:72`). The only public methods are `health`,
+`xkms.algorithms`, `invite.get` and `invite.pivActivate`, the same ones REST
+serves unauthenticated (`publicMethods`, `pkg/api/mcp/authz.go:61-77`).
 
 ## Role assignment mechanism
 
@@ -527,6 +537,13 @@ role must already exist (one of qrdb's built-ins; xkms creates none). The
 `xkmsctl user update` only toggles `--enable`/`--disable`
 (`pkg/api/rest/user_handlers.go:handleEnableUser`/`handleDisableUser`,
 `POST /api/v1/users/{username}/enable`/`.../disable`, no body).
+
+For mTLS, `xkmsctl admin create <username> --method mtls --cert-file
+<pem>` creates the user and binds the certificate in one step: the binding
+holds the certificate's SPKI thumbprint (`qrdbsdk.ComputeSPKIThumbprint`,
+`cmd/xkmsctl/admin.go:202`) and its `NotAfter` (`:247-248`), so a reissued
+certificate for the same key still resolves. `--pkcs11-module` reads the
+certificate from a token instead (`admin.go:741-742`).
 
 Role CRUD (defining a **custom** role beyond the built-ins) is reachable
 only through the embedded Go SDK:

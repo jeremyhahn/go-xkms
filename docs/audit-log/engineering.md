@@ -1,6 +1,6 @@
 # Audit Log — Engineering Contract
 
-> **Status: NORMATIVE** · Feature: `audit-log` · Repo: `go-xkms` · Last verified: 2026-10-07 (S2c)
+> **Status: NORMATIVE** · Feature: `audit-log` · Repo: `go-xkms` · Last verified: 2026-10-12
 
 ## Exported surface — `pkg/audit`
 
@@ -177,6 +177,33 @@ The sink is go-qrdb's, chosen by composition:
   (`audit-events.ndjson` in the working directory when no datastore path is
   set), and closes it at shutdown.
 - **Off** — a nil sink; `Emit` returns nil.
+
+### ACME audit trail
+
+The ACME server writes its own trail, separate from the go-qrdb sink above,
+through `pkg/acme/audit` (xkmsd opens it with `audit.NewFileAuditLogger`,
+`cmd/xkmsd/acme.go:198`). It is configured by `acme.audit`
+(`ACMEAuditConfig`, `pkg/config/acme.go:317-356`):
+
+| Key | Default (`pkg/config/acme.go:284-306`) |
+|---|---|
+| `enabled` | on |
+| `log_path` | `<data dir>/audit.log` (`ResolveLogPath`, `:366-371`) |
+| `max_size_mb` | 100 |
+| `max_age_days` | 365 |
+| `max_backups` | 10 |
+| `buffer_size` | 100 |
+| `flush_interval_seconds` | 5 |
+| `compress` | off |
+| `format` | `json`, the only accepted value (`ErrACMEAuditUnsupportedFormat`, `:59`) |
+
+Turning the trail off while ACME is enabled is a compliance gap
+(`pkg/config/config.go:1424-1427`): xkmsd refuses to start
+(`cmd/xkmsd/main.go:162-167`) and refuses a reload into it
+(`main.go:350-352`). The read side is `GET /admin/audit`
+([api.md](api.md#acme-audit-trail)); its queries are bounded by
+`pkg/acme/audit/query.go` (page size 25 by default, at most 100, and a
+10 000-event window, `:51-58`).
 
 ## Persistence
 

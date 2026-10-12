@@ -5,15 +5,13 @@ This directory contains configuration guides for various aspects of go-xkms.
 ## Configuration Topics
 
 ### Build Configuration
-- [Build System](build-system.md) - Build tags, compilation options, and cross-platform builds
+- [Build toggles](../crypto-backends/engineering.md#build-toggles) - Build tags and the `WITH_*` Makefile toggles
 
 ### Encryption Configuration
-- [AEAD Auto-Selection](aead-auto-selection.md) - Automatic AEAD algorithm selection based on key types
-- [AEAD Bytes Tracking](aead-bytes-tracking.md) - Encrypted data format and byte layout
-- [Symmetric Encryption](symmetric-encryption.md) - Symmetric encryption configuration and usage
+- [Symmetric Encryption & AEAD](../symmetric-aead/) - Algorithm auto-selection, per-key byte budgets and symmetric key usage
 
 ### Bootstrap Configuration
-- [CA Bundle Bootstrap](bootstrap.md) - Noise_NK and SPKI-pinned TLS bootstrap configuration
+- [CA Bundle Bootstrap](../trust-bootstrap/engineering.md#configuration) - Noise bootstrap listener and the resolver's `trust:` section
 
 ### Barrier and PIN Configuration
 
@@ -71,8 +69,8 @@ pin:
 ```
 
 **Related documentation:**
-- [Barrier Architecture](../seal/README.md)
-- [PIN Management](../seal/pin.md)
+- [Sealing and Barrier](../sealing-and-barrier/architecture.md)
+- [PIN Management](../pin-management/architecture.md)
 - [CLI PIN Commands](../../xkey/docs/usage/cli/pin.md)
 
 ### Backend-Specific Configuration
@@ -127,5 +125,5 @@ The Policies tab provides comprehensive policy lifecycle management:
 ## See Also
 
 - [Architecture Overview](../architecture/overview.md)
-- [Backend Documentation](../backends/)
+- [Backend Documentation](../crypto-backends/)
 - [Getting Started Guide](../../xkey/docs/usage/getting-started.md)

@@ -295,8 +295,8 @@ tpm2_nvundefine 0x01800000
 ## See Also
 
 - [Certificate Management Guide](../../../docs/certificate-management.md)
-- [PKCS#11 Backend Documentation](../../../docs/backends/pkcs11.md)
-- [TPM2 Backend Documentation](../../../docs/backends/tpm2.md)
+- [PKCS#11 Backend Documentation](../../../docs/pkcs11-backend/user.md)
+- [TPM2 Backend Documentation](../../../docs/tpm2/user.md)
 - [Storage Abstraction](../../../docs/storage-abstraction.md)
 
 ## License

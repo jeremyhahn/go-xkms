@@ -966,5 +966,5 @@ xkmsctl key decrypt my-aes-key "$(echo $ENCRYPTED | jq -r '.ciphertext')" \
 - [Getting Started Guide](../getting-started.md)
 - [Key Import/Export Guide](../key-import-export.md)
 - [Advanced Cryptography Guide](../advanced-crypto.md)
-- [Backend Documentation](../../backends/README.md)
+- [Backend Documentation](../../../../docs/crypto-backends/user.md)
 - [Certificate Management](../certificate-management.md)

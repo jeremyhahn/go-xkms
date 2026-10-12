@@ -64,6 +64,6 @@ See the `examples/` directory in the repository for complete working examples:
 
 ## See Also
 
-- [Backend Documentation](../backends/)
+- [Backend Documentation](../../../docs/crypto-backends/user.md)
 - [Configuration Guide](../configuration/)
 - [Testing Documentation](../testing/)

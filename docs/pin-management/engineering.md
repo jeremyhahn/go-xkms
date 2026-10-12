@@ -1,6 +1,6 @@
 # PIN Management — Engineering Contract
 
-> **Status: NORMATIVE** · Feature: `pin-management` · Repo: `go-xkms` · Last verified: 2026-09-29
+> **Status: NORMATIVE** · Feature: `pin-management` · Repo: `go-xkms` · Last verified: 2026-10-12
 
 ## Exported surface
 
@@ -86,7 +86,14 @@ SRK. Without the backend, startup fails with `*ProviderUnavailableError`.
 ### `pkg/pintpm2`
 
 ```go
-type PlatformAuthProvider interface { /* supplies TPM platform authorization */ }
+type PlatformAuthProvider interface {
+	VerifyAuth(pin string) error
+	ChangeAuth(currentPIN, newPIN string) error
+	GetLockoutInfo() (failedAttempts, maxFail, interval, recovery int, err error)
+	DictionaryAttackLockoutReset(lockoutAuth []byte) error
+	IsProvisioned() bool
+	IsAuthReady() bool
+}
 
 type TPM2Backend struct{ /* implements qrdbsdk.PINBackend */ }
 func NewTPM2Backend(platformStore PlatformAuthProvider) *TPM2Backend
@@ -104,11 +111,82 @@ func (b *TPM2Backend) IsInitialized() bool                        // platformSto
 func (b *TPM2Backend) GetLockoutStatus() *qrdbsdk.PINLockoutStatus
 func (b *TPM2Backend) ResetLockout(lockoutAuth string) error
 func (b *TPM2Backend) VerifyFIDO2Hash(hash []byte) bool
-func (b *TPM2Backend) Close()
+func (b *TPM2Backend) Close() error                               // ErrFIDO2HashDestroyFailed
 ```
 
 The interface, `PINStrategyID`, `PINLockoutStatus` and `ErrPINNotSet` are
 **go-qrdb's**, reached through `go-qrdb/sdk/go` only.
+
+The FIDO2 hash `VerifyFIDO2Hash` checks is the CTAP2 one, `SHA-256(PIN)[:16]`
+(`pkg/pintpm2/backend.go:267`).
+
+`PlatformAuthProvider` is declared at `pkg/pintpm2/providers.go:22`;
+`*tpm2.PlatformKeyStore` implements it. `IsProvisioned` and `IsAuthReady` answer
+different questions: an SRK left by a prior TPM owner is provisioned, but its
+auth value is unknown. `TPM2Backend` asserts both qrdb contracts at compile time,
+`qrdbsdk.PINBackend` and `qrdbsdk.FIDO2HashVerifier` (`backend.go:36-39`).
+
+How the TPM2 backend behaves:
+
+- **Construction.** `NewTPM2Backend` reports `UserPINSet()` true only when the
+  provider is provisioned **and** auth-ready (`backend.go:75-81`).
+  Verification still runs whenever the SRK is provisioned.
+- **PIN length.** `SetUserPIN` and `ChangeUserPIN` refuse a new PIN shorter
+  than 6 characters with `qrdbsdk.ErrPINTooShort` (`backend.go:43`, `:314-317`).
+  This is the same minimum as qrdb's software backend.
+- **`SetUserPIN`** does not set anything on the TPM. It verifies the PIN
+  against the SRK's existing auth value, and a mismatch is
+  `qrdbsdk.ErrPINInvalid` (`backend.go:98-110`).
+- **`VerifyUserPIN`** returns `qrdbsdk.ErrPINNotSet` on an unprovisioned
+  platform (`backend.go:162-181`). On success, if no live hash enclave exists
+  (for example after a restart), it caches the FIDO2 hash then.
+- **`ChangeUserPIN`** goes through `ChangeAuth` (`backend.go:119-151`). When
+  the change fails, the backend re-reads `IsAuthReady`. If the provider is no
+  longer ready, it drops the cached FIDO2 hash.
+- **Auth-failure detection** is string matching on the provider's error
+  (`bad_auth`, `auth_fail`, `auth verification failed`). This keeps the
+  package free of go-tpm types (`providers.go:53-61`).
+- **An auth failure carries the lockout counters** (`backend.go:249-264`):
+  - `*qrdbsdk.PINTPMLockedError` once `failedAttempts >= maxFail`;
+  - `*qrdbsdk.PINInvalidWithStatusError` before that;
+  - plain `qrdbsdk.ErrPINInvalid` when the counters cannot be read.
+- **`GetLockoutStatus`** returns `nil` when the counters cannot be read
+  (`backend.go:198-209`).
+
+`PlatformKeyStore.SetAuthReady(bool)` is for a caller that has confirmed the SRK
+auth by other means (`pkg/tpm2/platform_keystore.go:621-626`). A persisted
+`pin.strategy` does not count as such a means: it records which backend was
+chosen, not that this process checked the auth value.
+
+### Platform SRK — `pkg/tpm2.PlatformKeyStore`
+
+The user PIN of the TPM2 backend is the auth value of the Platform SRK.
+`PlatformKeyStore` holds it.
+
+- `EnrollPlatformSRK(soPIN, userPIN string)` is the first-boot enrollment
+  (`pkg/tpm2/platform_keystore.go:323`). `soPIN` is the owner-hierarchy auth,
+  and is needed only when that hierarchy has one. The call:
+  - refuses an empty `userPIN` with `ErrPlatformSRKEnrollEmptyPIN`;
+  - refuses a store whose auth is already known-good with
+    `ErrPlatformSRKAlreadyEnrolled`;
+  - otherwise runs `Initialize`.
+- When the owner hierarchy has an auth value that was not supplied, the
+  TPM answers `TPM_RC_BAD_AUTH`. Enrollment then returns
+  `ErrPlatformSRKHierarchyAuth` joined with that TPM error
+  (`platform_keystore.go:278`).
+- `VerifyAuth(userPIN)` (`platform_keystore.go:502`):
+  - on success, marks the auth ready (`IsAuthReady`);
+  - maps a TPM auth failure to `ErrAuthFailed`;
+  - returns any other TPM fault as is.
+- `ChangeAuth(currentPIN, newPIN)` verifies `currentPIN` first
+  (`platform_keystore.go:526`). The change evicts and re-persists the SRK. If
+  it fails part-way, the auth is marked not-ready and the store re-probes
+  whether an SRK still exists at the handle, so a retry through `Initialize`
+  takes the right branch.
+- The PIN SRK is created with `NoDA` cleared (`rsaSRKTemplateWithDA`,
+  `enableDAOnSRK`, `platform_keystore.go:710`, `:718`). Wrong PINs therefore
+  count against the TPM dictionary-attack lockout that `GetLockoutStatus`
+  reports.
 
 ## Invariants
 
@@ -170,8 +248,12 @@ The interface, `PINStrategyID`, `PINLockoutStatus` and `ErrPINNotSet` are
 |---|---|
 | `ErrNoSoftwareProvider` | `Config.Software` was nil — a construction bug |
 | `qrdbsdk.ErrPINNotSet` | this backend has no such PIN (every SO method on TPM2) |
-| auth failure | wrong PIN; `buildAuthFailureError` distinguishes it from a device error |
-| lockout | the device is refusing further attempts |
+| `qrdbsdk.ErrPINTooShort` | new user PIN under 6 characters |
+| `qrdbsdk.ErrPINInvalid` | wrong PIN on `SetUserPIN`, or on verify/change when lockout counters are unreadable |
+| `*qrdbsdk.PINInvalidWithStatusError` | wrong PIN, with the TPM DA counters |
+| `*qrdbsdk.PINTPMLockedError` | the TPM DA counter is exhausted; the device refuses further attempts |
+| `tpm2.ErrAuthProbeRejected` | the TPM refused the auth probe for a reason other than auth (`pkg/tpm2/auth.go:45`); passed through, never reported as a wrong PIN |
+| `pintpm2.ErrFIDO2HashDestroyFailed` | `Close` could not wipe the hash enclave |
 | `pintpm2.ErrFIDO2HashCacheFailed` | the TPM accepted the PIN but its FIDO2 hash could not be placed in locked memory; wraps `enclave.ErrBudgetExhausted`, `enclave.ErrLockedMemoryUnavailable` or `enclave.ErrLimitDiscoveryFailed` |
 
 **Fail closed:** an unprovisioned platform, a locked-out device, a wrong PIN, an

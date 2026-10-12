@@ -1,6 +1,6 @@
 # Browser Trust Injection — Architecture
 
-> **Status: NORMATIVE** · Feature: `browser-trust-injection` · Repo: `go-xkms` (`xkey/`) · Last verified: 2026-09-24
+> **Status: NORMATIVE** · Feature: `browser-trust-injection` · Repo: `go-xkms` (`xkey/`) · Last verified: 2026-10-12
 
 ## The problem
 
@@ -21,10 +21,9 @@ The whole feature is xkey-side, under `xkey/pkg/gui/services/` and
 Nothing in go-xkms's root module (`pkg/*`) is involved — this is a xkey
 product surface over the go-xkms trust store, not shared library code, so it
 belongs under `xkey/docs/` per that tree's own convention
-(`xkey/docs/README.md` §"Feature documentation"). The legacy
-`docs/browser/README.md` — in the **root** module's docs tree — documents
-this same feature but is stale on a load-bearing point (below) and is
-superseded by this folder.
+(`xkey/docs/README.md` §"Feature documentation"). It absorbed the root
+module's legacy `docs/browser/README.md`, which was stale on a load-bearing
+point (below) and has been deleted (go-xkms#1433).
 
 ## Shape chosen: a pure-Go NSS writer plus a Firefox-policy exporter, both driven by one trust-hash gate
 
@@ -33,7 +32,7 @@ gate:
 
 - **Chrome family** (Chrome, Chromium, Brave, Edge, Opera, Vivaldi — matched
   by binary-name substring in `classifyBrowser`,
-  `secure_browser_service.go:781-801`) reads NSS `cert9.db`/`key4.db`.
+  `secure_browser_service.go:811-831`) reads NSS `cert9.db`/`key4.db`.
   `xkey/pkg/nssdb.Writer` (`nssdb.go:151-421`) is a from-scratch, pure-Go
   writer for that format — no `certutil` dependency — built directly on
   `database/sql` against `modernc.org/sqlite` (a pure-Go SQLite driver), with
@@ -42,7 +41,7 @@ gate:
   `sftkdb_HMACSDB`-compatible HMAC construction for trust-object signatures
   (`nssdb.go:611-705`, citing `lib/softoken/sftkdb.c` by name).
 - **Firefox family** (Firefox, LibreWolf, Waterfox) is documented in the
-  legacy README as reading a `policies.json` file via `MOZ_POLICIES_FILE`.
+  deleted legacy README as reading a `policies.json` file via `MOZ_POLICIES_FILE`.
   **That mechanism does not work and the code no longer relies on it**: "Firefox
   enterprise policies (policies.json) are NOT used because Mozilla only loads
   policies.json from system-protected paths (`/etc/firefox/policies/`,
@@ -55,7 +54,7 @@ gate:
   an operator-inspection aid and a manual fallback for a system administrator
   who wants to deploy the supported system-wide policies path — not as the
   mechanism the launched browser itself reads.
-- **Change detection**: `computeTrustHash` (`secure_browser_service.go:811-822`)
+- **Change detection**: `computeTrustHash` (`secure_browser_service.go:844-852`)
   is a SHA-256 over an implementation-version tag and the sorted SHA-256
   fingerprints of every trust-store certificate. It is tracked **per
   resolved target store** — keyed by browser family *and* the currently
@@ -64,7 +63,7 @@ gate:
   `:744-755`). A single global hash was tried first and caused a launch in
   one profile mode to mark a *different* mode's store falsely up to date,
   leaving that store with stale CAs. `browserStorePresent`
-  (`secure_browser_service.go:689-712`) additionally probes for the
+  (`secure_browser_service.go:733-742`) additionally probes for the
   resolved store's `cert9.db` on disk, so a store wiped externally after its
   hash was recorded still gets resynced rather than silently skipped.
 - **Automatic rebuild on trust-store mutation**: the GUI wires
@@ -83,7 +82,7 @@ profile; for shared-mode Chrome this targets the user's real
 `~/.pki/nssdb`, and for shared-mode Firefox no NSS injection happens at all
 — "the user's own profile must not be mutated by us",
 `secure_browser_service.go:461-465`). `targetNSSDBDir`
-(`secure_browser_service.go:714-742`) is the single function resolving which
+(`secure_browser_service.go:753-772`) is the single function resolving which
 of the four (family × mode) combinations a sync writes to.
 
 ## Chrome extension import (isolated mode only)

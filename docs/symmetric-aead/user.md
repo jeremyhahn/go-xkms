@@ -1,6 +1,6 @@
 # Symmetric Encryption & AEAD — User Guide
 
-> **Status: NORMATIVE** · Feature: `symmetric-aead` · Repo: `go-xkms` · Last verified: 2026-09-28
+> **Status: NORMATIVE** · Feature: `symmetric-aead` · Repo: `go-xkms` · Last verified: 2026-10-12
 
 ## Generate a symmetric key
 
@@ -53,31 +53,28 @@ xkmsctl key rotate my-secret
 ```
 
 Rotation generates a fresh key under the same key ID and resets that key's
-nonce-reuse history and byte counter. The AEAD safety tracker's state is
-**in-memory only** (see below) — after a server restart, tracking for every
-key (rotated or not) starts over regardless of rotation.
+byte counter. It does not reset the nonce record: a nonce used under the key
+ID stays used.
 
 ## Supplying your own nonce
 
 Leave the nonce empty and let the server generate it. If a protocol requires
 you to choose it, use each nonce once per key: the server refuses a second
 encryption under the same key and nonce, including a nonce it generated for
-someone else's ciphertext. That record is kept in the server's memory. It is
-lost when `xkmsd` restarts and is not shared between cluster nodes, so the
-guarantee does not span restarts yet.
+someone else's ciphertext. The record is kept in the server's datastore, so
+it survives an `xkmsd` restart and is shared by every node that uses the same
+datastore (see [`architecture.md`](architecture.md) §"Persistence: a durable
+claim, not process memory alone").
 
-## Operational note: AEAD safety tracking does not survive a restart
+## Operational note: the byte budget does not survive a restart
 
-go-xkms's only AEAD-safety tracker implementation keeps nonce-reuse history
-and byte counters in memory. A restarted `xkmsd` process has forgotten every
-nonce it has ever used and every byte it has ever encrypted with every key.
-This does not make a re-used nonce safe — the underlying cryptography is
-unaffected — but it does mean the *detection* mechanism that would catch a
-reused nonce, or warn before a key exceeds its NIST SP 800-38D byte budget,
-resets on every restart. If your deployment encrypts high volumes with a
-long-lived symmetric key across process restarts, rotate keys on a schedule
-well inside the 350GB default limit rather than relying on the tracker to
-warn you close to it.
+Each key has a byte budget, 350GB by default, after which encryption is
+refused until you rotate the key. The counter lives in the server's memory
+and starts again from zero after a restart, and the server gives no warning
+before the limit. If you encrypt high volumes with a long-lived key, rotate it
+on a schedule well inside the limit rather than relying on the refusal. The
+budget is set per key at generation; see [`engineering.md`](engineering.md)
+§"Per-key options and the bytes budget".
 
 ## FIPS-mode deployments
 

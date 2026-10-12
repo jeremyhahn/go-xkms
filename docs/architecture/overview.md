@@ -17,7 +17,7 @@ go-xkms/pkg/seal/        Hardware strategies: TPM2, PKCS#11, AWS/GCP/Azure KMS, 
 - **Barrier**: go-xkms imports `ExtendedBarrier` from go-qrdb (which embeds go-quicraft's minimal barrier). go-xkms adds hardware `SealingStrategy` implementations.
 - **Storage**: Canonical storage engines (file, memory, pebble, namespace) live in go-qrdb. go-xkms imports them directly and provides a thin QRDB networked adapter for distributed mode.
 
-See [barrier-integration.md](barrier-integration.md) for details.
+See [sealing-and-barrier](../sealing-and-barrier/engineering.md) for details.
 
 ## System Architecture
 
@@ -403,7 +403,7 @@ caps := backend.Capabilities()
 level := caps.GetSecurityLevel() // types.SecurityLevel (0-3)
 ```
 
-See [Security Levels](./security-levels.md) for detailed documentation.
+See [crypto-backends](../crypto-backends/engineering.md) for detailed documentation.
 
 ## Extensibility Points
 
@@ -534,9 +534,9 @@ func init() {
 
 ## See Also
 
-- [Security Levels](./security-levels.md)
+- [Security levels (crypto-backends)](../crypto-backends/engineering.md)
 - Backend Registry - no standalone document yet; the registry is `pkg/xkms/registry.go` with one `register_*.go` per backend
-- [Storage Architecture](./storage.md)
-- [Build System](../configuration/build-system.md)
+- [Datastore](../datastore/engineering.md)
+- [Build toggles](../crypto-backends/engineering.md#build-toggles)
 - [Getting Started](../../xkey/docs/usage/getting-started.md)
-- [PKCS#11 Manager](../pkcs11/manager.md)
+- [PKCS#11 Manager](../pkcs11-provider-module/engineering.md#pkgpkcs11manager)

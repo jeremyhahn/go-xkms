@@ -946,12 +946,12 @@ go doc github.com/jeremyhahn/go-xkms/pkg/certstore
 Comprehensive documentation is available in the [docs/](docs/) directory:
 
 - [Getting Started Guide](xkey/docs/usage/getting-started.md) - Step-by-step guide to using go-xkms
-- [Certificate Authority](docs/ca/README.md) - CA module, certificate lifecycle, and ACME
-- [Hardware Certificate Storage](docs/architecture/hardware-certificate-storage.md) - Storing certificates in PKCS#11 and TPM2 modules
-- [Backend Guide](docs/backends/) - Backend-specific configuration and usage
-- [Storage Architecture](docs/architecture/storage.md) - Storage interfaces and abstraction layer
+- [Certificate Authority](docs/certificate-authority/architecture.md) - CA module, certificate lifecycle, and ACME
+- [Hardware Certificate Storage](docs/certificate-authority/engineering.md#hardware-certificate-storage--pkgstoragehardware) - Storing certificates in PKCS#11 and TPM2 modules
+- [Backend Guide](docs/crypto-backends/) - Backend-specific configuration and usage
+- [Datastore](docs/datastore/) - Storage interfaces and abstraction layer
 - [Testing Guide](docs/testing/) - Running tests and writing new tests
-- [Build System](docs/configuration/build-system.md) - Build tags and compilation options
+- [Build toggles](docs/crypto-backends/engineering.md#build-toggles) - Build tags and compilation options
 
 ### Core Interfaces
 

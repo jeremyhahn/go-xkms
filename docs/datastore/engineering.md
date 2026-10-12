@@ -1,6 +1,6 @@
 # Datastore — Engineering Contract
 
-> **Status: NORMATIVE** · Feature: `datastore` · Repo: `go-xkms` · Last verified: 2026-10-08
+> **Status: NORMATIVE** · Feature: `datastore` · Repo: `go-xkms` · Last verified: 2026-10-12
 
 ## Exported surface
 
@@ -40,6 +40,39 @@ type CompareAndDeleter interface {
 A caller that needs the guarantee type-asserts for it and handles absence —
 `GuardedWriteReporter` lets a backend explicitly report the capability as
 unavailable rather than silently defeating the guard.
+`storage.GuardedWritesUsable(b)` (`pkg/storage/guardedwrites.go:88`) is how a
+caller asks: it needs both interfaces **and** the report, and a backend that
+does not implement the reporter is taken at its word. `PrefixBackend` declares
+`CompareAndSwap` unconditionally (`pkg/storage/prefix_compareandswap.go:24`,
+answering `ErrCompareAndSwapUnsupported` when the inner backend cannot), so its
+report is the inner backend's usability (`pkg/storage/prefix_guardedwrites.go:32`).
+The go-qrdb-backed `pkg/storage/qrdb.Backend` reports available when its client
+is a `GuardedKVClient` or a `TransactionClient` (`pkg/storage/qrdb/backend.go:89`).
+
+### `pkg/storage/kvadapter` — a `storage.Backend` as a go-qrdb `KVStore`
+
+`kvadapter.New(backend)` (`pkg/storage/kvadapter/adapter.go:71`) wraps a
+`storage.Backend` so go-qrdb's DAO layer can run over it. It returns
+`NilBackendError` for a nil backend, and an `AtomicKVStore`
+(`atomicKVStoreAdapter`, `atomic.go:40`) only when
+`storage.GuardedWritesUsable` holds; otherwise a plain `KVStore`, so a DAO
+takes its non-atomic path instead of failing on the first guarded write. The
+semantic translations:
+
+| Operation | Adapter behaviour | Source |
+|---|---|---|
+| `Get` of a missing key | `storage.ErrNotFound` becomes `*qrdbsdk.QRDBError{Code: ErrNotFound}`, so the DAO's not-found check works | `adapter.go:96` |
+| `Delete` of a missing key | swallowed — `KVStore.Delete` is idempotent | `adapter.go:115` |
+| `Scan` | collects, sorts keys, then calls back in key order | `adapter.go:128` |
+| `CompareAndSwap` | delegates; the backend's observed `current` value is dropped | `atomic.go:87` |
+| index registration and queries | `*IndexingNotSupportedError`, which matches go-qrdb's `ErrIndexUnsupported` so the DAO plans full scans | `indexes.go:47`, `errors.go:154` |
+
+Other failures are typed and unwrap to the backend error: `PutError`,
+`GetError`, `DeleteError`, `ScanError`, `ScanCallbackError`, `ListError`,
+`ExistsError` (`pkg/storage/kvadapter/errors.go`). A decorator over a
+`KVStore` follows the same rule: `pkg/acme/storage/objstore`'s tenant prefix
+wrapper claims `AtomicKVStore` only when its inner store does
+(`pkg/acme/storage/objstore/tenant_aware_factory.go:185`).
 
 ### `pkg/server` — the one datastore seam every xkms subsystem uses
 
@@ -264,6 +297,13 @@ factory with `*dao.DatabaseUnavailableError`. The SDK re-exports it as
 `NewStoreDAOFactory`; `testutil.NewMemoryDAOFactory` is it over a fresh
 memory store.
 
+An entity is a JSON-tagged struct with `EntityID()`/`SetEntityID()` and
+optional `index:` tags — `pkg/oidc/entity.go:20` (`index:"unique,ci"`) and
+`:31`. Feature stores derive the ID from the natural key so a lookup needs no
+scan: `qrdbsdk.NewCryptoFieldHashGenerator(<field>)` (for example
+`pkg/signing/store/store.go:74`, `pkg/pivcert/file/file.go:91`) or
+`NewFieldHashGenerator` (`pkg/tpm2/store/blob.go:69`).
+
 ### `pkg/compose` — the databases a root opens
 
 ```go
@@ -317,6 +357,29 @@ func NewKVStoreBackend(store qrdbsdk.KVStore) (*KVStoreBackend, error)
 SDK's `KVStore` offers no read-consistency option, so reads take the
 store's default consistency rather than follower reads, and it carries no
 fenced create.
+
+### `pkg/storage` — a bare go-qrdb engine as a `Backend`
+
+```go
+func OpenEngine(cfg EngineConfig) (Backend, error)
+```
+
+(`pkg/storage/engine.go:397-436`.) Opens one go-qrdb storage engine directly,
+with no node, barrier or Raft above it. This is a library seam (the file
+engine below wraps it); `xkmsd` never selects an engine through it.
+`EngineConfig.Kind` (`pkg/storage/engine.go:354-369`) is one of:
+
+| Kind | Opens | Needs |
+|---|---|---|
+| `file` (also the empty kind) | `qrdbsdk.NewFileStorage(Path)` | `Path` |
+| `pebble` | `qrdbsdk.NewPebbleStorage(DefaultPebbleConfig(Path))` | `Path` |
+| `memory` | `qrdbsdk.NewMemoryStorage()` | nothing |
+| `objstore` | `qrdbsdk.NewObjStoreStorage(Provider, Options)` | `Provider` (empty = `"local"`); `Options` go verbatim to go-objstore (`pkg/storage/engine.go:375-388`) |
+
+A missing `Path` is `ErrEnginePathRequired`, an unknown kind wraps
+`ErrUnknownEngine` (`pkg/storage/errors.go:49-54`), and an open failure is
+`*EngineError`, rendered `storage: engine <op> "<path or provider>": <cause>`
+(`pkg/storage/engine.go:39-41`).
 
 ### `pkg/storage/file` — the file engine's validation and permission wrapper
 
@@ -410,6 +473,8 @@ read/write linearizability.
 | go-qrdb's `lifecycle.EmptyVectorDataDirError` | go-qrdb `pkg/server/lifecycle` (not an xkms type; this repository never constructs or catches it directly) | the underlying go-qrdb failure `datastore.path` being required prevents: go-qrdb's node builder unconditionally roots its vector-storage subsystem under the node's data directory regardless of the primary KV engine, so an empty directory fails the node build outright. `config.Validate` and `pkg/datastore.Open` both refuse an empty `Datastore.Path` for `mode: standalone` before this can be reached, adopting the constraint rather than working around it -- see "Configuration" below |
 | `ErrNotFound` | `pkg/storage/errors.go` | `Get`/`Delete` against an absent key |
 | `ErrClosed` | `pkg/storage/errors.go` | an operation reached a closed go-qrdb engine |
+| `ErrAlreadyExists` | `pkg/storage/errors.go:41` | a create found the key already present |
+| `ErrCompareAndSwapUnsupported` / `ErrCompareAndDeleteUnsupported` / `ErrFencedCreateUnsupported` | `pkg/storage/errors.go:28`, `:33`, `:38` | the backend cannot perform that guarded write (see `GuardedWritesUsable` above) |
 
 ## Configuration
 
@@ -451,8 +516,9 @@ check reads an already-defaulted `Datastore`):
 - Any other `Engine` or `Mode` value is a hard error naming the field and
   the accepted values.
 - `Databases`: each entry needs a non-empty `Name`, names must not repeat,
-  and a non-empty `Backend` must be `memory`, `file`, `pebble`, or `raft`.
-  An empty `Backend` is valid — it defers to `Engine`.
+  and a non-empty `Backend` must be `memory`, `file`, `pebble`, `raft`, or
+  `objstore` (`pkg/config/config.go:1532-1534`). An empty `Backend` is valid
+  — it defers to `Engine`.
 
 Two other `Validate` rules key off `Datastore.Mode` and matter for this
 feature's neighbors:

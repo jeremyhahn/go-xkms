@@ -1,6 +1,6 @@
 # Web Console — Engineering Contract
 
-> **Status: NORMATIVE** · Feature: `web-console` · Repo: `go-xkms` · Last verified: 2026-10-07
+> **Status: NORMATIVE** · Feature: `web-console` · Repo: `go-xkms` · Last verified: 2026-10-12
 
 ## Exported surface
 
@@ -115,6 +115,10 @@ it in a goroutine. Typed error: `LaunchError{Reason, Err}`.
 - **A loopback bearer token is issued once per launch and never persisted.**
   `pkg/server/loopback.Launch` generates it in memory; closing the instance
   invalidates it (the static authenticator goes away with the process).
+- **Every modal renders through `web/app/src/components/Modal.svelte`**, a
+  thin wrapper over the native `<dialog>` element (`Modal.svelte:151`) opened
+  with `showModal()` (`Modal.svelte:110`), so the browser supplies top-layer
+  stacking, the focus trap and Escape-to-close.
 
 ## Known gaps
 
@@ -143,6 +147,25 @@ three packages (`sdk/ts`, `svelte-auth`, `web/app`); branches 90% in
 `sdk/ts` and `svelte-auth`, 80% in `web/app` (the Svelte compiler emits
 implicit branches for every `{#if}`/keyed `{#each}`/optional prop, so a 90%
 floor there would chase generated-code coverage rather than behavior).
+`make test` runs `test-web` alongside the Go suites, so the web thresholds
+fail CI the same way.
+
+Mock tier (`web/app/e2e/`): `support/mockApi.ts` holds the default response
+table and `support/mockAuth.ts` seeds an authenticated session. A token in
+`localStorage` alone does nothing; the helper injects a fake
+`window.go.main.bridge` so the app's own `bootstrapDesktop()`
+(`web/app/src/lib/desktop.ts:55`) calls the real `setAuthenticated()`
+(`web/app/e2e/support/mockAuth.ts:28`) — production code, no source change.
+
+Live tier (`test/integration/web/`): `run-server.sh` stages the SPA with
+`make build-web` when `web/dist/index.html` is missing, builds `xkmsd` with
+`ui pkcs8 frost webauthn fido2 codec_cbor codec_json codec_msgpack`
+(`run-server.sh:23`), and runs it with `XKMS_CONFIG=config.yaml`
+(`run-server.sh:47`). Playwright waits on the REST port with a TCP-only
+readiness check (`playwright.config.ts:55`). Passkey login runs through
+Chrome's CDP virtual authenticator (`tests/support/virtualAuthenticator.ts`),
+so registration and login exercise the real WebAuthn RP. It boots a daemon
+and writes a keystore: run it in the devcontainer.
 
 `make integration-test-web` is deliberately **not** part of the
 `integration-test` aggregate (`Makefile`'s `integration-test` target lists

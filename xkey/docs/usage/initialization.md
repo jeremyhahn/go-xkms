@@ -165,7 +165,7 @@ auth:
   enable_rbac: true
 ```
 
-See [Authentication Configuration](../configuration/auth.md) for the full reference, including composite authentication (mTLS + JWT), PKCS#11 token-backed client certificates, and RBAC role mapping.
+See [Authentication Configuration](../../../docs/xkmsd-configuration/engineering.md#authentication-and-client-certificate-settings) for the full reference, including composite authentication (mTLS + JWT), PKCS#11 token-backed client certificates, and RBAC role mapping.
 
 ## Daily Operations
 
@@ -186,6 +186,6 @@ The server unseals the barrier on each restart through the configured seal strat
 - [PIN Commands](cli/pin.md) -- Full PIN CLI reference
 - [Barrier Architecture](../seal/architecture.md) -- Encryption design and threat model
 - [Configuration Reference](../configuration/README.md) -- Complete configuration options
-- [Authentication Configuration](../configuration/auth.md) -- mTLS, JWT, OIDC, and RBAC
+- [Authentication Configuration](../../../docs/xkmsd-configuration/engineering.md#authentication-and-client-certificate-settings) -- mTLS, JWT, and composite authentication
 - [Getting Started (Backend Selection)](getting-started.md) -- Backend comparison and Go API examples
 - [Bootstrap Commands](cli/bootstrap.md) -- Secure CA bundle bootstrap for new nodes

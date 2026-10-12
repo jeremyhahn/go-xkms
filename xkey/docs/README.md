@@ -18,7 +18,7 @@ tell.
 | [agent](agent/) | Network agent enrollment, connection-time revocation checking, and removal | `agent/` |
 | [agent-automation](agent-automation/) | PIN and touch automation for headless agents and CI | `agent/` |
 | [device](device/) | The `xkey device` CLI namespace: client-side agent enrollment (`enroll`/`connect`) and QR-code pairing | `device/README.md`, `device/pairing.md`, `device/qr-pairing.md`, `device/tcp-relay.md` |
-| [browser-trust-injection](browser-trust-injection/) | Injecting xkey trust-store CA certificates into Chrome- and Firefox-family browsers via a pure-Go NSS `cert9.db` writer, isolated/shared profile modes, and Chrome extension import | [`../../docs/browser/README.md`](../../docs/browser/README.md) — stale on the Firefox mechanism; see `architecture.md` |
+| [browser-trust-injection](browser-trust-injection/) | Injecting xkey trust-store CA certificates into Chrome- and Firefox-family browsers via a pure-Go NSS `cert9.db` writer, isolated/shared profile modes, and Chrome extension import | root `docs/browser/README.md` — **absorbed and deleted** (go-xkms#1433): its on-disk layout and detected browsers, corrected against the code, are in `engineering.md`; its `MOZ_POLICIES_FILE` mechanism, browser-name `--browser` values and single `trust-hash` file were wrong, and its `CT,C,C` trust-flag claim has no counterpart in `xkey/pkg/nssdb`; all were dropped |
 | [fido2](fido2/) | The `xkey fido2` daemon process, IPC-facing verbs (`touch`, `unlock`, `status`, `provision-attestation`), the GUI's FIDO2 device/service host, and a PIN/hmac-secret/SO-token protocol reference for `xkey/pkg/authenticator` | `fido2/README.md`, `fido2/overview.md`, `fido2/authenticator-*.md`, `fido2/daemon-*.md` (with `virtual-authenticator`) |
 | [gui](gui/) | The Wails v2 desktop GUI: the `App` composition root, the ~44-service Wails-bound backend surface, the opt-in Unix-socket IPC server (local app access, `xkey app-access`), events, and the Svelte frontend | `gui/architecture.md` (`gui/README.md`, `gui/features.md`, `gui/design-system.md`, `gui/setup-wizard.md`, `gui/api-explorer.md`, `gui/browser-settings.md`, `gui/ROADMAP.md` remain as superseded background) |
 | [ble](ble/) | The Bluetooth Low Energy transport for the phone-as-HSM pairing protocol: GATT wire shape, central and peripheral roles, BlueZ integration | `ble/README.md`, `ble/architecture.md`, `ble/protocol.md`, `ble/android-app.md`, `ble/testing.md` |
@@ -183,7 +183,7 @@ make -C xkey build-full      # every WITH_* feature on
 make -C xkey build-minimal   # every WITH_* feature off
 ```
 
-The toggle list is in [Build System](../../docs/configuration/build-system.md).
+The toggle list is in [Build toggles](../../docs/crypto-backends/engineering.md#build-toggles).
 
 ### Requirements
 
@@ -389,5 +389,5 @@ xkey
 
 ## See Also
 
-- [go-xkms Backends](../../docs/backends/README.md) -- All supported backends
+- [go-xkms Backends](../../docs/crypto-backends/) -- All supported backends
 - [go-xkms Documentation](../../docs/README.md) -- Library documentation

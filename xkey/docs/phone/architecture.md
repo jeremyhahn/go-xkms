@@ -210,8 +210,8 @@ See [engineering.md](engineering.md) for the exported method groups and
   implementation that lets an xkmsd server offer phone-backed keys through
   the general Backend API, proxying to the phone over `local.*` JSON-RPC
   (`pkg/backend/phone/backend.go:53-62`). It is a `go-xkms` root capability,
-  documented (thinly, "no backend guide written yet") at
-  [`../../../docs/backends/README.md`](../../../docs/backends/README.md);
+  listed as the `phone` row of the capability matrix in
+  [`../../../docs/crypto-backends/engineering.md`](../../../docs/crypto-backends/engineering.md);
   phone-hsm's architecture.md also places it in its component table. This
   folder only names it as the destination on the other end of the
   bidirectional bridge above.

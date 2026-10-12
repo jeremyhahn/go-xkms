@@ -1,6 +1,6 @@
 # PKCS#11 Provider Module — User Guide
 
-> **Status: NORMATIVE** · Feature: `pkcs11-provider-module` · Repo: `go-xkms` · Last verified: 2026-10-10
+> **Status: NORMATIVE** · Feature: `pkcs11-provider-module` · Repo: `go-xkms` · Last verified: 2026-10-12
 
 ## What you get
 
@@ -98,12 +98,29 @@ Upgrading from an earlier release: the server now keeps remote token state as
 records in its `pkcs11state` database, and does not read state written by an
 earlier release. Re-provision every remote token; there is no migration.
 
-## PINs come from the environment
+## Configuration file
+
+In remote mode the module also reads `/etc/xkms/pkcs11.conf` if it exists; the
+environment overrides it. Offline mode reads only the environment.
+
+```ini
+target = unix:///var/run/xkms/xkms.sock
+default_backend = software
+token_label = example-token
+piv_backends = software
+```
+
+The file must not be readable or writable by group or other (`chmod 600`), or
+`C_Initialize` fails. Every key is listed in
+[engineering.md](engineering.md#configuration--environment-and-an-optional-file).
+
+## PINs
 
 Cryptoki gives the module no way to prompt you, so `XKMS_PKCS11_SO_PIN` and
-`XKMS_PKCS11_USER_PIN` are environment variables. Anything that can read the
-process environment can read them — scope the environment to the process that
-needs it, and do not export them in a shared shell profile.
+`XKMS_PKCS11_USER_PIN` come from the environment (or `so_pin` / `user_pin` in
+the file). Anything that can read the process environment can read them — scope
+the environment to the process that needs it, and do not export them in a
+shared shell profile.
 
 ## Using it with common consumers
 
@@ -111,11 +128,93 @@ needs it, and do not export them in a shared shell profile.
 # Enumerate
 pkcs11-tool --module ./build/lib/libxkms_pkcs11.so --list-slots
 pkcs11-tool --module ./build/lib/libxkms_pkcs11.so --list-objects --login
-
-# OpenSSL, via the pkcs11 engine/provider
-openssl pkeyutl -engine pkcs11 -keyform engine -sign \
-    -inkey "pkcs11:token=example-token;object=web-tls" -in digest.bin
 ```
+
+Every behaviour below is pinned by an integration test in
+`test/integration/pkcs11/module/` (`make integration-test-pkcs11-openssl-all`)
+that checks the result outside the module.
+
+**OpenSSL 3+ — pkcs11-provider** (the supported path). Configure it in
+`openssl.cnf` and point `OPENSSL_CONF` at it; keep the default provider active
+for verification:
+
+```ini
+openssl_conf = openssl_init
+
+[openssl_init]
+providers = provider_sect
+
+[provider_sect]
+default = default_sect
+pkcs11 = pkcs11_sect
+
+[default_sect]
+activate = 1
+
+[pkcs11_sect]
+module = <ossl-modules-dir>/pkcs11.so
+pkcs11-module-path = <install-dir>/libxkms_pkcs11.so
+pkcs11-module-quirks = no-deinit
+activate = 1
+```
+
+`no-deinit` is pkcs11-provider's workaround for OpenSSL 4.0's late cleanup,
+which can crash on exit after the operation succeeded. RSA (v1.5, PSS, OAEP),
+ECDSA (P-256/384/521), Ed25519 (`-rawin`), CSR and certificate issuance and a
+TLS server with a token-resident key all work (`openssl_provider_test.go`,
+`openssl_x509_tls_test.go`). Address keys by RFC 7512 URI:
+`pkcs11:object=web-tls;type=private`.
+
+**OpenSSL — legacy libp11 ENGINE.** Set `MODULE_PATH` to the module, or libp11
+silently probes for OpenSC instead. Two limits are pinned by tests
+(`openssl_engine_test.go:378`, `:431`): `openssl genpkey -engine pkcs11`
+generates the key **in software**, so generate with `pkcs11-tool --keypairgen`;
+and the ENGINE cannot carry an Ed25519 key.
+
+**OpenSSH.** `ssh-add -s <install-dir>/libxkms_pkcs11.so`, `ssh -I …`, or
+`PKCS11Provider` in `~/.ssh/config`. RSA and ECDSA keys work on any version; an
+Ed25519 token key needs **OpenSSH 10.1 or later**
+(`openssl_ssh_test.go:1615`).
+
+**OpenSC `pkcs11-tool`** cannot rebuild a P-384 public key with
+`--read-object --type pubkey`; that is an OpenSC bug. Export it through the
+provider: `openssl pkey -in "pkcs11:object=my-key;type=public" -pubout`.
+
+Key objects answer all twelve boolean usage attributes, defaulting to false
+(`applyKeyUsageDefaults`, `pkg/pkcs11/module/object.go:2838`), and RSA private
+key objects carry the public components (`module.go:7044`), because libp11
+refuses keys without them.
+
+## Hardening
+
+Each item is enforced by the code cited.
+
+- **Use TLS or a unix socket.** A non-`unix://` target without TLS fails
+  `C_Initialize` (`config.go:228`); leave
+  `XKMS_PKCS11_ALLOW_INSECURE_TRANSPORT` off.
+- **Protect the config file.** Group- or world-accessible files are refused
+  (`config.go:507-512`); it may hold PINs.
+- **Keep the seal strategy at `passphrase`** in offline mode.
+- **PINs are slow to guess.** They are stored as Argon2id hashes with a 16-byte
+  salt (`token.go:796`, `:854`), compared in constant time (`token.go:931`),
+  and locked after 3 failures shared by every process on the token
+  (`session.go:1204`).
+- **Sessions see only what they may.** Every key lookup goes through the
+  session's access context (`GetObjectFor`, `object.go:3170`), private objects
+  need a login (`requireLogin`, `module.go:3039`), and a key whose type does
+  not fit the mechanism is `CKR_KEY_TYPE_INCONSISTENT` (`module.go:2800`).
+- **Sensitive values never leave.** `CKA_VALUE` and private components of a
+  sensitive or non-extractable key are not returned (`object.go:810`,
+  `:1684`). `C_GenerateKey` makes secret keys sensitive and non-extractable
+  unless the template says otherwise (`module.go:8776-8788`); keys imported
+  with `C_CreateObject` are never `CKA_LOCAL`, `CKA_ALWAYS_SENSITIVE` or
+  `CKA_NEVER_EXTRACTABLE` (`object.go:2586-2594`), and computed attributes
+  cannot be supplied (`object.go:866`).
+- **Leave legacy wrapping off.** `crypto.allow_legacy_key_wrap` and
+  `crypto.allow_weak_hashes` default off in xkmsd; so does
+  `XKMS_PKCS11_ALLOW_WEAK_HASH_SIGNING` in the module.
+- **Finalize wipes.** `C_Finalize` destroys session objects and zeroizes the
+  object store (`module.go:1079`, `:1087`).
 
 ## Troubleshooting
 
@@ -124,7 +223,7 @@ openssl pkeyutl -engine pkcs11 -keyform engine -sign \
 | `C_Initialize` fails naming a backend | the module was built without that backend's build tag | rebuild with the tag; the environment can only select what was compiled in |
 | state calls fail with `tenant_id does not match the authenticated identity's tenant` | the module's configured `tenant_id` is not the tenant its credentials authenticate as | unset `tenant_id` or correct it; the server always uses the authenticated tenant |
 | `C_Initialize` fails in remote mode | target unreachable, TLS material wrong, or storage unusable | it fails closed on purpose — fix the cause, do not look for a fallback |
-| `CKR_FUNCTION_NOT_SUPPORTED` (`0x54`) | this token will never do that operation | not a transient failure; four v3.2 surfaces are deliberately unimplemented |
+| `CKR_FUNCTION_NOT_SUPPORTED` (`0x54`) | this token will never do that operation | not a transient failure; asynchronous operations and blocking `C_WaitForSlotEvent` are unimplemented |
 | `CKR_USER_NOT_LOGGED_IN` | the mechanism needs a login first | supply the user PIN |
 | two processes fight over token state | concurrent sessions | this is what the compare-and-swap state operations are for; a plain put in that path is a bug |
 | offline keys are readable on disk | `XKMS_PKCS11_SEAL_STRATEGY=none` | unset it — the default protects them |
@@ -132,12 +231,12 @@ openssl pkeyutl -engine pkcs11 -keyform engine -sign \
 
 ## What is not implemented
 
-Four PKCS#11 v3.2 surfaces exist in the ABI and answer "not supported": KEM
-operations, authenticated wrapping, signature-first post-quantum verification,
-and asynchronous operations. That is the standards-conformant way to ship a
-partial version — the function is there and the token tells you honestly that it
-does not implement it. A consumer that needs one of these will get a clean
-answer rather than a wrong result.
+Asynchronous operations and a blocking `C_WaitForSlotEvent` answer
+`CKR_FUNCTION_NOT_SUPPORTED`; message-based signature-first verification is
+absent. KEM, authenticated wrapping, `C_VerifySignature` and
+`C_GetSessionValidationFlags` work through the v3.2 interface. The module is not
+fork-safe. The full list is in
+[engineering.md](engineering.md#deviations-and-limits).
 
 ## Where to go next
 

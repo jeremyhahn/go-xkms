@@ -186,6 +186,6 @@ Returns a non-zero exit code if no token exists or the token has expired.
 
 ## See Also
 
-- [Bootstrap Architecture](../../bootstrap/README.md) -- Trust establishment overview
+- [Bootstrap Architecture](../../../../docs/trust-bootstrap/architecture.md) -- Trust establishment overview
 - [Share Management](./share.md) -- Shamir share operations
 - [CLI Reference](./README.md) -- Full CLI command index

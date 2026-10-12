@@ -1,6 +1,6 @@
 # SSH Connect & Console Sessions — Engineering
 
-> **Status: NORMATIVE** · Feature: `ssh-sessions` · Repo: `go-xkms` · Last verified: 2026-10-08
+> **Status: NORMATIVE** · Feature: `ssh-sessions` · Repo: `go-xkms` · Last verified: 2026-10-12
 
 ## Exported surface
 
@@ -25,6 +25,37 @@
   a known-hosts store); `ResolverFunc` (`handler.go:82`) adapts a plain
   function. Options: `WithCheckOrigin`, `WithDialTimeout`,
   `WithHostKeyConfirmTimeout` (`handler.go:125,130,138`).
+
+#### WebSocket wire protocol
+
+Binary frames carry terminal bytes in both directions: client input goes to
+the session (`handler.go:390`) and session output goes back to the client
+(`:348`). Text frames carry a JSON `controlMessage` whose `type` is
+`"resize"`, `"error"` or `"exit"` (`handler.go:92`). The client sends
+`{"type":"resize","rows":R,"cols":C}` (`:396`). The server sends `"error"`
+when the dial fails (`:224`) and `"exit"` when the session output ends
+(`:355`). When the client's input ends, the bridge calls `CloseWrite` before
+it tears the session down (`:418`).
+
+#### Host-key policy on the WebSocket bridge
+
+`Target.HostKeyPolicy` selects how the bridge treats an unpinned host key
+(`handler.go:242-277`):
+
+| Policy | Behavior |
+|---|---|
+| `"ask"` | Sends a `"hostkey"` frame with `mode: "confirm"`, then blocks for the client's `{"type":"hostkey-response","accept":…}` reply (`handler.go:243-256`, `awaitHostKeyResponse` `:287`). The wait is bounded by `defaultHostKeyConfirmTimeout`, 60s (`handler.go:173`), overridable with `WithHostKeyConfirmTimeout` (`handler.go:139`). |
+| `"accept-new"` | Sends a `"hostkey"` frame with `mode: "notify"` and accepts without waiting; a failed notify write is logged, not fatal (`handler.go:258-274`). |
+| anything else, including `""` and `"yes"` | Strict: no prompt, the dial fails on an unpinned host (`handler.go:276`). |
+
+The `"hostkey"` frame carries `host`, `key_type`, `fingerprint`, `known`
+and `mode` (`hostKeyMessage`, `handler.go:104-111`). A pin that conflicts
+with the presented key is always a hard `*known_hosts.MismatchError`; TOFU
+never overrides it, whatever the policy (`console.go:200`, `:241`). The SDK's
+`ConsoleTarget` adds `KnownHostsExtraFiles` (extra OpenSSH `known_hosts`
+files) and `KnownHostsSkipStore` (skip the pin store and use only those
+files) (`sdk/go/client/ssh/console.go:62-70`), and passes all three fields
+through (`:131-133`).
 
 ### `pkg/ssh/session`
 

@@ -1,6 +1,6 @@
 # Host Embedding — Engineering
 
-> **Status: NORMATIVE** · Feature: `host-embedding` · Repo: `go-xkms` · Last verified: 2026-10-09
+> **Status: NORMATIVE** · Feature: `host-embedding` · Repo: `go-xkms` · Last verified: 2026-10-12
 
 ## Exported surface
 
@@ -51,6 +51,51 @@ instead of writing its own:
 The per-identity tenant-barrier gate (`pkg/api/tenantgate`) is not exported:
 tenant barriers are go-qrdb's, and that gate belongs in qrdb's middleware.
 
+**Correlation IDs.** A generated ID is a random UUID
+(`pkg/correlation/correlation.go:65`). xkmsd installs the HTTP middleware
+ahead of request logging (`pkg/api/rest/server.go:489`) and the gRPC
+interceptors first in the chain, ahead of rate limiting and authentication
+(`pkg/api/grpc/server.go:111`). A gRPC metadata key present with an empty
+value counts as absent (`pkg/correlation/middleware.go:74`); a failure to set
+the response header is logged as a warning and does not fail the call
+(`middleware.go:51`). The MCP tool path carries no correlation field of its
+own; when its context holds an ID, a withheld internal error is logged with it
+as `request_id` (`pkg/api/mcp/module_support.go:162`).
+
+### Unified-server registration
+
+xkmsd registers the same module on its own embedded node
+(`qrdbsdk.WithModule`, `pkg/server/qrdb_node.go:229`). Each surface late-binds,
+so registration can run before the XKMSService exists:
+
+- **gRPC.** `RegisterGRPC` attaches the whole `KeystoreService`
+  (`pkg/apimodule/module.go:394`). Every RPC answers `codes.Unavailable` until
+  the resolver yields a service (`module.go:430`). Per-RPC authorization is
+  qrdb's interceptor enforcing each RPC's `(qrdb.v1.permission)` option.
+  `Health` and `Algorithms` carry no option, so `PublicGRPCMethods` admits
+  them (`module.go:408`).
+- **HTTP.** `RegisterHTTP` registers the `rest.Routes()` table
+  (`pkg/apimodule/module_http.go:79`), except the host's own `/health`. Public
+  routes use `HandlePublic`, session routes use the identity-gated sentinel
+  (`qrdbsdk.PermissionIdentityGated`, `:27`), and every other route uses its
+  `resource:action` permission (`:99-106`). Until the REST wiring composes,
+  every route answers 503; a route whose subsystem is not configured answers
+  501 (`:70-74`). The embedded web UI registers as public prefix routes
+  (`:112-115`).
+- **MCP.** `RegisterMCP` turns each JSON-RPC method into a tool
+  (`pkg/apimodule/module_mcp.go:53`) that takes one optional `params_json`
+  argument, the method's params verbatim (`:62`). A tool's name is `xkms_`
+  plus the method with dots as underscores (`pkg/mcptool/client.go:88`). A
+  call before the MCP wiring composes is a tool error (`module_mcp.go:47`).
+
+On xkmsd the unified server's TLS certificate is the operator's
+`cert_file`/`key_file` or, without them, a bootstrap certificate that
+`upgradeUnifiedTLSCert` replaces once the CA composes
+(`pkg/server/unified_tls.go:159`). The upgrade also widens the mTLS client-CA
+pool to the configured `tls.ca_file`/`tls.client_cas` plus the CA's own bundle
+(`unifiedClientCAPool`, `unified_tls.go:198`), so a client anchored by either
+stays accepted (go-xkms#794).
+
 ### Feature → dependency
 
 | Feature | Needs | Off reason recorded |
@@ -77,6 +122,10 @@ tenant barriers are go-qrdb's, and that gate belongs in qrdb's middleware.
   key, as the TPM and cloud sealers xkmsd builds do).
 - PCR policy definitions persist through `policy.BackendPolicyStore`, a
   durable `PolicyStore` over a `storage.Backend`.
+- Transports never call `xkms.Get()`. Only two composition roots resolve the
+  singleton: xkmsd's server (`pkg/server/server.go:862`), which injects it
+  into every transport it starts, and the SDK's embedded transport
+  (`sdk/go/embedded.go:89`).
 - xkmsd behavior is unchanged: its stores are built at the same start-up
   points, from the same configuration, now through the `Build*` functions.
 

@@ -583,5 +583,5 @@ plaintext := decryptAES256(sessionKey, encryptedFile)
 
 - [ECIES Examples](/examples/advanced/ecies/)
 - [ECDH Documentation](/pkg/crypto/ecdh/)
-- [Backend Management](/docs/backends/)
+- [Backend Management](../../../docs/crypto-backends/)
 - [Key Management](key-import-export.md)

@@ -592,7 +592,7 @@ for _, id := range certIDs {
 
 ## See Also
 
-- [PKCS#11 Backend Documentation](../backends/pkcs11.md)
-- [TPM2 Backend Documentation](../backends/tpm2.md)
+- [PKCS#11 Backend Documentation](../../../docs/pkcs11-backend/user.md)
+- [TPM2 Backend Documentation](../../../docs/tpm2/user.md)
 - [Key Import/Export Guide](key-import-export.md)
 - [Getting Started](getting-started.md)

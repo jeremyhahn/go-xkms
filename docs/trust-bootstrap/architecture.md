@@ -1,6 +1,6 @@
 # Trust Bootstrap — Architecture
 
-> **Status: NORMATIVE** · Feature: `trust-bootstrap` · Repo: `go-xkms` · Last verified: 2026-09-22
+> **Status: NORMATIVE** · Feature: `trust-bootstrap` · Repo: `go-xkms` · Last verified: 2026-10-12
 
 ## The problem
 
@@ -70,6 +70,8 @@ Rejected alternatives:
 | TLS config construction for pinned modes | `pkg/trust/bootstrap/tlsconfig.go` | go-xkms |
 | TOFU pin persistence | `pkg/trust/bootstrap/pinstore_qrdb.go` — through `go-qrdb/sdk/go` | go-xkms (store is qrdb's) |
 | DANE, Noise_NK, SPKI-pinned TLS protocols | **go-truststrap** | go-truststrap |
+| TLSA record building and the publisher hook | `pkg/trust/dane`, re-exported as `sdk/go/dane` | go-xkms |
+| Publishing TLSA records into DNS | the application's `DANEPublisher` | the application |
 | The bundle being served | `GET /v1/ca/bootstrap` — [`../certificate-authority/`](../certificate-authority/architecture.md) | go-xkms |
 | Client-side platform CA import | `xkey trust import-platform` — [`../../xkey/docs/platform-trust/`](../../xkey/docs/platform-trust/architecture.md) | go-xkms (xkey surface) |
 | Admin read of the listener's own public keys (go-xkms#632) | `pkg/xkms/servicer_bootstrap.go`, every transport's `BootstrapListenerKeys` | go-xkms |

@@ -21,6 +21,10 @@ implementation work does not depend on the publisher's site staying up.
 - `NIST.SP.800-73pt1-5.pdf`, `NIST.SP.800-73pt2-5.pdf`, `NIST-SP-800-73pt3.pdf`
   — NIST SP 800-73, "Interfaces for Personal Identity Verification", parts
   1-3, the PIV card application and data model `pkg/piv` targets.
+- `rfc-8555.txt` — IETF RFC 8555, "Automatic Certificate Management
+  Environment (ACME)", the protocol `pkg/acme/server` implements.
+  [RFC_8555_COMPLIANCE.md](RFC_8555_COMPLIANCE.md) maps each section to its
+  implementation and conformance test.
 - `NIST.SP.800-76-2.pdf` — NIST SP 800-76-2, "Biometric Specifications for
   Personal Identity Verification".
 - `NIST.SP.800-78-5.pdf` — NIST SP 800-78-5, "Cryptographic Algorithms and Key

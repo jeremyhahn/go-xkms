@@ -1,6 +1,6 @@
 # PIV Smartcard — API
 
-> **Status: NORMATIVE** · Feature: `piv-smartcard` · Repo: `go-xkms` · Last verified: 2026-10-11
+> **Status: NORMATIVE** · Feature: `piv-smartcard` · Repo: `go-xkms` · Last verified: 2026-10-12
 
 Transport shapes: [`../key-management/api.md`](../key-management/api.md)
 §"How the six transports are shaped".
@@ -93,6 +93,22 @@ Go types in `pkg/api/transport/types.go` and `types_piv_ops.go`:
 `GeneratePIVKeyRequest`/`Response`, `GeneratePIVCSRRequest`/`Response`.
 Protobuf counterparts in `xkms.proto`.
 
+`GeneratePIVKeyRequest` (`pkg/api/transport/types.go:1720-1737`) carries,
+besides `backend`, `slot`, `algorithm` and `subject`:
+
+| Field | Meaning | Default |
+|---|---|---|
+| `output_format` | `self-signed`, `public-key`, `csr` or `ca-signed`; anything else is `ErrPIVInvalidOutputFormat` (`pkg/xkms/piv_manager.go:736-744`) | `self-signed` |
+| `organization`, `country` | X.509 `O` and `C` of the subject | empty |
+| `validity_days` | certificate lifetime | 3 years CA-signed, 10 years self-signed |
+| `tenant_id` | tenant scope | none |
+
+`GeneratePIVKeyResponse` (`types.go:1740-1746`) always returns `public_key`.
+`certificate` is filled for `self-signed` and `ca-signed`, `csr` for `csr`, and
+`chain_pem` for `ca-signed`. `public-key` and `csr` store nothing in the slot
+(`piv_manager.go:769-800`). The formats are described in
+[`engineering.md`](engineering.md) §"Key generation".
+
 Note the interface shape: `ImportPIVCertificate` takes a
 `*StorePIVCertificateRequest` and `ExportPIVCertificate` takes a
 `*GetPIVCertificateRequest` — import/store and export/get share request types
@@ -170,5 +186,7 @@ opt in.
 encodings are NIST-defined and will not change.
 
 The one local versioning hazard is not on the wire: TPM2 NV indices are derived
-by `GetNVIndex(slot, baseIndex)`. Changing that derivation orphans every
-NV-stored certificate, so it is a migration rather than a refactor.
+from each slot's fixed certificate ID (`piv-cert-<slot>`,
+`pkg/pivcert/tpm2/slotmodel.go:55-81`). Changing an ID orphans every
+certificate already stored under it, so it is a migration rather than a
+refactor — see [`engineering.md`](engineering.md) §"TPM2 NV storage".

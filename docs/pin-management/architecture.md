@@ -1,6 +1,6 @@
 # PIN Management — Architecture
 
-> **Status: NORMATIVE** · Feature: `pin-management` · Repo: `go-xkms` · Last verified: 2026-08-19
+> **Status: NORMATIVE** · Feature: `pin-management` · Repo: `go-xkms` · Last verified: 2026-10-12
 
 ## The problem
 
@@ -129,19 +129,21 @@ operation:
 - **It does not store PINs itself.** Each backend delegates to its device or to
   qrdb's software store.
 
-## Note on the "unified PIN architecture" documents
+## Note on the "unified PIN architecture" design
 
 The legacy `docs/architecture/pin-architecture.md` and
-`docs/fido2/authenticator/architecture.md` describe a **`PINCoordinator`** that
-fans a PIN change out across FIDO2, PKCS#11 and file-based subsystems, backed by
-a `pkg/pin` package.
+`docs/fido2/authenticator/architecture.md`, both absorbed and deleted
+(go-xkms#1433), described a **`PINCoordinator`** that fans a PIN change out
+across FIDO2, PKCS#11 and file-based subsystems, backed by a `pkg/pin` package.
 
 **Neither exists in this repository.** There is no `PINCoordinator` type and no
-`pkg/pin` directory; what exists is `pkg/pinselect`, `pkg/pintpm2`, the PKCS#11
-backend, and xkey's own authenticator PIN state (`xkey/pkg/authenticator`,
-which does carry `state.PINHash`). Documentation must follow code, so this
-folder documents the selection-and-implementation model that is real, and the
-coordinator design is not restated here as though it shipped.
-
-Whether that design is a roadmap item to keep or a stale document to retire is
-an owner decision, recorded in the migration report.
+`pkg/pin` directory, so the coordinator design was dropped, not carried over.
+What does exist is `pkg/pinselect`, `pkg/pintpm2`, the PKCS#11 backend, and
+xkey's own authenticator PIN state. Its one cross-subsystem link is xkey's
+`UnifiedPIN` setting (`xkey/pkg/authenticator/config.go:468-476`). It mirrors
+the host user PIN into the FIDO2 authenticator's CTAP2 PIN hash and does not
+touch PKCS#11 or file PINs. Within the authenticator, a FIDO2 PIN set before the
+SO PIN is configured sets `PINSyncPending`
+(`xkey/pkg/authenticator/types.go:166-168`), and the next SO unlock wires it to
+the CMK (`xkey/pkg/authenticator/key_manager.go:467-478`). Both are documented in
+[`../../xkey/docs/virtual-authenticator/`](../../xkey/docs/virtual-authenticator/architecture.md).

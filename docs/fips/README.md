@@ -245,7 +245,7 @@ The FIPS strategy is consumed by several subsystems:
 | User management | Account password hashing |
 | LUKS passphrase derivation | KDF for disk encryption keys |
 | Raw PKCS#1 v1.5 signatures | `Sign` / `Verify` with hash `NONE` on an in-process RSA key refuse with `types.ErrRawPKCS1v15Enforced` under `GODEBUG=fips140=only` (see [Hash selection](#hash-selection)) |
-| AEAD auto-selection | Forces AES-256-GCM over ChaCha20-Poly1305 ([AEAD Auto-Selection](../configuration/aead-auto-selection.md)) |
+| AEAD auto-selection | Forces AES-256-GCM over ChaCha20-Poly1305 ([AEAD Auto-Selection](../symmetric-aead/engineering.md#algorithm-auto-selection--pkgcryptoaeadautogo)) |
 | Key-ID grammar | `pkg/validation` and `pkg/xkms/keyid` validate spelling only; algorithm approval is enforced by the stdlib crypto package a caller reaches for, not here (go-xkms #21) |
 | ML-KEM-512 | `pkg/quantum/mlkem512.New`/`.Create` refuse with `ErrFIPSMode` under `crypto/fips140.Enabled()`, since CIRCL is outside the module boundary the stdlib polices (see [Crypto the standard library cannot see](#crypto-the-standard-library-cannot-see)) |
 | PKCS#11 authenticated wrapping | Refuses `C_WrapKeyAuthenticated` / `C_UnwrapKeyAuthenticated` with `CKR_MECHANISM_INVALID` when the runtime withholds arbitrary-IV GCM (see [AEAD construction](#aead-construction)) |
@@ -589,5 +589,4 @@ the wire protocol or reopens an already-settled design decision:
 
 - [Weak hash policy](../crypto/weak-hashes.md) -- signature-side digest policy
 - [Key Derivation Functions](../crypto/kdf.md) -- per-construction hash sets
-- [Configuration: AEAD](../configuration/aead-auto-selection.md) -- authenticated encryption setup
-- [Architecture: Symmetric Encryption](../architecture/symmetric-encryption.md) -- symmetric key architecture
+- [Symmetric Encryption & AEAD](../symmetric-aead/architecture.md) -- symmetric key architecture, AEAD modes and FIPS GCM nonces

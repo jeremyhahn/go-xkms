@@ -1,6 +1,6 @@
 # Web Console — API
 
-> **Status: NORMATIVE** · Feature: `web-console` · Repo: `go-xkms` · Last verified: 2026-10-07
+> **Status: NORMATIVE** · Feature: `web-console` · Repo: `go-xkms` · Last verified: 2026-10-12
 
 The console is a REST-only client. It never dials gRPC, QUIC, MCP, or the
 Unix socket, and — despite `sdk/ts` shipping a WebSocket-capable SSH console
@@ -40,6 +40,35 @@ wired.
 
 `GET /api/v1/auth/me`'s `permissions` map is built from a fixed
 `uiPermissionMatrix` of resource:action pairs, the pairs the console gates on.
+
+## Navigation gates
+
+Each sidebar entry in `navSections` (`web/app/src/lib/nav.ts:37`) carries an
+optional `requires` (RBAC pair, checked against `permissions`) and an optional
+`capability` (checked against `capabilities`), both from `GET /api/v1/auth/me`:
+
+| Screen | Route | `requires` | `capability` |
+|---|---|---|---|
+| Dashboard | `#/dashboard` | — | — |
+| Backends | `#/backends` | `backends:list` | — |
+| Keys | `#/keys` | `keys:list` | — |
+| FROST | `#/frost` | `keys:list` | `frost` |
+| TPM Policies | `#/tpm/policies` | — | `tpm_policies` |
+| Certificates | `#/certs` | `certs:list` | — |
+| Certificate Authority | `#/ca` | — | `ca` |
+| PIN | `#/pin` | `pin:read` | — |
+| PIV | `#/piv` | `piv:read` | — |
+| SSH | `#/ssh` | `ssh:read` | `ssh` |
+| Passwords | `#/passwords` | `passwords:read` | `passwords` |
+| OIDC Credentials | `#/oidc/credentials` | `oidc_credentials:list` | `oidc_credentials` |
+| Platform Secrets | `#/platform` | — | `platform` |
+| Users | `#/users` | `users:list` | — |
+| Tenants | `#/tenants` | `tenants:list` | `tenants` |
+| Settings | `#/settings` | — | — |
+
+Signed out, the only routes are `#/login` and `#/register`
+(`web/app/src/stores/router.svelte.ts:52`); an authenticated visitor sent to
+either is redirected to `#/dashboard` (`web/app/src/App.svelte:79`).
 
 ## Screen → REST parity
 

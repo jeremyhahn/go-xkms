@@ -1,6 +1,6 @@
 # Auth Factors — Engineering Contract
 
-> **Status: NORMATIVE** · Feature: `auth-factors` · Repo: `go-xkms` · Last verified: 2026-10-11
+> **Status: NORMATIVE** · Feature: `auth-factors` · Repo: `go-xkms` · Last verified: 2026-10-12
 
 ## Exported surface — `pkg/factor`
 
@@ -245,6 +245,19 @@ client certificate is not hardware-attested`.
 
 The result is recorded on the token (`attest_level`, carried through refresh)
 and on the audit event.
+
+### The client side of the `mtls` factor
+
+`xkmsctl` presents a client certificate from PEM files (`--tls-cert`,
+`--tls-key`, with `--tls-ca` for the server's CA; `cmd/xkmsctl/root.go:141-146`)
+or from a PKCS#11 token (`--pkcs11-module`, `--pkcs11-slot`, `--pkcs11-pin`;
+`root.go:161-166`). The token path goes through `NewPKCS11TLSConfig`
+(`pkg/auth/pkcs11_tls.go:236`, re-exported at `sdk/go/tls.go:47`;
+used at `cmd/xkmsctl/config.go:232`), which logs in as the user, finds the
+certificate, then the private key with the same `CKA_ID`, and signs the
+handshake on the token, so the key never leaves it. Its sentinels are
+`ErrPKCS11ModulePathRequired`, `ErrPKCS11PINRequired`, `ErrPKCS11Login`,
+`ErrPKCS11NoCertFound` and `ErrPKCS11NoKeyFound` (`pkcs11_tls.go:36-41`).
 
 ## Persistence
 

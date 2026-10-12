@@ -1,6 +1,6 @@
 # SSH Keys, Known Hosts & Authorized Keys — CLI
 
-> **Status: NORMATIVE** · Feature: `ssh-keys` · Repo: `go-xkms` · Last verified: 2026-09-28
+> **Status: NORMATIVE** · Feature: `ssh-keys` · Repo: `go-xkms` · Last verified: 2026-10-12
 
 `xkmsctl ssh` (`cmd/xkmsctl/ssh.go`) needs no build tag. It honors the global
 `--server` / `--transport` / `--tls-ca` flags every command group shares
@@ -167,5 +167,6 @@ sessions (`git commit -S` under `gpg.format=ssh`, `ssh-keygen -Y sign`), and
 saved connection profiles are separate surfaces of the `xkey` CLI/GUI built
 on top of this feature and on
 [`../ssh-agent-sessions/`](../ssh-agent-sessions/) — see
-[`../ssh/README.md`](../ssh/README.md) for those, which remains the
-reference for that part of the surface until it gets its own folder.
+[`../ssh-sessions/`](../ssh-sessions/) for consoles and profiles, and
+[`../../xkey/docs/ssh/cli.md`](../../xkey/docs/ssh/cli.md) for the `xkey ssh`
+verbs.

@@ -194,6 +194,23 @@ fire. `NewBarrierRegistry` refuses a nil system barrier with
 `ErrNilSystemBarrier`. A running xkmsd builds none of these: it adopts the
 node's `BarrierRegistry()`. They serve xkey and tests.
 
+`BarrierConfig` (`pkg/seal/config.go:20`) carries four fields:
+
+- `PreferenceOrder` is required. An empty list is `ErrNoStrategySpecified`.
+- `RootKeyPath` is the storage key of the sealed root-key blob. It must be
+  non-empty (`:28`).
+- `AuditLogger`: a nil logger disables audit (`:32`).
+- `Shamir` enables `InitializeShamir` and `UnsealWithShare`/`UnsealWithShares`
+  (`:37`).
+
+The passphrase and Shamir strategies are go-qrdb's, reached through two
+re-exports. `NewSoftwareStrategy` is go-qrdb's *deferred* constructor
+(`pkg/seal/strategy_software.go:46`): it reads the passphrase from
+`Credentials.Secret` at each seal and unseal. The bound constructor is not
+re-exported, because it ignores the credentials it is handed (go-qrdb#157).
+`NewShamirStrategy(threshold, total)` delegates to go-qrdb
+(`pkg/seal/barrier_adapter.go:250`).
+
 A hardware or cloud strategy whose backend refuses to unseal the root key
 returns `*RootKeyUnsealError{Strategy, Err}`. It unwraps to go-qrdb's
 `ErrInvalidCredentials` and to the backend's own error, so a wrong TPM,
@@ -233,6 +250,101 @@ strategy, `node.WithSealStrategy` plus the server option
 barrier can be sealed by it. A registry failure is a `*NodeSealError`;
 nothing is logged and skipped. `OpenEmbeddedNode` and `pkg/server` both
 call it.
+
+### `PlatformSealer`
+
+`PlatformSealer` routes arbitrary data, not the barrier root key, across
+xkms's sealers. The platform sealed-secret store is built on it
+([`../platform-secrets/engineering.md`](../platform-secrets/engineering.md)).
+
+- `NewPlatformSealer(logger, SealerConfig, map[StrategyID]types.Sealer)`
+  returns `ErrNoAvailableStrategy` for an empty map
+  (`pkg/seal/platform_sealer.go:43`). `SealWith` and `Unseal` name their
+  strategy explicitly and need no preference order.
+- `Seal` auto-selects through `BestStrategy`. That is the first strategy in
+  `SealerConfig.PreferenceOrder` (`pkg/seal/config.go:42`) whose `CanSeal()`
+  is true. It returns `ErrNoStrategySpecified` for an empty order and
+  `ErrNoAvailableStrategy` when no listed strategy can seal
+  (`platform_sealer.go:158`).
+- `SealWith` returns `ErrStrategyNotFound` for a strategy that is not
+  registered (`platform_sealer.go:143`).
+- A successful seal tags `SealedData.Metadata["seal:strategy"]` with the
+  strategy ID (`platform_sealer.go:26`, `:182`). `Unseal` routes on that tag
+  (`platform_sealer.go:86`):
+  - a missing tag gives a `SealedDataAuthenticationError` wrapping
+    `ErrStrategyMismatch`;
+  - an unregistered strategy gives one wrapping `ErrStrategyNotFound`.
+- Every seal and unseal emits an audit event with subject `seal`, action
+  `seal` or `unseal`, resource `platform_sealer`, the strategy ID as the
+  resource ID, and outcome `allow` or `deny` (a denial carries an `error`
+  detail) (`pkg/seal/audit.go:63`). **A failed audit write fails the
+  operation:** its error is returned in place of the result.
+
+### Sealed value decorator — `pkg/storage/sealed`
+
+`sealed.Backend` wraps any `storage.Backend` and seals each value with a
+`types.Sealer`; keys stay in the clear so `List` and `Exists` need no unseal.
+It encrypts values, not a volume — for the volume see [`../luks/`](../luks/).
+Production callers: the platform store over a `PlatformSealer`
+(`pkg/compose/builders.go:144`) and the pre-barrier store over the PCR-policy
+TPM sealer (`pkg/preseal/store.go:97`).
+
+- `New(inner, sealer, sealOpts)` wraps `ErrSealerNotAvailable` when `inner`
+  or `sealer` is nil, and returns it when `sealer.CanSeal()` is false, so a
+  misconfigured sealer fails at construction rather than storing plaintext
+  (`pkg/storage/sealed/backend.go:42`).
+- `Put` seals with the constructor's `sealOpts`, JSON-marshals the
+  `types.SealedData` envelope, and stores it under the caller's key
+  (`backend.go:82`). `PutIfAbsent` and `PutIfAllAbsent` seal the same way
+  before delegating (`backend_putifabsent.go:27`,
+  `backend_fencedcreate.go:31`); the latter returns
+  `storage.ErrFencedCreateUnsupported` when the inner backend is not a
+  `storage.FencedCreator`.
+- `Get` and `Scan` unmarshal and unseal every value before returning it
+  (`backend.go:61`, `:109`). Inner-backend errors such as
+  `storage.ErrNotFound` from `Get` pass through unchanged.
+- `Delete`, `List`, `Exists` and `Close` delegate to the inner backend
+  (`backend.go:97`–`131`).
+- `CompareAndDelete` compares against the **stored** envelope, decrypted
+  straight into locked go-enclave pages and compared in constant time; it
+  needs a sealer implementing `types.UnsealerInto` and returns
+  `ErrUnsealIntoUnsupported` otherwise, with no heap fallback
+  (`backend_compareanddelete.go:237`).
+- Sentinels (`pkg/storage/sealed/errors.go:20`–`53`): `ErrSealFailed`,
+  `ErrUnsealFailed`, `ErrSealerNotAvailable`, `ErrMarshalFailed`,
+  `ErrUnmarshalFailed`, `ErrGuardEnclaveFailed`, `ErrUnsealIntoUnsupported`,
+  `ErrGuardEscapedEnclave`.
+
+### Process hardening — `sdk/go/secure.HardenProcess`
+
+Locked, guard-paged memory does not stop a debugger or another process
+running as the same user from reading it through `ptrace` or
+`/proc/<pid>/mem`. `HardenProcess` (`sdk/go/secure/secure.go:128`, a
+re-export of go-qrdb's) closes that gap. On Linux it sets
+`prctl(PR_SET_DUMPABLE, 0)`: no ptrace attach or `/proc/<pid>/mem` read
+without `CAP_SYS_PTRACE`, and no core file. On macOS it uses
+`ptrace(PT_DENY_ATTACH)`; elsewhere it logs that no mechanism exists. It
+then refuses to continue if a tracer is already attached.
+
+Every binary calls it first thing in `main`, before any protected memory
+exists, and treats any error as fatal (print, exit 1): `xkmsd`
+(`cmd/xkmsd/main.go:56`), `xkmsctl` (`cmd/xkmsctl/main.go:26`),
+`trusted-acme-client` (`cmd/acme-client/main.go:137`), `xkey`
+(`xkey/cmd/xkey/main.go:42`) and `e2eprobe` (`xkey/cmd/e2eprobe/main.go:93`).
+
+The PKCS#11 module has no `main`. It hardens the host application once, on
+its first `C_Initialize` (`cmd/pkcs11-module/exports.go:216`,
+`cmd/pkcs11-module/harden.go:38`), which returns `CKR_GENERAL_ERROR` on
+failure (`harden.go:41`). `C_Initialize` is the call the standard requires
+before any PIN or key reaches the module; a library constructor would run
+in every process that merely loads it.
+
+To attach a debugger, set `QRDB_SECURE_ALLOW_PROCESS_INSPECTION=true`
+(`secure.AllowProcessInspectionEnv`, `secure.go:119`). The process stays
+inspectable and logs a warning. In FIPS 140-3 mode the opt-out is refused
+(`ProcessInspectionOptOutRefusedError`), and a value `strconv.ParseBool`
+rejects is a `ProcessInspectionOptOutError` rather than either answer
+(`secure.go:90`–`102`).
 
 ### Other components
 

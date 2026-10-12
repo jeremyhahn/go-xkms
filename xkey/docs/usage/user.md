@@ -300,5 +300,5 @@ var (
 ## Related Documentation
 
 - [WebAuthn Authentication](webauthn.md) - Passwordless authentication setup
-- [RBAC](../architecture/rbac.md) - Role-based access control
-- [Server Architecture](../architecture/server-architecture.md) - API server configuration
+- [RBAC](../../../docs/rbac/architecture.md) - Role-based access control
+- [xkmsd Configuration](../../../docs/xkmsd-configuration/) - API server configuration

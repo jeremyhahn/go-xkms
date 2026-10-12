@@ -1,6 +1,6 @@
 # PIV Smartcard — Engineering Contract
 
-> **Status: NORMATIVE** · Feature: `piv-smartcard` · Repo: `go-xkms` · Last verified: 2026-10-11
+> **Status: NORMATIVE** · Feature: `piv-smartcard` · Repo: `go-xkms` · Last verified: 2026-10-12
 
 ## Exported surface — `pkg/pivcert`
 
@@ -36,8 +36,18 @@ Slot constants: `PIVSlotAuthentication` (`9a`), `PIVSlotDigitalSignature`
 ### Interfaces
 
 ```go
-type PIVCertificateStorage interface { /* put / get / delete a certificate in a slot */ }
-type PIVSlotRegistry interface       { /* enumerate and describe slots */ }
+type PIVCertificateStorage interface {
+	Store(slot PIVSlot, cert *x509.Certificate) error
+	Retrieve(slot PIVSlot) (*x509.Certificate, error)
+	Delete(slot PIVSlot) error
+	List() ([]PIVSlotInfo, error)
+	Import(slot PIVSlot, data []byte, format CertFormat) error
+	Export(slot PIVSlot, format CertFormat) ([]byte, error)
+	Close() error
+	Type() PIVStorageType
+}
+// pkg/pivcert/pivcert.go:512-577 — after Close, every method returns ErrStorageClosed.
+type PIVSlotRegistry interface { /* enumerate and describe slots */ }
 
 type SlotModel interface {
 	// … prefers retired slots (82-95) over primary slots (9a-9e)
@@ -136,6 +146,122 @@ than silently reading as no match. `GetPIVManager` returns
 `ErrPIVNotInitialized` when no manager exists yet; `pkg/server` treats that
 as "RecordedLevel stays nil," not a composition failure, since a build with
 no PIV backends configured has no PIV manager to wire.
+
+### Key generation
+
+`GeneratePIVKey` (`pkg/xkms/piv_manager.go:729`) resolves a `PIVKeyGenerator`
+for the request's backend. `resolveGenerator` (`piv_manager.go:377-391`) uses
+the `PIVBackendResolver` set with `SetPIVBackendResolver` when there is one —
+the server installs it through `InitPIVBackendResolver`
+(`pkg/xkms/servicer_piv.go:102`) — and otherwise a lazily created, shared
+`softwarePIVKeyGenerator`. A backend that implements `PIVParentProvider`
+(`piv_manager.go:109`) supplies the parent-key attributes for every slot key
+it generates; TPM2 uses it to put PIV keys under the PlatformSRK
+(`piv_keygen_backend.go:123-126`). An empty algorithm means `ecdsap256`
+(`piv_keygen_backend.go:100-104`, `piv_keygen_software.go:78-81`).
+
+`OutputFormat` selects what comes back (`piv_manager.go:85-88`, dispatch
+`:736-744`; empty means `self-signed`, anything else is
+`ErrPIVInvalidOutputFormat`):
+
+| Format | Produces | Stored in the slot |
+|---|---|---|
+| `self-signed` | public key + self-signed certificate, default validity 10 × 365 days (`piv_manager.go:914-917`) | yes |
+| `public-key` | public key only | no |
+| `csr` | public key + PKCS#10 CSR | no |
+| `ca-signed` | public key + CA-issued certificate + chain, default validity 1095 days (`piv_manager.go:998-1000`) | yes |
+
+`ca-signed` needs a `PIVCASignFunc` installed with `SetPIVCASignFunc`
+(`piv_manager.go:93`); without one it fails with `ErrPIVCASignFuncNotSet`. The
+CA profile follows the slot (`pivSlotToCAProfile`, `piv_manager.go:356-361`):
+
+| Slot | CA profile |
+|---|---|
+| `9a` | `piv-authentication` |
+| `9c` | `piv-signature` |
+| `9d` | `piv-key-management` |
+| `9e` | `piv-card-auth` |
+
+Any other slot gets `piv-authentication` (`piv_manager.go:995`).
+`ValidityDays` overrides either default. The subject's CN defaults to the
+slot name; `Organization` and `Country` are applied when set
+(`piv_manager.go:833-843`).
+
+### TPM2 NV storage — `pkg/pivcert/tpm2`
+
+The TPM2 backend is an adapter over `pkg/storage/hardware.TPM2CertStorage`,
+the one NV certificate store. Each slot is bound to a fixed certificate ID,
+`piv-cert-<slot>`, for all 25 slots (`pivSlotToCertIDMap`,
+`pkg/pivcert/tpm2/slotmodel.go:55-81`). The store places a record at
+
+```
+NV index = BaseIndex + (uint32(xxhash64(certificate ID)) mod 0x00400000)
+```
+
+(`pkg/storage/hardware/tpm2_cert_storage.go:564-570`, span `:46`) and writes
+the ID into the record header, so the index is the same after every restart
+with no host-side index file. A write that lands on an index already holding
+another ID's record is refused, and `Store` reports `ErrStorageFull`.
+`TestPIVSlotCertIDs_MapToDistinctNVIndices` asserts the 25 slot IDs map to 25
+distinct in-range indices.
+
+`pivcert.GetNVIndex` is not used by this backend; it has no caller outside its
+tests.
+
+```go
+store, err := tpm2.New(&tpm2.Config{ // pkg/pivcert/tpm2/tpm2.go:58-79
+	TPM:         tpm,        // caller-owned; Close does not close it
+	BaseIndex:   0x01800000, // zero → DefaultBaseIndex
+	MaxCertSize: 2048,       // zero → DefaultMaxCertSize
+	OwnerAuth:   ownerAuth,
+})
+```
+
+`BaseIndex` must lie in `0x01000000`–`0x01BFFFFF`, so
+`pivcert.DefaultTPM2BaseIndex` (`0x01C00100`) is rejected; use
+`tpm2.DefaultBaseIndex` (`tpm2.go:50`). `MaxCertSize` ranges from 512 bytes to
+`pivcert.MaxCertSizeTPM2` (4 KiB, `pkg/pivcert/pivcert.go:790`).
+`NewFromCertStorage` (`tpm2.go:157`) wraps an existing
+`hardware.HardwareCertStorage`, and `CertStorage()` (`tpm2.go:166`) returns it,
+so the slot model and the store share one view of NV RAM.
+
+TPM failures are mapped to the pivcert sentinels, with the original error kept
+for `errors.Is` (`pkg/pivcert/tpm2/errors.go:64-85`):
+
+| TPM condition | Sentinel |
+|---|---|
+| `TPM_RC_NV_SPACE`, `TPM_RC_NV_RANGE`, index held by another record | `ErrStorageFull` |
+| `TPM_RC_NV_DEFINED` | `ErrNVIndexExists` |
+| `TPM_RC_BAD_AUTH`, `TPM_RC_AUTH_FAIL`, `TPM_RC_NV_AUTHORIZATION`, `TPM_RC_NV_LOCKED` | `ErrPermissionDenied` |
+| `TPM_RC_HANDLE` | `ErrCertificateNotFound` |
+| `TPM_RC_NV_UNAVAILABLE`, no TPM, hardware unavailable | `ErrTPMNotAvailable` |
+| certificate too large | `ErrCertificateTooLarge` |
+
+A command that failed without a TPM response code is `ErrTPMNotAvailable`
+(`errors.go:107`), never an empty slot: a caller that believed the slot empty
+would issue over a live certificate.
+
+`tpm2.NewPIVSlotModel` implements `SlotModel` over the same records. A slot is
+occupied when NV holds its certificate, since the TPM keeps no PIV key in this
+store (`slotmodel.go:125-128`). `NextAvailable` hands out retired slots first,
+then primary, and never auto-allocates `9a` or `9e` (`slotmodel.go:120-123,
+200-220`).
+
+The SDK re-exports the backend behind the `tpm2` build tag:
+`PIVTPM2Config`, `NewPIVTPM2Backend`, `NewPIVTPM2BackendFromCertStorage` and
+`NewPIVTPM2SlotModel` (`sdk/go/pivcert_backends_tpm2.go:32,52,56,60`).
+`PIVStorageTypeTPM2` and `PIVMaxCertSizeTPM2` are exported without a tag
+(`sdk/go/pivcert.go:67,77`).
+
+### PKCS#11 storage — CKA_ID mapping
+
+`pkg/pivcert/pkcs11` follows the YubiKey PIV PKCS#11 object-ID convention
+(`pkg/pivcert/pkcs11/pkcs11.go:48-77`): `9a` = `0x01`, `9c` = `0x02`,
+`9d` = `0x03`, `9e` = `0x04`, retired `82`–`95` = `0x05`–`0x18`, `f9` =
+`0x19`. `PIVSlotToCKAID` and `CKAIDToPIVSlot` (`pkcs11.go:89,97`) convert in
+each direction. The PKCS#11 module's own PIV slots are documented in
+[`pkcs11-provider-module/engineering.md`](../pkcs11-provider-module/engineering.md#piv-objects)
+§"PIV objects".
 
 ## Slot attestation: reading the evidence back
 
@@ -329,9 +455,10 @@ whether there is any evidence to check.
   is validated against the supplied key (`ErrPIVAlgorithmMismatch`); the key
   itself decides. A caller that believes it is importing one algorithm must not
   silently end up with another.
-- **TPM2 NV indices are derived, not assigned.** `GetNVIndex(slot, baseIndex)`
-  is deterministic from the configured base; two deployments sharing a TPM must
-  not share a base.
+- **TPM2 NV indices are derived, not assigned.** Each index is a function of
+  the base index and the slot's fixed certificate ID (§"TPM2 NV storage"), and
+  the record header refuses a write over another ID's record rather than
+  clobbering it.
 - **Storage and slot semantics are independent.** The same slot model applies
   whether the bytes land in a file, NV, or a token.
 - **Concurrency.** Storage implementations serialise device access; the slot
@@ -405,9 +532,10 @@ falls back to file storage when the configured hardware is unavailable.
 - **`FileStorageConfig`** — `DAOs`, the go-qrdb DAO factory the composition
   root injects. A nil factory is refused with `ErrMissingDAOFactory`; the
   store never closes the factory.
-- **`TPM2StorageConfig`** — the NV base index. `GetNVIndex` derives per-slot
-  indices from it. Choose a base that does not collide with other NV users on
-  the same TPM.
+- **`TPM2StorageConfig`** — device path, base index, owner auth; only
+  validated (`pkg/pivcert/pivcert.go:425-459`). The TPM2 backend itself is
+  built from `tpm2.Config` (§"TPM2 NV storage"), whose base index must lie in
+  `0x01000000`–`0x01BFFFFF`.
 - **`PKCS11StorageConfig`** — module path, slot, PIN handling. `PIN` and
   `SOPIN` are `*secure.Secret`; a nil value means no PIN was configured, and
   each is opened only around the PKCS#11 login call that needs the
@@ -434,8 +562,9 @@ not parse reads as `ErrInvalidCertificate`. Hosts without a go-qrdb node
 `sdk/go.NewBackendDAOFactory`, one factory per backend namespace.
 
 Compatibility: slot identifiers and PIV certificate encodings are NIST-defined
-and stable. The TPM2 NV index derivation is ours; changing `GetNVIndex` would
-orphan every existing NV-stored certificate and is a migration, not a change.
+and stable. The TPM2 NV index derivation is ours: the `piv-cert-<slot>` IDs
+are part of the on-device format, and changing one orphans every certificate
+already stored under it — a migration, not a change.
 
 ## Test strategy
 

@@ -89,5 +89,5 @@ type SignerConfig struct {
 
 ## Cross-References
 
-- [PKCS#11 Module](../pkcs11/module/README.md) -- PKCS#11 token integration
+- [PKCS#11 Module](../../../docs/pkcs11-provider-module/user.md) -- PKCS#11 token integration
 - [TLS Configuration](../configuration/README.md) -- server TLS setup

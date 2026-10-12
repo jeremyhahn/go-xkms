@@ -290,8 +290,8 @@ storage:
   backend: "qrdb"   # required by auth.enable_rbac above
 ```
 
-See [RBAC](rbac.md) and
-[Authentication configuration](../configuration/auth.md#rbac-requires-the-qrdb-storage-backend).
+See [RBAC](../rbac/architecture.md) and
+[RBAC configuration](../rbac/engineering.md#configuration).
 
 ## Examples
 

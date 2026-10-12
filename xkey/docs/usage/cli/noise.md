@@ -96,4 +96,4 @@ The underlying implementation is go-truststrap's `pkg/noiseproto`.
 ## See Also
 
 - [Bootstrap CLI](bootstrap.md) -- the full bootstrap command group
-- [Multi-Protocol API Support](../../../../docs/acme/protocols/README.md) -- where the Noise port sits among the transports
+- [Key management API](../../../../docs/key-management/api.md) -- where the Noise port sits among the transports

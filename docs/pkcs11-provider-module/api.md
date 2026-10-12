@@ -1,6 +1,6 @@
 # PKCS#11 Provider Module — API
 
-> **Status: NORMATIVE** · Feature: `pkcs11-provider-module` · Repo: `go-xkms` · Last verified: 2026-10-08
+> **Status: NORMATIVE** · Feature: `pkcs11-provider-module` · Repo: `go-xkms` · Last verified: 2026-10-12
 
 Transport shapes for the rest of the repo:
 [`../key-management/api.md`](../key-management/api.md).
@@ -128,7 +128,7 @@ between it and Go errors in both directions.
 | state conflict (CAS lost) | mapped as a general failure | retry the operation |
 
 The distinction `CKR_FUNCTION_NOT_SUPPORTED` carries is deliberate and
-documented at `crypto.go:3327`: a caller must be able to tell "this token will
+documented at `crypto.go:3351`: a caller must be able to tell "this token will
 never do that" from "that failed". Collapsing it loses information consumers act
 on.
 
@@ -139,12 +139,11 @@ of objects on the token rather than paged.
 
 ## Versioning and deprecation
 
-PKCS#11 versions are the standard's: the module publishes v3.0 plus the v3.2
-additions. Four v3.2 surfaces — KEM, authenticated wrapping, signature-first PQC
-verification, asynchronous operations — are present in the ABI and answer
-`CKR_FUNCTION_NOT_SUPPORTED`. That is the specification-conformant way to ship a
-partial version: the function exists, and the token honestly reports that it
-does not implement it.
+PKCS#11 versions are the standard's. `C_GetInterface` serves the v2.40, v3.0
+and v3.2 function lists; the v3.2 additions (KEM, authenticated wrapping,
+`C_VerifySignature*`, `C_GetSessionValidationFlags`) are only in the v3.2 list.
+Asynchronous operations answer `CKR_FUNCTION_NOT_SUPPORTED`: the function
+exists, and the token honestly reports that it does not implement it.
 
-Detail: `docs/pkcs11/module/v32-compliance.md`,
-`docs/references/pkcs11-v3.0-to-v3.2-changes.md`.
+Detail: [engineering.md](engineering.md#interfaces-and-v32-status),
+[`../references/pkcs11-v3.0-to-v3.2-changes.md`](../references/pkcs11-v3.0-to-v3.2-changes.md).

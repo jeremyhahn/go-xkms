@@ -1,6 +1,6 @@
 # ACME Issuance — CLI
 
-> **Status: NORMATIVE** · Feature: `acme-issuance` · Repo: `go-xkms` · Last verified: 2026-09-28
+> **Status: NORMATIVE** · Feature: `acme-issuance` · Repo: `go-xkms` · Last verified: 2026-10-12
 
 Two binaries cover ACME, on opposite sides of the protocol:
 
@@ -21,7 +21,7 @@ The CA operator's *certificate hierarchy* verbs (`ca sign-csr`, `ca issue`,
 
 ## `cactl` is retired, not undocumented
 
-The legacy `docs/acme/cli/cactl.md` documents a `cactl` binary. **There is no
+Older documentation described a `cactl` binary. **There is no
 `cmd/cactl` in go-xkms and there never was.** `cactl` belonged to a separate
 standalone CA project that was decommissioned in August 2026, its CA
 functionality having been folded into go-xkms as `TrustedCA` and the ACME
@@ -212,9 +212,10 @@ Prints version, commit and build date.
 
 ## `xkmsctl acme` (admin)
 
-`xkmsctl acme` administers the ACME certificate authority go-xkms hosts on
-its own dedicated HTTPS listener (`cfg.ACME.HTTPSAddr`) — a distinct service
-from xkmsd's own keystore/control-plane surface. Every verb goes through the
+`xkmsctl acme` administers the ACME certificate authority go-xkms hosts.
+xkmsd serves the ACME admin plane as REST under `/admin` and
+`/api/v1/tenants` on its unified mTLS listener (`cmd/xkmsd/admin.go:71`,
+`:91-106`), not on the RFC 8555 listener (`acme.https_addr`). Every verb goes through the
 ACME admin SDK (`sdk/go/acme`, `sdk/go/acme/client/admin`), never through
 `pkg/acme/admin` directly, and the admin API is permission-gated
 (`pkg/acme/admin`'s `PermissionGate`): a caller lacking the required role
@@ -239,6 +240,11 @@ take their own connection flags instead:
 `xkmsctl`'s usual `--tls-cert`/`--tls-key`/`--tls-ca` flags supply client
 TLS material for `grpcs://`/`mcps://`/`quic://` targets or a bare address
 whose transport requires TLS.
+
+Against xkmsd, only `rest` (an `https://` address) connects: the gRPC, QUIC
+and MCP admin transports are served only by the library
+`MultiProtocolServer` ([`api.md`](api.md#transport-adapters)). Because
+`--acme-transport` defaults to `grpc`, give xkmsd a full `https://` URL.
 
 ```
 xkmsctl acme --acme-server https://ca.example.com:8443 account list

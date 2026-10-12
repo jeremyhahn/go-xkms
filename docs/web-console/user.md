@@ -1,6 +1,6 @@
 # Web Console — User Guide
 
-> **Status: NORMATIVE** · Feature: `web-console` · Repo: `go-xkms` · Last verified: 2026-10-07
+> **Status: NORMATIVE** · Feature: `web-console` · Repo: `go-xkms` · Last verified: 2026-10-12
 
 ## What it is
 
@@ -41,7 +41,41 @@ curl -sk https://localhost:8443/api/v1/capabilities
 curl -sko /dev/null -w '%{http_code}\n' https://localhost:8443/ui/   # 200
 ```
 
-The startup log line `mounted SPA web UI prefix=/ui/` confirms the mount.
+The startup log line `mounted SPA web UI prefix=/ui/` confirms the mount
+(`pkg/webui/spa.go:109`).
+
+## Configuration
+
+```yaml
+ui:
+  enabled: true          # omitted means enabled; only an explicit false turns it off
+  path_prefix: "/ui/"    # empty selects /ui/
+  redirect_root: false   # true redirects GET / to the UI prefix
+
+cors:                    # only for a browser served cross-origin; same-origin needs none
+  enabled: false
+  allowed_origins: []    # exact scheme://host[:port] origins
+  allow_credentials: false
+  max_age_seconds: 3600  # <= 0 selects 3600
+
+auth:
+  piv_login:             # POST /api/v1/auth/login/piv
+    enabled: false       # needs tls.client_auth to request client certs
+    trusted_issuers: []  # optional issuer-DN allowlist (exact match)
+    attestation_roots: /etc/xkms/piv-attestation-root.pem  # required unless allow_unattested
+    attestation_intermediates: []
+    allow_unattested: false  # true accepts unattested keys; token records attest_level "unattested"; not with attestation_roots
+  session:
+    access_token_ttl: "15m"
+    refresh_token_ttl: "8h"
+    login_rate_per_min: 10   # 0 selects 10
+```
+
+Source: `UIConfig` (`pkg/config/config.go:611`), `CORSConfig`
+(`pkg/config/config.go:593`), `PIVLoginConfig` (`pkg/config/config.go:450`),
+`SessionConfig` (`pkg/config/config.go:478`). Startup refuses
+`attestation_roots` together with `allow_unattested`
+(`pkg/config/config.go:1649`).
 
 ## If the daemon refuses to start
 
@@ -98,7 +132,7 @@ tenants. The dashboard shows whether the deployment is clustered.
 | Section | Screen | Route |
 |---|---|---|
 | Overview | Dashboard, Backends | `#/dashboard`, `#/backends` |
-| Keys & Crypto | Keys, FROST, PCR Policies | `#/keys`, `#/frost`, `#/policies` |
+| Keys & Crypto | Keys, FROST, TPM Policies | `#/keys`, `#/frost`, `#/tpm/policies` |
 | Certificates & CA | Certificates, Certificate Authority | `#/certs`, `#/ca` |
 | Security | PIN, PIV, SSH, Passwords, OIDC Credentials, Platform Secrets | `#/pin`, `#/piv`, `#/ssh`, `#/passwords`, `#/oidc/credentials`, `#/platform` |
 | Identity & Access | Users, Tenants | `#/users`, `#/tenants` |

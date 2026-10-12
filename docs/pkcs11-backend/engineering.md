@@ -1,6 +1,6 @@
 # PKCS#11 Backend — Engineering Contract
 
-> **Status: NORMATIVE** · Feature: `pkcs11-backend` · Repo: `go-xkms` · Last verified: 2026-10-03
+> **Status: NORMATIVE** · Feature: `pkcs11-backend` · Repo: `go-xkms` · Last verified: 2026-10-12
 
 All symbols below require `-tags pkcs11` and cgo. See
 [`architecture.md`](architecture.md) for the package's place in the stack.
@@ -45,11 +45,7 @@ type PKCS11Config struct {
 
 ### PIN resolution — `*types.SecretValue`, not a plain string
 
-**Correcting a stale claim in the predecessor documentation
-(`docs/pkcs11/backend/configuration.md`):** that folder describes
-`Config.Pin` as a plain `string`, read literally from `xkmsd.yaml` with
-"no `credential://` resolver, no `${ENV}` expansion." As of the current
-source, `PKCS11Config.Pin` (and `pkcs11.Config.PIN`/`.SOPIN`,
+`PKCS11Config.Pin` (and `pkcs11.Config.PIN`/`.SOPIN`,
 `pkg/backend/pkcs11/config.go:53,58`) are `*types.SecretValue` — one of the
 protected-target fields go-qrdb's `secret.ConfigProcessor` resolves
 (`docs/xkmsd-configuration/engineering.md` §"secret-bearing config field"
@@ -63,8 +59,7 @@ lists `backends.pkcs11.pin` explicitly). Practically:
 - `*types.SecretValue` is walked as a single leaf key by
   `registerEnvKeys`/`walkYAMLKeys` (`pkg/config/load.go:214-249`), the same
   as any other config leaf — `backends.pkcs11.pin` resolves under
-  `XKMS_BACKENDS_PKCS11_PIN` by the generic rule, contrary to the
-  predecessor doc's claim that no such override exists.
+  `XKMS_BACKENDS_PKCS11_PIN` by the generic rule.
 - `nil` is the only way to spell "PIN not configured"; a present-but-empty
   `SecretValue` fails config resolution outright (`pkg/config/load.go:251-257`).
 - The resolved plaintext lives in the `SecretValue`'s own memguard enclave,
@@ -73,8 +68,9 @@ lists `backends.pkcs11.pin` explicitly). Practically:
 
 `config.PKCS11Config` still has **no `so-pin` field** — the daemon YAML
 cannot configure the SO PIN; it is reachable only via `pkcs11.Config.SOPIN`
-when embedding the package directly (matching the predecessor doc's claim,
-which is still accurate on this point).
+when embedding the package directly. `SoftHSMConfig(tokenDir)`
+(`pkg/backend/pkcs11/config.go:177`) renders a `softhsm2.conf` whose tokens
+live under `tokenDir`.
 
 ## `pkcs11.Config` fields (`pkg/backend/pkcs11/config.go:32`)
 
@@ -158,19 +154,32 @@ only. Generated key pairs are `CKA_TOKEN=true`, `CKA_PRIVATE=true`,
 
 ## Signing, decryption, symmetric, ECDH — see the mechanism map above for the wire mechanism; behavioral notes:
 
-- `Verify(attrs, digest, signature)` verifies **in software** from the
-  public key read back off the token; only ECDSA is implemented — RSA
-  returns `backend.ErrInvalidAlgorithm`.
+- `Verify(attrs, digest, signature)` (`pkcs11.go:1540`) verifies RSA,
+  ECDSA and Ed25519 **in software** from the public key read back off the
+  token, and ML-DSA on the token with `C_Verify` (`verifyPublicKey`,
+  `:1570-1589`). RSA-PSS and OAEP map SHA-1/224/256/384/512 to their
+  `CKM_`/`CKG_MGF1_` pair (`signer_rsa.go:37-43`).
 - AES-GCM: nonce fixed at 12 bytes; tag length defaults to 16 bytes,
   accepts 12–16 (`resolveGCMTagSize`); every encrypt consults
   `types.AEADSafetyTracker` (byte budget, then nonce uniqueness) before the
-  operation reaches the token.
+  operation reaches the token. `aesGCMAlgorithms` (`pkcs11_symmetric.go:891-904`)
+  lists the AEAD algorithms; the cipher path also admits CBC, CBC-PAD and ECB
+  (`requireCipherMechanism`, `:158-180`).
 - ECDH (`DeriveKeyECDH`): rejects a cross-curve peer with `ErrCurveMismatch`;
   the KDF from `kdfParams` runs **in software** after `C_DeriveKey`
-  produces the raw shared secret. Caveat: `generateECDSAKeyPair`'s
-  templates do not set `CKA_DERIVE` (PKCS#11 §4.9 default `CK_FALSE`), so a
-  key from `GenerateECDSA` cannot `C_DeriveKey` on a conforming token
-  without separately provisioning `CKA_DERIVE=true`.
+  produces the raw shared secret. The derived object is created
+  non-sensitive so its value can be read (`pkcs11_ecdh.go:394-395`);
+  `SupportedCurves` is at `:63-108`. Generated EC private keys carry
+  `CKA_DERIVE=true` (`signer_ecdsa.go:293`), so they are usable as ECDH base
+  keys on a conforming token.
+- `GenerateRandom` (`pkcs11.go:631-667`) draws from `C_GenerateRandom`.
+  `Get`/`Save` return `backend.ErrNotSupported` (`pkcs11.go:270-296`): key
+  material stays in the token. `RotateKey` (`:627`) is
+  `ErrOperationNotSupported`.
+- `DeleteKey` destroys the objects and then confirms they are gone
+  (`verifyKeyRemoved`, `pkcs11.go:397-455`). `ListKeys` (`:466`) pages
+  `C_FindObjects` in batches with no upper bound on the count
+  (`findObjectsBatchSize` loop, `:304-321`).
 
 ## Import/export ceremony
 
@@ -183,7 +192,13 @@ persistent RSA-4096 wrapping key pair labeled `go-xkms-wrapping-key`
 (`importKeyHybrid`) exists because SoftHSM2 refuses `C_UnwrapKey` with
 `CKM_RSA_PKCS_OAEP` for secret keys — it decrypts an ephemeral AES KEK to
 host memory, re-imports it as a session object, unwraps the target with
-`CKM_AES_KEY_WRAP_PAD`, and destroys the KEK. `UnwrapKey` deliberately
+`CKM_AES_KEY_WRAP_PAD`, and destroys the KEK. The hybrid blob is
+`[4-byte length][wrapped AES key][wrapped key material]`
+(`pkcs11_importexport.go:522`); the host copy of the KEK is wiped after use
+(`unwrapWithEphemeralKEK`, `:579-590`). The wrapping key is
+`wrappingKeyLabel`/`wrappingKeySize` (`:44-47`). An imported key that cannot
+be given its `CKA_LABEL`/`CKA_ID` is destroyed and reported as
+`ErrImportedKeyUnaddressable` (`:54`). `UnwrapKey` deliberately
 returns `backend.ErrNotSupported` — unwrapping only happens inside the HSM
 during `ImportKey`. `ExportKeyMaterial` is restricted to `CKO_SECRET_KEY`;
 `GenerateSecretKey` hard-codes `CKA_EXTRACTABLE=false`, so generated AES
@@ -202,10 +217,19 @@ defaults, because `C_UnwrapKey`'s §5.18.4 default `CKA_EXTRACTABLE` is
 — SoftHSM2 is stricter than the spec requires, so a template relying on
 defaults would pass CI and silently import a plaintext-readable key on a
 conforming HSM. `attrs.Exportable=false` at import time is permanent.
-`GenerateSecretKey` sets `CKA_SENSITIVE=true` and `CKA_EXTRACTABLE=false`;
-`generateRSAKeyPair`/`generateECDSAKeyPair` set `CKA_SENSITIVE=true` and
-leave `CKA_EXTRACTABLE` at the token default — verify with
-`pkcs11-tool --list-objects` on the device actually deployed.
+`GenerateSecretKey` sets `CKA_SENSITIVE=true` and `CKA_EXTRACTABLE=false`
+(`pkcs11.go:1395`); `generateRSAKeyPair`/`generateECDSAKeyPair` set both
+explicitly too (`generatedKeySensitive`/`generatedKeyExtractable`,
+`signer_rsa.go:358-359`). YubiKey PIV templates omit them because the slot
+sets them (`signer_rsa.go:362-365`).
+
+## Sealing
+
+The backend is a `types.Sealer` (`sealer.go:29`): `CanSeal` (`:33`) is true once
+initialized, `Seal` (`:74`) encrypts with AES-GCM under a token-resident key
+named by `opts.KeyAttributes`, and `Unseal` (`:163`) reports a tampered
+ciphertext as `types.ErrSealedDataAuthentication` only for a return code that
+names the ciphertext (see the SoftHSM section below).
 
 ## Errors (representative, not exhaustive)
 
@@ -214,6 +238,8 @@ leave `CKA_EXTRACTABLE` at the token default — verify with
 `ErrInvalidKeyAttributes`, `ErrInvalidNonceLength`, `ErrInvalidTagSize`,
 `ErrInvalidTagLength`, `ErrAttestationUnsupported`,
 `ErrNoDeviceAttestationKey`, `ErrDeviceCertificateNotFound`,
+`ErrSessionPoolNilContext`, `ErrSessionPoolOpen` (`errors.go:84`, `:87`),
+`ErrImportedKeyUnaddressable`,
 `backend.ErrNotSupported`, `backend.ErrKeyNotExportable`,
 `backend.ErrAsymmetricKeyExportNotAllowed`,
 `backend.ErrOperationNotSupported` (`RotateKey`; `Capabilities().KeyRotation

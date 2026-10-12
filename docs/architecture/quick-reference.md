@@ -411,10 +411,10 @@ openssl req -x509 -newkey rsa:4096 -nodes \
 ## Resources
 
 ### Documentation
-- [server-architecture.md](./server-architecture.md) - Complete design
+- [host-embedding](../host-embedding/engineering.md) - Unified API server and module registration
 - [overview.md](./overview.md) - System architecture and design philosophy
 - [api-specifications.md](./api-specifications.md) - API reference
-- [../configuration/build-system.md](../configuration/build-system.md) - Build tags and compilation options
+- [Build toggles](../crypto-backends/engineering.md#build-toggles) - Build tags and compilation options
 - [README.md](./README.md) - Overview
 
 ### External

@@ -1,6 +1,6 @@
 # SSH Agent Sessions — CLI
 
-> **Status: NORMATIVE** · Feature: `ssh-agent-sessions` · Repo: `go-xkms` · Last verified: 2026-08-20
+> **Status: NORMATIVE** · Feature: `ssh-agent-sessions` · Repo: `go-xkms` · Last verified: 2026-10-12
 
 **No CLI surface: reachable only through the Go SDK (`xkmsssh.StartAgent`).**
 
@@ -19,7 +19,7 @@ Related CLI surface that does exist:
 
 - `xkey ssh connect` — the connection-oriented path, which starts one of these
   sessions internally and adds host-key handling.
-  See [`../ssh/README.md`](../ssh/README.md).
+  See [`../ssh-sessions/`](../ssh-sessions/).
 - `xkey ssh keys …` — generating and listing the keys a session serves.
 
 Consumers wiring git commit signing do so in Go, not in shell; the worked

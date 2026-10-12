@@ -76,6 +76,6 @@ This ensures consistent key derivation regardless of how the URL is provided.
 
 ## Cross-References
 
-- [Barrier Architecture](../../docs/seal/tenant-barriers.md) - Encryption at rest
+- [Barrier Architecture](../seal/architecture.md) - Encryption at rest
 - [Server Registry](serverregistry.md) - Maps server URLs to CA fingerprints
 - [API Explorer](api-explorer.md) - Automatic JWT injection from token store

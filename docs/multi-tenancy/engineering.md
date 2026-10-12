@@ -1,6 +1,6 @@
 # Multi-Tenancy — Engineering Contract
 
-> **Status: NORMATIVE** · Feature: `multi-tenancy` · Repo: `go-xkms` · Last verified: 2026-10-04
+> **Status: NORMATIVE** · Feature: `multi-tenancy` · Repo: `go-xkms` · Last verified: 2026-10-12
 
 ## Exported surface — `sdk/go/transport`
 
@@ -20,6 +20,38 @@ Server side: `pkg/api/rest/handlers_tenant.go` plus `middleware_tenant.go`;
 `pkg/api/tenantgate`. Composition: `sdk/go/tenant_compose.go`,
 `sdk/go/tenant_factories.go`. Per-tenant state:
 `pkg/seal/platform_store_tenant.go`, `pkg/xkms/backend_tenant.go`.
+
+## The tenant gate — `pkg/api/tenantgate`
+
+```go
+func Access(identity *auth.Identity, registry *seal.BarrierRegistry) (*seal.TenantBarrier, error)
+```
+
+Every transport makes the same tenant-admission decision through this one
+function (`pkg/api/tenantgate/tenantgate.go:110`), not a per-transport copy:
+
+| Case | Result |
+|---|---|
+| cross-tenant identity (`auth.IsCrossTenant`: nil, empty tenant, or the system tenant; `pkg/auth/auth.go:113`) | pass through, no barrier |
+| no barrier registry | pass through, no barrier |
+| tenant not in the registry | `*ErrTenantNotFound` |
+| tenant barrier sealed | `*ErrTenantSealed` |
+| otherwise | the tenant's `*seal.TenantBarrier` |
+
+Each transport maps the result onto its own wire shape and, on success,
+injects the barrier with `auth.WithTenantBarrier`:
+
+| Transport | Gate | Not found | Sealed |
+|---|---|---|---|
+| REST (and QUIC, which is HTTP/3 on the same listener) | `Server.TenantMiddleware` (`pkg/api/rest/middleware_tenant.go:37`) | 403 (`:51`) | 503 (`:55`) |
+| gRPC | `TenantUnaryInterceptor` / `TenantStreamInterceptor` (`pkg/api/grpc/interceptor_tenant.go:87`, `:104`) | `PermissionDenied` (`:47`) | `Unavailable` (`:52`) |
+| gRPC over the Unix socket | the same two interceptors, chained first (`pkg/api/unix/grpc_server.go:292-293`) | as gRPC | as gRPC |
+| MCP | `Server.tenantAccess` (`pkg/api/mcp/tenant.go:39`), run before `authorizeMethod` (`pkg/api/mcp/module_support.go:124-128`) | `ErrCodeForbidden` -32003 | `ErrCodeServiceUnavailable` -32004 (`pkg/api/mcp/types.go:72`, `:78`) |
+
+Any other error is an internal error on every transport. The package lives
+in `pkg/api` rather than `pkg/auth` to avoid an import cycle: `pkg/auth`
+would need `pkg/seal`, which imports `pkg/audit`, which imports `pkg/auth`
+(`pkg/api/tenantgate/tenantgate.go:34-40`).
 
 ## Ownership scopes — `pkg/scope`
 
@@ -192,6 +224,12 @@ Tenant barrier strategies are the same set as the system barrier —
 Tenant records, entitlements and quotas persist through go-qrdb. Per-tenant
 barrier state is `pkg/seal/platform_store_tenant.go`; tenant-scoped key
 resolution is `pkg/xkms/backend_tenant.go`.
+
+Per-tenant storage volumes come from go-qrdb's volume pools
+(`Storage.VolumePools`). When the barrier is enabled, a datastore path is set
+and no pool is configured, the embedded node gets one pool named
+`default`, rooted at `<datastore-path>/tenant-volumes`
+(`pkg/embeddednode/embedded_node.go:339`).
 
 ## Test strategy
 

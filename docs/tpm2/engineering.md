@@ -27,7 +27,12 @@ The package is large; the map in [`architecture.md`](architecture.md)
 
 `reexports.go` is the curated surface for consumers that should not import the
 whole package. `pkg/tpm2/store` holds the key-backend types (`KeyBackend` in
-`store/interfaces.go`). `pkg/tpm2/mocks` supplies test substitutes.
+`store/interfaces.go`). TPM key blobs persist through `BlobStorer`
+(`Read`/`Write`/`Delete` by name, `store/interfaces.go:132`); its one
+implementation, `NewFSBlobStore(logger, backend)` (`store/blob.go:59`), is a
+go-qrdb DAO over `kvadapter.New(backend)` whose entity ID is the hash of the
+blob name, so a read is a direct lookup. `pkg/tpm2/mocks` supplies test
+substitutes.
 
 `pkg/attestation` is the verification half: `verifier.go`, `invariants.go`,
 `types.go`, `errors.go`, `truststore/`, `android/`.
@@ -48,7 +53,9 @@ whole package. `pkg/tpm2/store` holds the key-backend types (`KeyBackend` in
 - **PCR selection is fixed at seal time.** Changing the selection does not
   re-bind existing sealed blobs; it makes new ones behave differently.
 - **NV indices must not collide.** PIV storage derives its indices from a
-  configured base (`pivcert.GetNVIndex`); other NV users must not overlap it.
+  configured base and a per-slot certificate ID
+  (`pkg/storage/hardware/tpm2_cert_storage.go:564-570`); other NV users must
+  not overlap that range.
 - **Failed authorizations advance the lockout counter**, and it persists across
   reboots. Retrying blindly is how a TPM becomes unusable for its recovery
   interval.

@@ -7,7 +7,7 @@
 > implemented and verified end-to-end against swtpm. The `Identity.Keystores`
 > model, `Params.BackendForStore` / `BackendForStoreFunc`, the per-instance
 > `keystoreMap`, `resolveKeyBackend`, and `initSecondaryKeys` all ship as
-> described below. See [`ca/multi-keystore.md`](./ca/multi-keystore.md) for the
+> described below. See [`certificate-authority/engineering.md`](./certificate-authority/engineering.md#multi-keystore-routing) for the
 > user-facing reference. The consumer-wiring phases (go-trusted-platform /
 > go-quicbaas `BackendForStore` factories) remain follow-on work.
 >
@@ -16,7 +16,7 @@
 > callers that left `BackendForStore` nil has been deleted. `BackendForStore`
 > is required on every constructor; `Identity.KeystoreType` no longer exists
 > (`GetStoreType()` now reports `Keys[0].StoreType`). See
-> [`ca/multi-keystore.md`](./ca/multi-keystore.md) for the current contract —
+> [`certificate-authority/engineering.md`](./certificate-authority/engineering.md#multi-keystore-routing) for the current contract —
 > this file is kept as the historical design record.
 
 ---

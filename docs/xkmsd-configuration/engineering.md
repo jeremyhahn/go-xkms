@@ -1,6 +1,6 @@
 # xkmsd Configuration — Engineering Contract
 
-> **Status: NORMATIVE** · Feature: `xkmsd-configuration` · Repo: `go-xkms` · Last verified: 2026-09-28
+> **Status: NORMATIVE** · Feature: `xkmsd-configuration` · Repo: `go-xkms` · Last verified: 2026-10-12
 
 ## Exported surface — `pkg/config`
 
@@ -43,7 +43,7 @@ Unexported but load-bearing, all in `pkg/config/load.go`:
 | Symbol | Contract |
 |---|---|
 | `New(cfg *config.Config, opts ...Option) (*Server, error)` (`pkg/server/server.go`) | Calls `cfg.Validate()` first, before any filesystem or storage touch. A failure is returned as `*ErrServiceInit{Service: "configuration"}` wrapping `Validate`'s typed error. `Validate` also normalizes `cfg` in place (defaults `Storage.Backend` to `"pebble"`, `Storage.QRDB.Transport` to `"embedded"`, `Cluster.ShardID` to `1`), so every subsystem `New` initializes afterward sees the normalized values. |
-| `config.Config.LoopbackDesktop` (`pkg/config/config.go`, `yaml:"-"`) | Pure embedder signal, unreachable from any config file/env/flag. Set only by `pkg/server/loopback.desktopConfig`, which forces `Protocols.REST` on for the 127.0.0.1-only desktop engine listener. `Validate` reads it to skip, for that one launch shape, the `storage.backend "qrdb"` + `tls.enabled` requirement `NetworkServing` otherwise imposes on any REST-enabled config — no other check is affected. |
+| `config.Config.LoopbackDesktop` (`pkg/config/config.go`, `yaml:"-"`) | Pure embedder signal, unreachable from any config file/env/flag. Set only by `pkg/server/loopback.desktopConfig`, which forces `Protocols.REST` on for the 127.0.0.1-only desktop engine listener. `Validate` reads it to skip, for that one launch shape, the `datastore.mode "standalone"` + `tls.enabled` requirement `NetworkServing` otherwise imposes on any REST-enabled config — no other check is affected. |
 
 ## Invariant — `Server.New` always validates
 
@@ -114,6 +114,15 @@ either is ever reached without going through `New`.
    file, or generated — see
    [`../trust-bootstrap/engineering.md`](../trust-bootstrap/engineering.md)
    §Configuration for that custody decision, which this file does not own).
+9. **Network serving is the unified API server.** `NetworkServing` is true
+   when any of `protocols.rest`, `grpc`, `quic` or `mcp` is on
+   (`pkg/config/config.go:345`); the Unix socket never counts. Such a
+   configuration must set `datastore.mode: standalone`, because the embedded
+   qrdb node's multi-protocol server owns those ports, and `tls.enabled`,
+   because its transports are TLS-only; `Validate` refuses either omission
+   (`config.go:1551-1557`). `cert_file`/`key_file` stay optional: without them
+   a bootstrap certificate serves until the CA issues the real one. QUIC is
+   HTTP/3 on the REST port, advertised via `Alt-Svc` (`config.go:336-338`).
 
 ## Decoding notes
 
@@ -231,9 +240,63 @@ viper reads the YAML into a map before mapstructure decodes it with
     also removed `barrier.passphrase` (and the `--seal-passphrase` flag /
     `XKMS_BARRIER_PASSPHRASE` env var) entirely. The barrier never
     auto-unseals from configuration at all any more — see
-    `docs/seal/README.md` and `docs/xkmsd-configuration/cli.md` for the
+    `docs/sealing-and-barrier/` and `docs/xkmsd-configuration/cli.md` for the
     replacement (a registered hardware seal strategy, or operator-driven
     unseal through go-qrdb's barrier surface).
+
+## Authentication and client-certificate settings
+
+`Server.buildAuthenticator` (`pkg/server/server.go:1257`) turns `auth.*` into
+one authenticator and fails closed on anything it does not recognize:
+
+| `auth.type` | Result | Refused with |
+|---|---|---|
+| `none`, `noop`, empty, or `auth.enabled: false` | no-op, every request anonymous; `Config.ComplianceGaps` flags it, so `xkmsd` will not start on it (`server.go:1276-1294`) | — |
+| `jwt` | `JWTAuthenticator` (`:1296`) | `ErrJWTPublicKeyRequired` without `auth.jwt.public_key_file` (`pkg/server/errors.go:57`) |
+| `mtls` | `MTLSAuthenticator` over the qrdb user store (`:1309`) | `ErrMTLSRequiresTLS` without `tls.enabled` (`errors.go:71`) |
+| `composite` | see below (`:1322`) | |
+| `adaptive` | removed: first boot provisions the administrator's credential, so there is no anonymous window to bridge (`:1329`) | `*ErrAdaptiveRemoved` (`errors.go:142`) |
+| anything else | — | `*ErrUnknownAuthType` (`errors.go:493`) |
+
+With `auth.composite.methods` set, each name goes through a `jwt`/`mtls`
+factory map (`createCompositeAuthenticator`, `server.go:1371`): `jwt` without
+a public key file fails `ErrCompositeJWTRequired`, `mtls` without TLS fails
+`ErrCompositeMTLSRequiresTLS`, and any other name fails
+`ErrUnknownCompositeMethod`, each wrapped in `*ErrCompositeMethodCreate`
+(`errors.go:77-83`). With no methods listed the chain is derived
+(`deriveCompositeAuthenticator`, `server.go:1423`): `jwt` when a key file or
+the token issuer exists, `mtls` when TLS is on; a single member is used bare,
+and none fails `ErrCompositeMethodsRequired` (`errors.go:74`). The chain
+returns the first member's success, or the last member's error
+(`pkg/auth/composite.go:50-60`).
+
+`JWTAuthenticator` and `OIDCAuthenticator` pin `jwt.WithValidMethods` to the
+verification key's own family — RS\*/PS\* for RSA, ES\* for ECDSA, EdDSA for
+Ed25519 (`validMethodsForKey`, `pkg/auth/jwtalg.go:77`; `jwt.go:182`,
+`oidc.go:447`) — so an `HS256` token keyed with the public key's bytes never
+verifies. Any other key type, including a JWKS `oct` key, is
+`*UnsupportedVerificationKeyError`. OIDC further intersects that set with the
+provider's `id_token_signing_alg_values_supported` and refuses an empty
+intersection as `*NoCommonSigningAlgorithmError` (`oidc.go:435`).
+
+Both listeners map `tls.client_auth` the same way (`server.go:3442-3451`,
+`parseClientAuthMode`, `pkg/server/unified_tls.go:128`):
+
+| `tls.client_auth` | `crypto/tls` policy |
+|---|---|
+| `require`, `require_and_verify` | `RequireAndVerifyClientCert` |
+| `verify` | `VerifyClientCertIfGiven` — what a composite `jwt` + `mtls` deployment needs, so bearer-only clients still connect |
+| `request` | `RequestClientCert` |
+| `none`, empty, anything else | `NoClientCert` |
+
+After the embedded CA composes, the unified listener verifies client
+certificates against the union of `tls.ca_file`, `tls.client_cas` and the
+CA's own bundle, not the bundle alone (`unifiedClientCAPool`,
+`unified_tls.go:198`, called at `:174`). `auth.piv_login.enabled` refuses an
+empty or `none` `tls.client_auth` (`pkg/config/config.go:1632-1636`).
+`tls.prefer_server_ciphers` and `tls.watch_cert_files` are parsed
+(`config.go:413`, `:416`) but read by nothing: certificates are not reloaded
+when the files change.
 
 ## Errors
 

@@ -1,11 +1,11 @@
 # SSH — API
 
-> **Status: NORMATIVE** · Feature: `ssh` · Module: `go-xkms/xkey` · Last verified: 2026-09-27
+> **Status: NORMATIVE** · Feature: `ssh` · Module: `go-xkms/xkey` · Last verified: 2026-10-12
 
 No REST/gRPC/QUIC/MCP transport surface belongs to xkey itself — the
 network transports for keys/host-keys/authorized-keys/`Session.Dial` are
 served by xkmsd and documented at
-[`../../../docs/ssh/README.md`](../../../docs/ssh/README.md). This
+[`../../../docs/ssh-keys/api.md`](../../../docs/ssh-keys/api.md). This
 document covers what is reachable only through xkey: the GUI's Wails
 bindings, and the loopback WebSocket bridge the embedded console uses.
 
@@ -88,7 +88,7 @@ connection are resolved *before* the endpoint is returned
 (`open`/`resolveLocalParams`), so a bad key reference surfaces as a GUI
 dialog error rather than a WebSocket handshake failure. An issued-but-
 never-connected ticket is purged after 2 minutes
-(`consoleTicketTTL`). See root docs for the WebSocket wire protocol
+(`consoleTicketTTL`). See [`../../../docs/ssh-sessions/engineering.md`](../../../docs/ssh-sessions/engineering.md#websocket-wire-protocol) for the WebSocket wire protocol
 (binary terminal frames, JSON control frames, host-key confirmation
 round trip).
 
@@ -116,4 +116,5 @@ functions; there is no separate "API" for them beyond that Go surface.
 - [Engineering](engineering.md) — exported surface, invariants, tests
 - [CLI](cli.md) — the CLI's equivalent surface
 - Root SSH transports (REST/gRPC/QUIC/MCP/unix, `Session.Dial`, the
-  console wire protocol): [`../../../docs/ssh/README.md`](../../../docs/ssh/README.md)
+  console wire protocol): [`../../../docs/ssh-keys/api.md`](../../../docs/ssh-keys/api.md),
+  [`../../../docs/ssh-sessions/api.md`](../../../docs/ssh-sessions/api.md)

@@ -1,6 +1,6 @@
 # PKCS#11 Backend — Architecture
 
-> **Status: NORMATIVE** · Feature: `pkcs11-backend` · Repo: `go-xkms` · Last verified: 2026-09-24
+> **Status: NORMATIVE** · Feature: `pkcs11-backend` · Repo: `go-xkms` · Last verified: 2026-10-12
 
 ## Scope: the client backend, not the provider module
 
@@ -186,12 +186,9 @@ initialize, close) take the write lock, lookups take the read lock. `Seal`/
 releases the read lock itself to avoid the recursive-read-lock deadlock
 `sync.RWMutex` documents when a writer arrives between the two acquisitions.
 
-## Attestation: fully implemented, corrects a stale claim
+## Attestation: fully implemented
 
-The predecessor documentation for this backend (superseded
-`docs/pkcs11/backend/operations.md`) stated that `AttestKey`'s supporting
-helpers were placeholders returning "not implemented." **That is no longer
-true.** `AttestKey` (`attestation.go:296`) is fully implemented: it checks
+`AttestKey` (`attestation.go:296`) is fully implemented: it checks
 token support via `supportsAttestation()`, resolves the token's own device
 attestation key (`deviceAttestationKey()`), locates the target key object
 (`findKeyObject`, `attestation.go:515`), reads its public half

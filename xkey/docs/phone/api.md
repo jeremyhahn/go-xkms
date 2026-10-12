@@ -87,5 +87,5 @@ xkmsd server, proxying operations to a phone over the `local.*` methods via
 a `Sender` interface any `pairing.Transport`-backed sender can satisfy
 (`pkg/backend/phone/backend.go:36-62`). This is a `go-xkms` root capability
 consumed by xkmsd, not something `xkey/pkg/phone` calls into directly — see
-[`../../../docs/backends/README.md`](../../../docs/backends/README.md) and
+[`../../../docs/crypto-backends/engineering.md`](../../../docs/crypto-backends/engineering.md) and
 phone-hsm's architecture.md for where it sits in the stack.

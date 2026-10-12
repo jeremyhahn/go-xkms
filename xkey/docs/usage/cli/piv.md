@@ -338,6 +338,6 @@ Common error conditions:
 ## See Also
 
 - [PIV Architecture](../../piv/architecture.md)
-- [PKCS#11 Module](../../pkcs11/module/README.md)
-- [Backends](../../backends/README.md)
+- [PKCS#11 Module](../../../../docs/pkcs11-provider-module/user.md)
+- [Backends](../../../../docs/crypto-backends/user.md)
 - [Configuration Reference](../../configuration/README.md)

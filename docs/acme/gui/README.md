@@ -3,7 +3,7 @@
 > **The admin UI xkmsd actually serves is `/admin-ui`**, a separate
 > implementation (`pkg/acme/web/packages/admin`) mounted by
 > `cmd/xkmsd/admin.go:73` / `finalizeAdminModule`
-> (`cmd/xkmsd/admin.go:130`) — see [REST Protocol](../protocols/rest.md).
+> (`cmd/xkmsd/admin.go:130`) — see [acme-issuance/user.md](../../acme-issuance/user.md#browsing-the-api-interactively).
 >
 > **Correction (go-xkms#942):** this page describes `pkg/acme/gui/{admin,client,guard,webui}`
 > and a `cactl` binary. There is no `cactl` in this repository, and

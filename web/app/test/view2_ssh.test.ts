@@ -12,8 +12,8 @@
 //    Contact licensing@automatethethings.com for commercial licensing options.
 //
 // NOTE: xkmsd terminates no SSH session on any transport, and this SPA
-// deliberately ships no in-browser console (see docs/web/parity.md,
-// "Deliberately absent everywhere: an SSH console"). SshView is list /
+// deliberately ships no in-browser console (see docs/web-console/architecture.md,
+// "What this feature deliberately does not do"). SshView is list /
 // generate / delete only, plus a static note pointing operators at the xkey
 // client — there is no lazy-imported console and no host/port/user dialog to
 // test here.

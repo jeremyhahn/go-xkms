@@ -19,8 +19,8 @@
 // That file iterated every case (status, stats, tenant/EAB lifecycle,
 // certificate/account listing, output formats, error handling) across five
 // transports: REST, gRPC, QUIC, MCP, and Unix. xkmsd serves none of the
-// latter four for the ACME admin plane (docs/acme/protocols/grpc.md,
-// quic.md, mcp.md, unix-socket.md); wiring them is tracked in go-xkms#743,
+// latter four for the ACME admin plane (docs/acme-issuance/api.md,
+// "Transport adapters"); wiring them is tracked in go-xkms#743,
 // at which point a real transport matrix belongs back here. Until then a
 // "matrix" of one transport is just the REST suite, so this file keeps only
 // the assertions cli_test.go does not already cover — the filtered-list and

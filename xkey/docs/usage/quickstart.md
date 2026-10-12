@@ -46,7 +46,7 @@ xkmsctl pin verify
 xkmsctl pin verify --type so
 ```
 
-> **Deep dive**: [PIN Management](../seal/pin.md) | [PIN CLI Reference](cli/pin.md)
+> **Deep dive**: [PIN Management](../../../docs/pin-management/user.md) | [PIN CLI Reference](cli/pin.md)
 
 ## Step 4: Test Basic Operations
 
@@ -119,7 +119,7 @@ xkmsctl --tls-cert /etc/xkms/tls/admin.pem \
         admin status
 ```
 
-> **Deep dive**: [Authentication Configuration](../configuration/auth.md) | [TLS CLI Reference](../../../docs/certificate-authority/cli.md)
+> **Deep dive**: [Authentication Configuration](../../../docs/xkmsd-configuration/engineering.md#authentication-and-client-certificate-settings) | [TLS CLI Reference](../../../docs/certificate-authority/cli.md)
 
 ---
 
@@ -148,7 +148,7 @@ xkmsctl piv export 9a --backend pkcs11 > /etc/xkms/tls/admin-piv.pem
 
 **3. Configure mTLS to trust the PIV CA** and connect using the PIV-backed certificate. The PKCS#11 module handles the private key operations on the hardware token.
 
-> **Deep dive**: [PIV Documentation](../piv/user.md) | [PIV CLI Reference](cli/piv.md) | [PKCS#11 Backend](../backends/pkcs11.md)
+> **Deep dive**: [PIV Documentation](../piv/user.md) | [PIV CLI Reference](cli/piv.md) | [PKCS#11 Backend](../../../docs/pkcs11-backend/user.md)
 
 ---
 
@@ -261,7 +261,7 @@ The server unseals the barrier on each restart through the configured seal strat
 | Backend selection and Go API | [Getting Started](getting-started.md) |
 | Full initialization procedures | [Initialization Guide](initialization.md) |
 | Barrier encryption architecture | [Seal/Unseal Architecture](../seal/architecture.md) |
-| Bootstrap for new nodes | [Bootstrap Configuration](../configuration/bootstrap.md) |
+| Bootstrap for new nodes | [Bootstrap Configuration](../../../docs/trust-bootstrap/engineering.md#configuration) |
 | CLI command reference | [CLI Overview](cli/README.md) |
 | PIV slot management | [PIV Documentation](../piv/user.md) |
 | xKey security key interface | [xKey Overview](../README.md) |

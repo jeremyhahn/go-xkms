@@ -1,6 +1,6 @@
 # PKCS#11 Module/Token Manager — Architecture
 
-> **Status: NORMATIVE** · Feature: `pkcs11-manager` · Module: `go-xkms/xkey` · Last verified: 2026-09-23
+> **Status: NORMATIVE** · Feature: `pkcs11-manager` · Module: `go-xkms/xkey` · Last verified: 2026-10-12
 
 ## The problem
 
@@ -95,14 +95,14 @@ An alternative was to give `pkg/pkcs11/manager` itself a
 mirroring `pkcs11mgr`'s original constructor shape. That was rejected: the
 manager is hardware-crypto logic owned by go-xkms proper and reached by
 several consumers beyond xkey (see
-[docs/pkcs11/manager.md](../../../docs/pkcs11/manager.md)); teaching it about
+[docs/pkcs11-provider-module/engineering.md](../../../docs/pkcs11-provider-module/engineering.md#pkgpkcs11manager)); teaching it about
 one consumer's GUI-facing registry type would invert the dependency the SDK
 boundary exists to enforce. `PKCS11Service` sits on the xkey side of that
 boundary already, so the synchronization logic belongs there.
 
 ## Cross-references
 
-- [PKCS#11 module/token manager](../../../docs/pkcs11/manager.md) -- the
+- [PKCS#11 module/token manager](../../../docs/pkcs11-provider-module/engineering.md#pkgpkcs11manager) -- the
   manager this feature is built on
 - [PKCS#11 IPC transport](../pkcs11/ipc.md) -- a different PKCS#11-adjacent
   concern in xkey (external processes talking to a running xkey instance),

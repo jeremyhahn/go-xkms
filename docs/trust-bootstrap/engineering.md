@@ -1,6 +1,6 @@
 # Trust Bootstrap — Engineering Contract
 
-> **Status: NORMATIVE** · Feature: `trust-bootstrap` · Repo: `go-xkms` · Last verified: 2026-09-22 (go-xkms#632: `BootstrapListenerKeys`)
+> **Status: NORMATIVE** · Feature: `trust-bootstrap` · Repo: `go-xkms` · Last verified: 2026-10-12
 
 ## Exported surface — `pkg/trust/bootstrap`
 
@@ -75,6 +75,31 @@ is configured, else P-256. A FIPS client needs `ServerP256StaticKey` to use
 this transport at all — the value `xkmsctl bootstrap noise show-p256-key`
 prints for the server's key.
 
+### The other sub-configs
+
+| Type | Fields | Source |
+|---|---|---|
+| `DANEConfig` | `Hostname`, `DNSServer`, `DNSOverTLS`, `DNSTLSServerName` | `bootstrap.go:176-191` |
+| `SPKIConfig` | `Pin`: hex SHA-256 SPKI pin, 64 characters | `bootstrap.go:229-233` |
+| `DirectConfig` | none; a non-nil value enables direct mode | `bootstrap.go:239` |
+| `TOFUConfig` | `PinStore truststrap.PinStore` (required), `ConfirmFunc` | `bootstrap.go:251-264` |
+
+`TOFUConfig.ConfirmFunc` runs before a newly captured pin is persisted. If it
+returns an error, the fetch fails with `truststrap.ErrTOFURejected` and nothing
+is stored. If it is nil, new pins are accepted and a WARNING line is logged.
+
+`NewDANETLSConfig` takes its hostname from `DANEConfig.Hostname` when set,
+otherwise from the `hostname` argument. With neither, it returns
+`ErrHostnameRequired`. The TLSA lookup requires DNSSEC-authenticated answers
+(`RequireAD`) (`tlsconfig.go:27`, `:45-64`).
+
+`NewStoragePinStore(storage.Backend)` is the `truststrap.PinStore` used for
+TOFU (`pinstore_qrdb.go:108-113`). A nil backend gives `NilBackendError{}`.
+Each pin is stored as JSON under `trust/tofu/pins/<host:port>`, built with
+`net.JoinHostPort`, so IPv6 hosts are bracketed (`pinstore_qrdb.go:29`, `:116`).
+The SDK aliases are in `sdk/go/bootstrap/bootstrap.go`: `NewDANETLSConfig`
+(`:98`), `NewSPKIPinTLSConfig` (`:102`) and `NewStoragePinStore` (`:128`).
+
 ### `CABundle`
 
 ```go
@@ -140,6 +165,143 @@ Use `errors.Is(err, ErrFetch)` for "any fetch-level failure" and
 `errors.As`/`errors.Unwrap` to recover the truststrap cause for finer dispatch.
 `FetchError.Mode` tells you which anchor was being attempted, which is the field
 that makes an `ModeAuto` failure diagnosable.
+
+## Exported surface — `pkg/trust/resolver`
+
+The resolver is scope-keyed. For a `(scope, endpoint)` pair it runs the scope's
+strategies in order and returns the first success. It runs the network
+strategies through `bootstrap.Fetch` (`resolver.go:506`). The local ones,
+`embedded`, `ca-file` and `provider-ca`, it handles itself.
+
+| Strategy | Anchor | Source |
+|---|---|---|
+| `dane` | DNSSEC-validated TLSA | `config.go:40` |
+| `noise` | the server's static bootstrap key | `config.go:44` |
+| `spki` | SHA-256 SPKI pin of the leaf | `config.go:48` |
+| `embedded` | `x509.SystemCertPool`; no fetch, and `CABundlePEM` returns `nil, nil` | `config.go:52`, `resolver.go:443` |
+| `ca-file` | a PEM file on local disk | `config.go:55` |
+| `provider-ca` | an injected `CABundleProvider` | `config.go:59` |
+| `tofu` | first-use pin, via `WithTOFUPinStore` | `config.go:66` |
+
+Scopes are free-form keys under `trust.scopes` in the xkmsd config
+(`pkg/config/config.go:69`, `resolver/config.go:72-125`):
+
+```yaml
+trust:
+  scopes:
+    default:
+      strategies: [dane, noise, spki, embedded]
+      server-url: "https://kms.example.com:8443"
+      hostname: "kms.example.com"
+      per-method-timeout: 10s
+      dane:
+        dns-server: "198.51.100.53:53"
+        dns-over-tls: false
+      spki:
+        pin: "<64-hex-chars>"      # or pin-file: <path>
+    internal:
+      strategies: [provider-ca]
+```
+
+The other scope keys are `bundle-path`, `install-to-system-trust`, `noise`
+(see Configuration below), `tofu`, `ca-file` and
+`dane.dns-tls-server-name`. `tofu:` takes no fields
+(`TOFUScopeConfig struct{}`, `config.go:167`); its store is runtime state.
+
+**Validation** (`ScopeConfig.validate`, `config.go:217-289`) returns
+`*ErrInvalidConfig` when:
+
+- `strategies` is empty, or names an unknown strategy;
+- a `noise:` block has neither key, or has no `server-addr`;
+- `per-method-timeout` is negative.
+
+When `spki.pin` is empty and `spki.pin-file` is set, validation reads the file,
+trims whitespace, and uses the result as the pin. A `tofu` strategy with no
+store fails with `ErrTOFUPinStoreRequired{}`.
+
+```go
+func New(cfg *Config, opts ...Option) (Resolver, error)   // resolver.go:153
+// Options: WithLogger, WithPinStore, WithCABundleProvider,
+//          WithTOFUPinStore(truststrap.PinStore), WithTOFUConfirmFunc
+
+type Resolver interface {
+	TLSConfig(ctx context.Context, scope, endpoint string) (*tls.Config, error)
+	CAPool(ctx context.Context, scope, endpoint string) (*x509.CertPool, error)
+	CABundlePEM(ctx context.Context, scope string) ([]byte, error)
+}
+type PinStore interface         { SPKIPin(ctx context.Context, endpoint string) (string, error) }
+type CABundleProvider interface { CABundle(ctx context.Context) ([]byte, error) }
+
+func InstallToSystemTrust(bundlePEM []byte, certPath string) error // install.go:27
+```
+
+How the resolver behaves:
+
+- `New` returns `ErrNilConfig{}` for a nil config. It then validates the config,
+  treating TOFU as allowed only when a TOFU store was supplied.
+- An unknown scope is `*ErrScopeNotConfigured` (`resolver.go:296`).
+- An endpoint without a port is assumed to use 443 (`resolver.go:33`).
+- Only `CAPool` caches. It keeps successful pools in a `sync.Map` keyed by
+  `(scope, endpoint)` (`resolver.go:142`, `:229-258`). `TLSConfig` and
+  `CABundlePEM` resolve again on every call.
+- When every strategy fails, the error is `*ErrNoStrategySucceeded`. Its
+  `Attempts` list holds one `Attempt{Strategy, Err}` per strategy, in chain
+  order, and `Unwrap() []error` exposes each cause (`errors.go:156-183`).
+- `InstallToSystemTrust` refuses an empty bundle with `ErrCABundleEmpty`. It
+  creates parent directories at 0755 and writes the file at 0644. A failure is
+  `*ErrWriteFailed`.
+
+**Parsed but unread, as shipped:** nothing in go-xkms calls
+`InstallToSystemTrust` except the SDK aliases. The `install-to-system-trust`
+scope key decodes but has no effect.
+
+Typed errors (`pkg/trust/resolver/errors.go`):
+
+| Error | Meaning |
+|---|---|
+| `ErrNilConfig{}` | nil `*Config` passed to `New` |
+| `*ErrScopeNotConfigured` | scope absent from `Config.Scopes` |
+| `*ErrInvalidConfig` | a scope field is missing or malformed |
+| `*ErrFetchFailed` | one strategy's fetch failed |
+| `ErrCABundleEmpty{}` | the bundle had zero bytes |
+| `ErrCABundleParse{}` | the bundle had bytes but no parseable PEM |
+| `*ErrWriteFailed` | `InstallToSystemTrust` could not write |
+| `ErrProviderCAUnavailable{}` | `provider-ca` with no injected provider |
+| `*ErrPinNotFound` | no SPKI pin in the `PinStore` or the scope |
+| `*ErrCAFileRead` | `ca-file` could not be read |
+| `*ErrEndpointInvalid` | the endpoint or `server-url` does not parse |
+| `ErrTOFUPinStoreRequired{}` | `tofu` with no `WithTOFUPinStore` |
+| `*ErrNoStrategySucceeded` | every strategy in the chain failed |
+
+The SDK exposes the resolver in two places:
+
+- `sdk/go/trust/resolver` re-exports it under the same names. It adds
+  `LoadTrustConfig(path)` (`resolver.go:136`) to read the `trust:` section of
+  a config file.
+- The flat `sdk/go` package uses a `TrustResolver` prefix, for example
+  `TrustResolverNew`, `TrustResolverWithLogger` and
+  `TrustResolverInstallToSystemTrust` (`sdk/go/trust.go:157`, `:165`, `:184`).
+  This avoids clashing with the `TrustBootstrap*` names in the same package.
+
+## Exported surface — `pkg/trust/dane` (re-exported by `sdk/go/dane`)
+
+The publishing half of DANE. go-xkms derives TLSA records but ships no DNS
+code: the application that owns the zone supplies the publisher
+(`pkg/trust/dane/publisher.go:14-20`). Nothing inside go-xkms registers one.
+
+| Name | Contract |
+|---|---|
+| `Record{Name, Usage, Selector, MatchingType, Data, TTL}` | one TLSA record; `Data` is hex (`publisher.go:43`) |
+| `DANEPublisher` | `PublishDANE(ctx, records []Record) error`; implementations must be safe for concurrent use (`publisher.go:70`) |
+| `ErrNoDANEPublisher` | `dane: no publisher configured` (`publisher.go:78`) |
+| `BuildRecords(cert, hostname, port)` | DANE-TA records over both selectors and both SHA variants, via go-truststrap's `GenerateCommonTLSARecords`, each with `DefaultTTL` (`publisher.go:86`) |
+| `DefaultTTL` | `3600` seconds (`publisher.go:36`) |
+| `UsageDANETA`, `UsageDANEEE`, `SelectorFullCert`, `SelectorSPKI`, `MatchingSHA256`, `MatchingSHA512`, `ComputeTLSAData`, `ErrInvalidCertificate` | the TLSA field values and digest helper (`pkg/trust/dane/truststrap.go`) |
+
+The SDK aliases are `sdk/go/dane/dane.go:27` (`Record`), `:30`
+(`DANEPublisher`), `:39` (`ErrNoDANEPublisher`) and `:43` (`BuildRecords`).
+For hand-run record generation and checks, see `xkmsctl bootstrap dane` in
+[`cli.md`](cli.md).
 
 ## Admin read of the listener's own public keys — `pkg/xkms` (go-xkms#632)
 
@@ -280,7 +442,22 @@ Server side — the ports the bootstrap channel uses:
 ```yaml
 server:
   noise_port: 8447        # configs/xkmsd-local.yaml
+protocols:
+  noise: true             # the only switch that starts the listener
 ```
+
+`server.noise_port` is `ServerConfig.NoisePort` (`pkg/config/config.go:319`).
+When `protocols.noise` is set, validation rejects a port outside 1–65535
+(`config.go:1572-1574`). Nothing checks that the port differs from the other
+listeners' ports.
+
+Only `protocols.noise` starts the listener (`pkg/server/server.go:2464-2467`).
+**Parsed but unread, as shipped:** `bootstrap.noise.enabled`.
+
+Every key can be overridden from the environment. The variable name is `XKMS_`
+followed by the key path, with `.` and `-` turned into `_`. For example,
+`XKMS_SERVER_NOISE_PORT` overrides `server.noise_port`
+(`pkg/config/load.go:38`, `:163-198`).
 
 Server side — custody of the static keys the listener serves each suite with
 (`config.NoiseBootstrapConfig`, YAML key `bootstrap.noise`; go-xkms#35,
@@ -330,6 +507,28 @@ but the value is never read.
 The struct is still named `NoiseBootstrapConfig` and still lives under the
 `bootstrap.noise` YAML key. That is historical — it predates the second suite.
 
+The same block bounds the listener (`pkg/config/config.go:1314-1326`, applied
+at `pkg/server/server.go:3147-3165`):
+
+```yaml
+bootstrap:
+  noise:
+    enabled: true
+    max_connections: 100   # concurrent handshakes; <= 0 means 100
+    read_timeout: 10s      # per read
+    write_timeout: 10s     # per write
+```
+
+A timeout that does not parse as a Go duration is ignored and the 10-second
+default stays, without an error or a warning.
+
+**Parsed but unread, as shipped:** `bootstrap.spki` (`enabled`, `pin_sha256`)
+and `bootstrap.dane` (`enabled`, `hostname`, `port`, `dns_server`) decode into
+`SPKIBootstrapConfig` and `DANEBootstrapConfig`
+(`pkg/config/config.go:1329-1351`), but no xkmsd code reads either. SPKI and
+DANE are client-side anchors: the pin and the TLSA lookup are configured on the
+client (`xkmsctl bootstrap` flags, or the resolver's scope), not on the server.
+
 **Sequencing (Ruling 1, go-xkms#35):** the bootstrap listener is a network
 service and so must not bind before the barrier is unsealed. This already
 holds by construction and needs no extra gating here: `s.barrier` is set
@@ -377,8 +576,8 @@ means `/v1/ca/bootstrap` (the canonical unauthenticated route), while the CLI's
 bundle, but only the first works before the client has credentials. Documented
 as shipped; reconciling the two is an owner decision.
 
-TOFU pin persistence is `pkg/trust/bootstrap/pinstore_qrdb.go`, backed by
-`go-qrdb/sdk/go`. The pin store is a security boundary — treat write access to
+TOFU pin persistence is `pkg/trust/bootstrap/pinstore_qrdb.go`, backed by any
+`pkg/storage` backend (`pinstore_qrdb.go:22`, `:108`). The pin store is a security boundary — treat write access to
 it as equivalent to the ability to re-anchor trust.
 
 ## Persistence

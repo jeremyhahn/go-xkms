@@ -1,6 +1,6 @@
 # Auth Factors — API
 
-> **Status: NORMATIVE** · Feature: `auth-factors` · Repo: `go-xkms` · Last verified: 2026-10-11
+> **Status: NORMATIVE** · Feature: `auth-factors` · Repo: `go-xkms` · Last verified: 2026-10-12
 
 Transport shapes: [`../key-management/api.md`](../key-management/api.md)
 §"How the six transports are shaped".
@@ -24,6 +24,30 @@ What *is* on the wire is (a) the hardware operations each factor wraps, and
 | Register into an existing registry | `registry.Register(f)` for each of `DefaultFactors(cfg)` | the registry type is **go-qrdb's** |
 
 SDK access is `Security().Auth().FIDO2()` and `Security().Auth().PIV()`.
+
+## The SDK login plane
+
+Projects above go-xkms reach the whole login plane through `sdk/go`, without
+importing `pkg/*`:
+
+| Need | SDK call | Source |
+|---|---|---|
+| Hardware factor verification inside an embedded qrdb node | `xkms.WithXKMSFactorVerifiers(AuthFactorOptions)` returns `embedded.Option`s for qrdb's embedded transport | `sdk/go/auth.go:149` |
+| Factor records (enroll, list, remove) and the rest of the identity plane | `xkms.Auth(qrdbClient)`: `Users`, `Roles`, `Permissions`, `Factors`, `Login`, `Sessions`, `RBAC`, `VolumePools` | `sdk/go/auth.go:38,80` |
+| PIV login and the session pair | `xkms.NewLoginClient(cfg)`: `PIVLogin`, `Refresh`, `Logout`, `Validate` | `sdk/go/login.go:89` |
+
+`WithXKMSFactorVerifiers` always registers the PKCS#11 verifier, whose enrolled
+public key travels in the factor record. It registers the WebAuthn verifier
+only when `WebAuthnService` is set, and the PIV verifier only when `PIVRoots`
+is set (`sdk/go/auth.go:151-165`). A missing dependency is not an error.
+
+`PIVLogin` posts to `POST /api/v1/auth/login/piv` (`sdk/go/login.go:122`). The
+PIV slot certificate is the TLS client certificate, so this client speaks
+mTLS HTTPS directly; possession of the card key is the credential.
+
+The factor-record service itself is go-qrdb's `UserAuthFactorService`, hosted
+on xkmsd's gRPC server and unix socket (`pkg/server/qrdb_control_plane.go:57`).
+go-xkms has no REST proxy for it.
 
 ## Factor challenge and response payloads
 

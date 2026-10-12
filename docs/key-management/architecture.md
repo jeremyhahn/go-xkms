@@ -1,6 +1,6 @@
 # Key Management — Architecture
 
-> **Status: NORMATIVE** · Feature: `key-management` · Repo: `go-xkms` · Last verified: 2026-08-19
+> **Status: NORMATIVE** · Feature: `key-management` · Repo: `go-xkms` · Last verified: 2026-10-12
 
 ## The problem
 
@@ -33,7 +33,7 @@ Rejected alternatives:
   backend set is a deployment decision, not a build decision: the same binary
   ships to a laptop with no TPM and to a node with a hardware token. Backends
   are instead selected by config and compiled in behind build tags
-  (`configuration/build-system.md` in the legacy tree; see `engineering.md`).
+  (see [`../crypto-backends/engineering.md`](../crypto-backends/engineering.md#build-toggles)).
 - **Passing raw `crypto.Signer` around.** Rejected because it cannot express
   the operations that only exist in hardware — attestation, wrap/unwrap under
   a KEK that never leaves the device, sealed export — and because it gives no

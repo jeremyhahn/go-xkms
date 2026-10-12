@@ -1,6 +1,6 @@
 # Multi-Tenancy — Architecture
 
-> **Status: NORMATIVE** · Feature: `multi-tenancy` · Repo: `go-xkms` · Last verified: 2026-10-04
+> **Status: NORMATIVE** · Feature: `multi-tenancy` · Repo: `go-xkms` · Last verified: 2026-10-12
 
 ## The problem
 
@@ -136,6 +136,15 @@ plane works before any tenant barrier unseals
   separate entitlement.
 - **Per-tenant barriers isolate tenants from each other, not from the
   operator.**
+
+## ACME issuance tenants
+
+The ACME admin plane (`pkg/acme/admin`) keeps its own tenant record, carrying a
+per-tenant CA hierarchy (optional tenant root, purpose-tagged intermediates, a
+default intermediate) that finalize selects the signing CA from. That record and
+its routes are documented with ACME issuance:
+[`../acme-issuance/engineering.md`](../acme-issuance/engineering.md#acme-tenant-ca-hierarchy)
+and [`../acme-issuance/api.md`](../acme-issuance/api.md#admin-api-tenant-routes).
 
 ## What this feature deliberately does not do
 

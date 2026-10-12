@@ -63,7 +63,7 @@ go build -tags "awskms" ./...
 | FROST | `frost` | Enabled | `WITH_FROST` |
 
 The full toggle list, provider umbrellas and profile targets are in
-[Build System](../../../docs/configuration/build-system.md).
+[Build toggles](../../../docs/crypto-backends/engineering.md#build-toggles).
 
 ### Why Opt Out?
 
@@ -550,7 +550,7 @@ store, err := xkms.New(&xkms.BackendConfig{
 })
 ```
 
-**Learn More:** [Software Backend Documentation](../backends/software.md)
+**Learn More:** [Software Backend Documentation](../../../docs/crypto-backends/user.md)
 
 ### TPM 2.0 - Hardware-Backed On-Premise
 
@@ -570,7 +570,7 @@ config := &tpm2.Config{
 store, err := tpm2.NewBackend(config, backend)
 ```
 
-**Learn More:** [TPM2 Documentation](../backends/tpm2.md)
+**Learn More:** [TPM2 Documentation](../../../docs/tpm2/user.md)
 
 ### PKCS#11 - Enterprise HSM
 
@@ -590,7 +590,7 @@ config := &pkcs11.Config{
 store, err := pkcs11.NewBackend(config)
 ```
 
-**Learn More:** [PKCS#11 Documentation](../backends/pkcs11.md)
+**Learn More:** [PKCS#11 Documentation](../../../docs/pkcs11-backend/user.md)
 
 ### AWS KMS - Amazon Cloud HSM
 
@@ -608,7 +608,7 @@ config := &awskms.Config{
 store, err := awskms.NewBackend(config)
 ```
 
-**Learn More:** [AWS KMS Documentation](../backends/awskms.md)
+**Learn More:** [AWS KMS Documentation](../../../docs/crypto-backends/user.md)
 
 ### GCP KMS - Google Cloud HSM
 
@@ -627,7 +627,7 @@ config := &gcpkms.Config{
 store, err := gcpkms.NewBackend(config)
 ```
 
-**Learn More:** [GCP KMS Documentation](../backends/gcpkms.md)
+**Learn More:** [GCP KMS Documentation](../../../docs/crypto-backends/user.md)
 
 ### Azure Key Vault - Microsoft Cloud HSM
 
@@ -645,7 +645,7 @@ config := &azurekv.Config{
 store, err := azurekv.NewBackend(config)
 ```
 
-**Learn More:** [Azure Key Vault Documentation](../backends/azurekv.md)
+**Learn More:** [Azure Key Vault Documentation](../../../docs/crypto-backends/user.md)
 
 ## Common Use Cases
 
@@ -1016,7 +1016,7 @@ With the barrier unsealed, enroll a client certificate for mTLS:
 xkey cert request --server https://kms.example.com:8443 --cn "alice@example.com"
 ```
 
-See the [Bootstrap Architecture](../bootstrap/README.md) for protocol details on DANE, Noise, and SPKI trust methods.
+See the [Bootstrap Architecture](../../../docs/trust-bootstrap/architecture.md) for protocol details on DANE, Noise, and SPKI trust methods.
 
 ## Next Steps
 
@@ -1028,12 +1028,12 @@ See the [Bootstrap Architecture](../bootstrap/README.md) for protocol details on
 
 ## Additional Resources
 
-- [Software Backend Documentation](../backends/software.md)
-- [TPM2 Backend Documentation](../backends/tpm2.md)
-- [PKCS#11 Backend Documentation](../backends/pkcs11.md)
-- [AWS KMS Backend Documentation](../backends/awskms.md)
-- [GCP KMS Backend Documentation](../backends/gcpkms.md)
-- [Azure Key Vault Backend Documentation](../backends/azurekv.md)
+- [Software Backend Documentation](../../../docs/crypto-backends/user.md)
+- [TPM2 Backend Documentation](../../../docs/tpm2/user.md)
+- [PKCS#11 Backend Documentation](../../../docs/pkcs11-backend/user.md)
+- [AWS KMS Backend Documentation](../../../docs/crypto-backends/user.md)
+- [GCP KMS Backend Documentation](../../../docs/crypto-backends/user.md)
+- [Azure Key Vault Backend Documentation](../../../docs/crypto-backends/user.md)
 - [Go SDK README](../../sdk/go/README.md)
 
 ## Support

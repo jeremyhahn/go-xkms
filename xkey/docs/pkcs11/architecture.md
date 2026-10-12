@@ -1,6 +1,6 @@
 # PKCS#11 — Architecture
 
-> **Status: NORMATIVE** · Feature: `pkcs11` · Module: `go-xkms/xkey` · Last verified: 2026-10-10
+> **Status: NORMATIVE** · Feature: `pkcs11` · Module: `go-xkms/xkey` · Last verified: 2026-10-12
 
 ## Scope
 
@@ -12,7 +12,7 @@ itself (`cmd/pkcs11-module`, a cgo shared library other applications
 `dlopen`) or the PKCS#11 crypto **backend** (a way to store xkms keys on an
 HSM) — both are root-owned and documented at
 [`../../../docs/pkcs11-provider-module/`](../../../docs/pkcs11-provider-module/)
-and [`../../../docs/pkcs11/backend/`](../../../docs/pkcs11/backend/)
+and [`../../../docs/pkcs11-backend/`](../../../docs/pkcs11-backend/architecture.md)
 respectively. There is no `xkey pkcs11` CLI verb group; PKCS#11 is a
 `--backend pkcs11` (or `--device-backend pkcs11`) option accepted by
 several unrelated commands — see [cli.md](cli.md).
@@ -160,4 +160,4 @@ same root `PKCS11Transport` contract.
 - [API](api.md) — GUI Wails bindings and the IPC wire protocol
 - [User Guide](user.md) — task-oriented usage
 - Root PKCS#11 module: [`../../../docs/pkcs11-provider-module/`](../../../docs/pkcs11-provider-module/)
-- Root PKCS#11 manager and backend: [`../../../docs/pkcs11/manager.md`](../../../docs/pkcs11/manager.md), [`../../../docs/pkcs11/backend/`](../../../docs/pkcs11/backend/)
+- Root PKCS#11 manager and backend: [`../../../docs/pkcs11-provider-module/engineering.md`](../../../docs/pkcs11-provider-module/engineering.md#pkgpkcs11manager), [`../../../docs/pkcs11-backend/`](../../../docs/pkcs11-backend/architecture.md)

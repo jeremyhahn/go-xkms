@@ -1,6 +1,6 @@
 # Crypto Backends — Engineering Contract
 
-> **Status: NORMATIVE** · Feature: `crypto-backends` · Repo: `go-xkms` · Last verified: 2026-10-11
+> **Status: NORMATIVE** · Feature: `crypto-backends` · Repo: `go-xkms` · Last verified: 2026-10-12
 
 ## Exported surface
 
@@ -55,8 +55,13 @@ Helpers: `HasKeys()`, `IsHardwareBacked()`, `SupportsSymmetricEncryption()`,
 `SupportsQuantumSigning()`, `SupportsKeyEncapsulation()`.
 
 `SecurityLevel` values, from `pkg/types`: `0` Low (software), `1` Medium
-(cloud), `2` High (PKCS#11), `3` VeryHigh (TPM2). It is a sort key for UIs, not
-an authorization input.
+(cloud), `2` High (PKCS#11), `3` VeryHigh (TPM2) — `pkg/types/types.go:1589`.
+It is a sort key for UIs, not an authorization input. `SecurityLevel.String()`
+(`:1607`) and `.Description()` (`:1623`) give the label and one-line
+description; `Capabilities.GetSecurityLevel()` (`:1760`) reads it. Beyond
+PKCS#11 and TPM2, the phone backend declares High
+(`pkg/backend/phone/backend.go:204`) and Vault declares Medium alongside the
+cloud KMS backends (`pkg/backend/vault/vault.go:175`).
 
 ### Registration
 
@@ -429,6 +434,25 @@ The release targets build with the fixed lists `CLI_BUILD_TAGS` and
 `SERVER_BUILD_TAGS` (`Makefile:74-76`, used at `Makefile:948-977`), not with
 the toggles.
 
+The remaining toggles gate no key backend. `WITH_AWS_S3`, `WITH_MINIO`,
+`WITH_GCP_STORAGE`, `WITH_AZURE_BLOB`, `WITH_GLACIER` and `WITH_AZURE_ARCHIVE`
+(`Makefile:31-36`) add the go-objstore tags `awss3`, `minio`, `gcpstorage`,
+`azureblob`, `glacier` and `azurearchive` (`Makefile:108-125`) for the
+embedded qrdb datastore's object-store and backup targets; `WITH_AWS` also
+sets `WITH_AWS_S3` and `WITH_GLACIER`, `WITH_GCP` sets `WITH_GCP_STORAGE`, and
+`WITH_AZURE` sets `WITH_AZURE_BLOB` and `WITH_AZURE_ARCHIVE` (`Makefile:56-69`).
+The codec tags `codec_cbor codec_json codec_msgpack` are not toggles: they
+seed `BUILD_TAGS` (`Makefile:82`) because the qrdb DAO layer needs them. The
+toggles do not reach `TEST_TAGS` (`Makefile:408`), and a plain `go build`
+outside `make` passes no tags at all. `make show-backends` (`Makefile:4701`)
+prints the key-backend toggles and the resulting `BUILD_TAGS`.
+
+`xkey/Makefile` has its own, smaller set: `WITH_PKCS11` (`xkey/Makefile:35`)
+and the same six object-store toggles (`xkey/Makefile:44-49`), listed in its
+`FEATURE_TOGGLES` (`xkey/Makefile:50`), the same three umbrellas over the
+object-store family only (`xkey/Makefile:53-57`), and its own `build-full` /
+`build-minimal` (`xkey/Makefile:237`, `:242`).
+
 ### A configured backend that is not compiled in
 
 What happens depends on the entry point:
@@ -456,8 +480,10 @@ What happens depends on the entry point:
   (`pkg/server/backend_frost_stub.go:25-30`).
 
 Runtime backend configuration is the `backends:` section of the server config
-(`pkg/config/config.go`). Provider credentials come from the server process's
-environment, never from a file in this repo.
+(`pkg/config/config.go`), described per backend in §"Per-backend
+configuration" below. Provider credentials come from the server's side —
+its config (as `credential://` references) or its process environment —
+never from a file in this repo.
 
 **`pkg/backend/tpm2.Config.KeyDir` has no default** (`config.go:108-118`,
 issue #926): `Validate` returns `*errs.Detail` wrapping `ErrKeyDirRequired`
@@ -482,6 +508,219 @@ derive: when `storage.NewPrefixBackend` over `Datastore` fails, it returns
 `*xkms.BackendStorageError` (`pkg/xkms/auto.go:112-115`), which names the
 backend and wraps the cause, and matches `xkms.ErrBackendStorageUnresolved`
 as well as the cause with `errors.Is` (`pkg/xkms/errors_auto.go:58-72`).
+
+### Per-backend configuration
+
+Every backend has two configuration surfaces. The first is the `xkmsd` YAML
+section `backends.<name>`: `config.BackendsConfig` (`pkg/config/config.go:1113`),
+mapped onto the package `Config` by `pkg/server/backend_<name>.go`. The second
+is the SDK map `AutoConfig.BackendConfigs[<name>]`, read by the factory in
+`pkg/xkms/register_<name>.go`. The two do not expose the same keys. Every
+package `Config` has a `Validate` that its constructor calls first.
+
+A field typed `*types.SecretValue` (AWS `secret_key`, Azure `client_secret`,
+Vault `token`, PKCS#11 `pin`) must be a `credential://<name>` reference. How
+those references resolve is described in
+[`../backend-credentials/`](../backend-credentials/engineering.md) and
+[`../xkmsd-configuration/engineering.md`](../xkmsd-configuration/engineering.md).
+
+**Defect: cloud backends cannot be constructed through `xkmsd` or
+`AutoInitialize`.** The awskms, gcpkms, azurekv and vault `Config.Validate`
+methods all require `CertStorage`:
+
+- awskms: `pkg/backend/awskms/config.go:108`
+- gcpkms: `pkg/backend/gcpkms/config.go:123`
+- azurekv: `pkg/backend/azurekv/config.go:118`
+- vault: `pkg/backend/vault/config.go:83`
+
+Each `NewBackend` calls `Validate` first: `awskms.go:78`, `gcpkms.go:171`,
+`azurekv.go:176`, `vault.go:75`. Neither caller sets `CertStorage`:
+
+- the `xkmsd` initializers (`pkg/server/backend_awskms.go:43-50` and its
+  gcpkms, azurekv and vault siblings);
+- the SDK factories (`pkg/xkms/register_awskms.go:46`, `register_gcpkms.go:48`,
+  `register_azurekv.go:53`, `register_vault.go:52`).
+
+All four therefore fail with `cert storage is required`. The SDK factories
+also set `KeyStorage: storage.New()` (in memory), so they ignore the
+`key_storage` that `AutoInitialize` derives from `Datastore`.
+
+#### software
+
+| Surface | Keys |
+|---|---|
+| `xkmsd` | `enabled`, `path` (`pkg/config/config.go:1127`; built at `pkg/server/server.go:1065`) |
+| SDK | `key_storage` |
+
+`software.Config` needs `KeyStorage`; `Tracker` is optional
+(`pkg/backend/software/config.go:38`). The backend is a facade over two
+providers:
+
+- asymmetric keys go to a PKCS#8 provider (`pkg/backend/software/software.go:162`);
+- symmetric keys go to the symmetric provider (`software.go:179`).
+
+A nil `Tracker` gets `backend.NewMemoryAEADTracker()` (`software.go:171`). That
+in-memory tracker is the only implementation in the repository; see
+[`../symmetric-aead/`](../symmetric-aead/engineering.md).
+
+RSA sizes are bounded by `types.ValidateRSAKeySize` to 2048–4096 bits
+(`pkg/types/algorithms.go:666-671`). The symmetric algorithms are AES-128/192/256-GCM,
+ChaCha20-Poly1305 and XChaCha20-Poly1305
+(`pkg/keyprovider/symmetric/encrypted_data.go:273-291`).
+
+#### pkcs8
+
+| Surface | Keys |
+|---|---|
+| `xkmsd` | `enabled`, `path` (`pkg/config/config.go:1133`; built at `pkg/server/server.go:1083`) |
+| SDK | `key_storage`, `allow_plaintext_keys` |
+
+- **Password protection.** When `KeyAttributes.Password` is set, the key is
+  stored as an encrypted PKCS#8 blob (`pkg/keyprovider/pkcs8/pkcs8.go:277`,
+  `:333`) via `github.com/youmark/pkcs8` (`:688`, `:726`).
+- **Key agreement.** `DeriveSharedSecret` (`pkcs8.go:820`) supports X25519 and
+  the NIST curves; `Capabilities` reports `KeyAgreement: true` and
+  `SymmetricEncryption`/`ECIES: false` (`pkcs8.go:75-79`).
+- **Sealing.** `Seal` derives an AES-256-GCM key from the private key with
+  stdlib HKDF-SHA256 (`pkg/keyprovider/pkcs8/sealer.go:305`).
+- **Close.** Every operation after `Close` returns `pkcs8.ErrStorageClosed`
+  (`pkg/keyprovider/pkcs8/errors.go:32`).
+
+#### tpm2
+
+| Surface | Keys |
+|---|---|
+| `xkmsd` | `enabled`, `device_path`, `use_simulator`, `simulator_host`, `simulator_port`, `srk_handle` (default `0x81000001`), `platform_pcr` (default 16), `platform_pcr_bank` (default `sha256`), `vtpm` (`pkg/config/config.go:1139`; mapped at `pkg/server/backend_tpm2.go:122-127`) |
+| SDK | `device`, `key_storage`, `use_simulator`, `simulator_host`, `simulator_port` (`pkg/xkms/register_tpm2.go:54-66`) |
+
+When neither a device nor the simulator is configured, `Validate`
+(`pkg/backend/tpm2/config.go:105`) defaults the device to `/dev/tpmrm0`. A
+missing device returns `ErrTPMNotAvailable`.
+Everything about SRK, sessions, PCR policy, PIN enrollment and NV storage is in
+[`../tpm2/`](../tpm2/engineering.md).
+
+#### pkcs11
+
+| Surface | Keys |
+|---|---|
+| `xkmsd` | `enabled`, `library`, `token` (label), `pin` (`pkg/config/config.go:1188`) |
+| SDK | `library`, `config`, `pin`, `so_pin`, `label`, `slot`, `key_storage`, `cert_storage`, `key_dir` (`pkg/xkms/register_pkcs11.go:54-111`) |
+
+`xkmsd` only logs in (`pkg/server/backend_pkcs11.go:23`). Initializing a token
+with its SO PIN is an operator step. A Nitrokey HSM is detected as a
+SmartCard-HSM device (`pkg/pkcs11/manager/detect.go:85-97`). Mechanisms,
+session pool and PIN handling are in
+[`../pkcs11-backend/`](../pkcs11-backend/engineering.md).
+
+#### awskms
+
+| Surface | Keys |
+|---|---|
+| `xkmsd` | `enabled`, `region`, `access_key`, `secret_key`, `endpoint`, `key_id` (`pkg/config/config.go:1202`) |
+| SDK | `region`, `access_key_id`, `secret_access_key`, `session_token`, `endpoint`, `key_id` (`pkg/xkms/register_awskms.go:49-64`) |
+
+`key_id` names an existing CMK for the barrier seal key. It accepts a key ID,
+key ARN, alias name or alias ARN.
+
+`Validate` (`pkg/backend/awskms/config.go:83`) requires a well-formed `region`.
+The access-key pair must be set together or not at all.
+
+**Credentials.** When both access keys are set, they are used as static
+credentials, with `session_token` optional. Otherwise the AWS SDK default
+chain is used, through `awsconfig.LoadDefaultConfig`
+(`pkg/backend/awskms/awskms.go:138-153`).
+
+**Generation.** `getKeySpec` (`awskms.go:492-513`) maps every RSA request to
+`RSA_2048` and every ECDSA request to `ECC_NIST_P256`, regardless of the
+requested size or curve (**defect**). Symmetric and HMAC keys use
+`SYMMETRIC_DEFAULT`.
+
+**Signing.** Supported schemes are RSASSA-PSS and PKCS#1 v1.5 with
+SHA-256/384/512, and ECDSA with SHA-256/384/512 (`awskms.go:947-974`).
+
+**Import.** The wrapping key spec is RSA-2048 (`awskms.go:1057`).
+
+#### gcpkms
+
+| Surface | Keys |
+|---|---|
+| `xkmsd` | `enabled`, `project_id`, `location`, `key_ring`, `credentials_file` (`pkg/config/config.go:1222`) |
+| SDK | `project_id`, `location_id`, `key_ring_id`, `credentials_file`, `endpoint`, `insecure` (`pkg/xkms/register_gcpkms.go:51-66`) |
+
+`Validate` (`pkg/backend/gcpkms/config.go:87`) checks the following:
+
+- project, location and key ring are all required;
+- `insecure` requires an `endpoint`;
+- a configured `credentials_file` must exist.
+
+**Credentials** (`pkg/backend/gcpkms/gcpkms.go:175-196`):
+
+- `CredentialsJSON` takes precedence over `CredentialsFile`.
+- With neither set, Application Default Credentials are used.
+- `insecure` disables authentication and uses plaintext gRPC.
+
+`xkmsd` cannot set `endpoint`, `insecure` or `CredentialsJSON`.
+
+**Generation.** RSA keys are PKCS#1 SHA-256 at 2048, 3072 or 4096 bits
+(`gcpkms.go:424-430`). EC keys are P-256 with SHA-256 or P-384 with SHA-384
+(`gcpkms.go:518-522`). Symmetric keys use `GOOGLE_SYMMETRIC_ENCRYPTION`
+(`gcpkms.go:632`).
+
+**Import.** Import jobs use the `HSM` protection level
+(`gcpkms_importexport.go:65`).
+
+#### azurekv
+
+| Surface | Keys |
+|---|---|
+| `xkmsd` | `enabled`, `vault_url`, `tenant_id`, `client_id`, `client_secret`, `allow_local_vault_url` (`pkg/config/config.go:1231`) |
+| SDK | `vault_url`, `tenant_id`, `client_id`, `client_secret`, `allow_local_vault_url` (`pkg/xkms/register_azurekv.go:56-72`) |
+
+`Validate` (`pkg/backend/azurekv/config.go:81`) requires a well-formed
+`vault_url`. Tenant, client ID and client secret must be set together or not
+at all.
+
+**Credentials.** A complete service principal uses `ClientSecretCredential`
+(`pkg/backend/azurekv/azurekv.go:248`). Otherwise `DefaultAzureCredential` is
+used (`azurekv.go:304`).
+
+**Generation** (`azurekv.go:629-658`). Keys are always software-protected
+RSA-2048 or EC P-256, regardless of the requested size or curve (**defect**).
+Symmetric keys are `oct` keys. Imported keys are `RSA-HSM`/`EC-HSM`
+(`azurekv_importexport.go:189`, `:393`, `:398`), on P-256, P-384 or P-521
+(`:450-454`).
+
+**Signing** (`azurekv.go:664-713`):
+
+- PS256/384/512 when the signer opts are PSS;
+- otherwise RS256/384/512 by hash;
+- ES256/384/512 for EC keys.
+
+**Decryption** (`azurekv.go:1221-1263`) is RSA only:
+
+- RSA-OAEP-256 by default;
+- RSA-OAEP for OAEP with SHA-1;
+- RSA1_5 when the opts are nil.
+
+#### vault
+
+| Surface | Keys |
+|---|---|
+| `xkmsd` | `enabled`, `address`, `token`, `namespace`, `mount_path` (default `transit`) (`pkg/config/config.go:1251`) |
+| SDK | `address`, `token`, `transit_path`, `namespace`, `tls_ca_file`, `tls_ca_path`, `tls_cert_file`, `tls_key_file` (`pkg/xkms/register_vault.go:55-76`) |
+
+`Validate` (`pkg/backend/vault/config.go:70`) requires `address` and `token`.
+A TLS client certificate and its key must be set together.
+
+**Authentication.** A Vault token is the only auth method; client
+construction is `NewBackend` (`pkg/backend/vault/vault.go:74-120`). The TLS fields
+verify the server and present a client certificate at the transport layer.
+`namespace` is applied with `SetNamespace` (`pkg/backend/vault/vault.go:104`).
+`xkmsd` passes no TLS options.
+
+**Key types** (`vault.go:664-700`): rsa-2048/3072/4096, ecdsa-p256/p384/p521
+and ed25519. Symmetric and BYOK keys are `aes256-gcm96`
+(`vault_symmetric.go:112`, `vault_importexport.go:57`).
 
 ## Persistence
 

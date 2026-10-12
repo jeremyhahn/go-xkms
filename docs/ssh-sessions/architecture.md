@@ -1,6 +1,6 @@
 # SSH Connect & Console Sessions — Architecture
 
-> **Status: NORMATIVE** · Feature: `ssh-sessions` · Repo: `go-xkms` · Last verified: 2026-10-08
+> **Status: NORMATIVE** · Feature: `ssh-sessions` · Repo: `go-xkms` · Last verified: 2026-10-12
 
 ## Scope of this folder
 
@@ -25,10 +25,9 @@ This folder covers the part of go-xkms's SSH subsystem that opens an
 [`../ssh-keys/architecture.md`](../ssh-keys/architecture.md) names this
 exact package set as "the xkey desktop application's connection-profile
 manager... which is a consumer of this feature and of
-[`ssh-agent-sessions`](../ssh-agent-sessions/), not part of either" and
-says the legacy [`../ssh/README.md`](../ssh/README.md) "remains the
-reference for console/connect/profiles until those get their own
-folders" — this is that folder.
+[`ssh-agent-sessions`](../ssh-agent-sessions/), not part of either" —
+this is that folder. The legacy `ssh/README.md` it replaces was absorbed
+and deleted (go-xkms#1433).
 
 ## The problem: xkms is a vault, not an SSH relay
 
@@ -201,5 +200,3 @@ session, on any transport."
   socket `pkg/ssh/connect` builds on.
 - [`../web-console/`](../web-console/) — documents the SPA's SSH screen and
   why it never imports the console bridge.
-- [`../ssh/README.md`](../ssh/README.md) — the pre-conversion legacy
-  document this folder supersedes for connect/console/profiles/sessions/local.

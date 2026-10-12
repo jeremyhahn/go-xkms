@@ -1,6 +1,6 @@
 # SSH — Engineering Contract
 
-> **Status: NORMATIVE** · Feature: `ssh` · Module: `go-xkms/xkey` · Last verified: 2026-09-27
+> **Status: NORMATIVE** · Feature: `ssh` · Module: `go-xkms/xkey` · Last verified: 2026-10-12
 
 ## Exported surface
 
@@ -102,7 +102,8 @@ directly — only the SDK.
   both default to `"ask"`; `knownHostsPolicy` on both defaults to
   `"barrier"` — chosen so a fresh install's first connection raises a
   fingerprint prompt instead of hard-failing against an empty pin store.
-  See root docs for the full TOFU policy semantics.
+  See [`../../../docs/ssh-sessions/engineering.md`](../../../docs/ssh-sessions/engineering.md#host-key-policy-on-the-websocket-bridge)
+  for the full TOFU policy semantics.
 
 ## Configuration
 

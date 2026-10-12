@@ -12,7 +12,7 @@ This directory contains development-focused documentation for contributors and m
 
 - **Architecture**: See [docs/architecture/](../architecture/)
 - **Usage Guides**: See [xkey/docs/usage/](../../xkey/docs/usage/)
-- **Backend Guides**: See [docs/backends/](../backends/)
+- **Backend Guides**: See [docs/crypto-backends/](../crypto-backends/)
 - **Testing**: See [docs/testing/](../testing/)
 - **Configuration**: See [docs/configuration/](../configuration/)
 - **Deployment**: See [docs/deployment/](../deployment/)

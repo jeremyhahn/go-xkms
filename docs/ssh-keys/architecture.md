@@ -1,6 +1,6 @@
 # SSH Keys, Known Hosts & Authorized Keys — Architecture
 
-> **Status: NORMATIVE** · Feature: `ssh-keys` · Repo: `go-xkms` · Last verified: 2026-10-08
+> **Status: NORMATIVE** · Feature: `ssh-keys` · Repo: `go-xkms` · Last verified: 2026-10-12
 
 ## Scope of this folder
 
@@ -17,12 +17,11 @@ manager (`pkg/ssh/connect`, `pkg/ssh/profile`, `pkg/ssh/sessions`,
 `pkg/ssh/local`), which is a consumer of this feature and of
 `ssh-agent-sessions`, not part of either: that manager, plus interactive
 console sessions, is now [`../ssh-sessions/`](../ssh-sessions/)
-(go-xkms#707), which is NORMATIVE for it. The legacy
-[`../ssh/README.md`](../ssh/README.md) covered all of the above in one
-file; with `ssh-keys`, `ssh-agent-sessions`, and `ssh-sessions` together,
-every subpackage of `pkg/ssh` now has a NORMATIVE home and that legacy
-file is fully superseded, though not yet deleted (no single folder
-absorbs it end to end — see `docs/README.md`'s migration record).
+(go-xkms#707), which is NORMATIVE for it. The legacy `ssh/README.md`
+covered all of the above in one file; with `ssh-keys`,
+`ssh-agent-sessions`, and `ssh-sessions` together, every subpackage of
+`pkg/ssh` has a NORMATIVE home, so that file was absorbed into the three
+and deleted (go-xkms#1433).
 
 ## No build tag — always compiled, always mounted
 

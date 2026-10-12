@@ -1,6 +1,6 @@
 # SSH Keys, Known Hosts & Authorized Keys — Engineering Contract
 
-> **Status: NORMATIVE** · Feature: `ssh-keys` · Repo: `go-xkms` · Last verified: 2026-10-08
+> **Status: NORMATIVE** · Feature: `ssh-keys` · Repo: `go-xkms` · Last verified: 2026-10-12
 
 No build tag gates any symbol in this document — see
 [`architecture.md`](architecture.md).
@@ -174,6 +174,29 @@ key generation, storage, verification, or owner binding logic — see architectu
 the one exception (gRPC's client-side `Verify`/`Emit`), which lives in the
 SDK client, not the server handler.
 
+### Error mapping, shared across transports
+
+One table, `classify` (`sdk/go/client/ssh/rest_status_dispatch.go:59`), sorts
+store errors into classes, and each transport maps the class:
+`HTTPStatusForError` (`rest_status.go:54`, via `httpStatusDispatch`
+`rest_status_dispatch.go:130`), `GRPCCodeForError` (`grpc_status.go:43`) and
+`JSONRPCCodeForError` (`mcp_status.go:64`).
+
+| Store error | REST | gRPC | MCP JSON-RPC |
+|---|---|---|---|
+| `*keys.KeyNotFoundError`, `*known_hosts.NotFoundError`, `*authorized.NotFoundError` | 404 | `NotFound` | -32001 |
+| `*known_hosts.DuplicateError`, `*authorized.DuplicateError`, `*keys.OwnerConflictError` | 409 | `AlreadyExists` | -32005 |
+| `*known_hosts.MismatchError` (presented host key does not match the pin) | 409 | `FailedPrecondition` | -32006 |
+| validation errors (`isBadRequest`) | 400 | `InvalidArgument` | -32602 |
+| `*NotImplementedError` | 501 | `Unimplemented` | -32601 |
+| anything else | 500 | `Internal` | -32603 |
+
+The JSON-RPC codes are constants in `mcp_status.go:37-56`. gRPC alone maps
+`*BackendUnavailableError` to `FailedPrecondition` before classifying
+(`grpc_status.go:48-51`). The gRPC service never echoes an unclassified
+error: it answers the fixed message `"ssh: internal error"`
+(`pkg/api/grpc/service_ssh.go:364`).
+
 ## Testing
 
 - Backend CN injectivity (go-xkms#1238): `pkg/ssh/keys/backend_keyid_test.go`
@@ -214,10 +237,7 @@ SDK client, not the server handler.
   `make integration-test-api-ssh` drives the CLI against a dockerized
   `xkmsd` over embedded/REST/gRPC/QUIC/MCP/unix (generate → list → export →
   delete, plus a backend-selection check).
-  `make integration-test-ssh-backends` confirms
-  generate → derive public key → sign → verify on every backend: software,
-  TPM 2.0 (in-process simulator), PKCS#11 (SoftHSM2), and cloud KMS (AWS via
-  Floci with real signatures; GCP/Azure via self-consistent in-memory-ECDSA
-  mocks) — not independently re-verified for this folder; treat the exact
-  cloud-mock behavior as the legacy `../ssh/README.md`'s claim, not
-  re-confirmed here.
+  `make integration-test-ssh-backends` runs `./test/integration/sshbackend/...`
+  with the `tpm_simulator pkcs11 awskms gcpkms azurekv` tags against a Floci
+  AWS KMS emulator (`Makefile:4503-4519`), confirming generate → derive
+  public key → sign → verify per backend.

@@ -1,6 +1,6 @@
 # ACME Issuance — Engineering Contract
 
-> **Status: NORMATIVE** · Feature: `acme-issuance` · Repo: `go-xkms` · Last verified: 2026-10-08
+> **Status: NORMATIVE** · Feature: `acme-issuance` · Repo: `go-xkms` · Last verified: 2026-10-12
 
 ## Exported surface
 
@@ -50,8 +50,15 @@
   construction path — see "Circuit breakers and degradation" below.
 - `pkg/acme/admin` — the administrative plane (`auth.go`, `authz.go`,
   `barrier_handlers.go`, `barrier_service.go`, `ca_adapter.go`).
-- `pkg/acme/api/adapter.go` plus `api/{rest,grpc,quic,mcp}` — the transport
-  adapters, and `api/swagger` for the OpenAPI surface.
+- `pkg/acme/api/adapter.go` plus `api/{rest,grpc,quic,mcp}` — admin-plane
+  client adapters (`AdminAdapter`; `ACMEAdapter` has no implementation),
+  `api/server` — the library `MultiProtocolServer`, which xkmsd does not run —
+  and `api/swagger` for the OpenAPI surface. See
+  [api.md](api.md#transport-adapters).
+- `pkg/acme/auth` — a token-validation `Client` interface (`interface.go`)
+  with an in-memory implementation (`memory.go:32`), consumed by the admin
+  `AuthMiddleware` (`pkg/acme/admin/auth.go:105-111`) and by
+  `pkg/acme/client`'s `WithAuthClient` (`options.go:44`).
 - `pkg/acme/ct` — Certificate Transparency types.
 
 ### Client
@@ -62,7 +69,15 @@
   queried on (`DefaultDNSPort`, `"53"`, when unset; a supplied lookup returns
   complete addresses and is not re-ported).
 - `sdk/go/acme` — the SDK surface, including `sdk/go/acme/trustedca.go` and
-  `sdk/go/acme/transport/quic`.
+  `sdk/go/acme/transport/quic`; the admin client is
+  `sdk/go/acme/client/admin`. `NewClient(address, opts...)`
+  (`sdk/go/acme/trustedca.go:730-756`) picks a transport from its options:
+  `WithREST` (`:367`), `WithQUIC` (`:375`), `WithUnix` (`:383`),
+  `WithEmbedded` (`:395`), `WithMCP` (`:407`), with TLS from `WithTLS`
+  (`:276`). The default is gRPC (`:207`), which `createTransport` refuses
+  because RFC 8555 has no gRPC binding (`:758-781`). An `http://` or
+  `https://` address switches that default to REST. Defaults: 30 s timeout,
+  3 retries with 100 ms → 5 s backoff (`:206-221`).
 - `pkg/acme/client/service` — the multi-account service layer:
   `AccountManager`, `CertificateManager` and `DeviceManager`, each keyed by a
   named spec in `service.Config` (`Accounts`, `Certificates`, `Devices`) and
@@ -84,6 +99,205 @@
   a separate registration step.
 - `cmd/acme-client` — the `trusted-acme-client` binary
   (`account`, `cert`, `device`, `service`, `serve`, `version` groups).
+
+#### `pkg/acme/client.Client`
+
+`NewClient(*Params)` (`pkg/acme/client/client.go:98`) takes `Params`
+(`:87-95`) and a `Config` (`config.go:28-56`); `DefaultConfig` (`config.go:59-70`)
+sets a 60 s timeout and 3 retries with 1 s → 30 s backoff. The client wraps
+`golang.org/x/crypto/acme`.
+
+| Group | Methods (`client.go`) |
+|---|---|
+| Account | `RegisterAccount` (`:433`), `Account` (`:341`), `AccountSigner` (`:336`), `UpdateAccount` (`:519`), `DeactivateAccount` (`:598`), `AccountKeyRollover` (`:1009`) |
+| Orders | `RequestCertificate` (`:831`), `RenewCertificate` (`:964`), `ListOrders` (`:647`), `GetOrder` (`:740`) |
+| Authorizations | `GetAuthorization` (`:807`), `DeactivateAuthorization` (`:780`) |
+| Certificates | `FetchCertificate` (`:990`), `RevokeCertificate` (`:977`) |
+| Lifecycle | `Close` (`:1028`) |
+
+Device and cross-sign flows: `EnrollDevice` (`enrollment.go:178`),
+`RequestEndorsementKeyCertificate` (`:550`), `DeviceAttest` (`:862`);
+`CrossSignerFromClient`, `CrossSign`, `CrossSignWithChallenge`
+(`cross_sign.go:135,197,424`).
+
+**Renewal information (ARI, RFC 9773) — client only.** `ari.go`:
+`SupportsARI` (`:350`, true when the directory lists `renewalInfo`), `GetRenewalInfo` (`:97`), `GetCertificateID` /
+`GetCertificateIDFromHash` / `ParseCertificateID` / `ValidateCertificateID` /
+`BuildRenewalInfoURL` (`:300,330,472,497,504`), and on `RenewalInfo`
+`ShouldRenewNow`, `ShouldRenewSoon`, `RandomRenewalTime`, `HasExplanation`
+(`:412,423,440,465`). The go-xkms server publishes no `renewalInfo` endpoint,
+so against it `SupportsARI` is false. `CreateOrderWithReplaces` (`:194`)
+does **not** send the `replaces` field: it logs a warning and opens an
+ordinary order (`:259-286`).
+
+Without ARI, the local helpers decide renewal: `ShouldRenewAt(cert, threshold)`
+(`:543`) returns `NotAfter − validity × threshold`, where `threshold` is the
+fraction of validity left and falls back to 0.3 outside (0, 1);
+`ComputeRenewalTime` (`:584`), `NeedsRenewal` (`:606`), `DaysUntilExpiry`
+(`:616`), `IsExpired` (`:628`), `IsNotYetValid` (`:636`).
+
+**Pre-authorization** (`preauth.go`): `SupportsPreAuthorization` (`:44`)
+reports whether the directory advertises `newAuthz`; `PreAuthorize` (`:68`),
+`PreAuthorizeMany` (`:129`), `PreAuthorizeDomains` (`:204`) and
+`PreAuthorizeIPs` (`:217`) drive it.
+
+**OCSP** (`ocsp.go`): `Client.GetOCSP` (`:142`) and the package-level
+`GetOCSP` (`:173`) / `CheckOCSP` (`:276`) fetch a response;
+`HasMustStaple` (`:301`) reports the OCSP Must-Staple extension. The result
+answers `IsGood`, `IsRevoked`, `IsUnknown`, `IsStale` and `ShouldRefresh`
+(`:93-117`).
+
+**Alternate chains** (`chain.go`): `FetchCertificateWithChain` (`:93`) takes
+a `ChainOption` (`:43`; `PreferredChain` names a root, `AllowFallback`
+accepts the default chain when none matches; `DefaultChainOption`, `:55`).
+`GetAvailableChains` (`:153`) returns every `ChainInfo` (`:62`: `Chain`,
+`RootName`, `RootIssuer`, `ChainLength`, `URL`), and
+`SelectChainByRootName`, `SelectShortestChain`, `SelectLongestChain`
+(`:370,386,403`) choose among them.
+
+#### Challenge resolver and DNS solver
+
+`ChallengeResolver` (`pkg/acme/client/resolver.go`) maps challenge types to
+`ChallengeSolver`s (`:69-83`: `Type`, `Solve(ctx, domain, challenge,
+keyAuth)`, `Cleanup(ctx, domain, challenge)`). `NewChallengeResolver`
+(`:99-108`) starts with no solvers and the preference order `dns-01`,
+`http-01`, `tls-alpn-01`.
+
+- `RegisterSolver` (`:112`) replaces an existing solver for the type;
+  `RegisterSolverStrict` (`:130`) refuses it. `UnregisterSolver`,
+  `GetSolver`, `HasSolver`, `ListSolvers`, `SolverCount`,
+  `SetPreferences` / `GetPreferences` manage the set.
+- `SelectChallenge` (`:234`) picks the most preferred challenge in the
+  authorization that has a solver. `Solve(ctx, authz, keyAuth)` (`:276`)
+  selects, solves and returns the challenge for the caller to accept.
+  `SolveWithCleanup(ctx, authz, keyAuth, afterSolve)` (`:312`) runs
+  `afterSolve` (typically accept-and-wait) and then cleans up.
+  `Cleanup` (`:356`), `Close` (`:375`), `IsClosed` (`:391`).
+- Errors are the sentinels at `:28-37` and `*ChallengeCleanupError` (`:51`).
+
+`DNSSolver` (`dns_solver.go`) is the `dns-01` `ChallengeSolver` over a DNS
+provider: `NewDNSSolver(provider, opts...)` (`:128`), with
+`WithPropagationWait` (fixed wait after `Present`; none by default, `:72`),
+`WithPropagationCheck` (poll until the record resolves, `:81`) and
+`WithNameservers` (`:90`). `WithRecordTTL` (`:97`) is stored but has no
+effect: `Provider.Present` takes no TTL, so each provider applies its own.
+`ComputeDNS01ChallengeValue` (`:283`) is the RFC 8555 §8.4 TXT value.
+`WrapPreCheck` (`:348`) runs a check after the record is placed and before
+`Solve` returns; `CheckDNSFromAuthoritative`, `CheckDNSFromPublic` and
+`CheckDNSFromNameservers` (`:544,568,593`) build one. Errors: `:36-40`,
+`*DNSCleanupError` (`:52`).
+
+`NewChallengeResolver` and `DNSSolver` have no caller outside tests.
+
+**Client service DNS-01 configuration.** `pkg/acme/client/service` reads a
+`challenge.dns01` block (`config.go:259,274-278`): `provider`, `credentials`
+(a string map) and `ttl` (default 300, `config.go:404-406`).
+`SetupDNS01Challenge(ctx, config, logger, domain, token, keyAuth)`
+(`challenge.go:275`) prints the TXT record to create by hand and returns a nil
+challenge when `provider` is empty (`:279-293`); otherwise it builds the named
+provider through `dns01.GetProvider` and presents the record
+(`dns01_provider.go:59,80`), and `DNS01Challenge.Cleanup` (`:43`) removes it.
+Credential keys per provider (`dns01_provider.go:96-153`; `ambient` is parsed
+as a boolean):
+
+| `provider` | `credentials` keys |
+|---|---|
+| `route53` | `accessKeyId`, `secretAccessKey`, `region`, `hostedZoneId`, `role`, `webIdentityToken`, `ambient` |
+| `cloudflare` | `email`, `apiKey`, `apiToken`, `zoneApiToken`, `zoneId`, `baseUrl` |
+| `azure` | `clientId`, `clientSecret`, `tenantId`, `subscriptionId`, `resourceGroupName`, `zoneName`, `environment`, `ambient`, `managedIdentityClientId`, `managedIdentityResourceId` |
+| `clouddns` | `project`, `serviceAccountJson`, `hostedZoneName`, `ambient` |
+
+Any other name fails with `ErrUnsupportedDNSProvider`, a non-boolean `ambient`
+with `ErrInvalidDNSProviderCredential` (`errors.go:67-88`). Setup and cleanup
+failures wrap as `ErrChallengeSetupFailed` / `ErrChallengeCleanupFailed`.
+`SetupDNS01Challenge`, like `SetupHTTP01Challenge` (`challenge.go:188`), has no
+caller outside tests: the `trusted-acme-client` commands do not invoke either,
+so the `challenge.dns01` keys are parsed but drive no shipped command today.
+
+#### DNS-01 providers
+
+`pkg/acme/challenges/dns-01/providers` defines `Provider`
+(`provider.go:47-71`: `Present` and `CleanUp`, each
+`(ctx, domain, fqdn, value)`; `CleanUp` of a missing record is not an error),
+plus the optional `ProviderTimeout` (`:77`, propagation timeout and polling
+interval) and `ProviderSequential` (`:89`). Each provider package registers
+itself in `init()` through `Register` / `RegisterEnvFactory`
+(`:112,128`), so the caller imports it (a blank import is enough) before
+using the factory: `NewProvider(ctx, name, config)` and
+`NewProviderFromEnv(ctx, name)` (`factory.go:41,63`) answer
+`ErrProviderNotFound` for an unregistered name. Names are `route53`,
+`cloudflare`, `azure`, `clouddns` (`provider.go:163-166`).
+
+`GetEnvOrFile` (`env.go:48`) reads `VAR`, or the file named by `VAR_FILE`;
+providers use it only for the variables marked † below. Every other
+variable is read directly. Every provider defaults to a 120 s propagation
+timeout, 4 s polling interval and 30 s HTTP timeout.
+
+| Provider | Config | Environment (`NewFromEnv`) | TTL | Behaviour |
+|---|---|---|---|---|
+| `cloudflare` (`cloudflare.go:110-159`) | `APIToken`, or `Email` + `APIKey` (mutually exclusive); optional `ZoneAPIToken` for zone listing, `ZoneID`, `BaseURL`, `HTTPClient`, `Nameservers` | `CLOUDFLARE_DNS_API_TOKEN`, `CLOUDFLARE_ZONE_API_TOKEN`, `CLOUDFLARE_EMAIL`, `CLOUDFLARE_API_KEY`, `CLOUDFLARE_ZONE_ID`, `CLOUDFLARE_{PROPAGATION_TIMEOUT,POLLING_INTERVAL,TTL,HTTP_TIMEOUT}`, each also as `CF_*` (`:74-93`); no `_FILE` | 120 | |
+| `route53` (`route53.go:99-152`) | `AccessKeyID` + `SecretAccessKey`, or `Ambient`; `Region`, `HostedZoneID`, `Role` (STS assume-role), `WebIdentityToken` (requires `Role`), `ZoneFinder`, `Nameservers` | `AWS_ACCESS_KEY_ID`†, `AWS_SECRET_ACCESS_KEY`†, `AWS_REGION`, `AWS_HOSTED_ZONE_ID`, `AWS_{PROPAGATION_TIMEOUT,POLLING_INTERVAL,TTL}`, overridden by `ROUTE53_*` (`:73-82`); no key pair → `Ambient` | 10 | waits for the change to reach `INSYNC`; zone discovery skips private zones |
+| `azure` (`azure.go:105-164`) | `ClientID` + `ClientSecret` + `TenantID`, or `Ambient` (optionally `ManagedIdentityClientID` / `ManagedIdentityResourceID`); `SubscriptionID`, `ResourceGroupName` (required), `ZoneName`, `Environment`, `Nameservers` | `AZURE_CLIENT_ID`†, `AZURE_CLIENT_SECRET`†, `AZURE_TENANT_ID`†, `AZURE_SUBSCRIPTION_ID`†, `AZURE_RESOURCE_GROUP`†, `AZURE_ZONE_NAME`†, `AZURE_ENVIRONMENT`, `AZURE_{PROPAGATION_TIMEOUT,POLLING_INTERVAL,TTL}` (`:79-88`); missing client credentials → `Ambient` | 60 | record-set updates are ETag-conditioned (`IfMatch`) |
+| `clouddns` (`clouddns.go:94-134`) | `Project` (required), `ServiceAccountJSON` or `Ambient`, `HostedZoneName`, `ZoneFinder`, `Nameservers` | `GCE_PROJECT`†, `GCE_SERVICE_ACCOUNT_FILE`† (falls back to `GOOGLE_APPLICATION_CREDENTIALS`; neither → `Ambient`), `GCE_ZONE_NAME`, `GCE_{PROPAGATION_TIMEOUT,POLLING_INTERVAL,TTL}` (`:71-77`) | 120 | zone discovery prefers public zones |
+
+`AZURE_ENVIRONMENT` is case-insensitive: `AzureCloud`, `AzurePublicCloud` or
+empty select the public cloud, `AzureUSGovernment` /
+`AzureUSGovernmentCloud` the US Government cloud, `AzureChinaCloud` the China
+cloud; anything else is a `ConfigError` (`getCloudConfig`, `azure.go:528`).
+Provider errors are `ProviderError`, `ConfigError` and `APIError`
+(`errors.go`).
+
+A new provider is a package under `providers/<name>/` implementing `Provider`
+(and `ProviderTimeout`), with `New(ctx, Config)` and `NewFromEnv(ctx)`,
+registered in `init()`; its row goes in the table above.
+
+#### `pkg/acme/challenges/dns-01` helpers
+
+`dns01.SetupWithProvider(ctx, provider, domain, challengeToken)` /
+`CleanupWithProvider` (`dns01.go:255`) place the
+`_acme-challenge.<domain>` record through a `Provider`; `ComputeChallengeValue`,
+`GetProvider` and `ListProviders` wrap the registry. `SetDNSService`
+(`:103`) and `Setup(challengeToken, authzValue)` (`:200`) instead write the
+TXT record (TTL 300) into an in-process `DNSServiceInterface` zone (`:69`).
+Errors: `ErrChallengeFailed`, `ErrDNSServiceNotInitialized`,
+`ErrProviderNotConfigured`. Outside tests only `GetProvider` is called, by the
+client service's DNS-01 setup below (`pkg/acme/client/service/dns01_provider.go:86`).
+
+#### http-01 responder
+
+`pkg/acme/challenges/http-01/responder.go` serves one key authorization at
+`/.well-known/acme-challenge/<token>` for a client that has no web server of
+its own; the SDK re-exports it as `acme.NewHTTP01Responder`,
+`HTTP01Responder`, `HTTP01ResponderConfig`, `ConfigError`, `BindError` and
+`ShutdownError` (`sdk/go/acme/http01_responder.go:72-97`).
+
+- `ResponderConfig` (`:100`): `Addr`, `KeyAuth`, `ReadTimeout` (5 s),
+  `WriteTimeout` (10 s), `IdleTimeout` (120 s), `ShutdownTimeout` (15 s)
+  (`:44-53`).
+- `NewResponder` (`:165`) refuses an empty `Addr` or `KeyAuth`
+  (`ResponderConfigError`), turns a bare port into `:port`, and binds before
+  returning, so a bind failure is a `ResponderBindError` at construction.
+  `Addr()` (`:223`) reports the bound address.
+- `Shutdown(ctx)` (`:252`) applies `ShutdownTimeout` when the context has no
+  deadline; after a successful stop it is a no-op returning nil. A failed
+  shutdown returns `ResponderShutdownError` and does not mark the responder
+  stopped, so `Shutdown` can be retried.
+  `Close()` (`:277`).
+
+#### enroll-01 client endpoints
+
+`enroll01.Setup(listenAddr, keyAuth, tpm)` (`pkg/acme/challenges/enroll-01/enroll01.go:340`)
+is the device side of enroll-01: it serves `/.well-known/acme-activation/`
+(`:83`), answering the server's `GET` with the challenge material and its
+`POST` with the credential activation. `endorse01.Setup(challengeToken,
+certAuthority, tpm, serializer)` (`endorse01.go:167`) is the endorse-01
+counterpart.
+
+The TCG-CSR-IDEVID `enroll-01` finalizes carries `TCG_IDEVID_CONTENT`
+(`pkg/tpm2/types.go:857`); finalize reads `ProdModel`, `ProdSerial`,
+`EkCert`, `AttestPub`, `SigningPub`, `BootEvntLog` and `ProdCaData`
+(`order_finalize.go:1638-1647`). See [`api.md`](api.md#enroll-01-finalize)
+for what it returns.
 
 ### Directory document
 
@@ -565,8 +779,8 @@ SAN with `checkAIKCertificate` first and marks it handled on a copy.
 the configured policy). The roots are separate per format, and a format with no
 root is refused. `xkmsd` builds it from `acme.challenges.device_attest` and
 refuses to start with `device_attest01` enabled and no anchor
-(`config.ErrACMEDeviceAttestNoAnchors`, `ErrACMEDeviceAttestAnchors`). See
-[the challenge reference](../acme/challenges.md#device-attest-01-challenge).
+(`config.ErrACMEDeviceAttestNoAnchors`, `ErrACMEDeviceAttestAnchors`). The
+keys are under [Configuration](#configuration).
 
 **Device identity, at the challenge.** Binding the CSR's key to
 the attested key says the certificate is for a key some genuine device holds.
@@ -649,9 +863,11 @@ public area, and `bindEnrollActivation` refuses a TCG-CSR built around any other
 exchange takes place. Its only control is the External Account Binding, so the
 identity it reports is the EK that binding names, derived by
 `EndorseEABValidator` and handed to `handlers.NewEndorseVerifier`; EAB is
-required unless waived, and a binding that names no EK is refused. The
-reasons there is no MakeCredential proof of possession are in
-[the challenge reference](../acme/challenges.md#endorse-01-challenge).
+required unless waived, and a binding that names no EK is refused. There is
+no MakeCredential proof of possession because the exchange has no carrier:
+the order's identifier is the EK, not an address, so there is nothing for the
+server to dial, and a second request on the challenge would change the ACME
+protocol.
 Separating the `enroll-01` order identifier from the dial address remains an
 open design question.
 
@@ -977,6 +1193,52 @@ breaker, plus an `http01`/`dns01` entry in `TargetGroups` (registered by
 `WrapChallengeVerifiers`, empty until a target is validated) when the
 caller-supplied challenge map (`WithChallengeMap`) has those entries.
 
+## ACME tenant CA hierarchy
+
+An ACME tenant (`entities.Tenant`, `pkg/acme/entities/tenant.go:20-63`) is the
+admin plane's issuance tenant, separate from the key-management tenant model in
+[`../multi-tenancy/`](../multi-tenancy/architecture.md). Its routes are listed in
+[`api.md`](api.md#admin-api-tenant-routes).
+
+| Type | Fields that matter |
+|---|---|
+| `Tenant` | `ID`, `Name`, `Status` (`active` / `suspended` / `deleted`), `RootCA` (nil = issue under the global CA), `IntermediateCAs`, `DefaultIntermediateCAID`, `Settings` |
+| `TenantRootCA` (`:67-95`) | `CommonName`, `SerialNumber`, `KeyID`, `KeyAlgorithm`, validity, `Status` (`active` / `pending-rotation` / `revoked`), `CertificatePEM` |
+| `TenantIntermediateCA` (`:100-145`) | the same, plus `ID`, `ParentType` (`global` / `tenant`), `Purpose`, `ChainPEM` |
+| `TenantSettings` (`:148-183`) | `MaxCertificates`, `MaxAccounts`, `AllowedKeyAlgorithms`, `AllowedChallengeTypes`, `CertificateValidityDays`, `RequireEAB`, `AllowEndorse01`, `AllowEnroll01`, `ComplianceConfig`, `CustomMetadata` |
+
+CA purposes are `general`, `server-auth`, `client-auth`, `code-signing` and
+`tpm-endorsement` (`CAPurpose*`, ending at `:283`).
+
+- **Parent.** An intermediate with `parent_type: tenant` is signed by the
+  tenant's root CA and fails with `ErrTenantRootCANotFound` when the tenant
+  has none. Any other value is signed by the global `TrustedCA` root, and
+  fails with `ErrCANotConfigured` when ACME is disabled
+  (`pkg/acme/admin/tenant_service.go:801-830`).
+- **Default.** A new intermediate becomes the default when `set_as_default`
+  is true or no default is set yet (`tenant_service.go:926-927`). Setting an
+  intermediate's status to anything but `active` clears it as the default
+  (`:1100-1101`). `GetDefaultIntermediateCA` (`tenant.go:317`) returns the
+  default if it is still active, otherwise the first active intermediate.
+- **Selection at finalize.** For an account bound to a tenant,
+  `resolveTenantSigningCA` (`pkg/acme/server/handlers/order_finalize.go:120`)
+  refuses issuance when the tenant cannot be loaded (`ErrTenantDAOUnavailable`,
+  `ErrTenantNotFound`) or is not active (`ErrTenantInactive`, `:158-164`).
+  It then calls `GetSigningCA(purpose)` (`tenant.go:426`), which picks:
+  1. the first active intermediate of the requested purpose;
+  2. the default intermediate;
+  3. the tenant root CA;
+  4. the global CA.
+
+  The purpose is `tpm-endorsement` when the order's first identifier is a
+  `permanent-identifier` and `general` otherwise (`order_finalize.go:691-695`).
+  The other purposes are labels that finalize never requests.
+- **Settings are recorded, not enforced.** `TenantSettings` is stored and
+  round-tripped by the admin service and the gRPC adapters
+  (`tenant_service.go:2068-2091`, `pkg/acme/api/server/grpc_service.go:669-676`).
+  No issuance path reads it: EAB, endorse-01 and challenge policy come from the
+  server configuration (see Configuration).
+
 ## Error semantics
 
 ACME errors are RFC 8555 problem documents with URN types (`urn:ietf:params:acme:error:*`).
@@ -1095,6 +1357,28 @@ are loopback or container-network addresses, and for lab deployments whose
 devices sit on a private network. With `allow_loopback_identifier` on, the
 substituted client IP is itself a private address in most labs, so both keys
 are normally set together there (go-xkms#1172).
+
+`acme.challenges.device_attest01` enables `device-attest-01`, and
+`acme.challenges.device_attest` (`ACMEDeviceAttestConfig`,
+`pkg/config/acme.go:776,780,803-829`) holds its trust anchors:
+
+```yaml
+acme:
+  challenges:
+    device_attest01: true
+    device_attest:
+      tpm_roots:  [<install-dir>/acme/tpm-aik-root.pem]
+      dice_roots: [<install-dir>/acme/dice-device-id.pem]
+      dice_require_device_signed_leaf: true   # secure-element profiles
+      dice_require_measurement: true          # DiceTcbInfo must carry an FWID
+      dice_require_tcb_info: true             # DiceTcbInfo must be present
+```
+
+`tpm_roots` are the CAs that vouch for AIK certificates (a manufacturer
+attestation CA, a privacy CA, or this deployment's own CA); `dice_roots` are the
+anchors of DICE alias chains. A certificate listed in `tpm_roots` anchors a
+chain whether or not it is self-signed, so when an AIK is issued by an
+intermediate, list that intermediate.
 
 The xkmsd ACME listener (`acme.tls`, `ACMEConfig` / `ACMETLSConfig`,
 `pkg/config/acme.go`) always uses its own dedicated TLS certificate/key pair;

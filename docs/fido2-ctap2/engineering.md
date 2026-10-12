@@ -1,6 +1,6 @@
 # FIDO2 / CTAP2 Client — Engineering Contract
 
-> **Status: NORMATIVE** · Feature: `fido2-ctap2` · Repo: `go-xkms` · Last verified: 2026-09-30
+> **Status: NORMATIVE** · Feature: `fido2-ctap2` · Repo: `go-xkms` · Last verified: 2026-10-12
 
 ## Exported surface — `pkg/fido2`
 
@@ -113,6 +113,37 @@ relying party.
 - **Concurrency.** A `FIDO2Handler` drives one device at a time; the CTAPHID
   channel is not multiplexed. Do not share a handler across concurrent
   ceremonies.
+
+## The `hmac-secret` derivation (CTAP 2.1 §12.5)
+
+`HMACSecretExtension.deriveSecretCTAP2` (`hmac_secret.go:197`) runs the
+exchange:
+
+1. `EstablishPINUVAuthSession` (`pinuvauth.go:595`) fetches the
+   authenticator's key agreement key and derives the PIN/UV auth shared secret
+   by ECDH. `PINUVAuthProtocolVersion` (`pinuvauth.go:581`) picks protocol two
+   when `authenticatorGetInfo` advertises it, protocol one otherwise.
+2. The salt (or `Salt` ‖ `Salt2`) is encrypted under that secret (`saltEnc`),
+   authenticated (`saltAuth`), and sent with the platform key and protocol
+   version as the `hmac-secret` input of `authenticatorGetAssertion`.
+3. `hmacSecretOutput` (`hmac_secret.go:280`) finds the encrypted output in the
+   CBOR extension map that ends the authenticator data.
+   `ParseAuthDataExtensions` (`authdata.go:124`) honours the ED and AT flags
+   (`authdata.go:133,138`) and measures the attested credential data instead of
+   assuming a fixed offset. It then decrypts the output and checks its length
+   against the salts.
+
+`DeriveHMACSecret` returns the 32-byte output as `HMACSecret`, and the second
+32 bytes as `HMACSecret2` when `Salt2` was set. `UnlockWithKey`
+(`fido2.go:222`) uses only `HMACSecret`: it runs it through
+`GenerateDerivedKey` (`hmac_secret.go:382`), two domain-separated SHA-256
+digests concatenated into a 64-byte key, and clears the raw output.
+
+Any failure to get the genuine output is a typed error and returns no key:
+`ErrInvalidExtensions` (`types.go:78`) for a malformed extension map,
+`ErrHMACSecretMissing` (`types.go:95`) when there is no `hmac-secret` entry,
+and `ErrHMACSecretOutputInvalid` (`types.go:96`) for a wrong type, a failed
+decryption or a wrong length.
 
 ## Error semantics
 

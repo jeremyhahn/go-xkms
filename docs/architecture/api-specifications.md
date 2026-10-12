@@ -1315,4 +1315,4 @@ xkmsctl key delete my-key --backend software
 ```
 
 
-**For complete implementation details, see [Server Architecture](./server-architecture.md)**
+**For complete implementation details, see [Host Embedding](../host-embedding/engineering.md)**

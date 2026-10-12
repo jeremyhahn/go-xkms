@@ -1,6 +1,6 @@
 # Platform Secrets — Engineering Contract
 
-> **Status: NORMATIVE** · Feature: `platform-secrets` · Repo: `go-xkms` · Last verified: 2026-10-11
+> **Status: NORMATIVE** · Feature: `platform-secrets` · Repo: `go-xkms` · Last verified: 2026-10-12
 
 ## Exported surface — `pkg/seal`
 
@@ -57,6 +57,18 @@ Note the asymmetry: the Go interface has `Exists`, the transport interface has
 `SealStoreStatus`. They are not the same operation — `Exists` is per-name,
 `SealStoreStatus` reports the store's own state.
 
+Every name is stored under the internal key prefix `platform-store/`
+(`pkg/seal/platform_store.go:50`), which `List` strips. Well-known names
+(`pkg/seal/platform_store.go:32-45`); callers may use any other non-blank name:
+
+| Constant | Name | Read by |
+|---|---|---|
+| `SecretUserPIN` | `platform/user-pin` | — |
+| `SecretLUKSPassphrase` | `platform/luks-passphrase` | — |
+| `SecretPKCS11PIN` | `platform/pkcs11-pin` | `pkg/pkcs11strategy/sealed_pin.go:42`, `pkg/preseal/store.go:43` |
+| `SecretTPM2Auth` | `platform/tpm2-auth` | — |
+| `SecretVaultToken` | `platform/vault-token` | `pkg/preseal/store.go:47` |
+
 ## Invariants
 
 - **Sealing belongs to the backend.** `SealedPlatformStore` never encrypts. With
@@ -72,6 +84,11 @@ Note the asymmetry: the Go interface has `Exists`, the transport interface has
 - **`List` returns names without the internal storage prefix.** Callers must not
   reconstruct raw storage keys.
 - **All operations take a read-write mutex** — safe for concurrent use.
+  `Get`, `Exists` and `List` take the read lock, `Put` and `Delete` the write
+  lock (`pkg/seal/platform_store.go:118,134,152,169,181`). `Reseal` takes no
+  lock of its own: it calls `Get`, `Delete` and `Put` in turn
+  (`pkg/seal/platform_store.go:197-217`), so the sequence is not atomic
+  against a concurrent writer of the same name.
 - **The store is platform-scoped, and reached only through the service.**
   Every `XKMSService.SealStore*` method refuses a tenant-scoped caller with
   `*xkms.TenantBindingError` before the store is touched
@@ -106,9 +123,13 @@ Note the asymmetry: the Go interface has `Exists`, the transport interface has
 
 | Error | Condition |
 |---|---|
+| `ErrNilSealedBackend` | `NewPlatformStore` was given a nil backend (`pkg/seal/platform_store.go:102`) |
+| `ErrInvalidSecretName` | the name is empty or whitespace-only (`pkg/seal/platform_store.go:220-225`) |
 | `ErrSecretNotFound` | the name is not present |
 | `ErrResealFailed` | `Reseal` failed; wraps the underlying cause |
 | unseal failure (from the backend) | the sealed value cannot be opened in the current state |
+
+The four sentinels are go-qrdb's, re-exported by `pkg/seal/errors.go:175-184`.
 
 **Fail closed:** an unsealable value returns an error. Nothing returns
 ciphertext as if it were the secret, and nothing falls back to an unsealed copy.

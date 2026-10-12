@@ -1,6 +1,6 @@
 # Symmetric Encryption & AEAD — Engineering Contract
 
-> **Status: NORMATIVE** · Feature: `symmetric-aead` · Repo: `go-xkms` · Last verified: 2026-10-08
+> **Status: NORMATIVE** · Feature: `symmetric-aead` · Repo: `go-xkms` · Last verified: 2026-10-12
 
 ## Exported surface — `pkg/keyprovider/symmetric`
 
@@ -41,7 +41,7 @@
 | `SymmetricChaCha20Poly1305` | `"chacha20-poly1305"` | 256 bits |
 | `SymmetricXChaCha20Poly1305` | `"xchacha20-poly1305"` | 256 bits |
 
-(`pkg/types/types.go:410-414`.) AES-CBC (`types.CipherModeCBC`/`CBCPad`) and
+(`pkg/types/types.go:475-479`.) AES-CBC (`types.CipherModeCBC`/`CBCPad`) and
 AES-ECB (`types.CipherModeECB`) are cipher **modes** selected via
 `EncryptOptions.Mode`/`DecryptOptions.Mode`, not separate
 `SymmetricAlgorithm` values — they require an AES-family key
@@ -154,7 +154,7 @@ nonce those backends' remote encryption service cannot honor.
 
 ## AEAD safety tracker — `types.AEADSafetyTracker`
 
-Interface (`pkg/types/types.go:2802-2822`): `IncrementBytes(keyID, numBytes
+Interface (`pkg/types/types.go:2886-2906`): `IncrementBytes(keyID, numBytes
 int64) error`, `GetBytesEncrypted(keyID) (int64, error)`,
 `GetAEADOptions(keyID) (*AEADOptions, error)`, `SetAEADOptions(keyID,
 *AEADOptions) error`, `ResetTracking(keyID) error`. Covers only the bytes
@@ -169,7 +169,7 @@ what the guard actually returns.
 `types.AEADOptions{NonceTracking, BytesTracking, BytesTrackingLimit,
 NonceSize bool/bool/int64/int}`; `DefaultAEADOptions()` sets both tracking
 flags true, a 350GB byte limit, and `NonceSize: 12`
-(`pkg/types/types.go:488-506`, defaults at `:531-538`). `NonceTracking` is retained on the struct for
+(`pkg/types/types.go:527-547`, defaults at `:570-577`). `NonceTracking` is retained on the struct for
 the `GetAEADOptions`/`SetAEADOptions` configuration surface but no longer
 gates anything: nonce-reuse protection is unconditional, on every backend,
 regardless of this setting (`TestBackend_NonceReuseRefusedEvenWithTrackingOptedOut`
@@ -185,6 +185,111 @@ nonce guard is not reset on rotation, and must not be — resetting it would
 let the old key version's nonces be reused if the rotated key ever produced
 the same material again (see `pkg/backend/awskms/awskms_backend_gaps_test.go`'s
 `TestRotateKey_SymmetricResetsAEADTracking`).
+
+### Per-key options and the bytes budget
+
+- `KeyAttributes.AEADOptions` (`pkg/types/types.go:1224-1226`) sets the
+  budget per key; nil means `DefaultAEADOptions()`. `GenerateSymmetricKey`
+  takes `attrs.AEADOptions` or the defaults, runs `Validate`, and stores the
+  result with `tracker.SetAEADOptions` (`backend.go:431-442`).
+- `AEADOptions.Validate` (`pkg/types/types.go:550-561`): `NonceSize` 0
+  becomes 12, below 12 is an error; with `BytesTracking` set, a
+  `BytesTrackingLimit` of 0 or less becomes the 350GB default. Setting
+  `BytesTracking: false` is the only way to turn the budget off.
+- `memoryAEADTracker.IncrementBytes` (`pkg/backend/aead_tracker.go:59-86`)
+  tracks nothing for a key with no stored options or with `BytesTracking`
+  false. Otherwise, if the running total plus the request would pass the
+  limit, it returns `ErrBytesLimitExceeded` (`pkg/backend/errors.go:72`)
+  without counting the request. The symmetric `Encrypt` wraps that as
+  "AEAD safety check failed: … (consider rotating this key)"
+  (`backend.go:606-610`). `GetAEADOptions` returns a copy, or `nil, nil`
+  when none is set (`aead_tracker.go:102-118`).
+- The tracker never warns ahead of the limit; the first sign is the refusal.
+
+### Which backends carry a tracker
+
+Each of these backend configs has a `Tracker types.AEADSafetyTracker` field
+and exposes it through `types.SymmetricKeyProviderWithTracking.GetTracker()`
+(`pkg/types/types.go:2915`):
+
+| Backend | Config field | `GetTracker` assertion |
+|---|---|---|
+| symmetric | `pkg/keyprovider/symmetric/backend.go:97` | `backend.go:1807` |
+| software | `pkg/backend/software/config.go:38` | `software.go:1307` |
+| PKCS#11 | `pkg/backend/pkcs11/config.go:86` | `pkcs11_symmetric.go:1019` |
+| TPM2 | `pkg/backend/tpm2/config.go:97`, `pkg/tpm2/config.go:239` | `pkg/backend/tpm2/backend.go:1261` |
+| AWS KMS | `pkg/backend/awskms/config.go:78` | `awskms_symmetric.go:393` |
+| Azure Key Vault | `pkg/backend/azurekv/config.go:76` | `azurekv_symmetric.go:546` |
+| GCP KMS | `pkg/backend/gcpkms/config.go:82` | `gcpkms.go:1655` |
+| Vault Transit | `pkg/backend/vault/config.go:66` | `vault_symmetric.go:459` |
+| quantum | `pkg/keyprovider/quantum/backend.go:59` | — |
+
+The paired-phone backend has no tracker.
+
+### `pkg/crypto/aead.BytesTracker`
+
+A standalone, exported byte counter (`pkg/crypto/aead/bytes_tracker.go`)
+that no production code calls; the backends use the `AEADSafetyTracker`
+above. `NewBytesTracker(enabled, limit)` (`:71`) treats a limit of 0 as
+`DefaultBytesTrackingLimit` (350GB, `:33`); `Conservative68GB` (`:37`) is
+offered as a tighter limit. `CheckAndIncrementBytes` (`:98-114`) adds
+atomically and rolls the add back when it passes the limit;
+`ShouldWarnUser` (`:185-190`) reports usage at or above 90%.
+
+## Algorithm auto-selection — `pkg/crypto/aead/auto.go`
+
+- `SelectOptimal(hardwareBacked bool)` (`:193-202`) returns the JWE name
+  `"A256GCM"` or `"ChaCha20-Poly1305"`; `SelectOptimalBackend` (`:221-228`)
+  returns `"aes256-gcm"` or `"chacha20-poly1305"`. Both pick AES when the
+  key is hardware-backed, when FIPS mode is on, or when the CPU has AES
+  instructions (`selectAESGCM`, `:103-119`).
+- FIPS is a runtime check, `fips140.Enabled()` (`fipsRequiresAES`,
+  `:138-140`), not a build tag, so one binary follows the process's
+  `GODEBUG=fips140` setting.
+- `HasAESNI` (`:155-164`) reads `cpu.X86.HasAES` on amd64 and
+  `cpu.ARM64.HasAES` on arm64; every other architecture reports false and
+  gets ChaCha20-Poly1305.
+- `IsAESGCM`/`IsChaCha` (`:231-252`) accept either naming; `ToJWE`/`ToBackend`
+  (`:260-300`) convert between them and return an unknown name unchanged.
+- The only production caller is JWE: `parseContentEncryption`
+  (`pkg/encoding/jwe/jwe.go:504-534`) uses `SelectOptimal(false)` when `enc`
+  is empty, and maps the ChaCha20/XChaCha20 names to `A256GCM` because
+  ChaCha20-Poly1305 is not an RFC 7516 content-encryption algorithm. Symmetric key generation
+  does not auto-select (see below).
+
+## Password-wrapped key storage
+
+`encryptWithPassword` (`backend.go:1282`) derives the wrapping key with
+Argon2id, t=1, 64 MiB, p=4, from a fresh 32-byte `crypto/rand` salt
+(`backend.go:1291`), and stores `[salt][nonce][ciphertext+tag]`.
+`decryptWithPassword` (`backend.go:1324`) refuses a blob shorter than 60
+bytes before deriving.
+
+## `EncryptedData` wire format
+
+`symmetric.Marshal`/`Unmarshal` (`pkg/keyprovider/symmetric/encrypted_data.go:99`,
+`:174`; layout documented at `:71-98`): version byte `0x02`, nonce-mode byte
+(`0x00` explicit, `0x01` random), then algorithm, nonce and tag each as a
+u16 length plus bytes, then the ciphertext as a u32 length plus bytes.
+Version 1 is refused; there is no older-format reader.
+
+## Deriving from a stored key — `types.SymmetricKeyDeriver`
+
+`SymmetricKeyDeriver` (`pkg/types/kdf.go:138-152`) is optional. The service
+checks for it and returns `ErrBackendUnsupported` wrapping
+`ErrOperationNotSupported` when the backend lacks it
+(`pkg/xkms/servicer_kdf.go:95-99`). A backend that has it but whose key
+cannot be read returns `ErrKeyDerivationNotSupported` (`pkg/types/kdf.go:71`).
+
+| Backend | Implementation |
+|---|---|
+| symmetric | `pkg/keyprovider/symmetric/kdf.go:43` |
+| software | `pkg/backend/software/software.go:459` |
+| PKCS#11 | `pkg/backend/pkcs11/pkcs11_kdf.go:49-78` — exports the key value, maps `ErrKeyNotExportable` to `ErrKeyDerivationNotSupported`, wipes the material |
+| TPM2 | `pkg/backend/tpm2/kdf.go:51` → `pkg/tpm2/kdf.go:44-74`, unseals the key and wipes it after deriving |
+
+AWS KMS, GCP KMS, Azure Key Vault, Vault Transit and the paired phone do not
+implement it.
 
 ## Configuration
 
@@ -245,9 +350,11 @@ recognizes exactly one configuration key, `"key_dir"` (string): empty or
 - **Key-derivation (`DeriveFromSymmetricKey`) is documented in full in this
   package**, but the underlying `pkg/crypto/kdf` package (HKDF, PBKDF2,
   Argon2/Argon2i/Argon2id, SP800-108 counter/feedback/double-pipeline, X9.63,
-  SP800-56A) is shared, general-purpose infrastructure already covered by
-  [`../key-management/`](../key-management/) (superseding
-  `docs/crypto/kdf.md`); this folder does not duplicate that coverage.
+  SP800-56A) is shared, general-purpose infrastructure imported well beyond
+  this feature (`pkg/encoding/pkcs8.go`, `pkg/staticpw/`, the PKCS#11,
+  software and TPM2 backends, `pkg/xkms/servicer_kdf.go`), so it is
+  documented once in [`../crypto/kdf.md`](../crypto/kdf.md); this folder
+  does not duplicate that coverage.
 
 ## Tests
 

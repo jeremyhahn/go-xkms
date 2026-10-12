@@ -1,6 +1,6 @@
 # SSH — User Guide
 
-> **Status: NORMATIVE** · Feature: `ssh` · Module: `go-xkms/xkey` · Last verified: 2026-09-27
+> **Status: NORMATIVE** · Feature: `ssh` · Module: `go-xkms/xkey` · Last verified: 2026-10-12
 
 ## Generate a key and use it
 
@@ -122,5 +122,6 @@ manual unlock), then retry the CLI command. See
   local passthrough) work the way they do
 - Root SSH docs (backend-native key generation, the console protocol,
   agent-only signing sessions for `git commit -S`):
-  [`../../../docs/ssh/README.md`](../../../docs/ssh/README.md),
+  [`../../../docs/ssh-keys/`](../../../docs/ssh-keys/),
+  [`../../../docs/ssh-sessions/`](../../../docs/ssh-sessions/),
   [`../../../docs/ssh-agent-sessions/user.md`](../../../docs/ssh-agent-sessions/user.md)

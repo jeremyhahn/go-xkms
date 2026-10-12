@@ -1,6 +1,6 @@
 # Certificate Authority — Engineering Contract
 
-> **Status: NORMATIVE** · Feature: `certificate-authority` · Repo: `go-xkms` · Last verified: 2026-10-08
+> **Status: NORMATIVE** · Feature: `certificate-authority` · Repo: `go-xkms` · Last verified: 2026-10-12
 
 ## Exported surface — `pkg/ca`
 
@@ -186,6 +186,99 @@ Certificate"). The IAK's own certificate is unchanged.
 
 Constructors are `pkg/ca/constructors.go`; configuration types are
 `pkg/ca/config.go` (`Identity`, and the CA config it hangs off).
+
+### Canonical issuance — the `Issuer` seam (`pkg/ca/issuance.go`)
+
+Every X.509 certificate go-xkms signs goes through one seam.
+`Issuer.Sign` (`issuance.go:331`) holds the only `x509.CreateCertificate`
+call in `pkg/ca` (`issuance.go:348`); `Issue` (`issuance.go:297`) is
+`Template` + `Sign` + parse.
+
+- `Issuer` (`issuance.go:47`) is who signs: `Signer`, `Certificate` (nil means
+  self-signed — a root, including a per-tenant root) and `Identity` (the
+  CRL/OCSP/AIA endpoints; nil means none).
+- `CertificateSpec` (`issuance.go:77`) is what the caller owns: serial,
+  subject (`Subject` or `RawSubject`), validity, `PublicKey` (nil certifies the
+  issuer's own key), `SignatureAlgorithm`, the names (`DNSNames`,
+  `EmailAddresses`, `IPAddresses`, `URIs`, `SANS`, `OtherNames`,
+  `DirectoryNames`), `ExtraExtensions`, `NameConstraints`, the originating
+  `Request`, and the required `Profile`. It has no key-usage, EKU or
+  basic-constraints fields on purpose (`issuance.go:71-76`): those belong to
+  the profile, applied by `profile.Apply` inside `Template`
+  (`issuance.go:377`). A spec with no profile is refused
+  (`issuance.go:178`).
+- Callers that must sign the same template twice use `Template` once and
+  `Sign` twice. ACME issuance lint-signs and signs the precertificate, then
+  the final certificate (`pkg/acme/issuance/issuance.go:205`, `:220`,
+  `:275`, `:282`). Hybrid issuance builds an `Issuer` over the classical key
+  (`pkg/ca/hybrid.go:146`) and signs twice (`hybrid.go:150`, `:177`).
+- Regression guard: `testutil.PolicyFingerprint`
+  (`pkg/testutil/certpolicy.go:148`) reduces a certificate to its policy
+  fields, and the `TestCertificatePolicy_*` suites
+  (`pkg/ca/certpolicy_test.go`, `pkg/acme/issuance/certpolicy_test.go`,
+  `pkg/acme/admin/certpolicy_test.go`) assert every issuance path and
+  endpoint lands on the seam, that a profile change reaches each path, that
+  a spec without a profile is refused, and that an incomplete `Issuer` is
+  refused.
+
+### Built-in profiles
+
+`NewDefaultProfileRegistry` (`profiles.go:55`, filled by
+`registerBuiltinProfiles` at `profiles.go:67`) registers, keyed by lowercase
+name: `server`, `client`, `code-signing`, `email`, `ocsp-responder`,
+`timestamping`, `ca` (`ProfileNameCA`, `profiles.go:398`), `acme-leaf`
+(`ProfileNameACMELeaf`, `profiles.go:453`), the TCG set `tcg-ek`, `tcg-ak`,
+`tcg-iak`, `tcg-idevid`, `tcg-lak` (`profiles.go:506-510`),
+`fido2-attestation` (`profile_fido2.go:42`), `dice-idevid`
+(`profile_dice.go:38`), `ipsec-vtep` and `x509-svid`
+(`profile_ipsec_svid.go:35`, `:38`).
+
+A CA's registry is `(*CA).Profiles()` (`ca_extensions.go:340`).
+`ProfileRegistry.Register(name, profile)` (`interface.go:820`, implemented at
+`profiles.go:101`) adds or replaces a profile; `NewProfileBuilder`
+(`profiles.go:743`) with `WithKeyUsage`, `AsCA` and `Build` composes one.
+
+**FIDO2 attestation profile.** `NewFIDO2AttestationProfile(permitted ...[16]byte)`
+(`profile_fido2.go:136`) issues WebAuthn §8.2.1 packed-attestation
+certificates: digitalSignature, no EKU, basic constraints present with cA
+false; subject C and O from the CA, OU `Authenticator Attestation`, CN from
+the request; the AAGUID extension non-critical. The AAGUID must be on the
+allowlist, which with no arguments is `XKeyAAGUID` alone
+(`profile_fido2.go:71`); anything else is
+`ErrFIDO2AttestationAAGUIDNotPermitted` (`errors.go:455`).
+
+### TCG naming and defaults
+
+- An IAK certificate's CN is `IAKCommonName(model, serial)` →
+  `iak-<model>-<serial>` (`tcg.go:297`); `IAKCertificateReader`
+  (`interface.go:848`) reads one back. The SDK re-exports both
+  (`sdk/go/acme/ca.go:44`, `:126`).
+- TCG device certificates carry NotAfter `99991231235959Z`, the RFC 5280
+  "no well-defined expiration" value (`tcg.go:47`), and NotBefore one minute
+  in the past to absorb clock skew (`tcg.go:187`, `tcg_lak.go:175`).
+- Private extensions under the arc 1.3.6.1.4.1.29377.101
+  (`tcg_oids.go:120-136`): `tp-issuerKeyStore` (.1), `tp-keyStore` (.2),
+  `tp-fips140` (.3), `tp-tenantID` (.20), `tp-networkZone` (.21); built by
+  `CreateTPIssuerKeyStoreExtension`, `CreateTPKeyStoreExtension` and
+  `CreateTPFIPS140Extension` (`tcg_oids.go:314`, `:300`, `:327`).
+  `CreateTPMSpecificationExtension` (`tcg_oids.go:200`) encodes the TCG TPM
+  specification attribute.
+- Hybrid (classical + post-quantum) certificates carry
+  `OIDQuantumAlgorithm` (…29377.101.10) and `OIDQuantumSignature`
+  (…29377.101.11) (`tcg_oids.go:125-126`).
+
+### Revocation, OCSP and TLS helpers
+
+- `VerifyAgainstCRL(cert, crlDER) (bool, error)` (`revocation.go:412`,
+  SDK alias `sdk/go/ca.go:554`) checks one certificate against a DER CRL the
+  caller already holds.
+- `OCSPResponderConfig` (`ocsp.go:71`): `CacheTTL`, `NextUpdate` (default 7
+  days) and `MaxCacheEntries`, which bounds the response cache because a
+  request may name any serial (go-xkms#1263). Zero fields take
+  `DefaultOCSPResponderConfig()`.
+- `TLSBundle`, `TLSBundleWithCrossSigner` and `TLSConfigWithXSigner`
+  (`tls_extensions.go:44`, `:99`, `:140`) build TLS material from the CA,
+  with or without a cross-signer.
 
 ### Overlay identity surface (`pkg/ca`)
 
@@ -522,7 +615,72 @@ behaviour rather than naming:
 - `IsAutoImportingIssuerCAs()` — whether the AIA walk runs automatically on
   import. Off means chains must be supplied.
 - Multi-keystore identities — one CA name, several `{storeType, keyAlgorithm}`
-  signing keys.
+  signing keys. See "Multi-keystore routing" below.
+
+### Multi-keystore routing
+
+Each key in an identity's `Keys` names its own store type, so one CA can sign
+with a software key, a TPM key and an HSM key at once.
+
+- The constructor takes a `BackendForStore`
+  (`BackendForStoreFunc func(cn string, storeType types.StoreType) (xkms.Backend, error)`,
+  `constructors.go:74`). It is required: without it construction fails with
+  `ErrBackendForStoreRequired` (`errors.go:173`; checked at `ca.go:223` and
+  `ca.go:676`).
+- `buildKeystoreMap` (`ca.go:1272`) calls the factory once per distinct store
+  type across the identity's keys and keeps the result in `keystoreMap`
+  (`ca.go:267`). An empty store type means `types.StoreSoftware`
+  (`ca.go:1290-1291`); a factory that returns a nil backend is
+  `ErrKeyStoreRequired` (`ca.go:1301-1302`); a factory error is wrapped and
+  fails construction.
+- `resolveKeyBackend` (`ca.go:1260`) picks a key's backend by store type and
+  answers `ErrKeyStoreRequired` for a store type with no backend.
+- Only `Keys[0]` is bound to the CA certificate. The other keys are generated
+  ahead of use by `initSecondaryKeys` (`ca.go:1312-1318`). A secondary-key
+  failure does not fail `Init`; it is kept (`ca.go:782`) and readable from
+  `(*CA).SecondaryKeyInitError()` (`ca.go:738`).
+- Per-store settings sit under the identity's `keystores` block
+  (`Identity.Keystores`, `config.go:109`; `CAKeystoresConfig`,
+  `config.go:165`):
+
+  | Key | Type | Source |
+  |---|---|---|
+  | `keystores.software.password` | secret reference | `config.go:136` |
+  | `keystores.tpm2.srk-handle` | uint32, e.g. `0x81000001` | `config.go:145` |
+  | `keystores.tpm2.srk-auth` | KMS URI resolving to the SRK auth | `config.go:148` |
+  | `keystores.pkcs11.pin` | secret reference | `config.go:157` |
+  | `keystores.pkcs11.slot` | int | `config.go:158` |
+  | `keystores.pkcs11.module` | module path | `config.go:159` |
+
+  `password` and `pin` are `*types.SecretValue`: a reference string in YAML,
+  sealed in memory once resolved. A key's own `KeyConfig.Password` wins; the
+  software keystore password is the fallback for keys that set none
+  (`config.go:587`, applied at `config.go:605-606`).
+- The SDK re-exports the config and factory types as
+  `TrustedCAKeystoresConfig` and `TrustedCABackendForStoreFunc`
+  (`sdk/go/ca.go:300`, `:319`).
+
+### CA-backed server TLS
+
+With `tls.enabled` and `tls.server_cn` set (`pkg/config/config.go:390`),
+xkmsd issues its own TLS server certificate from its CA at boot
+(`ensureTLSServerCert`, `pkg/server/server.go:2154`), adding
+`tls.extra_sans` (`config.go:396`). Without `tls.ca_file`
+(`config.go:386`) the bootstrap bundle is served from the CA itself
+(`server.go:2396-2397`); with it, from that file (`tlsCABundler`,
+`pkg/server/ca_bundler.go:26`). The key list is in
+[`../xkmsd-configuration/engineering.md`](../xkmsd-configuration/engineering.md).
+
+### SignCSR attestation gate
+
+A `SignCSR` request that names an `attestation_format`
+(`pkg/api/transport/types.go:1472`; `tpm2` or `yubikey-piv`) is checked
+before signing (`pkg/xkms/servicer_ca.go:161`). With no attestation trust
+anchors configured at all it fails with `ErrAttestationNotConfigured`, and
+with none for the named format with `ErrAttestationFormatNotConfigured`
+(`servicer_ca.go:50`, `:55`; returned at `:319`, `:323`). Neither falls back
+to unattested issuance. See
+[`../attestation-verifier/engineering.md`](../attestation-verifier/engineering.md).
 
 REST routes for the CA group are gated by the `hasCA` predicate in
 `pkg/api/rest/routes.go`; when no CA is configured, only the fallback
@@ -677,6 +835,74 @@ populated for issued certificates — only `ImportCertificate` /
 `ImportCertificatePEM` call `keyStore.SaveCert`, and only best-effort — so
 `certStore` is the sole authoritative certificate store this method cleans
 up.
+
+### Hardware certificate storage — `pkg/storage/hardware`
+
+A PKCS#11 token or a TPM can hold certificates as well as keys.
+`HardwareCertStorage` (`pkg/storage/hardware/interface.go:26`) is the
+contract for that: the certificate and chain record methods, plus
+`GetCapacity`, `SupportsChains`, `IsHardwareBacked` and `Compact`.
+
+**Modes.** `CertStorageMode` is `external` (the default), `hardware` or
+`hybrid` (`interface.go:92`). The PKCS#11 backend applies a mode through
+`CreateCertificateStorage` (`pkg/backend/pkcs11/cert_config.go:78`, build tag
+`pkcs11`):
+
+- `external` returns the caller's `storage.Backend` unchanged.
+- `hardware` wraps the token store in a `HardwareBackendAdapter`.
+- `hybrid` wraps a `HybridCertStorage` of the token and the external backend.
+
+`Validate` requires an external backend for `external` and `hybrid`, and
+`EnableHardwareStorage` for `hardware` and `hybrid` (`cert_config.go:45`).
+On a YubiKey PIV token the store elevates to the SO session, authenticated
+with the management key, for deletes (`cert_config.go:130`). The errors are
+`ErrSOSessionRequired` when no SO PIN is set and
+`ErrDeleteNotSupportedOnToken` when the token ignores `C_DestroyObject`
+(`errors.go:94`, `:86`). No TPM2 backend constructor applies a mode. The TPM
+store is built directly with `NewTPM2CertStorage`, and `pkg/pivcert/tpm2`
+wraps any `HardwareCertStorage` (`pkg/pivcert/tpm2/tpm2.go:157`).
+
+**Hybrid behavior** (`hybrid_cert_storage.go`):
+
+- `SaveCert` writes to hardware first (`:369`). It falls back to external
+  storage only on a capacity or hardware error (`IsCapacityError`,
+  `IsHardwareError`, `errors.go:99`, `:107`); any other hardware error is
+  returned as is.
+- `GetCert` falls back to external storage on not-found or a hardware error
+  (`:418`).
+- `ListCerts` merges and deduplicates the IDs from both sides, and fails only
+  when both sides fail (`:618`).
+- Deletes go to both sides. A delete reports `storage.ErrNotFound` only when
+  neither side held the record, and reports a failure from either side
+  (`combineDeleteResults`, `:482`).
+
+**Records per ID.** A certificate and its chain share an ID but are separate
+records, each with its own delete. `HardwareBackendAdapter` routes
+`certs/{id}-chain.pem` to `DeleteCertChain` and `certs/{id}.pem` to
+`DeleteCert`, and refuses any other key shape (`backend_adapter.go:159`). On
+PKCS#11, chain members are objects with `CKA_ID = <id>-chain-<n>`
+(`chain_member.go:18`). An ID shaped `<id>-chain` or `<id>-chain-<n>` is
+refused as a certificate ID on every store with `ErrIDReservedForChain`
+(`errors.go:49`; `chain_member.go:60`). The adapter implements `PutIfAbsent`
+(`backend_adapter_putifabsent.go:32`) but not `storage.CompareAndDeleter`. A
+token or NV index has other writers, so a guard checked in this process would
+not be checked where the hardware's writes serialize. A test pins this
+(`backend_adapter_record_scope_test.go:36`).
+
+**TPM2 NV layout** (`tpm2_cert_storage.go`):
+
+- Each ID has its own NV index: the base (default `0x01800000`) plus an
+  xxhash64 of the ID modulo `0x00400000` (`:565`, `:46`).
+- A base outside `0x01000000`–`0x01BFFFFF` is refused (`:145`).
+- Each record is `"XKC1"`, a big-endian 16-bit ID length, the ID, then the
+  PEM payload (`:74`). Storing the ID is what lets `ListCerts` return IDs
+  that `GetCert` accepts.
+- The index holds whichever of `SaveCert` and `SaveCertChain` wrote last.
+  Chain blocks carry the PEM header `Record: chain` (`:614`), and each method
+  treats a record of the other kind as absent (`interface.go:35`).
+- `Compact` returns `ErrNotSupported` (`:559`).
+- Every operation holds one mutex, reads included, because the TPM transport
+  carries one command at a time (`:56`).
 
 ## Test strategy
 

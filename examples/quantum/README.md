@@ -193,4 +193,4 @@ ML-KEM-768:
 - [FIPS 204 (ML-DSA)](https://csrc.nist.gov/pubs/fips/204/final)
 - [Cloudflare circl (ML-DSA)](https://github.com/cloudflare/circl)
 - [Go crypto/mlkem (ML-KEM)](https://pkg.go.dev/crypto/mlkem)
-- [Quantum Backend Documentation](../../docs/backends/quantum.md)
+- [Quantum Backend Documentation](../../docs/post-quantum/user.md)

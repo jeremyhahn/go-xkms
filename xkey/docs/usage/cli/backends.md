@@ -348,8 +348,8 @@ xkmsctl --verbose backends info tpm2
 ## See Also
 
 - [Getting Started Guide](../getting-started.md) - Backend selection and configuration
-- [Software Backend](../../backends/software.md) - Software backend documentation
-- [TPM2 Backend](../../backends/tpm2.md) - Hardware TPM documentation
-- [PKCS#11 Backend](../../backends/pkcs11.md) - HSM integration
-- [AWS KMS Backend](../../backends/awskms.md) - Cloud backend configuration
-- [Build System](../../configuration/build-system.md) - Build tags and compilation
+- [Software Backend](../../../../docs/crypto-backends/user.md) - Software backend documentation
+- [TPM2 Backend](../../../../docs/tpm2/user.md) - Hardware TPM documentation
+- [PKCS#11 Backend](../../../../docs/pkcs11-backend/user.md) - HSM integration
+- [AWS KMS Backend](../../../../docs/crypto-backends/user.md) - Cloud backend configuration
+- [Build toggles](../../../../docs/crypto-backends/engineering.md#build-toggles) - Build tags and compilation

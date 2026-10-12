@@ -8,7 +8,7 @@
 
 The `bootstrap` command group provides tools for secure CA bundle retrieval and DANE/TLSA record management. These commands support the bootstrap workflow where a new node obtains CA certificates before TLS is configured.
 
-For protocol details, see the [CA Bundle Bootstrap documentation](../../ca/bootstrap.md).
+For protocol details, see the [trust bootstrap documentation](../../../../docs/trust-bootstrap/architecture.md).
 
 ## Command Tree
 
@@ -491,6 +491,6 @@ xkmsctl bootstrap dane generate-tlsa \
 
 ## See Also
 
-- [CA Bundle Bootstrap](../../ca/bootstrap.md) -- Protocol documentation
-- [DANE/TLSA Concepts](../../ca/dane.md) -- RFC 6698 details and security properties
-- [Bootstrap Configuration](../../configuration/bootstrap.md) -- YAML configuration reference
+- [Trust Bootstrap](../../../../docs/trust-bootstrap/architecture.md) -- Protocol documentation
+- [DANE publisher hook](../../../../docs/trust-bootstrap/engineering.md) -- TLSA record fields and publication
+- [Bootstrap Configuration](../../../../docs/trust-bootstrap/engineering.md#configuration) -- YAML configuration reference

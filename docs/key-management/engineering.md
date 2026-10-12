@@ -1,6 +1,6 @@
 # Key Management — Engineering Contract
 
-> **Status: NORMATIVE** · Feature: `key-management` · Repo: `go-xkms` · Last verified: 2026-10-02
+> **Status: NORMATIVE** · Feature: `key-management` · Repo: `go-xkms` · Last verified: 2026-10-12
 
 This is the file an implementing agent works from. Every identifier below was
 grepped in this repository.
@@ -64,6 +64,52 @@ type BackendService interface {
 `pkg/xkms/register_<backend>.go`; the key-identifier scheme is
 `pkg/xkms/keyid.go` and `composite_keyid.go`. `pkg/xkms/algorithms.go` holds
 the algorithm vocabulary served by `GET /api/v1/algorithms`.
+
+### Key ID format — `pkg/xkms/keyid.go`
+
+A key ID (`type KeyID string`, `keyid.go:45`) is
+`backend:type:algo:keyname`. `ParseKeyID` (`keyid.go:124`) splits and checks
+it:
+
+- A string with no colon is shorthand for the keyname alone; otherwise it must
+  have exactly four colon-separated parts. `:::my-key` is the explicit form of
+  `my-key`, and `pkcs11:::my-key` names only the backend.
+- `backend`, `type` and `algo` are trimmed and lowercased. Each is optional;
+  only a non-empty segment is validated. The keyname is required.
+- The whole ID is at most 512 characters (`maxKeyIDLength`, `keyid.go:72`), the
+  keyname at most 255 (`maxKeyNameLength`, `keyid.go:75`).
+
+| Segment | Accepted values | Where |
+|---|---|---|
+| backend | `software`, `pkcs11`, `tpm2`, `awskms`, `gcpkms`, `azurekv`, `vault`, `quantum`, `frost` | `validBackends`, `keyid.go:79` |
+| type | `attestation`, `ca`, `encryption`, `endorsement`, `hmac`, `idevid`, `ldevid`, `secret`, `signing`, `storage`, `tls`, `tpm` | `validateKeyType`, `keyid.go:270` |
+| algo | `rsa`; `ecdsa-p256`/`-p384`/`-p521` (aliases `p256`, `p-256`, `ecdsa-p-256`, …); `ed25519`, `ed448`, `x25519`, `x448`; `aes128`/`192`/`256` (`-gcm`), `chacha20`/`xchacha20` (`-poly1305`); `ml-dsa-44`/`65`/`87`, `ml-kem-512`/`768`/`1024` (dashless aliases); `hmac-sha256`/`384`/`512`; `frost-ed25519`, `frost-ristretto255`, `frost-ed448`, `frost-p256`, `frost-secp256k1` (with or without the hash suffix) | `validateAlgorithm`, `keyid.go:295` |
+| keyname | `^[a-zA-Z0-9_.\-]+$`, and never `..`, `/` or `\` | `keynameRegex`, `keyid.go:92`; `validateKeyName`, `keyid.go:344` |
+
+The algo check is grammar only: whether a FIPS deployment may use the
+algorithm is left to the Go standard library (`keyid.go:288-293`).
+
+`NewKeyID` (`keyid.go:199`) builds an ID from its four parts under the same
+rules; `ValidateKeyID` (`keyid.go:254`) runs `ParseKeyID` and discards the
+result. Neither checks that the key exists.
+
+`ParseKeyIDToAttributes` (`keyid.go:557`) turns an ID into `KeyAttributes`:
+the keyname becomes `CN`; a backend sets both `StoreType` and `Backend` to the
+store-type keyword (`keyid.go:574-580`); RSA gets a 2048-bit default
+(`keyid.go:537-538`) and ECDSA its curve. Its algorithm mapping covers only
+RSA, ECDSA, Ed25519 and the symmetric AEADs, so an ID with `ed448`, `x25519`,
+ML-DSA, ML-KEM, HMAC or FROST passes `ParseKeyID` but fails here with
+`*ErrUnsupportedAlgorithm` (`keyid.go:448-470`).
+
+Errors (`keyid.go:55-67`): `ErrInvalidKeyIDFormat` (wrong shape, bad type or
+algo), `ErrInvalidBackendType`, `ErrInvalidKeyName`, `ErrKeyIDTooLong`, and
+`ErrBackendMismatch`. Segment and keyname failures come back as
+`*ErrValidation`, which unwraps to the sentinel (`pkg/xkms/errors.go:424,
+438`), so `errors.Is` matches either form.
+
+The `Backend` interface resolves IDs through `GetKeyByID`, `GetSignerByID`
+and `GetDecrypterByID`, each taking `(ctx, keyID)` (`pkg/xkms/keystore.go:139,
+148, 156`).
 
 ## Invariants
 

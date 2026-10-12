@@ -1,13 +1,13 @@
 # ACME Issuance — API
 
-> **Status: NORMATIVE** · Feature: `acme-issuance` · Repo: `go-xkms` · Last verified: 2026-10-08
+> **Status: NORMATIVE** · Feature: `acme-issuance` · Repo: `go-xkms` · Last verified: 2026-10-12
 
 ACME is different from every other feature in this repo: **its wire format is
 defined by RFC 8555, not by us.** The six-transport rule applies to go-xkms's
 own control surfaces; the ACME protocol itself is HTTPS + JWS because that is
-what the standard says and what every existing client speaks. The other
-transports carry it as adapters, which is what `pkg/acme/api/adapter.go` and
-`pkg/acme/api/{rest,grpc,quic,mcp}` are for.
+what the standard says and what every existing client speaks. Only the ACME
+**admin** plane has other transports (see
+[Transport adapters](#transport-adapters)).
 
 ## The RFC 8555 surface (REST / HTTPS)
 
@@ -76,6 +76,15 @@ cluster enrollment config uses (`pkg/config/config.go:710`). Setting
 `baseRESTURI` from `acme.external_url`, and derives it from the listen address
 when that is empty (`acmeclient.AdvertisedURL`): a wildcard bind advertises
 `https://localhost:<port>`, a named bind advertises its name.
+
+### JWS algorithms
+
+Every signed request must use one of `AllowedJOSEAlgorithms`
+(`pkg/acme/server/types.go:25-36`): `RS256`, `RS384`, `RS512`, `PS256`,
+`PS384`, `PS512`, `ES256`, `ES384`, `ES512`, `EdDSA`. Anything else fails to
+parse. The list is enforced on every signed request
+(`pkg/acme/server/handlers/service.go:1139`), on the key-change inner JWS
+(`key_change.go:100`) and on tenant-scoped requests (`tenant_auth.go:70`).
 
 `POST-as-GET` is used throughout, per RFC 8555 §6.3: reads are POSTs with an
 empty payload, signed by the account key. There are no unauthenticated reads of
@@ -146,6 +155,27 @@ for such an order is `badCSR` (400). A TCG-CSR-IDEVID is likewise refused unless
 enroll-01 validated the order and the CSR's endorsement key and IAK are the ones
 that passed credential activation.
 
+The EK certificate endorse-01 issues uses the `tcg-ek` profile: extended key
+usage tcg-kp-EKCertificate (2.23.133.8.1) (`pkg/ca/profiles.go:506,575`), and
+the TPM's permanent identifier as an otherName in the subjectAltName
+(`pkg/ca/tcg.go:140`).
+
+### enroll-01 finalize
+
+An enroll-01 order finalized with a TCG-CSR-IDEVID is signed by
+`SignTCGCSRIDevID`, which issues two certificates
+(`pkg/acme/server/handlers/order_finalize.go:1576-1604`). The certificate the
+order then serves is one PEM bundle, in this order:
+
+1. the IAK certificate, Common Name `ca.IAKCommonName` (`iak-` prefix,
+   `pkg/ca/tcg.go:284,297`);
+2. the IDevID certificate, Common Name `<model>-<serial>` from the CSR's
+   `ProdModel` and `ProdSerial` (`order_finalize.go:1448`);
+3. the issuing chain (`appendIssuingChain`).
+
+The parsed enrollment data goes to any `OrderFinalizeHooks` as
+`TCGEnrollmentData`.
+
 ### device-attest-01 / permanent-identifier finalize
 
 A `permanent-identifier` order finalized with a standard x509 CSR (rather
@@ -196,55 +226,99 @@ permanent identifier — only its DNS/IP SANs are.
 
 ## Transport adapters
 
-| Transport | What it carries | Package |
-|---|---|---|
-| **rest** | the full RFC 8555 surface above | `pkg/acme/api/rest` |
-| **quic** | the same surface over HTTP/3; `DefaultQUICPort = 9444` (`pkg/acme/api/server/server.go:49`) | `pkg/acme/api/quic` |
-| **grpc** | adapter surface | `pkg/acme/api/grpc` |
-| **mcp** | adapter surface | `pkg/acme/api/mcp` |
-| **unix** | **MISSING — docs/13** | — |
-| **embedded** | `pkg/acme/client` in-process; first-node issuance goes straight to `TrustedCA` without ACME at all | `pkg/acme/client` |
+xkmsd serves the RFC 8555 surface on its own ACME listener
+(`acme.https_addr`, `pkg/config/acme.go:106`; `cmd/xkmsd/acme.go:409`). No
+other transport carries the ACME protocol: `ACMEAdapter`
+(`pkg/acme/api/adapter.go:184-198`) is an interface with no implementation.
+The transports below carry the **admin** plane only.
 
-OpenAPI/Swagger definitions live in `pkg/acme/api/swagger`.
+| Transport | Admin plane in xkmsd | Admin plane in `MultiProtocolServer` | Client adapter |
+|---|---|---|---|
+| **rest** | `/admin` and `/api/v1/tenants` on the unified mTLS listener (`cmd/xkmsd/admin.go:71`, `:91-106`) | `:8443` (`pkg/acme/api/server/server.go:49`) | `pkg/acme/api/rest` |
+| **grpc** | not served | `:9443` (`server.go:50`), plus the Unix socket `/run/trusted-ca-grpc.sock`, mode 0660 (`server.go:53`, `:55`) | `pkg/acme/api/grpc` |
+| **quic** | not served | `:9444` over HTTP/3, disabled without TLS (`server.go:51`, `:713-723`) | `pkg/acme/api/quic` |
+| **mcp** | not served | `:9445`, plus `POST /mcp` on the REST router (`server.go:52`, `:650-655`) | `pkg/acme/api/mcp` |
+| **unix** | not served | HTTP over `/run/trusted-ca-rest.sock`, mode 0660, with no TLS: access is controlled only by filesystem permissions (`server.go:54`, `:56`, `:905-942`) | — |
+| **embedded** | `pkg/acme/client` in-process; first-node issuance goes straight to `TrustedCA` without ACME | — | `pkg/acme/client` |
 
-**Recorded gap:** there is no Unix-socket adapter for ACME. This is a defensible
-absence — ACME is a network enrollment protocol and a local socket has no
-identifiers to validate — but it is written as a gap rather than omitted so the
-decision is visible.
+The client adapters implement `AdminAdapter` (`adapter.go:164-179`).
+`MultiProtocolServer` (`pkg/acme/api/server`) is a library server. xkmsd does
+not start it; only the multi-protocol integration tests import it. REST, QUIC,
+MCP and HTTP-over-Unix all serve the single router that `buildRouter` builds
+(`server.go:620-673`). It holds:
+
+- the admin and tenant routes;
+- `GET /health`, unauthenticated, answering `{"status":"healthy"}`
+  (`:640-646`);
+- `POST /mcp`;
+- Swagger;
+- the admin web UI.
+
+### Authorization on the library server
+
+Callers must always authenticate. Permissions are checked only when
+`ServerConfig.Authorizer` is set; with it nil, every authenticated caller is
+allowed (`server.go:96-106`, `pkg/acme/admin/authz.go:47-57`).
+
+- **gRPC over TCP** chains three interceptors: peer credentials, mTLS
+  identity and authorization (`server.go:807-811`). `MethodPermissions`
+  (`pkg/acme/api/server/interceptor_authz.go:49-91`) maps each `AdminService`
+  RPC to a qrdb permission. A method with no entry is refused with
+  `PermissionDenied` (`ErrOperationUnmapped`, `:110-145`).
+- **gRPC over the Unix socket** has no TLS. The caller is identified by
+  `SO_PEERCRED`, and on platforms without it the socket refuses to start
+  (`server.go:839-897`). `RoleMapping` turns the peer's credentials into qrdb
+  roles (`role_mapper.go:47-65`). `DefaultRoleMapping` grants `admin` to UID 0
+  and GID 0, and `operator` to GIDs 10 and 80 (`:73-79`). A peer that matches
+  no rule gets no role and is denied (`:42-46`).
+- **MCP** has 28 methods, such as `admin.getStatus` and
+  `admin.listCertificates` (`server.go:207-251`). They are checked against
+  `MCPMethodPermissions` (`mcp_authz.go:35-76`), the same table gRPC uses. A
+  method that can be dispatched but has no entry is denied
+  (`mcp_authz.go:84-96`).
+
+MCP answers with these JSON-RPC error codes (`server.go:1087-1143`):
+
+| Code | Meaning |
+|---|---|
+| `-32700` | parse error |
+| `-32600` | invalid request |
+| `-32002` | unauthorized |
+| `-32003` | forbidden |
+| `-32001` | not found |
+| `-32603` | internal error; the detail is withheld |
+
+The gRPC service is `trustedca.admin.v1.AdminService` (`api/proto/admin.proto`),
+with unary RPCs only.
 
 ### Interactive documentation (Swagger UI)
 
 `pkg/acme/api/swagger` embeds both OpenAPI specs (`acme-api.yaml`,
-`admin-api.yaml`) and a vendored copy of `swagger-ui-dist` — no CDN, no
-external fetch at runtime — and mounts them on the same gorilla mux router
-`pkg/acme/api/server` builds for the Admin API:
+`admin-api.yaml`) and a vendored copy of `swagger-ui-dist`, with no CDN and no
+external fetch at runtime. Only `MultiProtocolServer` mounts it
+(`server.go:662-667`, default spec `admin-api`). xkmsd does not serve it.
 
 | Path | Serves |
 |---|---|
-| `GET /docs` | Swagger UI; `?spec=acme-api` (default) or `?spec=admin-api` selects which spec renders |
+| `GET /docs` | Swagger UI; `?spec=acme-api` or `?spec=admin-api` selects which spec renders |
 | `GET /openapi/acme-api.yaml` | the RFC 8555 surface documented above |
 | `GET /openapi/admin-api.yaml` | the `pkg/acme/admin` control-plane surface |
 
-Both `/docs` and `/openapi/*` require the same admin authentication (Bearer
-JWT or mTLS) and the `admin:capabilities` qrdb grant as `GET /admin/algorithms`
-— they are **not public**. The specs and the UI enumerate every admin route,
-parameter and permission this deployment exposes; publishing that attack
-surface map to unauthenticated callers would hand out a target list for free.
-The RFC 8555 endpoints in the table above remain public regardless — ACME's
-own directory (`GET /acme/directory`) already discovers them for standard
-clients, which is what ACME clients actually use, not the Swagger UI.
+`/docs` and `/openapi/*` are **not public**. They require the same admin
+authentication and `admin:capabilities` qrdb grant as `GET /admin/algorithms`.
+The specs list every admin route, parameter and permission, so serving them to
+unauthenticated callers would hand out a list of targets.
 
 The Swagger UI page sets a strict `Content-Security-Policy` (`script-src
-'self'`, no `unsafe-eval`, no `unsafe-inline` scripts): every script it loads
-is same-origin and vendored at build time, so there is nothing for a relaxed
-CSP to protect against.
+'self'`, no `unsafe-eval`, no `unsafe-inline` scripts). Every script it loads
+is same-origin and vendored at build time.
 
 ## The xkms control-plane view of ACME
 
 Separately from the RFC surface, the ACME server's **administration** is
-reachable through `pkg/acme/admin` (accounts, certificates, EAB, tenants,
-roles, users, CA status/stats, policy). That plane is not RFC 8555
-and is not documented as if it were; it follows the repo's normal
+reachable through `pkg/acme/admin` (accounts, certificates, orders, EAB,
+tenants, roles, users, CA status/stats, audit, algorithms). That plane is not
+RFC 8555 and is not documented as if it were; it follows the repo's normal
 authenticated-API conventions. The SDK surface is `sdk/go/acme/client/admin`;
 the CLI surface is `xkmsctl acme` ([`cli.md`](cli.md#xkmsctl-acme-admin)).
 
@@ -266,10 +340,52 @@ else to report succeeds with `{message}`. Every error, on every operation and
 at every layer (handler validation, service errors, and `PermissionGate`'s
 own 401/403), is an RFC 7807 `application/problem+json` body
 (`{type, title, detail, status}`). `admin-api.yaml`
-(`pkg/acme/api/swagger/openapi/admin-api.yaml`, served live at
-`GET /openapi/admin-api.yaml`) documents exactly this for every operation —
-there is no second copy of this document anywhere in the tree to drift from
-it.
+(`pkg/acme/api/swagger/openapi/admin-api.yaml`) documents exactly this for
+every operation — there is no second copy of this document anywhere in the
+tree to drift from it.
+
+### Admin API routes
+
+`Handlers.RegisterRoutes` (`pkg/acme/admin/handlers.go:108-142`) mounts these
+routes under `/admin`. Each is wrapped in `gate.Wrap(resource, action)`:
+
+| Route | Method | Permission |
+|---|---|---|
+| `/admin/certificates` | `GET` | `certs:list` |
+| `/admin/certificates/expiring` | `GET` | `certs:list` |
+| `/admin/certificates/{serial}` | `GET` | `certs:read` |
+| `/admin/certificates/{serial}/revoke` | `POST` | `certs:revoke` |
+| `/admin/accounts` | `GET` | `acme_accounts:list` |
+| `/admin/accounts/{id}` | `GET` / `DELETE` | `acme_accounts:read` / `acme_accounts:disable` |
+| `/admin/orders` | `GET` | `acme_orders:list` |
+| `/admin/orders/{id}` | `GET` | `acme_orders:read` |
+| `/admin/audit` | `GET` | `audit:read` |
+| `/admin/status`, `/admin/stats` | `GET` | `admin:status` |
+| `/admin/algorithms` | `GET` | `admin:capabilities` |
+
+Query parameters, with defaults in parentheses:
+
+| Route | Parameters | Source |
+|---|---|---|
+| `/admin/certificates` | `page` (1), `per_page` (20), `status`, `subject` | `handlers.go:153-156` |
+| `/admin/certificates/expiring` | `days` (30), `page`, `per_page` | `handlers.go:232-234` |
+| `/admin/accounts` | `page`, `per_page`, `status` | `handlers.go:259-261` |
+| `/admin/orders` | `page`, `per_page`, `status`, `account_id` | `handlers.go:340-345` |
+| `/admin/orders/{id}` | `account_id`, required; `400` without it | `handlers.go:379-383` |
+| `/admin/audit` | see [audit-log/api.md](../audit-log/api.md#acme-audit-trail) | `handlers.go:500-516` |
+| `/api/v1/tenants` | `page`, `per_page`, `status` | `tenant_handlers.go:344-346` |
+| `/api/v1/tenants/{id}/eab` | `page`, `per_page`, `status`, `purpose` | `tenant_handlers.go:753-756` |
+| `/api/v1/tenants/{id}/roles`, `/users` | `page`, `page_size` (20) | `parsePagination`, `tenant_handlers.go:1062-1076` |
+
+The service caps `per_page` at 100 (`pkg/acme/admin/service.go:68-71`,
+`tenant_service.go:521-524`). A tenant created without an `id` is given
+`tenant-<unixnano>` (`tenant_handlers.go:198`). `POST .../eab` returns the
+`mac_key` once (`CreateEABResponse`, `types.go:507-512`). Later reads never
+include it (`EABInfo`, `types.go:470-483`).
+
+xkmsd builds its admin handlers without an audit querier
+(`cmd/xkmsd/admin.go:143`), so on xkmsd `GET /admin/audit` answers `501`
+(`handlers.go:446-488`).
 
 ### Admin API tenant binding responses
 
@@ -294,6 +410,60 @@ gRPC maps these through `convertAdminErrorToGRPC`
 `ErrAccountNotFound`, `ErrOrderNotFound`, `ErrCertificateNotFound`
 (`IsNotFoundError`, `pkg/acme/admin/types.go:64`) or `ErrForbidden`
 (`IsUnauthorizedError`).
+
+### Admin API tenant routes
+
+The ACME admin plane's tenant routes (`TenantHandlers.RegisterRoutes`,
+`pkg/acme/admin/tenant_handlers.go:52-127`) are distinct from the key-management
+tenant routes in [`../multi-tenancy/api.md`](../multi-tenancy/api.md): these
+carry the ACME tenant's CA hierarchy, settings and EABs
+([`engineering.md`](engineering.md#acme-tenant-ca-hierarchy)). Each route is
+`gate.Wrap(resource, action)`, a qrdb permission:
+
+| Route | Method | Permission |
+|---|---|---|
+| `/api/v1/tenants` | `GET` / `POST` | `tenants:list` / `tenants:create` |
+| `/api/v1/tenants/{id}` | `GET` / `PUT` / `DELETE` | `tenants:read` / `tenants:update` / `tenants:delete` |
+| `/api/v1/tenants/{id}/status` | `PUT` | `tenants:update` |
+| `/api/v1/tenants/{id}/root-ca` | `POST` | `ca:create` |
+| `/api/v1/tenants/{id}/intermediate-cas` | `GET` / `POST` | `ca:list` / `ca:create` |
+| `/api/v1/tenants/{id}/intermediate-cas/{caid}` | `GET` | `ca:read` |
+| `/api/v1/tenants/{id}/intermediate-cas/{caid}/status` | `PUT` | `ca:update` |
+| `/api/v1/tenants/{id}/default-intermediate-ca` | `PUT` | `ca:update` |
+| `/api/v1/tenants/{id}/ca-status` | `GET` | `ca:read` |
+| `/api/v1/tenants/{id}/eab` | `GET` / `POST` | `acme_eab:list` / `acme_eab:create` |
+| `/api/v1/tenants/{id}/eab/{kid}` | `GET` / `DELETE` | `acme_eab:read` / `acme_eab:delete` |
+| `/api/v1/tenants/{id}/roles`, `/roles/{roleID}` | CRUD | `roles:*` |
+| `/api/v1/tenants/{id}/users`, `/users/{userID}` | CRUD | `users:*` |
+
+Resource names are `pkg/auth/permissions.go:45,109,116`. `acme_eab:create` is
+the endorser authority: a deployment that wants an endorse-only principal
+creates a qrdb role holding just that permission (the comment above the EAB
+routes in `RegisterRoutes`).
+
+Request bodies (`pkg/acme/admin/types.go`):
+
+| Request | Fields |
+|---|---|
+| `CreateTenantRequest` (`:408`) | `id`, `name`, `settings` (`TenantSettingsInfo`, `:368`: `max_certificates`, `max_accounts`, `allowed_key_algorithms`, `allowed_challenge_types`, `certificate_validity_days`, `require_eab`, `allow_endorse_01`, `allow_enroll_01`, `compliance_config`) |
+| `UpdateTenantStatusRequest` (`:421`) | `status` |
+| `CreateTenantRootCARequest` (`:426`) | `common_name`, `key_algorithm`, `validity_years` |
+| `CreateTenantIntermediateCARequest` (`:433`) | `common_name`, `parent_type` (`global` or `tenant`), `purpose`, `key_algorithm`, `validity_years`, `set_as_default` |
+| `CreateEABRequest` | `purpose` — `account-binding` (the default), `endorse-01` or `enroll-01`; anything else is `400` (`tenant_handlers.go:649-658`). An `endorse-01` EAB without `device_info` is accepted with a logged warning (`:661-663`), but endorse-01 then refuses it at the challenge because it names no EK (see [endorse-01 finalize](#endorse-01-finalize)). |
+
+```bash
+curl --cert admin.pem --key admin.key \
+  -H "Content-Type: application/json" \
+  -d '{"common_name": "Example Corp TPM Endorsement CA",
+       "parent_type": "global", "key_algorithm": "ECDSA",
+       "validity_years": 10, "purpose": "tpm-endorsement"}' \
+  https://kms.example.com/api/v1/tenants/example-corp/intermediate-cas
+```
+
+`key_algorithm` names an algorithm family, not a curve or size: `RSA` (also
+the empty default), `ECDSA`/`EC` or `Ed25519`, in the case variants
+`parseKeyAlgorithm` lists; anything else, `EC-P384` included, is refused as
+malformed (`pkg/acme/admin/tenant_service.go:1744-1754`).
 
 ## Response schemas
 
@@ -320,7 +490,8 @@ read it will fail its next POST with `badNonce`.
 ## Pagination
 
 `POST /acme/account/{id}/orders` returns an orders list with RFC 8555 `Link:
-rel="next"` pagination. No ACME collection is returned unbounded.
+rel="next"` pagination. No ACME collection is returned unbounded. Admin-plane
+list pagination is under [Admin API routes](#admin-api-routes).
 
 ## Versioning and deprecation
 

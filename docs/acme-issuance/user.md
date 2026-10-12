@@ -1,6 +1,6 @@
 # ACME Issuance — User Guide
 
-> **Status: NORMATIVE** · Feature: `acme-issuance` · Repo: `go-xkms` · Last verified: 2026-09-28
+> **Status: NORMATIVE** · Feature: `acme-issuance` · Repo: `go-xkms` · Last verified: 2026-10-12
 
 ## Prerequisites
 
@@ -146,25 +146,19 @@ node pinned to one interface serves the exchange on that interface only.
 
 ## Browsing the API interactively
 
-`GET /docs` on the Admin API address serves a Swagger UI you can browse the
-RFC 8555 and admin surfaces from, and try requests against directly. It is
-admin-gated — the same Bearer JWT or mTLS credential and permission grant
-`GET /admin/algorithms` requires — because the specs it renders list every
-admin route, parameter and permission this deployment exposes:
+xkmsd serves the admin web UI at `/admin-ui` on its unified mTLS listener
+(`cmd/xkmsd/admin.go:54`, `:103`). Open it in a browser that presents a client
+certificate bound to a qrdb user:
 
 ```
-curl -H "Authorization: Bearer $TOKEN" https://kms.example.com:8443/docs
+https://kms.example.com/admin-ui/
 ```
 
-Open that URL in a browser signed in the same way (or via an mTLS-aware proxy)
-and switch specs with the **ACME API** / **Admin API** links in the top bar, or
-`?spec=acme-api` / `?spec=admin-api` in the URL. The raw specs are also
-available on their own for tooling that consumes OpenAPI directly:
-
-```
-curl -H "Authorization: Bearer $TOKEN" https://kms.example.com:8443/openapi/acme-api.yaml
-curl -H "Authorization: Bearer $TOKEN" https://kms.example.com:8443/openapi/admin-api.yaml
-```
+xkmsd does not serve Swagger UI or the raw OpenAPI specs. The specs are in the
+source tree, at `pkg/acme/api/swagger/openapi/acme-api.yaml` and
+`admin-api.yaml`, for tooling that consumes OpenAPI directly. An embedder that
+runs the library `MultiProtocolServer` gets them at `/docs` and `/openapi/*`
+behind admin authentication ([api.md](api.md#interactive-documentation-swagger-ui)).
 
 ## Troubleshooting
 

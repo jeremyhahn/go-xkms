@@ -1,6 +1,6 @@
 # Password Vault — Engineering Contract
 
-> **Status: NORMATIVE** · Feature: `password-vault` · Repo: `go-xkms` · Last verified: 2026-10-09
+> **Status: NORMATIVE** · Feature: `password-vault` · Repo: `go-xkms` · Last verified: 2026-10-12
 
 ## Exported surface — `pkg/staticpw`
 
@@ -153,6 +153,43 @@ decrypt- or PIN-aware variant. Entries: `entity.go`, `team_entity.go`,
 `types.go`. Support: `generator.go`, `expiry.go`, `validation.go`,
 `errors.go`.
 
+Key layout: shared entries live under `{tenant}/staticpw/shared/` and personal
+ones under `{tenant}/staticpw/users/{subject}/` (`store.go:33-34`), with each
+entry at `.../entry/<id>`. A tenant ID is 1-64 characters matching
+`^[a-zA-Z0-9][a-zA-Z0-9_-]*$` (`store.go:38,44,663-671`); `NewTenantStore`
+answers `ErrInvalidTenantID` otherwise (`store.go:132-141`).
+
+Entry IDs (public scheme): `GenerateID(name, folder)` is the `%016x` xxhash64
+of lowercase `folder + "/" + name`, or of lowercase `name` when there is no
+folder (`types.go:117-125`). An ID is therefore not the path itself, and
+`MoveToFolder` re-derives it and renames the record (`store.go:435-460`;
+`ErrPasswordReadOnly`, `ErrMoveToSameFolder`). `Get(idOrName)` tries the
+argument as an ID, then as the ID of a folderless name, then falls back to a
+case-insensitive name match over all entries (`store.go:623-649`).
+`ListFolders` returns every folder with all its parent segments plus the empty
+folder markers (`store.go:394-424`).
+
+`ScopedStore` routing (`scoped_store.go`): `Add` stamps `OwnerID` and writes a
+`Shared` entry to the shared store, anything else to personal (`:100-110`);
+`Get` and `Delete` look in personal first, then shared (`:114-125`, `:169-171`);
+`Update` writes a `Shared` entry to shared, otherwise resolves the same way
+(`:160-165`). An owner ID failing `isValidUserID` fails construction with
+`ErrInvalidUserID` (`:47-48`, `:63-64`).
+
+Generator (`generator.go`): `GeneratePassword(length, charset)` uses length 32
+for 0 and rejects anything outside 8-128 with `ErrInvalidLength`
+(`:51-57`, `:83-99`). Charset `""` or `"all"` is the full set, `"alphanumeric"`
+drops symbols, any other string is used verbatim as a custom charset
+(`:186-195`). The full set guarantees at least `length/8` (minimum 1) each of
+upper, lower, digits and the symbols `!@#$%^&*()-_=+?.`, then shuffles with
+`crypto/rand` (`:104-138`).
+
+Team store (`team_store.go:30-66`, `NewDAOTeamStore` `:80-98`): the
+`staticpw_teams` collection, keyed by a hash of `Name`. `AddMember` appends
+only when absent and `RemoveMember` ignores an absent member; `IsMember`
+returns a bool; `Page` takes a `qrdbsdk.PageQuery`. Errors: `ErrTeamNotFound`,
+`ErrTeamExists`, `ErrTeamNameEmpty`.
+
 ### Client contract — `sdk/go/transport`
 
 ```go
@@ -184,8 +221,11 @@ type PasswordService interface {
   while locked; that is what makes it useful.
 - **Scope is enforced, not advisory.** `own | shared | all` determines what a
   listing returns; a caller cannot widen it by asking.
-- **Expiry is metadata.** `expires_at` marks an entry; nothing in this package
-  invalidates the credential.
+- **Expiry is metadata to the service.** `expires_at` marks an entry and
+  nothing invalidates the credential itself. xkmsd never deletes on expiry;
+  `ExpiryChecker` (`expiry.go:35-108`) does when a caller runs it: it deletes
+  every entry whose `ExpiresAt` has passed and calls `onExpiry` for each. xkey's
+  GUI runs it hourly (`xkey/pkg/gui/app.go:3156`).
 - **Generation has one implementation.** `generator.go`. A second generator at a
   call site is a defect.
 - **Encryption is the barrier's.** `DAOStore` persists through go-qrdb's DAO

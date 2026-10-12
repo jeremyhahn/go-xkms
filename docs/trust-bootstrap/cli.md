@@ -1,6 +1,6 @@
 # Trust Bootstrap — CLI
 
-> **Status: NORMATIVE** · Feature: `trust-bootstrap` · Repo: `go-xkms` · Last verified: 2026-09-22
+> **Status: NORMATIVE** · Feature: `trust-bootstrap` · Repo: `go-xkms` · Last verified: 2026-10-12
 
 Binary: `xkmsctl`, group `bootstrap`. Sources: `cmd/xkmsctl/bootstrap.go`,
 `bootstrap_dane.go`, `bootstrap_noise.go`, `bootstrap_p256.go`,
@@ -31,6 +31,19 @@ Runs the configured modes in order and returns the first bundle that verifies.
 | `--direct` | bool | `false` | enable direct HTTPS fallback using the system trust store |
 | `--bundle-path` | string | `""` | REST path for the bundle endpoint |
 | `--bundle-output` | string | `""` | write the bundle here (stdout when omitted) |
+
+`--config` takes the local flag when given, otherwise the root `--config`
+(`cmd/xkmsctl/bootstrap.go:62-95`). Only the file's `trust.scopes.default` scope
+is read, and flags override what it supplies (`bootstrap_trust.go:38-67`). It
+supplies:
+
+- `server-url`;
+- `hostname` and `dane.dns-server`, but only when the scope has a `dane:` block;
+- `noise.server-static-key`, `server-p256-static-key` and `server-addr`;
+- `spki.pin`.
+
+A file that cannot be loaded is `*ConfigLoadError`. The scope format is in
+[`engineering.md`](engineering.md) §Exported surface — `pkg/trust/resolver`.
 
 A mode with no flags supplied is simply skipped. `--direct` is opt-in because
 it is the one mode that verifies nothing beyond the public web PKI.

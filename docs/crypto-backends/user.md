@@ -1,6 +1,6 @@
 # Crypto Backends — User Guide
 
-> **Status: NORMATIVE** · Feature: `crypto-backends` · Repo: `go-xkms` · Last verified: 2026-10-11
+> **Status: NORMATIVE** · Feature: `crypto-backends` · Repo: `go-xkms` · Last verified: 2026-10-12
 
 ## Which backend should I use?
 
@@ -46,8 +46,17 @@ The capabilities you will care about most:
   block each other.
 - **pkcs11** — the token's Cryptoki `.so`, the slot number, and the user PIN.
   Set the security-officer PIN before the user PIN on a fresh token.
-- **cloud (awskms / gcpkms / azurekv / vault)** — credentials in the
-  **server's** environment. You never pass these on the command line.
+- **cloud (awskms / gcpkms / azurekv / vault)** — credentials on the
+  **server's** side, never on the command line:
+  - **awskms** — static keys from config, or the AWS default credential chain.
+  - **gcpkms** — a credentials file, or Application Default Credentials.
+  - **azurekv** — a service principal, or `DefaultAzureCredential`.
+  - **vault** — a token; Vault has no other auth method here.
+
+  Secret fields in `xkmsd` config are `credential://` references. Each
+  backend's keys are listed in
+  [`engineering.md`](engineering.md#per-backend-configuration). Read its
+  **defect** note before enabling a cloud backend.
 - **phone** — a paired xkey-android device.
 - **avr** — a device running arduino-generic firmware, on a serial link the
   caller opens. There is no credential: the link is the access.

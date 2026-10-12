@@ -1,6 +1,6 @@
 # Password Vault — Architecture
 
-> **Status: NORMATIVE** · Feature: `password-vault` · Repo: `go-xkms` · Last verified: 2026-10-09
+> **Status: NORMATIVE** · Feature: `password-vault` · Repo: `go-xkms` · Last verified: 2026-10-12
 
 ## The problem
 
@@ -387,7 +387,8 @@ session gate are enforced once.
   REST handlers and per-tenant DAO factory were deleted.
 - **Expiry is metadata, not enforcement.** `expiry.go` records
   `--expires-at`; treat an expired entry as a signal to rotate, not as a
-  guarantee that the credential stopped working.
+  guarantee that the credential stopped working. xkey's GUI does delete
+  expired entries hourly through `ExpiryChecker`; xkmsd does not.
 - **Tenant isolation applies.** Entries carry `--tenant-id` and the store is
   tenant-scoped — see [`../multi-tenancy/`](../multi-tenancy/architecture.md).
 - **Generated passwords are only as good as the generator.** `generator.go` is

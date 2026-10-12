@@ -22,7 +22,7 @@
 // This package replaces test/integration/cactl (go-xkms#949): go-trusted-ca's
 // cactl binary no longer exists in this repository, and the ACME admin
 // plane it drove is served exclusively over REST by xkmsd today (see
-// docs/acme/protocols/rest.md). Every case here therefore runs a single
+// docs/acme-issuance/api.md, "Transport adapters"). Every case here therefore runs a single
 // transport, REST, via "--acme-transport rest"; the former transport-matrix
 // coverage (gRPC/QUIC/MCP/Unix) is dropped, not adapted, because xkmsd does
 // not serve those transports (go-xkms#743 tracks wiring them).
