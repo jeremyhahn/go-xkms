@@ -25,29 +25,23 @@ import (
 	"time"
 
 	"github.com/jeremyhahn/go-xkms/xkey/pkg/pairing"
-	"tinygo.org/x/bluetooth"
 )
 
-// This file exercises the parts of BLETransport that do not require a real
-// Bluetooth adapter: the guard clauses every exported method checks before
-// touching hardware, the notification handlers (fed by the GATT client
-// library, not by hardware directly), and the pure helper functions.
-//
-// NewBLETransport itself calls bluetooth.DefaultAdapter.Enable(), which
-// depends on a running bluetoothd and has no injectable seam (see the
-// package-level report on this). Every test here builds a *BLETransport by
-// struct literal instead, exactly as the peripheral's own tests build a
-// *BLEPeripheral without calling Start.
+// This file exercises the guard clauses every exported method checks before
+// touching the central, the notification handlers (fed by the GATT client
+// library, not by hardware directly), and the pure helper functions. The
+// paths that drive a central are in ble_transport_central_test.go.
 
 // newTestTransport builds a transport whose channels and fragmenter are
-// initialized the way NewBLETransport would, without ever calling
-// adapter.Enable(). adapterPresent controls whether the adapter-nil guard is
-// hit; nothing here calls a method ON the adapter, so a non-nil zero-value
-// pointer is safe.
+// initialized the way newBLETransport would. adapterPresent controls whether
+// the adapter-nil guard is hit; when present the adapter is a fakeCentral that
+// finds nothing, and bluetoothctl reports every device as unknown.
 func newTestTransport(adapterPresent bool) *BLETransport {
 	t := &BLETransport{
 		cfg:          DefaultBLETransportConfig(),
 		log:          slog.New(slog.NewTextHandler(io.Discard, nil)),
+		bluetoothctl: newFakeBluetoothctl().run,
+		sleep:        func(time.Duration) {},
 		fragmenter:   pairing.NewFragmenter(DefaultMTU),
 		reassembler:  pairing.NewReassembler(),
 		responseChan: make(chan []byte, 16),
@@ -55,7 +49,7 @@ func newTestTransport(adapterPresent bool) *BLETransport {
 		done:         make(chan struct{}),
 	}
 	if adapterPresent {
-		t.adapter = &bluetooth.Adapter{}
+		t.adapter = newFakeCentral()
 	}
 	return t
 }

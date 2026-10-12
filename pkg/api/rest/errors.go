@@ -93,6 +93,26 @@ var (
 	// neither a token issuer nor a qrdb client was supplied: there is no
 	// session vehicle a caller could authenticate with.
 	ErrAuthenticatorChainEmpty = errors.New("rest: no session-vehicle input available (need a token issuer or a qrdb client)")
+
+	// ErrPIVLoginUnattestedWithAnchors is returned by NewServer when an
+	// enabled PIVLogin sets both AttestationRoots and AllowUnattested. A
+	// deployment that configures attestation trust requires the evidence;
+	// accepting a login that fails it as "unattested" would be a fallback
+	// around the very check the anchors configure.
+	ErrPIVLoginUnattestedWithAnchors = errors.New("rest: piv login cannot allow unattested logins when attestation roots are configured")
+
+	// ErrPIVAttestationUnparseable is the profile failure for an attestation
+	// certificate carrying a PIV attestation extension that does not decode.
+	ErrPIVAttestationUnparseable = errors.New("rest: piv attestation carries an extension that does not decode")
+
+	// ErrPIVAttestationClaimMissing is the profile failure for a certificate
+	// lacking the firmware, serial, or PIN/touch policy claim every PIV slot
+	// attestation carries.
+	ErrPIVAttestationClaimMissing = errors.New("rest: certificate lacks the piv slot attestation claims")
+
+	// ErrPIVAttestationPolicyUnknown is the profile failure for a PIN or
+	// touch policy value this build does not recognise.
+	ErrPIVAttestationPolicyUnknown = errors.New("rest: piv attestation carries an unrecognised pin or touch policy")
 )
 
 // writeError writes an error response to the client. The body carries

@@ -682,6 +682,80 @@ func TestRunPivGenerate_RejectsInvalidSlot(t *testing.T) {
 	require.Error(t, err)
 }
 
+func TestRunPivGenerate_CSROutputFormat_PrintsASignedRequest(t *testing.T) {
+	withFilePIVStorage(t)
+
+	cmd, buf := newPIVGenerateTestCmd(t)
+	require.NoError(t, setFlagForTest(t, cmd.Flags(), "output-format", "csr"))
+	require.NoError(t, setFlagForTest(t, cmd.Flags(), "subject", "csr-user@example.com"))
+
+	require.NoError(t, runPivGenerate(cmd, []string{string(xkms.PIVSlotAuthentication)}))
+
+	block, _ := pem.Decode(buf.Bytes())
+	require.NotNil(t, block, "the CSR is written to stdout as PEM")
+	assert.Equal(t, "CERTIFICATE REQUEST", block.Type)
+	csr, err := x509.ParseCertificateRequest(block.Bytes)
+	require.NoError(t, err)
+	require.NoError(t, csr.CheckSignature(), "the request is signed by the generated slot key")
+	assert.Equal(t, "csr-user@example.com", csr.Subject.CommonName)
+}
+
+func TestRunPivGenerate_RejectsInvalidPoliciesBeforeGenerating(t *testing.T) {
+	tests := []struct {
+		flag    string
+		wantErr error
+	}{
+		{flag: "pin-policy", wantErr: ErrPIVInvalidPINPolicy},
+		{flag: "touch-policy", wantErr: ErrPIVInvalidTouchPolicy},
+	}
+	for _, tt := range tests {
+		t.Run(tt.flag, func(t *testing.T) {
+			withFilePIVStorage(t)
+
+			cmd, _ := newPIVGenerateTestCmd(t)
+			require.NoError(t, setFlagForTest(t, cmd.Flags(), tt.flag, "sometimes"))
+
+			err := runPivGenerate(cmd, []string{string(xkms.PIVSlotAuthentication)})
+			require.ErrorIs(t, err, tt.wantErr)
+
+			storage, err := createPIVStorage(mustBuildPIVConfig(t, nil), slog.Default())
+			require.NoError(t, err)
+			defer func() { _ = storage.Close() }()
+			slots, err := storage.List()
+			require.NoError(t, err)
+			assert.Empty(t, slots, "a rejected policy must not leave a key in the slot")
+		})
+	}
+}
+
+func TestRunPivGenerate_ReportsAnUnwritableOutputFile(t *testing.T) {
+	withFilePIVStorage(t)
+
+	cmd, _ := newPIVGenerateTestCmd(t)
+	require.NoError(t, setFlagForTest(t, cmd.Flags(), "output-format", "public-key"))
+	outPath := filepath.Join(t.TempDir(), "missing-dir", "pub.pem")
+	require.NoError(t, setFlagForTest(t, cmd.Flags(), "output", outPath))
+
+	err := runPivGenerate(cmd, []string{string(xkms.PIVSlotDigitalSignature)})
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "failed to write Public key to "+outPath)
+	assert.NoFileExists(t, outPath)
+}
+
+func TestRunPivGenerate_UnusableStorageFailsWithStorageCreationError(t *testing.T) {
+	withFilePIVStorage(t)
+	cfg := xkeyconfig.DefaultConfig()
+	cfg.PIV.Backend = string(PIVBackendPKCS11)
+	cfg.PIV.Storage = string(PIVStorageTypePKCS11)
+	cfg.PIV.PKCS11Library = ""
+	loadedConfig = cfg
+
+	cmd, _ := newPIVGenerateTestCmd(t)
+	err := runPivGenerate(cmd, []string{string(xkms.PIVSlotAuthentication)})
+	require.ErrorIs(t, err, ErrPIVStorageCreationFailed)
+	assert.ErrorIs(t, err, ErrPIVPKCS11LibraryRequired)
+}
+
 // newPIVCSRTestCmd builds a detached csr command carrying the flags
 // pivCSRCmd registers in production.
 func newPIVCSRTestCmd(t *testing.T, cn string) (*cobra.Command, *bytes.Buffer) {

@@ -1,6 +1,6 @@
 # PIV Smartcard — API
 
-> **Status: NORMATIVE** · Feature: `piv-smartcard` · Repo: `go-xkms` · Last verified: 2026-10-09
+> **Status: NORMATIVE** · Feature: `piv-smartcard` · Repo: `go-xkms` · Last verified: 2026-10-11
 
 Transport shapes: [`../key-management/api.md`](../key-management/api.md)
 §"How the six transports are shaped".
@@ -55,8 +55,7 @@ login key's SubjectPublicKeyInfo; the token it mints records `attest_level`
 the one vocabulary shared with go-quicbaas#379). The contract is in
 [`../auth-factors/api.md`](../auth-factors/api.md).
 
-**Precedence: a recorded enrollment level, when one exists, decides the
-claim outright — the certificate chain is not consulted at all in that case.**
+**A recorded enrollment level never replaces the attestation.**
 `PIVLoginOptions.RecordedLevel`
 (`func(cert *x509.Certificate) (types.AttestLevel, bool)`) looks up the level
 `pkg/xkms`'s `PIVKeyGenerator` implementations recorded on
@@ -66,15 +65,13 @@ certificate against every enrolled PIV slot on every registered backend by
 SubjectPublicKeyInfo — the canonical qrdb SPKI SHA-256 thumbprint
 (`qrdbsdk.ComputeSPKIThumbprint`, the one cert-binding algorithm already used
 for admin cert binding), not a second algorithm invented for this lookup.
+With `attestation_roots` configured, the login must present a verifying
+attestation for its key whatever the record says, and a recorded `software`
+or `unattested` level refuses it. Without roots, a recorded level decides the
+claim: `hardware` is accepted, and any other level needs `allow_unattested`.
 When `RecordedLevel` is nil (no PIV manager was initialized at server
-composition) or reports not-found for the presented certificate, the
-exchange falls back to the pre-existing chain-derived decision (an anchored
-attestation chain proves `hardware`; `AllowUnattested` opts into minting
-`unattested` otherwise). A recorded `hardware` is never downgraded by a
-missing or invalid chain, and a recorded `software` or `unattested` is never
-upgraded by a chain that happens to verify — RecordedLevel decides *what*
-the key is; `AllowUnattested` still decides whether a non-hardware login may
-proceed at all.
+composition) or reports not-found, the decision rests on the attestation, or
+on `allow_unattested` when there is no anchor.
 
 ## `{slot}` is a closed set
 

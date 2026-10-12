@@ -15,10 +15,7 @@ package file
 
 import (
 	"context"
-	"os"
 	"time"
-
-	"golang.org/x/sys/unix"
 
 	"github.com/jeremyhahn/go-xkms/pkg/errs"
 )
@@ -27,8 +24,8 @@ import (
 // attempts to acquire the advisory lock. The critical sections it protects
 // are an engine open or a handful of small reads and writes, not a
 // long-held section, so a short fixed poll keeps contention latency low
-// without the complexity of a blocking flock(2) call plus a second
-// mechanism (a signal, or a watcher goroutine) to make it obey ctx.
+// without the complexity of a blocking lock call plus a second mechanism (a
+// signal, or a watcher goroutine) to make it obey ctx.
 const lockPollInterval = time.Millisecond
 
 // withCrossProcessLock runs fn while holding an exclusive advisory lock on
@@ -36,12 +33,6 @@ const lockPollInterval = time.Millisecond
 // Put, Delete, PutIfAbsent, PutIfAllAbsent, CompareAndSwap and
 // CompareAndDelete -- and the engine open in New against the same operations
 // racing from another process against the same directory (#1157).
-//
-// The lock is taken on the directory itself, not on a lock file inside it:
-// go-qrdb's file engine refuses to initialise a directory that already holds
-// anything but its format marker, so a lock file created before the first
-// open would make the store unopenable. Locking the directory also leaves
-// nothing behind on disk.
 //
 // Any write this package performs must exclude every OTHER write -- guarded or not -- from another process, the
 // same guarantee engineBackend's writeMu already gives this package's calls
@@ -51,31 +42,30 @@ const lockPollInterval = time.Millisecond
 // guarded read and write and defeat the guard, exactly as an unguarded Put
 // would defeat writeMu in-process.
 //
-// A fresh file description is opened for every call rather than one held for
-// the life of the FileStorage. flock(2) locks are scoped to the open file
-// description, not the process or the file: two descriptions opened by the
-// SAME process still contend for the lock like any other pair of processes
-// would. Opening fresh each time is what lets this single mechanism serialize
-// this process's own goroutines calling concurrently AND every other process,
-// with no separate in-process mutex to keep paired with the flock calls.
+// A fresh lock handle is opened for every call rather than one held for the
+// life of the FileStorage. Both platform locks (flock(2), LockFileEx) are
+// scoped to the open handle, not the process: two handles opened by the SAME
+// process still contend for the lock like any other pair of processes would.
+// Opening fresh each time is what lets this single mechanism serialize this
+// process's own goroutines calling concurrently AND every other process,
+// with no separate in-process mutex to keep paired with the lock calls.
 //
-// flock releases the moment the holding file description closes, including
-// on process exit.
+// The lock releases the moment the holding handle closes, including on
+// process exit. openDirLock documents what each platform locks.
 func withCrossProcessLock(ctx context.Context, dir string, fn func() error) error {
-	dirFile, err := os.Open(dir) // #nosec G304 -- dir is the store root New resolved
+	lock, err := openDirLock(dir)
 	if err != nil {
 		return &errs.Wrapped{Msg: "file storage: failed to open store directory for locking", Err: err}
 	}
-	defer func() { _ = dirFile.Close() }()
+	defer func() { _ = lock.close() }()
 
-	fd := int(dirFile.Fd())
 	for {
-		flockErr := unix.Flock(fd, unix.LOCK_EX|unix.LOCK_NB)
-		if flockErr == nil {
-			break
+		acquired, lockErr := lock.tryLock()
+		if lockErr != nil {
+			return &errs.Wrapped{Msg: "file storage: failed to acquire cross-process lock", Err: lockErr}
 		}
-		if flockErr != unix.EWOULDBLOCK {
-			return &errs.Wrapped{Msg: "file storage: failed to acquire cross-process lock", Err: flockErr}
+		if acquired {
+			break
 		}
 		select {
 		case <-ctx.Done():
@@ -83,10 +73,10 @@ func withCrossProcessLock(ctx context.Context, dir string, fn func() error) erro
 		case <-time.After(lockPollInterval):
 		}
 	}
-	// Unlocked explicitly, ahead of the deferred Close above, so release is
-	// deterministic the instant fn returns rather than left to Close/GC
+	// Unlocked explicitly, ahead of the deferred close above, so release is
+	// deterministic the instant fn returns rather than left to close/GC
 	// ordering.
-	defer func() { _ = unix.Flock(fd, unix.LOCK_UN) }()
+	defer func() { _ = lock.unlock() }()
 
 	return fn()
 }

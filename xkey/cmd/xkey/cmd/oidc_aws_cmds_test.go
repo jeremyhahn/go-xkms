@@ -15,12 +15,17 @@ package cmd
 
 import (
 	"bytes"
+	"encoding/json"
+	"fmt"
 	"io/fs"
 	"net"
 	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"strconv"
+	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -257,4 +262,170 @@ func TestHandleAWSOutput_ExecRequiresCommand(t *testing.T) {
 	err := handleAWSOutput("exec", nil, "default", "", "")
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "exec output mode requires a command")
+}
+
+// --- AWS auto-refresh loop ---
+
+// awsRefreshServer is an AWS token endpoint that rotates the refresh token
+// on every call and records the refresh token each call presented.
+type awsRefreshServer struct {
+	*httptest.Server
+
+	mu        sync.Mutex
+	presented []string
+}
+
+func newAWSRefreshServer(t *testing.T) *awsRefreshServer {
+	t.Helper()
+
+	server := &awsRefreshServer{}
+	server.Server = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if err := r.ParseForm(); err != nil {
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+		server.mu.Lock()
+		server.presented = append(server.presented, r.PostForm.Get("refresh_token"))
+		call := len(server.presented)
+		server.mu.Unlock()
+
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(aws.RawTokenResponse{
+			AccessToken: &aws.AccessTokenCredentials{
+				AccessKeyID:     fmt.Sprintf("AKIAROTATED%09d", call),
+				SecretAccessKey: "secret",
+				SessionToken:    "FwoGZXIvYXdzRotatedSessionToken",
+				Expiration:      time.Now().Add(time.Hour).UTC().Format(time.RFC3339),
+			},
+			TokenType:    "DPoP",
+			ExpiresIn:    3600,
+			RefreshToken: "rotated-" + strconv.Itoa(call),
+		})
+	}))
+	t.Cleanup(server.Close)
+	return server
+}
+
+func (s *awsRefreshServer) refreshTokens() []string {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return append([]string(nil), s.presented...)
+}
+
+// awsRefreshClient returns an AWS client whose token endpoint is tokenURL.
+func awsRefreshClient(t *testing.T, tokenURL string) *aws.Client {
+	t.Helper()
+
+	dpopKey, err := oidc.GenerateDPoPKey()
+	require.NoError(t, err)
+	client, err := aws.NewClient(&aws.ClientConfig{Region: "us-east-1", TokenEndpointOverride: tokenURL}, dpopKey)
+	require.NoError(t, err)
+	return client
+}
+
+// awsAutoRefreshUntil runs the AWS refresh loop on a 10ms interval, writing
+// output mode output to credentialsFile, until ready reports true for its
+// log, then stops it and returns the log.
+func awsAutoRefreshUntil(t *testing.T, client *aws.Client, output, credentialsFile, sessionStore string, ready func(log string) bool) string {
+	t.Helper()
+
+	log := &lockedBuffer{}
+	stop := make(chan struct{})
+	done := make(chan error, 1)
+	go func() {
+		done <- runAWSAutoRefreshWithWriter(client, "seed-refresh", "us-east-1", "default", credentialsFile,
+			output, "", sessionStore, "", 10*time.Millisecond, log, stop)
+	}()
+
+	reached := assert.Eventually(t, func() bool { return ready(log.String()) }, 5*time.Second, 10*time.Millisecond)
+	close(stop)
+	select {
+	case err := <-done:
+		require.NoError(t, err)
+	case <-time.After(5 * time.Second):
+		t.Fatal("the AWS refresh loop did not stop after its stop channel closed")
+	}
+	if !reached {
+		t.Fatalf("the refresh loop never got there; log:\n%s", log.String())
+	}
+	return log.String()
+}
+
+// TestRunAWSAutoRefresh_RotatesTheRefreshTokenAndWritesCredentials proves
+// each tick presents the refresh token the previous tick received, writes
+// the new credentials to the profile, and records a successful status under
+// the region's default status name.
+func TestRunAWSAutoRefresh_RotatesTheRefreshTokenAndWritesCredentials(t *testing.T) {
+	server := newAWSRefreshServer(t)
+	dir := t.TempDir()
+	credentialsFile := filepath.Join(dir, "credentials")
+	sessionStore := filepath.Join(dir, "sessions", "aws.json")
+
+	log := awsAutoRefreshUntil(t, awsRefreshClient(t, server.URL), "aws-credentials", credentialsFile, sessionStore,
+		func(log string) bool { return strings.Count(log, "Credentials refreshed.") >= 2 })
+	assert.Contains(t, log, "Auto-refresh stopped.")
+
+	presented := server.refreshTokens()
+	require.GreaterOrEqual(t, len(presented), 2)
+	assert.Equal(t, "seed-refresh", presented[0])
+	assert.Equal(t, "rotated-1", presented[1], "the second tick must present the token the first tick received")
+
+	credentials, err := os.ReadFile(credentialsFile)
+	require.NoError(t, err)
+	assert.Contains(t, string(credentials), "[default]")
+	assert.Contains(t, string(credentials), "AKIAROTATED")
+
+	status, err := loadRefreshStatus(sessionStore, "aws-us-east-1")
+	require.NoError(t, err)
+	assert.Equal(t, "success", status.LastStatus)
+	assert.GreaterOrEqual(t, status.RefreshCount, 2)
+}
+
+// TestRunAWSAutoRefresh_KeepsGoingAfterAFailedTick proves a refused refresh
+// or an unusable output mode is logged and recorded, and the loop retries
+// on the next tick instead of ending.
+func TestRunAWSAutoRefresh_KeepsGoingAfterAFailedTick(t *testing.T) {
+	refused := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(aws.ErrorResponse{Error: "invalid_grant", ErrorDescription: "revoked"})
+	}))
+	t.Cleanup(refused.Close)
+
+	tests := []struct {
+		name      string
+		tokenURL  string
+		output    string
+		logLine   string
+		lastError string
+	}{
+		{
+			name:      "refresh refused",
+			tokenURL:  refused.URL,
+			output:    "aws-credentials",
+			logLine:   "Error refreshing:",
+			lastError: "refresh failed:",
+		},
+		{
+			name:      "unusable output mode",
+			tokenURL:  newAWSRefreshServer(t).URL,
+			output:    "carrier-pigeon",
+			logLine:   "Error outputting:",
+			lastError: "output failed:",
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			dir := t.TempDir()
+			sessionStore := filepath.Join(dir, "aws.json")
+
+			log := awsAutoRefreshUntil(t, awsRefreshClient(t, tt.tokenURL), tt.output, filepath.Join(dir, "credentials"), sessionStore,
+				func(log string) bool { return strings.Count(log, tt.logLine) >= 2 })
+			assert.NotContains(t, log, "Credentials refreshed.")
+
+			status, err := loadRefreshStatus(sessionStore, "aws-us-east-1")
+			require.NoError(t, err)
+			assert.Equal(t, "error", status.LastStatus)
+			assert.Contains(t, status.LastError, tt.lastError)
+		})
+	}
 }

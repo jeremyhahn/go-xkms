@@ -28,7 +28,6 @@ import (
 	secure "github.com/jeremyhahn/go-xkms/sdk/go/secure"
 	"github.com/jeremyhahn/go-xkms/sdk/go/transport"
 	"github.com/jeremyhahn/go-xkms/xkey/pkg/pairing"
-	"github.com/jeremyhahn/go-xkms/xkey/pkg/phone"
 )
 
 // Key sharing errors.
@@ -203,7 +202,7 @@ func runDeviceShare(cmd *cobra.Command, args []string) (err error) {
 		return &SentinelCauseError{Sentinel: ErrShareConnectFailed, Cause: err}
 	}
 
-	phoneBackend, err := phone.NewPhoneKeyBackend(backendCfg)
+	phoneBackend, err := dialPairedDevice(backendCfg)
 	if err != nil {
 		return &SentinelCauseError{Sentinel: ErrShareConnectFailed, Cause: err}
 	}
@@ -410,7 +409,7 @@ func runDeviceImport(cmd *cobra.Command, args []string) (err error) {
 		return &SentinelCauseError{Sentinel: ErrShareConnectFailed, Cause: err}
 	}
 
-	phoneBackend, err := phone.NewPhoneKeyBackend(backendCfg)
+	phoneBackend, err := dialPairedDevice(backendCfg)
 	if err != nil {
 		return &SentinelCauseError{Sentinel: ErrShareConnectFailed, Cause: err}
 	}

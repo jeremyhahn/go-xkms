@@ -21,8 +21,6 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	noiseproto "github.com/jeremyhahn/go-truststrap/pkg/noiseproto"
-
 	"github.com/jeremyhahn/go-xkms/pkg/config"
 	"github.com/jeremyhahn/go-xkms/pkg/datastore"
 	"github.com/jeremyhahn/go-xkms/pkg/escrow"
@@ -83,18 +81,6 @@ func TestRetainNoiseKey_NilIsNoOp(t *testing.T) {
 	assert.Empty(t, s.retainedNoiseKeys)
 }
 
-// TestRetainNoiseKey_AppendsKey proves a non-nil key is parked on the
-// retention set.
-func TestRetainNoiseKey_AppendsKey(t *testing.T) {
-	s := &Server{}
-	key, err := noiseproto.GenerateStaticKey()
-	require.NoError(t, err)
-
-	s.retainNoiseKey(key)
-	require.Len(t, s.retainedNoiseKeys, 1)
-	assert.Same(t, key, s.retainedNoiseKeys[0])
-}
-
 // TestRetainBootstrapKeys_NilIsNoOp proves a nil *bootstrapKeys retains
 // nothing.
 func TestRetainBootstrapKeys_NilIsNoOp(t *testing.T) {
@@ -104,32 +90,18 @@ func TestRetainBootstrapKeys_NilIsNoOp(t *testing.T) {
 	assert.Empty(t, s.retainedP256Keys)
 }
 
-// TestRetainBootstrapKeys_RetainsBothSuites proves both keys of a listener
-// that offered both handshake suites are retained.
-func TestRetainBootstrapKeys_RetainsBothSuites(t *testing.T) {
+// TestRetainBootstrapKeys_NilNoiseSkipsNoiseRetention proves a listener that
+// offered only the approved P-256 suite (nil noise), the only shape a FIPS
+// build produces, retains only that suite's key.
+func TestRetainBootstrapKeys_NilNoiseSkipsNoiseRetention(t *testing.T) {
 	s := &Server{}
-	noiseKey, err := noiseproto.GenerateStaticKey()
-	require.NoError(t, err)
 	p256Key, err := bootstrap.GenerateP256StaticKey()
 	require.NoError(t, err)
 
-	s.retainBootstrapKeys(&bootstrapKeys{noise: noiseKey, p256: p256Key})
-	assert.Len(t, s.retainedNoiseKeys, 1)
-	assert.Len(t, s.retainedP256Keys, 1)
-}
-
-// TestRetainBootstrapKeys_NilP256SkipsP256Retention proves a listener that
-// offered only the Noise_NK suite (nil p256) retains only that suite's key,
-// matching the doc comment's "a build that offered only one suite retains
-// only that suite's key".
-func TestRetainBootstrapKeys_NilP256SkipsP256Retention(t *testing.T) {
-	s := &Server{}
-	noiseKey, err := noiseproto.GenerateStaticKey()
-	require.NoError(t, err)
-
-	s.retainBootstrapKeys(&bootstrapKeys{noise: noiseKey, p256: nil})
-	assert.Len(t, s.retainedNoiseKeys, 1)
-	assert.Empty(t, s.retainedP256Keys)
+	s.retainBootstrapKeys(&bootstrapKeys{noise: nil, p256: p256Key})
+	assert.Empty(t, s.retainedNoiseKeys)
+	require.Len(t, s.retainedP256Keys, 1)
+	assert.Same(t, p256Key, s.retainedP256Keys[0])
 }
 
 // ============================================================================

@@ -996,6 +996,178 @@ func TestRunAutoRefresh_MalformedIDToken_SkipsExecHook(t *testing.T) {
 	assert.True(t, os.IsNotExist(statErr), "the exec hook must never run when the ID token cannot be parsed")
 }
 
+// autoRefreshUntil runs the "corp" provider's auto-refresh loop on a 10ms
+// interval until ready reports true for its log, or the loop ends by itself,
+// and returns the log and the loop's error.
+func autoRefreshUntil(t *testing.T, tokenEndpoint string, store *oidcCLITokenStore, storePath, execCmd string, ready func(log string) bool) (string, error) {
+	t.Helper()
+
+	log := &lockedBuffer{}
+	stop := make(chan struct{})
+	done := make(chan error, 1)
+	go func() {
+		done <- runAutoRefresh(tokenEndpoint, "client", store, storePath, execCmd, "corp", 10*time.Millisecond, log, oidc.TokenEncodingForm, stop)
+	}()
+
+	var result error
+	ended := false
+	reached := assert.Eventually(t, func() bool {
+		select {
+		case result = <-done:
+			ended = true
+			return true
+		default:
+			return ready(log.String())
+		}
+	}, 5*time.Second, 10*time.Millisecond)
+	if !reached {
+		close(stop)
+		t.Fatalf("the refresh loop never got there; log:\n%s", log.String())
+	}
+	if ended {
+		return log.String(), result
+	}
+
+	close(stop)
+	select {
+	case result = <-done:
+		return log.String(), result
+	case <-time.After(5 * time.Second):
+		t.Fatal("runAutoRefresh did not stop after its stop channel closed")
+		return "", nil
+	}
+}
+
+// autoRefreshStore opens the test token store, seeded with seed unless nil.
+func autoRefreshStore(t *testing.T, seed *OIDCStoredToken) (*oidcCLITokenStore, string) {
+	t.Helper()
+
+	cmd, _, storePath := oidcTestCmd(t)
+	store, err := openOIDCTokenStore(cmd, storePath)
+	require.NoError(t, err)
+	if seed != nil {
+		defer seed.Destroy()
+		require.NoError(t, store.Save(seed))
+	}
+	return store, storePath
+}
+
+// TestRunAutoRefresh_HandsRotatedTokensToTheExecHook proves a refresh tick
+// stores the rotated tokens, records a successful status, and runs the exec
+// hook with the rotated tokens and the new ID token's claims.
+func TestRunAutoRefresh_HandsRotatedTokensToTheExecHook(t *testing.T) {
+	store, storePath := autoRefreshStore(t, mustOIDCStoredToken(t, "", "https://idp.example.com", "client",
+		"seed-access", "seed-refresh", "", time.Now().Add(-time.Minute), []string{"openid"}))
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(OIDCTokenResponse{
+			AccessToken:  xkms.SecretBytes("rotated-access"),
+			RefreshToken: xkms.SecretBytes("rotated-refresh"),
+			IDToken:      xkms.SecretBytes(signedTestIDToken(t, OIDCIDTokenClaims{Claims: jwt.Claims{Subject: "user-9"}})),
+			ExpiresIn:    3600,
+		})
+	}))
+	defer server.Close()
+
+	hookOutput := filepath.Join(t.TempDir(), "hook.txt")
+	execCmd := fmt.Sprintf(`printf '%%s|%%s|%%s' "$OIDC_ACCESS_TOKEN" "$OIDC_REFRESH_TOKEN" "$OIDC_SUBJECT" > %q`, hookOutput)
+
+	log, err := autoRefreshUntil(t, server.URL, store, storePath, execCmd, func(log string) bool {
+		return strings.Contains(log, "Token refreshed.") && strings.Count(log, "Executing: ") >= 1
+	})
+	require.NoError(t, err)
+	assert.Contains(t, log, "Auto-refresh stopped.")
+
+	hookSaw, err := os.ReadFile(hookOutput)
+	require.NoError(t, err)
+	assert.Equal(t, "rotated-access|rotated-refresh|user-9", string(hookSaw))
+
+	token, err := store.Load()
+	require.NoError(t, err)
+	defer token.Destroy()
+	assert.Equal(t, "rotated-access", string(token.AccessToken()))
+	assert.Equal(t, "rotated-refresh", string(token.RefreshToken()))
+	assert.True(t, token.ExpiresAt.After(time.Now().Add(50*time.Minute)))
+
+	status, err := loadRefreshStatus(storePath, "corp")
+	require.NoError(t, err)
+	assert.Equal(t, "success", status.LastStatus)
+	assert.Empty(t, status.LastError)
+	assert.GreaterOrEqual(t, status.RefreshCount, 1)
+}
+
+// TestRunAutoRefresh_StopsWithoutARefreshToken proves the loop ends with a
+// typed error, and records why, once the stored token has nothing to
+// refresh with, never calling the token endpoint.
+func TestRunAutoRefresh_StopsWithoutARefreshToken(t *testing.T) {
+	store, storePath := autoRefreshStore(t, mustOIDCStoredToken(t, "", "https://idp.example.com", "client",
+		"access", "", "", time.Now().Add(time.Hour), nil))
+
+	var calls atomic.Int32
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		calls.Add(1)
+	}))
+	defer server.Close()
+
+	log, err := autoRefreshUntil(t, server.URL, store, storePath, "", func(string) bool { return false })
+	require.ErrorIs(t, err, ErrOIDCInvalidRefreshToken)
+	assert.Contains(t, log, "No refresh token available. Stopping auto-refresh.")
+	assert.Zero(t, calls.Load())
+
+	status, err := loadRefreshStatus(storePath, "corp")
+	require.NoError(t, err)
+	assert.Equal(t, "error", status.LastStatus)
+	assert.Equal(t, "no refresh token available", status.LastError)
+}
+
+// TestRunAutoRefresh_KeepsGoingAfterAFailedTick proves a tick that cannot
+// load or refresh the token is logged and recorded, and the loop retries on
+// the next tick instead of ending.
+func TestRunAutoRefresh_KeepsGoingAfterAFailedTick(t *testing.T) {
+	refused := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		http.Error(w, `{"error":"invalid_grant"}`, http.StatusBadRequest)
+	}))
+	defer refused.Close()
+
+	tests := []struct {
+		name      string
+		seed      *OIDCStoredToken
+		logLine   string
+		lastError string
+	}{
+		{
+			name: "refresh refused",
+			seed: mustOIDCStoredToken(t, "", "https://idp.example.com", "client",
+				"seed-access", "seed-refresh", "", time.Now().Add(-time.Minute), nil),
+			logLine:   "Error refreshing:",
+			lastError: "refresh failed:",
+		},
+		{
+			name:      "nothing stored",
+			logLine:   "Error loading token:",
+			lastError: "failed to load token:",
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			store, storePath := autoRefreshStore(t, tt.seed)
+
+			log, err := autoRefreshUntil(t, refused.URL, store, storePath, "", func(log string) bool {
+				return strings.Count(log, tt.logLine) >= 2
+			})
+			require.NoError(t, err, "a failed tick must not end the loop")
+			assert.NotContains(t, log, "Token refreshed.")
+
+			status, err := loadRefreshStatus(storePath, "corp")
+			require.NoError(t, err)
+			assert.Equal(t, "error", status.LastStatus)
+			assert.Contains(t, status.LastError, tt.lastError)
+			assert.GreaterOrEqual(t, status.RefreshCount, 2)
+		})
+	}
+}
+
 // hostileProviderText carries an OSC 52 clipboard write, a clear-screen
 // CSI, an 8-bit CSI and a NUL between two words; sanitised it reads
 // "deniedend".

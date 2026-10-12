@@ -3871,6 +3871,23 @@ vet-integration:
 	@scripts/vet-integration.sh
 	@echo "$(GREEN)✓ Integration compile gate passed$(RESET)"
 
+# CROSS_CHECK_OSES are the platforms sdk/go must compile for with cgo off: a
+# consumer cross-compiling its own binary for one of them builds every package
+# the SDK imports (go-xkms#1466).
+CROSS_CHECK_OSES := windows darwin
+
+.PHONY: build-cross-check
+## build-cross-check: Compile sdk/go/... with CGO_ENABLED=0 for every CROSS_CHECK_OSES platform
+build-cross-check:
+	@echo "$(CYAN)$(BOLD)→ Cross-compiling sdk/go for $(CROSS_CHECK_OSES)...$(RESET)"
+	@failed=""; \
+	for os in $(CROSS_CHECK_OSES); do \
+		echo "$(CYAN)  → GOOS=$$os GOARCH=amd64 CGO_ENABLED=0 go build ./sdk/go/...$(RESET)"; \
+		( cd sdk/go && GOOS=$$os GOARCH=amd64 CGO_ENABLED=0 $(GO) build ./... ) || failed="$$failed $$os"; \
+	done; \
+	if [ -n "$$failed" ]; then echo "$(RED)✗ sdk/go does not build for:$$failed$(RESET)"; exit 1; fi
+	@echo "$(GREEN)✓ sdk/go builds for $(CROSS_CHECK_OSES)$(RESET)"
+
 .PHONY: lint
 ## lint: Run golangci-lint across every module (LINT_MODULES), plus the root module's backend and raft tag sets
 lint:

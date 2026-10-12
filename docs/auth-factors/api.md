@@ -1,6 +1,6 @@
 # Auth Factors — API
 
-> **Status: NORMATIVE** · Feature: `auth-factors` · Repo: `go-xkms` · Last verified: 2026-09-29
+> **Status: NORMATIVE** · Feature: `auth-factors` · Repo: `go-xkms` · Last verified: 2026-10-11
 
 Transport shapes: [`../key-management/api.md`](../key-management/api.md)
 §"How the six transports are shaped".
@@ -75,22 +75,37 @@ The WebAuthn routes sit in `GroupWebAuthn` and are `RouteAuthPublic` — they ar
 /api/v1/auth/login/piv` is likewise `RouteAuthPublic` in `GroupAuthSession`.
 Both groups sit behind the login rate limiter.
 
-**PIV login proves hardware, or says it did not.** The exchange accepts a TLS
-client certificate as smartcard-backed only when some certificate the client
-presents both chains to the operator-configured PIV attestation anchor
-(`auth.piv_login.attestation_roots`, for a YubiKey the Yubico PIV Attestation
-root, plus optional `attestation_intermediates`) and carries the same
-SubjectPublicKeyInfo as the login certificate. The binding is on the key, so
-a genuine attestation borrowed from another card attests nothing here, and
+**PIV login proves hardware, or says it did not.** With an attestation anchor
+configured (`auth.piv_login.attestation_roots`; for a YubiKey, the Yubico PIV
+Attestation root, plus optional `attestation_intermediates`), the client
+presents its login certificate first and the slot's attestation certificate
+after it. The device attestation certificate (slot `f9`) can follow as an
+intermediate. The exchange accepts the login as smartcard-backed only when
+that separate attestation:
+
+- chains to the anchor;
+- carries the same SubjectPublicKeyInfo as the login certificate;
+- carries the Yubico attestation claims (firmware, serial, PIN and touch
+  policy);
+- passes any deployment policy set in `PIVLoginOptions.AttestationPolicy`.
+
+The login certificate is never its own evidence. The binding is on the key,
+so a genuine attestation borrowed from another card attests nothing here, and
 certificates the client presents are chain material, never anchors. An issuer
-DN (`trusted_issuers`) remains an additional allowlist, not evidence. With no
-anchor configured the exchange refuses every login unless
-`allow_unattested: true` is set explicitly. The minted token carries
-`attest_level`: `hardware` when the key was proven, `unattested` when the
-deployment accepted it without proof, so the two are never indistinguishable.
-A refusal answers `401` with `client certificate is not hardware-attested`;
-the operator-facing reason (no anchor, no chain, or a different key) is on the
-audit record for `auth.login.piv`.
+DN (`trusted_issuers`) remains an additional allowlist, not evidence. A
+recorded enrollment level never replaces the attestation.
+
+With no anchor configured, the exchange refuses every login unless
+`allow_unattested: true` is set explicitly. The two settings are mutually
+exclusive, so there is no "attest if possible, otherwise allow" mode. The
+minted token carries `attest_level`: `hardware` when the key was proven,
+`unattested` (or the recorded level's name) when the deployment accepted it
+without proof, so the two are never indistinguishable.
+
+Every refusal answers `401` with `client certificate is not
+hardware-attested`. The stable reason code
+(see [engineering.md](engineering.md) §"Refusal reasons") is only on the
+audit record for `auth.login.piv`, as `attestation: <code>`.
 
 `GET /api/v1/users/{username}/credentials` and the cert-binding route are in
 `GroupUsers`: authenticated, permission-gated (`users:read`, `users:update`),

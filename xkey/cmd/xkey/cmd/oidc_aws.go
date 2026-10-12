@@ -327,11 +327,16 @@ func handleAWSOutput(outputMode string, data *handlers.TokenData, profile, crede
 // runAWSAutoRefresh runs the auto-refresh loop for AWS credentials.
 func runAWSAutoRefresh(client *aws.Client, refreshToken, region, profile, credentialsFile, output, execCmd, sessionStore, providerName string, interval time.Duration) error {
 	return runAWSAutoRefreshWithWriter(client, refreshToken, region, profile,
-		credentialsFile, output, execCmd, sessionStore, providerName, interval, os.Stdout)
+		credentialsFile, output, execCmd, sessionStore, providerName, interval, os.Stdout, nil)
 }
 
 // runAWSAutoRefreshWithWriter runs the auto-refresh loop for AWS credentials with a custom writer.
-func runAWSAutoRefreshWithWriter(client *aws.Client, refreshToken, region, profile, credentialsFile, output, execCmd, sessionStore, providerName string, interval time.Duration, logWriter io.Writer) error {
+//
+// stop, when non-nil, ends the loop the same way an OS interrupt does; every
+// production call site passes nil, so only an OS signal can stop it there. It
+// exists so a test can end the loop deterministically instead of sending the
+// process a real signal, as with runAutoRefresh.
+func runAWSAutoRefreshWithWriter(client *aws.Client, refreshToken, region, profile, credentialsFile, output, execCmd, sessionStore, providerName string, interval time.Duration, logWriter io.Writer, stop <-chan struct{}) error {
 	if logWriter == nil {
 		logWriter = os.Stdout
 	}
@@ -372,6 +377,10 @@ func runAWSAutoRefreshWithWriter(client *aws.Client, refreshToken, region, profi
 	for {
 		select {
 		case <-sigChan:
+			log("\n[%s] Auto-refresh stopped.\n", time.Now().Format("2006-01-02 15:04:05"))
+			return nil
+
+		case <-stop:
 			log("\n[%s] Auto-refresh stopped.\n", time.Now().Format("2006-01-02 15:04:05"))
 			return nil
 
@@ -656,7 +665,7 @@ func runAWSBackgroundWorker(cmd *cobra.Command, args []string) (err error) {
 	}
 	_, _ = fmt.Fprintf(logWriter, "\n")
 
-	return runAWSAutoRefreshWithWriter(client, session.RefreshToken, region, profile, credentialsFile, output, execCmd, sessionStore, providerName, time.Duration(autoRefresh)*time.Second, logWriter)
+	return runAWSAutoRefreshWithWriter(client, session.RefreshToken, region, profile, credentialsFile, output, execCmd, sessionStore, providerName, time.Duration(autoRefresh)*time.Second, logWriter, nil)
 }
 
 // isAWSProcessRunning checks if an AWS background process is running.

@@ -1,6 +1,6 @@
 # Auth Factors — Engineering Contract
 
-> **Status: NORMATIVE** · Feature: `auth-factors` · Repo: `go-xkms` · Last verified: 2026-09-29
+> **Status: NORMATIVE** · Feature: `auth-factors` · Repo: `go-xkms` · Last verified: 2026-10-11
 
 ## Exported surface — `pkg/factor`
 
@@ -183,23 +183,68 @@ process, by `rest.PIVLoginOptions` (`ServiceModulePIVLoginOptions` on the
 SDK). Beyond `enabled` and `trusted_issuers`:
 
 - **`attestation_roots`** (`AttestationRoots *x509.CertPool`) — the PIV
-  attestation CA bundle a login must prove its key against. Required when the
-  exchange is enabled, unless the opt-out below is set; the config refuses to
-  validate otherwise, and a bundle that names a file that does not load fails
-  the daemon at composition rather than mounting an exchange that refuses
-  every card.
+  attestation CA bundle a login must prove its key against. Setting it puts
+  the exchange in strict mode (below). Required when the exchange is enabled,
+  unless the opt-out below is set; the config refuses to validate otherwise,
+  and a bundle that names a file that does not load fails the daemon at
+  composition rather than mounting an exchange that refuses every card.
 - **`attestation_intermediates`** (`AttestationIntermediates`) — vendor
   intermediates the device does not present itself. Optional.
 - **`allow_unattested`** (`AllowUnattested`) — accept logins nothing attests,
   minting `attest_level: unattested`. Off by default; the zero value is
-  strict.
+  strict. It is mutually exclusive with `attestation_roots`: config
+  validation refuses the pair, and `rest.NewServer` returns
+  `ErrPIVLoginUnattestedWithAnchors`. Strict mode has no fallback.
+- **`AttestationPolicy`** (`func(*pivcert.Attestation) error`, in process
+  only) — a deployment profile run after the built-in one, on an attestation
+  that already chains to the roots and attests the login key. Any error
+  refuses the login. Use it for site rules such as "touch always" or a
+  firmware floor. It is ignored without `AttestationRoots`.
+- **`RecordedLevel`** — the server-side enrollment lookup. Without roots, a
+  recorded `hardware` level is accepted and any other recorded level needs
+  `allow_unattested`. With roots it is never evidence. It can only refuse a
+  login whose record says the key is not hardware-backed.
 
-The proof is evaluated by `pivcert.VerifyAttestation` over every certificate
-the client presents, with the others as path-building material and the anchors
-only from configuration, and a chain that verifies counts only if its subject
-key equals the login certificate's `RawSubjectPublicKeyInfo`. The result is
-recorded on the token (`attest_level`, carried through refresh) and on the
-audit event.
+#### Strict mode contract
+
+With `AttestationRoots` set, `PIVLoginOptions.attestationLevel`
+(`pkg/api/rest/handlers_auth.go`) admits a login as `hardware` only when one
+certificate the client presents **after** the login certificate:
+
+1. is not the login certificate itself (a login certificate that happens to
+   chain to the roots is not evidence);
+2. verifies through `pivcert.VerifyAttestation` to the configured roots. The
+   other presented certificates, excluding the login certificate, are
+   path-building material only;
+3. carries the login certificate's `RawSubjectPublicKeyInfo`;
+4. satisfies the built-in profile, which is the Yubico PIV attestation layout
+   (arc `1.3.6.1.4.1.41482.3`): firmware version (`.3`), serial number
+   (`.7`), and PIN and touch policy (`.8`) all present and parseable, with
+   both policies known values. Form factor (`.9`) is not required;
+5. passes `AttestationPolicy`, when one is set.
+
+When several candidates fail, the refusal reports the one that got furthest
+through these stages.
+
+#### Refusal reasons
+
+A refusal is an `*ErrPIVAttestationRefused{Reason, Cause}`. `Reason` is a
+stable `PIVAttestationRefusal` code, and it goes on the `auth.login.piv` audit
+event as `reason: "attestation: <code>"`. The client only ever sees `401
+client certificate is not hardware-attested`.
+
+| Code | Cause |
+|---|---|
+| `no_attestation_anchor` | No roots, no record, and `allow_unattested` is off |
+| `recorded_level_not_hardware` | The enrollment record says the key is not hardware-backed, and the deployment does not accept that |
+| `no_attestation_evidence` | Roots are set, but the client presented no certificate besides the login certificate |
+| `attestation_chain_untrusted` | No presented attestation chains to the roots |
+| `attested_key_mismatch` | An attestation chains, but for a different key |
+| `attestation_profile_mismatch` | The attestation fails the built-in profile (`ErrPIVAttestationUnparseable`, `ErrPIVAttestationClaimMissing`, `ErrPIVAttestationPolicyUnknown`) |
+| `attestation_policy_refused` | `AttestationPolicy` returned an error |
+
+The result is recorded on the token (`attest_level`, carried through refresh)
+and on the audit event.
 
 ## Persistence
 

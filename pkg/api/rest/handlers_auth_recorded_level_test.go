@@ -1,5 +1,5 @@
-// Copyright (c) 2026 Jeremy Hahn
-// Copyright (c) 2026 Automate The Things, LLC
+// Copyright (c) 2025 Jeremy Hahn
+// Copyright (c) 2025 Automate The Things, LLC
 //
 // This file is part of go-xkms.
 //
@@ -39,8 +39,9 @@ func TestPIVAttestLevelConstants_MatchSharedVocabulary(t *testing.T) {
 }
 
 // testLoginPeers returns a single self-signed leaf certificate, standing in
-// for r.TLS.PeerCertificates. attestationLevel only reads peers[0]'s SPKI in
-// the chain-derived fallback, which these precedence tests never reach.
+// for r.TLS.PeerCertificates. With no AttestationRoots configured,
+// attestationLevel never examines the chain, so these precedence tests need
+// nothing more.
 func testLoginPeers(t *testing.T) []*x509.Certificate {
 	t.Helper()
 	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
@@ -48,27 +49,27 @@ func testLoginPeers(t *testing.T) []*x509.Certificate {
 	return []*x509.Certificate{generateTestCertificate(t, key)}
 }
 
-// TestAttestationLevel_RecordedHardware_NeverDowngradedByMissingChain proves
-// a recorded types.AttestLevelHardware is accepted even though no
-// AttestationRoots is configured at all — the chain path here would refuse
-// outright (see TestPIVLogin_NoAnchorRefusesUnlessUnattestedIsAllowed), but
-// RecordedLevel answers first and the chain is never consulted.
-func TestAttestationLevel_RecordedHardware_NeverDowngradedByMissingChain(t *testing.T) {
+// TestAttestationLevel_RecordedHardware_AcceptedWithoutAnchor proves a
+// recorded types.AttestLevelHardware is accepted when no AttestationRoots is
+// configured — the no-record path here would refuse outright (see
+// TestPIVLogin_NoAnchorRefusesUnlessUnattestedIsAllowed). With roots
+// configured a recorded level is never evidence (TestPIVLogin_StrictAttestation).
+func TestAttestationLevel_RecordedHardware_AcceptedWithoutAnchor(t *testing.T) {
 	opts := &PIVLoginOptions{
 		RecordedLevel: func(*x509.Certificate) (types.AttestLevel, bool) {
 			return types.AttestLevelHardware, true
 		},
 	}
 
-	level, reason := opts.attestationLevel(testLoginPeers(t))
+	level, refusal := opts.attestationLevel(testLoginPeers(t))
 	assert.Equal(t, PIVAttestLevelHardware, level)
-	assert.Empty(t, reason)
+	assert.Nil(t, refusal)
 }
 
 // TestAttestationLevel_RecordedUnattested_RefusedWithoutAllowUnattested
 // proves a recorded non-hardware level still passes through the same
-// admission policy as a chain-derived one: RecordedLevel decides WHAT the
-// key is, not whether a non-hardware key may log in.
+// admission policy as an unrecorded one: RecordedLevel decides WHAT the key
+// is, not whether a non-hardware key may log in.
 func TestAttestationLevel_RecordedUnattested_RefusedWithoutAllowUnattested(t *testing.T) {
 	opts := &PIVLoginOptions{
 		RecordedLevel: func(*x509.Certificate) (types.AttestLevel, bool) {
@@ -76,9 +77,10 @@ func TestAttestationLevel_RecordedUnattested_RefusedWithoutAllowUnattested(t *te
 		},
 	}
 
-	level, reason := opts.attestationLevel(testLoginPeers(t))
+	level, refusal := opts.attestationLevel(testLoginPeers(t))
 	assert.Empty(t, level)
-	assert.NotEmpty(t, reason)
+	require.NotNil(t, refusal)
+	assert.Equal(t, PIVRefusalRecordedNotHardware, refusal.Reason)
 }
 
 // TestAttestationLevel_RecordedSoftware_AcceptedWhenUnattestedAllowed proves
@@ -94,15 +96,15 @@ func TestAttestationLevel_RecordedSoftware_AcceptedWhenUnattestedAllowed(t *test
 		},
 	}
 
-	level, reason := opts.attestationLevel(testLoginPeers(t))
+	level, refusal := opts.attestationLevel(testLoginPeers(t))
 	assert.Equal(t, types.AttestLevelSoftware.String(), level)
-	assert.Empty(t, reason)
+	assert.Nil(t, refusal)
 }
 
-// TestAttestationLevel_RecordedNotFound_FallsBackToChain proves RecordedLevel
-// reporting found=false — not a level, a "no record" answer — defers to the
-// certificate-chain decision exactly as if RecordedLevel were nil.
-func TestAttestationLevel_RecordedNotFound_FallsBackToChain(t *testing.T) {
+// TestAttestationLevel_RecordedNotFound_FallsBackToUnattested proves
+// RecordedLevel reporting found=false — not a level, a "no record" answer —
+// is decided exactly as if RecordedLevel were nil.
+func TestAttestationLevel_RecordedNotFound_FallsBackToUnattested(t *testing.T) {
 	called := false
 	opts := &PIVLoginOptions{
 		AllowUnattested: true,
@@ -112,19 +114,19 @@ func TestAttestationLevel_RecordedNotFound_FallsBackToChain(t *testing.T) {
 		},
 	}
 
-	level, reason := opts.attestationLevel(testLoginPeers(t))
+	level, refusal := opts.attestationLevel(testLoginPeers(t))
 	assert.True(t, called, "RecordedLevel must be consulted before falling back")
-	assert.Equal(t, PIVAttestLevelUnattested, level, "no anchor configured falls back to the unattested chain path")
-	assert.Empty(t, reason)
+	assert.Equal(t, PIVAttestLevelUnattested, level, "no anchor configured falls back to unattested")
+	assert.Nil(t, refusal)
 }
 
-// TestAttestationLevel_NilRecordedLevel_UsesChainOnly proves a nil
-// RecordedLevel reproduces the pre-RecordedLevel behavior exactly: every
-// login is decided from the certificate chain alone.
-func TestAttestationLevel_NilRecordedLevel_UsesChainOnly(t *testing.T) {
+// TestAttestationLevel_NoAnchorNoRecord_Refused proves that with neither an
+// anchor, a record, nor the opt-out, nothing can vouch for the key.
+func TestAttestationLevel_NoAnchorNoRecord_Refused(t *testing.T) {
 	opts := &PIVLoginOptions{}
 
-	level, reason := opts.attestationLevel(testLoginPeers(t))
+	level, refusal := opts.attestationLevel(testLoginPeers(t))
 	assert.Empty(t, level)
-	assert.Equal(t, "no attestation anchor is configured and unattested logins are not allowed", reason)
+	require.NotNil(t, refusal)
+	assert.Equal(t, PIVRefusalNoAnchor, refusal.Reason)
 }

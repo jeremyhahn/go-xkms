@@ -19,9 +19,13 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"io"
+	"net/http"
+	"net/http/httptest"
+	"net/url"
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 
 	"github.com/spf13/cobra"
@@ -123,6 +127,144 @@ func TestOIDCServerMode_Lifecycle(t *testing.T) {
 	out, err = runOIDCCommand(t, oidcProvidersRemoveCmd, []string{"claude"}, map[string]string{"scope": "tenant"})
 	require.NoError(t, err)
 	assert.Contains(t, out, "removed")
+}
+
+// deviceTestIdP is an identity provider serving RFC 8628 device
+// authorization and answering each device token poll with the next queued
+// reply, repeating the last one once the queue runs out.
+type deviceTestIdP struct {
+	*httptest.Server
+
+	mu      sync.Mutex
+	replies []func(w http.ResponseWriter)
+	polls   []url.Values
+}
+
+// newDeviceTestIdP starts a device-flow identity provider whose device
+// logins poll every interval seconds and expire after expiresIn seconds.
+func newDeviceTestIdP(t *testing.T, interval, expiresIn int, replies ...func(w http.ResponseWriter)) *deviceTestIdP {
+	t.Helper()
+
+	idp := &deviceTestIdP{replies: replies}
+	idp.Server = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/device":
+			writeTestJSON(t, w, http.StatusOK, map[string]any{
+				"device_code":               "device-code-1",
+				"user_code":                 "WDJB-MJHT",
+				"verification_uri":          idp.URL + "/activate",
+				"verification_uri_complete": idp.URL + "/activate?user_code=WDJB-MJHT",
+				"expires_in":                expiresIn,
+				"interval":                  interval,
+			})
+		case "/token":
+			if err := r.ParseForm(); err != nil {
+				http.Error(w, err.Error(), http.StatusBadRequest)
+				return
+			}
+			idp.mu.Lock()
+			idp.polls = append(idp.polls, r.PostForm)
+			reply := idp.replies[0]
+			if len(idp.replies) > 1 {
+				idp.replies = idp.replies[1:]
+			}
+			idp.mu.Unlock()
+			reply(w)
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	t.Cleanup(idp.Close)
+	return idp
+}
+
+// tokenPolls returns the device token polls received so far.
+func (idp *deviceTestIdP) tokenPolls() []url.Values {
+	idp.mu.Lock()
+	defer idp.mu.Unlock()
+	return append([]url.Values(nil), idp.polls...)
+}
+
+// replyWithDeviceError answers a device token poll with an RFC 8628
+// section 3.5 error code.
+func replyWithDeviceError(t *testing.T, code string) func(w http.ResponseWriter) {
+	return func(w http.ResponseWriter) {
+		writeTestJSON(t, w, http.StatusBadRequest, map[string]string{"error": code})
+	}
+}
+
+// addServerDeviceCredential registers a tenant credential named name whose
+// provider is idp.
+func addServerDeviceCredential(t *testing.T, name string, idp *deviceTestIdP) {
+	t.Helper()
+
+	_, err := runOIDCCommand(t, oidcProvidersAddCmd, nil, map[string]string{
+		"name":                   name,
+		"scope":                  "tenant",
+		"issuer":                 idp.URL,
+		"client-id":              "xkey-cli",
+		"authorization-endpoint": idp.URL + "/authorize",
+		"token-endpoint":         idp.URL + "/token",
+		"device-endpoint":        idp.URL + "/device",
+	})
+	require.NoError(t, err)
+}
+
+// TestOIDCServerMode_DeviceLogin drives `oidc login` against a server
+// credential: the CLI prints the verification URI and code, polls the
+// server at the provider's interval while the user has not approved, and
+// stops on approval, denial, or expiry.
+func TestOIDCServerMode_DeviceLogin(t *testing.T) {
+	startOIDCXKMSd(t)
+	t.Setenv("XKEY_DATA_DIR", t.TempDir())
+
+	t.Run("approved after a pending poll", func(t *testing.T) {
+		idp := newDeviceTestIdP(t, 1, 60,
+			replyWithDeviceError(t, "authorization_pending"),
+			func(w http.ResponseWriter) {
+				writeTestJSON(t, w, http.StatusOK, map[string]any{
+					"access_token": "device-access-token",
+					"token_type":   "Bearer",
+					"expires_in":   3600,
+				})
+			})
+		addServerDeviceCredential(t, "corp", idp)
+
+		out, err := runOIDCCommand(t, oidcLoginCmd, nil, map[string]string{"provider": "corp", "scope": "tenant"})
+		require.NoError(t, err)
+		assert.Contains(t, out, "Open "+idp.URL+"/activate?user_code=WDJB-MJHT")
+		assert.Contains(t, out, "and enter the code: WDJB-MJHT")
+		assert.Contains(t, out, "Server OIDC credential logged in")
+		assert.Contains(t, out, "Status:       active")
+
+		polls := idp.tokenPolls()
+		require.Len(t, polls, 2, "the CLI keeps polling while authorization is pending")
+		assert.Equal(t, "urn:ietf:params:oauth:grant-type:device_code", polls[1].Get("grant_type"))
+		assert.Equal(t, "device-code-1", polls[1].Get("device_code"))
+
+		out, err = runOIDCCommand(t, oidcTokenCmd, nil, map[string]string{"provider": "corp", "scope": "tenant", "show-full": "true"})
+		require.NoError(t, err)
+		assert.Contains(t, out, "device-access-token", "the server stored the approved tokens")
+	})
+
+	t.Run("denied", func(t *testing.T) {
+		idp := newDeviceTestIdP(t, 1, 60, replyWithDeviceError(t, "access_denied"))
+		addServerDeviceCredential(t, "denied", idp)
+
+		_, err := runOIDCCommand(t, oidcLoginCmd, nil, map[string]string{"provider": "denied", "scope": "tenant"})
+		require.ErrorContains(t, err, "denied")
+		assert.Len(t, idp.tokenPolls(), 1, "a denial ends the login at once")
+	})
+
+	t.Run("not approved in time", func(t *testing.T) {
+		// The login expires before the first poll is due.
+		idp := newDeviceTestIdP(t, 5, 1, replyWithDeviceError(t, "authorization_pending"))
+		addServerDeviceCredential(t, "expired", idp)
+
+		_, err := runOIDCCommand(t, oidcLoginCmd, nil, map[string]string{"provider": "expired", "scope": "tenant"})
+		require.ErrorIs(t, err, ErrOIDCDeviceLoginExpired)
+		assert.Empty(t, idp.tokenPolls())
+	})
 }
 
 func TestOIDCServerMode_ImportCodexAuth(t *testing.T) {

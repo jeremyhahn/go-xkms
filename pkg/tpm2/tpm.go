@@ -33,7 +33,6 @@ import (
 
 	"github.com/google/go-tpm/tpm2"
 	"github.com/google/go-tpm/tpm2/transport"
-	"github.com/google/go-tpm/tpm2/transport/linuxudstpm"
 	tcptpm "github.com/google/go-tpm/tpm2/transport/tcp"
 	kbackend "github.com/jeremyhahn/go-xkms/pkg/backend"
 	"github.com/jeremyhahn/go-xkms/pkg/tpm2/store"
@@ -458,7 +457,7 @@ func NewTPM2(params *Params) (TrustedPlatformModule, error) {
 	case params.Config.Device != "":
 		params.Logger.Info(infoOpeningDevice, slog.String("device", params.Config.Device))
 		if strings.HasSuffix(params.Config.Device, ".sock") {
-			udsTransport, udsErr := linuxudstpm.Open(params.Config.Device)
+			udsTransport, udsErr := openUnixSocket(params.Config.Device)
 			if udsErr != nil {
 				params.Logger.Error("failed to open unix socket", slog.String("error", udsErr.Error()))
 				return nil, udsErr
@@ -573,7 +572,7 @@ func (tpm *TPM2) Open() error {
 		t = sim.Transport()
 	case tpm.config.Device != "":
 		if strings.HasSuffix(tpm.config.Device, ".sock") {
-			udsTransport, udsErr := linuxudstpm.Open(tpm.config.Device)
+			udsTransport, udsErr := openUnixSocket(tpm.config.Device)
 			if udsErr != nil {
 				tpm.logger.Error("failed to open unix socket", slog.String("error", udsErr.Error()))
 				return udsErr
@@ -601,7 +600,7 @@ func (tpm *TPM2) Open() error {
 // This is typically used for connecting to swtpm instances. The returned transport
 // should be closed when no longer needed.
 func OpenUnixSocketTransport(socketPath string) (transport.TPM, error) {
-	return linuxudstpm.Open(socketPath)
+	return openUnixSocket(socketPath)
 }
 
 // OpenDeviceTransport opens a raw command channel to a TPM 2.0 device or Unix
@@ -615,7 +614,7 @@ func OpenUnixSocketTransport(socketPath string) (transport.TPM, error) {
 // returned transport and must Close it when done.
 func OpenDeviceTransport(device string) (transport.TPMCloser, error) {
 	if strings.HasSuffix(device, ".sock") {
-		return linuxudstpm.Open(device)
+		return openUnixSocket(device)
 	}
 	f, err := tpmdev.Open(device)
 	if err != nil {

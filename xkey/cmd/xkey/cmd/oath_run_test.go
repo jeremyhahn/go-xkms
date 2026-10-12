@@ -356,6 +356,38 @@ func TestRunOATHGenerate_HOTPIncrementsCounter(t *testing.T) {
 	assert.NotEqual(t, first, strings.TrimSpace(buf2.String()))
 }
 
+func TestRunOATHGenerate_AllAdvancesHOTPCounters(t *testing.T) {
+	store := oathStorePath(t)
+	hotp := totpCredential("Bank")
+	hotp.Type = oath.TypeHOTP
+	hotp.Counter = 4
+	hotp.Period = 0
+	addTestCredential(t, store, hotp)
+	addTestCredential(t, store, totpCredential("GitHub"))
+
+	cmd, buf := newOATHCmd(t, oathGenerateCmd, store)
+	require.NoError(t, setFlagForTest(t, cmd.Flags(), "all", "true"))
+	require.NoError(t, runOATHGenerate(cmd, nil))
+
+	lines := strings.Split(strings.TrimSpace(buf.String()), "\n")
+	require.Len(t, lines, 2, "one code per credential")
+	for _, line := range lines {
+		assert.Regexp(t, sixDigits, line)
+		if strings.Contains(line, "Bank") {
+			assert.NotContains(t, line, "expires in", "HOTP codes do not expire on a timer")
+		} else {
+			assert.Contains(t, line, "expires in")
+		}
+	}
+
+	fs, err := oath.NewFileStore(store)
+	require.NoError(t, err)
+	defer func() { _ = fs.Close() }()
+	bank, err := fs.Get("bank")
+	require.NoError(t, err)
+	assert.Equal(t, uint64(5), bank.Counter, "--all must persist the advanced HOTP counter")
+}
+
 // --- oath remove ---
 
 func TestRunOATHRemove_RequiresArgument(t *testing.T) {

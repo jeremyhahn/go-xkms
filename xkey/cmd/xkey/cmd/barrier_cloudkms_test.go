@@ -156,6 +156,92 @@ func TestPersistBarrierCloudKMSConfig_AWSKMSInvalid(t *testing.T) {
 	assert.True(t, errors.Is(err, config.ErrBarrierCloudKMSConfigInvalid))
 }
 
+// setBarrierFlagForTest sets one of the barrier init flag variables for the
+// duration of the test.
+func setBarrierFlagForTest[T any](t *testing.T, flag *T, value T) {
+	t.Helper()
+	previous := *flag
+	*flag = value
+	t.Cleanup(func() { *flag = previous })
+}
+
+// TestPersistBarrierCloudKMSConfig_OtherProviders proves the gcp_kms,
+// azure_kv and vault strategies persist their connection flags the way
+// aws_kms does, and that a missing required flag is refused before anything
+// is written.
+func TestPersistBarrierCloudKMSConfig_OtherProviders(t *testing.T) {
+	tests := []struct {
+		strategy string
+		setFlags func(t *testing.T)
+		check    func(t *testing.T, section config.BarrierCloudKMSConfig)
+	}{
+		{
+			strategy: "gcp_kms",
+			setFlags: func(t *testing.T) {
+				setBarrierFlagForTest(t, &barrierGCPProjectID, "xkey-project")
+				setBarrierFlagForTest(t, &barrierGCPLocationID, "us-east1")
+				setBarrierFlagForTest(t, &barrierGCPKeyRingID, "xkey-ring")
+				setBarrierFlagForTest(t, &barrierGCPCredentialsFile, "/etc/xkey/gcp.json")
+			},
+			check: func(t *testing.T, section config.BarrierCloudKMSConfig) {
+				require.NotNil(t, section.GCPKMS)
+				assert.Equal(t, config.BarrierGCPKMSConfig{
+					ProjectID:       "xkey-project",
+					LocationID:      "us-east1",
+					KeyRingID:       "xkey-ring",
+					CredentialsFile: "/etc/xkey/gcp.json",
+				}, *section.GCPKMS)
+			},
+		},
+		{
+			strategy: "azure_kv",
+			setFlags: func(t *testing.T) {
+				setBarrierFlagForTest(t, &barrierAzureVaultURL, "https://xkey-seal.vault.azure.net/")
+			},
+			check: func(t *testing.T, section config.BarrierCloudKMSConfig) {
+				require.NotNil(t, section.AzureKV)
+				assert.Equal(t, "https://xkey-seal.vault.azure.net/", section.AzureKV.VaultURL)
+				assert.False(t, section.AzureKV.AllowLocalVaultURL)
+			},
+		},
+		{
+			strategy: "vault",
+			setFlags: func(t *testing.T) {
+				setBarrierFlagForTest(t, &barrierVaultAddress, "https://vault.example.com:8200")
+				setBarrierFlagForTest(t, &barrierVaultMountPath, "transit-xkey")
+			},
+			check: func(t *testing.T, section config.BarrierCloudKMSConfig) {
+				require.NotNil(t, section.Vault)
+				assert.Equal(t, "https://vault.example.com:8200", section.Vault.Address)
+				assert.Equal(t, "transit-xkey", section.Vault.MountPath)
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.strategy, func(t *testing.T) {
+			tmpDir := t.TempDir()
+			config.SetConfigDir(tmpDir)
+			t.Cleanup(config.ResetConfigDir)
+			saved := loadedConfig
+			t.Cleanup(func() { loadedConfig = saved })
+			loadedConfig = config.DefaultConfig()
+			configPath := filepath.Join(tmpDir, "xkey.yaml")
+
+			err := persistBarrierCloudKMSConfig(tt.strategy)
+			require.ErrorIs(t, err, config.ErrBarrierCloudKMSConfigInvalid, "the required flags are unset")
+			assert.NoFileExists(t, configPath, "a refused configuration is never written")
+
+			tt.setFlags(t)
+			require.NoError(t, persistBarrierCloudKMSConfig(tt.strategy))
+
+			loaded, err := config.LoadFromPath(configPath)
+			require.NoError(t, err)
+			tt.check(t, loaded.Barrier.CloudKMS)
+		})
+	}
+}
+
 // --- normalizeAmbientSecret ---
 
 func TestNormalizeAmbientSecret_Nil(t *testing.T) {

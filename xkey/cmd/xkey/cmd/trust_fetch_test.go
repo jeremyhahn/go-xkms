@@ -310,6 +310,65 @@ func TestTrustFetch_ServerErrorWraps(t *testing.T) {
 	assert.True(t, errors.Is(err, ErrTrustFetchFailed))
 }
 
+// TestTrustFetch_RefetchSkipsKnownCertificates proves fetching the same
+// bundle twice is idempotent: the second fetch reports the certificate as
+// skipped, the store still holds one copy, and an operator-supplied --source
+// is what gets recorded. A zero --timeout falls back to the default rather
+// than expiring at once.
+func TestTrustFetch_RefetchSkipsKnownCertificates(t *testing.T) {
+	_, bundlePEM := makeFetchCA(t)
+	srv := startFetchServer(t, bundlePEM)
+	pin := tlsServerPin(t, srv)
+	storeDir := configureTrustStorePath(t)
+	target := srv.URL + xkms.TrustFetcherDefaultBundlePath
+
+	fetch := func() string {
+		fcmd := newFetchTestCmd()
+		out, errOut := &bytes.Buffer{}, &bytes.Buffer{}
+		fcmd.SetOut(out)
+		fcmd.SetErr(errOut)
+		require.NoError(t, setFlagForTest(t, fcmd.Flags(), "spki-pin", pin))
+		require.NoError(t, setFlagForTest(t, fcmd.Flags(), "source", "corp-ca-portal"))
+		require.NoError(t, setFlagForTest(t, fcmd.Flags(), "timeout", "0s"))
+		require.NoError(t, runTrustFetch(fcmd, []string{target}), "stderr=%s", errOut.String())
+		return out.String()
+	}
+
+	assert.Contains(t, fetch(), "certificates: 1 (added: 1, skipped: 0)")
+	assert.Contains(t, fetch(), "certificates: 1 (added: 0, skipped: 1)")
+
+	store, err := truststore.NewFileStore(&truststore.FileStoreConfig{BaseDir: storeDir})
+	require.NoError(t, err)
+	defer store.Close()
+	certs, err := store.Certificates()
+	require.NoError(t, err)
+	require.Len(t, certs, 1)
+	meta, err := store.Metadata(truststore.Fingerprint(certs[0]))
+	require.NoError(t, err)
+	require.NotNil(t, meta)
+	assert.Equal(t, "corp-ca-portal", meta.Source)
+}
+
+// TestTrustImportPlatform_WrapsFailures proves import-platform reports every
+// failure under its own sentinel while keeping the underlying cause.
+func TestTrustImportPlatform_WrapsFailures(t *testing.T) {
+	configureTrustStorePath(t)
+
+	t.Run("a host that cannot form a URL", func(t *testing.T) {
+		err := runTrustImportPlatform(newImportPlatformTestCmd(), []string{"kms.example.com\x7f:8443"})
+		require.ErrorIs(t, err, ErrTrustImportPlatformFailed)
+	})
+
+	t.Run("a fetch that cannot run", func(t *testing.T) {
+		icmd := newImportPlatformTestCmd()
+		icmd.SetOut(&bytes.Buffer{})
+		icmd.SetErr(&bytes.Buffer{})
+		err := runTrustImportPlatform(icmd, []string{"kms.example.com:8443"})
+		require.ErrorIs(t, err, ErrTrustImportPlatformFailed)
+		require.ErrorIs(t, err, ErrTrustFetchInvalidArgs, "the missing --spki-pin is the cause")
+	})
+}
+
 // --- certIsSelfSigned helper ---
 
 func TestCertIsSelfSigned(t *testing.T) {

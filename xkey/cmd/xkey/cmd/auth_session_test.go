@@ -14,10 +14,15 @@
 package cmd
 
 import (
+	"bytes"
 	"context"
+	"encoding/json"
 	"log/slog"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"sync"
 	"testing"
 
 	xkms "github.com/jeremyhahn/go-xkms/sdk/go"
@@ -73,6 +78,124 @@ func TestRunAuthRefresh_ServerNotRegistered(t *testing.T) {
 	err := runAuthRefresh(authServerCmd(serverURL), nil)
 	require.Error(t, err)
 	assert.ErrorIs(t, err, ErrAuthServerLookupFailed)
+}
+
+// sessionTestServer is a pinned TLS server speaking the session plane's
+// refresh and logout verbs, registered in the server registry the way an
+// enrolled server is.
+type sessionTestServer struct {
+	*httptest.Server
+	status int // answered by every verb when non-zero
+
+	mu       sync.Mutex
+	requests []sessionTestRequest
+}
+
+type sessionTestRequest struct {
+	path          string
+	authorization string
+	refreshToken  string
+}
+
+func newSessionTestServer(t *testing.T) *sessionTestServer {
+	t.Helper()
+	s := &sessionTestServer{}
+	s.Server = httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var body struct {
+			RefreshToken string `json:"refresh_token"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+			t.Errorf("decode %s request: %v", r.URL.Path, err)
+		}
+		s.mu.Lock()
+		s.requests = append(s.requests, sessionTestRequest{
+			path:          r.URL.Path,
+			authorization: r.Header.Get("Authorization"),
+			refreshToken:  body.RefreshToken,
+		})
+		s.mu.Unlock()
+
+		switch {
+		case s.status != 0:
+			http.Error(w, "refresh token reused", s.status)
+		case r.URL.Path == "/api/v1/auth/refresh":
+			writeTestJSON(t, w, http.StatusOK, map[string]any{
+				"access_token":  "rotated-access-token",
+				"refresh_token": "rotated-refresh-token",
+				"token_type":    "Bearer",
+				"expires_in":    900,
+			})
+		case r.URL.Path == "/api/v1/auth/logout":
+			w.WriteHeader(http.StatusNoContent)
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	t.Cleanup(s.Close)
+
+	registry, cleanup, err := openServerRegistry(slog.Default())
+	require.NoError(t, err)
+	defer cleanup()
+	require.NoError(t, registry.Register(context.Background(), &serverregistry.ServerEntry{
+		URL:           s.URL,
+		Name:          "session",
+		Protocol:      serverregistry.ProtocolREST,
+		CAFingerprint: tlsServerPin(t, s.Server),
+	}))
+	return s
+}
+
+func (s *sessionTestServer) received() []sessionTestRequest {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return append([]sessionTestRequest(nil), s.requests...)
+}
+
+func loadStoredSession(t *testing.T, serverURL string) (*tokenstore.TokenEntry, error) {
+	t.Helper()
+	tokens, cleanup, err := openTokenStore(slog.Default())
+	require.NoError(t, err)
+	defer cleanup()
+	return tokens.Load(context.Background(), serverURL)
+}
+
+func TestRunAuthRefresh_RotatesTheStoredPair(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	srv := newSessionTestServer(t)
+	require.NoError(t, storeAuthTokenPair(context.Background(), slog.Default(), loginServer{URL: srv.URL}, tokenstore.SourcePIV,
+		&xkms.TokenPair{AccessToken: "old-access-token", RefreshToken: "old-refresh-token", ExpiresIn: 900}))
+
+	cmd := authServerCmd(srv.URL)
+	var out bytes.Buffer
+	cmd.SetOut(&out)
+	require.NoError(t, runAuthRefresh(cmd, nil))
+	assert.Contains(t, out.String(), "Session refreshed for "+srv.URL)
+
+	got := srv.received()
+	require.Len(t, got, 1)
+	assert.Equal(t, "/api/v1/auth/refresh", got[0].path)
+	assert.Equal(t, "old-refresh-token", got[0].refreshToken)
+
+	entry, err := loadStoredSession(t, srv.URL)
+	require.NoError(t, err)
+	assert.Equal(t, "rotated-access-token", entry.Token)
+	assert.Equal(t, "rotated-refresh-token", entry.RefreshToken)
+	assert.Equal(t, tokenstore.SourcePIV, entry.Source, "a refresh keeps the login's source")
+}
+
+func TestRunAuthRefresh_ServerRefusalKeepsTheStoredPair(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	srv := newSessionTestServer(t)
+	srv.status = http.StatusUnauthorized
+	require.NoError(t, storeAuthTokenPair(context.Background(), slog.Default(), loginServer{URL: srv.URL}, tokenstore.SourcePIV,
+		&xkms.TokenPair{AccessToken: "old-access-token", RefreshToken: "old-refresh-token", ExpiresIn: 900}))
+
+	err := runAuthRefresh(authServerCmd(srv.URL), nil)
+	require.ErrorIs(t, err, ErrAuthRefreshFailed)
+
+	entry, err := loadStoredSession(t, srv.URL)
+	require.NoError(t, err)
+	assert.Equal(t, "old-refresh-token", entry.RefreshToken)
 }
 
 // --- runAuthLogout ---
@@ -131,6 +254,28 @@ func TestRunAuthLogout_RefreshTokenPresent_ServerUnreachable(t *testing.T) {
 	defer cleanup()
 	_, loadErr := tokens.Load(context.Background(), serverURL)
 	assert.NoError(t, loadErr, "the local session must survive a failed server-side revoke")
+}
+
+func TestRunAuthLogout_RevokesServerSideThenDeletesLocally(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	srv := newSessionTestServer(t)
+	require.NoError(t, storeAuthTokenPair(context.Background(), slog.Default(), loginServer{URL: srv.URL}, tokenstore.SourcePIV,
+		&xkms.TokenPair{AccessToken: "live-access-token", RefreshToken: "live-refresh-token", ExpiresIn: 900}))
+
+	cmd := authServerCmd(srv.URL)
+	var out bytes.Buffer
+	cmd.SetOut(&out)
+	require.NoError(t, runAuthLogout(cmd, nil))
+	assert.Contains(t, out.String(), "Logged out of "+srv.URL)
+
+	got := srv.received()
+	require.Len(t, got, 1)
+	assert.Equal(t, "/api/v1/auth/logout", got[0].path)
+	assert.Equal(t, "Bearer live-access-token", got[0].authorization)
+	assert.Equal(t, "live-refresh-token", got[0].refreshToken)
+
+	_, err := loadStoredSession(t, srv.URL)
+	assert.Error(t, err, "the local session is removed once the server revoked it")
 }
 
 // --- storeAuthTokenPair ---

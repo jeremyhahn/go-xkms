@@ -44,10 +44,10 @@ var (
 	ErrBackupDeviceEmptyPayload = errors.New("backup: phone returned an empty backup")
 )
 
-// deviceBackupTransport is the request/response channel to a paired phone.
+// pairedDeviceTransport is the request/response channel to a paired phone.
 // The concrete implementation is the BLE Noise transport; the interface keeps
-// the command testable without a radio.
-type deviceBackupTransport interface {
+// the device commands testable without a radio.
+type pairedDeviceTransport interface {
 	Connect(ctx context.Context) error
 	SendRequest(ctx context.Context, req *pairing.Request) (*pairing.Response, error)
 	Close() error
@@ -55,7 +55,7 @@ type deviceBackupTransport interface {
 
 // dialPairedDevice opens a channel to a paired phone. It is a variable so
 // tests can substitute an in-process transport.
-var dialPairedDevice = func(cfg *phone.PhoneKeyBackendConfig) (deviceBackupTransport, error) {
+var dialPairedDevice = func(cfg *phone.PhoneKeyBackendConfig) (pairedDeviceTransport, error) {
 	return phone.NewPhoneKeyBackend(cfg)
 }
 
@@ -390,7 +390,7 @@ func resolvePairedDevice(deviceName string) (*PairedDevice, error) {
 
 // connectPairedDevice builds the Noise-protected transport for a paired
 // device. The sentinel names the operation the failure belongs to.
-func connectPairedDevice(device *PairedDevice, timeout time.Duration, sentinel error) (deviceBackupTransport, error) {
+func connectPairedDevice(device *PairedDevice, timeout time.Duration, sentinel error) (pairedDeviceTransport, error) {
 	cfg, err := newPairedDeviceBackendConfig(device, timeout, slog.Default())
 	if err != nil {
 		return nil, err

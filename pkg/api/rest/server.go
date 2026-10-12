@@ -305,6 +305,10 @@ func NewServer(cfg *Config) (*Server, error) {
 		return nil, ErrAuthenticatorRequired
 	}
 
+	if piv := cfg.PIVLogin; piv != nil && piv.Enabled && piv.AttestationRoots != nil && piv.AllowUnattested {
+		return nil, ErrPIVLoginUnattestedWithAnchors
+	}
+
 	// Set up logger (default to stdlib if not provided)
 	log := cfg.Logger
 	if log == nil {

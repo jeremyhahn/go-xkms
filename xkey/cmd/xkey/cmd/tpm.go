@@ -115,8 +115,17 @@ func init() {
 	tpmCmd.AddCommand(tpmPCRsCmd)
 }
 
-// openTPM creates and initializes a TPM connection with the configured settings
-func openTPM() (xkms.TrustedPlatformModule, error) {
+// openTPM and openTPMForProvisioningWithPCROverrides are the TPM openers
+// every `tpm` subcommand goes through. They are variables so tests can route
+// a sequence of subcommands through one provisioned simulator: the in-process
+// simulator is re-manufactured, and so loses every key, on each open.
+var (
+	openTPM                                = openConfiguredTPM
+	openTPMForProvisioningWithPCROverrides = openConfiguredTPMForProvisioningWithPCROverrides
+)
+
+// openConfiguredTPM creates and initializes a TPM connection with the configured settings
+func openConfiguredTPM() (xkms.TrustedPlatformModule, error) {
 	logger := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{
 		Level: getLogLevel(),
 	}))
@@ -190,13 +199,13 @@ func openTPMForProvisioning() (xkms.TrustedPlatformModule, error) {
 	return openTPMForProvisioningWithPCROverrides("", nil, 0)
 }
 
-// openTPMForProvisioningWithPCROverrides creates a TPM connection for provisioning
+// openConfiguredTPMForProvisioningWithPCROverrides creates a TPM connection for provisioning
 // with optional PCR configuration overrides, using the `tpm` command group's
 // own --device/--simulator flags (tpmCfg).
 // - pcrBank: override the platform PCR bank (empty string uses default "sha256")
 // - goldenPCRs: override which PCRs to include in golden measurement (nil uses config default)
 // - platformPCR: override which PCR to extend with golden measurement (0 uses xkms.DefaultPlatformPCR)
-func openTPMForProvisioningWithPCROverrides(pcrBank string, goldenPCRs []uint, platformPCR int) (xkms.TrustedPlatformModule, error) {
+func openConfiguredTPMForProvisioningWithPCROverrides(pcrBank string, goldenPCRs []uint, platformPCR int) (xkms.TrustedPlatformModule, error) {
 	return openTPMForProvisioningWithDeviceAndPCROverrides(tpmCfg.device, tpmCfg.useSimulator, pcrBank, goldenPCRs, platformPCR)
 }
 

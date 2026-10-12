@@ -117,6 +117,7 @@ var (
 	ErrInvalidEKCert               = errors.New("tpm: failed to verify endorsement key certificate")
 	ErrDeviceAlreadyOpen           = errors.New("tpm: device already open")
 	ErrOpeningDevice               = errors.New("tpm: error opening device")
+	ErrDeviceTransportUnsupported  = errors.New("tpm: TPM device transport not supported on this platform")
 	ErrInvalidSessionType          = errors.New("tpm: invalid session type")
 	ErrInvalidSRKAuth              = errors.New("tpm: invalid storage root key auth")
 	ErrInvalidActivationCredential = errors.New("tpm: invalid activation credential")

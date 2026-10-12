@@ -19,9 +19,12 @@ import (
 	"crypto/ecdsa"
 	"crypto/elliptic"
 	"crypto/rand"
+	"crypto/rsa"
 	"crypto/x509"
 	"crypto/x509/pkix"
 	"math/big"
+	"net"
+	"net/url"
 	"testing"
 	"time"
 
@@ -145,6 +148,60 @@ func TestPrintAttestationCertificateChain_WithTrustInfo(t *testing.T) {
 	require.Contains(t, out, "TRUST ANCHOR")
 	require.Contains(t, out, "Google - root")
 	require.Contains(t, out, "FINGERPRINT MATCHES EMBEDDED ROOT")
+}
+
+// TestPrintAttestationCertificateChain_ShowsSubjectAltNamesAndUsage proves
+// the chain printout carries every SAN kind, the extended key usages, the
+// path-length constraint and an RSA key's size, so an operator can audit an
+// attestation certificate without a second tool.
+func TestPrintAttestationCertificateChain_ShowsSubjectAltNamesAndUsage(t *testing.T) {
+	key, err := rsa.GenerateKey(rand.Reader, 2048)
+	require.NoError(t, err)
+	spiffe, err := url.Parse("spiffe://example.com/device")
+	require.NoError(t, err)
+	template := &x509.Certificate{
+		SerialNumber:          big.NewInt(7),
+		Subject:               pkix.Name{CommonName: "attested-device"},
+		NotBefore:             time.Now().Add(-time.Hour),
+		NotAfter:              time.Now().Add(time.Hour),
+		IsCA:                  true,
+		BasicConstraintsValid: true,
+		MaxPathLen:            2,
+		KeyUsage:              x509.KeyUsageCertSign,
+		ExtKeyUsage:           []x509.ExtKeyUsage{x509.ExtKeyUsageServerAuth, x509.ExtKeyUsageClientAuth},
+		DNSNames:              []string{"device.example.com", "alt.example.com"},
+		EmailAddresses:        []string{"ops@example.com"},
+		IPAddresses:           []net.IP{net.ParseIP("192.0.2.10")},
+		URIs:                  []*url.URL{spiffe},
+	}
+	der, err := x509.CreateCertificate(rand.Reader, template, template, &key.PublicKey, key)
+	require.NoError(t, err)
+	cert, err := x509.ParseCertificate(der)
+	require.NoError(t, err)
+
+	out := captureDeviceInfoStdout(t, func() {
+		printAttestationCertificateChain([]*x509.Certificate{cert})
+	})
+	require.Contains(t, out, "Public Key:          RSA 2048 bits")
+	require.Contains(t, out, "Max Path Length:     2")
+	require.Contains(t, out, "Extended Key Usage:  Server Auth, Client Auth")
+	require.Contains(t, out, "Subject Alt Names:")
+	require.Contains(t, out, "DNS:               device.example.com, alt.example.com")
+	require.Contains(t, out, "Email:             ops@example.com")
+	require.Contains(t, out, "IP:                192.0.2.10")
+	require.Contains(t, out, "URI:               spiffe://example.com/device")
+}
+
+// TestPrintAttestationCertificateChain_OmitsAbsentSections proves a
+// certificate with no SANs, no extended key usage and no path-length
+// constraint prints none of those headings.
+func TestPrintAttestationCertificateChain_OmitsAbsentSections(t *testing.T) {
+	out := captureDeviceInfoStdout(t, func() {
+		printAttestationCertificateChain([]*x509.Certificate{selfSignedCert(t, "bare")})
+	})
+	require.NotContains(t, out, "Subject Alt Names:")
+	require.NotContains(t, out, "Extended Key Usage:")
+	require.NotContains(t, out, "Max Path Length:")
 }
 
 func TestPrintAuthorizationList_Nil(t *testing.T) {

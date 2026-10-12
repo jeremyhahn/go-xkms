@@ -25,7 +25,6 @@ import (
 	"sync"
 	"time"
 
-	"golang.org/x/sys/unix"
 	"golang.org/x/term"
 
 	secure "github.com/jeremyhahn/go-xkms/sdk/go/secure"
@@ -318,43 +317,9 @@ func (h *InteractiveHandler) waitForConfirmation(ctx context.Context) error {
 // drainPendingInput discards any buffered input to prevent stale ENTER presses
 // from automatically approving new user presence requests.
 func (h *InteractiveHandler) drainPendingInput() {
-	// For stdin, we can use non-blocking read to drain pending data
 	if f, ok := h.reader.(*os.File); ok {
-		// Set non-blocking temporarily
-		fd := int(f.Fd())
-		if err := setNonBlocking(fd, true); err != nil {
-			return
-		}
-		// Read and discard any pending data
-		buf := make([]byte, 1024)
-		for {
-			n, err := f.Read(buf)
-			if n == 0 || err != nil {
-				break
-			}
-		}
-		// Restore blocking mode. A failure here is worth knowing about: every
-		// prompt after this one reads from the same fd, and a stdin left
-		// non-blocking would turn its scanner reads into spurious EOFs.
-		if err := setNonBlocking(fd, false); err != nil {
-			slog.Debug("authenticator: failed to restore blocking mode on stdin", "error", err)
-		}
+		drainFile(f)
 	}
-}
-
-// setNonBlocking sets or clears the O_NONBLOCK flag on a file descriptor.
-func setNonBlocking(fd int, nonBlocking bool) error {
-	flags, err := unix.FcntlInt(uintptr(fd), unix.F_GETFL, 0)
-	if err != nil {
-		return err
-	}
-	if nonBlocking {
-		flags |= unix.O_NONBLOCK
-	} else {
-		flags &^= unix.O_NONBLOCK
-	}
-	_, err = unix.FcntlInt(uintptr(fd), unix.F_SETFL, flags)
-	return err
 }
 
 // Close releases resources held by the InteractiveHandler.

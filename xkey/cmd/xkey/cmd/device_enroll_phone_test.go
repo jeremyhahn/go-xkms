@@ -17,8 +17,14 @@ package cmd
 
 import (
 	"bufio"
+	"crypto/ecdsa"
+	"crypto/elliptic"
+	"crypto/rand"
+	"crypto/x509"
+	"crypto/x509/pkix"
 	"encoding/base64"
 	"encoding/pem"
+	"net/http"
 	"os"
 	"strings"
 	"testing"
@@ -154,6 +160,98 @@ func TestSignEnrollmentCSR_RejectsAnUnknownCASource(t *testing.T) {
 	)
 
 	assert.ErrorIs(t, err, ErrEnrollPhoneNoCA)
+}
+
+// newEnrollmentCSR returns a real DER certificate request, standing in for
+// the one the phone builds over its Keystore key.
+func newEnrollmentCSR(t *testing.T) []byte {
+	t.Helper()
+	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	require.NoError(t, err)
+	der, err := x509.CreateCertificateRequest(rand.Reader, &x509.CertificateRequest{
+		Subject: pkix.Name{CommonName: "phone.example.com"},
+	}, key)
+	require.NoError(t, err)
+	return der
+}
+
+func TestSignEnrollmentCSR_SubmitsToTheConfiguredCA(t *testing.T) {
+	csr := newEnrollmentCSR(t)
+	decision := &pairing.EnrollmentDecision{NotAfter: time.Now().Add(30 * 24 * time.Hour)}
+
+	t.Run("local CA signs without evidence", func(t *testing.T) {
+		ca := newCATestFixture(t)
+		fake := newFakeXKMSd(t, ca)
+		useTestXKMSdEndpoint(t, fake.server.URL)
+
+		certDER, chainDER, err := signEnrollmentCSR(t.Context(), &enrollPhoneOptions{},
+			&pairing.LocalGetDeviceEnrollmentRequestResult{CSR: csr}, []byte(enrollFixtureNonce), decision)
+		require.NoError(t, err)
+
+		block, _ := pem.Decode(fake.signResponse.CertificatePEM)
+		require.NotNil(t, block)
+		assert.Equal(t, block.Bytes, certDER)
+		assert.Equal(t, [][]byte{ca.cert.Raw}, chainDER)
+
+		sent := fake.lastSignRequest
+		csrBlock, _ := pem.Decode(sent.CSRPEM)
+		require.NotNil(t, csrBlock)
+		assert.Equal(t, csr, csrBlock.Bytes)
+		assert.Equal(t, enrollmentCertProfile, sent.Profile)
+		assert.Equal(t, 30, sent.ValidityDays)
+		assert.Empty(t, sent.AttestationFormat)
+		assert.Empty(t, sent.AttestationChain)
+		assert.Empty(t, sent.AttestationNonce)
+	})
+
+	t.Run("xkms source is matched case-insensitively", func(t *testing.T) {
+		fake := newFakeXKMSd(t, newCATestFixture(t))
+		useTestXKMSdEndpoint(t, fake.server.URL)
+
+		_, _, err := signEnrollmentCSR(t.Context(), &enrollPhoneOptions{CASource: " XKMS "},
+			&pairing.LocalGetDeviceEnrollmentRequestResult{CSR: csr, AttestationChain: loadEnrollFixtureChain(t)},
+			[]byte(enrollFixtureNonce), decision)
+		require.NoError(t, err)
+		assert.Equal(t, enrollmentCertProfile, fake.lastSignRequest.Profile)
+	})
+
+	t.Run("xkms source refuses a malformed chain before contacting the CA", func(t *testing.T) {
+		useTestXKMSdEndpoint(t, "")
+
+		_, _, err := signEnrollmentCSR(t.Context(), &enrollPhoneOptions{CASource: caSourceXKMS},
+			&pairing.LocalGetDeviceEnrollmentRequestResult{CSR: csr, AttestationChain: []string{"not!base64"}},
+			[]byte(enrollFixtureNonce), decision)
+		require.ErrorIs(t, err, ErrEnrollPhoneRefused)
+		assert.NotErrorIs(t, err, ErrEnrollPhoneNoCA)
+	})
+
+	t.Run("no CA configured", func(t *testing.T) {
+		useTestXKMSdEndpoint(t, "")
+
+		_, _, err := signEnrollmentCSR(t.Context(), &enrollPhoneOptions{},
+			&pairing.LocalGetDeviceEnrollmentRequestResult{CSR: csr}, []byte(enrollFixtureNonce), decision)
+		assert.ErrorIs(t, err, ErrEnrollPhoneNoCA)
+	})
+
+	t.Run("CA refuses the request", func(t *testing.T) {
+		fake := newFakeXKMSd(t, newCATestFixture(t))
+		fake.signStatus = http.StatusForbidden
+		useTestXKMSdEndpoint(t, fake.server.URL)
+
+		_, _, err := signEnrollmentCSR(t.Context(), &enrollPhoneOptions{},
+			&pairing.LocalGetDeviceEnrollmentRequestResult{CSR: csr}, []byte(enrollFixtureNonce), decision)
+		assert.ErrorIs(t, err, ErrEnrollPhoneRefused)
+	})
+
+	t.Run("CA answers without a certificate", func(t *testing.T) {
+		fake := newFakeXKMSd(t, newCATestFixture(t))
+		fake.signResponse.CertificatePEM = nil
+		useTestXKMSdEndpoint(t, fake.server.URL)
+
+		_, _, err := signEnrollmentCSR(t.Context(), &enrollPhoneOptions{},
+			&pairing.LocalGetDeviceEnrollmentRequestResult{CSR: csr}, []byte(enrollFixtureNonce), decision)
+		assert.ErrorIs(t, err, ErrEnrollPhoneRefused)
+	})
 }
 
 // TestValidityDaysUntil_NeverIssuesZeroDays guards a subtle failure.

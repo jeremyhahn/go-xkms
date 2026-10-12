@@ -17,29 +17,11 @@ package server
 import (
 	"testing"
 
-	"github.com/jeremyhahn/go-truststrap/pkg/noiseproto"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
 	"github.com/jeremyhahn/go-xkms/pkg/trust/bootstrap"
 )
-
-// TestEncodeNoiseStaticKeyHex_RoundTrips proves the hex form decodes back to
-// the same key and has the length the barrier expects.
-func TestEncodeNoiseStaticKeyHex_RoundTrips(t *testing.T) {
-	key, err := noiseproto.GenerateStaticKey()
-	require.NoError(t, err)
-	defer key.Destroy()
-
-	hexKey, err := encodeNoiseStaticKeyHex(key)
-	require.NoError(t, err)
-	require.Len(t, hexKey, noiseproto.HexKeySize)
-
-	decoded, err := noiseproto.DecodeStaticKey(hexKey)
-	require.NoError(t, err)
-	defer decoded.Destroy()
-	assert.Equal(t, key.Public, decoded.Public)
-}
 
 // TestEncodeNoiseStaticKeyHex_NilKey proves a missing key is an error and
 // yields no bytes.

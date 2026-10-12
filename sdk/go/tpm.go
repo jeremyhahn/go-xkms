@@ -450,6 +450,7 @@ var (
 	ErrTPMInvalidEKCert               = tpm2.ErrInvalidEKCert
 	ErrTPMDeviceAlreadyOpen           = tpm2.ErrDeviceAlreadyOpen
 	ErrTPMOpeningDevice               = tpm2.ErrOpeningDevice
+	ErrTPMDeviceTransportUnsupported  = tpm2.ErrDeviceTransportUnsupported
 	ErrTPMInvalidSessionType          = tpm2.ErrInvalidSessionType
 	ErrTPMInvalidSRKAuth              = tpm2.ErrInvalidSRKAuth
 	ErrTPMInvalidActivationCredential = tpm2.ErrInvalidActivationCredential

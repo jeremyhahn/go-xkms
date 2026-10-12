@@ -1,6 +1,6 @@
 # Auth Factors — User Guide
 
-> **Status: NORMATIVE** · Feature: `auth-factors` · Repo: `go-xkms` · Last verified: 2026-09-29
+> **Status: NORMATIVE** · Feature: `auth-factors` · Repo: `go-xkms` · Last verified: 2026-10-11
 
 ## What a "factor" is here
 
@@ -90,9 +90,11 @@ which is deliberate: a factor that quietly downgrades is not a factor.
 card only when it can prove the login key lives on it: configure
 `auth.piv_login.attestation_roots` with the vendor's PIV attestation root (for
 YubiKeys, the Yubico PIV Attestation root) and have the client present the
-slot's attestation certificate alongside its login certificate. Without an
-anchor the exchange refuses everyone; if you knowingly accept software keys on
-this route, say so with `allow_unattested: true`, and the tokens you mint will
+slot's attestation certificate after its login certificate. The login
+certificate alone is never enough. Without an anchor the exchange refuses
+everyone. If you knowingly accept software keys on this route, say so with
+`allow_unattested: true` instead of an anchor (the two cannot be combined),
+and the tokens you mint will
 carry `attest_level: unattested` so nothing downstream mistakes them for
 hardware.
 
@@ -106,7 +108,7 @@ hardware.
 | worked yesterday, fails today | challenge TTL, or a clock skew between client and server | check both clocks first |
 | a token that used to work is now refused | it is locked out after failed PIN attempts | reset the lockout — see the PIN guide |
 | PIV login rejected but the card works for signing | the certificate is not bound to the user | bind it on the identity plane |
-| PIV login answers "client certificate is not hardware-attested" | no attestation anchor is configured, the client did not present the slot's attestation certificate, or the attestation is for a different key | check the audit record for `auth.login.piv` for which; configure `attestation_roots`, present the attestation chain, or set `allow_unattested` deliberately |
+| PIV login answers "client certificate is not hardware-attested" | the attestation was missing, untrusted, for a different key, or failed the profile or site policy | the `auth.login.piv` audit record names the reason code (see [`engineering.md`](engineering.md) §"Refusal reasons"); present the slot's attestation certificate after the login certificate, or fix `attestation_roots` |
 
 ## Where to go next
 

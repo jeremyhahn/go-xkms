@@ -26,7 +26,6 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/jeremyhahn/go-xkms/xkey/pkg/pairing"
-	"github.com/jeremyhahn/go-xkms/xkey/pkg/phone"
 	xkeysync "github.com/jeremyhahn/go-xkms/xkey/pkg/sync"
 )
 
@@ -401,7 +400,7 @@ type syncResult struct {
 // syncStore binds a store's operator-facing label to its exchange function.
 type syncStore struct {
 	label    string
-	exchange func(ctx context.Context, backend *phone.PhoneKeyBackend, svc *xkeysync.Service, mode syncMode) (syncResult, error)
+	exchange func(ctx context.Context, backend pairedDeviceTransport, svc *xkeysync.Service, mode syncMode) (syncResult, error)
 }
 
 // selectedSyncStores returns the exchanges for the selected scope, in a
@@ -422,7 +421,7 @@ func selectedSyncStores(scope syncScope) []syncStore {
 
 // exchangeTrustStore sends the local trust store to the phone and merges the
 // certificates the phone returns.
-func exchangeTrustStore(ctx context.Context, backend *phone.PhoneKeyBackend, svc *xkeysync.Service, mode syncMode) (syncResult, error) {
+func exchangeTrustStore(ctx context.Context, backend pairedDeviceTransport, svc *xkeysync.Service, mode syncMode) (syncResult, error) {
 	var result syncResult
 
 	params := &pairing.LocalSyncTrustStoreParams{Certificates: []pairing.SyncCertificate{}}
@@ -458,7 +457,7 @@ func exchangeTrustStore(ctx context.Context, backend *phone.PhoneKeyBackend, svc
 
 // exchangeOATH sends the local OATH credentials to the phone and merges the
 // credentials the phone returns.
-func exchangeOATH(ctx context.Context, backend *phone.PhoneKeyBackend, svc *xkeysync.Service, mode syncMode) (syncResult, error) {
+func exchangeOATH(ctx context.Context, backend pairedDeviceTransport, svc *xkeysync.Service, mode syncMode) (syncResult, error) {
 	var result syncResult
 
 	// params shares the local delta's protected secrets, so destroying params
@@ -499,7 +498,7 @@ func exchangeOATH(ctx context.Context, backend *phone.PhoneKeyBackend, svc *xkey
 
 // exchangePasswords sends the local password entries to the phone and merges
 // the entries the phone returns.
-func exchangePasswords(ctx context.Context, backend *phone.PhoneKeyBackend, svc *xkeysync.Service, mode syncMode) (syncResult, error) {
+func exchangePasswords(ctx context.Context, backend pairedDeviceTransport, svc *xkeysync.Service, mode syncMode) (syncResult, error) {
 	var result syncResult
 
 	// params shares the local delta's protected passwords, so destroying params
@@ -540,7 +539,7 @@ func exchangePasswords(ctx context.Context, backend *phone.PhoneKeyBackend, svc 
 
 // sendSyncRequest performs one request/response round trip and decodes the
 // result, mapping both transport and protocol failures onto the sync sentinel.
-func sendSyncRequest[T any](ctx context.Context, backend *phone.PhoneKeyBackend, method string, params interface{}) (*T, error) {
+func sendSyncRequest[T any](ctx context.Context, backend pairedDeviceTransport, method string, params interface{}) (*T, error) {
 	resp, err := backend.SendRequest(ctx, pairing.NewRequest(method, params))
 	if err != nil {
 		return nil, &SentinelCauseError{Sentinel: ErrDeviceSyncFailed, Cause: err}

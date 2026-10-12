@@ -129,7 +129,10 @@ type BLEPeripheral struct {
 	log    *slog.Logger
 	closed atomic.Bool
 
-	adapter *bluetooth.Adapter
+	// openAdapter resolves AdapterID to the GATT server Start brings up;
+	// NewBLEPeripheral sets it to openTinygoAdapter.
+	openAdapter func(id string) gattServer
+	adapter     gattServer
 
 	// GATT characteristics. The handles are bound by AddService and are what
 	// the peripheral writes to in order to notify the connected central.
@@ -285,9 +288,57 @@ type advertiser interface {
 	Stop() error
 }
 
+// gattServer is the part of *bluetooth.Adapter Start uses to bring the
+// peripheral up: enabling the adapter, registering the xKey GATT service and
+// handing out the advertisement. It is an interface for the same reason as
+// advertiser: without an adapter in CI, the service Start registers, the
+// advertisement it configures and every way it can fail had no test.
+// tinygoGATTServer adapts the real adapter.
+type gattServer interface {
+	Enable() error
+	AddService(service *bluetooth.Service) error
+	DefaultAdvertisement() configurableAdvertiser
+}
+
+// configurableAdvertiser is an advertiser Start can also configure.
+type configurableAdvertiser interface {
+	advertiser
+	Configure(options bluetooth.AdvertisementOptions) error
+}
+
+// tinygoGATTServer adapts *bluetooth.Adapter to gattServer.
+type tinygoGATTServer struct {
+	adapter *bluetooth.Adapter
+}
+
+func (s tinygoGATTServer) Enable() error {
+	return s.adapter.Enable()
+}
+
+func (s tinygoGATTServer) AddService(service *bluetooth.Service) error {
+	return s.adapter.AddService(service)
+}
+
+func (s tinygoGATTServer) DefaultAdvertisement() configurableAdvertiser {
+	return s.adapter.DefaultAdvertisement()
+}
+
+// openTinygoAdapter returns the adapter named id, or the system default
+// adapter when id is empty.
+func openTinygoAdapter(id string) gattServer {
+	if id == "" {
+		return tinygoGATTServer{adapter: bluetooth.DefaultAdapter}
+	}
+	return tinygoGATTServer{adapter: bluetooth.NewAdapter(id)}
+}
+
 // Compile-time check that the concrete advertisement still fits the two
 // methods the lifecycle uses.
-var _ advertiser = (*bluetooth.Advertisement)(nil)
+var (
+	_ advertiser             = (*bluetooth.Advertisement)(nil)
+	_ configurableAdvertiser = (*bluetooth.Advertisement)(nil)
+	_ gattServer             = tinygoGATTServer{}
+)
 
 // NewBLEPeripheral creates a new BLE peripheral.
 func NewBLEPeripheral(cfg *BLEPeripheralConfig) (*BLEPeripheral, error) {
@@ -335,6 +386,7 @@ func NewBLEPeripheral(cfg *BLEPeripheralConfig) (*BLEPeripheral, error) {
 		cfg:              cfg,
 		adoptedStaticKey: owned,
 		log:              logger.With("component", "ble_peripheral"),
+		openAdapter:      openTinygoAdapter,
 		mtu:              mtu,
 		incomingData:     make(chan []byte, 100),
 		stopChan:         make(chan struct{}),
@@ -364,10 +416,7 @@ func (p *BLEPeripheral) Start(ctx context.Context) error {
 	)
 
 	// Enable the BLE adapter
-	p.adapter = bluetooth.DefaultAdapter
-	if p.cfg.AdapterID != "" {
-		p.adapter = bluetooth.NewAdapter(p.cfg.AdapterID)
-	}
+	p.adapter = p.openAdapter(p.cfg.AdapterID)
 	if err := p.adapter.Enable(); err != nil {
 		p.log.Error("failed to enable bluetooth adapter", slog.String("error", err.Error()))
 		return &SentinelCauseError{Sentinel: ErrPeripheralStartFailed, Cause: err}

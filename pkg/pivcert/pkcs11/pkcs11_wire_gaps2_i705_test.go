@@ -196,9 +196,16 @@ func TestAcquireModule_AlreadyInitializedByAnotherConsumer(t *testing.T) {
 	if err := externalCtx.Initialize(); err != nil {
 		t.Fatalf("externalCtx.Initialize() error = %v", err)
 	}
-	defer externalCtx.Destroy()
-	// Deliberately never Finalize externalCtx: acquireModule must not be
-	// the one to unwind another consumer's initialization.
+	// acquireModule must not be the one to unwind another consumer's
+	// initialization, so the external consumer finalizes its own, after
+	// Close. Leaving it initialized would leak into every later test that
+	// initializes the same library.
+	defer func() {
+		if err := externalCtx.Finalize(); err != nil {
+			t.Errorf("externalCtx.Finalize() error = %v, want nil: Close must leave the external initialization in place", err)
+		}
+		externalCtx.Destroy()
+	}()
 
 	s, err := New(&pivcert.PKCS11StorageConfig{
 		LibraryPath: tok.Library,

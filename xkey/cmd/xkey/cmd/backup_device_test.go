@@ -45,6 +45,10 @@ import (
 type fakeDeviceTransport struct {
 	requests []*pairing.Request
 
+	// wire holds each request's params as serialised at send time, which is
+	// what the phone receives: commands release protected params afterwards.
+	wire []json.RawMessage
+
 	// createResult is returned for local.createBackup.
 	createResult *pairing.LocalCreateBackupResult
 
@@ -56,6 +60,12 @@ type fakeDeviceTransport struct {
 
 	// sendErr, when set, fails every SendRequest call.
 	sendErr error
+
+	// results holds the reply for any other method, keyed by method name.
+	results map[string]any
+
+	// rpcErrors makes the phone answer a method with a JSON-RPC error.
+	rpcErrors map[string]*pairing.RPCError
 
 	connected bool
 	closed    bool
@@ -72,8 +82,18 @@ func (f *fakeDeviceTransport) Connect(_ context.Context) error {
 func (f *fakeDeviceTransport) SendRequest(_ context.Context, req *pairing.Request) (*pairing.Response, error) {
 	f.requests = append(f.requests, req)
 
+	params, err := json.Marshal(req.Params)
+	if err != nil {
+		return nil, err
+	}
+	f.wire = append(f.wire, params)
+
 	if f.sendErr != nil {
 		return nil, f.sendErr
+	}
+
+	if rpcErr, ok := f.rpcErrors[req.Method]; ok {
+		return &pairing.Response{ID: req.ID, Error: rpcErr}, nil
 	}
 
 	var payload any
@@ -83,7 +103,11 @@ func (f *fakeDeviceTransport) SendRequest(_ context.Context, req *pairing.Reques
 	case pairing.MethodLocalRestoreBackup:
 		payload = f.restoreResult
 	default:
-		return &pairing.Response{Error: &pairing.RPCError{Code: -32601, Message: "method not found"}}, nil
+		result, ok := f.results[req.Method]
+		if !ok {
+			return &pairing.Response{Error: &pairing.RPCError{Code: -32601, Message: "method not found"}}, nil
+		}
+		payload = result
 	}
 
 	raw, err := json.Marshal(payload)
@@ -122,7 +146,7 @@ func useFakeTransport(t *testing.T, transport *fakeDeviceTransport) {
 	t.Helper()
 
 	previous := dialPairedDevice
-	dialPairedDevice = func(_ *phone.PhoneKeyBackendConfig) (deviceBackupTransport, error) {
+	dialPairedDevice = func(_ *phone.PhoneKeyBackendConfig) (pairedDeviceTransport, error) {
 		return transport, nil
 	}
 	t.Cleanup(func() { dialPairedDevice = previous })
@@ -605,7 +629,7 @@ func TestBackupToDevice_DialFailure(t *testing.T) {
 	pairTestDevice(t, "Test Phone")
 
 	previous := dialPairedDevice
-	dialPairedDevice = func(_ *phone.PhoneKeyBackendConfig) (deviceBackupTransport, error) {
+	dialPairedDevice = func(_ *phone.PhoneKeyBackendConfig) (pairedDeviceTransport, error) {
 		return nil, errors.New("no bluetooth adapter")
 	}
 	t.Cleanup(func() { dialPairedDevice = previous })

@@ -16,6 +16,7 @@ package cmd
 import (
 	"errors"
 	"reflect"
+	"strings"
 	"testing"
 
 	"github.com/spf13/cobra"
@@ -130,6 +131,33 @@ func TestResolveSSHConnect_FlagsOnly(t *testing.T) {
 	if r.Host != "server.example.com" || r.Port != 2222 || r.User != "deploy" || r.Local {
 		t.Fatalf("unexpected resolved target: %+v", r)
 	}
+}
+
+// TestRunSSHConnect_RefusesBeforeLaunchingSSH proves a managed connect
+// rejects a target with no host and a key the store does not hold before
+// any ssh process starts.
+func TestRunSSHConnect_RefusesBeforeLaunchingSSH(t *testing.T) {
+	withCLIHome(t)
+	isolateXKMSdEndpoint(t)
+
+	t.Run("no host after user@", func(t *testing.T) {
+		cmd := newSSHConnectCmd(t)
+		_ = setFlagForTest(t, cmd.Flags(), "key", "deploy")
+		if err := runSSHConnect(cmd, []string{"alice@"}); !errors.Is(err, ErrSSHConnectTarget) {
+			t.Fatalf("runSSHConnect = %v, want ErrSSHConnectTarget", err)
+		}
+	})
+
+	t.Run("unknown key", func(t *testing.T) {
+		cmd := newSSHConnectCmd(t)
+		_ = setFlagForTest(t, cmd.Flags(), "key", "missing")
+		err := runSSHConnect(cmd, []string{"alice@server.example.com"})
+		// The local store's not-found type has no SDK re-export, so the
+		// message is what the CLI can check.
+		if err == nil || !strings.Contains(err.Error(), "key not found: user/local/missing") {
+			t.Fatalf("runSSHConnect = %v, want the key reported as not found", err)
+		}
+	})
 }
 
 func TestResolveSSHConnect_LocalFlagAndAlias(t *testing.T) {

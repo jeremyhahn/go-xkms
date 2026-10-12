@@ -62,6 +62,120 @@ var (
 )
 
 // BLETransportConfig configures the BLE transport.
+// bleCentral is the part of *bluetooth.Adapter the transport drives as a GATT
+// client. It and the three interfaces below are interfaces for one reason:
+// tinygo returns concrete Device, DeviceService and DeviceCharacteristic
+// values that only a real adapter can produce, so the connect, discovery,
+// notification and write paths were untestable without Bluetooth hardware,
+// which CI does not have. The peripheral's advertiser seam exists for the
+// same reason. tinygoCentral adapts the real adapter.
+type bleCentral interface {
+	Enable() error
+	Scan(callback func(*bluetooth.Adapter, bluetooth.ScanResult)) error
+	StopScan() error
+	Connect(address bluetooth.Address) (bleDevice, error)
+}
+
+// bleDevice is the part of bluetooth.Device the transport uses.
+type bleDevice interface {
+	DiscoverServices(uuids []bluetooth.UUID) ([]bleService, error)
+	Disconnect() error
+}
+
+// bleService is the part of bluetooth.DeviceService the transport uses.
+type bleService interface {
+	UUID() bluetooth.UUID
+	DiscoverCharacteristics(uuids []bluetooth.UUID) ([]bleCharacteristic, error)
+}
+
+// bleCharacteristic is the part of bluetooth.DeviceCharacteristic the
+// transport uses.
+type bleCharacteristic interface {
+	UUID() bluetooth.UUID
+	WriteWithoutResponse(p []byte) (int, error)
+	EnableNotifications(callback func(buf []byte)) error
+}
+
+// Compile-time checks that the tinygo types still fit the seams.
+var (
+	_ bleCentral        = tinygoCentral{}
+	_ bleDevice         = tinygoDevice{}
+	_ bleService        = tinygoService{}
+	_ bleCharacteristic = (*bluetooth.DeviceCharacteristic)(nil)
+)
+
+// tinygoCentral adapts *bluetooth.Adapter to bleCentral.
+type tinygoCentral struct {
+	adapter *bluetooth.Adapter
+}
+
+func (c tinygoCentral) Enable() error {
+	return c.adapter.Enable()
+}
+
+func (c tinygoCentral) Scan(callback func(*bluetooth.Adapter, bluetooth.ScanResult)) error {
+	return c.adapter.Scan(callback)
+}
+
+func (c tinygoCentral) StopScan() error {
+	return c.adapter.StopScan()
+}
+
+func (c tinygoCentral) Connect(address bluetooth.Address) (bleDevice, error) {
+	device, err := c.adapter.Connect(address, bluetooth.ConnectionParams{})
+	if err != nil {
+		return nil, err
+	}
+	return tinygoDevice{device: device}, nil
+}
+
+// tinygoDevice adapts bluetooth.Device to bleDevice.
+type tinygoDevice struct {
+	device bluetooth.Device
+}
+
+func (d tinygoDevice) DiscoverServices(uuids []bluetooth.UUID) ([]bleService, error) {
+	services, err := d.device.DiscoverServices(uuids)
+	if err != nil {
+		return nil, err
+	}
+	wrapped := make([]bleService, len(services))
+	for i, svc := range services {
+		wrapped[i] = tinygoService{service: svc}
+	}
+	return wrapped, nil
+}
+
+func (d tinygoDevice) Disconnect() error {
+	return d.device.Disconnect()
+}
+
+// tinygoService adapts bluetooth.DeviceService to bleService.
+type tinygoService struct {
+	service bluetooth.DeviceService
+}
+
+func (s tinygoService) UUID() bluetooth.UUID {
+	return s.service.UUID()
+}
+
+func (s tinygoService) DiscoverCharacteristics(uuids []bluetooth.UUID) ([]bleCharacteristic, error) {
+	chars, err := s.service.DiscoverCharacteristics(uuids)
+	if err != nil {
+		return nil, err
+	}
+	wrapped := make([]bleCharacteristic, len(chars))
+	for i := range chars {
+		wrapped[i] = &chars[i]
+	}
+	return wrapped, nil
+}
+
+// runBluetoothctl runs bluetoothctl with args and returns its combined output.
+func runBluetoothctl(args ...string) ([]byte, error) {
+	return exec.Command("bluetoothctl", args...).CombinedOutput()
+}
+
 type BLETransportConfig struct {
 	// DeviceAddress is the specific device address to connect to.
 	// If empty, will scan for xKey service.
@@ -100,13 +214,19 @@ type BLETransport struct {
 	log *slog.Logger
 
 	mu      sync.RWMutex
-	adapter *bluetooth.Adapter
-	device  bluetooth.Device
-	service bluetooth.DeviceService
+	adapter bleCentral
+	device  bleDevice
+	service bleService
 
-	controlChar  bluetooth.DeviceCharacteristic
-	responseChar bluetooth.DeviceCharacteristic
-	statusChar   bluetooth.DeviceCharacteristic
+	controlChar  bleCharacteristic
+	responseChar bleCharacteristic
+	statusChar   bleCharacteristic
+
+	// bluetoothctl runs the bluetoothctl CLI and returns its combined output;
+	// sleep pauses between BlueZ operations. NewBLETransport sets them to the
+	// real command and time.Sleep.
+	bluetoothctl func(args ...string) ([]byte, error)
+	sleep        func(time.Duration)
 
 	fragmenter   *pairing.Fragmenter
 	reassembler  *pairing.Reassembler
@@ -136,6 +256,12 @@ type BLETransport struct {
 
 // NewBLETransport creates a new BLE transport.
 func NewBLETransport(cfg *BLETransportConfig) (*BLETransport, error) {
+	return newBLETransport(cfg, tinygoCentral{adapter: bluetooth.DefaultAdapter}, runBluetoothctl)
+}
+
+// newBLETransport builds a transport over the given central and bluetoothctl
+// runner. NewBLETransport passes the system adapter and the real CLI.
+func newBLETransport(cfg *BLETransportConfig, adapter bleCentral, bluetoothctl func(args ...string) ([]byte, error)) (*BLETransport, error) {
 	if cfg == nil {
 		cfg = DefaultBLETransportConfig()
 	}
@@ -146,7 +272,6 @@ func NewBLETransport(cfg *BLETransportConfig) (*BLETransport, error) {
 		cfg.MTU = DefaultMTU
 	}
 
-	adapter := bluetooth.DefaultAdapter
 	if err := adapter.Enable(); err != nil {
 		return nil, ErrBLEUnavailable
 	}
@@ -155,6 +280,8 @@ func NewBLETransport(cfg *BLETransportConfig) (*BLETransport, error) {
 		cfg:          cfg,
 		log:          cfg.Logger.With("component", "ble_transport"),
 		adapter:      adapter,
+		bluetoothctl: bluetoothctl,
+		sleep:        time.Sleep,
 		fragmenter:   pairing.NewFragmenter(cfg.MTU),
 		reassembler:  pairing.NewReassembler(),
 		responseChan: make(chan []byte, 16),
@@ -369,25 +496,25 @@ func (t *BLETransport) ConnectWithBondedAddress(ctx context.Context, address, bo
 		t.log.Info("detected address change (Android RPA rotation)",
 			"old_address", bondedAddress,
 			"new_address", address)
-		refreshBlueZDevice(bondedAddress, t.log)
+		t.refreshBlueZDevice(bondedAddress)
 	}
 
 	// Trust the device BEFORE connecting to avoid pairing prompts.
 	// For BLE, the pairing happens at the application level (Noise handshake).
-	if err := trustBlueZDevice(address); err != nil {
+	if err := t.trustBlueZDevice(address); err != nil {
 		t.log.Warn("failed to trust BlueZ device", "address", address, "error", err)
 	}
-	time.Sleep(100 * time.Millisecond)
+	t.sleep(100 * time.Millisecond)
 
 	// Connect with retry logic and D-Bus error recovery
 	const connectRetries = 3
-	var device bluetooth.Device
+	var device bleDevice
 	var connectErr error
 
 	for attempt := 1; attempt <= connectRetries; attempt++ {
 		t.log.Debug("connection attempt", "attempt", attempt, "address", address)
 
-		device, connectErr = t.adapter.Connect(addr, bluetooth.ConnectionParams{})
+		device, connectErr = t.adapter.Connect(addr)
 		if connectErr == nil {
 			break // Success
 		}
@@ -411,18 +538,18 @@ func (t *BLETransport) ConnectWithBondedAddress(ctx context.Context, address, bo
 			if stopErr := t.adapter.StopScan(); stopErr != nil {
 				t.log.Warn("failed to stop scan", "error", stopErr)
 			}
-			if removeErr := removeBlueZDevice(address); removeErr != nil {
+			if removeErr := t.removeBlueZDevice(address); removeErr != nil {
 				t.log.Warn("failed to remove BlueZ device", "address", address, "error", removeErr)
 			}
 
 			// Also remove any stale old bonded address
 			if bondedAddress != "" && bondedAddress != address {
-				if removeErr := removeBlueZDevice(bondedAddress); removeErr != nil {
+				if removeErr := t.removeBlueZDevice(bondedAddress); removeErr != nil {
 					t.log.Warn("failed to remove bonded BlueZ device", "address", bondedAddress, "error", removeErr)
 				}
 			}
 
-			time.Sleep(500 * time.Millisecond)
+			t.sleep(500 * time.Millisecond)
 
 			// Return a specific error so the caller can re-scan
 			return ErrDBusStaleObject
@@ -433,11 +560,11 @@ func (t *BLETransport) ConnectWithBondedAddress(ctx context.Context, address, bo
 			if stopErr := t.adapter.StopScan(); stopErr != nil {
 				t.log.Warn("failed to stop scan", "error", stopErr)
 			}
-			refreshBlueZDevice(address, t.log)
-			if err := trustBlueZDevice(address); err != nil {
+			t.refreshBlueZDevice(address)
+			if err := t.trustBlueZDevice(address); err != nil {
 				t.log.Warn("failed to trust BlueZ device", "address", address, "error", err)
 			}
-			time.Sleep(300 * time.Millisecond)
+			t.sleep(300 * time.Millisecond)
 		}
 	}
 
@@ -455,7 +582,7 @@ func (t *BLETransport) ConnectWithBondedAddress(ctx context.Context, address, bo
 	const maxRetries = 3
 	const retryDelay = 500 * time.Millisecond
 
-	var xkeyService bluetooth.DeviceService
+	var xkeyService bleService
 	var foundService bool
 
 	for attempt := 1; attempt <= maxRetries; attempt++ {
@@ -490,7 +617,7 @@ func (t *BLETransport) ConnectWithBondedAddress(ctx context.Context, address, bo
 				}
 				return ErrServiceNotFound
 			}
-			time.Sleep(retryDelay)
+			t.sleep(retryDelay)
 			continue
 		}
 
@@ -517,7 +644,7 @@ func (t *BLETransport) ConnectWithBondedAddress(ctx context.Context, address, bo
 				"attempt", attempt,
 				"retryDelay", retryDelay,
 				"expected", XKeyServiceUUID.String())
-			time.Sleep(retryDelay)
+			t.sleep(retryDelay)
 		}
 	}
 
@@ -552,7 +679,7 @@ func (t *BLETransport) ConnectWithBondedAddress(ctx context.Context, address, bo
 	t.log.Debug("discovered characteristics", "address", address, "charCount", len(chars))
 
 	// Find each characteristic
-	var controlChar, responseChar, statusChar bluetooth.DeviceCharacteristic
+	var controlChar, responseChar, statusChar bleCharacteristic
 	for _, char := range chars {
 		switch char.UUID() {
 		case ControlPointUUID:
@@ -567,10 +694,10 @@ func (t *BLETransport) ConnectWithBondedAddress(ctx context.Context, address, bo
 		}
 	}
 
-	if controlChar.UUID() == (bluetooth.UUID{}) || responseChar.UUID() == (bluetooth.UUID{}) {
+	if controlChar == nil || responseChar == nil {
 		t.log.Error("missing required characteristics",
-			"hasControl", controlChar.UUID() != (bluetooth.UUID{}),
-			"hasResponse", responseChar.UUID() != (bluetooth.UUID{}))
+			"hasControl", controlChar != nil,
+			"hasResponse", responseChar != nil)
 		if disconnectErr := device.Disconnect(); disconnectErr != nil {
 			t.log.Warn("failed to disconnect after missing characteristics", "address", address, "error", disconnectErr)
 		}
@@ -600,7 +727,7 @@ func (t *BLETransport) ConnectWithBondedAddress(ctx context.Context, address, bo
 	// Subscribe to status notifications if available. Best-effort: status
 	// updates are a bonus feature, so a failure here does not abort the
 	// connection the way a response notification failure does above.
-	if statusChar.UUID() != (bluetooth.UUID{}) {
+	if statusChar != nil {
 		t.log.Debug("enabling status notifications", "conn_epoch", epoch)
 		if err := statusChar.EnableNotifications(func(data []byte) {
 			if t.connEpoch.Load() != epoch {
@@ -832,10 +959,10 @@ func (t *BLETransport) disconnectLocked(forceRemove bool) error {
 			if addr := t.connectedAddress.Load(); addr != nil {
 				address := addr.(string)
 				t.log.Info("force-removing BlueZ device (not connected)", "address", address)
-				if err := removeBlueZDevice(address); err != nil {
+				if err := t.removeBlueZDevice(address); err != nil {
 					t.log.Warn("failed to remove BlueZ device", "address", address, "error", err)
 				}
-				time.Sleep(500 * time.Millisecond)
+				t.sleep(500 * time.Millisecond)
 			}
 		}
 		return nil
@@ -849,11 +976,11 @@ func (t *BLETransport) disconnectLocked(forceRemove bool) error {
 
 	t.connected.Store(false)
 
-	if t.device != (bluetooth.Device{}) {
+	if t.device != nil {
 		if err := t.device.Disconnect(); err != nil {
 			t.log.Warn("disconnect error", "error", err)
 		}
-		t.device = bluetooth.Device{}
+		t.device = nil
 	}
 
 	// Drain pending data from channels to prevent stale fragments from a
@@ -869,16 +996,16 @@ func (t *BLETransport) disconnectLocked(forceRemove bool) error {
 			// GATT handles. This is needed when a timed-out write goroutine left
 			// a pending D-Bus operation that blocks new writes with "In Progress".
 			t.log.Info("force-removing BlueZ device to clear stale GATT state", "address", address)
-			time.Sleep(200 * time.Millisecond)
-			if err := removeBlueZDevice(address); err != nil {
+			t.sleep(200 * time.Millisecond)
+			if err := t.removeBlueZDevice(address); err != nil {
 				t.log.Warn("failed to remove BlueZ device", "address", address, "error", err)
 			}
-			time.Sleep(500 * time.Millisecond)
+			t.sleep(500 * time.Millisecond)
 		} else {
 			// Just ensure disconnected, don't remove bonding
 			t.log.Debug("ensuring BlueZ disconnect state", "address", address)
-			time.Sleep(200 * time.Millisecond)
-			if err := disconnectBlueZDevice(address); err != nil {
+			t.sleep(200 * time.Millisecond)
+			if err := t.disconnectBlueZDevice(address); err != nil {
 				t.log.Warn("failed to disconnect BlueZ device", "address", address, "error", err)
 			}
 		}
@@ -935,8 +1062,7 @@ func (t *BLETransport) CleanStaleBlueZEntry(address string) {
 	}
 
 	// Check if BlueZ knows about this device
-	cmd := exec.Command("bluetoothctl", "info", address)
-	output, err := cmd.CombinedOutput()
+	output, err := t.bluetoothctl("info", address)
 	if err != nil {
 		return // Device not known to BlueZ, nothing to clean
 	}
@@ -967,10 +1093,10 @@ func (t *BLETransport) CleanStaleBlueZEntry(address string) {
 
 	t.log.Info("removing stale classic Bluetooth cache entry before scan",
 		"address", address)
-	if err := removeBlueZDevice(address); err != nil {
+	if err := t.removeBlueZDevice(address); err != nil {
 		t.log.Warn("failed to remove stale BlueZ device", "address", address, "error", err)
 	}
-	time.Sleep(500 * time.Millisecond)
+	t.sleep(500 * time.Millisecond)
 }
 
 // Close closes the transport and releases resources.
@@ -1028,9 +1154,8 @@ func isBlueZCacheError(err error) bool {
 }
 
 // isDevicePaired checks if a device is paired/bonded in BlueZ.
-func isDevicePaired(address string) bool {
-	cmd := exec.Command("bluetoothctl", "info", address)
-	output, err := cmd.CombinedOutput()
+func (t *BLETransport) isDevicePaired(address string) bool {
+	output, err := t.bluetoothctl("info", address)
 	if err != nil {
 		return false
 	}
@@ -1039,9 +1164,8 @@ func isDevicePaired(address string) bool {
 }
 
 // disconnectBlueZDevice disconnects a device without removing bonding info.
-func disconnectBlueZDevice(address string) error {
-	cmd := exec.Command("bluetoothctl", "disconnect", address)
-	output, err := cmd.CombinedOutput()
+func (t *BLETransport) disconnectBlueZDevice(address string) error {
+	output, err := t.bluetoothctl("disconnect", address)
 	if err != nil {
 		// Disconnect can fail if not connected - that's ok
 		if !contains(string(output), "not connected") {
@@ -1053,9 +1177,8 @@ func disconnectBlueZDevice(address string) error {
 
 // removeBlueZDevice removes a device from the BlueZ cache using bluetoothctl.
 // WARNING: This removes bonding info too! Use refreshBlueZDevice for bonded devices.
-func removeBlueZDevice(address string) error {
-	cmd := exec.Command("bluetoothctl", "remove", address)
-	output, err := cmd.CombinedOutput()
+func (t *BLETransport) removeBlueZDevice(address string) error {
+	output, err := t.bluetoothctl("remove", address)
 	if err != nil {
 		return &MessageError{Msg: fmt.Sprintf("bluetoothctl remove failed: %v, output: %s", err, output)}
 	}
@@ -1065,28 +1188,27 @@ func removeBlueZDevice(address string) error {
 // refreshBlueZDevice attempts to refresh a device's D-Bus state without removing bonding.
 // For bonded devices, this tries disconnect + reconnect to refresh stale state.
 // For non-bonded devices, it removes and re-adds.
-func refreshBlueZDevice(address string, log *slog.Logger) {
-	if isDevicePaired(address) {
+func (t *BLETransport) refreshBlueZDevice(address string) {
+	if t.isDevicePaired(address) {
 		// Device is bonded - don't remove, just disconnect and let it reconnect
-		log.Debug("device is bonded, refreshing without removing", "address", address)
-		if err := disconnectBlueZDevice(address); err != nil {
-			log.Warn("failed to disconnect BlueZ device", "address", address, "error", err)
+		t.log.Debug("device is bonded, refreshing without removing", "address", address)
+		if err := t.disconnectBlueZDevice(address); err != nil {
+			t.log.Warn("failed to disconnect BlueZ device", "address", address, "error", err)
 		}
-		time.Sleep(300 * time.Millisecond)
+		t.sleep(300 * time.Millisecond)
 	} else {
 		// Not bonded - safe to remove stale cache entry
-		log.Debug("device is not bonded, removing stale cache entry", "address", address)
-		if err := removeBlueZDevice(address); err != nil {
-			log.Warn("failed to remove BlueZ device", "address", address, "error", err)
+		t.log.Debug("device is not bonded, removing stale cache entry", "address", address)
+		if err := t.removeBlueZDevice(address); err != nil {
+			t.log.Warn("failed to remove BlueZ device", "address", address, "error", err)
 		}
-		time.Sleep(300 * time.Millisecond)
+		t.sleep(300 * time.Millisecond)
 	}
 }
 
 // trustBlueZDevice trusts a device in BlueZ, which is required for BLE connections.
-func trustBlueZDevice(address string) error {
-	cmd := exec.Command("bluetoothctl", "trust", address)
-	output, err := cmd.CombinedOutput()
+func (t *BLETransport) trustBlueZDevice(address string) error {
+	output, err := t.bluetoothctl("trust", address)
 	if err != nil {
 		return &MessageError{Msg: fmt.Sprintf("bluetoothctl trust failed: %v, output: %s", err, output)}
 	}

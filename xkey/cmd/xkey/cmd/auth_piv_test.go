@@ -14,14 +14,20 @@
 package cmd
 
 import (
+	"bytes"
 	"context"
+	"crypto/tls"
 	"crypto/x509"
 	"log/slog"
+	"net/http"
+	"net/http/httptest"
+	"sync"
 	"testing"
 
 	xkms "github.com/jeremyhahn/go-xkms/sdk/go"
 	xkeyconfig "github.com/jeremyhahn/go-xkms/xkey/pkg/config"
 	"github.com/jeremyhahn/go-xkms/xkey/pkg/serverregistry"
+	"github.com/jeremyhahn/go-xkms/xkey/pkg/tokenstore"
 	"github.com/spf13/cobra"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -140,6 +146,86 @@ func TestRunAuthLoginPIV_ConnectionRefused(t *testing.T) {
 	err := runAuthLoginPIV(authPIVCmd("9a", "software"), slog.Default(), serverURL)
 	require.Error(t, err)
 	assert.ErrorIs(t, err, ErrAuthPIVLoginFailed)
+}
+
+// TestRunAuthLoginPIV_StoresTheTokenPair drives a whole PIV login against a
+// pinned mTLS server: the slot certificate is presented as the client
+// certificate, the pair the server answers lands in the token store, and the
+// registered server's last-connected time is recorded.
+func TestRunAuthLoginPIV_StoresTheTokenPair(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	isolateCertPIV(t)
+	generateTestPIVKey(t)
+
+	storage, err := createPIVStorage(&PIVConfig{
+		Backend:     PIVBackendSoftware,
+		StorageType: PIVStorageTypeFile,
+		StoragePath: GetConfig().PIV.StoragePath,
+	}, slog.Default())
+	require.NoError(t, err)
+	slotCert, err := storage.Retrieve(xkms.PIVSlot("9a"))
+	require.NoError(t, err)
+	require.NoError(t, storage.Close())
+
+	var (
+		mu        sync.Mutex
+		presented []*x509.Certificate
+	)
+	srv := httptest.NewUnstartedServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost || r.URL.Path != "/api/v1/auth/login/piv" || len(r.TLS.PeerCertificates) == 0 {
+			http.Error(w, "unauthorized", http.StatusUnauthorized)
+			return
+		}
+		mu.Lock()
+		presented = append(presented, r.TLS.PeerCertificates[0])
+		mu.Unlock()
+		writeTestJSON(t, w, http.StatusOK, map[string]any{
+			"access_token":  "piv-access-token",
+			"refresh_token": "piv-refresh-token",
+			"token_type":    "Bearer",
+			"expires_in":    900,
+		})
+	}))
+	srv.TLS = &tls.Config{ClientAuth: tls.RequestClientCert}
+	srv.StartTLS()
+	t.Cleanup(srv.Close)
+
+	registry, cleanup, err := openServerRegistry(slog.Default())
+	require.NoError(t, err)
+	require.NoError(t, registry.Register(context.Background(), &serverregistry.ServerEntry{
+		URL:           srv.URL,
+		Name:          "piv-login",
+		Protocol:      serverregistry.ProtocolREST,
+		CAFingerprint: tlsServerPin(t, srv),
+	}))
+	cleanup()
+
+	cmd := authPIVCmd("9a", "software")
+	var out bytes.Buffer
+	cmd.SetOut(&out)
+	require.NoError(t, runAuthLoginPIV(cmd, slog.Default(), srv.URL))
+	assert.Contains(t, out.String(), "Authenticated to "+srv.URL+" with PIV slot 9a. Token pair stored.")
+
+	mu.Lock()
+	require.Len(t, presented, 1)
+	assert.Equal(t, slotCert.Raw, presented[0].Raw)
+	mu.Unlock()
+
+	tokens, tokensCleanup, err := openTokenStore(slog.Default())
+	require.NoError(t, err)
+	defer tokensCleanup()
+	entry, err := tokens.Load(context.Background(), srv.URL)
+	require.NoError(t, err)
+	assert.Equal(t, "piv-access-token", entry.Token)
+	assert.Equal(t, "piv-refresh-token", entry.RefreshToken)
+	assert.Equal(t, tokenstore.SourcePIV, entry.Source)
+
+	registry, cleanup, err = openServerRegistry(slog.Default())
+	require.NoError(t, err)
+	defer cleanup()
+	recorded, err := registry.Lookup(context.Background(), srv.URL)
+	require.NoError(t, err)
+	assert.False(t, recorded.LastConnectedAt.IsZero())
 }
 
 func TestBuildAuthPIVConfig_DefaultsToSoftware(t *testing.T) {

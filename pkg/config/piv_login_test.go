@@ -133,3 +133,17 @@ func TestValidate_PIVLoginRequiresAnAnchorOrAnExplicitOptOut(t *testing.T) {
 	cfg.Auth.PIVLogin.Enabled = false
 	assert.NoError(t, cfg.Validate(), "a disabled exchange needs no anchor")
 }
+
+// Configured attestation trust requires the evidence, so the unattested
+// opt-out cannot sit beside it: it would accept every failed attestation.
+func TestValidate_PIVLoginRefusesAnchorWithOptOut(t *testing.T) {
+	cfg := pivLoginTestConfig()
+	cfg.Auth.PIVLogin.AttestationRoots = "/etc/xkms/piv-attestation-root.pem"
+	cfg.Auth.PIVLogin.AllowUnattested = true
+	err := cfg.Validate()
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "mutually exclusive")
+
+	cfg.Auth.PIVLogin.Enabled = false
+	assert.NoError(t, cfg.Validate(), "a disabled exchange is not validated")
+}

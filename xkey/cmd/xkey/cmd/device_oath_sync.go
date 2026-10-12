@@ -30,7 +30,6 @@ import (
 	secure "github.com/jeremyhahn/go-xkms/sdk/go/secure"
 	"github.com/jeremyhahn/go-xkms/xkey/pkg/oath"
 	"github.com/jeremyhahn/go-xkms/xkey/pkg/pairing"
-	"github.com/jeremyhahn/go-xkms/xkey/pkg/phone"
 )
 
 // OATH phone sync errors.
@@ -472,12 +471,12 @@ func runOATHPull(cmd *cobra.Command, args []string) (err error) {
 }
 
 // connectToPhone establishes a BLE connection to a paired phone device.
-func connectToPhone(device *PairedDevice, timeout time.Duration, logger *slog.Logger) (*phone.PhoneKeyBackend, error) {
+func connectToPhone(device *PairedDevice, timeout time.Duration, logger *slog.Logger) (pairedDeviceTransport, error) {
 	cfg, err := newPairedDeviceBackendConfig(device, timeout, logger)
 	if err != nil {
 		return nil, err
 	}
-	return phone.NewPhoneKeyBackend(cfg)
+	return dialPairedDevice(cfg)
 }
 
 // credentialToPhoneInfo converts a local OATH credential to the phone

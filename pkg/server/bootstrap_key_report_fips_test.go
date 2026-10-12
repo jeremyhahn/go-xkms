@@ -11,11 +11,13 @@
 // 2. Commercial License
 //    Contact licensing@automatethethings.com for commercial licensing options.
 
-// bootstrap_key_report_test.go proves startNoiseBootstrap publishes the
-// listener's public keys into the XKMSService (go-xkms#632), that the
-// reported hex round-trips through the client's own NoiseConfig validation
-// and completes a real handshake, and that Shutdown withdraws the report
-// again.
+//go:build fips
+
+// bootstrap_key_report_fips_test.go is the FIPS counterpart of
+// bootstrap_key_report_nofips_test.go: with Noise_NK compiled out, the
+// listener must offer the approved P-256 suite alone, report only its key,
+// complete a real handshake pinned to that key, and withdraw the report on
+// Shutdown.
 package server
 
 import (
@@ -31,12 +33,10 @@ import (
 	"github.com/jeremyhahn/go-xkms/pkg/xkms"
 )
 
-// TestStartNoiseBootstrap_PublishesAndWithdrawsListenerKeys drives a real
-// startNoiseBootstrap/Shutdown cycle and checks BootstrapListenerKeys through
-// the XKMSService the whole time: not enabled before Start, published with
-// the exact hex the listener's live key holds once Start succeeds, and not
-// enabled again once Shutdown has claimed the listener.
-func TestStartNoiseBootstrap_PublishesAndWithdrawsListenerKeys(t *testing.T) {
+// TestStartNoiseBootstrap_FIPSPublishesP256KeyOnly drives a real
+// startNoiseBootstrap/Shutdown cycle in a FIPS build and checks that the
+// report carries the P-256 key and no Noise_NK key.
+func TestStartNoiseBootstrap_FIPSPublishesP256KeyOnly(t *testing.T) {
 	xkms.Reset()
 	defer xkms.Reset()
 
@@ -53,7 +53,6 @@ func TestStartNoiseBootstrap_PublishesAndWithdrawsListenerKeys(t *testing.T) {
 
 	ctx := context.Background()
 
-	// Before the listener starts, the service must report "not enabled".
 	_, err = srv.xkmsService.BootstrapListenerKeys(ctx)
 	require.ErrorIs(t, err, xkms.ErrBootstrapListenerNotEnabled)
 
@@ -71,31 +70,28 @@ func TestStartNoiseBootstrap_PublishesAndWithdrawsListenerKeys(t *testing.T) {
 	}
 
 	srv.mu.Lock()
-	liveKey := srv.noiseBootstrapKey
+	noiseKey := srv.noiseBootstrapKey
+	p256Key := srv.p256BootstrapKey
 	listenerAddr := srv.noiseBootstrapServer.Addr().String()
 	srv.mu.Unlock()
-	require.NotNil(t, liveKey, "Noise_NK must be offered in a non-FIPS test build")
+	require.Nil(t, noiseKey, "a FIPS build must not offer Noise_NK")
+	require.NotNil(t, p256Key, "a FIPS build must offer the approved P-256 suite")
 
 	resp, err := srv.xkmsService.BootstrapListenerKeys(ctx)
 	require.NoError(t, err)
-	assert.Equal(t, hex.EncodeToString(liveKey.Public), resp.NoisePublicKey)
+	assert.Empty(t, resp.NoisePublicKey, "no Noise_NK key may be reported in a FIPS build")
+	assert.Equal(t, hex.EncodeToString(p256Key.PublicBytes()), resp.P256PublicKey)
 
-	// The reported hex must be exactly what a first-contact client pastes
-	// into NoiseConfig.ServerStaticKey: pin the discovered key and complete
-	// a real handshake against the running listener, the same round trip
-	// test/integration/bootstrap performs against a real server.
 	bundle, err := bootstrap.Fetch(ctx, bootstrap.Config{
 		Mode: bootstrap.ModeNoise,
 		Noise: &bootstrap.NoiseConfig{
-			ServerAddr:      listenerAddr,
-			ServerStaticKey: resp.NoisePublicKey,
+			ServerAddr:          listenerAddr,
+			ServerP256StaticKey: resp.P256PublicKey,
 		},
 	})
-	require.NoError(t, err, "the reported public key must decode and pin a working Noise_NK handshake")
+	require.NoError(t, err, "the reported P-256 key must pin a working approved-suite handshake")
 	assert.NotNil(t, bundle)
 
-	// Shutdown claims and destroys the listener's keys; the report must be
-	// withdrawn in the same act, not left stale.
 	require.NoError(t, srv.Shutdown())
 
 	_, err = srv.xkmsService.BootstrapListenerKeys(ctx)

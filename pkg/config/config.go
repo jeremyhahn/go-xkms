@@ -462,7 +462,7 @@ type PIVLoginConfig struct {
 	// Attestation root). A login is hardware-backed only when a certificate
 	// the client presents chains to this bundle and carries the login
 	// certificate's public key. Required when enabled, unless
-	// allow_unattested is set.
+	// allow_unattested is set; the two are mutually exclusive.
 	AttestationRoots string `yaml:"attestation_roots,omitempty"`
 
 	// AttestationIntermediates optionally lists PEM files of vendor
@@ -470,7 +470,8 @@ type PIVLoginConfig struct {
 	AttestationIntermediates []string `yaml:"attestation_intermediates,omitempty"`
 
 	// AllowUnattested accepts logins whose key nothing attests; the minted
-	// token records attest_level "unattested". Off by default.
+	// token records attest_level "unattested". Off by default, and refused
+	// together with attestation_roots.
 	AllowUnattested bool `yaml:"allow_unattested,omitempty"`
 }
 
@@ -1642,6 +1643,11 @@ func (c *Config) Validate() error {
 		// explicitly that software keys are accepted on this route.
 		if c.Auth.PIVLogin.AttestationRoots == "" && !c.Auth.PIVLogin.AllowUnattested {
 			return &errs.Message{Msg: "auth.piv_login.enabled requires attestation_roots (the PIV attestation CA bundle) or allow_unattested: true"}
+		}
+		// Configured attestation trust requires the evidence: accepting a
+		// login that fails it as unattested would bypass the check.
+		if c.Auth.PIVLogin.AttestationRoots != "" && c.Auth.PIVLogin.AllowUnattested {
+			return &errs.Message{Msg: "auth.piv_login: attestation_roots and allow_unattested are mutually exclusive"}
 		}
 	}
 

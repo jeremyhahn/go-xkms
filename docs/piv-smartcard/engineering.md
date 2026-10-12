@@ -1,6 +1,6 @@
 # PIV Smartcard — Engineering Contract
 
-> **Status: NORMATIVE** · Feature: `piv-smartcard` · Repo: `go-xkms` · Last verified: 2026-10-09
+> **Status: NORMATIVE** · Feature: `piv-smartcard` · Repo: `go-xkms` · Last verified: 2026-10-11
 
 ## Exported surface — `pkg/pivcert`
 
@@ -209,10 +209,20 @@ with no vendor root configured keeps the presence check it already has
 verdict and none.
 
 The PIV login exchange (`POST /api/v1/auth/login/piv`) is the in-repo consumer:
-it runs `VerifyAttestation` over each certificate the client presents with the
-anchors from `auth.piv_login.attestation_roots`, and treats a verified chain as
-proof only when its subject key equals the login certificate's, so a chain
-that verifies for some other key proves nothing about this login.
+it runs `VerifyAttestation` over each certificate the client presents after
+the login certificate, with the anchors from
+`auth.piv_login.attestation_roots`. It treats a verified chain as proof only
+when its subject key equals the login certificate's and its claims pass the
+profile check, so a chain that verifies for some other key proves nothing
+about this login. The strict-mode contract and its refusal reasons are in
+[`../auth-factors/engineering.md`](../auth-factors/engineering.md).
+
+The exchange then enforces the account's permitted-method policy with
+`qrdbsdk.CheckAuthMethod(user, qrdbsdk.MethodPIV)` and records the same
+constant as the session's `auth_method`. `piv` is distinct from `mtls`: an
+account whose policy names only `mtls` is refused PIV login (401, deny audit
+`auth.login.piv`), and an empty policy states no restriction (go-xkms#1095;
+`pkg/api/rest/handlers_auth_piv_method_test.go`).
 
 The exchange then enforces the account's permitted-method policy with
 `qrdbsdk.CheckAuthMethod(user, qrdbsdk.MethodPIV)` and records the same
@@ -357,12 +367,12 @@ whether there is any evidence to check.
   the structural invariant ("PKCS#8 storage is always software") makes a
   persisted, possibly-stale value strictly worse than the live, unconditional
   answer `ListKeys` already gives.
-- **A recorded PIV login level takes precedence over the certificate chain,
-  never a blend of the two.** `PIVLoginOptions.attestationLevel`
-  (`pkg/api/rest`) consults `RecordedLevel` first; when it reports found, the
-  chain is not examined at all for that decision. `AllowUnattested` still
-  gates whether a non-hardware level — recorded or chain-derived — may log
-  in; `RecordedLevel` only decides which level that is.
+- **A recorded PIV login level is never evidence.** `PIVLoginOptions.attestationLevel`
+  (`pkg/api/rest`) consults `RecordedLevel` first. With `AttestationRoots`
+  set, a recorded non-hardware level refuses and anything else still needs
+  the attestation (go-xkms#1467). Without roots, the recorded level decides
+  the claim, and `AllowUnattested` gates whether a non-hardware level may log
+  in.
 - **`AttestLevelForCertificate` matches on SPKI, not on certificate
   identity.** Two certificates issued for the same key — a renewal, or a
   distinct self-signed leaf minted over the same key at enrollment versus

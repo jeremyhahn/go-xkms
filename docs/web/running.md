@@ -87,7 +87,7 @@ auth:
     trusted_issuers: []  # optional issuer-DN allowlist
     attestation_roots: /etc/xkms/piv-attestation-root.pem  # vendor PIV attestation CA; required unless allow_unattested
     attestation_intermediates: []  # optional vendor intermediates
-    allow_unattested: false        # true accepts software keys and mints attest_level "unattested"
+    allow_unattested: false        # true accepts software keys and mints attest_level "unattested"; not with attestation_roots
   session:
     access_token_ttl: "15m"
     refresh_token_ttl: "8h"
