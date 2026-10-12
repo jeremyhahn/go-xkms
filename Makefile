@@ -1037,7 +1037,7 @@ test-scripts:
 test-buildgates:
 	@$(GO) test ./internal/buildgates/...
 
-.PHONY: test-go
+.PHONY: test-go unit-test-pkgs
 ## test-go: Run the Go unit tests with coverage
 # Package exclusions from this lane (issue #703 -- every other exclusion
 # regex used to carry was unjustified and has been removed; pkg/pkcs11/...,
@@ -1053,12 +1053,19 @@ test-buildgates:
 #   pkcs11test, /proto        production code; excluded from the per-package
 #                              threshold report in scripts/check-coverage.sh
 #   yubikey, smartcardhsm   - tests that need physical hardware to exercise
+UNIT_TEST_SCOPE := ./pkg/... ./cmd/... ./sdk/...
+UNIT_TEST_EXCLUDE := (pkg/tpm2$$|/mocks|/testutil|/proto|pkcs11test|yubikey|smartcardhsm)
+
+## unit-test-pkgs: Print test-go's package list (batch.yml's race scope)
+unit-test-pkgs:
+	@go list -e $(UNIT_TEST_SCOPE) 2>/dev/null | grep -v -E "$(UNIT_TEST_EXCLUDE)"
+
 test-go: check-insecure-tls agsim
 	@echo "$(CYAN)$(BOLD)→ Running unit tests...$(RESET)"
 	@mkdir -p $(COVERAGE_DIR)
 	@bash -c 'set -o pipefail; \
 	$(GO) test $(TEST_FLAGS) -coverprofile=$(COVERAGE_FILE) -covermode=atomic \
-		$$(go list -e ./pkg/... ./cmd/... ./sdk/... 2>/dev/null | grep -v -E "(pkg/tpm2$$|/mocks|/testutil|/proto|pkcs11test|yubikey|smartcardhsm)") \
+		$$(go list -e $(UNIT_TEST_SCOPE) 2>/dev/null | grep -v -E "$(UNIT_TEST_EXCLUDE)") \
 		2>&1 | tee $(COVERAGE_DIR)/test.log; \
 	EXIT_CODE=$${PIPESTATUS[0]}; \
 	if [ $$EXIT_CODE -eq 0 ]; then \
@@ -1114,7 +1121,7 @@ coverage-full: agsim
 	@mkdir -p $(COVERAGE_DIR)
 	@echo "$(CYAN)→ Step 1: Running unit tests with coverage...$(RESET)"
 	@$(GO) test $(TEST_FLAGS) -coverprofile=$(COVERAGE_DIR)/unit.out -covermode=atomic \
-		$$(go list -e ./pkg/... 2>/dev/null | grep -v -E "(pkg/tpm2$$|/mocks|/testutil|/proto|pkcs11test|yubikey|smartcardhsm)") \
+		$$(go list -e ./pkg/... 2>/dev/null | grep -v -E "$(UNIT_TEST_EXCLUDE)") \
 		2>&1 | tee $(COVERAGE_DIR)/unit.log; \
 		unit_exit=$$?; \
 		if [ ! -f "$(COVERAGE_DIR)/unit.out" ] || [ ! -s "$(COVERAGE_DIR)/unit.out" ]; then \

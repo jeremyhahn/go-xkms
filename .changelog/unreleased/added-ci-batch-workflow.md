@@ -1,0 +1,1 @@
+- **Batch workflow on the batch runners** -- `.github/workflows/batch.yml` (handbook batch-template v1.1) runs fuzzing, the unit suite under `-race -count=3`, a soak loop over the device-free integration suites, and the benchmarks on dispatch only, never in a merge gate; `make unit-test-pkgs` prints the unit-test package list it races, the same list `test-go` runs. Refs #1492.

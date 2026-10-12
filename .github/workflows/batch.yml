@@ -1,0 +1,361 @@
+# batch-template: v1.1 — token-free CPU work on the batch runners: fuzz,
+# race-full, soak, bench. Dispatch only; never in a merge gate.
+#
+# Owner order 2026-10-12 10:43 EDT (relayed by the Company Agent 17:24Z):
+# "the fleet is still not working hard. omega is 21%, both dell servers are
+# under 50%. we need to give them more work!" Lanes are bound by Claude
+# accounts; this workflow is work that needs none and still finds defects in
+# the release-candidate products.
+#
+# WHO RUNS IT. The project's coordinator dispatches it on `main` when the
+# workflow lands and again after every merge to `main`:
+#   POST /repos/{owner}/{repo}/actions/workflows/batch.yml/dispatches
+#        {"ref":"main","inputs":{"jobs":"all"}}
+# and files ONE issue per real finding, quoting the log lines that start
+# with `BATCH-FINDING`:
+#   fuzz       a crasher (the new corpus file is in the log and the artifact)
+#   race-full  a DATA RACE report, or a test that fails in any of the 3 runs
+#   soak       an iteration that fails
+#   bench      a regression > 20 % against the previous dispatch on main
+#              (benchstat old.txt new.txt; the coordinator compares, the
+#              workflow does not, because a run cannot read another run's
+#              artifact on Gitea)
+# A finding that is already an open issue gets a comment, not a new issue.
+#
+# RUNNERS. `runs-on: batch`: Infrastructure registers "batch" runners on the
+# worker nodes (19 slots in all). Nothing else uses that label, so batch work
+# never takes a CI slot from a pull request.
+#
+# ARTIFACTS. actions/upload-artifact v4 and later refuse any server that is
+# not github.com ("not currently supported on GHES"; Gitea presents as one),
+# so Gitea uploads with v3 and github.com with v6. Every finding is ALSO
+# printed in the log, so a coordinator can file it without the artifact.
+#
+# go-xkms customizations, beyond the env values below:
+#   - every job installs the module graph's unconditional cgo dependencies
+#     (libicu-dev, libusb-1.0-0-dev), as ci.yml's jobs do;
+#   - race-full takes its package list from `make unit-test-pkgs`, test-go's
+#     scope with its exclusions (pkg/tpm2's -lcrypto simulator suite, test
+#     doubles, yubikey/smartcardhsm hardware), and builds the arduino-generic
+#     simulators and installs swtpm the way ci.yml's Unit Tests job does;
+#   - bench passes BENCH_TAGS: the DAO-backed benchmarks need a codec tag.
+# Private modules: no token setup. As in ci.yml, the runners inject
+# GOPRIVATE for the jeremyhahn/* modules.
+#
+# xkey (a separate Go module) is not in race-full: its Makefile suite builds
+# the webkit GUI tags, and ci.yml's curated nested-module-test runs it as an
+# unprivileged user that the batch runner does not provide.
+
+name: Batch
+
+permissions:
+  contents: read
+
+env:
+  # In lockstep with ci.yml's GO_VERSION (go.mod declares go 1.27.2).
+  GO_VERSION: '1.27.2'
+  # The Fuzz* targets (pkg/oidc, pkg/ssh/keys, pkg/tpm2) carry no build tags.
+  FUZZ_TAGS: ''
+  # The Makefile's TEST_TAGS, which test-go (ci.yml's Unit Tests) runs under.
+  RACE_TAGS: 'codec_cbor codec_json codec_msgpack tpm_simulator frost'
+  # The Makefile's device-free in-process integration suites
+  # (integration-test-software, -symmetric, -signing, -opaque, -metrics,
+  # -health, -ratelimit); the rest of `make integration-test` needs Docker
+  # stacks, SoftHSM, a TPM or a cloud KMS.
+  SOAK_CMD: >-
+    go test -race -count=1 -tags=integration -p 1
+    ./pkg/backend/software/... ./pkg/keyprovider/symmetric/...
+    ./test/integration/signing/... ./test/integration/opaque/...
+    ./test/integration/metrics/... ./test/integration/health/...
+    ./test/integration/ratelimit/...
+  # Every root-module package with Benchmark* functions, less the
+  # hardware-bound pkg/tpm2 and pkg/storage/hardware (TPM2/PKCS#11 stores).
+  BENCH_TAGS: 'codec_cbor codec_json codec_msgpack frost'
+  BENCH_PKGS: >-
+    ./pkg/acme/challenges/device-attest-01 ./pkg/acme/challenges/dns-01
+    ./pkg/acme/challenges/endorse-01 ./pkg/acme/challenges/enroll-01
+    ./pkg/acme/challenges/http-01 ./pkg/acme/common ./pkg/acme/server/handlers
+    ./pkg/acme/server/metrics ./pkg/acme/storage ./pkg/api/grpc ./pkg/api/rest
+    ./pkg/attestation ./pkg/attestation/android ./pkg/attestation/dice
+    ./pkg/backend ./pkg/backend/avr ./pkg/correlation ./pkg/crypto/aead
+    ./pkg/crypto/chacha20poly1305 ./pkg/crypto/ecies ./pkg/crypto/ecpoint
+    ./pkg/crypto/kdf ./pkg/crypto/rand ./pkg/crypto/wrapping
+    ./pkg/encoding/jwe ./pkg/encoding/jwk ./pkg/keyprovider/pkcs8
+    ./pkg/keyprovider/symmetric ./pkg/metrics ./pkg/oidc ./pkg/password
+    ./pkg/pkcs11/module ./pkg/validation ./pkg/xkms
+
+on:
+  workflow_dispatch:
+    inputs:
+      jobs:
+        description: 'all, fuzz, race-full, soak or bench'
+        type: choice
+        options: [all, fuzz, race-full, soak, bench]
+        default: all
+      fuzztime:
+        description: 'go test -fuzztime per target'
+        default: '20m'
+      soak_minutes:
+        description: 'how long soak loops the integration suite'
+        default: '60'
+
+# One run per ref at a time. A dispatch while one runs waits; a newer one
+# replaces a waiting one (where the server honours concurrency).
+concurrency:
+  group: batch-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  # Every package with Fuzz* targets; every target fuzzed for `fuzztime`.
+  # The runner does not expand a matrix built from another job's output
+  # (go-quicraft ci.yml), so the targets are split over a static matrix of
+  # four shards, and each shard fuzzes two targets at a time with
+  # -parallel=4: 8 cores per shard, 20 minutes per pair of targets.
+  fuzz:
+    name: Fuzz (shard ${{ matrix.shard }}/4)
+    if: inputs.jobs == 'all' || inputs.jobs == 'fuzz'
+    runs-on: batch
+    timeout-minutes: 180
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [0, 1, 2, 3]
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+
+      - uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6.5.0
+        with:
+          go-version: ${{ env.GO_VERSION }}
+
+      - name: Install cgo dependencies
+        run: sudo .github/scripts/apt-deps.sh libicu-dev libusb-1.0-0-dev
+
+      - name: List this shard's fuzz targets
+        # `go test -list` prints a package's matching tests, then its
+        # "ok <pkg>" line. Targets are numbered across the whole module and
+        # dealt to shards round-robin, so every shard sees the same order.
+        run: |
+          set -o pipefail
+          go test -tags="$FUZZ_TAGS" -run='^$' -list='^Fuzz' ./... |
+            awk '/^Fuzz/ {t[n++]=$1; next}
+                 /^ok/   {for (i = 0; i < n; i++) print $2, t[i]; n = 0}' |
+            awk -v s=${{ matrix.shard }} '(NR - 1) % 4 == s' > fuzz-targets.txt
+          echo "shard ${{ matrix.shard }}: $(wc -l < fuzz-targets.txt) targets"
+          cat fuzz-targets.txt
+
+      - name: Fuzz each target for ${{ inputs.fuzztime }}
+        env:
+          FUZZTIME: ${{ inputs.fuzztime }}
+        run: |
+          mkdir -p fuzz-logs
+          # shellcheck disable=SC2329 # xargs calls it through bash -c
+          fuzz_one() {
+            pkg=$1 target=$2 log="fuzz-logs/$(echo "$pkg" | tr / _).$target.log"
+            if go test -tags="$FUZZ_TAGS" -run='^$' -fuzz="^${target}\$" \
+                 -fuzztime="$FUZZTIME" -parallel=4 "$pkg" > "$log" 2>&1; then
+              echo "ok   $pkg $target"
+            elif grep -q 'context deadline exceeded' "$log" &&
+                 ! grep -q 'Failing input written to' "$log"; then
+              # A target stopped by a duration -fuzztime can fail on the
+              # deadline itself with no failing input written: there is no
+              # crasher and no reproducer, so it is not a finding (handbook #306).
+              echo "deadline $pkg $target (no failing input; not a finding)"
+            else
+              echo "BATCH-FINDING fuzz $pkg $target"
+              tail -n 60 "$log"
+              return 1
+            fi
+          }
+          export -f fuzz_one
+          export FUZZ_TAGS FUZZTIME
+          rc=0
+          xargs -r -P 2 -L 1 bash -c 'fuzz_one "$@"' _ < fuzz-targets.txt || rc=1
+          # A failing input is written to <pkg dir>/testdata/fuzz/<Target>/.
+          git ls-files --others --exclude-standard | grep '/testdata/fuzz/' > fuzz-new.txt || true
+          mkdir -p fuzz-findings
+          while read -r f; do
+            echo "BATCH-FINDING fuzz corpus $f"
+            sed 's/^/    /' "$f"
+            mkdir -p "fuzz-findings/$(dirname "$f")"
+            cp "$f" "fuzz-findings/$f"
+          done < fuzz-new.txt
+          exit $rc
+
+      - name: Upload fuzz findings (Gitea)
+        if: failure() && github.server_url != 'https://github.com'
+        uses: actions/upload-artifact@c6a366c94c3e0affe28c06c8df20a878f24da3cf # v3.2.2
+        with:
+          name: fuzz-findings-${{ matrix.shard }}
+          path: |
+            fuzz-findings/
+            fuzz-logs/
+          retention-days: 30
+
+      - name: Upload fuzz findings (GitHub)
+        if: failure() && github.server_url == 'https://github.com'
+        uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6.0.0
+        with:
+          name: fuzz-findings-${{ matrix.shard }}
+          path: |
+            fuzz-findings/
+            fuzz-logs/
+          retention-days: 30
+
+  # The unit suite under the race detector, three times, on main.
+  race-full:
+    name: Race (full, -count=3)
+    if: inputs.jobs == 'all' || inputs.jobs == 'race-full'
+    runs-on: batch
+    timeout-minutes: 180
+    # ci.yml's Unit Tests bounds: the Go toolchain is cgroup-unaware, and
+    # pkg/api/mcp and pkg/api/rest each peak near 7 GB under -race.
+    env:
+      GOMEMLIMIT: 10GiB
+      GOMAXPROCS: 8
+      GOFLAGS: -p=2
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+
+      - uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6.5.0
+        with:
+          go-version: ${{ env.GO_VERSION }}
+
+      - name: UDP buffers for QUIC suites
+        # QUIC suites need larger socket buffers (go-quicraft ci.yml); a runner
+        # that refuses sudo runs them with the defaults (handbook #306).
+        run: |
+          sudo -n sysctl -w net.core.rmem_max=7340032 net.core.wmem_max=7340032 ||
+            echo "batch: sysctl not permitted; UDP buffers left at the defaults"
+
+      # swtpm: pkg/tpm2/vtpm supervises a real swtpm process per tenant.
+      # build-essential: `make agsim` below compiles the arduino-generic
+      # firmware for the host.
+      - name: Install cgo and test dependencies
+        run: sudo .github/scripts/apt-deps.sh libicu-dev libusb-1.0-0-dev swtpm build-essential
+
+      # pkg/acme/client's device-attest-01 DICE tests enroll the real
+      # arduino-generic firmware; a missing simulator binary fails them.
+      - name: Build the arduino-generic simulators
+        run: make agsim
+
+      - name: go test -race -count=3
+        run: |
+          set -o pipefail
+          rc=0
+          RACE_PKGS=$(make -s unit-test-pkgs)
+          # shellcheck disable=SC2086 # RACE_PKGS is a package list
+          go test -race -count=3 -timeout=170m -tags="$RACE_TAGS" $RACE_PKGS 2>&1 | tee race.log || rc=$?
+          grep -n 'WARNING: DATA RACE' race.log | sed 's/^/BATCH-FINDING race /' || true
+          grep -E '^(--- FAIL|FAIL)' race.log | sed 's/^/BATCH-FINDING race-fail /' || true
+          exit "$rc"
+
+  # The integration suite in a loop for soak_minutes. Every iteration runs to
+  # the end; a failing one is reported and the loop goes on, so one flake does
+  # not hide a second, different failure.
+  soak:
+    name: Soak (${{ inputs.soak_minutes }} min)
+    if: inputs.jobs == 'all' || inputs.jobs == 'soak'
+    runs-on: batch
+    timeout-minutes: 180
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+
+      - uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6.5.0
+        with:
+          go-version: ${{ env.GO_VERSION }}
+
+      - name: UDP buffers for QUIC suites
+        # QUIC suites need larger socket buffers (go-quicraft ci.yml); a runner
+        # that refuses sudo runs them with the defaults (handbook #306).
+        run: |
+          sudo -n sysctl -w net.core.rmem_max=7340032 net.core.wmem_max=7340032 ||
+            echo "batch: sysctl not permitted; UDP buffers left at the defaults"
+
+      - name: Install cgo dependencies
+        run: sudo .github/scripts/apt-deps.sh libicu-dev libusb-1.0-0-dev
+
+      - name: Loop the integration suite
+        env:
+          SOAK_MINUTES: ${{ inputs.soak_minutes }}
+        run: |
+          end=$(( $(date +%s) + SOAK_MINUTES * 60 ))
+          i=0 failed=0
+          mkdir -p soak-logs
+          while [ "$(date +%s)" -lt "$end" ]; do
+            i=$((i + 1))
+            if bash -c "$SOAK_CMD" > "soak-logs/$i.log" 2>&1; then
+              echo "iteration $i ok"
+            else
+              failed=$((failed + 1))
+              echo "BATCH-FINDING soak iteration $i failed"
+              grep -E '^(--- FAIL|FAIL|panic:)|WARNING: DATA RACE' "soak-logs/$i.log" | head -n 40
+            fi
+          done
+          echo "soak: $i iterations, $failed failed"
+          [ "$failed" -eq 0 ]
+
+      - name: Upload soak logs (Gitea)
+        if: failure() && github.server_url != 'https://github.com'
+        uses: actions/upload-artifact@c6a366c94c3e0affe28c06c8df20a878f24da3cf # v3.2.2
+        with:
+          name: soak-logs
+          path: soak-logs/
+          retention-days: 30
+
+      - name: Upload soak logs (GitHub)
+        if: failure() && github.server_url == 'https://github.com'
+        uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6.0.0
+        with:
+          name: soak-logs
+          path: soak-logs/
+          retention-days: 30
+
+  # Benchmarks with allocations. -count=5 gives benchstat enough samples to
+  # tell a 20 % regression from noise; one sample cannot.
+  bench:
+    name: Bench
+    if: inputs.jobs == 'all' || inputs.jobs == 'bench'
+    runs-on: batch
+    timeout-minutes: 180
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+
+      - uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6.5.0
+        with:
+          go-version: ${{ env.GO_VERSION }}
+
+      - name: Install cgo dependencies
+        run: sudo .github/scripts/apt-deps.sh libicu-dev libusb-1.0-0-dev
+
+      - name: go test -bench=. -benchmem
+        run: |
+          set -o pipefail
+          # shellcheck disable=SC2086 # BENCH_PKGS is a package list
+          go test -run='^$' -bench=. -benchmem -count=5 -timeout=170m -tags="$BENCH_TAGS" $BENCH_PKGS 2>&1 | tee "bench-${GITHUB_SHA}.txt"
+
+      - name: Post the results to the run summary
+        if: always()
+        run: |
+          {
+            echo "## Benchmarks at ${GITHUB_SHA}"
+            echo
+            echo '```'
+            grep -E '^(Benchmark|goos|goarch|pkg|cpu)' "bench-${GITHUB_SHA}.txt" || true
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Upload the results (Gitea)
+        if: always() && github.server_url != 'https://github.com'
+        uses: actions/upload-artifact@c6a366c94c3e0affe28c06c8df20a878f24da3cf # v3.2.2
+        with:
+          name: bench-${{ github.sha }}
+          path: bench-${{ github.sha }}.txt
+          retention-days: 90
+
+      - name: Upload the results (GitHub)
+        if: always() && github.server_url == 'https://github.com'
+        uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6.0.0
+        with:
+          name: bench-${{ github.sha }}
+          path: bench-${{ github.sha }}.txt
+          retention-days: 90
