@@ -1742,7 +1742,7 @@ coverage-xkmsctl:
 # lane used to be represented here by integration-test-pkcs11-conformance alone,
 # which left the C ABI and the whole OpenSSL/OpenSSH interop surface out of every
 # default run -- the exact surface real callers reach the module through.
-integration-test: clean-test-containers integration-test-software integration-test-pkcs8 integration-test-pkcs11 integration-test-pkcs11-module-all integration-test-tpm2 integration-test-challenges integration-test-awskms integration-test-gcpkms integration-test-azurekv integration-test-vault integration-test-storage integration-test-utils integration-test-quantum integration-test-frost integration-test-webauthn integration-test-fido2 integration-test-cli integration-test-api-all integration-test-sdk-go integration-test-sshagent integration-test-initceremony integration-test-bootstrap
+integration-test: clean-test-containers integration-test-software integration-test-pkcs8 integration-test-pkcs11 integration-test-pkcs11-barrier integration-test-pkcs11-module-all integration-test-tpm2 integration-test-challenges integration-test-awskms integration-test-gcpkms integration-test-azurekv integration-test-vault integration-test-storage integration-test-utils integration-test-quantum integration-test-frost integration-test-webauthn integration-test-fido2 integration-test-cli integration-test-api-all integration-test-sdk-go integration-test-sshagent integration-test-initceremony integration-test-bootstrap
 	@echo "$(GREEN)$(BOLD)✓ All integration tests complete!$(RESET)"
 
 .PHONY: clean-run-images
@@ -2001,6 +2001,22 @@ integration-test-pkcs11-backend:
 	@cd test/integration/pkcs11 && trap '$(call compose,pkcs11) down -v --remove-orphans >/dev/null 2>&1' EXIT INT TERM && \
 		$(call compose,pkcs11) run --build --rm test
 	@echo "$(GREEN)✓ PKCS11 integration tests complete$(RESET)"
+
+.PHONY: integration-test-pkcs11-barrier
+## integration-test-pkcs11-barrier: Run the TPM-sealed PKCS#11 barrier PIN reboot test (SoftHSM + swtpm)
+# xkmsd seals the token PIN under the Platform SRK, restarts against the same
+# swtpm and must unseal unattended, then must refuse to start once the
+# platform PCR moves. The swtpm is the compose service, never the
+# devcontainer's TPM. compose run waits for the simulator's healthcheck.
+integration-test-pkcs11-barrier:
+	@echo "$(CYAN)$(BOLD)→ Running TPM-sealed PKCS#11 barrier PIN integration tests (SoftHSM + swtpm)...$(RESET)"
+	@$(MAKE) --no-print-directory stage-gomodauth
+	@cd test/integration/pkcs11/barrier && $(call compose,pkcs11-barrier) down -v >/dev/null 2>&1 || true
+	@cd test/integration/pkcs11/barrier && trap '$(call compose,pkcs11-barrier) down -v --remove-orphans >/dev/null 2>&1' EXIT INT TERM && \
+		$(call compose,pkcs11-barrier) run --build --rm test \
+		go test -v -count=1 -tags='integration pkcs11 pkcs11_barrier codec_cbor codec_json codec_msgpack' -timeout 15m \
+		./test/integration/pkcs11/barrier/...
+	@echo "$(GREEN)✓ TPM-sealed PKCS#11 barrier PIN integration tests complete$(RESET)"
 
 .PHONY: integration-test-pkcs11-module
 ## integration-test-pkcs11-module: Run PKCS#11 module multi-protocol integration tests (runs in devcontainer with xkms-server)

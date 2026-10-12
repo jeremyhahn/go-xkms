@@ -1,6 +1,6 @@
 # Sealing and Barrier — Engineering Contract
 
-> **Status: NORMATIVE** · Feature: `sealing-and-barrier` · Repo: `go-xkms` · Last verified: 2026-10-08
+> **Status: NORMATIVE** · Feature: `sealing-and-barrier` · Repo: `go-xkms` · Last verified: 2026-10-12
 
 ## Exported surface — `pkg/seal`
 
@@ -429,6 +429,18 @@ Tests:
 - `pkg/pkcs11strategy/sealed_pin_test.go` and `builder_softhsm_test.go`
   cover the release, the wipe and a SoftHSM login.
 - `pkg/embeddednode/node_seal_pkcs11_*_test.go` covers the node seal.
+- `test/integration/pkcs11/barrier/barrier_test.go` is the reboot-equivalent
+  end-to-end test, run by `make integration-test-pkcs11-barrier` (part of
+  `make integration-test`) in docker compose: a SoftHSM 2.7.0 token and one
+  swtpm that outlives every xkmsd process, never the devcontainer's TPM. It
+  seals the token PIN with `xkmsd seal-pkcs11-pin`, then starts xkmsd twice
+  with `barrier.strategy: pkcs11` and no PIN in the configuration; both starts
+  must report the barrier initialized and unsealed with no operator input.
+  It then extends the platform PCR on the swtpm. The next start must exit
+  non-zero at the node seal, and the same resolution in-process must return
+  `*embeddednode.NodeSealError` wrapping `*pkcs11strategy.BuildError` and
+  `*preseal.RefusedError` for `platform/pkcs11-pin`. The build tags are
+  `integration pkcs11 pkcs11_barrier`.
 
 **TPM2 key directory.** Both the general TPM2 backend
 (`pkg/server/backend_tpm2.go`) and the node-barrier flip's `tpm2` strategy
