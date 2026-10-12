@@ -28,6 +28,7 @@ import (
 	"github.com/jeremyhahn/go-enclave"
 	"github.com/jeremyhahn/go-xkms/pkg/config"
 	"github.com/jeremyhahn/go-xkms/pkg/server"
+	"github.com/jeremyhahn/go-xkms/sdk/go/secure"
 	"github.com/jeremyhahn/go-xkms/web"
 )
 
@@ -50,6 +51,13 @@ var subcommands = map[string]func([]string) int{
 }
 
 func main() {
+	// Before anything constructs protected memory: a debugger or a same-user
+	// process must not be able to read it through ptrace or /proc/<pid>/mem.
+	if _, err := secure.HardenProcess(nil); err != nil {
+		fmt.Fprintf(os.Stderr, "xkmsd: process hardening: %v\n", err)
+		os.Exit(1)
+	}
+
 	// runProcess reports the process exit code instead of calling os.Exit
 	// directly, so the deferred WipeAll inside it always runs — an os.Exit
 	// inside a function that owns a pending defer skips it.

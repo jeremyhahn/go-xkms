@@ -22,6 +22,12 @@ import (
 // ErrLocalCeremonyUnavailable indicates the CTAP2 driver is not wired.
 var ErrLocalCeremonyUnavailable = errors.New("fido2: local CTAP2 ceremony is not available in this build")
 
+// NoHandlerReason is the operator-facing text reported by a LocalCeremony with
+// no FIDO2 handler attached. It is exported because it is what the ceremony's
+// preflight surfaces to the person standing at the console, and a caller may
+// want to match on it.
+const NoHandlerReason = "no FIDO2 handler attached — this build or host has no FIDO2 support; enroll from a console that can reach a security key"
+
 // ErrLocalRPIDRequired indicates a local enrollment was attempted with no
 // relying-party ID. A credential enrolled against the wrong RP ID verifies at
 // enrollment and fails at every login, so this is refused rather than guessed.

@@ -53,6 +53,54 @@ func realLocalCeremony(t *testing.T) *xkmsfido2.LocalCeremony {
 	return xkmsfido2.NewLocalCeremony(handler, time.Millisecond)
 }
 
+// attachedKey is a pkgfido2.HIDDevice that is enumerated but never opened, so
+// a handler can report one authenticator without touching any hardware.
+type attachedKey struct{}
+
+func (attachedKey) Write([]byte) (int, error) {
+	return 0, errors.New("attachedKey: Write must not be called")
+}
+func (attachedKey) Read([]byte) (int, error) {
+	return 0, errors.New("attachedKey: Read must not be called")
+}
+func (attachedKey) Close() error         { return nil }
+func (attachedKey) Path() string         { return "/dev/hidraw0" }
+func (attachedKey) ProductID() uint16    { return 0x0407 }
+func (attachedKey) VendorID() uint16     { return 0x1050 }
+func (attachedKey) Product() string      { return "Security Key" }
+func (attachedKey) Manufacturer() string { return "Example" }
+func (attachedKey) SerialNumber() string { return "0001" }
+
+// oneDeviceEnumerator reports a single attached authenticator.
+type oneDeviceEnumerator struct{}
+
+func (oneDeviceEnumerator) Enumerate(_, _ uint16) ([]pkgfido2.HIDDevice, error) {
+	return []pkgfido2.HIDDevice{attachedKey{}}, nil
+}
+
+func (oneDeviceEnumerator) Open(_ string) (pkgfido2.HIDDevice, error) {
+	return nil, errors.New("oneDeviceEnumerator: Open must not be called")
+}
+
+// TestPreflightAdminFactors_FIDO2WithAnAttachedKeyPasses is the positive half
+// of issue #1446: with a handler that can reach an authenticator, a planned
+// fido2 factor preflights cleanly.
+func TestPreflightAdminFactors_FIDO2WithAnAttachedKeyPasses(t *testing.T) {
+	handler, err := pkgfido2.NewHandler(nil, oneDeviceEnumerator{})
+	if err != nil {
+		t.Fatalf("pkgfido2.NewHandler: %v", err)
+	}
+	err = PreflightAdminFactors(context.Background(), AdminEnrollmentConfig{
+		Plan:           mustPlan(t, "fido2"),
+		Username:       "administrator",
+		RelyingPartyID: "example.com",
+		FIDO2Handler:   handler,
+	})
+	if err != nil {
+		t.Fatalf("fido2 must preflight cleanly with an authenticator attached, got %v", err)
+	}
+}
+
 // TestAdminEnrollmentParams_MTLSBindsTheAdminCertificate is the regression for
 // the bug that made `xkmsd init` fail with "mtls: cert_pem is required": the
 // provider returned no params for mtls, so the administrator certificate the

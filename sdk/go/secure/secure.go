@@ -23,6 +23,7 @@ package secure
 
 import (
 	"context"
+	"log/slog"
 
 	qrdbsecure "github.com/jeremyhahn/go-qrdb/sdk/go/secure"
 )
@@ -83,7 +84,50 @@ type (
 
 	// EmptyBorrowError is returned when a borrow yields no bytes.
 	EmptyBorrowError = qrdbsecure.EmptyBorrowError
+
+	// ProcessHardeningError is returned by HardenProcess when the platform
+	// refuses the mechanism or the tracer check cannot be made.
+	ProcessHardeningError = qrdbsecure.ProcessHardeningError
+
+	// ProcessInspectionOptOutError is returned by HardenProcess when
+	// AllowProcessInspectionEnv holds a value strconv.ParseBool rejects.
+	ProcessInspectionOptOutError = qrdbsecure.ProcessInspectionOptOutError
+
+	// ProcessInspectionOptOutRefusedError is returned by HardenProcess when
+	// the opt-out is set in FIPS 140-3 mode.
+	ProcessInspectionOptOutRefusedError = qrdbsecure.ProcessInspectionOptOutRefusedError
+
+	// ProcessTracedError is returned by HardenProcess when a tracer is
+	// already attached.
+	ProcessTracedError = qrdbsecure.ProcessTracedError
 )
+
+// ProcessHardening is the re-export of qrdb's ProcessHardening — what
+// HardenProcess did to the process.
+type ProcessHardening = qrdbsecure.ProcessHardening
+
+// The HardenProcess outcomes.
+const (
+	ProcessHardened             = qrdbsecure.ProcessHardened
+	ProcessInspectionAllowed    = qrdbsecure.ProcessInspectionAllowed
+	ProcessHardeningUnavailable = qrdbsecure.ProcessHardeningUnavailable
+)
+
+// AllowProcessInspectionEnv names the environment variable that opts a
+// process out of HardenProcess so a debugger can attach. A process that
+// honours it logs a warning; FIPS 140-3 mode refuses it.
+const AllowProcessInspectionEnv = qrdbsecure.AllowProcessInspectionEnv
+
+// HardenProcess stops other processes from reading this one's memory: on
+// Linux prctl(PR_SET_DUMPABLE, 0), on macOS ptrace(PT_DENY_ATTACH), elsewhere
+// a logged no-op. It then refuses to continue if a tracer is already
+// attached. It belongs to the binary that owns the process: call it once,
+// first thing in main, before anything constructs a Buffer or Secret.
+// Every error means the process is NOT hardened. A nil logger uses
+// slog.Default.
+func HardenProcess(logger *slog.Logger) (ProcessHardening, error) {
+	return qrdbsecure.HardenProcess(logger)
+}
 
 // NewSecret seals src into a new Secret. On return, src is wiped — the
 // caller must not reuse the slice. ctx bounds the wait for the process

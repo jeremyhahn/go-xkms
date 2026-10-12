@@ -75,7 +75,14 @@ type LocalCeremony struct {
 // timeout bounds the user-presence wait; 0 selects 60s, long enough to find
 // and touch a key and short enough that an unattended init fails instead of
 // hanging a boot.
+//
+// A nil handler yields a ceremony that reports itself unavailable and refuses
+// to enroll. It must not be stored in the interfaces as a typed nil, which
+// would compare non-nil and dereference the handler on first use.
 func NewLocalCeremony(handler *pkgfido2.FIDO2Handler, timeout time.Duration) *LocalCeremony {
+	if handler == nil {
+		return newLocalCeremony(nil, nil, timeout)
+	}
 	return newLocalCeremony(handler, handler, timeout)
 }
 
@@ -97,7 +104,7 @@ func newLocalCeremony(devices deviceLister, ceremony ctap2Ceremony, timeout time
 // preflight before any state changes.
 func (c *LocalCeremony) Available(_ context.Context) (bool, string) {
 	if c == nil || c.devices == nil || c.ceremony == nil {
-		return false, "FIDO2 subsystem is not wired into this build"
+		return false, NoHandlerReason
 	}
 	found, err := c.devices.ListDevices()
 	if err != nil {

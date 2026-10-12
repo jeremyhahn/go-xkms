@@ -21,7 +21,9 @@ import (
 	"crypto/x509"
 	"crypto/x509/pkix"
 	"encoding/pem"
+	"errors"
 	"math/big"
+	"strings"
 	"testing"
 	"time"
 
@@ -87,11 +89,11 @@ func TestNewAdminFactorRegistry_RegistersTheHardwareFactors(t *testing.T) {
 	}
 }
 
-// TestNewAdminFactorRegistry_NoHandlerKeepsTheDefaultFIDO2Factor verifies that
-// with no authenticator attached the default fido2 factor is left in place.
-// The replacement only happens when a handler exists, so a host with no FIDO2
-// support still builds a usable registry rather than failing construction.
-func TestNewAdminFactorRegistry_NoHandlerKeepsTheDefaultFIDO2Factor(t *testing.T) {
+// TestNewAdminFactorRegistry_NoHandlerRegistersAnUnavailableFIDO2Factor
+// verifies that with no authenticator handler the registry still builds, and
+// its fido2 factor answers the availability probe as unavailable rather than
+// as the browser-path default that reports available (issue #1446).
+func TestNewAdminFactorRegistry_NoHandlerRegistersAnUnavailableFIDO2Factor(t *testing.T) {
 	registry, _, err := NewAdminFactorRegistry(AdminEnrollmentConfig{
 		RelyingPartyID: "example.com",
 		FIDO2Handler:   nil,
@@ -99,8 +101,18 @@ func TestNewAdminFactorRegistry_NoHandlerKeepsTheDefaultFIDO2Factor(t *testing.T
 	if err != nil {
 		t.Fatalf("NewAdminFactorRegistry: %v", err)
 	}
-	if _, err := registry.Lookup(xkmsfido2.FactorName); err != nil {
-		t.Fatalf("the default fido2 factor must remain registered when no handler is attached: %v", err)
+	plugin, err := registry.Lookup(xkmsfido2.FactorName)
+	if err != nil {
+		t.Fatalf("a fido2 factor must be registered even with no handler: %v", err)
+	}
+	probe, ok := plugin.(interface {
+		Available(context.Context) (bool, string)
+	})
+	if !ok {
+		t.Fatalf("fido2 factor %T must answer the availability probe", plugin)
+	}
+	if available, reason := probe.Available(context.Background()); available || reason != xkmsfido2.NoHandlerReason {
+		t.Fatalf("Available = (%v, %q), want (false, %q)", available, reason, xkmsfido2.NoHandlerReason)
 	}
 }
 
@@ -112,24 +124,64 @@ func TestPreflightAdminFactors_NilPlanIsANoOp(t *testing.T) {
 	}
 }
 
-// TestPreflightAdminFactors_FIDO2WithNoHandlerStaysAvailable pins a deliberate
-// design decision rather than an accident. With no local ceremony attached the
-// fido2 factor reports itself AVAILABLE (pkg/factor/fido2/factor.go), because
-// the browser/WebAuthn path needs no hardware on THIS host — reporting
-// otherwise would block every ordinary server deployment from offering fido2.
-//
-// Preflight therefore passes here. The hardware check only bites when a local
-// CTAP2 ceremony is wired, which is what a daemon does when it opens an
-// authenticator for a planned passkey enrollment.
-func TestPreflightAdminFactors_FIDO2WithNoHandlerStaysAvailable(t *testing.T) {
+// TestPreflightAdminFactors_FIDO2WithNoHandlerFails is the regression test for
+// issue #1446. The init ceremony has no browser, so a planned passkey can only
+// be enrolled through an attached authenticator. Before the fix this preflight
+// PASSED — the default browser-path factor reports itself available — and
+// enrollment then dereferenced the absent handler and panicked after first
+// boot had already written state.
+func TestPreflightAdminFactors_FIDO2WithNoHandlerFails(t *testing.T) {
 	err := PreflightAdminFactors(context.Background(), AdminEnrollmentConfig{
 		Plan:           mustPlan(t, "fido2"),
 		Username:       "administrator",
 		RelyingPartyID: "example.com",
 		FIDO2Handler:   nil,
 	})
-	if err != nil {
-		t.Fatalf("fido2 must preflight cleanly with no local ceremony attached, got %v", err)
+	if err == nil {
+		t.Fatal("a planned fido2 factor with no handler must fail preflight")
+	}
+	var unavailable *qrdbsdk.AdminFactorUnavailableError
+	if !errors.As(err, &unavailable) {
+		t.Fatalf("err = %T (%v), want *AdminFactorUnavailableError", err, err)
+	}
+	if unavailable.Factor != qrdbsdk.FactorFIDO2 {
+		t.Errorf("Factor = %v, want fido2", unavailable.Factor)
+	}
+	if !strings.Contains(unavailable.Reason, xkmsfido2.NoHandlerReason) {
+		t.Errorf("Reason = %q, want it to carry %q", unavailable.Reason, xkmsfido2.NoHandlerReason)
+	}
+}
+
+// recordingPersister counts the enrollments it is asked to store.
+type recordingPersister struct {
+	persisted []qrdbsdk.AdminFactor
+}
+
+func (p *recordingPersister) PersistAdminFactor(_ context.Context, f qrdbsdk.AdminFactor, _ *qrdbsdk.AuthFactorEnrollment) error {
+	p.persisted = append(p.persisted, f)
+	return nil
+}
+
+// TestEnrollAdminFactors_FIDO2WithNoHandlerRefusesWithoutPanicking is the
+// defence in depth behind the preflight for issue #1446: a caller that skips
+// preflight gets a refusal, not a nil-handler panic, and nothing is persisted.
+func TestEnrollAdminFactors_FIDO2WithNoHandlerRefusesWithoutPanicking(t *testing.T) {
+	persister := &recordingPersister{}
+	enrolled, err := EnrollAdminFactors(context.Background(), AdminEnrollmentConfig{
+		Plan:           mustPlan(t, "fido2"),
+		Username:       "administrator",
+		TenantID:       "system",
+		RelyingPartyID: "example.com",
+		Persister:      persister,
+	})
+	if err == nil {
+		t.Fatal("fido2 enrollment with no handler must fail")
+	}
+	if len(enrolled) != 0 {
+		t.Errorf("a refused fido2 factor must not appear as enrolled, got %d", len(enrolled))
+	}
+	if len(persister.persisted) != 0 {
+		t.Errorf("nothing may be persisted for a refused factor, got %v", persister.persisted)
 	}
 }
 

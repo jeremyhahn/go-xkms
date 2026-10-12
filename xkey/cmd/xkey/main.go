@@ -22,6 +22,7 @@ import (
 	"runtime"
 	"strings"
 
+	"github.com/jeremyhahn/go-xkms/sdk/go/secure"
 	"github.com/jeremyhahn/go-xkms/xkey/cmd/xkey/cmd"
 	"github.com/jeremyhahn/go-xkms/xkey/frontend"
 	"github.com/jeremyhahn/go-xkms/xkey/pkg/gui"
@@ -36,6 +37,13 @@ var guiRun = gui.Run
 var cliExecute = cmd.Execute
 
 func main() {
+	// Before anything constructs protected memory: a debugger or a same-user
+	// process must not be able to read it through ptrace or /proc/<pid>/mem.
+	if _, err := secure.HardenProcess(nil); err != nil {
+		_, _ = fmt.Fprintf(os.Stderr, "xkey: process hardening: %v\n", err)
+		os.Exit(1)
+	}
+
 	os.Exit(run(os.Args, os.Stderr))
 }
 

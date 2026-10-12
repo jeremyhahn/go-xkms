@@ -709,6 +709,30 @@ OS-level memory protection for sensitive key material:
 | Cleanup | `Destroy()` zeros data, then `munlock` + `munmap`; verifies the canary and panics on detected corruption |
 | Concurrent safety | `sync.RWMutex` — `WithBytes`/`EqualTo`/`OpenString` borrow under the read lock, `Destroy`/`Freeze` wait out in-flight borrows |
 | Process-wide teardown | `enclave.WipeAll()`, called once by the owning binary at orderly exit — never by a library |
+| Inspection by other processes | `secure.HardenProcess` (`sdk/go/secure`, re-exported from go-qrdb), called first thing in every binary — see below |
+
+### Process hardening
+
+`mlock` and guard pages do not stop a debugger or another process running as
+the same user from reading locked pages through `ptrace` or `/proc/<pid>/mem`.
+`xkmsd`, `xkmsctl`, `trusted-acme-client`, `xkey` and `e2eprobe` call
+go-qrdb's `secure.HardenProcess` first thing in `main`, before any protected
+memory exists. On Linux it sets `prctl(PR_SET_DUMPABLE, 0)` (no ptrace attach
+or `/proc/<pid>/mem` without `CAP_SYS_PTRACE`, no core file); on macOS
+`ptrace(PT_DENY_ATTACH)`; elsewhere it logs that no mechanism exists. It then
+refuses to continue if a tracer is already attached. Any error is fatal: the
+binary prints it and exits 1.
+
+The PKCS#11 module has no `main`; it hardens the host application on its
+first `C_Initialize`, which then returns `CKR_GENERAL_ERROR` on failure.
+`C_Initialize` is the entry point the standard requires before any PIN or key
+reaches the module; a library constructor would run in every process that
+merely loads it.
+
+To attach a debugger, set `QRDB_SECURE_ALLOW_PROCESS_INSPECTION=true`. The
+process stays inspectable and logs a warning. In FIPS 140-3 mode the opt-out
+is refused, and a value `strconv.ParseBool` rejects is an error rather than
+either answer.
 
 ```go
 // Material about to be generated is produced directly into locked pages —

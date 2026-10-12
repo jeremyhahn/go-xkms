@@ -135,6 +135,19 @@ func TestNewLocalCeremony_WiresARealHandler(t *testing.T) {
 	}
 }
 
+// TestNewLocalCeremony_NilHandlerRefuses pins issue #1446: a nil handler must
+// not be stored as a typed-nil interface, which compares non-nil and panics on
+// first use. The ceremony reports NoHandlerReason and refuses to enroll.
+func TestNewLocalCeremony_NilHandlerRefuses(t *testing.T) {
+	c := NewLocalCeremony(nil, 0)
+	if ok, reason := c.Available(context.Background()); ok || reason != NoHandlerReason {
+		t.Fatalf("Available() = (%v, %q), want (false, %q)", ok, reason, NoHandlerReason)
+	}
+	if _, err := c.Enroll(context.Background(), localRequest()); !errors.Is(err, ErrLocalCeremonyUnavailable) {
+		t.Fatalf("Enroll = %v, want ErrLocalCeremonyUnavailable", err)
+	}
+}
+
 func TestLocalCeremony_AvailableRequiresAuthenticator(t *testing.T) {
 	c := newLocalCeremony(&fakeDevices{}, &fakeCeremony{}, 0)
 	ok, reason := c.Available(context.Background())

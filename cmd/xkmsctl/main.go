@@ -14,10 +14,20 @@
 package main
 
 import (
+	"fmt"
 	"os"
+
+	"github.com/jeremyhahn/go-xkms/sdk/go/secure"
 )
 
 func main() {
+	// Before anything constructs protected memory: a debugger or a same-user
+	// process must not be able to read it through ptrace or /proc/<pid>/mem.
+	if _, err := secure.HardenProcess(nil); err != nil {
+		fmt.Fprintf(os.Stderr, "xkmsctl: process hardening: %v\n", err)
+		os.Exit(1)
+	}
+
 	if err := Execute(); err != nil {
 		os.Exit(1)
 	}

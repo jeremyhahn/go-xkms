@@ -23,6 +23,8 @@ import (
 
 	"github.com/spf13/cobra"
 	"github.com/spf13/viper"
+
+	"github.com/jeremyhahn/go-xkms/sdk/go/secure"
 )
 
 // rootCmd represents the base command when called without any subcommands.
@@ -130,6 +132,13 @@ func init() {
 }
 
 func main() {
+	// Before anything constructs protected memory: a debugger or a same-user
+	// process must not be able to read it through ptrace or /proc/<pid>/mem.
+	if _, err := secure.HardenProcess(nil); err != nil {
+		fmt.Fprintf(os.Stderr, "error: process hardening: %v\n", err)
+		os.Exit(1)
+	}
+
 	if err := rootCmd.Execute(); err != nil {
 		fmt.Fprintf(os.Stderr, "error: %v\n", err)
 		os.Exit(1)

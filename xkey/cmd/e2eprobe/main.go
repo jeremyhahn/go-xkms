@@ -39,6 +39,7 @@ import (
 	"os"
 	"time"
 
+	"github.com/jeremyhahn/go-xkms/sdk/go/secure"
 	"github.com/jeremyhahn/go-xkms/xkey/pkg/pairing"
 )
 
@@ -86,6 +87,12 @@ const probeShutdownTimeout = 5 * time.Second
 var probeExit int
 
 func main() {
+	// Before anything constructs protected memory: a debugger or a same-user
+	// process must not be able to read the static key through ptrace or
+	// /proc/<pid>/mem.
+	_, err := secure.HardenProcess(nil)
+	fatalIf(err, "process hardening")
+
 	// Registered before anything else, so it is the final defer to run and
 	// can act on whatever teardown recorded.
 	defer func() {

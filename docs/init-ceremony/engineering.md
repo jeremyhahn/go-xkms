@@ -1,6 +1,6 @@
 # Init Ceremony — Engineering
 
-> **Status: NORMATIVE** · Feature: `init-ceremony` · Repo: `go-xkms` · Last verified: 2026-10-04
+> **Status: NORMATIVE** · Feature: `init-ceremony` · Repo: `go-xkms` · Last verified: 2026-10-11
 
 ## Exported surface (`pkg/init`)
 
@@ -18,7 +18,13 @@
 ## Invariants
 
 - A planned factor that cannot succeed (no security key attached) fails in
-  preflight, before any state changes.
+  preflight, before any state changes, with go-qrdb's
+  `*AdminFactorUnavailableError`. This covers a planned `fido2` factor with
+  no `FIDO2Handler` (reason `fido2.NoHandlerReason`): the init ceremony has
+  no browser, so the registry always wires the local CTAP2 ceremony, never
+  the browser-path factor that reports itself available. A planned `piv`
+  factor with no generator and no `AllowSoftwarePIV` fails the same way
+  (`piv.NoGeneratorReason`).
 - First boot is idempotent: `xkmsd run`'s own first boot is a no-op afterwards.
 - The node is always closed before `xkmsd init` returns.
 - Holder certificates carry the registered subject only, no SAN, never the

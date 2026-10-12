@@ -69,7 +69,8 @@ type AdminEnrollmentConfig struct {
 
 	// FIDO2Handler drives an attached authenticator. Nil when this build or
 	// host has no FIDO2 support, which makes a planned fido2 factor fail at
-	// preflight rather than midway through the ceremony.
+	// preflight (reason xkmsfido2.NoHandlerReason) rather than midway through
+	// the ceremony.
 	FIDO2Handler *pkgfido2.FIDO2Handler
 
 	// PIVGenerator produces keys in an attached smartcard's PIV slots. It is
@@ -109,11 +110,13 @@ type AdminEnrollmentConfig struct {
 // rather than substituting a software generator. Software PIV remains
 // reachable, but only by naming AllowSoftwarePIV.
 //
-// The default fido2 factor is REPLACED rather than supplemented: Register
-// refuses a duplicate name, and a factor without the local ceremony would
-// answer the availability probe without being able to run, reporting a factor
-// that cannot actually enroll. With no handler the default registry is
-// returned unchanged and a planned fido2 factor fails preflight.
+// The default fido2 factor is always REPLACED by one driving the local
+// ceremony: Register refuses a duplicate name, and the default factor answers
+// the availability probe as available because a browser elsewhere can run its
+// ceremony. There is no browser at init, so with no FIDO2Handler the local
+// ceremony reports xkmsfido2.NoHandlerReason and a planned fido2 factor fails
+// preflight with *qrdbsdk.AdminFactorUnavailableError, exactly as an
+// unattached PIV generator does.
 func NewAdminFactorRegistry(cfg AdminEnrollmentConfig) (*qrdbsdk.AuthFactorRegistry, *xkmsfido2.LocalCeremony, error) {
 	local := xkmsfido2.NewLocalCeremony(cfg.FIDO2Handler, 0)
 
@@ -126,13 +129,11 @@ func NewAdminFactorRegistry(cfg AdminEnrollmentConfig) (*qrdbsdk.AuthFactorRegis
 		return nil, nil, err
 	}
 
-	if cfg.FIDO2Handler != nil {
-		registry.Unregister(xkmsfido2.FactorName)
-		if rerr := registry.Register(xkmsfido2.NewWithLocalCeremony(xkmsfido2.Config{
-			RPID: cfg.RelyingPartyID,
-		}, local)); rerr != nil {
-			return nil, nil, rerr
-		}
+	registry.Unregister(xkmsfido2.FactorName)
+	if rerr := registry.Register(xkmsfido2.NewWithLocalCeremony(xkmsfido2.Config{
+		RPID: cfg.RelyingPartyID,
+	}, local)); rerr != nil {
+		return nil, nil, rerr
 	}
 	return registry, local, nil
 }

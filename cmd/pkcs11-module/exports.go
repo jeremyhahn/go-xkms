@@ -214,6 +214,10 @@ func C_Initialize(pInitArgs C.CK_VOID_PTR) (rv C.CK_RV) {
 		}
 	}
 
+	if rv := hardenProcess(); rv != module.CKR_OK {
+		return C.CK_RV(rv)
+	}
+
 	// Offline mode: the library builds the embedded in-process service and
 	// installs it as the global module, so the module uses the injected
 	// in-process client instead of dialing a remote xkmsd. initializeOffline
