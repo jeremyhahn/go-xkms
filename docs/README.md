@@ -101,9 +101,9 @@ done
 ```
 
 Test for **all five files**, not just `architecture.md`. Several legacy folders
-— `docs/acme/`, `docs/ca/`, `docs/frost/`, `xkey/docs/ble/`, `xkey/docs/gui/` —
+— `docs/acme/`, `docs/ca/`, `xkey/docs/ble/`, `xkey/docs/gui/` —
 already contain a file called `architecture.md`, so the shorter form overcounts
-by five and reports unconverted folders as converted.
+by four and reports unconverted folders as converted.
 
 ### Legacy paths superseded by a feature folder
 
@@ -111,6 +111,7 @@ by five and reports unconverted folders as converted.
 |---|---|
 | [key-management](key-management/) | `architecture/unified-keyid-jwk-integration.md`, `key-agreement.md` |
 | [crypto-backends](crypto-backends/) | `backends/` |
+| [frost-threshold-signing](frost-threshold-signing/) | `frost/` — **absorbed and deleted** (go-xkms#1433): every claim was re-verified against `pkg/keyprovider/frost`; the true ones moved into the feature folder (the security checklist became the procedure in [`frost-threshold-signing/user.md`](frost-threshold-signing/user.md) §"Operating a FROST group securely"), and the fictional `xkms frost` CLI, per-backend Go config, env vars and compliance prose were dropped |
 | [tpm2](tpm2/) | `configuration/tpm2-session-encryption.md` — **absorbed and deleted** (go-xkms#1147): it documented the removed `EncryptSession` switch and an encrypted-versus-unencrypted comparison that no longer exists; session encryption is unconditional and documented in [`tpm2/engineering.md`](tpm2/engineering.md) §"Bus protection", its capture tests under §"Test strategy" |
 | [attestation-verifier](attestation-verifier/) | `attestation/README.md` — **absorbed and deleted** |
 | [pkcs11-provider-module](pkcs11-provider-module/) | `pkcs11/module/`, `references/pkcs11-v3.0-to-v3.2-changes.md`, `pkcs11/manager.md` |
@@ -279,7 +280,7 @@ module) by the time they were re-verified for this pass.
 |---|---|
 | Post-quantum | [`post-quantum/`](post-quantum/) |
 | Symmetric encryption / AEAD | [`symmetric-aead/`](symmetric-aead/) |
-| FROST threshold signatures | [`frost-threshold-signing/`](frost-threshold-signing/) (partial absorption — see the note below) |
+| FROST threshold signatures | [`frost-threshold-signing/`](frost-threshold-signing/) (full absorption — the legacy `frost/` folder was re-verified against source and deleted, go-xkms#1433) |
 | SSH key management | [`ssh-keys/`](ssh-keys/), [`ssh-agent-sessions/`](ssh-agent-sessions/), and [`ssh-sessions/`](ssh-sessions/) together — see the note below |
 | PKCS#11 **backend** (consuming a token) | [`pkcs11-backend/`](pkcs11-backend/) |
 | Web console | [`web-console/`](web-console/) |
@@ -290,20 +291,12 @@ module) by the time they were re-verified for this pass.
 | Datastore | [`datastore/`](datastore/) |
 | Backend credentials (found missing by the 2026-10-11 audit, go-xkms#1450) | [`backend-credentials/`](backend-credentials/) |
 
-[`frost-threshold-signing/`](frost-threshold-signing/),
 [`ssh-keys/`](ssh-keys/), [`ssh-agent-sessions/`](ssh-agent-sessions/) and
 [`ssh-sessions/`](ssh-sessions/) are all NORMATIVE folders, but no single
-one of the SSH three fully absorbs [`ssh/README.md`](ssh/README.md) on
+one of the three fully absorbs [`ssh/README.md`](ssh/README.md) on
 its own, so none gets its own "legacy paths superseded" row above — the
 detail is recorded here instead:
 
-- **FROST** — [`frost-threshold-signing/`](frost-threshold-signing/) is
-  NORMATIVE for `pkg/keyprovider/frost` and its CLI/REST/gRPC/MCP surface.
-  The legacy [`frost/`](frost/) folder's `backends.md` (per-backend
-  `SecretBackend` setup) and `dkg-integration.md` (writing a custom
-  `KeyGenerator`) were not re-verified for this conversion and remain
-  legacy-only; treat them as unconfirmed until someone re-verifies them
-  against source the way the rest of this folder was.
 - **SSH** — [`ssh-keys/`](ssh-keys/) is NORMATIVE for SSH keys,
   known-hosts, and authorized-keys (plus the backend bridge and the
   shared key-ID layout). [`ssh-agent-sessions/`](ssh-agent-sessions/) is
@@ -347,8 +340,7 @@ and stay where they are.
 
 **Operator checklists are procedure, not backlog.** The checklists in
 `acme/deployment/security.md`, `acme/deployment/operations.md`,
-`acme/admin/configuration.md`, `frost/security.md` and
-`pkcs11/module/security.md` are deployment and hardening procedure. They belong
+`acme/admin/configuration.md` and `pkcs11/module/security.md` are deployment and hardening procedure. They belong
 in the relevant feature's `user.md` or under `deployment/`, and are retained
 where they are until that absorption happens. Their unchecked boxes are not a
 work queue.

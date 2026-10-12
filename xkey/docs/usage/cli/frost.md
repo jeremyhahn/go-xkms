@@ -1085,7 +1085,7 @@ fi
 
 ## See Also
 
-- [FROST Documentation](../../frost/README.md)
-- [FROST Security Guide](../../frost/security.md)
+- [FROST Documentation](../../../../docs/frost-threshold-signing/architecture.md)
+- [Operating a FROST group securely](../../../../docs/frost-threshold-signing/user.md)
 - [Key Management](./key.md)
 - [Getting Started](../getting-started.md)

@@ -1,6 +1,6 @@
 # FROST Threshold Signing — CLI
 
-> **Status: NORMATIVE** · Feature: `frost-threshold-signing` · Repo: `go-xkms` · Last verified: 2026-09-29 (#1337)
+> **Status: NORMATIVE** · Feature: `frost-threshold-signing` · Repo: `go-xkms` · Last verified: 2026-10-12 (#1433)
 
 `xkmsctl frost` requires a binary built with `-tags frost`
 (`go build -tags frost ./cmd/xkmsctl`); without the tag, every subcommand
@@ -20,7 +20,7 @@ platform namespace the server keeps apart from every tenant's keys (see
 
 ## Local storage and the FROST passphrase
 
-`frostStoreDirs` (`cmd/xkmsctl/frost.go:1305`) creates `<key-dir>` (when
+`frostStoreDirs` (`cmd/xkmsctl/frost.go:1306`) creates `<key-dir>` (when
 absent), `<key-dir>/frost`, `<key-dir>/frost/public` and
 `<key-dir>/frost/secrets` with mode `0700`, and re-modes the three FROST
 directories to `0700` if they already exist.
@@ -40,7 +40,7 @@ seals it without the passphrase.
 
 The verbs that use those keys — `keygen` in participant mode, `recipient`,
 `import`, `round1`, `round2` — require the passphrase
-(`openFrostLocalStore`, `frost.go:1363`). `list`, `info`, `delete`,
+(`openFrostLocalStore`, `frost.go:1364`). `list`, `info`, `delete`,
 `aggregate` and `verify` touch only public material and never ask for it.
 The passphrase is taken from exactly one source, in precedence order
 (`cmd/xkmsctl/frost_passphrase.go:81`); it is never accepted as a flag value:
@@ -74,7 +74,7 @@ printf '%s' "$FROST_PASSPHRASE" | xkmsctl frost round1 --key-id demo --output r1
 ## `xkmsctl frost keygen`
 
 Generate FROST key packages using the trusted-dealer model
-(`cmd/xkmsctl/frost.go:167`).
+(`cmd/xkmsctl/frost.go:168`).
 
 | Flag | Default | Meaning |
 |---|---|---|
@@ -126,7 +126,7 @@ xkmsctl frost keygen --key-id mykey --threshold 2 --total 3 --participant-id 1 \
 ## `xkmsctl frost recipient`
 
 Create, on first use, the recipient key that the dealer encrypts this
-participant's package to, and print its public half (`frost.go:558`). The
+participant's package to, and print its public half (`frost.go:559`). The
 private key is stored in `<key-dir>/frost/secrets` as encrypted PKCS#8
 under the FROST passphrase and is used only by `import`. Running it again
 prints the same key.
@@ -147,7 +147,7 @@ xkmsctl frost recipient --public-key-file alice.pem --passphrase-file ./frost.pa
 
 ## `xkmsctl frost import`
 
-Import a key package file received from a dealer (`frost.go:426`). Decrypts
+Import a key package file received from a dealer (`frost.go:427`). Decrypts
 the package with this `--key-dir`'s recipient key and seals the share, so it
 requires the FROST passphrase. Nothing is stored until the package has
 decrypted.
@@ -171,7 +171,7 @@ xkmsctl frost import --package ./alice_participant_1.json --passphrase-file ./fr
 
 ## `xkmsctl frost list`
 
-List FROST keys stored under `--key-dir` (`frost.go:634`).
+List FROST keys stored under `--key-dir` (`frost.go:635`).
 
 | Flag | Default | Meaning |
 |---|---|---|
@@ -179,7 +179,7 @@ List FROST keys stored under `--key-dir` (`frost.go:634`).
 
 ## `xkmsctl frost info <key-id>`
 
-Show details for one key (`frost.go:691`). Reads only the public key
+Show details for one key (`frost.go:692`). Reads only the public key
 package and metadata; it never unseals the share.
 
 | Flag | Default | Meaning |
@@ -189,12 +189,12 @@ package and metadata; it never unseals the share.
 
 ## `xkmsctl frost delete <key-id>`
 
-Delete a key and its local data (`frost.go:745`). Prompts for confirmation
+Delete a key and its local data (`frost.go:746`). Prompts for confirmation
 unless `-f, --force` is set.
 
 ## `xkmsctl frost round1`
 
-Generate this participant's nonces and commitments (`frost.go:812`).
+Generate this participant's nonces and commitments (`frost.go:813`).
 Unseals the share, so it requires the FROST passphrase.
 
 | Flag | Meaning |
@@ -205,7 +205,7 @@ Unseals the share, so it requires the FROST passphrase.
 
 ## `xkmsctl frost round2`
 
-Generate this participant's signature share (`frost.go:895`). Unseals the
+Generate this participant's signature share (`frost.go:896`). Unseals the
 share, so it requires the FROST passphrase.
 
 | Flag | Meaning |
@@ -219,7 +219,7 @@ share, so it requires the FROST passphrase.
 
 ## `xkmsctl frost aggregate`
 
-Combine signature shares into the final signature (`frost.go:1037`).
+Combine signature shares into the final signature (`frost.go:1038`).
 
 | Flag | Default | Meaning |
 |---|---|---|
@@ -233,7 +233,7 @@ Combine signature shares into the final signature (`frost.go:1037`).
 
 ## `xkmsctl frost verify`
 
-Verify a signature against the stored group public key (`frost.go:1170`).
+Verify a signature against the stored group public key (`frost.go:1171`).
 
 | Flag | Meaning |
 |---|---|
@@ -243,7 +243,7 @@ Verify a signature against the stored group public key (`frost.go:1170`).
 
 ## Message input (`round2`, `aggregate`, `verify`)
 
-`getMessage` (`frost.go:1244`) resolves the signed payload from exactly one
+`getMessage` (`frost.go:1245`) resolves the signed payload from exactly one
 of:
 
 - `-m, --message <string>` — used verbatim as bytes.

@@ -14,12 +14,14 @@
 package xkms
 
 import (
+	"context"
 	"crypto"
 	"crypto/ecdsa"
 	"crypto/ed25519"
 	"crypto/rand"
 	"crypto/sha256"
 	"crypto/sha512"
+	"errors"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -149,6 +151,50 @@ func TestPIVCryptoSigner_SignWithPIN(t *testing.T) {
 	ecdsaPub, ok := pub.(*ecdsa.PublicKey)
 	require.True(t, ok)
 	assert.True(t, ecdsa.VerifyASN1(ecdsaPub, digest[:], sig), "signature must verify against the slot's public key")
+}
+
+// TestPIVCryptoSigner_SignWipesPIN proves the PIN bytes handed to the
+// backend are zeroed once Sign returns, on the success and the error path.
+// It swaps SignPIV for a backend that keeps the slice it was given, so it
+// can inspect the very bytes the request carried after the call.
+func TestPIVCryptoSigner_SignWipesPIN(t *testing.T) {
+	errBackend := errors.New("backend refused")
+	tests := []struct {
+		name    string
+		backErr error
+	}{
+		{name: "success", backErr: nil},
+		{name: "backend error", backErr: errBackend},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			pin, err := secure.NewSecret(t.Context(), []byte("123456"))
+			require.NoError(t, err)
+			signer := &PIVCryptoSigner{Backend: "software", Slot: "9a", PIN: pin}
+
+			var seen []byte
+			original := SignPIV
+			t.Cleanup(func() { SignPIV = original })
+			SignPIV = func(_ context.Context, req *PIVSignRequest) (*PIVSignResponse, error) {
+				require.Equal(t, []byte("123456"), []byte(req.PIN), "backend must receive the PIN")
+				seen = req.PIN
+				if tt.backErr != nil {
+					return nil, tt.backErr
+				}
+				return &PIVSignResponse{Signature: []byte("sig")}, nil
+			}
+
+			digest := sha256.Sum256([]byte("pin wipe digest"))
+			_, err = signer.Sign(rand.Reader, digest[:], crypto.SHA256)
+			if tt.backErr != nil {
+				require.ErrorIs(t, err, tt.backErr)
+			} else {
+				require.NoError(t, err)
+			}
+			require.Len(t, seen, 6)
+			assert.Equal(t, make([]byte, 6), []byte(seen), "PIN bytes must be zeroed after Sign returns")
+		})
+	}
 }
 
 // TestPIVCryptoSigner_SignPINOpenFailure proves Sign surfaces the typed

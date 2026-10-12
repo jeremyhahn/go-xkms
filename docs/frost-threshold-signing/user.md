@@ -1,6 +1,6 @@
 # FROST Threshold Signing — User Guide
 
-> **Status: NORMATIVE** · Feature: `frost-threshold-signing` · Repo: `go-xkms` · Last verified: 2026-09-29 (#1337)
+> **Status: NORMATIVE** · Feature: `frost-threshold-signing` · Repo: `go-xkms` · Last verified: 2026-10-12 (#1433)
 
 ## What this is for
 
@@ -196,7 +196,7 @@ encryption instead.
 If you are embedding go-xkms directly in a Go program instead of using
 `xkmsctl` — `xkms.AutoInitialize` with `BackendConfigs[xkms.BackendFROST]`,
 rather than the CLI's own `openFrostShareBackend`
-(`cmd/xkmsctl/frost.go:1398`), which xkmsctl uses instead and is unaffected
+(`cmd/xkmsctl/frost.go:1399`), which xkmsctl uses instead and is unaffected
 — the same fail-closed rule applies one level lower: its internal `pkcs8`
 secret store refuses to persist the wrapping key at all unless you set
 `"allow_plaintext_keys": true` in that backend's config
@@ -225,11 +225,75 @@ go-xkms#1237.
   you will overwrite your own participant data with the dealer's export
   directory contents unless you separate them (`--key-dir` per role, or run
   each role on a different machine as intended).
-- **There is no server-backed FROST today.** Do not point `--server` /
-  `--transport` at anything for `xkmsctl frost` — it is ignored. If your
-  workflow needs a daemon to hold shares centrally, that is unstarted work;
-  see [`architecture.md`](architecture.md).
-- **A crypto.Signer only works at threshold 1.** If you need a drop-in
-  `crypto.Signer` for existing tooling and are willing to accept a single
-  point of trust, set `--threshold 1`; anything higher requires the explicit
-  round workflow above.
+- **`xkmsctl frost` never talks to a server.** `--server` / `--transport`
+  are ignored. To keep shares on a server, enable `backends.frost` in
+  `xkmsd` and use the network API — see
+  [`engineering.md`](engineering.md) §"xkmsd configuration".
+- **There is no single-signer shortcut.** Key generation refuses a
+  threshold below 2, so every key needs the round workflow above; a drop-in
+  `crypto.Signer` is not available for these keys.
+- **A failed aggregation does not name the culprit.** If `aggregate` fails,
+  re-run both rounds with fresh `round1` files; the error does not say which
+  participant sent a bad share.
+
+## Operating a FROST group securely
+
+Follow this when you put a FROST key into production. Each step says what
+to do and why.
+
+**1. Choose M and N.** Any M of the N participants can sign, and fewer than
+M cannot. `--threshold` must be at least 2 and `--total` at most 255.
+Choose N above M so that signing still works when some participants are
+unavailable: 3-of-5 survives two absent participants.
+
+**2. Decide where shares live.**
+
+- On operator machines with `xkmsctl`, each share is protected by that
+  participant's FROST passphrase. Choose a strong passphrase per
+  participant and supply it from a file or stdin, never on the command line.
+- On a server, set `backends.frost.secret_backend` to `tpm2`, `pkcs11` or a
+  cloud KMS (`awskms`, `gcpkms`, `azurekv`, `vault`) so the share is sealed
+  by hardware or a managed key rather than by software.
+
+**3. Run the dealer ceremony.**
+
+1. Every participant runs `frost recipient` on their own machine and sends
+   the public key file to the dealer.
+2. Every participant reads their `recipient_id` to the dealer over a
+   second channel; the dealer compares it before using the file.
+3. The dealer runs `frost keygen` with one `--recipient` per participant,
+   on a machine with no other duties.
+4. Participants move their own package and run `frost import`.
+5. The dealer deletes the export directory once every import has succeeded.
+   The dealer saw every share during generation; nothing should outlive the
+   ceremony on that machine.
+
+**4. Prove the group works.** Before relying on the key, have exactly M
+participants sign a test message and run `frost verify` on the result.
+
+**5. Sign safely, every time.**
+
+- Run `round1` fresh for every signing attempt, including retries. Delete
+  each `.nonces` file once its `round2` has run.
+- Every signer uses the same message input and the same commitment set.
+- Move commitment and share files between participants over an
+  authenticated channel, so nobody can substitute another participant's
+  commitment.
+
+**6. Back up, separately.** Back up each participant's `--key-dir` on its
+own, encrypted, and never in the same place as another participant's. A
+backup of M participants' directories in one place is a copy of the key.
+
+**7. Respond to incidents.**
+
+- *A share or passphrase may be exposed, and fewer than M are affected.*
+  The key is still safe. Generate a new key, have every participant import
+  their new package, move signing to it, and delete the old key with
+  `frost delete` on every machine.
+- *M or more shares may be exposed.* Treat the key as compromised: stop
+  using it, withdraw trust in its public key wherever it is relied on, and
+  generate a new one.
+- *A nonce file was used twice, or `round2` reports a nonce already used.*
+  The second use was refused if nonce tracking saw both; investigate how the
+  file was reused. If the same nonces may have signed two different
+  messages anywhere, treat that participant's share as exposed.

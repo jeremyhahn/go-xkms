@@ -1,6 +1,6 @@
 # FROST Threshold Signing — Architecture
 
-> **Status: NORMATIVE** · Feature: `frost-threshold-signing` · Repo: `go-xkms` · Last verified: 2026-09-29 (#1337)
+> **Status: NORMATIVE** · Feature: `frost-threshold-signing` · Repo: `go-xkms` · Last verified: 2026-10-12 (#1433)
 
 ## The problem
 
@@ -62,12 +62,12 @@ two owner-only (`0700`) directories under `--key-dir`:
   recipient key that dealer packages are encrypted to, both stored as
   encrypted PKCS#8 under the operator's FROST passphrase by a PKCS#8 backend
   that refuses plaintext keys (`newFrostWrapKeyProvider`,
-  `cmd/xkmsctl/frost.go:1412`).
+  `cmd/xkmsctl/frost.go:1413`).
 
 The share verbs (`keygen` in participant mode, `import`, `round1`, `round2`)
-go through `openFrostLocalStore` (`frost.go:1363`), which resolves the
+go through `openFrostLocalStore` (`frost.go:1364`), which resolves the
 passphrase and decrypts the wrapping key with it. The public verbs go through
-`openFrostPublicBackend` (`frost.go:1333`), which never provisions or
+`openFrostPublicBackend` (`frost.go:1334`), which never provisions or
 decrypts the wrapping key, so any unseal through it fails closed. The
 passphrase is what protects the shares at rest: the sealed envelopes and the
 wrapping key sit on the same disk, and before go-xkms#1324 the wrapping key
@@ -118,7 +118,7 @@ exactly as the key lifecycle RPCs do (go-xkms#1218).
   key ID is unique only within its tenant. The tenant is also stamped in the
   key's metadata (`KeyMetadata.TenantID`,
   `pkg/keyprovider/frost/storage.go:65`) and reported by `ListKeys`
-  (`pkg/keyprovider/frost/backend.go:329`), so the generic tenant-scoped
+  (`pkg/keyprovider/frost/backend.go:300`), so the generic tenant-scoped
   backend view (`TenantScopedBackend.ListKeys`) sees a tenant's FROST keys
   too.
 - **Every key-naming operation resolves inside the caller's tenant.** Get,
@@ -129,7 +129,7 @@ exactly as the key lifecycle RPCs do (go-xkms#1218).
   no tenant holds gets, on every transport.
 - **Import writes only into the caller's tenant.** `FrostImportKey` stamps the
   caller's tenant (`FrostBackend.ImportKeyPackage`,
-  `pkg/keyprovider/frost/backend.go:493`), so importing a package under
+  `pkg/keyprovider/frost/backend.go:464`), so importing a package under
   another tenant's key ID creates the caller's own key rather than replacing
   the other tenant's share.
 - **Listing is the caller's tenant only.** A platform-scoped caller — no
@@ -180,15 +180,13 @@ strategies:
 
 ## Key generation: trusted dealer only
 
-`Config.DKG KeyGenerator` (`config.go:35`) is an extension point for a real
+`Config.DKG KeyGenerator` (`config.go:56`) is an extension point for a real
 distributed-key-generation protocol where no single party ever sees the
 whole key; if left nil, `Config.GetKeyGenerator()` falls back to
-`NewTrustedDealer()` (`config.go:151-156`). **Only the trusted-dealer
+`NewTrustedDealer()` (`config.go:175-180`). **Only the trusted-dealer
 generator ships today.** A custom `KeyGenerator` is something an embedder
-must write and wire in themselves — see
-[`dkg-integration.md`](../frost/dkg-integration.md) in the legacy folder for
-worked notes on the `KeyGenerator` interface (not re-verified for this
-folder; treat it as design notes, not a shipped API).
+must write and wire in themselves; its contract is in
+[`engineering.md`](engineering.md) §"Key generation contract".
 
 The dealer's packages leave `xkmsctl` encrypted, never as a plaintext share
 (go-xkms#1337). Each participant first creates a recipient key with
@@ -218,10 +216,10 @@ and the operator must confirm each public key's `recipient_id` out of band.
 ## Two signing modes
 
 1. **Orchestrated** (`FrostBackend.Signer`) — returns a `crypto.Signer`.
-   Works out of the box only for `Threshold == 1`; anything higher returns
-   `frost.ErrThresholdSigningNotSupported`
-   (`pkg/keyprovider/frost/errors.go`), because a synchronous `Sign` call
-   cannot coordinate a multi-party protocol.
+   Works only for a key with one required signer; a key whose `MinSigners`
+   is above 1 is refused with `*frost.ThresholdSigningNotSupportedError`
+   (`pkg/keyprovider/frost/backend.go:358-359`), because a synchronous
+   `Sign` call cannot coordinate a multi-party protocol.
 2. **Explicit round API** — `GenerateNonces` → (exchange commitments
    out-of-band) → `SignRound` → (collect ≥ threshold shares) → `Aggregate` →
    `Verify`. This is what both `xkmsctl frost round1/round2/aggregate/verify`
@@ -230,13 +228,14 @@ and the operator must confirm each public key's `recipient_id` out of band.
 ## Nonce-reuse prevention
 
 FROST nonce reuse recovers the private key outright. `Config.NonceStorage`
-(falls back to `PublicStorage`) and `EnableNonceTracking` (default `true`,
-`config.go:165`) make every commitment hash-checked before it is accepted a
-second time; a repeat returns `ErrNonceAlreadyUsed`
-(`pkg/keyprovider/frost/errors.go`). Disabling nonce tracking is documented
-in the package as strongly discouraged (`pkg/keyprovider/frost/doc.go:80-83`)
-and is not something either the CLI or the network handlers expose a flag
-for — it is only reachable by constructing `frost.Config` directly.
+(falls back to `PublicStorage`) and `EnableNonceTracking` (`true` in
+`DefaultConfig`, `config.go:189`) make `SignRound` check every commitment
+before it is used a second time (`rounds.go:198`); a repeat returns
+`ErrNonceAlreadyUsed` (`pkg/keyprovider/frost/errors.go`). The package
+documentation calls nonce reuse catastrophic and tells callers to keep
+tracking on (`pkg/keyprovider/frost/doc.go:80-82`). Neither the CLI nor the
+network handlers expose a flag to turn it off, and `xkmsd` always sets it
+(`pkg/server/backend_frost.go`) — it is only reachable by constructing `frost.Config` directly.
 
 ## Sessions
 
@@ -245,7 +244,7 @@ for — it is only reachable by constructing `frost.Config` directly.
 secret Round-1 nonces plus its public commitments -- directly to the caller,
 who holds it and passes it back to `SignRound` for Round 2; the caller is
 responsible for completing the round promptly and zeroizing the nonces once
-used (`docs/frost/security.md`). `EnableNonceTracking` (default `true`) still
+used (`SigningNonces.Zeroize`, `pkg/keyprovider/frost/nonce.go:162`). `EnableNonceTracking` (default `true`) still
 rejects reuse of any commitment across signing attempts regardless of who
 holds the nonces, which is what actually prevents the catastrophic case this
 section used to describe as session expiry.

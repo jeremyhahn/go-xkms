@@ -145,7 +145,7 @@ func (b *FrostBackend) GenerateNonces(keyID string) (*NoncePackage, error) {
 
 	// The caller holds noncePackage's secret nonces for Round 2 and is
 	// responsible for zeroizing them once SignRound is called (see
-	// SigningNonces.Zeroize and docs/frost/security.md). xkms does not keep
+	// SigningNonces.Zeroize and docs/frost-threshold-signing/user.md). xkms does not keep
 	// a server-side copy: SignRound takes the nonces from the request, and
 	// EnableNonceTracking (default true) rejects any commitment reused
 	// across signing attempts.

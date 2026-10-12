@@ -101,7 +101,7 @@ func TestGenerateNonces_Success(t *testing.T) {
 // FrostBackend must not carry a "sessions" map (or similar) that stores a
 // SigningSession per GenerateNonces call. That state was write-only - Round
 // 2 (SignRound) takes its nonces from the caller by design, see
-// docs/frost/security.md - so the map only grew, held secret nonce material
+// docs/frost-threshold-signing/user.md - so the map only grew, held secret nonce material
 // past its use, and was never swept or bounded.
 func TestFrostBackend_NoServerSideSessionState(t *testing.T) {
 	typ := reflect.TypeOf(FrostBackend{})

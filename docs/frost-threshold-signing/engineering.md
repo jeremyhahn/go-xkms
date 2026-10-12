@@ -1,6 +1,6 @@
 # FROST Threshold Signing — Engineering Contract
 
-> **Status: NORMATIVE** · Feature: `frost-threshold-signing` · Repo: `go-xkms` · Last verified: 2026-09-29 (#1337)
+> **Status: NORMATIVE** · Feature: `frost-threshold-signing` · Repo: `go-xkms` · Last verified: 2026-10-12 (#1433)
 
 All symbols below require `-tags frost` unless noted. See
 [`architecture.md`](architecture.md) for why the CLI and network-API surfaces
@@ -8,33 +8,42 @@ are independent, and for how FROST keys are scoped to tenants.
 
 ## Exported surface — `pkg/keyprovider/frost`
 
-`FrostBackend` (`backend.go:32`) implements `types.KeyProvider`:
+`FrostBackend` (`backend.go:33`) implements `types.KeyProvider`. Every
+attribute-addressed method takes a `context.Context` first and names the key
+by `attrs.CN` (and `attrs.TenantID`):
 
 | Method | Contract |
 |---|---|
-| `NewBackend(config *Config) (*FrostBackend, error)` | `config.go:70`. Validates and defaults the config (see below), then constructs. |
-| `Type() types.BackendType` | Returns `types.BackendTypeFrost` (`"frost"`). |
-| `Capabilities() types.Capabilities` | `backend.go:104`. |
-| `GenerateKey(ctx, attrs *types.KeyAttributes) (crypto.PrivateKey, error)` | `backend.go:128`. Trusted-dealer generation (or `Config.DKG` if set) for `attrs.FrostAttributes`. |
-| `GetKey(ctx, attrs) (crypto.PrivateKey, error)` | `backend.go:245`. Returns a `*FrostKeyHandle`. |
-| `DeleteKey(ctx, attrs) error` | `backend.go:286`. |
-| `ListKeys(ctx) ([]*types.KeyAttributes, error)` | `backend.go:309`. |
-| `Signer(ctx, attrs) (crypto.Signer, error)` | `backend.go:347`. Works only when `attrs.FrostAttributes.Threshold == 1`; otherwise returns `ErrThresholdSigningNotSupported`. |
-| `Decrypter(ctx, attrs) (crypto.Decrypter, error)` | `backend.go:396`. Always fails: `ErrDecryptionNotSupported` — FROST is signing-only per RFC 9591. |
-| `RotateKey(ctx, attrs) error` | `backend.go:402`. |
-| `Close() error` | `backend.go:463`. |
-| `GenerateNonces(keyID string) (*NoncePackage, error)` | Round 1: produces this participant's signing nonces + commitments; records them against `EnableNonceTracking`. |
-| `SignRound(keyID string, message []byte, nonces *NoncePackage, commitments []*Commitment) (*SignatureShare, error)` | Round 2: produces this participant's signature share for a session keyed by `(keyID, message)`. |
-| `Aggregate(keyID string, message []byte, commitments []*Commitment, shares []*SignatureShare) ([]byte, error)` | Combines ≥ threshold shares into the final Schnorr signature. |
-| `Verify(keyID string, message, signature []byte) error` | Verifies against the stored group public key. |
+| `NewBackend(config *Config) (*FrostBackend, error)` | `backend.go:43`. Validates and defaults the config (see below), then constructs. |
+| `Type() types.BackendType` | `backend.go:71`. Returns `types.BackendTypeFrost` (`"frost"`). |
+| `Capabilities() types.Capabilities` | `backend.go:76`. |
+| `GenerateKey(ctx, attrs) (crypto.PrivateKey, error)` | `backend.go:100`. Fills missing `FrostAttributes` from the config defaults, runs `Config.DKG` (trusted dealer if nil), and stores package `ParticipantID` (`0` selects participant 1; an ID above the package count is refused). Returns a `*FrostKeyHandle`; an existing key is `ErrKeyAlreadyExists`. |
+| `GetKey(ctx, attrs) (crypto.PrivateKey, error)` | `backend.go:218`. Returns a `*FrostKeyHandle`. |
+| `DeleteKey(ctx, attrs) error` | `backend.go:259`. |
+| `ListKeys(ctx) ([]*types.KeyAttributes, error)` | `backend.go:283`. |
+| `Signer(ctx, attrs) (crypto.Signer, error)` | `backend.go:322`. Works only when the key's `MinSigners` is 1; otherwise `*ThresholdSigningNotSupportedError` (`backend.go:358-359`). |
+| `Decrypter(ctx, attrs) (crypto.Decrypter, error)` | `backend.go:371`. Always fails: `ErrDecryptionNotSupported` — FROST is signing-only per RFC 9591. |
+| `RotateKey(ctx, attrs) error` | `backend.go:377`. Reads the key's public metadata, deletes the key, and generates a new one with the same threshold, total, algorithm, participants and participant ID. Every participant must import a new package: the old shares no longer match. |
+| `PublicKeyPackage(ctx, attrs)` | `backend.go:442`. The group public key and verification shares, read without unsealing the secret share. |
+| `ImportKeyPackage(ctx, attrs, pkg)` | `backend.go:464`. Stores a dealer package. |
+| `Close() error` | `backend.go:500`. |
+| `GenerateNonces(keyID string) (*NoncePackage, error)` | `rounds.go:49`. Round 1: this participant's secret nonces and public commitments. |
+| `SignRound(keyID string, message []byte, nonces *NoncePackage, commitments []*Commitment) (*SignatureShare, error)` | `rounds.go:158`. Round 2: this participant's signature share. With `EnableNonceTracking` it first marks the commitment used (`rounds.go:198`) — see "Nonce tracking". |
+| `Aggregate(keyID string, message []byte, commitments []*Commitment, shares []*SignatureShare) ([]byte, error)` | `rounds.go:328`. Combines ≥ threshold shares into the final Schnorr signature; an aggregation failure is a `*CulpritError` carrying `KeyID` and the underlying `Reason` (`rounds.go:408-411`). Its `Culprits` field is not filled in, so the error does not identify which participant sent a bad share. |
+| `Verify(keyID string, message, signature []byte) error` | `rounds.go:425`. Verifies against the stored group public key. |
+
+The round API takes the storage key ID (see "Service layer and tenancy").
+The secret share and the round nonces are wiped through
+`SecretKeyShare.Zeroize` (`keygen.go:103`, `enclave.Wipe`) and
+`SigningNonces.Zeroize` (`nonce.go:162`).
 
 ## Configuration — `frost.Config` (`pkg/keyprovider/frost/config.go:24`)
 
 | Field | Required | Default | Notes |
 |---|---|---|---|
 | `PublicStorage storage.Backend` | yes | — | `ConfigError{Field: "PublicStorage"}` if nil. |
-| `SecretBackend types.SealingKeyProvider` | yes | — | `ConfigError{Field: "SecretBackend"}` if nil or `!SecretBackend.CanSeal()` (`config.go:73-76`). Must implement both `types.KeyProvider` (`Type`/`Capabilities`, used by `FrostBackend`) and `types.Sealer` (`Seal`/`Unseal`/`CanSeal`) — see "Secret share sealing" below. |
-| `SecretSealKeyAttributes *types.KeyAttributes` | no | `nil` | Identifies the wrapping key `SecretBackend` seals/unseals with. `nil` when the backend needs no attributes at all (only a bare test `Sealer`); a fixed `CN` names one wrapping key reused for every FROST key in the store (PKCS#11/cloud KMS/software/PKCS#8); a `CN`-less template (`Parent` only, TPM2) gets a per-key `CN` filled in — see `KeyStore.secretSealKeyAttributesFor` (`storage.go:125`). |
+| `SecretBackend types.SealingKeyProvider` | yes | — | `ConfigError{Field: "SecretBackend"}` if nil or `!SecretBackend.CanSeal()` (`config.go:97`). Must implement both `types.KeyProvider` (`Type`/`Capabilities`, used by `FrostBackend`) and `types.Sealer` (`Seal`/`Unseal`/`CanSeal`) — see "Secret share sealing" below. |
+| `SecretSealKeyAttributes *types.KeyAttributes` | no | `nil` | Identifies the wrapping key `SecretBackend` seals/unseals with. `nil` when the backend needs no attributes at all (only a bare test `Sealer`); a fixed `CN` names one wrapping key reused for every FROST key in the store (PKCS#11/cloud KMS/software/PKCS#8); a `CN`-less template (`Parent` only, TPM2) gets a per-key `CN` filled in — see `KeyStore.secretSealKeyAttributesFor` (`storage.go:131`). |
 | `DKG KeyGenerator` | no | `NewTrustedDealer()` | See architecture.md — no other generator ships. |
 | `Algorithm types.FrostAlgorithm` | no | `FrostAlgorithmEd25519` | Must be one of the five ciphersuites below or `ConfigError{Field: "Algorithm"}`. |
 | `ParticipantID uint32` | no | `0` | `0` means dealer mode in `xkmsctl`; when set, must be `1..DefaultTotal`. |
@@ -44,11 +53,95 @@ are independent, and for how FROST keys are scoped to tenants.
 | `NonceStorage storage.Backend` | no | `PublicStorage` | |
 | `EnableNonceTracking bool` | no | `true` | Zero value is `false`; `DefaultConfig()` sets it `true` explicitly. Constructing `Config{}` literally without setting this field leaves nonce tracking **off** — always set it explicitly, or start from `DefaultConfig()`. |
 
-`(*Config).Validate()` runs these checks and fills defaults for
+`(*Config).Validate()` (`config.go:89`) runs these checks and fills defaults for
 `Algorithm`/`DefaultThreshold`/`DefaultTotal` (mutates the receiver).
 `DefaultConfig()` returns a `*Config` with `Algorithm`, `DefaultThreshold`,
 `DefaultTotal`, and `EnableNonceTracking` pre-set; callers still must supply
 `PublicStorage` and `SecretBackend`.
+
+Per key, `types.FrostAttributes` (`pkg/types/types.go:769`) carries
+`Threshold`, `Total`, `Algorithm`, `Participants`, `ParticipantID` and,
+after generation, `GroupPublicKey`. `GenerateKey` fills any zero field from
+the `Config` defaults.
+
+## Key generation contract (`pkg/keyprovider/frost/keygen.go`)
+
+`Config.DKG` takes any `KeyGenerator` (`keygen.go:127`):
+
+```go
+type KeyGenerator interface {
+    Generate(config FrostConfig) ([]*KeyPackage, *PublicKeyPackage, error)
+}
+```
+
+`Generate` returns **every** participant's package, in participant-ID
+order, plus the shared public package. `GenerateKey` keeps only the package
+for its own `ParticipantID`. A custom generator for a real DKG must return
+the packages this participant can obtain in the same shape.
+
+| Type | Where | Fields |
+|---|---|---|
+| `FrostConfig` | `keygen.go:31` | `Threshold`, `Total`, `Algorithm`, `Participants`, `ParticipantID`. `Validate` (`keygen.go:49`): threshold ≥ 2, total ≥ threshold, both ≤ 255, `Participants` length equals total when set, algorithm known. |
+| `KeyPackage` | `keygen.go:72` | `ParticipantID`, `SecretShare *SecretKeyShare` (`Value []byte`), `GroupPublicKey`, `VerificationShares map[uint32][]byte`, `MinSigners`, `MaxSigners`, `Algorithm`. |
+| `PublicKeyPackage` | `keygen.go:108` | `GroupPublicKey`, `VerificationShares`, `MinSigners`, `MaxSigners`, `Algorithm`. |
+
+`TrustedDealer` (`keygen.go:139`, `NewTrustedDealer` `:142`) is the only
+generator that ships. Its `Generate` (`keygen.go:148`) runs go-frost's
+dealer with identifiers `1..Total` and maps go-frost's verification-share
+indices back to those participant IDs. Because `FrostConfig.Validate`
+refuses a threshold below 2, every key generated through it needs the round
+API; `Signer` cannot serve it.
+
+## Storage layout and nonce tracking (`storage.go`, `nonce.go`)
+
+`KeyStore` (`NewKeyStore`, `storage.go:110`) writes, under `PublicStorage`
+and the storage key ID:
+
+| Path | Constant | Content |
+|---|---|---|
+| `frost/keys/<id>/metadata.json` | `metadataFile` (`storage.go:36`) | `KeyMetadata`. |
+| `frost/keys/<id>/group_public.bin` | `groupPublicKeyFile` (`storage.go:40`) | Group public key. |
+| `frost/keys/<id>/verification_shares/` | `verificationSharesDir` (`storage.go:43`) | One verification share per participant. |
+| `frost/keys/<id>/secret_share.json` | `secretShareFile` (`storage.go:50`) | The sealed share (see below). |
+| `frost/nonces/<id>/<sha256(commitment), hex>` | `noncesPrefix` (`storage.go:53`), `noncePath` (`nonce.go:50`) | Used-nonce marker, in `NonceStorage`. |
+
+`NonceTracker.MarkUsedWithDetails` (`nonce.go:91`), called from `SignRound`,
+hashes the commitment, refuses one already recorded with
+`*NonceReuseError{KeyID, ParticipantID, SessionID}` (wrapping
+`ErrNonceAlreadyUsed`), and otherwise writes the marker before the share is
+computed. Markers live in storage, so they survive a restart; `xkmsd` leaves
+`NonceStorage` nil, which puts them in `public_path`.
+`DeleteKeyNonces` (`nonce.go:118`) removes a key's markers.
+
+## xkmsd configuration (`backends.frost`)
+
+`xkmsd` builds `frost.Config` from YAML (`pkg/config/frost.go:49`, wired by
+`Server.initFrostBackend`, `pkg/server/backend_frost.go:41`):
+
+```yaml
+backends:
+  frost:
+    enabled: true
+    public_path: <install-dir>/frost/public
+    secret_backend: tpm2
+    algorithm: FROST-Ed25519-SHA512
+    default_threshold: 2
+    default_total: 3
+```
+
+| Key | Rule (`FrostConfig.Validate`, `pkg/config/frost.go:97`) |
+|---|---|
+| `public_path` | Required when enabled. Resolved through the node's storage engine; holds public components, sealed shares and nonce markers. |
+| `secret_backend` | Required. One of `software`, `pkcs8`, `tpm2`, `pkcs11`, `awskms`, `gcpkms`, `azurekv`, `vault` (`frost.go:29`), and that `backends.*` section must be configured and enabled (`pkg/config/config.go:1767`, `enabledBackendNamed`, `frost.go:149`). |
+| `algorithm` | Defaults to `FROST-Ed25519-SHA512`; must be one of the five ciphersuites. |
+| `default_threshold` | Defaults to `2`; must be 2–255. |
+| `default_total` | Defaults to `3`; must be ≤ 255 and ≥ `default_threshold`. |
+
+A violation is a `*FrostConfigError{Field, Message}` at startup. At
+construction, a `secret_backend` that is missing or is not a
+`types.SealingKeyProvider` is `ErrFrostSecretBackendUnavailable`. `xkmsd`
+always enables nonce tracking and sets no `DKG`, `ParticipantID` or
+`Participants`: those are per-request (`FrostAttributes`) or embedder-only.
 
 ## Secret share sealing (`pkg/keyprovider/frost/storage.go`, `wrapkey.go`)
 
@@ -60,18 +153,18 @@ provisioned symmetric key, or software/PKCS#8's HKDF-derived AES-GCM key
 on any backend; `KeyStore` never calls `SecretBackend.GenerateKey` or
 `GetKey` for the secret share.
 
-- `KeyStore.StoreKeyPackage` (`storage.go:176`) calls
+- `KeyStore.StoreKeyPackage` (`storage.go:182`) calls
   `secretBackend.Seal(ctx, pkg.SecretShare.Value, ks.secretSealOptions(keyID))`
   and persists the resulting `types.SealedData`, JSON-marshaled, in
   `PublicStorage` at `frost/keys/<keyID>/secret_share.json`
   (`secretShareFile`, `storage.go:45-50`). Sealing is what makes storing the
   envelope in the same (unencrypted-at-rest) storage as the public
   components safe.
-- `KeyStore.LoadKeyPackage` (`storage.go:231`) reads that envelope back and
+- `KeyStore.LoadKeyPackage` (`storage.go:237`) reads that envelope back and
   calls `secretBackend.Unseal(ctx, &sealed, ks.secretUnsealOptions(keyID))`.
   Its return value is used directly as the secret share bytes — no type
   assertion, since `Unseal` already returns `[]byte`.
-- `KeyStore.DeleteKey` (`storage.go:372`) deletes `secret_share.json` from
+- `KeyStore.DeleteKey` (`storage.go:378`) deletes `secret_share.json` from
   `PublicStorage` first (in place of the old `SecretBackend.DeleteKey`
   call), then the verification shares and group public key, then metadata
   last, preserving the original resumable-on-partial-failure ordering.
@@ -82,7 +175,7 @@ on any backend; `KeyStore` never calls `SecretBackend.GenerateKey` or
 |---|---|---|
 | `SymmetricSecretSealKeyAttributes(store types.StoreType)` (`wrapkey.go:42`) | PKCS#11, AWS KMS, GCP KMS, Azure Key Vault, HashiCorp Vault | `CN: SecretSealKeyCN`, `KeyType: KeyTypeEncryption`, `SymmetricAlgorithm: SymmetricAES256GCM`. Provision with `seal.EnsureSealKey`. |
 | `AsymmetricSecretSealKeyAttributes(store types.StoreType)` (`wrapkey.go:60`) | software, PKCS#8 | `CN: SecretSealKeyCN`, `KeyAlgorithm: x509.Ed25519`. These backends' `Seal` loads an existing private key via `GetKey` and derives an AES key from it (HKDF); provision with `seal.EnsurePrivateSealKey`. |
-| `TPM2SecretSealKeyAttributes(psrkAttrs *types.KeyAttributes)` (`wrapkey.go:77`) | TPM2 | `Parent: psrkAttrs`, no `CN` — a template. TPM2 seals directly under the Platform SRK and needs no provisioning step; `KeyStore` fills in a per-FROST-key `CN` (`"frost-secret:" + keyID`, `secretSealCN`, `storage.go:140`) so each key gets its own TPM-sealed object identity instead of every key's `Seal` overwriting one shared slot. |
+| `TPM2SecretSealKeyAttributes(psrkAttrs *types.KeyAttributes)` (`wrapkey.go:77`) | TPM2 | `Parent: psrkAttrs`, no `CN` — a template. TPM2 seals directly under the Platform SRK and needs no provisioning step; `KeyStore` fills in a per-FROST-key `CN` (`"frost-secret:" + keyID`, `secretSealCN`, `storage.go:146`) so each key gets its own TPM-sealed object identity instead of every key's `Seal` overwriting one shared slot. |
 
 `SecretSealKeyCN = "xkms-frost-wrap"` (`wrapkey.go:35`) is distinct from
 `seal.SealKeyCN` (`"xkms-barrier-seal"`), the barrier's own wrapping key, so
@@ -112,12 +205,12 @@ of hardware protecting the wrapping key (go-xkms#1324):
 
 | Step | Code | Behaviour |
 |---|---|---|
-| Directories | `frostStoreDirs` (`frost.go:1305`) | `MkdirAll` of `<key-dir>/frost/{public,secrets}` with `0700`, then `Chmod 0700` on the three FROST directories. `<key-dir>` is only created, never re-moded. |
-| Backend check | `openFrostLocalStore` (`frost.go:1363`) | `--backend` must be `software`; anything else is `ErrFrostWrapBackendUnsupported`. |
+| Directories | `frostStoreDirs` (`frost.go:1306`) | `MkdirAll` of `<key-dir>/frost/{public,secrets}` with `0700`, then `Chmod 0700` on the three FROST directories. `<key-dir>` is only created, never re-moded. |
+| Backend check | `openFrostLocalStore` (`frost.go:1364`) | `--backend` must be `software`; anything else is `ErrFrostWrapBackendUnsupported`. |
 | Passphrase | `resolveFrostPassphrase` (`frost_passphrase.go:65`) | `--passphrase-stdin`, then `--passphrase-file`, then `XKMS_FROST_PASSPHRASE`; one trailing line ending trimmed; held as a `client.Password` (memguard enclave); raw bytes wiped. No flag accepts the value. |
-| Wrapping-key backend | `newFrostWrapKeyProvider` (`frost.go:1412`) | `client.NewPKCS8Backend` over `<key-dir>/frost/secrets` with `AllowPlaintextKeys` false. |
-| Wrapping key | `ensureFrostWrapKey` (`frost.go:1434`) | `AsymmetricSecretSealKeyAttributes(StoreSoftware)` with `Password` set, provisioned by `EnsurePrivateSealKey`, so the key is written as encrypted PKCS#8 (PBES2). A decode failure (`client.ErrPKCS8KeyDecodingFailed`) is `ErrFrostPassphraseRejected`; any other failure is `ErrProvisionFrostSealKeyFailed`. |
-| Public verbs | `openFrostPublicBackend` (`frost.go:1333`) | Same PKCS#8 backend, no passphrase, no provisioning: a seal or unseal through it fails to decode the wrapping key. `info` reads `PublicKeyPackage` rather than unsealing. |
+| Wrapping-key backend | `newFrostWrapKeyProvider` (`frost.go:1413`) | `client.NewPKCS8Backend` over `<key-dir>/frost/secrets` with `AllowPlaintextKeys` false. |
+| Wrapping key | `ensureFrostWrapKey` (`frost.go:1435`) | `AsymmetricSecretSealKeyAttributes(StoreSoftware)` with `Password` set, provisioned by `EnsurePrivateSealKey`, so the key is written as encrypted PKCS#8 (PBES2). A decode failure (`client.ErrPKCS8KeyDecodingFailed`) is `ErrFrostPassphraseRejected`; any other failure is `ErrProvisionFrostSealKeyFailed`. |
+| Public verbs | `openFrostPublicBackend` (`frost.go:1334`) | Same PKCS#8 backend, no passphrase, no provisioning: a seal or unseal through it fails to decode the wrapping key. `info` reads `PublicKeyPackage` rather than unsealing. |
 
 `import` stores through `FrostBackend.ImportKeyPackage`, so it shares this
 wiring rather than building its own `KeyStore`.
@@ -140,7 +233,7 @@ X25519/age-style box would not.
 | Dealer input | `parseFrostRecipients` (`frost_export.go:149`) | `--recipient <id>=<pem>` for every ID `1..total`. Refuses a bad spec, an out-of-range, duplicate or missing ID, a non-P-256 key, and one key given for two participants. Runs before generation. |
 | Encrypt | `encryptKeyPackageExport` (`frost_export.go:193`) | JSON-encodes the `KeyPackageExport` (unchanged inner format), encrypts it with `kid` in the protected header, wipes the plaintext buffer. |
 | Decrypt | `decryptKeyPackageExport` (`frost_export.go:226`) | Empty `package` is `ErrFrostPackageNotEncrypted`; a `kid` other than this store's recipient ID is `ErrFrostPackageRecipientMismatch`; a failed GCM open is `ErrFrostPackageDecryptFailed`. |
-| Import | `readFrostPackage` (`frost.go:541`) | Reads the file, loads the recipient key, decrypts. `import` stores nothing until this succeeds. |
+| Import | `readFrostPackage` (`frost.go:542`) | Reads the file, loads the recipient key, decrypts. `import` stores nothing until this succeeds. |
 
 The exported file is `EncryptedKeyPackageExport`: `key_id`, `participant_id`
 and `participant_name` in the clear as routing labels, and `package`, the
@@ -176,14 +269,15 @@ Sentinel `error` values (not typed structs) for the common cases:
 `ErrBackendClosed`, `ErrKeyNotFound`, `ErrKeyAlreadyExists`,
 `ErrInsufficientShares`, `ErrNonceAlreadyUsed` (catastrophic if ignored —
 reuse recovers the key), `ErrNonceNotFound`, `ErrInvalidSignature`,
-`ErrInvalidCommitment`, `ErrInvalidShare`, `ErrSessionNotFound`,
-`ErrSessionExpired`, `ErrThresholdSigningNotSupported`, `ErrInvalidConfig`,
-`ErrInvalidAttributes`, `ErrUnsupportedAlgorithm`, `ErrInvalidParticipant`,
-`ErrDKGFailed`, `ErrAggregationFailed`, `ErrDecryptionNotSupported`. Detail
-types (`KeyNotFoundError`, `ShareNotFoundError`, `NonceReuseError`,
-`CulpritError`, `ConfigError`, `AlgorithmError`,
-`ThresholdSigningNotSupportedError`) wrap a sentinel with the offending
-value.
+`ErrInvalidCommitment`, `ErrInvalidShare`, `ErrThresholdSigningNotSupported`,
+`ErrInvalidConfig`, `ErrInvalidAttributes`, `ErrUnsupportedAlgorithm`,
+`ErrInvalidParticipant`, `ErrDKGFailed`, `ErrAggregationFailed`,
+`ErrDecryptionNotSupported`. Detail types (`KeyNotFoundError`, `KeyIDError`,
+`ShareNotFoundError`, `NonceReuseError`, `CulpritError`, `ConfigError`,
+`AlgorithmError`, `ThresholdSigningNotSupportedError`) carry the offending
+value and unwrap to a sentinel — for example `NonceReuseError` to
+`ErrNonceAlreadyUsed` and `CulpritError` to `ErrInvalidShare`
+(`errors.go:146`, `:164`).
 
 ## Daemon backend registration (`pkg/xkms/register_frost.go`)
 
@@ -242,11 +336,11 @@ The REST, gRPC and MCP FROST handlers are thin adapters over
 |---|---|---|
 | `XKMSService.FrostGenerateKey` | `pkg/xkms/servicer_frost.go:253` | Participant mode stores the key for the caller's tenant; dealer mode returns every package and stores nothing. Both require a registered FROST backend. |
 | `XKMSService.FrostImportKey` | `servicer_frost.go:364` | Imports one package into the caller's tenant, replacing only that tenant's key of the same ID. |
-| `XKMSService.FrostListKeys` | `servicer_frost.go:406` | The caller's tenant's keys, ordered by key ID; every tenant's for a platform-scoped caller. Describes each key from its public package (`FrostBackend.PublicKeyPackage`, `pkg/keyprovider/frost/backend.go:471`) without unsealing the secret share. |
+| `XKMSService.FrostListKeys` | `servicer_frost.go:406` | The caller's tenant's keys, ordered by key ID; every tenant's for a platform-scoped caller. Describes each key from its public package (`FrostBackend.PublicKeyPackage`, `pkg/keyprovider/frost/backend.go:442`) without unsealing the secret share. |
 | `XKMSService.FrostGetKey` / `FrostDeleteKey` | `servicer_frost.go:450`, `:484` | Resolve the key ID inside the caller's tenant. |
 | `XKMSService.FrostGenerateNonces` / `FrostSignRound` / `FrostAggregate` / `FrostVerify` | `servicer_frost.go:518`, `:535`, `:583`, `:620` | Resolve the key ID inside the caller's tenant, then drive the round API by storage key ID. `FrostVerify` reports a signature that does not verify as `Valid: false` with a `Reason`, not as an error. |
 | `frost.StorageKeyID(tenantID, keyID)` | `pkg/keyprovider/frost/tenant.go:46` | `keyID` for a platform key, `tenantID:keyID` for a tenant's key; validates both halves. The round API (`GenerateNonces`, `SignRound`, `Aggregate`, `Verify`) takes this ID and re-validates it (`validateStorageKeyID`, `tenant.go:73`). |
-| `FrostBackend.ImportKeyPackage` | `pkg/keyprovider/frost/backend.go:493` | Stores a dealer package under the key `attrs` names, stamping `attrs.TenantID`. |
+| `FrostBackend.ImportKeyPackage` | `pkg/keyprovider/frost/backend.go:464` | Stores a dealer package under the key `attrs` names, stamping `attrs.TenantID`. |
 | `KeyMetadata.TenantID` | `pkg/keyprovider/frost/storage.go:65` | The owning tenant, empty for a platform key; `ListKeys` reports it as `KeyAttributes.TenantID`. |
 
 Invariants:
@@ -333,8 +427,7 @@ ID: they are platform keys, invisible to every tenant. There is no migration.
   `initFrostBackend` never called that factory.
 - Integration: `test/integration/frost/{backend,signing}_integration_test.go`
   construct a `frost.Backend` directly, in-process — they do not stand up an
-  `xkmsd` with a configured FROST backend (there is no config surface to do
-  so). `test/integration/api/frost_parity_test.go`
+  `xkmsd` with a configured `backends.frost` section. `test/integration/api/frost_parity_test.go`
   (`//go:build integration && frost`) drives `xkmsctl frost keygen` with
   `--transport embedded`, exercising the CLI's local path, not the
   REST/gRPC/MCP handlers against a live daemon backend.
