@@ -1,6 +1,6 @@
 # DICE Device Identity — Architecture
 
-> **Status: NORMATIVE** · Feature: `dice-device-identity` · Repo: `go-xkms` · Last verified: 2026-09-23
+> **Status: NORMATIVE** · Feature: `dice-device-identity` · Repo: `go-xkms` · Last verified: 2026-10-11
 
 ## The question this answers
 
@@ -51,9 +51,10 @@ mint alias certificate
     fwids      = firmware measurement
     flags      = operational states
     vendorInfo = vendor-defined device state
-  TcgUeid      = device identifier
+  TcgUeid      = device identifier (optional)
   UccsEvidence
-    uccs       = CBOR claims set, eat_nonce (10) = the nonce
+    uccs       = CBOR claims set, eat_nonce (10) = the nonce,
+                 ueid (256) = device identifier (optional)
                        --->  chain + CSR
                              1. anchor the chain          (dice.Verify)
                                 every critical DICE extension
@@ -127,6 +128,20 @@ nothing. A leaf with no UCCS extension is refused with
 `ErrNonceClaimMissing`; the two are distinct because an operator needs to tell
 a device that answered the wrong way from one that did not answer.
 
+### One device identifier, two placements
+
+The DICE architecture lets a device state its UEID as the `tcg-dice-Ueid`
+extension or as the EAT `ueid` claim (CWT key 256) inside its UCCS evidence. A
+device carries the one it can afford: the arduino-generic alias certificate is
+built on an 8-bit part from a fixed template with room for one DICE extension,
+so it uses the claim (`pkg/attestation/dice/uccs.go:60-66`). Every reader in
+this repo goes through `dice.DeviceUeid` (`extension.go:690`) — `dice.Verify`
+and the device-attest-01 identity gate
+(`pkg/acme/challenges/device-attest-01/identity.go:163`) — so no reader can
+miss a claim-only device. A certificate stating both must state the same value;
+a disagreement is `ErrUeidConflict`, because choosing one would make the
+device's identity depend on which placement a reader happened to consult.
+
 ### The UCCS extension is not carried onto the IDevID
 
 The `dice-idevid` profile in `pkg/ca` carries `tcg-dice-TcbInfo` and
@@ -137,6 +152,12 @@ long-lived certificate would put a value that means "this answer is live" into
 a document that outlives the answer by a decade. The challenge belongs on the
 per-exchange alias certificate the device mints, which is where `dice.Verify`
 and the invariants gate read it from.
+
+A consequence: a device that states its UEID only as claim 256 receives an
+IDevID with no `tcg-dice-Ueid`, since the profile copies only the extension
+(`pkg/ca/profile_dice.go:220-229`). Its identity is still bound through
+ACME, where the order's `permanentIdentifier` is the hex UEID read by
+`DeviceUeid`.
 
 ### Rejected: refusing claim keys this verifier does not know
 

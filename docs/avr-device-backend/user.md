@@ -1,6 +1,6 @@
 # AVR Device Backend — User Guide
 
-> **Status: NORMATIVE** · Feature: `avr-device-backend` · Repo: `go-xkms` · Last verified: 2026-09-23
+> **Status: NORMATIVE** · Feature: `avr-device-backend` · Repo: `go-xkms` · Last verified: 2026-10-11
 
 ## What this is for
 
@@ -47,6 +47,11 @@ device says about its own root of trust.
   compiled out of a production image on purpose. `Identity` works on a
   provisioning image; a device record is keyed on the identity public key
   instead, which a fielded device will answer for.
+- **Finish an ACME device-attest-01 enrolment on real hardware.** The device
+  answers the challenge, and the CA accepts its certificate and names it by the
+  hex of its UEID. Finalizing the order needs a CSR signed by the device key,
+  and `Signer` refuses with `ErrSigningUnsupported` for the reason above. The
+  whole flow has been proven only against the `agsim` simulator (`make agsim`).
 
 ## Reading an error
 

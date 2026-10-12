@@ -1,6 +1,6 @@
 # Crypto Backends — Engineering Contract
 
-> **Status: NORMATIVE** · Feature: `crypto-backends` · Repo: `go-xkms` · Last verified: 2026-10-02
+> **Status: NORMATIVE** · Feature: `crypto-backends` · Repo: `go-xkms` · Last verified: 2026-10-11
 
 ## Exported surface
 
@@ -139,8 +139,10 @@ Two consequences follow directly from this table:
   counterexample.
 - **A `FixedTPM` key cannot be exported at all**, whatever the request or the
   key's `exportable` attribute says. Hardware wins.
-- **Stub builds fail loudly, not silently.** Without its tag, a backend's
-  `_stub.go` reports unavailable at construction; it never degrades to software.
+- **A compiled-out backend never degrades to software.** Through
+  `AutoInitialize` it fails closed with `*FeatureNotCompiledError`; in
+  `xkmsd` its `_stub.go` logs a warning and leaves the backend absent (FROST's
+  stub fails start-up). See §Configuration.
 - **`Close()` releases device state.** PKCS#11 sessions and TPM contexts are
   finite; leaking them exhausts the device, not memory.
 - **A local Azure Key Vault URL requires an explicit opt-in.** `azurekv.Config.VaultURL`
@@ -388,16 +390,70 @@ not-found contract never applying to a method that cannot reach a lookup.
 
 ## Configuration
 
-Build tags are assembled in the `Makefile`:
+### Build toggles
 
-```
-CLI_BUILD_TAGS    := pkcs8 awskms gcpkms azurekv vault frost codec_cbor codec_json codec_msgpack gms_pure_go
-SERVER_BUILD_TAGS := pkcs8 awskms gcpkms azurekv vault pkcs11 frost awss3 minio gcpstorage azureblob glacier azurearchive codec_cbor codec_json codec_msgpack
-ALL_TAGS          := integration frost pkcs8 pkcs11 awskms gcpkms azurekv vault nitrokey fido2 webauthn awss3 minio gcpstorage azureblob glacier azurearchive codec_cbor codec_json codec_msgpack
-```
+Every optional feature is a `WITH_*` variable in the root `Makefile`
+(`Makefile:20-48`), and every one defaults to `1`: a build opts a feature
+**out** with `WITH_<FEATURE>=0`. `FEATURE_TOGGLES` (`Makefile:46`) lists them
+all. The provider umbrellas `WITH_AWS`, `WITH_GCP` and `WITH_AZURE`
+(`Makefile:53-69`) are unset by default and, when set, override their
+provider's KMS and object-storage toggles together.
 
-Individual tags are toggled by `make` variables (`Makefile:78-126`), which
-assemble `BUILD_TAGS` and then `TAG_FLAGS := -tags "$(BUILD_TAGS)"`.
+Each toggle appends its build tag to `BUILD_TAGS` (`Makefile:82-125`), which
+becomes `TAG_FLAGS := -tags "$(BUILD_TAGS)"` (`Makefile:129-130`). `build-cli`
+builds `xkmsctl` with `CLI_TAGS` (`Makefile:142`, `BUILD_TAGS` minus `pkcs11`,
+plus `gms_pure_go`). `make build-full` and `make build-minimal`
+(`Makefile:478-486`) run the `build-profile` target with every toggle forced
+to `1` or `0`.
+
+The toggles that gate a backend are the ones `backendFeatures` maps
+(`pkg/xkms/registry.go:226-235`):
+
+| Backend | Toggle | Tag | Registration |
+|---|---|---|---|
+| `pkcs11` | `WITH_PKCS11` | `pkcs11` | `pkg/xkms/register_pkcs11.go` |
+| `awskms` | `WITH_AWS_KMS` | `awskms` | `pkg/xkms/register_awskms.go` |
+| `gcpkms` | `WITH_GCP_KMS` | `gcpkms` | `pkg/xkms/register_gcpkms.go` |
+| `azurekv` | `WITH_AZURE_KV` | `azurekv` | `pkg/xkms/register_azurekv.go` |
+| `vault` | `WITH_VAULT` | `vault` | `pkg/xkms/register_vault.go` |
+| `frost` | `WITH_FROST` | `frost` | `pkg/xkms/register_frost.go` |
+
+`tpm2` and `pkcs8` are in that map too, but their registrations
+(`register_tpm2.go`, `register_pkcs8.go`) carry no build constraint, so both
+backends are always compiled. The `tpm2` tag only gates the TPM 2.0 slot of
+the PKCS#11 provider module (`pkg/pkcs11/module/backend_tpm2.go`) and the
+SDK's re-export of the TPM2 NV-backed PIV certificate store
+(`sdk/go/pivcert_backends_tpm2.go`).
+
+The release targets build with the fixed lists `CLI_BUILD_TAGS` and
+`SERVER_BUILD_TAGS` (`Makefile:74-76`, used at `Makefile:948-977`), not with
+the toggles.
+
+### A configured backend that is not compiled in
+
+What happens depends on the entry point:
+
+- **`xkms.AutoInitialize`** (SDK embedders, xkey) fails closed. A
+  `BackendConfigs` key or `DefaultBackend` naming an unregistered backend
+  returns `*xkms.FeatureNotCompiledError` (`pkg/xkms/auto.go:79-88`), whose
+  `Feature`, `Toggle` and `Tag` fields name the backend, its `WITH_*` toggle
+  and its build tag (`pkg/xkms/errors_auto.go:35-49`); it matches
+  `xkms.ErrFeatureNotCompiled` with `errors.Is`. `xkms.RequireBackend`
+  (`pkg/xkms/registry.go:242`) applies the same check to a direct factory
+  lookup. The check covers any name with no registered factory: a
+  misspelled `BackendConfigs` key, and `avr`, which `pkg/xkms` never
+  registers (its `FeatureNotCompiledError` has an empty `Toggle`; the AVR
+  backend is constructed directly over a caller-opened link, see
+  [`../avr-device-backend/`](../avr-device-backend/)). A `DefaultBackend`
+  that is not a valid `BackendType` at all is not checked and falls back
+  through `ResolveDefaultBackend` (`pkg/xkms/auto.go:84`, `:217`). Tests:
+  `pkg/xkms/auto_test.go` `TestAutoInitialize_*FailsClosed`.
+- **`xkmsd`** builds backends in `pkg/server`. For `pkcs11`, `awskms`,
+  `gcpkms`, `azurekv` and `vault`, an enabled config section in a binary
+  without the tag logs a warning and the server starts without that backend
+  (`pkg/server/backend_vault_stub.go:19-24` and its siblings). `frost` fails
+  closed with `*server.ErrNotCompiledIn`
+  (`pkg/server/backend_frost_stub.go:25-30`).
 
 Runtime backend configuration is the `backends:` section of the server config
 (`pkg/config/config.go`). Provider credentials come from the server process's
@@ -419,7 +475,13 @@ path. `pkg/xkms.AutoInitialize` instead derives `KeyStorage` from
 caller that leaves `Datastore` nil and wants the tpm2 backend must set
 `key_storage` explicitly in `BackendConfigs`, or the backend factory returns
 an error and `AutoInitialize` skips it (logged, not fatal, matching every
-other backend that fails to initialize).
+other backend that fails to initialize at run time, `pkg/xkms/auto.go:117-123`).
+
+`AutoInitialize` does **not** skip a backend whose key storage it cannot
+derive: when `storage.NewPrefixBackend` over `Datastore` fails, it returns
+`*xkms.BackendStorageError` (`pkg/xkms/auto.go:112-115`), which names the
+backend and wraps the cause, and matches `xkms.ErrBackendStorageUnresolved`
+as well as the cause with `errors.Is` (`pkg/xkms/errors_auto.go:58-72`).
 
 ## Persistence
 

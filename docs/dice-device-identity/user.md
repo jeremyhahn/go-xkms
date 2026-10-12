@@ -1,6 +1,6 @@
 # DICE Device Identity — User
 
-> **Status: NORMATIVE** · Feature: `dice-device-identity` · Repo: `go-xkms` · Last verified: 2026-09-23
+> **Status: NORMATIVE** · Feature: `dice-device-identity` · Repo: `go-xkms` · Last verified: 2026-10-11
 
 ## Verifying a device's evidence
 
@@ -77,6 +77,19 @@ opts := &dice.VerifyOptions{
 Without `ExpectedUeid` a successful verification means "a device from this
 manufacturer", not "the device I enrolled".
 
+A device states its identifier in one of two places: the `tcg-dice-Ueid`
+extension, or the `ueid` claim (CWT claim key 256) of its UCCS evidence. A
+small device such as an arduino-generic AVR carries only the claim. `Verify`
+reads either, and so does `dice.DeviceUeid` when you need the identifier from a
+certificate yourself:
+
+```go
+id, err := dice.DeviceUeid(leaf) // extension or claim 256
+```
+
+Prefer it to `dice.UeidFromCertificate`, which reads only the extension. Set
+`RequireUeid` to refuse a leaf that states neither.
+
 ## Reading what a device measured
 
 ```go
@@ -105,6 +118,9 @@ the field, and `0` is a real value it did report. Layer 0 is the DICE core.
 | `ErrUnsupportedKeyType` | A device certificate carries something other than ECDSA P-256. The hardware holds P-256 only. |
 | `ErrOperationalStateNotPermitted` | The device declared a state you did not permit. The message names which. |
 | `ErrUnknownTcbInfoField` / `ErrUnknownOperationalFlag` | The device sent something this verifier cannot read. Refused rather than ignored — an unread claim is not a claim you can rely on. |
+| `ErrUeidMismatch` | The device is not the one `ExpectedUeid` names. |
+| `ErrUeidNotFound` | `RequireUeid` or `ExpectedUeid` was set and the leaf states no identifier in either place. |
+| `ErrUeidConflict` | The leaf states its identifier in the extension and in claim 256, and the two differ. Neither is chosen. |
 | `ErrChainVerificationFailed` | The chain does not reach a configured trust anchor. |
 | `ErrNoMeasurement` | `RequireMeasurement` was set and the leaf carried no FWID — or the `dice-idevid` profile was asked to issue against evidence that measures nothing. |
 | `ErrCriticalEvidenceUnreadable` | A certificate in the chain marks DICE evidence critical that this verifier cannot decode. Anchoring tells `crypto/x509` those extensions were handled, so it only says that about extensions it actually read. |

@@ -1,6 +1,6 @@
 # Crypto Backends — User Guide
 
-> **Status: NORMATIVE** · Feature: `crypto-backends` · Repo: `go-xkms` · Last verified: 2026-08-19
+> **Status: NORMATIVE** · Feature: `crypto-backends` · Repo: `go-xkms` · Last verified: 2026-10-11
 
 ## Which backend should I use?
 
@@ -52,15 +52,29 @@ The capabilities you will care about most:
 - **avr** — a device running arduino-generic firmware, on a serial link the
   caller opens. There is no credential: the link is the access.
 
-## "That backend is not available"
+## "That backend is not compiled in"
 
-The binary was built without the backend's build tag. Backends behind tags:
-`pkcs11`, `awskms`, `gcpkms`, `azurekv`, `vault`, `frost`. Rebuild with the tag
-rather than falling back — a build that quietly used software instead would put
-your keys somewhere you did not choose.
+Every backend is compiled in by default. A build can leave one out with its
+`WITH_*` toggle set to `0`: `WITH_PKCS11`, `WITH_AWS_KMS`, `WITH_GCP_KMS`,
+`WITH_AZURE_KV`, `WITH_VAULT`, `WITH_FROST`. The `software`, `pkcs8`, `tpm2` and
+`quantum` backends are always compiled; `WITH_TPM2` only affects the TPM slot
+of the PKCS#11 provider module. `avr` is never loaded from configuration: an
+application opens it directly over the device's serial link.
+
+If you configure a backend the binary does not have:
+
+- **`xkmsd`** logs `… backend enabled in config but not compiled in` and
+  starts without it; a configured `frost` backend stops the server instead.
+- **An application using the SDK** (`xkms.AutoInitialize`) refuses to start
+  with an error such as
+  `xkms: backend "vault" is not compiled into this binary; build with WITH_VAULT=1 (build tag "vault")`.
+
+Rebuild with the toggle on rather than falling back — a build that quietly
+used software instead would put your keys somewhere you did not choose.
 
 ```
-xkmsctl backends list    # tells you what this binary really has
+make build-full          # every feature on
+xkmsctl backends list    # tells you what the server really has
 ```
 
 ## Moving a key between backends
@@ -77,9 +91,10 @@ guarantee you bought.
 
 | What you see | What it means |
 |---|---|
-| backend reports unavailable | compiled out; rebuild with the tag |
+| backend missing from `backends list`, or `not compiled into this binary` | compiled out; rebuild with its `WITH_*` toggle on |
+| `resolving key storage for backend …` | the SDK could not derive that backend's key storage from the datastore; fix the datastore, the backend is not skipped |
 | `security officer PIN required` | fresh token — set the SO PIN, then the user PIN |
-| `user PIN required` | pass `--pkcs11-pin`, or unlock the token first |
+| `user PIN required` | the token has no user PIN yet, or it is not unlocked; see the PIN guide |
 | export refused on Azure Key Vault | expected — it supports import and not export |
 | operations hang against the TPM simulator | another process holds the single simulator connection |
 | a cloud backend fails with credentials errors | fix the **server's** environment, not the client's |

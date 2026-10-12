@@ -1,6 +1,6 @@
 # AVR Device Backend — CLI
 
-> **Status: NORMATIVE** · Feature: `avr-device-backend` · Repo: `go-xkms` · Last verified: 2026-09-23
+> **Status: NORMATIVE** · Feature: `avr-device-backend` · Repo: `go-xkms` · Last verified: 2026-10-11
 
 No CLI surface. The backend is reachable only through the Go API: it is
 constructed around a link the caller has already opened, and `xkmsctl` has no

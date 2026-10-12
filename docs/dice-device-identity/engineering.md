@@ -1,6 +1,6 @@
 # DICE Device Identity — Engineering
 
-> **Status: NORMATIVE** · Feature: `dice-device-identity` · Repo: `go-xkms` · Last verified: 2026-09-23
+> **Status: NORMATIVE** · Feature: `dice-device-identity` · Repo: `go-xkms` · Last verified: 2026-10-11
 
 ## Packages
 
@@ -62,7 +62,9 @@ absent, which is unambiguous — an empty vendor name is not a claim.
 | `ParseUeid([]byte) (*Ueid, error)` | Refuses an empty identifier and trailing data. |
 | `CreateTcbInfoExtension(*TcbInfo) (pkix.Extension, error)` | **Critical**, per §6.1.1. |
 | `CreateUeidExtension([]byte) (pkix.Extension, error)` | **Not critical** — a critical UEID no general client recognises would make the certificate unusable for ordinary TLS. |
-| `TcbInfoFromCertificate` / `UeidFromCertificate` | `ErrTcbInfoNotFound` / `ErrUeidNotFound` when absent. |
+| `TcbInfoFromCertificate` / `UeidFromCertificate` | `ErrTcbInfoNotFound` / `ErrUeidNotFound` when absent. `UeidFromCertificate` reads only the `tcg-dice-Ueid` extension. |
+| `DeviceUeid(*x509.Certificate) ([]byte, error)` | The device identifier from **either** placement: the `tcg-dice-Ueid` extension, or the `ueid` claim (`ClaimUeid`, 256) of `tcg-dice-UCCS-evidence` (`extension.go:690`). Both present and different: `ErrUeidConflict`, wrapped in `errs.Detail` with both values in hex — never a silent choice. Both present and equal, or one present: that value. Neither: `ErrUeidNotFound`. A malformed extension or claim is returned as its own error. This is what `Verify` reads, and what a caller recording a device's identity should read: a device that cannot afford the extension, such as the arduino-generic AVR profile, carries only the claim. |
+| `(*ClaimsSet).Ueid() ([]byte, error)` | The `ueid` claim on its own (`uccs.go:201`), RFC 9711 type byte included. `ErrUeidNotFound` when absent, `ErrMalformedUeid` when not a CBOR byte string, `ErrEmptyUeid` when empty. |
 | `HasExtensions(*x509.Certificate) bool` | Whether a certificate is device-resident. |
 | `Challenge(*x509.Certificate) ([]byte, error)` | The nonce from the `eat_nonce` claim of `tcg-dice-UCCS-evidence`. Always an error when it cannot be produced, and **never** falls back to `vendorInfo`: `ErrUccsEvidenceNotFound` for an absent extension, `ErrNonceClaimMissing` for a claims set without the claim. |
 | `MarshalUccsEvidence(*ClaimsSet) ([]byte, error)` | Encodes the DER extension value. The CBOR inside is RFC 8949 core deterministic, so one claims set has one encoding — §6.1.4 requires the issuer to make this field contribute to the CDI. |
@@ -79,7 +81,7 @@ absent, which is unambiguous — an empty vendor name is not a claim.
 | `TrustedRoots` | nil | Nil skips anchoring. Only correct when the caller anchored by another route: an unanchored chain is self-consistent whoever generated it. |
 | `ExpectedNonce` | — | **Required.** `ErrNonceRequired` without it. |
 | `ExpectedUeid` | nil | "This is the device I enrolled" rather than "a device from this manufacturer". |
-| `RequireUeid` | false | Demand the extension without matching it. |
+| `RequireUeid` | false | Demand a device identifier without matching it — the `tcg-dice-Ueid` extension **or** UCCS claim 256, as `DeviceUeid` reads them (`verify.go:47-50`, `verifyUeid` at `:473`). Without `RequireUeid` or `ExpectedUeid`, a leaf with neither yields `Evidence.Ueid == nil`; a malformed or conflicting identifier is an error either way. |
 | `RequireMeasurement` | false | Demand at least one FWID. |
 | `RequireTcbInfo` | false | Demand the extension. §6.1.4 permits a UCCS-only certificate, so this is not the default; set it where policy reads the operational flags, which live in `DiceTcbInfo` and are therefore **absent**, not clear, without it. |
 | `RequireDeviceSignedLeaf` | false | State that the leaf's **issuer** is device-resident, so the leaf must carry ECDSA-SHA256. Needed because the issuer is usually not in the chain — a device has nowhere to keep its DeviceID certificate — and the signature algorithm is otherwise checked only on certificates a device-resident key signed. `pkg/backend/avr` sets it. |
@@ -121,7 +123,8 @@ All typed sentinels in `pkg/attestation/dice/errors.go`, wrapped with
 `ErrNilCertificate`, `ErrNilTcbInfo`, `ErrTcbInfoNotFound`, `ErrUeidNotFound`,
 `ErrMalformedTcbInfo`, `ErrMalformedUeid`, `ErrMalformedFWID`,
 `ErrUnknownTcbInfoField`, `ErrTcbInfoFieldOrder`, `ErrNegativeTcbInfoValue`,
-`ErrUnknownOperationalFlag`, `ErrEmptyUeid`. UCCS evidence: `ErrNilClaimsSet`,
+`ErrUnknownOperationalFlag`, `ErrEmptyUeid`, `ErrUeidConflict` (the extension
+and claim 256 disagree, `errors.go:41`). UCCS evidence: `ErrNilClaimsSet`,
 `ErrUccsEvidenceNotFound`, `ErrMalformedUccsEvidence`, `ErrMalformedClaimsSet`,
 `ErrDuplicateClaim`, `ErrNonceClaimMissing`, `ErrMalformedNonceClaim`,
 `ErrNonceClaimLength`. Verification:
@@ -133,7 +136,9 @@ All typed sentinels in `pkg/attestation/dice/errors.go`, wrapped with
 
 Every one of them is re-exported from `sdk/go/attestation_dice.go` as
 `ErrDICE<Name>`, aliased to the canonical value rather than copied, so a
-consumer that cannot import `pkg/` can still use `errors.Is`.
+consumer that cannot import `pkg/` can still use `errors.Is`. The same file
+re-exports `DeviceUeid` as `DICEDeviceUeid` and `ClaimUeid` as
+`DICEClaimUeid` (`attestation_dice.go:95-98`).
 
 `pkg/ca` adds `ErrDICEEvidenceMissing` and `ErrDICEEvidenceInvalid`. The
 `dice-idevid` profile refuses a `DiceTcbInfo` with **no `fwids`** — reported as

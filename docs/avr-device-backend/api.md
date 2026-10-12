@@ -1,6 +1,6 @@
 # AVR Device Backend — API
 
-> **Status: NORMATIVE** · Feature: `avr-device-backend` · Repo: `go-xkms` · Last verified: 2026-09-23
+> **Status: NORMATIVE** · Feature: `avr-device-backend` · Repo: `go-xkms` · Last verified: 2026-10-11
 
 ## Transports
 
@@ -12,7 +12,7 @@
 | MCP | no |
 | CLI | no |
 | SDK (`sdk/go`) | **yes** — `NewAVRBackend`, `AVRConfig`, `AVRAttestation`, the `ErrAVR*` sentinels, and the `BackendTypeAVR` / `StoreAVR` constants |
-| ACME `device-attest-01` | indirectly — the caller forwards `Attestation.CertificateDER` as `dice`-format evidence |
+| ACME `device-attest-01` | indirectly — the caller forwards `Attestation.CertificateDER` as `dice`-format evidence; the identifier is `hex(Attestation.Ueid)`. A physical device cannot sign the finalization CSR (see below) |
 
 The backend is not served over a network transport, and that is a pending
 decision rather than an omission. Serving it needs a daemon configuration that
@@ -63,8 +63,9 @@ att := result.(*avr.Attestation)
 
 att.CertificateDER        // forward these bytes verbatim; never re-encode them
 att.Claims.Nonce          // the challenge, already matched in constant time
-att.Claims.Other[256]     // the ueid, as the raw CBOR the device encoded
-att.Claims.Other[273]     // the firmware measurement, likewise
+att.Ueid                  // the device identifier, type byte included (dice.DeviceUeid of claim 256)
+att.Claims.Other[256]     // the same ueid, as the raw CBOR the device encoded
+att.Claims.Other[273]     // the firmware measurement, likewise raw CBOR
 att.AttestLevel           // from the device's crypto tier
 att.Anchored              // false means no roots were configured -- not that anchoring failed
 ```
@@ -92,6 +93,20 @@ this one — any `io.ReadWriter` will do, including a pty or a subprocess pipe.
 so it composes anywhere either interface is accepted. It is safe to use from
 several goroutines: every command is serialised on the link, and a multi-frame
 exchange such as `AttestKey` stays contiguous.
+
+### Enrolling over ACME device-attest-01
+
+The ACME server verifies the forwarded certificate with `dice.Verify` against
+`challenges.device_attest.dice_roots` (`pkg/config/acme.go:810-820`), and
+names the device by the hex of its UEID (`pkg/acme/challenges/device-attest-01/identity.go:162-171`),
+which is `hex(att.Ueid)`.
+
+Finalization needs a CSR signed by the device identity key, and
+`backend.Signer` returns `ErrSigningUnsupported` (`pkg/backend/avr/backend.go:436-441`):
+the wire has no command that signs a host-supplied digest. A physical AVR can
+therefore answer the challenge but cannot finish enrolment. The flow is proven
+end to end only against the `agsim` simulator, whose published test seed lets
+the test sign the CSR (`pkg/acme/client/device_attest_dice_e2e_test.go`).
 
 ### From the SDK
 

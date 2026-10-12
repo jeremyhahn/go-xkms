@@ -1,6 +1,6 @@
 # DICE Device Identity — CLI
 
-> **Status: NORMATIVE** · Feature: `dice-device-identity` · Repo: `go-xkms` · Last verified: 2026-09-23
+> **Status: NORMATIVE** · Feature: `dice-device-identity` · Repo: `go-xkms` · Last verified: 2026-10-11
 
 **No CLI surface of its own.** There is no `xkmsctl dice` command group and
 none is planned for this half of the feature.
@@ -10,13 +10,14 @@ that already existed:
 
 ## Issuing with the DICE profile
 
-`dice-idevid` is a registered certificate profile, so any `xkmsctl` verb that
-takes `--profile` can name it. The profile refuses a request that carries no
+`dice-idevid` is a built-in certificate profile (`pkg/ca/profiles.go:83`), so
+the `xkmsctl ca` verbs that take `--profile` — `ca sign-csr` and `ca issue`
+(`cmd/xkmsctl/ca.go:573-580`) — can name it. The profile refuses a request that carries no
 `tcg-dice-TcbInfo` extension, which is every request not produced by a DICE
 device — so in practice this is reached by the enrollment path, not by hand.
 
 ```bash
-xkmsctl certs generate --profile dice-idevid --cn avr-device-0001
+xkmsctl ca sign-csr --csr request.pem --profile dice-idevid
 # ca: request carries no tcg-dice-TcbInfo extension
 ```
 
@@ -26,8 +27,11 @@ has to come from the device.
 ## Inspecting a device certificate
 
 `certstore` knows the DICE OIDs by name, so any command that prints a
-certificate renders them as `tcg-dice-TcbInfo` and `tcg-dice-Ueid` under the
-TCG extensions heading rather than as bare digits.
+certificate renders them as `tcg-dice-TcbInfo`, `tcg-dice-Ueid` and the other
+`tcg-dice-*` names (`pkg/certstore/types.go:255-259`) rather than as bare
+digits. A UEID stated as UCCS claim 256 sits inside the
+`tcg-dice-UCCS-evidence` value and is not rendered separately; read it with
+`dice.DeviceUeid` (see [`engineering.md`](engineering.md)).
 
 ## What is deliberately absent
 

@@ -1,11 +1,11 @@
 # AVR Device Backend — Engineering
 
-> **Status: NORMATIVE** · Feature: `avr-device-backend` · Repo: `go-xkms` · Last verified: 2026-09-23
+> **Status: NORMATIVE** · Feature: `avr-device-backend` · Repo: `go-xkms` · Last verified: 2026-10-11
 
 Package: `pkg/backend/avr` · Import path
 `github.com/jeremyhahn/go-xkms/pkg/backend/avr`
 
-Upstream: `github.com/jeremyhahn/arduino-generic/sdk/go v0.3.0-alpha`, a Layer 0
+Upstream: `github.com/jeremyhahn/arduino-generic/sdk/go v0.7.0-alpha` (`go.mod`), a Layer 0
 module whose only dependencies are `go.bug.st/serial` and `testify`. Importing
 it from Layer 3 is permitted and is what it exists for.
 
@@ -26,7 +26,7 @@ it from Layer 3 is permitted and is what it exists for.
 | `Backend.ListKeys(ctx)` | The one key the device holds, or none. No I/O. |
 | `DeviceKey` | `Public()`, `Slot()`, `CN()`, `Equal()`. Deliberately not a `crypto.Signer`. |
 | `Algorithms` | `Can`, `Named`, `Unnamed`, `Empty`, `Set`, `String`. |
-| `Attestation` | Format, parsed leaf, DER, `dice.ClaimsSet`, nonce, attest level, crypto tier, `Anchored`. |
+| `Attestation` | Format, parsed leaf, DER, `dice.ClaimsSet`, `Ueid`, nonce, attest level, crypto tier, `Anchored`. `Ueid` is the device identifier, type byte included, as `dice.Verify` read it through `dice.DeviceUeid` — from CWT claim 256, where this profile states it (`attestation.go:80-84`, set at `:234`). |
 | `AttestationConfig` | `TrustStore *truststore.Config`, `Intermediates [][]byte`. |
 | `Identity` | `Serial`, `SerialBytes`, `Revision`, `ConfigLocked`, `DataLocked`, `Provisioned()`. |
 | `FormatDICE` | `"dice"`, the same string `device-attest-01` uses for this evidence. |
@@ -43,7 +43,10 @@ speaking for an API it does not own.
 
 `GenerateKey`, `Signer`, `Decrypter`, `DeleteKey` and `RotateKey` exist to
 satisfy `types.KeyProvider` and always refuse. Each refusal names a permanent
-property of the part or the protocol.
+property of the part or the protocol. `Signer` returns `ErrSigningUnsupported`
+(`backend.go:436-441`): the wire defines no command that signs a host-supplied
+digest. One consequence is that a physical device cannot sign the CSR that
+device-attest-01 finalization needs; see architecture.md §Enrolment.
 
 ## Invariants
 
@@ -154,7 +157,16 @@ context.Canceled)` still works across this layer.
 
 ## Tests
 
-`make test-avr`, `make bench-avr`, `make coverage-avr`. Coverage is 99.6%.
+`make test-avr`, `make bench-avr`, `make coverage-avr` (`Makefile:1379-1391`).
+
+The device-attest-01 enrolment of an arduino-generic device is proven end to end
+in `pkg/acme/client/device_attest_dice_e2e_test.go`
+(`TestDeviceAttestDICEEnrollsTheRealFirmware` and the four
+`TestDeviceAttestDICERefuses*` cases) against the real firmware run by the
+`agsim` simulator. `make agsim` builds it into `$AGSIM_DIR` (`Makefile:423`,
+`:3727`); `test-go` and `race` depend on it (`Makefile:1050`, `:1094`). The CSR there is signed with the
+simulator's published test DeviceID key, which no real part offers — see
+architecture.md §Limitation.
 
 There is no hardware and CI has none, so the tests drive a **fake link and the
 real codec**: every byte a test sends is framed by the SDK's own
@@ -197,7 +209,7 @@ each other about something wrong.
 
 ## Resolved upstream gaps
 
-Both blockers reported against `v0.2.0-alpha` are fixed in `v0.3.0-alpha`:
+Both blockers reported against `v0.2.0-alpha` were fixed in `v0.3.0-alpha`:
 `ProvInfo` now receives the two lock bytes explicitly (a 38-byte reply; a
 36-byte one from older firmware is refused as short rather than read past), and
 `Attest`/`AttestCert` exist with internal paging and exported nonce widths.

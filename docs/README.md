@@ -21,12 +21,13 @@ the folder in the same commit that changes the behavior.
 | [attested-peer](attested-peer/) | Is the other end of a connection a currently attested system? The quote→verdict primitive, IDevID/IAK credential validation, TLS channel binding, and the verifier, evidence cache and collector behind go-qrdb's attested-caller gate |
 | [audit-log](audit-log/) | Tamper-evident audit records and their signing chain |
 | [auth-factors](auth-factors/) | Factor composition, adapters, and the identity/key-domain split |
-| [avr-device-backend](avr-device-backend/) | An AVR device with a secure-element identity as an xkms key provider and DICE attester, over the arduino-generic wire protocol |
+| [avr-device-backend](avr-device-backend/) | An AVR device with a secure-element identity as an xkms key provider and DICE attester, over the arduino-generic wire protocol; its UEID, and device-attest-01 enrolment (simulator only: the device cannot sign a CSR) |
+| [backend-credentials](backend-credentials/) | Backend secrets (PKCS#11 User PIN, cloud KMS and Vault secrets) under `credentials.seal_strategy`: the `pkg/server/credentials` service, `credential://` resolution at startup, and the `xkmsctl credential` / `/api/v1/credentials` / MCP `credentials.*` surface |
 | [certificate-authority](certificate-authority/) | `TrustedCA` — cross-signed root pool, AIA import, DANE TLSA publishing |
 | [clustering](clustering/) | Embedding a go-qrdb clustered node behind the `raft` build tag: Raft config mapping, inter-node mTLS provisioning, not-leader redirects, the `xkmsctl cluster`/`rebalance` control plane, the read-only REST cluster status/membership surface for the web console, and cluster CA key custody |
-| [crypto-backends](crypto-backends/) | The `Backend` contract and every software, hardware and cloud implementation |
+| [crypto-backends](crypto-backends/) | The `Backend` contract, every software, hardware and cloud implementation, and the `WITH_*` toggles that compile each one in |
 | [datastore](datastore/) | The single global, qrdb-backed datastore every xkms subsystem stores through: the `storage.Backend` interface, `datastore.engine` (memory/file/pebble) and `datastore.mode` (standalone/remote) configuration, and why there is no per-subsystem storage choice left |
-| [dice-device-identity](dice-device-identity/) | DICE-based device identity with a hardware root of trust: the TCG DICE certificate extensions, their verification, and the `dice-idevid` issuance profile |
+| [dice-device-identity](dice-device-identity/) | DICE-based device identity with a hardware root of trust: the TCG DICE certificate extensions and UCCS claims (the UEID in either placement), their verification, and the `dice-idevid` issuance profile |
 | [escrow](escrow/) | External key escrow (KMIP + xkms federation): the agent factory, daemon config, and service layer — reachable today only through the embedded Go SDK, pending an RBAC vocabulary decision for the network transports |
 | [fido2-ctap2](fido2-ctap2/) | The canonical FIDO2 CTAP2 implementation |
 | [frost-threshold-signing](frost-threshold-signing/) | RFC 9591 FROST threshold signing (`-tags frost`) — trusted-dealer keygen, the explicit round API, and why the CLI's local path and the REST/gRPC/MCP network surface are independent |
@@ -125,7 +126,8 @@ by five and reports unconverted folders as converted.
 | [auth-factors](auth-factors/) | `auth/factors.md`, `auth/layering.md` |
 | [pin-management](pin-management/) | `pin/`, `seal/pin.md`, `architecture/pin-architecture.md` |
 | [sealing-and-barrier](sealing-and-barrier/) | `seal/` (except `seal/tenant-barriers.md`, superseded by `multi-tenancy` below), `seal/barrier.md` — **absorbed and deleted** (go-xkms#707): its layered LUKS+barrier architecture, the `pkg/storage/luks.Backend` gate, and barrier auto-unseal content are now covered by [`../xkey/docs/luks/architecture.md`](../xkey/docs/luks/architecture.md) §"The gate: `pkg/storage/luks.Backend`", [`../xkey/docs/seal/`](../xkey/docs/seal/) (policy-based barrier auto-unseal), [`../xkey/docs/setup-wizard/`](../xkey/docs/setup-wizard/) (the GUI's separate LUKS-volume TPM auto-unseal, `BarrierAutoUnsealBlobID`), and [`../xkey/docs/password/`](../xkey/docs/password/) (static-password-behind-the-barrier layering) — re-verified against all four for this pass, `sealed-storage/`, `architecture/barrier-integration.md` |
-| [init-ceremony](init-ceremony/) | `init/ceremony.md`, `init/roles.md`, `init/threshold.md`, `init/README.md`, `auth/bootstrap.md` — **deleted**; the M-of-N officer ceremony they described was removed (go-qrdb holder/quorum model). `init/credentials.md` stays as cross-cutting documentation |
+| [init-ceremony](init-ceremony/) | `init/ceremony.md`, `init/roles.md`, `init/threshold.md`, `init/README.md`, `auth/bootstrap.md` — **deleted**; the M-of-N officer ceremony they described was removed (go-qrdb holder/quorum model) |
+| [backend-credentials](backend-credentials/) | `init/credentials.md` — **absorbed and deleted** (go-xkms#1450). It had been filed as cross-cutting, but it documents one feature. Its per-strategy `credentials.<strategy>.*` config blocks, `CredentialSealer` interface, `Enter User PIN:` prompt and `storage.backend: qrdb` precondition never matched the code, and it presented `pkcs11`, `vault` and `passphrase` as working when `xkmsd` refuses all three at startup |
 | [multi-tenancy](multi-tenancy/) | `architecture/multi-tenant.md`, `seal/tenant-barriers.md`, `acme/multi-tenancy.md` |
 | [escrow](escrow/) | `escrow/README.md` — **absorbed and deleted** |
 | [password-vault](password-vault/) | `staticpw/` |
@@ -263,7 +265,9 @@ Several of these need a note rather than a row:
 
 ### Still owed a feature folder
 
-**Nothing, as of this pass (go-xkms#707, 2026-09-24).** Every area this
+**Nothing, as of go-xkms#707 (2026-09-24).** The 2026-10-11 docs audit found
+shipped features without a folder after all, and those are being converted
+one issue at a time. Each one is added to the table below as it lands. Every area this
 section used to list has since been converted; the table below is kept as
 a record of where each one landed, not as an open queue. Before adding a
 new row here, re-run the derivation loop at the top of this file and
@@ -284,6 +288,7 @@ module) by the time they were re-verified for this pass.
 | Browser trust injection | [`../xkey/docs/browser-trust-injection/`](../xkey/docs/browser-trust-injection/) — converted, but in the xkey module; see the note below |
 | LUKS | [`luks/`](luks/) |
 | Datastore | [`datastore/`](datastore/) |
+| Backend credentials (found missing by the 2026-10-11 audit, go-xkms#1450) | [`backend-credentials/`](backend-credentials/) |
 
 [`frost-threshold-signing/`](frost-threshold-signing/),
 [`ssh-keys/`](ssh-keys/), [`ssh-agent-sessions/`](ssh-agent-sessions/) and
@@ -383,8 +388,8 @@ Canonical trust-bootstrap dispatch library:
 - [Trust Bootstrap Library](trust/bootstrap.md) - `pkg/trust/bootstrap` Mode enum, Fetch entry point, and the four consumers (xkmsctl, xkey GUI, QuicBaaS SDK, go-trusted-platform via SDK)
 
 ### [Init](init-ceremony/)
-First-boot server initialization ceremony:
-- [Credential Seal Strategies](init/credentials.md) - how the User PIN and operational credentials are protected at rest
+First-boot server initialization ceremony. Backend credential seal strategies
+are now [backend-credentials](backend-credentials/).
 
 ### [Auth](auth/)
 Authentication, authorization, and bootstrap:

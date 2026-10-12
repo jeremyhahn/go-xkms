@@ -1,6 +1,6 @@
 # AVR Device Backend — Architecture
 
-> **Status: NORMATIVE** · Feature: `avr-device-backend` · Repo: `go-xkms` · Last verified: 2026-09-23
+> **Status: NORMATIVE** · Feature: `avr-device-backend` · Repo: `go-xkms` · Last verified: 2026-10-11
 
 ## The problem
 
@@ -88,8 +88,9 @@ verifier nonce = SHA-256(ACME key authorization)       32 bytes
    the eat_nonce claim of tcg-dice-UCCS-evidence
         │
         ▼
-   parse → curve and signature algorithm → read the extension →
-   constant-time nonce compare → anchor (when roots are configured)
+   parse → dice.Verify: curve and signature algorithm, the UCCS
+   extension, constant-time nonce compare, operational flags, UEID,
+   anchor (when roots are configured)
 ```
 
 The nonce check is **unconditional**. The device has no clock, so that nonce is
@@ -105,30 +106,61 @@ rather than the whole authorization — and produce a mismatch whose cause is
 invisible from either end. A caller that passes a raw key authorization is
 refused for its width.
 
-### Why `AttestKey` does not call `dice.Verify`
+### One verifier: `dice.Verify`
 
-It cannot, on any device shipping today, and the reason is worth stating
-because the obvious reading of the code is that it should.
+`checkAliasCertificate` parses the leaf and hands it, with any configured
+intermediates, to `dice.Verify` (`pkg/backend/avr/attestation.go:178-212`).
+Nothing about the DICE formats is reimplemented here.
 
-`dice.Verify` reads the leaf's `tcg-dice-TcbInfo` extension unconditionally and
-refuses a certificate carrying none. The AVR alias profile emits **exactly one**
-extension: `tcg-dice-UCCS-evidence`, critical. The UEID and the firmware
-measurement travel as CWT claims 256 and 273 *inside that extension's claims
-set* rather than as X.509 extensions of their own, because the certificate is
-assembled on an 8-bit part from a 230-byte PROGMEM template and every extra
-extension costs flash the part does not have.
+The AVR alias profile emits **exactly one** extension:
+`tcg-dice-UCCS-evidence`, critical. The UEID and the firmware measurement travel
+as CWT claims 256 and 273 *inside that extension's claims set* rather than as
+X.509 extensions of their own, because the certificate is assembled on an 8-bit
+part from a fixed PROGMEM template and every extra extension costs flash the
+part does not have. `dice.Verify` accepts a UCCS-only leaf (DICE Attestation
+Architecture §6.1.4 permits UCCS "in place of" `DiceTcbInfo`) and reads the
+UEID with `dice.DeviceUeid`, which finds claim 256; see
+[`../dice-device-identity/`](../dice-device-identity/). The result reaches the
+caller as `Attestation.Ueid`, type byte included (`attestation.go:80-84`), with
+`Attestation.Claims` still carrying every claim as the raw CBOR the device
+encoded.
 
-So this package composes the same code one level down —
-`dice.UccsFromCertificate`, which reads precisely the extension the device emits
-— and anchors with `crypto/x509`. Nothing about the DICE formats is
-reimplemented; `Attestation.Claims` hands the caller the decoded claims set so
-the UEID and the measurement are read as the raw CBOR the device encoded.
+`RequireDeviceSignedLeaf` is set (`attestation.go:207`): the alias certificate
+is signed by the DeviceID key in the same element, whose certificate is not in
+the chain, so without it nothing would pin the leaf's signature algorithm to
+the ECDSA-SHA256 the element emits.
 
-`TestDiceVerifyStillRefusesTheProfileTheDeviceEmits` pins this as a test result
-rather than a claim in a comment. **When it starts failing, delete the long way
-round**: either the profile gained a `DiceTcbInfo` or `dice.Verify` made it
-optional, and `checkAliasCertificate` should collapse into one `dice.Verify`
-call.
+## Enrolment over ACME device-attest-01
+
+The evidence `AttestKey` returns is the `dice` attestation format of
+`pkg/acme/challenges/device-attest-01`: `Attestation.CertificateDER` goes, as
+the device sent it, into the attestation object's `x5c`. The server verifies it
+against `challenges.device_attest.dice_roots`, with
+`dice_require_device_signed_leaf: true` for this profile
+(`pkg/config/acme.go:810-820`), and authorizes the order only for the identity
+the evidence carries — the lowercase hex of the UEID read by `dice.DeviceUeid`
+(`pkg/acme/challenges/device-attest-01/identity.go:162-171`).
+
+`pkg/acme/client/device_attest_dice_e2e_test.go` proves the whole path against
+the real arduino-generic firmware compiled for the host and started by the
+SDK's `agsim` simulator (built by `make agsim`): the order is for the device's
+UEID, the evidence answers the challenge's nonce, the CSR is bound to the alias
+key, and the issued certificate carries the UEID as its `permanentIdentifier`.
+Refusals for another UEID, another nonce, untrusted roots and a CSR for another
+key are pinned beside it.
+
+### Limitation: a physical device cannot finish enrolment
+
+Finalization needs a CSR signed by the attested key, which for this profile is
+the DeviceID key inside the element. The firmware has no command that signs a
+CSR, and `Backend.Signer` returns `ErrSigningUnsupported`
+(`pkg/backend/avr/backend.go:436-441`) because the protocol deliberately signs
+no host-supplied digest. The end-to-end test completes only because the
+simulator's DeviceID key is a published **test** key whose private half the
+test derives to sign the CSR (`testDeviceIDSeed`). A real part answers the
+challenge but cannot produce the CSR, so there is no production adapter from
+this backend to the ACME client's `TPMModule`; closing that gap needs a
+firmware command that signs a CSR it assembles itself.
 
 ## Rejected alternatives
 
