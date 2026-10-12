@@ -12,7 +12,8 @@
 #   2. A single non-doc path in an otherwise-docs diff must flip docs_only
 #      to false -- the dangerous direction is mislabeling a code change as
 #      docs-only, not the reverse.
-#   3. Tier selection: train/* or merge-train/* head ref -> full_tier=true; anything else on
+#   3. Tier selection: train/* or merge-train/* head ref, or the ci:full
+#      label -> full_tier=true; anything else on
 #      a pull_request -> false; push/dispatch -> true regardless of ref.
 #   4. Every "no usable base" path (empty BASE_SHA, all-zero BEFORE_SHA, a
 #      base sha this clone cannot reach) fails OPEN: docs_only=false.
@@ -63,6 +64,7 @@ run() {
 	b="$2"
 	before="$3"
 	href="$4"
+	label="${5:-false}"
 	out="$work/out"
 	rm -f "$out"
 	# set -e means a compound command's own nonzero status would abort this
@@ -70,7 +72,7 @@ run() {
 	# rather than read from $? after the fact.
 	if (
 		cd "$repo"
-		GITHUB_OUTPUT="$out" EVENT_NAME="$event" BASE_SHA="$b" BEFORE_SHA="$before" HEAD_REF="$href" \
+		GITHUB_OUTPUT="$out" EVENT_NAME="$event" BASE_SHA="$b" BEFORE_SHA="$before" HEAD_REF="$href" CI_FULL_LABEL="$label" \
 			sh "$subject" >"$work/log" 2>&1
 	); then
 		rc=0
@@ -143,6 +145,12 @@ check "docs_only=false" [ "$(outval docs_only)" = false ]
 echo "== a branch merely containing train in its name stays fast tier =="
 run pull_request "$base_sha" "" "issue/9-merge-train-docs"
 check "full_tier=false" [ "$(outval full_tier)" = false ]
+
+echo "== the ci:full label puts an ordinary PR on the full tier =="
+run pull_request "$base_sha" "" "issue/9-feature" true
+check "labelled: full_tier=true" [ "$(outval full_tier)" = true ]
+run pull_request "$base_sha" "" "issue/9-feature" false
+check "unlabelled: full_tier=false" [ "$(outval full_tier)" = false ]
 
 echo "== push and workflow_dispatch are always full tier =="
 run push "$base_sha" "$base_sha" ""

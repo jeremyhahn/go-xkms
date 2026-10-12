@@ -13,8 +13,10 @@
 #                          treats a skip as success for exactly those jobs
 #                          when docs_only is true.
 #
-#   full_tier=true|false   true for a push (main), a manual dispatch, or a
-#                          pull_request whose head branch is train/* --
+#   full_tier=true|false   true for a push (main), a manual dispatch, a
+#                          pull_request labelled ci:full (CI_FULL_LABEL=true,
+#                          #1483), or a pull_request whose head branch is
+#                          train/* or merge-train/* --
 #                          these get the full matrix (race, every tagged
 #                          backend, the raft matrix, nested-module tests,
 #                          docker build+scan, security scan, and the 89%
@@ -51,13 +53,19 @@ out="${GITHUB_OUTPUT:?GITHUB_OUTPUT must be set (run from a GitHub/Gitea Actions
 # when its head branch is train/* or merge-train/* (automerge.yml v7 opens
 # each train as a PR from merge-train/<epoch>-<run id>, #1422) -- see the
 # top-of-file note in ci.yml for why trains, not every PR, carry the full
-# matrix.
+# matrix -- or when it carries the ci:full label (#1483), which is how an
+# author asks for the full tier on one PR. CI_FULL_LABEL is the rendered
+# `contains(labels, 'ci:full')` expression, so it is exactly "true" or
+# "false"; the full-tier jobs' own `if:` reads the same label.
 full_tier=true
 if [ "${EVENT_NAME:-}" = "pull_request" ]; then
 	case "${HEAD_REF:-}" in
 	train/* | merge-train/*) full_tier=true ;;
 	*) full_tier=false ;;
 	esac
+	if [ "${CI_FULL_LABEL:-}" = "true" ]; then
+		full_tier=true
+	fi
 fi
 echo "full_tier=${full_tier}" >>"$out"
 

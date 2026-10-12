@@ -17,11 +17,10 @@
 
 name: Nightly
 
+# Manual only (#1483): no cron trigger. A timer-driven run on the shared
+# runners competes with every PR and train for the same slots; whoever needs
+# the nightly suite dispatches it.
 on:
-  schedule:
-    # 03:17 UTC — off the hour, so it does not pile onto every other repo's
-    # nightly at 03:00 on the same two shared runners.
-    - cron: '17 3 * * *'
   workflow_dispatch:
 
 permissions:
@@ -153,7 +152,7 @@ jobs:
   # largest non-gating cost in ci.yml.
   #
   # NOT a deletion, and #19's instruction against one still stands. The suite is
-  # unchanged, runs nightly, and is dispatchable on demand -- so the moment #61
+  # unchanged and dispatchable on demand (#1483 removed the timer) -- so the moment #61
   # unblocks it can be exercised immediately with workflow_dispatch, and it
   # returns to ci.yml (with its ci-gate entry restored to `check`, not
   # `advisory`) once it has passed there.

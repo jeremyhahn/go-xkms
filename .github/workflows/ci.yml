@@ -79,30 +79,39 @@
 #               arch-gates is a six-second grep with nothing to gain by
 #               excluding it.
 #
-#   full_tier   true for a train/* or merge-train/* PR or a push to main (or a manual
-#               dispatch); false for every other pull_request. Selects which
-#               of the two mutually-exclusive job sets below runs:
+#   full_tier   true for a train/* or merge-train/* PR, a PR labelled ci:full
+#               (#1483), a push to main or a manual dispatch; false for every
+#               other pull_request. Selects whether the full tier runs on top
+#               of the PR tier:
 #
-#     fast tier (full_tier=false): lint, build, arch-gates (unchanged), plus
-#       test-changed (unit tests scoped to the packages the PR touched, with
-#       a best-effort reverse-dependency expansion -- see
-#       changed-go-packages.sh) and nested-module-build (sdk/go, xkey and
-#       web/desktop compile, not their full test suites -- `make vet`,
-#       already in the `lint` job's LINT_MODULES loop, covers `go vet` for
-#       both nested modules on every tier already).
+#     PR tier (every run): changes, lint, static-analysis, arch-gates, build
+#       (one leg compiling xkmsctl, xkmsd and xkey), nested-module-build
+#       (sdk/go, xkey and web/desktop compile, not their full test suites --
+#       `make vet`, already in the `lint` job's LINT_MODULES loop, covers
+#       `go vet` for the nested modules on every tier), test-changed (unit
+#       tests scoped to the packages the PR touched, with a best-effort
+#       reverse-dependency expansion -- see changed-go-packages.sh; on the
+#       full tier its steps stand down, because `test` runs every package),
+#       and ci-gate.
 #
-#     full tier (full_tier=true): everything the fast tier has, PLUS the
-#       expensive jobs this file already had -- race, build-raft, the
-#       nested-module-test full suites, docker build+scan, security, and
-#       tpm2-simulator -- and `test`, whose `make coverage` carries the root
-#       89% COVERAGE_THRESHOLD gate. That gate moving to the full tier is the
+#     full tier (full_tier=true): the PR tier PLUS race, build-raft, the
+#       nested-module-test full suites, docker build+scan, security,
+#       tpm2-simulator, and `test`, whose `make coverage` carries the root
+#       89% COVERAGE_THRESHOLD gate. That gate living on the full tier is the
 #       point: it was already effectively enforced only at the train, since
 #       an outdated branch cannot fast-forward into main, so gating every
 #       individual PR on it bought nothing but runner time.
 #
+#   Each full-tier job writes its condition out in full (#1483): the event
+#   (push, workflow_dispatch), the ci:full label, OR full_tier -- the last is
+#   what keeps trains on the full tier. A full-tier job may `needs:` a
+#   PR-tier job, never the reverse. internal/buildgates parses this file and
+#   fails if a job's `if:`, its CI Gate tag, or that rule disagree.
+#
 # ci-gate treats a job's `skipped` result as PASS exactly when the tier/
-# docs-only split says that job was not supposed to run for THIS PR, and as
-# FAIL otherwise -- the same "a gate that can pass vacuously is worse than no
+# docs-only split says that job was not supposed to run for THIS PR -- a
+# `full` job when the full tier was not selected, or a Go job on a docs-only
+# diff -- and as FAIL otherwise -- the same "a gate that can pass vacuously is worse than no
 # gate" principle the v1.9 block above applied to the staged
 # ordering, extended to cover deliberate exclusion as well as upstream
 # failure.
@@ -131,6 +140,9 @@ on:
     branches: [ main ]
   pull_request:
     branches: [ main ]
+    # `labeled` (#1483): adding the ci:full label starts a run that takes the
+    # full tier for that PR, without waiting for the next push.
+    types: [opened, synchronize, reopened, labeled]
   workflow_dispatch:                    # manual rerun — Gitea has no rerun API
 
 # Supersession control (#392). A newer head on the same ref cancels the older
@@ -288,6 +300,8 @@ jobs:
           HEAD_REF: ${{ github.head_ref }}
           BASE_SHA: ${{ github.event.pull_request.base.sha }}
           BEFORE_SHA: ${{ github.event.before }}
+          # Renders to exactly "true" or "false" (#1483).
+          CI_FULL_LABEL: ${{ contains(github.event.pull_request.labels.*.name, 'ci:full') }}
         run: .github/scripts/pr-scope.sh
 
   # Job 1: Unit Tests with Coverage Enforcement
@@ -299,7 +313,11 @@ jobs:
     # the `make coverage` run with the root 89% COVERAGE_THRESHOLD gate,
     # reserved for train/* PRs and pushes to main. An ordinary PR gets the
     # narrower `test-changed` job instead.
-    if: needs.changes.outputs.docs_only != 'true' && needs.changes.outputs.full_tier == 'true'
+    if: >-
+      needs.changes.outputs.docs_only != 'true' &&
+      (github.event_name == 'push' || github.event_name == 'workflow_dispatch' ||
+      contains(github.event.pull_request.labels.*.name, 'ci:full') ||
+      needs.changes.outputs.full_tier == 'true')
 
     # ci-template v1.6: the Go toolchain is cgroup-unaware -- in a ~12 GB job
     # container it sees the HOST's 24 cores and 94 GB, same as the Security
@@ -523,7 +541,11 @@ jobs:
     # instead -- sdk/go and xkey still have to COMPILE on every PR, but the
     # full run is reserved for train/* PRs and pushes to main.
     needs: [changes]
-    if: needs.changes.outputs.docs_only != 'true' && needs.changes.outputs.full_tier == 'true'
+    if: >-
+      needs.changes.outputs.docs_only != 'true' &&
+      (github.event_name == 'push' || github.event_name == 'workflow_dispatch' ||
+      contains(github.event.pull_request.labels.*.name, 'ci:full') ||
+      needs.changes.outputs.full_tier == 'true')
 
     steps:
       - name: Checkout code
@@ -817,13 +839,15 @@ jobs:
   # (LINT_MODULES = . sdk/go xkey web/desktop, see the Makefile), so the one
   # signal missing for a fast-tier PR was "does it still build". The full
   # race-detector suites in `nested-module-test` above are reserved for the
-  # full tier (train/* PRs, pushes to main); this job is its cheap fast-tier
-  # counterpart, not a replacement for it.
+  # full tier (train/* PRs, pushes to main); this job is its cheap PR-tier
+  # counterpart, not a replacement for it. PR tier (#1483): it runs on every
+  # tier, because CI Gate lets only a full-tier job skip; it is cheap, and
+  # web/desktop compiles nowhere else on the full tier.
   nested-module-build:
-    name: Nested Module Build (sdk/go, xkey, web/desktop) [fast tier]
+    name: Nested Module Build (sdk/go, xkey, web/desktop) [pr tier]
     runs-on: ubuntu-latest
     needs: [changes]
-    if: needs.changes.outputs.docs_only != 'true' && needs.changes.outputs.full_tier != 'true'
+    if: needs.changes.outputs.docs_only != 'true'
 
     steps:
       - name: Checkout code
@@ -858,7 +882,7 @@ jobs:
         working-directory: xkey
         run: go build ./...
 
-  # Job 1d: Unit Tests (changed packages) [fast tier] -- an ordinary PR (not
+  # Job 1d: Unit Tests (changed packages) [pr tier] -- an ordinary PR (not
   # train/*, not a push) gets a smoke test scoped to whatever it touched
   # instead of the full `make coverage` run in `test` above: the
   # authoritative, un-scoped suite (with the 89% COVERAGE_THRESHOLD gate)
@@ -869,10 +893,14 @@ jobs:
   # a narrower-than-ideal scope here costs a later signal on the train,
   # never a gap in what actually gates main.
   test-changed:
-    name: Unit Tests (changed packages) [fast tier]
+    name: Unit Tests (changed packages) [pr tier]
     runs-on: ubuntu-latest
     needs: [changes]
-    if: needs.changes.outputs.docs_only != 'true' && needs.changes.outputs.full_tier != 'true'
+    # PR tier (#1483): the job runs on every tier, because CI Gate lets only a
+    # full-tier job skip. On the full tier its steps stand down instead: `test`
+    # runs every root-module package with the coverage gate there, and CI Gate
+    # requires it, so a scoped subset of that run would only repeat it.
+    if: needs.changes.outputs.docs_only != 'true'
 
     # Same cgroup-unaware Go toolchain bound as the `test` job above (see its
     # comment): unbounded GOMAXPROCS OOM-killed pkg/api/rest in the fast tier.
@@ -881,7 +909,12 @@ jobs:
       GOMAXPROCS: 8
 
     steps:
+      - name: Full tier -- covered by Unit Tests
+        if: needs.changes.outputs.full_tier == 'true'
+        run: echo "Full tier -- the Unit Tests job runs every root-module package, so there is nothing to scope here."
+
       - name: Checkout code
+        if: needs.changes.outputs.full_tier != 'true'
         uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
           persist-credentials: false
@@ -892,6 +925,7 @@ jobs:
           fetch-depth: 0
 
       - name: Set up Go
+        if: needs.changes.outputs.full_tier != 'true'
         uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5
         with:
           go-version: ${{ env.GO_VERSION }}
@@ -901,6 +935,7 @@ jobs:
       # swtpm: pkg/tpm2/vtpm supervises a real swtpm process per tenant, and
       # this job's tpm_simulator-tagged run can include that package.
       - name: Install and configure SoftHSM2
+        if: needs.changes.outputs.full_tier != 'true'
         run: |
           sudo .github/scripts/apt-deps.sh libicu-dev libusb-1.0-0-dev swtpm
           # SoftHSM 2.7.0 from its pinned, checksum-verified release, not the
@@ -920,6 +955,7 @@ jobs:
           SOFTHSM2_CONF: ${{ github.workspace }}/softhsm2.conf
 
       - name: Install dependencies
+        if: needs.changes.outputs.full_tier != 'true'
         run: go mod download
 
       # pkg/acme/client's device-attest-01 DICE test enrolls the REAL
@@ -927,11 +963,13 @@ jobs:
       # simulators come from the arduino-generic module at the version go.mod
       # pins; a missing binary FAILS that test, so this job builds them.
       - name: Build the arduino-generic simulators
+        if: needs.changes.outputs.full_tier != 'true'
         env:
           AGSIM_DIR: ${{ github.workspace }}/build/agsim
         run: make agsim
 
       - name: Determine changed packages
+        if: needs.changes.outputs.full_tier != 'true'
         id: pkgs
         env:
           MERGE_BASE: ${{ needs.changes.outputs.merge_base }}
@@ -946,7 +984,7 @@ jobs:
       # suite, and the full backend matrix already runs in `race` on the
       # full tier.
       - name: Unit tests for changed packages
-        if: steps.pkgs.outputs.packages != ''
+        if: needs.changes.outputs.full_tier != 'true' && steps.pkgs.outputs.packages != ''
         env:
           CGO_ENABLED: 1
           AGSIM_DIR: ${{ github.workspace }}/build/agsim
@@ -958,7 +996,7 @@ jobs:
         run: go test -race -p 2 -timeout 15m -tags="codec_cbor codec_json codec_msgpack tpm_simulator frost" $PACKAGES
 
       - name: No root-module Go changes
-        if: steps.pkgs.outputs.packages == ''
+        if: needs.changes.outputs.full_tier != 'true' && steps.pkgs.outputs.packages == ''
         run: echo "No root-module .go files changed -- nothing to test here (sdk/go, xkey and web/desktop changes are covered by nested-module-build)."
 
   # Job 3: Lint
@@ -1042,6 +1080,13 @@ jobs:
       # module's real graph.
       - name: Test the changed-package scoping
         run: .github/scripts/changed-go-packages-test.sh
+
+      # The tier split itself (#1483): every job is in CI Gate, its pr/full
+      # tag matches its `if:`, and no PR-tier job needs a full-tier one. It
+      # runs here, not only in `test`, because a ci.yml-only change touches
+      # no Go package, so test-changed would never select it.
+      - name: Test the CI tier gate
+        run: make test-buildgates
 
       # NO NETWORK INSTALL (#189). golangci-lint is baked into the self-hosted
       # runner image at GOLANGCI_LINT_VERSION, in /usr/local/bin. The step this
@@ -1155,7 +1200,11 @@ jobs:
     #
     # Full tier only (TWO-TIER PIPELINE note, top of file).
     needs: [changes]
-    if: needs.changes.outputs.docs_only != 'true' && needs.changes.outputs.full_tier == 'true'
+    if: >-
+      needs.changes.outputs.docs_only != 'true' &&
+      (github.event_name == 'push' || github.event_name == 'workflow_dispatch' ||
+      contains(github.event.pull_request.labels.*.name, 'ci:full') ||
+      needs.changes.outputs.full_tier == 'true')
     permissions:
       security-events: write
       contents: read
@@ -1253,17 +1302,15 @@ jobs:
     # build and arch-gates run on every tier, and stay unconditional except for the one thing that can
     # legitimately skip them: a docs-only diff has nothing for a build to
     # compile.
+    #
+    # ONE leg (#1483). This was a three-leg matrix with one leg per BINARY
+    # (xkmsctl, xkmsd, xkey), not per platform, so there are no "other
+    # platforms" to move to the full tier: every leg was compile coverage a
+    # PR needs. One job now builds all three in sequence, sharing one module
+    # download and one build cache, for one runner slot instead of three.
+    # release.yml owns the per-platform builds.
     needs: [changes]
     if: needs.changes.outputs.docs_only != 'true'
-    strategy:
-      matrix:
-        include:
-          - binary: xkmsctl
-            output: xkmsctl
-          - binary: xkmsd
-            output: xkmsd
-          - binary: xkey
-            output: xkey
 
     steps:
       - name: Checkout code
@@ -1287,23 +1334,21 @@ jobs:
           # No SoftHSM: building only -- PKCS#11 modules are dlopen()ed at run time.
           sudo .github/scripts/apt-deps.sh libtss2-dev libicu-dev libusb-1.0-0-dev
 
-      - name: Build ${{ matrix.binary }} with all backends
+      - name: Build xkmsctl, xkmsd and xkey with all backends
         env:
           CGO_ENABLED: 1
         run: |
           # Build with ALL backend tags enabled to test full integration
           TAGS="pkcs8,tpm2,awskms,gcpkms,azurekv,pkcs11,vault,frost"
           mkdir -p build
-          if [ "${{ matrix.binary }}" = "xkey" ]; then
-            # xkey is a separate Go module (xkey/go.mod) with its own
-            # ./cmd/xkey package -- there is no ./cmd/xkey at the repo root.
-            # Building without the production/dev/bindings tags selects
-            # xkey/cmd/xkey/gui_disabled.go (CLI-only), so no frontend/GUI
-            # toolchain is needed for this sanity build.
-            (cd xkey && go build -tags="${TAGS}" -o ../build/${{ matrix.output }} ./cmd/xkey)
-          else
-            go build -tags="${TAGS}" -o build/${{ matrix.output }} ./cmd/${{ matrix.binary }}
-          fi
+          go build -tags="${TAGS}" -o build/xkmsctl ./cmd/xkmsctl
+          go build -tags="${TAGS}" -o build/xkmsd ./cmd/xkmsd
+          # xkey is a separate Go module (xkey/go.mod) with its own
+          # ./cmd/xkey package -- there is no ./cmd/xkey at the repo root.
+          # Building without the production/dev/bindings tags selects
+          # xkey/cmd/xkey/gui_disabled.go (CLI-only), so no frontend/GUI
+          # toolchain is needed for this sanity build.
+          (cd xkey && go build -tags="${TAGS}" -o ../build/xkey ./cmd/xkey)
 
       # The acme-client GUI is a product surface (Wails desktop,
       # conventions/frontend.md), and NOTHING in this workflow compiled it: its
@@ -1315,9 +1360,7 @@ jobs:
       # "no matching versions for query latest" (#48).
       #
       # So this is not a build for its own sake, it is the gate that makes the
-      # tag stop rotting. It runs on one matrix leg because the `gui` tag is
-      # orthogonal to which backend binary is being built, and building it
-      # three times would buy nothing.
+      # tag stop rotting.
       #
       # `-tags gui` ALONE is not enough, and the first version of this step
       # made that mistake. Wails picks internal/app/app_default_unix.go unless
@@ -1336,12 +1379,10 @@ jobs:
       # webkit2_41 is required on Ubuntu 24.04: wails defaults to the
       # webkit2gtk-4.0 pkg-config name, which that release does not ship.
       - name: acme-client GUI toolchain
-        if: matrix.binary == 'xkmsctl'
         run: |
           sudo .github/scripts/apt-deps.sh libgtk-3-dev libwebkit2gtk-4.1-dev
 
       - name: acme-client compiles with the production GUI tags
-        if: matrix.binary == 'xkmsctl'
         env:
           CGO_ENABLED: 1
         run: |
@@ -1373,7 +1414,6 @@ jobs:
       # codec registry, and without it service construction fails at runtime
       # with `codec "json" is not supported in this build`.
       - name: acme-client and GUI-tagged suites run
-        if: matrix.binary == 'xkmsctl'
         run: |
           go test -tags "gui codec_json" ./cmd/acme-client/... ./pkg/acme/gui/...
 
@@ -1381,8 +1421,11 @@ jobs:
         if: github.server_url == 'https://github.com'
         uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6
         with:
-          name: binaries-${{ matrix.binary }}
-          path: build/${{ matrix.output }}
+          name: binaries
+          path: |
+            build/xkmsctl
+            build/xkmsd
+            build/xkey
           retention-days: 7
   # Job 5b: Clustering build-tag matrix — the raft-gated clustering code must
   # compile and pass its unit tests in BOTH the default (standalone) and
@@ -1396,7 +1439,11 @@ jobs:
     # Full tier only (TWO-TIER PIPELINE note, top of file): this is the raft
     # tag matrix, part of "all tagged backends".
     needs: [changes]
-    if: needs.changes.outputs.docs_only != 'true' && needs.changes.outputs.full_tier == 'true'
+    if: >-
+      needs.changes.outputs.docs_only != 'true' &&
+      (github.event_name == 'push' || github.event_name == 'workflow_dispatch' ||
+      contains(github.event.pull_request.labels.*.name, 'ci:full') ||
+      needs.changes.outputs.full_tier == 'true')
     strategy:
       matrix:
         tags: [ "codec_json", "raft codec_json" ]
@@ -1484,11 +1531,16 @@ jobs:
     # job publishes nothing (its push step is `if: false`; release.yml
     # publishes), so there is no artefact or side effect to hold back, and
     # CI Gate fails closed on security either way.
-    # Push-only, as before, PLUS docs_only (TWO-TIER PIPELINE note, top of
-    # file): a docs-only push straight to main -- a train that turned out to
-    # carry only doc changes -- has no image worth building or scanning
-    # either.
-    if: github.event_name == 'push' && needs.changes.outputs.docs_only != 'true'
+    # Full tier (#1483), like every other expensive job: it was push-only,
+    # which put the Trivy gate AFTER main instead of in front of it. It
+    # publishes nothing, so running it on a train, a ci:full PR or a
+    # dispatch has no side effect. A docs-only diff has no image worth
+    # building or scanning.
+    if: >-
+      needs.changes.outputs.docs_only != 'true' &&
+      (github.event_name == 'push' || github.event_name == 'workflow_dispatch' ||
+      contains(github.event.pull_request.labels.*.name, 'ci:full') ||
+      needs.changes.outputs.full_tier == 'true')
     permissions:
       security-events: write
       contents: read
@@ -1662,7 +1714,11 @@ jobs:
     #
     # Full tier only (TWO-TIER PIPELINE note, top of file).
     needs: [changes]
-    if: needs.changes.outputs.docs_only != 'true' && needs.changes.outputs.full_tier == 'true'
+    if: >-
+      needs.changes.outputs.docs_only != 'true' &&
+      (github.event_name == 'push' || github.event_name == 'workflow_dispatch' ||
+      contains(github.event.pull_request.labels.*.name, 'ci:full') ||
+      needs.changes.outputs.full_tier == 'true')
 
     # Same cgroup-unaware Go toolchain bound as the `test` job above (see its
     # comment): unbounded GOMAXPROCS OOM-killed pkg/api/rest in the fast tier.
@@ -1766,7 +1822,11 @@ jobs:
     name: TPM2 Simulator Tests
     runs-on: ubuntu-latest
     needs: [changes]
-    if: needs.changes.outputs.docs_only != 'true' && needs.changes.outputs.full_tier == 'true'
+    if: >-
+      needs.changes.outputs.docs_only != 'true' &&
+      (github.event_name == 'push' || github.event_name == 'workflow_dispatch' ||
+      contains(github.event.pull_request.labels.*.name, 'ci:full') ||
+      needs.changes.outputs.full_tier == 'true')
     timeout-minutes: 30
 
     steps:
@@ -1887,71 +1947,52 @@ jobs:
         env:
           DOCS_ONLY: ${{ needs.changes.outputs.docs_only }}
           FULL_TIER: ${{ needs.changes.outputs.full_tier }}
-          EVENT_NAME: ${{ github.event_name }}
         run: |
           BAD=0
 
-          # check_required <name> <result> <skip-is-ok: 0|1>
-          check_required() {
-            case "$2" in
-              success) echo "OK   $1";;
+          # check <tier> <job> <result> [docs]   (#1483)
+          #
+          #   pr    the job runs on every tier. A skip fails the gate.
+          #   full  the job runs only on the full tier (push, dispatch, a
+          #         train, or a ci:full PR). A skip passes only when the
+          #         full tier was not selected.
+          #   docs  the job also stands down on a docs-only diff, so a skip
+          #         passes when docs_only is true. Lines without it belong to
+          #         jobs that run even then.
+          #
+          # Every job in this file has exactly one line here, and its tag
+          # matches its `if:`; internal/buildgates (TestCIGateTiersMatchTheJobs)
+          # fails the build otherwise.
+          check() {
+            case "$3" in
+              success) echo "OK   $2";;
               skipped)
-                if [ "$3" = 1 ]; then
-                  echo "SKIP $1 (excluded by the tier/docs-only split, by design)"
+                if [ "$1" = full ] && [ "$FULL_TIER" != "true" ]; then
+                  echo "SKIP $2 (full-tier job, full tier not selected)"
+                elif [ "${4:-}" = docs ] && [ "$DOCS_ONLY" = "true" ]; then
+                  echo "SKIP $2 (docs-only diff)"
                 else
-                  echo "FAIL $1 (should have run for this tier -- or its upstream need failed, see changes)"
+                  echo "FAIL $2 (skipped, but should have run for this tier -- or its upstream need failed, see changes)"
                   BAD=1
                 fi
                 ;;
-              *) echo "FAIL $1 ($2)"; BAD=1;;
+              *) echo "FAIL $2 ($3)"; BAD=1;;
             esac
           }
 
-          # `changes` itself is unconditional.
-          check_required changes "${{ needs.changes.result }}" 0
-
-          # lint and arch-gates run on every PR and every push, docs-only
-          # included (lint is where the xkey check-skill-reference docs
-          # check lives; arch-gates is six seconds of grep).
-          check_required lint       "${{ needs.lint.result }}" 0
-          check_required static-analysis "${{ needs.static-analysis.result }}" 0
-          check_required arch-gates "${{ needs.arch-gates.result }}" 0
-
-          # build runs on both tiers; only a docs-only diff skips it.
-          build_skip_ok=0
-          [ "$DOCS_ONLY" = "true" ] && build_skip_ok=1
-          check_required build "${{ needs.build.result }}" "$build_skip_ok"
-
-          # Full-tier-only jobs: skip is fine on a fast-tier PR (full_tier
-          # != true) or a docs-only diff; required on a train PR or a push.
-          full_only_skip_ok=0
-          if [ "$DOCS_ONLY" = "true" ] || [ "$FULL_TIER" != "true" ]; then full_only_skip_ok=1; fi
-          check_required test               "${{ needs.test.result }}" "$full_only_skip_ok"
-          check_required nested-module-test "${{ needs.nested-module-test.result }}" "$full_only_skip_ok"
-          check_required security           "${{ needs.security.result }}" "$full_only_skip_ok"
-          check_required build-raft         "${{ needs.build-raft.result }}" "$full_only_skip_ok"
-          check_required race               "${{ needs.race.result }}" "$full_only_skip_ok"
-          check_required tpm2-simulator     "${{ needs.tpm2-simulator.result }}" "$full_only_skip_ok"
-
-          # Fast-tier-only jobs: skip is fine on a train PR/push (the
-          # full-tier jobs above already cover it) or a docs-only diff;
-          # required on an ordinary code PR.
-          fast_only_skip_ok=0
-          if [ "$DOCS_ONLY" = "true" ] || [ "$FULL_TIER" = "true" ]; then fast_only_skip_ok=1; fi
-          check_required test-changed        "${{ needs.test-changed.result }}" "$fast_only_skip_ok"
-          check_required nested-module-build "${{ needs.nested-module-build.result }}" "$fast_only_skip_ok"
-
-          # docker: push-only, as before, PLUS a docs-only push now
-          # legitimately skips it too (see the `docker` job's own `if`).
-          case "${{ needs.docker.result }}" in
-            success) echo "OK   docker" ;;
-            skipped)
-              if [ "$EVENT_NAME" != 'push' ] || [ "$DOCS_ONLY" = "true" ]; then
-                echo "OK   docker (push-only/docs-only-skipped job, event=$EVENT_NAME, docs_only=$DOCS_ONLY)"
-              else
-                echo "FAIL docker (skipped on a non-docs-only push)"; BAD=1
-              fi ;;
-            *) echo "FAIL docker (${{ needs.docker.result }})"; BAD=1 ;;
-          esac
+          check pr   changes             "${{ needs.changes.result }}"
+          check pr   lint                "${{ needs.lint.result }}"
+          check pr   static-analysis     "${{ needs.static-analysis.result }}"
+          check pr   arch-gates          "${{ needs.arch-gates.result }}"
+          check pr   build               "${{ needs.build.result }}"               docs
+          check pr   nested-module-build "${{ needs.nested-module-build.result }}" docs
+          check pr   test-changed        "${{ needs.test-changed.result }}"        docs
+          check full test                "${{ needs.test.result }}"                docs
+          check full race                "${{ needs.race.result }}"                docs
+          check full build-raft          "${{ needs.build-raft.result }}"          docs
+          check full nested-module-test  "${{ needs.nested-module-test.result }}"  docs
+          check full security            "${{ needs.security.result }}"            docs
+          check full tpm2-simulator      "${{ needs.tpm2-simulator.result }}"      docs
+          check full docker              "${{ needs.docker.result }}"              docs
 
           exit $BAD

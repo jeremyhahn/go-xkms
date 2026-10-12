@@ -1031,6 +1031,12 @@ test-scripts:
 	@bash test/scripts/check-test-helpers.test.sh
 	@echo "$(GREEN)✓ Shell script tests passed$(RESET)"
 
+# test-buildgates: the CI tier gate (#1483) -- every ci.yml job is in CI Gate
+# with a pr/full tag that matches its `if:`. Pure file parsing, no build tags.
+.PHONY: test-buildgates
+test-buildgates:
+	@$(GO) test ./internal/buildgates/...
+
 .PHONY: test-go
 ## test-go: Run the Go unit tests with coverage
 # Package exclusions from this lane (issue #703 -- every other exclusion
