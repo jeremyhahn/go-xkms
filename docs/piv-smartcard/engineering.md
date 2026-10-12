@@ -214,6 +214,13 @@ anchors from `auth.piv_login.attestation_roots`, and treats a verified chain as
 proof only when its subject key equals the login certificate's, so a chain
 that verifies for some other key proves nothing about this login.
 
+The exchange then enforces the account's permitted-method policy with
+`qrdbsdk.CheckAuthMethod(user, qrdbsdk.MethodPIV)` and records the same
+constant as the session's `auth_method`. `piv` is distinct from `mtls`: an
+account whose policy names only `mtls` is refused PIV login (401, deny audit
+`auth.login.piv`), and an empty policy states no restriction (go-xkms#1095;
+`pkg/api/rest/handlers_auth_piv_method_test.go`).
+
 ### A verified chain is not a satisfied policy
 
 `VerifyAttestation` returning a nil error means the **chain** verified. The

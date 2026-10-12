@@ -20,6 +20,7 @@ import (
 	"net/http"
 	"testing"
 
+	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
@@ -49,7 +50,7 @@ func pivLoginAs(t *testing.T, methods []string) (int, *mockAuthAuditLogger) {
 // TestPIVLogin_EnforcesThePermittedMethodPolicy proves the PIV login, the
 // issuer of the session tokens qrdb's chain accepts with an unobservable
 // method, enforces the account's permitted-method policy when it mints:
-// an account that may not log in with a certificate gets no token.
+// an account that may not log in with a PIV card gets no token.
 func TestPIVLogin_EnforcesThePermittedMethodPolicy(t *testing.T) {
 	code, auditLog := pivLoginAs(t, []string{"webauthn"})
 	assert.Equal(t, http.StatusUnauthorized, code)
@@ -57,9 +58,22 @@ func TestPIVLogin_EnforcesThePermittedMethodPolicy(t *testing.T) {
 	require.NotEmpty(t, events)
 	assert.Equal(t, audit.OutcomeDeny, events[len(events)-1].Outcome)
 
-	code, _ = pivLoginAs(t, []string{"webauthn", "mtls"})
-	assert.Equal(t, http.StatusOK, code, "a policy that permits certificate login mints")
+	code, _ = pivLoginAs(t, []string{qrdbsdk.MethodPIV})
+	assert.Equal(t, http.StatusOK, code, "a piv-only policy permits PIV login")
 
 	code, _ = pivLoginAs(t, nil)
 	assert.Equal(t, http.StatusOK, code, "an empty policy states no restriction")
+}
+
+// TestPIVLogin_MTLSDoesNotPermitPIV proves PIV login is checked against
+// qrdb's MethodPIV, not MethodMTLS: an account permitted only certificate
+// API access cannot mint a session with a smart card.
+func TestPIVLogin_MTLSDoesNotPermitPIV(t *testing.T) {
+	code, auditLog := pivLoginAs(t, []string{qrdbsdk.MethodMTLS})
+	assert.Equal(t, http.StatusUnauthorized, code)
+	events := auditLog.Events()
+	require.NotEmpty(t, events)
+	last := events[len(events)-1]
+	assert.Equal(t, audit.OutcomeDeny, last.Outcome)
+	assert.Equal(t, "auth.login.piv", last.Action)
 }

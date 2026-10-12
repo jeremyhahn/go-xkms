@@ -359,7 +359,8 @@ specific permission before assuming a non-Admin role holds it.
   refusal is disablement, policy exclusion, or an unbound certificate.
   The WebAuthn relying party applies the same `qrdbsdk.CheckAuthMethod` with
   `qrdbsdk.MethodWebAuthn`, and the PIV login (`POST /api/v1/auth/piv`) with
-  `qrdbsdk.MethodMTLS`, alongside the lifecycle check, through
+  `qrdbsdk.MethodPIV` -- distinct from `mtls`, so an account can be permitted
+  one without the other (go-xkms#1095) -- alongside the lifecycle check, through
   `webauthn.CheckAccountStanding` (go-xkms#1298; see
   [webauthn/engineering.md](../webauthn/engineering.md)).
 - **A tenant ID taken from a request is bound in `XKMSService`, never in a

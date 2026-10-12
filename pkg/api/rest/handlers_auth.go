@@ -348,8 +348,9 @@ func (s *Server) handlePIVLogin(w http.ResponseWriter, r *http.Request) {
 	// The session token this mints is accepted on qrdb's chain with an
 	// unobservable login method, so the account's permitted-method policy
 	// is enforced here, by the issuer, for the method that authenticated:
-	// the client certificate (mTLS).
-	if err := qrdbsdk.CheckAuthMethod(&qrdbsdk.User{Username: user.Username, TenantID: user.TenantID, AuthMethods: user.AuthMethods}, qrdbsdk.MethodMTLS); err != nil {
+	// the PIV smart card. qrdb keeps MethodPIV distinct from MethodMTLS, so
+	// a policy can permit one without the other.
+	if err := qrdbsdk.CheckAuthMethod(&qrdbsdk.User{Username: user.Username, TenantID: user.TenantID, AuthMethods: user.AuthMethods}, qrdbsdk.MethodPIV); err != nil {
 		if s.auditAuthDenyOrFail(w, r, user.Username, "auth.login.piv", "method not permitted") {
 			return
 		}
@@ -363,7 +364,7 @@ func (s *Server) handlePIVLogin(w http.ResponseWriter, r *http.Request) {
 		Metadata: map[string]string{
 			"username":             user.Username,
 			"display_name":         user.DisplayName,
-			"auth_method":          "piv",
+			"auth_method":          qrdbsdk.MethodPIV,
 			attestLevelMetadataKey: attestLevel,
 			// Declares Subject's encoding explicitly for the refresh-time
 			// re-check (go-xkms#1297 review): QRDBUserResolver must never
