@@ -60,6 +60,19 @@ env:
   #
   # Bump together with ci.yml's pin as 1.27.x patch releases ship.
   GO_VERSION: '1.27.2'
+  # BUILD AND SCAN IMAGES BY DIGEST (go-xkms#1332). The runners share one
+  # Docker daemon with pull_request jobs, and `docker create`/`docker run`
+  # use whatever image that daemon has cached under a tag -- a PR's test code
+  # can re-tag a malicious image as golang:1.27.2-bookworm or
+  # aquasec/trivy:0.75.0 and the next release would compile in it, or pass a
+  # fake gate. A digest names content, not a mutable tag: every use below
+  # pulls by digest first and runs by digest, so a re-tagged local image is
+  # never selected. Each value is the multi-arch index digest of the tag in
+  # its comment; bump the digest in the same edit as GO_VERSION (resolve it
+  # with `docker buildx imagetools inspect golang:<GO_VERSION>-bookworm`), and
+  # TRIVY_DIGEST together with ci.yml's copy of it.
+  GO_IMAGE_DIGEST: 'sha256:5cf287a799e6b94384bad13d16b14904c531f51ba65792237e122ce42b392f61' # golang:1.27.2-bookworm
+  TRIVY_DIGEST: 'sha256:af6acf9a6b85dfe389a1941505c0ce9efef52a4719635e1a962f022a3d855daa' # aquasec/trivy:0.75.0
   REGISTRY: ghcr.io
   IMAGE_NAME_SERVER: jeremyhahn/xkms-server
   IMAGE_NAME_CLI: jeremyhahn/xkms-cli
@@ -226,8 +239,7 @@ jobs:
                      | grep -v '=>' | awk '{print $1, $2}')
           done < <(find . -name go.mod -not -path './vendor/*' -not -path '*/testdata/*' | sort)
           if [ "$rc" -eq 0 ]; then echo "OK: every released cross-pin equals v$VERSION"; fi
-          exit $rc
-          exit $rc
+          exit "$rc"
 
   create-release:
     name: Create Release
@@ -254,24 +266,24 @@ jobs:
         id: get_version
         run: |
           VERSION=${RELEASE_TAG#v}
-          echo "version=${VERSION}" >> $GITHUB_OUTPUT
+          echo "version=${VERSION}" >> "$GITHUB_OUTPUT"
           # The tag is checked out, so HEAD is the released commit -- true on
           # both trigger paths, unlike github.sha.
-          echo "commit=$(git rev-parse HEAD)" >> $GITHUB_OUTPUT
+          echo "commit=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
           echo "Version: ${VERSION} at $(git rev-parse HEAD)"
 
       - name: Generate changelog
         id: changelog
         run: |
           # Get previous tag
-          PREV_TAG=$(git describe --abbrev=0 --tags $(git rev-list --tags --skip=1 --max-count=1) 2>/dev/null || echo "")
+          PREV_TAG=$(git describe --abbrev=0 --tags "$(git rev-list --tags --skip=1 --max-count=1)" 2>/dev/null || echo "")
 
           if [ -z "$PREV_TAG" ]; then
             echo "First release - generating full changelog"
             CHANGELOG=$(git log --pretty=format:"* %s (%h)" --no-merges)
           else
             echo "Generating changelog from ${PREV_TAG} to ${RELEASE_TAG}"
-            CHANGELOG=$(git log ${PREV_TAG}..HEAD --pretty=format:"* %s (%h)" --no-merges)
+            CHANGELOG=$(git log "${PREV_TAG}..HEAD" --pretty=format:"* %s (%h)" --no-merges)
           fi
 
           # Save changelog to file
@@ -586,6 +598,14 @@ jobs:
           # not a marketplace retry action: 3 attempts, linear backoff, and a
           # failed attempt's container is torn down before the next one
           # starts so a retry never inherits a half-built /src/dist.
+          # Pull the build image by digest (go-xkms#1332): `docker create`
+          # never pulls, it takes whatever the shared daemon caches, so the
+          # digest is fetched here and the container is created from it.
+          BUILD_IMAGE="golang:${GO_VERSION}-bookworm@${GO_IMAGE_DIGEST}"
+          docker image inspect "$BUILD_IMAGE" >/dev/null 2>&1 || \
+            .release-tools/scripts/retry.sh --attempts 3 --backoff 15 -- \
+            docker pull "$BUILD_IMAGE"
+
           attempt=0
           max_attempts=3
           while :; do
@@ -604,7 +624,7 @@ jobs:
                  -e GIT_CONFIG_COUNT="${GIT_CONFIG_COUNT:-}" \
                  -e GIT_CONFIG_KEY_0="${GIT_CONFIG_KEY_0:-}" \
                  -e GIT_CONFIG_VALUE_0="${GIT_CONFIG_VALUE_0:-}" \
-                 golang:${{ env.GO_VERSION }}-bookworm \
+                 "$BUILD_IMAGE" \
                  bash /src/build.sh) \
                && docker cp . "$CID":/src \
                && docker start -a "$CID" \
@@ -782,7 +802,7 @@ jobs:
           cat > Dockerfile.release << 'EOF'
           # Multi-stage Dockerfile for xkms production deployment
           # Stage 1: Builder
-          FROM golang:${{ env.GO_VERSION }}-bookworm AS builder
+          FROM golang:${{ env.GO_VERSION }}-bookworm@${{ env.GO_IMAGE_DIGEST }} AS builder
 
           ENV GOTOOLCHAIN=auto
 
@@ -938,7 +958,7 @@ jobs:
           set -euo pipefail
           CACHE_ARGS=()
           if [ "${{ github.server_url }}" = "https://github.com" ]; then
-            CACHE_ARGS=(--cache-from type=gha --cache-to type=gha,mode=max)
+            CACHE_ARGS=(--cache-from type=gha --cache-to "type=gha,mode=max")
           fi
           .release-tools/scripts/retry.sh --attempts 3 --backoff 20 -- \
             docker buildx build \
@@ -963,9 +983,11 @@ jobs:
         # (task 3604). The scanner is pinned to the version nightly.yml
         # installs (#325); bump every trivy pin together.
         run: |
+          # By digest, pulled first (go-xkms#1332): see TRIVY_DIGEST above.
+          docker pull "aquasec/trivy:0.75.0@${TRIVY_DIGEST}"
           docker run --rm \
             -v /var/run/docker.sock:/var/run/docker.sock \
-            aquasec/trivy:0.75.0 image \
+            "aquasec/trivy:0.75.0@${TRIVY_DIGEST}" image \
               --format table \
               --severity CRITICAL,HIGH \
               --ignore-unfixed \
@@ -1080,7 +1102,7 @@ jobs:
           set -euo pipefail
           CACHE_ARGS=()
           if [ "${{ github.server_url }}" = "https://github.com" ]; then
-            CACHE_ARGS=(--cache-from type=gha --cache-to type=gha,mode=max)
+            CACHE_ARGS=(--cache-from type=gha --cache-to "type=gha,mode=max")
           fi
           .release-tools/scripts/retry.sh --attempts 3 --backoff 20 -- \
             docker buildx build \
@@ -1103,9 +1125,11 @@ jobs:
         # server image gate above (task 3605). Scanner pinned per #325; bump
         # every trivy pin together.
         run: |
+          # By digest, pulled first (go-xkms#1332): see TRIVY_DIGEST above.
+          docker pull "aquasec/trivy:0.75.0@${TRIVY_DIGEST}"
           docker run --rm \
             -v /var/run/docker.sock:/var/run/docker.sock \
-            aquasec/trivy:0.75.0 image \
+            "aquasec/trivy:0.75.0@${TRIVY_DIGEST}" image \
               --format table \
               --severity CRITICAL,HIGH \
               --ignore-unfixed \
@@ -1259,35 +1283,37 @@ jobs:
 
       - name: Release summary
         run: |
-          echo "## Release Summary" >> $GITHUB_STEP_SUMMARY
-          echo "" >> $GITHUB_STEP_SUMMARY
-          echo "Version: **${{ needs.create-release.outputs.version }}**" >> $GITHUB_STEP_SUMMARY
-          echo "" >> $GITHUB_STEP_SUMMARY
-          echo "### Binaries" >> $GITHUB_STEP_SUMMARY
-          echo "" >> $GITHUB_STEP_SUMMARY
-          echo "- **xkmsctl** - CLI tool" >> $GITHUB_STEP_SUMMARY
-          echo "- **xkmsd** - Multi-protocol server (REST, gRPC, QUIC, MCP)" >> $GITHUB_STEP_SUMMARY
-          echo "- **xkey** - Virtual FIDO2 device (Linux only)" >> $GITHUB_STEP_SUMMARY
-          echo "" >> $GITHUB_STEP_SUMMARY
-          echo "### Artifacts Published" >> $GITHUB_STEP_SUMMARY
-          echo "" >> $GITHUB_STEP_SUMMARY
-          echo "#### Linux Binaries" >> $GITHUB_STEP_SUMMARY
-          echo "- **Standard** (amd64, arm64) - xkmsctl, xkmsd, xkey" >> $GITHUB_STEP_SUMMARY
-          echo "- **FIPS 140-3** (amd64, arm64) - xkmsctl, xkmsd (GOFIPS140=v1.0.0)" >> $GITHUB_STEP_SUMMARY
-          echo "" >> $GITHUB_STEP_SUMMARY
-          echo "#### Docker Images" >> $GITHUB_STEP_SUMMARY
-          echo "- Multi-arch (amd64, arm64)" >> $GITHUB_STEP_SUMMARY
-          echo "" >> $GITHUB_STEP_SUMMARY
-          echo "All artifacts include SHA256 checksums for verification" >> $GITHUB_STEP_SUMMARY
-          echo "" >> $GITHUB_STEP_SUMMARY
-          echo "### Docker Images" >> $GITHUB_STEP_SUMMARY
-          echo '```bash' >> $GITHUB_STEP_SUMMARY
-          echo "# Multi-protocol server (REST, gRPC, QUIC, MCP)" >> $GITHUB_STEP_SUMMARY
-          echo "docker pull ghcr.io/jeremyhahn/xkms-server:${{ needs.create-release.outputs.version }}" >> $GITHUB_STEP_SUMMARY
-          echo "" >> $GITHUB_STEP_SUMMARY
-          echo "# CLI tool" >> $GITHUB_STEP_SUMMARY
-          echo "docker pull ghcr.io/jeremyhahn/xkms-cli:${{ needs.create-release.outputs.version }}" >> $GITHUB_STEP_SUMMARY
-          echo '```' >> $GITHUB_STEP_SUMMARY
+          {
+            echo "## Release Summary"
+            echo ""
+            echo "Version: **${{ needs.create-release.outputs.version }}**"
+            echo ""
+            echo "### Binaries"
+            echo ""
+            echo "- **xkmsctl** - CLI tool"
+            echo "- **xkmsd** - Multi-protocol server (REST, gRPC, QUIC, MCP)"
+            echo "- **xkey** - Virtual FIDO2 device (Linux only)"
+            echo ""
+            echo "### Artifacts Published"
+            echo ""
+            echo "#### Linux Binaries"
+            echo "- **Standard** (amd64, arm64) - xkmsctl, xkmsd, xkey"
+            echo "- **FIPS 140-3** (amd64, arm64) - xkmsctl, xkmsd (GOFIPS140=v1.0.0)"
+            echo ""
+            echo "#### Docker Images"
+            echo "- Multi-arch (amd64, arm64)"
+            echo ""
+            echo "All artifacts include SHA256 checksums for verification"
+            echo ""
+            echo "### Docker Images"
+            echo '```bash'
+            echo "# Multi-protocol server (REST, gRPC, QUIC, MCP)"
+            echo "docker pull ghcr.io/jeremyhahn/xkms-server:${{ needs.create-release.outputs.version }}"
+            echo ""
+            echo "# CLI tool"
+            echo "docker pull ghcr.io/jeremyhahn/xkms-cli:${{ needs.create-release.outputs.version }}"
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
 
   # go-xkms#1026: the run's true terminal state, independent of whether every
   # upstream job in THIS run went green. It runs whenever a release object

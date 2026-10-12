@@ -51,7 +51,7 @@ jobs:
         id: coverage
         run: |
           COVERAGE=$(go tool cover -func=build/coverage/coverage.out | grep total | awk '{print $3}' | sed 's/%//')
-          echo "coverage=${COVERAGE}" >> $GITHUB_OUTPUT
+          echo "coverage=${COVERAGE}" >> "$GITHUB_OUTPUT"
           echo "Total coverage: ${COVERAGE}%"
 
       - name: Check coverage threshold

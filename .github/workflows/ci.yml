@@ -367,16 +367,16 @@ jobs:
           sudo .github/scripts/apt-deps.sh build-essential autoconf automake libtool pkg-config libssl-dev
           sudo sh scripts/build-softhsm.sh
           # Create token directory
-          mkdir -p ${GITHUB_WORKSPACE}/softhsm2/tokens
+          mkdir -p "${GITHUB_WORKSPACE}/softhsm2/tokens"
           # Create SoftHSM2 config
-          cat > ${GITHUB_WORKSPACE}/softhsm2.conf << EOF
+          cat > "${GITHUB_WORKSPACE}/softhsm2.conf" << EOF
           directories.tokendir = ${GITHUB_WORKSPACE}/softhsm2/tokens
           objectstore.backend = file
           log.level = INFO
           EOF
           # Verify config file was created
           echo "=== SoftHSM2 Config ==="
-          cat ${GITHUB_WORKSPACE}/softhsm2.conf
+          cat "${GITHUB_WORKSPACE}/softhsm2.conf"
           echo "=== Initializing token ==="
           # Initialize test token
           softhsm2-util --init-token --slot 0 --label "test-token" --so-pin 1234 --pin 1234
@@ -423,7 +423,7 @@ jobs:
         id: coverage
         run: |
           COVERAGE=$(go tool cover -func=build/coverage/coverage.out | grep total | awk '{print $3}' | sed 's/%//')
-          echo "coverage=${COVERAGE}" >> $GITHUB_OUTPUT
+          echo "coverage=${COVERAGE}" >> "$GITHUB_OUTPUT"
           echo "Total coverage: ${COVERAGE}%"
 
       - name: Check coverage threshold
@@ -944,8 +944,8 @@ jobs:
           # (go-xkms#1418). Installs at the distro's paths.
           sudo .github/scripts/apt-deps.sh build-essential autoconf automake libtool pkg-config libssl-dev
           sudo sh scripts/build-softhsm.sh
-          mkdir -p ${GITHUB_WORKSPACE}/softhsm2/tokens
-          cat > ${GITHUB_WORKSPACE}/softhsm2.conf << EOF
+          mkdir -p "${GITHUB_WORKSPACE}/softhsm2/tokens"
+          cat > "${GITHUB_WORKSPACE}/softhsm2.conf" << EOF
           directories.tokendir = ${GITHUB_WORKSPACE}/softhsm2/tokens
           objectstore.backend = file
           log.level = INFO
@@ -993,7 +993,10 @@ jobs:
         # -p 2: go test runs up to GOMAXPROCS test binaries at once, and under
         # -race the password-vault packages (pkg/api/mcp, pkg/api/rest) each
         # peak near 7 GB, so eight in parallel OOM-killed this job (#1389).
-        run: go test -race -p 2 -timeout 15m -tags="codec_cbor codec_json codec_msgpack tpm_simulator frost" $PACKAGES
+        # PACKAGES is a space-separated list and is split into arguments.
+        run: |
+          # shellcheck disable=SC2086
+          go test -race -p 2 -timeout 15m -tags="codec_cbor codec_json codec_msgpack tpm_simulator frost" $PACKAGES
 
       - name: No root-module Go changes
         if: needs.changes.outputs.full_tier != 'true' && steps.pkgs.outputs.packages == ''
@@ -1055,6 +1058,12 @@ jobs:
       # formats; no network, no host mutation, under a second.
       - name: Test the pinned-version gate
         run: .github/scripts/require-tool-test.sh
+
+      # `make lint` (actionlint) and `make trivy`/`make trivy-image` must fail
+      # closed when their tool is missing, never print a skip and pass
+      # (go-xkms#1434). Fakes on a replaced PATH, GOPROXY=off; no network.
+      - name: Test the Makefile gates fail closed
+        run: .github/scripts/make-gates-test.sh
 
       # Same reasoning for the apt step every cgo job runs (#342): the script
       # must skip present packages, retry a bounded number of times, and
@@ -1688,22 +1697,6 @@ jobs:
         with:
           sarif_file: ${{ steps.grype.outputs.sarif }}
           category: grype
-      - name: Push Docker image
-        if: false  # Disabled - Docker publishing is handled by release workflow only
-        uses: docker/build-push-action@ca052bb54ab0790a636c9b5f226502c73d547a25 # v5
-        with:
-          context: .
-          file: Dockerfile.cli
-          platforms: linux/amd64,linux/arm64
-          push: true
-          tags: ${{ steps.meta.outputs.tags }}
-          labels: ${{ steps.meta.outputs.labels }}
-          build-args: |
-            VERSION=dev
-            COMMIT=${{ github.sha }}
-            DATE=${{ github.event.repository.updated_at }}
-          cache-from: ${{ github.server_url == 'https://github.com' && 'type=gha' || '' }}
-          cache-to: ${{ github.server_url == 'https://github.com' && 'type=gha,mode=max' || '' }}
 
   # Job 7: Race Detector
   race:
@@ -1754,9 +1747,9 @@ jobs:
       - name: Configure SoftHSM2
         run: |
           # Create token directory
-          mkdir -p ${GITHUB_WORKSPACE}/softhsm2/tokens
+          mkdir -p "${GITHUB_WORKSPACE}/softhsm2/tokens"
           # Create SoftHSM2 config
-          cat > ${GITHUB_WORKSPACE}/softhsm2.conf << EOF
+          cat > "${GITHUB_WORKSPACE}/softhsm2.conf" << EOF
           directories.tokendir = ${GITHUB_WORKSPACE}/softhsm2/tokens
           objectstore.backend = file
           log.level = INFO

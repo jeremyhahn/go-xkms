@@ -1,6 +1,6 @@
 # Lint gates
 
-Status: current. Last verified: 2026-10-01.
+Status: current. Last verified: 2026-10-11.
 
 What CI's Lint job (`.github/workflows/ci.yml`) enforces on every push and
 pull request, in order, and the Make target behind each step so a developer
@@ -12,9 +12,10 @@ runs the identical check locally before pushing.
 |-------|------|-------------|-------------------|
 | 1 | gofmt | `make fmt-check` | Every `.go` file in every module is `gofmt -s` formatted. Path-based, so one run reaches all four modules. |
 | 2 | go vet | `make vet` | `go vet` passes for every module in `LINT_MODULES` (`.`, `sdk/go`, `xkey`, `web/desktop`), each under its own build tags (`LINT_TAGS_xkey` for `xkey`; untagged elsewhere). Go tooling does not cross a module boundary, so this loops rather than running `go vet ./...` once from the root. |
-| 3 | golangci-lint | `make lint` | The pinned `golangci-lint` version (`GOLANGCI_LINT_VERSION` in `ci.yml`) against `.golangci.yml`, over the same `LINT_MODULES` × tags matrix as `go vet`. CI requires the exact pinned version (`.github/scripts/require-tool.sh`) rather than falling back to an install, so a version drift fails loudly instead of scanning with an unknown tool. |
-| 4 | secure-analyzer selftest | `make secure-analyzer-selftest` | Proves the next gate can still find a known violation and stays silent on its compliant counterpart, before that gate's own result is trusted. See below. |
-| 5 | secure-analyzer | `make secure-analyzer` | go-qrdb's `pkg/secure/analyzer` rules (raw `memguard` imports, `ssh.ParsePrivateKey`, sensitive-named `string`/`[]byte` struct fields, unborrowed `Buffer.Bytes`, string conversions of protected bytes, unwiped copy-outs) over every module under every declared tag combination. See below. |
+| 3 | actionlint | `make lint` (`make actionlint`) | Every workflow in `.github/workflows/` passes actionlint at `ACTIONLINT_VERSION` (Makefile): syntax, expressions, runner labels, and every `run:` script through shellcheck when it is installed. A missing or different actionlint is replaced by the pin (`make install-actionlint`); a pin that cannot be installed fails the target. The installed version must match the pin exactly. The target fails at once when `.github/actionlint.yaml` is missing: it lists the self-hosted runner labels the workflows request (`qwen`), and must name exactly those. `make install-trivy` builds Trivy at `TRIVY_VERSION` with `go install`, stamping the version as Trivy's release build does; no install script is piped into a shell. A missing Trivy, or one that does not report the pin, is replaced by the pin, and an install that does not report the pin fails the target. `.github/scripts/make-gates-test.sh` proves this gate, and `make trivy`/`make trivy-image`, fail closed with the tool absent (go-xkms#1434). |
+| 4 | golangci-lint | `make lint` | The pinned `golangci-lint` version (`GOLANGCI_LINT_VERSION` in `ci.yml`) against `.golangci.yml`, over the same `LINT_MODULES` × tags matrix as `go vet`. CI requires the exact pinned version (`.github/scripts/require-tool.sh`) rather than falling back to an install, so a version drift fails loudly instead of scanning with an unknown tool. |
+| 5 | secure-analyzer selftest | `make secure-analyzer-selftest` | Proves the next gate can still find a known violation and stays silent on its compliant counterpart, before that gate's own result is trusted. See below. |
+| 6 | secure-analyzer | `make secure-analyzer` | go-qrdb's `pkg/secure/analyzer` rules (raw `memguard` imports, `ssh.ParsePrivateKey`, sensitive-named `string`/`[]byte` struct fields, unborrowed `Buffer.Bytes`, string conversions of protected bytes, unwiped copy-outs) over every module under every declared tag combination. See below. |
 
 `make ci-gate` (the `ci-gate` job) is the umbrella that all of the above,
 plus the other jobs (`test`, `security`, `build`, `race`, ...), must pass

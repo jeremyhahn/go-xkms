@@ -3887,6 +3887,48 @@ vet-integration:
 	@scripts/vet-integration.sh
 	@echo "$(GREEN)✓ Integration compile gate passed$(RESET)"
 
+# actionlint validates workflow syntax, expressions, runner labels and (when
+# shellcheck is installed) every run: script before CI sees them (go-xkms#1434).
+# yaml parsers accept what Gitea rejects -- a duplicate key makes Gitea create
+# no run at all, silently. Pinned; a missing or different version is replaced
+# by the pin, and a pin that cannot be installed fails the target.
+ACTIONLINT_VERSION := v1.7.12
+ACTIONLINT_MODULE := github.com/rhysd/actionlint/cmd/actionlint
+# actionlint takes files, not directories, and with no arguments lints whatever
+# .github/workflows is nearest the caller's working directory: name the files
+# and the config so the gate lints this repository from anywhere.
+ACTIONLINT_CONFIG := $(CURDIR)/.github/actionlint.yaml
+# The recipe globs this directory when it runs, not when make parses the file,
+# so a workflow created after make started is still linted; none fails the gate.
+ACTIONLINT_WORKFLOW_DIR := $(CURDIR)/.github/workflows
+
+.PHONY: actionlint
+## actionlint: Lint .github/workflows with actionlint at ACTIONLINT_VERSION (installs the pin when absent)
+actionlint:
+	@echo "$(CYAN)$(BOLD)→ Running actionlint $(ACTIONLINT_VERSION)...$(RESET)"
+	@if [ ! -f "$(ACTIONLINT_CONFIG)" ]; then \
+		echo "$(RED)$(BOLD)✗ actionlint config $(ACTIONLINT_CONFIG) is missing: it declares the self-hosted runner labels the workflows use$(RESET)"; \
+		exit 1; \
+	fi
+	@set --; \
+	for f in "$(ACTIONLINT_WORKFLOW_DIR)"/*.yml "$(ACTIONLINT_WORKFLOW_DIR)"/*.yaml; do \
+		if [ -f "$$f" ]; then set -- "$$@" "$$f"; fi; \
+	done; \
+	if [ $$# -eq 0 ]; then \
+		echo "$(RED)$(BOLD)✗ no workflows (*.yml, *.yaml) in $(ACTIONLINT_WORKFLOW_DIR): nothing for actionlint to lint$(RESET)"; \
+		exit 1; \
+	fi; \
+	ACTIONLINT_BIN=$$(command -v actionlint 2>/dev/null || echo "$$(go env GOPATH)/bin/actionlint"); \
+	if [ "$$($$ACTIONLINT_BIN -version 2>/dev/null | head -n 1)" != "$(ACTIONLINT_VERSION)" ]; then \
+		$(MAKE) --no-print-directory install-actionlint || exit 1; \
+		ACTIONLINT_BIN="$$(go env GOPATH)/bin/actionlint"; \
+	fi; \
+	if ! $$ACTIONLINT_BIN -config-file "$(ACTIONLINT_CONFIG)" "$$@"; then \
+		echo "$(RED)$(BOLD)✗ actionlint found problems in $(ACTIONLINT_WORKFLOW_DIR)$(RESET)"; \
+		exit 1; \
+	fi; \
+	echo "$(GREEN)✓ Workflows pass actionlint$(RESET)"
+
 # CROSS_CHECK_OSES are the platforms sdk/go must compile for with cgo off: a
 # consumer cross-compiling its own binary for one of them builds every package
 # the SDK imports (go-xkms#1466).
@@ -3905,8 +3947,8 @@ build-cross-check:
 	@echo "$(GREEN)✓ sdk/go builds for $(CROSS_CHECK_OSES)$(RESET)"
 
 .PHONY: lint
-## lint: Run golangci-lint across every module (LINT_MODULES), plus the root module's backend and raft tag sets
-lint:
+## lint: Run actionlint over the workflows, then golangci-lint across every module (LINT_MODULES), plus the root module's backend and raft tag sets
+lint: actionlint
 	@echo "$(CYAN)$(BOLD)→ Running linters...$(RESET)"
 	@GOLANGCI_LINT_BIN=$$(command -v golangci-lint 2>/dev/null || echo "$$HOME/go/bin/golangci-lint"); \
 	if [ ! -x "$$GOLANGCI_LINT_BIN" ]; then \
@@ -4054,7 +4096,8 @@ trivy:
 			--skip-dirs bin --skip-dirs build . && \
 		echo "$(GREEN)✓ Trivy scan complete - no critical/high vulnerabilities found$(RESET)"; \
 	else \
-		echo "$(YELLOW)⚠ trivy not found - skipping (install with: make install-trivy)$(RESET)"; \
+		echo "$(RED)✗ trivy is required but not installed (install with: make install-trivy)$(RESET)"; \
+		exit 1; \
 	fi
 
 # Every product image this Makefile builds. devops.md §8 requires all of them
@@ -4086,8 +4129,9 @@ trivy-image: docker-build-all
 		fi; \
 		echo "$(GREEN)✓ Trivy image scan complete$(RESET)"; \
 	else \
-		echo "$(YELLOW)⚠ trivy not found - skipping image scan$(RESET)"; \
+		echo "$(RED)✗ trivy is required but not installed$(RESET)"; \
 		echo "$(YELLOW)  Install with: make install-trivy$(RESET)"; \
+		exit 1; \
 	fi
 
 .PHONY: modverify
@@ -4111,17 +4155,34 @@ check: fmt vet lint gosec vuln
 # Tool Installation
 # ==============================================================================
 
+# The version the CI and release Trivy images run (TRIVY_DIGEST in ci.yml and
+# release.yml); bump every trivy pin together.
+TRIVY_VERSION := v0.75.0
+# Built from source through the module proxy and checksum database, like
+# actionlint, rather than by piping a remote install script into a shell.
+TRIVY_MODULE := github.com/aquasecurity/trivy/cmd/trivy
+# What `trivy --version` reports first. A source build reports "dev" unless the
+# version is stamped the way trivy's own release build stamps it.
+TRIVY_VERSION_LINE := Version: $(TRIVY_VERSION:v%=%)
+TRIVY_LDFLAGS := -X github.com/aquasecurity/trivy/pkg/version/app.ver=$(TRIVY_VERSION:v%=%)
+
 .PHONY: install-trivy
-## install-trivy: Install Trivy vulnerability scanner
+## install-trivy: Install Trivy vulnerability scanner at TRIVY_VERSION
 install-trivy:
-	@echo "$(CYAN)$(BOLD)→ Installing trivy...$(RESET)"
-	@if ! command -v trivy >/dev/null 2>&1; then \
-		echo "$(CYAN)  Installing Trivy vulnerability scanner...$(RESET)"; \
-		curl -sfL https://raw.githubusercontent.com/aquasecurity/trivy/main/contrib/install.sh | sh -s -- -b $$(go env GOPATH)/bin; \
-		echo "$(GREEN)  ✓ trivy installed$(RESET)"; \
-	else \
-		echo "$(GREEN)  ✓ trivy already installed$(RESET)"; \
-	fi
+	@echo "$(CYAN)$(BOLD)→ Installing trivy $(TRIVY_VERSION)...$(RESET)"
+	@if [ "$$(trivy --version 2>/dev/null | head -n 1)" = "$(TRIVY_VERSION_LINE)" ]; then \
+		echo "$(GREEN)  ✓ trivy $(TRIVY_VERSION) already installed$(RESET)"; \
+		exit 0; \
+	fi; \
+	go install -ldflags "$(TRIVY_LDFLAGS)" $(TRIVY_MODULE)@$(TRIVY_VERSION) || { \
+		echo "$(RED)✗ could not install trivy $(TRIVY_VERSION)$(RESET)"; \
+		exit 1; \
+	}; \
+	if [ "$$($$(go env GOPATH)/bin/trivy --version 2>/dev/null | head -n 1)" != "$(TRIVY_VERSION_LINE)" ]; then \
+		echo "$(RED)✗ installed trivy does not report $(TRIVY_VERSION)$(RESET)"; \
+		exit 1; \
+	fi; \
+	echo "$(GREEN)  ✓ trivy $(TRIVY_VERSION) installed$(RESET)"
 
 .PHONY: install-govulncheck
 ## install-govulncheck: Install govulncheck vulnerability scanner
@@ -4147,9 +4208,23 @@ install-gosec:
 		echo "$(GREEN)  ✓ gosec already installed$(RESET)"; \
 	fi
 
+.PHONY: install-actionlint
+## install-actionlint: Install actionlint at ACTIONLINT_VERSION into GOPATH/bin
+install-actionlint:
+	@echo "$(CYAN)$(BOLD)→ Installing actionlint $(ACTIONLINT_VERSION)...$(RESET)"
+	@go install $(ACTIONLINT_MODULE)@$(ACTIONLINT_VERSION) || { \
+		echo "$(RED)✗ could not install actionlint $(ACTIONLINT_VERSION)$(RESET)"; \
+		exit 1; \
+	}
+	@if [ "$$($$(go env GOPATH)/bin/actionlint -version | head -n 1)" != "$(ACTIONLINT_VERSION)" ]; then \
+		echo "$(RED)✗ installed actionlint does not report $(ACTIONLINT_VERSION)$(RESET)"; \
+		exit 1; \
+	fi
+	@echo "$(GREEN)  ✓ actionlint $(ACTIONLINT_VERSION) installed$(RESET)"
+
 .PHONY: install-tools
-## install-tools: Install development tools (golangci-lint, gosec, govulncheck, trivy, etc.)
-install-tools: install-gosec install-govulncheck install-trivy
+## install-tools: Install development tools (golangci-lint, gosec, govulncheck, trivy, actionlint, etc.)
+install-tools: install-gosec install-govulncheck install-trivy install-actionlint
 	@echo "$(CYAN)$(BOLD)→ Installing development tools...$(RESET)"
 	@echo "$(CYAN)  Installing golangci-lint v2.14.0 (same as CI)...$(RESET)"
 	@cd /tmp && \
