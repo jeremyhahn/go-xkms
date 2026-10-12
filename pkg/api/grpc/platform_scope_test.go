@@ -38,7 +38,7 @@ import (
 // to a tenant-local Admin with NotFound and the unknown-tenant message, and
 // still served to the platform identity.
 
-const platformScopeSecret = "credentials/pkcs11-pin"
+const platformScopeSecret = "vault-token"
 
 // newPlatformScopeGRPC returns a Service over an XKMSService composed with an
 // unsealed system barrier, a PIN backend with both PINs set, a platform store

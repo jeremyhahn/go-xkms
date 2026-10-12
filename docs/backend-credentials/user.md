@@ -1,6 +1,6 @@
 # Backend Credentials — User Guide
 
-> **Status: NORMATIVE** · Feature: `backend-credentials` · Repo: `go-xkms` · Last verified: 2026-10-11
+> **Status: NORMATIVE** · Feature: `backend-credentials` · Repo: `go-xkms` · Last verified: 2026-10-12
 
 Backend credentials are the secrets a crypto backend needs before it can
 start: the PKCS#11 User PIN, a cloud KMS secret, a Vault token. `xkmsd`
@@ -69,17 +69,12 @@ Your identity must be platform-scoped. A tenant administrator gets
 
 ## See what is still outstanding
 
-`xkmsctl credential list` currently gets a 404 from `xkmsd` (see
-[`cli.md`](cli.md) §"Known gap"). Until that is fixed, call the route
-directly:
-
 ```
-curl --cert admin.pem --key admin-key.pem --cacert ca.pem \
-  https://kms.example.com:8443/api/v1/credentials/
+xkmsctl credential list --server https://kms.example.com:8443 \
+  --tls-cert admin.pem --tls-key admin-key.pem --tls-ca ca.pem
 ```
 
-The response contains names only. The credential API never returns a value.
-Under a hardware or cloud strategy, though, a platform-scoped caller with
-platform-secrets read permission can read the stored entry
-`credentials/<name>` through [`../platform-secrets/`](../platform-secrets/).
-Grant that permission accordingly.
+The response contains names only. No API returns a credential's value.
+Under a hardware or cloud strategy the value is stored as the platform
+secret `credentials/<name>`, but the platform-secrets commands refuse that
+name with a permission error and leave it out of their listing.

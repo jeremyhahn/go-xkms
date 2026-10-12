@@ -174,3 +174,38 @@ func TestServiceSealStoreStatus_Unavailable(t *testing.T) {
 	_, err := svc.SealStoreStatus(context.Background(), &pb.SealStoreStatusRequest{})
 	assert.Equal(t, codes.Unavailable, status.Code(err))
 }
+
+// newCredentialSealStoreGRPCService returns a service over a platform store
+// holding a backend credential (credentials/db-password) and an ordinary
+// platform secret (vault-token).
+func newCredentialSealStoreGRPCService(t *testing.T) *Service {
+	t.Helper()
+	store, err := seal.NewPlatformStore(storage.NewMemory(), nil)
+	require.NoError(t, err)
+	require.NoError(t, store.Put(context.Background(), "credentials/db-password", []byte("hunter2")))
+	require.NoError(t, store.Put(context.Background(), "vault-token", []byte("token")))
+	xkmsSvc := &xkms.XKMSService{}
+	xkmsSvc.SetPlatformStore(store)
+	return NewService(nil, nil, xkmsSvc)
+}
+
+func TestServiceSealStoreGet_CredentialNamespaceDenied(t *testing.T) {
+	svc := newCredentialSealStoreGRPCService(t)
+	resp, err := svc.SealStoreGet(context.Background(), &pb.SealStoreGetRequest{Name: "credentials/db-password"})
+	assert.Nil(t, resp)
+	assert.Equal(t, codes.PermissionDenied, status.Code(err))
+}
+
+func TestServiceSealStoreGet_PlatformSecretBesideCredential(t *testing.T) {
+	svc := newCredentialSealStoreGRPCService(t)
+	resp, err := svc.SealStoreGet(context.Background(), &pb.SealStoreGetRequest{Name: "vault-token"})
+	require.NoError(t, err)
+	assert.Equal(t, []byte("token"), resp.Secret)
+}
+
+func TestServiceSealStoreList_OmitsCredentials(t *testing.T) {
+	svc := newCredentialSealStoreGRPCService(t)
+	resp, err := svc.SealStoreList(context.Background(), &pb.SealStoreListRequest{})
+	require.NoError(t, err)
+	assert.Equal(t, []string{"vault-token"}, resp.Names)
+}

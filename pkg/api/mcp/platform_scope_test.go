@@ -36,7 +36,7 @@ import (
 // to a tenant-local Admin with the not-found code and the unknown-tenant
 // message, and still served to the platform identity.
 
-const platformScopeSecret = "credentials/pkcs11-pin"
+const platformScopeSecret = "vault-token"
 
 // newPlatformScopeMCP returns a Server whose XKMSService is composed with an
 // unsealed system barrier, a PIN backend with both PINs set, a platform store
@@ -74,11 +74,11 @@ func newPlatformScopeMCP(t *testing.T) *Server {
 // platformScopeMethods is every MCP method #1226 and #1227 name, with params
 // that pass each handler's own validation.
 var platformScopeMethods = map[string]string{
-	"sealStore.put":      `{"name":"credentials/pkcs11-pin","secret":"b3ZlcndyaXR0ZW4="}`,
-	"sealStore.get":      `{"name":"credentials/pkcs11-pin"}`,
-	"sealStore.delete":   `{"name":"credentials/pkcs11-pin"}`,
+	"sealStore.put":      `{"name":"vault-token","secret":"b3ZlcndyaXR0ZW4="}`,
+	"sealStore.get":      `{"name":"vault-token"}`,
+	"sealStore.delete":   `{"name":"vault-token"}`,
 	"sealStore.list":     `{}`,
-	"sealStore.reseal":   `{"name":"credentials/pkcs11-pin"}`,
+	"sealStore.reseal":   `{"name":"vault-token"}`,
 	"sealStore.status":   `{}`,
 	"credentials.submit": `{"name":"pkcs11-pin","value":"c2VjcmV0"}`,
 

@@ -1,6 +1,6 @@
 # Backend Credentials — CLI
 
-> **Status: NORMATIVE** · Feature: `backend-credentials` · Repo: `go-xkms` · Last verified: 2026-10-11
+> **Status: NORMATIVE** · Feature: `backend-credentials` · Repo: `go-xkms` · Last verified: 2026-10-12
 
 Binary: `xkmsctl`, group `credential` (`cmd/xkmsctl/credential.go:50-67`,
 registered at `cmd/xkmsctl/root.go:182`).
@@ -8,7 +8,7 @@ registered at `cmd/xkmsctl/root.go:182`).
 | Verb | Purpose | REST call |
 |---|---|---|
 | `credential submit` | Submit or replace a backend credential | `POST /api/v1/credentials/submit` (`credential.go:145`) |
-| `credential list` (alias `ls`) | List the names of the credentials the server holds | `GET /api/v1/credentials` (`credential.go:239`), see "Known gap" below |
+| `credential list` (alias `ls`) | List the names of the credentials the server holds | `GET /api/v1/credentials` (`credential.go:239`) |
 | `credential strategy` | Show the configured strategy and whether it unseals automatically | `GET /api/v1/credentials/strategy` (`credential.go:193`) |
 
 There is no `rotate`, `get` or `delete` verb. To rotate a credential, run
@@ -66,14 +66,6 @@ xkmsctl credential list --server https://kms.example.com:8443 \
 Text output: `Submitted credentials:` followed by one name per line, or
 `No credentials submitted.` JSON output: `{"names": [...]}`
 (`credential.go:255-268`).
-
-### Known gap
-
-The CLI requests `/api/v1/credentials` without a trailing slash. The server
-routes only `/api/v1/credentials/` (`pkg/api/rest/routes.go:416`), and the
-chi router does not redirect between the two, so against a real `xkmsd` this
-verb gets **404**. Until the paths match, call the REST route directly (see
-[`api.md`](api.md)).
 
 ## `credential strategy`
 

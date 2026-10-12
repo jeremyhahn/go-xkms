@@ -67,7 +67,7 @@ The binding is applied once, in `XKMSService`, and no transport repeats it:
 | `UpdateTenantQuotas` | `requirePlatformScope` | `pkg/xkms/servicer_tenant.go:340` |
 | `BarrierEnableEncryption` | `bindTenantTarget` (empty `TenantID` = system barrier) | `pkg/xkms/servicer_barrier.go:377` |
 | `SignCSR` | `bindTenantTarget` when `TenantID` is set (the SPIFFE tenant SAN) | `pkg/xkms/servicer_ca.go:147` |
-| `SealStorePut` / `Get` / `Delete` / `List` / `Reseal` / `Status` | `requirePlatformScope` (#1226) | `pkg/xkms/servicer_seal_store.go:40,54,75,89,106,120` |
+| `SealStorePut` / `Get` / `Delete` / `List` / `Reseal` / `Status` | `requirePlatformScope` (#1226) | `pkg/xkms/servicer_seal_store.go:47,65,90,109,127,146` |
 | `SubmitCredential`, `ListCredentials` | `requirePlatformScope` (#1226) | `pkg/xkms/servicer_credentials.go:32,73` |
 | system barrier: `BarrierInitialize[WithCredentials]`, `BarrierUnseal[WithCredentials]`, `BarrierSeal`, `BarrierStatus`, `BarrierInitializeShamir`, `BarrierUnsealWithShare(s)`, `BarrierRekey`, `BarrierGenerateRecoveryKeys`, `BarrierRecoverWithKeys`, `BarrierDeleteRecoveryKeys`, `BarrierHasRecoveryKeys`, `BarrierGenerateRootToken` | `requirePlatformScope` (#1227) | `pkg/xkms/servicer_barrier.go:89,117,128,139,170,205,236,253,278,300,314,325,342` |
 | `SetSOPIN`, `SetUserPIN`, `ChangeSOPIN`, `ChangeUserPIN`, `VerifySOPIN`, `VerifyUserPIN`, `GetLockoutStatus`, `ResetLockout` | `requirePlatformScope` (#1227) | `pkg/xkms/servicer_pin.go:43,54,65,76,87,98,109,136` |

@@ -407,13 +407,14 @@ func Routes() []RouteSpec {
 	// --- Credentials. submit and strategy carry the credentials:* pairs
 	// the MCP credentials.* methods are gated with; neither is on the
 	// pre-operational ceremony allowlist, so gating them never blocks an
-	// account-less officer. GET /credentials/ has no counterpart on any
+	// account-less officer. GET /credentials has no counterpart on any
 	// other transport, so it has no canonical pair to adopt and stays
-	// session-authenticated until one is defined. ---
+	// session-authenticated until one is defined. It is the collection path
+	// with no trailing slash, the one xkmsctl calls (go-xkms#1464). ---
 	hasCreds := func(s *Server) bool { return s.credentialHandlers != nil }
 	permIf("POST", "/credentials/submit", auth.ResourceCredentials, auth.ActionSubmit, hasCreds, func(s *Server) http.HandlerFunc { return s.credentialHandlers.HandleSubmit })
 	permIf("GET", "/credentials/strategy", auth.ResourceCredentials, auth.ActionStrategy, hasCreds, func(s *Server) http.HandlerFunc { return s.credentialHandlers.HandleGetStrategy })
-	session("GET", "/credentials/", hasCreds, func(s *Server) http.HandlerFunc { return s.credentialHandlers.HandleList })
+	session("GET", "/credentials", hasCreds, func(s *Server) http.HandlerFunc { return s.credentialHandlers.HandleList })
 
 	// --- Session endpoints. Exchange endpoints are unauthenticated (they
 	// ARE the authentication); introspection requires a live session. ---

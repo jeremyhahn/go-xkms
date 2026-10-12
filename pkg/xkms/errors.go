@@ -350,6 +350,13 @@ var (
 	// none is configured for this server, or startup has not yet reached
 	// publication (pkg/server's startNoiseBootstrap goroutine).
 	ErrBootstrapListenerNotEnabled = errors.New("keystore: bootstrap listener not enabled")
+
+	// ErrReservedSecretName is returned by the platform-secrets operations for
+	// a name inside the backend-credential namespace (credentials/<name>). A
+	// credential's value is write-only: only the credentials service reads it,
+	// and it is reached through the credential API, never platform secrets
+	// (go-xkms#1465).
+	ErrReservedSecretName = errors.New("seal store: name is reserved for backend credentials")
 )
 
 // Auto-initialization errors

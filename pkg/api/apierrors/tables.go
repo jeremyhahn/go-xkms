@@ -41,6 +41,9 @@ var SealStoreSentinelClasses = []SentinelClass{
 	{xkms.ErrNilRequest, ClassInvalidArgument},
 	{seal.ErrSecretNotFound, ClassNotFound},
 	{seal.ErrInvalidSecretName, ClassInvalidArgument},
+	// The backend-credential namespace is not part of platform secrets: a
+	// credential's value is write-only (go-xkms#1465).
+	{xkms.ErrReservedSecretName, ClassPermissionDenied},
 	{seal.ErrResealFailed, ClassInternal},
 	// Every operation on this platform-global state is platform-scoped: a
 	// tenant-scoped caller is refused with xkms.TenantBindingError, which

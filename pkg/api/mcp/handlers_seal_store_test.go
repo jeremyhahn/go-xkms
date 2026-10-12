@@ -226,6 +226,32 @@ func TestInvokeMethod_SealStore_SecretNotFound(t *testing.T) {
 	})
 }
 
+func TestInvokeMethod_SealStore_CredentialNamespace(t *testing.T) {
+	server := createTestServer(t)
+	defer cleanupXKMS()
+	store := newFakeSealStore()
+	store.secrets["credentials/db-password"] = []byte("hunter2")
+	store.secrets["vault-token"] = []byte("token")
+	server.xkmsService.SetPlatformStore(store)
+
+	t.Run("credential refused", func(t *testing.T) {
+		result, err := server.InvokeMethod(context.Background(), "sealStore.get", json.RawMessage(`{"name":"credentials/db-password"}`))
+		assert.Nil(t, result)
+		var keyErr *KeyOpError
+		require.ErrorAs(t, err, &keyErr)
+		assert.Equal(t, ErrCodeForbidden, keyErr.Code)
+		assert.ErrorIs(t, err, xkms.ErrReservedSecretName)
+	})
+
+	t.Run("platform secret readable", func(t *testing.T) {
+		result, err := server.InvokeMethod(context.Background(), "sealStore.get", json.RawMessage(`{"name":"vault-token"}`))
+		require.NoError(t, err)
+		resp, ok := result.(*transport.SealStoreGetResponse)
+		require.True(t, ok, "unexpected result type %T", result)
+		assert.Equal(t, []byte("token"), resp.Secret)
+	})
+}
+
 // TestInvokeMethod_SealStore_ResealFailed proves sealStore.reseal reports
 // Internal (apierrors.ClassInternal, matching gRPC's codes.Internal) for
 // seal.ErrResealFailed, and that the failure still reaches the caller as a

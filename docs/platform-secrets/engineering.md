@@ -1,6 +1,6 @@
 # Platform Secrets — Engineering Contract
 
-> **Status: NORMATIVE** · Feature: `platform-secrets` · Repo: `go-xkms` · Last verified: 2026-10-07
+> **Status: NORMATIVE** · Feature: `platform-secrets` · Repo: `go-xkms` · Last verified: 2026-10-11
 
 ## Exported surface — `pkg/seal`
 
@@ -75,7 +75,7 @@ Note the asymmetry: the Go interface has `Exists`, the transport interface has
 - **The store is platform-scoped, and reached only through the service.**
   Every `XKMSService.SealStore*` method refuses a tenant-scoped caller with
   `*xkms.TenantBindingError` before the store is touched
-  (`pkg/xkms/servicer_seal_store.go:40,54,75,89,106,120`, go-xkms#1226), and
+  (`pkg/xkms/servicer_seal_store.go:47,65,90,109,127,146`, go-xkms#1226), and
   no transport holds the `PlatformStore`: REST
   (`pkg/api/rest/seal_store_handlers.go`), gRPC/Unix
   (`pkg/api/grpc/service_seal_store.go`) and MCP
@@ -84,6 +84,19 @@ Note the asymmetry: the Go interface has `Exists`, the transport interface has
   without this a tenant-local Admin could read and overwrite the platform's
   backend credentials. Tests: `pkg/xkms/platform_scope_test.go`, and the
   per-transport `platform_scope_test.go` in `pkg/api/rest`, `pkg/api/grpc`,
+  `pkg/api/mcp`.
+- **The `credentials/` namespace is not a platform secret.** The hardware and
+  cloud credential strategies keep backend credentials in this store under
+  `credentials/<name>`, and a credential's value is write-only. The service
+  refuses Put/Get/Delete/Reseal of a name for which `credentials.InNamespace`
+  holds (the name is `path.Clean`ed first) with `xkms.ErrReservedSecretName`
+  (403 / `PermissionDenied` / `ErrCodeForbidden`), and List/Status omit those
+  names (go-xkms#1465). The credentials service holds the `PlatformStore`
+  directly and is the namespace's only reader. Tests:
+  `pkg/xkms/servicer_seal_store_test.go`
+  (`TestSealStore_CredentialNamespaceRefused`, a credential submitted through
+  the real credentials service), and the per-transport
+  `*CredentialNamespace*` tests in `pkg/api/rest`, `pkg/api/grpc`,
   `pkg/api/mcp`.
 - **`ErrSecretNotFound` distinguishes absent from unreadable.** A sealed secret
   that will not unseal is not "not found", and code that collapses the two makes

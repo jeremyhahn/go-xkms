@@ -1,6 +1,6 @@
 # Platform Secrets — API
 
-> **Status: NORMATIVE** · Feature: `platform-secrets` · Repo: `go-xkms` · Last verified: 2026-09-28 (#1226)
+> **Status: NORMATIVE** · Feature: `platform-secrets` · Repo: `go-xkms` · Last verified: 2026-10-11 (#1465)
 
 Transport shapes: [`../key-management/api.md`](../key-management/api.md)
 §"How the six transports are shaped".
@@ -34,17 +34,37 @@ The store holds platform-global secrets -- the backend credentials live under
 operation is refused to a tenant-scoped caller, including a tenant-local
 Admin whose `keys:*` grants pass the RBAC gate (go-xkms#1226). Each service
 method calls `requirePlatformScope` before touching the store
-(`pkg/xkms/servicer_seal_store.go:40,54,75,89,106,120`). The refusal reads
+(`pkg/xkms/servicer_seal_store.go:47,65,90,109,127,146`). The refusal reads
 exactly as a missing tenant:
 
 | Transport | Answer | Mapping site |
 |---|---|---|
 | REST | `404`, `{"error":"<unknown-tenant message>"}` | `pkg/api/rest/seal_store_handlers.go:268` |
-| gRPC / Unix | `codes.NotFound` | `pkg/api/apierrors/tables.go:39` |
-| MCP | `JSONRPCCodeNotFound` | `pkg/api/apierrors/tables.go:39` |
+| gRPC / Unix | `codes.NotFound` | `pkg/api/apierrors/tables.go:50` |
+| MCP | `JSONRPCCodeNotFound` | `pkg/api/apierrors/tables.go:50` |
 
 Only a platform (system-tenant) identity, or an in-process caller with no
 identity, reaches the store.
+
+## The backend-credential namespace
+
+The `credentials/` namespace is not part of platform secrets (go-xkms#1465).
+A backend credential's value is write-only: only the credentials service
+reads it, in process. So Put, Get, Delete and Reseal refuse a name inside the
+namespace with `xkms.ErrReservedSecretName`, before the store is touched, and
+List and Status leave those names out
+(`pkg/xkms/servicer_seal_store.go:56,74,99,120,136,156`). The name is cleaned
+first, so `x/../credentials/db` is refused too
+(`credentials.InNamespace`, `pkg/server/credentials/service.go`).
+
+| Transport | Answer | Mapping site |
+|---|---|---|
+| REST | `403`, `{"error":"Secret name is reserved for backend credentials"}` | `pkg/api/rest/seal_store_handlers.go:261` |
+| gRPC / Unix | `codes.PermissionDenied` | `pkg/api/apierrors/tables.go:45` |
+| MCP | `ErrCodeForbidden` | `pkg/api/apierrors/tables.go:45` |
+
+Embedded and USB return the service's error as is. Credential names are
+listed through the credential API (`xkmsctl credential list`), never here.
 
 ## Request and response schemas
 

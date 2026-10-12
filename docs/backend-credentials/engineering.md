@@ -1,32 +1,32 @@
 # Backend Credentials — Engineering
 
-> **Status: NORMATIVE** · Feature: `backend-credentials` · Repo: `go-xkms` · Last verified: 2026-10-11
+> **Status: NORMATIVE** · Feature: `backend-credentials` · Repo: `go-xkms` · Last verified: 2026-10-12
 
 ## Exported surface — `pkg/server/credentials`
 
 | Symbol | Contract | Source |
 |---|---|---|
-| `StrategyManual`, `StrategyBarrier` | go-qrdb's strategy IDs, re-used | `service.go:34-40` |
-| `Config{Strategy string}` | `""` selects `manual` | `service.go:64-71` |
-| `New(cfg, platformStore, barrier, logger)` | Validates the strategy, then picks the store: platform strategies → `platformCredentials`; `manual`/`barrier` → `qrdbsdk.NewVersionedCredentialService` | `service.go:93-126` |
-| `(*Service).StoreCredential` | Seals a value; name and value must be non-empty | `service.go:129-134` |
-| `(*Service).RetrieveCredential` | Unseals a value. Under `manual` it blocks until the value is submitted or `ctx` is cancelled | `service.go:136-143` |
-| `(*Service).SubmitCredential` | Operator entry point. Under `manual` a name can be submitted once, and a repeat returns `ErrCredentialAlreadySubmitted`. The other strategies overwrite | `service.go:145-162` |
-| `(*Service).DeleteCredential` | Removes a value | `service.go:164-170` |
-| `(*Service).ListCredentials` | Sorted names only | `service.go:172-186` |
-| `(*Service).AutoUnsealAvailable` | `true` for every strategy except `manual` | `service.go:188-192` |
-| `(*Service).Strategy` | The configured name | `service.go:194-197` |
+| `StrategyManual`, `StrategyBarrier` | go-qrdb's strategy IDs, re-used | `service.go:35-41` |
+| `Config{Strategy string}` | `""` selects `manual` | `service.go:74-81` |
+| `New(cfg, platformStore, barrier, logger)` | Validates the strategy, then picks the store: platform strategies → `platformCredentials`; `manual`/`barrier` → `qrdbsdk.NewVersionedCredentialService` | `service.go:103-136` |
+| `(*Service).StoreCredential` | Seals a value; name and value must be non-empty | `service.go:139-144` |
+| `(*Service).RetrieveCredential` | Unseals a value. Under `manual` it blocks until the value is submitted or `ctx` is cancelled | `service.go:146-153` |
+| `(*Service).SubmitCredential` | Operator entry point. Under `manual` a name can be submitted once, and a repeat returns `ErrCredentialAlreadySubmitted`. The other strategies overwrite | `service.go:155-172` |
+| `(*Service).DeleteCredential` | Removes a value | `service.go:174-180` |
+| `(*Service).ListCredentials` | Sorted names only | `service.go:182-196` |
+| `(*Service).AutoUnsealAvailable` | `true` for every strategy except `manual` | `service.go:198-202` |
+| `(*Service).Strategy` | The configured name | `service.go:204-207` |
 
 ## Errors
 
 | Sentinel | When | Source |
 |---|---|---|
-| `ErrInvalidStrategy` | Name not in `validStrategies` | `errors.go:29`, `service.go:99-101` |
-| `ErrNilPlatformStore` | Platform strategy without a store | `errors.go:23`, `service.go:109-111` |
-| `ErrNilBarrier` | `barrier` without a barrier | `errors.go:26`, `service.go:118-120` |
-| `ErrCredentialAlreadySubmitted` | Second `manual` submit of a name | `errors.go:33`, `service.go:157-159` |
-| `ErrCredentialNotFound` | go-qrdb's sentinel; also mapped from `seal.ErrSecretNotFound` for platform strategies | `errors.go:37`, `service.go:219-221`, `:234-236` |
-| `ErrEmptyCredentialName`, `ErrEmptyCredentialValue` | go-qrdb's sentinels, from `validateInput` | `errors.go:40-43`, `service.go:268-276` |
+| `ErrInvalidStrategy` | Name not in `validStrategies` | `errors.go:29`, `service.go:109-111` |
+| `ErrNilPlatformStore` | Platform strategy without a store | `errors.go:23`, `service.go:119-121` |
+| `ErrNilBarrier` | `barrier` without a barrier | `errors.go:26`, `service.go:128-130` |
+| `ErrCredentialAlreadySubmitted` | Second `manual` submit of a name | `errors.go:33`, `service.go:167-169` |
+| `ErrCredentialNotFound` | go-qrdb's sentinel; also mapped from `seal.ErrSecretNotFound` for platform strategies | `errors.go:37`, `service.go:229-231`, `:244-246` |
+| `ErrEmptyCredentialName`, `ErrEmptyCredentialValue` | go-qrdb's sentinels, from `validateInput` | `errors.go:40-43`, `service.go:278-286` |
 
 The service layer adds `xkms.ErrNotConfigured` (no credential service is
 wired) and `xkms.ErrInvalidEncoding` (the submitted value is not standard
@@ -53,10 +53,11 @@ The service is installed with `XKMSService.SetCredentialService`
 - One strategy per `Service`. It never changes after `New`.
 - Platform-strategy entries are namespaced `credentials/` in the platform
   store. `ListCredentials` skips keys outside that prefix
-  (`service.go:244-259`).
+  (`service.go:254-269`).
 - Values never leave the service through `ListCredentials`, and no transport
-  exposes `RetrieveCredential`. The platform-secrets exception is described
-  in [`architecture.md`](architecture.md) §"Read boundary".
+  exposes `RetrieveCredential`. Platform secrets refuse and hide the
+  `credentials/` namespace, so the credentials service is its only reader
+  ([`architecture.md`](architecture.md) §"Read boundary").
 
 ## Configuration
 
@@ -76,16 +77,8 @@ builds".
 | REST handlers and status mapping | `pkg/api/rest/handlers_credentials_test.go` |
 | Route permission pairs | `pkg/api/rest/server_route_authz_test.go` (`credentials` rows) |
 | CLI request paths and output | `cmd/xkmsctl/credential_test.go`, `cmd/xkmsctl/credential_run_test.go` |
+| `credential list` against the real REST router, not a stub | `cmd/xkmsctl/credential_router_test.go` |
+| Platform secrets refuse and hide the `credentials/` namespace | `pkg/xkms/servicer_seal_store_test.go`, `pkg/api/rest/seal_store_handlers_test.go`, `pkg/api/grpc/service_seal_store_i705_test.go`, `pkg/api/mcp/handlers_seal_store_test.go` |
 
 `make test-server` runs these together with the rest of `./pkg/server/...`
 (`Makefile:1199-1201`). There is no target for this package alone.
-
-### Known gap
-
-`xkmsctl credential list` requests `GET /api/v1/credentials`
-(`cmd/xkmsctl/credential.go:239`). The route is registered as
-`GET /api/v1/credentials/` with a trailing slash
-(`pkg/api/rest/routes.go:416`). The REST router is chi
-(`pkg/api/rest/server.go:484`), with no slash redirect, so it answers 404 for
-the path without the slash. The CLI unit test uses a stub server and does
-not catch this.

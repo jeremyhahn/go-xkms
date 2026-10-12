@@ -24,6 +24,7 @@ import (
 	"context"
 	"errors"
 	"log/slog"
+	"path"
 	"slices"
 	"strings"
 
@@ -42,6 +43,15 @@ const (
 // credentialPrefix namespaces credential keys within the platform store,
 // which holds more than credentials.
 const credentialPrefix = "credentials/"
+
+// InNamespace reports whether a platform-store secret name falls inside the
+// credential namespace. The platform-secrets API refuses such names
+// (go-xkms#1465): a credential's value is write-only, and this service is its
+// only reader. The name is cleaned first so a dot-segment spelling of the
+// same key ("x/../credentials/db") is caught too.
+func InNamespace(name string) bool {
+	return strings.HasPrefix(path.Clean("/"+name), "/"+credentialPrefix)
+}
 
 // validStrategies maps all supported strategy names to true for O(1) validation.
 // The cloud-KMS names match the seal layer's StrategyID constants

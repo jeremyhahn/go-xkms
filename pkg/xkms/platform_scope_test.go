@@ -41,7 +41,7 @@ import (
 // transport check can mask a missing service-layer one.
 
 const (
-	platformScopeSecretName = "credentials/pkcs11-pin"
+	platformScopeSecretName = "vault-token"
 	platformScopeSOPIN      = "so-pin-123456"
 	platformScopeUserPIN    = "user-pin-123456"
 	platformScopeTPMTenant  = "tenant-b"

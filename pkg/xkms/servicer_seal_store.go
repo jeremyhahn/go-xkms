@@ -17,15 +17,22 @@ import (
 	"context"
 
 	"github.com/jeremyhahn/go-xkms/pkg/api/transport"
+	credentialspkg "github.com/jeremyhahn/go-xkms/pkg/server/credentials"
 )
 
 // SealStoreServicer defines operations for the platform-sealed secret store.
 //
-// The platform store holds platform-global secrets -- backend credentials
-// live under credentials/<name> -- sealed by the system barrier, so every
-// method is platform-scoped (requirePlatformScope, go-xkms#1226): a
-// tenant-scoped caller is refused with a *TenantBindingError that reads as
-// not-found, before the store is touched.
+// The platform store holds platform-global secrets sealed by the system
+// barrier, so every method is platform-scoped (requirePlatformScope,
+// go-xkms#1226): a tenant-scoped caller is refused with a *TenantBindingError
+// that reads as not-found, before the store is touched.
+//
+// The same store also holds the backend credentials of the hardware and
+// cloud credential strategies, under credentials/<name>. That namespace is
+// not part of platform secrets (go-xkms#1465): a name inside it is refused
+// with ErrReservedSecretName, and List and Status leave it out, so a
+// credential's value stays write-only and is read only by the credentials
+// service.
 type SealStoreServicer interface {
 	SealStorePut(ctx context.Context, req *transport.SealStorePutRequest) error
 	SealStoreGet(ctx context.Context, req *transport.SealStoreGetRequest) (*transport.SealStoreGetResponse, error)
@@ -47,6 +54,9 @@ func (s *XKMSService) SealStorePut(ctx context.Context, req *transport.SealStore
 	if req == nil {
 		return ErrNilRequest
 	}
+	if err := requirePlatformSecretName(req.Name); err != nil {
+		return err
+	}
 	return platformStore.Put(ctx, req.Name, req.Secret)
 }
 
@@ -61,6 +71,9 @@ func (s *XKMSService) SealStoreGet(ctx context.Context, req *transport.SealStore
 	}
 	if req == nil {
 		return nil, ErrNilRequest
+	}
+	if err := requirePlatformSecretName(req.Name); err != nil {
+		return nil, err
 	}
 	secret, err := platformStore.Get(ctx, req.Name)
 	if err != nil {
@@ -84,10 +97,14 @@ func (s *XKMSService) SealStoreDelete(ctx context.Context, req *transport.SealSt
 	if req == nil {
 		return ErrNilRequest
 	}
+	if err := requirePlatformSecretName(req.Name); err != nil {
+		return err
+	}
 	return platformStore.Delete(ctx, req.Name)
 }
 
-// SealStoreList returns a list of all secrets in the platform-sealed store.
+// SealStoreList returns the names of the platform secrets in the
+// platform-sealed store, without the backend-credential namespace.
 func (s *XKMSService) SealStoreList(ctx context.Context) (*transport.SealStoreListResponse, error) {
 	platformStore := s.platformStore.load()
 	if err := requirePlatformScope(ctx, "seal store list", ""); err != nil {
@@ -101,7 +118,7 @@ func (s *XKMSService) SealStoreList(ctx context.Context) (*transport.SealStoreLi
 		return nil, err
 	}
 	return &transport.SealStoreListResponse{
-		Names: names,
+		Names: platformSecretNames(names),
 	}, nil
 }
 
@@ -117,10 +134,14 @@ func (s *XKMSService) SealStoreReseal(ctx context.Context, req *transport.SealSt
 	if req == nil {
 		return ErrNilRequest
 	}
+	if err := requirePlatformSecretName(req.Name); err != nil {
+		return err
+	}
 	return platformStore.Reseal(ctx, req.Name)
 }
 
-// SealStoreStatus returns the status of the platform-sealed store.
+// SealStoreStatus returns the status of the platform-sealed store, counting
+// the platform secrets only.
 func (s *XKMSService) SealStoreStatus(ctx context.Context) (*transport.SealStoreStatusResponse, error) {
 	platformStore := s.platformStore.load()
 	if err := requirePlatformScope(ctx, "seal store status", ""); err != nil {
@@ -133,9 +154,30 @@ func (s *XKMSService) SealStoreStatus(ctx context.Context) (*transport.SealStore
 	if err != nil {
 		return nil, err
 	}
+	names = platformSecretNames(names)
 	return &transport.SealStoreStatusResponse{
 		Available:   true,
 		SecretCount: len(names),
 		SecretNames: names,
 	}, nil
+}
+
+// requirePlatformSecretName refuses a name inside the backend-credential
+// namespace with ErrReservedSecretName.
+func requirePlatformSecretName(name string) error {
+	if credentialspkg.InNamespace(name) {
+		return ErrReservedSecretName
+	}
+	return nil
+}
+
+// platformSecretNames returns names without the backend-credential namespace.
+func platformSecretNames(names []string) []string {
+	visible := make([]string, 0, len(names))
+	for _, name := range names {
+		if !credentialspkg.InNamespace(name) {
+			visible = append(visible, name)
+		}
+	}
+	return visible
 }

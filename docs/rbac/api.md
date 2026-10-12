@@ -168,7 +168,7 @@ no identity, reaches them:
 | Capability | REST | gRPC / Unix | MCP |
 |---|---|---|---|
 | sealed platform store | `/api/v1/platform/secrets[/{name}[/reseal]]`, `/api/v1/platform/status` | `SealStore*` | `sealStore.*` |
-| credentials | `POST /api/v1/credentials/submit`, `GET /api/v1/credentials/` | no RPC | `credentials.submit` |
+| credentials | `POST /api/v1/credentials/submit`, `GET /api/v1/credentials` | no RPC | `credentials.submit` |
 | system barrier | `/api/v1/barrier/*` except `enable-encryption` | `Barrier*` except `BarrierEnableEncryption` | `barrier.*` except `barrier.enableEncryption` |
 | token PINs | `/api/v1/pin/*` | `SetSOPIN` … `ResetLockout` | `xkms.setSOPIN` … `xkms.resetLockout` |
 | server PIV card | `/api/v1/piv/slots*` | `*PIV*` | `xkms.*PIV*` |

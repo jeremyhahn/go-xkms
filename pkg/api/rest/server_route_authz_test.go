@@ -160,7 +160,7 @@ var sessionOnlyRoutes = []string{
 	"GET /api/v1/auth/me",
 	"GET /api/v1/auth/validate",
 	"GET /api/v1/ca/crl",
-	"GET /api/v1/credentials/",
+	"GET /api/v1/credentials",
 	"POST /api/v1/auth/logout",
 	// Adds a passkey to the caller's OWN account; the account comes from
 	// the session, never the request (go-xkms#1294).

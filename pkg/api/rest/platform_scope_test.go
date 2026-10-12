@@ -59,7 +59,7 @@ var platformScopeRoutes = map[string]platformScopeRoute{
 	"platform reseal":    {http.MethodPost, "/platform/secrets/" + platformScopeREST + "/reseal", ""},
 	"platform status":    {http.MethodGet, "/platform/status", ""},
 	"credentials submit": {http.MethodPost, "/credentials/submit", `{"name":"pkcs11-pin","value":"c2VjcmV0"}`},
-	"credentials list":   {http.MethodGet, "/credentials/", ""},
+	"credentials list":   {http.MethodGet, "/credentials", ""},
 
 	"pin so set":        {http.MethodPost, "/pin/so/set", `{"current_so_pin":"so-pin-123456","new_so_pin":"so-pin-654321"}`},
 	"pin user set":      {http.MethodPost, "/pin/user/set", `{"so_pin":"so-pin-123456","new_user_pin":"user-pin-654321"}`},
@@ -144,7 +144,7 @@ func platformScopeRouter(t *testing.T, svc *xkms.XKMSService, identity *auth.Ide
 	r.Post("/platform/secrets/{name}/reseal", platform.ResealSecretHandler)
 	r.Get("/platform/status", platform.StatusHandler)
 	r.Post("/credentials/submit", creds.HandleSubmit)
-	r.Get("/credentials/", creds.HandleList)
+	r.Get("/credentials", creds.HandleList)
 
 	r.Post("/pin/so/set", h.SetSOPINHandler)
 	r.Post("/pin/user/set", h.SetUserPINHandler)

@@ -1,6 +1,6 @@
 # Backend Credentials — Architecture
 
-> **Status: NORMATIVE** · Feature: `backend-credentials` · Repo: `go-xkms` · Last verified: 2026-10-11
+> **Status: NORMATIVE** · Feature: `backend-credentials` · Repo: `go-xkms` · Last verified: 2026-10-12
 
 ## The problem
 
@@ -14,15 +14,15 @@ unattended, or supplied by an operator and never written to disk.
 
 `pkg/server/credentials.Service` keeps named byte values under a single
 strategy, picked once at construction (`New`,
-`pkg/server/credentials/service.go:93-126`). Every strategy implements the
+`pkg/server/credentials/service.go:103-136`). Every strategy implements the
 same five operations: store, retrieve, submit, delete and list
-(`credentialStore`, `service.go:76-82`).
+(`credentialStore`, `service.go:86-92`).
 
 | Strategy | Where the value lives | Owner |
 |---|---|---|
-| `manual` (default) | go-qrdb's versioned credential service, held in memory, with retrieval that blocks until the value is submitted | go-qrdb (`qrdbsdk.CredentialStrategyManual`, `service.go:36`) |
-| `barrier` | go-qrdb's versioned credential service, encrypted by the embedded qrdb node's barrier | go-qrdb (`service.go:39`, `service.go:118-125`) |
-| `tpm2`, `pkcs11`, `awskms`, `gcpkms`, `azurekv`, `vault`, `passphrase` | xkms's sealed `seal.PlatformStore`, under the key `credentials/<name>` | go-xkms (`platformCredentials`, `service.go:201-259`, prefix `service.go:44`) |
+| `manual` (default) | go-qrdb's versioned credential service, held in memory, with retrieval that blocks until the value is submitted | go-qrdb (`qrdbsdk.CredentialStrategyManual`, `service.go:37`) |
+| `barrier` | go-qrdb's versioned credential service, encrypted by the embedded qrdb node's barrier | go-qrdb (`service.go:40`, `service.go:128-135`) |
+| `tpm2`, `pkcs11`, `awskms`, `gcpkms`, `azurekv`, `vault`, `passphrase` | xkms's sealed `seal.PlatformStore`, under the key `credentials/<name>` | go-xkms (`platformCredentials`, `service.go:211-269`, prefix `service.go:45`) |
 
 The split follows the layer ownership. Manual and barrier storage are
 go-qrdb's, and xkms uses them as they are. The hardware and cloud sealing
@@ -31,10 +31,10 @@ strategies belong to xkms, and go-qrdb has no equivalent (package doc,
 `pkg/credentials/config.go` defines `StrategyManual` as "stores credentials
 in-memory with blocking retrieval until a credential is submitted".
 
-`New` accepts the name set in `validStrategies` (`service.go:49-62`). An
+`New` accepts the name set in `validStrategies` (`service.go:59-72`). An
 unknown name returns `ErrInvalidStrategy`. A platform strategy without a
 platform store returns `ErrNilPlatformStore`, and `barrier` without a barrier
-returns `ErrNilBarrier` (`service.go:99-120`).
+returns `ErrNilBarrier` (`service.go:109-130`).
 
 ## What `xkmsd` actually builds per strategy
 
@@ -82,15 +82,30 @@ Every transport reaches it through that service.
 
 The credential API can submit, list names and report the strategy. It has
 no verb that returns a value (`Service.ListCredentials`,
-`service.go:172-186`). Rotating a credential means submitting a new value
+`service.go:182-196`). Rotating a credential means submitting a new value
 under an existing name (`cmd/xkmsctl/credential.go:64-66`).
 
-The boundary covers this API only. Under a platform strategy the value is an
-ordinary platform-store entry named `credentials/<name>`, and the
-platform-secrets `SealStoreGet` does not filter that prefix
-(`pkg/xkms/servicer_seal_store.go:54-73`). A platform-scoped caller who holds
-the platform-secrets read permission can therefore read the value. See
-[`../platform-secrets/`](../platform-secrets/).
+Under a platform strategy the value is a platform-store entry named
+`credentials/<name>`, and the platform-secrets API cannot reach it. Its Put,
+Get, Delete and Reseal refuse any name inside that namespace with
+`xkms.ErrReservedSecretName`, and its List and Status leave those names out
+(`requirePlatformSecretName` and `platformSecretNames`,
+`pkg/xkms/servicer_seal_store.go:167-183`; error `pkg/xkms/errors.go:359`).
+The namespace test is `credentials.InNamespace`
+(`pkg/server/credentials/service.go:52-54`). It cleans the name first, so
+`/credentials/x` and `a/../credentials/x` are refused too. The credentials
+service is the namespace's only reader.
+
+Each transport reports the refusal as a permission error, not as not-found:
+
+| Transport | Answer | Source |
+|---|---|---|
+| REST, QUIC | 403 | `pkg/api/rest/seal_store_handlers.go:262` |
+| gRPC, Unix | `PermissionDenied` | `pkg/api/apierrors/tables.go:46`, `pkg/api/grpc/errors_keyops.go:42` |
+| MCP | Forbidden | `tables.go:46`, `pkg/api/mcp/errors_shared.go:49` |
+
+The Unix socket serves the gRPC service (`pkg/api/unix/grpc_server.go:334`).
+See [`../platform-secrets/`](../platform-secrets/).
 
 ## Scope
 

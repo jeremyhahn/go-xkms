@@ -6,6 +6,7 @@ import (
 	"testing"
 
 	"github.com/jeremyhahn/go-xkms/pkg/api/transport"
+	credentialspkg "github.com/jeremyhahn/go-xkms/pkg/server/credentials"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -226,4 +227,57 @@ func TestSealStoreStatus_ListError(t *testing.T) {
 	_, err := svc.SealStoreStatus(context.Background())
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "status list failed")
+}
+
+// --- Backend-credential namespace (go-xkms#1465) ---
+
+// setupServiceWithCredential returns a service whose platform store holds a
+// backend credential submitted through the credentials service, under a
+// hardware strategy, next to an ordinary platform secret.
+func setupServiceWithCredential(t *testing.T) (*XKMSService, *mockPlatformStore) {
+	t.Helper()
+	svc, store := setupServiceWithPlatformStore(t)
+	creds, err := credentialspkg.New(&credentialspkg.Config{Strategy: "tpm2"}, store, nil, nil)
+	require.NoError(t, err)
+	require.NoError(t, creds.SubmitCredential(context.Background(), "db-password", []byte("hunter2")))
+	store.secrets["vault-token"] = []byte("token")
+	return svc, store
+}
+
+func TestSealStore_CredentialNamespaceRefused(t *testing.T) {
+	svc, store := setupServiceWithCredential(t)
+	ctx := context.Background()
+
+	for _, name := range []string{"credentials/db-password", "x/../credentials/db-password", "/credentials/db-password"} {
+		t.Run(name, func(t *testing.T) {
+			_, err := svc.SealStoreGet(ctx, &transport.SealStoreGetRequest{Name: name})
+			require.ErrorIs(t, err, ErrReservedSecretName)
+			require.ErrorIs(t, svc.SealStorePut(ctx, &transport.SealStorePutRequest{Name: name, Secret: []byte("x")}), ErrReservedSecretName)
+			require.ErrorIs(t, svc.SealStoreDelete(ctx, &transport.SealStoreDeleteRequest{Name: name}), ErrReservedSecretName)
+			require.ErrorIs(t, svc.SealStoreReseal(ctx, &transport.SealStoreResealRequest{Name: name}), ErrReservedSecretName)
+		})
+	}
+	assert.Equal(t, []byte("hunter2"), store.secrets["credentials/db-password"], "the refused calls must not touch the credential")
+}
+
+func TestSealStore_PlatformSecretStillReadable(t *testing.T) {
+	svc, _ := setupServiceWithCredential(t)
+
+	got, err := svc.SealStoreGet(context.Background(), &transport.SealStoreGetRequest{Name: "vault-token"})
+	require.NoError(t, err)
+	assert.Equal(t, []byte("token"), got.Secret)
+}
+
+func TestSealStore_ListAndStatusOmitCredentials(t *testing.T) {
+	svc, _ := setupServiceWithCredential(t)
+	ctx := context.Background()
+
+	list, err := svc.SealStoreList(ctx)
+	require.NoError(t, err)
+	assert.Equal(t, []string{"vault-token"}, list.Names)
+
+	status, err := svc.SealStoreStatus(ctx)
+	require.NoError(t, err)
+	assert.Equal(t, 1, status.SecretCount)
+	assert.Equal(t, []string{"vault-token"}, status.SecretNames)
 }

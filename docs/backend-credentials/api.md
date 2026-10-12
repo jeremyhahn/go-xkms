@@ -1,6 +1,6 @@
 # Backend Credentials — API
 
-> **Status: NORMATIVE** · Feature: `backend-credentials` · Repo: `go-xkms` · Last verified: 2026-10-11
+> **Status: NORMATIVE** · Feature: `backend-credentials` · Repo: `go-xkms` · Last verified: 2026-10-12
 
 Transport shapes: [`../key-management/api.md`](../key-management/api.md)
 §"How the six transports are shaped". Every transport goes through the
@@ -12,11 +12,11 @@ Transport shapes: [`../key-management/api.md`](../key-management/api.md)
 |---|---|---|---|---|---|---|
 | Submit | `POST /api/v1/credentials/submit` | **not supported** | same as REST | `credentials.submit` | `SubmitCredential` | `CredentialsClient.submit` |
 | Strategy | `GET /api/v1/credentials/strategy` | **not supported** | same as REST | `credentials.strategy` | `GetCredentialStrategy` | `CredentialsClient.strategy` |
-| List names | `GET /api/v1/credentials/` | — | — | — | — | — |
+| List names | `GET /api/v1/credentials` | — | — | — | — | — |
 
 Sources:
 
-- **REST routes:** `pkg/api/rest/routes.go:414-416`. They are mounted when
+- **REST routes:** `pkg/api/rest/routes.go:415-417`. They are mounted when
   an `XKMSService` is composed (`pkg/api/rest/server.go:443`).
 - **Go SDK interface:** `transport.CredentialManagementService`, which has
   submit and strategy only (`pkg/api/transport/client.go:493-499`).
@@ -32,15 +32,20 @@ Sources:
   `:1278`.
 - **TS SDK:** `sdk/ts/src/clients/credentials.ts:21-36`.
 
-Listing is reachable only over REST.
+Listing has a REST route and nothing else. There is no gRPC RPC and no MCP
+method for it, and `transport.CredentialManagementService` has no list
+method, so no Go client (REST, Unix, QUIC, gRPC, MCP or embedded) and no TS
+SDK method calls it. The route table records this
+(`pkg/api/rest/routes.go:410-413`). `xkmsctl credential list` sends the REST
+request itself (`cmd/xkmsctl/credential.go:239`).
 
 ## Authorization
 
 | Operation | REST | MCP | Scope |
 |---|---|---|---|
-| Submit | `credentials:submit` (`routes.go:414`) | `credentials:submit` (`pkg/api/mcp/authz.go:263`) | platform only |
-| Strategy | `credentials:strategy` (`routes.go:415`) | `credentials:strategy` (`authz.go:264`) | any |
-| List | authenticated session, no permission pair (`routes.go:410-416`) | — | platform only |
+| Submit | `credentials:submit` (`routes.go:415`) | `credentials:submit` (`pkg/api/mcp/authz.go:263`) | platform only |
+| Strategy | `credentials:strategy` (`routes.go:416`) | `credentials:strategy` (`authz.go:264`) | any |
+| List | authenticated session, no permission pair (`routes.go:407-417`) | — | platform only |
 
 The constants are `auth.ResourceCredentials`, `auth.ActionSubmit` and
 `auth.ActionStrategy` (`pkg/auth/permissions.go:93`, `:247-248`). The
@@ -61,7 +66,7 @@ Response: `{"status": "accepted"}`.
 
 `GET /api/v1/credentials/strategy`: `{"strategy": "manual", "auto_unseal": false}`.
 
-`GET /api/v1/credentials/`: `{"names": ["pkcs11-user-pin"]}`. An empty store
+`GET /api/v1/credentials`: `{"names": ["pkcs11-user-pin"]}`. An empty store
 returns `[]`, never `null` (`pkg/api/rest/handlers_credentials.go:178-184`).
 
 Sources: `pkg/api/transport/types_init.go:18-33` and

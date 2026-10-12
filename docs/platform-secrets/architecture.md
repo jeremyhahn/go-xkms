@@ -1,6 +1,6 @@
 # Platform Secrets — Architecture
 
-> **Status: NORMATIVE** · Feature: `platform-secrets` · Repo: `go-xkms` · Last verified: 2026-10-07
+> **Status: NORMATIVE** · Feature: `platform-secrets` · Repo: `go-xkms` · Last verified: 2026-10-11
 
 ## The problem
 
@@ -146,6 +146,11 @@ reseal: PlatformStore.Reseal(name)
   was removed — `credentials.seal_strategy: passphrase` now fails
   `Server.New` with a typed error rather than silently protecting nothing.
 - **Secret names are not secret.** `List` returns them.
+- **Backend credentials share the store but not the surface.** The
+  `credentials/` namespace belongs to the credentials service, whose values are
+  write-only; the platform-secrets API refuses it and leaves it out of `List`
+  (go-xkms#1465). Rejected alternative: a second platform store for
+  credentials — two stores to seal, compose and reseal for one namespace check.
 - **`SealedPlatformStore` is concurrency-safe** — all operations take a
   read-write mutex — but concurrency safety is not access control; that is the
   route's session gate.

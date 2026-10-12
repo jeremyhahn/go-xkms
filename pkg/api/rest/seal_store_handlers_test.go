@@ -498,3 +498,60 @@ func TestSealStore_Status_Error(t *testing.T) {
 
 	assert.Equal(t, http.StatusInternalServerError, w.Code)
 }
+
+// credentialSealStoreHandlers returns handlers over a platform store holding a
+// backend credential (credentials/db-password) and an ordinary platform
+// secret (vault-token).
+func credentialSealStoreHandlers(t *testing.T) *SealStoreHandlers {
+	t.Helper()
+	ps, err := seal.NewPlatformStore(storage.NewMemory(), slog.Default())
+	require.NoError(t, err)
+	require.NoError(t, ps.Put(context.Background(), "credentials/db-password", []byte("hunter2")))
+	require.NoError(t, ps.Put(context.Background(), "vault-token", []byte("token")))
+	return sealStoreHandlersOver(ps)
+}
+
+// getSecretNamed calls GetSecretHandler with the {name} URL parameter set to
+// name directly: a chi {name} segment cannot carry the slash in a credential
+// key, but the handler must refuse it whatever route delivers it.
+func getSecretNamed(h *SealStoreHandlers, name string) *httptest.ResponseRecorder {
+	rctx := chi.NewRouteContext()
+	rctx.URLParams.Add("name", name)
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/platform/secrets/x", nil)
+	req = req.WithContext(context.WithValue(req.Context(), chi.RouteCtxKey, rctx))
+	w := httptest.NewRecorder()
+	h.GetSecretHandler(w, req)
+	return w
+}
+
+func TestSealStore_GetSecret_CredentialNamespaceForbidden(t *testing.T) {
+	h := credentialSealStoreHandlers(t)
+
+	w := getSecretNamed(h, "credentials/db-password")
+
+	assert.Equal(t, http.StatusForbidden, w.Code)
+	assert.NotContains(t, w.Body.String(), base64.StdEncoding.EncodeToString([]byte("hunter2")))
+}
+
+func TestSealStore_GetSecret_PlatformSecretBesideCredential(t *testing.T) {
+	h := credentialSealStoreHandlers(t)
+
+	w := getSecretNamed(h, "vault-token")
+
+	require.Equal(t, http.StatusOK, w.Code)
+	var resp SealStoreGetResponse
+	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))
+	assert.Equal(t, base64.StdEncoding.EncodeToString([]byte("token")), resp.Secret)
+}
+
+func TestSealStore_ListSecrets_OmitsCredentials(t *testing.T) {
+	r := sealStoreRouter(credentialSealStoreHandlers(t))
+
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, httptest.NewRequest(http.MethodGet, "/api/v1/platform-store", nil))
+
+	require.Equal(t, http.StatusOK, w.Code)
+	var resp SealStoreListResponse
+	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))
+	assert.Equal(t, []string{"vault-token"}, resp.Names)
+}

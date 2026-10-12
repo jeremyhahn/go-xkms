@@ -259,6 +259,7 @@ var platformStoreErrorResponses = []struct {
 	{xkms.ErrNotConfigured, http.StatusServiceUnavailable, "Platform store not configured"},
 	{seal.ErrSecretNotFound, http.StatusNotFound, "Secret not found"},
 	{seal.ErrInvalidSecretName, http.StatusBadRequest, "Invalid secret name"},
+	{xkms.ErrReservedSecretName, http.StatusForbidden, "Secret name is reserved for backend credentials"},
 }
 
 // platformStoreWriteServiceError writes the response for an error returned by

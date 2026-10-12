@@ -1078,3 +1078,19 @@ func TestListCredentials_DeleteRemovesName(t *testing.T) {
 		t.Fatalf("expected the deleted credential to be gone, got %v", names)
 	}
 }
+
+func TestInNamespace_CredentialKeys(t *testing.T) {
+	for _, name := range []string{"credentials/db", "/credentials/db", "x/../credentials/db", "credentials//db"} {
+		if !InNamespace(name) {
+			t.Errorf("InNamespace(%q) = false, want true", name)
+		}
+	}
+}
+
+func TestInNamespace_OtherKeys(t *testing.T) {
+	for _, name := range []string{"", "credentials", "vault-token", "my-credentials/db", "credentialsdb", "credentials/../db"} {
+		if InNamespace(name) {
+			t.Errorf("InNamespace(%q) = true, want false", name)
+		}
+	}
+}
