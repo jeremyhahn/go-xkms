@@ -148,6 +148,46 @@ func TestBLETransport_Scan_StopsOnFirstXKeyDevice(t *testing.T) {
 	}
 }
 
+// A stop-on-first scan that hears several distinct xKey devices must not block
+// the scan callback on its one-slot found signal. The fake's StopScan waits for
+// Scan to return, so Scan returning at all proves every callback returned and
+// the scan goroutine exited; a blocked callback deadlocks StopScan instead.
+func TestBLETransport_Scan_StopOnFirstDoesNotBlockLaterDevices(t *testing.T) {
+	central := &fakeCentral{results: []bluetooth.ScanResult{
+		scanResult(t, phoneAddr, "Pixel", XKeyServiceUUID),
+		scanResult(t, bondedAddr, "Tablet", XKeyServiceUUID),
+		scanResult(t, "AA:BB:CC:DD:EE:03", "Watch", XKeyServiceUUID),
+	}}
+	tr := newCentralTransport(t, central, newFakeBluetoothctl())
+	tr.cfg.ScanTimeout = time.Minute
+
+	type scanOutcome struct {
+		got []ScanResult
+		err error
+	}
+	done := make(chan scanOutcome, 1)
+	go func() {
+		got, err := tr.Scan(context.Background())
+		done <- scanOutcome{got: got, err: err}
+	}()
+
+	var out scanOutcome
+	select {
+	case out = <-done:
+	case <-time.After(10 * time.Second):
+		t.Fatal("Scan() did not return: the scan callback is blocked on the found signal")
+	}
+	if out.err != nil {
+		t.Fatalf("Scan() error = %v", out.err)
+	}
+	if len(out.got) != 3 {
+		t.Fatalf("Scan() = %+v, want the 3 devices heard before the stop", out.got)
+	}
+	if _, stops := central.counts(); stops != 1 {
+		t.Fatalf("StopScan calls = %d, want 1", stops)
+	}
+}
+
 func TestBLETransport_ScanAll_CollectsUntilTimeout(t *testing.T) {
 	central := &fakeCentral{
 		results: []bluetooth.ScanResult{

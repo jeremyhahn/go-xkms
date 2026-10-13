@@ -398,9 +398,14 @@ func (t *BLETransport) ScanWithOptions(ctx context.Context, stopOnFirst bool) ([
 						"address", result.Address.String(),
 						"name", result.LocalName(),
 					)
-					// Signal that we found a device
+					// Signal that we found a device. The send never blocks: one
+					// pending signal is enough to stop the scan, and a blocked
+					// callback would hold mu and leak the scan goroutine.
 					if stopOnFirst {
-						found <- struct{}{}
+						select {
+						case found <- struct{}{}:
+						default:
+						}
 					}
 				}
 				mu.Unlock()
