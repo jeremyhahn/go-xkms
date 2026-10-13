@@ -1,85 +1,67 @@
 # Building
 
-> **Correction (go-xkms#942):** there is no `cactl` or `trusted-acme-server`
-> binary, and the root Makefile has no `build-gui`/`frontend-build-admin`/
-> `build-gui-cactl` targets today. This page's Makefile and npm-workspace
-> layout (`web/packages/{admin,client,shared}`) describes
-> `pkg/acme/gui/{admin,client,guard,webui}`, which has no confirmed `cmd/`
-> caller — see [`README.md`](README.md)'s correction. The frontend source
-> for the admin UI that **is** wired (`xkmsd`'s `/admin-ui`) instead lives
-> at `pkg/acme/web/packages/{admin,client,shared}`. Reconciling this page
-> with that is unresolved; treat the targets and paths below as
-> unverified.
+> **Status: REFERENCE** · Last verified: 2026-10-12
+> Legacy, unabsorbed notes on building the ACME SPAs (`pkg/acme/web`) and the `trusted-acme-client` desktop GUI.
 
-## Frontend Targets
+No Makefile target builds `pkg/acme/web` or `cmd/acme-client`. The Makefile's
+`build-web`, `dev-web`, `test-web` and `build-desktop` targets build the
+separate `web/app` frontend, not these SPAs.
 
-| Target | Description |
-|--------|-------------|
-| `make frontend-install` | Install npm dependencies (runs automatically as prerequisite) |
-| `make frontend-build` | Build both admin and client frontends |
-| `make frontend-build-admin` | Build admin frontend only |
-| `make frontend-build-client` | Build client frontend only |
-| `make frontend-clean` | Remove `node_modules` and `dist/` from all packages |
-| `make frontend-dev-admin` | Start Vite dev server for admin (HMR enabled) |
-| `make frontend-dev-client` | Start Vite dev server for client (HMR enabled) |
+## Frontend
 
-## Binary Targets
-
-### CLI-Only (no CGO required)
+The `dist/` output of each package is committed and embedded by Go, so a
+rebuild is needed only after editing the Svelte sources.
 
 ```bash
-make build
+cd pkg/acme/web
+npm ci                  # install the workspace from package-lock.json
+npm run build           # admin, then client
 ```
 
-`make build` produces `bin/xkmsd` and `bin/xkmsctl` (`build-servers`,
-`build-cli`, `Makefile:462-484`); there is no Makefile target that builds
-`cmd/acme-client` (`trusted-acme-client`) today. See the correction above
-for what this page originally claimed.
-
-The `frontend-build` target runs first to embed the admin SPA into the server binary for web mode.
-
-### GUI-Enabled (requires CGO + WebKit2GTK)
-
-There is no `make build-gui`/`build-gui-server`/`build-gui-client` target
-in the root Makefile. `cmd/acme-client/gui.go` builds under `-tags gui`
-directly (`go build -tags gui ./cmd/acme-client`), but has no Makefile
-target of its own — see the correction above.
-
-## Build Pipeline
-
-```
-frontend-install
-      |
-      v
-frontend-build (admin + client)
-      |
-      +---> make build      (CLI: embeds admin SPA for web mode)
-      |
-      +---> make build-gui  (Desktop: embeds both SPAs, links WebKit2GTK)
-```
-
-## npm Workspace Structure
-
-The `web/` directory uses npm workspaces:
-
-```
-web/
-  package.json          # Workspace root
-  packages/
-    shared/             # @trustedca/shared - components, stores, API client
-    admin/              # Admin SPA (Vite + Svelte)
-    client/             # Client SPA (Vite + Svelte)
-```
-
-npm scripts in the root `package.json`:
+Scripts in `pkg/acme/web/package.json`:
 
 | Script | Effect |
 |--------|--------|
-| `npm run build` | Build admin then client |
-| `npm run dev:admin` | Start admin dev server |
-| `npm run dev:client` | Start client dev server |
-| `npm run check` | Type-check both apps |
+| `npm run build` | Build admin, then client |
+| `npm run build:admin` / `build:client` | Build one app |
+| `npm run dev:admin` / `dev:client` | Vite dev server with HMR |
+| `npm run preview:admin` / `preview:client` | Serve the built bundle |
+| `npm run check` | `svelte-check` both apps |
 
-## Docker
+## Go binaries
 
-GUI builds are not included in Docker images (no WebKit2GTK in containers). Docker images build CLI-only binaries with the web admin UI embedded in the server binary.
+```bash
+# CLI only, no cgo or WebKit needed
+go build -o bin/trusted-acme-client ./cmd/acme-client
+
+# With the desktop GUI (cgo, Wails v2, WebKit2GTK)
+go build -tags gui -o bin/trusted-acme-client ./cmd/acme-client
+
+# xkmsd embeds the admin SPA for /admin-ui
+make build-servers
+```
+
+`cmd/acme-client/wails.json` is also present, so `wails build` works from
+`cmd/acme-client`. Its frontend build command is `npm run build:client` in
+`pkg/acme/web`.
+
+## Pipeline
+
+```
+pkg/acme/web (npm run build)
+      |
+      +--> packages/admin/dist  --embed--> xkmsd (/admin-ui), pkg/acme/gui/webui.AdminAssets
+      +--> packages/client/dist --embed--> pkg/acme/gui/webui.ClientAssets --> trusted-acme-client -tags gui
+```
+
+## npm workspace
+
+```
+pkg/acme/web/
+  package.json          # workspace root
+  package-lock.json
+  packages/
+    shared/             # @trustedca/shared: components, stores, API client
+    admin/              # @trustedca/admin: admin SPA (Vite + Svelte 5)
+    client/             # @trustedca/client: client SPA (Vite + Svelte 5)
+```

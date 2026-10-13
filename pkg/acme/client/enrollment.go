@@ -20,6 +20,7 @@ import (
 	"crypto/x509"
 	"crypto/x509/pkix"
 	"encoding/base64"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -35,9 +36,11 @@ import (
 
 	"golang.org/x/crypto/acme"
 
+	deviceattest01 "github.com/jeremyhahn/go-xkms/pkg/acme/challenges/device-attest-01"
 	caerrors "github.com/jeremyhahn/go-xkms/pkg/acme/errors"
 	acmeserver "github.com/jeremyhahn/go-xkms/pkg/acme/server"
 	"github.com/jeremyhahn/go-xkms/pkg/ca"
+	"github.com/jeremyhahn/go-xkms/pkg/errs"
 )
 
 // TPM enrollment errors
@@ -891,6 +894,7 @@ func (c *Client) DeviceAttest(ctx context.Context, config *EnrollmentConfig) (*x
 	// Process authorizations. Every one is answered for the same key, the
 	// one the CSR is signed with below.
 	var attested *AttestedKey
+	var attestedKeyAuth string
 
 	for _, authzURL := range order.AuthzURLs {
 		authz, err := c.client.GetAuthorization(ctx, authzURL)
@@ -928,6 +932,7 @@ func (c *Client) DeviceAttest(ctx context.Context, config *EnrollmentConfig) (*x
 		if err != nil {
 			return nil, caerrors.InternalServerError("attestation failed: challenge setup failed: %v", err)
 		}
+		attestedKeyAuth = keyAuth
 
 		// Respond to the challenge with the attestation as its payload
 		// (golang.org/x/crypto/acme sends Challenge.Payload in place of "{}").
@@ -966,7 +971,7 @@ func (c *Client) DeviceAttest(ctx context.Context, config *EnrollmentConfig) (*x
 		return nil, caerrors.InternalServerError("attestation failed: the order carried no authorization to attest")
 	}
 
-	csrDER, err := deviceAttestCSR(config.CommonName, deviceIdentity, attested.Signer)
+	csrDER, err := attestedKeyCSR(config.CommonName, deviceIdentity, attestedKeyAuth, attested)
 	if err != nil {
 		return nil, caerrors.BadCSRError("attestation failed: failed to create CSR: %v", err)
 	}
@@ -998,6 +1003,21 @@ func (c *Client) DeviceAttest(ctx context.Context, config *EnrollmentConfig) (*x
 // certified and no other, and it names the order's permanent identifier in the
 // RFC 4043 permanentIdentifier otherName the server matches the order against
 // -- never the Common Name, which is display text.
+// attestedKeyCSR is the finalize request for the attested key. A DICE device
+// mints it from the possession template over the challenge it answered
+// (go-xkms#1441), naming itself by its DeviceID; every other format sends an
+// ordinary request naming the device.
+func attestedKeyCSR(commonName, deviceIdentity, keyAuth string, attested *AttestedKey) ([]byte, error) {
+	if attested.Format != deviceattest01.FormatDICE {
+		return deviceAttestCSR(commonName, deviceIdentity, attested.Signer)
+	}
+	deviceID, err := hex.DecodeString(deviceIdentity)
+	if err != nil {
+		return nil, &errs.Joined{Lead: ErrAttestationFailed, Detail: "the DICE device identity is not the hex of a DeviceID", Cause: err}
+	}
+	return deviceattest01.SignPossessionCSR(attested.Signer, deviceID, deviceattest01.DICENonce(keyAuth))
+}
+
 func deviceAttestCSR(commonName, permanentIdentifier string, signer crypto.Signer) ([]byte, error) {
 	identifier, err := ca.MarshalPermanentIdentifier(permanentIdentifier, nil)
 	if err != nil {

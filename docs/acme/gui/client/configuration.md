@@ -1,27 +1,38 @@
 # Client Configuration
 
-The Configuration view (`GET /api/v1/config`, `PUT /api/v1/config`) manages the ACME client runtime settings.
+> **Status: REFERENCE** · Last verified: 2026-10-12
+> Legacy, unabsorbed notes on where the ACME client GUI's configuration comes from.
 
-## Settings
+The GUI has no Configuration view, and the client router has no `/config` or
+`/renewal/*` endpoint. Configuration lives in the client's YAML config file,
+which `Config` in `pkg/acme/client/service/config.go:30` loads. The GUI
+changes it only by adding and removing accounts (`POST`/`DELETE
+/api/v1/accounts`).
 
-| Field | Type | Description |
-|-------|------|-------------|
-| `server_url` | string | ACME server directory URL |
-| `account_url` | string | Registered account URL (set after registration) |
-| `key_type` | string | Key algorithm (e.g., `RSA`, `ECDSA`) |
-| `key_size` | number | Key size in bits (e.g., 2048, 4096) |
-| `challenge_type` | string | Default challenge type (`http-01`, `dns-01`, `tls-alpn-01`, `device-attest-01`, `endorse-01`, `enroll-01`) |
-| `auto_renew` | boolean | Enable automatic certificate renewal |
-| `renew_before_days` | number | Days before expiry to trigger renewal |
+## Top-level keys (`Config`)
 
-## Auto-Renewal Configuration
+| Key | Purpose |
+|-----|---------|
+| `tenant_id` | Tenant the client acts for |
+| `storage` | Where accounts and certificates are stored |
+| `xkms` | Key backend |
+| `logging` | Logging |
+| `challenge` | Solver settings: `http01`, `dns01` (`config.go:257`) |
+| `accounts` | Named ACME accounts |
+| `certificates` | Named certificate specs |
+| `devices` | Named TPM devices for enroll/attest |
 
-The auto-renewal service runs in the background and periodically checks for certificates approaching expiry.
+## Certificate spec (`CertificateSpec`, `config.go:84`)
 
-| Field | Type | Description |
-|-------|------|-------------|
-| `enabled` | boolean | Whether the renewal service is active |
-| `check_interval_hours` | number | Hours between renewal checks |
-| `renew_before_days` | number | Days before expiry to trigger renewal |
+| Key | Purpose |
+|-----|---------|
+| `account` | Account name to issue under |
+| `subject`, `sans` | Names on the certificate |
+| `key` | Key parameters |
+| `challenge` | Challenge type |
+| `valid` | Requested validity |
+| `deploy` | Where to write the issued certificate |
+| `renewal` | `auto` (bool), `days_before` (int) (`CertRenewalConfig`, `config.go:122`) |
+| `cross_signer` | Optional cross-signing |
 
-Managed via `GET /api/v1/renewal/config` and `PUT /api/v1/renewal/config`.
+Renewal is per certificate. There is no global renewal service setting.

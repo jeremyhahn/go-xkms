@@ -1,5 +1,23 @@
 # TPM2 Package Refactoring Roadmap
 
+> **Status: REFERENCE** · Last verified: 2026-10-12
+> Record of a `pkg/tpm2` cleanup and the xkey TPM wave that followed it. Wave 2 is only partly done; see the state table below. The file counts and line numbers in the body describe the tree when it was written.
+
+## State on 2026-10-12
+
+| Phase | State |
+|---|---|
+| 1A | Superseded. `bytesToUint32` now lives in `pkg/tpm2/idevid_csr.go:643`. `parseNVIndex`, `uint32ToBytes`, `parseOID` and `parseRDNSequence` no longer exist in `pkg/tpm2`. |
+| 1B | Done: `pkg/tpm2/cert_idevid.go:34,59,116,141`, `pkg/tpm2/tpm.go:1252`. |
+| 1C | Stale. `pkg/tpm2` now has well over 29 test files, and simulator tests are split into many `*_simulator_test.go` files. |
+| 2A | Done: `ReplayEventLog` (`xkey/pkg/gui/services/tpm_service.go:3293`), `EventLogReplayResult` (`:444`), with `TestReplayEventLog_*` tests in `tpm_service_test.go`. |
+| 2B | Open. Neither `ComparePolicyPCRs` nor `PolicyComparisonResult` exists. |
+| 2C | Done: the "Verify Event Log" button in `xkey/frontend/src/lib/components/EventLogViewer.svelte:193`, wired from `TPM.svelte:1899`. |
+| 2D | Open. It depends on 2B. |
+| 2E | Done for 2A only. No `TestComparePolicyPCRs_*` tests exist. |
+
+`validPCRBanks` is now at `tpm_service.go:88`, not line 86.
+
 ## Phase 1A: Move Generic Private Functions (COMPLETED)
 
 Moved 5 generic private functions out of `cert_idevid.go` to their proper homes:

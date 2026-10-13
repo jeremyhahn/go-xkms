@@ -1,6 +1,6 @@
 # DICE Device Identity — User
 
-> **Status: NORMATIVE** · Feature: `dice-device-identity` · Repo: `go-xkms` · Last verified: 2026-10-11
+> **Status: NORMATIVE** · Feature: `dice-device-identity` · Repo: `go-xkms` · Last verified: 2026-10-12
 
 ## Verifying a device's evidence
 
@@ -141,11 +141,38 @@ use `errors.Is`.
 // e.g. a deviceattest01.TrustAnchorVerifier over the configured DICE roots.
 verified, err := deviceattest01.VerifyAttestation(verifier, payload, keyAuthorization)
 
-// At finalization: the key the CA is about to certify.
+// At finalization: the device's possession request, then the key the CA is
+// about to certify.
+if err := verified.VerifyPossessionCSR(csr, order.Identifiers); err != nil {
+    return err            // not the device's request for this order
+}
 if err := verified.BindCSRKey(csr); err != nil {
     return err            // the CSR is not for the attested key
 }
 ```
+
+The `dice` CSR is the device's **possession request**: a fixed template the
+device signs with its alias key over `b = deviceattest01.DICENonce(keyAuthorization)`,
+naming itself by `hex(DeviceID)` as a `permanent-identifier`. A device whose key
+sits behind a Go `crypto.Signer` produces it in one call:
+
+```go
+der, err := deviceattest01.SignPossessionCSR(signer, deviceID,
+    deviceattest01.DICENonce(keyAuthorization))
+```
+
+A device that signs only raw digests gets the bytes to sign from
+`BuildPossessionCRI(pub, deviceID, b)` and hands its DER signature back to
+`AssemblePossessionCSR(cri, signature)`. `acmeclient.DeviceAttest` does this for
+an `AttestedKey` whose `Format` is `deviceattest01.FormatDICE`.
+
+| Finalize refusal (`badCSR`) | What happened |
+|-----------------------------|---------------|
+| `ErrPossessionCSRMalformed` | The request is not exactly what the template writes: an ordinary CSR, a subject, an extra extension or attribute, another curve. |
+| `ErrPossessionSignatureInvalid` | The signature does not verify under the request's key. |
+| `ErrPossessionKeyMismatch` | The request is for a key other than the one the device attested. |
+| `ErrPossessionNonceMismatch` | The request was signed for another order's challenge. |
+| `ErrPossessionIdentifierMismatch` | The order names something besides this one device: a DNS name, or a second device. |
 
 The one-shot `deviceattest01.Verify` refuses the `dice` format with
 `ErrKeyBindingRequired`. That is deliberate: the nonce says the device answered

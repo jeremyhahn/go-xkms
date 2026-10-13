@@ -1,593 +1,67 @@
 # Go-xKMS Architecture Documentation
 
-Comprehensive architecture documentation for the go-xkms multi-protocol server.
+> **Status: REFERENCE** · Last verified: 2026-10-12
+> Index of the cross-cutting architecture documents; feature folders under `docs/<feature>/` are normative.
 
+## Documents in this directory
 
-## Documentation Overview
+| Document | Contents |
+|---|---|
+| [overview.md](./overview.md) | System overview: transports, layers, backends |
+| [quick-reference.md](./quick-reference.md) | One-page cheat sheet: binaries, Make targets, configuration keys |
+| [api-specifications.md](./api-specifications.md) | REST routes, gRPC services and the CLI, checked against the code |
+| [adapter-framework.md](./adapter-framework.md) | The auth, logging and adapter seams |
 
-This directory contains the complete architecture and implementation guidance for building the go-xkms server that exposes the KeyStore interface via multiple protocols.
+## Absorbed documents
 
-### Core Documents
+Earlier documents in this directory were folded into feature folders
+(go-xkms#1433):
 
-1. **[quick-reference.md](./quick-reference.md)** (1-page)
-   - **Purpose:** One-page developer cheat sheet
-   - **Audience:** All developers
-   - **Contents:** Quick API reference, common patterns, key commands
+- Server architecture → [host-embedding](../host-embedding/engineering.md) and
+  [xkmsd-configuration](../xkmsd-configuration/engineering.md)
+- Storage and object storage → [datastore](../datastore/engineering.md)
+- RBAC → [rbac](../rbac/architecture.md)
+- Key ID format →
+  [key-management](../key-management/engineering.md#key-id-format--pkgxkmskeyidgo)
+- Hardware certificate storage →
+  [certificate-authority](../certificate-authority/engineering.md#hardware-certificate-storage--pkgstoragehardware)
+- Correlation IDs → [host-embedding](../host-embedding/engineering.md)
+- Post-quantum cryptography → [post-quantum](../post-quantum/architecture.md)
+- Symmetric encryption → [symmetric-aead](../symmetric-aead/)
 
-2. **[overview.md](./overview.md)** (14KB)
-   - **Purpose:** High-level architecture overview
-   - **Audience:** Project stakeholders, managers, new developers
-   - **Contents:** System overview, key features, component relationships
+## Transports at a glance
 
-3. **Server architecture** — absorbed into [host-embedding](../host-embedding/engineering.md) (the unified API server and module registration) and [xkmsd-configuration](../xkmsd-configuration/engineering.md) (configuration) (go-xkms#1433)
+`xkmsd` binds every network listener on `server.host`
+(`ServerConfig`, `pkg/config/config.go:309`); each transport is switched on under
+`protocols:` (`config.go:351-358`). The shipped `configs/xkmsd.yaml` uses:
 
-4. **[api-specifications.md](./api-specifications.md)** (22KB)
-   - **Purpose:** Complete API reference for all protocols
-   - **Audience:** API users, integrators, frontend developers
-   - **Contents:**
-     - REST API endpoint specifications
-     - gRPC service definitions
-     - MCP (Model Context Protocol) methods
-     - QUIC/HTTP3 API details
-     - CLI command reference
-     - Common data types
-     - Error codes and handling
-     - Rate limits
-     - Complete usage examples
+| Transport | Port key | Shipped value | Notes |
+|---|---|---|---|
+| Unix socket | `unix.*` | — | On by default for local IPC |
+| REST (HTTP/1.1, HTTP/2) | `server.rest_port` | 8443 | |
+| QUIC (HTTP/3) | — | rest port | HTTP/3 is served on `rest_port` (`pkg/server/server.go:2433`) |
+| gRPC | `server.grpc_port` | 9443 | |
+| MCP | `server.mcp_port` | 8445 | Served by the embedded qrdb node (`pkg/server/qrdb_node.go:85-86`) |
+| Metrics | `metrics.port` | 9090 | Path `/metrics` |
 
-### Feature & Component Documentation
+Health routes are public on REST: `/health`, `/health/live`,
+`/health/ready`, `/health/startup` (`pkg/api/rest/routes.go:124-128`).
 
-5. **Storage** — absorbed into [datastore](../datastore/engineering.md) (go-xkms#1433)
-
-6. **[adapter-framework.md](./adapter-framework.md)**
-   - **Purpose:** Authentication, logging, and adapter patterns
-   - **Audience:** Platform developers
-   - **Contents:**
-     - Adapter architecture
-     - Auth adapters (JWT, mTLS, OIDC, Adaptive, Composite)
-     - Logging adapters
-     - Custom adapter development
-
-7. **[RBAC](../rbac/architecture.md)** — moved to the `docs/rbac/` feature folder.
-
-8. **[Key ID format](../key-management/engineering.md#key-id-format--pkgxkmskeyidgo)** — moved to the `docs/key-management/` feature folder.
-
-9. **Hardware certificate storage** — absorbed into [certificate-authority](../certificate-authority/engineering.md#hardware-certificate-storage--pkgstoragehardware) (go-xkms#1433)
-
-10. **Correlation IDs** — absorbed into [host-embedding](../host-embedding/engineering.md) (go-xkms#1433)
-
-11. **Object storage** — absorbed into [datastore](../datastore/engineering.md) (go-xkms#1433)
-
-12. **[Post-quantum cryptography](../post-quantum/architecture.md)** — moved to the `docs/post-quantum/` feature folder.
-
-13. **[symmetric-aead/](../symmetric-aead/)**
-    - **Purpose:** Symmetric encryption capabilities
-    - **Audience:** Security developers
-    - **Contents:**
-      - AES-GCM, ChaCha20-Poly1305 and XChaCha20-Poly1305
-      - Nonce-reuse guard and per-key byte budget
-      - Derivation from a stored key
-
-## Quick Start
-
-### For Developers (Quick Reference)
-
-**Start here:** [quick-reference.md](./quick-reference.md) - One-page cheat sheet with:
-- Common API patterns
-- Key generation examples
-- Configuration snippets
-- Essential commands
-
-### For Developers Starting Implementation
-
-1. **Read first:** [overview.md](./overview.md)
-   - Understand the system at a high level
-   - Learn about key components and their relationships
-
-2. **Deep dive:** [host-embedding](../host-embedding/engineering.md)
-   - Understand the overall design
-   - Review the architecture diagrams
-   - Familiarize yourself with design principles
-   - Use the development workflow guidelines
-   - Follow the testing strategy
-
-3. **Reference:** [api-specifications.md](./api-specifications.md)
-   - Implement APIs according to specifications
-   - Ensure consistency across all protocols
-   - Validate against provided examples
-
-4. **Component-specific:** Review relevant feature documents
-   - [datastore](../datastore/engineering.md) - For storage layer work
-   - [rbac/](../rbac/architecture.md) - For authorization implementation
-   - [key-management/](../key-management/architecture.md) - For key management
-
-### For API Users / Integrators
-
-1. **Quick start:** [quick-reference.md](./quick-reference.md)
-2. **Complete reference:** [api-specifications.md](./api-specifications.md)
-   - Available endpoints and methods
-   - Request/response formats
-   - Authentication requirements
-   - Error handling
-   - Rate limits
-
-### For Project Managers / Stakeholders
-
-Read [overview.md](./overview.md) for high-level understanding of the system architecture and capabilities.
-
-
-## Architecture Summary
-
-### System Overview
+## Repository layout
 
 ```
-┌─────────────────────────────────────────────────────────────────┐
-│                         Client Layer                             │
-├──────────┬──────────┬──────────┬──────────┬─────────────────────┤
-│   REST   │   gRPC   │   MCP    │   QUIC   │        CLI          │
-│ (HTTP/2) │  (HTTP/2)│(JSON-RPC)│ (HTTP/3) │  (Cobra/Viper)      │
-└─────┬────┴────┬─────┴────┬─────┴────┬─────┴─────────────────────┘
-      │         │          │          │
-      └─────────┴──────────┴──────────┘
-                    │
-        ┌───────────▼───────────┐
-        │   Service Layer       │
-        │  - KeyManager         │
-        │  - BackendRegistry    │
-        │  - Validators         │
-        └───────────┬───────────┘
-                    │
-        ┌───────────▼───────────┐
-        │   KeyStore Interface  │
-        └───────────┬───────────┘
-                    │
-        ┌───────────▼───────────┐
-        │   Backend Layer       │
-        │  - Software - TPM2    │
-        │  - PKCS#11 - Cloud    │
-        └───────────────────────┘
+cmd/       xkmsd, xkmsctl, pkcs11-module, cgo, acme-client
+pkg/api/   rest, grpc, unix, mcp, transport, apierrors, tenantgate
+pkg/xkms/  the composite service and the Backend contract (keystore.go)
+pkg/server/ xkmsd composition root
+pkg/config/ xkmsd configuration
+test/integration/  integration suites, one directory per feature
 ```
 
-The QUIC box above is logical, not a separate listener: it is HTTP/3 served
-directly on the REST port, advertised via `Alt-Svc`. MCP is served by the
-embedded qrdb node (Streamable HTTP), not a standalone xkms listener.
-
-### Key Features
-
-**Multi-Protocol Support:**
-- REST API (HTTP/1.1 + HTTP/2) on port 8443
-- gRPC (HTTP/2) on port 9443
-- MCP (real Model Context Protocol, Streamable HTTP, served by the embedded
-  qrdb node) on port 9444
-- QUIC (HTTP/3), served on the same port as REST (8443) via `Alt-Svc` -- not
-  a separate listener
-- CLI for local and remote operations
-
-**Security:**
-- TLS 1.2+ for all network protocols
-- JWT, mTLS, and OIDC authentication
-- Rate limiting per client
-- Comprehensive audit logging
-
-**Operations:**
-- Health checks and readiness probes
-- Prometheus metrics on port 9090
-- Graceful shutdown
-- Configurable via file, environment, or flags
-
-### Supported Operations
-
-All protocols support:
-- Health checking
-- Backend management (list, info)
-- Key generation (RSA, ECDSA, Ed25519)
-- Key retrieval and listing
-- Key deletion
-- Cryptographic signing
-- Signature verification
-- Key rotation (backend-dependent)
-
-
-## System Components
-
-### Core Infrastructure
-- Configuration management
-- Service layer implementation
-- Middleware framework
-- Server orchestrator
-
-### Protocol Implementations
-- REST API
-- gRPC API
-- QUIC/HTTP3 (served on the REST listener via `Alt-Svc`, not a separate server)
-- MCP (real Model Context Protocol, served by the embedded qrdb node)
-- CLI (local and remote)
-
-### Security & Operations
-- Authentication/authorization
-- TLS configuration
-- Metrics & monitoring
-- Audit logging
-
-### Testing & Documentation
-- Comprehensive integration tests
-- Performance benchmarks
-- API documentation
-- Deployment guides
-
-
-## Directory Structure
-
-```
-go-xkms/
-├── cmd/
-│   ├── xkmsd/           # Multi-protocol server binary
-│   └── xkmsctl/         # CLI binary
-├── pkg/
-│   ├── server/          # Server orchestration & service layer
-│   ├── config/          # Configuration management
-│   ├── api/
-│   │   ├── rest/        # REST API implementation (also serves QUIC/HTTP3)
-│   │   ├── grpc/        # gRPC implementation
-│   │   ├── mcp/         # MCP dispatch core (real MCP served by the embedded qrdb node)
-│   │   └── unix/        # Unix socket gRPC
-│   ├── backend/         # Backend interface & implementations
-│   ├── crypto/          # Cryptographic primitives
-│   ├── encoding/        # Encoding (JWK, JWE, JWT, PEM)
-│   ├── storage/         # Storage layer
-│   └── types/           # Common types
-├── test/
-│   └── integration/
-│       └── api/         # Integration tests
-└── docs/
-    └── architecture/    # This directory
-```
-
-
-## Testing Strategy
-
-### Unit Tests
-- **Target:** 90%+ coverage
-- **Command:** `go test -v ./pkg/...`
-- **Focus:** Validation, error handling, configuration
-
-### Integration Tests
-- **Location:** `test/integration/api/`
-- **Command:** `make integration-test`
-- **Environment:** Docker Compose with real backends
-- **Tests:**
-  - REST API tests
-  - gRPC tests
-  - MCP tests
-  - QUIC tests
-  - CLI tests
-  - E2E workflow tests
-
-### Benchmark Tests
-- **Command:** `go test -bench=. ./pkg/...`
-- **Targets:**
-  - Key generation < 100ms (RSA 2048)
-  - Signing < 10ms (RSA 2048)
-  - REST request < 5ms (overhead)
-  - gRPC request < 2ms (overhead)
-
-
-## Dependencies
-
-### Core Dependencies
-- `github.com/spf13/cobra` - CLI framework
-- `github.com/spf13/viper` - Configuration
-- `google.golang.org/grpc` - gRPC
-- `github.com/quic-go/quic-go` - QUIC/HTTP3
-- `github.com/prometheus/client_golang` - Metrics
-
-### Existing Packages
-- `github.com/jeremyhahn/go-xkms/pkg/xkms` - KeyStore interface
-- `github.com/jeremyhahn/go-xkms/pkg/backend` - Backend interface
-
-
-## Configuration Example
-
-```yaml
-server:
-  data_dir: /var/lib/xkms
-  log_level: info
-
-rest:
-  enabled: true
-  address: :8443
-
-grpc:
-  enabled: true
-  address: :9443
-
-mcp:
-  enabled: true
-  address: :9444
-
-quic:
-  enabled: true
-  # QUIC has no listener/port of its own: it is HTTP/3 served on the REST
-  # address above via Alt-Svc. A dedicated quic.address is vestigial.
-  address: :8444
-
-auth:
-  enabled: true
-  type: adaptive  # jwt, mtls, oidc, adaptive, composite
-  # Adaptive escalates to JWT once the first user exists, so a JWT
-  # verification key is required; startup fails without it.
-  jwt:
-    public_key_file: /etc/xkms/jwt-public.pem
-
-metrics:
-  enabled: true
-  address: :9090
-
-backends:
-  - name: software
-    type: software
-    config:
-      key_dir: /var/lib/xkms/keys
-```
-
-
-## API Consistency
-
-All protocols provide equivalent functionality:
-
-| Operation | REST | gRPC | MCP | QUIC | CLI |
-|-----------|:----:|:----:|:---:|:----:|:---:|
-| Health Check | ✓ | ✓ | ✓ | ✓ | ✓ |
-| List Backends | ✓ | ✓ | ✓ | ✓ | ✓ |
-| Generate Key | ✓ | ✓ | ✓ | ✓ | ✓ |
-| Get Key | ✓ | ✓ | ✓ | ✓ | ✓ |
-| List Keys | ✓ | ✓ | ✓ | ✓ | ✓ |
-| Delete Key | ✓ | ✓ | ✓ | ✓ | ✓ |
-| Sign | ✓ | ✓ | ✓ | ✓ | ✓ |
-| Verify | ✓ | ✓ | ✓ | ✓ | ✓ |
-| Notifications | - | Stream | ✓ | - | - |
-
-
-## Design Principles
-
-1. **Separation of Concerns**
-   - Protocol handlers handle protocol-specific details
-   - Service layer contains business logic
-   - KeyStore manages cryptographic operations
-
-2. **DRY (Don't Repeat Yourself)**
-   - Common logic in service layer
-   - Protocol handlers are thin adapters
-   - Shared validation and error handling
-
-3. **Thread Safety**
-   - All components thread-safe
-   - Read-write locks for shared state
-   - Immutable configurations
-
-4. **Error Handling**
-   - Protocol-specific error mapping
-   - Structured error responses
-   - Comprehensive logging
-
-5. **Testability**
-   - Dependency injection throughout
-   - Mock-friendly interfaces
-   - Comprehensive integration tests
-
-6. **Performance**
-   - Lock-free algorithms where possible
-   - Connection pooling
-   - Context propagation
-   - Graceful shutdown
-
-
-## Security Considerations
-
-### Authentication
-- JWT (Bearer token with public key verification)
-- Mutual TLS (client certificates)
-- OIDC (OpenID Connect with provider discovery)
-- Adaptive (auto-switches between bootstrap and secured mode)
-- Composite (chains multiple authenticators)
-
-### TLS Configuration
-- TLS 1.2+ required
-- Strong cipher suites
-- Certificate validation
-- Perfect forward secrecy
-
-### Input Validation
-- Key IDs: alphanumeric + hyphens, max 255 chars
-- Key types: whitelist only
-- Key sizes: algorithm-specific validation
-- Backend names: registered backends only
-
-### Rate Limiting
-- Key generation: 10/minute
-- Signing: 100/minute
-- List operations: 50/minute
-
-### Audit Logging
-- All key operations logged
-- Authentication events logged
-- Failed operations logged
-- Structured logging with context
-
-
-## Monitoring & Observability
-
-### Metrics (Prometheus)
-```
-xkms_key_generate_total{backend, key_type}
-xkms_key_generate_duration_seconds{backend, key_type}
-xkms_sign_total{backend}
-xkms_http_requests_total{method, path, status}
-xkms_grpc_requests_total{method, status}
-```
-
-### Health Checks
-- `/health` - Overall health
-- `/ready` - Readiness probe
-- `/live` - Liveness probe
-
-### Logging
-Structured JSON logging with fields:
-- `request_id` - Unique request ID
-- `protocol` - rest, grpc, mcp, quic, cli
-- `backend` - Backend name
-- `operation` - generate, sign, verify
-- `duration_ms` - Operation duration
-- `error` - Error message (if any)
-
-
-## Deployment
-
-### Docker
-```bash
-docker build -t go-xkms-server .
-docker run -p 8443:8443 -p 9443:9443 -p 9444:9444 go-xkms-server
-```
-
-### Kubernetes
-```bash
-kubectl apply -f deployments/kubernetes/
-```
-
-### Binary
-```bash
-# Build
-make build
-
-# Run
-./bin/xkmsd --config /etc/xkms/config.yaml
-```
-
-
-## Development Commands
-
-### Build
-```bash
-make build              # Build all binaries
-make build-server       # Build server only
-make build-cli          # Build CLI only
-```
-
-### Test
-```bash
-make test               # Unit tests
-make integration-test   # Integration tests
-make bench             # Benchmarks
-make coverage          # Coverage report
-```
-
-### Generate
-```bash
-make proto-gen         # Generate protobuf code
-make swagger-gen       # Generate OpenAPI docs
-```
-
-### Docker
-```bash
-make docker-build      # Build Docker image
-make docker-run        # Run in Docker
-make docker-test       # Run integration tests in Docker
-```
-
-
-## Next Steps
-
-1. **Begin Development:** Start with Core Infrastructure components
-2. **Follow Architecture:** Review the feature folders (`docs/<feature>/`) for implementation details
-3. **Test Continuously:** Run tests after each component
-4. **Document Changes:** Update docs as you implement
-5. **Review Regularly:** Ensure consistency across protocols
-
-
-## Documentation History
-
-### Consolidated Documents (2025-12)
-
-The following documents have been consolidated to reduce duplication and improve maintainability:
-
-**Merged into `storage.md` (since absorbed into [datastore](../datastore/engineering.md), go-xkms#1433):**
-- `storage-abstraction.md` - Storage abstraction concepts
-- `storage-interfaces.md` - BlobStorer interface details
-
-**Merged into `unified-keyid-jwk-integration.md`** (itself absorbed into [key-management/](../key-management/engineering.md) and deleted, go-xkms#1433):
-- `keyid-jwk-quick-reference.md` - Quick reference content
-
-**Removed (outdated):**
-- `backend-registry.md` - Superseded by `server-architecture.md` (since absorbed, go-xkms#1433)
-- `blobstorer-refactoring.md` - Internal development notes
-
-**Condensed:**
-- `hardware-certificate-storage.md` - Streamlined for clarity (since absorbed into certificate-authority, go-xkms#1433)
-
-
-## Support Resources
-
-### Internal Documentation
-- [Quick Reference](./quick-reference.md) - One-page cheat sheet
-- [Overview](./overview.md) - High-level architecture
-- [Host Embedding](../host-embedding/engineering.md) - Unified API server design
-- [API Specifications](./api-specifications.md) - Complete API reference
-- [Datastore](../datastore/engineering.md) - Storage layer design
-- [RBAC](../rbac/architecture.md) - Role-based access control
-- [KeyStore Interface](../../pkg/xkms/keystore.go) - Core interface
-- [Backend Interface](../../pkg/xkms/keystore.go) - `Backend` contract (`pkg/xkms/keystore.go:36`)
-- [Existing Tests](../../test/integration/api/) - Integration test suite
-
-### External Standards
-- [REST API Best Practices](https://restfulapi.net/)
-- [gRPC Documentation](https://grpc.io/docs/)
-- [JSON-RPC 2.0 Specification](https://www.jsonrpc.org/specification)
-- [HTTP/3 (RFC 9114)](https://www.rfc-editor.org/rfc/rfc9114.html)
-- [Model Context Protocol](https://github.com/anthropics/model-context-protocol)
-- [Go Code Review Comments](https://github.com/golang/go/wiki/CodeReviewComments)
-- [Google Go Style Guide](https://google.github.io/styleguide/go/)
-
-### Tools & Libraries
-- [Protocol Buffers](https://protobuf.dev/)
-- [Cobra CLI Framework](https://cobra.dev/)
-- [Viper Configuration](https://github.com/spf13/viper)
-- [QUIC-GO](https://github.com/quic-go/quic-go)
-- [Prometheus Go Client](https://github.com/prometheus/client_golang)
-
-
-## Contributing
-
-When implementing components, ensure:
-
-1. **Follow Design Patterns:** Use patterns from architecture document
-2. **Maintain Consistency:** Keep APIs consistent across protocols
-3. **Write Tests:** Unit tests + integration tests for all components
-4. **Document Code:** Clear comments and godoc documentation
-5. **Update Docs:** Keep architecture docs synchronized with code
-
-
-## Document Maintenance
-
-These architecture documents should be updated when:
-
-- Adding new protocols or endpoints → Update [api-specifications.md](./api-specifications.md) and [quick-reference.md](./quick-reference.md)
-- Changing the unified API server → Update [host-embedding](../host-embedding/engineering.md)
-- Modifying configuration structure → Update [xkmsd-configuration](../xkmsd-configuration/engineering.md) and [quick-reference.md](./quick-reference.md)
-- Updating security requirements → Update [rbac/](../rbac/architecture.md) and [adapter-framework.md](./adapter-framework.md)
-- Adding new features or capabilities → Update [overview.md](./overview.md) and relevant feature documents
-- Changing storage implementation → Update [datastore](../datastore/engineering.md)
-- Modifying key management → Update [key-management/](../key-management/engineering.md)
-
-### Documentation Structure Guidelines
-
-- **Keep it DRY:** Avoid duplicating content across documents. Link to authoritative sources.
-- **Single source of truth:** Each topic should have one primary document.
-- **Progressive disclosure:** Start simple (quick-reference), then detailed (feature docs).
-- **Consolidate when needed:** Merge documents that overlap significantly.
-
-**Architecture Version:** 1.1 (2025-12-24)
-**Document Owner:** Architecture Team
-**Last Consolidated:** 2025-12-24
-
-
-**Ready to begin development? Start with [quick-reference.md](./quick-reference.md) or [overview.md](./overview.md)!**
+## Make targets
+
+`make build`, `make build-server`, `make build-cli`, `make test`,
+`make integration-test`, `make bench`, `make coverage`, `make proto`,
+`make docker-build`, `make docker-run`, `make docker-test`. Per-package
+targets follow `test-<pkg>`, `integration-test-<pkg>`, `bench-<pkg>` and
+`coverage-<pkg>`.

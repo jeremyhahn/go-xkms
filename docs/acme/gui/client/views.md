@@ -1,95 +1,65 @@
 # Client Views
 
-All views are Svelte components in `web/packages/client/src/views/`.
+> **Status: REFERENCE** · Last verified: 2026-10-12
+> Legacy, unabsorbed reference for the views in `pkg/acme/web/packages/client/src/views/`.
+
+Views call the API through `src/lib/api/client-api.ts`.
 
 ## Dashboard
 
-`Dashboard.svelte` -- Landing view showing client status summary and recent activity.
+`Dashboard.svelte` summarises accounts and certificates (`GET /api/v1/accounts`,
+`GET /api/v1/certificates`).
 
 ## Accounts
 
-`Accounts.svelte` -- Multi-account management view.
-
-Displays all configured ACME accounts in a table with name, directory URL, email, key algorithm, and store type. Supports removing accounts with confirmation dialog.
-
-Calls `GET /api/v1/accounts`, `DELETE /api/v1/accounts/{name}`.
+`Accounts.svelte` lists configured accounts and removes one after confirmation
+(`GET /api/v1/accounts`, `DELETE /api/v1/accounts/{name}`).
 
 ## Certificates
 
-`Certificates.svelte` -- Certificate inventory and lifecycle management.
-
-Displays all configured certificate specs with status (issued/pending), account, subject, challenge type, and auto-renewal status. Supports filtering by account. Action buttons per certificate: Request, Renew, Deploy, Revoke.
-
-Calls `GET /api/v1/certificates`, `POST /api/v1/certificate/request`, `POST /api/v1/certificate/renew`, `POST /api/v1/certificates/{name}/deploy`, `POST /api/v1/certificate/revoke`.
+`Certificates.svelte` lists certificate specs and can filter them by account.
+Each row has Request, Renew, Deploy and Revoke actions; Revoke uses reason 0
+(`POST /api/v1/certificate/{request,renew,revoke}`,
+`POST /api/v1/certificates/{name}/deploy`).
 
 ## Register
 
-`Register.svelte` -- ACME account registration form.
+`Register.svelte` adds an account (`POST /api/v1/accounts`). Fields:
+- account name, ACME directory URL and contact email
+- key algorithm, with an ECC curve or RSA bits
+- optional EAB key ID and HMAC key
 
-Fields: contact emails, terms of service agreement, optional EAB credentials (kid + HMAC key).
+It does not call `/api/v1/account/register`.
 
-Calls `POST /api/v1/account/register`.
+## Request / Renew / Revoke Certificate
 
-## Request Certificate
-
-`RequestCert.svelte` -- Request a new certificate.
-
-Fields: domain names (multi-value), key type, key size, challenge type.
-
-Calls `POST /api/v1/certificate/request`.
-
-## Renew Certificate
-
-`RenewCert.svelte` -- Renew an existing certificate by serial number.
-
-Fields: serial number, optional new key type.
-
-Calls `POST /api/v1/certificate/renew`.
-
-## Revoke Certificate
-
-`RevokeCert.svelte` -- Revoke a certificate.
-
-Fields: serial number, revocation reason code.
-
-Calls `POST /api/v1/certificate/revoke`.
-
-## Auto-Renewal
-
-`AutoRenewal.svelte` -- View and configure automatic renewal.
-
-Displays renewal service status, next check time, and tracked certificates with days remaining.
-
-Calls `GET /api/v1/renewal/status`, `GET /api/v1/renewal/config`, `PUT /api/v1/renewal/config`.
+`RequestCert.svelte`, `RenewCert.svelte` and `RevokeCert.svelte` each pick a
+configured certificate spec by name. Revoke also takes a reason code. They
+call `POST /api/v1/certificate/request`, `/renew` and `/revoke` with
+`{ name }` (plus `reason`).
 
 ## Device Enroll
 
-`DeviceEnroll.svelte` -- TPM device enrollment.
-
-Fields: EK certificate PEM, AK name, device info (manufacturer, model, TPM details).
-
-Calls `POST /api/v1/device/enroll`. Returns EAB credentials for subsequent ACME registration.
+`DeviceEnroll.svelte` has fields for EK certificate PEM, AK name, device ID,
+manufacturer and model. It posts them as `ek_cert_pem`, `ak_name` and
+`device_info` to `POST /api/v1/device/enroll`. The handler reads only `name`
+and rejects a request without it, so this view currently gets a 400. The same
+mismatch applies to the response: the view reads `eab_kid`, which the handler
+does not return.
 
 ## Device Attest
 
-`DeviceAttest.svelte` -- TPM remote attestation.
+`DeviceAttest.svelte` has fields for AK name, nonce, quote, signature and PCR
+values, and posts them to `POST /api/v1/device/attest`. It has the same `name`
+mismatch as Device Enroll.
 
-Fields: AK name, quote, signature, PCR values, nonce.
+## Challenges
 
-Calls `POST /api/v1/device/attest`. Returns attestation status and optional certificate.
-
-## Configuration
-
-`Configuration.svelte` -- View and edit client configuration.
-
-Fields: server URL, account URL, key type, key size, challenge type, auto-renew toggle, renew-before-days.
-
-Calls `GET /api/v1/config`, `PUT /api/v1/config`.
-
-## Challenge Config
-
-`ChallengeConfig.svelte` -- Per-challenge-type configuration settings.
+`ChallengeConfig.svelte` shows read-only descriptions of http-01, dns-01,
+tls-alpn-01, endorse-01, enroll-01 and device-attest-01. See
+[challenge-types.md](challenge-types.md).
 
 ## Settings
 
-`Settings.svelte` -- Application-level preferences (theme, display options).
+`Settings.svelte` offers the theme choice (Light, Dark or System) and shows
+the API base URL.

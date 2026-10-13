@@ -1,6 +1,6 @@
 # DICE Device Identity — CLI
 
-> **Status: NORMATIVE** · Feature: `dice-device-identity` · Repo: `go-xkms` · Last verified: 2026-10-11
+> **Status: NORMATIVE** · Feature: `dice-device-identity` · Repo: `go-xkms` · Last verified: 2026-10-12
 
 **No CLI surface of its own.** There is no `xkmsctl dice` command group and
 none is planned for this half of the feature.
@@ -34,6 +34,11 @@ digits. A UEID stated as UCCS claim 256 sits inside the
 `dice.DeviceUeid` (see [`engineering.md`](engineering.md)).
 
 ## What is deliberately absent
+
+A verb that mints or checks the ACME possession request. The device signs it
+and the ACME client wraps it (`attestedKeyCSR`,
+`pkg/acme/client/enrollment.go:1010`); the server checks it at finalize. Both
+ends are library calls, documented in [`api.md`](api.md).
 
 A verb that drives a device to produce evidence. That belongs to the AVR
 backend — the device is reached over its wire protocol, not by this package —

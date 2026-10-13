@@ -1,30 +1,49 @@
 # Admin API Reference
 
-The admin API is served at `/api/v1` by both the embedded desktop server and the ACME server (web mode).
+> **Status: REFERENCE** · Last verified: 2026-10-12
+> Legacy, unabsorbed reference for the desktop admin router in `pkg/acme/gui/admin/api/router.go`.
+
+`adminapi.NewRouter(client trustedca.Client, logger, opts...)`
+(`pkg/acme/gui/admin/api/router.go:32`) builds a `gorilla/mux` router. It
+serves the paths below under `/api/v1`, behind the `pkg/acme/gui/guard`
+middleware. Only the Wails admin host mounts it, and no binary builds that
+host. xkmsd's `/admin-ui` uses xkmsd's own admin endpoints instead; see
+[README.md](README.md).
 
 ## Endpoints
+
+Routes are registered at `pkg/acme/gui/admin/api/router.go:42-94`.
 
 ### Status
 
 | Method | Path | Description |
 |--------|------|-------------|
-| GET | `/status` | CA server status (identity, version, algorithms) |
-| GET | `/stats` | Certificate and account statistics |
+| GET | `/status` | CA server status |
+| GET | `/stats` | Certificate, account and order statistics |
 
 ### Certificates
 
 | Method | Path | Description |
 |--------|------|-------------|
 | GET | `/certificates` | List certificates (paginated) |
+| GET | `/certificates/expiring` | Certificates nearing expiry |
 | GET | `/certificates/{serial}` | Get certificate by serial number |
 | POST | `/certificates/{serial}/revoke` | Revoke a certificate |
 
-**List query params:** `page`, `per_page`, `status`, `subject`, `expires_days`
+**List query params** (certificates, accounts, orders): `page` (default 1),
+`per_page` (default 20), `status`.
 
-**Revoke request:**
+**Revoke request** (`pkg/acme/gui/admin/api/cert_handlers.go:29`):
 ```json
 { "reason": "keyCompromise" }
 ```
+
+### Orders
+
+| Method | Path | Description |
+|--------|------|-------------|
+| GET | `/orders` | List orders (paginated) |
+| GET | `/orders/{id}` | Get order by ID |
 
 ### Accounts
 
@@ -38,13 +57,16 @@ The admin API is served at `/api/v1` by both the embedded desktop server and the
 
 | Method | Path | Description |
 |--------|------|-------------|
-| GET | `/tenants` | List all tenants |
+| GET | `/tenants` | List tenants |
 | POST | `/tenants` | Create a tenant |
 | GET | `/tenants/{id}` | Get tenant by ID |
 | PUT | `/tenants/{id}` | Update a tenant |
 | DELETE | `/tenants/{id}` | Delete a tenant |
+| PUT | `/tenants/{id}/status` | Change tenant status |
 
-**Create tenant request:**
+**Create tenant request** (`CreateTenantRequest`,
+`sdk/go/acme/client/admin/types.go:113`; settings fields from
+`TenantSettingsInfo`):
 ```json
 {
   "id": "acme-corp",
@@ -57,6 +79,17 @@ The admin API is served at `/api/v1` by both the embedded desktop server and the
 }
 ```
 
+### Tenant CAs
+
+| Method | Path | Description |
+|--------|------|-------------|
+| POST | `/tenants/{id}/root-ca` | Create the tenant root CA |
+| GET | `/tenants/{id}/ca-status` | Tenant CA status |
+| GET | `/tenants/{id}/intermediate-cas` | List intermediate CAs |
+| POST | `/tenants/{id}/intermediate-cas` | Create an intermediate CA |
+| GET | `/tenants/{id}/intermediate-cas/{caId}` | Get an intermediate CA |
+| PUT | `/tenants/{id}/intermediate-cas/{caId}` | Update an intermediate CA |
+
 ### Tenant EAB
 
 | Method | Path | Description |
@@ -66,7 +99,7 @@ The admin API is served at `/api/v1` by both the embedded desktop server and the
 | GET | `/tenants/{id}/eab/{eabId}` | Get EAB by ID |
 | DELETE | `/tenants/{id}/eab/{eabId}` | Delete EAB credential |
 
-### Tenant Roles
+### Tenant roles
 
 | Method | Path | Description |
 |--------|------|-------------|
@@ -76,7 +109,7 @@ The admin API is served at `/api/v1` by both the embedded desktop server and the
 | PUT | `/tenants/{id}/roles/{roleId}` | Update role |
 | DELETE | `/tenants/{id}/roles/{roleId}` | Delete role |
 
-### Tenant Users
+### Tenant users
 
 | Method | Path | Description |
 |--------|------|-------------|
@@ -86,25 +119,24 @@ The admin API is served at `/api/v1` by both the embedded desktop server and the
 | PUT | `/tenants/{id}/users/{userId}` | Update user |
 | DELETE | `/tenants/{id}/users/{userId}` | Delete user |
 
-## Response Envelope
+## Response envelope
+
+`pkg/acme/gui/admin/api/handlers.go:40-48`. `data`, `error` and `pagination`
+are omitted when empty:
 
 ```json
-{
-  "success": true,
-  "data": { ... },
-  "pagination": { "page": 1, "per_page": 20, "total": 142 },
-  "error": null
-}
+{ "success": true, "data": { }, "pagination": { } }
+{ "success": false, "error": { "code": "...", "message": "..." } }
 ```
 
-## Headers
+## Origin check and CORS
 
-| Header | Purpose |
-|--------|---------|
-| `Authorization` | `Bearer {token}` for authenticated requests |
-| `X-Tenant-ID` | Tenant context for multi-tenant operations |
-| `Content-Type` | `application/json` |
+The `guard` middleware (`pkg/acme/gui/guard/guard.go:101`) works as follows:
 
-## CORS
+- It rejects a request whose `Origin` host differs from the request `Host`.
+- In the in-process (Wails) transport it answers with `Access-Control-Allow-Origin: *`.
+- It answers `OPTIONS` with 204.
+- It allows methods `GET, POST, PUT, DELETE, OPTIONS` and headers
+  `Content-Type, Authorization` (`guard.go:42`, `:45`).
 
-All endpoints accept `OPTIONS` preflight requests. The CORS middleware allows all origins, methods `GET/POST/PUT/DELETE/OPTIONS`, and headers `Content-Type`, `Authorization`, `X-Tenant-ID`.
+The router itself reads no auth or tenant headers.

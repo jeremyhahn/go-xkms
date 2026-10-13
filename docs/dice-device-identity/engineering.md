@@ -1,6 +1,6 @@
 # DICE Device Identity — Engineering
 
-> **Status: NORMATIVE** · Feature: `dice-device-identity` · Repo: `go-xkms` · Last verified: 2026-10-11
+> **Status: NORMATIVE** · Feature: `dice-device-identity` · Repo: `go-xkms` · Last verified: 2026-10-12
 
 ## Packages
 
@@ -11,6 +11,7 @@
 | `pkg/attestation/dice/verify.go` | `VerifyOptions`, `Evidence`, `Verify` |
 | `pkg/attestation/dice/errors.go` | every sentinel this package returns |
 | `pkg/ca/profile_dice.go` | the `dice-idevid` certificate profile |
+| `pkg/acme/challenges/device-attest-01/possession.go` | the possession request profile: builder, parser and the finalize checks |
 
 ## Exported surface
 
@@ -73,6 +74,29 @@ absent, which is unambiguous — an empty vendor name is not a claim.
 | `CreateUccsEvidenceExtension(*ClaimsSet) (pkix.Extension, error)` | **Critical**, for the reason `CreateTcbInfoExtension` is: the claims are what make the certificate an attestation. §6.1.4 states no criticality, so this is a choice. |
 | `UccsFromCertificate(*x509.Certificate)` | `ErrUccsEvidenceNotFound` when absent. |
 | `Verify([]*x509.Certificate, *VerifyOptions) (*Evidence, error)` | Chain leaf-first. |
+
+### The possession request
+
+In `pkg/acme/challenges/device-attest-01`; the template and why it looks the
+way it does are in [architecture.md](architecture.md#possession-at-finalize-the-device-signs-a-fixed-template).
+
+| Symbol | Contract |
+|--------|----------|
+| `PossessionNonceSize` | 32: the request carries `DICENonce(keyAuthorization)` (`possession.go:77`). |
+| `PossessionIdentifierType` | `permanent-identifier` (`possession.go:81`). |
+| `OIDExtensionRequest` | PKCS#9 extensionRequest, 1.2.840.113549.1.9.14 (`possession.go:86`). |
+| `PossessionRequest{DeviceID, Nonce, PublicKey}` | What a request states. `Identifier()` is `{permanent-identifier, hex(DeviceID)}` (`possession.go:132`). |
+| `BuildPossessionCRI(pub, deviceID, nonce) ([]byte, error)` | The DER CertificationRequestInfo the device signs (`possession.go:171`). Refuses a key that is not P-256, an empty DeviceID and a nonce that is not 32 bytes, with `ErrPossessionCSRMalformed`. |
+| `AssemblePossessionCSR(cri, signature) ([]byte, error)` | Wraps a device's DER ECDSA signature with ecdsa-with-SHA256 (`possession.go:232`). Refuses a request info that is not one DER value (`ErrPossessionCSRMalformed`) and a signature that is not one DER ECDSA-Sig-Value (`ErrPossessionSignatureInvalid`). It does not verify the signature; finalize does. |
+| `SignPossessionCSR(signer, deviceID, nonce) ([]byte, error)` | Builds, signs and assembles in one call for a key behind a `crypto.Signer` (`possession.go:256`). A signer that fails is `ErrPossessionSigningFailed`. |
+| `ParsePossessionCSR(*x509.CertificateRequest) (*PossessionRequest, error)` | Reverses the template exactly (`possession.go:280`): rebuilds the CertificationRequestInfo from the values it read and refuses the request with `ErrPossessionCSRMalformed` unless the bytes are identical, so no extra attribute, extension, subject or criticality survives. Does not check the signature. |
+| `(*VerifiedAttestation).VerifyPossessionCSR(csr, orderIdentifiers) error` | The four finalize checks, in order: signature (`:374`), key (`:377`), nonce (`:380`), identifiers (`:383`). Refuses a non-`dice` record with `ErrKeyBindingUnavailable` and a nil record with `ErrNoVerifiedAttestation` (`possession.go:358`). |
+
+The ACME client mints the request for a `dice` device:
+`AttestedKey.Format` selects it (`pkg/acme/client/tpm.go`), and
+`attestedKeyCSR` (`pkg/acme/client/enrollment.go:1010`) calls
+`SignPossessionCSR` with the hex-decoded device identity and
+`DICENonce(keyAuthorization)`. Every other format sends an ordinary request.
 
 ### VerifyOptions
 
@@ -140,6 +164,14 @@ consumer that cannot import `pkg/` can still use `errors.Is`. The same file
 re-exports `DeviceUeid` as `DICEDeviceUeid` and `ClaimUeid` as
 `DICEClaimUeid` (`attestation_dice.go:95-98`).
 
+The possession request's sentinels live beside it in
+`pkg/acme/challenges/device-attest-01/possession.go:87-115`:
+`ErrPossessionCSRMalformed`, `ErrPossessionSignatureInvalid`,
+`ErrPossessionSigningFailed`, `ErrPossessionKeyMismatch`,
+`ErrPossessionNonceMismatch`, `ErrPossessionIdentifierMismatch`. The finalize
+handler reports each as `badCSR` with the sentinel's text
+(`pkg/acme/server/handlers/device_attest.go:192-193`).
+
 `pkg/ca` adds `ErrDICEEvidenceMissing` and `ErrDICEEvidenceInvalid`. The
 `dice-idevid` profile refuses a `DiceTcbInfo` with **no `fwids`** — reported as
 `ErrDICEEvidenceInvalid` wrapping `dice.ErrNoMeasurement` — because every field
@@ -177,6 +209,24 @@ truncation.
 Nothing in the suite touches the host: certificate chains are generated in
 memory.
 
+The possession request has its own literal vector:
+`TestPossessionVector` (`pkg/acme/challenges/device-attest-01/possession_test.go:95`)
+pins the CertificationRequestInfo and the assembled request as hex for a fixed
+P-256 key, DeviceID and `b` (`possession_test.go:45-62`), and checks that the
+pinned signature verifies. A device implementation that mints the template
+must reproduce those bytes. `TestPossessionExtensionCriticality` pins the
+criticality of both extensions, `TestParsePossessionCSRRefusesAnythingButTheTemplate`
+the parser's refusals, and `TestVerifyPossessionCSRSignature`, `...Key`,
+`...Nonce` and `...Identifiers` accept and refuse each finalize check. At the
+handler, `TestBindDeviceAttestationKey_DICERequiresThePossessionRequest`
+(`pkg/acme/server/handlers/device_attest_test.go:184`) refuses an ordinary
+request for the attested key.
+
+```
+go test -tags "codec_cbor codec_json codec_msgpack tpm_simulator frost" \
+    -run Possession ./pkg/acme/challenges/device-attest-01/
+```
+
 ### End to end against the real firmware
 
 `pkg/acme/client/device_attest_dice_e2e_test.go` enrolls arduino-generic's
@@ -201,13 +251,14 @@ command; it never skips.
 
 | Case | Outcome |
 |---|---|
-| order for the device's ueid, evidence over `DICENonce(keyAuthorization)`, CSR for the alias key | certificate issued, `permanentIdentifier` = hex ueid |
+| order for the device's ueid, evidence over `DICENonce(keyAuthorization)`, possession request signed by the alias key | certificate issued, `permanentIdentifier` = hex ueid |
 | order for another ueid | `unauthorized` |
 | evidence over another challenge's nonce | `incorrectResponse` (`dice.ErrNonceMismatch`) |
 | `dice_roots` that do not anchor the device | `incorrectResponse` (`ErrCertificateChainInvalid`) |
-| CSR for a key other than the alias key | `badCSR` |
+| possession request for a key other than the alias key | `badCSR` (`ErrPossessionKeyMismatch`) |
 
-The firmware has no command that signs a CSR, and the alias key is the DeviceID
-key, so the test signs the CSR with the simulator's published test private key.
+The simulator's firmware has no command that signs the possession template, and
+the alias key is the DeviceID key, so the test signs the possession request with
+the simulator's published test private key.
 The simulator identity is a test identity: its private key is the SHA-256 of a
 published string, and no deployment may anchor on it.

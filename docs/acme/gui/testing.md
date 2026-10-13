@@ -1,48 +1,58 @@
 # Testing
 
-## Unit Tests
+> **Status: REFERENCE** · Last verified: 2026-10-12
+> Legacy, unabsorbed notes on how the ACME GUI code is tested.
 
-Frontend unit tests validate component behavior and store logic. Run via:
+## Frontend
 
-```bash
-cd web && npm run check
-```
-
-Type checking covers both admin and client packages.
-
-## API Testing
-
-The embedded REST APIs are standard HTTP servers testable with any HTTP client:
+The `pkg/acme/web` workspace has no unit-test runner and no `test` script.
+The only automated frontend check is type checking:
 
 ```bash
-# Example: test admin status endpoint against running desktop app
-curl http://localhost:{port}/api/v1/status
+cd pkg/acme/web && npm run check     # svelte-check, admin and client
 ```
 
-For automated testing, use Go's `httptest` package against the router:
+## Go API routers
+
+The `/api/v1` routers are plain `http.Handler`s, tested with `httptest` in
+`pkg/acme/gui/admin/api/admin_api_test.go` and
+`pkg/acme/gui/client/api/{client_api_test,security_test}.go`:
 
 ```go
-router := adminapi.NewRouter(factory, logger)
-req := httptest.NewRequest("GET", "/api/v1/status", nil)
+router := adminapi.NewRouter(client, logger, adminapi.WithInProcessTransport())
+req := httptest.NewRequest(http.MethodGet, "/api/v1/status", nil)
 w := httptest.NewRecorder()
 router.ServeHTTP(w, req)
 ```
 
-## Integration Tests
-
-Integration tests exercise the full stack via the `platformctl` CLI across all protocols. See the project-level testing conventions in `CLAUDE.md` for the multi-protocol test pattern.
-
-GUI integration tests are in `test/integration/gui/` and run inside the devcontainer with real server resources.
-
-## Build Verification
+`NewRouter` takes a `trustedca.Client` for admin
+(`pkg/acme/gui/admin/api/router.go:32`). For the client router it takes a
+`workflow.Workflow` and the client `*service.Service`
+(`pkg/acme/gui/client/api/router.go:42`).
 
 ```bash
-# Verify frontend builds without errors
-make frontend-build
+make test-acme                                  # pkg/acme/..., includes the router tests
+go test -tags gui ./pkg/acme/gui/...            # adds app_security_test.go (gui tag)
+go test ./pkg/acme/gui/guard/ ./pkg/acme/gui/webui/
+```
 
-# Verify GUI binaries compile
-make build-gui
+The desktop apps bind no port, so you cannot `curl` a running window.
 
-# Type check frontend code
-cd web && npm run check
+## Integration
+
+`test/integration/acmeserver/acmeserver_gui_test.go` (`integration` tag)
+checks that the admin SPA is served at `/ui/admin/`, falls back to
+`index.html`, serves static assets, and 404s for missing assets:
+
+```bash
+make integration-test-acmeserver
+```
+
+Run it in the devcontainer, as with every integration suite.
+
+## Build verification
+
+```bash
+cd pkg/acme/web && npm run build && npm run check
+go build -tags gui ./cmd/acme-client
 ```

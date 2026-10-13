@@ -21,7 +21,6 @@ import (
 	"crypto/elliptic"
 	"crypto/rand"
 	"crypto/x509"
-	"crypto/x509/pkix"
 	"encoding/base64"
 	"fmt"
 	"net/http"
@@ -31,8 +30,10 @@ import (
 	"github.com/gorilla/mux"
 	"github.com/stretchr/testify/require"
 
+	deviceattest01 "github.com/jeremyhahn/go-xkms/pkg/acme/challenges/device-attest-01"
 	"github.com/jeremyhahn/go-xkms/pkg/acme/common"
 	"github.com/jeremyhahn/go-xkms/pkg/acme/entities"
+	"github.com/jeremyhahn/go-xkms/pkg/attestation/dice"
 	"github.com/jeremyhahn/go-xkms/pkg/ca"
 )
 
@@ -81,12 +82,15 @@ func newDeviceFinalizeSetup(t *testing.T, leadingIdentifiers []entities.ACMEIden
 	return &deviceFinalizeSetup{service: service, mockCA: mockCA, accountKey: accountKey, accountID: account.ID, order: order, deviceKeys: deviceKeys}
 }
 
-// finalize posts a certificate request naming device, with dnsNames as its
-// DNS SANs, signed by signer.
-func (d *deviceFinalizeSetup) finalize(t *testing.T, device string, dnsNames []string, signer *ecdsa.PrivateKey) *httptest.ResponseRecorder {
+// finalize posts the possession request device sends, signed by signer.
+func (d *deviceFinalizeSetup) finalize(t *testing.T, device string, signer *ecdsa.PrivateKey) *httptest.ResponseRecorder {
 	t.Helper()
-	template := &x509.CertificateRequest{Subject: pkix.Name{CommonName: device}, DNSNames: dnsNames}
-	csr := createPermanentIdentifierCSR(t, template, signer, device)
+	return d.finalizeCSR(t, devicePossessionCSR(t, signer, device, deviceAttestTestKeyAuth))
+}
+
+// finalizeCSR posts csr as the order's finalize request.
+func (d *deviceFinalizeSetup) finalizeCSR(t *testing.T, csr *x509.CertificateRequest) *httptest.ResponseRecorder {
+	t.Helper()
 	payload := OrderFinalizeRequest{CSR: base64.RawURLEncoding.EncodeToString(csr.Raw)}
 
 	url := fmt.Sprintf("%s/acme/orders/%d/finalize", d.service.baseRESTURI, d.order.ID)
@@ -97,54 +101,77 @@ func (d *deviceFinalizeSetup) finalize(t *testing.T, device string, dnsNames []s
 	return resp
 }
 
+// Device identities as an order names a DICE device: hex of its DeviceID.
+const (
+	deviceA = "0a0a0a0a"
+	deviceB = "0b0b0b0b"
+)
+
 // A device-attest-01 authorization that follows a dns identifier in the same
 // order still binds the request's key: the order's first identifier is not
-// what decides whether the binding applies.
+// what decides whether the binding applies. A DICE device's possession request
+// names the device alone (go-xkms#1441), so such an order cannot be issued.
 func TestOrderFinalize_DeviceAttest01_MixedOrderStillBindsTheKey(t *testing.T) {
 	dns := []entities.ACMEIdentifier{{Type: common.AuthzTypeDNS, Value: "host.example.com"}}
+	withDNS := func(t *testing.T, signer *ecdsa.PrivateKey) *x509.CertificateRequest {
+		return createPermanentIdentifierCSR(t, &x509.CertificateRequest{DNSNames: []string{"host.example.com"}}, signer, deviceA)
+	}
 
 	t.Run("a key the device did not attest is refused", func(t *testing.T) {
-		setup := newDeviceFinalizeSetup(t, dns, "device-a")
+		setup := newDeviceFinalizeSetup(t, dns, deviceA)
 		software, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
 		require.NoError(t, err)
 
-		assertErrorType(t, setup.finalize(t, "device-a", []string{"host.example.com"}, software), common.ErrTypeBadCSR, http.StatusBadRequest)
+		assertErrorType(t, setup.finalizeCSR(t, withDNS(t, software)), common.ErrTypeBadCSR, http.StatusBadRequest)
 	})
 
-	t.Run("the attested key is issued", func(t *testing.T) {
-		setup := newDeviceFinalizeSetup(t, dns, "device-a")
+	t.Run("the attested key asking for the dns name too is refused", func(t *testing.T) {
+		setup := newDeviceFinalizeSetup(t, dns, deviceA)
 
-		resp := setup.finalize(t, "device-a", []string{"host.example.com"}, setup.deviceKeys["device-a"])
-		require.Equal(t, http.StatusOK, resp.Code)
+		resp := setup.finalizeCSR(t, withDNS(t, setup.deviceKeys[deviceA]))
+		body := resp.Body.String()
+		assertErrorType(t, resp, common.ErrTypeBadCSR, http.StatusBadRequest)
+		require.Contains(t, body, deviceattest01.ErrPossessionCSRMalformed.Error())
+	})
+
+	t.Run("the possession request does not cover the dns name", func(t *testing.T) {
+		setup := newDeviceFinalizeSetup(t, dns, deviceA)
+
+		assertErrorType(t, setup.finalize(t, deviceA, setup.deviceKeys[deviceA]), common.ErrTypeRejectedIdentifier, http.StatusForbidden)
 	})
 }
 
 // An order that authorizes two devices binds each request to the device it
-// names: device B cannot be certified for device A's attested key.
+// names: device B cannot be certified for device A's attested key. Nor can
+// device B be certified at all, since its possession request names it alone
+// and the order holds two devices.
 func TestOrderFinalize_DeviceAttest01_BindsTheKeyOfTheDeviceNamed(t *testing.T) {
 	t.Run("another device's attested key is refused", func(t *testing.T) {
-		setup := newDeviceFinalizeSetup(t, nil, "device-a", "device-b")
+		setup := newDeviceFinalizeSetup(t, nil, deviceA, deviceB)
 
-		assertErrorType(t, setup.finalize(t, "device-b", nil, setup.deviceKeys["device-a"]), common.ErrTypeBadCSR, http.StatusBadRequest)
+		assertErrorType(t, setup.finalize(t, deviceB, setup.deviceKeys[deviceA]), common.ErrTypeBadCSR, http.StatusBadRequest)
 	})
 
-	t.Run("the named device's own key is issued", func(t *testing.T) {
-		setup := newDeviceFinalizeSetup(t, nil, "device-a", "device-b")
+	t.Run("the named device's own key is refused for an order holding two devices", func(t *testing.T) {
+		setup := newDeviceFinalizeSetup(t, nil, deviceA, deviceB)
 
-		resp := setup.finalize(t, "device-b", nil, setup.deviceKeys["device-b"])
-		require.Equal(t, http.StatusOK, resp.Code)
+		resp := setup.finalize(t, deviceB, setup.deviceKeys[deviceB])
+		body := resp.Body.String()
+		assertErrorType(t, resp, common.ErrTypeBadCSR, http.StatusBadRequest)
+		require.Contains(t, body, deviceattest01.ErrPossessionIdentifierMismatch.Error())
+		require.Nil(t, setup.mockCA.lastSignOptions, "nothing was signed")
 	})
 }
 
 func TestFindDeviceAttestation_SelectsTheRecordOfTheNamedDevice(t *testing.T) {
-	setup := newDeviceFinalizeSetup(t, nil, "device-a", "device-b")
+	setup := newDeviceFinalizeSetup(t, nil, deviceA, deviceB)
 	authzDAO, err := setup.service.storageFactory.AuthorizationDAO(setup.accountID)
 	require.NoError(t, err)
 
-	rec, problem := setup.service.findDeviceAttestation(context.Background(), authzDAO, setup.order, "device-b")
+	rec, problem := setup.service.findDeviceAttestation(context.Background(), authzDAO, setup.order, deviceB)
 	require.Nil(t, problem)
 	require.NotNil(t, rec)
-	require.Equal(t, "device-b", rec.DeviceIdentityValue)
+	require.Equal(t, deviceB, rec.DeviceIdentityValue)
 
 	rec, problem = setup.service.findDeviceAttestation(context.Background(), authzDAO, setup.order, "device-unknown")
 	require.Nil(t, problem)
@@ -155,7 +182,7 @@ func TestFindDeviceAttestation_SelectsTheRecordOfTheNamedDevice(t *testing.T) {
 // device-attest-01 challenge validated, it would carry keys nothing attested,
 // so it is refused rather than routed past the key binding.
 func TestOrderFinalize_DeviceAttest01_RefusesATCGCSR(t *testing.T) {
-	setup := newDeviceFinalizeSetup(t, nil, "device-a")
+	setup := newDeviceFinalizeSetup(t, nil, deviceA)
 
 	payload := OrderFinalizeRequest{CSR: base64.RawURLEncoding.EncodeToString([]byte("not-a-pkcs10-request"))}
 	url := fmt.Sprintf("%s/acme/orders/%d/finalize", setup.service.baseRESTURI, setup.order.ID)
@@ -183,7 +210,7 @@ func TestOrderFinalize_DeviceAttest01_IdentityThatDecodesAsAKeyIsNotEndorse01(t 
 	software, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
 	require.NoError(t, err)
 
-	assertErrorType(t, setup.finalize(t, identity, nil, software), common.ErrTypeBadCSR, http.StatusBadRequest)
+	assertErrorType(t, setup.finalizeCSR(t, createPermanentIdentifierCSR(t, &x509.CertificateRequest{}, software, identity)), common.ErrTypeBadCSR, http.StatusBadRequest)
 }
 
 // dropAuthorizations makes the order reference authorizations storage does not
@@ -213,7 +240,7 @@ func TestOrderFinalize_MissingAuthorizationRefusesFinalize(t *testing.T) {
 		software, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
 		require.NoError(t, err)
 
-		resp := setup.finalize(t, identity, nil, software)
+		resp := setup.finalizeCSR(t, createPermanentIdentifierCSR(t, &x509.CertificateRequest{}, software, identity))
 
 		assertErrorType(t, resp, common.ErrTypeServerInternal, http.StatusInternalServerError)
 		stored, err := mustOrderDAO(t, setup).Get(context.Background(), setup.order.ID)
@@ -222,7 +249,7 @@ func TestOrderFinalize_MissingAuthorizationRefusesFinalize(t *testing.T) {
 	})
 
 	t.Run("a TCG-CSR is not routed past the missing authorization", func(t *testing.T) {
-		setup := newDeviceFinalizeSetup(t, nil, "device-a")
+		setup := newDeviceFinalizeSetup(t, nil, deviceA)
 		dropAuthorizations(t, setup)
 
 		payload := OrderFinalizeRequest{CSR: base64.RawURLEncoding.EncodeToString([]byte("not-a-pkcs10-request"))}
@@ -236,9 +263,9 @@ func TestOrderFinalize_MissingAuthorizationRefusesFinalize(t *testing.T) {
 	})
 
 	t.Run("the same order finalizes while its authorization exists", func(t *testing.T) {
-		setup := newDeviceFinalizeSetup(t, nil, "device-a")
+		setup := newDeviceFinalizeSetup(t, nil, deviceA)
 
-		resp := setup.finalize(t, "device-a", nil, setup.deviceKeys["device-a"])
+		resp := setup.finalize(t, deviceA, setup.deviceKeys[deviceA])
 		require.Equal(t, http.StatusOK, resp.Code)
 	})
 }
@@ -253,7 +280,7 @@ func mustOrderDAO(t *testing.T, setup *deviceFinalizeSetup) interface {
 }
 
 func TestOrderAuthorizations(t *testing.T) {
-	setup := newDeviceFinalizeSetup(t, nil, "device-a", "device-b")
+	setup := newDeviceFinalizeSetup(t, nil, deviceA, deviceB)
 	authzDAO, err := setup.service.storageFactory.AuthorizationDAO(setup.accountID)
 	require.NoError(t, err)
 
@@ -261,8 +288,8 @@ func TestOrderAuthorizations(t *testing.T) {
 		authzs, problem := setup.service.orderAuthorizations(context.Background(), authzDAO, setup.order)
 		require.Nil(t, problem)
 		require.Len(t, authzs, 2)
-		require.Equal(t, "device-a", authzs[0].Identifier.Value)
-		require.Equal(t, "device-b", authzs[1].Identifier.Value)
+		require.Equal(t, deviceA, authzs[0].Identifier.Value)
+		require.Equal(t, deviceB, authzs[1].Identifier.Value)
 	})
 
 	t.Run("a missing authorization is a server fault, not an empty set", func(t *testing.T) {
@@ -296,8 +323,10 @@ func TestErrOrderAuthorizationMissing(t *testing.T) {
 
 // A device identity can decode as a public key. The challenge that validated
 // the order decides what it is, so a device-attest-01 order whose identity
-// happens to be key-shaped is bound to the attested key and issued the
-// certificate request's key -- never an EK certificate for the identifier's key.
+// happens to be key-shaped is bound to the attested key -- never issued an EK
+// certificate for the identifier's key. A DICE identity is the hex of its
+// DeviceID, which never decodes as a key, so no possession request can name
+// a key-shaped one and even the attested key is refused (go-xkms#1441).
 func TestOrderFinalize_DeviceAttest01_KeyShapedIdentityIsStillADeviceAttest01Order(t *testing.T) {
 	spki, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
 	require.NoError(t, err)
@@ -307,12 +336,15 @@ func TestOrderFinalize_DeviceAttest01_KeyShapedIdentityIsStillADeviceAttest01Ord
 	_, decodesAsKey := decodeEndorse01PublicKey(identity)
 	require.True(t, decodesAsKey)
 
-	t.Run("the attested key is issued, as a certificate for that key", func(t *testing.T) {
+	t.Run("the attested key is refused, and not as an endorse-01 order", func(t *testing.T) {
 		setup := newDeviceFinalizeSetup(t, nil, identity)
+		csr := createPermanentIdentifierCSR(t, &x509.CertificateRequest{}, setup.deviceKeys[identity], identity)
 
-		resp := setup.finalize(t, identity, nil, setup.deviceKeys[identity])
+		resp := setup.finalizeCSR(t, csr)
 
-		require.Equal(t, http.StatusOK, resp.Code, resp.Body.String())
+		body := resp.Body.String()
+		assertErrorType(t, resp, common.ErrTypeBadCSR, http.StatusBadRequest)
+		require.Contains(t, body, deviceattest01.ErrPossessionCSRMalformed.Error())
 		require.Nil(t, setup.mockCA.lastEKRequest, "an EK certificate was issued for the identity's key")
 	})
 
@@ -321,7 +353,7 @@ func TestOrderFinalize_DeviceAttest01_KeyShapedIdentityIsStillADeviceAttest01Ord
 		software, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
 		require.NoError(t, err)
 
-		assertErrorType(t, setup.finalize(t, identity, nil, software), common.ErrTypeBadCSR, http.StatusBadRequest)
+		assertErrorType(t, setup.finalizeCSR(t, createPermanentIdentifierCSR(t, &x509.CertificateRequest{}, software, identity)), common.ErrTypeBadCSR, http.StatusBadRequest)
 	})
 }
 
@@ -330,9 +362,9 @@ func TestOrderFinalize_DeviceAttest01_KeyShapedIdentityIsStillADeviceAttest01Ord
 // identity to it, or the issued certificate would carry no device identity.
 func TestOrderFinalize_DeviceAttest01_CertificateAssertsTheAttestedIdentity(t *testing.T) {
 	t.Run("a device-attest-01 order", func(t *testing.T) {
-		setup := newDeviceFinalizeSetup(t, nil, "device-a")
+		setup := newDeviceFinalizeSetup(t, nil, deviceA)
 
-		resp := setup.finalize(t, "device-a", nil, setup.deviceKeys["device-a"])
+		resp := setup.finalize(t, deviceA, setup.deviceKeys[deviceA])
 
 		require.Equal(t, http.StatusOK, resp.Code, resp.Body.String())
 		require.NotNil(t, setup.mockCA.lastSignOptions)
@@ -341,7 +373,13 @@ func TestOrderFinalize_DeviceAttest01_CertificateAssertsTheAttestedIdentity(t *t
 		require.True(t, other.TypeID.Equal(ca.OIDPermanentIdentifier))
 		parsed, err := ca.ParsePermanentIdentifierExtension(other.Value)
 		require.NoError(t, err)
-		require.Equal(t, "device-a", parsed.IdentifierValue)
+		require.Equal(t, deviceA, parsed.IdentifierValue)
+
+		// The possession request's UCCS evidence answered the challenge; it
+		// is never carried onto the certificate.
+		for _, ext := range setup.mockCA.lastSignOptions.ExtraExtensions {
+			require.False(t, ext.Id.Equal(dice.OIDUccsEvidence), "the requested UCCS evidence was copied onto the certificate")
+		}
 	})
 
 	t.Run("an order no device attested asserts none", func(t *testing.T) {

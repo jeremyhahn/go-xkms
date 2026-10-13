@@ -278,7 +278,7 @@ func TestCov92_OrderFinalizeHandler_CAAValidationSkipsNonDNS(t *testing.T) {
 	order := createTestOrderSimple(t, service, account.ID)
 	order.Status = common.StatusReady
 	order.Identifiers = []entities.ACMEIdentifier{
-		{Type: common.AuthzTypePermanentIdentifier, Value: "test-device-id"},
+		{Type: common.AuthzTypePermanentIdentifier, Value: deviceAttestTestIdentity},
 	}
 
 	ctx := context.Background()
@@ -294,15 +294,10 @@ func TestCov92_OrderFinalizeHandler_CAAValidationSkipsNonDNS(t *testing.T) {
 	// device-attest-01 attestation for a permanent-identifier order before it
 	// will sign anything; this test is about CAA being skipped, not about
 	// that gate, so a matching one is attached.
-	attachDeviceAttestation(t, service, order, account.ID, "test-device-id", csrKey)
+	attachDeviceAttestation(t, service, order, account.ID, deviceAttestTestIdentity, csrKey)
 	require.NoError(t, orderDAO.Save(ctx, order))
 
-	template := &x509.CertificateRequest{
-		Subject: pkix.Name{
-			CommonName: "test-device-id",
-		},
-	}
-	csr := createPermanentIdentifierCSR(t, template, csrKey, "test-device-id")
+	csr := devicePossessionCSR(t, csrKey, deviceAttestTestIdentity, deviceAttestTestKeyAuth)
 
 	payload := OrderFinalizeRequest{
 		CSR: base64.RawURLEncoding.EncodeToString(csr.Raw),
@@ -553,7 +548,7 @@ func TestCov92_OrderFinalizeHandler_PermanentIDNotBase64(t *testing.T) {
 	order := createTestOrderSimple(t, service, account.ID)
 	order.Status = common.StatusReady
 	order.Identifiers = []entities.ACMEIdentifier{
-		{Type: common.AuthzTypePermanentIdentifier, Value: "device-hostname-123"},
+		{Type: common.AuthzTypePermanentIdentifier, Value: deviceAttestTestIdentity},
 	}
 
 	ctx := context.Background()
@@ -569,15 +564,10 @@ func TestCov92_OrderFinalizeHandler_PermanentIDNotBase64(t *testing.T) {
 	// device-attest-01 attestation for a permanent-identifier order before it
 	// will sign anything; this test is about endorse-01/device-attest-01
 	// classification, not that gate, so a matching one is attached.
-	attachDeviceAttestation(t, service, order, account.ID, "device-hostname-123", csrKey)
+	attachDeviceAttestation(t, service, order, account.ID, deviceAttestTestIdentity, csrKey)
 	require.NoError(t, orderDAO.Save(ctx, order))
 
-	template := &x509.CertificateRequest{
-		Subject: pkix.Name{
-			CommonName: "device-hostname-123",
-		},
-	}
-	csr := createPermanentIdentifierCSR(t, template, csrKey, "device-hostname-123")
+	csr := devicePossessionCSR(t, csrKey, deviceAttestTestIdentity, deviceAttestTestKeyAuth)
 
 	payload := OrderFinalizeRequest{
 		CSR: base64.RawURLEncoding.EncodeToString(csr.Raw),

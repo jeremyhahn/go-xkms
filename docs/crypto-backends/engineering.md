@@ -71,6 +71,45 @@ build tag in the table below. Server-side construction is
 `initializeBackends`), each with a `_stub.go` sibling for builds without the
 tag.
 
+### Registering a backend from another module
+
+A backend that lives in another Go module registers from that module's
+`init()` with `xkms.RegisterExternalBackend(xkms.ExternalBackend{Type, Factory}) error`
+(`pkg/xkms/registry_external.go:56`; the type is at `:29`). The SDK
+re-exports it, `ExternalBackend`, `BackendTypeRegistrationError` and the three
+sentinels (`sdk/go/xkms_service.go:61`).
+
+- **Name.** `Type` must match `validation.ValidateBackendName`: a-z, 0-9 and
+  `-`, at most 64 characters. The same name is the keys' `StoreType` and the
+  backend segment of their Key IDs (`<type>:signing:ecdsa-p256:<name>`). The
+  `KeyProvider` the factory returns must report it from `Type()`.
+- **Name claim.** `types.RegisterBackendType` (`pkg/types/backend_registry.go:82`)
+  records the name. `IsRegisteredBackendType` (`:119`) is consulted by
+  `xkms.BackendType.IsValid` (`pkg/xkms/registry.go:91`), `types.StoreType.IsValid`
+  (`pkg/types/types.go:332`), `types.ParseStoreType` (`:349`), and Key ID
+  parsing: `validateBackend`, `keyIDToBackendType` and `backendTypeToStoreType`
+  (`pkg/xkms/keyid.go:260`, `:374`, `:494`). The built-in switches are
+  unchanged and checked first.
+- **Construction.** The factory joins `backendFactories` like a compiled-in
+  backend. `AutoInitialize` calls it with `AutoConfig.BackendConfigs[Type]`,
+  plus a `key_storage` backend prefixed `<type>/` when `AutoConfig.Datastore`
+  is set.
+- **Timing.** As with `phone.RegisterPlatform`, registration is accepted at any
+  time and lasts for the life of the process. A backend registered after
+  `AutoInitialize` is constructed by the next `AutoInitialize`.
+- **Concurrency.** The name set, `backendRegistry` and `backendFactories` are
+  copy-on-write maps behind `atomic.Pointer`. Lookups never lock, and
+  concurrent registrations never lose an entry.
+- **Refusals.** A refused registration registers nothing and returns
+  `*types.BackendTypeRegistrationError`, which matches one of three sentinels:
+  - `types.ErrInvalidBackendTypeName`: the name is empty or malformed;
+  - `types.ErrBackendTypeRegistered`: the name is built in (including
+    xkms-only names such as `pkcs8`) or already registered;
+  - `xkms.ErrNilBackendFactory`: there is no factory.
+
+  An unregistered name stays invalid everywhere. `RequireBackend` and
+  `AutoInitialize` return `ErrFeatureNotCompiled` for it.
+
 ## Backend capability matrix
 
 Read from each backend's declared `Capabilities` and its provider semantics.

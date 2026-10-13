@@ -1,101 +1,94 @@
 # Client Embedded API
 
-The ACME client desktop app mounts these endpoints in the Wails asset server, in-process and same-origin with the frontend; no port is bound. The same router is served over TCP by `trusted-acme-client serve`. All endpoints are under `/api/v1`.
+> **Status: REFERENCE** · Last verified: 2026-10-12
+> Legacy, unabsorbed reference for the client router in `pkg/acme/gui/client/api/router.go`.
 
-## Endpoints
+`clientapi.NewRouter(wf workflow.Workflow, service *svc.Service, logger, opts...)`
+(`pkg/acme/gui/client/api/router.go:42`) serves these routes under `/api/v1`,
+behind the `pkg/acme/gui/guard` middleware. The desktop app mounts the router
+in the Wails asset server: it runs in-process and same-origin, and no port is
+bound. `trusted-acme-client serve` serves the same router over TCP/TLS, with a
+nil workflow (`cmd/acme-client/serve.go:96`).
 
-### Accounts (Multi-Account)
+## Endpoints (`router.go:52-72`)
+
+### Accounts
 
 | Method | Path | Description |
 |--------|------|-------------|
-| GET | `/accounts` | List all configured accounts |
-| POST | `/accounts` | Add a new account |
-| GET | `/accounts/{name}` | Get account details |
+| GET | `/accounts` | List configured accounts |
+| POST | `/accounts` | Add an account |
+| GET | `/accounts/{name}` | Get an account |
 | DELETE | `/accounts/{name}` | Remove an account |
-| POST | `/account/register` | Register via workflow (legacy) |
+| POST | `/account/register` | Register through the workflow |
 
-**Register Request:**
+**Add account request** (`addAccountRequest`, `acme_handlers.go:84`):
 ```json
 {
-  "contact": ["mailto:admin@example.com"],
-  "terms_of_service_agreed": true,
-  "eab_kid": "optional-key-id",
-  "eab_hmac_key": "optional-hmac-key"
+  "name": "prod",
+  "email": "admin@example.com",
+  "directory": "https://kms.example.com/acme/directory",
+  "key": { },
+  "eab": { },
+  "transport": "",
+  "server_addr": "",
+  "trusted_roots": [],
+  "request_server_bundle": false
 }
 ```
+`name`, `email` and `directory` are the core fields; the rest are optional.
 
-**Register Response:**
+**Register request / response** (`acme_handlers.go:28`, `:33`):
 ```json
-{
-  "data": {
-    "account_url": "https://ca.example.com/acme/acct/1",
-    "account_id": 1,
-    "status": "valid"
-  }
-}
+{ "email": "admin@example.com" }
+{ "data": { "accountUrl": "...", "status": "valid", "contact": ["mailto:admin@example.com"] } }
 ```
 
-### Certificates (Multi-Account)
+### Certificates
 
 | Method | Path | Description |
 |--------|------|-------------|
-| GET | `/certificates` | List all certificate specs (optional `?account=` filter) |
+| GET | `/certificates` | List certificate specs (optional `?account=` filter) |
 | GET | `/certificates/{name}` | Get managed certificate info |
 | POST | `/certificates/{name}/deploy` | Deploy a managed certificate |
 | POST | `/certificate/request` | Request a certificate by spec name |
 | POST | `/certificate/renew` | Renew a certificate by spec name |
-| POST | `/certificate/revoke` | Revoke a certificate by spec name |
+| POST | `/certificate/revoke` | Revoke a certificate |
+
+Request and renew take `{ "name": "<spec>" }` (`acme_handlers.go:179`) and
+return `{ subject, notBefore, notAfter }`. Revoke takes
+`{ "name" | "certFile" | "certificate", "reason": <int> }`
+(`acme_handlers.go:238`).
 
 ### Device (TPM)
 
 | Method | Path | Description |
 |--------|------|-------------|
-| POST | `/device/enroll` | Enroll a TPM device |
-| POST | `/device/attest` | Perform remote attestation |
+| POST | `/device/enroll` | Enroll the named device |
+| POST | `/device/attest` | Attest the named device |
 
-### Configuration
+Both take `{ "name": "<device>" }` (`device_handlers.go:22`) and reject a
+missing `name` with 400.
+- Enroll returns `{ name, iakSubject, idevidSubject, idevidNotBefore, idevidNotAfter, issuingChainCount }`.
+- Attest returns `{ name, subject, notBefore, notAfter }`.
 
-| Method | Path | Description |
-|--------|------|-------------|
-| GET | `/config` | Get current client configuration |
-| PUT | `/config` | Update client configuration |
+There are no `/config` or `/renewal/*` routes.
 
-### Renewal Service
-
-| Method | Path | Description |
-|--------|------|-------------|
-| GET | `/renewal/status` | Get renewal service status and tracked certificates |
-| GET | `/renewal/config` | Get renewal configuration |
-| PUT | `/renewal/config` | Update renewal configuration |
-
-## Response Envelope
-
-All responses use the standard envelope:
+## Response envelope (`handlers.go:47-50`)
 
 ```json
-{
-  "success": true,
-  "data": { ... },
-  "error": null
-}
+{ "data": { } }
+{ "error": "certificate not found" }
 ```
 
-Error responses:
+`data` and `error` are omitted when empty. There is no `success` field, and
+`error` is a plain string.
 
-```json
-{
-  "success": false,
-  "data": null,
-  "error": {
-    "code": "not_found",
-    "message": "certificate not found"
-  }
-}
-```
+## Origin check and CORS
 
-## CORS
+The `guard` middleware (`pkg/acme/gui/guard/guard.go:101`) works as follows:
 
-All endpoints accept `OPTIONS` preflight requests. Response headers:
-- `Access-Control-Allow-Origin: *`
-- `Access-Control-Allow-Methods: GET, POST, PUT, DELETE, OPTIONS`
-- `Access-Control-Allow-Headers: Content-Type, Authorization`
+- It rejects an `Origin` whose host differs from the request `Host`.
+- In-process it answers `Access-Control-Allow-Origin: *`.
+- It answers `OPTIONS` with 204.
+- It allows `GET, POST, PUT, DELETE, OPTIONS` and `Content-Type, Authorization`.

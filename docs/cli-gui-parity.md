@@ -1,5 +1,8 @@
 # CLI ↔ GUI Feature Parity Audit
 
+> **Status: REFERENCE** · Last verified: 2026-10-12
+> A parity snapshot generated on 2026-04-16. The approximate counts and "examples" lists are not re-derived. The corrections below were checked against the tree on 2026-10-12.
+
 **Generated:** 2026-04-16
 **Scope:** `xkey` desktop CLI + `xkmsctl` admin CLI vs. xkey desktop (Wails) GUI
 
@@ -10,7 +13,7 @@
   - Route tables in `xkey/frontend/src/App.svelte:395-435` and `xkey/frontend/src/views/AdminApp.svelte:14-39`
   - `callBackend(...Service...)` invocations across `xkey/frontend/src/views/*.svelte`
   - Wails bindings in `xkey/pkg/gui/services/*.go`
-- Playwright coverage from `xkey/frontend/tests/e2e/*.spec.ts` (33 spec files).
+- Playwright coverage from `xkey/frontend/tests/e2e/*.spec.ts` (33 spec files at generation; 38 on 2026-10-12, plus `live/`).
 
 ## Summary
 
@@ -46,10 +49,8 @@
 - Entry point: expand `Certificates.svelte` with Request/Sign/Revoke/CRL actions + a CA info card.
 - Effort: Medium.
 
-### 3. SSH Key + Agent Management
-`xkey ssh *` covers agent start/stop/status, key list/generate/import/delete/export, git-config integration. **No SSH section in GUI and no SSHService binding.** SSH is a daily-use vector; ought to be discoverable.
-- Entry point: new `SSH.svelte` under Applications, OR SSH tab in `Keys.svelte`. Needs new Go `SSHService` Wails binding.
-- Effort: Large.
+### 3. SSH Key + Agent Management (closed since generation)
+There is now an SSH view (`xkey/frontend/src/views/SSH.svelte`), bound to `SSHService` (`xkey/pkg/gui/services/ssh_service.go`), with key list, generate, export and delete. Keys also appear in `Keys.svelte`. Coverage is in `tests/e2e/ssh.spec.ts`.
 
 ## xkey CLI → GUI Detail (abridged — see audit transcript for full tables)
 
@@ -74,7 +75,7 @@
 - **cert**: request, export
 - **tpm**: quote, iak (all subcommands), idevid (all subcommands), idevid-cert
 - **policy**: verify, export
-- **ssh**: entire command group
+- **ssh**: commands beyond key list/generate/export/delete (see `SSH.svelte`)
 - **usb**: entire command group (gadget mode)
 - **backup**: to-device, from-device
 - **auth**: register, token, status (GUI only has enterprise login via `AuthLoginGate`)
@@ -104,9 +105,8 @@
 - **admin**: create/list/get/delete/disable/enable/status
 - **user**: register/login/list/get/delete/disable/enable/status/credential-config
 - **credential**: submit, strategy
-- **tenant**: entire group (see Gap #3 above)
+- **tenant**: entire group (see Gap 1 above)
 - **frost**: entire group (threshold signatures)
-- **migrate**: plan/execute/validate
 - **key**: rotate, import, export, copy, wrap, unwrap, get-import-params
 
 ## Undertested GUI Operations (missing Playwright coverage)
@@ -134,10 +134,9 @@
 - ❌ admin (user accounts)
 - ❌ bootstrap (auto, noise, dane, spki) — though these are pre-server provisioning
 - ❌ credential (submit, strategy)
-- ❌ migrate (plan/execute/validate)
 - ❌ pkcs11 (probe, register, list-modules, list-tokens, init-token, connect, disconnect)
 - ❌ piv (server-side PIV cert store — separate from local-xkey PIV)
-- ❌ tenant (create/list/show/delete/barrier-init/unseal/status)
+- ❌ tenant (create/list/show/delete/update-entitlements/update-quotas, `cmd/xkmsctl/tenant.go`)
 - ❌ user (register/login/list/get/delete/disable/enable/status/credential-config)
 
 Adding these is mechanical: extend `commands.CommandDefinition` lists in `test/integration/api/commands/commands.go` and the table-driven framework picks them up automatically across all 6 protocols.
@@ -150,4 +149,4 @@ Adding these is mechanical: extend `commands.CommandDefinition` lists in `test/i
   - `xkey/pkg/gui/services/tenant_service.go`
   - `xkey/pkg/gui/services/ca_service.go`
   - `xkey/pkg/gui/services/agent_service.go` (partial — `PairAgentDialog` consumes some methods)
-- Playwright suite: `xkey/frontend/tests/e2e/` (33 spec files)
+- Playwright suite: `xkey/frontend/tests/e2e/` (38 spec files on 2026-10-12)

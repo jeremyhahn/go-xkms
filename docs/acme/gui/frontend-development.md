@@ -1,38 +1,48 @@
 # Frontend Development
 
-## Workspace Structure
+> **Status: REFERENCE** · Last verified: 2026-10-12
+> Legacy, unabsorbed notes on developing the ACME SPAs in the `pkg/acme/web` npm workspace.
+
+## Workspace structure
 
 ```
-web/
+pkg/acme/web/
   package.json                    # npm workspace root
   packages/
     shared/                       # @trustedca/shared
       src/
         api/
-          client.ts               # ApiClient singleton (fetch-based)
+          client.ts               # ApiClient + apiClient singleton (fetch-based)
           transport.ts            # Wails/browser detection, base URL resolution
-          types.ts                # TypeScript types matching Go structs
-        components/               # Shared Svelte components
+          types.ts                # TypeScript types mirroring the Go API
+          setup.ts, barrier.ts    # setup-wizard and seal/unseal calls
+        components/               # shared Svelte components
         stores/
-          theme.ts                # Dark/light mode store
-          notifications.ts        # Toast notification store
-    admin/                        # Admin SPA
+          theme.ts                # light/dark/system store
+          notifications.ts        # toast store
+          seal.svelte.ts          # seal state
+          setup-wizard.svelte.ts  # setup wizard state
+        utils/                    # formatters.ts, validators.ts
+    admin/                        # @trustedca/admin
       src/
-        views/                    # View components
-        App.svelte                # Root component with sidebar navigation
-      vite.config.ts
-    client/                       # Client SPA
+        views/                    # view components
+        lib/api/admin-api.ts      # typed calls on top of apiClient
+        App.svelte                # root component with sidebar navigation
+      vite.config.ts              # dev server :5173, proxies /api to https://localhost:8443
+    client/                       # @trustedca/client
       src/
-        views/                    # View components
-        App.svelte                # Root component with sidebar navigation
-      vite.config.ts
+        views/
+        lib/api/client-api.ts
+        App.svelte
+      vite.config.ts              # dev server :5174, proxies /api to http://localhost:18443
 ```
 
-Packages reference each other via npm workspace aliases (e.g., `@trustedca/shared`).
+Apps import shared code as `@trustedca/shared/...`. Each `vite.config.ts`
+aliases that to `../shared/src`.
 
-## Adding a New View
+## Adding a new view
 
-1. Create `web/packages/{app}/src/views/MyView.svelte`
+1. Create `pkg/acme/web/packages/{admin,client}/src/views/MyView.svelte`
 2. Import it in `App.svelte`:
    ```svelte
    import MyView from './views/MyView.svelte';
@@ -41,78 +51,84 @@ Packages reference each other via npm workspace aliases (e.g., `@trustedca/share
    ```typescript
    { label: 'My View', icon: 'dashboard', view: 'my-view' }
    ```
-4. Add the route in the template:
+4. Add the branch in the template:
    ```svelte
    {:else if activeView === 'my-view'}
      <MyView />
    ```
 
-Available icon keys: `dashboard`, `certificate`, `accounts`, `tenants`, `settings`, `connection`, `register`, `request`, `renew`, `revoke`, `device`, `autorenew`, `config`, `challenge`.
+Icon keys known to `Sidebar.svelte`: `dashboard`, `certificate`, `accounts`,
+`tenants`, `settings`, `connection`, `register`, `request`, `renew`, `revoke`,
+`device`, `autorenew`, `config`, `challenge`, `lock`, `orders`, `ca`, `audit`.
+An unknown key renders the `dashboard` icon. The client app's Certificates
+entry uses `certificates`, which is not a key, so it shows the dashboard icon.
 
-## Adding an API Endpoint
+## Adding an API endpoint
 
 ### Frontend
 
-Use the singleton `apiClient` from `@trustedca/shared`:
+Add a typed wrapper to the app's `lib/api/*-api.ts`. The wrappers call the
+shared `apiClient` with the full path:
 
 ```typescript
 import { apiClient } from '@trustedca/shared/api/client';
-import type { CertificateInfo } from '@trustedca/shared/api/types';
 
-const cert = await apiClient.get<CertificateInfo>('/certificates/ABC123');
+const API_V1 = '/api/v1';
+const cert = await apiClient.get<ManagedCertInfo>(`${API_V1}/certificates/${name}`);
 ```
 
 Methods: `get<T>(path, params?)`, `post<T>(path, body?)`, `put<T>(path, body?)`, `patch<T>(path, body?)`, `delete<T>(path)`.
 
 The client automatically:
-- Prepends the base URL (absolute in Wails, relative in browser)
-- Sets `Content-Type: application/json` and `Accept: application/json`
-- Injects `Authorization` and `X-Tenant-ID` headers when set
-- Unwraps the `{ data: T }` response envelope
-- Throws `ApiClientError` with `status`, `code`, and `message` on failure
-- Clears auth state on 401
+- prefixes `getApiBaseUrl()` (empty, same-origin, unless `window.__API_BASE_URL__` is set)
+- sets `Content-Type: application/json` and `Accept: application/json`
+- adds `Authorization: Bearer ...` and `X-Tenant-ID` when set
+- unwraps `data` from the JSON response
+- throws `ApiClientError` (`status`, `code`, `message`) on failure
+- clears auth state on 401
 
 ### Backend
 
-Add the route in the appropriate `router.go`:
+Add the route to `pkg/acme/gui/{admin,client}/api/router.go`. For example:
 
 ```go
-v1.HandleFunc("/my-endpoint", h.myHandler).Methods("GET")
+v1.HandleFunc("/my-endpoint", h.myHandler).Methods(http.MethodGet)
 ```
 
-## Svelte Store Patterns
+## Svelte store patterns
 
-### Theme Store
+### Theme store
 
 ```typescript
-import { theme, toggleTheme, initTheme } from '@trustedca/shared/stores/theme';
+import { theme, themeMode, setThemeMode, toggleTheme, initTheme } from '@trustedca/shared/stores/theme';
 
-// Call once in root component onMount
-initTheme();
-
-// Toggle: $theme flips between 'light' and 'dark'
-toggleTheme();
+initTheme();             // once, in the root onMount
+setThemeMode('system');  // 'light' | 'dark' | 'system'
+toggleTheme();           // flips between light and dark
 ```
 
-Persists to `localStorage` under `trustedca-theme`. Falls back to `prefers-color-scheme` media query.
+The mode persists in `localStorage` under `trustedca-theme`. `system`
+follows `prefers-color-scheme`. See [theming.md](theming.md).
 
-### Notification Store
+### Notification store
 
 ```typescript
 import { notifySuccess, notifyError, notifyWarning, notifyInfo } from '@trustedca/shared/stores/notifications';
 
 notifySuccess('Certificate issued');
-notifyError('Request failed', 8000);  // 8s duration
+notifyError('Request failed', 10000);  // optional duration in ms
 ```
 
-Notifications auto-dismiss after 5 seconds (8 seconds for errors). The `<Toast />` component renders them.
+Notifications auto-dismiss after 5 seconds by default, or 8 seconds for
+`notifyError`. The `<Toast />` component renders them.
 
-## TypeScript Type Sync
+## TypeScript types
 
-Types in `web/packages/shared/src/api/types.ts` mirror Go structs from `pkg/admin/types.go`. When Go types change, update the TypeScript types manually. Key type groups:
+`pkg/acme/web/packages/shared/src/api/types.ts` is maintained by hand to
+match the Go API's JSON. Key groups:
 
-- **Response envelope**: `ApiResponse<T>`, `ApiError`, `Pagination`
-- **CA types**: `CAStatus`, `CAStats`, `CertificateInfo`, `AccountInfo`, `OrderInfo`
-- **Tenant types**: `TenantInfo`, `TenantSettingsInfo`, `EABInfo`, `CreateTenantRequest`
-- **Client types**: `RegisterRequest`, `CertRequest`, `ClientConfig`, `RenewalConfig`
-- **Device types**: `EnrollRequest`, `AttestRequest`, `EABDeviceInfoDTO`
+- **Envelope**: `ApiResponse<T>`, `ApiError`, `Pagination`
+- **CA**: `CAStatus`, `CAStats`, `CertificateInfo`, `AccountInfo`, `OrderInfo`
+- **Tenant**: `TenantInfo`, `TenantSettingsInfo`, `EABInfo`, `CreateTenantRequest`
+- **Client**: `RegisterRequest`, `CertRequest`, `AccountConfig`, `CertificateSpec`, `ManagedCertInfo`
+- **Device**: `EnrollRequest`, `AttestRequest`, `EABDeviceInfoDTO`

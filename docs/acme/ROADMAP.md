@@ -1,5 +1,8 @@
 # Roadmap
 
+> **Status: ARCHIVE — historical record. Do NOT build from this document.**
+> Last verified: 2026-10-12. Inherited from go-trusted-ca: the paths it names (`pkg/qrdb/`, `config/`, `examples/config/`, `cmd/cactl`) no longer exist. Open ACME work is tracked in the repository-root [ROADMAP.md](../../ROADMAP.md); the current feature is [acme-issuance/](../acme-issuance/architecture.md).
+
 ## Completed
 
 ### QRDB Storage + RBAC Integration
@@ -106,7 +109,7 @@ Feature parity across all protocols:
 ### Production Hardening
 
 - [x] Prometheus exporters for issuance/challenge/revocation/account events
-      (`pkg/acme/server/metrics`, wired #734); see
+      (`pkg/acme/server/metrics`); see
       `docs/acme-issuance/engineering.md#observability`. Per-tenant
       rate-limit metrics remain unwired.
 - [ ] Performance optimization and benchmarking

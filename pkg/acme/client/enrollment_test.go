@@ -43,6 +43,7 @@ import (
 	"github.com/stretchr/testify/require"
 	"golang.org/x/crypto/acme"
 
+	deviceattest01 "github.com/jeremyhahn/go-xkms/pkg/acme/challenges/device-attest-01"
 	caerrors "github.com/jeremyhahn/go-xkms/pkg/acme/errors"
 	acmeserver "github.com/jeremyhahn/go-xkms/pkg/acme/server"
 	"github.com/jeremyhahn/go-xkms/pkg/ca"
@@ -6542,6 +6543,53 @@ func TestDeviceAttestCSR_ReportsAKeyThatCannotSign(t *testing.T) {
 
 	der, err := deviceAttestCSR("device.example.com", "192.168.1.1", failingSigner{public: key.Public()})
 	assert.ErrorIs(t, err, ErrAttestedKeyFailed)
+	assert.Nil(t, der)
+}
+
+// A DICE device finalizes with the possession template over the challenge it
+// answered, naming itself by its DeviceID: the request the server's
+// possession checks accept (go-xkms#1441).
+func TestAttestedKeyCSR_DICEDeviceSendsThePossessionRequest(t *testing.T) {
+	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	require.NoError(t, err)
+	attested := &AttestedKey{Signer: key, Format: deviceattest01.FormatDICE}
+
+	der, err := attestedKeyCSR("device.example.com", "0a0b0c", "token.thumbprint", attested)
+	require.NoError(t, err)
+	csr, err := x509.ParseCertificateRequest(der)
+	require.NoError(t, err)
+
+	request, err := deviceattest01.ParsePossessionCSR(csr)
+	require.NoError(t, err)
+	assert.Equal(t, []byte{0x0a, 0x0b, 0x0c}, request.DeviceID)
+	assert.Equal(t, deviceattest01.DICENonce("token.thumbprint"), request.Nonce)
+	assert.True(t, key.PublicKey.Equal(request.PublicKey))
+	assert.Empty(t, csr.Subject.CommonName, "the template's subject is empty")
+}
+
+// Every other format finalizes with an ordinary request naming the device.
+func TestAttestedKeyCSR_OtherFormatsSendAnOrdinaryRequest(t *testing.T) {
+	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	require.NoError(t, err)
+	attested := &AttestedKey{Signer: key, Format: deviceattest01.FormatTPM}
+
+	der, err := attestedKeyCSR("device.example.com", "0a0b0c", "token.thumbprint", attested)
+	require.NoError(t, err)
+	csr, err := x509.ParseCertificateRequest(der)
+	require.NoError(t, err)
+
+	assert.Equal(t, "device.example.com", csr.Subject.CommonName)
+	_, err = deviceattest01.ParsePossessionCSR(csr)
+	assert.ErrorIs(t, err, deviceattest01.ErrPossessionCSRMalformed)
+}
+
+func TestAttestedKeyCSR_RefusesADICEIdentityThatIsNotHex(t *testing.T) {
+	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	require.NoError(t, err)
+	attested := &AttestedKey{Signer: key, Format: deviceattest01.FormatDICE}
+
+	der, err := attestedKeyCSR("device.example.com", "not-hex", "token.thumbprint", attested)
+	assert.ErrorIs(t, err, ErrAttestationFailed)
 	assert.Nil(t, der)
 }
 

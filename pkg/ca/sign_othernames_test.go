@@ -26,6 +26,8 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	deviceattest01 "github.com/jeremyhahn/go-xkms/pkg/acme/challenges/device-attest-01"
+	"github.com/jeremyhahn/go-xkms/pkg/attestation/dice"
 	"github.com/jeremyhahn/go-xkms/pkg/ca"
 )
 
@@ -89,6 +91,25 @@ func TestSignCSR_OtherNamesFromTheIssuerReachTheCertificate(t *testing.T) {
 
 		require.NoError(t, err)
 		assert.Empty(t, permanentIdentifierOf(t, cert), "a requester must not name its own otherName")
+	})
+
+	t.Run("a DICE possession request's extensions are not copied", func(t *testing.T) {
+		key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+		require.NoError(t, err)
+		nonce := deviceattest01.DICENonce("token.thumbprint")
+		der, err := deviceattest01.SignPossessionCSR(key, []byte{0xfe, 0xed}, nonce)
+		require.NoError(t, err)
+		requested := pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE REQUEST", Bytes: der})
+
+		cert, err := trustedCA.SignCSR(context.Background(), requested, &ca.SignOptions{
+			OtherNames: []ca.OtherName{{TypeID: ca.OIDPermanentIdentifier, Value: identifier}},
+		})
+
+		require.NoError(t, err)
+		assert.Equal(t, "0102030405060708", permanentIdentifierOf(t, cert), "only the issuer's identity is asserted, not the one the request names")
+		for _, ext := range cert.Extensions {
+			assert.False(t, ext.Id.Equal(dice.OIDUccsEvidence), "the requested UCCS evidence was copied onto the certificate")
+		}
 	})
 
 	t.Run("otherNames and a pre-encoded subjectAltName extension are not both honored", func(t *testing.T) {

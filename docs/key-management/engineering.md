@@ -558,6 +558,37 @@ assert tenant B's key survives, and that a tenant's copy lands in its own
 tenant. `pkg/xkms/servicer_key_tenant_lifecycle_test.go` pins the service
 side.
 
+## Key agreement (ECDH)
+
+A backend that supports ECDH implements `types.KeyAgreement`
+(`pkg/types/types.go:2814`):
+
+```go
+DeriveSharedSecret(ctx context.Context, attrs *KeyAttributes, publicKey crypto.PublicKey) ([]byte, error)
+```
+
+`attrs` names the local private key; `publicKey` is the peer's. Callers check
+`Capabilities().KeyAgreement` (`pkg/types/types.go:1678`) before using it. The
+software backend delegates to the PKCS#8 key provider
+(`pkg/backend/software/software.go:1221-1222`), which supports X25519 and the
+NIST curves — see
+[crypto-backends engineering](../crypto-backends/engineering.md#pkcs8).
+
+The raw shared secret is not a key. Derive keys from it with a KDF:
+
+- `pkg/crypto/x25519` — `KeyAgreement.DeriveKey(sharedSecret, salt, info, keyLength)`
+  (`pkg/crypto/x25519/x25519.go:63`) is HKDF-SHA256 through the stdlib
+  `crypto/hkdf`, so a FIPS 140-only refusal is returned as an error rather
+  than a panic; it rejects an empty secret, a non-positive length and lengths
+  above 8160 bytes (`x25519.go:125-147`).
+- `pkg/crypto/ecdh` — `DeriveSharedSecret(*ecdsa.PrivateKey, *ecdsa.PublicKey)`
+  (`pkg/crypto/ecdh/ecdh.go:56`) for NIST-curve keys held in process.
+- The KDF a backend applies is selected by `types.KDFParams`; see
+  [Key Derivation Functions](../crypto/kdf.md).
+
+A runnable X25519 example — generation, agreement, HKDF derivation — is in
+`examples/advanced/x25519-ecdh/main.go`.
+
 ## Error semantics
 
 Typed errors only — `fmt.Errorf` is not used. The keystore vocabulary is

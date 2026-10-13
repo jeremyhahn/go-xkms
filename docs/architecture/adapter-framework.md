@@ -1,416 +1,178 @@
 # Authentication Adapter Framework
 
-## Overview
+> **Status: REFERENCE** · Last verified: 2026-10-12
+> The `pkg/auth` authenticator seam and how `xkmsd` builds it from `auth:`; [rbac](../rbac/engineering.md) is normative for authorization.
 
-go-xkms provides a pluggable authentication adapter framework that enforces cryptographic authentication for all requests. The system supports JWT Bearer tokens, mutual TLS (mTLS), OpenID Connect (OIDC), and PKCS#11-backed TLS. There are no API keys or passwords — all authentication is based on cryptographic proof.
+## Interface
 
-## Authentication Adapters
-
-### Interface
-
-Located in `pkg/auth/auth.go`, the `Authenticator` interface allows applications to implement custom authentication:
+Every transport authenticates through one interface,
+`auth.Authenticator` (`pkg/auth/auth.go:48`):
 
 ```go
 type Authenticator interface {
-    // AuthenticateHTTP authenticates an HTTP request
     AuthenticateHTTP(r *http.Request) (*Identity, error)
-
-    // AuthenticateGRPC authenticates a gRPC request
     AuthenticateGRPC(ctx context.Context, md metadata.MD) (*Identity, error)
-
-    // Name returns the authenticator name
     Name() string
 }
 ```
 
-### Identity
+`auth.Identity` is an alias for go-qrdb's `qrdbsdk.Identity`
+(`auth.go:42`). The authenticators fill `Subject`, `Roles` and `TenantID`
+(for example `pkg/auth/jwt.go:233`, `:253`; `pkg/auth/mtls.go:258`, `:283`).
+A handler reads it back with `auth.GetIdentity(ctx)` (`auth.go:98`).
 
-The `Identity` struct represents an authenticated user or service:
+Never decide authorization from the identity's role strings. `Roles` holds
+qrdb role identifiers, so comparing it with a role name matches nothing real
+(go-xkms#1074). Use `(*auth.Authorizer).Authorize(ctx, identity, resource,
+action)` (`pkg/auth/authorize.go:60`) for a resource:action decision, or
+`auth.HoldsSystemRole` (`pkg/auth/rolemembership.go:75`) where the decision
+really is role membership.
 
-```go
-type Identity struct {
-    Subject    string                 // Unique identifier
-    Claims     map[string]interface{} // Roles, permissions, etc.
-    Attributes map[string]string      // Metadata (auth_method, remote_addr, etc.)
-}
-```
+## Authenticators
 
-Authorization is never decided from the identity's role strings: `Roles`
-holds qrdb role identifiers, so comparing it against a role name matches
-nothing real (go-xkms#1074). Use `auth.Authorizer` for a resource:action
-decision, or `auth.HoldsSystemRole` where the decision genuinely is role
-membership; see [`../rbac/engineering.md`](../rbac/engineering.md).
+| Type | Constructor | `Name()` | Purpose |
+|---|---|---|---|
+| `JWTAuthenticator` | `NewJWTAuthenticator(*JWTConfig)` (`jwt.go:60`) | `jwt` | Bearer token verified against `JWTConfig.PublicKey`, with optional `Issuer`, `Audience` and `HeaderName` (`jwt.go:48`) |
+| `MTLSAuthenticator` | `NewMTLSAuthenticator(*MTLSConfig)` (`mtls.go:131`) | `qrdbsdk.MethodMTLS` | TLS client certificate; see below |
+| `OIDCAuthenticator` | `NewOIDCAuthenticator(ctx, *OIDCConfig)` (`oidc.go:163`) | `oidc` | OIDC ID and access tokens; `OIDCConfig` (`oidc.go:98`) takes `Issuer`, `ClientID`, `Audience`, `JWKSCacheTTL` (default one hour) and `HTTPClient` |
+| `CompositeAuthenticator` | `NewCompositeAuthenticator(...Authenticator)` (`composite.go:35`) | `composite` | Tries each in order. The first success wins; if all fail, the last error is returned (`composite.go:26-28`) |
+| `NoOpAuthenticator` | `NewNoOpAuthenticator()` (`noop.go:28`) | `noop` | Admits every request anonymously |
+| `QRDBBearerAuthenticator` | `NewQRDBBearerAuthenticator(source)` (`qrdb_bearer.go:62`) | `jwt` | Carries a host's session tokens into an embedded go-qrdb node's authenticator chain (`qrdb_bearer.go:39-43`) |
+| `StaticTokenAuthenticator` | `NewStaticTokenAuthenticator(token, identity)` (`statictoken.go:39`) | `statictoken` | One per-launch bearer token, accepted over loopback HTTP only, for the desktop standalone mode (`statictoken.go:26-30`) |
+| `LiveAuthenticator` | `NewLiveAuthenticator(a)` (`live.go:68`) | the wrapped one | Wraps an authenticator so it can be replaced while requests are in flight (`live.go:32-36`) |
 
-### Built-in Authenticators
+`OIDCAuthenticator` is a library type only: `xkmsd` never builds it from
+configuration.
 
-#### 1. JWTAuthenticator (`pkg/auth/jwt.go`)
+### mTLS
 
-Authenticates requests using signed JWT Bearer tokens. Tokens are verified against a configured public key.
+`MTLSConfig` (`pkg/auth/mtls.go:105`) has three optional fields:
 
-```go
-config := &auth.JWTConfig{
-    PublicKey:  publicKey,         // crypto.PublicKey (required)
-    Issuer:    "my-issuer",       // Expected issuer claim (optional)
-    Audience:  []string{"xkms"}, // Expected audience claim (optional)
-    HeaderName: "Authorization",  // HTTP header (default: "Authorization")
-}
+- `ExtractMetadata`: derives certificate metadata.
+- `ExtractSubject`: defaults to the certificate's Common Name.
+- `UserStore`: maps a certificate to a user.
 
-authenticator, err := auth.NewJWTAuthenticator(config)
-```
+With a `UserStore` set, the user is found by the certificate's SPKI
+thumbprint (`qrdbsdk.ComputeSPKIThumbprint`), and the identity is never
+derived from certificate fields (`mtls.go:113-123`). The lookup fails closed:
 
-Features:
-- Bearer token extraction from `Authorization` header
-- Public key signature verification (RSA, ECDSA, Ed25519)
-- Issuer and audience claim validation
-- Subject, role, and username extraction from token claims
-- Works across HTTP and gRPC
+| Outcome | Error |
+|---|---|
+| Account is disabled | `ErrUserDisabled` |
+| Account's method policy excludes mTLS | `*qrdbsdk.AuthMethodNotPermittedError` |
+| Certificate is bound to no user | `ErrCertNotBound` |
+| Any other store failure | `*UserLookupError` |
 
-#### 2. MTLSAuthenticator (`pkg/auth/mtls.go`)
+### PKCS#11-backed client TLS
 
-Authenticates using mutual TLS client certificates:
+`auth.NewPKCS11TLSConfig(*PKCS11TLSConfig)` (`pkg/auth/pkcs11_tls.go:236`)
+returns a `*tls.Config`, a cleanup function and an error. The private key
+never leaves the token. `PKCS11TLSConfig` (`pkcs11_tls.go:51`) has these
+fields:
 
-```go
-config := &auth.MTLSConfig{
-    // Optional: Custom claim extraction from client certificate
-    ExtractClaims: func(cert *x509.Certificate) map[string]interface{} {
-        return map[string]interface{}{
-            "organization": cert.Subject.Organization,
-            "roles":        extractRolesFromCert(cert),
-        }
-    },
+| Field | Meaning |
+|---|---|
+| `ModulePath` | Path to the PKCS#11 module |
+| `SlotID` | Slot to use |
+| `PIN` | A `*secure.Secret`; nil is rejected |
+| `CertLabel` | Optional; when empty, the first certificate is used |
+| `CACerts` | Optional; when nil, the system roots are used |
+| `Module` | Optional pre-initialised module |
 
-    // Optional: Custom subject extraction
-    ExtractSubject: func(cert *x509.Certificate) string {
-        return cert.Subject.CommonName
-    },
+## How xkmsd builds the authenticator
 
-    // Optional: Map certificate fingerprints to users
-    UserStore: myUserStore,
-}
+`(*Server).buildAuthenticator` (`pkg/server/server.go:1257`) reads `auth:`
+(`AuthConfig`, `pkg/config/config.go:420`):
 
-authenticator := auth.NewMTLSAuthenticator(config)
-```
+| `auth.type` | Result |
+|---|---|
+| `enabled: false`, or `none`/`noop`/`""` | `NoOpAuthenticator`. `cmd/xkmsd` refuses to start on it, because the config flags it as a compliance gap |
+| `jwt` | `JWTAuthenticator`. Requires `auth.jwt.public_key_file`, else `ErrJWTPublicKeyRequired` |
+| `mtls` | `MTLSAuthenticator` with the qrdb user store. Requires `tls.enabled`, else `ErrMTLSRequiresTLS` |
+| `composite` | `auth.composite.methods` (`jwt`, `mtls`) chained in order (`server.go:1371`) |
+| `adaptive` | Removed. Fails with `ErrAdaptiveRemoved` and names `composite` as the replacement (`server.go:1329-1334`, `pkg/config/auth.go:43`) |
+| anything else | `ErrUnknownAuthType`: fails closed |
 
-Default behavior:
-- Subject: Certificate Common Name (fallback to DNS name, then serial number)
-- Claims: Organization, OU, Country, Province, Locality, DNS names, email addresses, extended key usage
-- When a `UserStore` is configured, the authenticator looks up users by the SHA-256 fingerprint of the client certificate and enriches the identity with user role information
+When `composite.methods` is empty, the chain is derived
+(`server.go:1423`):
 
-#### 3. OIDCAuthenticator (`pkg/auth/oidc.go`)
-
-Authenticates using OpenID Connect with automatic provider discovery:
-
-```go
-config := &auth.OIDCConfig{
-    Issuer:       "https://auth.example.com", // OIDC provider URL (required)
-    ClientID:     "my-client-id",             // OAuth2 client ID (required)
-    Audience:     []string{"xkms"},          // Expected audience (optional)
-    JWKSCacheTTL: time.Hour,                 // JWKS cache TTL (default: 1h)
-    HTTPClient:   customHTTPClient,           // Custom HTTP client (optional)
-}
-
-authenticator, err := auth.NewOIDCAuthenticator(ctx, config)
-```
-
-Features:
-- Automatic OIDC discovery via `.well-known/openid-configuration`
-- JWKS key fetching with configurable cache TTL
-- ID token validation with signature verification
-- Access token validation via userinfo endpoint fallback
-- Role extraction from standard claims (`roles`, `groups`, Keycloak `realm_access`)
-
-#### 4. AdaptiveAuthenticator (`pkg/auth/adaptive.go`)
-
-Automatically switches between open access (bootstrap mode) and required authentication based on whether users exist in the system:
-
-```go
-config := &auth.AdaptiveConfig{
-    UserChecker:           myUserStore,       // Checks for existing users (required)
-    RequiredAuthenticator: jwtAuthenticator,  // Used when users exist (required)
-    CacheExpiry:           30 * time.Second,  // User check cache TTL (default: 30s)
-    Logger:                slogLogger,        // Optional logger
-}
-
-authenticator, err := auth.NewAdaptiveAuthenticator(config)
-```
-
-Behavior:
-- **Bootstrap mode** (no users): All requests allowed with anonymous identity
-- **Secured mode** (users exist): Delegates to the configured required authenticator
-- Caches user existence check with configurable TTL
-- Logs mode transitions
-
-#### 5. CompositeAuthenticator (`pkg/auth/composite.go`)
-
-Chains multiple authenticators and returns the first successful result:
-
-```go
-authenticator, err := auth.NewCompositeAuthenticator(
-    mtlsAuthenticator,
-    jwtAuthenticator,
-    oidcAuthenticator,
-)
-```
-
-Tries each authenticator in order. Returns the identity from the first one that succeeds. If all fail, returns the error from the last authenticator.
-
-#### 6. NoOpAuthenticator (`pkg/auth/noop.go`)
-
-Allows all requests with an anonymous identity. Intended for:
-- Development and testing
-- Bootstrap mode (via AdaptiveAuthenticator)
-- When authentication is handled externally (reverse proxy, service mesh)
-
-```go
-auth := auth.NewNoOpAuthenticator()
-```
-
-#### 7. PKCS11TLSConfig (`pkg/auth/pkcs11_tls.go`)
-
-Creates a `tls.Config` backed by a PKCS#11 hardware token for client certificate authentication:
-
-```go
-config := &auth.PKCS11TLSConfig{
-    ModulePath: "/usr/lib/libxkey11.so", // PKCS#11 shared object
-    SlotID:     0,                        // Token slot
-    PIN:        tokenPIN,                 // Token PIN
-    CertLabel:  "my-cert",               // Certificate label filter (optional)
-    CACerts:    caCertPool,              // CA certs for server verification (optional)
-}
-
-tlsConfig, cleanup, err := auth.NewPKCS11TLSConfig(config)
-defer cleanup()
-```
-
-Features:
-- Private key operations stay within the hardware token boundary
-- Supports RSA (PKCS#1 v1.5, PSS), ECDSA, and Ed25519 signing
-- Automatic certificate and matching key discovery via CKA_ID
-
-### Custom Authenticator Example
-
-```go
-type MyAuthenticator struct {
-    // your auth system
-}
-
-func (a *MyAuthenticator) AuthenticateHTTP(r *http.Request) (*auth.Identity, error) {
-    token := r.Header.Get("Authorization")
-
-    // Validate with your auth system
-    user, err := a.validateToken(token)
-    if err != nil {
-        return nil, err
-    }
-
-    return &auth.Identity{
-        Subject: user.ID,
-        Claims: map[string]interface{}{
-            "roles": user.Roles,
-        },
-        Attributes: map[string]string{
-            "auth_method": "custom",
-        },
-    }, nil
-}
-
-func (a *MyAuthenticator) AuthenticateGRPC(ctx context.Context, md metadata.MD) (*auth.Identity, error) {
-    // Similar implementation for gRPC
-}
-
-func (a *MyAuthenticator) Name() string {
-    return "my-custom-auth"
-}
-```
-
-## TLS/mTLS Configuration
-
-TLS/mTLS support is available across all server interfaces:
-
-- REST server TLS/mTLS configuration
-- gRPC server TLS/mTLS configuration
-- QUIC server TLS/mTLS configuration (requires TLS 1.3)
-- MCP server TLS/mTLS configuration
-
-### Features
-
-1. **TLS Configuration** (`pkg/config/tls.go`)
-   - Certificate and key loading from files
-   - TLS version control (TLS 1.2 - TLS 1.3)
-   - Cipher suite configuration
-   - Client certificate verification modes (none, request, require, verify, require_and_verify)
-   - Multiple CA certificate support
-   - Server cipher preference control
-
-2. **Server Support**
-   - **REST**: HTTPS with optional client cert verification
-   - **gRPC**: TLS with optional mTLS
-   - **QUIC**: HTTP/3 with TLS 1.3 (required)
-   - **MCP**: TCP with TLS/mTLS
-
-3. **Integration**
-   - Unified TLS configuration structure across all servers
-   - Automatic mTLS authentication when client certificates are required
-   - Identity extraction from client certificates
-   - Context propagation of authenticated identity
-
-## Configuration
-
-Authentication is configured via YAML:
+- JWT is added when `public_key_file` is set or a token issuer exists.
+- mTLS is added when TLS is enabled.
+- A single result is used bare, without a composite wrapper.
+- An empty result is `ErrCompositeMethodsRequired`.
 
 ```yaml
 auth:
   enabled: true
-  type: adaptive    # noop, mtls, jwt, adaptive, composite
-
-  # JWT configuration. public_key_file is required for type jwt and for type
-  # adaptive (which escalates to JWT once a user exists); startup fails without it.
+  type: composite
   jwt:
-    public_key_file: "/etc/xkms/jwt-public.pem"
-    issuer: "my-issuer"
-    audience: ["xkms"]
-
-  # mTLS uses client certificates from TLS config
-  mtls: true
-
-  # Adaptive: auto-switch between noop (bootstrap) and required auth
-  adaptive: true
-
-  # Composite: chain multiple auth methods
+    public_key_file: /etc/xkms/jwt-public.pem
   composite:
     methods: ["jwt", "mtls"]
-
-  # RBAC. Roles and permissions live in the qrdb identity plane, so this
-  # requires storage.backend "qrdb"; with any other backend the authorizer
-  # cannot be built and every transport would authorize every request, which
-  # the daemon refuses to start with.
   enable_rbac: true
-
-storage:
-  backend: "qrdb"   # required by auth.enable_rbac above
 ```
 
-See [RBAC](../rbac/architecture.md) and
+`auth.enable_rbac` builds an `auth.Authorizer` over the qrdb RBAC client. If
+there is no qrdb identity plane, the server logs a warning and authorisation
+is permissive (`server.go:1513-1519`). See
 [RBAC configuration](../rbac/engineering.md#configuration).
 
-## Examples
+## TLS
 
-### REST Server with JWT Authentication
+`tls:` (`TLSConfig`, `pkg/config/config.go:382`) is turned into a
+`*tls.Config` by `(*TLSConfig).LoadTLSConfig` (`pkg/config/tls.go:26`). It
+has these keys:
+
+- `cert_file`, `key_file` and `ca_file`
+- `client_auth` and `client_cas`
+- `min_version` and `max_version`
+- `cipher_suites` and `prefer_server_ciphers`
+- `watch_cert_files`
+- `server_cn`, `extra_sans` and `include_localhost_sans`
+
+`client_auth` maps onto Go's `tls.ClientAuthType` (`tls.go:100-115`):
+
+| `client_auth` | `tls.ClientAuthType` |
+|---|---|
+| `none` or `""` | `NoClientCert` |
+| `request` | `RequestClientCert` |
+| `require` | `RequireAnyClientCert` |
+| `verify` | `VerifyClientCertIfGiven` |
+| `require_and_verify` | `RequireAndVerifyClientCert` |
+
+## Embedding example
 
 ```go
-authenticator, err := auth.NewJWTAuthenticator(&auth.JWTConfig{
-    PublicKey: publicKey,
-    Issuer:   "my-issuer",
-})
-
-server, err := rest.NewServer(&rest.Config{
-    Port:          8443,
-    Backends:      backends,
-    TLSConfig:     tlsConfig,
-    Authenticator: authenticator,
-})
-```
-
-### REST Server with mTLS
-
-```go
-// Configure mTLS with client certificate verification
-tlsCfg := &config.TLSConfig{
+tlsConfig, err := (&config.TLSConfig{
     Enabled:    true,
-    CertFile:   "/path/to/server-cert.pem",
-    KeyFile:    "/path/to/server-key.pem",
-    CAFile:     "/path/to/ca-cert.pem",
+    CertFile:   "server.pem",
+    KeyFile:    "server-key.pem",
+    CAFile:     "ca.pem",
     ClientAuth: "require_and_verify",
-    MinVersion: "TLS1.2",
-}
+}).LoadTLSConfig()
 
-tlsConfig, err := tlsCfg.LoadTLSConfig()
+jwtAuth, err := auth.NewJWTAuthenticator(&auth.JWTConfig{PublicKey: pub})
+chain, err := auth.NewCompositeAuthenticator(
+    auth.NewMTLSAuthenticator(&auth.MTLSConfig{UserStore: users}),
+    jwtAuth,
+)
 
-authenticator := auth.NewMTLSAuthenticator(&auth.MTLSConfig{
-    UserStore: myUserStore, // Maps cert fingerprints to users
-})
-
-server, err := rest.NewServer(&rest.Config{
+srv, err := rest.NewServer(&rest.Config{ // pkg/api/rest/server.go:114, :270
     Port:          8443,
     Backends:      backends,
     TLSConfig:     tlsConfig,
-    Authenticator: authenticator,
+    Authenticator: chain,
 })
 ```
 
-### Composite Authentication (JWT + mTLS)
+In a handler:
 
 ```go
-jwtAuth, _ := auth.NewJWTAuthenticator(&auth.JWTConfig{
-    PublicKey: publicKey,
-})
-
-mtlsAuth := auth.NewMTLSAuthenticator(&auth.MTLSConfig{
-    UserStore: myUserStore,
-})
-
-composite, _ := auth.NewCompositeAuthenticator(mtlsAuth, jwtAuth)
-
-server, err := rest.NewServer(&rest.Config{
-    Port:          8443,
-    Backends:      backends,
-    TLSConfig:     tlsConfig,
-    Authenticator: composite,
-})
-```
-
-### Adaptive Authentication (Bootstrap to Secured)
-
-```go
-jwtAuth, _ := auth.NewJWTAuthenticator(&auth.JWTConfig{
-    PublicKey: publicKey,
-})
-
-adaptive, _ := auth.NewAdaptiveAuthenticator(&auth.AdaptiveConfig{
-    UserChecker:           userStore,
-    RequiredAuthenticator: jwtAuth,
-})
-
-server, err := rest.NewServer(&rest.Config{
-    Port:          8443,
-    Backends:      backends,
-    TLSConfig:     tlsConfig,
-    Authenticator: adaptive,
-})
-```
-
-### Accessing Identity in Handlers
-
-```go
-func myHandler(w http.ResponseWriter, r *http.Request) {
-    identity := auth.GetIdentity(r.Context())
-
-    if identity == nil {
-        http.Error(w, "Unauthorized", http.StatusUnauthorized)
-        return
-    }
-
-    if err := authorizer.Authorize(r.Context(), identity, auth.ResourceKeys, auth.ActionList); err != nil {
-        http.Error(w, "Forbidden", http.StatusForbidden)
-        return
-    }
-
-    // Process request...
+identity := auth.GetIdentity(r.Context())
+if err := authorizer.Authorize(r.Context(), identity, auth.ResourceKeys, auth.ActionList); err != nil {
+    // 403
 }
 ```
 
-## Best Practices
-
-1. **Authentication**
-   - Use mTLS for service-to-service communication
-   - Use JWT or OIDC for user-facing authentication
-   - Use AdaptiveAuthenticator for smooth bootstrap-to-secured transitions
-   - Use CompositeAuthenticator to support multiple auth methods simultaneously
-   - Use PKCS#11-backed TLS for hardware-protected client credentials
-
-2. **Security**
-   - Always use TLS in production
-   - Require mTLS for privileged operations
-   - Use short-lived JWT tokens with appropriate audience and issuer claims
-   - Monitor authentication failures via audit logging
-   - Use hardware tokens (PKCS#11, TPM) for private key protection
+`auth.ResourceKeys` is defined at `pkg/auth/permissions.go:40` and
+`auth.ActionList` at `:135`.

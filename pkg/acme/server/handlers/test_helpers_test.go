@@ -29,6 +29,7 @@ import (
 	"crypto/x509"
 	"crypto/x509/pkix"
 	"encoding/base64"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -576,7 +577,7 @@ func createTestOrderSimple(t *testing.T, service *RestService, accountID uint64)
 func attachDeviceAttestation(t *testing.T, service *RestService, order *entities.ACMEOrder, accountID uint64, identifierValue string, csrKey *ecdsa.PrivateKey) {
 	t.Helper()
 
-	const keyAuth = "test-token.test-thumbprint"
+	keyAuth := deviceAttestTestKeyAuth
 	uccs, err := dice.CreateUccsEvidenceExtension(&dice.ClaimsSet{Nonce: deviceattest01.DICENonce(keyAuth)})
 	require.NoError(t, err)
 
@@ -617,6 +618,22 @@ func attachDeviceAttestation(t *testing.T, service *RestService, order *entities
 	require.NoError(t, authzDAO.Save(context.Background(), authz))
 
 	order.Authorizations = []string{fmt.Sprintf("%d", authz.ID)}
+}
+
+// devicePossessionCSR is the possession request a DICE device holding key
+// sends at finalization (go-xkms#1441): the deviceattest01 template naming
+// identity, the hex DeviceID an order carries, and answering keyAuth. Its
+// nonce answers the attestation attachDeviceAttestation leaves when keyAuth is
+// deviceAttestTestKeyAuth.
+func devicePossessionCSR(t *testing.T, key *ecdsa.PrivateKey, identity, keyAuth string) *x509.CertificateRequest {
+	t.Helper()
+	deviceID, err := hex.DecodeString(identity)
+	require.NoError(t, err)
+	der, err := deviceattest01.SignPossessionCSR(key, deviceID, deviceattest01.DICENonce(keyAuth))
+	require.NoError(t, err)
+	csr, err := x509.ParseCertificateRequest(der)
+	require.NoError(t, err)
+	return csr
 }
 
 // parseErrorResponse parses an ACME error from an HTTP response

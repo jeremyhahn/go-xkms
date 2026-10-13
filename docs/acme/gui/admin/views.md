@@ -1,59 +1,74 @@
 # Admin Views
 
-All views are Svelte components in `web/packages/admin/src/views/`.
+> **Status: REFERENCE** · Last verified: 2026-10-12
+> Legacy, unabsorbed reference for the views in `pkg/acme/web/packages/admin/src/views/`.
+
+Views reach the API through `src/lib/api/admin-api.ts`, mostly via the stores
+in `src/lib/stores/`. The paths below are the ones that file calls.
 
 ## Dashboard
 
-`Dashboard.svelte` -- CA status overview.
+`Dashboard.svelte` shows CA status and statistics through the `status` store
+(`GET /admin/status`, `GET /admin/stats`). It also lists the certificates
+expiring within 30 days
+(`GET /admin/certificates?expires_days=30&per_page=5`).
 
-Displays: CA identity, version, uptime, key/signature algorithms, root and intermediate CA info.
+## Seal Manager
 
-Statistics: total/valid/revoked/expired certificates, total/active accounts, total/pending/completed orders.
-
-Calls `GET /api/v1/status`, `GET /api/v1/stats`.
+`SealManager.svelte` shows the barrier's seal state through the shared barrier
+API and polls it every 10 s.
 
 ## Certificates
 
-`Certificates.svelte` -- Certificate management.
-
-Features: paginated list with subject, serial, status, validity dates. Filter by status or subject. View certificate details. Revoke certificates with reason.
-
-Calls `GET /api/v1/certificates`, `GET /api/v1/certificates/{serial}`, `POST /api/v1/certificates/{serial}/revoke`.
+`Certificates.svelte` is a paginated certificate list from the `certs` store
+(`GET /admin/certificates`).
 
 ## Accounts
 
-`Accounts.svelte` -- ACME account management.
+`Accounts.svelte` is a paginated ACME account list from the `accounts` store
+(`GET /admin/accounts`).
 
-Features: paginated list with status, contact, creation date, order count. View account details. Disable accounts.
+## CA Manager
 
-Calls `GET /api/v1/accounts`, `GET /api/v1/accounts/{id}`, `DELETE /api/v1/accounts/{id}`.
+`CAManager.svelte` shows the root CA status (`GET /admin/status`) and each
+tenant's CA status (`GET /api/v1/tenants/{id}/ca-status`). It creates tenant
+intermediate CAs (`POST /api/v1/tenants/{id}/intermediate-cas`).
+
+## Orders and Order Detail
+
+`Orders.svelte` and `OrderDetail.svelte` read the `orders` store
+(`GET /admin/orders`, `GET /admin/orders/{id}`).
 
 ## Tenants
 
-`Tenants.svelte` -- Multi-tenant management list.
-
-Features: list all tenants, create new tenants, navigate to tenant detail.
-
-Calls `GET /api/v1/tenants`, `POST /api/v1/tenants`.
+`Tenants.svelte` lists tenants (`GET /api/v1/tenants`) and creates them with
+an ID and a name (`POST /api/v1/tenants`).
 
 ## Tenant Detail
 
-`TenantDetail.svelte` -- Individual tenant management.
+`TenantDetail.svelte` has four tabs:
+- **Overview**: tenant information
+- **Certificate Authorities**: CA status, plus creating the tenant root CA and
+  intermediate CAs (`/api/v1/tenants/{id}/ca-status`, `/root-ca`,
+  `/intermediate-cas`)
+- **EAB Credentials**: placeholder text only
+- **Settings**: placeholder text only
 
-Sub-sections:
-- **Info** -- View/edit tenant name and settings
-- **EAB** -- List, create, and delete External Account Binding credentials
-- **Roles** -- CRUD operations on tenant roles
-- **Users** -- CRUD operations on tenant users
+## Audit Log
 
-Calls tenant, EAB, role, and user endpoints under `/api/v1/tenants/{id}/`.
+`AuditLog.svelte` is a paginated audit list (`GET /admin/audit`).
 
 ## Connection Settings
 
-`ConnectionSettings.svelte` -- Configure how the desktop app connects to the CA server (desktop mode only).
-
-Options: transport protocol, server address, TLS certificates, auth token, timeout.
+`ConnectionSettings.svelte` is read-only. It shows the API base URL from
+`getApiBaseUrl()` and the connection status. The sidebar always shows it.
 
 ## Settings
 
-`Settings.svelte` -- Application preferences (theme, display options).
+`Settings.svelte` offers the theme choice: Light, Dark or System.
+
+## Unused views
+
+`EABManager.svelte`, `RoleManager.svelte` and `UserManager.svelte` are in the
+`views/` directory, but `App.svelte` never imports them, so they are
+unreachable.

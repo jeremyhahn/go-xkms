@@ -1,111 +1,102 @@
 # GUI Architecture
 
-> This page describes `pkg/acme/gui/admin`, the **desktop host** (Wails) for
-> the admin SPA. It has no current `cmd/` entry point; which binary hosts it
-> is tracked in go-xkms#743 / go-xkms#746 — see [README.md](README.md). The
-> admin UI xkmsd actually serves today is a separate implementation at
-> `/admin-ui` (`pkg/acme/web/packages/admin`,
-> `cmd/xkmsd/admin.go:73`/`:130`); its web-mode routing below (`/ui/admin/`
-> via `webui.RegisterRoutes()`) does not describe that surface.
+> **Status: REFERENCE** · Last verified: 2026-10-12
+> Legacy, unabsorbed notes on how the ACME SPAs are hosted. The code lives in `pkg/acme/gui` and `pkg/acme/web`.
 
-## Dual-Mode Design
+## Hosts
 
-The same Svelte bundle works in two environments without code changes. The transport layer auto-detects the runtime and resolves the correct API base URL.
+One Svelte bundle per app runs unchanged in every host:
 
-### Desktop Mode (Wails)
+| Host | Code | Serves | Wired into a binary |
+|------|------|--------|---------------------|
+| Client desktop (Wails) | `pkg/acme/gui/client/app.go` | client SPA + `/api/v1` client router | yes: `trusted-acme-client`, `-tags gui` (`cmd/acme-client/gui.go:44`) |
+| Admin desktop (Wails) | `pkg/acme/gui/admin/app.go` | admin SPA + `/api/v1` admin router | no (go-xkms#743, go-xkms#746) |
+| xkmsd admin module | `cmd/xkmsd/admin.go:91` | admin SPA at `/admin-ui` | yes: `xkmsd` |
+| ACME API server | `pkg/acme/gui/webui/handler.go` via `pkg/acme/api/server/server.go:670` | admin SPA at `/ui/admin/` | no; only tests call `server.NewMultiProtocolServer` |
 
-1. Wails opens a native webview and serves the pre-built Svelte assets
-2. The REST API router is mounted in that same asset server as `assetserver.Options.Handler`, so it shares the frontend's origin
-3. On startup, the frontend calls the `GetApiBaseUrl()` Wails binding, which returns an empty, same-origin base
-4. All subsequent API calls use `fetch('/api/v1/...')` against the window's own origin
+### Desktop mode (Wails)
 
-The desktop apps open **no network listener**. There is no port to discover, no
-token to carry and no cross-origin negotiation, because nothing outside the
-process can reach a route.
+1. Wails opens a native webview and serves the embedded `dist/`.
+2. The `/api/v1` router is the asset server's `Handler`
+   (`assetserver.Options.Handler`), so the API shares the frontend's origin.
+3. `initTransport()` calls the `GetApiBaseUrl()` binding, which returns `""`.
+   That empty string is a same-origin base (`pkg/acme/gui/admin/app.go:111`).
+4. All API calls are `fetch('/api/v1/...')` against the window's own origin.
 
-### Web Mode (Server-hosted)
+The desktop apps open **no network listener**. Nothing outside the process can
+reach a route. The admin router is built with `adminapi.WithInProcessTransport()`
+(`pkg/acme/gui/admin/app.go:103`).
 
-1. The ACME server registers the admin SPA under `/ui/admin/` via `webui.RegisterRoutes()`
-2. A `spaFileServer` serves static files from the embedded `dist/` directory, falling back to `index.html` for client-side routing
-3. The frontend detects no Wails runtime and defaults to relative URL `/api/v1`
-4. The browser's same-origin policy routes requests to the server's REST API
+### Web mode
 
-## Transport Detection
+`webui.RegisterSPA` (`pkg/acme/gui/webui/handler.go:41`) mounts an SPA under a
+prefix. It uses `http.StripPrefix` and the shared `corewebui.NewHandler`, which
+serves files from the embedded `dist/` and falls back to `index.html`.
+`xkmsd` mounts the admin SPA through `WithAdminWebUI` instead
+(`cmd/xkmsd/admin.go:104`). In both cases there is no Wails runtime, so the SPA
+uses a relative API base.
 
-`web/packages/shared/src/api/transport.ts` implements runtime detection:
+## Transport detection
 
-```typescript
-// Wails injects window.runtime or window.go
-export function isWailsAvailable(): boolean {
-  return typeof window !== 'undefined' &&
-    (!!(window as any).runtime || !!(window as any).go);
-}
+`pkg/acme/web/packages/shared/src/api/transport.ts`:
 
-// Same-origin in both modes: the base is a prefix, empty unless configured
-export function getApiBaseUrl(): string {
-  if (typeof window !== 'undefined' && (window as any).__API_BASE_URL__) {
-    return (window as any).__API_BASE_URL__;
-  }
-  return '';
-}
-```
+- `isWailsAvailable()` (`:18`) is true when `window.runtime` or `window.go` exists.
+- `getApiBaseUrl()` (`:26`) returns `window.__API_BASE_URL__` if set, else `''`.
+- `initTransport()` (`:45`) calls `runtime.Call('main.App', 'GetApiBaseUrl')`
+  in desktop mode and stores the result on `window.__API_BASE_URL__`.
 
-`initTransport()` is called once in each app's root `onMount`. In desktop mode it calls `runtime.Call('main.App', 'GetApiBaseUrl')` and stores the result on `window.__API_BASE_URL__`.
+Each app calls `initTransport()` once, in its root `onMount`.
 
-## Why REST Over Wails RPC
+## Why REST over Wails bindings
 
-The frontend communicates exclusively through REST API calls rather than Wails Go bindings because:
+The frontend talks to Go only through `fetch()`, not through generated Wails
+bindings:
 
-- **Same code path** -- identical `fetch()` calls work in both desktop and web mode
-- **Protocol flexibility** -- the admin desktop app can connect to the CA server over any supported protocol (Unix socket, gRPC, QUIC, REST, MCP) via the `AdapterFactory` pattern
-- **Testability** -- API endpoints are testable with standard HTTP tools
-- **Decoupling** -- frontend has zero compile-time dependency on Go types
+- the same calls work in the desktop and web hosts
+- the API is testable with plain HTTP (`httptest`)
+- the frontend has no compile-time dependency on Go types
 
-## In-Process API Pattern
+## In-process API pattern
 
-Both desktop apps (`pkg/acme/gui/admin/app.go` and `pkg/acme/gui/client/app.go`) follow the same pattern:
+Both desktop apps follow the same pattern:
 
-1. Create a `gorilla/mux` router with the `/api/v1` routes
-2. Launch Wails with an `AssetServer` carrying both the embedded `dist/` filesystem as `Assets` and that router as `Handler`
-3. Wails serves a GET from `Assets` first and falls back to `Handler` when the file does not exist; every non-GET goes straight to `Handler`
+1. Build a `gorilla/mux` router with the `/api/v1` routes, wrapped in the
+   `pkg/acme/gui/guard` middleware.
+2. Start Wails with an `AssetServer` whose `Assets` is the embedded `dist/`
+   and whose `Handler` is that router.
+3. Wails serves a GET from `Assets` first and falls back to `Handler` when the
+   file does not exist. Every non-GET goes straight to `Handler`.
 
-So the SPA keeps loading from `Assets`, `/api/v1` lands on the router, and no
-socket is bound under either. Nothing needs shutting down because nothing was
-started: closing the window ends the process.
+Closing the window ends the process. There is no server to shut down.
 
-The admin app uses an `AdapterFactory` to create protocol adapters per request. The client app injects the ACME client `Service` directly.
+The admin app takes a `trustedca.Client` (`pkg/acme/gui/admin/app.go:55`). The
+client app takes the ACME client `*service.Service` plus a `trustedca.Client`
+(`pkg/acme/gui/client/app.go:59`).
 
-## Build Tag System
+## Build tags
 
-GUI code is gated behind the `gui` build tag to keep CLI-only builds free of CGO and WebKit dependencies.
+`pkg/acme/gui/admin/app.go`, `pkg/acme/gui/client/app.go` and
+`cmd/acme-client/gui.go` carry `//go:build gui`. Without the tag,
+`cmd/acme-client/gui_nogui.go` returns `ErrGUINotAvailable`, and the binary
+needs neither cgo nor WebKit2GTK.
 
 | Tag | Effect |
 |-----|--------|
-| `gui` | Includes Wails desktop app packages (`pkg/gui/admin`, `pkg/gui/client`) |
-| (no `gui`) | CLI-only binary, no native window support |
+| `gui` | Links Wails and the desktop apps |
+| (none) | CLI only, no native window |
 
-Build commands:
-- `make build` -- CLI binaries, no `gui` tag
-- `make build-gui` -- GUI binaries, includes `-tags=gui`
+No Makefile target passes `-tags gui`. Build it directly:
+`go build -tags gui ./cmd/acme-client`.
 
-## Package Layout
+## Package layout
 
 ```
-pkg/gui/
-  admin/
-    app.go          # Wails app, API mounted in the asset server
-    config.go       # GUIConfig struct with defaults
-    errors.go       # Typed errors
-    api/
-      router.go     # gorilla/mux routes for admin API
-      handlers.go   # HTTP handler implementations
-  client/
-    app.go          # Wails app, API mounted in the asset server
-    config.go       # GUIConfig struct with defaults
-    errors.go       # Typed errors
-    api/
-      router.go     # gorilla/mux routes for client API
-      handlers.go   # HTTP handler implementations
-  webui/
-    handler.go      # SPA file server for /ui/admin/ on the ACME server
+pkg/acme/gui/
+  admin/            app.go (gui tag), config.go, errors.go
+    api/            router.go, handlers.go, *_handlers.go, tenant_ca.go, orders.go
+  client/           app.go (gui tag), config.go, errors.go
+    api/            router.go, handlers.go, acme_handlers.go, device_handlers.go
+  guard/            guard.go: origin check + CORS for the routers
+  webui/            embed.go (AdminAssets, ClientAssets), handler.go (RegisterSPA, RegisterRoutes)
+pkg/acme/web/       npm workspace: packages/{shared,admin,client}
 ```

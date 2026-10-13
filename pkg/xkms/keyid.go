@@ -258,7 +258,7 @@ func ValidateKeyID(keyID string) error {
 
 // validateBackend checks if a backend type is supported.
 func validateBackend(backend string) error {
-	if !validBackends[backend] {
+	if !validBackends[backend] && !types.IsRegisteredBackendType(types.BackendType(backend)) {
 		return &ErrValidation{Sentinel: ErrInvalidBackendType, Detail: backend}
 	}
 	return nil
@@ -398,6 +398,9 @@ func keyIDToBackendType(backendStr string) (types.BackendType, error) {
 	case "avr":
 		return types.BackendTypeAVR, nil
 	default:
+		if bt := types.BackendType(backendStr); types.IsRegisteredBackendType(bt) {
+			return bt, nil
+		}
 		return "", &ErrValidation{Sentinel: ErrInvalidBackendType, Detail: backendStr}
 	}
 }
@@ -513,6 +516,11 @@ func backendTypeToStoreType(bt types.BackendType) types.StoreType {
 	case types.BackendTypeAVR:
 		return types.StoreAVR
 	default:
+		// A registered external backend's keys carry its own name as their
+		// store type (types.RegisterBackendType).
+		if types.IsRegisteredBackendType(bt) {
+			return types.StoreType(bt)
+		}
 		return types.StoreSoftware
 	}
 }

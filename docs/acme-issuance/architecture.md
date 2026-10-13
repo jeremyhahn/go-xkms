@@ -1,6 +1,6 @@
 # ACME Issuance — Architecture
 
-> **Status: NORMATIVE** · Feature: `acme-issuance` · Repo: `go-xkms` · Last verified: 2026-10-08
+> **Status: NORMATIVE** · Feature: `acme-issuance` · Repo: `go-xkms` · Last verified: 2026-10-12
 
 ## The problem
 
@@ -64,7 +64,11 @@ requires the CSR's key to be `pubArea`'s key, and the identity is the AIK
 certificate's RFC 4043 `permanentIdentifier` otherName. Both key-binding
 phases go through the one binding gate, `attestation.VerifyInvariants`, that
 the TCG-CSR and SignCSR carriers use. See
-[engineering.md](engineering.md#device-attest-01-key-binding).
+[engineering.md](engineering.md#device-attest-01-key-binding). For the `dice`
+format the CSR is the device's possession request — a fixed template the
+device signs over `SHA-256(keyAuthorization)` — and finalize checks it with
+`VerifyPossessionCSR` before `BindCSRKey`
+(`pkg/acme/server/handlers/device_attest.go:191-196`).
 
 The evidence being verifiable says nothing about which device produced it,
 since attestation evidence is not secret: without the identity check, a

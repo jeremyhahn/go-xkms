@@ -1,5 +1,27 @@
 # Boulder CA Comparison: Enhancement Opportunities for go-xkms
 
+> **Status: REFERENCE** · Last verified: 2026-10-12
+> Gap analysis against Boulder; most items are still open. The "Current State" text below predates the work recorded in the table, and every "Implementation Plan" block is a proposal, not existing code.
+
+## State on 2026-10-12
+
+| Item | State in code |
+|------|---------------|
+| P0-1 goodkey (Fermat, ROCA, small primes, EC checks) | Open. No such checks; no `pkg/ca/goodkey` |
+| P0-2 zlint | Open. `pkg/acme/issuance` has a `CertificateLinter` seam (`issuance.go:47-48`, `lintCertificate` at `:527`), but nothing implements it outside tests and zlint is not a dependency |
+| P0-3 TBS determinism | Implemented as `ca.VerifyTBSDeterminism` (`pkg/ca/tbs_determinism.go:70`), called only by `pkg/acme/issuance` (`issuance.go:234,295`) |
+| P0-4 private-key verification | Open for issuance. `verifyKeyMatchesCertificate` (`pkg/ca/tls.go:819`) covers the CA's own TLS material only |
+| P1-1 domain blocklist | Implemented and wired: `pkg/acme/policy/blocklist.go`, built at `pkg/acme/server/handlers/service.go:623` |
+| P1-2 CT multi-operator policy | Code exists in `pkg/acme/ct/` (`policy.go`, `submitter.go`), but no production path constructs it |
+| P1-3 GCRA | Open. Rate limiting is token bucket (`pkg/acme/server/rate_limiter.go:113`, `pkg/ratelimit/ratelimit.go:30`), with per-tenant limits in `pkg/acme/server/tenant_rate_limiter.go` |
+| P1-4 Redis rate limiting | Open. Limiter state is in-process; there is no Redis dependency |
+| P1-5 encrypted stateless nonces | Open. Nonces are stored entities (`pkg/acme/entities/nonce.go:17`, `pkg/acme/nonce/service.go:21`) |
+| P1-6 two-phase precert issuance | Implemented in `pkg/acme/issuance` (`addPrecertPoison`, `replacePoisonWithSCTs`), but `issuance.NewIssuer` has no production caller |
+| P1-7 typed errors | Typed ACME errors exist (`pkg/acme/errors/errors.go`), with no Boulder-style gRPC mapping |
+| P2-1 Retry-After jitter | Open. `Retry-After` is set without jitter (`pkg/acme/server/rate_limiter.go:345`) |
+| P2-2 gRPC deadlines, P2-3 audit checksums, P2-4 multi-perspective validation | Open |
+| P2-5 sharded CRLs | Open. One CRL per CA (`pkg/ca/crl_persistence.go:158`) |
+
 ## Executive Summary
 
 This document compares go-xkms against Boulder (Let's Encrypt's production CA) to identify security and performance enhancements. Boulder processes 2M+ certificates daily and represents production-grade CA engineering.

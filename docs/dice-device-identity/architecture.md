@@ -1,6 +1,6 @@
 # DICE Device Identity — Architecture
 
-> **Status: NORMATIVE** · Feature: `dice-device-identity` · Repo: `go-xkms` · Last verified: 2026-10-11
+> **Status: NORMATIVE** · Feature: `dice-device-identity` · Repo: `go-xkms` · Last verified: 2026-10-12
 
 ## The question this answers
 
@@ -36,6 +36,7 @@ certificate rather than dropping it.
 | The IDevID certificate profile | this feature | `pkg/ca/profile_dice.go` |
 | OID registries | this feature | `pkg/ca/tcg_oids.go`, `pkg/certstore/types.go` |
 | The ACME format tag | this feature | `pkg/acme/challenges/device-attest-01/` |
+| The possession request profile | this feature | `pkg/acme/challenges/device-attest-01/possession.go` |
 | Talking to the device | the AVR backend | `pkg/backend/avr/` |
 | The AVR wire protocol and firmware | `arduino-generic` | not this repo |
 | Device registry and fleet policy | `go-trusted-platform` | not this repo |
@@ -67,10 +68,11 @@ mint alias certificate
 
 Steps 1-4 and step 5 are one exchange for a CSR carrying its evidence, and TWO
 for ACME: device-attest-01 delivers the chain at the challenge and the CSR at
-finalization. There the leaf is carried across as a VerifiedAttestation and
-step 5 is BindCSRKey, which runs before issuance. The challenge verifier
-refuses to answer for the dice format on its own, so step 5 cannot be the step
-that gets skipped.
+finalization. There the leaf is carried across as a VerifiedAttestation, the
+CSR is the device's possession request (below), and step 5 is
+VerifyPossessionCSR and then BindCSRKey, both before issuance. The challenge
+verifier refuses to answer for the dice format on its own, so step 5 cannot be
+the step that gets skipped.
 ```
 
 ## Decisions
@@ -158,6 +160,80 @@ IDevID with no `tcg-dice-Ueid`, since the profile copies only the extension
 (`pkg/ca/profile_dice.go:220-229`). Its identity is still bound through
 ACME, where the order's `permanentIdentifier` is the hex UEID read by
 `DeviceUeid`.
+
+### Possession at finalize: the device signs a fixed template
+
+A template-minting device has no ASN.1 encoder, and its alias key is its static
+DeviceID key, so the leaf it presents at the challenge says nothing about which
+finalize it belongs to (`pkg/acme/challenges/device-attest-01/possession.go:39-46`).
+It proves possession at finalize instead, by signing a PKCS#10
+CertificationRequestInfo filled in from a fixed template. The template's one
+host-supplied input is `b = SHA-256(keyAuthorization)`, the same `b` the
+challenge carried (`DICENonce`, `deviceattest01.go:440`). The host rebuilds the
+CertificationRequestInfo and wraps the device's signature
+(`AssemblePossessionCSR`, `possession.go:232`); a device that can sign a
+digest through a Go `crypto.Signer` uses `SignPossessionCSR` (`:256`).
+
+The template, which `BuildPossessionCRI` (`:171`) writes and the package
+comment states byte for byte (`:51-62`):
+
+| Field | Value |
+|-------|-------|
+| version | 0 |
+| subject | empty Name, `30 00` |
+| subjectPKInfo | id-ecPublicKey, prime256v1, uncompressed point |
+| attributes | one `extensionRequest` (1.2.840.113549.1.9.14, `:86`) |
+| extension 1 | `subjectAltName`, **critical** (RFC 5280 §4.2.1.6: the subject is empty), one otherName `id-on-permanentIdentifier` (RFC 4043), `identifierValue` = lower-case `hex(DeviceID)`, no assigner (`possessionExtensions`, `:212-227`) |
+| extension 2 | `tcg-dice-UCCS-evidence` (2.23.133.5.4.6), **not critical**, CBOR `{10: b}` |
+| signature | ecdsa-with-SHA256 |
+
+The request names its device as the ACME identifier type
+`permanent-identifier` (`PossessionIdentifierType`, `:81`) with value
+`hex(DeviceID)` (`Identifier`, `:132-133`), the form the challenge's identity
+gate compares against the order.
+
+`VerifyPossessionCSR` (`:358`) is the finalize side. `ParsePossessionCSR`
+(`:280`) first refuses any request that is not what the template writes for the
+values it carries (`ErrPossessionCSRMalformed`), then four checks run, each
+with its own error:
+
+| Check | Error | Where |
+|-------|-------|-------|
+| the signature verifies under the request's own key | `ErrPossessionSignatureInvalid` | `possession.go:374` |
+| the SubjectPublicKeyInfo is byte-equal to the attested leaf's | `ErrPossessionKeyMismatch` | `possession.go:377` |
+| the UCCS nonce is SHA-256 of this order's key authorization, compared in constant time | `ErrPossessionNonceMismatch` | `possession.go:380` |
+| the request's identifiers are exactly the order's | `ErrPossessionIdentifierMismatch` | `possession.go:383` |
+
+The ACME finalize handler runs it for every `dice` record and then still runs
+`BindCSRKey`, the gate every format shares
+(`pkg/acme/server/handlers/device_attest.go:191-196`, called from
+`order_finalize.go:605`). A refusal is `badCSR`.
+
+A consequence of the identifier check: a `dice` order names one device and
+nothing else. An order that also asks for a DNS name, or for a second device,
+cannot be finalized by a possession request.
+
+**Nothing in the request reaches the certificate.** The UCCS extension is
+evidence about this one request. The CA copies no requested extension: the CSR's
+extensions reach only a certificate profile (`pkg/ca/ca.go:1956`), and the
+finalize handler issues with the attested `permanentIdentifier` alone
+(`order_finalize.go:851`). `TestOrderFinalize_DeviceAttest01_CertificateAssertsTheAttestedIdentity`
+proves it at the handler, and the `pkg/ca` subtest "a DICE possession request's
+extensions are not copied" (`sign_othernames_test.go:96`) proves it at the CA.
+
+#### Rejected: binding through `challengePassword`
+
+PKCS#9 `challengePassword` is a string a CA compares, which no DICE verifier
+reads as a challenge. The UCCS `eat_nonce` is where the challenge already
+travels at the challenge, so the binding goes there too (`possession.go:64-68`).
+
+#### Rejected: a critical UCCS extension
+
+`CreateUccsEvidenceExtension` marks the extension critical on an alias
+certificate, because there the claims are what make the certificate an
+attestation. In the possession request it is never issued: it is evidence about
+the request, not a claim for the certificate, so it is not critical
+(`possession.go:65-68`).
 
 ### Rejected: refusing claim keys this verifier does not know
 

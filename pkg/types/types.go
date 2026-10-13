@@ -327,8 +327,15 @@ func (st StoreType) String() string {
 	return string(st)
 }
 
-// IsValid returns true if the store type is recognized.
+// IsValid returns true if the store type is built in or was registered with
+// RegisterBackendType.
 func (st StoreType) IsValid() bool {
+	return isBuiltinStoreType(st) || IsRegisteredBackendType(BackendType(st))
+}
+
+// isBuiltinStoreType reports whether st is one of the store types go-xkms
+// defines itself.
+func isBuiltinStoreType(st StoreType) bool {
 	switch st {
 	case StoreSoftware, StorePKCS11, StoreTPM2, StoreAWSKMS, StoreGCPKMS, StoreAzureKV, StoreVault, StoreQuantum, StoreFrost, StorePhone, StoreAVR:
 		return true
@@ -365,6 +372,9 @@ func ParseStoreType(s string) StoreType {
 	case "avr":
 		return StoreAVR
 	default:
+		if IsRegisteredBackendType(BackendType(s)) {
+			return StoreType(s)
+		}
 		return StoreUnknown
 	}
 }

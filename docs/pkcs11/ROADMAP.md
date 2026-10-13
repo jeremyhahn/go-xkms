@@ -1,9 +1,9 @@
 # PKCS#11 Module Roadmap — Compliance, Persistence, FIPS, Interop
 
-**Living document.** Update the finding/task status columns as work lands; add new
-findings to the register with the next free ID. Last updated: 2026-08-12 (Phase 1
-implementation in progress: C0-C16, C19-C23, C25 FIXED + tested; C24 deferred; C17/C18
-remain).
+> **Status: ARCHIVE — historical record. Do NOT build from this document.**
+> Last verified: 2026-10-12. Phases 1–5 landed in `pkg/pkcs11/module/` and
+> `cmd/pkcs11-module/`; the finding register and task tables are frozen as of
+> 2026-08-12 and are not updated.
 
 Scope: `pkg/pkcs11/module/` (core), `cmd/pkcs11-module/` (cgo C ABI),
 `test/integration/pkcs11/` (suites), Makefile build/test lanes.
@@ -94,7 +94,7 @@ it existed then) read the **env var** via its own now-deleted `Enabled()`,
 not the compiled-in `crypto/fips140.Enabled()` state — so a non-FIPS `.so`
 with `GOFIPS140=latest` in the environment *claimed* FIPS filtering without
 FIPS crypto, and vice versa. No CK_INFO/CK_TOKEN_INFO string identified a
-FIPS build. F5 (below) and go-xkms #21 close this gap: `GOFIPS140` set as a
+FIPS build. F5 (below) closes this gap: `GOFIPS140` set as a
 runtime environment variable has no effect on anything in this repository
 today, labeling reads build provenance only, and mechanism filtering reads
 `crypto/fips140.Enabled()` directly.
@@ -259,8 +259,8 @@ key-blobs (storage) and the KMIP / CloudHSM networked model (remote). L3 is unbl
 (folds into C9); R1 is unblocked (D2/D3 settled). Resolutions:
 
 - **C9 — storage record integrity → CONSUME qrdb's barrier, do NOT build a sealer.**
-  **REVISED 2026-08-12 after reading `~/sources/automatethethings/software/docs/05-seal-barrier-architecture.md`
-  + `00-ownership-and-sdk-boundary.md` (NORMATIVE).** Those docs are unambiguous:
+  **REVISED 2026-08-12 after reading the company seal-barrier architecture
+  standard and the ownership/SDK-boundary constitution (both NORMATIVE).** Those docs are unambiguous:
   **go-qrdb is the single barrier authority; go-xkms supplies hardware `SealingStrategy`
   implementations and PIN backends only, and must NEVER build its own sealing/AEAD
   layer.** The earlier sketch here (bespoke per-token TMK + Argon2id(PIN) KEKs +
@@ -480,9 +480,14 @@ linearizable cross-node value-CAS, as the KEY FINDING above predicted).
   `_ConcurrentAccumulates` (50 increments / 2 clients / `-race`, zero lost updates),
   `_AbsentKeyIsZero`, `_NilBackend`; existing `session_pin_lockout_test.go` (lockout
   survives restart / resets on success) still green through the new path.
+  *Superseded since:* the increment became a spend-before-verify ledger —
+  `ModuleStorage.SpendFailedAttempt` / `RefundFailedAttempt`
+  (`pkg/pkcs11/module/storage.go:263-283`) — and `LoadFailedAttempts` takes the
+  slot ID (`storage.go:447`); `IncrementFailedAttempt` and `SetAttemptPersistence`
+  no longer exist.
 
 **Remaining:** E2 (live multi-client devcontainer E2E) can now be written — the
-primitive and the consumer both exist. Task #8 (multi-devcontainer cluster harness)
+primitive and the consumer both exist. The multi-devcontainer cluster harness
 is the vehicle for E2 plus the broader cluster-operations verification.
 
 ## E2 CLOSEOUT (2026-08-12) — cluster CAS concurrency test ADDED (run pending devcontainer)
@@ -508,7 +513,7 @@ REST test (not just this one) needs that client-trust work before the HTTPS suit
 runs green in the devcontainer. That is in-flight harness migration owned outside
 this change.
 
-**Remaining task-#8 scope (broader than E2, not yet written):** multi-tenant
+**Remaining cluster-harness scope (broader than E2, not yet written):** multi-tenant
 config + isolation across the cluster, and rebalance. init / peer-discovery /
 leader-election / membership / replication / failover / restart-rejoin are already
 covered by the existing cluster suite.

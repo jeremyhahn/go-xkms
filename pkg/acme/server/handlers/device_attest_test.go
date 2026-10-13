@@ -41,6 +41,10 @@ import (
 
 const deviceAttestTestKeyAuth = "test-token.test-thumbprint"
 
+// deviceAttestTestIdentity is a DICE device identity as an order names it:
+// the lower-case hex of the device's DeviceID.
+const deviceAttestTestIdentity = "deadbeef"
+
 // newDICEAliasDeviceKey generates the P-256 key pkg/attestation/dice requires
 // of every DICE-resident key.
 func newDICEAliasDeviceKey(t *testing.T) *ecdsa.PrivateKey {
@@ -101,17 +105,24 @@ func deviceAttestPayload(t *testing.T, leafDER []byte) json.RawMessage {
 	return payload
 }
 
-// deviceAttestCSR builds the certificate request a device-attest-01 client
-// sends at finalization: signed by key, naming no identifiers of its own
-// (matchesIdentifier/matchesPermanentIdentifierOrder are exercised
-// separately; these tests are about the key/identity binding alone).
-func deviceAttestCSR(t *testing.T, key *ecdsa.PrivateKey) *x509.CertificateRequest {
+// deviceAttestCSR builds the possession request a DICE device sends at
+// finalization for rec: the deviceattest01 template, signed by key, naming
+// rec's device identity and carrying the nonce of rec's key authorization.
+func deviceAttestCSR(t *testing.T, key *ecdsa.PrivateKey, rec *entities.DeviceAttestation) *x509.CertificateRequest {
 	t.Helper()
-	der, err := x509.CreateCertificateRequest(rand.Reader, &x509.CertificateRequest{}, key)
-	require.NoError(t, err)
-	csr, err := x509.ParseCertificateRequest(der)
-	require.NoError(t, err)
-	return csr
+	return devicePossessionCSR(t, key, rec.DeviceIdentityValue, rec.KeyAuthorization)
+}
+
+// deviceAttestOrder is the order rec authorizes: rec's device identity as its
+// one permanent-identifier.
+func deviceAttestOrder(rec *entities.DeviceAttestation) *entities.ACMEOrder {
+	return &entities.ACMEOrder{
+		ID: 1,
+		Identifiers: []entities.ACMEIdentifier{{
+			Type:  common.AuthzTypePermanentIdentifier,
+			Value: rec.DeviceIdentityValue,
+		}},
+	}
 }
 
 func newDICEDeviceAttestation(t *testing.T, key *ecdsa.PrivateKey, keyAuth, deviceIdentity string) *entities.DeviceAttestation {
@@ -130,9 +141,9 @@ func newDICEDeviceAttestation(t *testing.T, key *ecdsa.PrivateKey, keyAuth, devi
 // be accepted.
 func TestBindDeviceAttestationKey_MatchingKeySucceeds(t *testing.T) {
 	key := newDICEAliasDeviceKey(t)
-	rec := newDICEDeviceAttestation(t, key, deviceAttestTestKeyAuth, "urn:dice:device:example")
+	rec := newDICEDeviceAttestation(t, key, deviceAttestTestKeyAuth, deviceAttestTestIdentity)
 
-	problem := bindDeviceAttestationKey(rec, 1, deviceAttestCSR(t, key))
+	problem := bindDeviceAttestationKey(rec, deviceAttestOrder(rec), deviceAttestCSR(t, key, rec))
 	require.Nil(t, problem)
 }
 
@@ -142,13 +153,14 @@ func TestBindDeviceAttestationKey_MatchingKeySucceeds(t *testing.T) {
 // compared the two and the CSR was signed regardless.
 func TestBindDeviceAttestationKey_DifferentKeyRefused(t *testing.T) {
 	attestedKey := newDICEAliasDeviceKey(t)
-	rec := newDICEDeviceAttestation(t, attestedKey, deviceAttestTestKeyAuth, "urn:dice:device:example")
+	rec := newDICEDeviceAttestation(t, attestedKey, deviceAttestTestKeyAuth, deviceAttestTestIdentity)
 
 	otherKey := newDICEAliasDeviceKey(t)
 
-	problem := bindDeviceAttestationKey(rec, 1, deviceAttestCSR(t, otherKey))
+	problem := bindDeviceAttestationKey(rec, deviceAttestOrder(rec), deviceAttestCSR(t, otherKey, rec))
 	require.NotNil(t, problem)
 	require.Equal(t, "urn:ietf:params:acme:error:"+common.ErrTypeBadCSR, problem.Type)
+	require.Contains(t, problem.Detail, deviceattest01.ErrPossessionKeyMismatch.Error())
 }
 
 // TestBindDeviceAttestationKey_NoRecordRefused proves a permanent-identifier
@@ -157,10 +169,52 @@ func TestBindDeviceAttestationKey_DifferentKeyRefused(t *testing.T) {
 // go-xkms#789.
 func TestBindDeviceAttestationKey_NoRecordRefused(t *testing.T) {
 	key := newDICEAliasDeviceKey(t)
+	rec := newDICEDeviceAttestation(t, key, deviceAttestTestKeyAuth, deviceAttestTestIdentity)
 
-	problem := bindDeviceAttestationKey(nil, 42, deviceAttestCSR(t, key))
+	problem := bindDeviceAttestationKey(nil, deviceAttestOrder(rec), deviceAttestCSR(t, key, rec))
 	require.NotNil(t, problem)
 	require.Equal(t, "urn:ietf:params:acme:error:"+common.ErrTypeBadCSR, problem.Type)
+}
+
+// TestBindDeviceAttestationKey_DICERequiresThePossessionRequest is
+// go-xkms#1441: for a DICE device the attested key is not enough. An ordinary
+// request on that key, which the key binding alone accepts, is refused because
+// it is not the device's possession request; so is a possession request
+// answering another challenge, or naming identifiers the order does not hold.
+func TestBindDeviceAttestationKey_DICERequiresThePossessionRequest(t *testing.T) {
+	key := newDICEAliasDeviceKey(t)
+	rec := newDICEDeviceAttestation(t, key, deviceAttestTestKeyAuth, deviceAttestTestIdentity)
+
+	ordinaryDER, err := x509.CreateCertificateRequest(rand.Reader, &x509.CertificateRequest{}, key)
+	require.NoError(t, err)
+	ordinary, err := x509.ParseCertificateRequest(ordinaryDER)
+	require.NoError(t, err)
+
+	otherChallenge := *rec
+	otherChallenge.KeyAuthorization = "other-token.test-thumbprint"
+
+	mixedOrder := deviceAttestOrder(rec)
+	mixedOrder.Identifiers = append(mixedOrder.Identifiers,
+		entities.ACMEIdentifier{Type: common.AuthzTypeDNS, Value: "device.example.com"})
+
+	tests := []struct {
+		name  string
+		order *entities.ACMEOrder
+		csr   *x509.CertificateRequest
+		want  error
+	}{
+		{"an ordinary request on the attested key", deviceAttestOrder(rec), ordinary, deviceattest01.ErrPossessionCSRMalformed},
+		{"another challenge's nonce", deviceAttestOrder(rec), deviceAttestCSR(t, key, &otherChallenge), deviceattest01.ErrPossessionNonceMismatch},
+		{"an order holding more than the device", mixedOrder, deviceAttestCSR(t, key, rec), deviceattest01.ErrPossessionIdentifierMismatch},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			problem := bindDeviceAttestationKey(rec, tt.order, tt.csr)
+			require.NotNil(t, problem)
+			require.Equal(t, "urn:ietf:params:acme:error:"+common.ErrTypeBadCSR, problem.Type)
+			require.Contains(t, problem.Detail, tt.want.Error())
+		})
+	}
 }
 
 // TestFindDeviceAttestation_LocatesTheValidatedChallenge proves
@@ -287,7 +341,7 @@ func TestNewDeviceAttestVerifier_ReturnsAttestedIdentityAndEvidence(t *testing.T
 		"the record must name the attested identity, not the order's declared value")
 
 	// And the recorded evidence binds the device's own key at finalization.
-	problemAtFinalize := bindDeviceAttestationKey(rec, 1, deviceAttestCSR(t, key))
+	problemAtFinalize := bindDeviceAttestationKey(rec, deviceAttestOrder(rec), deviceAttestCSR(t, key, rec))
 	require.Nil(t, problemAtFinalize)
 }
 
@@ -434,7 +488,8 @@ func TestChallengeHandler_DeviceAttest01_MatchingIdentityPersistsRecord(t *testi
 	require.Equal(t, common.StatusValid, stored.Status)
 	require.NotNil(t, stored.DeviceAttestation, "the verified evidence must be persisted for finalization")
 	require.Equal(t, hex.EncodeToString(identity), stored.DeviceAttestation.DeviceIdentityValue)
-	require.Nil(t, bindDeviceAttestationKey(stored.DeviceAttestation, 1, deviceAttestCSR(t, setup.deviceKey)))
+	rec := stored.DeviceAttestation
+	require.Nil(t, bindDeviceAttestationKey(rec, deviceAttestOrder(rec), deviceAttestCSR(t, setup.deviceKey, rec)))
 }
 
 // TestChallengeHandler_DeviceAttest01_EmptyResponseRefused is the client that

@@ -778,6 +778,36 @@ key, compared as keys rather than encodings (`verifyCertifiedKeyIsSubjectKey`,
 `Signature`, `PubArea`, `Algorithm`), so it survives storage between the two
 requests.
 
+**`dice` at finalization — the possession request.** A template-minting DICE
+device's alias key is its static DeviceID key, so its challenge leaf says
+nothing about which finalize it belongs to. Its CSR is therefore a possession
+request: a PKCS#10 CertificationRequestInfo built from a fixed template whose
+one host-supplied input is `b = DICENonce(keyAuthorization)`, signed by the
+device and wrapped by the host
+(`pkg/acme/challenges/device-attest-01/possession.go:38-73`). The template is an
+empty subject, a P-256 key and one `extensionRequest` holding a critical
+`subjectAltName` with the `permanentIdentifier` otherName `hex(DeviceID)` and a
+non-critical `tcg-dice-UCCS-evidence` whose `eat_nonce` is `b`. The ACME
+identifier type is `permanent-identifier` (`possession.go:81`).
+`bindDeviceAttestationKey` runs `VerifyPossessionCSR` for every `dice` record
+before `BindCSRKey` (`pkg/acme/server/handlers/device_attest.go:191-196`).
+`ParsePossessionCSR` (`possession.go:280`) refuses anything the template would
+not have written, then four checks run, each its own `badCSR` cause:
+
+| Check | Error | Where |
+|---|---|---|
+| the signature verifies under the request's key | `ErrPossessionSignatureInvalid` | `possession.go:374` |
+| the SubjectPublicKeyInfo is byte-equal to the attested leaf's | `ErrPossessionKeyMismatch` | `possession.go:377` |
+| the UCCS nonce is SHA-256 of this order's key authorization | `ErrPossessionNonceMismatch` | `possession.go:380` |
+| the request's identifiers are exactly the order's | `ErrPossessionIdentifierMismatch` | `possession.go:383` |
+
+So a `dice` order names one device and nothing else. No requested extension
+reaches the certificate: the handler issues with the attested
+`permanentIdentifier` alone (`order_finalize.go:851`), and the CA hands a CSR's
+extensions only to a certificate profile (`pkg/ca/ca.go:1956`). The profile and
+the rejected alternatives are in
+[dice-device-identity/architecture.md](../dice-device-identity/architecture.md#possession-at-finalize-the-device-signs-a-fixed-template).
+
 **One gate.** The TPM2 profile identifies its attester by public area
 (TCG-CSR-IDEVID) or by certificate (`Evidence.AttesterCertificate`, this
 format) — never both — and reads its challenge from the certification's
@@ -913,8 +943,9 @@ refuses every attestation (`ErrNoAttestationVerifier`).
 (`findDeviceAttestation`, scanning the order's authorizations for a `valid`
 `device-attest-01` challenge carrying one) and calls
 `bindDeviceAttestationKey`, which reconstructs the `VerifiedAttestation`
-(`deviceattest01.FromRecord`) and re-runs `BindCSRKey` against the submitted
-CSR. A permanent-identifier order reaching this point with no record is
+(`deviceattest01.FromRecord`), checks a `dice` record's possession request with
+`VerifyPossessionCSR`, and re-runs `BindCSRKey` against the submitted CSR
+(`device_attest.go:179-200`, called from `order_finalize.go:605`). A permanent-identifier order reaching this point with no record is
 refused (`badCSR`) rather than signed as an ordinary certificate request — the
 order is never anything other than `device-attest-01` once `enroll-01`'s
 TCG-CSR-IDEVID path and `endorse-01`'s EK-public-key identifier have been

@@ -1,6 +1,6 @@
 # DICE Device Identity — API
 
-> **Status: NORMATIVE** · Feature: `dice-device-identity` · Repo: `go-xkms` · Last verified: 2026-09-28
+> **Status: NORMATIVE** · Feature: `dice-device-identity` · Repo: `go-xkms` · Last verified: 2026-10-12
 
 ## Transports
 
@@ -62,7 +62,24 @@ Verification is therefore two phases:
 | Call | When | Establishes |
 |------|------|-------------|
 | `VerifyAttestation(...) (*VerifiedAttestation, error)` | challenge | Format, chain anchoring, freshness. Returns the **verified leaf**. |
+| `(*VerifiedAttestation).VerifyPossessionCSR(csr, orderIdentifiers)` | finalization, `dice` only | The CSR is the device's possession request: the fixed template, signed by the alias key, over `DICENonce(keyAuthorization)`, naming exactly the order's identifiers (`possession.go:358`). |
 | `(*VerifiedAttestation).BindCSRKey(csr)` | finalization | The CSR self-signature verifies, and its SubjectPublicKeyInfo is the alias certificate's, through `attestation.VerifyInvariants`. |
+
+**The `dice` CSR is a possession request.** A template-minting device signs a
+CertificationRequestInfo built from a fixed template whose one host-supplied
+input is `b = DICENonce(keyAuthorization)`, and the host wraps the signature
+(`AssemblePossessionCSR`, `possession.go:232`). Its shape is an empty subject,
+a P-256 key and one `extensionRequest` holding a critical `subjectAltName` with
+the `permanentIdentifier` otherName `hex(DeviceID)` and a non-critical
+`tcg-dice-UCCS-evidence` whose `eat_nonce` is `b`
+([architecture.md](architecture.md#possession-at-finalize-the-device-signs-a-fixed-template)).
+The order's identifier is `permanent-identifier` / `hex(DeviceID)`. The ACME
+finalize handler runs `VerifyPossessionCSR` and then `BindCSRKey` for a `dice`
+record (`pkg/acme/server/handlers/device_attest.go:191-196`); any other request
+is `badCSR`, so a `dice` order names one device and nothing else. The UCCS
+extension and every other requested extension stay off the certificate: the
+handler issues with the attested `permanentIdentifier` alone
+(`order_finalize.go:851`).
 
 `Verify` — the one-shot `ChallengeVerifierFunc` shape — **refuses** `dice`
 with `ErrKeyBindingRequired`, and `tpm` too: its evidence certifies `pubArea`,

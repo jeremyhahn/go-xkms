@@ -174,7 +174,7 @@ func (e *diceElement) CreateAttestedKey(_, keyAuthorization string) (*AttestedKe
 	if err != nil {
 		return nil, err
 	}
-	return &AttestedKey{Statement: statement, Signer: e.signer}, nil
+	return &AttestedKey{Statement: statement, Signer: e.signer, Format: deviceattest01.FormatDICE}, nil
 }
 
 // verdictRecorder wraps the production verifier and remembers why it last

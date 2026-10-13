@@ -931,8 +931,7 @@ func TestOrderFinalizeHandler_DeviceAttest01Path(t *testing.T) {
 	order := createTestOrderSimple(t, service, account.ID)
 	order.Status = common.StatusReady
 	order.Identifiers = []entities.ACMEIdentifier{
-		// Use a hostname-like identifier, not a base64 public key
-		{Type: common.AuthzTypePermanentIdentifier, Value: "device-serial-123456"},
+		{Type: common.AuthzTypePermanentIdentifier, Value: deviceAttestTestIdentity},
 	}
 
 	ctx := context.Background()
@@ -941,23 +940,18 @@ func TestOrderFinalizeHandler_DeviceAttest01Path(t *testing.T) {
 	err = orderDAO.Save(ctx, order)
 	require.NoError(t, err)
 
-	// Create a CSR carrying the RFC 4043 permanentIdentifier otherName the
-	// order authorizes, and no other SAN.
 	csrKey, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
 	require.NoError(t, err)
 
 	// go-xkms#789: finalization refuses a permanent-identifier order with no
 	// validated device-attest-01 attestation to bind the CSR's key against,
 	// so this fixture attaches one for the same key the CSR below uses.
-	attachDeviceAttestation(t, service, order, account.ID, "device-serial-123456", csrKey)
+	attachDeviceAttestation(t, service, order, account.ID, deviceAttestTestIdentity, csrKey)
 	require.NoError(t, orderDAO.Save(ctx, order))
 
-	template := &x509.CertificateRequest{
-		Subject: pkix.Name{
-			CommonName: "device-serial-123456",
-		},
-	}
-	csr := createPermanentIdentifierCSR(t, template, csrKey, "device-serial-123456")
+	// The DICE device's possession request (go-xkms#1441), which carries the
+	// RFC 4043 permanentIdentifier otherName the order authorizes.
+	csr := devicePossessionCSR(t, csrKey, deviceAttestTestIdentity, deviceAttestTestKeyAuth)
 
 	payload := OrderFinalizeRequest{
 		CSR: base64.RawURLEncoding.EncodeToString(csr.Raw),

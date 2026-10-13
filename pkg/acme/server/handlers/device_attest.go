@@ -170,19 +170,28 @@ func (s *RestService) findDeviceAttestation(
 }
 
 // bindDeviceAttestationKey refuses a certificate request whose key is not the
-// key a device-attest-01 challenge attested (go-xkms#789). rec is what
+// key a device-attest-01 challenge attested (go-xkms#789) and, for the DICE
+// format, one that is not the device's possession request for order. rec is what
 // findDeviceAttestation returned; a nil rec is refused as badCSR rather than
 // treated as "not a device-attest-01 order", since by the time
 // OrderFinalizeHandler reaches this call every permanent-identifier order
 // with a standard x509 CSR is one.
-func bindDeviceAttestationKey(rec *entities.DeviceAttestation, orderID uint64, csr *x509.CertificateRequest) *entities.Error {
+func bindDeviceAttestationKey(rec *entities.DeviceAttestation, order *entities.ACMEOrder, csr *x509.CertificateRequest) *entities.Error {
 	if rec == nil {
-		return common.BadCSR((&ErrDeviceAttestationNotFound{OrderID: orderID}).Error())
+		return common.BadCSR((&ErrDeviceAttestationNotFound{OrderID: order.ID}).Error())
 	}
 
 	verified, err := deviceattest01.FromRecord(rec)
 	if err != nil {
 		return common.BadCSR("device-attest-01: " + err.Error())
+	}
+	// A DICE device mints its request from the possession template, so the
+	// request itself must be that template: it is what proves the attested
+	// key answered this challenge (go-xkms#1441).
+	if verified.Format == deviceattest01.FormatDICE {
+		if err := verified.VerifyPossessionCSR(csr, order.Identifiers); err != nil {
+			return common.BadCSR("device-attest-01: certificate request is not the attested device's possession request: " + err.Error())
+		}
 	}
 	if err := verified.BindCSRKey(csr); err != nil {
 		return common.BadCSR("device-attest-01: certificate request key does not match the attested key: " + err.Error())

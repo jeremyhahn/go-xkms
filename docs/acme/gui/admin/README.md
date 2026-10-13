@@ -1,49 +1,54 @@
 # CA Admin GUI
 
-> **Correction (go-xkms#942):** there is no `cactl` binary in this
-> repository, and this package (`pkg/acme/gui/admin`) has no confirmed
-> `cmd/` entry point — see the correction in [`../README.md`](../README.md).
-> The desktop content below describes what this package would do if
-> wired up; treat it as unverified against a running binary.
+> **Status: REFERENCE** · Last verified: 2026-10-12
+> Legacy, unabsorbed notes on the admin SPA (`pkg/acme/web/packages/admin`) and its hosts.
 
-The admin GUI provides certificate authority management through a desktop application and (a separately implemented) web interface — see the correction above.
+The admin SPA is a single Svelte bundle. Three hosts can serve it:
 
-## Desktop Mode
+| Host | Where | In a binary |
+|------|-------|-------------|
+| xkmsd admin module | `/admin-ui` (`cmd/xkmsd/admin.go:55`, `:92`, `:104`) | yes |
+| Wails desktop (`pkg/acme/gui/admin`) | native window | no: there is no `cactl` binary (go-xkms#743, go-xkms#746) |
+| ACME API server (`pkg/acme/gui/webui`) | `/ui/admin/` | no: only tests build that server |
 
-Not currently reachable from any binary in this repository — see the
-correction above.
+The SPA's API calls (`src/lib/api/admin-api.ts`) target `/admin/*` and
+`/api/v1/tenants/...`. That is the xkmsd admin surface. The desktop host's
+router serves `/api/v1/status`, `/api/v1/certificates` and so on (see
+[api.md](api.md)), so most SPA calls would not match it.
 
-### Window Defaults
+## Desktop defaults (`pkg/acme/gui/admin/config.go:17-24`)
 
 | Property | Value |
 |----------|-------|
 | Title | Trusted CA Admin |
 | Size | 1280 x 800 |
-| Min Size | 1024 x 700 |
+| Min size | 1024 x 700 |
+| Transport | `unix` |
+| Address | `/run/trusted-ca-grpc.sock` |
+| Timeout | 30 s |
 
-### Connection Defaults
+The Linux `ProgramName` is still `cactl` (`pkg/acme/gui/admin/app.go:87`).
 
-Unverified — see the correction above.
+## Navigation
 
-## Web Mode
+`App.svelte` gates the UI on setup and seal state (loading, setup wizard,
+sealed, app). The sidebar then shows these entries, in this order:
 
-The web admin UI that is actually wired today is `xkmsd`'s own
-`/admin-ui` (`pkg/acme/web/packages/admin`, `cmd/xkmsd/admin.go:73`), not
-`/ui/admin/`. See the correction at the top of this page.
+| View | Purpose |
+|------|---------|
+| Dashboard | CA status, statistics, certificates expiring in 30 days |
+| Seal Manager | Barrier seal/unseal status |
+| Certificates | Certificate list |
+| Accounts | ACME account list |
+| CA Manager | Root and per-tenant intermediate CAs |
+| Orders | Order list and order detail |
+| Tenants | Tenant list, create, tenant detail |
+| Audit Log | Audit entries |
+| Connection | Shows the API base URL and connection status |
+| Settings | Light / Dark / System theme |
 
-## Navigation Views
+## Related documentation
 
-| View | Description |
-|------|-------------|
-| Dashboard | CA status, certificate/account statistics |
-| Certificates | List, view, and revoke certificates |
-| Accounts | List and manage ACME accounts |
-| Tenants | Multi-tenant CA management |
-| Connection | Protocol and server connection settings (desktop only) |
-| Settings | Application preferences |
-
-## Related Documentation
-
-- [Views Reference](views.md)
-- [Web Mode](web-mode.md)
-- [Admin API Reference](api.md)
+- [Views reference](views.md)
+- [Web mode](web-mode.md)
+- [Desktop admin API](api.md)

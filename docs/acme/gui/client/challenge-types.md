@@ -1,35 +1,49 @@
 # Challenge Types
 
-The ACME client supports multiple challenge types for domain validation. Select the appropriate type based on your environment.
+> **Status: REFERENCE** · Last verified: 2026-10-12
+> Legacy, unabsorbed notes on the challenge types known to the ACME client (`pkg/acme/client/types.go:160-177`).
 
-## Standard ACME Challenges
+The GUI's Challenges view (`ChallengeConfig.svelte`) shows a read-only card
+for each type below. Nothing is configured from the GUI.
+
+## Standard ACME challenges
 
 ### http-01
 
-Proves control of a domain by serving a token file at `http://{domain}/.well-known/acme-challenge/{token}`. Requires port 80 access.
+Proves control of a domain by serving a token at
+`http://{domain}/.well-known/acme-challenge/{token}`. Needs port 80.
 
 ### dns-01
 
-Proves control by creating a `_acme-challenge.{domain}` TXT record. Works for wildcard certificates and systems without public HTTP access.
+Proves control with a `_acme-challenge.{domain}` TXT record. Works for
+wildcards and for hosts without public HTTP.
 
 ### tls-alpn-01
 
-Proves control via a self-signed certificate with the ACME ALPN extension on port 443. No separate port or DNS access needed.
+Proves control with a self-signed certificate carrying the ACME ALPN extension
+on port 443. The constant exists, but the default `SupportedChallenges` list
+(`pkg/acme/client/trustedca_config.go:195`) does not include it.
 
-## Trusted Computing Challenges
+## Trusted computing challenges
 
 ### device-attest-01
 
-TPM-based device attestation challenge. The client provides a TPM quote and signature to prove platform integrity. Requires a TPM with enrolled attestation key.
+TPM-based device attestation. The client proves platform identity with
+TPM-backed attestation evidence.
 
 ### endorse-01
 
-Endorsement key-based challenge using the TPM's manufacturer-provisioned EK certificate to prove hardware identity.
+Uses the TPM's manufacturer-provisioned EK certificate to prove hardware identity.
 
 ### enroll-01
 
-Device enrollment challenge that combines EK certificate verification with attestation key creation to bootstrap trust for new devices.
+Device enrollment that combines EK verification with attestation-key creation
+to bootstrap trust for a new device.
 
-## Configuration
+## Choosing a challenge
 
-Set the default challenge type in the Configuration view or override per-request in the Request Certificate view. Challenge-specific settings are managed in the Challenges view.
+Each certificate spec in the client YAML config names its challenge
+(`certificates.<name>.challenge`, `CertificateSpec` at
+`pkg/acme/client/service/config.go:84`). Solver settings for http-01 and
+dns-01 live under the top-level `challenge` key (`ChallengeConfig`,
+`config.go:257`). See [configuration.md](configuration.md).

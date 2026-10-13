@@ -1,18 +1,21 @@
 # FIPS 140 Strategy
 
+> **Status: REFERENCE** · Last verified: 2026-10-12
+> Cross-cutting reference: how go-xkms defers FIPS 140 enforcement to the Go standard library, and the gaps that remain.
+
 ## Overview
 
 go-xkms provides FIPS 140 default-algorithm selection for the choices this
 repository owns (the KDF selectors below), and reports FIPS build provenance
 for artifact labels. Whether FIPS 140 mode is *active* in a process is
-answered by the Go standard library alone (go-xkms #21) — this repository
-keeps no copy of that signal.
+answered by the Go standard library alone — this repository keeps no copy of
+that signal.
 
 **Packages**:
 - `github.com/jeremyhahn/go-xkms/pkg/crypto/fips` -- build-provenance reporting (`Built`, `BuildSetting`) and KDF selection
 - `github.com/jeremyhahn/go-xkms/pkg/crypto/kdf` -- `PasswordHasher` with versioned algorithms
 
-## FIPS Mode Detection (owner ruling on #21, 2026-09-22)
+## FIPS Mode Detection
 
 ```go
 import "crypto/fips140"
@@ -83,16 +86,16 @@ under `GODEBUG=fips140=on`.
 `crypto/fips140.Enabled()` remains the one signal other packages in this
 repository call directly to decide whether FIPS mode is active for their own
 purposes (KDF selection below, the AEAD selector, PKCS#11 mechanism
-advertisement — see [FIPS Mode Detection](#fips-mode-detection-owner-ruling-on-21-2026-09-22)
+advertisement — see [FIPS Mode Detection](#fips-mode-detection)
 above). It does not decide whether a given *algorithm* may run. That decision
 belongs to the Go standard library — see "Algorithm enforcement" below.
 
-## Algorithm enforcement (owner ruling on #21, 2026-09-22)
+## Algorithm enforcement
 
 go-xkms keeps no approved-algorithm allowlist of its own. Earlier revisions
 of this package held one (`approvedAlgorithms`, `fips.ApprovedAlgorithm`,
-`fips.AlgorithmPermitted`) that `pkg/validation` and `pkg/xkms/keyid`
-consulted to reject a key ID naming a non-approved algorithm. It was deleted:
+`fips.AlgorithmPermitted`) that `pkg/validation` and `pkg/xkms`'s key-ID
+parser consulted to reject a key ID naming a non-approved algorithm. It was deleted:
 a hand-maintained list that has to be kept in sync with what the Go toolchain
 actually enforces is a list that drifts, and the toolchain already enforces
 its own answer correctly.
@@ -110,8 +113,9 @@ on its own:
 | ML-KEM-768/1024 | `crypto/mlkem` | Approved; unaffected |
 | X25519 | `crypto/ecdh` | Refused: `"use of X25519 is not allowed in FIPS 140-only mode"` |
 
-`pkg/validation.isValidAlgorithm` and `pkg/xkms/keyid.validateAlgorithm` are
-now grammar checks only — is `algo` a spelling either package recognizes —
+`pkg/validation.isValidAlgorithm` (`pkg/validation/validation.go:254`) and
+`pkg/xkms.validateAlgorithm` (`pkg/xkms/keyid.go:295`) are now grammar checks
+only — is `algo` a spelling either package recognizes —
 never a FIPS policy decision. An algorithm this repository's grammar accepts
 but the stdlib does not implement (`chacha20-poly1305`, `xchacha20-poly1305`,
 `x448`, the `frost-*` ciphersuites) is unaffected by that grammar check
@@ -149,7 +153,9 @@ as PKCS#11 curve/OID metadata).
 
 ## KDF Selection
 
-The `fips` package provides default KDF selectors that the rest of the system uses to pick algorithms:
+The `fips` package provides default KDF selectors. No production code in this
+repository calls them yet; they are exported for consumers that pick a
+password-based KDF by name:
 
 ```go
 kdf := fips.DefaultKDF()      // "argon2id" or "pbkdf2"
@@ -240,13 +246,10 @@ The FIPS strategy is consumed by several subsystems:
 
 | Subsystem | Usage |
 |-----------|-------|
-| Barrier seal/unseal | KDF for deriving data encryption keys |
-| PlatformStore | Password hashing for stored credentials |
-| User management | Account password hashing |
-| LUKS passphrase derivation | KDF for disk encryption keys |
+| xkey backup encryption | `xkey/pkg/backup/key.go` derives the backup key through the SDK's `NewFIPSAwareHasher` (`sdk/go/kdf.go:51`), so the version follows the process's FIPS state |
 | Raw PKCS#1 v1.5 signatures | `Sign` / `Verify` with hash `NONE` on an in-process RSA key refuse with `types.ErrRawPKCS1v15Enforced` under `GODEBUG=fips140=only` (see [Hash selection](#hash-selection)) |
 | AEAD auto-selection | Forces AES-256-GCM over ChaCha20-Poly1305 ([AEAD Auto-Selection](../symmetric-aead/engineering.md#algorithm-auto-selection--pkgcryptoaeadautogo)) |
-| Key-ID grammar | `pkg/validation` and `pkg/xkms/keyid` validate spelling only; algorithm approval is enforced by the stdlib crypto package a caller reaches for, not here (go-xkms #21) |
+| Key-ID grammar | `pkg/validation` and `pkg/xkms/keyid` validate spelling only; algorithm approval is enforced by the stdlib crypto package a caller reaches for, not here |
 | ML-KEM-512 | `pkg/quantum/mlkem512.New`/`.Create` refuse with `ErrFIPSMode` under `crypto/fips140.Enabled()`, since CIRCL is outside the module boundary the stdlib polices (see [Crypto the standard library cannot see](#crypto-the-standard-library-cannot-see)) |
 | PKCS#11 authenticated wrapping | Refuses `C_WrapKeyAuthenticated` / `C_UnwrapKeyAuthenticated` with `CKR_MECHANISM_INVALID` when the runtime withholds arbitrary-IV GCM (see [AEAD construction](#aead-construction)) |
 
@@ -259,8 +262,7 @@ mechanism has no random-nonce mode for a caller to opt into the way
 already-gated authenticated-wrap verbs, so most of the conformance coverage
 in `pkg/testing/pkcs11test` (`encryption.go`, `decryption.go`, `dual.go`,
 `keymgmt.go`, `verification.go`, `signing.go`, `message.go`) exercises a
-refused construction under `fips140=only`. This is tracked as a known gap
-(295 test failures at last measurement), not fixed under #23: closing it is
+refused construction under `fips140=only`. This is a known gap: closing it is
 a mechanism-table-wide change to the module's `CKM_AES_GCM` handling, not a
 test-by-test fix, and belongs to its own change.
 
@@ -293,7 +295,7 @@ purpose-scoped the way SP 800-131A Rev. 2 is:
   `fips140=only` *activation* state specifically, and no predicate answers it:
   `crypto/fips140.Enabled()` is true under both `fips140=on` and
   `fips140=only` and cannot distinguish them, and `fips.Built()` is
-  provenance, which says nothing about how the process was started (#219). A
+  provenance, which says nothing about how the process was started. A
   guard would therefore fail open precisely for FIPS artifacts. `crypto/sha1`
   is no longer imported by the package. Consumers comparing against
   `openssl x509 -fingerprint` must pass `-sha256`.
@@ -310,7 +312,7 @@ purpose-scoped the way SP 800-131A Rev. 2 is:
   not `fips140.Enabled`, which is also true under `fips140=on`, where the raw
   form works and is left alone. Only in-process `*rsa.PrivateKey` /
   `*rsa.PublicKey` values are governed: a PKCS#11 or TPM signer builds its own
-  `DigestInfo` and never reaches `crypto/rsa` (#486).
+  `DigestInfo` and never reaches `crypto/rsa`.
 - **Key derivation** -- the approved set is per construction. The ANSI X9.63 /
   SP 800-56A concatenation KDFs accept SHA-1, SHA-224 and SHA3-224 in a fully
   compliant deployment, because SP 800-56A Rev. 3 approves them for KDF use and
@@ -332,9 +334,9 @@ reports linkage, `fips140.Enabled()` is true under both `on` and `only`, and
 the standard library exports no predicate for the only mode. The PKCS#11
 authenticated wrap verbs gate on it and answer `CKR_MECHANISM_INVALID`, the
 code for a mechanism the token does not offer, rather than reporting the
-regime restriction as an internal fault (#292).
+regime restriction as an internal fault.
 
-### Random-nonce GCM for the default Encrypt path (#23)
+### Random-nonce GCM for the default Encrypt path
 
 `cipher.NewGCMWithRandomNonce` cannot honour a caller-chosen IV -- its
 `NonceSize` is zero, and it generates the nonce internally -- so it is not a
@@ -387,7 +389,7 @@ their own request/response construction. Before this was wired, every default
 (no-explicit-nonce) symmetric `Encrypt` under `fips140=only` produced a
 random-nonce ciphertext whose mode never reached the matching `Decrypt` call
 over any of those transports, so the round trip failed even though both
-endpoints individually behaved correctly (go-xkms#23). The `embedded` and
+endpoints individually behaved correctly. The `embedded` and
 in-process `mcp` transports need no such change: they forward the same
 `transport.EncryptResponse`/`DecryptRequest` values directly, so the field
 already survives the hop.
@@ -401,7 +403,7 @@ migration path for existing wrapped blobs, consistent with this repository's
 pre-release, no-backward-compatibility posture; there is no prior release to
 carry forward.
 
-### xkey AES-GCM call sites (#23)
+### xkey AES-GCM call sites
 
 Two `xkey` call sites generated their own nonce with `crypto/rand` and
 handed it to a caller-chosen-IV `cipher.NewGCM`/`cipher.NewGCMWithTagSize` —
@@ -475,15 +477,12 @@ most of what it decides. `CKM_SHA1_RSA_PKCS`, for example, is
 *generation* — but `crypto/rsa` does not refuse a SHA-1-digested PKCS#1 v1.5
 signature under `fips140=only` at all (RSA itself is approved regardless of
 digest; see "Algorithm enforcement" above), so there is no stdlib refusal to
-substitute. The same is true of most of the ~150-entry mechanism catalog:
-legacy mechanisms like `CKM_RC2_*`/`CKM_RC4`/`CKM_DES_*` have no
-`crypto/fips140`-gated Go package backing them at all, so `fips140=only`
-cannot refuse what it has no opinion about. Removing the table would silently
+substitute. Removing the table would silently
 re-admit every mechanism it currently withholds to a FIPS-mode PKCS#11
 client. `fipsModeEnabled` (the table's one activation signal) already is
 `crypto/fips140.Enabled` and duplicates nothing.
 
-## Panics the stdlib raises instead of returning an error (#23)
+## Panics the stdlib raises instead of returning an error
 
 Most FIPS 140-only refusals in the Go standard library return an `error` a
 caller can handle. A few APIs predate that convention, or have no error
@@ -529,7 +528,7 @@ substitute for either:
   ok/error," so a genuinely unexpected panic elsewhere in the same package
   still crashes the process as it should.
 
-## Known blockers outside this repository's control (#23)
+## Known blockers outside this repository's control
 
 The dispositions above (error-returning replacement, or a local
 `recover`/typed-error boundary) require a call site this repository owns.
@@ -555,14 +554,10 @@ with no call site of ours to wrap:
   `GODEBUG=fips140=only go test -tags tpm_simulator ./pkg/xkms/...` and the
   process aborts partway through, silently skipping every test alphabetically
   after the first TPM-simulator test rather than reporting them as failed.
-  Measured for `pkg/xkms` alone: `go test -tags tpm_simulator -list '.*'`
-  enumerates 1,841 top-level tests, and the FIPS-only run executes 700 `RUN`
-  lines (including subtests) before the panic aborts the process -- the
-  majority of the package's tests never get a chance to run in that
-  configuration. This is an upstream go-tpm defect (no FIPS-aware code path
+  This is an upstream go-tpm defect (no FIPS-aware code path
   exists in v0.9.8), tracked as a blocker, not fixed here; a fix requires
   either an upstream go-tpm release or vendoring a patched session-encryption
-  path, both out of scope for #23.
+  path, both out of scope here.
 - **`github.com/gorilla/websocket`** computes the WebSocket accept key with
   SHA-1 (`computeAcceptKey`), which panics under `fips140=only`. Unlike
   go-tpm, this one *is* recovered -- by `net/http`'s per-connection panic
@@ -574,8 +569,9 @@ Three more findings from this work are architecture questions for the owner,
 not something a test fix can resolve, because the "correct" answer changes
 the wire protocol or reopens an already-settled design decision:
 
-- `pkg/ssh/session` intentionally advertises `curve25519-sha256` among its
-  SSH KEX algorithms with no FIPS-approved alternative pinned; restricting it
+- `pkg/ssh/session` deliberately defers to `golang.org/x/crypto/ssh`'s default
+  key-exchange list, whose preferred algorithm is `curve25519-sha256`, and
+  pins no FIPS-approved alternative; restricting it
   under FIPS would contradict that existing decision rather than extend it.
 - `pkg/api/transport/usb`'s Noise Protocol handshake is hard-wired to
   Curve25519 (`Noise_XX_25519_...`), and the Noise specification defines no

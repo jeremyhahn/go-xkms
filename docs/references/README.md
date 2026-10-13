@@ -1,5 +1,8 @@
 # Reference specifications
 
+> **Status: REFERENCE** · Last verified: 2026-10-12
+> Index of the public specifications kept in `docs/references/` and the code that implements each.
+
 Public specification documents this project implements against. Nothing here
 is proprietary; each entry is a publicly published standard, kept locally so
 implementation work does not depend on the publisher's site staying up.
@@ -20,7 +23,8 @@ implementation work does not depend on the publisher's site staying up.
   Specification", version 1.4.
 - `NIST.SP.800-73pt1-5.pdf`, `NIST.SP.800-73pt2-5.pdf`, `NIST-SP-800-73pt3.pdf`
   — NIST SP 800-73, "Interfaces for Personal Identity Verification", parts
-  1-3, the PIV card application and data model `pkg/piv` targets.
+  1-3, the PIV card application and data model `pkg/factor/piv` and
+  `pkg/pivcert` target.
 - `rfc-8555.txt` — IETF RFC 8555, "Automatic Certificate Management
   Environment (ACME)", the protocol `pkg/acme/server` implements.
   [RFC_8555_COMPLIANCE.md](RFC_8555_COMPLIANCE.md) maps each section to its

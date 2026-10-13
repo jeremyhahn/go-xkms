@@ -304,6 +304,12 @@ type AttestedKey struct {
 	// it: the server refuses a CSR for any key other than the one the
 	// statement certifies.
 	Signer crypto.Signer
+
+	// Format is the attestation format of Statement. It decides the CSR:
+	// a FormatDICE device proves possession with the possession request
+	// over the challenge it answered (deviceattest01.SignPossessionCSR),
+	// and every other format sends an ordinary request naming the device.
+	Format deviceattest01.AttestationFormat
 }
 
 // XKMSTPMAdapter adapts go-xkms's TrustedPlatformModule to our TPMModule interface.
@@ -560,7 +566,7 @@ func (a *XKMSTPMAdapter) CreateAttestedKey(name, keyAuth string) (*AttestedKey, 
 	if err != nil {
 		return nil, &errs.Joined{Lead: ErrAttestedKeyFailed, Detail: name, Cause: err}
 	}
-	return &AttestedKey{Statement: statement, Signer: signer}, nil
+	return &AttestedKey{Statement: statement, Signer: signer, Format: deviceattest01.FormatTPM}, nil
 }
 
 // attestedKeyAttributes describes the device-attest-01 certificate key called

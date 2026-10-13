@@ -1,42 +1,53 @@
 # ACME Client GUI
 
-The ACME client GUI is a desktop application built with Wails v2 that provides a graphical interface for all ACME client operations: account registration, certificate lifecycle management, device enrollment/attestation, and auto-renewal configuration.
+> **Status: REFERENCE** · Last verified: 2026-10-12
+> Legacy, unabsorbed notes on the `trusted-acme-client` desktop GUI (`pkg/acme/gui/client`, `pkg/acme/web/packages/client`).
+
+The ACME client GUI is a Wails v2 desktop window over the client SPA. It
+covers account management, the certificate lifecycle (request, renew, revoke,
+deploy) and TPM device enrollment and attestation. There is no auto-renewal
+or configuration view. Renewal is set per certificate in the client YAML
+config; see [configuration.md](configuration.md).
 
 ## Launch
 
 ```bash
-# No subcommand = GUI mode
-./bin/trusted-acme-client
+go build -tags gui -o bin/trusted-acme-client ./cmd/acme-client
+./bin/trusted-acme-client       # no subcommand opens the window
 ```
 
-## Window Defaults
+`cmd/acme-client/serve.go` is also `gui`-tagged. Its `serve` subcommand
+serves the same client router over TCP/TLS instead of in a window
+(`cmd/acme-client/serve.go:96`).
+
+## Window defaults (`pkg/acme/gui/client/config.go:17-21`)
 
 | Property | Value |
 |----------|-------|
 | Title | Trusted ACME Client |
 | Size | 1024 x 768 |
-| Min Size | 800 x 600 |
-| Linux Program Name | `trusted-acme-client` |
+| Min size | 800 x 600 |
+| Linux program name | `trusted-acme-client` (`pkg/acme/gui/client/app.go:93`) |
 
-## Navigation Views
+## Navigation (`App.svelte`, sidebar title "ACME Client")
 
 | View | Description |
 |------|-------------|
-| Dashboard | Overview of client status and recent activity |
-| Register | ACME account registration with EAB support |
-| Request Cert | Request new certificates for domains |
-| Renew Cert | Manually renew an existing certificate |
-| Revoke Cert | Revoke a certificate by serial number |
-| Auto-Renewal | Configure and monitor automatic certificate renewal |
-| Device Enroll | TPM device enrollment with EK certificate |
-| Device Attest | TPM-based remote attestation |
-| Configuration | Client settings (server URL, key type, challenge type) |
-| Challenges | Per-challenge-type configuration |
-| Settings | Application preferences |
+| Dashboard | Account and certificate counts |
+| Accounts | Configured ACME accounts, remove |
+| Certificates | Certificate specs, filtered by account; request, renew, revoke, deploy |
+| Register | Add an account (directory, email, key, optional EAB) |
+| Request Cert | Request a certificate for a configured spec |
+| Renew Cert | Renew a configured spec |
+| Revoke Cert | Revoke a configured spec with a reason code |
+| Device Enroll | TPM device enrollment |
+| Device Attest | TPM device attestation |
+| Challenges | Read-only descriptions of the challenge types |
+| Settings | Theme (Light/Dark/System) and the API base URL |
 
-## Related Documentation
+## Related documentation
 
-- [Views Reference](views.md)
-- [Configuration Guide](configuration.md)
-- [Challenge Types](challenge-types.md)
-- [Embedded API Reference](api.md)
+- [Views reference](views.md)
+- [Configuration](configuration.md)
+- [Challenge types](challenge-types.md)
+- [Embedded API reference](api.md)

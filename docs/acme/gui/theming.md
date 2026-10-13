@@ -1,34 +1,42 @@
 # Theming
 
-## Dark/Light Mode
+> **Status: REFERENCE** · Last verified: 2026-10-12
+> Legacy, unabsorbed notes on dark/light mode in the ACME SPAs.
 
-The GUI supports dark and light themes via TailwindCSS `dark:` class variants. Theme state is managed by the `theme` Svelte store.
+## Theme store
 
-### How It Works
+`pkg/acme/web/packages/shared/src/stores/theme.ts` holds the theme state:
 
-1. On startup, `initTheme()` checks `localStorage` for a saved preference
-2. If none, it reads the OS preference via `prefers-color-scheme` media query
-3. The `dark` class is toggled on `document.documentElement`
-4. TailwindCSS applies `dark:` variant styles throughout the app
+- `themeMode` is a writable store: `'light' | 'dark' | 'system'`.
+- `theme` is derived from it and resolves to `'light' | 'dark'`. `system`
+  follows `prefers-color-scheme`.
+- `initTheme()` applies the theme and, in `system` mode, tracks OS changes.
+- `setThemeMode(mode)` sets the mode, and `toggleTheme()` flips between light
+  and dark. Both persist to `localStorage` under `trustedca-theme`.
+- Applying a theme toggles the `dark` class on `document.documentElement`.
 
-### Toggle
+The Sidebar footer has a light/dark toggle. Both apps' Settings views offer
+Light, Dark and System.
 
-The Sidebar footer includes a theme toggle button. Programmatically:
+## Tailwind configuration
 
-```typescript
-import { toggleTheme } from '@trustedca/shared/stores/theme';
-toggleTheme();
+The SPAs use **Tailwind CSS 4** through `@tailwindcss/vite`, plus daisyUI 5.
+Each app's `src/app.css` begins:
+
+```css
+@import "tailwindcss";
+@source "../../shared/src/**/*.{svelte,ts,js}";
+@plugin "daisyui";
 ```
 
-### Persistence
+There is no `tailwind.config.js` and no `@custom-variant dark` rule. Under
+Tailwind 4 the `dark:` variant therefore matches `prefers-color-scheme: dark`,
+not the `dark` class. As a result, the in-app toggle and the Light/Dark
+settings change the store and the class but not the `dark:` styles: the
+styles follow the OS setting. Making the toggle drive the styles would need
+`@custom-variant dark (&:where(.dark, .dark *));` in each `app.css`.
 
-Theme preference is stored in `localStorage` under the key `trustedca-theme` with values `light` or `dark`.
-
-## TailwindCSS Configuration
-
-The project uses TailwindCSS 3 with the `class` dark mode strategy. All shared components use the `dark:` variant for styling.
-
-Color palette:
+Color palette used by the shared components:
 - **Primary**: `blue-600` / `blue-400` (dark)
 - **Backgrounds**: `white` / `slate-800` (dark), `slate-50` / `slate-900` (dark, sidebar)
 - **Borders**: `slate-200` / `slate-700` (dark)

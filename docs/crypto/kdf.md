@@ -1,5 +1,8 @@
 # Key Derivation Functions
 
+> **Status: REFERENCE** · Last verified: 2026-10-12
+> Cross-cutting reference for `pkg/crypto/kdf` and the `types.KDFParams` bridge every backend derives through.
+
 `pkg/crypto/kdf` is the only KDF implementation in go-xkms. The backends, the
 service layer, and the PKCS#11 module all reach it — nothing derives keys on
 its own.
@@ -16,8 +19,9 @@ types.KDFParams.Derive          <- one bridge, enforces parameter applicability
 pkg/crypto/kdf adapters         <- the algorithms
 ```
 
-`applyKDF` in every backend is a two-line delegation. A backend cannot derive
-a key any other way, which is what makes the four backends produce identical
+`applyKDF` in every backend is a nil check and a delegation to
+`types.KDFParams.Derive` (for example `pkg/backend/software/ecdh.go:178`). A
+backend cannot derive a key any other way, which is what makes the four backends produce identical
 bytes for identical inputs.
 
 ## Algorithms
@@ -29,6 +33,11 @@ bytes for identical inputs.
 | `SP800-56A` | NIST SP 800-56A one-step concat | `Info` (OtherInfo) |
 | `SP800-108-COUNTER` | NIST SP 800-108r1 §4.1 | `Label`, `Context`, `CounterLength`, `CounterLocation` |
 | `SP800-108-FEEDBACK` | NIST SP 800-108r1 §4.2 | `Label`, `Context`, `CounterLength`, `CounterLocation`, `IV` |
+| `RAW` | PKCS#11 `CKD_NULL` (no KDF) | none; returns the trailing `KeyLength` bytes of the shared secret |
+
+`RAW` (`pkg/types/types.go:2174`) takes no hash and no inputs; asking for more
+bytes than the shared secret holds returns `types.ErrRawKDFTooShort`
+(`pkg/types/kdf.go:480`).
 
 `pkg/crypto/kdf` additionally implements SP 800-108r1 §4.3 Double-Pipeline
 Iteration Mode, PBKDF2, and Argon2. Those are reachable through the `DeriveKey`
@@ -36,7 +45,7 @@ service verb and the password hasher; they are not offered on the ECDH path.
 
 ### Argon2 floor
 
-`Argon2Adapter.ValidateParams` (`pkg/crypto/kdf/argon2.go:127-161`) refuses
+`Argon2Adapter.ValidateParams` (`pkg/crypto/kdf/argon2.go:136-170`) refuses
 any request below `MinArgon2Memory` (19 MiB) or `MinArgon2Time` (2), the
 OWASP Password Storage Cheat Sheet's first Argon2id recommendation
 (m=19456 KiB, t=2, p=1), checked independently. As of the 2026-09-28 crypto
@@ -151,18 +160,18 @@ caller did not ask for, which is indistinguishable from a wrong key.
 
 ## Wire parameter mapping
 
-`DeriveKeyECDHRequest` carries `KDFSalt` and `KDFInfo`, which are HKDF's
-vocabulary. `pkg/xkms.buildECDHKDFParams` maps them explicitly:
+`DeriveKeyECDHRequest` carries `KDFSalt`, `KDFInfo` and `KDFLabel`
+(`pkg/api/transport/types.go:1133`). `pkg/xkms.buildECDHKDFParams`
+(`pkg/xkms/servicer_crypto.go:1152`) maps them explicitly:
 
-| Algorithm | `KDFSalt` | `KDFInfo` |
-| --- | --- | --- |
-| HKDF, X9.63, SP 800-56A | `Salt` | `Info` |
-| SP 800-108 counter | rejected | `Context` |
-| SP 800-108 feedback | `IV` (K(0)) | `Context` |
+| Algorithm | `KDFSalt` | `KDFInfo` | `KDFLabel` |
+| --- | --- | --- | --- |
+| HKDF, X9.63, SP 800-56A | `Salt` | `Info` | rejected |
+| SP 800-108 counter | rejected | `Context` | `Label` |
+| SP 800-108 feedback | `IV` (K(0)) | `Context` | `Label` |
+| RAW | rejected | rejected | rejected |
 
-The wire has no field for the SP 800-108 `Label`, so ECDH derivations over the
-API use an empty label. An empty label is valid SP 800-108; a dedicated wire
-field is a follow-up.
+`RAW` also rejects a `KDFHash`: `CKD_NULL` runs no derivation.
 
 ## Test vectors
 

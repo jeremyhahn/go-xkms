@@ -1,5 +1,8 @@
 # Cluster CA Key Custody Architecture
 
+> **Status: REFERENCE** · Last verified: 2026-10-12
+> Design companion to the clustering feature folder; [architecture.md](architecture.md) is normative.
+
 How the cluster's certificate-authority signing key is protected and made
 available so that **any node can issue** node certificates, across software,
 HSM, and TPM-rooted deployments — through one pluggable strategy consumed
@@ -26,10 +29,10 @@ Two hard constraints shape the answer:
    single node is down, more than one node must be able to issue — the key
    cannot stay pinned to the first node.
 
-Grounding fact (verified against go-qrdb): each node encfs-encrypts its **own**
-local PebbleDB with its **own** barrier; Raft replicates state-machine plaintext
-(protected in transit by mTLS), and each node re-encrypts locally. The barrier
-is therefore per-node local-storage encryption, **not** a cluster-shared secret.
+Grounding fact: the qrdb barrier is per-node local-storage encryption, **not**
+a cluster-shared secret. The replicated key storage a strategy receives is
+qrdb-routed and barrier-encrypted on each node
+(`pkg/trust/clusterca/keystrategy.go:79-81`).
 
 ## The seam: `ClusterCAKeyStrategy`
 
@@ -50,11 +53,15 @@ type ClusterCAKeyStrategy interface {
 }
 ```
 
-`StrategyDeps` is the product-agnostic dependency bundle a composition root
-supplies: the node-local data dir, the CA hierarchy config, the KeyProtection
-settings, the replicated (qrdb-routed) key/cert storage, the shared HSM backend,
-the TPM sealer + credential activator, and a `Bootstrapping` flag. Selection is a
-one-line config choice, `cluster.raft_enrollment.ca_key_strategy`.
+`ClusterCAKeyStrategy` is declared at `pkg/trust/clusterca/keystrategy.go:119`.
+`StrategyDeps` (`keystrategy.go:63`) is the product-agnostic dependency bundle a
+composition root supplies: the node-local data dir, the CA hierarchy config, the
+`KeyProtection` mode, the replicated (qrdb-routed) key and cert storage, the
+shared HSM backend, the TPM sealer and credential activator, and a
+`Bootstrapping` flag. Selection is a one-line config choice,
+`cluster.raft_enrollment.ca_key_strategy` (`pkg/config/config.go:933`); empty
+selects `barrier`, and an unknown name fails with `ErrUnknownKeyStrategy`
+(`keystrategy.go:142-153`).
 
 ## The three strategies
 
@@ -91,8 +98,11 @@ HSM backend supplied in `StrategyDeps.HSMBackend`.
 The replicated CA key is wrapped under a KEK derived from a **cluster seed**:
 
 ```
-KEK = HKDF-SHA256(seed) ;  CA key blobs in the replicated store are wrapped under KEK
+KEK = HKDF-SHA256(seed, salt="go-xkms/cluster-ca", info="kek/v1", 32 bytes)
+CA key blobs in the replicated store are wrapped under KEK
 ```
+
+(`pkg/trust/clusterca/keystrategy_tpmkek.go:100`)
 
 - The **bootstrap node** generates the seed, seals it to its **local TPM**, and
   wraps the CA key under `KEK(seed)`.
@@ -160,13 +170,13 @@ Each product supplies the same three things and gets identical behavior:
    directory URL)`.
 2. **Delivery mount** — build `SecretDeliveryService` from
    `EnrollmentSecretStrategyOf(strategy).SecretProvider()` + the CA pool, and
-   mount its handler on the node's server (xkmsd on the ACME mux; quicbaasd on
-   the chi REST router).
+   mount its handler on the node's server (xkmsd mounts it on the ACME mux at
+   `SecretDeliveryPath`, `cmd/xkmsd/acme.go:394-397`).
 3. **Joiner fetch** — after enrollment, read the TPM EK/AK material, fetch, and
    `ConsumeEnrollmentSecret` before the runtime CA is built.
 
-All of this is re-exported through `sdk/go/clusterca`, so quicbaas and
-trusted-platform consume one mechanism rather than reimplementing it.
+All of this is re-exported through `sdk/go/clusterca`, so downstream products
+consume one mechanism rather than reimplementing it.
 
 ## Fail-closed & compliance posture
 
@@ -190,4 +200,3 @@ trusted-platform consume one mechanism rather than reimplementing it.
 | Pre-node node-local backends | `backends.go` |
 | SDK re-exports | `sdk/go/clusterca/clusterca.go` |
 | xkms wiring | `pkg/server/cluster_ca_strategy.go`, `qrdb_node_cluster_acme.go`, `cmd/xkmsd/acme.go` |
-| quicbaas wiring | `go-quicbaas/pkg/server/cluster_ca.go`, `qrdb_node_cluster_acme.go`, `pkg/api/rest/server.go` |

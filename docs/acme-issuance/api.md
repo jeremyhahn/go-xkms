@@ -193,6 +193,7 @@ this identifier.
 | the CSR carries a DNS or IP SAN, or an email/URI SAN | `rejectedIdentifier` (401) / `malformed` (400) unless that exact name is one of the order's authorized `dns`/`ip` identifiers |
 | (device-attest-01 only) no validated `device-attest-01` challenge left an attestation record to bind against | `badCSR` (400) |
 | (device-attest-01 only) the CSR's key is not the attested key | `badCSR` (400) |
+| (device-attest-01 `dice` only) the CSR is not the device's possession request: not the template, a signature that does not verify, another key, another order's nonce, or identifiers other than exactly the order's | `badCSR` (400) |
 | an authorization the order references is missing from storage | `serverInternal` (500) |
 
 As with endorse-01, each is refused before the order moves to `processing`.
@@ -210,6 +211,16 @@ challenge when it validated; a
 permanent-identifier order with no such record is refused outright rather
 than signed as an ordinary CSR. See
 [engineering.md](engineering.md#device-attest-01-key-binding).
+
+For `dice` the CSR must also be the device's **possession request**: the
+fixed template (empty subject, P-256 key, one `extensionRequest` with a
+critical `subjectAltName` naming `permanentIdentifier` = `hex(DeviceID)` and a
+non-critical `tcg-dice-UCCS-evidence` whose `eat_nonce` is
+`SHA-256(keyAuthorization)`), signed by the attested key
+(`pkg/acme/challenges/device-attest-01/possession.go:38-73`, checked by
+`VerifyPossessionCSR` at `possession.go:358`). A `dice` order therefore names
+exactly one `permanent-identifier` and nothing else. The UCCS extension is
+never copied onto the certificate (`order_finalize.go:851`).
 
 The challenge itself also refuses to validate unless the device identity the
 evidence carries — the RFC 4043 `permanentIdentifier` otherName on the AIK

@@ -353,13 +353,13 @@ func TestOrderFinalize_EKCertificate_OnlyForAnEndorse01Order(t *testing.T) {
 // that is not an EK (so the EK path does not apply) cannot be finalized as a
 // device-attest-01 certificate either.
 func TestOrderFinalize_Endorse01OrderCannotBeFinalizedAsAnotherFlow(t *testing.T) {
-	setup := newDeviceFinalizeSetup(t, nil, "device-a")
+	setup := newDeviceFinalizeSetup(t, nil, deviceA)
 	finalized := func() *httptest.ResponseRecorder {
-		return setup.finalize(t, "device-a", nil, setup.deviceKeys["device-a"])
+		return setup.finalize(t, deviceA, setup.deviceKeys[deviceA])
 	}
 	require.Equal(t, http.StatusOK, finalized().Code, "the device-attest-01 order alone is issued")
 
-	setup = newDeviceFinalizeSetup(t, nil, "device-a")
+	setup = newDeviceFinalizeSetup(t, nil, deviceA)
 	// A second authorization on the same order, validated by endorse-01.
 	authorizeOrderAlso(t, setup, "another-device", common.ChallengeTypeEndorse01)
 

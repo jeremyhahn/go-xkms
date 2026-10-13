@@ -89,6 +89,11 @@ func (b BackendType) String() string {
 
 // IsValid returns true if the backend type is a recognized value.
 func (b BackendType) IsValid() bool {
+	return b.isBuiltin() || types.IsRegisteredBackendType(types.BackendType(b))
+}
+
+// isBuiltin reports whether b is one of the backend types go-xkms defines.
+func (b BackendType) isBuiltin() bool {
 	switch b {
 	case BackendSoftware, BackendTPM2, BackendPKCS11, BackendPKCS8,
 		BackendAWSKMS, BackendGCPKMS,
@@ -114,41 +119,25 @@ func IsKeyProviderType(bt BackendType) bool {
 	return keyProviderTypes[bt]
 }
 
-// backendRegistry holds the registered backends using atomic.Value for lock-free access.
-// The stored value is a map[BackendType]bool where true indicates the backend is available.
-// Initialized at package variable level to guarantee availability before any init() runs.
-var backendRegistry = func() atomic.Value {
-	var v atomic.Value
-	v.Store(make(map[BackendType]bool))
-	return v
-}()
+// backendRegistry holds the registered backends, copy-on-write behind an
+// atomic pointer for lock-free access. A true value marks the backend
+// available; the zero value is an empty registry.
+var backendRegistry atomic.Pointer[map[BackendType]bool]
 
 // RegisterBackend registers a backend as available. This function is called by
 // init() functions in backend-specific files that are conditionally compiled
-// based on build tags.
+// based on build tags, and by RegisterExternalBackend.
 //
-// This function is safe to call concurrently from multiple init() functions.
-// It uses copy-on-write semantics with atomic.Value for lock-free operation.
+// This function is safe to call concurrently: it uses copy-on-write with a
+// compare-and-swap, so no registration is lost.
 func RegisterBackend(name BackendType) {
-	// Load current registry
-	current := backendRegistry.Load().(map[BackendType]bool)
-
-	// Create new map with the additional backend (copy-on-write)
-	updated := make(map[BackendType]bool, len(current)+1)
-	for k, v := range current {
-		updated[k] = v
-	}
-	updated[name] = true
-
-	// Store atomically. Since init() functions run sequentially in a
-	// single goroutine per package, this is safe without CAS.
-	backendRegistry.Store(updated)
+	storeCopyOnWrite(&backendRegistry, name, true)
 }
 
 // SupportedBackends returns a slice of all backends that were compiled into
 // the binary. The returned slice is sorted alphabetically for consistent output.
 func SupportedBackends() []BackendType {
-	registry := backendRegistry.Load().(map[BackendType]bool)
+	registry := loadCopyOnWrite(&backendRegistry)
 
 	// Pre-allocate slice with exact capacity
 	backends := make([]BackendType, 0, len(registry))
@@ -165,14 +154,12 @@ func SupportedBackends() []BackendType {
 // IsBackendSupported returns true if the specified backend was compiled into
 // the binary and is available for use.
 func IsBackendSupported(name BackendType) bool {
-	registry := backendRegistry.Load().(map[BackendType]bool)
-	return registry[name]
+	return loadCopyOnWrite(&backendRegistry)[name]
 }
 
 // BackendCount returns the number of available backends.
 func BackendCount() int {
-	registry := backendRegistry.Load().(map[BackendType]bool)
-	return len(registry)
+	return len(loadCopyOnWrite(&backendRegistry))
 }
 
 // BackendFactory creates a KeyProvider from configuration.
@@ -180,13 +167,9 @@ func BackendCount() int {
 // its KeyProvider from a generic configuration map.
 type BackendFactory func(config map[string]interface{}) (types.KeyProvider, error)
 
-// backendFactories holds registered factory functions using atomic.Value
-// for lock-free access. The stored value is a map[BackendType]BackendFactory.
-var backendFactories = func() atomic.Value {
-	var v atomic.Value
-	v.Store(make(map[BackendType]BackendFactory))
-	return v
-}()
+// backendFactories holds registered factory functions, copy-on-write behind
+// an atomic pointer for lock-free access.
+var backendFactories atomic.Pointer[map[BackendType]BackendFactory]
 
 // RegisterBackendFactory registers a factory function for creating a backend's
 // KeyProvider. This is called alongside RegisterBackend in init() functions.
@@ -196,21 +179,14 @@ var backendFactories = func() atomic.Value {
 // keys (e.g., "key_storage" for a pre-built storage.Backend -- see
 // AutoConfig.Datastore).
 func RegisterBackendFactory(name BackendType, factory BackendFactory) {
-	current := backendFactories.Load().(map[BackendType]BackendFactory)
-	updated := make(map[BackendType]BackendFactory, len(current)+1)
-	for k, v := range current {
-		updated[k] = v
-	}
-	updated[name] = factory
-	backendFactories.Store(updated)
+	storeCopyOnWrite(&backendFactories, name, factory)
 }
 
 // GetBackendFactory returns the factory function for the specified backend type.
 // Returns the factory and true if found, or nil and false if no factory is
 // registered for the given backend type.
 func GetBackendFactory(name BackendType) (BackendFactory, bool) {
-	factories := backendFactories.Load().(map[BackendType]BackendFactory)
-	f, ok := factories[name]
+	f, ok := loadCopyOnWrite(&backendFactories)[name]
 	return f, ok
 }
 
@@ -263,5 +239,32 @@ func sortBackends(backends []BackendType) {
 			j--
 		}
 		backends[j+1] = key
+	}
+}
+
+// loadCopyOnWrite returns the current snapshot of a copy-on-write registry
+// map. The snapshot is never mutated; a nil map reads as empty.
+func loadCopyOnWrite[V any](registry *atomic.Pointer[map[BackendType]V]) map[BackendType]V {
+	if current := registry.Load(); current != nil {
+		return *current
+	}
+	return nil
+}
+
+// storeCopyOnWrite sets name to value in a copy-on-write registry map,
+// retrying when a concurrent writer swapped the map first.
+func storeCopyOnWrite[V any](registry *atomic.Pointer[map[BackendType]V], name BackendType, value V) {
+	for {
+		current := registry.Load()
+		updated := make(map[BackendType]V, 1)
+		if current != nil {
+			for k, v := range *current {
+				updated[k] = v
+			}
+		}
+		updated[name] = value
+		if registry.CompareAndSwap(current, &updated) {
+			return
+		}
 	}
 }

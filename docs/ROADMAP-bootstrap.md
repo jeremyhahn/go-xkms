@@ -1,5 +1,8 @@
 # ROADMAP: xkey as PKCS#11 Token and go-xkms Authenticator
 
+> **Status: ARCHIVE — historical record. Do NOT build from this document.**
+> Last verified: 2026-10-12. The checkboxes are stale in both directions. Items left unchecked have shipped: `xkey/pkg/ipc/pkcs11_types.go`, `xkey/pkg/pkcs11/ipc_transport.go`, `xkey/pkg/gui/services/pkcs11_ipc_handler.go`, `pkg/escrow/`, `pkg/webauthn/client/`, `pkg/xkeysigner/`, and the xkey API-explorer and browser services. Items checked off were deleted when barriers, custodians, shares and the user model moved to go-qrdb: `pkg/custodian/`, `pkg/sharestore/`, `pkg/seal/tenant_barrier.go`, `pkg/user/`, and the custodian/share REST handlers and CLI. Current plans are in the repository-root [ROADMAP.md](../ROADMAP.md).
+
 Progress tracker for the multi-phase implementation plan.
 
 ## Part 1: PKCS#11 Token (IPC Transport)

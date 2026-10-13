@@ -1,33 +1,48 @@
 # Admin Web Mode
 
-When the ACME server starts, it registers the admin SPA at `/ui/admin/` via `webui.RegisterRoutes()`.
+> **Status: REFERENCE** · Last verified: 2026-10-12
+> Legacy, unabsorbed notes on serving the admin SPA over HTTP.
 
-## How It Works
+## xkmsd (`/admin-ui`)
 
-1. The admin frontend is compiled into the server binary as an embedded `fs.FS`
-2. `RegisterRoutes()` creates a sub-filesystem from `dist/` and mounts it on the server's `gorilla/mux` router
-3. A custom `spaFileServer` handles static file serving with SPA fallback:
-   - Known files (JS, CSS, images) are served directly with proper content types
-   - Unknown paths return `index.html` so Svelte handles client-side routing
+`xkmsd` is the binary that serves the admin SPA:
 
-## Access
+1. `newAdminModule` (`cmd/xkmsd/admin.go:91`) takes
+   `fs.Sub(adminweb.Assets, "dist")` (`:92`), where `adminweb` is
+   `pkg/acme/web/packages/admin`.
+2. It mounts that filesystem at `/admin-ui` with
+   `WithAdminWebUI(adminUIPrefix, uiFS, false)` (`:104`).
 
 ```
-https://your-ca-server:8443/ui/admin/
+https://kms.example.com:<port>/admin-ui/
 ```
 
-The SPA uses relative URLs (`/api/v1`) for API calls, which resolve against the server's origin.
+The SPA has no Wails runtime, so it uses a same-origin API base. Its calls go
+to xkmsd's `/admin/*` and `/api/v1/tenants/...` endpoints. See
+[acme-issuance/user.md](../../../acme-issuance/user.md#browsing-the-api-interactively).
 
-## Differences from Desktop Mode
+## `webui.RegisterRoutes` (`/ui/admin/`)
 
-| Aspect | Desktop | Web |
-|--------|---------|-----|
-| API base URL | `/api/v1` (same origin, in-process) | `/api/v1` (same origin) |
-| Transport detection | Wails runtime detected | No Wails, uses defaults |
-| Connection Settings view | Available | Not shown (server is the CA) |
-| Authentication | Token from config | Browser session/token via server auth |
-| TLS | None needed: the API is in-process, with no socket | Server's TLS configuration |
+`pkg/acme/gui/webui` can also mount the SPA:
 
-## Authentication
+1. `webui.AdminAssets` (`pkg/acme/gui/webui/embed.go:22`) is the same
+   embedded admin bundle.
+2. `RegisterSPA` (`handler.go:41`) strips the prefix and serves the bundle
+   through the shared `corewebui.NewHandler`. Known files are served directly;
+   unknown paths fall back to `index.html`. Its `WithAPIBaseURL` option
+   (`handler.go:32`) injects an API base for the SPA.
+3. `RegisterRoutes` (`handler.go:61`) calls `RegisterSPA` for `/ui/admin/`
+   with no options.
 
-In web mode, the admin SPA sends a Bearer token via the `Authorization` header and a tenant identifier via `X-Tenant-ID`. Configure authentication through the server's auth middleware.
+Only `pkg/acme/api/server` calls `RegisterRoutes`
+(`pkg/acme/api/server/server.go:670`), and only tests construct that server.
+`test/integration/acmeserver/acmeserver_gui_test.go` covers it.
+
+## Differences from desktop mode
+
+| Aspect | Desktop (Wails) | Web |
+|--------|-----------------|-----|
+| API base URL | `''` from the `GetApiBaseUrl` binding | `''`, or the `WithAPIBaseURL` value |
+| Transport detection | Wails runtime present | no Wails runtime |
+| Socket | none: the API is the asset server's handler | the hosting server's listener and TLS |
+| Origin check | `guard` with the in-process transport | `guard` same-host check (webui), or xkmsd's own middleware |

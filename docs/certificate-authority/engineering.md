@@ -910,8 +910,11 @@ not be checked where the hardware's writes serialize. A test pins this
   `issuance_test.go`, `csr_test.go`, `cross_signing_test.go`, `hybrid_test.go`,
   `certpolicy_test.go`, `bundle_test.go`, `attestation_test.go`,
   `interface_contract_test.go` (the conformance test for `TrustedCA`), plus
-  `multi_keystore_test.go`, `multi_keystore_pkcs11_test.go`,
-  `multi_keystore_tpm2_sim_test.go`. CRL persistence:
+  `multi_keystore_test.go`, `multi_keystore_pkcs11_test.go` (build tag
+  `pkcs11`: a secondary key lands in SoftHSM) and
+  `multi_keystore_tpm2_sim_test.go` (build tag `tpm_simulator`: a TPM key as
+  secondary and as the primary that self-signs the CA certificate).
+  CRL persistence:
   `crl_persistence_test.go` (round trip across independent `*CA` instances
   sharing a backend, refresh-on-revoke, regenerate-on-read past/before
   `NextUpdate` via an injected `Clock`, force-regenerate),

@@ -13,7 +13,10 @@
 
 package xkms
 
-import pkgxkms "github.com/jeremyhahn/go-xkms/pkg/xkms"
+import (
+	"github.com/jeremyhahn/go-xkms/pkg/types"
+	pkgxkms "github.com/jeremyhahn/go-xkms/pkg/xkms"
+)
 
 // XKMS service-singleton surface re-exported so the xkey GUI/CLI drive the
 // process-global pkg/xkms service (key lifecycle, backend registry and the PIV
@@ -48,6 +51,30 @@ var GetBackend = pkgxkms.GetBackend
 
 // GetBackendFactory returns the factory for a backend type.
 var GetBackendFactory = pkgxkms.GetBackendFactory
+
+// ExternalBackend describes a backend implemented in another module: its
+// type name and the ServiceBackendFactory that constructs its KeyProvider.
+type ExternalBackend = pkgxkms.ExternalBackend
+
+// RegisterExternalBackend makes a backend implemented in another module a
+// first-class backend type. Call it from that module's init function.
+var RegisterExternalBackend = pkgxkms.RegisterExternalBackend
+
+// BackendTypeRegistrationError reports a refused RegisterExternalBackend.
+type BackendTypeRegistrationError = types.BackendTypeRegistrationError
+
+var (
+	// ErrInvalidBackendTypeName refuses a backend type name the Key ID
+	// format cannot carry.
+	ErrInvalidBackendTypeName = types.ErrInvalidBackendTypeName
+
+	// ErrBackendTypeRegistered refuses a backend type name already held by
+	// a built-in backend or an earlier registration.
+	ErrBackendTypeRegistered = types.ErrBackendTypeRegistered
+
+	// ErrNilBackendFactory refuses an external backend without a factory.
+	ErrNilBackendFactory = pkgxkms.ErrNilBackendFactory
+)
 
 // RegisterServiceBackend registers a backend instance under a name.
 var RegisterServiceBackend = pkgxkms.RegisterServiceBackend

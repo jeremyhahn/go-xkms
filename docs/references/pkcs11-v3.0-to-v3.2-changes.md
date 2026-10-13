@@ -1,5 +1,8 @@
 # PKCS#11 v3.0 to v3.2 Comprehensive Change Inventory
 
+> **Status: REFERENCE** · Last verified: 2026-10-12
+> Specification-side inventory only; it makes no claims about what `pkg/pkcs11` implements.
+
 This document provides an exhaustive inventory of every change introduced in PKCS#11 from v3.0 (the baseline) through v3.1 to v3.2.
 Source: OASIS PKCS#11 Specification v3.2 CSD01 (`pkcs11-spec-v3.2.html`) and `pkcs11t.h` header file.
 

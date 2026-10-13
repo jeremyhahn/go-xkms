@@ -1,427 +1,124 @@
 # Go-xKMS Server - Quick Reference Card
 
-**One-page reference for developers**
+> **Status: REFERENCE** · Last verified: 2026-10-12
+> One-page developer cheat sheet; [xkmsd-configuration](../xkmsd-configuration/engineering.md) is normative for configuration keys.
 
+## Binaries
 
-## Architecture at a Glance
-
-```
-Client → Protocol Handler → Service Layer → KeyStore → Backend
-```
+| Binary | Purpose | Flags |
+|---|---|---|
+| `xkmsd` | Server | `-config`/`-c` (default `/etc/xkms/xkmsd.yaml`), `-daemon`/`-d`, `-pid-file`, `-version` (`cmd/xkmsd/main.go:105-110`) |
+| `xkmsctl` | CLI client | Global flags in `cmd/xkmsctl/root.go:116-153`: `--config`, `--backend` (default `software`), `--key-dir`, `-o/--output`, `-v/--verbose`, `--transport`, `-s/--server`, `--tls-cert`, `--tls-key`, `--tls-ca`, `--token`, `--spki-pin` |
 
 ## Ports
 
-`xkmsd` has no port flags and no built-in port defaults -- it binds exactly what
-the YAML names (`cmd/xkmsd/main.go:67-74`). The "shipped default" column is what
-`configs/*.yaml` sets, which is what a stock daemon actually binds. The
-"library fallback" column is what the API server packages substitute when they
-are embedded with a zero port, and it is not the same number for MCP.
+`xkmsd` has no port flags; it binds what the YAML names. The shipped column
+is `configs/xkmsd.yaml`. The library fallback is what a package substitutes
+when it is embedded with a zero port or no address.
 
-| Protocol | Shipped default (`configs/*.yaml`) | Library fallback | TLS Required |
-|----------|------------------------------------|------------------|--------------|
-| REST     | 8443 (`rest_port`)  | 8443 (`pkg/api/rest/server.go:311`) | Yes |
-| gRPC     | 9443 (`grpc_port`)  | none | Yes |
-| QUIC     | none — HTTP/3 on `rest_port` (8443), advertised via `Alt-Svc`; `quic_port` is vestigial config | n/a | Yes (1.3) |
-| MCP      | 8445 (`mcp_port`)   | 9444 (`sdk/go/options.go:33`) | Yes — served by the embedded qrdb node at `https://host:mcp_port/mcp` |
-| Noise    | 8447 (`noise_port`, `configs/xkmsd-local.yaml:10`) | 8445 (`DefaultNoisePort`, `pkg/trust/bootstrap/bootstrap.go:98`) | Noise_NK |
-| Metrics  | 9090 (`metrics.port`) | none | No |
+| Protocol | Config key | Shipped | Library fallback |
+|---|---|---|---|
+| REST | `server.rest_port` | 8443 | 8443 (`pkg/api/rest/server.go:281`) |
+| HTTP/3 (QUIC) | — | on `rest_port` | — |
+| gRPC | `server.grpc_port` | 9443 | none |
+| MCP | `server.mcp_port` | 8445 | SDK dials `localhost:9444` (`sdk/go/options.go:33`) |
+| Noise | `server.noise_port` (`pkg/config/config.go:320`) | 8447 in `configs/xkmsd-local.yaml:10` | 8445 (`DefaultNoisePort`, `pkg/trust/bootstrap/bootstrap.go:103`) |
+| Metrics | `metrics.port` | 9090 | none |
 
-MCP is the one to watch: the shipped configurations bind it on 8445, but the SDK
-client dials `localhost:9444` by default (`sdk/go/options.go:33`). Point the
-client at the configured port or change `mcp_port` to 9444. There is no
-standalone QUIC server package or port anymore -- QUIC is HTTP/3 served
-directly on the unified REST listener; the QUIC client transport
-(`pkg/api/transport/quic`) dials the REST port.
+The SDK's MCP default (9444) differs from the shipped `mcp_port` (8445):
+point the client at the configured port.
 
-## Directory Structure
+## API surfaces
 
-```
-cmd/
-├── xkmsd/         # Server binary
-└── xkmsctl/       # CLI binary
+- **REST** — the route table is `pkg/api/rest/routes.go`. Most routes live
+  under `/api/v1`; WebAuthn, invites, users and SSH have their own prefixes.
+  See [api-specifications.md](./api-specifications.md#rest-api).
+- **gRPC** — `xkms.v1.KeystoreService`
+  (`pkg/api/grpc/proto/xkmsv1/xkms.proto:15`).
+- **MCP** — each xkms method is an MCP tool named `xkms_<method>`, with dots
+  turned into underscores. It takes one optional `params_json` string
+  argument (`pkg/mcptool/client.go:82-89`, `:405-422`).
 
-pkg/
-├── server/        # Orchestration & service layer
-├── config/        # Configuration
-├── api/
-│   ├── rest/      # REST API (also serves QUIC/HTTP3 on the same port)
-│   ├── grpc/      # gRPC
-│   ├── mcp/       # MCP dispatch core (real MCP is served by the embedded qrdb node)
-│   └── unix/      # Unix socket gRPC
-├── backend/       # Backend implementations
-├── crypto/        # Cryptographic primitives
-├── encoding/      # Encoding (JWK, JWE, JWT, PEM)
-├── storage/       # Storage layer
-└── types/         # Common types
-```
+## Common CLI verbs
 
-## Key Interfaces
-
-### Service Layer
-```go
-type KeyManager interface {
-    GenerateKey(ctx, req) (*KeyInfo, error)
-    GetKey(ctx, backend, keyID) (*KeyInfo, error)
-    ListKeys(ctx, backend, opts) ([]*KeyInfo, error)
-    DeleteKey(ctx, backend, keyID) error
-    Sign(ctx, backend, keyID, data, opts) ([]byte, error)
-    Verify(ctx, backend, keyID, data, sig, opts) (bool, error)
-}
-
-type BackendRegistry interface {
-    Register(name, ks) error
-    Get(name) (xkms.KeyStore, error)
-    List() []BackendInfo
-}
-```
-
-## API Endpoints
-
-### REST (JSON)
-```
-GET    /health
-GET    /api/v1/backends
-GET    /api/v1/backends/{name}
-POST   /api/v1/keys
-GET    /api/v1/keys?backend=software
-GET    /api/v1/keys/{id}?backend=software
-DELETE /api/v1/keys/{id}?backend=software
-POST   /api/v1/keys/{id}/sign?backend=software
-POST   /api/v1/keys/{id}/verify?backend=software
-```
-
-### gRPC
-```protobuf
-service KeystoreService {
-  rpc Health(HealthRequest) returns (HealthResponse);
-  rpc ListBackends(ListBackendsRequest) returns (ListBackendsResponse);
-  rpc GenerateKey(GenerateKeyRequest) returns (GenerateKeyResponse);
-  rpc GetKey(GetKeyRequest) returns (GetKeyResponse);
-  rpc ListKeys(ListKeysRequest) returns (ListKeysResponse);
-  rpc DeleteKey(DeleteKeyRequest) returns (DeleteKeyResponse);
-  rpc Sign(SignRequest) returns (SignResponse);
-  rpc Verify(VerifyRequest) returns (VerifyResponse);
-}
-```
-
-### MCP (tool name -- xkms JSON-RPC method)
-Each method is exposed as an MCP tool named `xkms_<method>` (dots become
-underscores), taking one optional `params_json` string argument.
-```
-xkms_health
-xkms_listBackends
-xkms_generateKey
-xkms_getKey
-xkms_listKeys
-xkms_deleteKey
-xkms_sign
-xkms_verify
-```
-`xkms.subscribe` (and its notification plane) was removed with the legacy
-MCP server; there is no live subscription/watch equivalent yet.
-
-### CLI
 ```bash
 xkmsctl version
 xkmsctl backends list
-xkmsctl backends info <name>
-xkmsctl key generate <id> --backend <name> --key-type <type>
-xkmsctl key list --backend <name>
-xkmsctl key get <id> --backend <name>
-xkmsctl key delete <id> --backend <name>
-xkmsctl key sign <id> <data> --backend <name> --hash <alg>
-xkmsctl key verify <id> <data> --signature <sig> --backend <name>
+xkmsctl backends info <backend>
+xkmsctl key generate <key-id> --key-type signing
+xkmsctl key list
+xkmsctl key get <key-id>
+xkmsctl key sign <key-id> <data> --hash sha256
+xkmsctl key verify <key-id> <data> <signature>
+xkmsctl key delete <key-id>
 ```
 
-## Configuration
+`--key-type` takes `tls` (the default), `signing`, `encryption` or
+`symmetric` (`cmd/xkmsctl/key.go:1909`). `--hash` defaults to `sha256`
+(`key.go:1932`). The key verbs are documented in [key-management → CLI](../key-management/cli.md).
 
-Ports live under `server:` as `*_port` integers and protocols are switched on
-under `protocols:` -- there are no top-level `rest:` / `grpc:` / `mcp:` / `quic:`
-sections and no `address:` keys (`pkg/config/config.go:198-217`). Compare
-`configs/xkmsd.yaml`.
+## Configuration skeleton
+
+Ports live under `server:` as `*_port` integers, and protocols are switched
+on under `protocols:` (`ServerConfig`, `pkg/config/config.go:309`;
+`ProtocolsConfig`, `config.go:351`).
 
 ```yaml
 server:
-  host: "0.0.0.0"
+  host: "127.0.0.1"
   rest_port: 8443
   grpc_port: 9443
-  quic_port: 8444  # vestigial -- QUIC is served as HTTP/3 on rest_port
   mcp_port: 8445
 
 protocols:
   unix: true
   rest: true
   grpc: true
-  quic: true
   mcp: true
 
 auth:
   enabled: true
-  type: adaptive  # noop|none, mtls, jwt, adaptive, composite -- there is no oidc type
-  # Adaptive escalates to JWT once the first user exists, so a JWT
-  # verification key is required; startup fails without it.
+  type: composite  # mtls, jwt, composite; "adaptive" was removed (pkg/server/server.go:1257)
   jwt:
-    public_key_file: /etc/xkms/jwt-public.pem
+    public_key_file: /etc/xkms/jwt-public.pem   # config.go:583
 
 metrics:
   enabled: true
   path: /metrics
   port: 9090
 
-# backends is a map keyed by backend name, not a list
-backends:
+backends:          # a struct keyed by backend name (BackendsConfig, config.go:1114)
   software:
     enabled: true
     path: "xkms-data/keys/software"
 ```
 
-## Error Handling
+Every key can also be set from the environment as `XKMS_<PATH>`, with nesting
+joined by underscores. For example, `logging.level` becomes
+`XKMS_LOGGING_LEVEL` (`pkg/config/load.go:38`, `:201`).
 
-### Service Errors → Protocol Mapping
+## Build and test
 
-| Service Error | REST | gRPC | MCP |
-|--------------|------|------|-----|
-| ErrInvalidKeyID | 400 | InvalidArgument | -32602 |
-| ErrKeyNotFound | 404 | NotFound | -32001 |
-| ErrKeyAlreadyExists | 409 | AlreadyExists | -32002 |
-| ErrBackendNotFound | 404 | NotFound | -32001 |
-| ErrOperationNotSupported | 501 | Unimplemented | -32601 |
-
-## Common Patterns
-
-### Dependency Injection
-```go
-func NewKeyManager(
-    ks xkms.KeyStore,
-    registry *BackendRegistry,
-    validator *Validator,
-) *KeyManager
-```
-
-### Context Propagation
-```go
-func (km *KeyManager) GenerateKey(
-    ctx context.Context,
-    req GenerateKeyRequest,
-) (*KeyInfo, error)
-```
-
-### Error Wrapping
-```go
-if err != nil {
-    return nil, fmt.Errorf("operation failed: %w", err)
-}
-```
-
-### Graceful Shutdown
-```go
-func (s *Server) Shutdown(ctx context.Context) error {
-    var wg sync.WaitGroup
-    // Shutdown all servers in parallel
-    // Collect and return errors
-}
-```
-
-## Testing
-
-### Unit Tests
 ```bash
-go test -v ./pkg/config/...
-go test -v ./pkg/server/...
-go test -cover ./pkg/...
+make build            # all binaries
+make build-server     # xkmsd
+make build-cli        # xkmsctl
+make test             # unit tests; make test-<pkg> for one package
+make integration-test # devcontainer; make integration-test-<area> per area
+make coverage
+make proto            # regenerate gRPC stubs
 ```
 
-### Integration Tests
-```bash
-make integration-test
+## Health
 
-# Individual protocols
-go test -v -tags=integration ./test/integration/api/rest_test.go
-go test -v -tags=integration,grpc ./test/integration/api/grpc_test.go
-go test -v -tags=integration ./test/integration/api/mcp_test.go
-go test -v -tags=integration ./test/integration/api/quic_test.go
-go test -v -tags=integration ./test/integration/api/cli_test.go
-```
-
-### Benchmarks
-```bash
-go test -bench=. -benchmem ./pkg/...
-```
-
-## Build & Run
-
-### Build
-```bash
-make build              # All binaries
-make build-server       # Server only
-make build-cli          # CLI only
-```
-
-### Run
-```bash
-# Server
-./bin/xkmsd --config config.yaml
-
-# CLI
-./bin/xkmsctl key generate my-key --backend software --key-type rsa
-```
-
-### Docker
-```bash
-docker-compose up -d
-docker-compose ps
-docker-compose logs -f xkms-server
-```
-
-## Development Workflow
-
-1. **Create feature branch**
-   ```bash
-   git checkout -b feature/rest-api
-   ```
-
-2. **Implement component**
-   ```bash
-   mkdir -p pkg/api/rest
-   vim pkg/api/rest/server.go
-   vim pkg/api/rest/handlers.go
-   ```
-
-3. **Write tests**
-   ```bash
-   vim pkg/api/rest/handlers_test.go
-   go test -v ./pkg/api/rest/...
-   ```
-
-4. **Integration test**
-   ```bash
-   make integration-test
-   ```
-
-5. **Commit & push**
-   ```bash
-   git add .
-   git commit -m "feat: implement REST API"
-   git push origin feature/rest-api
-   ```
-
-## Debugging
-
-### Enable Debug Logging
-```bash
-export XKMS_LOGGING_LEVEL=debug
-./bin/xkmsd
-```
-`XKMS_LOGGING_LEVEL` maps to the `logging.level` config key via the generic
-`XKMS_<SECTION>_<KEY>` binding (`pkg/config/load.go:175-182`); see
-[`../xkmsd-configuration/user.md`](../xkmsd-configuration/user.md). There is
-no `XKMS_SERVER_LOG_LEVEL` variable.
-
-### Test Individual Endpoints
-
-**REST:**
-```bash
-curl -X POST http://localhost:8443/api/v1/keys \
-  -H "Content-Type: application/json" \
-  -d '{"key_id":"test","backend":"software","key_type":"rsa","key_size":2048}'
-```
-
-**gRPC:**
-```bash
-grpcurl -plaintext -d '{"key_id":"test","backend":"software","key_type":"rsa","key_size":2048}' \
-  localhost:9443 xkms.v1.KeystoreService/GenerateKey
-```
-
-**MCP:**
-```bash
-# mcp_port is 8445 in the shipped configs; the SDK client default is 9444.
-# Real MCP (Streamable HTTP) served by the embedded qrdb node at /mcp; the
-# xkms "health" method is exposed as the "xkms_health" tool.
-curl -X POST https://localhost:8445/mcp \
-  -H "Content-Type: application/json" \
-  -d '{"jsonrpc":"2.0","method":"tools/call","params":{"name":"xkms_health","arguments":{}},"id":1}'
-```
-
-### Check Docker Services
-```bash
-docker-compose ps
-docker-compose logs xkms-server
-```
-
-### Check Ports
-```bash
-netstat -tuln | grep -E '8443|9443|8445|9090'
-```
-
-## Performance Targets
-
-| Operation | Target |
-|-----------|--------|
-| Key Generation (RSA 2048) | < 100ms |
-| Signing (RSA 2048) | < 10ms |
-| REST Request Overhead | < 5ms |
-| gRPC Request Overhead | < 2ms |
-
-## Metrics
-
-```
-xkms_key_generate_total{backend, key_type}
-xkms_key_generate_duration_seconds{backend, key_type}
-xkms_sign_total{backend}
-xkms_http_requests_total{method, path, status}
-xkms_grpc_requests_total{method, status}
-```
-
-## System Components
-
-1. **Core Infrastructure:**
-   - Config, Service, Middleware, Server
-
-2. **Protocol Implementations:**
-   - REST, gRPC, QUIC, MCP, CLI
-
-3. **Security & Operations:**
-   - Auth, TLS, Metrics, Logging
-
-4. **Testing & Documentation:**
-   - Integration tests, Benchmarks, Docs
-
-## Common Issues
-
-**Issue:** gRPC compilation errors
-```bash
-make proto-gen
-go mod tidy
-```
-
-**Issue:** Integration tests failing
-```bash
-docker-compose ps
-docker-compose restart
-netstat -tuln | grep -E '8443|9443|8444|8445'
-```
-
-**Issue:** TLS certificate errors
-```bash
-openssl req -x509 -newkey rsa:4096 -nodes \
-  -keyout server.key -out server.crt -days 365 \
-  -subj "/CN=localhost"
-```
+`GET /health`, `/health/live`, `/health/ready` and `/health/startup` are
+public (`pkg/api/rest/routes.go:124-128`).
 
 ## Resources
 
-### Documentation
-- [host-embedding](../host-embedding/engineering.md) - Unified API server and module registration
-- [overview.md](./overview.md) - System architecture and design philosophy
-- [api-specifications.md](./api-specifications.md) - API reference
-- [Build toggles](../crypto-backends/engineering.md#build-toggles) - Build tags and compilation options
-- [README.md](./README.md) - Overview
-
-### External
-- [gRPC Go Tutorial](https://grpc.io/docs/languages/go/quickstart/)
-- [HTTP/3 in Go](https://github.com/quic-go/quic-go)
-- [Cobra CLI](https://cobra.dev/)
-- [Viper Config](https://github.com/spf13/viper)
-
-
-**Quick Start:** Follow the [Getting Started guide](../../xkey/docs/usage/getting-started.md) to begin.
+- [Architecture index](./README.md)
+- [overview.md](./overview.md)
+- [api-specifications.md](./api-specifications.md)
+- [host-embedding](../host-embedding/engineering.md)
+- [Build toggles](../crypto-backends/engineering.md#build-toggles)
+- [Getting started](../../xkey/docs/usage/getting-started.md)
