@@ -12,15 +12,16 @@
 //    Contact licensing@automatethethings.com for commercial licensing options.
 
 // Package xkmsdtest runs a real xkmsd for an integration suite: it builds
-// the binaries from this checkout, starts xkmsd over a throwaway data
-// directory with a passphrase barrier, initializes that barrier through the
-// pre-boot sealed-window listener as an operator does on a fresh
-// deployment, trusts the server's CA the way a first-contact client does,
-// and hands the suite the first-boot admin's mTLS credential.
+// the binaries from this checkout, runs `xkmsd init` over a throwaway data
+// directory with a passphrase barrier as an operator does on a fresh
+// deployment, starts xkmsd and unseals that barrier through the pre-boot
+// sealed-window listener, trusts the server's CA the way a first-contact
+// client does, and hands the suite the admin mTLS credential init issued.
 //
 // The server serves REST over TLS on a kernel-assigned loopback port, with
-// client certificates verified against its own CA and the WebAuthn relying
-// party "localhost", so passkeys and console origins work against it.
+// client certificates verified against its own CA and init's, and the
+// WebAuthn relying party "localhost", so passkeys and console origins work
+// against it.
 package xkmsdtest
 
 import (
@@ -50,7 +51,8 @@ import (
 // with: its passkeys are scoped to it and the console runs on it.
 const RelyingParty = "localhost"
 
-// barrierPassphrase is the test server's barrier passphrase.
+// barrierPassphrase is the test server's SO PIN, which `xkmsd init` makes
+// its barrier passphrase.
 const barrierPassphrase = "xkmsdtest-barrier-passphrase"
 
 // startTimeout bounds each start-up step.
@@ -232,6 +234,10 @@ func Start(bin, dir string, opts ...Option) (*Server, error) {
 	if err != nil {
 		return nil, err
 	}
+	if err := initialize(bin, config, data, logFile); err != nil {
+		stepErr := &StepError{Step: "initialize the server with xkmsd init", Err: err, Log: s.LogTail(40)}
+		return nil, errors.Join(stepErr, logFile.Close())
+	}
 	s.cmd = exec.Command(bin, "-config", config)
 	s.cmd.Dir = dir
 	s.cmd.Stdout = logFile
@@ -249,7 +255,7 @@ func Start(bin, dir string, opts ...Option) (*Server, error) {
 		name string
 		run  func() error
 	}{
-		{"initialize the barrier through the sealed window", func() error { return s.initializeBarrier(data) }},
+		{"unseal the barrier through the sealed window", func() error { return s.unsealBarrier(data) }},
 		{"wait for the server", func() error { return s.waitServing(l) }},
 		{"trust the server's CA", s.trustCA},
 		{"find the first-boot admin credential", func() error { return s.findAdminCredential(data) }},
@@ -350,10 +356,24 @@ func (s *Server) wait(deadline time.Time) error {
 	}
 }
 
-// initializeBarrier initializes the passphrase barrier through the pre-boot
-// sealed-window listener (InitializeBarrier), giving up when xkmsd exits or
+// initialize runs `xkmsd init` with the config at config over data, as an
+// operator does before a deployment's first start: it initializes the
+// barrier with the SO PIN as its passphrase and issues the admin mTLS
+// credential into data. The PIN travels in the environment, never argv.
+func initialize(bin, config, data string, out io.Writer) error {
+	cmd := exec.Command(bin, "init", "--config", config, "--data-dir", data,
+		"--hostname", "localhost", "--admin-factor", "mtls")
+	cmd.Dir = filepath.Dir(config)
+	cmd.Env = append(os.Environ(), "XKMS_SO_PIN="+barrierPassphrase)
+	cmd.Stdout = out
+	cmd.Stderr = out
+	return cmd.Run()
+}
+
+// unsealBarrier unseals the barrier `xkmsd init` initialized through the
+// pre-boot sealed-window listener (OpenBarrier), giving up when xkmsd exits or
 // startTimeout passes.
-func (s *Server) initializeBarrier(data string) error {
+func (s *Server) unsealBarrier(data string) error {
 	ctx, cancel := context.WithTimeout(context.Background(), startTimeout)
 	defer cancel()
 	go func() {
@@ -365,7 +385,7 @@ func (s *Server) initializeBarrier(data string) error {
 	}()
 	client, err := SealedWindowClient(ctx, filepath.Join(data, "unified-tls", "cert.pem"))
 	if err == nil {
-		err = InitializeBarrier(ctx, client, s.URL, []byte(barrierPassphrase))
+		err = OpenBarrier(ctx, client, s.URL, []byte(barrierPassphrase))
 	}
 	select {
 	case <-s.exited:
@@ -428,8 +448,8 @@ func (s *Server) trustCA() error {
 	}
 }
 
-// findAdminCredential locates the first-boot admin credential first boot
-// wrote into the data directory.
+// findAdminCredential locates the admin credential `xkmsd init` wrote into
+// the data directory.
 func (s *Server) findAdminCredential(data string) error {
 	cert, key := filepath.Join(data, "admin-cert.pem"), filepath.Join(data, "admin-key.pem")
 	for _, p := range []string{cert, key} {
@@ -476,6 +496,8 @@ func serverConfig(l listeners, data string) string {
   server_cn: localhost
   min_version: TLS1.3
   client_auth: verify
+  client_cas:
+    - %[2]s/ca-bundle.pem
 auth:
   enabled: true
   type: composite

@@ -113,13 +113,17 @@ RUN ldconfig
 RUN groupadd -r testuser -g 1000 && \
     useradd -r -u 1000 -g testuser -m -s /bin/bash testuser
 
-# Create required directories with proper structure
+# Create required directories with proper structure.
+# /data/storage/tenant-volumes is the default qrdb volume pool the embedded
+# node is given under configs/xkmsd-integration.yaml's datastore path
+# (pkg/embeddednode); qrdb opens the pool but does not create it. A fresh
+# named volume mounted at /data is seeded from this directory tree.
 RUN mkdir -p /workspace \
     /var/lib/softhsm/tokens \
     /var/lib/swtpm \
     /etc/softhsm \
     /etc/xkms \
-    /data \
+    /data/storage/tenant-volumes \
     /app/build/bin \
     /var/run/xkms \
     && chown -R testuser:testuser /workspace \

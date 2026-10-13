@@ -28,6 +28,10 @@ import (
 // retryInterval paces the barrier helpers' retries.
 const retryInterval = 250 * time.Millisecond
 
+// ErrBarrierUninitialized reports a sealed node whose barrier was never
+// initialized: `xkmsd init` did not run, or did not complete, over its data.
+var ErrBarrierUninitialized = errors.New("xkmsdtest: the barrier was never initialized; run xkmsd init over the node's data first")
+
 // BarrierState is what a node's sealed window reports about its barrier.
 type BarrierState struct {
 	Sealed        bool   `json:"sealed"`
@@ -82,13 +86,6 @@ func ReadBarrierState(ctx context.Context, client *http.Client, url string) (Bar
 	}
 }
 
-// InitializeBarrier initializes the passphrase barrier of the sealed node at
-// url with passphrase, through its sealed window, retrying until the listener
-// answers. A passphrase barrier is unsealed by its initialization.
-func InitializeBarrier(ctx context.Context, client *http.Client, url string, passphrase []byte) error {
-	return postSecret(ctx, client, url+"/v1/barrier/initialize", passphrase)
-}
-
 // UnsealBarrier unseals the initialized, sealed node at url with passphrase,
 // through its sealed window, retrying until the listener answers.
 func UnsealBarrier(ctx context.Context, client *http.Client, url string, passphrase []byte) error {
@@ -96,9 +93,10 @@ func UnsealBarrier(ctx context.Context, client *http.Client, url string, passphr
 }
 
 // OpenBarrier brings the node at url past its sealed window, as an operator
-// does: it initializes a barrier that has never been initialized and unseals
-// one that has -- a node restarted after initialization boots sealed again.
-// A node that is already unsealed is left alone.
+// does after `xkmsd init`: it unseals the sealed barrier init initialized and
+// leaves an unsealed node alone. It never initializes -- the sealed window
+// refuses that (HTTP 409) -- so a barrier init never initialized fails with
+// ErrBarrierUninitialized.
 func OpenBarrier(ctx context.Context, client *http.Client, url string, passphrase []byte) error {
 	state, err := ReadBarrierState(ctx, client, url)
 	if err != nil {
@@ -108,7 +106,7 @@ func OpenBarrier(ctx context.Context, client *http.Client, url string, passphras
 	case !state.Sealed:
 		return nil
 	case !state.Initialized():
-		return InitializeBarrier(ctx, client, url, passphrase)
+		return ErrBarrierUninitialized
 	default:
 		return UnsealBarrier(ctx, client, url, passphrase)
 	}

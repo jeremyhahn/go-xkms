@@ -223,25 +223,48 @@ export GITEA_GO_TOKEN
 # reason as the token: every compose file interpolates ${GITEA_HOST}.
 GITEA_HOST ?= $(shell scripts/gitea-host.sh 2>/dev/null)
 export GITEA_HOST
-# How many GIT_CONFIG_* entries the compose services should read: ONE when we
-# have a Gitea host to rewrite to, NONE for a GitHub origin. Git reads exactly
-# GIT_CONFIG_COUNT entries, so an empty or zero count leaves KEY_0/VALUE_0
-# inert rather than emitting a rewrite with an empty host in it.
+# The insteadOf rewrite that resolves github.com/jeremyhahn/* against Gitea.
+GITEA_INSTEADOF_KEY = url.http://x:$(GITEA_GO_TOKEN)@$(GITEA_HOST)/jeremyhahn/.insteadOf
+
+# The module-fetch credentials every container gets, resolved ONCE here for
+# all consumers: the gomodauth BuildKit secret (stage-gomodauth), the builder
+# containers (GITEA_MODULE_ENV) and every compose file's environment block.
+# Two sources, checked in order:
+#   1. GIT_CONFIG_KEY_0 already in the environment -- this is how Gitea Actions
+#      supplies them (runner.envs injects the composed insteadOf rewrite into
+#      every job's process env; dependency-resolution.md §6). There is no
+#      GITEA_GO_TOKEN on that runner and no .devcontainer/.env in its checkout,
+#      so this must be checked first or the job gets an empty-token rewrite
+#      ("Failed to authenticate user").
+#   2. GITEA_GO_TOKEN and GITEA_HOST, composed into GITEA_INSTEADOF_KEY -- the
+#      devcontainer/host path, sourced from the gitignored .devcontainer/.env.
+# Otherwise the count is 0: git reads exactly GIT_CONFIG_COUNT entries, so
+# KEY_0/VALUE_0 stay inert and every module resolves publicly.
 #
-# The compose files do NOT depend on this being exported. They read
-# `${GITEA_GIT_CONFIG_COUNT:-${GITEA_HOST:+1}}`, deriving the count from
-# GITEA_HOST when make is not in the picture -- .devcontainer/devcontainer.json
-# loads the compose file DIRECTLY, so a devcontainer whose .devcontainer/.env
-# supplies GITEA_HOST must still get the rewrite. This export is the override
-# for the make path, not the only source.
+# The compose files read `${GOMODAUTH_GIT_CONFIG_COUNT:-${GITEA_HOST:+1}}` and
+# likewise for KEY_0/VALUE_0, falling back to the token rewrite when make is
+# not in the picture -- .devcontainer/devcontainer.json loads the compose file
+# DIRECTLY, so a devcontainer whose .devcontainer/.env supplies the token and
+# host must still get the rewrite. These exports are the override for the
+# make path, not the only source.
 #
 # A required `${GITEA_HOST:?...}` cannot serve here: compose evaluates it when
 # the file is LOADED, so it fails a public checkout before any service starts,
 # which is the opposite of the public-resolution path this exists to provide.
-GITEA_GIT_CONFIG_COUNT = $(if $(GITEA_HOST),1,0)
-export GITEA_GIT_CONFIG_COUNT
-# The insteadOf rewrite that resolves github.com/jeremyhahn/* against Gitea.
-GITEA_INSTEADOF_KEY = url.http://x:$(GITEA_GO_TOKEN)@$(GITEA_HOST)/jeremyhahn/.insteadOf
+ifneq ($(GIT_CONFIG_KEY_0),)
+GOMODAUTH_GOPRIVATE := $(if $(GOPRIVATE),$(GOPRIVATE),github.com/jeremyhahn/*)
+GOMODAUTH_GIT_CONFIG_COUNT := $(if $(GIT_CONFIG_COUNT),$(GIT_CONFIG_COUNT),1)
+GOMODAUTH_GIT_CONFIG_KEY_0 := $(GIT_CONFIG_KEY_0)
+GOMODAUTH_GIT_CONFIG_VALUE_0 := $(GIT_CONFIG_VALUE_0)
+else ifneq ($(and $(GITEA_GO_TOKEN),$(GITEA_HOST)),)
+GOMODAUTH_GOPRIVATE := github.com/jeremyhahn/*
+GOMODAUTH_GIT_CONFIG_COUNT := 1
+GOMODAUTH_GIT_CONFIG_KEY_0 := $(GITEA_INSTEADOF_KEY)
+GOMODAUTH_GIT_CONFIG_VALUE_0 := https://github.com/jeremyhahn/
+else
+GOMODAUTH_GIT_CONFIG_COUNT := 0
+endif
+export GOMODAUTH_GOPRIVATE GOMODAUTH_GIT_CONFIG_COUNT GOMODAUTH_GIT_CONFIG_KEY_0 GOMODAUTH_GIT_CONFIG_VALUE_0
 
 # ==============================================================================
 # Compose project namespacing
@@ -325,14 +348,14 @@ IMAGE_TAG = $(if $(XKMS_IMAGE_TAG),$(XKMS_IMAGE_TAG),latest)
 # compose file's `${XKMS_IMAGE_TAG:-dev}` so lookups find what compose built.
 XKMS_SERVER_IMAGE = go-xkms-server:$(if $(XKMS_IMAGE_TAG),$(XKMS_IMAGE_TAG),dev)
 GOMODCACHE_HOST := $(shell go env GOMODCACHE 2>/dev/null || echo $(HOME)/go/pkg/mod)
-ifneq ($(GITEA_HOST),)
+ifneq ($(GOMODAUTH_GIT_CONFIG_COUNT),0)
 GITEA_MODULE_ENV := -e GOWORK=off \
-                    -e GOPRIVATE='github.com/jeremyhahn/*' \
-                    -e GIT_CONFIG_COUNT=1 \
-                    -e GIT_CONFIG_KEY_0='$(GITEA_INSTEADOF_KEY)' \
-                    -e GIT_CONFIG_VALUE_0='https://github.com/jeremyhahn/'
+                    -e GOPRIVATE='$(GOMODAUTH_GOPRIVATE)' \
+                    -e GIT_CONFIG_COUNT='$(GOMODAUTH_GIT_CONFIG_COUNT)' \
+                    -e GIT_CONFIG_KEY_0='$(GOMODAUTH_GIT_CONFIG_KEY_0)' \
+                    -e GIT_CONFIG_VALUE_0='$(GOMODAUTH_GIT_CONFIG_VALUE_0)'
 else
-# No Gitea host: a GitHub-origin checkout resolves every module publicly.
+# No module-fetch credentials: every module resolves publicly.
 GITEA_MODULE_ENV := -e GOWORK=off
 endif
 # The warm host module cache, for containers that run AS ROOT only: the
@@ -1027,8 +1050,10 @@ test-scripts:
 	@bash test/scripts/changelog-assemble.test.sh
 	@bash test/scripts/retry.test.sh
 	@bash test/scripts/softhsm-pin.test.sh
+	@bash test/scripts/open-server-barrier.test.sh
 	@bash test/scripts/check-public-literals.test.sh
 	@bash test/scripts/check-test-helpers.test.sh
+	@bash test/scripts/gomodauth.test.sh
 	@echo "$(GREEN)✓ Shell script tests passed$(RESET)"
 
 # test-buildgates: the CI tier gate (#1483) -- every ci.yml job is in CI Gate
@@ -1749,6 +1774,10 @@ coverage-xkmsctl:
 # lane used to be represented here by integration-test-pkcs11-conformance alone,
 # which left the C ABI and the whole OpenSSL/OpenSSH interop surface out of every
 # default run -- the exact surface real callers reach the module through.
+#
+# integration-test-cluster stays out of the default run: its three Raft nodes
+# cannot initialize their barriers until each node can be initialized without
+# running its own first boot, against a shared bootstrap CA. Run it on its own.
 integration-test: clean-test-containers integration-test-software integration-test-pkcs8 integration-test-pkcs11 integration-test-pkcs11-barrier integration-test-pkcs11-module-all integration-test-tpm2 integration-test-challenges integration-test-awskms integration-test-gcpkms integration-test-azurekv integration-test-vault integration-test-storage integration-test-utils integration-test-quantum integration-test-frost integration-test-webauthn integration-test-fido2 integration-test-cli integration-test-api-all integration-test-sdk-go integration-test-sshagent integration-test-initceremony integration-test-bootstrap
 	@echo "$(GREEN)$(BOLD)✓ All integration tests complete!$(RESET)"
 
@@ -2649,6 +2678,14 @@ define run_with_server
 	fi
 endef
 
+.PHONY: devcontainer-module-env
+## devcontainer-module-env: Show where the devcontainer's go command resolves modules from (never prints a credential)
+# Redacted by construction: GIT_CONFIG_KEY_0 carries the module token, so only
+# whether it is set is printed, never its value. The listing shows which
+# first-party modules the module cache already holds before any go command runs.
+devcontainer-module-env:
+	$(call run_in_devcontainer,go env -json GOPROXY GOFLAGS GOMODCACHE GOPRIVATE GONOSUMDB; echo GIT_CONFIG_COUNT:; printenv GIT_CONFIG_COUNT; if printenv GIT_CONFIG_KEY_0 >/dev/null; then echo GIT_CONFIG_KEY_0 set: yes; else echo GIT_CONFIG_KEY_0 set: no; fi; echo cached first-party modules:; ls /go/pkg/mod/cache/download/github.com/jeremyhahn/ 2>/dev/null || echo none,devcontainer-module-env)
+
 .PHONY: devcontainer-up
 ## devcontainer-up: Build and start go-xkms's own devcontainer stack (devcontainer + swtpm + softhsm)
 devcontainer-up: stage-gomodauth
@@ -2736,6 +2773,10 @@ devcontainer-server-up:
 # positive XKMS_DEVCONTAINER marker instead (see the comment above
 # run_in_devcontainer), but this guard stays: a probe that cannot say which
 # of two things failed sends everyone to the wrong component.
+#
+# The server boots with its passphrase barrier sealed and serves no socket
+# until an operator opens it, so before probing, the devcontainer plays that
+# operator through the sealed window (.devcontainer/scripts/open-server-barrier.sh).
 devcontainer-server-wait:
 	@echo "$(CYAN)$(BOLD)→ Waiting for xkms-server on $(XKMS_UNIX_SOCKET)...$(RESET)"
 	@if [ -z "$$($(DOCKER_COMPOSE) ps -q devcontainer 2>/dev/null)" ]; then \
@@ -2743,6 +2784,11 @@ devcontainer-server-wait:
 		echo "$(YELLOW)  The probe runs inside the devcontainer, so this says nothing about$(RESET)"; \
 		echo "$(YELLOW)  xkms-server -- it may well be serving. See go-xkms#19.$(RESET)"; \
 		exit 1; \
+	fi; \
+	cid=$$($(DOCKER_COMPOSE) ps -q xkms-server 2>/dev/null); \
+	if [ -n "$$cid" ] && [ "$$(docker inspect -f '{{.State.Running}}' $$cid 2>/dev/null)" = "true" ]; then \
+		$(DOCKER_COMPOSE) exec -T devcontainer bash $(DEVCONTAINER_REPO)/.devcontainer/scripts/open-server-barrier.sh || \
+			echo "$(YELLOW)could not open the xkms-server barrier; the socket probe below reports why it is not serving$(RESET)"; \
 	fi; \
 	probe_err=""; \
 	for i in $$(seq 1 15); do \
@@ -3458,32 +3504,18 @@ release: lib release-binaries
 # when no token is configured, so the same build resolves from the public
 # proxy on hosts without Gitea access.
 #
-# Two credential sources, checked in order:
-#   1. GIT_CONFIG_KEY_0/GOPRIVATE already in the environment -- this is how
-#      Gitea Actions supplies them (runner.envs injects the four variables
-#      directly into every job's process env; §6). There is no GITEA_GO_TOKEN
-#      on that runner, only the already-composed insteadOf rewrite, so this
-#      must be checked first or a CI job silently stages an empty/broken file.
-#   2. GITEA_GO_TOKEN, reconstructed into the same four variables -- this is
-#      the devcontainer/host path, sourced from the gitignored
-#      .devcontainer/.env.
+# The credentials are the GOMODAUTH_* resolution above; the recipe reads them
+# from its exported environment so no value is expanded into the recipe text.
 GOMODAUTH_FILE := .devcontainer/gomodauth.env
 .PHONY: stage-gomodauth
 stage-gomodauth:
 	@umask 077; : > $(GOMODAUTH_FILE); \
-	if [ -n "$$GIT_CONFIG_KEY_0" ]; then \
+	if [ "$$GOMODAUTH_GIT_CONFIG_COUNT" != 0 ]; then \
 		{ \
-			printf 'export GOPRIVATE=%s\n' "$${GOPRIVATE:-github.com/jeremyhahn/*}"; \
-			printf 'export GIT_CONFIG_COUNT=%s\n' "$${GIT_CONFIG_COUNT:-1}"; \
-			printf 'export GIT_CONFIG_KEY_0=%s\n' "$$GIT_CONFIG_KEY_0"; \
-			printf 'export GIT_CONFIG_VALUE_0=%s\n' "$$GIT_CONFIG_VALUE_0"; \
-		} > $(GOMODAUTH_FILE); \
-	elif [ -n "$(GITEA_GO_TOKEN)" ] && [ -n "$(GITEA_HOST)" ]; then \
-		{ \
-			printf 'export GOPRIVATE=%s\n' 'github.com/jeremyhahn/*'; \
-			printf 'export GIT_CONFIG_COUNT=1\n'; \
-			printf 'export GIT_CONFIG_KEY_0=%s\n' '$(GITEA_INSTEADOF_KEY)'; \
-			printf 'export GIT_CONFIG_VALUE_0=%s\n' 'https://github.com/jeremyhahn/'; \
+			printf 'export GOPRIVATE=%s\n' "$$GOMODAUTH_GOPRIVATE"; \
+			printf 'export GIT_CONFIG_COUNT=%s\n' "$$GOMODAUTH_GIT_CONFIG_COUNT"; \
+			printf 'export GIT_CONFIG_KEY_0=%s\n' "$$GOMODAUTH_GIT_CONFIG_KEY_0"; \
+			printf 'export GIT_CONFIG_VALUE_0=%s\n' "$$GOMODAUTH_GIT_CONFIG_VALUE_0"; \
 		} > $(GOMODAUTH_FILE); \
 	fi
 
@@ -4703,7 +4735,7 @@ integration-test-acmeadmin: stage-gomodauth
 
 .PHONY: integration-test-cluster
 ## integration-test-cluster: Run 3-node Raft cluster + standalone-server integration tests (crypto gen/sign/verify replication, public-key consistency, delete replication, leader failover, node restart/rejoin catch-up, standalone lifecycle)
-integration-test-cluster:
+integration-test-cluster: stage-gomodauth
 	@echo "$(CYAN)$(BOLD)→ Running 3-node Raft cluster + standalone-server integration tests...$(RESET)"
 	@cd test/integration/cluster && bash gen-certs.sh
 	@cd test/integration/cluster && $(call compose,cluster) down -v >/dev/null 2>&1 || true

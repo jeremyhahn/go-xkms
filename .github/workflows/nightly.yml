@@ -227,6 +227,14 @@ jobs:
       - name: Build Docker image
         run: make docker-build
 
+      # Redacted: prints GOPROXY/GOFLAGS/GOMODCACHE/GOPRIVATE, GIT_CONFIG_COUNT,
+      # whether GIT_CONFIG_KEY_0 is set (yes/no, never its value) and which
+      # first-party modules the devcontainer's module cache already holds --
+      # the evidence for where private modules resolve from (go-xkms#1055).
+      - name: Devcontainer module resolution
+        run: make devcontainer-module-env
+        continue-on-error: true
+
       - name: Run integration tests
         # XKMS_COMPOSE_SERVER=1 forces the compose xkms-server (grpc/quic/mcp
         # network listeners) to build and start unconditionally. The default

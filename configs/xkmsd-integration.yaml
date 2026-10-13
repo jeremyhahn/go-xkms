@@ -38,6 +38,12 @@ tls:
   # requires; it still keeps anonymous connections working for every other
   # suite that shares this fixture, since no certificate is required.
   client_auth: "verify"
+  # The first-boot admin credential is issued by `xkmsd init`'s one-shot
+  # bootstrap CA, not by this server's embedded CA, so "verify" accepts it only
+  # with that CA in the client-CA pool. init writes its bundle beside the
+  # credential, before the daemon starts (.devcontainer/docker-compose.yml).
+  client_cas:
+    - "/data/storage/ca-bundle.pem"
   # The WebAuthn login matrix dials the compose service by its dotted
   # network alias (see the webauthn block below), so the auto-issued
   # server certificate must cover that name for CA-verified clients.
@@ -104,6 +110,21 @@ webauthn:
 barrier:
   enabled: true
   strategy: "passphrase"
+  # `xkmsd init` initializes the barrier on a fresh volume (the compose
+  # service's command); the server then boots sealed and serves the sealed
+  # window on server.host until .devcontainer/scripts/open-server-barrier.sh
+  # (run by the Makefile's devcontainer-server-wait) unseals it from the
+  # devcontainer.
+  # server.host must stay 0.0.0.0 -- the suites dial xkms-server:9443 over the
+  # compose network once it is unsealed -- so the window binds it too.
+  # Listening beyond loopback is acceptable here only because this is a
+  # throwaway per-run test server: the window is reachable on the run's
+  # private xkms-dev compose network (and the runner host's ephemeral debug
+  # port mapping), stays open only until the wait step opens it seconds after
+  # start, and guards a test passphrase over a disposable data volume. Same
+  # precedent as test/integration/cluster/config.node.yaml; a deployment binds
+  # the window to loopback or a trusted management interface.
+  sealed_window_allow_remote: true
 
 ratelimit:
   enabled: false

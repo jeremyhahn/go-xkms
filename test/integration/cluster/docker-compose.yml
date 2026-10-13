@@ -41,8 +41,13 @@ services:
       - ./config.node.yaml:/etc/xkms/xkmsd.yaml:ro
       - ./certs:/certs:ro
     # The Raft member identities gen-certs.sh derives from the per-node certs.
+    # Optional only so the file loads before gen-certs.sh has run:
+    # clean-test-containers tears this project down from a fresh checkout,
+    # and a required env file fails every compose command, `down` included.
+    # integration-test-cluster always generates it before the stack starts.
     env_file:
-      - ./certs/cluster.env
+      - path: ./certs/cluster.env
+        required: false
     environment:
       - XKMS_CONFIG=/etc/xkms/xkmsd.yaml
       - XKMS_LOGGING_LEVEL=debug
@@ -87,8 +92,13 @@ services:
       - ./config.node.yaml:/etc/xkms/xkmsd.yaml:ro
       - ./certs:/certs:ro
     # The Raft member identities gen-certs.sh derives from the per-node certs.
+    # Optional only so the file loads before gen-certs.sh has run:
+    # clean-test-containers tears this project down from a fresh checkout,
+    # and a required env file fails every compose command, `down` included.
+    # integration-test-cluster always generates it before the stack starts.
     env_file:
-      - ./certs/cluster.env
+      - path: ./certs/cluster.env
+        required: false
     environment:
       - XKMS_CONFIG=/etc/xkms/xkmsd.yaml
       - XKMS_LOGGING_LEVEL=debug
@@ -135,8 +145,13 @@ services:
       - ./config.node.yaml:/etc/xkms/xkmsd.yaml:ro
       - ./certs:/certs:ro
     # The Raft member identities gen-certs.sh derives from the per-node certs.
+    # Optional only so the file loads before gen-certs.sh has run:
+    # clean-test-containers tears this project down from a fresh checkout,
+    # and a required env file fails every compose command, `down` included.
+    # integration-test-cluster always generates it before the stack starts.
     env_file:
-      - ./certs/cluster.env
+      - path: ./certs/cluster.env
+        required: false
     environment:
       - XKMS_CONFIG=/etc/xkms/xkmsd.yaml
       - XKMS_LOGGING_LEVEL=debug
@@ -188,6 +203,32 @@ services:
       # certificate names the node from its Raft address; a standalone node
       # has none, so its service name is configured as a SAN.
       - XKMS_TLS_EXTRA_SANS=standalone
+      # `xkmsd init` issues the admin credential from its own one-shot
+      # bootstrap CA, so client_auth "verify" accepts it only with init's
+      # bundle in the client-CA pool. init writes it beside the credential
+      # before the daemon starts (entrypoint below).
+      - XKMS_TLS_CLIENT_CAS=/data/storage/ca-bundle.pem
+      # Throwaway test SO PIN for `xkmsd init`, which also becomes the
+      # passphrase of this server's barrier. It must equal barrierPassphrase
+      # in barrier_test.go, which unseals the server with it.
+      - XKMS_SO_PIN=xkms-cluster-harness-barrier-passphrase
+    # A fresh volume is bootstrapped the supported way, with `xkmsd init`, as
+    # the devcontainer's xkms-server is: the sealed window refuses barrier
+    # initialization (HTTP 409). init does not refuse a second run (it fails
+    # partway, once the admin exists), so the admin credential pair it writes
+    # marks the volume as initialized. The PIN reaches init only through its
+    # environment, never argv, and is dropped before the daemon starts; the
+    # daemon then boots sealed until the suite's TestMain unseals it.
+    entrypoint:
+      - /bin/sh
+      - -ec
+      - |
+        if [ -f /data/storage/admin-cert.pem ] && [ -f /data/storage/admin-key.pem ]; then
+          echo "standalone: admin credential present; volume already initialized"
+        else
+          /app/xkmsd init --config /etc/xkms/xkmsd.yaml --hostname standalone --admin-factor mtls
+        fi
+        exec env -u XKMS_SO_PIN /app/xkmsd -config /etc/xkms/xkmsd.yaml
     healthcheck:
       test: ["CMD", "wget", "--quiet", "--tries=1", "--spider", "--no-check-certificate", "https://localhost:8443/health"]
       interval: 5s
@@ -206,6 +247,7 @@ services:
       dockerfile: test/integration/cluster/Dockerfile.test
       secrets:
         - gomodauth
+    image: go-xkms-cluster-test:${XKMS_IMAGE_TAG:-latest}
     # The nodes boot sealed (passphrase barrier) and turn healthy only once
     # unsealed, which is this container's first job (TestMain), so it waits
     # for them to start rather than for health.
@@ -232,6 +274,11 @@ services:
       - go-build-cache:/root/.cache/go-build
     environment:
       - CGO_ENABLED=0
+      - GOWORK=off
+      - GOPRIVATE=github.com/jeremyhahn/*
+      - GIT_CONFIG_COUNT=${GOMODAUTH_GIT_CONFIG_COUNT:-${GITEA_HOST:+1}}
+      - GIT_CONFIG_KEY_0=${GOMODAUTH_GIT_CONFIG_KEY_0:-url.http://x:${GITEA_GO_TOKEN}@${GITEA_HOST}/jeremyhahn/.insteadOf}
+      - GIT_CONFIG_VALUE_0=${GOMODAUTH_GIT_CONFIG_VALUE_0:-https://github.com/jeremyhahn/}
       # Node REST endpoints reachable inside cluster-net.
       - CLUSTER_NODE1_URL=https://node1:8443
       - CLUSTER_NODE2_URL=https://node2:8443

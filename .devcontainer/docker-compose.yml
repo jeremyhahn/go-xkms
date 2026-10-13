@@ -71,12 +71,14 @@ services:
       - XKMS_DEVCONTAINER=1
       - GOPATH=/go
       # In-house modules resolve from Gitea tags (dependency-resolution.md §6).
-      # The read-only token comes from the gitignored .devcontainer/.env.
+      # Credentials: the Makefile's GOMODAUTH_* resolution (the CI runner's
+      # injected rewrite first), else the read-only token from the gitignored
+      # .devcontainer/.env when compose is loaded directly.
       - GOWORK=off
       - GOPRIVATE=github.com/jeremyhahn/*
-      - GIT_CONFIG_COUNT=${GITEA_GIT_CONFIG_COUNT:-${GITEA_HOST:+1}}
-      - GIT_CONFIG_KEY_0=url.http://x:${GITEA_GO_TOKEN}@${GITEA_HOST}/jeremyhahn/.insteadOf
-      - GIT_CONFIG_VALUE_0=https://github.com/jeremyhahn/
+      - GIT_CONFIG_COUNT=${GOMODAUTH_GIT_CONFIG_COUNT:-${GITEA_HOST:+1}}
+      - GIT_CONFIG_KEY_0=${GOMODAUTH_GIT_CONFIG_KEY_0:-url.http://x:${GITEA_GO_TOKEN}@${GITEA_HOST}/jeremyhahn/.insteadOf}
+      - GIT_CONFIG_VALUE_0=${GOMODAUTH_GIT_CONFIG_VALUE_0:-https://github.com/jeremyhahn/}
       - CGO_ENABLED=1
       - TPM_USE_SIMULATOR=true
       - TPM_SIMULATOR_HOST=swtpm
@@ -98,6 +100,9 @@ services:
       - XKMS_GRPC_TLS_CERT=/tmp/xkms/admin-cert.pem
       - XKMS_GRPC_TLS_KEY=/tmp/xkms/admin-key.pem
       - XKMS_SERVER_STATE_DIR=/xkms-data
+      # The xkms-server's throwaway test SO PIN, which `xkmsd init` made its
+      # barrier passphrase; open-server-barrier.sh unseals with it.
+      - XKMS_SERVER_BARRIER_SECRET=${XKMS_TEST_SO_PIN:-xkms-integration-test-so-pin}
       # The same trust anchor again, under the names the PKCS#11 MODULE reads
       # (pkg/pkcs11/module/config.go). The XKMS_GRPC_TLS_* pair above is read by
       # the Go test harness, which configures an in-process module; the
@@ -227,6 +232,10 @@ services:
       - TPM_USE_SIMULATOR=true
       - PKCS11_LIBRARY=/usr/lib/softhsm/libsofthsm2.so
       - SOFTHSM2_CONF=/etc/softhsm/softhsm2.conf
+      # Throwaway test SO PIN for `xkmsd init` (see command below), which also
+      # becomes the passphrase of this server's barrier. The devcontainer's
+      # XKMS_SERVER_BARRIER_SECRET must resolve to the same value.
+      - XKMS_SO_PIN=${XKMS_TEST_SO_PIN:-xkms-integration-test-so-pin}
     depends_on:
       swtpm:
         condition: service_healthy
@@ -250,11 +259,33 @@ services:
     # ComplianceGaps() is non-empty. The integration config therefore ships a
     # compliant posture — TLS from the embedded CA, composite jwt+mtls auth
     # (the first-boot admin authenticates with the generated mTLS
-    # credential), and a barrier with a development passphrase that
-    # auto-unseals — so the suites need no unseal ceremony and no pre-seeded
-    # credentials. This instance is reachable only from the private xkms-dev
-    # network and the xkms-socket volume, over a throwaway data volume.
-    command: ["/app/xkmsd", "-config", "/etc/xkms/xkmsd.yaml"]
+    # credential), and a passphrase barrier.
+    #
+    # A fresh volume is bootstrapped the supported way, with `xkmsd init`: it
+    # initializes the barrier in-process with the SO PIN as its passphrase, runs
+    # first boot, and writes the admin credential to /data/storage. The sealed
+    # window cannot do this: it refuses barrier initialization (HTTP 409) and
+    # leaves first-contact initialization to the go-qrdb ceremony. init does not
+    # refuse a second run (it fails partway, once the admin exists), so the
+    # admin-cert.pem/admin-key.pem pair it delivers is what marks the volume as
+    # initialized. The daemon then boots sealed, and the Makefile's
+    # devcontainer-server-wait unseals it through the sealed window with the same
+    # PIN (.devcontainer/scripts/open-server-barrier.sh) before the suites run,
+    # so they need no unseal step of their own. The PIN reaches init only
+    # through its environment, never argv, and is dropped before the daemon
+    # starts. This instance is reachable from the private xkms-dev network, the
+    # xkms-socket volume and the ephemeral debug ports above, over a throwaway
+    # data volume.
+    command:
+      - /bin/sh
+      - -ec
+      - |
+        if [ -f /data/storage/admin-cert.pem ] && [ -f /data/storage/admin-key.pem ]; then
+          echo "xkms-server: admin credential present; volume already initialized"
+        else
+          /app/xkmsd init --config /etc/xkms/xkmsd.yaml --hostname xkms-server --admin-factor mtls
+        fi
+        exec env -u XKMS_SO_PIN /app/xkmsd -config /etc/xkms/xkmsd.yaml
 
   # quicbaasd fixture for the login verification matrix
   # (make integration-test-logins-quicbaas). Built from the sibling

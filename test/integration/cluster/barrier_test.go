@@ -24,8 +24,9 @@ import (
 	"github.com/jeremyhahn/go-xkms/test/integration/xkmsdtest"
 )
 
-// barrierPassphrase is the passphrase the harness initializes every node's
-// barrier with, and unseals a restarted node with.
+// barrierPassphrase is the passphrase the harness unseals every node's
+// barrier with. The standalone fixture's XKMS_SO_PIN in docker-compose.yml,
+// which `xkmsd init` makes its barrier passphrase, must equal it.
 const barrierPassphrase = "xkms-cluster-harness-barrier-passphrase"
 
 // barrierTimeout bounds bringing one node past its sealed window.
@@ -64,9 +65,10 @@ func datastore(volume string) string {
 	return volume + "/storage"
 }
 
-// openBarrier initializes or unseals the barrier of the node at url through
-// its sealed window, trusting the certificate the node persisted in its data
-// volume.
+// openBarrier unseals the barrier of the node at url through its sealed
+// window, trusting the certificate the node persisted in its data volume. The
+// window refuses initialization, so a node whose barrier `xkmsd init` never
+// initialized fails with xkmsdtest.ErrBarrierUninitialized.
 func openBarrier(url, volume string) error {
 	ctx, cancel := context.WithTimeout(context.Background(), barrierTimeout)
 	defer cancel()

@@ -396,7 +396,9 @@ func runCertificateStorageTests(t *testing.T, hwStorage hardware.HardwareCertSto
 			t.Log("✓ All certificates in chain match")
 
 			// Clean up
-			hwStorage.DeleteCert("chain-primary-cert")
+			if err := hwStorage.DeleteCertChain("chain-primary-cert"); err != nil {
+				t.Errorf("Failed to clean up chain: %v", err)
+			}
 		})
 
 		t.Run("OverwriteChain", func(t *testing.T) {
@@ -438,7 +440,9 @@ func runCertificateStorageTests(t *testing.T, hwStorage hardware.HardwareCertSto
 			t.Log("✓ Overwritten chain retrieved correctly")
 
 			// Clean up
-			hwStorage.DeleteCert("chain-overwrite-cert")
+			if err := hwStorage.DeleteCertChain("chain-overwrite-cert"); err != nil {
+				t.Errorf("Failed to clean up chain: %v", err)
+			}
 		})
 
 		t.Run("DeleteChain", func(t *testing.T) {
@@ -453,8 +457,9 @@ func runCertificateStorageTests(t *testing.T, hwStorage hardware.HardwareCertSto
 				t.Fatalf("Failed to save chain: %v", err)
 			}
 
-			// Delete the chain
-			err = hwStorage.DeleteCert("chain-delete-cert")
+			// Delete the chain. DeleteCert releases only the certificate
+			// record and leaves the chain, so the chain has its own release.
+			err = hwStorage.DeleteCertChain("chain-delete-cert")
 			if err != nil {
 				t.Fatalf("Failed to delete chain: %v", err)
 			}

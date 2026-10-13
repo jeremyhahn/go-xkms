@@ -91,3 +91,51 @@ func TestConformanceConfigsAllowWeakHashes(t *testing.T) {
 			"PKCS#11 conformance suite exercises will be refused by the daemon")
 	}
 }
+
+// TestIntegrationConfigSealedWindow pins the sealed-window posture of the
+// compose xkms-server's config.
+//
+// Its passphrase barrier boots sealed, and the sealed-window listener binds
+// server.host, which must stay a wildcard so the suites can dial the server
+// over the compose network once it is unsealed. pkg/server refuses that bind
+// unless barrier.sealed_window_allow_remote is set, and the daemon exits at
+// startup: the nightly's devcontainer-server-wait then times out with nothing
+// pointing at the config.
+func TestIntegrationConfigSealedWindow(t *testing.T) {
+	path := filepath.Join("..", "..", "configs", "xkmsd-integration.yaml")
+	cfg, err := Load(path)
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if !cfg.Barrier.Enabled || cfg.Barrier.SealStrategy() != "passphrase" {
+		t.Fatalf("barrier = enabled %v strategy %q; open-server-barrier.sh drives a passphrase barrier",
+			cfg.Barrier.Enabled, cfg.Barrier.SealStrategy())
+	}
+	if cfg.Server.Host != "0.0.0.0" {
+		t.Errorf("server.host = %q; the suites dial xkms-server over the compose network", cfg.Server.Host)
+	}
+	if !cfg.Barrier.SealedWindowAllowRemote {
+		t.Error("barrier.sealed_window_allow_remote is not set, so the sealed window refuses " +
+			"to bind server.host and the compose xkms-server exits at startup")
+	}
+}
+
+// TestProductionConfigsKeepSealedWindowLocal pins the opposite default on the
+// configs a deployment starts from: none of them accepts a remotely reachable
+// sealed window.
+func TestProductionConfigsKeepSealedWindowLocal(t *testing.T) {
+	for _, name := range shippedDaemonConfigs {
+		if name == "xkmsd-integration.yaml" {
+			continue
+		}
+		t.Run(name, func(t *testing.T) {
+			cfg, err := Load(filepath.Join("..", "..", "configs", name))
+			if err != nil {
+				t.Fatalf("Load: %v", err)
+			}
+			if cfg.Barrier.SealedWindowAllowRemote {
+				t.Errorf("%s sets barrier.sealed_window_allow_remote", name)
+			}
+		})
+	}
+}
