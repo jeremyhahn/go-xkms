@@ -1,1 +1,0 @@
-- **Go toolchain moves to 1.27.2 and `golang.org/x/net` to v0.60.0** -- fixes advisories GO-2026-6599 through GO-2026-6617 reported by `govulncheck`. The `go` directive in the root, `sdk/go`, `xkey` and `web/desktop` modules, every Dockerfile base image, the devcontainer, the workflow `GO_VERSION` pins and the downloaded Go tarballs in the xkey builder images now name 1.27.2.
