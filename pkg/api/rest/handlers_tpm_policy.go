@@ -31,9 +31,9 @@ import (
 // and vTPM under /api/v1/tenants/{tenantID}/tpm.
 //
 // Every handler delegates to the XKMSService's TPM policy methods, which bind
-// the target tenant: a tenant-scoped caller acts on its own tenant, and only a
-// cross-tenant (system) caller may name another through tenant_id or reach
-// the tenant TPM mode and vTPM routes. Request and response bodies are the
+// the target tenant: every caller acts on its own tenant and may not name
+// another through tenant_id, and only a system-tenant caller may reach the
+// tenant TPM mode and vTPM routes. Request and response bodies are the
 // pkg/api/transport types.
 type TPMPolicyHandlers struct {
 	servicer transport.TPMPolicyServicer

@@ -416,16 +416,16 @@ e-mail addresses are valid tenant names and are not SPIFFE path segments.
   `recordIssuedKey` (`pkg/ca/ca_extensions.go`, `cert-tenant/<serial-decimal
   >.json`). `XKMSService.RevokeCertificate` (`pkg/xkms/servicer_ca.go`)
   reads it back with `CertificateTenant` and runs it through the same
-  `bindTenantTarget` every other tenant-scoped operation uses: a
-  tenant-scoped caller may revoke only its own tenant's certificates, a
-  cross-tenant (system) caller may revoke any certificate including the
-  system/platform scope's own. `IssueCertificate` binds `req.TenantID`
+  `bindTenantTarget` (`pkg/xkms/tenant_binding.go:88`) every other
+  tenant-scoped operation uses: every caller may revoke only its own
+  tenant's certificates — a system-tenant caller only the system/platform
+  scope's own (`""`), never a tenant's (go-xkms#1406). `IssueCertificate` binds `req.TenantID`
   the same way before forwarding it, so a tenant-scoped caller cannot mint
   a certificate attributed to a different tenant either. A certificate
   issued through a path that never calls `signCSR` — the TCG device-identity
   family (EK/AK/IDevID) and the CA's own root/intermediate certificates —
   carries no record and so resolves to the system/platform scope, reachable
-  only by a cross-tenant caller. `certs:revoke` (and `certs:generate`) is
+  only by a system-tenant caller. `certs:revoke` (and `certs:generate`) is
   the same permission on every transport (REST, gRPC, MCP); go-qrdb's
   built-in Admin role grants it by default in every tenant it is seeded
   into, including the system tenant, so both a system admin and a tenant

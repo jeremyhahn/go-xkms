@@ -19,9 +19,14 @@ import (
 	"fmt"
 	"net"
 	"os"
+	"strconv"
 
+	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
+	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials"
+	"google.golang.org/grpc/peer"
 
+	"github.com/jeremyhahn/go-xkms/pkg/auth"
 	"github.com/jeremyhahn/go-xkms/pkg/errs"
 	"github.com/jeremyhahn/go-xkms/pkg/peercred"
 )
@@ -180,4 +185,68 @@ type peerCredentialAuthInfo struct {
 // AuthType returns the type of authentication.
 func (peerCredentialAuthInfo) AuthType() string {
 	return "peer_credentials"
+}
+
+// PeerAuthMethod is the auth_method metadata of the identity the listener
+// attaches to an admitted peer.
+const PeerAuthMethod = "unix-peer"
+
+// identity returns the explicit identity of an admitted peer: subject
+// "uid:<uid>" in the system tenant. The peer policy admits only the daemon's
+// own uid, root and the configured uids/gids -- operators of this host -- so
+// the peer acts in the system tenant, confined to it like every other
+// system-tenant caller (pkg/scope).
+func (a peerCredentialAuthInfo) identity() *auth.Identity {
+	creds := a.credentials
+	uid := strconv.FormatUint(uint64(creds.UID), 10)
+	return &auth.Identity{
+		Subject:  "uid:" + uid,
+		TenantID: qrdbsdk.SystemTenantID,
+		Metadata: map[string]string{
+			"auth_method": PeerAuthMethod,
+			"uid":         uid,
+			"gid":         strconv.FormatUint(uint64(creds.GID), 10),
+			"pid":         strconv.FormatInt(int64(creds.PID), 10),
+		},
+	}
+}
+
+// withPeerIdentity returns ctx carrying the identity of the request's peer
+// when the peer passed the peer-credential policy. Any other context is
+// returned unchanged and reaches the handlers with no identity, which every
+// identity-scoped operation refuses.
+func withPeerIdentity(ctx context.Context) context.Context {
+	p, ok := peer.FromContext(ctx)
+	if !ok {
+		return ctx
+	}
+	info, ok := p.AuthInfo.(peerCredentialAuthInfo)
+	if !ok || info.credentials == nil {
+		return ctx
+	}
+	return auth.WithIdentity(ctx, info.identity())
+}
+
+// peerIdentityUnaryInterceptor attaches the admitted peer's identity to every
+// unary request.
+func peerIdentityUnaryInterceptor(ctx context.Context, req any, _ *grpc.UnaryServerInfo, handler grpc.UnaryHandler) (any, error) {
+	return handler(withPeerIdentity(ctx), req)
+}
+
+// peerIdentityStreamInterceptor attaches the admitted peer's identity to
+// every stream.
+func peerIdentityStreamInterceptor(srv any, ss grpc.ServerStream, _ *grpc.StreamServerInfo, handler grpc.StreamHandler) error {
+	return handler(srv, &peerIdentityStream{ServerStream: ss, ctx: withPeerIdentity(ss.Context())})
+}
+
+// peerIdentityStream is a grpc.ServerStream whose context carries the peer's
+// identity.
+type peerIdentityStream struct {
+	grpc.ServerStream
+	ctx context.Context
+}
+
+// Context returns the stream context carrying the peer's identity.
+func (s *peerIdentityStream) Context() context.Context {
+	return s.ctx
 }

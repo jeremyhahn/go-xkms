@@ -19,6 +19,9 @@ import (
 	"crypto/elliptic"
 	"crypto/rand"
 	"crypto/x509"
+	"crypto/x509/pkix"
+	"encoding/pem"
+	"math/big"
 	"testing"
 	"time"
 
@@ -45,6 +48,32 @@ func pkixPublicKeyDER(t *testing.T) []byte {
 		t.Fatalf("MarshalPKIXPublicKey: %v", err)
 	}
 	return der
+}
+
+// enrollmentShell returns the smallest enrollment every factor's Challenge
+// accepts: no ttl override, and a self-signed certificate as the public key,
+// which the mtls factor parses to put the enrolled key in the challenge.
+func enrollmentShell(t *testing.T) *qrdbsdk.AuthFactorEnrollment {
+	t.Helper()
+	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	if err != nil {
+		t.Fatalf("GenerateKey: %v", err)
+	}
+	tmpl := &x509.Certificate{
+		SerialNumber: big.NewInt(1),
+		Subject:      pkix.Name{CommonName: "user-1"},
+		NotBefore:    time.Now().Add(-time.Hour),
+		NotAfter:     time.Now().Add(time.Hour),
+	}
+	der, err := x509.CreateCertificate(rand.Reader, tmpl, tmpl, &key.PublicKey, key)
+	if err != nil {
+		t.Fatalf("CreateCertificate: %v", err)
+	}
+	return &qrdbsdk.AuthFactorEnrollment{
+		EnrollmentID: "enr-1",
+		PublicKey:    pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: der}),
+		Metadata:     map[string]string{},
+	}
 }
 
 // TestNewDefaultRegistry_ConfigReachesTheFactorInstances is the behavioral
@@ -134,11 +163,9 @@ func TestNewDefaultRegistry_ConfigReachesTheFactorInstances(t *testing.T) {
 			}
 			// Challenge only needs an enrollment shell; the ttl comes from the
 			// factor config when the enrollment carries no override.
-			challenge, err := plugin.Challenge(ctx, &qrdbsdk.AuthFactorEnrollment{
-				EnrollmentID: "enr-1",
-				FactorName:   name,
-				Metadata:     map[string]string{},
-			})
+			shell := enrollmentShell(t)
+			shell.FactorName = name
+			challenge, err := plugin.Challenge(ctx, shell)
 			if err != nil {
 				t.Fatalf("%s Challenge: %v", name, err)
 			}
@@ -162,10 +189,7 @@ func TestNewDefaultRegistry_ZeroConfigUsesFactorDefaults(t *testing.T) {
 		if err != nil {
 			t.Fatalf("Lookup(%s): %v", name, err)
 		}
-		challenge, err := plugin.Challenge(ctx, &qrdbsdk.AuthFactorEnrollment{
-			EnrollmentID: "enr-1",
-			Metadata:     map[string]string{},
-		})
+		challenge, err := plugin.Challenge(ctx, enrollmentShell(t))
 		if err != nil {
 			t.Fatalf("%s Challenge: %v", name, err)
 		}
@@ -194,7 +218,7 @@ func TestDefaultFactors_ProducesIndependentInstances(t *testing.T) {
 	}
 
 	ctx := context.Background()
-	shell := &qrdbsdk.AuthFactorEnrollment{EnrollmentID: "enr-1", Metadata: map[string]string{}}
+	shell := enrollmentShell(t)
 	shortC, err := a[3].Challenge(ctx, shell)
 	if err != nil {
 		t.Fatalf("Challenge (short ttl): %v", err)

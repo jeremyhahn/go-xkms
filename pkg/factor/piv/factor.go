@@ -301,11 +301,17 @@ func buildSelfSignedCert(signer crypto.Signer, subject pkix.Name, validityDays i
 	if err != nil {
 		return nil, err
 	}
+	return issueSelfSignedCert(signer, subject, serial, time.Now().UTC(), validityDays)
+}
+
+// issueSelfSignedCert issues the PEM-encoded self-signed certificate of
+// signer with the given serial, valid for validityDays from notBefore.
+func issueSelfSignedCert(signer crypto.Signer, subject pkix.Name, serial *big.Int, notBefore time.Time, validityDays int) ([]byte, error) {
 	cert, err := (&ca.Issuer{Signer: signer}).Issue(rand.Reader, &ca.CertificateSpec{
 		Serial:    serial,
 		Subject:   subject,
-		NotBefore: time.Now().UTC(),
-		NotAfter:  time.Now().UTC().AddDate(0, 0, validityDays),
+		NotBefore: notBefore,
+		NotAfter:  notBefore.AddDate(0, 0, validityDays),
 		Profile:   selfSignedProfile(),
 	})
 	if err != nil {

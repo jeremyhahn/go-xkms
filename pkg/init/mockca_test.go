@@ -144,6 +144,15 @@ func (m *mockCA) SignCSR(_ context.Context, csrPEM []byte, opts *ca.SignOptions)
 	if opts != nil && opts.RawSubject != nil {
 		template.RawSubject = opts.RawSubject
 	}
+	// Like the TrustedCA, requested usages override the defaults: go-qrdb's
+	// ceremony refuses a holder certificate whose usages differ from the ones
+	// it asked for.
+	if opts != nil && opts.KeyUsage != 0 {
+		template.KeyUsage = opts.KeyUsage
+	}
+	if opts != nil && opts.ExtKeyUsage != nil {
+		template.ExtKeyUsage = opts.ExtKeyUsage
+	}
 	certDER, err := x509.CreateCertificate(rand.Reader, template, m.cert, csr.PublicKey, m.privateKey)
 	if err != nil {
 		return nil, err

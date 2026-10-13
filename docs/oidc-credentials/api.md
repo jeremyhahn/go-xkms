@@ -1,6 +1,6 @@
 # OIDC Credentials — API
 
-> **Status: NORMATIVE** · Feature: `oidc-credentials` · Repo: `go-xkms` · Last verified: 2026-09-30
+> **Status: NORMATIVE** · Feature: `oidc-credentials` · Repo: `go-xkms` · Last verified: 2026-10-12
 
 Design: [`architecture.md`](architecture.md). Service:
 `pkg/oidc/credential.Service`, reached only through `XKMSService`
@@ -9,9 +9,10 @@ transport model is in [key-management/api.md](../key-management/api.md).
 
 ## Tenancy and ownership
 
-- `tenant_id` empty is the caller's tenant. A tenant caller cannot name
-  another tenant; a system caller can name any tenant's **shared**
-  credentials.
+- `tenant_id` empty is the caller's tenant. No caller can name another
+  tenant — a system caller included (`scope.CrossTenantError`,
+  go-xkms#1406) — and a request with no identity is refused
+  (`scope.UnauthenticatedError`).
 - `scope` is `tenant` (shared) or `user` (personal). A personal credential's
   `owner` defaults to the caller and is served to that owner only — a system
   caller is refused like anyone else (PermissionDenied).

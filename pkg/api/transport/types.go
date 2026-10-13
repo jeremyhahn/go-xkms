@@ -2142,9 +2142,9 @@ type SealStoreStatusResponse struct {
 //
 // A TPM policy is a named, TPM-authorized policy that many TPM keys and
 // sealed objects of one tenant share (pkg/tpmpolicy). Every request names its
-// tenant in TenantID: a tenant-scoped caller may leave it empty (its own
-// tenant) or name its own tenant; a cross-tenant (system) caller may name any
-// tenant, and empty is the system scope. OwnerAuth is the physical TPM's
+// tenant in TenantID: every caller may leave it empty (its own tenant, the
+// system scope for a system-tenant caller) or name its own tenant, never
+// another. OwnerAuth is the physical TPM's
 // owner-hierarchy authorization; it is never logged or echoed.
 
 // TPM policy condition types: the kinds of condition a branch of a named

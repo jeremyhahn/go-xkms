@@ -1,9 +1,20 @@
 # Multi-Tenancy — CLI
 
-> **Status: NORMATIVE** · Feature: `multi-tenancy` · Repo: `go-xkms` · Last verified: 2026-08-19
+> **Status: NORMATIVE** · Feature: `multi-tenancy` · Repo: `go-xkms` · Last verified: 2026-10-12
 
 Binary: `xkmsctl`, group `tenant` (`cmd/xkmsctl/tenant.go`). Global flags:
 [`../key-management/cli.md`](../key-management/cli.md).
+
+## Who the CLI acts as
+
+Over the unix socket — `xkmsctl`'s default transport — the daemon identifies
+the CLI by its kernel credentials: subject `uid:<your uid>` in the `system`
+tenant (see [`api.md`](api.md#identity-on-the-unix-socket)). That identity
+administers the tenant registry and plans below, but it is confined to the
+system tenant for everything else: `xkmsctl` over the socket cannot sign a
+CSR for, revoke a certificate of, or read the SSH assets or TPM policies of
+another tenant. Act as that tenant's own identity instead (a tenant
+certificate over gRPC/TLS or REST).
 
 ## `tenant create`
 

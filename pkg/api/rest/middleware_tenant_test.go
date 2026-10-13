@@ -136,8 +136,9 @@ func TestTenantMiddleware_SystemLevel(t *testing.T) {
 // TestTenantMiddleware_SystemTenantID is the regression test for the reported
 // bug: a WebAuthn-registered user is minted with TenantID = "system"
 // (pkg/server/server.go's webAuthnSystemTenant), which the REST tenant
-// middleware must recognize as cross-tenant scoped via auth.IsCrossTenant
-// (TenantID == qrdbsdk.SystemTenantID) exactly like the empty-TenantID case.
+// middleware must recognize as the system tenant, with no tenant barrier to
+// gate (TenantID == qrdbsdk.SystemTenantID), exactly like the empty-TenantID
+// case.
 // Before this fix the middleware only special-cased "", so a "system"-tenant
 // identity fell through to the registry lookup and was rejected with 403 for
 // a tenant that was never meant to be looked up in the first place -- this

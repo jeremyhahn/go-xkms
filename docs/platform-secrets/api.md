@@ -33,7 +33,7 @@ The store holds platform-global secrets -- the backend credentials live under
 `credentials/<name>` (`pkg/server/credentials/service.go`) -- so every
 operation is refused to a tenant-scoped caller, including a tenant-local
 Admin whose `keys:*` grants pass the RBAC gate (go-xkms#1226). Each service
-method calls `requirePlatformScope` before touching the store
+method calls `requireSystemTenant` before touching the store
 (`pkg/xkms/servicer_seal_store.go:47,65,90,109,127,146`). The refusal reads
 exactly as a missing tenant:
 

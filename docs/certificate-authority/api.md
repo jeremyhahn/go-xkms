@@ -1,6 +1,6 @@
 # Certificate Authority — API
 
-> **Status: NORMATIVE** · Feature: `certificate-authority` · Repo: `go-xkms` · Last verified: 2026-10-01
+> **Status: NORMATIVE** · Feature: `certificate-authority` · Repo: `go-xkms` · Last verified: 2026-10-12
 
 Transport shapes are described once in
 [`../key-management/api.md`](../key-management/api.md) §"How the six transports
@@ -60,10 +60,12 @@ other tenant-scoped operation in this service uses:
   issuing tenant is its own; a foreign tenant's certificate answers exactly
   like an unknown serial (`*TenantBindingError`, the same not-found shape
   `docs/tenancy` documents elsewhere in this service).
-- A cross-tenant (system) caller may revoke any certificate, including one
-  recorded for the system/platform scope (`""`) — the server's own
-  certificates and certificates issued through a path that records no
-  tenant at all (TCG EK/AK/IDevID, the CA's own root/intermediate chain).
+- A system-tenant caller is bound the same way (go-xkms#1406): it may revoke
+  only a certificate recorded for the system/platform scope (`""`) — the
+  server's own certificates and certificates issued through a path that
+  records no tenant at all (TCG EK/AK/IDevID, the CA's own
+  root/intermediate chain). A tenant's certificate answers it exactly like
+  an unknown serial.
 - `IssueCertificate` binds `req.TenantID` against the caller's own tenant
   before forwarding it to `IssueCertificateRaw`, exactly as `SignCSR`
   already did for `SignCSRWithSPIFFE`'s tenant, so a tenant-scoped caller

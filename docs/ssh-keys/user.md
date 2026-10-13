@@ -109,8 +109,8 @@ xkmsctl ssh keys generate --name ci --scope service --owner ci-pipeline
 xkmsctl ssh keys list --scope service --owner ci-pipeline
 ```
 
-Against a server, the owner must be yours. If you sign in to a tenant
-(anything but the system tenant), `xkmsd` lets you address only:
+Against a server, the owner must be yours. Whichever tenant you sign in to —
+the system tenant included — `xkmsd` lets you address only:
 
 - `--scope tenant --owner <your tenant ID>`, and
 - `--scope user` or `--scope service` with `--owner <your subject>` — the
@@ -121,8 +121,11 @@ Anything else answers exactly like a key that does not exist (`404` /
 creates nothing. `list` shows only what you own, whatever `--scope`/`--owner`
 you pass. So the example above, run by a tenant user, is refused unless that
 user's subject is `ci-pipeline`; the default `--owner default` is refused for
-the same reason. Signing in to the system tenant lifts the restriction: a
-platform administrator can manage any tenant's `--scope tenant` keys.
+the same reason. Signing in to the system tenant does not lift the
+restriction: a platform administrator manages only the system tenant's own
+keys, and a tenant's keys are managed by that tenant. Over the local unix
+socket `xkmsctl` acts as `uid:<your uid>` in the system tenant, so pass
+`--owner uid:<your uid>` for `--scope user`.
 
 Two tenants never share SSH assets, even when their users have the same
 name: `alice` in one tenant and `alice` in another each see only their own

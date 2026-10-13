@@ -304,15 +304,18 @@ func TestScopeIsolation(t *testing.T) {
 	_, err = e.svc.List(ctx, mallory, tenantA)
 	assert.ErrorIs(t, err, scope.ErrRefused)
 
-	// The system tenant reaches tenant A's shared credentials, never a
-	// personal one.
+	// The system tenant is confined to its own tenant: it reaches none of
+	// tenant A's credentials.
 	_, err = e.svc.Get(ctx, admin, Ref{TenantID: tenantA, Scope: scope.Tenant, Name: "team"})
-	require.NoError(t, err)
+	assert.ErrorIs(t, err, scope.ErrRefused)
 	_, err = e.svc.GetAccessToken(ctx, admin, Ref{TenantID: tenantA, Scope: scope.User, Owner: "alice", Name: "mine"})
 	assert.ErrorIs(t, err, scope.ErrRefused)
-	list, err = e.svc.List(ctx, admin, tenantA)
-	require.NoError(t, err)
-	assert.Equal(t, []string{"team"}, names(list))
+	_, err = e.svc.List(ctx, admin, tenantA)
+	assert.ErrorIs(t, err, scope.ErrRefused)
+
+	// No identity reaches nothing.
+	_, err = e.svc.Get(ctx, scope.Principal{}, Ref{TenantID: tenantA, Scope: scope.Tenant, Name: "team"})
+	assert.ErrorIs(t, err, scope.ErrRefused)
 
 	// Deletion follows the same rule.
 	assert.ErrorIs(t, e.svc.Delete(ctx, bob, Ref{Scope: scope.User, Owner: "alice", Name: "mine"}), scope.ErrRefused)

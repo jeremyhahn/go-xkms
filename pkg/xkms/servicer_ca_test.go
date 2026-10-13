@@ -641,22 +641,27 @@ func TestRevokeCertificate_OwnTenantAllowed(t *testing.T) {
 	assert.True(t, resp.Success)
 }
 
-// TestRevokeCertificate_SystemAdminRevokesAnyTenant proves a cross-tenant
-// (system) caller may revoke a certificate belonging to any tenant,
-// including the system/platform scope's own certificates.
-func TestRevokeCertificate_SystemAdminRevokesAnyTenant(t *testing.T) {
-	for _, certTenant := range []string{"", "tenant-a", "tenant-b"} {
+// TestRevokeCertificate_SystemAdminRevokesOnlySystemCertificates proves a
+// system-tenant caller revokes the system tenant's own certificates and is
+// refused, as not-found, every other tenant's (#1406).
+func TestRevokeCertificate_SystemAdminRevokesOnlySystemCertificates(t *testing.T) {
+	ca := &mockCA{}
+	svc := setupServiceWithCA(t, ca)
+	resp, err := svc.RevokeCertificate(systemCtx(), &transport.RevokeCertificateRequest{
+		SerialNumber: "abcdef01",
+		Reason:       1,
+	})
+	require.NoError(t, err)
+	assert.True(t, resp.Success)
+
+	for _, certTenant := range []string{"tenant-a", "tenant-b"} {
 		ca := &mockCA{certTenant: certTenant}
 		svc := setupServiceWithCA(t, ca)
-		ctx := systemCtx()
-
-		resp, err := svc.RevokeCertificate(ctx, &transport.RevokeCertificateRequest{
+		_, err := svc.RevokeCertificate(systemCtx(), &transport.RevokeCertificateRequest{
 			SerialNumber: "abcdef01",
 			Reason:       1,
 		})
-		require.NoError(t, err, "cert tenant %q", certTenant)
-		require.NotNil(t, resp, "cert tenant %q", certTenant)
-		assert.True(t, resp.Success, "cert tenant %q", certTenant)
+		requireBindingRefusal(t, err, certTenant)
 	}
 }
 

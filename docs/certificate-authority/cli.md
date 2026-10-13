@@ -1,6 +1,6 @@
 # Certificate Authority — CLI
 
-> **Status: NORMATIVE** · Feature: `certificate-authority` · Repo: `go-xkms` · Last verified: 2026-10-01
+> **Status: NORMATIVE** · Feature: `certificate-authority` · Repo: `go-xkms` · Last verified: 2026-10-12
 
 Binary: `xkmsctl`. Groups: `ca` (the authority), `cert` (certificate storage
 against a key), `tls` (TLS material). Sources: `cmd/xkmsctl/ca.go`,
@@ -83,9 +83,10 @@ xkmsctl ca revoke --serial 0a1b2c3d4e5f --reason 1
 ```
 
 Requires `certs:revoke` and is further confined to the serial's issuing
-tenant: a tenant-scoped caller can revoke only a certificate issued for its
-own tenant, and a foreign tenant's serial answers exactly like an unknown
-one. A system-tenant caller may revoke any serial. See
+tenant: every caller can revoke only a certificate issued for its own
+tenant, and a foreign tenant's serial answers exactly like an unknown one.
+A system-tenant caller — `xkmsctl` over the local unix socket included —
+revokes only the system/platform scope's certificates (go-xkms#1406). See
 [api.md](api.md#revoke-is-confined-to-the-certificates-issuing-tenant-go-xkms1229).
 
 ### `ca crl`

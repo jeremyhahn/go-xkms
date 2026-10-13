@@ -25,12 +25,12 @@ import (
 //
 // Submitted credentials are the platform's backend credentials (a PKCS#11
 // PIN, a cloud KMS secret), sealed into the platform store, so only a
-// cross-tenant identity may submit one (requirePlatformScope, go-xkms#1226):
+// system-tenant caller may submit one (requireSystemTenant, go-xkms#1226):
 // a tenant-scoped caller is refused with a *TenantBindingError that reads as
 // not-found.
 func (s *XKMSService) SubmitCredential(ctx context.Context, req *transport.CredentialSubmitRequest) (*transport.CredentialSubmitResponse, error) {
 	credentialService := s.credentialService.load()
-	if err := requirePlatformScope(ctx, "submit credential", ""); err != nil {
+	if err := requireSystemTenant(ctx, "submit credential", ""); err != nil {
 		return nil, err
 	}
 	if credentialService == nil {
@@ -73,7 +73,7 @@ func (s *XKMSService) GetCredentialStrategy(ctx context.Context) (*transport.Cre
 // platform-scoped: the names describe the platform's own backends.
 func (s *XKMSService) ListCredentials(ctx context.Context) ([]string, error) {
 	credentialService := s.credentialService.load()
-	if err := requirePlatformScope(ctx, "list credentials", ""); err != nil {
+	if err := requireSystemTenant(ctx, "list credentials", ""); err != nil {
 		return nil, err
 	}
 	if credentialService == nil {

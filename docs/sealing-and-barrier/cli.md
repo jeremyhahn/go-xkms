@@ -1,6 +1,6 @@
 # Sealing and Barrier — CLI
 
-> **Status: NORMATIVE** · Feature: `sealing-and-barrier` · Repo: `go-xkms` · Last verified: 2026-10-08
+> **Status: NORMATIVE** · Feature: `sealing-and-barrier` · Repo: `go-xkms` · Last verified: 2026-10-13
 
 Binary: `xkmsctl`. The top-level `seal` / `unseal` / `can-seal` data verbs. Global flags: [`../key-management/cli.md`](../key-management/cli.md).
 
@@ -85,6 +85,12 @@ or `*preseal.NotFoundError` (the secret was never sealed).
 
 The cloud KMS node seals (`awskms`, `gcpkms`, `azurekv`) have no verb: they
 authenticate with the provider's ambient credentials.
+
+## go-enclave provider
+
+No CLI surface: the go-enclave provider bridge (`pkg/enclaveprovider`) is a
+library seam that a Go program wires into its own go-enclave `Sealer`. See
+[`api.md`](api.md) §"go-enclave provider".
 
 ## TPM policies
 

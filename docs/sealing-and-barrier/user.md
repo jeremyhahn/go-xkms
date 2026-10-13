@@ -1,6 +1,6 @@
 # Sealing and Barrier — User Guide
 
-> **Status: NORMATIVE** · Feature: `sealing-and-barrier` · Repo: `go-xkms` · Last verified: 2026-10-08
+> **Status: NORMATIVE** · Feature: `sealing-and-barrier` · Repo: `go-xkms` · Last verified: 2026-10-13
 
 ## What the barrier is
 
@@ -102,6 +102,43 @@ key, created the first time you seal, so another tenant cannot unseal your
 data even with the sealed blob in hand. A tenant account cannot seal on a TPM
 2.0 backend: TPM-sealed data unseals for anyone who holds it, so only
 platform accounts may use it.
+
+## Keeping go-enclave keys in a TPM, HSM or KMS
+
+A Go program that holds secrets with go-enclave can put its `Sealer`'s keys
+under any backend go-xkms can seal with. Build the backend as usual, name a
+sealing key on it, and choose a mode.
+
+Per operation: every seal and open asks the backend, and the sealing key never
+leaves it.
+
+```go
+protector, err := enclaveprovider.NewKeyProtector(backend, sealingKey)
+if err != nil {
+	return err
+}
+sealer, err := enclave.NewSealer(enclave.WithKeyProtector(protector))
+```
+
+Root key: the backend is asked once per start, for a root key you provisioned
+once and stored.
+
+```go
+// Once, at setup: store sealedRoot wherever the program keeps its state.
+sealedRoot, err := enclaveprovider.ProvisionRoot(ctx, backend, sealingKey)
+
+// At every start:
+unsealer, err := enclaveprovider.NewRootUnsealer(backend, sealingKey, sealedRoot)
+if err != nil {
+	return err
+}
+sealer, err := enclave.NewSealer(enclave.WithRootUnsealer(unsealer))
+```
+
+An open that fails with `enclave.ErrSealedAuthentication` means the stored
+blob is not one this provider wrote under that key: do not retry. Any other
+failure keeps the backend's own error — unreachable, refused, or a PCR policy
+the machine no longer satisfies — and may succeed later.
 
 ## Troubleshooting
 

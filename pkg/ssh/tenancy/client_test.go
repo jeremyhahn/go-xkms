@@ -262,8 +262,7 @@ func TestKeys_ServiceScope(t *testing.T) {
 }
 
 // TestKeys_PlatformCannotReachPersonalKeys proves a user's personal keys stay
-// private even from a platform caller: the platform reaches tenants' shared
-// keys, never another user's.
+// private from a system-tenant caller, which owns only its own.
 func TestKeys_PlatformCannotReachPersonalKeys(t *testing.T) {
 	c, _ := newTestClient(t, false)
 	empty, _ := newTestClient(t, false)
@@ -289,14 +288,13 @@ func TestKeys_PlatformCannotReachPersonalKeys(t *testing.T) {
 	require.NoError(t, err)
 }
 
-// TestKeys_OwnersAndPlatform is the positive control.
-func TestKeys_OwnersAndPlatform(t *testing.T) {
+// TestKeys_Owners is the positive control.
+func TestKeys_Owners(t *testing.T) {
 	c, _ := newTestClient(t, false)
 	generate(t, c, aliceA, "tenant", tenantA, "a-key")
 	generate(t, c, aliceA, "user", "alice", "alice-key")
 	generate(t, c, aliceA, "service", "alice", "alice-svc")
 	generate(t, c, aliceB, "user", "alice", "alice-b-key")
-	generate(t, c, platform, "tenant", tenantB, "platform-made")
 
 	// Alice sees exactly her three; the alice of tenant B exactly hers.
 	keys, err := c.Keys().List(as(aliceA), sdkssh.ListKeysRequest{})
@@ -311,22 +309,6 @@ func TestKeys_OwnersAndPlatform(t *testing.T) {
 	require.NoError(t, err)
 	require.Len(t, keys, 1)
 	assert.Equal(t, "alice-b-key", keys[0].Name)
-
-	// The key the platform made for tenant B lives in B's partition.
-	_, err = c.Keys().Get(as(adminB), sdkssh.GetKeyRequest{Scope: "tenant", Owner: tenantB, Name: "platform-made"})
-	require.NoError(t, err)
-	keys, err = c.Keys().List(as(platform), sdkssh.ListKeysRequest{Scope: "tenant", Owner: tenantB})
-	require.NoError(t, err)
-	require.Len(t, keys, 1)
-
-	// The platform's own partition holds none of the tenants' keys.
-	keys, err = c.Keys().List(as(platform), sdkssh.ListKeysRequest{})
-	require.NoError(t, err)
-	assert.Empty(t, keys)
-
-	// A nil identity is the platform too.
-	_, err = c.Keys().Get(context.Background(), sdkssh.GetKeyRequest{Scope: "tenant", Owner: tenantA, Name: "a-key"})
-	require.NoError(t, err)
 
 	signer, err := c.Keys().Signer(as(aliceA), sdkssh.GetKeyRequest{Scope: "user", Owner: "alice", Name: "alice-key"})
 	require.NoError(t, err)
@@ -345,19 +327,75 @@ func TestKeys_OwnersAndPlatform(t *testing.T) {
 	assert.Equal(t, "imported", imported.Name)
 }
 
-// TestPlatform_SystemAndInvalidTenantOwners proves the platform reaches the
-// platform partition for the system tenant, and that an owner no tenant can
-// have is answered as missing and never written.
-func TestPlatform_SystemAndInvalidTenantOwners(t *testing.T) {
+// TestPlatform_ConfinedToSystemTenant proves a system-tenant caller is served
+// from the platform partition and reaches no other tenant's keys: it can
+// neither read, list nor write a tenant's shared keys.
+func TestPlatform_ConfinedToSystemTenant(t *testing.T) {
 	c, _ := newTestClient(t, false)
 	empty, _ := newTestClient(t, false)
 	generate(t, c, platform, "tenant", qrdbsdk.SystemTenantID, "sys-key")
+	generate(t, c, adminB, "tenant", tenantB, "b-key")
 	keys, err := c.Keys().List(as(platform), sdkssh.ListKeysRequest{})
 	require.NoError(t, err)
 	require.Len(t, keys, 1)
+	assert.Equal(t, "sys-key", keys[0].Name)
+
+	ref := sdkssh.GetKeyRequest{Scope: "tenant", Owner: tenantB, Name: "b-key"}
+	_, err = c.Keys().Get(as(platform), ref)
+	_, miss := empty.Keys().Get(as(platform), ref)
+	requireRefusedAsMissing(t, err, miss)
+	var refusal *OwnerBindingError
+	require.ErrorAs(t, err, &refusal)
+	var crossTenant *scope.CrossTenantError
+	require.ErrorAs(t, refusal.Cause, &crossTenant)
+
+	keys, err = c.Keys().List(as(platform), sdkssh.ListKeysRequest{Scope: "tenant", Owner: tenantB})
+	require.NoError(t, err)
+	assert.Empty(t, keys)
+
+	_, err = c.Keys().Generate(as(platform), sdkssh.GenerateRequest{Scope: "tenant", Owner: tenantB, Name: "planted", Algorithm: "ed25519"})
+	require.ErrorAs(t, err, &refusal)
+	_, err = c.Keys().Get(as(adminB), sdkssh.GetKeyRequest{Scope: "tenant", Owner: tenantB, Name: "planted"})
+	require.Error(t, err, "the refused write must not land in tenant B")
+}
+
+// TestNoIdentity_Refused proves a request carrying no identity reaches
+// nothing: every address is refused as missing and a listing is empty.
+func TestNoIdentity_Refused(t *testing.T) {
+	c, _ := newTestClient(t, false)
+	empty, _ := newTestClient(t, false)
+	generate(t, c, platform, "tenant", qrdbsdk.SystemTenantID, "sys-key")
+	generate(t, c, aliceA, "tenant", tenantA, "a-key")
+
+	for _, ref := range []sdkssh.GetKeyRequest{
+		{Scope: "tenant", Owner: qrdbsdk.SystemTenantID, Name: "sys-key"},
+		{Scope: "tenant", Owner: tenantA, Name: "a-key"},
+	} {
+		_, err := c.Keys().Get(context.Background(), ref)
+		_, miss := empty.Keys().Get(context.Background(), ref)
+		requireRefusedAsMissing(t, err, miss)
+		var refusal *OwnerBindingError
+		require.ErrorAs(t, err, &refusal)
+		var unauthenticated *scope.UnauthenticatedError
+		require.ErrorAs(t, refusal.Cause, &unauthenticated)
+	}
+
+	keys, err := c.Keys().List(context.Background(), sdkssh.ListKeysRequest{})
+	require.NoError(t, err)
+	assert.Empty(t, keys)
+	_, err = c.Keys().Generate(context.Background(), sdkssh.GenerateRequest{Scope: "tenant", Owner: qrdbsdk.SystemTenantID, Name: "k", Algorithm: "ed25519"})
+	var refusal *OwnerBindingError
+	require.ErrorAs(t, err, &refusal)
+}
+
+// TestPlatform_InvalidTenantOwner proves an owner no tenant can have is
+// answered as missing and never written.
+func TestPlatform_InvalidTenantOwner(t *testing.T) {
+	c, _ := newTestClient(t, false)
+	empty, _ := newTestClient(t, false)
 
 	ref := sdkssh.GetKeyRequest{Scope: "tenant", Owner: "bad:tenant", Name: "k"}
-	_, err = c.Keys().Get(as(platform), ref)
+	_, err := c.Keys().Get(as(platform), ref)
 	_, miss := empty.Keys().Get(as(aliceA), ref)
 	requireRefusedAsMissing(t, err, miss)
 
@@ -365,7 +403,7 @@ func TestPlatform_SystemAndInvalidTenantOwners(t *testing.T) {
 	var refusal *OwnerBindingError
 	require.True(t, errors.As(err, &refusal))
 
-	keys, err = c.Keys().List(as(platform), sdkssh.ListKeysRequest{Scope: "tenant", Owner: "bad:tenant"})
+	keys, err := c.Keys().List(as(platform), sdkssh.ListKeysRequest{Scope: "tenant", Owner: "bad:tenant"})
 	require.NoError(t, err)
 	assert.Empty(t, keys)
 }

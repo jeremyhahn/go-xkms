@@ -33,15 +33,16 @@ func TestScopeSurface(t *testing.T) {
 	}
 
 	root := ScopePrincipalOf(&qrdbsdk.Identity{Subject: "root", TenantID: ScopeSystemTenant})
-	if !root.Platform {
-		t.Fatal("a system-tenant identity is the platform")
+	if err := root.Authorize(ScopeTarget{TenantID: ScopeSystemTenant, Scope: ObjectScopeTenant}); err != nil {
+		t.Fatalf("system tenant refused its own shared object: %v", err)
 	}
-	if err := root.Authorize(ScopeTarget{TenantID: "acme", Scope: ObjectScopeTenant}); err != nil {
-		t.Fatalf("platform refused a tenant's shared object: %v", err)
+	if err := root.Authorize(ScopeTarget{TenantID: "acme", Scope: ObjectScopeTenant}); !errors.As(err, &cross) {
+		t.Fatalf("system tenant to a tenant's shared object err = %v, want *ScopeCrossTenantError", err)
 	}
-	var crossUser *ScopeCrossUserError
-	if err := root.Authorize(ScopeTarget{TenantID: "acme", Scope: ObjectScopeUser, Owner: "alice"}); !errors.As(err, &crossUser) {
-		t.Fatalf("platform to a tenant user's personal object err = %v, want *ScopeCrossUserError", err)
+
+	var unauthenticated *ScopeUnauthenticatedError
+	if err := ScopePrincipalOf(nil).Authorize(ScopeTarget{TenantID: ScopeSystemTenant, Scope: ObjectScopeTenant}); !errors.As(err, &unauthenticated) || !errors.Is(err, ErrScopeRefused) {
+		t.Fatalf("no identity err = %v, want *ScopeUnauthenticatedError", err)
 	}
 }
 

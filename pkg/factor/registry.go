@@ -101,3 +101,27 @@ func NewDefaultRegistry(cfg Config) (*qrdbsdk.AuthFactorRegistry, error) {
 
 	return registry, nil
 }
+
+// NewNodeRegistry constructs the registry an embedded go-qrdb node is built
+// with: every canonical factor except mtls. The node's ceremony enrols an
+// mtls share holder by its certificate's public key, binds it by
+// qrdbsdk.CertThumbprint and has it answer a quorum challenge with
+// qrdbsdk.SignQuorumChallenge; go-qrdb's own mtls factor verifies exactly
+// that whenever the registry does not override it. The xkms mtls factor
+// enrols a PEM certificate and verifies a bare-nonce signature, so it stays
+// the admin-enrolment factor (NewDefaultRegistry) and never answers for a
+// node's share holders.
+func NewNodeRegistry(cfg Config) (*qrdbsdk.AuthFactorRegistry, error) {
+	registry := qrdbsdk.NewFactorRegistry()
+
+	for _, f := range DefaultFactors(cfg) {
+		if f.Name() == mtls.FactorName {
+			continue
+		}
+		if err := registry.Register(f); err != nil {
+			return nil, err
+		}
+	}
+
+	return registry, nil
+}

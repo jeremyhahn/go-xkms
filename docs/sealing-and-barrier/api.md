@@ -1,6 +1,6 @@
 # Sealing and Barrier — API
 
-> **Status: NORMATIVE** · Feature: `sealing-and-barrier` · Repo: `go-xkms` · Last verified: 2026-10-08 (#1227, #1228, #1244)
+> **Status: NORMATIVE** · Feature: `sealing-and-barrier` · Repo: `go-xkms` · Last verified: 2026-10-13 (#1227, #1228, #1244, #1415)
 
 Transport shapes: [`../key-management/api.md`](../key-management/api.md)
 §"How the six transports are shaped".
@@ -94,6 +94,22 @@ reports that failure without the sentinel. See [`engineering.md`](engineering.md
 authentication" for each backend's mapping. On REST, gRPC and MCP the status
 an unseal failure maps to is unchanged; the error text begins
 `sealed data failed authentication` for this class.
+
+## go-enclave provider (embedded only)
+
+The go-enclave provider bridge (`pkg/enclaveprovider`, go-xkms#1415) has no
+REST, gRPC, QUIC, MCP or USB surface: it hands a go-enclave `Sealer` its keys
+inside the process that holds them, so there is nothing to send over a wire.
+It is a Go library seam over an already-constructed `types.Sealer`:
+
+| Capability | Go |
+|---|---|
+| Per-operation provider | `enclaveprovider.NewKeyProtector(sealer, attrs)` → `enclave.WithKeyProtector` |
+| Provision a sealed root | `enclaveprovider.ProvisionRoot(ctx, sealer, attrs)` |
+| Root-key provider | `enclaveprovider.NewRootUnsealer(sealer, attrs, sealedRoot)` → `enclave.WithRootUnsealer` |
+
+Errors and the envelope format: [`engineering.md`](engineering.md)
+§"go-enclave provider bridge".
 
 ## TPM policies
 

@@ -53,7 +53,20 @@ func (e *InvalidSegmentError) Error() string {
 // Unwrap returns the underlying validation failure.
 func (e *InvalidSegmentError) Unwrap() error { return e.Err }
 
-// CrossTenantError refuses a tenant caller addressing another tenant.
+// UnauthenticatedError refuses a request that carries no identity.
+type UnauthenticatedError struct {
+	TargetTenantID string
+}
+
+// Error implements the error interface.
+func (e *UnauthenticatedError) Error() string {
+	return "scope: an unauthenticated caller may not address tenant " + e.TargetTenantID
+}
+
+// Is matches ErrRefused.
+func (e *UnauthenticatedError) Is(target error) bool { return target == ErrRefused }
+
+// CrossTenantError refuses a caller addressing another tenant.
 type CrossTenantError struct {
 	CallerTenantID string
 	TargetTenantID string

@@ -609,13 +609,12 @@ func TestGetTenantHandler_TenantFiltering(t *testing.T) {
 		assert.Equal(t, "tenant-a", resp.Tenant.ID)
 	})
 
-	t.Run("system-tenant identity can access any tenant (regression)", func(t *testing.T) {
+	t.Run("system-tenant identity can read any tenant record (regression)", func(t *testing.T) {
 		// Regression test: a caller minted with the reserved "system" TenantID
 		// (e.g. a WebAuthn-registered identity, see pkg/server.webAuthnSystemTenant)
-		// must be treated as cross-tenant scoped exactly like an empty TenantID.
-		// Before isCrossTenantAccess delegated to auth.IsCrossTenant, "system" was
-		// compared literally against the target tenant and this test failed with
-		// 404.
+		// owns the tenant registry exactly like an empty TenantID. Before the
+		// binding normalized the system tenant, "system" was compared literally
+		// against the target tenant and this test failed with 404.
 		_, router := setupTenantTestHandlers(t)
 
 		rec := createTenantViaAPI(t, router, "tenant-b", "Tenant B")

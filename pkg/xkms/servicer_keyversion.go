@@ -198,10 +198,8 @@ func (s *XKMSService) updateVersions(ctx context.Context, backendName, tenantID,
 // pinnedKeyRules), and keys with a certificate, which would stay on the old
 // version -- rotate those one at a time and re-issue the certificate.
 //
-// A tenant-scoped caller rotates its own tenant; only a system caller may
-// name another, and a system caller naming none rotates the system tenant's
-// own keys. Naming another tenant without system scope is refused with
-// *TenantBindingError.
+// Every caller rotates its own tenant, a system caller the system tenant's
+// own keys. Naming another tenant is refused with *TenantBindingError.
 func (s *XKMSService) RotateScopeKeys(ctx context.Context, req *transport.RotateScopeKeysRequest) (*transport.RotateScopeKeysResponse, error) {
 	if req == nil {
 		return nil, ErrNilRequest

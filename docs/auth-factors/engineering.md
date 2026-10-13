@@ -16,12 +16,28 @@ type Config struct {
 
 func DefaultFactors(cfg Config) []qrdbsdk.AuthFactorPlugin
 func NewDefaultRegistry(cfg Config) (*qrdbsdk.AuthFactorRegistry, error)
+func NewNodeRegistry(cfg Config) (*qrdbsdk.AuthFactorRegistry, error)
 ```
 
-`DefaultFactors` returns, in order: `piv.New`, `pkcs11.New`, `fido2.New`,
-`mtls.New`. It is the **single authoritative definition** of the four factors —
-`NewDefaultRegistry` and every downstream composer call it rather than building
-their own slice.
+`DefaultFactors` (`pkg/factor/registry.go:68`) returns, in order: `piv.New`,
+`pkcs11.New`, `fido2.New`, `mtls.New`. It is the **single authoritative
+definition** of the four factors. `NewDefaultRegistry` (`:93`),
+`NewNodeRegistry` (`:114`) and every downstream composer call it rather than
+building their own slice.
+
+`NewDefaultRegistry` registers all four. It is the administrator-enrolment
+registry: the xkms `mtls` factor enrols a `cert_pem` certificate and records
+its `cert_spki_thumbprint` (`qrdbsdk.ComputeSPKIThumbprint`).
+
+`NewNodeRegistry` registers every factor except `mtls`. An embedded go-qrdb
+node is built with it (`server.NewNodeFactorRegistry`,
+`pkg/server/server.go:1778`). The node's quorum ceremony enrols an mTLS share
+holder by its certificate's public key, binds it by `qrdbsdk.CertThumbprint`,
+and has it answer with `qrdbsdk.SignQuorumChallenge`. go-qrdb's own `mtls`
+factor verifies exactly that whenever the registry does not override it. The
+xkms `mtls` factor verifies a signature over the bare nonce against a PEM
+certificate, so registering it on a node would refuse every ceremony mTLS
+holder. Leaving it out adds no second verify or binding scheme.
 
 Per-factor constructors and configs:
 
@@ -38,6 +54,48 @@ Enrollment and verification helpers used by the API layer are `pkg/auth_factors`
 The interfaces implemented — `qrdbsdk.AuthFactorPlugin`,
 `qrdbsdk.AuthFactorRegistry`, `qrdbsdk.NewFactorRegistry` — belong to go-qrdb
 and are reached through `go-qrdb/sdk/go` only. Never `go-qrdb/pkg/*`.
+
+### Decoy enrollments
+
+Each factor's `*Factor` has the method set of go-qrdb's
+`authfactors.DecoyEnroller`:
+
+```go
+func (f *Factor) DecoyEnrollment(seed []byte, userID string, like []*qrdbsdk.AuthFactorEnrollment) (*qrdbsdk.AuthFactorEnrollment, error)
+```
+
+`go-qrdb/sdk/go` does not re-export the interface yet. Each factor's
+`decoy_test.go` therefore asserts the method set against a local interface of
+the same shape.
+
+What each decoy derives, and from what:
+
+| Factor | Key | Other values |
+|---|---|---|
+| `piv` | predominant `algorithm` (`rsa2048`, `rsa4096`, `ecdsap256`, `ecdsap384`, `ed25519`) | predominant `slot`; self-signed certificate with `NotBefore` inside the span of `like`'s certificates |
+| `pkcs11` | predominant PKIX key shape (ECDSA P-256/384/521, RSA 2048–8192 with e = 65537) | predominant `mechanism` of the key's family, `token_label`, `slot`; `key_id` in the predominant encoding and length |
+| `fido2` | predominant COSE shape (EC2 P-256/384/521, OKP Ed25519, RSA) in canonical CTAP2 encoding | `credential_id` in the predominant base64 variant and length; `rp_id` and `origins` as a pair; `require_uv`, `aaguid` |
+| `mtls` | the predominant certificate shape (key, issuer, signature algorithm) | the template's subject, SANs and extensions in order, with the holder's user id replaced (percent-encoded in IA5 names); derived serial of the predominant length; derived subject key id: truncated SHA-256 when the template's is, otherwise random bytes of the same length; validity period kept |
+
+All four copy `ttl` from `like` when present, else use their own
+`ChallengeTTLSeconds`. An empty `like` gives the form `Enroll` records under the factor's own
+defaults:
+- PIV: its configured algorithm and slot.
+- PKCS#11: its default mechanism over a P-256 key (RSA-2048 when that
+  mechanism is RSA).
+- FIDO2: ES256 with a 32-byte credential id and the configured RP id.
+- mTLS: a self-signed P-256 client certificate naming `userID`. Templates that cannot be
+signed deterministically are skipped: RSA-PSS, and RSA public exponents other
+than 65537.
+
+Errors (`pkg/factor/internal/decoy`):
+
+| Error | Cause |
+|---|---|
+| `*decoy.SeedError` | seed shorter than 16 bytes |
+| `*decoy.UserIDError` | empty `userID` |
+| `*decoy.RSASizeError` | RSA size outside 2048–8192 bits |
+| `*decoy.DerivationError` | a derived value could not be built or encoded (names the purpose) |
 
 ## SessionStore interface (`pkg/webauthn/interfaces.go`)
 
@@ -91,12 +149,18 @@ expired session is consumed all the same (cannot be retried).
   from anything the response supplies; the enrolled mechanism only ever
   gates a refusal, never a choice.
 - **The verification key comes from the challenge, never the response.** Each
-  factor's `Challenge` copies `enrollment.PublicKey` into `MethodData`
-  (`enrolled_cert_pem` for `piv` and `mtls`, `enrolled_public_key_der` for
-  `pkcs11`, `enrolled_cose_public_key` for `fido2`). `Verify` reads the key
+  factor's `Challenge` copies the enrolled key into `MethodData`
+  (`enrolled_cert_pem` for `piv`, `enrolled_public_key_der` for `pkcs11` and
+  `mtls`, `enrolled_cose_public_key` for `fido2`). `Verify` reads the key
   from there and nowhere else, and returns
   `*qrdbsdk.AuthFactorVerificationFailedError` when it is absent. A response
   that could supply its own key could pass with any key the caller holds.
+- **An mTLS challenge carries the enrolled key, never the certificate.**
+  `mtls` stores the certificate PEM as `enrollment.PublicKey`, but `Challenge`
+  exposes only its SubjectPublicKeyInfo (standard base64 PKIX DER). A
+  CA-issued certificate verifies under its CA and a decoy's cannot (the decoy
+  is signed by a derived key), so exposing the certificate would tell holders
+  from decoys to anyone holding the CA certificate.
 - **FIDO2 assertions are checked against the enrollment's RP, origin(s) and
   user-verification requirement.** `Verify` requires
   `authenticatorData[0:32] == SHA-256(rp_id)` (the `rp_id` carried in the
@@ -270,12 +334,22 @@ local cert-binding scheme, by ownership rule.
 - **Unit** — `pkg/factor/registry_test.go` and `registry_wiring_test.go`. The
   wiring test is the one that matters: it asserts that the registry actually
   contains the four factors `DefaultFactors` names, which is what catches a
-  composer that stopped calling it.
+  composer that stopped calling it. `TestNewNodeRegistry_LeavesMTLSToQRDB`
+  (`registry_test.go:47`) pins the node set, and
+  `pkg/init/mofn_unseal_hw_factor_test.go` unseals a 2-of-3 barrier on it
+  with PIV, mTLS and PKCS#11 share holders.
 - **Per factor** — suites under `pkg/factor/{piv,pkcs11,fido2,mtls}`.
 - **Helpers** — `pkg/auth_factors/{piv,pkcs11,webauthn}_test.go`,
   `auth_factors_extra_test.go`.
 - **Integration** — `test/integration/fido2`, `test/integration/pkcs11`,
   `test/integration/webauthn-browser`, `test/integration/logins`.
+- **Decoys** — `pkg/factor/{piv,pkcs11,fido2,mtls}/decoy_test.go` check:
+  - determinism in (seed, userID);
+  - challenge-shape parity with a real enrollment;
+  - that `Verify` fails;
+  - the empty-`like` default and the bad-input errors.
+
+  `pkg/factor/internal/decoy/decoy_test.go` covers the shared derivation.
 - **Fault injection** — expired challenges and mechanism mismatches are covered
   in the per-factor suites; both must fail closed.
 

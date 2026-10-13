@@ -23,7 +23,7 @@ import (
 // SealStoreServicer defines operations for the platform-sealed secret store.
 //
 // The platform store holds platform-global secrets sealed by the system
-// barrier, so every method is platform-scoped (requirePlatformScope,
+// barrier, so every method is platform-scoped (requireSystemTenant,
 // go-xkms#1226): a tenant-scoped caller is refused with a *TenantBindingError
 // that reads as not-found, before the store is touched.
 //
@@ -45,7 +45,7 @@ type SealStoreServicer interface {
 // SealStorePut stores a secret in the platform-sealed store.
 func (s *XKMSService) SealStorePut(ctx context.Context, req *transport.SealStorePutRequest) error {
 	platformStore := s.platformStore.load()
-	if err := requirePlatformScope(ctx, "seal store put", ""); err != nil {
+	if err := requireSystemTenant(ctx, "seal store put", ""); err != nil {
 		return err
 	}
 	if platformStore == nil {
@@ -63,7 +63,7 @@ func (s *XKMSService) SealStorePut(ctx context.Context, req *transport.SealStore
 // SealStoreGet retrieves a secret from the platform-sealed store.
 func (s *XKMSService) SealStoreGet(ctx context.Context, req *transport.SealStoreGetRequest) (*transport.SealStoreGetResponse, error) {
 	platformStore := s.platformStore.load()
-	if err := requirePlatformScope(ctx, "seal store get", ""); err != nil {
+	if err := requireSystemTenant(ctx, "seal store get", ""); err != nil {
 		return nil, err
 	}
 	if platformStore == nil {
@@ -88,7 +88,7 @@ func (s *XKMSService) SealStoreGet(ctx context.Context, req *transport.SealStore
 // SealStoreDelete deletes a secret from the platform-sealed store.
 func (s *XKMSService) SealStoreDelete(ctx context.Context, req *transport.SealStoreDeleteRequest) error {
 	platformStore := s.platformStore.load()
-	if err := requirePlatformScope(ctx, "seal store delete", ""); err != nil {
+	if err := requireSystemTenant(ctx, "seal store delete", ""); err != nil {
 		return err
 	}
 	if platformStore == nil {
@@ -107,7 +107,7 @@ func (s *XKMSService) SealStoreDelete(ctx context.Context, req *transport.SealSt
 // platform-sealed store, without the backend-credential namespace.
 func (s *XKMSService) SealStoreList(ctx context.Context) (*transport.SealStoreListResponse, error) {
 	platformStore := s.platformStore.load()
-	if err := requirePlatformScope(ctx, "seal store list", ""); err != nil {
+	if err := requireSystemTenant(ctx, "seal store list", ""); err != nil {
 		return nil, err
 	}
 	if platformStore == nil {
@@ -125,7 +125,7 @@ func (s *XKMSService) SealStoreList(ctx context.Context) (*transport.SealStoreLi
 // SealStoreReseal re-seals a secret with updated platform state.
 func (s *XKMSService) SealStoreReseal(ctx context.Context, req *transport.SealStoreResealRequest) error {
 	platformStore := s.platformStore.load()
-	if err := requirePlatformScope(ctx, "seal store reseal", ""); err != nil {
+	if err := requireSystemTenant(ctx, "seal store reseal", ""); err != nil {
 		return err
 	}
 	if platformStore == nil {
@@ -144,7 +144,7 @@ func (s *XKMSService) SealStoreReseal(ctx context.Context, req *transport.SealSt
 // the platform secrets only.
 func (s *XKMSService) SealStoreStatus(ctx context.Context) (*transport.SealStoreStatusResponse, error) {
 	platformStore := s.platformStore.load()
-	if err := requirePlatformScope(ctx, "seal store status", ""); err != nil {
+	if err := requireSystemTenant(ctx, "seal store status", ""); err != nil {
 		return nil, err
 	}
 	if platformStore == nil {

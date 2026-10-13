@@ -1139,7 +1139,7 @@ func certTenantStorageKey(serial *big.Int) string {
 // TCG device-identity certificates (EK/AK/IDevID) and the CA's own
 // root/intermediate certificates do not go through signCSR and so carry no
 // record; CertificateTenant reports the system/platform scope for them,
-// which only a cross-tenant (system) caller may address.
+// which only a system-tenant caller may address.
 func (ca *CA) recordCertTenant(ctx context.Context, serial *big.Int, tenantID string) error {
 	if serial == nil {
 		return ErrInvalidCertificate

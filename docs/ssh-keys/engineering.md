@@ -116,8 +116,8 @@ so it is documented here rather than left to the source comment alone.
 | Symbol | Contract |
 |---|---|
 | `Options{DAOs, Resolver, Permissions}` / `New(opts) (sdkssh.Client, error)` | `client.go:81-139`. `DAOs` (`*qrdbsdk.DAOFactory` serving the `ssh` database) is required (`*NilInputError` otherwise); the datastore behind it is the caller's, so `Close` releases nothing. `Resolver` is optional and unscoped; the client narrows it per partition. `Permissions` answers `ssh:service`; nil closes the service scope. |
-| Owner binding | `client.go:170-182`. A tenant-scoped caller owns `scope=tenant` only for `owner == identity.TenantID`, and `scope=user`/`service` only for `owner == identity.Subject`. A platform caller (`auth.IsCrossTenant`) owns every address. |
-| Partition choice | `client.go:217-266`. Tenant-scoped callers: their own tenant, always. Platform callers: the tenant a `scope=tenant` owner names, else the platform partition. A platform owner no tenant can have (`storage.ValidateTenantID` fails) has no partition and is refused. Every partition, the platform's included, is the tenant root `scope.TenantRoot(tenantID)` prefixed to each record's natural key — `{tenant}/`, and `system/` for the platform — via `sdkssh.Stores.Partition`. |
+| Owner binding | `client.go:199-205,275-285`. Every caller owns `scope=tenant` only for its own tenant (`owner` naming it), and `scope=user`/`service` only for `owner == identity.Subject` (`service` also needs `ssh:service`) — the system tenant included; there is no platform caller (go-xkms#1406). A request with no identity owns nothing: it is refused as a missing asset, with `OwnerBindingError.Cause` a `*scope.UnauthenticatedError`. |
+| Partition choice | `client.go:290-320`. Every caller: its own tenant's partition, always — `system/` for a system-tenant caller. A listing with no identity reads the empty partition. Every partition, the platform's included, is the tenant root `scope.TenantRoot(tenantID)` prefixed to each record's natural key — `{tenant}/`, and `system/` for the platform — via `sdkssh.Stores.Partition`. |
 | Backend namespace | `client.go:306-320`, `keyprovider.go:33-105`. A tenant partition's `KeyProvider` sets `KeyAttributes.TenantID` on every call, never mutating the caller's attributes; `ListKeys` returns only its tenant's keys; `Close` releases nothing (the provider is shared). A resolver that returns no provider is `*backend.BackendNotFoundError`. |
 | Refusals | Reads, deletes, `Verify` and `Callback` on an address the caller does not own are served by the empty partition and wrapped in `*OwnerBindingError` (`client.go:324-346`). Writes (`Generate`, `Import`, known-hosts `Add`, authorized-keys `Add`) are answered with the empty partition's lookup of the same address and never touch a store or backend (`ops.go:38-59,135-138,152-163,237-248`). `Emit` addresses no asset and is not bound (`ops.go:297-299`). |
 | Listings | `ops.go:76-92,166-182,264-280`. The listing reads the caller's partition and drops every item the caller does not own; filters never widen it. |
@@ -209,7 +209,8 @@ error: it answers the fixed message `"ssh: internal error"`
   previously-colliding addresses through the real software backend.
 - Owner binding (go-xkms#1230): `pkg/ssh/tenancy/client_test.go` and
   `keyprovider_test.go` cover every operation across the owner matrix, the
-  partition rules, platform reach, the per-tenant backend namespace and the
+  partition rules, the system tenant's confinement and the refusal of a
+  missing identity (go-xkms#1406), the per-tenant backend namespace and the
   refusal errors. Each transport repeats the attack matrix end to end —
   `pkg/api/rest/handlers_ssh_crosstenant_test.go`,
   `pkg/api/grpc/service_ssh_crosstenant_test.go`,

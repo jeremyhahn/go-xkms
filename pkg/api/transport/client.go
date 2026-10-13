@@ -429,9 +429,9 @@ type SealStoreService interface {
 // TPMPolicyService manages named TPM policies, the registry of which TPM
 // object uses which policy, and each tenant's TPM mode (pkg/tpmpolicy).
 //
-// Policy operations act on the caller's own tenant; a cross-tenant (system)
-// caller may address any tenant through the request's TenantID. The tenant
-// TPM mode and vTPM operations are system-scope only.
+// Policy operations act on the caller's own tenant, and naming another tenant
+// in the request's TenantID is refused to every caller, the system tenant's
+// included. The tenant TPM mode and vTPM operations are system-scope only.
 type TPMPolicyService interface {
 	// TPMPolicyCreate creates a named policy of branches, capturing the
 	// values of its pcr conditions from the tenant's TPM.

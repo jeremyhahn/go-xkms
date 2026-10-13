@@ -488,7 +488,10 @@ func TestRotateScopeKeys_RotatesOnlyTheTargetTenant(t *testing.T) {
 	var binding *TenantBindingError
 	assert.ErrorAs(t, err, &binding, "a tenant cannot rotate another tenant")
 
-	resp, err = svc.RotateScopeKeys(systemCtx(), &transport.RotateScopeKeysRequest{TenantID: "globex"})
+	_, err = svc.RotateScopeKeys(systemCtx(), &transport.RotateScopeKeysRequest{TenantID: "globex"})
+	assert.ErrorAs(t, err, &binding, "the system tenant cannot rotate another tenant")
+
+	resp, err = svc.RotateScopeKeys(identityCtx("globex"), &transport.RotateScopeKeysRequest{})
 	require.NoError(t, err)
 	require.Len(t, resp.Results, 1)
 	assert.Equal(t, uint32(2), resp.Results[0].KeyVersion)

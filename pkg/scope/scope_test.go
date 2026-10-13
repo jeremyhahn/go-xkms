@@ -151,23 +151,46 @@ func TestFeaturePrefixAndScopeRoot(t *testing.T) {
 }
 
 func TestPrincipalOf(t *testing.T) {
-	platform := scope.PrincipalOf(nil)
-	assert.True(t, platform.Platform)
-	assert.Equal(t, scope.SystemTenant, platform.TenantID)
-
 	root := scope.PrincipalOf(&auth.Identity{Subject: "root", TenantID: scope.SystemTenant})
-	assert.True(t, root.Platform)
+	assert.True(t, root.Authenticated)
+	assert.Equal(t, scope.SystemTenant, root.TenantID)
 	assert.Equal(t, "root", root.Subject)
 
 	alice := scope.PrincipalFromContext(auth.WithIdentity(context.Background(), &auth.Identity{Subject: "alice", TenantID: "acme"}))
-	assert.False(t, alice.Platform)
+	assert.True(t, alice.Authenticated)
 	assert.Equal(t, "acme", alice.TenantID)
 	assert.Equal(t, "alice", alice.Subject)
+
+	// An empty tenant is the system tenant's scope name.
+	assert.Equal(t, scope.SystemTenant, scope.PrincipalOf(&auth.Identity{Subject: "x"}).TenantID)
+}
+
+// TestPrincipalOf_NoIdentity checks an absent identity is never the
+// platform: it is the unauthenticated principal, refused every object,
+// the system tenant's own included.
+func TestPrincipalOf_NoIdentity(t *testing.T) {
+	anonymous := scope.PrincipalOf(nil)
+	assert.False(t, anonymous.Authenticated)
+	assert.Equal(t, scope.Principal{}, scope.PrincipalFromContext(context.Background()))
+
+	for _, target := range []scope.Target{
+		{TenantID: "", Scope: scope.Tenant},
+		{TenantID: scope.SystemTenant, Scope: scope.Tenant},
+		{TenantID: "a", Scope: scope.Tenant},
+		{TenantID: "", Scope: scope.User, Owner: ""},
+	} {
+		var unauthenticated *scope.UnauthenticatedError
+		err := anonymous.Authorize(target)
+		require.ErrorAs(t, err, &unauthenticated)
+		assert.ErrorIs(t, err, scope.ErrRefused)
+		assert.Equal(t, scope.TenantName(target.TenantID), unauthenticated.TargetTenantID)
+		assert.NotEmpty(t, err.Error())
+	}
 }
 
 func TestAuthorize(t *testing.T) {
-	alice := scope.Principal{TenantID: "a", Subject: "alice"}
-	root := scope.Principal{TenantID: scope.SystemTenant, Subject: "root", Platform: true}
+	alice := scope.Principal{TenantID: "a", Subject: "alice", Authenticated: true}
+	root := scope.PrincipalOf(&auth.Identity{Subject: "root", TenantID: scope.SystemTenant})
 
 	allowed := []struct {
 		name string
@@ -176,8 +199,9 @@ func TestAuthorize(t *testing.T) {
 	}{
 		{"tenant user sees shared", alice, scope.Target{TenantID: "a", Scope: scope.Tenant}},
 		{"user sees own personal", alice, scope.Target{TenantID: "a", Scope: scope.User, Owner: "alice"}},
-		{"platform sees tenant shared", root, scope.Target{TenantID: "a", Scope: scope.Tenant}},
-		{"platform sees own personal", root, scope.Target{TenantID: "", Scope: scope.User, Owner: "root"}},
+		{"system sees own shared", root, scope.Target{TenantID: "", Scope: scope.Tenant}},
+		{"system sees own shared by name", root, scope.Target{TenantID: scope.SystemTenant, Scope: scope.Tenant}},
+		{"system sees own personal", root, scope.Target{TenantID: "", Scope: scope.User, Owner: "root"}},
 		{"service permission", withService(alice), scope.Target{TenantID: "a", Scope: scope.Service, Owner: "ci"}},
 	}
 	for _, tc := range allowed {
@@ -194,9 +218,12 @@ func TestAuthorize(t *testing.T) {
 		{"tenant to system", alice, scope.Target{TenantID: "", Scope: scope.Tenant}, &scope.CrossTenantError{}},
 		{"other user personal", alice, scope.Target{TenantID: "a", Scope: scope.User, Owner: "bob"}, &scope.CrossUserError{}},
 		{"same subject other tenant", alice, scope.Target{TenantID: "b", Scope: scope.User, Owner: "alice"}, &scope.CrossTenantError{}},
-		{"platform to user personal", root, scope.Target{TenantID: "a", Scope: scope.User, Owner: "root"}, &scope.CrossUserError{}},
-		{"platform to other personal", root, scope.Target{TenantID: "", Scope: scope.User, Owner: "admin2"}, &scope.CrossUserError{}},
+		{"system to tenant shared", root, scope.Target{TenantID: "a", Scope: scope.Tenant}, &scope.CrossTenantError{}},
+		{"system to tenant service", withService(root), scope.Target{TenantID: "a", Scope: scope.Service, Owner: "ci"}, &scope.CrossTenantError{}},
+		{"system to user personal", root, scope.Target{TenantID: "a", Scope: scope.User, Owner: "root"}, &scope.CrossTenantError{}},
+		{"system to other personal", root, scope.Target{TenantID: "", Scope: scope.User, Owner: "admin2"}, &scope.CrossUserError{}},
 		{"service without permission", alice, scope.Target{TenantID: "a", Scope: scope.Service, Owner: "alice"}, &scope.ServiceScopeError{}},
+		{"unauthenticated", scope.Principal{TenantID: "a", Subject: "alice"}, scope.Target{TenantID: "a", Scope: scope.Tenant}, &scope.UnauthenticatedError{}},
 	}
 	for _, tc := range refused {
 		err := tc.p.Authorize(tc.t)

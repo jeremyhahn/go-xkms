@@ -48,7 +48,7 @@ func (s *XKMSService) tenantTPMService(ctx context.Context, op, tenantID string)
 	if tenantID == "" {
 		return nil, ErrTenantIDRequired
 	}
-	if err := requirePlatformScope(ctx, op, tenantID); err != nil {
+	if err := requireSystemTenant(ctx, op, tenantID); err != nil {
 		return nil, err
 	}
 	svc := s.tpmPolicies.load()

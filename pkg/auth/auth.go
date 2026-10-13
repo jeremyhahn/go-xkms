@@ -105,6 +105,11 @@ func GetIdentity(ctx context.Context) *Identity {
 // A nil identity is treated as system-scoped (no auth context => platform
 // boot / internal pipeline).
 //
+// It grants administration of the tenant model only (tenants and their IAM,
+// pkg/acme/admin). It never lifts a caller over another tenant's objects:
+// pkg/scope and the service-layer tenant binding confine every caller, the
+// system tenant's included, to its own tenant (#1406).
+//
 // The rule belongs to go-qrdb, which owns the tenant model, so this delegates
 // to the predicate exported by its SDK rather than restating it. Re-deriving
 // the comparison here is what let it drift once already: enforcement sites

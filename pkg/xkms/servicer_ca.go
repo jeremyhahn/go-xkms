@@ -442,12 +442,11 @@ func (s *XKMSService) IssueCertificate(ctx context.Context, req *transport.Issue
 // decided here is ownership: the certificate's issuing tenant, recorded at
 // issuance by IssueCertificateRaw/SignCSRWithSPIFFE, is looked up and
 // checked against the caller's own tenant with the same bindTenantTarget
-// every other tenant-scoped operation uses. A tenant-scoped caller may
-// revoke only its own tenant's certificates; a cross-tenant (system)
-// caller may revoke any, including the system/platform scope's own
-// certificates. This closes go-xkms#1229: previously any authenticated
-// caller holding certs:revoke could revoke any certificate regardless of
-// which tenant it was issued for.
+// every other tenant-scoped operation uses. Every caller may revoke only its
+// own tenant's certificates; a system-tenant caller revokes the system
+// tenant's own, never another tenant's. This closes go-xkms#1229: previously
+// any authenticated caller holding certs:revoke could revoke any certificate
+// regardless of which tenant it was issued for.
 func (s *XKMSService) RevokeCertificate(ctx context.Context, req *transport.RevokeCertificateRequest) (resp *transport.RevokeCertificateResponse, err error) {
 	start := time.Now()
 	defer func() { recordServiceOp(metrics.OpRevokeCert, caMetricsBackend, start, err) }()

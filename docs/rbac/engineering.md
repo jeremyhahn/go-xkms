@@ -1,6 +1,6 @@
 # RBAC — Engineering Contract
 
-> **Status: NORMATIVE** · Feature: `rbac` · Repo: `go-xkms` · Last verified: 2026-10-12 (#1114, #1115, #1226, #1227, #1230, #1232, #1249, #1433)
+> **Status: NORMATIVE** · Feature: `rbac` · Repo: `go-xkms` · Last verified: 2026-10-12 (#1114, #1115, #1226, #1227, #1230, #1232, #1249, #1406, #1433)
 
 ## Exported surface
 
@@ -39,13 +39,20 @@ func (e *TenantBindingError) Error() string // qrdbsdk.ErrTenantMissing's messag
 func (e *TenantBindingError) Unwrap() error // qrdbsdk.ErrTenantMissing
 ```
 
-`bindTenantTarget(ctx, op, target)` (`pkg/xkms/tenant_binding.go:67`) admits
-a cross-tenant identity (`auth.IsCrossTenant`: no identity, an empty tenant,
-or the reserved system tenant) for any target, and a tenant-scoped identity
-only when `target` is its own tenant; an empty target is the system scope and
-is refused to a tenant-scoped caller. `requirePlatformScope(ctx, op, target)`
-(`:88`) admits only a cross-tenant identity; it guards plan management and
-every operation on platform-global state, which passes an empty target. Both refuse with a
+`bindTenantTarget(ctx, op, target)` (`pkg/xkms/tenant_binding.go:88`) admits
+a caller only when `target` is its own tenant (`scope.TenantName` of each
+side, so the empty tenant and `system` are the same). The system tenant gets
+no exception: a system-tenant identity naming another tenant is refused like
+any other (go-xkms#1406). A caller with no identity is the system tenant here
+(`callerTenant`) — in-process SDK callers carry none — and is confined to it
+the same way. `bindTenantRecord(ctx, op, target)` (`:99`) guards the tenant
+registry, which is the system tenant's: a system-tenant caller passes for
+any record, every other caller only for its own. `requireSystemTenant(ctx,
+op, target)` (`:119`) admits only a system-tenant caller; it guards plan
+management and every operation on platform-global state, which passes an
+empty target. `targetTenant(ctx, op, requested)` (`:137`) resolves the tenant
+an operation acts in: a named tenant must pass `bindTenantTarget`, and an
+unnamed one is the caller's own. All of them refuse with a
 `*TenantBindingError` (`:34`), which is exactly what the composed go-qrdb
 TenantService returns for an unknown tenant: same sentinel, same message
 (`:46`, `:52`). Every transport already answers that sentinel with its
@@ -57,23 +64,26 @@ The binding is applied once, in `XKMSService`, and no transport repeats it:
 
 | Method | Check | Site |
 |---|---|---|
-| `GetTenant` | `bindTenantTarget` | `pkg/xkms/servicer_tenant.go:94` |
-| `ListTenants` | filters to the caller's tenant (`visibleToCaller`) | `pkg/xkms/servicer_tenant.go:127` |
-| `DeleteTenant` | `bindTenantTarget` | `pkg/xkms/servicer_tenant.go:144` |
+| `GetTenant` | `bindTenantRecord` | `pkg/xkms/servicer_tenant.go:89` |
+| `ListTenants` | filters with `bindTenantRecord` (`visibleToCaller`) | `pkg/xkms/servicer_tenant.go:121` |
+| `DeleteTenant` | `bindTenantRecord` | `pkg/xkms/servicer_tenant.go:138` |
 | `TenantBarrierInit` | `bindTenantTarget` | `pkg/xkms/servicer_tenant.go:191` |
 | `TenantBarrierUnseal` | `bindTenantTarget` | `pkg/xkms/servicer_tenant.go:246` |
 | `TenantBarrierStatus` | `bindTenantTarget` | `pkg/xkms/servicer_tenant.go:283` |
-| `UpdateTenantEntitlements` | `requirePlatformScope` | `pkg/xkms/servicer_tenant.go:313` |
-| `UpdateTenantQuotas` | `requirePlatformScope` | `pkg/xkms/servicer_tenant.go:340` |
+| `UpdateTenantEntitlements` | `requireSystemTenant` | `pkg/xkms/servicer_tenant.go:163` |
+| `UpdateTenantQuotas` | `requireSystemTenant` | `pkg/xkms/servicer_tenant.go:190` |
 | `BarrierEnableEncryption` | `bindTenantTarget` (empty `TenantID` = system barrier) | `pkg/xkms/servicer_barrier.go:377` |
-| `SignCSR` | `bindTenantTarget` when `TenantID` is set (the SPIFFE tenant SAN) | `pkg/xkms/servicer_ca.go:147` |
-| `SealStorePut` / `Get` / `Delete` / `List` / `Reseal` / `Status` | `requirePlatformScope` (#1226) | `pkg/xkms/servicer_seal_store.go:47,65,90,109,127,146` |
-| `SubmitCredential`, `ListCredentials` | `requirePlatformScope` (#1226) | `pkg/xkms/servicer_credentials.go:32,73` |
-| system barrier: `BarrierInitialize[WithCredentials]`, `BarrierUnseal[WithCredentials]`, `BarrierSeal`, `BarrierStatus`, `BarrierInitializeShamir`, `BarrierUnsealWithShare(s)`, `BarrierRekey`, `BarrierGenerateRecoveryKeys`, `BarrierRecoverWithKeys`, `BarrierDeleteRecoveryKeys`, `BarrierHasRecoveryKeys`, `BarrierGenerateRootToken` | `requirePlatformScope` (#1227) | `pkg/xkms/servicer_barrier.go:89,117,128,139,170,205,236,253,278,300,314,325,342` |
-| `SetSOPIN`, `SetUserPIN`, `ChangeSOPIN`, `ChangeUserPIN`, `VerifySOPIN`, `VerifyUserPIN`, `GetLockoutStatus`, `ResetLockout` | `requirePlatformScope` (#1227) | `pkg/xkms/servicer_pin.go:43,54,65,76,87,98,109,136` |
-| `ListPIVSlots`, `GetPIVCertificate`, `StorePIVCertificate`, `DeletePIVCertificate`, `GeneratePIVKey`, `ImportPIVCertificate`, `ExportPIVCertificate`, `GeneratePIVCSR` | `requirePlatformScope` (#1227) | `pkg/xkms/servicer_piv.go:31,40,49,58,67,76,85,94` |
-| `GetTenantTPMMode`, `SetTenantTPMMode`, `TenantVTPMStatus` / `Start` / `Stop` | `requirePlatformScope` | `pkg/xkms/servicer_tpm_policy.go` (`tenantTPMService`) |
-| `TPMPolicy*`, `TPMObjectPolicy` | `bindTenantTarget` (tenant callers act on their own tenant) | `pkg/xkms/servicer_tpm_policy.go` (`tpmPolicyTarget`) |
+| `SignCSR` | `bindTenantTarget` when `TenantID` is set (the SPIFFE tenant SAN) | `pkg/xkms/servicer_ca.go:172` |
+| `IssueCertificate` | `bindTenantTarget` when `TenantID` is set | `pkg/xkms/servicer_ca.go:403` |
+| `RevokeCertificate` | `bindTenantTarget` on the certificate's issuing tenant | `pkg/xkms/servicer_ca.go:474` |
+| `RotateScopeKeys` | `targetTenant` (every caller rotates its own tenant) | `pkg/xkms/servicer_keyversion.go:206` |
+| `SealStorePut` / `Get` / `Delete` / `List` / `Reseal` / `Status` | `requireSystemTenant` (#1226) | `pkg/xkms/servicer_seal_store.go:47,65,90,109,127,146` |
+| `SubmitCredential`, `ListCredentials` | `requireSystemTenant` (#1226) | `pkg/xkms/servicer_credentials.go:32,73` |
+| system barrier: `BarrierInitialize[WithCredentials]`, `BarrierUnseal[WithCredentials]`, `BarrierSeal`, `BarrierStatus`, `BarrierInitializeShamir`, `BarrierUnsealWithShare(s)`, `BarrierRekey`, `BarrierGenerateRecoveryKeys`, `BarrierRecoverWithKeys`, `BarrierDeleteRecoveryKeys`, `BarrierHasRecoveryKeys`, `BarrierGenerateRootToken` | `requireSystemTenant` (#1227) | `pkg/xkms/servicer_barrier.go:89,117,128,139,170,205,236,253,278,300,314,325,342` |
+| `SetSOPIN`, `SetUserPIN`, `ChangeSOPIN`, `ChangeUserPIN`, `VerifySOPIN`, `VerifyUserPIN`, `GetLockoutStatus`, `ResetLockout` | `requireSystemTenant` (#1227) | `pkg/xkms/servicer_pin.go:43,54,65,76,87,98,109,136` |
+| `ListPIVSlots`, `GetPIVCertificate`, `StorePIVCertificate`, `DeletePIVCertificate`, `GeneratePIVKey`, `ImportPIVCertificate`, `ExportPIVCertificate`, `GeneratePIVCSR` | `requireSystemTenant` (#1227) | `pkg/xkms/servicer_piv.go:31,40,49,58,67,76,85,94` |
+| `GetTenantTPMMode`, `SetTenantTPMMode`, `TenantVTPMStatus` / `Start` / `Stop` | `requireSystemTenant` | `pkg/xkms/servicer_tpm_policy.go` (`tenantTPMService`) |
+| `TPMPolicy*`, `TPMObjectPolicy` | `targetTenant` (every caller, the system tenant included, acts on its own tenant) | `pkg/xkms/servicer_tpm_policy.go:37` |
 
 The platform-scoped rows are reached on every transport only through the
 service: the REST handlers (`pkg/api/rest/seal_store_handlers.go`,
@@ -93,8 +103,9 @@ SSH assets take the same rule one level down, in the SSH service rather than
 the owner may be a user as well as a tenant, so `pkg/ssh/tenancy` binds it:
 a tenant-scoped identity owns `scope=tenant` only for `owner ==
 identity.TenantID` and `scope=user`/`service` only for `owner ==
-identity.Subject`; a cross-tenant identity owns every address
-(`pkg/ssh/tenancy/client.go:170-182`). The refusal, `*OwnerBindingError`
+identity.Subject`, a system-tenant identity included — there is no
+platform caller that owns every address (go-xkms#1406), and a request with no
+identity is refused (`pkg/ssh/tenancy/client.go:275-285`). The refusal, `*OwnerBindingError`
 (`pkg/ssh/tenancy/errors.go:44-71`), is the SSH store's own not-found for the
 address, verbatim — the SSH counterpart of `TenantBindingError`. Every
 transport's SSH surface calls that one service (`pkg/server/server.go:486-512`);
@@ -367,7 +378,7 @@ specific permission before assuming a non-Admin role holds it.
   transport.** The RBAC gate cannot do it (see `Authorize` above); a
   transport-level copy is a second owner that drifts. A new service method
   that targets a caller-supplied tenant calls `bindTenantTarget` (or
-  `requirePlatformScope`) and gets a row in the table above.
+  `requireSystemTenant`) and gets a row in the table above.
 - **Plan management is platform-only.** Entitlements and quotas are gated on
   qrdb's dedicated `tenants:set_entitlements` / `tenants:set_quotas`
   (`pkg/auth/permissions.go:154-155`), never `tenants:update`, on every
@@ -376,7 +387,7 @@ specific permission before assuming a non-Admin role holds it.
   `qrdb.v1.permission` options at `pkg/api/grpc/proto/xkmsv1/xkms.proto:647,654`.
   Because both permissions are self-scoped in qrdb and qrdb's built-in Admin
   role grants `tenants:set_entitlements`, the RBAC gate alone would still
-  let a Tenant Admin change its own plan; `requirePlatformScope` is what
+  let a Tenant Admin change its own plan; `requireSystemTenant` is what
   refuses it.
 - **Platform-global state is platform-only.** The sealed platform store and
   the backend credentials in it, the system barrier, the token PINs, the
@@ -384,7 +395,7 @@ specific permission before assuming a non-Admin role holds it.
   permissions (`keys:*`, `credentials:submit`, `seal:*`, `barrier:*`,
   `pin:*`, `piv:*`, `policy:*`) are self-scoped, so a tenant-local Admin
   passes the gate for all of them (go-xkms#1226, #1227). Each service method
-  calls `requirePlatformScope` before it touches the subsystem, and each
+  calls `requireSystemTenant` before it touches the subsystem, and each
   transport reaches the subsystem only through that method. A new operation
   on one of these subsystems adds a row to the table above and an entry to
   `platformScopedOps` (`pkg/xkms/platform_scope_test.go`).
@@ -398,9 +409,12 @@ specific permission before assuming a non-Admin role holds it.
   transport, before dispatch. `XKMSService.SignCSR` used to run its own
   role check on top of `certs:generate`; it no longer does
   (`pkg/xkms/servicer_ca.go:139`).
-- **No role is exempt from tenant scoping.** `tenantgate.Access` consults
-  only `auth.IsCrossTenant`, qrdb's system-tenant rule
-  (`pkg/api/tenantgate/tenantgate.go:107`).
+- **No role is exempt from tenant scoping, and no tenant either.**
+  `tenantgate.Access` consults no role: a nil or system-tenant identity
+  passes it with no tenant barrier (`pkg/api/tenantgate/tenantgate.go:116`),
+  and that grants no reach — the service binding and `pkg/scope` still
+  confine it to the system tenant (go-xkms#1406). `auth.IsCrossTenant` is
+  left only for tenant IAM administration in `pkg/acme/admin`.
 - **Role reassignment after user creation does not exist.** `roleNameToID`
   runs once, at `CreateUser`; there is no update path.
 - **With a `UserStore` configured, an mTLS identity is always a bound,
@@ -592,8 +606,10 @@ re-exported verbatim so a downstream consumer needs a single import.
   layer against go-qrdb's real TenantService over an in-memory barrier:
   tenant A → B refused as not-found for get, delete, barrier init / unseal /
   status and both plan changes; the refusal equals a genuine miss; A → A
-  allowed except plan changes; the system identity reaches every tenant;
-  `ListTenants` is filtered; `BarrierEnableEncryption` and `SignCSR` bind
+  allowed except plan changes; the system (or an absent) identity reaches
+  every tenant record but is refused every other tenant's target
+  (`TestBindTenantRecord_SystemOwnsTheRegistry`,
+  `TestTargetTenant_ConfinesEveryCaller`); `ListTenants` is filtered; `BarrierEnableEncryption` and `SignCSR` bind
   their targets. Transport mapping to not-found is pinned per transport:
   `pkg/api/rest/handlers_tenant_test.go`
   (`TestTenantHandlers_CrossTenantRefusalMatchesGenuineMiss`,

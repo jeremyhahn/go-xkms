@@ -290,7 +290,8 @@ func TestSSHREST_KnownHostVerifyCrossOwner(t *testing.T) {
 
 // TestSSHREST_OwnersKeepAccess is the positive control: a check that refused
 // everything would satisfy every test above. Each owner reaches its own
-// assets, and a platform identity reaches tenant B's.
+// assets; a system-tenant identity is confined to its own tenant like any
+// other, so tenant B's assets answer it as missing.
 func TestSSHREST_OwnersKeepAccess(t *testing.T) {
 	client := newSSHTenancyClient(t)
 	seedSSHOwners(t, client)
@@ -308,8 +309,8 @@ func TestSSHREST_OwnersKeepAccess(t *testing.T) {
 		{"tenant B signs with its key", sshAdminB, http.MethodPost, "/xkms/v1/ssh/keys/tenant/" + sshTenantB + "/b-key/sign", digest, http.StatusOK},
 		{"bob signs with his key", sshBobA, http.MethodPost, "/xkms/v1/ssh/keys/user/bob/bob-key/sign", digest, http.StatusOK},
 		{"alice of tenant B reads her key", sshAliceB, http.MethodGet, "/xkms/v1/ssh/keys/user/alice/alice-b-key", nil, http.StatusOK},
-		{"platform reads tenant B's key", sshPlatform, http.MethodGet, "/xkms/v1/ssh/keys/tenant/" + sshTenantB + "/b-key", nil, http.StatusOK},
-		{"platform reads tenant B's authorized entry", sshPlatform, http.MethodGet, "/xkms/v1/ssh/authorized-keys/tenant/" + sshTenantB + "/b-entry", nil, http.StatusOK},
+		{"platform is refused tenant B's key", sshPlatform, http.MethodGet, "/xkms/v1/ssh/keys/tenant/" + sshTenantB + "/b-key", nil, http.StatusNotFound},
+		{"platform is refused tenant B's authorized entry", sshPlatform, http.MethodGet, "/xkms/v1/ssh/authorized-keys/tenant/" + sshTenantB + "/b-entry", nil, http.StatusNotFound},
 		{"alice creates a tenant A key", sshAliceA, http.MethodPost, "/xkms/v1/ssh/keys",
 			sdkssh.GenerateRequest{Scope: "tenant", Owner: sshTenantA, Name: "a-key", Algorithm: "ed25519"}, http.StatusCreated},
 		{"alice creates her own key", sshAliceA, http.MethodPost, "/xkms/v1/ssh/keys",

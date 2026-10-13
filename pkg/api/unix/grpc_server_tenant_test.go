@@ -102,11 +102,10 @@ func startTenantTestGRPCServer(t *testing.T, registry *seal.BarrierRegistry) (pb
 // tenant interceptors (grpcinternal.TenantUnaryInterceptor /
 // TenantStreamInterceptor, the same constructors the network gRPC server
 // uses) are wired onto the Unix domain socket listener without breaking its
-// existing unauthenticated RPC surface. The Unix listener sets no
-// authentication interceptor -- its trust boundary is the socket's file mode,
-// not identity -- so every call here carries a nil identity, and
-// tenantgate.Access(nil, registry) always passes through regardless of what
-// tenants the registry holds.
+// RPC surface. Every admitted peer carries the listener's unix-peer identity
+// in the system tenant, which has no tenant barrier to gate, so
+// tenantgate.Access passes through regardless of what tenants the registry
+// holds.
 func TestGRPCServer_TenantInterceptors_WithRegistryPassesThrough(t *testing.T) {
 	registry := tenantGRPCTestRegistry(t)
 	_, err := registry.RegisterTenantDefault("tenant-a")

@@ -1,6 +1,6 @@
 # Auth Factors — Architecture
 
-> **Status: NORMATIVE** · Feature: `auth-factors` · Repo: `go-xkms` · Last verified: 2026-09-29
+> **Status: NORMATIVE** · Feature: `auth-factors` · Repo: `go-xkms` · Last verified: 2026-10-12
 
 ## The problem
 
@@ -36,6 +36,13 @@ function, so the set never diverges. A composer that assembled its own list
 would drift the moment a fifth factor was added.
 
 Four factors: `piv`, `pkcs11`, `fido2`, `mtls`.
+
+An embedded go-qrdb node is built with `NewNodeRegistry`
+(`pkg/factor/registry.go:114`), the same slice without `mtls`. A node's quorum
+share holders follow go-qrdb's mTLS contract: they are enrolled by their
+certificate's public key, bound by `qrdbsdk.CertThumbprint`, and answer with
+`qrdbsdk.SignQuorumChallenge`. go-qrdb's own `mtls` factor already verifies
+that, so the node defers to it rather than shadowing it with a second scheme.
 
 The zero `Config` is valid and yields software-backed PIV plus DER/COSE-verifying
 PKCS#11, FIDO2 and certificate-possession mTLS. That matters for development:
@@ -134,6 +141,62 @@ and qrdb composes the answers into an authentication decision.
   distinction matters.
 - **mTLS proves certificate possession, not identity.** Binding a certificate to
   a user is qrdb's cert-binding scheme, not this package's.
+
+## Decoy enrollments: no factor enumeration
+
+go-qrdb answers a login for a user who has no enrollment for a factor with a
+challenge anyway, built from a *decoy* enrollment, so a caller cannot learn
+which users hold which factors by asking. go-qrdb's ceremony asks the factor
+for the decoy through its `DecoyEnroller` interface — `DecoyEnrollment(seed,
+userID, like)` — and falls back to its own built-in mTLS form when the factor
+has none. Every go-xkms factor implements it, because only the factor knows
+what its challenges look like:
+
+| Factor | Implementation |
+|---|---|
+| `piv` | `pkg/factor/piv/decoy.go` |
+| `pkcs11` | `pkg/factor/pkcs11/decoy.go` |
+| `fido2` | `pkg/factor/fido2/decoy.go` |
+| `mtls` | `pkg/factor/mtls/decoy.go` |
+
+The shared derivation lives in `pkg/factor/internal/decoy`.
+
+The design rules:
+
+- **Deterministic in (seed, userID).** The seed is go-qrdb's barrier-held
+  decoy seed, and every value is derived from it with HKDF-SHA256, labelled
+  per factor and per purpose. Asking twice for the same absent user returns
+  the same challenge, just as asking twice for a real holder does.
+- **Shaped like the roster.** `like` is the factor's real enrollments. A decoy
+  takes the shape predominant among them: key type and size, mechanism, slot,
+  credential-id encoding and length, relying party and origins, serial length,
+  certificate extensions. Metadata such as the challenge TTL is copied from
+  `like`'s values, not configured. An empty `like` gives the form a default
+  `Enroll` would record.
+- **Real keys of the matching type, no private half.** The public key is a
+  valid point or modulus of the imitated type. The private half is discarded,
+  so `Verify` fails for every response, and the decoy needs no
+  verification-time special case.
+
+Rejected alternatives:
+
+- **go-qrdb's built-in mTLS decoy for every factor.** A PIV or FIDO2 login
+  answered with a client-certificate challenge gives the user away at once.
+- **Fresh random material per request.** Two challenges for the same user
+  would differ where a real holder's never do.
+- **A fixed default shape.** A roster of RSA-4096 PIV cards next to a decoy
+  with a P-256 key is just as telling as no challenge at all.
+
+Residual exposure, by design:
+
+- **An mTLS decoy for a CA-issued template cannot carry the CA's signature.**
+  It names the real issuer and authority key identifier but is signed by a
+  derived key. Anyone who holds the issuing CA's certificate can check the
+  signature and spot the decoy.
+- **RSA decoys cost CPU.** Deriving an RSA key runs a prime search,
+  about 0.2 s for 2048 bits and about 1 s for 4096 bits, on every
+  decoy challenge. That makes RSA decoy challenges measurably slower than
+  real ones.
 
 ## What this feature deliberately does not do
 

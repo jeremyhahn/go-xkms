@@ -1,6 +1,6 @@
 # Sealing and Barrier — Architecture
 
-> **Status: NORMATIVE** · Feature: `sealing-and-barrier` · Repo: `go-xkms` · Last verified: 2026-10-08
+> **Status: NORMATIVE** · Feature: `sealing-and-barrier` · Repo: `go-xkms` · Last verified: 2026-10-13
 
 ## The problem
 
@@ -99,6 +99,7 @@ Rejected alternatives:
 | Autodetection | `pkg/seal/autodetect.go` | go-xkms |
 | Seal audit | `pkg/seal/audit.go` | go-xkms |
 | Sealed blob store | `pkg/sealblobstore` | go-xkms |
+| go-enclave `KeyProtector` / `RootUnsealer` over `types.Sealer` | `pkg/enclaveprovider` | go-xkms (the seam is go-enclave's) |
 
 Capability row: **"Hardware / cloud `SealingStrategy` impls (TPM2, PKCS#11,
 AWS-KMS, GCP-KMS, Azure-KV, Vault)" (tier 2)** — composer-only, registered into
@@ -270,6 +271,52 @@ SDK/embedded callers need it in-process); matching error strings generically
 (only Vault, which has no codes, is matched on text, and only its
 documented decrypt messages); treating every unseal failure as one error
 (the distinction is the point).
+
+## The go-enclave provider bridge (go-xkms#1415)
+
+go-enclave keeps secrets in locked memory and seals values at rest under a
+`Sealer` whose keys sit behind a provider seam: a `KeyProtector`, called on
+every seal and open (`ModePerOperation`), or a `RootUnsealer`, asked once for
+a root key that an in-memory KEK hierarchy then runs under (`ModeRootKey`).
+go-enclave ships only a software provider and leaves the hardware bridge to
+the library that owns the hardware. That is go-xkms, and it already has one
+abstraction over every backend that can seal: `types.Sealer`.
+
+`pkg/enclaveprovider` implements both seams once, over any `types.Sealer`,
+rather than once per backend:
+
+```
+ModePerOperation:  enclave.Sealer → KeyProtector.Protect(DEK)
+                     → types.Sealer.Seal(DEK, AAD = protected-key)  ← TPM / HSM / KMS
+                     → envelope(sealed data) ‖ HMAC tag keyed from the DEK
+ModeRootKey:       ProvisionRoot → root drawn into locked pages → types.Sealer.Seal(root, AAD = sealed-root)
+                   at start: RootUnsealer.UnsealRoot(dst) → types.Sealer.Unseal → dst (locked)
+```
+
+The envelope makes every blob self-describing and versioned, and its tag,
+keyed from the protected key, makes every byte authentic even where a backend
+ignores a field on unseal. A blob the provider did not write fails as
+`enclave.ErrSealedAuthentication`; an outage keeps the backend's own error,
+so go-enclave's open reports `ErrOpenFailed` for it, never tampering.
+
+The modes are not equals, and the choice is the caller's: per-operation keeps
+the sealing key in the device and calls it for every value; root-key calls it
+once, after which the root is in this process's locked memory. A TPM that
+cannot sustain a session per value suits root-key; an HSM or KMS that can,
+per-operation.
+
+Rejected alternatives:
+
+- **One provider per backend.** Rejected: `types.Sealer` already absorbs the
+  backend differences, including the authentication-versus-outage
+  classification, so a per-backend provider would repeat it six times.
+- **Serialising `types.SealedData` as JSON.** Rejected: JSON matches field
+  names case-insensitively and ignores unknown ones, so a flipped bit can leave
+  a blob that still opens. The binary envelope is strict and fully tagged.
+- **Relying on the backend to authenticate the whole blob.** Rejected: the
+  backends authenticate their ciphertext, not the metadata beside it.
+- **A provider in go-enclave or in a consumer.** Rejected by ownership:
+  hardware crypto is go-xkms's, and go-enclave's owner placed the bridge here.
 
 ## What this feature deliberately does not do
 

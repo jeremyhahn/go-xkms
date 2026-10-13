@@ -13,12 +13,13 @@ Every subcommand takes `--scope` (default `user`) and `--owner` (default
 `default`) (`cmd/xkmsctl/ssh.go:219-220`) except `authorized-keys emit`,
 which is a pure local formatting helper with no identity coordinates.
 
-Against `xkmsd`, a caller signed in to a tenant may name only an owner it
-owns: its tenant ID for `--scope tenant`, its own subject for `--scope user`
-and `--scope service` (`pkg/ssh/tenancy/client.go:170-182`). Any other owner
-answers as a missing asset and creates nothing, so a tenant user passes its
-own `--owner` rather than the default. A system-tenant caller may name any
-owner. See [`architecture.md`](architecture.md) §"Owner binding and tenant
+Against `xkmsd`, every caller — a system-tenant caller included — may name
+only an owner it owns: its tenant ID for `--scope tenant`, its own subject for
+`--scope user` and `--scope service`
+(`pkg/ssh/tenancy/client.go:199-205,275-285`). Any other owner answers as a
+missing asset and creates nothing, so a caller passes its own `--owner` rather
+than the default. Over the local unix socket your subject is
+`uid:<your uid>` (go-xkms#1406). See [`architecture.md`](architecture.md) §"Owner binding and tenant
 partitions".
 
 ## `xkmsctl ssh keys`

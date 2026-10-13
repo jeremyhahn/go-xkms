@@ -73,7 +73,7 @@ func TestPartitions_ScopeLayout(t *testing.T) {
 	generate(t, c, aliceA, "service", "ci", "runner")
 	generate(t, c, platform, "user", "root", "admin")
 	generate(t, c, platform, "tenant", qrdbsdk.SystemTenantID, "sys-shared")
-	generate(t, c, platform, "tenant", tenantB, "platform-made")
+	generate(t, c, adminB, "tenant", tenantB, "b-shared")
 	require.NoError(t, c.KnownHosts().Add(as(aliceA), sdkssh.AddKnownHostRequest{Scope: "user", Owner: "alice", Host: "web.example.com", PublicKey: line}))
 	require.NoError(t, c.AuthorizedKeys().Add(as(adminB), sdkssh.AddAuthorizedKeyRequest{Scope: "tenant", Owner: tenantB, Name: "ops", Line: line}))
 
@@ -83,7 +83,7 @@ func TestPartitions_ScopeLayout(t *testing.T) {
 		"tenant-a/ssh/services/ci/keys/runner",
 		"system/ssh/users/root/keys/admin",
 		"system/ssh/shared/keys/sys-shared",
-		"tenant-b/ssh/shared/keys/platform-made",
+		"tenant-b/ssh/shared/keys/b-shared",
 		"tenant-a/ssh/users/alice/known_hosts/web.example.com",
 		"tenant-b/ssh/shared/authorized_keys/ops",
 	}, storedPaths(t, daos))

@@ -44,9 +44,9 @@ func newTPMPolicyService(t *testing.T) (*XKMSService, *tpmpolicy.Service, *tpmpo
 }
 
 // TestTPMPolicyTarget_BindsTheCallersTenant proves a tenant-scoped caller
-// acts on its own tenant whether or not it names it, cannot name another,
-// and a cross-tenant caller -- or a context with no identity, the
-// in-process path -- addresses any tenant, "" being the system scope.
+// acts on its own tenant whether or not it names it and cannot name another.
+// A system caller -- or a context with no identity, the in-process path -- is
+// confined the same way to the system scope, "" (#1406).
 func TestTPMPolicyTarget_BindsTheCallersTenant(t *testing.T) {
 	got, err := targetTenant(tenantCtx("acme"), "op", "")
 	require.NoError(t, err)
@@ -59,17 +59,19 @@ func TestTPMPolicyTarget_BindsTheCallersTenant(t *testing.T) {
 	_, err = targetTenant(tenantCtx("acme"), "op", "globex")
 	requireBindingRefusal(t, err, "tenant naming another tenant")
 
-	got, err = targetTenant(systemCtx(), "op", "globex")
-	require.NoError(t, err)
-	assert.Equal(t, "globex", got)
+	_, err = targetTenant(systemCtx(), "op", "globex")
+	requireBindingRefusal(t, err, "system naming another tenant")
 
 	got, err = targetTenant(systemCtx(), "op", "")
 	require.NoError(t, err)
 	assert.Empty(t, got, "a system caller naming no tenant acts on the system scope")
 
-	got, err = targetTenant(context.Background(), "op", "acme")
+	_, err = targetTenant(context.Background(), "op", "acme")
+	requireBindingRefusal(t, err, "no identity naming a tenant")
+
+	got, err = targetTenant(context.Background(), "op", "")
 	require.NoError(t, err)
-	assert.Equal(t, "acme", got)
+	assert.Empty(t, got, "no identity acts on the system scope")
 }
 
 // TestTPMPolicy_TenantCannotAddressAnotherTenant proves every TPM policy
@@ -325,9 +327,8 @@ func TestTPMObjectPolicy_ResolvesInTheCallersTenant(t *testing.T) {
 	_, err = svc.TPMObjectPolicy(tenantCtx("acme"), &transport.TPMObjectPolicyRequest{KeyID: "signer", Kind: "sealed"})
 	require.ErrorIs(t, err, tpmpolicy.ErrNotAssigned)
 
-	sys, err := svc.TPMObjectPolicy(systemCtx(), &transport.TPMObjectPolicyRequest{TenantID: "acme", KeyID: "signer"})
-	require.NoError(t, err)
-	assert.Equal(t, "key/signer", sys.ObjectID)
+	_, err = svc.TPMObjectPolicy(systemCtx(), &transport.TPMObjectPolicyRequest{TenantID: "acme", KeyID: "signer"})
+	requireBindingRefusal(t, err, "the system tenant cannot read another tenant's object policy")
 
 	_, err = svc.TPMObjectPolicy(tenantCtx("acme"), &transport.TPMObjectPolicyRequest{KeyID: "signer", Kind: "blob"})
 	var kindErr *InvalidTPMObjectKindError

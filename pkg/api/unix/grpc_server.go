@@ -104,14 +104,15 @@ type GRPCConfig struct {
 	// configuration with both allowlists empty, since it could admit no one.
 	ExclusivePeers bool
 
-	// UnaryInterceptors run after the tenant interceptor on every unary RPC.
-	// An embedder narrows what this listener serves with them; the node-local
+	// UnaryInterceptors run after the peer-identity and tenant interceptors
+	// on every unary RPC, so they see the peer's unix-peer identity. An
+	// embedder narrows what this listener serves with them; the node-local
 	// signing server (pkg/signserver) admits only its sign-only slot RPCs
 	// this way. Optional.
 	UnaryInterceptors []grpc.UnaryServerInterceptor
 
-	// StreamInterceptors run after the tenant interceptor on every streaming
-	// RPC. Optional.
+	// StreamInterceptors run after the peer-identity and tenant interceptors
+	// on every streaming RPC. Optional.
 	StreamInterceptors []grpc.StreamServerInterceptor
 
 	// Logger is the logging adapter
@@ -278,19 +279,25 @@ func (s *GRPCServer) Start() error {
 
 	s.logger.Info("gRPC Unix socket created", slog.String("path", s.config.SocketPath))
 
-	// Create gRPC server with options. The tenant interceptors are the same
+	// Create gRPC server with options. The peer-identity interceptors run
+	// first: every peer the peer-credential policy admitted gets an explicit
+	// identity -- subject "uid:<uid>" in the system tenant, auth_method
+	// unix-peer -- so no request on this listener reaches a handler without
+	// one by default (#1406). The tenant interceptors that follow are the same
 	// constructors the network gRPC server uses (see
-	// pkg/api/grpc/interceptor_tenant.go); the Unix socket has no
-	// authentication interceptor and therefore ordinarily carries no
-	// identity, so tenant scoping is a no-op passthrough unless a caller
-	// context ever carries one -- kept for parity with every other transport
-	// rather than because a nil identity needs gating today.
+	// pkg/api/grpc/interceptor_tenant.go).
 	peerPolicy := NewPeerCredentialPolicy(s.config.AllowedUIDs, s.config.AllowedGIDs)
 	if s.config.ExclusivePeers {
 		peerPolicy = NewExclusivePeerCredentialPolicy(s.config.AllowedUIDs, s.config.AllowedGIDs)
 	}
-	unary := append([]grpc.UnaryServerInterceptor{grpcinternal.TenantUnaryInterceptor(s.config.BarrierRegistry, s.logger)}, s.config.UnaryInterceptors...)
-	stream := append([]grpc.StreamServerInterceptor{grpcinternal.TenantStreamInterceptor(s.config.BarrierRegistry, s.logger)}, s.config.StreamInterceptors...)
+	unary := append([]grpc.UnaryServerInterceptor{
+		peerIdentityUnaryInterceptor,
+		grpcinternal.TenantUnaryInterceptor(s.config.BarrierRegistry, s.logger),
+	}, s.config.UnaryInterceptors...)
+	stream := append([]grpc.StreamServerInterceptor{
+		peerIdentityStreamInterceptor,
+		grpcinternal.TenantStreamInterceptor(s.config.BarrierRegistry, s.logger),
+	}, s.config.StreamInterceptors...)
 	opts := []grpc.ServerOption{
 		grpc.MaxRecvMsgSize(s.config.MaxRecvMsgSize),
 		grpc.MaxSendMsgSize(s.config.MaxSendMsgSize),

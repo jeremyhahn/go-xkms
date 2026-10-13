@@ -67,13 +67,19 @@ itself:
 
 | Scope | Keyspace | Who may address it |
 |---|---|---|
-| `tenant` (shared) | `{tenant}/{feature}/shared/...` | every user of the tenant; a platform caller for any tenant |
-| `user` (personal) | `{tenant}/{feature}/users/{subject}/...` | only the owning subject, in its own tenant — **a platform caller included** |
+| `tenant` (shared) | `{tenant}/{feature}/shared/...` | every user of the tenant, and nobody outside it |
+| `user` (personal) | `{tenant}/{feature}/users/{subject}/...` | only the owning subject, in its own tenant — **a system-tenant caller included** |
 | `service` | `{tenant}/{feature}/services/{owner}/...` | only a caller holding the feature's explicit service permission (`ssh:service`), in its own tenant |
 
 - **The system tenant is a tenant.** Its scope name is `system` (go-qrdb's
   `SystemTenantID`); the empty tenant maps to it. It has its own shared and
   personal objects and is isolated from every tenant in both directions.
+  There is no system-tenant lift: a system-tenant identity naming another
+  tenant's object is refused like any other cross-tenant caller.
+- **No identity is no access.** `scope.PrincipalOf(nil)` is unauthenticated,
+  and `Principal.Authorize` refuses it with `*UnauthenticatedError` (matches
+  `scope.ErrRefused`). Every network transport attaches an identity before an
+  object is addressed — the unix socket included (see Trust boundaries).
 - **A refusal looks like a miss.** `Principal.Authorize` returns
   `*CrossTenantError`, `*CrossUserError` or `*ServiceScopeError` (all match
   `scope.ErrRefused`) for diagnostics; each feature answers the caller exactly
@@ -87,8 +93,13 @@ itself:
   `compose.BuildPlatformStore` builds over a `sealedstorage` view;
   [`../platform-secrets/`](../platform-secrets/architecture.md)) holds the
   platform's own secrets. It has no tenant or user scope: every call is
-  refused to a tenant-scoped caller (`requirePlatformScope`), so only
+  refused to a tenant-scoped caller (`requireSystemTenant`), so only
   system-tenant callers reach it.
+- **Administering the tenant model is not reaching into tenants.** The tenant
+  registry (create, read, list, delete) and plan management (entitlements,
+  quotas) belong to the system tenant. That authority stops at the tenant
+  record: it never reaches a tenant's keys, certificates, SSH assets, TPM
+  policies, passwords or OIDC credentials.
 
 ## Component boundaries
 
@@ -120,6 +131,19 @@ plane works before any tenant barrier unseals
 
 ## Trust boundaries
 
+- **Every caller is confined to its own tenant.** The service-layer binding
+  (`pkg/xkms/tenant_binding.go`) compares the caller's tenant with the target
+  tenant and refuses any mismatch, for the system tenant as for every other.
+- **A unix-socket peer is the system tenant, by uid.** The local gRPC listener
+  admits a peer by its kernel credentials (socket file mode, and the
+  `SO_PEERCRED` allowlist when exclusive), then attaches the identity
+  `uid:<peer uid>` in the system tenant with `auth_method=unix-peer`. A peer
+  the policy refuses never reaches a handler and gets no identity.
+- **An in-process caller is the system tenant.** The embedded SDK (the xkey
+  GUI, for example) calls the service with
+  no identity; the service binding treats that as the system tenant, confined
+  to it like any system caller. Object authorization (`pkg/scope`) still
+  refuses it.
 - **The middleware admits the request; the tenant-scoped backend narrows the
   key namespace.** A key ID is only resolvable inside its tenant *because* the
   handler resolves it through `xkms.TenantScopedBackend`. A key ID is a common

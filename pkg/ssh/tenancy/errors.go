@@ -60,9 +60,8 @@ type OwnerBindingError struct {
 	// CallerTenantID and CallerSubject identify the refused caller.
 	CallerTenantID string
 	CallerSubject  string
-	// Cause is the scope rule's reason for the refusal (a pkg/scope error
-	// matching scope.ErrRefused, or the invalid tenant a platform caller
-	// named). It is diagnostic only: Unwrap returns Err, never Cause, so no
+	// Cause is the scope rule's reason for the refusal, a pkg/scope error
+	// matching scope.ErrRefused. It is diagnostic only: Unwrap returns Err, never Cause, so no
 	// transport can classify a refusal differently from a miss.
 	Cause error
 	// Err is the genuine-miss answer for the address.

@@ -74,7 +74,7 @@ func (k *keysClient) Get(ctx context.Context, req sdkssh.GetKeyRequest) (*sdkssh
 // List implements sdkssh.KeysClient. The listing holds only keys the caller
 // owns, whatever the filters name.
 func (k *keysClient) List(ctx context.Context, req sdkssh.ListKeysRequest) ([]*sdkssh.Key, error) {
-	p, visible, err := k.c.listPartition(ctx, req.Scope, req.Owner)
+	p, visible, err := k.c.listPartition(ctx, req.Scope)
 	if err != nil {
 		return nil, err
 	}
@@ -164,7 +164,7 @@ func (h *knownHostsClient) Add(ctx context.Context, req sdkssh.AddKnownHostReque
 // List implements sdkssh.KnownHostsClient. The listing holds only pins the
 // caller owns, whatever the filters name.
 func (h *knownHostsClient) List(ctx context.Context, req sdkssh.ListKnownHostsRequest) ([]*sdkssh.Pin, error) {
-	p, visible, err := h.c.listPartition(ctx, req.Scope, req.Owner)
+	p, visible, err := h.c.listPartition(ctx, req.Scope)
 	if err != nil {
 		return nil, err
 	}
@@ -262,7 +262,7 @@ func (a *authorizedKeysClient) Get(ctx context.Context, scope, owner, name strin
 // List implements sdkssh.AuthorizedKeysClient. The listing holds only
 // entries the caller owns, whatever the filters name.
 func (a *authorizedKeysClient) List(ctx context.Context, req sdkssh.ListAuthorizedKeysRequest) ([]*sdkssh.AuthorizedEntry, error) {
-	p, visible, err := a.c.listPartition(ctx, req.Scope, req.Owner)
+	p, visible, err := a.c.listPartition(ctx, req.Scope)
 	if err != nil {
 		return nil, err
 	}

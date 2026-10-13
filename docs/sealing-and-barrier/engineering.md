@@ -1,6 +1,6 @@
 # Sealing and Barrier — Engineering Contract
 
-> **Status: NORMATIVE** · Feature: `sealing-and-barrier` · Repo: `go-xkms` · Last verified: 2026-10-12
+> **Status: NORMATIVE** · Feature: `sealing-and-barrier` · Repo: `go-xkms` · Last verified: 2026-10-13
 
 ## Exported surface — `pkg/seal`
 
@@ -314,6 +314,76 @@ TPM sealer (`pkg/preseal/store.go:97`).
   `ErrUnsealFailed`, `ErrSealerNotAvailable`, `ErrMarshalFailed`,
   `ErrUnmarshalFailed`, `ErrGuardEnclaveFailed`, `ErrUnsealIntoUnsupported`,
   `ErrGuardEscapedEnclave`.
+
+### go-enclave provider bridge — `pkg/enclaveprovider` (go-xkms#1415)
+
+go-enclave (v0.8) defines the provider seam its `Sealer` keys sit behind and
+ships only a software provider. This package is the hardware side of that
+seam, over any `types.Sealer` — TPM 2.0, PKCS#11, AWS KMS, GCP Cloud KMS,
+Azure Key Vault, Vault Transit or the software backend:
+
+```go
+func NewKeyProtector(sealer types.Sealer, attrs *types.KeyAttributes) (*KeyProtector, error)
+func (*KeyProtector) Protect(ctx, key []byte) (blob []byte, err error)
+func (*KeyProtector) Unprotect(ctx, blob, key []byte) error
+func (*KeyProtector) Health() error // always nil: the key lives in the backend
+
+func ProvisionRoot(ctx, sealer types.Sealer, attrs *types.KeyAttributes) (sealedRoot []byte, err error)
+func NewRootUnsealer(sealer types.Sealer, attrs *types.KeyAttributes, sealedRoot []byte) (*RootUnsealer, error)
+func (*RootUnsealer) UnsealRoot(ctx, dst []byte) error
+```
+
+`KeyProtector` is `enclave.KeyProtector` and `enclave.HealthReporter`
+(`ModePerOperation`); `RootUnsealer` is `enclave.RootUnsealer`
+(`ModeRootKey`). Neither implements the other's interface, so
+`enclave.NewSealer` accepts each only for the mode it serves.
+`ProvisionRoot` draws a 32-byte root into locked pages from
+`enclave.ProcessAllocator()`, seals it from there and destroys the pages; the
+caller persists the returned blob and builds a `RootUnsealer` from it at every
+start.
+
+**Envelope** (`pkg/enclaveprovider/envelope.go`). Every blob is
+`"XKEP" ‖ version 1 ‖ purpose ‖ SealedData fields ‖ HMAC-SHA256 tag`, the
+fields length-prefixed and the metadata names strictly ascending, parsed
+strictly (no trailing bytes, nothing over 64 KiB). The purpose (protected key
+or sealed root) is in the envelope and selects the AAD the sealer binds
+(`go-xkms/enclaveprovider/v1/protected-key` or `.../sealed-root`), so neither
+seam opens the other's blob. The tag is keyed by HKDF-SHA256-Expand from the
+protected key itself and covers every envelope byte, so a field the backend
+does not authenticate on unseal (a TPM handle in the metadata, a key version)
+cannot be altered either. Expand, not Extract: Extract would hash the key as a
+message and leave it in a SHA-256 block buffer on the heap.
+
+Invariants:
+
+- **Exactly the seam's contract.** An ended context is refused before the
+  backend with an error matching `ctx.Err()`. `Unprotect` and `UnsealRoot`
+  require a 32-byte destination and a 32-byte sealed key; either length
+  mismatch is an authentication failure. On every failure the destination is
+  untouched.
+- **The backend's plaintext is wiped on every path** (`enclave.Wipe`), and
+  `blob` is copied, never retained or modified.
+- **Each call gets its own copy of the sealing key's attributes**, and of their
+  `TPMAttributes`: the TPM 2.0 sealer stages the secret in the attributes it is
+  handed, and go-enclave calls a provider concurrently.
+- **`NewKeyProtector` and `ProvisionRoot` refuse a sealer whose `CanSeal` is
+  false**; `NewRootUnsealer` refuses a blob that is not a sealed root before
+  any backend call.
+
+Errors (`pkg/enclaveprovider/errors.go`):
+
+| Error | When |
+|---|---|
+| `ErrNilSealer`, `ErrNilKeyAttributes`, `ErrSealerUnavailable` | construction |
+| `ErrInvalidKeyLength` | `Protect` given a key that is not 32 bytes |
+| `ErrProtectFailed`, `ErrUnprotectFailed`, `ErrUnsealRootFailed`, `ErrProvisionRootFailed` | the backend or the context failed; the cause stays reachable |
+| `ErrEnvelopeTooLarge` | the backend's sealed data does not fit the envelope |
+| `enclave.ErrSealedAuthentication` with `ErrMalformedEnvelope`, `ErrWrongPurpose`, `ErrKeyLengthMismatch` or `ErrEnvelopeTag` | the blob is not one this provider wrote for this seam |
+| `enclave.ErrSealedAuthentication` with `types.ErrSealedDataAuthentication` | the backend's own verdict (see the table below); the native cause stays reachable |
+
+A backend failure that is not `types.ErrSealedDataAuthentication` is never
+reported as `enclave.ErrSealedAuthentication`, so the PKCS#11 ambiguity below
+(SoftHSM before 2.7.0) carries through unchanged.
 
 ### Process hardening — `sdk/go/secure.HardenProcess`
 
@@ -672,6 +742,35 @@ so this is the one compatibility rule in the repo with no workaround.
   `tenant_metadata_store_test.go`.
 - **Transport** — `pkg/api/rest/handlers_barrier_shamir.go` and
   `handlers_seal_test.go`; `pkg/api/grpc/service_barrier_shamir.go`.
+- **M-of-N unseal with hardware-factor holders** —
+  `pkg/init/mofn_unseal_hw_factor_test.go` (go-xkms#1355). It sets up a
+  2-of-3 Shamir system barrier whose share holders are enrolled through
+  go-qrdb's ceremony (`go-qrdb/sdk/go`) against the node's own factor registry
+  (`factor.NewNodeRegistry`, `pkg/factor/registry.go:114`, which
+  `server.NewNodeFactorRegistry`, `pkg/server/server.go:1778`, returns;
+  `newMofnRig`, `pkg/init/mofn_unseal_hw_factor_test.go:84`). The three
+  holders authenticate through the xkms PIV factor (software PIV key
+  generator), through mTLS, and through the xkms PKCS#11 factor (its own P-256
+  token key). Every holder claims its share, bound by
+  `qrdbsdk.CertThumbprint`, before the barrier is sealed.
+  `TestMofNUnseal_HardwareFactorHolderCompletesQuorum` (`:266`) unseals with
+  the PIV and mTLS holders.
+  `TestMofNUnseal_InvalidHardwareFactorAssertionIsRefused` (`:285`) shows
+  that a PIV assertion signed by a key other than the enrolled one is refused
+  and its share is not counted.
+  `TestMofNUnseal_MismatchedMTLSCertificateIsRefused` (`:313`) shows the same
+  for an mTLS holder that presents a certificate, and signs with a key, other
+  than the enrolled one.
+- **Node registry and mTLS share holders** — the node registry carries `piv`,
+  `pkcs11` and `fido2`, but no `mtls`. The ceremony enrols an mTLS share holder
+  by its certificate's public key. The holder answers the quorum challenge
+  with `qrdbsdk.SignQuorumChallenge`, and go-qrdb's own `mtls` factor verifies
+  that answer whenever the registry does not override it. The xkms `mtls`
+  factor enrols a PEM certificate and verifies a signature over the bare
+  nonce, so in the node registry it refused every ceremony mTLS holder.
+  `factor.NewDefaultRegistry`, which keeps the xkms `mtls` factor, serves only
+  administrator enrolment. `TestNewNodeRegistry_LeavesMTLSToQRDB`
+  (`pkg/factor/registry_test.go:47`) pins the set.
 - **Sealed-data authentication** — one `sealer_authentication_test.go` per
   backend (`pkg/backend/{awskms,gcpkms,azurekv,vault,pkcs11,software}`,
   `pkg/keyprovider/pkcs8`), `pkg/seal/sealed_data_authentication_test.go`,
@@ -691,6 +790,22 @@ so this is the one compatibility rule in the repo with no workaround.
   classifiers have table tests of their own (`TestRejectsCiphertext`,
   `TestRejectsSealedData`, `TestLoadRejectsSealedObject`), and
   `test/integration/vault` asserts the AAD binding against a real Vault.
+- **go-enclave provider bridge** — `pkg/enclaveprovider` unit tests cover the
+  envelope parser, the error mapping, the attribute copies and the wipe on
+  every path. `enclaveprovidertest.Run` runs go-enclave's `providertest`
+  suite in both modes, a go-enclave `Sealer` round trip in both modes and the
+  cross-seam refusal, over one backend; it runs for the software backend
+  (`pkg/enclaveprovider`) and from each backend's own package beside its
+  sealed-data authentication fixture: `pkg/backend/{awskms,gcpkms,azurekv}`
+  on their mock clients, `pkg/backend/vault` on the Transit double,
+  `pkg/backend/pkcs11` on SoftHSM and `pkg/tpm2` on the simulator
+  (`enclave_provider*_test.go`). The process-memory residue sweep runs and
+  passes for the software and cloud KMS backends; it is skipped, with the
+  reason recorded, for Vault (the plaintext crosses an HTTP JSON body), the
+  in-process TPM simulator, and SoftHSM (an async-preemption signal can save
+  its decrypt registers on the Go-allocated signal stack; no copy is found
+  under `GODEBUG=asyncpreemptoff=1`). The PKCS#11 tampered-blob property
+  needs SoftHSM 2.7.0.
 - **Integration** — `test/integration/tpm2`, `awskms`, `gcpkms`, `azurekv`,
   `vault`, `pkcs11`, `storage`.
 

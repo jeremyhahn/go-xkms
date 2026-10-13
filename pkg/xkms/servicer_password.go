@@ -80,17 +80,18 @@ func (s *XKMSService) resolvePasswordStore(ctx context.Context) (staticpw.Store,
 }
 
 // scopedTenantIDFromContext returns the tenant this request is scoped to, or
-// "" when the caller is platform-scoped and therefore belongs on the system
-// store.
+// "" when the caller belongs on the system store: one in the system tenant
+// (an empty TenantID or the reserved system tenant ID) or one with no identity,
+// the in-process path. The system store holds only the system tenant's
+// passwords; it is not a view over other tenants'.
 //
-// Platform scope covers both an absent identity and one rooted in the reserved
-// "system" tenant, per auth.IsCrossTenant. Returning the raw TenantID instead
-// would hand "system" to the tenant manager, which would then create and
-// operate a per-tenant store literally named "system" alongside the real
-// system store — silently splitting password state in two.
+// Returning the raw TenantID for a system caller would hand "system" to the
+// tenant manager, which would then create and operate a per-tenant store
+// literally named "system" alongside the real system store — silently
+// splitting password state in two.
 func scopedTenantIDFromContext(ctx context.Context) string {
 	identity := auth.GetIdentity(ctx)
-	if auth.IsCrossTenant(identity) {
+	if identity == nil || scope.IsSystem(identity.TenantID) {
 		return ""
 	}
 	return identity.TenantID

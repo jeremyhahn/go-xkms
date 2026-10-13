@@ -19,7 +19,6 @@ import (
 	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
 
 	"github.com/jeremyhahn/go-xkms/pkg/api/transport"
-	"github.com/jeremyhahn/go-xkms/pkg/auth"
 )
 
 // TenantServicer defines operations for managing tenants and their barriers.
@@ -77,9 +76,10 @@ func (s *XKMSService) CreateTenant(ctx context.Context, req *transport.CreateTen
 	return &transport.CreateTenantResponse{Tenant: tenantInfoToTransport(info)}, nil
 }
 
-// GetTenant retrieves a tenant by its ID. A tenant-scoped caller may read
-// only its own tenant; any other tenant ID is refused with a
-// *TenantBindingError that reads as not-found (bindTenantTarget).
+// GetTenant retrieves a tenant by its ID. The tenant registry is the system
+// tenant's, so a system caller may read any tenant; any other caller only its
+// own, and any other tenant ID is refused with a *TenantBindingError that
+// reads as not-found (bindTenantRecord).
 //
 // Requires the composed TenantService; returns ErrTenantServiceNotConfigured
 // otherwise.
@@ -87,7 +87,7 @@ func (s *XKMSService) GetTenant(ctx context.Context, tenantID string) (*transpor
 	if tenantID == "" {
 		return nil, ErrTenantIDRequired
 	}
-	if err := bindTenantTarget(ctx, "get tenant", tenantID); err != nil {
+	if err := bindTenantRecord(ctx, "get tenant", tenantID); err != nil {
 		return nil, err
 	}
 	if s.tenantService == nil {
@@ -102,7 +102,7 @@ func (s *XKMSService) GetTenant(ctx context.Context, tenantID string) (*transpor
 }
 
 // ListTenants returns the registered tenants the caller may see: every tenant
-// for a cross-tenant identity, only its own tenant for a tenant-scoped one.
+// for a system-tenant caller, only its own tenant for any other.
 // Filtering here rather than in each transport keeps tenant enumeration under
 // the same single owner as the per-tenant binding.
 //
@@ -117,19 +117,18 @@ func (s *XKMSService) ListTenants(ctx context.Context) (*transport.ListTenantsRe
 	if err != nil {
 		return nil, err
 	}
-	identity := auth.GetIdentity(ctx)
 	tenants := make([]transport.TenantInfo, 0, len(infos))
 	for i := range infos {
-		if visibleToCaller(identity, infos[i].ID) {
+		if visibleToCaller(ctx, infos[i].ID) {
 			tenants = append(tenants, tenantInfoToTransport(&infos[i]))
 		}
 	}
 	return &transport.ListTenantsResponse{Tenants: tenants}, nil
 }
 
-// DeleteTenant deletes a tenant by its ID. A tenant-scoped caller may delete
-// only its own tenant; any other tenant ID is refused with a
-// *TenantBindingError that reads as not-found (bindTenantTarget).
+// DeleteTenant deletes a tenant by its ID. A system caller may delete any
+// tenant; any other caller only its own, and any other tenant ID is refused
+// with a *TenantBindingError that reads as not-found (bindTenantRecord).
 //
 // Requires the composed TenantService; returns ErrTenantServiceNotConfigured
 // otherwise.
@@ -137,7 +136,7 @@ func (s *XKMSService) DeleteTenant(ctx context.Context, tenantID string) error {
 	if tenantID == "" {
 		return ErrTenantIDRequired
 	}
-	if err := bindTenantTarget(ctx, "delete tenant", tenantID); err != nil {
+	if err := bindTenantRecord(ctx, "delete tenant", tenantID); err != nil {
 		return err
 	}
 	if s.tenantService == nil {
@@ -148,10 +147,10 @@ func (s *XKMSService) DeleteTenant(ctx context.Context, tenantID string) error {
 
 // UpdateTenantEntitlements updates a tenant's feature entitlements (which
 // isolation tiers and dedicated-storage features its plan permits). Plan
-// management is a platform operation: only a cross-tenant identity may change
+// management is a platform operation: only a system-tenant caller may change
 // any tenant's entitlements, and a tenant-scoped caller is refused with a
 // *TenantBindingError that reads as not-found even for its own tenant
-// (requirePlatformScope).
+// (requireSystemTenant).
 //
 // Requires the composed TenantService; returns ErrTenantServiceNotConfigured
 // otherwise.
@@ -162,7 +161,7 @@ func (s *XKMSService) UpdateTenantEntitlements(ctx context.Context, req *transpo
 	if req.TenantID == "" {
 		return nil, ErrTenantIDRequired
 	}
-	if err := requirePlatformScope(ctx, "update tenant entitlements", req.TenantID); err != nil {
+	if err := requireSystemTenant(ctx, "update tenant entitlements", req.TenantID); err != nil {
 		return nil, err
 	}
 	if s.tenantService == nil {
@@ -176,9 +175,9 @@ func (s *XKMSService) UpdateTenantEntitlements(ctx context.Context, req *transpo
 }
 
 // UpdateTenantQuotas updates a tenant's resource quotas. Like entitlements,
-// quotas are plan management: only a cross-tenant identity may change them,
+// quotas are plan management: only a system-tenant caller may change them,
 // and a tenant-scoped caller is refused with a *TenantBindingError that reads
-// as not-found even for its own tenant (requirePlatformScope).
+// as not-found even for its own tenant (requireSystemTenant).
 //
 // Requires the composed TenantService; returns ErrTenantServiceNotConfigured
 // otherwise.
@@ -189,7 +188,7 @@ func (s *XKMSService) UpdateTenantQuotas(ctx context.Context, req *transport.Upd
 	if req.TenantID == "" {
 		return nil, ErrTenantIDRequired
 	}
-	if err := requirePlatformScope(ctx, "update tenant quotas", req.TenantID); err != nil {
+	if err := requireSystemTenant(ctx, "update tenant quotas", req.TenantID); err != nil {
 		return nil, err
 	}
 	if s.tenantService == nil {

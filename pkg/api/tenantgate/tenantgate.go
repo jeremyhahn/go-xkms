@@ -17,8 +17,9 @@
 // calls Access with the same two inputs (the caller's identity and the
 // process's *seal.BarrierRegistry) and gets back the same decision:
 //
-//   - a cross-tenant-scoped caller (auth.IsCrossTenant: nil identity, empty
-//     TenantID, or the reserved system tenant) passes with no barrier
+//   - a caller with no identity, or one in the system tenant (an empty
+//     TenantID or the reserved system tenant ID), passes with no tenant
+//     barrier
 //   - no registry configured means tenant enforcement is disabled for this
 //     deployment; every caller passes
 //   - the caller's tenant is not registered: ErrTenantNotFound
@@ -31,7 +32,7 @@
 // This logic used to be hand-mirrored in pkg/api/rest/middleware_tenant.go
 // and pkg/api/grpc/interceptor_tenant.go, and was entirely absent from QUIC,
 // MCP, and the Unix domain socket gRPC listener. It cannot live in pkg/auth
-// (which already owns auth.IsCrossTenant): pkg/auth would have to import
+// (which owns the identity): pkg/auth would have to import
 // pkg/seal for *seal.BarrierRegistry / *seal.TenantBarrier, but pkg/seal
 // already imports pkg/audit, and pkg/audit imports pkg/auth — auth -> seal
 // would close that cycle. pkg/api/tenantgate sits above both, mirroring how
@@ -39,19 +40,23 @@
 // public-method table. Every pkg/api/* transport may import it; pkg/auth and
 // pkg/seal never import it back.
 //
-// # Cross-tenant scope is qrdb's system-tenant rule, and nothing else
+// # The gate selects a barrier; it grants no reach
 //
-// Whether a caller escapes tenant scoping is decided by auth.IsCrossTenant,
-// which delegates to go-qrdb's system-tenant rule: cross-tenant power comes
-// from a role grant in the reserved system tenant. There is deliberately no
-// role-based exemption. One existed -- a Security Officer bypass that compared
+// Passing the gate without a tenant barrier is not cross-tenant power. The
+// system tenant's data sits behind the system barrier, which every transport
+// already gates, so a system-tenant caller has no tenant barrier to check; a
+// caller with no identity has no tenant at all, and the object layer
+// (pkg/scope, the service-layer tenant binding) refuses it. Every caller, the
+// system tenant's included, is confined to its own tenant there (#1406).
+//
+// Which tenant a caller belongs to is decided by its identity alone (scope.
+// IsSystem). There is deliberately no role-based exemption. One existed -- a Security Officer bypass that compared
 // the identity's roles against the NAME "so" -- and it never matched a real
 // grant, because identities carry role IDENTIFIERS; it only matched an
 // identity whose roles came from an unverified token claim spelling "so",
 // which it then let past the tenant-registered and tenant-sealed checks
-// (go-xkms#1074). The system tenant's own Security Officer is already
-// cross-tenant under the rule above; a tenant-local officer is confined to
-// its tenant exactly as qrdb's authorizer confines it.
+// (go-xkms#1074). A tenant-local officer is gated on its tenant's barrier
+// exactly like any other member of the tenant.
 //
 // Each transport maps the returned error onto its own wire shape (REST 403 /
 // 503, gRPC PermissionDenied / Unavailable, QUIC 403 / 503, MCP JSON-RPC
@@ -61,6 +66,7 @@ package tenantgate
 
 import (
 	"github.com/jeremyhahn/go-xkms/pkg/auth"
+	"github.com/jeremyhahn/go-xkms/pkg/scope"
 	"github.com/jeremyhahn/go-xkms/pkg/seal"
 )
 
@@ -102,13 +108,13 @@ func (e *ErrTenantSealed) Error() string {
 // disabled); identity may be nil (unauthenticated / bootstrap caller).
 //
 // A nil *seal.TenantBarrier with a nil error means the caller passes without
-// tenant scoping applied — either because the caller is cross-tenant scoped
-// (system tenant, empty TenantID, or a nil identity) or no registry is
-// configured. The caller must not assume a non-nil barrier: a
-// nil barrier and nil error is the common "no enforcement needed" case, not a
-// failure.
+// tenant barrier to gate — either because the caller has no identity or is in
+// the system tenant (empty TenantID or the reserved system tenant ID), or no
+// registry is configured. The caller must not assume a non-nil barrier: a nil
+// barrier and nil error is the common "no tenant barrier" case, not a failure,
+// and it grants no access to any tenant's objects.
 func Access(identity *auth.Identity, registry *seal.BarrierRegistry) (*seal.TenantBarrier, error) {
-	if auth.IsCrossTenant(identity) {
+	if identity == nil || scope.IsSystem(identity.TenantID) {
 		return nil, nil
 	}
 

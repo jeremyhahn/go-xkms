@@ -1,6 +1,6 @@
 # Multi-Tenancy — API
 
-> **Status: NORMATIVE** · Feature: `multi-tenancy` · Repo: `go-xkms` · Last verified: 2026-10-04
+> **Status: NORMATIVE** · Feature: `multi-tenancy` · Repo: `go-xkms` · Last verified: 2026-10-12
 
 Transport shapes: [`../key-management/api.md`](../key-management/api.md)
 §"How the six transports are shaped".
@@ -34,14 +34,18 @@ grants a Tenant Admin holds pass for any tenant ID; the
 service binding is what confines them. `GetTenant` and `DeleteTenant` refuse a tenant-scoped caller naming another
 tenant with the answer a nonexistent tenant gets (see "Status and error
 mapping"); `ListTenants` returns only the caller's own tenant
-(`pkg/xkms/servicer_tenant.go:127`). No handler carries a check of its own.
-`CreateTenant` is not bound: a new tenant cannot yet belong to anyone.
+(`pkg/xkms/servicer_tenant.go:121`). The tenant registry itself is the
+system tenant's, so a system-tenant caller may read, list and delete any
+tenant record — and nothing more: the record grants no reach into that
+tenant's keys, certificates or other objects (go-xkms#1406). No handler
+carries a check of its own. `CreateTenant` is not bound: a new tenant cannot
+yet belong to anyone.
 
-**Plan changes are platform-only** (go-xkms#1113). `UpdateTenantEntitlements`
+**Plan changes are system-only** (go-xkms#1113). `UpdateTenantEntitlements`
 and `UpdateTenantQuotas` require qrdb's dedicated `tenants:set_entitlements` /
 `tenants:set_quotas` on every transport — never `tenants:update` — and the
-service admits only a platform (system-tenant) identity
-(`pkg/xkms/servicer_tenant.go:313,340`): a Tenant Admin is refused with the
+service admits only a system-tenant identity
+(`pkg/xkms/servicer_tenant.go:163,190`): a Tenant Admin is refused with the
 not-found answer even for its own tenant. The service check is load-bearing,
 not belt-and-braces: both permissions are self-scoped in qrdb and qrdb's
 built-in Admin role grants `tenants:set_entitlements`. No built-in role
@@ -68,6 +72,33 @@ certificate is always scoped to it so the control plane functions before any
 tenant barrier unseals ([`../init-ceremony/api.md`](../init-ceremony/api.md)),
 and when a SPIFFE trust domain is configured the SAN is
 `spiffe://<td>/tenant/system/user/<CN>`.
+
+The system tenant is a tenant, not a skeleton key. Outside the tenant
+registry and plan management a system-tenant identity is confined to the
+system tenant exactly as any other identity is confined to its own: naming
+another tenant for a CSR, a certificate revocation, a TPM policy, an SSH
+asset or an OIDC credential gets the not-found answer, and its password
+operations reach only the system tenant's vault.
+
+## Identity on the unix socket
+
+The local gRPC listener (`KeystoreService` over a unix socket, xkmsctl's
+default transport) admits a peer by its kernel credentials — the socket file
+mode, plus the `SO_PEERCRED` uid/gid allowlist when exclusive peers are
+configured — and then attaches this identity to every call:
+
+| Field | Value |
+|---|---|
+| `Subject` | `uid:<peer uid>` |
+| `TenantID` | `system` |
+| `Metadata["auth_method"]` | `unix-peer` (`unix.PeerAuthMethod`) |
+| `Metadata["uid"]`, `["gid"]`, `["pid"]` | the peer's kernel credentials |
+
+The identity is attached before the tenant interceptors and any embedder
+interceptor, so the keystore service and the qrdb control plane hosted on the
+same socket see the same caller. A peer the policy refuses is closed before
+any handler runs (`Unavailable`) and never gets an identity. Personal
+(`user`-scope) objects created over the socket are owned by `uid:<peer uid>`.
 
 ## What actually narrows the key namespace
 
@@ -124,9 +155,6 @@ Still outstanding: the FROST paths (`pkg/api/grpc/service_frost.go`, build tag
 because `getFrostBackend()` resolves to the concrete key **provider** and so
 unwraps any tenant scoping — the same structural problem as #163. Tracked
 separately rather than guessed at here.
-
-The system tenant is not a scope: a system-scoped caller resolves against the
-unscoped backend and sees every key, which is what the control plane needs.
 
 ## Request and response schemas
 

@@ -115,9 +115,8 @@ func seededRoleID(t *testing.T, n *testutil.FirstBootNode, tenantID, roleName st
 }
 
 // TestAccess_SystemTenantOfficersPass proves the system tenant's Security
-// Officer and Admin -- identified by the role IDs they actually carry -- are
-// cross-tenant scoped under qrdb's system-tenant rule, whatever the registry
-// holds.
+// Officer and Admin -- identified by the role IDs they actually carry -- have
+// no tenant barrier to gate, whatever the registry holds.
 func TestAccess_SystemTenantOfficersPass(t *testing.T) {
 	n := seededGateNode(t)
 

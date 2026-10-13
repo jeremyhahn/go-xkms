@@ -52,9 +52,9 @@ type ScopeTarget = scope.Target
 // returns *ScopeInvalidScopeError.
 var ParseObjectScope = scope.Parse
 
-// ScopePrincipalOf returns the principal an identity authenticates,
-// following go-qrdb's system-tenant rule: no identity, or an identity in the
-// system tenant, is the platform.
+// ScopePrincipalOf returns the principal an identity authenticates. No
+// identity is the unauthenticated principal; every other identity, the system
+// tenant's included, is confined to its own tenant.
 var ScopePrincipalOf = scope.PrincipalOf
 
 // ScopePrincipalFromContext returns the principal of the identity a context
@@ -99,8 +99,12 @@ var ScopeSharedSuffix = scope.SharedSuffix
 // ScopePrincipal.Authorize returns.
 var ErrScopeRefused = scope.ErrRefused
 
-// ScopeCrossTenantError refuses a tenant caller addressing another tenant. It
+// ScopeUnauthenticatedError refuses a request that carries no identity. It
 // matches ErrScopeRefused.
+type ScopeUnauthenticatedError = scope.UnauthenticatedError
+
+// ScopeCrossTenantError refuses a caller addressing another tenant, the
+// system tenant's callers included. It matches ErrScopeRefused.
 type ScopeCrossTenantError = scope.CrossTenantError
 
 // ScopeCrossUserError refuses a caller addressing a personal object it does

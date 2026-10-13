@@ -174,22 +174,27 @@ and applies the xkms scope rule, `scope.Principal.Authorize`
 ([`../multi-tenancy/architecture.md`](../multi-tenancy/architecture.md#ownership-scopes)):
 
 - `scope=tenant` belongs to the tenant whose ID is the owner; every user of
-  that tenant may address it, and a platform caller may address any tenant's.
+  that tenant may address it, and nobody outside it — a system-tenant caller
+  included (go-xkms#1406).
 - `scope=user` belongs to the principal whose subject is the owner, in the
-  caller's own tenant. Only that principal may address it — **a platform
-  caller included**: a system-tenant identity reaches its own personal keys,
-  never another user's.
+  caller's own tenant. Only that principal may address it — **a system-tenant
+  caller included**: it reaches its own personal keys, never another user's.
 - `scope=service` belongs to a workload in the caller's own tenant. The owner
   is the workload's ID and is not bound to the caller's subject; instead the
   caller must hold the explicit `ssh:service` permission, checked below the
   transport gate through `XKMSService.AuthorizeCaller`
   (`tenancy.Options.Permissions`). With no checker wired the scope is closed.
 
-A platform caller is `auth.IsCrossTenant`: no identity, or the system tenant.
+There is no platform caller. A request with no identity is refused
+(`*scope.UnauthenticatedError`), and a listing without one reads the empty
+partition. Every network transport attaches an identity first; on the unix
+socket it is `uid:<peer uid>` in the system tenant
+([`../multi-tenancy/api.md`](../multi-tenancy/api.md#identity-on-the-unix-socket)).
 The refusal carries the scope rule's reason in `OwnerBindingError.Cause`
-(`*scope.CrossTenantError`, `*scope.CrossUserError`,
-`*scope.ServiceScopeError`) for server-side diagnostics only. A refused request is served from the *empty partition*, a
-store nothing is ever written to (`pkg/ssh/tenancy/client.go:89-93`), so its
+(`*scope.UnauthenticatedError`, `*scope.CrossTenantError`,
+`*scope.CrossUserError`, `*scope.ServiceScopeError`) for server-side
+diagnostics only. A refused request is served from the *empty partition*, a
+store nothing is ever written to (`pkg/ssh/tenancy/client.go:130`), so its
 answer is by construction the genuine-miss answer; the service wraps it in
 `*OwnerBindingError`, which renders that answer verbatim
 (`pkg/ssh/tenancy/errors.go:44-71`). A refused write never reaches a store or
@@ -215,17 +220,18 @@ apart.
 The platform is the ordinary tenant `system` (`scope.TenantRoot("")` is
 `system/`), so its assets land under `system/ssh/...` exactly as tenant A's
 land under `tenant-a/ssh/...`. Which partition serves a request
-(`pkg/ssh/tenancy/client.go:284-305`):
+(`pkg/ssh/tenancy/client.go:275-320`):
 
-| Caller | Address | Partition |
-|---|---|---|
-| tenant-scoped | any it owns | its own tenant's |
-| platform | `scope=tenant`, owner a real tenant ID | that tenant's |
-| platform | anything else (user/service scope, the system tenant) | the platform partition, `system/` |
+| Caller | Partition |
+|---|---|
+| tenant-scoped | its own tenant's |
+| system-tenant | the platform partition, `system/` |
+| no identity | none — refused; a listing reads the empty partition |
 
-A platform identity therefore manages any tenant's `scope=tenant` assets but
-no user's `scope=user` assets other than its own, and service assets of the
-platform partition only with `ssh:service`. A session (`Session().Dial`) must take its key and its
+The partition follows the caller, never the address: a system-tenant
+identity manages the `system` tenant's `scope=tenant` assets, its own
+`scope=user` assets, and the platform partition's service assets with
+`ssh:service` — and no other tenant's. A session (`Session().Dial`) must take its key and its
 host-key pins from one partition the caller owns
 (`pkg/ssh/tenancy/ops.go:327-352`).
 

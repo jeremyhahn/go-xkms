@@ -20,8 +20,10 @@ What *is* on the wire is (a) the hardware operations each factor wraps, and
 | Capability | Embedded call | Notes |
 |---|---|---|
 | Build the canonical factor slice | `factor.DefaultFactors(cfg)` | the authoritative list: `piv`, `pkcs11`, `fido2`, `mtls` |
-| Build a registry with them | `factor.NewDefaultRegistry(cfg)` | returns `*qrdbsdk.AuthFactorRegistry` |
+| Build a registry with them | `factor.NewDefaultRegistry(cfg)` | returns `*qrdbsdk.AuthFactorRegistry`; administrator enrolment |
+| Build an embedded node's registry | `factor.NewNodeRegistry(cfg)` | every factor but `mtls`; go-qrdb's own `mtls` factor serves quorum share holders (`pkg/factor/registry.go:114`) |
 | Register into an existing registry | `registry.Register(f)` for each of `DefaultFactors(cfg)` | the registry type is **go-qrdb's** |
+| Decoy enrollment for a user with no enrollment | `f.DecoyEnrollment(seed, userID, like)` on each factor | called by go-qrdb's login ceremony, not by composers; the decoy's challenge `MethodData` has the same keys and types as a real one |
 
 SDK access is `Security().Auth().FIDO2()` and `Security().Auth().PIV()`.
 
@@ -62,7 +64,7 @@ take one from the response.
 | `piv` | `enrolled_cert_pem` (enrolled certificate, PEM), `slot`, `algorithm` | `Value`: DER ECDSA signature over SHA-256(nonce) |
 | `pkcs11` | `enrolled_public_key_der` (enrolled PKIX key, standard base64), `mechanism`, `algorithm`, `key_id` | `Value`: DER ECDSA or PKCS#1 v1.5 RSA signature over SHA-256(nonce) |
 | `fido2` | `enrolled_cose_public_key` (enrolled COSE key, standard base64), `rp_id`, `origins` (`[]string`), `require_uv` (`bool`), `credential_id`, `challenge_base64` | `Value`: assertion signature; `Metadata`: `authenticator_data`, `client_data` (base64) |
-| `mtls` | `enrolled_cert_pem`, `cert_spki_thumbprint`, `cert_cn` | `Value`: ECDSA or RSA signature over SHA-256(nonce), or Ed25519 over the nonce |
+| `mtls` | `enrolled_public_key_der` (the enrolled certificate's public key, standard base64 PKIX DER; never the certificate), `cert_spki_thumbprint`, `cert_cn` | `Value`: ECDSA or RSA signature over SHA-256(nonce), or Ed25519 over the nonce |
 
 A response carries **no public key**. Verification uses only the key in the
 stored challenge. Key material placed in a response's metadata

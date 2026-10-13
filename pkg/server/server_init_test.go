@@ -758,8 +758,9 @@ func TestInitializeFactorRegistry_Initializes(t *testing.T) {
 	if s.factorRegistry == nil {
 		t.Fatal("expected factorRegistry to be non-nil after initialization")
 	}
-	if got := len(s.factorRegistry.List()); got != 4 {
-		t.Fatalf("expected 4 factors registered, got %d: %v", got, s.factorRegistry.List())
+	// piv, pkcs11 and fido2; go-qrdb's own factor serves mtls.
+	if got := len(s.factorRegistry.List()); got != 3 {
+		t.Fatalf("expected 3 factors registered, got %d: %v", got, s.factorRegistry.List())
 	}
 }
 

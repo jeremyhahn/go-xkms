@@ -1,6 +1,6 @@
 # TPM Policies — API
 
-> **Status: NORMATIVE** · Feature: `tpm-policies` · Repo: `go-xkms` · Last verified: 2026-09-30
+> **Status: NORMATIVE** · Feature: `tpm-policies` · Repo: `go-xkms` · Last verified: 2026-10-12
 
 Design: [`architecture.md`](architecture.md). Service: `pkg/tpm2/policy.Service`,
 reached only through `XKMSService` (`pkg/xkms/servicer_tpm_policy.go`), which
@@ -8,13 +8,14 @@ every transport calls.
 
 ## Tenancy
 
-- Every policy operation acts on a tenant's TPM scope. A tenant-scoped caller
-  acts on its own tenant: it may leave `tenant_id` empty or name its own
-  tenant, and naming another is refused with the unknown-tenant not-found
-  (`xkms.TenantBindingError`). A cross-tenant (system) caller may name any
-  tenant; an empty `tenant_id` is the system scope.
+- Every policy operation acts on the caller's own tenant's TPM scope
+  (`targetTenant`, `pkg/xkms/tenant_binding.go:137`): a caller may leave
+  `tenant_id` empty or name its own tenant, and naming another is refused
+  with the unknown-tenant not-found (`xkms.TenantBindingError`). That holds
+  for a system-tenant caller too, whose own scope is the system scope
+  (go-xkms#1406).
 - A tenant's TPM mode and its vTPM are system-scope only
-  (`requirePlatformScope`): a tenant-scoped caller is refused even for its own
+  (`requireSystemTenant`): a tenant-scoped caller is refused even for its own
   tenant.
 
 ## Operations

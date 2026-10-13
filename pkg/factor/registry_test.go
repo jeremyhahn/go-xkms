@@ -44,6 +44,43 @@ func TestNewDefaultRegistry_RegistersAllFactors(t *testing.T) {
 	}
 }
 
+func TestNewNodeRegistry_LeavesMTLSToQRDB(t *testing.T) {
+	registry, err := NewNodeRegistry(Config{})
+	if err != nil {
+		t.Fatalf("NewNodeRegistry: %v", err)
+	}
+
+	for _, name := range []string{piv.FactorName, pkcs11.FactorName, fido2.FactorName} {
+		if _, err := registry.Lookup(name); err != nil {
+			t.Fatalf("Lookup(%q): %v", name, err)
+		}
+	}
+	if _, err := registry.Lookup(mtls.FactorName); err == nil {
+		t.Fatal("the node registry must not override go-qrdb's mtls factor")
+	}
+	if got := len(registry.List()); got != 3 {
+		t.Fatalf("registry has %d factors, want 3: %v", got, registry.List())
+	}
+}
+
+func TestNewNodeRegistry_AppliesConfig(t *testing.T) {
+	registry, err := NewNodeRegistry(Config{RequirePIVGenerator: true})
+	if err != nil {
+		t.Fatalf("NewNodeRegistry: %v", err)
+	}
+	f, err := registry.Lookup(piv.FactorName)
+	if err != nil {
+		t.Fatalf("Lookup(piv): %v", err)
+	}
+	pivFactor, ok := f.(*piv.Factor)
+	if !ok {
+		t.Fatalf("Lookup(piv) = %T, want *piv.Factor", f)
+	}
+	if available, _ := pivFactor.Available(context.Background()); available {
+		t.Fatal("a PIV factor that requires a generator and has none must report unavailable")
+	}
+}
+
 func TestNewDefaultRegistry_AppliesConfig(t *testing.T) {
 	registry, err := NewDefaultRegistry(Config{
 		FIDO2RPID:           "example.org",

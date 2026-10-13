@@ -1,6 +1,6 @@
 # SSH Keys, Known Hosts & Authorized Keys — API
 
-> **Status: NORMATIVE** · Feature: `ssh-keys` · Repo: `go-xkms` · Last verified: 2026-10-08
+> **Status: NORMATIVE** · Feature: `ssh-keys` · Repo: `go-xkms` · Last verified: 2026-10-12
 
 Transport model: [`../key-management/api.md`](../key-management/api.md)
 §"How the six transports are shaped". Unlike FROST and the PKCS#11 backend,
@@ -31,15 +31,16 @@ not the asset: `auth.Authorizer` binds the caller's own tenant as the
 target, so it cannot see the `scope`/`owner` a request names. The SSH
 service every transport is wired with (`pkg/ssh/tenancy`, built by
 `pkg/server/server.go:486-512`) binds them instead
-(`pkg/ssh/tenancy/client.go:170-182`):
+(`pkg/ssh/tenancy/client.go:199-205,275-285`):
 
-| Scope | A tenant-scoped caller may address |
+| Scope | A caller may address |
 |---|---|
 | `tenant` | only `owner` = its own tenant ID |
 | `user`, `service` | only `owner` = its own subject |
 
-A platform identity (no identity, or the system tenant —
-`auth.IsCrossTenant`) may address any owner. A request for an asset the
+Every caller is bound this way, a system-tenant caller included — there is
+no platform reach (go-xkms#1406). A request with no identity owns nothing and is refused the same way
+(the refusal's `Cause` is a `*scope.UnauthenticatedError`). A request for an asset the
 caller does not own answers exactly as a missing asset does — REST `404`,
 gRPC `NotFound`, MCP `JSONRPCCodeNotFound`, with the genuine-miss body
 (`pkg/ssh/tenancy/errors.go:44-71`). That includes writes: a `generate`,

@@ -67,8 +67,8 @@ func SharedPrefix(tenantID, feature string) (string, error)            // .../sh
 func PersonalPrefix(tenantID, feature, subject string) (string, error) // .../users/{subject}/
 func SharedSuffix(feature string) (string, error)    // "/{feature}/shared/", for cross-tenant scans
 
-type Principal struct{ TenantID, Subject string; Platform, ServiceAccess bool }
-func PrincipalOf(id *auth.Identity) Principal
+type Principal struct{ TenantID, Subject string; Authenticated, ServiceAccess bool }
+func PrincipalOf(id *auth.Identity) Principal         // nil -> unauthenticated
 func PrincipalFromContext(ctx context.Context) Principal
 type Target struct{ TenantID string; Scope Scope; Owner string }
 func (p Principal) Authorize(t Target) error
@@ -76,8 +76,10 @@ func (p Principal) Authorize(t Target) error
 
 Errors: `*InvalidScopeError`, `*InvalidSegmentError` (a tenant, feature or
 owner that is not exactly one key segment), and the refusals
-`*CrossTenantError`, `*CrossUserError`, `*ServiceScopeError`, which match
-`ErrRefused`. `ServiceAccess` is set by the feature after checking its own
+`*UnauthenticatedError` (no identity), `*CrossTenantError`, `*CrossUserError`,
+`*ServiceScopeError`, which match `ErrRefused`. `Authorize` grants no tenant
+an exception: a system-tenant principal naming another tenant gets
+`*CrossTenantError` like any other. `ServiceAccess` is set by the feature after checking its own
 service permission; `pkg/scope` carries no permission model.
 
 The whole package is exported through `sdk/go` for hosts that store objects
@@ -139,19 +141,37 @@ a code change.
   `XKMSService`, never in a transport** (go-xkms#1112). The RBAC gate binds
   the caller's own tenant as its target (`pkg/auth/authorize.go:61`), so it
   cannot tell whether a *requested* tenant is the caller's.
-  `bindTenantTarget` (`pkg/xkms/tenant_binding.go:67`) admits a cross-tenant
-  identity (`auth.IsCrossTenant`) for any target and a tenant-scoped one only
-  for its own tenant; it guards `GetTenant`, `DeleteTenant`, the plan-change
-  methods and the SPIFFE tenant of `SignCSR` (`pkg/xkms/servicer_ca.go:178`). `ListTenants` filters
-  to the caller's tenant (`pkg/xkms/servicer_tenant.go:127`). The gRPC
-  tenant RPCs no longer carry a barrier-registry fallback that bypassed the
-  servicer; with no `XKMSService` they answer `Unavailable`.
-- **Plan changes are platform-only** (go-xkms#1113).
-  `requirePlatformScope` (`pkg/xkms/tenant_binding.go:88`) refuses every
+  `bindTenantTarget` (`pkg/xkms/tenant_binding.go:88`) admits a caller only
+  for its own tenant — the system tenant included (go-xkms#1406). It guards
+  the SPIFFE tenant of `SignCSR`, `IssueCertificate` and the issuing tenant of
+  `RevokeCertificate` (`pkg/xkms/servicer_ca.go:172,403,474`), the TPM policy
+  and object-policy tenant, and `RotateScopeKeys`. A caller with no identity
+  is the system tenant here (`callerTenant`): in-process SDK callers carry
+  none.
+- **The tenant registry is the system tenant's.** `bindTenantRecord`
+  (`pkg/xkms/tenant_binding.go:99`) lets a system-tenant caller read and
+  delete any tenant record and binds every other caller to its own; it guards
+  `GetTenant` and `DeleteTenant` (`pkg/xkms/servicer_tenant.go:89,138`).
+  `ListTenants` filters with it (`visibleToCaller`,
+  `pkg/xkms/servicer_tenant.go:121`). Administering the record grants no reach
+  into the tenant's objects.
+- **Plan changes are system-only** (go-xkms#1113).
+  `requireSystemTenant` (`pkg/xkms/tenant_binding.go:119`) refuses every
   tenant-scoped caller, including one naming its own tenant
-  (`pkg/xkms/servicer_tenant.go:313,340`); the transports gate on
+  (`pkg/xkms/servicer_tenant.go:163,190`); the transports gate on
   `tenants:set_entitlements` / `tenants:set_quotas`
   (`pkg/auth/permissions.go:147-148`), never `tenants:update`.
+- **The tenant gate grants no reach.** `tenantgate.Access` selects the tenant
+  barrier a request runs under; a nil or system-tenant identity passes it
+  with no tenant barrier and is still confined to the system tenant by the
+  service binding and `pkg/scope`. `auth.IsCrossTenant` survives only for
+  tenant IAM administration in `pkg/acme/admin`.
+- **Every unix-socket peer carries an identity.** `pkg/api/unix` attaches
+  `uid:<peer uid>`, the system tenant and `auth_method=unix-peer`
+  (`unix.PeerAuthMethod`) to every peer its credential policy admits, ahead
+  of the tenant and embedder interceptors (`pkg/api/unix/peercred.go`,
+  `grpc_server.go`), so the keystore service and the hosted qrdb control
+  plane see the same identity.
 - **Isolation mode is fixed at creation.** There is no in-place upgrade from
   `prefix` to `barrier`; that is a data migration.
 - **A requested mode outside the tenant's entitlements is refused**, not
@@ -239,8 +259,14 @@ and no pool is configured, the embedded node gets one pool named
 - **Tenant binding** — `pkg/xkms/tenant_binding_test.go` (service layer,
   against go-qrdb's real TenantService over an in-memory barrier: A → B
   refused as not-found for every tenant operation, refusal equals a genuine
-  miss, A → A allowed except plan changes, system identity reaches every
-  tenant, `ListTenants` filtered, enable-encryption and CSR targets bound).
+  miss, A → A allowed except plan changes, a system or absent identity
+  refused for every other tenant's target but owning the tenant registry,
+  `ListTenants` filtered, enable-encryption and CSR targets bound).
+- **No identity, no lift** — `pkg/scope/scope_test.go` (a nil principal and a
+  system principal naming another tenant are both refused).
+- **Unix-socket identity** — `pkg/api/unix/peer_identity_test.go` (an
+  admitted peer carries `uid:<uid>` in the system tenant, a refused peer
+  reaches no handler, SSH RPCs are served to the peer over the socket).
   Per-transport not-found mapping:
   `pkg/api/rest/handlers_tenant_test.go`,
   `pkg/api/grpc/service_tenant_isolation_test.go`

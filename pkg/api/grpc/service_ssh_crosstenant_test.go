@@ -260,7 +260,7 @@ func TestSSHGRPC_OwnersKeepAccess(t *testing.T) {
 	})
 	require.NoError(t, err, "bob signs with his own key")
 	_, err = svc.SSHGetKey(grpcSSHAs(grpcSSHPlatform), &pb.SSHKeyRef{Scope: "tenant", Owner: grpcSSHTenantB, Name: "b-key"})
-	require.NoError(t, err, "a platform identity reaches tenant B's key")
+	assert.Equal(t, codes.NotFound, status.Code(err), "a system-tenant identity is confined to its own tenant")
 
 	_, err = svc.SSHGenerateKey(grpcSSHAs(grpcSSHAliceA), &pb.SSHGenerateKeyRequest{Scope: "user", Owner: "alice", Name: "alice-a-key", Algorithm: "ed25519"})
 	require.NoError(t, err, "alice creates her own key")

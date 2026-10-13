@@ -29,14 +29,13 @@
 //   - scope=tenant is owned by the tenant whose ID is the owner, and every
 //     user of that tenant may address it;
 //   - scope=user is owned by the principal whose subject is the owner, in
-//     the caller's tenant, and only that principal may address it -- a
-//     platform caller included;
+//     the caller's tenant, and only that principal may address it;
 //   - scope=service is owned by a workload in the caller's tenant, and only
 //     a caller holding the explicit ssh:service permission may address it
 //     (Options.Permissions; with none wired the scope is closed).
 //
-// A platform caller (auth.IsCrossTenant: no identity, or the system tenant)
-// may also address any tenant's scope=tenant assets. A refusal is an
+// Every caller, the system tenant's included, is confined to its own tenant,
+// and a request carrying no identity is refused. A refusal is an
 // *OwnerBindingError that answers exactly as a missing asset does; a listing
 // silently omits what the caller may not see.
 //
@@ -57,9 +56,7 @@
 //	{tenant}/ssh/users/{subject}/<kind>/<name>    scope=user
 //	{tenant}/ssh/services/{owner}/<kind>/<name>   scope=service
 //
-// A tenant-scoped caller is always served from its own tenant's partition. A
-// platform caller is served from the partition of the tenant a scope=tenant
-// owner names, and from the platform partition otherwise.
+// A caller is always served from its own tenant's partition.
 package tenancy
 
 import (
@@ -187,9 +184,6 @@ func callerOf(ctx context.Context) caller {
 	return caller{identity: identity, principal: scope.PrincipalOf(identity)}
 }
 
-// platform reports whether the caller is platform-scoped.
-func (a caller) platform() bool { return a.principal.Platform }
-
 // target returns the owner a request addressing (sc, owner) names: a
 // scope=tenant owner is the tenant itself; a user or service owner lives in
 // the caller's own tenant.
@@ -284,57 +278,51 @@ func (c *client) bind(ctx context.Context, sc pkgscope.Scope, owner string) (bin
 	if refusal := c.authorize(ctx, who, sc, owner); refusal != nil {
 		return binding{refusal: refusal}, nil
 	}
-	if !who.platform() {
-		if err := validatePartitionTenant(who.identity.TenantID); err != nil {
-			return binding{}, err
-		}
-		return binding{tenantID: who.identity.TenantID}, nil
+	tenantID, err := partitionTenant(who)
+	if err != nil {
+		return binding{}, err
 	}
-	if sc != pkgscope.Tenant || qrdbsdk.IsSystemTenant(owner) {
-		return binding{}, nil
-	}
-	if err := storage.ValidateTenantID(owner); err != nil {
-		// No tenant can have this ID, so it has no partition and no assets.
-		return binding{refusal: &scope.InvalidSegmentError{Field: "tenant", Value: owner, Err: err}}, nil
-	}
-	return binding{tenantID: owner}, nil
+	return binding{tenantID: tenantID}, nil
 }
 
-// listPartition opens the partition a listing filtered by (rawScope, owner)
-// reads, and the filter that keeps what the caller may see. Either filter may
-// be empty. A tenant-scoped caller always reads its own partition.
-func (c *client) listPartition(ctx context.Context, rawScope, owner string) (sdkssh.Client, func(scope, owner string) bool, error) {
-	who := callerOf(ctx)
-	visible := c.visibility(ctx, who)
-	var sc pkgscope.Scope
+// listPartition opens the partition a listing filtered by rawScope reads, and
+// the filter that keeps what the caller may see. A caller always reads its own
+// tenant's partition; a caller with no identity reads the empty one.
+func (c *client) listPartition(ctx context.Context, rawScope string) (sdkssh.Client, func(scope, owner string) bool, error) {
 	if rawScope != "" {
-		parsed, err := pkgscope.Parse(rawScope)
-		if err != nil {
+		if _, err := pkgscope.Parse(rawScope); err != nil {
 			return nil, nil, &sdkssh.InvalidScopeError{Value: rawScope}
 		}
-		sc = parsed
 	}
-	if !who.platform() {
-		if err := validatePartitionTenant(who.identity.TenantID); err != nil {
-			return nil, nil, err
-		}
-		p, err := c.open(who.identity.TenantID)
-		return p, visible, err
-	}
-	if sc != pkgscope.Tenant || owner == "" || qrdbsdk.IsSystemTenant(owner) {
-		p, err := c.open("")
-		return p, visible, err
-	}
-	if storage.ValidateTenantID(owner) != nil {
+	who := callerOf(ctx)
+	visible := c.visibility(ctx, who)
+	if !who.principal.Authenticated {
 		return c.empty, visible, nil
 	}
-	p, err := c.open(owner)
+	tenantID, err := partitionTenant(who)
+	if err != nil {
+		return nil, nil, err
+	}
+	p, err := c.open(tenantID)
 	return p, visible, err
 }
 
-// validatePartitionTenant checks a tenant-scoped caller's tenant can root a
-// partition. auth.IsCrossTenant already classed an empty tenant as the
-// platform, so tenantID is never empty here.
+// partitionTenant returns the partition an authenticated caller is served
+// from: its own tenant's, or "" (the platform partition) for the system
+// tenant.
+func partitionTenant(who caller) (string, error) {
+	if scope.IsSystem(who.principal.TenantID) {
+		return "", nil
+	}
+	if err := validatePartitionTenant(who.identity.TenantID); err != nil {
+		return "", err
+	}
+	return who.identity.TenantID, nil
+}
+
+// validatePartitionTenant checks a tenant caller's tenant can root a
+// partition. The system tenant is the platform partition, so tenantID is never
+// empty here.
 func validatePartitionTenant(tenantID string) error {
 	if err := storage.ValidateTenantID(tenantID); err != nil {
 		return &CallerTenantError{TenantID: tenantID, Err: err}

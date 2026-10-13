@@ -27,11 +27,14 @@
 // naming convention.
 //
 // Challenge issues a 32-byte crypto/rand nonce and embeds the enrolled
-// certificate PEM in MethodData["enrolled_cert_pem"] so that Verify can
-// authenticate against the server-issued (not response-supplied) key.
+// certificate's public key (standard base64 PKIX DER) in
+// MethodData["enrolled_public_key_der"] so that Verify can authenticate
+// against the server-issued (not response-supplied) key. The certificate
+// itself is never exposed: its issuer signature would tell a real holder
+// from a decoy enrollment.
 //
-// Verify reads the enrolled certificate from challenge.MethodData
-// ["enrolled_cert_pem"] — never from the response — and checks that
+// Verify reads the enrolled key from challenge.MethodData
+// ["enrolled_public_key_der"] — never from the response — and checks that
 // response.Value is a valid signature over the nonce. ECDSA (ASN.1 DER,
 // SHA-256 digest), RSA PKCS#1 v1.5 (SHA-256 digest), and Ed25519 (raw nonce)
 // are all supported.
@@ -52,6 +55,7 @@ import (
 	"crypto/sha256"
 	"crypto/x509"
 	"encoding/asn1"
+	"encoding/base64"
 	"encoding/pem"
 	"math/big"
 	"strconv"
@@ -66,6 +70,12 @@ const FactorName = "mtls"
 const (
 	defaultChallengeTTLSeconds = 5 * 60
 	nonceLength                = 32
+
+	// methodDataEnrolledKey is the challenge MethodData key carrying the
+	// enrolled certificate's PKIX public key, standard-base64 DER. Verify
+	// reads the verification key from here and nowhere else, so a response
+	// can never substitute its own key.
+	methodDataEnrolledKey = "enrolled_public_key_der"
 )
 
 // Config configures an mTLS Factor. The zero value is valid.
@@ -151,12 +161,22 @@ func (f *Factor) Enroll(_ context.Context, params *qrdbsdk.AuthFactorEnrollParam
 }
 
 // Challenge produces a 32-byte random nonce the custodian must sign with the
-// private key corresponding to their enrolled certificate. The enrolled
-// certificate PEM is embedded in MethodData["enrolled_cert_pem"] so Verify
-// can authenticate against the server-issued key without trusting the response.
+// private key corresponding to their enrolled certificate. The certificate's
+// public key is embedded in MethodData["enrolled_public_key_der"] so Verify
+// can authenticate against the server-issued key without trusting the
+// response. Only the key is exposed, never the certificate: a CA-issued
+// certificate's signature verifies under the CA and a decoy's cannot, so
+// exposing it would tell holders from decoys.
 func (f *Factor) Challenge(_ context.Context, enrollment *qrdbsdk.AuthFactorEnrollment) (*qrdbsdk.AuthFactorChallenge, error) {
 	if enrollment == nil {
 		return nil, &qrdbsdk.AuthFactorEnrollmentInvalidError{Reason: "enrollment must not be nil"}
+	}
+	cert, err := parseCertPEM(enrollment.PublicKey)
+	if err != nil {
+		return nil, &qrdbsdk.AuthFactorEnrollmentInvalidError{
+			EnrollmentID: enrollment.EnrollmentID,
+			Reason:       "mtls: enrolled certificate: " + err.Error(),
+		}
 	}
 	nonce := make([]byte, nonceLength)
 	if _, err := rand.Read(nonce); err != nil {
@@ -177,9 +197,7 @@ func (f *Factor) Challenge(_ context.Context, enrollment *qrdbsdk.AuthFactorEnro
 		Nonce:        nonce,
 		ExpiresAt:    time.Now().UTC().Add(time.Duration(ttl) * time.Second),
 		MethodData: map[string]any{
-			// enrolled_cert_pem carries the server-side enrolled public key so
-			// Verify never needs to trust a key supplied by the response.
-			"enrolled_cert_pem":    string(enrollment.PublicKey),
+			methodDataEnrolledKey:  base64.StdEncoding.EncodeToString(cert.RawSubjectPublicKeyInfo),
 			"cert_spki_thumbprint": enrollment.Metadata["cert_spki_thumbprint"],
 			"cert_cn":              enrollment.Metadata["cert_cn"],
 		},
@@ -188,11 +206,11 @@ func (f *Factor) Challenge(_ context.Context, enrollment *qrdbsdk.AuthFactorEnro
 
 // Verify checks that response.Value is a valid signature over the challenge
 // nonce, produced by the private key corresponding to the enrolled
-// certificate. The enrolled certificate PEM is read from
-// challenge.MethodData["enrolled_cert_pem"] — never from the response —
+// certificate. The enrolled public key is read from
+// challenge.MethodData["enrolled_public_key_der"] — never from the response —
 // ensuring the key cannot be substituted by an attacker.
 //
-// Checks in order: challenge expiry, enrolled cert parse, then
+// Checks in order: challenge expiry, enrolled key decode, then
 // algorithm-specific signature verification:
 //   - ECDSA: ASN.1 DER (r,s) over SHA-256(nonce)
 //   - RSA:   PKCS#1 v1.5 over SHA-256(nonce)
@@ -208,26 +226,26 @@ func (f *Factor) Verify(_ context.Context, challenge *qrdbsdk.AuthFactorChalleng
 		return &qrdbsdk.AuthFactorChallengeExpiredError{ChallengeID: challenge.ChallengeID}
 	}
 
-	// Read the enrolled cert from the server-issued challenge, not the response.
-	enrolledPEM, ok := challenge.MethodData["enrolled_cert_pem"].(string)
-	if !ok || enrolledPEM == "" {
+	// Read the enrolled key from the server-issued challenge, not the response.
+	encoded, ok := challenge.MethodData[methodDataEnrolledKey].(string)
+	if !ok || encoded == "" {
 		return &qrdbsdk.AuthFactorVerificationFailedError{
 			FactorName: FactorName,
-			Reason:     "enrolled_cert_pem missing from challenge MethodData",
+			Reason:     methodDataEnrolledKey + " missing from challenge MethodData",
 		}
 	}
-
-	cert, err := parseCertPEM([]byte(enrolledPEM))
+	der, err := base64.StdEncoding.DecodeString(encoded)
 	if err != nil {
-		return &qrdbsdk.AuthFactorVerificationFailedError{
-			FactorName: FactorName,
-			Reason:     "parse enrolled certificate: " + err.Error(),
-		}
+		return &qrdbsdk.AuthFactorVerificationFailedError{FactorName: FactorName, Reason: "decode " + methodDataEnrolledKey + ": " + err.Error()}
+	}
+	enrolled, err := x509.ParsePKIXPublicKey(der)
+	if err != nil {
+		return &qrdbsdk.AuthFactorVerificationFailedError{FactorName: FactorName, Reason: "parse enrolled public key: " + err.Error()}
 	}
 
 	digest := sha256.Sum256(challenge.Nonce)
 
-	switch pub := cert.PublicKey.(type) {
+	switch pub := enrolled.(type) {
 	case *ecdsa.PublicKey:
 		return verifyECDSA(pub, digest[:], response.Value)
 	case *rsa.PublicKey:

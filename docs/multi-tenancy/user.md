@@ -1,6 +1,6 @@
 # Multi-Tenancy — User Guide
 
-> **Status: NORMATIVE** · Feature: `multi-tenancy` · Repo: `go-xkms` · Last verified: 2026-08-19
+> **Status: NORMATIVE** · Feature: `multi-tenancy` · Repo: `go-xkms` · Last verified: 2026-10-12
 
 ## Choose the isolation mode with the customer's requirement in front of you
 
@@ -81,6 +81,19 @@ Cross-tenant access returns "not found", not "forbidden". That is deliberate:
 "forbidden" would confirm the tenant exists and make tenant IDs enumerable. When
 debugging, do not read a 404 as proof that a tenant was never created.
 
+## The system tenant runs the platform, not the tenants
+
+An operator in the `system` tenant creates, lists and deletes tenants and sets
+their plans. That is where its authority over tenants ends. It cannot sign a
+CSR into another tenant, revoke another tenant's certificate, or read
+another tenant's SSH keys, TPM policies, passwords or OIDC credentials; those
+requests answer "not found", exactly as they would for a tenant that does not
+exist. To act inside a tenant, act as one of that tenant's identities.
+
+The same holds for `xkmsctl` over the local unix socket: the daemon sees you
+as `uid:<your uid>` in the `system` tenant. A personal object you create that
+way (an SSH key in `user` scope, say) is owned by `uid:<your uid>`.
+
 ## Troubleshooting
 
 | What you see | What it means | What to do |
@@ -92,6 +105,8 @@ debugging, do not read a 404 as proof that a tenant was never created.
 | tenant routes return 404 | tenancy is not configured on this server | server-side configuration |
 | user operations ignore the tenant | expected — the user plane is identity-scoped, not tenant-scoped | not a bug |
 | the control plane works before any tenant is unsealed | expected — the SO certificate is scoped to the `system` tenant | not a bug |
+| a system-tenant operator gets "not found" for another tenant's certificate, SSH key or TPM policy | expected — the system tenant is confined to itself outside tenant administration | act as an identity of that tenant |
+| every call over the unix socket fails `Unavailable` | the socket's credential policy (exclusive peers) refused your uid/gid | add it to the allowlist, or run as an allowed user |
 
 ## Where to go next
 

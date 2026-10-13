@@ -1,6 +1,6 @@
 # RBAC — Architecture
 
-> **Status: NORMATIVE** · Feature: `rbac` · Repo: `go-xkms` · Last verified: 2026-09-30 (#1114, #1115, #1228, #1230, #1231, #1232)
+> **Status: NORMATIVE** · Feature: `rbac` · Repo: `go-xkms` · Last verified: 2026-10-12 (#1114, #1115, #1228, #1230, #1231, #1232, #1406)
 
 ## The problem
 
@@ -143,7 +143,8 @@ for every transport:
   service every transport calls binds the owner to the caller with the xkms
   scope rule (`scope.Principal.Authorize`, see
   [`../multi-tenancy/architecture.md`](../multi-tenancy/architecture.md#ownership-scopes)):
-  a `user` asset only to its owner -- a platform caller included -- and a
+  a `tenant` asset only to callers of that tenant, a `user` asset only to its
+  owner -- a system-tenant caller included in both -- and a
   `service` asset only to a caller that also holds `ssh:service`, checked
   below the gate through `XKMSService.AuthorizeCaller`. It serves each tenant from its own
   storage partition and backend-key namespace, so equal subjects in two
@@ -178,8 +179,16 @@ ownership scope (`pkg/scope`): `passwords:read` reaches the tenant's shared
 entries and the caller's own personal ones, never another user's; `ssh:read`
 likewise. Platform-global state (the sealed platform store, the system
 barrier, the backend credential strategy) is additionally refused to
-tenant-scoped callers by `requirePlatformScope`, whatever permission they
+tenant-scoped callers by `requireSystemTenant`, whatever permission they
 hold.
+
+The `ScopeSelf` lift is go-qrdb's permission rule and stops at the
+permission gate. It lets a system-tenant identity pass the gate for a request
+naming another tenant; it never lets it reach that tenant's objects. Past the
+gate xkms confines every caller, the system tenant included, to its own
+tenant (`pkg/xkms/tenant_binding.go`, `pkg/scope`; go-xkms#1406). The only
+system-tenant authority over other tenants is administration of the tenant
+model itself: the tenant registry and plan management.
 
 ## Identities carry role identifiers, never role names
 
@@ -210,11 +219,12 @@ Each was replaced by the model the operation already declared:
   the vault administrator from any other writer. It resolves membership with
   `auth.HoldsSystemRole` against the identity's own tenant
   (`pkg/xkms/servicer_password.go:113`, `:144`).
-- **The tenant gate** has no role exemption. Cross-tenant scope is qrdb's
-  system-tenant rule alone, through `auth.IsCrossTenant`
-  (`pkg/api/tenantgate/tenantgate.go:107`). The system tenant's Security
-  Officer is cross-tenant already; a tenant-local officer is confined to its
-  tenant, as qrdb's authorizer confines it.
+- **The tenant gate** has no role exemption. It only selects the tenant
+  barrier a request runs under; a nil or system-tenant identity passes with
+  none (`pkg/api/tenantgate/tenantgate.go:116`), and passing grants no reach
+  into another tenant (go-xkms#1406). A tenant-local officer is confined to
+  its tenant, as qrdb's authorizer confines it; the system tenant's officer
+  is confined to the system tenant by the service binding.
 
 `Identity.HasRole` belongs to go-qrdb and cannot be removed here. The
 `forbidigo` rule in `.golangci.yml:115` fails the build on any call to it.

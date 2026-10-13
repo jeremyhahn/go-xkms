@@ -233,11 +233,11 @@ func (e *env) customConfig() Config {
 }
 
 func user(tenant, subject string) scope.Principal {
-	return scope.Principal{TenantID: tenant, Subject: subject}
+	return scope.Principal{TenantID: tenant, Subject: subject, Authenticated: true}
 }
 
 func platform(subject string) scope.Principal {
-	return scope.Principal{TenantID: scope.SystemTenant, Subject: subject, Platform: true}
+	return user(scope.SystemTenant, subject)
 }
 
 func shared(name string) Ref { return Ref{Scope: scope.Tenant, Name: name} }

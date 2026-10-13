@@ -287,7 +287,7 @@ func TestSSHMCP_OwnersKeepAccess(t *testing.T) {
 	require.NoError(t, err, "bob signs with his own key")
 	_, err = s.handleSSHKeysGet(mcpSSHAs(mcpSSHPlatform), sshRequest(t, "ssh.keys.get",
 		sdkssh.GetKeyRequest{Scope: "tenant", Owner: mcpSSHTenantB, Name: "b-key"}))
-	require.NoError(t, err, "a platform identity reaches tenant B's key")
+	require.Error(t, err, "a system-tenant identity is confined to its own tenant")
 
 	_, err = s.handleSSHKeysGenerate(mcpSSHAs(mcpSSHAliceA), sshRequest(t, "ssh.keys.generate",
 		sdkssh.GenerateRequest{Scope: "user", Owner: "alice", Name: "alice-a-key", Algorithm: "ed25519"}))

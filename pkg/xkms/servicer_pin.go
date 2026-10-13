@@ -23,7 +23,7 @@ import (
 // PINServicer defines operations for managing Security Officer and User PINs.
 //
 // The PINs guard the platform's own token, so every method is
-// platform-scoped (requirePlatformScope, go-xkms#1227): a tenant-scoped caller
+// platform-scoped (requireSystemTenant, go-xkms#1227): a tenant-scoped caller
 // is refused with a *TenantBindingError that reads as not-found, before the
 // PIN backend is touched -- a refused attempt does not even count toward the
 // lockout.
@@ -41,7 +41,7 @@ type PINServicer interface {
 // SetSOPIN sets the Security Officer PIN.
 func (s *XKMSService) SetSOPIN(ctx context.Context, req *transport.SetSOPINRequest) error {
 	pinManager := s.pinManager.load()
-	if err := requirePlatformScope(ctx, "set SO PIN", ""); err != nil {
+	if err := requireSystemTenant(ctx, "set SO PIN", ""); err != nil {
 		return err
 	}
 	if pinManager == nil {
@@ -53,7 +53,7 @@ func (s *XKMSService) SetSOPIN(ctx context.Context, req *transport.SetSOPINReque
 // SetUserPIN sets the User PIN using the Security Officer PIN for authorization.
 func (s *XKMSService) SetUserPIN(ctx context.Context, req *transport.SetUserPINRequest) error {
 	pinManager := s.pinManager.load()
-	if err := requirePlatformScope(ctx, "set user PIN", ""); err != nil {
+	if err := requireSystemTenant(ctx, "set user PIN", ""); err != nil {
 		return err
 	}
 	if pinManager == nil {
@@ -65,7 +65,7 @@ func (s *XKMSService) SetUserPIN(ctx context.Context, req *transport.SetUserPINR
 // ChangeSOPIN changes the Security Officer PIN.
 func (s *XKMSService) ChangeSOPIN(ctx context.Context, req *transport.ChangeSOPINRequest) error {
 	pinManager := s.pinManager.load()
-	if err := requirePlatformScope(ctx, "change SO PIN", ""); err != nil {
+	if err := requireSystemTenant(ctx, "change SO PIN", ""); err != nil {
 		return err
 	}
 	if pinManager == nil {
@@ -77,7 +77,7 @@ func (s *XKMSService) ChangeSOPIN(ctx context.Context, req *transport.ChangeSOPI
 // ChangeUserPIN changes the User PIN.
 func (s *XKMSService) ChangeUserPIN(ctx context.Context, req *transport.ChangeUserPINRequest) error {
 	pinManager := s.pinManager.load()
-	if err := requirePlatformScope(ctx, "change user PIN", ""); err != nil {
+	if err := requireSystemTenant(ctx, "change user PIN", ""); err != nil {
 		return err
 	}
 	if pinManager == nil {
@@ -89,7 +89,7 @@ func (s *XKMSService) ChangeUserPIN(ctx context.Context, req *transport.ChangeUs
 // VerifySOPIN verifies the Security Officer PIN.
 func (s *XKMSService) VerifySOPIN(ctx context.Context, req *transport.VerifySOPINRequest) error {
 	pinManager := s.pinManager.load()
-	if err := requirePlatformScope(ctx, "verify SO PIN", ""); err != nil {
+	if err := requireSystemTenant(ctx, "verify SO PIN", ""); err != nil {
 		return err
 	}
 	if pinManager == nil {
@@ -101,7 +101,7 @@ func (s *XKMSService) VerifySOPIN(ctx context.Context, req *transport.VerifySOPI
 // VerifyUserPIN verifies the User PIN.
 func (s *XKMSService) VerifyUserPIN(ctx context.Context, req *transport.VerifyUserPINRequest) error {
 	pinManager := s.pinManager.load()
-	if err := requirePlatformScope(ctx, "verify user PIN", ""); err != nil {
+	if err := requireSystemTenant(ctx, "verify user PIN", ""); err != nil {
 		return err
 	}
 	if pinManager == nil {
@@ -113,7 +113,7 @@ func (s *XKMSService) VerifyUserPIN(ctx context.Context, req *transport.VerifyUs
 // GetLockoutStatus returns the current PIN lockout status.
 func (s *XKMSService) GetLockoutStatus(ctx context.Context) (*transport.LockoutStatusResponse, error) {
 	pinManager := s.pinManager.load()
-	if err := requirePlatformScope(ctx, "PIN lockout status", ""); err != nil {
+	if err := requireSystemTenant(ctx, "PIN lockout status", ""); err != nil {
 		return nil, err
 	}
 	if pinManager == nil {
@@ -141,7 +141,7 @@ func (s *XKMSService) GetLockoutStatus(ctx context.Context) (*transport.LockoutS
 // ResetLockout resets the PIN lockout counter using the Security Officer PIN.
 func (s *XKMSService) ResetLockout(ctx context.Context, req *transport.ResetLockoutRequest) error {
 	pinManager := s.pinManager.load()
-	if err := requirePlatformScope(ctx, "reset PIN lockout", ""); err != nil {
+	if err := requireSystemTenant(ctx, "reset PIN lockout", ""); err != nil {
 		return err
 	}
 	if pinManager == nil {

@@ -25,6 +25,7 @@ import (
 	"crypto/x509"
 	"crypto/x509/pkix"
 	"encoding/asn1"
+	"encoding/base64"
 	"encoding/pem"
 	"errors"
 	"math/big"
@@ -254,8 +255,30 @@ func TestMTLSFactor_Challenge_HappyPath(t *testing.T) {
 	if challenge.Expired() {
 		t.Fatal("freshly issued challenge must not be expired")
 	}
-	if pem, ok := challenge.MethodData["enrolled_cert_pem"].(string); !ok || pem == "" {
-		t.Fatal("enrolled_cert_pem missing or empty in MethodData")
+	encoded, ok := challenge.MethodData[methodDataEnrolledKey].(string)
+	if !ok || encoded == "" {
+		t.Fatal("enrolled_public_key_der missing or empty in MethodData")
+	}
+	if _, present := challenge.MethodData["enrolled_cert_pem"]; present {
+		t.Fatal("challenge must not expose the enrolled certificate")
+	}
+	der, err := base64.StdEncoding.DecodeString(encoded)
+	if err != nil {
+		t.Fatalf("decode enrolled_public_key_der: %v", err)
+	}
+	if _, err := x509.ParsePKIXPublicKey(der); err != nil {
+		t.Fatalf("enrolled_public_key_der is not a PKIX public key: %v", err)
+	}
+}
+
+func TestMTLSFactor_Challenge_RejectsCorruptEnrollment(t *testing.T) {
+	enrollment := &qrdbsdk.AuthFactorEnrollment{EnrollmentID: "e1", PublicKey: []byte("not a certificate")}
+	var inv *qrdbsdk.AuthFactorEnrollmentInvalidError
+	if _, err := New(Config{}).Challenge(context.Background(), enrollment); !errors.As(err, &inv) {
+		t.Fatalf("Challenge(corrupt) err = %v, want EnrollmentInvalidError", err)
+	}
+	if inv.EnrollmentID != "e1" {
+		t.Errorf("EnrollmentID = %q, want e1", inv.EnrollmentID)
 	}
 }
 
@@ -378,7 +401,7 @@ func TestMTLSFactor_Verify_RejectsMissingEnrolledCertPEM(t *testing.T) {
 	})
 	challenge, _ := f.Challenge(ctx, enrollment)
 	// Remove the enrolled cert from MethodData to simulate a tampered challenge.
-	delete(challenge.MethodData, "enrolled_cert_pem")
+	delete(challenge.MethodData, methodDataEnrolledKey)
 
 	var failed *qrdbsdk.AuthFactorVerificationFailedError
 	if err := f.Verify(ctx, challenge, &qrdbsdk.AuthFactorResponse{Value: kp.sign(challenge.Nonce)}); !errors.As(err, &failed) {
@@ -421,7 +444,7 @@ func TestMTLSFactor_Verify_RejectsWrongKey(t *testing.T) {
 	}
 }
 
-func TestMTLSFactor_Verify_RejectsCorruptEnrolledCert(t *testing.T) {
+func TestMTLSFactor_Verify_RejectsCorruptEnrolledKey(t *testing.T) {
 	ctx := context.Background()
 	f := New(Config{})
 	kp := ecdsaKeyPair(t, time.Now().Add(24*time.Hour))
@@ -430,13 +453,18 @@ func TestMTLSFactor_Verify_RejectsCorruptEnrolledCert(t *testing.T) {
 		MethodParams: map[string]any{"cert_pem": kp.certPEM},
 	})
 	challenge, _ := f.Challenge(ctx, enrollment)
-	// Replace enrolled cert in MethodData with a garbage PEM to simulate
-	// store corruption.
-	challenge.MethodData["enrolled_cert_pem"] = "-----BEGIN CERTIFICATE-----\ngarbage\n-----END CERTIFICATE-----\n"
+	// Replace the enrolled key in MethodData with garbage to simulate store
+	// corruption: once not base64, once base64 of bytes that are no PKIX key.
+	challenge.MethodData[methodDataEnrolledKey] = "!not base64!"
+	var notBase64 *qrdbsdk.AuthFactorVerificationFailedError
+	if err := f.Verify(ctx, challenge, &qrdbsdk.AuthFactorResponse{Value: kp.sign(challenge.Nonce)}); !errors.As(err, &notBase64) {
+		t.Fatalf("Verify(non-base64 key) err = %v, want VerificationFailedError", err)
+	}
+	challenge.MethodData[methodDataEnrolledKey] = base64.StdEncoding.EncodeToString([]byte("garbage"))
 
 	var failed *qrdbsdk.AuthFactorVerificationFailedError
 	if err := f.Verify(ctx, challenge, &qrdbsdk.AuthFactorResponse{Value: kp.sign(challenge.Nonce)}); !errors.As(err, &failed) {
-		t.Fatalf("Verify(corrupt cert) err = %v, want VerificationFailedError", err)
+		t.Fatalf("Verify(corrupt key) err = %v, want VerificationFailedError", err)
 	}
 }
 

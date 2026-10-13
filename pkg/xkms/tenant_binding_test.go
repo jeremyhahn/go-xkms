@@ -74,8 +74,8 @@ func newBindingTestService(t *testing.T) *XKMSService {
 	return svc
 }
 
-// systemCtx carries an identity in the reserved system tenant: the platform
-// scope that may address every tenant.
+// systemCtx carries an identity in the reserved system tenant, which manages
+// the tenant registry but reaches no tenant's objects.
 func systemCtx() context.Context {
 	return auth.WithIdentity(context.Background(), &auth.Identity{
 		Subject: "so@example.com", TenantID: qrdbsdk.SystemTenantID,
@@ -178,10 +178,12 @@ func TestBindTenantTarget_DecisionTable(t *testing.T) {
 		target   string
 		allowed  bool
 	}{
-		{"no identity is the platform scope", nil, "tenant-a", true},
-		{"empty tenant is the platform scope", &auth.Identity{Subject: "so"}, "tenant-a", true},
-		{"system tenant reaches any tenant", &auth.Identity{TenantID: qrdbsdk.SystemTenantID}, "tenant-a", true},
-		{"system tenant reaches the system scope", &auth.Identity{TenantID: qrdbsdk.SystemTenantID}, "", true},
+		{"no identity is the system tenant", nil, "", true},
+		{"no identity is confined to the system tenant", nil, "tenant-a", false},
+		{"empty tenant is confined to the system tenant", &auth.Identity{Subject: "so"}, "tenant-a", false},
+		{"system tenant cannot reach another tenant", &auth.Identity{TenantID: qrdbsdk.SystemTenantID}, "tenant-a", false},
+		{"system tenant reaches its own scope", &auth.Identity{TenantID: qrdbsdk.SystemTenantID}, "", true},
+		{"system tenant reaches its own ID", &auth.Identity{TenantID: qrdbsdk.SystemTenantID}, qrdbsdk.SystemTenantID, true},
 		{"own tenant is allowed", &auth.Identity{TenantID: "tenant-a"}, "tenant-a", true},
 		{"another tenant is refused", &auth.Identity{TenantID: "tenant-a"}, "tenant-b", false},
 		{"the system scope is refused to a tenant", &auth.Identity{TenantID: "tenant-a"}, "", false},
@@ -189,8 +191,10 @@ func TestBindTenantTarget_DecisionTable(t *testing.T) {
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
 			ctx := context.Background()
+			wantCaller := ""
 			if tc.identity != nil {
 				ctx = auth.WithIdentity(ctx, tc.identity)
+				wantCaller = tc.identity.TenantID
 			}
 			err := bindTenantTarget(ctx, "op", tc.target)
 			if tc.allowed {
@@ -200,17 +204,53 @@ func TestBindTenantTarget_DecisionTable(t *testing.T) {
 			var bindErr *TenantBindingError
 			require.ErrorAs(t, err, &bindErr)
 			assert.Equal(t, "op", bindErr.Op)
-			assert.Equal(t, tc.identity.TenantID, bindErr.CallerTenantID)
+			assert.Equal(t, wantCaller, bindErr.CallerTenantID)
 			assert.Equal(t, tc.target, bindErr.TargetTenantID)
 		})
 	}
 }
 
-func TestRequirePlatformScope(t *testing.T) {
-	assert.NoError(t, requirePlatformScope(context.Background(), "op", "tenant-a"))
-	assert.NoError(t, requirePlatformScope(systemCtx(), "op", "tenant-a"))
+// TestBindTenantRecord_SystemOwnsTheRegistry pins the one place the system
+// tenant reaches past itself: tenant records live in the system tenant's
+// registry, so the system manages them, while a tenant sees only its own.
+func TestBindTenantRecord_SystemOwnsTheRegistry(t *testing.T) {
+	assert.NoError(t, bindTenantRecord(systemCtx(), "op", "tenant-a"))
+	assert.NoError(t, bindTenantRecord(context.Background(), "op", "tenant-a"))
+	assert.NoError(t, bindTenantRecord(tenantCtx("tenant-a"), "op", "tenant-a"))
 
-	err := requirePlatformScope(tenantCtx("tenant-a"), "op", "tenant-a")
+	err := bindTenantRecord(tenantCtx("tenant-a"), "op", "tenant-b")
+	var bindErr *TenantBindingError
+	require.ErrorAs(t, err, &bindErr)
+	assert.Equal(t, "tenant-a", bindErr.CallerTenantID)
+	assert.Equal(t, "tenant-b", bindErr.TargetTenantID)
+}
+
+// TestTargetTenant_ConfinesEveryCaller pins #1406: naming no tenant resolves
+// to the caller's own, and naming another is refused to every caller, the
+// system tenant's included.
+func TestTargetTenant_ConfinesEveryCaller(t *testing.T) {
+	got, err := targetTenant(tenantCtx("tenant-a"), "op", "")
+	require.NoError(t, err)
+	assert.Equal(t, "tenant-a", got)
+
+	got, err = targetTenant(systemCtx(), "op", "")
+	require.NoError(t, err)
+	assert.Empty(t, got, "the system tenant resolves to the unscoped system view")
+
+	for name, ctx := range map[string]context.Context{
+		"system": systemCtx(), "no identity": context.Background(), "tenant": tenantCtx("tenant-b"),
+	} {
+		_, err := targetTenant(ctx, "op", "tenant-a")
+		var bindErr *TenantBindingError
+		require.ErrorAs(t, err, &bindErr, name)
+	}
+}
+
+func TestRequireSystemTenant(t *testing.T) {
+	assert.NoError(t, requireSystemTenant(context.Background(), "op", "tenant-a"))
+	assert.NoError(t, requireSystemTenant(systemCtx(), "op", "tenant-a"))
+
+	err := requireSystemTenant(tenantCtx("tenant-a"), "op", "tenant-a")
 	var bindErr *TenantBindingError
 	require.ErrorAs(t, err, &bindErr)
 	assert.Equal(t, "tenant-a", bindErr.CallerTenantID)
@@ -243,8 +283,8 @@ func TestSignCSR_TenantBinding(t *testing.T) {
 		Subject: "so@example.com", TenantID: qrdbsdk.SystemTenantID, Roles: []string{"admin"},
 	})
 	_, err = svc.SignCSR(platformAdmin, &transport.SignCSRRequest{CSRPEM: csr, TenantID: "tenant-b"})
-	require.NoError(t, err)
-	assert.Equal(t, "tenant-b", ca.signCSRTenant)
+	requireBindingRefusal(t, err, "system tenant naming another tenant")
+	assert.Empty(t, ca.signCSRTenant, "the system tenant must not mint another tenant's credential")
 }
 
 func TestTenantBinding_CrossTenantRefusedAsNotFound(t *testing.T) {

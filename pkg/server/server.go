@@ -1746,7 +1746,7 @@ func (s *Server) EscrowRegistry() *escrow.Registry {
 }
 
 // initializeFactorRegistry composes the canonical go-xkms hardware auth
-// factors (PIV, PKCS#11, FIDO2, mTLS) into a qrdb AuthFactorRegistry. The registry is
+// factors (PIV, PKCS#11, FIDO2) into a qrdb AuthFactorRegistry. The registry is
 // injected into the embedded qrdb node via WithFactorRegistry (in
 // initEmbeddedQRDBNode) so the node's unified AuthFactorService can verify
 // hardware factor challenges during custodian enrollment and Shamir unseal
@@ -1777,8 +1777,10 @@ func (s *Server) initializeFactorRegistry() error {
 // can use it without an import cycle; a caller of embeddednode.OpenEmbeddedNode
 // that wants a factor registry (xkmsd init, xkmsd run) builds one explicitly
 // with this function and passes it via EmbeddedNodeOptions.FactorRegistry.
+// It carries no mtls factor: go-qrdb's own serves the node's mtls share
+// holders (see factor.NewNodeRegistry).
 func NewNodeFactorRegistry() (*qrdbsdk.AuthFactorRegistry, error) {
-	return factor.NewDefaultRegistry(factor.Config{})
+	return factor.NewNodeRegistry(factor.Config{})
 }
 
 // FactorRegistry returns the hardware auth-factor registry.
@@ -2563,7 +2565,8 @@ func (s *Server) prepareUnix() *unix.GRPCServer {
 			// Host the embedded qrdb node's control plane (cluster admin,
 			// rebalance, user auth factors) on the unix socket — xkmsctl's
 			// default transport. Same socket-file-mode trust boundary as the
-			// keystore service above.
+			// keystore service above, and the same unix-peer identity
+			// (uid:<peer uid>, system tenant) on every admitted call (#1406).
 			ExtraServices: []func(*grpc.Server){s.registerQRDBControlPlane},
 		}
 

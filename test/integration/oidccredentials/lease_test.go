@@ -170,7 +170,7 @@ func importDue(t *testing.T, svc *credential.Service, idp *rotatingIdP, name str
 	return ref
 }
 
-var platform = scope.Principal{TenantID: scope.SystemTenant, Subject: "it", Platform: true}
+var platform = scope.Principal{TenantID: scope.SystemTenant, Subject: "it", Authenticated: true}
 
 // TestLeaseSerializesRefreshAcrossNodes proves the raft lease is the
 // cross-node lock: two services, each with its own in-process locks, so

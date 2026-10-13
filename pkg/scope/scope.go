@@ -29,11 +29,12 @@
 //
 // The platform (system) tenant is an ordinary tenant named "system": it has
 // its own shared and personal objects and never sees another tenant's
-// personal objects.
+// objects.
 //
-// Principal.Authorize is the single access rule. It refuses a cross-tenant
-// or cross-user request with a typed error that matches ErrRefused, so each
-// transport can map it to the answer it gives a missing object.
+// Principal.Authorize is the single access rule. It refuses an
+// unauthenticated, cross-tenant or cross-user request with a typed error that
+// matches ErrRefused, so each transport can map it to the answer it gives a
+// missing object.
 package scope
 
 import (

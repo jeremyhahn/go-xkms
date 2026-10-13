@@ -22,6 +22,7 @@ import (
 	"crypto/rand"
 	"crypto/x509/pkix"
 	"encoding/asn1"
+	"encoding/base64"
 	"encoding/pem"
 	"errors"
 	"math/big"
@@ -244,18 +245,22 @@ func TestMTLSFactor_Verify_RejectsUnsupportedPublicKeyType(t *testing.T) {
 	if !ok {
 		return
 	}
+	cert, err := parseCertPEM([]byte(certPEM))
+	if err != nil {
+		t.Fatalf("parseCertPEM(dsa cert): %v", err)
+	}
 
 	challenge := &qrdbsdk.AuthFactorChallenge{
 		ChallengeID: "chal-1",
 		Nonce:       []byte("0123456789012345678901234567890"),
 		ExpiresAt:   time.Now().UTC().Add(time.Hour),
 		MethodData: map[string]any{
-			"enrolled_cert_pem": certPEM,
+			methodDataEnrolledKey: base64.StdEncoding.EncodeToString(cert.RawSubjectPublicKeyInfo),
 		},
 	}
 
 	var failed *qrdbsdk.AuthFactorVerificationFailedError
-	err := f.Verify(ctx, challenge, &qrdbsdk.AuthFactorResponse{Value: []byte("irrelevant")})
+	err = f.Verify(ctx, challenge, &qrdbsdk.AuthFactorResponse{Value: []byte("irrelevant")})
 	if !errors.As(err, &failed) {
 		t.Fatalf("Verify(dsa cert) err = %v, want VerificationFailedError", err)
 	}
