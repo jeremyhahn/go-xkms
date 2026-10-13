@@ -2476,7 +2476,7 @@ Usage: `xkey tpm ek restore [flags]`
 | Flag | Type | Default | Description |
 |---|---|---|---|
 | `--ec` | bool | false | Restore EC EK certificate instead of RSA (default) |
-| `--force` | bool | false | Force restore without public key verification |
+| `--force` | bool | false | Skip public key verification and replace a stored EK certificate |
 | `--input` | string |  | Input PEM file containing EK certificate |
 
 ## xkey tpm ek show

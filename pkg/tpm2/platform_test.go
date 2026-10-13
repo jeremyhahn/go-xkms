@@ -390,6 +390,7 @@ func (m *mockTPMForPKS) PlatformQuote(_ *types.KeyAttributes) (Quote, []byte, er
 }
 func (m *mockTPMForPKS) Provision(_ types.Password) error  { return nil }
 func (m *mockTPMForPKS) ProvisionEKCert(_, _ []byte) error { return nil }
+func (m *mockTPMForPKS) ReplaceEKCert(_, _ []byte) error   { return nil }
 func (m *mockTPMForPKS) ProvisionOwner(_ types.Password) (*types.KeyAttributes, error) {
 	return nil, nil
 }

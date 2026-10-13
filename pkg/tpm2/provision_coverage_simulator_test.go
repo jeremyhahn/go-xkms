@@ -17,10 +17,17 @@
 package tpm2
 
 import (
+	"crypto/ecdsa"
+	"crypto/elliptic"
+	"crypto/rand"
 	"crypto/x509"
+	"crypto/x509/pkix"
+	"encoding/asn1"
 	"errors"
 	"log/slog"
+	"math/big"
 	"testing"
+	"time"
 
 	"github.com/google/go-tpm/tpm2"
 	"github.com/jeremyhahn/go-xkms/pkg/tpm2/store"
@@ -192,6 +199,299 @@ func TestBackupEKCertificates_ImportFailureIsLoggedNotPanicked(t *testing.T) {
 	tpmImpl.certStore = &alwaysFailCertStore{err: errors.New("cert store: synthetic import failure")}
 
 	assert.NotPanics(t, func() { tpmImpl.BackupEKCertificates() })
+}
+
+// newEKCertSim returns a simulator TPM whose EK certificate lives in NV at
+// the TCG RSA-2048 index, with that index undefined again at cleanup.
+func newEKCertSim(t *testing.T) *TPM2 {
+	t.Helper()
+	_, tpm := createSim(t, false)
+	t.Cleanup(func() { _ = tpm.Close() })
+	tpmImpl, ok := tpm.(*TPM2)
+	require.True(t, ok)
+	tpmImpl.config.EK.CertHandle = ekCertIndexRSA2048
+	t.Cleanup(func() { _ = tpmImpl.deleteCertFromNVRAM(tpm2.TPMHandle(ekCertIndexRSA2048)) })
+	return tpmImpl
+}
+
+func TestProvisionEKCert_StoredCertificateIsErrEKCertExists(t *testing.T) {
+	tpmImpl := newEKCertSim(t)
+	first := createTestCertDER(t)
+	require.NoError(t, tpmImpl.ProvisionEKCert(nil, first))
+
+	err := tpmImpl.ProvisionEKCert(nil, createTestCertDER(t))
+	require.ErrorIs(t, err, ErrEKCertExists)
+	assert.ErrorIs(t, err, tpmRCNVDefined, "the TPM response code stays reachable")
+
+	stored, err := tpmImpl.EKCertificateRSA()
+	require.NoError(t, err)
+	assert.Equal(t, first, stored.Raw, "a refused write leaves the stored certificate in place")
+}
+
+func TestReplaceEKCert_ReplacesOnEveryRun(t *testing.T) {
+	tpmImpl := newEKCertSim(t)
+	ekBefore, err := tpmImpl.EKRSA()
+	require.NoError(t, err)
+
+	// The first run finds no index; later runs replace what is stored.
+	for i := 0; i < 3; i++ {
+		certDER := createTestCertDER(t)
+		require.NoError(t, tpmImpl.ReplaceEKCert(nil, certDER), "run %d", i)
+		stored, err := tpmImpl.EKCertificateRSA()
+		require.NoError(t, err)
+		assert.Equal(t, certDER, stored.Raw, "run %d", i)
+	}
+
+	ekAfter, err := tpmImpl.EKRSA()
+	require.NoError(t, err)
+	assert.True(t, ekBefore.Equal(ekAfter), "only the certificate is replaced, never the EK")
+}
+
+func TestReplaceEKCert_RejectedInputKeepsStoredOne(t *testing.T) {
+	tooLarge := func(t *testing.T, tpmImpl *TPM2) []byte {
+		indexMax, err := nvIndexMaxSize(tpmImpl.transport)
+		require.NoError(t, err)
+		return make([]byte, int(indexMax)+1)
+	}
+	tests := []struct {
+		name    string
+		auth    []byte
+		certDER func(t *testing.T, tpmImpl *TPM2) []byte
+		wantErr error
+	}{
+		{
+			name:    "empty certificate",
+			certDER: func(*testing.T, *TPM2) []byte { return nil },
+			wantErr: ErrNVCertEmpty,
+		},
+		{
+			name:    "unparseable certificate",
+			certDER: func(*testing.T, *TPM2) []byte { return []byte("this is not a DER certificate") },
+			wantErr: ErrInvalidEKCertFormat,
+		},
+		{
+			name:    "certificate larger than the NV index maximum",
+			certDER: tooLarge,
+			wantErr: ErrNVCertTooLarge,
+		},
+		{
+			name:    "wrong hierarchy authorization",
+			auth:    []byte("not-the-hierarchy-auth"),
+			certDER: func(t *testing.T, _ *TPM2) []byte { return createTestCertDER(t) },
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			tpmImpl := newEKCertSim(t)
+			first := createTestCertDER(t)
+			require.NoError(t, tpmImpl.ProvisionEKCert(nil, first))
+
+			err := tpmImpl.ReplaceEKCert(tt.auth, tt.certDER(t, tpmImpl))
+			require.Error(t, err)
+			if tt.wantErr != nil {
+				assert.ErrorIs(t, err, tt.wantErr)
+			}
+
+			stored, err := tpmImpl.EKCertificateRSA()
+			require.NoError(t, err)
+			assert.Equal(t, first, stored.Raw, "a rejected call never undefines the stored certificate")
+		})
+	}
+}
+
+func TestReplaceEKCert_RefusesAnIndexThatIsNotACertificate(t *testing.T) {
+	t.Run("cert-handle outside the NV index range", func(t *testing.T) {
+		tpmImpl := newEKCertSim(t)
+		tpmImpl.config.EK.CertHandle = 0x81010001
+		assert.ErrorIs(t, tpmImpl.ReplaceEKCert(nil, createTestCertDER(t)), ErrEKCertIndexInvalid)
+		assert.ErrorIs(t, tpmImpl.ProvisionEKCert(nil, createTestCertDER(t)), ErrEKCertIndexInvalid)
+	})
+
+	t.Run("cert-handle naming a counter index", func(t *testing.T) {
+		tpmImpl := newEKCertSim(t)
+		counterIndex := tpm2.TPMHandle(0x01C10100)
+		_, err := tpm2.NVDefineSpace{
+			AuthHandle: tpm2.AuthHandle{Handle: tpm2.TPMRHOwner, Auth: tpm2.PasswordAuth(nil)},
+			PublicInfo: tpm2.New2B(tpm2.TPMSNVPublic{
+				NVIndex: counterIndex,
+				NameAlg: tpm2.TPMAlgSHA256,
+				Attributes: tpm2.TPMANV{
+					OwnerWrite: true,
+					OwnerRead:  true,
+					NoDA:       true,
+					NT:         tpm2.TPMNTCounter,
+				},
+				DataSize: 8,
+			}),
+		}.Execute(tpmImpl.transport)
+		require.NoError(t, err)
+		t.Cleanup(func() { assert.NoError(t, tpmImpl.deleteCertFromNVRAM(counterIndex)) })
+
+		tpmImpl.config.EK.CertHandle = uint32(counterIndex)
+		assert.ErrorIs(t, tpmImpl.ReplaceEKCert(nil, createTestCertDER(t)), ErrEKCertIndexInvalid)
+
+		_, err = tpm2.NVReadPublic{NVIndex: counterIndex}.Execute(tpmImpl.transport)
+		assert.NoError(t, err, "the counter index is never undefined")
+	})
+}
+
+func TestReplaceEKCert_WritesOnlyTheConfiguredIndex(t *testing.T) {
+	tpmImpl := newEKCertSim(t)
+	rsaCert := createTestCertDER(t)
+	require.NoError(t, tpmImpl.ProvisionEKCert(nil, rsaCert))
+
+	tpmImpl.config.EK.CertHandle = ekCertIndexECCP256
+	t.Cleanup(func() { assert.NoError(t, tpmImpl.deleteCertFromNVRAM(tpm2.TPMHandle(ekCertIndexECCP256))) })
+
+	// The first run defines the EC index; the second replaces it.
+	for i := 0; i < 2; i++ {
+		ecCert := createTestCertDER(t)
+		require.NoError(t, tpmImpl.ReplaceEKCert(nil, ecCert), "run %d", i)
+
+		stored, err := tpmImpl.EKCertificateEC()
+		require.NoError(t, err)
+		assert.Equal(t, ecCert, stored.Raw, "run %d", i)
+	}
+	assert.ErrorIs(t, tpmImpl.ProvisionEKCert(nil, createTestCertDER(t)), ErrEKCertExists)
+
+	stored, err := tpmImpl.EKCertificateRSA()
+	require.NoError(t, err)
+	assert.Equal(t, rsaCert, stored.Raw, "the RSA certificate survives byte for byte")
+}
+
+func TestReplaceEKCert_CertificateLargerThanNVBufferMax(t *testing.T) {
+	tpmImpl := newEKCertSim(t)
+	bufMax := int(nvWriteChunkSize(tpmImpl.transport))
+	indexMax, err := nvIndexMaxSize(tpmImpl.transport)
+	require.NoError(t, err)
+	require.Greater(t, int(indexMax), bufMax, "the simulator must allow an index larger than one NV write")
+
+	require.NoError(t, tpmImpl.ProvisionEKCert(nil, createTestCertDER(t)))
+
+	large := createPaddedCertDER(t, (bufMax+int(indexMax))/2)
+	require.Greater(t, len(large), bufMax)
+	require.LessOrEqual(t, len(large), int(indexMax))
+
+	require.NoError(t, tpmImpl.ReplaceEKCert(nil, large))
+	stored, err := tpmImpl.EKCertificateRSA()
+	require.NoError(t, err)
+	assert.Equal(t, large, stored.Raw)
+}
+
+// setOwnerAuth changes the owner hierarchy's empty authorization to auth.
+func setOwnerAuth(t *testing.T, tpmImpl *TPM2, auth []byte) {
+	t.Helper()
+	_, err := tpm2.HierarchyChangeAuth{
+		AuthHandle: tpm2.AuthHandle{Handle: tpm2.TPMRHOwner, Auth: tpm2.PasswordAuth(nil)},
+		NewAuth:    tpm2.TPM2BAuth{Buffer: auth},
+	}.Execute(tpmImpl.transport)
+	require.NoError(t, err)
+}
+
+// largeEKCertDER returns a certificate that takes more than one NV write.
+func largeEKCertDER(t *testing.T, tpmImpl *TPM2) []byte {
+	t.Helper()
+	bufMax := int(nvWriteChunkSize(tpmImpl.transport))
+	indexMax, err := nvIndexMaxSize(tpmImpl.transport)
+	require.NoError(t, err)
+	large := createPaddedCertDER(t, (bufMax+int(indexMax))/2)
+	require.Greater(t, len(large), bufMax)
+	return large
+}
+
+func TestReplaceEKCert_MultiChunkCertificateUnderOwnerAuth(t *testing.T) {
+	tpmImpl := newEKCertSim(t)
+	ownerAuth := []byte("owner-hierarchy-auth")
+	setOwnerAuth(t, tpmImpl, ownerAuth)
+	require.NoError(t, tpmImpl.ProvisionEKCert(ownerAuth, createTestCertDER(t)))
+
+	// Every chunk after the first authorizes over the index's written Name.
+	for i := 0; i < 2; i++ {
+		large := largeEKCertDER(t, tpmImpl)
+		require.NoError(t, tpmImpl.ReplaceEKCert(ownerAuth, large), "run %d", i)
+
+		stored, err := tpmImpl.EKCertificateRSA()
+		require.NoError(t, err)
+		assert.Equal(t, large, stored.Raw, "run %d", i)
+	}
+}
+
+func TestReplaceEKCert_WithoutPersistentEK(t *testing.T) {
+	tpmImpl := newEKCertSim(t)
+	require.NoError(t, tpmImpl.ProvisionEKCert(nil, createTestCertDER(t)))
+
+	ekHandle := tpm2.TPMHandle(tpmImpl.config.EK.Handle)
+	readPub, err := tpm2.ReadPublic{ObjectHandle: ekHandle}.Execute(tpmImpl.transport)
+	require.NoError(t, err)
+	require.NoError(t, tpmImpl.evictControl(tpm2.TPMRHOwner, nil,
+		tpm2.NamedHandle{Handle: ekHandle, Name: readPub.Name}, ekHandle))
+	tpmImpl.ekAttrs = nil
+
+	// Without a persistent EK the EK attributes come from the config, whose
+	// endorsement hierarchy cannot undefine or define an NV index.
+	ekAttrs, err := tpmImpl.EKAttributes()
+	require.NoError(t, err)
+	require.Equal(t, tpm2.TPMRHEndorsement, ekAttrs.TPMAttributes.Hierarchy)
+
+	certDER := createTestCertDER(t)
+	require.NoError(t, tpmImpl.ReplaceEKCert(nil, certDER))
+	stored, err := tpmImpl.EKCertificateRSA()
+	require.NoError(t, err)
+	assert.Equal(t, certDER, stored.Raw)
+}
+
+func TestReplaceEKCert_RefusesAPlatformCreatedIndex(t *testing.T) {
+	tpmImpl := newEKCertSim(t)
+	nvIndex := tpm2.TPMHandle(ekCertIndexRSA2048)
+	_, err := tpm2.NVDefineSpace{
+		AuthHandle: tpm2.AuthHandle{Handle: tpm2.TPMRHPlatform, Auth: tpm2.PasswordAuth(nil)},
+		PublicInfo: tpm2.New2B(tpm2.TPMSNVPublic{
+			NVIndex: nvIndex,
+			NameAlg: tpm2.TPMAlgSHA256,
+			Attributes: tpm2.TPMANV{
+				PPWrite:        true,
+				PPRead:         true,
+				OwnerRead:      true,
+				AuthRead:       true,
+				NoDA:           true,
+				PlatformCreate: true,
+				NT:             tpm2.TPMNTOrdinary,
+			},
+			DataSize: 1024,
+		}),
+	}.Execute(tpmImpl.transport)
+	require.NoError(t, err)
+
+	err = tpmImpl.ReplaceEKCert(nil, createTestCertDER(t))
+	require.ErrorIs(t, err, ErrEKCertPlatformIndex)
+
+	_, err = tpm2.NVReadPublic{NVIndex: nvIndex}.Execute(tpmImpl.transport)
+	assert.NoError(t, err, "the platform index is never undefined")
+}
+
+// createPaddedCertDER returns a self-signed certificate of about size bytes,
+// padded with a private, non-critical extension.
+func createPaddedCertDER(t *testing.T, size int) []byte {
+	t.Helper()
+	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	require.NoError(t, err)
+
+	build := func(padding int) []byte {
+		template := &x509.Certificate{
+			SerialNumber: big.NewInt(1),
+			Subject:      pkix.Name{CommonName: "Padded EK Certificate"},
+			NotBefore:    time.Now(),
+			NotAfter:     time.Now().Add(time.Hour),
+			ExtraExtensions: []pkix.Extension{{
+				Id:    asn1.ObjectIdentifier{1, 3, 6, 1, 4, 1, 32473, 1},
+				Value: make([]byte, padding),
+			}},
+		}
+		certDER, err := x509.CreateCertificate(rand.Reader, template, template, &key.PublicKey, key)
+		require.NoError(t, err)
+		return certDER
+	}
+	return build(size - len(build(0)))
 }
 
 // alwaysFailCertStore implements store.CertificateStorer and fails every

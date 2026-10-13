@@ -807,6 +807,10 @@ func (m *mockXKMSTPM) ProvisionEKCert(hierarchyAuth, ekCert []byte) error {
 	return m.provisionError
 }
 
+func (m *mockXKMSTPM) ReplaceEKCert(hierarchyAuth, ekCert []byte) error {
+	return m.provisionError
+}
+
 func (m *mockXKMSTPM) ProvisionOwner(hierarchyAuth xkmssdk.Password) (*xkmssdk.KeyAttributes, error) {
 	return nil, nil
 }

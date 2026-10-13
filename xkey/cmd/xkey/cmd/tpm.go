@@ -117,17 +117,33 @@ func init() {
 	tpmCmd.AddCommand(tpmPCRsCmd)
 }
 
-// openTPM and openTPMForProvisioningWithPCROverrides are the TPM openers
-// every `tpm` subcommand goes through. They are variables so tests can route
-// a sequence of subcommands through one provisioned simulator: the in-process
-// simulator is re-manufactured, and so loses every key, on each open.
+// openTPM, openTPMForEKCert and openTPMForProvisioningWithPCROverrides are
+// the TPM openers every `tpm` subcommand goes through; openTPMForEKCert takes
+// the NV index an EK certificate is written to. They are variables so tests
+// can route a sequence of subcommands through one provisioned simulator: the
+// in-process simulator is re-manufactured, and so loses every key, on each
+// open.
 var (
 	openTPM                                = openConfiguredTPM
+	openTPMForEKCert                       = openConfiguredTPMForEKCert
 	openTPMForProvisioningWithPCROverrides = openConfiguredTPMForProvisioningWithPCROverrides
+)
+
+// EK certificate NV indices from the TCG EK Credential Profile: the RSA 2048
+// certificate is the default, the ECC NIST P-256 one is selected with --ec.
+const (
+	ekCertHandleRSA uint32 = 0x01C00002
+	ekCertHandleEC  uint32 = 0x01C0000A
 )
 
 // openConfiguredTPM creates and initializes a TPM connection with the configured settings
 func openConfiguredTPM() (xkms.TrustedPlatformModule, error) {
+	return openConfiguredTPMForEKCert(ekCertHandleRSA)
+}
+
+// openConfiguredTPMForEKCert opens the TPM like openConfiguredTPM, but with
+// ekCertHandle as the NV index the EK certificate is written to.
+func openConfiguredTPMForEKCert(ekCertHandle uint32) (xkms.TrustedPlatformModule, error) {
 	logger := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{
 		Level: getLogLevel(),
 	}))
@@ -142,7 +158,7 @@ func openConfiguredTPM() (xkms.TrustedPlatformModule, error) {
 		Hash:         "SHA-256",
 		EK: &xkms.EKConfig{
 			Handle:        0x81010001,
-			CertHandle:    0x01C00002,
+			CertHandle:    ekCertHandle,
 			KeyAlgorithm:  "RSA",
 			HierarchyAuth: hierarchyAuth,
 		},
@@ -243,7 +259,7 @@ func openTPMForProvisioningWithDeviceAndPCROverrides(device string, useSimulator
 		Hash:         "SHA-256",
 		EK: &xkms.EKConfig{
 			Handle:        0x81010001,
-			CertHandle:    0x01C00002,
+			CertHandle:    ekCertHandleRSA,
 			KeyAlgorithm:  "RSA",
 			HierarchyAuth: hierarchyAuth,
 		},

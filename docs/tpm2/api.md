@@ -1,6 +1,6 @@
 # TPM 2.0 — API
 
-> **Status: NORMATIVE** · Feature: `tpm2` · Repo: `go-xkms` · Last verified: 2026-09-24
+> **Status: NORMATIVE** · Feature: `tpm2` · Repo: `go-xkms` · Last verified: 2026-10-13
 
 Transport shapes: [`../key-management/api.md`](../key-management/api.md)
 §"How the six transports are shaped".
@@ -89,6 +89,13 @@ methods and new package functions appear automatically).
 `ActivationKeyName` and no longer requires a TPM of its own; enroll-01's
 device side (`ActivateCredential`) and `AnswerCredentialChallenge` share the
 same `TPM2_ActivateCredential` mechanics under the hood.
+
+## Writing the EK certificate
+
+| Symbol | What it is |
+|---|---|
+| `(*TPM2).ProvisionEKCert(hierarchyAuth, ekCertDER []byte) error` | defines the NV index named by `EKConfig.CertHandle` and writes the certificate there, in chunks of at most `TPM_PT_NV_BUFFER_MAX` bytes, so any certificate up to `TPM_PT_NV_INDEX_MAX` fits; an index that is already defined is refused with `ErrEKCertExists` and left untouched. With no `EKConfig.CertHandle` the certificate goes to the certificate store instead |
+| `(*TPM2).ReplaceEKCert(hierarchyAuth, ekCertDER []byte) error` | replaces the certificate at the `EKConfig.CertHandle` index and no other. Everything that can be checked first is: a handle that is not an NV index or names a non-ordinary index (`ErrEKCertIndexInvalid`), an index the platform hierarchy created (`ErrEKCertPlatformIndex`), an empty or oversized certificate (`ErrNVCertEmpty`, `ErrNVCertTooLarge`) and DER that does not parse (`ErrInvalidEKCertFormat`) are refused with the stored certificate untouched. It then undefines the index under the owner hierarchy, which also proves `hierarchyAuth` (the owner authorization, whether or not a persistent EK exists), and redefines and writes it there as `ProvisionEKCert` does, so a repeated call behaves like the first. The EK itself is never touched. `xkey tpm ek restore --force` calls it, on the RSA 2048 index (`0x01C00002`), or on the ECC P-256 index (`0x01C0000A`) with `--ec` |
 
 ## The one place TPM evidence crosses the wire
 

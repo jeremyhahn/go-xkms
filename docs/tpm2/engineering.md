@@ -1,6 +1,6 @@
 # TPM 2.0 — Engineering Contract
 
-> **Status: NORMATIVE** · Feature: `tpm2` · Repo: `go-xkms` · Last verified: 2026-10-12
+> **Status: NORMATIVE** · Feature: `tpm2` · Repo: `go-xkms` · Last verified: 2026-10-13
 
 ## Exported surface — `pkg/tpm2`
 
@@ -653,6 +653,9 @@ vocabulary. The categories that need distinguishing:
 | `ErrActivationKeyCreate` | `CreateActivationKey`'s `TPM2_CreatePrimary` (null hierarchy) failed |
 | `ErrActivationKeyRequired`, `ErrCredentialChallengeRequired` | `AnswerCredentialChallenge` was called with a nil `*ActivationKey` or `*CredentialChallenge` |
 | `ErrEKCertNotInNV` | `AnswerCredentialChallenge` found no persistent EK and could not read an EK certificate from NV |
+| `ErrEKCertExists` | `ProvisionEKCert` found the EK certificate NV index already defined (`TPM_RC_NV_DEFINED`, reachable through `errors.Is`) and wrote nothing; `ReplaceEKCert` replaces a stored certificate |
+| `ErrEKCertIndexInvalid` | `ProvisionEKCert` or `ReplaceEKCert` was configured with an `EKConfig.CertHandle` that is not an NV index, or `ReplaceEKCert` found an index there that is not an ordinary one (a counter, bit-field or extend index); nothing was written or undefined |
+| `ErrEKCertPlatformIndex` | `ReplaceEKCert` found the EK certificate NV index created by the platform hierarchy (`TPMA_NV_PLATFORMCREATE`), which only platform authorization can undefine; nothing was undefined or written. `ErrTPMEKCertPlatformIndex` in the SDK |
 | `ErrEKTemplateUnsupported` | the NV EK certificate is in the high range, or its key is neither RSA-2048 nor ECC P-256, so no transient EK template matches it |
 | `ErrEKPublicKeyMismatch` | the transient EK's public key is not the key the NV EK certificate certifies; the EK is flushed and the challenge refused |
 

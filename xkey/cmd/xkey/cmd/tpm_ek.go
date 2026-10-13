@@ -145,7 +145,7 @@ Examples:
   # Restore EC EK certificate
   xkey tpm ek restore --ec --input ek-cert-ec.pem
 
-  # Force restore without verification
+  # Replace a stored certificate without verification
   xkey tpm ek restore --input ek-cert-rsa.pem --force`,
 	RunE: runEKRestore,
 }
@@ -178,7 +178,7 @@ func init() {
 	tpmEKRestoreCmd.Flags().BoolVar(&ekUseEC, "ec", false,
 		"Restore EC EK certificate instead of RSA (default)")
 	tpmEKRestoreCmd.Flags().BoolVar(&ekRestoreForce, "force", false,
-		"Force restore without public key verification")
+		"Skip public key verification and replace a stored EK certificate")
 	_ = tpmEKRestoreCmd.MarkFlagRequired("input")
 }
 
@@ -501,6 +501,7 @@ func runEKBackup(cmd *cobra.Command, args []string) (err error) {
 // the TPM call without a real or simulated TPM.
 type ekCertWriter interface {
 	ProvisionEKCert(hierarchyAuth, ekCert []byte) error
+	ReplaceEKCert(hierarchyAuth, ekCert []byte) error
 }
 
 // restoreEKCert writes ekCertDER to tpm's EK certificate NV index. When the
@@ -508,9 +509,14 @@ type ekCertWriter interface {
 // it requires the endorsement/owner hierarchy authorization in
 // hierarchyAuth; ProvisionEKCert threads it through to the underlying
 // NVDefineSpace/NVWrite calls, unlike WriteEKCert, which always passes nil.
+// With force, ReplaceEKCert undefines a stored certificate's index first;
+// without it, a stored certificate is refused with ErrTPMEKCertExists.
 // hierarchyAuth is wiped before returning.
-func restoreEKCert(tpm ekCertWriter, hierarchyAuth, ekCertDER []byte) error {
+func restoreEKCert(tpm ekCertWriter, hierarchyAuth, ekCertDER []byte, force bool) error {
 	defer enclave.Wipe(hierarchyAuth)
+	if force {
+		return tpm.ReplaceEKCert(hierarchyAuth, ekCertDER)
+	}
 	return tpm.ProvisionEKCert(hierarchyAuth, ekCertDER)
 }
 
@@ -540,8 +546,12 @@ func runEKRestore(cmd *cobra.Command, args []string) (err error) {
 	_, _ = fmt.Fprintf(out, "  Serial:  %s\n", cert.SerialNumber.String())
 	_, _ = fmt.Fprintln(out)
 
-	// Open TPM
-	tpm, err := openTPM()
+	// Open the TPM configured with the index the certificate is written to.
+	ekCertHandle := ekCertHandleRSA
+	if ekUseEC {
+		ekCertHandle = ekCertHandleEC
+	}
+	tpm, err := openTPMForEKCert(ekCertHandle)
 	if err != nil {
 		return err
 	}
@@ -588,7 +598,7 @@ func runEKRestore(cmd *cobra.Command, args []string) (err error) {
 
 	// Write certificate to NV RAM. See restoreEKCert for why hierarchyAuth
 	// (from --hierarchy-auth) must be passed through.
-	if err := restoreEKCert(tpm, []byte(tpmCfg.hierarchyAuth), block.Bytes); err != nil {
+	if err := restoreEKCert(tpm, []byte(tpmCfg.hierarchyAuth), block.Bytes, ekRestoreForce); err != nil {
 		return &WrappedError{Msg: "failed to write EK certificate to NV RAM", Err: err}
 	}
 

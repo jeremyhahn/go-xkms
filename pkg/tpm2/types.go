@@ -23,7 +23,6 @@ const (
 	// Table 2: Reserved Handles for TPM Provisioning Fundamental Elements
 	// https://trustedcomputinggroup.org/wp-content/uploads/TCG-TPM-v2.0-Provisioning-Guidance-Published-v1r1.pdf
 	ekIndex         = 0x81010001
-	ekCertIndex     = 0x01C00002
 	srkIndexRSA2048 = 0x81000001
 	srkIndexECCP256 = 0x81000002
 	idevIDKey       = 0x81020000
@@ -489,6 +488,21 @@ var (
 	// persistent handle and no EK certificate could be read from NV, so
 	// there is no certificate to select and verify a transient EK against.
 	ErrEKCertNotInNV = errors.New("tpm: no persistent EK and no EK certificate in NV")
+
+	// ErrEKCertExists reports that the EK certificate NV index is already
+	// defined, so ProvisionEKCert refuses to write over it. ReplaceEKCert
+	// is the operation that replaces a stored EK certificate.
+	ErrEKCertExists = errors.New("tpm: ek certificate already exists in NV")
+
+	// ErrEKCertIndexInvalid reports that the configured EK cert-handle does
+	// not name an ordinary NV index, so no certificate is written there and
+	// nothing stored there is undefined.
+	ErrEKCertIndexInvalid = errors.New("tpm: ek cert-handle is not an ordinary NV index")
+
+	// ErrEKCertPlatformIndex reports that the EK certificate NV index was
+	// created by the platform hierarchy (TPMA_NV_PLATFORMCREATE), so only the
+	// platform firmware can undefine it and ReplaceEKCert leaves it in place.
+	ErrEKCertPlatformIndex = errors.New("tpm: ek certificate NV index is platform-created and cannot be replaced")
 
 	// ErrEKTemplateUnsupported reports that the NV EK certificate's key
 	// matches no TCG EK Credential Profile low-range template (RSA-2048,

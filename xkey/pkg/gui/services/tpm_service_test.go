@@ -397,6 +397,9 @@ func (m *mockTPM) PlatformQuote(_ *xkms.KeyAttributes) (xkms.Quote, []byte, erro
 func (m *mockTPM) ProvisionEKCert(_, _ []byte) error {
 	panic("mockTPM: ProvisionEKCert not expected")
 }
+func (m *mockTPM) ReplaceEKCert(_, _ []byte) error {
+	panic("mockTPM: ReplaceEKCert not expected")
+}
 func (m *mockTPM) ProvisionOwner(_ xkms.Password) (*xkms.KeyAttributes, error) {
 	panic("mockTPM: ProvisionOwner not expected")
 }

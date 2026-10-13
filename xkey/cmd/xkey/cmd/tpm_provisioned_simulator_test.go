@@ -19,6 +19,7 @@ import (
 	"bytes"
 	"crypto"
 	"crypto/ecdsa"
+	"crypto/elliptic"
 	"crypto/rand"
 	"crypto/rsa"
 	"crypto/x509"
@@ -83,15 +84,41 @@ func withProvisionedSimulatorTPM(t *testing.T) *provisionedSimulator {
 // clear.
 func withProvisionedSimulatorTPMWithoutEKCert(t *testing.T) *provisionedSimulator {
 	t.Helper()
+	withSimulatorTPMCfg(t)
+
+	tpm, err := openConfiguredTPMForProvisioningWithPCROverrides("sha256", []uint{0, 7}, 0)
+	require.NoError(t, err)
+	return shareProvisionedSimulatorTPM(t, tpm, ekCertHandleRSA)
+}
+
+// withProvisionedSimulatorTPMForECCert is withProvisionedSimulatorTPMWithoutEKCert
+// with the TPM configured to write its EK certificate to the EC index, the
+// TPM `tpm ek restore --ec` opens.
+func withProvisionedSimulatorTPMForECCert(t *testing.T) *provisionedSimulator {
+	t.Helper()
+	withSimulatorTPMCfg(t)
+
+	tpm, err := openConfiguredTPMForEKCert(ekCertHandleEC)
+	require.ErrorIs(t, err, ErrTPMNotInitialized)
+	return shareProvisionedSimulatorTPM(t, tpm, ekCertHandleEC)
+}
+
+func withSimulatorTPMCfg(t *testing.T) {
+	t.Helper()
 	withTPMCfg(t, func(c *tpmConfig) {
 		c.device = ""
 		c.useSimulator = true
 		c.outputFormat = "text"
 		c.hierarchyAuth = ""
 	})
+}
 
-	tpm, err := openConfiguredTPMForProvisioningWithPCROverrides("sha256", []uint{0, 7}, 0)
-	require.NoError(t, err)
+// shareProvisionedSimulatorTPM provisions tpm and routes every TPM opener to
+// it until the test ends. ekCertHandle is the EK certificate index tpm is
+// configured with; an opener that would open the TPM for another index fails
+// the test.
+func shareProvisionedSimulatorTPM(t *testing.T, tpm xkms.TrustedPlatformModule, ekCertHandle uint32) *provisionedSimulator {
+	t.Helper()
 	t.Cleanup(func() {
 		assert.NoError(t, tpm.Close())
 	})
@@ -100,12 +127,19 @@ func withProvisionedSimulatorTPMWithoutEKCert(t *testing.T) *provisionedSimulato
 	caCert, caKey := generateEKTestCA(t)
 	sim := &provisionedSimulator{tpm: tpm, caCert: caCert, caKey: caKey}
 
-	savedOpen, savedOpenWithPCROverrides := openTPM, openTPMForProvisioningWithPCROverrides
+	savedOpen, savedOpenForEKCert, savedOpenWithPCROverrides := openTPM, openTPMForEKCert, openTPMForProvisioningWithPCROverrides
 	t.Cleanup(func() {
-		openTPM, openTPMForProvisioningWithPCROverrides = savedOpen, savedOpenWithPCROverrides
+		openTPM, openTPMForEKCert, openTPMForProvisioningWithPCROverrides = savedOpen, savedOpenForEKCert, savedOpenWithPCROverrides
 	})
 	shared := sharedTPM{tpm}
-	openTPM = func() (xkms.TrustedPlatformModule, error) { return shared, nil }
+	openTPM = func() (xkms.TrustedPlatformModule, error) {
+		require.Equal(t, ekCertHandle, ekCertHandleRSA, "openTPM opens the TPM for the RSA EK certificate index")
+		return shared, nil
+	}
+	openTPMForEKCert = func(handle uint32) (xkms.TrustedPlatformModule, error) {
+		require.Equal(t, ekCertHandle, handle, "EK certificate index the TPM is opened for")
+		return shared, nil
+	}
 	openTPMForProvisioningWithPCROverrides = func(pcrBank string, goldenPCRs []uint, platformPCR int) (xkms.TrustedPlatformModule, error) {
 		sim.pcrBank, sim.goldenPCRs, sim.platformPCR = pcrBank, goldenPCRs, platformPCR
 		return shared, nil
@@ -359,6 +393,95 @@ func TestRunEKRestore_ProvisionedSimulator(t *testing.T) {
 		require.NoError(t, err)
 		assert.Equal(t, foreign.Raw, stored.Raw)
 	})
+
+	t.Run("force replaces a stored certificate on every run", func(t *testing.T) {
+		sim := withProvisionedSimulatorTPM(t)
+		setVar(t, &ekUseEC, false)
+		setVar(t, &ekRestoreForce, true)
+		ekBefore, err := sim.tpm.EKRSA()
+		require.NoError(t, err)
+
+		for _, cn := range []string{"First Forced EK Certificate", "Second Forced EK Certificate"} {
+			foreign := issueTestCert(t, sim.caCert, sim.caKey, cn, foreignRSAKey(t))
+			setVar(t, &ekRestoreInput, writeCertPEM(t, foreign))
+
+			stdout, _, err := runTPMSubcommand(runEKRestore)
+			require.NoError(t, err, cn)
+			assert.Contains(t, stdout, "RSA EK certificate restored successfully")
+			stored, err := sim.tpm.EKCertificateRSA()
+			require.NoError(t, err)
+			assert.Equal(t, foreign.Raw, stored.Raw, cn)
+		}
+
+		ekAfter, err := sim.tpm.EKRSA()
+		require.NoError(t, err)
+		assert.True(t, ekBefore.Equal(ekAfter), "restore replaces the certificate, never the EK")
+	})
+
+	t.Run("stored certificate is not replaced without force", func(t *testing.T) {
+		sim := withProvisionedSimulatorTPM(t)
+		setVar(t, &ekUseEC, false)
+		setVar(t, &ekRestoreForce, false)
+		before, err := sim.tpm.EKCertificateRSA()
+		require.NoError(t, err)
+		ekPub, err := sim.tpm.EKRSA()
+		require.NoError(t, err)
+		matching := issueTestCert(t, sim.caCert, sim.caKey, "Matching EK Certificate", ekPub)
+		setVar(t, &ekRestoreInput, writeCertPEM(t, matching))
+
+		_, _, err = runTPMSubcommand(runEKRestore)
+		assert.ErrorIs(t, err, xkms.ErrTPMEKCertExists)
+		after, err := sim.tpm.EKCertificateRSA()
+		require.NoError(t, err)
+		assert.Equal(t, before.Raw, after.Raw, "a refused restore leaves NV RAM untouched")
+	})
+
+	t.Run("ec backup is written to the empty EC index", func(t *testing.T) {
+		sim := withProvisionedSimulatorTPMForECCert(t)
+		setVar(t, &ekUseEC, true)
+		setVar(t, &ekRestoreForce, false)
+		backup := issueTestCert(t, sim.caCert, sim.caKey, "Restored EC EK Certificate", foreignECKey(t))
+		setVar(t, &ekRestoreInput, writeCertPEM(t, backup))
+
+		stdout, _, err := runTPMSubcommand(runEKRestore)
+		require.NoError(t, err)
+		assert.Contains(t, stdout, "EC EK certificate restored successfully")
+		stored, err := sim.tpm.EKCertificateEC()
+		require.NoError(t, err)
+		assert.Equal(t, backup.Raw, stored.Raw)
+		_, err = sim.tpm.EKCertificateRSA()
+		assert.Error(t, err, "an EC restore never writes the RSA index")
+	})
+
+	t.Run("ec force replaces the stored EC certificate on every run", func(t *testing.T) {
+		sim := withProvisionedSimulatorTPMForECCert(t)
+		setVar(t, &ekUseEC, true)
+		setVar(t, &ekRestoreForce, true)
+		stored := issueTestCert(t, sim.caCert, sim.caKey, "Stored EC EK Certificate", foreignECKey(t))
+		require.NoError(t, sim.tpm.ProvisionEKCert(nil, stored.Raw))
+
+		for _, cn := range []string{"First Forced EC EK Certificate", "Second Forced EC EK Certificate"} {
+			forced := issueTestCert(t, sim.caCert, sim.caKey, cn, foreignECKey(t))
+			setVar(t, &ekRestoreInput, writeCertPEM(t, forced))
+
+			stdout, _, err := runTPMSubcommand(runEKRestore)
+			require.NoError(t, err, cn)
+			assert.Contains(t, stdout, "EC EK certificate restored successfully")
+			got, err := sim.tpm.EKCertificateEC()
+			require.NoError(t, err)
+			assert.Equal(t, forced.Raw, got.Raw, cn)
+		}
+		_, err := sim.tpm.EKCertificateRSA()
+		assert.Error(t, err, "an EC restore never writes the RSA index")
+	})
+}
+
+// foreignECKey returns a P-256 public key that no TPM key matches.
+func foreignECKey(t *testing.T) *ecdsa.PublicKey {
+	t.Helper()
+	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	require.NoError(t, err)
+	return &key.PublicKey
 }
 
 func TestRunEKRestore_RejectsBadInput(t *testing.T) {

@@ -735,15 +735,14 @@ func (tpm *TPM2) ProvisionOwner(
 	return srkAttrs, nil
 }
 
-// Writes an Endorsement Certificate to TPM NVRAM.
-//
-// WARNING: This is a potentially destructive operation that will overwrite
-// a TPM manufacturer or OEM certificate if it exists!
+// ProvisionEKCert writes an Endorsement Certificate to the NV index named
+// by the configured EK cert-handle. When that index is already defined it
+// returns ErrEKCertExists and leaves the stored certificate untouched;
+// ReplaceEKCert overwrites it.
 //
 // If an EK cert-handle is not configured, the certificate is saved to
-// the x509 certificate store instead of writing to NV RAM.
-// This provides a workaround for the 1024 byte limitation in the
-// simulator and/or allows a user to conserve NV RAM in a real TPM.
+// the x509 certificate store instead of writing to NV RAM, which lets a
+// user conserve NV RAM in a real TPM.
 func (tpm *TPM2) ProvisionEKCert(hierarchyAuth, ekCertDER []byte) error {
 
 	tpm.logger.Info("Provisioning Endorsement Key Certificate - EK Credential Profile")
@@ -752,8 +751,6 @@ func (tpm *TPM2) ProvisionEKCert(hierarchyAuth, ekCertDER []byte) error {
 	if err != nil {
 		return err
 	}
-
-	ekCertHandle := tpm2.TPMHandle(ekCertIndex)
 
 	if tpm.config.EK.CertHandle == 0 {
 		if tpm.certStore == nil {
@@ -771,89 +768,140 @@ func (tpm *TPM2) ProvisionEKCert(hierarchyAuth, ekCertDER []byte) error {
 		return nil
 	}
 
+	nvIndex, err := tpm.checkEKCertForNV(ekCertDER)
+	if err != nil {
+		return err
+	}
+	return tpm.writeEKCertToNV(nvIndex, ekAttrs.TPMAttributes.Hierarchy, hierarchyAuth, ekCertDER)
+}
+
+// checkEKCertForNV validates ekCertDER for the NV index named by the
+// configured EK cert-handle and returns that index. It sends no command
+// that changes the TPM: the cert-handle must lie in the NV index range,
+// and the certificate must be a parseable X.509 certificate that fits an
+// NV index.
+func (tpm *TPM2) checkEKCertForNV(ekCertDER []byte) (tpm2.TPMHandle, error) {
+	nvIndex := tpm2.TPMHandle(tpm.config.EK.CertHandle)
+	if nvIndex>>24 != tpm2.TPMHandle(tpm2.TPMHTNVIndex) {
+		tpm.logger.Error("EK cert-handle is not an NV index",
+			slog.String("index", fmt.Sprintf("0x%08X", nvIndex)))
+		return 0, ErrEKCertIndexInvalid
+	}
+	if err := tpm.checkCertFitsNV(ekCertDER); err != nil {
+		return 0, err
+	}
+	if _, err := x509.ParseCertificate(ekCertDER); err != nil {
+		return 0, &errs.Joined{Lead: ErrInvalidEKCertFormat, Cause: err}
+	}
+	return nvIndex, nil
+}
+
+// writeEKCertToNV defines nvIndex under hierarchy and writes ekCertDER to
+// it. An index that is already defined is refused with ErrEKCertExists.
+func (tpm *TPM2) writeEKCertToNV(nvIndex, hierarchy tpm2.TPMHandle, hierarchyAuth, ekCertDER []byte) error {
 	tpm.logger.Debug("NVDefineSpace: EK Certificate",
+		slog.String("index", fmt.Sprintf("0x%08X", nvIndex)),
 		slog.Int("size", len(ekCertDER)))
 
-	if len(ekCertDER) == 0 {
-		return ErrNVCertEmpty
+	err := tpm.defineAndWriteCert(nvIndex, ekCertDER, tpm.hierarchyAuthorizer(hierarchy, hierarchyAuth))
+	if errors.Is(err, tpmRCNVDefined) {
+		return &errs.Joined{Lead: ErrEKCertExists, Cause: err}
+	}
+	return err
+}
+
+// ReplaceEKCert writes an Endorsement Certificate like ProvisionEKCert, but
+// first undefines the NV index named by the configured EK cert-handle -- the
+// one index ProvisionEKCert writes -- when it is already defined, so a stored
+// certificate is replaced completely and a repeated call behaves like the
+// first. Only that index is replaced: the EK and every other index are never
+// touched. The index is undefined and redefined under the owner hierarchy,
+// whichever hierarchy the EK belongs to, so hierarchyAuth is the owner
+// authorization. The cert-handle, the certificate's encoding and size, and
+// the index's type and creator are validated before anything is undefined:
+// a platform-created index is refused with ErrEKCertPlatformIndex. The
+// undefine itself proves the owner authorization, so a rejected call leaves
+// the stored certificate in place.
+//
+// WARNING: This is a destructive operation that overwrites a TPM
+// manufacturer or OEM certificate if one exists!
+func (tpm *TPM2) ReplaceEKCert(hierarchyAuth, ekCertDER []byte) error {
+	// Without an EK cert-handle the certificate lives in the certificate
+	// store, whose import already overwrites.
+	if tpm.config.EK.CertHandle == 0 {
+		return tpm.ProvisionEKCert(hierarchyAuth, ekCertDER)
 	}
 
-	indexMax, err := nvIndexMaxSize(tpm.transport)
+	nvIndex, err := tpm.checkEKCertForNV(ekCertDER)
 	if err != nil {
-		tpm.logger.Error("failed to query maximum NV index data size",
-			slog.String("error", err.Error()))
 		return err
 	}
-	if len(ekCertDER) > int(indexMax) {
-		tpm.logger.Error("EK certificate exceeds the maximum NV index data size",
-			slog.Int("size_bytes", len(ekCertDER)),
-			slog.Int("nv_index_max", int(indexMax)))
-		return ErrNVCertTooLarge
-	}
-
-	hierarchy := ekAttrs.TPMAttributes.Hierarchy
-	defs := tpm2.NVDefineSpace{
-		PublicInfo: tpm2.New2B(
-			tpm2.TPMSNVPublic{
-				NVIndex: ekCertHandle,
-				NameAlg: tpm.algID,
-				Attributes: tpm2.TPMANV{
-					OwnerWrite: true,
-					AuthWrite:  true,
-					OwnerRead:  true,
-					AuthRead:   true,
-					NoDA:       true,
-					// TPM_NT_ORDINARY: opaque data written by TPM2_NV_Write.
-					// A counter, bits or PIN index is fixed at 8 octets and
-					// cannot hold a certificate (TCG Part 2 §13.4).
-					NT: tpm2.TPMNTOrdinary,
-				},
-				DataSize: uint16(len(ekCertDER)), // #nosec G115 -- bounded by indexMax (uint16) above
-			}),
-	}
-	err = tpm.withHierarchyAuth(hierarchy, hierarchyAuth, encryptIn, func(authHandle tpm2.AuthHandle) error {
-		defs.AuthHandle = authHandle
-		_, err := defs.Execute(tpm.transport)
-		return err
-	})
+	stored, err := tpm.readEKCertIndex(nvIndex)
 	if err != nil {
-		tpm.logger.Error("NVDefineSpace failed", slog.String("error", err.Error()))
 		return err
 	}
 
-	pub, err := defs.PublicInfo.Contents()
+	// The index is owner-created (readEKCertIndex refuses a platform-created
+	// one), so it is undefined and redefined under the owner hierarchy,
+	// whichever hierarchy the EK itself belongs to.
+	if stored != nil {
+		if err := tpm.undefineEKCertIndex(stored, hierarchyAuth); err != nil {
+			return err
+		}
+	}
+	return tpm.writeEKCertToNV(nvIndex, tpm2.TPMRHOwner, hierarchyAuth, ekCertDER)
+}
+
+// undefineEKCertIndex undefines the EK certificate NV index whose public
+// area readEKCertIndex returned, under the owner hierarchy authorized by
+// hierarchyAuth. A wrong authorization fails the undefine and leaves the
+// index in place.
+func (tpm *TPM2) undefineEKCertIndex(stored *tpm2.NVReadPublicResponse, hierarchyAuth []byte) error {
+	pub, err := stored.NVPublic.Contents()
 	if err != nil {
-		tpm.logger.Error("failed to get public info contents", slog.String("error", err.Error()))
 		return err
 	}
-
-	nvName, err := tpm2.NVName(pub)
-	if err != nil {
-		tpm.logger.Error("failed to get NV name", slog.String("error", err.Error()))
-		return err
-	}
-
-	// The EK certificate is public: only the hierarchy auth is protected.
-	err = tpm.withHierarchyAuth(hierarchy, hierarchyAuth, encryptNone, func(authHandle tpm2.AuthHandle) error {
-		_, err := tpm2.NVWrite{
+	tpm.logger.Info("Undefining EK certificate NV index",
+		slog.String("index", fmt.Sprintf("0x%08X", pub.NVIndex)))
+	return tpm.withHierarchyAuth(tpm2.TPMRHOwner, hierarchyAuth, encryptNone, func(authHandle tpm2.AuthHandle) error {
+		_, err := tpm2.NVUndefineSpace{
 			AuthHandle: authHandle,
 			NVIndex: tpm2.NamedHandle{
 				Handle: pub.NVIndex,
-				Name:   *nvName,
+				Name:   stored.NVName,
 			},
-			Data: tpm2.TPM2BMaxNVBuffer{
-				Buffer: ekCertDER,
-			},
-			Offset: 0,
 		}.Execute(tpm.transport)
 		return err
 	})
-	if err != nil {
-		tpm.logger.Error("NVWrite failed", slog.String("error", err.Error()))
-		return err
-	}
+}
 
-	return nil
+// readEKCertIndex reads the public area of the EK certificate NV index,
+// returning nil when the index is not defined. It refuses an index that
+// cannot hold a certificate and one the platform hierarchy created, whose
+// undefine needs platform authorization the caller does not hold.
+func (tpm *TPM2) readEKCertIndex(nvIndex tpm2.TPMHandle) (*tpm2.NVReadPublicResponse, error) {
+	readPubRsp, err := tpm2.NVReadPublic{NVIndex: nvIndex}.Execute(tpm.transport)
+	if err != nil {
+		if errors.Is(err, tpmRCHandle) {
+			return nil, nil
+		}
+		return nil, err
+	}
+	pub, err := readPubRsp.NVPublic.Contents()
+	if err != nil {
+		return nil, err
+	}
+	if pub.Attributes.NT != tpm2.TPMNTOrdinary {
+		tpm.logger.Error("EK cert-handle names an NV index that cannot hold a certificate",
+			slog.String("index", fmt.Sprintf("0x%08X", nvIndex)))
+		return nil, ErrEKCertIndexInvalid
+	}
+	if pub.Attributes.PlatformCreate {
+		tpm.logger.Error("EK certificate NV index is platform-created",
+			slog.String("index", fmt.Sprintf("0x%08X", nvIndex)))
+		return nil, ErrEKCertPlatformIndex
+	}
+	return readPubRsp, nil
 }
 
 // WriteEKCert writes the Endorsement Key certificate to the TPM.

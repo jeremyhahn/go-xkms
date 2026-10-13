@@ -265,6 +265,7 @@ func (m *mockTPM) PlatformQuote(keyAttrs *types.KeyAttributes) (pkgtpm2.Quote, [
 }
 func (m *mockTPM) Provision(soPIN types.Password) error               { return nil }
 func (m *mockTPM) ProvisionEKCert(hierarchyAuth, ekCert []byte) error { return nil }
+func (m *mockTPM) ReplaceEKCert(hierarchyAuth, ekCert []byte) error   { return nil }
 func (m *mockTPM) ProvisionOwner(hierarchyAuth types.Password) (*types.KeyAttributes, error) {
 	return nil, nil
 }

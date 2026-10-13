@@ -169,6 +169,7 @@ type TrustedPlatformModule interface {
 	PlatformQuote(keyAttrs *types.KeyAttributes) (Quote, []byte, error)
 	Provision(soPIN types.Password) error
 	ProvisionEKCert(hierarchyAuth, ekCert []byte) error
+	ReplaceEKCert(hierarchyAuth, ekCert []byte) error
 	ProvisionOwner(hierarchyAuth types.Password) (*types.KeyAttributes, error)
 	Quote(pcrs []uint, nonce []byte) (Quote, error)
 	CertifyKey(keyAttrs *types.KeyAttributes, nonce []byte, backend store.KeyBackend) (*CertifyResult, error)

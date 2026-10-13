@@ -1023,6 +1023,35 @@ func (tpm *TPM2) writeCertToNVRAM(nvIndex tpm2.TPMHandle, certDER []byte) error 
 		slog.String("nv_index", fmt.Sprintf("0x%08X", nvIndex)),
 		slog.Int("size_bytes", len(certDER)))
 
+	if err := tpm.checkCertFitsNV(certDER); err != nil {
+		return err
+	}
+	return tpm.defineAndWriteCert(nvIndex, certDER, ownerPasswordAuth)
+}
+
+// nvAuthorizer runs execute under the authorization an NV certificate
+// index's define, write and undefine commands need. dir selects the
+// parameter encryption of the command execute issues.
+type nvAuthorizer func(dir paramEncryption, execute func(tpm2.AuthHandle) error) error
+
+// ownerPasswordAuth authorizes with the owner hierarchy's empty password.
+func ownerPasswordAuth(_ paramEncryption, execute func(tpm2.AuthHandle) error) error {
+	return execute(tpm2.AuthHandle{
+		Handle: tpm2.TPMRHOwner,
+		Auth:   tpm2.PasswordAuth(nil),
+	})
+}
+
+// hierarchyAuthorizer authorizes with hierarchy and its authorization value.
+func (tpm *TPM2) hierarchyAuthorizer(hierarchy tpm2.TPMHandle, auth []byte) nvAuthorizer {
+	return func(dir paramEncryption, execute func(tpm2.AuthHandle) error) error {
+		return tpm.withHierarchyAuth(hierarchy, auth, dir, execute)
+	}
+}
+
+// checkCertFitsNV rejects a certificate that is empty or larger than the
+// TPM's maximum NV index data size (TPM_PT_NV_INDEX_MAX).
+func (tpm *TPM2) checkCertFitsNV(certDER []byte) error {
 	if len(certDER) == 0 {
 		return ErrNVCertEmpty
 	}
@@ -1039,13 +1068,15 @@ func (tpm *TPM2) writeCertToNVRAM(nvIndex tpm2.TPMHandle, certDER []byte) error 
 			slog.Int("nv_index_max", int(indexMax)))
 		return ErrNVCertTooLarge
 	}
+	return nil
+}
 
-	// Define NV space
+// defineAndWriteCert defines nvIndex as an ordinary index sized for certDER
+// and writes certDER to it. The write is issued in chunks of at most
+// TPM_PT_NV_BUFFER_MAX bytes, so a certificate up to TPM_PT_NV_INDEX_MAX
+// fits. The caller checks certDER with checkCertFitsNV first.
+func (tpm *TPM2) defineAndWriteCert(nvIndex tpm2.TPMHandle, certDER []byte, authorize nvAuthorizer) error {
 	defs := tpm2.NVDefineSpace{
-		AuthHandle: tpm2.AuthHandle{
-			Handle: tpm2.TPMRHOwner,
-			Auth:   tpm2.PasswordAuth(nil),
-		},
 		PublicInfo: tpm2.New2B(
 			tpm2.TPMSNVPublic{
 				NVIndex: nvIndex,
@@ -1056,13 +1087,19 @@ func (tpm *TPM2) writeCertToNVRAM(nvIndex tpm2.TPMHandle, certDER []byte) error 
 					OwnerRead:  true,
 					AuthRead:   true,
 					NoDA:       true,
-					NT:         tpm2.TPMNTOrdinary,
+					// TPM_NT_ORDINARY: opaque data written by TPM2_NV_Write.
+					// A counter, bits or PIN index is fixed at 8 octets and
+					// cannot hold a certificate (TCG Part 2 §13.4).
+					NT: tpm2.TPMNTOrdinary,
 				},
-				DataSize: uint16(len(certDER)), // #nosec G115 -- bounded by indexMax (uint16) above
+				DataSize: uint16(len(certDER)), // #nosec G115 -- bounded by indexMax (uint16) in checkCertFitsNV
 			}),
 	}
-
-	_, err = defs.Execute(tpm.transport)
+	err := authorize(encryptIn, func(authHandle tpm2.AuthHandle) error {
+		defs.AuthHandle = authHandle
+		_, err := defs.Execute(tpm.transport)
+		return err
+	})
 	if err != nil {
 		tpm.logger.Error("failed to define NV space", slog.String("error", err.Error()))
 		return err
@@ -1091,27 +1128,39 @@ func (tpm *TPM2) writeCertToNVRAM(nvIndex tpm2.TPMHandle, certDER []byte) error 
 		chunk := remaining[:chunkSize]
 		remaining = remaining[chunkSize:]
 
-		write := tpm2.NVWrite{
-			AuthHandle: tpm2.AuthHandle{
-				Handle: tpm2.TPMRHOwner,
-				Auth:   tpm2.PasswordAuth(nil),
-			},
-			NVIndex: tpm2.NamedHandle{
-				Handle: pub.NVIndex,
-				Name:   *nvName,
-			},
-			Data: tpm2.TPM2BMaxNVBuffer{
-				Buffer: chunk,
-			},
-			Offset: offset,
-		}
-		if _, err := write.Execute(tpm.transport); err != nil {
+		// A certificate is public: only the hierarchy auth is protected.
+		err := authorize(encryptNone, func(authHandle tpm2.AuthHandle) error {
+			_, err := tpm2.NVWrite{
+				AuthHandle: authHandle,
+				NVIndex: tpm2.NamedHandle{
+					Handle: pub.NVIndex,
+					Name:   *nvName,
+				},
+				Data: tpm2.TPM2BMaxNVBuffer{
+					Buffer: chunk,
+				},
+				Offset: offset,
+			}.Execute(tpm.transport)
+			return err
+		})
+		if err != nil {
 			tpm.logger.Error("failed to write NV data",
 				slog.String("error", err.Error()),
 				slog.Int("offset", int(offset)))
 			return err
 		}
 		offset += uint16(chunkSize) // #nosec G115 -- chunkSize ≤ bufMax ≤ MaxUint16
+
+		// The first write sets TPMA_NV_WRITTEN, which is part of the index's
+		// Name. An HMAC session authorizes over that Name (cpHash), so every
+		// later chunk must name the index as it now is.
+		if !pub.Attributes.Written {
+			pub.Attributes.Written = true
+			if nvName, err = tpm2.NVName(pub); err != nil {
+				tpm.logger.Error("failed to compute NV name", slog.String("error", err.Error()))
+				return err
+			}
+		}
 	}
 
 	return nil

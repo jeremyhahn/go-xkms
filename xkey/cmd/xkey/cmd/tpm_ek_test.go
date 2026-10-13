@@ -34,15 +34,21 @@ import (
 // fakeEKCertWriter is a test double for ekCertWriter that records the
 // hierarchyAuth and cert bytes it was called with.
 type fakeEKCertWriter struct {
-	gotAuth []byte
-	gotCert []byte
-	err     error
+	gotAuth  []byte
+	gotCert  []byte
+	replaced bool
+	err      error
 }
 
 func (f *fakeEKCertWriter) ProvisionEKCert(hierarchyAuth, ekCert []byte) error {
 	f.gotAuth = append([]byte(nil), hierarchyAuth...)
 	f.gotCert = append([]byte(nil), ekCert...)
 	return f.err
+}
+
+func (f *fakeEKCertWriter) ReplaceEKCert(hierarchyAuth, ekCert []byte) error {
+	f.replaced = true
+	return f.ProvisionEKCert(hierarchyAuth, ekCert)
 }
 
 // TestRestoreEKCert_PassesHierarchyAuthThrough proves restoreEKCert forwards
@@ -52,8 +58,21 @@ func (f *fakeEKCertWriter) ProvisionEKCert(hierarchyAuth, ekCert []byte) error {
 func TestRestoreEKCert_PassesHierarchyAuthThrough(t *testing.T) {
 	fake := &fakeEKCertWriter{}
 
-	err := restoreEKCert(fake, []byte("owner-secret"), []byte("cert-der"))
+	err := restoreEKCert(fake, []byte("owner-secret"), []byte("cert-der"), false)
 	require.NoError(t, err)
+	assert.Equal(t, []byte("owner-secret"), fake.gotAuth)
+	assert.Equal(t, []byte("cert-der"), fake.gotCert)
+	assert.False(t, fake.replaced, "without force the stored certificate is never replaced")
+}
+
+// TestRestoreEKCert_ForceReplaces proves --force routes the write through
+// ReplaceEKCert, the operation that overwrites a stored EK certificate.
+func TestRestoreEKCert_ForceReplaces(t *testing.T) {
+	fake := &fakeEKCertWriter{}
+
+	err := restoreEKCert(fake, []byte("owner-secret"), []byte("cert-der"), true)
+	require.NoError(t, err)
+	assert.True(t, fake.replaced)
 	assert.Equal(t, []byte("owner-secret"), fake.gotAuth)
 	assert.Equal(t, []byte("cert-der"), fake.gotCert)
 }
@@ -64,7 +83,7 @@ func TestRestoreEKCert_PropagatesError(t *testing.T) {
 	wantErr := assert.AnError
 	fake := &fakeEKCertWriter{err: wantErr}
 
-	err := restoreEKCert(fake, []byte("owner-secret"), []byte("cert-der"))
+	err := restoreEKCert(fake, []byte("owner-secret"), []byte("cert-der"), true)
 	assert.ErrorIs(t, err, wantErr)
 }
 

@@ -539,6 +539,9 @@ var (
 	ErrTPMPolicyEmptyPCRs             = tpm2.ErrPolicyEmptyPCRs
 	ErrTPMPolicyAuthValueRequired     = tpm2.ErrPolicyAuthValueRequired
 	ErrTPMAuthFailed                  = tpm2.ErrAuthFailed
+	ErrTPMEKCertExists                = tpm2.ErrEKCertExists
+	ErrTPMEKCertIndexInvalid          = tpm2.ErrEKCertIndexInvalid
+	ErrTPMEKCertPlatformIndex         = tpm2.ErrEKCertPlatformIndex
 
 	// Platform key store errors
 	ErrPlatformKeyStoreNilTPM             = tpm2.ErrPlatformKeyStoreNilTPM

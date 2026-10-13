@@ -217,6 +217,9 @@ func (m *allPanicTPM) Provision(_ xkms.Password) error { panic("allPanicTPM: Pro
 func (m *allPanicTPM) ProvisionEKCert(_, _ []byte) error {
 	panic("allPanicTPM: ProvisionEKCert")
 }
+func (m *allPanicTPM) ReplaceEKCert(_, _ []byte) error {
+	panic("allPanicTPM: ReplaceEKCert")
+}
 func (m *allPanicTPM) ProvisionOwner(_ xkms.Password) (*xkms.KeyAttributes, error) {
 	panic("allPanicTPM: ProvisionOwner")
 }
