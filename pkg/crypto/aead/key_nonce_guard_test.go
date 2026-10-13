@@ -275,7 +275,12 @@ func TestSharedAEADNonceGuardIsOneInstance(t *testing.T) {
 		t.Fatal("SharedAEADNonceGuard must return the same guard every time")
 	}
 
-	key := []byte("shared-guard-key")
+	// The shared guard outlives this test, so a fixed key would collide with
+	// the pair an earlier run (go test -count=N) already claimed.
+	key := make([]byte, 32)
+	if _, err := rand.Read(key); err != nil {
+		t.Fatalf("rand.Read: %v", err)
+	}
 	nonce := []byte("shared-nonce")
 	if err := first.Use(key, nonce); err != nil {
 		t.Fatalf("unexpected error: %v", err)

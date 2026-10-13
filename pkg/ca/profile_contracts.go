@@ -60,6 +60,17 @@ type TemplateValidator interface {
 	ValidateTemplate(template *x509.Certificate) error
 }
 
+// CSRValidator is implemented by a profile that constrains what a requester
+// may ask for, not only what the certificate ends up carrying. CSR signing
+// calls it on the parsed, signature-checked request before anything is built
+// from it, so a request outside the profile is refused rather than reshaped:
+// no requested field is ever stripped silently.
+type CSRValidator interface {
+	// ValidateCSR returns an error describing why csr must not be signed
+	// under the profile.
+	ValidateCSR(csr *x509.CertificateRequest) error
+}
+
 // Errors for caller-supplied names, lifetimes and name constraints. Each is a
 // sentinel; refusals wrap it in an errs.Detail naming the offending value, so
 // callers match with errors.Is.
@@ -111,6 +122,34 @@ var (
 	// outside the issuing certificate's name constraints. The CA refuses to
 	// sign it: the result would fail path validation everywhere.
 	ErrNameConstraintViolation = errors.New("ca: certificate names violate the issuer's name constraints")
+
+	// ErrSubjectNotCommonNameOnly reports a subject other than exactly one
+	// non-empty common name, under a profile that permits nothing else.
+	ErrSubjectNotCommonNameOnly = errors.New("ca: profile requires a subject of a single common name")
+
+	// ErrSubjectAltNameNotPermitted reports subject alternative names, in the
+	// request or from the caller, under a profile that permits none.
+	ErrSubjectAltNameNotPermitted = errors.New("ca: profile does not permit subject alternative names")
+
+	// ErrCARequestNotPermitted reports a CSR whose basic constraints request
+	// a CA certificate under an end-entity profile.
+	ErrCARequestNotPermitted = errors.New("ca: profile does not permit a request for a CA certificate")
+
+	// ErrKeyUsageNotPermitted reports a CSR requesting a key usage other
+	// than the profile's.
+	ErrKeyUsageNotPermitted = errors.New("ca: requested key usage is not permitted by the profile")
+
+	// ErrExtKeyUsageNotPermitted reports a CSR requesting an extended key
+	// usage other than the profile's.
+	ErrExtKeyUsageNotPermitted = errors.New("ca: requested extended key usage is not permitted by the profile")
+
+	// ErrBoundKeyNotFound reports a SignOptions.BoundKey the CA's keystore
+	// holds no key for.
+	ErrBoundKeyNotFound = errors.New("ca: bound key not found in the keystore")
+
+	// ErrBoundKeyMismatch reports a CSR whose public key is not the public
+	// key of SignOptions.BoundKey.
+	ErrBoundKeyMismatch = errors.New("ca: CSR public key does not match the bound key")
 )
 
 // isCallerSANProfile reports whether profile takes its names only from the

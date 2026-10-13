@@ -40,7 +40,10 @@ func wrapGateSecretKey(t *testing.T, m *Module, session SessionHandle, label str
 	// the mechanism flags, not about key residency, so the keys are bound to a
 	// backend here rather than each test asserting the residency error instead
 	// of the flag it means to exercise.
-	bindObjectToBackend(t, m, handle, label)
+	// The key id is fresh per run: the AES-GCM IV reuse guard is
+	// process-wide and keys a backend key by (backend, key id), so a fixed id
+	// would meet the IVs an earlier go test -count=N run already claimed.
+	bindObjectToBackend(t, m, handle, label+"-"+freshGuardKeyID(t))
 	return handle
 }
 
@@ -160,17 +163,6 @@ func TestWrapKeyTreatsAnEmptyWrapTemplateAsUnconstrained(t *testing.T) {
 	// The two spellings of "no constraint": the zero-length value only a Go
 	// caller can produce, and the canonical zero-count encoding the C boundary
 	// produces. They must behave identically.
-	// Each subtest carries its own GCM nonce because both wrapping keys hold
-	// the same value, and sealing twice under one (key, IV) pair leaks the XOR
-	// of the two plaintexts (NIST SP 800-38D section 8.2).
-	//
-	// This is hygiene here, not an assertion: C_WrapKey delegates to
-	// CryptoManager.WrapKeyByID, which forwards the caller's IV to the backend
-	// without consulting any reuse guard, so the pair would in fact be accepted
-	// twice on this path. The authenticated wrap verbs do refuse it -- see
-	// TestWrapKeyAuthenticatedRefusesAReusedIVUnderOneKey -- and extending the
-	// same guard to WrapKeyByID is tracked as a required follow-up on
-	// crypto.go.
 	for _, spelling := range []struct {
 		name  string
 		value Attribute

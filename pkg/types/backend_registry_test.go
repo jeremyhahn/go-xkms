@@ -1,7 +1,10 @@
 package types
 
 import (
+	"fmt"
+	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -10,8 +13,18 @@ import (
 
 // TestRegisterBackendType_ValidEverywhere proves a registered type becomes a
 // valid store type and parses back to itself.
+// backendTypeSeq numbers the backend types the tests register.
+var backendTypeSeq atomic.Uint64
+
+// uniqueBackendType returns a backend type no earlier test, or earlier
+// -count iteration, has registered. The registry is process-wide and refuses
+// duplicates, so a fixed name passes only on the first run.
+func uniqueBackendType(prefix string) BackendType {
+	return BackendType(fmt.Sprintf("%s-%d", prefix, backendTypeSeq.Add(1)))
+}
+
 func TestRegisterBackendType_ValidEverywhere(t *testing.T) {
-	bt := BackendType("types-ext-valid")
+	bt := uniqueBackendType("types-ext-valid")
 	require.False(t, StoreType(bt).IsValid())
 	require.Equal(t, StoreUnknown, ParseStoreType(string(bt)))
 
@@ -20,13 +33,14 @@ func TestRegisterBackendType_ValidEverywhere(t *testing.T) {
 	assert.True(t, IsRegisteredBackendType(bt))
 	assert.False(t, IsBuiltinBackendType(bt))
 	assert.True(t, StoreType(bt).IsValid())
-	assert.Equal(t, StoreType(bt), ParseStoreType(" TYPES-EXT-VALID "))
+	assert.Equal(t, StoreType(bt), ParseStoreType(" "+strings.ToUpper(string(bt))+" "))
 }
 
 // TestRegisterBackendType_Refusals proves empty, malformed, built-in and
 // duplicate names are refused with typed errors.
 func TestRegisterBackendType_Refusals(t *testing.T) {
-	require.NoError(t, RegisterBackendType("types-ext-dup"))
+	dup := uniqueBackendType("types-ext-dup")
+	require.NoError(t, RegisterBackendType(dup))
 
 	tests := []struct {
 		name string
@@ -39,7 +53,7 @@ func TestRegisterBackendType_Refusals(t *testing.T) {
 		{"builtin backend type", BackendTypeTPM2, ErrBackendTypeRegistered},
 		{"builtin backend type without store", BackendTypeYubiKey, ErrBackendTypeRegistered},
 		{"unknown store sentinel", BackendType(StoreUnknown), ErrBackendTypeRegistered},
-		{"duplicate", "types-ext-dup", ErrBackendTypeRegistered},
+		{"duplicate", dup, ErrBackendTypeRegistered},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
@@ -59,7 +73,10 @@ func TestRegisterBackendType_Refusals(t *testing.T) {
 // copy-on-write registry loses no entry under concurrent registration and
 // admits exactly one winner for a contested name.
 func TestRegisterBackendType_ConcurrentRegistrationsAllLand(t *testing.T) {
-	names := []BackendType{"types-cc-a", "types-cc-b", "types-cc-c", "types-cc-d"}
+	names := make([]BackendType, 4)
+	for i := range names {
+		names[i] = uniqueBackendType("types-cc")
+	}
 	var wg sync.WaitGroup
 	results := make(chan error, len(names)*2)
 	for _, n := range names {

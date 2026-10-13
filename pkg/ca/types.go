@@ -499,6 +499,13 @@ type SignOptions struct {
 	// Profiles define default key usage, validity, and other settings.
 	Profile string
 
+	// BoundKey, when set, names a key in the CA's keystore that the CSR must
+	// certify. The CA refuses the request with ErrBoundKeyMismatch unless the
+	// CSR's public key equals that key's public key, compared as marshalled
+	// SubjectPublicKeyInfo, and with ErrBoundKeyNotFound when the keystore
+	// holds no such key.
+	BoundKey *types.KeyAttributes
+
 	// ValidityDays overrides the default validity period.
 	// A value of 0 uses the profile or CA default.
 	ValidityDays int

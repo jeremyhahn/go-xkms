@@ -199,6 +199,17 @@ the CSR's names. They are reached in-process, through the SDK's `TrustedCA`:
 - `TrustedCASignOptions.SANS` and `TrustedCASignOptions.Validity`;
 - `CreateAttestationEvidenceExtension`.
 
+### Key binding is in-process only
+
+The `code-signing` profile is issuable on every transport: its CSR checks
+(`ErrSubjectNotCommonNameOnly`, `ErrSubjectAltNameNotPermitted`,
+`ErrCARequestNotPermitted`, `ErrKeyUsageNotPermitted`,
+`ErrExtKeyUsageNotPermitted`) run on the CSR alone. Binding the certificate to
+a keystore key (`TrustedCASignOptions.BoundKey`, refused with
+`ErrCABoundKeyNotFound` or `ErrCABoundKeyMismatch`) has no wire field and is
+reached through the SDK's `TrustedCA` only. See
+[engineering.md](engineering.md#built-in-profiles).
+
 ## Request and response schemas
 
 Go types in `pkg/api/transport/types.go` (re-exported by `sdk/go/transport`),

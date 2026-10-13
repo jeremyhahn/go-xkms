@@ -674,6 +674,11 @@ const (
 	// ProfileNameX509SVID issues SPIFFE X.509-SVID leaves: one caller-supplied
 	// SPIFFE URI SAN, serverAuth+clientAuth, 1-hour default lifetime.
 	ProfileNameX509SVID = pkgca.ProfileNameX509SVID
+
+	// ProfileNameCodeSigning issues code-signing certificates from a validated
+	// CSR: a CN-only subject, no SANs, not a CA, digitalSignature and
+	// codeSigning only, 365-day default and 460-day maximum lifetime.
+	ProfileNameCodeSigning = pkgca.ProfileNameCodeSigning
 )
 
 // DefaultSubordinateLifetime is the lifetime of a subordinate CA whose request
@@ -693,12 +698,14 @@ type SubordinateCARequest = pkgca.SubordinateCARequest
 // assert `trustedCA.(SubordinateIssuer)`.
 type SubordinateIssuer = pkgca.SubordinateIssuer
 
-// CallerSANProfile, LifetimeBoundedProfile and TemplateValidator are the
-// optional profile contracts a custom ProfileProvider may implement.
+// CallerSANProfile, LifetimeBoundedProfile, TemplateValidator and
+// CSRValidator are the optional profile contracts a custom ProfileProvider may
+// implement.
 type (
 	CallerSANProfile       = pkgca.CallerSANProfile
 	LifetimeBoundedProfile = pkgca.LifetimeBoundedProfile
 	TemplateValidator      = pkgca.TemplateValidator
+	CSRValidator           = pkgca.CSRValidator
 )
 
 // AttestationEvidence is the content of the tp-attestationEvidence extension
@@ -743,4 +750,16 @@ var (
 	ErrCAInvalidNameConstraints     = pkgca.ErrInvalidNameConstraints
 	ErrCANameConstraintViolation    = pkgca.ErrNameConstraintViolation
 	ErrCAInvalidAttestationEvidence = pkgca.ErrInvalidAttestationEvidence
+)
+
+// Errors returned when a CSR breaks its profile's request policy, or does not
+// carry the key TrustedCASignOptions.BoundKey names.
+var (
+	ErrCASubjectNotCommonNameOnly   = pkgca.ErrSubjectNotCommonNameOnly
+	ErrCASubjectAltNameNotPermitted = pkgca.ErrSubjectAltNameNotPermitted
+	ErrCACARequestNotPermitted      = pkgca.ErrCARequestNotPermitted
+	ErrCAKeyUsageNotPermitted       = pkgca.ErrKeyUsageNotPermitted
+	ErrCAExtKeyUsageNotPermitted    = pkgca.ErrExtKeyUsageNotPermitted
+	ErrCABoundKeyNotFound           = pkgca.ErrBoundKeyNotFound
+	ErrCABoundKeyMismatch           = pkgca.ErrBoundKeyMismatch
 )

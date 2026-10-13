@@ -55,6 +55,17 @@ func newExternalFactory(name BackendType, seen *atomic.Pointer[map[string]interf
 // forgetBackendAfterTest removes name from this package's registries when
 // the test ends, so later AutoInitialize tests see only the compiled-in set.
 // The types-level name claim is permanent, so every test uses its own name.
+// externalBackendSeq numbers the external backend types the tests register.
+var externalBackendSeq atomic.Uint64
+
+// uniqueExternalBackend returns a backend type no earlier test, or earlier
+// -count iteration, has registered. forgetBackendAfterTest clears the xkms
+// registries, but the name stays claimed in the process-wide types registry,
+// which refuses duplicates by design.
+func uniqueExternalBackend(prefix string) BackendType {
+	return BackendType(fmt.Sprintf("%s-%d", prefix, externalBackendSeq.Add(1)))
+}
+
 func forgetBackendAfterTest(t *testing.T, name BackendType) {
 	t.Helper()
 	t.Cleanup(func() {
@@ -84,7 +95,7 @@ func deleteCopyOnWrite[V any](registry *atomic.Pointer[map[BackendType]V], name 
 // use: validation, AutoInitialize with per-backend config, Key ID parsing,
 // key generation and signing.
 func TestRegisterExternalBackend_EndToEnd(t *testing.T) {
-	name := BackendType("xkms-ext-e2e")
+	name := uniqueExternalBackend("xkms-ext-e2e")
 	forgetBackendAfterTest(t, name)
 	require.False(t, name.IsValid())
 
@@ -139,7 +150,7 @@ func TestRegisterExternalBackend_EndToEnd(t *testing.T) {
 // malformed and factory-less registrations are refused with typed errors and
 // register nothing.
 func TestRegisterExternalBackend_Refusals(t *testing.T) {
-	dup := BackendType("xkms-ext-dup")
+	dup := uniqueExternalBackend("xkms-ext-dup")
 	forgetBackendAfterTest(t, dup)
 	var seen atomic.Pointer[map[string]interface{}]
 	require.NoError(t, RegisterExternalBackend(ExternalBackend{Type: dup, Factory: newExternalFactory(dup, &seen)}))

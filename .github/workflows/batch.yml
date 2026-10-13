@@ -238,7 +238,11 @@ jobs:
       - name: Build the arduino-generic simulators
         run: make agsim
 
+      # The tests run outside make, so point them at the simulators
+      # `make agsim` built, as the Makefile's AGSIM_DIR export does.
       - name: go test -race -count=3
+        env:
+          AGSIM_DIR: ${{ github.workspace }}/build/agsim
         run: |
           set -o pipefail
           rc=0

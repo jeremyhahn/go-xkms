@@ -285,32 +285,6 @@ func NewClientProfile() ProfileProvider {
 	}
 }
 
-// codeSigningProfile provides configuration for code signing certificates.
-type codeSigningProfile struct {
-	baseProfile
-}
-
-// NewCodeSigningProfile creates a profile for code signing certificates.
-//
-// Key usage:
-//   - DigitalSignature
-//
-// Extended key usage:
-//   - CodeSigning
-//
-// Default validity: 365 days
-func NewCodeSigningProfile() ProfileProvider {
-	return &codeSigningProfile{
-		baseProfile: baseProfile{
-			name:                  "code-signing",
-			keyUsage:              x509.KeyUsageDigitalSignature,
-			extKeyUsage:           []x509.ExtKeyUsage{x509.ExtKeyUsageCodeSigning},
-			defaultValidity:       365,
-			basicConstraintsValid: true,
-		},
-	}
-}
-
 // emailProfile provides configuration for S/MIME email certificates.
 type emailProfile struct {
 	baseProfile

@@ -390,6 +390,19 @@ func newTestCryptoManager() (*CryptoManager, *mockClient) {
 	return NewCryptoManager(client, config), client
 }
 
+// freshGuardKeyID returns a backend key id no earlier run has used. The AES-GCM
+// IV reuse guard is process-wide and keys a backend key by (backend, key id), so
+// a test that encrypts under a fixed id and a fixed nonce would meet its own
+// earlier claim on the next go test -count=N iteration.
+func freshGuardKeyID(t *testing.T) string {
+	t.Helper()
+	suffix := make([]byte, 8)
+	if _, err := rand.Read(suffix); err != nil {
+		t.Fatalf("rand.Read: %v", err)
+	}
+	return fmt.Sprintf("test-key-%x", suffix)
+}
+
 // CryptoManager tests
 
 func TestNewCryptoManager(t *testing.T) {
@@ -3245,7 +3258,7 @@ func TestCryptoManager_Encrypt_WithNonceAndTag(t *testing.T) {
 	// are set here -- the backend is expected to generate the nonce.
 	mech := &Mechanism{Type: CKM_AES_GCM}
 
-	op, _ := cm.EncryptInit(mech, 1, "test-key", "backend1")
+	op, _ := cm.EncryptInit(mech, 1, freshGuardKeyID(t), "backend1")
 
 	result, err := cm.Encrypt(context.Background(), op, []byte("plaintext"))
 	if err != nil {
@@ -3286,8 +3299,9 @@ func TestCryptoManager_Encrypt_Decrypt_GCM_RoundTrip(t *testing.T) {
 		Tag:        backendTag,
 	}
 
+	keyID := freshGuardKeyID(t)
 	encMech := &Mechanism{Type: CKM_AES_GCM}
-	encOp, err := cm.EncryptInit(encMech, 1, "test-key", "backend1")
+	encOp, err := cm.EncryptInit(encMech, 1, keyID, "backend1")
 	if err != nil {
 		t.Fatalf("EncryptInit failed: %v", err)
 	}
@@ -3299,7 +3313,7 @@ func TestCryptoManager_Encrypt_Decrypt_GCM_RoundTrip(t *testing.T) {
 	// A conformant caller retrieves the generated IV and supplies it back
 	// for decryption -- DecryptInit never generates one itself.
 	decMech := NewMechanismWithTypedParams(CKM_AES_GCM, NewAESGCMParams(encOp.IV(), 128))
-	decOp, err := cm.DecryptInit(decMech, 1, "test-key", "backend1")
+	decOp, err := cm.DecryptInit(decMech, 1, keyID, "backend1")
 	if err != nil {
 		t.Fatalf("DecryptInit failed: %v", err)
 	}
@@ -3324,12 +3338,6 @@ func TestCryptoManager_Encrypt_Decrypt_GCM_RoundTrip(t *testing.T) {
 // the caller chose would break any nonce-management scheme it is running.
 func TestCryptoManager_EncryptInit_GCM_CarriesCallerIV(t *testing.T) {
 	cm, client := newTestCryptoManager()
-	// An IV no other fixture in this package uses. The (key, IV) guard is
-	// process-wide and keyed by the key the IV is used with, not by the
-	// CryptoManager, so two encryptions naming one key and one IV are one
-	// reused pair however many managers the tests build (NIST SP 800-38D
-	// section 8.2); TestCryptoManager_Encrypt_WithNonceAndTag consumes
-	// "123456789012" under this same key.
 	callerIV := []byte("caller-iv-01")
 	client.encryptResponse = &transport.EncryptResponse{
 		Ciphertext: []byte("ciphertext"),
@@ -3337,7 +3345,7 @@ func TestCryptoManager_EncryptInit_GCM_CarriesCallerIV(t *testing.T) {
 	}
 	mech := NewMechanismWithTypedParams(CKM_AES_GCM, NewAESGCMParams(callerIV, 128))
 
-	op, err := cm.EncryptInit(mech, 1, "test-key", "backend1")
+	op, err := cm.EncryptInit(mech, 1, freshGuardKeyID(t), "backend1")
 	if err != nil {
 		t.Fatalf("EncryptInit failed: %v", err)
 	}
@@ -3387,7 +3395,8 @@ func TestCryptoManager_Encrypt_GCM_NonceReuseRejected(t *testing.T) {
 
 	mech := &Mechanism{Type: CKM_AES_GCM}
 
-	op1, _ := cm.EncryptInit(mech, 1, "test-key", "backend1")
+	keyID := freshGuardKeyID(t)
+	op1, _ := cm.EncryptInit(mech, 1, keyID, "backend1")
 	if _, err := cm.Encrypt(context.Background(), op1, []byte("plaintext-1")); err != nil {
 		t.Fatalf("first Encrypt failed: %v", err)
 	}
@@ -3395,7 +3404,7 @@ func TestCryptoManager_Encrypt_GCM_NonceReuseRejected(t *testing.T) {
 	// A second, independent encryption under the same (backend, keyID) that
 	// happens to reuse the same nonce (e.g. a misbehaving backend RNG) must
 	// be rejected rather than silently accepted.
-	op2, _ := cm.EncryptInit(mech, 1, "test-key", "backend1")
+	op2, _ := cm.EncryptInit(mech, 1, keyID, "backend1")
 	_, err := cm.Encrypt(context.Background(), op2, []byte("plaintext-2"))
 	if err == nil {
 		t.Fatal("expected error for reused AES-GCM nonce")

@@ -17,6 +17,7 @@ import (
 	"sync"
 	"testing"
 
+	"github.com/prometheus/client_golang/prometheus"
 	dto "github.com/prometheus/client_model/go"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -38,12 +39,34 @@ func TestInit(t *testing.T) {
 // prometheus.DefaultGatherer already registers Go/process collectors for the
 // host process, so Init must never add a second copy of them to Registry.
 func TestInitExcludesRuntimeCollectors(t *testing.T) {
+	useFreshRegistry(t)
+
 	Init()
 
 	families, err := Registry.Gather()
 	require.NoError(t, err)
+	assert.True(t, hasMetricFamily(families, "acme_active_orders"),
+		"Init must register the ACME metrics into Registry")
 	assert.False(t, hasMetricFamily(families, "go_goroutines"),
 		"Init must not register the Go runtime collector into Registry")
+}
+
+// useFreshRegistry points Registry at an empty registry and re-arms Init for
+// the rest of the test, so the test observes only what Init itself adds and
+// not what earlier tests (or earlier -count iterations) left in the
+// process-wide registry. The process-wide registry, fully initialised, is
+// restored when the test ends.
+func useFreshRegistry(t *testing.T) {
+	t.Helper()
+	Init()
+	saved := Registry
+	Registry = prometheus.NewRegistry()
+	once = sync.Once{}
+	t.Cleanup(func() {
+		Registry = saved
+		// saved already holds Init's metrics: Init must stay a no-op.
+		once.Do(func() {})
+	})
 }
 
 func TestRegisterRuntimeCollectors(t *testing.T) {

@@ -1374,11 +1374,17 @@ func TestConcurrentAEADParameterGuardsNeverPanic(t *testing.T) {
 
 	// An AES-256 wrapping key and an extractable target key, both created up
 	// front so the concurrent phase contends only over the GCM parameter path.
+	// The wrapping key's value is fresh per run: the IV guard is process-wide
+	// and keyed by this material, so a fixed value would meet the (key, IV)
+	// pairs an earlier go test -count=N run already sealed under.
+	wrappingKeyValue := make([]byte, 32)
+	_, err = rand.Read(wrappingKeyValue)
+	require.NoError(t, err)
 	wrappingKey, rv := m.CreateObject(setup, []Attribute{
 		NewUint32Attribute(CKA_CLASS, uint32(CKO_SECRET_KEY)),
 		NewUint32Attribute(CKA_KEY_TYPE, uint32(CKK_AES)),
 		NewStringAttribute(CKA_LABEL, "gcm-wrapping-key"),
-		NewAttribute(CKA_VALUE, []byte("0123456789ABCDEF0123456789ABCDEF")),
+		NewAttribute(CKA_VALUE, wrappingKeyValue),
 		NewBoolAttribute(CKA_WRAP, true),
 		NewBoolAttribute(CKA_UNWRAP, true),
 		NewBoolAttribute(CKA_TOKEN, true),

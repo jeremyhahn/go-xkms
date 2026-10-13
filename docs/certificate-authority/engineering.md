@@ -247,6 +247,47 @@ allowlist, which with no arguments is `XKeyAAGUID` alone
 (`profile_fido2.go:71`); anything else is
 `ErrFIDO2AttestationAAGUIDNotPermitted` (`errors.go:455`).
 
+**Code-signing profile.** `code-signing` (`ProfileNameCodeSigning`,
+`NewCodeSigningProfile` at `profile_codesigning.go:79`) validates the CSR
+rather than reshaping it: a request that breaks a rule is refused with that
+rule's error, and no field is ever dropped silently. It issues cA false
+(basic constraints asserted), digitalSignature, EKU codeSigning, a subject of
+exactly one RDN holding one non-empty CN, and no SANs; 365 days by default and
+460 days at most (CA/B Forum CS BR §6.3.2).
+
+| The CSR (or the issuing call) | Is refused with |
+|---|---|
+| has a subject other than a single CN, or an empty CN | `ErrSubjectNotCommonNameOnly` |
+| requests subjectAltName, or `SignOptions.SANS` adds names | `ErrSubjectAltNameNotPermitted` |
+| requests BasicConstraints with cA true | `ErrCARequestNotPermitted` |
+| requests a KeyUsage other than digitalSignature alone | `ErrKeyUsageNotPermitted` |
+| requests an ExtKeyUsage other than codeSigning alone | `ErrExtKeyUsageNotPermitted` |
+| asks for a lifetime above 460 days | `ErrValidityExceedsProfile` (refused, never clamped) |
+
+The checks run through the optional `CSRValidator` contract
+(`ValidateCSR(csr *x509.CertificateRequest) error`,
+`profile_contracts.go:68`), which `CA.SignCSR` calls before it resolves the
+lifetime or builds the template (`ca.go:1786`).
+
+**Key binding.** `SignOptions.BoundKey *types.KeyAttributes` (`types.go:507`)
+names a key in the CA's keystore, under any profile. The CSR is refused unless
+its public key is that key's public key, compared as marshalled SPKI
+(`ca.go:1904`): a key the keystore does not hold is `ErrBoundKeyNotFound`, a
+different key `ErrBoundKeyMismatch`, and a CA built without a keystore
+`ErrKeyStoreRequired`. The SDK re-exports these as
+`xkms.ProfileNameCodeSigning`, `xkms.CSRValidator`,
+`xkms.TrustedCASignOptions` and `xkms.ErrCA*`:
+
+```go
+cert, err := trustedCA.SignCSR(ctx, csrPEM, &xkms.TrustedCASignOptions{
+    Profile:  xkms.ProfileNameCodeSigning,
+    BoundKey: attrs, // *xkms.KeyAttributes of the signing key
+})
+if errors.Is(err, xkms.ErrCABoundKeyMismatch) {
+    // the CSR was not made over the named key
+}
+```
+
 ### TCG naming and defaults
 
 - An IAK certificate's CN is `IAKCommonName(model, serial)` →

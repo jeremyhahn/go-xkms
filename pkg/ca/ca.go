@@ -1780,6 +1780,19 @@ func (ca *CA) signCSR(ctx context.Context, csrPEM []byte, opts *SignOptions, req
 		profile = newTLSLeafProfile(keyUsage, extKeyUsage, validityDays)
 	}
 
+	// A profile that constrains the request refuses it here, before anything
+	// is built from it, and a caller-bound key must be the key requested.
+	if validator, ok := profile.(CSRValidator); ok {
+		if err := validator.ValidateCSR(csr); err != nil {
+			return nil, err
+		}
+	}
+	if opts != nil && opts.BoundKey != nil {
+		if err := ca.checkBoundKey(ctx, csr, opts.BoundKey); err != nil {
+			return nil, err
+		}
+	}
+
 	// The lifetime: a duration, a day count, or the profile's default, and
 	// never more than a lifetime-bounded profile's maximum.
 	var requestedValidity time.Duration
@@ -1881,6 +1894,37 @@ func (ca *CA) signCSR(ctx context.Context, csrPEM []byte, opts *SignOptions, req
 		keyUsage:     keyUsage,
 		extKeyUsage:  extKeyUsage,
 	})
+}
+
+// checkBoundKey refuses csr unless its public key is the public key of the
+// keystore key attrs names, compared as marshalled SubjectPublicKeyInfo.
+//
+// Returns ErrBoundKeyNotFound when the keystore holds no such key and
+// ErrBoundKeyMismatch when the keys differ.
+func (ca *CA) checkBoundKey(ctx context.Context, csr *x509.CertificateRequest, attrs *types.KeyAttributes) error {
+	if ca.keyStore == nil {
+		return ErrKeyStoreRequired
+	}
+	key, err := ca.keyStore.GetKey(ctx, attrs)
+	if errors.Is(err, backendpkg.ErrKeyNotFound) {
+		return &errs.Detail{Err: ErrBoundKeyNotFound, Detail: attrs.CN}
+	}
+	if err != nil {
+		return &errs.Wrapped{Msg: "ca: resolve bound key " + attrs.CN, Err: err}
+	}
+	signer, ok := key.(crypto.Signer)
+	if !ok {
+		return &errs.Detail{Err: ErrInvalidKeyAlgorithm, Detail: "bound key " + attrs.CN + " does not expose a public key"}
+	}
+	want, err := x509.MarshalPKIXPublicKey(signer.Public())
+	if err != nil {
+		return &errs.Detail{Err: ErrInvalidKeyAlgorithm, Detail: fmt.Sprintf("bound key %s: %v", attrs.CN, err)}
+	}
+	got, err := x509.MarshalPKIXPublicKey(csr.PublicKey)
+	if err != nil || !bytes.Equal(got, want) {
+		return &errs.Detail{Err: ErrBoundKeyMismatch, Detail: attrs.CN}
+	}
+	return nil
 }
 
 // signRawSubjectCSR signs a CSR under a caller-chosen raw subject: the
