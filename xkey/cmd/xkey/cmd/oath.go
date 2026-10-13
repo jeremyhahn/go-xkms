@@ -597,6 +597,17 @@ func runOATHRemove(cmd *cobra.Command, args []string) (err error) {
 }
 
 // runOATHScan executes the oath scan command.
+// oathNumDisplays and oathScanScreen reach the host's displays. Tests
+// replace them, since a test host has no screen to capture.
+var (
+	oathNumDisplays = qrscan.NumDisplays
+	oathScanScreen  = func(displayIndex int) ([]*qrscan.ScanResult, error) {
+		scanner := qrscan.NewScanner()
+		scanner.AllowMultiple = true // runOATHScan handles multiple results itself
+		return scanner.ScanScreen(displayIndex)
+	}
+)
+
 func runOATHScan(cmd *cobra.Command, args []string) (err error) {
 	out := cmd.OutOrStdout()
 	storePath, _ := cmd.Flags().GetString("store")
@@ -608,7 +619,7 @@ func runOATHScan(cmd *cobra.Command, args []string) (err error) {
 
 	// List displays mode
 	if listDisplays {
-		n := qrscan.NumDisplays()
+		n := oathNumDisplays()
 		if n == 0 {
 			_, _ = fmt.Fprintln(out, "No displays found.")
 			return nil
@@ -621,18 +632,14 @@ func runOATHScan(cmd *cobra.Command, args []string) (err error) {
 	}
 
 	// Check display availability
-	n := qrscan.NumDisplays()
+	n := oathNumDisplays()
 	if n == 0 {
 		return ErrOATHScanFailed
 	}
 
 	_, _ = fmt.Fprintf(out, "Scanning %d display(s) for QR codes...\n", n)
 
-	// Scan for QR codes
-	scanner := qrscan.NewScanner()
-	scanner.AllowMultiple = true // We'll handle multiple results ourselves
-
-	results, err := scanner.ScanScreen(displayIndex)
+	results, err := oathScanScreen(displayIndex)
 	if err != nil {
 		if errors.Is(err, qrscan.ErrNoQRCodeFound) {
 			return ErrOATHNoQRFound

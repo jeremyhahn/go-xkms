@@ -486,6 +486,20 @@ type OpenSSLConfig = pkgca.OpenSSLConfig
 // RevokeOptions configures certificate revocation behavior.
 type RevokeOptions = pkgca.RevokeOptions
 
+// RFC 5280 Section 5.3.1 CRLReason codes, for Revoke and RevokeOptions.
+const (
+	CARevocationReasonUnspecified          = pkgca.ReasonUnspecified
+	CARevocationReasonKeyCompromise        = pkgca.ReasonKeyCompromise
+	CARevocationReasonCACompromise         = pkgca.ReasonCACompromise
+	CARevocationReasonAffiliationChanged   = pkgca.ReasonAffiliationChanged
+	CARevocationReasonSuperseded           = pkgca.ReasonSuperseded
+	CARevocationReasonCessationOfOperation = pkgca.ReasonCessationOfOperation
+	CARevocationReasonCertificateHold      = pkgca.ReasonCertificateHold
+	CARevocationReasonRemoveFromCRL        = pkgca.ReasonRemoveFromCRL
+	CARevocationReasonPrivilegeWithdrawn   = pkgca.ReasonPrivilegeWithdrawn
+	CARevocationReasonAACompromise         = pkgca.ReasonAACompromise
+)
+
 // SerialGenerator issues serial numbers for new certificates.
 type SerialGenerator = pkgca.SerialGenerator
 

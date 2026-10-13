@@ -41,6 +41,10 @@ unified-server module) the same way `pkg/api/rest`'s `Config.CA` is. See
 | Get CRL (read, regenerates only if stale/missing) | `GET /api/v1/ca/crl` | **MISSING — #275** | **MISSING — #275** | **MISSING — #275** | **MISSING — #275** | session |
 | Revocation status | `GET /api/v1/ca/revoked/{serial}` | `IsRevoked` | same as REST | **MISSING — docs/13** | `IsRevoked` | `certs:read` |
 
+The `reason` field takes an RFC 5280 CRLReason code. Embedded Go callers name
+them with the `sdk/go` constants `CARevocationReason…` (for example
+`CARevocationReasonSuperseded` = 4).
+
 ### Revoke is confined to the certificate's issuing tenant (go-xkms#1229)
 
 `certs:revoke` — the same permission on REST, gRPC, MCP and the embedded

@@ -17,7 +17,6 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
-	"os"
 
 	xkms "github.com/jeremyhahn/go-xkms/sdk/go"
 	"github.com/jeremyhahn/go-xkms/sdk/go/fsutil"
@@ -156,8 +155,8 @@ func runPivCSR(cmd *cobra.Command, args []string) error {
 		slotName := xkms.PIVSlotName(slot)
 		_, _ = fmt.Fprintf(out, "CSR generated for slot %s (%s) and written to %s\n", slot, slotName, outputPath)
 	} else {
-		// Write to stdout
-		if _, err := os.Stdout.Write(resp.CSR); err != nil {
+		// Write to the command's output (stdout unless redirected).
+		if _, err := out.Write(resp.CSR); err != nil {
 			return errors.Join(ErrPIVCSROutputFailed, err)
 		}
 	}

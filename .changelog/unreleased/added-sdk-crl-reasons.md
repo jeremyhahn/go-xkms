@@ -1,0 +1,1 @@
+- **RFC 5280 CRL reason codes in `sdk/go`** -- `CARevocationReasonUnspecified` through `CARevocationReasonAACompromise` re-export the `pkg/ca` reason constants, so a caller of `Revoke` or `RevokeOptions` names `CARevocationReasonSuperseded` (4) instead of copying the number. No behaviour change. Files: `sdk/go/ca.go`, `sdk/go/ca_revocation_reasons_test.go`.

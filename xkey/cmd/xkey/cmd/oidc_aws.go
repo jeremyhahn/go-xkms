@@ -123,6 +123,10 @@ Examples:
 }
 
 // runOIDCAWS executes the AWS OIDC login flow.
+// awsLogin runs the AWS browser login. Tests point it at a local token
+// endpoint through aws.LoginOptions.TokenEndpointOverride.
+var awsLogin = aws.Login
+
 func runOIDCAWS(cmd *cobra.Command, args []string) error {
 	// Check if running as background worker (internal use)
 	backgroundWorker, _ := cmd.Flags().GetBool("background-worker")
@@ -216,7 +220,7 @@ func runAWSLogin(cmd *cobra.Command, out io.Writer, region, profile string, cros
 		_, _ = fmt.Fprintln(out, "Waiting for authorization...")
 	}
 
-	result, err := aws.Login(context.Background(), aws.LoginOptions{
+	result, err := awsLogin(context.Background(), aws.LoginOptions{
 		Region:      region,
 		CrossDevice: crossDevice,
 		Callback:    callback,

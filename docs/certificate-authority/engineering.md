@@ -26,6 +26,10 @@ startup.
 **`CARevoker`** — `Revoke(ctx, serial *big.Int, reason int) error`,
 `RevokeCert(ctx, cert, opts RevokeOptions) error`, `GenerateCRL(ctx) ([]byte, error)`,
 `CRL(ctx) ([]byte, error)`, `IsRevoked(serial *big.Int) (bool, error)`.
+The RFC 5280 reason codes for `reason` and `RevokeOptions` are exported from
+`sdk/go` as `CARevocationReasonUnspecified`, `…KeyCompromise`, `…CACompromise`,
+`…AffiliationChanged`, `…Superseded` (4), `…CessationOfOperation`,
+`…CertificateHold`, `…RemoveFromCRL`, `…PrivilegeWithdrawn`, `…AACompromise`.
 `RevokeCert`'s `RevokeOptions.DeleteKeys` deletes exactly the key the CA
 generated or resolved at issuance, resolved from the `issued-keys/` record
 (see "Issued-key persistence" under Persistence) rather than reconstructed

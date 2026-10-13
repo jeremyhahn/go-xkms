@@ -95,6 +95,20 @@ escalation from the xKey GUI.`,
 	RunE:   runUHIDSetup,
 }
 
+// The host surface runUHIDSetup acts on: the effective UID check, the
+// filesystem root its config files are written under, and the system
+// commands it runs. Tests point them at a temporary root and a recorder.
+var (
+	uhidSetupGeteuid = os.Geteuid
+	uhidSetupRoot    = "/"
+	uhidSetupRun     = runUHIDSetupCommand
+)
+
+// runUHIDSetupCommand runs a system command and waits for it to finish.
+func runUHIDSetupCommand(name string, args ...string) error {
+	return exec.Command(name, args...).Run() // #nosec G204
+}
+
 func init() {
 	uhidCmd.AddCommand(uhidSetupCmd)
 }
@@ -102,40 +116,42 @@ func init() {
 // runUHIDSetup performs the privileged UHID setup operations.
 func runUHIDSetup(cmd *cobra.Command, _ []string) error {
 	out := cmd.OutOrStdout()
-	if os.Geteuid() != 0 {
+	if uhidSetupGeteuid() != 0 {
 		return ErrUHIDSetupRequiresRoot
 	}
 
 	// Step 1: Write udev rule.
-	if err := os.MkdirAll(filepath.Dir(uhidUdevRulePath), 0755); err != nil {
+	udevRulePath := filepath.Join(uhidSetupRoot, uhidUdevRulePath)
+	if err := os.MkdirAll(filepath.Dir(udevRulePath), 0755); err != nil {
 		return &SentinelCauseError{Sentinel: ErrUHIDSetupUdevDirFailed, Cause: err}
 	}
-	if err := os.WriteFile(uhidUdevRulePath, []byte(uhidUdevRuleContent), 0644); err != nil {
+	if err := os.WriteFile(udevRulePath, []byte(uhidUdevRuleContent), 0644); err != nil {
 		return &SentinelCauseError{Sentinel: ErrUHIDSetupUdevWriteFailed, Cause: err}
 	}
-	_, _ = fmt.Fprintln(out, "Created udev rule:", uhidUdevRulePath)
+	_, _ = fmt.Fprintln(out, "Created udev rule:", udevRulePath)
 
 	// Step 2: Ensure uhid module loads at boot.
-	if err := os.MkdirAll(filepath.Dir(uhidModuleLoadPath), 0755); err != nil {
+	moduleLoadPath := filepath.Join(uhidSetupRoot, uhidModuleLoadPath)
+	if err := os.MkdirAll(filepath.Dir(moduleLoadPath), 0755); err != nil {
 		return &SentinelCauseError{Sentinel: ErrUHIDSetupModulesDirFailed, Cause: err}
 	}
-	if err := os.WriteFile(uhidModuleLoadPath, []byte(uhidModuleLoadContent), 0644); err != nil {
+	if err := os.WriteFile(moduleLoadPath, []byte(uhidModuleLoadContent), 0644); err != nil {
 		return &SentinelCauseError{Sentinel: ErrUHIDSetupModulesWriteFailed, Cause: err}
 	}
-	_, _ = fmt.Fprintln(out, "Created module load config:", uhidModuleLoadPath)
+	_, _ = fmt.Fprintln(out, "Created module load config:", moduleLoadPath)
 
 	// Step 3: Load uhid module now (may already be loaded).
-	if err := exec.Command("modprobe", "uhid").Run(); err != nil { // #nosec G204
+	if err := uhidSetupRun("modprobe", "uhid"); err != nil {
 		_, _ = fmt.Fprintf(out, "Warning: modprobe uhid failed (may already be loaded): %v\n", err)
 	} else {
 		_, _ = fmt.Fprintln(out, "Loaded uhid kernel module")
 	}
 
 	// Step 4: Reload udev rules and trigger device rescan.
-	if err := exec.Command("udevadm", "control", "--reload-rules").Run(); err != nil { // #nosec G204
+	if err := uhidSetupRun("udevadm", "control", "--reload-rules"); err != nil {
 		return &SentinelCauseError{Sentinel: ErrUHIDSetupUdevReloadFailed, Cause: err}
 	}
-	if err := exec.Command("udevadm", "trigger", "--subsystem-match=misc").Run(); err != nil { // #nosec G204
+	if err := uhidSetupRun("udevadm", "trigger", "--subsystem-match=misc"); err != nil {
 		return &SentinelCauseError{Sentinel: ErrUHIDSetupUdevTriggerFailed, Cause: err}
 	}
 	_, _ = fmt.Fprintln(out, "Reloaded udev rules and triggered device rescan")
@@ -145,7 +161,7 @@ func runUHIDSetup(cmd *cobra.Command, _ []string) error {
 	callingUser := resolveCallingUsername()
 	if callingUser != "" && callingUser != "root" {
 		if !userInGroup(callingUser, "input") {
-			if err := exec.Command("usermod", "-aG", "input", callingUser).Run(); err != nil { // #nosec G204
+			if err := uhidSetupRun("usermod", "-aG", "input", callingUser); err != nil {
 				return &DetailError{Err: ErrUHIDSetupUserAddFailed, Detail: fmt.Sprintf(": user %s: %v", callingUser, err)}
 			}
 			_, _ = fmt.Fprintf(out, "Added user %q to input group (session restart required for group membership)\n", callingUser)
