@@ -36,6 +36,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	xkms "github.com/jeremyhahn/go-xkms/sdk/go"
+	"github.com/jeremyhahn/go-xkms/sdk/go/xkmstest"
 )
 
 // sharedTPM keeps the provisioned simulator open across subcommands: each
@@ -748,6 +749,48 @@ func TestRunLAKShow_WithoutLAK(t *testing.T) {
 	require.ErrorIs(t, err, ErrKeyNotFound)
 	assert.ErrorContains(t, err, "LAK not found - run 'tpm lak create' first")
 	assert.Empty(t, stdout)
+}
+
+func TestRunLAKCreate_WithoutPlatformSRK(t *testing.T) {
+	withProvisionedSimulatorTPM(t)
+
+	setVar(t, &lakCreateForce, false)
+	stdout, _, err := runTPMSubcommand(runLAKCreate)
+	require.ErrorIs(t, err, ErrLAKPlatformSRKNotEnrolled)
+	assert.ErrorContains(t, err, "xkey setup wizard")
+	assert.NotContains(t, stdout, "Creating Local Attestation Key")
+}
+
+func TestRunLAKCreate_ProvisionedSimulator(t *testing.T) {
+	sim := withProvisionedSimulatorTPM(t)
+	cfg := xkms.DefaultTPMConfig
+	require.NoError(t, xkmstest.EnrollPlatformSRK(sim.tpm, &cfg))
+
+	t.Run("create", func(t *testing.T) {
+		setVar(t, &lakCreateForce, false)
+		stdout, _, err := runTPMSubcommand(runLAKCreate)
+		require.NoError(t, err)
+		assert.Contains(t, stdout, "LAK created successfully")
+	})
+
+	t.Run("show", func(t *testing.T) {
+		stdout, _, err := runTPMSubcommand(runLAKShow)
+		require.NoError(t, err)
+		assert.Contains(t, stdout, "0x81010003")
+	})
+
+	t.Run("create refuses to replace without force", func(t *testing.T) {
+		setVar(t, &lakCreateForce, false)
+		_, _, err := runTPMSubcommand(runLAKCreate)
+		assert.ErrorContains(t, err, "LAK already exists - use --force to recreate")
+	})
+
+	t.Run("create with force recreates", func(t *testing.T) {
+		setVar(t, &lakCreateForce, true)
+		stdout, _, err := runTPMSubcommand(runLAKCreate)
+		require.NoError(t, err)
+		assert.Contains(t, stdout, "LAK created successfully")
+	})
 }
 
 // TestRunLAKCommands_MissingDevice proves the LAK commands fail on a TPM

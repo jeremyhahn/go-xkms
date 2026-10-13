@@ -29,6 +29,13 @@ import (
 var (
 	ErrLAKAlreadyExists = errors.New("tpm: LAK already exists")
 	ErrLAKCreateFailed  = errors.New("tpm: failed to create LAK")
+
+	// ErrLAKPlatformSRKNotEnrolled is returned by 'tpm lak create' when the
+	// Platform SRK, the LAK's parent, is not enrolled. 'tpm provision' creates
+	// only the TCG-default EK and SSRK plus the IAK; the Platform SRK is
+	// enrolled separately, with the user PIN as its auth value.
+	ErrLAKPlatformSRKNotEnrolled = errors.New("tpm: the Platform SRK is not enrolled - " +
+		"enroll it with the xkey setup wizard (desktop GUI) before running 'tpm lak create'")
 )
 
 // LAKInfo holds information about the Local Attestation Key (go-xkms#715).
@@ -98,7 +105,9 @@ var tpmLAKCreateCmd = &cobra.Command{
 This creates a Restricted, Sign-only child key of the Platform SRK and
 persists it at the LAK handle. The device's IAK must already be provisioned
 -- run 'tpm provision' first -- since certifying the LAK (via 'tpm lak
-cert export') requires it.
+cert export') requires it. The Platform SRK must also be enrolled: 'tpm
+provision' does not create it; the xkey setup wizard enrolls it with the
+user PIN as its auth value.
 
 Examples:
   # Create the LAK
@@ -221,6 +230,10 @@ func runLAKCreate(cmd *cobra.Command, args []string) (err error) {
 
 	if _, err := tpm.IAKAttributes(); err != nil {
 		return &WrappedError{Msg: "IAK not found - run 'tpm provision' first", Err: err}
+	}
+
+	if _, err := tpm.PlatformSRKAttributes(); err != nil {
+		return &SentinelCauseError{Sentinel: ErrLAKPlatformSRKNotEnrolled, Cause: err}
 	}
 
 	var ownerAuth xkms.Password

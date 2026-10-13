@@ -16,6 +16,7 @@ package tpm2
 import (
 	"crypto"
 	"crypto/x509"
+	"errors"
 	"fmt"
 	"log/slog"
 
@@ -63,6 +64,22 @@ func (tpm *TPM2) CreateLAK(
 	}
 	lakAttrs.Parent = srkAttrs
 
+	// The LAK lives at its persistent handle; its private and public blobs
+	// are only needed to reload it for TPM2_EvictControl below. A TPM opened
+	// without a key backend (the xkey CLI) stages them in scratch memory.
+	if backend == nil && tpm.backend == nil {
+		scratch, err := store.NewMemoryStorageFactory(tpm.logger)
+		if err != nil {
+			return nil, err
+		}
+		defer func() {
+			if closeErr := scratch.Close(); closeErr != nil {
+				tpm.logger.Warn("tpm: failed to close LAK scratch key store", slog.String("error", closeErr.Error()))
+			}
+		}()
+		backend = scratch.KeyBackend()
+	}
+
 	if err := tpm.createLAKKeyPair(lakAttrs, backend, overwrite); err != nil {
 		return nil, err
 	}
@@ -82,6 +99,12 @@ func (tpm *TPM2) CreateLAK(
 	}
 
 	persistentHandle := tpm2.TPMHandle(tpm.config.LAK.Handle)
+	if overwrite {
+		if err := tpm.evictPersistedLAK(hierarchyAuthBytes, persistentHandle); err != nil {
+			tpm.flushSilent(loadResp.ObjectHandle)
+			return nil, &errs.Wrapped{Msg: "failed to evict the existing LAK", Err: err}
+		}
+	}
 	if err := tpm.evictControl(tpm2.TPMRHOwner, hierarchyAuthBytes, tpm2.NamedHandle{
 		Handle: loadResp.ObjectHandle,
 		Name:   loadResp.Name,
@@ -117,6 +140,23 @@ func (tpm *TPM2) createLAKKeyPair(lakAttrs *types.KeyAttributes, backend store.K
 	}
 	_, err := tpm.CreateECDSA(lakAttrs, backend, overwrite)
 	return err
+}
+
+// evictPersistedLAK evicts the LAK persisted at handle so CreateLAK's
+// overwrite can persist its replacement there. An empty handle has nothing
+// to evict and is not an error.
+func (tpm *TPM2) evictPersistedLAK(hierarchyAuth []byte, handle tpm2.TPMHandle) error {
+	pub, err := tpm2.ReadPublic{ObjectHandle: handle}.Execute(tpm.transport)
+	if errors.Is(err, tpmRCHandle) {
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	return tpm.evictControl(tpm2.TPMRHOwner, hierarchyAuth, tpm2.NamedHandle{
+		Handle: handle,
+		Name:   pub.Name,
+	}, handle)
 }
 
 // LAKAttributes returns the Local Attestation Key attributes, rebuilding them

@@ -164,6 +164,44 @@ func TestLAKAttributes_RebuildsAfterCacheCleared(t *testing.T) {
 	assert.Equal(t, original.KeyType, rebuilt.KeyType)
 }
 
+// TestCreateLAK_WithoutKeyBackend_PersistsLAK proves a TPM opened without a
+// key backend (the xkey CLI's) can still create the LAK: its blobs are only
+// staged to reload it for TPM2_EvictControl, so CreateLAK stages them in
+// scratch memory instead of dereferencing a nil backend.
+func TestCreateLAK_WithoutKeyBackend_PersistsLAK(t *testing.T) {
+	h := newLAKHarness(t)
+	saved := h.TPM.backend
+	h.TPM.backend = nil
+	t.Cleanup(func() { h.TPM.backend = saved })
+
+	lakAttrs, err := h.TPM.CreateLAK(nil, nil, false)
+	require.NoError(t, err)
+
+	h.TPM.lakAttrs = nil
+	persisted, err := h.TPM.LAKAttributes()
+	require.NoError(t, err)
+	assert.Equal(t, lakAttrs.TPMAttributes.PublicKeyBytes, persisted.TPMAttributes.PublicKeyBytes)
+}
+
+// TestCreateLAK_Overwrite_ReplacesPersistedLAK proves overwrite evicts the LAK
+// already persisted at the handle and persists a fresh key in its place,
+// while a second create without overwrite is refused.
+func TestCreateLAK_Overwrite_ReplacesPersistedLAK(t *testing.T) {
+	h := newLAKHarness(t)
+
+	original, err := h.TPM.CreateLAK(nil, h.Backend, false)
+	require.NoError(t, err)
+
+	_, err = h.TPM.CreateLAK(nil, h.Backend, false)
+	require.Error(t, err, "a second create without overwrite must not replace the LAK")
+
+	replaced, err := h.TPM.CreateLAK(nil, h.Backend, true)
+	require.NoError(t, err)
+	assert.Equal(t, original.TPMAttributes.Handle, replaced.TPMAttributes.Handle)
+	assert.NotEqual(t, original.TPMAttributes.PublicKeyBytes, replaced.TPMAttributes.PublicKeyBytes,
+		"overwrite must persist a fresh key, not keep the old one")
+}
+
 // =============================================================================
 // Platform-policy-bound LAK: bindObjectPolicy / objectSession (go-xkms#715)
 // =============================================================================
