@@ -1,285 +1,236 @@
 # Browser Extension
 
-The xKey browser extension provides secure credential autofill for web browsers. It communicates with the xKey desktop application (or headless server) via a Unix socket IPC protocol, enabling password and TOTP code filling directly into web forms.
+> **Status: REFERENCE** · Last verified: 2026-10-13
+> Scope: the `xkey extension` command group (`xkey/cmd/xkey/cmd/extension.go`, `extension_serve.go`); the normative reference is [`../../autofill/`](../../autofill/architecture.md).
+
+The xKey browser extension fills passwords and TOTP codes into web forms. It
+talks to a running xKey instance — the desktop app, or the headless
+`xkey extension serve` — through a native messaging host and the instance's
+Unix socket IPC.
 
 ## Architecture
 
-### Communication Path
-
 ```
-Chrome Extension  <-->  Native Messaging Host  <-->  IPC Server (xkey GUI or headless)
-   (MV3 SW)             (stdin/stdout)               (Unix socket)
+Browser extension  <-->  Native messaging host  <-->  xKey IPC server (GUI or serve)
+   (MV3)                 (stdin/stdout)               (Unix socket)
 ```
 
-The browser launches the native messaging host process (`xkey extension host`) via Chrome's native messaging API. The host bridges the browser's stdin/stdout pipe to the xKey IPC server over a Unix domain socket. All messages after the initial handshake are encrypted end-to-end.
-
-### Two-Layer Security Model
+The browser launches the xkey binary as its native messaging host. Chrome
+passes `chrome-extension://<id>/` and Firefox passes the manifest path; xkey
+detects either and runs the hidden `xkey extension host` command
+(`xkey/cmd/xkey/main.go:274`). The host name is `com.automatethethings.xkey`
+and messages are limited to 1 MB (`xkey/pkg/nativemsg/protocol.go:24`).
 
 | Layer | Mechanism |
 |-------|-----------|
-| Transport | Chrome native messaging (stdin/stdout) to Unix socket IPC |
-| Channel security | X25519 ECDH + HKDF-SHA256 + AES-256-GCM session encryption |
-| Identity binding | Ed25519 long-lived key per browser profile |
-| Pairing ceremony | 6-digit code displayed in xKey GUI, entered in extension |
-| Replay protection | Monotonic nonce counter per session direction |
-| Browser binding | Parent process verification via `/proc/$PPID/exe` |
+| Channel | X25519 ECDH handshake, HKDF-SHA256 directional keys, AES-256-GCM |
+| Replay protection | Per-direction counter nonce; a nonce not above the last accepted one is rejected |
+| Extension identity | Ed25519 key per browser profile, pinned per extension origin |
+| Pairing | 6-digit code, valid 5 minutes, entered in the extension |
+| Browser binding | Parent process check via `/proc/$PPID/exe` (Linux) |
 
-### Session Encryption
+The handshake, pairing and message formats are specified in
+[autofill architecture](../../autofill/architecture.md) and
+[autofill engineering](../../autofill/engineering.md).
 
-Every native messaging session begins with an X25519 ECDH handshake:
+### Pairing
 
-1. Extension generates an ephemeral X25519 keypair
-2. Extension sends `{type: "handshake", pubkey: "<base64>"}` via native messaging
-3. Host generates its own ephemeral X25519 keypair
-4. Host performs ECDH, derives two directional AES-256-GCM keys via HKDF-SHA256
-5. Host responds `{type: "handshake_ok", pubkey: "<base64>"}`
-6. All subsequent messages are encrypted: `{type: "encrypted", nonce: <uint64>, ciphertext: "<base64>"}`
+On first contact the host asks for pairing and sends a 6-digit code to the
+IPC server, which shows it in the GUI or, under `extension serve`, on the
+terminal. The user types it into the extension popup. The host then stores the
+extension's Ed25519 public key keyed by origin, so several extensions can be
+paired at once. Later connections sign
+`SHA-256(ephemeral X25519 key || origin || "xkey-ext-v1")`; a different key or
+origin is rejected.
 
-Key derivation uses directional info strings (`xkey-nativemsg-v1-send` / `xkey-nativemsg-v1-recv`) with lexicographic public key comparison to assign send/recv roles. The nonce is an 8-byte little-endian counter (starting at 1) padded to 12 bytes for GCM. Messages with nonces less than or equal to the last accepted nonce are rejected.
+Pairing state lives in `extension/pairing.json` under the xKey data directory
+(`~/.xkey/data` by default; `xkey/cmd/xkey/cmd/extension.go:437`). The failure
+counters live beside it in `pairing-limits.json`, so relaunching the host does
+not reset a lockout (`xkey/pkg/nativemsg/pairing_limits.go:27`).
 
-### Extension Pairing
+### Autofill actions
 
-First-time setup requires a pairing ceremony:
+After the handshake the extension sends encrypted IPC requests with one of
+these actions (`xkey/pkg/ipc/autofill_types.go:20`):
 
-1. Extension generates an Ed25519 keypair (stored in `chrome.storage.local`)
-2. Extension includes its Ed25519 public key and origin in the handshake
-3. Host responds `{type: "handshake_pair", pairing_required: true}`
-4. xKey GUI displays a 6-digit verification code (expires in 5 minutes)
-5. User enters the code in the extension popup
-6. Host stores the extension's Ed25519 public key + origin at `~/.xkey/pairing.json`
+| Action | Purpose | Fields |
+|--------|---------|--------|
+| `search` | Credentials for a domain | `domain` |
+| `get` | A credential and its password | `id`, `challenge` |
+| `totp` | TOTP code for a domain | `domain` |
+| `totp_by_id` | TOTP code for an account | `id` |
+| `status` | Lock state and policy | none |
+| `policy` | Current policy | none |
+| `save` | Save a credential from a form submission | `domain`, `username`, `password`, `title` |
+| `ignore_domain` | Never offer to save for a domain | `domain` |
+| `focus` | Bring the GUI window to the front | none |
 
-Subsequent connections use Ed25519 signature verification:
+With CTAP2 authentication on, `get` needs `challenge` (base64, 32 random bytes)
+and the response carries an assertion (authenticator data, signature,
+credential ID) the extension can verify.
 
-- Extension signs `SHA-256(X25519_ephemeral_pubkey || origin || "xkey-ext-v1")` with its Ed25519 private key
-- Host verifies the signature against the stored public key and origin
-- Mismatched keys or origins are rejected
-
-### Autofill IPC Protocol
-
-After the encrypted session is established, the extension sends IPC messages as encrypted payloads. The autofill protocol supports these actions:
-
-| Action | Description | Required Fields |
-|--------|-------------|-----------------|
-| `search` | Search credentials by domain | `domain` |
-| `get` | Get credential + password for fill | `id`, `challenge` (optional) |
-| `totp` | Get TOTP code for domain | `domain` |
-| `totp_by_id` | Get TOTP by account ID | `id` |
-| `status` | Check app lock state + policy | none |
-| `policy` | Get current policy | none |
-
-When CTAP2 authentication is enabled, the `get` action requires a `challenge` field (base64-encoded 32-byte random value). The response includes an `AutofillAssertion` containing authenticator data and signature for the extension to verify.
-
-### Wire Format
-
-Native messaging uses Chrome's length-prefixed format:
+## Commands
 
 ```
-[4-byte little-endian uint32 length][JSON payload]
+xkey extension
+├── install [chrome|firefox|all]     # Write native messaging manifests
+├── uninstall [chrome|firefox|all]   # Remove them
+├── status                           # Manifest status per browser
+├── serve                            # Headless autofill IPC server
+├── unpair                           # Remove every paired extension identity
+└── pair-status                      # Show paired extensions
 ```
 
-Maximum message size is 1 MB (Chrome's limit). The native host name is `com.automatethethings.xkey`.
+### install and uninstall
 
-## CLI Usage
+`chrome` covers every Chromium-based browser found (Chrome, Brave, Chromium,
+Edge, Opera, Vivaldi); `firefox` covers Firefox-family browsers; `all` is the
+default.
 
-### Native Messaging Setup
-
-Install the native messaging manifest so the browser can launch xKey:
+| Flag | Command | Description |
+|------|---------|-------------|
+| `--allowed-origin` | `install` | Override the Chrome extension origin (for an unpacked extension) |
+| `--profile-dir` | both | Pair one Chrome profile's user-data directory with this xkey instance; requires `chrome` |
 
 ```bash
-# Install for all supported browsers
 xkey extension install
-
-# Install for Chrome only
-xkey extension install chrome
-
-# Install for Firefox only
-xkey extension install firefox
-
-# Install with custom Chrome extension origin (unpacked extension)
 xkey extension install chrome --allowed-origin "chrome-extension://your_extension_id/"
-
-# Check installation status
-xkey extension status
-
-# Remove manifests
-xkey extension uninstall
-xkey extension uninstall chrome
+xkey extension install chrome --profile-dir ~/agents/agent-a/chrome-profile
+xkey extension uninstall chrome --profile-dir ~/agents/agent-a/chrome-profile
+xkey extension uninstall firefox
 ```
 
-**Example status output:**
+`--profile-dir` writes a manifest that launches a small generated script
+pinning the host to this instance's socket and data, so two xkey instances
+run by the same OS user can each pair with their own Chrome profile.
+
+Manifest locations on Linux and macOS (`xkey/pkg/nativemsg/manifest.go:128`):
+
+| Browser | Linux | macOS |
+|---------|-------|-------|
+| Chrome | `~/.config/google-chrome/NativeMessagingHosts/` | `~/Library/Application Support/Google/Chrome/NativeMessagingHosts/` |
+| Firefox | `~/.mozilla/native-messaging-hosts/` | `~/Library/Application Support/Mozilla/NativeMessagingHosts/` |
+
+The file is `com.automatethethings.xkey.json` in each.
+
+### status
+
+Prints one row per browser, each Chromium derivative separately:
 
 ```
 BROWSER    INSTALLED  PATH
-chrome     yes        /home/user/.config/google-chrome/NativeMessagingHosts/com.automatethethings.xkey.json
-firefox    no         /home/user/.mozilla/native-messaging-hosts/com.automatethethings.xkey.json
+Chrome     yes        <home>/.config/google-chrome/NativeMessagingHosts/com.automatethethings.xkey.json
+Firefox    no         <home>/.mozilla/native-messaging-hosts/com.automatethethings.xkey.json
 ```
 
-**Manifest Paths:**
+### unpair and pair-status
 
-| OS | Browser | Path |
-|----|---------|------|
-| Linux | Chrome | `~/.config/google-chrome/NativeMessagingHosts/com.automatethethings.xkey.json` |
-| Linux | Firefox | `~/.mozilla/native-messaging-hosts/com.automatethethings.xkey.json` |
-| macOS | Chrome | `~/Library/Application Support/Google/Chrome/NativeMessagingHosts/com.automatethethings.xkey.json` |
-| macOS | Firefox | `~/Library/Application Support/Mozilla/NativeMessagingHosts/com.automatethethings.xkey.json` |
+`unpair` deletes every stored extension identity; each extension must pair
+again. `pair-status` prints `Status: Not paired`, or the paired extensions
+with their origins and pairing times.
 
-### GUI Mode
+### serve
 
-The browser extension connects automatically when the xKey desktop app is running. The IPC server starts with the GUI and listens on the default socket path.
+Runs the autofill pipeline without a desktop session. It opens the IPC socket
+only when local app access is on and refuses to start otherwise; enable it
+with `xkey app-access enable`.
 
-### Headless Mode
+| Flag | Default | Description |
+|------|---------|-------------|
+| `--barrier-password-stdin` | `false` | Read the barrier password from stdin |
+| `--barrier-password-file` | | Read the barrier password from a file (first line) |
+| `--so-pin-stdin` | `false` | Read the SO PIN from stdin, to verify a sealed enterprise policy |
+| `--tpm-device` | `$TPM_DEVICE_PATH` or `/dev/tpmrm0` | TPM for the `tpm2` and `pkcs11` strategies |
+| `--tpm-simulator` | `false` | Use the in-process TPM simulator (simulator builds only) |
+| `--auto-lock-minutes` | `15` | Inactivity lock timeout; `0` disables it |
+| `--pin-state` | `<data dir>/pin` | PIN state directory |
+| `--log-level` | `info` | `debug`, `info`, `warn` or `error` |
+| `--log-file` | stderr | Log file |
+| `--no-barrier` | `false` | Use plain file stores (development only) |
+| `--no-auth` | `false` | Return credentials without CTAP2 PIN or touch (development only) |
+| `--no-pairing` | `false` | Skip extension identity verification (testing only) |
 
-Run the autofill IPC server without a desktop environment:
+The socket is the global `--socket`, which defaults as described below.
 
 ```bash
-# Start with barrier encryption (production)
-echo -n "secret" | xkey extension serve --barrier-password-stdin
-
-# Read barrier password from environment
+xkey extension serve --barrier-password-stdin < password.txt
 XKEY_BARRIER_PASSWORD=secret xkey extension serve
-
-# Read barrier password from file (first line)
 xkey extension serve --barrier-password-file /run/secrets/barrier
-
-# Interactive password prompt (terminal only)
-xkey extension serve
-
-# TPM2-sealed barrier (no password needed)
-xkey extension serve
-
-# Skip barrier encryption (development/testing)
-xkey extension serve --no-barrier
-
-# Custom socket path and debug logging
-xkey extension serve --socket /tmp/xkey.sock --log-level debug --log-file /var/log/xkey.log
+xkey extension serve --tpm-device /dev/tpm0
+xkey extension serve --no-barrier --no-pairing --log-level debug
 ```
 
-The headless server auto-detects the barrier strategy from the stored root key (the `barrier/root_key` entry of the data directory's storage engine). For software-sealed barriers, a password is required. For TPM2-sealed barriers, the hardware unseals automatically.
+The barrier password is taken from, in order, `--barrier-password-stdin`,
+`--barrier-password-file`, `XKEY_BARRIER_PASSWORD`, and a no-echo prompt when
+stdin is a terminal (`xkey/cmd/xkey/cmd/extension_serve.go:694`). There is no
+`--barrier-password` value flag.
 
-The `passphrase`, `tpm2`, `aws_kms`, `gcp_kms`, `azure_kv`, and `vault` strategies all unseal headlessly. A cloud KMS strategy needs no password: the server rebuilds the backend from the connection settings `xkey barrier init` persisted to the config file and authenticates with the provider's ambient credentials (or an explicit `*SecretValue` reference set by hand in the config), exactly like `xkey barrier unseal` does interactively -- see [seal/cli.md](../../seal/cli.md). A barrier sealed with `pkcs11` or `shamir` is refused with a typed, named error rather than hanging or attempting a login it cannot complete:
+The barrier strategy is read from the stored root key and unsealed
+headlessly where possible (`xkey/cmd/xkey/cmd/extension_serve.go:242`):
 
-- **`pkcs11`** -- the PKCS#11 token PIN would need to come from a source a headless process can reach without a human typing it (the intended source is a PIN sealed to the TPM under the platform PCR policy, auto-unsealed the same way the barrier's own TPM2 auto-unseal works). That pre-barrier secret store does not exist yet (go-xkms#677); until it does, unseal interactively with `xkey barrier unseal`.
-- **`shamir`** -- reassembling the root key needs an M-of-N quorum of operator-held shares, which a headless process has no way to collect. Unseal interactively with `xkey barrier unseal`.
+- `software` (Argon2id passphrase) uses the barrier password. With no barrier
+  initialized yet, `serve` initializes one with this strategy.
+- `tpm2` tries the TPM auto-unseal policy first, then a direct TPM unseal.
+- `pkcs11` releases the token PIN that `xkey barrier init` sealed under the
+  TPM platform policy, so no one types it.
+- `aws_kms`, `gcp_kms`, `azure_kv` and `vault` rebuild the backend from the
+  configuration `xkey barrier init` saved and use the provider's credentials;
+  see [seal/cli.md](../../seal/cli.md).
+- `shamir` is refused with `ErrServeShamirStrategyUnavailable`: a quorum of
+  operator shares cannot be collected headlessly. Unseal with
+  `xkey barrier unseal`.
 
-**Barrier password resolution order:**
+In an enterprise deployment with a sealed config directory, the SO policy is
+honoured only after it verifies with the SO PIN (`--so-pin-stdin` or
+`XKEY_SO_PIN`). Without the PIN the command fails closed.
 
-1. `--barrier-password-stdin` flag (reads standard input)
-2. `--barrier-password-file` flag (reads first line)
-3. `XKEY_BARRIER_PASSWORD` environment variable
-4. Interactive stdin prompt (if terminal is attached)
+### Default socket path
 
-### Command Reference
+`--socket` defaults to `$XKEY_HOME/run/xkey.sock` when `XKEY_HOME` is set,
+otherwise `$XDG_RUNTIME_DIR/xkey/xkey.sock`. Without `XDG_RUNTIME_DIR` it uses a
+per-user directory: `/run/user/$SUDO_UID` under sudo, `$TMPDIR` on macOS,
+`~/.xkey/run` elsewhere. It never falls back to a shared directory such as
+`/tmp` (`xkey/pkg/ipc/socket.go:78`).
 
-**`xkey extension install [chrome|firefox|all]`**
-
-| Flag | Default | Description |
-|------|---------|-------------|
-| `--allowed-origin` | (built-in Chrome extension ID) | Override Chrome extension allowed origin |
-
-**`xkey extension uninstall [chrome|firefox|all]`**
-
-No additional flags.
-
-**`xkey extension status`**
-
-No additional flags.
-
-**`xkey extension host`** (invoked by browser, not run manually)
-
-| Flag | Default | Description |
-|------|---------|-------------|
-| `--socket` | auto | IPC Unix socket path |
-| `--no-pairing` | false | Disable extension identity verification (dev only) |
-
-**`xkey extension serve`**
-
-| Flag | Default | Description |
-|------|---------|-------------|
-| `--socket` | auto | IPC Unix socket path |
-| `--barrier-password-stdin` | `false` | Read the barrier encryption password from standard input |
-| `--barrier-password-file` | | Read barrier password from file (first line) |
-| `--no-barrier` | false | Skip barrier encryption (dev/testing) |
-| `--log-level` | info | Log level (debug, info, warn, error) |
-| `--log-file` | stderr | Log file path |
-| `--auto-lock-minutes` | 15 | Inactivity lock timeout (0=disabled) |
-| `--pin-state` | auto | PIN state file path |
-
-### Default Socket Path
-
-The IPC socket location is determined automatically:
-
-- `$XDG_RUNTIME_DIR/xkey/xkey.sock` when `XDG_RUNTIME_DIR` is set
-- `/tmp/xkey-$UID/xkey.sock` otherwise
-
-When running via `sudo`, the original user's UID from `SUDO_UID` is used so the daemon and client resolve to the same path.
-
-## Security
-
-### Attack Mitigations
+## Security notes
 
 | Attack | Mitigation |
 |--------|------------|
-| Rogue extension | Ed25519 identity verification -- different key rejected |
-| Rogue local process | No Ed25519 key -- rejected; parent process check (`/proc/$PPID/exe`) |
-| Extension reinstall | New Ed25519 key generated -- requires re-pairing |
-| Replay handshake | Ed25519 signature binds to ephemeral X25519 pubkey |
-| Replay messages | Monotonic nonce counter per direction; out-of-order rejected |
-| Message tampering | AES-256-GCM authenticated encryption detects modification |
-| DDoS pairing | Rate limit: 3 failed attempts -- 15-minute lockout |
-| DDoS identity | Rate limit: 5 failed verifications -- 5-minute lockout |
-| Pairing code bruteforce | 6-digit code expires after 5 minutes |
+| Rogue extension or local process | No matching Ed25519 identity: rejected |
+| Reinstalled extension | New identity key: must pair again |
+| Replayed handshake | Identity signature covers the ephemeral X25519 key |
+| Replayed or tampered messages | Counter nonces and AES-GCM authentication |
+| Pairing code guessing | 3 failures: 15-minute lockout; codes expire after 5 minutes |
+| Identity verification flooding | 5 failures: 5-minute lockout |
 
-### Browser Sandboxing
+The constants are in `xkey/pkg/nativemsg/pairing.go:35`. The extension
+manifest declares no `externally_connectable`, so other extensions and web
+pages cannot message the host.
 
-The Chrome extension MV3 architecture provides additional isolation:
+On Linux the host accepts only these parent binaries
+(`xkey/pkg/nativemsg/pairing.go:365`): `chrome`, `chromium`, `google-chrome`,
+`google-chrome-stable`, `chromium-browser`, `brave-browser`, `vivaldi-bin`,
+`opera`, `microsoft-edge`, `firefox`, `firefox-esr`, `firefox-bin`. Where
+`/proc` cannot be read the check is skipped; it is defence in depth, not the
+only control.
 
-- **No `externally_connectable`** -- other extensions and pages cannot message xKey
-- **Chrome isolated worlds** -- content script has separate JS globals from page scripts
-- **Service worker sole handler** -- content scripts cannot directly reach the native host
-- **User-initiated only** -- credential fills require explicit user action
+## Data storage
 
-### Parent Process Verification
-
-On Linux, the native messaging host verifies its parent process by reading `/proc/$PPID/exe`. Only known browser binaries are accepted:
-
-`chrome`, `chromium`, `google-chrome`, `google-chrome-stable`, `chromium-browser`, `brave-browser`, `vivaldi-bin`, `opera`, `microsoft-edge`
-
-On non-Linux platforms this check is skipped (defense in depth, not sole control).
-
-### Barrier Encryption
-
-When barrier mode is active, all credential data on disk is encrypted with AES-256-GCM. The barrier root key can be sealed with:
-
-- **Software strategy** -- Argon2id-derived key from a password
-- **TPM2 strategy** -- Hardware-sealed key (no password required)
-
-The headless server reads the strategy from the root key envelope and initializes only the required backend.
-
-### Unpair Extension
-
-To remove a paired extension:
-
-- **GUI**: Settings -- unpair action
-- **CLI**: Delete `~/.xkey/pairing.json`
-- **Automatic**: Extension reinstall generates a new Ed25519 key, triggering re-pairing
-
-## Data Storage
-
-| Path | Contents | Encrypted |
+| Path (under `~/.xkey/data`) | Contents | Protection |
 |------|----------|-----------|
-| `~/.xkey/pairing.json` | Ed25519 public key + origin of paired extension | No (public key only) |
-| `~/.xkey/data/staticpw/` | Static password entries | Yes (barrier) |
-| `~/.xkey/data/oath.json` | OATH/TOTP account data | Yes (barrier) |
-| `barrier/root_key` entry in `~/.xkey/data/` | Sealed barrier root key envelope (an engine entry, not a file) | Sealed |
-| `~/.xkey/data/pin-state.json` | PIN lockout state | No (lockout metadata only) |
+| `extension/pairing.json` | Paired extension public keys and origins | Public keys only |
+| `extension/pairing-limits.json` | Pairing and verification failure counters | Mode 0600 |
+| Barrier store | Static passwords and OATH accounts | Barrier encryption |
+| `staticpw/`, `oath.json` | The same stores under `--no-barrier` | None |
+| `pin/` | PIN state | Lockout metadata |
 
-## Deployment Patterns
+## Deployment
 
-### systemd Service
+### systemd
 
 ```ini
 [Unit]
-Description=xkey extension daemon
+Description=xkey extension server
 After=network.target
 
 [Service]
@@ -296,78 +247,45 @@ RestartSec=5
 WantedBy=multi-user.target
 ```
 
-### Docker
+Run `xkey app-access enable` as the service user first.
+
+### SSH socket forwarding
+
+Forward a remote instance's socket to the path the local host resolves:
 
 ```bash
-docker run -d --name xkey-ext \
-  -v xkey-data:/home/xkey/.xkey \
-  -v /tmp/xkey-sock:/sock \
-  -e XKEY_BARRIER_PASSWORD=secret \
-  xkey extension serve --socket /sock/xkey.sock
+ssh -L "$XDG_RUNTIME_DIR/xkey/xkey.sock:/run/user/1000/xkey/xkey.sock" remote-host
 ```
 
-### SSH Socket Forwarding
-
-Forward the daemon socket from a remote machine to localhost:
-
-```bash
-ssh -L /tmp/xkey-$(id -u)/xkey.sock:/tmp/xkey-1000/xkey.sock remote-host
-```
-
-The local browser extension then connects to the forwarded socket transparently.
-
-## Integration Testing
-
-The extension integration tests exercise the full autofill pipeline end-to-end:
+## Integration tests
 
 ```bash
 cd xkey && make integration-test-extension
 ```
 
-Tests connect directly to the IPC Unix socket (no browser dependency) to verify credential search, retrieval, TOTP generation, status queries, and error handling.
+The tests talk to the IPC socket directly, with no browser.
 
 ## Troubleshooting
 
-### Extension Cannot Connect
+**The extension cannot connect.** Check `xkey extension status`, that the GUI
+or `xkey extension serve` is running, that local app access is on
+(`xkey app-access status`), and that the socket exists at the path above.
 
-**Symptoms:** Extension popup shows connection error.
+**Pairing is required again after an update.** Reinstalling the extension or
+clearing its storage creates a new identity key. Pair again.
 
-**Solutions:**
-1. Verify manifest is installed: `xkey extension status`
-2. Verify IPC server is running (GUI open or `xkey extension serve` active)
-3. Check socket exists: `ls -la /tmp/xkey-$(id -u)/xkey.sock`
-4. Verify permissions on socket file (should be `0600`)
+**`extension serve: barrier password required`.** Supply it with
+`--barrier-password-stdin`, `--barrier-password-file` or
+`XKEY_BARRIER_PASSWORD`, or use a strategy that unseals headlessly.
 
-### Pairing Required After Extension Update
-
-This is expected when the extension is reinstalled or `chrome.storage.local` is cleared. The new Ed25519 key does not match the stored one. Complete the pairing ceremony again.
-
-### Barrier Password Prompt in Headless Mode
-
-**Symptoms:** `extension serve: barrier password required`
-
-**Solutions:**
-1. Pass via stdin: `--barrier-password-stdin` (pipe the password in)
-2. Pass via environment: `XKEY_BARRIER_PASSWORD=secret`
-3. Pass via file: `--barrier-password-file /run/secrets/barrier`
-4. Use TPM2-sealed barrier (no password needed)
-5. Use `--no-barrier` for development
-
-### Identity Verification Locked
-
-**Symptoms:** `nativemsg: identity verification locked due to too many failures`
-
-Wait 5 minutes for the lockout to expire, or restart the native messaging host. If pairing was locked (3 failures), wait 15 minutes.
+**`nativemsg: identity verification locked due to too many failures`.** Wait
+5 minutes (15 after three failed pairing codes). Restarting the host does not
+clear the lockout.
 
 ## See Also
 
+- [Autofill feature folder](../../autofill/user.md)
 - [FIDO2 CLI Commands](./fido2.md)
 - [Getting Started Guide](../getting-started.md)
 - [WebAuthn Documentation](../webauthn.md)
-
-## References
-
 - [Chrome Native Messaging](https://developer.chrome.com/docs/extensions/develop/concepts/native-messaging)
-- [X25519 ECDH (RFC 7748)](https://datatracker.ietf.org/doc/html/rfc7748)
-- [HKDF (RFC 5869)](https://datatracker.ietf.org/doc/html/rfc5869)
-- [AES-GCM (NIST SP 800-38D)](https://csrc.nist.gov/pubs/sp/800/38/d/final)

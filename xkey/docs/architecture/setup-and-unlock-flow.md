@@ -3,11 +3,14 @@
 
 # Setup Wizard and Unlock Flow
 
+> **Status: REFERENCE** · Last verified: 2026-10-13
+> Backend sequence of setup, startup unlock and app lock; the [setup-wizard](../setup-wizard/) feature folder is normative for setup.
+
 This document describes the backend execution flow of the setup wizard, the returning user startup/unlock process, and the component architecture that ties them together.
 
 ## Setup Wizard Backend Execution (ApplySetup)
 
-The `SetupWizardService.ApplySetup()` method executes 10 sequential steps. Each step delegates to a dedicated service. Failures in non-critical steps are recorded as warnings; critical failures abort the wizard.
+The `SetupWizardService.ApplySetup()` method executes 9 sequential steps (`setupTotalSteps`, `xkey/pkg/gui/services/setup_wizard_service.go:464`). Each step delegates to a dedicated service. Failures in non-critical steps are recorded as warnings; critical failures abort the wizard.
 
 ```mermaid
 flowchart TD
@@ -45,13 +48,13 @@ flowchart TD
         S5A -->|Yes| S5B[barrierPassword = userPIN]
         S5A -->|No| S5C[Use explicit barrier password]
         S5B & S5C --> S5D[BarrierService.Initialize]
-        S5D --> S5E{Best strategy}
-        S5E -->|TPM2| S5F[TPM2 strategy — auto-unseal]
-        S5E -->|Software| S5G[Software AES-256-GCM]
+        S5D --> S5E{SealerBackend: chosen, else BestSealer, else passphrase}
+        S5E -->|tpm2| S5F[TPM2 strategy — auto-unseal]
+        S5E -->|passphrase| S5G[Passphrase strategy]
     end
 
     subgraph S6["Step 6: Initialize Data Directory"]
-        S6A["Create ~/.xkey/data/"] --> S6B[initPINService — TPM2Backend or SoftwareBackend]
+        S6A["Create ~/.xkey/data/"] --> S6B[initPINService — ResolvePINBackend picks the PIN strategy]
         S6B --> S6C[initializeAuthenticator — PINVerifier wired, already populated]
         S6C --> S6G[postDataDirStartup]
         S6G --> S6D{PIN deferred from Step 2?}
@@ -81,7 +84,7 @@ flowchart TD
 
 ### Step 4 Detail: Platform SRK Provisioning
 
-The Platform SRK (at handle `0x81000002`) is the sole key used for PIN verification. The `ensureSRKAuth` method handles the case where the SRK already exists from a prior installation:
+The Platform SRK (at handle `0x81000002`) is the sole key used for PIN verification. The `ensureSRKAuth` method (`pkg/tpm2/platform_keystore.go:345`) handles the case where the SRK already exists from a prior installation:
 
 ```mermaid
 flowchart TD
@@ -98,7 +101,7 @@ flowchart TD
     EVICT -->|TPM_RC_BAD_AUTH| FAIL([ErrPlatformKeyStoreEvictSRK])
 ```
 
-If eviction fails because the TPM owner hierarchy has auth from a prior installation, `Initialize` returns `ErrPlatformKeyStoreEvictSRK` with a message directing the user to clear the TPM or provide the correct SO PIN. There is no fallback to the Shared SRK — the Platform SRK is the only key used for PIN management.
+If eviction fails because the TPM owner hierarchy has auth from a prior installation, `Initialize` returns `ErrPlatformKeyStoreEvictSRK` (`platform_keystore.go:77`) with a message directing the user to clear the TPM or provide the correct SO PIN. There is no fallback to the Shared SRK — the Platform SRK is the only key used for PIN management.
 
 ## Returning User Startup Flow
 
@@ -180,16 +183,16 @@ until restart.
 ```mermaid
 flowchart TD
     A[AppLockService.Unlock] --> B[PINService.VerifyUserPIN]
-    B --> C[pin.Service.VerifyUserPIN]
+    B --> C[qrdbsdk.PINService.VerifyUserPIN]
     C --> D{Backend type?}
 
-    D -->|TPM2| E[pin.TPM2Backend.VerifyUserPIN]
+    D -->|TPM2| E[pintpm2.TPM2Backend.VerifyUserPIN]
     E --> F[PlatformKeyStore.VerifyAuth]
     F --> G["tpm.VerifyAuth(srkHandle, pin)\nTPM2_Create as parent auth check"]
     G -->|Success| OK([Verified])
     G -->|Fail| FAIL([ErrAuthFailed])
 
-    D -->|Software| H[pin.SoftwareBackend.VerifyUserPIN]
+    D -->|Software| H[go-qrdb software PIN backend]
     H --> I[Argon2id hash comparison]
     I -->|Match| OK
     I -->|No match| FAIL
@@ -210,10 +213,10 @@ flowchart TB
     end
 
     subgraph CORE["Core Layer"]
-        PS[pin.Service]
+        PS[qrdbsdk.PINService]
         SB[seal.Barrier]
-        T2B[pin.TPM2Backend]
-        SWB[pin.SoftwareBackend]
+        T2B[pintpm2.TPM2Backend]
+        SWB[software PIN backend]
     end
 
     subgraph TPM["TPM Layer"]

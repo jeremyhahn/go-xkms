@@ -1,5 +1,8 @@
 # Unified Key Store
 
+> **Status: REFERENCE** · Last verified: 2026-10-13
+> Describes the phone-side key store of xkey-android, a separate Kotlin repository; superseded by [phone-hsm/architecture.md](../../phone-hsm/architecture.md). Only the wire-visible fields are verified against this tree (`KeyInfo`, `xkey/pkg/pairing/protocol_local.go:170`); the Room schema, DAO and migration below are not.
+
 ## Overview
 
 The Android app uses a single Room database table (`keys`) as the unified source of truth for all key types. This replaces the FIDO2-only `credential_metadata` table with a general-purpose key entity that supports FIDO2 credentials, SSH keys, TLS certificates, signing keys, encryption keys, and symmetric keys.
@@ -51,6 +54,9 @@ data class KeyEntity(
 | `signing` | General-purpose signing | EC, RSA |
 | `encryption` | RSA encryption | RSA2048-4096 |
 | `symmetric` | Symmetric encryption/HMAC | AES128, AES256, HMAC-SHA256/512 |
+
+These are the `keyType` filter values `local.listKeys` accepts
+(`LocalListKeysParams`, `xkey/pkg/pairing/protocol_local.go:164`).
 
 ## Key Sources
 

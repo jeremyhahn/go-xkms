@@ -1,5 +1,8 @@
 # Phone Backend Security
 
+> **Status: REFERENCE** · Last verified: 2026-10-13
+> Security background for the phone backend; superseded by [phone-hsm/architecture.md](../../phone-hsm/architecture.md). Where they disagree, the feature folder wins. Phone-side (Android app) behaviour is described, not verified here.
+
 ## Overview
 
 The phone backend provides multiple layers of security to protect key material and operations. This document covers the threat model, security layers, and mitigations.
@@ -96,7 +99,12 @@ The attestation extension indicates the actual security level:
 
 - `attestationSecurityLevel = 1` (TEE) - Key operations in TrustZone
 - `attestationSecurityLevel = 2` (StrongBox) - Key operations in dedicated chip
-- `attestationSecurityLevel = 0` (Software) - **Rejected** by phone backend verification
+- `attestationSecurityLevel = 0` (Software)
+
+The phone backend accepts software attestations unless
+`backends.phone` attestation sets `min_security_level` to `tee` or
+`strongbox`; an empty or unrecognised value maps to software
+(`mapMinSecurityLevel`, `pkg/backend/phone/android/verifier.go:119`).
 
 ## Noise Protocol Security
 
@@ -119,7 +127,7 @@ Properties:
 
 | Key | Storage | Purpose |
 |-----|---------|---------|
-| Local static key | `~/.xkey/phone.yaml` (laptop) | Laptop identity |
+| Local static key | xkey `devices.yaml`, sealed under the barrier when one is configured (laptop) | Laptop identity |
 | Remote static key | Phone app encrypted storage | Phone identity |
 | Ephemeral keys | Memory only, per-session | Forward secrecy |
 | Session keys | Memory only, derived from handshake | Encrypt/decrypt messages |
@@ -128,7 +136,7 @@ Properties:
 
 - First pairing derives a short authentication string (SAS) from the Noise
   handshake's channel binding and prints it on the desktop
-  (`pairing.ShortAuthString`, go-xkms#1306). It is informational today: the
+  (`ShortAuthString`, `xkey/pkg/pairing/sas.go`). It is informational today: the
   Android app does not yet display the matching code, so nothing currently
   blocks pairing on the operator confirming a match. Once the app shows it,
   comparing the two is what catches an active MITM that substituted its own
@@ -138,9 +146,13 @@ Properties:
 
 ## Biometric Security
 
-### Per-Operation Authentication
+### Per-Key Authentication
 
-Every key operation (sign, decrypt, ECDH) requires fresh biometric authentication on the phone.
+Keys generated with `biometricRequired` need biometric authentication on the
+phone for key operations (sign, decrypt, ECDH); the flag and
+`authDurationSeconds` are per-key (`LocalGenerateKeyParams`,
+`xkey/pkg/pairing/protocol_local.go:53`) and can be changed with
+`local.setKeyPolicy`.
 
 ### Authentication Duration
 
@@ -166,13 +178,12 @@ Every key operation (sign, decrypt, ECDH) requires fresh biometric authenticatio
 | Noise handshake | N/A | Same encryption as BLE |
 | Biometric | N/A | Same per-operation auth as BLE |
 
-### Stage 2: Custom USB Driver
+### Stage 2: Android Open Accessory
 
-Future implementation eliminates the need for USB debugging by using:
-
-- Android USB Accessory Mode (AOA)
-- USB CDC-ACM serial communication
-- Phone acts as USB accessory without debug mode
+xkey's own USB transport uses Android Open Accessory mode instead of ADB, so
+USB debugging is not needed (`xkey/pkg/phone/aoa.go`,
+`xkey/pkg/phone/usb_transport.go`). The xkmsd phone backend itself still
+reaches a USB phone over `tcp` through ADB forwarding.
 
 ## Best Practices
 
@@ -189,4 +200,4 @@ Future implementation eliminates the need for USB debugging by using:
 - [Architecture](architecture.md)
 - [Attestation](attestation.md)
 - [Configuration](configuration.md)
-- [xKey Phone Transport Security](../../../xkey/docs/phone/transport.md)
+- [Phone Transport](../transport.md)

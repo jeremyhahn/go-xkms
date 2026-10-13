@@ -1,48 +1,53 @@
 # Initialization Guide
 
+> **Status: REFERENCE** · Last verified: 2026-10-13
+> First-run walkthrough for xkmsd and xkmsctl; superseded by [xkmsd-configuration](../../../docs/xkmsd-configuration/user.md), [pin-management](../../../docs/pin-management/user.md) and [seal/](../seal/architecture.md). Where they disagree, the feature folders win.
+
 After installing go-xkms, these steps bring the system to a fully operational state. The process covers barrier initialization for at-rest encryption, PIN setup for access control, backend configuration, and verifying the system is ready.
 
 ## Prerequisites
 
 - go-xkms binary installed (`xkmsctl` CLI available on `$PATH`)
-- Configuration file at default location (`$HOME/.xkms.yaml`) or specified via `--config`
+- `xkmsctl` configuration at the default location (`$HOME/.xkms.yaml`, `cmd/xkmsctl/root.go:116`) or specified via `--config`
 - For hardware backends: TPM 2.0 device (`/dev/tpmrm0`) or PKCS#11 token available
 
 ## Step 1: Configuration File
 
-Create a configuration file with at minimum the server, backend, seal, and PIN sections. A minimal `xkmsd.yaml`:
+Create an `xkmsd.yaml` with at least the server, backend, barrier and PIN sections (`Config`, `pkg/config/config.go:35`). A minimal example:
 
 ```yaml
 server:
-  address: "0.0.0.0:8443"
-  tls:
-    cert_file: "/etc/xkms/server.pem"
-    key_file: "/etc/xkms/server-key.pem"
-    ca_file: "/etc/xkms/ca.pem"
+  host: ""            # all interfaces
+  rest_port: 8443
+
+tls:
+  enabled: true
+  cert_file: "/etc/xkms/server.pem"
+  key_file: "/etc/xkms/server-key.pem"
+  ca_file: "/etc/xkms/ca.pem"
 
 backends:
-  - id: software
-    type: software
-    data_dir: "/var/lib/xkms/keys"
+  software:
+    enabled: true
+    path: "/var/lib/xkms/keys"
 
-seal:
-  strategy: auto
+barrier:
+  enabled: true
+  strategy: tpm2
   root_key_path: "sys/barrier/root-key"
 
 pin:
-  strategy: auto
-  min_length: 6
-  lockout:
-    max_attempts: 5
-    duration: 5m
-    backoff: true
+  enabled: true
+  strategy: software
+  max_attempts: 5
+  lockout_duration: 5m
 ```
 
-The `auto` strategy for both `seal` and `pin` selects the best available hardware option, falling back to software. For production, prefer an explicit `tpm2` or `pkcs11` strategy.
+`barrier.strategy` takes `none`, `passphrase`, `shamir`, `tpm2`, `pkcs11`, `awskms`, `gcpkms`, `azurekv` or `vault`; empty means `passphrase` (`BarrierConfig`, `pkg/config/config.go:160`). `pin` has only `enabled`, `strategy`, `max_attempts` and `lockout_duration` (`PINConfig`, `config.go:261`); `pin.strategy` is `auto` (the default), `software` or `tpm2` (`pkg/server/pin_manager.go:32-37`). The full key reference is [xkmsd-configuration/engineering.md](../../../docs/xkmsd-configuration/engineering.md).
 
 ## Step 2: Initialize the Barrier
 
-The barrier provides transparent at-rest encryption for all key material. It belongs to go-qrdb, and `xkmsctl` has no `barrier` verb: the server initializes and unseals it from the `seal` section above when `xkmsd` starts. See [Barrier Architecture](../seal/architecture.md).
+The barrier provides transparent at-rest encryption for all key material. It belongs to go-qrdb, and `xkmsctl` has no `barrier` verb: the server initializes and unseals it from the `barrier` section above when `xkmsd` starts. See [Barrier Architecture](../seal/architecture.md).
 
 On a desktop, `xkey barrier init` initializes the barrier. Run it before `xkey tpm` or `xkey pin` on a fresh data directory, because the go-qrdb file engine refuses a non-empty directory that lacks its format marker.
 
@@ -51,63 +56,35 @@ On a desktop, `xkey barrier init` initializes the barrier. Run it before `xkey t
 The SO PIN is the master PIN used for administrative operations. It must be set before the user PIN.
 
 ```bash
-xkmsctl pin set-so
+xkmsctl pin so-set
 ```
 
-You will be prompted interactively:
-
-```
-Enter new SO PIN: ********
-Confirm SO PIN: ********
-SO PIN set successfully.
-```
-
-Requirements: minimum length from config (default 6 characters). Store this PIN securely -- it is needed for lockout recovery and user PIN management.
+The new PIN is prompted for when `--new-pin` is omitted; `--new-pin -` reads it from stdin. Replacing an existing SO PIN needs `--current-pin` (`cmd/xkmsctl/pin.go:500-501`). Store this PIN securely -- it is needed for lockout recovery and user PIN management.
 
 ## Step 4: Set the User PIN
 
-The user PIN controls day-to-day access. Requires the SO PIN for authorization.
+The user PIN controls day-to-day access. It requires the SO PIN for authorization.
 
 ```bash
-xkmsctl pin set-user
+xkmsctl pin user-set
 ```
 
-```
-Enter SO PIN: ********
-Enter new User PIN: ********
-Confirm User PIN: ********
-User PIN set successfully.
-```
+`--so-pin` and `--new-pin` are prompted for when omitted (`pin.go:511-512`).
 
 ## Step 5: Verify PIN Setup
 
-Confirm both PINs are working and the lockout counter is clean:
-
 ```bash
-# Verify user PIN
-xkmsctl pin verify
-# Enter User PIN: ********
-# PIN verified successfully.
+# Verify the user PIN
+xkmsctl pin user-verify
 
-# Verify SO PIN
-xkmsctl pin verify --type so
-# Enter SO PIN: ********
-# PIN verified successfully.
+# Verify the SO PIN
+xkmsctl pin so-verify
 
-# Check lockout status
-xkmsctl pin status
+# Check lockout state
+xkmsctl pin lockout
 ```
 
-Expected status output:
-
-```
-PIN Status
-  Strategy:        software
-  SO PIN Set:      true
-  User PIN Set:    true
-  Failed Attempts: 0/5
-  Locked:          false
-```
+Both verify verbs take `--pin` (prompted when omitted, `pin.go:508`, `:519`).
 
 ## Step 6: Test Key Operations
 
@@ -115,7 +92,7 @@ Generate a test key to verify the system is fully operational:
 
 ```bash
 # Generate a signing key
-xkmsctl key generate test-key --key-type signing --algorithm ed25519
+xkmsctl key generate test-key --key-type signing --key-algorithm ed25519
 
 # List keys
 xkmsctl key list
@@ -127,7 +104,7 @@ xkmsctl key sign test-key "hello world"
 xkmsctl key delete test-key
 ```
 
-If all commands succeed, the barrier, PIN, and backend layers are operational.
+`key generate`, `list`, `delete` and `sign <key-id> <data>` are defined in `cmd/xkmsctl/key.go:42`, `:160`, `:265` and `:314`. If all commands succeed, the barrier, PIN, and backend layers are operational.
 
 ## Step 7: (Optional) Set Up PIV
 
@@ -169,17 +146,16 @@ See [Authentication Configuration](../../../docs/xkmsd-configuration/engineering
 
 ## Daily Operations
 
-The server unseals the barrier on each restart through the configured seal strategy. TPM 2.0 and PKCS#11 strategies unseal automatically because the hardware provides authentication. There is no `xkmsctl barrier` verb.
+The server unseals the barrier on each restart through the configured seal strategy. TPM 2.0 and PKCS#11 strategies unseal automatically because the hardware provides authentication; `passphrase` and `shamir` never auto-unseal and wait for the operator (`config.go:166-172`). There is no `xkmsctl barrier` verb.
 
 ## Troubleshooting
 
-| Symptom | Cause | Resolution |
-|---------|-------|------------|
-| `pin: locked out due to too many failed attempts` | Exceeded max failed PIN attempts | Check `xkmsctl pin status` for recovery time, or reset immediately with `xkmsctl pin reset-lockout` (requires SO PIN) |
-| `seal: barrier is sealed` | Key operation attempted while barrier is sealed | Restart `xkmsd` so the seal strategy unseals it |
-| `seal: invalid credentials` | Wrong passphrase during unseal | Re-enter the correct passphrase |
-| `backend not found` | Requested backend not defined in configuration | Verify the `backends` section in your configuration file |
-| `pin: SO PIN authorization required` | Attempted user PIN set without SO PIN | Set the SO PIN first (Step 3) |
+| Symptom | Resolution |
+|---------|------------|
+| PIN locked out after too many failed attempts | Check `xkmsctl pin lockout`, or reset it with `xkmsctl pin lockout-reset` (requires the SO PIN, `pin.go:522`) |
+| Key operation fails because the barrier is sealed | Restart `xkmsd` so the seal strategy unseals it, or complete the passphrase/Shamir unseal |
+| `backend not found` | Verify the `backends` section in your configuration file |
+| User PIN cannot be set | Set the SO PIN first (Step 3) |
 
 ## See Also
 

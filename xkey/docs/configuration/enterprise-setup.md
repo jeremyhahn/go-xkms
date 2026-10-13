@@ -1,280 +1,118 @@
 # Enterprise Setup Architecture
 
-## Overview
-
-xkey supports two deployment modes:
-
-- **Personal** -- Single-user, no authentication gate. Barrier unseal is sufficient for daily use.
-- **Enterprise** -- Security Officer (SO) provisions the device first, then users onboard with SO authorization. A policy HMAC ensures configuration integrity.
-
-Enterprise mode is detected by the existence of the HMAC file at `~/.config/xkey/xkey_policy.hmac`, not by a config flag. This allows the application to load policy without requiring the SO PIN at startup. A CLI command that acts on the policy consults it only through `config.LoadVerifiedPolicy`, which fails closed in enterprise mode until the SO PIN is supplied (see [enterprise-mode.md](enterprise-mode.md#verification-on-the-cli-path)).
+> **Status: REFERENCE** · Last verified: 2026-10-13
+> How personal and enterprise deployments differ; the wizard flows are normative in [setup-wizard](../setup-wizard/architecture.md), the policy fields and HMAC in [enterprise-mode.md](enterprise-mode.md).
 
 ## Deployment Modes
 
-### Personal Mode
+- **Personal**: single user, no authentication gate. Barrier unseal is
+  sufficient for daily use.
+- **Enterprise**: a Security Officer (SO) provisions the device and seals a
+  security policy, then a user onboards with the SO's authorization.
 
-Personal mode is the default for standalone desktop use.
+Enterprise mode is detected by the existence of the HMAC file
+`~/.config/xkey/xkey_policy.hmac`, not by a config flag
+(`IsEnterpriseMode`, `xkey/pkg/config/policy_integrity.go:72`). A CLI command
+that acts on the policy consults it only through `config.LoadVerifiedPolicy`,
+which fails closed in enterprise mode until the SO PIN is supplied (see
+[enterprise-mode.md](enterprise-mode.md#verification-on-the-cli-path)).
 
-- Single user, no authentication gate after barrier unseal
-- All features available without restriction
-- Setup wizard: 6 steps (Welcome, Deployment Mode, Operating Mode, Security, Storage, Summary)
+## Unified Config
 
-### Enterprise Mode
+All settings live in one YAML file. `Load` reads the first one found; the
+system file is a fallback, not a merge (`xkey/pkg/config/load.go:82-95`):
 
-Enterprise mode adds organizational security controls.
+| Path | Role |
+|------|------|
+| `~/.config/xkey/xkey.yaml` | Per-user config, read first |
+| `/etc/xkey/xkey.yaml` | Read only when there is no user config (`load.go:34`, `:77`) |
 
-- SO provisions the device and defines a security policy
-- Users onboard with SO authorization and receive a User PIN
-- Policy controls which features users can access via `user_can_*` permission flags
-- The `policy:` section of the config is HMAC-protected against tampering
+`XKEY_`-prefixed environment variables override the file (`XKEY_LOG_LEVEL=debug`).
+The top-level sections are those of `Config` (`xkey/pkg/config/config.go:28-48`):
+`policy`, `backend`, `backends`, `fido2`, `piv`, `oath`, `phone`, `xkmsd`,
+`oidc`, `agent`, `tpm`, `password_protection`, `trust`, `attestation`, `log`,
+`gui`, `state`, `barrier` and `device`. Their keys are in
+[app-configuration.md](app-configuration.md).
 
-## Unified Config Architecture
+Only `policy:` is covered by the HMAC. Every other section can be changed
+freely by the user.
 
-All configuration lives in a single YAML file following XDG conventions.
-
-| Path | Priority | Description |
-|------|----------|-------------|
-| `~/.config/xkey/xkey.yaml` | User-level (primary) | Per-user config |
-| `/etc/xkey/xkey.yaml` | System-wide (fallback) | Organizational defaults |
-
-Environment variables override both files using the `XKEY_` prefix (e.g., `XKEY_LOG_LEVEL=debug`).
-
-### Config Sections
-
-```yaml
-policy:           # SO-controlled, HMAC-protected
-backend:          # Cryptographic backend selection (software, tpm2, pkcs11, phone)
-fido2:            # FIDO2/WebAuthn authenticator settings
-oath:             # OATH TOTP/HOTP module
-phone:            # Phone-as-a-token backend
-xkmsd:            # Remote xkmsd server connection
-tpm:              # Direct TPM access parameters
-password_protection:  # Barrier/encryption at-rest
-trust:            # Root certificates and system trust
-attestation:      # Attestation authority
-log:              # Logging settings
-gui:              # User preferences (theme, window, auto-unseal)
-state:            # Managed by app (setup_complete, barrier_initialized)
-```
-
-The `policy:` section is the only section protected by HMAC integrity verification. All other sections can be freely modified by the user.
-
-Package: `xkey/pkg/config/`
-
-## Policy HMAC Tamper Detection
-
-### Key Derivation
-
-The SO PIN is stretched through a two-stage derivation chain:
-
-```
-SO_PIN
-  |
-  v
-Argon2id(SO_PIN, salt, t=3, m=64MB, p=4, keyLen=32)
-  |
-  v
-HKDF-SHA256(intermediate, salt, info="xkey-policy-integrity", len=32)
-  |
-  v
-HMAC-SHA256(derived_key, canonical_json(policy)) --> tag
-```
-
-### HMAC File Format
-
-Stored at `~/.config/xkey/xkey_policy.hmac` as JSON:
-
-```json
-{
-  "version": 1,
-  "algorithm": "HMAC-SHA256",
-  "salt": "<base64>",
-  "hmac": "<base64>",
-  "tpm_nv_index": 0
-}
-```
-
-A fresh random salt (16 bytes) is generated on every write. The file is written atomically using temp-file-plus-rename for crash safety.
-
-### Canonical JSON
-
-HMAC is computed over the JSON encoding of the `PolicySection` struct. Because `encoding/json` marshals struct fields in declaration order, the output is deterministic without requiring sorted-key canonicalization.
-
-### Tamper Scenarios
+## Tamper Scenarios
 
 | Scenario | Result |
 |----------|--------|
-| Policy modified, HMAC intact | HMAC mismatch detected on SO login; SO-only mode |
-| HMAC file deleted | No enterprise mode detected; device operates as personal mode (effective factory reset of enterprise policy) |
-| Both intact | Policy verified; normal enterprise operation |
+| Policy section modified | HMAC mismatch at SO login; the SO is logged in with `tamper_detected` set and `DefaultPolicy()` stays in effect (`xkey/pkg/gui/services/auth_service.go:184-201`) |
+| HMAC file deleted | Enterprise mode is no longer detected; the device runs in personal mode |
+| Both intact | Policy verified at SO login and applied for the session |
 
-### TPM Integration
+The HMAC file has a `tpm_nv_index` field (`policy_integrity.go:65`), but
+nothing reads or writes it, so verification always needs the SO PIN.
 
-- **With TPM2**: Policy hash can also be stored in TPM NV RAM (`tpm_nv_index` field) for auto-verification without requiring the SO PIN at every startup.
-- **Without TPM**: SO PIN is required at startup to re-derive the key and verify the HMAC.
+## Setup Flows
 
-## Setup Wizard Flows
+`GetStartupState` tells the frontend which flow to show; SO provisioning
+(`ApplySOProvisioning`) and user onboarding (`ApplyUserOnboarding`) are
+described step by step in
+[setup-wizard/architecture.md](../setup-wizard/architecture.md#flows) and
+[enterprise-mode.md](enterprise-mode.md#so-provisioning-flow).
 
-### Enterprise SO Provisioning (6 Steps)
+## Auth Gate
 
-| Step | Screen | Description |
-|------|--------|-------------|
-| 1 | Welcome | Environment probe, system info |
-| 2 | Deployment Mode | Select Enterprise |
-| 3 | Enterprise Security Policy | Organization name, min PIN length, storage requirements, TPM requirements, user permission toggles |
-| 4 | Security | Platform policy, password protection settings |
-| 5 | Storage | Barrier initialization, storage type selection |
-| 6 | Summary | Review and apply |
-
-The apply phase executes 7 backend steps in sequence:
-1. Barrier initialization
-2. Data directory creation
-3. SO PIN provisioning
-4. TPM key provisioning
-5. Platform key store setup
-6. Security policy write
-7. HMAC computation and write
-
-### Enterprise User Onboarding (3 Steps)
-
-| Step | Screen | Description |
-|------|--------|-------------|
-| 1 | Welcome | Policy summary display (org name, requirements) |
-| 2 | Set User PIN | Requires SO PIN for authorization |
-| 3 | Done | Barrier storage initialized, setup marked complete |
-
-The wizard flow is determined by the `WizardFlow` type: `'setup'` for provisioning, `'user_onboarding'` for user enrollment.
-
-## Auth Gate and Dual UI
-
-### Application Lifecycle
-
-```
-Start --> Setup Complete?
-            |
-         No: Setup Wizard
-            |
-         Yes: Enterprise Mode?
-                |
-             No: Auto-enter User App (barrier unseal only)
-                |
-             Yes: Auth Login Gate
-                    |
-                 SO PIN --> AdminApp (SO Admin)
-                 User PIN --> User App
-```
-
-### Auth Modes
-
-| Mode | Value | Description |
-|------|-------|-------------|
-| Locked | `locked` | No user authenticated |
-| User | `user` | Regular user authenticated |
-| SO Admin | `so_admin` | Security Officer authenticated |
-
-### AdminApp (SO Admin)
-
-Navigation sections:
-
-**Overview**: Dashboard, Device Status
-
-**Security**: Policy Editor, PIN Management
-
-**System**: Audit Log, Factory Reset, Settings
-
-The AdminApp sidebar displays an "SO ADMIN" badge and a pulsing security indicator in the header. The SO can switch to User Mode or log out.
-
-### User App
-
-Full navigation with all device features. In enterprise mode, navigation items are conditionally hidden based on policy permissions (audit log, sealed data, trust store).
-
-In personal mode, the auth gate is skipped entirely -- barrier unseal is the only required authentication.
+In enterprise mode the login gate (`AuthLoginGate.svelte`) takes the SO PIN
+or the User PIN. The SO lands in the admin shell (`AdminApp.svelte`), which
+can switch to the user app or log out (`AdminApp.svelte:21`); a user lands in
+the user app. In personal mode the gate is skipped. The `locked`, `user` and
+`so_admin` modes are in [enterprise-mode.md](enterprise-mode.md#authmode-states).
 
 ## Policy Permissions
 
-The `PolicySection` contains permission flags that control user access in
-enterprise mode. Each is a deny switch enforced at the service call it
-governs, not just a UI hint (#668): setting it to `false` makes the
-corresponding call return a typed `*PolicyDeniedError` and log an
-`audit.OpPolicyDenied` event.
+Each `user_can_*` field is a deny switch enforced at the service call it
+governs, not only a UI hint. Setting it to `false` makes the call return a
+typed `*PolicyDeniedError`:
 
-| Field | Default | Controls |
-|-------|---------|----------|
-| `user_can_configure_auto_unseal` | `true` | `AppService.ToggleBarrierAutoUnseal` (also requires `allow_auto_unseal`) |
-| `user_can_configure_theme` | `true` | `AppService.SetTheme` |
-| `user_can_manage_trust_store` | `true` | Every mutating `TrustService` call (add/remove/import/seed/install) |
-| `user_can_view_audit_log` | `true` | `AuditService.GetEntries` / `ExportEntries` |
-| `user_can_manage_sealed_data` | `true` | `SealService.SealData` / `DeleteBlob` |
-| `user_can_change_own_pin` | `true` | `PINService.ChangeUserPIN` |
-| `user_can_toggle_dev_tools` | `true` | `AppService.SetDeveloperTools` (also requires `developer_tools_enabled`) |
-| `user_can_configure_extension` | `true` | `AutoFillService.SetEnabled` / `SetRequireAuthentication` / `SetPolicy` |
+| Field | Controls |
+|-------|----------|
+| `user_can_configure_auto_unseal` | `AppService.ToggleBarrierAutoUnseal` (also requires `allow_auto_unseal`) |
+| `user_can_configure_theme` | `AppService.SetTheme` (`app_service.go:593`) |
+| `user_can_manage_trust_store` | Mutating `TrustService` calls |
+| `user_can_view_audit_log` | `AuditService.GetEntries` / `ExportEntries` (`audit_service.go:120`, `:169`) |
+| `user_can_manage_sealed_data` | `SealService.SealData` / `DeleteBlob` (`seal_service.go:739`, `:993`) |
+| `user_can_change_own_pin` | `PINService.ChangeUserPIN` (`pin_service.go:351`) |
+| `user_can_toggle_dev_tools` | `AppService.SetDeveloperTools` (`app_service.go:643`; also requires `developer_tools_enabled`) |
+| `user_can_configure_extension` | `AutoFillService.SetEnabled` / `SetPolicy` / `SetRequireAuthentication` (`autofill_service.go:173`, `:245`, `:280`) |
 
-Additional policy fields govern security requirements. `require_so_pin`,
-`require_user_pin`, `require_encrypted_storage` and `require_tpm` are checked
-once against the host right after the SO PIN verifies the sealed policy; see
-[Security Requirements](enterprise-mode.md#security-requirements) for the
-fail-open-to-defaults behavior when the host cannot meet one of them.
-
-| Field | Description |
-|-------|-------------|
-| `min_pin_length` | Minimum PIN length (default: 6) |
-| `require_so_pin` | SO PIN must be configured on this host |
-| `require_user_pin` | User PIN must be configured on this host |
-| `require_encrypted_storage` | Storage backend must be `barrier` |
-| `require_tpm` | TPM must be available on this host |
-| `allowed_backends` | Whitelist of permitted backends |
-| `api_explorer_enabled` | API Explorer subsystem enabled at all (`APIExplorerService.Execute`) |
-| `developer_tools_enabled` | Developer Tools subsystem enabled at all |
-| `organization_name` | Displayed in user onboarding |
-| `policy_version` | Incremented on policy updates |
-
-**BREAKING** (#668): `platform_pcrs`, `require_password_protection`,
-`password_protection_mode` and `fido2_require_resident_key` have been
-removed from `PolicySection`. They were parsed and signed into the sealed
-policy but never enforced. Remove them from any enterprise config file
-before upgrading; an enterprise deployment must re-seal its policy
-(`ComputePolicyHMAC`) after upgrading regardless, since the field set --
-and therefore the HMAC's canonical JSON input -- changed.
+The full field list, defaults and the requirement checks are in
+[enterprise-mode.md](enterprise-mode.md#policy-section).
 
 ## Factory Reset
 
-Factory reset is available only in the AdminApp and requires two-factor confirmation:
+The confirmation screen (`xkey/frontend/src/views/FactoryReset.svelte:10`)
+asks for the phrase `FACTORY RESET` and the SO PIN.
+`SetupWizardService.FactoryReset`
+(`xkey/pkg/gui/services/setup_wizard_service.go:1630`) refuses without a
+verified SO PIN, then:
 
-1. Type the exact phrase `FACTORY RESET`
-2. Enter the SO PIN (minimum 6 characters)
+1. Resets the TPM (`TPMService.FactoryReset`, `tpm_service.go:1398`)
+2. Removes the policy HMAC file, leaving enterprise mode
+3. Removes the unified config file
+4. Resets the GUI config, so setup runs on next launch
 
-The reset destroys:
-- All FIDO2 credentials and authenticator state
-- All stored passwords and OATH tokens
-- All PIV certificates and keys
-- TPM provisioned keys and platform policy
-- Barrier encrypted storage and sealed data
-- Security policy and HMAC integrity data
-- All configuration and preferences
-
-After reset, the device returns to factory state and the setup wizard runs on next launch.
+Step failures are collected and reported together rather than stopping the reset.
 
 ## Key Files
 
-### Backend (Go)
-
 | File | Purpose |
 |------|---------|
-| `xkey/pkg/config/config.go` | Top-level `Config` struct and validation |
-| `xkey/pkg/config/load.go` | XDG path resolution, Viper loading |
+| `xkey/pkg/config/config.go` | `Config` struct and validation |
+| `xkey/pkg/config/load.go` | Path resolution, Viper loading |
 | `xkey/pkg/config/save.go` | Atomic config persistence |
-| `xkey/pkg/config/policy.go` | `PolicySection` struct, canonical JSON, defaults |
+| `xkey/pkg/config/policy.go` | `PolicySection`, canonical JSON, defaults |
 | `xkey/pkg/config/policy_integrity.go` | HMAC compute, verify, write, key derivation |
-| `xkey/pkg/gui/services/setup_wizard_service.go` | Wizard backend (ApplySetup, ApplySOProvisioning, ApplyUserOnboarding) |
-| `xkey/pkg/gui/services/auth_service.go` | Auth gate (LoginSO, LoginUser, mode management) |
-
-### Frontend (Svelte/TypeScript)
-
-| File | Purpose |
-|------|---------|
-| `xkey/frontend/src/views/SetupWizard.svelte` | Multi-flow setup wizard UI |
-| `xkey/frontend/src/views/AdminApp.svelte` | SO Admin app shell and navigation |
-| `xkey/frontend/src/views/FactoryReset.svelte` | Factory reset confirmation flow |
-| `xkey/frontend/src/lib/components/AuthLoginGate.svelte` | Login overlay for enterprise mode |
-| `xkey/frontend/src/lib/stores/auth.ts` | Auth state store (mode, policy, tamper detection) |
-| `xkey/frontend/src/lib/stores/wizard.ts` | Wizard state store (flow, step, choices, progress) |
+| `xkey/pkg/gui/services/setup_wizard_service.go` | `ApplySetup`, `ApplySOProvisioning`, `ApplyUserOnboarding`, `FactoryReset` |
+| `xkey/pkg/gui/services/auth_service.go` | `LoginSO`, `LoginUser`, mode management |
+| `xkey/frontend/src/views/SetupWizard.svelte` | Setup wizard UI |
+| `xkey/frontend/src/views/AdminApp.svelte` | SO admin shell |
+| `xkey/frontend/src/views/FactoryReset.svelte` | Factory reset confirmation |
+| `xkey/frontend/src/lib/components/AuthLoginGate.svelte` | Enterprise login overlay |
+| `xkey/frontend/src/lib/stores/auth.ts` | Auth state store |
+| `xkey/frontend/src/lib/stores/wizard.ts` | Wizard state store |

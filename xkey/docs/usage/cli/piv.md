@@ -1,5 +1,8 @@
 # CLI Reference: PIV Commands
 
+> **Status: REFERENCE** · Last verified: 2026-10-13
+> Scope: `xkmsctl piv`, the go-xkms server CLI (flags at `cmd/xkmsctl/piv.go:523`).
+
 > **Scope:** this page documents the go-xkms **server** CLI `xkmsctl piv`
 > (source: `cmd/xkmsctl/`), **not** the `xkey` desktop CLI. It lives under
 > `xkey/docs/` for historical reasons.
@@ -24,7 +27,7 @@ Retrieves the status of every PIV slot in the specified backend, showing which s
 
 | Flag | Type | Default | Description |
 |------|------|---------|-------------|
-| `--backend` | string | config default | Backend to query for PIV slots (global flag) |
+| `--backend` | string | `software` | Backend to query for PIV slots (global flag) |
 
 **Examples:**
 

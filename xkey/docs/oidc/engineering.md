@@ -1,6 +1,7 @@
 # OIDC — Engineering
 
-Status: current. Last verified: 2026-10-08.
+> **Status: NORMATIVE** · Last verified: 2026-10-13
+> Conflicts with this document are defects. Fix them here first.
 
 This document covers the CLI's token-store surface
 (`cmd/xkey/cmd/oidc_token_store.go`, `cmd/xkey/cmd/oidc.go`), the GUI's token
@@ -184,9 +185,9 @@ such as `credential_process`, which AWS tooling executes. So:
 
 ## GUI token store (go-xkms#1203)
 
-`OIDCService.SetDataDir` (`pkg/gui/services/oidc_service.go:284`) and
-`OIDCService.SetBackend` (`:313`) are the GUI's two token-store paths,
-selected by `App.initializeDataDir` (`pkg/gui/app.go:719`) exactly the way
+`OIDCService.SetDataDir` (`pkg/gui/services/oidc_service.go:286`) and
+`OIDCService.SetBackend` (`:315`) are the GUI's two token-store paths,
+selected by `App.initializeDataDir` (`pkg/gui/app.go:734`) exactly the way
 every other GUI store picks between its barrier-backed and no-barrier forms.
 Both build the store with `newOIDCTokenStore(kv)`, which serves `kv` as the
 DAO factory for every database (`xkms.NewStoreDAOFactory`) and opens
@@ -307,14 +308,14 @@ The AWS credentials writer is covered in `pkg/oidc/handlers`:
 | `aws_credentials_validate_test.go` | Injection refusal (`\n`, `\r`, `[`, `=`, NUL in each field and the profile/region) with the existing file byte-for-byte unchanged and no temporary file left; no `~/.aws` created for a refused write; real-shaped STS credentials round-tripping with other profiles preserved, UTC expiration and mode `0600` over a pre-existing `0644` file; each rule's bounds; errors that report offsets, not values; deterministic formatting; rename-failure cleanup. Every file it writes is under `t.TempDir()`, and the `Handle` tests redirect `HOME` and `AWS_SHARED_CREDENTIALS_FILE` there and write through the default `~/.aws/credentials` path |
 | `aws_credentials_test.go` | Required-field errors, create/update/add-profile merge, region override, expiration toggle, parsing |
 
-Run just this package's tests:
+Run just this feature's tests. `make -C xkey test-oidc` runs
+`xkey/pkg/oidc/...` (the `aws` and `handlers` packages) with the Makefile's
+`TEST_TAGS` (`xkey/Makefile:105`); the CLI's OIDC tests have no target of
+their own, so run them with the same base tags:
 
 ```
-cd xkey && GOTOOLCHAIN=auto GOWORK=off go test -tags 'ble codec_json' ./cmd/xkey/cmd/... -run OIDC
-```
-
-```
-cd xkey && GOWORK=off go test -race -tags 'ble codec_json' ./pkg/oidc/handlers/
+make -C xkey test-oidc
+cd xkey && GOWORK=off go test -tags 'production codec_json tpm_simulator' ./cmd/xkey/cmd/ -run OIDC
 ```
 
 `oidc_barrier_test.go`'s tests drive a real passphrase barrier

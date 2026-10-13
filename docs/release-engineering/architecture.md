@@ -1,8 +1,7 @@
 # Release engineering — architecture
 
-**Status:** implemented.
-**Last verified:** 2026-10-08 against `scripts/release-alpha.sh` and
-`scripts/release-tag.sh`.
+> **Status: NORMATIVE** · Last verified: 2026-10-13
+> Conflicts with this document are defects. Fix them here first.
 
 ## What a release is
 

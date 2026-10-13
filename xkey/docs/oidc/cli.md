@@ -1,6 +1,7 @@
 # OIDC — CLI
 
-Status: current. Last verified: 2026-09-29.
+> **Status: NORMATIVE** · Last verified: 2026-10-13
+> Conflicts with this document are defects. Fix them here first.
 
 `xkey oidc` performs browser-based OIDC login against any OIDC-compliant
 provider (PKCE authorization code) or AWS Console native login (DPoP), and

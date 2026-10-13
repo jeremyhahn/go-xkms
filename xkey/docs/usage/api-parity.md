@@ -1,210 +1,150 @@
 # API Parity Status
 
-This document tracks the implementation status of KeyStore interface methods across all client interfaces.
+> **Status: REFERENCE** · Last verified: 2026-10-13
+> Scope: how the `Backend` interface (`pkg/xkms/keystore.go`) and the `XKMSService` (`pkg/xkms/service.go`) reach each client transport of xkmsd.
 
-## Overview
+go-xkms reaches its key store through five client transports:
 
-go-xkms exposes its functionality through five client interfaces:
-- **REST** - HTTP/HTTPS API
-- **gRPC** - High-performance RPC
-- **CLI** - Command-line interface
-- **MCP** - Model Context Protocol (JSON-RPC)
-- **QUIC** - HTTP/3 over QUIC
+- **REST**: the routes in `pkg/api/rest/routes.go`, under `/api/v1`.
+- **gRPC**: `KeystoreService` in `pkg/api/grpc/proto/xkmsv1/xkms.proto`.
+- **MCP**: the JSON-RPC dispatch table `rpcMethodHandlers` (`pkg/api/mcp/server.go:247`).
+- **QUIC**: HTTP/3 on the REST port, advertised through Alt-Svc
+  (`pkg/server/server.go:2422`). The QUIC client
+  (`pkg/api/transport/quic/transport.go`) calls the same `/api/v1` paths as
+  REST, so every REST row below holds for QUIC too.
+- **CLI**: `xkmsctl`, which drives any of these transports. Its `--transport`
+  flag takes `rest`, `grpc`, `quic`, `mcp`, `unix` or `embedded`, and the
+  default is `unix` (`cmd/xkmsctl/root.go:29`, `cmd/xkmsctl/config.go:29`).
 
-## KeyStore Interface (20 methods)
+## The Backend interface
 
-Located in: `pkg/xkms/keystore.go`
+`Backend` (`pkg/xkms/keystore.go:39`) has 28 methods:
 
-### Key Operations (7 methods)
-1. `GenerateRSA` - Generate RSA private key
-2. `GenerateECDSA` - Generate ECDSA private key
-3. `GenerateEd25519` - Generate Ed25519 private key
-4. `GetKey` - Retrieve existing private key
-5. `DeleteKey` - Delete a private key
-6. `ListKeys` - List all keys in backend
-7. `RotateKey` - Rotate/update a key
+| Group | Methods |
+|-------|---------|
+| Key generation | `GenerateRSA`, `GenerateECDSA`, `GenerateEd25519` |
+| Key lifecycle | `GetKey`, `DeleteKey`, `ListKeys`, `RotateKey` |
+| Crypto | `Signer`, `Decrypter` |
+| Certificates | `SaveCert`, `GetCert`, `DeleteCert`, `SaveCertChain`, `GetCertChain`, `ListCerts`, `CertExists` |
+| TLS | `GetTLSCertificate` |
+| By key ID | `GetKeyByID`, `GetSignerByID`, `GetDecrypterByID` |
+| Sealing | `Seal`, `Unseal`, `CanSeal` |
+| In-process only | `Type`, `KeyProvider`, `CertStorage`, `SignerStore`, `Close` |
 
-## SymmetricBackend Interface (3 methods)
+Symmetric keys use the separate `types.SymmetricKeyProvider` interface
+(`pkg/types/types.go:2112`): `GenerateSymmetricKey`, `GetSymmetricKey` and
+`SymmetricEncrypter`. No transport has its own symmetric operations. A
+symmetric key is generated through the generic generate-key operation, which
+switches to the backend's `SymmetricKeyProvider` when the request names a
+symmetric algorithm (`pkg/xkms/servicer_key.go:119`). It is then used through
+encrypt and decrypt.
 
-Located in: `pkg/backend/backend.go`
+## Transport matrix
 
-Access via: `keystore.Backend().(backend.SymmetricBackend)`
+A transport identifies a key by its ID in every operation, so the `*ByID`
+methods are what the transports actually call.
 
-### Symmetric Key Operations (3 methods)
-1. `GenerateSymmetricKey` - Generate AES symmetric key (128/192/256-bit)
-2. `GetSymmetricKey` - Retrieve existing symmetric key
-3. `SymmetricEncrypter` - Get encrypter interface for AEAD operations (Encrypt/Decrypt)
+| Backend method | REST | gRPC | MCP | xkmsctl |
+|----------------|------|------|-----|---------|
+| `GenerateRSA` / `ECDSA` / `Ed25519`, `GenerateSymmetricKey` | `POST /keys` | `GenerateKey` | `xkms.generateKey` | `key generate` |
+| `GetKey` / `GetKeyByID` | `GET /keys/{id}` | `GetKey` | `xkms.getKey` | `key get` |
+| `DeleteKey` | `DELETE /keys/{id}` | `DeleteKey` | `xkms.deleteKey` | `key delete` |
+| `ListKeys` | `GET /keys` | `ListKeys` | `xkms.listKeys` | `key list` |
+| `RotateKey` | `POST /keys/{id}/rotate` | `RotateKey` | `xkms.rotateKey` | `key rotate` |
+| `Signer` / `GetSignerByID` | `POST /keys/{id}/sign` | `Sign` | `xkms.sign` | `key sign` |
+| `Decrypter` / `GetDecrypterByID` | `POST /keys/{id}/decrypt` | `Decrypt` | `xkms.decrypt`, `xkms.asymmetricDecrypt` | `key decrypt` |
+| `SymmetricEncrypter` (encrypt) | `POST /keys/{id}/encrypt` | `Encrypt` | `xkms.encrypt` | `key encrypt` |
+| `SaveCert` | `POST /certs` | `SaveCert` | `xkms.saveCert` | `cert save` |
+| `GetCert` | `GET /certs/{id}` | `GetCert` | `xkms.getCert` | `cert get` |
+| `DeleteCert` | `DELETE /certs/{id}` | `DeleteCert` | `xkms.deleteCert` | `cert delete` |
+| `ListCerts` | `GET /certs` | `ListCerts` | `xkms.listCerts` | `cert list` |
+| `CertExists` | `HEAD /certs/{id}` | `CertExists` | `xkms.certExists` | `cert exists` |
+| `SaveCertChain` | `POST /certs/{id}/chain` | `SaveCertChain` | `xkms.saveCertChain` | `cert save-chain` |
+| `GetCertChain` | `GET /certs/{id}/chain` | `GetCertChain` | `xkms.getCertChain` | `cert get-chain` |
+| `GetTLSCertificate` | `GET /tls/{id}` | `GetTLSCertificate` | `xkms.getTLSCertificate` | `tls get` |
+| `Seal` | `POST /seal` | `Seal` | `xkms.seal` | `seal` |
+| `Unseal` | `POST /unseal` | `Unseal` | `xkms.unseal` | `unseal` |
+| `CanSeal` | `GET /seal/capability` | `CanSeal` | `xkms.canSeal` | `can-seal` |
 
-### Crypto Operations (2 methods)
-8. `Signer` - Get crypto.Signer for key
-9. `Decrypter` - Get crypto.Decrypter for key
+Citations:
 
-### Certificate Operations (7 methods)
-10. `SaveCert` - Save X.509 certificate
-11. `GetCert` - Retrieve certificate
-12. `DeleteCert` - Delete certificate
-13. `SaveCertChain` - Save certificate chain
-14. `GetCertChain` - Retrieve certificate chain
-15. `ListCerts` - List all certificates
-16. `CertExists` - Check if certificate exists
+- REST: `routes.go:157-212`.
+- gRPC: `xkms.proto:30-263`.
+- MCP: `server.go:255-308`.
 
-### TLS Helpers (1 method)
-17. `GetTLSCertificate` - Get complete TLS certificate (key + cert + chain)
+`Type`, `KeyProvider`, `CertStorage`, `SignerStore` and `Close` stay in-process
+and have no transport operation.
 
-### Lifecycle (3 methods)
-18. `Backend` - Get underlying backend
-19. `CertStorage` - Get certificate storage
-20. `Close` - Close keystore
+## Operations beyond the Backend interface
 
-## Implementation Status
+| Operation | REST | gRPC | MCP | xkmsctl |
+|-----------|------|------|-----|---------|
+| Health | `GET`/`HEAD /health` | `Health` | `health` | — |
+| Backends | `GET /backends`, `/backends/{id}` | `ListBackends`, `GetBackendInfo` | `xkms.listBackends`, `xkms.getBackend` | `backends list`, `backends info` |
+| Verify | `POST /keys/{id}/verify` | `Verify` | `xkms.verify` | `key verify` |
+| Asymmetric encrypt | `POST /keys/{id}/encrypt-asym` | `EncryptAsym` | `xkms.asymmetricEncrypt` | `key encrypt-asym` |
+| Import parameters | `POST /keys/import-params` | `GetImportParameters` | `xkms.getImportParameters` | `key get-import-params` |
+| Wrap / unwrap | `POST /keys/wrap`, `/keys/unwrap` | `WrapKey`, `UnwrapKey` | `xkms.wrapKey`, `xkms.unwrapKey` | `key wrap`, `key unwrap` |
+| Wrap / unwrap by ID | `POST /keys/wrap-by-id`, `/keys/unwrap-by-id` | `WrapKeyByID`, `UnwrapKeyByID` | `xkms.wrapKeyByID`, `xkms.unwrapKeyByID` | `key wrap-by-id`, `key unwrap-by-id` |
+| Import | `POST /keys/import` | `ImportKey` | `xkms.importKey` | `key import` |
+| Export (wrapped) | `POST /keys/{id}/export` | `ExportKey` | `xkms.exportKey` | `key export` |
+| Export material | `POST /keys/{id}/export-material` | `ExportKeyMaterial` | `xkms.exportKeyMaterial` | `key export-material` |
+| Copy | `POST /keys/copy` | `CopyKey` | `xkms.copyKey` | `key copy` |
+| ECDH derivation | `POST /keys/derive-ecdh` | `DeriveKeyECDH` | `xkms.deriveKeyECDH` | `key derive-ecdh` |
+| Key derivation (HKDF, PBKDF2 and others) | not served | `DeriveKey` | `xkms.deriveKey` | — |
+| Attestation | `POST /attest` | `AttestKey` | `xkms.attestKey` | `key attest` |
 
-| Method | REST | gRPC | CLI | MCP | QUIC | Notes |
-|--------|------|------|-----|-----|------|-------|
-| **Key Operations** |
-| GenerateRSA | Yes | Yes | Yes | Yes | Yes | Full coverage |
-| GenerateECDSA | Yes | Yes | Yes | Yes | Yes | P-256/P256 variants supported |
-| GenerateEd25519 | Yes | Yes | Yes | Yes | Yes | Full coverage |
-| GetKey | Yes | Yes | Yes | Yes | Yes | Full coverage |
-| DeleteKey | Yes | Yes | Yes | Yes | Yes | Full coverage |
-| ListKeys | Yes | Yes | Yes | Yes | Yes | Full coverage |
-| RotateKey | Yes | Yes | Yes | Yes | Yes | Full coverage |
-| **Symmetric Key Operations** |
-| GenerateSymmetricKey | Yes | Pending | Yes | Yes | Yes | gRPC pending tooling |
-| GetSymmetricKey | Yes | Pending | Yes | Yes | Yes | gRPC pending tooling |
-| SymmetricEncrypter (Encrypt/Decrypt) | Yes | Pending | Yes | Yes | Yes | AES-GCM AEAD support |
-| **Crypto Operations** |
-| Signer (Sign) | Yes | Yes | Yes | Yes | Yes | Full coverage |
-| Decrypter (Decrypt) | Yes | Yes | Yes | Yes | Yes | Full coverage |
-| **Certificate Operations** |
-| SaveCert | Yes | Yes | Yes | Yes | Yes | Full coverage |
-| GetCert | Yes | Yes | Yes | Yes | Yes | Full coverage |
-| DeleteCert | Yes | Yes | Yes | Yes | Yes | Full coverage |
-| SaveCertChain | Yes | Yes | Yes | Yes | Yes | Full coverage |
-| GetCertChain | Yes | Yes | Yes | Yes | Yes | Full coverage |
-| ListCerts | Yes | Yes | Yes | Yes | Yes | Full coverage |
-| CertExists | Yes | Yes | Yes | Yes | Yes | Full coverage |
-| **TLS Helpers** |
-| GetTLSCertificate | Yes | Yes | Yes | Yes | Yes | Full coverage |
-| **Lifecycle** |
-| Backend | No | No | No | No | No | Not exposed (internal) |
-| CertStorage | No | No | No | No | No | Not exposed (internal) |
-| Close | No | No | No | No | No | Not exposed (internal) |
+Both HTTP clients call `POST /api/v1/keys/derive` for key derivation
+(`pkg/api/transport/rest/transport.go:839`, `pkg/api/transport/quic/transport.go:1050`),
+but `routes.go` registers no such route. Generic key derivation is reachable
+only over gRPC (`xkms.proto:123`) and MCP (`server.go:290`).
 
-## Coverage Summary
+Key versions (`/keys/{id}/versions` and `key version …`), `POST /keys/rotate-all`
+and the gRPC hardware-resident ECDH RPCs (`DeriveKeyECDHSecure`,
+`UseResidentKey`, `GenerateEphemeralECDH`; `xkms.proto:137-147`) are also
+outside the Backend interface. The PIV, CA, PIN, tenant, user, TPM-policy,
+OIDC and SSH families are documented in their feature folders.
 
-| Interface | Functional Methods | Coverage | Status |
-|-----------|-------------------|----------|--------|
-| **REST** | 20/20 | 100% | Complete |
-| **gRPC** | 17/20 | 85% | Symmetric pending |
-| **QUIC** | 20/20 | 100% | Complete |
-| **CLI** | 20/20 | 100% | Complete |
-| **MCP** | 20/20 | 100% | Complete |
+`pkg/api/keyops_parity_test/parity_test.go` checks that key operations give
+the same results over REST and gRPC.
 
-**Note:** Lifecycle methods (Backend, CertStorage, Close) are intentionally not exposed in client APIs for security and encapsulation. Total functional methods: 20 (17 KeyStore + 3 SymmetricBackend).
+## XKMSService
 
-## Additional Features
-
-### REST
-- Health check endpoint (`/health`)
-- Backend listing (`/api/v1/backends`)
-- Signature verification (not in KeyStore interface)
-
-### gRPC
-- Health check RPC
-- Backend listing RPC
-- Signature verification
-
-### CLI
-- Version command
-- Config management
-- Multiple output formats (text, JSON, table)
-- Backend information commands
-
-### MCP
-- Event subscription system
-- Health check method
-- Backend listing
-- Batch request support
-
-### QUIC
-- HTTP/3 transport
-- Health check endpoint
-- Backend listing
-
-## XKMSService API
-
-The `XKMSService` in `pkg/xkms/` provides a unified, singleton API for all xkms operations. All client interfaces (REST, gRPC, CLI, MCP, QUIC) use the service as their backend.
-
-### Initialization
+`XKMSService` (`pkg/xkms/service.go:68`) puts the configured backends behind
+one API. Most of it is package-level functions that act on a process-wide
+singleton:
 
 ```go
 import "github.com/jeremyhahn/go-xkms/pkg/xkms"
 
-// Initialize with backends
 err := xkms.Initialize(&xkms.ServiceConfig{
-    Backends: map[string]xkms.KeyStore{
-        "software": softwareBackend,
-        "pkcs11":   pkcs11Backend,
-        "tpm2":     tpm2Backend,
-    },
+    Backends:       map[string]xkms.Backend{"software": softwareBackend},
+    KeyProviders:   map[string]xkms.Backend{},
     DefaultBackend: "software",
 })
 ```
 
-### Key Reference Format
+- `ServiceConfig` (`service.go:216`) holds `Backends` (full-service backends),
+  `KeyProviders` (partial providers composed into backends) and
+  `DefaultBackend`.
+- `Initialize` (`service.go:507`) runs once. Later calls do nothing.
+- `Get` (`service.go:233`) returns the singleton.
+- `NewService` (`service.go:525`) builds a separate instance that is not the
+  singleton.
+- `Reset` (`service.go:584`) clears the singleton.
 
-All service methods accept key references in two formats:
-- `"backend:key-id"` - Specifies which backend to use
-- `"key-id"` - Uses the default backend
+Key IDs use the format `backend:type:algo:keyname`. Every segment except
+`keyname` is optional, so `my-key` and `pkcs11:::my-key` are both valid
+(`pkg/xkms/keyid.go:27`).
 
-### Service Methods
-
-| Category | Method | Description |
-|----------|--------|-------------|
-| **Backends** | `Backend(name)` | Get a specific backend |
-| | `DefaultBackend()` | Get the default backend |
-| | `Backends()` | List all backend names |
-| | `GetBackendInfo(name)` | Get backend type and capabilities |
-| | `GetBackendCapabilities(name)` | Get detailed capabilities |
-| **Keys** | `KeyByID(keyID)` | Get key by reference |
-| | `GenerateKeyWithBackend(backend, attrs)` | Generate key on specific backend |
-| | `RotateKey(keyID)` | Rotate (replace) a key |
-| | `DeleteKey(keyID)` | Delete a key |
-| | `ListKeys(backends...)` | List all keys |
-| **Signing** | `Signer(keyID)` | Get crypto.Signer |
-| | `Sign(keyID, data, opts)` | Sign data |
-| | `Verify(keyID, data, sig, opts)` | Verify signature |
-| **Encryption** | `Decrypter(keyID)` | Get crypto.Decrypter |
-| | `Encrypt(keyID, data, opts)` | Symmetric encryption |
-| | `Decrypt(keyID, encrypted, opts)` | Symmetric decryption |
-| **Certificates** | `SaveCertificate(keyID, cert)` | Save certificate |
-| | `Certificate(keyID)` | Get certificate |
-| | `DeleteCertificate(keyID)` | Delete certificate |
-| | `ListCertificates(backends...)` | List certificates |
-| | `CertificateExists(keyID)` | Check if certificate exists |
-| | `SaveCertificateChain(keyID, chain)` | Save certificate chain |
-| | `CertificateChain(keyID)` | Get certificate chain |
-| **TLS** | `GetTLSCertificate(keyID)` | Get tls.Certificate |
-| **Import/Export** | `GetImportParameters(backend, attrs, alg)` | Get wrapping key |
-| | `WrapKey(backend, material, params)` | Wrap key material |
-| | `UnwrapKey(backend, wrapped, params)` | Unwrap key material |
-| | `ImportKey(backend, attrs, wrapped)` | Import wrapped key |
-| | `ExportKey(keyID, alg)` | Export key wrapped |
-| | `CopyKey(srcKeyID, destBackend, attrs)` | Copy key between backends |
-| **Symmetric** | `GenerateSymmetricKey(backend, attrs)` | Generate AES key |
-| | `GetSymmetricKey(keyID)` | Get symmetric key |
-| **Sealing** | `CanSeal(backends...)` | Check sealing support |
-| | `Seal(ctx, data, opts)` | Seal data |
-| | `Unseal(ctx, sealed, opts)` | Unseal data |
-| **Lifecycle** | `Initialize(config)` | Initialize service |
-| | `IsInitialized()` | Check initialization |
-| | `Close()` | Close all backends |
-| | `Reset()` | Reset service (testing) |
-
-## Testing Status
-
-All implemented methods have:
-- Unit tests
-- Integration tests
-- End-to-end tests (Docker-based)
-
+| Group | Package functions |
+|-------|-------------------|
+| Backends | `GetBackend`, `DefaultBackend`, `BackendFor`, `Backends`, `KeyProviders`, `GetKeyProvider`, `GetBackendInfo`, `GetBackendCapabilities`, `RegisterServiceBackend`, `UnregisterBackend` |
+| Keys | `GenerateKey`, `GenerateKeyWithBackend`, `Key`, `KeyByID`, `DeleteKey`, `DeleteKeyByID`, `ListKeys`, `RotateKey` |
+| Crypto | `Signer`, `SignerByID`, `Sign`, `Verify`, `Decrypter`, `DecrypterByID`, `Encrypt`, `Decrypt` |
+| Certificates | `Certificate`, `CertificateByID`, `SaveCertificate`, `SaveCertificateByID`, `DeleteCertificate`, `DeleteCertificateByID`, `ListCertificates`, `CertificateExists`, `CertificateExistsByID`, `CertificateChain`, `CertificateChainByID`, `SaveCertificateChain`, `SaveCertificateChainByID`, `ParseCertificateID` |
+| TLS | `TLSCertificate`, `TLSCertificateByID` |
+| Import and export | `GetImportParameters`, `WrapKey`, `UnwrapKey`, `WrapKeyByID`, `UnwrapKeyByID`, `ImportKey`, `ExportKey`, `CopyKey` |
+| Symmetric | `GenerateSymmetricKey`, `GetSymmetricKey` |
+| Sealing | `Seal`, `SealWithBackend`, `Unseal`, `UnsealWithBackend`, `CanSeal` |
+| Lifecycle | `Initialize`, `NewService`, `Get`, `IsInitialized`, `Close`, `Reset` |

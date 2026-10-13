@@ -1,16 +1,19 @@
 # Roadmap: Dual-Mode xkey GUI (Wails Desktop + Browser Web App)
 
+> **Status: REFERENCE** · Last verified: 2026-10-13
+> Scope: an unbuilt plan. Every phase below is open: no frontend transport layer, `xkey/pkg/gui/webserver/`, `WebApp`, `xkey/cmd/xkey-web/`, `FileDialogProvider` or `*-web` Make target exists. The `pkg/webauthn/` pieces it reuses do exist.
+
 ## Context
 
 The xkey GUI is built with **Wails v2 + Svelte + TypeScript + Tailwind CSS**. The frontend is pure web technology, but it communicates with the Go backend exclusively through Wails-specific RPC (`window.go.services`) and events (`EventsOn`). This roadmap describes how to add a browser mode so the same Svelte frontend can run as a standalone web app served by a Go HTTP server, while preserving the existing Wails desktop mode unchanged.
 
-The architecture is well-suited for this: ~88% of the 26 Go services are pure business logic with zero Wails coupling, and all services use callback injection for events (they don't import Wails directly). Only `tpm_service.go` and `trust_service.go` have 3 direct Wails file dialog calls.
+Most services are business logic with callback-injected events. Direct Wails file dialog calls remain in `app_service.go`, `key_service.go`, `oidc_service.go`, `staticpw_service.go` and `trust_service.go` (see the inventory below).
 
 Browser authentication uses **WebAuthn** — the app's own FIDO2 authenticator authenticates the user into the web UI. The complete WebAuthn relying party server already exists in `pkg/webauthn/` (service, HTTP handlers, stores, JWT generation), requiring zero new ceremony code.
 
 ---
 
-## Phase 1: Frontend Transport Abstraction
+## Phase 1: Frontend Transport Abstraction — Open
 
 **Goal**: Replace direct `window.go.services` and `EventsOn` calls with a pluggable transport layer. Desktop mode continues working identically.
 
@@ -34,15 +37,15 @@ Browser authentication uses **WebAuthn** — the app's own FIDO2 authenticator a
 
 ### Modified Files
 
-4. **`xkey/frontend/src/lib/api/backend.ts`** — Replace `window.go.services[svc][method]()` with `getTransport().invoke()` inside `callBackend`, `callBackendWithError`, `callBackendVoid`, `callBackendVoidWithError`. Replace `isWailsAvailable()` with `getTransport().isAvailable()`. No changes to the function signatures — all 29 views and 13 stores continue calling the same helpers.
+4. **`xkey/frontend/src/lib/api/backend.ts`** — Replace `window.go.services[svc][method]()` with `getTransport().invoke()` inside `callBackend`, `callBackendWithError`, `callBackendVoid`, `callBackendVoidWithError`. Replace `isWailsAvailable()` with `getTransport().isAvailable()`. No changes to the function signatures — every view and store continues calling the same helpers.
 
 5. **`xkey/frontend/src/lib/stores/events.ts`** — Replace the dynamic `import('../../wailsjs/runtime/runtime')` + `wailsRuntime.EventsOn()` pattern with `getTransport().on()`. The `setupEventListeners()` function calls `transport.connect()` first (no-op for Wails, WebSocket connect for HTTP).
 
 ---
 
-## Phase 2: Go HTTP Server + JSON-RPC Dispatch
+## Phase 2: Go HTTP Server + JSON-RPC Dispatch — Open
 
-**Goal**: Expose all 26 services via a single `/api/rpc` endpoint using JSON-RPC style dispatch with reflection-based method invocation.
+**Goal**: Expose every GUI service via a single `/api/rpc` endpoint using JSON-RPC style dispatch with reflection-based method invocation.
 
 ### New Package: `xkey/pkg/gui/webserver/`
 
@@ -78,7 +81,7 @@ Browser authentication uses **WebAuthn** — the app's own FIDO2 authenticator a
 
 ---
 
-## Phase 3: Emit Function Abstraction in app.go
+## Phase 3: Emit Function Abstraction in app.go — Open
 
 **Goal**: Make event emission injectable so WebApp can swap Wails emit for WebSocket broadcast.
 
@@ -87,7 +90,7 @@ Browser authentication uses **WebAuthn** — the app's own FIDO2 authenticator a
 - Add `emitFunc func(eventType string, data interface{})` field to `App` struct
 - Add `SetEmitFunc(fn)` method
 - Refactor `EmitEvent()` to call `a.emitFunc` if set, otherwise fall back to `wailsruntime.EventsEmit`
-- Refactor the 4 inline `wailsruntime.EventsEmit()` calls to use `a.emitFunc` when set
+- Refactor the inline `wailsruntime.EventsEmit()` calls (inventory below) to use `a.emitFunc` when set
 - Add `StartServices(ctx context.Context)` that contains the service initialization logic from `startup()` (context propagation, emitter wiring, policy init, barrier setup, etc.) — callable from both Wails `OnStartup` and `WebApp.Run()`
 - Add `StopServices()` wrapping `shutdown()` logic
 
@@ -95,7 +98,7 @@ The existing `startup()` method calls `StartServices(ctx)` so desktop mode is un
 
 ---
 
-## Phase 4: WebApp Wrapper + Entry Point
+## Phase 4: WebApp Wrapper + Entry Point — Open
 
 **Goal**: A `WebApp` struct that boots the same services but uses the HTTP server instead of Wails.
 
@@ -105,7 +108,7 @@ The existing `startup()` method calls `StartServices(ctx)` so desktop mode is un
    - `NewWebApp(cfg *GUIConfig) *WebApp`
    - `Run(addr string, assets fs.FS) error`:
      - Creates `App` with standard config
-     - Registers all 26 services in `ServiceRegistry`
+     - Registers every GUI service in `ServiceRegistry`
      - Sets `App.emitFunc` to `EventHub.Broadcast`
      - Wires notifier, phone emitter, FIDO2 emitter through the hub
      - Calls `App.StartServices(ctx)` with `context.Background()`
@@ -121,7 +124,7 @@ The existing `startup()` method calls `StartServices(ctx)` so desktop mode is un
 
 ---
 
-## Phase 5: HTTP Transport (Frontend)
+## Phase 5: HTTP Transport (Frontend) — Open
 
 **Goal**: Browser can communicate with the Go HTTP server.
 
@@ -147,17 +150,17 @@ The existing `startup()` method calls `StartServices(ctx)` so desktop mode is un
 
 ---
 
-## Phase 6: WebAuthn Browser Authentication
+## Phase 6: WebAuthn Browser Authentication — Open
 
 **Goal**: Use the app's own FIDO2 authenticator to log into the browser UI via WebAuthn. The xkey app *is* a FIDO2 authenticator — using it to authenticate into its own web interface is a natural fit and dogfoods the core product.
 
 ### Existing Infrastructure to Reuse (zero new Go ceremony code needed)
 
-- **`pkg/webauthn/service.go`** — Complete WebAuthn service with `BeginRegistration`, `FinishRegistration`, `BeginLogin`, `FinishLogin`
-- **`pkg/webauthn/http/handler.go`** — 5 HTTP handlers ready to mount (begin/finish registration, begin/finish login, status)
-- **`pkg/webauthn/http/routes.go`** — `MountStdlib(mux, prefix, handler)` for stdlib `http.ServeMux`
-- **`pkg/webauthn/qrdb_userstore.go`** — `NewQRDBUserStoreAdapter`: go-qrdb users plus the DAO-entity `CredentialStore` on an injected DAO factory
-- **`pkg/webauthn/session_store.go`** — In-memory `SessionStore` (thread-safe, with TTL; swept by `SweepSessions`)
+- **`pkg/webauthn/service.go`** — WebAuthn service with `BeginRegistration`, `FinishRegistration`, `BeginLogin`, `FinishLogin` (`service.go:176`, `:331`, `:453`, `:594`)
+- **`pkg/webauthn/http/handler.go`** — 5 HTTP handlers ready to mount (begin/finish registration, begin add-credential, begin/finish login)
+- **`pkg/webauthn/http/routes.go`** — `MountStdlib(mux, prefix, handler)` for stdlib `http.ServeMux` (`routes.go:71`)
+- **`pkg/webauthn/qrdb_userstore.go`** — `NewQRDBUserStoreAdapter` (`qrdb_userstore.go:59`): go-qrdb users plus the DAO-entity `CredentialStore` on an injected DAO factory
+- **`pkg/webauthn/session_store.go`** — In-memory `SessionStore` (thread-safe, with TTL; swept by `Service.SweepSessions`, `session_sweeper.go:57`)
 - **`pkg/webauthn/config.go`** — Config with RPID, origins, timeouts, user verification preference
 - **`pkg/webauthn/jwt_generator.go`** — JWT token generation on successful login
 
@@ -167,7 +170,7 @@ Add to **`server.go`**:
 - Create `webauthn.Service` with config: `RPID = "localhost"` (or hostname), `RPOrigins = ["https://localhost:8443"]`
 - Create `webauthn/http.Handler` with the service
 - Mount via `webauthnhttp.MountStdlib(mux, "/api/webauthn", handler)`
-- Start store cleanup routine via `stores.StartCleanupRoutine(ctx, time.Minute)`
+- Start the session sweeper via `service.SweepSessions(ctx, time.Minute)`
 
 Add to **`auth.go`**:
 - `AuthMiddleware` validates JWT returned by WebAuthn `FinishLogin` (same JWT the existing `JWTGenerator` produces)
@@ -192,7 +195,7 @@ Add to **`auth.go`**:
 
 ---
 
-## Phase 7: File Dialog Abstraction
+## Phase 7: File Dialog Abstraction — Open
 
 **Goal**: TPM policy export/import and cert import work in browser mode.
 
@@ -210,9 +213,9 @@ Add to **`auth.go`**:
 
 ### Modified Files
 
-3. **`xkey/pkg/gui/services/tpm_service.go`** (lines 3446, 3524) — Use `FileDialogProvider` instead of direct `wailsruntime` calls
+3. **`app_service.go`, `key_service.go`, `oidc_service.go`, `staticpw_service.go`, `trust_service.go`** (in `xkey/pkg/gui/services/`) — Use `FileDialogProvider` instead of direct `wailsruntime` calls (call sites in the inventory below)
 
-4. **`xkey/pkg/gui/services/trust_service.go`** (line 218) — Same
+4. **TPM policy export/import** — needs the data-based alternatives below; `tpm_service.go` itself no longer opens a Wails dialog
 
 5. Add data-based alternatives for browser mode:
    - `ExportPolicyData(name string) ([]byte, error)` — returns policy bytes (frontend triggers download via Blob)
@@ -221,7 +224,7 @@ Add to **`auth.go`**:
 
 ---
 
-## Phase 8: Build System + Documentation
+## Phase 8: Build System + Documentation — Open
 
 ### Modified Files
 
@@ -238,18 +241,21 @@ Add to **`auth.go`**:
 
 | Location | Wails Call | Abstraction |
 |----------|-----------|-------------|
-| `app.go:1704` | `EventsEmit` in `EmitEvent()` | `emitFunc` callback |
-| `app.go:1159` | `EventsEmit` in FIDO2 emitter setup | Already callback-injected |
-| `app.go:1165` | `EventsEmit` in WailsNotifier setup | Already callback-injected |
-| `app.go:1226,1229` | `EventsEmit` for auto-unseal events | Route through `emitFunc` |
-| `app.go:1320` | `EventsEmit` for password expiry | Route through `emitFunc` |
-| `app.go:1754` | `EventsEmit` for `app:shutting_down` | Route through `emitFunc` |
-| `app.go:1110` | `WindowHide` in `beforeClose` | Skip in web mode |
-| `app.go:1792-1795` | `WindowShow/Unminimise/AlwaysOnTop` | Skip in web mode |
-| `app.go:1803` | `WindowHide` | Skip in web mode |
-| `tpm_service.go:3446` | `SaveFileDialog` | `FileDialogProvider` |
-| `tpm_service.go:3524` | `OpenFileDialog` | `FileDialogProvider` |
-| `trust_service.go:218` | `OpenFileDialog` | `FileDialogProvider` |
+| `app.go:3749` | `EventsEmit` in `EmitEvent()` | `emitFunc` callback |
+| `app.go:2876`, `:2881`, `:2908` | `EventsEmit` inside injected emitter callbacks | Already callback-injected |
+| `app.go:2971`, `:2974` | `EventsEmit` for auto-unseal events | Route through `emitFunc` |
+| `app.go:3159` | `EventsEmit` for `password:expired` | Route through `emitFunc` |
+| `app.go:3799` | `EventsEmit` for `app:shutting_down` | Route through `emitFunc` |
+| `app.go:2807` | `WindowHide` | Skip in web mode |
+| `app.go:3838-3841`, `:3847` | `WindowUnminimise/Show/Center/SetAlwaysOnTop` | Skip in web mode |
+| `app.go:3857` | `WindowHide` | Skip in web mode |
+| `app_service.go:698`, `:723` | `SaveFileDialog` | `FileDialogProvider` |
+| `key_service.go:750` / `:763` | `OpenFileDialog` / `SaveFileDialog` | `FileDialogProvider` |
+| `oidc_service.go:1630` | `OpenFileDialog` | `FileDialogProvider` |
+| `staticpw_service.go:624` / `:638`, `:909` | `SaveFileDialog` / `OpenFileDialog` | `FileDialogProvider` |
+| `trust_service.go:376` | `OpenFileDialog` | `FileDialogProvider` |
+
+`tpm_service.go` no longer calls a Wails file dialog.
 
 ---
 
@@ -295,8 +301,7 @@ Phases 1, 2, 3, and 7 can be developed in parallel.
 - `xkey/frontend/src/lib/stores/events.ts` — Event subscription (1 function to refactor)
 - `xkey/frontend/vite.config.ts` — Add proxy for dev mode
 - `xkey/pkg/gui/app.go` — Add `emitFunc`, `StartServices()`, `StopServices()`
-- `xkey/pkg/gui/services/tpm_service.go` — 2 file dialog calls to abstract
-- `xkey/pkg/gui/services/trust_service.go` — 1 file dialog call to abstract
+- `xkey/pkg/gui/services/{app,key,oidc,staticpw,trust}_service.go` — file dialog calls to abstract
 - `xkey/pkg/gui/events/events.go` — Event type definitions (reused by WebSocket hub)
 - `pkg/webauthn/service.go` — WebAuthn ceremony service (reuse as-is for browser auth)
 - `pkg/webauthn/http/handler.go` — WebAuthn HTTP handlers (mount via `MountStdlib`)

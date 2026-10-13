@@ -1,5 +1,8 @@
 # OIDC OpenID Connect Authentication
 
+> **Status: REFERENCE** · Last verified: 2026-10-13
+> Scope: background overview of xkey OIDC; the feature folder ([architecture.md](architecture.md), [cli.md](cli.md)) is normative.
+
 xkey includes comprehensive support for OpenID Connect (OIDC) authentication with two distinct approaches:
 
 1. **Standard OIDC** - Compatible with any OIDC-compliant identity provider (Google, Microsoft, Okta, Auth0, Keycloak)
@@ -186,8 +189,8 @@ xkey oidc stop aws-us-east-1
 | `AWS_ACCESS_KEY_ID` | AWS access key ID |
 | `AWS_SECRET_ACCESS_KEY` | AWS secret access key |
 | `AWS_SESSION_TOKEN` | AWS session token |
-| `AWS_REGION` | AWS region |
-| `AWS_EXPIRATION` | Credential expiration time |
+| `AWS_REGION`, `AWS_DEFAULT_REGION` | AWS region (set when known) |
+| `AWS_CREDENTIAL_EXPIRATION` | Credential expiration time, UTC (`xkey/pkg/oidc/handlers/exec.go:196`) |
 
 ### Session Storage
 
@@ -351,7 +354,7 @@ xkey oidc providers add --name aws-prod \
   --profile production \
   --auto-refresh 840 \
   --background \
-  --log-file ~/.config/xkey/logs/aws-prod.log
+  --log-file ~/.xkey/logs/aws-prod.log
 
 # Login using saved provider
 xkey oidc login --provider aws-prod
@@ -375,10 +378,9 @@ OIDC Providers (3):
   Profile:      production
   Credentials:  ~/.aws/credentials
   Output:       aws-credentials
-  Session Store: /home/user/.config/xkey/aws-session.json
   Auto-Refresh: 840 seconds
   Background:   yes
-  Log File:     /home/user/.config/xkey/logs/aws-prod.log
+  Log File:     /home/user/.xkey/logs/aws-prod.log
 
   Name:         okta-aws
   Type:         oidc
@@ -545,7 +547,7 @@ xkey oidc logout [flags]
 
 | Flag | Default | Description |
 |------|---------|-------------|
-| `--all` | `false` | Remove the entire token store file |
+| `--all` | `false` | Kept for compatibility; the CLI keeps one active session, so `--all` and the default form both remove it (`xkey/cmd/xkey/cmd/oidc.go:1005`) |
 
 ### oidc status
 
@@ -560,16 +562,21 @@ xkey oidc status [flags]
 ```
 Background Refresh Processes (2):
 
-  Provider:   aws-us-east-1
-  PID:        12345
-  Started:    2025-02-01 17:30:00 (45 minutes ago)
-  Log file:   ~/.config/xkey/logs/aws-us-east-1.log
+  Provider:     aws-us-east-1
+  PID:          12345
+  Started:      2025-02-01 17:30:00 (45 minutes ago)
+  Log file:     ~/.xkey/logs/aws-us-east-1.log
 
-  Provider:   okta-aws
-  PID:        12346
-  Started:    2025-02-01 17:00:00 (1 hour 15 minutes ago)
-  Log file:   ~/.config/xkey/logs/okta-aws.log
+  Provider:     okta-aws
+  PID:          12346
+  Started:      2025-02-01 17:00:00 (1 hours 15 minutes ago)
+  Log file:     ~/.xkey/logs/okta-aws.log
 ```
+
+Log and PID files default to `logs/` and `pids/` beside the token store
+directory (`getDefaultLogFile`, `getPIDDir` in `xkey/cmd/xkey/cmd/oidc.go:1933`,
+`:1943`). With a status file present the block also shows `Last Refresh`,
+`Next Refresh` and `Refreshes`.
 
 ### oidc stop
 
@@ -695,6 +702,8 @@ The `--exec` flag runs a custom script after login, useful for:
 | Variable | Description |
 |----------|-------------|
 | `OIDC_PROVIDER` | Provider issuer URL |
+| `OIDC_ISSUER` | Issuer URL |
+| `OIDC_CLIENT_ID` | OAuth2 client ID |
 | `OIDC_ACCESS_TOKEN` | Access token |
 | `OIDC_REFRESH_TOKEN` | Refresh token |
 | `OIDC_ID_TOKEN` | ID token (JWT) |
@@ -792,26 +801,18 @@ xkey oidc login --provider okta \
 
 ### Token Store
 
-Default: `~/.config/xkey/tokens.json`
-
-```json
-{
-  "tokens": [{
-    "provider": "https://accounts.google.com",
-    "issuer": "https://accounts.google.com",
-    "client_id": "YOUR_CLIENT_ID",
-    "access_token": "eyJhbG...",
-    "refresh_token": "1//0g...",
-    "id_token": "eyJhbG...",
-    "expires_at": "2025-01-31T13:00:00Z",
-    "scopes": ["openid", "profile", "email"]
-  }]
-}
-```
+One active session, stored as a single JSON object under the key
+`oidc/tokens.json`. It is barrier-encrypted when `xkey barrier init` has been
+run. Otherwise it is an unencrypted go-qrdb file store under the xkey data
+directory, or in exactly the `--token-store` directory when that flag is set.
+The fields are `provider`, `issuer`, `client_id`, `access_token`,
+`refresh_token`, `id_token`, `expires_at` and `scopes`
+(`xkey/cmd/xkey/cmd/oidc_token_store.go:199`). See
+[architecture.md](architecture.md#where-the-store-lives).
 
 ### Provider Configuration
 
-Default: `~/.config/xkey/oidc-providers.json`
+Default: `~/.xkey/oidc-providers.json`
 
 ```json
 {
@@ -839,7 +840,7 @@ Default: `~/.config/xkey/oidc-providers.json`
       "aws_profile": "production",
       "auto_refresh": 840,
       "background": true,
-      "log_file": "/home/user/.config/xkey/logs/aws-prod.log"
+      "log_file": "/home/user/.xkey/logs/aws-prod.log"
     }
   ]
 }
@@ -926,7 +927,7 @@ xkey oidc stop NAME
 xkey oidc stop --all
 
 # View logs
-tail -f ~/.config/xkey/logs/NAME.log
+tail -f ~/.xkey/logs/NAME.log
 ```
 
 ---
@@ -936,7 +937,7 @@ tail -f ~/.config/xkey/logs/NAME.log
 - **PKCE** is mandatory for all flows, protecting against code interception
 - **DPoP** binds tokens to the client's key, preventing token theft
 - **State parameters** are cryptographically random (32 bytes) for CSRF protection
-- Token store files are created with `0600` permissions
+- The token and AWS session stores are barrier-encrypted at rest once `xkey barrier init` has been run
 - DPoP private keys are stored in the session store for refresh operations
 - Logout only clears local tokens - use provider's revocation endpoint for immediate invalidation
 - When using `--exec`, tokens are passed via environment variables - avoid logging them
@@ -958,6 +959,10 @@ The `pkg/oidc` package includes built-in provider templates that provide sensibl
 | `okta` | Okta (requires issuer URL) | No | exec |
 | `auth0` | Auth0 (requires issuer URL) | No | exec |
 | `keycloak` | Keycloak (requires issuer URL) | No | exec |
+| `openai` | OpenAI ChatGPT login (the codex CLI's); device login or import | No | none |
+| `anthropic` | Claude Code long-lived token; imported, never refreshed | No | none |
+
+`BuiltinTemplates` in `pkg/oidc/templates.go:143` is the source of this table.
 
 ### Using Templates in Go
 
@@ -984,7 +989,10 @@ if err := config.Validate(); err != nil {
 }
 
 // Get template for endpoint resolution
-template, _ := oidc.GetTemplate("aws")
+template, err := oidc.GetTemplate("aws")
+if err != nil {
+    return err
+}
 authEndpoint, tokenEndpoint := config.ResolveEndpoints(template, config.Region)
 ```
 
@@ -1007,8 +1015,15 @@ type ProviderTemplate struct {
     SupportsRemoteFlow        bool
     CustomResponseHandler     string
     RequiresRegion            bool
+    TokenEncoding             TokenEncoding // empty means form
+    DeviceStyle               DeviceStyle   // empty means RFC 8628
+    Flows                     []Flow        // empty means authorization code only
+    NoRefresh                 bool
+    TokenLifetime             time.Duration
 }
 ```
+
+Field list from `pkg/oidc/templates.go:42`.
 
 ### DPoP Key Management
 
@@ -1053,14 +1068,16 @@ execHandler := handlers.NewExecHandler("./my-script.sh")
 
 // Chain handlers
 chain := handlers.NewChainHandler(awsHandler, execHandler)
-chain.Handle(ctx, tokenData)
+if err := chain.Handle(ctx, tokenData); err != nil {
+    return err
+}
 ```
 
 ---
 
 ## See Also
 
-- [xkey Overview](README.md)
+- [xkey documentation index](../README.md)
 - [AWS Signin OIDC](https://docs.aws.amazon.com/signin/latest/userguide/oidc-native.html)
 - [DPoP RFC 9449](https://datatracker.ietf.org/doc/html/rfc9449)
 - [PKCE RFC 7636](https://datatracker.ietf.org/doc/html/rfc7636)

@@ -1,6 +1,7 @@
 # OIDC — User Guide
 
-Status: current. Last verified: 2026-09-30.
+> **Status: NORMATIVE** · Last verified: 2026-10-13
+> Conflicts with this document are defects. Fix them here first.
 
 ## Log in to a standard OIDC provider
 

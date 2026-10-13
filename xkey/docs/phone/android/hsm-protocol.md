@@ -1,44 +1,54 @@
 # HSM Protocol Handler (local.* Methods)
 
+> **Status: REFERENCE** · Last verified: 2026-10-13
+> Wire reference for the `local.*` methods; superseded by [phone-hsm/api.md](../../phone-hsm/api.md). Phone-side (xkey-android, Kotlin) internals are out of scope: only the Go wire types in `xkey/pkg/pairing` are verified here.
+
 ## Overview
 
-The Android app handles `local.*` JSON-RPC requests from the laptop. These requests arrive over the Noise-encrypted BLE or TCP channel and are dispatched to the Android Keystore via `KeystoreManager`. The phone effectively operates as a remote HSM for the laptop.
+The Android app (xkey-android, a separate repository) handles `local.*` JSON-RPC requests from the laptop. These requests arrive over the Noise-encrypted BLE, USB or TCP channel and are served by the Android Keystore. The phone effectively operates as a remote HSM for the laptop.
 
-## Handler Architecture
+The desktop side defines every method name and its params/result types in
+`xkey/pkg/pairing/protocol_local.go`; `IsLocalMethod` (`protocol_local.go:418`)
+validates names against the `localMethodNames` map (`protocol_local.go:392`).
+Byte fields (`[]byte` in Go) are base64 strings on the wire (Go's
+`encoding/json` default).
 
-```
-BLE GATT / TCP Server
-        |
-        v
-  Noise Decryption
-        |
-        v
-  JSON-RPC Parser
-        |
-        v
-  Method Dispatcher (map-based, O(1) lookup)
-        |
-        +-- local.generateKey     -> KeystoreManager.generateKeyForAlgorithm()
-        +-- local.sign            -> KeystoreManager.signWithAlgorithm()
-        +-- local.decrypt         -> KeystoreManager.decrypt()
-        +-- local.symmetricEncrypt -> KeystoreManager.symmetricEncrypt()
-        +-- local.symmetricDecrypt -> KeystoreManager.symmetricDecrypt()
-        +-- local.hmac            -> KeystoreManager.computeHMAC()
-        +-- local.ecdh            -> KeystoreManager.performECDH()
-        +-- local.getPublicKey    -> KeystoreManager.getPublicKeyXxx()
-        +-- local.listKeys        -> KeyDao.getByType() / observeAll()
-        +-- local.getKeyInfo      -> KeyDao.getByKeyId() + KeystoreManager.getKeyInfo()
-        +-- local.deleteKey       -> KeystoreManager.deleteKey() + KeyDao.deleteByKeyId()
-        +-- local.setKeyPolicy    -> KeyDao.update()
-        +-- local.attestKey       -> KeystoreManager.getKeyAttestation()
-        +-- local.getCapabilities -> Runtime capability detection
-```
+## Methods
+
+| Method | Params type | Result type |
+|--------|-------------|-------------|
+| `local.generateKey` | `LocalGenerateKeyParams` | `LocalGenerateKeyResult` |
+| `local.sign` | `LocalSignParams` | `LocalSignResult` |
+| `local.decrypt` | `LocalDecryptParams` | `LocalDecryptResult` |
+| `local.symmetricEncrypt` | `LocalSymmetricEncryptParams` | `LocalSymmetricEncryptResult` |
+| `local.symmetricDecrypt` | `LocalSymmetricDecryptParams` | `LocalSymmetricDecryptResult` |
+| `local.hmac` | `LocalHMACParams` | `LocalHMACResult` |
+| `local.ecdh` | `LocalECDHParams` | `LocalECDHResult` |
+| `local.getPublicKey` | `LocalGetPublicKeyParams` | `LocalGetPublicKeyResult` |
+| `local.listKeys` | `LocalListKeysParams` | `LocalListKeysResult` |
+| `local.getKeyInfo` | `LocalGetKeyInfoParams` | `LocalGetKeyInfoResult` |
+| `local.deleteKey` | `LocalDeleteKeyParams` | `LocalDeleteKeyResult` |
+| `local.setKeyPolicy` | `LocalSetKeyPolicyParams` | `LocalSetKeyPolicyResult` |
+| `local.attestKey` | `LocalAttestKeyParams` | `LocalAttestKeyResult` |
+| `local.attestDevice` | `LocalAttestDeviceParams` | `LocalAttestDeviceResult` |
+| `local.getCapabilities` | (none) | `LocalGetCapabilitiesResult` |
+| `local.listFido2Credentials` | `LocalListFido2CredentialsParams` | `LocalListFido2CredentialsResult` |
+| `local.signFido2Assertion` | `LocalSignFido2AssertionParams` | `LocalSignFido2AssertionResult` |
+| `local.biometricPending` | `LocalBiometricPendingParams` (phone → laptop notification) | — |
+
+The OATH, PIV, sharing, sync, backup, IDevID and device-enrollment `local.*`
+methods are defined in the sibling `protocol_*.go` files; see
+[../protocol.md](../protocol.md).
 
 ## Method Reference
 
 ### local.generateKey
 
-Generate a new key in Android Keystore.
+Generate a new key in Android Keystore (`LocalGenerateKeyParams`,
+`protocol_local.go:53`). `algorithm` accepts `ES256`, `ES384`, `ES512`,
+`RS256`, `RS384`, `RS512`, `AES128`, `AES256`, `HMAC-SHA256`, `HMAC-SHA512`.
+`exportable` requests a software-backed key and is only valid for symmetric
+algorithms.
 
 **Request:**
 ```json
@@ -49,17 +59,16 @@ Generate a new key in Android Keystore.
   "params": {
     "keyId": "my-signing-key",
     "algorithm": "ES256",
-    "keyType": "signing",
-    "label": "Code Signing Key",
-    "strongBox": true,
+    "strongBoxBacked": true,
     "biometricRequired": true,
-    "authDurationSeconds": 5,
-    "attestationChallenge": "base64-encoded-nonce"
+    "authDurationSeconds": 5
   }
 }
 ```
 
-**Response:**
+Other params: `keySizeBits` (RSA: 2048, 3072, 4096), `userVerificationRequired`, `exportable`.
+
+**Response** (`LocalGenerateKeyResult`, `protocol_local.go:69`):
 ```json
 {
   "jsonrpc": "2.0",
@@ -67,15 +76,20 @@ Generate a new key in Android Keystore.
   "result": {
     "keyId": "my-signing-key",
     "publicKeyDer": "base64-encoded-der",
-    "strongBoxBacked": true,
-    "attestationChain": ["base64-cert-leaf", "base64-cert-intermediate", "base64-cert-root"]
+    "algorithm": "ES256",
+    "keySizeBits": 256,
+    "securityLevel": "strongbox"
   }
 }
 ```
 
+`publicKeyCose` may be returned instead of, or alongside, `publicKeyDer`.
+`securityLevel` is `tee` or `strongbox`.
+
 ### local.sign
 
-Sign data with a stored key. Requires biometric authentication.
+Sign data with a stored key (`LocalSignParams`, `protocol_local.go:79`).
+`algorithm` optionally overrides the signing algorithm.
 
 **Request:**
 ```json
@@ -97,16 +111,17 @@ Sign data with a stored key. Requires biometric authentication.
   "jsonrpc": "2.0",
   "id": 2,
   "result": {
-    "signature": "base64-encoded-der-signature"
+    "signature": "base64-encoded-der-signature",
+    "algorithm": "ES256"
   }
 }
 ```
 
 ### local.decrypt
 
-RSA OAEP decryption. Requires biometric authentication.
+RSA decryption (`LocalDecryptParams`, `protocol_local.go:93`); optional
+`algorithm`, e.g. `RSA-OAEP-SHA256`. Result: `plaintext`.
 
-**Request:**
 ```json
 {
   "jsonrpc": "2.0",
@@ -121,7 +136,8 @@ RSA OAEP decryption. Requires biometric authentication.
 
 ### local.symmetricEncrypt / local.symmetricDecrypt
 
-AES-GCM encryption and decryption. Optional AAD parameter.
+AES encryption and decryption with optional `aad`
+(`protocol_local.go:105`, `:117`). The ciphertext is IV + encrypted data + tag.
 
 **Encrypt request:**
 ```json
@@ -148,11 +164,12 @@ AES-GCM encryption and decryption. Optional AAD parameter.
 }
 ```
 
+Decrypt takes `keyId`, `ciphertext`, `aad` and returns `plaintext`.
+
 ### local.hmac
 
-Compute HMAC over data.
+Compute an HMAC over `data` (`protocol_local.go:129`). Result: `mac`.
 
-**Request:**
 ```json
 {
   "jsonrpc": "2.0",
@@ -167,9 +184,9 @@ Compute HMAC over data.
 
 ### local.ecdh
 
-ECDH key agreement. Returns the raw shared secret.
+ECDH key agreement against a DER-encoded peer public key
+(`protocol_local.go:140`). Result: `sharedSecret`.
 
-**Request:**
 ```json
 {
   "jsonrpc": "2.0",
@@ -184,9 +201,9 @@ ECDH key agreement. Returns the raw shared secret.
 
 ### local.getPublicKey
 
-Export a public key in the requested format.
+Export a public key in the requested format (`protocol_local.go:151`).
+Result: `publicKey`, `format`, `algorithm`.
 
-**Request:**
 ```json
 {
   "jsonrpc": "2.0",
@@ -203,9 +220,10 @@ Export a public key in the requested format.
 
 ### local.listKeys
 
-List keys, optionally filtered by type.
+List keys, optionally filtered by `keyType` (`fido2`, `ssh`, `tls`, `signing`,
+`encryption`, `symmetric`) and `algorithm` (`protocol_local.go:164`). Result:
+`keys`, an array of `KeyInfo` (`protocol_local.go:170`).
 
-**Request:**
 ```json
 {
   "jsonrpc": "2.0",
@@ -219,7 +237,10 @@ List keys, optionally filtered by type.
 
 ### local.getKeyInfo
 
-Get metadata for a specific key, combining Room data and Android Keystore info.
+Get metadata for one key. The result embeds `KeyInfo` and, for `fido2` keys,
+adds `rpId`, `rpName`, `userId`, `userName`, `userDisplayName`,
+`isDiscoverable` and `signCount` (`LocalGetKeyInfoResult`,
+`protocol_local.go:198`).
 
 **Request:**
 ```json
@@ -243,8 +264,12 @@ Get metadata for a specific key, combining Room data and Android Keystore info.
     "keyType": "signing",
     "algorithm": "ES256",
     "keySizeBits": 256,
+    "label": "Code Signing Key",
     "strongBoxBacked": true,
     "biometricRequired": true,
+    "exportable": false,
+    "shareable": false,
+    "source": "local",
     "useCount": 42,
     "createdAt": 1706140800,
     "lastUsedAt": 1706227200
@@ -252,11 +277,12 @@ Get metadata for a specific key, combining Room data and Android Keystore info.
 }
 ```
 
+`source` is one of `local`, `remote_ble`, `remote_usb`, `xkmsd`.
+
 ### local.deleteKey
 
-Delete a key from both Android Keystore and Room.
+Delete a key (`protocol_local.go:212`). Result: `deleted`.
 
-**Request:**
 ```json
 {
   "jsonrpc": "2.0",
@@ -270,9 +296,10 @@ Delete a key from both Android Keystore and Room.
 
 ### local.setKeyPolicy
 
-Update key policy fields (label, shareable, biometric requirement).
+Update the policy fields `shareable`, `biometricRequired` and
+`authDurationSeconds`; an absent field is left unchanged
+(`LocalSetKeyPolicyParams`, `protocol_local.go:223`). Result: `updated`.
 
-**Request:**
 ```json
 {
   "jsonrpc": "2.0",
@@ -280,17 +307,18 @@ Update key policy fields (label, shareable, biometric requirement).
   "method": "local.setKeyPolicy",
   "params": {
     "keyId": "my-signing-key",
-    "shareable": true,
-    "label": "Updated Label"
+    "shareable": true
   }
 }
 ```
 
 ### local.attestKey
 
-Get Android Key Attestation certificate chain for a key.
+Get the Android Key Attestation certificate chain for a key
+(`protocol_local.go:236`). Result (`LocalAttestKeyResult`,
+`protocol_local.go:242`): `format` (`android-keystore`), `certificateChain`
+(leaf first), `securityLevel`, and the echoed `nonce`.
 
-**Request:**
 ```json
 {
   "jsonrpc": "2.0",
@@ -298,14 +326,14 @@ Get Android Key Attestation certificate chain for a key.
   "method": "local.attestKey",
   "params": {
     "keyId": "my-signing-key",
-    "challenge": "base64-encoded-nonce"
+    "nonce": "base64-encoded-nonce"
   }
 }
 ```
 
 ### local.getCapabilities
 
-Runtime detection of device capabilities.
+Takes no parameters (`LocalGetCapabilitiesResult`, `protocol_local.go:334`).
 
 **Response:**
 ```json
@@ -313,54 +341,42 @@ Runtime detection of device capabilities.
   "jsonrpc": "2.0",
   "id": 13,
   "result": {
-    "strongBox": true,
-    "biometric": true,
-    "algorithms": ["ES256", "ES384", "ES512", "RS256", "RS384", "RS512", "AES-128-GCM", "AES-256-GCM", "HMAC-SHA256", "HMAC-SHA512"],
-    "strongBoxAlgorithms": ["ES256", "AES-256-GCM", "HMAC-SHA256"],
-    "attestationSupported": true,
-    "ecdhSupported": true
+    "version": "1.0",
+    "deviceName": "Pixel-8",
+    "supportedAlgorithms": ["ES256", "ES384", "ES512", "RS256"],
+    "strongBoxAvailable": true,
+    "maxKeys": 100,
+    "currentKeyCount": 3,
+    "supportedFormats": ["der", "pem", "ssh", "cose"],
+    "attestationSupport": true
   }
 }
 ```
 
-## Biometric Flow
+## Biometric gating
 
-For operations that use a key (sign, decrypt, encrypt, hmac, ecdh):
+`biometricRequired` and `authDurationSeconds` are set at generation and can be
+changed with `local.setKeyPolicy`. While the phone waits for the user it may
+send a `local.biometricPending` notification carrying `operation`, `rpName`
+and `timeoutSecs` (`LocalBiometricPendingParams`, `protocol_local.go:385`).
 
-```
-1. JSON-RPC request received and parsed
-2. Handler resolves keyId to Android Keystore alias
-3. BiometricPrompt displayed to user
-4. User authenticates (fingerprint or face)
-5. Android Keystore unlocks key for configured auth duration
-6. Cryptographic operation performed
-7. Result serialized as JSON-RPC response
-8. Response encrypted via Noise and sent back
-```
+## Error codes
 
-If the key was generated with `authDurationSeconds > 0`, subsequent operations within that window skip the biometric prompt. If `authDurationSeconds = 0`, biometric is required for every operation.
+Errors use the JSON-RPC codes in `xkey/pkg/pairing/protocol.go:47`: the
+standard `-32700`, `-32600`, `-32601`, `-32602`, `-32603`, and the
+application range starting at `-32000`, including:
 
-## Key Metadata Sync
-
-After each operation, the handler updates Room:
-
-| Field | Update |
-|-------|--------|
-| `use_count` | Incremented by 1 |
-| `last_used_at` | Set to current timestamp |
-| `sign_count` | Incremented by 1 (FIDO2 keys only) |
-
-## Error Mapping
-
-Android Keystore exceptions are mapped to JSON-RPC error codes.
-
-| Android Exception | JSON-RPC Code | Message |
-|-------------------|---------------|---------|
-| `KeyPermanentlyInvalidatedException` | -32000 | Key invalidated (biometric enrollment changed or key deleted) |
-| `KeyNotFoundException` | -32000 | Key not found in Keystore |
-| `UserNotAuthenticatedException` | -32002 | Biometric authentication required but not completed |
-| `BiometricPromptCancelled` | -32001 | User cancelled biometric prompt |
-| `StrongBoxUnavailableException` | -32004 | Algorithm not supported in StrongBox |
-| `UnsupportedAlgorithmException` | -32003 | Algorithm not supported on this device |
-| `IllegalBlockSizeException` | -32603 | Ciphertext size invalid for decryption |
-| `AEADBadTagException` | -32603 | AES-GCM authentication tag verification failed |
+| Code | Constant |
+|------|----------|
+| -32000 | `ErrorCodeKeyNotFound` |
+| -32001 | `ErrorCodeUserCancelled` |
+| -32002 | `ErrorCodeBiometricFailed` |
+| -32003 | `ErrorCodeKeyExists` |
+| -32004 | `ErrorCodeUnsupportedAlg` |
+| -32007 | `ErrorCodeOperationTimeout` |
+| -32009 | `ErrorCodeAttestFailed` |
+| -32010 | `ErrorCodeAttestUnsupported` |
+| -32013 | `ErrorCodeDecryptFailed` |
+| -32014 | `ErrorCodeHMACFailed` |
+| -32015 | `ErrorCodeECDHFailed` |
+| -32016 | `ErrorCodeInvalidFormat` |

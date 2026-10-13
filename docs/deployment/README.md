@@ -1,5 +1,8 @@
 # Deployment Documentation
 
+> **Status: REFERENCE** · Last verified: 2026-10-13
+> Scope: index of the container deployment guides in this folder; service units live in `deploy/`.
+
 This directory contains deployment guides for go-xkms.
 
 ## Available Guides
@@ -16,7 +19,7 @@ This directory contains deployment guides for go-xkms.
 - [docker-quickstart.md](docker-quickstart.md) - Quick start guide for Docker deployment:
   - 5-minute setup
   - Basic configuration examples
-  - Development and production setups
+  - Production setup with `docker-compose.production.yml`
   - Common use cases
 
 ## Deployment Options
@@ -28,3 +31,4 @@ go-xkms provides multiple deployment options:
 3. **CLI Tool** - Command-line interface for direct xkms operations
 
 See the individual guides for detailed instructions on each deployment option.
+For systemd and OpenRC service units, see [deploy/README.md](../../deploy/README.md).

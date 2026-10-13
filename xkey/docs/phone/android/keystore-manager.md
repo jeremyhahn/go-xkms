@@ -1,5 +1,8 @@
 # Extended KeystoreManager
 
+> **Status: REFERENCE** · Last verified: 2026-10-13
+> Describes the `KeystoreManager` class of xkey-android, a separate Kotlin repository; superseded by [phone-hsm/architecture.md](../../phone-hsm/architecture.md). The Kotlin signatures below are not verifiable against this tree; the wire names and the attestation OID are.
+
 ## Overview
 
 The `KeystoreManager` is extended beyond the original ES256 FIDO2 signing to support all Android Keystore algorithms. This enables the phone to serve as a full HSM for elliptic curve signing, RSA signing/encryption, AES-GCM symmetric encryption, HMAC computation, and ECDH key agreement.
@@ -28,6 +31,9 @@ The `KeystoreManager` is extended beyond the original ES256 FIDO2 signing to sup
 |-----------|----------|------|-------|
 | AES-128-GCM | 128 bits | GCM | 12-byte IV, 16-byte tag |
 | AES-256-GCM | 256 bits | GCM | 12-byte IV, 16-byte tag |
+
+On the wire `local.generateKey` names these `AES128` and `AES256`
+(`LocalGenerateKeyParams`, `xkey/pkg/pairing/protocol_local.go:51`).
 
 ### HMAC
 
@@ -157,7 +163,7 @@ val spec = KeyGenParameterSpec.Builder(alias, PURPOSE_SIGN)
 2. Intermediate certificate
 3. Google hardware attestation root
 
-**Attestation extension OID:** `1.3.6.1.4.1.11129.2.1.17`
+**Attestation extension OID:** `1.3.6.1.4.1.11129.2.1.17` (read on the desktop side by `xkey/pkg/attestation/verifier.go`)
 
 The extension contains:
 - Attestation version and security level (Software, TEE, StrongBox)

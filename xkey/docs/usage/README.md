@@ -1,5 +1,8 @@
 # Usage Documentation
 
+> **Status: REFERENCE** · Last verified: 2026-10-13
+> Index of the legacy usage guides; superseded by the feature folders listed in [xkey/docs/README.md](../README.md). Where they disagree, the feature folders win.
+
 This directory contains guides and tutorials for using go-xkms in your applications.
 
 ## Getting Started

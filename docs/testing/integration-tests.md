@@ -1,15 +1,16 @@
 # Integration Tests
 
-This document describes how to run integration tests for all go-xkms backends.
+> **Status: REFERENCE** · Last verified: 2026-10-13
+> Scope: the backend, PKCS#11 conformance, WebAuthn and ACME integration suites under `test/integration/` and the Make targets that run them.
+
+This document describes how to run the go-xkms backend integration tests.
 
 ## Overview
 
-The go-xkms library includes comprehensive integration tests for all backends. Tests are organized by backend in `test/integration/{backend}/` with Docker-based execution for consistency and isolation.
-
-**Test Statistics:**
-- Total: 151 tests passing
-- Coverage: 74.9%
-- Backends: 9 (PKCS#8, AES, PKCS#11, TPM2, YubiKey, AWS KMS, GCP KMS, Azure KV, Vault)
+Integration suites live in `test/integration/<suite>/`. Most backend suites
+run in Docker Compose; a few run in the devcontainer or on the host, as noted
+per suite. For the Compose layout and execution flow, see
+[docker-testing.md](docker-testing.md).
 
 ## Test Strategy
 
@@ -29,8 +30,8 @@ Integration tests use Docker Compose to provide:
 `integration` (or other suite) build tag, because that tag is never set —
 which is how a package API change can break an integration suite with
 nothing noticing until someone runs it in the devcontainer. `make
-vet-integration` closes that gap without running anything: it discovers
-every distinct `//go:build` tag combination declared under
+vet-integration` (`Makefile:3892`) closes that gap without running anything:
+it discovers every distinct `//go:build` tag combination declared under
 `test/integration/` and runs one `go vet -tags "..."` per combination,
 scoped to `./test/integration/...`.
 
@@ -40,7 +41,7 @@ to `integration && !grpc`), and unioning every tag would compile both
 halves of a pair together and fail on a conflict no real build
 configuration ever produces. `scripts/vet-integration.sh` has the full
 discovery algorithm and is called by both `make vet-integration` and CI's
-Lint job.
+Static Analysis job (`.github/workflows/ci.yml:1185`).
 
 This gate is compile-only: it never runs a test body, dials hardware, or
 touches the host. The suites themselves still run only in the devcontainer
@@ -48,19 +49,16 @@ via `make integration-test-*`.
 
 ## Test Structure
 
-Each backend has its own directory under `test/integration/`:
+The backend suites covered here:
 
 ```
 test/integration/
-├── common/                    # Shared test utilities
-├── software/                  # Software backend
-│   ├── docker-compose.yml
-│   ├── Dockerfile
-│   └── software_integration_test.go
+├── common/                    # common_test.go
 ├── pkcs11/                    # PKCS#11/SoftHSM
 │   ├── docker-compose.yml
 │   ├── Dockerfile
-│   └── pkcs11_integration_test.go
+│   ├── pkcs11_integration_test.go
+│   └── module/conformance/    # OASIS PKCS#11 v3.0 conformance suite
 ├── tpm2/                      # TPM2 simulator
 │   ├── docker-compose.yml
 │   ├── Dockerfile
@@ -72,22 +70,27 @@ test/integration/
 ├── gcpkms/                    # GCP KMS (Floci emulator + mock)
 │   ├── docker-compose.yml
 │   ├── Dockerfile
-│   └── gcpkms_integration_test.go
+│   ├── gcpkms_integration_test.go
+│   └── gcpkms_emulator_integration_test.go
 ├── azurekv/                   # Azure Key Vault (mock)
 │   ├── docker-compose.yml
 │   ├── Dockerfile
 │   └── azurekv_integration_test.go
-├── vault/                      # HashiCorp Vault
+├── vault/                     # HashiCorp Vault
 │   ├── docker-compose.yml
 │   ├── Dockerfile
 │   └── vault_integration_test.go
+├── webauthn-browser/          # Playwright WebAuthn RP suite
 ├── acme-tpm/                  # ACME device-attest-01/enroll-01/permanent-identifier over swtpm
 │   ├── docker-compose.yml
-│   └── *_integration_test.go
-└── challenges/                 # ACME challenge-framework availability (enroll01/endorse01, no TPM)
+│   └── *_test.go
+└── challenges/                # ACME challenge-framework availability (enroll01/endorse01, no TPM)
     ├── docker-compose.yml
     └── {enroll01,endorse01}/*_test.go
 ```
+
+There is no `test/integration/software/` directory; see
+[Software Backend](#software-backend-integration-tests).
 
 ## Running Tests
 
@@ -97,7 +100,9 @@ test/integration/
 make integration-test
 ```
 
-This runs all backend integration tests sequentially.
+This runs the aggregate (`Makefile:1752`): the backends below except
+acme-tpm, plus pkcs8, the PKCS#11 barrier and module suites, storage,
+quantum, FROST, WebAuthn, FIDO2, the CLI, API and SDK suites, and more.
 
 ### Individual Backend Tests
 
@@ -132,16 +137,11 @@ make integration-test-challenges
 make integration-test-acme-tpm
 ```
 
+Manual Compose runs below assume `make stage-gomodauth` has staged the
+private-module build secret (see [docker-testing.md](docker-testing.md)).
+
 
 ## Software Backend Integration Tests
-
-### What It Tests
-- RSA key generation (2048, 3072, 4096 bits)
-- ECDSA key generation (P-256, P-384, P-521)
-- Ed25519 key generation
-- Signing and verification
-- Key storage and retrieval
-- Error handling
 
 ### Running
 
@@ -149,24 +149,13 @@ make integration-test-acme-tpm
 make integration-test-software
 ```
 
-### Manual Execution
-
-```bash
-cd test/integration/software
-docker-compose run --rm test
-docker-compose down -v
-```
+No Compose environment: the target runs
+`go test -v -tags=integration ./pkg/backend/software/...` in the devcontainer
+(`Makefile:1980`). No file in `pkg/backend/software` carries an
+`integration` build tag, so this runs that package's regular tests.
 
 
 ## PKCS#11/SoftHSM Integration Tests
-
-### What It Tests
-- SoftHSM token initialization
-- RSA key generation in HSM
-- ECDSA key generation in HSM
-- Signing operations via HSM
-- Key listing and attributes
-- Error handling with HSM
 
 ### Running
 
@@ -174,13 +163,25 @@ docker-compose down -v
 make integration-test-pkcs11
 ```
 
+`integration-test-pkcs11` (`Makefile:2004`) runs the backend suite in
+`test/integration/pkcs11`.
+
 ### Manual Execution
 
 ```bash
 cd test/integration/pkcs11
-docker-compose run --rm test
-docker-compose down -v
+docker compose run --build --rm test
+docker compose down -v
 ```
+
+### SoftHSM Configuration
+
+The test image's command initializes the token
+(`test/integration/pkcs11/Dockerfile`):
+- Token Label: test-token
+- Slot: 0
+- SO PIN: 1234
+- User PIN: 1234
 
 
 ## OASIS PKCS#11 v3.0 Conformance Suite
@@ -195,24 +196,26 @@ BOTH tags are passed.
 make integration-test-pkcs11-conformance
 ```
 
-The target runs in the devcontainer against a live `xkms-server` (same
-transport env as `integration-test-pkcs11-module`) and is part of the aggregate
-`make integration-test`.
+The target (`Makefile:2090`) runs in the devcontainer against a live
+`xkms-server` (same transport env as `integration-test-pkcs11-module`) and is
+part of the aggregate `make integration-test` through
+`integration-test-pkcs11-module-all` (`Makefile:2272`).
 
 
 ## WebAuthn Integration Tests
 
 There is one WebAuthn E2E suite: the Playwright suite in
-`test/integration/webauthn-browser`. It boots a real `xkmsd` and drives
-Chrome's CDP virtual authenticator against the live Relying Party
-(`/api/v1/webauthn/*`), covering registration, authentication,
-forged-signature rejection (401), `excludeCredentials` re-registration
-refusal, discoverable resident-key login, unknown-session rejection (400),
-unregistered-user login (404) and the cross-origin CORS path.
+`test/integration/webauthn-browser`. It builds and boots a real `xkmsd` and
+drives Chrome's CDP virtual authenticator against the live Relying Party
+(`/api/v1/webauthn/*`), covering registration and authentication,
+tampered-signature rejection, `excludeCredentials` re-registration refusal,
+discoverable resident-key login, unknown-session rejection, unregistered-user
+login (404) and the cross-origin CORS path
+(`test/integration/webauthn-browser/tests/rp-ceremony.spec.ts`).
 
 ```bash
-make integration-test-webauthn           # alias of the target below
-make integration-test-webauthn-browser   # needs Node + Chromium
+make integration-test-webauthn           # alias of the target below (Makefile:2499)
+make integration-test-webauthn-browser   # runs on the host; needs Node + Chromium (Makefile:2503)
 ```
 
 A second Go/chromedp suite used to live in `test/integration/webauthn`. It was
@@ -222,22 +225,8 @@ virtual authenticator and asserted nothing about our Relying Party, and its
 serve -- while logging every failure instead of failing, so they passed whether
 or not the RP worked.
 
-### SoftHSM Configuration
-- Token Label: test-token
-- Slot: 0
-- SO PIN: 1234
-- User PIN: 1234
-
 
 ## TPM2 Integration Tests
-
-### What It Tests
-- TPM2 simulator initialization
-- RSA key generation in TPM
-- ECDSA key generation in TPM
-- Signing operations via TPM
-- Key persistence in TPM
-- Error handling with TPM
 
 ### Running
 
@@ -249,15 +238,16 @@ make integration-test-tpm2
 
 ```bash
 cd test/integration/tpm2
-docker-compose up -d tpm-simulator
-docker-compose run --rm test
-docker-compose down -v
+docker compose up -d tpm-simulator
+docker compose run --build --rm test
+docker compose down -v
 ```
 
 ### SWTPM Configuration
 - TPM Version: 2.0
-- Socket: /var/lib/swtpm/swtpm-sock
-- State Directory: /var/lib/swtpm/state
+- Service `tpm-simulator`, TCP command port `2421`, control port `2422`
+- The test container reads `TPM2_SIMULATOR_HOST=tpm-simulator` and
+  `TPM2_SIMULATOR_PORT=2421`
 
 
 ## ACME Challenge-Framework Integration Tests
@@ -275,14 +265,14 @@ docker-compose down -v
 make integration-test-challenges
 ```
 
-Part of the `make integration-test` aggregate.
+Part of the `make integration-test` aggregate (`Makefile:2380`).
 
 ### Manual Execution
 
 ```bash
 cd test/integration/challenges
-docker compose up -d acme-server
-docker compose run --rm test
+docker compose up -d --build acme-server
+docker compose run --build --rm test
 docker compose down -v
 ```
 
@@ -305,8 +295,8 @@ make integration-test-acme-tpm
 no registered server-side challenge verifier yet (go-xkms#737, pending an
 owner ruling on go-xkms#828), so a subset of this suite fails against current
 `main` for a known, tracked reason rather than a regression. Run it on its
-own; `Makefile`'s `integration-test-acme-tpm` target explains where to add it
-back once #737 lands.
+own; the comment above `Makefile`'s `integration-test-acme-tpm` target
+(`Makefile:2365`) explains where to add it back once #737 lands.
 
 ### Manual Execution
 
@@ -318,17 +308,14 @@ docker compose down -v
 ```
 
 ### SWTPM Configuration
-Same swtpm image and socket contract as the TPM2 suite above.
+
+Not the TPM2 suite's simulator: this stack's `tpm-simulator` runs the
+`go-xkms-swtpm` image on TCP command port `2321` and control port `2322`,
+and the test container reads `TPM_SOCKET_HOST=tpm-simulator` and
+`TPM_SOCKET_PORT=2321` (`test/integration/acme-tpm/docker-compose.yml`).
 
 
 ## AWS KMS Integration Tests
-
-### What It Tests
-- AWS KMS key creation (using Floci)
-- RSA and ECDSA key operations
-- Signing via KMS
-- Key management operations
-- Error handling
 
 ### Running
 
@@ -340,15 +327,15 @@ make integration-test-awskms
 
 ```bash
 cd test/integration/awskms
-docker-compose up -d floci
-docker-compose run --rm test
-docker-compose down -v
+docker compose up -d floci
+docker compose run --build --rm test
+docker compose down -v
 ```
 
 ### Floci Configuration
-- Endpoint: http://floci:4566
+- Endpoint: `AWS_ENDPOINT_URL=http://floci:4566`
 - Region: us-east-1
-- Credentials: test/test (auto-configured)
+- Credentials: test/test (set in the compose file)
 
 **Note:** These tests use Floci, not real AWS. No AWS credentials or costs required.
 
@@ -356,12 +343,9 @@ docker-compose down -v
 ## Google Cloud KMS Integration Tests
 
 ### What It Tests
-- GCP KMS key operations against the Floci GCP emulator (real gRPC, real signatures)
-- RSA (RSASSA-PKCS1) and ECDSA P-256 sign/verify with local cryptographic verification
-- Symmetric AES-256-GCM encrypt/decrypt round-trip
-- Key management and lifecycle (list, delete)
-- Mock-client coverage for algorithms the emulator lacks (EC P-384, RSA-PSS)
-- Error handling
+- GCP KMS key operations against the Floci GCP emulator
+  (`gcpkms_emulator_integration_test.go`)
+- Mock-client coverage (`gcpkms_integration_test.go`)
 
 ### Running
 
@@ -373,22 +357,16 @@ make integration-test-gcpkms
 
 ```bash
 cd test/integration/gcpkms
-docker-compose run --rm test
-docker-compose down -v
+docker compose run --build --rm test
+docker compose down -v
 ```
 
-**Note:** These tests use the Floci GCP emulator and a mock client, not real GCP. No GCP credentials required.
-
+**Note:** These tests use the Floci GCP emulator
+(`GCPKMS_EMULATOR_ENDPOINT=floci-gcp:4588`) and a mock client, not real GCP.
+No GCP credentials required.
 
 
 ## Azure Key Vault Integration Tests
-
-### What It Tests
-- Azure Key Vault operations (using mock client)
-- RSA and ECDSA key generation
-- Signing operations
-- Key management
-- Error handling
 
 ### Running
 
@@ -400,22 +378,14 @@ make integration-test-azurekv
 
 ```bash
 cd test/integration/azurekv
-docker-compose run --rm test
-docker-compose down -v
+docker compose run --build --rm test
+docker compose down -v
 ```
 
 **Note:** These tests use a mock client, not real Azure. No Azure credentials required.
 
 
-
 ## HashiCorp Vault Integration Tests
-
-### What It Tests
-- Vault transit engine operations
-- Key generation and management
-- Signing and verification
-- Secret management
-- Error handling
 
 ### Running
 
@@ -427,15 +397,16 @@ make integration-test-vault
 
 ```bash
 cd test/integration/vault
-docker-compose up -d vault
-docker-compose run --rm test
-docker-compose down -v
+docker compose up -d vault
+docker compose run --build --rm test
+docker compose down -v
 ```
 
 ### Vault Configuration
-- Endpoint: http://vault:8200
+- Endpoint: `VAULT_ADDR=http://vault:8200`
 - Root Token: root (dev mode)
-- Transit Engine: Enabled automatically
+- Transit Engine: mounted at `transit` by the test image's command before the
+  tests run (`test/integration/vault/Dockerfile`)
 
 
 ## Troubleshooting
@@ -445,9 +416,9 @@ docker-compose down -v
 If integration tests fail:
 
 1. **Check Docker is running**: `docker ps`
-2. **Clean up old containers**: `docker-compose down -v`
-3. **Rebuild images**: `docker-compose build --no-cache`
-4. **Check logs**: `docker-compose logs`
+2. **Clean up old containers**: `docker compose down -v`
+3. **Rebuild images**: `docker compose build --no-cache`
+4. **Check logs**: `docker compose logs`
 
 ### Permission Errors
 
@@ -455,31 +426,10 @@ If you encounter permission errors:
 
 1. Ensure Docker has proper permissions
 2. Check file ownership in test directories
-3. Run `docker-compose down -v` to clean up volumes
-
-### Slow Tests
-
-Integration tests run in Docker and may take several minutes:
-- Software: ~30 seconds
-- TPM2: ~60 seconds (simulator startup)
-- PKCS#11/SoftHSM: ~45 seconds
-- AWS KMS/Floci: ~90 seconds (emulator initialization)
-- GCP KMS: ~40 seconds (Floci emulator + mock)
-- Azure KV: ~30 seconds (mock)
-- Vault: ~60 seconds (Vault initialization)
-
-Total time for all backends: ~6-8 minutes
+3. Run `docker compose down -v` to clean up volumes
 
 
 ## Summary
-
-Integration tests validate all backend implementations:
-
-- **151 tests** passing across 7 backends
-- **74.9%** code coverage
-- **Docker-based** for consistency
-- **No host modifications** required
-- **Automated** via make targets
 
 Run all tests with:
 ```bash

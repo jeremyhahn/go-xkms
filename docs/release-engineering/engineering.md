@@ -1,7 +1,7 @@
 # Release engineering — engineering
 
-**Status:** implemented.
-**Last verified:** 2026-10-08.
+> **Status: NORMATIVE** · Last verified: 2026-10-13
+> Conflicts with this document are defects. Fix them here first.
 
 ## Surface
 
@@ -45,8 +45,9 @@ one known fleet name in the omega family is matched as a literal, not a
 wildcard: the bare word alone is ordinary English (a public gTLD, and an
 unrelated xkey SSH test fixture value), so widening the match would flag
 both as false positives. `make check-public-literals` runs it against the
-repository root; it takes an optional `ROOT` argument so its own test can
-point it at a scratch tree instead.
+repository root; the script takes an optional root-directory argument
+(`ROOT`, default the repository root) so its own test can point it at a
+scratch tree instead.
 
 `scripts/retry.sh` (go-xkms#1026) is a generic bounded-attempt/linear-backoff
 wrapper — `retry.sh [--attempts N] [--backoff SECONDS] -- CMD [ARG...]`,
@@ -69,7 +70,7 @@ at all (`CGO_ENABLED=0`, pure Go), and standard/arm64 additionally
 `gcc-aarch64-linux-gnu` plus the arm64 variant of every dev package the leg
 already installs for amd64, and sets `CC=aarch64-linux-gnu-gcc` before the
 static `-linkmode external -extldflags -static` build — the same approach
-`make release-server` already uses for `xkmsd` (`Makefile:898`). This was
+`make release-server` already uses for `xkmsd` (`Makefile:969`). This was
 spiked locally before being adopted: a full cross-compiled build of
 `xkmsctl`, `xkmsd` and `xkey` with the leg's exact tags and ldflags produced
 statically linked aarch64 ELF binaries, confirmed with `file`. The one dev
@@ -322,7 +323,9 @@ architecture.md.
 `make test-scripts` (also reached by `make test`) runs
 `test/scripts/release-alpha.test.sh`, `test/scripts/release-tag.test.sh`,
 `test/scripts/release-assets.test.sh`, `test/scripts/changelog-assemble.test.sh`,
-`test/scripts/retry.test.sh` and `test/scripts/check-public-literals.test.sh`.
+`test/scripts/retry.test.sh` and `test/scripts/check-public-literals.test.sh`,
+alongside the non-release script suites `clean-test-containers.test.sh`,
+`softhsm-pin.test.sh` and `check-test-helpers.test.sh` (`Makefile:1021`).
 
 `check-public-literals.test.sh` runs the gate against synthetic scratch trees
 under `mktemp -d` only — never against this repository's own tree, so it

@@ -1,5 +1,8 @@
 # xKey Desktop GUI
 
+> **Status: REFERENCE** · Last verified: 2026-10-13
+> Superseded background: the GUI feature folder, starting with [architecture.md](architecture.md), is normative.
+
 A premium cross-platform desktop application for xKey, built with [Wails](https://wails.io/) to provide a native experience that matches the xKey Android app.
 
 ## Overview
@@ -16,96 +19,87 @@ The xKey Desktop GUI provides a system tray application with full window support
 
 ## Current Status
 
-All 10 implementation phases (0-9) are complete.
-
-| Metric | Value |
-|--------|-------|
-| Go tests passing | 97 |
-| Frontend errors | 0 (vite build + svelte-check) |
-| Frontend warnings | 0 |
-| CSS bundle | 80 KB (12 KB gzip) |
-| JS bundle | 252 KB (68 KB gzip) |
-| Frontend components | 24 |
-| Frontend views | 15 |
-| Frontend stores | 8 |
-| Frontend utils | 3 |
-| Backend services | 8 (App, Phone, FIDO2, OATH, PIV, TPM, Audit, Admin) |
+All 10 implementation phases (0-9) of the original [ROADMAP](./ROADMAP.md) are
+complete. The frontend views are in `xkey/frontend/src/views/`, shared
+components in `xkey/frontend/src/lib/components/`, stores in
+`xkey/frontend/src/lib/stores/`, and the Go services bound to the frontend in
+`xkey/pkg/gui/services/`.
 
 ## Quick Start
 
 ```bash
 cd xkey
 
-# Build both CLI and GUI binaries
-make build
+# Build the single xkey binary (GUI + CLI) in the Docker builder image
+make build              # produces <BIN_DIR>/xkey
 
-# Build CLI only
-make build-cli          # produces ./build/bin/xkey
+# Build locally instead (needs the webkit, libusb and bluetooth dev packages)
+make build-local
 
-# Build GUI only (requires wails CLI)
-make build-gui          # produces ./build/bin/xkey-gui
-
-# Run GUI (auto-detects display server; falls back to CLI with --no-gui)
-./build/bin/xkey-gui
-./build/bin/xkey-gui --no-gui   # force CLI fallback
-
-# Run CLI only (no GUI dependencies)
+# Run: GUI when a display is detected, CLI otherwise
 ./build/bin/xkey
+./build/bin/xkey --no-gui   # force the CLI
 
-# Development mode with hot reload
-make dev-gui
+# Development mode with Wails hot reload
+make dev
 ```
+
+`BIN_DIR` defaults to `$(WORKSPACE_ROOT)/build/bin` (`xkey/Makefile`).
 
 ## Architecture
 
 ```
 xkey/
-  main.go               GUI entry point (Wails + embed + systray)
-                           --no-gui flag falls back to CLI
-  cmd/xkey/main.go      CLI-only entry point (cobra/viper)
+  cmd/xkey/main.go      The one entry point: GUI or CLI
+  pkg/gui/              Wails app, systray, config, events, services
 
 ┌─────────────────────────────────────────────────────────────────────┐
-│                      xkey-gui Binary                                │
-│  main.go: GUI Entry Point                                           │
-│    ├── hasGUIEnvironment() -> detect X11 / Wayland / macOS / Win   │
-│    ├── --no-gui | --help | -h -> CLI fallback (cobra/viper)        │
-│    └── GUI Mode -> Wails + embed frontend/dist + systray           │
-├─────────────────────────────────────────────────────────────────────┤
-│                      xkey Binary (CLI-only)                         │
-│  cmd/xkey/main.go: CLI Entry Point                                  │
-│    └── cobra/viper command tree (no GUI dependencies)              │
+│                      xkey Binary                                    │
+│  cmd/xkey/main.go                                                   │
+│    ├── hasGUIEnvironment() -> detect a display                      │
+│    ├── --no-gui | --help | -h -> CLI (cobra/viper)                  │
+│    ├── --gui -> force the GUI                                       │
+│    └── GUI Mode -> Wails + embedded frontend + systray              │
 ├─────────────────────────────────────────────────────────────────────┤
 │  Frontend (Svelte 4 + TypeScript + TailwindCSS)                     │
-│    ├── 24 Components (Card, Button, Modal, Toast, PCRViewer, ...)  │
-│    ├── 15 Views (Dashboard, Devices, FIDO2, OATH, PIV, TPM, ...)  │
-│    ├── 8 Stores (app, theme, phone, keys, oath, fido2, events,    │
-│    │             notifications)                                     │
-│    └── 3 Utils (theme, format, icons)                              │
+│    ├── src/views/            (Dashboard, FIDO2, OATH, PIV, TPM, ...)│
+│    ├── src/lib/components/   (Card, Button, Modal, PCRViewer, ...)  │
+│    ├── src/lib/stores/       (app, theme, keys, oath, fido2, ...)   │
+│    └── src/lib/utils/                                               │
 ├─────────────────────────────────────────────────────────────────────┤
 │  Backend (Go)                                                       │
-│    ├── 8 Services: App, Phone, FIDO2, OATH, PIV, TPM, Audit,      │
-│    │               Admin (Wails bindings exposed to frontend)      │
-│    ├── TrayManager (fyne.io/systray integration)                   │
-│    ├── Events System (bidirectional Go <-> frontend events)        │
-│    └── Config Persistence (~/.xkey/gui.json, atomic writes)        │
+│    ├── pkg/gui/services/  (Wails bindings exposed to frontend)      │
+│    ├── TrayManager (fyne.io/systray integration)                    │
+│    ├── Events System (Go -> frontend events)                        │
+│    └── Config Persistence (<config dir>/xkey/gui.json, atomic)      │
 └─────────────────────────────────────────────────────────────────────┘
 ```
+
+The GUI/CLI decision is in `xkey/cmd/xkey/main.go:65-73`;
+`hasGUIEnvironment()` is at `xkey/cmd/xkey/main.go:295`.
 
 ## Build Commands
 
 | Command | Description |
 |---------|-------------|
-| `make build` | Build both CLI and GUI binaries |
-| `make build-cli` | CLI only (no GUI dependencies) |
-| `make build-gui` | GUI only (requires wails CLI) |
-| `make dev-gui` | Dev mode with hot reload |
+| `make build` | Build the xkey binary (GUI + CLI) in Docker |
+| `make build-local` | Build the same binary on the host |
+| `make dev` | Wails dev mode with hot reload |
 | `make frontend-build` | Frontend only |
-| `make test` | Run all unit tests with coverage |
+| `make test` | Run all unit tests |
 | `make coverage-gui` | GUI test coverage report |
 
 ## Configuration
 
-The GUI persists its own configuration as JSON at `~/.xkey/gui.json`. Writes are atomic (temp-file + rename) to prevent corruption. Viper keys from environment variables and CLI flags override the JSON file values.
+The GUI persists its own configuration as JSON at `gui.json` in the `xkey`
+directory under the OS user config dir (`os.UserConfigDir()`, e.g.
+`$XDG_CONFIG_HOME/xkey/gui.json` on Linux; `configDir` and `guiConfigPath` in
+`xkey/pkg/gui/config.go:263` and `:283`). Writes are atomic
+(`fsutil.WriteFileAtomic`, `xkey/pkg/gui/config.go:445`). Viper keys under
+`gui.` (for example `gui.theme`) override the JSON file values when set
+(`LoadGUIConfig`, `xkey/pkg/gui/config.go:294`).
+
+A subset of the fields (`GUIConfig`, `xkey/pkg/gui/config.go`):
 
 ```json
 {
@@ -123,16 +117,16 @@ The GUI persists its own configuration as JSON at `~/.xkey/gui.json`. Writes are
 
 ### Configuration Sources (highest to lowest precedence)
 
-1. **CLI flags / environment variables** (`XKEY_GUI_THEME`, etc. via viper)
-2. **JSON file** (`~/.xkey/gui.json`)
-3. **Defaults** (system theme, 1024x768, notifications enabled)
+1. **Viper keys** (`gui.*`, from flags, environment or the xkey config file)
+2. **JSON file** (`gui.json`)
+3. **Defaults** (`DefaultGUIConfig`, `xkey/pkg/gui/config.go:196`)
 
 ## Documentation
 
 - [Architecture](./architecture.md) - Technical architecture and component design
 - [Design System](./design-system.md) - Colors, typography, components matching Android
 - [Features](./features.md) - Detailed feature specifications
-- [ROADMAP](./ROADMAP.md) - Development checklist and milestones
+- [ROADMAP](./ROADMAP.md) - Development checklist and milestones (archived)
 
 ## Technology Stack
 
@@ -142,7 +136,7 @@ The GUI persists its own configuration as JSON at `~/.xkey/gui.json`. Writes are
 | Frontend | Svelte 4 + TypeScript | Reactive UI components |
 | Styling | TailwindCSS | Utility-first CSS matching Android design |
 | Systray | [fyne.io/systray](https://github.com/fyne-io/systray) | Cross-platform tray integration |
-| Icons | Material Design Icons | Consistent with Android |
+| Icons | Material Design Icons (`@mdi/js`) | Consistent with Android |
 | State | Svelte Stores | Reactive state management |
 
 ## Comparison with YubiKey Authenticator
@@ -152,10 +146,10 @@ The GUI persists its own configuration as JSON at `~/.xkey/gui.json`. Writes are
 | TOTP/HOTP | Yes | Yes |
 | FIDO2/WebAuthn | Limited | Full Management |
 | PIV Certificates | Yes | Yes + CSR Generation |
-| Phone Backend | No | Yes (BLE + TCP) |
+| Phone Backend | No | Yes |
 | TPM Integration | No | Full TPM2 Support |
 | Server Admin | No | xkmsd Management |
-| Audit Logging | No | Comprehensive |
+| Audit Logging | No | Yes |
 | Multi-Device | No | Yes (Phone + Hardware) |
 | Custom Themes | No | Light/Dark + System |
 
@@ -164,8 +158,7 @@ The GUI persists its own configuration as JSON at `~/.xkey/gui.json`. Writes are
 - All cryptographic operations happen in Go backend
 - Frontend never has access to private keys
 - IPC is secured via Wails runtime
-- Biometric prompts use native OS dialogs
-- Audit log tracks all security operations
+- Audit log tracks security operations
 
 ## License
 

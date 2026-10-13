@@ -1,10 +1,13 @@
 # Development Documentation
 
+> **Status: REFERENCE** · Last verified: 2026-10-13
+> Scope: index of the contributor-facing development documents in this folder.
+
 This directory contains development-focused documentation for contributors and maintainers.
 
 ## Available Documents
 
-- [encoding-interop-status.md](encoding-interop-status.md) - Status of JWK/JWT/JWE integration test implementation
+- [encoding-interop-status.md](encoding-interop-status.md) - Archived record of the completed JWK/JWT/JWE integration test plan
 - [errors.md](errors.md) - Typed-error conventions (`pkg/errs` types, sentinels, sentinel-preservation rule)
 - [lint-gates.md](lint-gates.md) - What CI's Lint job enforces (gofmt, go vet, golangci-lint, secure-analyzer) and the local Make target for each
 

@@ -1,5 +1,8 @@
 # Docker Deployment Guide
 
+> **Status: REFERENCE** · Last verified: 2026-10-13
+> Scope: the six Dockerfiles, `docker-compose.production.yml` and the development compose environment.
+
 This guide covers building and deploying go-xkms using Docker containers.
 
 ## Available Images
@@ -48,16 +51,24 @@ make docker-build-cli     # CLI tool
 
 ### Run Containers
 
+There are no `docker-run-*` targets. Run an image with `docker run`, or start
+its service from `docker-compose.production.yml` (see below):
+
 ```bash
-# Run unified server (all protocols)
-make docker-run-server
-
-# Run REST-only server
-make docker-run-rest
-
-# Run gRPC-only server
-make docker-run-grpc
+# Unified server (all protocols)
+docker run -d --name xkms-server \
+  -p 8443:8443 -p 9443:9443 -p 9444:9444 \
+  -v $(PWD)/configs:/etc/xkms:ro \
+  -v xkms-data:/var/lib/xkms \
+  go-xkms-server:latest
 ```
+
+Each image is tagged `go-xkms-<profile>:<VERSION>` and
+`go-xkms-<profile>:latest` (`Makefile:3497-3579`).
+
+The gRPC image's default command passes `--port` and `--data-dir`, which
+`xkmsd` does not accept (`cmd/xkmsd/main.go:105-110`); run it with
+`--config /etc/xkms/config.yaml` as the container command.
 
 ## Docker Compose
 
@@ -66,12 +77,16 @@ make docker-run-grpc
 The default `docker-compose.yml` provides a development environment with:
 - SWTPM (TPM 2.0 simulator)
 - SoftHSM (PKCS#11 simulator)
-- Integration test runner
-- Development shell
+- Integration test runner (`integration-test`)
+- Unit test runner (`unit-test`)
+- Development shell (`dev`)
 
 ```bash
 # Start development environment
 make compose-up
+
+# Run unit tests
+make compose-test
 
 # Run integration tests
 make compose-integration
@@ -94,6 +109,10 @@ make docker-build-all
 
 # Start production services
 docker compose -f docker-compose.production.yml up -d
+
+# The protocol-specific services sit behind the rest-only, grpc-only,
+# quic-only and mcp-only profiles; start one by naming it
+docker compose -f docker-compose.production.yml up -d xkms-rest
 
 # View logs
 docker compose -f docker-compose.production.yml logs -f
@@ -166,20 +185,24 @@ When running multiple services, ports are mapped to avoid conflicts:
 
 ### Volume Mounts
 
-All containers expect configuration in `/etc/xkms/config.yaml`:
+The server images start `xkmsd --config /etc/xkms/config.yaml` (each
+Dockerfile's `CMD`; the gRPC image is the exception noted above):
 
 ```bash
 docker run -d \
   -v $(PWD)/configs:/etc/xkms:ro \
   -p 8443:8443 \
-  go-xkms/server:latest
+  go-xkms-server:latest
 ```
 
-### Environment Variables
+### Config Path
 
-| Variable | Default | Description |
-|----------|---------|-------------|
-| KEYSTORE_CONFIG | /etc/xkms/config.yaml | Path to config file |
+To read the config from elsewhere, pass `--config <path>` as the container
+command. Every image, and every service in `docker-compose.production.yml`,
+also sets `KEYSTORE_CONFIG`, but no code reads it: the per-protocol compose
+services' `config-rest.yaml`, `config-grpc.yaml`, `config-quic.yaml` and
+`config-mcp.yaml` values have no effect, and those services load
+`/etc/xkms/config.yaml`.
 
 ### Data Persistence
 
@@ -189,7 +212,7 @@ Mount volumes for persistent data:
 docker run -d \
   -v xkms-data:/var/lib/xkms \
   -v $(PWD)/configs:/etc/xkms:ro \
-  go-xkms/server:latest
+  go-xkms-server:latest
 ```
 
 ## Configuration Files
@@ -217,6 +240,13 @@ tls:
   cert_file: /etc/xkms/server.crt
   key_file: /etc/xkms/server.key
 
+# Network protocols require the embedded qrdb node: datastore.mode
+# "standalone", with datastore.path set.
+datastore:
+  engine: pebble
+  mode: standalone
+  path: /var/lib/xkms/metadata
+
 default_backend: software
 
 backends:
@@ -224,6 +254,11 @@ backends:
     enabled: true
     path: /var/lib/xkms/keys
 ```
+
+The complete versions of these files are in `examples/config/`
+(`config-server.yaml`, `config-rest.yaml`, `config-grpc.yaml`, ...). Whatever
+the file is called on the host, the container reads it as
+`/etc/xkms/config.yaml`.
 
 ### configs/config-rest.yaml (REST-only)
 
@@ -259,59 +294,33 @@ protocols:
 
 ## Build Arguments
 
-### Version Information
+The `docker-build-*` targets pass `VERSION`, `GIT_COMMIT` and `BUILD_DATE`
+as build arguments. Only `Dockerfile.cli` declares any (`ARG VERSION`,
+`COMMIT`, `DATE`), and of those only `VERSION` matches what Make passes. The
+server Dockerfiles declare no `ARG`, so their binaries report version `dev`.
 
-Build with version metadata:
+## Multi-Architecture Builds and Registry Publishing
 
-```bash
-docker build \
-  --build-arg VERSION=v1.0.0 \
-  --build-arg COMMIT=$(git rev-parse --short HEAD) \
-  -t go-xkms/server:v1.0.0 \
-  -f Dockerfile.server .
-```
-
-The Makefile automatically sets these:
+There are no Make targets for multi-architecture builds or for pushing
+images. The `docker-build-*` targets build for the local architecture and
+load the result into the local Docker image store; tag and push with
+`docker` yourself:
 
 ```bash
-VERSION=v1.0.0 make docker-build-server
-```
-
-## Multi-Architecture Builds
-
-Build for multiple architectures (amd64, arm64):
-
-```bash
-# Setup buildx
-make docker-buildx-setup
-
-# Build and push multi-arch image
-make docker-build-multiarch
-```
-
-## Registry Publishing
-
-### Configure Registry
-
-Set your registry in Makefile or environment:
-
-```bash
-export DOCKER_REGISTRY=ghcr.io/your-org
-make docker-build-all
-make docker-push-all
-```
-
-### Push Individual Images
-
-```bash
+docker tag go-xkms-server:latest ghcr.io/your-org/go-xkms-server:latest
 docker push ghcr.io/your-org/go-xkms-server:latest
-docker push ghcr.io/your-org/go-xkms-rest:latest
-docker push ghcr.io/your-org/go-xkms-grpc:latest
 ```
+
+Published release images are built by `.github/workflows/release.yml`; see
+[release engineering](../release-engineering/user.md).
 
 ## Health Checks
 
-All server images include health checks:
+Every server image declares a `HEALTHCHECK`. The unified and REST images
+probe `curl -fsSk https://localhost:8443/health` (`Dockerfile.server:134`,
+`Dockerfile.rest:125`); the gRPC, QUIC and MCP images look for their port in
+`netstat` output (`Dockerfile.grpc:121`, `Dockerfile.quic:121`,
+`Dockerfile.mcp:121`).
 
 ```bash
 # Check container health
@@ -359,10 +368,13 @@ Never commit secrets to the repository. Use:
 
 ```bash
 docker run -d \
-  -v /secure/path/certs:/etc/xkms:ro \
-  --secret server_key \
-  go-xkms/server:latest
+  -v /secure/path/certs:/etc/xkms/certs:ro \
+  -v $(PWD)/configs:/etc/xkms:ro \
+  go-xkms-server:latest
 ```
+
+`docker run` has no `--secret` flag; Docker secrets are a Swarm and Compose
+feature, mounted under `/run/secrets/`.
 
 ## Troubleshooting
 
@@ -392,7 +404,7 @@ docker exec -it xkms-server sh
 Check server version:
 
 ```bash
-docker run --rm go-xkms/server:latest --version
+docker run --rm go-xkms-server:latest --version   # reports "dev"; see Build Arguments
 ```
 
 ### Check Health
@@ -409,7 +421,7 @@ docker inspect --format='{{.State.Health.Status}}' xkms-server
 
 ### Resource Limits
 
-Set resource limits in docker-compose.yml:
+Set resource limits in `docker-compose.production.yml` (it sets none today):
 
 ```yaml
 services:
@@ -439,33 +451,22 @@ networks:
 
 ## Makefile Targets
 
-All Docker-related targets are in `Makefile.docker`:
-
-```bash
-# Include in main Makefile
-include Makefile.docker
-
-# View all Docker targets
-make docker-help
-```
+The Docker targets live in the top-level `Makefile`; there is no separate
+`Makefile.docker`. `make help` lists every target.
 
 ### Available Targets
 
 | Target | Description |
 |--------|-------------|
-| docker-build-all | Build all production images |
-| docker-build-server | Build unified server image |
-| docker-build-rest | Build REST-only image |
-| docker-build-grpc | Build gRPC-only image |
-| docker-build-quic | Build QUIC-only image |
-| docker-build-mcp | Build MCP-only image |
-| docker-build-cli | Build CLI image |
-| docker-push-all | Push all images to registry |
-| docker-run-server | Run unified server locally |
-| docker-run-rest | Run REST server locally |
-| docker-run-grpc | Run gRPC server locally |
-| docker-stop-all | Stop all containers |
-| docker-clean-production | Remove all production images |
+| docker-build-all | Build all six images below |
+| docker-build-server | Build the unified server image (`go-xkms-server`) |
+| docker-build-rest | Build the REST-only image (`go-xkms-rest`) |
+| docker-build-grpc | Build the gRPC-only image (`go-xkms-grpc`) |
+| docker-build-quic | Build the QUIC image (`go-xkms-quic`) |
+| docker-build-mcp | Build the MCP-only image (`go-xkms-mcp`) |
+| docker-build-cli | Build the CLI image (`go-xkms-cli`) |
+| docker-build, docker-run, docker-test, docker-stop, docker-clean | The integration-test image and container (`Dockerfile`), not the deployment images |
+| compose-up, compose-down, compose-test, compose-integration, compose-dev | The development `docker-compose.yml` environment |
 
 `docker-compose.production.yml` has no corresponding `compose-*` Make
 targets; drive it directly with `docker compose -f
@@ -488,6 +489,12 @@ server:
 protocols:
   rest: true
   grpc: true
+tls:
+  enabled: true
+datastore:
+  engine: pebble
+  mode: standalone
+  path: /var/lib/xkms/metadata
 default_backend: software
 backends:
   software:
@@ -500,7 +507,7 @@ docker run -d --name xkms \
   -p 8443:8443 -p 9443:9443 \
   -v $(PWD)/configs:/etc/xkms:ro \
   -v xkms-data:/var/lib/xkms \
-  go-xkms/server:latest
+  go-xkms-server:latest
 
 # Check health
 curl -k https://localhost:8443/health
@@ -513,13 +520,16 @@ docker logs -f xkms
 
 ```bash
 make docker-build-rest
-make docker-run-rest
+docker compose -f docker-compose.production.yml up -d xkms-rest
 
 # Access REST API
 curl -k https://localhost:8445/health
 ```
 
 ### Using CLI Tool
+
+The CLI image's entrypoint is `xkmsctl` (installed as
+`/usr/local/bin/xkms-cli`), so arguments go straight to it:
 
 ```bash
 # Build CLI image
@@ -528,51 +538,14 @@ make docker-build-cli
 # Run CLI command
 docker run --rm \
   -v $(PWD)/configs:/etc/xkms:ro \
-  go-xkms/cli:latest \
-  keys list
+  go-xkms-cli:latest \
+  key list --help
 
 # Interactive shell
 docker run -it --rm \
   -v $(PWD)/configs:/etc/xkms:ro \
-  go-xkms/cli:latest \
-  sh
-```
-
-## CI/CD Integration
-
-### GitHub Actions Example
-
-```yaml
-name: Docker Build
-
-on:
-  push:
-    tags:
-      - 'v*'
-
-jobs:
-  build:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v3
-
-      - name: Build images
-        run: make docker-build-all
-
-      - name: Push images
-        run: make docker-push-all
-```
-
-### GitLab CI Example
-
-```yaml
-docker-build:
-  stage: build
-  script:
-    - make docker-build-all
-    - make docker-push-all
-  only:
-    - tags
+  --entrypoint sh \
+  go-xkms-cli:latest
 ```
 
 ## References

@@ -1,6 +1,7 @@
 # OIDC — Architecture
 
-Status: current. Last verified: 2026-10-08.
+> **Status: NORMATIVE** · Last verified: 2026-10-13
+> Conflicts with this document are defects. Fix them here first.
 
 ## Two backends
 

@@ -1,6 +1,26 @@
 # xKey Desktop GUI - Development Roadmap
 
+> **Status: ARCHIVE — historical record. Do NOT build from this document.**
+> Last verified: 2026-10-13. For the GUI as built, see [architecture.md](architecture.md).
+
 A phased development checklist for building the xKey Desktop GUI using Wails.
+All ten phases were finished; the checklist below is kept as written and has
+since drifted from the code. Known drift, checked 2026-10-13:
+
+- Shared components live in `xkey/frontend/src/lib/components/`, not
+  `src/components/`. `Devices.svelte`, `DeviceDetail.svelte`,
+  `PairingDialog.svelte` and `DeviceCard.svelte` no longer exist; pairing is
+  `src/views/Pairing.svelte` and `PairingDetail.svelte`.
+- The Makefile has no `build-gui`, `dev-gui` or `build-gui-all` target; the
+  GUI builds with `make build` and runs with `make dev` (`xkey/Makefile`).
+- Playwright E2E tests now exist (`make playwright-test`, `@playwright/test`
+  in `xkey/frontend/package.json`), and `make lint-frontend` runs eslint when
+  it is installed.
+- Go dependencies are now `github.com/wailsapp/wails/v2 v2.12.0` and
+  `fyne.io/systray v1.12.1` (`xkey/go.mod`).
+- The `--no-gui` flag and `hasGUIEnvironment()` are in
+  `xkey/cmd/xkey/main.go:65` and `:295`.
+- The open items and counts below were not re-verified.
 
 ## Quick Reference
 

@@ -1,5 +1,13 @@
 # xKey Desktop GUI - Features
 
+> **Status: REFERENCE** · Last verified: 2026-10-13
+> Superseded background: the GUI feature folder, starting with [architecture.md](architecture.md), is normative.
+
+This is the original design specification. The system tray (§1), the pairing
+attestation step (§3.2) and the keyboard shortcuts (§11) were checked against
+the code; the other mockups describe the intended UI and are not an inventory
+of what ships.
+
 Comprehensive feature specifications for the xKey Desktop GUI, designed to match and exceed the capabilities of the YubiKey Authenticator while maintaining visual parity with the xKey Android app.
 
 ## Feature Overview
@@ -19,60 +27,42 @@ Comprehensive feature specifications for the xKey Desktop GUI, designed to match
 
 ## 1. System Tray
 
+The tray is built in `xkey/pkg/gui/systray.go` with `fyne.io/systray`.
+
 ### 1.1 Tray Icon
 
-- **Icon States**:
-  - Default: xKey logo (navy)
-  - Connected: Green dot overlay
-  - Warning: Yellow dot overlay
-  - Error: Red dot overlay
-  - Processing: Animated indicator
-
-- **Tooltip**: "xKey - [Status]"
-  - "xKey - Ready"
-  - "xKey - Connected to Pixel 8 Pro"
-  - "xKey - Authenticating..."
+- **Icon**: the application icon (`icon.AppIcon`, `systray.go:56`); it does not change with status
+- **Tooltip**: "xKey - Multi-protocol Authentication" (`systray.go:57`)
 
 ### 1.2 Tray Menu Structure
 
+Built in `systray.go:65-118`:
+
 ```
-┌────────────────────────────────────────┐
-│ 🔐 Status: Ready                       │ (disabled, info only)
-├────────────────────────────────────────┤
-│ 📱 Phone: Pixel 8 Pro ✓               │ → submenu
-│    ├─ Disconnect                       │
-│    ├─ Attest Device                    │
-│    └─ Device Info...                   │
-├────────────────────────────────────────┤
-│ 🔑 Keys (12)                          │ → opens Keys window
-│ 🛡️ FIDO2                              │ → submenu
-│    ├─ Start Bridge                     │
-│    ├─ Credentials...                   │
-│    └─ Relying Parties...               │
-│ 🔢 OATH TOTP                          │ → submenu
-│    ├─ [Account 1] 123 456  ⏱ 15s      │
-│    ├─ [Account 2] 789 012  ⏱ 15s      │
-│    ├─ ─────────────────────            │
-│    └─ Manage Accounts...               │
-│ 💳 PIV                                │ → opens PIV window
-│ 🔒 TPM                                │ → opens TPM window
-├────────────────────────────────────────┤
-│ ⚙️ Settings...                        │ → opens Settings window
-│ 📋 Audit Log...                       │ → opens Audit window
-│ 🔧 Server Admin...                    │ → opens Admin window (if admin)
-├────────────────────────────────────────┤
-│ 📖 Help                               │ → opens docs URL
-│ ℹ️ About xKey                         │ → opens About dialog
-├────────────────────────────────────────┤
-│ ❌ Quit                               │
-└────────────────────────────────────────┘
+xKey: Ready                  (status line, updated at runtime)
+─────────────────────────
+Phone                        → No device connected (status)
+                               Connect / Disconnect / Attest Device
+Keys: 0                      (key count, updated at runtime)
+Storage: Unknown             (encrypted storage status)
+─────────────────────────
+FIDO2                        → Start Bridge / Stop Bridge / Credentials
+OATH                         → Accounts
+PIV
+TPM
+─────────────────────────
+Settings
+Audit Log
+─────────────────────────
+Quit
 ```
+
+Connect, Disconnect, Attest Device, Start Bridge, Stop Bridge, Settings,
+Audit Log and Quit have click handlers (`systray.go:128-156`).
 
 ### 1.3 Quick Actions
 
-- **Single-click on tray icon**: Toggle main window
-- **Double-click**: Open dashboard
-- **Right-click**: Show menu
+- **Click on the tray icon**: shows the main window (`SetOnTapped` → `ShowWindow`, `systray.go:60-62`)
 
 ---
 
@@ -175,8 +165,10 @@ Each status card shows:
 6. **Attest**: The phone's hardware attestation is requested and verified
    before anything is saved — the same decision as `xkey device pair`. A device
    that cannot be verified is refused by default; `devices.yaml`'s
-   `attestation_policy.allow_unattestable_devices` (lockable by enterprise
-   policy) lets it pair with no attestation claim on record
+   `attestation_policy.allow_unattestable_devices`
+   (`xkey/pkg/gui/services/phone_service.go:241`, lockable by the enterprise
+   policy `pairing_allow_unattestable_devices`, `xkey/pkg/config/policy.go:81`)
+   lets it pair with no attestation claim on record
 7. **Complete**: Show success with the verified security level
 
 ### 3.3 Device Detail View
@@ -651,17 +643,9 @@ Form fields:
 
 ## 11. Keyboard Shortcuts
 
-| Shortcut | Action |
-|----------|--------|
-| `Ctrl+Q` / `Cmd+Q` | Quit application |
-| `Ctrl+,` / `Cmd+,` | Open settings |
-| `Ctrl+L` / `Cmd+L` | Open audit log |
-| `Ctrl+D` / `Cmd+D` | Open dashboard |
-| `Ctrl+P` / `Cmd+P` | Pair new device |
-| `Ctrl+T` / `Cmd+T` | Generate TOTP (focused account) |
-| `Ctrl+C` / `Cmd+C` | Copy current TOTP code |
-| `Escape` | Close current dialog/view |
-| `F5` | Refresh current view |
+There are no application-wide shortcuts. `Escape` closes a non-persistent
+modal (`xkey/frontend/src/lib/components/Modal.svelte:17`); other key
+handling is local to individual views and dialogs.
 
 ---
 

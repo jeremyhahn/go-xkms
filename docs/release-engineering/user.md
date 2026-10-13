@@ -1,7 +1,7 @@
 # Release engineering — user guide
 
-**Status:** implemented.
-**Last verified:** 2026-10-08.
+> **Status: NORMATIVE** · Last verified: 2026-10-13
+> Conflicts with this document are defects. Fix them here first.
 
 ## Cutting a release, in two steps (go-xkms#419, go-xkms#211)
 
@@ -175,27 +175,22 @@ because a runner-infrastructure failure — not a code defect — took out a leg
 and nothing after it ran. Two mitigations landed for this, one architectural
 and one defensive:
 
-- **Only one leg still needs QEMU at all.** Of the four `build-binaries` legs,
-  the standard build genuinely links CGO (`miekg/pkcs11`, plus the
-  unconditional `dolthub/go-icu-regex`/`google/gousb` cgo deps of the module
-  graph) against arm64 system libraries, so its arm64 leg still builds inside
-  an emulated arm64 container. The FIPS build is `CGO_ENABLED=0` on **both**
-  architectures — pure Go, no C toolchain, nothing to cross-link — so its
-  arm64 leg now cross-compiles natively (`GOARCH=arm64` inside the same amd64
-  container the amd64 leg uses) and never touches QEMU. `build-docker` and
-  `build-docker-cli` never needed arm64 QEMU at all on this Gitea instance in
-  the first place: their multi-arch step is guarded to `github.server_url ==
-  'https://github.com'` and never runs here, so their QEMU setup step now
-  carries the same guard instead of registering binfmt for a build that can't
-  run.
+- **No `build-binaries` leg uses QEMU** (go-xkms#1032, following
+  go-xkms#1026's fips/arm64 leg). All four legs build natively inside one
+  amd64 container: the FIPS build is `CGO_ENABLED=0` on both architectures,
+  and the standard arm64 leg cross-compiles with `GOARCH=arm64` and
+  `CC=aarch64-linux-gnu-gcc` against arm64 dev packages. `build-docker` and
+  `build-docker-cli` keep `docker/setup-qemu-action`, but only for their
+  multi-arch step, and both are guarded to `github.server_url ==
+  'https://github.com'`, so neither runs on this Gitea instance.
 - **Bounded retries, on the two things that actually failed:** the
   `build-binaries` container build (`docker create`/`cp`/`start`/`cp`) and the
   two amd64 Docker-image scan builds (`scripts/retry.sh`, 3 attempts, linear
   backoff). A code failure still fails, just three times over instead of
   once — the same shell loop cannot distinguish a bad build from a flaky
   daemon, so it does not try to.
-- `docker/setup-qemu-action` now runs with `cache-image: false` on the one leg
-  that still needs it, so it never writes to (or races) the shared
+- `docker/setup-qemu-action` runs with `cache-image: false` wherever it still
+  runs, so it never writes to (or races) the shared
   hostedtoolcache binfmt image — the specific ENOENT copy race the issue
   recorded at v0.24.0-alpha.
 - `build-binaries`' matrix caps at `max-parallel: 2`, so at most two of the

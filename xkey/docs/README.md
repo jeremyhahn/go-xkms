@@ -1,5 +1,8 @@
 # xKey Documentation
 
+> **Status: REFERENCE** · Last verified: 2026-10-13
+> Index of xkey documentation: feature folders and the legacy paths they supersede.
+
 xKey is a unified security key interface that provides FIDO2/WebAuthn, OATH TOTP/HOTP, PIV certificates, SSH agent, OIDC authentication, and static password functionality. Unlike traditional hardware-only security keys, xKey works with **any go-xkms backend** -- from software storage to hardware HSMs to cloud KMS services.
 
 ## Feature documentation

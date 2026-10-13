@@ -1,5 +1,12 @@
 # xKey Desktop GUI - Design System
 
+> **Status: REFERENCE** · Last verified: 2026-10-13
+> Superseded background: the GUI feature folder, starting with [architecture.md](architecture.md), is normative.
+
+The tokens below are defined in `xkey/frontend/src/app.css` (light theme at
+`:20` onwards, dark theme `[data-theme="dark"]` at `:225`) and
+`xkey/frontend/tailwind.config.js`; those files win where this page differs.
+
 This design system ensures visual parity between the xKey Desktop GUI and the Android app. All colors, typography, spacing, and component styles are derived from the Android implementation.
 
 ## Design Philosophy
@@ -824,24 +831,8 @@ All color combinations meet WCAG AA (4.5:1 for normal text, 3:1 for large text):
 
 ## Dark Theme
 
-The dark theme uses navy-charcoal surfaces (never pure black) for premium depth. Switch themes via:
+The dark theme uses navy-charcoal surfaces (never pure black) for premium depth. The theme store is `xkey/frontend/src/lib/stores/theme.ts`:
 
-```javascript
-// Toggle theme
-function toggleTheme() {
-  const current = document.documentElement.getAttribute('data-theme');
-  const next = current === 'dark' ? 'light' : 'dark';
-  document.documentElement.setAttribute('data-theme', next);
-  localStorage.setItem('xkey-theme', next);
-}
-
-// Initialize from system preference or saved
-function initTheme() {
-  const saved = localStorage.getItem('xkey-theme');
-  if (saved) {
-    document.documentElement.setAttribute('data-theme', saved);
-  } else if (window.matchMedia('(prefers-color-scheme: dark)').matches) {
-    document.documentElement.setAttribute('data-theme', 'dark');
-  }
-}
-```
+- `ThemeMode` is `light`, `dark` or `system` (`theme.ts:3`); the choice is saved in `localStorage` under `xkey-theme` (`:5`).
+- The effective theme is written to `data-theme` on the document element (`:32`); `system` follows `prefers-color-scheme` and tracks changes to it (`initTheme`, `:40`).
+- `setTheme(mode)` (`:63`) and `toggleTheme()` (`:70`) change and persist the mode.

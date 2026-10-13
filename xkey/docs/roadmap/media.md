@@ -1,5 +1,8 @@
 # Media Signing for Deep Fake Prevention
 
+> **Status: REFERENCE** · Last verified: 2026-10-13
+> Scope: an unbuilt plan. Every phase below is open: no `pkg/mediasign/`, `xkey/pkg/contactstore/`, `xkey media` or `xkey contact` command, or media/contact GUI service exists.
+
 ## Context
 
 xkey needs the ability to sign photos and videos so that people appearing in media can cryptographically attest to their presence, preventing deep fake misrepresentation. Multiple people can sign the same media file, identifying the region (face/body) or time segment where they appear. A viewer with integrated verification shows who signed what and whether signatures are valid.
@@ -208,9 +211,9 @@ type Store interface {
 3. Backend computes content-only hash (skipping any existing signature metadata)
 4. Backend extracts existing SignatureBundle if present (for adding co-signatures)
 5. User optionally draws a rectangle region (photo) or selects time segment (video)
-6. User selects signing key (default: PIV 9C, or any key from KeyService.ListSigningKeys)
+6. User selects signing key (default: PIV 9C, or any signing key; `KeyService` has no `ListSigningKeys` yet)
 7. Backend constructs SigningPayload, serializes to deterministic CBOR, hashes with SHA-256
-8. Backend calls `KeyService.SignData(backend, keyID, "SHA-256", payloadHash)` to get signature
+8. Backend calls `KeyService.SignData(source, backend, keyID, algorithm, data)` (`xkey/pkg/gui/services/key_service.go:507`) to get signature
 9. Backend creates MediaSignature entry with public key, region/segment, and signature bytes
 10. Backend appends signature to bundle (or creates new bundle), embeds into media file
 
@@ -263,7 +266,7 @@ The original file is copied to `<name>.original.<ext>` before the first signing 
 
 ## Implementation Phases
 
-### Phase 1: Core Data Format & Signing Logic
+### Phase 1: Core Data Format & Signing Logic — Open
 
 **Location**: `pkg/mediasign/`
 
@@ -274,7 +277,7 @@ The original file is copied to `<name>.original.<ext>` before the first signing 
 5. Format detection and embedder registry
 6. Full test suite (90%+ coverage, test fixtures: small JPEG, PNG, MP4 files)
 
-### Phase 2: Contact Store
+### Phase 2: Contact Store — Open
 
 **Location**: `xkey/pkg/contactstore/`
 
@@ -283,7 +286,7 @@ The original file is copied to `<name>.original.<ext>` before the first signing 
 3. PEM/JWK import with public key fingerprint computation
 4. Full test suite (90%+ coverage)
 
-### Phase 3: GUI Services
+### Phase 3: GUI Services — Open
 
 **Location**: `xkey/pkg/gui/services/`
 
@@ -292,7 +295,7 @@ The original file is copied to `<name>.original.<ext>` before the first signing 
 3. Wire both into `app.go` (fields, construction, SetContext, bindings, store init)
 4. Service tests
 
-### Phase 4: CLI Commands
+### Phase 4: CLI Commands — Open
 
 **Location**: `xkey/cmd/xkey/cmd/`
 
@@ -303,28 +306,28 @@ The original file is copied to `<name>.original.<ext>` before the first signing 
 5. `xkey contact list`
 6. `xkey contact remove <id>`
 
-### Phase 5: Frontend - Contacts View
+### Phase 5: Frontend - Contacts View — Open
 
 1. Contact list with search/filter
 2. Import public key dialog
 3. Trust management toggle
 4. Navigation item in App.svelte
 
-### Phase 6: Frontend - Media Signing View
+### Phase 6: Frontend - Media Signing View — Open
 
 1. File picker, image/video preview
 2. Canvas rectangle drawing tool for photos
 3. Time range selector for videos
 4. Key selector, sign action, existing signatures list
 
-### Phase 7: Frontend - Media Viewer
+### Phase 7: Frontend - Media Viewer — Open
 
 1. Photo viewer with colored rectangle overlays
 2. Hover tooltips for signer info
 3. Video player with signature timeline bar
 4. Verification status sidebar
 
-### Phase 8: Documentation
+### Phase 8: Documentation — Open
 
 **Location**: `xkey/docs/mediasign/`
 
@@ -343,11 +346,11 @@ The original file is copied to `<name>.original.<ext>` before the first signing 
 
 ## Key Reuse Points
 
-- `xkey/pkg/gui/services/key_service.go`: SignData() and VerifySignature() for crypto operations
+- `xkey/pkg/gui/services/key_service.go`: `SignData()` and `VerifySignature()` (`:507`, `:535`) for crypto operations
 - `xkey/pkg/oath/backend_store.go`: Pattern for barrier-backed ContactStore persistence
 - `xkey/pkg/gui/services/oath_service.go`: Pattern for store-backed Wails service
 - `github.com/fxamacker/cbor/v2`: Already in go.mod, use for bundle encoding
-- `github.com/abema/go-mp4`: NEW dependency for MP4 box manipulation
+- `github.com/abema/go-mp4`: NEW dependency for MP4 box manipulation (not in any `go.mod` yet)
 - `crypto/ecdsa`, `crypto/ed25519`: Standard library for verification
 
 ## Future Enhancements (post-MVP)

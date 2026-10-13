@@ -1,10 +1,15 @@
 # Remote Key Access (remote.* Client)
 
+> **Status: REFERENCE** · Last verified: 2026-10-13
+> Wire reference for the `remote.*` methods; superseded by [phone-hsm/api.md](../../phone-hsm/api.md). The phone-side `RemoteKeyClient`, Room references and UI belong to xkey-android, a separate Kotlin repository, and are not verifiable here; the Go wire types (`xkey/pkg/pairing/protocol_remote.go`) and the bridge are.
+
 ## Overview
 
 The Android app can use keys stored on the laptop's xkmsd backends by sending `remote.*` JSON-RPC requests over the same Noise-encrypted channel. The Go binary on the laptop acts as a bridge, forwarding requests to xkmsd via the Go SDK. This allows the phone to sign, encrypt, and decrypt using TPM2, PKCS#11, or any other xkmsd backend without the key material leaving the laptop.
 
 ## RemoteKeyClient
+
+Phone-side sketch (xkey-android, unverified here):
 
 ```kotlin
 class RemoteKeyClient(
@@ -20,8 +25,6 @@ class RemoteKeyClient(
 }
 ```
 
-All methods are suspend functions that send a JSON-RPC request over the Noise channel and await the response. Timeouts are enforced by the underlying `ProtocolHandler`.
-
 ## Data Flow
 
 ```
@@ -34,13 +37,13 @@ RemoteKeyClient
 JSON-RPC "remote.*" request
     |
     v
-Noise Encrypted Channel (BLE GATT / TCP)
+Noise Encrypted Channel (BLE GATT / USB / TCP)
     |
     v
 Go Binary (xkey)
     |
     v
-XkmsdBridge
+Bridge (xkey/pkg/pairing/bridge.go)
     |
     v
 Go SDK (go-xkms SDK)
@@ -57,9 +60,19 @@ Response back through the same path
 
 ## Method Reference
 
+Method names are the constants in `xkey/pkg/pairing/protocol_remote.go:20`:
+`listBackends`, `listKeys`, `getPublicKey`, `sign`, `verify`, `encrypt`,
+`decrypt`, `deriveKey`, `generateKey`, `getKeyInfo`, `deleteKey`, `attestKey`,
+`attestDevice`, `getTCGCSRIDevID`, `activateCredential`,
+`getAttestationQuote` and `storeEnrollmentCerts`, each prefixed `remote.`.
+Byte fields are base64 strings on the wire.
+
 ### remote.listBackends
 
-List available xkmsd backends.
+List available xkmsd backends. Each entry is a `BackendInfo`
+(`protocol_remote.go:71`): `name`, `type`, `hardwareBacked` and the capability
+flags `signing`, `decryption`, `symmetricCrypto`, `keyAgreement`,
+`attestation`.
 
 **Request:**
 ```json
@@ -77,8 +90,7 @@ List available xkmsd backends.
   "id": 1,
   "result": {
     "backends": [
-      {"name": "tpm2", "type": "tpm2", "keyCount": 5},
-      {"name": "software", "type": "software", "keyCount": 12}
+      {"name": "tpm2", "type": "tpm2", "hardwareBacked": true, "signing": true, "decryption": true, "symmetricCrypto": false, "keyAgreement": false, "attestation": true}
     ]
   }
 }
@@ -86,7 +98,9 @@ List available xkmsd backends.
 
 ### remote.listKeys
 
-List keys in a specific backend.
+List keys in a specific backend, optionally filtered by `algorithm`
+(`RemoteListKeysParams`, `protocol_remote.go:88`). Each key is a
+`RemoteKeyInfo` (`protocol_remote.go:94`).
 
 **Request:**
 ```json
@@ -108,10 +122,11 @@ List keys in a specific backend.
   "result": {
     "keys": [
       {
-        "keyId": "ssh-ed25519-main",
-        "algorithm": "Ed25519",
-        "keyType": "ssh",
-        "label": "Main SSH Key",
+        "keyId": "signing-main",
+        "backend": "tpm2",
+        "algorithm": "ES256",
+        "keySizeBits": 256,
+        "label": "Main Signing Key",
         "createdAt": 1706140800
       }
     ]
@@ -121,7 +136,8 @@ List keys in a specific backend.
 
 ### remote.sign
 
-Sign data with a key on the laptop.
+Sign data with a key on the laptop (`RemoteSignParams`,
+`protocol_remote.go:123`).
 
 **Request:**
 ```json
@@ -131,16 +147,16 @@ Sign data with a key on the laptop.
   "method": "remote.sign",
   "params": {
     "backend": "tpm2",
-    "keyId": "ssh-ed25519-main",
+    "keyId": "signing-main",
     "data": "base64-encoded-data",
-    "algorithm": "Ed25519"
+    "algorithm": "ES256"
   }
 }
 ```
 
 ### remote.getPublicKey
 
-Get public key from a laptop backend key.
+Get the public key of a laptop backend key.
 
 **Request:**
 ```json
@@ -150,17 +166,19 @@ Get public key from a laptop backend key.
   "method": "remote.getPublicKey",
   "params": {
     "backend": "tpm2",
-    "keyId": "ssh-ed25519-main",
-    "format": "ssh"
+    "keyId": "signing-main",
+    "format": "pem"
   }
 }
 ```
 
-**Format values:** `der`, `pem`, `ssh`
+**Format values:** `der`, `pem` (`RemoteGetPublicKeyParams`, `protocol_remote.go:109`)
 
 ### remote.encrypt / remote.decrypt
 
-Encrypt or decrypt data with a laptop backend key.
+Encrypt or decrypt data with a laptop backend key. Encrypt also accepts
+optional `algorithm` and `aad` (`RemoteEncryptParams`,
+`protocol_remote.go:151`).
 
 **Request:**
 ```json
@@ -178,7 +196,10 @@ Encrypt or decrypt data with a laptop backend key.
 
 ### remote.attestKey
 
-Get attestation for a laptop key (TPM2 Certify or PKCS#11 attestation).
+Get attestation for a laptop key (`RemoteAttestKeyParams`,
+`protocol_remote.go:233`). The result (`RemoteAttestKeyResult`,
+`protocol_remote.go:240`) carries `format`, `certificateChain`,
+`attestationData` and the echoed `nonce`.
 
 **Request:**
 ```json
@@ -188,7 +209,7 @@ Get attestation for a laptop key (TPM2 Certify or PKCS#11 attestation).
   "method": "remote.attestKey",
   "params": {
     "backend": "tpm2",
-    "keyId": "ssh-ed25519-main",
+    "keyId": "signing-main",
     "nonce": "base64-encoded-nonce"
   }
 }
@@ -200,112 +221,70 @@ Get attestation for a laptop key (TPM2 Certify or PKCS#11 attestation).
   "jsonrpc": "2.0",
   "id": 6,
   "result": {
-    "attestationType": "tpm2",
-    "certifyInfo": "base64-encoded-tpms-attest",
-    "signature": "base64-encoded-signature",
-    "certificateChain": ["base64-cert-ak", "base64-cert-ek"]
+    "format": "tpm2",
+    "certificateChain": ["base64-cert-ak", "base64-cert-ek"],
+    "attestationData": "base64-encoded-attestation",
+    "nonce": "base64-encoded-nonce"
   }
 }
 ```
 
 ## Remote Key References in Room
 
-Keys with `source = "xkmsd"` are stored in the `keys` table as references. They contain metadata but no private key material.
-
-| Field | Content |
-|-------|---------|
-| `keyId` | Key identifier from xkmsd |
-| `algorithm` | Algorithm from xkmsd |
-| `publicKeyDer` | Cached locally for verification and display |
-| `source` | `"xkmsd"` |
-| `key_type` | Matches xkmsd key type |
-| `label` | Backend name + key label |
-
-Operations on these keys are proxied through `RemoteKeyClient`, not the local Android Keystore. The `KeystoreManager` is never invoked for xkmsd-sourced keys.
+Phone-side behaviour of xkey-android, unverified here. Keys with `source = "xkmsd"` are stored in the phone's `keys` table as references: metadata and a cached public key, no private key material. Operations on them are proxied through `RemoteKeyClient`, never the local Android Keystore.
 
 ## Key Management UI Integration
 
-The Key Management screen shows both local and remote keys.
-
-| Key Source | Icon | Operations Available |
-|------------|------|---------------------|
-| Local (Android Keystore) | Hardware chip icon | Sign, encrypt, decrypt, delete, export public key |
-| Remote (xkmsd) | Laptop icon | Sign, encrypt, decrypt (proxied), view info |
-
-**Key list display:**
-- Keys are grouped by source (Local / Remote)
-- Each key shows: label, algorithm, key type, last used time
-- Tapping a remote key shows the backend name, key details, and cached public key
-- Pull-to-refresh syncs remote key list via `remote.listBackends` and `remote.listKeys`
+Phone-side behaviour of xkey-android, unverified here. The Key Management screen groups keys by source (Local / Remote) and refreshes the remote list with `remote.listBackends` and `remote.listKeys`.
 
 ## Sharing Policy
 
-The phone respects the laptop's sharing policy configured in `~/.config/xkey/config.yaml`:
+The laptop decides which backends the phone may reach. `xkey` reads the
+backend lists from the `xkmsd.sharing` section of its config
+(`xkey/cmd/xkey/cmd/dial_xkmsd.go:95-96`):
 
 ```yaml
-phone:
-  xkmsd:
-    sharing:
-      policy: "shared"              # "private" or "shared"
-      allowed_backends: ["tpm2", "software"]
-      denied_backends: ["vault"]
+xkmsd:
+  sharing:
+    allowed_backends: ["tpm2", "software"]   # empty = all backends
+    denied_backends: ["vault"]
 ```
 
-| Policy | Behavior |
-|--------|----------|
-| `private` | Phone sees no remote keys. `remote.listBackends` returns empty. |
-| `shared` | Phone sees backends in `allowed_backends`. Denied backends are filtered out. |
-
-The Go binary enforces the policy before forwarding requests. If the phone requests an operation on a denied backend, it receives a `-32001` error (access denied).
+These populate `BridgeConfig.AllowedBackends` and `DeniedBackends`
+(`xkey/pkg/pairing/bridge.go:39`). The bridge enforces them before forwarding a
+request; an operation on a backend that is not allowed fails with `-32008`
+`ErrorCodeBackendDenied`, "backend access denied" (`bridge.go:1017`). Per-key
+sharing is a separate policy (`xkey/pkg/pairing/sharing_policy.go`).
 
 ## Use Cases
 
-### SSH Signing with Laptop TPM2 Key
-
-The phone's terminal app needs to authenticate an SSH session using the laptop's TPM2-backed SSH key.
+### Signing with a Laptop TPM2 Key
 
 ```
-Phone terminal app -> RemoteKeyClient.sign("tpm2", "ssh-main", challenge, "Ed25519")
+Phone app -> remote.sign("tpm2", "signing-main", data, "ES256")
     -> Noise channel -> Go binary -> xkmsd -> TPM2 -> signature
-    -> Phone terminal app verifies and completes SSH handshake
 ```
 
-### Encryption with Laptop PKCS#11 Key
-
-The phone encrypts sensitive data using the laptop's PKCS#11-backed RSA encryption key.
+### Encryption with a Laptop PKCS#11 Key
 
 ```
-Phone app -> RemoteKeyClient.encrypt("pkcs11", "rsa-enc", plaintext)
+Phone app -> remote.encrypt("pkcs11", "rsa-enc", plaintext)
     -> Noise channel -> Go binary -> xkmsd -> PKCS#11 HSM -> ciphertext
-    -> Phone app stores encrypted data
-```
-
-### Unified Key Inventory
-
-The phone lists all available keys across both local and remote stores.
-
-```kotlin
-// Local keys from Room
-val localKeys = keyDao.getByType("signing")
-
-// Remote keys from xkmsd
-val backends = remoteKeyClient.listBackends()
-val remoteKeys = backends.flatMap { backend ->
-    remoteKeyClient.listKeys(backend.name)
-}
-
-// Combined view
-val allKeys = localKeys.map { it.toKeyInfo() } + remoteKeys.map { it.toKeyInfo() }
 ```
 
 ## Error Handling
 
-Remote key errors map to JSON-RPC error codes.
+Remote key errors use the JSON-RPC codes in `xkey/pkg/pairing/protocol.go:47`,
+including:
 
-| Scenario | JSON-RPC Code | Message |
-|----------|---------------|---------|
-| Backend not found | -32000 | Backend does not exist |
-| Access denied (policy) | -32001 | Backend access denied by sharing policy |
-| Key not found | -32000 | Key not found in backend |
-| Laptop disconnected | -32005 | Connection lost during operation |
-| xkmsd unavailable | -32603 | xkmsd service not reachable |
+| Code | Constant |
+|------|----------|
+| -32000 | `ErrorCodeKeyNotFound` |
+| -32004 | `ErrorCodeUnsupportedAlg` |
+| -32007 | `ErrorCodeOperationTimeout` |
+| -32008 | `ErrorCodeBackendDenied` |
+| -32009 | `ErrorCodeAttestFailed` |
+| -32010 | `ErrorCodeAttestUnsupported` |
+| -32013 | `ErrorCodeDecryptFailed` |
+| -32016 | `ErrorCodeInvalidFormat` |
+| -32603 | standard internal error |

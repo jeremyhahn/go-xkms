@@ -1,5 +1,8 @@
 # Virtual USB CCID Device
 
+> **Status: REFERENCE** · Last verified: 2026-10-13
+> Scope: background on the virtual CCID device (`xkey/pkg/ccid`); the usb feature folder ([architecture.md](architecture.md), [cli.md](cli.md)) is normative.
+
 xkey can present itself as a virtual CCID (Chip Card Interface Device) smartcard reader with an inserted card. The operating system sees a standard smartcard reader, and ISO 7816 APDU commands are translated into PKCS#11 operations through the xkey backend. This enables VM passthrough, integration with smartcard-aware applications (OpenSC, GnuPG, ssh-agent), and PIV/OpenPGP applet emulation.
 
 ## Architecture
@@ -23,11 +26,11 @@ xkey can present itself as a virtual CCID (Chip Card Interface Device) smartcard
 
 The stack has three layers:
 
-1. **CCIDDevice** (`ccid.go`) -- Opens `/dev/uhid`, creates a virtual USB HID device with CCID-class report descriptors, and runs the event loop. Receives PC_to_RDR messages, extracts APDU payloads from XfrBlock messages, and sends RDR_to_PC responses back.
+1. **CCIDDevice** (`xkey/pkg/ccid/ccid.go`) -- Runs the event loop over a USB transport: a virtual HID device on `/dev/uhid` (`--transport uhid`, the default) or a real USB gadget through ConfigFS/FunctionFS (`--transport gadget`). `xkey/cmd/xkey/cmd/usb_device.go` opens the transport. Receives PC_to_RDR messages, extracts APDU payloads from XfrBlock messages, and sends RDR_to_PC responses back.
 
 2. **PKCS11Bridge** (`bridge.go`) -- Implements the `APDUHandler` interface. Routes ISO 7816 instructions (SELECT, VERIFY, PSO, GENERATE ASYMMETRIC, GET DATA, READ BINARY) to the corresponding PKCS#11 transport operations. Manages card sessions and applet selection state.
 
-3. **PKCS11Transport** -- The backend abstraction. Supports `software`, `tpm2`, and `pkcs11` backends for key generation, signing, verification, encryption, and decryption.
+3. **PKCS11Transport** (`xkey/pkg/ccid/bridge.go`) -- The backend abstraction. When local app access is off it is the in-process transport; when it is on, the running xKey's socket (`usbDevicePKCS11Transport`, `xkey/cmd/xkey/cmd/usb_device.go:256`). `--device-backend` selects `software`, `tpm2` or `pkcs11`.
 
 ## APDU Command Handling
 
@@ -79,7 +82,7 @@ Virtual device commands are under `xkey usb device`.
 
 ### start - Start the Virtual CCID Device
 
-Creates the virtual device and runs the event loop in the foreground. Requires root or access to `/dev/uhid`.
+Creates the virtual device and runs the event loop in the foreground. Requires root, or access to `/dev/uhid` in UHID mode.
 
 ```bash
 sudo xkey usb device start [flags]
@@ -88,12 +91,18 @@ sudo xkey usb device start [flags]
 | Flag | Description | Default |
 |------|-------------|---------|
 | `--device-backend` | PKCS#11 backend: software, tpm2, pkcs11 | software |
+| `--transport` | USB transport: `uhid` or `gadget` (OTG hardware) | uhid |
+| `--udc` | UDC controller name for gadget mode | auto-detect |
 
 Stop the device with Ctrl+C or SIGTERM.
 
+### stop - Print Stop Instructions
+
+Prints how to stop the running device; it does not signal it.
+
 ### status - Show Device Status
 
-Displays UHID availability, device identification, and whether a CCID device process is running.
+Displays UHID and USB gadget availability, the UDC controller if one is found, whether a CCID device process is running, and the device identification.
 
 ```bash
 xkey usb device status
@@ -142,13 +151,13 @@ The ATR (Answer To Reset) identifies the card as `xKey CCID v1.0` using direct c
 
 ## Requirements
 
-- Linux kernel with UHID support (`CONFIG_UHID`)
-- Access to `/dev/uhid` (root or `uinput` group membership)
-- The xkey PKCS#11 subsystem must be initialized before starting
+- UHID mode: Linux kernel with UHID support (`CONFIG_UHID`) and access to `/dev/uhid`
+- Gadget mode: OTG-capable hardware with a UDC
+- With local app access on, an open and unlocked xKey; otherwise the start fails with `ErrUSBDeviceGUINotListening`
 
 ## See Also
 
-- [PKCS#11 IPC](pkcs11-ipc.md) - PKCS#11 module integration
-- [PIV Support](piv.md) - PIV applet and certificate management
-- [USB Disk Images](usb-images.md) - Portable USB image creation
-- [Architecture](architecture.md) - System design overview
+- [USB CLI](cli.md) - every `xkey usb` verb and flag
+- [USB Architecture](architecture.md) - feature design
+- [USB Disk Images](images.md) - Portable USB image creation
+- [PKCS#11 CLI](../pkcs11/cli.md) - local app access and the PKCS#11 transports

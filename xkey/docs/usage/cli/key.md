@@ -1,5 +1,8 @@
 # CLI Key Command Reference
 
+> **Status: REFERENCE** · Last verified: 2026-10-13
+> Scope: `xkmsctl key`, the go-xkms server CLI (`cmd/xkmsctl/key.go`, `cmd/xkmsctl/key_version.go`); the normative reference is [`docs/key-management/cli.md`](../../../../docs/key-management/cli.md).
+
 > **Scope:** this page documents the go-xkms **server** CLI `xkmsctl key`
 > (source: `cmd/xkmsctl/`), **not** the `xkey` desktop CLI. It lives under
 > `xkey/docs/` for historical reasons.
@@ -8,963 +11,302 @@
 
 ## Overview
 
-The `key` command group provides comprehensive key management operations for cryptographic keys across all supported backends. It supports both asymmetric (RSA, ECDSA, Ed25519) and symmetric (AES-GCM) key operations including generation, rotation, encryption, decryption, signing, verification, and secure import/export.
+The `key` command group manages keys held by an xkmsd server. Every subcommand
+connects to the server named by the global `-s/--server` flag (default
+`xkms-data/xkms.sock`) and acts on the backend named by `--backend` (default
+`software`). There is no local or offline mode: key material stays on the
+server, and the CLI reads and writes only the files named on its command line.
 
-## Global Flags
+The global flags that matter most here are `--backend`, `-s/--server`,
+`--token`, the `--tls-*` flags and `-o/--output` (`text`, `json` or `table`).
+Commands with their own `--output` file flag (`attest`, `derive-ecdh`,
+`export-material`, `get-import-params`, `wrap-by-id`) hide the global
+`-o/--output` there.
 
-All key commands support the following global flags:
+```
+xkmsctl key
+├── generate <key-id>                  ├── encrypt <key-id> <plaintext>
+├── list                               ├── decrypt <key-id> <ciphertext>
+├── get <key-id>                       ├── encrypt-asym <key-id> <plaintext>
+├── delete <key-id>                    ├── derive-ecdh <key-id>
+├── rotate <key-id>                    ├── export <key-id> <output-file>
+├── rotate-all                         ├── export-material <key-id>
+├── versions <key-id>                  ├── get-import-params <key-id>
+├── version                            ├── import <key-id> <wrapped-key-file>
+│   ├── enable <key-id> <version>      ├── wrap <material> <params> <output>
+│   ├── enable-all <key-id>            ├── unwrap <wrapped> <params> <output>
+│   ├── disable <key-id> <version>     ├── wrap-by-id <target-key-id>
+│   ├── disable-all <key-id>           ├── unwrap-by-id <new-key-id>
+│   └── retire <key-id> <version>      ├── copy <key-id> [<dest-key-id>]
+├── sign <key-id> <data>               ├── attest <key-id>
+└── verify <key-id> <data> <signature> └── policy <key-id>
+```
 
-- `--backend <name>` - Backend to use (default: "software")
-- `--keydir <path>` - Key directory for file-based backends
-- `--local` - Use direct backend access instead of xkmsd server
-- `--verbose` - Enable verbose output
-- `--output <format>` - Output format: text, json (default: "text")
-
-## Key Types
-
-Keys can be categorized by their intended use case:
-
-**General Purpose Keys:**
-- `signing` - Digital signature operations
-- `encryption` - Encryption/decryption operations
-- `hmac` - HMAC keys for message authentication
-- `secret` - General-purpose secret keys
-- `tls` - TLS/SSL certificate keys
-- `ca` - Certificate Authority keys
-
-**TPM 2.0 Keys:**
-- `endorsement` - Endorsement Key (EK) - TPM identity and attestation
-- `attestation` - Initial Attestation Key (IAK) - Attestation operations
-- `storage` - Storage Root Key (SRK) - Parent key for key hierarchies
-- `idevid` - Initial Device Identity - Factory-provisioned device identity
-- `ldevid` - Locally-sourced Device Identity - Locally-provisioned device identity
-- `tpm` - Generic TPM key
-
-## Algorithms
-
-### Asymmetric Algorithms
-
-**RSA:**
-- `rsa` - RSA algorithm with configurable key size (2048, 3072, 4096 bits)
-
-**ECDSA (Elliptic Curve):**
-- `ecdsa-p256` - ECDSA with P-256 curve (256-bit)
-- `ecdsa-p384` - ECDSA with P-384 curve (384-bit)
-- `ecdsa-p521` - ECDSA with P-521 curve (521-bit)
-- `ecdsa` - Generic ECDSA (use with `--curve` flag)
-
-**Edwards Curve:**
-- `ed25519` - EdDSA with Curve25519 (256-bit)
-
-### Symmetric Algorithms
-
-**AES-GCM (Advanced Encryption Standard with Galois/Counter Mode):**
-- `aes128-gcm` - AES-128-GCM (128-bit key)
-- `aes192-gcm` - AES-192-GCM (192-bit key)
-- `aes256-gcm` - AES-256-GCM (256-bit key)
-
-**ChaCha20-Poly1305:**
-- `chacha20-poly1305` - ChaCha20-Poly1305 AEAD cipher (256-bit key)
-- `xchacha20-poly1305` - XChaCha20-Poly1305 with extended nonce (256-bit key)
-
-## Subcommands
+## Lifecycle
 
 ### key generate
 
-Generate a new cryptographic key with specified algorithm and parameters.
+Flags are defined at `cmd/xkmsctl/key.go:1909` onward.
 
-**Usage:**
+| Flag | Default | Description |
+|------|---------|-------------|
+| `--key-type` | `tls` | `tls`, `signing`, `encryption` or `symmetric` |
+| `--key-algorithm` | `rsa` | Asymmetric algorithm: `rsa`, `ecdsa` or `ed25519` |
+| `--key-size` | `2048` | RSA bits (2048 or more), or AES bits (128, 192, 256) |
+| `--curve` | `P-256` | ECDSA curve: `P-256`, `P-384` or `P-521` |
+| `--algorithm` | | Symmetric cipher: `aes-128-gcm`, `aes-192-gcm` or `aes-256-gcm` |
+| `--exportable` | `false` | Allow the key to be exported |
+| `--sensitive` | `false` | Never release the plaintext (PKCS#11 `CKA_SENSITIVE`); with `--exportable` the key can still be wrapped |
+| `--tpm-policy` | built-in platform policy | TPM policy a `tpm2` key is bound to; see `xkmsctl tpm policy` |
+
+A key is symmetric when `--key-type` is `symmetric` or `aes`, or when
+`--algorithm` names an AES-GCM cipher. Without `--algorithm` the server picks
+the cipher from `--key-size` (`cmd/xkmsctl/key.go:121`).
+
 ```bash
-xkmsctl key generate <key-id> [flags]
+xkmsctl key generate web-tls                                   # RSA 2048, type tls
+xkmsctl key generate signer --key-type signing --key-algorithm ecdsa --curve P-384
+xkmsctl key generate data-key --key-type symmetric --key-size 256 --exportable
+xkmsctl --backend tpm2 key generate device-key --key-algorithm ecdsa
 ```
 
-**Flags:**
-- `--key-type <type>` - Key type (see Key Types section below)
-- `--key-algorithm <algo>` - Key algorithm (see Algorithms section below)
-- `--algorithm <algo>` - Symmetric algorithm: aes128-gcm, aes192-gcm, aes256-gcm, chacha20-poly1305, xchacha20-poly1305
-- `--key-size <bits>` - Key size in bits (default: 2048 for RSA, 128/192/256 for AES)
-- `--curve <curve>` - Elliptic curve: P-256, P-384, P-521 (default: "P-256")
-- `--exportable` - Allow the key to be exported (default: false)
+### key list, get, delete
 
-**Examples:**
+`list` takes no flags. `get` and `delete` take `--key-type` (default `tls`).
 
-Generate an RSA-2048 key:
 ```bash
-xkmsctl key generate my-rsa-key --local
+xkmsctl key list -o json
+xkmsctl key get signer --key-type signing
+xkmsctl key delete old-key
 ```
 
-Generate an RSA-4096 key:
+### key rotate and rotate-all
+
+`rotate` generates the next version of a key with the same algorithm and
+attributes and makes it current. Sign and encrypt move to it at once; earlier
+versions stay enabled, so their signatures and ciphertext still verify and
+decrypt. If the key has a certificate, `rotate` warns that the certificate
+still certifies the previous version. `rotate` takes `--key-type` (default
+`tls`).
+
+`rotate-all` rotates every key of a tenant in every backend. A key that cannot
+be rotated is reported and the rest are still rotated; the command then exits
+non-zero. A system caller can name another tenant with `--tenant`.
+
 ```bash
-xkmsctl key generate my-strong-key --key-algorithm rsa --key-size 4096 --local
+xkmsctl key rotate signer --key-type signing
+xkmsctl key rotate-all --tenant acme
 ```
 
-Generate an ECDSA key with P-384 curve:
+### key versions and key version
+
+`versions` lists each version's number, state (enabled, disabled or retired),
+whether it is current, and when and by whom it was created.
+
+| Command | Effect |
+|---------|--------|
+| `version disable <key-id> <version>` | No operation may use the version until it is enabled again; its material is kept. The current version cannot be disabled. |
+| `version disable-all <key-id>` | Disable every enabled version except the current one |
+| `version enable <key-id> <version>` | Let verify and decrypt use the version again. A retired version cannot be enabled. |
+| `version enable-all <key-id>` | Enable every disabled version; retired ones stay retired |
+| `version retire <key-id> <version>` | Delete the version's material for good. What it signed or encrypted can no longer be verified or decrypted. The current version cannot be retired. |
+
 ```bash
-xkmsctl key generate my-ecdsa-key --key-algorithm ecdsa --curve P-384 --local
+xkmsctl key versions signer
+xkmsctl key version disable signer 1
 ```
 
-Generate an Ed25519 signing key:
+## Cryptographic Operations
+
+Data arguments to `sign`, `verify`, `encrypt` and `encrypt-asym` are taken as
+literal strings (their UTF-8 bytes). Binary results are printed base64.
+
+### key sign and key verify
+
+`sign` prints the signature in base64; `-o json` gives `signature` and, when
+the server reports one, `key_version`. `verify` takes that base64 signature.
+
+| Flag | Default | Description |
+|------|---------|-------------|
+| `--hash` | `sha256` | `sha256`, `sha384` or `sha512` (both commands) |
+| `--key-version` | every enabled version, newest first | `verify` only: the version to check against |
+
 ```bash
-xkmsctl key generate my-ed25519-key --key-algorithm ed25519 --key-type signing --local
+SIG=$(xkmsctl key sign signer "release v1.0")
+xkmsctl key verify signer "release v1.0" "$SIG"
 ```
 
-Generate an exportable symmetric AES-256-GCM key:
+### key encrypt and key decrypt
+
+`encrypt` uses a symmetric (AES) key. It prints the ciphertext, nonce and tag
+in base64, the algorithm, and the key version; `-o json` gives `ciphertext`,
+`nonce`, `tag`, `algorithm` and `key_version`. `--aad` adds associated data.
+
+`decrypt` takes base64 ciphertext and works for symmetric and asymmetric keys.
+It prints the plaintext base64-encoded (`cmd/xkmsctl/key.go:609`).
+
+| `decrypt` flag | Description |
+|----------------|-------------|
+| `--nonce` | Nonce/IV from `encrypt` (base64); required for symmetric keys |
+| `--tag` | Authentication tag from `encrypt` (base64); required for symmetric keys |
+| `--aad` | The associated data given to `encrypt` |
+| `--key-version` | The version `encrypt` reported. By default the server chooses; it is required for AES-CBC and RSA PKCS#1 v1.5 ciphertext once a key has several enabled versions. |
+
 ```bash
-xkmsctl key generate my-aes-key --key-type symmetric --algorithm aes-256-gcm --key-size 256 --exportable --local
+ENC=$(xkmsctl key encrypt data-key "secret" -o json)
+xkmsctl key decrypt data-key "$(echo "$ENC" | jq -r .ciphertext)" \
+  --nonce "$(echo "$ENC" | jq -r .nonce)" --tag "$(echo "$ENC" | jq -r .tag)" \
+  | base64 -d
 ```
-
-Generate an AES-128-GCM encryption key:
-```bash
-xkmsctl key generate my-encryption-key --key-type encryption --algorithm aes-128-gcm --key-size 128 --local
-```
-
----
-
-### key list
-
-List all cryptographic keys in the keystore.
-
-**Usage:**
-```bash
-xkmsctl key list [flags]
-```
-
-**Examples:**
-
-List all keys in the default backend:
-```bash
-xkmsctl key list --local
-```
-
-List keys in JSON format:
-```bash
-xkmsctl key list --output json --local
-```
-
-List keys from a specific backend:
-```bash
-xkmsctl key list --backend tpm2 --local
-```
-
----
-
-### key get
-
-Display detailed information about a specific key.
-
-**Usage:**
-```bash
-xkmsctl key get <key-id> [flags]
-```
-
-**Flags:**
-- `--key-type <type>` - Key type (default: "tls")
-- `--key-algorithm <algo>` - Key algorithm (default: "rsa")
-- `--key-size <bits>` - Key size in bits (default: 2048)
-- `--curve <curve>` - Elliptic curve (default: "P-256")
-
-**Examples:**
-
-Get information about an RSA key:
-```bash
-xkmsctl key get my-rsa-key --local
-```
-
-Get information about an ECDSA key:
-```bash
-xkmsctl key get my-ecdsa-key --key-algorithm ecdsa --curve P-384 --local
-```
-
-Get key info in JSON format:
-```bash
-xkmsctl key get my-key --output json --local
-```
-
----
-
-### key delete
-
-Delete a cryptographic key from the keystore.
-
-**Usage:**
-```bash
-xkmsctl key delete <key-id> [flags]
-```
-
-**Flags:**
-- `--key-type <type>` - Key type (default: "tls")
-- `--key-algorithm <algo>` - Key algorithm (default: "rsa")
-- `--key-size <bits>` - Key size in bits (default: 2048)
-- `--curve <curve>` - Elliptic curve (default: "P-256")
-
-**Examples:**
-
-Delete an RSA key:
-```bash
-xkmsctl key delete my-rsa-key --local
-```
-
-Delete an ECDSA key:
-```bash
-xkmsctl key delete my-ecdsa-key --key-algorithm ecdsa --curve P-256 --local
-```
-
-Delete a symmetric key:
-```bash
-xkmsctl key delete my-aes-key --key-algorithm aes256-gcm --key-size 256 --local
-```
-
----
-
-### key sign
-
-Sign data using a cryptographic key.
-
-**Usage:**
-```bash
-xkmsctl key sign <key-id> <data> [flags]
-```
-
-**Flags:**
-- `--key-type <type>` - Key type (default: "tls")
-- `--key-algorithm <algo>` - Key algorithm (default: "rsa")
-- `--key-size <bits>` - Key size in bits (default: 2048)
-- `--curve <curve>` - Elliptic curve (default: "P-256")
-- `--hash <algo>` - Hash algorithm: sha256, sha384, sha512 (default: "sha256")
-
-**Output:** Base64-encoded signature
-
-**Examples:**
-
-Sign data with an RSA key using SHA-256:
-```bash
-xkmsctl key sign my-rsa-key "Hello, World!" --local
-```
-
-Sign with ECDSA using SHA-384:
-```bash
-xkmsctl key sign my-ecdsa-key "Important message" --key-algorithm ecdsa --hash sha384 --local
-```
-
-Sign with Ed25519 (uses raw message):
-```bash
-xkmsctl key sign my-ed25519-key "Message to sign" --key-algorithm ed25519 --local
-```
-
-Store signature in a variable:
-```bash
-SIGNATURE=$(xkmsctl key sign my-key "data" --output json --local | jq -r '.signature')
-```
-
----
-
-### key verify
-
-Verify a signature against data using a key's public key.
-
-**Usage:**
-```bash
-xkmsctl key verify <key-id> <data> <signature> [flags]
-```
-
-**Flags:**
-- `--key-type <type>` - Key type (default: "tls")
-- `--key-algorithm <algo>` - Key algorithm (default: "rsa")
-- `--key-size <bits>` - Key size in bits (default: 2048)
-- `--curve <curve>` - Elliptic curve (default: "P-256")
-- `--hash <algo>` - Hash algorithm: sha256, sha384, sha512 (default: "sha256")
-
-**Examples:**
-
-Verify an RSA signature:
-```bash
-SIGNATURE=$(xkmsctl key sign my-rsa-key "Hello, World!" --local)
-xkmsctl key verify my-rsa-key "Hello, World!" "$SIGNATURE" --local
-```
-
-Verify an ECDSA signature with SHA-384:
-```bash
-xkmsctl key verify my-ecdsa-key "data" "$SIGNATURE" --key-algorithm ecdsa --hash sha384 --local
-```
-
-Verify an Ed25519 signature:
-```bash
-xkmsctl key verify my-ed25519-key "Message" "$SIGNATURE" --key-algorithm ed25519 --local
-```
-
----
-
-### key rotate
-
-Rotate a key by generating a new version and invalidating the old one.
-
-**Usage:**
-```bash
-xkmsctl key rotate <key-id> [flags]
-```
-
-**Flags:**
-- `--key-type <type>` - Key type (default: "tls")
-- `--key-algorithm <algo>` - Key algorithm (default: "rsa")
-- `--key-size <bits>` - Key size in bits (default: 2048)
-- `--curve <curve>` - Elliptic curve (default: "P-256")
-
-**Examples:**
-
-Rotate an RSA key:
-```bash
-xkmsctl key rotate my-rsa-key --local
-```
-
-Rotate an ECDSA key:
-```bash
-xkmsctl key rotate my-ecdsa-key --key-algorithm ecdsa --curve P-256 --local
-```
-
----
-
-### key encrypt
-
-Encrypt data using a symmetric (AES-GCM) key.
-
-**Usage:**
-```bash
-xkmsctl key encrypt <key-id> <plaintext> [flags]
-```
-
-**Flags:**
-- `--key-type <type>` - Key type (default: "encryption")
-- `--key-algorithm <algo>` - Key algorithm: aes128-gcm, aes192-gcm, aes256-gcm (default: "aes256-gcm")
-- `--key-size <bits>` - Key size in bits: 128, 192, 256 (default: 256)
-- `--aad <data>` - Additional authenticated data (optional)
-
-**Output:** JSON with base64-encoded ciphertext, nonce, and authentication tag
-
-**Examples:**
-
-Encrypt data with AES-256-GCM:
-```bash
-xkmsctl key encrypt my-aes-key "Secret message" --local
-```
-
-Output:
-```json
-{
-  "ciphertext": "base64-encoded-ciphertext",
-  "nonce": "base64-encoded-nonce",
-  "tag": "base64-encoded-tag",
-  "algorithm": "aes-256-gcm"
-}
-```
-
-Encrypt with additional authenticated data:
-```bash
-xkmsctl key encrypt my-aes-key "Secret" --aad "context-info" --local
-```
-
-Store encrypted output:
-```bash
-ENCRYPTED=$(xkmsctl key encrypt my-aes-key "Secret" --output json --local)
-CIPHERTEXT=$(echo $ENCRYPTED | jq -r '.ciphertext')
-NONCE=$(echo $ENCRYPTED | jq -r '.nonce')
-TAG=$(echo $ENCRYPTED | jq -r '.tag')
-```
-
----
-
-### key decrypt
-
-Decrypt data using a symmetric key or asymmetric private key.
-
-**Usage:**
-```bash
-xkmsctl key decrypt <key-id> <ciphertext> [flags]
-```
-
-**Flags:**
-
-For symmetric decryption (AES-GCM):
-- `--key-type <type>` - Key type (default: "tls")
-- `--key-algorithm <algo>` - Key algorithm (default: "rsa")
-- `--key-size <bits>` - Key size in bits (default: 2048)
-- `--nonce <base64>` - Nonce/IV (base64-encoded, required for symmetric)
-- `--tag <base64>` - Authentication tag (base64-encoded, required for symmetric)
-- `--aad <data>` - Additional authenticated data (if used during encryption)
-
-For asymmetric decryption (RSA):
-- `--curve <curve>` - Elliptic curve (default: "P-256")
-- `--hash <algo>` - Hash algorithm for RSA OAEP decryption (e.g., sha256)
-
-**Examples:**
-
-Decrypt symmetric data (AES-GCM):
-```bash
-# Using output from encrypt command
-ENCRYPTED=$(xkmsctl key encrypt my-aes-key "Secret" --output json --local)
-CIPHERTEXT=$(echo $ENCRYPTED | jq -r '.ciphertext')
-NONCE=$(echo $ENCRYPTED | jq -r '.nonce')
-TAG=$(echo $ENCRYPTED | jq -r '.tag')
-
-xkmsctl key decrypt my-aes-key "$CIPHERTEXT" --nonce "$NONCE" --tag "$TAG" --local
-```
-
-Decrypt with AAD:
-```bash
-xkmsctl key decrypt my-aes-key "$CIPHERTEXT" --nonce "$NONCE" --tag "$TAG" --aad "context-info" --local
-```
-
-Decrypt with RSA OAEP:
-```bash
-xkmsctl key decrypt my-rsa-key "$CIPHERTEXT" --hash sha256 --local
-```
-
-Decrypt with RSA PKCS1v15 (no hash specified):
-```bash
-xkmsctl key decrypt my-rsa-key "$CIPHERTEXT" --local
-```
-
----
 
 ### key encrypt-asym
 
-Encrypt data using asymmetric (RSA) public key encryption with OAEP.
+RSA-OAEP encryption with an RSA key. `--hash` selects the OAEP hash (`sha256`
+by default, `sha384` or `sha512`). Prints the ciphertext in base64; decrypt it
+with `key decrypt`.
 
-**Usage:**
 ```bash
-xkmsctl key encrypt-asym <key-id> <plaintext> [flags]
+CT=$(xkmsctl key encrypt-asym web-tls "secret")
+xkmsctl key decrypt web-tls "$CT" | base64 -d
 ```
 
-**Flags:**
-- `--key-type <type>` - Key type (default: "tls")
-- `--key-algorithm <algo>` - Key algorithm (default: "rsa")
-- `--key-size <bits>` - Key size in bits (default: 2048)
-- `--curve <curve>` - Elliptic curve (default: "P-256")
-- `--hash <algo>` - Hash algorithm for OAEP: sha256, sha384, sha512 (default: "sha256")
+### key derive-ecdh
 
-**Output:** Base64-encoded ciphertext
+ECDH between the named private key and a peer public key, followed by a KDF.
+The private key stays in the backend.
 
-**Examples:**
+| Flag | Default | Description |
+|------|---------|-------------|
+| `--peer-key` | | Peer public key file, DER or uncompressed point, same curve (required) |
+| `--kdf` | `HKDF` | `HKDF`, `SP800-108-COUNTER`, `SP800-108-FEEDBACK`, `SP800-56A` or `X963` |
+| `--kdf-hash` | `SHA-256` | `SHA-256`, `SHA-384` or `SHA-512` |
+| `--length` | `32` | Derived key length in bytes |
+| `--salt` | | KDF salt (base64) |
+| `--info` | | KDF context string |
+| `--label` | | SP 800-108 label |
+| `--output` | | Write the derived key to a file (mode 0600) instead of printing it |
 
-Encrypt with RSA using OAEP SHA-256:
 ```bash
-xkmsctl key encrypt-asym my-rsa-key "Secret message" --local
+xkmsctl key derive-ecdh my-ec-key --peer-key peer.der --kdf-hash SHA-384 --output shared.key
 ```
 
-Encrypt with OAEP SHA-512:
+## Import, Export and Wrapping
+
+### key export and key export-material
+
+`export <key-id> <output-file>` writes the key wrapped for transport, as JSON,
+to a file with mode 0600. `--algorithm` selects the wrapping algorithm
+(default `RSAES_OAEP_SHA_256`). The key must be exportable.
+
+`export-material <key-id>` returns the raw bytes of an extractable symmetric
+key, **in plaintext**. It prints them base64, or writes them to `--output`
+(mode 0600). It is refused for a `--sensitive` key. Prefer `export` for moving
+keys between systems.
+
+### key get-import-params, wrap, import
+
+Importing external key material takes three steps:
+
+1. `get-import-params <key-id>` fetches the server's wrapping public key and
+   parameters. With `--output` they are saved as JSON (mode 0600); otherwise
+   they are printed. Flags: `--algorithm` (default `RSAES_OAEP_SHA_256`),
+   `--key-type` (default `tls`), `--key-algorithm` (default `rsa`),
+   `--key-size` (default `2048`), `--curve` (default `P-256`).
+2. `wrap <key-material-file> <params-file> <output-file>` wraps the raw
+   material with those parameters and writes the wrapped key as JSON (mode
+   0600).
+3. `import <key-id> <wrapped-key-file>` imports it.
+
+| `import` flag | Description |
+|---------------|-------------|
+| `--key-type` | Algorithm of the imported key: `rsa`, `ecdsa`, `ed25519` or `aes` (required) |
+| `--key-size` | RSA modulus bits (2048, 3072, 4096); required for `rsa` |
+| `--curve` | `P-256`, `P-384` or `P-521`; required for `ecdsa` |
+| `--aes-key-size` | 128, 192 or 256; required for `aes` |
+| `--hash` | Signing hash to associate with the key, for example `SHA-256` |
+| `--exportable` | Whether the key may be exported again; when omitted the server default applies (`aes` exportable, others not) |
+| `--sensitive` | Mark the key `CKA_SENSITIVE`; `export-material` is then refused |
+| `--partition` | Backend partition to import into |
+
+`unwrap <wrapped-key-file> <params-file> <output-file>` reverses `wrap` on the
+server and writes the recovered material to a file with mode 0600.
+
 ```bash
-xkmsctl key encrypt-asym my-rsa-key "Sensitive data" --hash sha512 --local
+xkmsctl key get-import-params imported-key --output params.json
+xkmsctl key wrap aes.bin params.json wrapped.json
+xkmsctl key import imported-key wrapped.json --key-type aes --aes-key-size 256
 ```
 
-Full encryption/decryption workflow:
+### key wrap-by-id and key unwrap-by-id
+
+The CLI equivalents of PKCS#11 `C_WrapKey` and `C_UnwrapKey`, with both keys
+named by their server-side IDs.
+
+| `wrap-by-id` flag | Default | Description |
+|-------------------|---------|-------------|
+| `--wrapping-key` | | Wrapping key (KEK) ID (required) |
+| `--algorithm` | `AES_KEY_WRAP` | Wrapping algorithm |
+| `--wrapping-backend` | `--backend` | Backend holding the wrapping key |
+| `--target-backend` | `--backend` | Backend holding the target key |
+| `--output` | | Write the wrapped bytes to a file (mode 0600) instead of printing them base64 |
+
+| `unwrap-by-id` flag | Default | Description |
+|---------------------|---------|-------------|
+| `--wrapped-file` | | Wrapped bytes, as written by `wrap-by-id --output` (required) |
+| `--unwrapping-key` | | Unwrapping key ID (required) |
+| `--algorithm` | `AES_KEY_WRAP` | Must match the wrap |
+| `--key-type` | `symmetric` | `symmetric`, `rsa`, `ecdsa` or `ed25519` |
+| `--key-size` | `256` | New key size in bits |
+| `--curve` | | Curve for `ecdsa` keys |
+| `--exportable` | `false` | Allow the new key to be exported |
+| `--unwrapping-backend`, `--target-backend` | `--backend` | Where the unwrapping key is, and where the new key goes |
+
 ```bash
-# Encrypt
-CIPHERTEXT=$(xkmsctl key encrypt-asym my-rsa-key "Secret" --output json --local | jq -r '.ciphertext')
-
-# Decrypt
-xkmsctl key decrypt my-rsa-key "$CIPHERTEXT" --hash sha256 --local
+xkmsctl key wrap-by-id data-key --wrapping-key kek --output wrapped.bin
+xkmsctl key unwrap-by-id restored-key --wrapped-file wrapped.bin --unwrapping-key kek
 ```
-
----
-
-### key import
-
-Import externally generated key material that has been wrapped for secure transport.
-
-**Usage:**
-```bash
-xkmsctl key import <key-id> <wrapped-key-file> [flags]
-```
-
-**Flags:**
-- `--key-type <type>` - Key type (default: "tls")
-- `--key-algorithm <algo>` - Key algorithm (default: "rsa")
-- `--key-size <bits>` - Key size in bits (default: 2048)
-- `--curve <curve>` - Elliptic curve (default: "P-256")
-
-**File Format:** JSON file containing wrapped key material
-
-**Examples:**
-
-Import a wrapped RSA key:
-```bash
-xkmsctl key import imported-key wrapped-key.json --local
-```
-
-Import an ECDSA key:
-```bash
-xkmsctl key import ecdsa-imported wrapped-ecdsa.json --key-algorithm ecdsa --curve P-256 --local
-```
-
-**Wrapped Key File Format:**
-```json
-{
-  "wrapped_key": "base64-encoded-wrapped-key-material",
-  "algorithm": "RSAES_OAEP_SHA_256"
-}
-```
-
----
-
-### key export
-
-Export a key in wrapped form for secure transport to another system.
-
-**Usage:**
-```bash
-xkmsctl key export <key-id> <output-file> [flags]
-```
-
-**Flags:**
-- `--key-type <type>` - Key type (default: "tls")
-- `--key-algorithm <algo>` - Key algorithm (default: "rsa")
-- `--key-size <bits>` - Key size in bits (default: 2048)
-- `--curve <curve>` - Elliptic curve (default: "P-256")
-- `--algorithm <algo>` - Wrapping algorithm (default: "RSAES_OAEP_SHA_256")
-
-**Note:** The key must have been generated with the `--exportable` flag.
-
-**Examples:**
-
-Export an exportable key:
-```bash
-# First, generate an exportable key
-xkmsctl key generate exportable-key --exportable --local
-
-# Export it
-xkmsctl key export exportable-key wrapped-export.json --local
-```
-
-Export with specific wrapping algorithm:
-```bash
-xkmsctl key export my-key export.json --algorithm RSAES_OAEP_SHA_256 --local
-```
-
-Export an ECDSA key:
-```bash
-xkmsctl key export my-ecdsa-key ecdsa-export.json --key-algorithm ecdsa --curve P-384 --local
-```
-
----
 
 ### key copy
 
-Copy an exportable key from one backend to another using secure wrapping.
-
-**Usage:**
-```bash
-xkmsctl key copy <source-key-id> [dest-key-id] [flags]
-```
-
-**Flags:**
-- `--dest-backend <name>` - Destination backend (default: "software")
-- `--dest-keydir <path>` - Destination key directory (for file-based backends)
-- `--key-type <type>` - Key type (default: "tls")
-- `--key-algorithm <algo>` - Key algorithm (default: "rsa")
-- `--key-size <bits>` - Key size in bits (default: 2048)
-- `--curve <curve>` - Elliptic curve (default: "P-256")
-- `--algorithm <algo>` - Wrapping algorithm (default: "RSAES_OAEP_SHA_256")
-
-**Note:** Source key must be exportable. If dest-key-id is omitted, uses the same ID as source.
-
-**Examples:**
-
-Copy a key to another backend:
-```bash
-xkmsctl key copy my-key --dest-backend tpm2 --local
-```
-
-Copy with a different destination key ID:
-```bash
-xkmsctl key copy source-key dest-key --dest-backend pkcs11 --local
-```
-
-Copy to a different directory:
-```bash
-xkmsctl key copy my-key --dest-backend software --dest-keydir /secure/keys --local
-```
-
-Copy an ECDSA key:
-```bash
-xkmsctl key copy ecdsa-key --dest-backend tpm2 --key-algorithm ecdsa --curve P-256 --local
-```
-
----
-
-### key get-import-params
-
-Retrieve the wrapping public key and parameters needed to import a key securely.
-
-**Usage:**
-```bash
-xkmsctl key get-import-params <key-id> [flags]
-```
-
-**Flags:**
-- `--key-type <type>` - Key type (default: "tls")
-- `--key-algorithm <algo>` - Key algorithm (default: "rsa")
-- `--key-size <bits>` - Key size in bits (default: 2048)
-- `--curve <curve>` - Elliptic curve (default: "P-256")
-- `--algorithm <algo>` - Wrapping algorithm (default: "RSAES_OAEP_SHA_256")
-- `--output <file>` - Output file for import parameters (JSON)
-
-**Examples:**
-
-Get import parameters and display them:
-```bash
-xkmsctl key get-import-params my-key --local
-```
-
-Save import parameters to a file:
-```bash
-xkmsctl key get-import-params my-key --output import-params.json --local
-```
-
-Get parameters for TPM2 backend:
-```bash
-xkmsctl key get-import-params tpm-key --backend tpm2 --output tpm-params.json --local
-```
-
-**Output Format:**
-```json
-{
-  "wrapping_public_key": "base64-encoded-public-key-der",
-  "algorithm": "RSAES_OAEP_SHA_256",
-  "expires_at": "2024-01-01T00:00:00Z"
-}
-```
-
----
-
-### key wrap
-
-Wrap raw key material using import parameters for secure transport.
-
-**Usage:**
-```bash
-xkmsctl key wrap <key-material-file> <params-file> <output-file> [flags]
-```
-
-**Arguments:**
-- `<key-material-file>` - File containing raw key material
-- `<params-file>` - JSON file with import parameters (from get-import-params)
-- `<output-file>` - Output file for wrapped key material
-
-**Examples:**
-
-Wrap key material for import:
-```bash
-# 1. Get import parameters from destination
-xkmsctl key get-import-params target-key --output params.json --backend tpm2 --local
-
-# 2. Wrap your key material
-xkmsctl key wrap raw-key-material.bin params.json wrapped-key.json --local
-```
-
-Full workflow for secure key transfer:
-```bash
-# On destination system: get import parameters
-xkmsctl key get-import-params my-imported-key --output params.json --backend tpm2 --local
-
-# Transfer params.json to source system
-
-# On source system: wrap key material
-openssl genrsa -out private-key.pem 2048
-xkmsctl key wrap private-key.pem params.json wrapped.json --local
-
-# Transfer wrapped.json to destination system
-
-# On destination system: import the wrapped key
-xkmsctl key import my-imported-key wrapped.json --backend tpm2 --local
-```
-
----
-
-### key unwrap
-
-Unwrap previously wrapped key material.
-
-**Usage:**
-```bash
-xkmsctl key unwrap <wrapped-key-file> <params-file> <output-file> [flags]
-```
-
-**Arguments:**
-- `<wrapped-key-file>` - JSON file containing wrapped key material
-- `<params-file>` - JSON file with import parameters
-- `<output-file>` - Output file for unwrapped key material
-
-**Examples:**
-
-Unwrap key material:
-```bash
-xkmsctl key unwrap wrapped-key.json params.json unwrapped-key.bin --local
-```
-
-Full unwrap workflow:
-```bash
-# Unwrap
-xkmsctl key unwrap wrapped.json import-params.json key-material.bin --local
-
-# Use the unwrapped key material
-openssl rsa -in key-material.bin -text -noout
-```
-
----
-
-## Complete Workflows
-
-### Workflow 1: Generate, Sign, and Verify
+Copies an exportable key from `--backend` to `--dest-backend` (default
+`software`) by wrapping it on the server. The copy takes its algorithm, size,
+curve, hash and partition from the source (`cmd/xkmsctl/key.go:991`). The
+destination ID defaults to the source ID. `--algorithm` selects the wrapping
+algorithm (default `RSAES_OAEP_SHA_256`). `--dest-keydir` is declared
+(`cmd/xkmsctl/key.go:1965`) but not read.
 
 ```bash
-# Generate an RSA signing key
-xkmsctl key generate signing-key --key-type signing --exportable --local
-
-# Sign a message
-SIGNATURE=$(xkmsctl key sign signing-key "Important message" --local)
-
-# Verify the signature
-xkmsctl key verify signing-key "Important message" "$SIGNATURE" --local
+xkmsctl --backend software key copy web-tls web-tls-hsm --dest-backend pkcs11
 ```
 
-### Workflow 2: Symmetric Encryption/Decryption
+## Hardware
+
+### key attest
+
+Requests an attestation statement proving the key was created in hardware and
+never left it. A random 32-byte nonce is used unless `--nonce` (base64) is
+given. `--output` writes the statement to a JSON file (mode 0600); otherwise
+the backend, format, signature algorithm, nonce, data, signature and
+certificate count are printed.
 
 ```bash
-# Generate AES-256-GCM key
-xkmsctl key generate aes-key --key-type symmetric --algorithm aes-256-gcm --key-size 256 --local
-
-# Encrypt data with AAD
-ENCRYPTED=$(xkmsctl key encrypt aes-key "Sensitive data" --aad "user123" --output json --local)
-CIPHERTEXT=$(echo $ENCRYPTED | jq -r '.ciphertext')
-NONCE=$(echo $ENCRYPTED | jq -r '.nonce')
-TAG=$(echo $ENCRYPTED | jq -r '.tag')
-
-# Decrypt data
-PLAINTEXT=$(xkmsctl key decrypt aes-key "$CIPHERTEXT" --nonce "$NONCE" --tag "$TAG" --aad "user123" --local)
-echo "Decrypted: $PLAINTEXT"
+xkmsctl --backend tpm2 key attest device-key --output attestation.json
 ```
 
-### Workflow 3: Asymmetric Encryption/Decryption
+### key policy
+
+Shows the TPM policy a `tpm2` key was created under and its authPolicy digest.
+`--sealed` reads a sealed object instead of a key; `--tenant` addresses another
+tenant's TPM scope (system callers only).
 
 ```bash
-# Generate RSA key
-xkmsctl key generate rsa-key --key-size 4096 --local
-
-# Encrypt with public key
-CIPHERTEXT=$(xkmsctl key encrypt-asym rsa-key "Secret message" --hash sha256 --local)
-
-# Decrypt with private key
-PLAINTEXT=$(xkmsctl key decrypt rsa-key "$CIPHERTEXT" --hash sha256 --local)
-echo "Decrypted: $PLAINTEXT"
+xkmsctl --backend tpm2 key policy device-key
 ```
-
-### Workflow 4: Cross-Backend Key Migration
-
-```bash
-# Generate exportable key in software backend
-xkmsctl key generate migratable-key --exportable --backend software --local
-
-# Copy to TPM2 backend
-xkmsctl key copy migratable-key tpm-key --dest-backend tpm2 --local
-
-# Verify the key exists in both backends
-xkmsctl key list --backend software --local
-xkmsctl key list --backend tpm2 --local
-
-# Clean up source key
-xkmsctl key delete migratable-key --backend software --local
-```
-
-### Workflow 5: Secure Key Import
-
-```bash
-# On target system: get import parameters
-xkmsctl key get-import-params imported-key --output params.json --backend tpm2 --local
-
-# Transfer params.json to source system
-
-# On source system: generate and wrap key
-openssl genrsa -out key.pem 2048
-openssl rsa -in key.pem -outform DER -out key.der
-xkmsctl key wrap key.der params.json wrapped.json --local
-
-# Transfer wrapped.json back to target system
-
-# On target system: import the key
-xkmsctl key import imported-key wrapped.json --backend tpm2 --local
-
-# Verify import
-xkmsctl key get imported-key --backend tpm2 --local
-```
-
-### Workflow 6: Key Rotation
-
-```bash
-# Generate initial key
-xkmsctl key generate rotatable-key --key-type signing --local
-
-# Use the key for signing
-SIGNATURE=$(xkmsctl key sign rotatable-key "Message 1" --local)
-
-# Rotate the key (generates new version)
-xkmsctl key rotate rotatable-key --local
-
-# Old signatures should still verify
-xkmsctl key verify rotatable-key "Message 1" "$SIGNATURE" --local
-
-# New signatures use the new key version
-NEW_SIGNATURE=$(xkmsctl key sign rotatable-key "Message 2" --local)
-xkmsctl key verify rotatable-key "Message 2" "$NEW_SIGNATURE" --local
-```
-
-### Workflow 7: Multi-Algorithm Key Management
-
-```bash
-# Generate different key types
-xkmsctl key generate rsa-key --key-algorithm rsa --key-size 4096 --local
-xkmsctl key generate ecdsa-key --key-algorithm ecdsa --curve P-384 --local
-xkmsctl key generate ed25519-key --key-algorithm ed25519 --local
-xkmsctl key generate aes-key --key-type symmetric --algorithm aes-256-gcm --key-size 256 --local
-
-# List all keys
-xkmsctl key list --local
-
-# Sign with each key type
-xkmsctl key sign rsa-key "Message" --hash sha384 --local
-xkmsctl key sign ecdsa-key "Message" --key-algorithm ecdsa --hash sha384 --local
-xkmsctl key sign ed25519-key "Message" --key-algorithm ed25519 --local
-
-# Encrypt with symmetric key
-xkmsctl key encrypt aes-key "Secret" --local
-```
-
-## Backend-Specific Examples
-
-### Software Backend
-
-```bash
-# Generate key in custom directory
-xkmsctl key generate my-key --backend software --keydir /secure/keys --local
-
-# List keys from custom directory
-xkmsctl key list --backend software --keydir /secure/keys --local
-```
-
-### TPM2 Backend
-
-```bash
-# Generate key in TPM2
-xkmsctl key generate tpm-key --backend tpm2 --local
-
-# TPM2 keys are automatically non-exportable
-xkmsctl key get tpm-key --backend tpm2 --local
-```
-
-### PKCS#11 Backend
-
-```bash
-# Generate key in HSM
-xkmsctl key generate hsm-key --backend pkcs11 --local
-
-# Sign with HSM key
-xkmsctl key sign hsm-key "Important data" --backend pkcs11 --local
-```
-
-### Cloud KMS Backends
-
-AWS KMS:
-```bash
-xkmsctl key generate aws-key --backend awskms --local
-xkmsctl key sign aws-key "Message" --backend awskms --local
-```
-
-GCP KMS:
-```bash
-xkmsctl key generate gcp-key --backend gcpkms --local
-xkmsctl key encrypt gcp-key "Secret" --backend gcpkms --local
-```
-
-Azure Key Vault:
-```bash
-xkmsctl key generate azure-key --backend azurekv --local
-xkmsctl key rotate azure-key --backend azurekv --local
-```
-
-## Error Handling
-
-Common errors and solutions:
-
-**Key not found:**
-```bash
-# Error: key not found
-# Solution: Verify key exists and parameters match
-xkmsctl key list --local
-xkmsctl key get my-key --key-algorithm ecdsa --curve P-256 --local
-```
-
-**Key not exportable:**
-```bash
-# Error: key is not exportable
-# Solution: Regenerate with --exportable flag
-xkmsctl key generate exportable-key --exportable --local
-xkmsctl key export exportable-key output.json --local
-```
-
-**Invalid key size:**
-```bash
-# Error: RSA key size must be at least 2048 bits
-# Solution: Use minimum 2048 bits for RSA
-xkmsctl key generate my-key --key-size 2048 --local
-```
-
-**Missing symmetric decryption parameters:**
-```bash
-# Error: nonce and tag required for symmetric decryption
-# Solution: Include nonce and tag from encryption output
-ENCRYPTED=$(xkmsctl key encrypt my-aes-key "data" --output json --local)
-xkmsctl key decrypt my-aes-key "$(echo $ENCRYPTED | jq -r '.ciphertext')" \
-  --nonce "$(echo $ENCRYPTED | jq -r '.nonce')" \
-  --tag "$(echo $ENCRYPTED | jq -r '.tag')" --local
-```
-
-## Best Practices
-
-1. **Always use --local flag for direct backend access** to avoid dependency on xkmsd server during development
-
-2. **Generate keys with appropriate sizes:**
-   - RSA: minimum 2048 bits, 4096 recommended for long-term use
-   - ECDSA: P-256 for general use, P-384/P-521 for high security
-   - AES: 256 bits for maximum security
-
-3. **Use --exportable sparingly:** Only mark keys exportable when cross-backend migration is required
-
-4. **Store encrypted data components together:** Always save ciphertext, nonce, tag, and algorithm together
-
-5. **Match hash algorithms:** Use the same hash algorithm for encryption/decryption and signing/verification
-
-6. **Verify signatures immediately:** Always verify signatures after signing to catch configuration errors
-
-7. **Use JSON output for automation:**
-   ```bash
-   xkmsctl key list --output json --local | jq '.keys[].key_id'
-   ```
-
-8. **Clean up test keys:**
-   ```bash
-   # Delete test keys after experiments
-   xkmsctl key delete test-key --local
-   ```
-
-9. **Backup import parameters:** Save import parameters when doing secure key imports
-
-10. **Use verbose mode for troubleshooting:**
-    ```bash
-    xkmsctl key generate debug-key --verbose --local
-    ```
 
 ## See Also
 
-- [Getting Started Guide](../getting-started.md)
+- [Key management](../../../../docs/key-management/user.md) — the normative feature folder
 - [Key Import/Export Guide](../key-import-export.md)
 - [Advanced Cryptography Guide](../advanced-crypto.md)
 - [Backend Documentation](../../../../docs/crypto-backends/user.md)
-- [Certificate Management](../certificate-management.md)
+- [Certificate Management CLI](./cert.md)

@@ -1,503 +1,220 @@
-# Key Import/Export Guide
+# Key Import and Export
 
-This guide explains how to securely import and export cryptographic keys between systems using go-xkms's service API and key wrapping functionality.
+> **Status: REFERENCE** · Last verified: 2026-10-13
+> Scope: the import, export and copy functions of the `pkg/xkms` service and the wrapping algorithms each backend accepts; for the CLI see [`xkmsctl key`](cli/key.md).
 
-## Overview
+go-xkms moves keys between systems as wrapped key material. The key is
+encrypted under a wrapping public key that the destination backend provides,
+and only the destination can unwrap it.
 
-Key import/export enables secure key transport between systems while maintaining security:
+## Service API
 
-- **Import**: Bring externally generated keys into an HSM/KMS
-- **Export**: Extract keys from one system for import into another (when supported)
-- **Key Wrapping**: Encrypts key material for secure transport over untrusted channels
-- **Cross-Backend Copy**: Move keys between backends with `xkms.CopyKey()`
-
-The key material is encrypted (wrapped) before transmission and can only be decrypted (unwrapped) by the intended recipient.
-
-## Service API Quick Reference
+Each function takes a `context.Context` first (`pkg/xkms/service.go:1849-2088`):
 
 | Function | Description |
 |----------|-------------|
-| `xkms.ExportKey(kid, algorithm)` | Export a key in wrapped form |
-| `xkms.ImportKey(backend, attrs, wrapped)` | Import wrapped key material |
-| `xkms.CopyKey(sourceKID, destBackend, attrs)` | Copy a key between backends |
-| `xkms.GetImportParameters(backend, attrs, algo)` | Get import parameters |
-| `xkms.WrapKey(backend, material, params)` | Wrap key material for secure transport |
-| `xkms.UnwrapKey(backend, wrapped, params)` | Unwrap key material |
+| `GetImportParameters(ctx, backendName, attrs, algorithm)` | Get the destination's wrapping public key, import token and expiry |
+| `WrapKey(ctx, backendName, keyMaterial, params)` | Wrap plaintext key material under the import parameters |
+| `UnwrapKey(ctx, backendName, wrapped, params)` | Unwrap wrapped material |
+| `ImportKey(ctx, backendName, attrs, wrapped)` | Import wrapped material as a new key |
+| `ExportKey(ctx, kid, algorithm)` | Export a key in wrapped form |
+| `CopyKey(ctx, sourceKID, destBackend, destAttrs)` | Copy a key from one backend to another |
+| `WrapKeyByID`, `UnwrapKeyByID` | Wrap and unwrap under a key the server holds, addressed by ID |
 
-## Supported Backends
+The types are in `pkg/backend/backend_importexport.go`:
 
-### Software Backend
-- **Import**: Supported
-- **Export**: Supported
-- **Unwrap**: Supported (client-side)
-- **Wrapping Algorithms**: All standard algorithms
-- **Use Case**: Development, testing, key migration between systems
-- **Security**: Keys stored in software, not hardware-backed
+- `ImportParameters` (`:74`): `WrappingPublicKey`, `ImportToken`, `Algorithm`,
+  `ExpiresAt` (a `*time.Time`, nil when the parameters do not expire) and
+  `KeySpec`.
+- `WrappedKeyMaterial` (`:101`): `WrappedKey`, `Algorithm`, `ImportToken` and
+  `Metadata`.
 
-### Symmetric Backend
-- **Import**: Supported
-- **Export**: Supported
-- **Unwrap**: Supported (client-side)
-- **Wrapping Algorithms**: All standard algorithms
-- **Use Case**: Symmetric key import/export, key rotation
-- **Security**: Supports password-protected keys
+A backend supports import if it implements `backend.ImportBackend` (`:132`), and
+export if it implements `ExportBackend`. `ImportExportBackend` (`:281`) embeds
+both. `types.Capabilities` reports the halves as `Import` and `Export`, and
+`SupportsImportExport()` is true only when both are set
+(`pkg/types/types.go:1670-1705`).
 
-### AWS KMS
-- **Import**: Supported
-- **Export**: Not supported (AWS security policy)
-- **Unwrap**: Happens in AWS HSM
-- **Wrapping Algorithms**:
-  - `RSAES_OAEP_SHA_1` - RSA-OAEP with SHA-1
-  - `RSAES_OAEP_SHA_256` - RSA-OAEP with SHA-256 (recommended)
-  - `RSA_AES_KEY_WRAP_SHA_1` - Hybrid RSA + AES-KWP with SHA-1
-  - `RSA_AES_KEY_WRAP_SHA_256` - Hybrid RSA + AES-KWP with SHA-256 (for large keys)
+## Wrapping algorithms
 
-### GCP KMS
-- **Import**: Supported
-- **Export**: Not supported (GCP security policy)
-- **Unwrap**: Happens in GCP HSM
-- **Wrapping Algorithms**:
-  - `RSA_OAEP_3072_SHA256_AES_256` - Hybrid 3072-bit RSA + AES-KWP (recommended)
-  - `RSA_OAEP_4096_SHA256_AES_256` - Hybrid 4096-bit RSA + AES-KWP
-  - `RSA_OAEP_4096_SHA256` - Direct RSA-OAEP (for small keys only)
+| Constant (`backend.`) | Value | Construction |
+|-----------------------|-------|--------------|
+| `WrappingAlgorithmRSAES_OAEP_SHA_1` | `RSAES_OAEP_SHA_1` | RSA-OAEP, SHA-1 |
+| `WrappingAlgorithmRSAES_OAEP_SHA_256` | `RSAES_OAEP_SHA_256` | RSA-OAEP, SHA-256 |
+| `WrappingAlgorithmRSA_AES_KEY_WRAP_SHA_1` | `RSA_AES_KEY_WRAP_SHA_1` | RSA-OAEP wraps an ephemeral AES key, which wraps the material with AES-KWP; SHA-1 |
+| `WrappingAlgorithmRSA_AES_KEY_WRAP_SHA_256` | `RSA_AES_KEY_WRAP_SHA_256` | The same, SHA-256 |
+| `WrappingAlgorithmRSA_OAEP_3072_SHA256_AES_256` | `RSA_OAEP_3072_SHA256_AES_256` | GCP hybrid, RSA-3072 |
+| `WrappingAlgorithmRSA_OAEP_4096_SHA256_AES_256` | `RSA_OAEP_4096_SHA256_AES_256` | GCP hybrid, RSA-4096 |
+| `WrappingAlgorithmRSA_OAEP_4096_SHA256` | `RSA_OAEP_4096_SHA256` | GCP plain RSA-OAEP, RSA-4096 |
+| `WrappingAlgorithmVaultTransitBYOK` | `VAULT_TRANSIT_BYOK_RSA_OAEP_SHA256_AES256_GCM96` | Vault Transit BYOK format |
 
-### TPM2
-- **Import**: Partial (wrapping supported, TPM2_Import needs completion)
-- **Export**: Not supported (most TPM keys are FixedTPM)
-- **Unwrap**: Happens in TPM hardware
-- **Wrapping Algorithms**: `RSAES_OAEP_SHA_256`, `RSA_AES_KEY_WRAP_SHA_256`
-- **Use Case**: Hardware-backed key storage on devices with TPM
-- **Security**: Keys are FixedTPM (cannot leave the TPM)
+The constants are defined at `backend_importexport.go:37-68`. Plain RSA-OAEP can
+wrap only material smaller than the RSA modulus less the padding, which is
+enough for a symmetric key. Use a hybrid algorithm for private keys. In a
+hybrid algorithm, `WrappedKey` is the wrapped AES key followed by the wrapped
+material (`:103`). Prefer the SHA-256 variants.
 
-### PKCS#11
-- **Import**: Supported (via C_UnwrapKey)
-- **Export**: Conditional (only if key has CKA_EXTRACTABLE attribute)
-- **Unwrap**: Happens in HSM
-- **Wrapping Algorithms**: All standard algorithms
-- **Use Case**: Hardware Security Modules (HSM), smartcards
-- **Security**: Keys marked as non-extractable by default
+## Backend support
 
-## Key Wrapping Algorithms
+| Backend | Import | Export | Algorithms accepted | Parameters expire |
+|---------|--------|--------|---------------------|-------------------|
+| Software | Yes | Yes, if `Exportable` | The four `RSAES_OAEP_*` and `RSA_AES_KEY_WRAP_*` | Yes, set by the import-token store |
+| Symmetric | Yes | Yes, if `Exportable` | The four `RSAES_OAEP_*` and `RSA_AES_KEY_WRAP_*` | Yes |
+| PKCS#11 | Yes, through `C_UnwrapKey` | Yes, if the key is `CKA_EXTRACTABLE` | The four `RSAES_OAEP_*` and `RSA_AES_KEY_WRAP_*` | — |
+| AWS KMS | Yes | No (`ErrExportNotSupported`) | The four `RSAES_OAEP_*` and `RSA_AES_KEY_WRAP_*` | When AWS says (`ParametersValidTo`) |
+| GCP KMS | Yes | No (`ErrExportNotSupported`) | The three GCP constants; `RSAES_OAEP_SHA_256` maps to `RSA_OAEP_4096_SHA256` | After 3 days |
+| Azure Key Vault | Yes | No (`ErrNotSupported`) | `RSA_AES_KEY_WRAP_SHA_1` and `_SHA_256` only | — |
+| Vault Transit | Symmetric keys only | No | `WrappingAlgorithmVaultTransitBYOK` only | — |
+| TPM 2.0 | Yes, as a TPM duplicate | No: TPM keys are hardware-bound | `TPM2_DUPLICATE` only | — |
+| Phone | No | No | — | — |
 
-### RSA-OAEP
-Direct encryption using RSA public key with OAEP padding.
+Citations:
 
-**Use for**: Small key material (symmetric keys, etc.)
-**Limitations**: Key material must be smaller than RSA key size minus padding overhead
+- Software: `pkg/backend/software/software.go:494`, `:727`, `:1075`.
+- Symmetric: `pkg/keyprovider/symmetric/backend.go:1381`, `:1627`.
+- PKCS#11: `pkg/backend/pkcs11/pkcs11_importexport.go:99`, `:755`.
+- AWS: `pkg/backend/awskms/awskms.go:1071`, `:1221`, `:1278`.
+- GCP: `pkg/backend/gcpkms/gcpkms_importexport.go:94`, `:264`, `:302`.
+- Azure: `pkg/backend/azurekv/azurekv_importexport.go:116`, `:467`.
+- Vault: `pkg/backend/vault/vault_importexport.go:80`, `:312`.
+- TPM 2.0: `pkg/backend/tpm2/importexport.go:62`, `:225`, `:265`. A tenant-scoped
+  TPM backend refuses imports outside the system tenant (`:238`).
+- Phone: `pkg/backend/phone/import_export.go:58`.
 
-### Hybrid (RSA + AES-KWP)
-Two-step wrapping process:
-1. Generate random AES-256 key
-2. Wrap AES key with RSA-OAEP
-3. Wrap target key material with AES-KWP (RFC 5649)
-4. Concatenate wrapped AES key + wrapped key material
+The wrapping private key stays in the destination backend. Wrapping happens
+outside it, so the plaintext material exists in the caller's memory until it
+is wrapped.
 
-**Use for**: Large key material (RSA private keys, etc.)
-**Advantages**: No size limitations, supports arbitrary-length key material
+## Copying a key between backends
 
-## Cross-Backend Key Copy
+`CopyKey` copies in one call (`service.go:2016`). It:
 
-The simplest way to move a key between backends is `xkms.CopyKey()`:
+1. Loads the source key's stored attributes, so a key generated with
+   `Exportable: true` can be copied.
+2. Gets the destination's import parameters with `RSAES_OAEP_SHA_256`
+   (`service.go:2068`).
+3. Wraps the key for those parameters with the source's `ExportKeyTo`.
+4. Imports it into the destination.
+
+With `destAttrs` nil, the destination uses the source's attributes. Because
+the algorithm is fixed, a destination that refuses `RSAES_OAEP_SHA_256`
+(Azure, Vault, TPM 2.0) cannot be a `CopyKey` target.
 
 ```go
-package main
-
 import (
-    "log"
+    "context"
 
     "github.com/jeremyhahn/go-xkms/pkg/xkms"
 )
 
-func main() {
-    // Initialize with multiple backends
-    if err := xkms.AutoInitialize(&xkms.AutoConfig{
-        DataDir: "/var/lib/xkms",
-    }); err != nil {
-        log.Fatal(err)
-    }
-    defer xkms.Close()
+ctx := context.Background()
 
-    // Copy a key from software backend to another backend
-    // Uses RSA-OAEP-SHA256 wrapping automatically
-    err := xkms.CopyKey(
-        "software:::my-key",  // source key ID
-        "pkcs11",             // destination backend
-        nil,                  // nil = use same attributes as source
-    )
-    if err != nil {
-        log.Fatal(err)
-    }
-
-    // The key is now available in both backends
-    sig1, _ := xkms.Sign("software:::my-key", data, nil)
-    sig2, _ := xkms.Sign("pkcs11:::my-key", data, nil)
+// A nil Datastore keeps everything in memory (pkg/xkms/auto.go:23).
+if err := xkms.AutoInitialize(&xkms.AutoConfig{}); err != nil {
+    return err
 }
+defer xkms.Close()
+
+if err := xkms.CopyKey(ctx, "software:::my-key", "pkcs11", nil); err != nil {
+    return err
+}
+sig, err := xkms.Sign(ctx, "pkcs11:::my-key", digest, nil)
 ```
 
-## Export and Import via Service API
+## Importing external key material
 
-For more control over the export/import process:
-
-```go
-package main
-
-import (
-    "fmt"
-    "log"
-
-    "github.com/jeremyhahn/go-xkms/pkg/backend"
-    "github.com/jeremyhahn/go-xkms/pkg/types"
-    "github.com/jeremyhahn/go-xkms/pkg/xkms"
-)
-
-func main() {
-    if err := xkms.AutoInitialize(&xkms.AutoConfig{
-        DataDir: "/var/lib/xkms",
-    }); err != nil {
-        log.Fatal(err)
-    }
-    defer xkms.Close()
-
-    // Step 1: Export a key from the source backend (wrapped)
-    wrapped, err := xkms.ExportKey(
-        "software:::my-key",
-        backend.WrappingAlgorithmRSAES_OAEP_SHA_256,
-    )
-    if err != nil {
-        log.Fatal(err)
-    }
-    fmt.Printf("Exported key (%d bytes wrapped)\n", len(wrapped.WrappedKey))
-
-    // Step 2: Import into the destination backend
-    destAttrs := &types.KeyAttributes{
-        CN:      "my-key",
-        KeyType: types.KeyTypeSigning,
-    }
-
-    err = xkms.ImportKey("pkcs11", destAttrs, wrapped)
-    if err != nil {
-        log.Fatal(err)
-    }
-    fmt.Println("Key imported successfully")
-}
-```
-
-## Importing External Key Material
-
-When importing key material generated outside of go-xkms (e.g., from an external HSM or key ceremony):
+To import material generated elsewhere, get the parameters, wrap, then import:
 
 ```go
-package main
-
 import (
+    "context"
     "crypto/rand"
-    "fmt"
-    "log"
 
     "github.com/jeremyhahn/go-xkms/pkg/backend"
     "github.com/jeremyhahn/go-xkms/pkg/types"
     "github.com/jeremyhahn/go-xkms/pkg/xkms"
 )
 
-func main() {
-    if err := xkms.AutoInitialize(&xkms.AutoConfig{
-        DataDir: "/var/lib/xkms",
-    }); err != nil {
-        log.Fatal(err)
-    }
-    defer xkms.Close()
-
-    // Define the key to import
-    attrs := &types.KeyAttributes{
-        CN:      "imported-aes-key",
-        KeyType: types.KeyTypeSymmetric,
-        KeySize: 256,
-    }
-
-    // Step 1: Get import parameters from the destination backend
-    // These include a wrapping public key and import token
-    params, err := xkms.GetImportParameters(
-        "awskms",
-        attrs,
-        backend.WrappingAlgorithmRSAES_OAEP_SHA_256,
-    )
-    if err != nil {
-        log.Fatal(err)
-    }
-    fmt.Printf("Import parameters valid until: %v\n", params.ExpiresAt)
-
-    // Step 2: Generate or obtain your key material
-    keyMaterial := make([]byte, 32) // AES-256 key
-    if _, err := rand.Read(keyMaterial); err != nil {
-        log.Fatal(err)
-    }
-
-    // Step 3: Wrap the key material
-    wrapped, err := xkms.WrapKey("awskms", keyMaterial, params)
-    if err != nil {
-        log.Fatal(err)
-    }
-    fmt.Printf("Wrapped key: %d bytes\n", len(wrapped.WrappedKey))
-
-    // Step 4: Import the wrapped key
-    err = xkms.ImportKey("awskms", attrs, wrapped)
-    if err != nil {
-        log.Fatal(err)
-    }
-    fmt.Println("Key imported to AWS KMS")
-
-    // Zero out sensitive material
-    for i := range keyMaterial {
-        keyMaterial[i] = 0
-    }
-}
-```
-
-## Importing Large Keys (RSA Private Keys)
-
-For large key material like RSA private keys, use hybrid wrapping algorithms:
-
-```go
-package main
-
-import (
-    "crypto/rand"
-    "crypto/rsa"
-    "crypto/x509"
-    "fmt"
-    "log"
-
-    "github.com/jeremyhahn/go-xkms/pkg/backend"
-    "github.com/jeremyhahn/go-xkms/pkg/types"
-    "github.com/jeremyhahn/go-xkms/pkg/xkms"
-)
-
-func main() {
-    if err := xkms.AutoInitialize(&xkms.AutoConfig{
-        DataDir: "/var/lib/xkms",
-    }); err != nil {
-        log.Fatal(err)
-    }
-    defer xkms.Close()
-
-    // Generate an RSA key pair externally
-    privateKey, err := rsa.GenerateKey(rand.Reader, 2048)
-    if err != nil {
-        log.Fatal(err)
-    }
-
-    // Marshal private key to PKCS#8
-    keyMaterial, err := x509.MarshalPKCS8PrivateKey(privateKey)
-    if err != nil {
-        log.Fatal(err)
-    }
-    fmt.Printf("Private key material size: %d bytes\n", len(keyMaterial))
-
-    attrs := &types.KeyAttributes{
-        CN:      "imported-rsa-key",
-        KeyType: types.KeyTypeRSA,
-        KeySize: 2048,
-    }
-
-    // Use hybrid algorithm for large key material
-    params, err := xkms.GetImportParameters(
-        "awskms",
-        attrs,
-        backend.WrappingAlgorithmRSA_AES_KEY_WRAP_SHA_256,
-    )
-    if err != nil {
-        log.Fatal(err)
-    }
-
-    // Wrap the large key material
-    wrapped, err := xkms.WrapKey("awskms", keyMaterial, params)
-    if err != nil {
-        log.Fatal(err)
-    }
-
-    // Import into AWS KMS
-    err = xkms.ImportKey("awskms", attrs, wrapped)
-    if err != nil {
-        log.Fatal(err)
-    }
-
-    fmt.Println("RSA private key imported to AWS KMS")
-
-    // Zero out sensitive material
-    for i := range keyMaterial {
-        keyMaterial[i] = 0
-    }
-}
-```
-
-## GCP KMS Import Example
-
-```go
 attrs := &types.KeyAttributes{
-    CN:      "my-imported-key",
-    KeyType: types.KeyTypeRSA,
-    KeySize: 2048,
+    CN:                 "imported-aes-key",
+    KeyType:            types.KeyTypeEncryption,
+    SymmetricAlgorithm: types.SymmetricAES256GCM,
+    StoreType:          types.StoreAWSKMS,
 }
 
-// GCP uses different wrapping algorithms
-params, err := xkms.GetImportParameters(
-    "gcpkms",
-    attrs,
-    backend.WrappingAlgorithmRSA_OAEP_3072_SHA256_AES_256,
-)
+params, err := xkms.GetImportParameters(ctx, "awskms", attrs, backend.WrappingAlgorithmRSAES_OAEP_SHA_256)
 if err != nil {
-    log.Fatal(err)
-}
-fmt.Printf("Import job valid until: %v\n", params.ExpiresAt)
-
-wrapped, err := xkms.WrapKey("gcpkms", keyMaterial, params)
-if err != nil {
-    log.Fatal(err)
+    return err
 }
 
-err = xkms.ImportKey("gcpkms", attrs, wrapped)
+keyMaterial := make([]byte, 32)
+if _, err := rand.Read(keyMaterial); err != nil {
+    return err
+}
+defer clear(keyMaterial)
+
+wrapped, err := xkms.WrapKey(ctx, "awskms", keyMaterial, params)
 if err != nil {
-    log.Fatal(err)
+    return err
+}
+if err := xkms.ImportKey(ctx, "awskms", attrs, wrapped); err != nil {
+    return err
 }
 ```
 
-## Security Considerations
+For an RSA private key, marshal it with `x509.MarshalPKCS8PrivateKey` and use
+`WrappingAlgorithmRSA_AES_KEY_WRAP_SHA_256`, or a GCP hybrid algorithm for GCP.
 
-### Import Parameter Expiration
-- **AWS KMS**: 24 hours
-- **GCP KMS**: 3 days
-
-After expiration, you must obtain new import parameters. Do not reuse expired parameters.
-
-### Algorithm Selection
-
-**For symmetric keys (AES, etc.)**:
-- Use direct RSA-OAEP: `RSAES_OAEP_SHA_256` or `RSA_OAEP_4096_SHA256`
-
-**For RSA private keys**:
-- Use hybrid algorithms: `RSA_AES_KEY_WRAP_SHA_256` or `RSA_OAEP_3072_SHA256_AES_256`
-
-**SHA-256 vs SHA-1**:
-- Always prefer SHA-256 variants
-- SHA-1 is provided for compatibility with legacy systems only
-
-### Key Material Handling
-- Generate key material using cryptographically secure random number generators
-- Clear sensitive key material from memory after wrapping
-- Never log or store plaintext key material
-- Use secure channels when transmitting wrapped keys (even though they're encrypted)
-
-### Hardware Security
-- Wrapping happens **client-side** (outside the HSM)
-- Unwrapping happens **inside the HSM** (AWS/GCP hardware)
-- Plaintext key material never leaves the HSM after import
-- The unwrapping private key never leaves the HSM
-
-## Error Handling
+Import parameters can expire. Check `params.ExpiresAt` before a slow step, and
+get new parameters once it has passed:
 
 ```go
-// Export errors
-wrapped, err := xkms.ExportKey("software:::my-key", algorithm)
-if err != nil {
-    switch {
-    case errors.Is(err, backend.ErrNotSupported):
-        // Backend doesn't support export
-        fmt.Println("Export not supported by this backend")
-    case errors.Is(err, xkms.ErrBackendNotFound):
-        // Backend not registered
-        fmt.Println("Backend not available")
-    default:
-        fmt.Printf("Export failed: %v\n", err)
-    }
-    return
-}
-
-// Import errors
-err = xkms.ImportKey("awskms", attrs, wrapped)
-if err != nil {
-    switch {
-    case errors.Is(err, backend.ErrImportTokenExpired):
-        // Import parameters have expired -- get new ones
-        fmt.Println("Import parameters expired, get new ones")
-    case errors.Is(err, backend.ErrKeyAlreadyExists):
-        // Key with same attributes already exists
-        fmt.Println("Key already exists, delete or use different name")
-    case errors.Is(err, backend.ErrInvalidKeySize):
-        // Key material too large for chosen algorithm
-        fmt.Println("Use hybrid algorithm for large keys")
-    default:
-        fmt.Printf("Import failed: %v\n", err)
-    }
+if params.ExpiresAt != nil && time.Now().After(*params.ExpiresAt) {
+    // Call GetImportParameters again.
 }
 ```
 
-## Best Practices
+## Exporting a key
 
-1. **Check backend capabilities** before attempting import/export:
-   ```go
-   caps, err := xkms.GetBackendCapabilities("awskms")
-   if err != nil || !caps.SupportsImportExport {
-       log.Fatal("backend doesn't support import/export")
-   }
-   ```
+`ExportKey` loads the key's stored attributes, so the backend sees the
+`Exportable` flag the key was generated with (`service.go:2002`). It returns
+material wrapped under a key the source backend creates:
 
-2. **Use appropriate wrapping algorithms**:
-   - Small keys: Direct RSA-OAEP
-   - Large keys: Hybrid RSA + AES-KWP
+```go
+wrapped, err := xkms.ExportKey(ctx, "software:::my-key", backend.WrappingAlgorithmRSA_AES_KEY_WRAP_SHA_256)
+```
 
-3. **Validate import parameters before use**:
-   ```go
-   if params.ExpiresAt != nil && time.Now().After(*params.ExpiresAt) {
-       return errors.New("import parameters expired")
-   }
-   ```
+To move a key to another backend, use `CopyKey`, which wraps for the
+destination's own parameters instead.
 
-4. **Handle errors gracefully**:
-   - Expired import tokens: Get new parameters
-   - Key already exists: Delete or rename
-   - Unsupported algorithm: Choose different algorithm
+## Errors
 
-5. **Clean up sensitive data**:
-   ```go
-   defer func() {
-       for i := range keyMaterial {
-           keyMaterial[i] = 0
-       }
-   }()
-   ```
+| Error | Returned when |
+|-------|---------------|
+| `xkms.ErrImportExportNotSupported` | The backend implements neither half, or not the half requested (`pkg/xkms/errors.go:282`) |
+| `xkms.ErrBackendNotFound` | No backend has that name (`errors.go:222`) |
+| `backend.ErrExportNotSupported` | The backend never releases key material |
+| `backend.ErrImportNotSupported` | The backend cannot import |
+| `backend.ErrKeyNotExportable` | The key is not marked `Exportable` or `CKA_EXTRACTABLE` |
+| `backend.ErrInvalidAlgorithm` | The backend does not accept that wrapping algorithm |
+| `backend.ErrNotSupported`, `backend.ErrOperationNotSupported` | Azure and Vault's form of "not supported" |
+| `backend.ErrKeyAlreadyExists` | A key with that name already exists |
 
-6. **Use context for timeouts**:
-   ```go
-   ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
-   defer cancel()
-   ```
+The `backend.` sentinels are in `pkg/backend/errors.go`. Match them with
+`errors.Is`.
 
 ## Troubleshooting
 
-### "algorithm not supported"
-- Check the backend's supported algorithms
-- AWS and GCP have different algorithm sets
+- **`invalid algorithm`.** The destination accepts a different set. See
+  [Backend support](#backend-support).
+- **The material is too large to wrap.** Use a hybrid algorithm.
+- **Import fails after a delay.** The parameters have expired. Get new ones and
+  wrap again.
+- **`key is not exportable`.** Generate the key with `Exportable: true`.
+  Existing non-exportable keys cannot be exported.
 
-### "key material too large"
-- Use hybrid wrapping algorithm
-- For RSA private keys, use `RSA_AES_KEY_WRAP_*` variants
+## See Also
 
-### "import token expired"
-- Get new import parameters
-- AWS: 24-hour validity
-- GCP: 3-day validity
-
-### "key already exists"
-- Delete existing key first
-- Use a different CN/name for the key
-
-### "unwrapping failed"
-- Ensure wrapped key was created with correct parameters
-- Check for data corruption during transmission
-- Verify algorithm matches between wrap and import
-
-## Related Documentation
-
-- [Backend Registry](../architecture/backend-registry.md)
-- [AWS KMS Backend](../../../docs/crypto-backends/user.md)
-- [GCP KMS Backend](../../../docs/crypto-backends/user.md)
+- [`xkmsctl key`](cli/key.md): `get-import-params`, `wrap`, `unwrap`, `import`, `export`, `export-material`, `copy`
+- [API parity](api-parity.md): the import and export operations on each transport
+- [Crypto backends](../../../docs/crypto-backends/user.md)

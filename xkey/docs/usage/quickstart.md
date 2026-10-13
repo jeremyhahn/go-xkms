@@ -1,5 +1,8 @@
 # Quick Start: First-Time Setup
 
+> **Status: REFERENCE** · Last verified: 2026-10-13
+> First-time setup walkthrough; the canonical references are [docs/pin-management/](../../../docs/pin-management/user.md), [docs/xkmsd-configuration/](../../../docs/xkmsd-configuration/user.md) and [docs/certificate-authority/](../../../docs/certificate-authority/cli.md). Where they disagree, the feature folders win.
+
 This guide walks through the complete first-time setup of xkms, from installation through establishing your first admin connection. It covers barrier initialization, PIN setup, and the available authentication methods for initial system configuration.
 
 ## Prerequisites
@@ -31,20 +34,21 @@ The dual-PIN model controls access: the Security Officer (SO) PIN for admin oper
 
 ```bash
 # Set the SO PIN (master admin PIN)
-xkmsctl pin set-so
+xkmsctl pin so-set
 # Enter new SO PIN: ********
-# Confirm SO PIN: ********
 
 # Set the User PIN (requires SO PIN authorization)
-xkmsctl pin set-user
+xkmsctl pin user-set
 # Enter SO PIN: ********
 # Enter new User PIN: ********
-# Confirm User PIN: ********
 
 # Verify both PINs
-xkmsctl pin verify
-xkmsctl pin verify --type so
+xkmsctl pin user-verify
+xkmsctl pin so-verify
 ```
+
+Each PIN flag (`--new-pin`, `--so-pin`, `--pin`) accepts `-` to read stdin and
+is prompted for when omitted (`cmd/xkmsctl/pin.go:500-519`).
 
 > **Deep dive**: [PIN Management](../../../docs/pin-management/user.md) | [PIN CLI Reference](cli/pin.md)
 
@@ -53,7 +57,7 @@ xkmsctl pin verify --type so
 Confirm the system is operational by generating a test key:
 
 ```bash
-xkmsctl key generate test-key --key-type signing --algorithm ed25519
+xkmsctl key generate test-key --key-type signing --key-algorithm ed25519
 xkmsctl key list
 xkmsctl key sign test-key "hello world"
 xkmsctl key delete test-key
@@ -75,21 +79,25 @@ mTLS provides certificate-based mutual authentication. Both the server and clien
 
 ```bash
 # Generate a self-signed CA (or use your existing PKI)
-xkmsctl cert create-ca --subject "CN=xkms CA,O=MyOrg" --output /etc/xkms/tls/ca.pem
+xkmsctl cert generate-ca --cn "xkms CA" --org MyOrg \
+  --output /etc/xkms/tls/ca.pem --key-output /etc/xkms/tls/ca-key.pem
 
 # Generate server certificate
 xkmsctl cert issue \
-  --ca /etc/xkms/tls/ca.pem \
-  --subject "CN=xkmsd,O=MyOrg" \
-  --san "DNS:localhost,IP:127.0.0.1" \
-  --output /etc/xkms/tls/server.pem
+  --ca-cert /etc/xkms/tls/ca.pem --ca-key /etc/xkms/tls/ca-key.pem \
+  --cn xkmsd --org MyOrg --type server \
+  --dns localhost --ip 127.0.0.1 \
+  --output /etc/xkms/tls/server.pem --key-output /etc/xkms/tls/server-key.pem
 
 # Generate admin client certificate
 xkmsctl cert issue \
-  --ca /etc/xkms/tls/ca.pem \
-  --subject "CN=admin,O=MyOrg" \
-  --output /etc/xkms/tls/admin.pem
+  --ca-cert /etc/xkms/tls/ca.pem --ca-key /etc/xkms/tls/ca-key.pem \
+  --cn admin --org MyOrg --type client \
+  --output /etc/xkms/tls/admin.pem --key-output /etc/xkms/tls/admin-key.pem
 ```
+
+Flags: `cert generate-ca` at `cmd/xkmsctl/cert.go:1114-1124`, `cert issue` at
+`cert.go:1128-1144`.
 
 **2. Configure the server** (`xkmsd.yaml`):
 
@@ -177,8 +185,11 @@ Follow the prompts to touch your security key or approve in the xkey terminal.
 **3. Authenticate with FIDO2:**
 
 ```bash
-xkmsctl --auth fido2 admin status
+xkmsctl auth login --method fido2
 ```
+
+`--method` is one of `mtls`, `fido2`, `piv`, `pkcs11`
+(`cmd/xkmsctl/auth_factor_handlers.go:303`).
 
 > **Deep dive**: [WebAuthn Documentation](webauthn.md) | [FIDO2 CLI Reference](cli/fido2.md) | [xKey FIDO2](../fido2/architecture.md)
 
@@ -265,4 +276,4 @@ The server unseals the barrier on each restart through the configured seal strat
 | CLI command reference | [CLI Overview](cli/README.md) |
 | PIV slot management | [PIV Documentation](../piv/user.md) |
 | xKey security key interface | [xKey Overview](../README.md) |
-| Docker deployment | [Docker Quick Start](../deployment/docker-quickstart.md) |
+| Docker deployment | [Docker Quick Start](../../../docs/deployment/docker-quickstart.md) |

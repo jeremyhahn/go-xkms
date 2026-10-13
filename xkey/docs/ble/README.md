@@ -1,6 +1,9 @@
 # xkey Phone Backend via BLE
 
-Use your Android phone as a secure FIDO2 key backend via Bluetooth Low Energy. Keys are stored in Android Keystore/StrongBox with biometric binding, providing hardware-backed security without dedicated hardware tokens.
+> **Status: REFERENCE** · Last verified: 2026-10-13
+> Quick-start overview of the BLE phone backend; the [ble](architecture.md) feature folder is normative.
+
+Use an Android phone as a FIDO2 key backend over Bluetooth Low Energy. Key storage, biometric prompts and the GATT server live in the separate **xkey-android** app; this repository holds the desktop side (`xkey/pkg/phone`) and the wire contract the app must match (see [Architecture](architecture.md#the-android-app-is-out-of-scope-for-this-repository)).
 
 ## Overview
 
@@ -14,38 +17,32 @@ The phone backend enables xkey to use an Android phone as a remote signing devic
                                        └────────┬────────┘
                                                 │
                                            BLE GATT
-                                        (encrypted link)
+                                       (Noise XX session)
                                                 │
                                        ┌────────▼────────┐
                                        │ Android Phone   │
                                        │ BLE Peripheral  │
                                        │  (GATT Server)  │
-                                       │  ┌───────────┐  │
-                                       │  │ StrongBox │  │
-                                       │  └───────────┘  │
                                        └─────────────────┘
 ```
 
 ## Key Features
 
-- **Hardware-backed security**: Keys stored in Android Keystore with StrongBox (hardware security module)
-- **Biometric protection**: Every signing operation requires fingerprint or face authentication
-- **Double encryption**: BLE link encryption + Noise protocol application layer
-- **No network required**: Direct BLE connection, works offline
-- **Cross-platform**: Linux (BlueZ), macOS, and Windows support
+- **Application-layer encryption**: every exchange runs inside a Noise XX session (`Noise_XX_25519_ChaChaPoly_SHA256`, `xkey/pkg/pairing/noise.go:28`). The desktop does not perform OS-level BLE pairing or require an encrypted link; Noise is the only confidentiality layer it relies on (`xkey/pkg/phone/ble_transport.go:506-507`).
+- **No network required**: direct BLE connection, works offline.
+- **Linux (BlueZ)**: the central's recovery paths shell out to `bluetoothctl` (`ble_transport.go:1161-1214`), so macOS and Windows support is unconfirmed.
 
 ## Quick Start
 
 ### Prerequisites
 
 **Desktop (xkey):**
-- Linux with BlueZ 5.48+ (or macOS/Windows)
+- Linux with BlueZ and `bluetoothctl` on `PATH`
 - Bluetooth adapter with BLE support
-- xkey built with BLE support: `go build -tags ble ./cmd/xkey/`
+- xkey built with the `ble` tag: `make build` includes it (`xkey/Makefile:90`), or `go build -tags ble ./cmd/xkey/` from `xkey/`
 
 **Phone:**
-- Android 9+ (API 28) with biometric hardware
-- xkey Android app installed
+- The xkey-android app installed
 
 ### Pairing
 
@@ -58,22 +55,24 @@ There is no `xkey phone pair` command; pairing is `xkey device pair`
    xkey device pair
    ```
 3. The desktop prints a short verification code derived from the Noise
-   handshake (go-xkms#1306). The Android app does not yet display a matching
-   code, so there is nothing to confirm against it today; treat the printed
-   code as informational until it does.
+   handshake (`xkey/cmd/xkey/cmd/device_pair.go:363`). The Android app does
+   not yet display a matching code, so there is nothing to confirm against
+   it today; treat the printed code as informational until it does.
 4. Keys are exchanged for secure communication
 
 ### Usage
 
-Start the virtual FIDO2 device with phone backend:
+Start the virtual FIDO2 device with phone backend (`xkey/cmd/xkey/cmd/fido2.go:405`):
 
 ```bash
 xkey fido2 --backend phone
 ```
 
+`--phone-device <name-or-address>` selects a specific paired phone (`fido2.go:411`).
+
 Then use WebAuthn sites normally. When authentication is needed:
 1. Phone receives signing request
-2. User confirms with biometric
+2. User confirms on the phone
 3. Signature sent back to desktop
 4. WebAuthn completes
 
@@ -81,19 +80,18 @@ Then use WebAuthn sites normally. When authentication is needed:
 
 - [Architecture](architecture.md) - System design and security model
 - [Protocol](protocol.md) - BLE GATT and JSON-RPC protocol specification
-- [Android App](android-app.md) - Building and using the Android app
-- [Testing](testing.md) - Integration testing guide
+- [Android App](android-app.md) - Where the phone-side app lives and what it must match
+- [Testing](testing.md) - Unit, integration and virtual-HCI BLE tests
 
 ## Security Model
 
 | Threat | Mitigation |
 |--------|------------|
-| BLE eavesdropping | Link encryption + Noise app layer |
-| BLE MITM | LE Secure Connections + Noise mutual auth |
+| BLE eavesdropping | Noise XX session encryption |
+| BLE MITM | Noise XX against the phone's pinned static key (`ExpectedRemoteStatic`, required unless `TrustNewDevices`, `xkey/pkg/phone/phone.go:372`) |
 | Compromised BLE stack | Noise layer still protects |
-| Stolen phone (locked) | Biometric required for signing |
 | Stolen laptop | No keys stored, just pairing info |
-| Replay attacks | Noise counters + nonces |
+| Replay attacks | Noise transport nonces |
 
 ## Requirements
 
@@ -104,15 +102,8 @@ Build with BLE support:
 go build -tags ble ./cmd/xkey/
 ```
 
-Without the `ble` tag, phone commands return `ErrBLEUnavailable`.
+Without the `ble` tag, the BLE transport is a stub (`xkey/pkg/phone/ble_transport_stub.go:13`) and phone operations return `ErrBLEUnavailable` (`xkey/pkg/phone/errors.go:119`).
 
 ### Linux
 
-- BlueZ 5.48+ (standard on modern distros)
-- User in `bluetooth` group or root access
-
-### Android
-
-- Android 9+ (API 28)
-- StrongBox or TEE for key storage
-- Biometric hardware (fingerprint or face)
+- BlueZ with `bluetoothctl` on `PATH`

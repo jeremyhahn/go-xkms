@@ -1,5 +1,8 @@
 # Noise Protocol Key Management
 
+> **Status: REFERENCE** · Last verified: 2026-10-13
+> Scope: `xkmsctl bootstrap noise`, the go-xkms server CLI (`cmd/xkmsctl/bootstrap_noise.go`, `cmd/xkmsctl/bootstrap_p256.go`).
+
 > **Scope:** this page documents the go-xkms **server** CLI
 > `xkmsctl bootstrap noise` (source: `cmd/xkmsctl/bootstrap_noise.go`), **not**
 > the `xkey` desktop CLI. It lives under `xkey/docs/` for historical reasons.
@@ -16,9 +19,13 @@ The command group sits under `bootstrap`:
 
 ```
 xkmsctl bootstrap noise generate-key
+xkmsctl bootstrap noise generate-p256-key
 xkmsctl bootstrap noise show-key
+xkmsctl bootstrap noise show-p256-key
 xkmsctl bootstrap noise show-spki-pin
 ```
+
+Flags are defined in `cmd/xkmsctl/bootstrap.go:311`.
 
 ## generate-key
 
@@ -40,7 +47,30 @@ xkmsctl bootstrap noise generate-key --output /etc/xkms/noise.key
 
 | Flag | Default | Description |
 |------|---------|-------------|
-| `--output`, `-o` | **required** | File to write the private key to, with 0600 permissions |
+| `--output`, `-o` | **required** | File to create the private key in, mode 0600; must not already exist |
+
+## generate-p256-key
+
+Generates a P-256 static keypair for the `TSBOOT1_P256_AESGCM_SHA256` bootstrap
+suite, the one a FIPS build serves: Noise NK mandates X25519, which SP 800-56A
+Rev. 3 does not approve (`cmd/xkmsctl/bootstrap_p256.go:46`). `--output`
+behaves exactly as for `generate-key`. There is no config field pointing the
+server at this file; to use it instead of a server-generated key, place it at
+`<storage.path>/bootstrap-noise-p256.key` before the server's first boot.
+
+```bash
+xkmsctl bootstrap noise generate-p256-key --output /etc/xkms/noise-p256.key
+```
+
+## show-p256-key
+
+Derives the uncompressed public point from a P-256 static private key; clients
+pin this value with `bootstrap auto --p256-key`. Takes `--key-file` or
+`--key-hex`, as `show-key` does.
+
+```bash
+xkmsctl bootstrap noise show-p256-key --key-file /etc/xkms/noise-p256.key
+```
 
 ## show-key
 
@@ -86,6 +116,7 @@ xkmsctl bootstrap auto \
 | Flag | Description |
 |------|-------------|
 | `--noise-key` | Hex-encoded Noise static **public** key of the server |
+| `--p256-key` | Hex-encoded P-256 static public key of the server, for the FIPS-approved suite |
 | `--noise-addr` | Noise bootstrap server address (`host:port`) |
 
 The server's Noise listener is configured by `server.noise_port` (8447 in

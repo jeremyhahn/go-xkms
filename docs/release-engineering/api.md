@@ -1,7 +1,7 @@
 # Release engineering — API
 
-**Status:** implemented.
-**Last verified:** 2026-10-08.
+> **Status: NORMATIVE** · Last verified: 2026-10-13
+> Conflicts with this document are defects. Fix them here first.
 
 No programmatic API surface: releases are cut by an operator or a project agent
 through `make release-alpha` (prepare) and `make release-tag` (publish, once

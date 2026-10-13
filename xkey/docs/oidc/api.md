@@ -1,6 +1,7 @@
 # OIDC — API
 
-Status: current. Last verified: 2026-09-22.
+> **Status: NORMATIVE** · Last verified: 2026-10-13
+> Conflicts with this document are defects. Fix them here first.
 
 No API surface: the CLI's OIDC token store (this feature folder) is
 reachable only through `xkey oidc ...` (see [cli.md](cli.md)) and, for the

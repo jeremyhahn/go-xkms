@@ -1,5 +1,8 @@
 # Phone Backend Key Attestation
 
+> **Status: REFERENCE** · Last verified: 2026-10-13
+> Attestation background for the xkmsd phone backend; superseded by [phone-hsm/architecture.md](../../phone-hsm/architecture.md) and [phone/attestation.md](../attestation.md). Where they disagree, the feature folders win.
+
 ## Overview
 
 The phone backend supports Android Key Attestation, which produces X.509 certificate chains proving that keys are stored in hardware (TEE or StrongBox). The attestation chain roots to Google's hardware attestation root CA, providing a trusted third-party guarantee of hardware backing.
@@ -10,7 +13,7 @@ The phone backend supports Android Key Attestation, which produces X.509 certifi
 |-------|--------------|-----------|
 | Transport | Paired device identity | Noise XX static keys |
 | Key | Key is hardware-backed | Android Key Attestation X.509 chain |
-| Device | Device is genuine | Play Integrity API (future) |
+| Device | Device state, liveness | `local.attestDevice` (see [phone/attestation.md](../attestation.md)) |
 
 ## How Android Key Attestation Works
 
@@ -36,24 +39,18 @@ xkmsd                   Phone Backend               Android Phone
    |--- AttestKey(nonce) ------->|                            |
    |                             |--- local.attestKey ------->|
    |                             |                            |
-   |                             |           Generate attestation chain
-   |                             |           with nonce embedded in leaf
-   |                             |           certificate extension
-   |                             |                            |
    |                             |<-- [leaf, inter, root] ----|
    |                             |                            |
-   |    Verify chain to Google root CA                        |
-   |    Parse OID 1.3.6.1.4.1.11129.2.1.17                   |
-   |    Verify nonce matches                                  |
-   |    Check security level (TEE/StrongBox)                  |
-   |    Validate key properties                               |
+   |    Platform verifier (when configured):                  |
+   |    verify chain to the configured trust store,           |
+   |    nonce, minimum security level, boot state             |
    |                             |                            |
-   |<-- AttestationStatement ----|                            |
+   |<-- AttestationResult -------|                            |
 ```
 
 ## Attestation Extension Contents (OID 1.3.6.1.4.1.11129.2.1.17)
 
-The ASN.1-encoded extension contains:
+Defined by the Android Key Attestation schema:
 
 | Field | Description |
 |-------|-------------|
@@ -67,8 +64,6 @@ The ASN.1-encoded extension contains:
 | `teeEnforced` | Key properties enforced by hardware |
 
 ### TEE-Enforced Key Properties
-
-The `teeEnforced` field contains the security-critical properties:
 
 | Property | Description |
 |----------|-------------|
@@ -85,6 +80,8 @@ The `teeEnforced` field contains the security-critical properties:
 
 ### Request: `local.attestKey`
 
+`LocalAttestKeyParams` (`xkey/pkg/pairing/protocol_local.go:236`):
+
 ```json
 {
   "jsonrpc": "2.0",
@@ -99,6 +96,8 @@ The `teeEnforced` field contains the security-critical properties:
 
 ### Response
 
+`LocalAttestKeyResult` (`protocol_local.go:242`):
+
 ```json
 {
   "jsonrpc": "2.0",
@@ -107,206 +106,84 @@ The `teeEnforced` field contains the security-critical properties:
     "format": "android-keystore",
     "certificateChain": ["<base64 leaf>", "<base64 intermediate>", "<base64 root>"],
     "securityLevel": "strongbox",
-    "nonce": "<base64 echoed challenge>",
-    "attestationData": {
-      "keymasterVersion": 200,
-      "attestationSecurityLevel": 2,
-      "purpose": ["sign"],
-      "algorithm": "ec",
-      "keySize": 256,
-      "digest": ["sha256"],
-      "origin": "generated",
-      "rootOfTrust": {
-        "verifiedBootKey": "<hex>",
-        "deviceLocked": true,
-        "verifiedBootState": "verified"
-      },
-      "osVersion": 150000,
-      "osPatchLevel": 202501
-    }
+    "nonce": "<base64 echoed challenge>"
   }
 }
 ```
 
 ### Error Responses
 
-| Code | Name | Description |
-|------|------|-------------|
-| -32000 | KeyNotFound | Credential does not exist |
-| -32008 | AttestationUnavailable | Device does not support attestation |
-| -32603 | InternalError | Keystore or hardware failure |
+Codes from `xkey/pkg/pairing/protocol.go:47`:
+
+| Code | Constant |
+|------|----------|
+| -32000 | `ErrorCodeKeyNotFound` |
+| -32009 | `ErrorCodeAttestFailed` |
+| -32010 | `ErrorCodeAttestUnsupported` |
+| -32603 | standard internal error |
 
 ## Go-Side Verification
 
-The Go backend (`pkg/backend/phone/attestation.go`) verifies attestation in five steps:
+`Backend.AttestKey` (`pkg/backend/phone/attestation.go:83`) sends
+`local.attestKey` with the key's CN as `keyId` and the caller's nonce. What
+happens next depends on whether the backend `Config.Attestation` is set (see
+[configuration.md](configuration.md)); the xkmsd `backends.phone` section has
+no attestation key, so a backend registered by xkmsd
+(`RegisterPhoneBackend`, `pkg/server/backend_phone.go:58`) never has one:
 
-### Step 1: Certificate Chain Validation
+- **No verifier configured** — the raw chain is returned with
+  `Verified: false`.
+- **Verifier configured** — the platform verifier registered for
+  `attestation.platform` checks the chain. The Android verifier
+  (`AndroidVerifier.VerifyAttestation`,
+  `pkg/backend/phone/android/verifier.go:85`) parses the DER chain and calls
+  `VerifyKeyAttestation` with the configured trust roots, the expected nonce,
+  `min_security_level` and `verify_boot_state`. Any failure returns
+  `ErrChainVerificationFailed`.
 
-Verify the chain from the leaf certificate through the intermediate to Google's hardware attestation root CA. The root certificate is embedded in the Go binary for offline verification.
+The Android verifier is activated by a blank import of
+`github.com/jeremyhahn/go-xkms/pkg/backend/phone/android`
+(`pkg/backend/phone/doc.go`).
 
-```go
-// Google Hardware Attestation Root CA is the trust anchor
-// for all Android hardware attestation chains
-roots := x509.NewCertPool()
-roots.AddCert(googleHardwareAttestationRoot)
+Software-level attestations are accepted unless `min_security_level` is set
+to `tee` or `strongbox` (see [security.md](security.md)).
 
-opts := x509.VerifyOptions{
-    Roots:         roots,
-    Intermediates: intermediatePool,
-    KeyUsages:     []x509.ExtKeyUsage{x509.ExtKeyUsageAny},
-}
+## Attestation Result
 
-_, err := leafCert.Verify(opts)
-```
-
-### Step 2: Parse Attestation Extension
-
-Extract the attestation data from the leaf certificate's extension with OID `1.3.6.1.4.1.11129.2.1.17`.
-
-```go
-var attestationOID = asn1.ObjectIdentifier{1, 3, 6, 1, 4, 1, 11129, 2, 1, 17}
-
-for _, ext := range leafCert.Extensions {
-    if ext.Id.Equal(attestationOID) {
-        // Parse ASN.1-encoded attestation extension
-        attestation, err := parseAttestationExtension(ext.Value)
-    }
-}
-```
-
-### Step 3: Nonce Verification
-
-Ensure `attestationChallenge` in the extension matches the nonce that was sent in the attestation request. This prevents replay attacks.
+`AttestKey` returns an `AttestationResult`
+(`pkg/backend/phone/attestation.go:28`):
 
 ```go
-if !bytes.Equal(attestation.Challenge, expectedNonce) {
-    return ErrAttestationNonceMismatch
-}
-```
-
-### Step 4: Security Level Check
-
-Verify that `attestationSecurityLevel` is TEE (1) or StrongBox (2). Software-level attestation (0) is rejected in production because it does not prove hardware backing.
-
-```go
-if attestation.SecurityLevel < SecurityLevelTEE {
-    return ErrAttestationNotHardwareBacked
-}
-```
-
-### Step 5: Key Properties Validation
-
-Confirm that the key algorithm, purpose, and key size match the expected values for the credential.
-
-```go
-if attestation.Algorithm != expectedAlgorithm {
-    return ErrAttestationAlgorithmMismatch
-}
-if attestation.KeySize != expectedKeySize {
-    return ErrAttestationKeySizeMismatch
-}
-```
-
-## Attestation Statement
-
-The phone backend returns an `attestation.AttestationStatement` (from `pkg/attestation/types.go`):
-
-```go
-type AttestationStatement struct {
-    Format           string              // "android-keystore"
-    Signature        []byte              // Not used (chain-based attestation)
-    CertificateChain []*x509.Certificate // [leaf, intermediate, root]
-    Nonce            []byte              // Challenge nonce
-    Backend          string              // "android-keystore-tee" or "android-keystore-strongbox"
-    AttestationData  interface{}         // Parsed attestation extension data
+type AttestationResult struct {
+    Format           string   // e.g. "android-keystore"
+    CertificateChain [][]byte // DER, leaf first
+    AttestationData  []byte
+    Nonce            []byte   // echoed challenge
+    Backend          string   // "android-keystore-strongbox" or "android-keystore-tee"
+    Verified         bool     // chain and extension verified
+    PlatformData     any      // *android.KeyDescription on Android
 }
 ```
 
 ### Security Level to Backend Mapping
 
-| Security Level | Value | Backend String |
-|---------------|-------|----------------|
-| Software | 0 | Rejected (not hardware-backed) |
-| TEE | 1 | `android-keystore-tee` |
-| StrongBox | 2 | `android-keystore-strongbox` |
+`securityLevelMapping` (`pkg/backend/phone/attestation.go:56`):
+
+| `securityLevel` | Backend String |
+|-----------------|----------------|
+| `tee` | `android-keystore-tee` |
+| `strongbox` | `android-keystore-strongbox` |
 
 ## CLI Usage
 
-### Attest a Phone-Backed Key
-
 ```bash
-xkmsctl attest --backend phone --key my-signing-key
+xkmsctl key attest my-signing-key --backend phone
+xkmsctl key attest my-signing-key --backend phone --nonce <base64> --output attestation.json
 ```
 
-Output:
-
-```
-Attestation Format: android-keystore
-Security Level: StrongBox
-Certificate Chain: 3 certificates
-Chain Valid: true (verified to Google root CA)
-Key Algorithm: EC P-256
-Key Purpose: Sign
-Hardware Origin: Generated in hardware
-Boot State: Verified, device locked
-OS Version: Android 15, patch 2025-01
-```
-
-### Verbose Attestation Output
-
-```bash
-xkmsctl attest --backend phone --key my-signing-key --verbose
-```
-
-Output:
-
-```
-Attestation Format: android-keystore
-Security Level: StrongBox (level 2)
-Keymaster Version: 200
-
-Certificate Chain:
-  [0] Leaf:         CN=Android Keystore Key
-      Serial:       1234567890
-      Not Before:   2025-01-15 10:30:00 UTC
-      Not After:    2035-01-15 10:30:00 UTC
-  [1] Intermediate: CN=Google Hardware Attestation Intermediate
-      Serial:       9876543210
-  [2] Root:         CN=Google Hardware Attestation Root
-      Serial:       1
-
-Chain Valid: true
-
-Key Properties (TEE-enforced):
-  Algorithm:  EC P-256
-  Key Size:   256 bits
-  Purpose:    Sign
-  Digest:     SHA-256
-  Origin:     Generated in hardware
-
-Root of Trust:
-  Verified Boot Key: a1b2c3d4...
-  Device Locked:     true
-  Boot State:        Verified
-
-OS Info:
-  Version:     Android 15 (150000)
-  Patch Level: 2025-01
-```
-
-## Backends That Do Not Support Attestation
-
-The `Capabilities` struct includes an `Attestation` field. Backends that do not support attestation return `backend.ErrOperationNotSupported` from `AttestKey()`.
-
-| Backend | Attestation | Format |
-|---------|------------|--------|
-| Phone | Yes | `android-keystore` |
-| TPM2 | Yes | `tpm2` |
-| PKCS#11 | Yes | `pkcs11` |
-| Software | No | N/A |
-| AWS KMS | No | N/A |
-| GCP KMS | No | N/A |
-| Azure KV | No | N/A |
+`key attest` is defined at `cmd/xkmsctl/key.go:1340`; `--nonce` (random 32
+bytes when omitted) and `--output` at `key.go:1984-1985`; `--backend` is the
+global flag (`cmd/xkmsctl/root.go:118`).
 
 ## Root of Trust Verification
 
@@ -320,12 +197,13 @@ The `rootOfTrust` field in the attestation extension provides verified boot stat
 | `deviceLocked` | `true` | Bootloader is locked |
 | `deviceLocked` | `false` | Bootloader is unlocked |
 
-Production deployments should require `verifiedBootState == "verified"` and `deviceLocked == true` to ensure the device has not been tampered with.
+An embedder that sets `AttestationConfig.VerifyBootState` rejects devices
+whose boot state is not `verified`.
 
 ## See Also
 
-- [Phone Backend Architecture](../phone/)
+- [Phone Backend](README.md)
 - [Phone Backend Configuration](configuration.md)
-- [Bidirectional Attestation](../../xkey/phone-backend.md)
-- [TPM2 Attestation](../tpm2.md)
+- [Bidirectional Attestation](../attestation.md)
+- [TPM2](../../../../docs/tpm2/architecture.md)
 - [Key Attestation Guide](../../../../docs/attestation-verifier/user.md)

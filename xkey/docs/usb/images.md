@@ -1,5 +1,8 @@
 # USB Disk Image Support
 
+> **Status: REFERENCE** · Last verified: 2026-10-13
+> Scope: background on portable USB images (`xkey/pkg/usb`); the usb feature folder ([architecture.md](architecture.md), [cli.md](cli.md)) is normative.
+
 xkey can create bootable USB disk images for portable deployments. Images work with both physical USB flash drives and QEMU virtual machines, allowing you to carry xkey and all its encrypted data on a single USB device.
 
 ## Overview
@@ -13,7 +16,7 @@ A USB image contains two partitions:
 | Type:  EFI System (EF00)  | Type:  Linux (8300)               |
 |                            |                                   |
 | - xkey binaries            | - Encrypted data partition        |
-| - xkey.sh launcher         | - AES-256-XTS via dm-crypt        |
+| - xkey.sh launcher         | - go-luks2 default parameters     |
 | - .xkey-home marker        | - ext4 filesystem inside          |
 | - README.txt               |                                   |
 +---------------------------+-----------------------------------+
@@ -28,7 +31,7 @@ The FAT32 partition is readable on any OS and contains multi-architecture xkey b
 | 1 | FAT32 | 512 MB (fixed) | EF00 (EFI System) | Binaries, launcher, marker |
 | 2 | LUKS2 + ext4 | Remaining space | 8300 (Linux) | Encrypted data |
 
-Minimum image size is 1 GB. The GPT partition table is created with `sgdisk`.
+Minimum image size is 1 GB (`MinImageSize`, `xkey/pkg/usb/size.go:34`). The GPT partition table is created with `sgdisk`, the FAT32 partition with `mkfs.vfat`.
 
 ## CLI Commands
 
@@ -51,10 +54,10 @@ Prompts for a LUKS passphrase with confirmation.
 
 ### status - Show Image Status
 
-Displays partition sizes, LUKS mount status, and detected binaries.
+Displays partition sizes, LUKS mount status, and detected binaries. Does not require root.
 
 ```bash
-xkey usb status <path>
+xkey usb status [path]
 ```
 
 ### update - Update Binaries
@@ -140,21 +143,23 @@ The `xkey/pkg/usb` package provides the programmatic interface.
 type ImageConfig struct {
     Path       string   // Output path (file or block device)
     SizeBytes  int64    // Total size (ignored for block devices)
-    Passphrase string   // LUKS passphrase for the data partition
-    Binaries   []string // Paths to xkey binaries for the FAT32 partition
+    Passphrase *secure.Secret // LUKS passphrase, held in protected memory; nil is rejected
+    Binaries   []string       // Paths to xkey binaries for the FAT32 partition
 }
 ```
+
+Defined in `xkey/pkg/usb/image.go:46`.
 
 ## Security Notes
 
 - The FAT32 partition is **not encrypted**. Do not store secrets on it.
-- The LUKS2 data partition uses AES-256-XTS via the kernel dm-crypt subsystem.
+- The LUKS2 header is written by go-luks2 with its default format parameters (`luks2.FormatParams{}`, `xkey/pkg/usb/image.go:318`).
 - Always safely eject the USB drive before removing it.
 - Keep a secure backup of your passphrase; it is not recoverable.
 - `ValidateBlockDevice` prevents accidental writes to system disks by checking `/proc/mounts`.
 
 ## See Also
 
-- [LUKS2 Encrypted Storage](luks.md) - LUKS container management
-- [Auto-Unseal](auto-unseal.md) - TPM-based auto-unseal for LUKS and barrier
-- [Architecture](architecture.md) - System design overview
+- [USB CLI](cli.md) - every `xkey usb` verb and flag
+- [USB Architecture](architecture.md) - feature design
+- [LUKS](../luks/cli.md) - LUKS container management and the unlock gate

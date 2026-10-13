@@ -1,5 +1,8 @@
 # Backend Selection Architecture
 
+> **Status: REFERENCE** · Last verified: 2026-10-13
+> How xkey picks a default backend and routes GUI views to backends; cross-cutting, no feature folder.
+
 ## Overview
 
 xkey supports multiple concurrent cryptographic backends (software, TPM2, PKCS#11, cloud KMS, etc.). The backend selection system provides:
@@ -24,17 +27,17 @@ Setup Wizard → GUIConfig.SealerBackend → AdminService.SetDefaultBackend()
 
 | Component | Role |
 |-----------|------|
-| `SetupWizardService.ApplySetup()` | Auto-fills `SealerBackend` from `SealService.BestSealer()` if not explicitly chosen |
-| `AdminService.SetDefaultBackend()` | Validates backend, updates registry defaults for all supported capabilities, syncs SealService, persists to config |
-| `AdminService.GetSystemDefaultBackend()` | Returns current default (SealService priority > registry > "software") |
-| `SealService` | Manages sealers, auto-selects by `SecurityLevel` (TPM2 VeryHigh > PKCS11 High > Software Low) |
-| `GUIConfig.SealerBackend` | Persistent storage in `gui.json` |
+| `SetupWizardService.ApplySetup()` | Auto-fills `SealerBackend` from `SealService.BestSealer()` if not explicitly chosen, else `"passphrase"` (`xkey/pkg/gui/services/setup_wizard_service.go:656-663`) |
+| `AdminService.SetDefaultBackend()` | Validates backend, updates registry defaults for all supported capabilities, syncs SealService, persists to config (`admin_service.go:836`) |
+| `AdminService.GetSystemDefaultBackend()` | Returns current default: SealService default, else the registry's `signing` default, else `"software"` (`admin_service.go:892`, `:823`) |
+| `SealService` | Manages sealers; `BestSealer()` picks the highest `SecurityLevel`, ties broken by ID (`seal_service.go:458`) |
+| `GUIConfig.SealerBackend` | Persistent storage in `gui.json` (`xkey/pkg/gui/config.go:153`) |
 
 ### Auto-Selection Priority
 
 1. User's explicit choice (setup wizard or Settings/Admin)
 2. `SealService.BestSealer()` — highest `SecurityLevel` among available sealers
-3. Fallback: `"software"`
+3. Fallback in setup: `"passphrase"`; fallback in `GetDefaultBackend()`: `"software"`
 
 ## Per-Operation Backend Routing
 
@@ -42,23 +45,26 @@ Setup Wizard → GUIConfig.SealerBackend → AdminService.SetDefaultBackend()
 
 ```
 Keys.svelte (filter chips + dialog selector)
-  → KeyService.ListKeys(source, backend)
-    → SDK transport.Client.ListKeys(ctx, backend)
+  → KeyService.ListBackends('local') + KeyService.ListAllKeys('local')
+    → SDK transport client
       → go-xkms server backend routing
 ```
 
-The `source` parameter selects local vs remote client. The `backend` parameter routes to a specific backend within the server.
+`Keys.svelte` loads every key and filters client-side; per-key operations
+pass the key's backend (`KeyService.DeleteKey('local', backend, keyId)`).
+`KeyService.ListKeys(source, backend)` (`xkey/pkg/gui/services/key_service.go:349`)
+queries a single backend. The `source` parameter selects local vs remote
+client; the `backend` parameter routes to a specific backend within the server.
 
-### Pattern for Each App View
+### Views Using BackendSelector
 
-| View | Capability Filter | Backend Selection |
-|------|-------------------|-------------------|
-| Keys | `signing` | Filter chips + dialog selector |
-| Certificates | `signing` | BackendSelector component + client-side filtering |
-| FIDO2 | `fido2` | BackendSelector filter chips |
-| Passwords | `passwords` | BackendSelector chips + dialog backend field |
-| PIV | `piv` | BackendSelector (connected only, no "All") |
-| OATH | `oath` | BackendSelector filter chips |
+| View | Capability Filter |
+|------|-------------------|
+| Certificates | `signing` |
+| SSH (and `GenerateSSHKeyDialog`) | `signing` |
+| FIDO2 | `fido2` |
+| PIV | `piv` |
+| OATH | `oath` |
 
 ### Service Layer
 
@@ -86,7 +92,7 @@ The `BackendSelector` component filters backends by capability:
 <BackendSelector capability="fido2" bind:selected={selectedBackend} />
 ```
 
-Capabilities are defined in `pkg/backendregistry/types.go`:
+Capabilities are defined in `xkey/pkg/backendregistry/types.go:113-121`:
 
 | Capability | Description |
 |------------|-------------|
@@ -98,6 +104,7 @@ Capabilities are defined in `pkg/backendregistry/types.go`:
 | `CapPIV` | PIV smart card operations |
 | `CapOATH` | OATH TOTP/HOTP tokens |
 | `CapPasswords` | Static password storage |
+| `CapSSH` | SSH keys |
 
 ## BackendSelector Component
 
@@ -134,8 +141,7 @@ User clicks "Set as Default" in Admin Backends view
 ## Data Flow: Per-Operation Routing
 
 ```
-User selects "tpm2" backend in Keys view filter chips
-  → selectedBackend = 'tpm2'
+Caller requests keys from the "tpm2" backend
   → KeyService.ListKeys('local', 'tpm2')
     → client.ListKeys(ctx, 'tpm2')
       → SDK transport routes to TPM2 backend

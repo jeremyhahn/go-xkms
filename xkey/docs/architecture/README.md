@@ -1,5 +1,8 @@
 # Xkey Architecture
 
+> **Status: REFERENCE** · Last verified: 2026-10-13
+> Cross-cutting overview of the virtual FIDO2 authenticator's layers; the [virtual-authenticator](../virtual-authenticator/) and [fido2](../fido2/) feature folders are normative.
+
 This document describes the architecture of xkey and its component interfaces.
 
 ## Overview
@@ -21,8 +24,8 @@ xkey is a virtual FIDO2/WebAuthn authenticator that exposes itself as a USB HID 
          | /dev/uhid
          v
 +-------------------+
-|   VirtualFIDO2    |  cmd/xkey
-|      Device       |
+|    fido2Device    |  xkey/cmd/xkey/cmd
+|                   |
 +-------------------+
          |
          v
@@ -102,74 +105,60 @@ The Credential Master Key (CMK) is wrapped twice, once by the Admin Key (AK) der
 
 ### KeyManager Component
 
-The `KeyManager` orchestrates all key derivation, wrapping, and unwrapping operations.
-
-```go
-type KeyManager struct {
-    storage    KeyStorage
-    config     *KeyManagerConfig
-    smk        []byte           // Cached SO Master Key (cleared after use)
-    umk        []byte           // Cached User Master Key (cleared after use)
-    cmk        []byte           // Cached Credential Master Key
-    ak         []byte           // Cached Admin Key
-    attestKey  crypto.PrivateKey // Cached attestation signing key
-    mu         sync.RWMutex
-}
-```
+`KeyManager` (`xkey/pkg/authenticator/key_manager.go:93`) orchestrates all key
+derivation, wrapping, and unwrapping. It holds the unwrapped AK, CMK, SMK, and
+UMK in memguard-backed `*secure.Buffer`s (mlocked, wiped on `Lock`) and never
+caches the attestation key unwrapped: `AttestationSigner` unwraps it for each
+signature.
 
 **Key Methods:**
 
-- `DeriveSOKey(sopin []byte) ([]byte, error)` - Derive SMK from SO PIN
-- `DeriveUserKey(pin []byte) ([]byte, error)` - Derive UMK from User PIN
-- `UnwrapAdminKey(smk []byte) ([]byte, error)` - Unwrap AK using SMK
-- `UnwrapCMK(key []byte, isAdmin bool) ([]byte, error)` - Unwrap CMK using AK or UMK
-- `WrapCredentialKey(cmk, credKey []byte) ([]byte, error)` - Wrap credential key
-- `UnwrapCredentialKey(cmk, wrappedKey []byte) ([]byte, error)` - Unwrap credential key
-- `InitializeSOPIN(sopin []byte) error` - Set up SO key hierarchy
-- `ChangeSOPIN(oldPIN, newPIN []byte) error` - Re-wrap AK with new SO PIN
-- `ResetUserPIN(smk, newPIN []byte) error` - SO resets user PIN
+- `UnlockWithSOPIN(pin string) error` - Derive SMK, unwrap AK, unwrap the SO copy of CMK
+- `UnlockWithUserPIN(pinHash []byte) error` - Derive UMK from the CTAP2 PIN hash, unwrap the user copy of CMK
+- `InitializeSOPIN(soPin string) error` - Generate AK, CMK, and the attestation key and wrap them
+- `InitializeUserPIN(pinHash []byte) error` - Wrap CMK under the UMK (SO-unlocked only)
+- `WrapCredentialKey(privateKeyPKCS8 *secure.Buffer) ([]byte, error)` - Wrap a credential key with CMK
+- `UnwrapCredentialKey(wrapped []byte) ([]byte, error)` - Unwrap a credential key with CMK
+- `AttestationSigner() (crypto.Signer, error)` - Signer over the wrapped attestation key
+- `ChangeSOPIN(currentSMK []byte, newPIN string) error` - Re-wrap AK with the new SMK
+- `ResetUserPIN(newPINHash []byte) error` - SO re-wraps CMK under a new UMK
+- `Lock()` - Destroy all cached key material
 
 ### Key Derivation Parameters
 
-Xkey uses Argon2id for PIN-to-key derivation with these default parameters:
+The UMK is derived with Argon2id using these parameters (`umk*` constants,
+`xkey/pkg/authenticator/key_manager.go:67-79`); the SMK is derived by the SO
+PIN manager:
 
 | Parameter | Value | Description |
 |-----------|-------|-------------|
 | Memory | 64 MB | Memory cost (64 * 1024 KB) |
 | Time | 3 | Number of iterations |
 | Parallelism | 4 | Degree of parallelism |
-| Salt | 32 bytes | Random, stored with wrapped keys |
+| Salt | 32 bytes | Set by `SetUMKSalt`, else derived from the SO PIN salt (or the AAGUID when no SO PIN is set) |
 | Key Length | 32 bytes | AES-256 key size |
 
 ## Component Details
 
-### VirtualFIDO2Device
+### fido2Device
 
-**Location**: `cmd/xkey/device.go`
+**Location**: `xkey/cmd/xkey/cmd/fido2.go:747`
 
-The top-level component that manages the virtual FIDO2 device lifecycle.
+The top-level component behind `xkey fido2` that manages the virtual FIDO2 device lifecycle.
 
 **Responsibilities**:
-- Opens and manages the UHID device
+- Opens and manages the UHID device (or the Chrome DevTools bridge with `--cdp`)
 - Creates and configures the authenticator
 - Runs the HID event loop
 - Handles graceful shutdown
 
-```go
-type VirtualFIDO2Device struct {
-    cfg        *Config
-    logger     *slog.Logger
-    uhidDevice *uhid.Device
-    auth       *authenticator.Authenticator
-    hidHandler *authenticator.CTAPHIDHandler
-    storage    authenticator.StatefulCredentialStorage
-    keyBackend keybackend.FIDO2KeyBackend
-    running    atomic.Bool
-}
-```
+It holds the UHID device, the `*authenticator.Authenticator`, the
+`*authenticator.CTAPHIDHandler`, the `StatefulCredentialStorage`, and the
+`keybackend.FIDO2KeyBackend`, plus the keyboard, IPC server, password store,
+notifier, and CDP bridge.
 
 **Key Methods**:
-- `NewVirtualFIDO2Device(cfg, logger)` - Creates device with configuration
+- `newFIDO2Device(ctx, cfg, logger)` - Creates the device from a `*FIDO2Config` (`fido2.go:766`)
 - `Run(ctx)` - Starts the event loop (blocking)
 - `Close()` - Stops device and releases resources
 
@@ -200,22 +189,27 @@ The core CTAP2 authenticator implementation.
 
 ```go
 type Authenticator struct {
-    config    *Config
-    storage   StatefulCredentialStorage
-    state     *AuthenticatorState
-    upHandler UserPresenceHandler
+    config     *Config
+    storage    StatefulCredentialStorage
+    state      *AuthenticatorState
+    keyBackend keybackend.FIDO2KeyBackend
+    upHandler  UserPresenceHandler
+    keyManager *KeyManager
     // ...
 }
 ```
 
-**CTAP2 Commands Supported**:
+**CTAP2 Commands Supported** (`Cmd*` constants, `authenticator.go:33-43`):
 - `0x01` MakeCredential - Register a new credential
 - `0x02` GetAssertion - Authenticate with a credential
 - `0x04` GetInfo - Get authenticator capabilities
 - `0x06` ClientPIN - PIN management
 - `0x07` Reset - Factory reset (requires SO PIN when enabled)
 - `0x08` GetNextAssertion - Continue multi-credential assertion
+- `0x09` BioEnrollment
 - `0x0A` CredentialManagement - Manage stored credentials
+- `0x0B` Selection
+- `0x0C` LargeBlobs
 - `0x0D` AuthenticatorConfig - Device configuration (CTAP2.1)
 
 ### AuthenticatorConfig Command (0x0D)
@@ -232,14 +226,25 @@ The CTAP2.1 `authenticatorConfig` command provides device configuration manageme
 
 **Vendor Subcommands (Xkey Extensions):**
 
+Vendor operations travel under the single `vendorPrototype` subcommand `0x80`
+(`AuthConfigCmdVendorPrototype`), which carries a vendor command ID
+(`VendorCmd*` constants, `xkey/pkg/authenticator/cmd_config.go:44-79`,
+dispatched by the map at `cmd_config.go:167`):
+
 | ID | Name | Description | Requires |
 |----|------|-------------|----------|
-| 0x80 | VendorSetSOPIN | Initialize SO PIN (first-time) | No auth |
-| 0x81 | VendorChangeSOPIN | Change existing SO PIN | Current SO PIN |
-| 0x82 | VendorUnlockWithSOPIN | Unlock authenticator | SO PIN |
-| 0x83 | VendorResetUserPIN | Reset user PIN | SO PIN |
-| 0x84 | VendorReplaceAttestKey | Replace attestation key | SO PIN |
-| 0x85 | VendorGetSOPINRetries | Query SO PIN retry count | No auth |
+| 0x01 | VendorCmdSetSOPIN | Initialize SO PIN (first-time) | — |
+| 0x02 | VendorCmdChangeSOPIN | Change existing SO PIN | Current SO PIN |
+| 0x03 | VendorCmdUnlockWithSOPIN | Unlock the KeyManager | SO PIN |
+| 0x04 | VendorCmdResetUserPIN | Reset user PIN | SO unlock |
+| 0x05 | VendorCmdReplaceAttestKey | Replace attestation key | SO unlock |
+| 0x06 | VendorCmdGetTokenInfo | Token lifecycle state | — |
+| 0x07 | VendorCmdSetRPPolicy | Set a per-RP policy | SO unlock |
+| 0x08 | VendorCmdGetRPPolicy | Get a per-RP policy | — |
+| 0x09 | VendorCmdDeleteRPPolicy | Delete a per-RP policy | SO unlock |
+| 0x0A | VendorCmdListRPPolicies | List per-RP policies | — |
+| 0x0B | VendorCmdSetProfile | Set the authenticator profile | SO unlock |
+| 0x0C | VendorCmdSetAttestCert | Install the attestation certificate chain | SO unlock |
 
 **Command Flow:**
 
@@ -262,46 +267,34 @@ Xkey implements the `deviceConfig` extension for relying party configuration ver
 
 **Extension Processing:**
 
+`DeviceConfigExtension` (`xkey/pkg/authenticator/ext_deviceconfig.go:47`):
+
 ```go
 type DeviceConfigExtension struct {
-    MinPINLength uint            `cbor:"1,keyasint"`
-    AlwaysUV     bool            `cbor:"2,keyasint"`
-    PINProtocol  uint            `cbor:"3,keyasint"`
-    AttestedHash []byte          `cbor:"4,keyasint"`
-    CurrentHash  []byte          `cbor:"5,keyasint"`
-    Tampered     bool            `cbor:"6,keyasint"`
-    Vendor       map[string]any  `cbor:"7,keyasint,omitempty"`
+    MinPINLength int                    `cbor:"minPINLength,omitempty"`
+    AlwaysUV     bool                   `cbor:"alwaysUV,omitempty"`
+    PINProtocol  int                    `cbor:"pinProtocol,omitempty"`
+    AttestedHash []byte                 `cbor:"attestedHash,omitempty"`
+    CurrentHash  []byte                 `cbor:"currentHash,omitempty"`
+    Tampered     bool                   `cbor:"tampered,omitempty"`
+    Vendor       map[string]interface{} `cbor:"vendor,omitempty"`
 }
 ```
 
 **Hash Computation:**
 
-```go
-// ConfigHash computes SHA-256 of canonical config representation
-func (c *DeviceConfig) Hash() []byte {
-    data := struct {
-        MinPINLength uint
-        AlwaysUV     bool
-        PINProtocol  uint
-        // ... other config fields
-    }{
-        MinPINLength: c.MinPINLength,
-        AlwaysUV:     c.AlwaysUV,
-        PINProtocol:  c.PINProtocol,
-    }
-    encoded, _ := cbor.Marshal(data)
-    hash := sha256.Sum256(encoded)
-    return hash[:]
-}
-```
+`ComputeConfigHash(cfg *Config)` (`ext_deviceconfig.go:100`) builds a canonical
+`ConfigForHash` from `PINMinLength`, `AlwaysUV`, and the PIN protocol version,
+marshals it to JSON, and returns its SHA-256.
 
 **Tamper Detection Flow:**
 
 ```
-1. During MakeCredential, attestedHash is computed and stored with credential
-2. During GetAssertion, currentHash is computed from current config
-3. Extension compares hashes and sets tampered flag
-4. Relying party receives tampered status in authenticator data
+1. When the Security Officer installs the attestation key, the configuration
+   hash is recorded as attestedHash (the baseline)
+2. Each response computes currentHash from the current configuration
+3. tampered is set when the two hashes differ
+4. Relying party receives tampered status in the extension output
 ```
 
 ## UserPresenceHandler Interface
@@ -345,8 +338,7 @@ type UserVerificationRequest struct {
 }
 
 type UserVerificationResult struct {
-    Verified bool   // Whether verification succeeded
-    PIN      string // Entered PIN (if required)
+    Verified bool // Whether verification succeeded
 }
 ```
 
@@ -381,7 +373,7 @@ type InteractiveHandler struct {
 }
 
 func NewInteractiveHandler() (*InteractiveHandler, error)
-func NewInteractiveHandlerWithIO(reader, writer io.Writer, fd int) *InteractiveHandler
+func NewInteractiveHandlerWithIO(reader io.Reader, writer io.Writer, fd int) *InteractiveHandler
 ```
 
 Behavior:
@@ -398,10 +390,16 @@ Abstracts cryptographic key operations, allowing different backend implementatio
 ```go
 type FIDO2KeyBackend interface {
     // Type returns the backend type identifier.
-    Type() FIDO2KeyBackendType
+    Type() xkms.BackendType
 
     // Capabilities returns what this backend supports.
     Capabilities() FIDO2KeyCapabilities
+
+    // HandlesUserVerificationFor / HandlesUserPresenceFor report whether the
+    // backend that holds a given credential's key verifies the user or
+    // collects presence inside the key operation.
+    HandlesUserVerificationFor(backendID xkms.BackendType) bool
+    HandlesUserPresenceFor(backendID xkms.BackendType) bool
 
     // GenerateCredentialKey creates a new key pair.
     GenerateCredentialKey(algorithm int, credentialID []byte) (KeyHandle, []byte, error)
@@ -435,6 +433,8 @@ type FIDO2KeyCapabilities struct {
     SupportsImport      bool  // Can import private keys
     SupportsAttestation bool  // Can provide attestation
     HardwareBacked      bool  // Keys stored in hardware
+    HandlesUserPresence     bool // Backend collects presence itself (e.g. phone biometric)
+    HandlesUserVerification bool // Backend verifies the user inside its key operations
 }
 ```
 
@@ -453,6 +453,7 @@ KMS backends are all reached through the same type, selected by `BackendType`.
 type BackendAdapter struct {
     provider    xkms.KeyProvider
     backendType xkms.BackendType
+    slotModel   xkms.PIVSlotModel // nil for non-slot backends
     // ...
 }
 
@@ -460,13 +461,13 @@ func NewBackendAdapter(provider xkms.KeyProvider, backendType xkms.BackendType) 
 ```
 
 `xkms` here is `github.com/jeremyhahn/go-xkms/sdk/go`. Backend selection uses the
-`BackendType` constants re-exported by that SDK (`sdk/go/types.go`), among them
-`BackendTypeSoftware`, `BackendTypeTPM2`, `BackendTypePKCS11`, `BackendTypeYubiKey`,
+`BackendType` constants re-exported by that SDK (`sdk/go/types.go:280-290`), among them
+`BackendTypeSoftware`, `BackendTypeTPM2`, `BackendTypePKCS11`, `BackendTypeAWSKMS`,
 and `BackendTypePhone`.
 
 Per-backend capabilities are reported at runtime by `Capabilities()`, and the
 algorithm set is derived from the backend type by `algorithmsForBackend`
-(`adapter.go:86`, `adapter.go:112`) rather than being fixed per implementation.
+(`adapter.go:99`, `adapter.go:129`) rather than being fixed per implementation.
 
 ### Attestation Interface
 
@@ -503,9 +504,9 @@ With LUKS:      App --> Barrier (AES-256-GCM) --> luks.Backend --> filestorage.B
 | Barrier (always active) | AES-256-GCM per-value | Root key sealed by strategy (TPM2, software, cloud KMS) |
 | LUKS (optional base) | AES-256-XTS full-volume | Passphrase + Argon2id (kernel dm-crypt) |
 
-The barrier is initialized during the setup wizard regardless of whether LUKS is selected. When LUKS is selected as the storage type, the barrier writes its encrypted data into the LUKS mount point, providing dual-layer encryption. The `luks.Backend` (`pkg/storage/luks/`) implements `storage.Backend` by delegating to a `filestorage.Backend` rooted at the LUKS mount point when unlocked.
+The barrier is initialized during the setup wizard regardless of whether LUKS is selected. When LUKS is selected as the storage type, the barrier writes its encrypted data into the LUKS mount point, providing dual-layer encryption. The root module's `luks.Backend` (`pkg/storage/luks/backend.go:43`) implements `storage.Backend` by delegating to a `pkg/storage/file` store rooted at the LUKS mount point when unlocked (`backend.go:89`).
 
-Barrier auto-unseal is configured via `BarrierAutoUnsealBlobID`. When using the software sealing strategy, the barrier password is TPM-sealed so the barrier can unlock automatically on boot if the PCR state matches. The blob is re-sealed with current PCR values on shutdown.
+The GUI's TPM auto-unseal records the sealed passphrase's blob ID in `gui.auto_unseal_blob_id` (`AutoUnsealBlobID`, `xkey/pkg/gui/config.go:109`). For a returning user the `App` tries it at startup (`xkey/pkg/gui/app.go:2966`) and reseals the blob with current PCR values on shutdown (`app.go:3573`).
 
 Static passwords and other sensitive data stored through the barrier backend are transparently encrypted by the barrier's AES-256-GCM layer before reaching the base storage.
 
@@ -540,16 +541,15 @@ type StatefulCredentialStorage interface {
 
     SaveState(state *AuthenticatorState) error
     LoadState() (*AuthenticatorState, error)
-    ListRPIDs() ([]string, error)
     Close() error
 }
 ```
 
 ### Implementations
 
-**MemoryStorage**: In-memory implementation for testing.
+**MemoryStorage** (`xkey/pkg/authenticator/storage_memory.go:25`): In-memory implementation for testing.
 
-**BackendStorage**: Wraps a file backend for persistent storage.
+**BackendStorage** (`xkey/pkg/authenticator/storage_backend.go:83`): Wraps a storage backend for persistent storage.
 
 ## Data Flow
 
@@ -655,212 +655,8 @@ func (s *MyStorage) Store(credential *StoredCredential) error {
 // Implement remaining interface methods...
 ```
 
-## TPM2 Backend Integration
+## Other Components
 
-The virtual FIDO2 device wires up a real TPM2 backend via the `TPMSignerAdapter`:
-
-```
-createKeyBackend(cfg)
-    |
-    +-- "software" → SoftwareKeyBackend (default)
-    |
-    +-- "tpm2" → createTPM2KeyBackend()
-        |
-        +-- pkgtpm2.NewTPM2(device) → TrustedPlatformModule
-        +-- tpm2backend.NewTPMSignerAdapter(tpm)
-        +-- tpm2backend.NewTPM2KeyBackend(config)
-```
-
-**Configuration flags**:
-- `--backend tpm2` -- selects TPM2 key backend
-- `--tpm-device /dev/tpmrm0` -- TPM device path (default: `/dev/tpmrm0`)
-
-**Error handling**:
-- `ErrTPMOpenFailed` -- TPM device could not be opened
-- `ErrTPMBackendCreationFailed` -- TPM2 backend initialization failed
-
-## Planned: Cloud KMS Backends
-
-Future backends will support cloud KMS services for FIDO2 credential key management:
-
-- **AWS KMS** (`--backend awskms`) -- ECDSA signing keys via AWS KMS
-- **GCP KMS** (`--backend gcpkms`) -- ECDSA signing keys via Google Cloud KMS
-- **Azure Key Vault** (`--backend azurekv`) -- ECDSA signing keys via Azure Key Vault
-
-Each uses build tags to avoid unnecessary cloud SDK dependencies.
-
-## Planned: Proxy Backend
-
-A proxy backend (`--backend proxy`) delegates key operations to a remote xkmsd service:
-
-```
-xkey → SDK Transport → xkmsd → Backend (TPM2, KMS, etc.)
-```
-
-Supports multiple transport protocols: Unix socket, gRPC, REST, QUIC, and MCP.
-
----
-
-## SSH Agent Architecture
-
-The SSH agent provides a Unix socket-based agent compatible with standard SSH clients (`ssh-agent` protocol).
-
-### Overview
-
-```
-+-------------------+
-|   SSH Client      |  ssh, git, etc.
-+-------------------+
-         |
-         | SSH Agent Protocol
-         v
-+-------------------+
-|   Xkey Agent      |  xkey/pkg/ssh/agent
-|      Server       |
-+-------------------+
-         |
-         v
-+-------------------+
-|    KeyBackend     |  Abstract key operations
-+-------------------+
-    |           |
-    v           v
-+--------+ +-----------+
-| Local  | | Xkmsd |
-|Backend | |  Backend  |
-+--------+ +-----------+
-    |           |
-    v           v
-+--------+ +-----------+
-|  File  | |  xkmsd|
-|Storage | |  Service  |
-+--------+ +-----------+
-               |
-               v
-          +--------+
-          |Backend |
-          |(TPM2,  |
-          | KMS,   |
-          | etc.)  |
-          +--------+
-```
-
-### Components
-
-#### Agent Server
-
-**Location**: `xkey/pkg/ssh/agent/server.go`
-
-The agent server listens on a Unix socket and handles SSH agent protocol requests.
-
-```go
-type Server struct {
-    agent      *Agent
-    listener   net.Listener
-    socketPath string
-    logger     *slog.Logger
-}
-
-func NewServer(agent *Agent, cfg *ServerConfig) (*Server, error)
-func (s *Server) Serve(ctx context.Context) error
-func (s *Server) Close() error
-```
-
-#### Agent
-
-**Location**: `xkey/pkg/ssh/agent/agent.go`
-
-The agent implements the `golang.org/x/crypto/ssh/agent.Agent` interface.
-
-```go
-type Agent struct {
-    backend KeyBackend
-    logger  *slog.Logger
-}
-
-// Implements ssh/agent.Agent interface
-func (a *Agent) List() ([]*agent.Key, error)
-func (a *Agent) Sign(key ssh.PublicKey, data []byte) (*ssh.Signature, error)
-func (a *Agent) Add(key agent.AddedKey) error
-func (a *Agent) Remove(key ssh.PublicKey) error
-func (a *Agent) RemoveAll() error
-func (a *Agent) Lock(passphrase []byte) error
-func (a *Agent) Unlock(passphrase []byte) error
-func (a *Agent) Signers() ([]ssh.Signer, error)
-```
-
-#### KeyBackend Interface
-
-**Location**: `xkey/pkg/ssh/agent/backend.go`
-
-Abstracts key storage and cryptographic operations for the SSH agent.
-
-```go
-type KeyBackend interface {
-    ListKeys(ctx context.Context) ([]*KeyInfo, error)
-    GetPublicKey(ctx context.Context, keyID string) (ssh.PublicKey, error)
-    Sign(ctx context.Context, keyID string, data []byte, algorithm string) ([]byte, error)
-    GenerateKey(ctx context.Context, keyID string, keyType KeyType, opts *GenerateOptions) (*KeyInfo, error)
-    ImportKey(ctx context.Context, keyID string, privateKeyPEM []byte) (*KeyInfo, error)
-    DeleteKey(ctx context.Context, keyID string) error
-    Close() error
-}
-```
-
-### Backend Implementations
-
-#### LocalBackend
-
-**Location**: `xkey/pkg/ssh/agent/backend_local.go`
-
-Stores keys locally using the `storage.Backend` interface. Keys are serialized as PKCS#8 PEM.
-
-- **Default path**: `~/.config/xkey/ssh/keys/`
-- **Key format**: PKCS#8 PEM for private keys
-- **Supported types**: Ed25519, RSA (2048-4096), ECDSA (P-256, P-384, P-521)
-
-#### XkmsdBackend
-
-**Location**: `xkey/pkg/ssh/agent/backend_xkmsd.go`
-
-Delegates key operations to xkmsd via the Go SDK. Supports BYOK (Bring Your Own Key) import protocol.
-
-- **Transport**: Unix socket or gRPC
-- **Backends**: Software, TPM2, PKCS#11, cloud KMS
-- **Import**: Uses BYOK protocol with RSA-AES key wrapping
-
-### Data Flow
-
-#### Key Signing
-
-```
-1. SSH client connects to agent socket
-2. Client requests signature for authentication
-3. Agent looks up key by public key fingerprint
-4. Agent calls KeyBackend.Sign(keyID, data, algorithm)
-5. Backend performs signing (local or via xkmsd)
-6. Signature returned to SSH client
-7. SSH client uses signature for authentication
-```
-
-#### Key Generation (Server Mode)
-
-```
-1. User runs: xkey ssh keys generate --id my-key
-2. CLI calls XkmsdBackend.GenerateKey()
-3. Backend calls xkmsd SDK to generate key
-4. xkmsd creates key in configured backend (TPM2, KMS, etc.)
-5. Public key returned to CLI and displayed
-```
-
-#### Key Import (Server Mode with BYOK)
-
-```
-1. User runs: xkey ssh keys import ~/.ssh/id_ed25519 --id my-key
-2. CLI reads private key from file
-3. Backend calls xkmsd.GetImportParameters() for wrapping key
-4. Backend wraps private key using RSA-AES key wrap
-5. Backend calls xkmsd.ImportKey() with wrapped material
-6. xkmsd unwraps and stores key in backend
-7. Public key returned to CLI
-```
+Key backends are selected through the `BackendAdapter` above; see
+[Backend Selection](backend-selection.md). The SSH agent, key store, and
+connect/console live in the [ssh](../ssh/) feature folder.

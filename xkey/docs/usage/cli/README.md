@@ -1,5 +1,8 @@
 # xkey CLI
 
+> **Status: REFERENCE** · Last verified: 2026-10-13
+> Scope: the xkey desktop CLI command index, derived from the cobra tree in `xkey/cmd/xkey/cmd/`.
+
 `xkey` is the desktop CLI. The same binary serves the GUI and the CLI; it
 dispatches on whether a subcommand was given, so `xkey <command>` runs the CLI
 and a bare `xkey` starts the GUI — provided the binary was built with a GUI
@@ -14,11 +17,11 @@ registrations in `xkey/cmd/xkey/cmd/`.
 > files in this directory document `xkmsctl` rather than `xkey`, and each now
 > carries a scope banner saying so: `admin.md`, `backends.md`,
 > `bootstrap.md`, `ca.md`, `cert.md`, `fido2.md`, `frost.md`, `key.md`,
-> `migrate.md`, `noise.md`, `pin.md`, `piv.md`, `tls.md`, `user.md`. (On
+> `noise.md`, `pin.md`, `piv.md` and `user.md`. (On
 > `noise.md`: the top-level `xkmsctl noise` group was removed, and what
 > survives is `xkmsctl bootstrap noise`, so that page documents the command
 > under its current path. `xkey` itself has no `noise` command.)
-> The xkey-scoped pages are this one, `auth.md`, `share.md` and `extension.md`.
+> The xkey-scoped pages are this one, `auth.md` and `extension.md`.
 >
 > Watch out for the overlapping names: `xkmsctl` and `xkey` both have `barrier`,
 > `ca`, `cert`, `pin`, `piv` and `fido2` command groups, with **different**
@@ -82,8 +85,8 @@ auto-detection.
 
 | Command | Subcommands |
 |---------|-------------|
-| `xkey auth` | `register`, `login`, `status`, `token` |
-| `xkey oidc` | `login`, `token`, `refresh`, `logout`, `status`, `stop`, `providers`, `aws` |
+| `xkey auth` | `register`, `login`, `logout`, `refresh`, `status`, `token` |
+| `xkey oidc` | `login`, `token`, `refresh`, `logout`, `status`, `stop`, `providers`, `import`, `aws` |
 | `xkey pin` | `set-so`, `set-user`, `change-so`, `change-user`, `verify`, `status`, `reset-lockout` |
 | `xkey unlock` | (unlock a running instance) |
 
@@ -110,16 +113,19 @@ xkey auth token --server https://xkms.example.com:8443
 
 | Command | Subcommands |
 |---------|-------------|
-| `xkey fido2` | `start`, `status`, `policy`, `profile` |
+| `xkey fido2` | `start`, `status`, `init-token`, `change-so-pin`, `provision-attestation`, `policy`, `profile` |
 | `xkey touch` | (approve presence / type a password) |
-| `xkey uhid` | `setup` |
+| `xkey uhid` | `setup` (Linux, root; hidden from `--help`) |
 
 The bare `xkey fido2` *is* the daemon; `start` is a named alias for it and
 accepts the same flags. The daemon flags are local rather than persistent, so
 they are not available on `policy` or `profile`. `policy` takes
 `list`/`set`/`get`/`delete` per relying party; `profile` takes
-`set`/`show`. `status` takes `--socket`. See
+`set`/`show`. `status` honours the global `--socket`. See
 [../../virtual-authenticator/cli.md](../../virtual-authenticator/cli.md).
+`xkey uhid setup` grants the `input` group access to `/dev/uhid` and loads the
+`uhid` module; the GUI normally runs it through privilege escalation
+(`xkey/cmd/xkey/cmd/uhid_setup.go:81`).
 (`fido2.md` in this directory describes a different thing — `xkmsctl fido2`,
 which drives *external* FIDO2 hardware keys.)
 
@@ -127,7 +133,7 @@ which drives *external* FIDO2 hardware keys.)
 
 | Command | Subcommands |
 |---------|-------------|
-| `xkey password` | `add`, `list`, `get`, `remove`, `type`, `unlock`, `lock`, `status`, `access-mode` |
+| `xkey password` | `add`, `list`, `get`, `remove`, `type`, `unlock`, `lock`, `status`, `access-mode`, `vault` |
 | `xkey oath` | `add`, `list`, `generate`, `remove`, `scan`, `sync`, `push`, `pull` |
 | `xkey platform-store` | `put`, `get`, `delete`, `list`, `reseal`, `status` |
 
@@ -140,7 +146,8 @@ xkey oath scan                # read a QR code off the screen
 
 `xkey oath sync`, `push` and `pull` move credentials to and from a paired
 phone. Note the removal verb is `remove`, not `delete`, for both `password`
-and `oath`.
+and `oath`. `xkey password vault` takes `enroll`, `status`, `rotate`,
+`recover` and `remove`.
 
 ### Certificates and trust
 
@@ -154,8 +161,8 @@ and `oath`.
 
 | Command | Subcommands |
 |---------|-------------|
-| `xkey tpm` | `status`, `info`, `pcrs`, `quote`, `ek`, `iak`, `idevid`, `provision`, `install`, `clear`, `policy` (`create`, `list`, `get`, `update`, `revoke`, `verify`, `delete`, `objects`, `key`, `auto-unseal`), `authority rotate` |
-| `xkey piv` | `list`, `show`, `store`, `import`, `export`, `delete`, `generate`, `csr`, `status`, `phone-*` |
+| `xkey tpm` | `status`, `info`, `pcrs`, `quote`, `ek`, `iak`, `idevid`, `lak`, `provision`, `install`, `clear`, `policy`, `authority` |
+| `xkey piv` | `list`, `show`, `store`, `import`, `export`, `delete`, `generate`, `csr`, `status`, `phone-generate`, `phone-list`, `phone-push-cert`, `phone-pull-cert` |
 | `xkey usb` | `create`, `status`, `update`, `device` |
 
 ```bash
@@ -169,25 +176,31 @@ xkey tpm quote           # signed quote
 single subcommand `import` (a CA-signed IDevID certificate; self-signed is
 refused), and the PEM-format CSR export is a subcommand of `csr` --
 `xkey tpm idevid csr export`, alongside the bare `csr` that emits TCG-CSR-IDEVID.
-`xkey usb device` takes `start`/`stop`/`status`.
+`lak` takes `show`/`create`/`cert`. `policy` takes `create`, `list`, `get`,
+`describe`, `update`, `revoke`, `verify`, `delete`, `objects`, `key` and
+`auto-unseal`; `authority` takes `rotate`. `xkey usb device` takes
+`start`/`stop`/`status`.
 
 ### Phones
 
-`xkey device` covers paired Android devices: `list`, `status`, `pair`,
+`xkey device` (alias `phone`) covers paired Android devices: `list`, `status`, `pair`,
 `unpair`, `scan`, `enroll`, `enroll-phone`, `connect`, `listen`, `relay`,
 `attest`, `attest-device`, `device-info`, `share`, `share-policy`, `import`,
 `sync`, `sync-status`, `sync-push`, `sync-pull`.
 
 ```bash
 xkey device pair --device "John's Pixel"
-xkey device relay --qr          # show a pairing QR for the phone to scan
+xkey device relay               # serve the paired phone on 127.0.0.1:8444
 xkey device list
 ```
 
-`xkey device pair` takes `--device`, `--timeout` and `--force`. QR *generation*
-is `xkey device relay --qr`; there is no CLI command that scans a pairing QR —
-the phone does that. See
-[../../device/cli.md#device-relay-and-qr-pairing](../../device/cli.md#device-relay-and-qr-pairing).
+`xkey device pair` pairs over BLE and takes `--device`, `--timeout` and
+`--force`, plus the barrier password and SO PIN input flags. `xkey device relay`
+is not a pairing mechanism: it serves an already-paired phone's session over
+TCP when BLE is out of range, bound to loopback unless `--listen` names another
+address. The commands that need the phone link are built only with the `ble`
+tag; without it they are stubs that report the feature unavailable. See
+[../../device/cli.md#device-relay](../../device/cli.md#device-relay).
 
 ### SSH
 
@@ -213,8 +226,8 @@ the phone does that. See
 
 | Command | Subcommands |
 |---------|-------------|
-| `xkey extension` | `install`, `uninstall`, `status`, `serve`, `host`, `unpair`, `pair-status` |
-| `xkey browser` | `launch [url]` |
+| `xkey extension` | `install`, `uninstall`, `status`, `serve`, `unpair`, `pair-status` |
+| `xkey browser` | `launch` |
 
 `install` and `uninstall` accept `chrome`, `firefox` or `all`. See
 [extension.md](extension.md).
@@ -223,9 +236,12 @@ the phone does that. See
 
 | Command | Subcommands |
 |---------|-------------|
-| `xkey agent` | `start`, `stop`, `status` |
+| `xkey agent` | `start`, `stop`, `status`, `code`, `pending`, `approve`, `reject`, `remove` |
 | `xkey config` | `show`, `init`, `path` |
 | `xkey version` | (version info) |
+| `xkey app-access` | `enable`, `disable`, `status` |
+| `xkey provision` | (provision a fresh instance for one agent) |
+| `xkey secret-service` | (run the freedesktop Secret Service daemon) |
 
 ## See Also
 
@@ -233,4 +249,4 @@ the phone does that. See
 - [Browser Extension](extension.md)
 - [FIDO2 Daemon Overview](../../fido2/architecture.md)
 - [FIDO2 Daemon Configuration](../../virtual-authenticator/cli.md)
-- [QR Pairing](../../device/cli.md#device-relay-and-qr-pairing)
+- [Device relay](../../device/cli.md#device-relay)

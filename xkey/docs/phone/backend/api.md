@@ -1,37 +1,41 @@
 # Phone Backend API Reference
 
+> **Status: REFERENCE** · Last verified: 2026-10-13
+> `local.*` wire summary for the phone backend; superseded by [phone-hsm/api.md](../../phone-hsm/api.md). Where they disagree, the feature folder wins. Types are in `xkey/pkg/pairing/protocol_local.go`; byte fields are base64 on the wire.
+
 ## Overview
 
-The phone backend uses JSON-RPC 2.0 over Noise XX encrypted channels. Methods in the `local.*` namespace are sent from the laptop to the phone, requesting operations on the phone's Android Keystore.
+The phone backend uses JSON-RPC 2.0 over Noise XX encrypted channels. Methods in the `local.*` namespace are sent from the laptop to the phone, requesting operations on the phone's Android Keystore. The per-method reference with field lists is [android/hsm-protocol.md](../android/hsm-protocol.md).
 
 ## Method Summary
 
-| Method | Description | Returns |
-|--------|-------------|---------|
-| `local.generateKey` | Generate key with specified algorithm | Public key |
-| `local.sign` | Sign data with key | Signature bytes |
-| `local.decrypt` | RSA decryption | Plaintext bytes |
-| `local.symmetricEncrypt` | AES-GCM encryption | Ciphertext + nonce |
-| `local.symmetricDecrypt` | AES-GCM decryption | Plaintext bytes |
-| `local.hmac` | HMAC computation | MAC bytes |
-| `local.ecdh` | ECDH key agreement | Shared secret bytes |
-| `local.getPublicKey` | Export public key | Key in requested format |
-| `local.listKeys` | List keys by type | Key metadata array |
-| `local.getKeyInfo` | Detailed key metadata | Key info object |
-| `local.deleteKey` | Delete key from phone | Success boolean |
-| `local.setKeyPolicy` | Update key sharing/auth policies | Updated policy |
-| `local.attestKey` | Android Key Attestation | X.509 cert chain |
-| `local.getCapabilities` | Phone capabilities | Capabilities object |
-| `ping` | Connection health check | Pong |
-| `getInfo` | Device information | Device info |
+| Method | Description | Result fields |
+|--------|-------------|---------------|
+| `local.generateKey` | Generate key with specified algorithm | `keyId`, `publicKeyDer`/`publicKeyCose`, `algorithm`, `keySizeBits`, `securityLevel` |
+| `local.sign` | Sign data with key | `signature`, `algorithm` |
+| `local.decrypt` | RSA decryption | `plaintext` |
+| `local.symmetricEncrypt` | AES-GCM encryption | `ciphertext` (IV + data + tag) |
+| `local.symmetricDecrypt` | AES-GCM decryption | `plaintext` |
+| `local.hmac` | HMAC computation | `mac` |
+| `local.ecdh` | ECDH key agreement | `sharedSecret` |
+| `local.getPublicKey` | Export public key | `publicKey`, `format`, `algorithm` |
+| `local.listKeys` | List keys, optional `keyType`/`algorithm` filters | `keys` |
+| `local.getKeyInfo` | Detailed key metadata | key info object |
+| `local.deleteKey` | Delete key from phone | `deleted` |
+| `local.setKeyPolicy` | Update sharing/auth policy | `updated` |
+| `local.attestKey` | Android Key Attestation | `format`, `certificateChain`, `securityLevel`, `nonce` |
+| `local.getCapabilities` | Phone capabilities | see below |
+| `ping` | Connection health check | — |
+| `getInfo` | Device information | — |
+
+`ping` and `getInfo` are the base methods in `xkey/pkg/pairing/protocol.go`.
 
 ## Key Generation
 
 ### `local.generateKey`
 
-Generate a new key on the phone's Android Keystore.
+`LocalGenerateKeyParams` (`protocol_local.go:53`):
 
-**Request:**
 ```json
 {
   "jsonrpc": "2.0",
@@ -40,19 +44,18 @@ Generate a new key on the phone's Android Keystore.
   "params": {
     "keyId": "my-signing-key",
     "algorithm": "ES256",
-    "keyType": "signing",
-    "label": "My Signing Key",
+    "strongBoxBacked": true,
     "biometricRequired": true,
-    "authDurationSeconds": 5,
-    "strongBox": true,
-    "shareable": false
+    "authDurationSeconds": 5
   }
 }
 ```
 
-**Supported algorithms:** `ES256`, `ES384`, `ES512`, `RS256`, `RS384`, `RS512`, `RSA2048`, `RSA3072`, `RSA4096`, `AES128`, `AES256`, `HMAC-SHA256`, `HMAC-SHA512`
+Other params: `keySizeBits` (RSA: 2048, 3072, 4096), `userVerificationRequired`, `exportable` (symmetric only).
 
-**Response:**
+**Supported algorithms:** `ES256`, `ES384`, `ES512`, `RS256`, `RS384`, `RS512`, `AES128`, `AES256`, `HMAC-SHA256`, `HMAC-SHA512`
+
+**Response** (`LocalGenerateKeyResult`, `protocol_local.go:69`):
 ```json
 {
   "jsonrpc": "2.0",
@@ -62,7 +65,7 @@ Generate a new key on the phone's Android Keystore.
     "publicKeyDer": "<base64>",
     "algorithm": "ES256",
     "keySizeBits": 256,
-    "strongBoxBacked": true
+    "securityLevel": "strongbox"
   }
 }
 ```
@@ -71,9 +74,6 @@ Generate a new key on the phone's Android Keystore.
 
 ### `local.sign`
 
-Sign data with a key on the phone.
-
-**Request:**
 ```json
 {
   "jsonrpc": "2.0",
@@ -81,30 +81,21 @@ Sign data with a key on the phone.
   "method": "local.sign",
   "params": {
     "keyId": "my-signing-key",
-    "data": "<base64 data hash>",
+    "data": "<base64 data>",
     "algorithm": "ES256"
   }
 }
 ```
 
-**Response:**
-```json
-{
-  "jsonrpc": "2.0",
-  "id": 2,
-  "result": {
-    "signature": "<base64 DER-encoded signature>"
-  }
-}
-```
+**Response:** `{"signature": "<base64 DER-encoded signature>", "algorithm": "ES256"}`
 
 ## Decryption
 
 ### `local.decrypt`
 
-RSA decryption (OAEP or PKCS1v15).
+RSA decryption; the optional `algorithm` names the scheme, e.g.
+`RSA-OAEP-SHA256` (`LocalDecryptParams`, `protocol_local.go:93`).
 
-**Request:**
 ```json
 {
   "jsonrpc": "2.0",
@@ -113,30 +104,20 @@ RSA decryption (OAEP or PKCS1v15).
   "params": {
     "keyId": "my-rsa-key",
     "ciphertext": "<base64>",
-    "padding": "oaep",
-    "hash": "sha256"
+    "algorithm": "RSA-OAEP-SHA256"
   }
 }
 ```
 
-**Response:**
-```json
-{
-  "jsonrpc": "2.0",
-  "id": 3,
-  "result": {
-    "plaintext": "<base64>"
-  }
-}
-```
+**Response:** `{"plaintext": "<base64>"}`
 
 ## Symmetric Encryption
 
-### `local.symmetricEncrypt`
+### `local.symmetricEncrypt` / `local.symmetricDecrypt`
 
-AES-GCM encryption.
+AES-GCM. The ciphertext carries the IV and tag: IV + encrypted data + tag
+(`protocol_local.go:105-120`); there is no separate `nonce` field.
 
-**Request:**
 ```json
 {
   "jsonrpc": "2.0",
@@ -150,53 +131,14 @@ AES-GCM encryption.
 }
 ```
 
-**Response:**
-```json
-{
-  "jsonrpc": "2.0",
-  "id": 4,
-  "result": {
-    "ciphertext": "<base64>",
-    "nonce": "<base64 12-byte IV>"
-  }
-}
-```
+**Encrypt response:** `{"ciphertext": "<base64 IV + data + tag>"}`
 
-### `local.symmetricDecrypt`
-
-AES-GCM decryption.
-
-**Request:**
-```json
-{
-  "jsonrpc": "2.0",
-  "id": 5,
-  "method": "local.symmetricDecrypt",
-  "params": {
-    "keyId": "my-aes-key",
-    "ciphertext": "<base64>",
-    "nonce": "<base64>",
-    "aad": "<base64 optional>"
-  }
-}
-```
-
-**Response:**
-```json
-{
-  "jsonrpc": "2.0",
-  "id": 5,
-  "result": {
-    "plaintext": "<base64>"
-  }
-}
-```
+Decrypt takes `keyId`, `ciphertext` and optional `aad`, and returns `plaintext`.
 
 ## HMAC
 
 ### `local.hmac`
 
-**Request:**
 ```json
 {
   "jsonrpc": "2.0",
@@ -209,22 +151,12 @@ AES-GCM decryption.
 }
 ```
 
-**Response:**
-```json
-{
-  "jsonrpc": "2.0",
-  "id": 6,
-  "result": {
-    "mac": "<base64>"
-  }
-}
-```
+**Response:** `{"mac": "<base64>"}`
 
 ## ECDH Key Agreement
 
 ### `local.ecdh`
 
-**Request:**
 ```json
 {
   "jsonrpc": "2.0",
@@ -237,22 +169,12 @@ AES-GCM decryption.
 }
 ```
 
-**Response:**
-```json
-{
-  "jsonrpc": "2.0",
-  "id": 7,
-  "result": {
-    "sharedSecret": "<base64>"
-  }
-}
-```
+**Response:** `{"sharedSecret": "<base64>"}`
 
 ## Public Key Export
 
 ### `local.getPublicKey`
 
-**Request:**
 ```json
 {
   "jsonrpc": "2.0",
@@ -267,24 +189,12 @@ AES-GCM decryption.
 
 **Supported formats:** `der`, `pem`, `ssh`, `cose`
 
-**Response:**
-```json
-{
-  "jsonrpc": "2.0",
-  "id": 8,
-  "result": {
-    "publicKey": "<base64 key in requested format>",
-    "format": "der",
-    "algorithm": "ES256"
-  }
-}
-```
+**Response:** `{"publicKey": "<base64>", "format": "der", "algorithm": "ES256"}`
 
 ## Key Management
 
 ### `local.listKeys`
 
-**Request:**
 ```json
 {
   "jsonrpc": "2.0",
@@ -299,37 +209,14 @@ AES-GCM decryption.
 
 Both params are optional filters.
 
-### `local.getKeyInfo`
+### `local.getKeyInfo` / `local.deleteKey`
 
-**Request:**
-```json
-{
-  "jsonrpc": "2.0",
-  "id": 10,
-  "method": "local.getKeyInfo",
-  "params": {
-    "keyId": "my-signing-key"
-  }
-}
-```
-
-### `local.deleteKey`
-
-**Request:**
-```json
-{
-  "jsonrpc": "2.0",
-  "id": 11,
-  "method": "local.deleteKey",
-  "params": {
-    "keyId": "my-signing-key"
-  }
-}
-```
+Both take `{"keyId": "my-signing-key"}`.
 
 ### `local.setKeyPolicy`
 
-**Request:**
+Absent fields are left unchanged (`LocalSetKeyPolicyParams`, `protocol_local.go:223`):
+
 ```json
 {
   "jsonrpc": "2.0",
@@ -348,59 +235,64 @@ Both params are optional filters.
 
 ### `local.attestKey`
 
-Brief reference -- see [attestation.md](attestation.md) for full details.
+See [attestation.md](attestation.md).
 
 ### `local.getCapabilities`
 
-**Request:**
-```json
-{
-  "jsonrpc": "2.0",
-  "id": 14,
-  "method": "local.getCapabilities",
-  "params": {}
-}
-```
+Takes no parameters. **Response** (`LocalGetCapabilitiesResult`, `protocol_local.go:334`):
 
-**Response:**
 ```json
 {
   "jsonrpc": "2.0",
   "id": 14,
   "result": {
-    "supportedAlgorithms": ["ES256", "ES384", "ES512", "RS256", "RS384", "RS512", "AES128", "AES256", "HMAC-SHA256", "HMAC-SHA512"],
-    "securityLevel": "strongbox",
+    "version": "1.0",
+    "deviceName": "Pixel-8",
+    "supportedAlgorithms": ["ES256", "ES384", "ES512", "RS256", "AES256", "HMAC-SHA256"],
+    "strongBoxAvailable": true,
     "maxKeys": 256,
-    "currentKeys": 12,
-    "biometricAvailable": true,
-    "attestationSupported": true,
-    "ecdhSupported": true
+    "currentKeyCount": 12,
+    "supportedFormats": ["der", "pem", "ssh", "cose"],
+    "attestationSupport": true
   }
 }
 ```
 
 ## Error Codes
 
-| Code | Name | Description |
-|------|------|-------------|
-| -32700 | Parse Error | Invalid JSON |
-| -32600 | Invalid Request | Invalid JSON-RPC structure |
-| -32601 | Method Not Found | Unknown method |
-| -32602 | Invalid Params | Missing or invalid parameters |
-| -32603 | Internal Error | Server-side error |
-| -32000 | Key Not Found | Requested key doesn't exist |
-| -32001 | User Cancelled | User cancelled biometric prompt |
-| -32002 | Biometric Failed | Biometric authentication failed |
-| -32003 | Key Exists | Key with that ID already exists |
-| -32004 | Unsupported Algorithm | Algorithm not supported |
-| -32005 | Invalid Credential ID | Invalid or empty credential ID |
-| -32006 | Storage Full | No more keys can be stored |
-| -32007 | Operation Timeout | Operation exceeded deadline |
-| -32008 | Attestation Failed | Attestation generation failed |
-| -32009 | Policy Violation | Operation denied by security policy |
+From `xkey/pkg/pairing/protocol.go:47`; the full list continues past `-32019`
+with backup, OATH, PIV and sync codes.
+
+| Code | Constant |
+|------|----------|
+| -32700 | `ErrorCodeParseError` (standard) |
+| -32600 | invalid request (standard) |
+| -32601 | method not found (standard) |
+| -32602 | invalid params (standard) |
+| -32603 | internal error (standard) |
+| -32000 | `ErrorCodeKeyNotFound` |
+| -32001 | `ErrorCodeUserCancelled` |
+| -32002 | `ErrorCodeBiometricFailed` |
+| -32003 | `ErrorCodeKeyExists` |
+| -32004 | `ErrorCodeUnsupportedAlg` |
+| -32005 | `ErrorCodeInvalidCredID` |
+| -32006 | `ErrorCodeStorageFull` |
+| -32007 | `ErrorCodeOperationTimeout` |
+| -32008 | `ErrorCodeBackendDenied` |
+| -32009 | `ErrorCodeAttestFailed` |
+| -32010 | `ErrorCodeAttestUnsupported` |
+| -32011 | `ErrorCodeOperationDenied` |
+| -32012 | `ErrorCodeInvalidPublicKey` |
+| -32013 | `ErrorCodeDecryptFailed` |
+| -32014 | `ErrorCodeHMACFailed` |
+| -32015 | `ErrorCodeECDHFailed` |
+| -32016 | `ErrorCodeInvalidFormat` |
+| -32017 | `ErrorCodePairingRejected` |
+| -32018 | `ErrorCodeShareDenied` |
+| -32019 | `ErrorCodeShareNotExportable` |
 
 ## See Also
 
 - [Phone Backend Architecture](architecture.md)
 - [Attestation](attestation.md)
-- [Full Protocol Specification](../../../xkey/docs/phone/protocol.md)
+- [Full Protocol Specification](../protocol.md)

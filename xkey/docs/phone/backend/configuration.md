@@ -1,35 +1,44 @@
 # Phone Backend Configuration
 
+> **Status: REFERENCE** · Last verified: 2026-10-13
+> Configuration background for the xkmsd phone backend; superseded by [phone-hsm/engineering.md](../../phone-hsm/engineering.md). Where they disagree, the feature folder wins.
+
 ## Overview
 
-The phone backend is configured in the xkmsd YAML configuration file and reuses the pairing configuration from `xkey phone pair`.
+The phone backend is configured in the `backends.phone` section of the xkmsd
+YAML configuration file. xkmsd only logs the configured transport at start-up
+(`initPhoneBackend`, `pkg/server/backend_phone.go:32`); the backend is
+registered when the embedder that owns the phone connection supplies a
+`Sender` (`RegisterPhoneBackend`, `pkg/server/backend_phone.go:58`). Nothing
+in this repository calls `RegisterPhoneBackend`.
 
 ## xkmsd Configuration
+
+`PhoneConfig` (`pkg/config/config.go:1267`):
 
 ```yaml
 backends:
   phone:
     enabled: true
-    transport: "ble"              # "ble" or "usb"
-    config_path: "~/.xkey/phone.yaml"  # Pairing config from xkey phone pair
-    request_timeout: "30s"        # Per-operation timeout (includes biometric wait)
-    scan_timeout: "30s"           # BLE device scan timeout (BLE only)
+    transport: "ble"                  # "ble" or "tcp" (USB via ADB forwarding)
+    device_address: "AA:BB:CC:DD:EE:FF"   # BLE MAC, or host:port for tcp
+    noise_static_key: "<secret reference>" # this host's Noise static private key
+    phone_static_key: "<hex>"         # the paired phone's Noise static public key
+    request_timeout: "30s"            # per-operation timeout; 0 = 30s default
+    config_path: ""                   # declared, not read by xkmsd
 ```
 
 ## Go Configuration Struct
 
-```go
-type Config struct {
-    Transport       string        // "ble" or "usb"
-    BLEAddress      string        // BLE MAC address (for BLE transport)
-    USBPort         int           // ADB forwarded port (for USB transport, default 8444)
-    NoisePrivateKey string        // Base64 Noise static private key
-    PhonePublicKey  string        // Base64 phone's Noise static public key
-    ScanTimeout     time.Duration // BLE scan timeout (default 30s)
-    RequestTimeout  time.Duration // Per-operation timeout (default 30s)
-    Logger          *slog.Logger
-}
-```
+The backend's own `Config` (`pkg/backend/phone/config.go:76`) carries
+`Transport`, `DeviceAddress`, `NoiseStaticKey`, `PhoneStaticKey`,
+`ScanTimeout`, `ConnectTimeout`, `RequestTimeout`, `Attestation` and `Logger`.
+`Attestation` (`AttestationConfig`, `config.go:52`) holds `platform`
+(required, `android`), `trust_store`, `min_security_level` and
+`verify_boot_state`; when nil, attestation chains are returned unverified.
+`RegisterPhoneBackend` copies only transport, device address, both static
+keys and the request timeout, so a backend xkmsd registers has no
+`Attestation` and no scan or connect timeouts.
 
 ## Pairing Setup
 
@@ -46,7 +55,7 @@ xkey device pair
 # 1. Enable Bluetooth on both devices
 # 2. Open xKey app on phone and start advertising
 # 3. Select the discovered device
-# 4. The desktop prints a verification code (go-xkms#1306); the Android app
+# 4. The desktop prints a verification code; the Android app
 #    does not yet display a matching code to compare it against
 ```
 
@@ -62,19 +71,17 @@ There is no separate `phone.yaml`.
 ### BLE Transport
 
 - Default for wireless use
-- Automatic device scanning (uses saved BLE address)
-- Fragmentation for messages larger than MTU (default 247 bytes)
+- Fragmentation for messages larger than the negotiated MTU
 - Range: ~10 meters (varies by environment)
 
-### USB Transport (ADB Port Forwarding)
+### TCP Transport (USB with ADB Port Forwarding)
 
 ```yaml
 backends:
   phone:
     enabled: true
-    transport: "usb"
-    usb_port: 8444               # ADB forwarded port
-    config_path: "~/.xkey/phone.yaml"
+    transport: "tcp"
+    device_address: "127.0.0.1:8444"
 ```
 
 Setup:
@@ -84,21 +91,20 @@ Setup:
 adb forward tcp:8444 tcp:8444
 ```
 
-The USB transport connects to localhost:8444, which ADB tunnels to the phone.
+ADB tunnels the local port to the phone.
 
 ## Sharing Policy (Bidirectional)
 
-For Phase 6 (bidirectional key sharing), the xkey binary configuration includes sharing policy:
+Which laptop backends the phone may reach over `remote.*` is set in the xkey
+config, not xkmsd's (`xkey/cmd/xkey/cmd/dial_xkmsd.go:88-99`):
 
 ```yaml
-# ~/.xkey/config.yaml
 xkmsd:
   enabled: true
   protocol: "unix"
-  address: "xkms-data/xkms.sock"
+  address: "<path to xkms.sock>"
   sharing:
-    policy: "shared"              # "private", "shared", "ask"
-    allowed_backends:
+    allowed_backends:     # empty = all backends
       - "tpm2"
       - "software"
     denied_backends:
@@ -107,23 +113,22 @@ xkmsd:
 
 ## Timeouts
 
+Defaults in `pkg/backend/phone/config.go:33-39`:
+
 | Parameter | Default | Description |
 |-----------|---------|-------------|
-| `scan_timeout` | 30s | BLE device scan duration |
-| `request_timeout` | 30s | Per-operation timeout (includes biometric) |
-| `connect_timeout` | 10s | Connection establishment timeout |
-| `handshake_timeout` | 10s | Noise XX handshake timeout |
+| `ScanTimeout` | 30s | BLE device scan duration |
+| `ConnectTimeout` | 15s | Connection establishment timeout |
+| `RequestTimeout` | 30s | Per-operation timeout (includes biometric wait) |
+
+Only `request_timeout` is exposed in the xkmsd config.
 
 ## Environment Variables
 
-| Variable | Description |
-|----------|-------------|
-| `XKEY_PHONE_CONFIG` | Override phone config file path |
-| `XKEY_PHONE_TRANSPORT` | Override transport type ("ble" or "usb") |
-| `XKEY_PHONE_TIMEOUT` | Override request timeout |
+None: the phone backend reads no environment variables.
 
 ## See Also
 
 - [Architecture](architecture.md)
 - [Security](security.md)
-- [xKey Phone Transport](../../../xkey/docs/phone/transport.md)
+- [Phone Transport](../transport.md)

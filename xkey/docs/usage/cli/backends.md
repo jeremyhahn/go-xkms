@@ -1,41 +1,34 @@
 # Backends CLI Command
 
+> **Status: REFERENCE** · Last verified: 2026-10-13
+> Scope: `xkmsctl backends`, the go-xkms server CLI (`cmd/xkmsctl/backends.go`).
+
 > **Scope:** this page documents the go-xkms **server** CLI `xkmsctl backends`
 > (source: `cmd/xkmsctl/`), **not** the `xkey` desktop CLI. It lives under
 > `xkey/docs/` for historical reasons.
 > There is no `xkey` equivalent. For the xkey command tree see
 > [the xkey CLI reference](README.md).
 
-The `backends` command provides tools to discover and inspect available cryptographic backends in your go-xkms installation.
-
-## Overview
-
-The backends command helps you:
-- List all available cryptographic backends
-- View detailed capabilities of each backend
-- Verify which backends are enabled in your build
-- Understand backend features before configuration
+The `backends` command lists the cryptographic backends an xkmsd server has
+and shows a summary of each one's capabilities. Both subcommands connect to the
+server named by the global `--server` flag and ask it
+(`cmd/xkmsctl/backends.go:43`); there is no offline mode, so the answer
+reflects the **server's** build and configuration, not the `xkmsctl` binary's.
 
 ## Available Commands
 
 ### backends list
 
-Lists all cryptographic backends available in the current build.
-
 ```bash
 xkmsctl backends list
 ```
 
-**Output (text format):**
+**Output (text or table format):**
 ```
 Available Backends:
   - software
   - pkcs11
   - tpm2
-  - awskms
-  - gcpkms
-  - azurekv
-  - vault
 ```
 
 **Output (JSON format):**
@@ -45,56 +38,27 @@ xkmsctl --output json backends list
 
 ```json
 {
-  "backends": [
-    "software",
-    "pkcs11",
-    "tpm2",
-    "awskms",
-    "gcpkms",
-    "azurekv",
-    "vault"
-  ]
+  "backends": ["software", "pkcs11", "tpm2"]
 }
 ```
 
-### backends info
+The entries are the backend IDs the server reports.
 
-Display detailed information and capabilities for a specific backend.
+### backends info
 
 ```bash
 xkmsctl backends info <backend-name>
 ```
 
-**Arguments:**
-- `<backend-name>` - Name of the backend to inspect (required)
-
-**Examples:**
-
-```bash
-# Get information about the software backend
-xkmsctl backends info software
-
-# Get TPM2 backend capabilities
-xkmsctl backends info tpm2
-
-# View AWS KMS backend details
-xkmsctl backends info awskms
-```
-
-**Output (text format):**
+**Output (text or table format)** (`cmd/xkmsctl/output.go:124`):
 ```
 Backend: software
 Capabilities:
-  Keys: true
-  Hardware-backed: false
-  Signing: true
-  Decryption: true
-  Key Rotation: true
-  Symmetric Encryption: true
-  Import: true
-  Export: true
-  Key Agreement: true
-  ECIES: true
+  Keys:            true
+  Hardware Backed: false
+  Signing:         true
+  Decryption:      true
+  Key Rotation:    true
 ```
 
 **Output (JSON format):**
@@ -110,176 +74,51 @@ xkmsctl --output json backends info software
     "hardware_backed": false,
     "signing": true,
     "decryption": true,
-    "key_rotation": true,
-    "symmetric_encryption": true,
-    "import": true,
-    "export": true,
-    "key_agreement": true,
-    "ecies": true
+    "key_rotation": true
   }
 }
 ```
 
+`Hardware Backed` is true when either the backend's capabilities or its backend
+info say so (`cmd/xkmsctl/backends.go:122`).
+
 ## Backend Types
 
-### Software Backends
+The backend IDs `xkmsctl --backend` accepts are `software`, `pkcs11`, `tpm2`,
+`awskms`, `gcpkms`, `azurekv` and `vault`. Which of them a given server offers
+depends on its build tags and configuration. The full per-backend capability
+matrix is normative in
+[crypto backends — engineering](../../../../docs/crypto-backends/engineering.md#backend-capability-matrix).
 
-**software**
-- Software-based key storage using PKCS#8 encrypted key files
-- No hardware protection
-- Full feature support including ECIES and key agreement
-- Best for: Development, testing, and offline use
-
-### Hardware Backends
-
-**pkcs11**
-- PKCS#11 interface for HSMs and smart cards
-- Hardware-backed security
-- No key rotation support
-- Best for: Enterprise PKI, compliance requirements
-
-**tpm2**
-- TPM 2.0 hardware security module
-- Hardware-backed security
-- No key rotation support
-- Best for: Edge devices, IoT, on-premise servers
-
-### Cloud Backends
-
-**awskms**
-- AWS Key Management Service
-- Cloud HSM-backed
-- Supports key rotation
-- Best for: AWS-hosted applications
-
-**gcpkms**
-- Google Cloud Key Management Service
-- Cloud HSM-backed (FIPS 140-2 Level 3)
-- Supports key rotation
-- Best for: GCP-hosted applications
-
-**azurekv**
-- Azure Key Vault
-- Cloud HSM-backed
-- Supports key rotation
-- Best for: Azure-hosted applications
-
-**vault**
-- HashiCorp Vault
-- Software or hardware-backed (depending on configuration)
-- Supports key rotation
-- Best for: Multi-cloud, hybrid deployments
-
-## Backend Capabilities
-
-The `backends info` command shows these capabilities for each backend:
-
-| Capability | Description |
-|------------|-------------|
-| Keys | Can store and manage cryptographic keys |
-| Hardware-backed | Keys are protected by hardware security module |
-| Signing | Can perform digital signature operations |
-| Decryption | Can decrypt encrypted data |
-| Key Rotation | Supports automated key rotation |
-| Symmetric Encryption | Supports AES-GCM symmetric encryption |
-| Import | Can import existing keys |
-| Export | Can export keys (non-hardware backends only) |
-| Key Agreement | Supports ECDH key agreement protocols |
-| ECIES | Supports Elliptic Curve Integrated Encryption Scheme |
-
-## Usage Modes
-
-The backends commands support both local and remote modes:
-
-### Local Mode
-
-Directly queries backend information without connecting to xkmsd server:
+## Connecting to a server
 
 ```bash
+# Default: the local unix socket (xkms-data/xkms.sock)
 xkmsctl backends list
-xkmsctl backends info software
-```
 
-### Remote Mode
-
-Queries backend information from a running xkmsd server:
-
-```bash
-# Connect to remote server and list backends
-xkmsctl --server-url https://xkms.example.com:8443 backends list
-
-# Get backend info from remote server
-xkmsctl --server-url https://xkms.example.com:8443 backends info tpm2
+# A remote server over REST, verifying it against a private CA
+xkmsctl --server https://kms.example.com:8443 --tls-ca /path/to/ca.pem backends list
 ```
 
 ## Global Flags
 
-All backends commands support these global flags:
+The root flags most relevant here (`xkmsctl --help`):
 
-```bash
---output <format>     Output format: text, json, table (default: text)
---config <path>       Configuration file path
---server-url <url>    Remote xkmsd server URL
---verbose             Enable verbose logging
 ```
-
-## Examples
-
-### Discover Available Backends
-
-```bash
-# List backends in your build
-xkmsctl backends list
-
-# Check if TPM2 is available
-xkmsctl backends list | grep tpm2
-```
-
-### Compare Backend Features
-
-```bash
-# Compare software vs hardware capabilities
-xkmsctl backends info software
-xkmsctl backends info tpm2
-
-# View cloud backend features
-xkmsctl backends info awskms
-xkmsctl backends info gcpkms
-xkmsctl backends info azurekv
-```
-
-### Verify Build Configuration
-
-```bash
-# Check if required backends are available
-xkmsctl backends list
-
-# Verify PKCS#11 support before configuration
-xkmsctl backends info pkcs11
-```
-
-### Remote Backend Discovery
-
-```bash
-# Discover backends available on production server
-xkmsctl --server-url https://prod.example.com:8443 backends list
-
-# Check staging server capabilities
-xkmsctl --server-url https://staging.example.com:8443 backends info vault
+-s, --server <url>      xkms server URL (default: xkms-data/xkms.sock); unix://, http(s)://, grpc(s)://, quic://
+    --transport <name>  Client transport: rest, grpc, quic, mcp, unix, embedded (default "unix")
+-o, --output <format>   Output format: text, json, table (default "text")
+    --tls-ca <path>     CA certificate for server verification
+    --config <path>     Config file (default is $HOME/.xkms.yaml)
+-v, --verbose           Verbose output
 ```
 
 ## Build Tags
 
-Backend availability depends on build tags used during compilation. See the [Build Configuration](../getting-started.md#build-configuration) guide for details on enabling specific backends.
+A backend exists in a server only if the server binary was built with its tag.
+Every optional backend toggle defaults on in the Makefile; see
+[Build toggles](../../../../docs/crypto-backends/engineering.md#build-toggles).
 
-### Default Build
-```bash
-# Every backend is compiled in by default
-make build
-xkmsctl backends list
-```
-
-### Opting Out
 ```bash
 # Drop backends the deployment does not use
 make build WITH_VAULT=0 WITH_AZURE=0
@@ -288,68 +127,29 @@ make build WITH_VAULT=0 WITH_AZURE=0
 make build-minimal
 ```
 
+`WITH_AZURE` is a provider umbrella: it sets `WITH_AZURE_KV` together with the
+Azure object-storage toggles (root `Makefile:55`).
+
 ## Troubleshooting
 
 ### Backend Not Listed
 
-If an expected backend is missing, the build opted it out:
+The server was built without it, or its configuration does not enable it.
+Rebuild with the toggle back on (for example `make build WITH_VAULT=1`). A
+configuration that names a backend the binary was built without fails with
+`xkms: backend "<name>" is not compiled into this binary; build with
+WITH_<FEATURE>=1 (build tag "<tag>")` (`pkg/xkms/errors_auto.go:47`).
 
-1. Check your build configuration:
-   ```bash
-   xkmsctl version  # Shows build information
-   xkmsctl backends list
-   ```
-
-2. Rebuild with the backend's toggle back on (or drop the `=0`):
-   ```bash
-   make build WITH_VAULT=1  # Example: Vault
-   ```
-
-A server whose configuration names a backend it was built without refuses to
-start with `backend "<name>" is not compiled into this binary; build with
-WITH_<FEATURE>=1`.
-
-### Remote Server Connection Failed
-
-If backend commands fail in remote mode:
+### Server Connection Failed
 
 ```bash
-# Verify server is running
-curl -k https://xkms.example.com:8443/health
-
-# Check TLS configuration
-xkmsctl --server-url https://xkms.example.com:8443 \
-  --tls-ca /path/to/ca.pem \
-  backends list
-
-# Enable verbose logging
-xkmsctl --verbose \
-  --server-url https://xkms.example.com:8443 \
-  backends list
-```
-
-### Hardware Backend Not Working
-
-For hardware backends (pkcs11, tpm2):
-
-```bash
-# Check if hardware is available
-ls -l /dev/tpmrm0  # TPM2
-ls -l /usr/lib/softhsm/libsofthsm2.so  # SoftHSM
-
-# View backend capabilities
-xkmsctl backends info tpm2
-xkmsctl backends info pkcs11
-
-# Test with verbose logging
-xkmsctl --verbose backends info tpm2
+# Verbose output shows the connection step
+xkmsctl --verbose --server https://kms.example.com:8443 --tls-ca /path/to/ca.pem backends list
 ```
 
 ## See Also
 
 - [Getting Started Guide](../getting-started.md) - Backend selection and configuration
-- [Software Backend](../../../../docs/crypto-backends/user.md) - Software backend documentation
-- [TPM2 Backend](../../../../docs/tpm2/user.md) - Hardware TPM documentation
-- [PKCS#11 Backend](../../../../docs/pkcs11-backend/user.md) - HSM integration
-- [AWS KMS Backend](../../../../docs/crypto-backends/user.md) - Cloud backend configuration
-- [Build toggles](../../../../docs/crypto-backends/engineering.md#build-toggles) - Build tags and compilation
+- [Crypto backends](../../../../docs/crypto-backends/user.md)
+- [TPM2 Backend](../../../../docs/tpm2/user.md)
+- [PKCS#11 Backend](../../../../docs/pkcs11-backend/user.md)

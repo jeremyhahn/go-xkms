@@ -1,12 +1,15 @@
 # Bidirectional JSON-RPC 2.0 Protocol
 
+> **Status: REFERENCE** · Last verified: 2026-10-13
+> Wire background for the xkey phone link; superseded by [phone/architecture.md](architecture.md) and [phone-hsm/api.md](../phone-hsm/api.md). Where they disagree, the feature folders win. Types are in `xkey/pkg/pairing/protocol*.go`; phone-side (Android app) behaviour is unverified here.
+
 ## Overview
 
 The xkey-phone protocol uses JSON-RPC 2.0 over Noise XX encrypted channels. Methods are namespaced by direction:
 
 - `local.*` -- Laptop requests operations on the phone's Android Keystore
 - `remote.*` -- Phone requests operations on the laptop's xkmsd backends
-- (no prefix) -- Existing FIDO2-specific methods (backward compatible)
+- (no prefix) -- The base FIDO2 and pairing methods
 
 Both directions share the same encrypted Noise channel.
 
@@ -15,11 +18,12 @@ Both directions share the same encrypted Noise channel.
 | Property | Value |
 |----------|-------|
 | Version | JSON-RPC 2.0 |
-| Encoding | JSON over binary (Noise encrypted) |
-| Transport | BLE GATT or TCP (ADB/USB) |
-| Fragmentation | For messages exceeding BLE MTU (247 bytes) |
-| Request IDs | Atomic uint64 counter, unique per session |
-| Max message size | 65519 bytes (Noise limit) |
+| Encoding | JSON; `[]byte` fields are base64 strings |
+| Encryption | `Noise_XX_25519_ChaChaPoly_SHA256` (`xkey/pkg/pairing/noise.go:30`) |
+| Transport | BLE GATT, USB (AOA) or TCP; see [transport.md](transport.md) |
+| Fragmentation | BLE only, for messages larger than the MTU |
+| Request IDs | One process-wide `atomic.Uint64` counter (`requestIDCounter`, `protocol.go:143`) |
+| Max message size | `NoiseMaxMessageSize` plaintext (`noise.go:36`) |
 
 ### Request Format
 
@@ -43,7 +47,8 @@ Both directions share the same encrypted Noise channel.
   "jsonrpc": "2.0",
   "id": 1,
   "result": {
-    "signature": "base64-encoded-signature"
+    "signature": "base64-encoded-signature",
+    "algorithm": "ES256"
   }
 }
 ```
@@ -56,8 +61,7 @@ Both directions share the same encrypted Noise channel.
   "id": 1,
   "error": {
     "code": -32000,
-    "message": "key not found",
-    "data": "no key with ID 'my-signing-key'"
+    "message": "key not found"
   }
 }
 ```
@@ -66,11 +70,11 @@ Both directions share the same encrypted Noise channel.
 
 ## `local.*` Methods (Laptop to Phone)
 
-These methods are sent by the laptop and executed on the phone's Android Keystore (TEE/StrongBox).
+These methods are sent by the laptop and executed on the phone's Android Keystore (TEE/StrongBox). The core set is `xkey/pkg/pairing/protocol_local.go:28-47`:
 
 | Method | Description |
 |--------|-------------|
-| `local.generateKey` | Generate a key pair in Android Keystore |
+| `local.generateKey` | Generate a key in Android Keystore |
 | `local.sign` | Sign data with a phone key |
 | `local.decrypt` | Decrypt data with a phone key |
 | `local.symmetricEncrypt` | Encrypt data with a symmetric key |
@@ -81,597 +85,143 @@ These methods are sent by the laptop and executed on the phone's Android Keystor
 | `local.listKeys` | List keys stored on the phone |
 | `local.getKeyInfo` | Get metadata for a specific key |
 | `local.deleteKey` | Delete a key from the phone |
-| `local.setKeyPolicy` | Set access policy for a key |
+| `local.setKeyPolicy` | Update sharing and authentication policy for a key |
 | `local.attestKey` | Get Android Key Attestation for a key |
+| `local.attestDevice` | Device-level attestation (see [attestation.md](attestation.md)) |
 | `local.getCapabilities` | Query phone capabilities and algorithms |
-| `local.listFido2Credentials` | Discover shared FIDO2 credentials |
-| `local.signFido2Assertion` | Sign a FIDO2 assertion with a shared credential |
-
-### local.generateKey
-
-Generate a new key pair in Android Keystore.
-
-**Request params:**
-
-| Field | Type | Required | Description |
-|-------|------|----------|-------------|
-| `keyId` | string | yes | Unique key identifier |
-| `algorithm` | string | yes | Key algorithm: `ES256`, `ES384`, `ES512`, `RSA2048`, `RSA4096` |
-| `purpose` | []string | yes | Key purposes: `sign`, `decrypt`, `agree` |
-| `requireBiometric` | bool | no | Require biometric for each use (default: true) |
-| `strongBox` | bool | no | Require StrongBox backing (default: true) |
-| `attestation` | bool | no | Generate with attestation (default: false) |
-
-**Response result:**
-
-| Field | Type | Description |
-|-------|------|-------------|
-| `keyId` | string | Key identifier |
-| `publicKey` | string | Base64-encoded public key (DER/SPKI) |
-| `algorithm` | string | Key algorithm |
-| `hardwareBacked` | bool | True if key is hardware-backed |
-| `securityLevel` | string | `strongbox`, `tee`, or `software` |
-
-**Errors:** `-32010` KeyAlreadyExists, `-32011` UnsupportedAlgorithm, `-32012` StorageFull, `-32013` StrongBoxUnavailable
-
-### local.sign
-
-Sign data with a key stored on the phone. Triggers biometric prompt if key requires it.
-
-**Request params:**
-
-| Field | Type | Required | Description |
-|-------|------|----------|-------------|
-| `keyId` | string | yes | Key identifier |
-| `algorithm` | string | yes | Signing algorithm: `ES256`, `ES384`, `ES512`, `RS256`, `PS256` |
-| `data` | string | yes | Base64-encoded data to sign |
-
-**Response result:**
-
-| Field | Type | Description |
-|-------|------|-------------|
-| `signature` | string | Base64-encoded signature (DER for ECDSA, PKCS#1 for RSA) |
-
-**Errors:** `-32000` KeyNotFound, `-32001` UserCancelled, `-32002` BiometricFailed, `-32005` OperationTimeout
-
-### local.decrypt
-
-Decrypt data with a key stored on the phone.
-
-**Request params:**
-
-| Field | Type | Required | Description |
-|-------|------|----------|-------------|
-| `keyId` | string | yes | Key identifier |
-| `algorithm` | string | yes | Decryption algorithm: `RSA-OAEP-256`, `RSA-OAEP-384` |
-| `ciphertext` | string | yes | Base64-encoded ciphertext |
-
-**Response result:**
-
-| Field | Type | Description |
-|-------|------|-------------|
-| `plaintext` | string | Base64-encoded decrypted data |
-
-**Errors:** `-32000` KeyNotFound, `-32001` UserCancelled, `-32014` DecryptionFailed
-
-### local.symmetricEncrypt
-
-Encrypt data with a symmetric key on the phone.
-
-**Request params:**
-
-| Field | Type | Required | Description |
-|-------|------|----------|-------------|
-| `keyId` | string | yes | Symmetric key identifier |
-| `algorithm` | string | yes | `AES-256-GCM` |
-| `plaintext` | string | yes | Base64-encoded plaintext |
-| `aad` | string | no | Base64-encoded additional authenticated data |
-
-**Response result:**
-
-| Field | Type | Description |
-|-------|------|-------------|
-| `ciphertext` | string | Base64-encoded ciphertext |
-| `nonce` | string | Base64-encoded nonce/IV |
-| `tag` | string | Base64-encoded authentication tag |
-
-### local.symmetricDecrypt
-
-Decrypt data with a symmetric key on the phone.
-
-**Request params:**
-
-| Field | Type | Required | Description |
-|-------|------|----------|-------------|
-| `keyId` | string | yes | Symmetric key identifier |
-| `algorithm` | string | yes | `AES-256-GCM` |
-| `ciphertext` | string | yes | Base64-encoded ciphertext |
-| `nonce` | string | yes | Base64-encoded nonce/IV |
-| `tag` | string | yes | Base64-encoded authentication tag |
-| `aad` | string | no | Base64-encoded additional authenticated data |
-
-**Response result:**
-
-| Field | Type | Description |
-|-------|------|-------------|
-| `plaintext` | string | Base64-encoded plaintext |
-
-### local.hmac
-
-Compute HMAC with a key on the phone.
-
-**Request params:**
-
-| Field | Type | Required | Description |
-|-------|------|----------|-------------|
-| `keyId` | string | yes | HMAC key identifier |
-| `algorithm` | string | yes | `HMAC-SHA256`, `HMAC-SHA384`, `HMAC-SHA512` |
-| `data` | string | yes | Base64-encoded data |
-
-**Response result:**
-
-| Field | Type | Description |
-|-------|------|-------------|
-| `mac` | string | Base64-encoded HMAC value |
-
-### local.ecdh
-
-Perform ECDH key agreement using a phone key and a peer public key.
-
-**Request params:**
-
-| Field | Type | Required | Description |
-|-------|------|----------|-------------|
-| `keyId` | string | yes | Local ECDH key identifier |
-| `peerPublicKey` | string | yes | Base64-encoded peer public key (DER/SPKI) |
-| `kdf` | string | no | Key derivation: `HKDF-SHA256` (default), `HKDF-SHA384` |
-| `kdfInfo` | string | no | Base64-encoded HKDF info parameter |
-| `keyLength` | int | no | Derived key length in bytes (default: 32) |
-
-**Response result:**
-
-| Field | Type | Description |
-|-------|------|-------------|
-| `derivedKey` | string | Base64-encoded derived key material |
-
-### local.getPublicKey
-
-Retrieve the public key component of a stored key.
-
-**Request params:**
-
-| Field | Type | Required | Description |
-|-------|------|----------|-------------|
-| `keyId` | string | yes | Key identifier |
-
-**Response result:**
-
-| Field | Type | Description |
-|-------|------|-------------|
-| `publicKey` | string | Base64-encoded public key (DER/SPKI) |
-| `algorithm` | string | Key algorithm |
-
-### local.listKeys
-
-List all keys stored on the phone.
-
-**Request params:**
-
-| Field | Type | Required | Description |
-|-------|------|----------|-------------|
-| `filter` | string | no | Filter by purpose: `sign`, `decrypt`, `agree`, `all` (default) |
-
-**Response result:**
-
-| Field | Type | Description |
-|-------|------|-------------|
-| `keys` | []KeyInfo | Array of key metadata objects |
-
-KeyInfo fields:
-
-| Field | Type | Description |
-|-------|------|-------------|
-| `keyId` | string | Key identifier |
-| `algorithm` | string | Key algorithm |
-| `purpose` | []string | Key purposes |
-| `securityLevel` | string | `strongbox`, `tee`, or `software` |
-| `requiresBiometric` | bool | Whether biometric is required |
-| `createdAt` | string | ISO 8601 creation timestamp |
-
-### local.getKeyInfo
-
-Get detailed metadata for a specific key.
-
-**Request params:**
-
-| Field | Type | Required | Description |
-|-------|------|----------|-------------|
-| `keyId` | string | yes | Key identifier |
-
-**Response result:**
-
-Same as KeyInfo above, plus:
-
-| Field | Type | Description |
-|-------|------|-------------|
-| `attestation` | object | Attestation data if key was created with attestation |
-
-### local.deleteKey
-
-Delete a key from the phone's keystore.
-
-**Request params:**
-
-| Field | Type | Required | Description |
-|-------|------|----------|-------------|
-| `keyId` | string | yes | Key identifier |
-
-**Response result:**
-
-| Field | Type | Description |
-|-------|------|-------------|
-| `deleted` | bool | True if key was deleted |
-
-### local.setKeyPolicy
-
-Set or update access policy for a key.
-
-**Request params:**
-
-| Field | Type | Required | Description |
-|-------|------|----------|-------------|
-| `keyId` | string | yes | Key identifier |
-| `requireBiometric` | bool | no | Require biometric for each use |
-| `allowedOrigins` | []string | no | Allowed relying party origins |
-| `maxUsesPerAuth` | int | no | Max operations per biometric auth (0 = unlimited) |
-
-**Response result:**
-
-| Field | Type | Description |
-|-------|------|-------------|
-| `updated` | bool | True if policy was updated |
-
-### local.attestKey
-
-Request Android Key Attestation for a key.
-
-**Request params:**
-
-| Field | Type | Required | Description |
-|-------|------|----------|-------------|
-| `keyId` | string | yes | Key identifier |
-| `challenge` | string | yes | Base64-encoded attestation challenge (nonce) |
-
-**Response result:**
-
-| Field | Type | Description |
-|-------|------|-------------|
-| `certificateChain` | []string | Array of Base64-encoded X.509 certificates (leaf first) |
-| `securityLevel` | string | `strongbox`, `tee`, or `software` |
-| `attestationVersion` | int | Android Key Attestation schema version |
-
-### local.getCapabilities
-
-Query phone capabilities and supported algorithms.
-
-**Request params:** None
-
-**Response result:**
-
-| Field | Type | Description |
-|-------|------|-------------|
-| `deviceName` | string | Phone model name |
-| `androidVersion` | int | Android API level |
-| `strongBox` | bool | StrongBox available |
-| `supportedAlgorithms` | []string | Supported signing algorithms |
-| `supportedKdf` | []string | Supported KDF algorithms |
-| `maxCredentials` | int | Maximum credential count |
-| `currentCredentials` | int | Current credential count |
-| `biometricTypes` | []string | `fingerprint`, `face`, `iris` |
-
-### local.listFido2Credentials
-
-Discover FIDO2 credentials shared by the phone.
-
-**Request params:**
-
-| Field | Type | Required | Description |
-|-------|------|----------|-------------|
-| `rpId` | string | no | Filter by relying party ID |
-
-**Response result:**
-
-| Field | Type | Description |
-|-------|------|-------------|
-| `credentials` | []Fido2Credential | Array of shared credentials |
-
-Fido2Credential fields:
-
-| Field | Type | Description |
-|-------|------|-------------|
-| `credentialId` | string | Base64-encoded credential ID |
-| `rpId` | string | Relying party ID |
-| `rpName` | string | Relying party display name |
-| `userName` | string | User name |
-| `userDisplayName` | string | User display name |
-| `algorithm` | int | COSE algorithm identifier |
-| `createdAt` | string | ISO 8601 creation timestamp |
-| `signCount` | int | Current signature counter |
-
-### local.signFido2Assertion
-
-Sign a FIDO2 assertion using a shared credential on the phone.
-
-**Request params:**
-
-| Field | Type | Required | Description |
-|-------|------|----------|-------------|
-| `credentialId` | string | yes | Base64-encoded credential ID |
-| `clientDataHash` | string | yes | Base64-encoded client data hash |
-| `rpId` | string | yes | Relying party ID |
-| `flags` | int | no | Authenticator data flags (default: 0x05 = UP+UV) |
-
-**Response result:**
-
-| Field | Type | Description |
-|-------|------|-------------|
-| `authenticatorData` | string | Base64-encoded authenticator data |
-| `signature` | string | Base64-encoded assertion signature |
-| `signCount` | int | Updated signature counter |
+| `local.listFido2Credentials` | Discover FIDO2 credentials on the phone |
+| `local.signFido2Assertion` | Sign a FIDO2 assertion with a phone credential |
+| `local.biometricPending` | Notification that the phone is waiting on a biometric prompt |
+
+Parameters and results for each method, with source lines, are in
+[android/hsm-protocol.md](android/hsm-protocol.md) and the summary in
+[backend/api.md](backend/api.md).
+
+Further `local.*` families live in their own files:
+
+| Family | Methods | Source |
+|--------|---------|--------|
+| TPM enrollment | `local.getTCGCSRIDevID`, `local.activateCredential`, `local.getAttestationQuote`, `local.getIAKPublicKey`, `local.storeEnrollmentCerts` | `protocol_attestation.go:58-77` |
+| IDevID | `local.getCABundle`, `local.getIDevIDCertificate`, `local.requestIDevIDIssuance`, `local.generateIDevIDCSR`, `local.storeIDevIDCertificate` | `protocol_idevid.go:29-45` |
+| Device enrollment | `local.getDeviceEnrollmentRequest`, `local.storeDeviceCredential` | `protocol_device_enrollment.go:53-57` |
+| Key sharing | `local.sharePublicKey`, `local.shareSymmetric`, `local.importSharedKey` | `protocol_sharing.go:26-34` |
+| OATH | `local.oathAdd`, `local.oathList`, `local.oathGenerate`, `local.oathRemove` | `protocol_oath.go:27-37` |
+| PIV | `local.pivGenerateKey`, `local.pivImportCert`, `local.pivListSlots`, `local.pivSign`, `local.pivGetCert` | `protocol_piv.go:41-53` |
+| Sync | `local.syncTrustStore`, `local.syncOATH`, `local.syncPasswords`, `local.syncStatus` | `protocol_sync.go:28-39` |
+| Backup | `local.createBackup`, `local.restoreBackup` | `protocol_backup.go:26-30` |
 
 ---
 
 ## `remote.*` Methods (Phone to Laptop)
 
-These methods are sent by the phone and executed on the laptop's xkmsd backends.
+These methods are sent by the phone and served on the laptop by the xkey
+bridge, which forwards them to xkmsd (see [bidirectional.md](bidirectional.md)).
+The core set is `xkey/pkg/pairing/protocol_remote.go:20-32`, plus the TPM
+enrollment methods at `:60-67`.
 
 | Method | Description |
 |--------|-------------|
-| `remote.listBackends` | List available xkmsd backends |
-| `remote.listKeys` | List keys in a xkmsd backend |
-| `remote.getPublicKey` | Get public key from xkmsd |
-| `remote.sign` | Sign data with a xkmsd key |
-| `remote.verify` | Verify a signature using xkmsd |
-| `remote.encrypt` | Encrypt data with a xkmsd key |
-| `remote.decrypt` | Decrypt data with a xkmsd key |
-| `remote.deriveKey` | ECDH/HKDF key derivation via xkmsd |
-| `remote.generateKey` | Generate a key on a xkmsd backend |
-| `remote.getKeyInfo` | Get key metadata from xkmsd |
-| `remote.attestKey` | Get attestation from xkmsd backend |
+| `remote.listBackends` | List the xkmsd backends the phone may use |
+| `remote.listKeys` | List keys in a backend |
+| `remote.getPublicKey` | Get a public key |
+| `remote.sign` | Sign data |
+| `remote.verify` | Verify a signature |
+| `remote.encrypt` | Encrypt data |
+| `remote.decrypt` | Decrypt data |
+| `remote.deriveKey` | ECDH key agreement |
+| `remote.generateKey` | Generate a key on a backend |
+| `remote.getKeyInfo` | Get key metadata |
+| `remote.deleteKey` | Delete a key |
+| `remote.attestKey` | Get key attestation from a backend |
+| `remote.attestDevice` | Laptop platform attestation |
+| `remote.getTCGCSRIDevID` | Laptop TCG-CSR-IDEVID |
+| `remote.activateCredential` | TPM2 credential activation |
+| `remote.getAttestationQuote` | TPM2 PCR quote |
+| `remote.storeEnrollmentCerts` | Store issued enrollment certificates |
+
+Every key operation names its `backend`; the bridge refuses a backend outside
+the sharing policy with `-32008` `ErrorCodeBackendDenied`.
+
+Other `remote.*` families: key sharing (`remote.sharePublicKey`,
+`remote.shareSymmetric`, `remote.importSharedKey`, `protocol_sharing.go:38-46`),
+OATH (`remote.oathAdd`, `remote.oathGenerate`, `protocol_oath.go:41-45`), PIV
+(`remote.pivListSlots`, `remote.pivSign`, `remote.pivGetCert`,
+`protocol_piv.go:57-65`), sync (`remote.syncTrustStore`, `remote.syncOATH`,
+`remote.syncPasswords`, `remote.syncAll`, `remote.syncStatus`,
+`protocol_sync.go:43-59`) and backup (`remote.createBackup`,
+`remote.restoreBackup`, `remote.listBackups`, `protocol_backup.go:34-42`).
 
 ### remote.listBackends
 
-List available xkmsd backends that the phone is allowed to access.
-
-**Request params:** None
-
-**Response result:**
+No params. Result: `backends`, an array of `BackendInfo`
+(`protocol_remote.go:70-79`):
 
 | Field | Type | Description |
 |-------|------|-------------|
-| `backends` | []BackendInfo | Array of available backends |
-
-BackendInfo fields:
-
-| Field | Type | Description |
-|-------|------|-------------|
-| `id` | string | Backend identifier |
-| `type` | string | Backend type: `tpm2`, `pkcs11`, `software`, `awskms`, `gcpkms`, `azurekv` |
-| `hardwareBacked` | bool | Whether backend uses hardware |
-| `capabilities` | []string | `sign`, `decrypt`, `agree`, `attest` |
+| `name` | string | Backend name |
+| `type` | string | Backend type, e.g. `tpm2`, `pkcs11`, `software`, `awskms` |
+| `hardwareBacked` | bool | Whether the backend uses hardware |
+| `signing` | bool | Supports signing |
+| `decryption` | bool | Supports decryption |
+| `symmetricCrypto` | bool | Supports symmetric encryption |
+| `keyAgreement` | bool | Supports key agreement |
+| `attestation` | bool | Supports attestation |
 
 ### remote.listKeys
 
-List keys in a xkmsd backend.
-
-**Request params:**
-
-| Field | Type | Required | Description |
-|-------|------|----------|-------------|
-| `backend` | string | no | Backend ID (default: all allowed backends) |
-| `filter` | string | no | Filter by key type |
-
-**Response result:**
-
-| Field | Type | Description |
-|-------|------|-------------|
-| `keys` | []RemoteKeyInfo | Array of key metadata |
-
-RemoteKeyInfo fields:
+Params: `backend`, optional `algorithm` filter (`protocol_remote.go:88-90`).
+Result: `keys`, an array of `RemoteKeyInfo` (`:94-100`):
 
 | Field | Type | Description |
 |-------|------|-------------|
 | `keyId` | string | Key identifier |
 | `backend` | string | Backend that stores the key |
 | `algorithm` | string | Key algorithm |
-| `hardwareBacked` | bool | Whether key is hardware-backed |
+| `keySizeBits` | int | Key size |
+| `label` | string | Key label |
+| `createdAt` | int | Creation time (Unix seconds) |
 
-### remote.getPublicKey
+### Key operations
 
-Get the public key from a xkmsd key.
+| Method | Params | Result | Source |
+|--------|--------|--------|--------|
+| `remote.getPublicKey` | `backend`, `keyId`, `format` (`der`, `pem`) | `publicKey`, `format`, `algorithm` | `protocol_remote.go:109-119` |
+| `remote.sign` | `backend`, `keyId`, `data`, optional `algorithm` | `signature`, `algorithm` | `:123-133` |
+| `remote.verify` | `backend`, `keyId`, `data`, `signature`, optional `algorithm` | `valid` | `:137-147` |
+| `remote.encrypt` | `backend`, `keyId`, `plaintext`, optional `algorithm`, `aad` | `ciphertext` | `:151-161` |
+| `remote.decrypt` | `backend`, `keyId`, `ciphertext`, optional `algorithm`, `aad` | `plaintext` | `:165-175` |
+| `remote.deriveKey` | `backend`, `keyId`, `peerPublicKey` (DER) | `sharedSecret` | `:179-187` |
+| `remote.generateKey` | `backend`, `keyId`, `algorithm`, optional `keySizeBits`, `label` | `keyId`, `publicKey` (DER), `algorithm`, `keySizeBits`, `backend` | `:191-205` |
+| `remote.getKeyInfo` | `backend`, `keyId` | `RemoteKeyInfo` fields plus `hardwareBacked`, `exportable` | `:209-219` |
+| `remote.deleteKey` | `backend`, `keyId` | `deleted` | `:222-229` |
 
-**Request params:**
-
-| Field | Type | Required | Description |
-|-------|------|----------|-------------|
-| `keyId` | string | yes | Key identifier |
-| `backend` | string | no | Backend ID |
-
-**Response result:**
-
-| Field | Type | Description |
-|-------|------|-------------|
-| `publicKey` | string | Base64-encoded public key (DER/SPKI) |
-| `algorithm` | string | Key algorithm |
-
-### remote.sign
-
-Sign data with a key in xkmsd.
-
-**Request params:**
-
-| Field | Type | Required | Description |
-|-------|------|----------|-------------|
-| `keyId` | string | yes | Key identifier |
-| `algorithm` | string | yes | Signing algorithm |
-| `data` | string | yes | Base64-encoded data to sign |
-| `backend` | string | no | Backend ID |
-
-**Response result:**
-
-| Field | Type | Description |
-|-------|------|-------------|
-| `signature` | string | Base64-encoded signature |
-
-### remote.verify
-
-Verify a signature using xkmsd.
-
-**Request params:**
-
-| Field | Type | Required | Description |
-|-------|------|----------|-------------|
-| `keyId` | string | yes | Key identifier |
-| `algorithm` | string | yes | Signing algorithm |
-| `data` | string | yes | Base64-encoded original data |
-| `signature` | string | yes | Base64-encoded signature to verify |
-| `backend` | string | no | Backend ID |
-
-**Response result:**
-
-| Field | Type | Description |
-|-------|------|-------------|
-| `valid` | bool | True if signature is valid |
-
-### remote.encrypt
-
-Encrypt data with a xkmsd key.
-
-**Request params:**
-
-| Field | Type | Required | Description |
-|-------|------|----------|-------------|
-| `keyId` | string | yes | Key identifier |
-| `algorithm` | string | yes | Encryption algorithm |
-| `plaintext` | string | yes | Base64-encoded plaintext |
-| `backend` | string | no | Backend ID |
-
-**Response result:**
-
-| Field | Type | Description |
-|-------|------|-------------|
-| `ciphertext` | string | Base64-encoded ciphertext |
-
-### remote.decrypt
-
-Decrypt data with a xkmsd key.
-
-**Request params:**
-
-| Field | Type | Required | Description |
-|-------|------|----------|-------------|
-| `keyId` | string | yes | Key identifier |
-| `algorithm` | string | yes | Decryption algorithm |
-| `ciphertext` | string | yes | Base64-encoded ciphertext |
-| `backend` | string | no | Backend ID |
-
-**Response result:**
-
-| Field | Type | Description |
-|-------|------|-------------|
-| `plaintext` | string | Base64-encoded plaintext |
-
-### remote.deriveKey
-
-Perform ECDH key agreement and KDF via xkmsd.
-
-**Request params:**
-
-| Field | Type | Required | Description |
-|-------|------|----------|-------------|
-| `keyId` | string | yes | Local ECDH key identifier |
-| `peerPublicKey` | string | yes | Base64-encoded peer public key (DER/SPKI) |
-| `kdf` | string | no | `HKDF-SHA256` (default), `HKDF-SHA384` |
-| `kdfInfo` | string | no | Base64-encoded HKDF info |
-| `keyLength` | int | no | Derived key length in bytes (default: 32) |
-| `backend` | string | no | Backend ID |
-
-**Response result:**
-
-| Field | Type | Description |
-|-------|------|-------------|
-| `derivedKey` | string | Base64-encoded derived key material |
-
-### remote.generateKey
-
-Generate a new key on a xkmsd backend.
-
-**Request params:**
-
-| Field | Type | Required | Description |
-|-------|------|----------|-------------|
-| `keyId` | string | yes | Key identifier |
-| `algorithm` | string | yes | Key algorithm |
-| `backend` | string | yes | Target backend ID |
-| `purpose` | []string | yes | Key purposes: `sign`, `decrypt`, `agree` |
-
-**Response result:**
-
-| Field | Type | Description |
-|-------|------|-------------|
-| `keyId` | string | Key identifier |
-| `publicKey` | string | Base64-encoded public key (DER/SPKI) |
-| `algorithm` | string | Key algorithm |
-| `backend` | string | Backend that stores the key |
-
-### remote.getKeyInfo
-
-Get key metadata from xkmsd.
-
-**Request params:**
-
-| Field | Type | Required | Description |
-|-------|------|----------|-------------|
-| `keyId` | string | yes | Key identifier |
-| `backend` | string | no | Backend ID |
-
-**Response result:**
-
-| Field | Type | Description |
-|-------|------|-------------|
-| `keyId` | string | Key identifier |
-| `backend` | string | Backend storing the key |
-| `algorithm` | string | Key algorithm |
-| `hardwareBacked` | bool | Whether key uses hardware |
-| `createdAt` | string | ISO 8601 creation timestamp |
+`remote.deriveKey` returns the raw shared secret; there is no KDF parameter.
 
 ### remote.attestKey
 
-Get attestation for a xkmsd key from its backend.
-
-**Request params:**
-
-| Field | Type | Required | Description |
-|-------|------|----------|-------------|
-| `keyId` | string | yes | Key identifier |
-| `challenge` | string | yes | Base64-encoded attestation nonce |
-| `backend` | string | no | Backend ID |
-
-**Response result:**
+Params: `backend`, `keyId`, `nonce` (`protocol_remote.go:233-236`). Result
+(`:240-244`):
 
 | Field | Type | Description |
 |-------|------|-------------|
-| `format` | string | Attestation format: `tpm2`, `pkcs11`, `none` |
-| `attestation` | string | Base64-encoded attestation data |
-| `certificateChain` | []string | Base64-encoded X.509 certificate chain |
+| `format` | string | Attestation format, e.g. `tpm2`, `pkcs11` |
+| `certificateChain` | []string | Attestation certificate chain |
+| `attestationData` | string | Backend-specific attestation data |
+| `nonce` | string | Echoed challenge |
 
-**Errors:** `-32020` AttestationUnsupported (software backend)
+### remote.attestDevice
+
+Params: `nonce`, a 32-byte challenge (`protocol_remote.go:249`). The result
+(`:255-267`) carries `format`, `certificateChain`, `securityLevel` and `nonce`,
+plus optional `platformPcrs`, `quoteData`, `quoteSignature`,
+`firmwareVersion`, `bootHashHex` and `bootStateVerified`. See
+[attestation.md](attestation.md).
 
 ---
 
-## Existing Methods (No Namespace Prefix)
+## Base Methods (No Namespace Prefix)
 
-These are the original FIDO2-specific methods, retained for backward compatibility.
+`xkey/pkg/pairing/protocol.go:35-41`:
 
 | Method | Description |
 |--------|-------------|
@@ -681,57 +231,75 @@ These are the original FIDO2-specific methods, retained for backward compatibili
 | `deleteKey` | Delete FIDO2 credential |
 | `loadKey` | Load/verify FIDO2 credential exists |
 | `getInfo` | Device information and capabilities |
+| `pairing.confirm` | Pairing confirmation |
 
-These methods are documented in the [BLE Protocol Specification](../ble/protocol.md).
+The FIDO2 methods are documented in the [BLE Protocol Specification](../ble/protocol.md).
 
 ---
 
 ## Error Code Registry
 
+`xkey/pkg/pairing/protocol.go:47-139`.
+
 ### Standard JSON-RPC Errors
 
-| Code | Name | Description |
-|------|------|-------------|
-| -32700 | ParseError | Invalid JSON received |
-| -32600 | InvalidRequest | Invalid JSON-RPC request structure |
-| -32601 | MethodNotFound | Method does not exist |
-| -32602 | InvalidParams | Invalid method parameters |
-| -32603 | InternalError | Internal server error |
+| Code | Constant |
+|------|----------|
+| -32700 | `ErrorCodeParseError` |
+| -32600 | `ErrorCodeInvalidRequest` |
+| -32601 | `ErrorCodeMethodNotFound` |
+| -32602 | `ErrorCodeInvalidParams` |
+| -32603 | `ErrorCodeInternalError` |
 
-### FIDO2 Application Errors (Existing)
+### Key and Policy Errors
 
-| Code | Name | Description |
-|------|------|-------------|
-| -32000 | KeyNotFound | Credential or key not found |
-| -32001 | UserCancelled | User dismissed biometric or prompt |
-| -32002 | BiometricFailed | Biometric verification failed |
-| -32003 | UnsupportedAlgorithm | Algorithm not supported by device |
-| -32004 | InvalidCredentialID | Malformed credential identifier |
-| -32005 | OperationTimeout | Operation timed out waiting |
-| -32006 | StorageFull | No space for new credentials or keys |
-| -32007 | KeyExists | Key with this ID already exists |
+| Code | Constant |
+|------|----------|
+| -32000 | `ErrorCodeKeyNotFound` |
+| -32001 | `ErrorCodeUserCancelled` |
+| -32002 | `ErrorCodeBiometricFailed` |
+| -32003 | `ErrorCodeKeyExists` |
+| -32004 | `ErrorCodeUnsupportedAlg` |
+| -32005 | `ErrorCodeInvalidCredID` |
+| -32006 | `ErrorCodeStorageFull` |
+| -32007 | `ErrorCodeOperationTimeout` |
+| -32008 | `ErrorCodeBackendDenied` |
+| -32009 | `ErrorCodeAttestFailed` |
+| -32010 | `ErrorCodeAttestUnsupported` |
+| -32011 | `ErrorCodeOperationDenied` |
+| -32012 | `ErrorCodeInvalidPublicKey` |
+| -32013 | `ErrorCodeDecryptFailed` |
+| -32014 | `ErrorCodeHMACFailed` |
+| -32015 | `ErrorCodeECDHFailed` |
+| -32016 | `ErrorCodeInvalidFormat` |
+| -32017 | `ErrorCodePairingRejected` |
+| -32018 | `ErrorCodeShareDenied` |
+| -32019 | `ErrorCodeShareNotExportable` |
 
-### General Key Operation Errors
+### Feature Errors
 
-| Code | Name | Description |
-|------|------|-------------|
-| -32010 | KeyAlreadyExists | Key ID already in use |
-| -32011 | UnsupportedOperation | Operation not supported by key or backend |
-| -32012 | PolicyViolation | Key policy prevents this operation |
-| -32013 | StrongBoxUnavailable | StrongBox requested but not available |
-| -32014 | DecryptionFailed | Ciphertext could not be decrypted |
-| -32015 | VerificationFailed | Signature or MAC verification failed |
-| -32016 | InvalidKeyPurpose | Key not authorized for this operation |
-
-### Remote Backend Errors
-
-| Code | Name | Description |
-|------|------|-------------|
-| -32020 | AttestationUnsupported | Backend does not support attestation |
-| -32021 | BackendNotFound | Specified backend does not exist |
-| -32022 | BackendDenied | Sharing policy denies access to backend |
-| -32023 | BackendUnavailable | Backend temporarily unavailable |
-| -32024 | XkmsdUnavailable | xkmsd service not reachable |
+| Code | Constant |
+|------|----------|
+| -32020 | `ErrorCodeBackupFailed` |
+| -32021 | `ErrorCodeBackupRestore` |
+| -32022 | `ErrorCodeBackupNotFound` |
+| -32023 | `ErrorCodeOATHNotFound` |
+| -32024 | `ErrorCodeOATHGenerate` |
+| -32025 | `ErrorCodeOATHStore` |
+| -32026 | `ErrorCodePIVSlotNotFound` |
+| -32027 | `ErrorCodePIVSlotOccupied` |
+| -32028 | `ErrorCodePIVSignFailed` |
+| -32029 | `ErrorCodePIVInvalidSlot` |
+| -32030 | `ErrorCodeSyncFailed` |
+| -32031 | `ErrorCodeSyncConflict` |
+| -32032 | `ErrorCodeSyncRemoteUnavail` |
+| -32033 | `ErrorCodeSyncNoData` |
+| -32034 | `ErrorCodeSyncVersionMismatch` |
+| -32035 | `ErrorCodeFeatureUnavailable` |
+| -32036 | `ErrorCodeNotApplicable` |
+| -32037 | `ErrorCodeAttestProtocolDowngrade` |
+| -32038 | `ErrorCodeSyncApprovalRequired` |
+| -32039 | `ErrorCodeSyncNotApproved` |
 
 ---
 
@@ -744,17 +312,16 @@ Laptop                                    Phone
   |                                         |
   |-- local.generateKey ------------------>|
   |   {keyId:"sig-key", algorithm:"ES256", |
-  |    purpose:["sign"]}                   |
+  |    strongBoxBacked:true}               |
   |                                         | Generate key in StrongBox
-  |<-- result: {publicKey:"...",  ---------|
+  |<-- result: {publicKeyDer:"...", -------|
   |     securityLevel:"strongbox"}         |
   |                                         |
   |-- local.sign ------------------------->|
   |   {keyId:"sig-key",                    |
   |    algorithm:"ES256",                  |
   |    data:"base64-hash"}                 |
-  |                                         | Show biometric prompt
-  |                                         | User authenticates
+  |                                         | Biometric prompt, if required
   |<-- result: {signature:"..."} ----------|
   |                                         |
 ```
@@ -766,17 +333,16 @@ Laptop                                    Phone
   |                                         |
   |<-- remote.listBackends ----------------|
   |                                         |
-  |-- result: [{id:"tpm2",  ------------->|
-  |     type:"tpm2", ...}]                 |
+  |-- result: {backends:[{name:"tpm2", -->|
+  |     type:"tpm2", ...}]}                |
   |                                         |
   |<-- remote.sign ------------------------|
-  |   {keyId:"tpm-sign-key",              |
-  |    algorithm:"ES256",                  |
-  |    data:"base64-hash",                |
-  |    backend:"tpm2"}                     |
+  |   {backend:"tpm2",                     |
+  |    keyId:"tpm-sign-key",               |
+  |    data:"base64-hash"}                 |
   |                                         |
-  |   [laptop calls xkmsd SDK:         |
-  |    client.Sign("tpm-sign-key",...)]    |
+  |   [bridge checks sharing policy,       |
+  |    forwards to xkmsd]                  |
   |                                         |
   |-- result: {signature:"..."} --------->|
   |                                         |
@@ -789,24 +355,19 @@ Laptop                                    Phone
   |                                         |
   |-- local.attestKey -------------------->|
   |   {keyId:"sig-key",                    |
-  |    challenge:"base64-nonce"}           |
+  |    nonce:"base64-nonce"}               |
   |                                         | Android Key Attestation
-  |<-- result: {certificateChain:[...],  --|
+  |<-- result: {format:"android-keystore",-|
+  |     certificateChain:[...],            |
   |     securityLevel:"strongbox"}         |
   |                                         |
-  | [Laptop verifies chain to Google root] |
-  |                                         |
   |<-- remote.attestKey -------------------|
-  |   {keyId:"tpm-key",                    |
-  |    challenge:"base64-nonce"}           |
-  |                                         |
-  | [Laptop calls xkmsd attestation]   |
+  |   {backend:"tpm2", keyId:"tpm-key",    |
+  |    nonce:"base64-nonce"}               |
   |                                         |
   |-- result: {format:"tpm2",  ---------->|
-  |     attestation:"...",                  |
+  |     attestationData:"...",             |
   |     certificateChain:[...]}            |
-  |                                         |
-  | [Phone verifies TPM2 attestation]      |
   |                                         |
 ```
 
@@ -814,7 +375,7 @@ Laptop                                    Phone
 
 ## See Also
 
-- [BLE Protocol Specification](../ble/protocol.md) - Existing FIDO2 protocol details
+- [BLE Protocol Specification](../ble/protocol.md) - FIDO2 base protocol details
 - [Attestation](attestation.md) - Detailed attestation flows
 - [Bidirectional Key Sharing](bidirectional.md) - Sharing design and policies
-- [Transport](transport.md) - BLE and USB transport details
+- [Transport](transport.md) - BLE, USB and TCP transport details

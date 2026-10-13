@@ -1,6 +1,9 @@
 # PIV Implementation Roadmap
 
-xkey implements PIV-I (PIV-Interoperable, FIPS 201-3 / NIST SP 800-73-4) to enable physical access control and mTLS authentication from both desktop and mobile devices. All cryptographic operations are backed by FIPS 140-2/3 validated hardware (PKCS#11 HSMs, TPM2, AWS/Azure/GCP cloud KMS).
+> **Status: REFERENCE** · Last verified: 2026-10-13
+> Scope: open plan for PIV-I; each phase is marked done or open against the code. For PIV as built, the [piv feature folder](../piv/architecture.md) is normative.
+
+xkey targets PIV-I (PIV-Interoperable, FIPS 201-3 / NIST SP 800-73-4) to enable physical access control and mTLS authentication from both desktop and mobile devices. The goal is for every PIV key to live on FIPS 140-2/3 validated hardware (PKCS#11 HSMs, TPM2, AWS/Azure/GCP cloud KMS).
 
 ## Federal Compliance Position
 
@@ -8,7 +11,7 @@ xkey implements PIV-I (PIV-Interoperable, FIPS 201-3 / NIST SP 800-73-4) to enab
 
 go-xkms does not need FBCA cross-certification. Like Microsoft AD CS or EJBCA, go-xkms is the **certificate generation engine**. The deploying organization gets their CA cross-certified — not the software. AD CS has no FBCA cross-cert. EJBCA has no FBCA cross-cert. Neither does go-xkms need one.
 
-**What go-xkms provides**: PIV-I compliant certificate profiles, CRL generation, OCSP, key management on FIPS-validated backends, certificate lifecycle management.
+**What go-xkms provides** (PIV-I profiles are still open, see Phase 1): PIV-I compliant certificate profiles, CRL generation, OCSP, key management on FIPS-validated backends, certificate lifecycle management.
 
 **What the deploying organization provides**: Certificate Policy (CP), Certification Practice Statement (CPS), trust chain cross-certification, identity proofing operations, compliance audits.
 
@@ -22,7 +25,7 @@ go-xkms does not need FBCA cross-certification. Like Microsoft AD CS or EJBCA, g
 
 ### FIPS 140 coverage
 
-go-xkms delegates all cryptographic operations to FIPS 140-2/3 validated backends:
+The hardware backends and their FIPS 140-2/3 validation levels:
 
 | Backend | FIPS Level | Private Key Protection |
 |---------|-----------|----------------------|
@@ -32,75 +35,63 @@ go-xkms delegates all cryptographic operations to FIPS 140-2/3 validated backend
 | Azure Key Vault (Managed HSM) | Level 3 | Keys in cloud HSM |
 | GCP KMS (Cloud HSM) | Level 3 | Keys in cloud HSM |
 
-The CA private keys, PIV slot keys, and content signing keys all reside in validated hardware. go-xkms never handles raw private key material for these operations.
+Target: CA private keys, PIV slot keys, and content signing keys all reside in validated hardware. Today a software PIV key generator also exists (`NewSoftwarePIVKeyGenerator`, `pkg/xkms/piv_keygen_software.go`), so this holds only when a hardware backend is configured.
 
 ### What works today for federal logical access
 
 | Requirement | Capability | Status |
 |-------------|-----------|--------|
-| Phishing-resistant MFA (OMB M-22-09) | FIDO2/CTAP2 authenticator | Done |
-| AAL2 authentication (SP 800-63-4) | FIDO2 device-bound passkeys | Done |
-| AAL3 authentication (SP 800-63-4) | FIDO2 with TPM2-bound key | Done |
-| mTLS client auth | PKCS#11 module + PIV certificates | Done |
-| PIV certificate management | All slots, all storage backends | Done |
-| CA with certificate profiles | `pkg/ca/` with PIV profiles | Done |
-| CRL generation | RFC 5280 compliant | Done |
-| Certificate chain verification | Full chain validation | Done |
+| Phishing-resistant MFA (OMB M-22-09) | FIDO2/CTAP2 (`pkg/fido2/`) | Done |
+| mTLS client auth | PKCS#11 module + PIV certificates (`pkg/auth/pkcs11_tls.go:236`) | Done |
+| PIV certificate management | All slots, file/TPM2/PKCS#11 storage (`pkg/pivcert/`) | Done |
+| CA with PIV-I certificate profiles | `pkg/ca/` has no PIV profile or PIV OIDs | Open |
+| CRL generation | `pkg/ca/revocation.go` | Done |
+| OCSP responder | `OCSPResponder` (`pkg/ca/ocsp.go:107`) | Done |
+| Certificate chain verification | `pkg/ca/verification.go` | Done |
 
 ## Current State
 
 ### What's implemented
 
 **CA and Certificate Infrastructure** (`pkg/ca/`):
-- Full CA implementation (`ca.go` - 1358 lines): `Init()`, `Load()`, `SignCSR()`, `IssueCertificate()`, `CreateCSR()`
-- PIV certificate profiles (`profiles/piv.go` - 650 lines): All 4 slots with correct key usage, EKU, validity
-- CRL generation (`revocation.go` - 570 lines): RFC 5280 reason codes, monotonic CRL numbers, AKI extension
-- Certificate verification (`verification.go` - 787 lines): Full chain validation with revocation checking
-- TLS helpers (`tls.go` - 757 lines): Server/client/mTLS config generation
-- Profile system: server, client, code-signing, email, OCSP responder, timestamping, CA, mTLS, PIV
-- PIV OIDs already defined: `OIDSmartCardLogon`, `OIDPIVCardAuthentication`, `OIDPIVContentSigning`, `OIDPIVCHUID`, `OIDFPKICommonPolicy`, `OIDFPKICommonHardware`, `OIDFPKICommonHighAssurance`
+- CA core (`ca.go`), issuance (`issuance.go`), CSR creation (`csr.go`), profiles (`profiles.go`)
+- CRL generation (`revocation.go`) and certificate verification (`verification.go`)
+- TLS helpers (`tls.go`)
+- OCSP responder: `NewOCSPResponder` / `OCSPResponder.HandleRequest` (`ocsp.go:141`)
 
-**PKCS#11 PIV Bridge** (`pkg/pkcs11/module/module_piv.go`):
-- 20-method `PKCS11Transport` interface with full PIV coverage
-- `ListPIVSlots`, `GetPIVCertificate`, `GeneratePIVKey` for slot management
-- `StorePIVCertificate`, `DeletePIVCertificate`, `ImportPIVCertificate` for cert lifecycle
-- `ExportPIVCertificate`, `GeneratePIVCSR` for interoperability
-- Creates proper PKCS#11 objects (CKO_CERTIFICATE, CKO_PUBLIC_KEY, CKO_PRIVATE_KEY) per slot
+**PKCS#11 PIV Bridge** (`pkg/pkcs11/module/`):
+- The `PKCS11Transport` interface (`transport.go:47`) carries the PIV methods `ListPIVSlots`, `GetPIVCertificate`, `GeneratePIVKey`, `StorePIVCertificate`, `DeletePIVCertificate`, `ImportPIVCertificate`, `ExportPIVCertificate`, `GeneratePIVCSR`
+- `module_piv.go` creates PKCS#11 objects (CKO_CERTIFICATE, CKO_PUBLIC_KEY, CKO_PRIVATE_KEY) per slot (`LoadPIVObjects`)
 
 **mTLS via PKCS#11** (`pkg/auth/pkcs11_tls.go`):
-- `NewPKCS11TLSConfig()` creates `tls.Config` for PKCS#11-backed client auth
-- Works with curl, Firefox, OpenSSL, and any PKCS#11-aware application
-- `libxkms_pkcs11.so` CGO shared library built and functional
+- `NewPKCS11TLSConfig()` (`pkcs11_tls.go:236`) creates a `tls.Config` for PKCS#11-backed client auth
+- The `libxkms_pkcs11.so` shared library is built by the root `Makefile`
 
 **PIV Certificate Storage** (`pkg/pivcert/`):
-- All PIV slots (9A, 9C, 9D, 9E, F9) + retired slots (82-95)
-- File, TPM2, and PKCS#11 storage backends
+- Slots 9A, 9C, 9D, 9E, F9 and retired slots 82-95 (`pivcert.go`)
+- File, TPM2, and PKCS#11 storage backends (`pkg/pivcert/{file,tpm2,pkcs11}`)
 
-**xkey Desktop PIV CLI** (`xkey/docs/piv.md`):
-- `xkey piv store/show/list/export/delete/status` commands
+**xkey Desktop PIV CLI**: see the [piv feature folder](../piv/cli.md).
 
-**xkey-android PIV Foundation**:
-- `PivKeyManager` generates keys in Android StrongBox/Keystore
-- `PivSlot` enum, `PivSlotDao`, `PivSlotEntity` for slot management
-- `PivActivity`, `PivSlotDetailActivity` UI
-- BLE + USB transports with Noise_XX pairing and device attestation
+**Virtual CCID with a partial APDU engine** (`xkey/pkg/ccid/`):
+- `PKCS11Bridge` (`bridge.go`) selects the PIV or OpenPGP AID and dispatches SELECT, VERIFY, PSO, READ BINARY, GENERATE ASYMMETRIC and GET DATA (`apduHandlers`, `bridge.go:162`) onto PKCS#11
+
+**xkey-android**: lives in a separate repository; its PIV state is not verified here.
 
 ### What's missing
 
-1. **PIV-I certificate profile compliance** — Existing profiles need PIV-I policy OIDs, UUID SAN encoding, FASC-N encoding, EKU criticality flags
-2. **OCSP responder** — Has OCSP config/profiles but no request/response handler
-3. **PIV data objects** — No CHUID, CCC, Discovery Object, or Security Object construction
-4. **Content signing certificate** — No profile or workflow for signing PIV data objects
-5. **Key escrow** — No key archival/recovery for slot 9D
-6. **PIV APDU engine** — No ISO 7816 command processing
-7. **Virtual CCID device** — No virtual smart card reader
-8. **Android HCE** — No NFC `HostApduService`
+1. **PIV-I certificate profile compliance** — no PIV profile, PIV-I policy OIDs, UUID SAN encoding, FASC-N encoding, or EKU criticality handling in `pkg/ca/`
+2. **PIV data objects** — no CHUID, CCC, Discovery Object, or Security Object construction
+3. **Content signing certificate** — no profile or workflow for signing PIV data objects
+4. **Key escrow for slot 9D** — `pkg/escrow/` exists but has no PIV slot 9D workflow
+5. **Full PIV APDU engine** — the CCID bridge has no GENERAL AUTHENTICATE or PUT DATA handler, and there is no `pkg/piv/`
+6. **Android HCE** — not in this repository
 
 ## PIV-I Certificate Profile Compliance
 
 ### Policy OIDs
 
-These OIDs must be added to `pkg/ca/profiles/piv.go`:
+These OIDs must be added to `pkg/ca/profiles.go`:
 
 ```go
 // PIV-I Policy OIDs (id-fpki-certpcy arc: 2.16.840.1.101.3.2.1.3)
@@ -349,26 +340,26 @@ F6-FE  Optional fields: empty
 
 ## Implementation Phases
 
-### Phase 1: PIV-I Certificate Profile Compliance
+### Phase 1: PIV-I Certificate Profile Compliance — Open
 
-Update existing `pkg/ca/profiles/piv.go` and CA infrastructure for full PIV-I compliance.
+Add PIV-I profiles to `pkg/ca/profiles.go`; `pkg/ca/` has no PIV profile or PIV OID today.
 
-**1a. Add PIV-I policy OIDs** (`pkg/ca/profiles/piv.go`):
+**1a. Add PIV-I policy OIDs** (`pkg/ca/profiles.go`):
 - Add `OIDPIVIAuthentication`, `OIDPIVICardAuth`, `OIDPIVIContentSigning`
 - Add `OIDPIVContentSigningEKU`, `OIDPIVNACIIndicator`
 - Update each profile to assert correct policy OID in Certificate Policies extension
 
-**1b. UUID SAN encoding** (`pkg/ca/profiles/piv.go` or `pkg/ca/`):
+**1b. UUID SAN encoding** (`pkg/ca/`):
 - Add `WithUUID(uuid string)` profile option
 - Encode as `uniformResourceIdentifier = urn:uuid:<uuid>` in SAN
 - Ensure all 4 slot certs for same card share the same UUID
 
-**1c. EKU criticality** (`pkg/ca/profiles/piv.go`):
-- Slot 9E: EKU must be CRITICAL (currently not)
+**1c. EKU criticality** (`pkg/ca/profiles.go`):
+- Slot 9E: EKU must be CRITICAL
 - Content Signing: EKU must be CRITICAL
-- Slots 9A, 9C, 9D: EKU NOT critical (verify current behavior)
+- Slots 9A, 9C, 9D: EKU NOT critical
 
-**1d. Content signing certificate profile** (`pkg/ca/profiles/piv.go`):
+**1d. Content signing certificate profile** (`pkg/ca/profiles.go`):
 - New profile `piv-content-signing`
 - EKU: `id-PIV-content-signing` (2.16.840.1.101.3.6.7), CRITICAL
 - Policy: `id-fpki-certpcy-pivi-contentSigning` (2.16.840.1.101.3.2.1.3.20)
@@ -383,26 +374,15 @@ Update existing `pkg/ca/profiles/piv.go` and CA infrastructure for full PIV-I co
 
 **1f. AIA and CDP extensions**:
 - Ensure all PIV profiles include configurable AIA (caIssuers + OCSP) and CDP URLs
-- Verify `WithCRLDistributionPoints()` and `WithOCSPServers()` profile options work correctly
+- Today the URLs are CA-wide: `CAConfig.CRLDistributionPoints` and `CAConfig.OCSPServers` (`pkg/ca/types.go:69`, `:73`); there are no per-profile options
 
-### Phase 2: OCSP Responder
+### Phase 2: OCSP Responder — Done (different layout)
 
-Implement `pkg/ca/ocsp/` — the CA infrastructure has OCSP profiles and URL configuration but no actual responder.
+Built as `pkg/ca/ocsp.go`, not a `pkg/ca/ocsp/` package: `NewOCSPResponder` and `OCSPResponder.HandleRequest` (`pkg/ca/ocsp.go:141`) parse an RFC 6960 request and return a signed response, with a response cache (`getCachedResponse`, `cacheResponse`).
 
-**Files**:
-- `pkg/ca/ocsp/responder.go` — OCSP request/response handling per RFC 6960
-- `pkg/ca/ocsp/handler.go` — HTTP handler for OCSP endpoint
-- `pkg/ca/ocsp/signer.go` — Response signing with OCSP responder key
+**Still open**: an 18-hour CRL publication schedule (FPKI requirement) tied to PIV-I issuance.
 
-**Requirements**:
-- Parse OCSP requests (RFC 6960)
-- Look up certificate revocation status from `pkg/ca/revocation.go`
-- Sign responses with OCSP responder certificate
-- Support GET and POST methods
-- Nonce extension support
-- CRL publication every 18 hours (FPKI requirement)
-
-### Phase 3: PIV Data Object Construction
+### Phase 3: PIV Data Object Construction — Open
 
 Implement `pkg/piv/` — data object builders for CHUID, CCC, Discovery Object, and Security Object.
 
@@ -427,9 +407,9 @@ Implement `pkg/piv/` — data object builders for CHUID, CCC, Discovery Object, 
 - CMS SignedData wrapper signed with content signing key
 - Content signing certificate included in CMS
 
-### Phase 4: Key Escrow for Slot 9D
+### Phase 4: Key Escrow for Slot 9D — Open
 
-Implement key archival and recovery for Key Management certificates (the only PIV slot where this is permitted).
+Implement key archival and recovery for Key Management certificates (the only PIV slot where this is permitted). A general escrow layer exists (`pkg/escrow/`, KMIP and xkms federation backends) but nothing escrows PIV slot 9D keys.
 
 **Requirements**:
 - Encrypt and archive 9D private key material
@@ -437,9 +417,9 @@ Implement key archival and recovery for Key Management certificates (the only PI
 - Archived key protected at same FIPS 140 level as live key
 - Integration with existing `pkg/backend/` key storage
 
-### Phase 5: PIV APDU Engine (`pkg/piv/`)
+### Phase 5: PIV APDU Engine (`pkg/piv/`) — Open (partial engine in `xkey/pkg/ccid/`)
 
-Core ISO 7816-4 / SP 800-73-4 command processor.
+Core ISO 7816-4 / SP 800-73-4 command processor. There is no `pkg/piv/`. `xkey/pkg/ccid/bridge.go` has a PKCS#11-backed engine that selects the PIV AID (`AIDPIV`, `bridge.go:65`) and handles SELECT, VERIFY, PSO, READ BINARY, GENERATE ASYMMETRIC and GET DATA (`bridge.go:162`). GENERAL AUTHENTICATE, PUT DATA and GET RESPONSE are not handled, and the data objects of Phase 3 are not served.
 
 **Files**:
 - `pkg/piv/apdu.go` — APDU command/response types
@@ -474,25 +454,13 @@ type PIVKeyBackend interface {
 }
 ```
 
-### Phase 6: Virtual CCID Device (`xkey/pkg/ccid/`)
+### Phase 6: Virtual CCID Device (`xkey/pkg/ccid/`) — Done (different layout)
 
-Present xkey as a USB smart card reader to the host OS using Linux UHID.
+xkey presents a USB smart card reader to the host OS. The CCID message layer is `xkey/pkg/ccid/ccid.go` (`PC_to_RDR_XfrBlock` → `handleXfrBlock` → `RDR_to_PC_DataBlock`, `ccid.go:317`, `:391`); descriptors are in `descriptor.go`; APDUs go to the `PKCS11Bridge` of Phase 5. The USB transports (UHID or USB gadget) live in `xkey/pkg/uhid/` and `xkey/pkg/gadget/`; see [usb/ccid.md](../usb/ccid.md). There are no `uhid.go` or `transport.go` files in `xkey/pkg/ccid/`.
 
-**Files**:
-- `xkey/pkg/ccid/ccid.go` — USB CCID device class implementation
-- `xkey/pkg/ccid/uhid.go` — Linux UHID device creation (reuse `xkey/pkg/uhid/`)
-- `xkey/pkg/ccid/transport.go` — CCID message framing (PC_to_RDR_XfrBlock / RDR_to_PC_DataBlock)
+### Phase 7: Derived Credentials + Phone Provisioning — Open
 
-**How it works**:
-1. xkey creates a UHID device with USB CCID class descriptors
-2. Host OS recognizes it as a smart card reader via pcscd/CCID driver
-3. Applications (OpenSC, Firefox, ssh-agent) send ISO 7816 APDUs through pcscd
-4. CCID transport unwraps APDUs and routes to `pkg/piv/` APDU engine
-5. Responses flow back through CCID framing to the application
-
-### Phase 7: Derived Credentials + Phone Provisioning
-
-The xkey-android app already has Noise_XX pairing with device attestation. This phase adds PIV credential provisioning over the existing secure channel.
+Depends on Phase 1 (no PIV-I Card Auth profile exists yet). The desktop side of the pairing protocol already carries PIV methods (generate key, import cert, list slots, sign, get cert; `xkey/pkg/pairing/protocol_piv.go`), but none issues a PIV-I certificate. The xkey-android app lives in a separate repository and is not verified here; the plan assumes it has Noise_XX pairing with device attestation. This phase adds PIV credential provisioning over the existing secure channel.
 
 **Flow**:
 1. Phone is already paired via BLE Noise_XX (existing)
@@ -504,7 +472,7 @@ The xkey-android app already has Noise_XX pairing with device attestation. This 
 
 **SP 800-157 Derived Credentials**: The phone key is a "derived credential" — generated on the phone, signed by the same CA. The Noise channel provides mutual authentication and confidentiality.
 
-### Phase 8: Android HCE (`xkey-android`)
+### Phase 8: Android HCE (`xkey-android`) — Open (separate repository, not verified here)
 
 Implement `HostApduService` to present the phone as a contactless PIV card to NFC building access readers.
 
@@ -519,11 +487,12 @@ Implement `HostApduService` to present the phone as a contactless PIV card to NF
 
 ### Unit Tests (No Hardware)
 
-The PIV APDU engine, data objects, FASC-N encoding, and certificate profiles are pure Go. All tested with standard Go unit tests.
+Planned, not yet present: `pkg/piv/` and PIV profile tests do not exist. The planned engine, data objects, FASC-N encoding, and certificate profiles are pure Go and testable with standard Go unit tests.
 
 ```bash
+# planned
 go test ./pkg/piv/... -v -count=1
-go test ./pkg/ca/profiles/ -run TestPIV -v -count=1
+go test ./pkg/ca/ -run TestPIV -v -count=1
 ```
 
 ### Certificate Profile Validation
@@ -536,8 +505,10 @@ Use GSA's [fpkilint](https://github.com/GSA/fpkilint) and [CPCT](https://playboo
 
 **Protocol**: TCP socket on port 35963, 2-byte big-endian length prefix framing.
 
+Planned, not yet present: the compose file, `Dockerfile.piv-test` and the `piv-card` service below do not exist.
+
 ```yaml
-# test/docker/docker-compose.piv.yml
+# test/docker/docker-compose.piv.yml (planned)
 services:
   vpcd:
     image: debian:bookworm-slim
@@ -594,12 +565,14 @@ APDUs are transport-agnostic — if the APDU engine passes validation via vpcd, 
 
 ### Makefile Targets
 
+Planned, not yet present. Today's PIV integration target is `make integration-test-piv` in `xkey/Makefile` (`./test/integration/piv/...`, line 580); the targets below, aimed at the planned `pkg/piv/` and vpcd harness, do not exist.
+
 ```makefile
 test-piv:
 	go test ./pkg/piv/... -v -count=1
 
 test-piv-profiles:
-	go test ./pkg/ca/profiles/ -run TestPIV -v -count=1
+	go test ./pkg/ca/ -run TestPIV -v -count=1
 
 integration-test-piv:
 	docker compose -f test/docker/docker-compose.piv.yml up --build --abort-on-container-exit
@@ -616,12 +589,12 @@ bench-piv:
 
 | Phase | Depends On |
 |-------|-----------|
-| Phase 1 (Profile Compliance) | None — updates to existing `pkg/ca/profiles/piv.go` |
-| Phase 2 (OCSP Responder) | None — builds on existing `pkg/ca/revocation.go` |
+| Phase 1 (Profile Compliance) | None — extends `pkg/ca/profiles.go` |
+| Phase 2 (OCSP Responder) | Done (`pkg/ca/ocsp.go`) |
 | Phase 3 (Data Objects) | Phase 1 (needs FASC-N, UUID, content signing cert) |
-| Phase 4 (Key Escrow) | None — builds on existing `pkg/backend/` |
+| Phase 4 (Key Escrow) | None — builds on `pkg/escrow/` and `pkg/backend/` |
 | Phase 5 (APDU Engine) | Phase 3 (needs data objects to serve) |
-| Phase 6 (Virtual CCID) | Phase 5 + `xkey/pkg/uhid/` (already exists) |
+| Phase 6 (Virtual CCID) | Done (`xkey/pkg/ccid/`) |
 | Phase 7 (Phone Provisioning) | Phase 1 + existing Noise pairing |
 | Phase 8 (Android HCE) | Phase 5 + Phase 7 |
 | vpcd Testing | Phase 5 |

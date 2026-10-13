@@ -1,32 +1,49 @@
 # Lint gates
 
-Status: current. Last verified: 2026-10-12.
+> **Status: REFERENCE** · Last verified: 2026-10-13
+> Scope: the lint and static-analysis gates CI's Lint and Static Analysis jobs run, and the Make target behind each.
 
-What CI's Lint job (`.github/workflows/ci.yml`) enforces on every push and
-pull request, in order, and the Make target behind each step so a developer
-runs the identical check locally before pushing.
+What CI's Lint and Static Analysis jobs (`.github/workflows/ci.yml`) enforce
+on every push and pull request, in order, and the Make target behind each
+step so a developer runs the identical check locally before pushing.
 
 ## Gates
+
+### Lint job
 
 | Order | Gate | Make target | What it enforces |
 |-------|------|-------------|-------------------|
 | 1 | gofmt | `make fmt-check` | Every `.go` file in every module is `gofmt -s` formatted. Path-based, so one run reaches all four modules. |
-| 2 | go vet | `make vet` | `go vet` passes for every module in `LINT_MODULES` (`.`, `sdk/go`, `xkey`, `web/desktop`), each under its own build tags (`LINT_TAGS_xkey` for `xkey`; untagged elsewhere). Go tooling does not cross a module boundary, so this loops rather than running `go vet ./...` once from the root. |
+| 2 | go vet | `make vet` | `go vet` passes for every module in `LINT_MODULES` (`.`, `sdk/go`, `xkey`, `web/desktop`; `Makefile:3792`), each under its own build tags: `LINT_TAGS_xkey` for `xkey`, `VET_BUILD_TAGS` for `web/desktop`, and `LINT_TAGS_root` (`TEST_TAGS`, comma-joined) plus `VET_BUILD_TAGS` for `.` and `sdk/go`. Two more passes vet the root module under `LINT_TAGS_root_backends` and `LINT_TAGS_root_raft` (`Makefile:3873`). Go tooling does not cross a module boundary, so this loops rather than running `go vet ./...` once from the root. |
 | 3 | actionlint | `make lint` (`make actionlint`) | Every workflow in `.github/workflows/` passes actionlint at `ACTIONLINT_VERSION` (Makefile): syntax, expressions, runner labels, and every `run:` script through shellcheck when it is installed. A missing or different actionlint is replaced by the pin (`make install-actionlint`); a pin that cannot be installed fails the target. The installed version must match the pin exactly. The target fails at once when `.github/actionlint.yaml` is missing: it lists the self-hosted runner labels the workflows request (`qwen`), and must name exactly those. `make install-trivy` builds Trivy at `TRIVY_VERSION` with `go install`, stamping the version as Trivy's release build does; no install script is piped into a shell. A missing Trivy, or one that does not report the pin, is replaced by the pin, and an install that does not report the pin fails the target. `.github/scripts/make-gates-test.sh` proves this gate, and `make trivy`/`make trivy-image`, fail closed with the tool absent (go-xkms#1434). |
 | 4 | golangci-lint | `make lint` | The pinned `golangci-lint` version (`GOLANGCI_LINT_VERSION` in `ci.yml`) against `.golangci.yml`, over the same `LINT_MODULES` × tags matrix as `go vet`. CI requires the exact pinned version (`.github/scripts/require-tool.sh`) rather than falling back to an install, so a version drift fails loudly instead of scanning with an unknown tool. |
-| 5 | secure-analyzer selftest | `make secure-analyzer-selftest` | Proves the next gate can still find a known violation and stays silent on its compliant counterpart, before that gate's own result is trusted. See below. |
-| 6 | secure-analyzer | `make secure-analyzer` | go-qrdb's `pkg/secure/analyzer` rules (raw `memguard` imports, `ssh.ParsePrivateKey`, sensitive-named `string`/`[]byte` struct fields, string conversions of protected bytes, unwiped copy-outs) over every module under every declared tag combination. See below. |
+| 5 | xkey skill reference | `make -C xkey check-skill-reference` | Fails when the xkey skill's generated CLI reference is stale, or `SKILL.md` cites a command or flag that does not exist (`xkey/Makefile:1048`). |
+| 6 | internal literals | `make check-public-literals` | No lab-network address, fleet host name or owner workstation path anywhere in the tree (go-xkms#1030). |
 
-`make ci-gate` (the `ci-gate` job) is the umbrella that all of the above,
-plus the other jobs (`test`, `security`, `build`, `race`, ...), must pass
-before a PR is mergeable — this page covers the Lint job's steps only.
+Between gates 2 and 3 the job also runs the CI scripts' own self-tests
+(`.github/scripts/require-tool-test.sh`, `make-gates-test.sh`,
+`apt-deps-test.sh`, `pr-scope-test.sh`, `changed-go-packages-test.sh`) and
+`make test-buildgates`.
+
+### Static Analysis job
+
+| Order | Gate | Make target | What it enforces |
+|-------|------|-------------|-------------------|
+| 1 | integration compile gate | `make vet-integration` | Every `test/integration` suite compiles, one `go vet` per distinct `//go:build` tag combination (go-xkms#650). |
+| 2 | secure-analyzer selftest | `make secure-analyzer-selftest` | Proves the next gate can still find a known violation and stays silent on its compliant counterpart, before that gate's own result is trusted. See below. |
+| 3 | secure-analyzer | `make secure-analyzer` | go-qrdb's `pkg/secure/analyzer` rules (raw `memguard` imports, `ssh.ParsePrivateKey`, sensitive-named `string`/`[]byte` struct fields, string conversions of protected bytes, unwiped copy-outs) over every module under every declared tag combination. See below. |
+
+The `ci-gate` job (CI Gate) is the umbrella that all of the above, plus the
+other jobs (`test`, `security`, `build`, `race`, ...), must pass before a PR
+is mergeable. It is a job, not a Make target. This page covers the Lint and
+Static Analysis jobs only.
 
 ## The secure-analyzer gate (go-xkms#549)
 
 ### What it enforces
 
 go-qrdb's `pkg/secure/analyzer` (`pkg/secure/analyzer/analyzer.go`,
-vendored as a dependency, not code in this repository) is a `go vet` plugin
+a module dependency, not code in this repository) is a `go vet` plugin
 enforcing five rules on sensitive-material handling (`securecheck`, rules 1-3,
 and `securecopy`, rules 4-5, as pinned at go-qrdb v0.47.0-alpha). The
 numbers are this repository's: `rule_for` in `scripts/secure-analyzer-key.sh`
@@ -65,7 +82,7 @@ dropped the rule and the directive with it
 
 The selftest's bad fixture plants one violation per rule
 (`test/lint/secure/_fixtures/bad/bad.go`: rule 4 at line 59, rule 5 at line
-68) and `expect_hit` (`scripts/secure-analyzer-selftest.sh:81-102`) fails
+68) and `expect_hit` (`scripts/secure-analyzer-selftest.sh:84-91`) fails
 unless each rule is reported exactly once; the clean fixture beside it must
 produce no diagnostic at all.
 
@@ -121,8 +138,9 @@ using `scripts/secure-analyzer-symbol`, a small `go/ast`-based helper built
 alongside the analyzer itself. One consequence: multiple call sites in the
 same file with textually identical call expressions collapse onto the same
 rule-2 key — correct when, as in `pkg/ssh/keys/signer.go`, they really are
-the same shape for the same reason. (`pkg/ssh/keys` now parses in one helper,
-`parseSealedPEM`, so its entry names a single call.)
+the same shape for the same reason. (`signer.go` now parses in one helper,
+`parseSealedPEM` (`pkg/ssh/keys/signer.go:144`), so its entry names a single
+call; `pkg/ssh/keys/parse.go:63` has an entry of its own.)
 
 The file's own header documents two classes. Rule 1 has none: no file in
 this repository imports `memguard` any more, now that the bootstrap P-256
@@ -140,9 +158,10 @@ when they went stale.
 - **Pre-existing rule-3 findings**: sensitive-named fields that predate this
   gate, reported for triage rather than converted without review, because
   every one needs an API change (the field's type) reaching its
-  construction sites, some of them across a module boundary. See the
-  allowlist file for the full, current list with the struct each belongs
-  to.
+  construction sites, some of them across a module boundary. The class is
+  currently empty: the allowlist's only entries are the two rule-2 sites
+  above (`scripts/secure-analyzer-allowlist.txt:71-72`), and its rule-3
+  section keeps only the header that governs any entry added back.
 
 ### Handling a secret without tripping the gate
 
@@ -204,7 +223,7 @@ manual audit:
 - **`rsa.PrivateKey.Precomputed`** — `crypto/rsa` caches bigmod-form copies
   of the modulus and the primes in unexported fields of
   `rsa.PrecomputedValues`. `zeroizeParsedPrivateKey`
-  (`pkg/backend/software/zeroize.go`) clears `D`, `Primes[]`, and every
+  (`pkg/backend/software/zeroize.go:74`) clears `D`, `Primes[]`, and every
   *exported* `Precomputed` field it can reach; the unexported cache is out
   of reach. go-xkms#133.
 - **`ecdh.PrivateKey`'s X25519/NIST scalar** — lives in an unexported field

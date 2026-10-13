@@ -1,10 +1,13 @@
 # Getting Started with go-xkms
 
+> **Status: REFERENCE** · Last verified: 2026-10-13
+> Library walkthrough for the `pkg/xkms` service API and the Go SDK; superseded by [crypto-backends](../../../docs/crypto-backends/user.md) and the [Go SDK README](../../../sdk/go/README.md). Where they disagree, those win.
+
 ## Overview
 
-go-xkms is a comprehensive cryptographic key management library for Go that provides a unified interface across multiple storage backends. Whether you need software-based key storage for development, hardware security modules for production, or cloud-based key management for scalability, go-xkms offers a consistent API while leveraging the security features of each backend.
+go-xkms is a cryptographic key management library for Go that provides one interface across software, hardware and cloud backends.
 
-This guide covers three initialization patterns -- from the simplest auto-discovery mode to the full-control multi-backend setup and the client/server Go SDK.
+This guide covers three initialization patterns: auto-discovery, manual multi-backend setup, and the client/server Go SDK.
 
 ## Installation
 
@@ -15,10 +18,10 @@ go get github.com/jeremyhahn/go-xkms
 ## Build Configuration
 
 go-xkms uses build tags to compile its optional backends. Through `make`,
-**every backend is compiled in by default**; opt one out with its
-`WITH_*=0` variable. A configuration that names a backend the binary was
-built without fails `AutoInitialize` with an `*xkms.FeatureNotCompiledError`
-naming the toggle to set — it never starts without it.
+**every backend is compiled in by default** (`Makefile:19-41`); opt one out
+with its `WITH_*=0` variable. A configuration that names a backend the binary
+was built without fails `AutoInitialize` with an `*xkms.FeatureNotCompiledError`
+(`pkg/xkms/errors_auto.go:35`) naming the toggle to set.
 
 ### Build Profiles
 
@@ -26,10 +29,10 @@ naming the toggle to set — it never starts without it.
 # Every backend (the default)
 make build-full
 
-# No optional backend: software, TPM 2.0, symmetric and post-quantum only
+# No optional backend
 make build-minimal
 
-# The default build without the cloud providers
+# The default build without the cloud providers (umbrella toggles, Makefile:52-54)
 make build WITH_AWS=0 WITH_GCP=0 WITH_AZURE=0
 
 # The default build without PKCS#11 and Vault
@@ -51,35 +54,30 @@ go build -tags "awskms" ./...
 
 ### Backend Build Tags
 
-| Backend | Build Tag | Make Default | Makefile Variable |
-|---------|-----------|--------------|-------------------|
-| Software | none | Always | — |
-| TPM2 | none (the `tpm2` tag adds the PKCS#11 module's TPM slot) | Always | `WITH_TPM2` |
-| PKCS#11 | `pkcs11` | Enabled | `WITH_PKCS11` |
-| AWS KMS | `awskms` | Enabled | `WITH_AWS_KMS` |
-| GCP KMS | `gcpkms` | Enabled | `WITH_GCP_KMS` |
-| Azure Key Vault | `azurekv` | Enabled | `WITH_AZURE_KV` |
-| HashiCorp Vault | `vault` | Enabled | `WITH_VAULT` |
-| FROST | `frost` | Enabled | `WITH_FROST` |
+| Backend | Build Tag | Makefile Variable |
+|---------|-----------|-------------------|
+| Software | none | — |
+| PKCS#8 | `pkcs8` | `WITH_PKCS8` |
+| TPM2 | `tpm2` | `WITH_TPM2` |
+| PKCS#11 | `pkcs11` | `WITH_PKCS11` |
+| AWS KMS | `awskms` | `WITH_AWS_KMS` |
+| GCP KMS | `gcpkms` | `WITH_GCP_KMS` |
+| Azure Key Vault | `azurekv` | `WITH_AZURE_KV` |
+| HashiCorp Vault | `vault` | `WITH_VAULT` |
+| FROST | `frost` | `WITH_FROST` |
 
 The full toggle list, provider umbrellas and profile targets are in
 [Build toggles](../../../docs/crypto-backends/engineering.md#build-toggles).
 
-### Why Opt Out?
-
-- **Reduced Binary Size**: Exclude backends you don't need
-- **Faster Compilation**: Skip unused dependencies
-- **Simplified Deployment**: Avoid cloud SDK dependencies for on-premise deployments
-- **Security**: Minimize attack surface by excluding unused code
-
 ## Quick Start (Pattern A: Auto-Initialize)
 
-The recommended way to get started. `AutoInitialize` discovers all compiled-in backends and sets them up automatically:
+`AutoInitialize` (`pkg/xkms/auto.go:71`) discovers all compiled-in backends and sets them up. Every key, sign and certificate call takes a `context.Context`:
 
 ```go
 package main
 
 import (
+    "context"
     "crypto/elliptic"
     "crypto/x509"
     "fmt"
@@ -90,21 +88,22 @@ import (
 )
 
 func main() {
-    // Discover what's compiled in
-    backends := xkms.SupportedBackends()
-    fmt.Println("Available backends:", backends) // e.g. [pkcs8 software symmetric tpm2]
+    ctx := context.Background()
 
-    // Auto-initialize all compiled-in backends with defaults (in-memory storage)
+    // Discover what's compiled in
+    fmt.Println("Available backends:", xkms.SupportedBackends())
+
+    // Auto-initialize all compiled-in backends (nil = in-memory storage)
     if err := xkms.AutoInitialize(nil); err != nil {
         log.Fatal(err)
     }
     defer xkms.Close()
 
     // Generate a key
-    key, err := xkms.GenerateKey(&types.KeyAttributes{
-        CN:           "my-signing-key",
-        StoreType:    types.BackendType("software"),
-        KeyAlgorithm: x509.ECDSA,
+    key, err := xkms.GenerateKey(ctx, &types.KeyAttributes{
+        CN:            "my-signing-key",
+        Backend:       "software",
+        KeyAlgorithm:  x509.ECDSA,
         ECCAttributes: &types.ECCAttributes{Curve: elliptic.P256()},
     })
     if err != nil {
@@ -112,28 +111,34 @@ func main() {
     }
     fmt.Printf("Generated key: %T\n", key)
 
-    // Sign data using the key ID format: "backend:::keyname"
-    sig, err := xkms.Sign("software:::my-signing-key", []byte("Hello, go-xkms!"), nil)
+    // Sign data using the key ID format "backend:type:algo:keyname"
+    sig, err := xkms.Sign(ctx, "software:::my-signing-key", []byte("Hello, go-xkms!"), nil)
     if err != nil {
         log.Fatal(err)
     }
-    fmt.Printf("Signature: %x\n", sig)
 
     // Verify the signature
-    if err := xkms.Verify("software:::my-signing-key", []byte("Hello, go-xkms!"), sig, nil); err != nil {
+    if err := xkms.Verify(ctx, "software:::my-signing-key", []byte("Hello, go-xkms!"), sig, nil); err != nil {
         log.Fatal(err)
     }
     fmt.Println("Signature verified")
 }
 ```
 
+`KeyAttributes.Backend` is the registry name that routes the call;
+`StoreType` is derived from the resolved backend and is not used for routing
+(`pkg/types/types.go:1178-1195`).
+
 ### Auto-Initialize with Persistent Storage
 
-Pass an `AutoConfig` to use file-backed storage instead of in-memory:
+`AutoConfig` (`pkg/xkms/auto.go:23`) has three fields: `Datastore`,
+`DefaultBackend` and `BackendConfigs`. The package never opens a directory
+itself; pass a `storage.Backend` as `Datastore` and every backend's key
+storage is a prefixed view of it:
 
 ```go
 err := xkms.AutoInitialize(&xkms.AutoConfig{
-    DataDir:        "/var/lib/xkms",
+    Datastore:      datastore, // a storage.Backend, e.g. from pkg/storage/file
     DefaultBackend: "software",
 })
 defer xkms.Close()
@@ -141,14 +146,15 @@ defer xkms.Close()
 
 ### Auto-Initialize with Backend-Specific Configuration
 
-Override configuration for individual backends:
+`BackendConfigs` overrides one backend's settings. The common key is
+`key_storage`, a pre-built `storage.Backend`:
 
 ```go
 err := xkms.AutoInitialize(&xkms.AutoConfig{
-    DataDir: "/var/lib/xkms",
+    Datastore: datastore,
     BackendConfigs: map[xkms.BackendType]map[string]interface{}{
         xkms.BackendSoftware: {
-            "key_dir": "/var/lib/xkms/software/keys",
+            "key_storage": softwareKeys,
         },
     },
 })
@@ -157,26 +163,26 @@ defer xkms.Close()
 
 ## Multi-Backend Architecture (Pattern B: Manual Init)
 
-For full control over which backends are initialized and how they are configured, use `Initialize` directly:
+For full control over which backends are initialized, build them yourself and call `Initialize` (`pkg/xkms/service.go:507`):
 
 ```go
 package main
 
 import (
+    "context"
     "crypto/elliptic"
     "crypto/x509"
-    "fmt"
     "log"
 
     "github.com/jeremyhahn/go-xkms/pkg/backend/software"
-    "github.com/jeremyhahn/go-xkms/pkg/storage"
     "github.com/jeremyhahn/go-xkms/pkg/storage/file"
     "github.com/jeremyhahn/go-xkms/pkg/types"
     "github.com/jeremyhahn/go-xkms/pkg/xkms"
 )
 
 func main() {
-    // Create storage
+    ctx := context.Background()
+
     keyStore, err := file.New("/var/lib/xkms/keys")
     if err != nil {
         log.Fatal(err)
@@ -186,7 +192,7 @@ func main() {
         log.Fatal(err)
     }
 
-    // Create a software KeyProvider
+    // A software key provider
     keyProvider, err := software.NewBackend(&software.Config{
         KeyStorage: keyStore,
     })
@@ -194,7 +200,7 @@ func main() {
         log.Fatal(err)
     }
 
-    // Wrap in xkms.Backend (adds certificate storage, TLS, unified API)
+    // Wrap it in xkms.Backend (adds certificate storage, TLS, unified API)
     softwareBackend, err := xkms.New(&xkms.BackendConfig{
         Backend:     keyProvider,
         CertStorage: certStore,
@@ -203,11 +209,8 @@ func main() {
         log.Fatal(err)
     }
 
-    // Initialize the service with named backends
     err = xkms.Initialize(&xkms.ServiceConfig{
-        Backends: map[string]xkms.Backend{
-            "software": softwareBackend,
-        },
+        Backends:       map[string]xkms.Backend{"software": softwareBackend},
         DefaultBackend: "software",
     })
     if err != nil {
@@ -215,30 +218,26 @@ func main() {
     }
     defer xkms.Close()
 
-    // Use the service API (identical to Pattern A)
-    key, err := xkms.GenerateKey(&types.KeyAttributes{
-        CN:           "my-key",
-        StoreType:    types.BackendType("software"),
-        KeyAlgorithm: x509.ECDSA,
+    // The service API is identical to Pattern A
+    if _, err := xkms.GenerateKey(ctx, &types.KeyAttributes{
+        CN:            "my-key",
+        Backend:       "software",
+        KeyAlgorithm:  x509.ECDSA,
         ECCAttributes: &types.ECCAttributes{Curve: elliptic.P256()},
-    })
-    if err != nil {
+    }); err != nil {
         log.Fatal(err)
     }
-    fmt.Printf("Key generated: %T\n", key)
-
-    // Sign with string-based key ID
-    sig, err := xkms.Sign("software:::my-key", []byte("data"), nil)
-    if err != nil {
-        log.Fatal(err)
-    }
-    fmt.Printf("Signature: %x\n", sig)
 }
 ```
 
+`file.New` is `pkg/storage/file/storage.go:59`, `software.NewBackend` is
+`pkg/backend/software/software.go:147`, and `xkms.New` with `BackendConfig` is
+`pkg/xkms/keystore.go:217-248`. `ServiceConfig` also has a `KeyProviders` map
+for partial providers (`service.go:216`).
+
 ### Multiple Backends
 
-Register multiple backends and route operations by key ID prefix:
+Register several backends and route by key ID prefix:
 
 ```go
 err := xkms.Initialize(&xkms.ServiceConfig{
@@ -251,23 +250,19 @@ err := xkms.Initialize(&xkms.ServiceConfig{
 })
 defer xkms.Close()
 
-// Route to specific backends using the key ID format
-sig1, _ := xkms.Sign("software:::app-key", data, nil)
-sig2, _ := xkms.Sign("tpm2:::device-key", data, nil)
-sig3, _ := xkms.Sign("awskms:::cloud-key", data, nil)
-
-// Or use KeyAttributes with StoreType for type-safe routing
-key, _ := xkms.GenerateKey(&types.KeyAttributes{
-    CN:           "new-key",
-    StoreType:    types.BackendType("tpm2"),
-    KeyAlgorithm: x509.ECDSA,
-    ECCAttributes: &types.ECCAttributes{Curve: elliptic.P256()},
-})
+sig1, err := xkms.Sign(ctx, "software:::app-key", data, nil)
+sig2, err := xkms.Sign(ctx, "tpm2:::device-key", data, nil)
+sig3, err := xkms.Sign(ctx, "awskms:::cloud-key", data, nil)
 ```
+
+How to construct each hardware or cloud backend is in its feature docs:
+[TPM2](../../../docs/tpm2/user.md), [PKCS#11](../../../docs/pkcs11-backend/user.md)
+and [crypto-backends](../../../docs/crypto-backends/user.md) for the cloud
+providers.
 
 ## Go SDK - Client/Server (Pattern C)
 
-For client/server deployments, use the Go SDK to connect to a running go-xkms server:
+For client/server deployments, use the Go SDK to talk to a running xkmsd:
 
 ```go
 package main
@@ -283,8 +278,8 @@ import (
 func main() {
     ctx := context.Background()
 
-    // Connect via URL (protocol auto-detected)
-    client, err := xkms.NewFromURL("https://localhost:8443")
+    // Connect via URL (protocol chosen from the scheme)
+    client, err := xkms.NewFromURL("https://kms.example.com:8443")
     if err != nil {
         log.Fatal(err)
     }
@@ -294,7 +289,6 @@ func main() {
         log.Fatal(err)
     }
 
-    // Generate a key
     resp, err := client.GenerateKey(ctx, &xkms.GenerateKeyRequest{
         KeyID:   "my-signing-key",
         Backend: "software",
@@ -306,7 +300,6 @@ func main() {
     }
     fmt.Printf("Generated key: %s\n", resp.KeyID)
 
-    // Sign data
     signResp, err := client.Sign(ctx, &xkms.SignRequest{
         Backend: "software",
         KeyID:   "my-signing-key",
@@ -320,338 +313,14 @@ func main() {
 }
 ```
 
-### Supported Protocols
-
-| Protocol | Scheme | Description |
-|----------|--------|-------------|
-| Unix Socket | `unix://` | Default, fastest for local |
-| gRPC | `grpc://`, `grpcs://` | High-performance RPC |
-| REST | `http://`, `https://` | HTTP/HTTPS REST API |
-| QUIC | `quic://` | HTTP/3 over QUIC |
-| Embedded | N/A | Direct in-process calls |
+`NewFromURL` is `sdk/go/xkms.go:260`; the request types are re-exported at
+`sdk/go/xkms.go:333` and `:345` from `pkg/api/transport/types.go:68` and `:146`.
+The supported URL schemes are listed in the [Go SDK README](../../../sdk/go/README.md).
 
 ### Embedded Mode (In-Process)
 
-For applications that need the full `XKMSServicer` interface without a network server, use the embedded transport. This is how the xkey GUI manages local keys:
-
-```go
-package main
-
-import (
-    "context"
-    "fmt"
-    "log"
-
-    "github.com/jeremyhahn/go-xkms/pkg/xkms"
-    xkmssdk "github.com/jeremyhahn/go-xkms/sdk/go"
-    "github.com/jeremyhahn/go-xkms/sdk/go/transport"
-)
-
-func main() {
-    ctx := context.Background()
-
-    // Initialize with persistent storage
-    if err := xkms.AutoInitialize(&xkms.AutoConfig{
-        DataDir:        "/var/lib/myapp/keys",
-        DefaultBackend: "software",
-    }); err != nil {
-        log.Fatal(err)
-    }
-    defer xkms.Close()
-
-    // Get the XKMSService singleton (implements XKMSServicer)
-    svc, err := xkms.Get()
-    if err != nil {
-        log.Fatal(err)
-    }
-
-    // Create an embedded client — no network, direct in-process calls
-    client, err := xkmssdk.NewEmbedded(svc)
-    if err != nil {
-        log.Fatal(err)
-    }
-
-    // Use the same SDK Client interface as remote clients
-    resp, err := client.GenerateKey(ctx, &transport.GenerateKeyRequest{
-        KeyID:   "my-local-key",
-        Backend: "software",
-        KeyType: "EC",
-        Curve:   "P-256",
-    })
-    if err != nil {
-        log.Fatal(err)
-    }
-    fmt.Printf("Generated local key: %s\n", resp.KeyID)
-}
-```
-
-See the [Go SDK README](../../sdk/go/README.md) for full SDK documentation.
-
-## Service API Reference
-
-Once initialized (via any pattern), the `xkms` package exposes these top-level functions:
-
-### Key Operations
-
-| Function | Description |
-|----------|-------------|
-| `xkms.GenerateKey(attrs)` | Generate a new key (routes by `StoreType`) |
-| `xkms.Key(attrs)` | Retrieve a key by attributes |
-| `xkms.KeyByID(kid)` | Retrieve a key by string key ID |
-| `xkms.DeleteKey(attrs)` | Delete a key by attributes |
-| `xkms.DeleteKeyByID(kid)` | Delete a key by string key ID |
-| `xkms.ListKeys(backend...)` | List keys (optionally filtered by backend) |
-| `xkms.RotateKey(kid)` | Rotate an existing key |
-
-### Signing and Verification
-
-| Function | Description |
-|----------|-------------|
-| `xkms.Sign(kid, data, opts)` | Sign data (hashes automatically) |
-| `xkms.Verify(kid, data, sig, opts)` | Verify a signature |
-| `xkms.Signer(attrs)` | Get a `crypto.Signer` for a key |
-
-### Symmetric Encryption
-
-| Function | Description |
-|----------|-------------|
-| `xkms.GenerateSymmetricKey(backend, attrs)` | Generate a symmetric key |
-| `xkms.Encrypt(kid, data, opts)` | Encrypt data with symmetric key |
-| `xkms.Decrypt(kid, data, opts)` | Decrypt data with symmetric key |
-
-### Certificate Operations
-
-| Function | Description |
-|----------|-------------|
-| `xkms.Certificate(attrs)` | Get a certificate by attributes |
-| `xkms.CertificateByID(kid)` | Get a certificate by key ID |
-| `xkms.SaveCertificate(attrs, cert)` | Save a certificate |
-| `xkms.SaveCertificateByID(kid, cert)` | Save a certificate by key ID |
-| `xkms.DeleteCertificate(attrs)` | Delete a certificate |
-| `xkms.CertificateChain(attrs)` | Get a certificate chain |
-| `xkms.SaveCertificateChain(attrs, chain)` | Save a certificate chain |
-| `xkms.TLSCertificate(attrs)` | Get a `tls.Certificate` for TLS use |
-| `xkms.ListCertificates(backend...)` | List certificate IDs |
-
-### Import/Export
-
-| Function | Description |
-|----------|-------------|
-| `xkms.ExportKey(kid, algorithm)` | Export a key in wrapped form |
-| `xkms.ImportKey(backend, attrs, wrapped)` | Import wrapped key material |
-| `xkms.CopyKey(sourceKID, destBackend, attrs)` | Copy a key between backends |
-| `xkms.GetImportParameters(backend, attrs, algo)` | Get import parameters |
-| `xkms.WrapKey(backend, material, params)` | Wrap key material |
-
-### Sealing (TPM2/Hardware)
-
-| Function | Description |
-|----------|-------------|
-| `xkms.Seal(ctx, data, opts)` | Seal data with default backend |
-| `xkms.SealWithBackend(ctx, name, data, opts)` | Seal with a specific backend |
-| `xkms.Unseal(ctx, sealed, opts)` | Unseal previously sealed data |
-| `xkms.CanSeal(backend...)` | Check if sealing is supported |
-
-### Backend Discovery
-
-| Function | Description |
-|----------|-------------|
-| `xkms.SupportedBackends()` | List compiled-in backend types |
-| `xkms.IsBackendSupported(name)` | Check if a backend is compiled in |
-| `xkms.BackendCount()` | Count available backends |
-| `xkms.GetBackend(name)` | Get a specific backend instance |
-| `xkms.GetBackendInfo(name)` | Get backend metadata and capabilities |
-| `xkms.Backends()` | List names of initialized backends |
-
-### Key ID Format
-
-The string-based API uses a 4-part key ID format: `backend:type:algo:keyname`
-
-All segments except `keyname` are optional:
-- `"my-key"` -- uses the default backend
-- `"software:::my-key"` -- routes to the `software` backend
-- `"tpm2:signing:ecdsa-p256:my-key"` -- fully qualified
-
-## Choosing a Backend
-
-### Decision Tree
-
-```
-+---------------------------------+
-| What is your primary use case?  |
-+----------------+----------------+
-                 |
-        +--------+--------+
-        |                 |
-        v                 v
-Development/     Production
-Testing          Workload
-        |                 |
-        v                 v
-Software         Security Level?
-                      |
-          +-----------+-----------+
-          |           |           |
-          v           v           v
-     Software    Moderate      High
-     Based       Security    Security
-          |           |           |
-          v           v           v
-     Software       TPM2       PKCS#11
-                              Cloud HSM
-                              (AWS/GCP/Azure)
-```
-
-### Backend Comparison Matrix
-
-| Feature | Software | TPM2 | PKCS#11 | AWS KMS | GCP KMS | Azure KV |
-|---------|----------|------|---------|---------|---------|----------|
-| **Security Level** | Software | Hardware | Hardware | Cloud HSM | Cloud HSM | Cloud HSM |
-| **FIPS 140-2** | No | Level 2 | Level 2/3 | Level 2/3 | Level 3 | Level 2/3 |
-| **Key Export** | Yes | No | No | No | No | No |
-| **Offline Use** | Yes | Yes | Yes | No | No | No |
-| **Cost** | Free | Free | $100-$10k+ | $1/key/mo | ~0.06/key/mo | $1/key/mo |
-| **Setup Complexity** | Low | Medium | High | Low | Low | Low |
-| **Performance** | Fastest | Fast | Fast | Network | Network | Network |
-| **Best For** | Dev/Test | Desktop/Edge/IoT | Enterprise | AWS Cloud | GCP Cloud | Azure Cloud |
-
-## Backend Configuration Reference
-
-The following sections document backend-specific configuration for Pattern B (manual init) users. Pattern A users can pass backend-specific settings via `AutoConfig.BackendConfigs`.
-
-### Software - Unified Software Backend
-
-The software backend provides both asymmetric (RSA, ECDSA, Ed25519 via PKCS#8 encoding) and symmetric (AES-GCM, ChaCha20-Poly1305) operations through a single unified interface.
-
-**When to use:**
-- Development and testing
-- CI/CD pipelines
-- Low-security requirements
-- Offline operation needed
-
-**Manual Setup (Pattern B):**
-```go
-import (
-    "github.com/jeremyhahn/go-xkms/pkg/backend/software"
-    "github.com/jeremyhahn/go-xkms/pkg/storage/file"
-    "github.com/jeremyhahn/go-xkms/pkg/xkms"
-)
-
-keyStorage, err := file.New("/var/lib/xkms/keys")
-certStorage, err := file.New("/var/lib/xkms/certs")
-
-keyProvider, err := software.NewBackend(&software.Config{
-    KeyStorage: keyStorage,
-})
-
-store, err := xkms.New(&xkms.BackendConfig{
-    Backend:     keyProvider,
-    CertStorage: certStorage,
-})
-```
-
-**Learn More:** [Software Backend Documentation](../../../docs/crypto-backends/user.md)
-
-### TPM 2.0 - Hardware-Backed On-Premise
-
-**When to use:**
-- Desktop/Laptop/Server/Edge devices with TPM chips
-- IoT deployments
-- On-premise servers
-- Air-gapped environments
-
-**Manual Setup (Pattern B):**
-```go
-config := &tpm2.Config{
-    CN:         "my-xkms",
-    DevicePath: "/dev/tpmrm0",
-    SRKHandle:  0x81000001,
-}
-store, err := tpm2.NewBackend(config, backend)
-```
-
-**Learn More:** [TPM2 Documentation](../../../docs/tpm2/user.md)
-
-### PKCS#11 - Enterprise HSM
-
-**When to use:**
-- Enterprise data centers
-- Regulatory compliance (PCI DSS, HIPAA)
-- Certificate authorities
-- High-security applications
-
-**Manual Setup (Pattern B):**
-```go
-config := &pkcs11.Config{
-    LibraryPath: "/usr/lib/softhsm/libsofthsm2.so",
-    TokenLabel:  "my-token",
-    PIN:         os.Getenv("HSM_PIN"),
-}
-store, err := pkcs11.NewBackend(config)
-```
-
-**Learn More:** [PKCS#11 Documentation](../../../docs/pkcs11-backend/user.md)
-
-### AWS KMS - Amazon Cloud HSM
-
-**When to use:**
-- AWS-hosted or hybrid applications
-- Multi-region deployments
-- Scalable cloud workloads
-
-**Manual Setup (Pattern B):**
-```go
-config := &awskms.Config{
-    Region: "us-east-1",
-    // Uses IAM role automatically
-}
-store, err := awskms.NewBackend(config)
-```
-
-**Learn More:** [AWS KMS Documentation](../../../docs/crypto-backends/user.md)
-
-### GCP KMS - Google Cloud HSM
-
-**When to use:**
-- GCP-hosted or hybrid applications
-- Global deployments
-- FIPS 140-2 Level 3 required
-
-**Manual Setup (Pattern B):**
-```go
-config := &gcpkms.Config{
-    ProjectID: "my-project",
-    Location:  "us-central1",
-    KeyRing:   "production",
-}
-store, err := gcpkms.NewBackend(config)
-```
-
-**Learn More:** [GCP KMS Documentation](../../../docs/crypto-backends/user.md)
-
-### Azure Key Vault - Microsoft Cloud HSM
-
-**When to use:**
-- Azure-hosted or hybrid applications
-- Microsoft ecosystem integration
-- Managed HSM requirements
-
-**Manual Setup (Pattern B):**
-```go
-config := &azurekv.Config{
-    VaultURL:           "https://my-vault.vault.azure.net/",
-    UseManagedIdentity: true,
-}
-store, err := azurekv.NewBackend(config)
-```
-
-**Learn More:** [Azure Key Vault Documentation](../../../docs/crypto-backends/user.md)
-
-## Common Use Cases
-
-### Development Environment
-
-Use auto-initialize with in-memory storage:
+For the full `XKMSServicer` interface without a network server, wrap the
+service singleton with `NewEmbedded` (`sdk/go/xkms.go:250`):
 
 ```go
 if err := xkms.AutoInitialize(nil); err != nil {
@@ -659,75 +328,120 @@ if err := xkms.AutoInitialize(nil); err != nil {
 }
 defer xkms.Close()
 
-// All operations use in-memory storage, no files created
-key, _ := xkms.GenerateKey(&types.KeyAttributes{
-    CN:           "dev-key",
-    StoreType:    types.BackendType("software"),
-    KeyAlgorithm: x509.ECDSA,
-    ECCAttributes: &types.ECCAttributes{Curve: elliptic.P256()},
+svc, err := xkms.Get() // pkg/xkms/service.go:233
+if err != nil {
+    log.Fatal(err)
+}
+
+client, err := xkmssdk.NewEmbedded(svc)
+if err != nil {
+    log.Fatal(err)
+}
+
+resp, err := client.GenerateKey(ctx, &transport.GenerateKeyRequest{
+    KeyID:   "my-local-key",
+    Backend: "software",
+    KeyType: "EC",
+    Curve:   "P-256",
 })
 ```
 
-### Production Application (Cloud)
+Here `xkms` is `pkg/xkms`, `xkmssdk` is `sdk/go` and `transport` is
+`sdk/go/transport`.
 
-Use auto-initialize with persistent storage:
+## Service API Reference
 
-```go
-err := xkms.AutoInitialize(&xkms.AutoConfig{
-    DataDir:        "/var/lib/xkms",
-    DefaultBackend: "awskms",
-})
-defer xkms.Close()
+Once initialized, `pkg/xkms` exposes these top-level functions (all in
+`pkg/xkms/service.go` unless noted). Every function except the discovery
+helpers takes a `context.Context` first.
 
-// Sign with cloud-managed keys
-sig, _ := xkms.Sign("awskms:::prod-signing-key", data, nil)
-```
+### Key Operations
 
-### Edge Device / IoT
+| Function | Description |
+|----------|-------------|
+| `GenerateKey(ctx, attrs)` | Generate a new key, routed by `attrs.Backend` |
+| `Key(ctx, attrs)` / `KeyByID(ctx, kid)` | Retrieve a key |
+| `DeleteKey(ctx, attrs)` / `DeleteKeyByID(ctx, kid)` | Delete a key |
+| `ListKeys(ctx, backend...)` | List key attributes, optionally per backend |
+| `RotateKey(ctx, kid)` | Rotate an existing key |
 
-Use auto-initialize with TPM2 as default:
+### Signing and Verification
 
-```go
-err := xkms.AutoInitialize(&xkms.AutoConfig{
-    DataDir:        "/var/lib/xkms",
-    DefaultBackend: "tpm2",
-})
-defer xkms.Close()
+| Function | Description |
+|----------|-------------|
+| `Sign(ctx, kid, data, opts)` | Sign data; `SignOptions.Hash` defaults to SHA-256 (`service.go:1582`) |
+| `Verify(ctx, kid, data, sig, opts)` | Verify a signature |
+| `Signer(ctx, attrs)` | Get a `crypto.Signer` for a key |
 
-// Keys are hardware-backed
-key, _ := xkms.GenerateKey(&types.KeyAttributes{
-    CN:           "device-identity",
-    StoreType:    types.BackendType("tpm2"),
-    KeyAlgorithm: x509.ECDSA,
-    ECCAttributes: &types.ECCAttributes{Curve: elliptic.P256()},
-})
-```
+### Symmetric Encryption
 
-### Multi-Backend Hybrid
+| Function | Description |
+|----------|-------------|
+| `GenerateSymmetricKey(ctx, backend, attrs)` | Generate a symmetric key |
+| `Encrypt(ctx, kid, data, opts)` | Encrypt; returns `*types.EncryptedData` |
+| `Decrypt(ctx, kid, encrypted, opts)` | Decrypt a `*types.EncryptedData` |
 
-Combine backends for different security levels:
+### Certificate Operations
 
-```go
-// Needs PKCS#11 and AWS KMS, both in the default make build
-err := xkms.AutoInitialize(&xkms.AutoConfig{
-    DataDir:        "/var/lib/xkms",
-    DefaultBackend: "software",
-})
-defer xkms.Close()
+| Function | Description |
+|----------|-------------|
+| `Certificate(ctx, attrs)` / `CertificateByID(ctx, kid)` | Get a certificate |
+| `SaveCertificate(ctx, attrs, cert)` / `SaveCertificateByID(ctx, kid, cert)` | Save a certificate |
+| `DeleteCertificate(ctx, attrs)` | Delete a certificate |
+| `CertificateChain(ctx, attrs)` / `SaveCertificateChain(ctx, attrs, chain)` | Get or save a chain |
+| `TLSCertificate(ctx, attrs)` | Get a `tls.Certificate` |
+| `ListCertificates(ctx, backend...)` | List certificate IDs |
 
-// Use the right backend for each key's security requirements
-appKey, _ := xkms.GenerateKey(&types.KeyAttributes{
-    CN:        "app-session-key",
-    StoreType: types.BackendType("software"),
-    // ...
-})
+### Import/Export
 
-caKey, _ := xkms.GenerateKey(&types.KeyAttributes{
-    CN:        "ca-signing-key",
-    StoreType: types.BackendType("pkcs11"),
-    // ...
-})
-```
+| Function | Description |
+|----------|-------------|
+| `ExportKey(ctx, kid, algorithm)` | Export a key in wrapped form |
+| `ImportKey(ctx, backend, attrs, wrapped)` | Import wrapped key material |
+| `CopyKey(ctx, sourceKID, destBackend, attrs)` | Copy a key between backends |
+| `GetImportParameters(ctx, backend, attrs, algo)` | Get import parameters |
+| `WrapKey(ctx, backend, material, params)` | Wrap key material |
+
+### Sealing
+
+| Function | Description |
+|----------|-------------|
+| `Seal(ctx, data, opts)` | Seal data with the default backend |
+| `SealWithBackend(ctx, name, data, opts)` | Seal with a specific backend |
+| `Unseal(ctx, sealed, opts)` | Unseal previously sealed data |
+| `CanSeal(backend...)` | Check whether sealing is supported |
+
+### Backend Discovery
+
+| Function | Description |
+|----------|-------------|
+| `SupportedBackends()` | Compiled-in backend types (`registry.go:150`) |
+| `IsBackendSupported(name)` | Whether a backend is compiled in (`registry.go:167`) |
+| `BackendCount()` | Count of compiled-in backends (`registry.go:173`) |
+| `GetBackend(name)` | A specific backend instance |
+| `GetBackendInfo(name)` | Backend metadata and capabilities |
+| `Backends()` | Names of initialized backends |
+
+### Key ID Format
+
+The string-based API uses `backend:type:algo:keyname` (`pkg/xkms/keyid.go:27-44`).
+All segments except `keyname` are optional:
+
+- `"my-key"` -- uses the default backend
+- `"software:::my-key"` -- routes to the `software` backend
+- `"tpm2:signing:ecdsa-p256:my-key"` -- fully qualified
+
+## Choosing a Backend
+
+| Use case | Backend |
+|----------|---------|
+| Development, testing, CI | Software |
+| Desktop, edge, IoT with a TPM | TPM2 |
+| Enterprise HSM or smart card | PKCS#11 |
+| Cloud-hosted workloads | AWS KMS, GCP KMS, Azure Key Vault |
+| Central secrets platform | HashiCorp Vault |
+
+Per-backend capabilities are in [crypto-backends](../../../docs/crypto-backends/user.md).
 
 ## Key Management Patterns
 
@@ -735,25 +449,25 @@ caKey, _ := xkms.GenerateKey(&types.KeyAttributes{
 
 ```go
 // ECDSA key
-ecKey, err := xkms.GenerateKey(&types.KeyAttributes{
-    CN:           "ec-signing-key",
-    StoreType:    types.BackendType("software"),
-    KeyAlgorithm: x509.ECDSA,
+ecKey, err := xkms.GenerateKey(ctx, &types.KeyAttributes{
+    CN:            "ec-signing-key",
+    Backend:       "software",
+    KeyAlgorithm:  x509.ECDSA,
     ECCAttributes: &types.ECCAttributes{Curve: elliptic.P256()},
 })
 
 // RSA key
-rsaKey, err := xkms.GenerateKey(&types.KeyAttributes{
-    CN:           "rsa-encryption-key",
-    StoreType:    types.BackendType("software"),
-    KeyAlgorithm: x509.RSA,
+rsaKey, err := xkms.GenerateKey(ctx, &types.KeyAttributes{
+    CN:            "rsa-encryption-key",
+    Backend:       "software",
+    KeyAlgorithm:  x509.RSA,
     RSAAttributes: &types.RSAAttributes{KeySize: 2048},
 })
 
 // Ed25519 key
-edKey, err := xkms.GenerateKey(&types.KeyAttributes{
+edKey, err := xkms.GenerateKey(ctx, &types.KeyAttributes{
     CN:           "ed25519-signing-key",
-    StoreType:    types.BackendType("software"),
+    Backend:      "software",
     KeyAlgorithm: x509.Ed25519,
 })
 ```
@@ -761,82 +475,56 @@ edKey, err := xkms.GenerateKey(&types.KeyAttributes{
 ### Signing Operations
 
 ```go
-// Sign (hashing is handled automatically)
-sig, err := xkms.Sign("software:::my-key", document, nil)
+sig, err := xkms.Sign(ctx, "software:::my-key", document, nil)
 
-// Sign with specific options
-sig, err := xkms.Sign("software:::my-key", document, &xkms.SignOptions{
+sig, err = xkms.Sign(ctx, "software:::my-key", document, &xkms.SignOptions{
     Hash: crypto.SHA512,
 })
 
-// Verify
-err = xkms.Verify("software:::my-key", document, sig, nil)
+err = xkms.Verify(ctx, "software:::my-key", document, sig, nil)
 ```
 
-### Key Rotation
+### Key Rotation and Listing
 
 ```go
-// Rotate replaces the key with a new one of the same type
-newKey, err := xkms.RotateKey("software:::my-key")
-```
+newKey, err := xkms.RotateKey(ctx, "software:::my-key")
 
-### Listing Keys
-
-```go
-// List all keys across all backends
-allKeys, err := xkms.ListKeys()
-
-// List keys from a specific backend
-softwareKeys, err := xkms.ListKeys("software")
+allKeys, err := xkms.ListKeys(ctx)
+softwareKeys, err := xkms.ListKeys(ctx, "software")
 ```
 
 ## Symmetric Encryption
 
-All backends support AES-GCM symmetric encryption with AEAD support.
-
-### Generate and Use Symmetric Keys
-
 ```go
-// Generate a symmetric key
-symKey, err := xkms.GenerateSymmetricKey("software", &types.KeyAttributes{
-    CN:           "my-encryption-key",
-    KeyType:      types.KEY_TYPE_ENCRYPTION,
-    StoreType:    types.BackendType("software"),
-    KeyAlgorithm: types.ALG_AES256_GCM,
-    AESAttributes: &types.AESAttributes{KeySize: 256},
+symKey, err := xkms.GenerateSymmetricKey(ctx, "software", &types.KeyAttributes{
+    CN:                 "my-encryption-key",
+    Backend:            "software",
+    KeyType:            types.KeyTypeEncryption,
+    SymmetricAlgorithm: types.SymmetricAES256GCM,
 })
 
-// Encrypt
-encrypted, err := xkms.Encrypt("software:::my-encryption-key", plaintext, &types.EncryptOptions{
+encrypted, err := xkms.Encrypt(ctx, "software:::my-encryption-key", plaintext, &types.EncryptOptions{
     AdditionalData: []byte("context"),
 })
 
-// Decrypt
-decrypted, err := xkms.Decrypt("software:::my-encryption-key", encrypted, &types.DecryptOptions{
+decrypted, err := xkms.Decrypt(ctx, "software:::my-encryption-key", encrypted, &types.DecryptOptions{
     AdditionalData: []byte("context"),
 })
 ```
 
-### Symmetric Key Algorithms
-
-| Algorithm | Key Size | Mode | Features |
-|-----------|----------|------|----------|
-| AES-GCM | 128-bit | Galois/Counter Mode | AEAD, authenticated encryption |
-| AES-GCM | 192-bit | Galois/Counter Mode | AEAD, authenticated encryption |
-| AES-GCM | 256-bit | Galois/Counter Mode | AEAD, authenticated encryption |
+`types.SymmetricAES256GCM` is `pkg/types/types.go:477`; AES-128 and AES-192
+GCM have sibling constants.
 
 ## Testing
 
-### Running Tests
-
 ```bash
-# Run all unit tests (fast, no system modifications)
+# Unit tests
 make test
 
-# Run all integration tests (Docker-based)
+# All integration tests (devcontainer)
 make integration-test
 
-# Run specific backend integration tests
+# One backend
 make integration-test-software
 make integration-test-tpm2
 make integration-test-pkcs11
@@ -846,31 +534,18 @@ make integration-test-azurekv
 make integration-test-vault
 ```
 
-### Test Structure
+Backend integration tests live in `test/integration/backend/` (software,
+symmetric, TPM2) and in per-backend folders under `test/integration/`
+(`pkcs11`, `awskms`, `gcpkms`, `azurekv`, `vault`, `tpm2`).
 
-Integration tests are organized in `test/integration/backend/`:
-
-```
-test/integration/
-├── backend/
-│   ├── software_integration_test.go  # Software backend tests
-│   ├── tpm2_integration_test.go      # TPM2 simulator tests
-│   └── symmetric_integration_test.go # Symmetric encryption tests
-├── pkcs11/             # PKCS#11/SoftHSM tests
-├── awskms/             # AWS KMS/Floci tests
-├── gcpkms/             # GCP KMS mock tests
-├── azurekv/            # Azure Key Vault mock tests
-└── vault/              # HashiCorp Vault tests
-```
-
-## Error Handling Best Practices
-
-### Comprehensive Error Handling
+## Error Handling
 
 ```go
-err := xkms.AutoInitialize(nil)
-if err != nil {
+if err := xkms.AutoInitialize(nil); err != nil {
+    var notCompiled *xkms.FeatureNotCompiledError
     switch {
+    case errors.As(err, &notCompiled):
+        log.Fatalf("rebuild with the named toggle: %v", err)
     case errors.Is(err, xkms.ErrNoBackendsAvailable):
         log.Fatal("no backends compiled in -- check build tags")
     default:
@@ -879,163 +554,48 @@ if err != nil {
 }
 defer xkms.Close()
 
-key, err := xkms.GenerateKey(attrs)
-if err != nil {
+if _, err := xkms.GenerateKey(ctx, attrs); err != nil {
     switch {
     case errors.Is(err, xkms.ErrNotInitialized):
-        log.Fatal("call xkms.AutoInitialize() first")
+        log.Fatal("call xkms.AutoInitialize first")
     case errors.Is(err, xkms.ErrBackendNotFound):
-        log.Fatal("backend not available -- check build tags")
+        log.Fatal("backend not registered")
     default:
         log.Fatalf("key generation failed: %v", err)
     }
 }
 ```
 
-## Security Best Practices
-
-### Password Management
-
-```go
-// Bad: Hardcoded secrets
-config := &software.Config{
-    KeyStorage: keyStorage, // NEVER hardcode secrets
-}
-
-// Good: Environment variable
-password := os.Getenv("KEYSTORE_PASSWORD")
-
-// Better: Secret management service
-func loadPassword() string {
-    // Load from HashiCorp Vault, AWS Secrets Manager, etc.
-    return secretsClient.GetSecret("xkms-password")
-}
-```
-
-### Access Control
-
-```go
-// Principle of least privilege
-func configureCloudKMS() *awskms.Config {
-    return &awskms.Config{
-        Region: "us-east-1",
-        // Uses IAM role with minimal permissions:
-        // - kms:Sign
-        // - kms:Verify
-        // - kms:GetPublicKey
-    }
-}
-```
-
-## Troubleshooting
-
-### Common Issues
-
-**Issue: "backend ... is not compiled into this binary"**
-```
-AutoInitialize returned *xkms.FeatureNotCompiledError: the configuration
-names a backend the build opted out of. Rebuild with the toggle the error
-names, for example:
-  make build WITH_VAULT=1
-Or check compiled backends:
-  fmt.Println(xkms.SupportedBackends())
-```
-
-**Issue: "service not initialized"**
-```go
-// Solution: Call AutoInitialize or Initialize before any operation
-if err := xkms.AutoInitialize(nil); err != nil {
-    log.Fatal(err)
-}
-```
-
-**Issue: "backend not found"**
-```go
-// Solution: Check available backends
-fmt.Println("Available:", xkms.Backends())
-// Ensure the backend was compiled in
-fmt.Println("Supported:", xkms.SupportedBackends())
-```
-
-**Issue: Key Not Found**
-```go
-// Solution: List keys to verify what exists
-keys, _ := xkms.ListKeys("software")
-for _, k := range keys {
-    fmt.Println(k.CN)
-}
-```
-
-**Issue: Permission Denied (Cloud)**
-```
-// AWS KMS: Check IAM policy and key policy
-// GCP KMS: Verify service account has cloudkms.signerVerifier role
-// Azure KV: Check RBAC assignment or access policy
-```
+The sentinels are in `pkg/xkms/errors.go:31`, `:222` and `:367`.
 
 ## Server Bootstrap
 
-For client/server deployments, go-xkms uses a secure bootstrap workflow that establishes trust without relying on pre-existing PKI infrastructure.
-
-### End-to-End Flow
-
-```
-1. Server first boot    -->  Prints setup token + SPKI pin
-2. Admin registers      -->  xkey auth register --server URL --spki-pin PIN
-3. Barrier unsealed     -->  by the server's seal strategy (go-qrdb owns the barrier)
-4. Client cert enrolled -->  xkey cert request --server URL --cn "user@example.com"
-```
-
-### Step 1: Server First Boot
-
-On first start, the server generates a one-time setup token and prints its SPKI pin:
-
-```
-Setup Token:  eyJhbGciOi...  (one-time use, 15 min TTL)
-SPKI Pin:     e5f6a7b8c9d0e1f2...
-Hostname:     kms.example.com:8443
-```
-
-### Step 2: Admin Registration with SPKI Pin
-
-The first admin registers using the SPKI pin for trust-on-first-use:
+For client/server deployments, a new client establishes trust in the server
+and enrolls with xkey:
 
 ```bash
-xkey auth register --server https://kms.example.com:8443 --spki-pin e5f6a7b8...
-```
+# Register the first admin, pinning the server's SPKI
+xkey auth register --server https://kms.example.com:8443 \
+    --email admin@example.com --spki-pin <sha256-pin>
 
-### Step 3: Barrier Unsealing
-
-The barrier, including Shamir custodian quorums, belongs to go-qrdb. xkms has no `custodian` or `share` verb; the server unseals through its configured seal strategy.
-
-### Step 4: Client Certificate Enrollment
-
-With the barrier unsealed, enroll a client certificate for mTLS:
-
-```bash
+# Enroll a client certificate for mTLS
 xkey cert request --server https://kms.example.com:8443 --cn "alice@example.com"
 ```
 
-See the [Bootstrap Architecture](../../../docs/trust-bootstrap/architecture.md) for protocol details on DANE, Noise, and SPKI trust methods.
+`auth register` takes `--server`, `--email` (both required), `--spki-pin`,
+`--tls-ca`, `--setup-token` and `--display-name`
+(`xkey/cmd/xkey/cmd/auth.go:518-523`). `cert request` takes `--server` and
+`--cn` (required), `--slot`, `--organization`, `--spki-pin`, `--profile` and
+`--validity-days` (`xkey/cmd/xkey/cmd/cert.go:195-205`).
 
-## Next Steps
-
-- Review backend-specific documentation for detailed configuration
-- Set up monitoring and alerting
-- Plan key rotation policies
-- Test disaster recovery procedures
-- Explore the [Go SDK](../../sdk/go/README.md) for client/server deployments
+The barrier, including Shamir quorums, belongs to go-qrdb; the server unseals
+it through its configured seal strategy. See the
+[trust bootstrap architecture](../../../docs/trust-bootstrap/architecture.md)
+for DANE, Noise and SPKI trust.
 
 ## Additional Resources
 
-- [Software Backend Documentation](../../../docs/crypto-backends/user.md)
-- [TPM2 Backend Documentation](../../../docs/tpm2/user.md)
-- [PKCS#11 Backend Documentation](../../../docs/pkcs11-backend/user.md)
-- [AWS KMS Backend Documentation](../../../docs/crypto-backends/user.md)
-- [GCP KMS Backend Documentation](../../../docs/crypto-backends/user.md)
-- [Azure Key Vault Backend Documentation](../../../docs/crypto-backends/user.md)
-- [Go SDK README](../../sdk/go/README.md)
-
-## Support
-
-For issues, questions, or contributions, please visit the GitHub repository.
+- [Crypto backends](../../../docs/crypto-backends/user.md)
+- [TPM2](../../../docs/tpm2/user.md)
+- [PKCS#11 backend](../../../docs/pkcs11-backend/user.md)
+- [Go SDK README](../../../sdk/go/README.md)

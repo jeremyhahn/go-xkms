@@ -1,8 +1,13 @@
 # BLE Protocol Specification
 
+> **Status: REFERENCE** · Last verified: 2026-10-13
+> Fragment framing and the core JSON-RPC key methods, from `xkey/pkg/pairing`; the [ble](architecture.md) feature folder is normative.
+
 ## Message Framing
 
 ### Fragment Header (7 bytes)
+
+`FragmentHeaderSize` and the flag constants are in `xkey/pkg/pairing/fragmentation.go:22-33`.
 
 ```
 ┌─────────┬──────────┬─────────┬──────────┐
@@ -25,8 +30,8 @@
 
 ### MTU Handling
 
-Default MTU: 247 bytes
-Minimum MTU: 23 bytes
+Default MTU: 247 bytes (`DefaultMTU`, `xkey/pkg/phone/phone.go:63`)
+Minimum MTU: 23 bytes (`MinMTU`, `xkey/pkg/pairing/constants.go:18`)
 Max payload per fragment: MTU - 7 (header)
 
 Large messages are split across multiple fragments and reassembled in order.
@@ -71,6 +76,12 @@ All messages use JSON-RPC 2.0 format over the Noise-encrypted channel.
 ```
 
 ## Methods
+
+The core methods are declared in `xkey/pkg/pairing/protocol.go:34-40` and
+their parameter and result types at `protocol.go:151-249`. Byte fields
+(`credentialId`, `publicKey`, `dataHash`, `signature`) are `[]byte` and
+therefore standard base64 in JSON. Further method families (attestation,
+sync, PIV, OATH, backup, sharing) live in the sibling `protocol_*.go` files.
 
 ### ping
 
@@ -134,17 +145,19 @@ Generate a new signing key pair.
   "method": "generateKey",
   "params": {
     "credentialId": "base64-encoded-credential-id",
-    "algorithm": -7
+    "algorithm": -7,
+    "userVerificationRequired": true
   }
 }
 ```
 
 **Parameters:**
 - `credentialId`: Base64-encoded credential identifier
-- `algorithm`: COSE algorithm identifier
+- `algorithm`: COSE algorithm identifier (`protocol.go:27-29`)
   - `-7` (ES256): ECDSA with P-256 and SHA-256
   - `-35` (ES384): ECDSA with P-384 and SHA-384
   - `-36` (ES512): ECDSA with P-521 and SHA-512
+- `userVerificationRequired`: Whether the phone must verify the user
 
 **Response:**
 ```json
@@ -152,7 +165,7 @@ Generate a new signing key pair.
   "jsonrpc": "2.0",
   "id": 3,
   "result": {
-    "publicKeyCose": "base64-encoded-cose-key"
+    "publicKey": "base64-encoded-cose-key"
   }
 }
 ```
@@ -169,16 +182,16 @@ Sign data with a stored key.
   "method": "sign",
   "params": {
     "credentialId": "base64-encoded-credential-id",
-    "algorithm": -7,
-    "data": "base64-encoded-data-to-sign"
+    "dataHash": "base64-encoded-hash",
+    "userVerificationRequired": true
   }
 }
 ```
 
 **Parameters:**
 - `credentialId`: Base64-encoded credential identifier
-- `algorithm`: COSE algorithm identifier
-- `data`: Base64-encoded data to sign (typically clientDataHash)
+- `dataHash`: Base64-encoded hash to sign
+- `userVerificationRequired`: Whether the phone must verify the user
 
 **Response:**
 ```json
@@ -186,7 +199,7 @@ Sign data with a stored key.
   "jsonrpc": "2.0",
   "id": 4,
   "result": {
-    "signature": "base64-encoded-der-signature"
+    "signature": "base64-encoded-signature"
   }
 }
 ```
@@ -239,10 +252,18 @@ Load/verify a key exists.
   "jsonrpc": "2.0",
   "id": 6,
   "result": {
-    "publicKeyCose": "base64-encoded-cose-key"
+    "exists": true,
+    "publicKey": "base64-encoded-cose-key"
   }
 }
 ```
+
+`publicKey` is omitted when `exists` is false.
+
+### pairing.confirm
+
+Confirms a pairing. Params carry `deviceName` and `publicKeyHex`; the result
+carries `confirmed` and `deviceName` (`protocol.go:242-249`).
 
 ## Error Codes
 
@@ -256,16 +277,25 @@ Load/verify a key exists.
 | -32602 | Invalid params | Invalid method parameters |
 | -32603 | Internal error | Internal server error |
 
+Declared at `xkey/pkg/pairing/protocol.go:46-50`.
+
 ### Application Errors
 
-| Code | Message | Description |
-|------|---------|-------------|
-| -32000 | Key not found | Credential ID not in keystore |
-| -32001 | User cancelled | User declined biometric |
-| -32002 | Biometric failed | Biometric authentication failed |
-| -32003 | Unsupported algorithm | Algorithm not supported |
-| -32004 | Invalid credential ID | Malformed credential ID |
-| -32005 | Operation timeout | Operation timed out |
+The key-operation codes (`protocol.go:53-60`):
+
+| Code | Constant |
+|------|----------|
+| -32000 | `ErrorCodeKeyNotFound` |
+| -32001 | `ErrorCodeUserCancelled` |
+| -32002 | `ErrorCodeBiometricFailed` |
+| -32003 | `ErrorCodeKeyExists` |
+| -32004 | `ErrorCodeUnsupportedAlg` |
+| -32005 | `ErrorCodeInvalidCredID` |
+| -32006 | `ErrorCodeStorageFull` |
+| -32007 | `ErrorCodeOperationTimeout` |
+
+Codes -32008 through -32039 cover backend denial, attestation, ECDH/HMAC,
+pairing, sharing, backup, OATH, PIV and sync (`protocol.go:61-138`).
 
 ## COSE Key Format
 
@@ -287,8 +317,8 @@ Public keys are returned in COSE_Key format (CBOR encoded):
 
 | Operation | Timeout |
 |-----------|---------|
-| BLE scan | 30 seconds |
-| Connection | 10 seconds |
-| Operation (sign, generate) | 60 seconds |
+| BLE scan | 30 seconds (`ScanTimeout`, `xkey/pkg/phone/phone.go:66`) |
+| Connection | 10 seconds (`ConnectTimeout`, `phone.go:69`) |
+| Operation (sign, generate) | 60 seconds (`OperationTimeout`, `phone.go:72`) |
 
 Operations requiring biometric may take longer as they wait for user interaction.

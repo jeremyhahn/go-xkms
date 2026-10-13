@@ -1,15 +1,17 @@
 # Phone Backend Architecture
 
+> **Status: REFERENCE** · Last verified: 2026-10-13
+> Architecture background for the xkmsd phone backend (`pkg/backend/phone`); superseded by [phone-hsm/architecture.md](../../phone-hsm/architecture.md). Where they disagree, the feature folder wins. Phone-side (Android) behaviour is unverified here.
+
 ## Overview
 
-The phone backend is a xkmsd backend that delegates all cryptographic operations to an Android phone connected via BLE or USB. It implements the full `types.Backend` interface hierarchy, making the phone a first-class xkmsd backend alongside TPM2, PKCS#11, and software backends.
+The phone backend is an xkmsd backend that delegates all cryptographic operations to an Android phone. It implements the `types.KeyProvider` interface family, making the phone a backend alongside TPM2, PKCS#11 and software.
 
-The Android phone's hardware-backed Keystore (TEE/StrongBox) serves as the cryptographic engine, with biometric authentication gating access to key material. All communication between the laptop and phone is encrypted using the Noise XX protocol, ensuring mutual authentication and forward secrecy.
+The Android phone's hardware-backed Keystore (TEE/StrongBox) serves as the cryptographic engine, with biometric authentication gating access to key material. The backend itself holds no connection: it sends every request through a `Sender` (`pkg/backend/phone/backend.go:39`) supplied by the embedder that owns the Noise XX session with the phone.
 
 ```
 +-----------------------------------------------------------------------+
-|                        xkmsd Server                               |
-|                    (API: REST, gRPC, QUIC, MCP, Unix)                 |
+|                        xkmsd Server                                   |
 +-----------------------------------------------------------------------+
                                 |
                                 v
@@ -17,13 +19,13 @@ The Android phone's hardware-backed Keystore (TEE/StrongBox) serves as the crypt
 |                       Phone Backend                                   |
 |                   pkg/backend/phone                                   |
 +-----------------------------------------------------------------------+
-|  Backend     | Attestation | Symmetric  | KeyAgreement | ImportExport |
+|  KeyProvider | Attestation | Symmetric  | KeyAgreement | ImportExport |
 |  (core ops)  | (Android KA)| (AES-GCM)  | (ECDH)       | (pub only)   |
 +--------------+-------------+------------+--------------+--------------+
                                 |
-                                v (JSON-RPC over Noise XX)
+                                v Sender.SendRequest (JSON-RPC)
 +-----------------------------------------------------------------------+
-|                      Transport Layer                                  |
+|              Embedder-owned Noise XX session                          |
 |              BLE (GATT)  |  TCP (ADB port forward)                    |
 +-----------------------------------------------------------------------+
                                 |
@@ -41,652 +43,175 @@ The Android phone's hardware-backed Keystore (TEE/StrongBox) serves as the crypt
 
 ```
 pkg/backend/phone/
-+-- backend.go           # types.Backend implementation (core key ops)
-+-- attestation.go       # types.AttestingBackend (Android Key Attestation)
-+-- config.go            # Backend configuration
-+-- connection.go        # Transport abstraction (BLE or TCP for ADB)
++-- backend.go           # Backend, Sender, core key ops, JSON-RPC error mapping
++-- attestation.go       # types.AttestingKeyProvider (Android Key Attestation)
++-- platform.go          # PlatformVerifier registry (RegisterPlatform)
++-- config.go            # Config, AttestationConfig, defaults
 +-- errors.go            # Typed errors
 +-- signer.go            # crypto.Signer proxy to phone
 +-- decrypter.go         # crypto.Decrypter proxy to phone
-+-- symmetric.go         # types.SymmetricBackend implementation
-+-- key_agreement.go     # types.KeyAgreementBackend (ECDH)
++-- symmetric.go         # types.SymmetricKeyProvider implementation
++-- key_agreement.go     # types.KeyAgreementProvider (ECDH)
 +-- import_export.go     # ImportExportBackend (public key export only)
++-- fido2.go             # FIDO2 credential listing on the phone
 +-- doc.go               # Package documentation
-+-- backend_test.go      # Tests
++-- android/             # Android Key Attestation verifier
 ```
 
-## Component Architecture
+## Interfaces Implemented
 
-```
-+-----------------------------------------------------------------------+
-|                          xkmsd                                     |
-|                                                                       |
-|  REST/gRPC/QUIC/MCP/Unix API                                         |
-|         |                                                             |
-|         v                                                             |
-|  +---------------------------+                                        |
-|  |    xKMS Service       |                                        |
-|  |    (pkg/xkms)         |                                        |
-|  +---------------------------+                                        |
-|         |                                                             |
-|         v                                                             |
-|  +---------------------------+     +------------------------------+   |
-|  |    Phone Backend          |     |   Other Backends             |   |
-|  |    (pkg/backend/phone)    |     |   (TPM2, PKCS#11, Software) |   |
-|  +---------------------------+     +------------------------------+   |
-|         |                                                             |
-|         | crypto.Signer / crypto.Decrypter proxies                    |
-|         v                                                             |
-|  +---------------------------+                                        |
-|  |    JSON-RPC Encoder       |                                        |
-|  |    (method + params)      |                                        |
-|  +---------------------------+                                        |
-|         |                                                             |
-|         v                                                             |
-|  +---------------------------+                                        |
-|  |    Noise XX Session       |                                        |
-|  |    (encrypt/decrypt)      |                                        |
-|  +---------------------------+                                        |
-|         |                                                             |
-|         v                                                             |
-|  +---------------------------+                                        |
-|  |    Transport              |                                        |
-|  |    BLE (GATT) | TCP (ADB) |                                        |
-|  +---------------------------+                                        |
-+-----------------------------------------------------------------------+
-              |
-              | BLE radio / USB cable
-              v
-+-----------------------------------------------------------------------+
-|                         Android Phone                                 |
-|                                                                       |
-|  +---------------------------+                                        |
-|  |    Transport              |                                        |
-|  |    BLE (GATT) | TCP       |                                        |
-|  +---------------------------+                                        |
-|         |                                                             |
-|         v                                                             |
-|  +---------------------------+                                        |
-|  |    Noise XX Session       |                                        |
-|  |    (decrypt/encrypt)      |                                        |
-|  +---------------------------+                                        |
-|         |                                                             |
-|         v                                                             |
-|  +---------------------------+                                        |
-|  |    JSON-RPC Dispatcher    |                                        |
-|  |    local.* | remote.*     |                                        |
-|  +---------------------------+                                        |
-|         |                   |                                         |
-|         v                   v                                         |
-|  +--------------+    +------------------+                             |
-|  | Biometric    |    | Android Keystore |                             |
-|  | Prompt       |    | (TEE/StrongBox)  |                             |
-|  +--------------+    +------------------+                             |
-+-----------------------------------------------------------------------+
-```
+| Interface | Assertion | Phone methods used |
+|-----------|-----------|--------------------|
+| `types.KeyProvider` | `backend.go:111` | `local.generateKey`, `local.getKeyInfo`, `local.getPublicKey`, `local.deleteKey`, `local.listKeys` |
+| `crypto.Signer` (per key) | `signer.go:34` | `local.sign` — the pre-hashed digest is sent as `data` (`signer.go:57`) |
+| `crypto.Decrypter` (per key) | `decrypter.go:76` | `local.decrypt` |
+| `types.AttestingKeyProvider` | `attestation.go:25` | `local.attestKey` |
+| `types.SymmetricKeyProvider` | `symmetric.go:27` | `local.generateKey`, `local.symmetricEncrypt`, `local.symmetricDecrypt` |
+| `types.KeyAgreementProvider` | `key_agreement.go:24` | `local.ecdh` |
+| `backend.ImportExportBackend` | `import_export.go:25` | `local.getPublicKey`; import and private export return `ErrImportNotSupported` / `ErrExportNotSupported` |
 
-## Backend Interface Hierarchy
+`RotateKey` returns `ErrRotationNotSupported` (`backend.go:439`). There is no
+`local.verify` or `local.encrypt` method; the full `local.*` set is
+`localMethodNames` (`xkey/pkg/pairing/protocol_local.go:392`).
 
-The phone backend implements the following `types.Backend` interface hierarchy:
+## Transport and Noise
 
-| Interface | Purpose | Phone Implementation |
-|-----------|---------|---------------------|
-| `Backend` | Core key operations: generate, sign, verify, encrypt, decrypt | JSON-RPC `local.generateKey`, `local.sign`, `local.verify`, `local.encrypt`, `local.decrypt` dispatched to Android Keystore |
-| `AttestingBackend` | Hardware key attestation | Android Key Attestation: X.509 certificate chain rooted at Google hardware attestation root CA |
-| `SymmetricBackend` | Symmetric key generation and AEAD encryption | AES-GCM via Android Keystore `local.symmetricEncrypt` / `local.symmetricDecrypt` |
-| `KeyAgreementBackend` | ECDH key agreement | `local.ecdh` delegates to Android Keystore EC key agreement |
-| `ImportExportBackend` | Key import/export | Public key export only; private keys are hardware-bound in TEE/StrongBox and cannot be extracted |
+The backend validates `transport` (`ble` or `tcp`), `device_address` and both
+static keys, but never opens a connection or reads `NoiseStaticKey`
+(`pkg/server/backend_phone.go:91`). The embedder that owns the phone link
+performs the Noise XX handshake and passes a `Sender` to
+`Server.RegisterPhoneBackend` (`pkg/server/backend_phone.go:58`). Nothing in
+this repository calls it, so a stock xkmsd never registers the backend.
 
-### Interface Constraints
-
-```
-types.Backend (required)
-    |
-    +-- types.AttestingBackend
-    |   Android Key Attestation only (not custom attestation)
-    |   Cert chain: leaf -> intermediate -> Google root
-    |
-    +-- types.SymmetricBackend
-    |   AES-256-GCM only (Android Keystore constraint)
-    |   Keys never leave TEE/StrongBox
-    |
-    +-- types.KeyAgreementBackend
-    |   ECDH P-256 / P-384
-    |   Raw shared secret stays on phone; derived key returned
-    |
-    +-- ImportExportBackend
-        ExportPublicKey: supported
-        ExportPrivateKey: ErrExportNotSupported (hardware-bound)
-        ImportKey: ErrImportNotSupported (generate on device)
-```
-
-## Transport Layer
-
-The transport layer provides an abstraction over the physical connection between the laptop and phone. Both transport types expose the same `Connection` interface, ensuring the upper layers are transport-agnostic.
-
-### Transport Interface
-
-```go
-type Connection interface {
-    // Send transmits a message to the phone.
-    Send(ctx context.Context, data []byte) error
-
-    // Receive reads a message from the phone.
-    Receive(ctx context.Context) ([]byte, error)
-
-    // Close terminates the connection.
-    Close() error
-}
-```
-
-### BLE Transport
-
-BLE uses GATT (Generic Attribute Profile) characteristics for bidirectional communication.
-
-```
-Laptop (Central)                    Phone (Peripheral)
-     |                                    |
-     |--- BLE Scan for service UUID ----->|
-     |<-- Advertisement ------------------|
-     |                                    |
-     |--- Connect ----------------------->|
-     |<-- Connection established ---------|
-     |                                    |
-     |--- Write to TX characteristic ---->|  (request)
-     |    [fragmented if > MTU]           |
-     |                                    |
-     |<-- Notify on RX characteristic ----|  (response)
-     |    [reassembled from fragments]    |
-```
-
-Key characteristics:
-- **Service UUID**: Custom 128-bit UUID identifying the phone backend service
-- **TX Characteristic**: Laptop writes request data (supports fragmentation)
-- **RX Characteristic**: Phone notifies with response data (supports reassembly)
-- **MTU negotiation**: Requests largest supported MTU to minimize fragmentation
-- **Fragmentation**: Messages larger than (MTU - 3) bytes are split into chunks with sequence headers
-
-### TCP Transport (ADB)
-
-TCP transport uses Android Debug Bridge (ADB) port forwarding for USB-connected phones.
-
-```
-Laptop                    ADB                    Phone
-  |                        |                       |
-  |-- adb forward -------->|                       |
-  |   tcp:PORT -> tcp:PORT |                       |
-  |                        |                       |
-  |-- TCP connect -------->|--- USB forward ------>|
-  |<-- TCP established ----|<-- Established -------|
-  |                        |                       |
-  |-- Send (raw TCP) ----->|--- Forward ---------->|
-  |<-- Receive ------------|<-- Forward -----------|
-```
-
-Key characteristics:
-- **Stage 1**: ADB port forwarding over USB (requires `adb` binary)
-- **Stage 2**: Custom USB driver (future, eliminates ADB dependency)
-- **No fragmentation needed**: TCP handles message framing natively
-- **Lower latency**: USB provides higher bandwidth than BLE
-
-### Transport Comparison
-
-| Property | BLE | TCP (ADB) |
-|----------|-----|-----------|
-| Physical medium | Bluetooth radio | USB cable |
-| Range | ~10m | Cable length |
-| Bandwidth | ~1 Mbit/s | USB speed |
-| Latency | 10-50ms | 1-5ms |
-| Fragmentation | Required (MTU limited) | Not needed |
-| Setup | Automatic scan | `adb forward` command |
-| Dependencies | BLE adapter | ADB binary, USB cable |
-
-## Noise Protocol Integration
-
-All communication between the laptop and phone is encrypted using the Noise Protocol Framework with the XX handshake pattern.
+The transports and their framing are documented in
+[../transport.md](../transport.md); the Noise handshake and pairing in
+[../protocol.md](../protocol.md) and phone-hsm's
+[architecture.md](../../phone-hsm/architecture.md).
 
 ### XX Handshake Pattern
-
-The XX pattern provides mutual authentication: both sides prove possession of their static keys.
 
 ```
 Initiator (Laptop)                        Responder (Phone)
      |                                         |
      |  e -->                                  |
-     |  (ephemeral public key)                 |
      |-----------------------------------------|
-     |                                         |
      |                              <-- e, ee, s, es
-     |  (ephemeral + static keys, encrypted)   |
      |-----------------------------------------|
-     |                                         |
      |  s, se -->                              |
-     |  (static key, encrypted)                |
      |-----------------------------------------|
-     |                                         |
      |  [Transport session established]        |
      |  [Both sides authenticated]             |
 ```
 
-### Key Management
-
-- **Static keys**: Generated during `xkey device pair` and stored in `devices.yaml`
-- **Ephemeral keys**: Generated fresh per connection for forward secrecy
-- **Session keys**: Derived from Noise handshake, used for transport encryption
-- **Key rotation**: New session keys on every reconnection
-
-### Pairing Flow
-
-There is no `xkey phone pair` command; the verb is `xkey device pair`
-(BLE-only, phone-hsm's [cli.md](../../phone-hsm/cli.md)):
-
-```
-xkey device pair
-     |
-     +-- Scan for advertising devices, select one
-     +-- Generate this host's Noise static keypair
-     +-- Perform the real Noise XX handshake (not a trial run) --
-     |   the phone's static public key is learned from it
-     +-- Print a short authentication string derived from the handshake's
-     |   channel binding (go-xkms#1306; informational -- see security.md)
-     +-- Send pairing.confirm; the phone answers Confirmed true/false
-     +-- Attest the device (unless policy allows an unattestable pairing)
-     +-- Save the record to devices.yaml, sealing the local private key
-         under the barrier when one is configured
-```
-
-### Message Encryption
-
-After the Noise XX handshake completes, every JSON-RPC message is encrypted:
-
-```
-Plaintext JSON-RPC          Noise Transport           Encrypted Wire Format
-+------------------+        +------------------+      +------------------+
-| {"jsonrpc":"2.0",| -----> | Encrypt with     | ---> | [length][nonce]  |
-|  "method":"local.|        | ChaChaPoly1305   |      | [ciphertext]     |
-|  sign", ...}     |        | session key      |      | [auth tag]       |
-+------------------+        +------------------+      +------------------+
-```
+- **Static keys**: generated during `xkey device pair` and stored in `devices.yaml`
+- **Ephemeral keys**: fresh per connection, for forward secrecy
+- **Session keys**: derived from the handshake; new on every reconnection
 
 ## Key Operation Flow
 
-### Sign Operation (Typical Flow)
+### Sign
 
 ```
-xkmsd                Phone Backend           Transport/Noise        Phone
+xkmsd                Phone Backend           Sender (Noise)          Phone
     |                         |                       |                    |
-    | Sign(keyAttrs, digest)  |                       |                    |
+    | Signer(attrs).Sign(dgst)|                       |                    |
     |------------------------>|                       |                    |
-    |                         |                       |                    |
-    |                         | JSON-RPC request:     |                    |
     |                         | local.sign            |                    |
-    |                         |---------------------->|                    |
-    |                         |                       | encrypt + send     |
-    |                         |                       |------------------>|
-    |                         |                       |                    |
-    |                         |                       |                    | prompt
+    |                         |---------------------->|------------------->|
     |                         |                       |                    | biometric
-    |                         |                       |                    |
-    |                         |                       |                    | user
-    |                         |                       |                    | authenticates
-    |                         |                       |                    |
-    |                         |                       |                    | Android Keystore
-    |                         |                       |                    | signs in TEE
-    |                         |                       |                    |
-    |                         |                       |  <-- encrypted     |
-    |                         |                       |      response      |
-    |                         | <-- JSON-RPC response |                    |
-    |                         |     (signature bytes) |                    |
-    |                         |                       |                    |
+    |                         |                       |                    | prompt (if key
+    |                         |                       |                    | requires it)
+    |                         |                       |                    | Keystore signs
+    |                         | <-- signature --------|<-------------------|
     | <-- signature           |                       |                    |
-    |                         |                       |                    |
 ```
 
-### Key Generation Flow
-
-```
-xkmsd                Phone Backend           Phone (Android Keystore)
-    |                         |                       |
-    | GenerateKey(attrs)      |                       |
-    |------------------------>|                       |
-    |                         | local.generateKey     |
-    |                         |---------------------->|
-    |                         |                       | generate in TEE
-    |                         |                       | (biometric-bound)
-    |                         | <-- keyID + pubKey    |
-    |                         |                       |
-    | <-- KeyAttributes       |                       |
-    |    (keyID, algorithm,   |                       |
-    |     public key)         |                       |
-```
-
-### Attestation Flow
+### Attestation
 
 ```
 xkmsd                Phone Backend           Phone (Android Keystore)
     |                         |                       |
-    | AttestKey(keyAttrs)     |                       |
+    | AttestKey(attrs, nonce) |                       |
     |------------------------>|                       |
     |                         | local.attestKey       |
     |                         |---------------------->|
-    |                         |                       | retrieve attestation
-    |                         |                       | cert chain from TEE
     |                         | <-- X.509 cert chain  |
     |                         |                       |
-    |                         | verify chain against  |
-    |                         | Google root CA        |
-    |                         |                       |
+    |                         | platform verifier,    |
+    |                         | only if configured    |
     | <-- AttestationResult   |                       |
-    |    (cert chain,         |                       |
-    |     verified: true)     |                       |
 ```
 
-## Bidirectional Architecture
+`Verified` is `false` unless `Config.Attestation` is set; see
+[attestation.md](attestation.md).
 
-The phone backend supports bidirectional cryptographic operations over the same encrypted channel. This enables two distinct use cases:
+## Bidirectional Use
 
-### Direction 1: local.* (Laptop uses Phone)
-
-The laptop delegates cryptographic operations to the phone's Android Keystore.
-
-```
-Laptop (xkmsd)                        Phone (Android Keystore)
-     |                                         |
-     |  local.generateKey ------------------>  |  TEE generates key
-     |  local.sign ------------------------->  |  TEE signs with biometric
-     |  local.encrypt ---------------------->  |  TEE encrypts (AES-GCM)
-     |  local.decrypt ---------------------->  |  TEE decrypts (AES-GCM)
-     |  local.ecdh ------------------------->  |  TEE performs ECDH
-     |  local.attestKey -------------------->  |  TEE returns attestation
-     |  local.symmetricEncrypt ------------->  |  TEE AES-GCM encrypt
-     |  local.symmetricDecrypt ------------->  |  TEE AES-GCM decrypt
-```
-
-### Direction 2: remote.* (Phone uses Laptop)
-
-The phone delegates cryptographic operations to the laptop's xkmsd backends (TPM2, PKCS#11, software, cloud KMS).
-
-```
-Phone (Android App)                       Laptop (xkmsd)
-     |                                         |
-     |  remote.generateKey ------------------>  |  TPM2/PKCS#11 generates key
-     |  remote.sign ------------------------->  |  TPM2/PKCS#11 signs
-     |  remote.encrypt ---------------------->  |  Backend encrypts
-     |  remote.decrypt ---------------------->  |  Backend decrypts
-     |  remote.listKeys --------------------->  |  List available keys
-```
-
-### Bridge Architecture
-
-The Go binary on the laptop acts as a bridge for `remote.*` requests, routing them through the standard xkmsd service layer:
-
-```
-Phone App                    Phone Backend (Go)            xkmsd Service
-     |                            |                              |
-     | remote.sign ------------>  |                              |
-     |                            | route to backend ----------> |
-     |                            |                              | TPM2.Sign()
-     |                            |                              |   or
-     |                            |                              | PKCS11.Sign()
-     |                            | <-- signature --------------|
-     | <-- signature              |                              |
-```
-
-## Connection Lifecycle
-
-```
-                     +-------------------+
-                     |   Uninitialized   |
-                     +-------------------+
-                              |
-                              | Backend.Init(config)
-                              | Load static keys from config
-                              v
-                     +-------------------+
-                     |   Initialized     |
-                     +-------------------+
-                              |
-                              | Connect()
-                              | BLE scan or TCP connect
-                              v
-                     +-------------------+
-                     |   Connecting      |
-                     +-------------------+
-                              |
-                              | Noise XX handshake
-                              | Mutual authentication
-                              v
-                     +-------------------+
-                     |   Authenticated   |
-                     +-------------------+
-                              |
-                              | Session established
-                              | JSON-RPC ready
-                              v
-                     +-------------------+
-            +------->   Connected       |<------+
-            |        +-------------------+       |
-            |                 |                  |
-            |     Operations: |                  |
-            |     generateKey |                  |
-            |     sign        |                  |
-            |     encrypt     |  Reconnect on    |
-            |     decrypt     |  transient error |
-            |     ecdh        |                  |
-            |                 |                  |
-            +-----------------+------------------+
-                              |
-                              | Close() or fatal error
-                              v
-                     +-------------------+
-                     |   Disconnected    |
-                     +-------------------+
-```
-
-### Reconnection Strategy
-
-- **Transient errors** (BLE signal loss, timeout): Automatic reconnect with exponential backoff
-- **Authentication errors** (Noise handshake failure): Fail immediately, require re-pairing
-- **Fatal errors** (backend closed): No reconnect, return error to caller
-
-## JSON-RPC Protocol
-
-All operations use JSON-RPC 2.0 over the Noise-encrypted transport.
-
-### Request Format
-
-```json
-{
-    "jsonrpc": "2.0",
-    "id": 1,
-    "method": "local.sign",
-    "params": {
-        "key_id": "a1b2c3d4",
-        "algorithm": "ECDSA-P256-SHA256",
-        "digest": "<base64-encoded-digest>"
-    }
-}
-```
-
-### Response Format
-
-```json
-{
-    "jsonrpc": "2.0",
-    "id": 1,
-    "result": {
-        "signature": "<base64-encoded-signature>"
-    }
-}
-```
-
-### Error Response Format
-
-```json
-{
-    "jsonrpc": "2.0",
-    "id": 1,
-    "error": {
-        "code": -32001,
-        "message": "biometric_failed",
-        "data": {
-            "reason": "user_cancelled"
-        }
-    }
-}
-```
-
-### Method Catalog
-
-| Direction | Method | Description |
-|-----------|--------|-------------|
-| `local` | `local.generateKey` | Generate key in Android Keystore |
-| `local` | `local.sign` | Sign digest with TEE-held key |
-| `local` | `local.verify` | Verify signature on phone |
-| `local` | `local.encrypt` | Asymmetric encrypt (RSA-OAEP) |
-| `local` | `local.decrypt` | Asymmetric decrypt (RSA-OAEP) |
-| `local` | `local.symmetricEncrypt` | AES-GCM encrypt |
-| `local` | `local.symmetricDecrypt` | AES-GCM decrypt |
-| `local` | `local.ecdh` | ECDH key agreement |
-| `local` | `local.attestKey` | Android Key Attestation |
-| `local` | `local.deleteKey` | Delete key from Keystore |
-| `local` | `local.listKeys` | List available keys |
-| `local` | `local.getPublicKey` | Export public key |
-| `remote` | `remote.generateKey` | Generate key on laptop backend |
-| `remote` | `remote.sign` | Sign using laptop backend |
-| `remote` | `remote.encrypt` | Encrypt using laptop backend |
-| `remote` | `remote.decrypt` | Decrypt using laptop backend |
-| `remote` | `remote.listKeys` | List laptop backend keys |
+`local.*` requests flow from the laptop to the phone through this backend.
+`remote.*` requests flow the other way — the phone using laptop keys — and are
+served by the xkey bridge (`xkey/pkg/pairing/bridge.go`), not by this package.
+The `remote.*` set is in `xkey/pkg/pairing/protocol_remote.go:20-32`; see
+[../bidirectional.md](../bidirectional.md).
 
 ## Error Handling
 
-All errors are typed and defined in `errors.go`. Errors are categorized by source.
+All errors are typed in `errors.go`. `mapRPCError` translates JSON-RPC error
+codes through `rpcErrorMapping` (`backend.go:90`):
 
-### Error Categories
+| JSON-RPC code | Go error |
+|---------------|----------|
+| -32000 `KeyNotFound` | `ErrKeyNotFound` |
+| -32001 `UserCancelled` | `ErrUserCancelled` |
+| -32002 `BiometricFailed` | `ErrBiometricFailed` |
+| -32003 `KeyExists` | `ErrKeyExists` |
+| -32004 `UnsupportedAlg` | `ErrUnsupportedAlgorithm` |
+| -32007 `OperationTimeout` | `ErrOperationTimeout` |
+| -32009 `AttestFailed` | `ErrAttestationFailed` |
+| -32012 `InvalidPublicKey` | `ErrInvalidPublicKey` |
+| -32603 internal error | `ErrInvalidResponse` |
+| -32700, -32600, -32601, -32602, -32008, -32010, -32011, -32013 | `ErrProtocolError` |
 
-| Category | Error Type | Description |
-|----------|-----------|-------------|
-| Transport | `ErrConnectionLost` | BLE/TCP connection dropped |
-| Transport | `ErrConnectionTimeout` | Connection attempt timed out |
-| Transport | `ErrBLEUnavailable` | BLE adapter not found or disabled |
-| Transport | `ErrADBNotFound` | ADB binary not available for TCP transport |
-| Transport | `ErrPhoneNotFound` | Phone not discovered during BLE scan |
-| Protocol | `ErrInvalidResponse` | Malformed JSON-RPC response |
-| Protocol | `ErrMethodNotFound` | Unsupported JSON-RPC method |
-| Protocol | `ErrHandshakeFailed` | Noise XX handshake failed |
-| Protocol | `ErrNotPaired` | No stored static keys for phone |
-| Phone | `ErrBiometricFailed` | Biometric authentication failed |
-| Phone | `ErrUserCancelled` | User declined biometric prompt |
-| Phone | `ErrKeyNotFound` | Requested key not in Android Keystore |
-| Phone | `ErrKeystoreUnavailable` | Android Keystore service unavailable |
-| Phone | `ErrStrongBoxUnavailable` | StrongBox not available on device |
-| Backend | `ErrExportNotSupported` | Private key export not allowed |
-| Backend | `ErrImportNotSupported` | Key import not supported |
-| Backend | `ErrNotConnected` | Operation attempted without connection |
-
-### Error Classification
-
-```go
-// IsRetryable returns true for transient errors that may succeed on retry.
-func IsRetryable(err error) bool
-
-// IsTransportError returns true for connection-level errors.
-func IsTransportError(err error) bool
-
-// IsProtocolError returns true for JSON-RPC and Noise protocol errors.
-func IsProtocolError(err error) bool
-
-// IsPhoneError returns true for errors originating from the Android device.
-func IsPhoneError(err error) bool
-
-// IsAuthenticationError returns true for biometric/PIN authentication errors.
-func IsAuthenticationError(err error) bool
-```
-
-### Error Mapping (JSON-RPC to Go)
-
-| JSON-RPC Code | Go Error Type |
-|---------------|---------------|
-| -32001 | `ErrBiometricFailed` |
-| -32002 | `ErrUserCancelled` |
-| -32003 | `ErrKeyNotFound` |
-| -32004 | `ErrKeystoreUnavailable` |
-| -32601 | `ErrMethodNotFound` |
-| -32700 | `ErrInvalidResponse` |
+Other notable errors: `ErrNotConnected`, `ErrBackendClosed`,
+`ErrConnectionLost`, `ErrTransportUnavailable`, `ErrRotationNotSupported`,
+`ErrExportNotSupported`, `ErrImportNotSupported`, `ErrChainVerificationFailed`,
+`ErrInsufficientSecurityLevel`, `ErrUnsupportedPlatform`.
 
 ## Security Model
 
-### Trust Boundaries
-
-```
-+---------------------------+     +---------------------------+
-|   Laptop Trust Domain     |     |   Phone Trust Domain      |
-|                           |     |                           |
-|  xkmsd process        |     |  Android App (user space) |
-|  Noise static keys        |     |  Noise static keys        |
-|  Backend routing          |     |  Biometric gating         |
-|                           |     |  Android Keystore (TEE)   |
-+---------------------------+     +---------------------------+
-            |                                   |
-            +------- Noise XX channel ----------+
-            (encrypted, mutually authenticated)
-```
-
-### Security Properties
-
 | Property | Mechanism |
 |----------|-----------|
-| Confidentiality | Noise XX transport encryption (ChaChaPoly1305) |
-| Integrity | Noise AEAD authentication tags |
-| Mutual authentication | Static key verification during XX handshake |
+| Confidentiality and integrity | Noise XX transport encryption |
+| Mutual authentication | Static key verification during the XX handshake |
 | Forward secrecy | Ephemeral keys per connection |
 | Key binding | Android Keystore TEE/StrongBox hardware binding |
-| User presence | Biometric prompt before key operations |
-| Attestation | Android Key Attestation with Google root CA |
-| Replay protection | Noise nonce counter (monotonic, per session) |
+| User presence | Biometric prompt for keys created with `biometricRequired` |
+| Attestation | Android Key Attestation, verified only when a verifier is configured |
 
-### Threat Mitigations
-
-| Threat | Mitigation |
-|--------|------------|
-| BLE eavesdropping | Noise XX encryption (independent of BLE pairing) |
-| Man-in-the-middle | Static key pinning from initial pairing |
-| Key extraction | Hardware-bound keys in TEE/StrongBox |
-| Unauthorized signing | Biometric authentication per operation |
-| Replay attacks | Noise nonce counter + session uniqueness |
-| Lost phone | Keys require biometric; remote wipe via Android |
+See [security.md](security.md) for the threat model.
 
 ## Capabilities
 
-```go
-Capabilities: types.Capabilities{
-    Keys:                true,   // Key generation and storage
-    HardwareBacked:      true,   // TEE/StrongBox backed
-    Signing:             true,   // ECDSA, RSA signing
-    Decryption:          true,   // RSA-OAEP decryption
-    SymmetricEncryption: true,   // AES-256-GCM
-    Sealing:             false,  // Not supported
-    Import:              false,  // Keys generated on device only
-    Export:              false,  // Private keys hardware-bound
-    KeyAgreement:        true,   // ECDH P-256, P-384
-    Attestation:         true,   // Android Key Attestation
-}
-```
+`Capabilities()` (`backend.go:191`) — the full literal is in
+[README.md](README.md#capabilities): keys, hardware-backed, signing,
+decryption, symmetric encryption, key agreement and attestation are `true`;
+rotation, sealing, import and export are `false`; security level is
+`SecurityLevelHigh`.
 
-### Supported Algorithms
+### Algorithm Mapping
 
-| Algorithm | Type | Android Keystore Support |
-|-----------|------|-------------------------|
-| ECDSA P-256 | Signing | All devices |
-| ECDSA P-384 | Signing | Most devices |
-| RSA 2048 | Signing, Encryption | All devices |
-| RSA 4096 | Signing, Encryption | Most devices |
-| AES-256-GCM | Symmetric | All devices |
-| ECDH P-256 | Key Agreement | All devices |
-| ECDH P-384 | Key Agreement | Most devices |
+`algorithmMapping` (`backend.go:71`) maps key attributes to phone algorithm
+names:
+
+| Key | Phone algorithm |
+|-----|-----------------|
+| ECDSA P-256 / P-384 / P-521 | `ES256` / `ES384` / `ES512` |
+| RSA SHA-256 (default) / SHA-384 / SHA-512 | `RS256` / `RS384` / `RS512` |
+| Ed25519 | `EdDSA` |
+
+Which of these a given phone supports is reported by `local.getCapabilities`.
 
 ## See Also
 
-- [Backend Selection Guide](../README.md)
+- [Phone overview](../README.md)
 - [Configuration](configuration.md)
-- [CLI Usage](../../usage/cli/phone.md)
+- [CLI](../../phone-hsm/cli.md)

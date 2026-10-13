@@ -1,45 +1,41 @@
 # WebAuthn Authentication
 
-go-xkms provides server-side WebAuthn/FIDO2 support for passwordless authentication.
+> **Status: REFERENCE** · Last verified: 2026-10-13
+> Scope: the go-xkms WebAuthn relying party (`pkg/webauthn`, `pkg/webauthn/http`); the normative reference is [`docs/webauthn/`](../../../docs/webauthn/architecture.md).
 
-## Overview
-
-The WebAuthn package (`pkg/webauthn`) implements the server-side WebAuthn protocol for:
-- User registration with passkeys/security keys
-- User authentication with discoverable credentials
-- Session management for WebAuthn ceremonies
+go-xkms provides the server side of WebAuthn: passkey registration, login
+with discoverable or account-bound credentials, and the ceremony session
+state between the begin and finish steps.
 
 ## Architecture
 
 ```
-┌─────────────────────────────────────────────────────────────┐
-│                      HTTP Handlers                          │
-│  (pkg/webauthn/http)                                        │
-├─────────────────────────────────────────────────────────────┤
-│                      WebAuthn Service                       │
-│  (pkg/webauthn/service.go)                                  │
-├─────────────────────────────────────────────────────────────┤
-│  UserStore      │  SessionStore    │  CredentialStore       │
-│  (interface)    │  (interface)     │  (interface)           │
-├─────────────────────────────────────────────────────────────┤
-│                   Storage Backends                          │
-│  Memory (testing) │ Database (production)                   │
-└─────────────────────────────────────────────────────────────┘
+HTTP handlers        pkg/webauthn/http (Handler, Mount* helpers)
+WebAuthn service     pkg/webauthn/service.go (Service)
+Stores               UserStore · SessionStore · CredentialStore (interfaces)
+Implementations      go-qrdb users + DAO credentials · in-memory sessions
 ```
 
-## REST API Endpoints
+## REST endpoints
 
 | Endpoint | Method | Description |
 |----------|--------|-------------|
 | `/api/v1/webauthn/registration/begin` | POST | Start registration of an account's first passkey |
-| `/api/v1/webauthn/credentials/begin` | POST | Start adding a passkey to the signed-in account (bearer token required) |
-| `/api/v1/webauthn/registration/finish` | POST | Complete registration ceremony |
-| `/api/v1/webauthn/login/begin` | POST | Start authentication ceremony |
-| `/api/v1/webauthn/login/finish` | POST | Complete authentication ceremony |
+| `/api/v1/webauthn/registration/finish` | POST | Complete a registration ceremony |
+| `/api/v1/webauthn/login/begin` | POST | Start a login ceremony |
+| `/api/v1/webauthn/login/finish` | POST | Complete a login ceremony |
+| `/api/v1/webauthn/credentials/begin` | POST | Start adding a passkey to the signed-in account (session required) |
 
-## Usage
+xkmsd also serves `/api/v1/webauthn/sdk/registration/{begin,finish}` and
+`/api/v1/webauthn/sdk/authentication/{begin,finish}` (`pkg/api/rest/routes.go:443`).
 
-### Server Setup
+The mount helpers `MountChi`, `MountMux`, `MountStdlib`, `Handler.Routes` and
+`Handler.HandlerFunc` register only the four public ceremonies
+(`pkg/webauthn/http/routes.go:30`). `BeginAddCredential` must be mounted by
+hand behind authentication middleware; the account comes from the session
+identity, never from the request (`pkg/webauthn/http/handler.go:98`).
+
+## Server setup
 
 ```go
 import (
@@ -72,48 +68,53 @@ if err != nil {
     log.Fatal(err)
 }
 
-// Mount HTTP handlers
-handlers := webauthnhttp.NewHandlers(service)
-// handlers.Mount(router) - mount to your router
+handler := webauthnhttp.NewHandler(service)
+r.Route("/api/v1/webauthn", func(r chi.Router) {
+    webauthnhttp.MountChi(r, handler)
+})
+go service.SweepSessions(ctx, webauthn.DefaultSessionSweepInterval)
 ```
 
-### Registration Flow
+`ServiceParams` also takes an optional `JWTGenerator` and `AuditLogger`.
 
-1. **Begin Registration** (POST `/api/v1/webauthn/registration/begin`)
-```json
-{
-  "email": "user@example.com",
-  "display_name": "John Doe"
-}
-```
+## Registration
 
-Response includes `X-Session-Id` header and WebAuthn `publicKey` options.
+Registration is invite-only by default: `Config.AllowPublicRegistration` is
+nil, meaning false, so `registration/begin` creates no account for an email it
+has never seen (`pkg/webauthn/config.go:67`). An account provisioned through
+the authorized user-creation path still enrols its first passkey through
+`registration/begin`. An account that already has a passkey adds more through
+`credentials/begin`.
 
-2. **Finish Registration** (POST `/api/v1/webauthn/registration/finish`)
+1. `POST /registration/begin`:
 
-Include `X-Session-Id` header and authenticator response from browser.
+   ```json
+   {"email": "user@example.com", "display_name": "Example User"}
+   ```
 
-### Authentication Flow
+   The response is the WebAuthn creation options, with the session ID in the
+   `X-Session-Id` header.
 
-1. **Begin Login** (POST `/api/v1/webauthn/login/begin`)
-```json
-{
-  "email": "user@example.com"
-}
-```
+2. `POST /registration/finish` with the same `X-Session-Id` header and the
+   browser's attestation response.
 
-Or empty body `{}` for discoverable credentials.
+The begin route refuses an existing account and, with public registration off,
+an unknown email in the same way, so it does not reveal which accounts exist.
 
-2. **Finish Login** (POST `/api/v1/webauthn/login/finish`)
+## Login
 
-Include `X-Session-Id` header and authenticator assertion from browser.
+1. `POST /login/begin` with `{"email": "..."}` or `{"user_id": "..."}`, or
+   `{}` for a discoverable credential. An unknown account gets decoy options
+   rather than an error.
+2. `POST /login/finish` with the `X-Session-Id` header and the browser's
+   assertion. The response carries `token` and `user_id`, plus
+   `refresh_token` when the token generator issues pairs.
 
-## Store Interfaces
+## Store interfaces
 
-Implement these interfaces for production storage:
+Defined in `pkg/webauthn/interfaces.go`:
 
 ```go
-// UserStore manages WebAuthn users
 type UserStore interface {
     GetByID(ctx context.Context, userID []byte) (User, error)
     GetByEmail(ctx context.Context, email string) (User, error)
@@ -122,14 +123,13 @@ type UserStore interface {
     Delete(ctx context.Context, userID []byte) error
 }
 
-// SessionStore manages WebAuthn sessions
 type SessionStore interface {
     Save(ctx context.Context, data *webauthn.SessionData) (string, error)
     Get(ctx context.Context, sessionID string) (*webauthn.SessionData, error)
+    Take(ctx context.Context, sessionID string) (*webauthn.SessionData, error)
     Delete(ctx context.Context, sessionID string) error
 }
 
-// CredentialStore manages WebAuthn credentials
 type CredentialStore interface {
     Save(ctx context.Context, cred *Credential) error
     GetByUserID(ctx context.Context, userID []byte) ([]*Credential, error)
@@ -140,36 +140,35 @@ type CredentialStore interface {
 }
 ```
 
+`Take` claims a session atomically, returning it and removing it at once, so
+two concurrent finish requests cannot both validate against one challenge.
+
+## Sessions
+
+`NewMemorySessionStore` holds sessions for 2 minutes
+(`pkg/webauthn/session_store.go:99`); `NewMemorySessionStoreWithTTL` sets
+another TTL. A store that implements `SessionCleaner` keeps expired sessions
+until swept; run `Service.SweepSessions` (or the package-level
+`SweepSessions`) on a goroutine you own (`pkg/webauthn/session_sweeper.go:34`).
+
+## Errors
+
+Sentinels in `pkg/webauthn/errors.go` include `ErrUserNotFound`,
+`ErrUserAlreadyExists`, `ErrCredentialNotFound`, `ErrCredentialAlreadyExists`,
+`ErrSessionNotFound`, `ErrSessionExpired`, `ErrInvalidRequest`,
+`ErrVerificationFailed`, `ErrNoCredentials`, `ErrClonedAuthenticator`,
+`ErrRegistrationRefused`, `ErrSessionAccountMismatch`,
+`ErrCredentialOwnerMismatch` and `ErrCredentialUpdateConflict`.
+
 ## Testing
 
 Tests run the production stores on a real in-process DAO factory over a
 memory store (`testutil.NewMemoryDAOFactory()`) and go-qrdb's in-process user
 client, so there is no separate test-only user or credential store.
 
-## Session TTL
+## Security considerations
 
-Default session TTL is 2 minutes. Configure with:
-
-```go
-sessionStore := webauthn.NewMemorySessionStoreWithTTL(5 * time.Minute)
-```
-
-## Error Handling
-
-The package defines typed errors:
-
-- `ErrUserNotFound` - User does not exist
-- `ErrUserAlreadyExists` - Email already registered
-- `ErrSessionNotFound` - Invalid session ID
-- `ErrSessionExpired` - Session has expired
-- `ErrCredentialNotFound` - Credential does not exist
-- `ErrCredentialAlreadyExists` - Credential ID already registered
-- `ErrNoCredentials` - User has no registered credentials
-- `ErrInvalidRequest` - Malformed request
-
-## Security Considerations
-
-1. **Use HTTPS** - WebAuthn requires secure context
-2. **Validate Origins** - Configure `RPOrigins` correctly
-3. **Session Cleanup** - Call `sessionStore.Cleanup()` periodically
-4. **Rate Limiting** - Implement rate limiting on registration endpoints
+1. Serve over HTTPS: browsers allow WebAuthn only in a secure context.
+2. Set `RPOrigins` to exactly the origins that serve the login page.
+3. Run the session sweeper.
+4. Rate-limit the begin endpoints.

@@ -1,5 +1,8 @@
 # xKey Architecture
 
+> **Status: REFERENCE** · Last verified: 2026-10-13
+> Application-level overview (layers, config, enterprise auth gate); [setup-wizard](../setup-wizard/) is normative for setup flows.
+
 xKey is the desktop GUI and CLI application for go-xkms, built with Wails (Go backend) and Svelte (frontend). It provides hardware security key management, FIDO2 authentication, OATH tokens, and enterprise policy enforcement.
 
 ## Layer Architecture
@@ -37,7 +40,7 @@ The GUI services layer is the boundary between the Wails frontend and the go-xkm
 
 ## Unified Configuration
 
-Phase 2 replaced the split config (CLI YAML + GUI JSON) with a single YAML file at `~/.config/xkey/xkey.yaml`.
+CLI and GUI share one YAML file at `~/.config/xkey/xkey.yaml` (`ConfigPath`, `xkey/pkg/config/load.go:71`). GUI bootstrap state needed before the barrier opens stays in `gui.json` (`xkey/pkg/gui/config.go:287`).
 
 ```
 ~/.config/xkey/
@@ -51,17 +54,13 @@ Phase 2 replaced the split config (CLI YAML + GUI JSON) with a single YAML file 
 2. `/etc/xkey/xkey.yaml` (system fallback)
 3. `DefaultConfig()` (built-in defaults)
 
-Environment variables with the `XKEY_` prefix override any loaded value. Viper handles merging.
+Only the first file found is read (`Load`, `xkey/pkg/config/load.go:84`). Environment variables with the `XKEY_` prefix override any loaded value (`load.go:33`, `:156`); Viper handles merging.
 
-### Migration
-
-On first load, if the unified config does not exist but legacy files do (`~/.xkey/config.yaml` or `~/.config/xkey/gui.json`), automatic migration merges them into the unified format. Legacy files are preserved for rollback.
-
-See [configuration.md](configuration.md) for complete field reference.
+See [app-configuration.md](../configuration/app-configuration.md) for the field reference.
 
 ## Enterprise Mode Detection
 
-Enterprise mode uses state-driven inference rather than a config flag:
+Enterprise mode uses state-driven inference rather than a config flag (`IsEnterpriseMode`, `xkey/pkg/config/policy_integrity.go:72`):
 
 ```
 HMAC file exists?
@@ -111,7 +110,7 @@ SO login triggers HMAC verification. The result is cached in an atomic bool for 
 
 ### Session State
 
-`AuthService` uses `sync/atomic` for lock-free state management:
+`AuthService` (`xkey/pkg/gui/services/auth_service.go`) uses `sync/atomic` for lock-free state management:
 
 - `mode` (`atomic.Value`): current `AuthMode` (locked, user, so_admin)
 - `policyVerified` (`atomic.Bool`): HMAC verified this session
@@ -140,9 +139,9 @@ HMAC-SHA256(key, canonical_json(PolicySection))
 Tag stored in xkey_policy.hmac
 ```
 
-Verification occurs on SO login. A fresh salt is generated on each policy write, preventing salt reuse across policy revisions.
+Verification occurs on SO login. `WritePolicyHMAC` (`xkey/pkg/config/policy_integrity.go:146`) draws a fresh salt on each policy write, preventing salt reuse across policy revisions.
 
-See [enterprise-mode.md](enterprise-mode.md) for full details.
+See [enterprise-mode.md](../configuration/enterprise-mode.md) for full details.
 
 ## Admin vs User UI Separation
 
@@ -158,7 +157,9 @@ The SO can switch to user mode for testing. Logout always returns to `locked`.
 
 ## Setup Workflows
 
-### Personal Setup (10 steps)
+Step counts are the progress steps each apply method emits (`xkey/pkg/gui/services/setup_wizard_service.go:464`, `:1180`, `:1196`); the [setup-wizard](../setup-wizard/) feature folder is normative.
+
+### Personal Setup (9 steps)
 
 Standard first-run wizard for standalone use. Configures storage, PINs, TPM, password protection, auto-unseal, and saves config with `setup_complete=true`.
 
@@ -174,7 +175,7 @@ The user verifies SO PIN, sets their User PIN, initializes/unseals barrier, and 
 
 ### Startup State Router
 
-`GetStartupState()` produces a `StartupState` struct that the frontend uses to determine the initial view:
+`GetStartupState()` produces a `StartupState` struct (`setup_wizard_service.go:138`) that the frontend uses to determine the initial view:
 
 ```go
 type StartupState struct {

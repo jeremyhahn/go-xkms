@@ -1,6 +1,9 @@
 # xKey Unified Configuration
 
-xKey uses a single YAML configuration file that merges all subsystem settings (CLI, GUI, FIDO2, TPM, policy, etc.) into one location.
+> **Status: REFERENCE** · Last verified: 2026-10-13
+> The `xkey.yaml` schema, defaults and loader, from `xkey/pkg/config`; cross-cutting, no feature folder.
+
+xKey uses a single YAML configuration file that merges all subsystem settings (CLI, GUI, FIDO2, TPM, policy, etc.) into one location. The schema is the `Config` struct in `xkey/pkg/config/config.go:28-48`; defaults are `DefaultConfig()` (`config.go:399`).
 
 ## File Locations
 
@@ -10,7 +13,8 @@ xKey uses a single YAML configuration file that merges all subsystem settings (C
 | 2 | `/etc/xkey/xkey.yaml` | System-wide fallback |
 | 3 | Built-in defaults | The base every load starts from |
 
-If neither file exists, the built-in defaults are loaded and the `XKEY_`
+`Load()` (`xkey/pkg/config/load.go:84`) reads the user file, else the system
+file. If neither file exists, the built-in defaults are loaded and the `XKEY_`
 environment overrides are still applied and validated on top of them, exactly
 as they would be over a file. This is a valid first-run state: the active
 configuration is defaults plus environment, never a file-less `DefaultConfig()`
@@ -41,7 +45,7 @@ Three consequences worth knowing:
   exactly `[tpm2]`, not the default list with `tpm2` added.
 - **The `Require*` policy gates cannot be switched off by omission.**
   Tightening one policy value never silently relaxes the rest of the
-  section (#114). Turning a gate off takes an explicit `false`, which is
+  section. Turning a gate off takes an explicit `false`, which is
   visible in the file and, in enterprise mode, covered by the policy HMAC.
 
 ## Environment Variable Overrides
@@ -60,7 +64,7 @@ XKEY_GUI_SERVER_ADDRESS=xkmsd.example.com:8443
 XKEY_TPM_DEVICE=/dev/tpmrm0
 XKEY_FIDO2_ALWAYS_UV=true
 XKEY_TRUST_ROOTS=/etc/xkey/root-a.pem,/etc/xkey/root-b.pem
-XKEY_POLICY_PLATFORM_PCRS=0,7
+XKEY_POLICY_ALLOWED_BACKENDS=software,tpm2
 ```
 
 A value from the environment is validated exactly like one from the file.
@@ -68,26 +72,30 @@ A value from the environment is validated exactly like one from the file.
 Four keys cannot be set from the environment, because one variable cannot
 express a map or a list of objects: `backends.local`, `backends.remote`,
 `backends.defaults`, and `fido2.extensions`. A variable set for one of them
-fails the load rather than being ignored.
+fails the load rather than being ignored (`load.go:178-181`).
 
 ## Config Sections
 
 ```yaml
 policy:                  # SO-controlled security policy (see enterprise-mode.md)
 backend:                 # Cryptographic backend selection
+backends:                # Local and remote backend registry entries
 fido2:                   # FIDO2/WebAuthn authenticator settings
+piv:                     # PIV module backend and storage
 oath:                    # OATH TOTP/HOTP module
 phone:                   # Phone-as-a-token backend
 xkmsd:                   # xkmsd server connection
 oidc:                    # Local OAuth2 callback listener for OIDC and AWS login
 agent:                   # Agent server bind address
 tpm:                     # Direct TPM access parameters
-password_protection:     # Barrier/encryption at-rest settings
+password_protection:     # Password-store protection settings
 trust:                   # Root certificates and system trust
 attestation:             # Attestation authority settings
 log:                     # Logging configuration
 gui:                     # Desktop application settings
 state:                   # Runtime state persisted across restarts
+barrier:                 # Cloud KMS and PKCS#11 barrier strategy settings
+device:                  # Paired-device commands
 ```
 
 ### backend
@@ -96,24 +104,52 @@ state:                   # Runtime state persisted across restarts
 backend:
   default: "software"       # software | tpm2 | pkcs11 | phone
   tpm2:
-    device: "/dev/tpmrm0"
+    device: ""
     simulator: false
     hash: ""
+```
+
+### backends
+
+```yaml
+backends:
+  defaults: {}              # capability -> backend ID
+  local:                    # default: one entry, the software backend
+    - id: "software"
+      category: "software"
+      name: "Local software"
+      # tpm2: {device, simulator}, pkcs11: {library_path, slot_id}, seal_strategy
+  remote: []                # id, name, address, protocol, tls_enabled, spki_pin, auto_connect
 ```
 
 ### fido2
 
 ```yaml
 fido2:
-  storage: "file"           # Storage backend for credentials
+  storage: ""               # Storage backend for credentials (empty = the command's default)
   storage_path: ""          # Custom storage path (empty = default)
   attestation: "packed"     # Attestation format
-  device_name: "xKey"       # Device name reported to relying parties
+  device_name: ""           # Device name reported to relying parties (empty = the command's default)
   rpid_hash: false
   always_uv: false          # Require user verification for all operations
   resident_key: false       # Default resident key preference
   conformance_mode: false
   extensions: {}            # Extension enable/disable map
+```
+
+`attestation` is the only FIDO2 key with a built-in default
+(`config.go:424`).
+
+### piv
+
+```yaml
+piv:
+  backend: "software"       # software | tpm2 | pkcs11
+  storage: ""               # file | tpm2 | pkcs11
+  storage_path: ""
+  tpm_device: "/dev/tpmrm0"
+  pkcs11_library: "/usr/lib/softhsm/libsofthsm2.so"
+  pkcs11_token: ""
 ```
 
 ### oath
@@ -134,7 +170,8 @@ phone:
   backend: ""
   server_address: ""
   server_protocol: ""
-  relay_listen_address: ":8444"  # xkey device relay binds this (host:port); --listen overrides
+  relay_listen_address: "127.0.0.1:8444"  # xkey device relay binds this (host:port); --listen overrides
+  tpm_enrollment: false     # Offer TCG-CSR-IDEVID enrollment of this host's TPM over the phone bridge
   server_tls_enabled: false
   device_filter: ""
   attestation_policy: ""
@@ -151,6 +188,7 @@ xkmsd:
   tls_ca_file: ""
   tls_cert_file: ""
   tls_key_file: ""
+  server_name: ""           # Names the server on a transport without TLS (Unix socket)
 ```
 
 ### oidc
@@ -182,15 +220,6 @@ agent:
 
 `--listen` on `xkey agent start` overrides the section for one run.
 
-### agent
-
-```yaml
-agent:
-  listen_address: ":9443"   # xkey agent start binds this (host:port; ":port" = every interface)
-```
-
-`--listen` on `xkey agent start` overrides the section for one run.
-
 ### tpm
 
 ```yaml
@@ -207,7 +236,7 @@ tpm:
 ```yaml
 password_protection:
   enabled: false
-  mode: ""                  # tpm_sealed | aes_software | none
+  mode: ""
 ```
 
 ### trust
@@ -275,13 +304,14 @@ state:
   storage_type: ""          # luks | barrier   (at-rest: LUKS volume vs plain dir)
   storage_engine: "file"    # file | pebble | memory  (go-qrdb storage engine)
   barrier_initialized: false
-  barrier_strategy: ""      # software | tpm-pcr
+  barrier_strategy: ""      # Seal strategy ID the barrier uses (e.g. tpm2, passphrase)
+  mode: ""                  # personal | enterprise
 ```
 
 `storage_engine` selects the go-qrdb storage engine backing **all** local
 persistence (barrier-sealed component stores, trust store, PIN, PIV, FIDO2,
 OATH, passwords). It is orthogonal to `storage_type`, which chooses plain-disk
-vs LUKS at-rest encryption for the data directory.
+vs LUKS at-rest encryption for the data directory (`config.go:322-328`).
 
 - `file` (default) — one flat file per key under the data directory
   (`<dir>/<key>`). This is xkey's historical on-disk layout, so switching to it
@@ -292,24 +322,61 @@ vs LUKS at-rest encryption for the data directory.
 All engines are reached through the go-qrdb SDK; the barrier still encrypts on
 top of whichever engine is selected.
 
+### barrier
+
+```yaml
+barrier:
+  cloud_kms:
+    aws_kms:  {region, access_key_id, secret_access_key, session_token, endpoint, key_id}
+    gcp_kms:  {project_id, location_id, key_ring_id, credentials_file, ...}
+    azure_kv: {vault_url, tenant_id, client_id, client_secret, ...}
+    vault:    {address, token, namespace, mount_path, ...}
+  pkcs11:
+    library: ""
+    token: ""
+```
+
+Provider settings for barrier seal strategies (`xkey/pkg/config/barrier_cloud.go`,
+`barrier_pkcs11.go`); see [seal](../seal/) for how the barrier uses them.
+
+### device
+
+```yaml
+device:
+  trust_new_devices: false  # Accept a device with no stored expected key; mirrors --trust-new-devices
+  scan_timeout: 30s         # Must be > 0
+```
+
 ## Validation Rules
 
+`Config.Validate()` (`config.go:507`) enforces:
+
 - `log.level` must be one of: trace, debug, info, warn, error
-- `backend.default` must be one of: software, tpm2, pkcs11, phone
-- `state.storage_engine` (when set) must be one of: file, pebble, memory
 - `gui.clipboard_timeout` must be >= 0
 - `gui.window_width` and `gui.window_height` must be > 0
+- `oidc.callback_port` must be 1-65535
+- `device.scan_timeout` must be > 0
+- `agent.listen_address` and `phone.relay_listen_address` (when set) must be `host:port` with a port of 1-65535
+- `backend.default` must be one of: software, tpm2, pkcs11, phone
+- `piv.backend` must be one of: software, tpm2, pkcs11; `piv.storage` one of: file, tpm2, pkcs11
+- `policy.api_explorer_sandbox_policy` must be an allowed value
+- `backends.local` / `backends.remote` entries are validated when present
+- `state.mode` must be one of: personal, enterprise
+- `state.storage_engine` must be one of: file, pebble, memory
 
-Validation runs automatically on both load and save.
+Each enum rule applies only when the key is set. Validation runs on load
+(`unmarshalAndValidate`, `load.go:250`) and on save (`save.go:38`).
 
 ## Atomic Writes
 
-Both `Save()` and `WritePolicyHMAC()` use atomic write patterns:
+Both `Save()` and `WritePolicyHMAC()` write through `fsutil.WriteFileAtomic`
+(`sdk/go/fsutil/fsutil.go:65`):
 
 1. Write to a temporary file in the same directory
 2. `fsync` the temporary file
 3. `chmod 0600` the temporary file
 4. `rename` (atomic on POSIX) to the target path
+5. `fsync` the directory
 
 This prevents partial writes from corrupting the config on crash or power loss.
 

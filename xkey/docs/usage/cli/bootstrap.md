@@ -1,496 +1,234 @@
 # Bootstrap CLI Commands
 
+> **Status: REFERENCE** · Last verified: 2026-10-13
+> Scope: `xkmsctl bootstrap`, the go-xkms server CLI (`cmd/xkmsctl/bootstrap*.go`); the normative reference is [`docs/trust-bootstrap/cli.md`](../../../../docs/trust-bootstrap/cli.md).
+
 > **Scope:** this page documents the go-xkms **server** CLI `xkmsctl bootstrap`
 > (source: `cmd/xkmsctl/`), **not** the `xkey` desktop CLI. It lives under
 > `xkey/docs/` for historical reasons.
 > There is no `xkey` equivalent. For the xkey command tree see
 > [the xkey CLI reference](README.md).
 
-The `bootstrap` command group provides tools for secure CA bundle retrieval and DANE/TLSA record management. These commands support the bootstrap workflow where a new node obtains CA certificates before TLS is configured.
-
-For protocol details, see the [trust bootstrap documentation](../../../../docs/trust-bootstrap/architecture.md).
+The `bootstrap` command group fetches a CA bundle for a first-contact client
+before TLS trust exists, and manages the DANE/TLSA records, Noise keys and SPKI
+pins that make the fetch verifiable. For the protocol see the
+[trust bootstrap architecture](../../../../docs/trust-bootstrap/architecture.md).
 
 ## Command Tree
 
 ```
 xkmsctl bootstrap
-├── auto                          # Auto-bootstrap using all configured methods
+├── auto                      # Try DANE, Noise, SPKI, then Direct
+├── direct                    # Accept an operator-supplied CA bundle file
+├── show-keys                 # The running server's bootstrap public keys
 ├── dane
-│   ├── generate-tlsa             # Generate TLSA records from a CA certificate
-│   ├── verify-tlsa               # Verify a certificate against TLSA DNS records
-│   └── show-tlsa                 # Display TLSA records from DNS
+│   ├── generate-tlsa         # TLSA records from a certificate
+│   ├── verify-tlsa           # Check a certificate against published TLSA records
+│   └── show-tlsa             # Display published TLSA records
 ├── noise
-│   ├── generate-key              # Generate a Noise static keypair
-│   ├── show-key                  # Show public key from a private key
-│   └── show-spki-pin             # Compute SPKI SHA-256 pin
+│   ├── generate-key          # Curve25519 (Noise_NK) static keypair
+│   ├── generate-p256-key     # P-256 static keypair (FIPS suite)
+│   ├── show-key              # Public key from a Noise_NK private key
+│   ├── show-p256-key         # Public key from a P-256 private key
+│   └── show-spki-pin         # SPKI SHA-256 pin of a certificate
 └── spki
-    └── show-pin                  # Compute SPKI SHA-256 pin from a certificate
+    └── show-pin              # SPKI SHA-256 pin of a certificate
 ```
-
-The noise subcommands have moved from `xkmsctl noise` to `xkmsctl bootstrap noise`. The top-level `xkmsctl noise` commands have been removed and are no longer available.
 
 ---
 
 ## bootstrap auto
 
-Perform automatic CA bundle bootstrap by trying all configured methods in priority order: DANE, Noise, SPKI, Direct.
-
-**Usage:**
+Tries each configured method in priority order — DANE, Noise, SPKI, Direct —
+and returns the first CA bundle that verifies. A method is tried only if its
+flags (or the config file) configure it. Direct is a last-resort fallback over
+plain HTTPS with the system trust store.
 
 ```bash
 xkmsctl bootstrap auto [flags]
 ```
 
-**Flags:**
+Flags are defined in `cmd/xkmsctl/bootstrap.go:326`:
 
-| Flag | Type | Default | Description |
-|------|------|---------|-------------|
-| `--config` | string | `$HOME/.xkms.yaml` | Configuration file with bootstrap settings |
-| `--output-file` | string | | Write CA bundle PEM to this file |
-| `--timeout` | duration | `60s` | Overall timeout for all attempts |
-| `--per-method-timeout` | duration | `15s` | Timeout per individual method |
-| `--method-order` | string | `dane,noise,spki,direct` | Comma-separated priority order |
-
-**Example:**
+| Flag | Default | Description |
+|------|---------|-------------|
+| `--server-url` | | xkms server URL, for example `https://kms.example.com:8443` |
+| `--config` | | xkmsd config file; its `trust:` section's default scope supplies base values, flags override them |
+| `--dane-hostname` | | Hostname for DANE/TLSA verification |
+| `--dane-dns-server` | | DNS server for DANE lookups, for example `8.8.8.8:53` |
+| `--noise-key` | | Hex Noise_NK (Curve25519) static public key of the server |
+| `--p256-key` | | Hex P-256 static public key of the server, for the FIPS-approved suite |
+| `--noise-addr` | | Noise bootstrap server address (`host:port`) |
+| `--spki-pin` | | Hex SHA-256 SPKI pin of the server certificate |
+| `--direct` | `false` | Enable the direct HTTPS fallback |
+| `--bundle-path` | `/api/v1/ca/bundle` | REST path of the CA bundle endpoint |
+| `--bundle-output` | stdout | File to write the CA bundle to |
 
 ```bash
 xkmsctl bootstrap auto \
-  --output-file /etc/xkms/ca-bundle.pem \
-  --per-method-timeout 10s
+  --server-url https://kms.example.com:8443 \
+  --dane-hostname kms.example.com \
+  --noise-addr kms.example.com:8444 --noise-key <hex-public-key> \
+  --bundle-output /etc/xkms/ca-bundle.pem
 ```
 
-**Output:**
+## bootstrap direct
 
+Takes a CA bundle PEM file supplied out of band. The file must exist and must
+not be a directory (`cmd/xkmsctl/canonical.go:113`).
+
+```bash
+xkmsctl bootstrap direct --bundle /path/to/ca.pem
 ```
-Trying method: dane... failed (dane: no TLSA records found)
-Trying method: noise... success
-CA bundle written to /etc/xkms/ca-bundle.pem (3 certificates, 4521 bytes)
+
+## bootstrap show-keys
+
+Asks the running server, over its admin API, for its bootstrap listener's
+Noise_NK and P-256 public keys. Needs the `bootstrap:read` permission. A suite
+the server does not offer is omitted. The raw public key is what a client pins:
+pass it to `bootstrap auto --noise-key` or `--p256-key`
+(`cmd/xkmsctl/bootstrap.go:111`).
+
+```bash
+xkmsctl bootstrap show-keys
+xkmsctl bootstrap show-keys --output json
 ```
-
-**Exit Codes:**
-
-- `0` -- CA bundle retrieved and written successfully
-- `1` -- All methods failed or configuration error
 
 ---
 
 ## bootstrap dane generate-tlsa
 
-Generate TLSA DNS records from a CA certificate for publication in a DNSSEC-signed zone.
+Generates TLSA records from a PEM certificate for a DNSSEC-signed zone
+(`cmd/xkmsctl/bootstrap_dane.go:233`).
 
-**Usage:**
+| Flag | Default | Description |
+|------|---------|-------------|
+| `--cert-file` | | PEM certificate |
+| `--hostname` | | Hostname for the record, for example `kms.example.com` |
+| `--port` | `443` | Port for the record |
+| `--usage` | `2` | Certificate usage (0-3); 2 = DANE-TA |
+| `--selector` | `1` | 0 = full certificate, 1 = SPKI |
+| `--matching-type` | `1` | 0 = exact, 1 = SHA-256, 2 = SHA-512 |
+| `--all` | `false` | Generate all common combinations |
 
-```bash
-xkmsctl bootstrap dane generate-tlsa [flags]
-```
-
-**Flags:**
-
-| Flag | Type | Default | Description |
-|------|------|---------|-------------|
-| `--cert-file` | string | (required) | Path to PEM-encoded CA certificate |
-| `--hostname` | string | (required) | Server hostname for TLSA record |
-| `--port` | uint16 | (required) | Server port for TLSA record |
-| `--usage` | uint8 | `2` | Certificate Usage (0-3, default: DANE-TA) |
-| `--selector` | uint8 | `1` | Selector (0=full cert, 1=SPKI) |
-| `--matching-type` | uint8 | `1` | Matching Type (0=exact, 1=SHA-256, 2=SHA-512) |
-| `--all` | bool | `false` | Generate all common DANE-TA variants |
-
-**Examples:**
-
-Generate the recommended 2 1 1 record:
+Each record prints as `<name> IN TLSA <usage> <selector> <matching-type> <data>`,
+with the name `_<port>._tcp.<hostname>.`:
 
 ```bash
 xkmsctl bootstrap dane generate-tlsa \
-  --cert-file /etc/xkms/ca.pem \
-  --hostname kms.example.com \
-  --port 8443
+  --cert-file /etc/xkms/ca.pem --hostname kms.example.com --port 8443
 ```
 
-**Output:**
-
 ```
-_8443._tcp.kms.example.com. IN TLSA 2 1 1 a1b2c3d4e5f6a7b8c9d0e1f2a3b4c5d6e7f8a9b0c1d2e3f4a5b6c7d8e9f0a1b2
+_8443._tcp.kms.example.com. IN TLSA 2 1 1 a1b2c3...
 ```
 
-Generate all four common DANE-TA variants:
-
-```bash
-xkmsctl bootstrap dane generate-tlsa \
-  --cert-file /etc/xkms/ca.pem \
-  --hostname kms.example.com \
-  --port 8443 \
-  --all
-```
-
-**Output:**
-
-```
-_8443._tcp.kms.example.com. IN TLSA 2 0 1 f0e1d2c3b4a5f6e7d8c9b0a1...
-_8443._tcp.kms.example.com. IN TLSA 2 1 1 a1b2c3d4e5f6a7b8c9d0e1f2...
-_8443._tcp.kms.example.com. IN TLSA 2 0 2 e3d4c5b6a7f8e9d0c1b2a3f4...
-_8443._tcp.kms.example.com. IN TLSA 2 1 2 b7c8d9e0f1a2b3c4d5e6f7a8...
-```
-
-Generate with custom parameters:
-
-```bash
-xkmsctl bootstrap dane generate-tlsa \
-  --cert-file /etc/xkms/ca.pem \
-  --hostname kms.example.com \
-  --port 8443 \
-  --usage 2 --selector 0 --matching-type 2
-```
-
-**Exit Codes:**
-
-- `0` -- TLSA record(s) generated successfully
-- `1` -- Certificate parse error, missing flags, or unsupported parameters
-
----
+`--all` prints six records: `2 1 1`, `2 0 1`, `3 1 1`, `3 0 1`, `3 1 2` and
+`3 0 2` (`cmd/xkmsctl/bootstrap_dane.go:488`).
 
 ## bootstrap dane verify-tlsa
 
-Verify a certificate against TLSA records retrieved from DNS.
+Checks that a certificate matches the TLSA records published for a hostname and
+port.
 
-**Usage:**
-
-```bash
-xkmsctl bootstrap dane verify-tlsa [flags]
-```
-
-**Flags:**
-
-| Flag | Type | Default | Description |
-|------|------|---------|-------------|
-| `--cert-file` | string | | Path to PEM certificate to verify |
-| `--server` | string | | Server address (host:port) to fetch certificate from |
-| `--hostname` | string | | Hostname for TLSA lookup (default: from cert or server) |
-| `--port` | uint16 | | Port for TLSA lookup (default: from server address) |
-| `--dns-server` | string | | DNS resolver address (default: system resolver) |
-| `--no-dnssec` | bool | `false` | Skip DNSSEC AD flag validation (testing only) |
-
-One of `--cert-file` or `--server` is required.
-
-**Examples:**
-
-Verify a local certificate file:
+| Flag | Default | Description |
+|------|---------|-------------|
+| `--cert-file` | | PEM certificate to verify |
+| `--hostname` | | Hostname to look up |
+| `--port` | `443` | Port of the record |
+| `--dns-server` | `8.8.8.8:53` when empty | DNS server for the lookup (`cmd/xkmsctl/bootstrap_dane.go:67`) |
 
 ```bash
 xkmsctl bootstrap dane verify-tlsa \
-  --cert-file /etc/xkms/ca.pem \
-  --hostname kms.example.com \
-  --port 8443
+  --cert-file /etc/xkms/ca.pem --hostname kms.example.com --port 8443
 ```
-
-Verify a running server's certificate:
-
-```bash
-xkmsctl bootstrap dane verify-tlsa \
-  --server kms.example.com:8443
-```
-
-**Output (success):**
-
-```
-TLSA verification: OK
-  Hostname:  kms.example.com
-  Port:      8443
-  Records:   2
-  Matched:   _8443._tcp.kms.example.com. TLSA 2 1 1
-  DNSSEC:    validated (AD=1)
-```
-
-**Output (failure):**
-
-```
-TLSA verification: FAILED
-  Hostname:  kms.example.com
-  Port:      8443
-  Records:   1
-  Error:     dane: TLSA verification failed
-```
-
-**Exit Codes:**
-
-- `0` -- Verification succeeded
-- `1` -- Verification failed, DNS lookup error, or missing flags
-
----
 
 ## bootstrap dane show-tlsa
 
-Query and display TLSA records from DNS for a given hostname and port.
-
-**Usage:**
-
-```bash
-xkmsctl bootstrap dane show-tlsa [flags]
-```
-
-**Flags:**
-
-| Flag | Type | Default | Description |
-|------|------|---------|-------------|
-| `--hostname` | string | (required) | Hostname for TLSA lookup |
-| `--port` | uint16 | (required) | Port for TLSA lookup |
-| `--dns-server` | string | | DNS resolver address (default: system resolver) |
-| `--no-dnssec` | bool | `false` | Skip DNSSEC AD flag validation (testing only) |
-
-**Example:**
+Queries DNS for `_<port>._tcp.<hostname>` TLSA records and prints them in a
+readable form. Flags: `--hostname`, `--port` (default `443`) and
+`--dns-server` (`8.8.8.8:53` when empty).
 
 ```bash
-xkmsctl bootstrap dane show-tlsa \
-  --hostname kms.example.com \
-  --port 8443
+xkmsctl bootstrap dane show-tlsa --hostname kms.example.com --port 8443
 ```
-
-**Output:**
-
-```
-TLSA records for _8443._tcp.kms.example.com:
-
-  Record 1:
-    Usage:         2 (DANE-TA)
-    Selector:      1 (SPKI)
-    Matching Type: 1 (SHA-256)
-    Cert Data:     a1b2c3d4e5f6a7b8c9d0e1f2a3b4c5d6e7f8a9b0c1d2e3f4a5b6c7d8e9f0a1b2
-    DNSSEC:        validated (AD=1)
-```
-
-**Exit Codes:**
-
-- `0` -- Records found and displayed
-- `1` -- No records found, DNS error, or DNSSEC validation failed
 
 ---
 
-## bootstrap noise generate-key
+## bootstrap noise
 
-Generate a new Curve25519 static keypair for the Noise_NK bootstrap protocol.
+### generate-key and generate-p256-key
 
-**Usage:**
+Each writes a new private key, hex-encoded, to the file named by `-o`/`--output`
+(required). The file is created with mode 0600 and must not already exist; the
+private key is never printed. The public key is printed for distribution to
+clients (`cmd/xkmsctl/bootstrap.go:311`).
 
-```bash
-xkmsctl bootstrap noise generate-key [flags]
-```
-
-**Flags:**
-
-| Flag | Short | Type | Default | Description |
-|------|-------|------|---------|-------------|
-| `--output` | `-o` | string | | Write private key to file with 0600 permissions |
-
-**Examples:**
+`generate-p256-key` makes the key for the `TSBOOT1_P256_AESGCM_SHA256` suite,
+the only suite a FIPS build serves, because Noise_NK needs X25519, which a FIPS
+build cannot run. The server's bootstrap key is never config-supplied: to use a
+key generated here, follow the placement instructions in
+`xkmsctl bootstrap noise generate-p256-key --help`.
 
 ```bash
-# Print both keys to stdout
-xkmsctl bootstrap noise generate-key
-
-# Write private key to file
-xkmsctl bootstrap noise generate-key --output /etc/xkms/noise-static.key
+xkmsctl bootstrap noise generate-key --output /etc/xkms/noise.key
+xkmsctl bootstrap noise generate-p256-key --output /etc/xkms/noise-p256.key
 ```
 
-**Output:**
+### show-key and show-p256-key
 
-```
-Private key: 3a4b5c6d7e8f9a0b1c2d3e4f5a6b7c8d9e0f1a2b3c4d5e6f7a8b9c0d1e2f3a4b
-Public key:  a1b2c3d4e5f6a7b8c9d0e1f2a3b4c5d6e7f8a9b0c1d2e3f4a5b6c7d8e9f0a1b2
-```
-
-**Exit Codes:**
-
-- `0` -- Key generated successfully
-- `1` -- Generation or file write failed
-
----
-
-## bootstrap noise show-key
-
-Derive and display the public key from a Noise static private key.
-
-**Usage:**
+Print the public key for a private key given by `--key-file` or `--key-hex`.
 
 ```bash
-xkmsctl bootstrap noise show-key [flags]
+xkmsctl bootstrap noise show-key --key-file /etc/xkms/noise.key
+xkmsctl bootstrap noise show-p256-key --key-file /etc/xkms/noise-p256.key
 ```
 
-**Flags:**
+### show-spki-pin
 
-| Flag | Type | Default | Description |
-|------|------|---------|-------------|
-| `--key-file` | string | | Path to hex-encoded private key file |
-| `--key-hex` | string | | Hex-encoded private key string |
-
-One of `--key-file` or `--key-hex` is required.
-
-**Example:**
-
-```bash
-xkmsctl bootstrap noise show-key --key-file /etc/xkms/noise-static.key
-```
-
-**Output:**
-
-```
-Public key: a1b2c3d4e5f6a7b8c9d0e1f2a3b4c5d6e7f8a9b0c1d2e3f4a5b6c7d8e9f0a1b2
-```
-
-**Exit Codes:**
-
-- `0` -- Key decoded and displayed
-- `1` -- Missing flag, file error, or invalid key
-
----
-
-## bootstrap noise show-spki-pin
-
-Compute the SHA-256 SPKI pin from a TLS certificate for SPKI-pinned TLS bootstrap.
-
-**Usage:**
-
-```bash
-xkmsctl bootstrap noise show-spki-pin [flags]
-```
-
-**Flags:**
-
-| Flag | Type | Default | Description |
-|------|------|---------|-------------|
-| `--cert-file` | string | | Path to PEM certificate file |
-| `--server` | string | | Server address (host:port) to connect and retrieve certificate |
-
-One of `--cert-file` or `--server` is required.
-
-**Examples:**
-
-```bash
-# From a certificate file
-xkmsctl bootstrap noise show-spki-pin --cert-file /etc/xkms/server.pem
-
-# From a running server
-xkmsctl bootstrap noise show-spki-pin --server kms.example.com:8443
-```
-
-**Output (from file):**
-
-```
-SPKI SHA-256 pin: e5f6a7b8c9d0e1f2a3b4c5d6e7f8a9b0c1d2e3f4a5b6c7d8e9f0a1b2c3d4e5f6
-Subject:          CN=kms.example.com,O=Example Corp
-```
-
-**Output (from server):**
-
-```
-SPKI SHA-256 pin: e5f6a7b8c9d0e1f2a3b4c5d6e7f8a9b0c1d2e3f4a5b6c7d8e9f0a1b2c3d4e5f6
-Subject:          CN=kms.example.com,O=Example Corp
-Issuer:           CN=Example Intermediate CA,O=Example Corp
-Not Before:       2025-01-15 00:00:00
-Not After:        2026-01-15 23:59:59
-```
-
-**Exit Codes:**
-
-- `0` -- Pin computed and displayed
-- `1` -- File error, connection failure, or parse error
-
----
+Same as `bootstrap spki show-pin`.
 
 ## bootstrap spki show-pin
 
-Compute the SHA-256 SPKI pin from a certificate. This is an alias for `bootstrap noise show-spki-pin`.
-
-**Usage:**
-
-```bash
-xkmsctl bootstrap spki show-pin [flags]
-```
-
-**Flags:**
-
-| Flag | Type | Default | Description |
-|------|------|---------|-------------|
-| `--cert-file` | string | | Path to PEM certificate file |
-| `--server` | string | | Server address (host:port) to connect and retrieve certificate |
-
-**Example:**
+Prints the SHA-256 hash of a certificate's SubjectPublicKeyInfo, the value for
+`bootstrap auto --spki-pin`. The only flag is `--cert-file`.
 
 ```bash
-xkmsctl bootstrap spki show-pin --cert-file /etc/xkms/server.pem
+openssl s_client -connect kms.example.com:8443 </dev/null | openssl x509 > server.pem
+xkmsctl bootstrap spki show-pin --cert-file server.pem
 ```
-
-**Exit Codes:**
-
-- `0` -- Pin computed and displayed
-- `1` -- File error, connection failure, or parse error
 
 ---
 
-## Common Workflows
-
-### DANE Bootstrap Setup
-
-Generate TLSA records and publish them in DNS:
+## Workflow: publish DANE and bootstrap a client
 
 ```bash
-# 1. Generate TLSA record from your CA certificate
-xkmsctl bootstrap dane generate-tlsa \
-  --cert-file /etc/xkms/ca.pem \
-  --hostname kms.example.com \
-  --port 8443
+# Server operator: generate the record and publish it in the signed zone
+xkmsctl bootstrap dane generate-tlsa --cert-file /etc/xkms/ca.pem \
+  --hostname kms.example.com --port 8443
 
-# 2. Add the output to your DNS zone file, sign with DNSSEC
+# Once DNS has propagated, confirm what resolvers see
+xkmsctl bootstrap dane verify-tlsa --cert-file /etc/xkms/ca.pem \
+  --hostname kms.example.com --port 8443
 
-# 3. Verify the record is published and DNSSEC-validated
-xkmsctl bootstrap dane show-tlsa \
-  --hostname kms.example.com \
-  --port 8443
-
-# 4. Verify end-to-end
-xkmsctl bootstrap dane verify-tlsa \
-  --cert-file /etc/xkms/ca.pem \
-  --hostname kms.example.com \
-  --port 8443
+# Client: fetch the bundle
+xkmsctl bootstrap auto --server-url https://kms.example.com:8443 \
+  --dane-hostname kms.example.com --bundle-output ca-bundle.pem
 ```
 
-### Auto Bootstrap (New Node Enrollment)
-
-Use auto-bootstrap to try all configured methods:
+## Workflow: pin the server's Noise key
 
 ```bash
-xkmsctl bootstrap auto \
-  --output-file /etc/xkms/ca-bundle.pem
-```
+# Operator: read the running server's public keys
+xkmsctl bootstrap show-keys
 
-### Noise Bootstrap Setup
-
-Generate keys and configure the server:
-
-```bash
-# On the server
-xkmsctl bootstrap noise generate-key \
-  --output /etc/xkms/noise-static.key
-
-# Distribute the public key to clients out-of-band
-```
-
-### Certificate Rotation
-
-When rotating certificates, pre-publish the new TLSA record:
-
-```bash
-# Generate record for the new certificate
-xkmsctl bootstrap dane generate-tlsa \
-  --cert-file /etc/xkms/ca-new.pem \
-  --hostname kms.example.com \
-  --port 8443
-
-# Add to DNS alongside the existing record
-# Wait for TTL expiry, then remove the old record
+# Client: pin the key it was given out of band
+xkmsctl bootstrap auto --noise-addr kms.example.com:8444 \
+  --noise-key <hex-public-key> --bundle-output ca-bundle.pem
 ```
 
 ## See Also
 
-- [Trust Bootstrap](../../../../docs/trust-bootstrap/architecture.md) -- Protocol documentation
-- [DANE publisher hook](../../../../docs/trust-bootstrap/engineering.md) -- TLSA record fields and publication
-- [Bootstrap Configuration](../../../../docs/trust-bootstrap/engineering.md#configuration) -- YAML configuration reference
+- [Trust bootstrap architecture](../../../../docs/trust-bootstrap/architecture.md)
+- [Trust bootstrap engineering](../../../../docs/trust-bootstrap/engineering.md#configuration) — the `trust:` config section
+- [Trust bootstrap CLI](../../../../docs/trust-bootstrap/cli.md) — normative

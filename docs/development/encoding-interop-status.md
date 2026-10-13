@@ -1,69 +1,53 @@
 # Encoding Integration Test Status
 
-## Status: COMPLETE ✅
-
-All JWK/JWT/JWE integration tests are implemented and passing.
+> **Status: ARCHIVE — historical record. Do NOT build from this document.**
+> Last verified: 2026-10-13. The JWK/JWT/JWE integration-test plan this file tracked is complete; the suites live in `test/integration/encoding/`.
 
 ## Test Coverage
 
-### JWK Tests (jwk_integration_test.go)
-**All tests passing** - Comprehensive JWK encoding/decoding tests:
-- All key type round-trip tests (RSA, ECDSA, Ed25519, X25519, Symmetric)
-- xKMS integration tests (RSA, ECDSA P256/P384/P521, Ed25519)
-- All error handling tests
-- Marshal/unmarshal tests with indentation
-- Public key export tests
-- Complex scenarios (multiple keys, key secrecy)
+All four suites carry `//go:build integration`. Counts are top-level `Test*`
+functions / `t.Run` subtests, recounted against the code.
 
-### JWT Tests (jwt_integration_test.go)
-**All tests passing** - Comprehensive JWT signing/verification tests:
-- Basic signing/verification (RSA RS256/RS384/RS512/PS256, ECDSA ES256/ES384/ES512, Ed25519 EdDSA)
-- xKMS integration (RSA, ECDSA P256, Ed25519)
-- Claims validation (standard claims, issuer, audience single/multiple, custom claims)
-- Error handling (invalid signature, wrong key, malformed token, unsupported algorithm)
-- Token lifecycle (create, sign, encode, decode, verify)
-- KID header support (sign with KID, extract KID, xkms KID format)
+### JWK Tests (`jwk_integration_test.go`, 5 / 21)
+- Round trips for every key type: RSA 2048/4096, ECDSA P-256/P-384/P-521, Ed25519, X25519, symmetric 128/192/256-bit
+- xKMS-backed JWKs: RSA, ECDSA P-256/P-384/P-521, Ed25519
+- Error handling: key not found, getter error propagation, empty symmetric key, wrong type for `ToSymmetricKey`
+- Indented marshalling
+- Complex scenarios: multiple keys in xKMS, public-key export with private-key secrecy
 
-### JWE Tests (jwe_integration_test.go)
-**All tests passing** - Comprehensive JWE encryption/decryption tests:
-- RSA encryption (OAEP with A256GCM/A192GCM/A128GCM/A256CBC-HS512, auto-detect algorithm)
-- ECDH encryption (ES A256KW/A128KW with various curves, auto-detect)
-- Symmetric encryption (A256KW/A128KW, direct encryption)
-- xKMS integration (RSA, ECDSA P256, auto key ID, explicit key ID override)
-- Header support (KID header, multiple headers)
-- Error handling (wrong key, corrupted ciphertext, invalid format, nil key, unsupported type, invalid algorithm, xkms key not found, empty KID)
-- Large payloads (1MB payload, minimal payload)
+### JWT Tests (`jwt_integration_test.go`, 6 / 28)
+- Signing and verification: RS256, RS384, RS512, PS256, ES256, ES384, ES512, EdDSA
+- xKMS integration: RSA, ECDSA P-256, Ed25519, auto key ID verification, manual algorithm selection
+- Claims validation: standard claims, issuer, single and multiple audiences, custom claims
+- Error handling: invalid signature, wrong public key, malformed token, unsupported algorithm, xKMS key not found, empty KID
+- Token lifecycle: create, sign, encode, decode, verify
+- KID header: sign with KID, extract KID, xKMS KID format
 
-### Interoperability Tests (interop_integration_test.go)
-**All tests passing** - Comprehensive JWK/JWT/JWE interoperability tests:
-- JWK ↔ JWT: JWK to JWT signing (RSA, ECDSA)
-- JWK ↔ JWE: JWK to JWE encryption (RSA OAEP, ECDH)
-- JWT ↔ JWE: Encrypted JWT tokens (nested JWT with different keys)
-- Full workflow: Complete authentication flow, multi-key rotation workflow
+### JWE Tests (`jwe_integration_test.go`, 7 / 27)
+- RSA: RSA-OAEP with A256GCM, A128GCM and A256CBC-HS512, RSA-OAEP-256 with A192GCM, algorithm auto-detection
+- ECDH-ES: A256KW/A256GCM, A128KW/A128GCM on P-384, auto-detection
+- Symmetric: A256KW/A256GCM, A128KW/A128GCM, direct encryption
+- xKMS integration: RSA, ECDSA P-256, auto key ID detection, explicit key ID override
+- Headers: KID header, multiple headers
+- Error handling: wrong decryption key, corrupted ciphertext, invalid JWE format, nil key, unsupported key type, invalid algorithm, xKMS key not found, empty KID
+- Payloads: 1 MB and minimal
 
-## Test Results
+### Interoperability Tests (`interop_integration_test.go`, 4 / 8)
+- JWK → JWT signing (RSA, ECDSA)
+- JWK → JWE encryption (RSA-OAEP, ECDH)
+- JWT ↔ JWE: encrypted JWT token, nested JWT with different keys
+- Full workflow: complete authentication flow, multi-key rotation
 
-```bash
-$ go test -v -tags=integration ./test/integration/encoding/...
-ok  	github.com/jeremyhahn/go-xkms/test/integration/encoding	2.185s
-```
+## Running
 
-**Total Test Count**: 100% pass rate
-- JWK Integration Tests: ✅ All passing
-- JWT Integration Tests: ✅ All passing
-- JWE Integration Tests: ✅ All passing
-- Interop Integration Tests: ✅ All passing
+There is no dedicated `integration-test-encoding` target. The suite runs as
+part of `make coverage-full`, which passes `./test/integration/encoding/...`
+with the tags `integration codec_cbor codec_json codec_msgpack`.
 
 ## Implementation Notes
 
-All encoding integration tests use the current xkms API:
-- Use `types.KeyAttributes` for key generation
-- Call `ks.GenerateRSA(attrs)`, `ks.GenerateECDSA(attrs)`, etc.
-- Use `ks.GetKey(attrs)` for key retrieval
-- Support xkms-backed JWK/JWT/JWE operations
-- Comprehensive error handling and edge cases
-- All tests provide meaningful coverage (no superficial tests)
-
-## Code Coverage
-
-The encoding packages maintain >90% code coverage through these integration tests combined with unit tests.
+The suites drive a real backend through the helpers in
+`test/integration/encoding/helpers_test.go`:
+- keys are described with `types.KeyAttributes` (`createRSAAttrs`, `createECDSAAttrs`, `createEd25519Attrs`);
+- keys are generated with `backend.GenerateKey(ctx, attrs)` and fetched with `backend.GetKey(ctx, attrs)`;
+- `GetKeyByID` resolves a key by common name for the xKMS-backed JWK/JWT/JWE paths.

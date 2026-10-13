@@ -1,9 +1,15 @@
 # Error Conventions
 
-go-xkms does not construct errors with `fmt.Errorf`. Every error is either a
+> **Status: REFERENCE** · Last verified: 2026-10-13
+> Scope: the typed-error convention and the five `pkg/errs` types (`pkg/errs/errs.go`).
+
+The convention is that go-xkms does not construct errors with `fmt.Errorf`
+(the few remaining calls are listed below). Every error is either a
 package sentinel (`errors.New` / a typed error declared in the owning package)
-or one of the five reusable typed errors in `pkg/errs`. All five are
-transparent to `errors.Is` / `errors.As` via `Unwrap`.
+or one of the five reusable typed errors in `pkg/errs`. The four that carry a
+cause (`Wrapped`, `Detail`, `Affix`, `Joined`) are transparent to `errors.Is` /
+`errors.As` via `Unwrap` (`pkg/errs/errs.go:44`, `:61`, `:83`, `:110`);
+`Message` has no cause to unwrap.
 
 ## The Five `pkg/errs` Types
 
@@ -28,6 +34,10 @@ transparent to `errors.Is` / `errors.As` via `Unwrap`.
 - **Tests and examples follow the same rules.** Integration tests in
   submodules that cannot import `pkg/errs` carry their own small typed-error
   file with matching build tags (see `xkey/test/integration/errors.go`).
-- The only permitted `fmt.Errorf` calls in the repository are the parity
+- New code does not call `fmt.Errorf`. The intended exceptions are the parity
   oracles in `pkg/errs/errs_test.go`, which verify that each type renders
-  identically to the format expression it replaces.
+  identically to the format expression it replaces. The rule is not
+  machine-enforced yet: `err113` is left disabled in `.golangci.yml` over a
+  backlog, and production files such as `pkg/attestation/invariants.go`,
+  `pkg/trust/bootstrap/suite.go` and `xkey/pkg/attestation/device.go` still
+  call `fmt.Errorf`. Do not copy them.

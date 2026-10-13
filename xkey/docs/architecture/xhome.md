@@ -1,10 +1,13 @@
 # xhome - Unified Path Resolution
 
+> **Status: REFERENCE** · Last verified: 2026-10-13
+> The `xhome` package's home and data-directory resolution, cited from `xkey/pkg/xhome/xhome.go`; cross-cutting, no feature folder.
+
 The `xhome` package (`xkey/pkg/xhome`) provides unified path resolution for xKey. Every component -- CLI, GUI, LUKS, barrier, config loader -- resolves paths through a single `Home` value so that the data directory is never hard-coded in multiple places.
 
 ## Resolution Order
 
-`Resolve()` probes four strategies in order and returns the first valid candidate:
+`Resolve()` probes four strategies in order and returns the first valid candidate (`resolve`, `xkey/pkg/xhome/xhome.go:135`):
 
 | Priority | Strategy | Path | Notes |
 |----------|----------|------|-------|
@@ -53,6 +56,15 @@ than with root's; `XKEY_HOME` and the portable marker still take precedence.
 An empty `homeDir` skips strategy 3. `xkey device` uses it for the shared
 `devices.yaml`.
 
+### ResolveExisting
+
+```go
+func ResolveExisting() (*Home, error)
+```
+
+Probes the same strategies in the same order but never creates a directory:
+a candidate wins only if it already exists. Read-only commands use it.
+
 ### Home
 
 ```go
@@ -67,6 +79,7 @@ type Home struct {
 |--------|---------|
 | `ConfigPath()` | `<root>/config.yaml` |
 | `DataDir()` | `<root>/data` |
+| `AuthDir()` | `<root>/data/auth` (registered servers and login tokens) |
 | `TrustDir()` | `<root>/trust` |
 | `CADir()` | `<root>/ca` |
 | `DevicesDir()` | `<root>/devices` |
@@ -105,7 +118,7 @@ persists state resolves the data directory through one chain in
 
 | Priority | Source | Notes |
 |----------|--------|-------|
-| 1 | The group's `--data-dir` flag | Only `pin` and `barrier` expose one. |
+| 1 | The group's `--data-dir` flag | Only `pin`, `barrier` and `secret-service` expose one (`pin.go:139`, `barrier.go:109`, `secret_service.go:97`). |
 | 2 | `XKEY_DATA_DIR` env var | Used as given (cleaned), whether or not it exists. |
 | 3 | Config key `data_dir` | Same handling as the env var. |
 | 4 | `Home.DataDir()` | `<root>/data` under the home resolved by the order above. |
@@ -128,7 +141,7 @@ empty data directory). Feature groups obtain `<dataDir>/<feature>` from
 
 Because they share the chain, all of these groups honour `XKEY_HOME`, the
 portable `.xkey-home` marker, `XKEY_DATA_DIR` and `data_dir` identically.
-A test in the CLI package (`TestNoAdHocDataDirLiterals`) fails the build
+A test in the CLI package (`TestNoAdHocDataDirLiterals`, `xkey/cmd/xkey/cmd/datadir_adoption_test.go:723`) fails the build
 if any command source outside `datadir.go` spells the data directory by
 hand.
 
@@ -137,7 +150,7 @@ directory at `<root>/backups` and `device` keeps the shared `devices.yaml`
 at `<root>/devices.yaml`, both under `Resolve()` (or `ResolveForUser` under
 `sudo`), never under `$HOME/.xkey` directly (#442). A companion gate
 (`TestNoAdHocHomeRootLiterals`) fails the build on a quoted `".xkey"` path
-segment in any command source.
+segment in any command source (`datadir_adoption_test.go:732`).
 
 ## Binary Directory Marker
 
@@ -203,7 +216,7 @@ func TestMyComponent(t *testing.T) {
 
 ## See Also
 
-- [xkey Configuration](configuration.md) - Application configuration loaded from `ConfigPath()`
-- [xkey Architecture](architecture.md) - System design and component layout
-- [LUKS2 Encrypted Storage](luks.md) - LUKS container at `LUKSPath()`
-- [Auto-Unseal](auto-unseal.md) - Barrier and LUKS auto-unseal via TPM
+- [xkey Configuration](../configuration/README.md) - Application configuration
+- [xkey Architecture](app-architecture.md) - System design and component layout
+- [LUKS2 Encrypted Storage](../luks/) - LUKS container at `LUKSPath()`
+- [Seal](../seal/) - Barrier and LUKS auto-unseal via TPM

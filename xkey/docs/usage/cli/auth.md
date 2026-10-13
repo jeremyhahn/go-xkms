@@ -1,6 +1,11 @@
 # xkey auth -- Server Authentication
 
-Manage authentication with xkms servers. Server entries and JWT tokens are stored in `~/.xkey/data/auth/`, encrypted by the local barrier when active.
+> **Status: REFERENCE** · Last verified: 2026-10-13
+> Scope: the `xkey auth` command group (`xkey/cmd/xkey/cmd/auth.go`, `auth_session.go`).
+
+Manage authentication with xkms servers. Server entries and tokens are stored
+under `data/auth/` in the xkey home (`~/.xkey` by default, or `$XKEY_HOME`),
+encrypted at rest when a barrier is active (`xkey/cmd/xkey/cmd/auth.go:323`).
 
 ## Command Tree
 
@@ -8,6 +13,8 @@ Manage authentication with xkms servers. Server entries and JWT tokens are store
 xkey auth
 ├── register   Register with a new xkms server
 ├── login      Authenticate to a registered server
+├── logout     Revoke and remove a stored session
+├── refresh    Rotate a PIV session's token pair
 ├── status     Show authentication status for all servers
 └── token      Print current JWT token for a server
 ```
@@ -19,7 +26,7 @@ Register with a new xkms server. Establishes a connection, verifies the server i
 **Usage:**
 
 ```bash
-xkey auth register --server <url> --email <login-key> [--tls-ca <bundle>] [--spki-pin <pin>] [--setup-token <token>]
+xkey auth register --server <url> --email <login-key> [--tls-ca <bundle>] [--spki-pin <pin>] [--setup-token <token>] [--pin-stdin]
 ```
 
 The registration ceremony runs against a local CTAP2 authenticator -- a real
@@ -36,14 +43,19 @@ opened; no credential is ever fabricated locally.
 | `--setup-token` | string | Pre-authorized enrollment token from server first boot |
 | `--email` | string | Canonical email login key to enroll (required) |
 | `--display-name` | string | Human-readable account name (default: the login key) |
+| `--pin-stdin` | bool | Read the authenticator's CTAP2 PIN from stdin |
 
 The ceremony is addressed by the **email login key**: the server resolves the
 account with `GetUserByEmail`, so `--email` is the only identifier that can
 reach a principal. There is no default -- an OS account name is a different
 identifier, and on a relying party with public registration enabled a lookup
 that misses is a sign-up, enrolling the credential onto an account nobody
-created. `--username` is the deprecated spelling of the same flag and still
-carries the value.
+created.
+
+An authenticator with a CTAP2 PIN set refuses the ceremony without the PIN.
+Supply it with `--pin-stdin` or the `XKEY_PIN` environment variable, in that
+order of precedence; there is no `--pin` value flag. This is the
+authenticator's PIN and is unrelated to `--spki-pin`.
 
 ### Server trust
 
@@ -57,7 +69,8 @@ The server is verified against, in combination:
 Each of those is an **addition** to verification, never a bypass. The
 attestation purposes (`tpm-manufacturer`, `android-hardware`,
 `idevid-issuer`) are deliberately not TLS anchors: they anchor device
-attestation chains, and a session to a server is not one.
+attestation chains, and a session to a server is not one. `synced`
+certificates, received from a paired device, anchor nothing.
 
 `--spki-pin` is different in kind. It pins the server's public key directly
 (trust-on-first-use) and is the route to a server whose CA is nowhere on this
@@ -88,12 +101,16 @@ xkey auth register --server https://kms.example.com:8443 --email alice@example.c
 
 ## auth login
 
-Authenticate to a registered server using WebAuthn. On success, the resulting JWT token is stored for subsequent API calls.
+Authenticate to a registered server using WebAuthn, or with `--piv` using a
+PIV slot certificate over mTLS. On success the issued token is stored for
+subsequent API calls. A PIV login also stores a refresh token; a WebAuthn
+login does not.
 
 **Usage:**
 
 ```bash
-xkey auth login --server <url> --email <login-key> [--tls-ca <bundle>]
+xkey auth login --server <url> --email <login-key> [--tls-ca <bundle>] [--pin-stdin]
+xkey auth login --server <url> --piv [--slot 9a] [--backend software|pkcs11]
 ```
 
 **Flags:**
@@ -101,8 +118,16 @@ xkey auth login --server <url> --email <login-key> [--tls-ca <bundle>]
 | Flag | Type | Description |
 |------|------|-------------|
 | `--server` | string | Server URL (required) |
-| `--email` | string | Canonical email login key to authenticate (required) |
+| `--email` | string | Canonical email login key to authenticate (required for WebAuthn) |
 | `--tls-ca` | string | PEM CA bundle to verify the server against |
+| `--pin-stdin` | bool | Read the authenticator's CTAP2 PIN from stdin (WebAuthn) |
+| `--piv` | bool | Authenticate with a PIV slot certificate over mTLS |
+| `--slot` | string | PIV slot (default `9a`, with `--piv`) |
+| `--backend` | string | PIV key backend, `software` or `pkcs11` (default `software`, with `--piv`) |
+| `--barrier-password-file`, `--barrier-password-stdin` | | Barrier password for the software PIV key store |
+
+A `--backend software` PIV key exists only for the process that generated it;
+use `--backend pkcs11` for a persistent hardware token.
 
 Login verifies the server the same way `auth register` does, plus the SPKI pin
 recorded on the server entry when there is one.
@@ -111,6 +136,30 @@ recorded on the server entry when there is one.
 
 ```bash
 xkey auth login --server https://kms.example.com:8443 --email alice@example.com
+xkey auth login --server https://kms.example.com:8443 --piv --slot 9c --backend pkcs11
+```
+
+## auth logout
+
+Remove a stored session. When the session carries a refresh token (PIV login),
+the refresh token is revoked on the server first, and the local entry is
+deleted only once that succeeds. A WebAuthn session has nothing to revoke and
+only its local entry is removed. The only flag is `--server` (required).
+
+```bash
+xkey auth logout --server https://kms.example.com:8443
+```
+
+## auth refresh
+
+Rotate a stored session's access and refresh token pair. Only PIV sessions
+carry a refresh token; for a WebAuthn session the command fails with
+`ErrAuthRefreshTokenMissing`. The server detects reuse of a rotated refresh
+token and revokes the whole token family, after which a fresh login is needed.
+The only flag is `--server` (required).
+
+```bash
+xkey auth refresh --server https://kms.example.com:8443
 ```
 
 ## auth status
@@ -187,5 +236,4 @@ Returns a non-zero exit code if no token exists or the token has expired.
 ## See Also
 
 - [Bootstrap Architecture](../../../../docs/trust-bootstrap/architecture.md) -- Trust establishment overview
-- [Share Management](./share.md) -- Shamir share operations
 - [CLI Reference](./README.md) -- Full CLI command index

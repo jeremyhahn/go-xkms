@@ -1,7 +1,7 @@
 # Release engineering — CLI
 
-**Status:** implemented.
-**Last verified:** 2026-10-08.
+> **Status: NORMATIVE** · Last verified: 2026-10-13
+> Conflicts with this document are defects. Fix them here first.
 
 Cutting a release is two commands, run at different times by possibly
 different people: `make release-alpha` PREPARES a pull request and stops;

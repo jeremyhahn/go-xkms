@@ -1,5 +1,8 @@
 # xkey backup
 
+> **Status: REFERENCE** · Last verified: 2026-10-13
+> Scope: `xkey backup` (`xkey/cmd/xkey/cmd/backup.go`, `backup_device.go`) and the envelope format (`xkey/pkg/backup/`).
+
 Encrypted backup and restore of xkey data: trust store certificates, OATH
 credentials, and static passwords.
 
@@ -8,17 +11,24 @@ credentials, and static passwords.
 | Command | Purpose |
 |---------|---------|
 | `xkey backup create` | Collect the data stores and write a sealed `.xkb` file |
-| `xkey backup list` | List `.xkb` files in `~/.xkey/backups/` |
+| `xkey backup list` | List `.xkb` files in `backups/` under the xkey home (`~/.xkey/backups/` by default) |
 | `xkey backup contents <file>` | Decrypt and print the manifest without restoring |
 | `xkey backup restore <file>` | Decrypt and write the contents back into the stores |
+| `xkey backup to-device` | Send a backup to a paired phone (`ble` builds) |
+| `xkey backup from-device` | Restore a backup from a paired phone (`ble` builds) |
+
+`create` writes to `--output`/`-o`, by default
+`<xkey home>/backups/backup-{timestamp}.xkb` (`xkey/cmd/xkey/cmd/backup.go:1395`).
+`to-device` and `from-device` take `--device` and `--timeout` (default `1m0s`)
+as well as the store and credential flags below.
 
 ## Credentials
 
 The backup password is read from standard input (`--password-stdin`) or the
 `XKEY_BACKUP_PASSWORD` environment variable, in that order. There is no
 `--password` value flag: a value on the command line is visible to every
-process on the host through `ps` (go-xkms#1202, the same rule as `--pin`,
-`cmd/xkey/cmd/backup.go:1352-1370`). The password bytes are wiped once the
+process on the host through `ps` (the same rule as `--pin`,
+`xkey/cmd/xkey/cmd/backup.go:1403`). The password bytes are wiped once the
 key is derived.
 
 When `create` gets no password a random 256-bit key is generated and printed
@@ -37,7 +47,7 @@ There is no `--key` value flag either.
 A password is stretched with Argon2id (t=3, m=64 MiB, p=4) under a fresh
 32-byte random salt, or PBKDF2-SHA256 when the Go FIPS 140 module is
 enabled — the canonical go-xkms password hasher, reached through
-`backup.NewPasswordKey` (`pkg/backup/key.go:63-71`). The salt and parameters
+`backup.NewPasswordKey` (`xkey/pkg/backup/key.go:63`). The salt and parameters
 are stored in the file (see [File format](#file-format)), so the same
 password gives a different key for every backup.
 
@@ -48,21 +58,22 @@ A wrong password or key fails with
 
 By default the commands read and write the stores under the xkey data
 directory (`$XKEY_HOME/data`, normally `~/.xkey/data`) — the same locations
-the xkey GUI uses when the barrier is not active:
+the xkey GUI uses when the barrier is not active. The OATH store is
+barrier-aware: when a barrier is initialized, `create`, `restore` and the
+device verbs open the barrier-encrypted OATH store, unsealed with
+`--barrier-password-stdin`, `--barrier-password-file` or
+`XKEY_BARRIER_PASSWORD` (`xkey/cmd/xkey/cmd/backup.go:618`):
 
 | Category | Default location | Override |
 |----------|------------------|----------|
 | `trust-store` | `{data}/trust` | `--trust-store` |
-| `oath-credentials` | `{data}/oath.json` | `--oath-store` |
+| `oath-credentials` | barrier store, else `{data}/oath.json` | `--oath-store` (bypasses the barrier) |
 | `static-passwords` | `{data}/staticpw` | `--password-store` |
 
 Each default resolves through the same feature-directory constant the owning
 command uses (`trustDataSubdir`, `oathStoreFilename`,
 `passwordStoreFeature` in `xkey/cmd/xkey/cmd`), so backup and the command
-that actually reads or writes the store can never drift apart. Prior to
-go-xkms#936, backup's copy of the password default was `{data}/passwords`
-while `xkey password`'s store lived at `{data}/staticpw`: a default backup
-silently captured zero passwords.
+that actually reads or writes the store can never drift apart.
 
 Note that `xkey oath` and `xkey password` default their own `--store` flag to
 a path relative to the current working directory. Pass the paths above to
@@ -77,15 +88,14 @@ empty store and reporting a zero count with no explanation. An explicit
 `--trust-store`/`--oath-store`/`--password-store` path that does not exist is
 a hard error instead: the operator named that path deliberately, so backup
 never auto-creates it. `restore` and `from-device` are unaffected: a
-destination store that does not exist yet is created normally, the same as
-before go-xkms#936.
+destination store that does not exist yet is created normally.
 
 ## Failure modes
 
 | Situation | Behavior |
 |-----------|----------|
 | Every store empty | Fails with `backup: no data available to back up`; no file is written |
-| Data directory barrier-encrypted | Fails with `backup: xkey data directory is barrier-encrypted`; unseal in the GUI or pass explicit store paths |
+| Barrier initialized and no explicit `--trust-store` or `--password-store` | Fails with `backup: xkey data directory is barrier-encrypted`: those two stores have no barrier-backed CLI path yet. Pass explicit paths for both (`xkey/cmd/xkey/cmd/backup.go:636`) |
 | Default source never written to (`create`/`to-device`) | Not an error: the category is listed under `Not included:` and left out, instead of being auto-created empty |
 | `--trust-store`/`--oath-store`/`--password-store` names a path that does not exist (`create`/`to-device`) | Fails with `backup: source does not exist`, naming the category and path |
 | Store cannot be opened | Fails with `backup: data store unavailable`, naming the category and path |
@@ -126,7 +136,7 @@ A `.xkb` file is the JSON encoding of the backup envelope:
 `kdf` is absent for a backup sealed with a random or `--key-stdin`/`XKEY_BACKUP_KEY` key. The
 ciphertext is the archive — manifest, certificates, credentials, and
 passwords — serialized to JSON and sealed with XChaCha20-Poly1305 under the
-password-derived or supplied key (`pkg/backup/service.go:437-460`). The
+password-derived or supplied key (`xkey/pkg/backup/service.go:1132`). The
 header (`magic`, `version`, `kdf`) is the AEAD additional data, so editing
 any of it makes decryption fail. A `kdf` record whose costs differ from the
 ones its version pins is refused before derivation, so a crafted file cannot
@@ -135,7 +145,7 @@ checksum of its own payload, verified on decrypt. Only the header and nonce
 are readable without the key.
 
 Version 1 files, keyed with an unsalted SHA-256 of the password, are refused
-(`pkg/backup/service.go:958-969`).
+(`xkey/pkg/backup/service.go:1177`).
 
 ## Example
 

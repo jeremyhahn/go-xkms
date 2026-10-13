@@ -1,357 +1,149 @@
 # CLI Reference: PIN Commands
 
+> **Status: REFERENCE** · Last verified: 2026-10-13
+> Scope: `xkmsctl pin`, the go-xkms server CLI (`cmd/xkmsctl/pin.go`); the normative reference is [`docs/pin-management/cli.md`](../../../../docs/pin-management/cli.md).
+
 > **Scope:** this page documents the go-xkms **server** CLI `xkmsctl pin`
 > (source: `cmd/xkmsctl/`), **not** the `xkey` desktop CLI. It lives under
-> `xkey/docs/` for historical reasons.
-> `xkey` has its own `xkey pin` command group with a different surface —
+> `xkey/docs/` for historical reasons. For the xkey command tree
 > see [the xkey CLI reference](README.md).
 
-PIN commands manage the dual-PIN authentication system used to control access to the barrier and key operations. The model follows the PKCS#11 standard with a Security Officer (SO) PIN for administration and a User PIN for daily operations.
+The `pin` command group manages the Security Officer (SO) PIN and the user PIN
+on an xkmsd server. The SO PIN authorizes privileged operations: setting the
+user PIN and resetting the lockout counter. The user PIN authorizes day-to-day
+operations. Every subcommand connects to the server named by the global
+`--server` flag (`cmd/xkmsctl/pin.go:298`).
+
+```
+xkmsctl pin
+├── so-set          # Set the SO PIN
+├── so-change       # Change the SO PIN
+├── so-verify       # Verify the SO PIN
+├── user-set        # Set the user PIN (SO authorization)
+├── user-change     # Change the user PIN
+├── user-verify     # Verify the user PIN
+├── lockout         # Show PIN lockout status
+└── lockout-reset   # Reset the lockout counter (SO authorization)
+```
+
+## Supplying PINs
+
+Every PIN flag resolves the same way (`cmd/xkmsctl/prompt.go:57`):
+
+1. A value other than `-` is used as given. It is then visible in the process
+   list.
+2. `-` reads all of stdin, with the trailing newline trimmed.
+3. An omitted flag prompts on stderr without echo when stdin is a terminal,
+   and otherwise reads one line from stdin.
+
+An empty PIN is refused (`cmd/xkmsctl/prompt.go:93`). Flags are defined at
+`cmd/xkmsctl/pin.go:500` onward.
 
 ## Commands
 
-### pin set-so
+### pin so-set
 
-Set the Security Officer PIN. On first call, no current PIN is required. On subsequent calls, the current SO PIN must be provided.
+Sets the SO PIN. When an SO PIN is already set, `--current-pin` must match it.
 
-```bash
-xkmsctl pin set-so [flags]
-```
-
-**Flags:**
-
-| Flag | Type | Default | Description |
-|------|------|---------|-------------|
-| `--strategy` | string | `auto` | PIN strategy: `auto`, `software`, `tpm2`, `pkcs11` |
-| `--state-path` | string | platform default | Path to PIN state file |
-
-**Examples:**
+| Flag | Description |
+|------|-------------|
+| `--current-pin` | Current SO PIN; required only when one is already set |
+| `--new-pin` | New SO PIN |
 
 ```bash
-# First-time SO PIN setup (interactive prompt)
-xkmsctl pin set-so
-
-# Enter new SO PIN: ********
-# Confirm SO PIN: ********
-# SO PIN set successfully.
-
-# Change existing SO PIN
-xkmsctl pin set-so
-# Enter current SO PIN: ********
-# Enter new SO PIN: ********
-# Confirm SO PIN: ********
-# SO PIN changed successfully.
+xkmsctl pin so-set
 ```
 
----
+### pin so-change
 
-### pin set-user
+| Flag | Description |
+|------|-------------|
+| `--current-pin` | Current SO PIN |
+| `--new-pin` | New SO PIN |
 
-Set the User PIN. Requires SO PIN authorization.
+### pin so-verify and pin user-verify
+
+Check a PIN. The only flag is `--pin`.
 
 ```bash
-xkmsctl pin set-user [flags]
+printf '%s' "$SO_PIN" | xkmsctl pin so-verify --pin -
+xkmsctl pin user-verify
 ```
 
-**Flags:**
+### pin user-set
 
-| Flag | Type | Default | Description |
-|------|------|---------|-------------|
-| `--strategy` | string | `auto` | PIN strategy |
-| `--state-path` | string | platform default | Path to PIN state file |
+Sets the user PIN under SO authorization.
 
-**Examples:**
+| Flag | Description |
+|------|-------------|
+| `--so-pin` | SO PIN authorizing the operation |
+| `--new-pin` | New user PIN |
 
 ```bash
-xkmsctl pin set-user
-
-# Enter SO PIN: ********
-# Enter new User PIN: ********
-# Confirm User PIN: ********
-# User PIN set successfully.
+xkmsctl pin user-set
 ```
 
----
+### pin user-change
 
-### pin change-so
+| Flag | Description |
+|------|-------------|
+| `--current-pin` | Current user PIN |
+| `--new-pin` | New user PIN |
 
-Change the SO PIN. Requires the current SO PIN.
+### pin lockout
+
+Shows the failed attempts, the maximum attempts and whether the PIN is locked,
+plus the lock expiry and the seconds until recovery when they apply
+(`cmd/xkmsctl/pin.go:439`). Takes the global `-o json`.
 
 ```bash
-xkmsctl pin change-so [flags]
+xkmsctl pin lockout
 ```
 
-**Examples:**
+```
+PIN Lockout Status:
+  Failed Attempts: 0
+  Max Attempts:    <server limit>
+  Locked:          false
+```
+
+### pin lockout-reset
+
+Resets the lockout counter under SO authorization. The only flag is `--so-pin`.
 
 ```bash
-xkmsctl pin change-so
-
-# Enter current SO PIN: ********
-# Enter new SO PIN: ********
-# Confirm new SO PIN: ********
-# SO PIN changed successfully.
+xkmsctl pin lockout-reset
 ```
-
----
-
-### pin change-user
-
-Change the User PIN. Requires the current User PIN.
-
-```bash
-xkmsctl pin change-user [flags]
-```
-
-**Examples:**
-
-```bash
-xkmsctl pin change-user
-
-# Enter current User PIN: ********
-# Enter new User PIN: ********
-# Confirm new User PIN: ********
-# User PIN changed successfully.
-```
-
----
-
-### pin verify
-
-Verify a PIN without performing any other operation.
-
-```bash
-xkmsctl pin verify [flags]
-```
-
-**Flags:**
-
-| Flag | Type | Default | Description |
-|------|------|---------|-------------|
-| `--type` | string | `user` | PIN type to verify: `so`, `user` |
-| `--output` | string | `text` | Output format: `text`, `json` |
-
-**Examples:**
-
-```bash
-# Verify user PIN
-xkmsctl pin verify
-
-# Enter User PIN: ********
-# PIN verified successfully.
-
-# Verify SO PIN
-xkmsctl pin verify --type so
-
-# Enter SO PIN: ********
-# PIN verified successfully.
-
-# JSON output (for scripting)
-xkmsctl pin verify --output json
-# {"valid": true}
-```
-
----
-
-### pin status
-
-Display the current PIN and lockout status.
-
-```bash
-xkmsctl pin status [flags]
-```
-
-**Flags:**
-
-| Flag | Type | Default | Description |
-|------|------|---------|-------------|
-| `--output` | string | `text` | Output format: `text`, `json` |
-
-**Examples:**
-
-```bash
-# Text output
-xkmsctl pin status
-
-# PIN Status
-#   Strategy:        software
-#   SO PIN Set:      true
-#   User PIN Set:    true
-#   Failed Attempts: 0/5
-#   Locked:          false
-
-# JSON output
-xkmsctl pin status --output json
-# {
-#   "strategy": "software",
-#   "so_pin_set": true,
-#   "user_pin_set": true,
-#   "failed_attempts": 0,
-#   "max_attempts": 5,
-#   "is_locked": false,
-#   "lockout_until": null,
-#   "recovery_seconds": 0
-# }
-
-# Locked status example
-xkmsctl pin status
-
-# PIN Status
-#   Strategy:        software
-#   SO PIN Set:      true
-#   User PIN Set:    true
-#   Failed Attempts: 5/5
-#   Locked:          true
-#   Lockout Until:   2025-01-15T10:35:00Z
-#   Recovery:        247s
-```
-
----
-
-### pin reset-lockout
-
-Reset the lockout counter. Requires SO PIN authorization.
-
-```bash
-xkmsctl pin reset-lockout [flags]
-```
-
-**Examples:**
-
-```bash
-xkmsctl pin reset-lockout
-
-# Enter SO PIN: ********
-# Lockout reset successfully.
-```
-
-For PKCS#11 strategy, this command returns an error because hardware token lockout requires vendor-specific reset procedures.
 
 ## Workflows
 
-### Initial PIN Setup
+### Initial setup
 
 ```bash
-# Step 1: Set SO PIN (administrator)
-xkmsctl pin set-so
-# Choose a strong SO PIN (minimum 6 characters)
-
-# Step 2: Set User PIN (requires SO PIN)
-xkmsctl pin set-user
-# SO PIN authorizes User PIN creation
-
-# Step 3: Verify both PINs
-xkmsctl pin verify --type so
-xkmsctl pin verify --type user
-
-# Step 4: Check status
-xkmsctl pin status
+xkmsctl pin so-set        # prompts for the new SO PIN
+xkmsctl pin user-set      # prompts for the SO PIN, then the new user PIN
+xkmsctl pin so-verify
+xkmsctl pin user-verify
 ```
 
-### Daily Verification
+### Lockout recovery
 
 ```bash
-xkmsctl pin verify
+xkmsctl pin lockout          # Locked: true, Recovery In: ...
+xkmsctl pin lockout-reset    # or wait for the lockout to expire
 ```
 
-### Lockout Recovery
-
-```bash
-# 1. Check lockout status
-xkmsctl pin status
-# Locked: true, Recovery: 247s
-
-# Option A: Wait for lockout to expire
-sleep 300
-xkmsctl pin verify
-
-# Option B: Reset with SO PIN (immediate)
-xkmsctl pin reset-lockout
-# Enter SO PIN: ********
-
-# 3. Verify recovery
-xkmsctl pin status
-# Locked: false, Failed Attempts: 0/5
-```
-
-### PIN Rotation
-
-```bash
-# Rotate SO PIN
-xkmsctl pin change-so
-
-# Rotate User PIN
-xkmsctl pin change-user
-```
-
-## PIN Requirements
-
-- Minimum length: 6 characters
-- No maximum length restriction
-- Any printable characters allowed
-
-## Lockout Behavior
-
-| Setting | Default | Description |
-|---------|---------|-------------|
-| Max attempts | 5 | Failed attempts before lockout |
-| Base duration | 5 minutes | Initial lockout duration |
-| Backoff | Enabled | Exponential backoff on repeated lockouts |
-| Max backoff | 1 hour | Backoff cap |
-
-Backoff progression (5-minute base):
-
-```
-Attempt 5:  5 min lockout
-Attempt 6:  10 min lockout
-Attempt 7:  20 min lockout
-Attempt 8:  40 min lockout
-Attempt 9+: 60 min lockout (cap)
-```
-
-A successful verification resets the failed attempt counter to zero.
-
-## Exit Codes
-
-| Code | Description |
-|------|-------------|
-| 0 | Success |
-| 1 | General error (invalid PIN, lockout, etc.) |
-
-Common error messages:
-
-- `pin: PIN must be at least 6 characters` -- PIN too short
-- `pin: invalid PIN` -- Wrong PIN
-- `pin: locked out due to too many failed attempts` -- Lockout active
-- `pin: SO PIN authorization required` -- SO PIN needed for operation
-- `pin: PIN not set` -- Operation requires a PIN that has not been set
-- `pin: PIN already set, use Change instead` -- Use `change-so` or `change-user`
-
-## Configuration File
-
-PIN settings can be specified in the configuration file:
-
-```yaml
-pin:
-  strategy: auto           # auto, software, tpm2, pkcs11
-  min_length: 6
-  state_path: ""           # Override default state file location
-  lockout:
-    max_attempts: 5
-    duration: 5m
-    backoff: true
-```
+The lockout policy (attempt limit, duration, backoff) is the server's; see
+[PIN management engineering](../../../../docs/pin-management/engineering.md).
 
 ## `xkey --unified-pin` (out of scope for this page)
 
-This page is about the go-xkms **server** CLI, `xkmsctl pin` (see the scope
-note at the top); `--unified-pin` is an `xkey fido2` flag, not one of these
-commands. It does not synchronize a "PINCoordinator" across FIDO2, PKCS#11
-and file PIN systems — no such coordinator exists. It propagates the *xkey*
-host PIN service's user PIN to the virtual FIDO2 authenticator's own CTAP2
-PIN hash; see
-[`../../virtual-authenticator/cli.md`](../../virtual-authenticator/cli.md)
-and go-xkms#307 for what actually governs a PIN across `xkey`'s subsystems.
+`--unified-pin` is an `xkey fido2` flag, not part of `xkmsctl pin`. It
+propagates the xkey host PIN service's user PIN to the virtual FIDO2
+authenticator's own CTAP2 PIN; see
+[`../../virtual-authenticator/cli.md`](../../virtual-authenticator/cli.md).
 
 ## See Also
 
+- [PIN management](../../../../docs/pin-management/user.md) — the normative feature folder
 - [Configuration Reference](../../configuration/README.md)
