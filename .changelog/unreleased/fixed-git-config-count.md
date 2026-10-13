@@ -1,0 +1,1 @@
+- Builder and Compose containers now receive `GIT_CONFIG_COUNT=1` with the forwarded module-fetch rewrite, so a caller count above 1 no longer makes git abort with `missing config key GIT_CONFIG_KEY_1`.

@@ -89,6 +89,16 @@ via_make GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0="$RUNNER_KEY" GIT_CONFIG_VALUE_0="$
 eq "make succeeds" "0" "$?"
 expect_all GIT_CONFIG_KEY_0 "$RUNNER_KEY" ci
 
+section "a caller count above 1 forwards entry 0 with a count of 1"
+via_make GIT_CONFIG_COUNT=2 GIT_CONFIG_KEY_0="$RUNNER_KEY" GIT_CONFIG_VALUE_0="$VALUE" \
+	GIT_CONFIG_KEY_1=core.hooksPath GIT_CONFIG_VALUE_1=/dev/null
+eq "make succeeds" "0" "$?"
+expect_all GIT_CONFIG_COUNT 1 count2
+expect_all GIT_CONFIG_KEY_0 "$RUNNER_KEY" count2
+eq "count2: gomodauth secret" \
+	"$(printf 'export GOPRIVATE=github.com/jeremyhahn/*\nexport GIT_CONFIG_COUNT=1\nexport GIT_CONFIG_KEY_0=%s\nexport GIT_CONFIG_VALUE_0=%s' "$RUNNER_KEY" "$VALUE")" \
+	"$(cat "$WORK/gomodauth.env")"
+
 section "GITEA_GO_TOKEN and GITEA_HOST compose the rewrite"
 via_make GITEA_GO_TOKEN=local-token GITEA_HOST=gitea.example.com
 eq "make succeeds" "0" "$?"

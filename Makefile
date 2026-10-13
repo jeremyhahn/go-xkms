@@ -235,7 +235,10 @@ GITEA_INSTEADOF_KEY = url.http://x:$(GITEA_GO_TOKEN)@$(GITEA_HOST)/jeremyhahn/.i
 #      every job's process env; dependency-resolution.md §6). There is no
 #      GITEA_GO_TOKEN on that runner and no .devcontainer/.env in its checkout,
 #      so this must be checked first or the job gets an empty-token rewrite
-#      ("Failed to authenticate user").
+#      ("Failed to authenticate user"). Only entry 0 is forwarded (the
+#      rewrite), so the count is always 1: git aborts with "missing config
+#      key GIT_CONFIG_KEY_1" when the caller's count of N > 1 crosses over
+#      without entries 1..N-1, which fails every module fetch.
 #   2. GITEA_GO_TOKEN and GITEA_HOST, composed into GITEA_INSTEADOF_KEY -- the
 #      devcontainer/host path, sourced from the gitignored .devcontainer/.env.
 # Otherwise the count is 0: git reads exactly GIT_CONFIG_COUNT entries, so
@@ -253,7 +256,7 @@ GITEA_INSTEADOF_KEY = url.http://x:$(GITEA_GO_TOKEN)@$(GITEA_HOST)/jeremyhahn/.i
 # which is the opposite of the public-resolution path this exists to provide.
 ifneq ($(GIT_CONFIG_KEY_0),)
 GOMODAUTH_GOPRIVATE := $(if $(GOPRIVATE),$(GOPRIVATE),github.com/jeremyhahn/*)
-GOMODAUTH_GIT_CONFIG_COUNT := $(if $(GIT_CONFIG_COUNT),$(GIT_CONFIG_COUNT),1)
+GOMODAUTH_GIT_CONFIG_COUNT := 1
 GOMODAUTH_GIT_CONFIG_KEY_0 := $(GIT_CONFIG_KEY_0)
 GOMODAUTH_GIT_CONFIG_VALUE_0 := $(GIT_CONFIG_VALUE_0)
 else ifneq ($(and $(GITEA_GO_TOKEN),$(GITEA_HOST)),)
