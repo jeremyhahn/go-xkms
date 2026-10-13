@@ -14,10 +14,17 @@
 package admin
 
 import (
+	"context"
+	"errors"
 	"net/http"
 
+	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
 	"github.com/jeremyhahn/go-xkms/pkg/auth"
 )
+
+// ErrAuthenticatorNotConfigured is returned when an MTLSAuthHandler was
+// built without an authenticator. The request is refused, never admitted.
+var ErrAuthenticatorNotConfigured = errors.New("admin: mTLS authenticator not configured")
 
 // MTLSAuthHandler is the production AuthHandler for the ACME admin surface.
 // It authenticates each request from its mTLS client certificate using
@@ -27,14 +34,24 @@ import (
 // transport. It then publishes both the AuthenticatedUser record (tenant
 // scoping, audit attribution) and the canonical auth.Identity the
 // PermissionGate authorizes against.
+//
+// The admin routes are public module routes: qrdb's authentication
+// middleware binds no tenant before this handler runs. The handler applies
+// qrdb's own certificate-to-tenant rule (qrdbsdk.TenantFromClientCert) under
+// the deployment's trust domain, binds that tenant, and only then looks the
+// certificate's thumbprint up — within that tenant alone, so a tenant user
+// resolves in its own tenant and a certificate is never searched for in
+// another one.
 type MTLSAuthHandler struct {
 	authenticator *auth.MTLSAuthenticator
+	trustDomain   string
 }
 
 // NewMTLSAuthHandler wraps an *auth.MTLSAuthenticator as an AuthHandler for
-// the admin surface.
-func NewMTLSAuthHandler(authenticator *auth.MTLSAuthenticator) *MTLSAuthHandler {
-	return &MTLSAuthHandler{authenticator: authenticator}
+// the admin surface. trustDomain is the SPIFFE trust domain the deployment's
+// CA issues under; a SPIFFE SAN from any other trust domain is refused.
+func NewMTLSAuthHandler(authenticator *auth.MTLSAuthenticator, trustDomain string) *MTLSAuthHandler {
+	return &MTLSAuthHandler{authenticator: authenticator, trustDomain: trustDomain}
 }
 
 // Authenticate implements AuthHandler: it resolves the caller's identity from
@@ -43,12 +60,8 @@ func NewMTLSAuthHandler(authenticator *auth.MTLSAuthenticator) *MTLSAuthHandler 
 // the PermissionGate.
 func (h *MTLSAuthHandler) Authenticate(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if h.authenticator == nil {
-			writeProblem(w, http.StatusUnauthorized, problemUnauthorized, "Authentication required")
-			return
-		}
-		identity, err := h.authenticator.AuthenticateHTTP(r)
-		if err != nil || identity == nil {
+		identity, err := h.authenticate(r)
+		if err != nil {
 			writeProblem(w, http.StatusUnauthorized, problemUnauthorized, "Authentication required")
 			return
 		}
@@ -60,6 +73,37 @@ func (h *MTLSAuthHandler) Authenticate(next http.Handler) http.Handler {
 		}
 		next.ServeHTTP(w, r.WithContext(withUser(r.Context(), user)))
 	})
+}
+
+// authenticate resolves the request's identity. It returns
+// ErrAuthenticatorNotConfigured without an authenticator,
+// auth.ErrNoPeerCertificate without a client certificate, the
+// *qrdbsdk.ClientCertificateTenantError of a certificate that names no usable
+// tenant, and otherwise whatever the authenticator refuses with (for example
+// auth.ErrCertNotBound for a certificate bound to no user in its tenant).
+func (h *MTLSAuthHandler) authenticate(r *http.Request) (*auth.Identity, error) {
+	if h.authenticator == nil {
+		return nil, ErrAuthenticatorNotConfigured
+	}
+	ctx, err := h.bindCertificateTenant(r)
+	if err != nil {
+		return nil, err
+	}
+	return h.authenticator.AuthenticateHTTP(r.WithContext(ctx))
+}
+
+// bindCertificateTenant returns the request context bound to the tenant the
+// client certificate names, normalized exactly as qrdb's middleware does (a
+// certificate naming no tenant is the system tenant's).
+func (h *MTLSAuthHandler) bindCertificateTenant(r *http.Request) (context.Context, error) {
+	if r.TLS == nil || len(r.TLS.PeerCertificates) == 0 {
+		return nil, auth.ErrNoPeerCertificate
+	}
+	tenantID, _, err := qrdbsdk.TenantFromClientCert(r.TLS.PeerCertificates[0], h.trustDomain)
+	if err != nil {
+		return nil, err
+	}
+	return qrdbsdk.ContextWithTenant(r.Context(), qrdbsdk.NormalizeTenantID(tenantID)), nil
 }
 
 // Compile-time interface check.

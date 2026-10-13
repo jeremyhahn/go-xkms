@@ -222,13 +222,13 @@ func firstBootAdmin(t *testing.T, client *qrdbsdk.Client) *qrdbtransport.User {
 // newClientCert returns a self-signed client certificate for commonName. The
 // admin plane's authenticator resolves a certificate by its SPKI thumbprint;
 // chain verification is the TLS listener's job and is not exercised here.
-func newClientCert(t *testing.T, commonName string) *x509.Certificate {
+func newClientCert(t *testing.T, commonName string, organizationalUnits ...string) *x509.Certificate {
 	t.Helper()
 	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
 	require.NoError(t, err)
 	tmpl := &x509.Certificate{
 		SerialNumber: big.NewInt(time.Now().UnixNano()),
-		Subject:      pkix.Name{CommonName: commonName},
+		Subject:      pkix.Name{CommonName: commonName, OrganizationalUnit: organizationalUnits},
 		NotBefore:    time.Now().Add(-time.Hour),
 		NotAfter:     time.Now().Add(time.Hour),
 		ExtKeyUsage:  []x509.ExtKeyUsage{x509.ExtKeyUsageClientAuth},
@@ -244,7 +244,10 @@ func newClientCert(t *testing.T, commonName string) *x509.Certificate {
 // to the user, as xkmsctl's enrollment does.
 func bindClientCert(t *testing.T, client *qrdbsdk.Client, u *qrdbtransport.User) *x509.Certificate {
 	t.Helper()
-	cert := newClientCert(t, u.Username)
+	// The certificate names the user's tenant in its OU, as the certificates
+	// xkms issues do, so the admin plane looks the binding up in that tenant
+	// (go-xkms#1240).
+	cert := newClientCert(t, u.Username, u.TenantID)
 	// qrdb resolves the user within the context's tenant.
 	ctx := qrdbsdk.ContextWithTenant(context.Background(), u.TenantID)
 	_, err := client.Users().AddCertBinding(ctx, u.ID, qrdbsdk.ComputeSPKIThumbprint(cert), 0)

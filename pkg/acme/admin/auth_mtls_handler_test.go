@@ -17,10 +17,16 @@ package admin
 
 import (
 	"context"
+	"crypto/ecdsa"
+	"crypto/elliptic"
+	"crypto/rand"
 	"crypto/tls"
 	"crypto/x509"
+	"crypto/x509/pkix"
+	"math/big"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"testing"
 	"time"
 
@@ -31,163 +37,252 @@ import (
 	xkmsauth "github.com/jeremyhahn/go-xkms/pkg/auth"
 )
 
-// fakeMTLSUserStore implements xkmsauth.UserStore directly, so these tests
-// exercise MTLSAuthHandler -- the AuthHandler cmd/xkmsd/admin.go actually
-// wires onto the ACME admin surface (go-xkms#1240) -- without standing up a
-// qrdb transport. The SPKI-thumbprint partitioning that go-xkms#1240 fixed is
-// covered at its own layer by pkg/auth's QRDBUserStore tests; what these
-// prove is that MTLSAuthHandler.Authenticate publishes whatever tenant the
-// resolved user carries, through withUser, onto both the AuthenticatedUser
-// record and the qrdb context tenant go-xkms#1225's tenant_binding.go reads.
-type fakeMTLSUserStore struct {
-	byFingerprint map[string]xkmsauth.MTLSUser
+// testTrustDomain is the trust domain the deployment's CA issues under in
+// these tests.
+const testTrustDomain = "kms.example.com"
+
+// tenantMTLSUserStore implements xkmsauth.UserStore the way qrdb's user
+// index answers it: a thumbprint is bound within one tenant, and the lookup
+// is made in the tenant bound on the context. A lookup with no tenant bound
+// fails, so a test passes only if MTLSAuthHandler bound the certificate's
+// tenant before the lookup.
+type tenantMTLSUserStore struct {
+	byTenant map[string]map[string]xkmsauth.MTLSUser
+	lookups  int
 }
 
-func (f *fakeMTLSUserStore) GetByCertFingerprint(_ context.Context, fingerprint string) (xkmsauth.MTLSUser, error) {
-	u, ok := f.byFingerprint[fingerprint]
+func (s *tenantMTLSUserStore) bind(tenantID string, cert *x509.Certificate, u xkmsauth.MTLSUser) {
+	if s.byTenant == nil {
+		s.byTenant = map[string]map[string]xkmsauth.MTLSUser{}
+	}
+	if s.byTenant[tenantID] == nil {
+		s.byTenant[tenantID] = map[string]xkmsauth.MTLSUser{}
+	}
+	s.byTenant[tenantID][qrdbsdk.ComputeSPKIThumbprint(cert)] = u
+}
+
+func (s *tenantMTLSUserStore) GetByCertFingerprint(ctx context.Context, fingerprint string) (xkmsauth.MTLSUser, error) {
+	s.lookups++
+	tenantID, ok := qrdbsdk.TenantFromContext(ctx)
+	if !ok {
+		return xkmsauth.MTLSUser{}, qrdbsdk.NewMissingTenantContextError("cert thumbprint lookup")
+	}
+	u, ok := s.byTenant[tenantID][fingerprint]
 	if !ok {
 		return xkmsauth.MTLSUser{}, &qrdbsdk.UserNotFoundError{Lookup: "cert_spki/" + fingerprint}
 	}
 	return u, nil
 }
 
-// TestMTLSAuthHandler_TenantUserAuthenticates proves a tenant user's
-// certificate authenticates on the ACME admin plane's mTLS boundary and
-// binds its own tenant, both on the AuthenticatedUser record and on the
-// qrdb context tenant -- the two facts go-xkms#1225's tenant-scoped routes
-// depend on to confine the request to tenant-a.
-func TestMTLSAuthHandler_TenantUserAuthenticates(t *testing.T) {
-	cert := createTestCertificate(t, "alice", nil, []string{"tenant-a"}, nil,
-		time.Now().Add(-time.Hour), time.Now().Add(time.Hour))
-	thumbprint := qrdbsdk.ComputeSPKIThumbprint(cert)
+// clientCert issues a self-signed client certificate with the given Subject
+// OUs and URI SANs.
+func clientCert(t *testing.T, cn string, ous []string, uris ...string) *x509.Certificate {
+	t.Helper()
+	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	require.NoError(t, err)
+	template := &x509.Certificate{
+		SerialNumber: big.NewInt(time.Now().UnixNano()),
+		Subject:      pkix.Name{CommonName: cn, OrganizationalUnit: ous},
+		NotBefore:    time.Now().Add(-time.Hour),
+		NotAfter:     time.Now().Add(time.Hour),
+		KeyUsage:     x509.KeyUsageDigitalSignature,
+		ExtKeyUsage:  []x509.ExtKeyUsage{x509.ExtKeyUsageClientAuth},
+	}
+	for _, raw := range uris {
+		u, err := url.Parse(raw)
+		require.NoError(t, err)
+		template.URIs = append(template.URIs, u)
+	}
+	der, err := x509.CreateCertificate(rand.Reader, template, template, &key.PublicKey, key)
+	require.NoError(t, err)
+	cert, err := x509.ParseCertificate(der)
+	require.NoError(t, err)
+	return cert
+}
 
-	store := &fakeMTLSUserStore{byFingerprint: map[string]xkmsauth.MTLSUser{
-		thumbprint: {
-			Username: "alice",
-			TenantID: "tenant-a",
-			Enabled:  true,
-			Roles:    []string{"role-id-operator"},
-		},
-	}}
-	handler := NewMTLSAuthHandler(xkmsauth.NewMTLSAuthenticator(&xkmsauth.MTLSConfig{UserStore: store}))
+func mtlsRequest(path string, cert *x509.Certificate) *http.Request {
+	req := httptest.NewRequest(http.MethodGet, path, nil)
+	if cert != nil {
+		req.TLS = &tls.ConnectionState{PeerCertificates: []*x509.Certificate{cert}}
+	}
+	return req
+}
 
-	var capturedUser *AuthenticatedUser
-	var capturedCtx context.Context
+func newTestMTLSAuthHandler(store xkmsauth.UserStore) *MTLSAuthHandler {
+	return NewMTLSAuthHandler(xkmsauth.NewMTLSAuthenticator(&xkmsauth.MTLSConfig{UserStore: store}), testTrustDomain)
+}
+
+// serve runs req through handler.Authenticate and returns the response code
+// and the context the next handler saw (nil when it did not run).
+func serve(handler *MTLSAuthHandler, req *http.Request) (int, context.Context) {
+	var seen context.Context
 	h := handler.Authenticate(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		capturedUser = GetUserFromContext(r.Context())
-		capturedCtx = r.Context()
+		seen = r.Context()
 		w.WriteHeader(http.StatusOK)
 	}))
-
-	req := httptest.NewRequest("GET", "/api/v1/tenants/tenant-a/roles", nil)
-	req.TLS = &tls.ConnectionState{PeerCertificates: []*x509.Certificate{cert}}
 	w := httptest.NewRecorder()
 	h.ServeHTTP(w, req)
+	return w.Code, seen
+}
 
-	require.Equal(t, http.StatusOK, w.Code)
-	require.NotNil(t, capturedUser)
-	assert.Equal(t, "alice", capturedUser.Username)
-	assert.Equal(t, "tenant-a", capturedUser.TenantID)
-	assert.Equal(t, []string{"role-id-operator"}, capturedUser.Roles)
+// TestMTLSAuthHandler_TenantUserAuthenticates proves a tenant user whose
+// certificate names its tenant in the deployment's trust domain is looked up
+// in that tenant, authenticates, and reaches its own tenant's admin routes:
+// the AuthenticatedUser, the qrdb context tenant and the identity all carry
+// tenant-a, and go-xkms#1225's binding admits tenant-a's routes.
+func TestMTLSAuthHandler_TenantUserAuthenticates(t *testing.T) {
+	cert := clientCert(t, "alice", []string{"tenant-a"}, "spiffe://"+testTrustDomain+"/tenant/tenant-a/user/alice")
+	store := &tenantMTLSUserStore{}
+	store.bind("tenant-a", cert, xkmsauth.MTLSUser{
+		Username: "alice", TenantID: "tenant-a", Enabled: true, Roles: []string{"role-id-operator"},
+	})
 
-	bound, ok := qrdbsdk.TenantFromContext(capturedCtx)
-	require.True(t, ok, "withUser must bind the qrdb context tenant explicitly")
+	code, ctx := serve(newTestMTLSAuthHandler(store), mtlsRequest("/api/v1/tenants/tenant-a/roles", cert))
+
+	require.Equal(t, http.StatusOK, code)
+	user := GetUserFromContext(ctx)
+	require.NotNil(t, user)
+	assert.Equal(t, "alice", user.Username)
+	assert.Equal(t, "tenant-a", user.TenantID)
+	assert.Equal(t, []string{"role-id-operator"}, user.Roles)
+
+	bound, ok := qrdbsdk.TenantFromContext(ctx)
+	require.True(t, ok)
 	assert.Equal(t, "tenant-a", bound)
-
-	identity := xkmsauth.GetIdentity(capturedCtx)
+	identity := xkmsauth.GetIdentity(ctx)
 	require.NotNil(t, identity)
 	assert.Equal(t, "tenant-a", identity.TenantID)
+
+	assert.NoError(t, bindTenantTarget(ctx, "list roles", "tenant-a"))
+}
+
+// TestMTLSAuthHandler_TenantUserByOU proves the OU fallback of qrdb's rule:
+// a certificate with no SPIFFE SAN is read as the tenant its first OU names.
+func TestMTLSAuthHandler_TenantUserByOU(t *testing.T) {
+	cert := clientCert(t, "bob", []string{"tenant-a"})
+	store := &tenantMTLSUserStore{}
+	store.bind("tenant-a", cert, xkmsauth.MTLSUser{Username: "bob", TenantID: "tenant-a", Enabled: true})
+
+	code, ctx := serve(newTestMTLSAuthHandler(store), mtlsRequest("/api/v1/tenants/tenant-a/roles", cert))
+
+	require.Equal(t, http.StatusOK, code)
+	assert.Equal(t, "tenant-a", GetUserFromContext(ctx).TenantID)
+}
+
+// TestMTLSAuthHandler_TenantUserRefusedOnOtherTenantRoutes proves a tenant-a
+// certificate gets go-xkms#1225's refusal on tenant-b's routes.
+func TestMTLSAuthHandler_TenantUserRefusedOnOtherTenantRoutes(t *testing.T) {
+	cert := clientCert(t, "alice", nil, "spiffe://"+testTrustDomain+"/tenant/tenant-a/user/alice")
+	store := &tenantMTLSUserStore{}
+	store.bind("tenant-a", cert, xkmsauth.MTLSUser{Username: "alice", TenantID: "tenant-a", Enabled: true})
+
+	code, ctx := serve(newTestMTLSAuthHandler(store), mtlsRequest("/api/v1/tenants/tenant-b/roles", cert))
+	require.Equal(t, http.StatusOK, code)
+
+	var refusal *TenantBindingError
+	require.ErrorAs(t, bindTenantTarget(ctx, "list roles", "tenant-b"), &refusal)
+	assert.Equal(t, "tenant-a", refusal.CallerTenantID)
+	assert.Equal(t, "tenant-b", refusal.TargetTenantID)
 }
 
 // TestMTLSAuthHandler_SystemTenantIdentityAuthenticates proves a
-// system-tenant identity -- no OU, no SPIFFE SAN -- keeps authenticating
-// exactly as it did before go-xkms#1240's fix.
+// system-tenant identity -- no OU, no SPIFFE SAN -- is looked up in the
+// system tenant and keeps authenticating.
 func TestMTLSAuthHandler_SystemTenantIdentityAuthenticates(t *testing.T) {
-	cert := createTestCertificate(t, "root", nil, nil, nil,
-		time.Now().Add(-time.Hour), time.Now().Add(time.Hour))
-	thumbprint := qrdbsdk.ComputeSPKIThumbprint(cert)
+	cert := clientCert(t, "root", nil)
+	store := &tenantMTLSUserStore{}
+	store.bind(qrdbsdk.SystemTenantID, cert, xkmsauth.MTLSUser{
+		Username: "root", Enabled: true, Roles: []string{"role-id-platform-admin"},
+	})
 
-	store := &fakeMTLSUserStore{byFingerprint: map[string]xkmsauth.MTLSUser{
-		thumbprint: {
-			Username: "root",
-			TenantID: "",
-			Enabled:  true,
-			Roles:    []string{"role-id-platform-admin"},
-		},
-	}}
-	handler := NewMTLSAuthHandler(xkmsauth.NewMTLSAuthenticator(&xkmsauth.MTLSConfig{UserStore: store}))
+	code, ctx := serve(newTestMTLSAuthHandler(store), mtlsRequest("/admin/tenants", cert))
 
-	var capturedCtx context.Context
-	h := handler.Authenticate(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		capturedCtx = r.Context()
-		w.WriteHeader(http.StatusOK)
-	}))
-
-	req := httptest.NewRequest("GET", "/admin/tenants", nil)
-	req.TLS = &tls.ConnectionState{PeerCertificates: []*x509.Certificate{cert}}
-	w := httptest.NewRecorder()
-	h.ServeHTTP(w, req)
-
-	require.Equal(t, http.StatusOK, w.Code)
-	bound, ok := qrdbsdk.TenantFromContext(capturedCtx)
+	require.Equal(t, http.StatusOK, code)
+	bound, ok := qrdbsdk.TenantFromContext(ctx)
 	require.True(t, ok)
 	assert.Equal(t, qrdbsdk.SystemTenantID, bound)
+}
+
+// TestMTLSAuthHandler_CertificateNotSearchedInOtherTenants proves the
+// thumbprint is looked up in the certificate's tenant only: a certificate
+// naming tenant-a whose thumbprint is bound in the system tenant is refused,
+// never resolved by falling back to the system tenant.
+func TestMTLSAuthHandler_CertificateNotSearchedInOtherTenants(t *testing.T) {
+	cert := clientCert(t, "alice", []string{"tenant-a"})
+	store := &tenantMTLSUserStore{}
+	store.bind(qrdbsdk.SystemTenantID, cert, xkmsauth.MTLSUser{Username: "alice", Enabled: true})
+	handler := newTestMTLSAuthHandler(store)
+
+	_, err := handler.authenticate(mtlsRequest("/admin/tenants", cert))
+	assert.ErrorIs(t, err, xkmsauth.ErrCertNotBound)
+
+	code, _ := serve(handler, mtlsRequest("/admin/tenants", cert))
+	assert.Equal(t, http.StatusUnauthorized, code)
 }
 
 // TestMTLSAuthHandler_UnknownCertificateIsUnauthorized proves a certificate
 // bound to no user is refused with 401, never admitted with a
 // certificate-derived identity (go-xkms#1096).
 func TestMTLSAuthHandler_UnknownCertificateIsUnauthorized(t *testing.T) {
-	cert := createTestCertificate(t, "mallory", nil, []string{"tenant-a"}, nil,
-		time.Now().Add(-time.Hour), time.Now().Add(time.Hour))
+	cert := clientCert(t, "mallory", []string{"tenant-a"})
+	handler := newTestMTLSAuthHandler(&tenantMTLSUserStore{})
 
-	store := &fakeMTLSUserStore{byFingerprint: map[string]xkmsauth.MTLSUser{}}
-	handler := NewMTLSAuthHandler(xkmsauth.NewMTLSAuthenticator(&xkmsauth.MTLSConfig{UserStore: store}))
+	_, err := handler.authenticate(mtlsRequest("/admin/tenants", cert))
+	assert.ErrorIs(t, err, xkmsauth.ErrCertNotBound)
 
-	h := handler.Authenticate(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		t.Fatal("handler must not run for a certificate bound to no user")
-	}))
-
-	req := httptest.NewRequest("GET", "/admin/tenants", nil)
-	req.TLS = &tls.ConnectionState{PeerCertificates: []*x509.Certificate{cert}}
-	w := httptest.NewRecorder()
-	h.ServeHTTP(w, req)
-
-	assert.Equal(t, http.StatusUnauthorized, w.Code)
+	code, ctx := serve(handler, mtlsRequest("/admin/tenants", cert))
+	assert.Equal(t, http.StatusUnauthorized, code)
+	assert.Nil(t, ctx, "the next handler must not run")
 }
 
 // TestMTLSAuthHandler_NoCertificateIsUnauthorized proves a request with no
 // client certificate at all is refused, not merely a request with an
 // unmatched one.
 func TestMTLSAuthHandler_NoCertificateIsUnauthorized(t *testing.T) {
-	handler := NewMTLSAuthHandler(xkmsauth.NewMTLSAuthenticator(&xkmsauth.MTLSConfig{
-		UserStore: &fakeMTLSUserStore{byFingerprint: map[string]xkmsauth.MTLSUser{}},
-	}))
+	handler := newTestMTLSAuthHandler(&tenantMTLSUserStore{})
 
-	h := handler.Authenticate(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		t.Fatal("handler must not run without a peer certificate")
-	}))
+	_, err := handler.authenticate(mtlsRequest("/admin/tenants", nil))
+	assert.ErrorIs(t, err, xkmsauth.ErrNoPeerCertificate)
 
-	req := httptest.NewRequest("GET", "/admin/tenants", nil)
-	w := httptest.NewRecorder()
-	h.ServeHTTP(w, req)
+	code, ctx := serve(handler, mtlsRequest("/admin/tenants", nil))
+	assert.Equal(t, http.StatusUnauthorized, code)
+	assert.Nil(t, ctx)
+}
 
-	assert.Equal(t, http.StatusUnauthorized, w.Code)
+// TestMTLSAuthHandler_ForeignTrustDomainIsUnauthorized proves a certificate
+// whose SPIFFE SAN is from another trust domain is refused with qrdb's typed
+// refusal before any lookup -- even though its OU names a tenant where the
+// thumbprint is bound -- rather than falling back to the OU or the system
+// tenant.
+func TestMTLSAuthHandler_ForeignTrustDomainIsUnauthorized(t *testing.T) {
+	cert := clientCert(t, "eve", []string{"tenant-a"}, "spiffe://other.example.com/tenant/tenant-a/user/eve")
+	store := &tenantMTLSUserStore{}
+	store.bind("tenant-a", cert, xkmsauth.MTLSUser{Username: "eve", TenantID: "tenant-a", Enabled: true})
+	store.bind(qrdbsdk.SystemTenantID, cert, xkmsauth.MTLSUser{Username: "eve", Enabled: true})
+	handler := newTestMTLSAuthHandler(store)
+
+	_, err := handler.authenticate(mtlsRequest("/admin/tenants", cert))
+	var refusal *qrdbsdk.ClientCertificateTenantError
+	require.ErrorAs(t, err, &refusal)
+	assert.ErrorIs(t, err, qrdbsdk.ErrSpiffeTrustDomainMismatch)
+
+	code, ctx := serve(handler, mtlsRequest("/admin/tenants", cert))
+	assert.Equal(t, http.StatusUnauthorized, code)
+	assert.Nil(t, ctx)
+	assert.Zero(t, store.lookups, "a refused certificate must never reach the user store")
 }
 
 // TestMTLSAuthHandler_NilAuthenticatorIsUnauthorized proves the handler
 // fails closed when constructed without an authenticator, rather than
 // panicking or admitting the request.
 func TestMTLSAuthHandler_NilAuthenticatorIsUnauthorized(t *testing.T) {
-	handler := NewMTLSAuthHandler(nil)
+	handler := NewMTLSAuthHandler(nil, testTrustDomain)
+	cert := clientCert(t, "root", nil)
 
-	h := handler.Authenticate(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		t.Fatal("handler must not run with no authenticator configured")
-	}))
+	_, err := handler.authenticate(mtlsRequest("/admin/tenants", cert))
+	assert.ErrorIs(t, err, ErrAuthenticatorNotConfigured)
 
-	req := httptest.NewRequest("GET", "/admin/tenants", nil)
-	w := httptest.NewRecorder()
-	h.ServeHTTP(w, req)
-
-	assert.Equal(t, http.StatusUnauthorized, w.Code)
+	code, ctx := serve(handler, mtlsRequest("/admin/tenants", cert))
+	assert.Equal(t, http.StatusUnauthorized, code)
+	assert.Nil(t, ctx)
 }

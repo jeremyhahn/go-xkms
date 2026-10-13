@@ -151,7 +151,10 @@ func finalizeAdminModule(srv *server.Server, acme *acmeServer, logger *slog.Logg
 	// the first-boot administrator (go-xkms#1069).
 	mtlsConfig := &auth.MTLSConfig{UserStore: auth.NewQRDBUserStore(qrdbClient.Users())}
 	authorizer := auth.NewAuthorizer(qrdbClient.RBAC())
-	authHandler := admin.NewMTLSAuthHandler(auth.NewMTLSAuthenticator(mtlsConfig))
+	// The certificate's tenant is read under the deployment's own trust
+	// domain, and its thumbprint is looked up in that tenant only, so a
+	// tenant user authenticates in its own tenant (go-xkms#1240).
+	authHandler := admin.NewMTLSAuthHandler(auth.NewMTLSAuthenticator(mtlsConfig), srv.TrustDomain())
 	gate := admin.NewPermissionGate(authorizer, logger)
 
 	router := mux.NewRouter()

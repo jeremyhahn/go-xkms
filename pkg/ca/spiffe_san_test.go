@@ -17,6 +17,7 @@ import (
 	"context"
 	"testing"
 
+	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
 	"github.com/jeremyhahn/go-xkms/pkg/spiffe"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -84,6 +85,28 @@ func TestSignCSRWithSPIFFE_Raw(t *testing.T) {
 	require.NoError(t, err)
 	require.Len(t, cert.URIs, 1)
 	assert.Equal(t, "spiffe://example.com/tenant/tenant-b/user/bob", cert.URIs[0].String())
+}
+
+// A tenant user's certificate carries its tenant in exactly the form qrdb's
+// certificate-to-tenant rule reads, so the ACME admin plane, which applies
+// that rule pinned to the deployment's trust domain, resolves the user in
+// its own tenant (go-xkms#1240). The same certificate is refused under any
+// other pin rather than falling back to its OU.
+func TestSignCSR_TenantResolvesThroughQRDBRule(t *testing.T) {
+	ca := setupTestCA(t)
+	csrPEM, _ := makeLeafCSR(t, "dave")
+
+	cert, err := ca.SignCSRWithSPIFFE(context.Background(), csrPEM, "client", 30, "kms.example.com", "tenant-a", "", "")
+	require.NoError(t, err)
+
+	tenantID, fromSPIFFE, err := qrdbsdk.TenantFromClientCert(cert, "kms.example.com")
+	require.NoError(t, err)
+	assert.Equal(t, "tenant-a", tenantID)
+	assert.True(t, fromSPIFFE, "the tenant must come from the SPIFFE SAN, not the OU")
+
+	_, _, err = qrdbsdk.TenantFromClientCert(cert, "other.example.com")
+	var refusal *qrdbsdk.ClientCertificateTenantError
+	assert.ErrorAs(t, err, &refusal, "a foreign pin must refuse the certificate")
 }
 
 // Scenario (b): the keypair-issuance path (generate-and-distribute) must stamp

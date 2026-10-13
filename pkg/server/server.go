@@ -877,6 +877,10 @@ func New(cfg *config.Config, opts ...Option) (*Server, error) {
 		// made below the route gate (XKMSService.AuthorizeCaller).
 		// A nil Authorizer means RBAC is disabled, as it does there.
 		svc.SetAuthorizer(s.rbacAuthorizer)
+		// Tenant-scoped client certificates the CA signs carry their
+		// tenant as a SPIFFE SAN in the deployment's trust domain, the
+		// form qrdb's certificate-to-tenant rule reads (go-xkms#1240).
+		svc.SetSPIFFETrustDomain(s.TrustDomain())
 		stores.Wire(svc)
 		if s.tokenIssuer != nil {
 			// So DisableUser/DeleteUser can revoke every refresh-token

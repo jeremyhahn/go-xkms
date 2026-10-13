@@ -74,27 +74,27 @@ func TestEnsureSSHClient_NilXKMSServiceReturnsNil(t *testing.T) {
 }
 
 // ============================================================================
-// Tests — firstBootTrustDomain
+// Tests — TrustDomain
 // ============================================================================
 
 // TestFirstBootTrustDomain_UsesConfiguredTrustDomain proves a configured
 // cluster.raft_enrollment.trust_domain is stamped onto the administrator's
 // certificate, not the daemon default.
-func TestFirstBootTrustDomain_UsesConfiguredTrustDomain(t *testing.T) {
+func TestTrustDomain_UsesConfiguredTrustDomain(t *testing.T) {
 	s := newMinimalServer(t, &config.Config{
 		Cluster: config.ClusterConfig{
 			RaftEnrollment: config.RaftEnrollmentConfig{TrustDomain: "custom.example.org"},
 		},
 	})
-	assert.Equal(t, "custom.example.org", s.firstBootTrustDomain())
+	assert.Equal(t, "custom.example.org", s.TrustDomain())
 }
 
 // TestFirstBootTrustDomain_DefaultsWhenUnset proves an unconfigured trust
 // domain falls back to embeddednode.DefaultTrustDomain rather than stamping an
 // empty (unusable) SPIFFE trust domain.
-func TestFirstBootTrustDomain_DefaultsWhenUnset(t *testing.T) {
+func TestTrustDomain_DefaultsWhenUnset(t *testing.T) {
 	s := newMinimalServer(t, &config.Config{})
-	assert.NotEmpty(t, s.firstBootTrustDomain())
+	assert.NotEmpty(t, s.TrustDomain())
 }
 
 // ============================================================================

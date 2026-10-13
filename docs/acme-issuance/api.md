@@ -324,9 +324,13 @@ the CLI surface is `xkmsctl acme` ([`cli.md`](cli.md#xkmsctl-acme-admin)).
 
 Authorization is qrdb RBAC, resolved per route by `PermissionGate`. On
 xkmsd's unified mTLS listener the caller is the qrdb user its client
-certificate is bound to (SPKI thumbprint), with that user's roles; a
-certificate bound to no user, or a user holding no role that carries the
-route's permission, is answered `403` (`cmd/xkmsd/admin.go:200-209`; see
+certificate is bound to (SPKI thumbprint), looked up in the tenant the
+certificate names (its tenant SPIFFE SAN in the deployment's trust domain,
+else its first OU, else the system tenant), with that user's roles. A
+missing certificate, a certificate bound to no user in that tenant, or a
+SPIFFE SAN from another trust domain is answered `401`; a user holding no
+role that carries the route's permission is answered `403`
+(`cmd/xkmsd/admin.go:152-157`, `pkg/acme/admin/auth_mtls.go:84-107`; see
 [`engineering.md`](engineering.md#invariants)).
 
 ### Admin API response contract

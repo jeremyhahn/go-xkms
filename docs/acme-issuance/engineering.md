@@ -330,17 +330,35 @@ once, to the externally visible base.
   non-strict policy skips PCRs it cannot find, refused or absent alike
   (`compliance_attestation.go:151-161`).
 
+- **The admin plane resolves every mTLS caller's tenant from its certificate,
+  then its qrdb user within that tenant (go-xkms#1240).** The admin routes
+  are public module routes, so qrdb's middleware binds no tenant first.
+  `MTLSAuthHandler` (`pkg/acme/admin/auth_mtls.go:84-107`) applies qrdb's
+  own rule, `qrdbsdk.TenantFromClientCert`, pinned to the deployment's trust
+  domain (`Server.TrustDomain`, `pkg/server/firstboot.go:376`, passed at
+  `cmd/xkmsd/admin.go:157`): a tenant SPIFFE SAN wins, else the first
+  Subject OU, else the system tenant. It binds that tenant and looks the
+  SPKI thumbprint up in it alone — a certificate is never searched for in
+  another tenant. The refusals are typed and all answer `401`:
+  `ErrAuthenticatorNotConfigured` (no authenticator),
+  `auth.ErrNoPeerCertificate` (no certificate),
+  `*qrdbsdk.ClientCertificateTenantError` (a SPIFFE SAN from another trust
+  domain, malformed, or naming two tenants — never a fallback to the OU or
+  the system tenant), and `auth.ErrCertNotBound` (no user bound in that
+  tenant). `withUser` then binds the user's tenant, so go-xkms#1225's
+  `bindTenantTarget` (`pkg/acme/admin/tenant_binding.go:103`) confines a
+  tenant user to its own tenant's routes.
 - **The admin plane resolves every mTLS caller to its qrdb user before the
   permission gate runs.** xkmsd builds the admin plane's authenticator with
-  the qrdb SPKI-thumbprint user store (`cmd/xkmsd/admin.go:206-209`), so the
+  the qrdb SPKI-thumbprint user store (`cmd/xkmsd/admin.go:152`), so the
   identity `PermissionGate.Authorize` (`pkg/acme/admin/authz.go:83`) hands to
   qrdb's RBAC carries the user's tenant and **qrdb role IDs** — every role,
   verbatim (`pkg/auth/qrdb_userstore.go:50-59`, `pkg/auth/mtls.go:220`).
   go-qrdb resolves permissions by role ID only; a role name, or a missing
   store, leaves the identity with no resolvable role and every admin route
   answers 403, which is what go-xkms#1069 was. A certificate bound to no user
-  still authenticates from its fields but holds no role, so it is refused on
-  every route. The admin plane declares no permission of its own: each
+  is refused with `401` and never authenticates from its fields
+  (go-xkms#1096). The admin plane declares no permission of its own: each
   `gate.Wrap` resource:action (`pkg/acme/admin/handlers.go:108-143`,
   `tenant_handlers.go:61-127`) is a qrdb-registered permission that qrdb
   places on its built-in roles — Owner holds all of them; Admin holds all but

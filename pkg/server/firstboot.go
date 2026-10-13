@@ -97,7 +97,7 @@ func (s *Server) runFirstBoot(ctx context.Context) error {
 
 	deps, err := BuildFirstBootDependencies(s.qrdbNode, FirstBootParams{
 		CA:          s.ca,
-		TrustDomain: s.firstBootTrustDomain(),
+		TrustDomain: s.TrustDomain(),
 		Logger:      s.logger,
 	})
 	if err != nil {
@@ -363,15 +363,17 @@ func fileExists(path string) bool {
 	return err == nil && !info.IsDir()
 }
 
-// firstBootTrustDomain returns the SPIFFE trust domain stamped into the
-// administrator's certificate.
+// TrustDomain returns the deployment's SPIFFE trust domain: the one stamped
+// into the administrator's certificate and into every tenant-scoped client
+// certificate the CA signs (XKMSService.SignCSR), and the one the ACME admin
+// plane pins when it reads a client certificate's tenant.
 //
 // It reuses the operator's cluster enrollment trust domain so a node
-// certificate and an administrator certificate issued by the same deployment
-// live in one trust domain; a deployment that has not configured one gets the
+// certificate and a user certificate issued by the same deployment live in
+// one trust domain; a deployment that has not configured one gets the
 // same default the enrollment path uses, rather than an empty domain that would
 // produce an unusable SPIFFE ID.
-func (s *Server) firstBootTrustDomain() string {
+func (s *Server) TrustDomain() string {
 	if td := s.config.Cluster.RaftEnrollment.TrustDomain; td != "" {
 		return td
 	}
