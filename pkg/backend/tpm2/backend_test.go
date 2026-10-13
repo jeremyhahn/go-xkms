@@ -160,6 +160,9 @@ func (m *mockTPM) CreateSecretKey(keyAttrs *types.KeyAttributes, backend store.K
 func (m *mockTPM) CreateIAK(ekAttrs *types.KeyAttributes, qualifyingData []byte) (*types.KeyAttributes, error) {
 	return nil, nil
 }
+func (m *mockTPM) DeleteIAK(ekAttrs *types.KeyAttributes) error {
+	return nil
+}
 func (m *mockTPM) CreateIDevID(akAttrs *types.KeyAttributes, ekCert *x509.Certificate, qualifyingData []byte) (*types.KeyAttributes, *pkgtpm2.TCG_CSR_IDEVID, error) {
 	return nil, nil, nil
 }

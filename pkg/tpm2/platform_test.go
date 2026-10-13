@@ -292,6 +292,9 @@ func (m *mockTPMForPKS) CreateSecretKey(_ *types.KeyAttributes, _ store.KeyBacke
 func (m *mockTPMForPKS) CreateIAK(_ *types.KeyAttributes, _ []byte) (*types.KeyAttributes, error) {
 	return nil, nil
 }
+func (m *mockTPMForPKS) DeleteIAK(_ *types.KeyAttributes) error {
+	return nil
+}
 func (m *mockTPMForPKS) CreateIDevID(_ *types.KeyAttributes, _ *x509.Certificate, _ []byte) (*types.KeyAttributes, *TCG_CSR_IDEVID, error) {
 	return nil, nil, nil
 }

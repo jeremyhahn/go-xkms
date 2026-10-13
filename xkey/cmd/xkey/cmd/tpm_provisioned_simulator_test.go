@@ -404,7 +404,22 @@ func TestRunIAKCommands_ProvisionedSimulator(t *testing.T) {
 		setVar(t, &iakCreateTemplate, "rsa-pss")
 		setVar(t, &iakCreateForce, false)
 		_, _, err := runTPMSubcommand(runIAKCreate)
-		assert.ErrorContains(t, err, "IAK already exists - use --force to recreate")
+		assert.ErrorIs(t, err, ErrIAKAlreadyExists)
+		assert.ErrorContains(t, err, "use --force to recreate")
+	})
+
+	t.Run("create --force replaces the existing IAK on every run", func(t *testing.T) {
+		setVar(t, &iakCreateTemplate, "rsa-pss")
+		setVar(t, &iakCreateForce, true)
+		for run := 1; run <= 2; run++ {
+			stdout, _, err := runTPMSubcommand(runIAKCreate)
+			require.NoError(t, err, "run %d", run)
+			assert.Contains(t, stdout, "IAK created successfully", "run %d", run)
+		}
+
+		stdout, _, err := runTPMSubcommand(runIAKShow)
+		require.NoError(t, err)
+		assert.Contains(t, stdout, "0x81010002")
 	})
 
 	t.Run("export has no certificate store", func(t *testing.T) {

@@ -1134,6 +1134,54 @@ func (tpm *TPM2) CreateIAK(
 	return iakAttrs, nil
 }
 
+// DeleteIAK removes the Initial Attestation Key so CreateIAK can create it
+// again: the IAK certificate, wherever iak.cert-handle keeps it, and the
+// persistent object at iak.handle, evicted under the owner hierarchy with
+// the authorization CreateIAK persisted it with. A step that finds nothing
+// to remove is not an error, so DeleteIAK on a device without an IAK
+// succeeds. The IAK Policy NV Index stays: it holds the platform
+// delegation, not the key, and CreateIAK rewrites it.
+func (tpm *TPM2) DeleteIAK(ekAttrs *types.KeyAttributes) error {
+	if tpm.config.IAK == nil {
+		return ErrIAKConfigNil
+	}
+
+	var hierarchyAuth []byte
+	if ekAttrs.TPMAttributes.HierarchyAuth != nil {
+		if err := requireReadable(ekAttrs.TPMAttributes.HierarchyAuth); err != nil {
+			return err
+		}
+		hierarchyAuth = ekAttrs.TPMAttributes.HierarchyAuth.Bytes()
+	}
+
+	iakAttrs, err := tpm.IAKAttributes()
+	switch {
+	case err == nil:
+		err = tpm.evictControl(tpm2.TPMRHOwner, hierarchyAuth, tpm2.NamedHandle{
+			Handle: iakAttrs.TPMAttributes.Handle,
+			Name:   iakAttrs.TPMAttributes.Name,
+		}, iakAttrs.TPMAttributes.Handle)
+		if err != nil {
+			tpm.logger.Error("failed to evict IAK", slog.String("error", err.Error()))
+			return err
+		}
+	case !errors.Is(err, tpmRCHandle):
+		return err
+	}
+
+	// The certificate store keys the IAK certificate on the attributes still
+	// cached above, so the cache is dropped only after it.
+	err = tpm.DeleteIAKCertificate()
+	if err != nil &&
+		!errors.Is(err, ErrCertStoreNotConfigured) &&
+		!errors.Is(err, store.ErrCertNotFound) &&
+		!errors.Is(err, tpmRCHandle) {
+		return err
+	}
+	tpm.iakAttrs = nil
+	return nil
+}
+
 // assertAdminAuthorizable reports whether a template's administration is
 // authorizable at all, returning ErrAdminWithPolicyNoAuthPolicy when it sets
 // adminWithPolicy while naming no authPolicy.

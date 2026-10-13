@@ -584,6 +584,10 @@ func (m *mockXKMSTPM) CreateIAK(ekAttrs *xkmssdk.KeyAttributes, qualifyingData [
 	return m.iakAttrs, nil
 }
 
+func (m *mockXKMSTPM) DeleteIAK(ekAttrs *xkmssdk.KeyAttributes) error {
+	return nil
+}
+
 func (m *mockXKMSTPM) CreateIDevID(akAttrs *xkmssdk.KeyAttributes, ekCert *x509.Certificate, qualifyingData []byte) (*xkmssdk.KeyAttributes, *xkmssdk.TCG_CSR_IDEVID, error) {
 	m.receivedQualifyingData = qualifyingData
 	if m.idevidError != nil {

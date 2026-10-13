@@ -281,6 +281,9 @@ func (m *mockTPM) CreateSecretKey(_ *xkms.KeyAttributes, _ xkms.TPMKeyBackend) e
 func (m *mockTPM) CreateIAK(_ *xkms.KeyAttributes, _ []byte) (*xkms.KeyAttributes, error) {
 	return m.createIAKResult, m.createIAKErr
 }
+func (m *mockTPM) DeleteIAK(_ *xkms.KeyAttributes) error {
+	return nil
+}
 func (m *mockTPM) CreateIDevID(_ *xkms.KeyAttributes, _ *x509.Certificate, _ []byte) (*xkms.KeyAttributes, *xkms.TCG_CSR_IDEVID, error) {
 	return m.createIDevIDResult, nil, m.createIDevIDErr
 }

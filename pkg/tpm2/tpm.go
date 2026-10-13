@@ -93,6 +93,7 @@ type TrustedPlatformModule interface {
 		keyAttrs *types.KeyAttributes,
 		backend store.KeyBackend) error
 	CreateIAK(ekAttrs *types.KeyAttributes, qualifyingData []byte) (*types.KeyAttributes, error)
+	DeleteIAK(ekAttrs *types.KeyAttributes) error
 	CreateIDevID(akAttrs *types.KeyAttributes, ekCert *x509.Certificate, qualifyingData []byte) (*types.KeyAttributes, *TCG_CSR_IDEVID, error)
 	CreatePlatformPolicy() error
 	CreateRSA(

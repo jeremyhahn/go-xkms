@@ -297,6 +297,65 @@ func TestIAK_PublicKeyMatchesPersistedKey(t *testing.T) {
 	assert.NotEqual(t, ekRSA.N, iakRSA.N, "the IAK must not be the EK")
 }
 
+// TestDeleteIAK_FreesTheHandleForCreateIAK proves DeleteIAK leaves the IAK
+// handle empty and the cache cold, so CreateIAK can persist a new IAK there:
+// before it existed, CreateIAK over an existing IAK failed TPM2_EvictControl
+// with TPM_RC_NV_DEFINED (#704). A second delete-and-create cycle must behave
+// like the first.
+func TestDeleteIAK_FreesTheHandleForCreateIAK(t *testing.T) {
+	h := newSimHarness(t, nil)
+
+	ekAttrs, err := h.TPM.EKAttributes()
+	require.NoError(t, err)
+	iakHandle := tpm2.TPMHandle(h.TPM.config.IAK.Handle)
+
+	for cycle := 1; cycle <= 2; cycle++ {
+		require.NoError(t, h.TPM.DeleteIAK(ekAttrs), "cycle %d", cycle)
+		assert.Nil(t, h.TPM.iakAttrs, "DeleteIAK must drop the cached IAK")
+		_, _, err = h.TPM.ReadHandle(iakHandle)
+		require.Error(t, err, "the IAK handle must be empty after DeleteIAK")
+
+		created, err := h.TPM.CreateIAK(ekAttrs, nil)
+		require.NoError(t, err, "cycle %d", cycle)
+		assert.Equal(t, iakHandle, created.TPMAttributes.Handle)
+	}
+
+	// Without an IAK there is nothing to remove, which is not an error.
+	require.NoError(t, h.TPM.DeleteIAK(ekAttrs))
+	require.NoError(t, h.TPM.DeleteIAK(ekAttrs))
+}
+
+// TestDeleteIAK_ErrorPaths covers the refusals: no IAK configuration, and an
+// owner authorization that does not match the TPM's, which must leave the
+// IAK in place.
+func TestDeleteIAK_ErrorPaths(t *testing.T) {
+	h := newSimHarness(t, nil)
+
+	ekAttrs, err := h.TPM.EKAttributes()
+	require.NoError(t, err)
+
+	t.Run("nil IAK config", func(t *testing.T) {
+		saved := h.TPM.config.IAK
+		h.TPM.config.IAK = nil
+		t.Cleanup(func() { h.TPM.config.IAK = saved })
+
+		assert.ErrorIs(t, h.TPM.DeleteIAK(ekAttrs), ErrIAKConfigNil)
+	})
+
+	t.Run("wrong owner authorization", func(t *testing.T) {
+		wrong := *ekAttrs
+		wrongTPM := *ekAttrs.TPMAttributes
+		wrongAuth, err := types.NewPassword([]byte("not-the-owner-auth"))
+		require.NoError(t, err)
+		wrongTPM.HierarchyAuth = wrongAuth
+		wrong.TPMAttributes = &wrongTPM
+
+		require.Error(t, h.TPM.DeleteIAK(&wrong))
+		_, _, err = h.TPM.ReadHandle(tpm2.TPMHandle(h.TPM.config.IAK.Handle))
+		assert.NoError(t, err, "a refused DeleteIAK must leave the IAK persisted")
+	})
+}
+
 // TestIAK_CorruptCachedPublicKeyBytes_ReturnsParseError proves a corrupted
 // cache is reported rather than returned as a key. The accessor parses PKIX
 // bytes on every call, so garbage in the cache must surface as the typed parse

@@ -269,6 +269,16 @@ substitutes.
   recognise `KeyTypeLAK`: the LAK's own authorization is ordinary
   password/policy auth, never the DevID admin-policy session an IAK/IDevID
   target requires.
+- **`DeleteIAK` is what makes replacing an IAK possible.** `CreateIAK`
+  persists to `IAKConfig.Handle` with `TPM2_EvictControl`, which fails
+  `TPM_RC_NV_DEFINED` while that handle is occupied. `DeleteIAK`
+  (`key.go`) first evicts the persisted IAK under the Owner hierarchy, using
+  the EK attributes' hierarchy authorization. It then removes the IAK
+  certificate from the certificate store or `IAKConfig.CertHandle` and drops
+  the cached attributes. A step that finds nothing to remove is not an error.
+  The IAK Policy NV Index stays, because `CreateIAK` rewrites it.
+  `xkey tpm iak create --force` calls it before `CreateIAK`. Without
+  `--force`, an existing IAK is refused with `ErrIAKAlreadyExists`.
 - **`CertifyKey`'s TPM2_Certify mechanics are shared by every signer, not
   duplicated per key.** `certifyKeyAs` (`attestation.go:94`) takes the
   signing key's attributes as a parameter; `CertifyKey` (signer: IAK),

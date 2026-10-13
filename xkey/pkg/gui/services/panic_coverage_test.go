@@ -80,6 +80,9 @@ func (m *allPanicTPM) CreateSecretKey(_ *xkms.KeyAttributes, _ xkms.TPMKeyBacken
 func (m *allPanicTPM) CreateIAK(_ *xkms.KeyAttributes, _ []byte) (*xkms.KeyAttributes, error) {
 	panic("allPanicTPM: CreateIAK")
 }
+func (m *allPanicTPM) DeleteIAK(_ *xkms.KeyAttributes) error {
+	panic("allPanicTPM: DeleteIAK")
+}
 func (m *allPanicTPM) CreateIDevID(_ *xkms.KeyAttributes, _ *x509.Certificate, _ []byte) (*xkms.KeyAttributes, *xkms.TCG_CSR_IDEVID, error) {
 	panic("allPanicTPM: CreateIDevID")
 }

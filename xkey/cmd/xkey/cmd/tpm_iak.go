@@ -39,6 +39,10 @@ type IAKInfo struct {
 	CertNotAfter       string `json:"certificate_not_after,omitempty"`
 }
 
+// ErrIAKAlreadyExists is returned by 'tpm iak create' without --force when
+// the device already has an IAK.
+var ErrIAKAlreadyExists = errors.New("tpm: IAK already exists")
+
 var (
 	iakExportOutput   string
 	iakCreateForce    bool
@@ -289,7 +293,7 @@ func runIAKCreate(cmd *cobra.Command, args []string) (err error) {
 	// Check if IAK already exists
 	if !iakCreateForce {
 		if _, err := tpm.IAKAttributes(); err == nil {
-			return &MessageError{Msg: "IAK already exists - use --force to recreate"}
+			return &DetailError{Err: ErrIAKAlreadyExists, Detail: " - use --force to recreate"}
 		}
 	}
 
@@ -297,6 +301,14 @@ func runIAKCreate(cmd *cobra.Command, args []string) (err error) {
 	ekAttrs, err := tpm.EKAttributes()
 	if err != nil {
 		return &WrappedError{Msg: "EK not found - run 'tpm provision' first", Err: err}
+	}
+
+	// --force replaces the IAK: the persistent handle has to be free before
+	// CreateIAK can persist the new key there.
+	if iakCreateForce {
+		if err := tpm.DeleteIAK(ekAttrs); err != nil {
+			return &WrappedError{Msg: "failed to remove the existing IAK", Err: err}
+		}
 	}
 
 	// Create IAK
