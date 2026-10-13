@@ -26,10 +26,10 @@ import (
 	"encoding/json"
 	"fmt"
 	"log/slog"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"os"
-	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -78,8 +78,8 @@ func BenchmarkNewNonceHandler(b *testing.B) {
 
 		service.NewNonceHandler(w, req)
 
-		if w.Code != http.StatusNoContent {
-			b.Fatalf("expected status 204, got %d", w.Code)
+		if w.Code != http.StatusOK {
+			b.Fatalf("expected status 200, got %d", w.Code)
 		}
 	}
 }
@@ -94,7 +94,7 @@ func BenchmarkNewAccountHandler(b *testing.B) {
 
 	for i := 0; i < b.N; i++ {
 		key := generateBenchmarkTestKey(b)
-		req := createBenchmarkJWSRequest(b, service, key, "/acme/new-account", map[string]interface{}{
+		req := createBenchmarkJWSRequest(b, service, key, service.baseRESTURI+"/acme/new-account", map[string]interface{}{
 			"termsOfServiceAgreed": true,
 			"contact":              []string{"mailto:benchmark@example.com"},
 		}, false, 0)
@@ -129,7 +129,7 @@ func BenchmarkNewOrderHandler(b *testing.B) {
 	b.ResetTimer()
 
 	for i := 0; i < b.N; i++ {
-		req := createBenchmarkJWSRequest(b, service, accountKey, "/acme/new-order", orderPayload, true, account.ID)
+		req := createBenchmarkJWSRequest(b, service, accountKey, service.baseRESTURI+"/acme/new-order", orderPayload, true, account.ID)
 		w := httptest.NewRecorder()
 
 		service.NewOrderHandler(w, req)
@@ -147,13 +147,8 @@ func BenchmarkAuthorizationHandler(b *testing.B) {
 
 	// Setup: Create account and order
 	account := createBenchmarkAccount(b, service, accountKey)
-	order := createBenchmarkOrder(b, service, account.ID)
-
-	if len(order.Authorizations) == 0 {
-		b.Fatal("order has no authorizations")
-	}
-
-	authID := extractBenchmarkIDFromURL(order.Authorizations[0])
+	_, authz := createBenchmarkOrder(b, service, account.ID, common.StatusPending)
+	authID := authz.ID
 
 	b.ReportAllocs()
 	b.ResetTimer()
@@ -177,22 +172,11 @@ func BenchmarkChallengeHandler(b *testing.B) {
 	service, accountKey, cleanup := setupBenchmarkService(b)
 	defer cleanup()
 
-	// Setup: Create account, order, and get challenge
+	// Setup: Create account and an order whose challenge is already valid,
+	// so each request reads the challenge without re-running validation.
 	account := createBenchmarkAccount(b, service, accountKey)
-	order := createBenchmarkOrder(b, service, account.ID)
-
-	if len(order.Authorizations) == 0 {
-		b.Fatal("order has no authorizations")
-	}
-
-	authID := extractBenchmarkIDFromURL(order.Authorizations[0])
-	authorization := getBenchmarkAuthorization(b, service, accountKey, account.ID, authID)
-
-	if len(authorization.Challenges) == 0 {
-		b.Fatal("authorization has no challenges")
-	}
-
-	challengeID := extractBenchmarkIDFromURL(authorization.Challenges[0].URL)
+	_, authz := createBenchmarkOrder(b, service, account.ID, common.StatusValid)
+	challengeID := authz.Challenges[0].ID
 
 	b.ReportAllocs()
 	b.ResetTimer()
@@ -221,7 +205,7 @@ func BenchmarkOrdersListHandler(b *testing.B) {
 
 	// Pre-create 10 orders
 	for i := 0; i < 10; i++ {
-		createBenchmarkOrder(b, service, account.ID)
+		createBenchmarkOrder(b, service, account.ID, common.StatusPending)
 	}
 
 	b.ReportAllocs()
@@ -276,7 +260,7 @@ func BenchmarkNewAccountHandler_Parallel(b *testing.B) {
 	b.RunParallel(func(pb *testing.PB) {
 		for pb.Next() {
 			key := generateBenchmarkTestKey(b)
-			req := createBenchmarkJWSRequest(b, service, key, "/acme/new-account", map[string]interface{}{
+			req := createBenchmarkJWSRequest(b, service, key, service.baseRESTURI+"/acme/new-account", map[string]interface{}{
 				"termsOfServiceAgreed": true,
 				"contact":              []string{"mailto:benchmark@example.com"},
 			}, false, 0)
@@ -313,7 +297,7 @@ func BenchmarkNewOrderHandler_Parallel(b *testing.B) {
 
 	b.RunParallel(func(pb *testing.PB) {
 		for pb.Next() {
-			req := createBenchmarkJWSRequest(b, service, accountKey, "/acme/new-order", orderPayload, true, account.ID)
+			req := createBenchmarkJWSRequest(b, service, accountKey, service.baseRESTURI+"/acme/new-order", orderPayload, true, account.ID)
 			w := httptest.NewRecorder()
 
 			service.NewOrderHandler(w, req)
@@ -350,11 +334,20 @@ func setupBenchmarkService(b *testing.B) (*RestService, *TestKey, func()) {
 		Level: slog.LevelError,
 	}))
 
+	// New orders offer one challenge per registered type, so register the
+	// types the unit tests do; the benchmarks never run validation.
+	acceptChallenge := func(*net.Resolver, common.CertificateAuthority, string, string, string, string) error {
+		return nil
+	}
+
 	params := &Params{
-		BaseRESTURI:    "https://acme.benchmark.example.com",
-		CA:             &MockCA{},
-		CAAIdentities:  []string{"acme.benchmark.example.com"},
-		ChallengeMap:   make(map[string]common.ChallengeVerifierFunc),
+		BaseRESTURI:   "https://acme.benchmark.example.com",
+		CA:            &MockCA{},
+		CAAIdentities: []string{"acme.benchmark.example.com"},
+		ChallengeMap: map[string]common.ChallengeVerifierFunc{
+			"http-01": acceptChallenge,
+			"dns-01":  acceptChallenge,
+		},
 		Logger:         logger,
 		StorageFactory: factory,
 		TermsOfService: "https://acme.benchmark.example.com/tos",
@@ -510,8 +503,9 @@ func createBenchmarkAccount(b *testing.B, service *RestService, key *TestKey) *e
 	return account
 }
 
-// createBenchmarkOrder creates a test order for benchmarking
-func createBenchmarkOrder(b *testing.B, service *RestService, accountID uint64) *entities.ACMEOrder {
+// createBenchmarkOrder creates a test order for benchmarking with one
+// authorization holding an http-01 challenge in challengeStatus.
+func createBenchmarkOrder(b *testing.B, service *RestService, accountID uint64, challengeStatus string) (*entities.ACMEOrder, *entities.ACMEAuthorization) {
 	b.Helper()
 
 	ctx := context.Background()
@@ -526,67 +520,82 @@ func createBenchmarkOrder(b *testing.B, service *RestService, accountID uint64) 
 		b.Fatalf("failed to generate order ID: %v", err)
 	}
 
+	identifier := entities.ACMEIdentifier{Type: common.AuthzTypeDNS, Value: "benchmark.example.com"}
 	order := &entities.ACMEOrder{
-		ID:     orderID,
-		Status: common.StatusPending,
-		Identifiers: []entities.ACMEIdentifier{
-			{Type: "dns", Value: "benchmark.example.com"},
-		},
-		Expires:        time.Now().Add(24 * time.Hour).Format(time.RFC3339),
-		Authorizations: []string{fmt.Sprintf("%s/acme/authz/1", service.baseRESTURI)},
-		Finalize:       fmt.Sprintf("%s/acme/orders/%d/finalize", service.baseRESTURI, orderID),
-		AccountID:      accountID,
-		URL:            fmt.Sprintf("%s/acme/orders/%d", service.baseRESTURI, orderID),
+		ID:          orderID,
+		Status:      common.StatusPending,
+		Identifiers: []entities.ACMEIdentifier{identifier},
+		Expires:     time.Now().Add(24 * time.Hour).Format(time.RFC3339),
+		Finalize:    fmt.Sprintf("%s/acme/orders/%d/finalize", service.baseRESTURI, orderID),
+		AccountID:   accountID,
+		URL:         fmt.Sprintf("%s/acme/orders/%d", service.baseRESTURI, orderID),
 	}
+
+	authz := createBenchmarkAuthorization(b, service, order, identifier, challengeStatus)
+	order.Authorizations = []string{authz.URL}
 
 	if err := orderDAO.Save(ctx, order); err != nil {
 		b.Fatalf("failed to save order: %v", err)
 	}
 
-	return order
+	return order, authz
 }
 
-// getBenchmarkAuthorization retrieves an authorization for benchmarking
-func getBenchmarkAuthorization(
+// createBenchmarkAuthorization saves an authorization for order with a
+// single http-01 challenge in challengeStatus.
+func createBenchmarkAuthorization(
 	b *testing.B,
 	service *RestService,
-	key *TestKey,
-	accountID uint64,
-	authID uint64,
+	order *entities.ACMEOrder,
+	identifier entities.ACMEIdentifier,
+	challengeStatus string,
 ) *entities.ACMEAuthorization {
 	b.Helper()
 
-	url := fmt.Sprintf("%s/acme/authz/%d", service.baseRESTURI, authID)
-	req := createBenchmarkJWSRequest(b, service, key, url, nil, true, accountID)
-	req = mux.SetURLVars(req, map[string]string{"id": fmt.Sprintf("%d", authID)})
-
-	w := httptest.NewRecorder()
-	service.AuthorizationHandler(w, req)
-
-	if w.Code != http.StatusOK {
-		b.Fatalf("failed to get authorization: status %d", w.Code)
-	}
-
-	var auth entities.ACMEAuthorization
-	if err := json.NewDecoder(w.Body).Decode(&auth); err != nil {
-		b.Fatalf("failed to decode authorization: %v", err)
-	}
-
-	return &auth
-}
-
-// extractBenchmarkIDFromURL extracts an ID from an ACME URL
-func extractBenchmarkIDFromURL(url string) uint64 {
-	parts := strings.Split(url, "/")
-	if len(parts) == 0 {
-		return 0
-	}
-	idStr := parts[len(parts)-1]
-	id, err := strconv.ParseUint(idStr, 10, 64)
+	authzDAO, err := service.storageFactory.AuthorizationDAO(order.AccountID)
 	if err != nil {
-		return 0
+		b.Fatalf("failed to get authorization DAO: %v", err)
 	}
-	return id
+
+	authzID, err := GenerateID()
+	if err != nil {
+		b.Fatalf("failed to generate authorization ID: %v", err)
+	}
+
+	challengeID, err := GenerateID()
+	if err != nil {
+		b.Fatalf("failed to generate challenge ID: %v", err)
+	}
+
+	challenge := entities.ACMEChallenge{
+		ID:              challengeID,
+		Type:            "http-01",
+		Status:          challengeStatus,
+		Token:           fmt.Sprintf("benchmark-token-%d", challengeID),
+		AccountID:       order.AccountID,
+		AuthorizationID: authzID,
+		URL:             fmt.Sprintf("%s/acme/challenge/%d", service.baseRESTURI, challengeID),
+	}
+	if challengeStatus == common.StatusValid {
+		challenge.Validated = time.Now().Format(time.RFC3339)
+	}
+
+	authz := &entities.ACMEAuthorization{
+		ID:         authzID,
+		Identifier: identifier,
+		Status:     common.StatusPending,
+		Expires:    time.Now().Add(24 * time.Hour).Format(time.RFC3339),
+		AccountID:  order.AccountID,
+		OrderID:    order.ID,
+		Challenges: []entities.ACMEChallenge{challenge},
+		URL:        fmt.Sprintf("%s/acme/authz/%d", service.baseRESTURI, authzID),
+	}
+
+	if err := authzDAO.Save(context.Background(), authz); err != nil {
+		b.Fatalf("failed to save authorization: %v", err)
+	}
+
+	return authz
 }
 
 // compile-time check to silence unused warnings for helper functions

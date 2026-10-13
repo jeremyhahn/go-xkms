@@ -26,7 +26,7 @@ import (
 // wireKeyVersionStore installs an in-memory key-version store on the
 // initialized xkms service singleton, as xkmsd's composition does, so key
 // rotation can record versions.
-func wireKeyVersionStore(t *testing.T) {
+func wireKeyVersionStore(t testing.TB) {
 	t.Helper()
 	svc, err := xkms.Get()
 	require.NoError(t, err)

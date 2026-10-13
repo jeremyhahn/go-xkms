@@ -38,7 +38,7 @@ import (
 // AllowPlaintextKeys is set to true so that tests focus on key-generation
 // mechanics without needing to supply a password for every key. Security
 // policy tests (fail-closed behavior) use dedicated backends below.
-func createTestBackend(t *testing.T) (*PKCS8Backend, storage.Backend) {
+func createTestBackend(t testing.TB) (*PKCS8Backend, storage.Backend) {
 	t.Helper()
 
 	keyStorage := storage.New()
@@ -1278,9 +1278,7 @@ func TestInterfaceCompliance(t *testing.T) {
 
 // BenchmarkGenerateRSA benchmarks RSA key generation
 func BenchmarkGenerateRSA(b *testing.B) {
-	keyStorage := storage.New()
-	config := &Config{KeyStorage: keyStorage}
-	be, _ := NewBackend(config)
+	be, _ := createTestBackend(b)
 	defer func() { _ = be.Close() }()
 
 	b.ResetTimer()
@@ -1296,9 +1294,7 @@ func BenchmarkGenerateRSA(b *testing.B) {
 
 // BenchmarkGenerateECDSA benchmarks ECDSA key generation
 func BenchmarkGenerateECDSA(b *testing.B) {
-	keyStorage := storage.New()
-	config := &Config{KeyStorage: keyStorage}
-	be, _ := NewBackend(config)
+	be, _ := createTestBackend(b)
 	defer func() { _ = be.Close() }()
 
 	b.ResetTimer()
@@ -1314,9 +1310,7 @@ func BenchmarkGenerateECDSA(b *testing.B) {
 
 // BenchmarkGetKey benchmarks key retrieval
 func BenchmarkGetKey(b *testing.B) {
-	keyStorage := storage.New()
-	config := &Config{KeyStorage: keyStorage}
-	be, _ := NewBackend(config)
+	be, _ := createTestBackend(b)
 	defer func() { _ = be.Close() }()
 
 	attrs := createRSAAttrs("benchmark.com", 2048)
@@ -1337,9 +1331,7 @@ func BenchmarkGetKey(b *testing.B) {
 
 // BenchmarkSign benchmarks signing operations
 func BenchmarkSign(b *testing.B) {
-	keyStorage := storage.New()
-	config := &Config{KeyStorage: keyStorage}
-	be, _ := NewBackend(config)
+	be, _ := createTestBackend(b)
 	defer func() { _ = be.Close() }()
 
 	attrs := createRSAAttrs("benchmark.com", 2048)

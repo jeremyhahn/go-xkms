@@ -56,6 +56,9 @@ import (
 // production, and reaching that here would need a real external qrdb
 // cluster to dial.
 func TestFinalizeAdminModule_NilQRDBClientRefused(t *testing.T) {
+	// adminRouterState is package-level; clear the router an earlier run()
+	// published so the check below observes only this call.
+	adminRouterState.Store(nil)
 	srv := &server.Server{}
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
 

@@ -31,6 +31,7 @@ import (
 // createBenchmarkHandler creates a handler context for benchmarking
 func createBenchmarkHandler(b *testing.B) *HandlerContext {
 	b.Helper()
+	xkms.Reset()
 
 	keyStorage := storage.New()
 	config := &software.Config{
@@ -43,7 +44,8 @@ func createBenchmarkHandler(b *testing.B) *HandlerContext {
 	}
 
 	ks, err := xkms.New(&xkms.BackendConfig{
-		Backend: backend,
+		Backend:     backend,
+		CertStorage: storage.New(),
 	})
 	if err != nil {
 		b.Fatalf("Failed to create keystore: %v", err)
@@ -59,8 +61,16 @@ func createBenchmarkHandler(b *testing.B) *HandlerContext {
 	if err != nil {
 		b.Fatalf("Failed to initialize xkms: %v", err)
 	}
+	wireKeyVersionStore(b)
+	b.Cleanup(xkms.Reset)
 
-	return NewHandlerContext("v1.0.0")
+	svc, err := xkms.Get()
+	if err != nil {
+		b.Fatalf("Failed to get xkms service: %v", err)
+	}
+	handler := NewHandlerContext("v1.0.0")
+	handler.SetXKMSService(svc)
+	return handler
 }
 
 // BenchmarkREST_HealthHandler benchmarks health check endpoint

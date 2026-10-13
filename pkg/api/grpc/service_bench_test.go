@@ -27,6 +27,7 @@ import (
 // createBenchmarkService creates a gRPC service for benchmarking
 func createBenchmarkService(b *testing.B) *Service {
 	b.Helper()
+	xkms.Reset()
 
 	keyStorage := storage.New()
 	config := &software.Config{
@@ -39,7 +40,8 @@ func createBenchmarkService(b *testing.B) *Service {
 	}
 
 	ks, err := xkms.New(&xkms.BackendConfig{
-		Backend: backend,
+		Backend:     backend,
+		CertStorage: storage.New(),
 	})
 	if err != nil {
 		b.Fatalf("Failed to create keystore: %v", err)
@@ -60,6 +62,8 @@ func createBenchmarkService(b *testing.B) *Service {
 	if err != nil {
 		b.Fatalf("Failed to get xkms service: %v", err)
 	}
+	wireKeyVersionStore(b)
+	b.Cleanup(xkms.Reset)
 	return NewService(nil, nil, svc)
 }
 

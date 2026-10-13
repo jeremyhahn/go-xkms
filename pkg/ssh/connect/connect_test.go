@@ -74,6 +74,24 @@ func contains(args []string, want string) bool {
 	return false
 }
 
+// awaitReaper makes the test wait, at cleanup, for the background reaper a
+// bounded teardown of sess may hand the work directory to. A reaper that
+// outlives its test reads the removeAll seam while a later test swaps it.
+func awaitReaper(t *testing.T, sess *Session) {
+	t.Helper()
+	t.Cleanup(func() {
+		done := sess.backgroundReap()
+		if done == nil {
+			return
+		}
+		select {
+		case <-done:
+		case <-time.After(syncDrainTimeout + 5*time.Second):
+			t.Error("the background reaper was still running when the test ended")
+		}
+	})
+}
+
 func TestStart_ArgsEnvAndSeed(t *testing.T) {
 	ctx := context.Background()
 	store, _ := known_hosts.NewDAOStore(testutil.NewMemoryDAOFactory())
@@ -160,6 +178,10 @@ func TestStart_SyncBackImportsNewHost(t *testing.T) {
 	}
 	if _, gerr := store.Get(ctx, scope.User, "alice", "fresh.example.com"); gerr != nil {
 		t.Fatalf("host not pinned after sync: %v", gerr)
+	}
+	// An unbounded teardown removes the work directory itself.
+	if sess.backgroundReap() != nil {
+		t.Fatal("an unbounded SyncAndStop handed teardown to a background reaper")
 	}
 }
 
@@ -395,6 +417,7 @@ func TestSession_StopIsNotHeldHostageByAStalledSync(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Start: %v", err)
 	}
+	awaitReaper(t, sess)
 	sockPath := strings.TrimPrefix(sess.Env[0], "SSH_AUTH_SOCK=")
 
 	// Give the import something to do: a host the native client "accepted".
@@ -435,6 +458,11 @@ func TestSession_StopIsNotHeldHostageByAStalledSync(t *testing.T) {
 	if _, serr := os.Stat(sockPath); !errors.Is(serr, os.ErrNotExist) {
 		t.Fatalf("the agent socket must be gone once Stop returns: %v", serr)
 	}
+	// The spent budget handed the work directory to the background reaper,
+	// and its lifetime is observable so the cleanup above can wait for it.
+	if sess.backgroundReap() == nil {
+		t.Fatal("a bounded Stop with a stalled import did not start the background reaper")
+	}
 }
 
 // TestSession_SyncAndStopHonoursItsBound covers the teardown path xkey actually
@@ -461,6 +489,7 @@ func TestSession_SyncAndStopHonoursItsBound(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Start: %v", err)
 	}
+	awaitReaper(t, sess)
 	sockPath := strings.TrimPrefix(sess.Env[0], "SSH_AUTH_SOCK=")
 
 	conn, derr := net.Dial("unix", sockPath)
@@ -543,6 +572,7 @@ func TestSession_SyncAndStopStopsTheAgentDespiteAStalledStore(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Start: %v", err)
 	}
+	awaitReaper(t, sess)
 	sockPath := strings.TrimPrefix(sess.Env[0], "SSH_AUTH_SOCK=")
 
 	// Give the import a host to look up, then wedge the store.
@@ -602,6 +632,7 @@ func TestSession_SyncAndStopKillsTheAgentBeforeWaiting(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Start: %v", err)
 	}
+	awaitReaper(t, sess)
 	sockPath := strings.TrimPrefix(sess.Env[0], "SSH_AUTH_SOCK=")
 
 	line, _ := known_hosts.Emit(known_hosts.PinFromPublicKey(
@@ -620,7 +651,11 @@ func TestSession_SyncAndStopKillsTheAgentBeforeWaiting(t *testing.T) {
 	// would still be answering for all of it.
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
-	go func() { _, _, _ = sess.SyncAndStop(ctx) }()
+	// The test returns while the teardown is still running; wait for it at
+	// cleanup, after the deferred release has unwedged the store.
+	teardown := make(chan struct{})
+	t.Cleanup(func() { <-teardown })
+	go func() { defer close(teardown); _, _, _ = sess.SyncAndStop(ctx) }()
 
 	// The store is wedged, so the import is definitely still running.
 	select {
@@ -676,6 +711,7 @@ func TestSession_SyncAndStopReturnsNearTheDeadline(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Start: %v", err)
 	}
+	awaitReaper(t, sess)
 
 	line, _ := known_hosts.Emit(known_hosts.PinFromPublicKey(
 		"accepted.example.com", scope.User, "alice", testHostPub(t), known_hosts.SourceFirstContact))
@@ -733,6 +769,7 @@ func TestSession_SyncAndStopPinsHostsDespiteAWedgedSigner(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Start: %v", err)
 	}
+	awaitReaper(t, sess)
 	sockPath := strings.TrimPrefix(sess.Env[0], "SSH_AUTH_SOCK=")
 
 	// ssh "accepts" a host on first contact.
@@ -802,6 +839,7 @@ func TestSession_RepeatedStopKeepsReportingTheAbandonment(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Start: %v", err)
 	}
+	awaitReaper(t, sess)
 	sockPath := strings.TrimPrefix(sess.Env[0], "SSH_AUTH_SOCK=")
 
 	conn, derr := net.Dial("unix", sockPath)
@@ -924,6 +962,7 @@ func TestSession_RepeatedReapDoesNotLeakWaiters(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Start: %v", err)
 	}
+	awaitReaper(t, sess)
 
 	line, _ := known_hosts.Emit(known_hosts.PinFromPublicKey(
 		"accepted.example.com", scope.User, "alice", testHostPub(t), known_hosts.SourceFirstContact))
@@ -988,6 +1027,7 @@ func TestSession_SyncIsSingleFlight(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Start: %v", err)
 	}
+	awaitReaper(t, sess)
 
 	line, _ := known_hosts.Emit(known_hosts.PinFromPublicKey(
 		"accepted.example.com", scope.User, "alice", testHostPub(t), known_hosts.SourceFirstContact))

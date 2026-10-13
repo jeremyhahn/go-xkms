@@ -22,6 +22,7 @@ import (
 	"os/signal"
 	"path/filepath"
 	"strconv"
+	"sync/atomic"
 	"syscall"
 	"time"
 
@@ -93,6 +94,11 @@ func runProcess() int {
 // or starts and serves the daemon until shutdown. It performs no process-wide
 // teardown of its own -- that is runProcess's job -- so it is safe for tests
 // to call directly, including more than once in the same test binary.
+// liveReloaders counts the config-reload goroutines that are running. run
+// starts one and must stop it before returning; its lifecycle test reads the
+// count to prove the goroutine does not outlive run.
+var liveReloaders atomic.Int32
+
 func run() int {
 	// Check for subcommands before parsing global flags.
 	if len(os.Args) > 1 {
@@ -101,15 +107,19 @@ func run() int {
 		}
 	}
 
-	// Parse command-line flags
-	configPath := flag.String("config", "/etc/xkms/xkmsd.yaml", "Path to configuration file")
-	configShort := flag.String("c", "", "Path to configuration file (short)")
-	daemonMode := flag.Bool("daemon", false, "Run as daemon")
-	daemonShort := flag.Bool("d", false, "Run as daemon (short)")
-	pidFile := flag.String("pid-file", "", "Path to PID file")
-	showVersion := flag.Bool("version", false, "Show version information")
-	srvFlags := registerServerFlags(flag.CommandLine)
-	flag.Parse()
+	// Parse command-line flags. The flag set is captured once: the reload
+	// goroutine reads it later, and must see the set run parsed.
+	fs := flag.CommandLine
+	configPath := fs.String("config", "/etc/xkms/xkmsd.yaml", "Path to configuration file")
+	configShort := fs.String("c", "", "Path to configuration file (short)")
+	daemonMode := fs.Bool("daemon", false, "Run as daemon")
+	daemonShort := fs.Bool("d", false, "Run as daemon (short)")
+	pidFile := fs.String("pid-file", "", "Path to PID file")
+	showVersion := fs.Bool("version", false, "Show version information")
+	srvFlags := registerServerFlags(fs)
+	if err := fs.Parse(os.Args[1:]); err != nil {
+		return 2
+	}
 
 	// Handle short flag aliases
 	if *configShort != "" {
@@ -153,7 +163,7 @@ func run() int {
 	// Flags are the top of the precedence order (flags > env > file >
 	// defaults): config.Load resolved the lower three, and only a flag the
 	// operator actually set is written over that result.
-	srvFlags.apply(cfg, flag.CommandLine)
+	srvFlags.apply(cfg, fs)
 
 	logger.Info("Configuration loaded successfully",
 		slog.Any("backends", cfg.GetEnabledBackends()),
@@ -214,29 +224,44 @@ func run() int {
 	// Setup signal handler for graceful shutdown and config reload
 	shutdownCtx, reloadCh := setupSignalHandler(logger)
 
-	// Create a channel to track config reload requests
-	configReloadCh := make(chan struct{}, 1)
-
-	// Handle config reload signals in a separate goroutine
-	go func() {
-		for range reloadCh {
-			logger.Info("Received SIGHUP, reloading configuration...")
-			configReloadCh <- struct{}{}
+	// Reload the configuration on SIGHUP until run returns; stopping the
+	// reloader waits out a reload in progress.
+	stopReloader := startConfigReloader(reloadCh, func() {
+		logger.Info("Received SIGHUP, reloading configuration...")
+		if err := reloadConfiguration(srv, *configPath, srvFlags, fs, logger); err != nil {
+			logger.Error("Failed to reload configuration", slog.Any("error", err))
+		} else {
+			logger.Info("Configuration reloaded successfully")
 		}
-	}()
+	})
+	defer stopReloader()
 
-	// Handle config reload
+	return serve(shutdownCtx, srv, cfg, logger)
+}
+
+// startConfigReloader calls reload once for each signal received on reloadCh
+// until the returned stop function is called. stop waits for the goroutine to
+// exit, so a reload never outlives the caller that stopped it.
+func startConfigReloader(reloadCh <-chan os.Signal, reload func()) (stop func()) {
+	quit := make(chan struct{})
+	done := make(chan struct{})
+	liveReloaders.Add(1)
 	go func() {
-		for range configReloadCh {
-			if err := reloadConfiguration(srv, *configPath, srvFlags, flag.CommandLine, logger); err != nil {
-				logger.Error("Failed to reload configuration", slog.Any("error", err))
-			} else {
-				logger.Info("Configuration reloaded successfully")
+		defer close(done)
+		defer liveReloaders.Add(-1)
+		for {
+			select {
+			case <-reloadCh:
+				reload()
+			case <-quit:
+				return
 			}
 		}
 	}()
-
-	return serve(shutdownCtx, srv, cfg, logger)
+	return func() {
+		close(quit)
+		<-done
+	}
 }
 
 // serve starts srv (and its optional ACME companion) and blocks until

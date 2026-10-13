@@ -158,4 +158,48 @@ func TestRun_FullLifecycleGracefulShutdown(t *testing.T) {
 	if h := adminRouterState.Load(); h == nil {
 		t.Fatal("run() returned before finalizeAdminModule published adminRouterState")
 	}
+
+	// The config-reload goroutine reads the flag set at reload time, so one
+	// that outlives run() races every later test that swaps flag.CommandLine.
+	if n := liveReloaders.Load(); n != 0 {
+		t.Fatalf("%d config-reload goroutine(s) still running after run() returned, want 0", n)
+	}
+}
+
+// TestStartConfigReloader_ReloadsOnEachSignal pins that every signal on the
+// reload channel runs one reload while the reloader is live.
+func TestStartConfigReloader_ReloadsOnEachSignal(t *testing.T) {
+	reloadCh := make(chan os.Signal)
+	reloaded := make(chan struct{})
+	stop := startConfigReloader(reloadCh, func() { reloaded <- struct{}{} })
+	defer stop()
+
+	for i := 0; i < 2; i++ {
+		reloadCh <- syscall.SIGHUP
+		select {
+		case <-reloaded:
+		case <-time.After(5 * time.Second):
+			t.Fatalf("signal %d did not trigger a reload", i+1)
+		}
+	}
+}
+
+// TestStartConfigReloader_StopWaitsForExit pins that stop returns only after
+// the goroutine has exited, so nothing reloads once stop has returned.
+func TestStartConfigReloader_StopWaitsForExit(t *testing.T) {
+	before := liveReloaders.Load()
+	reloadCh := make(chan os.Signal, 1)
+	stop := startConfigReloader(reloadCh, func() {
+		t.Error("reload ran after stop returned")
+	})
+	if got := liveReloaders.Load(); got != before+1 {
+		t.Fatalf("liveReloaders = %d while running, want %d", got, before+1)
+	}
+
+	stop()
+	if got := liveReloaders.Load(); got != before {
+		t.Fatalf("liveReloaders = %d after stop, want %d", got, before)
+	}
+	// A signal that arrives after stop has nobody to deliver it to.
+	reloadCh <- syscall.SIGHUP
 }

@@ -298,6 +298,7 @@ func TestSyncAndStop_WorkDirCleanupFailureSurfacesViaErr(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Start: %v", err)
 	}
+	awaitReaper(t, sess)
 	if !sess.ownsWorkDir {
 		t.Fatal("test requires an owned (auto-created) work directory")
 	}

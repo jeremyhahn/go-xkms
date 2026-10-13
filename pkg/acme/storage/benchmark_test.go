@@ -26,6 +26,7 @@ import (
 	"testing"
 	"time"
 
+	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
 	"github.com/jeremyhahn/go-xkms/pkg/acme/common"
 	"github.com/jeremyhahn/go-xkms/pkg/acme/entities"
 	"github.com/jeremyhahn/go-xkms/pkg/acme/storage"
@@ -155,10 +156,19 @@ func BenchmarkListOrders(b *testing.B) {
 	b.ReportAllocs()
 	b.ResetTimer()
 
+	// The order DAO is partitioned per account, so listing an account's
+	// orders is a paged walk of its DAO, as the admin service does it.
 	for i := 0; i < b.N; i++ {
-		_, err := dao.QueryByIndex(ctx, "accountId", accountID)
+		listed := 0
+		err := dao.ForEachPage(ctx, qrdbsdk.PageQuery{PageSize: 1000}, func(page qrdbsdk.PageResult[*entities.ACMEOrder]) error {
+			listed += len(page.Entities)
+			return nil
+		})
 		if err != nil {
 			b.Fatalf("failed to list orders: %v", err)
+		}
+		if listed != 100 {
+			b.Fatalf("listed %d orders, want 100", listed)
 		}
 	}
 }
