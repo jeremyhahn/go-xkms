@@ -45,6 +45,8 @@ var (
 	ErrInvalidEKTemplate     = errors.New("tpm: invalid EK template - must be rsa2048 or ecc256")
 	ErrInvalidIAKTemplate    = errors.New("tpm: invalid IAK template - must be rsa2048, rsa-pss, or ecc256")
 	ErrInvalidIDevIDTemplate = errors.New("tpm: invalid IDevID template - must be rsa2048, rsa-pss, or ecc256")
+	ErrIDevIDExists          = errors.New("tpm: IDevID already exists - use --force to recreate")
+	ErrIDevIDCertRemove      = errors.New("tpm: failed to remove the existing IDevID certificate")
 )
 
 // tpmConfig holds TPM-specific configuration

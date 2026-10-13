@@ -298,10 +298,10 @@ func runIDevIDCreate(cmd *cobra.Command, args []string) (err error) {
 	}()
 
 	// Check if IDevID already exists
-	if !idevidCreateForce {
-		if _, err := tpm.IDevIDAttributes(); err == nil {
-			return &MessageError{Msg: "IDevID already exists - use --force to recreate"}
-		}
+	_, existsErr := tpm.IDevIDAttributes()
+	idevidExists := existsErr == nil
+	if idevidExists && !idevidCreateForce {
+		return ErrIDevIDExists
 	}
 
 	// Get EK certificate for attestation
@@ -314,6 +314,18 @@ func runIDevIDCreate(cmd *cobra.Command, args []string) (err error) {
 	iakAttrs, err := tpm.IAKAttributes()
 	if err != nil {
 		return &WrappedError{Msg: "IAK not found - run 'tpm provision' first", Err: err}
+	}
+
+	// --force replaces the IDevID completely. The key is a primary derived
+	// from the endorsement seed, so CreateIDevID re-derives it and re-persists
+	// it at its handle; the certificate stored for the old one is removed
+	// here, so a forced run leaves the device as a first run does.
+	if idevidExists {
+		if _, certErr := tpm.IDevIDCertificate(); certErr == nil {
+			if err := tpm.DeleteIDevIDCertificate(); err != nil {
+				return &SentinelCauseError{Sentinel: ErrIDevIDCertRemove, Cause: err}
+			}
+		}
 	}
 
 	// Create IDevID

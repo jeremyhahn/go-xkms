@@ -1553,7 +1553,7 @@ func (tpm *TPM2) CreateIDevID(
 			Name:   readPubResp.Name,
 		}, persistentHandle)
 		if evictErr != nil {
-			tpm.logger.Debug("Failed to evict existing key")
+			return nil, nil, &errs.Detail{Err: ErrEvictIDevID, Detail: fmt.Sprintf("0x%x: %v", uint32(persistentHandle), evictErr)}
 		}
 	}
 

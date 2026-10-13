@@ -509,6 +509,10 @@ var (
 	ErrListTransientHandles  = errors.New("tpm: list transient handles")
 	ErrListNVIndexes         = errors.New("tpm: list NV indexes")
 
+	// ErrEvictIDevID is returned when the IDevID already persisted at its
+	// handle cannot be evicted to make room for the recreated key.
+	ErrEvictIDevID = errors.New("tpm: failed to evict the existing IDevID")
+
 	// Sealer errors
 	ErrSealFailed                = errors.New("tpm: seal operation failed")
 	ErrUnsealFailed              = errors.New("tpm: unseal operation failed")

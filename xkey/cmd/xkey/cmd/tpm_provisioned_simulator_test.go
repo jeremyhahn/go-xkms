@@ -464,7 +464,39 @@ func TestRunIDevIDCreate_ProvisionedSimulator(t *testing.T) {
 	require.NoError(t, err)
 
 	_, _, err = runTPMSubcommand(runIDevIDCreate)
-	assert.ErrorContains(t, err, "IDevID already exists - use --force to recreate")
+	assert.ErrorIs(t, err, ErrIDevIDExists)
+}
+
+// TestRunIDevIDCreate_ForceReplacesExisting checks that --force leaves the
+// device exactly as a first run does: the IDevID is re-derived and
+// re-persisted, and the certificate stored for the old one is gone.
+func TestRunIDevIDCreate_ForceReplacesExisting(t *testing.T) {
+	sim := withProvisionedSimulatorTPM(t)
+	idevidPub := sim.withIDevID(t)
+	cert := issueTestCert(t, sim.caCert, sim.caKey, "xkey-001", idevidPub)
+	require.NoError(t, sim.tpm.ProvisionIDevIDCert(cert))
+	_, err := sim.tpm.IDevIDCertificate()
+	require.NoError(t, err)
+
+	setVar(t, &idevidCreateForce, true)
+	for run := 1; run <= 2; run++ {
+		stdout, _, err := runTPMSubcommand(runIDevIDCreate)
+		require.NoError(t, err, "forced run %d", run)
+		assert.Contains(t, stdout, "IDevID created successfully")
+
+		_, err = sim.tpm.IDevIDCertificate()
+		assert.Error(t, err, "forced run %d left the old certificate in place", run)
+
+		// The IDevID is a primary key derived from the endorsement seed,
+		// so the recreated key is the same key, persisted afresh.
+		pub, err := sim.tpm.IDevID()
+		require.NoError(t, err)
+		assert.Equal(t, idevidPub, pub)
+	}
+
+	setVar(t, &idevidCreateForce, false)
+	_, _, err = runTPMSubcommand(runIDevIDCreate)
+	assert.ErrorIs(t, err, ErrIDevIDExists)
 }
 
 func TestRunIDevIDCreate_RejectsUnknownTemplate(t *testing.T) {
