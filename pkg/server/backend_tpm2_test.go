@@ -14,6 +14,7 @@
 package server
 
 import (
+	"context"
 	"errors"
 	"os"
 	"path/filepath"
@@ -23,7 +24,9 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/jeremyhahn/go-xkms/pkg/config"
+	"github.com/jeremyhahn/go-xkms/pkg/datastore"
 	"github.com/jeremyhahn/go-xkms/pkg/embeddednode"
+	"github.com/jeremyhahn/go-xkms/pkg/tpm2/store"
 	"github.com/jeremyhahn/go-xkms/pkg/types"
 )
 
@@ -66,12 +69,12 @@ func TestResolveTPM2KeyDir_Success(t *testing.T) {
 	assert.Equal(t, filepath.Join(storagePath, "tpm2-keys"), dir)
 }
 
-// TestInitTPM2Backend_EmptyStoragePath verifies that enabling the TPM2
-// backend without a configured storage path fails closed with a typed error
-// instead of writing key material under the process's working directory.
-func TestInitTPM2Backend_EmptyStoragePath(t *testing.T) {
+// TestInitTPM2Backend_KeyDatabaseUnavailable verifies that when the shared
+// datastore cannot open the tpm2 database (here: it is already closed),
+// initTPM2Backend fails closed with a typed error before it opens the TPM,
+// and registers no provider.
+func TestInitTPM2Backend_KeyDatabaseUnavailable(t *testing.T) {
 	s := newMinimalServer(t, &config.Config{
-		Datastore: config.DatastoreConfig{Path: ""},
 		Backends: config.BackendsConfig{
 			TPM2: &config.TPM2Config{
 				Enabled:      true,
@@ -79,15 +82,21 @@ func TestInitTPM2Backend_EmptyStoragePath(t *testing.T) {
 			},
 		},
 	})
+	cfg := &config.Config{Datastore: config.DatastoreConfig{Engine: "memory", Path: t.TempDir()}}
+	ds, err := datastore.Open(context.Background(), cfg, s.logger)
+	require.NoError(t, err)
+	require.NoError(t, ds.Close())
+	s.datastore = ds
 	s.keyProviders = map[string]types.KeyProvider{}
 
-	err := s.initTPM2Backend()
+	err = s.initTPM2Backend()
 	require.Error(t, err)
 	assert.Empty(t, s.keyProviders)
 
 	var createErr *ErrBackendCreate
 	require.True(t, errors.As(err, &createErr), "error must unwrap to *ErrBackendCreate, got %v", err)
 
-	var pathErr *embeddednode.ErrDatastorePathRequired
-	require.True(t, errors.As(err, &pathErr), "error must unwrap to *embeddednode.ErrDatastorePathRequired, got %v", err)
+	var storageErr *ErrStorageCreate
+	require.True(t, errors.As(err, &storageErr), "error must unwrap to *ErrStorageCreate, got %v", err)
+	assert.Equal(t, store.DatabaseName+" database", storageErr.Resource)
 }

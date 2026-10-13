@@ -38,6 +38,7 @@ import (
 	tpm2backend "github.com/jeremyhahn/go-xkms/pkg/backend/tpm2"
 	"github.com/jeremyhahn/go-xkms/pkg/ca"
 	"github.com/jeremyhahn/go-xkms/pkg/storage"
+	"github.com/jeremyhahn/go-xkms/pkg/testutil/tpmblobtest"
 	pkgtpm2 "github.com/jeremyhahn/go-xkms/pkg/tpm2"
 	tpmstore "github.com/jeremyhahn/go-xkms/pkg/tpm2/store"
 	"github.com/jeremyhahn/go-xkms/pkg/tpm2/tpm2test"
@@ -187,7 +188,7 @@ func newProvisionedSimulatorBackend(t *testing.T) (*tpm2backend.Backend, pkgtpm2
 	t.Helper()
 
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
-	keyBackend := tpmstore.NewFileBackend(logger, storage.NewMemory())
+	keyBackend := tpmblobtest.New(t)
 	config := simulatorTPMConfig(t)
 
 	tpmIface, err := pkgtpm2.NewTPM2(&pkgtpm2.Params{

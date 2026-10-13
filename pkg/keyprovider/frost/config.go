@@ -16,15 +16,19 @@
 package frost
 
 import (
-	"github.com/jeremyhahn/go-xkms/pkg/storage"
+	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
+
 	"github.com/jeremyhahn/go-xkms/pkg/types"
 )
 
 // Config contains configuration for the FROST backend.
 type Config struct {
-	// PublicStorage stores public components (group public key, verification shares, metadata)
-	// This storage does not need to be encrypted or hardware-backed.
-	PublicStorage storage.Backend
+	// DAOs serves the go-qrdb database, DatabaseName, holding every FROST
+	// entity: key metadata and group public keys, verification shares, the
+	// sealed secret share, and used-nonce claims. The secret share is stored
+	// only as the envelope SecretBackend sealed it into. Nonce claims need a
+	// store with atomic writes (kvstore.AtomicKVStore).
+	DAOs *qrdbsdk.DAOFactory
 
 	// SecretBackend seals and unseals each participant's secret key share
 	// using its own native sealing mechanism (see types.Sealer): TPM2
@@ -75,10 +79,6 @@ type Config struct {
 	// Length must equal DefaultTotal if specified.
 	Participants []string
 
-	// NonceStorage stores used nonce markers.
-	// If nil, PublicStorage is used.
-	NonceStorage storage.Backend
-
 	// EnableNonceTracking enables nonce reuse prevention.
 	// Defaults to true. Disabling is STRONGLY DISCOURAGED as it allows
 	// catastrophic nonce reuse attacks that can recover the private key.
@@ -87,8 +87,8 @@ type Config struct {
 
 // Validate validates the configuration.
 func (c *Config) Validate() error {
-	if c.PublicStorage == nil {
-		return &ConfigError{Field: "PublicStorage", Message: "required"}
+	if c.DAOs == nil {
+		return &ConfigError{Field: "DAOs", Message: "required"}
 	}
 
 	if c.SecretBackend == nil {
@@ -161,15 +161,6 @@ func (c *Config) SetDefaults() {
 	// Since EnableNonceTracking defaults to false in Go, we treat it specially
 }
 
-// GetNonceStorage returns the nonce storage backend.
-// Falls back to PublicStorage if NonceStorage is not set.
-func (c *Config) GetNonceStorage() storage.Backend {
-	if c.NonceStorage != nil {
-		return c.NonceStorage
-	}
-	return c.PublicStorage
-}
-
 // GetKeyGenerator returns the key generator.
 // Falls back to TrustedDealer if DKG is not set.
 func (c *Config) GetKeyGenerator() KeyGenerator {
@@ -180,7 +171,7 @@ func (c *Config) GetKeyGenerator() KeyGenerator {
 }
 
 // DefaultConfig returns a Config with sensible defaults.
-// Note: PublicStorage and SecretBackend must still be provided.
+// Note: DAOs and SecretBackend must still be provided.
 func DefaultConfig() *Config {
 	return &Config{
 		Algorithm:           types.FrostAlgorithmEd25519,

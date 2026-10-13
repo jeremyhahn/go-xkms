@@ -14,6 +14,7 @@
 package deviceattest01
 
 import (
+	"context"
 	"crypto"
 	"crypto/ecdsa"
 	"crypto/elliptic"
@@ -307,7 +308,7 @@ func TestVerifyAttestationRefusesAnX5cEntryThatIsNotACertificate(t *testing.T) {
 	})
 	ca := &mockCA{}
 
-	_, err := VerifyAttestation(ca, payload, tpmKeyAuth)
+	_, err := VerifyAttestation(context.Background(), ca, payload, tpmKeyAuth)
 	assert.ErrorIs(t, err, ErrCertificateChainInvalid)
 	assert.False(t, ca.verifyAKChainCalled, "a partial chain was handed to the anchor")
 }
@@ -320,7 +321,7 @@ func TestVerifyAttestationRefusesATPMStatementWithoutX5c(t *testing.T) {
 		AttStatement: AttestationStatement{Ver: "2.0", Alg: coseES256},
 	})
 
-	_, err := VerifyAttestation(&mockCA{}, payload, tpmKeyAuth)
+	_, err := VerifyAttestation(context.Background(), &mockCA{}, payload, tpmKeyAuth)
 	assert.ErrorIs(t, err, ErrTPMAttestationInvalid)
 }
 

@@ -22,7 +22,6 @@ package localtpm
 import (
 	"context"
 	"errors"
-	"io/fs"
 	"log/slog"
 	"path/filepath"
 
@@ -97,10 +96,10 @@ type Params struct {
 	// policy authority and sealed scope secrets) live there.
 	Keys store.KeyBackend
 
-	// DataDir is the client's data directory. The policy registry is kept in
-	// "<DataDir>/tpm-policies" and tenant object blobs in
-	// "<DataDir>/tpm-keys", outside the barrier: boot-time auto-unseal reads
-	// the registry before the barrier is open, and everything in it is
+	// DataDir is the client's data directory. The policy registry and the
+	// tenant object blobs (TPMBlob entities in the tpm2 database) are kept
+	// in "<DataDir>/tpm-policies", outside the barrier: boot-time auto-unseal
+	// reads the registry before the barrier is open, and everything in it is
 	// either public policy metadata or sealed by the TPM.
 	DataDir string
 
@@ -184,7 +183,6 @@ func Open(p Params) (*Policies, error) {
 	svc, err := compose.BuildTPMPolicyService(compose.TPMPolicyParams{
 		Backend: backend,
 		DAOs:    dao.NewStoreFactory(registryKV),
-		Storage: open,
 		Logger:  logger,
 	})
 	if err != nil {
@@ -349,15 +347,11 @@ func (l *Policies) DeleteObject(ctx context.Context, name string) error {
 	if err != nil {
 		return err
 	}
-	if err := keys.Delete(sealedObjectAttrs(name, "")); err != nil && !isNotFound(err) {
+	// Delete treats blobs the object never had as already removed.
+	if err := keys.Delete(sealedObjectAttrs(name, "")); err != nil {
 		return err
 	}
 	return l.svc.Unassign(ctx, localScope, tpmpolicy.ObjectSealed, name)
-}
-
-// isNotFound reports whether err means a stored object does not exist.
-func isNotFound(err error) bool {
-	return errors.Is(err, storage.ErrNotFound) || errors.Is(err, fs.ErrNotExist)
 }
 
 // locked runs op, one of the system scope's TPM policy API operations, with

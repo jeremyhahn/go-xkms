@@ -34,6 +34,7 @@ import (
 	"github.com/jeremyhahn/go-xkms/pkg/testutil/barriertest"
 	"github.com/jeremyhahn/go-xkms/pkg/testutil/hostdeps"
 	tpmpolicy "github.com/jeremyhahn/go-xkms/pkg/tpm2/policy"
+	tpmstore "github.com/jeremyhahn/go-xkms/pkg/tpm2/store"
 	"github.com/jeremyhahn/go-xkms/pkg/types"
 	"github.com/jeremyhahn/go-xkms/pkg/xkms"
 
@@ -316,15 +317,12 @@ func TestBuilders_RejectNilDependencies(t *testing.T) {
 	_, err = BuildSSHClient(testutil.NewMemoryDAOFactory(), nil, nil)
 	assert.ErrorAs(t, err, &nilDep)
 	assert.Contains(t, err.Error(), "backend lookup")
-	_, err = BuildTPMPolicyService(TPMPolicyParams{Storage: memoryStorage(t)})
+	_, err = BuildTPMPolicyService(TPMPolicyParams{DAOs: testutil.NewMemoryDAOFactory()})
 	assert.ErrorAs(t, err, &nilDep)
 	assert.Contains(t, err.Error(), "TPM2 backend")
 	_, err = BuildTPMPolicyService(TPMPolicyParams{Backend: &tpm2backend.Backend{}})
 	assert.ErrorAs(t, err, &nilDep)
 	assert.Contains(t, err.Error(), "DAO factory")
-	_, err = BuildTPMPolicyService(TPMPolicyParams{Backend: &tpm2backend.Backend{}, DAOs: testutil.NewMemoryDAOFactory()})
-	assert.ErrorAs(t, err, &nilDep)
-	assert.Contains(t, err.Error(), "storage factory")
 }
 
 // TestDatabases_FollowTheSuppliedDependencies proves every root opens the
@@ -336,8 +334,8 @@ func TestDatabases_FollowTheSuppliedDependencies(t *testing.T) {
 	always := []string{keyversion.DatabaseName, sshrecords.DatabaseName, staticpw.DatabaseName}
 	assert.Equal(t, always, Databases(Deps{}))
 	assert.Equal(t, append(always, certstore.DatabaseName), Databases(Deps{CA: hostdeps.NewCAConfig("Root")}))
-	assert.Equal(t, append(always, tpmpolicy.DatabaseName), Databases(Deps{TPMBackend: &tpm2backend.Backend{}}))
-	assert.Equal(t, append(always, certstore.DatabaseName, tpmpolicy.DatabaseName),
+	assert.Equal(t, append(always, tpmpolicy.DatabaseName, tpmstore.DatabaseName), Databases(Deps{TPMBackend: &tpm2backend.Backend{}}))
+	assert.Equal(t, append(always, certstore.DatabaseName, tpmpolicy.DatabaseName, tpmstore.DatabaseName),
 		Databases(Deps{CA: hostdeps.NewCAConfig("Root"), TPMBackend: &tpm2backend.Backend{}}))
 }
 
@@ -384,7 +382,7 @@ func TestBuilders_StorageFailureIsFeatureBuildError(t *testing.T) {
 
 	// A backend whose TPM is not a pkg/tpm2 TPM cannot run the TPM policy
 	// service; it is refused before any storage is opened.
-	_, err = BuildTPMPolicyService(TPMPolicyParams{Backend: &tpm2backend.Backend{}, DAOs: testutil.NewMemoryDAOFactory(), Storage: failingStorage})
+	_, err = BuildTPMPolicyService(TPMPolicyParams{Backend: &tpm2backend.Backend{}, DAOs: testutil.NewMemoryDAOFactory()})
 	require.ErrorAs(t, err, &buildErr)
 	assert.Equal(t, FeatureTPMPolicies, buildErr.Feature)
 	assert.ErrorIs(t, err, ErrUnsupportedTPM)

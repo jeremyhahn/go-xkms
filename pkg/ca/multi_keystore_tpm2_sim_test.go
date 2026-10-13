@@ -23,6 +23,7 @@ import (
 
 	tpmbackend "github.com/jeremyhahn/go-xkms/pkg/backend/tpm2"
 	"github.com/jeremyhahn/go-xkms/pkg/storage"
+	"github.com/jeremyhahn/go-xkms/pkg/testutil/tpmblobtest"
 	"github.com/jeremyhahn/go-xkms/pkg/types"
 	"github.com/jeremyhahn/go-xkms/pkg/xkms"
 	"github.com/stretchr/testify/require"
@@ -32,7 +33,7 @@ import (
 // in-process go-tpm-tools simulator.
 //
 // The simulator is auto-provisioned (EK + SRK) by NewBackend and all key
-// blob state lives in memory (storage.NewMemory), so the test needs no
+// blob state lives in memory (tpmblobtest.New), so the test needs no
 // external swtpm process, never touches the host's /dev/tpmrm0, and leaves
 // nothing on disk.
 func newSimulatorCABackend(t *testing.T) (xkms.Backend, func()) {
@@ -40,7 +41,7 @@ func newSimulatorCABackend(t *testing.T) (xkms.Backend, func()) {
 
 	tpmBackend, err := tpmbackend.NewBackend(&tpmbackend.Config{
 		UseSimulator: true,
-		KeyStorage:   storage.NewMemory(),
+		Keys:         tpmblobtest.New(t),
 		CN:           "ca-multi-keystore-test",
 	})
 	require.NoError(t, err, "TPM simulator backend must construct and auto-provision")

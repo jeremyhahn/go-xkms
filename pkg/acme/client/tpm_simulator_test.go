@@ -16,6 +16,7 @@
 package client
 
 import (
+	"context"
 	"crypto"
 	"crypto/ecdsa"
 	"crypto/elliptic"
@@ -139,7 +140,6 @@ func newSimulatedDeviceAdapter(t *testing.T, issuer *attestationCA) *XKMSTPMAdap
 		Config:    &config,
 		Logger:    logger,
 		Backend:   factory.KeyBackend(),
-		BlobStore: factory.BlobStore(),
 		CertStore: store.NewMemoryCertStore(logger),
 		Transport: sim.Transport(),
 	})
@@ -164,7 +164,7 @@ func newSimulatedDeviceAdapter(t *testing.T, issuer *attestationCA) *XKMSTPMAdap
 // payload a client POSTs for keyAuth.
 func verifyServed(t *testing.T, issuer *attestationCA, statement []byte, keyAuth string) (*deviceattest01.VerifiedAttestation, error) {
 	t.Helper()
-	return deviceattest01.VerifyAttestation(issuer.verifier(t), statement, keyAuth)
+	return deviceattest01.VerifyAttestation(context.Background(), issuer.verifier(t), statement, keyAuth)
 }
 
 func csrSignedBy(t *testing.T, signer crypto.Signer) *x509.CertificateRequest {

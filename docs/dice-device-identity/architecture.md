@@ -1,6 +1,6 @@
 # DICE Device Identity — Architecture
 
-> **Status: NORMATIVE** · Feature: `dice-device-identity` · Repo: `go-xkms` · Last verified: 2026-10-12
+> **Status: NORMATIVE** · Feature: `dice-device-identity` · Repo: `go-xkms` · Last verified: 2026-10-13
 
 ## The question this answers
 
@@ -39,7 +39,8 @@ certificate rather than dropping it.
 | The possession request profile | this feature | `pkg/acme/challenges/device-attest-01/possession.go` |
 | Talking to the device | the AVR backend | `pkg/backend/avr/` |
 | The AVR wire protocol and firmware | `arduino-generic` | not this repo |
-| Device registry and fleet policy | `go-trusted-platform` | not this repo |
+| The device-registry lookup contract (`DeviceResolver`) | this feature | `pkg/acme/challenges/device-attest-01/anchors.go` |
+| The device registry itself, and fleet policy | the platform that owns enrollment, which injects a `DeviceResolver` | not this repo |
 
 ## Data flow
 
@@ -58,12 +59,16 @@ mint alias certificate
                  ueid (256) = device identifier (optional)
                        --->  chain + CSR
                              1. anchor the chain          (dice.Verify)
+                                ACME: in the device's provisioning
+                                record first (DeviceResolver)
                                 every critical DICE extension
                                 cleared to do so decodes
                              2. ECDSA P-256 device keys   (dice.Verify)
                              3. nonce matches             (dice.Verify)
                              4. operational states permitted
                              5. CSR key == alias SPKI     (attestation.VerifyInvariants)
+                                ACME: == the attested SPKI, and the
+                                registry is asked again
                              6. issue                     (ca "dice-idevid")
 
 Steps 1-4 and step 5 are one exchange for a CSR carrying its evidence, and TWO
@@ -74,6 +79,36 @@ VerifyPossessionCSR and then BindCSRKey, both before issuance. The challenge
 verifier refuses to answer for the dice format on its own, so step 5 cannot be
 the step that gets skipped.
 ```
+
+### Anchored in the provisioning record
+
+A DICE alias certificate is signed by the key it carries, and a small device
+often keeps no DeviceID certificate to present above it. So the chain a device sends vouches
+only for itself: any host can mint one for a key it generated and name any
+device's UEID. What says which key belongs to a device is the record written
+when the device was provisioned, outside any field host. ACME
+`device-attest-01` therefore looks the alias's UEID up in a `DeviceResolver`
+the enrolling platform injects, and accepts the alias only along the path the
+record selects:
+
+- **raw key** — the record holds the DeviceID public key; the alias carries
+  exactly that key and its signature verifies under it.
+- **endorsement** — the record holds a DeviceID certificate; it names the same
+  UEID, and `[alias, DeviceID certificate]` anchors in `dice_roots`.
+
+No resolver, no record, or a record that does not vouch for the key is
+`unauthorized`. The key the record vouched for is persisted with the challenge
+as the attested SPKI, finalization accepts only a CSR for it, and finalization
+asks the registry again, so a device withdrawn or re-keyed in between is
+refused.
+
+Rejected: anchoring in `dice_roots` alone. Nothing a field device presents
+chains to a root without the provisioning record, and a root that certified a
+device's DeviceID key says nothing once that device is withdrawn. Rejected:
+falling back to the raw-key path when an endorsement has no `dice_roots`. A
+record that names a certificate is checked as one, or refused. Rejected: a
+default registry. There is none to default to, so a server without one refuses
+every `dice` attestation; a stock `xkmsd` is such a server.
 
 ## Decisions
 
@@ -206,7 +241,7 @@ with its own error:
 
 The ACME finalize handler runs it for every `dice` record and then still runs
 `BindCSRKey`, the gate every format shares
-(`pkg/acme/server/handlers/device_attest.go:191-196`, called from
+(`pkg/acme/server/handlers/device_attest.go:228-235`, called from
 `order_finalize.go:605`). A refusal is `badCSR`.
 
 A consequence of the identifier check: a `dice` order names one device and

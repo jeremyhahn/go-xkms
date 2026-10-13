@@ -14,8 +14,8 @@
 package deviceattest01
 
 import (
+	"context"
 	"crypto/sha256"
-	"crypto/subtle"
 	"crypto/x509"
 	"encoding/base64"
 	"encoding/json"
@@ -23,7 +23,6 @@ import (
 
 	"github.com/fxamacker/cbor/v2"
 	caerrors "github.com/jeremyhahn/go-xkms/pkg/acme/errors"
-	"github.com/jeremyhahn/go-xkms/pkg/attestation/dice"
 	"github.com/jeremyhahn/go-xkms/pkg/errs"
 )
 
@@ -232,8 +231,8 @@ type AttestationVerifier interface {
 // Returns:
 //   - ErrKeyBindingRequired for a format whose binding needs the CSR
 //   - error if verification fails
-func Verify(verifier AttestationVerifier, payload []byte, expectedKeyAuth string) error {
-	verified, err := VerifyAttestation(verifier, payload, expectedKeyAuth)
+func Verify(ctx context.Context, verifier AttestationVerifier, payload []byte, expectedKeyAuth string) error {
+	verified, err := VerifyAttestation(ctx, verifier, payload, expectedKeyAuth)
 	if err != nil {
 		return err
 	}
@@ -253,7 +252,10 @@ func Verify(verifier AttestationVerifier, payload []byte, expectedKeyAuth string
 //
 // The returned value is NOT an authorization on its own for a format that
 // binds through the CSR: see VerifiedAttestation.
-func VerifyAttestation(verifier AttestationVerifier, payload []byte, expectedKeyAuth string) (*VerifiedAttestation, error) {
+//
+// ctx bounds the device registry lookup a "dice" attestation is anchored in
+// (RegisteredDeviceVerifier).
+func VerifyAttestation(ctx context.Context, verifier AttestationVerifier, payload []byte, expectedKeyAuth string) (*VerifiedAttestation, error) {
 	if verifier == nil {
 		return nil, ErrNoAttestationVerifier
 	}
@@ -263,42 +265,16 @@ func VerifyAttestation(verifier AttestationVerifier, payload []byte, expectedKey
 		return nil, caerrors.MalformedError("device-attest-01: %v", err)
 	}
 
-	// Validate attestation format
+	// Verify the format's evidence. What anchors it and what proves freshness
+	// differ by format -- an AIK chain and a TPM2_Certify over qualifying data,
+	// a provisioning record and a DICE nonce echoed in a certificate extension
+	// -- so the whole check is dispatched rather than assumed to be one of them.
 	format := AttestationFormat(attestObj.Format)
-	if !ValidateAttestationFormat(format) {
-		return nil, ErrInvalidAttestationFormat
-	}
-
-	// Verify using the server's policy
-	if err := verifier.VerifyAttestationObject(attestObj, []byte(expectedKeyAuth)); err != nil {
-		return nil, caerrors.BadAttestationStatementError("device-attest-01: attestation verification failed: %v", err)
-	}
-
-	// Extract and verify certificate chain. Every entry must be a certificate:
-	// dropping one that is not would anchor a chain other than the one sent.
-	if len(attestObj.AttStatement.X5c) > 0 {
-		certChain := make([][]byte, 0, len(attestObj.AttStatement.X5c))
-		for _, cert := range attestObj.AttStatement.X5c {
-			certBytes, ok := cert.([]byte)
-			if !ok {
-				return nil, &errs.Detail{Err: ErrCertificateChainInvalid, Detail: "an x5c entry is not a byte string"}
-			}
-			certChain = append(certChain, certBytes)
-		}
-		if err := verifier.VerifyAKCertificateChain(certChain); err != nil {
-			return nil, &errs.Joined{Lead: ErrCertificateChainInvalid, Cause: err}
-		}
-	}
-
-	// Verify the format-specific evidence. What proves freshness differs by
-	// format -- a TPM2_Certify over qualifying data, a DICE nonce echoed in a
-	// certificate extension -- so the step that checks it is dispatched rather
-	// than assumed to be one of them.
 	verifyEvidence, supported := evidenceVerifiers[format]
 	if !supported {
 		return nil, ErrInvalidAttestationFormat
 	}
-	verified, err := verifyEvidence(attestObj, verifier, expectedKeyAuth)
+	verified, err := verifyEvidence(ctx, attestObj, verifier, expectedKeyAuth)
 	if err != nil {
 		return nil, err
 	}
@@ -347,9 +323,8 @@ func EncodeAttestationRequest(obj *AttestationObject) ([]byte, error) {
 	return json.Marshal(AttestationRequest{AttObj: attObj})
 }
 
-// evidenceVerifier checks the format-specific half of an attestation object,
-// after the shared steps (format recognition, attestation object verification
-// and certificate chain anchoring) have run.
+// evidenceVerifier checks an attestation object of one format: what anchors it
+// and what makes it this challenge's answer.
 //
 // It returns the evidence its checks were made against -- the format-specific
 // fields of a VerifiedAttestation, which the caller completes. The evidence is
@@ -357,27 +332,57 @@ func EncodeAttestationRequest(obj *AttestationObject) ([]byte, error) {
 // CSR cannot complete at challenge time, and the evidence the binding is made
 // against must be the evidence that was actually verified -- not evidence
 // re-fetched later from a device that has moved on.
-type evidenceVerifier func(*AttestationObject, AttestationVerifier, string) (*VerifiedAttestation, error)
+type evidenceVerifier func(context.Context, *AttestationObject, AttestationVerifier, string) (*VerifiedAttestation, error)
 
 // evidenceVerifiers dispatches an attestation object to its format's evidence
 // check. It is also the single source of truth for which formats this server
 // can verify, so ValidateAttestationFormat cannot drift away from what Verify
 // is actually able to dispatch.
 var evidenceVerifiers = map[AttestationFormat]evidenceVerifier{
-	FormatTPM:  verifyTPMEvidence,
-	FormatDICE: verifyDICEEvidence,
+	FormatTPM:  verifyTPMAttestation,
+	FormatDICE: verifyDICEAttestation,
 }
 
-// verifyDICEEvidence checks that the DICE leaf echoed this challenge.
+// verifyTPMAttestation applies the server's policy to a "tpm" attestation
+// object, anchors its AIK chain, and verifies the certification
+// (verifyTPMEvidence).
+func verifyTPMAttestation(_ context.Context, attestObj *AttestationObject, verifier AttestationVerifier, expectedKeyAuth string) (*VerifiedAttestation, error) {
+	if err := verifier.VerifyAttestationObject(attestObj, []byte(expectedKeyAuth)); err != nil {
+		return nil, caerrors.BadAttestationStatementError("device-attest-01: attestation verification failed: %v", err)
+	}
+
+	// Every x5c entry must be a certificate: dropping one that is not would
+	// anchor a chain other than the one sent.
+	if len(attestObj.AttStatement.X5c) > 0 {
+		certChain := make([][]byte, 0, len(attestObj.AttStatement.X5c))
+		for _, cert := range attestObj.AttStatement.X5c {
+			certBytes, ok := cert.([]byte)
+			if !ok {
+				return nil, &errs.Detail{Err: ErrCertificateChainInvalid, Detail: "an x5c entry is not a byte string"}
+			}
+			certChain = append(certChain, certBytes)
+		}
+		if err := verifier.VerifyAKCertificateChain(certChain); err != nil {
+			return nil, &errs.Joined{Lead: ErrCertificateChainInvalid, Cause: err}
+		}
+	}
+	return verifyTPMEvidence(attestObj, verifier, expectedKeyAuth)
+}
+
+// verifyDICEAttestation anchors a "dice" alias certificate in its device's
+// provisioning record and checks that it echoed this challenge
+// (RegisteredDeviceVerifier, go-xkms#1441).
 //
 // There is no certification to verify: a DICE device does not sign a separate
-// attestation structure. The evidence is the certificate chain itself, already
-// anchored by the caller, and the freshness is the nonce the device placed in
-// the eat_nonce claim of the leaf's tcg-dice-UCCS-evidence extension -- the
-// mechanism TCG DICE Attestation Architecture section 6.1.4 defines. The
-// device has no clock, so this nonce is the whole of the freshness argument
-// and nothing here consults a timestamp.
-func verifyDICEEvidence(attestObj *AttestationObject, _ AttestationVerifier, expectedKeyAuth string) (*VerifiedAttestation, error) {
+// attestation structure. The evidence is the alias certificate in x5c[0], and
+// the freshness is the nonce the device placed in the eat_nonce claim of its
+// tcg-dice-UCCS-evidence extension -- the mechanism TCG DICE Attestation
+// Architecture section 6.1.4 defines. The device has no clock, so this nonce
+// is the whole of the freshness argument and nothing here consults a
+// timestamp. Any certificate after x5c[0] is the client's to send and is not
+// used: on the endorsement path the DeviceID certificate comes from the
+// provisioning record, never from the payload.
+func verifyDICEAttestation(ctx context.Context, attestObj *AttestationObject, verifier AttestationVerifier, expectedKeyAuth string) (*VerifiedAttestation, error) {
 	if expectedKeyAuth == "" {
 		return nil, caerrors.BadAttestationStatementError("device-attest-01: no key authorization to bind the dice attestation to")
 	}
@@ -395,38 +400,22 @@ func verifyDICEEvidence(attestObj *AttestationObject, _ AttestationVerifier, exp
 		return nil, caerrors.BadAttestationStatementError("device-attest-01: dice leaf certificate could not be parsed: %v", err)
 	}
 
-	challenge, err := dice.Challenge(leaf)
-	if err != nil {
-		return nil, caerrors.BadAttestationStatementError("device-attest-01: %v", err)
+	registry, ok := verifier.(RegisteredDeviceVerifier)
+	if !ok {
+		return nil, notAuthorized(ErrNoDeviceResolver)
 	}
-
-	// The device echoes SHA-256 of the key authorization, not the string.
-	//
-	// EAT bounds eat_nonce at 8-64 bytes, and a key authorization is
-	// "<token>.<RFC 7638 thumbprint>" -- 87 bytes, since the thumbprint alone
-	// is 43 base64url characters. So the raw form cannot be carried by a
-	// conforming UCCS claims set at all, and a verifier that expected it would
-	// be asking every attester to emit evidence that a strictly conforming EAT
-	// verifier rejects -- which would undo the interoperability this extension
-	// was chosen for. Hashing is what Apple's device-attest-01 profile does,
-	// for the same reason.
-	//
-	// FormatTPM binds the key authorization through the certification's
-	// extraData instead, hashed with the statement's alg (TPMExtraData). For
-	// the SHA-256 algorithms the two digests coincide; they are defined
-	// separately because the DICE container fixes the hash and the WebAuthn
-	// "tpm" statement lets alg choose it.
-	want := sha256.Sum256([]byte(expectedKeyAuth))
-	if subtle.ConstantTimeCompare(challenge, want[:]) != 1 {
-		return nil, caerrors.BadAttestationStatementError("device-attest-01: dice attestation nonce mismatch")
+	attestedSPKI, err := registry.VerifyRegisteredDevice(ctx, leaf, expectedKeyAuth)
+	if err != nil {
+		return nil, err
 	}
 
 	// The leaf goes back to the caller because THIS IS NOT THE WHOLE CHECK.
-	// The nonce says the device answered this challenge; it says nothing about
-	// which key the certificate the CA is about to sign is for. That comparison
-	// is VerifiedAttestation.BindCSRKey and it needs the CSR, which arrives one
-	// request later.
-	return &VerifiedAttestation{Leaf: leaf}, nil
+	// The record says which key the device holds and the nonce says the
+	// device answered this challenge; neither says which key the certificate
+	// the CA is about to sign is for. That comparison is
+	// VerifiedAttestation.BindCSRKey, against AttestedSPKI, and it needs the
+	// CSR, which arrives one request later.
+	return &VerifiedAttestation{Leaf: leaf, AttestedSPKI: attestedSPKI}, nil
 }
 
 // DICENonce is the value a DICE attester places in its eat_nonce claim for a

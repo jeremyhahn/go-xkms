@@ -660,7 +660,6 @@ func BenchmarkRandomBytes_Simulator(b *testing.B) {
 	}
 	defer func() { _ = storageFactory.Close() }()
 
-	blobStore := storageFactory.BlobStore()
 	fileBackend := storageFactory.KeyBackend()
 
 	config := &Config{
@@ -711,7 +710,6 @@ func BenchmarkRandomBytes_Simulator(b *testing.B) {
 		Logger:       logger,
 		DebugSecrets: true,
 		Config:       config,
-		BlobStore:    blobStore,
 		Backend:      fileBackend,
 		FQDN:         "node1.example.com",
 	}

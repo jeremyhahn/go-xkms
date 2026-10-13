@@ -192,10 +192,11 @@ func (b *FrostBackend) SignRound(
 		return nil, ErrInsufficientShares
 	}
 
-	// Check nonce reuse
+	// Claim the nonce: exactly one signing round may ever use it.
 	if b.config.EnableNonceTracking {
 		commitmentBytes := nonces.Commitments.Serialize()
-		if err := b.nonceTracker.MarkUsedWithDetails(
+		if err := b.nonceTracker.Claim(
+			context.Background(),
 			keyID,
 			participantID,
 			nonces.SessionID,

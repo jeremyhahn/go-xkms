@@ -15,6 +15,7 @@
 package store
 
 import (
+	"context"
 	"crypto"
 	"crypto/x509"
 	"errors"
@@ -75,9 +76,9 @@ const (
 	// and so refusal errors can name it.
 	FSEXT_LEGACY_PRIVATE_BLOB = ".priv"
 
-	// FSEXT_CERTIFICATE is FileCertStore's extension for a PEM-encoded
-	// certificate, stored beside the object's key material under the same
-	// storage.Backend FileBackend uses for it.
+	// FSEXT_CERTIFICATE is BlobCertStore's extension for a DER-encoded
+	// certificate, stored beside the object's key material in the same
+	// BlobStore.
 	FSEXT_CERTIFICATE = ".crt"
 )
 
@@ -89,9 +90,9 @@ var (
 	ErrCertNotFound = errors.New("certificate not found")
 
 	// ErrEmptyKeyCN reports a storage operation on key attributes with no
-	// Common Name. The storage key is the CN plus an extension, so an empty CN
-	// would degenerate to the bare extension -- one slot shared by every key
-	// that lacks a name, last writer wins. Refused rather than composed.
+	// Common Name. A blob's natural key names its object by CN, so an empty CN
+	// would be one slot shared by every key that lacks a name, last writer
+	// wins. Refused rather than composed.
 	ErrEmptyKeyCN = errors.New("store: key attributes carry no common name; refusing to compose a storage key from an empty CN")
 
 	// ErrCorruptCopy indicates a corrupt copy operation
@@ -128,13 +129,6 @@ var (
 	ErrInvalidPublicKey = errors.New("invalid public key")
 )
 
-// BlobStorer provides binary blob storage
-type BlobStorer interface {
-	Read(name string) ([]byte, error)
-	Write(name string, data []byte) error
-	Delete(name string) error
-}
-
 // CertificateStorer provides certificate storage operations
 type CertificateStorer interface {
 	Get(attrs *types.KeyAttributes) (*x509.Certificate, error)
@@ -148,4 +142,9 @@ type KeyBackend interface {
 	Get(attrs *types.KeyAttributes, fsext types.FSExtension) ([]byte, error)
 	Save(attrs *types.KeyAttributes, data []byte, fsext types.FSExtension, overwrite bool) error
 	Delete(attrs *types.KeyAttributes) error
+}
+
+// KeyLister enumerates the objects a KeyBackend holds blobs for.
+type KeyLister interface {
+	KeyNames(ctx context.Context, ext types.FSExtension) ([]string, error)
 }

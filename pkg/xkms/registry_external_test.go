@@ -238,3 +238,88 @@ func TestRegisterBackendFactory_ConcurrentRegistrationsAllLand(t *testing.T) {
 		assert.True(t, ok, n)
 	}
 }
+
+// TestRegisterExternalBackend_ConcurrentClaimsOneWinner races registrations
+// of distinct names and of one contested name: every distinct name lands and
+// exactly one racer claims the contested one.
+func TestRegisterExternalBackend_ConcurrentClaimsOneWinner(t *testing.T) {
+	const workers = 16
+	const contested BackendType = "xkms-ext-contested"
+
+	start := make(chan struct{})
+	var wins atomic.Int32
+	var wg sync.WaitGroup
+	for i := range workers {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			<-start
+			own := BackendType(fmt.Sprintf("xkms-ext-worker-%d", i))
+			assert.NoError(t, RegisterExternalBackend(ExternalBackend{Type: own, Factory: newSoftwareKeyProvider}))
+			if RegisterExternalBackend(ExternalBackend{Type: contested, Factory: newSoftwareKeyProvider}) == nil {
+				wins.Add(1)
+			}
+		}()
+	}
+	close(start)
+	wg.Wait()
+
+	assert.Equal(t, int32(1), wins.Load(), "exactly one racer claims a contested name")
+	supported := SupportedBackends()
+	for i := range workers {
+		own := BackendType(fmt.Sprintf("xkms-ext-worker-%d", i))
+		assert.Contains(t, supported, own)
+		_, err := RequireBackend(own)
+		assert.NoError(t, err, own)
+	}
+	assert.Contains(t, supported, contested)
+}
+
+// TestRegisterExternalBackend_ReadersNeverSeeAPartialRegistration races
+// readers against registrations: a reader that sees a name as a valid type
+// must also see its factory and its availability, so RequireBackend never
+// reports a valid external name as not compiled in.
+func TestRegisterExternalBackend_ReadersNeverSeeAPartialRegistration(t *testing.T) {
+	const names = 200
+	const readers = 8
+
+	racing := make([]BackendType, names)
+	for i := range racing {
+		racing[i] = BackendType(fmt.Sprintf("xkms-ext-race-%d", i))
+	}
+
+	var partial, seen atomic.Int64
+	var writerDone atomic.Bool
+	var wg sync.WaitGroup
+	for range readers {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			// Every reader makes one last pass after the writer finishes,
+			// so the names are observed even if it starts late.
+			for done := false; !done; {
+				done = writerDone.Load()
+				for _, name := range racing {
+					if !name.IsValid() {
+						continue
+					}
+					seen.Add(1)
+					_, hasFactory := GetBackendFactory(name)
+					_, reqErr := RequireBackend(name)
+					if !hasFactory || !IsBackendSupported(name) || reqErr != nil {
+						partial.Add(1)
+					}
+				}
+			}
+		}()
+	}
+
+	for _, name := range racing {
+		require.NoError(t, RegisterExternalBackend(ExternalBackend{Type: name, Factory: newSoftwareKeyProvider}))
+	}
+	writerDone.Store(true)
+	wg.Wait()
+
+	assert.Zero(t, partial.Load(), "a reader saw a name without its factory or availability")
+	assert.Positive(t, seen.Load(), "the readers observed registered names")
+}

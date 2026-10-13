@@ -1,0 +1,1 @@
+- **Backend name and factory register atomically** -- beneath `xkms.RegisterExternalBackend`, `types.RegisterBackendType(bt, factory)` now publishes the name and its factory together in one atomic step, so no reader sees the name valid without its factory or availability.

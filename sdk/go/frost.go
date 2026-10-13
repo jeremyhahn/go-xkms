@@ -40,7 +40,7 @@ type (
 	// aggregation, and verification.
 	FrostBackend = frost.FrostBackend
 
-	// FrostBackendConfig configures a FrostBackend, wiring its public storage,
+	// FrostBackendConfig configures a FrostBackend, wiring its DAO factory,
 	// secret backend, default ciphersuite, and M-of-N parameters.
 	FrostBackendConfig = frost.Config
 
@@ -89,8 +89,8 @@ var (
 	// NewFrostBackend creates a FrostBackend from the given configuration.
 	NewFrostBackend = frost.NewBackend
 
-	// NewFrostKeyStore creates a FROST KeyStore over the given public storage
-	// backend and secret key provider.
+	// NewFrostKeyStore creates a FROST KeyStore over the given DAO factory
+	// and secret key provider.
 	NewFrostKeyStore = frost.NewKeyStore
 
 	// NewFrostTrustedDealer creates a trusted-dealer key generator used to

@@ -1,6 +1,6 @@
 # DICE Device Identity — Engineering
 
-> **Status: NORMATIVE** · Feature: `dice-device-identity` · Repo: `go-xkms` · Last verified: 2026-10-12
+> **Status: NORMATIVE** · Feature: `dice-device-identity` · Repo: `go-xkms` · Last verified: 2026-10-13
 
 ## Packages
 
@@ -102,7 +102,7 @@ The ACME client mints the request for a `dice` device:
 
 | Field | Default | Meaning |
 |-------|---------|---------|
-| `TrustedRoots` | nil | Nil skips anchoring. Only correct when the caller anchored by another route: an unanchored chain is self-consistent whoever generated it. |
+| `TrustedRoots` | nil | Nil skips anchoring. Only correct when the caller anchored by another route: an unanchored chain is self-consistent whoever generated it. device-attest-01's raw-key path is that route: it verifies the leaf's signature under the provisioned DeviceID key first. |
 | `ExpectedNonce` | — | **Required.** `ErrNonceRequired` without it. |
 | `ExpectedUeid` | nil | "This is the device I enrolled" rather than "a device from this manufacturer". |
 | `RequireUeid` | false | Demand a device identifier without matching it — the `tcg-dice-Ueid` extension **or** UCCS claim 256, as `DeviceUeid` reads them (`verify.go:47-50`, `verifyUeid` at `:473`). Without `RequireUeid` or `ExpectedUeid`, a leaf with neither yields `Evidence.Ueid == nil`; a malformed or conflicting identifier is an error either way. |
@@ -170,7 +170,7 @@ The possession request's sentinels live beside it in
 `ErrPossessionSigningFailed`, `ErrPossessionKeyMismatch`,
 `ErrPossessionNonceMismatch`, `ErrPossessionIdentifierMismatch`. The finalize
 handler reports each as `badCSR` with the sentinel's text
-(`pkg/acme/server/handlers/device_attest.go:192-193`).
+(`pkg/acme/server/handlers/device_attest.go:228-230`).
 
 `pkg/ca` adds `ErrDICEEvidenceMissing` and `ErrDICEEvidenceInvalid`. The
 `dice-idevid` profile refuses a `DiceTcbInfo` with **no `fwids`** — reported as
@@ -233,9 +233,10 @@ go test -tags "codec_cbor codec_json codec_msgpack tpm_simulator frost" \
 element-tier simulator (`agsim.StartElement`: the real firmware compiled for the
 host, with a model of the ATECC608A that does real P-256) through
 `Client.DeviceAttest`, the real ACME handlers and the production
-`deviceattest01.TrustAnchorVerifier`. `dice_roots` holds a certificate for the
-simulator's DeviceID public key, as a provisioning record would; the alias
-certificate's issuer is that key.
+`deviceattest01.TrustAnchorVerifier`. Its device registry is an in-memory
+`DeviceResolver` holding the simulator's UEID and DeviceID public key: the
+raw-key path, as a provisioning record would state it. The alias certificate is
+signed by that key.
 
 ```
 make agsim                                 # build the simulators into $AGSIM_DIR
@@ -254,8 +255,8 @@ command; it never skips.
 | order for the device's ueid, evidence over `DICENonce(keyAuthorization)`, possession request signed by the alias key | certificate issued, `permanentIdentifier` = hex ueid |
 | order for another ueid | `unauthorized` |
 | evidence over another challenge's nonce | `incorrectResponse` (`dice.ErrNonceMismatch`) |
-| `dice_roots` that do not anchor the device | `incorrectResponse` (`ErrCertificateChainInvalid`) |
-| possession request for a key other than the alias key | `badCSR` (`ErrPossessionKeyMismatch`) |
+| a provisioning record that names another DeviceID key | `unauthorized` (`ErrAttestedKeyMismatch`) |
+| possession request for a key other than the alias key | `badCSR` |
 
 The simulator's firmware has no command that signs the possession template, and
 the alias key is the DeviceID key, so the test signs the possession request with

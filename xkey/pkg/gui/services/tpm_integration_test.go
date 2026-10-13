@@ -80,7 +80,6 @@ func setupSimulatedTPM(t *testing.T) xkms.TrustedPlatformModule {
 		Config:    &cfg,
 		Logger:    logger,
 		Transport: sim.Transport(),
-		BlobStore: storageFactory.BlobStore(),
 		Backend:   storageFactory.KeyBackend(),
 		FQDN:      "xkey.integration.test",
 	})
@@ -172,7 +171,6 @@ func setupUnprovisionedTPM(t *testing.T) xkms.TrustedPlatformModule {
 		Config:    &cfg,
 		Logger:    logger,
 		Transport: sim.Transport(),
-		BlobStore: storageFactory.BlobStore(),
 		Backend:   storageFactory.KeyBackend(),
 		FQDN:      "xkey.integration.test",
 	})

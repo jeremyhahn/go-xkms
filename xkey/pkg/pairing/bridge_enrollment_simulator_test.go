@@ -82,7 +82,6 @@ func enrollmentTPM(t *testing.T) tpm2.TrustedPlatformModule {
 		Config:    &config,
 		Logger:    logger,
 		Backend:   storageFactory.KeyBackend(),
-		BlobStore: storageFactory.BlobStore(),
 		CertStore: certStore,
 		Transport: sim.Transport(),
 		FQDN:      "laptop.example.com",

@@ -14,12 +14,14 @@
 package deviceattest01
 
 import (
+	"context"
 	"crypto/ecdsa"
 	"crypto/elliptic"
 	"crypto/rand"
 	"crypto/x509"
 	"crypto/x509/pkix"
 	"encoding/asn1"
+	"encoding/hex"
 	"math/big"
 	"strings"
 	"testing"
@@ -59,7 +61,7 @@ func newDICEAlias(t *testing.T, challenge []byte) ([]byte, *ecdsa.PrivateKey) {
 	}
 	extension, err := dice.CreateTcbInfoExtension(info)
 	require.NoError(t, err)
-	extensions := []pkix.Extension{extension}
+	extensions := []pkix.Extension{extension, ueidExtension(t)}
 
 	if challenge != nil {
 		uccs, err := dice.CreateUccsEvidenceExtension(&dice.ClaimsSet{Nonce: challenge})
@@ -84,12 +86,41 @@ func newDICEAlias(t *testing.T, challenge []byte) ([]byte, *ecdsa.PrivateKey) {
 
 func diceAttestationObject(t *testing.T, challenge []byte) *AttestationObject {
 	t.Helper()
+	return diceLeafObject(newDICELeafDER(t, challenge))
+}
+
+// diceLeafObject is the "dice" attestation object a device sends for its
+// alias certificate leafDER.
+func diceLeafObject(leafDER []byte) *AttestationObject {
 	return &AttestationObject{
-		Format: string(FormatDICE),
-		AttStatement: AttestationStatement{
-			X5c: []interface{}{newDICELeafDER(t, challenge)},
-		},
+		Format:       string(FormatDICE),
+		AttStatement: AttestationStatement{X5c: []interface{}{leafDER}},
 	}
+}
+
+// ueidExtension is the tcg-dice-Ueid extension naming diceUeid.
+func ueidExtension(t *testing.T) pkix.Extension {
+	t.Helper()
+	extension, err := dice.CreateUeidExtension(diceUeid)
+	require.NoError(t, err)
+	return extension
+}
+
+// verifyDICE runs the "dice" verifier against a registry that provisions the
+// leaf's own key under diceUeid, so what these tests judge is the evidence the
+// leaf carries rather than its registration (registry_test.go judges that). A
+// leaf that does not parse is judged against an empty registry.
+func verifyDICE(t *testing.T, object *AttestationObject, keyAuth string) (*VerifiedAttestation, error) {
+	t.Helper()
+	registry := testRegistry{}
+	if len(object.AttStatement.X5c) > 0 {
+		if der, ok := object.AttStatement.X5c[0].([]byte); ok {
+			if leaf, err := x509.ParseCertificate(der); err == nil {
+				registry[hex.EncodeToString(diceUeid)] = &ProvisionedDevice{DeviceIDKey: leaf.RawSubjectPublicKeyInfo}
+			}
+		}
+	}
+	return verifyDICEAttestation(context.Background(), object, registryVerifier(t, TrustAnchors{Devices: registry}), keyAuth)
 }
 
 func TestFormatDICEIsRecognised(t *testing.T) {
@@ -113,12 +144,12 @@ func TestValidateAttestationFormatTracksTheDispatchTable(t *testing.T) {
 	}
 }
 
-func TestVerifyDICEEvidenceAcceptsAMatchingNonce(t *testing.T) {
+func TestVerifyDICEAttestationAcceptsAMatchingNonce(t *testing.T) {
 	// The device echoes SHA-256 of the key authorization, not the string.
 	// DICENonce is exported precisely so a device, a provisioning tool and this
 	// test agree on it rather than each hashing something slightly different.
 	object := diceAttestationObject(t, DICENonce(diceKeyAuth))
-	verified, err := verifyDICEEvidence(object, nil, diceKeyAuth)
+	verified, err := verifyDICE(t, object, diceKeyAuth)
 	require.NoError(t, err)
 	require.NotNil(t, verified)
 	leaf := verified.Leaf
@@ -148,7 +179,7 @@ func TestDICENonceFitsTheEATBound(t *testing.T) {
 	assert.Len(t, DICENonce(realistic), 32)
 }
 
-func TestVerifyDICEEvidenceRejectsBadInput(t *testing.T) {
+func TestVerifyDICEAttestationRejectsBadInput(t *testing.T) {
 	tests := []struct {
 		name    string
 		object  func(*testing.T) *AttestationObject
@@ -254,7 +285,7 @@ func TestVerifyDICEEvidenceRejectsBadInput(t *testing.T) {
 
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
-			verified, err := verifyDICEEvidence(test.object(t), nil, test.keyAuth)
+			verified, err := verifyDICE(t, test.object(t), test.keyAuth)
 			require.Error(t, err, "malformed dice evidence was accepted")
 			assert.Nil(t, verified, "a refused attestation must carry no leaf forward")
 		})
@@ -282,7 +313,7 @@ func newVendorInfoLeafDER(t *testing.T, challenge []byte) []byte {
 		Subject:         pkix.Name{CommonName: "Test DICE Alias"},
 		NotBefore:       time.Now().Add(-time.Hour),
 		NotAfter:        time.Now().Add(time.Hour),
-		ExtraExtensions: []pkix.Extension{extension},
+		ExtraExtensions: []pkix.Extension{extension, ueidExtension(t)},
 	}
 	der, err := x509.CreateCertificate(rand.Reader, template, template, key.Public(), key)
 	require.NoError(t, err)
@@ -290,8 +321,8 @@ func newVendorInfoLeafDER(t *testing.T, challenge []byte) []byte {
 }
 
 // TestDICEVerificationConsultsNoClock is the freshness contract stated as a
-// test. The device has no clock, so the only thing verifyDICEEvidence compares
-// is the nonce -- a certificate whose validity window has passed is still
+// test. The device has no clock, so the only freshness verifyDICEAttestation
+// checks is the nonce -- a certificate whose validity window has passed is still
 // accepted here, because expiry is the chain verifier's business and not a
 // substitute for a challenge.
 func TestDICEVerificationConsultsNoClock(t *testing.T) {
@@ -309,7 +340,7 @@ func TestDICEVerificationConsultsNoClock(t *testing.T) {
 		Subject:         pkix.Name{CommonName: "Long Expired Alias"},
 		NotBefore:       time.Now().Add(-48 * time.Hour),
 		NotAfter:        time.Now().Add(-24 * time.Hour),
-		ExtraExtensions: []pkix.Extension{extension, uccs},
+		ExtraExtensions: []pkix.Extension{extension, uccs, ueidExtension(t)},
 	}
 	der, err := x509.CreateCertificate(rand.Reader, expired, expired, key.Public(), key)
 	require.NoError(t, err)
@@ -318,7 +349,7 @@ func TestDICEVerificationConsultsNoClock(t *testing.T) {
 		Format:       string(FormatDICE),
 		AttStatement: AttestationStatement{X5c: []interface{}{der}},
 	}
-	_, err = verifyDICEEvidence(object, nil, diceKeyAuth)
+	_, err = verifyDICE(t, object, diceKeyAuth)
 	assert.NoError(t, err,
 		"freshness here is the nonce; expiry belongs to the chain verifier")
 }

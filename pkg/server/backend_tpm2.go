@@ -20,6 +20,7 @@ import (
 	"github.com/jeremyhahn/go-xkms/pkg/compose"
 	"github.com/jeremyhahn/go-xkms/pkg/embeddednode"
 	tpmpolicy "github.com/jeremyhahn/go-xkms/pkg/tpm2/policy"
+	"github.com/jeremyhahn/go-xkms/pkg/tpm2/store"
 	"github.com/jeremyhahn/go-xkms/pkg/tpm2/vtpm"
 )
 
@@ -55,18 +56,6 @@ func (s *Server) initTPM2Backend() error {
 		devicePath = "/dev/tpmrm0"
 	}
 
-	// keyDir is the TPM2 node-barrier seal strategy's own key directory --
-	// genuinely pre-datastore material (see docs/datastore/architecture.md),
-	// resolved directly under Datastore.Path rather than through the shared
-	// datastore itself. It is used ONLY below, as an optional ListKeys
-	// enumeration hint when this backend shares an already-open TPM
-	// connection with that strategy; it is never this backend's own key
-	// storage (see keyStorage further down for that).
-	keyDir, err := s.resolveTPM2KeyDir()
-	if err != nil {
-		return &ErrBackendCreate{Backend: "TPM2", Err: err}
-	}
-
 	// When an earlier step already opened this TPM -- the seal autodetect for
 	// the node-barrier flip (s.nodeSealTPM), or the platform store's tpm2
 	// credential strategy (s.platformStoreTPM, initializePlatformStore, which
@@ -78,11 +67,11 @@ func (s *Server) initTPM2Backend() error {
 	// server shutdown) -- not this backend (externalTPM).
 	//
 	// KeyBackend reuses shared.KeyBackend() -- the SAME store.KeyBackend the
-	// earlier open built (tpm2backend.NewBackend) over this identical keyDir,
-	// resolveTPM2KeyDir in both paths -- rather than opening a second file
-	// store over the same directory. Key blobs created under the shared TPM
-	// are parented to the same Platform SRK the barrier uses, so the barrier
-	// and this backend read and write one on-disk key store and share one
+	// earlier open built (seal autodetect, over the pre-barrier key directory
+	// resolveTPM2KeyDir names) -- rather than opening a second store over the
+	// same directory; ListKeys enumerates it. Key blobs created under the
+	// shared TPM are parented to the same Platform SRK the barrier uses, so
+	// the barrier and this backend read and write one key store and share one
 	// parent key. The TCG Shared SRK is never used.
 	shared, ok := s.nodeSealTPM.(*tpm2backend.Backend)
 	sharedFrom := "the seal autodetect's single TPM open"
@@ -94,7 +83,6 @@ func (s *Server) initTPM2Backend() error {
 		tpmBackend, err := tpm2backend.NewBackendWithTPM(&tpm2backend.ExternalTPMConfig{
 			TPM:        shared.TPM(),
 			KeyBackend: shared.KeyBackend(),
-			KeyDir:     keyDir,
 			Logger:     s.logger,
 		})
 		if err != nil {
@@ -105,11 +93,14 @@ func (s *Server) initTPM2Backend() error {
 		return nil
 	}
 
-	// Not sharing a TPM connection: this backend's own key storage is a
-	// key-prefixed view over the single shared datastore (createStorage),
-	// never a private file engine -- pkg/backend/tpm2.Config has no KeyDir
-	// path anymore (go-xkms#1345 batch 2).
-	keyStorage, err := s.createStorage("tpm2")
+	// Not sharing a TPM connection: this backend's key blobs are TPMBlob
+	// entities in the shared datastore's tpm2 database, behind the barrier,
+	// never a private file engine.
+	daos, err := s.daoFactory(store.DatabaseName)
+	if err != nil {
+		return &ErrBackendCreate{Backend: "TPM2", Err: err}
+	}
+	keys, err := store.NewBlobStore(s.logger, daos)
 	if err != nil {
 		return &ErrBackendCreate{Backend: "TPM2", Err: err}
 	}
@@ -117,7 +108,7 @@ func (s *Server) initTPM2Backend() error {
 	// Create TPM2 backend configuration
 	tpmConfig := &tpm2backend.Config{
 		Device:          devicePath,
-		KeyStorage:      keyStorage,
+		Keys:            keys,
 		CN:              "xkms",
 		UseSimulator:    s.config.Backends.TPM2.UseSimulator,
 		SimulatorHost:   s.config.Backends.TPM2.SimulatorHost,
@@ -139,7 +130,8 @@ func (s *Server) initTPM2Backend() error {
 }
 
 // initTPMPolicyService builds the TPM policy service (pkg/tpm2/policy), its
-// registry in the datastore's tpmpolicy.DatabaseName database, over the TPM2
+// registry in the datastore's tpmpolicy.DatabaseName database and its tenant
+// key blobs in the store.DatabaseName database, over the TPM2
 // key backend through compose.BuildTPMPolicyService -- the path an
 // embedding host's module takes -- and installs it as the backend's scope
 // provider, so every TPM2 key and seal runs in its tenant's TPM scope.
@@ -152,14 +144,13 @@ func (s *Server) initTPMPolicyService() error {
 		s.logger.Info("xkms feature off", "feature", compose.FeatureTPMPolicies, "reason", disabled.Error())
 		return nil
 	}
-	daos, err := s.daoFactory(tpmpolicy.DatabaseName)
+	daos, err := s.daoFactory(tpmpolicy.DatabaseName, store.DatabaseName)
 	if err != nil {
 		return err
 	}
 	svc, err := compose.BuildTPMPolicyService(compose.TPMPolicyParams{
 		Backend: backend,
 		DAOs:    daos,
-		Storage: s.createStorage,
 		VTPM:    s.vtpmConfig(),
 		Logger:  s.logger,
 	})

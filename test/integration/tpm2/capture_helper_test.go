@@ -47,7 +47,6 @@ func setupTPM2WithCapture(t *testing.T) (tpm2lib.TrustedPlatformModule, *TPMCapt
 		t.Fatalf("Failed to create storage factory: %v", err)
 	}
 
-	blobStore := storageFactory.BlobStore()
 	fileBackend := storageFactory.KeyBackend()
 
 	// Create TPM configuration
@@ -91,7 +90,6 @@ func setupTPM2WithCapture(t *testing.T) (tpm2lib.TrustedPlatformModule, *TPMCapt
 		Logger:       logger,
 		DebugSecrets: false, // Disable to reduce noise in capture
 		Config:       config,
-		BlobStore:    blobStore,
 		Backend:      fileBackend,
 		FQDN:         "capture-test.example.com",
 		Transport:    captureTransport, // Use capture transport

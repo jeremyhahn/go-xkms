@@ -1,6 +1,6 @@
 # TPM Policies and TPM Tenancy — Architecture
 
-> **Status: NORMATIVE** · Feature: `tpm-policies` · Repo: `go-xkms` · Last verified: 2026-10-08
+> **Status: NORMATIVE** · Feature: `tpm-policies` · Repo: `go-xkms` · Last verified: 2026-10-09
 
 This is the design for named TPM policies that many keys and sealed objects
 share, for a registry that records which keys use which policy, and for
@@ -349,7 +349,8 @@ in `<data dir>/tpm-policies`.
   would still match but the meaning would silently change. `update` re-captures
   values only.
 - An object ID is `<kind>/<CN>`, where kind is `key` or `sealed`, inside the
-  scope. The registry key and the TPM blob path both include the tenant, which
+  scope. The registry key and the TPM blob's natural key (`<tenant>/<CN>/<ext>`,
+  a `TPMBlob` entity in the `tpm2` database) both include the tenant, which
   closes the CN collision.
 
 ## Tenancy modes

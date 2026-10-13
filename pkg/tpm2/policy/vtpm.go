@@ -17,11 +17,9 @@ import (
 	"bytes"
 	"context"
 	"errors"
-	"io/fs"
 
 	"github.com/google/go-tpm/tpm2"
 	xscope "github.com/jeremyhahn/go-xkms/pkg/scope"
-	"github.com/jeremyhahn/go-xkms/pkg/storage"
 	pkgtpm2 "github.com/jeremyhahn/go-xkms/pkg/tpm2"
 	"github.com/jeremyhahn/go-xkms/pkg/tpm2/store"
 	"github.com/jeremyhahn/go-xkms/pkg/tpm2/vtpm"
@@ -217,7 +215,7 @@ func (s *Service) ensureStateKey(ctx context.Context, tenant string, ownerAuth [
 	switch {
 	case err == nil:
 		return nil
-	case !errors.Is(err, storage.ErrNotFound) && !errors.Is(err, fs.ErrNotExist):
+	case !errors.Is(err, store.ErrBlobNotFound):
 		return &SecretsError{Scope: tenant, Op: "read vTPM state key", Err: err}
 	}
 

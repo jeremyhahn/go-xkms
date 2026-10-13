@@ -23,7 +23,6 @@ import (
 	"crypto/rand"
 	"crypto/sha256"
 	"crypto/x509"
-	"errors"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -31,8 +30,8 @@ import (
 
 	tpm2backend "github.com/jeremyhahn/go-xkms/pkg/backend/tpm2"
 	"github.com/jeremyhahn/go-xkms/pkg/config"
-	"github.com/jeremyhahn/go-xkms/pkg/embeddednode"
-	"github.com/jeremyhahn/go-xkms/pkg/storage"
+	"github.com/jeremyhahn/go-xkms/pkg/testutil/tpmblobtest"
+	"github.com/jeremyhahn/go-xkms/pkg/tpm2/store"
 	"github.com/jeremyhahn/go-xkms/pkg/types"
 	"github.com/jeremyhahn/go-xkms/pkg/xkms"
 )
@@ -95,22 +94,19 @@ func TestInitTPM2Backend_SharedTPM_GenerateAndSign(t *testing.T) {
 	assert.True(t, ecdsa.VerifyASN1(pub, digest[:], signature), "signature must verify against the reported public key")
 }
 
-// TestInitTPM2Backend_SharedTPM_InvalidKeyStorageConfig verifies that, even
-// once the node seal has already opened the shared TPM (the shared branch of
-// initTPM2Backend), an invalid/missing key-storage configuration still fails
-// closed with the same typed error as the standalone path — resolveTPM2KeyDir
-// is checked before the shared-TPM type assertion, so this must never reach a
-// nil dereference on the shared backend's key store.
-func TestInitTPM2Backend_SharedTPM_InvalidKeyStorageConfig(t *testing.T) {
+// TestInitTPM2Backend_SharedTPM_ReusesSharedKeyStore verifies that the
+// shared branch of initTPM2Backend needs no datastore: it reuses the key
+// store of the backend that already opened the TPM rather than opening the
+// tpm2 database.
+func TestInitTPM2Backend_SharedTPM_ReusesSharedKeyStore(t *testing.T) {
 	shared, err := tpm2backend.NewBackend(&tpm2backend.Config{
 		UseSimulator: true,
-		KeyStorage:   storage.NewMemory(),
+		Keys:         tpmblobtest.New(t),
 	})
 	require.NoError(t, err, "constructing the shared simulator-backed TPM2 backend")
 	t.Cleanup(func() { _ = shared.Close() })
 
 	s := newMinimalServer(t, &config.Config{
-		Datastore: config.DatastoreConfig{Path: ""}, // invalid: never configured
 		Backends: config.BackendsConfig{
 			TPM2: &config.TPM2Config{Enabled: true, UseSimulator: true},
 		},
@@ -118,13 +114,43 @@ func TestInitTPM2Backend_SharedTPM_InvalidKeyStorageConfig(t *testing.T) {
 	s.keyProviders = map[string]types.KeyProvider{}
 	s.nodeSealTPM = shared
 
-	err = s.initTPM2Backend()
-	require.Error(t, err)
-	assert.Empty(t, s.keyProviders)
+	require.NoError(t, s.initTPM2Backend())
 
-	var createErr *ErrBackendCreate
-	require.True(t, errors.As(err, &createErr), "error must unwrap to *ErrBackendCreate, got %v", err)
+	tpmKP, ok := s.keyProviders["tpm2"].(*tpm2backend.Backend)
+	require.True(t, ok, "the tpm2 key provider must be a *tpm2backend.Backend")
+	assert.Same(t, shared.KeyBackend(), tpmKP.KeyBackend(), "the shared branch must reuse the shared backend's key store")
+}
 
-	var pathErr *embeddednode.ErrDatastorePathRequired
-	require.True(t, errors.As(err, &pathErr), "error must unwrap to *embeddednode.ErrDatastorePathRequired, got %v", err)
+// TestInitTPM2Backend_StoresKeysInTPM2Database verifies that a TPM2 backend
+// that shares no TPM open keeps its key blobs as TPMBlob entities in the
+// shared datastore's tpm2 database.
+func TestInitTPM2Backend_StoresKeysInTPM2Database(t *testing.T) {
+	s := newMinimalServer(t, &config.Config{
+		Backends: config.BackendsConfig{
+			TPM2: &config.TPM2Config{Enabled: true, UseSimulator: true},
+		},
+	})
+	openInMemoryDatastore(t, s)
+	s.keyProviders = map[string]types.KeyProvider{}
+
+	require.NoError(t, s.initTPM2Backend())
+	kp, ok := s.keyProviders["tpm2"].(*tpm2backend.Backend)
+	require.True(t, ok, "the tpm2 key provider must be a *tpm2backend.Backend")
+	t.Cleanup(func() { _ = kp.Close() })
+
+	attrs := &types.KeyAttributes{
+		CN:            "xkms-k3-dao-key",
+		KeyAlgorithm:  x509.ECDSA,
+		KeyType:       types.KeyTypeSigning,
+		StoreType:     types.StoreTPM2,
+		ECCAttributes: &types.ECCAttributes{Curve: elliptic.P256()},
+	}
+	_, err := kp.GenerateKey(context.Background(), attrs)
+	require.NoError(t, err)
+
+	keys, err := store.NewBlobStore(s.logger, s.datastore.DAOFactory())
+	require.NoError(t, err)
+	blob, err := keys.Get(attrs, store.FSEXT_PUBLIC_BLOB)
+	require.NoError(t, err, "the key's public blob must be a TPMBlob in the tpm2 database")
+	assert.NotEmpty(t, blob)
 }

@@ -16,7 +16,6 @@ import (
 	"testing"
 
 	"github.com/google/go-tpm/tpm2"
-	"github.com/jeremyhahn/go-xkms/pkg/storage"
 	"github.com/jeremyhahn/go-xkms/pkg/tpm2/store"
 	"github.com/jeremyhahn/go-xkms/pkg/types"
 	"github.com/stretchr/testify/assert"
@@ -861,7 +860,7 @@ type legacyKeyBackend struct {
 
 func (b *legacyKeyBackend) Get(attrs *types.KeyAttributes, ext types.FSExtension) ([]byte, error) {
 	if ext == store.FSEXT_PLATFORM_POLICY {
-		return nil, storage.ErrNotFound
+		return nil, store.ErrBlobNotFound
 	}
 	return b.KeyBackend.Get(attrs, ext)
 }

@@ -17,6 +17,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	"github.com/jeremyhahn/go-xkms/pkg/testutil"
 	"github.com/jeremyhahn/go-xkms/pkg/types"
 )
 
@@ -34,11 +35,10 @@ func createMultiParticipantBackends(t *testing.T) []*FrostBackend {
 
 	var backends []*FrostBackend
 	for i, pkg := range packages {
-		storage := newMockStorageBackend()
 		secret := newMockSecretBackend()
 
 		config := &Config{
-			PublicStorage:       storage,
+			DAOs:                testutil.NewMemoryDAOFactory(),
 			SecretBackend:       secret,
 			Algorithm:           types.FrostAlgorithmEd25519,
 			DefaultThreshold:    2,

@@ -43,13 +43,13 @@ var (
 	ErrNotAssigned = errors.New("tpmpolicy: object has no recorded policy")
 
 	// ErrNilRegistry, ErrNilTPM, ErrNilPlatformSRK, ErrNilKeys,
-	// ErrNilKeyStorage and ErrNilSealer are returned by NewService for a
+	// ErrNilTenantKeys and ErrNilSealer are returned by NewService for a
 	// missing Config field.
 	ErrNilRegistry    = errors.New("tpmpolicy: Config.Registry is required")
 	ErrNilTPM         = errors.New("tpmpolicy: Config.TPM is required")
 	ErrNilPlatformSRK = errors.New("tpmpolicy: Config.PlatformSRK is required")
 	ErrNilKeys        = errors.New("tpmpolicy: Config.Keys is required")
-	ErrNilKeyStorage  = errors.New("tpmpolicy: Config.KeyStorage is required")
+	ErrNilTenantKeys  = errors.New("tpmpolicy: Config.TenantKeys is required")
 	ErrNilSealer      = errors.New("tpmpolicy: Config.Sealer is required")
 
 	// ErrTPMModeNone is returned for any TPM object or policy operation of a

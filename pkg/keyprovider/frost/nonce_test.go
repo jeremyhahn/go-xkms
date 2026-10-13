@@ -10,145 +10,200 @@ package frost
 import (
 	"context"
 	"errors"
+	"sync"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+
+	"github.com/jeremyhahn/go-xkms/pkg/testutil"
 )
 
+func newTestNonceTracker(t *testing.T) *NonceTracker {
+	t.Helper()
+	tracker, err := NewNonceTracker(testutil.NewMemoryDAOFactory())
+	require.NoError(t, err)
+	return tracker
+}
+
+func requireNonceReuse(t *testing.T, err error, keyID string) {
+	t.Helper()
+	require.ErrorIs(t, err, ErrNonceAlreadyUsed)
+	var reuse *NonceReuseError
+	require.ErrorAs(t, err, &reuse)
+	assert.Equal(t, keyID, reuse.KeyID)
+}
+
 func TestNewNonceTracker(t *testing.T) {
-	stg := newMockStorageBackend()
-	tracker := NewNonceTracker(stg)
-
-	assert.NotNil(t, tracker)
-	assert.Equal(t, stg, tracker.storage)
-}
-
-func TestNonceTracker_MarkUsed(t *testing.T) {
-	storage := newMockStorageBackend()
-	tracker := NewNonceTracker(storage)
-
-	commitment := []byte("test-commitment-1234567890")
-
-	// First use should succeed
-	err := tracker.MarkUsed("key1", commitment)
-	assert.NoError(t, err)
-
-	// Second use should fail with ErrNonceAlreadyUsed
-	err = tracker.MarkUsed("key1", commitment)
-	require.Error(t, err)
-	assert.True(t, errors.Is(err, ErrNonceAlreadyUsed))
-}
-
-func TestNonceTracker_MarkUsed_DifferentCommitments(t *testing.T) {
-	storage := newMockStorageBackend()
-	tracker := NewNonceTracker(storage)
-
-	commitment1 := []byte("commitment-1")
-	commitment2 := []byte("commitment-2")
-
-	// Both should succeed as they are different
-	err := tracker.MarkUsed("key1", commitment1)
-	assert.NoError(t, err)
-
-	err = tracker.MarkUsed("key1", commitment2)
-	assert.NoError(t, err)
-}
-
-func TestNonceTracker_MarkUsed_DifferentKeys(t *testing.T) {
-	storage := newMockStorageBackend()
-	tracker := NewNonceTracker(storage)
-
-	commitment := []byte("same-commitment")
-
-	// Same commitment can be used for different keys
-	err := tracker.MarkUsed("key1", commitment)
-	assert.NoError(t, err)
-
-	err = tracker.MarkUsed("key2", commitment)
-	assert.NoError(t, err)
-}
-
-func TestNonceTracker_IsUsed(t *testing.T) {
-	storage := newMockStorageBackend()
-	tracker := NewNonceTracker(storage)
-
-	commitment := []byte("test-commitment")
-
-	// Initially not used
-	used, err := tracker.IsUsed("key1", commitment)
+	tracker, err := NewNonceTracker(testutil.NewMemoryDAOFactory())
 	require.NoError(t, err)
-	assert.False(t, used)
-
-	// Mark as used
-	err = tracker.MarkUsed("key1", commitment)
-	require.NoError(t, err)
-
-	// Now should be marked as used
-	used, err = tracker.IsUsed("key1", commitment)
-	require.NoError(t, err)
-	assert.True(t, used)
+	assert.NotNil(t, tracker.nonces)
 }
 
-func TestNonceTracker_MarkUsedWithDetails(t *testing.T) {
-	storage := newMockStorageBackend()
-	tracker := NewNonceTracker(storage)
+func TestNewNonceTracker_NilFactory(t *testing.T) {
+	tracker, err := NewNonceTracker(nil)
+	assert.Nil(t, tracker)
+	assert.ErrorIs(t, err, ErrNilDAOFactory)
+}
 
-	commitment := []byte("test-commitment")
+func TestNonceName(t *testing.T) {
+	name := nonceName("key-a", []byte("commitment"))
+	assert.Equal(t, "key-a/", name[:len("key-a/")])
+	assert.Len(t, name, len("key-a/")+64, "the commitment is named by its hex SHA-256")
+	assert.Equal(t, name, nonceName("key-a", []byte("commitment")))
+}
 
-	// First use should succeed
-	err := tracker.MarkUsedWithDetails("key1", 2, "session-123", commitment)
-	assert.NoError(t, err)
+func TestNonceName_Distinct(t *testing.T) {
+	base := nonceName("key-a", []byte("commitment"))
+	assert.NotEqual(t, base, nonceName("key-a", []byte("commitment2")))
+	assert.NotEqual(t, base, nonceName("key-b", []byte("commitment")))
+}
 
-	// Second use should fail with detailed error
-	err = tracker.MarkUsedWithDetails("key1", 2, "session-123", commitment)
-	require.Error(t, err)
-	assert.True(t, errors.Is(err, ErrNonceAlreadyUsed))
+func TestNonceTracker_Claim(t *testing.T) {
+	tracker := newTestNonceTracker(t)
+	ctx := context.Background()
+	commitment := []byte("commitment")
 
-	var nonceErr *NonceReuseError
-	assert.True(t, errors.As(err, &nonceErr))
-	assert.Equal(t, "key1", nonceErr.KeyID)
-	assert.Equal(t, uint32(2), nonceErr.ParticipantID)
-	assert.Equal(t, "session-123", nonceErr.SessionID)
+	require.NoError(t, tracker.Claim(ctx, "key-a", 1, "session-1", commitment))
+
+	stored, err := tracker.nonces.GetByNaturalKey(ctx, nonceName("key-a", commitment))
+	require.NoError(t, err)
+	assert.Equal(t, "key-a", stored.KeyID)
+	assert.Equal(t, uint32(1), stored.ParticipantID)
+	assert.Equal(t, "session-1", stored.SessionID)
+}
+
+func TestNonceTracker_Claim_Reuse(t *testing.T) {
+	tracker := newTestNonceTracker(t)
+	ctx := context.Background()
+	commitment := []byte("commitment")
+	require.NoError(t, tracker.Claim(ctx, "key-a", 1, "session-1", commitment))
+
+	err := tracker.Claim(ctx, "key-a", 2, "session-2", commitment)
+	requireNonceReuse(t, err, "key-a")
+	var reuse *NonceReuseError
+	require.ErrorAs(t, err, &reuse)
+	assert.Equal(t, uint32(2), reuse.ParticipantID)
+	assert.Equal(t, "session-2", reuse.SessionID)
+}
+
+func TestNonceTracker_Claim_DistinctCommitmentsAndKeys(t *testing.T) {
+	tracker := newTestNonceTracker(t)
+	ctx := context.Background()
+
+	require.NoError(t, tracker.Claim(ctx, "key-a", 1, "s", []byte("commitment-1")))
+	require.NoError(t, tracker.Claim(ctx, "key-a", 1, "s", []byte("commitment-2")))
+	require.NoError(t, tracker.Claim(ctx, "key-b", 1, "s", []byte("commitment-1")))
+}
+
+func TestNonceTracker_Claim_StoreFailure(t *testing.T) {
+	kv, daos := newFailingDAOs()
+	tracker, err := NewNonceTracker(daos)
+	require.NoError(t, err)
+	kv.failOn(failPut, nonceEntityType)
+
+	err = tracker.Claim(context.Background(), "key-a", 1, "s", []byte("commitment"))
+	var storeErr *StoreError
+	require.ErrorAs(t, err, &storeErr)
+	assert.Equal(t, "claim nonce", storeErr.Op)
+	assert.ErrorIs(t, err, errInjected)
+	assert.NotErrorIs(t, err, ErrNonceAlreadyUsed, "an unknown outcome must not read as reuse")
+}
+
+// TestNonceTracker_Claim_ConcurrentDoubleClaim races many signers, through
+// separate trackers over one real in-memory go-qrdb store, to claim the same
+// nonce. Exactly one claim may win; every other must be refused as reuse.
+func TestNonceTracker_Claim_ConcurrentDoubleClaim(t *testing.T) {
+	const claimers = 32
+	daos := testutil.NewMemoryDAOFactory()
+	trackers := make([]*NonceTracker, 2)
+	for i := range trackers {
+		tracker, err := NewNonceTracker(daos)
+		require.NoError(t, err)
+		trackers[i] = tracker
+	}
+	commitment := []byte("contended-commitment")
+
+	start := make(chan struct{})
+	results := make(chan error, claimers)
+	var wg sync.WaitGroup
+	for i := range claimers {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			<-start
+			results <- trackers[i%len(trackers)].Claim(context.Background(), "key-a", uint32(i+1), "session", commitment)
+		}()
+	}
+	close(start)
+	wg.Wait()
+	close(results)
+
+	wins := 0
+	for err := range results {
+		if err == nil {
+			wins++
+			continue
+		}
+		requireNonceReuse(t, err, "key-a")
+	}
+	assert.Equal(t, 1, wins, "exactly one concurrent claim of a nonce may succeed")
 }
 
 func TestNonceTracker_DeleteKeyNonces(t *testing.T) {
-	storage := newMockStorageBackend()
-	tracker := NewNonceTracker(storage)
+	tracker := newTestNonceTracker(t)
+	ctx := context.Background()
+	require.NoError(t, tracker.Claim(ctx, "key-a", 1, "s", []byte("commitment-1")))
+	require.NoError(t, tracker.Claim(ctx, "key-a", 1, "s", []byte("commitment-2")))
+	require.NoError(t, tracker.Claim(ctx, "key-b", 1, "s", []byte("commitment-1")))
 
-	commitment1 := []byte("commitment-1")
-	commitment2 := []byte("commitment-2")
+	require.NoError(t, tracker.DeleteKeyNonces(ctx, "key-a"))
 
-	// Mark some nonces as used
-	err := tracker.MarkUsed("key1", commitment1)
-	require.NoError(t, err)
-	err = tracker.MarkUsed("key1", commitment2)
-	require.NoError(t, err)
-
-	// Verify they're marked as used
-	used, _ := tracker.IsUsed("key1", commitment1)
-	assert.True(t, used)
-	used, _ = tracker.IsUsed("key1", commitment2)
-	assert.True(t, used)
-
-	// Delete all nonces for key1
-	err = tracker.DeleteKeyNonces("key1")
-	assert.NoError(t, err)
-
-	// Verify they're no longer marked as used
-	used, _ = tracker.IsUsed("key1", commitment1)
-	assert.False(t, used)
-	used, _ = tracker.IsUsed("key1", commitment2)
-	assert.False(t, used)
+	// key-a's nonces are gone, so they can be claimed again...
+	require.NoError(t, tracker.Claim(ctx, "key-a", 1, "s", []byte("commitment-1")))
+	require.NoError(t, tracker.Claim(ctx, "key-a", 1, "s", []byte("commitment-2")))
+	// ...while key-b's are untouched.
+	requireNonceReuse(t, tracker.Claim(ctx, "key-b", 1, "s", []byte("commitment-1")), "key-b")
 }
 
 func TestNonceTracker_DeleteKeyNonces_NoNonces(t *testing.T) {
-	storage := newMockStorageBackend()
-	tracker := NewNonceTracker(storage)
+	tracker := newTestNonceTracker(t)
 
-	// Should not error even when no nonces exist
-	err := tracker.DeleteKeyNonces("nonexistent-key")
-	assert.NoError(t, err)
+	assert.NoError(t, tracker.DeleteKeyNonces(context.Background(), "nonexistent-key"))
+}
+
+func TestNonceTracker_DeleteKeyNonces_ListFailure(t *testing.T) {
+	kv, daos := newFailingDAOs()
+	tracker, err := NewNonceTracker(daos)
+	require.NoError(t, err)
+	require.NoError(t, tracker.Claim(context.Background(), "key-a", 1, "s", []byte("commitment")))
+	kv.failOn(failScan, nonceEntityType)
+
+	err = tracker.DeleteKeyNonces(context.Background(), "key-a")
+	var storeErr *StoreError
+	require.ErrorAs(t, err, &storeErr)
+	assert.Equal(t, "list nonces", storeErr.Op)
+	assert.ErrorIs(t, err, errInjected)
+}
+
+func TestNonceTracker_DeleteKeyNonces_DeleteFailure(t *testing.T) {
+	kv, daos := newFailingDAOs()
+	tracker, err := NewNonceTracker(daos)
+	require.NoError(t, err)
+	ctx := context.Background()
+	require.NoError(t, tracker.Claim(ctx, "key-a", 1, "s", []byte("commitment-1")))
+	require.NoError(t, tracker.Claim(ctx, "key-a", 1, "s", []byte("commitment-2")))
+	kv.failOn(failDelete, nonceEntityType)
+
+	err = tracker.DeleteKeyNonces(ctx, "key-a")
+	var storeErr *StoreError
+	require.ErrorAs(t, err, &storeErr)
+	assert.Equal(t, "delete nonce", storeErr.Op)
+	assert.ErrorIs(t, err, errInjected)
+
+	// A failed delete leaves the claim in force.
+	kv.failOn("", "")
+	requireNonceReuse(t, tracker.Claim(ctx, "key-a", 1, "s", []byte("commitment-1")), "key-a")
 }
 
 func TestSigningNonces_Zeroize(t *testing.T) {
@@ -252,113 +307,27 @@ func TestNoncePackage(t *testing.T) {
 	assert.NotNil(t, pkg.Commitments)
 }
 
-func TestHashCommitment(t *testing.T) {
-	commitment := []byte("test-commitment")
+// TestNonceTracker_DeleteKeyNonces_ReportsEveryFailure guards the contract
+// that every failed delete is reported: the joined error carries one
+// StoreError per nonce.
+func TestNonceTracker_DeleteKeyNonces_ReportsEveryFailure(t *testing.T) {
+	kv, daos := newFailingDAOs()
+	tracker, err := NewNonceTracker(daos)
+	require.NoError(t, err)
+	ctx := context.Background()
+	require.NoError(t, tracker.Claim(ctx, "key-a", 1, "s", []byte("commitment-1")))
+	require.NoError(t, tracker.Claim(ctx, "key-a", 1, "s", []byte("commitment-2")))
+	kv.failOn(failDelete, nonceEntityType)
 
-	hash1 := hashCommitment(commitment)
-	hash2 := hashCommitment(commitment)
-
-	// Same input should produce same hash
-	assert.Equal(t, hash1, hash2)
-	assert.Len(t, hash1, 32) // SHA-256 produces 32 bytes
-
-	// Different input should produce different hash
-	differentCommitment := []byte("different-commitment")
-	hash3 := hashCommitment(differentCommitment)
-	assert.NotEqual(t, hash1, hash3)
-}
-
-func TestNoncePath(t *testing.T) {
-	commitmentHash := []byte{0x12, 0x34, 0x56, 0x78}
-	path := noncePath("my-key", commitmentHash)
-
-	assert.Contains(t, path, "frost/nonces")
-	assert.Contains(t, path, "my-key")
-	assert.Contains(t, path, "12345678")
-}
-
-// failingStorageBackend is a mock that fails on specific operations
-type failingStorageBackend struct {
-	*mockStorageBackend
-	failOn string
-}
-
-func newFailingStorageBackend(failOn string) *failingStorageBackend {
-	return &failingStorageBackend{
-		mockStorageBackend: newMockStorageBackend(),
-		failOn:             failOn,
+	err = tracker.DeleteKeyNonces(ctx, "key-a")
+	joined, ok := err.(interface{ Unwrap() []error })
+	require.True(t, ok, "DeleteKeyNonces must join its failures")
+	failed := 0
+	for _, e := range joined.Unwrap() {
+		var storeErr *StoreError
+		if errors.As(e, &storeErr) {
+			failed++
+		}
 	}
-}
-
-func (f *failingStorageBackend) Exists(ctx context.Context, key string) (bool, error) {
-	if f.failOn == "exists" {
-		return false, errors.New("storage error")
-	}
-	return f.mockStorageBackend.Exists(ctx, key)
-}
-
-func (f *failingStorageBackend) Put(ctx context.Context, key string, value []byte) error {
-	if f.failOn == "put" {
-		return errors.New("storage error")
-	}
-	return f.mockStorageBackend.Put(ctx, key, value)
-}
-
-func (f *failingStorageBackend) List(ctx context.Context, prefix string) ([]string, error) {
-	if f.failOn == "list" {
-		return nil, errors.New("storage error")
-	}
-	return f.mockStorageBackend.List(ctx, prefix)
-}
-
-func (f *failingStorageBackend) Delete(ctx context.Context, key string) error {
-	if f.failOn == "delete" {
-		return errors.New("storage error")
-	}
-	return f.mockStorageBackend.Delete(ctx, key)
-}
-
-func TestNonceTracker_MarkUsed_ExistsError(t *testing.T) {
-	storage := newFailingStorageBackend("exists")
-	tracker := NewNonceTracker(storage)
-
-	err := tracker.MarkUsed("key1", []byte("commitment"))
-	require.Error(t, err)
-	assert.Contains(t, err.Error(), "failed to check nonce status")
-}
-
-func TestNonceTracker_MarkUsed_PutError(t *testing.T) {
-	storage := newFailingStorageBackend("put")
-	tracker := NewNonceTracker(storage)
-
-	err := tracker.MarkUsed("key1", []byte("commitment"))
-	require.Error(t, err)
-	assert.Contains(t, err.Error(), "failed to mark nonce as used")
-}
-
-func TestNonceTracker_MarkUsedWithDetails_ExistsError(t *testing.T) {
-	storage := newFailingStorageBackend("exists")
-	tracker := NewNonceTracker(storage)
-
-	err := tracker.MarkUsedWithDetails("key1", 1, "session", []byte("commitment"))
-	require.Error(t, err)
-	assert.Contains(t, err.Error(), "failed to check nonce status")
-}
-
-func TestNonceTracker_MarkUsedWithDetails_PutError(t *testing.T) {
-	storage := newFailingStorageBackend("put")
-	tracker := NewNonceTracker(storage)
-
-	err := tracker.MarkUsedWithDetails("key1", 1, "session", []byte("commitment"))
-	require.Error(t, err)
-	assert.Contains(t, err.Error(), "failed to mark nonce as used")
-}
-
-func TestNonceTracker_DeleteKeyNonces_ListError(t *testing.T) {
-	storage := newFailingStorageBackend("list")
-	tracker := NewNonceTracker(storage)
-
-	err := tracker.DeleteKeyNonces("key1")
-	require.Error(t, err)
-	assert.Contains(t, err.Error(), "failed to list nonces")
+	assert.Equal(t, 2, failed)
 }

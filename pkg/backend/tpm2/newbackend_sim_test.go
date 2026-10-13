@@ -16,21 +16,21 @@ package tpm2
 import (
 	"testing"
 
-	"github.com/jeremyhahn/go-xkms/pkg/storage"
+	"github.com/jeremyhahn/go-xkms/pkg/testutil/tpmblobtest"
 )
 
 // TestNewBackend_WithSimulator_ExercisesTPMInit tests NewBackend with simulator.
 // The simulator starts in an unprovisioned state, so NewTPM2 will typically
 // return ErrNotInitialized indicating TPM needs provisioning.
 // This test exercises the NewBackend code paths including:
-// - the KeyStorage-backed key backend construction
+// - the Keys-backed key backend construction
 // - ToTPMConfig conversion
 // - pkgtpm2.NewTPM2 call
 // - Error handling for ErrNotInitialized
 func TestNewBackend_WithSimulator_ExercisesTPMInit(t *testing.T) {
 	config := &Config{
 		UseSimulator: true,
-		KeyStorage:   storage.NewMemory(),
+		Keys:         tpmblobtest.New(t),
 		SRKHandle:    0x81000001,
 		EKHandle:     0x81010001,
 	}
@@ -45,9 +45,6 @@ func TestNewBackend_WithSimulator_ExercisesTPMInit(t *testing.T) {
 			}
 			if backend.keyBackend == nil {
 				t.Error("backend.keyBackend should not be nil on success")
-			}
-			if backend.keyStorage == nil {
-				t.Error("backend.keyStorage should not be nil on success")
 			}
 			if backend.srkAttrs == nil {
 				t.Error("backend.srkAttrs should not be nil on success")

@@ -34,6 +34,7 @@ import (
 	"github.com/jeremyhahn/go-xkms/pkg/pivcert"
 	pivcertfile "github.com/jeremyhahn/go-xkms/pkg/pivcert/file"
 	"github.com/jeremyhahn/go-xkms/pkg/storage"
+	"github.com/jeremyhahn/go-xkms/pkg/testutil/tpmblobtest"
 	"github.com/jeremyhahn/go-xkms/pkg/types"
 	"github.com/jeremyhahn/go-xkms/pkg/xkms"
 	"github.com/jeremyhahn/go-xkms/sdk/go/transport"
@@ -112,7 +113,7 @@ func requireTPM2PIV(t *testing.T) func() {
 	xkms.Reset()
 
 	config := &tpm2.Config{
-		KeyStorage: storage.NewMemory(),
+		Keys: tpmblobtest.New(t),
 	}
 
 	if simHost != "" {
@@ -691,7 +692,7 @@ func TestIntegration_PIV_MultiBackend(t *testing.T) {
 	if simHost != "" || hwErr == nil {
 		hasTPM2 = true
 		config := &tpm2.Config{
-			KeyStorage: storage.NewMemory(),
+			Keys: tpmblobtest.New(t),
 		}
 		if simHost != "" {
 			config.UseSimulator = true

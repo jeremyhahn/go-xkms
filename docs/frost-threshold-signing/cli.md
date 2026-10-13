@@ -26,8 +26,11 @@ absent), `<key-dir>/frost`, `<key-dir>/frost/public` and
 directories to `0700` if they already exist.
 
 - `<key-dir>/frost/public` holds the group public key, verification shares,
-  metadata and each key's **sealed** secret share (AES-256-GCM under a key
-  HKDF-derived from the wrapping key).
+  metadata, each key's **sealed** secret share (AES-256-GCM under a key
+  HKDF-derived from the wrapping key) and a record of every nonce commitment
+  `round2` has signed with. They are stored as go-qrdb entities in the
+  `frost` database; `round2` refuses a nonce file whose commitment is already
+  recorded.
 - `<key-dir>/frost/secrets` holds that Ed25519 wrapping key and, once
   `frost recipient` has run, the ECDSA P-256 recipient key that dealer
   packages are encrypted to. Both are **encrypted PKCS#8** (PBES2, PBKDF2 +

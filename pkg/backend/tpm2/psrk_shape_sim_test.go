@@ -26,7 +26,7 @@ import (
 	"github.com/google/go-tpm/tpm2"
 	"github.com/stretchr/testify/require"
 
-	"github.com/jeremyhahn/go-xkms/pkg/storage"
+	"github.com/jeremyhahn/go-xkms/pkg/testutil/tpmblobtest"
 	pkgtpm2 "github.com/jeremyhahn/go-xkms/pkg/tpm2"
 	"github.com/jeremyhahn/go-xkms/pkg/types"
 )
@@ -68,7 +68,7 @@ func autodetectedPlatformSRKAuthPolicy(t *testing.T) []byte {
 
 	cfg := &Config{
 		UseSimulator:    true,
-		KeyStorage:      storage.NewMemory(),
+		Keys:            tpmblobtest.New(t),
 		CN:              "psrk-shape-autodetect",
 		PlatformPCR:     psrkShapeTestPCR,
 		PlatformPCRBank: psrkShapeTestBank,
@@ -91,8 +91,7 @@ func enrolledPlatformSRKAuthPolicy(t *testing.T) []byte {
 	t.Helper()
 
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
-	keyBackend, err := NewFileKeyBackend(logger, t.TempDir())
-	require.NoError(t, err)
+	keyBackend := tpmblobtest.New(t)
 
 	tpmConfig := &pkgtpm2.Config{
 		UseSimulator:    true,
@@ -154,7 +153,7 @@ func TestPlatformSRK_AutodetectAndEnrollmentAgreeOnAuthPolicy(t *testing.T) {
 func TestPlatformSRK_AutodetectWithoutPlatformPolicyConfigStillBindsAuthPolicy(t *testing.T) {
 	cfg := &Config{
 		UseSimulator: true,
-		KeyStorage:   storage.NewMemory(),
+		Keys:         tpmblobtest.New(t),
 		CN:           "psrk-shape-defaults",
 	}
 	backend, err := NewBackend(cfg)
@@ -180,8 +179,7 @@ func TestPlatformSRK_AutodetectWithoutPlatformPolicyConfigStillBindsAuthPolicy(t
 // calls.
 func TestBackend_SealUnseal_PINEnrolledPlatformSRK(t *testing.T) {
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
-	keyBackend, err := NewFileKeyBackend(logger, t.TempDir())
-	require.NoError(t, err)
+	keyBackend := tpmblobtest.New(t)
 
 	tpmConfig := &pkgtpm2.Config{
 		UseSimulator:    true,

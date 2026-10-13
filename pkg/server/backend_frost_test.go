@@ -24,8 +24,10 @@ import (
 
 	"github.com/jeremyhahn/go-xkms/pkg/backend/software"
 	"github.com/jeremyhahn/go-xkms/pkg/config"
+	"github.com/jeremyhahn/go-xkms/pkg/datastore"
 	"github.com/jeremyhahn/go-xkms/pkg/keyprovider/frost"
 	"github.com/jeremyhahn/go-xkms/pkg/storage"
+	"github.com/jeremyhahn/go-xkms/pkg/testutil"
 	"github.com/jeremyhahn/go-xkms/pkg/types"
 )
 
@@ -49,7 +51,6 @@ func TestInitFrostBackend_Success(t *testing.T) {
 		Backends: config.BackendsConfig{
 			Frost: &config.FrostConfig{
 				Enabled:          true,
-				PublicPath:       "frost/public",
 				SecretBackend:    "software",
 				Algorithm:        "FROST-Ed25519-SHA512",
 				DefaultThreshold: 2,
@@ -60,12 +61,7 @@ func TestInitFrostBackend_Success(t *testing.T) {
 	s.keyProviders = map[string]types.KeyProvider{
 		"software": newSoftwareKeyProviderForTest(t),
 	}
-	// newMinimalServer bypasses New(), so s.qrdbStorage -- the one shared
-	// datastore createStorage now always resolves through -- is never
-	// built; give this test a real one.
-	var qerr error
-	s.qrdbStorage, qerr = storage.NewMemoryBackend()
-	require.NoError(t, qerr)
+	openInMemoryDatastore(t, s)
 
 	err := s.initFrostBackend()
 	require.NoError(t, err)
@@ -115,7 +111,6 @@ func TestInitFrostBackend_SecretBackendUnavailable(t *testing.T) {
 		Backends: config.BackendsConfig{
 			Frost: &config.FrostConfig{
 				Enabled:       true,
-				PublicPath:    "frost/public",
 				SecretBackend: "tpm2",
 			},
 		},
@@ -129,6 +124,42 @@ func TestInitFrostBackend_SecretBackendUnavailable(t *testing.T) {
 	var unavailableErr *ErrFrostSecretBackendUnavailable
 	require.True(t, errors.As(err, &unavailableErr), "error must unwrap to *ErrFrostSecretBackendUnavailable, got %v", err)
 	assert.Equal(t, "tpm2", unavailableErr.Backend)
+}
+
+// TestInitFrostBackend_DatabaseUnavailable verifies that when the datastore
+// cannot open the frost database (here, a transport with no database plane)
+// initFrostBackend fails with a typed *ErrStorageCreate and registers no
+// FROST backend.
+func TestInitFrostBackend_DatabaseUnavailable(t *testing.T) {
+	client, _, err := testutil.NewQRDBFakeClient()
+	require.NoError(t, err)
+	ds, err := datastore.New(client, config.DatastoreConfig{})
+	require.NoError(t, err)
+
+	s := newMinimalServer(t, &config.Config{
+		Backends: config.BackendsConfig{
+			Frost: &config.FrostConfig{
+				Enabled:          true,
+				SecretBackend:    "software",
+				Algorithm:        "FROST-Ed25519-SHA512",
+				DefaultThreshold: 2,
+				DefaultTotal:     3,
+			},
+		},
+	})
+	s.datastore = ds
+	s.keyProviders = map[string]types.KeyProvider{
+		"software": newSoftwareKeyProviderForTest(t),
+	}
+
+	err = s.initFrostBackend()
+	require.Error(t, err)
+	assert.NotContains(t, s.keyProviders, "frost")
+
+	var storageErr *ErrStorageCreate
+	require.ErrorAs(t, err, &storageErr)
+	var scopeErr *datastore.ErrDatabaseScope
+	assert.ErrorAs(t, err, &scopeErr)
 }
 
 // TestInitializeBackends_FrostWithPKCS8SecretBackend_StartsCleanly is the
@@ -154,7 +185,6 @@ func TestInitializeBackends_FrostWithPKCS8SecretBackend_StartsCleanly(t *testing
 			},
 			Frost: &config.FrostConfig{
 				Enabled:          true,
-				PublicPath:       "frost/public",
 				SecretBackend:    "pkcs8",
 				Algorithm:        "FROST-Ed25519-SHA512",
 				DefaultThreshold: 2,
@@ -163,12 +193,7 @@ func TestInitializeBackends_FrostWithPKCS8SecretBackend_StartsCleanly(t *testing
 		},
 	})
 	s.keyProviders = map[string]types.KeyProvider{}
-	// newMinimalServer bypasses New(), so s.qrdbStorage -- the one shared
-	// datastore createStorage/createStorageAt now always resolve through --
-	// is never built; give this test a real one.
-	var qerr error
-	s.qrdbStorage, qerr = storage.NewMemoryBackend()
-	require.NoError(t, qerr)
+	openInMemoryDatastore(t, s)
 
 	require.NoError(t, s.initializeBackends())
 

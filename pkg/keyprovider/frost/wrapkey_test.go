@@ -21,6 +21,7 @@ import (
 
 	"github.com/stretchr/testify/assert"
 
+	"github.com/jeremyhahn/go-xkms/pkg/testutil"
 	"github.com/jeremyhahn/go-xkms/pkg/types"
 )
 
@@ -85,14 +86,14 @@ func TestTPM2SecretSealKeyAttributes_NilParent(t *testing.T) {
 }
 
 func TestKeyStore_SecretSealKeyAttributesFor_NilTemplate(t *testing.T) {
-	ks := NewKeyStore(newMockStorageBackend(), newMockSecretBackend(), nil)
+	ks := mustKeyStore(t, testutil.NewMemoryDAOFactory(), newMockSecretBackend(), nil)
 
 	assert.Nil(t, ks.secretSealKeyAttributesFor("any-key"))
 }
 
 func TestKeyStore_SecretSealKeyAttributesFor_FixedCNReusedAcrossKeys(t *testing.T) {
 	fixed := SymmetricSecretSealKeyAttributes(types.StorePKCS11)
-	ks := NewKeyStore(newMockStorageBackend(), newMockSecretBackend(), fixed)
+	ks := mustKeyStore(t, testutil.NewMemoryDAOFactory(), newMockSecretBackend(), fixed)
 
 	a := ks.secretSealKeyAttributesFor("key-a")
 	b := ks.secretSealKeyAttributesFor("key-b")
@@ -104,7 +105,7 @@ func TestKeyStore_SecretSealKeyAttributesFor_FixedCNReusedAcrossKeys(t *testing.
 
 func TestKeyStore_SecretSealKeyAttributesFor_TemplateGetsPerKeyCN(t *testing.T) {
 	template := TPM2SecretSealKeyAttributes(&types.KeyAttributes{CN: "psrk"})
-	ks := NewKeyStore(newMockStorageBackend(), newMockSecretBackend(), template)
+	ks := mustKeyStore(t, testutil.NewMemoryDAOFactory(), newMockSecretBackend(), template)
 
 	a := ks.secretSealKeyAttributesFor("key-a")
 	b := ks.secretSealKeyAttributesFor("key-b")

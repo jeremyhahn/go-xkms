@@ -37,6 +37,10 @@ var (
 	// holds no datastore: users and credentials have nowhere to live.
 	ErrWebAuthnNoDatastore = errors.New("server: webauthn requires an initialized datastore")
 
+	// ErrNoDatastore indicates a feature asked for its database before the
+	// server opened its datastore.
+	ErrNoDatastore = errors.New("server: the datastore is not open")
+
 	// ErrBootstrapCABundleUnavailable is returned by the GET /v1/ca/bootstrap
 	// provider before Start has computed the CA bundle.
 	ErrBootstrapCABundleUnavailable = errors.New("server: the bootstrap CA bundle is not available yet")

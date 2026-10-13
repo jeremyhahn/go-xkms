@@ -96,12 +96,9 @@ var (
 	// ErrNilSealedData indicates that nil sealed data was provided to Unseal
 	ErrNilSealedData = errors.New("tpm2: sealed data is required")
 
-	// ErrKeyStorageRequired indicates Config.KeyStorage was left unset. There
-	// is no default storage engine: this package never opens a private,
-	// directory-based engine of its own, and has no notion of a meaningful
-	// process working directory to resolve one against even if it did (an
-	// embedded service, a daemon started from an arbitrary cwd, a unit
-	// test). Callers must supply KeyStorage explicitly -- e.g. pkg/server's
-	// createStorage, or an SDK/library caller's datastore handle.
-	ErrKeyStorageRequired = errors.New("tpm2: key storage is required")
+	// ErrKeysRequired indicates Config.Keys was left unset. There is no
+	// default key store: this package never opens one of its own. Callers
+	// must supply Keys explicitly -- e.g. pkg/server's tpm2 DAO factory, or
+	// an SDK/library caller's datastore handle.
+	ErrKeysRequired = errors.New("tpm2: key store is required")
 )

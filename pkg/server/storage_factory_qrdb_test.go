@@ -134,6 +134,16 @@ func TestDAOFactory_ReportsADatabaseThatCannotOpen(t *testing.T) {
 	assert.ErrorIs(t, err, datastore.ErrDatabaseNameRequired)
 }
 
+// TestDAOFactory_RefusesWithoutADatastore proves a feature that asks for its
+// database before the datastore is open gets ErrNoDatastore, not a panic.
+func TestDAOFactory_RefusesWithoutADatastore(t *testing.T) {
+	s := &Server{ctx: context.Background()}
+
+	daos, err := s.daoFactory(tpmpolicy.DatabaseName)
+	assert.Nil(t, daos)
+	assert.ErrorIs(t, err, ErrNoDatastore)
+}
+
 // TestFeatureDAOs_RunAsServicePrincipal proves every feature DAO the server
 // builds over its embedded node -- the key-version, AEAD nonce, PKCS#11
 // state, TPM policy and ACME stores, named databases and the default one --

@@ -26,14 +26,12 @@ import (
 	"io"
 	"log/slog"
 	"math/big"
-	"os"
-	"path/filepath"
 	"testing"
 
 	"github.com/google/go-tpm/tpm2"
 	"github.com/google/go-tpm/tpm2/transport"
 	"github.com/jeremyhahn/go-xkms/pkg/backend"
-	"github.com/jeremyhahn/go-xkms/pkg/storage"
+	"github.com/jeremyhahn/go-xkms/pkg/testutil/tpmblobtest"
 	pkgtpm2 "github.com/jeremyhahn/go-xkms/pkg/tpm2"
 	"github.com/jeremyhahn/go-xkms/pkg/tpm2/store"
 	"github.com/jeremyhahn/go-xkms/pkg/types"
@@ -452,11 +450,11 @@ func TestConfig_Validate(t *testing.T) {
 		config  *Config
 		wantErr bool
 	}{
-		{"ValidConfigWithDevice", &Config{Device: "/dev/null", KeyStorage: storage.NewMemory(), SRKHandle: 0x81000001}, false},
-		{"ValidConfigWithSimulator", &Config{UseSimulator: true, KeyStorage: storage.NewMemory()}, false},
-		{"DefaultValues", &Config{Device: "/dev/null", KeyStorage: storage.NewMemory()}, false},
-		{"MissingKeyStorage", &Config{Device: "/dev/null"}, true},
-		{"NonExistentDevice", &Config{Device: "/dev/nonexistent-tpm-device-xyz", KeyStorage: storage.NewMemory()}, true},
+		{"ValidConfigWithDevice", &Config{Device: "/dev/null", Keys: tpmblobtest.New(t), SRKHandle: 0x81000001}, false},
+		{"ValidConfigWithSimulator", &Config{UseSimulator: true, Keys: tpmblobtest.New(t)}, false},
+		{"DefaultValues", &Config{Device: "/dev/null", Keys: tpmblobtest.New(t)}, false},
+		{"MissingKeys", &Config{Device: "/dev/null"}, true},
+		{"NonExistentDevice", &Config{Device: "/dev/nonexistent-tpm-device-xyz", Keys: tpmblobtest.New(t)}, true},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -468,38 +466,36 @@ func TestConfig_Validate(t *testing.T) {
 	}
 }
 
-// TestConfig_Validate_MissingKeyStorage verifies Validate returns a typed,
-// wrapped ErrKeyStorageRequired when KeyStorage is unset rather than
-// defaulting to a private storage engine of its own (issue #926, extended by
-// go-xkms#1345 batch 2: this package never opens one).
-func TestConfig_Validate_MissingKeyStorage(t *testing.T) {
+// TestConfig_Validate_MissingKeys verifies Validate returns a typed, wrapped
+// ErrKeysRequired when Keys is unset rather than opening a key store of its
+// own.
+func TestConfig_Validate_MissingKeys(t *testing.T) {
 	config := &Config{UseSimulator: true}
 
 	err := config.Validate()
 	if err == nil {
-		t.Fatal("Validate() error = nil, want ErrKeyStorageRequired")
+		t.Fatal("Validate() error = nil, want ErrKeysRequired")
 	}
-	if !errors.Is(err, ErrKeyStorageRequired) {
-		t.Errorf("Validate() error = %v, want it to wrap ErrKeyStorageRequired", err)
+	if !errors.Is(err, ErrKeysRequired) {
+		t.Errorf("Validate() error = %v, want it to wrap ErrKeysRequired", err)
 	}
-	if config.KeyStorage != nil {
-		t.Errorf("KeyStorage: expected to remain nil on validation failure, got %v", config.KeyStorage)
+	if config.Keys != nil {
+		t.Errorf("Keys: expected to remain nil on validation failure, got %v", config.Keys)
 	}
 }
 
-// TestConfig_Validate_KeyStorageSatisfiesRequirement proves a pre-built
-// storage.Backend (e.g. a key-prefixed view of the caller's shared
-// datastore) satisfies Validate's KeyStorage requirement.
-func TestConfig_Validate_KeyStorageSatisfiesRequirement(t *testing.T) {
-	config := &Config{UseSimulator: true, KeyStorage: storage.NewMemory()}
+// TestConfig_Validate_KeysSatisfiesRequirement proves a caller's key store
+// satisfies Validate's Keys requirement.
+func TestConfig_Validate_KeysSatisfiesRequirement(t *testing.T) {
+	config := &Config{UseSimulator: true, Keys: tpmblobtest.New(t)}
 
 	if err := config.Validate(); err != nil {
-		t.Fatalf("Validate() error = %v, want nil with KeyStorage set", err)
+		t.Fatalf("Validate() error = %v, want nil with Keys set", err)
 	}
 }
 
 func TestConfig_Validate_DefaultValues(t *testing.T) {
-	config := &Config{UseSimulator: true, KeyStorage: storage.NewMemory()}
+	config := &Config{UseSimulator: true, Keys: tpmblobtest.New(t)}
 	if err := config.Validate(); err != nil {
 		t.Fatalf("Validate() error = %v", err)
 	}
@@ -526,7 +522,7 @@ func TestConfig_Validate_DefaultValues(t *testing.T) {
 // PCR a Platform SRK policy is computed over, or a TPM enrolled by one is not
 // usable by the other.
 func TestConfig_Validate_PlatformPCRDefault(t *testing.T) {
-	config := &Config{UseSimulator: true, KeyStorage: storage.NewMemory()}
+	config := &Config{UseSimulator: true, Keys: tpmblobtest.New(t)}
 	if err := config.Validate(); err != nil {
 		t.Fatalf("Validate() error = %v", err)
 	}
@@ -544,7 +540,7 @@ func TestConfig_Validate_PlatformPCRDefault(t *testing.T) {
 // TestConfig_Validate_PlatformPCRExplicit verifies an operator-chosen platform
 // PCR is kept, not overwritten by the default.
 func TestConfig_Validate_PlatformPCRExplicit(t *testing.T) {
-	config := &Config{UseSimulator: true, KeyStorage: storage.NewMemory(), PlatformPCR: 23}
+	config := &Config{UseSimulator: true, Keys: tpmblobtest.New(t), PlatformPCR: 23}
 	if err := config.Validate(); err != nil {
 		t.Fatalf("Validate() error = %v", err)
 	}
@@ -554,7 +550,7 @@ func TestConfig_Validate_PlatformPCRExplicit(t *testing.T) {
 }
 
 func TestConfig_ToTPMConfig(t *testing.T) {
-	config := &Config{Device: "/dev/tpmrm0", KeyStorage: storage.NewMemory(), UseSimulator: true, SRKHandle: 0x81000001, EKHandle: 0x81010001, Hash: "SHA-256", PlatformPCR: 7, PlatformPCRBank: "SHA256"}
+	config := &Config{Device: "/dev/tpmrm0", Keys: tpmblobtest.New(t), UseSimulator: true, SRKHandle: 0x81000001, EKHandle: 0x81010001, Hash: "SHA-256", PlatformPCR: 7, PlatformPCRBank: "SHA256"}
 	tpmConfig := config.ToTPMConfig()
 	if tpmConfig == nil {
 		t.Fatal("ToTPMConfig returned nil")
@@ -607,7 +603,7 @@ func TestCapabilities(t *testing.T) {
 }
 
 func TestNewBackend_InvalidConfig(t *testing.T) {
-	_, err := NewBackend(&Config{Device: "/dev/nonexistent-tpm-xyz123", KeyStorage: storage.NewMemory()})
+	_, err := NewBackend(&Config{Device: "/dev/nonexistent-tpm-xyz123", Keys: tpmblobtest.New(t)})
 	if err == nil {
 		t.Error("Expected error for non-existent device")
 	}
@@ -666,20 +662,21 @@ func TestBackend_DoubleClose(t *testing.T) {
 	}
 }
 
-func TestBackend_ListKeys_EmptyDir(t *testing.T) {
-	tmpDir := t.TempDir()
-	b := &Backend{closed: false, keyDir: tmpDir}
+func TestBackend_ListKeys_EmptyStore(t *testing.T) {
+	b := &Backend{closed: false, keyBackend: tpmblobtest.New(t)}
 	keys, err := b.ListKeys(context.Background())
 	if err != nil {
 		t.Errorf("ListKeys() error = %v", err)
 	}
 	if len(keys) != 0 {
-		t.Errorf("Expected 0 keys in empty directory, got %d", len(keys))
+		t.Errorf("Expected 0 keys in an empty store, got %d", len(keys))
 	}
 }
 
-func TestBackend_ListKeys_NonExistentDir(t *testing.T) {
-	b := &Backend{closed: false, keyDir: "/nonexistent/path/xyz123"}
+// TestBackend_ListKeys_StoreCannotList proves a key store that is not a
+// store.KeyLister reports no keys rather than failing.
+func TestBackend_ListKeys_StoreCannotList(t *testing.T) {
+	b := &Backend{closed: false, keyBackend: &mockKeyBackend{}}
 	keys, err := b.ListKeys(context.Background())
 	if err != nil {
 		t.Errorf("ListKeys() error = %v", err)
@@ -733,35 +730,41 @@ func TestNewBackendWithTPM_NilKeyBackend(t *testing.T) {
 	}
 }
 
-func TestBackend_ListKeys_WithFiles(t *testing.T) {
-	tmpDir := t.TempDir()
-	keyNames := []string{"key1", "key2", "key3"}
+// seedBlobs saves a private blob for each of keyNames and a public blob only
+// for each of publicOnly, so a listing must report keyNames alone.
+func seedBlobs(t *testing.T, keys *store.BlobStore, keyNames, publicOnly []string) {
+	t.Helper()
 	for _, name := range keyNames {
-		path := filepath.Join(tmpDir, name+store.FSEXT_PRIVATE_BLOB)
-		if err := os.WriteFile(path, []byte("mock blob data"), 0600); err != nil {
-			t.Fatalf("Failed to create test file: %v", err)
+		attrs := &types.KeyAttributes{CN: name}
+		if err := keys.Save(attrs, []byte("mock blob data"), store.FSEXT_PRIVATE_BLOB, false); err != nil {
+			t.Fatalf("failed to seed key store: %v", err)
 		}
 	}
-	for _, name := range []string{"notakey.txt", "another.pub"} {
-		path := filepath.Join(tmpDir, name)
-		if err := os.WriteFile(path, []byte("ignored"), 0600); err != nil {
-			t.Fatalf("Failed to create test file: %v", err)
+	for _, name := range publicOnly {
+		attrs := &types.KeyAttributes{CN: name}
+		if err := keys.Save(attrs, []byte("ignored"), store.FSEXT_PUBLIC_BLOB, false); err != nil {
+			t.Fatalf("failed to seed key store: %v", err)
 		}
 	}
-	subDir := filepath.Join(tmpDir, "subdir.blob")
-	if err := os.Mkdir(subDir, 0700); err != nil {
-		t.Fatalf("Failed to create subdirectory: %v", err)
-	}
-	b := &Backend{closed: false, keyDir: tmpDir}
-	keys, err := b.ListKeys(context.Background())
+}
+
+// TestBackend_ListKeys_FromStore proves ListKeys enumerates the objects with
+// a private blob in the key store, and no others.
+func TestBackend_ListKeys_FromStore(t *testing.T) {
+	keys := tpmblobtest.New(t)
+	keyNames := []string{"key1", "key2", "key3"}
+	seedBlobs(t, keys, keyNames, []string{"public-only"})
+
+	b := &Backend{closed: false, keyBackend: keys}
+	listed, err := b.ListKeys(context.Background())
 	if err != nil {
-		t.Errorf("ListKeys() error = %v", err)
+		t.Fatalf("ListKeys() error = %v", err)
 	}
-	if len(keys) != len(keyNames) {
-		t.Errorf("Expected %d keys, got %d", len(keyNames), len(keys))
+	if len(listed) != len(keyNames) {
+		t.Errorf("Expected %d keys, got %d", len(keyNames), len(listed))
 	}
 	foundKeys := make(map[string]bool)
-	for _, k := range keys {
+	for _, k := range listed {
 		foundKeys[k.CN] = true
 		if k.StoreType != types.StoreTPM2 {
 			t.Errorf("Expected StoreType %v, got %v", types.StoreTPM2, k.StoreType)
@@ -774,97 +777,53 @@ func TestBackend_ListKeys_WithFiles(t *testing.T) {
 	}
 }
 
-// TestBackend_ListKeys_FromStorage proves ListKeys enumerates via
-// keyStorage.List (the NewBackend path -- the ONE storage path this package
-// uses; go-xkms#1345 batch 2), not just the ExternalTPMConfig/keyDir
-// directory-listing path TestBackend_ListKeys_WithFiles exercises.
-func TestBackend_ListKeys_FromStorage(t *testing.T) {
-	ks := storage.NewMemory()
-	keyNames := []string{"key1", "key2", "key3"}
-	for _, name := range keyNames {
-		if err := ks.Put(context.Background(), name+store.FSEXT_PRIVATE_BLOB, []byte("mock blob data")); err != nil {
-			t.Fatalf("failed to seed key storage: %v", err)
-		}
-	}
-	for _, name := range []string{"notakey.txt", "another.pub"} {
-		if err := ks.Put(context.Background(), name, []byte("ignored")); err != nil {
-			t.Fatalf("failed to seed key storage: %v", err)
-		}
-	}
-
-	b := &Backend{closed: false, keyStorage: ks}
-	keys, err := b.ListKeys(context.Background())
-	if err != nil {
-		t.Errorf("ListKeys() error = %v", err)
-	}
-	if len(keys) != len(keyNames) {
-		t.Errorf("Expected %d keys, got %d", len(keyNames), len(keys))
-	}
-	foundKeys := make(map[string]bool)
-	for _, k := range keys {
-		foundKeys[k.CN] = true
-		if k.StoreType != types.StoreTPM2 {
-			t.Errorf("Expected StoreType %v, got %v", types.StoreTPM2, k.StoreType)
-		}
-	}
-	for _, name := range keyNames {
-		if !foundKeys[name] {
-			t.Errorf("Expected to find key %q", name)
-		}
-	}
-}
-
-// TestBackend_ListKeys_FromStorage_Error proves a keyStorage.List failure
-// surfaces as a wrapped error rather than being swallowed.
-func TestBackend_ListKeys_FromStorage_Error(t *testing.T) {
-	b := &Backend{closed: false, keyStorage: &erroringListBackend{err: errors.New("list failed")}}
+// TestBackend_ListKeys_FromStore_Error proves a KeyNames failure surfaces as
+// a wrapped error rather than being swallowed.
+func TestBackend_ListKeys_FromStore_Error(t *testing.T) {
+	listErr := errors.New("list failed")
+	b := &Backend{closed: false, keyBackend: &erroringLister{err: listErr}}
 	_, err := b.ListKeys(context.Background())
-	if err == nil {
-		t.Fatal("expected an error from a failing List, got nil")
+	if !errors.Is(err, listErr) {
+		t.Fatalf("ListKeys() error = %v, want it to wrap %v", err, listErr)
 	}
 }
 
-// erroringListBackend is a minimal storage.Backend whose List always fails,
-// used to exercise ListKeys' error path.
-type erroringListBackend struct {
-	storage.Backend
+// erroringLister is a key store whose KeyNames always fails, used to exercise
+// ListKeys' error path.
+type erroringLister struct {
+	mockKeyBackend
 	err error
 }
 
-func (e *erroringListBackend) List(ctx context.Context, prefix string) ([]string, error) {
+func (e *erroringLister) KeyNames(ctx context.Context, ext types.FSExtension) ([]string, error) {
 	return nil, e.err
 }
 
 // TestBackend_ListKeys_ExternalTPM_NilConfig is the regression test for a crash
 // where a backend created via NewBackendWithTPM (config == nil, external TPM)
-// panicked dereferencing a nil config. ListKeys must use the keyDir field
-// directly and degrade gracefully when it is unset, never touching config.
+// panicked dereferencing a nil config. ListKeys must enumerate the key store
+// directly, never touching config.
 func TestBackend_ListKeys_ExternalTPM_NilConfig(t *testing.T) {
-	// External-TPM backend with no key directory: must return empty, not panic.
-	b := &Backend{closed: false, externalTPM: true, config: nil, keyDir: ""}
+	// External-TPM backend whose key store cannot list: must return empty, not panic.
+	b := &Backend{closed: false, externalTPM: true, config: nil, keyBackend: &mockKeyBackend{}}
 	keys, err := b.ListKeys(context.Background())
 	if err != nil {
 		t.Fatalf("ListKeys() error = %v", err)
 	}
 	if len(keys) != 0 {
-		t.Errorf("expected 0 keys when no keyDir is configured, got %d", len(keys))
+		t.Errorf("expected 0 keys from a store that cannot list, got %d", len(keys))
 	}
 
-	// External-TPM backend WITH a key directory: must enumerate blobs.
-	tmpDir := t.TempDir()
-	for _, name := range []string{"alpha", "beta"} {
-		path := filepath.Join(tmpDir, name+store.FSEXT_PRIVATE_BLOB)
-		if err := os.WriteFile(path, []byte("blob"), 0600); err != nil {
-			t.Fatalf("failed to create test blob: %v", err)
-		}
-	}
-	b2 := &Backend{closed: false, externalTPM: true, config: nil, keyDir: tmpDir}
+	// External-TPM backend over a blob store: must enumerate its keys.
+	blobs := tpmblobtest.New(t)
+	seedBlobs(t, blobs, []string{"alpha", "beta"}, nil)
+	b2 := &Backend{closed: false, externalTPM: true, config: nil, keyBackend: blobs}
 	keys2, err := b2.ListKeys(context.Background())
 	if err != nil {
 		t.Fatalf("ListKeys() error = %v", err)
 	}
 	if len(keys2) != 2 {
-		t.Errorf("expected 2 keys from external-TPM keyDir, got %d", len(keys2))
+		t.Errorf("expected 2 keys from the external-TPM key store, got %d", len(keys2))
 	}
 }
 
@@ -932,7 +891,7 @@ func TestBackend_GenerateKey_UnsupportedAlgorithm(t *testing.T) {
 }
 
 func TestConfig_Validate_DeviceDoesNotExist(t *testing.T) {
-	config := &Config{Device: "/dev/tpm-that-does-not-exist-xyz123", UseSimulator: false, KeyStorage: storage.NewMemory()}
+	config := &Config{Device: "/dev/tpm-that-does-not-exist-xyz123", UseSimulator: false, Keys: tpmblobtest.New(t)}
 	err := config.Validate()
 	if err == nil {
 		t.Error("Expected error for non-existent device")
@@ -943,7 +902,7 @@ func TestConfig_Validate_DeviceDoesNotExist(t *testing.T) {
 }
 
 func TestConfig_Validate_SimulatorSkipsDeviceCheck(t *testing.T) {
-	config := &Config{Device: "/dev/tpm-that-does-not-exist-xyz123", UseSimulator: true, KeyStorage: storage.NewMemory()}
+	config := &Config{Device: "/dev/tpm-that-does-not-exist-xyz123", UseSimulator: true, Keys: tpmblobtest.New(t)}
 	if err := config.Validate(); err != nil {
 		t.Errorf("Expected no error when using simulator, got %v", err)
 	}
@@ -987,12 +946,12 @@ func TestBackend_CloseWithNilTPM(t *testing.T) {
 }
 
 // TestBackend_GetKey_KeyNotFound verifies that a genuine "no such blob"
-// result from the key store (storage.ErrNotFound) is reported as
+// result from the key store (store.ErrBlobNotFound) is reported as
 // ErrKeyNotFound, which satisfies errors.Is(err, backend.ErrKeyNotFound)
 // since ErrKeyNotFound is an alias of it.
 func TestBackend_GetKey_KeyNotFound(t *testing.T) {
 	srkAttrs := &types.KeyAttributes{CN: "test-srk"}
-	b := &Backend{closed: false, srkAttrs: srkAttrs, keyBackend: &mockKeyBackend{getError: storage.ErrNotFound}}
+	b := &Backend{closed: false, srkAttrs: srkAttrs, keyBackend: &mockKeyBackend{getError: store.ErrBlobNotFound}}
 	attrs := &types.KeyAttributes{CN: "nonexistent-key"}
 	_, err := b.GetKey(context.Background(), attrs)
 	if err == nil {
@@ -1298,7 +1257,7 @@ func TestBackend_GetKey_PublicBlobError(t *testing.T) {
 // public blob was never written (or was already deleted).
 func TestBackend_GetKey_PublicBlobNotFound(t *testing.T) {
 	srkAttrs := &types.KeyAttributes{CN: "test-srk"}
-	mockKb := &mockKeyBackend{getData: []byte("mock-private-blob"), publicBlobError: storage.ErrNotFound}
+	mockKb := &mockKeyBackend{getData: []byte("mock-private-blob"), publicBlobError: store.ErrBlobNotFound}
 	b := &Backend{closed: false, tpm: &mockTPM{}, keyBackend: mockKb, srkAttrs: srkAttrs}
 	attrs := &types.KeyAttributes{CN: "test-key"}
 	_, err := b.GetKey(context.Background(), attrs)
@@ -1586,7 +1545,7 @@ func TestBackend_ECDSA_WithExistingCurve(t *testing.T) {
 
 func TestBackend_Signer_GetKeyError(t *testing.T) {
 	srkAttrs := &types.KeyAttributes{CN: "test-srk"}
-	mockKb := &mockKeyBackend{getError: storage.ErrNotFound}
+	mockKb := &mockKeyBackend{getError: store.ErrBlobNotFound}
 	b := &Backend{closed: false, srkAttrs: srkAttrs, keyBackend: mockKb}
 	attrs := &types.KeyAttributes{CN: "nonexistent-key"}
 	_, err := b.Signer(context.Background(), attrs)
@@ -1600,7 +1559,7 @@ func TestBackend_Signer_GetKeyError(t *testing.T) {
 
 func TestBackend_Decrypter_GetKeyError(t *testing.T) {
 	srkAttrs := &types.KeyAttributes{CN: "test-srk"}
-	mockKb := &mockKeyBackend{getError: storage.ErrNotFound}
+	mockKb := &mockKeyBackend{getError: store.ErrBlobNotFound}
 	b := &Backend{closed: false, srkAttrs: srkAttrs, keyBackend: mockKb}
 	attrs := &types.KeyAttributes{CN: "nonexistent-key"}
 	_, err := b.Decrypter(context.Background(), attrs)
@@ -1613,29 +1572,15 @@ func TestBackend_Decrypter_GetKeyError(t *testing.T) {
 }
 
 func TestConfig_Validate_ExistingDevice(t *testing.T) {
-	config := &Config{Device: "/dev/null", UseSimulator: false, KeyStorage: storage.NewMemory()}
+	config := &Config{Device: "/dev/null", UseSimulator: false, Keys: tpmblobtest.New(t)}
 	err := config.Validate()
 	if err != nil {
 		t.Errorf("Expected no error for existing device, got %v", err)
 	}
 }
 
-func TestBackend_ListKeys_ReadDirError(t *testing.T) {
-	tmpFile := filepath.Join(t.TempDir(), "notadir")
-	if err := os.WriteFile(tmpFile, []byte("data"), 0600); err != nil {
-		t.Fatalf("Failed to create file: %v", err)
-	}
-	// Point keyDir at a file (not a directory) to trigger read error -- the
-	// ExternalTPMConfig/NewBackendWithTPM path's directory listing.
-	b := &Backend{closed: false, keyDir: tmpFile}
-	_, err := b.ListKeys(context.Background())
-	if err == nil {
-		t.Error("Expected error when keyDir is not a directory")
-	}
-}
-
 func TestConfig_Validate_EmptyDeviceSimulator(t *testing.T) {
-	config := &Config{Device: "", UseSimulator: true, KeyStorage: storage.NewMemory()}
+	config := &Config{Device: "", UseSimulator: true, Keys: tpmblobtest.New(t)}
 	err := config.Validate()
 	if err != nil {
 		t.Errorf("Expected no error with empty device and simulator, got %v", err)
@@ -1787,7 +1732,7 @@ func TestNewBackend_DefaultLoggerAndTracker(t *testing.T) {
 	// We can only test the config preparation parts without a real TPM
 	config := &Config{
 		UseSimulator: true,
-		KeyStorage:   storage.NewMemory(),
+		Keys:         tpmblobtest.New(t),
 	}
 
 	// Validate config manually to see defaults are set
@@ -1796,8 +1741,8 @@ func TestNewBackend_DefaultLoggerAndTracker(t *testing.T) {
 	}
 
 	// Check defaults were set
-	if config.KeyStorage == nil {
-		t.Error("Expected KeyStorage to be set")
+	if config.Keys == nil {
+		t.Error("Expected Keys to be set")
 	}
 	if config.SRKHandle == 0 {
 		t.Error("Expected SRKHandle to have default value")
@@ -1818,7 +1763,7 @@ func TestNewBackend_ConfigValidationError(t *testing.T) {
 			config: &Config{
 				Device:       "/dev/nonexistent-tpm-device-12345",
 				UseSimulator: false,
-				KeyStorage:   storage.NewMemory(),
+				Keys:         tpmblobtest.New(t),
 			},
 		},
 	}
@@ -1843,7 +1788,7 @@ func TestNewBackend_WithProvidedLoggerAndTracker(t *testing.T) {
 
 	config := &Config{
 		UseSimulator: true,
-		KeyStorage:   storage.NewMemory(),
+		Keys:         tpmblobtest.New(t),
 		Logger:       logger,
 		Tracker:      tracker,
 	}
@@ -1944,7 +1889,7 @@ func TestNewBackend_ConfigWithPresetTPMConfig(t *testing.T) {
 func TestNewBackend_VerifyConfigDefaults(t *testing.T) {
 	config := &Config{
 		UseSimulator: true,
-		KeyStorage:   storage.NewMemory(),
+		Keys:         tpmblobtest.New(t),
 	}
 
 	if err := config.Validate(); err != nil {

@@ -27,6 +27,7 @@ import (
 	"github.com/jeremyhahn/go-xkms/pkg/keyprovider/pkcs8"
 	"github.com/jeremyhahn/go-xkms/pkg/seal"
 	"github.com/jeremyhahn/go-xkms/pkg/storage"
+	"github.com/jeremyhahn/go-xkms/pkg/testutil"
 	"github.com/jeremyhahn/go-xkms/pkg/types"
 )
 
@@ -55,7 +56,7 @@ func setupFrostService(t *testing.T) *XKMSService {
 	sealKey := frost.AsymmetricSecretSealKeyAttributes(types.StoreSoftware)
 	require.NoError(t, seal.EnsurePrivateSealKey(context.Background(), secrets, sealKey))
 	provider, err := frost.NewBackend(&frost.Config{
-		PublicStorage:           storage.New(),
+		DAOs:                    testutil.NewMemoryDAOFactory(),
 		SecretBackend:           sealer,
 		SecretSealKeyAttributes: sealKey,
 		EnableNonceTracking:     true,

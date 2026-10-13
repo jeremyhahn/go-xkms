@@ -172,7 +172,6 @@ func createTPMWithFullProvisioning(t *testing.T) (tpm2pkg.TrustedPlatformModule,
 	params := &tpm2pkg.Params{
 		Logger:    logger,
 		Config:    config,
-		BlobStore: storageFactory.BlobStore(),
 		Backend:   storageFactory.KeyBackend(),
 		CertStore: newMemCertStore(),
 		FQDN:      "idevid-integration-test.example.com",

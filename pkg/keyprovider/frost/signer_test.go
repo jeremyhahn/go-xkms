@@ -14,12 +14,13 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	"github.com/jeremyhahn/go-xkms/pkg/testutil"
 	"github.com/jeremyhahn/go-xkms/pkg/types"
 )
 
 func createTestSignerBackend(t *testing.T) *FrostBackend {
 	config := &Config{
-		PublicStorage:       newMockStorageBackend(),
+		DAOs:                testutil.NewMemoryDAOFactory(),
 		SecretBackend:       newMockSecretBackend(),
 		Algorithm:           types.FrostAlgorithmEd25519,
 		DefaultThreshold:    2,
@@ -195,7 +196,7 @@ func TestFrostSigner_AllAlgorithms(t *testing.T) {
 	for _, algo := range algorithms {
 		t.Run(string(algo), func(t *testing.T) {
 			config := &Config{
-				PublicStorage:       newMockStorageBackend(),
+				DAOs:                testutil.NewMemoryDAOFactory(),
 				SecretBackend:       newMockSecretBackend(),
 				Algorithm:           algo,
 				DefaultThreshold:    2,

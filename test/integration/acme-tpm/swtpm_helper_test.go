@@ -108,10 +108,9 @@ func (s *SwtpmConnection) InitializeTPM() error {
 	}
 
 	keysDir := filepath.Join(tempDir, "keys")
-	blobsDir := filepath.Join(tempDir, "blobs")
 	certsDir := filepath.Join(tempDir, "certs")
 
-	for _, dir := range []string{keysDir, blobsDir, certsDir} {
+	for _, dir := range []string{keysDir, certsDir} {
 		if err := os.MkdirAll(dir, 0755); err != nil {
 			return caerrors.StorageFailureError("failed to create dir %s: %v", dir, err)
 		}
@@ -122,10 +121,6 @@ func (s *SwtpmConnection) InitializeTPM() error {
 	if err := keysStorage.Configure(map[string]string{"path": keysDir}); err != nil {
 		return caerrors.StorageFailureError("failed to configure keys storage: %v", err)
 	}
-	blobsStorage := local.New()
-	if err := blobsStorage.Configure(map[string]string{"path": blobsDir}); err != nil {
-		return caerrors.StorageFailureError("failed to configure blobs storage: %v", err)
-	}
 	certsStorage := local.New()
 	if err := certsStorage.Configure(map[string]string{"path": certsDir}); err != nil {
 		return caerrors.StorageFailureError("failed to configure certs storage: %v", err)
@@ -133,7 +128,6 @@ func (s *SwtpmConnection) InitializeTPM() error {
 
 	// Create storage adapters
 	backend := NewLocalBackendAdapter(s.t, keysStorage, keysDir)
-	blobStore := NewLocalBlobStoreAdapter(s.t, blobsStorage, blobsDir)
 	certStore := NewLocalCertStoreAdapter(s.t, certsStorage, certsDir)
 
 	// Create TPM configuration
@@ -157,7 +151,6 @@ func (s *SwtpmConnection) InitializeTPM() error {
 	// Create TPM parameters
 	params := &xkmssdk.TPMParams{
 		Backend:      backend,
-		BlobStore:    blobStore,
 		CertStore:    certStore,
 		Config:       &config,
 		DebugSecrets: true,
@@ -187,10 +180,9 @@ func (s *SwtpmConnection) InitializeTPMWithECDSA() error {
 	}
 
 	keysDir := filepath.Join(tempDir, "keys")
-	blobsDir := filepath.Join(tempDir, "blobs")
 	certsDir := filepath.Join(tempDir, "certs")
 
-	for _, dir := range []string{keysDir, blobsDir, certsDir} {
+	for _, dir := range []string{keysDir, certsDir} {
 		if err := os.MkdirAll(dir, 0755); err != nil {
 			return caerrors.StorageFailureError("failed to create dir %s: %v", dir, err)
 		}
@@ -201,10 +193,6 @@ func (s *SwtpmConnection) InitializeTPMWithECDSA() error {
 	if err := keysStorage.Configure(map[string]string{"path": keysDir}); err != nil {
 		return caerrors.StorageFailureError("failed to configure keys storage: %v", err)
 	}
-	blobsStorage := local.New()
-	if err := blobsStorage.Configure(map[string]string{"path": blobsDir}); err != nil {
-		return caerrors.StorageFailureError("failed to configure blobs storage: %v", err)
-	}
 	certsStorage := local.New()
 	if err := certsStorage.Configure(map[string]string{"path": certsDir}); err != nil {
 		return caerrors.StorageFailureError("failed to configure certs storage: %v", err)
@@ -212,7 +200,6 @@ func (s *SwtpmConnection) InitializeTPMWithECDSA() error {
 
 	// Create storage adapters
 	backend := NewLocalBackendAdapter(s.t, keysStorage, keysDir)
-	blobStore := NewLocalBlobStoreAdapter(s.t, blobsStorage, blobsDir)
 	certStore := NewLocalCertStoreAdapter(s.t, certsStorage, certsDir)
 
 	// Create TPM configuration with ECDSA for IDevID
@@ -259,7 +246,6 @@ func (s *SwtpmConnection) InitializeTPMWithECDSA() error {
 	// Create TPM parameters
 	params := &xkmssdk.TPMParams{
 		Backend:      backend,
-		BlobStore:    blobStore,
 		CertStore:    certStore,
 		Config:       &config,
 		DebugSecrets: true,
@@ -594,45 +580,6 @@ func (l *LocalBackendAdapter) Delete(attrs *xkmssdk.KeyAttributes) error {
 		l.storage.Delete(key)
 	}
 	return nil
-}
-
-// LocalBlobStoreAdapter implements BlobStorer using go-objstore local storage
-type LocalBlobStoreAdapter struct {
-	t       *testing.T
-	storage common.Storage
-	dir     string
-}
-
-// NewLocalBlobStoreAdapter creates a new local-storage-based blob store
-func NewLocalBlobStoreAdapter(t *testing.T, storage common.Storage, dir string) *LocalBlobStoreAdapter {
-	return &LocalBlobStoreAdapter{
-		t:       t,
-		storage: storage,
-		dir:     dir,
-	}
-}
-
-// Read reads a blob
-func (l *LocalBlobStoreAdapter) Read(name string) ([]byte, error) {
-	// Use just the filename - storage is already configured with base path
-	reader, err := l.storage.Get(name)
-	if err != nil {
-		return nil, err
-	}
-	defer reader.Close()
-	return io.ReadAll(reader)
-}
-
-// Write writes a blob
-func (l *LocalBlobStoreAdapter) Write(name string, data []byte) error {
-	// Use just the filename - storage is already configured with base path
-	return l.storage.Put(name, bytes.NewReader(data))
-}
-
-// Delete deletes a blob
-func (l *LocalBlobStoreAdapter) Delete(name string) error {
-	// Use just the filename - storage is already configured with base path
-	return l.storage.Delete(name)
 }
 
 // LocalCertStoreAdapter implements CertificateStorer using go-objstore local storage

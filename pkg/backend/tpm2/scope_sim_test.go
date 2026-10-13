@@ -30,8 +30,8 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	"github.com/jeremyhahn/go-xkms/pkg/storage"
 	"github.com/jeremyhahn/go-xkms/pkg/testutil"
+	"github.com/jeremyhahn/go-xkms/pkg/testutil/tpmblobtest"
 	pkgtpm2 "github.com/jeremyhahn/go-xkms/pkg/tpm2"
 	tpmpolicy "github.com/jeremyhahn/go-xkms/pkg/tpm2/policy"
 	"github.com/jeremyhahn/go-xkms/pkg/types"
@@ -54,7 +54,7 @@ type scopedFixture struct {
 // backend's own TPM, key store and Platform SRK, and installs it.
 func newScopedFixture(t *testing.T) *scopedFixture {
 	t.Helper()
-	backend, err := NewBackend(&Config{UseSimulator: true, KeyStorage: storage.NewMemory()})
+	backend, err := NewBackend(&Config{UseSimulator: true, Keys: tpmblobtest.New(t)})
 	require.NoError(t, err)
 	tpm, ok := backend.TPM().(*pkgtpm2.TPM2)
 	require.True(t, ok)
@@ -65,7 +65,7 @@ func newScopedFixture(t *testing.T) *scopedFixture {
 		TPM:         tpm,
 		PlatformSRK: backend.SRKAttributes(),
 		Keys:        backend.KeyBackend(),
-		KeyStorage:  storage.NewMemory(),
+		TenantKeys:  tpmblobtest.New(t),
 		Sealer:      tpm,
 		Logger:      slog.New(slog.NewTextHandler(io.Discard, nil)),
 	})

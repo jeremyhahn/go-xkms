@@ -28,13 +28,13 @@
 //
 // Usage:
 //
-//	keyStorage, err := file.New("/var/lib/xkms/tpm2")
+//	keys, err := store.NewBlobStore(logger, daos) // daos: the tpm2 database's DAO factory
 //	if err != nil {
 //	    log.Fatal(err)
 //	}
 //	config := &tpm2.Config{
 //	    Device:       "/dev/tpmrm0",
-//	    KeyStorage:   keyStorage,
+//	    Keys:         keys,
 //	    UseSimulator: false,
 //	}
 //	backend, err := tpm2.NewBackend(config)

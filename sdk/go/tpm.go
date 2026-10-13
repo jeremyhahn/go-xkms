@@ -247,14 +247,24 @@ type TPMStorageFactory = store.StorageFactory
 
 // NewTPMStorageFactory constructs a TPM key-storage factory rooted at baseDir
 // (a private, file-based engine; empty baseDir uses a temp directory). For a
-// factory over the shared datastore instead (DatastoreStorage over an open
-// Datastore, or any other storage.Backend), use NewTPMFactory.
+// key store over the shared datastore instead, use NewTPMBlobStore over its
+// DAO factory.
 var NewTPMStorageFactory = store.NewStorageFactory
 
-// NewTPMFactory constructs a TPM key-storage factory over an already-open
-// storage.Backend -- e.g. a key-prefixed view of the shared datastore
-// (DatastoreStorage) -- rather than a private file or memory engine.
-var NewTPMFactory = store.NewFactory
+// TPMBlobStore keeps TPM key blobs as TPMBlob entities in the tpm2 database
+// of a DAO factory, one tenant per store.
+type TPMBlobStore = store.BlobStore
+
+// NewTPMBlobStore returns the system tenant's TPM key store over a DAO
+// factory that serves the tpm2 database (TPMBlobDatabase).
+var NewTPMBlobStore = store.NewBlobStore
+
+// NewTPMBackendBlobStore returns the system tenant's TPM key store over an
+// already-open StorageBackend that supports guarded writes.
+var NewTPMBackendBlobStore = store.NewBackendBlobStore
+
+// TPMBlobDatabase is the database TPM key blobs are kept in.
+const TPMBlobDatabase = store.DatabaseName
 
 // TPMStoreIsRSAPSS reports whether the signature algorithm is an RSA-PSS
 // variant, per pkg/tpm2/store. The equivalent pkg/types helper is re-exported
@@ -265,9 +275,6 @@ var TPMStoreIsRSAPSS = store.IsRSAPSS
 // pkg/tpm2/store constructor. The pkg/types equivalent is re-exported as
 // NewPassword in types.go.
 var NewTPMStorePassword = store.NewPassword
-
-// TPMBlobStorer provides binary blob storage for TPM operations.
-type TPMBlobStorer = store.BlobStorer
 
 // TPMCertificateStorer provides certificate storage operations for TPM.
 type TPMCertificateStorer = store.CertificateStorer
@@ -308,9 +315,6 @@ var RSASRKTemplate = gotpm2.RSASRKTemplate
 // ---------------------------------------------------------------------------
 // Store constructor re-exports (from pkg/tpm2/store)
 // ---------------------------------------------------------------------------
-
-// NewFileBackend creates a new file-based key backend.
-var NewFileBackend = store.NewFileBackend
 
 // ErrTPMStoreCertNotFound is returned when a certificate is not found in the TPM store.
 var ErrTPMStoreCertNotFound = store.ErrCertNotFound

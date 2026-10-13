@@ -108,10 +108,9 @@ func OpenDevice(p DeviceParams) (*Device, error) {
 		cfg.Device = p.Device
 	}
 	tpm, err := tpm2.NewTPM2(&tpm2.Params{
-		Logger:    logger,
-		Config:    &cfg,
-		BlobStore: factory.BlobStore(),
-		Backend:   factory.KeyBackend(),
+		Logger:  logger,
+		Config:  &cfg,
+		Backend: factory.KeyBackend(),
 	})
 	// ErrNotInitialized only means the EK/IDevID provisioning workflow has
 	// not run; the TPM still has a live transport and serves keys under the

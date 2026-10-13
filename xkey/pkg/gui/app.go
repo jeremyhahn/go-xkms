@@ -2507,7 +2507,7 @@ func (a *App) getTPM() xkmssdk.TrustedPlatformModule {
 
 	// Create the TPM storage factory. If it fails (e.g. missing codec_json
 	// build tag), proceed without persistent storage — the TPM can still
-	// serve property/capability queries with nil BlobStore/Backend.
+	// serve property/capability queries with a nil Backend.
 	var factory *xkmssdk.TPMStorageFactory
 	factory, err := xkmssdk.NewTPMStorageFactory(a.log, tpmDataDir)
 	if err != nil {
@@ -2534,13 +2534,12 @@ func (a *App) getTPM() xkmssdk.TrustedPlatformModule {
 	// TPM operations which may trigger goroutine signals.
 	FixSignalHandlers()
 
-	// Build TPM params — use factory backends when available, nil otherwise.
+	// Build TPM params — use the factory's key store when available, nil otherwise.
 	tpmParams := &xkmssdk.TPMParams{
 		Logger: a.log,
 		Config: &cfg,
 	}
 	if factory != nil {
-		tpmParams.BlobStore = factory.BlobStore()
 		tpmParams.Backend = factory.KeyBackend()
 	}
 

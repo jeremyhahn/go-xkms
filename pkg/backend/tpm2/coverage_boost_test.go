@@ -21,31 +21,13 @@ import (
 	"crypto/x509"
 	"errors"
 	"os"
-	"path/filepath"
 	"testing"
 
-	"github.com/jeremyhahn/go-xkms/pkg/storage"
+	"github.com/jeremyhahn/go-xkms/pkg/testutil/tpmblobtest"
 	pkgtpm2 "github.com/jeremyhahn/go-xkms/pkg/tpm2"
 	"github.com/jeremyhahn/go-xkms/pkg/tpm2/store"
 	"github.com/jeremyhahn/go-xkms/pkg/types"
 )
-
-// TestListKeys_ReadDirError tests ListKeys when os.ReadDir fails with non-NotExist error
-func TestListKeys_ReadDirError(t *testing.T) {
-	// Create a file instead of a directory to cause ReadDir to fail
-	tmpDir := t.TempDir()
-	notADir := filepath.Join(tmpDir, "not-a-dir")
-	if err := os.WriteFile(notADir, []byte("data"), 0600); err != nil {
-		t.Fatalf("Failed to create test file: %v", err)
-	}
-	// Try to list keys from a file (not directory) - this will cause ReadDir to fail
-	// with an error that is NOT os.IsNotExist
-	b := &Backend{closed: false, keyDir: notADir}
-	_, err := b.ListKeys(context.Background())
-	if err == nil {
-		t.Error("Expected error when listing keys from a file path")
-	}
-}
 
 // TestDecrypter_KeyDoesNotImplementDecrypter verifies error when key doesn't implement crypto.Decrypter
 func TestDecrypter_KeyDoesNotImplementDecrypter(t *testing.T) {
@@ -71,7 +53,7 @@ func TestDecrypter_KeyDoesNotImplementDecrypter(t *testing.T) {
 // TestDecrypter_GetKeyError verifies Decrypter returns error when GetKey fails
 func TestDecrypter_GetKeyError(t *testing.T) {
 	srkAttrs := &types.KeyAttributes{CN: "test-srk"}
-	mockKb := &mockKeyBackend{getError: storage.ErrNotFound}
+	mockKb := &mockKeyBackend{getError: store.ErrBlobNotFound}
 	b := &Backend{closed: false, tpm: &mockTPM{}, keyBackend: mockKb, srkAttrs: srkAttrs}
 
 	attrs := &types.KeyAttributes{CN: "nonexistent"}
@@ -87,7 +69,7 @@ func TestDecrypter_GetKeyError(t *testing.T) {
 // TestSigner_GetKeyError verifies Signer returns error when GetKey fails
 func TestSigner_GetKeyError(t *testing.T) {
 	srkAttrs := &types.KeyAttributes{CN: "test-srk"}
-	mockKb := &mockKeyBackend{getError: storage.ErrNotFound}
+	mockKb := &mockKeyBackend{getError: store.ErrBlobNotFound}
 	b := &Backend{closed: false, tpm: &mockTPM{}, keyBackend: mockKb, srkAttrs: srkAttrs}
 
 	attrs := &types.KeyAttributes{CN: "nonexistent"}
@@ -113,7 +95,7 @@ func TestConfig_Validate_EmptyDeviceWithoutSimulator(t *testing.T) {
 	config := &Config{
 		Device:       tmpFile.Name(),
 		UseSimulator: false,
-		KeyStorage:   storage.NewMemory(),
+		Keys:         tpmblobtest.New(t),
 	}
 	if err := config.Validate(); err != nil {
 		t.Errorf("Validate() failed for existing device: %v", err)
@@ -152,49 +134,9 @@ func TestBackend_DeleteKey_PreservesExistingParent(t *testing.T) {
 	}
 }
 
-// TestListKeys_SkipsNonBlobFiles verifies ListKeys skips files without .blob extension
-func TestListKeys_SkipsNonBlobFiles(t *testing.T) {
-	tmpDir := t.TempDir()
-
-	// Create various files - some blob, some not
-	testFiles := map[string]bool{
-		"key1" + store.FSEXT_PRIVATE_BLOB: true,  // Should be found
-		"key2.txt":                        false, // Should be skipped
-		"key3.pub":                        false, // Should be skipped
-		"key4" + store.FSEXT_PRIVATE_BLOB: true,  // Should be found
-	}
-
-	for name := range testFiles {
-		path := filepath.Join(tmpDir, name)
-		if err := os.WriteFile(path, []byte("data"), 0600); err != nil {
-			t.Fatalf("Failed to create test file: %v", err)
-		}
-	}
-
-	b := &Backend{closed: false, keyDir: tmpDir}
-	keys, err := b.ListKeys(context.Background())
-	if err != nil {
-		t.Fatalf("ListKeys() error = %v", err)
-	}
-
-	// Should find exactly 2 keys
-	if len(keys) != 2 {
-		t.Errorf("Expected 2 keys, got %d", len(keys))
-	}
-
-	// Verify correct keys were found
-	foundKeys := make(map[string]bool)
-	for _, k := range keys {
-		foundKeys[k.CN] = true
-	}
-	if !foundKeys["key1"] || !foundKeys["key4"] {
-		t.Error("Expected to find key1 and key4")
-	}
-}
-
 // TestConfig_Validate_AllDefaults verifies all defaults are set when empty config
 func TestConfig_Validate_AllDefaults(t *testing.T) {
-	config := &Config{UseSimulator: true, KeyStorage: storage.NewMemory()}
+	config := &Config{UseSimulator: true, Keys: tpmblobtest.New(t)}
 	err := config.Validate()
 	if err != nil {
 		t.Fatalf("Validate() error = %v", err)

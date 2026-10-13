@@ -46,7 +46,10 @@ func newSimulatorTPMProvider(t *testing.T) types.KeyProvider {
 	if err != nil {
 		t.Fatalf("NewFileStorageBackend: %v", err)
 	}
-	keyBackend := xkms.NewFileBackend(logger, fsBackend)
+	keyBackend, err := xkms.NewTPMBackendBlobStore(logger, fsBackend)
+	if err != nil {
+		t.Fatalf("NewTPMBackendBlobStore: %v", err)
+	}
 
 	tpmConfig := xkms.DefaultTPMConfig
 	tpmConfig.UseSimulator = true

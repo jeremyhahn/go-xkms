@@ -23,6 +23,7 @@ import (
 
 	tpm2backend "github.com/jeremyhahn/go-xkms/pkg/backend/tpm2"
 	"github.com/jeremyhahn/go-xkms/pkg/storage"
+	"github.com/jeremyhahn/go-xkms/pkg/testutil/tpmblobtest"
 	pkgtpm2 "github.com/jeremyhahn/go-xkms/pkg/tpm2"
 )
 
@@ -36,7 +37,7 @@ func openSimulator(t *testing.T) *tpm2backend.Backend {
 	t.Helper()
 	backend, err := tpm2backend.NewBackend(&tpm2backend.Config{
 		UseSimulator:    true,
-		KeyStorage:      storage.NewMemory(),
+		Keys:            tpmblobtest.New(t),
 		CN:              "preseal-simulator",
 		PlatformPCR:     simulatorPlatformPCR,
 		PlatformPCRBank: pkgtpm2.PCRBankSHA256,

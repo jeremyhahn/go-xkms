@@ -183,7 +183,6 @@ func createSim(t testing.TB, entropy bool) (*slog.Logger, TrustedPlatformModule)
 	// Note: In a real test, we'd defer storageFactory.Close() but this helper
 	// doesn't return a cleanup function. The temp dir will be cleaned up on program exit.
 
-	blobStore := storageFactory.BlobStore()
 	fileBackend := storageFactory.KeyBackend()
 
 	config := &Config{
@@ -237,7 +236,6 @@ func createSim(t testing.TB, entropy bool) (*slog.Logger, TrustedPlatformModule)
 		Logger:       logger,
 		DebugSecrets: true,
 		Config:       config,
-		BlobStore:    blobStore,
 		Backend:      fileBackend,
 		FQDN:         "node1.example.com",
 	}

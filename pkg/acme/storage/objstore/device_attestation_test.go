@@ -42,7 +42,7 @@ func TestChallengeDAO_DeviceAttestation_SurvivesReload(t *testing.T) {
 	dao1, err := factory1.(*Factory).ChallengeDAO(1)
 	require.NoError(t, err)
 
-	want := &entities.ACMEChallenge{
+	tpm := &entities.ACMEChallenge{
 		ID:        7,
 		Type:      "device-attest-01",
 		Status:    "valid",
@@ -60,9 +60,27 @@ func TestChallengeDAO_DeviceAttestation_SurvivesReload(t *testing.T) {
 			PubArea:             []byte{0x08, 0x09},
 		},
 	}
+	// A DICE record carries the SPKI the device registry vouched for, which
+	// finalize compares the CSR against (go-xkms#1441).
+	dice := &entities.ACMEChallenge{
+		ID:        8,
+		Type:      "device-attest-01",
+		Status:    "valid",
+		Token:     "dice-token",
+		AccountID: 1,
+		DeviceAttestation: &entities.DeviceAttestation{
+			Format:              "dice",
+			DeviceIdentityType:  "permanent-identifier",
+			DeviceIdentityValue: "0100112233445566778899aabbccddeeff",
+			KeyAuthorization:    "dice-token.thumbprint",
+			LeafDER:             []byte{0x0a, 0x0b},
+			AttestedSPKI:        []byte{0x30, 0x59, 0x30, 0x13},
+		},
+	}
 
 	ctx := context.Background()
-	require.NoError(t, dao1.Save(ctx, want))
+	require.NoError(t, dao1.Save(ctx, tpm))
+	require.NoError(t, dao1.Save(ctx, dice))
 
 	// A fresh Factory/DAO pair over the SAME backend, not the one that wrote
 	// the record: this only passes if DeviceAttestation actually went through
@@ -74,10 +92,12 @@ func TestChallengeDAO_DeviceAttestation_SurvivesReload(t *testing.T) {
 	dao2, err := factory2.(*Factory).ChallengeDAO(1)
 	require.NoError(t, err)
 
-	got, err := dao2.Get(ctx, want.ID)
-	require.NoError(t, err)
-	require.NotNil(t, got.DeviceAttestation)
-	require.Equal(t, want.DeviceAttestation, got.DeviceAttestation)
+	for _, want := range []*entities.ACMEChallenge{tpm, dice} {
+		got, err := dao2.Get(ctx, want.ID)
+		require.NoError(t, err)
+		require.NotNil(t, got.DeviceAttestation)
+		require.Equal(t, want.DeviceAttestation, got.DeviceAttestation)
+	}
 }
 
 // TestChallengeDAO_DeviceAttestation_NilByDefault proves that a challenge

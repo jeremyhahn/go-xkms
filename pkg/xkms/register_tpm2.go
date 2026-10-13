@@ -23,8 +23,11 @@
 package xkms
 
 import (
+	"log/slog"
+
 	tpm2backend "github.com/jeremyhahn/go-xkms/pkg/backend/tpm2"
 	"github.com/jeremyhahn/go-xkms/pkg/storage"
+	"github.com/jeremyhahn/go-xkms/pkg/tpm2/store"
 	"github.com/jeremyhahn/go-xkms/pkg/types"
 )
 
@@ -37,14 +40,14 @@ func init() {
 //
 // Supported configuration keys:
 //   - "device" (string): Path to TPM device (default: "/dev/tpmrm0")
-//   - "key_storage" (storage.Backend): pre-built storage for TPM key blobs --
-//     the caller's datastore handle (see AutoConfig.Datastore), already a
-//     key-prefixed view for this backend. Required -- there is no default
-//     (see tpm2.ErrKeyDirRequired). AutoInitialize supplies one automatically
-//     when AutoConfig.Datastore is set; callers that leave Datastore nil and
-//     want the tpm2 backend must set "key_storage" explicitly in
-//     BackendConfigs, or the backend factory returns an error and
-//     AutoInitialize skips it.
+//   - "key_storage" (storage.Backend): the datastore TPM key blobs are kept
+//     in as TPMBlob entities -- the caller's datastore handle (see
+//     AutoConfig.Datastore), already a key-prefixed view for this backend.
+//     It must support guarded writes. Required -- there is no default (see
+//     tpm2.ErrKeysRequired). AutoInitialize supplies one automatically when
+//     AutoConfig.Datastore is set; callers that leave Datastore nil and want
+//     the tpm2 backend must set "key_storage" explicitly in BackendConfigs,
+//     or the backend factory returns an error and AutoInitialize skips it.
 //   - "use_simulator" (bool): Use TPM simulator instead of hardware
 //   - "simulator_host" (string): Simulator hostname (default: "localhost")
 //   - "simulator_port" (int): Simulator port (default: 2321)
@@ -55,7 +58,11 @@ func newTPM2KeyProvider(config map[string]interface{}) (types.KeyProvider, error
 		tpmConfig.Device = device
 	}
 	if ks, ok := config["key_storage"].(storage.Backend); ok {
-		tpmConfig.KeyStorage = ks
+		keys, err := store.NewBackendBlobStore(slog.Default(), ks)
+		if err != nil {
+			return nil, err
+		}
+		tpmConfig.Keys = keys
 	}
 	if useSim, ok := config["use_simulator"].(bool); ok {
 		tpmConfig.UseSimulator = useSim

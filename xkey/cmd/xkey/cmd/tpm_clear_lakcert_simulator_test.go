@@ -85,7 +85,6 @@ func withLAKSimulatorTPM(t *testing.T) *lakSimulator {
 		Config:    &config,
 		Logger:    logger,
 		Backend:   storageFactory.KeyBackend(),
-		BlobStore: storageFactory.BlobStore(),
 		Transport: sim.Transport(),
 	})
 	if tpm != nil {

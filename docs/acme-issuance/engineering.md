@@ -1,6 +1,6 @@
 # ACME Issuance — Engineering Contract
 
-> **Status: NORMATIVE** · Feature: `acme-issuance` · Repo: `go-xkms` · Last verified: 2026-10-12
+> **Status: NORMATIVE** · Feature: `acme-issuance` · Repo: `go-xkms` · Last verified: 2026-10-13
 
 ## Exported surface
 
@@ -662,8 +662,9 @@ once, to the externally visible base.
   request is wrong regardless of the order. A CSR whose otherName decodes but
   names a value the order did not authorize, or whose DNS/IP SANs are not
   exactly the order's authorized `dns`/`ip` identifiers (if any accompany the
-  permanent identifier), is `rejectedIdentifier` — well-formed but asserting
-  an identity the order does not grant (`matchesPermanentIdentifierOrder`,
+  permanent identifier), is `badCSR` with `ErrCSRIdentifierMismatch`'s detail
+  — RFC 8555 §7.4 answers "the CSR and order identifiers differ" with
+  `badCSR` (`matchesPermanentIdentifierOrder`,
   `pkg/acme/server/handlers/order_finalize.go`). Before this, the permanent
   identifier fell back to the Common Name whenever the otherName was absent or
   malformed, and the branch returned as soon as it found the first
@@ -768,8 +769,8 @@ because draft-ietf-acme-device-attest's attestation carries no authenticator
 data. For the SHA-256 algorithms it equals `DICENonce`. An unknown `alg` is
 refused, never defaulted.
 
-**`tpm` at finalization** — `BindCSRKey` (`binding.go:142`) checks the CSR
-self-signature, then `tpmCSREvidence` (`binding.go:188`) re-submits the
+**`tpm` at finalization** — `BindCSRKey` (`binding.go:161`) checks the CSR
+self-signature, then `tpmCSREvidence` (`binding.go:228`) re-submits the
 recorded `certInfo`/`sig`/`pubArea`/`x5c[0]` to the gate with the CSR's
 SubjectPublicKeyInfo. `verifyTPMCertifyBinding` (`invariants.go:304`) repeats
 every certification check and then requires `pubArea`'s key to equal the CSR's
@@ -790,7 +791,7 @@ empty subject, a P-256 key and one `extensionRequest` holding a critical
 non-critical `tcg-dice-UCCS-evidence` whose `eat_nonce` is `b`. The ACME
 identifier type is `permanent-identifier` (`possession.go:81`).
 `bindDeviceAttestationKey` runs `VerifyPossessionCSR` for every `dice` record
-before `BindCSRKey` (`pkg/acme/server/handlers/device_attest.go:191-196`).
+before `BindCSRKey` (`pkg/acme/server/handlers/device_attest.go:228-235`).
 `ParsePossessionCSR` (`possession.go:280`) refuses anything the template would
 not have written, then four checks run, each its own `badCSR` cause:
 
@@ -800,6 +801,22 @@ not have written, then four checks run, each its own `badCSR` cause:
 | the SubjectPublicKeyInfo is byte-equal to the attested leaf's | `ErrPossessionKeyMismatch` | `possession.go:377` |
 | the UCCS nonce is SHA-256 of this order's key authorization | `ErrPossessionNonceMismatch` | `possession.go:380` |
 | the request's identifiers are exactly the order's | `ErrPossessionIdentifierMismatch` | `possession.go:383` |
+
+`BindCSRKey` (`binding.go:153`) then refuses, as `ErrKeyBindingUnavailable`
+("no attested SPKI"), a record without `AttestedSPKI`, the key the device
+registry vouched for at the challenge, and as `attestation.ErrKeyNotBound` a
+request whose SubjectPublicKeyInfo is not byte-equal to it (`diceCSREvidence`,
+`binding.go:184`).
+
+A request that passes is then **re-confirmed against the device registry**
+(`ConfirmRegistration`, `registry.go:298`, called from
+`bindDeviceAttestationKey`, `handlers/device_attest.go:238`). The server looks
+the device's UEID up again and refuses, as `unauthorized`, a device whose
+provisioning record was deleted or whose provisioned key is no longer
+`AttestedSPKI`. The CSR is judged first, so a request for the wrong key is
+`badCSR` whatever the registry says. The registry's error can name internal
+state, so the client gets a fixed detail and the cause is logged.
+
 
 So a `dice` order names one device and nothing else. No requested extension
 reaches the certificate: the handler issues with the attested
@@ -822,13 +839,93 @@ critical and holds only a `directoryName`, which `crypto/x509` reports in
 SAN with `checkAIKCertificate` first and marks it handled on a copy.
 
 **The production verifier.** `deviceattest01.TrustAnchorVerifier` anchors a
-`tpm` chain to configured `tpm_roots` with `evidence.VerifyAKCertificate` and a
-`dice` chain to configured `dice_roots` with `dice.Verify` (nonce, `Ueid`, and
-the configured policy). The roots are separate per format, and a format with no
-root is refused. `xkmsd` builds it from `acme.challenges.device_attest` and
-refuses to start with `device_attest01` enabled and no anchor
-(`config.ErrACMEDeviceAttestNoAnchors`, `ErrACMEDeviceAttestAnchors`). The
-keys are under [Configuration](#configuration).
+`tpm` chain to configured `tpm_roots` with `evidence.VerifyAKCertificate`. A
+`dice` attestation is anchored in the **device registry**, never in a root
+pool alone, as described in the next section. `xkmsd` builds the verifier from
+`acme.challenges.device_attest` and refuses to start with `device_attest01`
+enabled and no anchor (`config.ErrACMEDeviceAttestNoAnchors`,
+`ErrACMEDeviceAttestAnchors`). The keys are under
+[Configuration](#configuration).
+
+## DICE device registry
+
+A DICE alias certificate is signed by the key it carries, so on its own it
+vouches only for itself: any host can mint one for a key it generated and name
+any device's UEID. What says which key belongs to a device is the device's
+**provisioning record**, written when the device is provisioned, outside any
+field host (`pkg/acme/challenges/device-attest-01/registry.go`).
+
+**The resolver contract.** go-xkms declares the lookup, and the platform that
+owns enrollment implements it and injects it through `TrustAnchors.Devices`
+(`anchors.go:75`), so the dependency points from the enrollment layer to go-xkms:
+
+```go
+type DeviceResolver interface {
+    ResolveDevice(ctx context.Context, ueid string) (*ProvisionedDevice, error)
+}
+
+type ProvisionedDevice struct {
+    DeviceIDKey         []byte // DER SubjectPublicKeyInfo: the raw-key path
+    DeviceIDCertificate []byte // DER DeviceID certificate: the endorsement path
+}
+```
+
+- `ueid` is the lowercase hex of the complete RFC 9711 UEID: `01` followed by
+  the 16-byte DeviceID, 34 digits.
+- A UEID with no record is reported as an error wrapping
+  `ErrDeviceNotProvisioned`. Any other failure is any other error. Both refuse
+  the device; the sentinel only lets a caller tell an unprovisioned device from
+  a registry that is down.
+- Exactly one field of the record is set. Neither or both is
+  `ErrProvisioningRecordInvalid`, as is a key that is not an ECDSA P-256
+  SubjectPublicKeyInfo or a certificate that does not parse.
+
+**The two paths.** `VerifyRegisteredDevice` (`registry.go:116`) reads the UEID
+from the alias leaf only as the lookup key, then anchors the leaf along the path
+its record selects. Nothing else the leaf says is believed until then.
+
+| Path | Record | The leaf is anchored when | Attested SPKI |
+|---|---|---|---|
+| raw key | `DeviceIDKey` | its SubjectPublicKeyInfo is byte-equal to the provisioned key (`ErrAttestedKeyMismatch`) **and** its ECDSA-SHA256 signature verifies under that key (`ErrAliasSignatureInvalid`) | the provisioned key |
+| endorsement | `DeviceIDCertificate` | the DeviceID certificate names the same UEID, and `dice.Verify([alias, DeviceID certificate])` anchors in `dice_roots` (`ErrDeviceEndorsementInvalid`) | the DeviceID certificate's key |
+
+On the raw-key path neither check is enough alone: a leaf can copy the
+registered key and forge its measurements, and `dice.Verify` does not check a
+leaf's signature when it is given no roots. On the endorsement path an empty
+`dice_roots` refuses the device (`ErrNoTrustAnchors`); it never falls back to
+the raw-key path. Because the attested SPKI there is the DeviceID certificate's
+key, finalization accepts only a CSR for that key, and the alias must carry it
+too.
+
+Only after anchoring does `dice.Verify` check the claims: the `eat_nonce`
+(`DICENonce(keyAuthorization)`), a required `Ueid`, and the configured
+`dice_require_*` policy. A claim that fails is `ErrCertificateChainInvalid`,
+answered as `incorrectResponse`.
+
+**Fail closed.** Every refusal by the registry is joined under
+`ErrDeviceNotAuthorized`, which the challenge handler answers as `unauthorized`
+(`handlers/challenge.go:65`):
+
+| Condition | Joined reason |
+|---|---|
+| `TrustAnchors.Devices` is nil, or the `AttestationVerifier` does not implement `RegisteredDeviceVerifier` | `ErrNoDeviceResolver` |
+| the leaf carries no readable UEID | the identity error |
+| the resolver returns an error, including no record | the resolver's error (`ErrDeviceNotProvisioned` for no record) |
+| the record is malformed | `ErrProvisioningRecordInvalid` |
+| raw key: another key, or a signature that does not verify | `ErrAttestedKeyMismatch`, `ErrAliasSignatureInvalid` |
+| endorsement: no `dice_roots`, another UEID, or no chain to the roots | `ErrNoTrustAnchors`, `ErrDeviceEndorsementInvalid` |
+| at finalization: the record is gone, or its key is no longer `AttestedSPKI` | the resolver's error, `ErrAttestedKeyMismatch` |
+
+**`AttestedSPKI` is persisted.** `VerifiedAttestation.AttestedSPKI`
+(`binding.go:107`) is stored with the challenge as
+`entities.DeviceAttestation.AttestedSPKI` (`persist.go`) and read back at
+finalization. A `dice` record without one was never anchored in a registry and
+is refused as `badCSR`.
+
+**`xkmsd` fails closed.** `xkmsd` has no resolver to inject, so it builds its
+verifier with `TrustAnchors.Devices` nil and refuses every `dice` attestation as
+`unauthorized`, whatever `dice_roots` and `dice_require_*` say. A DICE fleet is
+enrolled by an embedder that supplies its registry; `tpm` is unaffected.
 
 **Device identity, at the challenge.** Binding the CSR's key to
 the attested key says the certificate is for a key some genuine device holds.
@@ -987,9 +1084,9 @@ it, so `IAKCertificate()` only ever resolved on the in-process TPM simulator
 every open regardless of what enrollment issued) or when an operator
 installed one some other way. A hardware device with no `IAK.CertHandle`
 configured also needs somewhere for `ProvisionIAKCert` to persist to:
-`openDeviceTPM`'s hardware branch is given `store.FileCertStore`
-(`pkg/tpm2/store`), backed by the same `storage.Backend` the device's key
-blobs already persist to, so the certificate survives a process restart.
+`openDeviceTPM`'s hardware branch is given `store.BlobCertStore`
+(`pkg/tpm2/store`), which keeps the certificate as a `TPMBlob` in the same
+`BlobStore` as the device's key blobs, so it survives a process restart.
 
 ## Challenge validation client
 
@@ -1311,7 +1408,8 @@ The mapping an implementer needs:
 | order not ready to finalize | `orderNotReady` | 403 |
 | CSR does not match the order (`dns`/`ip` orders) | `badCSR` | 400 |
 | permanent-identifier CSR missing/malformed/extra otherName | `badCSR` | 400 |
-| permanent-identifier or DNS/IP SAN not authorized by the order | `rejectedIdentifier` | 401 |
+| permanent-identifier or DNS/IP SAN not authorized by the order (`ErrCSRIdentifierMismatch`) | `badCSR` | 400 |
+| `dice` finalize CSR not signed by the attested key, missing its UCCS evidence, or carrying another order's nonce | `badCSR` | 400 |
 
 **Fail closed:** unvalidated authorization, failed CAA, an undetermined CAA
 RRset (DNS failure), failed attestation, an exceeded rate limit (standalone

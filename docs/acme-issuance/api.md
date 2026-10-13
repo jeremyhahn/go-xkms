@@ -1,6 +1,6 @@
 # ACME Issuance — API
 
-> **Status: NORMATIVE** · Feature: `acme-issuance` · Repo: `go-xkms` · Last verified: 2026-10-12
+> **Status: NORMATIVE** · Feature: `acme-issuance` · Repo: `go-xkms` · Last verified: 2026-10-13
 
 ACME is different from every other feature in this repo: **its wire format is
 defined by RFC 8555, not by us.** The six-transport rule applies to go-xkms's
@@ -189,11 +189,13 @@ this identifier.
 |---|---|
 | the CSR has no `permanentIdentifier` otherName | `badCSR` (400) |
 | the CSR carries more than one `permanentIdentifier` otherName, or an otherName of any other type | `badCSR` (400) |
-| the otherName's value does not equal an identifier the order authorizes | `rejectedIdentifier` (401) |
-| the CSR carries a DNS or IP SAN, or an email/URI SAN | `rejectedIdentifier` (401) / `malformed` (400) unless that exact name is one of the order's authorized `dns`/`ip` identifiers |
+| the otherName's value does not equal an identifier the order authorizes | `badCSR` (400) |
+| the CSR carries a DNS or IP SAN, or an email/URI SAN | `badCSR` (400) / `malformed` (400) unless that exact name is one of the order's authorized `dns`/`ip` identifiers |
 | (device-attest-01 only) no validated `device-attest-01` challenge left an attestation record to bind against | `badCSR` (400) |
 | (device-attest-01 only) the CSR's key is not the attested key | `badCSR` (400) |
 | (device-attest-01 `dice` only) the CSR is not the device's possession request: not the template, a signature that does not verify, another key, another order's nonce, or identifiers other than exactly the order's | `badCSR` (400) |
+| (device-attest-01 `dice` only) the attestation record carries no attested SPKI, or the CSR's SubjectPublicKeyInfo is not byte-equal to it | `badCSR` (400) |
+| (device-attest-01 `dice` only) the device registry, queried again, no longer holds the device's record, or holds another key | `unauthorized` (401) |
 | an authorization the order references is missing from storage | `serverInternal` (500) |
 
 As with endorse-01, each is refused before the order moves to `processing`.
@@ -201,8 +203,9 @@ As with endorse-01, each is refused before the order moves to `processing`.
 A `device-attest-01` finalize is refused unless the CSR's key is the key the
 challenge attested: for the `tpm` format, the key in the statement's
 `pubArea`, which the AIK in `x5c[0]` certified with TPM2_Certify over the key
-authorization (WebAuthn Level 2 §8.3); for `dice`, the alias leaf's own
-`SubjectPublicKeyInfo`. The attestation object is unchanged on the wire —
+authorization (WebAuthn Level 2 §8.3); for `dice`, the attested SPKI — the
+DeviceID key the device's provisioning record vouched for at the challenge,
+which the alias leaf must also carry. The attestation object is unchanged on the wire —
 `fmt: "tpm"`, `attStmt: {ver, alg, x5c, sig, certInfo, pubArea}` — but
 `certInfo` must be a TPM2_Certify, not a TPM2_Quote, and `extraData` must be
 `TPMExtraData(alg, keyAuthorization)`. The check runs against the attestation
@@ -220,14 +223,19 @@ non-critical `tcg-dice-UCCS-evidence` whose `eat_nonce` is
 (`pkg/acme/challenges/device-attest-01/possession.go:38-73`, checked by
 `VerifyPossessionCSR` at `possession.go:358`). A `dice` order therefore names
 exactly one `permanent-identifier` and nothing else. The UCCS extension is
-never copied onto the certificate (`order_finalize.go:851`).
+never copied onto the certificate (`order_finalize.go:851`). The request's key must also be the key the device
+registry vouched for at the challenge, and finalize asks the registry again, so
+a device withdrawn or re-keyed since its challenge is `unauthorized`.
 
 The challenge itself also refuses to validate unless the device identity the
 evidence carries — the RFC 4043 `permanentIdentifier` otherName on the AIK
 certificate for `tpm`, the hex-encoded TCG DICE `tcg-dice-Ueid` extension for
 `dice` — equals the authorization's `permanent-identifier` value;
 a mismatch is `unauthorized` (401) at the challenge, before
-finalize is ever reached. See
+finalize is ever reached. A `dice` challenge is also `unauthorized` unless the
+server's device registry holds a provisioning record for the device's UEID that
+vouches for the alias certificate's key; a server with no registry, which
+includes a stock `xkmsd`, refuses every `dice` attestation. See
 [engineering.md](engineering.md#device-attest-01-key-binding).
 
 `endorse-01` is the one exception: its permanent identifier is the EK public

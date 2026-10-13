@@ -346,8 +346,10 @@ func newPossessionFixture(t *testing.T) *possessionFixture {
 	t.Helper()
 	leafDER, key := newDICEAlias(t, DICENonce(diceKeyAuth))
 	deviceID := mustHex(t, vectorDeviceID)
+	attestedSPKI, err := x509.MarshalPKIXPublicKey(&key.PublicKey)
+	require.NoError(t, err)
 	return &possessionFixture{
-		verified: &VerifiedAttestation{Format: FormatDICE, KeyAuthorization: diceKeyAuth, LeafDER: leafDER},
+		verified: &VerifiedAttestation{Format: FormatDICE, KeyAuthorization: diceKeyAuth, LeafDER: leafDER, AttestedSPKI: attestedSPKI},
 		key:      key,
 		deviceID: deviceID,
 		order:    []entities.ACMEIdentifier{{Type: common.AuthzTypePermanentIdentifier, Value: vectorDeviceID}},

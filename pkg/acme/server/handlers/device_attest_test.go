@@ -125,26 +125,69 @@ func deviceAttestOrder(rec *entities.DeviceAttestation) *entities.ACMEOrder {
 	}
 }
 
-func newDICEDeviceAttestation(t *testing.T, key *ecdsa.PrivateKey, keyAuth, deviceIdentity string) *entities.DeviceAttestation {
+// newDICEDeviceAttestation is the record a device-attest-01 challenge leaves
+// for the DICE device whose UEID is ueid and whose provisioned DeviceID key,
+// and alias key, is key.
+func newDICEDeviceAttestation(t *testing.T, key *ecdsa.PrivateKey, keyAuth, deviceIdentity string, ueid []byte) *entities.DeviceAttestation {
 	t.Helper()
 	return &entities.DeviceAttestation{
 		Format:              "dice",
 		DeviceIdentityType:  common.AuthzTypePermanentIdentifier,
 		DeviceIdentityValue: deviceIdentity,
 		KeyAuthorization:    keyAuth,
-		LeafDER:             newDICEAliasCert(t, key, keyAuth, nil),
+		LeafDER:             newDICEAliasCert(t, key, keyAuth, ueid),
+		AttestedSPKI:        marshalSPKI(t, key),
 	}
 }
 
-// TestBindDeviceAttestationKey_MatchingKeySucceeds is go-xkms#789: a
-// certificate request for the key a device-attest-01 challenge attested must
-// be accepted.
-func TestBindDeviceAttestationKey_MatchingKeySucceeds(t *testing.T) {
-	key := newDICEAliasDeviceKey(t)
-	rec := newDICEDeviceAttestation(t, key, deviceAttestTestKeyAuth, deviceAttestTestIdentity)
+// deviceBindSetup is a service whose device registry provisions one DICE
+// device, and the record that device's challenge left.
+type deviceBindSetup struct {
+	service  *RestService
+	registry *registeredDevices
+	key      *ecdsa.PrivateKey
+	ueid     []byte
+	rec      *entities.DeviceAttestation
+}
 
-	problem := bindDeviceAttestationKey(rec, deviceAttestOrder(rec), deviceAttestCSR(t, key, rec))
-	require.Nil(t, problem)
+func newDeviceBindSetup(t *testing.T) *deviceBindSetup {
+	t.Helper()
+	service, _, cleanup := setupTestService(t)
+	t.Cleanup(cleanup)
+
+	key := newDICEAliasDeviceKey(t)
+	ueid := newTestUeid(t)
+	registry := serviceRegistry(t, service)
+	registry.provision(t, ueid, key)
+	return &deviceBindSetup{
+		service:  service,
+		registry: registry,
+		key:      key,
+		ueid:     ueid,
+		rec:      newDICEDeviceAttestation(t, key, deviceAttestTestKeyAuth, hex.EncodeToString(ueid), ueid),
+	}
+}
+
+// bind finalizes the order d.rec authorizes with a possession request signed
+// by signer, against the record rec (nil when the challenge left none).
+func (d *deviceBindSetup) bind(t *testing.T, rec *entities.DeviceAttestation, signer *ecdsa.PrivateKey) *entities.Error {
+	t.Helper()
+	return d.service.bindDeviceAttestationKey(context.Background(), rec, deviceAttestOrder(d.rec), deviceAttestCSR(t, signer, d.rec))
+}
+
+func requireProblem(t *testing.T, problem *entities.Error, errType string) {
+	t.Helper()
+	require.NotNil(t, problem)
+	require.Equal(t, "urn:ietf:params:acme:error:"+errType, problem.Type)
+}
+
+// TestBindDeviceAttestationKey_MatchingKeySucceeds is go-xkms#789: a
+// certificate request for the key a device-attest-01 challenge attested, and
+// the device registry still vouches for, must be accepted.
+func TestBindDeviceAttestationKey_MatchingKeySucceeds(t *testing.T) {
+	setup := newDeviceBindSetup(t)
+
+	require.Nil(t, setup.bind(t, setup.rec, setup.key))
 }
 
 // TestBindDeviceAttestationKey_DifferentKeyRefused is go-xkms#789's central
@@ -152,14 +195,10 @@ func TestBindDeviceAttestationKey_MatchingKeySucceeds(t *testing.T) {
 // finalization asks for a certificate on key B. Before this fix, nothing
 // compared the two and the CSR was signed regardless.
 func TestBindDeviceAttestationKey_DifferentKeyRefused(t *testing.T) {
-	attestedKey := newDICEAliasDeviceKey(t)
-	rec := newDICEDeviceAttestation(t, attestedKey, deviceAttestTestKeyAuth, deviceAttestTestIdentity)
+	setup := newDeviceBindSetup(t)
 
-	otherKey := newDICEAliasDeviceKey(t)
-
-	problem := bindDeviceAttestationKey(rec, deviceAttestOrder(rec), deviceAttestCSR(t, otherKey, rec))
-	require.NotNil(t, problem)
-	require.Equal(t, "urn:ietf:params:acme:error:"+common.ErrTypeBadCSR, problem.Type)
+	problem := setup.bind(t, setup.rec, newDICEAliasDeviceKey(t))
+	requireProblem(t, problem, common.ErrTypeBadCSR)
 	require.Contains(t, problem.Detail, deviceattest01.ErrPossessionKeyMismatch.Error())
 }
 
@@ -168,12 +207,44 @@ func TestBindDeviceAttestationKey_DifferentKeyRefused(t *testing.T) {
 // signed as an ordinary certificate request -- the fail-closed half of
 // go-xkms#789.
 func TestBindDeviceAttestationKey_NoRecordRefused(t *testing.T) {
-	key := newDICEAliasDeviceKey(t)
-	rec := newDICEDeviceAttestation(t, key, deviceAttestTestKeyAuth, deviceAttestTestIdentity)
+	setup := newDeviceBindSetup(t)
 
-	problem := bindDeviceAttestationKey(nil, deviceAttestOrder(rec), deviceAttestCSR(t, key, rec))
-	require.NotNil(t, problem)
-	require.Equal(t, "urn:ietf:params:acme:error:"+common.ErrTypeBadCSR, problem.Type)
+	requireProblem(t, setup.bind(t, nil, setup.key), common.ErrTypeBadCSR)
+}
+
+// A DICE record without the attested SPKI was never anchored in the device
+// registry, so there is no key to bind the request to (go-xkms#1441).
+func TestBindDeviceAttestationKey_NoAttestedSPKIRefused(t *testing.T) {
+	setup := newDeviceBindSetup(t)
+	setup.rec.AttestedSPKI = nil
+
+	requireProblem(t, setup.bind(t, setup.rec, setup.key), common.ErrTypeBadCSR)
+}
+
+// Finalization re-queries the registry: a device withdrawn, or re-keyed,
+// between the challenge and the finalize is no longer authorized
+// (go-xkms#1441).
+func TestBindDeviceAttestationKey_RegistryChangedRefused(t *testing.T) {
+	t.Run("the device was withdrawn", func(t *testing.T) {
+		setup := newDeviceBindSetup(t)
+		setup.registry.withdraw(setup.ueid)
+
+		requireProblem(t, setup.bind(t, setup.rec, setup.key), common.ErrTypeUnauthorized)
+	})
+
+	t.Run("the device was re-keyed", func(t *testing.T) {
+		setup := newDeviceBindSetup(t)
+		setup.registry.provision(t, setup.ueid, newDICEAliasDeviceKey(t))
+
+		requireProblem(t, setup.bind(t, setup.rec, setup.key), common.ErrTypeUnauthorized)
+	})
+
+	t.Run("no device registry is wired", func(t *testing.T) {
+		setup := newDeviceBindSetup(t)
+		setup.service.attestingVerifiers = nil
+
+		requireProblem(t, setup.bind(t, setup.rec, setup.key), common.ErrTypeUnauthorized)
+	})
 }
 
 // TestBindDeviceAttestationKey_DICERequiresThePossessionRequest is
@@ -182,8 +253,8 @@ func TestBindDeviceAttestationKey_NoRecordRefused(t *testing.T) {
 // it is not the device's possession request; so is a possession request
 // answering another challenge, or naming identifiers the order does not hold.
 func TestBindDeviceAttestationKey_DICERequiresThePossessionRequest(t *testing.T) {
-	key := newDICEAliasDeviceKey(t)
-	rec := newDICEDeviceAttestation(t, key, deviceAttestTestKeyAuth, deviceAttestTestIdentity)
+	setup := newDeviceBindSetup(t)
+	key, rec := setup.key, setup.rec
 
 	ordinaryDER, err := x509.CreateCertificateRequest(rand.Reader, &x509.CertificateRequest{}, key)
 	require.NoError(t, err)
@@ -209,9 +280,8 @@ func TestBindDeviceAttestationKey_DICERequiresThePossessionRequest(t *testing.T)
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			problem := bindDeviceAttestationKey(rec, tt.order, tt.csr)
-			require.NotNil(t, problem)
-			require.Equal(t, "urn:ietf:params:acme:error:"+common.ErrTypeBadCSR, problem.Type)
+			problem := setup.service.bindDeviceAttestationKey(context.Background(), rec, tt.order, tt.csr)
+			requireProblem(t, problem, common.ErrTypeBadCSR)
 			require.Contains(t, problem.Detail, tt.want.Error())
 		})
 	}
@@ -229,7 +299,7 @@ func TestFindDeviceAttestation_LocatesTheValidatedChallenge(t *testing.T) {
 	require.NoError(t, err)
 
 	key := newDICEAliasDeviceKey(t)
-	rec := newDICEDeviceAttestation(t, key, deviceAttestTestKeyAuth, "urn:dice:device:example")
+	rec := newDICEDeviceAttestation(t, key, deviceAttestTestKeyAuth, "urn:dice:device:example", newTestUeid(t))
 
 	authz := &entities.ACMEAuthorization{
 		AccountID: 1,
@@ -297,19 +367,6 @@ func TestFindDeviceAttestation_NoValidatedChallengeReturnsNil(t *testing.T) {
 	require.Nil(t, got)
 }
 
-// acceptAllAttestations is a deviceattest01.AttestationVerifier that accepts
-// everything, standing in for a real trust-anchored verifier: these tests are
-// about the identity/key binding NewDeviceAttestVerifier and ChallengeHandler
-// add, not about chain anchoring, which pkg/acme/challenges/device-attest-01
-// tests on its own against the production TrustAnchorVerifier.
-type acceptAllAttestations struct{}
-
-func (acceptAllAttestations) VerifyAttestationObject(*deviceattest01.AttestationObject, []byte) error {
-	return nil
-}
-
-func (acceptAllAttestations) VerifyAKCertificateChain([][]byte) error { return nil }
-
 // TestNewDeviceAttestVerifier_ReturnsAttestedIdentityAndEvidence proves the
 // verifier itself -- independent of ChallengeHandler's identity match -- reads
 // the device identity the evidence carries from the client's payload and
@@ -317,11 +374,9 @@ func (acceptAllAttestations) VerifyAKCertificateChain([][]byte) error { return n
 // (go-xkms#789, go-xkms#828). It is given no dial target and no port: nothing
 // is contacted.
 func TestNewDeviceAttestVerifier_ReturnsAttestedIdentityAndEvidence(t *testing.T) {
-	verifier := NewDeviceAttestVerifier(acceptAllAttestations{})
-
-	key := newDICEAliasDeviceKey(t)
-	deviceIdentity := []byte{0xDE, 0xAD, 0xBE, 0xEF}
-	leafDER := newDICEAliasCert(t, key, deviceAttestTestKeyAuth, deviceIdentity)
+	setup := newDeviceBindSetup(t)
+	verifier := setup.service.attestingVerifiers[common.ChallengeTypeDeviceAttest01]
+	leafDER := newDICEAliasCert(t, setup.key, deviceAttestTestKeyAuth, setup.ueid)
 
 	attested, err := verifier.VerifyAttested(nil, nil, common.AttestationChallenge{
 		IdentifierType:   common.AuthzTypePermanentIdentifier,
@@ -332,23 +387,40 @@ func TestNewDeviceAttestVerifier_ReturnsAttestedIdentityAndEvidence(t *testing.T
 	})
 	require.NoError(t, err)
 	require.NotNil(t, attested)
-	require.Equal(t, hex.EncodeToString(deviceIdentity), attested.Identifier)
+	require.Equal(t, hex.EncodeToString(setup.ueid), attested.Identifier)
 
 	rec := attested.Attestation
 	require.NotNil(t, rec, "the verified evidence must be returned for persistence")
 	require.Equal(t, leafDER, rec.LeafDER)
-	require.Equal(t, hex.EncodeToString(deviceIdentity), rec.DeviceIdentityValue,
+	require.Equal(t, hex.EncodeToString(setup.ueid), rec.DeviceIdentityValue,
 		"the record must name the attested identity, not the order's declared value")
+	require.Equal(t, marshalSPKI(t, setup.key), rec.AttestedSPKI,
+		"the record must carry the key the registry vouched for")
 
 	// And the recorded evidence binds the device's own key at finalization.
-	problemAtFinalize := bindDeviceAttestationKey(rec, deviceAttestOrder(rec), deviceAttestCSR(t, key, rec))
-	require.Nil(t, problemAtFinalize)
+	require.Nil(t, setup.bind(t, rec, setup.key))
+}
+
+// A device the registry does not provision is refused at the challenge, as
+// unauthorized, however well formed its evidence (go-xkms#1441).
+func TestNewDeviceAttestVerifier_UnregisteredDeviceRefused(t *testing.T) {
+	verifier := NewDeviceAttestVerifier(newRegisteredDevices(t))
+	key := newDICEAliasDeviceKey(t)
+
+	attested, err := verifier.VerifyAttested(nil, nil, common.AttestationChallenge{
+		IdentifierType: common.AuthzTypePermanentIdentifier, IdentifierValue: "device",
+		Token: "token", KeyAuthorization: deviceAttestTestKeyAuth,
+		Payload: deviceAttestPayload(t, newDICEAliasCert(t, key, deviceAttestTestKeyAuth, newTestUeid(t))),
+	})
+	require.ErrorIs(t, err, deviceattest01.ErrDeviceNotAuthorized)
+	require.ErrorIs(t, err, deviceattest01.ErrDeviceNotProvisioned)
+	require.Nil(t, attested)
 }
 
 // TestNewDeviceAttestVerifier_UndecodablePayloadRefused proves a client that
 // answers with anything but {"attObj": base64url(CBOR)} gets no identity.
 func TestNewDeviceAttestVerifier_UndecodablePayloadRefused(t *testing.T) {
-	verifier := NewDeviceAttestVerifier(acceptAllAttestations{})
+	verifier := NewDeviceAttestVerifier(newRegisteredDevices(t))
 
 	for name, payload := range map[string][]byte{
 		"an empty object (what a bare accept sends)": []byte(`{}`),
@@ -385,7 +457,7 @@ func TestNewDeviceAttestVerifier_NoVerifierRefused(t *testing.T) {
 // identity binding is defined for permanent-identifier, and this server offers
 // no other identifier type for device-attest-01.
 func TestNewDeviceAttestVerifier_WrongIdentifierTypeRefused(t *testing.T) {
-	verifier := NewDeviceAttestVerifier(acceptAllAttestations{})
+	verifier := NewDeviceAttestVerifier(newRegisteredDevices(t))
 
 	attested, err := verifier.VerifyAttested(nil, nil, common.AttestationChallenge{
 		IdentifierType: common.AuthzTypeDNS, IdentifierValue: "example.com",
@@ -408,6 +480,9 @@ type deviceAttestChallengeSetup struct {
 	authz      *entities.ACMEAuthorization
 	deviceKey  *ecdsa.PrivateKey
 	payload    json.RawMessage
+
+	registry       *registeredDevices
+	deviceIdentity []byte
 }
 
 // newDeviceAttestChallengeSetup attests a device with identity deviceIdentity
@@ -430,12 +505,12 @@ func newDeviceAttestChallengeSetup(t *testing.T, identifier string, deviceIdenti
 	require.NoError(t, err)
 
 	deviceKey := newDICEAliasDeviceKey(t)
-	service.attestingVerifiers = map[string]common.AttestingVerifier{
-		common.ChallengeTypeDeviceAttest01: NewDeviceAttestVerifier(acceptAllAttestations{}),
-	}
+	registry := serviceRegistry(t, service)
+	registry.provision(t, deviceIdentity, deviceKey)
 
 	return &deviceAttestChallengeSetup{
 		service: service, account: account, accountKey: accountKey, authz: authz, deviceKey: deviceKey,
+		registry: registry, deviceIdentity: deviceIdentity,
 		payload: deviceAttestPayload(t, newDICEAliasCert(t, deviceKey, keyAuth, deviceIdentity)),
 	}
 }
@@ -488,8 +563,24 @@ func TestChallengeHandler_DeviceAttest01_MatchingIdentityPersistsRecord(t *testi
 	require.Equal(t, common.StatusValid, stored.Status)
 	require.NotNil(t, stored.DeviceAttestation, "the verified evidence must be persisted for finalization")
 	require.Equal(t, hex.EncodeToString(identity), stored.DeviceAttestation.DeviceIdentityValue)
+	require.Equal(t, marshalSPKI(t, setup.deviceKey), stored.DeviceAttestation.AttestedSPKI,
+		"the attested SPKI must survive storage to reach finalization")
 	rec := stored.DeviceAttestation
-	require.Nil(t, bindDeviceAttestationKey(rec, deviceAttestOrder(rec), deviceAttestCSR(t, setup.deviceKey, rec)))
+	require.Nil(t, setup.service.bindDeviceAttestationKey(context.Background(), rec, deviceAttestOrder(rec), deviceAttestCSR(t, setup.deviceKey, rec)))
+}
+
+// A device the registry does not provision leaves the challenge invalid and
+// unauthorized, with no record persisted (go-xkms#1441).
+func TestChallengeHandler_DeviceAttest01_UnregisteredDeviceRefused(t *testing.T) {
+	identity := []byte{0xDE, 0xAD, 0xBE, 0xEF}
+	setup := newDeviceAttestChallengeSetup(t, hex.EncodeToString(identity), identity)
+	setup.registry.withdraw(setup.deviceIdentity)
+
+	stored := setup.run(t, setup.payload)
+	require.Equal(t, common.StatusInvalid, stored.Status)
+	require.NotNil(t, stored.Error)
+	require.Equal(t, "urn:ietf:params:acme:error:unauthorized", stored.Error.Type)
+	require.Nil(t, stored.DeviceAttestation)
 }
 
 // TestChallengeHandler_DeviceAttest01_EmptyResponseRefused is the client that

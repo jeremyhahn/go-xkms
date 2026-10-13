@@ -24,7 +24,7 @@ import (
 
 	"github.com/jeremyhahn/go-xkms/pkg/keyprovider/frost"
 	"github.com/jeremyhahn/go-xkms/pkg/seal"
-	"github.com/jeremyhahn/go-xkms/pkg/storage"
+	"github.com/jeremyhahn/go-xkms/pkg/testutil"
 	"github.com/jeremyhahn/go-xkms/pkg/types"
 )
 
@@ -40,8 +40,9 @@ func TestKeyStore_Vault_StoreAndLoadKeyPackage(t *testing.T) {
 	attrs := frost.SymmetricSecretSealKeyAttributes(types.StoreVault)
 	require.NoError(t, seal.EnsureSealKey(context.Background(), seal.StrategyVault, b, attrs))
 
-	publicStorage := storage.New()
-	ks := frost.NewKeyStore(publicStorage, b, attrs)
+	daos := testutil.NewMemoryDAOFactory()
+	ks, err := frost.NewKeyStore(daos, b, attrs)
+	require.NoError(t, err)
 
 	keyID := "vault-frost-key"
 	pkg := &frost.KeyPackage{
@@ -71,8 +72,9 @@ func TestKeyStore_Vault_MissingWrapKey_TypedError(t *testing.T) {
 	attrs := frost.SymmetricSecretSealKeyAttributes(types.StoreVault)
 	require.NoError(t, seal.EnsureSealKey(context.Background(), seal.StrategyVault, b, attrs))
 
-	publicStorage := storage.New()
-	ks := frost.NewKeyStore(publicStorage, b, attrs)
+	daos := testutil.NewMemoryDAOFactory()
+	ks, err := frost.NewKeyStore(daos, b, attrs)
+	require.NoError(t, err)
 
 	keyID := "vault-wrong-key-test"
 	pkg := &frost.KeyPackage{
@@ -89,8 +91,9 @@ func TestKeyStore_Vault_MissingWrapKey_TypedError(t *testing.T) {
 
 	missingAttrs := frost.SymmetricSecretSealKeyAttributes(types.StoreVault)
 	missingAttrs.CN = "xkms-frost-wrap-does-not-exist"
-	ksWrongKey := frost.NewKeyStore(publicStorage, b, missingAttrs)
+	ksWrongKey, err := frost.NewKeyStore(daos, b, missingAttrs)
+	require.NoError(t, err)
 
-	_, _, err := ksWrongKey.LoadKeyPackage(context.Background(), keyID, 1)
+	_, _, err = ksWrongKey.LoadKeyPackage(context.Background(), keyID, 1)
 	require.Error(t, err)
 }

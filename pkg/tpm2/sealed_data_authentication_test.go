@@ -11,7 +11,7 @@ import (
 
 	"github.com/google/go-tpm/tpm2"
 	"github.com/jeremyhahn/go-xkms/pkg/errs"
-	"github.com/jeremyhahn/go-xkms/pkg/storage"
+	"github.com/jeremyhahn/go-xkms/pkg/tpm2/store"
 	"github.com/jeremyhahn/go-xkms/pkg/types"
 	"github.com/stretchr/testify/require"
 )
@@ -40,7 +40,7 @@ func TestLoadRejectsSealedObject(t *testing.T) {
 		{"TPM_RC_OBJECT_MEMORY", tpm2.TPMRCObjectMemory, false},
 		{"TPM_RC_RETRY", tpm2.TPMRCRetry, false},
 		{"TPM_RC_FAILURE", tpm2.TPMRCFailure, false},
-		{"storage not found", storage.ErrNotFound, false},
+		{"blob not found", store.ErrBlobNotFound, false},
 		{"transport", errors.New("read /dev/tpmrm0: device not configured"), false},
 	}
 	for _, tc := range cases {

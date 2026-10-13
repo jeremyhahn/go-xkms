@@ -15,6 +15,7 @@ package cmd
 
 import (
 	"context"
+	"net"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -82,9 +83,13 @@ func startServe(t *testing.T, cmd *cobra.Command, socketPath string) (*ipc.Clien
 	}
 	t.Cleanup(stop)
 
+	// Wait for a dial to succeed, not for the socket file to appear:
+	// net.Listen binds (creating the file) before it listens, and a dial in
+	// between is refused.
 	deadline := time.Now().Add(10 * time.Second)
 	for {
-		if _, err := os.Stat(socketPath); err == nil {
+		if conn, err := net.Dial("unix", socketPath); err == nil {
+			require.NoError(t, conn.Close())
 			break
 		}
 		select {

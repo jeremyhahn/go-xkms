@@ -28,6 +28,7 @@ import (
 	"github.com/jeremyhahn/go-xkms/pkg/backend/awskms"
 	"github.com/jeremyhahn/go-xkms/pkg/seal"
 	"github.com/jeremyhahn/go-xkms/pkg/storage"
+	"github.com/jeremyhahn/go-xkms/pkg/testutil"
 	"github.com/jeremyhahn/go-xkms/pkg/types"
 )
 
@@ -85,7 +86,7 @@ func newAWSKMSFrostSecretBackend(t *testing.T) (*awskms.Backend, *types.KeyAttri
 
 func TestKeyStore_AWSKMS_StoreAndLoadKeyPackage(t *testing.T) {
 	secretBackend, attrs := newAWSKMSFrostSecretBackend(t)
-	ks := NewKeyStore(newMockStorageBackend(), secretBackend, attrs)
+	ks := mustKeyStore(t, testutil.NewMemoryDAOFactory(), secretBackend, attrs)
 
 	keyID := "aws-frost-key"
 	pkg := &KeyPackage{

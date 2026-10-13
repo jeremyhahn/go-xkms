@@ -35,6 +35,7 @@ func TestSentinelErrors(t *testing.T) {
 		ErrDKGFailed,
 		ErrAggregationFailed,
 		ErrDecryptionNotSupported,
+		ErrNilDAOFactory,
 	}
 
 	for i, err := range sentinelErrors {
@@ -144,6 +145,23 @@ func TestAlgorithmError(t *testing.T) {
 
 	// Test Unwrap() method
 	assert.True(t, errors.Is(err, ErrUnsupportedAlgorithm))
+}
+
+func TestStoreError(t *testing.T) {
+	cause := errors.New("disk full")
+	err := &StoreError{Op: "load key", Key: "test-key", Err: cause}
+
+	assert.Equal(t, "frost: load key test-key: disk full", err.Error())
+	assert.True(t, errors.Is(err, cause))
+}
+
+func TestStoreError_UnwrapsTypedCause(t *testing.T) {
+	err := &StoreError{Op: "load key", Key: "test-key", Err: &KeyNotFoundError{KeyID: "test-key"}}
+
+	var notFound *KeyNotFoundError
+	require.True(t, errors.As(err, &notFound))
+	assert.Equal(t, "test-key", notFound.KeyID)
+	assert.False(t, errors.Is(err, ErrNonceAlreadyUsed))
 }
 
 func TestErrorWrapping(t *testing.T) {

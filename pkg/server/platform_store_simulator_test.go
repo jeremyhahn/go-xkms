@@ -30,6 +30,7 @@ import (
 	"github.com/jeremyhahn/go-xkms/pkg/seal"
 	"github.com/jeremyhahn/go-xkms/pkg/storage"
 	sealedstorage "github.com/jeremyhahn/go-xkms/pkg/storage/sealed"
+	"github.com/jeremyhahn/go-xkms/pkg/testutil/tpmblobtest"
 	pkgtpm2 "github.com/jeremyhahn/go-xkms/pkg/tpm2"
 	tpm2store "github.com/jeremyhahn/go-xkms/pkg/tpm2/store"
 	"github.com/jeremyhahn/go-xkms/pkg/xkms"
@@ -66,8 +67,7 @@ func enrollPlatformSRKForTest(t *testing.T, platformPCR uint) *tpm2backend.Backe
 	t.Helper()
 
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
-	keyBackend, err := tpm2backend.NewFileKeyBackend(logger, t.TempDir())
-	require.NoError(t, err)
+	keyBackend := tpmblobtest.New(t)
 
 	tpmConfig := &pkgtpm2.Config{
 		UseSimulator:                 true,

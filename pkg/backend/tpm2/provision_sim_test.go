@@ -21,7 +21,7 @@ import (
 	"crypto/x509"
 	"testing"
 
-	"github.com/jeremyhahn/go-xkms/pkg/storage"
+	"github.com/jeremyhahn/go-xkms/pkg/testutil/tpmblobtest"
 	"github.com/jeremyhahn/go-xkms/pkg/types"
 )
 
@@ -34,7 +34,7 @@ import (
 func TestNewBackend_SimulatorAutoProvisions(t *testing.T) {
 	config := &Config{
 		UseSimulator: true,
-		KeyStorage:   storage.NewMemory(),
+		Keys:         tpmblobtest.New(t),
 		CN:           "autoprov-test",
 	}
 

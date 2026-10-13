@@ -40,10 +40,6 @@ const (
 	// authorityCNPrefix names a scope's policy authority, followed by its
 	// generation.
 	authorityCNPrefix = "tpm-policy-authority-"
-
-	// tenantKeysSuffix is appended to a tenant's name to form the prefix of
-	// its key store within Config.KeyStorage.
-	tenantKeysSuffix = "/tpm/keys/"
 )
 
 // ScopeTPM is where a scope's TPM objects live: the TPM, the storage parent
@@ -577,14 +573,14 @@ func (s *Service) reconcile(ctx context.Context, st *scopeState, scope *Scope) e
 	return nil
 }
 
-// tenantKeys returns the key store of a tenant's objects: Config.KeyStorage
-// under "<tenant>/tpm/keys/".
+// tenantKeys returns the key store of a tenant's objects: Config.TenantKeys
+// scoped to the tenant.
 func (s *Service) tenantKeys(tenant string) (store.KeyBackend, error) {
-	prefixed, err := storage.NewPrefixBackend(s.keyStorage, tenant+tenantKeysSuffix)
+	keys, err := s.tenantBlobs.Tenant(tenant)
 	if err != nil {
-		return nil, &StoreError{Op: "prefix", Key: tenant + tenantKeysSuffix, Err: err}
+		return nil, &StoreError{Op: "scope keys", Key: tenant, Err: err}
 	}
-	return store.NewFileBackend(s.logger, prefixed), nil
+	return keys, nil
 }
 
 // storageKeyAttrs returns the attributes of a shared tenant's storage key,

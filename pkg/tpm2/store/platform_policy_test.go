@@ -7,7 +7,6 @@ import (
 	"bytes"
 	"testing"
 
-	"github.com/jeremyhahn/go-xkms/pkg/storage"
 	"github.com/jeremyhahn/go-xkms/pkg/types"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -120,12 +119,12 @@ func TestUnmarshalPlatformPolicyPin_Rejections(t *testing.T) {
 	})
 }
 
-// TestFileBackend_Delete_RemovesPlatformPolicyPin proves the pin record shares
+// TestBlobStore_Delete_RemovesPlatformPolicyPin proves the pin record shares
 // the lifetime of the object it describes. A pin left behind after a delete
 // would be picked up by the next object created under the same CN, which would
 // then be authorized against a policy it was never created with.
-func TestFileBackend_Delete_RemovesPlatformPolicyPin(t *testing.T) {
-	fb := NewFileBackend(testLogger(), storage.NewMemory())
+func TestBlobStore_Delete_RemovesPlatformPolicyPin(t *testing.T) {
+	fb := newTestBlobStore(t)
 	attrs := &types.KeyAttributes{CN: "pinned-sealed-object"}
 
 	pin := &PlatformPolicyPin{
@@ -147,5 +146,5 @@ func TestFileBackend_Delete_RemovesPlatformPolicyPin(t *testing.T) {
 	require.NoError(t, fb.Delete(attrs))
 
 	_, err = fb.Get(attrs, types.FSExtension(FSEXT_PLATFORM_POLICY))
-	assert.Error(t, err, "deleting the object must delete its platform policy pin")
+	assert.ErrorIs(t, err, ErrBlobNotFound, "deleting the object must delete its platform policy pin")
 }

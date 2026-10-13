@@ -95,7 +95,6 @@ func newLUKSSimHarness(t *testing.T) *pkgtpm2.TPM2 {
 	params := &pkgtpm2.Params{
 		Logger:    logger,
 		Config:    config,
-		BlobStore: storageFactory.BlobStore(),
 		Backend:   storageFactory.KeyBackend(),
 		Transport: sim.Transport(),
 		FQDN:      "luks-test.example.com",

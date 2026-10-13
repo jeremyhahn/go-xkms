@@ -1,6 +1,6 @@
 # TPM Policies — Engineering Contract
 
-> **Status: NORMATIVE** · Feature: `tpm-policies` · Repo: `go-xkms` · Last verified: 2026-10-08 (registry and key versions on go-qrdb DAO entities)
+> **Status: NORMATIVE** · Feature: `tpm-policies` · Repo: `go-xkms` · Last verified: 2026-10-09 (registry, key versions and tenant blobs on go-qrdb DAO entities)
 
 Design: [`architecture.md`](architecture.md). Surface: [`api.md`](api.md).
 
@@ -34,7 +34,7 @@ Design: [`architecture.md`](architecture.md). Surface: [`api.md`](api.md).
   (policy, authPolicy digest) and delete the key again if it cannot be
   recorded. `Seal` records a sealed object bound to a named policy.
   `DeleteKey` removes both kinds of assignment for the name.
-- `ListKeys` lists the system key directory (minus the service's own
+- `ListKeys` lists the system tenant's key blobs (minus the service's own
   objects, `tpmpolicy.IsReservedObject`) and each tenant scope's recorded
   keys, with `TenantID` and `TPMPolicy` set; `TenantScopedBackend` filters by
   tenant.
@@ -58,13 +58,14 @@ Design: [`architecture.md`](architecture.md). Surface: [`api.md`](api.md).
 
 ## Composition
 
-`compose.BuildTPMPolicyService(TPMPolicyParams{Backend, DAOs, Storage,
-VTPM, Logger})`:
+`compose.BuildTPMPolicyService(TPMPolicyParams{Backend, DAOs, VTPM,
+Logger})`:
 
 - registry (`tpmpolicy.NewRegistry(DAOs)`) over the DAO factory serving the
-  `tpmpolicy.DatabaseName` database; a factory that does not serve it fails
-  the build with `*dao.DatabaseUnavailableError`. Tenant object blobs over
-  `Storage("tpm-keys")` (`StorageTPMKeys`);
+  `tpmpolicy.DatabaseName` database; tenant object blobs as `TPMBlob`
+  entities (`tpmstore.NewBlobStore(DAOs)`, one `Tenant` store per scope) in
+  the `tpmstore.DatabaseName` (`tpm2`) database. A factory that does not
+  serve either database fails the build with `*dao.DatabaseUnavailableError`;
 - the backend's own TPM, Platform SRK and key store for the system scope;
 - the backend's TPM as the scopes' secrets sealer (every sealed secret is
   bound to the built-in `platform` policy by the service itself);

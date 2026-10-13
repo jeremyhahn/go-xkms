@@ -15,6 +15,7 @@ import (
 	"github.com/jeremyhahn/go-xkms/pkg/keyprovider/frost"
 	"github.com/jeremyhahn/go-xkms/pkg/seal"
 	"github.com/jeremyhahn/go-xkms/pkg/storage"
+	"github.com/jeremyhahn/go-xkms/pkg/testutil"
 	"github.com/jeremyhahn/go-xkms/pkg/types"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -22,13 +23,12 @@ import (
 
 // TestFrostBackend_InterfaceCompliance verifies the backend implements types.KeyProvider
 func TestFrostBackend_InterfaceCompliance(t *testing.T) {
-	publicStore, err := storage.NewMemoryBackend()
-	require.NoError(t, err)
+	daos := testutil.NewMemoryDAOFactory()
 
 	secretBackend, sealAttrs := newSoftwareFrostSecretBackend(t)
 
 	config := &frost.Config{
-		PublicStorage:           publicStore,
+		DAOs:                    daos,
 		SecretBackend:           secretBackend,
 		SecretSealKeyAttributes: sealAttrs,
 		Algorithm:               types.FrostAlgorithmEd25519,
@@ -59,13 +59,12 @@ func TestFrostBackend_InterfaceCompliance(t *testing.T) {
 
 // TestFrostBackend_KeyLifecycle tests full FROST key lifecycle
 func TestFrostBackend_KeyLifecycle(t *testing.T) {
-	publicStore, err := storage.NewMemoryBackend()
-	require.NoError(t, err)
+	daos := testutil.NewMemoryDAOFactory()
 
 	secretBackend, sealAttrs := newSoftwareFrostSecretBackend(t)
 
 	config := &frost.Config{
-		PublicStorage:           publicStore,
+		DAOs:                    daos,
 		SecretBackend:           secretBackend,
 		SecretSealKeyAttributes: sealAttrs,
 		Algorithm:               types.FrostAlgorithmEd25519,
@@ -168,13 +167,12 @@ func TestFrostBackend_AllAlgorithms(t *testing.T) {
 
 	for _, algo := range algorithms {
 		t.Run(string(algo), func(t *testing.T) {
-			publicStore, err := storage.NewMemoryBackend()
-			require.NoError(t, err)
+			daos := testutil.NewMemoryDAOFactory()
 
 			secretBackend, sealAttrs := newSoftwareFrostSecretBackend(t)
 
 			config := &frost.Config{
-				PublicStorage:           publicStore,
+				DAOs:                    daos,
 				SecretBackend:           secretBackend,
 				SecretSealKeyAttributes: sealAttrs,
 				Algorithm:               algo,
@@ -230,13 +228,12 @@ func TestFrostBackend_ThresholdVariations(t *testing.T) {
 
 	for _, tc := range testCases {
 		t.Run(tc.name, func(t *testing.T) {
-			publicStore, err := storage.NewMemoryBackend()
-			require.NoError(t, err)
+			daos := testutil.NewMemoryDAOFactory()
 
 			secretBackend, sealAttrs := newSoftwareFrostSecretBackend(t)
 
 			config := &frost.Config{
-				PublicStorage:           publicStore,
+				DAOs:                    daos,
 				SecretBackend:           secretBackend,
 				SecretSealKeyAttributes: sealAttrs,
 				Algorithm:               types.FrostAlgorithmEd25519,
@@ -277,13 +274,12 @@ func TestFrostBackend_ThresholdVariations(t *testing.T) {
 
 // TestFrostBackend_ErrorHandling tests error conditions
 func TestFrostBackend_ErrorHandling(t *testing.T) {
-	publicStore, err := storage.NewMemoryBackend()
-	require.NoError(t, err)
+	daos := testutil.NewMemoryDAOFactory()
 
 	secretBackend, sealAttrs := newSoftwareFrostSecretBackend(t)
 
 	config := &frost.Config{
-		PublicStorage:           publicStore,
+		DAOs:                    daos,
 		SecretBackend:           secretBackend,
 		SecretSealKeyAttributes: sealAttrs,
 		Algorithm:               types.FrostAlgorithmEd25519,

@@ -88,11 +88,6 @@ func TestPolicyAPI_ReportsTheSharedTPMsRefusal(t *testing.T) {
 	assert.ErrorIs(t, l.TPMPolicyDelete(t.Context(), nil), refused)
 }
 
-func TestIsNotFound(t *testing.T) {
-	assert.True(t, isNotFound(fs.ErrNotExist))
-	assert.False(t, isNotFound(errors.New("other")))
-}
-
 func TestOpenDevice_DialsATPMOverTCP(t *testing.T) {
 	// A tcp:// device is dialled, not stat'ed: nothing listens on the port,
 	// so the open fails in the transport rather than as a missing device.

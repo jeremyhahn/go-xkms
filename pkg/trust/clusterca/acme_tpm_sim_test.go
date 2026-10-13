@@ -24,6 +24,7 @@ import (
 
 	tpm2backend "github.com/jeremyhahn/go-xkms/pkg/backend/tpm2"
 	"github.com/jeremyhahn/go-xkms/pkg/storage"
+	"github.com/jeremyhahn/go-xkms/pkg/testutil/tpmblobtest"
 	pkgtpm2 "github.com/jeremyhahn/go-xkms/pkg/tpm2"
 	"github.com/jeremyhahn/go-xkms/pkg/tpm2/store"
 	"github.com/jeremyhahn/go-xkms/pkg/types"
@@ -50,7 +51,7 @@ func newSimulatorTPMBackend(t *testing.T) *tpm2backend.Backend {
 
 	backend, err := tpm2backend.NewBackend(&tpm2backend.Config{
 		UseSimulator: true,
-		KeyStorage:   storage.NewMemory(),
+		Keys:         tpmblobtest.New(t),
 		CN:           "clusterca-acme-sim",
 	})
 	require.NoError(t, err)

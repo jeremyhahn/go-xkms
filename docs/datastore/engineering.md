@@ -629,26 +629,20 @@ factory as `config["key_storage"]` (a `storage.Backend`) — the SDK-facing
 equivalent of `"key_dir"` before this batch, which every `register_*.go`
 factory (`register_pkcs8`, `register_software`, `register_symmetric`,
 `register_tpm2`) now reads instead. `pkg/backend/tpm2.Config` has exactly
-ONE storage path: `KeyStorage storage.Backend` (required; `Validate` returns
-`ErrKeyStorageRequired` when nil), not a `KeyDir` string this package
-resolves a private, directory-based engine from itself. `pkg/server`'s TPM2
-crypto-backend wiring (`initTPM2Backend`, `backend_tpm2.go`) passes a
-`createStorage("tpm2")` view as `KeyStorage`, so this backend's key blobs
-are a key-prefixed view over the SAME shared datastore every other
-subsystem uses, not a second, private engine. `Backend.ListKeys` enumerates
-via `KeyStorage.List` accordingly. The sole exception is
+ONE key store: `Keys`, a `pkg/tpm2/store.BlobStore` keeping every blob as a
+`TPMBlob` entity (natural key `<tenant>/<CN>/<ext>`) in the `tpm2` database
+(`store.DatabaseName`). `register_tpm2` builds it over `key_storage` with
+`store.NewBackendBlobStore` (`pkg/tpm2/store/factory.go`). `pkg/server`'s
+TPM2 crypto-backend wiring (`initTPM2Backend`, `backend_tpm2.go`) opens the
+`tpm2` database on the shared datastore (`Server.daoFactory`) and builds the
+store with `store.NewBlobStore`, so the backend's key blobs live behind the
+barrier with every other subsystem's state. The sole exception is
 `NewBackendWithTPM`/`ExternalTPMConfig` (sharing an already-open TPM
-connection with the node-barrier seal strategy or the platform store):
-`ExternalTPMConfig.KeyDir` stays a real, optional directory hint for
-enumeration, because that key material is genuinely pre-datastore (the
-node-barrier seal strategy's own key, which must exist before -- and can
-seal -- the datastore it protects; see "Genuinely pre-datastore material"
-above and `pkg/seal/autodetect.go`'s `openTPM2Backend`, which resolves that
-directory to a file-based `storage.Backend` before handing it to `Config`
-as `KeyStorage`). `pkg/tpm2/store.NewFactory(logger, backend)` builds a
-`StorageFactory` over any `storage.Backend` (`NewStorageFactory`/
-`NewMemoryStorageFactory` now call it internally instead of duplicating the
-blob/key-backend wiring).
+connection with the node-barrier seal strategy or the platform store): it
+reuses the opener's `KeyBackend()`, which for the node barrier is the
+pre-datastore key directory (see "Genuinely pre-datastore material" above
+and `pkg/seal/autodetect.go`'s `openTPM2Backend`, which builds a
+`NewBackendBlobStore` over a file-based `storage.Backend` there).
 
 `pkg/xkms` cannot import `pkg/config`, `pkg/datastore` or `pkg/server`
 directly (`pkg/config` already transitively imports `pkg/xkms` via
@@ -697,8 +691,8 @@ through.
 
 `sdk/go` re-exports `Datastore`, `OpenDatastore(ctx, DatastoreConfig, logger)
 (*Datastore, error)` and `DatastoreStorage(daos) (StorageBackend, error)`
-(`compose.FactoryBackend`; `sdk/go/datastore.go`), and `NewTPMFactory =
-store.NewFactory` (`sdk/go/tpm.go`), so an embedder configures the identical
+(`compose.FactoryBackend`; `sdk/go/datastore.go`), and `NewTPMBlobStore =
+store.NewBlobStore` (`sdk/go/tpm.go`), so an embedder configures the identical
 datastore an `xkmsd`-hosted deployment uses without importing `pkg/config`/
 `pkg/datastore` directly, and feeds `AutoConfig.Datastore` from
 `DatastoreStorage(ds.DAOFactory())`.

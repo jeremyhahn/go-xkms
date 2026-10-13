@@ -17,12 +17,10 @@ import (
 	"bytes"
 	"errors"
 	"fmt"
-	"io/fs"
 	"log/slog"
 
 	"github.com/google/go-tpm/tpm2"
 	"github.com/jeremyhahn/go-xkms/pkg/errs"
-	"github.com/jeremyhahn/go-xkms/pkg/storage"
 	"github.com/jeremyhahn/go-xkms/pkg/tpm2/store"
 	"github.com/jeremyhahn/go-xkms/pkg/types"
 )
@@ -153,7 +151,7 @@ func (tpm *TPM2) loadPolicyBinding(
 	}
 	record, err := backend.Get(keyAttrs, store.FSEXT_TPM_POLICY)
 	if err != nil {
-		if errors.Is(err, storage.ErrNotFound) || errors.Is(err, fs.ErrNotExist) {
+		if errors.Is(err, store.ErrBlobNotFound) {
 			return nil, nil
 		}
 		return nil, err

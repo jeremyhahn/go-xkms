@@ -14,129 +14,114 @@
 package store
 
 import (
+	"io"
 	"log/slog"
 	"os"
 
+	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
+
+	"github.com/jeremyhahn/go-xkms/pkg/dao"
 	"github.com/jeremyhahn/go-xkms/pkg/storage"
 	"github.com/jeremyhahn/go-xkms/pkg/storage/file"
+	"github.com/jeremyhahn/go-xkms/pkg/storage/kvadapter"
 )
 
-// StorageFactory provides a convenient way to create storage backends
-// for TPM operations. It manages the lifecycle of the underlying storage
-// and provides both blob storage and key backend capabilities.
+// StorageFactory opens a BlobStore for a host with no go-qrdb datastore to
+// inject one from: a directory of its own, or memory. A host that has a
+// datastore builds its BlobStore with NewBlobStore over the datastore's DAO
+// factory instead.
 type StorageFactory struct {
-	logger    *slog.Logger
-	backend   storage.Backend
-	blobStore BlobStorer
-	keyStore  KeyBackend
-	tempDir   string
+	logger  *slog.Logger
+	closer  io.Closer
+	blobs   *BlobStore
+	tempDir string
 }
 
-// NewStorageFactory creates a new storage factory backed by a private,
-// file-based engine rooted at baseDir. If baseDir is empty, a temporary
-// directory is created and removed on Close. This constructor is for direct
-// file/test use (see doc comment on StorageFactory); a caller composing
-// through the shared datastore (pkg/compose.FactoryBackend over its DAO
-// factory, or any other storage.Backend -- e.g. pkg/server's createStorage view) uses NewFactory
-// instead, so TPM key blobs are never a second, private storage engine.
-func NewStorageFactory(logger *slog.Logger, baseDir string) (*StorageFactory, error) {
+// NewStorageFactory opens the BlobStore kept in dir. If dir is empty, a
+// temporary directory is created and removed on Close.
+func NewStorageFactory(logger *slog.Logger, dir string) (*StorageFactory, error) {
+	if logger == nil {
+		logger = slog.Default()
+	}
 	var tempDir string
-
-	if baseDir == "" {
-		// Create a temporary directory for testing
-		dir, err := os.MkdirTemp("", "tpm-store-*")
+	if dir == "" {
+		temp, err := os.MkdirTemp("", "tpm-store-*")
 		if err != nil {
-			return nil, err
+			return nil, &BlobStoreCreateError{Cause: err}
 		}
-		tempDir = dir
-		baseDir = tempDir
+		tempDir = temp
+		dir = temp
 	}
-
-	// Use file-based storage
-	backend, err := file.New(baseDir)
+	factory, err := openDirFactory(logger, dir)
 	if err != nil {
-		if tempDir != "" {
-			if rmErr := os.RemoveAll(tempDir); rmErr != nil {
-				logger.Error("failed to remove temp directory",
-					slog.String("path", tempDir),
-					slog.String("error", rmErr.Error()))
-			}
-		}
-		return nil, err
-	}
-
-	factory, err := NewFactory(logger, backend)
-	if err != nil {
-		if closeErr := backend.Close(); closeErr != nil {
-			logger.Error("failed to close backend",
-				slog.String("error", closeErr.Error()))
-		}
-		if tempDir != "" {
-			if rmErr := os.RemoveAll(tempDir); rmErr != nil {
-				logger.Error("failed to remove temp directory",
-					slog.String("path", tempDir),
-					slog.String("error", rmErr.Error()))
-			}
-		}
+		removeTempDir(logger, tempDir)
 		return nil, err
 	}
 	factory.tempDir = tempDir
 	return factory, nil
 }
 
-// NewMemoryStorageFactory creates a storage factory using in-memory storage.
-// This is useful for testing where persistence is not required.
-func NewMemoryStorageFactory(logger *slog.Logger) (*StorageFactory, error) {
-	return NewFactory(logger, storage.NewMemory())
+// openDirFactory opens the BlobStore kept in dir.
+func openDirFactory(logger *slog.Logger, dir string) (*StorageFactory, error) {
+	backend, err := file.New(dir)
+	if err != nil {
+		return nil, &BlobStoreCreateError{Cause: err}
+	}
+	blobs, err := NewBackendBlobStore(logger, backend)
+	if err != nil {
+		if closeErr := backend.Close(); closeErr != nil {
+			logger.Error("failed to close blob store directory", slog.String("error", closeErr.Error()))
+		}
+		return nil, err
+	}
+	return &StorageFactory{logger: logger, closer: backend, blobs: blobs}, nil
 }
 
-// NewFactory creates a storage factory over an already-open storage.Backend
-// -- e.g. a key-prefixed view of the shared datastore
-// (pkg/compose.FactoryBackend, or pkg/server's createStorage) -- rather than opening a private file or
-// memory engine. This is the constructor datastore-backed callers use;
-// NewStorageFactory/NewMemoryStorageFactory remain for direct file/in-memory
-// use (tests, standalone tooling) and are implemented in terms of this one.
-func NewFactory(logger *slog.Logger, backend storage.Backend) (*StorageFactory, error) {
-	blobStore, err := NewFSBlobStore(logger, backend)
+// NewBackendBlobStore returns the system tenant's BlobStore over backend, for
+// a host whose datastore is a storage.Backend rather than a DAO factory (an
+// xkms.AutoConfig.Datastore). The blobs are TPMBlob entities in the backend;
+// it must support guarded writes.
+func NewBackendBlobStore(logger *slog.Logger, backend storage.Backend) (*BlobStore, error) {
+	kv, err := kvadapter.New(backend)
+	if err != nil {
+		return nil, &BlobStoreCreateError{Cause: err}
+	}
+	return NewBlobStore(logger, dao.NewStoreFactory(kv))
+}
+
+// NewMemoryStorageFactory returns a factory whose BlobStore lives in memory,
+// for callers that need no persistence.
+func NewMemoryStorageFactory(logger *slog.Logger) (*StorageFactory, error) {
+	blobs, err := NewBlobStore(logger, dao.NewStoreFactory(qrdbsdk.NewMemoryKVStore()))
 	if err != nil {
 		return nil, err
 	}
-
-	return &StorageFactory{
-		logger:    logger,
-		backend:   backend,
-		blobStore: blobStore,
-		keyStore:  NewFileBackend(logger, backend),
-	}, nil
+	return &StorageFactory{logger: blobs.logger, blobs: blobs}, nil
 }
 
-// BlobStore returns the blob storage interface
-func (f *StorageFactory) BlobStore() BlobStorer {
-	return f.blobStore
+// KeyBackend returns the system tenant's BlobStore.
+func (f *StorageFactory) KeyBackend() *BlobStore {
+	return f.blobs
 }
 
-// KeyBackend returns the key backend interface
-func (f *StorageFactory) KeyBackend() KeyBackend {
-	return f.keyStore
-}
-
-// Backend returns the underlying storage backend
-func (f *StorageFactory) Backend() storage.Backend {
-	return f.backend
-}
-
-// Close releases resources held by the factory
+// Close releases the store and removes its temporary directory, if any.
 func (f *StorageFactory) Close() error {
 	var err error
-	if f.backend != nil {
-		err = f.backend.Close()
+	if f.closer != nil {
+		err = f.closer.Close()
 	}
-	if f.tempDir != "" {
-		if rmErr := os.RemoveAll(f.tempDir); rmErr != nil {
-			f.logger.Error("failed to remove temp directory",
-				slog.String("path", f.tempDir),
-				slog.String("error", rmErr.Error()))
-		}
-	}
+	removeTempDir(f.logger, f.tempDir)
 	return err
+}
+
+// removeTempDir removes dir when it is set, logging a failure.
+func removeTempDir(logger *slog.Logger, dir string) {
+	if dir == "" {
+		return
+	}
+	if err := os.RemoveAll(dir); err != nil {
+		logger.Error("failed to remove temp directory",
+			slog.String("path", dir),
+			slog.String("error", err.Error()))
+	}
 }

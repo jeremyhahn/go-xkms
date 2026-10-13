@@ -14,14 +14,12 @@
 package xkms
 
 import (
-	"errors"
-
 	"github.com/jeremyhahn/go-xkms/pkg/types"
 )
 
 // ErrNilBackendFactory is returned when an external backend is registered
 // without a factory to construct it.
-var ErrNilBackendFactory = errors.New("xkms: external backend has no factory")
+var ErrNilBackendFactory = types.ErrNilBackendFactory
 
 // ExternalBackend describes a backend implemented outside go-xkms, for
 // example a firmware's own wire-protocol backend living in that firmware's
@@ -54,12 +52,6 @@ type ExternalBackend struct {
 // wrapping types.ErrInvalidBackendTypeName, types.ErrBackendTypeRegistered
 // or ErrNilBackendFactory, and registers nothing.
 func RegisterExternalBackend(backend ExternalBackend) error {
-	if backend.Factory == nil {
-		return &types.BackendTypeRegistrationError{
-			Type: types.BackendType(backend.Type),
-			Err:  ErrNilBackendFactory,
-		}
-	}
 	// pkcs8 and the other xkms-only names have no types-level constant, so
 	// they are refused here before the types layer claims the name.
 	if backend.Type.isBuiltin() {
@@ -68,12 +60,8 @@ func RegisterExternalBackend(backend ExternalBackend) error {
 			Err:  types.ErrBackendTypeRegistered,
 		}
 	}
-	if err := types.RegisterBackendType(types.BackendType(backend.Type)); err != nil {
-		return err
-	}
-	// The factory lands before the availability flag so RequireBackend never
-	// sees an available backend it cannot construct.
-	RegisterBackendFactory(backend.Type, backend.Factory)
-	RegisterBackend(backend.Type)
-	return nil
+	// Publishing the name with its factory is the one atomic step: it
+	// decides between racing registrations of the same name, and no reader
+	// sees the name as a valid type without its factory and availability.
+	return types.RegisterBackendType(types.BackendType(backend.Type), backend.Factory)
 }

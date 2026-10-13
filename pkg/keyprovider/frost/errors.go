@@ -77,7 +77,28 @@ var (
 
 	// ErrDecryptionNotSupported indicates FROST is signing-only per RFC 9591.
 	ErrDecryptionNotSupported = errors.New("frost: decryption not supported (FROST is signing-only)")
+
+	// ErrNilDAOFactory indicates a key store or nonce tracker was built
+	// without a DAO factory.
+	ErrNilDAOFactory = errors.New("frost: a DAO factory is required")
 )
+
+// StoreError reports a failure of the FROST database. Op names the
+// operation and Key the entity it was working on. A failed nonce claim's
+// outcome is unknown, so it is a StoreError and never a NonceReuseError.
+type StoreError struct {
+	Op  string
+	Key string
+	Err error
+}
+
+// Error implements the error interface.
+func (e *StoreError) Error() string {
+	return fmt.Sprintf("frost: %s %s: %v", e.Op, e.Key, e.Err)
+}
+
+// Unwrap returns the underlying cause.
+func (e *StoreError) Unwrap() error { return e.Err }
 
 // KeyNotFoundError provides detailed information about a missing key.
 type KeyNotFoundError struct {

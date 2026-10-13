@@ -12,7 +12,7 @@ import (
 	"testing"
 
 	"github.com/jeremyhahn/go-xkms/pkg/keyprovider/frost"
-	"github.com/jeremyhahn/go-xkms/pkg/storage"
+	"github.com/jeremyhahn/go-xkms/pkg/testutil"
 	"github.com/jeremyhahn/go-xkms/pkg/types"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -50,13 +50,12 @@ func createMultiParticipantSetup(t *testing.T, keyID string, threshold, total in
 	for i := 0; i < total; i++ {
 		participantID := uint32(i + 1)
 
-		publicStore, err := storage.NewMemoryBackend()
-		require.NoError(t, err)
+		daos := testutil.NewMemoryDAOFactory()
 
 		secretBackend, sealAttrs := newSoftwareFrostSecretBackend(t)
 
 		backendConfig := &frost.Config{
-			PublicStorage:           publicStore,
+			DAOs:                    daos,
 			SecretBackend:           secretBackend,
 			SecretSealKeyAttributes: sealAttrs,
 			Algorithm:               algorithm,

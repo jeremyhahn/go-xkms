@@ -25,6 +25,7 @@ import (
 	"github.com/jeremyhahn/go-xkms/pkg/api/transport"
 	tpm2backend "github.com/jeremyhahn/go-xkms/pkg/backend/tpm2"
 	"github.com/jeremyhahn/go-xkms/pkg/storage"
+	"github.com/jeremyhahn/go-xkms/pkg/testutil/tpmblobtest"
 	"github.com/jeremyhahn/go-xkms/pkg/types"
 	"github.com/jeremyhahn/go-xkms/pkg/vaultkey"
 	"github.com/jeremyhahn/go-xkms/pkg/xkms"
@@ -33,7 +34,7 @@ import (
 // newTPMBackend is a TPM 2.0 key backend on the in-process simulator.
 func newTPMBackend(t *testing.T) xkms.Backend {
 	t.Helper()
-	kp, err := tpm2backend.NewBackend(&tpm2backend.Config{UseSimulator: true, KeyStorage: storage.NewMemory()})
+	kp, err := tpm2backend.NewBackend(&tpm2backend.Config{UseSimulator: true, Keys: tpmblobtest.New(t)})
 	require.NoError(t, err)
 	b, err := xkms.New(&xkms.BackendConfig{Backend: kp, CertStorage: storage.New()})
 	require.NoError(t, err)

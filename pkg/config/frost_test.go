@@ -41,7 +41,6 @@ func TestFrostConfig_Validate_Success(t *testing.T) {
 			name: "fully specified",
 			cfg: FrostConfig{
 				Enabled:          true,
-				PublicPath:       "/data/frost/public",
 				SecretBackend:    "tpm2",
 				Algorithm:        "FROST-P256-SHA256",
 				DefaultThreshold: 3,
@@ -55,7 +54,6 @@ func TestFrostConfig_Validate_Success(t *testing.T) {
 			name: "defaults fill algorithm, threshold, and total",
 			cfg: FrostConfig{
 				Enabled:       true,
-				PublicPath:    "/data/frost/public",
 				SecretBackend: "software",
 			},
 			wantAlgorithm: "FROST-Ed25519-SHA512",
@@ -93,20 +91,14 @@ func TestFrostConfig_Validate_Errors(t *testing.T) {
 		wantField string
 	}{
 		{
-			name:      "missing public_path",
-			cfg:       FrostConfig{Enabled: true, SecretBackend: "tpm2"},
-			wantField: "public_path",
-		},
-		{
 			name:      "missing secret_backend",
-			cfg:       FrostConfig{Enabled: true, PublicPath: "/data/frost/public"},
+			cfg:       FrostConfig{Enabled: true},
 			wantField: "secret_backend",
 		},
 		{
 			name: "unknown secret_backend name",
 			cfg: FrostConfig{
 				Enabled:       true,
-				PublicPath:    "/data/frost/public",
 				SecretBackend: "phone",
 			},
 			wantField: "secret_backend",
@@ -115,7 +107,6 @@ func TestFrostConfig_Validate_Errors(t *testing.T) {
 			name: "unrecognized algorithm",
 			cfg: FrostConfig{
 				Enabled:       true,
-				PublicPath:    "/data/frost/public",
 				SecretBackend: "tpm2",
 				Algorithm:     "FROST-not-a-real-suite",
 			},
@@ -125,7 +116,6 @@ func TestFrostConfig_Validate_Errors(t *testing.T) {
 			name: "threshold below minimum",
 			cfg: FrostConfig{
 				Enabled:          true,
-				PublicPath:       "/data/frost/public",
 				SecretBackend:    "tpm2",
 				DefaultThreshold: 1,
 			},
@@ -135,7 +125,6 @@ func TestFrostConfig_Validate_Errors(t *testing.T) {
 			name: "threshold exceeds 255",
 			cfg: FrostConfig{
 				Enabled:          true,
-				PublicPath:       "/data/frost/public",
 				SecretBackend:    "tpm2",
 				DefaultThreshold: 256,
 				DefaultTotal:     256,
@@ -146,7 +135,6 @@ func TestFrostConfig_Validate_Errors(t *testing.T) {
 			name: "total exceeds 255",
 			cfg: FrostConfig{
 				Enabled:          true,
-				PublicPath:       "/data/frost/public",
 				SecretBackend:    "tpm2",
 				DefaultThreshold: 2,
 				DefaultTotal:     256,
@@ -157,7 +145,6 @@ func TestFrostConfig_Validate_Errors(t *testing.T) {
 			name: "total below threshold",
 			cfg: FrostConfig{
 				Enabled:          true,
-				PublicPath:       "/data/frost/public",
 				SecretBackend:    "tpm2",
 				DefaultThreshold: 4,
 				DefaultTotal:     3,
@@ -208,7 +195,6 @@ func TestValidate_FrostBackend(t *testing.T) {
 			TPM2: &TPM2Config{Enabled: true, DevicePath: "/dev/tpmrm0"},
 			Frost: &FrostConfig{
 				Enabled:       true,
-				PublicPath:    "/data/frost/public",
 				SecretBackend: "tpm2",
 			},
 		}
@@ -222,7 +208,6 @@ func TestValidate_FrostBackend(t *testing.T) {
 		cfg.Backends = BackendsConfig{
 			Frost: &FrostConfig{
 				Enabled:       true,
-				PublicPath:    "/data/frost/public",
 				SecretBackend: "tpm2",
 			},
 		}
@@ -241,7 +226,6 @@ func TestValidate_FrostBackend(t *testing.T) {
 			TPM2: &TPM2Config{Enabled: false, DevicePath: "/dev/tpmrm0"},
 			Frost: &FrostConfig{
 				Enabled:       true,
-				PublicPath:    "/data/frost/public",
 				SecretBackend: "tpm2",
 			},
 		}

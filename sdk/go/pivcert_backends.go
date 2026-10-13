@@ -19,9 +19,6 @@ import pivfile "github.com/jeremyhahn/go-xkms/pkg/pivcert/file"
 // GUI/CLI build a file-backed PIV store through the SDK. The PKCS#11-backed
 // constructors are gated behind the pkcs11 build tag in
 // pivcert_backends_pkcs11.go.
-//
-// The name carries a PIV prefix because the bare NewFileBackend SDK name (tpm.go)
-// already aliases tpm2/store.NewFileBackend.
 
 // NewPIVFileBackend constructs a file-backed PIV certificate store.
 var NewPIVFileBackend = pivfile.NewFileBackend

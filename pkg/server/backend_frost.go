@@ -28,15 +28,14 @@ import (
 // after every other backend: backends.frost.secret_backend names one of
 // them, and the named backend must already be registered in s.keyProviders,
 // and implement types.SealingKeyProvider, for the FrostBackend to seal each
-// participant's secret share through it. Public group components (group
-// public key, verification shares, metadata) are stored separately, under
-// backends.frost.public_path, since they carry no secret material.
+// participant's secret share through it. Every FROST entity -- key metadata,
+// group public key, verification shares, the sealed secret share, and used
+// nonce claims -- lives in the datastore's frost.DatabaseName database.
 //
 // FROST signing sessions (nonces, in-flight commitments) are held only in
 // the returned *frost.FrostBackend's in-memory session map — never
 // persisted — so a restart always starts a fresh signing round; only used
-// nonce markers (under the storage prefix noncesPrefix) persist, through the
-// same public storage, to keep nonce-reuse detection effective across
+// nonce claims persist, so nonce-reuse detection stays effective across
 // restarts.
 func (s *Server) initFrostBackend() error {
 	cfg := s.config.Backends.Frost
@@ -58,23 +57,19 @@ func (s *Server) initFrostBackend() error {
 		return &ErrBackendCreate{Backend: "FROST", Err: err}
 	}
 
-	publicStorage, err := s.createStorageAt(cfg.PublicPath)
+	daos, err := s.daoFactory(frost.DatabaseName)
 	if err != nil {
-		return &ErrStorageCreate{Resource: "FROST public storage", Err: err}
+		return err
 	}
 
 	frostBackend, err := frost.NewBackend(&frost.Config{
-		PublicStorage:           publicStorage,
+		DAOs:                    daos,
 		SecretBackend:           secretBackend,
 		SecretSealKeyAttributes: sealKeyAttrs,
-		// NonceStorage is left nil so the backend tracks used nonce markers
-		// in publicStorage (frost.Config.GetNonceStorage's fallback) — the
-		// same durable, server-managed storage as the public group
-		// components, so nonce-reuse detection survives a restart.
-		Algorithm:           types.FrostAlgorithm(cfg.Algorithm),
-		DefaultThreshold:    cfg.DefaultThreshold,
-		DefaultTotal:        cfg.DefaultTotal,
-		EnableNonceTracking: true,
+		Algorithm:               types.FrostAlgorithm(cfg.Algorithm),
+		DefaultThreshold:        cfg.DefaultThreshold,
+		DefaultTotal:            cfg.DefaultTotal,
+		EnableNonceTracking:     true,
 	})
 	if err != nil {
 		return &ErrBackendCreate{Backend: "FROST", Err: err}

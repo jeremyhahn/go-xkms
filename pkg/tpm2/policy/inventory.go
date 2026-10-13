@@ -57,8 +57,8 @@ func (s *Service) Assignments(ctx context.Context, tenant string) ([]*Assignment
 }
 
 // KeyStore returns the key store holding tenant's object blobs without
-// opening the scope: the physical key store for the system scope, and the
-// tenant's "<tenant>/tpm/keys/" prefix of Config.KeyStorage otherwise. It
+// opening the scope: the physical key store for the system scope, and
+// Config.TenantKeys scoped to the tenant otherwise. It
 // reads blobs only; loading an object still needs ScopeTPM.
 func (s *Service) KeyStore(tenant string) (store.KeyBackend, error) {
 	name, err := scopeName(tenant)

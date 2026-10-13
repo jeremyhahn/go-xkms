@@ -71,7 +71,6 @@ func createSimNoStore(t *testing.T) TrustedPlatformModule {
 		Logger:       logger,
 		DebugSecrets: true,
 		Config:       config,
-		BlobStore:    nil, // intentionally nil
 		Backend:      nil, // intentionally nil
 		FQDN:         "node1.example.com",
 	}

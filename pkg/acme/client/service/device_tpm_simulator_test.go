@@ -16,6 +16,7 @@
 package service
 
 import (
+	"context"
 	"crypto/rand"
 	"crypto/x509"
 	"testing"
@@ -57,7 +58,7 @@ func TestOpenDeviceTPM_SimulatorAnswersDeviceAttest(t *testing.T) {
 	attested, err := module.CreateAttestedKey("device-under-test", keyAuth)
 	require.NoError(t, err)
 
-	verified, err := deviceattest01.VerifyAttestation(unanchoredVerifier{}, attested.Statement, keyAuth)
+	verified, err := deviceattest01.VerifyAttestation(context.Background(), unanchoredVerifier{}, attested.Statement, keyAuth)
 	require.NoError(t, err)
 	assert.Empty(t, verified.Leaf.Subject.Names, "section 8.3.1 requires an empty subject")
 	assert.NotEmpty(t, certstore.ParseTCGAttributes(verified.Leaf).Manufacturer)
@@ -95,7 +96,6 @@ func TestProvisionSimulatorIAKCertificate_RequiresAnIAK(t *testing.T) {
 	tpm, err := xkmssdk.NewTPM2(&xkmssdk.TPMParams{
 		Config:    &config,
 		Backend:   factory.KeyBackend(),
-		BlobStore: factory.BlobStore(),
 		Logger:    testLogger(),
 		Transport: sim.Transport(),
 	})

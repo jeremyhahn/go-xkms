@@ -16,29 +16,13 @@ package tpm2
 import (
 	"context"
 	"crypto/x509"
-	"io"
-	"log/slog"
-	"os"
-	"path/filepath"
 	"testing"
 
 	"github.com/google/go-tpm/tpm2"
-	"github.com/jeremyhahn/go-xkms/pkg/storage/file"
+	"github.com/jeremyhahn/go-xkms/pkg/testutil/tpmblobtest"
 	"github.com/jeremyhahn/go-xkms/pkg/tpm2/store"
 	"github.com/jeremyhahn/go-xkms/pkg/types"
 )
-
-// newTempKeyBackend wires a store.FileBackend over a temp directory using the
-// same storage/file backend that NewBackend uses, so ListKeys and the backend
-// resolve the same on-disk blobs.
-func newTempKeyBackend(t *testing.T, dir string) store.KeyBackend {
-	t.Helper()
-	fsBackend, err := file.New(dir)
-	if err != nil {
-		t.Fatalf("file.New(%q) error = %v", dir, err)
-	}
-	return store.NewFileBackend(slog.New(slog.NewTextHandler(io.Discard, nil)), fsBackend)
-}
 
 // eccPublicBlob builds a valid NIST P-256 ECDSA TPM2B_PUBLIC blob with a unique
 // public point and returns its serialized bytes, matching what SaveKeyPair
@@ -93,8 +77,7 @@ func eccPublicBlob(t *testing.T, xFill, yFill byte) []byte {
 // (KeyAlgorithm left as the zero value) was routed down the unseal delete path
 // and never removed.
 func TestListKeys_RecoversECDSAAlgorithmAndPIVSlot(t *testing.T) {
-	tmpDir := t.TempDir()
-	kb := newTempKeyBackend(t, tmpDir)
+	kb := tpmblobtest.New(t)
 
 	const cn = "piv-9a"
 	// A real, valid ECDSA TPM2B_PUBLIC blob saved under <cn>.pub ...
@@ -102,11 +85,11 @@ func TestListKeys_RecoversECDSAAlgorithmAndPIVSlot(t *testing.T) {
 		t.Fatalf("Save public blob error = %v", err)
 	}
 	// ... plus a private blob so ListKeys enumerates the key.
-	if err := os.WriteFile(filepath.Join(tmpDir, cn+store.FSEXT_PRIVATE_BLOB), []byte("private"), 0600); err != nil {
+	if err := kb.Save(&types.KeyAttributes{CN: cn}, []byte("private"), store.FSEXT_PRIVATE_BLOB, true); err != nil {
 		t.Fatalf("write private blob error = %v", err)
 	}
 
-	b := &Backend{keyDir: tmpDir, keyBackend: kb}
+	b := &Backend{keyBackend: kb}
 	keys, err := b.ListKeys(context.Background())
 	if err != nil {
 		t.Fatalf("ListKeys() error = %v", err)
@@ -135,16 +118,15 @@ func TestListKeys_RecoversECDSAAlgorithmAndPIVSlot(t *testing.T) {
 // CN set and KeyAlgorithm unset, and does not error.
 func TestListKeys_MissingOrMalformedPublicBlobIsBestEffort(t *testing.T) {
 	t.Run("missing public blob", func(t *testing.T) {
-		tmpDir := t.TempDir()
-		kb := newTempKeyBackend(t, tmpDir)
+		kb := tpmblobtest.New(t)
 
 		const cn = "sealed-key"
 		// Only a private blob exists; no .pub.
-		if err := os.WriteFile(filepath.Join(tmpDir, cn+store.FSEXT_PRIVATE_BLOB), []byte("private"), 0600); err != nil {
+		if err := kb.Save(&types.KeyAttributes{CN: cn}, []byte("private"), store.FSEXT_PRIVATE_BLOB, true); err != nil {
 			t.Fatalf("write private blob error = %v", err)
 		}
 
-		b := &Backend{keyDir: tmpDir, keyBackend: kb}
+		b := &Backend{keyBackend: kb}
 		keys, err := b.ListKeys(context.Background())
 		if err != nil {
 			t.Fatalf("ListKeys() error = %v", err)
@@ -161,18 +143,17 @@ func TestListKeys_MissingOrMalformedPublicBlobIsBestEffort(t *testing.T) {
 	})
 
 	t.Run("malformed public blob", func(t *testing.T) {
-		tmpDir := t.TempDir()
-		kb := newTempKeyBackend(t, tmpDir)
+		kb := tpmblobtest.New(t)
 
 		const cn = "broken-key"
 		if err := kb.Save(&types.KeyAttributes{CN: cn}, []byte("not a valid TPM2B_PUBLIC"), store.FSEXT_PUBLIC_BLOB, true); err != nil {
 			t.Fatalf("Save malformed public blob error = %v", err)
 		}
-		if err := os.WriteFile(filepath.Join(tmpDir, cn+store.FSEXT_PRIVATE_BLOB), []byte("private"), 0600); err != nil {
+		if err := kb.Save(&types.KeyAttributes{CN: cn}, []byte("private"), store.FSEXT_PRIVATE_BLOB, true); err != nil {
 			t.Fatalf("write private blob error = %v", err)
 		}
 
-		b := &Backend{keyDir: tmpDir, keyBackend: kb}
+		b := &Backend{keyBackend: kb}
 		keys, err := b.ListKeys(context.Background())
 		if err != nil {
 			t.Fatalf("ListKeys() error = %v", err)

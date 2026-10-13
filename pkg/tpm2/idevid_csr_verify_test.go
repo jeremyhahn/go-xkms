@@ -43,7 +43,6 @@ func createTestSimulator(t *testing.T) (TrustedPlatformModule, func()) {
 	storageFactory, err := store.NewStorageFactory(logger, "")
 	require.NoError(t, err)
 
-	blobStore := storageFactory.BlobStore()
 	fileBackend := storageFactory.KeyBackend()
 
 	config := &Config{
@@ -106,7 +105,6 @@ func createTestSimulator(t *testing.T) (TrustedPlatformModule, func()) {
 		Logger:       logger,
 		DebugSecrets: true,
 		Config:       config,
-		BlobStore:    blobStore,
 		Backend:      fileBackend,
 		FQDN:         "node1.example.com",
 	}

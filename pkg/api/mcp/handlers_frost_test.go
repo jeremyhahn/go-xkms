@@ -32,7 +32,7 @@ import (
 
 	"github.com/jeremyhahn/go-xkms/pkg/auth"
 	"github.com/jeremyhahn/go-xkms/pkg/keyprovider/frost"
-	"github.com/jeremyhahn/go-xkms/pkg/storage"
+	"github.com/jeremyhahn/go-xkms/pkg/testutil"
 	"github.com/jeremyhahn/go-xkms/pkg/types"
 	"github.com/jeremyhahn/go-xkms/pkg/xkms"
 	xkmsmocks "github.com/jeremyhahn/go-xkms/pkg/xkms/mocks"
@@ -116,7 +116,7 @@ func newFrostMCPServer(t *testing.T) *Server {
 	t.Helper()
 
 	be, err := frost.NewBackend(&frost.Config{
-		PublicStorage:    storage.NewMemory(),
+		DAOs:             testutil.NewMemoryDAOFactory(),
 		SecretBackend:    newFrostSecretBackend(),
 		Algorithm:        types.FrostAlgorithmEd25519,
 		DefaultThreshold: 2,

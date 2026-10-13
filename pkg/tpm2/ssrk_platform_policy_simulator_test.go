@@ -12,7 +12,6 @@ import (
 	"testing"
 
 	"github.com/google/go-tpm/tpm2"
-	"github.com/jeremyhahn/go-xkms/pkg/storage"
 	"github.com/jeremyhahn/go-xkms/pkg/tpm2/store"
 	"github.com/jeremyhahn/go-xkms/pkg/types"
 	"github.com/stretchr/testify/assert"
@@ -81,7 +80,7 @@ func TestProvisionSSRKRecordsNoPolicyPin(t *testing.T) {
 
 	_, err = h.Backend.Get(pinAttrs, store.FSEXT_PLATFORM_POLICY)
 	require.Error(t, err, "the shared SRK must record no platform policy pin")
-	assert.ErrorIs(t, err, storage.ErrNotFound)
+	assert.ErrorIs(t, err, store.ErrBlobNotFound)
 }
 
 // TestProvisionSSRKUsableAsParent proves the SSRK still does its job: it is the

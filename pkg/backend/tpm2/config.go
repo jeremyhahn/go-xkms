@@ -20,7 +20,6 @@ import (
 
 	"github.com/jeremyhahn/go-xkms/pkg/errs"
 
-	"github.com/jeremyhahn/go-xkms/pkg/storage"
 	pkgtpm2 "github.com/jeremyhahn/go-xkms/pkg/tpm2"
 	"github.com/jeremyhahn/go-xkms/pkg/tpm2/store"
 	"github.com/jeremyhahn/go-xkms/pkg/types"
@@ -38,14 +37,13 @@ type Config struct {
 	// Device is the path to the TPM device (e.g., "/dev/tpmrm0")
 	Device string `yaml:"device" json:"device"`
 
-	// KeyStorage is the storage.Backend TPM key blobs are persisted through
-	// -- e.g. a key-prefixed view of the caller's shared datastore (see
-	// pkg/xkms.AutoConfig.Datastore, or pkg/server's createStorage). This is
-	// the ONLY storage path NewBackend uses: there is no private, directory-
-	// based engine this package opens for itself. Not serializable (Go
-	// value); a caller building Config from yaml/json sets it after
-	// unmarshaling.
-	KeyStorage storage.Backend `yaml:"-" json:"-"`
+	// Keys is the store TPM key blobs are persisted in: TPMBlob entities in
+	// the caller's tpm2 database (see store.NewBlobStore, or
+	// store.NewBackendBlobStore for a storage.Backend datastore). It is the
+	// ONLY store NewBackend uses: this package never opens one of its own.
+	// Not serializable (Go value); a caller building Config from yaml/json
+	// sets it after unmarshaling.
+	Keys *store.BlobStore `yaml:"-" json:"-"`
 
 	// UseSimulator indicates whether to use the TPM simulator instead of hardware
 	UseSimulator bool `yaml:"use_simulator" json:"use_simulator"`
@@ -107,15 +105,13 @@ func (c *Config) Validate() error {
 		c.Device = "/dev/tpmrm0"
 	}
 
-	// KeyStorage has no default: this package has no notion of a meaningful
-	// process working directory to resolve a private storage engine against
-	// (see ErrKeyDirRequired). Callers derive it from their own storage
-	// conventions -- e.g. pkg/server's createStorage, or an SDK/library
-	// caller's datastore handle -- and supply it explicitly.
-	if c.KeyStorage == nil {
+	// Keys has no default: callers derive it from their own datastore --
+	// e.g. pkg/server's tpm2 DAO factory, or an SDK/library caller's
+	// datastore handle -- and supply it explicitly.
+	if c.Keys == nil {
 		return &errs.Detail{
-			Err:    ErrKeyStorageRequired,
-			Detail: "KeyStorage must be set explicitly; this package never opens a private storage engine of its own",
+			Err:    ErrKeysRequired,
+			Detail: "Keys must be set explicitly; this package never opens a key store of its own",
 		}
 	}
 

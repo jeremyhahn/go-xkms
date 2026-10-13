@@ -71,31 +71,62 @@ import (
 // evidence chain could carry for a "dns" authorization, so any other
 // identifier type is refused before the evidence is even read. (ChallengeHandler
 // refuses "ip" earlier still, for every attestation challenge.)
+//
+// For "dice", verifier is also where the device registry lives
+// (deviceattest01.RegisteredDeviceVerifier, go-xkms#1441): the evidence is
+// anchored in the device's provisioning record before the identity is
+// reported, and the same verifier is asked again at finalization
+// (bindDeviceAttestationKey).
 func NewDeviceAttestVerifier(verifier deviceattest01.AttestationVerifier) common.AttestingVerifier {
-	return common.AttestingVerifierFunc(func(
-		_ *net.Resolver,
-		_ common.CertificateAuthority,
-		challenge common.AttestationChallenge,
-	) (*common.AttestedIdentity, error) {
-		if challenge.IdentifierType != common.AuthzTypePermanentIdentifier {
-			return nil, &ErrAttestationIdentifierType{Challenge: common.ChallengeTypeDeviceAttest01, Type: challenge.IdentifierType}
-		}
+	return &deviceAttestVerifier{verifier: verifier}
+}
 
-		verified, err := deviceattest01.VerifyAttestation(verifier, challenge.Payload, challenge.KeyAuthorization)
-		if err != nil {
-			return nil, err
-		}
+// deviceAttestVerifier is the device-attest-01 common.AttestingVerifier. It
+// keeps the deviceattest01.AttestationVerifier it was built with so
+// finalization re-confirms a "dice" device against the same registry the
+// challenge anchored it in.
+type deviceAttestVerifier struct {
+	verifier deviceattest01.AttestationVerifier
+}
 
-		deviceIdentity, err := verified.DeviceIdentity()
-		if err != nil {
-			return nil, err
-		}
+// VerifyAttested implements common.AttestingVerifier.
+//
+// The challenge seam carries no request context, so the registry lookup runs
+// under context.Background(); the resolver bounds its own lookups.
+func (v *deviceAttestVerifier) VerifyAttested(
+	_ *net.Resolver,
+	_ common.CertificateAuthority,
+	challenge common.AttestationChallenge,
+) (*common.AttestedIdentity, error) {
+	if challenge.IdentifierType != common.AuthzTypePermanentIdentifier {
+		return nil, &ErrAttestationIdentifierType{Challenge: common.ChallengeTypeDeviceAttest01, Type: challenge.IdentifierType}
+	}
 
-		return &common.AttestedIdentity{
-			Identifier:  deviceIdentity,
-			Attestation: verified.Record(challenge.IdentifierType, deviceIdentity),
-		}, nil
-	})
+	verified, err := deviceattest01.VerifyAttestation(context.Background(), v.verifier, challenge.Payload, challenge.KeyAuthorization)
+	if err != nil {
+		return nil, err
+	}
+
+	deviceIdentity, err := verified.DeviceIdentity()
+	if err != nil {
+		return nil, err
+	}
+
+	return &common.AttestedIdentity{
+		Identifier:  deviceIdentity,
+		Attestation: verified.Record(challenge.IdentifierType, deviceIdentity),
+	}, nil
+}
+
+// deviceAttestationVerifier returns the deviceattest01.AttestationVerifier
+// the device-attest-01 challenge was verified with, or nil when none is
+// registered -- which refuses a "dice" record at finalization.
+func (s *RestService) deviceAttestationVerifier() deviceattest01.AttestationVerifier {
+	registered, ok := s.attestingVerifiers[common.ChallengeTypeDeviceAttest01].(*deviceAttestVerifier)
+	if !ok {
+		return nil
+	}
+	return registered.verifier
 }
 
 // orderAuthorizations loads every authorization the order references, in the
@@ -176,7 +207,13 @@ func (s *RestService) findDeviceAttestation(
 // treated as "not a device-attest-01 order", since by the time
 // OrderFinalizeHandler reaches this call every permanent-identifier order
 // with a standard x509 CSR is one.
-func bindDeviceAttestationKey(rec *entities.DeviceAttestation, order *entities.ACMEOrder, csr *x509.CertificateRequest) *entities.Error {
+//
+// A "dice" record is then confirmed against the device registry again
+// (go-xkms#1441): a device whose provisioning record was deleted, or whose
+// provisioned key changed, since the challenge is refused as unauthorized.
+// The CSR is judged first, so a request for the wrong key is badCSR whatever
+// the registry says.
+func (s *RestService) bindDeviceAttestationKey(ctx context.Context, rec *entities.DeviceAttestation, order *entities.ACMEOrder, csr *x509.CertificateRequest) *entities.Error {
 	if rec == nil {
 		return common.BadCSR((&ErrDeviceAttestationNotFound{OrderID: order.ID}).Error())
 	}
@@ -195,6 +232,13 @@ func bindDeviceAttestationKey(rec *entities.DeviceAttestation, order *entities.A
 	}
 	if err := verified.BindCSRKey(csr); err != nil {
 		return common.BadCSR("device-attest-01: certificate request key does not match the attested key: " + err.Error())
+	}
+	// The cause can carry the registry's own error, so it is logged rather
+	// than returned to the client.
+	if err := verified.ConfirmRegistration(ctx, s.deviceAttestationVerifier()); err != nil {
+		s.logger.Warn("Refusing finalization: the device registry no longer vouches for the attested key",
+			"error", err, "orderID", order.ID)
+		return common.Unauthorized("device-attest-01: the device's provisioning record no longer authorizes the attested key")
 	}
 	return nil
 }

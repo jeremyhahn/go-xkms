@@ -76,7 +76,6 @@ func newProvisionedDevice(t *testing.T, issuer *aikIssuer, iak func(*xtpm2.IAKCo
 		Config:    &config,
 		Logger:    logger,
 		Backend:   factory.KeyBackend(),
-		BlobStore: factory.BlobStore(),
 		CertStore: store.NewMemoryCertStore(logger),
 		Transport: sim.Transport(),
 	})
@@ -179,13 +178,13 @@ func TestSetupIsAcceptedByTheVerifier(t *testing.T) {
 			assert.Equal(t, iak.alg, decodePayload(t, payload).AttStatement.Alg)
 
 			ca := anchoredTo(issuer)
-			verified, err := VerifyAttestation(ca, payload, tpmKeyAuth)
+			verified, err := VerifyAttestation(context.Background(), ca, payload, tpmKeyAuth)
 			require.NoError(t, err)
 			assert.True(t, ca.chainChecked, "x5c was never anchored")
 			assert.Equal(t, FormatTPM, verified.Format)
 
 			// The one-shot verifier still defers to the binding.
-			assert.ErrorIs(t, Verify(ca, payload, tpmKeyAuth), ErrKeyBindingRequired)
+			assert.ErrorIs(t, Verify(context.Background(), ca, payload, tpmKeyAuth), ErrKeyBindingRequired)
 
 			require.NoError(t, verified.BindCSRKey(signedCSR(t, signer)))
 		})
@@ -200,7 +199,7 @@ func TestSetupEvidenceRefusesACSRForAnotherKey(t *testing.T) {
 	payload, err := Setup(tpmKeyAuth, device.tpm, key, device.keys)
 	require.NoError(t, err)
 
-	verified, err := VerifyAttestation(anchoredTo(issuer), payload, tpmKeyAuth)
+	verified, err := VerifyAttestation(context.Background(), anchoredTo(issuer), payload, tpmKeyAuth)
 	require.NoError(t, err)
 
 	software, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)

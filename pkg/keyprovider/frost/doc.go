@@ -39,15 +39,18 @@
 //
 // # Architecture
 //
-// The FROST backend separates public and secret storage:
+// The FROST backend separates storage from secret protection:
 //
-//   - PublicStorage: Stores non-sensitive data (group public key,
-//     verification shares, metadata) using any storage.Backend
-//   - SecretBackend: Stores the secret key share using any types.KeyProvider
-//     (TPM2, PKCS#11, Cloud KMS, Vault, etc.)
+//   - DAOs: go-qrdb entities in the DatabaseName database hold the key
+//     metadata and group public key (FrostKey), the verification shares
+//     (FrostShare), the sealed secret share (FrostSecretShare), and the
+//     used-nonce claims (FrostNonce)
+//   - SecretBackend: seals the secret key share with its native mechanism
+//     (TPM2, PKCS#11, Cloud KMS, Vault, software); only the sealed envelope
+//     is ever stored
 //
 // This separation allows secret shares to be protected by hardware security
-// modules while keeping public components easily accessible.
+// modules while every component lives in one go-qrdb datastore.
 //
 // # Key Generation
 //
@@ -98,8 +101,8 @@
 //
 //	// Create configuration
 //	config := &frost.Config{
-//	    PublicStorage:       publicStorageBackend,
-//	    SecretBackend:       secretStorageBackend,
+//	    DAOs:                daoFactory,
+//	    SecretBackend:       sealingBackend,
 //	    Algorithm:           types.FrostAlgorithmEd25519,
 //	    DefaultThreshold:    2,
 //	    DefaultTotal:        3,

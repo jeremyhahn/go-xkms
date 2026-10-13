@@ -62,7 +62,6 @@ func newUnprovisionedSimHarness(t *testing.T, mutate func(*Config)) *simHarness 
 		Logger:       logger,
 		DebugSecrets: false,
 		Config:       config,
-		BlobStore:    storageFactory.BlobStore(),
 		Backend:      storageFactory.KeyBackend(),
 		Transport:    sim.Transport(),
 		FQDN:         "node1.example.com",

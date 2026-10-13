@@ -14,6 +14,7 @@
 package deviceattest01
 
 import (
+	"context"
 	"crypto/ecdsa"
 	"crypto/elliptic"
 	"crypto/rand"
@@ -31,32 +32,41 @@ import (
 	"github.com/jeremyhahn/go-xkms/pkg/attestation/dice"
 )
 
-// diceUeid is the device identifier the DICE fixtures carry.
-var diceUeid = []byte{0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08}
-
-// diceFixture is a DICE root and the alias certificate it signed.
-type diceFixture struct {
-	root    *x509.Certificate
-	leafDER []byte
-	key     *ecdsa.PrivateKey
+// diceUeid is the device identifier the DICE fixtures carry: a random-type
+// UEID, 0x01 followed by the 16-byte DeviceID.
+var diceUeid = []byte{
+	0x01,
+	0x00, 0x11, 0x22, 0x33, 0x44, 0x55, 0x66, 0x77,
+	0x88, 0x99, 0xaa, 0xbb, 0xcc, 0xdd, 0xee, 0xff,
 }
 
-// newDICEFixture mints a DICE CA and an alias certificate it signs. challenge
-// is echoed in the alias's eat_nonce (nil echoes nothing), withUeid and
-// withTcbInfo choose which evidence extensions the alias carries, and
-// withMeasurement whether DiceTcbInfo carries a firmware measurement.
+// diceFixture is a device provisioned with a DeviceID certificate: a
+// manufacturer root, the DeviceID certificate it issued for the device's
+// DeviceID key and UEID, and an alias certificate the device signed with that
+// key, for that key.
+type diceFixture struct {
+	root     *x509.Certificate
+	rootKey  *ecdsa.PrivateKey
+	deviceID *x509.Certificate
+	leafDER  []byte
+	key      *ecdsa.PrivateKey
+}
+
+// newDICEFixture mints an endorsed DICE device. challenge is echoed in the
+// alias's eat_nonce (nil echoes nothing), withUeid and withTcbInfo choose
+// which evidence extensions the alias carries, and withMeasurement whether
+// DiceTcbInfo carries a firmware measurement.
 func newDICEFixture(t *testing.T, challenge []byte, withUeid, withTcbInfo, withMeasurement bool) *diceFixture {
 	t.Helper()
-	return newDICEFixtureSignedOn(t, elliptic.P256(), challenge, withUeid, withTcbInfo, withMeasurement)
+	return newDICEFixtureSignedWith(t, x509.ECDSAWithSHA256, challenge, withUeid, withTcbInfo, withMeasurement)
 }
 
-// newDICEFixtureSignedOn is newDICEFixture with the root on curve, which
-// decides the signature algorithm of the alias it signs: P-256 gives
-// ECDSA-SHA256, the one a secure element performs, and P-384 gives SHA-384.
-func newDICEFixtureSignedOn(t *testing.T, curve elliptic.Curve, challenge []byte, withUeid, withTcbInfo, withMeasurement bool) *diceFixture {
+// newDICEFixtureSignedWith is newDICEFixture with the alias signed under
+// algorithm: ECDSA-SHA256 is the one a secure element performs.
+func newDICEFixtureSignedWith(t *testing.T, algorithm x509.SignatureAlgorithm, challenge []byte, withUeid, withTcbInfo, withMeasurement bool) *diceFixture {
 	t.Helper()
 
-	rootKey, err := ecdsa.GenerateKey(curve, rand.Reader)
+	rootKey, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
 	require.NoError(t, err)
 	rootTemplate := &x509.Certificate{
 		SerialNumber:          big.NewInt(1),
@@ -71,6 +81,11 @@ func newDICEFixtureSignedOn(t *testing.T, curve elliptic.Curve, challenge []byte
 	require.NoError(t, err)
 	root, err := x509.ParseCertificate(rootDER)
 	require.NoError(t, err)
+
+	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	require.NoError(t, err)
+	fixture := &diceFixture{root: root, rootKey: rootKey, key: key}
+	fixture.deviceID = fixture.issueDeviceID(t, diceUeid)
 
 	var extensions []pkix.Extension
 	if withTcbInfo {
@@ -93,25 +108,56 @@ func newDICEFixtureSignedOn(t *testing.T, curve elliptic.Curve, challenge []byte
 		extensions = append(extensions, extension)
 	}
 
-	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
-	require.NoError(t, err)
 	leafTemplate := &x509.Certificate{
-		SerialNumber:    big.NewInt(2),
-		Subject:         pkix.Name{CommonName: "Test DICE Alias"},
-		NotBefore:       time.Now().Add(-time.Hour),
-		NotAfter:        time.Now().Add(time.Hour),
-		ExtraExtensions: extensions,
+		SerialNumber:       big.NewInt(3),
+		Subject:            pkix.Name{CommonName: "Test DICE Alias"},
+		NotBefore:          time.Now().Add(-time.Hour),
+		NotAfter:           time.Now().Add(time.Hour),
+		SignatureAlgorithm: algorithm,
+		ExtraExtensions:    extensions,
 	}
-	leafDER, err := x509.CreateCertificate(rand.Reader, leafTemplate, root, key.Public(), rootKey)
+	fixture.leafDER, err = x509.CreateCertificate(rand.Reader, leafTemplate, fixture.deviceID, key.Public(), key)
 	require.NoError(t, err)
-	return &diceFixture{root: root, leafDER: leafDER, key: key}
+	return fixture
+}
+
+// issueDeviceID has the fixture's root issue a DeviceID certificate for its
+// DeviceID key, naming ueid.
+func (f *diceFixture) issueDeviceID(t *testing.T, ueid []byte) *x509.Certificate {
+	t.Helper()
+	extension, err := dice.CreateUeidExtension(ueid)
+	require.NoError(t, err)
+	template := &x509.Certificate{
+		SerialNumber:          big.NewInt(2),
+		Subject:               pkix.Name{CommonName: "Test DICE DeviceID"},
+		NotBefore:             time.Now().Add(-time.Hour),
+		NotAfter:              time.Now().Add(time.Hour),
+		KeyUsage:              x509.KeyUsageCertSign,
+		BasicConstraintsValid: true,
+		IsCA:                  true,
+		ExtraExtensions:       []pkix.Extension{extension},
+	}
+	der, err := x509.CreateCertificate(rand.Reader, template, f.root, f.key.Public(), f.rootKey)
+	require.NoError(t, err)
+	deviceID, err := x509.ParseCertificate(der)
+	require.NoError(t, err)
+	return deviceID
 }
 
 func (f *diceFixture) object() *AttestationObject {
-	return &AttestationObject{
-		Format:       string(FormatDICE),
-		AttStatement: AttestationStatement{X5c: []interface{}{f.leafDER}},
-	}
+	return diceLeafObject(f.leafDER)
+}
+
+// registry provisions the fixture's device with its DeviceID certificate.
+func (f *diceFixture) registry() testRegistry {
+	return testRegistry{hex.EncodeToString(diceUeid): {DeviceIDCertificate: f.deviceID.Raw}}
+}
+
+// verifier is the production verifier anchoring the fixture's device in its
+// registry record and roots, under policy.
+func (f *diceFixture) verifier(t *testing.T, policy DICEPolicy) *TrustAnchorVerifier {
+	t.Helper()
+	return registryVerifier(t, TrustAnchors{DICERoots: []*x509.Certificate{f.root}, Devices: f.registry(), DICE: policy})
 }
 
 // aikObject is a "tpm" attestation object holding only the AIK chain: all the
@@ -140,6 +186,8 @@ func TestNewTrustAnchorVerifier(t *testing.T) {
 			"tpm":  {TPMRoots: []*x509.Certificate{issuer.cert}},
 			"dice": {DICERoots: []*x509.Certificate{fixture.root}},
 			"both": {TPMRoots: []*x509.Certificate{issuer.cert}, DICERoots: []*x509.Certificate{fixture.root}},
+			// The raw-key path is anchored in the registry, not in a root.
+			"a device registry": {Devices: testRegistry{}},
 		} {
 			verifier, err := NewTrustAnchorVerifier(anchors)
 			require.NoError(t, err, name)
@@ -223,70 +271,71 @@ func TestTrustAnchorVerifierTPMChain(t *testing.T) {
 func TestTrustAnchorVerifierDICEChain(t *testing.T) {
 	challenge := DICENonce(diceKeyAuth)
 	genuine := newDICEFixture(t, challenge, true, true, true)
-	verifier, err := NewTrustAnchorVerifier(TrustAnchors{DICERoots: []*x509.Certificate{genuine.root}})
-	require.NoError(t, err)
+	verifier := genuine.verifier(t, DICEPolicy{})
+	verify := func(v *TrustAnchorVerifier, f *diceFixture, keyAuth string) error {
+		_, err := VerifyAttestation(context.Background(), v, attestationPayload(t, f.object()), keyAuth)
+		return err
+	}
 
-	t.Run("an alias under a configured root echoing this challenge is accepted", func(t *testing.T) {
-		require.NoError(t, verifier.VerifyAttestationObject(genuine.object(), []byte(diceKeyAuth)))
+	t.Run("an alias endorsed by its provisioned DeviceID certificate echoing this challenge is accepted", func(t *testing.T) {
+		require.NoError(t, verify(verifier, genuine, diceKeyAuth))
+	})
+
+	t.Run("a chain alone never anchors dice evidence", func(t *testing.T) {
+		err := verifier.VerifyAttestationObject(genuine.object(), []byte(diceKeyAuth))
+		assert.ErrorIs(t, err, ErrDeviceNotAuthorized)
 	})
 
 	t.Run("a replayed answer to another challenge is refused", func(t *testing.T) {
-		err := verifier.VerifyAttestationObject(genuine.object(), []byte("a different token.thumbprint"))
-		assert.ErrorIs(t, err, ErrCertificateChainInvalid)
-	})
-
-	t.Run("an alias under a root nobody configured is refused", func(t *testing.T) {
-		other := newDICEFixture(t, challenge, true, true, true)
-		err := verifier.VerifyAttestationObject(other.object(), []byte(diceKeyAuth))
-		assert.ErrorIs(t, err, ErrCertificateChainInvalid)
+		assert.ErrorIs(t, verify(verifier, genuine, "a different token.thumbprint"), ErrCertificateChainInvalid)
 	})
 
 	t.Run("an alias with no Ueid is refused: the identity is read from it", func(t *testing.T) {
 		noUeid := newDICEFixture(t, challenge, false, true, true)
-		v, err := NewTrustAnchorVerifier(TrustAnchors{DICERoots: []*x509.Certificate{noUeid.root}})
-		require.NoError(t, err)
-		assert.ErrorIs(t, v.VerifyAttestationObject(noUeid.object(), []byte(diceKeyAuth)), ErrCertificateChainInvalid)
+		assert.ErrorIs(t, verify(noUeid.verifier(t, DICEPolicy{}), noUeid, diceKeyAuth), ErrDeviceNotAuthorized)
 	})
 
 	t.Run("no key authorization to bind to is refused", func(t *testing.T) {
-		err := verifier.VerifyAttestationObject(genuine.object(), nil)
+		leaf, err := x509.ParseCertificate(genuine.leafDER)
+		require.NoError(t, err)
+		_, err = verifier.VerifyRegisteredDevice(context.Background(), leaf, "")
 		assert.ErrorIs(t, err, ErrInvalidAttestationObject)
+		assert.Error(t, verify(verifier, genuine, ""))
 	})
 
 	t.Run("the configured policy is enforced", func(t *testing.T) {
 		noMeasurement := newDICEFixture(t, challenge, true, true, false)
 		noTcbInfo := newDICEFixture(t, challenge, true, false, false)
-		sha384Signed := newDICEFixtureSignedOn(t, elliptic.P384(), challenge, true, true, true)
 		for name, tc := range map[string]struct {
 			fixture *diceFixture
 			policy  DICEPolicy
 		}{
-			"a measurement is required":                       {noMeasurement, DICEPolicy{RequireMeasurement: true}},
-			"a DiceTcbInfo is required":                       {noTcbInfo, DICEPolicy{RequireTcbInfo: true}},
-			"a device-signed leaf must be ECDSA with SHA-256": {sha384Signed, DICEPolicy{RequireDeviceSignedLeaf: true}},
+			"a measurement is required": {noMeasurement, DICEPolicy{RequireMeasurement: true}},
+			"a DiceTcbInfo is required": {noTcbInfo, DICEPolicy{RequireTcbInfo: true}},
 		} {
 			t.Run(name, func(t *testing.T) {
-				strict, err := NewTrustAnchorVerifier(TrustAnchors{DICERoots: []*x509.Certificate{tc.fixture.root}, DICE: tc.policy})
-				require.NoError(t, err)
-				err = strict.VerifyAttestationObject(tc.fixture.object(), []byte(diceKeyAuth))
+				err := verify(tc.fixture.verifier(t, tc.policy), tc.fixture, diceKeyAuth)
 				assert.ErrorIs(t, err, ErrCertificateChainInvalid)
 
 				// The same fixture passes without the requirement, so the
 				// refusal is the policy and not the fixture.
-				lax, err := NewTrustAnchorVerifier(TrustAnchors{DICERoots: []*x509.Certificate{tc.fixture.root}})
-				require.NoError(t, err)
-				assert.NoError(t, lax.VerifyAttestationObject(tc.fixture.object(), []byte(diceKeyAuth)))
+				assert.NoError(t, verify(tc.fixture.verifier(t, DICEPolicy{}), tc.fixture, diceKeyAuth))
 			})
 		}
 	})
 
+	t.Run("an alias its DeviceID key signed with anything but ECDSA with SHA-256 is refused under any policy", func(t *testing.T) {
+		// dice.Verify holds every certificate a device key signs to
+		// ECDSA-SHA256, so the endorsement path cannot be relaxed below it.
+		sha384Signed := newDICEFixtureSignedWith(t, x509.ECDSAWithSHA384, challenge, true, true, true)
+		err := verify(sha384Signed.verifier(t, DICEPolicy{}), sha384Signed, diceKeyAuth)
+		assert.ErrorIs(t, err, ErrCertificateChainInvalid)
+		assert.ErrorIs(t, err, dice.ErrUnsupportedSignatureAlgorithm)
+	})
+
 	t.Run("a device-signed leaf is accepted when it is ECDSA with SHA-256", func(t *testing.T) {
-		strict, err := NewTrustAnchorVerifier(TrustAnchors{
-			DICERoots: []*x509.Certificate{genuine.root},
-			DICE:      DICEPolicy{RequireDeviceSignedLeaf: true, RequireMeasurement: true, RequireTcbInfo: true},
-		})
-		require.NoError(t, err)
-		assert.NoError(t, strict.VerifyAttestationObject(genuine.object(), []byte(diceKeyAuth)))
+		strict := genuine.verifier(t, DICEPolicy{RequireDeviceSignedLeaf: true, RequireMeasurement: true, RequireTcbInfo: true})
+		assert.NoError(t, verify(strict, genuine, diceKeyAuth))
 	})
 }
 
@@ -297,7 +346,9 @@ func TestTrustAnchorVerifierFormatIsolation(t *testing.T) {
 	t.Run("a format with no configured root is refused, not checked against the other's", func(t *testing.T) {
 		tpmOnly, err := NewTrustAnchorVerifier(TrustAnchors{TPMRoots: []*x509.Certificate{issuer.cert}})
 		require.NoError(t, err)
-		assert.ErrorIs(t, tpmOnly.VerifyAttestationObject(fixture.object(), []byte(diceKeyAuth)), ErrNoTrustAnchors)
+		_, err = VerifyAttestation(context.Background(), tpmOnly, attestationPayload(t, fixture.object()), diceKeyAuth)
+		assert.ErrorIs(t, err, ErrDeviceNotAuthorized)
+		assert.ErrorIs(t, err, ErrNoDeviceResolver)
 
 		diceOnly, err := NewTrustAnchorVerifier(TrustAnchors{DICERoots: []*x509.Certificate{fixture.root}})
 		require.NoError(t, err)
@@ -354,7 +405,7 @@ func TestTrustAnchorVerifierAKCertificateChain(t *testing.T) {
 
 	t.Run("a chain reaching a configured root of either kind passes", func(t *testing.T) {
 		require.NoError(t, verifier.VerifyAKCertificateChain([][]byte{issuer.issue(t, aikPublicKey(t), nil)}))
-		require.NoError(t, verifier.VerifyAKCertificateChain([][]byte{fixture.leafDER}))
+		require.NoError(t, verifier.VerifyAKCertificateChain([][]byte{fixture.deviceID.Raw}))
 	})
 
 	t.Run("a chain that ends at the root itself passes", func(t *testing.T) {
@@ -394,16 +445,18 @@ func TestTrustAnchorVerifierAKCertificateChain(t *testing.T) {
 // finalization.
 func TestTrustAnchorVerifierDrivesVerifyAttestation(t *testing.T) {
 	fixture := newDICEFixture(t, DICENonce(diceKeyAuth), true, true, true)
-	verifier, err := NewTrustAnchorVerifier(TrustAnchors{DICERoots: []*x509.Certificate{fixture.root}})
-	require.NoError(t, err)
+	verifier := fixture.verifier(t, DICEPolicy{})
 
-	verified, err := VerifyAttestation(verifier, attestationPayload(t, fixture.object()), diceKeyAuth)
+	verified, err := VerifyAttestation(context.Background(), verifier, attestationPayload(t, fixture.object()), diceKeyAuth)
 	require.NoError(t, err)
+	assert.Equal(t, fixture.deviceID.RawSubjectPublicKeyInfo, verified.AttestedSPKI,
+		"the attested SPKI is the provisioned DeviceID certificate's key")
 
 	identity, err := verified.DeviceIdentity()
 	require.NoError(t, err)
 	assert.Equal(t, hex.EncodeToString(diceUeid), identity)
 	require.NoError(t, verified.BindCSRKey(csrFor(t, fixture.key)), "the device's own key binds")
+	require.NoError(t, verified.ConfirmRegistration(context.Background(), verifier), "the registry still vouches for it")
 
 	software, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
 	require.NoError(t, err)
@@ -411,8 +464,8 @@ func TestTrustAnchorVerifierDrivesVerifyAttestation(t *testing.T) {
 
 	t.Run("an attestation under no configured root never reaches the evidence", func(t *testing.T) {
 		stranger := newDICEFixture(t, DICENonce(diceKeyAuth), true, true, true)
-		_, err := VerifyAttestation(verifier, attestationPayload(t, stranger.object()), diceKeyAuth)
-		require.Error(t, err)
+		_, err := VerifyAttestation(context.Background(), verifier, attestationPayload(t, stranger.object()), diceKeyAuth)
+		assert.ErrorIs(t, err, ErrDeviceNotAuthorized)
 	})
 }
 

@@ -14,6 +14,7 @@
 package deviceattest01
 
 import (
+	"context"
 	"crypto/ecdsa"
 	"crypto/elliptic"
 	"crypto/rand"
@@ -51,9 +52,10 @@ func csrFor(t *testing.T, key *ecdsa.PrivateKey) *x509.CertificateRequest {
 // device's -- and attestation chains are public, so anyone who has seen one
 // genuine device's answer could replay it beside a software key.
 func TestVerifyDoesNotAuthorizeDICEOnTheNonceAlone(t *testing.T) {
-	payload := attestationPayload(t, diceAttestationObject(t, DICENonce(diceKeyAuth)))
+	leafDER, aliasKey := newDICEAlias(t, DICENonce(diceKeyAuth))
+	payload := attestationPayload(t, diceLeafObject(leafDER))
 
-	err := Verify(&mockCA{}, payload, diceKeyAuth)
+	err := Verify(context.Background(), provisionedFor(t, aliasKey), payload, diceKeyAuth)
 	require.Error(t, err, "a dice challenge authorized issuance with no csr in sight")
 	assert.ErrorIs(t, err, ErrKeyBindingRequired)
 }
@@ -62,17 +64,14 @@ func TestVerifyDoesNotAuthorizeDICEOnTheNonceAlone(t *testing.T) {
 // path an order takes: verify the device's evidence, then meet the CSR.
 func TestBindCSRKeyRefusesACSRForAnUnrelatedKey(t *testing.T) {
 	leafDER, aliasKey := newDICEAlias(t, DICENonce(diceKeyAuth))
-	object := &AttestationObject{
-		Format:       string(FormatDICE),
-		AttStatement: AttestationStatement{X5c: []interface{}{leafDER}},
-	}
-	payload := attestationPayload(t, object)
+	payload := attestationPayload(t, diceLeafObject(leafDER))
 
-	verified, err := VerifyAttestation(&mockCA{}, payload, diceKeyAuth)
+	verified, err := VerifyAttestation(context.Background(), provisionedFor(t, aliasKey), payload, diceKeyAuth)
 	require.NoError(t, err)
 	require.NotNil(t, verified)
 	assert.Equal(t, FormatDICE, verified.Format)
 	require.NotNil(t, verified.Leaf, "the verified alias certificate did not survive to finalization")
+	assert.Equal(t, spkiOf(t, aliasKey), verified.AttestedSPKI, "the attested SPKI is the provisioned key")
 
 	// A key generated in software, presented beside the device's genuine
 	// evidence. This is the certificate an attacker wants and must not get.
@@ -98,7 +97,15 @@ func TestBindCSRKeyRefusesWhatItCannotCheck(t *testing.T) {
 		Format:           FormatDICE,
 		KeyAuthorization: diceKeyAuth,
 		Leaf:             leaf,
+		AttestedSPKI:     leaf.RawSubjectPublicKeyInfo,
 	}
+
+	t.Run("no attested SPKI", func(t *testing.T) {
+		// A record the device registry never vouched for has no key to bind
+		// to, and the missing comparison must not read as a passing one.
+		unanchored := &VerifiedAttestation{Format: FormatDICE, KeyAuthorization: diceKeyAuth, Leaf: leaf}
+		assert.ErrorIs(t, unanchored.BindCSRKey(csrFor(t, aliasKey)), ErrKeyBindingUnavailable)
+	})
 
 	t.Run("no verified attestation", func(t *testing.T) {
 		var missing *VerifiedAttestation
@@ -139,6 +146,7 @@ func TestBindCSRKeyRefusesWhatItCannotCheck(t *testing.T) {
 			Format:           FormatDICE,
 			KeyAuthorization: "another.keyauthorization",
 			Leaf:             leaf,
+			AttestedSPKI:     leaf.RawSubjectPublicKeyInfo,
 		}
 		err := stale.BindCSRKey(csrFor(t, aliasKey))
 		require.Error(t, err)
@@ -155,23 +163,18 @@ func TestBindCSRKeyRefusesWhatItCannotCheck(t *testing.T) {
 // far side of it, and must still refuse a software key there.
 func TestBindCSRKeySurvivesStorage(t *testing.T) {
 	leafDER, aliasKey := newDICEAlias(t, DICENonce(diceKeyAuth))
-	object := &AttestationObject{
-		Format:       string(FormatDICE),
-		AttStatement: AttestationStatement{X5c: []interface{}{leafDER}},
-	}
-	payload := attestationPayload(t, object)
+	payload := attestationPayload(t, diceLeafObject(leafDER))
 
-	verified, err := VerifyAttestation(&mockCA{}, payload, diceKeyAuth)
+	verified, err := VerifyAttestation(context.Background(), provisionedFor(t, aliasKey), payload, diceKeyAuth)
 	require.NoError(t, err)
 	require.Equal(t, leafDER, verified.LeafDER, "the device's own bytes are what get written down")
 
 	// What a store hands back: the fields that serialise, and no parsed
 	// certificate.
-	restored := &VerifiedAttestation{
-		Format:           verified.Format,
-		KeyAuthorization: verified.KeyAuthorization,
-		LeafDER:          verified.LeafDER,
-	}
+	restored, err := FromRecord(verified.Record("permanent-identifier", "device"))
+	require.NoError(t, err)
+	require.Nil(t, restored.Leaf)
+	require.Equal(t, verified.AttestedSPKI, restored.AttestedSPKI, "the attested SPKI survives storage")
 
 	require.NoError(t, restored.BindCSRKey(csrFor(t, aliasKey)))
 

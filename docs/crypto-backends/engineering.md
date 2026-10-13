@@ -83,21 +83,24 @@ sentinels (`sdk/go/xkms_service.go:61`).
   `-`, at most 64 characters. The same name is the keys' `StoreType` and the
   backend segment of their Key IDs (`<type>:signing:ecdsa-p256:<name>`). The
   `KeyProvider` the factory returns must report it from `Type()`.
-- **Name claim.** `types.RegisterBackendType` (`pkg/types/backend_registry.go:82`)
-  records the name. `IsRegisteredBackendType` (`:119`) is consulted by
+- **Name claim.** `types.RegisterBackendType` (`pkg/types/backend_registry.go:94`)
+  publishes the name and its factory together, in one atomic step, so no
+  reader sees the name valid without its factory. `IsRegisteredBackendType`
+  (`:132`) is consulted by
   `xkms.BackendType.IsValid` (`pkg/xkms/registry.go:91`), `types.StoreType.IsValid`
   (`pkg/types/types.go:332`), `types.ParseStoreType` (`:349`), and Key ID
   parsing: `validateBackend`, `keyIDToBackendType` and `backendTypeToStoreType`
   (`pkg/xkms/keyid.go:260`, `:374`, `:494`). The built-in switches are
   unchanged and checked first.
-- **Construction.** The factory joins `backendFactories` like a compiled-in
-  backend. `AutoInitialize` calls it with `AutoConfig.BackendConfigs[Type]`,
+- **Construction.** `GetBackendFactory`, `IsBackendSupported` and
+  `SupportedBackends` read the external factory from that same registry
+  (`types.RegisteredBackendFactory`), beside the compiled-in ones. `AutoInitialize` calls it with `AutoConfig.BackendConfigs[Type]`,
   plus a `key_storage` backend prefixed `<type>/` when `AutoConfig.Datastore`
   is set.
 - **Timing.** As with `phone.RegisterPlatform`, registration is accepted at any
   time and lasts for the life of the process. A backend registered after
   `AutoInitialize` is constructed by the next `AutoInitialize`.
-- **Concurrency.** The name set, `backendRegistry` and `backendFactories` are
+- **Concurrency.** The external registry, `backendRegistry` and `backendFactories` are
   copy-on-write maps behind `atomic.Pointer`. Lookups never lock, and
   concurrent registrations never lose an entry.
 - **Refusals.** A refused registration registers nothing and returns
@@ -344,6 +347,15 @@ practice:
 | `ErrPasswordRequired` | a software/PKCS#8 provider needs its password |
 | `ErrUnsupportedKeyAlgorithm` | the algorithm is valid but this backend cannot do it |
 | `ErrNoBackendsConfigured`, `ErrNoDefaultBackend`, `ErrDefaultBackendNotFound` | configuration |
+| `ErrNilBackendFactory` | `RegisterExternalBackend` was given a nil factory |
+| `types.ErrBackendTypeEmpty` | a backend type was registered under an empty name |
+| `types.ErrBackendTypeRegistered` | the name is built in or already registered |
+| `types.ErrBackendTypeNotCanonical` | the name is not lowercase and trimmed |
+
+The SDK re-exports these four as `ServiceErrNilBackendFactory`,
+`ServiceErrBackendTypeEmpty`, `ServiceErrBackendTypeNotCanonical` and
+`ServiceErrBackendTypeRegistered`. Any other malformed name (a space or `/`
+inside it, say) is refused with the `pkg/validation` backend-name error.
 
 **Fail closed:** a missing tag, an unreachable device, an unreadable provider
 credential, or an unmet PIN requirement all return an error. No backend falls
@@ -773,6 +785,10 @@ barrier. Certificate blobs go to go-objstore via
 - **Unit** — `pkg/backend/*_test.go` including `capabilities_test.go`,
   `backend_importexport_test.go`, `backend_symmetric_test.go`; per-backend
   suites in each backend package. `pkg/backend/mocks` provides substitutes.
+- **External registration** — `pkg/xkms/extbackend` is a test-only package
+  that stands in for an outside module: it registers a backend from `init()`,
+  builds it through `AutoInitialize`, addresses it by Key ID, covers every
+  refusal, and races registration against lookup under `-race`.
 - **Integration** — one directory per backend under `test/integration/`:
   `awskms`, `gcpkms`, `azurekv`, `vault`, `pkcs11`, `pkcs8`, `tpm2`, `quantum`,
   `backend`, `signing`, `crypto`. Each is tag-gated to match its backend.

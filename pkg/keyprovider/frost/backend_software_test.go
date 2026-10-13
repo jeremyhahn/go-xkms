@@ -28,6 +28,7 @@ import (
 	"github.com/jeremyhahn/go-xkms/pkg/keyprovider/pkcs8"
 	"github.com/jeremyhahn/go-xkms/pkg/seal"
 	"github.com/jeremyhahn/go-xkms/pkg/storage"
+	"github.com/jeremyhahn/go-xkms/pkg/testutil"
 	"github.com/jeremyhahn/go-xkms/pkg/types"
 )
 
@@ -74,7 +75,7 @@ func newPKCS8FrostSecretBackend(t *testing.T) (types.SealingKeyProvider, *types.
 
 func TestKeyStore_Software_StoreAndLoadKeyPackage(t *testing.T) {
 	secretBackend, attrs := newSoftwareFrostSecretBackend(t)
-	ks := NewKeyStore(newMockStorageBackend(), secretBackend, attrs)
+	ks := mustKeyStore(t, testutil.NewMemoryDAOFactory(), secretBackend, attrs)
 
 	keyID := "software-frost-key"
 	pkg := &KeyPackage{
@@ -97,7 +98,7 @@ func TestKeyStore_Software_StoreAndLoadKeyPackage(t *testing.T) {
 
 func TestKeyStore_PKCS8_StoreAndLoadKeyPackage(t *testing.T) {
 	secretBackend, attrs := newPKCS8FrostSecretBackend(t)
-	ks := NewKeyStore(newMockStorageBackend(), secretBackend, attrs)
+	ks := mustKeyStore(t, testutil.NewMemoryDAOFactory(), secretBackend, attrs)
 
 	keyID := "pkcs8-frost-key"
 	pkg := &KeyPackage{
@@ -123,11 +124,11 @@ func TestKeyStore_PKCS8_StoreAndLoadKeyPackage(t *testing.T) {
 // brand-new secret backend instance) constructed over the SAME storage,
 // simulating a process restart: the wrapping key is re-derived from the
 // same persisted private key, and the sealed envelope survives verbatim in
-// public storage.
+// its entity.
 func TestKeyStore_Software_RestartSurvival(t *testing.T) {
 	sharedKeyStorage, err := storage.NewMemoryBackend()
 	require.NoError(t, err)
-	sharedPublicStorage := newMockStorageBackend()
+	daos := testutil.NewMemoryDAOFactory()
 
 	keyID := "restart-key"
 	pkg := &KeyPackage{
@@ -147,7 +148,7 @@ func TestKeyStore_Software_RestartSurvival(t *testing.T) {
 	sealer1 := provider1.(types.SealingKeyProvider)
 	attrs1 := AsymmetricSecretSealKeyAttributes(types.StoreSoftware)
 	require.NoError(t, seal.EnsurePrivateSealKey(context.Background(), provider1, attrs1))
-	ks1 := NewKeyStore(sharedPublicStorage, sealer1, attrs1)
+	ks1 := mustKeyStore(t, daos, sealer1, attrs1)
 	require.NoError(t, ks1.StoreKeyPackage(context.Background(), keyID, pkg, metadata))
 
 	// "Boot 2": brand-new backend and KeyStore instances over the same
@@ -157,7 +158,7 @@ func TestKeyStore_Software_RestartSurvival(t *testing.T) {
 	sealer2 := provider2.(types.SealingKeyProvider)
 	attrs2 := AsymmetricSecretSealKeyAttributes(types.StoreSoftware)
 	require.NoError(t, seal.EnsurePrivateSealKey(context.Background(), provider2, attrs2))
-	ks2 := NewKeyStore(sharedPublicStorage, sealer2, attrs2)
+	ks2 := mustKeyStore(t, daos, sealer2, attrs2)
 
 	loaded, _, err := ks2.LoadKeyPackage(context.Background(), keyID, 1)
 	require.NoError(t, err)
@@ -170,7 +171,7 @@ func TestKeyStore_Software_RestartSurvival(t *testing.T) {
 // software backend (a different Ed25519 wrap key, since each backend
 // generates its own) can never unseal a share sealed by the first.
 func TestKeyStore_Software_WrongWrapKey_TypedError(t *testing.T) {
-	publicStorage := newMockStorageBackend()
+	daos := testutil.NewMemoryDAOFactory()
 
 	// Backend A seals the share.
 	keyStorageA, err := storage.NewMemoryBackend()
@@ -180,7 +181,7 @@ func TestKeyStore_Software_WrongWrapKey_TypedError(t *testing.T) {
 	sealerA := providerA.(types.SealingKeyProvider)
 	attrsA := AsymmetricSecretSealKeyAttributes(types.StoreSoftware)
 	require.NoError(t, seal.EnsurePrivateSealKey(context.Background(), providerA, attrsA))
-	ksA := NewKeyStore(publicStorage, sealerA, attrsA)
+	ksA := mustKeyStore(t, daos, sealerA, attrsA)
 
 	keyID := "wrong-key-test"
 	pkg := &KeyPackage{
@@ -196,7 +197,7 @@ func TestKeyStore_Software_WrongWrapKey_TypedError(t *testing.T) {
 	require.NoError(t, ksA.StoreKeyPackage(context.Background(), keyID, pkg, metadata))
 
 	// Backend B (independent wrap key) tries to unseal it, through a
-	// KeyStore over the SAME public storage (so it sees the same sealed
+	// KeyStore over the SAME DAO factory (so it sees the same sealed
 	// envelope) but a different secret backend.
 	keyStorageB, err := storage.NewMemoryBackend()
 	require.NoError(t, err)
@@ -205,7 +206,7 @@ func TestKeyStore_Software_WrongWrapKey_TypedError(t *testing.T) {
 	sealerB := providerB.(types.SealingKeyProvider)
 	attrsB := AsymmetricSecretSealKeyAttributes(types.StoreSoftware)
 	require.NoError(t, seal.EnsurePrivateSealKey(context.Background(), providerB, attrsB))
-	ksB := NewKeyStore(publicStorage, sealerB, attrsB)
+	ksB := mustKeyStore(t, daos, sealerB, attrsB)
 
 	_, _, err = ksB.LoadKeyPackage(context.Background(), keyID, 1)
 	require.Error(t, err)

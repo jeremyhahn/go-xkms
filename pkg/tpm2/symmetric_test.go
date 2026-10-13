@@ -714,7 +714,6 @@ func createSimWithTracker(t testing.TB, entropy bool) (*slog.Logger, TrustedPlat
 		panic(err)
 	}
 
-	blobStore := storageFactory.BlobStore()
 	fileBackend := storageFactory.KeyBackend()
 
 	// Create tracker
@@ -771,7 +770,6 @@ func createSimWithTracker(t testing.TB, entropy bool) (*slog.Logger, TrustedPlat
 		Logger:       logger,
 		DebugSecrets: true,
 		Config:       config,
-		BlobStore:    blobStore,
 		Backend:      fileBackend,
 		FQDN:         "node1.example.com",
 		Tracker:      tracker,

@@ -28,6 +28,7 @@ import (
 	"github.com/jeremyhahn/go-xkms/pkg/backend/gcpkms"
 	"github.com/jeremyhahn/go-xkms/pkg/seal"
 	"github.com/jeremyhahn/go-xkms/pkg/storage"
+	"github.com/jeremyhahn/go-xkms/pkg/testutil"
 	"github.com/jeremyhahn/go-xkms/pkg/types"
 )
 
@@ -86,7 +87,7 @@ func newGCPKMSFrostSecretBackend(t *testing.T) (*gcpkms.Backend, *types.KeyAttri
 
 func TestKeyStore_GCPKMS_StoreAndLoadKeyPackage(t *testing.T) {
 	secretBackend, attrs := newGCPKMSFrostSecretBackend(t)
-	ks := NewKeyStore(newMockStorageBackend(), secretBackend, attrs)
+	ks := mustKeyStore(t, testutil.NewMemoryDAOFactory(), secretBackend, attrs)
 
 	keyID := "gcp-frost-key"
 	pkg := &KeyPackage{

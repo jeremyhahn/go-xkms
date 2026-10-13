@@ -25,7 +25,7 @@ import (
 	"crypto/x509"
 	"testing"
 
-	"github.com/jeremyhahn/go-xkms/pkg/storage"
+	"github.com/jeremyhahn/go-xkms/pkg/testutil/tpmblobtest"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -38,7 +38,7 @@ import (
 // key is usable under it: with no password the platform PCR branch
 // authorizes the signature.
 func TestGenerateKey_DefaultsToThePlatformPolicy(t *testing.T) {
-	backend, err := NewBackend(&Config{UseSimulator: true, KeyStorage: storage.NewMemory()})
+	backend, err := NewBackend(&Config{UseSimulator: true, Keys: tpmblobtest.New(t)})
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = backend.Close() })
 

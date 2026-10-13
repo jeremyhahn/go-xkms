@@ -474,8 +474,30 @@ var ACMEDeviceIdentityFromCertificate = deviceattest01.DeviceIdentityFromCertifi
 var ACMEErrDeviceIdentityUnavailable = deviceattest01.ErrDeviceIdentityUnavailable
 
 // ACMETrustAnchors configures an ACMETrustAnchorVerifier: the roots a "tpm"
-// attestation's AIK chain and a "dice" attestation's chain must reach.
+// attestation's AIK chain must reach, and the device registry and roots a
+// "dice" attestation is anchored in.
 type ACMETrustAnchors = deviceattest01.TrustAnchors
+
+// ACMEDeviceResolver looks up a DICE device's provisioning record by the
+// lowercase hex of its UEID. The embedder implements it; with none, every
+// "dice" attestation is refused.
+type ACMEDeviceResolver = deviceattest01.DeviceResolver
+
+// ACMEProvisionedDevice is a provisioning record: exactly one of the DeviceID
+// key (DER SubjectPublicKeyInfo) or the DeviceID certificate (DER).
+type ACMEProvisionedDevice = deviceattest01.ProvisionedDevice
+
+// ACMEErrDeviceNotProvisioned is what an ACMEDeviceResolver returns for a UEID
+// it holds no record for.
+var ACMEErrDeviceNotProvisioned = deviceattest01.ErrDeviceNotProvisioned
+
+// ACMEErrDeviceNotAuthorized is returned when a "dice" attestation is not
+// authorized by its device's provisioning record.
+var ACMEErrDeviceNotAuthorized = deviceattest01.ErrDeviceNotAuthorized
+
+// ACMEErrNoDeviceResolver is returned when a "dice" attestation is verified
+// with no ACMEDeviceResolver to anchor it.
+var ACMEErrNoDeviceResolver = deviceattest01.ErrNoDeviceResolver
 
 // ACMEDICEPolicy is the policy a DICE alias certificate must meet beyond
 // anchoring: device-signed leaf, firmware measurement, DiceTcbInfo and
@@ -488,7 +510,8 @@ type ACMEDICEPolicy = deviceattest01.DICEPolicy
 type ACMETrustAnchorVerifier = deviceattest01.TrustAnchorVerifier
 
 // ACMENewTrustAnchorVerifier builds an ACMETrustAnchorVerifier. It returns
-// ACMEErrNoTrustAnchors when no root is configured.
+// ACMEErrNoTrustAnchors when neither a root nor a device registry is
+// configured.
 var ACMENewTrustAnchorVerifier = deviceattest01.NewTrustAnchorVerifier
 
 // ACMEErrNoTrustAnchors is returned when device-attest-01 verification is

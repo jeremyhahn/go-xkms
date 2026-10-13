@@ -195,7 +195,6 @@ func createTPM2Instance(t *testing.T) (tpm2lib.TrustedPlatformModule, func()) {
 		t.Fatalf("Failed to create storage factory: %v", err)
 	}
 
-	blobStore := storageFactory.BlobStore()
 	fileBackend := storageFactory.KeyBackend()
 
 	// Create certificate store for testing
@@ -257,7 +256,6 @@ func createTPM2Instance(t *testing.T) (tpm2lib.TrustedPlatformModule, func()) {
 		Logger:       logger,
 		DebugSecrets: true,
 		Config:       config,
-		BlobStore:    blobStore,
 		Backend:      fileBackend,
 		CertStore:    certStore, // Certificate store for EK cert
 		FQDN:         "integration-test.example.com",

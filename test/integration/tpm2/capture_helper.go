@@ -26,6 +26,7 @@ import (
 	"time"
 
 	"github.com/jeremyhahn/go-xkms/pkg/testutil/secrettest"
+	"github.com/jeremyhahn/go-xkms/pkg/testutil/tpmblobtest"
 
 	"github.com/google/go-tpm-tools/simulator"
 	"github.com/google/go-tpm/tpm2/transport"
@@ -113,15 +114,8 @@ func NewTPM2TestSetup(t *testing.T) *TPM2TestSetup {
 	// Create logger
 	logger := slog.Default()
 
-	// Create in-memory storage backend for blob store and file backend
-	memStorage := storage.New()
-
-	// Create blob store
-	blobStore, err := store.NewFSBlobStore(logger, memStorage)
-	require.NoError(t, err, "Failed to create blob store")
-
-	// Create file backend
-	fileBackend := store.NewFileBackend(logger, memStorage)
+	// Keep the TPM key blobs in an in-memory TPMBlob store
+	keyBackend := tpmblobtest.New(t)
 
 	// Create TPM configuration
 	tpmConfig := &tpm2ks.Config{
@@ -165,8 +159,7 @@ func NewTPM2TestSetup(t *testing.T) *TPM2TestSetup {
 		Logger:       logger,
 		DebugSecrets: false, // Disable to reduce noise in capture
 		Config:       tpmConfig,
-		BlobStore:    blobStore,
-		Backend:      fileBackend,
+		Backend:      keyBackend,
 		FQDN:         fmt.Sprintf("capture-test-%d.example.com", time.Now().UnixNano()),
 		Transport:    capture, // Use capture transport
 	}

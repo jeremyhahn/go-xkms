@@ -117,7 +117,7 @@ exactly as the key lifecycle RPCs do (go-xkms#1218).
   `storage.ValidateTenantID`), so two tenants' keys can never collide, and a
   key ID is unique only within its tenant. The tenant is also stamped in the
   key's metadata (`KeyMetadata.TenantID`,
-  `pkg/keyprovider/frost/storage.go:65`) and reported by `ListKeys`
+  `pkg/keyprovider/frost/storage.go:38`) and reported by `ListKeys`
   (`pkg/keyprovider/frost/backend.go:300`), so the generic tenant-scoped
   backend view (`TenantScopedBackend.ListKeys`) sees a tenant's FROST keys
   too.
@@ -160,14 +160,18 @@ indistinguishable from a miss.
 
 ## Key storage split: public vs. secret
 
-`frost.Config` (`pkg/keyprovider/frost/config.go:24`) takes two storage
+`frost.Config` (`pkg/keyprovider/frost/config.go:25`) takes two storage
 handles, matching the pattern used by `pkg/share-custody` and the sealing
 strategies:
 
-- `PublicStorage storage.Backend` — group public key, verification shares,
-  per-key metadata, and (go-xkms#841) the *sealed* secret-share envelope
-  (`types.SealedData`, JSON). Sealing is what makes storing the last one
-  here safe; the payload is opaque ciphertext, not the share in the clear.
+- `DAOs *qrdbsdk.DAOFactory` — the go-qrdb DAO factory that opens the
+  `frost` database (`pkg/keyprovider/frost/entity.go`). It holds four
+  entity types: `FrostKey` (group public key and per-key metadata),
+  `FrostShare` (one verification share per participant), `FrostSecretShare`
+  (this participant's *sealed* secret share, `types.SealedData`), and
+  `FrostNonce` (one record per claimed nonce commitment). Sealing is what
+  makes storing the secret share here safe; the record carries opaque
+  ciphertext, never the share in the clear.
 - `SecretBackend types.SealingKeyProvider` — seals and unseals this
   participant's secret share with its own native mechanism: TPM 2.0
   PCR-bound sealing under the Platform SRK, PKCS#11/cloud KMS AES-256-GCM
@@ -180,10 +184,10 @@ strategies:
 
 ## Key generation: trusted dealer only
 
-`Config.DKG KeyGenerator` (`config.go:56`) is an extension point for a real
+`Config.DKG KeyGenerator` (`config.go:60`) is an extension point for a real
 distributed-key-generation protocol where no single party ever sees the
 whole key; if left nil, `Config.GetKeyGenerator()` falls back to
-`NewTrustedDealer()` (`config.go:175-180`). **Only the trusted-dealer
+`NewTrustedDealer()` (`config.go:166-171`). **Only the trusted-dealer
 generator ships today.** A custom `KeyGenerator` is something an embedder
 must write and wire in themselves; its contract is in
 [`engineering.md`](engineering.md) §"Key generation contract".
@@ -227,15 +231,28 @@ and the operator must confirm each public key's `recipient_id` out of band.
 
 ## Nonce-reuse prevention
 
-FROST nonce reuse recovers the private key outright. `Config.NonceStorage`
-(falls back to `PublicStorage`) and `EnableNonceTracking` (`true` in
-`DefaultConfig`, `config.go:189`) make `SignRound` check every commitment
-before it is used a second time (`rounds.go:198`); a repeat returns
-`ErrNonceAlreadyUsed` (`pkg/keyprovider/frost/errors.go`). The package
-documentation calls nonce reuse catastrophic and tells callers to keep
-tracking on (`pkg/keyprovider/frost/doc.go:80-82`). Neither the CLI nor the
-network handlers expose a flag to turn it off, and `xkmsd` always sets it
-(`pkg/server/backend_frost.go`) — it is only reachable by constructing `frost.Config` directly.
+FROST nonce reuse recovers the private key outright. With
+`EnableNonceTracking` (default `true`, `config.go:180`), `SignRound` claims
+the nonce before it produces a signature share: `NonceTracker.Claim`
+(`pkg/keyprovider/frost/nonce.go:64`) writes a `FrostNonce` record keyed by
+the key ID and the SHA-256 of the commitment, through the DAO's atomic
+`SaveIfAbsent`. Exactly one claim of a commitment can win, even when several
+goroutines or processes race on the same store; every other claim returns a
+`*NonceReuseError` wrapping `ErrNonceAlreadyUsed`
+(`pkg/keyprovider/frost/errors.go`). The claim is written to the `frost`
+database, so it survives a restart. `DeleteKey` removes a key's claims
+along with the key.
+
+The previous design checked for the commitment and then wrote it as two
+separate steps, so two concurrent `SignRound` calls could both pass the
+check. It was replaced rather than locked: a process-local mutex would not
+cover a second process sharing the store.
+
+Disabling nonce tracking is documented in the package as strongly
+discouraged (`pkg/keyprovider/frost/doc.go:83-86`) and is not something
+either the CLI or the network handlers expose a flag for — it is only
+reachable by constructing `frost.Config` directly. `xkmsd` always sets it
+(`pkg/server/backend_frost.go`).
 
 ## Sessions
 
@@ -244,7 +261,7 @@ network handlers expose a flag to turn it off, and `xkmsd` always sets it
 secret Round-1 nonces plus its public commitments -- directly to the caller,
 who holds it and passes it back to `SignRound` for Round 2; the caller is
 responsible for completing the round promptly and zeroizing the nonces once
-used (`SigningNonces.Zeroize`, `pkg/keyprovider/frost/nonce.go:162`). `EnableNonceTracking` (default `true`) still
+used (`SigningNonces.Zeroize`, `pkg/keyprovider/frost/nonce.go:132`). `EnableNonceTracking` (default `true`) still
 rejects reuse of any commitment across signing attempts regardless of who
 holds the nonces, which is what actually prevents the catastrophic case this
 section used to describe as session expiry.
@@ -257,5 +274,5 @@ custody protects a key that is periodically *reconstructed*; FROST exists
 specifically so the key is *never* reconstructed. Sharing the storage layer
 would have coupled a "the key is whole, briefly" data model to a "the key is
 never whole" one for no code reuse that mattered — `frost.Config` deliberately
-takes its own `PublicStorage`/`SecretBackend` pair instead of a
+takes its own `DAOs`/`SecretBackend` pair instead of a
 `custodian.Group`.

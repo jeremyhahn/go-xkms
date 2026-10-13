@@ -117,8 +117,8 @@ func TestService_InventoryReadsTheRegistry(t *testing.T) {
 }
 
 // TestService_KeyStoreSeparatesScopes proves the system scope reads the
-// physical key store, a tenant reads its own prefix, and an invalid tenant is
-// refused.
+// physical key store, a tenant reads its own scope of the tenant key store,
+// and an invalid tenant is refused.
 func TestService_KeyStoreSeparatesScopes(t *testing.T) {
 	cfg := validConfig(t)
 	svc, err := NewService(cfg)
@@ -133,16 +133,22 @@ func TestService_KeyStoreSeparatesScopes(t *testing.T) {
 	acme, err := svc.KeyStore("acme")
 	require.NoError(t, err)
 	require.NoError(t, acme.Save(attrs, []byte("blob"), store.FSEXT_PUBLIC_BLOB, false))
-	stored, err := cfg.KeyStorage.Get(context.Background(), "acme"+tenantKeysSuffix+"signer"+store.FSEXT_PUBLIC_BLOB)
+	acmeKeys, err := cfg.TenantKeys.Tenant("acme")
+	require.NoError(t, err)
+	stored, err := acmeKeys.Get(attrs, store.FSEXT_PUBLIC_BLOB)
 	require.NoError(t, err)
 	assert.Equal(t, []byte("blob"), stored)
 
 	globex, err := svc.KeyStore("globex")
 	require.NoError(t, err)
 	_, err = globex.Get(attrs, store.FSEXT_PUBLIC_BLOB)
-	assert.Error(t, err, "one tenant cannot read another's blobs")
+	assert.ErrorIs(t, err, store.ErrBlobNotFound, "one tenant cannot read another's blobs")
 
 	_, err = svc.KeyStore("a/b")
 	var invalid *InvalidTenantError
 	assert.ErrorAs(t, err, &invalid)
+
+	_, err = svc.KeyStore("acme\x00")
+	var storeErr *StoreError
+	assert.ErrorAs(t, err, &storeErr, "a tenant the key store cannot scope is refused")
 }

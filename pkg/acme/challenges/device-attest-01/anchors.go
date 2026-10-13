@@ -14,6 +14,7 @@
 package deviceattest01
 
 import (
+	"context"
 	"crypto/x509"
 	"encoding/asn1"
 	"time"
@@ -43,13 +44,17 @@ import (
 //     IAK. The statement's own requirements (WebAuthn Level 2 section 8.3.1,
 //     the TPM2_Certify binding) are applied by the evidence verifier that runs
 //     after this one.
-//   - "dice": the chain must descend from a configured DICE root and the
-//     leaf must satisfy the configured DICE policy (dice.Verify), including the
-//     eat_nonce that makes the answer this challenge's.
+//   - "dice": the alias certificate is anchored in the device's provisioning
+//     record, which the injected DeviceResolver returns
+//     (VerifyRegisteredDevice, go-xkms#1441), and only then must satisfy the
+//     configured DICE policy (dice.Verify), including the eat_nonce that makes
+//     the answer this challenge's. A DICE root alone anchors nothing: the alias
+//     certificate is self-signed by the key it carries, so it vouches only for
+//     itself.
 //
 // The two root sets are separate on purpose. A root that vouches for TPM
-// AIKs has no say over DICE alias certificates and the reverse, and a format
-// with no configured roots is REFUSED rather than verified against another
+// AIKs has no say over DICE certificates and the reverse, and a format
+// with no configured anchor is REFUSED rather than verified against another
 // format's: configuring only TPM roots leaves DICE unavailable.
 
 // TrustAnchors configures a TrustAnchorVerifier.
@@ -57,11 +62,51 @@ type TrustAnchors struct {
 	// TPMRoots anchor the AIK certificate chain of a "tpm" attestation.
 	TPMRoots []*x509.Certificate
 
-	// DICERoots anchor the certificate chain of a "dice" attestation.
+	// DICERoots anchor the DeviceID certificate a provisioning record
+	// returns for a "dice" attestation (the endorsement path; see
+	// DeviceResolver). They are never an anchor on their own: a "dice"
+	// attestation is refused unless Devices vouches for the device.
 	DICERoots []*x509.Certificate
+
+	// Devices is the device registry a "dice" attestation is anchored in
+	// (go-xkms#1441). Nil refuses every "dice" attestation as unauthorized:
+	// there is no default registry, and nothing else can say which key is a
+	// device's DeviceID key.
+	Devices DeviceResolver
 
 	// DICE is the policy a "dice" leaf must meet beyond anchoring.
 	DICE DICEPolicy
+}
+
+// DeviceResolver looks up a DICE device's provisioning record (go-xkms#1441).
+//
+// go-xkms declares it and the platform that owns enrolment implements it and
+// injects it through TrustAnchors.Devices, so the dependency points from the
+// enrolment layer to go-xkms and never back. The record is written at
+// provisioning, outside any field host, and that is what makes it an anchor:
+// a self-signed alias certificate vouches only for itself.
+type DeviceResolver interface {
+	// ResolveDevice returns the provisioning record of the device whose UEID
+	// is ueid: the lowercase hex of the complete RFC 9711 UEID, 0x01 followed
+	// by the DeviceID, 34 digits for a 16-byte DeviceID. It reports a device
+	// with no record with an error wrapping ErrDeviceNotProvisioned, and any
+	// other failure with any other error. Both refuse the device.
+	ResolveDevice(ctx context.Context, ueid string) (*ProvisionedDevice, error)
+}
+
+// ProvisionedDevice is a DICE device's provisioning record. Exactly one of
+// its fields is set; a record with neither or both is refused.
+type ProvisionedDevice struct {
+	// DeviceIDKey is the provisioned DeviceID public key as a DER
+	// SubjectPublicKeyInfo (the raw-key path). The alias certificate must
+	// carry exactly this key and verify under it.
+	DeviceIDKey []byte
+
+	// DeviceIDCertificate is the DER DeviceID certificate issued at
+	// provisioning (the endorsement path). It must anchor in
+	// TrustAnchors.DICERoots, name the same UEID, and have signed the alias
+	// certificate.
+	DeviceIDCertificate []byte
 }
 
 // DICEPolicy is the policy a DICE alias certificate must meet. Each field is a
@@ -97,20 +142,23 @@ type TrustAnchorVerifier struct {
 	// roots are the roots of both formats, for the format-blind chain check.
 	roots []*x509.Certificate
 
+	// devices is the registry "dice" evidence is anchored in; nil refuses it.
+	devices DeviceResolver
+
 	dice DICEPolicy
 }
 
 var _ AttestationVerifier = (*TrustAnchorVerifier)(nil)
 
 // NewTrustAnchorVerifier returns a verifier for anchors. It returns
-// ErrNoTrustAnchors when neither a TPM nor a DICE root is configured: a
-// verifier with nothing to anchor to would have nothing to refuse a forged
-// chain with, so it cannot exist.
+// ErrNoTrustAnchors when no TPM root, no DICE root and no device registry is
+// configured: a verifier with nothing to anchor to would have nothing to
+// refuse a forged chain with, so it cannot exist.
 func NewTrustAnchorVerifier(anchors TrustAnchors) (*TrustAnchorVerifier, error) {
-	if len(anchors.TPMRoots) == 0 && len(anchors.DICERoots) == 0 {
+	if len(anchors.TPMRoots) == 0 && len(anchors.DICERoots) == 0 && anchors.Devices == nil {
 		return nil, ErrNoTrustAnchors
 	}
-	verifier := &TrustAnchorVerifier{dice: anchors.DICE}
+	verifier := &TrustAnchorVerifier{devices: anchors.Devices, dice: anchors.DICE}
 	tpmRoots, tpmPool, err := anchorSet(anchors.TPMRoots)
 	if err != nil {
 		return nil, err
@@ -142,12 +190,14 @@ func anchorSet(roots []*x509.Certificate) ([]*x509.Certificate, *x509.CertPool, 
 	return owned, pool, nil
 }
 
-// VerifyAttestationObject anchors obj to the roots configured for its format
-// and applies that format's policy. It is the authoritative check: it knows the
-// format, so a chain anchored to the other format's roots does not satisfy it.
+// VerifyAttestationObject anchors a "tpm" obj to the TPM roots. It is the
+// authoritative check: it knows the format, so a chain anchored to the other
+// format's roots does not satisfy it.
 //
-// expectedChallenge is the ACME key authorization.
-func (v *TrustAnchorVerifier) VerifyAttestationObject(obj *AttestationObject, expectedChallenge []byte) error {
+// A "dice" obj is refused with ErrDeviceNotAuthorized. Its chain anchors
+// nothing on its own; VerifyRegisteredDevice anchors it in the device
+// registry, and VerifyAttestation calls that instead.
+func (v *TrustAnchorVerifier) VerifyAttestationObject(obj *AttestationObject, _ []byte) error {
 	if obj == nil {
 		return &errs.Detail{Err: ErrInvalidAttestationObject, Detail: "no attestation object"}
 	}
@@ -159,7 +209,7 @@ func (v *TrustAnchorVerifier) VerifyAttestationObject(obj *AttestationObject, ex
 	case FormatTPM:
 		return v.verifyTPMChain(chain)
 	case FormatDICE:
-		return v.verifyDICEChain(chain, expectedChallenge)
+		return &errs.Detail{Err: ErrDeviceNotAuthorized, Detail: "dice evidence is anchored in the device registry, never by its chain alone"}
 	default:
 		return &errs.Detail{Err: ErrInvalidAttestationFormat, Detail: "format " + obj.Format}
 	}
@@ -214,30 +264,6 @@ func withSubjectAltNameHandled(cert *x509.Certificate) *x509.Certificate {
 	handled := *cert
 	handled.UnhandledCriticalExtensions = remaining
 	return &handled
-}
-
-// verifyDICEChain anchors a DICE chain to the DICE roots and applies the
-// configured DICE policy, including the nonce derived from keyAuthorization.
-func (v *TrustAnchorVerifier) verifyDICEChain(chain []*x509.Certificate, keyAuthorization []byte) error {
-	if v.dicePool == nil {
-		return &errs.Detail{Err: ErrNoTrustAnchors, Detail: "no DICE root is configured for the dice format"}
-	}
-	if len(keyAuthorization) == 0 {
-		return &errs.Detail{Err: ErrInvalidAttestationObject, Detail: "no key authorization to bind the dice attestation to"}
-	}
-	if _, err := dice.Verify(chain, &dice.VerifyOptions{
-		TrustedRoots: v.dicePool,
-		// The identity is read from the Ueid, so it is not optional.
-		RequireUeid:             true,
-		ExpectedNonce:           DICENonce(string(keyAuthorization)),
-		RequireDeviceSignedLeaf: v.dice.RequireDeviceSignedLeaf,
-		RequireMeasurement:      v.dice.RequireMeasurement,
-		RequireTcbInfo:          v.dice.RequireTcbInfo,
-		PermittedFlags:          v.dice.PermittedFlags,
-	}); err != nil {
-		return &errs.Joined{Lead: ErrCertificateChainInvalid, Detail: "the dice chain does not satisfy the configured DICE policy", Cause: err}
-	}
-	return nil
 }
 
 // VerifyAKCertificateChain checks the x5c chain, leaf first, against the

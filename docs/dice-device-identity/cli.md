@@ -43,3 +43,8 @@ ends are library calls, documented in [`api.md`](api.md).
 A verb that drives a device to produce evidence. That belongs to the AVR
 backend — the device is reached over its wire protocol, not by this package —
 and adding a placeholder here would be a command that cannot complete.
+
+A verb that provisions a device into the registry ACME `device-attest-01`
+anchors DICE devices in. The registry belongs to the platform that owns
+enrollment, which implements `deviceattest01.DeviceResolver`; go-xkms only
+declares the lookup.

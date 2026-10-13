@@ -20,117 +20,87 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"errors"
-	"path"
 
-	"github.com/jeremyhahn/go-xkms/pkg/errs"
-
-	"github.com/jeremyhahn/go-xkms/pkg/storage"
+	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
 
 	"github.com/jeremyhahn/go-enclave"
 )
 
-// NonceTracker provides O(1) nonce reuse prevention using storage-based tracking.
-// Nonce reuse in FROST is catastrophic - it allows full private key recovery.
+// NonceTracker prevents FROST nonce reuse. Reuse is catastrophic: two
+// signature shares over one nonce reveal the signer's secret share.
 //
-// The tracker uses commitment hashes as storage keys for constant-time lookups.
-// Commitments are already public (broadcast to other participants during signing),
-// so storing their hashes does not leak any secret information.
+// Each used nonce is one FrostNonce entity in the DatabaseName database,
+// created with the DAO's SaveIfAbsent: the one write with a defined outcome
+// under concurrency, so a nonce is claimed once across every goroutine,
+// process and node sharing the datastore, never twice. Commitments are
+// public (broadcast to the other participants), so the records leak nothing
+// secret.
 type NonceTracker struct {
-	storage storage.Backend
+	nonces qrdbsdk.GenericDAO[*FrostNonce]
 }
 
-// NewNonceTracker creates a new NonceTracker with the given storage backend.
-func NewNonceTracker(storage storage.Backend) *NonceTracker {
-	return &NonceTracker{
-		storage: storage,
-	}
-}
-
-// noncePath returns the storage path for a nonce marker.
-func noncePath(keyID string, commitmentHash []byte) string {
-	return path.Join(noncesPrefix, keyID, hex.EncodeToString(commitmentHash))
-}
-
-// hashCommitment computes a SHA-256 hash of the commitment for storage key.
-func hashCommitment(commitment []byte) []byte {
-	h := sha256.Sum256(commitment)
-	return h[:]
-}
-
-// MarkUsed marks a commitment's nonce as used.
-// Returns ErrNonceAlreadyUsed if the nonce was already used.
-func (t *NonceTracker) MarkUsed(keyID string, commitment []byte) error {
-	commitmentHash := hashCommitment(commitment)
-	key := noncePath(keyID, commitmentHash)
-
-	// Check if already used (O(1) existence check)
-	exists, err := t.storage.Exists(context.Background(), key)
+// NewNonceTracker returns a NonceTracker whose DAO daos builds over
+// DatabaseName.
+func NewNonceTracker(daos *qrdbsdk.DAOFactory) (*NonceTracker, error) {
+	nonces, err := newDAO(daos, nonceEntityType, newFrostNonce)
 	if err != nil {
-		return &errs.Wrapped{Msg: "failed to check nonce status", Err: err}
+		return nil, err
 	}
-	if exists {
-		return ErrNonceAlreadyUsed
-	}
+	return &NonceTracker{nonces: nonces}, nil
+}
 
-	// Mark as used (value is just a marker)
-	if err := t.storage.Put(context.Background(), key, []byte{1}); err != nil {
-		return &errs.Wrapped{Msg: "failed to mark nonce as used", Err: err}
-	}
+// nonceName is the natural key of the nonce behind commitment under keyID.
+func nonceName(keyID string, commitment []byte) string {
+	hash := sha256.Sum256(commitment)
+	return keyID + "/" + hex.EncodeToString(hash[:])
+}
 
+// Claim atomically records the nonce behind commitment as used for keyID.
+// It returns *NonceReuseError when the nonce was already claimed, by this or
+// any other process sharing the datastore, and *StoreError when the claim
+// could not be made, whose outcome is then unknown. The claim is the DAO's
+// SaveIfAbsent, so there is no read-then-write here for two signers to race
+// through.
+func (t *NonceTracker) Claim(ctx context.Context, keyID string, participantID uint32, sessionID string, commitment []byte) error {
+	nonce := &FrostNonce{
+		Name:          nonceName(keyID, commitment),
+		KeyID:         keyID,
+		ParticipantID: participantID,
+		SessionID:     sessionID,
+	}
+	claimed, err := t.nonces.SaveIfAbsent(ctx, nonce)
+	if err != nil {
+		return &StoreError{Op: "claim nonce", Key: nonce.Name, Err: err}
+	}
+	if !claimed {
+		return &NonceReuseError{KeyID: keyID, ParticipantID: participantID, SessionID: sessionID}
+	}
 	return nil
 }
 
-// IsUsed checks if a commitment's nonce has already been used.
-func (t *NonceTracker) IsUsed(keyID string, commitment []byte) (bool, error) {
-	commitmentHash := hashCommitment(commitment)
-	key := noncePath(keyID, commitmentHash)
-	return t.storage.Exists(context.Background(), key)
-}
-
-// MarkUsedWithDetails marks a nonce as used with detailed error information.
-func (t *NonceTracker) MarkUsedWithDetails(keyID string, participantID uint32, sessionID string, commitment []byte) error {
-	commitmentHash := hashCommitment(commitment)
-	key := noncePath(keyID, commitmentHash)
-
-	// Check if already used
-	exists, err := t.storage.Exists(context.Background(), key)
-	if err != nil {
-		return &errs.Wrapped{Msg: "failed to check nonce status", Err: err}
-	}
-	if exists {
-		return &NonceReuseError{
-			KeyID:         keyID,
-			ParticipantID: participantID,
-			SessionID:     sessionID,
+// DeleteKeyNonces removes every nonce record of keyID. It is called when the
+// key is deleted. Every failed delete is reported, joined.
+func (t *NonceTracker) DeleteKeyNonces(ctx context.Context, keyID string) error {
+	var used []*FrostNonce
+	err := t.nonces.ForEachPage(ctx, listQuery(), func(page qrdbsdk.PageResult[*FrostNonce]) error {
+		for _, nonce := range page.Entities {
+			if nonce.KeyID == keyID {
+				used = append(used, nonce)
+			}
 		}
-	}
-
-	// Mark as used
-	if err := t.storage.Put(context.Background(), key, []byte{1}); err != nil {
-		return &errs.Wrapped{Msg: "failed to mark nonce as used", Err: err}
-	}
-
-	return nil
-}
-
-// DeleteKeyNonces removes all nonce markers for a key.
-// This should be called when a key is deleted.
-func (t *NonceTracker) DeleteKeyNonces(keyID string) error {
-	prefix := path.Join(noncesPrefix, keyID) + "/"
-	keys, err := t.storage.List(context.Background(), prefix)
+		return nil
+	})
 	if err != nil {
-		return &errs.Wrapped{Msg: "failed to list nonces", Err: err}
+		return &StoreError{Op: "list nonces", Key: keyID, Err: err}
 	}
 
 	var deleteErr error
-	for _, key := range keys {
-		deleteErr = errors.Join(deleteErr, t.storage.Delete(context.Background(), key))
+	for _, nonce := range used {
+		if err := t.nonces.Delete(ctx, nonce); err != nil {
+			deleteErr = errors.Join(deleteErr, &StoreError{Op: "delete nonce", Key: nonce.Name, Err: err})
+		}
 	}
-	if deleteErr != nil {
-		return &errs.Wrapped{Msg: "failed to delete one or more nonces", Err: deleteErr}
-	}
-
-	return nil
+	return deleteErr
 }
 
 // NoncePackage contains nonces and commitments for a signing round.

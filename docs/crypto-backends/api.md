@@ -1,6 +1,6 @@
 # Crypto Backends — API
 
-> **Status: NORMATIVE** · Feature: `crypto-backends` · Repo: `go-xkms` · Last verified: 2026-09-25
+> **Status: NORMATIVE** · Feature: `crypto-backends` · Repo: `go-xkms` · Last verified: 2026-10-09
 
 The six transports and how they are shaped are described once, in
 [`../key-management/api.md`](../key-management/api.md) §"How the six transports
@@ -54,7 +54,8 @@ Standard mapping — see [`../key-management/api.md`](../key-management/api.md)
 ## Not on the wire
 
 Backend *construction* — `xkms.Backend`, `xkms.BackendConfig`, the
-`pkg/server/backend_<backend>.go` set — is in-process only and deliberately has
+`pkg/server/backend_<backend>.go` set, and `xkms.RegisterExternalBackend` for
+backend types added by other modules — is in-process only and deliberately has
 no transport surface. Deciding which backends a deployment runs is configuration,
 not an API call. Remote reconfiguration would make a server's crypto posture
 changeable by anyone holding an admin token, which is the opposite of what the

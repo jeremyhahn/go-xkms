@@ -210,7 +210,12 @@ go-xkms#1237.
 
 - **Never reuse a `round1` nonce file.** FROST nonce reuse is catastrophic —
   it can recover the private key. Run `round1` fresh for every signing
-  attempt, including retries after a failed `round2`.
+  attempt, including retries after a failed `round2`. `round2` records each
+  nonce it signs with and refuses one it has seen before, even when two
+  signing attempts race.
+- **A `--key-dir` written before the switch to go-qrdb entities is not
+  read.** Keys stored by an older xkmsctl are not found. Re-import your key
+  package into a fresh `--key-dir`, then delete the old directory.
 - **Upgrading from a build before #1324.** A `--key-dir` written by an older
   xkmsctl holds a plaintext wrapping key, which every share verb now rejects
   as "FROST passphrase rejected". Re-import your key package into a fresh

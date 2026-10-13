@@ -75,7 +75,6 @@ func simulatorTPM2AttestingBackend(t *testing.T) (*TPM2AttestingBackend, *x509.C
 		Config:    &config,
 		Logger:    logger,
 		Backend:   storageFactory.KeyBackend(),
-		BlobStore: storageFactory.BlobStore(),
 		CertStore: certStore,
 		Transport: sim.Transport(),
 	})
@@ -99,7 +98,8 @@ func simulatorTPM2AttestingBackend(t *testing.T) (*TPM2AttestingBackend, *x509.C
 
 	memStorage, err := xkms.NewMemoryBackend()
 	require.NoError(t, err)
-	blobs := xkms.NewFileBackend(logger, memStorage)
+	blobs, err := xkms.NewTPMBackendBlobStore(logger, memStorage)
+	require.NoError(t, err)
 
 	// Create the Local Attestation Key and certify it under the IAK via
 	// TPM2_Certify, the TCG v1.10 r9 §5.3/§6.3 "Owner Creation of a LAK

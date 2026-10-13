@@ -49,21 +49,21 @@ func NewBackend(config *Config) (*FrostBackend, error) {
 		return nil, &errs.Wrapped{Msg: "invalid frost config", Err: err}
 	}
 
-	// Create keystore
-	keystore := NewKeyStore(config.PublicStorage, config.SecretBackend, config.SecretSealKeyAttributes)
+	keystore, err := NewKeyStore(config.DAOs, config.SecretBackend, config.SecretSealKeyAttributes)
+	if err != nil {
+		return nil, err
+	}
 
-	// Create nonce tracker
-	nonceStorage := config.GetNonceStorage()
-	nonceTracker := NewNonceTracker(nonceStorage)
-
-	// Get key generator
-	keyGenerator := config.GetKeyGenerator()
+	nonceTracker, err := NewNonceTracker(config.DAOs)
+	if err != nil {
+		return nil, err
+	}
 
 	return &FrostBackend{
 		config:       config,
 		keystore:     keystore,
 		nonceTracker: nonceTracker,
-		keyGenerator: keyGenerator,
+		keyGenerator: config.GetKeyGenerator(),
 	}, nil
 }
 
@@ -269,10 +269,10 @@ func (b *FrostBackend) DeleteKey(ctx context.Context, attrs *types.KeyAttributes
 		return err
 	}
 
-	// Delete nonce markers for this key
+	// Delete nonce claims for this key
 	var nonceErr error
 	if b.config.EnableNonceTracking {
-		nonceErr = b.nonceTracker.DeleteKeyNonces(keyID)
+		nonceErr = b.nonceTracker.DeleteKeyNonces(ctx, keyID)
 	}
 
 	// Delete key package

@@ -30,6 +30,7 @@ import (
 	sshrecords "github.com/jeremyhahn/go-xkms/pkg/ssh/records"
 	"github.com/jeremyhahn/go-xkms/pkg/staticpw"
 	tpmpolicy "github.com/jeremyhahn/go-xkms/pkg/tpm2/policy"
+	tpmstore "github.com/jeremyhahn/go-xkms/pkg/tpm2/store"
 	"github.com/jeremyhahn/go-xkms/pkg/tpm2/vtpm"
 	"github.com/jeremyhahn/go-xkms/pkg/types"
 	"github.com/jeremyhahn/go-xkms/pkg/xkms"
@@ -78,10 +79,10 @@ type Deps struct {
 	// DAOs serves the go-qrdb database of each feature that persists through
 	// DAOs; Databases names them, for the composition root to open first.
 	// Enables key versions and the Password Manager; with CA and Storage, the Certificate Authority;
-	// with TPMBackend and Storage, the TPM policy service.
+	// with TPMBackend, the TPM policy service.
 	DAOs *qrdbsdk.DAOFactory
 
-	// TPMBackend is the TPM2 key backend. With DAOs and Storage it enables
+	// TPMBackend is the TPM2 key backend. With DAOs it enables
 	// the TPM policy service, which Build installs as the backend's scope
 	// provider.
 	TPMBackend *tpm2backend.Backend
@@ -164,7 +165,7 @@ func Databases(d Deps) []string {
 		databases = append(databases, certstore.DatabaseName)
 	}
 	if d.TPMBackend != nil {
-		databases = append(databases, tpmpolicy.DatabaseName)
+		databases = append(databases, tpmpolicy.DatabaseName, tpmstore.DatabaseName)
 	}
 	return databases
 }
@@ -235,13 +236,11 @@ func Build(ctx context.Context, d Deps) (*Stores, error) {
 	}
 
 	if b.need(FeatureTPMPolicies, d.TPMBackend != nil, "TPM2 backend") &&
-		b.need(FeatureTPMPolicies, d.DAOs != nil, "DAO factory") &&
-		b.need(FeatureTPMPolicies, d.Storage != nil, "storage") {
+		b.need(FeatureTPMPolicies, d.DAOs != nil, "DAO factory") {
 		st.TPMPolicies = built(b, FeatureTPMPolicies, func() (*tpmpolicy.Service, error) {
 			return BuildTPMPolicyService(TPMPolicyParams{
 				Backend: d.TPMBackend,
 				DAOs:    d.DAOs,
-				Storage: d.Storage,
 				VTPM:    d.VTPM,
 				Logger:  b.logger,
 			})

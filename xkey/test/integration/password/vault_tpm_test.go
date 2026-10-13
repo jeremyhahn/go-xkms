@@ -123,7 +123,7 @@ func provisionSWTPM(address string) error {
 	}
 	cfg := tpm2.DefaultConfig
 	cfg.CommandAddress = address
-	tpm, err := tpm2.NewTPM2(&tpm2.Params{Logger: logger, Config: &cfg, BlobStore: factory.BlobStore(), Backend: factory.KeyBackend()})
+	tpm, err := tpm2.NewTPM2(&tpm2.Params{Logger: logger, Config: &cfg, Backend: factory.KeyBackend()})
 	switch {
 	case errors.Is(err, tpm2.ErrNotInitialized) && tpm != nil:
 		err = tpm2.ProvisionFresh(tpm, &cfg)

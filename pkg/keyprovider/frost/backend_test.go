@@ -15,12 +15,13 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	"github.com/jeremyhahn/go-xkms/pkg/testutil"
 	"github.com/jeremyhahn/go-xkms/pkg/types"
 )
 
 func createTestBackend(t *testing.T) *FrostBackend {
 	config := &Config{
-		PublicStorage:       newMockStorageBackend(),
+		DAOs:                testutil.NewMemoryDAOFactory(),
 		SecretBackend:       newMockSecretBackend(),
 		Algorithm:           types.FrostAlgorithmEd25519,
 		DefaultThreshold:    2,
@@ -36,7 +37,7 @@ func createTestBackend(t *testing.T) *FrostBackend {
 
 func TestNewBackend_Success(t *testing.T) {
 	config := &Config{
-		PublicStorage: newMockStorageBackend(),
+		DAOs:          testutil.NewMemoryDAOFactory(),
 		SecretBackend: newMockSecretBackend(),
 	}
 
@@ -47,7 +48,7 @@ func TestNewBackend_Success(t *testing.T) {
 
 func TestNewBackend_InvalidConfig(t *testing.T) {
 	config := &Config{
-		// Missing PublicStorage and SecretBackend
+		// Missing DAOs and SecretBackend
 	}
 
 	backend, err := NewBackend(config)
@@ -589,7 +590,7 @@ func TestFrostBackend_RotateKey_MissingCN(t *testing.T) {
 func TestFrostBackend_GetKey_WithZeroParticipantID(t *testing.T) {
 	// Create backend with ParticipantID=0 in config
 	config := &Config{
-		PublicStorage:       newMockStorageBackend(),
+		DAOs:                testutil.NewMemoryDAOFactory(),
 		SecretBackend:       newMockSecretBackend(),
 		Algorithm:           types.FrostAlgorithmEd25519,
 		DefaultThreshold:    2,
@@ -630,7 +631,7 @@ func TestFrostBackend_GetKey_WithZeroParticipantID(t *testing.T) {
 func TestFrostBackend_Signer_WithZeroParticipantID(t *testing.T) {
 	// Create backend with ParticipantID=0 in config
 	config := &Config{
-		PublicStorage:       newMockStorageBackend(),
+		DAOs:                testutil.NewMemoryDAOFactory(),
 		SecretBackend:       newMockSecretBackend(),
 		Algorithm:           types.FrostAlgorithmEd25519,
 		DefaultThreshold:    2,

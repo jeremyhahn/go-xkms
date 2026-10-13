@@ -327,6 +327,38 @@ func TestPKCS11IPCRoundTrip_Decrypt_RSAPKCS1v15Refused(t *testing.T) {
 	assert.ErrorIs(t, err, pkcs11svc.ErrDecryptionFailed, "PKCS#1 v1.5 decryption stays refused unless legacy key wrap is enabled")
 }
 
+func TestPKCS11IPCRoundTrip_Encrypt_RSAPKCS1v15Refused(t *testing.T) {
+	rt := newIPCRoundTrip(t)
+	rt.generateKey(t, "rt-rsa", "RSA")
+
+	_, err := rt.client.Encrypt(context.Background(), &transport.EncryptRequest{
+		Backend: roundTripBackend, KeyID: "rt-rsa", Plaintext: []byte("p"),
+	})
+	assert.ErrorIs(t, err, pkcs11svc.ErrEncryptionFailed, "PKCS#1 v1.5 encryption stays refused unless legacy key wrap is enabled")
+}
+
+func TestPKCS11IPCRoundTrip_EncryptDecrypt_GCMCallerNonce(t *testing.T) {
+	rt := newIPCRoundTrip(t)
+	ctx := context.Background()
+	rt.newAESKey(t, "rt-aes", false)
+	plaintext := []byte("under the caller's nonce")
+	nonce := []byte("0123456789ab")
+	aad := []byte("record-17")
+
+	encrypted, err := rt.client.Encrypt(ctx, &transport.EncryptRequest{
+		Backend: roundTripBackend, KeyID: "rt-aes", Plaintext: plaintext, Nonce: nonce, AdditionalData: aad,
+	})
+	require.NoError(t, err)
+	assert.Equal(t, nonce, encrypted.Nonce, "the caller's nonce must reach the cipher")
+
+	decrypted, err := rt.client.Decrypt(ctx, &transport.DecryptRequest{
+		Backend: roundTripBackend, KeyID: "rt-aes", Ciphertext: encrypted.Ciphertext, Nonce: encrypted.Nonce,
+		Tag: encrypted.Tag, GCMNonceMode: encrypted.GCMNonceMode, AdditionalData: aad,
+	})
+	require.NoError(t, err)
+	assert.Equal(t, plaintext, decrypted.Plaintext)
+}
+
 func TestPKCS11IPCRoundTrip_CanceledContext_NeverDispatched(t *testing.T) {
 	rt := newIPCRoundTrip(t)
 	ctx, cancel := context.WithCancel(context.Background())

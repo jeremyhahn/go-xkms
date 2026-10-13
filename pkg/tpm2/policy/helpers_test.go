@@ -28,7 +28,6 @@ import (
 
 	"github.com/google/go-tpm/tpm2"
 	"github.com/google/go-tpm/tpm2/transport"
-	"github.com/jeremyhahn/go-xkms/pkg/storage"
 	"github.com/jeremyhahn/go-xkms/pkg/testutil"
 	pkgtpm2 "github.com/jeremyhahn/go-xkms/pkg/tpm2"
 	"github.com/jeremyhahn/go-xkms/pkg/tpm2/store"
@@ -69,8 +68,17 @@ type fixture struct {
 	svc        *Service
 	cfg        Config
 	tpm        *pkgtpm2.TPM2
-	keyStorage storage.Backend
+	tenantKeys *store.BlobStore
 	registry   *Registry
+}
+
+// memoryBlobs returns an in-memory BlobStore, closed when the test ends.
+func memoryBlobs(t *testing.T) *store.BlobStore {
+	t.Helper()
+	factory, err := store.NewMemoryStorageFactory(quietLogger)
+	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, factory.Close()) })
+	return factory.KeyBackend()
 }
 
 // newFixture builds a Service over tpm, whose own key store is keys. A nil
@@ -85,7 +93,7 @@ func newFixture(t *testing.T, tpm *pkgtpm2.TPM2, keys store.KeyBackend, vtpmCfg 
 		t:          t,
 		ctx:        context.Background(),
 		tpm:        tpm,
-		keyStorage: storage.NewMemory(),
+		tenantKeys: memoryBlobs(t),
 		registry:   registry,
 	}
 	f.cfg = Config{
@@ -93,7 +101,7 @@ func newFixture(t *testing.T, tpm *pkgtpm2.TPM2, keys store.KeyBackend, vtpmCfg 
 		TPM:         tpm,
 		PlatformSRK: srk,
 		Keys:        keys,
-		KeyStorage:  f.keyStorage,
+		TenantKeys:  f.tenantKeys,
 		Sealer:      tpm,
 		VTPM:        vtpmCfg,
 		Logger:      quietLogger,

@@ -26,16 +26,60 @@ The package is large; the map in [`architecture.md`](architecture.md)
 | randomness | `random.go` |
 
 `reexports.go` is the curated surface for consumers that should not import the
-whole package. `pkg/tpm2/store` holds the key-backend types (`KeyBackend` in
-`store/interfaces.go`). TPM key blobs persist through `BlobStorer`
-(`Read`/`Write`/`Delete` by name, `store/interfaces.go:132`); its one
-implementation, `NewFSBlobStore(logger, backend)` (`store/blob.go:59`), is a
-go-qrdb DAO over `kvadapter.New(backend)` whose entity ID is the hash of the
-blob name, so a read is a direct lookup. `pkg/tpm2/mocks` supplies test
-substitutes.
+whole package. `pkg/tpm2/store` holds the key store (`KeyBackend` in
+`store/interfaces.go`, implemented by `BlobStore` — see §"Key blob storage").
+`pkg/tpm2/mocks` supplies test substitutes; `pkg/testutil/tpmblobtest.New`
+returns an in-memory `BlobStore` for tests.
 
 `pkg/attestation` is the verification half: `verifier.go`, `invariants.go`,
 `types.go`, `errors.go`, `truststore/`, `android/`.
+
+## Key blob storage — `pkg/tpm2/store`
+
+Every TPM object artifact — public and private area, saved context, platform
+or TPM policy record — is one `TPMBlob` entity (`store/blob.go:65`) in the
+go-qrdb database `tpm2` (`store.DatabaseName`), written through a DAO built by
+`pkg/dao.New`. There is no file-per-blob layout and no raw key-value path.
+
+- **Natural key.** `{tenant}/{CN}/{ext}` (`blobKey`, `store/blob.go:125`). The
+  entity ID is the SHA-256 field hash of that key
+  (`NewCryptoFieldHashGenerator("Key")`, `store/blob.go:97`); reads and
+  deletes look it up with `GetByNaturalKey`.
+- **Tenants.** `NewBlobStore` (`store/blob.go:91`) returns the `system`
+  tenant's store; `(*BlobStore).Tenant` derives another tenant's store over
+  the same DAO, so two tenants' keys with one CN never collide. A tenant must
+  pass `storage.ValidateTenantID`.
+- **Construction.** A host with a go-qrdb datastore opens the `tpm2`
+  database and calls `NewBlobStore` over its DAO factory (xkmsd:
+  `pkg/server/backend_tpm2.go:99`; the SDK: `NewTPMBlobStore`). A host whose
+  datastore is a `storage.Backend` uses `NewBackendBlobStore`
+  (`store/factory.go:84`), which keeps the same entities over that backend;
+  the backend must support guarded writes. `NewStorageFactory` keeps a
+  private directory, `NewMemoryStorageFactory` keeps nothing.
+- **Delete** removes every extension a key can carry (`blobExtensions`,
+  `store/blob.go:48`), including the pre-#1148 `.priv`.
+- **Listing.** `KeyNames` pages through the tenant's blobs of one extension.
+
+**Pre-barrier exception.** The node-barrier seal key must exist before the
+datastore it unseals, so the seal autodetect keeps its blobs in the node's
+TPM2 key directory (`openTPM2Backend`, `pkg/seal/autodetect.go:130`), and the
+general TPM2 backend that shares that TPM open reuses the same store
+(`pkg/server/backend_tpm2.go:75`). Those blobs are TPM-wrapped and are the only
+TPM blobs outside the barrier.
+
+**Old data.** Blobs written by earlier releases as files (`<CN>.pub`,
+`<CN>.blob`, ...) or raw keys are not read and not migrated; keys created
+before this layout must be regenerated.
+
+| Error | Meaning |
+|---|---|
+| `ErrNilDAOFactory` | `NewBlobStore` was given no DAO factory |
+| `BlobStoreCreateError` | the DAO or the backend adapter could not be built |
+| `BlobReadError` | a read failed; matches `ErrBlobNotFound` when the blob was never stored |
+| `BlobWriteError` | a write failed; matches `ErrBlobExists` when overwrite was not allowed |
+| `BlobDeleteError`, `BlobListError` | a delete or listing failed; the cause is wrapped |
+| `InvalidBlobKeyError` | a tenant, CN or extension cannot be a natural-key segment |
+| `ErrEmptyKeyCN` | the CN (or the attributes) is empty |
 
 ## Invariants
 
@@ -232,8 +276,8 @@ substitutes.
   `IAKAttributes` all call it, so a rebuild can never describe a key
   differently from provisioning (#337), and the IAK and IDevID of one device
   never disagree about which device they name. Nothing fabricates a fixed
-  default: the key store composes its storage key from the CN, and
-  `store.FileBackend` refuses an empty one (`ErrEmptyKeyCN`) rather than
+  default: the key store composes its natural key from the CN, and
+  `store.BlobStore` refuses an empty one (`ErrEmptyKeyCN`) rather than
   collapsing every nameless key onto the bare extension (#440).
 - **Every configuration-derived field of an identity key is assigned by one
   function on both paths.** `applyIAKConfig` / `applyIDevIDConfig`
@@ -561,30 +605,20 @@ session or policy code of its own:
   (`seal.go:138`) and leaves under an `encryptOut` session (`seal.go:315`),
   both salted. It never crosses the TPM bus in plaintext.
 
-Blobs are `<CN>.blob`, `<CN>.pub` and, for a platform-policy key,
-`<CN>.policy`, the same files `DeleteKey` removes.
+Its blobs are the `.blob`, `.pub` and, for a platform-policy key, `.policy`
+`TPMBlob` entities of its CN (§"Key blob storage"), the same ones `DeleteKey`
+removes.
 
 **Keys written before this rule.** Earlier releases parented symmetric keys
-on the Shared SRK with no authorization and `NoDA` set, and stored them as
-`<CN>.priv` plus a size-prefixed `<CN>.pub`. They are not migrated.
+on the Shared SRK with no authorization and `NoDA` set, and stored them as a
+`.priv` blob plus a size-prefixed `.pub`. They are not migrated.
 `GetSymmetricKey` recognises that public area (`unprotectedSymmetricKeyBlob`,
-`symmetric.go:552`) and returns `ErrUnprotectedSymmetricKey`, whose detail
-names the exact `<CN>.priv` file to remove (`symmetric.go:241`).
-
-`FileBackend.Delete` (`store/file_backend.go:95`) includes
-`FSEXT_LEGACY_PRIVATE_BLOB` (`.priv`, `store/interfaces.go:51`) in the
-extensions it removes, so a `<CN>.priv` blob is cleaned up whenever `Delete`
-runs for that CN. It cannot run there on its own: `DeleteKey` for a sealed
-object first calls `UnsealKey` to prove the caller owns the key
-(`key.go:1775`), and `UnsealKey` loads the private blob from
-`FSEXT_PRIVATE_BLOB` (`.blob`) — a pre-#1148 key has no such file, so the
-load fails before `DeleteKey` ever reaches the delete step. A pre-#1148 key
-is therefore never removable through `DeleteKey`/`DeleteKeyPair`; an operator
-who hits `ErrUnprotectedSymmetricKey` deletes the named `<CN>.priv` (and its
-`<CN>.pub`) from the TPM2 key directory by hand — see
-[`user.md`](user.md)'s "Legacy symmetric key cleanup" for the exact steps.
-There is no scanning command that finds these files automatically; adding
-one is a future decision, not part of this fix (go-xkms#1168).
+`symmetric.go:617`) and returns `ErrUnprotectedSymmetricKey`, naming the key.
+`DeleteKeyPair` removes such a key: `BlobStore.Delete` includes the `.priv`
+extension (`blobExtensions`, `store/blob.go:48`), so the unprotected private
+area is never left behind (go-xkms#1168). `DeleteKey` cannot, because it
+first unseals to prove ownership (`key.go:1801`). Keys an earlier release
+stored as files are not read at all (§"Key blob storage").
 
 **Why not `TPM2_EncryptDecrypt2`.** A TPM-resident `TPM_ALG_SYMCIPHER` key
 would never leave the TPM, but the command offers CFB, CBC, ECB, CTR and OFB

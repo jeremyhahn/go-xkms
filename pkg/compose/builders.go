@@ -34,6 +34,7 @@ import (
 	sealedstorage "github.com/jeremyhahn/go-xkms/pkg/storage/sealed"
 	pkgtpm2 "github.com/jeremyhahn/go-xkms/pkg/tpm2"
 	tpmpolicy "github.com/jeremyhahn/go-xkms/pkg/tpm2/policy"
+	tpmstore "github.com/jeremyhahn/go-xkms/pkg/tpm2/store"
 	"github.com/jeremyhahn/go-xkms/pkg/tpm2/vtpm"
 	"github.com/jeremyhahn/go-xkms/pkg/types"
 	"github.com/jeremyhahn/go-xkms/pkg/xkms"
@@ -48,7 +49,6 @@ const (
 	StoragePlatformStore  = "platform-store"
 	StorageCASerials      = "ca-serials"
 	StorageCARevocations  = "ca-revocations"
-	StorageTPMKeys        = "tpm-keys"
 	defaultCredentialMode = credentialspkg.StrategyManual
 )
 
@@ -312,12 +312,9 @@ type TPMPolicyParams struct {
 	Backend *tpm2backend.Backend
 
 	// DAOs serves the policy registry's go-qrdb database
-	// (tpmpolicy.DatabaseName). Required.
+	// (tpmpolicy.DatabaseName) and the database of every tenant's TPM
+	// object blobs (tpmstore.DatabaseName). Required.
 	DAOs *qrdbsdk.DAOFactory
-
-	// Storage opens the store of every tenant's TPM object blobs
-	// (StorageTPMKeys). Required.
-	Storage StorageFactory
 
 	// VTPM configures the per-tenant vTPM supervisor. Nil leaves vtpm mode
 	// unavailable: a tenant set to it is refused with
@@ -341,9 +338,6 @@ func BuildTPMPolicyService(p TPMPolicyParams) (*tpmpolicy.Service, error) {
 	if p.DAOs == nil {
 		return nil, &NilDependencyError{Feature: FeatureTPMPolicies, Dependency: "DAO factory"}
 	}
-	if p.Storage == nil {
-		return nil, &NilDependencyError{Feature: FeatureTPMPolicies, Dependency: "storage factory"}
-	}
 	tpm, ok := p.Backend.TPM().(*pkgtpm2.TPM2)
 	if !ok {
 		return nil, &FeatureBuildError{Feature: FeatureTPMPolicies, Err: ErrUnsupportedTPM}
@@ -352,7 +346,7 @@ func BuildTPMPolicyService(p TPMPolicyParams) (*tpmpolicy.Service, error) {
 	if err != nil {
 		return nil, &FeatureBuildError{Feature: FeatureTPMPolicies, Err: err}
 	}
-	keyStorage, err := p.Storage(StorageTPMKeys)
+	tenantKeys, err := tpmstore.NewBlobStore(orDefault(p.Logger), p.DAOs)
 	if err != nil {
 		return nil, &FeatureBuildError{Feature: FeatureTPMPolicies, Err: err}
 	}
@@ -361,7 +355,7 @@ func BuildTPMPolicyService(p TPMPolicyParams) (*tpmpolicy.Service, error) {
 		TPM:         tpm,
 		PlatformSRK: p.Backend.SRKAttributes(),
 		Keys:        p.Backend.KeyBackend(),
-		KeyStorage:  keyStorage,
+		TenantKeys:  tenantKeys,
 		Sealer:      tpm,
 		VTPM:        p.VTPM,
 		Logger:      orDefault(p.Logger),

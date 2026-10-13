@@ -21,7 +21,6 @@ import (
 	"time"
 
 	"github.com/google/go-tpm/tpm2"
-	"github.com/jeremyhahn/go-xkms/pkg/storage"
 	pkgtpm2 "github.com/jeremyhahn/go-xkms/pkg/tpm2"
 	"github.com/jeremyhahn/go-xkms/pkg/tpm2/store"
 	"github.com/jeremyhahn/go-xkms/pkg/tpm2/vtpm"
@@ -55,9 +54,9 @@ type Config struct {
 	// Keys is the physical key store: the system scope's object blobs.
 	Keys store.KeyBackend
 
-	// KeyStorage holds every tenant's object blobs, each under
-	// "<tenant>/tpm/keys/".
-	KeyStorage storage.Backend
+	// TenantKeys holds every tenant's object blobs, each scoped to its
+	// tenant.
+	TenantKeys *store.BlobStore
 
 	// Sealer is the physical TPM's sealer; it seals each scope's secrets
 	// under the platform policy.
@@ -83,7 +82,7 @@ type Service struct {
 	tpm         *pkgtpm2.TPM2
 	platformSRK *types.KeyAttributes
 	keys        store.KeyBackend
-	keyStorage  storage.Backend
+	tenantBlobs *store.BlobStore
 	sealer      types.Sealer
 	vtpm        *vtpm.Manager
 	logger      *slog.Logger
@@ -118,8 +117,8 @@ func NewService(cfg Config) (*Service, error) {
 		return nil, ErrNilPlatformSRK
 	case cfg.Keys == nil:
 		return nil, ErrNilKeys
-	case cfg.KeyStorage == nil:
-		return nil, ErrNilKeyStorage
+	case cfg.TenantKeys == nil:
+		return nil, ErrNilTenantKeys
 	case cfg.Sealer == nil:
 		return nil, ErrNilSealer
 	}
@@ -128,7 +127,7 @@ func NewService(cfg Config) (*Service, error) {
 		tpm:         cfg.TPM,
 		platformSRK: cfg.PlatformSRK,
 		keys:        cfg.Keys,
-		keyStorage:  cfg.KeyStorage,
+		tenantBlobs: cfg.TenantKeys,
 		sealer:      cfg.Sealer,
 		logger:      cfg.Logger,
 		clock:       cfg.Clock,

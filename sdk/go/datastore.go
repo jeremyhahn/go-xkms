@@ -54,9 +54,9 @@ func OpenDatastore(ctx context.Context, cfg DatastoreConfig, logger *slog.Logger
 
 // DatastoreStorage returns a StorageBackend over the default database of
 // daos -- typically an open Datastore's DAOFactory(). Pass it as
-// AutoConfig.Datastore so every backend's key storage -- and, for TPM2, a
-// factory built with NewTPMFactory -- is a prefixed view over the same
-// store, never a private per-backend engine. Closing the backend does not
+// AutoConfig.Datastore so every backend's key storage is a prefixed view
+// over the same store, never a private per-backend engine. A TPM2 key store
+// over the datastore itself is NewTPMBlobStore over daos. Closing the backend does not
 // close the datastore.
 func DatastoreStorage(daos *qrdbsdk.DAOFactory) (StorageBackend, error) {
 	return compose.FactoryBackend(daos)

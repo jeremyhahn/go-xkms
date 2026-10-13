@@ -28,7 +28,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	"github.com/jeremyhahn/go-xkms/pkg/storage"
+	"github.com/jeremyhahn/go-xkms/pkg/testutil/tpmblobtest"
 	"github.com/jeremyhahn/go-xkms/pkg/types"
 )
 
@@ -37,7 +37,7 @@ import (
 // the key is authorized by its own policy session, not left unauthorized.
 func TestDecrypter_RSAOAEPUnderThePlatformPolicy(t *testing.T) {
 	ctx := context.Background()
-	backend, err := NewBackend(&Config{UseSimulator: true, KeyStorage: storage.NewMemory()})
+	backend, err := NewBackend(&Config{UseSimulator: true, Keys: tpmblobtest.New(t)})
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = backend.Close() })
 
@@ -74,7 +74,7 @@ func TestDecrypter_RSAOAEPUnderThePlatformPolicy(t *testing.T) {
 // key establishment with it is DeriveKeyECDH.
 func TestDecrypter_ECKeysAgreeInstead(t *testing.T) {
 	ctx := context.Background()
-	backend, err := NewBackend(&Config{UseSimulator: true, KeyStorage: storage.NewMemory()})
+	backend, err := NewBackend(&Config{UseSimulator: true, Keys: tpmblobtest.New(t)})
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = backend.Close() })
 

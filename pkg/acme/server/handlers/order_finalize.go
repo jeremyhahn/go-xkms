@@ -603,7 +603,7 @@ func (s *RestService) OrderFinalizeHandler(w http.ResponseWriter, r *http.Reques
 			writeError(w, problem)
 			return
 		}
-		if problem := bindDeviceAttestationKey(rec, order, csr); problem != nil {
+		if problem := s.bindDeviceAttestationKey(ctx, rec, order, csr); problem != nil {
 			writeError(w, problem)
 			return
 		}

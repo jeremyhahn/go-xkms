@@ -64,6 +64,7 @@ import (
 	xkmsstorage "github.com/jeremyhahn/go-xkms/pkg/storage"
 	"github.com/jeremyhahn/go-xkms/pkg/storage/kvadapter"
 	"github.com/jeremyhahn/go-xkms/pkg/testutil"
+	"github.com/jeremyhahn/go-xkms/pkg/testutil/tpmblobtest"
 	pkgtpm2 "github.com/jeremyhahn/go-xkms/pkg/tpm2"
 	"github.com/jeremyhahn/go-xkms/pkg/trust/clusterca"
 	"github.com/jeremyhahn/go-xkms/pkg/types"
@@ -395,7 +396,7 @@ func newJoinerTPM(t *testing.T, ekRoot *testIssuer) *tpm2backend.Backend {
 
 	backend, err := tpm2backend.NewBackend(&tpm2backend.Config{
 		UseSimulator: true,
-		KeyStorage:   xkmsstorage.NewMemory(),
+		Keys:         tpmblobtest.New(t),
 		CN:           "clusterca-joiner",
 		TPMConfig:    &cfg,
 	})

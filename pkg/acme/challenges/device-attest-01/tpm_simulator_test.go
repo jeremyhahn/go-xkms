@@ -17,6 +17,7 @@ package deviceattest01
 
 import (
 	"bytes"
+	"context"
 	"crypto"
 	"crypto/ecdsa"
 	"crypto/elliptic"
@@ -227,7 +228,7 @@ func genuineTPMAttestation(t *testing.T, device *simulatedTPM, issuer *aikIssuer
 func verifyServed(t *testing.T, ca AttestationVerifier, object *AttestationObject) (*VerifiedAttestation, error) {
 	t.Helper()
 	payload := attestationPayload(t, object)
-	return VerifyAttestation(ca, payload, tpmKeyAuth)
+	return VerifyAttestation(context.Background(), ca, payload, tpmKeyAuth)
 }
 
 func softwareCSR(t *testing.T) *x509.CertificateRequest {
@@ -296,7 +297,7 @@ func TestVerifyDoesNotAuthorizeTPMOnTheChallengeAlone(t *testing.T) {
 	issuer := newAIKIssuer(t, "AIK CA")
 	payload := attestationPayload(t, genuineTPMAttestation(t, device, issuer))
 
-	err := Verify(anchoredTo(issuer), payload, tpmKeyAuth)
+	err := Verify(context.Background(), anchoredTo(issuer), payload, tpmKeyAuth)
 	assert.ErrorIs(t, err, ErrKeyBindingRequired)
 }
 

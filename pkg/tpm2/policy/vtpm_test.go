@@ -19,9 +19,7 @@ import (
 	"os"
 	"testing"
 
-	"github.com/jeremyhahn/go-xkms/pkg/storage"
 	pkgtpm2 "github.com/jeremyhahn/go-xkms/pkg/tpm2"
-	"github.com/jeremyhahn/go-xkms/pkg/tpm2/store"
 	"github.com/jeremyhahn/go-xkms/pkg/tpm2/vtpm"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -67,7 +65,7 @@ func newSWTPMFixture(t *testing.T) *fixture {
 	conn := socket
 	t.Cleanup(func() { require.NoError(t, conn.Close()) })
 
-	keys := store.NewFileBackend(quietLogger, storage.NewMemory())
+	keys := memoryBlobs(t)
 	cfg := pkgtpm2.DefaultConfig
 	cfg.UseSimulator = false
 	tpm := provisionedTPM(t, &pkgtpm2.Params{Config: &cfg, Backend: keys, Logger: quietLogger, Transport: conn})

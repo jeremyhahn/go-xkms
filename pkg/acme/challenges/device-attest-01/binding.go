@@ -14,6 +14,7 @@
 package deviceattest01
 
 import (
+	"bytes"
 	"crypto/x509"
 
 	"github.com/jeremyhahn/go-xkms/pkg/attestation"
@@ -95,6 +96,15 @@ type VerifiedAttestation struct {
 	CertInfo  []byte
 	Signature []byte
 	PubArea   []byte
+
+	// AttestedSPKI is, for FormatDICE, the DER SubjectPublicKeyInfo of the
+	// key the device's provisioning record vouches for (go-xkms#1441): the
+	// provisioned DeviceID key, or the key of the provisioned DeviceID
+	// certificate. Only RegisteredDeviceVerifier sets it, after the registry
+	// check, and never from the payload. BindCSRKey refuses a certificate
+	// request for any other key, and a FormatDICE record without one. Nil for
+	// FormatTPM.
+	AttestedSPKI []byte
 }
 
 // csrEvidence builds the evidence the binding gate judges for one format,
@@ -128,8 +138,9 @@ func (v *VerifiedAttestation) bindsThroughTheCSR() bool {
 //     self-signed by the key it names, so an invalid signature means binding it
 //     to attested hardware would certify a key nobody demonstrated control of.
 //  2. The CSR's key is the attested key, and the evidence still carries the
-//     challenge this exchange issued. For FormatDICE the key is the alias
-//     leaf's SubjectPublicKeyInfo and the challenge its eat_nonce; for
+//     challenge this exchange issued. For FormatDICE the key is AttestedSPKI,
+//     the key the provisioning record vouched for, which the alias leaf must
+//     also carry, and the challenge the leaf's eat_nonce; for
 //     FormatTPM the key is PubArea's, re-verified as certified by the AIK
 //     under the TPM2_Certify checks, and the challenge the certification's
 //     extraData. Both are applied by pkg/attestation's gate rather than
@@ -174,6 +185,15 @@ func diceCSREvidence(v *VerifiedAttestation, csr *x509.CertificateRequest) (*att
 	leaf, err := v.verifiedLeaf()
 	if err != nil {
 		return nil, err
+	}
+	// The key the provisioning record vouched for at the challenge. A record
+	// without one was never anchored in the device registry, and a missing
+	// comparison must never read as a passing one.
+	if len(v.AttestedSPKI) == 0 {
+		return nil, &errs.Detail{Err: ErrKeyBindingUnavailable, Detail: "the dice record carries no attested SPKI"}
+	}
+	if !bytes.Equal(csr.RawSubjectPublicKeyInfo, v.AttestedSPKI) {
+		return nil, &errs.Detail{Err: attestation.ErrKeyNotBound, Detail: "the certificate request's key is not the attested SPKI"}
 	}
 	return &attestation.Evidence{
 		Format:            attestation.FormatDICE,

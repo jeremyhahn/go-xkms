@@ -22,10 +22,8 @@ import (
 	"testing"
 
 	"github.com/google/go-tpm/tpm2"
-	"github.com/jeremyhahn/go-xkms/pkg/storage"
 	"github.com/jeremyhahn/go-xkms/pkg/testutil"
 	pkgtpm2 "github.com/jeremyhahn/go-xkms/pkg/tpm2"
-	"github.com/jeremyhahn/go-xkms/pkg/tpm2/store"
 	"github.com/jeremyhahn/go-xkms/pkg/tpm2/vtpm"
 	"github.com/jeremyhahn/go-xkms/pkg/types"
 	"github.com/stretchr/testify/assert"
@@ -47,8 +45,8 @@ func validConfig(t *testing.T) Config {
 		Registry:    registry,
 		TPM:         tpm,
 		PlatformSRK: &types.KeyAttributes{TPMAttributes: &types.TPMAttributes{}},
-		Keys:        store.NewFileBackend(quietLogger, storage.NewMemory()),
-		KeyStorage:  storage.NewMemory(),
+		Keys:        memoryBlobs(t),
+		TenantKeys:  memoryBlobs(t),
 		Sealer:      tpm,
 		Logger:      quietLogger,
 	}
@@ -75,7 +73,7 @@ func TestNewService_RequiresEveryDependency(t *testing.T) {
 		{"platform SRK", func(c *Config) { c.PlatformSRK = nil }, ErrNilPlatformSRK},
 		{"platform SRK TPM attributes", func(c *Config) { c.PlatformSRK = &types.KeyAttributes{} }, ErrNilPlatformSRK},
 		{"keys", func(c *Config) { c.Keys = nil }, ErrNilKeys},
-		{"key storage", func(c *Config) { c.KeyStorage = nil }, ErrNilKeyStorage},
+		{"tenant keys", func(c *Config) { c.TenantKeys = nil }, ErrNilTenantKeys},
 		{"sealer", func(c *Config) { c.Sealer = nil }, ErrNilSealer},
 		{"vTPM config", func(c *Config) { c.VTPM = &vtpm.Config{} }, vtpm.ErrStateDirRequired},
 	}

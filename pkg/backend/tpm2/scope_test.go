@@ -15,15 +15,12 @@ package tpm2
 
 import (
 	"errors"
-	"io"
-	"log/slog"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	"github.com/jeremyhahn/go-xkms/pkg/storage"
-	"github.com/jeremyhahn/go-xkms/pkg/tpm2/store"
+	"github.com/jeremyhahn/go-xkms/pkg/testutil/tpmblobtest"
 	"github.com/jeremyhahn/go-xkms/pkg/types"
 )
 
@@ -76,7 +73,7 @@ func TestPublicAuthPolicy_RejectsMalformedPublic(t *testing.T) {
 	_, err := publicAuthPolicy([]byte{0x01})
 	assert.Error(t, err)
 
-	keys := store.NewFileBackend(slog.New(slog.NewTextHandler(io.Discard, nil)), storage.NewMemory())
+	keys := tpmblobtest.New(t)
 	_, err = authPolicyOf(keys, &types.KeyAttributes{CN: "missing"})
 	assert.Error(t, err, "a key with no public blob has no authPolicy")
 }
@@ -102,7 +99,7 @@ func TestScopeErrors(t *testing.T) {
 // its single-scope behaviour: tenant IDs select nothing, reserved names are
 // ordinary names, and sealing is not tenant-bound.
 func TestBackend_WithoutScopeProvider(t *testing.T) {
-	keys := store.NewFileBackend(slog.New(slog.NewTextHandler(io.Discard, nil)), storage.NewMemory())
+	keys := tpmblobtest.New(t)
 	b := &Backend{keyBackend: keys}
 
 	got, err := b.keyStore("acme")

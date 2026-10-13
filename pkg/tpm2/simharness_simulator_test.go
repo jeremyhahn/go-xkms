@@ -24,7 +24,7 @@ import (
 // the t.Cleanup registered in newSimHarness, so test order never matters.
 type simHarness struct {
 	TPM     *TPM2
-	Backend store.KeyBackend
+	Backend *store.BlobStore
 	Logger  *slog.Logger
 }
 
@@ -78,7 +78,6 @@ func newSimHarnessWithHTTPClient(t *testing.T, mutate func(*Config), httpClient 
 		Logger:       logger,
 		DebugSecrets: false,
 		Config:       config,
-		BlobStore:    storageFactory.BlobStore(),
 		Backend:      storageFactory.KeyBackend(),
 		Transport:    sim.Transport(),
 		FQDN:         "node1.example.com",

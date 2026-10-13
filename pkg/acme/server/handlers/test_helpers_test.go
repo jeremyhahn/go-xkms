@@ -27,7 +27,6 @@ import (
 	"crypto/sha256"
 	"crypto/tls"
 	"crypto/x509"
-	"crypto/x509/pkix"
 	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
@@ -51,7 +50,6 @@ import (
 	"github.com/jeremyhahn/go-xkms/pkg/acme/entities"
 	"github.com/jeremyhahn/go-xkms/pkg/acme/policy"
 	"github.com/jeremyhahn/go-xkms/pkg/acme/storage/objstore"
-	"github.com/jeremyhahn/go-xkms/pkg/attestation/dice"
 	"github.com/jeremyhahn/go-xkms/pkg/ca"
 	"github.com/jeremyhahn/go-xkms/pkg/certstore"
 	xkmsstorage "github.com/jeremyhahn/go-xkms/pkg/storage"
@@ -574,22 +572,16 @@ func createTestOrderSimple(t *testing.T, service *RestService, accountID uint64)
 // key-binding gate (go-xkms#789) refuses a permanent-identifier finalize
 // request without one, so any test driving that handler for a device-attest-01
 // order needs this fixture, not just a CSR naming the identifier.
+//
+// The device is provisioned in the service's device registry with csrKey as
+// its DeviceID key, because finalization re-queries the registry for the
+// attested key (go-xkms#1441).
 func attachDeviceAttestation(t *testing.T, service *RestService, order *entities.ACMEOrder, accountID uint64, identifierValue string, csrKey *ecdsa.PrivateKey) {
 	t.Helper()
 
-	keyAuth := deviceAttestTestKeyAuth
-	uccs, err := dice.CreateUccsEvidenceExtension(&dice.ClaimsSet{Nonce: deviceattest01.DICENonce(keyAuth)})
-	require.NoError(t, err)
-
-	template := &x509.Certificate{
-		SerialNumber:    big.NewInt(1),
-		Subject:         pkix.Name{CommonName: "test device"},
-		NotBefore:       time.Now().Add(-time.Hour),
-		NotAfter:        time.Now().Add(time.Hour),
-		ExtraExtensions: []pkix.Extension{uccs},
-	}
-	leafDER, err := x509.CreateCertificate(rand.Reader, template, template, csrKey.Public(), csrKey)
-	require.NoError(t, err)
+	const keyAuth = deviceAttestTestKeyAuth
+	ueid := newTestUeid(t)
+	serviceRegistry(t, service).provision(t, ueid, csrKey)
 
 	authzDAO, err := service.storageFactory.AuthorizationDAO(accountID)
 	require.NoError(t, err)
@@ -611,7 +603,8 @@ func attachDeviceAttestation(t *testing.T, service *RestService, order *entities
 				DeviceIdentityType:  common.AuthzTypePermanentIdentifier,
 				DeviceIdentityValue: identifierValue,
 				KeyAuthorization:    keyAuth,
-				LeafDER:             leafDER,
+				LeafDER:             newDICEAliasCert(t, csrKey, keyAuth, ueid),
+				AttestedSPKI:        marshalSPKI(t, csrKey),
 			},
 		}},
 	}

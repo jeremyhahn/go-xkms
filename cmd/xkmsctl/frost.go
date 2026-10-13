@@ -1458,9 +1458,13 @@ func newFrostBackend(publicDir string, provider client.SealingKeyProvider, sealK
 	if err != nil {
 		return nil, &WrappedError{Sentinel: ErrCreatePublicStorageFailed, Err: err}
 	}
+	daos, err := client.NewBackendDAOFactory(publicStorage)
+	if err != nil {
+		return nil, &WrappedError{Sentinel: ErrCreatePublicStorageFailed, Err: err}
+	}
 
 	return client.NewFrostBackend(&client.FrostBackendConfig{
-		PublicStorage:           publicStorage,
+		DAOs:                    daos,
 		SecretBackend:           provider,
 		SecretSealKeyAttributes: sealKeyAttrs,
 		Algorithm:               algorithm,

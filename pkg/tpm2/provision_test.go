@@ -452,7 +452,6 @@ func TestProvisionEKCertWithCertStoreCoverage(t *testing.T) {
 	params := &Params{
 		Logger:    logger,
 		Config:    config,
-		BlobStore: storageFactory.BlobStore(),
 		Backend:   storageFactory.KeyBackend(),
 		CertStore: certStore,
 		Transport: sim.Transport(),
@@ -520,7 +519,6 @@ func TestProvisionEKCertNilCertStoreCoverage(t *testing.T) {
 	params := &Params{
 		Logger:    logger,
 		Config:    config,
-		BlobStore: storageFactory.BlobStore(),
 		Backend:   storageFactory.KeyBackend(),
 		CertStore: nil, // No cert store
 		Transport: sim.Transport(),
@@ -591,7 +589,6 @@ func TestDownloadEKCertFromManufacturer_RejectsECCEK(t *testing.T) {
 	params := &Params{
 		Logger:    logger,
 		Config:    config,
-		BlobStore: storageFactory.BlobStore(),
 		Backend:   storageFactory.KeyBackend(),
 		Transport: sim.Transport(),
 	}
@@ -661,7 +658,6 @@ func TestWriteEKCertCoverage(t *testing.T) {
 	params := &Params{
 		Logger:    logger,
 		Config:    config,
-		BlobStore: storageFactory.BlobStore(),
 		Backend:   storageFactory.KeyBackend(),
 		CertStore: certStore,
 		Transport: sim.Transport(),
@@ -800,7 +796,6 @@ func TestCreatePlatformPolicyEmptyGoldenPCRsCoverage(t *testing.T) {
 	params := &Params{
 		Logger:    logger,
 		Config:    config,
-		BlobStore: storageFactory.BlobStore(),
 		Backend:   storageFactory.KeyBackend(),
 		Transport: sim.Transport(),
 	}

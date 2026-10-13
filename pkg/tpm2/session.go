@@ -3,14 +3,12 @@ package tpm2
 import (
 	"errors"
 	"fmt"
-	"io/fs"
 	"log/slog"
 
 	"github.com/jeremyhahn/go-xkms/pkg/errs"
 
 	"github.com/google/go-tpm/tpm2"
 	"github.com/google/go-tpm/tpm2/transport"
-	"github.com/jeremyhahn/go-xkms/pkg/storage"
 	"github.com/jeremyhahn/go-xkms/pkg/tpm2/store"
 	"github.com/jeremyhahn/go-xkms/pkg/types"
 )
@@ -767,7 +765,7 @@ func (tpm *TPM2) loadPlatformPolicyPin(
 
 	record, err := backend.Get(keyAttrs, store.FSEXT_PLATFORM_POLICY)
 	if err != nil {
-		if errors.Is(err, storage.ErrNotFound) || errors.Is(err, fs.ErrNotExist) {
+		if errors.Is(err, store.ErrBlobNotFound) {
 			tpm.logger.Debug("tpm: no platform policy pin recorded for key",
 				slog.String("cn", keyAttrs.CN))
 			return nil, nil

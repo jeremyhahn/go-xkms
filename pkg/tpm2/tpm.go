@@ -294,7 +294,6 @@ type TrustedPlatformModule interface {
 
 type Params struct {
 	Backend      store.KeyBackend
-	BlobStore    store.BlobStorer
 	CertStore    store.CertificateStorer
 	Config       *Config
 	DebugSecrets bool
@@ -314,7 +313,6 @@ type Params struct {
 type TPM2 struct {
 	algID        tpm2.TPMAlgID
 	backend      store.KeyBackend
-	blobStore    store.BlobStorer
 	certStore    store.CertificateStorer
 	config       *Config
 	debugSecrets bool
@@ -500,7 +498,6 @@ func NewTPM2(params *Params) (TrustedPlatformModule, error) {
 		algID:        algID,
 		logger:       params.Logger,
 		backend:      params.Backend,
-		blobStore:    params.BlobStore,
 		certStore:    params.CertStore,
 		debugSecrets: params.DebugSecrets,
 		config:       params.Config,

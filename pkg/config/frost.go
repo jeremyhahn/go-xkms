@@ -43,17 +43,12 @@ var frostSecretBackendNames = map[string]bool{
 // participant's secret key share, which is sealed (types.Sealer) under a
 // wrapping key native to SecretBackend -- TPM2 PCR-bound sealing, PKCS#11/
 // cloud KMS envelope encryption, or software/PKCS#8 HKDF-derived AES-GCM --
-// while the public components sit in ordinary storage; PublicPath and
-// SecretBackend configure exactly that split, matching
-// pkg/keyprovider/frost.Config.
+// while every component, the sealed share included, is stored in the
+// datastore's FROST database. SecretBackend names the sealing backend,
+// matching pkg/keyprovider/frost.Config.
 type FrostConfig struct {
 	// Enabled turns on the FROST backend.
 	Enabled bool `yaml:"enabled"`
-
-	// PublicPath is the storage location for FROST public components: the
-	// group public key, verification shares, and key metadata. This data is
-	// not secret and needs neither encryption nor hardware backing.
-	PublicPath string `yaml:"public_path"`
 
 	// SecretBackend names the xkms backend that holds each participant's
 	// FROST secret key share: one of "software", "pkcs8", "tpm2", "pkcs11",
@@ -97,10 +92,6 @@ func (e *FrostConfigError) Error() string {
 func (c *FrostConfig) Validate() error {
 	if !c.Enabled {
 		return nil
-	}
-
-	if c.PublicPath == "" {
-		return &FrostConfigError{Field: "public_path", Message: "required when enabled"}
 	}
 
 	if c.SecretBackend == "" {

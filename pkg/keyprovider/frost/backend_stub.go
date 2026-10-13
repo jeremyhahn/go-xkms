@@ -22,7 +22,8 @@ import (
 	"crypto"
 	"errors"
 
-	"github.com/jeremyhahn/go-xkms/pkg/storage"
+	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
+
 	"github.com/jeremyhahn/go-xkms/pkg/types"
 )
 
@@ -31,7 +32,7 @@ var ErrNotCompiled = errors.New("frost: not compiled (build with -tags frost)")
 
 // Config is a stub configuration struct.
 type Config struct {
-	PublicStorage       storage.Backend
+	DAOs                *qrdbsdk.DAOFactory
 	SecretBackend       types.KeyProvider
 	Algorithm           types.FrostAlgorithm
 	ParticipantID       uint32

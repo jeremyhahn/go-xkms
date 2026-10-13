@@ -34,7 +34,6 @@ import (
 	"github.com/jeremyhahn/go-xkms/pkg/backend"
 	"github.com/jeremyhahn/go-xkms/pkg/config"
 	"github.com/jeremyhahn/go-xkms/pkg/keyprovider/frost"
-	"github.com/jeremyhahn/go-xkms/pkg/storage"
 	"github.com/jeremyhahn/go-xkms/pkg/types"
 	"github.com/jeremyhahn/go-xkms/pkg/xkms"
 )
@@ -126,9 +125,9 @@ func (m *testFrostSecretBackend) Unseal(_ context.Context, sealed *types.SealedD
 // hand, because nothing ever registered one from configuration.
 //
 // A genuine 2-of-2 signature needs two participants, each holding a
-// distinct secret share for the same key — the same share storage key
-// (frost/secrets/<keyID>) can only ever hold one participant's share at a
-// time, by design. In a real deployment that means two xkms nodes. In this
+// distinct secret share for the same key — a node's FrostKey record for a
+// key ID names exactly one participant, so a node holds one participant's
+// share of a key, by design. In a real deployment that means two xkms nodes. In this
 // process it means two *server.Server instances, each with their own
 // backends.frost section — but only one *xkms.XKMSService can be the
 // package-level singleton pkg/api/rest's HandlerContext resolves through at
@@ -306,7 +305,6 @@ func newFrostServerForTest(t *testing.T, secretBackendName string) *Server {
 		Backends: config.BackendsConfig{
 			Frost: &config.FrostConfig{
 				Enabled:          true,
-				PublicPath:       "frost/public",
 				SecretBackend:    secretBackendName,
 				Algorithm:        string(types.FrostAlgorithmEd25519),
 				DefaultThreshold: 2,
@@ -318,12 +316,7 @@ func newFrostServerForTest(t *testing.T, secretBackendName string) *Server {
 	s.keyProviders = map[string]types.KeyProvider{
 		secretBackendName: newTestFrostSecretBackend(),
 	}
-	// newMinimalServer bypasses New(), so s.qrdbStorage -- the one shared
-	// datastore createStorage now always resolves through -- is never
-	// built; give this test a real one.
-	var qerr error
-	s.qrdbStorage, qerr = storage.NewMemoryBackend()
-	require.NoError(t, qerr)
+	openInMemoryDatastore(t, s)
 	require.NoError(t, s.initFrostBackend())
 
 	s.backends = map[string]xkms.Backend{}

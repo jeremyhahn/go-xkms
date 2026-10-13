@@ -26,6 +26,7 @@ import (
 
 	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
 	"github.com/jeremyhahn/go-xkms/pkg/acme/audit"
+	deviceattest01 "github.com/jeremyhahn/go-xkms/pkg/acme/challenges/device-attest-01"
 	"github.com/jeremyhahn/go-xkms/pkg/acme/challenges/validation"
 	"github.com/jeremyhahn/go-xkms/pkg/acme/common"
 	"github.com/jeremyhahn/go-xkms/pkg/acme/entities"
@@ -45,8 +46,10 @@ const loopbackIdentifier = "127.0.0.1"
 // 8555 "connection" problem carrying the validation client's fixed category
 // (validation.Kind), an authorization of a type an attestation challenge
 // cannot authorize is "unsupportedIdentifier" carrying that detail (safe: it
-// names only the challenge and identifier TYPE, never any evidence), and
-// every other failure is "incorrectResponse" with a fixed detail.
+// names only the challenge and identifier TYPE, never any evidence), a device
+// its provisioning record does not vouch for is "unauthorized" with a fixed
+// detail (go-xkms#1441), and every other failure is "incorrectResponse" with
+// a fixed detail.
 func challengeProblem(err error) *entities.Error {
 	var identErr *ErrAttestationIdentifierType
 	if errors.As(err, &identErr) {
@@ -59,6 +62,9 @@ func challengeProblem(err error) *entities.Error {
 	var noIdentity *ErrAttestationNoIdentity
 	if errors.As(err, &noIdentity) {
 		return common.ServerInternal("Challenge verifier returned no result")
+	}
+	if errors.Is(err, deviceattest01.ErrDeviceNotAuthorized) {
+		return common.Unauthorized("The device's provisioning record does not authorize this attestation")
 	}
 	var verr *validation.Error
 	if !errors.As(err, &verr) {

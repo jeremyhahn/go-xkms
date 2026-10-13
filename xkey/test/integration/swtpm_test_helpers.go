@@ -202,10 +202,9 @@ func provisionSwtpm(sockPath string) error {
 	var lastErr error
 	for attempt := 1; attempt <= swtpmMaxProvisionAttempts; attempt++ {
 		params := &xkms.TPMParams{
-			Logger:    logger,
-			Config:    &cfg,
-			BlobStore: factory.BlobStore(),
-			Backend:   factory.KeyBackend(),
+			Logger:  logger,
+			Config:  &cfg,
+			Backend: factory.KeyBackend(),
 		}
 		tpm, err := xkms.NewTPM2(params)
 		// NewTPM2 returns a usable TPM both when fully provisioned (err ==

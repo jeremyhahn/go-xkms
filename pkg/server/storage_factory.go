@@ -27,6 +27,9 @@ import (
 // every call of the stores it serves, as the embedded node's service
 // principal (datastore.WithCallContext in initializeQRDBStorage).
 func (s *Server) daoFactory(databases ...string) (*qrdbsdk.DAOFactory, error) {
+	if s.datastore == nil {
+		return nil, ErrNoDatastore
+	}
 	for _, name := range databases {
 		if _, err := s.datastore.DatabaseKVStore(s.ctx, name); err != nil {
 			return nil, &ErrStorageCreate{Resource: name + " database", Err: err}

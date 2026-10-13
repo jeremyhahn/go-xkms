@@ -2152,7 +2152,8 @@ func TestXKMSTPMAdapter_TPMManufacturer(t *testing.T) {
 // before the TPM is asked for anything. Its success path runs against the
 // simulator in tpm_simulator_test.go.
 func TestXKMSTPMAdapter_CreateAttestedKeyRefusals(t *testing.T) {
-	keys := xkmssdk.NewFileBackend(slog.New(slog.NewTextHandler(io.Discard, nil)), newMemoryStorage(t))
+	keys, err := xkmssdk.NewTPMBackendBlobStore(slog.New(slog.NewTextHandler(io.Discard, nil)), newMemoryStorage(t))
+	require.NoError(t, err)
 
 	t.Run("no name", func(t *testing.T) {
 		attested, err := NewXKMSTPMAdapter(&mockXKMSTPM{}, keys).CreateAttestedKey("", "key-auth")

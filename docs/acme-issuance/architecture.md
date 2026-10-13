@@ -1,6 +1,6 @@
 # ACME Issuance — Architecture
 
-> **Status: NORMATIVE** · Feature: `acme-issuance` · Repo: `go-xkms` · Last verified: 2026-10-12
+> **Status: NORMATIVE** · Feature: `acme-issuance` · Repo: `go-xkms` · Last verified: 2026-10-13
 
 ## The problem
 
@@ -61,14 +61,28 @@ and persists the evidence (see
 for the exact contract). For the `tpm` format the evidence is the WebAuthn
 Level 2 §8.3 TPM2_Certify of `pubArea` by the AIK in `x5c[0]`; the binding
 requires the CSR's key to be `pubArea`'s key, and the identity is the AIK
-certificate's RFC 4043 `permanentIdentifier` otherName. Both key-binding
+certificate's RFC 4043 `permanentIdentifier` otherName. For `dice` the alias
+certificate is self-signed and vouches for nothing on its own, so the challenge
+first anchors it in the device's provisioning record, which an injected device
+registry (`DeviceResolver`) returns by UEID: either the leaf carries the
+provisioned DeviceID key and is signed by it, or a provisioned DeviceID
+certificate endorses it and anchors in `dice_roots`. No registry, no record, or
+a record that does not vouch for the key is `unauthorized`; the server never
+falls back to a root pool alone. The binding then requires the CSR's key to be
+the key the record vouched for (the persisted attested SPKI), finalization
+re-queries the registry so a device withdrawn in between is refused, and the
+CSR must be the
+possession request whose `tcg-dice-UCCS-evidence` nonce is this order's
+challenge: the alias certificate proves the key answered a challenge, and the
+request's own nonce proves its holder asked for this order's certificate, so a
+request signed for one order cannot finalize another. Both key-binding
 phases go through the one binding gate, `attestation.VerifyInvariants`, that
 the TCG-CSR and SignCSR carriers use. See
 [engineering.md](engineering.md#device-attest-01-key-binding). For the `dice`
 format the CSR is the device's possession request — a fixed template the
 device signs over `SHA-256(keyAuthorization)` — and finalize checks it with
 `VerifyPossessionCSR` before `BindCSRKey`
-(`pkg/acme/server/handlers/device_attest.go:191-196`).
+(`pkg/acme/server/handlers/device_attest.go:228-235`).
 
 The evidence being verifiable says nothing about which device produced it,
 since attestation evidence is not secret: without the identity check, a

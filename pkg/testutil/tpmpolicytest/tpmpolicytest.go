@@ -24,11 +24,10 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/jeremyhahn/go-xkms/pkg/api/transport"
-	"github.com/jeremyhahn/go-xkms/pkg/storage"
 	"github.com/jeremyhahn/go-xkms/pkg/testutil"
+	"github.com/jeremyhahn/go-xkms/pkg/testutil/tpmblobtest"
 	pkgtpm2 "github.com/jeremyhahn/go-xkms/pkg/tpm2"
 	tpmpolicy "github.com/jeremyhahn/go-xkms/pkg/tpm2/policy"
-	"github.com/jeremyhahn/go-xkms/pkg/tpm2/store"
 	"github.com/jeremyhahn/go-xkms/pkg/types"
 )
 
@@ -49,8 +48,8 @@ func NewOffline(t *testing.T) (*tpmpolicy.Service, *tpmpolicy.Registry) {
 		Registry:    registry,
 		TPM:         tpm,
 		PlatformSRK: &types.KeyAttributes{TPMAttributes: &types.TPMAttributes{}},
-		Keys:        store.NewFileBackend(logger, storage.NewMemory()),
-		KeyStorage:  storage.NewMemory(),
+		Keys:        tpmblobtest.New(t),
+		TenantKeys:  tpmblobtest.New(t),
 		Sealer:      tpm,
 		Logger:      logger,
 	})

@@ -24,6 +24,9 @@ package xkms
 import (
 	"context"
 
+	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
+
+	"github.com/jeremyhahn/go-xkms/pkg/dao"
 	"github.com/jeremyhahn/go-xkms/pkg/keyprovider/frost"
 	"github.com/jeremyhahn/go-xkms/pkg/keyprovider/pkcs8"
 	"github.com/jeremyhahn/go-xkms/pkg/seal"
@@ -79,8 +82,10 @@ func newFROSTKeyProvider(config map[string]interface{}) (types.KeyProvider, erro
 		return nil, err
 	}
 
+	// A standalone FROST backend keeps its public state in memory, as its
+	// secret store above does: nothing outlives the process.
 	frostConfig := &frost.Config{
-		PublicStorage:           storage.New(),
+		DAOs:                    dao.NewStoreFactory(qrdbsdk.NewMemoryKVStore()),
 		SecretBackend:           secretBackend,
 		SecretSealKeyAttributes: sealKeyAttrs,
 		DefaultThreshold:        2,

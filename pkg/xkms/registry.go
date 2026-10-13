@@ -126,7 +126,7 @@ var backendRegistry atomic.Pointer[map[BackendType]bool]
 
 // RegisterBackend registers a backend as available. This function is called by
 // init() functions in backend-specific files that are conditionally compiled
-// based on build tags, and by RegisterExternalBackend.
+// based on build tags.
 //
 // This function is safe to call concurrently: it uses copy-on-write with a
 // compare-and-swap, so no registration is lost.
@@ -137,12 +137,15 @@ func RegisterBackend(name BackendType) {
 // SupportedBackends returns a slice of all backends that were compiled into
 // the binary. The returned slice is sorted alphabetically for consistent output.
 func SupportedBackends() []BackendType {
-	registry := loadCopyOnWrite(&backendRegistry)
+	builtin := loadCopyOnWrite(&backendRegistry)
+	external := types.RegisteredBackends()
 
-	// Pre-allocate slice with exact capacity
-	backends := make([]BackendType, 0, len(registry))
-	for backend := range registry {
+	backends := make([]BackendType, 0, len(builtin)+len(external))
+	for backend := range builtin {
 		backends = append(backends, backend)
+	}
+	for backend := range external {
+		backends = append(backends, BackendType(backend))
 	}
 
 	// Sort for consistent output
@@ -154,21 +157,25 @@ func SupportedBackends() []BackendType {
 // IsBackendSupported returns true if the specified backend was compiled into
 // the binary and is available for use.
 func IsBackendSupported(name BackendType) bool {
-	return loadCopyOnWrite(&backendRegistry)[name]
+	return loadCopyOnWrite(&backendRegistry)[name] ||
+		types.IsRegisteredBackendType(types.BackendType(name))
 }
 
 // BackendCount returns the number of available backends.
 func BackendCount() int {
-	return len(loadCopyOnWrite(&backendRegistry))
+	return len(loadCopyOnWrite(&backendRegistry)) + len(types.RegisteredBackends())
 }
 
 // BackendFactory creates a KeyProvider from configuration.
 // Each backend registers a factory function that knows how to instantiate
 // its KeyProvider from a generic configuration map.
-type BackendFactory func(config map[string]interface{}) (types.KeyProvider, error)
+type BackendFactory = types.BackendFactory
 
-// backendFactories holds registered factory functions, copy-on-write behind
-// an atomic pointer for lock-free access.
+// backendFactories holds the factories of the backends compiled into
+// go-xkms, copy-on-write behind an atomic pointer for lock-free access.
+// Backends added by RegisterExternalBackend are not kept here: their single
+// source of truth is the pkg/types registry, which publishes a name with its
+// factory in one step and which the pkg/types validators must read.
 var backendFactories atomic.Pointer[map[BackendType]BackendFactory]
 
 // RegisterBackendFactory registers a factory function for creating a backend's
@@ -186,6 +193,9 @@ func RegisterBackendFactory(name BackendType, factory BackendFactory) {
 // Returns the factory and true if found, or nil and false if no factory is
 // registered for the given backend type.
 func GetBackendFactory(name BackendType) (BackendFactory, bool) {
+	if f, ok := types.RegisteredBackendFactory(types.BackendType(name)); ok {
+		return f, true
+	}
 	f, ok := loadCopyOnWrite(&backendFactories)[name]
 	return f, ok
 }

@@ -28,7 +28,6 @@ import (
 
 	kbackend "github.com/jeremyhahn/go-xkms/pkg/backend"
 	"github.com/jeremyhahn/go-xkms/pkg/crypto/aead"
-	"github.com/jeremyhahn/go-xkms/pkg/storage"
 	"github.com/jeremyhahn/go-xkms/pkg/tpm2/store"
 	"github.com/jeremyhahn/go-xkms/pkg/types"
 
@@ -277,7 +276,7 @@ func (tpm *TPM2) GetSymmetricKeyIn(attrs *types.KeyAttributes, keys store.KeyBac
 
 	// Load public blob to verify key exists. Only a genuine "no such
 	// object" result from the underlying store (surfaced as
-	// storage.ErrNotFound through tpm.backend.Get) is reported as
+	// store.ErrBlobNotFound through tpm.backend.Get) is reported as
 	// backend.ErrKeyNotFound. Any other failure -- a permission error, a
 	// transient I/O fault, a corrupt or partially written blob -- becomes
 	// ErrKeyRetrievalFailed instead, so callers such as getOrGenerateCAKey
@@ -288,7 +287,7 @@ func (tpm *TPM2) GetSymmetricKeyIn(attrs *types.KeyAttributes, keys store.KeyBac
 	}
 	publicBlob, err := keys.Get(attrs, store.FSEXT_PUBLIC_BLOB)
 	if err != nil {
-		if errors.Is(err, storage.ErrNotFound) {
+		if errors.Is(err, store.ErrBlobNotFound) {
 			return nil, &errs.Detail{Err: kbackend.ErrKeyNotFound, Detail: attrs.CN}
 		}
 		return nil, &errs.Detail{Err: ErrKeyRetrievalFailed, Detail: fmt.Sprintf("%s: %v", attrs.CN, err)}
@@ -300,13 +299,11 @@ func (tpm *TPM2) GetSymmetricKeyIn(attrs *types.KeyAttributes, keys store.KeyBac
 	pub, err := tpmPublic.Contents()
 	if err != nil {
 		if unprotectedSymmetricKeyBlob(publicBlob) {
-			// Name the file to delete: DeleteKey cannot unseal a
-			// pre-#1148 blob to authorize its own removal, so this
-			// message is the only place an operator learns which file
-			// on disk still holds the unprotected key (go-xkms#1168).
+			// Name the key: it is never loaded, so the operator must
+			// delete it and generate a replacement (go-xkms#1168).
 			return nil, &errs.Detail{
 				Err:    ErrUnprotectedSymmetricKey,
-				Detail: fmt.Sprintf("%s: delete %s%s from the TPM2 key directory", attrs.CN, attrs.CN, store.FSEXT_LEGACY_PRIVATE_BLOB),
+				Detail: fmt.Sprintf("%s: delete the key and generate a new one", attrs.CN),
 			}
 		}
 		return nil, &errs.Wrapped{Msg: "tpm2: failed to get public contents", Err: err}

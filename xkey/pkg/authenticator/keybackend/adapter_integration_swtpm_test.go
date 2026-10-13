@@ -93,8 +93,8 @@ func provisionSwtpmOnce() {
 	logger := slog.Default()
 	device := swtpmDevice()
 
-	// Dedicated blob directory so the backend's ListKeys can enumerate the
-	// FIDO2 child-key blobs it writes (see TPM2 backend keyDir handling).
+	// Dedicated key store so the backend's ListKeys enumerates exactly the
+	// FIDO2 child-key blobs it writes.
 	keyDir, err := os.MkdirTemp("", "fido2-swtpm-*")
 	if err != nil {
 		swtpmErr = &WrappedError{Msg: "temp key dir", Err: err}
@@ -165,7 +165,6 @@ func provisionSwtpmOnce() {
 	backend, err := xkms.NewTPM2BackendWithTPM(&xkms.TPM2BackendExternalConfig{
 		TPM:        tpm,
 		KeyBackend: keyBackend,
-		KeyDir:     keyDir,
 		Logger:     logger,
 	})
 	if err != nil {

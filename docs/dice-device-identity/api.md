@@ -1,6 +1,6 @@
 # DICE Device Identity — API
 
-> **Status: NORMATIVE** · Feature: `dice-device-identity` · Repo: `go-xkms` · Last verified: 2026-10-12
+> **Status: NORMATIVE** · Feature: `dice-device-identity` · Repo: `go-xkms` · Last verified: 2026-10-13
 
 ## Transports
 
@@ -39,10 +39,29 @@ gateway that holds the ACME account: the gateway forwards the device's alias
 chain and POSTs. `deviceattest01.EncodeAttestationRequest` builds the payload
 (`ACMEEncodeDeviceAttestRequest` in `sdk/go/acme`).
 
-The server anchors the chain to the operator's `acme.challenges.device_attest.dice_roots`
-and applies the `dice_require_*` policy through `deviceattest01.TrustAnchorVerifier`,
-which calls `dice.Verify`. For an AVR with an ATECC608A set
+The server anchors the alias certificate in the **device's provisioning
+record**, never in a root pool alone: a DICE alias is signed by the key it
+carries, so on its own it vouches for nothing. The embedder that owns
+enrollment injects a `deviceattest01.DeviceResolver` through
+`TrustAnchors.Devices` (`ACMEDeviceResolver` in `sdk/go/acme`).
+`TrustAnchorVerifier` looks the alias's UEID up in it — 34 lowercase hex digits,
+`01` followed by the DeviceID — and the record selects one of two paths:
+
+| Record (`ProvisionedDevice`) | The alias is accepted when |
+|---|---|
+| `DeviceIDKey`, a DER SubjectPublicKeyInfo | it carries exactly that key and its ECDSA-SHA256 signature verifies under it |
+| `DeviceIDCertificate`, a DER DeviceID certificate | the certificate names the same UEID and `[alias, DeviceID certificate]` anchors in `acme.challenges.device_attest.dice_roots` |
+
+Only then does `dice.Verify` check the nonce, the UEID and the `dice_require_*`
+policy. For a device whose DeviceID key is held in a secure element, set
 `dice_require_device_signed_leaf`.
+
+**Fails closed as `unauthorized`** (`ErrDeviceNotAuthorized`): no resolver, a
+UEID with no record (the resolver wraps `ErrDeviceNotProvisioned`), a resolver
+error, a malformed record, a key or signature that does not match the raw-key
+record, or an endorsement with no `dice_roots`, another UEID or no chain. A
+stock `xkmsd` injects no resolver, so it refuses every `dice` attestation; a
+DICE fleet enrolls through an embedder that supplies its registry.
 
 Verification is dispatched by format. For `dice` it parses the `x5c` leaf and
 requires the `eat_nonce` claim of the leaf's `tcg-dice-UCCS-evidence`
@@ -61,9 +80,10 @@ Verification is therefore two phases:
 
 | Call | When | Establishes |
 |------|------|-------------|
-| `VerifyAttestation(...) (*VerifiedAttestation, error)` | challenge | Format, chain anchoring, freshness. Returns the **verified leaf**. |
+| `VerifyAttestation(...) (*VerifiedAttestation, error)` | challenge | Format, registry anchoring, freshness. Returns the **verified leaf** and the **attested SPKI**, the key the provisioning record vouched for. |
 | `(*VerifiedAttestation).VerifyPossessionCSR(csr, orderIdentifiers)` | finalization, `dice` only | The CSR is the device's possession request: the fixed template, signed by the alias key, over `DICENonce(keyAuthorization)`, naming exactly the order's identifiers (`possession.go:358`). |
-| `(*VerifiedAttestation).BindCSRKey(csr)` | finalization | The CSR self-signature verifies, and its SubjectPublicKeyInfo is the alias certificate's, through `attestation.VerifyInvariants`. |
+| `(*VerifiedAttestation).BindCSRKey(csr)` | finalization | The record carries an attested SPKI and the CSR's SubjectPublicKeyInfo is byte-equal to it; the CSR self-signature verifies; the alias certificate carries the same key, through `attestation.VerifyInvariants`. |
+| `(*VerifiedAttestation).ConfirmRegistration(ctx, verifier)` | finalization | The device registry still holds the device's record, and its key is still the attested SPKI. A refusal is `unauthorized`. |
 
 **The `dice` CSR is a possession request.** A template-minting device signs a
 CertificationRequestInfo built from a fixed template whose one host-supplied
@@ -75,7 +95,7 @@ the `permanentIdentifier` otherName `hex(DeviceID)` and a non-critical
 ([architecture.md](architecture.md#possession-at-finalize-the-device-signs-a-fixed-template)).
 The order's identifier is `permanent-identifier` / `hex(DeviceID)`. The ACME
 finalize handler runs `VerifyPossessionCSR` and then `BindCSRKey` for a `dice`
-record (`pkg/acme/server/handlers/device_attest.go:191-196`); any other request
+record (`pkg/acme/server/handlers/device_attest.go:228-235`); any other request
 is `badCSR`, so a `dice` order names one device and nothing else. The UCCS
 extension and every other requested extension stay off the certificate: the
 handler issues with the attested `permanentIdentifier` alone
@@ -94,6 +114,9 @@ the record has to outlive the request that produced it: a server that is not a
 single process writes it down between the two, and only bytes survive that.
 `BindCSRKey` binds against those bytes — a re-encoded certificate is a
 different document, and the device's signature is over the original.
+`AttestedSPKI` is stored beside it (`entities.DeviceAttestation.AttestedSPKI`);
+a `dice` record without one was never anchored in a registry and its finalize is
+`badCSR`.
 
 `ValidateAttestationFormat` and the verification dispatch table are the same
 map, so a format the server reports as supported is always one it can actually

@@ -27,7 +27,7 @@ import (
 	gotpm2 "github.com/google/go-tpm/tpm2"
 
 	"github.com/jeremyhahn/go-xkms/pkg/backend"
-	"github.com/jeremyhahn/go-xkms/pkg/storage"
+	"github.com/jeremyhahn/go-xkms/pkg/testutil/tpmblobtest"
 	"github.com/jeremyhahn/go-xkms/pkg/types"
 )
 
@@ -45,7 +45,7 @@ func newSimBackend(t *testing.T) *Backend {
 	t.Helper()
 	b, err := NewBackend(&Config{
 		UseSimulator: true,
-		KeyStorage:   storage.NewMemory(),
+		Keys:         tpmblobtest.New(t),
 		CN:           "importexport-test",
 	})
 	if err != nil {

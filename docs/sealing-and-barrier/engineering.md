@@ -624,16 +624,21 @@ Tests:
   `*preseal.RefusedError` for `platform/pkcs11-pin`. The build tags are
   `integration pkcs11 pkcs11_barrier`.
 
-**TPM2 key directory.** Both the general TPM2 backend
-(`pkg/server/backend_tpm2.go`) and the node-barrier flip's `tpm2` strategy
-(`pkg/server/node_seal.go`'s `resolveNodeSeal`) persist sealed key blobs under
-`<Storage.Path>/tpm2-keys`, resolved once by the shared
-`Server.resolveTPM2KeyDir` helper. That directory is never resolved relative
+**TPM2 key directory.** The node-barrier flip's `tpm2` strategy
+(`pkg/server/node_seal.go`'s `resolveNodeSeal`) and the platform store's
+`tpm2` credential strategy (`pkg/server/platform_store.go`) persist their key
+blobs under `<Storage.Path>/tpm2-keys`, resolved by
+`embeddednode.ResolveTPM2KeyDir` (`Server.resolveTPM2KeyDir` delegates to
+it): those keys must exist before the datastore they
+unseal. The general TPM2 backend (`pkg/server/backend_tpm2.go`), when it opens
+its own TPM, keeps its key blobs as `TPMBlob` entities in the datastore's
+`tpm2` database instead (`docs/tpm2/engineering.md` §"Key blob storage"). The
+directory is never resolved relative
 to the process's working directory: a caller that constructs `*config.Config`
 programmatically — an embedded/library use of `pkg/server` that never runs
 `config.Config.Validate` — gets a typed `*ErrConfigRequired{Field:
 "storage.path", Backend: "tpm2"}` (wrapped in `*NodeSealError` from
-`resolveNodeSeal`, in `*ErrBackendCreate` from `initTPM2Backend`) instead of a
+`resolveNodeSeal`) instead of a
 cwd-relative `tpm2-keys` directory (go-xkms#609).
 
 **Running the `tpm2` barrier strategy and `backends.tpm2.enabled: true`
@@ -644,9 +649,8 @@ general-purpose TPM2 backend over that SAME open —
 opening the device a second time; a swtpm-backed simulator hangs on a second
 open within one process. Sharing the connection means the general backend also
 reuses the node-seal backend's `store.KeyBackend` (`shared.KeyBackend()`)
-instead of constructing a second file store over the identical
-`<Storage.Path>/tpm2-keys` directory, so both the barrier and every key the
-general backend creates read and write through the one on-disk key store and
+instead of constructing a second store, so both the barrier and every key the
+general backend creates read and write through the one pre-barrier key store and
 are parented to the one Platform SRK the shared TPM connection resolved
 (`resolveSRKAttributes`, whose authorization comes only from
 `Backends.TPM2`/`KeyConfig`, never hardcoded; the TCG Shared SRK is never

@@ -1960,7 +1960,10 @@ func createFIDO2TPM2KeyBackend(cfg *FIDO2Config, logger *slog.Logger) (keybacken
 	if err != nil {
 		return nil, errors.Join(ErrFIDO2TPMBackendCreationFailed, err, tpm.Close())
 	}
-	keyBackend := xkms.NewFileBackend(logger, memStorage)
+	keyBackend, err := xkms.NewTPMBackendBlobStore(logger, memStorage)
+	if err != nil {
+		return nil, errors.Join(ErrFIDO2TPMBackendCreationFailed, err, tpm.Close())
+	}
 
 	backend, err := xkms.NewTPM2BackendWithTPM(&xkms.TPM2BackendExternalConfig{
 		TPM:        tpm,

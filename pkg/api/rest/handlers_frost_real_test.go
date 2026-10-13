@@ -28,7 +28,7 @@ import (
 
 	"github.com/go-chi/chi/v5"
 	"github.com/jeremyhahn/go-xkms/pkg/keyprovider/frost"
-	"github.com/jeremyhahn/go-xkms/pkg/storage"
+	"github.com/jeremyhahn/go-xkms/pkg/testutil"
 	"github.com/jeremyhahn/go-xkms/pkg/types"
 	"github.com/jeremyhahn/go-xkms/pkg/xkms"
 	xkmsmocks "github.com/jeremyhahn/go-xkms/pkg/xkms/mocks"
@@ -113,7 +113,7 @@ func newFrostBackend(t *testing.T) *frost.FrostBackend {
 	t.Helper()
 
 	be, err := frost.NewBackend(&frost.Config{
-		PublicStorage:    storage.NewMemory(),
+		DAOs:             testutil.NewMemoryDAOFactory(),
 		SecretBackend:    newFrostSecretBackend(),
 		Algorithm:        types.FrostAlgorithmEd25519,
 		DefaultThreshold: 2,

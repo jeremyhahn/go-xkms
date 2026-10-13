@@ -142,11 +142,11 @@ func TestBuildDeviceAttestVerifier(t *testing.T) {
 	})
 }
 
-// TestBuildDeviceAttestVerifier_DICEPolicyReachesTheVerifier proves the DICE
-// requirements in the configuration are the verifier's: an alias with no
-// DiceTcbInfo anchors and answers its challenge, and is refused only when
-// acme.challenges.device_attest.dice_require_tcb_info says so.
-func TestBuildDeviceAttestVerifier_DICEPolicyReachesTheVerifier(t *testing.T) {
+// TestBuildDeviceAttestVerifier_DICEFailsClosedWithoutARegistry proves the
+// daemon, which injects no device registry, authorizes no DICE device: an
+// alias that chains to a configured DICE root and answers its challenge is
+// still refused, because a chain alone never anchors DICE evidence.
+func TestBuildDeviceAttestVerifier_DICEFailsClosedWithoutARegistry(t *testing.T) {
 	root, rootKey := newTestRoot(t, "DICE Root")
 	const keyAuth = "token.thumbprint"
 
@@ -172,27 +172,33 @@ func TestBuildDeviceAttestVerifier_DICEPolicyReachesTheVerifier(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	leaf, err := x509.ParseCertificate(leafDER)
+	if err != nil {
+		t.Fatal(err)
+	}
 	object := &acmesdk.ACMEDeviceAttestObject{
 		Format:       string(acmesdk.ACMEDeviceAttestFormatDICE),
 		AttStatement: acmesdk.ACMEDeviceAttestStatement{X5c: []interface{}{leafDER}},
 	}
 
-	anchors := config.ACMEDeviceAttestConfig{DICERoots: []string{writeAnchorFile(t, root)}}
-	lax, err := buildDeviceAttestVerifier(config.ACMEChallengesConfig{DeviceAttest01: true, DeviceAttest: anchors})
+	verifier, err := buildDeviceAttestVerifier(config.ACMEChallengesConfig{
+		DeviceAttest01: true,
+		DeviceAttest:   config.ACMEDeviceAttestConfig{DICERoots: []string{writeAnchorFile(t, root)}},
+	})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := lax.VerifyAttestationObject(object, []byte(keyAuth)); err != nil {
-		t.Fatalf("default policy refused a conforming alias: %v", err)
+	if err := verifier.VerifyAttestationObject(object, []byte(keyAuth)); !errors.Is(err, acmesdk.ACMEErrDeviceNotAuthorized) {
+		t.Fatalf("err = %v, want ACMEErrDeviceNotAuthorized: a dice chain alone was accepted", err)
 	}
 
-	anchors.DICERequireTCBInfo = true
-	strict, err := buildDeviceAttestVerifier(config.ACMEChallengesConfig{DeviceAttest01: true, DeviceAttest: anchors})
-	if err != nil {
-		t.Fatal(err)
+	anchored, ok := verifier.(*acmesdk.ACMETrustAnchorVerifier)
+	if !ok {
+		t.Fatalf("verifier = %T, want *ACMETrustAnchorVerifier", verifier)
 	}
-	if err := strict.VerifyAttestationObject(object, []byte(keyAuth)); err == nil {
-		t.Fatal("dice_require_tcb_info did not reach the verifier: an alias with no DiceTcbInfo was accepted")
+	_, err = anchored.VerifyRegisteredDevice(context.Background(), leaf, keyAuth)
+	if !errors.Is(err, acmesdk.ACMEErrDeviceNotAuthorized) || !errors.Is(err, acmesdk.ACMEErrNoDeviceResolver) {
+		t.Fatalf("err = %v, want ACMEErrDeviceNotAuthorized wrapping ACMEErrNoDeviceResolver", err)
 	}
 }
 

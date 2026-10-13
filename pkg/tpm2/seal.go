@@ -7,7 +7,6 @@ import (
 	"github.com/google/go-tpm/tpm2"
 	"github.com/jeremyhahn/go-enclave"
 	"github.com/jeremyhahn/go-xkms/pkg/errs"
-	"github.com/jeremyhahn/go-xkms/pkg/storage"
 	"github.com/jeremyhahn/go-xkms/pkg/tpm2/store"
 	"github.com/jeremyhahn/go-xkms/pkg/types"
 )
@@ -279,7 +278,7 @@ func (tpm *TPM2) unsealKeyInternal(
 			}
 		}
 		// Log at debug level for "not found" errors - expected during fresh initialization
-		if errors.Is(err, storage.ErrNotFound) {
+		if errors.Is(err, store.ErrBlobNotFound) {
 			tpm.logger.Debug("key not found (expected during initialization)", slog.String("error", err.Error()))
 		} else {
 			tpm.logger.Error("failed to load key pair for unseal", slog.String("error", err.Error()))

@@ -17,65 +17,9 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/jeremyhahn/go-xkms/pkg/backend"
-	"github.com/jeremyhahn/go-xkms/pkg/storage"
+	"github.com/jeremyhahn/go-xkms/pkg/testutil"
 	"github.com/jeremyhahn/go-xkms/pkg/types"
 )
-
-// mockStorageBackend implements storage.Backend for testing
-type mockStorageBackend struct {
-	data map[string][]byte
-}
-
-func newMockStorageBackend() *mockStorageBackend {
-	return &mockStorageBackend{data: make(map[string][]byte)}
-}
-
-func (m *mockStorageBackend) Put(_ context.Context, key string, value []byte) error {
-	m.data[key] = value
-	return nil
-}
-
-func (m *mockStorageBackend) Get(_ context.Context, key string) ([]byte, error) {
-	if v, ok := m.data[key]; ok {
-		return v, nil
-	}
-	return nil, storage.ErrNotFound
-}
-
-func (m *mockStorageBackend) Delete(_ context.Context, key string) error {
-	delete(m.data, key)
-	return nil
-}
-
-func (m *mockStorageBackend) Exists(_ context.Context, key string) (bool, error) {
-	_, ok := m.data[key]
-	return ok, nil
-}
-
-func (m *mockStorageBackend) List(_ context.Context, prefix string) ([]string, error) {
-	var keys []string
-	for k := range m.data {
-		if len(k) >= len(prefix) && k[:len(prefix)] == prefix {
-			keys = append(keys, k)
-		}
-	}
-	return keys, nil
-}
-
-func (m *mockStorageBackend) Scan(_ context.Context, prefix string, fn func(key string, value []byte) error) error {
-	for k, v := range m.data {
-		if len(k) >= len(prefix) && k[:len(prefix)] == prefix {
-			if err := fn(k, v); err != nil {
-				return err
-			}
-		}
-	}
-	return nil
-}
-
-func (m *mockStorageBackend) Close() error {
-	return nil
-}
 
 // errMockUnimplemented is returned by mockSecretBackend methods that this
 // test double never exercises.
@@ -185,7 +129,7 @@ func (m *mockSecretBackend) Unseal(ctx context.Context, sealed *types.SealedData
 
 func TestConfig_Validate_Success(t *testing.T) {
 	config := &Config{
-		PublicStorage:    newMockStorageBackend(),
+		DAOs:             testutil.NewMemoryDAOFactory(),
 		SecretBackend:    newMockSecretBackend(),
 		Algorithm:        types.FrostAlgorithmEd25519,
 		DefaultThreshold: 2,
@@ -196,7 +140,7 @@ func TestConfig_Validate_Success(t *testing.T) {
 	assert.NoError(t, err)
 }
 
-func TestConfig_Validate_MissingPublicStorage(t *testing.T) {
+func TestConfig_Validate_MissingDAOs(t *testing.T) {
 	config := &Config{
 		SecretBackend: newMockSecretBackend(),
 	}
@@ -204,12 +148,14 @@ func TestConfig_Validate_MissingPublicStorage(t *testing.T) {
 	err := config.Validate()
 	require.Error(t, err)
 	assert.True(t, errors.Is(err, ErrInvalidConfig))
-	assert.Contains(t, err.Error(), "PublicStorage")
+	var configErr *ConfigError
+	require.ErrorAs(t, err, &configErr)
+	assert.Equal(t, "DAOs", configErr.Field)
 }
 
 func TestConfig_Validate_MissingSecretBackend(t *testing.T) {
 	config := &Config{
-		PublicStorage: newMockStorageBackend(),
+		DAOs: testutil.NewMemoryDAOFactory(),
 	}
 
 	err := config.Validate()
@@ -220,7 +166,7 @@ func TestConfig_Validate_MissingSecretBackend(t *testing.T) {
 
 func TestConfig_Validate_InvalidAlgorithm(t *testing.T) {
 	config := &Config{
-		PublicStorage: newMockStorageBackend(),
+		DAOs:          testutil.NewMemoryDAOFactory(),
 		SecretBackend: newMockSecretBackend(),
 		Algorithm:     "invalid-algo",
 	}
@@ -232,7 +178,7 @@ func TestConfig_Validate_InvalidAlgorithm(t *testing.T) {
 
 func TestConfig_Validate_ThresholdTooLow(t *testing.T) {
 	config := &Config{
-		PublicStorage:    newMockStorageBackend(),
+		DAOs:             testutil.NewMemoryDAOFactory(),
 		SecretBackend:    newMockSecretBackend(),
 		DefaultThreshold: 1,
 	}
@@ -245,7 +191,7 @@ func TestConfig_Validate_ThresholdTooLow(t *testing.T) {
 
 func TestConfig_Validate_TotalLessThanThreshold(t *testing.T) {
 	config := &Config{
-		PublicStorage:    newMockStorageBackend(),
+		DAOs:             testutil.NewMemoryDAOFactory(),
 		SecretBackend:    newMockSecretBackend(),
 		DefaultThreshold: 3,
 		DefaultTotal:     2,
@@ -259,7 +205,7 @@ func TestConfig_Validate_TotalLessThanThreshold(t *testing.T) {
 
 func TestConfig_Validate_ThresholdTooHigh(t *testing.T) {
 	config := &Config{
-		PublicStorage:    newMockStorageBackend(),
+		DAOs:             testutil.NewMemoryDAOFactory(),
 		SecretBackend:    newMockSecretBackend(),
 		DefaultThreshold: 256,
 		DefaultTotal:     256,
@@ -273,7 +219,7 @@ func TestConfig_Validate_ThresholdTooHigh(t *testing.T) {
 
 func TestConfig_Validate_TotalTooHigh(t *testing.T) {
 	config := &Config{
-		PublicStorage:    newMockStorageBackend(),
+		DAOs:             testutil.NewMemoryDAOFactory(),
 		SecretBackend:    newMockSecretBackend(),
 		DefaultThreshold: 2,
 		DefaultTotal:     256,
@@ -287,7 +233,7 @@ func TestConfig_Validate_TotalTooHigh(t *testing.T) {
 
 func TestConfig_Validate_InvalidParticipantID(t *testing.T) {
 	config := &Config{
-		PublicStorage:    newMockStorageBackend(),
+		DAOs:             testutil.NewMemoryDAOFactory(),
 		SecretBackend:    newMockSecretBackend(),
 		DefaultThreshold: 2,
 		DefaultTotal:     3,
@@ -301,7 +247,7 @@ func TestConfig_Validate_InvalidParticipantID(t *testing.T) {
 
 func TestConfig_Validate_ParticipantsLengthMismatch(t *testing.T) {
 	config := &Config{
-		PublicStorage:    newMockStorageBackend(),
+		DAOs:             testutil.NewMemoryDAOFactory(),
 		SecretBackend:    newMockSecretBackend(),
 		DefaultThreshold: 2,
 		DefaultTotal:     3,
@@ -334,24 +280,6 @@ func TestConfig_SetDefaults_PreservesExisting(t *testing.T) {
 	assert.Equal(t, types.FrostAlgorithmP256, config.Algorithm)
 	assert.Equal(t, 5, config.DefaultThreshold)
 	assert.Equal(t, 10, config.DefaultTotal)
-}
-
-func TestConfig_GetNonceStorage(t *testing.T) {
-	publicStorage := newMockStorageBackend()
-	nonceStorage := newMockStorageBackend()
-
-	// When NonceStorage is set, return it
-	config := &Config{
-		PublicStorage: publicStorage,
-		NonceStorage:  nonceStorage,
-	}
-	assert.Equal(t, nonceStorage, config.GetNonceStorage())
-
-	// When NonceStorage is nil, return PublicStorage
-	config = &Config{
-		PublicStorage: publicStorage,
-	}
-	assert.Equal(t, publicStorage, config.GetNonceStorage())
 }
 
 func TestConfig_GetKeyGenerator(t *testing.T) {

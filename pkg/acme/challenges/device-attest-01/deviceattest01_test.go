@@ -14,6 +14,7 @@
 package deviceattest01
 
 import (
+	"context"
 	"encoding/base64"
 	"encoding/json"
 	"errors"
@@ -81,7 +82,7 @@ func structurallyValidTPMObject() *AttestationObject {
 }
 
 func TestVerify_NoVerifier(t *testing.T) {
-	_, err := VerifyAttestation(nil, attestationPayload(t, structurallyValidTPMObject()), "keyauth")
+	_, err := VerifyAttestation(context.Background(), nil, attestationPayload(t, structurallyValidTPMObject()), "keyauth")
 	assert.ErrorIs(t, err, ErrNoAttestationVerifier)
 }
 
@@ -102,7 +103,7 @@ func TestVerify_PayloadLayers(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			_, err := VerifyAttestation(&mockCA{}, tt.payload, "keyauth")
+			_, err := VerifyAttestation(context.Background(), &mockCA{}, tt.payload, "keyauth")
 			require.Error(t, err)
 			assert.Contains(t, err.Error(), "device-attest-01")
 			assert.Contains(t, err.Error(), tt.detail)
@@ -117,14 +118,14 @@ func TestVerify_InvalidAttestationFormat(t *testing.T) {
 	obj := structurallyValidTPMObject()
 	obj.Format = "invalid-format"
 
-	_, err := VerifyAttestation(&mockCA{}, attestationPayload(t, obj), "keyauth")
+	_, err := VerifyAttestation(context.Background(), &mockCA{}, attestationPayload(t, obj), "keyauth")
 	assert.ErrorIs(t, err, ErrInvalidAttestationFormat)
 }
 
 func TestVerify_CAVerificationError(t *testing.T) {
 	ca := &mockCA{verifyError: errors.New("CA verification failed")}
 
-	_, err := VerifyAttestation(ca, attestationPayload(t, structurallyValidTPMObject()), "keyauth")
+	_, err := VerifyAttestation(context.Background(), ca, attestationPayload(t, structurallyValidTPMObject()), "keyauth")
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "attestation verification failed")
 	assert.False(t, ca.verifyAKChainCalled, "the chain is not anchored once the object was refused")
@@ -134,7 +135,7 @@ func TestVerify_AKCertificateChainError(t *testing.T) {
 	cause := errors.New("AK chain verification failed")
 	ca := &mockCA{verifyAKChainError: cause}
 
-	_, err := VerifyAttestation(ca, attestationPayload(t, structurallyValidTPMObject()), "keyauth")
+	_, err := VerifyAttestation(context.Background(), ca, attestationPayload(t, structurallyValidTPMObject()), "keyauth")
 	assert.ErrorIs(t, err, ErrCertificateChainInvalid)
 	assert.ErrorIs(t, err, cause, "the verifier's reason is kept")
 }
@@ -143,7 +144,7 @@ func TestVerify_X5cEntryNotACertificate(t *testing.T) {
 	obj := structurallyValidTPMObject()
 	obj.AttStatement.X5c = []interface{}{"not a byte string"}
 
-	_, err := VerifyAttestation(&mockCA{}, attestationPayload(t, obj), "keyauth")
+	_, err := VerifyAttestation(context.Background(), &mockCA{}, attestationPayload(t, obj), "keyauth")
 	assert.ErrorIs(t, err, ErrCertificateChainInvalid)
 }
 

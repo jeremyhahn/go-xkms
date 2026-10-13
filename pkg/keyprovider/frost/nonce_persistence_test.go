@@ -16,53 +16,50 @@
 package frost
 
 import (
+	"context"
 	"path/filepath"
 	"testing"
 
-	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	"github.com/jeremyhahn/go-xkms/pkg/dao"
+	"github.com/jeremyhahn/go-xkms/pkg/storage"
 	"github.com/jeremyhahn/go-xkms/pkg/storage/file"
+	"github.com/jeremyhahn/go-xkms/pkg/storage/kvadapter"
 )
 
-// TestNonceTracker_SurvivesRestart proves that a used-nonce marker recorded
-// through a durable, on-disk storage.Backend is still there after that
-// backend is closed and reopened at the same path — the same shape as
-// xkmsd's own restart: pkg/server's backend_frost.go leaves
-// frost.Config.NonceStorage nil so nonce tracking rides GetNonceStorage's
-// fallback to PublicStorage, which pkg/server.initFrostBackend builds with
-// s.createStorageAt(backends.frost.public_path) — a durable backend
-// (pebble/file/qrdb) in every production deployment, never "memory". This
-// test stands in for that durability with pkg/storage/file directly, so it
-// needs neither a full *server.Server nor the qrdb storage stack to prove
-// the point: nonce-reuse detection does not reset just because the process
-// restarted.
+// newFileNonceTracker opens a NonceTracker over an on-disk store at dir,
+// composed the way xkmsctl composes its FROST store: a storage.Backend
+// adapted to a go-qrdb KVStore and handed to a DAO factory.
+func newFileNonceTracker(t *testing.T, dir string) (*NonceTracker, storage.Backend) {
+	t.Helper()
+	backend, err := file.New(dir)
+	require.NoError(t, err)
+	kv, err := kvadapter.New(backend)
+	require.NoError(t, err)
+	tracker, err := NewNonceTracker(dao.NewStoreFactory(kv))
+	require.NoError(t, err)
+	return tracker, backend
+}
+
+// TestNonceTracker_SurvivesRestart proves a nonce claim is durable: after the
+// store is closed and reopened at the same path, with nothing carried over in
+// process memory, the same nonce is still refused.
 func TestNonceTracker_SurvivesRestart(t *testing.T) {
-	dir := filepath.Join(t.TempDir(), "frost-nonces")
+	dir := filepath.Join(t.TempDir(), "frost")
 	const keyID = "restart-key"
 	commitment := []byte("restart-persistence-commitment")
 
-	// "Boot 1": mark the nonce used, then close storage the same way server
-	// shutdown does.
-	store1, err := file.New(dir)
-	require.NoError(t, err)
-	tracker1 := NewNonceTracker(store1)
-	require.NoError(t, tracker1.MarkUsed(keyID, commitment))
-	require.NoError(t, store1.Close())
+	// "Boot 1": claim the nonce, then close the store as shutdown does.
+	tracker1, backend1 := newFileNonceTracker(t, dir)
+	require.NoError(t, tracker1.Claim(context.Background(), keyID, 1, "session-1", commitment))
+	require.NoError(t, backend1.Close())
 
-	// "Boot 2": reopen the identical on-disk path — nothing in this process
-	// carries state between the two; only the filesystem does — and confirm
-	// the marker survived.
-	store2, err := file.New(dir)
-	require.NoError(t, err)
-	t.Cleanup(func() { _ = store2.Close() })
-	tracker2 := NewNonceTracker(store2)
+	// "Boot 2": only the filesystem carries state between the two.
+	tracker2, backend2 := newFileNonceTracker(t, dir)
+	t.Cleanup(func() { require.NoError(t, backend2.Close()) })
 
-	used, err := tracker2.IsUsed(keyID, commitment)
-	require.NoError(t, err)
-	assert.True(t, used, "nonce marker must survive a storage close/reopen (simulated restart)")
-
-	err = tracker2.MarkUsed(keyID, commitment)
-	require.Error(t, err)
-	assert.ErrorIs(t, err, ErrNonceAlreadyUsed, "reusing the same nonce after restart must still be refused")
+	err := tracker2.Claim(context.Background(), keyID, 1, "session-2", commitment)
+	requireNonceReuse(t, err, keyID)
+	require.NoError(t, tracker2.Claim(context.Background(), keyID, 1, "session-2", []byte("fresh-commitment")))
 }

@@ -23,7 +23,8 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/jeremyhahn/go-xkms/pkg/backend/tpm2"
-	"github.com/jeremyhahn/go-xkms/pkg/storage"
+	"github.com/jeremyhahn/go-xkms/pkg/testutil"
+	"github.com/jeremyhahn/go-xkms/pkg/testutil/tpmblobtest"
 	"github.com/jeremyhahn/go-xkms/pkg/types"
 )
 
@@ -39,7 +40,7 @@ func newTPM2FrostSecretBackend(t *testing.T) (*tpm2.Backend, *types.KeyAttribute
 
 	b, err := tpm2.NewBackend(&tpm2.Config{
 		UseSimulator: true,
-		KeyStorage:   storage.NewMemory(),
+		Keys:         tpmblobtest.New(t),
 	})
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, b.Close()) })
@@ -50,7 +51,7 @@ func newTPM2FrostSecretBackend(t *testing.T) (*tpm2.Backend, *types.KeyAttribute
 
 func TestKeyStore_TPM2_StoreAndLoadKeyPackage(t *testing.T) {
 	secretBackend, attrs := newTPM2FrostSecretBackend(t)
-	ks := NewKeyStore(newMockStorageBackend(), secretBackend, attrs)
+	ks := mustKeyStore(t, testutil.NewMemoryDAOFactory(), secretBackend, attrs)
 
 	keyID := "tpm2-frost-key"
 	pkg := &KeyPackage{
@@ -78,8 +79,7 @@ func TestKeyStore_TPM2_StoreAndLoadKeyPackage(t *testing.T) {
 // second key never disturbs the first.
 func TestKeyStore_TPM2_MultipleKeys_DistinctSealedObjects(t *testing.T) {
 	secretBackend, attrs := newTPM2FrostSecretBackend(t)
-	publicStorage := newMockStorageBackend()
-	ks := NewKeyStore(publicStorage, secretBackend, attrs)
+	ks := mustKeyStore(t, testutil.NewMemoryDAOFactory(), secretBackend, attrs)
 
 	pkg1 := &KeyPackage{
 		ParticipantID:      1,
@@ -119,8 +119,7 @@ func TestKeyStore_TPM2_MultipleKeys_DistinctSealedObjects(t *testing.T) {
 // error rather than returning corrupted plaintext.
 func TestKeyStore_TPM2_CorruptSealedBlob_TypedError(t *testing.T) {
 	secretBackend, attrs := newTPM2FrostSecretBackend(t)
-	publicStorage := newMockStorageBackend()
-	ks := NewKeyStore(publicStorage, secretBackend, attrs)
+	ks := mustKeyStore(t, testutil.NewMemoryDAOFactory(), secretBackend, attrs)
 
 	keyID := "tpm2-corrupt-key"
 	pkg := &KeyPackage{
@@ -135,13 +134,13 @@ func TestKeyStore_TPM2_CorruptSealedBlob_TypedError(t *testing.T) {
 	metadata := &KeyMetadata{KeyID: keyID, Algorithm: types.FrostAlgorithmEd25519, Threshold: 2, Total: 2}
 	require.NoError(t, ks.StoreKeyPackage(context.Background(), keyID, pkg, metadata))
 
-	// Corrupt the sealed secret-share envelope directly in public storage.
-	sealedPath := keyPath(keyID, secretShareFile)
-	corrupt, err := publicStorage.Get(context.Background(), sealedPath)
+	// Tamper with the sealed object's encrypted private area in its entity;
+	// the TPM's integrity check must refuse to load it.
+	secret, err := ks.secrets.GetByNaturalKey(context.Background(), shareName(keyID, metadata.ParticipantID))
 	require.NoError(t, err)
-	corrupt = append([]byte(nil), corrupt...)
-	corrupt[len(corrupt)-1] ^= 0xFF
-	require.NoError(t, publicStorage.Put(context.Background(), sealedPath, corrupt))
+	require.NotEmpty(t, secret.Sealed.TPMPrivate)
+	secret.Sealed.TPMPrivate[len(secret.Sealed.TPMPrivate)/2] ^= 0xFF
+	require.NoError(t, ks.secrets.Save(context.Background(), secret))
 
 	_, _, err = ks.LoadKeyPackage(context.Background(), keyID, 1)
 	require.Error(t, err)

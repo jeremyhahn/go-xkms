@@ -61,10 +61,9 @@ func openSimTPM(t *testing.T) *simTPM {
 	cfg := xkms.DefaultTPMConfig
 	cfg.UseSimulator = true
 	tpm, err := xkms.NewTPM2(&xkms.TPMParams{
-		Logger:    simQuietLogger,
-		Config:    &cfg,
-		BlobStore: factory.BlobStore(),
-		Backend:   factory.KeyBackend(),
+		Logger:  simQuietLogger,
+		Config:  &cfg,
+		Backend: factory.KeyBackend(),
 	})
 	if err != nil {
 		require.ErrorIs(t, err, xkms.ErrTPMNotInitialized, "a fresh simulator only needs provisioning")
@@ -106,9 +105,11 @@ func newSimKeyBackend(t *testing.T, sim *simTPM) *xkms.TPM2Backend {
 	t.Helper()
 	store, err := xkms.NewMemoryBackend()
 	require.NoError(t, err)
+	keys, err := xkms.NewTPMBackendBlobStore(simQuietLogger, store)
+	require.NoError(t, err)
 	backend, err := xkms.NewTPM2BackendWithTPM(&xkms.TPM2BackendExternalConfig{
 		TPM:        sim.tpm,
-		KeyBackend: xkms.NewFileBackend(simQuietLogger, store),
+		KeyBackend: keys,
 		Logger:     simQuietLogger,
 	})
 	require.NoError(t, err)

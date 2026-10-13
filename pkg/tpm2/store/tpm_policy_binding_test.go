@@ -14,11 +14,9 @@
 package store
 
 import (
-	"errors"
 	"strings"
 	"testing"
 
-	"github.com/jeremyhahn/go-xkms/pkg/storage"
 	"github.com/jeremyhahn/go-xkms/pkg/types"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -162,10 +160,10 @@ func TestUnmarshalTPMPolicyBinding_RejectsUnknownVersion(t *testing.T) {
 	assert.Contains(t, versionErr.Error(), "version")
 }
 
-// TestFileBackend_DeleteRemovesTPMPolicyBinding proves the binding follows its
+// TestBlobStore_DeleteRemovesTPMPolicyBinding proves the binding follows its
 // key's lifetime: deleting the key deletes the record beside it.
-func TestFileBackend_DeleteRemovesTPMPolicyBinding(t *testing.T) {
-	backend := NewFileBackend(testLogger(), storage.NewMemory())
+func TestBlobStore_DeleteRemovesTPMPolicyBinding(t *testing.T) {
+	backend := newTestBlobStore(t)
 	attrs := &types.KeyAttributes{CN: "bound-key"}
 
 	record, err := validBinding().MarshalBinary()
@@ -176,5 +174,5 @@ func TestFileBackend_DeleteRemovesTPMPolicyBinding(t *testing.T) {
 	require.NoError(t, backend.Delete(attrs))
 
 	_, err = backend.Get(attrs, FSEXT_TPM_POLICY)
-	require.True(t, errors.Is(err, storage.ErrNotFound), "the binding must be gone, got %v", err)
+	require.ErrorIs(t, err, ErrBlobNotFound, "the binding must be gone")
 }

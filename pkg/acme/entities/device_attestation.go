@@ -64,4 +64,11 @@ type DeviceAttestation struct {
 	CertInfo  []byte `yaml:"cert-info,omitempty" json:"cert_info,omitempty"`
 	Signature []byte `yaml:"signature,omitempty" json:"signature,omitempty"`
 	PubArea   []byte `yaml:"pub-area,omitempty" json:"pub_area,omitempty"`
+
+	// AttestedSPKI is, for "dice", the DER SubjectPublicKeyInfo of the key
+	// the device's provisioning record vouched for when the challenge was
+	// validated (go-xkms#1441). Only the registry-anchored verifier sets it,
+	// never the payload; finalization requires the certificate request's key
+	// to equal it and refuses a "dice" record without one. Nil for "tpm".
+	AttestedSPKI []byte `yaml:"attested-spki,omitempty" json:"attested_spki,omitempty"`
 }

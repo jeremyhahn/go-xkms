@@ -251,7 +251,10 @@ func initTPM2BackendAdapter() (keybackend.FIDO2KeyBackend, error) {
 	if err != nil {
 		return nil, &WrappedError{Msg: "failed to create file storage", Err: err}
 	}
-	keyBackend := xkms.NewFileBackend(logger, fsBackend)
+	keyBackend, err := xkms.NewTPMBackendBlobStore(logger, fsBackend)
+	if err != nil {
+		return nil, &WrappedError{Msg: "failed to create TPM key store", Err: err}
+	}
 
 	tpmConfig := xkms.DefaultTPMConfig
 	tpmConfig.UseSimulator = true

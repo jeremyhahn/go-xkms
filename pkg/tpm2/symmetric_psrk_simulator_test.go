@@ -8,7 +8,6 @@ import (
 	"testing"
 
 	"github.com/google/go-tpm/tpm2"
-	"github.com/jeremyhahn/go-xkms/pkg/storage"
 	"github.com/jeremyhahn/go-xkms/pkg/tpm2/store"
 	"github.com/jeremyhahn/go-xkms/pkg/tpm2/tpm2test/tpmbus"
 	"github.com/jeremyhahn/go-xkms/pkg/types"
@@ -238,34 +237,32 @@ func writeLegacySymmetricBlob(t *testing.T, h *simHarness, attrs *types.KeyAttri
 // TestSymmetricKeyPSRK_RefusesUnprotectedBlob writes a key exactly as
 // releases before the Platform SRK change did -- under the Shared SRK, with
 // no authorization and NoDA -- and proves it is refused by name rather than
-// loaded, and that the refusal names the on-disk file an operator must
-// delete by hand (go-xkms#1168).
+// loaded, and that the refusal names the key an operator must delete
+// (go-xkms#1168).
 func TestSymmetricKeyPSRK_RefusesUnprotectedBlob(t *testing.T) {
 	h := newSimHarness(t, nil)
 	attrs := psrkSymmetricAttrs("pre-psrk-symmetric", nil)
 	writeLegacySymmetricBlob(t, h, attrs)
 
-	legacyFile := attrs.CN + string(store.FSEXT_LEGACY_PRIVATE_BLOB)
-
 	_, err := h.TPM.GetSymmetricKey(attrs)
 	require.ErrorIs(t, err, ErrUnprotectedSymmetricKey)
-	require.ErrorContains(t, err, legacyFile)
+	require.ErrorContains(t, err, attrs.CN)
 
 	_, err = h.TPM.SymmetricEncrypter(attrs)
 	require.ErrorIs(t, err, ErrUnprotectedSymmetricKey)
-	require.ErrorContains(t, err, legacyFile)
+	require.ErrorContains(t, err, attrs.CN)
 }
 
-// TestFileBackendDelete_RemovesLegacySymmetricPrivateBlob proves that
+// TestBlobStoreDelete_RemovesLegacySymmetricPrivateBlob proves that
 // deleting a pre-#1148 symmetric key removes its legacy ".priv" private
-// blob along with the current-format files, rather than leaving the
-// unprotected key material behind on disk (go-xkms#1168).
-func TestFileBackendDelete_RemovesLegacySymmetricPrivateBlob(t *testing.T) {
+// blob along with the current-format blobs, rather than leaving the
+// unprotected key material behind (go-xkms#1168).
+func TestBlobStoreDelete_RemovesLegacySymmetricPrivateBlob(t *testing.T) {
 	h := newSimHarness(t, nil)
 	attrs := psrkSymmetricAttrs("pre-psrk-symmetric-delete", nil)
 	writeLegacySymmetricBlob(t, h, attrs)
 
-	// Both legacy files are present before deletion.
+	// Both legacy blobs are present before deletion.
 	_, err := h.Backend.Get(attrs, store.FSEXT_LEGACY_PRIVATE_BLOB)
 	require.NoError(t, err)
 	_, err = h.Backend.Get(attrs, store.FSEXT_PUBLIC_BLOB)
@@ -274,16 +271,16 @@ func TestFileBackendDelete_RemovesLegacySymmetricPrivateBlob(t *testing.T) {
 	require.NoError(t, h.TPM.DeleteKeyPair(attrs, h.Backend))
 
 	_, err = h.Backend.Get(attrs, store.FSEXT_LEGACY_PRIVATE_BLOB)
-	require.ErrorIs(t, err, storage.ErrNotFound, "the legacy .priv blob must be removed")
+	require.ErrorIs(t, err, store.ErrBlobNotFound, "the legacy .priv blob must be removed")
 	_, err = h.Backend.Get(attrs, store.FSEXT_PUBLIC_BLOB)
-	require.ErrorIs(t, err, storage.ErrNotFound, "the .pub file must be removed")
+	require.ErrorIs(t, err, store.ErrBlobNotFound, "the .pub blob must be removed")
 }
 
-// TestFileBackendDelete_RemovesCurrentFormatSymmetricKey proves that
+// TestBlobStoreDelete_RemovesCurrentFormatSymmetricKey proves that
 // deleting a symmetric key written in the current (post-#1148) format still
 // works: adding FSEXT_LEGACY_PRIVATE_BLOB to the deletion list must not
 // regress the normal delete path (go-xkms#1168).
-func TestFileBackendDelete_RemovesCurrentFormatSymmetricKey(t *testing.T) {
+func TestBlobStoreDelete_RemovesCurrentFormatSymmetricKey(t *testing.T) {
 	h := newSimHarness(t, nil)
 	userPIN := []byte("user-pin-delete-normal")
 	psrk := createPSRK(t, h, []byte("so-pin-delete-normal"), userPIN)
@@ -300,7 +297,7 @@ func TestFileBackendDelete_RemovesCurrentFormatSymmetricKey(t *testing.T) {
 	require.NoError(t, h.TPM.DeleteKey(attrs, h.Backend))
 
 	_, err = h.Backend.Get(attrs, store.FSEXT_PRIVATE_BLOB)
-	require.ErrorIs(t, err, storage.ErrNotFound)
+	require.ErrorIs(t, err, store.ErrBlobNotFound)
 	_, err = h.Backend.Get(attrs, store.FSEXT_PUBLIC_BLOB)
-	require.ErrorIs(t, err, storage.ErrNotFound)
+	require.ErrorIs(t, err, store.ErrBlobNotFound)
 }

@@ -24,8 +24,6 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
-	"os"
-	"path/filepath"
 	"strings"
 	"sync"
 
@@ -33,8 +31,6 @@ import (
 
 	"github.com/google/go-tpm/tpm2"
 	"github.com/jeremyhahn/go-xkms/pkg/backend"
-	"github.com/jeremyhahn/go-xkms/pkg/storage"
-	"github.com/jeremyhahn/go-xkms/pkg/storage/file"
 	pkgtpm2 "github.com/jeremyhahn/go-xkms/pkg/tpm2"
 	tpmpolicy "github.com/jeremyhahn/go-xkms/pkg/tpm2/policy"
 	"github.com/jeremyhahn/go-xkms/pkg/tpm2/store"
@@ -47,8 +43,6 @@ type Backend struct {
 	config      *Config
 	tpm         pkgtpm2.TrustedPlatformModule
 	keyBackend  store.KeyBackend
-	keyStorage  storage.Backend // the storage.Backend key blobs are persisted through; used by ListKeys for enumeration (NewBackend path)
-	keyDir      string          // directory holding key blobs; used by ListKeys for enumeration (NewBackendWithTPM/ExternalTPMConfig path only)
 	logger      *slog.Logger
 	srkAttrs    *types.KeyAttributes
 	tracker     types.AEADSafetyTracker
@@ -66,41 +60,15 @@ type ExternalTPMConfig struct {
 	// TPM is the existing TPM instance to use
 	TPM pkgtpm2.TrustedPlatformModule
 
-	// KeyBackend is the storage backend for TPM key blobs
+	// KeyBackend is the store of TPM key blobs. ListKeys enumerates it when
+	// it is a store.KeyLister and reports no keys otherwise.
 	KeyBackend store.KeyBackend
-
-	// KeyDir is the directory where the KeyBackend persists key blobs. It is
-	// optional; when set, ListKeys can enumerate keys for this backend. When
-	// empty, ListKeys returns no keys (enumeration is unavailable) rather than
-	// failing — the store.KeyBackend interface itself exposes no List operation.
-	KeyDir string
 
 	// Logger is the logger instance to use (optional)
 	Logger *slog.Logger
 
 	// Tracker is the AEAD safety tracker (optional)
 	Tracker types.AEADSafetyTracker
-}
-
-// NewFileKeyBackend builds the file-backed store.KeyBackend NewBackend
-// constructs internally from Config.KeyDir, for callers of
-// NewBackendWithTPM: a caller sharing an already-open TPM connection (e.g.
-// pkg/server reusing the node-seal flip's or the platform store's single
-// open) still needs a real KeyBackend for the wrapper it builds over that
-// connection, and this is the one NewBackend itself uses, not a second
-// implementation of the same three steps.
-func NewFileKeyBackend(logger *slog.Logger, keyDir string) (store.KeyBackend, error) {
-	if err := os.MkdirAll(keyDir, 0700); err != nil {
-		return nil, &errs.Wrapped{Msg: "failed to create key directory", Err: err}
-	}
-	fsBackend, err := file.New(keyDir)
-	if err != nil {
-		return nil, &errs.Wrapped{Msg: "failed to create storage backend", Err: err}
-	}
-	if logger == nil {
-		logger = slog.Default()
-	}
-	return store.NewFileBackend(logger, fsBackend), nil
 }
 
 // NewBackendWithTPM creates a new TPM2 backend using an existing TPM instance.
@@ -144,7 +112,6 @@ func NewBackendWithTPM(config *ExternalTPMConfig) (*Backend, error) {
 		config:      nil, // No config when using external TPM
 		tpm:         config.TPM,
 		keyBackend:  config.KeyBackend,
-		keyDir:      config.KeyDir, // optional; enables ListKeys enumeration
 		logger:      log,
 		srkAttrs:    srkAttrs,
 		tracker:     tracker,
@@ -171,11 +138,9 @@ func NewBackend(config *Config) (*Backend, error) {
 		tracker = backend.NewMemoryAEADTracker()
 	}
 
-	// Create the key backend storing TPM key blobs: Config.Validate already
-	// required config.KeyStorage above, so this is the ONLY storage path --
-	// never a private, directory-based engine this package opens for
-	// itself.
-	keyBackend := store.NewFileBackend(log, config.KeyStorage)
+	// The key store is the caller's: Config.Validate already required
+	// config.Keys above, and this package never opens a store of its own.
+	keyBackend := config.Keys
 
 	// Create TPM2 configuration
 	tpmConfig := config.ToTPMConfig()
@@ -228,7 +193,6 @@ func NewBackend(config *Config) (*Backend, error) {
 		config:     config,
 		tpm:        tpm,
 		keyBackend: keyBackend,
-		keyStorage: config.KeyStorage,
 		logger:     log,
 		srkAttrs:   srkAttrs,
 		tracker:    tracker,
@@ -400,8 +364,8 @@ func (b *Backend) GetKey(ctx context.Context, attrs *types.KeyAttributes) (crypt
 	attrs.StoreType = types.StoreTPM2
 
 	// Try to load the key from the backend to verify it exists. Only a
-	// genuine "no such object" result from the underlying store (which
-	// surfaces as storage.ErrNotFound through keyBackend.Get) is reported
+	// genuine "no such object" result from the key store (which surfaces
+	// as store.ErrBlobNotFound through keyBackend.Get) is reported
 	// as ErrKeyNotFound. Any other failure -- a permission error, a
 	// transient I/O fault, a corrupt or partially written blob -- must not
 	// be conflated with "key does not exist yet", since callers such as
@@ -409,7 +373,7 @@ func (b *Backend) GetKey(ctx context.Context, attrs *types.KeyAttributes) (crypt
 	// to generate a replacement key.
 	_, err = keys.Get(attrs, store.FSEXT_PRIVATE_BLOB)
 	if err != nil {
-		if errors.Is(err, storage.ErrNotFound) {
+		if errors.Is(err, store.ErrBlobNotFound) {
 			return nil, &errs.Detail{Err: ErrKeyNotFound, Detail: attrs.CN}
 		}
 		return nil, &errs.Detail{Err: ErrKeyRetrievalFailed, Detail: fmt.Sprintf("%s: %v", attrs.CN, err)}
@@ -418,7 +382,7 @@ func (b *Backend) GetKey(ctx context.Context, attrs *types.KeyAttributes) (crypt
 	// Get the public blob to determine key type
 	pubData, err := keys.Get(attrs, store.FSEXT_PUBLIC_BLOB)
 	if err != nil {
-		if errors.Is(err, storage.ErrNotFound) {
+		if errors.Is(err, store.ErrBlobNotFound) {
 			return nil, &errs.Detail{Err: ErrKeyNotFound, Detail: attrs.CN}
 		}
 		return nil, &errs.Detail{Err: ErrKeyRetrievalFailed, Detail: fmt.Sprintf("%s: %v", attrs.CN, err)}
@@ -518,74 +482,20 @@ func (b *Backend) ListKeys(ctx context.Context) ([]*types.KeyAttributes, error) 
 	return keys, nil
 }
 
-// listSystemKeys enumerates the system scope's keys.
-//
-// Enumeration is storage-backed (keyStorage.List, set by NewBackend) --
-// there is no private, directory-based engine this package opens for
-// itself. The sole exception is keyDir (set only by NewBackendWithTPM /
-// ExternalTPMConfig, sharing an already-open TPM connection with the
-// node-barrier seal strategy or the platform store): that key material is
-// genuinely pre-datastore (see docs/datastore/architecture.md) and stays a
-// real directory, so enumeration there is still a directory listing. A
-// backend with neither (created with an external TPM and no KeyDir) reports
-// no keys rather than failing -- enumeration is simply unavailable.
+// listSystemKeys enumerates the system scope's keys: the objects with a
+// private blob in the key store. A key store that cannot enumerate its keys
+// (one that is not a store.KeyLister) reports none rather than failing.
 func (b *Backend) listSystemKeys(ctx context.Context) ([]*types.KeyAttributes, error) {
-	switch {
-	case b.keyStorage != nil:
-		return b.listKeysFromStorage(ctx)
-	case b.keyDir != "":
-		return b.listKeysFromDir(b.keyDir)
-	default:
+	lister, ok := b.keyBackend.(store.KeyLister)
+	if !ok {
 		return []*types.KeyAttributes{}, nil
 	}
-}
-
-// listKeysFromStorage enumerates private-blob keys (FSEXT_PRIVATE_BLOB) via
-// keyStorage.List, the storage.Backend key blobs are persisted through.
-func (b *Backend) listKeysFromStorage(ctx context.Context) ([]*types.KeyAttributes, error) {
-	names, err := b.keyStorage.List(ctx, "")
+	names, err := lister.KeyNames(ctx, store.FSEXT_PRIVATE_BLOB)
 	if err != nil {
-		return nil, &errs.Wrapped{Msg: "failed to list key storage", Err: err}
+		return nil, &errs.Wrapped{Msg: "failed to list key store", Err: err}
 	}
-
-	var keys []*types.KeyAttributes
-	for _, name := range names {
-		if !strings.HasSuffix(name, store.FSEXT_PRIVATE_BLOB) {
-			continue
-		}
-		cn := name[:len(name)-len(store.FSEXT_PRIVATE_BLOB)]
-		if b.reservedObject(cn) {
-			continue
-		}
-		keys = append(keys, listedKey(b.keyBackend, cn, ""))
-	}
-	return keys, nil
-}
-
-// listKeysFromDir enumerates private-blob key files (FSEXT_PRIVATE_BLOB)
-// directly under dir -- the ExternalTPMConfig/NewBackendWithTPM path's
-// genuinely pre-datastore key directory (see ListKeys).
-func (b *Backend) listKeysFromDir(dir string) ([]*types.KeyAttributes, error) {
-	entries, err := os.ReadDir(dir)
-	if err != nil {
-		if os.IsNotExist(err) {
-			return []*types.KeyAttributes{}, nil
-		}
-		return nil, &errs.Wrapped{Msg: "failed to list key directory", Err: err}
-	}
-
-	var keys []*types.KeyAttributes
-	for _, entry := range entries {
-		if entry.IsDir() {
-			continue
-		}
-		name := entry.Name()
-		// Look for private blob files
-		ext := filepath.Ext(name)
-		if ext != store.FSEXT_PRIVATE_BLOB {
-			continue
-		}
-		cn := name[:len(name)-len(ext)]
+	keys := make([]*types.KeyAttributes, 0, len(names))
+	for _, cn := range names {
 		if b.reservedObject(cn) {
 			continue
 		}

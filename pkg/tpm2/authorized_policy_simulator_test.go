@@ -18,7 +18,6 @@ import (
 	"testing"
 
 	"github.com/google/go-tpm/tpm2"
-	"github.com/jeremyhahn/go-xkms/pkg/storage"
 	"github.com/jeremyhahn/go-xkms/pkg/tpm2/store"
 	"github.com/jeremyhahn/go-xkms/pkg/types"
 	"github.com/stretchr/testify/assert"
@@ -839,7 +838,7 @@ func TestSignApproval_Errors(t *testing.T) {
 	require.ErrorIs(t, err, ErrInvalidAuthoritySignature)
 
 	_, _, err = f.h.TPM.AuthorityName(f.keyAttrs("no-such-authority", nil), f.h.Backend)
-	require.ErrorIs(t, err, storage.ErrNotFound)
+	require.ErrorIs(t, err, store.ErrBlobNotFound)
 
 	_, _, err = f.h.TPM.AuthorityName(nil, f.h.Backend)
 	require.ErrorIs(t, err, store.ErrInvalidKeyAttributes)
@@ -897,13 +896,14 @@ func TestCreateStorageKey_RejectsMissingParent(t *testing.T) {
 // not the TPM's default store, where no record exists for it.
 func TestAuthorizedPolicy_SealedObjectFromBlobsInCallerStore(t *testing.T) {
 	f := newPolicyFixture(t)
-	tenantStore := store.NewFileBackend(f.h.Logger, storage.NewMemory())
+	tenantStore, err := f.h.Backend.Tenant("acme")
+	require.NoError(t, err)
 
 	secret := []byte("sealed in a tenant's store")
 	attrs := sealedKeyAttrsUnder(f.srk, "tenant-sealed", nil)
 	attrs.TPMPolicy = testPolicyName
 	attrs.SealData = types.NewSealData(secret)
-	_, err := f.h.TPM.SealKey(attrs, tenantStore, false)
+	_, err = f.h.TPM.SealKey(attrs, tenantStore, false)
 	require.NoError(t, err)
 
 	pub, err := tenantStore.Get(attrs, store.FSEXT_PUBLIC_BLOB)
@@ -925,7 +925,8 @@ func TestAuthorizedPolicy_SealedObjectFromBlobsInCallerStore(t *testing.T) {
 // symmetric key parented on the Shared SRK is still refused.
 func TestSymmetricKey_UnderATenantStorageKey(t *testing.T) {
 	f := newPolicyFixture(t)
-	tenantStore := store.NewFileBackend(f.h.Logger, storage.NewMemory())
+	tenantStore, err := f.h.Backend.Tenant("acme")
+	require.NoError(t, err)
 
 	storageKey := &types.KeyAttributes{
 		CN:            "acme-storage",

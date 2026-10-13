@@ -1,6 +1,6 @@
 # DICE Device Identity — User
 
-> **Status: NORMATIVE** · Feature: `dice-device-identity` · Repo: `go-xkms` · Last verified: 2026-10-12
+> **Status: NORMATIVE** · Feature: `dice-device-identity` · Repo: `go-xkms` · Last verified: 2026-10-13
 
 ## Verifying a device's evidence
 
@@ -126,7 +126,25 @@ the field, and `0` is a real value it did report. Layer 0 is the DICE core.
 | `ErrCriticalEvidenceUnreadable` | A certificate in the chain marks DICE evidence critical that this verifier cannot decode. Anchoring tells `crypto/x509` those extensions were handled, so it only says that about extensions it actually read. |
 | `ErrUnsupportedSignatureAlgorithm` | A certificate a device key signed is not ECDSA-SHA256. With `RequireDeviceSignedLeaf` that includes the leaf, whose issuer is the device even when its certificate is not in the chain. |
 
-Every one of these is reachable from `sdk/go` as `ErrDICE<Name>` — for example
+Over ACME `device-attest-01`, the device registry adds its own refusals, all
+joined under `deviceattest01.ErrDeviceNotAuthorized` and answered as
+`unauthorized`:
+
+| Error | What happened |
+|-------|---------------|
+| `ErrNoDeviceResolver` | The server has no device registry. A stock `xkmsd` has none. |
+| `ErrDeviceNotProvisioned` | The registry holds no record for the device's UEID. |
+| `ErrProvisioningRecordInvalid` | The record sets neither or both fields, or holds a key that is not P-256 or a certificate that does not parse. |
+| `ErrAttestedKeyMismatch` | The alias certificate's key is not the provisioned DeviceID key, or the record was re-keyed before finalization. |
+| `ErrAliasSignatureInvalid` | The alias certificate does not verify under the provisioned DeviceID key. |
+| `ErrDeviceEndorsementInvalid` | The provisioned DeviceID certificate names another UEID, or does not chain the alias to `DICERoots`. |
+
+`sdk/go/acme` re-exports the three a registry implementer or caller branches
+on: `ACMEErrDeviceNotAuthorized`, `ACMEErrDeviceNotProvisioned` and
+`ACMEErrNoDeviceResolver`, beside `ACMEDeviceResolver` and
+`ACMEProvisionedDevice`.
+
+Every one of the `dice` errors above is reachable from `sdk/go` as `ErrDICE<Name>` — for example
 `xkms.ErrDICENonceMismatch` — so a consumer that cannot import `pkg/` can still
 use `errors.Is`.
 
@@ -137,17 +155,21 @@ use `errors.Is`.
 ```go
 // At the challenge: the device's evidence, verified and kept. payload is the
 // body the client POSTed to the challenge URL, {"attObj": base64url(CBOR)};
-// nothing is fetched from the device. verifier is the server's trust policy,
-// e.g. a deviceattest01.TrustAnchorVerifier over the configured DICE roots.
+// nothing is fetched from the device. verifier is the server's trust policy:
+// a deviceattest01.TrustAnchorVerifier whose TrustAnchors.Devices is your
+// device registry.
 verified, err := deviceattest01.VerifyAttestation(verifier, payload, keyAuthorization)
 
-// At finalization: the device's possession request, then the key the CA is
-// about to certify.
+// At finalization: the device's possession request, the key the CA is about
+// to certify, and the registry again.
 if err := verified.VerifyPossessionCSR(csr, order.Identifiers); err != nil {
     return err            // not the device's request for this order
 }
 if err := verified.BindCSRKey(csr); err != nil {
-    return err            // the CSR is not for the attested key
+    return err            // badCSR: the CSR is not for the attested key
+}
+if err := verified.ConfirmRegistration(ctx, verifier); err != nil {
+    return err            // unauthorized: the device was withdrawn or re-keyed
 }
 ```
 
@@ -173,6 +195,43 @@ an `AttestedKey` whose `Format` is `deviceattest01.FormatDICE`.
 | `ErrPossessionKeyMismatch` | The request is for a key other than the one the device attested. |
 | `ErrPossessionNonceMismatch` | The request was signed for another order's challenge. |
 | `ErrPossessionIdentifierMismatch` | The order names something besides this one device: a DNS name, or a second device. |
+
+### Provisioning the device registry
+
+A DICE alias certificate is signed by the key it carries, so the server accepts
+it only for a device you provisioned. Implement `deviceattest01.DeviceResolver`
+over wherever you record provisioning, and pass it as `TrustAnchors.Devices`:
+
+```go
+type registry struct{ devices map[string]*deviceattest01.ProvisionedDevice }
+
+func (r *registry) ResolveDevice(ctx context.Context, ueid string) (*deviceattest01.ProvisionedDevice, error) {
+    device, ok := r.devices[ueid]
+    if !ok {
+        return nil, deviceattest01.ErrDeviceNotProvisioned
+    }
+    return device, nil
+}
+
+verifier, err := deviceattest01.NewTrustAnchorVerifier(deviceattest01.TrustAnchors{
+    DICERoots: roots,     // only needed for records that hold a DeviceID certificate
+    Devices:   &registry{devices: provisioned},
+})
+```
+
+- Key the record by the device's UEID as 34 lowercase hex digits: `01`
+  followed by its 16-byte DeviceID, e.g. `01a1b2c3d4e5f60718293a4b5c6d7e8f90`.
+- Set **one** field: `DeviceIDKey`, the DER SubjectPublicKeyInfo of the
+  device's P-256 DeviceID key, when the device signs its own alias certificate;
+  or `DeviceIDCertificate`, the DER DeviceID certificate issued at provisioning,
+  when that certificate signs the alias and chains to `DICERoots`.
+- Return an error wrapping `ErrDeviceNotProvisioned` for an unknown UEID, and
+  any other error when the lookup itself fails. Both refuse the device.
+
+A server with no registry refuses every DICE device as `unauthorized`. That
+includes a stock `xkmsd`, which has nowhere to take a registry from: DICE
+enrollment runs in an embedder that supplies one.
+
 
 The one-shot `deviceattest01.Verify` refuses the `dice` format with
 `ErrKeyBindingRequired`. That is deliberate: the nonce says the device answered

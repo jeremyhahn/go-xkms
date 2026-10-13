@@ -35,7 +35,6 @@ func TestInitFrostBackend_NotCompiledIn(t *testing.T) {
 		Backends: config.BackendsConfig{
 			Frost: &config.FrostConfig{
 				Enabled:       true,
-				PublicPath:    "frost/public",
 				SecretBackend: "software",
 			},
 		},

@@ -21,7 +21,6 @@ import (
 	"testing"
 
 	"github.com/google/go-tpm/tpm2"
-	"github.com/jeremyhahn/go-xkms/pkg/storage"
 	pkgtpm2 "github.com/jeremyhahn/go-xkms/pkg/tpm2"
 	"github.com/jeremyhahn/go-xkms/pkg/tpm2/store"
 	"github.com/jeremyhahn/go-xkms/pkg/types"
@@ -34,7 +33,7 @@ import (
 // test opens exactly one, and closes it when it ends.
 func newSimFixture(t *testing.T) *fixture {
 	t.Helper()
-	keys := store.NewFileBackend(quietLogger, storage.NewMemory())
+	keys := memoryBlobs(t)
 	cfg := pkgtpm2.DefaultConfig
 	cfg.UseSimulator = true
 	tpm := provisionedTPM(t, &pkgtpm2.Params{Config: &cfg, Backend: keys, Logger: quietLogger})
@@ -255,7 +254,7 @@ func TestService_RotateAuthority(t *testing.T) {
 	st := f.scopeTPM("acme")
 	f.closeScopeTPM(st)
 	_, err = st.Keys.Get(&types.KeyAttributes{CN: before.Authority.CN}, store.FSEXT_PUBLIC_BLOB)
-	require.ErrorIs(t, err, storage.ErrNotFound, "the old authority is deleted")
+	require.ErrorIs(t, err, store.ErrBlobNotFound, "the old authority is deleted")
 
 	f.tpm.SetPolicyBindingResolver(replayResolver{Service: f.svc, approvals: old})
 	err = f.sign("acme", key)
@@ -266,7 +265,7 @@ func TestService_RotateAuthority(t *testing.T) {
 
 // TestService_SharedModeIsolation proves two shared-mode tenants using the
 // same policy and key names each see only their own, cannot load each
-// other's keys, and keep their blobs under their own prefixes.
+// other's keys, and keep their blobs in their own tenant scope.
 func TestService_SharedModeIsolation(t *testing.T) {
 	f := newSimFixture(t)
 	tenants := []string{"acme", "globex"}
@@ -305,13 +304,15 @@ func TestService_SharedModeIsolation(t *testing.T) {
 	_, globexPub := f.blobs("globex", keys["globex"])
 	assert.NotEqual(t, acmePub, globexPub)
 	for _, tenant := range tenants {
-		stored, err := f.keyStorage.List(f.ctx, tenant+"/tpm/keys/")
+		tenantKeys, err := f.tenantKeys.Tenant(tenant)
 		require.NoError(t, err)
-		assert.Contains(t, stored, tenant+"/tpm/keys/signer"+store.FSEXT_PUBLIC_BLOB)
+		stored, err := tenantKeys.KeyNames(f.ctx, store.FSEXT_PUBLIC_BLOB)
+		require.NoError(t, err)
+		assert.Contains(t, stored, "signer")
 	}
-	root, err := f.keyStorage.List(f.ctx, "signer")
+	root, err := f.tenantKeys.KeyNames(f.ctx, store.FSEXT_PUBLIC_BLOB)
 	require.NoError(t, err)
-	assert.Empty(t, root, "no blob is stored by CN alone")
+	assert.Empty(t, root, "no blob is stored outside a tenant")
 }
 
 // TestService_SetMode proves the mode rules: the system scope's mode is
