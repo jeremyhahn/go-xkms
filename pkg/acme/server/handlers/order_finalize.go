@@ -468,13 +468,14 @@ func (s *RestService) OrderFinalizeHandler(w http.ResponseWriter, r *http.Reques
 				// #1392): an endorse-01 or device-attest-01 authorization
 				// cannot be turned into an IDevID, and neither can an order
 				// no attestation challenge validated.
-				if problem := s.bindTCGCSRToActivation(ctx, authzDAO, order, csrDER); problem != nil {
+				validatedChallenges, problem := s.bindTCGCSRToActivation(ctx, authzDAO, order, csrDER)
+				if problem != nil {
 					writeError(w, problem)
 					return
 				}
 
 				serialNumber, pem, err = s.finalizeTCGCSR(
-					order.Identifiers[0].Value, csrDER, r, account, order)
+					order.Identifiers[0].Value, csrDER, r, account, order, validatedChallenges)
 				if err != nil {
 					// finalizeTCGCSR returns *entities.Error or common errors
 					if acmeErr, ok := err.(*entities.Error); ok {
@@ -859,11 +860,12 @@ func (s *RestService) OrderFinalizeHandler(w http.ResponseWriter, r *http.Reques
 		// Execute pre-sign extension hooks and append returned extensions to signOpts.
 		if s.preSignHooks != nil && s.preSignHooks.Count() > 0 {
 			preSignCtx := &OrderPreSignHookContext{
-				Context:  ctx,
-				Order:    order,
-				CSR:      csr,
-				ClientIP: r.RemoteAddr,
-				IsTCGCSR: false,
+				Context:             ctx,
+				Order:               order,
+				CSR:                 csr,
+				ClientIP:            r.RemoteAddr,
+				IsTCGCSR:            false,
+				ValidatedChallenges: validated.types(),
 			}
 			extraExts, hookErr := s.preSignHooks.Execute(preSignCtx)
 			if hookErr != nil {
@@ -1404,13 +1406,16 @@ func (s *RestService) caaValidationMethod(
 	return "", ErrCAAAuthorizationNotFound
 }
 
-// Finalize a TCG-CSR-IDEVID for a successful enroll-01 challenge verification
+// Finalize a TCG-CSR-IDEVID for a successful enroll-01 challenge verification.
+// validatedChallenges are the attestation challenge types that validated the
+// order; they reach the pre-sign hooks as OrderPreSignHookContext.ValidatedChallenges.
 func (s *RestService) finalizeTCGCSR(
 	ip string,
 	csrDER []byte,
 	r *http.Request,
 	account *entities.ACMEAccount,
 	order *entities.ACMEOrder,
+	validatedChallenges []string,
 ) (string, []byte, error) {
 	var pem []byte
 	ctx := r.Context()
@@ -1538,10 +1543,11 @@ func (s *RestService) finalizeTCGCSR(
 	// The TCGCSRRequest.ExtraExtensions field is honored by SignTCGCSRIDevID for the IDevID cert.
 	if s.preSignHooks != nil && s.preSignHooks.Count() > 0 {
 		preSignCtx := &OrderPreSignHookContext{
-			Context:  ctx,
-			Order:    order,
-			ClientIP: ip,
-			IsTCGCSR: true,
+			Context:             ctx,
+			Order:               order,
+			ClientIP:            ip,
+			IsTCGCSR:            true,
+			ValidatedChallenges: validatedChallenges,
 			TCGData: &TCGEnrollmentData{
 				ProductModel:        string(tcgCSR.CsrContents.ProdModel),
 				ProductSerial:       string(tcgCSR.CsrContents.ProdSerial),

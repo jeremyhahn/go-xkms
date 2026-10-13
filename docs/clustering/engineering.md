@@ -1,6 +1,6 @@
 # Clustering — Engineering Contract
 
-> **Status: NORMATIVE** · Feature: `clustering` · Repo: `go-xkms` · Last verified: 2026-10-08
+> **Status: NORMATIVE** · Feature: `clustering` · Repo: `go-xkms` · Last verified: 2026-10-12
 
 ## Exported surface
 
@@ -232,7 +232,8 @@ Raft mTLS provisioning precedence, highest first (`Server.resolveRaftMTLS`,
 2. **TPM-attested ACME enroll-01** — `cluster.raft_enrollment.acme.enabled: true`,
    requires `raft_enrollment.key_backend: tpm2`. The runtime `TrustedCA` is
    the single cluster trust anchor; joining nodes prove identity via TPM
-   attestation instead of receiving a shared CA key.
+   attestation instead of receiving a shared CA key. See "Node identity
+   from enroll-01" below for which joiners are named cluster members.
 3. **Hardware node key** — `cluster.raft_enrollment.key_backend: tpm2` or
    `pkcs11` without ACME; the node key never leaves the device.
 4. **Software auto-provisioned** (default) — the first node generates a
@@ -240,6 +241,43 @@ Raft mTLS provisioning precedence, highest first (`Server.resolveRaftMTLS`,
    joining nodes fetch it via `raft_enrollment.bootstrap` (Noise / SPKI /
    DANE / Direct — the same dispatch as
    [`../trust-bootstrap/`](../trust-bootstrap/architecture.md)).
+
+### Node identity from enroll-01
+
+A joiner's transport leaf carries `spiffe://<trust_domain>/node/<raft_address>`
+only when the CA's ACME server can vouch for both halves of that name. The
+pre-sign hook `handlers.NewClusterNodeURISANHook(trustDomain, members)`
+(`pkg/acme/server/handlers/hooks_urisan.go`; re-exported as
+`sdk/go/acme.NewACMEClusterNodeURISANHook`) stamps the URI when all of these
+hold, and otherwise adds nothing:
+
+- the order is a TCG-CSR-IDEVID order;
+- `enroll-01` is the order's only validated challenge
+  (`OrderPreSignHookContext.ValidatedChallenges`), so a TPM proved the key;
+- the order's `permanent-identifier` is exactly one of the configured member
+  addresses — host **and** port.
+
+`cmd/xkmsd` registers the hook only when `cluster.enabled` and
+`raft_enrollment.acme.enabled` are both set, with `members` taken from
+`cluster.peers` (`buildClusterPreSignHooks`, `cmd/xkmsd/acme.go`). The serving
+node's `peers` must therefore list every node expected to join.
+
+The joiner (`pkg/trust/clusterca`, `enrollJoiner`) sends its full
+`RaftAddress` as the identifier and expects the same full address back. A
+leaf without that URI fails the join with `*clusterca.ErrSPIFFEMismatch`
+(`Expected`, `Got`) rather than running with an identity peers would refuse.
+`enroll-01` dials the identifier's **host** on the challenge port (default
+`8080`, `raft_enrollment.acme.challenge_port`), never the Raft port; the
+identity it compares and records stays the full `host:port`.
+
+A joiner's `key_backend: tpm2` resolves through `NewNodeLocalBackends` to a
+backend that exposes the shared TPM (`tpmNodeBackend`,
+`pkg/trust/clusterca/backends.go`). enroll-01 needs the TPM itself, not only
+its key provider; without it the join fails with `ErrNoTPM`.
+
+enroll-01 installs the issued IAK certificate on the TPM. The TPM
+configuration must name an IAK certificate NV handle (`iak.cert-handle`) or
+the TPM must have a certificate store; otherwise the install fails.
 
 Cluster CA key custody, at steady state (`raft_enrollment.ca_key_strategy`,
 doc comment on `RaftEnrollmentConfig.CAKeyStrategy`, `pkg/config/config.go`;
@@ -305,6 +343,17 @@ the seal strategies above rather than the barrier.
   standalone-server integration tests (crypto gen/sign/verify replication,
   public-key consistency, delete replication, leader failover, node
   restart/rejoin catch-up, standalone lifecycle)".
+- **Node identity from enroll-01** — unit:
+  `pkg/acme/server/handlers/hooks_urisan_test.go` (member, non-member,
+  other challenge, port mismatch), `challenge_dial_host_test.go` (enroll-01
+  dials the identifier's host), `cmd/xkmsd/acme_test.go` (hook registration),
+  `pkg/trust/clusterca/acme_tpm_sim_test.go`
+  (`TestNodeLocalBackends_ReusesSharedTPMForHardwareKeys`, `tpm_simulator`
+  tag). Integration: `test/integration/clusterca/` — a first node advertises
+  the anchor, and a joiner with a simulated TPM enrolls over enroll-01 against
+  the CA's ACME server. A member gets its node URI; a non-member gets
+  `ErrSPIFFEMismatch`. Run with `make integration-test-clusterca` (needs port
+  `8080` free in the devcontainer).
 
 ## Observability
 

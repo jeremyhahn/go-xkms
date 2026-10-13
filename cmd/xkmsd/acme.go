@@ -30,7 +30,6 @@ import (
 	"github.com/gorilla/mux"
 
 	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
-	clusterenroll "github.com/jeremyhahn/go-qrdb/sdk/go/clusterenroll"
 	"github.com/jeremyhahn/go-xkms/pkg/acme/audit"
 	dns01 "github.com/jeremyhahn/go-xkms/pkg/acme/challenges/dns-01"
 	http01 "github.com/jeremyhahn/go-xkms/pkg/acme/challenges/http-01"
@@ -280,11 +279,13 @@ func startACMEServer(srv *server.Server, cfg *config.Config, logger *slog.Logger
 
 	// When cluster ACME enrollment is active, register the pre-sign hook that
 	// stamps the SPIFFE node identity (spiffe://<trust-domain>/node/<raft-addr>)
-	// as a URI SAN on enrolling nodes' transport certificates, keyed off the
-	// TCG permanent-identifier the joiner presents. The hook is a no-op for
-	// ordinary ACME orders (no permanent identifier), so registering it never
-	// affects non-cluster issuance.
-	preSignHooks := buildClusterPreSignHooks(cfg)
+	// as a URI SAN on enrolling nodes' transport certificates, for configured
+	// members enroll-01 validated. The hook is a no-op for every other order,
+	// so registering it never affects non-cluster issuance.
+	preSignHooks, err := buildClusterPreSignHooks(cfg)
+	if err != nil {
+		return nil, &acmeInitError{Stage: "build cluster pre-sign hooks", Err: err}
+	}
 
 	// Normalize directory path. The ACME routes are mounted under this prefix.
 	directoryPath := acmeCfg.DirectoryPath
@@ -562,23 +563,26 @@ func buildChallengeMap(
 // buildClusterPreSignHooks returns the pre-sign hook registry for the ACME
 // server. When cluster ACME enrollment is enabled it registers the SPIFFE
 // node-identity URI-SAN hook so enrolling nodes' transport certificates carry
-// spiffe://<trust-domain>/node/<raft-address>, derived from the TCG permanent
-// identifier the joiner presents (the canonical clusterenroll.NodeURI is the
-// single source of truth for the format). It returns nil when cluster ACME
-// enrollment is off, leaving ordinary ACME issuance untouched.
-func buildClusterPreSignHooks(cfg *config.Config) *handlers.OrderPreSignHookRegistry {
+// spiffe://<trust-domain>/node/<raft-address> — only for a Raft address listed
+// in cluster.peers whose order enroll-01 validated. cluster.peers on the node
+// serving ACME must therefore name every node that will join through it. It
+// returns nil when cluster ACME enrollment is off, leaving ordinary ACME
+// issuance untouched.
+func buildClusterPreSignHooks(cfg *config.Config) (*handlers.OrderPreSignHookRegistry, error) {
 	if !cfg.Cluster.Enabled || !cfg.Cluster.RaftEnrollment.ACME.Enabled {
-		return nil
+		return nil, nil
+	}
+	members, err := cfg.Cluster.Members()
+	if err != nil {
+		return nil, err
 	}
 	trustDomain := cfg.Cluster.RaftEnrollment.TrustDomain
 	if trustDomain == "" {
 		trustDomain = defaultClusterTrustDomain
 	}
 	registry := handlers.NewOrderPreSignHookRegistry()
-	registry.Register(handlers.NewPermanentIdentifierURISANHook(func(permanentID string) string {
-		return clusterenroll.NodeURI(trustDomain, permanentID)
-	}))
-	return registry
+	registry.Register(handlers.NewClusterNodeURISANHook(trustDomain, members))
+	return registry, nil
 }
 
 // clusterACMEIssuerCN returns the dedicated cluster intermediate CN that

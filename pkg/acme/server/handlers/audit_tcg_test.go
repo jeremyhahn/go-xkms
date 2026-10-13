@@ -166,7 +166,7 @@ func TestAuditTrail_TPMEnrollmentIsRecorded(t *testing.T) {
 	req := httptest.NewRequest("POST", service.baseRESTURI+"/acme/order/4711/finalize", nil)
 	req.Header.Set("X-Request-ID", "enrollment-correlation-id")
 
-	serialNumber, pemBytes, err := service.finalizeTCGCSR("198.51.100.20:4444", csrDER, req, account, order)
+	serialNumber, pemBytes, err := service.finalizeTCGCSR("198.51.100.20:4444", csrDER, req, account, order, nil)
 	require.NoError(t, err)
 	require.Equal(t, idevidSerial.Text(16), serialNumber)
 	require.NotEmpty(t, pemBytes)
@@ -212,7 +212,7 @@ func TestAuditTrail_TPMEnrollmentFailureIsNotRecordedAsIssuance(t *testing.T) {
 	req := httptest.NewRequest("POST", service.baseRESTURI+"/acme/order/4712/finalize", nil)
 
 	// A malformed CSR fails before any certificate can be produced.
-	_, _, err := service.finalizeTCGCSR("198.51.100.20:4444", []byte("not-a-tcg-csr"), req, account, order)
+	_, _, err := service.finalizeTCGCSR("198.51.100.20:4444", []byte("not-a-tcg-csr"), req, account, order, nil)
 	require.Error(t, err)
 
 	require.NoError(t, trail.logger.Flush())

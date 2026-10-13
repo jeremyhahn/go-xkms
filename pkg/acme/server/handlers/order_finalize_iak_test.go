@@ -73,7 +73,7 @@ func TestFinalizeTCGCSR_IAKDERReachesHooksAndClientUnchanged(t *testing.T) {
 	}
 	req := httptest.NewRequest("POST", service.baseRESTURI+"/acme/order/371/finalize", nil)
 
-	_, pemBytes, err := service.finalizeTCGCSR("198.51.100.21:4444", csrDER, req, account, order)
+	_, pemBytes, err := service.finalizeTCGCSR("198.51.100.21:4444", csrDER, req, account, order, nil)
 	require.NoError(t, err)
 
 	require.Equal(t, 1, hookCalls, "the finalize hook runs once per enrollment")

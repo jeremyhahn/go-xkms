@@ -24,7 +24,6 @@ import (
 	"crypto/x509/pkix"
 	"encoding/pem"
 	"fmt"
-	"net"
 	"net/url"
 	"os"
 	"time"
@@ -416,18 +415,17 @@ func (p *Provisioner) enrollJoiner(ctx context.Context) (*Result, error) {
 	}
 	tpm := provider.TPM()
 
-	host, _, err := net.SplitHostPort(p.opts.RaftAddress)
-	if err != nil {
-		host = p.opts.RaftAddress
-	}
-
 	client, err := p.newACMEClient(anchorPEM)
 	if err != nil {
 		return nil, err
 	}
+	// The permanent-identifier is the full Raft address: it is the node ID
+	// the cluster CA stamps into spiffe://<td>/node/<id> once it finds the
+	// address in its membership, and the server dials only its host, on the
+	// challenge port.
 	enrollment, err := client.EnrollDevice(ctx, &acmeclient.EnrollmentConfig{
 		Challenge:  string(acmeclient.ChallengeTypeEnroll01),
-		IPAddress:  host,
+		IPAddress:  p.opts.RaftAddress,
 		Port:       p.opts.ACME.ChallengePort,
 		ListenHost: p.opts.ACME.ChallengeHost,
 		TPMModule:  acmeclient.NewXKMSTPMAdapter(tpm, provider.KeyBackend()),

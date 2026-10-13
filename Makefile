@@ -3042,6 +3042,13 @@ integration-test-rand-all: integration-test-crypto-rand integration-test-rand-ha
 integration-test-crypto-wrapping:
 	$(call run_in_devcontainer,$(GO) test -v -tags=integration ./test/integration/crypto/... -run '.*Wrap.*' -timeout 5m,integration-test-crypto-wrapping)
 
+.PHONY: integration-test-clusterca
+## integration-test-clusterca: Run the cluster CA join suite: a joiner enrolls its simulated TPM over ACME enroll-01 (runs in devcontainer)
+# The joiner answers enroll-01 on 127.0.0.1:8080, the port the ACME server
+# dials, so the suite needs that port free inside the devcontainer.
+integration-test-clusterca:
+	$(call run_in_devcontainer,$(GO) test -v -tags='integration tpm_simulator $(BUILD_TAGS)' ./test/integration/clusterca/... -timeout 10m,integration-test-clusterca)
+
 .PHONY: integration-test-utils
 ## integration-test-utils: Run all utility package integration tests
 integration-test-utils: integration-test-signing integration-test-opaque integration-test-metrics integration-test-health integration-test-ratelimit integration-test-crypto-rand integration-test-crypto-wrapping

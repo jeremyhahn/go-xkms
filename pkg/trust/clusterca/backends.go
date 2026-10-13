@@ -163,10 +163,19 @@ func newNodeLocalBackendSet(ctx context.Context, params *NodeLocalBackendsParams
 		// The TPM backend is both a types.Sealer and a types.KeyProvider.
 		if name == "tpm2" && hardwareTPM != nil {
 			if provider, ok := hardwareTPM.(types.KeyProvider); ok {
-				return xkms.New(&xkms.BackendConfig{
+				backend, err := xkms.New(&xkms.BackendConfig{
 					Backend:     provider,
 					CertStorage: certStorage,
 				})
+				if err != nil {
+					return nil, err
+				}
+				// enroll-01 needs the TPM itself, not only its key provider:
+				// keep it reachable through the composed backend.
+				if tpm, ok := hardwareTPM.(tpmProvider); ok {
+					return &tpmNodeBackend{Backend: backend, tpmProvider: tpm}, nil
+				}
+				return backend, nil
 			}
 		}
 		// Software keys (CA signing key and, by default, the node transport key)
@@ -179,4 +188,12 @@ func newNodeLocalBackendSet(ctx context.Context, params *NodeLocalBackendsParams
 		keyStorage:  keyStorage,
 		certStorage: certStorage,
 	}, nil
+}
+
+// tpmNodeBackend is the "tpm2" node key backend: the composed xkms.Backend
+// over the shared TPM, which also exposes that TPM and its key-blob store so
+// a joining node can run enroll-01 with it (see tpmProvider).
+type tpmNodeBackend struct {
+	xkms.Backend
+	tpmProvider
 }

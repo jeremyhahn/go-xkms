@@ -1,6 +1,6 @@
 # Clustering — Architecture
 
-> **Status: NORMATIVE** · Feature: `clustering` · Repo: `go-xkms` · Last verified: 2026-10-07
+> **Status: NORMATIVE** · Feature: `clustering` · Repo: `go-xkms` · Last verified: 2026-10-12
 
 ## The problem
 
@@ -115,6 +115,16 @@ boot (raft build, cluster.enabled=true):
   → waitForClusterLeader (30s, 250ms poll) before the server reports ready
   → startClusterAdvertiser publishes this node's API endpoints
 
+joiner enrolls over ACME enroll-01 (raft_enrollment.acme.enabled):
+  joiner fetches the anchor (raft_enrollment.bootstrap)
+  → new-order permanent-identifier = its full raft_address (host:port)
+  → serving node dials enroll-01 at that host, challenge port (8080)
+  → finalize: NewClusterNodeURISANHook stamps
+    spiffe://<td>/node/<raft_address> only if enroll-01 was the sole
+    validated challenge AND raft_address is in cluster.peers
+  → joiner accepts the leaf only if it carries its own node URI,
+    else ErrSPIFFEMismatch
+
 client write reaches a follower:
   qrdb rejects the write → xkms.AsNotLeader(err) → typed ErrNotLeader
   → REST/QUIC: HTTP 421 with leader coordinates in headers + JSON body
@@ -207,6 +217,14 @@ certificates is a separate design surface from Raft membership itself. See
   `Unimplemented` — "go-xkms is not a database server product" (comment,
   same file). Clustering replicates xkms's own data; it does not turn
   `xkmsd` into a general KV service.
+- **A joiner's claimed address is not its cluster identity.** The ACME
+  `permanent-identifier` is client-declared. enroll-01 proves a TPM holds
+  the key, not that the TPM belongs at that address. So the node URI is
+  stamped only for addresses the serving node's own `cluster.peers` lists,
+  and only after enroll-01 is the order's sole validated challenge. Stamping
+  every enroll-01 identifier was rejected: any TPM the CA trusts could have
+  named itself a peer. A device-to-address registry was also rejected,
+  because `peers` is already the operator's statement of membership.
 - **A single-node cluster needs no Raft mTLS**; the in-process transport
   needs no peer certificates. Any cluster with more than one member always
   requires mTLS — it is mandatory in the Raft transport itself.

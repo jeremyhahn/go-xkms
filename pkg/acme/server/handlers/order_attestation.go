@@ -109,8 +109,11 @@ func (v *validatedAttestations) records(challengeType string) []*entities.Device
 }
 
 // types returns the attestation challenge types that validated the order,
-// sorted.
+// sorted. A nil set (an order with no device identifier) has none.
 func (v *validatedAttestations) types() []string {
+	if v == nil {
+		return nil
+	}
 	types := make([]string, 0, len(v.challenges))
 	for challengeType := range v.challenges {
 		types = append(types, challengeType)
@@ -182,32 +185,33 @@ func bindEnrollActivation(records []*entities.DeviceAttestation, orderID uint64,
 // bindTCGCSRToActivation is the gate in front of finalizeTCGCSR: the order must
 // have been validated by enroll-01 alone, and the TCG-CSR-IDEVID must be built
 // around the endorsement key and activation key that passed credential
-// activation there.
+// activation there. It returns the attestation challenge types that validated
+// the order, which finalizeTCGCSR hands to the pre-sign hooks.
 func (s *RestService) bindTCGCSRToActivation(
 	ctx context.Context,
 	authzDAO qrdbsdk.GenericDAO[*entities.ACMEAuthorization],
 	order *entities.ACMEOrder,
 	csrDER []byte,
-) *entities.Error {
+) ([]string, *entities.Error) {
 
 	validated, problem := s.validatedAttestations(ctx, authzDAO, order)
 	if problem != nil {
-		return problem
+		return nil, problem
 	}
 	if problem := validated.requireOnly(order.ID, common.ChallengeTypeEnroll01, "TCG-CSR-IDEVID"); problem != nil {
-		return problem
+		return nil, problem
 	}
 
 	tcgCSR, err := xkmssdk.UnmarshalIDevIDCSR(csrDER)
 	if err != nil {
-		return common.MalformedError("Failed to parse TCG-CSR-IDEVID", nil)
+		return nil, common.MalformedError("Failed to parse TCG-CSR-IDEVID", nil)
 	}
 	if problem := bindEnrollActivation(
 		validated.records(common.ChallengeTypeEnroll01), order.ID,
 		tcgCSR.CsrContents.EkCert, tcgCSR.CsrContents.AttestPub); problem != nil {
 		s.logger.Warn("TCG-CSR-IDEVID is not for the TPM that passed enroll-01 credential activation",
 			"order_id", order.ID, "reason", problem.Detail)
-		return problem
+		return nil, problem
 	}
-	return nil
+	return validated.types(), nil
 }

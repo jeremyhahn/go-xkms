@@ -1,6 +1,6 @@
 # Clustering — API
 
-> **Status: NORMATIVE** · Feature: `clustering` · Repo: `go-xkms` · Last verified: 2026-10-07
+> **Status: NORMATIVE** · Feature: `clustering` · Repo: `go-xkms` · Last verified: 2026-10-12
 
 Clustering shows up on xkms's own API surface (REST, gRPC, QUIC, MCP — the
 transports documented in
@@ -14,6 +14,24 @@ its own on any transport. Those belong to go-qrdb's control plane: its
 node's admin-plane `GET /peers`. `xkmsctl cluster` and `rebalance` (cli.md)
 speak that control plane directly. The former `GET /api/v1/cluster/status` and
 `GET /api/v1/cluster/members` REST routes re-hosted it and were removed.
+
+## SDK: the cluster node URI hook
+
+An embedder that serves the cluster CA's ACME directory registers the same
+pre-sign hook `xkmsd` registers:
+
+```go
+hooks := handlers.NewOrderPreSignHookRegistry()
+hooks.Register(acmesdk.NewACMEClusterNodeURISANHook(trustDomain, members))
+```
+
+`members` maps replica ID to Raft `host:port` and must cover every joiner.
+The hook stamps `spiffe://<trustDomain>/node/<host:port>` onto a TCG-CSR-IDEVID
+order whose only validated challenge is `enroll-01` and whose
+`permanent-identifier` is a member address. It adds nothing to any other order
+(`sdk/go/acme/acme_server.go`, `pkg/acme/server/handlers/hooks_urisan.go`).
+It replaces `NewACMEPermanentIdentifierURISANHook`, which stamped any
+identifier.
 
 ## `/auth/me` capability flag
 

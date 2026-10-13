@@ -1,6 +1,6 @@
 # Clustering — User Guide
 
-> **Status: NORMATIVE** · Feature: `clustering` · Repo: `go-xkms` · Last verified: 2026-10-07
+> **Status: NORMATIVE** · Feature: `clustering` · Repo: `go-xkms` · Last verified: 2026-10-12
 
 ## What clustering gets you
 
@@ -184,6 +184,24 @@ cluster:
       spki_pin: <base64 SPKI pin>
       server_addr: 10.0.0.1:8443
 ```
+
+A joining node is named a cluster member only if two things hold:
+
+- it passed enroll-01;
+- its `raft_address` (host and port) appears in the serving node's
+  `cluster.peers`.
+
+Its certificate then carries `spiffe://<trust_domain>/node/<raft_address>`.
+So on the node whose ACME directory joiners use, list every node that will
+join in `peers`. Give each joiner exactly the `raft_address` that appears
+there. A joiner left out of `peers`, or listed with a different port, gets
+a certificate with no node URI. It then stops with `ErrSPIFFEMismatch`
+instead of joining.
+
+enroll-01 reaches the joiner on the challenge port (`8080` unless
+`raft_enrollment.acme.challenge_port` is set) at the host part of its
+`raft_address`. That port must be reachable from the serving node during the
+join.
 
 Two admission models are available via the ACME challenge configuration:
 **enroll-01** (TPM-attested self-enrollment, touch-free) and **endorse-01**

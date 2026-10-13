@@ -121,4 +121,14 @@ func TestNodeLocalBackends_ReusesSharedTPMForHardwareKeys(t *testing.T) {
 		"the tpm2 backend must be the shared TPM, not the software keystore")
 	assert.Equal(t, types.BackendTypeTPM2, hardware.KeyProvider().Type(),
 		"the resolved tpm2 backend must be backed by the TPM key provider")
+
+	// A joining node type-asserts the resolved backend for the TPM to run
+	// enroll-01; without it the join fails with ErrNoTPM.
+	provider, ok := hardware.(tpmProvider)
+	require.True(t, ok, "the tpm2 backend must expose the TPM for enroll-01")
+	assert.Same(t, tpmBackend.TPM(), provider.TPM())
+	assert.Same(t, tpmBackend.KeyBackend(), provider.KeyBackend())
+
+	_, ok = software.(tpmProvider)
+	assert.False(t, ok, "the software backend has no TPM to expose")
 }

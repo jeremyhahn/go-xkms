@@ -98,8 +98,10 @@ type ACMEOptions struct {
 // this from its own configuration plus two injected seams (Backends, CA).
 type Options struct {
 	// RaftAddress is this node's Raft address (host:port) — the SPIFFE node
-	// identity, and the value joiners present as the ACME order's
-	// permanent-identifier host.
+	// identity, and the value a joiner presents, whole, as its ACME order's
+	// permanent-identifier. The cluster CA stamps the node URI only when it
+	// finds exactly this string in its membership, and its enroll-01
+	// challenge dials the host part on the challenge port.
 	RaftAddress string
 
 	// NodeID is this node's replica ID (names the node key).

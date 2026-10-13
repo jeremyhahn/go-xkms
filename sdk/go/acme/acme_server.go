@@ -157,13 +157,13 @@ type ACMEErrPreSignHookFailed = acmehandler.ErrPreSignHookFailed
 // as an IA5String SubjectAltName GeneralName.
 type ACMEErrURISANNotIA5 = acmehandler.ErrURISANNotIA5
 
-// NewACMEPermanentIdentifierURISANHook returns a pre-sign hook that embeds a
-// URI SubjectAltName derived from the ACME order's permanent-identifier in
-// enroll-01 (TCG-CSR-IDEVID) certificates. The caller-supplied uriFor maps a
-// permanent-identifier to the URI to stamp (e.g. a SPIFFE node URI for
-// attested Raft cluster enrollment) and returns "" to leave the certificate
-// unchanged.
-var NewACMEPermanentIdentifierURISANHook = acmehandler.NewPermanentIdentifierURISANHook
+// NewACMEClusterNodeURISANHook returns a pre-sign hook that stamps a cluster
+// node's SPIFFE identity, spiffe://<trustDomain>/node/<raftAddr>, into the
+// enroll-01 (TCG-CSR-IDEVID) IDevID — only when the order's
+// permanent-identifier is exactly one of members' Raft addresses (replica ID
+// to host:port) and enroll-01 alone validated the order. Any other order is
+// issued without the URI.
+var NewACMEClusterNodeURISANHook = acmehandler.NewClusterNodeURISANHook
 
 // ACMEDeviceProfile is the expected state of a device, returned by the lookup
 // function of a device-profile pre-issuance hook.

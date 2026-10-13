@@ -118,8 +118,9 @@ func ACMEAttestingVerifiers(client *ACMEChallengeClient, enroll, endorse bool, d
 			}
 			// The identity the dial established is the order's identifier: a
 			// genuine TPM answered, and activated a credential, at the
-			// address the identifier names (DialTarget is the identifier, or
-			// the client's own address under the dev-mode loopback
+			// address the identifier names (DialTarget is the identifier's
+			// host -- a cluster joiner's Raft address loses its port -- or the
+			// client's own address under the dev-mode loopback
 			// substitution). That binding is real, so ChallengeHandler keeps
 			// its comparison. What names the TPM itself is the activated
 			// endorsement key, which the record carries for finalization to

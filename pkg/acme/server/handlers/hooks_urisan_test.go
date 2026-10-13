@@ -31,8 +31,16 @@ import (
 	"github.com/jeremyhahn/go-xkms/pkg/acme/entities"
 )
 
+// testTrustDomain and testMembers are the cluster the hook tests stamp for.
+const testTrustDomain = "xkms.cluster"
+
+var testMembers = map[uint64]string{
+	1: "10.0.0.1:8300",
+	2: "10.0.0.2:8300",
+}
+
 // tcgOrderContext builds a TCG-CSR-IDEVID pre-sign hook context whose order
-// carries the given permanent-identifier value.
+// carries the given permanent-identifier value and was validated by enroll-01.
 func tcgOrderContext(permanentID string) *OrderPreSignHookContext {
 	return &OrderPreSignHookContext{
 		Context: context.Background(),
@@ -42,7 +50,8 @@ func tcgOrderContext(permanentID string) *OrderPreSignHookContext {
 				{Type: common.AuthzTypePermanentIdentifier, Value: permanentID},
 			},
 		},
-		IsTCGCSR: true,
+		IsTCGCSR:            true,
+		ValidatedChallenges: []string{common.ChallengeTypeEnroll01},
 		TCGData: &TCGEnrollmentData{
 			ProductModel:        "model",
 			ProductSerial:       "serial",
@@ -51,13 +60,10 @@ func tcgOrderContext(permanentID string) *OrderPreSignHookContext {
 	}
 }
 
-func TestPermanentIdentifierURISANHook_StampsURI(t *testing.T) {
-	hook := NewPermanentIdentifierURISANHook(func(permanentID string) string {
-		require.Equal(t, "10.0.0.1:8300", permanentID)
-		return "spiffe://xkms.cluster/node/10.0.0.1:8300"
-	})
+func TestClusterNodeURISANHook_StampsEnrolledMember(t *testing.T) {
+	hook := NewClusterNodeURISANHook(testTrustDomain, testMembers)
 
-	exts, err := hook(tcgOrderContext("10.0.0.1:8300"))
+	exts, err := hook(tcgOrderContext("10.0.0.2:8300"))
 	require.NoError(t, err)
 	require.Len(t, exts, 1)
 	assert.Equal(t, oidExtensionSubjectAltName, exts[0].Id)
@@ -79,75 +85,91 @@ func TestPermanentIdentifierURISANHook_StampsURI(t *testing.T) {
 	cert, err := x509.ParseCertificate(der)
 	require.NoError(t, err)
 	require.Len(t, cert.URIs, 1)
-	assert.Equal(t, "spiffe://xkms.cluster/node/10.0.0.1:8300", cert.URIs[0].String())
+	assert.Equal(t, "spiffe://xkms.cluster/node/10.0.0.2:8300", cert.URIs[0].String())
 }
 
-func TestPermanentIdentifierURISANHook_SkipsNonTCG(t *testing.T) {
-	hook := NewPermanentIdentifierURISANHook(func(string) string {
-		t.Fatal("uriFor must not be called on the standard CSR path")
-		return ""
-	})
-
-	hookCtx := tcgOrderContext("10.0.0.1:8300")
-	hookCtx.IsTCGCSR = false
-
-	exts, err := hook(hookCtx)
-	require.NoError(t, err)
-	assert.Nil(t, exts)
-}
-
-func TestPermanentIdentifierURISANHook_SkipsWithoutPermanentIdentifier(t *testing.T) {
-	hook := NewPermanentIdentifierURISANHook(func(string) string {
-		t.Fatal("uriFor must not be called without a permanent-identifier")
-		return ""
-	})
-
-	hookCtx := tcgOrderContext("unused")
-	hookCtx.Order.Identifiers = []entities.ACMEIdentifier{
-		{Type: common.AuthzTypeDNS, Value: "node.example.com"},
+// TestClusterNodeURISANHook_RefusesWithoutProof covers every way an order can
+// fall short of membership plus an enroll-01 validation. Each must leave the
+// certificate without a node URI rather than fail issuance.
+func TestClusterNodeURISANHook_RefusesWithoutProof(t *testing.T) {
+	tests := []struct {
+		name   string
+		mutate func(*OrderPreSignHookContext)
+	}{
+		{"non-member address", func(c *OrderPreSignHookContext) {
+			c.Order.Identifiers[0].Value = "10.0.0.9:8300"
+		}},
+		{"member host on another port", func(c *OrderPreSignHookContext) {
+			c.Order.Identifiers[0].Value = "10.0.0.1:9999"
+		}},
+		{"member host without port", func(c *OrderPreSignHookContext) {
+			c.Order.Identifiers[0].Value = "10.0.0.1"
+		}},
+		{"validated by endorse-01", func(c *OrderPreSignHookContext) {
+			c.ValidatedChallenges = []string{common.ChallengeTypeEndorse01}
+		}},
+		{"validated by device-attest-01", func(c *OrderPreSignHookContext) {
+			c.ValidatedChallenges = []string{common.ChallengeTypeDeviceAttest01}
+		}},
+		{"enroll-01 alongside another challenge", func(c *OrderPreSignHookContext) {
+			c.ValidatedChallenges = []string{common.ChallengeTypeEndorse01, common.ChallengeTypeEnroll01}
+		}},
+		{"no attestation challenge", func(c *OrderPreSignHookContext) {
+			c.ValidatedChallenges = nil
+		}},
+		{"standard CSR path", func(c *OrderPreSignHookContext) {
+			c.IsTCGCSR = false
+		}},
+		{"no permanent-identifier", func(c *OrderPreSignHookContext) {
+			c.Order.Identifiers[0] = entities.ACMEIdentifier{Type: common.AuthzTypeDNS, Value: "10.0.0.1:8300"}
+		}},
+		{"nil order", func(c *OrderPreSignHookContext) {
+			c.Order = nil
+		}},
 	}
 
-	exts, err := hook(hookCtx)
-	require.NoError(t, err)
-	assert.Nil(t, exts)
+	hook := NewClusterNodeURISANHook(testTrustDomain, testMembers)
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			hookCtx := tcgOrderContext("10.0.0.1:8300")
+			tt.mutate(hookCtx)
+
+			exts, err := hook(hookCtx)
+			require.NoError(t, err)
+			assert.Nil(t, exts)
+		})
+	}
 }
 
-func TestPermanentIdentifierURISANHook_SkipsWhenPolicyDeclines(t *testing.T) {
-	hook := NewPermanentIdentifierURISANHook(func(string) string {
-		return ""
-	})
-
-	exts, err := hook(tcgOrderContext("intruder:9999"))
-	require.NoError(t, err)
-	assert.Nil(t, exts)
-}
-
-func TestPermanentIdentifierURISANHook_SkipsNilContextAndOrder(t *testing.T) {
-	hook := NewPermanentIdentifierURISANHook(func(string) string { return "spiffe://d/node/x" })
-
-	exts, err := hook(nil)
+func TestClusterNodeURISANHook_NilContextAndNoMembers(t *testing.T) {
+	exts, err := NewClusterNodeURISANHook(testTrustDomain, testMembers)(nil)
 	require.NoError(t, err)
 	assert.Nil(t, exts)
 
-	hookCtx := tcgOrderContext("10.0.0.1:8300")
-	hookCtx.Order = nil
+	// An empty address in the membership must not admit an order without a
+	// permanent-identifier.
+	hook := NewClusterNodeURISANHook(testTrustDomain, map[uint64]string{1: ""})
+	hookCtx := tcgOrderContext("")
 	exts, err = hook(hookCtx)
 	require.NoError(t, err)
 	assert.Nil(t, exts)
 }
 
-func TestPermanentIdentifierURISANHook_RejectsNonIA5URI(t *testing.T) {
-	hook := NewPermanentIdentifierURISANHook(func(string) string {
-		return "spiffe://xkms.cluster/node/nöde"
-	})
+func TestClusterNodeURISANHook_CopiesMembers(t *testing.T) {
+	members := map[uint64]string{1: "10.0.0.1:8300"}
+	hook := NewClusterNodeURISANHook(testTrustDomain, members)
+	members[2] = "10.0.0.2:8300"
 
-	exts, err := hook(tcgOrderContext("10.0.0.1:8300"))
-	require.Error(t, err)
-	assert.Nil(t, exts)
+	exts, err := hook(tcgOrderContext("10.0.0.2:8300"))
+	require.NoError(t, err)
+	assert.Nil(t, exts, "a member added after construction must not be stamped")
+}
 
-	var ia5Err ErrURISANNotIA5
-	require.ErrorAs(t, err, &ia5Err)
-	assert.Contains(t, ia5Err.Error(), "not an IA5")
+func TestValidatedByEnroll01Only(t *testing.T) {
+	assert.True(t, validatedByEnroll01Only([]string{common.ChallengeTypeEnroll01}))
+	assert.False(t, validatedByEnroll01Only(nil))
+	assert.False(t, validatedByEnroll01Only([]string{common.ChallengeTypeEndorse01}))
+	assert.False(t, validatedByEnroll01Only([]string{common.ChallengeTypeEndorse01, common.ChallengeTypeEnroll01}))
 }
 
 func TestBuildURISANExtension_ValidAndInvalid(t *testing.T) {
@@ -157,7 +179,9 @@ func TestBuildURISANExtension_ValidAndInvalid(t *testing.T) {
 	assert.NotEmpty(t, ext.Value)
 
 	_, err = buildURISANExtension("spiffe://td/node/ü")
-	require.Error(t, err)
+	var ia5Err ErrURISANNotIA5
+	require.ErrorAs(t, err, &ia5Err)
+	assert.Contains(t, ia5Err.Error(), "not an IA5")
 }
 
 func TestOrderPermanentIdentifier(t *testing.T) {

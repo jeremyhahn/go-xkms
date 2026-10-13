@@ -332,12 +332,16 @@ func (s *RestService) ChallengeHandler(w http.ResponseWriter, r *http.Request) {
 
 		if authz.Identifier.Type == common.AuthzTypePermanentIdentifier &&
 			dialsDevice(challenge.Type) {
+			// A cluster joiner names itself by its Raft address (host:port);
+			// the device is reached at that host on the challenge port.
+			challengeDomain = permanentIdentifierDialHost(authz.Identifier.Value)
+
 			// Only use client IP when identifier is loopback (127.0.0.1)
 			// This supports local development/testing where the device registers with the
 			// loopback address but the actual challenge validation needs to reach the
 			// device at its real IP. Gated by acme.enrollment.allow_loopback_identifier
 			// (default false): a production deployment must refuse the substitution.
-			if authz.Identifier.Value == loopbackIdentifier {
+			if challengeDomain == loopbackIdentifier {
 				if !s.allowLoopbackIdentifier {
 					loopbackRefused = true
 					s.logger.Warn("enrollment challenge refused: loopback identifier requires acme.enrollment.allow_loopback_identifier",
@@ -666,4 +670,17 @@ func isDeviceAttestChallenge(challengeType string) bool {
 // device needs no address, no listener and no loopback substitution.
 func dialsDevice(challengeType string) bool {
 	return isEnrollXChallenge(challengeType) && !isDeviceAttestChallenge(challengeType)
+}
+
+// permanentIdentifierDialHost returns the host a dialing challenge reaches for
+// a permanent-identifier value. A host:port value (a cluster node's Raft
+// address, [v6]:port included) yields its host: the port names the node's
+// Raft listener, and the device answers on the challenge port. Any other value
+// is a host already and is returned unchanged.
+func permanentIdentifierDialHost(identifier string) string {
+	host, _, err := net.SplitHostPort(identifier)
+	if err != nil {
+		return identifier
+	}
+	return host
 }

@@ -842,26 +842,37 @@ func writeTestCertKeyPair(t *testing.T, dir string) (certFile, keyFile string) {
 // issuance registers no cluster-specific pre-sign extensions.
 func TestBuildClusterPreSignHooks_GatedOff(t *testing.T) {
 	// Cluster disabled entirely.
-	if got := buildClusterPreSignHooks(&config.Config{}); got != nil {
-		t.Errorf("cluster disabled: got %v, want nil", got)
+	got, err := buildClusterPreSignHooks(&config.Config{})
+	if err != nil || got != nil {
+		t.Errorf("cluster disabled: got %v, %v, want nil, nil", got, err)
 	}
 	// Cluster enabled but ACME enrollment off.
 	cfg := &config.Config{Cluster: config.ClusterConfig{Enabled: true}}
-	if got := buildClusterPreSignHooks(cfg); got != nil {
-		t.Errorf("ACME enrollment off: got %v, want nil", got)
+	got, err = buildClusterPreSignHooks(cfg)
+	if err != nil || got != nil {
+		t.Errorf("ACME enrollment off: got %v, %v, want nil, nil", got, err)
 	}
+}
+
+// clusterACMEConfig is a cluster with ACME enrollment on and two members.
+func clusterACMEConfig() *config.Config {
+	return &config.Config{Cluster: config.ClusterConfig{
+		Enabled: true,
+		Peers:   "1=10.0.0.1:8301,2=10.0.0.2:8301",
+		RaftEnrollment: config.RaftEnrollmentConfig{
+			TrustDomain: "cluster.example.org",
+			ACME:        config.RaftACMEEnrollmentConfig{Enabled: true},
+		},
+	}}
 }
 
 // TestBuildClusterPreSignHooks_Enabled verifies that enabling cluster ACME
 // enrollment registers exactly one pre-sign hook (the SPIFFE URI-SAN hook).
 func TestBuildClusterPreSignHooks_Enabled(t *testing.T) {
-	cfg := &config.Config{Cluster: config.ClusterConfig{
-		Enabled: true,
-		RaftEnrollment: config.RaftEnrollmentConfig{
-			ACME: config.RaftACMEEnrollmentConfig{Enabled: true},
-		},
-	}}
-	registry := buildClusterPreSignHooks(cfg)
+	registry, err := buildClusterPreSignHooks(clusterACMEConfig())
+	if err != nil {
+		t.Fatalf("buildClusterPreSignHooks: %v", err)
+	}
 	if registry == nil {
 		t.Fatal("expected a non-nil pre-sign hook registry")
 	}
@@ -870,32 +881,45 @@ func TestBuildClusterPreSignHooks_Enabled(t *testing.T) {
 	}
 }
 
-// TestBuildClusterPreSignHooks_RegisteredHookStampsSPIFFEURI executes the
-// registered SPIFFE URI-SAN hook (rather than only counting it, as
-// TestBuildClusterPreSignHooks_Enabled does) against a synthetic
-// TCG-CSR-IDEVID order carrying a permanent identifier, and proves the
-// resulting extension embeds clusterenroll.NodeURI's
-// spiffe://<trustDomain>/node/<permanentID> URI -- the actual mapping
-// go-xkms#705's earlier batches left unexercised.
-func TestBuildClusterPreSignHooks_RegisteredHookStampsSPIFFEURI(t *testing.T) {
-	cfg := &config.Config{Cluster: config.ClusterConfig{
-		Enabled: true,
-		RaftEnrollment: config.RaftEnrollmentConfig{
-			TrustDomain: "cluster.example.org",
-			ACME:        config.RaftACMEEnrollmentConfig{Enabled: true},
-		},
-	}}
-	registry := buildClusterPreSignHooks(cfg)
-
-	order := &entities.ACMEOrder{
-		Identifiers: []entities.ACMEIdentifier{
-			{Type: common.AuthzTypePermanentIdentifier, Value: "node-raft-1"},
-		},
+// TestBuildClusterPreSignHooks_MalformedPeersRefused verifies a cluster.peers
+// the membership cannot be read from fails ACME start-up rather than leaving
+// the hook with no members to stamp.
+func TestBuildClusterPreSignHooks_MalformedPeersRefused(t *testing.T) {
+	cfg := clusterACMEConfig()
+	cfg.Cluster.Peers = "not-a-peer"
+	registry, err := buildClusterPreSignHooks(cfg)
+	if err == nil {
+		t.Fatal("expected an error for a malformed cluster.peers")
 	}
+	if registry != nil {
+		t.Errorf("registry = %v, want nil on error", registry)
+	}
+}
+
+// TestBuildClusterPreSignHooks_StampsEnrolledMembersOnly executes the
+// registered SPIFFE URI-SAN hook against synthetic TCG-CSR-IDEVID orders and
+// proves it embeds spiffe://<trustDomain>/node/<raftAddr> for a cluster.peers
+// member enroll-01 validated, and nothing for any other order.
+func TestBuildClusterPreSignHooks_StampsEnrolledMembersOnly(t *testing.T) {
+	registry, err := buildClusterPreSignHooks(clusterACMEConfig())
+	if err != nil {
+		t.Fatalf("buildClusterPreSignHooks: %v", err)
+	}
+
+	orderFor := func(permanentID string) *entities.ACMEOrder {
+		return &entities.ACMEOrder{
+			Identifiers: []entities.ACMEIdentifier{
+				{Type: common.AuthzTypePermanentIdentifier, Value: permanentID},
+			},
+		}
+	}
+	enrolled := []string{common.ChallengeTypeEnroll01}
+
 	exts, err := registry.Execute(&handlers.OrderPreSignHookContext{
-		Context:  context.Background(),
-		Order:    order,
-		IsTCGCSR: true,
+		Context:             context.Background(),
+		Order:               orderFor("10.0.0.2:8301"),
+		IsTCGCSR:            true,
+		ValidatedChallenges: enrolled,
 	})
 	if err != nil {
 		t.Fatalf("registry.Execute: %v", err)
@@ -903,38 +927,38 @@ func TestBuildClusterPreSignHooks_RegisteredHookStampsSPIFFEURI(t *testing.T) {
 	if len(exts) != 1 {
 		t.Fatalf("registry.Execute returned %d extensions, want 1", len(exts))
 	}
-	wantURI := "spiffe://cluster.example.org/node/node-raft-1"
+	wantURI := "spiffe://cluster.example.org/node/10.0.0.2:8301"
 	if !strings.Contains(string(exts[0].Value), wantURI) {
 		t.Errorf("extension value = %x, want it to embed URI %q", exts[0].Value, wantURI)
 	}
 
-	// A non-TCG-CSR order (standard PKCS#10 issuance) must not be touched:
-	// the hook returns no extensions rather than misapplying a SPIFFE URI
-	// SAN meant only for cluster node enrollment.
-	exts, err = registry.Execute(&handlers.OrderPreSignHookContext{
-		Context:  context.Background(),
-		Order:    order,
-		IsTCGCSR: false,
-	})
-	if err != nil {
-		t.Fatalf("registry.Execute (non-TCG order): %v", err)
+	refused := []struct {
+		name string
+		ctx  *handlers.OrderPreSignHookContext
+	}{
+		{"non-member", &handlers.OrderPreSignHookContext{
+			Order: orderFor("10.0.0.9:8301"), IsTCGCSR: true, ValidatedChallenges: enrolled,
+		}},
+		{"member host on another port", &handlers.OrderPreSignHookContext{
+			Order: orderFor("10.0.0.2:9999"), IsTCGCSR: true, ValidatedChallenges: enrolled,
+		}},
+		{"endorse-01", &handlers.OrderPreSignHookContext{
+			Order: orderFor("10.0.0.2:8301"), IsTCGCSR: true,
+			ValidatedChallenges: []string{common.ChallengeTypeEndorse01},
+		}},
+		{"standard CSR", &handlers.OrderPreSignHookContext{
+			Order: orderFor("10.0.0.2:8301"), IsTCGCSR: false, ValidatedChallenges: enrolled,
+		}},
 	}
-	if len(exts) != 0 {
-		t.Errorf("registry.Execute (non-TCG order) returned %d extensions, want 0", len(exts))
-	}
-
-	// A TCG-CSR order with no permanent-identifier is equally a no-op: the
-	// hook has nothing to derive a node URI from.
-	exts, err = registry.Execute(&handlers.OrderPreSignHookContext{
-		Context:  context.Background(),
-		Order:    &entities.ACMEOrder{},
-		IsTCGCSR: true,
-	})
-	if err != nil {
-		t.Fatalf("registry.Execute (no permanent identifier): %v", err)
-	}
-	if len(exts) != 0 {
-		t.Errorf("registry.Execute (no permanent identifier) returned %d extensions, want 0", len(exts))
+	for _, tt := range refused {
+		tt.ctx.Context = context.Background()
+		exts, err := registry.Execute(tt.ctx)
+		if err != nil {
+			t.Fatalf("%s: registry.Execute: %v", tt.name, err)
+		}
+		if len(exts) != 0 {
+			t.Errorf("%s: registry.Execute returned %d extensions, want 0", tt.name, len(exts))
+		}
 	}
 }
 

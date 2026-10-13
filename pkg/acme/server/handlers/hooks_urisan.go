@@ -17,6 +17,8 @@ import (
 	"crypto/x509/pkix"
 	"encoding/asn1"
 
+	"github.com/jeremyhahn/go-qrdb/sdk/go/clusterenroll"
+
 	"github.com/jeremyhahn/go-xkms/pkg/acme/common"
 	"github.com/jeremyhahn/go-xkms/pkg/acme/entities"
 )
@@ -40,43 +42,54 @@ func (e ErrURISANNotIA5) Error() string {
 	return "acme: uri san is not an IA5 (ASCII) string: " + e.URI
 }
 
-// NewPermanentIdentifierURISANHook returns an OrderPreSignHook that embeds a
-// uniformResourceIdentifier SubjectAltName extension in certificates issued
-// through the TCG-CSR-IDEVID (enroll-01) path. The URI is derived from the
-// ACME order's permanent-identifier value by the caller-supplied uriFor
-// function, keeping identity policy at the composition root — for example, a
-// cluster server maps a Raft node's advertised address to its SPIFFE node URI
-// (spiffe://<trust-domain>/node/<raftAddr>) and returns "" for identifiers
-// that are not cluster members.
+// NewClusterNodeURISANHook returns an OrderPreSignHook that stamps a cluster
+// node's SPIFFE identity, spiffe://<trustDomain>/node/<raftAddr>, as a
+// uniformResourceIdentifier SubjectAltName in the IDevID issued through the
+// TCG-CSR-IDEVID (enroll-01) path. Peers trust that URI to name a cluster
+// member, so it is granted only on two conditions:
 //
-// The hook leaves the certificate unchanged (returns nil, nil) when:
-//   - the order is not a TCG-CSR-IDEVID enrollment (standard CSR paths carry
-//     their SANs in the CSR itself; appending a second SubjectAltName
-//     extension would produce an invalid duplicate),
-//   - the order carries no permanent-identifier, or
-//   - uriFor returns "" (the identifier is outside the caller's policy).
+//   - the order's permanent-identifier is exactly one of the members' Raft
+//     addresses (host:port, as configured; a different port is a different
+//     identifier), and
+//   - enroll-01, and no other challenge, validated the order: the dial that
+//     proved a genuine TPM activated a credential reached the address the
+//     identifier names.
 //
-// It returns an error — aborting issuance — only when the URI cannot be
-// encoded as an IA5String.
-func NewPermanentIdentifierURISANHook(uriFor func(permanentIdentifier string) string) OrderPreSignHook {
+// members maps replica ID to Raft address; the hook copies it, so later
+// changes to the map do not affect it.
+//
+// Otherwise the hook leaves the certificate unchanged (returns nil, nil):
+// standard CSR paths carry their SANs in the CSR itself, and appending a
+// second SubjectAltName extension would produce an invalid duplicate. It
+// returns an error — aborting issuance — only when the URI cannot be encoded
+// as an IA5String.
+func NewClusterNodeURISANHook(trustDomain string, members map[uint64]string) OrderPreSignHook {
+	memberAddrs := make(map[string]struct{}, len(members))
+	for _, addr := range members {
+		if addr != "" {
+			memberAddrs[addr] = struct{}{}
+		}
+	}
 	return func(ctx *OrderPreSignHookContext) ([]pkix.Extension, error) {
-		if ctx == nil || !ctx.IsTCGCSR || ctx.Order == nil {
+		if ctx == nil || !ctx.IsTCGCSR || ctx.Order == nil || !validatedByEnroll01Only(ctx.ValidatedChallenges) {
 			return nil, nil
 		}
 		permanentID := orderPermanentIdentifier(ctx.Order)
-		if permanentID == "" {
+		if _, member := memberAddrs[permanentID]; !member {
 			return nil, nil
 		}
-		uri := uriFor(permanentID)
-		if uri == "" {
-			return nil, nil
-		}
-		ext, err := buildURISANExtension(uri)
+		ext, err := buildURISANExtension(clusterenroll.NodeURI(trustDomain, permanentID))
 		if err != nil {
 			return nil, err
 		}
 		return []pkix.Extension{ext}, nil
 	}
+}
+
+// validatedByEnroll01Only reports whether enroll-01 is the one attestation
+// challenge that validated the order.
+func validatedByEnroll01Only(validatedChallenges []string) bool {
+	return len(validatedChallenges) == 1 && validatedChallenges[0] == common.ChallengeTypeEnroll01
 }
 
 // orderPermanentIdentifier returns the order's first permanent-identifier

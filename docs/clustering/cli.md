@@ -1,6 +1,6 @@
 # Clustering — CLI
 
-> **Status: NORMATIVE** · Feature: `clustering` · Repo: `go-xkms` · Last verified: 2026-10-07
+> **Status: NORMATIVE** · Feature: `clustering` · Repo: `go-xkms` · Last verified: 2026-10-12
 
 Binary: `xkmsctl`. Groups: `cluster` and `rebalance`
 (`cmd/xkmsctl/cluster.go`, `rebalance.go`). **These verbs do not go through
@@ -14,6 +14,10 @@ control plane is the only cluster surface — see architecture.md's "One
 cluster control plane: go-qrdb's". The target follows the standard `--server`/`--transport`
 conventions; every scheme other than the Unix socket or `grpc(s)://` is
 rejected with a typed `QRDBControlUnsupportedTransportError`.
+
+Cluster join and node identity (ACME enroll-01, the node URI) have no CLI
+verb. They are driven by `cluster.peers` and `cluster.raft_enrollment` in the
+`xkmsd` configuration; see user.md.
 
 ## `xkmsctl cluster status`
 

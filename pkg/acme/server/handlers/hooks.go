@@ -299,6 +299,13 @@ type OrderPreSignHookContext struct {
 	// When true, TCGData is populated and CSR is nil.
 	IsTCGCSR bool
 
+	// ValidatedChallenges are the attestation challenge types (enroll-01,
+	// endorse-01, device-attest-01) whose validation authorized the order's
+	// device identifier, sorted. Empty when no attestation challenge
+	// validated it. A hook that grants identity on the strength of a specific
+	// proof checks for it here rather than trusting the order's identifier.
+	ValidatedChallenges []string
+
 	// TCGData contains device identity fields extracted from the TCG-CSR-IDEVID.
 	// Only populated when IsTCGCSR is true.
 	TCGData *TCGEnrollmentData
