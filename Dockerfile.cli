@@ -1,8 +1,18 @@
 # Multi-stage Dockerfile for go-xkms CLI tool
 # Production-ready with security best practices
 
+# Base images by digest (go-xkms#1332): the runners share one Docker daemon
+# with pull_request jobs, so a tag can be re-pointed at a poisoned image; a
+# digest names content. release.yml's env (GO_IMAGE_DIGEST,
+# DEBIAN_SLIM_DIGEST) is the source of truth and passes both as build args;
+# these defaults mirror it for ci.yml and local builds, so bump them in the
+# same edit. Refresh with `docker buildx imagetools inspect <tag>` (the
+# multi-arch index digest).
+ARG GO_IMAGE=golang:1.27.2-bookworm@sha256:5cf287a799e6b94384bad13d16b14904c531f51ba65792237e122ce42b392f61
+ARG RUNTIME_IMAGE=debian:bookworm-slim@sha256:7c7b2c966bc9ee8cedfeef67e0e279108992c77681fa595db4a9d65c06ccc587
+
 # Stage 1: Builder
-FROM golang:1.27.2-bookworm AS builder
+FROM ${GO_IMAGE} AS builder
 
 ENV GOTOOLCHAIN=auto
 
@@ -76,7 +86,7 @@ RUN CGO_ENABLED=1 GOOS=linux go build \
 RUN test -f /build/xkms-cli || (echo "ERROR: CLI binary not built" && exit 1)
 
 # Stage 2: Runtime
-FROM debian:bookworm-slim
+FROM ${RUNTIME_IMAGE}
 
 LABEL maintainer="go-xkms"
 LABEL description="Production xkms CLI tool"

@@ -60,8 +60,8 @@ const ClaimEatNonce = 10
 // ClaimUeid is the CWT claim key of the EAT ueid, 256.
 //
 // It is how a device that cannot afford a tcg-dice-Ueid extension states its
-// identifier: the arduino-generic alias certificate is assembled on an 8-bit
-// part from a fixed template and carries the ueid here instead. The value is
+// identifier: a constrained device that mints a fixed-template alias
+// certificate and carries the ueid here instead. The value is
 // an RFC 9711 UEID, a byte string whose first byte is the type.
 const ClaimUeid = 256
 

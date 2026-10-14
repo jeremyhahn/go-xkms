@@ -71,7 +71,16 @@ env:
   # its comment; bump the digest in the same edit as GO_VERSION (resolve it
   # with `docker buildx imagetools inspect golang:<GO_VERSION>-bookworm`), and
   # TRIVY_DIGEST together with ci.yml's copy of it.
+  #
+  # DEBIAN_SLIM_DIGEST is the runtime base of both PUBLISHED images (the
+  # generated server Dockerfile and Dockerfile.cli). Refresh it with
+  # `docker buildx imagetools inspect debian:bookworm-slim` when Debian
+  # rebuilds the tag; the runtime stages still run `apt-get upgrade -y`
+  # (go-xkms#135), so a pinned base is reproducible and still patched.
+  # Dockerfile.cli receives GO_IMAGE/RUNTIME_IMAGE as build args from these
+  # values; its ARG defaults mirror them for ci.yml, so bump both together.
   GO_IMAGE_DIGEST: 'sha256:5cf287a799e6b94384bad13d16b14904c531f51ba65792237e122ce42b392f61' # golang:1.27.2-bookworm
+  DEBIAN_SLIM_DIGEST: 'sha256:7c7b2c966bc9ee8cedfeef67e0e279108992c77681fa595db4a9d65c06ccc587' # debian:bookworm-slim
   TRIVY_DIGEST: 'sha256:af6acf9a6b85dfe389a1941505c0ce9efef52a4719635e1a962f022a3d855daa' # aquasec/trivy:0.75.0
   REGISTRY: ghcr.io
   IMAGE_NAME_SERVER: jeremyhahn/xkms-server
@@ -868,7 +877,7 @@ jobs:
               ./cmd/xkmsd
 
           # Stage 2: Runtime
-          FROM debian:bookworm-slim
+          FROM debian:bookworm-slim@${{ env.DEBIAN_SLIM_DIGEST }}
 
           # Install runtime dependencies.
           #
@@ -1109,6 +1118,8 @@ jobs:
               --file Dockerfile.cli \
               --platform linux/amd64 \
               --tag "${REGISTRY}/${IMAGE_NAME_CLI}:release-scan" \
+              --build-arg GO_IMAGE="golang:${GO_VERSION}-bookworm@${GO_IMAGE_DIGEST}" \
+              --build-arg RUNTIME_IMAGE="debian:bookworm-slim@${DEBIAN_SLIM_DIGEST}" \
               --build-arg VERSION="${{ needs.create-release.outputs.version }}" \
               --build-arg COMMIT="${{ needs.create-release.outputs.commit }}" \
               --build-arg DATE="${{ github.event.repository.updated_at }}" \
@@ -1152,6 +1163,8 @@ jobs:
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
           build-args: |
+            GO_IMAGE=golang:${{ env.GO_VERSION }}-bookworm@${{ env.GO_IMAGE_DIGEST }}
+            RUNTIME_IMAGE=debian:bookworm-slim@${{ env.DEBIAN_SLIM_DIGEST }}
             VERSION=${{ needs.create-release.outputs.version }}
             COMMIT=${{ needs.create-release.outputs.commit }}
             DATE=${{ github.event.repository.updated_at }}

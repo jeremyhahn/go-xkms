@@ -287,6 +287,76 @@ func TestErrNoIssuedCertificate(t *testing.T) {
 	assert.Contains(t, err.Error(), "no issued certificate")
 }
 
+func TestErrChallengeCleanupFailed(t *testing.T) {
+	err := ErrChallengeCleanupFailed{ChallengeType: "dns-01", Reason: "record busy"}
+	assert.Contains(t, err.Error(), "dns-01")
+	assert.Contains(t, err.Error(), "record busy")
+}
+
+func TestErrUnsupportedDNSProvider(t *testing.T) {
+	err := ErrUnsupportedDNSProvider{Provider: "bind9"}
+	assert.Contains(t, err.Error(), `"bind9"`)
+	// The message lists what is supported so the operator can correct the config.
+	assert.Contains(t, err.Error(), "route53, cloudflare, azure, clouddns")
+}
+
+func TestErrInvalidDNSProviderCredential(t *testing.T) {
+	err := ErrInvalidDNSProviderCredential{Provider: "route53", Key: "max_retries", Reason: "not an integer"}
+	assert.Contains(t, err.Error(), `"max_retries"`)
+	assert.Contains(t, err.Error(), `"route53"`)
+	assert.Contains(t, err.Error(), "not an integer")
+}
+
+func TestErrDeviceSpecNotFound(t *testing.T) {
+	err := ErrDeviceSpecNotFound{Name: "edge-01"}
+	assert.Contains(t, err.Error(), "device spec not found: edge-01")
+}
+
+func TestErrDeviceNotEnrolled(t *testing.T) {
+	err := ErrDeviceNotEnrolled{Name: "edge-01"}
+	assert.Contains(t, err.Error(), `"edge-01"`)
+	assert.Contains(t, err.Error(), "call Enroll or Attest first")
+}
+
+func TestErrDeviceTPMOpenFailed(t *testing.T) {
+	err := ErrDeviceTPMOpenFailed{Name: "edge-01", Err: errSentinel}
+	assert.Contains(t, err.Error(), `"edge-01"`)
+	assert.Contains(t, err.Error(), "inner error")
+	assert.ErrorIs(t, err, errSentinel)
+}
+
+func TestErrDeviceTPMNotProvisioned(t *testing.T) {
+	err := ErrDeviceTPMNotProvisioned{Name: "edge-01"}
+	assert.Contains(t, err.Error(), `"edge-01"`)
+	assert.Contains(t, err.Error(), "is not provisioned")
+}
+
+func TestErrDeviceTPMProvisionFailed(t *testing.T) {
+	err := ErrDeviceTPMProvisionFailed{Name: "edge-01", Err: errSentinel}
+	assert.Contains(t, err.Error(), `"edge-01"`)
+	assert.Contains(t, err.Error(), "inner error")
+	assert.ErrorIs(t, err, errSentinel)
+}
+
+func TestErrDeviceTPMConfigIncomplete(t *testing.T) {
+	err := ErrDeviceTPMConfigIncomplete{Name: "edge-01", Reason: "no platform SRK"}
+	assert.Contains(t, err.Error(), `"edge-01"`)
+	assert.Contains(t, err.Error(), "no platform SRK")
+}
+
+func TestErrDeviceEKCertificateRequired(t *testing.T) {
+	err := ErrDeviceEKCertificateRequired{Name: "edge-01", Err: errSentinel}
+	assert.Contains(t, err.Error(), `"edge-01"`)
+	assert.Contains(t, err.Error(), "inner error")
+	assert.ErrorIs(t, err, errSentinel)
+}
+
+func TestErrInvalidEKCertificatePEM(t *testing.T) {
+	err := ErrInvalidEKCertificatePEM{Name: "edge-01"}
+	assert.Contains(t, err.Error(), `"edge-01"`)
+	assert.Contains(t, err.Error(), "not a valid PEM-encoded certificate")
+}
+
 // Verify errors.Is works correctly for wrapped error types.
 func TestErrWrapping_ErrorsIs(t *testing.T) {
 	target := errors.New("target")

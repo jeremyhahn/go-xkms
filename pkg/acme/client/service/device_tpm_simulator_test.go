@@ -19,6 +19,7 @@ import (
 	"context"
 	"crypto/rand"
 	"crypto/x509"
+	"path/filepath"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -106,4 +107,25 @@ func TestProvisionSimulatorIAKCertificate_RequiresAnIAK(t *testing.T) {
 	var failed ErrDeviceTPMProvisionFailed
 	require.ErrorAs(t, err, &failed)
 	assert.Equal(t, "dev1", failed.Name)
+}
+
+// A device configured for real hardware whose TPM device node cannot be
+// opened fails with a typed error naming the device, and is never
+// auto-provisioned the way the simulator is.
+func TestOpenDeviceTPM_UnopenableHardwareTPM(t *testing.T) {
+	config := xkmssdk.DefaultTPMConfig
+	config.UseSimulator = false
+	config.Device = filepath.Join(t.TempDir(), "no-such-tpm")
+	spec := &DeviceSpec{
+		Identifier: "device-under-test",
+		TPM:        &DeviceTPMConfig{KeyDir: t.TempDir(), Config: &config},
+	}
+
+	module, err := openDeviceTPM("dev1", spec, testLogger())
+	require.Error(t, err)
+	assert.Nil(t, module)
+
+	var openFailed ErrDeviceTPMOpenFailed
+	require.ErrorAs(t, err, &openFailed)
+	assert.Equal(t, "dev1", openFailed.Name)
 }

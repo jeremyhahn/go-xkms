@@ -255,7 +255,7 @@ type OperationalFlags struct {
 
 	// NotSecure: the target TCB is not secure.
 	//
-	// The AVR device identity profile sets this whenever the device reports a
+	// A constrained device's identity profile sets this whenever the device reports a
 	// software-only tier, because a root of trust that is not in hardware is
 	// exactly the claim this bit exists to make.
 	NotSecure bool

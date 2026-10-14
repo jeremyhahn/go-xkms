@@ -20,6 +20,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/jeremyhahn/go-xkms/pkg/config"
+	"github.com/jeremyhahn/go-xkms/pkg/seal"
 )
 
 func pkcs11NodeSealConfig(t *testing.T) *config.Config {
@@ -60,6 +61,23 @@ func TestOpenPreseal_RequiresTheTPMBackend(t *testing.T) {
 	var nodeErr *NodeSealError
 	require.ErrorAs(t, err, &nodeErr)
 	require.Contains(t, nodeErr.Reason, "backends.tpm2 is not set")
+	require.Nil(t, store)
+	require.Nil(t, closeStore)
+}
+
+// TestOpenPreseal_UnusableTPMKeepsTheProbeError pins go-xkms#1528: the
+// reason the configured TPM could not be used stays in the chain, so a TPM
+// that failed to open is not reported as a timeout and vice versa.
+func TestOpenPreseal_UnusableTPMKeepsTheProbeError(t *testing.T) {
+	cfg := pkcs11NodeSealConfig(t)
+	cfg.Backends.TPM2 = &config.TPM2Config{DevicePath: filepath.Join(t.TempDir(), "tpmrm0")}
+
+	store, closeStore, err := OpenPreseal(cfg, testLogger())
+	var nodeErr *NodeSealError
+	require.ErrorAs(t, err, &nodeErr)
+	var probeErr *seal.TPM2ProbeError
+	require.ErrorAs(t, err, &probeErr)
+	require.NotErrorIs(t, err, seal.ErrTPM2ProbeTimeout)
 	require.Nil(t, store)
 	require.Nil(t, closeStore)
 }

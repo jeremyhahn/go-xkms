@@ -21,9 +21,9 @@ Android Key and YubiKey PIV. It is the only one for a device with no clock.
 ## Language
 
 This feature provides **DICE-based device identity with a hardware root of
-trust**. It is deliberately not described as "TCG DICE compliant": the AVR
-profile meets the TCG hardware requirements only partially, and the device says
-so on the wire — `OperationalFlags.notSecure` is set whenever the device
+trust**. It is deliberately not described as "TCG DICE compliant": a constrained
+device's profile may meet the TCG hardware requirements only partially, and the
+device says so on the wire — `OperationalFlags.notSecure` is set whenever the device
 reports a software-only tier, and the CA carries that claim onto the
 certificate rather than dropping it.
 
@@ -37,10 +37,21 @@ certificate rather than dropping it.
 | OID registries | this feature | `pkg/ca/tcg_oids.go`, `pkg/certstore/types.go` |
 | The ACME format tag | this feature | `pkg/acme/challenges/device-attest-01/` |
 | The possession request profile | this feature | `pkg/acme/challenges/device-attest-01/possession.go` |
-| Talking to the device | the AVR backend | `pkg/backend/avr/` |
-| The AVR wire protocol and firmware | `arduino-generic` | not this repo |
+| Talking to the device | the device's backend, registered through the hook (below) | the backend's module (`pkg/backend/avr/` today) |
+| The device's wire protocol and firmware | the firmware's own repository | not this repo |
 | The device-registry lookup contract (`DeviceResolver`) | this feature | `pkg/acme/challenges/device-attest-01/anchors.go` |
 | The device registry itself, and fleet policy | the platform that owns enrollment, which injects a `DeviceResolver` | not this repo |
+
+### Plugging in a device backend
+
+This feature verifies evidence; it does not talk to devices. A device backend
+lives in its own Go module, registers from that module's `init()` with
+`xkms.RegisterExternalBackend` (`pkg/xkms/registry_external.go:54`), and is
+compiled in by a blank import of the adapter module (`import _ "<adapter>"`).
+The backend drives its device to mint the alias certificate and hands the chain
+to `dice.Verify` with the `VerifyOptions` its profile needs. Naming, the
+factory contract and the errors are in
+[crypto-backends: Registering a backend from another module](../crypto-backends/engineering.md#registering-a-backend-from-another-module).
 
 ## Data flow
 
@@ -114,9 +125,10 @@ every `dice` attestation; a stock `xkmsd` is such a server.
 
 ### ECDSA P-256, and nothing else
 
-The hardware root of trust is an ATECC608A. It holds P-256 keys and has no
-hardware Ed25519, so a DICE certificate presenting any other key was not
-produced by that hardware. `dice.Verify` refuses it rather than reporting
+The profile's hardware root of trust is a P-256-only key store (a secure
+element such as the ATECC608A). It holds P-256 keys and has no hardware
+Ed25519, so a DICE certificate presenting any other key was not produced by
+that hardware. `dice.Verify` refuses it rather than reporting
 hardware backing the device does not have. There is no Ed25519 path and none is
 advertised.
 
@@ -131,12 +143,13 @@ certificates, because they belong to two different parties. A certificate's
 public key is its subject's; the algorithm it was signed with is its issuer's.
 
 That leaves the case where the issuer is device-resident and its certificate is
-not in the chain, which is the ordinary AVR shape: the device has nowhere to
+not in the chain, which is the ordinary constrained-device shape: the device has nowhere to
 keep its DeviceID certificate, so the chain is the alias leaf alone or a
 DeviceID intermediate carrying no DICE extension of its own. There is then no
 certificate to check the algorithm on, and an alias signed with ECDSA-SHA384
 would verify. `VerifyOptions.RequireDeviceSignedLeaf` is how a profile that
-knows its leaf was signed by the element says so; `pkg/backend/avr` sets it.
+knows its leaf was signed by the element says so; a device backend whose
+element signs the leaf sets it (`pkg/backend/avr/attestation.go:207`).
 
 ### Freshness is the verifier's nonce, always
 
@@ -169,9 +182,9 @@ a device that answered the wrong way from one that did not answer.
 
 The DICE architecture lets a device state its UEID as the `tcg-dice-Ueid`
 extension or as the EAT `ueid` claim (CWT key 256) inside its UCCS evidence. A
-device carries the one it can afford: the arduino-generic alias certificate is
-built on an 8-bit part from a fixed template with room for one DICE extension,
-so it uses the claim (`pkg/attestation/dice/uccs.go:60-66`). Every reader in
+device carries the one it can afford: a constrained device that mints a
+fixed-template alias certificate has room for one DICE extension, so it uses
+the claim (`pkg/attestation/dice/uccs.go:60-66`). Every reader in
 this repo goes through `dice.DeviceUeid` (`extension.go:690`) — `dice.Verify`
 and the device-attest-01 identity gate
 (`pkg/acme/challenges/device-attest-01/identity.go:163`) — so no reader can

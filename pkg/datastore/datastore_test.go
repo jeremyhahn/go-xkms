@@ -18,6 +18,8 @@ import (
 	"errors"
 	"io"
 	"log/slog"
+	"os"
+	"path/filepath"
 	"testing"
 
 	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
@@ -161,6 +163,17 @@ func TestOpen_RejectsBadConfig(t *testing.T) {
 		assert.Equal(t, "carrier-pigeon", modeErr.Mode)
 	})
 
+	t.Run("standalone node fails to open", func(t *testing.T) {
+		cfg := memoryConfig(t)
+		cfg.Datastore.Path = filepath.Join(cfg.Datastore.Path, "not-a-directory")
+		require.NoError(t, os.WriteFile(cfg.Datastore.Path, nil, 0o600))
+		ds, err := Open(context.Background(), cfg, testLogger())
+		assert.Nil(t, ds)
+		var openErr *ErrOpenDatastore
+		require.ErrorAs(t, err, &openErr)
+		assert.Equal(t, "standalone", openErr.Mode)
+	})
+
 	t.Run("unsupported remote transport", func(t *testing.T) {
 		ds, err := Open(context.Background(), &config.Config{
 			Datastore: config.DatastoreConfig{
@@ -210,6 +223,7 @@ func TestErrorTypes(t *testing.T) {
 		"dial":   &ErrDialRemote{Transport: "rest", Address: "kms.example.com", Err: cause},
 		"ensure": &ErrEnsureDatabase{Name: "oidc", Err: cause},
 		"scope":  &ErrDatabaseScope{Name: "oidc", Err: cause},
+		"bind":   &ErrCallContext{Err: cause},
 	}
 	for name, err := range wrapping {
 		t.Run(name, func(t *testing.T) {

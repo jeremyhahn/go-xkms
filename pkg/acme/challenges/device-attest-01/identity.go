@@ -58,8 +58,9 @@ import (
 //     device identifier docs/dice-device-identity names as such, read by
 //     dice.DeviceUeid from the tcg-dice-Ueid extension or from the ueid claim
 //     (CWT key 256) of the tcg-dice-UCCS-evidence extension. The second is
-//     where the arduino-generic firmware states it, because its alias
-//     certificate has room for one extension; a gate that read only the first
+//     where a constrained device that mints a fixed-template alias
+//     certificate states it, because that certificate has room for one
+//     extension; a gate that read only the first
 //     would refuse every real device. The type byte is part of the UEID and is
 //     kept. Rendered lowercase hex: the certificate carries it as bytes and
 //     an ACME identifier value is a string, and no canonical string form is

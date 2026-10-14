@@ -64,9 +64,9 @@ type VerifyOptions struct {
 	// extension "MAY be used in addition to or in place of DiceTcbInfoSeq or
 	// DiceTcbInfo" -- so a certificate carrying only UCCS is conforming, and a
 	// verifier that refused it would refuse the profile a constrained device
-	// can actually mint. The AVR alias certificate is exactly that: one
-	// extension, because its TBS is a PROGMEM template on an 8-bit part and a
-	// second extension costs flash it does not have.
+	// can actually mint. A device that mints a fixed-template alias
+	// certificate is exactly that: one extension, because its TBS is a
+	// template in flash and a second extension costs space it does not have.
 	//
 	// SET IT WHEN POLICY DEPENDS ON THE OPERATIONAL FLAGS. Flags live in
 	// DiceTcbInfo, so a UCCS-only certificate carries none -- and "no flags"
@@ -237,9 +237,9 @@ func Verify(chain []*x509.Certificate, opts *VerifyOptions) (*Evidence, error) {
 // verifyDeviceKeys enforces the ECDSA P-256 constraint on the certificates the
 // device itself produced.
 //
-// The hardware root of trust is an ATECC608A: P-256 is the only curve it holds
-// a key on, and it has no hardware Ed25519. A DICE certificate carrying any
-// other key was not produced by that hardware, so accepting one would report
+// The profile's hardware root of trust is a P-256-only key store: P-256 is the
+// only curve it holds a key on, and it has no hardware Ed25519. A DICE
+// certificate carrying any other key was not produced by that hardware, so accepting one would report
 // hardware backing the device does not have.
 //
 // A certificate is device-resident if it is the leaf, or if it carries a DICE

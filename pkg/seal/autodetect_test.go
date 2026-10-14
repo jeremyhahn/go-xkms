@@ -206,6 +206,68 @@ func TestBuildBestStrategy_TimeoutCloseFailure_LoggedNotFatal(t *testing.T) {
 	}, time.Second, 5*time.Millisecond)
 }
 
+func TestOpenTPM2Strategy_SealCapableTPMSelected(t *testing.T) {
+	sealer := &fakeTPMSealer{canSeal: true}
+	withStubbedOpen(t, func(*TPM2ProbeConfig) (tpm2Sealer, error) { return sealer, nil })
+
+	res, err := OpenTPM2Strategy(probeCfg())
+	require.NoError(t, err)
+	require.True(t, res.HardwareAvailable())
+	assert.Equal(t, StrategyTPM2, res.ID)
+	require.NoError(t, res.Close())
+	assert.True(t, sealer.closed.Load())
+}
+
+func TestOpenTPM2Strategy_ReportsWhyNoTPMWasSelected(t *testing.T) {
+	openErr := errors.New("device busy")
+	tests := []struct {
+		name    string
+		sealer  tpm2Sealer
+		openErr error
+		want    error
+	}{
+		{name: "open error", openErr: openErr, want: openErr},
+		{name: "unprovisioned", openErr: errTPM2NotInitialized, want: errTPM2NotInitialized},
+		{name: "not seal-capable", sealer: &fakeTPMSealer{canSeal: false}, want: ErrTPM2NotSealCapable},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			withStubbedOpen(t, func(*TPM2ProbeConfig) (tpm2Sealer, error) { return tt.sealer, tt.openErr })
+
+			res, err := OpenTPM2Strategy(probeCfg())
+			assert.Nil(t, res)
+			var probeErr *TPM2ProbeError
+			require.ErrorAs(t, err, &probeErr)
+			assert.ErrorIs(t, err, tt.want)
+			assert.NotErrorIs(t, err, ErrTPM2ProbeTimeout)
+		})
+	}
+}
+
+// TestOpenTPM2Strategy_TimeoutIsDistinctFromAbsent pins go-xkms#1528: a TPM
+// that is slow to open is reported as timed out, not as missing, and the
+// late open is still released.
+func TestOpenTPM2Strategy_TimeoutIsDistinctFromAbsent(t *testing.T) {
+	release := make(chan struct{})
+	sealer := &fakeTPMSealer{canSeal: true}
+	withStubbedOpen(t, func(*TPM2ProbeConfig) (tpm2Sealer, error) {
+		<-release // block past the probe timeout
+		return sealer, nil
+	})
+
+	opts := probeCfg()
+	opts.ProbeTimeout = 20 * time.Millisecond
+	res, err := OpenTPM2Strategy(opts)
+	assert.Nil(t, res)
+	var probeErr *TPM2ProbeError
+	require.ErrorAs(t, err, &probeErr)
+	assert.ErrorIs(t, err, ErrTPM2ProbeTimeout)
+	assert.Equal(t, "seal: tpm2 probe: seal: TPM open timed out", err.Error())
+
+	close(release)
+	assert.Eventually(t, func() bool { return sealer.closed.Load() }, time.Second, 5*time.Millisecond)
+}
+
 func TestProbeStrategies_ListsAvailable(t *testing.T) {
 	// No TPM: software + none only.
 	avail, res := ProbeStrategies(AutodetectOptions{})

@@ -14,6 +14,7 @@
 package seal
 
 import (
+	"errors"
 	"log/slog"
 	"time"
 
@@ -162,13 +163,36 @@ func BuildBestStrategy(opts AutodetectOptions) *AutodetectResult {
 	if logger == nil {
 		logger = slog.Default()
 	}
-	empty := &AutodetectResult{}
 	if opts.TPM2 == nil {
-		return empty
+		return &AutodetectResult{}
 	}
-	timeout := opts.ProbeTimeout
-	if timeout == 0 {
-		timeout = DefaultProbeTimeout
+	res, err := OpenTPM2Strategy(opts)
+	switch {
+	case err == nil:
+		logger.Info("seal autodetect: provisioned, seal-capable TPM present; selecting tpm2 strategy")
+		return res
+	case errors.Is(err, errTPM2NotInitialized):
+		logger.Debug("seal autodetect: TPM present but unprovisioned; not selecting (construct the tpm2 backend explicitly to provision)")
+	case errors.Is(err, ErrTPM2ProbeTimeout):
+		logger.Warn("seal autodetect: TPM open timed out; selecting software", slog.Duration("timeout", probeTimeout(opts)))
+	case errors.Is(err, ErrTPM2NotSealCapable):
+		logger.Debug("seal autodetect: TPM open but not seal-capable; selecting software")
+	default:
+		logger.Debug("seal autodetect: TPM open failed; selecting software", slog.String("error", err.Error()))
+	}
+	return &AutodetectResult{}
+}
+
+// OpenTPM2Strategy makes the single bounded, non-provisioning TPM open that
+// BuildBestStrategy makes, but reports why no TPM was selected as a
+// *TPM2ProbeError instead of falling back. Callers whose configuration
+// requires the TPM use it so a slow TPM is not reported as an absent one.
+// opts.TPM2 must be non-nil. The returned result owns the TPM open — call
+// Close() on shutdown.
+func OpenTPM2Strategy(opts AutodetectOptions) (*AutodetectResult, error) {
+	logger := opts.Logger
+	if logger == nil {
+		logger = slog.Default()
 	}
 
 	type openResult struct {
@@ -184,28 +208,21 @@ func BuildBestStrategy(opts AutodetectOptions) *AutodetectResult {
 	select {
 	case r := <-resultCh:
 		if r.err != nil {
-			if errTPM2NotInitialized != nil && (r.err == errTPM2NotInitialized) {
-				logger.Debug("seal autodetect: TPM present but unprovisioned; not selecting (construct the tpm2 backend explicitly to provision)")
-			} else {
-				logger.Debug("seal autodetect: TPM open failed; selecting software", slog.String("error", r.err.Error()))
-			}
-			return empty
+			return nil, &TPM2ProbeError{Err: r.err}
 		}
 		if !r.backend.CanSeal() {
 			if cerr := r.backend.Close(); cerr != nil {
 				logger.Debug("seal autodetect: failed to close a non-seal-capable TPM backend", slog.String("error", cerr.Error()))
 			}
-			logger.Debug("seal autodetect: TPM open but not seal-capable; selecting software")
-			return empty
+			return nil, &TPM2ProbeError{Err: ErrTPM2NotSealCapable}
 		}
-		logger.Info("seal autodetect: provisioned, seal-capable TPM present; selecting tpm2 strategy")
 		return &AutodetectResult{
 			Strategy: NewTPM2Strategy(r.backend, nil),
 			Sealer:   r.backend,
 			ID:       StrategyTPM2,
 			closer:   r.backend,
-		}
-	case <-time.After(timeout):
+		}, nil
+	case <-time.After(probeTimeout(opts)):
 		// Drain and close the late open so a wedged TPM session cannot leak.
 		go func() {
 			r := <-resultCh
@@ -215,9 +232,16 @@ func BuildBestStrategy(opts AutodetectOptions) *AutodetectResult {
 				}
 			}
 		}()
-		logger.Warn("seal autodetect: TPM open timed out; selecting software", slog.Duration("timeout", timeout))
-		return empty
+		return nil, &TPM2ProbeError{Err: ErrTPM2ProbeTimeout}
 	}
+}
+
+// probeTimeout returns opts.ProbeTimeout, or DefaultProbeTimeout when unset.
+func probeTimeout(opts AutodetectOptions) time.Duration {
+	if opts.ProbeTimeout == 0 {
+		return DefaultProbeTimeout
+	}
+	return opts.ProbeTimeout
 }
 
 // ProbeStrategies returns the hardware strategy IDs currently available,

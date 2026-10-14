@@ -18,6 +18,7 @@ import (
 	"errors"
 	"testing"
 
+	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
 	"github.com/jeremyhahn/go-xkms/pkg/acme/entities"
 	"github.com/jeremyhahn/go-xkms/pkg/acme/storage"
 	"github.com/jeremyhahn/go-xkms/pkg/acme/storage/objstore"
@@ -123,4 +124,93 @@ func TestCertificateSerialCollisionError_Error(t *testing.T) {
 	err := &storage.CertificateSerialCollisionError{Wanted: "bbbb", Existing: "aaaa"}
 	assert.Contains(t, err.Error(), "bbbb")
 	assert.Contains(t, err.Error(), "aaaa")
+}
+
+// errInjected is the backend fault the faultyCertDAO methods return.
+var errInjected = errors.New("injected backend fault")
+
+// faultyCertDAO wraps a real certificate DAO and makes SaveIfAbsent and/or
+// Get fail, so the non-atomic fallback and the backend-fault paths of
+// SaveCertificateNoCollision run against real storage for everything else.
+type faultyCertDAO struct {
+	qrdbsdk.GenericDAO[*entities.ACMECertificate]
+	failSaveIfAbsent bool
+	failGet          bool
+}
+
+func (d *faultyCertDAO) SaveIfAbsent(ctx context.Context, cert *entities.ACMECertificate) (bool, error) {
+	if d.failSaveIfAbsent {
+		return false, errInjected
+	}
+	return d.GenericDAO.SaveIfAbsent(ctx, cert)
+}
+
+func (d *faultyCertDAO) Get(ctx context.Context, id uint64) (*entities.ACMECertificate, error) {
+	if d.failGet {
+		return nil, errInjected
+	}
+	return d.GenericDAO.Get(ctx, id)
+}
+
+func newFaultyCertDAO(t *testing.T, failSaveIfAbsent, failGet bool) *faultyCertDAO {
+	t.Helper()
+	dao, err := newCertificateTestDAO(t).CertificateDAO()
+	require.NoError(t, err)
+	return &faultyCertDAO{GenericDAO: dao, failSaveIfAbsent: failSaveIfAbsent, failGet: failGet}
+}
+
+func TestSaveCertificateNoCollision_FallbackSavesIntoEmptyRow(t *testing.T) {
+	dao := newFaultyCertDAO(t, true, false)
+	ctx := context.Background()
+
+	require.NoError(t, storage.SaveCertificateNoCollision(ctx, dao, collidingCertificate("aaaa", 42)))
+
+	stored, err := dao.GenericDAO.Get(ctx, 42)
+	require.NoError(t, err)
+	assert.Equal(t, "aaaa", stored.Serial)
+}
+
+func TestSaveCertificateNoCollision_FallbackRefusesDifferentSerial(t *testing.T) {
+	dao := newFaultyCertDAO(t, true, false)
+	ctx := context.Background()
+	require.NoError(t, dao.Save(ctx, collidingCertificate("aaaa", 42)))
+
+	err := storage.SaveCertificateNoCollision(ctx, dao, collidingCertificate("bbbb", 42))
+
+	var collisionErr *storage.CertificateSerialCollisionError
+	require.ErrorAs(t, err, &collisionErr)
+	assert.Equal(t, "bbbb", collisionErr.Wanted)
+	assert.Equal(t, "aaaa", collisionErr.Existing)
+
+	stored, err := dao.GenericDAO.Get(ctx, 42)
+	require.NoError(t, err)
+	assert.Equal(t, "pem-for-aaaa", stored.PEM)
+}
+
+func TestSaveCertificateNoCollision_FallbackIdempotentResave(t *testing.T) {
+	dao := newFaultyCertDAO(t, true, false)
+	ctx := context.Background()
+	require.NoError(t, dao.Save(ctx, collidingCertificate("aaaa", 42)))
+
+	assert.NoError(t, storage.SaveCertificateNoCollision(ctx, dao, collidingCertificate("aaaa", 42)))
+}
+
+func TestSaveCertificateNoCollision_FallbackSurfacesGetFault(t *testing.T) {
+	dao := newFaultyCertDAO(t, true, true)
+
+	err := storage.SaveCertificateNoCollision(context.Background(), dao, collidingCertificate("aaaa", 42))
+	assert.ErrorIs(t, err, errInjected)
+
+	// The fault must stop the write: nothing may land in the row.
+	_, getErr := dao.GenericDAO.Get(context.Background(), 42)
+	assert.True(t, qrdbsdk.IsDAONotFound(getErr))
+}
+
+func TestSaveCertificateNoCollision_OccupiedRowSurfacesGetFault(t *testing.T) {
+	dao := newFaultyCertDAO(t, false, true)
+	ctx := context.Background()
+	require.NoError(t, dao.Save(ctx, collidingCertificate("aaaa", 42)))
+
+	err := storage.SaveCertificateNoCollision(ctx, dao, collidingCertificate("bbbb", 42))
+	assert.ErrorIs(t, err, errInjected)
 }

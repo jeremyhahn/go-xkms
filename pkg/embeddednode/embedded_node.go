@@ -46,6 +46,7 @@ import (
 	"log/slog"
 	"path/filepath"
 	"strings"
+	"time"
 
 	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
 	qrdbnode "github.com/jeremyhahn/go-qrdb/sdk/go/node"
@@ -241,10 +242,18 @@ func tenantDefaultEntitlements() *qrdbsdk.Entitlements {
 	}
 }
 
+// nodeTPMOpenTimeout bounds the TPM open for a node seal the configuration
+// requires. seal.DefaultProbeTimeout only keeps an optional probe from
+// delaying startup; a required TPM that is slow to open (a loaded host, the
+// simulator under the race detector) must not be reported as missing, while a
+// wedged one still fails startup.
+const nodeTPMOpenTimeout = 30 * time.Second
+
 // openNodeTPM opens the TPM backends.tpm2 configures, with its key store in
-// the TPM2 key directory, through the seal autodetect. It fails closed when
-// backends.tpm2 is missing or no usable, provisioned TPM is found. The
-// caller closes the result.
+// the TPM2 key directory, through seal.OpenTPM2Strategy. It fails closed when
+// backends.tpm2 is missing or the TPM cannot be used, keeping the
+// *seal.TPM2ProbeError that says why in the chain. The caller closes the
+// result.
 func openNodeTPM(cfg *config.Config, logger *slog.Logger) (*seal.AutodetectResult, error) {
 	keyDir, err := resolveTPM2KeyDir(cfg)
 	if err != nil {
@@ -261,7 +270,7 @@ func openNodeTPM(cfg *config.Config, logger *slog.Logger) (*seal.AutodetectResul
 			Reason: "strategy " + cfg.Barrier.SealStrategy() + " configured for the node seal but backends.tpm2 is not set",
 		}
 	}
-	res := seal.BuildBestStrategy(seal.AutodetectOptions{
+	res, err := seal.OpenTPM2Strategy(seal.AutodetectOptions{
 		TPM2: &seal.TPM2ProbeConfig{
 			Device:          tpmCfg.DevicePath,
 			KeyDir:          keyDir,
@@ -272,11 +281,13 @@ func openNodeTPM(cfg *config.Config, logger *slog.Logger) (*seal.AutodetectResul
 			PlatformPCR:     tpmCfg.PlatformPCR,
 			PlatformPCRBank: tpmCfg.PlatformPCRBank,
 		},
-		Logger: logger,
+		ProbeTimeout: nodeTPMOpenTimeout,
+		Logger:       logger,
 	})
-	if !res.HardwareAvailable() {
+	if err != nil {
 		return nil, &NodeSealError{
-			Reason: "strategy " + cfg.Barrier.SealStrategy() + " configured but no usable, provisioned TPM was found",
+			Reason: "strategy " + cfg.Barrier.SealStrategy() + " configured but the TPM could not be used",
+			Err:    err,
 		}
 	}
 	return res, nil

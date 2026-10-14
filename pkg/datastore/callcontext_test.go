@@ -146,3 +146,134 @@ func TestBoundKV_RefusesVerbsTheInnerClientLacks(t *testing.T) {
 		})
 	}
 }
+
+// featureClients returns the KV and index planes of an existing feature
+// database on node, each wrapped to bind its calls with bind.
+func featureClients(t *testing.T, node *qrdbnode.Node, bind func(context.Context) (context.Context, error)) (*boundKV, *boundIndex) {
+	t.Helper()
+	ds, err := New(node.Client(), config.DatastoreConfig{Engine: "memory"}, WithCallContext(node.ServiceContext))
+	require.NoError(t, err)
+	_, err = ds.DatabaseKVStore(t.Context(), "feature")
+	require.NoError(t, err)
+
+	scoped, err := node.Client().DatabaseScoped("feature")
+	require.NoError(t, err)
+	return &boundKV{kv: scoped.KV(), bind: bind}, &boundIndex{index: scoped.Index(), bind: bind}
+}
+
+// boundVerbs exercises every verb of the bound KV and index planes once.
+var boundVerbs = map[string]func(context.Context, *boundKV, *boundIndex) error{
+	"put":    func(ctx context.Context, kv *boundKV, _ *boundIndex) error { return kv.Put(ctx, "k", []byte("v")) },
+	"get":    func(ctx context.Context, kv *boundKV, _ *boundIndex) error { _, err := kv.Get(ctx, "k"); return err },
+	"delete": func(ctx context.Context, kv *boundKV, _ *boundIndex) error { return kv.Delete(ctx, "k") },
+	"list":   func(ctx context.Context, kv *boundKV, _ *boundIndex) error { _, err := kv.List(ctx, ""); return err },
+	"scan":   func(ctx context.Context, kv *boundKV, _ *boundIndex) error { _, err := kv.Scan(ctx, ""); return err },
+	"exists": func(ctx context.Context, kv *boundKV, _ *boundIndex) error { _, err := kv.Exists(ctx, "k"); return err },
+	"put if absent": func(ctx context.Context, kv *boundKV, _ *boundIndex) error {
+		_, err := kv.PutIfAbsent(ctx, "k", []byte("v"))
+		return err
+	},
+	"compare and delete": func(ctx context.Context, kv *boundKV, _ *boundIndex) error {
+		_, err := kv.CompareAndDelete(ctx, "k", []byte("v"))
+		return err
+	},
+	"compare and swap": func(ctx context.Context, kv *boundKV, _ *boundIndex) error {
+		_, err := kv.CompareAndSwap(ctx, "k", []byte("v"), []byte("w"))
+		return err
+	},
+	"transaction": func(ctx context.Context, kv *boundKV, _ *boundIndex) error {
+		_, err := kv.ExecuteTransaction(ctx, &transport.TransactionRequest{})
+		return err
+	},
+	"index create": func(ctx context.Context, _ *boundKV, ix *boundIndex) error {
+		return ix.IndexCreate(ctx, "by_tag", "tag", transport.IndexConfig{})
+	},
+	"index drop": func(ctx context.Context, _ *boundKV, ix *boundIndex) error { return ix.IndexDrop(ctx, "by_tag") },
+	"index query": func(ctx context.Context, _ *boundKV, ix *boundIndex) error {
+		_, err := ix.IndexQuery(ctx, "by_tag", "a")
+		return err
+	},
+	"index scan": func(ctx context.Context, _ *boundKV, ix *boundIndex) error {
+		_, err := ix.IndexScan(ctx, "by_tag", nil, nil)
+		return err
+	},
+	"index list": func(ctx context.Context, _ *boundKV, ix *boundIndex) error { _, err := ix.IndexList(ctx); return err },
+}
+
+// TestBoundKV_EveryVerbRunsUnderTheBoundContext pins that each KV and index
+// verb reaches the node under the service principal the bind supplies: the
+// same verbs a caller issues with no bind are refused as unauthenticated.
+func TestBoundKV_EveryVerbRunsUnderTheBoundContext(t *testing.T) {
+	ctx := t.Context()
+	node := newPrincipalNode(t)
+	kv, ix := featureClients(t, node, node.ServiceContext)
+
+	require.NoError(t, kv.Put(ctx, "tags/1", []byte(`{"id":1,"tag":"a"}`)))
+	got, err := kv.Get(ctx, "tags/1")
+	require.NoError(t, err)
+	assert.JSONEq(t, `{"id":1,"tag":"a"}`, string(got))
+	found, err := kv.Exists(ctx, "tags/1")
+	require.NoError(t, err)
+	assert.True(t, found)
+	keys, err := kv.List(ctx, "tags/")
+	require.NoError(t, err)
+	assert.Equal(t, []string{"tags/1"}, keys)
+	pairs, err := kv.Scan(ctx, "tags/")
+	require.NoError(t, err)
+	assert.Len(t, pairs, 1)
+
+	stored, err := kv.PutIfAbsent(ctx, "claim", []byte("one"))
+	require.NoError(t, err)
+	assert.True(t, stored)
+	swapped, err := kv.CompareAndSwap(ctx, "claim", []byte("one"), []byte("two"))
+	require.NoError(t, err)
+	assert.True(t, swapped)
+	tx, err := kv.ExecuteTransaction(ctx, &transport.TransactionRequest{
+		Compares:   []transport.Compare{{Key: []byte("claim"), Target: transport.CompareValue, Result: transport.CompareEqual, Value: []byte("two")}},
+		SuccessOps: []transport.Op{{Type: transport.OpPut, Key: []byte("claim"), Value: []byte("three")}},
+	})
+	require.NoError(t, err)
+	assert.True(t, tx.Succeeded)
+	deleted, err := kv.CompareAndDelete(ctx, "claim", []byte("three"))
+	require.NoError(t, err)
+	assert.True(t, deleted)
+	require.NoError(t, kv.Delete(ctx, "tags/1"))
+	found, err = kv.Exists(ctx, "tags/1")
+	require.NoError(t, err)
+	assert.False(t, found)
+
+	require.NoError(t, ix.IndexCreate(ctx, "by_tag", "tag", transport.IndexConfig{}))
+	_, err = ix.IndexQuery(ctx, "by_tag", "a")
+	require.NoError(t, err)
+
+	// The service principal's grant stops at create and query, so scanning,
+	// listing and dropping reach the node authenticated and are refused by its RBAC.
+	var denied *qrdbsdk.PermissionDeniedError
+	_, err = ix.IndexScan(ctx, "by_tag", nil, nil)
+	require.ErrorAs(t, err, &denied)
+	_, err = ix.IndexList(ctx)
+	require.ErrorAs(t, err, &denied)
+	require.ErrorAs(t, ix.IndexDrop(ctx, "by_tag"), &denied)
+}
+
+// TestBoundKV_EveryVerbNeedsTheBind pins the failure side of the same verbs:
+// without a bind the node refuses each one, and a bind that fails stops each
+// one before it reaches the node.
+func TestBoundKV_EveryVerbNeedsTheBind(t *testing.T) {
+	cause := errors.New("no service principal")
+	node := newPrincipalNode(t)
+	unbound, unboundIx := featureClients(t, node, (&Datastore{}).callContext)
+	failing := (&Datastore{bind: func(context.Context) (context.Context, error) { return nil, cause }}).callContext
+	failed, failedIx := featureClients(t, node, failing)
+
+	for name, verb := range boundVerbs {
+		t.Run(name, func(t *testing.T) {
+			assert.ErrorIs(t, verb(t.Context(), unbound, unboundIx), qrdbsdk.ErrUnauthenticated)
+
+			err := verb(t.Context(), failed, failedIx)
+			var bindErr *ErrCallContext
+			require.ErrorAs(t, err, &bindErr)
+			assert.ErrorIs(t, err, cause)
+		})
+	}
+}

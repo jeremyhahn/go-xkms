@@ -116,8 +116,8 @@ type ProvisionedDevice struct {
 type DICEPolicy struct {
 	// RequireDeviceSignedLeaf states that the leaf's issuer is device-resident,
 	// which pins its signature algorithm to the one hardware performs
-	// (dice.VerifyOptions.RequireDeviceSignedLeaf). Set it for an AVR or other
-	// secure-element profile whose alias certificate is signed by a key the
+	// (dice.VerifyOptions.RequireDeviceSignedLeaf). Set it for a constrained-device
+	// or secure-element profile whose alias certificate is signed by a key the
 	// element holds.
 	RequireDeviceSignedLeaf bool
 

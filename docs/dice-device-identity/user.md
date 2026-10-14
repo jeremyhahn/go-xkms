@@ -79,7 +79,8 @@ manufacturer", not "the device I enrolled".
 
 A device states its identifier in one of two places: the `tcg-dice-Ueid`
 extension, or the `ueid` claim (CWT claim key 256) of its UCCS evidence. A
-small device such as an arduino-generic AVR carries only the claim. `Verify`
+constrained device that mints a fixed-template alias certificate carries only
+the claim. `Verify`
 reads either, and so does `dice.DeviceUeid` when you need the identifier from a
 certificate yourself:
 

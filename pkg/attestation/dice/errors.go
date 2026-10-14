@@ -153,8 +153,8 @@ var (
 	// ErrUnsupportedKeyType indicates a DICE certificate carries a key that is
 	// not ECDSA on P-256.
 	//
-	// The hardware root of trust is an ATECC608A, whose key store is P-256 and
-	// nothing else. A DICE certificate presenting any other key was not
+	// The profile's hardware root of trust is a key store that holds P-256
+	// and nothing else. A DICE certificate presenting any other key was not
 	// produced by the hardware this profile describes, so accepting it would
 	// mean reporting hardware backing the device does not have.
 	ErrUnsupportedKeyType = errors.New("dice: device identity keys must be ECDSA P-256")

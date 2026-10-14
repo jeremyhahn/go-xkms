@@ -19,6 +19,8 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+
+	xkmssdk "github.com/jeremyhahn/go-xkms/sdk/go"
 )
 
 func validTestConfig() *Config {
@@ -220,6 +222,70 @@ func TestConfig_Validate_CertReferencesUnknownAccount(t *testing.T) {
 	require.True(t, errors.As(err, &validationErr))
 	assert.Contains(t, validationErr.Field, "account")
 	assert.Contains(t, validationErr.Reason, "unknown account")
+}
+
+func TestConfig_Validate_DeviceSuccess(t *testing.T) {
+	cfg := validTestConfig()
+	cfg.Devices = map[string]*DeviceSpec{
+		"edge-01": {Account: "test-ca", Identifier: "serial-0001"},
+	}
+
+	require.NoError(t, cfg.Validate())
+}
+
+func TestConfig_Validate_DeviceReferencesUnknownAccount(t *testing.T) {
+	cfg := validTestConfig()
+	cfg.Devices = map[string]*DeviceSpec{
+		"edge-01": {Account: "nonexistent-account", Identifier: "serial-0001"},
+	}
+
+	var validationErr *ErrValidation
+	require.ErrorAs(t, cfg.Validate(), &validationErr)
+	assert.Equal(t, "devices.edge-01.account", validationErr.Field)
+	assert.Contains(t, validationErr.Reason, "nonexistent-account")
+}
+
+func TestConfig_Validate_DeviceMissingIdentifier(t *testing.T) {
+	cfg := validTestConfig()
+	cfg.Devices = map[string]*DeviceSpec{
+		"edge-01": {Account: "test-ca"},
+	}
+
+	var validationErr *ErrValidation
+	require.ErrorAs(t, cfg.Validate(), &validationErr)
+	assert.Equal(t, "devices.edge-01.identifier", validationErr.Field)
+}
+
+// A device with no TPM section, or a TPM section without an explicit
+// Config, runs on xkmssdk.DefaultTPMConfig. resolvedConfig must hand back a
+// copy so opening one device can never mutate the process-wide default.
+func TestDeviceTPMConfig_DefaultsWithoutExplicitConfig(t *testing.T) {
+	for name, dev := range map[string]*DeviceTPMConfig{
+		"nil section":     nil,
+		"no Config field": {KeyDir: "/keys"},
+	} {
+		t.Run(name, func(t *testing.T) {
+			assert.Equal(t, xkmssdk.DefaultTPMConfig.UseSimulator, dev.useSimulator())
+
+			resolved := dev.resolvedConfig()
+			require.NotNil(t, resolved)
+			assert.NotSame(t, &xkmssdk.DefaultTPMConfig, resolved)
+
+			before := xkmssdk.DefaultTPMConfig.Device
+			resolved.Device = "/dev/mutated"
+			assert.Equal(t, before, xkmssdk.DefaultTPMConfig.Device)
+		})
+	}
+}
+
+func TestDeviceTPMConfig_ExplicitConfigWins(t *testing.T) {
+	explicit := xkmssdk.DefaultTPMConfig
+	explicit.UseSimulator = !xkmssdk.DefaultTPMConfig.UseSimulator
+	dev := &DeviceTPMConfig{KeyDir: "/keys", Config: &explicit}
+
+	assert.Equal(t, explicit.UseSimulator, dev.useSimulator())
+	assert.Same(t, &explicit, dev.resolvedConfig())
+	assert.Equal(t, "/keys", dev.keyDir())
 }
 
 // TestConfig_Validate_CertMissingSubjectCN verifies that a certificate spec

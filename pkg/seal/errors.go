@@ -38,7 +38,34 @@ var (
 	// without an explicit strategy selection. There is no implicit default
 	// preference order — the caller must specify which strategy to use.
 	ErrNoStrategySpecified = errors.New("seal: no sealing strategy specified (explicit selection required)")
+
+	// ErrTPM2ProbeTimeout is the cause of a TPM2ProbeError when the TPM open
+	// did not finish within the probe timeout: the TPM is slow or wedged,
+	// which is not the same as absent.
+	ErrTPM2ProbeTimeout = errors.New("seal: TPM open timed out")
+
+	// ErrTPM2NotSealCapable is the cause of a TPM2ProbeError when the TPM
+	// opened but cannot seal.
+	ErrTPM2NotSealCapable = errors.New("seal: TPM opened but is not seal-capable")
 )
+
+// TPM2ProbeError reports why OpenTPM2Strategy selected no TPM: the open
+// failed (Err is the backend's error, matching tpm2.ErrNotInitialized for an
+// unprovisioned TPM), timed out (ErrTPM2ProbeTimeout) or yielded a TPM that
+// cannot seal (ErrTPM2NotSealCapable).
+type TPM2ProbeError struct {
+	Err error
+}
+
+// Error returns the error message.
+func (e *TPM2ProbeError) Error() string {
+	return "seal: tpm2 probe: " + e.Err.Error()
+}
+
+// Unwrap returns the cause.
+func (e *TPM2ProbeError) Unwrap() error {
+	return e.Err
+}
 
 // RootKeyUnsealError reports that a hardware or cloud strategy's backend
 // refused to unseal a barrier's root key: a wrong TPM, token or KMS key, an
