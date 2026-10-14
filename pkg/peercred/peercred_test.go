@@ -88,11 +88,9 @@ func TestCheckSupport_SupportedPlatform(t *testing.T) {
 	assert.NoError(t, CheckSupport())
 }
 
-// TestFromConn_RefusesNonUnixConnCaller documents that FromConn's contract
-// is scoped to *net.UnixConn: the compiler enforces this at the call site,
-// so there is no runtime type-assertion failure to exercise here. This test
-// instead pins that a nil peer produces the typed extraction error rather
-// than a panic.
+// TestFromConn_ClosedConnReturnsExtractionFailedError verifies a closed
+// connection yields the typed extraction error rather than stale or zero
+// credentials.
 func TestFromConn_ClosedConnReturnsExtractionFailedError(t *testing.T) {
 	client, server := realUnixConnPair(t)
 	require.NoError(t, client.Close())
@@ -102,4 +100,38 @@ func TestFromConn_ClosedConnReturnsExtractionFailedError(t *testing.T) {
 	require.Error(t, err)
 	var extractionErr ExtractionFailedError
 	assert.ErrorAs(t, err, &extractionErr)
+}
+
+// TestFromConn_NilConnReturnsExtractionFailedError verifies a nil
+// *net.UnixConn, which has no socket to query, yields the typed extraction
+// error rather than a panic or a zero-value credential.
+func TestFromConn_NilConnReturnsExtractionFailedError(t *testing.T) {
+	var conn *net.UnixConn
+
+	creds, err := FromConn(conn)
+	assert.Nil(t, creds)
+	var extractionErr ExtractionFailedError
+	require.ErrorAs(t, err, &extractionErr)
+	assert.Equal(t, "nil connection", extractionErr.Reason)
+}
+
+// TestFromConn_ZeroValueConnReturnsExtractionFailedError verifies a
+// non-nil but never-opened *net.UnixConn, which has no file descriptor,
+// yields the typed extraction error.
+func TestFromConn_ZeroValueConnReturnsExtractionFailedError(t *testing.T) {
+	creds, err := FromConn(&net.UnixConn{})
+	assert.Nil(t, creds)
+	var extractionErr ExtractionFailedError
+	assert.ErrorAs(t, err, &extractionErr)
+}
+
+// TestErrorMessages pins the operator-facing text of both typed errors: each
+// names what failed and carries the detail it was constructed with.
+func TestErrorMessages(t *testing.T) {
+	assert.Equal(t,
+		"peer credential extraction is not implemented for GOOS=plan9",
+		UnsupportedError{GOOS: "plan9"}.Error())
+	assert.Equal(t,
+		"failed to get peer credentials: bad file descriptor",
+		ExtractionFailedError{Reason: "bad file descriptor"}.Error())
 }

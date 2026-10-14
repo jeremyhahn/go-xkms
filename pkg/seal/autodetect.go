@@ -51,6 +51,13 @@ import (
 // TPM can never stall a daemon boot.
 const DefaultProbeTimeout = 3 * time.Second
 
+// RequiredTPMOpenTimeout bounds the TPM open when the configuration requires
+// the tpm2 strategy. DefaultProbeTimeout only keeps an optional probe from
+// delaying startup; a required TPM that is slow to open (a loaded host, the
+// simulator under the race detector) must not be reported as missing, while a
+// wedged one still fails startup.
+const RequiredTPMOpenTimeout = 30 * time.Second
+
 // TPM2ProbeConfig is the subset of the TPM2 backend configuration the
 // autodetect probe needs. Callers map their own config onto it so this package
 // does not depend on any consumer's config type.

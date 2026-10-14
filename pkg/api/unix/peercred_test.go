@@ -15,6 +15,7 @@ package unix
 
 import (
 	"context"
+	"net"
 	"os"
 	"path/filepath"
 	"testing"
@@ -165,6 +166,21 @@ func TestValidateSocketDir_AcceptsPrivateDir(t *testing.T) {
 func TestValidateSocketDir_MissingDirOK(t *testing.T) {
 	dir := filepath.Join(t.TempDir(), "does-not-exist-yet")
 	assert.NoError(t, validateSocketDir(dir))
+}
+
+// TestPeerCredentialTransport_TypedNilConnRefused is the regression test for
+// a typed-nil *net.UnixConn inside a net.Conn: it passes the handshake's
+// type assertion, and used to panic in peercred.FromConn instead of
+// refusing the connection with the typed extraction error.
+func TestPeerCredentialTransport_TypedNilConnRefused(t *testing.T) {
+	transport := newPeerCredentialTransport(&PeerCredentialPolicy{})
+	var unixConn *net.UnixConn
+
+	conn, authInfo, err := transport.ServerHandshake(unixConn)
+	assert.Nil(t, conn)
+	assert.Nil(t, authInfo)
+	var extractionErr peercred.ExtractionFailedError
+	assert.ErrorAs(t, err, &extractionErr)
 }
 
 // TestGRPCServer_Start_RefusesGroupWritableSocketDir is the end-to-end

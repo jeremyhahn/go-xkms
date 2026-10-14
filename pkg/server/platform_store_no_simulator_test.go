@@ -22,6 +22,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/jeremyhahn/go-xkms/pkg/config"
+	"github.com/jeremyhahn/go-xkms/pkg/seal"
 )
 
 // TestInitializePlatformStore_TPM2WithoutEnrolledPSRKFailsClosed proves the
@@ -35,14 +36,14 @@ import (
 // platform_store_simulator_test.go's TestInitializePlatformStore_TPM2ReusesNodeSealFlip,
 // which asserts the reuse invariants; see that test's doc comment). It
 // exercises the case where UseSimulator: true cannot reach a TPM at all
-// because the simulator isn't compiled in, so seal.BuildBestStrategy's TPM
-// open fails with pkgtpm2.ErrSimulatorNotAvailable -- a different underlying
-// cause than "no usable, provisioned TPM was found", but the same typed
-// ErrPlatformStoreStrategyUnavailable{Strategy: "tpm2"} this test asserts.
+// because the simulator isn't compiled in, so seal.OpenTPM2Strategy's TPM
+// open fails with pkgtpm2.ErrSimulatorNotAvailable, which reaches the typed
+// ErrPlatformStoreStrategyUnavailable{Strategy: "tpm2"} this test asserts as
+// its *seal.TPM2ProbeError cause.
 //
 // It cannot be merged into a tpm_simulator-tagged file: under that tag,
 // s.buildTPM2PlatformSealer's standalone/autodetect path
-// (seal.BuildBestStrategy -> pkg/backend/tpm2's NewBackend) always reaches
+// (seal.OpenTPM2Strategy -> pkg/backend/tpm2's NewBackend) always reaches
 // NewBackend's first-boot recipe on a fresh in-memory simulator, and that
 // recipe (pkg/tpm2.ProvisionFresh, added by go-xkms#681 "seal only under the
 // Platform SRK") provisions the EK, SSRK AND Platform SRK together as a
@@ -75,4 +76,7 @@ func TestInitializePlatformStore_TPM2WithoutEnrolledPSRKFailsClosed(t *testing.T
 	var unavailableErr *ErrPlatformStoreStrategyUnavailable
 	require.ErrorAs(t, err, &unavailableErr)
 	assert.Equal(t, "tpm2", unavailableErr.Strategy)
+
+	var probeErr *seal.TPM2ProbeError
+	assert.ErrorAs(t, err, &probeErr, "the failed TPM open's cause must survive")
 }

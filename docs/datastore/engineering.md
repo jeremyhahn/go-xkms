@@ -458,7 +458,9 @@ read/write linearizability.
 
 | Error | Where | Meaning |
 |---|---|---|
-| `*errs.Message` from `config.Validate` | `pkg/config/config.go` | `datastore.engine` not one of memory/file/pebble, `datastore.mode` not one of standalone/remote, `datastore.path` unset for `mode: standalone` (every engine, `memory` included -- go-qrdb roots the node's on-disk state under it regardless of the primary KV engine, so there is no engine choice that waives this), or a `mode: remote` requirement (address, transport) unmet |
+| `*config.ErrUnknownDatastoreEngine{Engine}` | `pkg/config/datastore.go:24`, from `config.Validate` and `embeddednode.OpenEmbeddedNode` | `datastore.engine` not one of memory/file/pebble |
+| `*config.ErrUnknownDatastoreMode{Mode}` | `pkg/config/datastore.go:36`, from `config.Validate` | `datastore.mode` not one of standalone/remote |
+| `*errs.Message` from `config.Validate` | `pkg/config/config.go` | `datastore.path` unset for `mode: standalone` (every engine, `memory` included -- go-qrdb roots the node's on-disk state under it regardless of the primary KV engine, so there is no engine choice that waives this), or a `mode: remote` requirement (address, transport) unmet |
 | `*datastore.ErrUnsupportedStorageBackend{Backend: "qrdb:" + transport}` | `pkg/datastore/remote.go`, used by both `pkg/server/qrdb_storage.go` and `pkg/datastore.Open` | `datastore.remote.transport` names a transport `DialRemote` does not implement (only reachable by bypassing `config.Validate`) |
 | `*datastore.ErrUnsupportedDatastoreMode{Mode}` | `pkg/datastore/errors.go` | `datastore.mode` is neither `standalone` nor `remote` (only reachable by bypassing `config.Validate`) |
 | `*datastore.ErrOpenDatastore{Mode, Err}` | `pkg/datastore/datastore.go` | `Open` failed to build the standalone datastore; `Err` is the underlying cause |
@@ -513,11 +515,21 @@ check reads an already-defaulted `Datastore`):
   non-durable.
 - `Mode == "remote"`: `Remote.Address` is required, and `Remote.Transport`
   must be `"rest"` or `"grpc"`.
-- Any other `Engine` or `Mode` value is a hard error naming the field and
-  the accepted values.
+- `Engine` and `Mode` are trimmed and lowercased before the check, and
+  `Validate` stores the normalised values (`pkg/config/config.go:1480-1494`).
+  Any other value is a hard error, `*config.ErrUnknownDatastoreEngine` or
+  `*config.ErrUnknownDatastoreMode`, naming the value and the accepted ones
+  (`pkg/config/datastore.go:24-45`). The accepted engines are go-qrdb's SDK
+  backend constants `BackendMemory`, `BackendFile` and `BackendPebble`; the
+  SDK has no list of them, so `config.DatastoreEngines`
+  (`pkg/config/datastore.go:13`) is that one list.
+- `embeddednode.OpenEmbeddedNode` repeats the engine check
+  (`pkg/embeddednode/embedded_node.go:429`), so a caller that skips
+  `Validate`, such as `datastore.Open`, cannot hand go-qrdb an unknown
+  engine.
 - `Databases`: each entry needs a non-empty `Name`, names must not repeat,
   and a non-empty `Backend` must be `memory`, `file`, `pebble`, `raft`, or
-  `objstore` (`pkg/config/config.go:1532-1534`). An empty `Backend` is valid
+  `objstore` (`pkg/config/config.go:1535-1537`). An empty `Backend` is valid
   — it defers to `Engine`.
 
 Two other `Validate` rules key off `Datastore.Mode` and matter for this

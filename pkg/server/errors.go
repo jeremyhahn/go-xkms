@@ -466,11 +466,22 @@ func (e *ErrPlatformStoreBuild) Unwrap() error {
 type ErrPlatformStoreStrategyUnavailable struct {
 	Strategy string
 	Reason   string
+	// Err is the underlying cause, when there is one (for tpm2, the
+	// *seal.TPM2ProbeError of a TPM open that failed or timed out).
+	Err error
 }
 
 // Error returns the error message.
 func (e *ErrPlatformStoreStrategyUnavailable) Error() string {
+	if e.Err != nil {
+		return fmt.Sprintf("platform store: strategy %q is not available: %s: %v", e.Strategy, e.Reason, e.Err)
+	}
 	return fmt.Sprintf("platform store: strategy %q is not available: %s", e.Strategy, e.Reason)
+}
+
+// Unwrap returns the underlying cause.
+func (e *ErrPlatformStoreStrategyUnavailable) Unwrap() error {
+	return e.Err
 }
 
 // ErrSealBackendNotConfigured indicates a hardware/cloud seal strategy was

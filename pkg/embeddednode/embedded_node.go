@@ -46,7 +46,6 @@ import (
 	"log/slog"
 	"path/filepath"
 	"strings"
-	"time"
 
 	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
 	qrdbnode "github.com/jeremyhahn/go-qrdb/sdk/go/node"
@@ -242,13 +241,6 @@ func tenantDefaultEntitlements() *qrdbsdk.Entitlements {
 	}
 }
 
-// nodeTPMOpenTimeout bounds the TPM open for a node seal the configuration
-// requires. seal.DefaultProbeTimeout only keeps an optional probe from
-// delaying startup; a required TPM that is slow to open (a loaded host, the
-// simulator under the race detector) must not be reported as missing, while a
-// wedged one still fails startup.
-const nodeTPMOpenTimeout = 30 * time.Second
-
 // openNodeTPM opens the TPM backends.tpm2 configures, with its key store in
 // the TPM2 key directory, through seal.OpenTPM2Strategy. It fails closed when
 // backends.tpm2 is missing or the TPM cannot be used, keeping the
@@ -281,7 +273,7 @@ func openNodeTPM(cfg *config.Config, logger *slog.Logger) (*seal.AutodetectResul
 			PlatformPCR:     tpmCfg.PlatformPCR,
 			PlatformPCRBank: tpmCfg.PlatformPCRBank,
 		},
-		ProbeTimeout: nodeTPMOpenTimeout,
+		ProbeTimeout: seal.RequiredTPMOpenTimeout,
 		Logger:       logger,
 	})
 	if err != nil {
@@ -435,6 +427,11 @@ type EmbeddedNodeOptions struct {
 // "shamir" leave the node sealed. Completing that unseal is the caller's
 // responsibility.
 func OpenEmbeddedNode(ctx context.Context, opts EmbeddedNodeOptions) (*qrdbnode.Node, ResolvedNodeSeal, error) {
+	// Callers such as pkg/datastore.Open may skip config.Validate, so the
+	// engine is checked here before it reaches go-qrdb.
+	if _, err := config.NormalizeDatastoreEngine(opts.Config.Datastore.Engine); err != nil {
+		return nil, ResolvedNodeSeal{}, err
+	}
 	sealRes, err := ResolveNodeSeal(opts.Config, opts.Logger)
 	if err != nil {
 		return nil, ResolvedNodeSeal{}, err

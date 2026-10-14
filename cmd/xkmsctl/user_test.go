@@ -278,45 +278,88 @@ func TestUserRegisterCmd_CreateUserError(t *testing.T) {
 	}
 }
 
+// TestUserRegisterCmd_RequestedRoleJSON pins that a later user gets the role
+// asked for, and that JSON output reports the pending account.
+func TestUserRegisterCmd_RequestedRoleJSON(t *testing.T) {
+	mock := &mockUserClient{
+		listUsersResp: &transport.ListUsersResponse{Users: []transport.UserInfo{{Username: "existing", Role: "admin"}}},
+	}
+	withGlobalConfig(t, newUserTestConfig("json", mock))
+
+	cmd := newUserRegisterCmd()
+	if err := cmd.Flags().Set("role", string(RoleOperator)); err != nil {
+		t.Fatalf("set role: %v", err)
+	}
+	code := -1
+	out := captureStdout(t, func() {
+		code = captureExit(t, func() { userRegisterCmd.Run(cmd, []string{"alice"}) })
+	})
+	if code != -1 {
+		t.Fatalf("expected success (no exit), got exit code %d", code)
+	}
+	if mock.gotCreateUser == nil || mock.gotCreateUser.Role != string(RoleOperator) {
+		t.Fatalf("CreateUser role = %+v, want %q", mock.gotCreateUser, RoleOperator)
+	}
+	got := lastJSONObject(t, out)
+	if got["role"] != string(RoleOperator) || got["first_user"] != false || got["pending"] != true || got["display_name"] != "alice" {
+		t.Errorf("JSON result = %v", got)
+	}
+}
+
 // ---------------------------------------------------------------------------
 // userLoginCmd
 // ---------------------------------------------------------------------------
 
+// The login tests below pass an email: the argument is the login key, and a
+// username is refused before any of the paths they exercise.
+
 func TestUserLoginCmd_CreateClientError(t *testing.T) {
 	withGlobalConfig(t, newUserErrorConfig("text"))
+	runUserLoginExpectingFailure(t, ErrCreateClientFailed)
+}
 
-	code := captureExit(t, func() {
-		userLoginCmd.Run(newUserLoginCmd(), []string{"alice"})
-	})
-	if code != 1 {
-		t.Errorf("expected exit code 1, got %d", code)
-	}
+func TestUserLoginCmd_ConnectError(t *testing.T) {
+	mock := &mockUserClient{connectErr: errors.New("connect refused")}
+	withGlobalConfig(t, newUserTestConfig("text", mock))
+	runUserLoginExpectingFailure(t, ErrConnectFailed)
 }
 
 func TestUserLoginCmd_BeginAuthenticationError(t *testing.T) {
 	mock := &mockUserClient{beginAuthErr: errors.New("no such user")}
 	withGlobalConfig(t, newUserTestConfig("text", mock))
+	runUserLoginExpectingFailure(t, ErrBeginAuthenticationFailed)
+}
 
-	code := captureExit(t, func() {
-		userLoginCmd.Run(newUserLoginCmd(), []string{"alice"})
+// runUserLoginExpectingFailure logs in as alice@example.com and requires
+// the command to exit 1 reporting sentinel.
+func runUserLoginExpectingFailure(t *testing.T, sentinel error) string {
+	t.Helper()
+	code, stderr := runKeyExt(t, func() {
+		userLoginCmd.Run(newUserLoginCmd(), []string{"alice@example.com"})
 	})
 	if code != 1 {
 		t.Errorf("expected exit code 1, got %d", code)
 	}
+	if sentinel != nil && !strings.Contains(stderr, sentinel.Error()) {
+		t.Errorf("stderr %q does not report %q", stderr, sentinel)
+	}
+	return stderr
+}
+
+// newUserLoginConfig serves mock and attaches no authenticator, so the
+// ceremony never reaches the host's HID devices.
+func newUserLoginConfig(mock *mockUserClient) *Config {
+	cfg := newUserTestConfig("json", mock)
+	cfg.HIDEnumerator = noHIDEnumerator{}
+	return cfg
 }
 
 func TestUserLoginCmd_BadOptionsJSON(t *testing.T) {
 	mock := &mockUserClient{
 		beginAuthResp: &client.BeginAuthenticationResponse{SessionID: "s", OptionsJSON: "not-json"},
 	}
-	withGlobalConfig(t, newUserTestConfig("text", mock))
-
-	code := captureExit(t, func() {
-		userLoginCmd.Run(newUserLoginCmd(), []string{"alice"})
-	})
-	if code != 1 {
-		t.Errorf("expected exit code 1, got %d", code)
-	}
+	withGlobalConfig(t, newUserLoginConfig(mock))
+	runUserLoginExpectingFailure(t, nil)
 }
 
 func TestUserLoginCmd_ReachesFIDO2Device(t *testing.T) {
@@ -326,13 +369,12 @@ func TestUserLoginCmd_ReachesFIDO2Device(t *testing.T) {
 			OptionsJSON: validAuthenticationOptionsJSON(),
 		},
 	}
-	withGlobalConfig(t, newUserTestConfig("json", mock))
+	withGlobalConfig(t, newUserLoginConfig(mock))
 
-	code := captureExit(t, func() {
-		userLoginCmd.Run(newUserLoginCmd(), []string{"alice"})
-	})
-	if code != 1 {
-		t.Errorf("expected exit code 1 (no real FIDO2 device present), got %d", code)
+	// No authenticator is attached, so the ceremony fails past the server.
+	stderr := runUserLoginExpectingFailure(t, nil)
+	if strings.Contains(stderr, ErrBeginAuthenticationFailed.Error()) {
+		t.Errorf("the ceremony must get past the server, got %q", stderr)
 	}
 }
 

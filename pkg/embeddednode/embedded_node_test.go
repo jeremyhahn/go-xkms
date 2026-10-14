@@ -98,6 +98,42 @@ func TestOpenEmbeddedNode_ResolveNodeSealErrorPropagates(t *testing.T) {
 	require.ErrorAs(t, err, &nodeSealErr)
 }
 
+// TestOpenEmbeddedNode_UnknownEngineRejected verifies a config that skipped
+// Validate cannot hand an unknown engine to go-qrdb: OpenEmbeddedNode fails
+// with the typed config error before opening anything.
+func TestOpenEmbeddedNode_UnknownEngineRejected(t *testing.T) {
+	cfg := &config.Config{
+		Datastore: config.DatastoreConfig{Path: t.TempDir(), Engine: "carrier-pigeon"},
+	}
+
+	node, _, err := OpenEmbeddedNode(context.Background(), EmbeddedNodeOptions{
+		Config: cfg,
+		Logger: testLogger(),
+	})
+	require.Error(t, err)
+	assert.Nil(t, node)
+
+	var engineErr *config.ErrUnknownDatastoreEngine
+	require.ErrorAs(t, err, &engineErr)
+	assert.Equal(t, "carrier-pigeon", engineErr.Engine)
+}
+
+// TestOpenEmbeddedNode_EngineNormalised verifies an engine written with
+// mixed case and surrounding whitespace is accepted.
+func TestOpenEmbeddedNode_EngineNormalised(t *testing.T) {
+	cfg := &config.Config{
+		Datastore: config.DatastoreConfig{Path: t.TempDir(), Engine: " Memory "},
+	}
+
+	node, _, err := OpenEmbeddedNode(context.Background(), EmbeddedNodeOptions{
+		Config: cfg,
+		Logger: testLogger(),
+	})
+	require.NoError(t, err)
+	require.NotNil(t, node)
+	t.Cleanup(func() { require.NoError(t, node.Close()) })
+}
+
 // TestOpenEmbeddedNode_OverridesFactorRegistryAndAuditSink proves that a
 // caller-supplied FactorRegistry/AuditSink is used as-is rather than built
 // from a default -- the seam xkmsd init and xkmsd run rely on to share one

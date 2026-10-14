@@ -78,14 +78,6 @@ func unsetFrostPassphraseEnv(t *testing.T) {
 	}
 }
 
-// withSecretStdin substitutes the stdin the passphrase resolver reads.
-func withSecretStdin(t *testing.T, content string) {
-	t.Helper()
-	original := secretStdin
-	secretStdin = strings.NewReader(content)
-	t.Cleanup(func() { secretStdin = original })
-}
-
 // generateFrostShare stores participant 1's share of a new 2-of-3 key in
 // cfg's store under the passphrase currently in the environment, returning
 // the group public key.

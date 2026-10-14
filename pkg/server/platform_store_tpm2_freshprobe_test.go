@@ -29,7 +29,7 @@ import (
 // TestBuildTPM2PlatformSealer_FreshProbeOpensAndEnrolls covers the "no
 // pre-injected s.nodeSealTPM" branch of buildTPM2PlatformSealer: with no
 // node-seal flip in play, it must probe hardware itself via
-// seal.BuildBestStrategy, track the resulting Close under
+// seal.OpenTPM2Strategy, track the resulting Close under
 // s.platformStoreTPMClose, and return a working sealer.
 //
 // Under the tpm_simulator tag, a bare UseSimulator: true config

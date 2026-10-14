@@ -1477,18 +1477,23 @@ func (c *Config) Validate() error {
 	// paths must never silently fall back to a non-durable store.
 	// Deployments that want an in-memory engine (tests, ephemeral
 	// deployments) or plain files set engine "memory" / "file" explicitly.
-	if c.Datastore.Engine == "" {
-		c.Datastore.Engine = "pebble"
+	engine, err := NormalizeDatastoreEngine(c.Datastore.Engine)
+	if err != nil {
+		return err
 	}
-	switch strings.ToLower(c.Datastore.Engine) {
-	case "memory", "file", "pebble":
-	default:
-		return &errs.Message{Msg: fmt.Sprintf("invalid datastore.engine: %s (must be memory, file, or pebble)", c.Datastore.Engine)}
+	if engine == "" {
+		engine = "pebble"
 	}
-	if c.Datastore.Mode == "" {
-		c.Datastore.Mode = "standalone"
+	c.Datastore.Engine = engine
+	mode, err := NormalizeDatastoreMode(c.Datastore.Mode)
+	if err != nil {
+		return err
 	}
-	switch strings.ToLower(c.Datastore.Mode) {
+	if mode == "" {
+		mode = "standalone"
+	}
+	c.Datastore.Mode = mode
+	switch mode {
 	case "standalone":
 		// A standalone datastore hosts the embedded qrdb node in this
 		// process, and go-qrdb roots the node's on-disk state (including its
@@ -1512,8 +1517,6 @@ func (c *Config) Validate() error {
 		default:
 			return &errs.Message{Msg: fmt.Sprintf("invalid datastore.remote.transport: %s (must be rest or grpc)", c.Datastore.Remote.Transport)}
 		}
-	default:
-		return &errs.Message{Msg: fmt.Sprintf("invalid datastore.mode: %s (must be standalone or remote)", c.Datastore.Mode)}
 	}
 
 	seenDatabaseNames := make(map[string]struct{}, len(c.Datastore.Databases))

@@ -167,7 +167,10 @@ func (s *Server) buildTPM2PlatformSealer() (types.Sealer, error) {
 		if err != nil {
 			return nil, err
 		}
-		res := seal.BuildBestStrategy(seal.AutodetectOptions{
+		// tpm2 is configured explicitly here, so a slow TPM gets the
+		// required-open budget and a failed open is reported with its cause,
+		// never mistaken for a missing TPM (go-xkms#1528).
+		res, err := seal.OpenTPM2Strategy(seal.AutodetectOptions{
 			TPM2: &seal.TPM2ProbeConfig{
 				Device:          s.config.Backends.TPM2.DevicePath,
 				KeyDir:          keyDir,
@@ -178,12 +181,14 @@ func (s *Server) buildTPM2PlatformSealer() (types.Sealer, error) {
 				PlatformPCR:     s.config.Backends.TPM2.PlatformPCR,
 				PlatformPCRBank: s.config.Backends.TPM2.PlatformPCRBank,
 			},
-			Logger: s.logger,
+			ProbeTimeout: seal.RequiredTPMOpenTimeout,
+			Logger:       s.logger,
 		})
-		if !res.HardwareAvailable() {
+		if err != nil {
 			return nil, &ErrPlatformStoreStrategyUnavailable{
 				Strategy: "tpm2",
-				Reason:   "no usable, provisioned TPM was found",
+				Reason:   "the configured TPM could not be used",
+				Err:      err,
 			}
 		}
 		tpmBackend, ok := res.Sealer.(*tpm2backend.Backend)

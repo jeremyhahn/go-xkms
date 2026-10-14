@@ -105,6 +105,6 @@ if one is needed), never as a config edit on a running system.
 |---|---|---|
 | server refuses to start: "datastore.path must be specified for datastore.engine ..." | `datastore.path` is empty | Set `datastore.path` (or `XKMS_DATASTORE_PATH`) |
 | server refuses to start: "network protocols require datastore.mode \"standalone\"" | you enabled REST/gRPC/QUIC/MCP with `datastore.mode: remote` | switch to `standalone`, or disable those protocols and use the Unix socket |
-| server refuses to start: "invalid datastore.engine" / "invalid datastore.mode" | a typo in `datastore.engine`/`datastore.mode` | use one of `memory`/`file`/`pebble` for engine, `standalone`/`remote` for mode |
+| server refuses to start: "config: unknown datastore.engine ..." / "config: unknown datastore.mode ..." | a typo in `datastore.engine`/`datastore.mode` | use one of `memory`/`file`/`pebble` for engine, `standalone`/`remote` for mode |
 | "storage: engine open-pebble: database already open" | two `xkmsd` processes pointed at the same `pebble` path | use separate `path` values, or run one server |
 | data from before a `datastore.engine`/`.mode` change is gone | expected — see "Switching engines or modes" above | restore the old configuration, or plan a real migration |

@@ -61,6 +61,7 @@ type mockCAClient struct {
 
 	issueLAKResp *transport.IssueLAKCertificateResponse
 	issueLAKErr  error
+	gotLAKReq    *transport.IssueLAKCertificateRequest
 }
 
 func newMockCAClient() *mockCAClient {
@@ -276,7 +277,8 @@ func (m *mockCAClient) EnrollDevice(_ context.Context, _ *transport.EnrollDevice
 	return m.enrollResp, nil
 }
 
-func (m *mockCAClient) IssueLAKCertificate(_ context.Context, _ *transport.IssueLAKCertificateRequest) (*transport.IssueLAKCertificateResponse, error) {
+func (m *mockCAClient) IssueLAKCertificate(_ context.Context, req *transport.IssueLAKCertificateRequest) (*transport.IssueLAKCertificateResponse, error) {
+	m.gotLAKReq = req
 	if m.issueLAKErr != nil {
 		return nil, m.issueLAKErr
 	}

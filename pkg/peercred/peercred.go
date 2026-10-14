@@ -74,5 +74,10 @@ func CheckSupport() error {
 
 // FromConn reads the kernel-verified UID/GID/PID of conn's peer.
 func FromConn(conn *net.UnixConn) (*Credentials, error) {
+	// A nil *net.UnixConn passes a caller's conn.(*net.UnixConn) assertion
+	// when the interface holds a typed nil, and its methods dereference it.
+	if conn == nil {
+		return nil, ExtractionFailedError{Reason: "nil connection"}
+	}
 	return fromConn(conn)
 }
