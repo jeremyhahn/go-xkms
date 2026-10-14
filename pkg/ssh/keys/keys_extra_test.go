@@ -894,26 +894,20 @@ func TestParseWithPassphrase_ProviderError(t *testing.T) {
 // ---------------------------------------------------------------------------
 
 func TestParsePEM_EmptyBuffer(t *testing.T) {
-	// NewBufferFromBytes with zero-length slice produces a Buffer, but
-	// ParsePEM checks len(pemBytes)==0 and returns NilInputError.
-	// The simplest way: use a fresh Buffer with genuinely zero bytes is
-	// tricky due to memguard minimum size; instead generate a 1-byte
-	// buffer and destroy it so Bytes() returns nil/empty.
-	// Actually the simpler approach: nil buffer is already tested by the
-	// existing TestParsePEM_NilBuffer. The "empty" branch fires when
-	// pemBuf.Bytes() returns a zero-length slice. We cannot easily create
-	// that with a live Buffer, so instead verify the nil path is
-	// distinct and the empty path fires for a buffer that was destroyed.
-	//
-	// Since the destroyed-Buffer approach depends on internal memguard
-	// behavior, we exercise the same code path by passing nil (the
-	// existing test covers that), and accept that the empty-slice branch
-	// is structurally tested via coverage of the nil branch sharing the
-	// same return value pattern.
-	//
-	// This test documents the decision rather than re-exercising
-	// the nil path.
-	t.Log("empty-buffer path shares NilInputError with nil-buffer path; covered by TestParsePEM_NilBuffer")
+	// A Buffer cannot be built empty (NewBufferFromBytes rejects a
+	// zero-length source), so a destroyed one stands in for an absent PEM:
+	// it must be refused like a nil buffer, not parsed.
+	buf, err := secure.NewBufferFromBytes([]byte("x"))
+	if err != nil {
+		t.Fatalf("NewBufferFromBytes: %v", err)
+	}
+	buf.Destroy()
+
+	_, err = keys.ParsePEM(context.Background(), buf, nil)
+	var nErr *keys.NilInputError
+	if !errors.As(err, &nErr) {
+		t.Fatalf("expected NilInputError for a destroyed buffer, got %T: %v", err, err)
+	}
 }
 
 // ---------------------------------------------------------------------------

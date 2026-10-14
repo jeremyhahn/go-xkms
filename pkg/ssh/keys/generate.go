@@ -151,7 +151,7 @@ func keyFromCryptoPrivate(ctx context.Context, priv crypto.PrivateKey, algo Algo
 	if secErr != nil {
 		return nil, &KeyMaterialError{Op: "seal generated pem", Err: secErr}
 	}
-	// Wipe our reference in case the underlying memguard
+	// Wipe our reference in case the underlying go-enclave
 	// implementation left anything behind (NewSecret already wipes,
 	// but defense in depth is cheap).
 	secure.Wipe(pemBytes)

@@ -436,7 +436,7 @@ command line — the only host-side caller of either.
 
 The authenticator's `KeyManager` holds four unwrapped keys while unlocked —
 Admin Key, Credential Master Key, Storage Master Key, User Master Key — each
-in memguard-backed protected memory (`secure.Buffer`): mlocked, canary-guarded,
+in go-enclave-backed protected memory (`secure.Buffer`): mlocked, canary-guarded,
 and deterministically wiped on release. `KeyWrapper.UnwrapInto` decrypts into
 a caller-supplied destination sized before any borrow, and `WrapFrom(src
 *secure.Buffer)` reads from a borrow the caller owns — neither method can

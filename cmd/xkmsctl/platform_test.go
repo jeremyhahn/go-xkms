@@ -16,6 +16,7 @@
 package main
 
 import (
+	"bytes"
 	"context"
 	"testing"
 
@@ -37,14 +38,18 @@ type mockPlatformClient struct {
 	statusErr  error
 
 	// Captured requests for assertion.
-	gotPutReq    *transport.SealStorePutRequest
-	gotGetReq    *transport.SealStoreGetRequest
-	gotDeleteReq *transport.SealStoreDeleteRequest
-	gotResealReq *transport.SealStoreResealRequest
+	gotPutReq *transport.SealStorePutRequest
+	// gotPutSecretRef aliases the caller's secret buffer, to check the wipe.
+	gotPutSecretRef []byte
+	gotGetReq       *transport.SealStoreGetRequest
+	gotDeleteReq    *transport.SealStoreDeleteRequest
+	gotResealReq    *transport.SealStoreResealRequest
 }
 
 func (m *mockPlatformClient) SealStorePut(_ context.Context, req *transport.SealStorePutRequest) error {
-	m.gotPutReq = req
+	// platformPut wipes req.Secret after the call, so keep a copy.
+	m.gotPutSecretRef = req.Secret
+	m.gotPutReq = &transport.SealStorePutRequest{Name: req.Name, Secret: bytes.Clone(req.Secret)}
 	return m.putErr
 }
 

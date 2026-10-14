@@ -13,6 +13,8 @@
 
 package pairing
 
+import secure "github.com/jeremyhahn/go-xkms/sdk/go/secure"
+
 // Key sharing method names for bidirectional key exchange between
 // laptop and phone. These methods enable public key distribution,
 // symmetric key wrapping, and key import/export flows.
@@ -164,6 +166,9 @@ type RemoteImportSharedKeyResult struct {
 	KeySize        int    `json:"key_size,omitempty"`
 	Exportable     bool   `json:"exportable"`
 }
+
+// Destroy wipes the exported key material once the result is encoded.
+func (r *RemoteImportSharedKeyResult) Destroy() { secure.Wipe(r.WrappedKey) }
 
 // sharingLocalMethodNames contains all valid local.* sharing method names.
 var sharingLocalMethodNames = map[string]bool{

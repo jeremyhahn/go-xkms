@@ -14,40 +14,65 @@
 package module
 
 import (
-	"crypto/ecdsa"
+	"bytes"
 	"crypto/elliptic"
-	"crypto/rand"
 	"encoding/asn1"
 	"errors"
 	"testing"
 )
 
 func TestECPublicKeyFromPoint(t *testing.T) {
-	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
-	if err != nil {
-		t.Fatal(err)
-	}
-	raw, err := key.PublicKey.Bytes()
-	if err != nil {
-		t.Fatal(err)
-	}
-	wrapped, err := asn1.Marshal(raw)
-	if err != nil {
-		t.Fatal(err)
-	}
+	// Every input is fixed bytes: a random point's X[0] can make the bare
+	// point parse as a complete OCTET STRING and change which error comes back.
+	// The P-256 base point is a valid point; its X[0] is 0x6B, so the bare
+	// point reads as an OCTET STRING longer than its input.
+	params := elliptic.P256().Params()
+	raw := make([]byte, 65)
+	raw[0] = 0x04
+	params.Gx.FillBytes(raw[1:33])
+	params.Gy.FillBytes(raw[33:])
+	wrapped := mustMarshalOctetString(t, raw)
+	// A complete OCTET STRING whose content is not a point on the curve.
+	notAPoint := mustMarshalOctetString(t, []byte{0x04, 0x01})
 
 	pub, err := ecPublicKeyFromPoint(elliptic.P256(), wrapped)
-	if err != nil || !pub.Equal(&key.PublicKey) {
+	if err != nil {
 		t.Fatalf("round trip failed: %v", err)
 	}
+	if got, err := pub.Bytes(); err != nil || !bytes.Equal(got, raw) {
+		t.Fatalf("round trip decoded a different point: %v", err)
+	}
 
-	if _, err := ecPublicKeyFromPoint(elliptic.P256(), raw); !errors.Is(err, ErrProvisionECPoint) {
-		t.Fatalf("unwrapped point error = %v, want ErrProvisionECPoint", err)
+	for _, tc := range []struct {
+		name       string
+		curve      elliptic.Curve
+		ecPoint    []byte
+		wantDERErr bool
+	}{
+		{name: "unwrapped point", curve: elliptic.P256(), ecPoint: raw, wantDERErr: true},
+		{name: "trailing bytes", curve: elliptic.P256(), ecPoint: append(append([]byte(nil), wrapped...), 0), wantDERErr: true},
+		{name: "empty", curve: elliptic.P256(), ecPoint: nil, wantDERErr: true},
+		{name: "octet string that is not a point", curve: elliptic.P256(), ecPoint: notAPoint},
+		{name: "P-256 point on P-384", curve: elliptic.P384(), ecPoint: wrapped},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			_, err := ecPublicKeyFromPoint(tc.curve, tc.ecPoint)
+			var provErr *ProvisionError
+			if !errors.As(err, &provErr) || provErr.Step != "decode CKA_EC_POINT" {
+				t.Fatalf("err = %v, want a decode CKA_EC_POINT ProvisionError", err)
+			}
+			if got := errors.Is(err, ErrProvisionECPoint); got != tc.wantDERErr {
+				t.Fatalf("errors.Is(err, ErrProvisionECPoint) = %v, want %v (err = %v)", got, tc.wantDERErr, err)
+			}
+		})
 	}
-	if _, err := ecPublicKeyFromPoint(elliptic.P256(), append(wrapped, 0)); !errors.Is(err, ErrProvisionECPoint) {
-		t.Fatalf("trailing bytes error = %v, want ErrProvisionECPoint", err)
+}
+
+func mustMarshalOctetString(t *testing.T, b []byte) []byte {
+	t.Helper()
+	der, err := asn1.Marshal(b)
+	if err != nil {
+		t.Fatal(err)
 	}
-	if _, err := ecPublicKeyFromPoint(elliptic.P384(), wrapped); err == nil {
-		t.Fatal("a P-256 point decoded on P-384")
-	}
+	return der
 }

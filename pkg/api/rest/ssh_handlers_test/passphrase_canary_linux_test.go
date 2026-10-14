@@ -118,7 +118,7 @@ func TestCanary_PassphraseNotInHeap(t *testing.T) {
 	if !bytes.Contains([]byte(importBody.PassphraseB64), []byte(base64.StdEncoding.EncodeToString([]byte(needle)))) {
 		t.Fatal("needle not present in test body: the canary has no test subject")
 	}
-	// The needle may still appear inside the memguard enclave
+	// The needle may still appear inside the go-enclave enclave
 	// pages (which are mlocked / guarded) — those are the intended
 	// live storage. The positive assertion above confirms the
 	// code-path executes; a broader /proc/self/mem scan is the

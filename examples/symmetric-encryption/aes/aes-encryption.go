@@ -143,8 +143,8 @@ func basicEncryption(b types.SymmetricKeyProvider) error {
 // passwordProtectedEncryption demonstrates AES-256-GCM encryption
 // with password-protected key storage.
 func passwordProtectedEncryption(b types.SymmetricKeyProvider) error {
-	// Define a password for key encryption. NewPassword seals it into a
-	// memguard-backed enclave; the plaintext never sits on the ordinary
+	// Define a password for key encryption. NewPassword copies it into a
+	// locked go-enclave memory enclave; the plaintext never sits on the ordinary
 	// Go heap.
 	password, err := types.NewPassword([]byte("my-secure-password"))
 	if err != nil {

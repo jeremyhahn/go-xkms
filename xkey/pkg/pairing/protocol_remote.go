@@ -13,6 +13,8 @@
 
 package pairing
 
+import secure "github.com/jeremyhahn/go-xkms/sdk/go/secure"
+
 // Remote method names for the phone-to-laptop direction.
 // These methods operate on the laptop's xkmsd backends, allowing
 // the phone to invoke cryptographic operations on the laptop remotely.
@@ -175,6 +177,9 @@ type RemoteDecryptResult struct {
 	Plaintext []byte `json:"plaintext"`
 }
 
+// Destroy wipes the plaintext once the result is encoded.
+func (r *RemoteDecryptResult) Destroy() { secure.Wipe(r.Plaintext) }
+
 // RemoteDeriveKeyParams contains parameters for remote.deriveKey (ECDH).
 type RemoteDeriveKeyParams struct {
 	Backend       string `json:"backend"`
@@ -186,6 +191,9 @@ type RemoteDeriveKeyParams struct {
 type RemoteDeriveKeyResult struct {
 	SharedSecret []byte `json:"sharedSecret"`
 }
+
+// Destroy wipes the shared secret once the result is encoded.
+func (r *RemoteDeriveKeyResult) Destroy() { secure.Wipe(r.SharedSecret) }
 
 // RemoteGenerateKeyParams contains parameters for remote.generateKey.
 type RemoteGenerateKeyParams struct {
@@ -345,6 +353,9 @@ type RemoteActivateCredentialResult struct {
 	// The CA compares this against its original value to verify EK possession.
 	DecryptedSecret []byte `json:"decryptedSecret"`
 }
+
+// Destroy wipes the recovered credential secret once the result is encoded.
+func (r *RemoteActivateCredentialResult) Destroy() { secure.Wipe(r.DecryptedSecret) }
 
 // RemoteGetAttestationQuoteParams contains parameters for remote.getAttestationQuote.
 // This requests a TPM2 attestation quote over platform PCRs, signed by the IAK.

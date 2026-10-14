@@ -32,7 +32,7 @@ import (
 // KeyManager error types define error conditions for key management operations.
 var (
 	// ErrKeyManagerProtectedMemory indicates key material could not be placed
-	// in memguard-backed protected memory. The plaintext is wiped before this
+	// in go-enclave-backed protected memory. The plaintext is wiped before this
 	// is returned; the operation fails rather than falling back to the heap.
 	ErrKeyManagerProtectedMemory = errors.New("authenticator: cannot place key material in protected memory")
 
@@ -100,14 +100,14 @@ type KeyManager struct {
 
 	// adminKey is the unwrapped Admin Key (from SMK).
 	//
-	// This and the three keys below are held in memguard-backed protected
+	// This and the three keys below are held in go-enclave-backed protected
 	// memory: mlocked so they cannot be swapped to disk, canary-guarded, and
 	// wiped deterministically by Destroy rather than by convention. They are
 	// the keys that unwrap everything else in the hierarchy, so an attacker
 	// who reads them does not need any of the keys they protect.
 	//
 	// Read them through WithBytes, not Bytes: only WithBytes holds the borrow
-	// across the read, and a memguard failure anywhere in the process unmaps
+	// across the read, and a process-wide enclave.WipeAll destroys
 	// every live enclave.
 	//
 	// Each key is decrypted DIRECTLY into its protected buffer:
@@ -352,7 +352,7 @@ func newRandomKeyBuffer(size int) (*secure.Buffer, error) {
 }
 
 // withKeyWrapper runs fn with an AES-GCM KeyWrapper built from a protected
-// key, holding the memguard borrow for the whole call. The wrapper must not
+// key, holding the borrow for the whole call. The wrapper must not
 // outlive fn.
 //
 // This is the shape every consumer of a protected key wants: the key's
@@ -370,7 +370,7 @@ func withKeyWrapper(key *secure.Buffer, fn func(KeyWrapper) error) error {
 }
 
 // withKeyBytes runs fn against a protected key's plaintext, holding the
-// memguard borrow for the whole call. Returns ErrKeyManagerLocked when the key
+// buffer's WithBytes borrow for the whole call. Returns ErrKeyManagerLocked when the key
 // is absent, which is the state every caller previously spelled as a nil check.
 func withKeyBytes(key *secure.Buffer, fn func([]byte) error) error {
 	if key == nil {

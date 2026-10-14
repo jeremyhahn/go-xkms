@@ -83,9 +83,9 @@ Supported backends:
 // rootCmd.PersistentPreRunE has no way to surface a sealing failure other
 // than aborting every command, so a failure is logged and treated as "no
 // PIN provided" rather than propagated, mirroring xkey's fido2PINSecret. In
-// practice this path is unreachable: the underlying memguard allocator
-// panics the whole process on allocation failure before NewSecret could
-// return an error here.
+// practice this path is rare: it needs the seal itself to fail (the
+// process Sealer already destroyed by enclave.WipeAll, or the kernel refusing
+// to lock the sealing key's pages), and NewSecret then returns that error here.
 func pkcs11PINSecret(ctx context.Context, s string) *secure.Secret {
 	if s == "" {
 		return nil

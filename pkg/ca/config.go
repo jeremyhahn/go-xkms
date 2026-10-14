@@ -131,7 +131,7 @@ type CAKeystoreSoftwareConfig struct {
 	//
 	// Password decodes from, and re-encodes to, a plain reference string in
 	// YAML/JSON; the resolved plaintext is sealed into this field's own
-	// memguard enclave rather than kept as a plain Go string. See
+	// go-enclave sealed enclave rather than kept as a plain Go string. See
 	// types.SecretValue and types.NewPasswordFromSecretValue.
 	Password *types.SecretValue `yaml:"password,omitempty" json:"password,omitempty" mapstructure:"password"`
 }
@@ -152,7 +152,7 @@ type CAKeystoreTPM2Config struct {
 type CAKeystorePKCS11Config struct {
 	// Pin is the PKCS#11 token PIN. Decodes from, and re-encodes to, a plain
 	// reference string in YAML/JSON; the resolved plaintext is sealed into
-	// this field's own memguard enclave rather than kept as a plain Go
+	// this field's own go-enclave sealed enclave rather than kept as a plain Go
 	// string. See types.SecretValue and types.SecretValueBytes.
 	Pin    *types.SecretValue `yaml:"pin,omitempty" json:"pin,omitempty" mapstructure:"pin"`
 	Slot   int                `yaml:"slot,omitempty" json:"slot,omitempty" mapstructure:"slot"`

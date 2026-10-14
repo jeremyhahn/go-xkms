@@ -917,7 +917,7 @@ type RaftEnrollmentConfig struct {
 	// protection mode (and the passphrase fallback in auto mode). Supports
 	// credential:// references resolved at boot. Declared as a
 	// types.SecretValue rather than a plain string so the resolved
-	// plaintext lives in its own memguard enclave rather than an unwipeable
+	// plaintext lives in its own go-enclave sealed enclave rather than an unwipeable
 	// Go string; see types.SecretValue and the CA identity password
 	// resolution in Server.initializeCA for the same pattern.
 	CAKeyPassphrase *types.SecretValue `yaml:"ca_key_passphrase"`
@@ -1100,7 +1100,7 @@ type RNGPKCS11Config struct {
 
 	// PIN is the authentication PIN (if PINRequired is true). Decodes from,
 	// and re-encodes to, a plain reference string in YAML/JSON; the resolved
-	// plaintext is sealed into this field's own memguard enclave rather than
+	// plaintext is sealed into this field's own go-enclave sealed enclave rather than
 	// kept as a plain Go string. See types.SecretValue and
 	// types.SecretValueBytes.
 	// Note: Consider using environment variable XKMS_RNG_PKCS11_PIN instead
@@ -1194,7 +1194,7 @@ type PKCS11Config struct {
 	Token string `yaml:"token"`
 	// Pin is the PKCS#11 user PIN. Decodes from, and re-encodes to, a plain
 	// reference string in YAML/JSON; the resolved plaintext is sealed into
-	// this field's own memguard enclave rather than kept as a plain Go
+	// this field's own go-enclave sealed enclave rather than kept as a plain Go
 	// string. See types.SecretValue and types.SecretValueBytes.
 	Pin *types.SecretValue `yaml:"pin"`
 }
@@ -1206,7 +1206,7 @@ type AWSKMSConfig struct {
 	AccessKey string `yaml:"access_key"`
 	// SecretKey is the AWS secret access key. Decodes from, and re-encodes
 	// to, a plain reference string in YAML/JSON; the resolved plaintext is
-	// sealed into this field's own memguard enclave rather than kept as a
+	// sealed into this field's own go-enclave sealed enclave rather than kept as a
 	// plain Go string. See types.SecretValue and types.SecretValueBytes.
 	SecretKey *types.SecretValue `yaml:"secret_key"`
 	Endpoint  string             `yaml:"endpoint"`
@@ -1236,7 +1236,7 @@ type AzureKVConfig struct {
 	ClientID string `yaml:"client_id"`
 	// ClientSecret is the Azure service principal client secret. Decodes
 	// from, and re-encodes to, a plain reference string in YAML/JSON; the
-	// resolved plaintext is sealed into this field's own memguard enclave
+	// resolved plaintext is sealed into this field's own go-enclave sealed enclave
 	// rather than kept as a plain Go string. See types.SecretValue and
 	// types.SecretValueBytes.
 	ClientSecret *types.SecretValue `yaml:"client_secret"`
@@ -1254,7 +1254,7 @@ type VaultConfig struct {
 	Address string `yaml:"address"`
 	// Token is the Vault authentication token. Decodes from, and re-encodes
 	// to, a plain reference string in YAML/JSON; the resolved plaintext is
-	// sealed into this field's own memguard enclave rather than kept as a
+	// sealed into this field's own go-enclave sealed enclave rather than kept as a
 	// plain Go string. See types.SecretValue and types.SecretValueBytes.
 	Token     *types.SecretValue `yaml:"token"`
 	Namespace string             `yaml:"namespace"`
@@ -1277,7 +1277,7 @@ type PhoneConfig struct {
 	// NoiseStaticKey is the hex-encoded Noise static private key for this
 	// host. Decodes from, and re-encodes to, a plain reference string in
 	// YAML/JSON; the resolved plaintext is sealed into this field's own
-	// memguard enclave rather than kept as a plain Go string. See
+	// go-enclave sealed enclave rather than kept as a plain Go string. See
 	// types.SecretValue and types.SecretValueBytes.
 	NoiseStaticKey *types.SecretValue `yaml:"noise_static_key"`
 

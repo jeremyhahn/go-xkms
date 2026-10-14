@@ -53,7 +53,8 @@ func (m *mockRequestHandler) HandleRequest(_ context.Context, request []byte) ([
 		return nil, m.returnErr
 	}
 	if m.response != nil {
-		return m.response, nil
+		// The server wipes the returned slice, so hand it a copy.
+		return append([]byte(nil), m.response...), nil
 	}
 	// Default: echo the request back.
 	return request, nil

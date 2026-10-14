@@ -90,9 +90,9 @@ var (
 	// ErrInvalidPermanentIdentifier is returned when an invalid permanent identifier is provided.
 	ErrInvalidPermanentIdentifier = errors.New("invalid permanent identifier")
 
-	// ErrEnclaveUnavailable is returned when memguard fails to allocate an
-	// mlocked region for a non-empty password. This is a hard system
-	// condition (RLIMIT_MEMLOCK exhausted, no swap, etc.); callers MUST
+	// ErrEnclaveUnavailable is returned when a non-empty password cannot get
+	// its locked buffer: the process locked-memory budget refuses it, or the
+	// kernel will not lock the pages (RLIMIT_MEMLOCK). Callers MUST
 	// treat it as fatal to the requested operation rather than silently
 	// substituting an empty password, which for TPM UserAuth would
 	// otherwise produce passwordless authentication.
@@ -927,7 +927,7 @@ type Password interface {
 const PasswordRedacted = "[REDACTED]"
 
 // ClearPassword implements Password by holding the UserAuth bytes inside
-// a memguard-backed *secure.Buffer. The plaintext never sits on the
+// a go-enclave-backed *secure.Buffer. The plaintext never sits on the
 // ordinary Go heap; callers receive defensive copies from Bytes/String
 // and MUST invoke Clear when the password is no longer needed.
 //
@@ -939,7 +939,7 @@ type ClearPassword struct {
 }
 
 // NewPassword creates a new password for TPM key authentication.
-// The input bytes are copied into a memguard enclave; the caller's
+// The input bytes are copied into a locked go-enclave memory enclave; the caller's
 // slice is NOT wiped by this constructor.
 //
 // Use this for key authentication values that will be passed to TPM
@@ -3654,7 +3654,7 @@ type KeyConfig struct {
 	// Password is the passphrase that protects this key at rest. It decodes
 	// from, and re-encodes to, a plain reference string in YAML/JSON (a
 	// "credential://..." URI); the resolved plaintext is sealed into this
-	// field's own memguard enclave rather than kept as a plain Go string. A
+	// field's own go-enclave sealed enclave rather than kept as a plain Go string. A
 	// nil pointer means unconfigured (an unprotected key); see SecretValue
 	// and NewPasswordFromSecretValue.
 	Password  *SecretValue `yaml:"password,omitempty" json:"password,omitempty" mapstructure:"password"`

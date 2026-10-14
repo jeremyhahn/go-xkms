@@ -228,7 +228,7 @@ type Config struct {
 	PlatformSRK *PlatformSRKConfig `yaml:"platform-srk" json:"platform_srk" mapstructure:"platform-srk"`
 	// LockoutAuth is the TPM Lockout hierarchy authorization value. Decodes
 	// from, and re-encodes to, a plain reference string in YAML/JSON; the
-	// resolved plaintext is sealed into this field's own memguard enclave
+	// resolved plaintext is sealed into this field's own go-enclave sealed enclave
 	// rather than kept as a plain Go string. See types.SecretValue and
 	// types.SecretValueBytes.
 	LockoutAuth     *types.SecretValue      `yaml:"lockout-auth,omitempty" json:"lockout-auth" mapstructure:"lockout-auth"`
@@ -273,7 +273,7 @@ type EKConfig struct {
 	Handle     uint32           `yaml:"handle" json:"handle" mapstructure:"handle"`
 	// HierarchyAuth and Password decode from, and re-encode to, a plain
 	// reference string in YAML/JSON; the resolved plaintext is sealed into
-	// each field's own memguard enclave rather than kept as a plain Go
+	// each field's own go-enclave sealed enclave rather than kept as a plain Go
 	// string. See types.SecretValue and types.SecretValueBytes.
 	HierarchyAuth  *types.SecretValue `yaml:"hierarchy-auth,omitempty" json:"hierarchy_auth" mapstructure:"hierarchy-auth"`
 	KeyAlgorithm   string             `yaml:"algorithm" json:"algorithm" mapstructure:"algorithm"`
@@ -331,7 +331,7 @@ type SRKConfig struct {
 	Handle    uint32           `yaml:"handle" json:"handle" mapstructure:"handle"`
 	// HierarchyAuth and Password decode from, and re-encode to, a plain
 	// reference string in YAML/JSON; the resolved plaintext is sealed into
-	// each field's own memguard enclave rather than kept as a plain Go
+	// each field's own go-enclave sealed enclave rather than kept as a plain Go
 	// string. See types.SecretValue and types.SecretValueBytes.
 	HierarchyAuth *types.SecretValue `yaml:"hierarchy-auth,omitempty" json:"hierarchy-auth" mapstructure:"hierarchy-auth"`
 	KeyAlgorithm  string             `yaml:"algorithm" json:"algorithm" mapstructure:"algorithm"`

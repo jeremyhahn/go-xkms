@@ -706,7 +706,7 @@ func (tpm *TPM2) CreateSRK(
 	// Lengths and presence flags only -- never the auth bytes themselves, at
 	// any log level. The auth values this key is created with are exactly
 	// the owner-hierarchy and object secrets this package protects
-	// everywhere else (types.SecretValue, memguard enclaves); logging them
+	// everywhere else (types.SecretValue, go-enclave enclaves); logging them
 	// here would undo that.
 	hierName, hierErr := HierarchyName(hierarchy)
 	if hierErr != nil {

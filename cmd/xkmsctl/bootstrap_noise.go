@@ -119,7 +119,7 @@ func generateNoiseKey(outputFile string) {
 	// wiping afterwards does nothing about the copies the GC may already have
 	// made, or about the page reaching swap in between. Unlike the P-256 path,
 	// EncodeNoiseStaticKey takes a plain []byte destination, so the SDK's
-	// secure.Buffer (never a raw memguard.LockedBuffer) is sufficient here.
+	// secure.Buffer (a go-enclave locked buffer) is sufficient here.
 	buf, err := secure.NewBuffer(bootstrap.NoiseHexKeySize + 1)
 	if err != nil {
 		handleError(&WrappedError{Sentinel: ErrGenerateKeyFailed, Err: err})

@@ -28,8 +28,8 @@
 // false, and the caller's correct response is to RETAIN the protected memory
 // rather than free it. Leaking locked pages is the safe failure mode; freeing
 // pages a live goroutine is decrypting through is not. Retention is permanent
-// for the life of the process — memguard reclaims only through a process-wide
-// purge — so a timeout is a real cost and the timeouts are set accordingly.
+// for the life of the process — go-enclave reclaims only through a process-wide
+// enclave.WipeAll — so a timeout is a real cost and the timeouts are set accordingly.
 package lifecycle
 
 import (

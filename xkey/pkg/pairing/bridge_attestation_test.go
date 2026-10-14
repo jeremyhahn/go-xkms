@@ -652,6 +652,40 @@ func TestHandleActivateCredential_Success(t *testing.T) {
 	assert.Equal(t, []byte("recovered-secret"), res.DecryptedSecret)
 }
 
+func TestHandleActivateCredential_SecretWipedAfterEncoding(t *testing.T) {
+	tpmSecret := []byte("recovered-secret")
+	b := newTestBridgeWithTPM(t, &mockTPMEnroller{activateSecret: tpmSecret})
+
+	resp := b.HandleRequest(context.Background(), newRemoteRequest(MethodRemoteActivateCredential, RemoteActivateCredentialParams{
+		CredentialBlob:  []byte{0x01},
+		EncryptedSecret: []byte{0x02},
+	}))
+
+	result := decodeResult[RemoteActivateCredentialResult](t, resp)
+	assert.Equal(t, []byte("recovered-secret"), result.DecryptedSecret)
+	assert.Equal(t, make([]byte, len(tpmSecret)), tpmSecret)
+}
+
+func TestHandleActivateCredential_AuditFailureWipesSecret(t *testing.T) {
+	tpmSecret := []byte("recovered-secret")
+	b, err := NewBridge(&mockTransportClient{}, &BridgeConfig{
+		Logger:      testLogger(),
+		TPM:         &mockTPMEnroller{activateSecret: tpmSecret},
+		AuditLogger: &mockAuditLogger{logErr: errors.New("audit sink unavailable")},
+	})
+	require.NoError(t, err)
+
+	params, err := json.Marshal(RemoteActivateCredentialParams{
+		CredentialBlob:  []byte{0x01},
+		EncryptedSecret: []byte{0x02},
+	})
+	require.NoError(t, err)
+
+	_, err = b.handleActivateCredential(context.Background(), params)
+	require.Error(t, err)
+	assert.Equal(t, make([]byte, len(tpmSecret)), tpmSecret)
+}
+
 func TestHandleActivateCredential_InvalidParams(t *testing.T) {
 	b := newTestBridgeWithTPM(t, &mockTPMEnroller{})
 	_, err := b.handleActivateCredential(context.Background(), json.RawMessage(`{not-json`))

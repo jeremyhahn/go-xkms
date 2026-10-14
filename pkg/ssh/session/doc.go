@@ -17,8 +17,8 @@
 //
 // This package replaces the legacy pkg/ssh.Client. Every Session owns
 // its underlying *keys.Key — Close() deterministically destroys the
-// memguard enclave in LIFO order, matching the secure-memory discipline
-// documented in pkg/secure.
+// go-enclave enclave in LIFO order, matching the secure-memory discipline
+// documented in sdk/go/secure.
 //
 // # MITM safety
 //

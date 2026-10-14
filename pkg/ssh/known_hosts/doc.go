@@ -17,7 +17,7 @@
 // Fingerprints are public material (OpenSSH "SHA256:..." form) and are
 // persisted as go-qrdb DAO entities in the same "ssh" database as
 // pkg/ssh/keys. Because pins carry no secret material, they are not
-// wrapped in memguard enclaves; the datastore's integrity is sufficient.
+// wrapped in go-enclave enclaves; the datastore's integrity is sufficient.
 //
 // # Layering
 //

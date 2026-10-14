@@ -2040,8 +2040,8 @@ func (s *PhoneService) closeActiveConnectionLocked() error {
 	}
 
 	// Parked, not dropped. The local would otherwise go out of scope here,
-	// which reads as "we forgot" rather than "we decided". memguard pins
-	// every live buffer in a package-level list, so the pages survive either
+	// which reads as "we forgot" rather than "we decided". go-enclave tracks
+	// every live enclave in a process-wide registry, so the pages survive either
 	// way — but holding the owner is what says so, and what a future
 	// reclamation path would need.
 	//

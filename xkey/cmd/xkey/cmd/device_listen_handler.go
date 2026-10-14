@@ -519,7 +519,17 @@ func (h *listenRequestHandler) handleViaBridge(ctx context.Context, req *pairing
 		h.logger.Error("bridge returned no response", slog.String("method", req.Method))
 		return pairing.EncodeErrorResponse(req.ID, pairing.ErrorCodeInternalError, "Bridge returned no response", nil)
 	}
-	return json.Marshal(resp)
+	return encodeBridgeResponse(resp)
+}
+
+// encodeBridgeResponse encodes a bridge response into the frame the transport
+// encrypts. The encoded result can carry a decrypted plaintext or a shared
+// secret, so it is wiped once copied into the frame; the transport wipes the
+// frame after Noise has encrypted it.
+func encodeBridgeResponse(resp *pairing.Response) ([]byte, error) {
+	encoded, err := json.Marshal(resp)
+	secure.Wipe(resp.Result)
+	return encoded, err
 }
 
 // methodHandler is a function type for handling specific methods.

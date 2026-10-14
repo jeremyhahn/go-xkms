@@ -180,7 +180,7 @@ viper reads the YAML into a map before mapstructure decodes it with
   configured" is answered by the field itself (`field != nil`), not a
   resolution-dependent wrapper.
 
-  Resolution into the field's memguard enclave happens later, wherever the
+  Resolution into the field's go-enclave sealed enclave happens later, wherever the
   field's owner has a `secret.ResolverRegistry` available — `Load` itself
   never resolves a secret reference. Two groups, by when in the daemon's
   life that owner exists:

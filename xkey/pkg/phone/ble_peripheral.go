@@ -24,6 +24,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	secure "github.com/jeremyhahn/go-xkms/sdk/go/secure"
 	"github.com/jeremyhahn/go-xkms/xkey/internal/lifecycle"
 	"github.com/jeremyhahn/go-xkms/xkey/pkg/pairing"
 	"tinygo.org/x/bluetooth"
@@ -119,6 +120,10 @@ type BLEPeripheralConfig struct {
 // PeripheralRequestHandler handles incoming requests from phone.
 type PeripheralRequestHandler interface {
 	// HandleRequest processes a JSON-RPC request and returns a response.
+	// Both may carry key material, so the peripheral wipes the request and
+	// the returned response once Noise has encrypted the response: the
+	// handler must return a slice it no longer needs and must not keep the
+	// request.
 	HandleRequest(ctx context.Context, request []byte) ([]byte, error)
 }
 
@@ -983,8 +988,14 @@ func (p *BLEPeripheral) processRequest(ctx context.Context, encryptedData []byte
 		response = []byte(`{"jsonrpc":"2.0","error":{"code":-32601,"message":"Method not found"}}`)
 	}
 
-	// Encrypt and send response
+	// Encrypt and send response. The request and response plaintexts can
+	// carry key material (a decrypted plaintext, a derived shared secret),
+	// so both are wiped once Noise has consumed them. The response is
+	// encrypted before the request is wiped in case the handler returned a
+	// slice of the request.
 	encrypted, err := p.session.Encrypt(response)
+	secure.Wipe(response)
+	secure.Wipe(plaintext)
 	if err != nil {
 		return &WrappedError{Msg: "encrypt response failed", Err: err}
 	}

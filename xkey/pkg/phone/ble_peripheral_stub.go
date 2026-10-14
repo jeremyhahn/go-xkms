@@ -78,6 +78,10 @@ type BLEPeripheralConfig struct {
 // PeripheralRequestHandler handles incoming requests from phone.
 type PeripheralRequestHandler interface {
 	// HandleRequest processes a JSON-RPC request and returns a response.
+	// Both may carry key material, so the peripheral wipes the request and
+	// the returned response once Noise has encrypted the response: the
+	// handler must return a slice it no longer needs and must not keep the
+	// request.
 	HandleRequest(ctx context.Context, request []byte) ([]byte, error)
 }
 

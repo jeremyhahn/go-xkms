@@ -107,7 +107,7 @@ The Credential Master Key (CMK) is wrapped twice, once by the Admin Key (AK) der
 
 `KeyManager` (`xkey/pkg/authenticator/key_manager.go:93`) orchestrates all key
 derivation, wrapping, and unwrapping. It holds the unwrapped AK, CMK, SMK, and
-UMK in memguard-backed `*secure.Buffer`s (mlocked, wiped on `Lock`) and never
+UMK in go-enclave-backed `*secure.Buffer`s (mlocked, wiped on `Lock`) and never
 caches the attestation key unwrapped: `AttestationSigner` unwraps it for each
 signature.
 

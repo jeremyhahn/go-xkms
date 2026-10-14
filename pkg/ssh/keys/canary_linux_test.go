@@ -30,7 +30,7 @@ import (
 // TestCanary_PEMNotOnHeap generates a key, forces two GC cycles, then
 // scans /proc/self/mem for the PEM-header byte pattern. A negative
 // result means the sealed PEM is not present in unprotected Go heap
-// memory (it may still live inside the memguard enclave, which is the
+// memory (it may still live inside the go-enclave enclave, which is the
 // expected behavior). The test is probabilistic — a false negative is
 // possible if the OS page-caches a region we don't read — but a
 // consistent positive indicates a real heap leak and must fail CI.

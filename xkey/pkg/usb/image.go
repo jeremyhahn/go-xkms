@@ -292,12 +292,8 @@ func formatLUKS(ctx context.Context, partition string, passphrase *secure.Secret
 	}
 	defer buf.Destroy()
 
-	var pass *enclave.MemoryEnclave
-	if err := buf.WithBytes(func(b []byte) error {
-		var copyErr error
-		pass, copyErr = enclave.NewMemoryEnclaveCopy(b)
-		return copyErr
-	}); err != nil {
+	pass, err := admitPassphraseCopy(buf)
+	if err != nil {
 		return &USBError{
 			Operation: "protect_passphrase",
 			Path:      partition,
@@ -310,6 +306,38 @@ func formatLUKS(ctx context.Context, partition string, passphrase *secure.Secret
 		err = errors.Join(err, &USBError{Operation: "destroy_passphrase", Path: partition, Err: destroyErr})
 	}
 	return err
+}
+
+// admitPassphraseCopy copies buf into a frozen enclave for go-luks2, admitted
+// against the process locked-memory budget. The copy goes from locked page to
+// locked page; a refusal is returned, never bypassed.
+func admitPassphraseCopy(buf *secure.Buffer) (*enclave.MemoryEnclave, error) {
+	alloc, err := enclave.ProcessAllocator()
+	if err != nil {
+		return nil, err
+	}
+	var pass *enclave.MemoryEnclave
+	err = buf.WithBytes(func(src []byte) error {
+		var sizeErr error
+		pass, sizeErr = alloc.NewSized(len(src))
+		if sizeErr != nil {
+			return sizeErr
+		}
+		return pass.WithBytes(func(dst []byte) error {
+			copy(dst, src)
+			return nil
+		})
+	})
+	if err == nil {
+		err = pass.Freeze()
+	}
+	if err != nil {
+		if pass != nil {
+			err = errors.Join(err, pass.Destroy())
+		}
+		return nil, err
+	}
+	return pass, nil
 }
 
 // formatAndInitLUKS formats partition as LUKS2 under pass, then unlocks it

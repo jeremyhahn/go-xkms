@@ -220,7 +220,7 @@ func NewWithConfig(cfg *transport.Config) (*Transport, error) {
 
 // noiseMaterial is the transport's own copy of the pairing key material.
 //
-// The private key is held as a *pairing.StaticKey -- memguard-backed protected
+// The private key is held as a *pairing.StaticKey -- go-enclave-backed protected
 // memory -- and NOT as a []byte. The transport has to keep its own copy so a
 // caller cannot mutate the key under an in-flight handshake, but a copy taken
 // with bytes.Clone would be a second plaintext scalar on the ordinary Go heap:

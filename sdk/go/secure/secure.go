@@ -67,7 +67,7 @@ type (
 	// or destroyed Buffer.
 	NilBufferError = qrdbsecure.NilBufferError
 
-	// OpenError wraps an underlying memguard failure to unseal.
+	// OpenError wraps an underlying go-enclave failure to unseal.
 	OpenError = qrdbsecure.OpenError
 
 	// InvalidSizeError is returned when a constructor receives a
@@ -151,7 +151,7 @@ func NewBufferFromBytes(src []byte) (*Buffer, error) {
 	return qrdbsecure.NewBufferFromBytes(src)
 }
 
-// Wipe clears a caller-owned []byte using memguard's
+// Wipe clears a caller-owned []byte using go-enclave's
 // compiler-optimization-resistant wipe. No-op on empty slices.
 func Wipe(b []byte) { qrdbsecure.Wipe(b) }
 

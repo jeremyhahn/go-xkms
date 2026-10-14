@@ -29,7 +29,7 @@ type (
 	Password = types.Password
 
 	// ClearPassword implements Password by holding the UserAuth bytes
-	// inside a memguard-backed enclave (see pkg/types.ClearPassword).
+	// inside a locked go-enclave memory enclave (see pkg/types.ClearPassword).
 	// SDK consumers use this type through the Password interface; for
 	// new code, prefer github.com/jeremyhahn/go-xkms/sdk/go/secure.Buffer
 	// directly.

@@ -21,7 +21,7 @@ import (
 	qrdbsecret "github.com/jeremyhahn/go-qrdb/sdk/go/secret"
 )
 
-// SecretValue holds a resolved secret sealed in a memguard enclave, together
+// SecretValue holds a resolved secret sealed in a go-enclave sealed enclave, together
 // with resolution metadata (Raw, Strategy, ExpiresAt). It is the protected
 // replacement for a plain string config field: declaring a field as
 // SecretValue instead of string keeps the resolved plaintext inside its own
@@ -204,7 +204,7 @@ func SecretValueBytes(ctx context.Context, sv *SecretValue) ([]byte, error) {
 //
 // Typical usage: config.Password.Raw = "credential://my-ca-pw" and registry
 // holds a CredentialResolver backed by the qrdb credential store. The
-// resolved plaintext stays sealed in the SecretValue's own memguard enclave
+// resolved plaintext stays sealed in the SecretValue's own go-enclave sealed enclave
 // for the life of the config; NewPasswordFromSecretValue borrows it via
 // WithBytes at the point KeyAttributesFromConfig builds the Password.
 //

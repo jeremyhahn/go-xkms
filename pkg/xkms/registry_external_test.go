@@ -244,7 +244,11 @@ func TestRegisterBackendFactory_ConcurrentRegistrationsAllLand(t *testing.T) {
 // exactly one racer claims the contested one.
 func TestRegisterExternalBackend_ConcurrentClaimsOneWinner(t *testing.T) {
 	const workers = 16
-	const contested BackendType = "xkms-ext-contested"
+	contested := uniqueExternalBackend("xkms-ext-contested")
+	own := make([]BackendType, workers)
+	for i := range own {
+		own[i] = uniqueExternalBackend("xkms-ext-worker")
+	}
 
 	start := make(chan struct{})
 	var wins atomic.Int32
@@ -254,8 +258,7 @@ func TestRegisterExternalBackend_ConcurrentClaimsOneWinner(t *testing.T) {
 		go func() {
 			defer wg.Done()
 			<-start
-			own := BackendType(fmt.Sprintf("xkms-ext-worker-%d", i))
-			assert.NoError(t, RegisterExternalBackend(ExternalBackend{Type: own, Factory: newSoftwareKeyProvider}))
+			assert.NoError(t, RegisterExternalBackend(ExternalBackend{Type: own[i], Factory: newSoftwareKeyProvider}))
 			if RegisterExternalBackend(ExternalBackend{Type: contested, Factory: newSoftwareKeyProvider}) == nil {
 				wins.Add(1)
 			}
@@ -266,11 +269,10 @@ func TestRegisterExternalBackend_ConcurrentClaimsOneWinner(t *testing.T) {
 
 	assert.Equal(t, int32(1), wins.Load(), "exactly one racer claims a contested name")
 	supported := SupportedBackends()
-	for i := range workers {
-		own := BackendType(fmt.Sprintf("xkms-ext-worker-%d", i))
-		assert.Contains(t, supported, own)
-		_, err := RequireBackend(own)
-		assert.NoError(t, err, own)
+	for _, name := range own {
+		assert.Contains(t, supported, name)
+		_, err := RequireBackend(name)
+		assert.NoError(t, err, name)
 	}
 	assert.Contains(t, supported, contested)
 }
@@ -285,7 +287,7 @@ func TestRegisterExternalBackend_ReadersNeverSeeAPartialRegistration(t *testing.
 
 	racing := make([]BackendType, names)
 	for i := range racing {
-		racing[i] = BackendType(fmt.Sprintf("xkms-ext-race-%d", i))
+		racing[i] = uniqueExternalBackend("xkms-ext-race")
 	}
 
 	var partial, seen atomic.Int64

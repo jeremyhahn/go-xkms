@@ -44,7 +44,7 @@ type Config struct {
 	// ClientSecret is the Azure service principal client secret.
 	// Optional - if not provided, will use DefaultAzureCredential. Decodes
 	// from, and re-encodes to, a plain reference string in YAML/JSON; the
-	// resolved plaintext is sealed into this field's own memguard enclave
+	// resolved plaintext is sealed into this field's own go-enclave sealed enclave
 	// rather than kept as a plain Go string. See types.SecretValue and
 	// types.SecretValueBytes.
 	ClientSecret *types.SecretValue `yaml:"client_secret,omitempty" json:"client_secret,omitempty" mapstructure:"client_secret"`

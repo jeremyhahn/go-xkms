@@ -62,7 +62,7 @@ lists `backends.pkcs11.pin` explicitly). Practically:
   `XKMS_BACKENDS_PKCS11_PIN` by the generic rule.
 - `nil` is the only way to spell "PIN not configured"; a present-but-empty
   `SecretValue` fails config resolution outright (`pkg/config/load.go:251-257`).
-- The resolved plaintext lives in the `SecretValue`'s own memguard enclave,
+- The resolved plaintext lives in the `SecretValue`'s own go-enclave sealed enclave,
   never a plain Go string, until `types.SecretValueBytes(c.PIN)`
   (`pkg/backend/pkcs11/config.go:121`) extracts it for the Cryptoki call.
 

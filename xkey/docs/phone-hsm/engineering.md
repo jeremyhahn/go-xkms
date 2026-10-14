@@ -191,6 +191,20 @@ pairing keys are configured (`ErrNoiseNotConfigured`).
   method sets and supports none of them — the phone path carries the pairing
   protocol, not the general API.
 - **Private keys never cross the channel.** No protocol message can export one.
+- **Secret results are wiped once encoded.** `RemoteDecryptResult`,
+  `RemoteDeriveKeyResult` and `RemoteActivateCredentialResult` implement
+  `Destroy`, which `Bridge.HandleRequest` calls after marshalling the result,
+  so the plaintext, shared secret or recovered credential secret the backend
+  returned is zeroed with `secure.Wipe`. A handler that fails its audit write
+  wipes the same bytes before returning. The message loop wipes the encoded
+  result and the response frame as soon as the Noise session has encrypted
+  them (#623). The phone-initiated listeners do the same: `xkey device
+  listen` wipes the bridge's encoded result once it is in the response frame
+  (`encodeBridgeResponse`), and `TCPPairingServer` and `BLEPeripheral` wipe
+  the decrypted request and the handler's response as soon as Noise has
+  encrypted the response, on the error path too. A `PeripheralRequestHandler`
+  therefore hands its returned slice to the transport and must not keep the
+  request. The wire types stay `[]byte`, so the format is unchanged.
 - **Wire compatibility with xkey-android is binding.** Any protocol change is
   made on both sides in the same change.
 
@@ -896,8 +910,9 @@ between the two forms (BREAKING, go-xkms compat cleanup PR5, removing the
 reseal-on-use path #42 originally shipped); the operator re-pairs the device
 so a fresh record is written in the form that matches this host's current
 barrier state. The unsealed material never exists as a Go string:
-`SealLocalNoiseKey` takes the raw scalar as `[]byte` (typically
-`phone.StaticKey.Private`, itself memguard-backed) and `UnsealLocalNoiseKey`
+`SealLocalNoiseKey` takes the raw scalar as `[]byte` (lent by
+`pairing.WithPrivateKey` straight from the `pairing.StaticKey`'s go-enclave
+`MemoryEnclave`, valid only for that borrow) and `UnsealLocalNoiseKey`
 returns an `sdk/go/secure.Buffer`, mlocked and wiped on `Destroy`.
 
 #### The barrier-absent case degrades, it does not refuse (owner ruling, recorded on #42)

@@ -25,7 +25,7 @@ const (
 )
 
 // ClearPassword implements types.Password for TPM UserAuth values.
-// The password bytes are held in a memguard-backed *secure.Buffer so
+// The password bytes are held in a go-enclave-backed *secure.Buffer so
 // the plaintext UserAuth never sits on the ordinary Go heap; callers
 // receive defensive copies from Bytes/String and MUST invoke Clear
 // when the password is no longer needed.
@@ -38,7 +38,7 @@ type ClearPassword struct {
 }
 
 // NewPassword creates a new password for TPM key authentication,
-// sealing the bytes into a memguard enclave. An empty or nil input
+// copying the bytes into a locked go-enclave memory enclave. An empty or nil input
 // produces a ClearPassword with no enclave backing and a nil error —
 // TPM2 interprets that as "no UserAuth required", which is intentional
 // and distinct from an allocation failure. The input slice is copied
@@ -95,7 +95,7 @@ func (p *ClearPassword) String() string {
 }
 
 // Clear destroys the underlying enclave. Safe to call on a zero-value
-// receiver and idempotent — memguard.Destroy itself is idempotent.
+// receiver and idempotent — Buffer.Destroy itself is idempotent.
 // After Clear, Bytes returns nil.
 func (p *ClearPassword) Clear() {
 	if p == nil || p.buf == nil {

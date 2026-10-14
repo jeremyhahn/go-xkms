@@ -239,6 +239,44 @@ func TestMessageRouter_InboundRequest(t *testing.T) {
 	assert.Equal(t, "tpm2", result.Backends[0].Name)
 }
 
+func TestMessageRouter_InboundRequest_WipesEncodedResult(t *testing.T) {
+	t.Parallel()
+
+	initiatorTransport, remoteTransport := newPipeTransports()
+	initiatorSession, remoteSession := setupHandshakedNoiseSessions(t)
+
+	encodedResult, err := json.Marshal(&RemoteDeriveKeyResult{SharedSecret: []byte("shared-secret")})
+	require.NoError(t, err)
+	handler := &mockRequestHandler{
+		handleFunc: func(_ context.Context, req *Request) *Response {
+			return &Response{JSONRPC: JSONRPCVersion, ID: req.ID, Result: encodedResult}
+		},
+	}
+
+	router := NewMessageRouter(initiatorTransport, initiatorSession, handler, testLogger())
+	router.Start()
+	defer router.Stop()
+
+	reqBytes, err := json.Marshal(&Request{JSONRPC: JSONRPCVersion, ID: 7, Method: MethodRemoteDeriveKey})
+	require.NoError(t, err)
+	ciphertext, err := remoteSession.Encrypt(reqBytes)
+	require.NoError(t, err)
+	require.NoError(t, remoteTransport.Send(context.Background(), ciphertext))
+
+	respCiphertext, err := remoteTransport.Receive(context.Background())
+	require.NoError(t, err)
+	respPlaintext, err := remoteSession.Decrypt(respCiphertext)
+	require.NoError(t, err)
+
+	var resp Response
+	require.NoError(t, json.Unmarshal(respPlaintext, &resp))
+	var result RemoteDeriveKeyResult
+	require.NoError(t, json.Unmarshal(resp.Result, &result))
+	assert.Equal(t, []byte("shared-secret"), result.SharedSecret)
+	// The handler's encoded result is wiped before the response is sent.
+	assert.Equal(t, make([]byte, len(encodedResult)), encodedResult)
+}
+
 // TestMessageRouter_Stop_CancelsPending verifies that stopping the router
 // while a request is pending causes the SendRequest to return ErrBackendClosed.
 func TestMessageRouter_Stop_CancelsPending(t *testing.T) {

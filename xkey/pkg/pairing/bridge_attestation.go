@@ -23,6 +23,7 @@ import (
 
 	gotpm2 "github.com/google/go-tpm/tpm2"
 	xkms "github.com/jeremyhahn/go-xkms/sdk/go"
+	secure "github.com/jeremyhahn/go-xkms/sdk/go/secure"
 	"github.com/jeremyhahn/go-xkms/xkey/pkg/audit"
 )
 
@@ -288,6 +289,7 @@ func (b *Bridge) handleActivateCredential(_ context.Context, params json.RawMess
 		"backend", backend,
 		"secretLen", len(secret))
 	if auditErr := b.logTPM(audit.OpDeviceAttested, MethodRemoteActivateCredential, true, nil); auditErr != nil {
+		secure.Wipe(secret)
 		return nil, auditErr
 	}
 

@@ -49,7 +49,7 @@ type Config struct {
 	// PIN is the user PIN for the PKCS#11 token. This is used for normal
 	// cryptographic operations. Decodes from, and re-encodes to, a plain
 	// reference string in YAML/JSON; the resolved plaintext is sealed into
-	// this field's own memguard enclave rather than kept as a plain Go
+	// this field's own go-enclave sealed enclave rather than kept as a plain Go
 	// string. See types.SecretValue and types.SecretValueBytes.
 	PIN *types.SecretValue `yaml:"pin,omitempty" json:"pin,omitempty" mapstructure:"pin"`
 

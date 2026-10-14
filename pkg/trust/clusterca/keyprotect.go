@@ -73,7 +73,7 @@ type KeyProtection struct {
 	DataDir string
 
 	// Passphrase is the operator passphrase for KeyProtectPassphrase (and the
-	// passphrase fallback in KeyProtectAuto), sealed in a long-lived memguard
+	// passphrase fallback in KeyProtectAuto), sealed in a long-lived go-enclave
 	// enclave. Nil disables passphrase mode. The composition root converts
 	// the resolved config-sourced types.SecretValue into this Secret (see
 	// Server.clusterCAKeyProtection) so the plaintext passphrase is never

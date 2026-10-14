@@ -22,6 +22,7 @@ import (
 
 	client "github.com/jeremyhahn/go-xkms/sdk/go"
 	"github.com/jeremyhahn/go-xkms/sdk/go/fsutil"
+	secure "github.com/jeremyhahn/go-xkms/sdk/go/secure"
 	"github.com/spf13/cobra"
 )
 
@@ -218,7 +219,10 @@ func createPlatformClient(cfg *Config) (client.Client, func(), error) {
 }
 
 // platformPut stores a secret via the SDK client.
+// platformPut sends req and wipes req.Secret once it returns, on every path.
 func platformPut(cfg *Config, printer *Printer, req *client.SealStorePutRequest) {
+	defer secure.Wipe(req.Secret)
+
 	cl, cleanup, err := createPlatformClient(cfg)
 	if err != nil {
 		handleError(err)
@@ -254,9 +258,12 @@ func platformGet(cfg *Config, printer *Printer, name, outputFile string) {
 		handleError(&WrappedError{Sentinel: ErrGetPlatformSecretFailed, Err: err})
 		return
 	}
-
+	// Each output path wipes the secret as soon as it has consumed it:
+	// handleError exits the process, which skips a deferred wipe.
 	if outputFile != "" {
-		if err := fsutil.WriteFileAtomic(outputFile, resp.Secret, 0600); err != nil {
+		err := fsutil.WriteFileAtomic(outputFile, resp.Secret, 0600)
+		secure.Wipe(resp.Secret)
+		if err != nil {
 			handleError(&WrappedError{Sentinel: ErrWriteSecretFileFailed, Err: err})
 			return
 		}
@@ -268,15 +275,17 @@ func platformGet(cfg *Config, printer *Printer, name, outputFile string) {
 
 	switch printer.format {
 	case OutputFormatJSON:
-		if err := printer.PrintJSON(resp); err != nil {
-			handleError(err)
-		}
+		err = printer.PrintJSON(resp)
 	case OutputFormatTable, OutputFormatText:
 		printer.printf("Platform Secret:\n")
 		printer.printf("  Name:   %s\n", resp.Name)
 		printer.printf("  Secret: %s\n", base64.StdEncoding.EncodeToString(resp.Secret))
 	}
-	if err := printer.Err(); err != nil {
+	secure.Wipe(resp.Secret)
+	if err == nil {
+		err = printer.Err()
+	}
+	if err != nil {
 		handleError(err)
 	}
 }

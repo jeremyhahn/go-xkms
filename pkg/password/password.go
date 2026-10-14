@@ -13,7 +13,7 @@
 
 // Package password provides secure password handling utilities for xkms.
 //
-// ClearPassword stores the password in a memguard-backed *secure.Buffer
+// ClearPassword stores the password in a go-enclave-backed *secure.Buffer
 // so the plaintext never sits on the ordinary Go heap. Callers receive
 // defensive copies from Bytes/String and MUST invoke Clear when the
 // password is no longer needed; Clear destroys the enclave and
@@ -35,13 +35,14 @@ var (
 	// ErrPasswordZeroed is returned when the password has been zeroed.
 	ErrPasswordZeroed = errors.New("password has been zeroed")
 
-	// ErrEnclaveUnavailable is returned when memguard fails to allocate
-	// an mlocked region. This is a hard system condition (RLIMIT_MEMLOCK
-	// exhausted, no swap, etc.) and callers cannot recover.
+	// ErrEnclaveUnavailable is returned when a password cannot get its
+	// locked buffer: the process locked-memory budget refuses it, or the
+	// kernel will not lock the pages (RLIMIT_MEMLOCK). Callers cannot
+	// recover.
 	ErrEnclaveUnavailable = errors.New("secure enclave unavailable")
 )
 
-// ClearPassword holds a password inside a memguard-backed enclave.
+// ClearPassword holds a password in a locked go-enclave memory enclave.
 //
 // The enclave guarantees the plaintext never sits on the ordinary Go
 // heap; the bytes are mlocked, canary-guarded, and wiped on Destroy.
@@ -52,7 +53,7 @@ type ClearPassword struct {
 	buf *secure.Buffer
 }
 
-// NewPassword creates a new password stored in a memguard enclave.
+// NewPassword creates a new password in a locked go-enclave memory enclave.
 //
 // The provided slice is copied into the enclave; the caller's slice
 // is NOT wiped — callers that control the source should wipe after

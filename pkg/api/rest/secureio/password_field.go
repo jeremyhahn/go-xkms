@@ -12,7 +12,7 @@
 //     Contact licensing@automatethethings.com for commercial licensing options.
 
 // Package secureio provides JSON request helpers that land sensitive
-// values directly into memguard-backed enclaves, bypassing the Go
+// values directly into locked go-enclave memory (secure.Buffer), bypassing the Go
 // string heap that json.Decoder would otherwise use.
 //
 // The centerpiece is PasswordField — a JSON field type whose
@@ -90,7 +90,7 @@ func (e *BadBodyError) Unwrap() error {
 }
 
 // PasswordField is a JSON field whose UnmarshalJSON decodes a base64
-// string directly into a memguard-backed *secure.Buffer. The
+// string directly into a go-enclave-backed *secure.Buffer. The
 // plaintext password bytes NEVER become a Go string at any point
 // along the unmarshal path:
 //
@@ -226,7 +226,7 @@ func (f *PasswordField) UnmarshalJSON(data []byte) error {
 }
 
 // Destroy wipes the underlying Buffer. Safe on a zero value and
-// idempotent — memguard.Destroy is itself idempotent. Subsequent
+// idempotent — Buffer.Destroy is itself idempotent. Subsequent
 // calls to Buffer return nil and Size returns 0.
 func (f *PasswordField) Destroy() {
 	if f == nil {

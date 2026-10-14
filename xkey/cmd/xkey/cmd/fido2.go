@@ -663,10 +663,10 @@ func resolveFIDO2SetPINSecret() *secure.Secret {
 // buildFIDO2Config has no error return -- it is called from more than a
 // dozen commands that are not themselves fallible at this point -- so a
 // sealing failure is logged and treated as "no PIN provided" rather than
-// propagated. In practice this path is unreachable: the underlying
-// memguard allocator panics the whole process on allocation failure before
-// NewSecret could return an error here. For the same reason (no
-// *cobra.Command) the PIN is sealed under a background context.
+// propagated. In practice this path is rare: it needs the seal itself
+// to fail (the process Sealer already destroyed by enclave.WipeAll, or the
+// kernel refusing to lock the sealing key's pages), and NewSecret then
+// returns that error here. For the same reason (no *cobra.Command) the PIN is sealed under a background context.
 func fido2PINSecret(s string) *secure.Secret {
 	if s == "" {
 		return nil

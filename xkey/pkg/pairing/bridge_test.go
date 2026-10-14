@@ -1005,10 +1005,10 @@ func TestBridge_Encrypt_Success(t *testing.T) {
 }
 
 func TestBridge_Decrypt_Success(t *testing.T) {
-	expectedPlaintext := []byte("decrypted-data")
+	backendPlaintext := []byte("decrypted-data")
 	client := &mockTransportClient{
 		decryptResp: &transport.DecryptResponse{
-			Plaintext: expectedPlaintext,
+			Plaintext: backendPlaintext,
 		},
 	}
 
@@ -1024,14 +1024,16 @@ func TestBridge_Decrypt_Success(t *testing.T) {
 	resp := b.HandleRequest(context.Background(), req)
 
 	result := decodeResult[RemoteDecryptResult](t, resp)
-	assert.Equal(t, expectedPlaintext, result.Plaintext)
+	assert.Equal(t, []byte("decrypted-data"), result.Plaintext)
+	// The plaintext the backend returned is wiped once the response is encoded.
+	assert.Equal(t, make([]byte, len(backendPlaintext)), backendPlaintext)
 }
 
 func TestBridge_DeriveKey_Success(t *testing.T) {
-	expectedSecret := []byte("shared-secret-32-bytes-long-key!")
+	backendSecret := []byte("shared-secret-32-bytes-long-key!")
 	client := &mockTransportClient{
 		deriveKeyECDHResp: &transport.DeriveKeyECDHResponse{
-			DerivedKey: expectedSecret,
+			DerivedKey: backendSecret,
 		},
 	}
 
@@ -1046,7 +1048,9 @@ func TestBridge_DeriveKey_Success(t *testing.T) {
 	resp := b.HandleRequest(context.Background(), req)
 
 	result := decodeResult[RemoteDeriveKeyResult](t, resp)
-	assert.Equal(t, expectedSecret, result.SharedSecret)
+	assert.Equal(t, []byte("shared-secret-32-bytes-long-key!"), result.SharedSecret)
+	// The shared secret the backend returned is wiped once the response is encoded.
+	assert.Equal(t, make([]byte, len(backendSecret)), backendSecret)
 }
 
 func TestBridge_DeriveKey_BackendDenied(t *testing.T) {
@@ -1972,12 +1976,12 @@ func (m *mockAuditLogger) LogServiceEvent(_ audit.OperationType, _ map[string]an
 
 func (m *mockAuditLogger) LogKeyOperation(op audit.OperationType, _, _ string, _ bool, _ error, _ int64) error {
 	m.keyOps = append(m.keyOps, string(op))
-	return nil
+	return m.logErr
 }
 
 func (m *mockAuditLogger) LogCryptoOperation(op audit.OperationType, _, _, _, _ string, _ bool, _ error, _ int64) error {
 	m.cryptoOps = append(m.cryptoOps, string(op))
-	return nil
+	return m.logErr
 }
 
 func (m *mockAuditLogger) LogPINOperation(_ audit.OperationType, _ string, _ bool, _ error, _ map[string]any) error {
@@ -1985,7 +1989,7 @@ func (m *mockAuditLogger) LogPINOperation(_ audit.OperationType, _ string, _ boo
 }
 
 func (m *mockAuditLogger) LogTPMOperation(_ audit.OperationType, _ bool, _ error, _ map[string]any) error {
-	return nil
+	return m.logErr
 }
 
 func (m *mockAuditLogger) LogPasswordStoreOperation(_ audit.OperationType, _ string, _ bool, _ error, _ map[string]any) error {
@@ -2139,6 +2143,48 @@ func TestBridge_DeriveKey_WithAuditLogger(t *testing.T) {
 	require.Nil(t, resp.Error)
 	require.Len(t, auditLog.cryptoOps, 1)
 	assert.Equal(t, string(audit.OpDeriveKey), auditLog.cryptoOps[0])
+}
+
+func TestBridge_DeriveKey_AuditFailureWipesSharedSecret(t *testing.T) {
+	backendSecret := []byte("secret")
+	client := &mockTransportClient{
+		deriveKeyECDHResp: &transport.DeriveKeyECDHResponse{DerivedKey: backendSecret},
+	}
+	b, err := NewBridge(client, &BridgeConfig{
+		Logger:      testLogger(),
+		AuditLogger: &mockAuditLogger{logErr: errors.New("audit sink unavailable")},
+	})
+	require.NoError(t, err)
+
+	req := newRemoteRequest(MethodRemoteDeriveKey, RemoteDeriveKeyParams{
+		Backend:       "software",
+		KeyID:         "key1",
+		PeerPublicKey: []byte("peer"),
+	})
+	resp := b.HandleRequest(context.Background(), req)
+	require.NotNil(t, resp.Error)
+	assert.Equal(t, make([]byte, len(backendSecret)), backendSecret)
+}
+
+func TestBridge_Decrypt_AuditFailureWipesPlaintext(t *testing.T) {
+	backendPlaintext := []byte("plaintext")
+	client := &mockTransportClient{
+		decryptResp: &transport.DecryptResponse{Plaintext: backendPlaintext},
+	}
+	b, err := NewBridge(client, &BridgeConfig{
+		Logger:      testLogger(),
+		AuditLogger: &mockAuditLogger{logErr: errors.New("audit sink unavailable")},
+	})
+	require.NoError(t, err)
+
+	req := newRemoteRequest(MethodRemoteDecrypt, RemoteDecryptParams{
+		Backend:    "software",
+		KeyID:      "key1",
+		Ciphertext: []byte("ct"),
+	})
+	resp := b.HandleRequest(context.Background(), req)
+	require.NotNil(t, resp.Error)
+	assert.Equal(t, make([]byte, len(backendPlaintext)), backendPlaintext)
 }
 
 func TestBridge_GenerateKey_WithAuditLogger(t *testing.T) {

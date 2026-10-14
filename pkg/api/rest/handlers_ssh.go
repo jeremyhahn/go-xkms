@@ -456,7 +456,7 @@ type restImportDTO struct {
 
 // SSHPassphraseField is an alias of secureio.PasswordField. The
 // shared type handles JSON base64 decoding directly into a
-// memguard-backed *secure.Buffer so plaintext never touches a Go
+// go-enclave-backed *secure.Buffer so plaintext never touches a Go
 // string. See pkg/api/rest/secureio/password_field.go for the full
 // memory-safety contract.
 //

@@ -119,9 +119,14 @@ func detachLoop(ctx context.Context, dev loopDevice) error {
 }
 
 // protectPassphrase moves passphrase into locked memory for go-luks2, which
-// takes credentials only as enclaves.
+// takes credentials only as enclaves. The enclave is admitted against the
+// process locked-memory budget; a refusal is returned, never bypassed.
 func protectPassphrase(passphrase string) (*enclave.MemoryEnclave, error) {
-	pass, err := enclave.NewMemoryEnclave([]byte(passphrase))
+	alloc, err := enclave.ProcessAllocator()
+	if err != nil {
+		return nil, &ExecutorError{Operation: "protect_passphrase", Err: err}
+	}
+	pass, err := alloc.New([]byte(passphrase))
 	if err != nil {
 		return nil, &ExecutorError{Operation: "protect_passphrase", Err: err}
 	}

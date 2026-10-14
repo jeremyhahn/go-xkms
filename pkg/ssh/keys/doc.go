@@ -24,7 +24,7 @@
 // # Memory discipline
 //
 // Long-lived key material lives in *secure.Secret, encrypted inside a
-// memguard enclave. Short-lived PEM plaintext used during parsing and
+// go-enclave sealed enclave. Short-lived PEM plaintext used during parsing and
 // signing flows through *secure.Buffer with immediate Destroy() on
 // every return path. No caller ever holds plaintext key bytes in an
 // unprotected []byte beyond a single stack frame.

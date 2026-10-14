@@ -22,6 +22,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	secure "github.com/jeremyhahn/go-xkms/sdk/go/secure"
 	"github.com/jeremyhahn/go-xkms/xkey/internal/lifecycle"
 	"github.com/jeremyhahn/go-xkms/xkey/pkg/notify"
 )
@@ -477,8 +478,11 @@ func (r *MessageRouter) handleInboundRequest(plaintext []byte, method string) {
 		return
 	}
 
-	// Encode, encrypt, and send the response back.
+	// Encode, encrypt, and send the response back. The encoded result can
+	// carry a shared secret or plaintext, so each plaintext copy is wiped as
+	// soon as it has been consumed.
 	respBytes, err := json.Marshal(resp)
+	secure.Wipe(resp.Result)
 	if err != nil {
 		r.logger.Error("failed to marshal inbound response", "error", err)
 		return
@@ -486,6 +490,7 @@ func (r *MessageRouter) handleInboundRequest(plaintext []byte, method string) {
 
 	r.sendMu.Lock()
 	ciphertext, err := r.session.Encrypt(respBytes)
+	secure.Wipe(respBytes)
 	if err != nil {
 		r.sendMu.Unlock()
 		r.logger.Error("failed to encrypt inbound response", "error", err)

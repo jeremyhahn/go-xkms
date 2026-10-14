@@ -15,6 +15,7 @@ package pairing
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"testing"
 
@@ -694,6 +695,59 @@ func TestBridge_HandleImportSharedKey_WithAuditLogger(t *testing.T) {
 	result := decodeResult[RemoteImportSharedKeyResult](t, resp)
 	assert.Equal(t, "ECDSA-P256", result.Algorithm)
 	assert.Contains(t, auditLog.keyOps, string(audit.OpKeyAccessed))
+}
+
+// newSymmetricExportClient returns a client whose symmetric key exports the
+// given material.
+func newSymmetricExportClient(material []byte) *mockSharingClient {
+	return &mockSharingClient{
+		mockTransportClient: mockTransportClient{
+			getKeyResp: &transport.GetKeyResponse{
+				KeyInfo: transport.KeyInfo{
+					KeyID:     "sym-key",
+					Backend:   "software",
+					Algorithm: "AES-256-GCM",
+				},
+			},
+		},
+		getCertErr: errors.New("no cert"),
+		exportKeyMaterialResp: &transport.ExportKeyMaterialResponse{
+			KeyMaterial: material,
+			KeySize:     256,
+		},
+	}
+}
+
+func TestBridge_HandleImportSharedKey_KeyMaterialWipedAfterEncoding(t *testing.T) {
+	material := []byte("exported-material")
+	b, err := NewBridge(newSymmetricExportClient(material), &BridgeConfig{Logger: testLogger()})
+	require.NoError(t, err)
+
+	resp := b.HandleRequest(context.Background(), newRemoteRequest(MethodRemoteImportSharedKey, RemoteImportSharedKeyParams{
+		Backend: "software",
+		KeyID:   "sym-key",
+	}))
+
+	result := decodeResult[RemoteImportSharedKeyResult](t, resp)
+	assert.Equal(t, []byte("exported-material"), result.WrappedKey)
+	assert.Equal(t, make([]byte, len(material)), material)
+}
+
+func TestBridge_HandleImportSharedKey_AuditFailureWipesKeyMaterial(t *testing.T) {
+	material := []byte("exported-material")
+	b, err := NewBridge(newSymmetricExportClient(material), &BridgeConfig{
+		Logger:      testLogger(),
+		AuditLogger: &mockAuditLogger{logErr: errors.New("audit sink unavailable")},
+	})
+	require.NoError(t, err)
+
+	params, err := json.Marshal(RemoteImportSharedKeyParams{Backend: "software", KeyID: "sym-key"})
+	require.NoError(t, err)
+
+	result, err := b.handleImportSharedKey(context.Background(), params)
+	require.Error(t, err)
+	assert.Nil(t, result)
+	assert.Equal(t, make([]byte, len(material)), material)
 }
 
 // --- Helper function tests ---

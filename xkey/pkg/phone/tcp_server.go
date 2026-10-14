@@ -24,6 +24,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	secure "github.com/jeremyhahn/go-xkms/sdk/go/secure"
 	"github.com/jeremyhahn/go-xkms/xkey/internal/lifecycle"
 
 	"github.com/jeremyhahn/go-xkms/xkey/pkg/pairing"
@@ -736,19 +737,25 @@ func (s *TCPPairingServer) requestLoop(conn net.Conn, session *pairing.NoiseSess
 			response = []byte(`{"jsonrpc":"2.0","error":{"code":-32601,"message":"Method not found"}}`)
 		}
 
+		// Encrypt the response. The request and response plaintexts can
+		// carry key material (a decrypted plaintext, a derived shared
+		// secret), so both are wiped once Noise has consumed them, before
+		// any error return. The response is encrypted before the request
+		// is wiped in case the handler returned a slice of the request.
+		encrypted, err := session.Encrypt(response)
+		secure.Wipe(response)
+		secure.Wipe(plaintext)
+		if err != nil {
+			s.log.Error("failed to encrypt response", "remote", remoteAddr, "error", err)
+			return
+		}
+
 		// Set write deadline for the response. A failure here means the
 		// write below could block forever instead of honoring
 		// RequestTimeout; treat it as fatal rather than silently writing
 		// without a deadline.
 		if err := conn.SetWriteDeadline(time.Now().Add(s.cfg.RequestTimeout)); err != nil {
 			s.log.Error("failed to set write deadline", "remote", remoteAddr, "error", err)
-			return
-		}
-
-		// Encrypt and send the response.
-		encrypted, err := session.Encrypt(response)
-		if err != nil {
-			s.log.Error("failed to encrypt response", "remote", remoteAddr, "error", err)
 			return
 		}
 

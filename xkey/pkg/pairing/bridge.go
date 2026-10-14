@@ -23,6 +23,7 @@ import (
 	"log/slog"
 	"time"
 
+	secure "github.com/jeremyhahn/go-xkms/sdk/go/secure"
 	"github.com/jeremyhahn/go-xkms/sdk/go/transport"
 	"github.com/jeremyhahn/go-xkms/xkey/pkg/audit"
 	"github.com/jeremyhahn/go-xkms/xkey/pkg/oath"
@@ -627,6 +628,9 @@ func (b *Bridge) handleDecrypt(ctx context.Context, params json.RawMessage) (int
 			err,
 			durationMs,
 		); auditErr != nil {
+			if resp != nil {
+				secure.Wipe(resp.Plaintext)
+			}
 			return nil, auditErr
 		}
 	}
@@ -670,6 +674,9 @@ func (b *Bridge) handleDeriveKey(ctx context.Context, params json.RawMessage) (i
 			err,
 			durationMs,
 		); auditErr != nil {
+			if resp != nil {
+				secure.Wipe(resp.DerivedKey)
+			}
 			return nil, auditErr
 		}
 	}

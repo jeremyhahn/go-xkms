@@ -256,6 +256,7 @@ func (b *Bridge) handleImportSharedKey(ctx context.Context, params json.RawMessa
 			nil,
 			durationMs,
 		); auditErr != nil {
+			result.Destroy()
 			return nil, auditErr
 		}
 	}

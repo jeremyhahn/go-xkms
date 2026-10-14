@@ -113,7 +113,7 @@ func testBackendFactory(map[string]interface{}) (KeyProvider, error) {
 // TestRegisterBackendType_PublishesFactoryWithName proves a registration
 // publishes the name and its factory together, in every lookup.
 func TestRegisterBackendType_PublishesFactoryWithName(t *testing.T) {
-	bt := BackendType("types-ext-factory")
+	bt := uniqueBackendType("types-ext-factory")
 	_, ok := RegisteredBackendFactory(bt)
 	require.False(t, ok)
 
