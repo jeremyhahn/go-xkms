@@ -1,1 +1,0 @@
-- `xkmsctl platform put` now wipes the secret buffer after the request is sent, on success and on error; `xkmsctl platform get` wipes the returned secret as soon as it has written or printed it, before any output error exits the process (#623).

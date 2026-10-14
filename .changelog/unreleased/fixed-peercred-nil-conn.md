@@ -1,1 +1,0 @@
-- **Unix-socket peer credentials refuse a nil connection instead of panicking** -- `peercred.FromConn` dereferenced a nil `*net.UnixConn`, so a typed-nil connection that passed the keystore gRPC listener's `*net.UnixConn` assertion panicked in the handshake. It now returns `ExtractionFailedError` and the handshake refuses the connection. Files: `pkg/peercred/peercred.go`.
