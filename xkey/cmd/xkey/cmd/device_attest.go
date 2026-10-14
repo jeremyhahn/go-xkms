@@ -36,7 +36,6 @@ import (
 	xkms "github.com/jeremyhahn/go-xkms/sdk/go"
 	xkeyAttestation "github.com/jeremyhahn/go-xkms/xkey/pkg/attestation"
 	"github.com/jeremyhahn/go-xkms/xkey/pkg/pairing"
-	"github.com/jeremyhahn/go-xkms/xkey/pkg/phone"
 	xkeyTruststore "github.com/jeremyhahn/go-xkms/xkey/pkg/truststore"
 )
 
@@ -174,7 +173,7 @@ func runDeviceAttest(cmd *cobra.Command, args []string) (err error) {
 		return err
 	}
 
-	backend, err := phone.NewPhoneKeyBackend(backendCfg)
+	backend, err := dialPairedDevice(backendCfg)
 	if err != nil {
 		return &WrappedError{Msg: "failed to create phone backend", Err: err}
 	}

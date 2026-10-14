@@ -28,6 +28,7 @@ import (
 	"errors"
 	"path/filepath"
 	"testing"
+	"time"
 
 	xkms "github.com/jeremyhahn/go-xkms/sdk/go"
 )
@@ -44,29 +45,55 @@ func withTPMCfg(t *testing.T, mutate func(*tpmConfig)) {
 // TestOpenTPM_Simulator_NotInitialized proves openTPM's ErrTPMNotInitialized
 // branch: unlike openTPMForProvisioning, openTPM requires a provisioned TPM
 // and turns the SDK's ErrTPMNotInitialized into its own package sentinel of
-// the same name, while still handing back a live, usable TPM handle (the
-// caller may still want FixedProperties/EKAttributes to check what is
-// present) rather than nil.
+// the same name. It closes the TPM it opened rather than handing it back
+// with the error: every caller closes only a TPM it got without an error
+// (go-xkms#704).
 func TestOpenTPM_Simulator_NotInitialized(t *testing.T) {
 	withTPMCfg(t, func(c *tpmConfig) {
 		c.useSimulator = true
 	})
 
-	tpm, err := openTPM()
-	if !errors.Is(err, ErrTPMNotInitialized) {
-		t.Fatalf("openTPM() error = %v, want errors.Is ErrTPMNotInitialized", err)
+	opens := map[string]func() (xkms.TrustedPlatformModule, error){
+		"openTPM": openTPM,
+		"openTPMForEKCert EC": func() (xkms.TrustedPlatformModule, error) {
+			return openTPMForEKCert(ekCertHandleEC)
+		},
 	}
-	if tpm == nil {
-		t.Fatal("openTPM() tpm = nil, want a live handle even when not initialized")
+	for name, open := range opens {
+		t.Run(name, func(t *testing.T) {
+			tpm, err := open()
+			if tpm != nil {
+				closeErr := tpm.Close()
+				t.Fatalf("%s() tpm = %v, want nil with an error (close: %v)", name, tpm, closeErr)
+			}
+			if !errors.Is(err, ErrTPMNotInitialized) {
+				t.Fatalf("%s() error = %v, want errors.Is ErrTPMNotInitialized", name, err)
+			}
+			requireSimulatorReleased(t)
+		})
 	}
-	defer func() {
-		if closeErr := tpm.Close(); closeErr != nil {
-			t.Errorf("tpm.Close() error = %v", closeErr)
-		}
-	}()
+}
 
-	if _, err := tpm.FixedProperties(); err != nil {
-		t.Errorf("FixedProperties() error = %v, want nil", err)
+// requireSimulatorReleased proves no TPM handle is left open. The simulator
+// is process-wide and a second open blocks until the first closes, so an
+// open that does not return before the deadline means a leaked handle.
+func requireSimulatorReleased(t *testing.T) {
+	t.Helper()
+	opened := make(chan error, 1)
+	go func() {
+		tpm, err := openTPMForProvisioning()
+		if err == nil {
+			err = tpm.Close()
+		}
+		opened <- err
+	}()
+	select {
+	case err := <-opened:
+		if err != nil {
+			t.Fatalf("reopening the simulator: %v", err)
+		}
+	case <-time.After(10 * time.Second):
+		t.Fatal("the simulator is still held: a TPM handle was leaked")
 	}
 }
 

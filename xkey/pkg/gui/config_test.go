@@ -79,6 +79,17 @@ func TestGUIConfig_Validate_ZeroHeight(t *testing.T) {
 	assert.Equal(t, DefaultWindowHeight, cfg.WindowHeight)
 }
 
+func TestGUIConfig_Validate_NegativeTimeoutsDisable(t *testing.T) {
+	cfg := DefaultGUIConfig()
+	cfg.ClipboardTimeout = -5
+	cfg.AppAutoLockMinutes = -1
+
+	require.NoError(t, cfg.Validate())
+
+	assert.Zero(t, cfg.ClipboardTimeout, "a negative clipboard timeout means never clear")
+	assert.Zero(t, cfg.AppAutoLockMinutes, "a negative auto-lock means never lock")
+}
+
 func TestDefaultGUIConfig_SandboxPolicyIsSafe(t *testing.T) {
 	cfg := DefaultGUIConfig()
 	assert.Equal(t, config.SafeDefaultAPIExplorerSandboxPolicy, cfg.APIExplorerSandboxPolicy)
@@ -157,6 +168,19 @@ func TestSaveAndLoadGUIConfig(t *testing.T) {
 	assert.Equal(t, 1280, loaded.WindowWidth)
 	assert.Equal(t, 800, loaded.WindowHeight)
 	assert.True(t, loaded.StartMinimized)
+}
+
+func TestLoadGUIConfig_InvalidThemeInFileFails(t *testing.T) {
+	isolateAppEnv(t)
+	cfgPath, err := guiConfigPath()
+	require.NoError(t, err)
+	require.NoError(t, os.MkdirAll(filepath.Dir(cfgPath), 0700))
+	require.NoError(t, os.WriteFile(cfgPath, []byte(`{"theme":"neon"}`), 0600))
+
+	cfg, err := LoadGUIConfig()
+
+	require.Error(t, err, "a stored config that fails validation is not loaded")
+	assert.Nil(t, cfg)
 }
 
 func TestSaveGUIConfig_NilConfig(t *testing.T) {

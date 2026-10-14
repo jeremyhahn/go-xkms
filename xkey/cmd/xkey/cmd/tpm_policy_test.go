@@ -294,6 +294,39 @@ func TestTPMPolicyCommands_SessionErrorsPropagate(t *testing.T) {
 	assert.ErrorIs(t, err, errOpen)
 }
 
+func TestTPMPolicyCommands_UnknownPolicyIsNotFound(t *testing.T) {
+	serverTPMPolicies(t)
+	withTPMPolicyFlags(t, "", "sha256", false, false)
+
+	for name, run := range map[string]func(*cobra.Command, []string) error{
+		"verify":      runTPMPolicyVerify,
+		"objects":     runTPMPolicyObjects,
+		"auto-unseal": runTPMPolicyAutoUnseal,
+	} {
+		t.Run(name, func(t *testing.T) {
+			out, err := runTPMPolicyCommand(t, run, "missing")
+			assert.ErrorIs(t, err, xkms.ErrTPMPolicyNotFound)
+			assert.Empty(t, out)
+		})
+	}
+}
+
+func TestTPMPolicyCreate_RefusesAnExistingName(t *testing.T) {
+	fake := serverTPMPolicies(t)
+	withTPMPolicyFlags(t, "7", "sha256", false, false)
+	_, err := runTPMPolicyCommand(t, runTPMPolicyCreate, "boot")
+	require.NoError(t, err)
+
+	fake.SetPCR(7, []byte{0xcc})
+	out, err := runTPMPolicyCommand(t, runTPMPolicyCreate, "boot")
+	assert.ErrorIs(t, err, xkms.ErrTPMPolicyExists)
+	assert.Empty(t, out)
+
+	out, err = runTPMPolicyCommand(t, runTPMPolicyVerify, "boot")
+	assert.ErrorIs(t, err, ErrTPMPolicyNotSatisfied, "the refused create left the original PCR capture in place")
+	assert.Contains(t, out, "PCRs changed: 7")
+}
+
 func TestOpenLocalTPMPolicies_FailsWithoutATPM(t *testing.T) {
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
 	_, err := openLocalTPMPolicies(logger, t.TempDir(), filepath.Join(t.TempDir(), "no-such-tpm"), false)

@@ -117,15 +117,17 @@ func init() {
 	tpmCmd.AddCommand(tpmPCRsCmd)
 }
 
-// openTPM, openTPMForEKCert and openTPMForProvisioningWithPCROverrides are
-// the TPM openers every `tpm` subcommand goes through; openTPMForEKCert takes
-// the NV index an EK certificate is written to. They are variables so tests
+// openTPM, openTPMForEKCert, openTPMForEKRestore and
+// openTPMForProvisioningWithPCROverrides are the TPM openers every `tpm`
+// subcommand goes through; openTPMForEKCert and openTPMForEKRestore take the
+// NV index an EK certificate is written to. They are variables so tests
 // can route a sequence of subcommands through one provisioned simulator: the
 // in-process simulator is re-manufactured, and so loses every key, on each
 // open.
 var (
 	openTPM                                = openConfiguredTPM
 	openTPMForEKCert                       = openConfiguredTPMForEKCert
+	openTPMForEKRestore                    = openConfiguredTPMForEKRestore
 	openTPMForProvisioningWithPCROverrides = openConfiguredTPMForProvisioningWithPCROverrides
 )
 
@@ -142,19 +144,51 @@ func openConfiguredTPM() (xkms.TrustedPlatformModule, error) {
 }
 
 // openConfiguredTPMForEKCert opens the TPM like openConfiguredTPM, but with
-// ekCertHandle as the NV index the EK certificate is written to.
+// ekCertHandle as the NV index the EK certificate is written to. A TPM with
+// neither the EK nor a certificate at ekCertHandle is closed and reported as
+// ErrTPMNotInitialized; no error is ever returned with an open TPM.
 func openConfiguredTPMForEKCert(ekCertHandle uint32) (xkms.TrustedPlatformModule, error) {
-	logger := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{
-		Level: getLogLevel(),
-	}))
+	tpm, err := openConfiguredTPMForEKRestore(ekCertHandle)
+	if err != nil {
+		return nil, discardTPM(tpm, err)
+	}
+	return tpm, nil
+}
+
+// openConfiguredTPMForEKRestore opens the TPM like openConfiguredTPMForEKCert,
+// except that a TPM with neither the EK nor a certificate at ekCertHandle is
+// returned open together with ErrTPMNotInitialized: `ek restore --force`
+// writes the certificate to such a TPM, and the caller must close it. Any
+// other error closes the TPM and returns nil.
+func openConfiguredTPMForEKRestore(ekCertHandle uint32) (xkms.TrustedPlatformModule, error) {
+	config, err := newTPMConfig(tpmCfg.device, tpmCfg.useSimulator, ekCertHandle)
+	if err != nil {
+		return nil, err
+	}
+
+	tpm, err := xkms.NewTPM2(newTPMParams(config))
+	if err != nil {
+		if errors.Is(err, xkms.ErrTPMNotInitialized) {
+			return tpm, ErrTPMNotInitialized
+		}
+		return nil, discardTPM(tpm, err)
+	}
+
+	return tpm, nil
+}
+
+// newTPMConfig is the configuration every `tpm` command opens the TPM
+// with: the TCG RSA EK at 0x81010001, its certificate at ekCertHandle, and
+// the shared SRK, IAK, IDevID and LAK at xkey's handles.
+func newTPMConfig(device string, useSimulator bool, ekCertHandle uint32) (*xkms.TPMConfig, error) {
 	hierarchyAuth, err := xkms.NewLiteralSecretValue(context.Background(), []byte(tpmCfg.hierarchyAuth))
 	if err != nil {
 		return nil, err
 	}
 
-	config := &xkms.TPMConfig{
-		Device:       tpmCfg.device,
-		UseSimulator: tpmCfg.useSimulator,
+	return &xkms.TPMConfig{
+		Device:       device,
+		UseSimulator: useSimulator,
 		Hash:         "SHA-256",
 		EK: &xkms.EKConfig{
 			Handle:        0x81010001,
@@ -194,22 +228,33 @@ func openConfiguredTPMForEKCert(ekCertHandle uint32) (xkms.TrustedPlatformModule
 		},
 		PlatformPCR:     xkms.DefaultPlatformPCR,
 		PlatformPCRBank: xkms.PCRBankSHA256,
-	}
+	}, nil
+}
 
-	params := &xkms.TPMParams{
+// newTPMParams wraps config with the logger the `tpm` commands log through.
+func newTPMParams(config *xkms.TPMConfig) *xkms.TPMParams {
+	logger := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{
+		Level: getLogLevel(),
+	}))
+	return &xkms.TPMParams{
 		Config: config,
 		Logger: logger,
 	}
+}
 
-	tpm, err := xkms.NewTPM2(params)
-	if err != nil {
-		if errors.Is(err, xkms.ErrTPMNotInitialized) {
-			return tpm, ErrTPMNotInitialized
-		}
-		return nil, err
+// discardTPM closes a TPM an open helper is about to return err for and
+// returns err, joined with any close failure. NewTPM2 hands back a live TPM
+// with ErrTPMNotInitialized, and callers close only a TPM they got without
+// an error, so an open helper that returned both would leak the device
+// (go-xkms#704).
+func discardTPM(tpm xkms.TrustedPlatformModule, err error) error {
+	if tpm == nil {
+		return err
 	}
-
-	return tpm, nil
+	if closeErr := tpm.Close(); closeErr != nil {
+		return errors.Join(err, closeErr)
+	}
+	return err
 }
 
 // openTPMForProvisioning creates a TPM connection that allows for unprovisioned TPMs
@@ -233,81 +278,24 @@ func openConfiguredTPMForProvisioningWithPCROverrides(pcrBank string, goldenPCRs
 // --tpm-device/--tpm-simulator flags) can open a TPM connection without
 // depending on the `tpm` command's package-level tpmCfg flags.
 func openTPMForProvisioningWithDeviceAndPCROverrides(device string, useSimulator bool, pcrBank string, goldenPCRs []uint, platformPCR int) (xkms.TrustedPlatformModule, error) {
-	logger := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{
-		Level: getLogLevel(),
-	}))
-	hierarchyAuth, err := xkms.NewLiteralSecretValue(context.Background(), []byte(tpmCfg.hierarchyAuth))
+	config, err := newTPMConfig(device, useSimulator, ekCertHandleRSA)
 	if err != nil {
 		return nil, err
 	}
 
-	// Set defaults
-	effectivePCRBank := xkms.PCRBankSHA256
-	effectivePlatformPCR := xkms.DefaultPlatformPCR
-
 	// Apply overrides if provided
+	config.GoldenPCRs = goldenPCRs
 	if pcrBank != "" {
-		effectivePCRBank = strings.ToLower(pcrBank)
+		config.PlatformPCRBank = strings.ToLower(pcrBank)
 	}
 	if platformPCR > 0 {
-		effectivePlatformPCR = uint(platformPCR)
-	}
-
-	config := &xkms.TPMConfig{
-		Device:       device,
-		UseSimulator: useSimulator,
-		Hash:         "SHA-256",
-		EK: &xkms.EKConfig{
-			Handle:        0x81010001,
-			CertHandle:    ekCertHandleRSA,
-			KeyAlgorithm:  "RSA",
-			HierarchyAuth: hierarchyAuth,
-		},
-		SSRK: &xkms.SRKConfig{
-			Handle:       0x81000001,
-			KeyAlgorithm: "RSA",
-		},
-		IAK: &xkms.IAKConfig{
-			Handle:             0x81010002,
-			Hash:               "SHA-256",
-			KeyAlgorithm:       "RSA",
-			SignatureAlgorithm: "SHA256-RSA-PSS",
-		},
-		IDevID: &xkms.IDevIDConfig{
-			Handle:             0x81020000,
-			CertHandle:         0x01C90000,
-			Hash:               "SHA-256",
-			KeyAlgorithm:       "RSA",
-			SignatureAlgorithm: "SHA256-RSA-PSS",
-			Model:              "xkey",
-			Serial:             "001",
-		},
-		// LAK (go-xkms#715): see openTPM's identical block for rationale.
-		LAK: &xkms.LAKConfig{
-			Handle:             0x81010003,
-			CertHandle:         0x01C00003,
-			Hash:               "SHA-256",
-			KeyAlgorithm:       "RSA",
-			SignatureAlgorithm: "SHA256-RSA-PSS",
-		},
-		GoldenPCRs:      goldenPCRs,
-		PlatformPCR:     effectivePlatformPCR,
-		PlatformPCRBank: effectivePCRBank,
-	}
-
-	params := &xkms.TPMParams{
-		Config: config,
-		Logger: logger,
+		config.PlatformPCR = uint(platformPCR)
 	}
 
 	// For provisioning, we accept ErrNotInitialized since we're about to initialize
-	tpm, err := xkms.NewTPM2(params)
-	if err != nil {
-		if errors.Is(err, xkms.ErrTPMNotInitialized) {
-			// Return the TPM handle - it's valid for provisioning
-			return tpm, nil
-		}
-		return nil, err
+	tpm, err := xkms.NewTPM2(newTPMParams(config))
+	if err != nil && !errors.Is(err, xkms.ErrTPMNotInitialized) {
+		return nil, discardTPM(tpm, err)
 	}
 
 	return tpm, nil

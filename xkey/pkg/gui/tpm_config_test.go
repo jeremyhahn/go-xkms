@@ -295,3 +295,67 @@ func TestMergeTPMConfig_BoolFalseOverridesTrue(t *testing.T) {
 	assert.False(t, merged.UseSimulator)
 	assert.False(t, merged.UseEntropy)
 }
+
+// TestMergeTPMConfig_DoesNotMutateDefaults verifies merging a file EK never
+// writes through the defaults' EK pointer: callers pass the package-level
+// xkms.DefaultTPMConfig, and a write-through would leak one config file's EK
+// handle into every later default.
+func TestMergeTPMConfig_DoesNotMutateDefaults(t *testing.T) {
+	defaults := xkms.DefaultTPMConfig
+	before := *defaults.EK
+
+	merged := mergeTPMConfig(defaults, xkms.TPMConfig{
+		EK: &xkms.EKConfig{Handle: 0x81010002, CertHandle: 0x01C0000A, KeyAlgorithm: "ECDSA"},
+	})
+
+	assert.Equal(t, uint32(0x81010002), merged.EK.Handle)
+	assert.Equal(t, before, *defaults.EK, "the defaults' EK must be unchanged by the merge")
+	assert.Equal(t, before, *xkms.DefaultTPMConfig.EK, "the package-level default EK must be unchanged")
+}
+
+// TestMergeTPMConfig_EKFieldsAndSubConfigs covers the EK fields the main
+// table leaves out and the sub-configs a file replaces wholesale.
+func TestMergeTPMConfig_EKFieldsAndSubConfigs(t *testing.T) {
+	t.Run("file EK is used when defaults have none", func(t *testing.T) {
+		fileEK := &xkms.EKConfig{Handle: 0x81010001}
+
+		merged := mergeTPMConfig(xkms.TPMConfig{}, xkms.TPMConfig{EK: fileEK})
+
+		assert.Same(t, fileEK, merged.EK)
+	})
+
+	t.Run("EK cert handle, hierarchy auth, RSA config and debug override", func(t *testing.T) {
+		auth := &xkms.SecretValue{Raw: "owner-auth"}
+		rsa := &xkms.RSAConfig{}
+
+		merged := mergeTPMConfig(xkms.DefaultTPMConfig, xkms.TPMConfig{
+			EK: &xkms.EKConfig{CertHandle: 0x01C00002, HierarchyAuth: auth, RSAConfig: rsa, Debug: true},
+		})
+
+		assert.Equal(t, uint32(0x01C00002), merged.EK.CertHandle)
+		assert.Same(t, auth, merged.EK.HierarchyAuth)
+		assert.Same(t, rsa, merged.EK.RSAConfig)
+		assert.True(t, merged.EK.Debug)
+		assert.Equal(t, xkms.DefaultTPMConfig.EK.Handle, merged.EK.Handle, "an unset handle keeps the default")
+	})
+
+	t.Run("empty hierarchy auth keeps the default", func(t *testing.T) {
+		merged := mergeTPMConfig(xkms.DefaultTPMConfig, xkms.TPMConfig{
+			EK: &xkms.EKConfig{HierarchyAuth: &xkms.SecretValue{}},
+		})
+
+		assert.Equal(t, xkms.DefaultTPMConfig.EK.HierarchyAuth, merged.EK.HierarchyAuth)
+	})
+
+	t.Run("SSRK, IAK and IDevID are replaced wholesale", func(t *testing.T) {
+		ssrk := &xkms.SRKConfig{}
+		iak := &xkms.IAKConfig{}
+		idevid := &xkms.IDevIDConfig{}
+
+		merged := mergeTPMConfig(xkms.DefaultTPMConfig, xkms.TPMConfig{SSRK: ssrk, IAK: iak, IDevID: idevid})
+
+		assert.Same(t, ssrk, merged.SSRK)
+		assert.Same(t, iak, merged.IAK)
+		assert.Same(t, idevid, merged.IDevID)
+	})
+}

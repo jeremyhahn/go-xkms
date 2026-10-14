@@ -1,0 +1,1 @@
+xKey's TPM config merge no longer writes a config file's EK settings into the shared default TPM configuration, so one merge cannot change the EK handle, certificate handle or algorithm that later default configs start from.

@@ -112,3 +112,27 @@ func TestRunTPMInfo_DeviceNotFound(t *testing.T) {
 		t.Errorf("runTPMInfo() error = %v, want errors.Is ErrTPMOpeningDevice as the wrapped cause", err)
 	}
 }
+
+// TestRunTPMInfo_ProvisionedSimulator checks that info reports every key a
+// provisioned TPM holds, including an IDevID created after provisioning.
+func TestRunTPMInfo_ProvisionedSimulator(t *testing.T) {
+	sim := withProvisionedSimulatorTPM(t)
+	sim.withIDevID(t)
+	setVar(t, &tpmCfg.outputFormat, "json")
+
+	stdout, _, err := runTPMSubcommand(runTPMInfo)
+	if err != nil {
+		t.Fatalf("runTPMInfo() error = %v, want nil", err)
+	}
+
+	var info TPMInfo
+	if err := json.Unmarshal([]byte(stdout), &info); err != nil {
+		t.Fatalf("json.Unmarshal(%q) error = %v", stdout, err)
+	}
+	if !info.Provisioned {
+		t.Error("info.Provisioned = false on a provisioned simulator, want true")
+	}
+	if !info.EKPresent || !info.SRKPresent || !info.IAKPresent || !info.IDevIDPresent {
+		t.Errorf("info = %+v, want EK, SRK, IAK and IDevID present", info)
+	}
+}

@@ -60,6 +60,64 @@ func TestRunDeviceShare_DeviceNotFound(t *testing.T) {
 	require.ErrorIs(t, err, ErrDeviceNotFound)
 }
 
+// runShareWithPolicy pairs a device, stores policy (when non-nil) and runs
+// "device share" against a fake phone, returning that phone.
+func runShareWithPolicy(t *testing.T, policy *pairing.SharingPolicy) (*fakeDeviceTransport, error) {
+	t.Helper()
+	deviceInfoTestHome(t)
+	isolatedBackupHome(t)
+	pairTestDevice(t, "Test Phone")
+	transport := &fakeDeviceTransport{}
+	useFakeTransport(t, transport)
+
+	if policy != nil {
+		store, err := loadSharingPolicyStore()
+		require.NoError(t, err)
+		require.NoError(t, store.SetPolicy(policy))
+	}
+
+	var out bytes.Buffer
+	cmd := deviceShareTestCmd()
+	cmd.SetOut(&out)
+	return transport, runDeviceShare(cmd, []string{"software", "my-key"})
+}
+
+// TestRunDeviceShare_RefusedWithoutPolicy pins that a key is never offered to
+// a phone unless a sharing policy explicitly allows it.
+func TestRunDeviceShare_RefusedWithoutPolicy(t *testing.T) {
+	tests := []struct {
+		name   string
+		policy *pairing.SharingPolicy
+	}{
+		{"no policy", nil},
+		{"policy disallows sharing", &pairing.SharingPolicy{Backend: "software", KeyID: "my-key", SharePublic: true}},
+		{"device not in allow-list", &pairing.SharingPolicy{
+			Backend: "software", KeyID: "my-key", AllowShare: true, SharePublic: true,
+			AllowedDevices: []string{"another-device"},
+		}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			transport, err := runShareWithPolicy(t, tt.policy)
+			require.ErrorIs(t, err, ErrSharePolicyDenied)
+			assert.Empty(t, transport.requests, "a refused share never reaches the phone")
+			assert.False(t, transport.connected)
+		})
+	}
+}
+
+// TestRunDeviceShare_KeyLoadFailsBeforeThePhone pins that an unreadable key
+// fails the share before any radio work, rather than sending the phone an
+// empty request.
+func TestRunDeviceShare_KeyLoadFailsBeforeThePhone(t *testing.T) {
+	transport, err := runShareWithPolicy(t, &pairing.SharingPolicy{
+		Backend: "software", KeyID: "my-key", AllowShare: true, SharePublic: true,
+	})
+	require.ErrorIs(t, err, ErrShareKeyLoadFailed)
+	assert.Empty(t, transport.requests)
+	assert.False(t, transport.connected)
+}
+
 func TestRunDeviceImport_NoConfig(t *testing.T) {
 	deviceInfoTestHome(t)
 	err := runDeviceImport(deviceImportTestCmd(), []string{"my-key"})

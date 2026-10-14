@@ -133,3 +133,58 @@ func TestRunTPMStatus_DeviceNotFound(t *testing.T) {
 		t.Errorf("runTPMStatus() error = %v, want errors.Is ErrTPMOpeningDevice as the wrapped cause", err)
 	}
 }
+
+// TestRunTPMStatus_WithIDevIDCertificate checks that status reports the
+// IDevID key and its NV-stored certificate once both exist.
+func TestRunTPMStatus_WithIDevIDCertificate(t *testing.T) {
+	sim := withProvisionedSimulatorTPM(t)
+	idevidPub := sim.withIDevID(t)
+	cert := issueTestCert(t, sim.caCert, sim.caKey, "xkey-001", idevidPub)
+	setVar(t, &idevidCertImportForce, false)
+	setVar(t, &idevidCertImportPath, writeCertPEM(t, cert))
+	if _, _, err := runTPMSubcommand(runIDevIDCertImport); err != nil {
+		t.Fatalf("runIDevIDCertImport() error = %v, want nil", err)
+	}
+	setVar(t, &tpmCfg.outputFormat, "json")
+
+	stdout, _, err := runTPMSubcommand(runTPMStatus)
+	if err != nil {
+		t.Fatalf("runTPMStatus() error = %v, want nil", err)
+	}
+
+	var status TPMStatusOutput
+	if err := json.Unmarshal([]byte(stdout), &status); err != nil {
+		t.Fatalf("json.Unmarshal(%q) error = %v", stdout, err)
+	}
+	var idevid *KeyStatus
+	for i := range status.Keys {
+		if status.Keys[i].Name == "IDevID" {
+			idevid = &status.Keys[i]
+		}
+	}
+	if idevid == nil || !idevid.Present {
+		t.Fatalf("IDevID key status = %+v, want present", idevid)
+	}
+	if idevid.Algorithm == "" || idevid.SignatureAlgorithm == "" || idevid.Error != "" {
+		t.Errorf("IDevID key status = %+v, want an algorithm, a signature algorithm and no error", *idevid)
+	}
+
+	var idevidCert *CertStatus
+	for i := range status.Certificates {
+		if status.Certificates[i].Name == "IDevID Cert" {
+			idevidCert = &status.Certificates[i]
+		}
+	}
+	if idevidCert == nil || !idevidCert.Present {
+		t.Fatalf("IDevID certificate status = %+v, want present", idevidCert)
+	}
+	if idevidCert.Subject != "CN=xkey-001" {
+		t.Errorf("IDevID certificate subject = %q, want %q", idevidCert.Subject, "CN=xkey-001")
+	}
+	if idevidCert.Issuer != cert.Issuer.String() {
+		t.Errorf("IDevID certificate issuer = %q, want %q", idevidCert.Issuer, cert.Issuer.String())
+	}
+	if idevidCert.NotAfter != cert.NotAfter.Format("2006-01-02") {
+		t.Errorf("IDevID certificate not_after = %q, want %q", idevidCert.NotAfter, cert.NotAfter.Format("2006-01-02"))
+	}
+}

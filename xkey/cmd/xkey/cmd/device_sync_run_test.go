@@ -141,6 +141,36 @@ func TestRunDeviceSyncMode_DryRunCountsLocalItemsWithoutConnecting(t *testing.T)
 	assert.False(t, transport.connected)
 }
 
+// TestDeviceSyncEntryPoints_DispatchTheirMode pins that each RunE entry point
+// runs its own direction: a swapped wrapper would push when the operator
+// asked to pull.
+func TestDeviceSyncEntryPoints_DispatchTheirMode(t *testing.T) {
+	home := isolatedBackupHome(t)
+	seedBackupStores(t, home)
+	pairTestDevice(t, "Test Phone")
+	useFakeTransport(t, &fakeDeviceTransport{})
+
+	tests := []struct {
+		name   string
+		run    func(*cobra.Command, []string) error
+		banner string
+	}{
+		{"sync", runDeviceSync, `Would sync with device "Test Phone"`},
+		{"push", runDeviceSyncPush, `Would push to device "Test Phone"`},
+		{"pull", runDeviceSyncPull, `Would pull from device "Test Phone"`},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			cmd := syncTestCmd(t, registerDeviceSyncFlags, map[string]string{"dry-run": "true"})
+			var out bytes.Buffer
+			cmd.SetOut(&out)
+
+			require.NoError(t, tt.run(cmd, nil), out.String())
+			assert.Contains(t, out.String(), tt.banner)
+		})
+	}
+}
+
 func TestRunDeviceSyncMode_SyncExchangesEveryStore(t *testing.T) {
 	home := isolatedBackupHome(t)
 	seedBackupStores(t, home)

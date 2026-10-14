@@ -16,6 +16,8 @@ package cmd
 import (
 	"bytes"
 	"errors"
+	"os"
+	"path/filepath"
 	"testing"
 
 	"github.com/spf13/cobra"
@@ -295,4 +297,133 @@ func TestRunUSBCreate_MissingBinary(t *testing.T) {
 	var usbErr *USBCmdError
 	assert.True(t, errors.As(err, &usbErr))
 	assert.Equal(t, "validate_binary", usbErr.Operation)
+}
+
+// requireUSBCmdError asserts err is a *USBCmdError raised by operation.
+func requireUSBCmdError(t *testing.T, err error, operation string) *USBCmdError {
+	t.Helper()
+	var usbErr *USBCmdError
+	require.ErrorAs(t, err, &usbErr)
+	assert.Equal(t, operation, usbErr.Operation)
+	return usbErr
+}
+
+// newUSBTestCmd returns a fresh command writing to the returned buffer, so a
+// test never shares output or context with the package-level commands.
+func newUSBTestCmd(t *testing.T) (*cobra.Command, *bytes.Buffer) {
+	t.Helper()
+	var buf bytes.Buffer
+	cmd := &cobra.Command{}
+	cmd.SetOut(&buf)
+	cmd.SetContext(t.Context())
+	return cmd, &buf
+}
+
+// setUSBFlagsForTest sets the usb command globals and restores them after.
+func setUSBFlagsForTest(t *testing.T, size string, binaries []string) {
+	t.Helper()
+	prevSize, prevBinaries := usbCreateSize, usbBinaries
+	usbCreateSize, usbBinaries = size, binaries
+	t.Cleanup(func() { usbCreateSize, usbBinaries = prevSize, prevBinaries })
+}
+
+func TestRunUSBStatus_ImageFileReport(t *testing.T) {
+	imgPath := filepath.Join(t.TempDir(), "xkey.img")
+	f, err := os.Create(imgPath)
+	require.NoError(t, err)
+	require.NoError(t, f.Truncate(2<<30))
+	require.NoError(t, f.Close())
+
+	cmd, buf := newUSBTestCmd(t)
+	require.NoError(t, runUSBStatus(cmd, []string{imgPath}))
+
+	out := buf.String()
+	assert.Contains(t, out, "USB Image Status: "+imgPath)
+	assert.Contains(t, out, "Type:           Image file")
+	assert.Contains(t, out, "Total size:     2.0G")
+	assert.Contains(t, out, "LUKS status:")
+	assert.Contains(t, out, "Binaries:       (not detected)")
+}
+
+func TestRunUSBCreate_InvalidSize(t *testing.T) {
+	setUSBFlagsForTest(t, "12Q", nil)
+	cmd, _ := newUSBTestCmd(t)
+
+	err := runUSBCreate(cmd, []string{filepath.Join(t.TempDir(), "x.img")})
+	requireUSBCmdError(t, err, "parse_size")
+}
+
+func TestRunUSBCreate_DefaultsToCurrentBinaryAndRejectsMismatchedPassphrase(t *testing.T) {
+	setUSBFlagsForTest(t, "1G", nil)
+	pipeStdin(t, "first\nsecond\n")
+	target := filepath.Join(t.TempDir(), "x.img")
+	cmd, buf := newUSBTestCmd(t)
+
+	err := runUSBCreate(cmd, []string{target})
+	requireUSBCmdError(t, err, "confirm_passphrase")
+
+	exe, exeErr := os.Executable()
+	require.NoError(t, exeErr)
+	assert.Contains(t, buf.String(), "Using current binary: "+exe)
+	assert.NoFileExists(t, target, "a refused passphrase must not create the image")
+}
+
+func TestRunUSBUpdate_MissingBinary(t *testing.T) {
+	setUSBFlagsForTest(t, "", []string{filepath.Join(t.TempDir(), "absent")})
+	cmd, buf := newUSBTestCmd(t)
+
+	err := runUSBUpdate(cmd, []string{filepath.Join(t.TempDir(), "x.img")})
+	usbErr := requireUSBCmdError(t, err, "validate_binary")
+	assert.Contains(t, usbErr.Message, "binary not found")
+	assert.NotContains(t, buf.String(), "Updating binaries", "nothing is touched before the binaries validate")
+}
+
+func TestRunUSBUpdate_MissingImageFails(t *testing.T) {
+	setUSBFlagsForTest(t, "", nil)
+	target := filepath.Join(t.TempDir(), "absent.img")
+	cmd, buf := newUSBTestCmd(t)
+
+	err := runUSBUpdate(cmd, []string{target})
+	requireUSBCmdError(t, err, "update_binaries")
+	assert.Contains(t, buf.String(), "Using current binary: ")
+	assert.Contains(t, buf.String(), "Updating binaries on "+target)
+	assert.NotContains(t, buf.String(), "Binaries updated successfully")
+}
+
+func TestReadUSBPassphrase_PipedMatchingLines(t *testing.T) {
+	pipeStdin(t, "hunter2\nhunter2\n")
+	cmd, _ := newUSBTestCmd(t)
+
+	secret, err := readUSBPassphrase(cmd)
+	require.NoError(t, err)
+	defer secret.Destroy()
+
+	buf, err := secret.Open(t.Context())
+	require.NoError(t, err)
+	defer buf.Destroy()
+	require.NoError(t, buf.WithBytes(func(b []byte) error {
+		assert.Equal(t, "hunter2", string(b))
+		return nil
+	}))
+}
+
+func TestReadUSBPassphraseFromStdin_Errors(t *testing.T) {
+	tests := []struct {
+		name      string
+		input     string
+		operation string
+	}{
+		{"no input", "", "read_passphrase"},
+		{"empty first line", "\n\n", "read_passphrase"},
+		{"missing confirmation", "secret\n", "read_passphrase"},
+		{"mismatch", "secret\nother\n", "confirm_passphrase"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			pipeStdin(t, tt.input)
+			secret, err := readUSBPassphraseFromStdin(t.Context())
+			assert.Nil(t, secret)
+			requireUSBCmdError(t, err, tt.operation)
+		})
+	}
 }

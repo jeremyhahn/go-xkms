@@ -14,8 +14,8 @@
 package cmd
 
 import (
+	"crypto"
 	"crypto/ecdsa"
-	"crypto/elliptic"
 	"crypto/rsa"
 	"crypto/x509"
 	"encoding/json"
@@ -184,7 +184,11 @@ func init() {
 
 func runEKShow(cmd *cobra.Command, args []string) (err error) {
 	out := cmd.OutOrStdout()
-	tpm, err := openTPM()
+	ekCertHandle := ekCertHandleRSA
+	if ekUseEC {
+		ekCertHandle = ekCertHandleEC
+	}
+	tpm, err := openTPMForEKCert(ekCertHandle)
 	if err != nil {
 		return err
 	}
@@ -194,27 +198,15 @@ func runEKShow(cmd *cobra.Command, args []string) (err error) {
 		}
 	}()
 
-	// Get EK attributes
-	ekAttrs, err := tpm.EKAttributes()
-	if err != nil {
-		return &SentinelCauseError{Sentinel: ErrKeyNotFound, Cause: err}
-	}
-
-	// Get EK certificate based on algorithm flag
+	var ekAttrs *xkms.KeyAttributes
 	var ekCert *x509.Certificate
 	if ekUseEC {
-		ekCert, err = tpm.EKCertificateEC()
-		// Update attributes to reflect EC key
-		ekAttrs.KeyAlgorithm = x509.ECDSA
-		ekAttrs.ECCAttributes = &xkms.ECCAttributes{
-			Curve: elliptic.P256(),
-		}
-		ekAttrs.RSAAttributes = nil
+		ekAttrs, ekCert, err = readECEK(tpm)
 	} else {
-		ekCert, err = tpm.EKCertificateRSA()
+		ekAttrs, ekCert, err = readRSAEK(tpm)
 	}
 	if err != nil {
-		return &SentinelCauseError{Sentinel: ErrKeyNotFound, Cause: err}
+		return err
 	}
 
 	// Output based on format
@@ -224,6 +216,48 @@ func runEKShow(cmd *cobra.Command, args []string) (err error) {
 	default:
 		return outputEKText(out, ekAttrs, ekCert)
 	}
+}
+
+// readRSAEK reads the persistent RSA EK and its certificate.
+func readRSAEK(tpm xkms.TrustedPlatformModule) (*xkms.KeyAttributes, *x509.Certificate, error) {
+	ekAttrs, err := tpm.EKAttributes()
+	if err != nil {
+		return nil, nil, &SentinelCauseError{Sentinel: ErrKeyNotFound, Cause: err}
+	}
+	ekCert, err := tpm.EKCertificateRSA()
+	if err != nil {
+		return nil, nil, &SentinelCauseError{Sentinel: ErrKeyNotFound, Cause: err}
+	}
+	return ekAttrs, ekCert, nil
+}
+
+// readECEK reads the EC EK from its certificate at the TCG ECC P-256 index.
+// The certificate is the TPM's one record of the EC EK: xkey persists only
+// the RSA EK, at 0x81010001, and the TCG ECC EK address 0x81010002 holds
+// xkey's IAK. The persistent EK's attributes are never relabelled as EC.
+func readECEK(tpm xkms.TrustedPlatformModule) (*xkms.KeyAttributes, *x509.Certificate, error) {
+	ekCert, err := tpm.EKCertificateEC()
+	if err != nil {
+		return nil, nil, &SentinelCauseError{Sentinel: ErrKeyNotFound, Cause: err}
+	}
+	ekPub, ok := ekCert.PublicKey.(*ecdsa.PublicKey)
+	if !ok {
+		return nil, nil, &DetailError{
+			Err:    ErrInvalidKeyAlgorithm,
+			Detail: fmt.Sprintf(": the EC EK certificate at 0x%08X holds a %s key", ekCertHandleEC, ekCert.PublicKeyAlgorithm),
+		}
+	}
+	return &xkms.KeyAttributes{
+		CN:           ekCert.Subject.CommonName,
+		KeyType:      xkms.KeyTypeEndorsement,
+		KeyAlgorithm: x509.ECDSA,
+		StoreType:    xkms.StoreTPM2,
+		// The TCG EK template behind the ECC P-256 certificate index uses
+		// the SHA-256 name algorithm (TCG EK Credential Profile, L-2).
+		Hash:          crypto.SHA256,
+		ECCAttributes: &xkms.ECCAttributes{Curve: ekPub.Curve},
+		TPMAttributes: &xkms.TPMAttributes{CertHandle: xkms.TPMHandle(ekCertHandleEC)},
+	}, ekCert, nil
 }
 
 func outputEKText(out io.Writer, ekAttrs *xkms.KeyAttributes, cert *x509.Certificate) error {
@@ -236,7 +270,9 @@ func outputEKText(out io.Writer, ekAttrs *xkms.KeyAttributes, cert *x509.Certifi
 	_, _ = fmt.Fprintf(out, "  Hash:      %s\n", ekAttrs.Hash)
 
 	if ekAttrs.TPMAttributes != nil {
-		_, _ = fmt.Fprintf(out, "  Handle:    0x%08X\n", ekAttrs.TPMAttributes.Handle)
+		if ekAttrs.TPMAttributes.Handle != 0 {
+			_, _ = fmt.Fprintf(out, "  Handle:    0x%08X\n", ekAttrs.TPMAttributes.Handle)
+		}
 		if ekAttrs.TPMAttributes.CertHandle != 0 {
 			_, _ = fmt.Fprintf(out, "  Cert NV:   0x%08X\n", ekAttrs.TPMAttributes.CertHandle)
 		}
@@ -275,7 +311,9 @@ func outputEKJSON(out io.Writer, ekAttrs *xkms.KeyAttributes, cert *x509.Certifi
 	}
 
 	if ekAttrs.TPMAttributes != nil {
-		info["handle"] = fmt.Sprintf("0x%08X", ekAttrs.TPMAttributes.Handle)
+		if ekAttrs.TPMAttributes.Handle != 0 {
+			info["handle"] = fmt.Sprintf("0x%08X", ekAttrs.TPMAttributes.Handle)
+		}
 		if ekAttrs.TPMAttributes.CertHandle != 0 {
 			info["cert_handle"] = fmt.Sprintf("0x%08X", ekAttrs.TPMAttributes.CertHandle)
 		}
@@ -551,8 +589,15 @@ func runEKRestore(cmd *cobra.Command, args []string) (err error) {
 	if ekUseEC {
 		ekCertHandle = ekCertHandleEC
 	}
-	tpm, err := openTPMForEKCert(ekCertHandle)
-	if err != nil {
+	// A TPM whose configured certificate index is empty, or that has no
+	// persistent EK, opens as not initialized. A forced restore still writes
+	// the certificate: ReplaceEKCert needs neither.
+	tpm, err := openTPMForEKRestore(ekCertHandle)
+	forceUninitialized := ekRestoreForce && tpm != nil && errors.Is(err, ErrTPMNotInitialized)
+	if err != nil && !forceUninitialized {
+		if tpm != nil {
+			err = errors.Join(err, tpm.Close())
+		}
 		return err
 	}
 	defer func() {

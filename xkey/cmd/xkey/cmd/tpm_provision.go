@@ -320,7 +320,7 @@ func runTPMProvision(cmd *cobra.Command, args []string) (err error) {
 		_, _ = fmt.Fprintln(out, "FINAL WARNING: This will permanently destroy manufacturer TPM keys!")
 		_, _ = fmt.Fprint(out, "Type 'DESTROY' to continue: ")
 
-		reader := bufio.NewReader(os.Stdin)
+		reader := bufio.NewReader(cmd.InOrStdin())
 		input, err := reader.ReadString('\n')
 		if err != nil {
 			return &WrappedError{Msg: "failed to read input", Err: err}

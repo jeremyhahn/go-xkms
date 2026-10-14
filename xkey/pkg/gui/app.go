@@ -3975,6 +3975,10 @@ func mergeTPMConfig(defaults, file xkmssdk.TPMConfig) xkmssdk.TPMConfig {
 		if cfg.EK == nil {
 			cfg.EK = file.EK
 		} else {
+			// Copy before writing: defaults is usually the package-level
+			// xkmssdk.DefaultTPMConfig, and its EK pointer is shared.
+			ek := *cfg.EK
+			cfg.EK = &ek
 			if file.EK.Handle != 0 {
 				cfg.EK.Handle = file.EK.Handle
 			}
