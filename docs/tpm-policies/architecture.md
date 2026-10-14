@@ -1,6 +1,6 @@
 # TPM Policies and TPM Tenancy — Architecture
 
-> **Status: NORMATIVE** · Feature: `tpm-policies` · Repo: `go-xkms` · Last verified: 2026-10-09
+> **Status: NORMATIVE** · Feature: `tpm-policies` · Repo: `go-xkms` · Last verified: 2026-10-14
 
 This is the design for named TPM policies that many keys and sealed objects
 share, for a registry that records which keys use which policy, and for
@@ -461,6 +461,34 @@ and every transport calls it through `XKMSService`.
 - Permissions: `tpm_policy:{create,get,list,update,revoke,verify,delete}`,
   scoped to the caller's tenant. `tenant:set_tpm_mode` is system-scope only.
 - The SDK exposes the same verbs on `xkms.Client`.
+
+## Planned: unattended unlock across updates
+
+Not built yet; the SPEC.md row is `in progress`.
+
+- **Branch update from signed reference values.** `Service.UpdatePolicy`
+  (`pkg/tpm2/policy/service.go:399`) re-captures live PCRs today. It gains a
+  form that updates one named branch from a signed CoRIM, verified against the
+  configured reference-signer endorsement (`refvalue.VerifySigned`,
+  `pkg/attestation/refvalue/refvalue.go:199`). It takes the final digests the
+  CoRIM carries, replays the node's event log for a component-measured PCR
+  (see [attestation-verifier](../attestation-verifier/architecture.md#planned-reference-value-replay)),
+  and signs the branch at the current epoch. Nobody supplies raw PCR values:
+  `ErrPCRValuesSupplied` (`pkg/tpm2/policy/errors.go:93`) keeps its meaning.
+  `verify` reports a branch approved for a registered image. Both are on every
+  transport and in xkey and xkmsctl.
+- **Offline binding record with a static resolver.** The `.tpmpolicy` binding
+  record carries the approvals and the scope authority's public key. A static
+  `PolicyBindingResolver` (`pkg/tpm2/authorized_policy.go:287`) built from it
+  is exported through `sdk/go`. `SetPolicyBindingResolver`, today a method on
+  `*TPM2` only (`pkg/tpm2/authorized_policy.go:298`), joins the
+  `TrustedPlatformModule` interface (`pkg/tpm2/tpm.go:53`).
+- **Per-node records.** The `tpmpolicy` database is shared by every node of a
+  deployment, so the scope, policy and assignment records carry the node's
+  identity in their key, beside the tenant (see [Registry](#registry)).
+- **Consumer.** go-quicbaas consumes this surface by SDK re-export
+  (`Security().TPMPolicy()` and the initrd static-resolver re-exports).
+  go-trusted-platform reaches it only through go-quicbaas.
 
 ## Rejected alternatives
 

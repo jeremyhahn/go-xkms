@@ -1,6 +1,6 @@
 # Attestation Verifier — Architecture
 
-> **Status: NORMATIVE** · Feature: `attestation-verifier` · Module: `go-xkms` · Last verified: 2026-09-25
+> **Status: NORMATIVE** · Feature: `attestation-verifier` · Module: `go-xkms` · Last verified: 2026-10-14
 
 ## The problem
 
@@ -213,6 +213,23 @@ TCG-CSR-IDEVID arrives (packed TPM public areas + TPM2_Certify structure)
   anchor must never validate a TPM chain, or vice versa
   (`servicer_ca.go:303`). Verifiers are per-format, keyed and checked
   independently.
+
+## Planned: reference-value replay
+
+Not built yet; the SPEC.md row is `in progress`. Reference-value replay
+predicts a PCR value for a new component image from a signed CoRIM, for
+[tpm-policies](../tpm-policies/architecture.md#planned-unattended-unlock-across-updates)
+branch updates.
+
+- It applies TCG extend arithmetic, `PCR = H(PCR ‖ digest)`, generic over the
+  bank (sha256, sha384).
+- It replays an event log up to the replaced component's event, then extends
+  the component digest taken from the signed CoRIM in its place.
+- It extends `EventLog.Replay`
+  (`pkg/attestation/evidence/eventlog.go:333`), which replays a whole log, and
+  takes digests from `Manifest.PCRDigests`
+  (`pkg/attestation/refvalue/refvalue.go:167`) after `VerifySigned`
+  (`pkg/attestation/refvalue/refvalue.go:199`).
 
 ## What this feature deliberately does not do
 

@@ -1,6 +1,6 @@
 # go-xkms specification
 
-> **Status: NORMATIVE** · Last verified: 2026-10-13
+> **Status: NORMATIVE** · Last verified: 2026-10-14
 > What go-xkms is, and every feature it has, with requirements and status. The plan by issue is [ROADMAP.md](../ROADMAP.md).
 
 **Rule 1.** This file lists what the project is and every feature, with requirements and status. A feature listed here, in any status, is never deleted: not its docs, its code or its issues. Removing or re-scoping a feature needs the owner's change to this file.
@@ -9,17 +9,23 @@ Each feature's folder (`docs/<feature>/`, `xkey/docs/<feature>/`) is the detail 
 
 ## Purpose
 
-go-xkms owns all hardware and cloud crypto and hardware identity in the stack: TPM 2.0, PKCS#11 (as a client backend and as a provider module), cloud KMS, FIDO2 CTAP2, the WebAuthn relying party, PIV, `TrustedCA` with ACME, trust-bootstrap dispatch, the phone-as-HSM pairing protocol, the SSH surface and RFC 9334 evidence-level attestation primitives.
-It sits above go-qrdb, consumed only through `go-qrdb/sdk/go`, and exports its own crypto surface through `go-xkms/sdk/go`.
-go-quicbaas composes it into the product, and go-trusted-platform reaches it through go-quicbaas. xkey, the desktop GUI and CLI in this repository, is its own product surface.
+go-xkms is the third layer of a stack that is one product in layers: go-quicraft is the Raft library, go-qrdb the cluster engine and database base layer, and go-xkms sits on go-qrdb, inheriting all of it through `go-qrdb/sdk/go`.
+It adds hardware crypto, auth factors, KMS, CA, ACME and TPM policies as services on top of go-qrdb through the ServiceModule abstraction, so the go-qrdb client works unchanged against an xkms node: TPM 2.0, PKCS#11 (as a client backend and as a provider module), cloud KMS, FIDO2 CTAP2, the WebAuthn relying party, PIV, `TrustedCA` with ACME, trust-bootstrap dispatch, the phone-as-HSM pairing protocol, the SSH surface and RFC 9334 evidence-level attestation primitives.
+`go-xkms/sdk/go` re-exports every go-qrdb service and adds these services to it.
+go-quicbaas composes go-qrdb and go-xkms, and go-trusted-platform sits on go-quicbaas only. xkey, the desktop GUI and CLI in this repository, works against go-xkms, go-quicbaas and go-trusted-platform alike.
 
 ## Boundaries
 
-go-xkms **owns** the canonical, single implementation of every capability above, and the hardware-side concerns of first boot (TPM enrollment, IDevID issuance, ACME directory enrollment). Its hardware and cloud seal strategies, PIN backends and factor adapters implement go-qrdb seams and register into go-qrdb's registries.
+go-xkms **owns** the canonical, single implementation of every service above, and the hardware-side concerns of first boot (TPM enrollment, IDevID issuance, ACME directory enrollment). Its hardware and cloud seal strategies, PIN backends and factor adapters implement go-qrdb seams and register into go-qrdb's registries.
+
+go-xkms **inherits** go-qrdb's one cluster engine and one datastore per deployment: system records live in the system tenant, tenant data in its tenant, and tenants are strictly isolated.
+
+A feature go-xkms needs from go-qrdb is a seam row in both SPECs and a re-export in `go-xkms/sdk/go`.
 
 go-xkms **never**:
 
-- ships a Raft state machine, KV store or any database surface, or re-exports go-qrdb's data plane from `sdk/go`;
+- ships a second cluster engine, Raft state machine, database or datastore, or a store, service or client of its own for anything go-qrdb provides;
+- re-implements, wraps, filters or re-models a go-qrdb service under its own names;
 - ships a barrier, bootstrap/first-boot implementation, user model or cert-binding scheme: those are go-qrdb's, consumed through `go-qrdb/sdk/go`;
 - imports `go-qrdb/pkg/*`: node configuration uses the `qrdbsdk.Daemon*` re-exports;
 - ships a multi-tenant Backend-as-a-Service facade (go-quicbaas) or application-level user, registration or JWT entities (the consumer's);
@@ -32,18 +38,18 @@ Cross-cutting documentation, not features: [architecture/](architecture/), [conf
 
 | Feature | Status | Requirements | Detail |
 |---|---|---|---|
-| acme-issuance | shipped | ACME RFC 8555 server and client with ARI, DNS-01 and HTTP-01 challenges and TPM enrollment; the device-attest-01 challenge for DICE devices; the ACME admin plane and its GUI. | [acme-issuance/](acme-issuance/) |
+| acme-issuance | in progress | ACME RFC 8555 server and client with ARI, DNS-01 and HTTP-01 challenges and TPM enrollment; the device-attest-01 challenge for DICE devices; the ACME admin plane and its GUI. `sdk/go` exports `AssemblePossessionCSR`, the device-attest-01 possession-request assembly. At finalize, trusted-firmware's xkms adapter, composed by go-quicbaas, assembles that request with it from the signature `Device.AttestCSR` returns and the device's alias certificate; go-trusted-platform reaches it only through go-quicbaas. | [acme-issuance/](acme-issuance/) |
 | attestation-evidence | shipped | RFC 9334 evidence primitives in `sdk/go/evidence`: TPM2_Quote, AK and EK chains, strict TCG event-log parsing and replay, TPM2_Certify, IAK/IDevID, signed CoRIM reference values. | [attestation-evidence/](attestation-evidence/) |
-| attestation-verifier | shipped | Backend-agnostic `pkg/attestation`: chain and signature verification and per-format key-binding invariants that gate CSR issuance on hardware provenance (TPM2, PIV, Android). | [attestation-verifier/](attestation-verifier/) |
+| attestation-verifier | in progress | Backend-agnostic `pkg/attestation`: chain and signature verification and per-format key-binding invariants that gate CSR issuance on hardware provenance (TPM2, PIV, Android). Reference-value replay applies TCG extend arithmetic in any bank (sha256, sha384): it replays an event log up to a replaced component event and extends the component digest from a signed CoRIM. | [attestation-verifier/](attestation-verifier/) |
 | attested-peer | shipped | Decide whether a connection's peer is a currently attested system: quote to verdict, IDevID/IAK validation, TLS channel binding, and the verifier behind go-qrdb's attested-caller gate. | [attested-peer/](attested-peer/) |
-| audit-log | shipped | Tamper-evident audit records and their signing chain. | [audit-log/](audit-log/) |
+| audit-log | shipped | The xkms product audit events, emitted into go-qrdb's tamper-evident audit logger. | [audit-log/](audit-log/) |
 | auth-factors | shipped | Hardware factor adapters behind go-qrdb's `Factor` interface, factor composition, and the identity/key-domain split. | [auth-factors/](auth-factors/) |
 | backend-credentials | shipped | Backend secrets (PKCS#11 User PIN, cloud KMS and Vault secrets) under `credentials.seal_strategy`, `credential://` resolution at startup, and the CLI, REST and MCP credential surface. | [backend-credentials/](backend-credentials/) |
-| backend-registry | shipped | External backends register through the hook (`RegisterExternalBackend`), built-in backend types stay closed to external registration, and a blank import of an adapter module is the integration path; shipped in `v0.52.0-alpha`. | [crypto-backends/engineering.md](crypto-backends/engineering.md) |
-| certificate-authority | shipped | `TrustedCA`, go-xkms's own CA, never replaced by go-qrdb's: cross-signed root pool, AIA import, DANE TLSA publishing, issuance profiles. | [certificate-authority/](certificate-authority/) |
+| backend-registry | shipped | External backends register through the hook (`RegisterExternalBackend`), built-in backend types stay closed to external registration, and a blank import of an adapter module is the integration path; shipped in `v0.52.0-alpha`. go-quicbaas composes trusted-firmware's xkms adapter by blank import, and go-trusted-platform reaches it only through go-quicbaas. | [crypto-backends/engineering.md](crypto-backends/engineering.md) |
+| certificate-authority | shipped | `TrustedCA`, the CA service go-xkms adds on go-qrdb: cross-signed root pool, AIA import, DANE TLSA publishing, issuance profiles. | [certificate-authority/](certificate-authority/) |
 | clustering | shipped | Embed a go-qrdb clustered node behind the `raft` tag: Raft config mapping, inter-node mTLS, leader redirects, the cluster control plane, cluster CA key custody and the enroll-01 join. | [clustering/](clustering/) |
 | crypto-backends | shipped | One `Backend` contract with every software, hardware and cloud implementation, each compiled in by a `WITH_*` toggle. | [crypto-backends/](crypto-backends/) |
-| datastore | shipped | One global, go-qrdb-backed datastore for every subsystem, configured by `datastore.engine` and `datastore.mode`, with no per-subsystem storage choice. | [datastore/](datastore/) |
+| datastore | shipped | Every subsystem persists in the deployment's one go-qrdb datastore, configured by `datastore.engine` and `datastore.mode`, with no per-subsystem storage choice. | [datastore/](datastore/) |
 | dice-device-identity | shipped | DICE device identity with a hardware root of trust: TCG DICE extensions and UCCS claims, their verification, and the `dice-idevid` issuance profile. | [dice-device-identity/](dice-device-identity/) |
 | escrow | shipped | External key escrow (KMIP and xkms federation) through the agent factory, daemon config and service layer; reachable through the embedded Go SDK. | [escrow/](escrow/) |
 | fido2-ctap2 | shipped | The stack's single FIDO2 CTAP2 client implementation. | [fido2-ctap2/](fido2-ctap2/) |
@@ -53,7 +59,7 @@ Cross-cutting documentation, not features: [architecture/](architecture/), [conf
 | init-ceremony | shipped | `xkmsd init`, the single-administrator bootstrap: CA artifacts, the node's first boot and the administrator's login factors. | [init-ceremony/](init-ceremony/) |
 | key-management | shipped | Key lifecycle, key providers, rotation, versions, cross-backend copy, and symmetric and asymmetric operations on every transport. | [key-management/](key-management/) |
 | luks | shipped | The stack's single LUKS implementation: FIPS-aware volume lifecycle on go-luks2 and TPM 2.0 passphrase sealing. | [luks/](luks/) |
-| multi-tenancy | shipped | Per-tenant isolation, tenant barriers and tenant-scoped keys. | [multi-tenancy/](multi-tenancy/) |
+| multi-tenancy | shipped | Per-tenant isolation over go-qrdb's tenant barriers, and tenant-scoped keys. | [multi-tenancy/](multi-tenancy/) |
 | observability | shipped | Prometheus instrumentation: operation counters and histograms, backend health, key and certificate totals, connection tracking. | [observability/](observability/) |
 | oidc-credentials | shipped | Server-side OIDC credentials on the tenant barrier, kept fresh by a leader-elected scheduler, with device-flow and import logins and `GetAccessToken` by reference. | [oidc-credentials/](oidc-credentials/) |
 | password-vault | shipped | Stored password credentials and their access modes. | [password-vault/](password-vault/) |
@@ -61,6 +67,7 @@ Cross-cutting documentation, not features: [architecture/](architecture/), [conf
 | piv-smartcard | shipped | PIV slot operations (sign, decrypt, attest) as a factor and as a CLI/SDK verb. | [piv-smartcard/](piv-smartcard/) |
 | pkcs11-backend | shipped | xkms as a PKCS#11 client consuming an HSM or token (`-tags pkcs11`). | [pkcs11-backend/](pkcs11-backend/) |
 | pkcs11-provider-module | shipped | The `pkcs11-module` cgo Cryptoki provider presenting xkms as a token, and its slot/token lifecycle. | [pkcs11-provider-module/](pkcs11-provider-module/) |
+| platform-pcr-selection | planned | The platform policy's PCR selection defaults to PCR 16 (`DefaultPlatformPCR`), the TCG debug PCR, which is resettable and which the PC Client firmware profile excludes from sealing. Decision pending: keep PCR 16, or move the selection to boot PCRs such as the board's seal-pcrs (default 7 and 11). | none |
 | platform-secrets | shipped | Platform secret storage and resolution. | [platform-secrets/](platform-secrets/) |
 | post-quantum | shipped | ML-KEM and ML-DSA key generation and use, the stdlib/CIRCL split and FIPS behavior. | [post-quantum/](post-quantum/) |
 | rbac | shipped | The `auth.Authorizer` seam over go-qrdb's identity plane: the xkms permission vocabulary, transport enforcement and the built-in roles. | [rbac/](rbac/) |
@@ -72,7 +79,7 @@ Cross-cutting documentation, not features: [architecture/](architecture/), [conf
 | ssh-keys | shipped | SSH keys (software or backend-backed), host-key pins and authorized_keys entries on every transport. | [ssh-keys/](ssh-keys/) |
 | ssh-sessions | shipped | Outbound SSH: interactive console, non-interactive `Run` and upload, connection profiles, session history, local `ssh_config`/agent discovery. | [ssh-sessions/](ssh-sessions/) |
 | symmetric-aead | shipped | AES-GCM, ChaCha20-Poly1305, AES-CBC and AES-ECB, the AEAD safety tracker and GCM nonce modes under FIPS. | [symmetric-aead/](symmetric-aead/) |
-| tpm-policies | shipped | Named, TPM-authorized policies (PolicyAuthorize with NV-counter revocation) shared by many keys and sealed objects, the key/policy registry and per-tenant TPM modes. | [tpm-policies/](tpm-policies/) |
+| tpm-policies | in progress | Named, TPM-authorized policies (PolicyAuthorize with NV-counter revocation) shared by many keys and sealed objects, the key/policy registry and per-tenant TPM modes. `UpdatePolicy` updates one named branch from a signed CoRIM instead of live capture, nobody supplies raw PCR values, and `verify` reports a branch approved for a registered image, on every transport and in xkey and xkmsctl. The `.tpmpolicy` binding record carries the approvals and the scope authority public key, a static `PolicyBindingResolver` built from it is exported through `sdk/go`, and per-node records carry the node's identity in their key. go-quicbaas consumes this surface by SDK re-export (`Security().TPMPolicy()`, the initrd static-resolver re-exports); go-trusted-platform reaches it only through go-quicbaas. | [tpm-policies/](tpm-policies/) |
 | tpm2 | shipped | EK/SRK lifecycle, IDevID/LDevID issuance (TCG-CSR-IDEVID), PCR policy, attestation and sealed objects. | [tpm2/](tpm2/) |
 | trust-bootstrap | shipped | The single DANE / Noise / SPKI / Direct / Auto mode-dispatch library that fetches and verifies a CA bundle for first-contact clients. | [trust-bootstrap/](trust-bootstrap/) |
 | user-onboarding | shipped | Administrator-issued activation invitations, redeemed through the WebAuthn or PIV ceremony to enroll the first credential. | [user-onboarding/](user-onboarding/) |
@@ -106,7 +113,7 @@ xkey (`go-xkms/xkey`) is a product surface: CLI, desktop GUI, browser extension 
 | pkcs11 | shipped | GUI module/slot/token management, the embedded and IPC `PKCS11Transport`, and `--backend pkcs11`. | [pkcs11/](../xkey/docs/pkcs11/) |
 | pkcs11-manager | shipped | The PKCS#11 module/token manager and its per-slot backend-registry sync. | [pkcs11-manager/](../xkey/docs/pkcs11-manager/) |
 | platform-trust | shipped | Trust bootstrap, the classified truststore and SPKI-pinned platform CA import. | [platform-trust/](../xkey/docs/platform-trust/) |
-| seal | shipped | The barrier, barrier auto-unseal through a named TPM policy, and the sealed-blob store. | [seal/](../xkey/docs/seal/) |
+| seal | shipped | go-qrdb's barrier, its auto-unseal through a named TPM policy, and the sealed-blob store. | [seal/](../xkey/docs/seal/) |
 | secret-service | shipped | The `org.freedesktop.secrets` D-Bus daemon over the password store, locked and unlocked with the barrier. | [secret-service/](../xkey/docs/secret-service/) |
 | setup-wizard | shipped | First-run personal and enterprise setup, SO provisioning and where the SO PIN may live. | [setup-wizard/](../xkey/docs/setup-wizard/) |
 | ssh | shipped | SSH keys, profiles and host keys, connect/console, local discovery and the GUI SSH services. | [ssh/](../xkey/docs/ssh/) |
