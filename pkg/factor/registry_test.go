@@ -17,6 +17,7 @@ import (
 	"context"
 	"testing"
 
+	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
 	"github.com/jeremyhahn/go-xkms/pkg/factor/fido2"
 	"github.com/jeremyhahn/go-xkms/pkg/factor/mtls"
 	"github.com/jeremyhahn/go-xkms/pkg/factor/piv"
@@ -244,5 +245,31 @@ func TestDefaultFactors_DefaultConfigKeepsSoftwarePIVAvailable(t *testing.T) {
 	}
 	if available, reason := probe.Available(context.Background()); !available {
 		t.Fatalf("Available() = false (%q), want true for the software default", reason)
+	}
+}
+
+func TestNewRegistry_RegistersEveryFactor(t *testing.T) {
+	registry, err := newRegistry(DefaultFactors(Config{}))
+	if err != nil {
+		t.Fatalf("newRegistry: %v", err)
+	}
+	if got := len(registry.List()); got != 4 {
+		t.Fatalf("registry has %d factors, want 4: %v", got, registry.List())
+	}
+}
+
+func TestNewRegistry_RejectsDuplicateFactor(t *testing.T) {
+	registry, err := newRegistry([]qrdbsdk.AuthFactorPlugin{mtls.New(mtls.Config{}), mtls.New(mtls.Config{})})
+	if err == nil {
+		t.Fatal("newRegistry accepted two factors with the same name")
+	}
+	if registry != nil {
+		t.Fatal("newRegistry returned a registry alongside an error")
+	}
+}
+
+func TestNewRegistry_RejectsNilFactor(t *testing.T) {
+	if _, err := newRegistry([]qrdbsdk.AuthFactorPlugin{nil}); err == nil {
+		t.Fatal("newRegistry accepted a nil factor")
 	}
 }

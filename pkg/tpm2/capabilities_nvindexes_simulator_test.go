@@ -27,7 +27,7 @@ func TestNvIndexes_ReportsEveryDefinedIndexType(t *testing.T) {
 
 	ordinary := &types.KeyAttributes{
 		Parent:   ekAttrs,
-		Password: mustPassword([]byte("ordinary")),
+		Password: mustPassword(t, []byte("ordinary")),
 		SealData: types.NewSealData([]byte("secret-payload")),
 		TPMAttributes: &types.TPMAttributes{
 			Handle:    tpm2.TPMHandle(nvramOwnerIndex),

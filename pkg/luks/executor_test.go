@@ -820,3 +820,114 @@ func TestIsMounted_KnownMount(t *testing.T) {
 func TestIsUnlocked_NotOpen(t *testing.T) {
 	assert.False(t, IsUnlocked("nonexistent_mapper_name_12345"))
 }
+
+// TestLibExecutor_RefusesCanceledContext pins that every lifecycle operation
+// checks its context before touching a seam, so a cancelled request never
+// attaches, maps, mounts or unmounts anything.
+func TestLibExecutor_RefusesCanceledContext(t *testing.T) {
+	ops := map[string]func(*LibExecutor, context.Context, *VolumeConfig) error{
+		"unlock": func(e *LibExecutor, ctx context.Context, cfg *VolumeConfig) error {
+			return e.Unlock(ctx, cfg, "passphrase")
+		},
+		"lock":    (*LibExecutor).Lock,
+		"mount":   (*LibExecutor).Mount,
+		"unmount": (*LibExecutor).Unmount,
+	}
+	for name, op := range ops {
+		t.Run(name, func(t *testing.T) {
+			stubLoopSeams(t)
+			touched := false
+			setupLoopDevice = func(context.Context, string) (loopDevice, error) { touched = true; return &fakeLoop{}, nil }
+			lockLUKS = func(context.Context, string) error { touched = true; return nil }
+			lookupMapping = func(_ context.Context, name string) (*dmcrypt.Mapping, error) {
+				touched = true
+				return &dmcrypt.Mapping{Name: name}, nil
+			}
+			unmountLUKS = func(context.Context, string, filesystem.UnmountFlags) error { touched = true; return nil }
+
+			cfg := testConfig(t.TempDir())
+			ctx, cancel := context.WithCancel(context.Background())
+			cancel()
+
+			err := op(NewLibExecutor(), ctx, cfg)
+			assert.ErrorIs(t, err, context.Canceled)
+			assert.False(t, touched, "a cancelled %s must not reach a kernel seam", name)
+			assert.NoDirExists(t, cfg.MountPoint)
+		})
+	}
+}
+
+// TestLibExecutor_Unlock_StatFails distinguishes an unreadable container path
+// from a missing one: only ENOENT means "no volume", anything else is an
+// operational failure naming the path.
+func TestLibExecutor_Unlock_StatFails(t *testing.T) {
+	stubLoopSeams(t)
+
+	dir := t.TempDir()
+	blocker := filepath.Join(dir, "blocker")
+	require.NoError(t, os.WriteFile(blocker, nil, 0600))
+	cfg := testConfig(dir)
+	cfg.LUKSPath = filepath.Join(blocker, "vault.luks")
+
+	err := NewLibExecutor().Unlock(context.Background(), cfg, "passphrase")
+	require.Error(t, err)
+	assert.NotErrorIs(t, err, ErrVolumeNotFound)
+
+	var execErr *ExecutorError
+	require.ErrorAs(t, err, &execErr)
+	assert.Equal(t, "stat", execErr.Operation)
+	assert.Equal(t, cfg.LUKSPath, execErr.Path)
+}
+
+// TestLibExecutor_Mount_UsesConfiguredFilesystem pins that a non-default
+// Filesystem reaches the mount call instead of the ext4 default.
+func TestLibExecutor_Mount_UsesConfiguredFilesystem(t *testing.T) {
+	stubLoopSeams(t)
+
+	var mounted filesystem.MountParams
+	mountLUKS = func(_ context.Context, p filesystem.MountParams) error { mounted = p; return nil }
+
+	e := &LibExecutor{Filesystem: "xfs"}
+	require.NoError(t, e.Mount(context.Background(), testConfig(t.TempDir())))
+	assert.Equal(t, filesystem.Type("xfs"), mounted.Type)
+}
+
+// TestFormatVolume_MissingDevice proves the production format seam reports a
+// device it cannot open rather than writing anywhere else.
+func TestFormatVolume_MissingDevice(t *testing.T) {
+	pass, err := protectPassphrase("passphrase")
+	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, destroyPassphrase(pass)) })
+
+	missing := filepath.Join(t.TempDir(), "absent")
+	err = formatVolume(context.Background(), missing, pass, luks2.FormatParams{})
+	require.Error(t, err)
+	assert.NoFileExists(t, missing)
+}
+
+// TestActivateVolume_NotALUKSVolume proves the production unlock seam refuses
+// a device with no LUKS2 header and returns no mapping.
+func TestActivateVolume_NotALUKSVolume(t *testing.T) {
+	pass, err := protectPassphrase("passphrase")
+	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, destroyPassphrase(pass)) })
+
+	device := filepath.Join(t.TempDir(), "zeros")
+	require.NoError(t, os.WriteFile(device, make([]byte, 1<<16), 0600))
+
+	mapping, err := activateVolume(context.Background(), device, pass, "xkms-test")
+	require.Error(t, err)
+	assert.Nil(t, mapping)
+}
+
+// TestActivateVolume_MissingDevice covers the open failure ahead of any
+// header parsing.
+func TestActivateVolume_MissingDevice(t *testing.T) {
+	pass, err := protectPassphrase("passphrase")
+	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, destroyPassphrase(pass)) })
+
+	mapping, err := activateVolume(context.Background(), filepath.Join(t.TempDir(), "absent"), pass, "xkms-test")
+	require.Error(t, err)
+	assert.Nil(t, mapping)
+}

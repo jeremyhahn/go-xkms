@@ -774,6 +774,18 @@ func TestEKAttributesFromConfigTableDriven(t *testing.T) {
 			},
 		},
 		{
+			name: "invalid key algorithm falls back to ECDSA",
+			config: EKConfig{
+				KeyAlgorithm: "INVALID",
+				Handle:       0x81010001,
+				ECCConfig:    &store.ECCConfig{Curve: "P-256"},
+			},
+			validate: func(t *testing.T, attrs *types.KeyAttributes) {
+				assert.Equal(t, x509.ECDSA, attrs.KeyAlgorithm)
+				assert.Equal(t, tpm2.ECCEKTemplate.Type, attrs.TPMAttributes.Template.Type)
+			},
+		},
+		{
 			name: "config with platform policy",
 			config: EKConfig{
 				KeyAlgorithm:   x509.RSA.String(),
@@ -867,6 +879,30 @@ func TestSRKAttributesFromConfigTableDriven(t *testing.T) {
 			validate:    nil,
 		},
 		{
+			name: "invalid key algorithm falls back to RSA",
+			config: SRKConfig{
+				KeyAlgorithm: "INVALID",
+				Handle:       0x81000001,
+				RSAConfig:    &store.RSAConfig{KeySize: 2048},
+			},
+			validate: func(t *testing.T, attrs *types.KeyAttributes) {
+				assert.Equal(t, x509.RSA, attrs.KeyAlgorithm)
+				assert.Equal(t, tpm2.RSASRKTemplate.Type, attrs.TPMAttributes.Template.Type)
+			},
+		},
+		{
+			name: "invalid key algorithm falls back to ECDSA",
+			config: SRKConfig{
+				KeyAlgorithm: "INVALID",
+				Handle:       0x81000001,
+				ECCConfig:    &store.ECCConfig{Curve: "P-256"},
+			},
+			validate: func(t *testing.T, attrs *types.KeyAttributes) {
+				assert.Equal(t, x509.ECDSA, attrs.KeyAlgorithm)
+				assert.Equal(t, tpm2.ECCSRKTemplate.Type, attrs.TPMAttributes.Template.Type)
+			},
+		},
+		{
 			name: "no configuration yields a platform policy or an AuthPolicy",
 			config: SRKConfig{
 				KeyAlgorithm: x509.RSA.String(),
@@ -900,7 +936,7 @@ func TestSRKAttributesFromConfigTableDriven(t *testing.T) {
 }
 
 func TestIAKAttributesFromConfigTableDriven(t *testing.T) {
-	soPIN := mustPassword([]byte("password"))
+	soPIN := mustPassword(t, []byte("password"))
 
 	tests := []struct {
 		name        string
@@ -1895,7 +1931,7 @@ func TestSigningKeyAttrBuildersLeaveTemplateZero(t *testing.T) {
 
 	t.Run("IAK", func(t *testing.T) {
 		attrs, err := IAKAttributesFromConfig(
-			mustPassword([]byte("so-pin")),
+			mustPassword(t, []byte("so-pin")),
 			&IAKConfig{
 				CN:                 "iak-template-zero",
 				Hash:               "SHA-256",

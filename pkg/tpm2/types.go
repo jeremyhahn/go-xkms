@@ -141,6 +141,14 @@ var (
 	// than the largest TPM digest.
 	ErrInvalidPCRData = errors.New("tpm: invalid PCR data")
 
+	// ErrPCRRead indicates a PCR read failed for a reason other than the
+	// TPM not supporting the bank, so the PCR state cannot be reported.
+	ErrPCRRead = errors.New("tpm: failed to read PCR")
+
+	// ErrMalformedNVExtendResponse indicates a TPM2_NV_Extend response whose
+	// header, parameter area or authorization area cannot be parsed.
+	ErrMalformedNVExtendResponse = errors.New("tpm: malformed NV_Extend response")
+
 	// ErrKeyRetrievalFailed indicates GetSymmetricKey could not determine
 	// whether a symmetric key exists because the underlying key store
 	// (store.KeyBackend) returned an error other than "not found" -- a

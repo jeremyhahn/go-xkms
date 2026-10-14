@@ -288,8 +288,6 @@ func (p *PlatformPassword) getCached() []byte {
 // when its member methods are invoked. If the provided password is the
 // default platform password, a random 32 byte (AES-256) key is generated.
 func (p *PlatformPassword) Create() error {
-
-	var passwd []byte
 	if p.keyAttrs.Password == nil {
 		pw, err := store.NewPassword(nil)
 		if err != nil {
@@ -297,26 +295,31 @@ func (p *PlatformPassword) Create() error {
 		}
 		p.keyAttrs.Password = pw
 		return nil
-	} else {
-		// Check if password is readable (placeholder passwords report why not)
-		if err := requireReadable(p.keyAttrs.Password); err != nil {
+	}
+	// Check if password is readable (placeholder passwords report why not)
+	if err := requireReadable(p.keyAttrs.Password); err != nil {
+		return err
+	}
+	original := p.keyAttrs.Password
+	passwd := original.Bytes()
+	if string(passwd) == store.DEFAULT_PASSWORD {
+		secret := make([]byte, 32) // AES-256 key
+		if _, err := p.tpm.RandomSource().Read(secret); err != nil {
 			return err
 		}
-		passwd = p.keyAttrs.Password.Bytes()
-		if string(passwd) == store.DEFAULT_PASSWORD {
-			passwd = make([]byte, 32) // AES-256 key
-			rng := p.tpm.RandomSource()
-			if _, err := rng.Read(passwd); err != nil {
-				return err
-			}
-			pw, err := store.NewPassword(passwd)
-			if err != nil {
-				return err
-			}
-			p.keyAttrs.Password = pw
+		pw, err := store.NewPassword(secret)
+		secure.Wipe(secret)
+		if err != nil {
+			return err
 		}
+		// The generated secret only lives until it is sealed: the
+		// attributes are re-pointed below, so release its enclave.
+		defer pw.Clear()
+		p.keyAttrs.Password = pw
 	}
+	secure.Wipe(passwd)
 	if _, err := p.tpm.SealKey(p.keyAttrs, p.backend, false); err != nil {
+		p.keyAttrs.Password = original
 		return err
 	}
 	if p.keyAttrs.TPMPolicy == types.TPMPolicyPlatform {

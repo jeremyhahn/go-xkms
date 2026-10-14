@@ -70,7 +70,7 @@ func deleteKeyRegressionFixture(t *testing.T) (tpm TrustedPlatformModule, srkAtt
 	// and returns a template child KeyAttributes (Password "key-pass")
 	// parented to it -- exactly the "parent auth != child auth" shape
 	// needed to distinguish the two code paths.
-	childTemplate := createKey(tpm, false)
+	childTemplate := createKey(t, tpm, false)
 	srkAttrs = childTemplate.Parent
 
 	storageFactory, err := store.NewStorageFactory(slog.Default(), "")

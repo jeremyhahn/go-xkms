@@ -168,3 +168,85 @@ func TestMapTPMPolicyError_ListsTheObjectsInUse(t *testing.T) {
 
 	assert.Equal(t, codes.Internal, status.Code(mapTPMPolicyError(errTPMPolicyUnclassified)))
 }
+
+// tpmPolicyRPCs returns the policy RPCs of s that act on one named policy or
+// on the scope's authority, each naming the policy "boot" in tenant.
+func tpmPolicyRPCs(s *Service, tenant string) map[string]func(context.Context) error {
+	req := &pb.TPMPolicyRequest{TenantId: tenant, Name: "boot"}
+	return map[string]func(context.Context) error{
+		"TPMPolicyGet": func(ctx context.Context) error {
+			_, err := s.TPMPolicyGet(ctx, req)
+			return err
+		},
+		"TPMPolicyUpdate": func(ctx context.Context) error {
+			_, err := s.TPMPolicyUpdate(ctx, req)
+			return err
+		},
+		"TPMPolicyRevoke": func(ctx context.Context) error {
+			_, err := s.TPMPolicyRevoke(ctx, req)
+			return err
+		},
+		"TPMPolicyVerify": func(ctx context.Context) error {
+			_, err := s.TPMPolicyVerify(ctx, req)
+			return err
+		},
+		"TPMPolicyDelete": func(ctx context.Context) error {
+			_, err := s.TPMPolicyDelete(ctx, &pb.TPMPolicyDeleteRequest{TenantId: tenant, Name: "boot"})
+			return err
+		},
+		"TPMPolicySetAutoUnseal": func(ctx context.Context) error {
+			_, err := s.TPMPolicySetAutoUnseal(ctx, &pb.TPMPolicyAutoUnsealRequest{TenantId: tenant, Name: "boot", Enabled: true})
+			return err
+		},
+		"TPMPolicySetDescription": func(ctx context.Context) error {
+			_, err := s.TPMPolicySetDescription(ctx, &pb.TPMPolicyDescriptionRequest{TenantId: tenant, Name: "boot", Description: "firmware"})
+			return err
+		},
+		"TPMPolicyRotateAuthority": func(ctx context.Context) error {
+			_, err := s.TPMPolicyRotateAuthority(ctx, &pb.TPMAuthorityRotateRequest{TenantId: tenant})
+			return err
+		},
+	}
+}
+
+// TestTPMPolicyRPCs_ReachTheCallersScope proves every policy RPC acts in the
+// caller's own scope: once the system caller sets a tenant's mode to none,
+// each of the tenant's RPCs answers FailedPrecondition from that scope. The
+// TPM-backed success paths run over the simulator in pkg/server.
+func TestTPMPolicyRPCs_ReachTheCallersScope(t *testing.T) {
+	s, _ := newTPMPolicyGRPC(t)
+	_, err := s.SetTenantTPMMode(platformScopeCtx(qrdbsdk.SystemTenantID), &pb.SetTenantTPMModeRequest{TenantId: "acme", Mode: "none"})
+	require.NoError(t, err)
+
+	for name, call := range tpmPolicyRPCs(s, "") {
+		t.Run(name, func(t *testing.T) {
+			err := call(platformScopeCtx("acme"))
+			assert.Equal(t, codes.FailedPrecondition, status.Code(err))
+			assert.Contains(t, err.Error(), tpmpolicy.ErrTPMModeNone.Error())
+		})
+	}
+}
+
+// TestTPMPolicyRPCs_RefuseAnotherTenant proves no policy RPC lets a tenant
+// caller reach another tenant's scope.
+func TestTPMPolicyRPCs_RefuseAnotherTenant(t *testing.T) {
+	s, _ := newTPMPolicyGRPC(t)
+
+	for name, call := range tpmPolicyRPCs(s, "globex") {
+		t.Run(name, func(t *testing.T) {
+			assert.Equal(t, codes.NotFound, status.Code(call(platformScopeCtx("acme"))))
+		})
+	}
+}
+
+// TestTPMPolicyRPCs_UnavailableWithoutAService proves every policy RPC
+// answers Unavailable on a server with no XKMSService.
+func TestTPMPolicyRPCs_UnavailableWithoutAService(t *testing.T) {
+	s := NewService(nil, nil, nil)
+
+	for name, call := range tpmPolicyRPCs(s, "") {
+		t.Run(name, func(t *testing.T) {
+			assert.Equal(t, codes.Unavailable, status.Code(call(platformScopeCtx(qrdbsdk.SystemTenantID))))
+		})
+	}
+}

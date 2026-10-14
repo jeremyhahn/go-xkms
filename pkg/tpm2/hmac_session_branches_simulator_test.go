@@ -18,7 +18,7 @@ func TestHMACSession_Salted_VerifiesCorrectAuth(t *testing.T) {
 	_, tpm := createSim(t, false)
 	defer func() { _ = tpm.Close() }()
 
-	srkAttrs := createKey(tpm, false).Parent
+	srkAttrs := createKey(t, tpm, false).Parent
 	tpmImpl := tpm.(*TPM2)
 
 	require.NoError(t, tpmImpl.VerifyAuth(srkAttrs.TPMAttributes.Handle, []byte("srk-pass")),
@@ -35,7 +35,7 @@ func TestHMACSaltedSession_ProducesUsableSession(t *testing.T) {
 	_, tpm := createSim(t, false)
 	defer func() { _ = tpm.Close() }()
 
-	srkAttrs := createKey(tpm, false).Parent
+	srkAttrs := createKey(t, tpm, false).Parent
 	tpmImpl := tpm.(*TPM2)
 
 	srkName, srkPub, err := tpmImpl.ReadHandle(srkAttrs.TPMAttributes.Handle)

@@ -84,7 +84,7 @@ func TestFactoryResetWithClear_EmptyLockout_ClearSucceeds(t *testing.T) {
 // auth -- exactly as its doc comment promises -- rather than aborting.
 func TestFactoryResetWithClear_LockoutSet_FallsThroughToEvictControl(t *testing.T) {
 	h := newUnprovisionedSimHarness(t, nil)
-	soPIN := mustPassword([]byte("factory-reset-so-pin-0123"))
+	soPIN := mustPassword(t, []byte("factory-reset-so-pin-0123"))
 	require.NoError(t, h.TPM.Provision(soPIN))
 
 	_, err := h.TPM.SSRKAttributes()
@@ -114,7 +114,7 @@ func TestFactoryResetWithClear_LockoutSet_FallsThroughToEvictControl(t *testing.
 // soPIN, must recover instead of failing.
 func TestSetHierarchyAuth_ReinstallRecovery_IdempotentRetrySucceeds(t *testing.T) {
 	h := newUnprovisionedSimHarness(t, nil)
-	soPIN := mustPassword([]byte("reinstall-recovery-pin-01"))
+	soPIN := mustPassword(t, []byte("reinstall-recovery-pin-01"))
 	platform := tpm2.TPMRHPlatform
 
 	require.NoError(t, h.TPM.SetHierarchyAuth(nil, soPIN, &platform))
@@ -131,14 +131,28 @@ func TestSetHierarchyAuth_ReinstallRecovery_IdempotentRetrySucceeds(t *testing.T
 // SetHierarchyAuth returns.
 func TestSetHierarchyAuth_ReinstallRecovery_MismatchedRetryFails(t *testing.T) {
 	h := newUnprovisionedSimHarness(t, nil)
-	original := mustPassword([]byte("original-hierarchy-pin-01"))
-	different := mustPassword([]byte("a-different-pin-entirely1"))
+	original := mustPassword(t, []byte("original-hierarchy-pin-01"))
+	different := mustPassword(t, []byte("a-different-pin-entirely1"))
 	platform := tpm2.TPMRHPlatform
 
 	require.NoError(t, h.TPM.SetHierarchyAuth(nil, original, &platform))
 
 	err := h.TPM.SetHierarchyAuth(nil, different, &platform)
 	require.Error(t, err, "old=nil against a live non-empty Platform auth must fail, and the reinstall-recovery retry (old=new=different) must fail too since the live auth is neither")
+}
+
+// TestInstall_ReleasesConfiguredHierarchyAuth pins that Install releases the
+// enclave it builds from config.EK.HierarchyAuth to present the current
+// hierarchy auth. The harness config carries store.DEFAULT_PASSWORD while the
+// fresh simulator's hierarchies are still empty, so Install fails right at
+// SetHierarchyAuth; before the fix that left the copy mlocked until exit.
+func TestInstall_ReleasesConfiguredHierarchyAuth(t *testing.T) {
+	h := newUnprovisionedSimHarness(t, nil)
+	soPIN := mustPassword(t, []byte("install-release-pin-012345"))
+
+	inUse := lockedBytesInUse(t)
+	require.Error(t, h.TPM.Install(soPIN, nil), "a configured auth the TPM does not hold must fail")
+	assert.Equal(t, inUse, lockedBytesInUse(t), "Install must release the configured hierarchy auth")
 }
 
 // ---------------------------------------------------------------------------

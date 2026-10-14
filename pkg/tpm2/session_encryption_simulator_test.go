@@ -26,14 +26,14 @@ func capture(h *simHarness) *tpmbus.Capture {
 func createPSRK(t *testing.T, h *simHarness, soPIN, userPIN []byte) *types.KeyAttributes {
 	t.Helper()
 	owner := tpm2.TPMRHOwner
-	require.NoError(t, h.TPM.SetHierarchyAuth(nil, mustPassword(soPIN), &owner))
+	require.NoError(t, h.TPM.SetHierarchyAuth(nil, mustPassword(t, soPIN), &owner))
 
 	psrkAttrs, err := PlatformSRKAttributesFromConfig(h.TPM.config)
 	require.NoError(t, err)
 	require.Equal(t, h.TPM.config.PlatformSRK.PlatformPolicy, (psrkAttrs.TPMPolicy == types.TPMPolicyPlatform),
 		"the Platform SRK must carry the platform policy exactly when configured to")
-	psrkAttrs.Password = mustPassword(userPIN)
-	psrkAttrs.TPMAttributes.HierarchyAuth = mustPassword(soPIN)
+	psrkAttrs.Password = mustPassword(t, userPIN)
+	psrkAttrs.TPMAttributes.HierarchyAuth = mustPassword(t, soPIN)
 	require.NoError(t, h.TPM.CreateSRK(psrkAttrs))
 	return psrkAttrs
 }
@@ -49,7 +49,7 @@ func TestSessionEncryption_SOPINNeverCrossesTheBus(t *testing.T) {
 	soPIN := []byte("so-pin-3f9a1c77e2")
 	bus := capture(h)
 
-	require.NoError(t, h.TPM.Provision(mustPassword(soPIN)))
+	require.NoError(t, h.TPM.Provision(mustPassword(t, soPIN)))
 
 	bus.RequireAbsent(t, "the SO PIN", soPIN)
 	bus.RequireSessionAttr(t, tpm2.TPMCCHierarchyChanegAuth, tpmbus.SessionAttrDecrypt)
@@ -94,7 +94,7 @@ func TestSessionEncryption_SealUnderPSRKWithPINs(t *testing.T) {
 		CN:        "session-encryption-pin-seal",
 		KeyType:   types.KeyTypeHMAC,
 		Parent:    psrkAttrs,
-		Password:  mustPassword(objectPIN),
+		Password:  mustPassword(t, objectPIN),
 		TPMPolicy: types.TPMPolicyPlatform,
 		SealData:  types.NewSealData(secret),
 		StoreType: types.StoreTPM2,
@@ -159,13 +159,13 @@ func TestSessionEncryption_NVSecretUnderOwnerAuth(t *testing.T) {
 	soPIN := []byte("so-pin-c61e0f2a97")
 	secret := []byte("nv-sealed-SECRET-0b7d52")
 	owner := tpm2.TPMRHOwner
-	require.NoError(t, h.TPM.SetHierarchyAuth(nil, mustPassword(soPIN), &owner))
+	require.NoError(t, h.TPM.SetHierarchyAuth(nil, mustPassword(t, soPIN), &owner))
 
 	ekAttrs, err := h.TPM.EKAttributes()
 	require.NoError(t, err)
 	parent := *ekAttrs
 	tpmAttrs := *ekAttrs.TPMAttributes
-	tpmAttrs.HierarchyAuth = mustPassword(soPIN)
+	tpmAttrs.HierarchyAuth = mustPassword(t, soPIN)
 	parent.TPMAttributes = &tpmAttrs
 
 	keyAttrs := &types.KeyAttributes{

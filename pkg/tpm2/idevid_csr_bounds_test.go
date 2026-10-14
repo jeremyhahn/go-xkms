@@ -20,6 +20,7 @@ import (
 	"io"
 	"reflect"
 	"runtime"
+	"strconv"
 	"testing"
 
 	"github.com/jeremyhahn/go-xkms/pkg/tpm2/store"
@@ -102,6 +103,8 @@ func TestUnmarshalIDevIDCSR_HugeLengthFieldIsRefusedWithoutAllocating(t *testing
 			require.Equal(t, tc.field, sizeErr.Field)
 			require.Equal(t, uint32(0xFFFFFFFF), sizeErr.Declared)
 			require.ErrorIs(t, parseErr, io.ErrUnexpectedEOF)
+			require.Contains(t, parseErr.Error(), tc.field, "the message names the hostile field")
+			require.Contains(t, parseErr.Error(), "4294967295")
 			require.Less(t, allocated, uint64(maxParserAllocation),
 				"a hostile %s length allocated %d bytes", tc.field, allocated)
 		})
@@ -116,6 +119,7 @@ func TestUnmarshalIDevIDCSR_RefusesOversizedInput(t *testing.T) {
 	require.ErrorAs(t, err, &tooLarge)
 	require.Equal(t, MaxIDevIDCSRSize+1, tooLarge.Size)
 	require.Equal(t, MaxIDevIDCSRSize, tooLarge.Max)
+	require.Contains(t, err.Error(), strconv.Itoa(MaxIDevIDCSRSize+1), "the message reports the refused size")
 }
 
 func TestUnpackIDevIDContent_RefusesOversizedInput(t *testing.T) {

@@ -1,0 +1,1 @@
+- **Provisioning no longer leaks locked memory.** `TPM2.Provision`, `Install` and `ProvisionOwner` replaced the hierarchy auth that the EK and SSRK configs built with the SO PIN but never cleared it. Each provisioned TPM leaked two locked pages until the process hit `RLIMIT_MEMLOCK`. The replaced enclave is now released (`provision_releases_auth_simulator_test.go`). SPEC: tpm2.

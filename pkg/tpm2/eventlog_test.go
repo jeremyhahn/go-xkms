@@ -2246,4 +2246,7 @@ func TestParseEventLog_OversizedEventRefused(t *testing.T) {
 	if tooLarge.Size != 0xFFFFFFFF || tooLarge.EventNum != 1 {
 		t.Fatalf("EventDataTooLargeError = %+v", tooLarge)
 	}
+	if msg := err.Error(); !strings.Contains(msg, "event 1") || !strings.Contains(msg, "4294967295") {
+		t.Fatalf("message %q does not name the event and its declared size", msg)
+	}
 }

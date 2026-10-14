@@ -153,6 +153,9 @@ func mustPassword(t *testing.T, pin []byte) types.Password {
 	}
 	pw, err := types.NewPassword(pin)
 	require.NoError(t, err)
+	// Passwords are mlocked enclaves with no finalizer; release this one
+	// when the test ends so the suite never exhausts RLIMIT_MEMLOCK.
+	t.Cleanup(pw.Clear)
 	return pw
 }
 

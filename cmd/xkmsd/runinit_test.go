@@ -27,6 +27,7 @@ package main
 // by the certificate first-boot itself issues).
 
 import (
+	"os"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -107,5 +108,79 @@ func TestRunInit_PreflightFailure(t *testing.T) {
 	args := append(runInitArgs(t), "--admin-factor", "piv")
 	if code := runInit(args); code != 1 {
 		t.Fatalf("runInit(--admin-factor piv, no PIV hardware) = %d, want 1", code)
+	}
+}
+
+func TestRunInit_InvalidAdminFactor(t *testing.T) {
+	args := append(runInitArgs(t), "--admin-factor", "carrier-pigeon")
+	if code := runInit(args); code != 1 {
+		t.Fatalf("runInit(--admin-factor carrier-pigeon) = %d, want 1", code)
+	}
+}
+
+// TestRunInit_PasskeyPINReadFailure points stdin at a closed file, so
+// --passkey-pin-stdin cannot read the PIN and init refuses before any state
+// changes.
+func TestRunInit_PasskeyPINReadFailure(t *testing.T) {
+	r, w, err := os.Pipe()
+	if err != nil {
+		t.Fatalf("os.Pipe: %v", err)
+	}
+	if err := w.Close(); err != nil {
+		t.Fatalf("close pipe writer: %v", err)
+	}
+	if err := r.Close(); err != nil {
+		t.Fatalf("close pipe reader: %v", err)
+	}
+	origStdin := os.Stdin
+	os.Stdin = r
+	t.Cleanup(func() { os.Stdin = origStdin })
+
+	args := append(runInitArgs(t), "--passkey-pin-stdin")
+	if code := runInit(args); code != 1 {
+		t.Fatalf("runInit(--passkey-pin-stdin, unreadable stdin) = %d, want 1", code)
+	}
+}
+
+// TestRunInit_BootstrapFailure makes the data directory a regular file, so
+// the CA bundle cannot be persisted and the bootstrap fails.
+func TestRunInit_BootstrapFailure(t *testing.T) {
+	dataDir := filepath.Join(t.TempDir(), "data")
+	if err := os.WriteFile(dataDir, []byte("not a directory"), 0o644); err != nil {
+		t.Fatalf("write data-dir blocker: %v", err)
+	}
+	args := append(runInitArgs(t), "--data-dir", dataDir)
+	var code int
+	captureStdout(t, func() { code = runInit(args) })
+	if code != 1 {
+		t.Fatalf("runInit(data dir is a file) = %d, want 1", code)
+	}
+}
+
+// TestRunInit_LoadsConfigFile runs a full bootstrap from a configuration file
+// and checks the file's server host became the ceremony hostname when no
+// --hostname flag is given.
+func TestRunInit_LoadsConfigFile(t *testing.T) {
+	dir := t.TempDir()
+	content := "server:\n  host: \"init-config.example.com\"\n" +
+		"protocols:\n  unix: true\n" +
+		"unix:\n  enabled: true\n  socket_path: \"" + filepath.Join(dir, "xkms.sock") + "\"\n  protocol: \"grpc\"\n" +
+		"datastore:\n  engine: \"pebble\"\n  mode: \"standalone\"\n  path: \"" + filepath.Join(dir, "storage") + "\"\n" +
+		"barrier:\n  enabled: true\n  strategy: \"none\"\n" +
+		"logging:\n  level: \"error\"\n  format: \"json\"\n" +
+		"default_backend: \"software\"\n" +
+		"backends:\n  software:\n    enabled: true\n    path: \"" + filepath.Join(dir, "software") + "\"\n"
+	path := filepath.Join(dir, "xkmsd.yaml")
+	if err := os.WriteFile(path, []byte(content), 0o644); err != nil {
+		t.Fatalf("write config: %v", err)
+	}
+	args := []string{"--config", path, "--so-pin", "test-so-pin", "--data-dir", t.TempDir()}
+	var code int
+	out := captureStdout(t, func() { code = runInit(args) })
+	if code != 0 {
+		t.Fatalf("runInit(--config %s) = %d, want 0", path, code)
+	}
+	if !strings.Contains(out, "Hostname:             init-config.example.com") {
+		t.Errorf("runInit() did not take the hostname from the config file; got:\n%s", out)
 	}
 }

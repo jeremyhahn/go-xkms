@@ -80,15 +80,15 @@ func nvExtendExecute(
 	}
 
 	if len(rsp) < tpmHeaderSize {
-		return &errs.Message{Msg: fmt.Sprintf("response too short: %d bytes", len(rsp))}
+		return &errs.Detail{Err: ErrMalformedNVExtendResponse, Detail: fmt.Sprintf("response too short: %d bytes", len(rsp))}
 	}
 	respTag := binary.BigEndian.Uint16(rsp[0:2])
 	if respTag != tpmSTSessions && respTag != tpmSTNoSessions {
-		return &errs.Message{Msg: fmt.Sprintf("unexpected response tag: 0x%04x", respTag)}
+		return &errs.Detail{Err: ErrMalformedNVExtendResponse, Detail: fmt.Sprintf("unexpected response tag: 0x%04x", respTag)}
 	}
 	respSize := binary.BigEndian.Uint32(rsp[2:6])
-	if uint32(len(rsp)) < respSize {
-		return &errs.Message{Msg: fmt.Sprintf("response truncated: got %d, expected %d", len(rsp), respSize)}
+	if respSize < tpmHeaderSize || uint32(len(rsp)) < respSize {
+		return &errs.Detail{Err: ErrMalformedNVExtendResponse, Detail: fmt.Sprintf("response size %d does not fit a %d-byte response", respSize, len(rsp))}
 	}
 	if respCode := binary.BigEndian.Uint32(rsp[6:10]); respCode != 0 {
 		rc := tpm2.TPMRC(respCode)
@@ -104,15 +104,15 @@ func nvExtendExecute(
 	body := bytes.NewBuffer(rsp[tpmHeaderSize:respSize])
 	var parmsSize uint32
 	if err := binary.Read(body, binary.BigEndian, &parmsSize); err != nil {
-		return &errs.Wrapped{Msg: "NV_Extend: response parameter size", Err: err}
+		return &errs.Joined{Lead: ErrMalformedNVExtendResponse, Detail: "parameter size", Cause: err}
 	}
 	if int(parmsSize) > body.Len() {
-		return &errs.Message{Msg: fmt.Sprintf("NV_Extend: response parameter size %d exceeds response", parmsSize)}
+		return &errs.Detail{Err: ErrMalformedNVExtendResponse, Detail: fmt.Sprintf("parameter size %d exceeds response", parmsSize)}
 	}
 	rspParms := body.Next(int(parmsSize))
 	authRsp, err := tpm2.Unmarshal[tpm2.TPMSAuthResponse](body.Bytes())
 	if err != nil {
-		return &errs.Wrapped{Msg: "NV_Extend: response authorization", Err: err}
+		return &errs.Joined{Lead: ErrMalformedNVExtendResponse, Detail: "response authorization", Cause: err}
 	}
 	if err := session.Validate(tpm2.TPMRCSuccess, tpm2.TPMCCNVExtend, rspParms, names, 0, authRsp); err != nil {
 		return &errs.Wrapped{Msg: "NV_Extend: validate response authorization", Err: err}

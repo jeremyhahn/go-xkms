@@ -170,7 +170,7 @@ func TestHierarchyAuthSetup(t *testing.T) {
 	hierarchyAuth := ekAttrs.TPMAttributes.HierarchyAuth
 
 	// Test setting new hierarchy auth
-	newPassword := mustPassword([]byte("new-hierarchy-pass"))
+	newPassword := mustPassword(t, []byte("new-hierarchy-pass"))
 	err = tpm.SetHierarchyAuth(hierarchyAuth, newPassword, nil)
 	assert.NoError(t, err)
 }
@@ -190,7 +190,7 @@ func TestKeyHierarchyCreation(t *testing.T) {
 		KeyAlgorithm: x509.RSA,
 		KeyType:      types.KeyTypeStorage,
 		Parent:       ekAttrs,
-		Password:     mustPassword([]byte("srk-test")),
+		Password:     mustPassword(t, []byte("srk-test")),
 		TPMPolicy:    types.TPMPolicyPlatform,
 		StoreType:    types.StoreTPM2,
 		TPMAttributes: &types.TPMAttributes{
@@ -210,7 +210,7 @@ func TestKeyHierarchyCreation(t *testing.T) {
 		KeyAlgorithm: x509.RSA,
 		KeyType:      types.KeyTypeCA,
 		Parent:       srkAttrs,
-		Password:     mustPassword([]byte("rsa-test")),
+		Password:     mustPassword(t, []byte("rsa-test")),
 		TPMPolicy:    types.TPMPolicyPlatform,
 		StoreType:    types.StoreTPM2,
 		TPMAttributes: &types.TPMAttributes{
@@ -395,7 +395,7 @@ func TestClearWithInvalidAuthCoverage(t *testing.T) {
 
 	// First set a non-empty lockout auth
 	lockoutHierarchy := tpm2.TPMRHLockout
-	newAuth := mustPassword([]byte("lockout-auth"))
+	newAuth := mustPassword(t, []byte("lockout-auth"))
 	err := tpm.SetHierarchyAuth(nil, newAuth, &lockoutHierarchy)
 	require.NoError(t, err)
 
@@ -826,7 +826,7 @@ func TestSetHierarchyAuthSpecificHierarchyCoverage(t *testing.T) {
 	_, tpm := createSim(t, false)
 	defer func() { _ = tpm.Close() }()
 
-	newPassword := mustPassword([]byte("new-hierarchy-auth"))
+	newPassword := mustPassword(t, []byte("new-hierarchy-auth"))
 
 	// Test setting Owner hierarchy auth
 	ownerHierarchy := tpm2.TPMRHOwner
@@ -895,7 +895,7 @@ func TestFactoryReset_Success(t *testing.T) {
 	tpmImpl.config.IAK.Handle = uint32(iakKey)
 
 	// Install provisions EK, SRK, IAK, and IDevID
-	soPIN := mustPassword([]byte(store.DEFAULT_PASSWORD))
+	soPIN := mustPassword(t, []byte(store.DEFAULT_PASSWORD))
 	err := tpmImpl.Install(soPIN, nil)
 	require.NoError(t, err)
 
@@ -970,7 +970,7 @@ func TestFactoryReset_IAKAtLegacyECCHandle_Evicted(t *testing.T) {
 	require.Equal(t, uint32(0x81010002), tpmImpl.config.IAK.Handle,
 		"this test depends on createSim's IAK handle colliding with the legacy ECC-EK address")
 
-	soPIN := mustPassword([]byte(store.DEFAULT_PASSWORD))
+	soPIN := mustPassword(t, []byte(store.DEFAULT_PASSWORD))
 	require.NoError(t, tpmImpl.Install(soPIN, nil))
 
 	_, err := tpmImpl.IAKAttributes()
@@ -1001,7 +1001,7 @@ func TestFactoryReset_ForeignObjectAtTCGECCEKHandle_Preserved(t *testing.T) {
 	tpmImpl.config.EK.HierarchyAuth = nil
 	require.Equal(t, uint32(0x81010002), tpmImpl.config.IAK.Handle)
 
-	soPIN := mustPassword([]byte(store.DEFAULT_PASSWORD))
+	soPIN := mustPassword(t, []byte(store.DEFAULT_PASSWORD))
 	require.NoError(t, tpmImpl.Install(soPIN, nil))
 
 	tpmImpl.config.IAK.Handle = 0x81010010

@@ -38,7 +38,7 @@ func TestHierarchyAuthSession_SOPINNeverCrossesTheBus(t *testing.T) {
 	h := newSimHarness(t, nil)
 	soPIN := []byte("so-pin-transport-6a90c2")
 	owner := tpm2.TPMRHOwner
-	require.NoError(t, h.TPM.SetHierarchyAuth(nil, mustPassword(soPIN), &owner))
+	require.NoError(t, h.TPM.SetHierarchyAuth(nil, mustPassword(t, soPIN), &owner))
 
 	bus := tpmbus.New(h.TPM.transport)
 	index := tpm2.TPMHandle(nvramOwnerIndex)

@@ -1,0 +1,1 @@
+- **EK certificate lookups release their passwords.** `TPM2.EKCertificate` built the EK attributes from config on every call and never cleared the EK password and hierarchy auth enclaves, so each lookup left a page of locked memory behind until `mlock` failed. Both are now released when the lookup returns (`ek_certificate_sources_simulator_test.go`). SPEC: tpm2.

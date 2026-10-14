@@ -14,21 +14,38 @@
 package tpm2
 
 import (
+	"testing"
+
+	"github.com/jeremyhahn/go-enclave"
 	"github.com/jeremyhahn/go-xkms/pkg/tpm2/store"
 	"github.com/jeremyhahn/go-xkms/pkg/types"
 )
 
-// mustPassword builds a types.Password test fixture. It panics if the
-// enclave allocation fails — a hard system condition (RLIMIT_MEMLOCK
-// exhausted, no swap) that test fixtures are not expected to hit — rather
-// than silently falling back to an empty (passwordless) auth value. This
-// mirrors the production contract enforced by store.NewPassword and
-// types.NewPassword after the enclave-allocation fix: a non-empty input
-// that fails to allocate must never become a usable empty Password.
-func mustPassword(b []byte) types.Password {
+// mustPassword builds a types.Password test fixture and destroys it when the
+// test ends. Every non-empty password holds an mlocked enclave, so a fixture
+// that outlives its test pins locked memory until the process exits; across
+// the whole suite those leaks exhaust RLIMIT_MEMLOCK and later allocations
+// fail with "secure enclave unavailable". A failed allocation fails the test
+// rather than silently falling back to an empty (passwordless) auth value,
+// mirroring the production contract enforced by store.NewPassword.
+func mustPassword(t testing.TB, b []byte) types.Password {
+	t.Helper()
 	pw, err := store.NewPassword(b)
 	if err != nil {
-		panic(err)
+		t.Fatalf("mustPassword: %v", err)
 	}
+	t.Cleanup(pw.Clear)
 	return pw
+}
+
+// lockedBytesInUse reports the locked memory the process allocator has
+// admitted, which every password enclave counts against. Comparing it
+// around a call shows whether the call released the enclaves it made.
+func lockedBytesInUse(t testing.TB) int64 {
+	t.Helper()
+	alloc, err := enclave.ProcessAllocator()
+	if err != nil {
+		t.Fatalf("process allocator: %v", err)
+	}
+	return alloc.InUse()
 }

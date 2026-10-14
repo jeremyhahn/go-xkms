@@ -262,7 +262,7 @@ func TestCreateKeySessionWithPassword(t *testing.T) {
 	keyAttrs := &types.KeyAttributes{
 		CN: "test-key",
 
-		Password: mustPassword([]byte("test-password")),
+		Password: mustPassword(t, []byte("test-password")),
 	}
 
 	session, closer, err := tpmImpl.CreateKeySession(keyAttrs)
@@ -375,7 +375,7 @@ func TestCreateSessionWithNilParent(t *testing.T) {
 	keyAttrs := &types.KeyAttributes{
 		CN: "test-key",
 
-		Password: mustPassword([]byte("test-password")),
+		Password: mustPassword(t, []byte("test-password")),
 		Parent:   nil,
 	}
 
@@ -586,13 +586,13 @@ func TestKeyAttributesPasswordExtraction(t *testing.T) {
 		},
 		{
 			name:           "clear password without policy",
-			password:       mustPassword([]byte("test")),
+			password:       mustPassword(t, []byte("test")),
 			platformPolicy: false,
 			expectNil:      false,
 		},
 		{
 			name:           "password with platform policy",
-			password:       mustPassword([]byte("test")),
+			password:       mustPassword(t, []byte("test")),
 			platformPolicy: true,
 			expectNil:      true, // Should not extract when platform policy is true
 		},

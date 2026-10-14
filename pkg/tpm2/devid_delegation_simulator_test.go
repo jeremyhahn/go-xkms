@@ -393,7 +393,7 @@ func TestCreateIDevID_PlatformPolicyKeepsTheAuthValuePath(t *testing.T) {
 	assert.NoError(t, rsa.VerifyPKCS1v15(h.IDevIDPublic, crypto.SHA256, digest[:], signature))
 
 	wrong := *h.IDevID
-	wrong.Password = mustPassword([]byte("not-the-secret"))
+	wrong.Password = mustPassword(t, []byte("not-the-secret"))
 	_, err = h.TPM.Sign(rand.Reader, digest[:], &store.SignerOpts{KeyAttributes: &wrong, Backend: h.Backend})
 	require.Error(t, err, "a wrong authValue does not fall back to anything")
 }

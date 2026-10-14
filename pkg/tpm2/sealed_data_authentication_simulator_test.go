@@ -28,7 +28,7 @@ var objectPassword = []byte("object-password")
 func sealForAuthTest(t *testing.T, h *simHarness, cn string, plaintext, aad []byte) *types.SealedData {
 	t.Helper()
 	sealed, err := h.TPM.Seal(context.Background(), plaintext, &types.SealOptions{
-		KeyAttributes: sealedKeyAttrs(t, h, cn, false, mustPassword(objectPassword)),
+		KeyAttributes: sealedKeyAttrs(t, h, cn, false, mustPassword(t, objectPassword)),
 		AAD:           aad,
 	})
 	require.NoError(t, err)
@@ -40,7 +40,7 @@ func sealForAuthTest(t *testing.T, h *simHarness, cn string, plaintext, aad []by
 func unsealOpts(t *testing.T, h *simHarness, cn string, aad []byte) *types.UnsealOptions {
 	t.Helper()
 	return &types.UnsealOptions{
-		KeyAttributes: sealedKeyAttrs(t, h, cn, false, mustPassword(objectPassword)),
+		KeyAttributes: sealedKeyAttrs(t, h, cn, false, mustPassword(t, objectPassword)),
 		AAD:           aad,
 	}
 }
@@ -143,7 +143,7 @@ func TestUnseal_SealedDataAuthentication_Simulator(t *testing.T) {
 	t.Run("object sealed under a different parent", func(t *testing.T) {
 		platformSRK := createPlatformPolicySRK(t, h, nil)
 		foreign, err := h.TPM.Seal(context.Background(), []byte("under the platform SRK"), &types.SealOptions{
-			KeyAttributes: sealedKeyAttrsUnder(platformSRK, "sealed-auth-foreign", mustPassword(objectPassword)),
+			KeyAttributes: sealedKeyAttrsUnder(platformSRK, "sealed-auth-foreign", mustPassword(t, objectPassword)),
 		})
 		require.NoError(t, err)
 
@@ -174,12 +174,12 @@ func TestUnseal_SealedDataAuthentication_FromStorage(t *testing.T) {
 	h := newSimHarness(t, nil)
 	const cn = "sealed-auth-stored"
 	sealed, err := h.TPM.Seal(context.Background(), []byte("stored secret"), &types.SealOptions{
-		KeyAttributes: sealedKeyAttrs(t, h, cn, false, mustPassword(objectPassword)),
+		KeyAttributes: sealedKeyAttrs(t, h, cn, false, mustPassword(t, objectPassword)),
 		Backend:       h.Backend,
 	})
 	require.NoError(t, err)
 
-	attrs := sealedKeyAttrs(t, h, cn, false, mustPassword(objectPassword))
+	attrs := sealedKeyAttrs(t, h, cn, false, mustPassword(t, objectPassword))
 	priv := bytes.Clone(sealed.TPMPrivate)
 	priv[len(priv)-1] ^= 0x01
 	require.NoError(t, h.Backend.Save(attrs, priv, store.FSEXT_PRIVATE_BLOB, true))
@@ -229,7 +229,7 @@ func TestUnseal_EnvironmentFailuresAreNotAuthentication_Simulator(t *testing.T) 
 		h := newSimHarness(t, nil)
 		sealed := sealForAuthTest(t, h, "env-password", []byte("password bound"), nil)
 		out, err := h.TPM.Unseal(context.Background(), sealed, &types.UnsealOptions{
-			KeyAttributes: sealedKeyAttrs(t, h, "env-password", false, mustPassword([]byte("not-the-password"))),
+			KeyAttributes: sealedKeyAttrs(t, h, "env-password", false, mustPassword(t, []byte("not-the-password"))),
 		})
 		require.Nil(t, out)
 		require.Error(t, err)
@@ -292,7 +292,7 @@ func TestSeal_AADBinding_Simulator(t *testing.T) {
 
 	t.Run("data too large for the binding", func(t *testing.T) {
 		_, err := h.TPM.Seal(context.Background(), make([]byte, 81), &types.SealOptions{
-			KeyAttributes: sealedKeyAttrs(t, h, "aad-too-large", false, mustPassword(objectPassword)),
+			KeyAttributes: sealedKeyAttrs(t, h, "aad-too-large", false, mustPassword(t, objectPassword)),
 			AAD:           aad,
 		})
 		require.ErrorIs(t, err, ErrSealAADTooLarge)
@@ -309,7 +309,7 @@ func TestSeal_PresetSealData_Simulator(t *testing.T) {
 
 	seal := func(t *testing.T, cn string, preset, aad []byte) *types.SealedData {
 		t.Helper()
-		attrs := sealedKeyAttrs(t, h, cn, false, mustPassword(objectPassword))
+		attrs := sealedKeyAttrs(t, h, cn, false, mustPassword(t, objectPassword))
 		attrs.SealData = types.NewSealData(preset)
 		sealed, err := h.TPM.Seal(context.Background(), nil, &types.SealOptions{KeyAttributes: attrs, AAD: aad})
 		require.NoError(t, err)
@@ -375,17 +375,17 @@ func TestUnseal_OversizedAndForeignObjects_Simulator(t *testing.T) {
 
 	t.Run("oversized area in storage", func(t *testing.T) {
 		stored, err := h.TPM.Seal(context.Background(), []byte("stored"), &types.SealOptions{
-			KeyAttributes: sealedKeyAttrs(t, h, "sealed-oversized-stored", false, mustPassword(objectPassword)),
+			KeyAttributes: sealedKeyAttrs(t, h, "sealed-oversized-stored", false, mustPassword(t, objectPassword)),
 			Backend:       h.Backend,
 		})
 		require.NoError(t, err)
-		attrs := sealedKeyAttrs(t, h, "sealed-oversized-stored", false, mustPassword(objectPassword))
+		attrs := sealedKeyAttrs(t, h, "sealed-oversized-stored", false, mustPassword(t, objectPassword))
 		require.NoError(t, h.Backend.Save(attrs, append(bytes.Clone(stored.TPMPublic), make([]byte, 5000)...), store.FSEXT_PUBLIC_BLOB, true))
 
-		bothAttrs := sealedKeyAttrs(t, h, "sealed-oversized-both", false, mustPassword(objectPassword))
+		bothAttrs := sealedKeyAttrs(t, h, "sealed-oversized-both", false, mustPassword(t, objectPassword))
 		both, err := h.TPM.Seal(context.Background(), []byte("stored"), &types.SealOptions{KeyAttributes: bothAttrs, Backend: h.Backend})
 		require.NoError(t, err)
-		bothAttrs = sealedKeyAttrs(t, h, "sealed-oversized-both", false, mustPassword(objectPassword))
+		bothAttrs = sealedKeyAttrs(t, h, "sealed-oversized-both", false, mustPassword(t, objectPassword))
 		require.NoError(t, h.Backend.Save(bothAttrs, append(bytes.Clone(both.TPMPublic), make([]byte, maxLoadAreaSize-len(both.TPMPublic))...), store.FSEXT_PUBLIC_BLOB, true))
 		require.NoError(t, h.Backend.Save(bothAttrs, append(bytes.Clone(both.TPMPrivate), make([]byte, maxLoadAreaSize-len(both.TPMPrivate))...), store.FSEXT_PRIVATE_BLOB, true))
 		bothFromStore := *both
@@ -432,7 +432,7 @@ func TestSeal_AADEnvelopeDoesNotLeakIntoOptions_Simulator(t *testing.T) {
 	preset := bytes.Repeat([]byte{0x5a}, 40)
 
 	t.Run("preset sealed twice with the same options", func(t *testing.T) {
-		attrs := sealedKeyAttrs(t, h, "envelope-reuse", false, mustPassword(objectPassword))
+		attrs := sealedKeyAttrs(t, h, "envelope-reuse", false, mustPassword(t, objectPassword))
 		attrs.SealData = types.NewSealData(preset)
 		opts := &types.SealOptions{KeyAttributes: attrs, AAD: aad}
 
@@ -448,7 +448,7 @@ func TestSeal_AADEnvelopeDoesNotLeakIntoOptions_Simulator(t *testing.T) {
 	})
 
 	t.Run("failed seal then retry", func(t *testing.T) {
-		attrs := sealedKeyAttrs(t, h, "envelope-retry", false, mustPassword(objectPassword))
+		attrs := sealedKeyAttrs(t, h, "envelope-retry", false, mustPassword(t, objectPassword))
 		attrs.SealData = types.NewSealData(preset)
 		opts := &types.SealOptions{KeyAttributes: attrs, AAD: aad, Backend: "not a key backend"}
 
@@ -465,7 +465,7 @@ func TestSeal_AADEnvelopeDoesNotLeakIntoOptions_Simulator(t *testing.T) {
 	})
 
 	t.Run("data argument with AAD", func(t *testing.T) {
-		attrs := sealedKeyAttrs(t, h, "envelope-data", false, mustPassword(objectPassword))
+		attrs := sealedKeyAttrs(t, h, "envelope-data", false, mustPassword(t, objectPassword))
 		_, err := h.TPM.Seal(context.Background(), []byte("explicit data"), &types.SealOptions{KeyAttributes: attrs, AAD: aad})
 		require.NoError(t, err)
 		require.Equal(t, []byte("explicit data"), attrs.SealData.Bytes(), "the attributes hold the data, never the envelope")

@@ -43,8 +43,8 @@ func TestSealUnseal(t *testing.T) {
 				var srkAuth types.Password
 				var keyAuth types.Password
 				if passwdOpt {
-					srkAuth = mustPassword([]byte("srk-password"))
-					keyAuth = mustPassword([]byte("key-password"))
+					srkAuth = mustPassword(t, []byte("srk-password"))
+					keyAuth = mustPassword(t, []byte("key-password"))
 				}
 
 				srkAttrs := &types.KeyAttributes{
@@ -135,8 +135,8 @@ func TestCreateKeyWithPolicy(t *testing.T) {
 		var srkAuth types.Password
 		var keyAuth types.Password
 		if passwdOpt {
-			srkAuth = mustPassword([]byte("srk-password"))
-			keyAuth = mustPassword([]byte("key-password"))
+			srkAuth = mustPassword(t, []byte("srk-password"))
+			keyAuth = mustPassword(t, []byte("key-password"))
 		}
 
 		srkAttrs := &types.KeyAttributes{
@@ -196,7 +196,7 @@ func TestCreateKeyWithPolicy(t *testing.T) {
 		// TPM_RC_AUTH_FAIL - the PolicyOR construction lets a caller
 		// authorize with the correct password OR the correct PCR
 		// state, never with an arbitrary/incorrect password.
-		keyAttrs.Parent.Password = mustPassword([]byte("foo"))
+		keyAttrs.Parent.Password = mustPassword(t, []byte("foo"))
 		keyAttrs.CN = "test5"
 		rsaPub5, err5 := tpm.CreateRSA(keyAttrs, nil, false)
 		assert.NotNil(t, err5)
@@ -269,8 +269,8 @@ func TestCreateKeyWithoutPolicy(t *testing.T) {
 		var srkAuth types.Password
 		var keyAuth types.Password
 		if passwdOpt {
-			srkAuth = mustPassword([]byte("srk-password"))
-			keyAuth = mustPassword([]byte("key-password"))
+			srkAuth = mustPassword(t, []byte("srk-password"))
+			keyAuth = mustPassword(t, []byte("key-password"))
 		}
 
 		srkAttrs := &types.KeyAttributes{
@@ -332,7 +332,7 @@ func TestCreateKeyWithoutPolicy(t *testing.T) {
 		}
 
 		// incorrect password without policy auth - should fail
-		keyAttrs.Parent.Password = mustPassword([]byte("foo"))
+		keyAttrs.Parent.Password = mustPassword(t, []byte("foo"))
 		keyAttrs.CN = "test5"
 		rsaPub3, err3 := tpm.CreateRSA(keyAttrs, nil, false)
 		assert.NotNil(t, err3)

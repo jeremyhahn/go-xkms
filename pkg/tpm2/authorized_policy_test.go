@@ -4,9 +4,13 @@ import (
 	"crypto/sha256"
 	"encoding/binary"
 	"encoding/hex"
+	"io"
+	"log/slog"
 	"testing"
 
 	"github.com/google/go-tpm/tpm2"
+	"github.com/jeremyhahn/go-xkms/pkg/storage"
+	"github.com/jeremyhahn/go-xkms/pkg/tpm2/store"
 	"github.com/jeremyhahn/go-xkms/pkg/types"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -302,6 +306,83 @@ func TestSetPolicyBindingResolver_Clear(t *testing.T) {
 	tpm.SetPolicyBindingResolver(nil)
 	_, err = tpm.policyBindingResolver()
 	require.ErrorIs(t, err, ErrPolicyResolverUnset)
+}
+
+// TestValidateApproval proves an approval is only redeemed against the
+// binding it was issued for: every field the binding pins is checked, and a
+// matching approval passes.
+func TestValidateApproval(t *testing.T) {
+	binding := &store.TPMPolicyBinding{Scope: SystemPolicyScope, Policy: "boot", Index: 0x01500020}
+	valid := func() *PolicyApproval {
+		return &PolicyApproval{
+			HashAlg:   tpm2.TPMAlgSHA256,
+			Index:     tpm2.TPMHandle(binding.Index),
+			PolicyRef: PolicyRef(binding.Scope, binding.Policy),
+			Counter:   0x01500010,
+		}
+	}
+	require.NoError(t, validateApproval(valid(), binding, tpm2.TPMAlgSHA256))
+
+	tests := []struct {
+		name   string
+		mutate func(*PolicyApproval) *PolicyApproval
+		want   error
+	}{
+		{"nil approval", func(*PolicyApproval) *PolicyApproval { return nil }, ErrInvalidPolicyApproval},
+		{"hash algorithm", func(a *PolicyApproval) *PolicyApproval { a.HashAlg = tpm2.TPMAlgSHA384; return a }, ErrPolicyApprovalMismatch},
+		{"policy index", func(a *PolicyApproval) *PolicyApproval { a.Index++; return a }, ErrPolicyApprovalMismatch},
+		{"policy reference", func(a *PolicyApproval) *PolicyApproval { a.PolicyRef = PolicyRef("tenant-a", "boot"); return a }, ErrPolicyApprovalMismatch},
+		{"no counter", func(a *PolicyApproval) *PolicyApproval { a.Counter = 0; return a }, ErrInvalidPolicyApproval},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			err := validateApproval(tt.mutate(valid()), binding, tpm2.TPMAlgSHA256)
+			assert.ErrorIs(t, err, tt.want)
+		})
+	}
+}
+
+// TestPolicyBindingRecord_RoundTrip proves a recorded binding loads back
+// through the TPM's own backend when no backend is passed.
+func TestPolicyBindingRecord_RoundTrip(t *testing.T) {
+	blobs, err := store.NewBackendBlobStore(slog.New(slog.NewTextHandler(io.Discard, nil)), storage.New())
+	require.NoError(t, err)
+	tpm := &TPM2{backend: blobs}
+	attrs := &types.KeyAttributes{CN: "bound-key"}
+	binding := &store.TPMPolicyBinding{
+		Scope:   SystemPolicyScope,
+		Policy:  "boot",
+		Index:   0x01500020,
+		HashAlg: uint16(tpm2.TPMAlgSHA256),
+	}
+
+	none, err := tpm.loadPolicyBinding(attrs, nil)
+	require.NoError(t, err)
+	assert.Nil(t, none, "a key with no record has no binding")
+
+	require.NoError(t, tpm.recordPolicyBinding(attrs, nil, binding, false))
+	loaded, err := tpm.loadPolicyBinding(attrs, nil)
+	require.NoError(t, err)
+	assert.Equal(t, binding, loaded)
+}
+
+// TestPolicyBindingRecord_Errors covers recording with no backend at all and
+// loading a record that does not parse.
+func TestPolicyBindingRecord_Errors(t *testing.T) {
+	attrs := &types.KeyAttributes{CN: "bound-key"}
+	binding := &store.TPMPolicyBinding{Scope: SystemPolicyScope, Policy: "boot"}
+
+	unbacked := &TPM2{}
+	assert.ErrorIs(t, unbacked.recordPolicyBinding(attrs, nil, binding, false), ErrNoStorageBackend)
+	loaded, err := unbacked.loadPolicyBinding(attrs, nil)
+	require.NoError(t, err)
+	assert.Nil(t, loaded, "with no backend there is nothing to load")
+
+	blobs, err := store.NewBackendBlobStore(slog.New(slog.NewTextHandler(io.Discard, nil)), storage.New())
+	require.NoError(t, err)
+	require.NoError(t, blobs.Save(attrs, []byte("not a binding"), store.FSEXT_TPM_POLICY, false))
+	_, err = unbacked.loadPolicyBinding(attrs, blobs)
+	assert.Error(t, err, "a corrupt record must not load as no binding")
 }
 
 type nopResolver struct{}

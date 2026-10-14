@@ -36,7 +36,7 @@ import (
 // support this process must not touch.
 func TestProvision_ClearBlockedByLockout_SchedulesForceClearThenFails(t *testing.T) {
 	h := newUnprovisionedSimHarness(t, nil)
-	soPIN := mustPassword([]byte("provision-lockout-test-pin-01"))
+	soPIN := mustPassword(t, []byte("provision-lockout-test-pin-01"))
 	require.NoError(t, h.TPM.Provision(soPIN))
 
 	err := h.TPM.Provision(soPIN)
@@ -54,7 +54,7 @@ func TestProvision_ClearBlockedByLockout_SchedulesForceClearThenFails(t *testing
 func TestProvision_EveryCommandFailurePropagates(t *testing.T) {
 	sweepEachCommandFailure(t, func(t *testing.T) (transport.TPM, func(transport.TPM) error) {
 		h := newUnprovisionedSimHarness(t, nil)
-		soPIN := mustPassword([]byte("provision-sweep-pin-0123456"))
+		soPIN := mustPassword(t, []byte("provision-sweep-pin-0123456"))
 
 		return h.TPM.transport, func(tr transport.TPM) error {
 			h.TPM.transport = tr
@@ -104,7 +104,7 @@ func TestInstall_EveryCommandFailurePropagates(t *testing.T) {
 			// TPM's real, still-empty hierarchy auth.
 			c.EK.HierarchyAuth = nil
 		})
-		soPIN := mustPassword([]byte("install-sweep-pin-0123456789"))
+		soPIN := mustPassword(t, []byte("install-sweep-pin-0123456789"))
 
 		return h.TPM.transport, func(tr transport.TPM) error {
 			h.TPM.transport = tr

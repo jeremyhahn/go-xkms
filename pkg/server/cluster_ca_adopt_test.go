@@ -16,6 +16,7 @@ package server
 import (
 	"crypto/x509"
 	"encoding/pem"
+	"errors"
 	"os"
 	"path/filepath"
 	"testing"
@@ -123,6 +124,52 @@ func TestAdoptStagedClusterCACerts_MalformedCertificateFailsClosed(t *testing.T)
 
 	err := s.adoptStagedClusterCACerts(cs)
 	require.Error(t, err)
+}
+
+var errCertStoreRefused = errors.New("certstore: refused")
+
+// adoptingCertStore records every certificate it is asked to store and
+// refuses the ones whose common name is in refuse.
+type adoptingCertStore struct {
+	certstore.CertStore
+	refuse map[string]bool
+	stored []string
+}
+
+func (c *adoptingCertStore) StoreCertificate(cert *x509.Certificate) error {
+	if c.refuse[cert.Subject.CommonName] {
+		return errCertStoreRefused
+	}
+	c.stored = append(c.stored, cert.Subject.CommonName)
+	return nil
+}
+
+// TestAdoptStagedClusterCACerts_SkipsForeignBlocksAndRefusals stages a bundle
+// holding a non-certificate block, a certificate the store refuses and one it
+// accepts: only the accepted one is adopted and startup does not fail.
+func TestAdoptStagedClusterCACerts_SkipsForeignBlocksAndRefusals(t *testing.T) {
+	s := adoptStagedTestServer(t)
+	_, _, refusedPEM := generateCAKeyAndCert(t, "already-present")
+	_, _, acceptedPEM := generateCAKeyAndCert(t, "fresh-root")
+	foreign := pem.EncodeToMemory(&pem.Block{Type: "PRIVATE KEY", Bytes: []byte("not a certificate")})
+	bundle := append(append(foreign, refusedPEM...), acceptedPEM...)
+	writeStagedCACerts(t, s, bundle)
+	store := &adoptingCertStore{refuse: map[string]bool{"already-present": true}}
+
+	require.NoError(t, s.adoptStagedClusterCACerts(store))
+	assert.Equal(t, []string{"fresh-root"}, store.stored)
+}
+
+// TestAdoptStagedClusterCACerts_UnreadableBundleFails puts a directory where
+// the bundle should be: a read failure other than absence is returned.
+func TestAdoptStagedClusterCACerts_UnreadableBundleFails(t *testing.T) {
+	s := adoptStagedTestServer(t)
+	path := clusterca.StagedCACertsPath(filepath.Join(s.config.Datastore.Path, clusterCACacheSubdir))
+	require.NoError(t, os.MkdirAll(path, 0o700))
+
+	err := s.adoptStagedClusterCACerts(&adoptingCertStore{})
+	require.Error(t, err)
+	assert.False(t, os.IsNotExist(err))
 }
 
 // newInMemoryCertStoreForAdopt builds a CertStore over an in-memory DAO

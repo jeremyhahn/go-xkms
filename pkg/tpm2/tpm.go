@@ -1239,6 +1239,17 @@ func isTPMBadAuth(err error) bool {
 		"TPM_RC_BAD_AUTH", "authorization failure without DA implications")
 }
 
+// releaseEKAttrsSecrets clears the password and hierarchy auth that
+// EKAttributesFromConfig allocated for attrs.
+func releaseEKAttrsSecrets(attrs *types.KeyAttributes) {
+	if attrs.Password != nil {
+		attrs.Password.Clear()
+	}
+	if attrs.TPMAttributes != nil && attrs.TPMAttributes.HierarchyAuth != nil {
+		attrs.TPMAttributes.HierarchyAuth.Clear()
+	}
+}
+
 // Retrieve the Endorsement Key Certificate. If the EK cert-handle is 0, the EK certificate
 // is managed using an internal certificate store. If an EK cert-handle is defined, the
 // certificate is retrieved from TPM NVRAM, falling back to checking both RSA and EC
@@ -1261,6 +1272,9 @@ func (tpm *TPM2) EKCertificate() (*x509.Certificate, error) {
 	if err != nil {
 		return nil, err
 	}
+	// The attributes only name the certificate; their password enclaves
+	// would otherwise stay locked for every lookup.
+	defer releaseEKAttrsSecrets(ekAttrs)
 
 	if tpm.config.EK.CertHandle == 0 {
 		if tpm.certStore == nil {
@@ -1506,7 +1520,7 @@ func (tpm *TPM2) Sign(
 
 	case types.KeyTypeAttestation, types.KeyTypeLAK:
 
-		digest, validationDigest, err := tpm.Hash(keyAttrs, digest)
+		hashed, validationDigest, err := tpm.Hash(keyAttrs, digest)
 		if err != nil {
 			tpm.logger.Error("failed to hash data for restricted signing key",
 				slog.String("error", err.Error()),
@@ -1528,6 +1542,10 @@ func (tpm *TPM2) Sign(
 				slog.String("cn", keyAttrs.CN))
 			return nil, ErrRestrictedSignRefused
 		}
+
+		// The ticket vouches for the digest the TPM computed, so that digest
+		// is what gets signed.
+		digest = hashed
 
 		// TPMT_TK_HASHCHECK -- This ticket is used to indicate that
 		// a digest of external data is safe to sign using a restricted
@@ -1563,6 +1581,13 @@ func (tpm *TPM2) Sign(
 		if err != nil {
 			tpm.logger.Error("failed to get public contents", slog.String("error", err.Error()))
 			return nil, err
+		}
+
+		// An ECC attestation key signs on the common ECDSA path below,
+		// under the ticket just obtained and the same empty authorization.
+		if outPub.Type == tpm2.TPMAlgECC {
+			signAuth = tpm2.PasswordAuth(nil)
+			break
 		}
 
 		rsaDetails, err := outPub.Parameters.RSADetail()
@@ -1845,9 +1870,7 @@ func (tpm *TPM2) Sign(
 					},
 				),
 			},
-			Validation: tpm2.TPMTTKHashCheck{
-				Tag: tpm2.TPMSTHashCheck,
-			},
+			Validation: validation,
 		}.Execute(tpm.Transport())
 		if err != nil {
 			return nil, err
@@ -2175,7 +2198,7 @@ func (tpm *TPM2) ReadHandle(handle tpm2.TPMHandle) (tpm2.TPM2BName, tpm2.TPMTPub
 // supported banks with the corresponding PCR ID. This method supports SHA1,
 // SHA256, SHA386, and SHA512. If one of the banks are not supported, the
 // function stops processing and returns the banks that were successfully
-// parsed without an error.
+// parsed without an error. Any other read failure returns ErrPCRRead.
 func (tpm *TPM2) ReadPCRs(pcrList []uint) ([]PCRBank, error) {
 
 	tpm.logger.Debug("reading PCR values across all supported banks")
@@ -2236,12 +2259,13 @@ func (tpm *TPM2) ReadPCRs(pcrList []uint) ([]PCRBank, error) {
 					bankUnsupported = true
 					break
 				}
+				// Only an unsupported bank may be skipped. Any other failure
+				// would drop a bank the TPM has from the reported PCR state.
 				tpm.logger.Error("error reading PCR",
 					slog.String("bank", name),
 					slog.Uint64("pcr", uint64(pcr)),
 					slog.String("error", errMsg))
-				bankUnsupported = true
-				break
+				return nil, &errs.Joined{Lead: ErrPCRRead, Detail: fmt.Sprintf("%s bank, PCR %d", name, pcr), Cause: err}
 			}
 			if response == nil {
 				continue

@@ -28,11 +28,11 @@ func psrkSymmetricAttrs(cn string, parent *types.KeyAttributes) *types.KeyAttrib
 
 // withParent returns a copy of attrs whose parent is a copy of parent
 // presenting password (nil for none).
-func withParent(attrs, parent *types.KeyAttributes, password []byte) *types.KeyAttributes {
+func withParent(t testing.TB, attrs, parent *types.KeyAttributes, password []byte) *types.KeyAttributes {
 	p := *parent
 	p.Password = nil
 	if password != nil {
-		p.Password = mustPassword(password)
+		p.Password = mustPassword(t, password)
 	}
 	a := *attrs
 	a.Parent = &p
@@ -113,15 +113,15 @@ func TestSymmetricKeyPSRK_UserPIN(t *testing.T) {
 	})
 
 	t.Run("without the PIN the key cannot be used", func(t *testing.T) {
-		requireSymmetricLoadFails(t, h, withParent(attrs, psrk, nil), tpm2.TPMRCAuthFail)
+		requireSymmetricLoadFails(t, h, withParent(t, attrs, psrk, nil), tpm2.TPMRCAuthFail)
 	})
 
 	t.Run("with a wrong PIN the key cannot be used", func(t *testing.T) {
-		requireSymmetricLoadFails(t, h, withParent(attrs, psrk, []byte("user-pin-WRONG")), tpm2.TPMRCAuthFail)
+		requireSymmetricLoadFails(t, h, withParent(t, attrs, psrk, []byte("user-pin-WRONG")), tpm2.TPMRCAuthFail)
 	})
 
 	t.Run("without the PIN no key can be created", func(t *testing.T) {
-		noPIN := withParent(psrkSymmetricAttrs("psrk-symmetric-no-pin", psrk), psrk, nil)
+		noPIN := withParent(t, psrkSymmetricAttrs("psrk-symmetric-no-pin", psrk), psrk, nil)
 		_, err := h.TPM.GenerateSymmetricKey(noPIN)
 		require.ErrorIs(t, err, tpm2.TPMRCAuthFail)
 		resetDALockout(t, h)
@@ -132,13 +132,13 @@ func TestSymmetricKeyPSRK_UserPIN(t *testing.T) {
 	t.Run("the key's own password authorizes its unseal", func(t *testing.T) {
 		ownPIN := []byte("object-pin-2b6e0d9f1a")
 		keyAttrs := psrkSymmetricAttrs("psrk-symmetric-object-pin", psrk)
-		keyAttrs.Password = mustPassword(ownPIN)
+		keyAttrs.Password = mustPassword(t, ownPIN)
 		_, err := h.TPM.GenerateSymmetricKey(keyAttrs)
 		require.NoError(t, err)
 		requireSymmetricRoundTrip(t, h, keyAttrs)
 
 		wrong := *keyAttrs
-		wrong.Password = mustPassword([]byte("object-pin-WRONG"))
+		wrong.Password = mustPassword(t, []byte("object-pin-WRONG"))
 		requireSymmetricLoadFails(t, h, &wrong, tpm2.TPMRCAuthFail)
 	})
 }
@@ -152,7 +152,7 @@ func TestSymmetricKeyPSRK_PlatformPolicy(t *testing.T) {
 	h := newSimHarness(t, nil)
 	userPIN := []byte("user-pin-6a0c3f82b5")
 	psrk := createPSRK(t, h, []byte("so-pin-d93e1b07c4"), userPIN)
-	pcrBranch := withParent(psrkSymmetricAttrs("psrk-symmetric-pcr", psrk), psrk, nil)
+	pcrBranch := withParent(t, psrkSymmetricAttrs("psrk-symmetric-pcr", psrk), psrk, nil)
 
 	bus := capture(h)
 	_, err := h.TPM.GenerateSymmetricKey(pcrBranch)
@@ -173,7 +173,7 @@ func TestSymmetricKeyPSRK_PlatformPolicy(t *testing.T) {
 	})
 
 	t.Run("the USER PIN branch survives a changed platform", func(t *testing.T) {
-		requireSymmetricRoundTrip(t, h, withParent(pcrBranch, psrk, userPIN))
+		requireSymmetricRoundTrip(t, h, withParent(t, pcrBranch, psrk, userPIN))
 	})
 }
 

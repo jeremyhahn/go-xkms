@@ -123,7 +123,7 @@ func TestSeal_NamedPolicyWithoutPassword_EmptyPasswordUnsealRefused(t *testing.T
 func TestSeal_PlatformPolicyWithPassword_PasswordAloneRefused(t *testing.T) {
 	h := newSimHarness(t, nil)
 	pin := []byte("object-recovery-pin")
-	attrs := sealedKeyAttrs(t, h, "bypass-password-only", true, mustPassword(pin))
+	attrs := sealedKeyAttrs(t, h, "bypass-password-only", true, mustPassword(t, pin))
 	attrs.SealData = types.NewSealData([]byte("policy-bound-secret"))
 	_, err := h.TPM.SealKey(attrs, h.Backend, true)
 	require.NoError(t, err)
@@ -174,7 +174,7 @@ func TestSeal_PlatformPolicyWithoutPassword_RoundTrip(t *testing.T) {
 	require.ErrorIs(t, err, tpm2.TPMRCPolicyFail)
 
 	_, err = h.TPM.UnsealKey(sealedKeyAttrs(t, h, "pcr-only", true,
-		mustPassword([]byte("guess"))), h.Backend)
+		mustPassword(t, []byte("guess"))), h.Backend)
 	require.ErrorIs(t, err, tpm2.TPMRCPolicyFail,
 		"an object sealed without a password has no password branch to guess")
 }
@@ -187,7 +187,7 @@ func TestSeal_PlatformPolicyWithPassword_RoundTrip(t *testing.T) {
 	h := newSimHarness(t, nil)
 	secret := []byte("pcr-or-pin-secret")
 	pin := []byte("object-recovery-pin")
-	attrs := sealedKeyAttrs(t, h, "pcr-or-pin", true, mustPassword(pin))
+	attrs := sealedKeyAttrs(t, h, "pcr-or-pin", true, mustPassword(t, pin))
 	attrs.SealData = types.NewSealData(secret)
 	_, err := h.TPM.SealKey(attrs, h.Backend, true)
 	require.NoError(t, err)
@@ -202,12 +202,12 @@ func TestSeal_PlatformPolicyWithPassword_RoundTrip(t *testing.T) {
 	_, err = h.TPM.UnsealKey(sealedKeyAttrs(t, h, "pcr-or-pin", true, nil), h.Backend)
 	require.ErrorIs(t, err, tpm2.TPMRCPolicyFail)
 
-	got, err = h.TPM.UnsealKey(sealedKeyAttrs(t, h, "pcr-or-pin", true, mustPassword(pin)), h.Backend)
+	got, err = h.TPM.UnsealKey(sealedKeyAttrs(t, h, "pcr-or-pin", true, mustPassword(t, pin)), h.Backend)
 	require.NoError(t, err)
 	require.Equal(t, secret, got)
 
 	_, err = h.TPM.UnsealKey(sealedKeyAttrs(t, h, "pcr-or-pin", true,
-		mustPassword([]byte("wrong-pin"))), h.Backend)
+		mustPassword(t, []byte("wrong-pin"))), h.Backend)
 	require.ErrorIs(t, err, tpm2.TPMRCAuthFail)
 }
 
@@ -218,7 +218,7 @@ func TestSeal_NamedPolicyWithPassword_RoundTrip(t *testing.T) {
 	f := newPolicyFixture(t)
 	secret := []byte("named-and-pin-secret")
 	pin := []byte("named-object-pin")
-	attrs := sealedKeyAttrsUnder(f.srk, "named-pin", mustPassword(pin))
+	attrs := sealedKeyAttrsUnder(f.srk, "named-pin", mustPassword(t, pin))
 	attrs.TPMPolicy = testPolicyName
 	attrs.SealData = types.NewSealData(secret)
 	_, err := f.h.TPM.SealKey(attrs, f.h.Backend, false)
@@ -239,13 +239,13 @@ func TestSeal_PasswordOnly_RoundTrip(t *testing.T) {
 	h := newSimHarness(t, nil)
 	secret := []byte("password-only-secret")
 	pin := []byte("object-password")
-	attrs := sealedKeyAttrs(t, h, "password-only", false, mustPassword(pin))
+	attrs := sealedKeyAttrs(t, h, "password-only", false, mustPassword(t, pin))
 	attrs.SealData = types.NewSealData(secret)
 	_, err := h.TPM.SealKey(attrs, h.Backend, true)
 	require.NoError(t, err)
 	requireUserWithAuth(t, h, attrs, true)
 
-	got, err := h.TPM.UnsealKey(sealedKeyAttrs(t, h, "password-only", false, mustPassword(pin)), h.Backend)
+	got, err := h.TPM.UnsealKey(sealedKeyAttrs(t, h, "password-only", false, mustPassword(t, pin)), h.Backend)
 	require.NoError(t, err)
 	require.Equal(t, secret, got)
 
@@ -259,7 +259,7 @@ func TestSeal_NeitherPolicyNorPassword_Refused(t *testing.T) {
 	h := newSimHarness(t, nil)
 	for name, password := range map[string]types.Password{
 		"nil password":   nil,
-		"empty password": mustPassword(nil),
+		"empty password": mustPassword(t, nil),
 	} {
 		t.Run(name, func(t *testing.T) {
 			attrs := sealedKeyAttrs(t, h, "unprotected", false, password)

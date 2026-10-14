@@ -242,6 +242,15 @@ func (pks *PlatformKeyStore) Initialize(soPIN, userPIN string) error {
 		return pks.ensureSRKAuth(soPIN, userPIN)
 	}
 
+	// Creating a persistent SRK is an owner-hierarchy operation, so it needs the
+	// owner hierarchy's auth when one is set. ensureSRKAuth already applies the
+	// SO PIN this way on its evict/recreate path; this path did not, so a
+	// caller supplying an SO PIN still hit TPM_RC_BAD_AUTH on a TPM whose owner
+	// hierarchy ProvisionOwner had given an auth value.
+	if err := pks.setSRKHierarchyAuth(soPIN); err != nil {
+		return err
+	}
+
 	// Create SRK first with user PIN as auth value. The SRK must exist
 	// before the TPM2Backend can verify PINs against it.
 	srkAttrs := *pks.srkAttrs
@@ -250,19 +259,9 @@ func (pks *PlatformKeyStore) Initialize(soPIN, userPIN string) error {
 		return err
 	}
 	srkAttrs.Password = userAuth
-	// Creating a persistent SRK is an owner-hierarchy operation, so it needs the
-	// owner hierarchy's auth when one is set. ensureSRKAuth already applies the
-	// SO PIN this way on its evict/recreate path; this path did not, so a
-	// caller supplying an SO PIN still hit TPM_RC_BAD_AUTH on a TPM whose owner
-	// hierarchy ProvisionOwner had given an auth value.
-	if soPIN != "" {
-		soAuth, err := store.NewPassword([]byte(soPIN))
-		if err != nil {
-			return err
-		}
-		srkAttrs.TPMAttributes.HierarchyAuth = soAuth
-	}
 	if err := pks.tpm.CreateSRK(&srkAttrs); err != nil {
+		// The user PIN is only kept once the SRK is created with it.
+		userAuth.Clear()
 		// TPM_RC_NV_DEFINED (0x14c) means the persistent handle is already
 		// occupied - the SRK exists from a prior provisioning attempt.
 		// Treat this as success but ensure auth matches below.
@@ -281,7 +280,7 @@ func (pks *PlatformKeyStore) Initialize(soPIN, userPIN string) error {
 	}
 
 	// Update cached attributes with data enriched by CreateSRK.
-	*pks.srkAttrs = srkAttrs
+	pks.cacheSRKAttrs(srkAttrs)
 
 	pks.initialized.Store(true)
 
@@ -357,14 +356,12 @@ func (pks *PlatformKeyStore) ensureSRKAuth(soPIN, userPIN string) error {
 	// Evict the old SRK and recreate it with the correct auth.
 	pks.logger.Info("platform SRK auth mismatch, evicting and recreating")
 
-	evictAttrs := *pks.srkAttrs
-	if soPIN != "" {
-		soAuth, err := store.NewPassword([]byte(soPIN))
-		if err != nil {
-			return err
-		}
-		evictAttrs.TPMAttributes.HierarchyAuth = soAuth
+	// The SO PIN lands in the TPMAttributes every copy of the cached SRK
+	// attributes shares, so both the evict and the recreate present it.
+	if err := pks.setSRKHierarchyAuth(soPIN); err != nil {
+		return err
 	}
+	evictAttrs := *pks.srkAttrs
 	name, _, readErr := pks.tpm.ReadHandle(evictAttrs.TPMAttributes.Handle)
 	if readErr != nil {
 		pks.authReady.Store(false)
@@ -389,17 +386,11 @@ func (pks *PlatformKeyStore) ensureSRKAuth(soPIN, userPIN string) error {
 		return err
 	}
 	srkAttrs.Password = userAuth
-	if soPIN != "" {
-		soAuth, err := store.NewPassword([]byte(soPIN))
-		if err != nil {
-			return err
-		}
-		srkAttrs.TPMAttributes.HierarchyAuth = soAuth
-	}
 	if err := pks.tpm.CreateSRK(&srkAttrs); err != nil {
+		userAuth.Clear()
 		return errors.Join(ErrPlatformKeyStoreCreateSRK, err)
 	}
-	*pks.srkAttrs = srkAttrs
+	pks.cacheSRKAttrs(srkAttrs)
 
 	if err := pks.pinBackend.SetUserPIN(soPIN, userPIN); err != nil {
 		return errors.Join(ErrPlatformKeyStoreSetUserPIN, err)
@@ -407,6 +398,35 @@ func (pks *PlatformKeyStore) ensureSRKAuth(soPIN, userPIN string) error {
 	pks.authReady.Store(true)
 	pks.logger.Info("platform SRK recreated with user PIN auth")
 	return nil
+}
+
+// setSRKHierarchyAuth presents soPIN as the owner hierarchy auth on the
+// cached SRK attributes and releases the value it replaces, which only the
+// key store ever set. An empty soPIN leaves the attributes unchanged.
+func (pks *PlatformKeyStore) setSRKHierarchyAuth(soPIN string) error {
+	if soPIN == "" {
+		return nil
+	}
+	soAuth, err := store.NewPassword([]byte(soPIN))
+	if err != nil {
+		return err
+	}
+	tpmAttrs := pks.srkAttrs.TPMAttributes
+	if tpmAttrs.HierarchyAuth != nil {
+		tpmAttrs.HierarchyAuth.Clear()
+	}
+	tpmAttrs.HierarchyAuth = soAuth
+	return nil
+}
+
+// cacheSRKAttrs replaces the cached SRK attributes with attrs and releases
+// the password they held: the SRK now answers to attrs.Password, and the
+// key store built the old one itself, so nothing else holds it.
+func (pks *PlatformKeyStore) cacheSRKAttrs(attrs types.KeyAttributes) {
+	if old := pks.srkAttrs.Password; old != nil && old != attrs.Password {
+		old.Clear()
+	}
+	*pks.srkAttrs = attrs
 }
 
 // InitializeWithDefaults creates the Platform SRK using empty (default) TPM

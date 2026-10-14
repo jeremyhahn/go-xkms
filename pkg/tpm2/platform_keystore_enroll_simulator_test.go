@@ -291,12 +291,12 @@ func TestEnrollPlatformSRK_OwnerHierarchyAuth_SuppliedByCaller(t *testing.T) {
 
 	ownerHierarchy := tpm2.TPMRHOwner
 	require.NoError(t,
-		h.TPM.SetHierarchyAuth(nil, mustPassword([]byte(ownerAuth)), &ownerHierarchy),
+		h.TPM.SetHierarchyAuth(nil, mustPassword(t, []byte(ownerAuth)), &ownerHierarchy),
 		"precondition: the owner hierarchy must carry an auth value")
 	t.Cleanup(func() {
 		// Hand the hierarchy back unauthenticated so the harness teardown and
 		// any simulator-wide state observe the value they started with.
-		_ = h.TPM.SetHierarchyAuth(mustPassword([]byte(ownerAuth)), nil, &ownerHierarchy)
+		_ = h.TPM.SetHierarchyAuth(mustPassword(t, []byte(ownerAuth)), nil, &ownerHierarchy)
 	})
 
 	pks := newPlatformKeyStore(t, h)

@@ -921,6 +921,8 @@ func New(cfg *config.Config, opts ...Option) (*Server, error) {
 		if s.config.Invite != nil {
 			inviteCfg, inviteErr := xkmsInviteConfigFromOperator(s.config.Invite)
 			if inviteErr != nil {
+				cancel()
+				s.closeBackends()
 				return nil, inviteErr
 			}
 			svc.SetInviteConfig(inviteCfg)
@@ -931,9 +933,13 @@ func New(cfg *config.Config, opts ...Option) (*Server, error) {
 		if s.config.Attestation != nil {
 			verifiers, attErr := s.config.Attestation.Verifiers()
 			if attErr != nil {
+				cancel()
+				s.closeBackends()
 				return nil, attErr
 			}
 			if attErr := svc.SetAttestationVerifiers(verifiers); attErr != nil {
+				cancel()
+				s.closeBackends()
 				return nil, attErr
 			}
 			s.logger.Info("Hardware attestation trust anchors wired",

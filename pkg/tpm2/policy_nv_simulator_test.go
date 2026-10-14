@@ -100,6 +100,58 @@ func TestCounterIndex_DefineIncrementRead(t *testing.T) {
 	assert.Equal(t, next, read, "a refused increment must not move the counter")
 }
 
+// TestCounterIndex_RedefineFails proves defining a counter over a live index
+// is refused by the TPM and leaves the existing counter's value alone.
+func TestCounterIndex_RedefineFails(t *testing.T) {
+	h := newSimHarness(t, nil)
+	index, err := h.TPM.FindFreeNVIndex(NVOwnerIndexFirst, NVOwnerIndexLast)
+	require.NoError(t, err)
+	_, err = h.TPM.DefineCounterIndex(index, policyWriteAuth, nil)
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = h.TPM.UndefineNVIndex(index, nil) })
+	before, err := h.TPM.ReadCounter(index)
+	require.NoError(t, err)
+
+	_, err = h.TPM.DefineCounterIndex(index, policyWriteAuth, nil)
+	require.ErrorIs(t, err, tpm2.TPMRCNVDefined)
+
+	after, err := h.TPM.ReadCounter(index)
+	require.NoError(t, err)
+	assert.Equal(t, before, after)
+}
+
+// TestReadCounter_Failures covers reading an index that does not exist and
+// an index whose type has no policy-read definition: neither may open a
+// session or return a value.
+func TestReadCounter_Failures(t *testing.T) {
+	h := newSimHarness(t, nil)
+	index, err := h.TPM.FindFreeNVIndex(NVOwnerIndexFirst, NVOwnerIndexLast)
+	require.NoError(t, err)
+
+	_, err = h.TPM.ReadCounter(index)
+	require.Error(t, err, "an undefined index cannot be read")
+
+	_, err = tpm2.NVDefineSpace{
+		AuthHandle: tpm2.AuthHandle{Handle: tpm2.TPMRHOwner, Auth: tpm2.PasswordAuth(nil)},
+		PublicInfo: tpm2.New2B(tpm2.TPMSNVPublic{
+			NVIndex: index,
+			NameAlg: tpm2.TPMAlgSHA256,
+			Attributes: tpm2.TPMANV{
+				OwnerWrite: true,
+				OwnerRead:  true,
+				NoDA:       true,
+				NT:         tpm2.TPMNTBits,
+			},
+			DataSize: 8,
+		}),
+	}.Execute(h.TPM.transport)
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = h.TPM.UndefineNVIndex(index, nil) })
+
+	_, err = h.TPM.ReadCounter(index)
+	assert.ErrorIs(t, err, ErrPolicyDigestCompute)
+}
+
 // TestFindFreeNVIndex_SkipsDefinedIndex proves a defined index is never
 // offered, and that a range with no free index is reported as exhausted.
 func TestFindFreeNVIndex_SkipsDefinedIndex(t *testing.T) {

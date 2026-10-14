@@ -148,11 +148,11 @@ func sealedKeyAttrsUnder(
 func TestSealUnseal_PINRecoveryThroughPlatformPolicySRK(t *testing.T) {
 	h := newSimHarness(t, platformPolicySRKConfig())
 
-	srk := createPlatformPolicySRK(t, h, mustPassword([]byte("srk-recovery-pin")))
+	srk := createPlatformPolicySRK(t, h, mustPassword(t, []byte("srk-recovery-pin")))
 
 	secret := []byte("recoverable-through-both-policies")
 	keyAttrs := sealedKeyAttrsUnder(srk, "srk-policy-sealed",
-		mustPassword([]byte("object-recovery-pin")))
+		mustPassword(t, []byte("object-recovery-pin")))
 	keyAttrs.SealData = types.NewSealData(secret)
 
 	_, err := h.TPM.SealKey(keyAttrs, h.Backend, true)
@@ -178,12 +178,12 @@ func TestSealUnseal_PINRecoveryThroughPlatformPolicySRK(t *testing.T) {
 func TestSealUnseal_PlatformPolicySRK_PCRBranchesStillFailAfterExtend(t *testing.T) {
 	h := newSimHarness(t, platformPolicySRKConfig())
 
-	srkPIN := mustPassword([]byte("srk-recovery-pin"))
+	srkPIN := mustPassword(t, []byte("srk-recovery-pin"))
 	srk := createPlatformPolicySRK(t, h, srkPIN)
 	secret := []byte("bound-to-the-sealed-platform-state")
 
 	keyAttrs := sealedKeyAttrsUnder(srk, "srk-policy-pcr-branch",
-		mustPassword([]byte("object-recovery-pin")))
+		mustPassword(t, []byte("object-recovery-pin")))
 	keyAttrs.SealData = types.NewSealData(secret)
 
 	_, err := h.TPM.SealKey(keyAttrs, h.Backend, true)
@@ -225,11 +225,11 @@ func TestSealUnseal_WrongSRKPINAfterExtend_Rejected(t *testing.T) {
 	h := newSimHarness(t, platformPolicySRKConfig())
 
 	secret := []byte("guarded-by-the-srk-pin")
-	correct := mustPassword([]byte("srk-recovery-pin"))
+	correct := mustPassword(t, []byte("srk-recovery-pin"))
 	srk := createPlatformPolicySRK(t, h, correct)
 
 	keyAttrs := sealedKeyAttrsUnder(srk, "srk-policy-wrong-pin",
-		mustPassword([]byte("object-recovery-pin")))
+		mustPassword(t, []byte("object-recovery-pin")))
 	keyAttrs.SealData = types.NewSealData(secret)
 
 	_, err := h.TPM.SealKey(keyAttrs, h.Backend, true)
@@ -238,8 +238,8 @@ func TestSealUnseal_WrongSRKPINAfterExtend_Rejected(t *testing.T) {
 	h.extendPlatformPCR(t, []byte("post-update-measurement"))
 
 	wrong := sealedKeyAttrsUnder(
-		platformPolicySRKAttrs(t, h, mustPassword([]byte("not-the-srk-pin"))),
-		"srk-policy-wrong-pin", mustPassword([]byte("object-recovery-pin")))
+		platformPolicySRKAttrs(t, h, mustPassword(t, []byte("not-the-srk-pin"))),
+		"srk-policy-wrong-pin", mustPassword(t, []byte("object-recovery-pin")))
 	out, err := h.TPM.UnsealKey(wrong, h.Backend)
 	require.Error(t, err, "a wrong SRK PIN must not load the object")
 	assert.Nil(t, out)
@@ -265,12 +265,12 @@ func TestSealUnseal_WrongSRKPINAfterExtend_Rejected(t *testing.T) {
 func TestSealUnseal_SRKWithoutPolicyPin_BehavesAsBefore(t *testing.T) {
 	h := newSimHarness(t, platformPolicySRKConfig())
 
-	srkPIN := mustPassword([]byte("srk-recovery-pin"))
+	srkPIN := mustPassword(t, []byte("srk-recovery-pin"))
 	srk := createPlatformPolicySRK(t, h, srkPIN)
 
 	secret := []byte("sealed-under-a-pre-pin-srk")
 	keyAttrs := sealedKeyAttrsUnder(srk, "pre-pin-srk-object",
-		mustPassword([]byte("object-recovery-pin")))
+		mustPassword(t, []byte("object-recovery-pin")))
 	keyAttrs.SealData = types.NewSealData(secret)
 
 	_, err := h.TPM.SealKey(keyAttrs, h.Backend, true)
@@ -311,13 +311,13 @@ func TestSealUnseal_SRKWithoutPolicyPin_BehavesAsBefore(t *testing.T) {
 func TestCreateSRK_RecordsPinPerHandle(t *testing.T) {
 	h := newSimHarness(t, platformPolicySRKConfig())
 
-	first := createPlatformPolicySRK(t, h, mustPassword([]byte("first-srk-pin")))
+	first := createPlatformPolicySRK(t, h, mustPassword(t, []byte("first-srk-pin")))
 
 	// The machine measures something new between the two creations, so the two
 	// records must describe different platform states.
 	h.extendPlatformPCR(t, []byte("measured-between-the-two-srks"))
 
-	second := platformPolicySRKAttrs(t, h, mustPassword([]byte("second-srk-pin")))
+	second := platformPolicySRKAttrs(t, h, mustPassword(t, []byte("second-srk-pin")))
 	second.TPMAttributes.Handle = first.TPMAttributes.Handle + 1
 	require.NoError(t, h.TPM.CreateSRK(second))
 
@@ -408,7 +408,7 @@ func platformPolicyChildAttrs(
 func TestCreateRSA_PINSignsAfterPCRExtend(t *testing.T) {
 	h := newSimHarness(t, nil)
 
-	pin := mustPassword([]byte("rsa-recovery-pin"))
+	pin := mustPassword(t, []byte("rsa-recovery-pin"))
 	attrs := platformPolicyChildAttrs(t, h, "rsa-pin-key", x509.RSA, pin)
 
 	pub, err := h.TPM.CreateRSA(attrs, h.Backend, true)
@@ -454,7 +454,7 @@ func TestCreateRSA_WrongPINAfterPCRExtend_Rejected(t *testing.T) {
 	h := newSimHarness(t, nil)
 
 	attrs := platformPolicyChildAttrs(t, h, "rsa-wrong-pin-key", x509.RSA,
-		mustPassword([]byte("rsa-recovery-pin")))
+		mustPassword(t, []byte("rsa-recovery-pin")))
 	_, err := h.TPM.CreateRSA(attrs, h.Backend, true)
 	require.NoError(t, err)
 
@@ -462,7 +462,7 @@ func TestCreateRSA_WrongPINAfterPCRExtend_Rejected(t *testing.T) {
 
 	digest := sha256.Sum256([]byte("payload a wrong PIN must not sign"))
 	wrong := platformPolicyChildAttrs(t, h, "rsa-wrong-pin-key", x509.RSA,
-		mustPassword([]byte("not-the-rsa-pin")))
+		mustPassword(t, []byte("not-the-rsa-pin")))
 
 	out, err := h.TPM.Sign(rand.Reader, digest[:], &store.SignerOpts{
 		KeyAttributes: wrong,
@@ -479,7 +479,7 @@ func TestCreateRSA_WrongPINAfterPCRExtend_Rejected(t *testing.T) {
 func TestCreateECDSA_PINSignsAfterPCRExtend(t *testing.T) {
 	h := newSimHarness(t, nil)
 
-	pin := mustPassword([]byte("ecdsa-recovery-pin"))
+	pin := mustPassword(t, []byte("ecdsa-recovery-pin"))
 	attrs := platformPolicyChildAttrs(t, h, "ecdsa-pin-key", x509.ECDSA, pin)
 
 	pub, err := h.TPM.CreateECDSA(attrs, h.Backend, true)
@@ -569,7 +569,7 @@ func encryptWithSecretKey(
 func TestCreateSecretKey_PINEncryptsAfterPCRExtend(t *testing.T) {
 	h := newSimHarness(t, nil)
 
-	pin := mustPassword([]byte("aes-recovery-pin"))
+	pin := mustPassword(t, []byte("aes-recovery-pin"))
 	attrs := platformPolicyChildAttrs(t, h, "aes-pin-key", x509.RSA, pin)
 	attrs.KeyType = types.KeyTypeHMAC
 
@@ -604,14 +604,14 @@ func TestCreateSecretKey_WrongPINAfterPCRExtend_Rejected(t *testing.T) {
 	h := newSimHarness(t, nil)
 
 	attrs := platformPolicyChildAttrs(t, h, "aes-wrong-pin-key", x509.RSA,
-		mustPassword([]byte("aes-recovery-pin")))
+		mustPassword(t, []byte("aes-recovery-pin")))
 	attrs.KeyType = types.KeyTypeHMAC
 	require.NoError(t, h.TPM.CreateSecretKey(attrs, h.Backend))
 
 	h.extendPlatformPCR(t, []byte("post-update-measurement"))
 
 	wrong := platformPolicyChildAttrs(t, h, "aes-wrong-pin-key", x509.RSA,
-		mustPassword([]byte("not-the-aes-pin")))
+		mustPassword(t, []byte("not-the-aes-pin")))
 	wrong.KeyType = types.KeyTypeHMAC
 
 	out, err := encryptWithSecretKey(t, h, wrong, []byte("sixteen bytes .."))
@@ -632,17 +632,17 @@ func TestPlatformPolicyChildKeys_RecordPinBesideTheirBlobs(t *testing.T) {
 	require.NoError(t, err)
 
 	rsaAttrs := platformPolicyChildAttrs(t, h, "rsa-record", x509.RSA,
-		mustPassword([]byte("pin")))
+		mustPassword(t, []byte("pin")))
 	_, err = h.TPM.CreateRSA(rsaAttrs, h.Backend, true)
 	require.NoError(t, err)
 
 	eccAttrs := platformPolicyChildAttrs(t, h, "ecdsa-record", x509.ECDSA,
-		mustPassword([]byte("pin")))
+		mustPassword(t, []byte("pin")))
 	_, err = h.TPM.CreateECDSA(eccAttrs, h.Backend, true)
 	require.NoError(t, err)
 
 	aesAttrs := platformPolicyChildAttrs(t, h, "aes-record", x509.RSA,
-		mustPassword([]byte("pin")))
+		mustPassword(t, []byte("pin")))
 	aesAttrs.KeyType = types.KeyTypeHMAC
 	require.NoError(t, h.TPM.CreateSecretKey(aesAttrs, h.Backend))
 
@@ -736,7 +736,7 @@ func TestSealUnseal_PCRMismatch_UnsealFailsAfterPCRExtend(t *testing.T) {
 func TestSealUnseal_PlatformPolicyWithPassword_PINBranchOpensTheObject(t *testing.T) {
 	h := newSimHarness(t, nil)
 
-	pin := mustPassword([]byte("recovery-pin-9876"))
+	pin := mustPassword(t, []byte("recovery-pin-9876"))
 	secret := []byte("secret-with-pin-fallback")
 
 	keyAttrs := sealedKeyAttrs(t, h, "pcr-bound-with-pin", true, pin)
@@ -783,7 +783,7 @@ func TestSealUnseal_PlatformPolicyWithPassword_PINBranchOpensTheObject(t *testin
 func TestSealUnseal_PINBranchRecoversAfterPCRExtend(t *testing.T) {
 	h := newSimHarness(t, nil)
 
-	pin := mustPassword([]byte("recovery-pin-9876"))
+	pin := mustPassword(t, []byte("recovery-pin-9876"))
 	secret := []byte("secret-with-pin-fallback")
 
 	keyAttrs := sealedKeyAttrs(t, h, "pcr-bound-with-pin", true, pin)
@@ -827,7 +827,7 @@ func TestSealUnseal_WrongPINAfterPCRExtend_Rejected(t *testing.T) {
 
 	secret := []byte("only-the-right-pin-opens-this")
 	keyAttrs := sealedKeyAttrs(t, h, "pcr-bound-wrong-pin", true,
-		mustPassword([]byte("recovery-pin-9876")))
+		mustPassword(t, []byte("recovery-pin-9876")))
 	keyAttrs.SealData = types.NewSealData(secret)
 
 	_, err := h.TPM.SealKey(keyAttrs, h.Backend, true)
@@ -836,7 +836,7 @@ func TestSealUnseal_WrongPINAfterPCRExtend_Rejected(t *testing.T) {
 	h.extendPlatformPCR(t, []byte("post-update-measurement"))
 
 	wrongPIN := sealedKeyAttrs(t, h, "pcr-bound-wrong-pin", true,
-		mustPassword([]byte("not-the-recovery-pin")))
+		mustPassword(t, []byte("not-the-recovery-pin")))
 	out, err := h.TPM.UnsealKey(wrongPIN, h.Backend)
 	require.Error(t, err, "a wrong PIN must not open the object")
 	assert.Nil(t, out, "no plaintext may be returned to a caller with the wrong PIN")
@@ -894,7 +894,7 @@ func TestSealUnseal_ObjectWithoutPolicyPin_StillOpens(t *testing.T) {
 
 	legacy := &legacyKeyBackend{KeyBackend: h.Backend}
 	secret := []byte("sealed-before-pins-existed")
-	pin := mustPassword([]byte("recovery-pin-9876"))
+	pin := mustPassword(t, []byte("recovery-pin-9876"))
 
 	keyAttrs := sealedKeyAttrs(t, h, "legacy-sealed-object", true, pin)
 	keyAttrs.SealData = types.NewSealData(secret)
@@ -942,7 +942,7 @@ func TestSealKey_PlatformPolicy_RecordsLivePCRState(t *testing.T) {
 	require.NoError(t, err)
 
 	keyAttrs := sealedKeyAttrs(t, h, "pin-record-contents", true,
-		mustPassword([]byte("recovery-pin-9876")))
+		mustPassword(t, []byte("recovery-pin-9876")))
 	keyAttrs.SealData = types.NewSealData([]byte("any-secret"))
 
 	_, err = h.TPM.SealKey(keyAttrs, h.Backend, true)
@@ -959,7 +959,7 @@ func TestSealKey_PlatformPolicy_RecordsLivePCRState(t *testing.T) {
 	assert.Equal(t, uint16(tpm2.TPMAlgSHA256), recorded.PCRBank)
 
 	// A sealed object without the platform policy has no policy to pin.
-	unbound := sealedKeyAttrs(t, h, "unbound-no-pin", false, mustPassword([]byte("object-password")))
+	unbound := sealedKeyAttrs(t, h, "unbound-no-pin", false, mustPassword(t, []byte("object-password")))
 	unbound.SealData = types.NewSealData([]byte("any-secret"))
 	_, err = h.TPM.SealKey(unbound, h.Backend, true)
 	require.NoError(t, err)
@@ -977,7 +977,7 @@ func TestSealUnseal_CorruptPolicyPin_Rejected(t *testing.T) {
 	h := newSimHarness(t, nil)
 
 	keyAttrs := sealedKeyAttrs(t, h, "corrupt-pin-record", true,
-		mustPassword([]byte("recovery-pin-9876")))
+		mustPassword(t, []byte("recovery-pin-9876")))
 	keyAttrs.SealData = types.NewSealData([]byte("secret-behind-a-broken-record"))
 
 	_, err := h.TPM.SealKey(keyAttrs, h.Backend, true)
@@ -1007,7 +1007,7 @@ func TestSealUnseal_NoPlatformPolicy_SurvivesPCRExtend(t *testing.T) {
 	h := newSimHarness(t, nil)
 
 	secret := []byte("not-bound-to-any-pcr")
-	keyAttrs := sealedKeyAttrs(t, h, "unbound-secret", false, mustPassword([]byte("object-password")))
+	keyAttrs := sealedKeyAttrs(t, h, "unbound-secret", false, mustPassword(t, []byte("object-password")))
 	keyAttrs.SealData = types.NewSealData(secret)
 
 	_, err := h.TPM.SealKey(keyAttrs, h.Backend, true)
@@ -1027,7 +1027,7 @@ func TestSealUnseal_WrongPassword_Rejected(t *testing.T) {
 	h := newSimHarness(t, nil)
 
 	secret := []byte("password-protected-secret")
-	correct := mustPassword([]byte("correct-horse-battery"))
+	correct := mustPassword(t, []byte("correct-horse-battery"))
 
 	keyAttrs := sealedKeyAttrs(t, h, "password-sealed", false, correct)
 	keyAttrs.SealData = types.NewSealData(secret)
@@ -1042,7 +1042,7 @@ func TestSealUnseal_WrongPassword_Rejected(t *testing.T) {
 
 	// The wrong password must be rejected by the TPM, not silently accepted.
 	wrongAttrs := sealedKeyAttrs(t, h, "password-sealed", false,
-		mustPassword([]byte("wrong-password")))
+		mustPassword(t, []byte("wrong-password")))
 	out, err := h.TPM.UnsealKey(wrongAttrs, h.Backend)
 	require.Error(t, err, "the TPM must reject an unseal authorized with the wrong password")
 	assert.Nil(t, out)
@@ -1058,7 +1058,7 @@ func TestUnsealKey_CorruptPrivateBlob_Rejected(t *testing.T) {
 	h := newSimHarness(t, nil)
 
 	secret := []byte("integrity-protected-secret")
-	keyAttrs := sealedKeyAttrs(t, h, "corruptible-secret", false, mustPassword([]byte("object-password")))
+	keyAttrs := sealedKeyAttrs(t, h, "corruptible-secret", false, mustPassword(t, []byte("object-password")))
 	keyAttrs.SealData = types.NewSealData(secret)
 
 	_, err := h.TPM.SealKey(keyAttrs, h.Backend, true)
@@ -1085,7 +1085,7 @@ func TestUnsealKey_CorruptPrivateBlob_Rejected(t *testing.T) {
 func TestUnsealKey_TruncatedPublicBlob_Rejected(t *testing.T) {
 	h := newSimHarness(t, nil)
 
-	keyAttrs := sealedKeyAttrs(t, h, "truncated-public", false, mustPassword([]byte("object-password")))
+	keyAttrs := sealedKeyAttrs(t, h, "truncated-public", false, mustPassword(t, []byte("object-password")))
 	keyAttrs.SealData = types.NewSealData([]byte("some-secret"))
 
 	_, err := h.TPM.SealKey(keyAttrs, h.Backend, true)
@@ -1132,7 +1132,7 @@ func TestSealKey_OversizedData_Rejected(t *testing.T) {
 func TestSealKey_NilParent_Rejected(t *testing.T) {
 	h := newSimHarness(t, nil)
 
-	keyAttrs := &types.KeyAttributes{CN: "no-parent", StoreType: types.StoreTPM2, Password: mustPassword([]byte("object-password"))}
+	keyAttrs := &types.KeyAttributes{CN: "no-parent", StoreType: types.StoreTPM2, Password: mustPassword(t, []byte("object-password"))}
 
 	resp, err := h.TPM.SealKey(keyAttrs, h.Backend, true)
 	assert.Nil(t, resp)
@@ -1154,14 +1154,14 @@ func TestSealKey_NilParent_Rejected(t *testing.T) {
 func TestSealKey_NilSealData_GeneratesRandomSecret(t *testing.T) {
 	h := newSimHarness(t, nil)
 
-	first := sealedKeyAttrs(t, h, "generated-secret-a", false, mustPassword([]byte("object-password")))
+	first := sealedKeyAttrs(t, h, "generated-secret-a", false, mustPassword(t, []byte("object-password")))
 	_, err := h.TPM.SealKey(first, h.Backend, true)
 	require.NoError(t, err)
 	require.NotNil(t, first.SealData, "SealKey must populate SealData when the caller supplies none")
 	secretA := first.SealData.Bytes()
 	assert.Len(t, secretA, 32, "a generated seal secret must be an AES-256 key")
 
-	second := sealedKeyAttrs(t, h, "generated-secret-b", false, mustPassword([]byte("object-password")))
+	second := sealedKeyAttrs(t, h, "generated-secret-b", false, mustPassword(t, []byte("object-password")))
 	_, err = h.TPM.SealKey(second, h.Backend, true)
 	require.NoError(t, err)
 	secretB := second.SealData.Bytes()
@@ -1192,7 +1192,7 @@ func (emptySealData) Clear()        {}
 func TestSealKey_SealDataYieldingNoBytes_Rejected(t *testing.T) {
 	h := newSimHarness(t, nil)
 
-	keyAttrs := sealedKeyAttrs(t, h, "empty-seal-data", false, mustPassword([]byte("object-password")))
+	keyAttrs := sealedKeyAttrs(t, h, "empty-seal-data", false, mustPassword(t, []byte("object-password")))
 	keyAttrs.SealData = emptySealData{}
 
 	resp, err := h.TPM.SealKey(keyAttrs, h.Backend, true)
@@ -1207,7 +1207,7 @@ func TestUnsealFromBlobs_RoundTripAndTamper(t *testing.T) {
 	h := newSimHarness(t, nil)
 
 	secret := []byte("efi-partition-sealed-secret")
-	keyAttrs := sealedKeyAttrs(t, h, "blob-sealed", false, mustPassword([]byte("object-password")))
+	keyAttrs := sealedKeyAttrs(t, h, "blob-sealed", false, mustPassword(t, []byte("object-password")))
 	keyAttrs.SealData = types.NewSealData(secret)
 
 	resp, err := h.TPM.SealKey(keyAttrs, h.Backend, true)
@@ -1229,7 +1229,7 @@ func TestUnsealFromBlobs_RoundTripAndTamper(t *testing.T) {
 	assert.Nil(t, out)
 
 	// Mismatched public/private pair (public taken from a different object).
-	other := sealedKeyAttrs(t, h, "blob-sealed-other", false, mustPassword([]byte("object-password")))
+	other := sealedKeyAttrs(t, h, "blob-sealed-other", false, mustPassword(t, []byte("object-password")))
 	other.SealData = types.NewSealData([]byte("another-secret"))
 	otherResp, err := h.TPM.SealKey(other, h.Backend, true)
 	require.NoError(t, err)
@@ -1250,7 +1250,7 @@ func TestSealer_SealUnseal_PublicAPIRoundTrip(t *testing.T) {
 
 	plaintext := []byte("barrier-root-key-material")
 	sealed, err := h.TPM.Seal(ctx, plaintext, &types.SealOptions{
-		KeyAttributes: sealedKeyAttrs(t, h, "sealer-api-key", false, mustPassword([]byte("object-password"))),
+		KeyAttributes: sealedKeyAttrs(t, h, "sealer-api-key", false, mustPassword(t, []byte("object-password"))),
 	})
 	require.NoError(t, err)
 	require.NotNil(t, sealed)
@@ -1264,7 +1264,7 @@ func TestSealer_SealUnseal_PublicAPIRoundTrip(t *testing.T) {
 	assert.NotContains(t, string(sealed.TPMPublic), string(plaintext))
 
 	got, err := h.TPM.Unseal(ctx, sealed, &types.UnsealOptions{
-		KeyAttributes: sealedKeyAttrs(t, h, "sealer-api-key", false, mustPassword([]byte("object-password"))),
+		KeyAttributes: sealedKeyAttrs(t, h, "sealer-api-key", false, mustPassword(t, []byte("object-password"))),
 	})
 	require.NoError(t, err)
 	assert.Equal(t, plaintext, got)
@@ -1277,7 +1277,7 @@ func TestSealer_Unseal_TamperedSealedData(t *testing.T) {
 	ctx := context.Background()
 
 	sealed, err := h.TPM.Seal(ctx, []byte("tamper-target"), &types.SealOptions{
-		KeyAttributes: sealedKeyAttrs(t, h, "tamper-key", false, mustPassword([]byte("object-password"))),
+		KeyAttributes: sealedKeyAttrs(t, h, "tamper-key", false, mustPassword(t, []byte("object-password"))),
 	})
 	require.NoError(t, err)
 
@@ -1286,7 +1286,7 @@ func TestSealer_Unseal_TamperedSealedData(t *testing.T) {
 	tampered.TPMPrivate[len(tampered.TPMPrivate)-1] ^= 0xFF
 
 	out, err := h.TPM.Unseal(ctx, &tampered, &types.UnsealOptions{
-		KeyAttributes: sealedKeyAttrs(t, h, "tamper-key", false, mustPassword([]byte("object-password"))),
+		KeyAttributes: sealedKeyAttrs(t, h, "tamper-key", false, mustPassword(t, []byte("object-password"))),
 	})
 	require.Error(t, err)
 	assert.Nil(t, out)
@@ -1302,7 +1302,7 @@ func TestSealer_Unseal_FromBackendStorage_WrongKeyID(t *testing.T) {
 
 	plaintext := []byte("storage-backed-secret")
 	sealed, err := h.TPM.Seal(ctx, plaintext, &types.SealOptions{
-		KeyAttributes: sealedKeyAttrs(t, h, "storage-backed", false, mustPassword([]byte("object-password"))),
+		KeyAttributes: sealedKeyAttrs(t, h, "storage-backed", false, mustPassword(t, []byte("object-password"))),
 		Backend:       h.Backend,
 	})
 	require.NoError(t, err)
@@ -1313,7 +1313,7 @@ func TestSealer_Unseal_FromBackendStorage_WrongKeyID(t *testing.T) {
 	fromStore.TPMPrivate = nil
 
 	got, err := h.TPM.Unseal(ctx, &fromStore, &types.UnsealOptions{
-		KeyAttributes: sealedKeyAttrs(t, h, "storage-backed", false, mustPassword([]byte("object-password"))),
+		KeyAttributes: sealedKeyAttrs(t, h, "storage-backed", false, mustPassword(t, []byte("object-password"))),
 		Backend:       h.Backend,
 	})
 	require.NoError(t, err)

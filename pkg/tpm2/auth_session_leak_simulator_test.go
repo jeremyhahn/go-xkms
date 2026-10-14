@@ -103,7 +103,7 @@ func verifyAuthSessionFixture(t *testing.T) (tpmImpl *TPM2, handle tpm2.TPMHandl
 	_, tpm := createSim(t, false)
 	t.Cleanup(func() { _ = tpm.Close() })
 
-	srkAttrs := createKey(tpm, false).Parent
+	srkAttrs := createKey(t, tpm, false).Parent
 	tpmImpl = tpm.(*TPM2)
 	return tpmImpl, srkAttrs.TPMAttributes.Handle, []byte("srk-pass"), []byte("wrong-pin")
 }

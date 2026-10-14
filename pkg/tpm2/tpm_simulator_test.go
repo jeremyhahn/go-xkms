@@ -1458,7 +1458,7 @@ func TestInstallHierarchyAuthError(t *testing.T) {
 		}
 
 		// Install without transport should return error
-		err := tpmInstance.Install(mustPassword([]byte("test")), nil)
+		err := tpmInstance.Install(mustPassword(t, []byte("test")), nil)
 		assert.Error(t, err)
 		assert.Contains(t, err.Error(), "TPM transport not initialized")
 	})
@@ -1566,7 +1566,7 @@ func TestSignValidateWithTransport(t *testing.T) {
 	t.Run("returns error for invalid handle", func(t *testing.T) {
 		keyAttrs := &types.KeyAttributes{
 			CN:       "test-key",
-			Password: mustPassword(nil),
+			Password: mustPassword(t, nil),
 			TPMAttributes: &types.TPMAttributes{
 				Handle:  tpm2.TPMHandle(0x99999999), // Invalid handle
 				HashAlg: tpm2.TPMAlgSHA256,
@@ -1743,7 +1743,7 @@ func TestInstallEKNotExists(t *testing.T) {
 		}
 
 		// Install without transport should return error
-		err := tpmInstance.Install(mustPassword([]byte("test")), nil)
+		err := tpmInstance.Install(mustPassword(t, []byte("test")), nil)
 		assert.Error(t, err)
 		assert.Contains(t, err.Error(), "TPM transport not initialized")
 	})
@@ -1838,7 +1838,7 @@ func TestSignValidateECDSA(t *testing.T) {
 
 		keyAttrs := &types.KeyAttributes{
 			CN:       "ecdsa-key",
-			Password: mustPassword(nil),
+			Password: mustPassword(t, nil),
 			TPMAttributes: &types.TPMAttributes{
 				Handle:  tpm2.TPMHandle(0x81010005),
 				HashAlg: tpm2.TPMAlgSHA256,
@@ -1926,7 +1926,7 @@ func TestSignValidateRSAPSS(t *testing.T) {
 
 		keyAttrs := &types.KeyAttributes{
 			CN:                 "rsapss-key",
-			Password:           mustPassword(nil),
+			Password:           mustPassword(t, nil),
 			SignatureAlgorithm: x509.SHA256WithRSAPSS,
 			TPMAttributes: &types.TPMAttributes{
 				Handle:  tpm2.TPMHandle(0x81010006),

@@ -33,7 +33,7 @@ func TestEnclaveProvider_Conformance_Simulator(t *testing.T) {
 	h := newSimHarness(t, nil)
 	enclaveprovidertest.Run(t, enclaveprovidertest.Backend{
 		Sealer:           h.TPM,
-		KeyAttributes:    sealedKeyAttrs(t, h, "enclave-provider", false, mustPassword(objectPassword)),
+		KeyAttributes:    sealedKeyAttrs(t, h, "enclave-provider", false, mustPassword(t, objectPassword)),
 		SkipResidueSweep: "the reference TPM simulator runs in this process and holds the unsealed secret in its own RAM; the TPM2_Unseal response crosses the command transport's buffers below pkg/tpm2",
 	})
 }

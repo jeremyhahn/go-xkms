@@ -91,15 +91,7 @@ func DefaultFactors(cfg Config) []qrdbsdk.AuthFactorPlugin {
 // It returns an error only if registration fails (which cannot happen for
 // distinct, non-nil, non-empty factor names but is surfaced for completeness).
 func NewDefaultRegistry(cfg Config) (*qrdbsdk.AuthFactorRegistry, error) {
-	registry := qrdbsdk.NewFactorRegistry()
-
-	for _, f := range DefaultFactors(cfg) {
-		if err := registry.Register(f); err != nil {
-			return nil, err
-		}
-	}
-
-	return registry, nil
+	return newRegistry(DefaultFactors(cfg))
 }
 
 // NewNodeRegistry constructs the registry an embedded go-qrdb node is built
@@ -112,16 +104,23 @@ func NewDefaultRegistry(cfg Config) (*qrdbsdk.AuthFactorRegistry, error) {
 // the admin-enrolment factor (NewDefaultRegistry) and never answers for a
 // node's share holders.
 func NewNodeRegistry(cfg Config) (*qrdbsdk.AuthFactorRegistry, error) {
-	registry := qrdbsdk.NewFactorRegistry()
-
+	var factors []qrdbsdk.AuthFactorPlugin
 	for _, f := range DefaultFactors(cfg) {
-		if f.Name() == mtls.FactorName {
-			continue
+		if f.Name() != mtls.FactorName {
+			factors = append(factors, f)
 		}
+	}
+	return newRegistry(factors)
+}
+
+// newRegistry registers factors into a fresh registry, failing on the first
+// factor the registry rejects (a nil factor or a duplicate name).
+func newRegistry(factors []qrdbsdk.AuthFactorPlugin) (*qrdbsdk.AuthFactorRegistry, error) {
+	registry := qrdbsdk.NewFactorRegistry()
+	for _, f := range factors {
 		if err := registry.Register(f); err != nil {
 			return nil, err
 		}
 	}
-
 	return registry, nil
 }

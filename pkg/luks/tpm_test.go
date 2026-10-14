@@ -544,3 +544,47 @@ func TestBuildPCRSelection_IgnoresOutOfRange(t *testing.T) {
 		t.Fatalf("out-of-range PCR leaked into bitmap: %x", bm)
 	}
 }
+
+func TestResolvePCRBank_EmptyDefaultsToSHA256(t *testing.T) {
+	alg, err := resolvePCRBank("")
+	if err != nil {
+		t.Fatalf("resolvePCRBank(\"\"): %v", err)
+	}
+	if alg != libtpm2.TPMAlgSHA256 {
+		t.Fatalf("resolvePCRBank(\"\") = %v, want SHA-256", alg)
+	}
+}
+
+func TestResolvePCRBank_UnknownBank(t *testing.T) {
+	if _, err := resolvePCRBank("md5"); !errors.Is(err, ErrInvalidPCRBank) {
+		t.Fatalf("resolvePCRBank(md5) = %v, want ErrInvalidPCRBank", err)
+	}
+}
+
+// TestTPMSealer_RejectsOutOfRangeParent pins that a sealer whose parent is
+// neither PSRK nor SSRK refuses both directions rather than defaulting to one.
+func TestTPMSealer_RejectsOutOfRangeParent(t *testing.T) {
+	tpm := &fakeTPM{}
+	s := &TPMSealer{tpm: tpm, parent: SealParent(99), pcrBank: libtpm2.TPMAlgSHA256}
+
+	var invalid *SealParentInvalidError
+	if _, err := s.SealPassphrase(context.Background(), nil); !errors.As(err, &invalid) || invalid.Value != 99 {
+		t.Fatalf("SealPassphrase with parent 99 = %v, want SealParentInvalidError{Value: 99}", err)
+	}
+	if _, err := s.UnsealPassphrase(context.Background(), &luks2.Token{Type: TPMTokenType}); !errors.Is(err, ErrInvalidSealParent) {
+		t.Fatalf("UnsealPassphrase with parent 99 = %v, want ErrInvalidSealParent", err)
+	}
+	if tpm.unsealCalled {
+		t.Fatal("Unseal must never be called for an invalid parent")
+	}
+}
+
+func TestInt32sToInts(t *testing.T) {
+	if got := int32sToInts(nil); got != nil {
+		t.Fatalf("int32sToInts(nil) = %v, want nil", got)
+	}
+	got := int32sToInts([]int32{0, 7, 23})
+	if len(got) != 3 || got[0] != 0 || got[1] != 7 || got[2] != 23 {
+		t.Fatalf("int32sToInts = %v, want [0 7 23]", got)
+	}
+}

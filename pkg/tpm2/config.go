@@ -462,6 +462,19 @@ type LAKConfig struct {
 	SignatureAlgorithm string             `yaml:"signature-algorithm" json:"signature-algorithm" mapstructure:"signature-algorithm"`
 }
 
+// eccAttributesFromConfig parses an optional ECC config. Builders call it
+// before allocating any password, so a bad curve never strands an enclave.
+func eccAttributesFromConfig(config *store.ECCConfig) (*types.ECCAttributes, error) {
+	if config == nil {
+		return nil, nil
+	}
+	curve, err := types.ParseCurve(config.Curve)
+	if err != nil {
+		return nil, err
+	}
+	return &types.ECCAttributes{Curve: curve}, nil
+}
+
 func EKAttributesFromConfig(config EKConfig, policyDigest *tpm2.TPM2BDigest, idevidConfig *IDevIDConfig) (*types.KeyAttributes, error) {
 
 	if config.CN == "" {
@@ -488,6 +501,13 @@ func EKAttributesFromConfig(config EKConfig, policyDigest *tpm2.TPM2BDigest, ide
 		}
 	}
 
+	// The curve is checked before any password is allocated, so a bad
+	// curve never strands a locked password enclave.
+	eccAttrs, err := eccAttributesFromConfig(config.ECCConfig)
+	if err != nil {
+		return nil, err
+	}
+
 	var ekTemplate tpm2.TPMTPublic
 	if algorithm == x509.RSA {
 		ekTemplate = tpm2.RSAEKTemplate
@@ -507,6 +527,9 @@ func EKAttributesFromConfig(config EKConfig, policyDigest *tpm2.TPM2BDigest, ide
 	}
 	ekHierarchyAuth, err := types.NewPasswordFromSecretValue(context.Background(), config.HierarchyAuth)
 	if err != nil {
+		if ekPassword != nil {
+			ekPassword.Clear()
+		}
 		return nil, err
 	}
 
@@ -528,19 +551,6 @@ func EKAttributesFromConfig(config EKConfig, policyDigest *tpm2.TPM2BDigest, ide
 		},
 	}
 
-	if config.ECCConfig != nil {
-		if config.KeyAlgorithm == "" {
-			config.KeyAlgorithm = x509.ECDSA.String()
-		}
-		curve, err := types.ParseCurve(config.ECCConfig.Curve)
-		if err != nil {
-			return nil, err
-		}
-		attrs.ECCAttributes = &types.ECCAttributes{
-			Curve: curve,
-		}
-	}
-
 	if config.RSAConfig != nil {
 		if config.KeyAlgorithm == "" {
 			config.KeyAlgorithm = x509.RSA.String()
@@ -549,6 +559,8 @@ func EKAttributesFromConfig(config EKConfig, policyDigest *tpm2.TPM2BDigest, ide
 			KeySize: config.RSAConfig.KeySize,
 		}
 	}
+
+	attrs.ECCAttributes = eccAttrs
 
 	return attrs, nil
 }
@@ -579,6 +591,13 @@ func SRKAttributesFromConfig(config SRKConfig) (*types.KeyAttributes, error) {
 		}
 	}
 
+	// The curve is checked before any password is allocated, so a bad
+	// curve never strands a locked password enclave.
+	eccAttrs, err := eccAttributesFromConfig(config.ECCConfig)
+	if err != nil {
+		return nil, err
+	}
+
 	var srkTemplate tpm2.TPMTPublic
 	if algorithm == x509.RSA {
 		srkTemplate = tpm2.RSASRKTemplate
@@ -601,6 +620,9 @@ func SRKAttributesFromConfig(config SRKConfig) (*types.KeyAttributes, error) {
 	// so that downstream TPM2_CreatePrimary uses empty auth (TPM default).
 	hierarchyAuth, err := types.NewPasswordFromSecretValue(context.Background(), config.HierarchyAuth)
 	if err != nil {
+		if srkPassword != nil {
+			srkPassword.Clear()
+		}
 		return nil, err
 	}
 
@@ -620,21 +642,13 @@ func SRKAttributesFromConfig(config SRKConfig) (*types.KeyAttributes, error) {
 		},
 	}
 
-	if config.ECCConfig != nil {
-		curve, err := types.ParseCurve(config.ECCConfig.Curve)
-		if err != nil {
-			return nil, err
-		}
-		attrs.ECCAttributes = &types.ECCAttributes{
-			Curve: curve,
-		}
-	}
-
 	if config.RSAConfig != nil {
 		attrs.RSAAttributes = &types.RSAAttributes{
 			KeySize: config.RSAConfig.KeySize,
 		}
 	}
+
+	attrs.ECCAttributes = eccAttrs
 
 	return attrs, nil
 }
@@ -661,6 +675,13 @@ func IAKAttributesFromConfig(
 		default:
 			return nil, err
 		}
+	}
+
+	// The curve is checked before any password is allocated, so a bad
+	// curve never strands a locked password enclave.
+	eccAttrs, err := eccAttributesFromConfig(config.ECCConfig)
+	if err != nil {
+		return nil, err
 	}
 
 	hash := ParseHash(config.Hash)
@@ -704,21 +725,13 @@ func IAKAttributesFromConfig(
 		},
 	}
 
-	if config.ECCConfig != nil {
-		curve, err := types.ParseCurve(config.ECCConfig.Curve)
-		if err != nil {
-			return nil, err
-		}
-		attrs.ECCAttributes = &types.ECCAttributes{
-			Curve: curve,
-		}
-	}
-
 	if config.RSAConfig != nil {
 		attrs.RSAAttributes = &types.RSAAttributes{
 			KeySize: config.RSAConfig.KeySize,
 		}
 	}
+
+	attrs.ECCAttributes = eccAttrs
 
 	return attrs, nil
 }
@@ -745,6 +758,13 @@ func LAKAttributesFromConfig(
 		default:
 			return nil, err
 		}
+	}
+
+	// The curve is checked before any password is allocated, so a bad
+	// curve never strands a locked password enclave.
+	eccAttrs, err := eccAttributesFromConfig(config.ECCConfig)
+	if err != nil {
+		return nil, err
 	}
 
 	hash := ParseHash(config.Hash)
@@ -795,21 +815,13 @@ func LAKAttributesFromConfig(
 		},
 	}
 
-	if config.ECCConfig != nil {
-		curve, err := types.ParseCurve(config.ECCConfig.Curve)
-		if err != nil {
-			return nil, err
-		}
-		attrs.ECCAttributes = &types.ECCAttributes{
-			Curve: curve,
-		}
-	}
-
 	if config.RSAConfig != nil {
 		attrs.RSAAttributes = &types.RSAAttributes{
 			KeySize: config.RSAConfig.KeySize,
 		}
 	}
+
+	attrs.ECCAttributes = eccAttrs
 
 	return attrs, nil
 }
@@ -875,6 +887,13 @@ func IDevIDAttributesFromConfig(config IDevIDConfig) (*types.KeyAttributes, erro
 		}
 	}
 
+	// The curve is checked before any password is allocated, so a bad
+	// curve never strands a locked password enclave.
+	eccAttrs, err := eccAttributesFromConfig(config.ECCConfig)
+	if err != nil {
+		return nil, err
+	}
+
 	hash := ParseHash(config.Hash)
 
 	sigAlgo, err := types.ParseSignatureAlgorithm(config.SignatureAlgorithm)
@@ -914,21 +933,13 @@ func IDevIDAttributesFromConfig(config IDevIDConfig) (*types.KeyAttributes, erro
 		},
 	}
 
-	if config.ECCConfig != nil {
-		curve, err := types.ParseCurve(config.ECCConfig.Curve)
-		if err != nil {
-			return nil, err
-		}
-		attrs.ECCAttributes = &types.ECCAttributes{
-			Curve: curve,
-		}
-	}
-
 	if config.RSAConfig != nil {
 		attrs.RSAAttributes = &types.RSAAttributes{
 			KeySize: config.RSAConfig.KeySize,
 		}
 	}
+
+	attrs.ECCAttributes = eccAttrs
 
 	return attrs, nil
 }
@@ -957,6 +968,13 @@ func LDevIDAttributesFromConfig(config LDevIDConfig) (*types.KeyAttributes, erro
 		}
 	}
 
+	// The curve is checked before any password is allocated, so a bad
+	// curve never strands a locked password enclave.
+	eccAttrs, err := eccAttributesFromConfig(config.ECCConfig)
+	if err != nil {
+		return nil, err
+	}
+
 	hash := ParseHash(config.Hash)
 
 	sigAlgo, err := types.ParseSignatureAlgorithm(config.SignatureAlgorithm)
@@ -996,21 +1014,13 @@ func LDevIDAttributesFromConfig(config LDevIDConfig) (*types.KeyAttributes, erro
 		},
 	}
 
-	if config.ECCConfig != nil {
-		curve, err := types.ParseCurve(config.ECCConfig.Curve)
-		if err != nil {
-			return nil, err
-		}
-		attrs.ECCAttributes = &types.ECCAttributes{
-			Curve: curve,
-		}
-	}
-
 	if config.RSAConfig != nil {
 		attrs.RSAAttributes = &types.RSAAttributes{
 			KeySize: config.RSAConfig.KeySize,
 		}
 	}
+
+	attrs.ECCAttributes = eccAttrs
 
 	return attrs, nil
 }

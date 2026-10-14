@@ -134,7 +134,7 @@ func TestObjectPolicy_RSASigningKeyWithoutPassword(t *testing.T) {
 func TestObjectPolicy_RSASigningKeyWithPassword(t *testing.T) {
 	h := newSimHarness(t, nil)
 	pin := []byte("rsa-key-pin")
-	attrs := platformKeyAttrs(t, h, "policy-rsa-pin", x509.RSA, types.KeyTypeSigning, mustPassword(pin))
+	attrs := platformKeyAttrs(t, h, "policy-rsa-pin", x509.RSA, types.KeyTypeSigning, mustPassword(t, pin))
 	pub, err := h.TPM.CreateRSA(attrs, h.Backend, true)
 	require.NoError(t, err)
 	requireLoadedUserWithAuth(t, h, attrs, false)

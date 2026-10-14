@@ -422,6 +422,9 @@ func (tpm *TPM2) Install(soPIN types.Password, opts *InstallOptions) error {
 				if err != nil {
 					return err
 				}
+				// SetHierarchyAuth only reads the current auth, so its
+				// enclave is released once provisioning returns.
+				defer auth.Clear()
 				currentAuth = auth
 			}
 		}
@@ -446,7 +449,7 @@ func (tpm *TPM2) Install(soPIN types.Password, opts *InstallOptions) error {
 				if err != nil {
 					return err
 				}
-				ekAttrs.TPMAttributes.HierarchyAuth = soPIN
+				replaceHierarchyAuth(ekAttrs, soPIN)
 				if err := tpm.CreateEK(ekAttrs); err != nil {
 					return err
 				}
@@ -454,7 +457,7 @@ func (tpm *TPM2) Install(soPIN types.Password, opts *InstallOptions) error {
 				return err
 			}
 		} else {
-			ekAttrs.TPMAttributes.HierarchyAuth = soPIN
+			replaceHierarchyAuth(ekAttrs, soPIN)
 		}
 	}
 
@@ -465,7 +468,7 @@ func (tpm *TPM2) Install(soPIN types.Password, opts *InstallOptions) error {
 		if ekErr != nil {
 			return ekErr
 		}
-		ekAttrs.TPMAttributes.HierarchyAuth = soPIN
+		replaceHierarchyAuth(ekAttrs, soPIN)
 		_, err := tpm.SSRKAttributes()
 		if err != nil {
 			if errors.Is(err, tpmRCHandle) {
@@ -484,7 +487,7 @@ func (tpm *TPM2) Install(soPIN types.Password, opts *InstallOptions) error {
 					return authErr
 				}
 				ssrkAttrs.Password = emptyAuth
-				ssrkAttrs.TPMAttributes.HierarchyAuth = soPIN
+				replaceHierarchyAuth(ssrkAttrs, soPIN)
 				if err := tpm.CreateSRK(ssrkAttrs); err != nil {
 					return err
 				}
@@ -507,7 +510,7 @@ func (tpm *TPM2) Install(soPIN types.Password, opts *InstallOptions) error {
 		if ekErr != nil {
 			return ekErr
 		}
-		ekAttrs.TPMAttributes.HierarchyAuth = soPIN
+		replaceHierarchyAuth(ekAttrs, soPIN)
 		if err := tpm.installIAK(ekAttrs); err != nil {
 			return err
 		}
@@ -698,6 +701,15 @@ func (tpm *TPM2) Provision(soPIN types.Password) error {
 	return nil
 }
 
+// replaceHierarchyAuth sets attrs' hierarchy authorization to auth, clearing
+// the enclave it replaces so the locked memory behind it is released.
+func replaceHierarchyAuth(attrs *types.KeyAttributes, auth types.Password) {
+	if old := attrs.TPMAttributes.HierarchyAuth; old != nil && old != auth {
+		old.Clear()
+	}
+	attrs.TPMAttributes.HierarchyAuth = auth
+}
+
 // Provisions a new Endorsement and Storage Root Key according to TCG
 // Provisioning Guidance. The Endorsement Key (EK) is created and evicted
 // to it's recommended persistent handle and a new Shared Storage Root Key
@@ -712,7 +724,7 @@ func (tpm *TPM2) ProvisionOwner(
 	if err != nil {
 		return nil, err
 	}
-	ekAttrs.TPMAttributes.HierarchyAuth = soPIN
+	replaceHierarchyAuth(ekAttrs, soPIN)
 	if err := tpm.CreateEK(ekAttrs); err != nil {
 		return nil, err
 	}
@@ -727,7 +739,7 @@ func (tpm *TPM2) ProvisionOwner(
 		return nil, err
 	}
 	srkAttrs.Parent = ekAttrs
-	srkAttrs.TPMAttributes.HierarchyAuth = soPIN
+	replaceHierarchyAuth(srkAttrs, soPIN)
 	if err := tpm.CreateSRK(srkAttrs); err != nil {
 		return nil, err
 	}

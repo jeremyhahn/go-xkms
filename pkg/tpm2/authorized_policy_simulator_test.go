@@ -124,7 +124,7 @@ func newCompositePolicyFixture(t *testing.T, branches ...branchSpec) *policyFixt
 	h := newSimHarness(t, nil)
 	f := &policyFixture{
 		h:        h,
-		srk:      createPlatformPolicySRK(t, h, mustPassword([]byte("platform-srk-pin"))),
+		srk:      createPlatformPolicySRK(t, h, mustPassword(t, []byte("platform-srk-pin"))),
 		resolver: newTestPolicyResolver(),
 		branches: branches,
 	}
@@ -157,7 +157,7 @@ func newCompositePolicyFixture(t *testing.T, branches ...branchSpec) *policyFixt
 // bound to the platform policy and carrying its own auth value.
 func (f *policyFixture) createAuthority(t *testing.T, cn string) *types.KeyAttributes {
 	t.Helper()
-	attrs := f.keyAttrs(cn, mustPassword([]byte(cn+"-auth-value")))
+	attrs := f.keyAttrs(cn, mustPassword(t, []byte(cn+"-auth-value")))
 	attrs.TPMPolicy = types.TPMPolicyPlatform
 	_, err := f.h.TPM.CreateECDSA(attrs, f.h.Backend, false)
 	require.NoError(t, err)
@@ -351,9 +351,9 @@ func withoutPassword(key *types.KeyAttributes) *types.KeyAttributes {
 }
 
 // withPassword returns a copy of key that presents password.
-func withPassword(key *types.KeyAttributes, password string) *types.KeyAttributes {
+func withPassword(t testing.TB, key *types.KeyAttributes, password string) *types.KeyAttributes {
 	c := *key
-	c.Password = mustPassword([]byte(password))
+	c.Password = mustPassword(t, []byte(password))
 	return &c
 }
 
@@ -425,7 +425,7 @@ func TestAuthorizedPolicy_DigestsMatchLiveSession(t *testing.T) {
 func TestAuthorizedPolicy_KeysSignUnderApproval(t *testing.T) {
 	f := newPolicyFixture(t)
 	noPassword := f.createBoundKey(t, "bound-no-password", nil)
-	withPassword := f.createBoundKey(t, "bound-with-password", mustPassword([]byte("bound-key-pin")))
+	withPassword := f.createBoundKey(t, "bound-with-password", mustPassword(t, []byte("bound-key-pin")))
 
 	require.NoError(t, f.sign(noPassword))
 	require.NoError(t, f.sign(withPassword))
@@ -445,7 +445,7 @@ func TestAuthorizedPolicy_KeysSignUnderApproval(t *testing.T) {
 func TestAuthorizedPolicy_PCRChangeRefusesApprovedBranch(t *testing.T) {
 	f := newPolicyFixture(t)
 	noPassword := f.createBoundKey(t, "pcr-no-password", nil)
-	withPassword := f.createBoundKey(t, "pcr-with-password", mustPassword([]byte("bound-key-pin")))
+	withPassword := f.createBoundKey(t, "pcr-with-password", mustPassword(t, []byte("bound-key-pin")))
 
 	f.extendPolicyPCR(t)
 
@@ -468,7 +468,7 @@ func TestAuthorizedPolicy_PCRChangeRefusesApprovedBranch(t *testing.T) {
 // that would bypass the PCR condition, and the PCR alone does not sign.
 func TestAuthorizedPolicy_CompositeAND(t *testing.T) {
 	f := newCompositePolicyFixture(t, branchSpec{pcr: true, authValue: true})
-	key := f.createBoundKey(t, "and-key", mustPassword([]byte("and-key-pin")))
+	key := f.createBoundKey(t, "and-key", mustPassword(t, []byte("and-key-pin")))
 
 	binding, err := f.h.TPM.loadPolicyBinding(key, f.h.Backend)
 	require.NoError(t, err)
@@ -482,7 +482,7 @@ func TestAuthorizedPolicy_CompositeAND(t *testing.T) {
 	require.ErrorAs(t, err, &missing, "the PCR alone does not sign")
 	assert.Equal(t, 0, missing.Branch)
 
-	require.Error(t, f.sign(withPassword(key, "wrong-pin")), "a wrong password does not sign")
+	require.Error(t, f.sign(withPassword(t, key, "wrong-pin")), "a wrong password does not sign")
 
 	f.extendPolicyPCR(t)
 	var mismatch *PolicyPCRMismatchError
@@ -494,7 +494,7 @@ func TestAuthorizedPolicy_CompositeAND(t *testing.T) {
 // with its password once the PCR has moved, and never with a wrong one.
 func TestAuthorizedPolicy_CompositeOR(t *testing.T) {
 	f := newCompositePolicyFixture(t, branchSpec{pcr: true}, branchSpec{authValue: true})
-	key := f.createBoundKey(t, "or-key", mustPassword([]byte("or-key-pin")))
+	key := f.createBoundKey(t, "or-key", mustPassword(t, []byte("or-key-pin")))
 
 	require.NoError(t, f.sign(withoutPassword(key)), "the PCR branch, no password")
 
@@ -510,7 +510,7 @@ func TestAuthorizedPolicy_CompositeOR(t *testing.T) {
 	assert.Equal(t, 1, missing.Branch)
 
 	require.NoError(t, f.sign(key), "the password branch after the PCR moved")
-	err = f.sign(withPassword(key, "wrong-pin"))
+	err = f.sign(withPassword(t, key, "wrong-pin"))
 	require.Error(t, err, "a wrong password does not sign")
 	assert.ErrorIs(t, err, tpm2.TPMRCAuthFail)
 }
@@ -626,7 +626,7 @@ func TestAuthorizedPolicy_CompositeRequiresObjectPassword(t *testing.T) {
 // restores the very same key blobs through each branch.
 func TestAuthorizedPolicy_UpdateReapprovesWithoutRekey(t *testing.T) {
 	f := newCompositePolicyFixture(t, branchSpec{pcr: true}, branchSpec{pcr: true, authValue: true})
-	key := f.createBoundKey(t, "update-key", mustPassword([]byte("bound-key-pin")))
+	key := f.createBoundKey(t, "update-key", mustPassword(t, []byte("bound-key-pin")))
 	privBefore := f.mustBlob(key, store.FSEXT_PRIVATE_BLOB)
 	pubBefore := f.mustBlob(key, store.FSEXT_PUBLIC_BLOB)
 
@@ -725,7 +725,7 @@ func TestAuthorizedPolicy_SealedObject(t *testing.T) {
 // authorized along another path.
 func TestAuthorizedPolicy_BindingRecordLifecycle(t *testing.T) {
 	f := newPolicyFixture(t)
-	key := f.createBoundKey(t, "binding-record", mustPassword([]byte("bound-key-pin")))
+	key := f.createBoundKey(t, "binding-record", mustPassword(t, []byte("bound-key-pin")))
 
 	binding, err := f.h.TPM.loadPolicyBinding(key, f.h.Backend)
 	require.NoError(t, err)
@@ -855,7 +855,7 @@ func TestCreateStorageKey_ParentForChildKeys(t *testing.T) {
 		KeyAlgorithm:  x509.RSA,
 		KeyType:       types.KeyTypeStorage,
 		Parent:        f.srk,
-		Password:      mustPassword([]byte("tenant-a-storage-secret")),
+		Password:      mustPassword(t, []byte("tenant-a-storage-secret")),
 		StoreType:     types.StoreTPM2,
 		TPMAttributes: &types.TPMAttributes{Hierarchy: tpm2.TPMRHOwner},
 	}
@@ -876,7 +876,7 @@ func TestCreateStorageKey_ParentForChildKeys(t *testing.T) {
 	require.NoError(t, f.sign(child))
 
 	wrongSecret := *storageKey
-	wrongSecret.Password = mustPassword([]byte("another tenant's secret"))
+	wrongSecret.Password = mustPassword(t, []byte("another tenant's secret"))
 	child.Parent = &wrongSecret
 	require.Error(t, f.sign(child), "a child cannot be loaded without its parent's secret")
 }
@@ -933,7 +933,7 @@ func TestSymmetricKey_UnderATenantStorageKey(t *testing.T) {
 		KeyAlgorithm:  x509.RSA,
 		KeyType:       types.KeyTypeStorage,
 		Parent:        f.srk,
-		Password:      mustPassword([]byte("acme-storage-secret")),
+		Password:      mustPassword(t, []byte("acme-storage-secret")),
 		StoreType:     types.StoreTPM2,
 		TPMAttributes: &types.TPMAttributes{Hierarchy: tpm2.TPMRHOwner},
 	}

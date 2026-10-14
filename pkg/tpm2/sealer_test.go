@@ -280,7 +280,7 @@ func TestSealWithNilData(t *testing.T) {
 		KeyAttributes: &types.KeyAttributes{
 			CN:       "test-seal-nil-data",
 			Parent:   ssrkAttrs,
-			Password: mustPassword([]byte("test-pass")),
+			Password: mustPassword(t, []byte("test-pass")),
 		},
 	}
 
@@ -306,7 +306,7 @@ func TestUnsealWithProvidedBlobs(t *testing.T) {
 		KeyAttributes: &types.KeyAttributes{
 			CN:       "test-unseal-blobs",
 			Parent:   ssrkAttrs,
-			Password: mustPassword([]byte("test-pass")),
+			Password: mustPassword(t, []byte("test-pass")),
 		},
 	}
 
@@ -318,7 +318,7 @@ func TestUnsealWithProvidedBlobs(t *testing.T) {
 		KeyAttributes: &types.KeyAttributes{
 			CN:       "test-unseal-blobs",
 			Parent:   ssrkAttrs,
-			Password: mustPassword([]byte("test-pass")),
+			Password: mustPassword(t, []byte("test-pass")),
 		},
 	}
 
@@ -348,7 +348,7 @@ func TestDefaultSealKeyAttributes(t *testing.T) {
 	assert.Equal(t, types.TPMPolicyPlatform, attrs.TPMPolicy,
 		"a seal without a password must be bound to the parent's policy")
 
-	attrs, err = tpm2Instance.defaultSealKeyAttributes(&types.SealOptions{Password: mustPassword([]byte("pw"))})
+	attrs, err = tpm2Instance.defaultSealKeyAttributes(&types.SealOptions{Password: mustPassword(t, []byte("pw"))})
 	require.NoError(t, err)
 	assert.Empty(t, attrs.TPMPolicy,
 		"a seal with a password is protected by the password alone")
@@ -422,19 +422,19 @@ func TestSeal_Unseal_OptsPassword_RoundTrip(t *testing.T) {
 
 	sealed, err := tpm2Instance.Seal(ctx, data, &types.SealOptions{
 		KeyAttributes: &types.KeyAttributes{CN: "opts-password-key", Parent: ssrkAttrs},
-		Password:      mustPassword([]byte("opts-level-password")),
+		Password:      mustPassword(t, []byte("opts-level-password")),
 	})
 	require.NoError(t, err)
 
 	_, err = tpm2Instance.Unseal(ctx, sealed, &types.UnsealOptions{
 		KeyAttributes: &types.KeyAttributes{CN: "opts-password-key", Parent: ssrkAttrs},
-		Password:      mustPassword([]byte("wrong-password")),
+		Password:      mustPassword(t, []byte("wrong-password")),
 	})
 	require.Error(t, err, "the wrong password must not unseal data protected by SealOptions.Password")
 
 	got, err := tpm2Instance.Unseal(ctx, sealed, &types.UnsealOptions{
 		KeyAttributes: &types.KeyAttributes{CN: "opts-password-key", Parent: ssrkAttrs},
-		Password:      mustPassword([]byte("opts-level-password")),
+		Password:      mustPassword(t, []byte("opts-level-password")),
 	})
 	require.NoError(t, err)
 	assert.Equal(t, data, got)

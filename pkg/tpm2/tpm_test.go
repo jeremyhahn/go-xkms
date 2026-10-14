@@ -113,6 +113,7 @@ func extendRandomBytes(transport transport.TPM) {
 }
 
 func createKey(
+	t testing.TB,
 	tpm TrustedPlatformModule,
 	platformPolicy bool) *types.KeyAttributes {
 
@@ -130,7 +131,7 @@ func createKey(
 		KeyAlgorithm: x509.RSA,
 		KeyType:      types.KeyTypeTPM,
 		Parent:       ekAttrs,
-		Password:     mustPassword([]byte("srk-pass")),
+		Password:     mustPassword(t, []byte("srk-pass")),
 		TPMPolicy:    platformPolicyName(platformPolicy),
 		StoreType:    types.StoreTPM2,
 		TPMAttributes: &types.TPMAttributes{
@@ -152,7 +153,7 @@ func createKey(
 		KeyType:      types.KeyTypeCA,
 		Parent:       srkAttrs,
 		TPMPolicy:    platformPolicyName(platformPolicy),
-		Password:     mustPassword([]byte("key-pass")),
+		Password:     mustPassword(t, []byte("key-pass")),
 		StoreType:    types.StoreTPM2,
 		TPMAttributes: &types.TPMAttributes{
 			Hierarchy: tpm2.TPMRHOwner,
@@ -405,7 +406,7 @@ func TestSign_RSAKeyCreationAndSigning(t *testing.T) {
 	defer func() { _ = tpm.Close() }()
 
 	// Create an RSA key
-	childKeyAttrs := createKey(tpm, false)
+	childKeyAttrs := createKey(t, tpm, false)
 	srkAttrs := childKeyAttrs.Parent
 
 	keyAttrs := &types.KeyAttributes{
@@ -415,7 +416,7 @@ func TestSign_RSAKeyCreationAndSigning(t *testing.T) {
 		KeyType:      types.KeyTypeSigning,
 		StoreType:    types.StoreTPM2,
 		Parent:       srkAttrs,
-		Password:     mustPassword([]byte("key-pass")),
+		Password:     mustPassword(t, []byte("key-pass")),
 		TPMAttributes: &types.TPMAttributes{
 			Hierarchy: tpm2.TPMRHOwner,
 		},
@@ -444,7 +445,7 @@ func TestSign_ECDSAKeyCreationAndSigning(t *testing.T) {
 	defer func() { _ = tpm.Close() }()
 
 	// Create an ECDSA key
-	childKeyAttrs := createKey(tpm, false)
+	childKeyAttrs := createKey(t, tpm, false)
 	srkAttrs := childKeyAttrs.Parent
 
 	keyAttrs := &types.KeyAttributes{
@@ -454,7 +455,7 @@ func TestSign_ECDSAKeyCreationAndSigning(t *testing.T) {
 		KeyType:      types.KeyTypeSigning,
 		StoreType:    types.StoreTPM2,
 		Parent:       srkAttrs,
-		Password:     mustPassword([]byte("key-pass")),
+		Password:     mustPassword(t, []byte("key-pass")),
 		TPMAttributes: &types.TPMAttributes{
 			Hierarchy: tpm2.TPMRHOwner,
 		},
@@ -488,7 +489,7 @@ func TestSign_WithInvalidHashFuncMD5(t *testing.T) {
 	defer func() { _ = tpm.Close() }()
 
 	// Create an RSA key
-	childKeyAttrs := createKey(tpm, false)
+	childKeyAttrs := createKey(t, tpm, false)
 	srkAttrs := childKeyAttrs.Parent
 
 	keyAttrs := &types.KeyAttributes{
@@ -498,7 +499,7 @@ func TestSign_WithInvalidHashFuncMD5(t *testing.T) {
 		KeyType:      types.KeyTypeSigning,
 		StoreType:    types.StoreTPM2,
 		Parent:       srkAttrs,
-		Password:     mustPassword([]byte("key-pass")),
+		Password:     mustPassword(t, []byte("key-pass")),
 		TPMAttributes: &types.TPMAttributes{
 			Hierarchy: tpm2.TPMRHOwner,
 		},
@@ -524,7 +525,7 @@ func TestSign_WithCustomKeyBackend(t *testing.T) {
 	defer func() { _ = tpm.Close() }()
 
 	// Create an RSA key
-	childKeyAttrs := createKey(tpm, false)
+	childKeyAttrs := createKey(t, tpm, false)
 	srkAttrs := childKeyAttrs.Parent
 
 	// Create a memory backend for testing
@@ -540,7 +541,7 @@ func TestSign_WithCustomKeyBackend(t *testing.T) {
 		KeyType:      types.KeyTypeSigning,
 		StoreType:    types.StoreTPM2,
 		Parent:       srkAttrs,
-		Password:     mustPassword([]byte("key-pass")),
+		Password:     mustPassword(t, []byte("key-pass")),
 		TPMAttributes: &types.TPMAttributes{
 			Hierarchy: tpm2.TPMRHOwner,
 		},
@@ -808,7 +809,7 @@ func TestHashSequence_WithHierarchyAuthPath(t *testing.T) {
 		CN: "test",
 		TPMAttributes: &types.TPMAttributes{
 			HashAlg:       tpm2.TPMAlgSHA256,
-			HierarchyAuth: mustPassword([]byte("test-auth")),
+			HierarchyAuth: mustPassword(t, []byte("test-auth")),
 		},
 	}
 
@@ -832,7 +833,7 @@ func TestHashSequence_WithParentHierarchyAuthPath(t *testing.T) {
 	parentAttrs := &types.KeyAttributes{
 		CN: "parent",
 		TPMAttributes: &types.TPMAttributes{
-			HierarchyAuth: mustPassword([]byte("parent-auth")),
+			HierarchyAuth: mustPassword(t, []byte("parent-auth")),
 		},
 	}
 
@@ -1853,7 +1854,7 @@ func TestChangeAuth_WrongCurrentAuth(t *testing.T) {
 	_, tpm := createSim(t, false)
 	defer func() { _ = tpm.Close() }()
 
-	srkAttrs := createKey(tpm, false).Parent
+	srkAttrs := createKey(t, tpm, false).Parent
 	tpmImpl := tpm.(*TPM2)
 
 	err := tpmImpl.ChangeAuth(srkAttrs.TPMAttributes.Handle, []byte("not-srk-pass"), []byte("new-pass"))

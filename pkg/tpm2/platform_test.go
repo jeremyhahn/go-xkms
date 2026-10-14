@@ -732,6 +732,75 @@ func TestPlatformKeyStore_InitializeCreateSRKError(t *testing.T) {
 	assert.False(t, pks.IsInitialized(), "must not be initialized on SRK error")
 }
 
+// TestPlatformKeyStore_InitializeFailureReleasesPINs pins that a failed
+// Initialize releases the user PIN it built, and that a retry replaces the
+// SO PIN on the SRK attributes rather than stacking another enclave. Before
+// the fix every failed attempt left both PINs mlocked until process exit.
+func TestPlatformKeyStore_InitializeFailureReleasesPINs(t *testing.T) {
+	mock := &mockTPMForPKS{
+		config:        testConfigForPKS(false),
+		createSRKErr:  ErrNotInitialized,
+		readHandleErr: tpm2.TPMRC(0x18b),
+	}
+	pks := newTestPlatformKeyStore(t, mock)
+
+	inUse := lockedBytesInUse(t)
+	require.ErrorIs(t, pks.Initialize("", "userpin1"), ErrPlatformKeyStoreCreateSRK)
+	assert.Equal(t, inUse, lockedBytesInUse(t), "a failed Initialize must release the user PIN")
+
+	require.ErrorIs(t, pks.Initialize("supersecret", "userpin1"), ErrPlatformKeyStoreCreateSRK)
+	withSOPIN := lockedBytesInUse(t)
+	assert.Greater(t, withSOPIN, inUse, "the SO PIN stays on the SRK attributes for the retry")
+	assert.Equal(t, "supersecret", string(pks.srkAttrs.TPMAttributes.HierarchyAuth.Bytes()))
+
+	require.ErrorIs(t, pks.Initialize("supersecret", "userpin1"), ErrPlatformKeyStoreCreateSRK)
+	assert.Equal(t, withSOPIN, lockedBytesInUse(t), "a retry must release the SO PIN it replaces")
+}
+
+// TestPlatformKeyStore_EnsureSRKAuthReleasesPINs pins the evict-and-recreate
+// path: a failed recreate releases the user PIN, and a successful one
+// releases the password the cached SRK attributes held before, so repeated
+// recreates hold a steady amount of locked memory.
+func TestPlatformKeyStore_EnsureSRKAuthReleasesPINs(t *testing.T) {
+	t.Run("failed recreate", func(t *testing.T) {
+		mock := &mockTPMForPKS{
+			config:        testConfigForPKS(false),
+			createSRKErr:  tpm2.TPMRC(0x14c),
+			verifyAuthErr: ErrAuthFailed,
+		}
+		pks := newTestPlatformKeyStore(t, mock)
+
+		require.ErrorIs(t, pks.Initialize("supersecret", "userpin1"), ErrPlatformKeyStoreCreateSRK)
+		afterFirst := lockedBytesInUse(t)
+		require.ErrorIs(t, pks.Initialize("supersecret", "userpin1"), ErrPlatformKeyStoreCreateSRK)
+		assert.Equal(t, afterFirst, lockedBytesInUse(t))
+	})
+
+	t.Run("successful recreate", func(t *testing.T) {
+		mock := &mockTPMForPKS{
+			config:        testConfigForPKS(false),
+			createSRKErr:  tpm2.TPMRC(0x14c),
+			verifyAuthErr: ErrAuthFailed,
+		}
+		pks := newTestPlatformKeyStore(t, mock)
+		require.ErrorIs(t, pks.Initialize("supersecret", "userpin1"), ErrPlatformKeyStoreCreateSRK)
+
+		// The SRK now exists. Each call below starts from an auth mismatch
+		// and recreates the SRK, after which the new PIN verifies.
+		mock.createSRKErr = nil
+		mock.verifyAuthClearOnCreateSRK = true
+		recreate := func(userPIN string) {
+			mock.verifyAuthErr = ErrAuthFailed
+			require.NoError(t, pks.Initialize("supersecret", userPIN))
+		}
+		recreate("userpin1")
+		afterFirst := lockedBytesInUse(t)
+		recreate("userpin2")
+		assert.Equal(t, afterFirst, lockedBytesInUse(t), "a recreate must release the password it replaces")
+		assert.Equal(t, "userpin2", string(pks.srkAttrs.Password.Bytes()))
+	})
+}
+
 func TestPlatformKeyStore_InitializeNVDefinedSuccess(t *testing.T) {
 	// TPM_RC_NV_DEFINED (0x14c) means the SRK persistent handle is already
 	// occupied from a prior provisioning attempt. This should be treated

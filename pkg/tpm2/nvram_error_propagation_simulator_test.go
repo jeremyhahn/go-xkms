@@ -25,7 +25,7 @@ func TestNVWrite_EveryCommandFailurePropagates(t *testing.T) {
 			h.TPM.transport = tr
 			keyAttrs := &types.KeyAttributes{
 				Parent:    ekAttrs,
-				Password:  mustPassword([]byte("test")),
+				Password:  mustPassword(t, []byte("test")),
 				TPMPolicy: types.TPMPolicyPlatform,
 				SealData:  types.NewSealData([]byte("secret")),
 				TPMAttributes: &types.TPMAttributes{
@@ -54,7 +54,7 @@ func TestNVRead_EveryCommandFailurePropagates(t *testing.T) {
 
 		keyAttrs := &types.KeyAttributes{
 			Parent:    ekAttrs,
-			Password:  mustPassword([]byte("test")),
+			Password:  mustPassword(t, []byte("test")),
 			TPMPolicy: types.TPMPolicyPlatform,
 			SealData:  types.NewSealData([]byte("secret")),
 			TPMAttributes: &types.TPMAttributes{
@@ -304,7 +304,7 @@ func TestNVWrite_SecretExceedsUint16_ReturnsErrWithoutTouchingTheTPM(t *testing.
 	oversized := make([]byte, 1<<16+1)
 	keyAttrs := &types.KeyAttributes{
 		Parent:   ekAttrs,
-		Password: mustPassword([]byte("test")),
+		Password: mustPassword(t, []byte("test")),
 		SealData: types.NewSealData(oversized),
 		TPMAttributes: &types.TPMAttributes{
 			Handle:    tpm2.TPMHandle(nvramOwnerIndex),

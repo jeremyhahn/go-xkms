@@ -24,6 +24,7 @@ type mockTPMForPassword struct {
 	sealErr      error
 	randomSource io.Reader
 	unsealCount  atomic.Int32 // Track number of Unseal calls for cache testing
+	sealedWith   []byte       // keyAttrs.Password as SealKey saw it
 }
 
 // UnsealKey implements the legacy unseal method
@@ -34,6 +35,9 @@ func (m *mockTPMForPassword) UnsealKey(keyAttrs *types.KeyAttributes, backend st
 
 // SealKey implements the legacy seal method
 func (m *mockTPMForPassword) SealKey(keyAttrs *types.KeyAttributes, backend store.KeyBackend, overwrite bool) (*tpm2.CreateResponse, error) {
+	if keyAttrs.Password != nil {
+		m.sealedWith = keyAttrs.Password.Bytes()
+	}
 	return m.sealResponse, m.sealErr
 }
 
@@ -334,7 +338,7 @@ func TestPlatformPasswordCreate_SealError(t *testing.T) {
 	backend := &mockKeyBackendForPassword{}
 	keyAttrs := &types.KeyAttributes{
 		CN:       "test-key",
-		Password: mustPassword([]byte("test")),
+		Password: mustPassword(t, []byte("test")),
 	}
 
 	pp := NewPlatformPassword(logger, tpmMock, keyAttrs, backend).(*PlatformPassword)
@@ -431,7 +435,7 @@ func TestPlatformPasswordCreate_DefaultPassword(t *testing.T) {
 	// Use the default password which should trigger key generation
 	keyAttrs := &types.KeyAttributes{
 		CN:       "test-key",
-		Password: mustPassword([]byte(store.DEFAULT_PASSWORD)),
+		Password: mustPassword(t, []byte(store.DEFAULT_PASSWORD)),
 	}
 
 	pp := NewPlatformPassword(logger, tpmMock, keyAttrs, backend).(*PlatformPassword)
@@ -448,6 +452,57 @@ func TestPlatformPasswordCreate_DefaultPassword(t *testing.T) {
 	}
 }
 
+// TestPlatformPasswordCreate_ReleasesGeneratedSecret pins that the random
+// secret Create generates for the default password is sealed and then its
+// enclave released. Before the fix the attributes were re-pointed after
+// sealing and the generated password stayed mlocked until process exit.
+func TestPlatformPasswordCreate_ReleasesGeneratedSecret(t *testing.T) {
+	tpmMock := &mockTPMForPassword{sealResponse: &tpm2.CreateResponse{}}
+	keyAttrs := &types.KeyAttributes{
+		CN:       "generated-secret",
+		Password: mustPassword(t, []byte(store.DEFAULT_PASSWORD)),
+	}
+	pp := NewPlatformPassword(slog.Default(), tpmMock, keyAttrs, &mockKeyBackendForPassword{}).(*PlatformPassword)
+
+	inUse := lockedBytesInUse(t)
+	if err := pp.Create(); err != nil {
+		t.Fatalf("Create() unexpected error: %v", err)
+	}
+
+	if len(tpmMock.sealedWith) != 32 {
+		t.Errorf("sealed a %d-byte secret, want the generated 32-byte key", len(tpmMock.sealedWith))
+	}
+	if got := lockedBytesInUse(t); got != inUse {
+		t.Errorf("locked memory after Create = %d bytes, want %d: the generated secret leaked", got, inUse)
+	}
+}
+
+// TestPlatformPasswordCreate_SealFailureKeepsCallerPassword pins that a
+// failed seal releases the generated secret and leaves the caller's own
+// password on the attributes, still readable.
+func TestPlatformPasswordCreate_SealFailureKeepsCallerPassword(t *testing.T) {
+	sealErr := errors.New("seal failed")
+	tpmMock := &mockTPMForPassword{sealErr: sealErr}
+	original := mustPassword(t, []byte(store.DEFAULT_PASSWORD))
+	keyAttrs := &types.KeyAttributes{CN: "seal-fails", Password: original}
+	pp := NewPlatformPassword(slog.Default(), tpmMock, keyAttrs, &mockKeyBackendForPassword{}).(*PlatformPassword)
+
+	inUse := lockedBytesInUse(t)
+	if err := pp.Create(); !errors.Is(err, sealErr) {
+		t.Fatalf("Create() error = %v, want %v", err, sealErr)
+	}
+
+	if keyAttrs.Password != original {
+		t.Error("a failed seal must leave the caller's password on the attributes")
+	}
+	if got := string(keyAttrs.Password.Bytes()); got != store.DEFAULT_PASSWORD {
+		t.Errorf("caller's password reads %q after a failed seal", got)
+	}
+	if got := lockedBytesInUse(t); got != inUse {
+		t.Errorf("locked memory after failed Create = %d bytes, want %d", got, inUse)
+	}
+}
+
 func TestPlatformPasswordCreate_WithPlatformPolicy(t *testing.T) {
 	logger := slog.Default()
 	tpmMock := &mockTPMForPassword{
@@ -458,7 +513,7 @@ func TestPlatformPasswordCreate_WithPlatformPolicy(t *testing.T) {
 
 	keyAttrs := &types.KeyAttributes{
 		CN:        "test-key",
-		Password:  mustPassword([]byte("test-pass")),
+		Password:  mustPassword(t, []byte("test-pass")),
 		TPMPolicy: types.TPMPolicyPlatform,
 	}
 
@@ -487,7 +542,7 @@ func TestPlatformPasswordCreate_WithoutPlatformPolicy(t *testing.T) {
 
 	keyAttrs := &types.KeyAttributes{
 		CN:       "test-key",
-		Password: mustPassword([]byte("test-pass")),
+		Password: mustPassword(t, []byte("test-pass")),
 	}
 
 	pp := NewPlatformPassword(logger, tpmMock, keyAttrs, backend).(*PlatformPassword)

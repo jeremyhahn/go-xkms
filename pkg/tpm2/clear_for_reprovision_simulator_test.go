@@ -59,7 +59,7 @@ func TestClearForReprovision_PlatformPath(t *testing.T) {
 	tpmImpl := freshSimTPM(t)
 
 	lockoutHierarchy := tpm2.TPMRHLockout
-	require.NoError(t, tpmImpl.SetHierarchyAuth(nil, mustPassword([]byte("lockout-pin")), &lockoutHierarchy))
+	require.NoError(t, tpmImpl.SetHierarchyAuth(nil, mustPassword(t, []byte("lockout-pin")), &lockoutHierarchy))
 
 	rebootRequired, err := tpmImpl.ClearForReprovision()
 	require.NoError(t, err)
@@ -78,9 +78,9 @@ func TestClearForReprovision_PPIPath(t *testing.T) {
 	tpmImpl := freshSimTPM(t)
 
 	lockoutHierarchy := tpm2.TPMRHLockout
-	require.NoError(t, tpmImpl.SetHierarchyAuth(nil, mustPassword([]byte("lockout-pin")), &lockoutHierarchy))
+	require.NoError(t, tpmImpl.SetHierarchyAuth(nil, mustPassword(t, []byte("lockout-pin")), &lockoutHierarchy))
 	platformHierarchy := tpm2.TPMRHPlatform
-	require.NoError(t, tpmImpl.SetHierarchyAuth(nil, mustPassword([]byte("platform-pin")), &platformHierarchy))
+	require.NoError(t, tpmImpl.SetHierarchyAuth(nil, mustPassword(t, []byte("platform-pin")), &platformHierarchy))
 
 	var gotPath string
 	var gotData []byte
@@ -106,9 +106,9 @@ func TestClearForReprovision_PPIPathFails(t *testing.T) {
 	tpmImpl := freshSimTPM(t)
 
 	lockoutHierarchy := tpm2.TPMRHLockout
-	require.NoError(t, tpmImpl.SetHierarchyAuth(nil, mustPassword([]byte("lockout-pin")), &lockoutHierarchy))
+	require.NoError(t, tpmImpl.SetHierarchyAuth(nil, mustPassword(t, []byte("lockout-pin")), &lockoutHierarchy))
 	platformHierarchy := tpm2.TPMRHPlatform
-	require.NoError(t, tpmImpl.SetHierarchyAuth(nil, mustPassword([]byte("platform-pin")), &platformHierarchy))
+	require.NoError(t, tpmImpl.SetHierarchyAuth(nil, mustPassword(t, []byte("platform-pin")), &platformHierarchy))
 
 	orig := ppiRequestWriter
 	ppiRequestWriter = func(path string, data []byte, perm os.FileMode) error {

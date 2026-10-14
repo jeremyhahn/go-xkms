@@ -122,7 +122,7 @@ func TestState_OwnedTPM(t *testing.T) {
 	require.ErrorIs(t, err, ErrNotInitialized)
 	t.Cleanup(func() { _ = tpmIface.Close() })
 
-	require.NoError(t, tpmIface.Provision(mustPassword([]byte("owned-tpm-so-pin"))))
+	require.NoError(t, tpmIface.Provision(mustPassword(t, []byte("owned-tpm-so-pin"))))
 
 	state, err := tpmIface.State()
 	require.NoError(t, err)
