@@ -205,7 +205,7 @@ KEM (`module_kem.go`, `module_kem_quantum.go`), authenticated wrapping
 reachable only through the v3.2 function list. Asynchronous operations
 (`module_async.go`) answer `CKR_FUNCTION_NOT_SUPPORTED`, and message-based
 signature-first verification is absent. Remaining work is tracked in
-[`../pkcs11/ROADMAP.md`](../pkcs11/ROADMAP.md); detail is in
+the repository-root [`ROADMAP.md`](../../ROADMAP.md); detail is in
 [engineering.md](engineering.md#interfaces-and-v32-status).
 
 ## What this feature deliberately does not do

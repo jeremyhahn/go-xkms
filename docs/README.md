@@ -11,10 +11,9 @@ go-xkms is a unified cryptographic key management library for Go that provides a
 
 ## Feature documentation
 
-Each feature below has a folder holding five documents — `architecture.md`,
-`engineering.md`, `cli.md`, `api.md`, `user.md`. Together they are the
-feature's requirements: read the folder before reading the code, and change
-the folder in the same commit that changes the behavior.
+[SPEC.md](SPEC.md) is the contract: every feature and its requirements. Each
+feature below has a documentation folder: read the folder before reading the
+code, and change the folder in the same commit that changes the behavior.
 
 | Feature | What it covers |
 |---------|----------------|
@@ -77,8 +76,7 @@ cross-reference them instead of repeating them:
   `xkmsctl` flags every command group inherits.
 
 Everything below this section predates the feature-folder convention. It is
-**unconverted debt, not a precedent** — a new feature gets a five-file folder
-regardless of what the rest of this tree looks like.
+**unconverted debt, not a precedent**.
 
 ## Migration record
 
@@ -90,23 +88,6 @@ While conversion is in progress, **a feature folder is NORMATIVE for its
 feature.** A legacy path listed as superseded is retained only for detail not
 yet absorbed and is **non-normative** — where the two disagree, the feature
 folder wins.
-
-Do not add a count here. Derive it:
-
-```bash
-ls -d docs/*/ xkey/docs/*/ | while read d; do
-    ok=1
-    for f in architecture engineering cli api user; do
-        [ -f "$d$f.md" ] || ok=0
-    done
-    [ $ok -eq 1 ] && echo "$d"
-done
-```
-
-Test for **all five files**, not just `architecture.md`. Several legacy folders
-— `docs/acme/`, `xkey/docs/ble/`, `xkey/docs/gui/` —
-already contain a file called `architecture.md`, so the shorter form overcounts
-by three and reports unconverted folders as converted.
 
 ### Legacy paths superseded by a feature folder
 
@@ -160,7 +141,7 @@ Several of these need a note rather than a row:
   repository and whose project has been retired; it, and the rest of
   `acme/cli/`, were deleted by go-xkms#942 — see
   [`acme-issuance/cli.md`](acme-issuance/cli.md).
-- **What remains of `acme/`.** Everything except three things was absorbed
+- **What remains of `acme/`.** Everything except two things was absorbed
   and deleted by go-xkms#942 and go-xkms#1433 (see the table above):
   - `acme/gui/` is still legacy: the dual-mode admin+client SPA,
     `pkg/acme/gui/{admin,client,guard,webui}`. go-xkms#942 corrected its
@@ -168,7 +149,6 @@ Several of these need a note rather than a row:
     admin web UI xkmsd actually serves is a separate implementation,
     `pkg/acme/web/packages/admin` at `/admin-ui` (`cmd/xkmsd/admin.go:54`);
     reconciling the two is unresolved.
-  - `acme/ROADMAP.md` is kept on purpose (see "Roadmaps stay out" below).
   - `acme/boulder-comparison-enhancements.md` is kept on purpose as a
     reference ([`acme-issuance/architecture.md`](acme-issuance/architecture.md)
     cites it directly).
@@ -240,8 +220,7 @@ shipped features without a folder after all, and those are being converted
 one issue at a time. Each one is added to the table below as it lands. Every area this
 section used to list has since been converted; the table below is kept as
 a record of where each one landed, not as an open queue. Before adding a
-new row here, re-run the derivation loop at the top of this file and
-check the top "Feature documentation" table first — several rows below
+new row here, check the top "Feature documentation" table first — several rows below
 were stale (already converted, sometimes in a different repository
 module) by the time they were re-verified for this pass.
 
@@ -290,9 +269,8 @@ tree was absorbed into that folder and deleted (go-xkms#1433).
 build, operational and contributor documentation, not features.
 
 **Roadmaps stay out of feature folders.** Feature folders document what *is*.
-`ROADMAP.md`, `ROADMAP-bootstrap.md`, `tpm-refactor-roadmap.md`,
-`cli-gui-parity.md`, `acme/ROADMAP.md` and `pkcs11/ROADMAP.md` are future work
-and stay where they are.
+The one roadmap is the repository-root [ROADMAP.md](../ROADMAP.md);
+`tpm-refactor-roadmap.md` and `cli-gui-parity.md` stay where they are.
 
 **Operator checklists.** `pkcs11/module/security.md` became
 [`pkcs11-provider-module/user.md`](pkcs11-provider-module/user.md#hardening)
@@ -321,7 +299,7 @@ Configuration guides for various components:
 - [TPM2 Session Encryption](tpm2/engineering.md#bus-protection) - TPM session security
 
 ### [Trust Bootstrap](trust-bootstrap/)
-Converted to the five-file feature layout — see [Feature documentation](#feature-documentation) below.
+Converted to a feature folder — see [Feature documentation](#feature-documentation) below.
 - [Engineering](trust-bootstrap/engineering.md) - `pkg/trust/bootstrap` modes and `Fetch`, the `pkg/trust/resolver` scope chain, the Noise bootstrap listener's configuration
 
 ### [Init](init-ceremony/)
@@ -329,11 +307,11 @@ First-boot server initialization ceremony. Backend credential seal strategies
 are now [backend-credentials](backend-credentials/).
 
 ### [Auth factors](auth-factors/)
-Converted to the five-file feature layout — see [Feature documentation](#feature-documentation) below.
+Converted to a feature folder — see [Feature documentation](#feature-documentation) below.
 - [Architecture](auth-factors/architecture.md) - Identity (qrdb) vs key-domain (xkms) split, factor registration
 
 ### [WebAuthn](webauthn/)
-Converted to the five-file feature layout — see [Feature documentation](#feature-documentation) below.
+Converted to a feature folder — see [Feature documentation](#feature-documentation) below.
 - [Architecture](webauthn/architecture.md) - Canonical RP implementation consumed by every binary in the stack via the QuicBaaS SDK re-export
 - [Engineering](webauthn/engineering.md) - Exported surface, ceremony invariants, the headless client used by `xkmsctl` and tests
 
@@ -370,8 +348,7 @@ FIPS compliance and algorithm selection:
 - [FIPS Strategy](fips/README.md) - crypto/fips140.Enabled mode detection, build provenance, KDF selection, and PasswordHasher
 
 ### [Development](development/)
-Development and contributor documentation:
-- [Encoding Interop Status](development/encoding-interop-status.md) - JWK/JWT/JWE test implementation status
+Development and contributor documentation.
 
 ## Quick Start
 

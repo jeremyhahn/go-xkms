@@ -7,10 +7,10 @@ xKey is a unified security key interface that provides FIDO2/WebAuthn, OATH TOTP
 
 ## Feature documentation
 
-Each feature below has a folder holding five documents — `architecture.md`,
-`engineering.md`, `cli.md`, `api.md`, `user.md`. Together they are the
-feature's requirements: read the folder before reading the code, and change
-the folder in the same commit that changes the behavior.
+[docs/SPEC.md](../../docs/SPEC.md) is the contract: every feature and its
+requirements. Each feature below has a documentation folder: read the folder
+before reading the code, and change the folder in the same commit that changes
+the behavior.
 
 **Add the row in the same commit that creates the folder.** An index updated in
 a later sweep is wrong in between, and the reader who hits it in between cannot
@@ -23,7 +23,7 @@ tell.
 | [device](device/) | The `xkey device` CLI namespace: client-side agent enrollment (`enroll`/`connect`) and QR-code pairing | `device/README.md`, `device/pairing.md`, `device/qr-pairing.md`, `device/tcp-relay.md` |
 | [browser-trust-injection](browser-trust-injection/) | Injecting xkey trust-store CA certificates into Chrome- and Firefox-family browsers via a pure-Go NSS `cert9.db` writer, isolated/shared profile modes, and Chrome extension import | root `docs/browser/README.md` — **absorbed and deleted** (go-xkms#1433): its on-disk layout and detected browsers, corrected against the code, are in `engineering.md`; its `MOZ_POLICIES_FILE` mechanism, browser-name `--browser` values and single `trust-hash` file were wrong, and its `CT,C,C` trust-flag claim has no counterpart in `xkey/pkg/nssdb`; all were dropped |
 | [fido2](fido2/) | The `xkey fido2` daemon process, IPC-facing verbs (`touch`, `unlock`, `status`, `provision-attestation`), the GUI's FIDO2 device/service host, and a PIN/hmac-secret/SO-token protocol reference for `xkey/pkg/authenticator` | `fido2/README.md`, `fido2/overview.md`, `fido2/authenticator-*.md`, `fido2/daemon-*.md` (with `virtual-authenticator`) |
-| [gui](gui/) | The Wails v2 desktop GUI: the `App` composition root, the ~44-service Wails-bound backend surface, the opt-in Unix-socket IPC server (local app access, `xkey app-access`), events, and the Svelte frontend | `gui/architecture.md` (`gui/README.md`, `gui/features.md`, `gui/design-system.md`, `gui/setup-wizard.md`, `gui/api-explorer.md`, `gui/browser-settings.md`, `gui/ROADMAP.md` remain as superseded background) |
+| [gui](gui/) | The Wails v2 desktop GUI: the `App` composition root, the ~44-service Wails-bound backend surface, the opt-in Unix-socket IPC server (local app access, `xkey app-access`), events, and the Svelte frontend | `gui/architecture.md` (`gui/README.md`, `gui/features.md`, `gui/design-system.md`, `gui/setup-wizard.md`, `gui/api-explorer.md`, `gui/browser-settings.md` remain as superseded background) |
 | [ble](ble/) | The Bluetooth Low Energy transport for the phone-as-HSM pairing protocol: GATT wire shape, central and peripheral roles, BlueZ integration | `ble/README.md`, `ble/architecture.md`, `ble/protocol.md`, `ble/android-app.md`, `ble/testing.md` |
 | [headless-webauthn](headless-webauthn/) | Programmatic WebAuthn ceremonies without a browser or a human | `fido2/` (with `virtual-authenticator`) |
 | [autofill](autofill/) | Browser extension credential/TOTP autofill: native messaging, extension pairing, CTAP2 assertion verification, policy | `autofill/README.md`, `autofill/compliance.md`, `autofill/extension.md`, `autofill/policy.md` |
@@ -37,7 +37,7 @@ tell.
 | [pkcs11-manager](pkcs11-manager/) | The PKCS#11 module/token manager wrapper and its automatic per-slot backend-registry synchronization | — |
 | [pkcs11](pkcs11/) | xkey's PKCS#11 side: GUI module/slot/token management, the embedded and IPC `PKCS11Transport` implementations, and the `--backend pkcs11` surface across other commands | `pkcs11/ipc.md` |
 | [platform-trust](platform-trust/) | Trust bootstrap, the classified truststore, platform CA import | `architecture/server-registry.md` (trust half) |
-| [seal](seal/) | The Barrier, barrier auto-unseal through a named TPM policy (shared by the CLI and GUI), and the sealed-blob store | `seal/README.md`, `seal/platform-policy.md`, `configuration/auto-unseal.md` (now a pointer) |
+| [seal](seal/) | The Barrier, barrier auto-unseal through a named TPM policy (shared by the CLI and GUI), and the sealed-blob store | `seal/README.md`, `seal/platform-policy.md`, `configuration/auto-unseal.md` (deleted) |
 | [secret-service](secret-service/) | The `org.freedesktop.secrets` D-Bus daemon exposing the static-password store to secret-tool, git-credential-libsecret and browsers, with Lock/Unlock tied to the barrier | — |
 | [setup-wizard](setup-wizard/) | First-run setup: quick and manual personal setup, enterprise SO provisioning and onboarding, and where the generated SO PIN may live | `gui/setup-wizard.md`, `seal/setup-wizard.md` |
 | [ssh](ssh/) | xkey's SSH key/profile/host-key management, connect/console, local `ssh_config`/agent discovery, and the GUI SSH services | `ssh/README.md` |
@@ -55,8 +55,7 @@ consumes it through `go-xkms/sdk/go`, so these folders document a product
 surface rather than a second implementation.
 
 Everything below this section predates the feature-folder convention. It is
-**unconverted debt, not a precedent** — a new feature gets a five-file folder
-regardless of what the rest of this tree looks like. While conversion is in
+**unconverted debt, not a precedent**. While conversion is in
 progress a feature folder is NORMATIVE for its feature and a superseded legacy
 path is not; where they disagree, the feature folder wins.
 
@@ -80,11 +79,11 @@ Every feature folder is converted. Not features and staying as they are:
 | [password/](password/) | Static password management with encryption and access modes |
 | [phone/](phone/) | The `xkey/pkg/phone` FIDO2 key backend, its transports, and the GUI's `PhoneService` (converted; see [Feature documentation](#feature-documentation) above; pairing/protocol/CLI is [phone-hsm/](phone-hsm/)) |
 | [piv/](piv/) | PIV smart card certificate management |
-| [pkcs11/](pkcs11/) | xkey's PKCS#11 module/slot/token management, transports, and `--backend pkcs11` surface (five-file feature folder) |
+| [pkcs11/](pkcs11/) | xkey's PKCS#11 module/slot/token management, transports, and `--backend pkcs11` surface (feature folder) |
 | [roadmap/](roadmap/) | Feature roadmaps for media, PIV, and web |
 | [seal/](seal/) | The Barrier, TPM PCR-policy auto-unseal, named PCR policies, and the legacy sealed-blob store |
 | [secret-service/](secret-service/) | The `org.freedesktop.secrets` D-Bus Secret Service daemon |
-| [ssh/](ssh/) | xkey's SSH key/profile/host-key/console management (five-file feature folder) |
+| [ssh/](ssh/) | xkey's SSH key/profile/host-key/console management (feature folder) |
 | [testing/](testing/) | Testing guides and end-to-end test documentation |
 | [usage/](usage/) | CLI usage guides, tutorials, and command reference |
 | [usb/](usb/) | USB CCID smart card interface and disk image creation |
@@ -228,7 +227,7 @@ xkey fido2 --cdp --cdp-port 9222
 ### [FIDO2](fido2/)
 
 See the [Feature documentation](#feature-documentation) table above for the
-five-file folder: [architecture](fido2/architecture.md),
+feature folder: [architecture](fido2/architecture.md),
 [engineering](fido2/engineering.md), [cli](fido2/cli.md), [api](fido2/api.md),
 [user](fido2/user.md). The CTAP2 authenticator itself — commands, PIN
 establishment, credential storage, and the `xkey fido2`/`xkey uhid` flag
@@ -243,7 +242,7 @@ reference — is [virtual-authenticator](virtual-authenticator/).
 
 ### [Configuration](configuration/)
 - [Overview](configuration/README.md) -- All configuration options
-- [Auto-Unseal](configuration/auto-unseal.md) -- Moved to [seal/](seal/)
+- [Auto-Unseal](seal/architecture.md) -- the [seal/](seal/) feature folder
 - [Enterprise Setup](configuration/enterprise-setup.md) -- Enterprise deployment and policy configuration
 
 ### [GUI](gui/)
@@ -252,7 +251,7 @@ reference — is [virtual-authenticator](virtual-authenticator/).
 - [CLI](gui/cli.md) -- the GUI/CLI dispatch in the `xkey` binary, and `xkey app-access`
 - [API](gui/api.md) -- the Wails-bound service surface, grouped by method
 - [User Guide](gui/user.md) -- task-oriented usage
-- Superseded background, unconverted: [Overview](gui/README.md), [Features](gui/features.md), [Design System](gui/design-system.md), [Setup Wizard](gui/setup-wizard.md), [API Explorer](gui/api-explorer.md), [Browser Settings](gui/browser-settings.md), [Roadmap](gui/ROADMAP.md)
+- Superseded background, unconverted: [Overview](gui/README.md), [Features](gui/features.md), [Design System](gui/design-system.md), [Setup Wizard](gui/setup-wizard.md), [API Explorer](gui/api-explorer.md), [Browser Settings](gui/browser-settings.md)
 
 ### [SSH](ssh/)
 - [Architecture](ssh/architecture.md) -- the shared store, transport selection, and key-source resolution

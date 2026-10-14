@@ -2082,5 +2082,4 @@ an internal struct, not through `pkg/acme/server/metrics`, so they will not
 automatically join the Prometheus registry or the dashboards above. OCSP
 stapling, CRL distribution-point automation, CT log submission automation
 and cross-signing automation remain roadmap items, not implemented. They are
-tracked in `docs/acme/ROADMAP.md` and deliberately not documented here as if
-they existed.
+deliberately not documented here as if they existed.

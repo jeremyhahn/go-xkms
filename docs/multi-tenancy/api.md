@@ -69,7 +69,7 @@ Two groups deliberately sit outside it:
 
 The **`system` tenant** is the control-plane exception. The SO/bootstrap
 certificate is always scoped to it so the control plane functions before any
-tenant barrier unseals ([`../init-ceremony/api.md`](../init-ceremony/api.md)),
+tenant barrier unseals,
 and when a SPIFFE trust domain is configured the SAN is
 `spiffe://<td>/tenant/system/user/<CN>`.
 

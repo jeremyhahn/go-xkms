@@ -19,7 +19,7 @@ The xKey Desktop GUI provides a system tray application with full window support
 
 ## Current Status
 
-All 10 implementation phases (0-9) of the original [ROADMAP](./ROADMAP.md) are
+All 10 implementation phases (0-9) of the original roadmap are
 complete. The frontend views are in `xkey/frontend/src/views/`, shared
 components in `xkey/frontend/src/lib/components/`, stores in
 `xkey/frontend/src/lib/stores/`, and the Go services bound to the frontend in
@@ -126,7 +126,6 @@ A subset of the fields (`GUIConfig`, `xkey/pkg/gui/config.go`):
 - [Architecture](./architecture.md) - Technical architecture and component design
 - [Design System](./design-system.md) - Colors, typography, components matching Android
 - [Features](./features.md) - Detailed feature specifications
-- [ROADMAP](./ROADMAP.md) - Development checklist and milestones (archived)
 
 ## Technology Stack
 

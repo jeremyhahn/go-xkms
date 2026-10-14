@@ -19,7 +19,7 @@
 //
 // go-xkms builds NO sealing here — it CONSUMES go-qrdb's barrier through the SDK
 // re-export (pkg/seal, surfaced from qrdbsdk). go-qrdb is the single barrier
-// authority (stack ownership doc L1; docs/pkcs11/ROADMAP.md Decisions §C9). This
+// authority (stack ownership doc L1; docs/pkcs11-provider-module/architecture.md, Trust boundaries). This
 // package only wires the barrier's lifecycle to the PKCS#11 user PIN.
 package localseal
 

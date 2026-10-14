@@ -42,7 +42,7 @@ import (
 // embedded service uses a plain file backend (strategy `none`, cleartext),
 // matching SoftHSM's unencrypted default. Keying it under go-qrdb's barrier is
 // the C9/L3 work — the module must consume qrdb's barrier, never build its own
-// sealer (see docs/pkcs11/ROADMAP.md Decisions §C9).
+// sealer (see docs/pkcs11-provider-module/architecture.md, Trust boundaries).
 
 const (
 	// envMode selects the module's transport mode.

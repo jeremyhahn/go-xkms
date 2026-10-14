@@ -16,7 +16,7 @@ package module
 // SealController is the seam through which the module drives the at-rest barrier
 // that protects a token's private key material. The module NEVER builds a
 // sealer — go-qrdb is the single barrier authority (see
-// docs/pkcs11/ROADMAP.md Decisions §C9 and the stack's ownership doc). Instead a
+// docs/pkcs11-provider-module/architecture.md, Trust boundaries, and the stack's ownership doc). Instead a
 // composition root builds a barrier (via the SDK's seal package) and injects an
 // implementation here, so the module only decides WHEN to unseal and reseal,
 // keyed by the credential PKCS#11 semantics say owns the key material: the
