@@ -358,6 +358,7 @@ func TestStoreTypeForBackend(t *testing.T) {
 		{xkms.BackendTypeAzureKV, xkms.StoreAzureKV},
 		{xkms.BackendTypeVault, xkms.StoreVault},
 		{xkms.BackendTypePhone, xkms.StorePhone},
+		{xkms.BackendTypeAVR, xkms.StoreAVR},
 		// Module-ID-style backend types (e.g. a second PKCS#11 token
 		// registered under its own instance name) fall through to the
 		// prefix-matching loop rather than the exact-match cases above.
@@ -407,6 +408,7 @@ func TestEncodeCOSEPublicKey_TypeMismatches(t *testing.T) {
 	}{
 		{"ed25519 key with an ECDSA algorithm", edPub, COSEAlgES256},
 		{"ecdsa key with EdDSA", &ecKey.PublicKey, COSEAlgEdDSA},
+		{"ecdsa key with an RSA algorithm", &ecKey.PublicKey, COSEAlgRS256},
 		{"unknown algorithm", &ecKey.PublicKey, -999},
 		{"nil key", nil, COSEAlgES256},
 	}
@@ -696,6 +698,64 @@ func TestBackendAdapter_SignFailure(t *testing.T) {
 	handle := &adapterKeyHandle{credentialID: []byte("credential"), algorithm: COSEAlgES256}
 	_, err = adapter.Sign(handle, COSEAlgES256, []byte("data"))
 	assert.ErrorIs(t, err, ErrSigningFailed)
+}
+
+// garbageSigner is a device signer whose output is not an ASN.1 ECDSA
+// signature, so low-S normalization cannot parse it.
+type garbageSigner struct{ public crypto.PublicKey }
+
+func (s *garbageSigner) Public() crypto.PublicKey { return s.public }
+
+func (s *garbageSigner) Sign(_ io.Reader, _ []byte, _ crypto.SignerOpts) ([]byte, error) {
+	return []byte{0xDE, 0xAD, 0xBE, 0xEF}, nil
+}
+
+func TestBackendAdapter_SignRejectsMalformedDeviceSignature(t *testing.T) {
+	t.Parallel()
+
+	priv, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	require.NoError(t, err)
+
+	adapter := NewBackendAdapter(&stubProvider{generated: &garbageSigner{public: &priv.PublicKey}}, xkms.BackendTypeSoftware)
+	adapter.SetLogger(slog.New(slog.DiscardHandler))
+
+	handle := &adapterKeyHandle{credentialID: []byte("credential"), algorithm: COSEAlgES256}
+	_, err = adapter.Sign(handle, COSEAlgES256, []byte("data"))
+	assert.ErrorIs(t, err, ErrSigningFailed)
+}
+
+// TestBackendAdapter_GenerateCredentialKey_OpaqueSigner proves a provider
+// that returns a hardware-bound crypto.Signer, not raw key material, still
+// yields the COSE encoding of that signer's public key.
+func TestBackendAdapter_GenerateCredentialKey_OpaqueSigner(t *testing.T) {
+	t.Parallel()
+
+	priv, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	require.NoError(t, err)
+
+	adapter := NewBackendAdapter(&stubProvider{generated: &failingSigner{public: &priv.PublicKey}}, xkms.BackendTypeSoftware)
+	adapter.SetLogger(slog.New(slog.DiscardHandler))
+
+	handle, publicKeyCOSE, err := adapter.GenerateCredentialKey(COSEAlgES256, []byte("credential"))
+	require.NoError(t, err)
+	assert.Equal(t, COSEAlgES256, handle.Algorithm())
+
+	want, err := EncodeCOSEPublicKey(&priv.PublicKey, COSEAlgES256)
+	require.NoError(t, err)
+	assert.Equal(t, want, publicKeyCOSE)
+}
+
+func TestBackendAdapter_ExportPrivateKey_UnsupportedAlgorithm(t *testing.T) {
+	t.Parallel()
+
+	priv, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	require.NoError(t, err)
+
+	adapter := NewBackendAdapter(&stubProvider{generated: priv}, xkms.BackendTypeSoftware)
+	handle := &adapterKeyHandle{credentialID: []byte("credential"), algorithm: -999}
+
+	_, err = adapter.ExportPrivateKey(handle)
+	assert.ErrorIs(t, err, ErrUnsupportedAlgorithm)
 }
 
 // TestBackendAdapter_DeleteKeyUnsupportedAlgorithm covers DeleteKey's

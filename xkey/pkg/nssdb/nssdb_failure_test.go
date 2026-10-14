@@ -272,3 +272,172 @@ func TestNewWriter_CertDatabaseUnusable(t *testing.T) {
 	assert.Nil(t, w)
 	assert.ErrorIs(t, err, ErrCreateSchema)
 }
+
+// seedDB runs stmts against the SQLite file at path before a Writer opens it,
+// standing in for a database left behind by another NSS tool or an older
+// xkey.
+func seedDB(t *testing.T, path string, stmts ...string) {
+	t.Helper()
+	db, err := sql.Open("sqlite", path)
+	require.NoError(t, err)
+	defer func() { require.NoError(t, db.Close()) }()
+	for _, stmt := range stmts {
+		_, err := db.Exec(stmt)
+		require.NoError(t, err, stmt)
+	}
+}
+
+// countRows returns the number of rows in table that match where.
+func countRows(t *testing.T, db *sql.DB, table, where string) int {
+	t.Helper()
+	var n int
+	require.NoError(t, db.QueryRow("SELECT count(*) FROM "+table+" WHERE "+where).Scan(&n))
+	return n
+}
+
+// TestNewWriter_ForeignMetaDataTable verifies that a key4.db whose metaData
+// table cannot hold the password entry fails NewWriter with ErrPasswordInit
+// instead of returning a Writer that cannot sign trust objects.
+func TestNewWriter_ForeignMetaDataTable(t *testing.T) {
+	t.Parallel()
+
+	dir := t.TempDir()
+	seedDB(t, filepath.Join(dir, key4DBFile), "CREATE TABLE metaData (id PRIMARY KEY, item1)")
+
+	w, err := NewWriter(dir)
+	require.Error(t, err)
+	assert.Nil(t, w)
+	assert.ErrorIs(t, err, ErrPasswordInit)
+}
+
+// TestInitDir_UnusableDatabase verifies that InitDir reports the Writer's
+// error when the directory already holds a cert9.db it cannot open.
+func TestInitDir_UnusableDatabase(t *testing.T) {
+	t.Parallel()
+
+	dir := t.TempDir()
+	require.NoError(t, os.Mkdir(filepath.Join(dir, cert9DBFile), 0700))
+
+	err := InitDir(dir)
+	require.Error(t, err)
+	assert.ErrorIs(t, err, ErrCreateSchema)
+	assert.FileExists(t, filepath.Join(dir, pkcs11TxtFile))
+}
+
+// TestAddTrustedCA_NilSerial verifies that a certificate without a serial
+// number is rejected with ErrSerialEncode before anything is written.
+func TestAddTrustedCA_NilSerial(t *testing.T) {
+	t.Parallel()
+
+	w, err := NewWriter(t.TempDir())
+	require.NoError(t, err)
+	defer func() { require.NoError(t, w.Close()) }()
+
+	cert := testCA(t)
+	cert.SerialNumber = nil
+
+	err = w.AddTrustedCA(cert, "xkey No Serial")
+	require.Error(t, err)
+	assert.ErrorIs(t, err, ErrSerialEncode)
+	assert.Zero(t, countRows(t, w.certDB, "nssPublic", "1"))
+}
+
+// TestRemoveByPrefix_TrustQueryFailure verifies that a cert9.db whose
+// nssPublic table lacks the object-class column fails the trust lookup with
+// ErrRemoveTrust and leaves the matching certificate in place.
+func TestRemoveByPrefix_TrustQueryFailure(t *testing.T) {
+	t.Parallel()
+
+	dir := t.TempDir()
+	seedDB(t, filepath.Join(dir, cert9DBFile),
+		"CREATE TABLE nssPublic (id PRIMARY KEY, a3, a81, a82, a101, a102)",
+		"INSERT INTO nssPublic (id, a3, a81, a82) VALUES (1, CAST('xkey CA' AS BLOB), x'01', x'02')",
+	)
+
+	w, err := NewWriter(dir)
+	require.NoError(t, err)
+	defer func() { require.NoError(t, w.Close()) }()
+
+	err = w.RemoveByPrefix("xkey")
+	require.Error(t, err)
+	assert.ErrorIs(t, err, ErrRemoveTrust)
+	assert.Equal(t, 1, countRows(t, w.certDB, "nssPublic", "id = 1"))
+}
+
+// TestRemoveByPrefix_UnscannableCertificateID verifies that a matching
+// certificate row whose id is not an integer fails with ErrRemoveCertificate.
+func TestRemoveByPrefix_UnscannableCertificateID(t *testing.T) {
+	t.Parallel()
+
+	w, err := NewWriter(t.TempDir())
+	require.NoError(t, err)
+	defer func() { require.NoError(t, w.Close()) }()
+
+	_, err = w.certDB.Exec("INSERT INTO nssPublic (id, a3) VALUES ('not-a-number', CAST('xkey CA' AS BLOB))")
+	require.NoError(t, err)
+
+	err = w.RemoveByPrefix("xkey")
+	require.Error(t, err)
+	assert.ErrorIs(t, err, ErrRemoveCertificate)
+}
+
+// TestRemoveByPrefix_UnscannableTrustID verifies that a trust object linked
+// to a removed certificate whose id is not an integer fails with
+// ErrRemoveTrust and deletes nothing.
+func TestRemoveByPrefix_UnscannableTrustID(t *testing.T) {
+	t.Parallel()
+
+	w, err := NewWriter(t.TempDir())
+	require.NoError(t, err)
+	defer func() { require.NoError(t, w.Close()) }()
+
+	require.NoError(t, w.AddTrustedCA(testCA(t), "xkey Test CA"))
+	_, err = w.certDB.Exec("INSERT INTO nssPublic (id, a0, a81, a82) " +
+		"SELECT 'bogus', a0, a81, a82 FROM nssPublic WHERE hex(a0) = 'CE534353'")
+	require.NoError(t, err)
+
+	err = w.RemoveByPrefix("xkey")
+	require.Error(t, err)
+	assert.ErrorIs(t, err, ErrRemoveTrust)
+	assert.Equal(t, 3, countRows(t, w.certDB, "nssPublic", "1"))
+}
+
+// TestRemoveByPrefix_DeleteRejected verifies that a cert9.db refusing the
+// DELETE surfaces ErrRemoveCertificate and keeps both objects.
+func TestRemoveByPrefix_DeleteRejected(t *testing.T) {
+	t.Parallel()
+
+	w, err := NewWriter(t.TempDir())
+	require.NoError(t, err)
+	defer func() { require.NoError(t, w.Close()) }()
+
+	require.NoError(t, w.AddTrustedCA(testCA(t), "xkey Test CA"))
+	_, err = w.certDB.Exec("CREATE TRIGGER keep BEFORE DELETE ON nssPublic BEGIN SELECT RAISE(ABORT, 'read-only'); END")
+	require.NoError(t, err)
+
+	err = w.RemoveByPrefix("xkey")
+	require.Error(t, err)
+	assert.ErrorIs(t, err, ErrRemoveCertificate)
+	assert.Equal(t, 2, countRows(t, w.certDB, "nssPublic", "1"))
+}
+
+// TestRemoveByPrefix_SignatureDeleteRejected verifies that a key4.db refusing
+// to drop the trust signatures surfaces ErrRemoveTrust after the objects
+// themselves are gone.
+func TestRemoveByPrefix_SignatureDeleteRejected(t *testing.T) {
+	t.Parallel()
+
+	w, err := NewWriter(t.TempDir())
+	require.NoError(t, err)
+	defer func() { require.NoError(t, w.Close()) }()
+
+	require.NoError(t, w.AddTrustedCA(testCA(t), "xkey Test CA"))
+	_, err = w.keyDB.Exec("CREATE TRIGGER keep BEFORE DELETE ON metaData BEGIN SELECT RAISE(ABORT, 'read-only'); END")
+	require.NoError(t, err)
+
+	err = w.RemoveByPrefix("xkey")
+	require.Error(t, err)
+	assert.ErrorIs(t, err, ErrRemoveTrust)
+	assert.Zero(t, countRows(t, w.certDB, "nssPublic", "1"))
+	assert.NotZero(t, countRows(t, w.keyDB, "metaData", "id LIKE 'sig_cert_%'"))
+}

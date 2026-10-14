@@ -146,3 +146,21 @@ func TestProbe_BadURLs(t *testing.T) {
 	_, err = Probe(context.Background(), "https://", nil)
 	assert.True(t, errors.As(err, &probeErr), "a URL without a host is refused")
 }
+
+// TestProbe_CancelledContextIsAProbeError proves a probe the caller has
+// already cancelled fails on both transports, reports the URL it was asked
+// about, and keeps the cancellation reachable through errors.Is. The URLs
+// carry no port, so the scheme's default port is what gets dialled.
+func TestProbe_CancelledContextIsAProbeError(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+
+	for _, rawURL := range []string{"https://127.0.0.1", "quic://127.0.0.1"} {
+		_, err := Probe(ctx, rawURL, nil)
+		var probeErr *ProbeError
+		require.True(t, errors.As(err, &probeErr), "%s: %v", rawURL, err)
+		assert.Equal(t, rawURL, probeErr.URL)
+		assert.Contains(t, err.Error(), "serverid: identify "+rawURL)
+		assert.ErrorIs(t, err, context.Canceled, "%s: the cause must survive Unwrap", rawURL)
+	}
+}

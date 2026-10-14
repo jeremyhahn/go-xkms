@@ -95,3 +95,49 @@ func TestErrors_IsNotCrossMatch(t *testing.T) {
 	assert.False(t, errors.Is(ErrScreenLockUnavailable, ErrDBusUnavailable))
 	assert.False(t, errors.Is(ErrScreenLockUnavailable, ErrNotifierClosed))
 }
+
+func TestMessageError_ReturnsMessageVerbatim(t *testing.T) {
+	err := &MessageError{Msg: `opening " has no matching close`}
+	assert.Equal(t, `opening " has no matching close`, err.Error())
+}
+
+func TestSentinelCauseError_MessageJoinsSentinelAndCause(t *testing.T) {
+	err := &SentinelCauseError{
+		Sentinel: ErrUnterminatedQuote,
+		Cause:    &MessageError{Msg: "opening ' has no matching close"},
+	}
+	assert.Equal(t, ErrUnterminatedQuote.Error()+": opening ' has no matching close", err.Error())
+}
+
+func TestSentinelCauseError_UnwrapsToSentinelAndCause(t *testing.T) {
+	cause := &MessageError{Msg: "detail"}
+	err := &SentinelCauseError{Sentinel: ErrInvalidCommand, Cause: cause}
+
+	assert.ErrorIs(t, err, ErrInvalidCommand)
+	assert.ErrorIs(t, err, cause)
+	assert.NotErrorIs(t, err, ErrUnterminatedQuote)
+
+	var msgErr *MessageError
+	require.ErrorAs(t, err, &msgErr)
+	assert.Equal(t, "detail", msgErr.Msg)
+}
+
+func TestNewCommandNotifier_UnterminatedQuoteErrorExplainsWhichQuote(t *testing.T) {
+	tests := []struct {
+		name    string
+		command string
+		want    string
+	}{
+		{name: "single quote", command: "notify-send 'touch", want: "opening ' has no matching close"},
+		{name: "double quote", command: `notify-send "touch`, want: `opening " has no matching close`},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			n, err := NewCommandNotifier(tc.command, nil)
+			require.Error(t, err)
+			assert.Nil(t, n)
+			assert.ErrorIs(t, err, ErrUnterminatedQuote)
+			assert.Equal(t, ErrUnterminatedQuote.Error()+": "+tc.want, err.Error())
+		})
+	}
+}

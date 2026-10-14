@@ -130,6 +130,17 @@ func TestScanScreen_SpecificDisplayFindsQRCode(t *testing.T) {
 	assert.Equal(t, 1, results[0].DisplayIndex)
 }
 
+func TestScanScreen_QRCodeOutsideTheModeIsInvalidContent(t *testing.T) {
+	qr := generateQRImage(t, "https://example.com/not-an-otp-uri", 200)
+	withFakeDisplays(t, qr)
+
+	scanner := NewScanner()
+	results, err := scanner.ScanScreen(0)
+
+	assert.ErrorIs(t, err, ErrInvalidQRContent)
+	assert.Nil(t, results)
+}
+
 // TestScanScreen_CaptureFailureOnOneDisplayIsSkipped pins that ScanScreen(-1)
 // keeps scanning the remaining displays when one display's capture fails,
 // rather than aborting the whole sweep.

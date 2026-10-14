@@ -24,6 +24,7 @@ import (
 	"crypto/x509/pkix"
 	"encoding/asn1"
 	"errors"
+	"io"
 	"math/big"
 	"testing"
 	"time"
@@ -352,6 +353,97 @@ func TestPackedAttestationStatement(t *testing.T) {
 		_, err := PackedAttestationStatement(edKey, []*x509.Certificate{edCert}, authData, clientDataHash)
 
 		require.ErrorIs(t, err, ErrUnsupportedAttestationKey)
+	})
+}
+
+// refusingSigner is an attestation key whose device refuses to sign, as an
+// HSM or token does when it is locked or removed mid-ceremony.
+type refusingSigner struct {
+	*ecdsa.PrivateKey
+}
+
+func (s refusingSigner) Sign(io.Reader, []byte, crypto.SignerOpts) ([]byte, error) {
+	return nil, errSignerRefused
+}
+
+var errSignerRefused = errors.New("signer refused")
+
+// wrongKeySigner reports one public key but signs with another, so its
+// signatures are well-formed ECDSA that the certified key does not verify.
+type wrongKeySigner struct {
+	*ecdsa.PrivateKey
+	signsWith *ecdsa.PrivateKey
+}
+
+func (s wrongKeySigner) Sign(r io.Reader, digest []byte, opts crypto.SignerOpts) ([]byte, error) {
+	return s.signsWith.Sign(r, digest, opts)
+}
+
+func TestPackedAttestationStatement_RefusesBrokenInputs(t *testing.T) {
+	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	require.NoError(t, err)
+	cert := newTestAttestationCert(t, key.Public(), attestationCertOptions{})
+	authData := newTestAuthData(testAAGUID)
+	clientDataHash := make([]byte, 32)
+
+	t.Run("rejects a chain whose leaf is nil", func(t *testing.T) {
+		_, err := PackedAttestationStatement(key, []*x509.Certificate{nil}, authData, clientDataHash)
+
+		require.ErrorIs(t, err, ErrNoAttestationCertificate)
+	})
+
+	t.Run("rejects full-length authenticator data without the AT flag", func(t *testing.T) {
+		noAT := newTestAuthData(testAAGUID)
+		noAT[32] &^= authDataFlagAttestedCredentialData
+
+		_, err := PackedAttestationStatement(key, []*x509.Certificate{cert}, noAT, clientDataHash)
+
+		require.ErrorIs(t, err, ErrAttestationAuthDataInvalid)
+	})
+
+	t.Run("reports a signer that refuses as a signing failure", func(t *testing.T) {
+		_, err := PackedAttestationStatement(refusingSigner{key}, []*x509.Certificate{cert}, authData, clientDataHash)
+
+		require.ErrorIs(t, err, ErrSigningFailed)
+		require.ErrorIs(t, err, errSignerRefused, "the device's own error must stay reachable")
+	})
+
+	t.Run("refuses a signature the leaf certificate does not verify", func(t *testing.T) {
+		other, keyErr := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+		require.NoError(t, keyErr)
+
+		_, err := PackedAttestationStatement(wrongKeySigner{PrivateKey: key, signsWith: other}, []*x509.Certificate{cert}, authData, clientDataHash)
+
+		require.ErrorIs(t, err, ErrAttestationSignatureInvalid)
+	})
+}
+
+func TestValidateAttestationCertificate_StructuralRequirements(t *testing.T) {
+	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	require.NoError(t, err)
+	cert := newTestAttestationCert(t, key.Public(), attestationCertOptions{})
+
+	t.Run("rejects a certificate that is not X.509 v3", func(t *testing.T) {
+		v1 := *cert
+		v1.Version = 1
+
+		err := ValidateAttestationCertificate(&v1, testAAGUID)
+
+		require.ErrorIs(t, err, ErrAttestationCertInvalid)
+	})
+
+	t.Run("rejects trailing data after the AAGUID OCTET STRING", func(t *testing.T) {
+		value, marshalErr := MarshalAAGUIDExtensionValue(testAAGUID)
+		require.NoError(t, marshalErr)
+		trailing := *cert
+		trailing.Extensions = []pkix.Extension{{
+			Id:    OIDFIDOGenCEAAGUID,
+			Value: append(value, 0x00),
+		}}
+
+		err := ValidateAttestationCertificate(&trailing, testAAGUID)
+
+		require.ErrorIs(t, err, ErrAttestationCertInvalid)
 	})
 }
 
