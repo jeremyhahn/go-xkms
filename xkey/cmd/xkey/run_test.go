@@ -381,6 +381,102 @@ func TestHasGUIEnvironment(t *testing.T) {
 	}
 }
 
+func TestGUIEnvironmentFor(t *testing.T) {
+	tests := []struct {
+		name string
+		goos string
+		env  map[string]string
+		want bool
+	}{
+		{"darwin without display variables", "darwin", nil, true},
+		{"windows without display variables", "windows", nil, true},
+		{"linux with DISPLAY", "linux", map[string]string{"DISPLAY": ":0"}, true},
+		{"linux with WAYLAND_DISPLAY", "linux", map[string]string{"WAYLAND_DISPLAY": "wayland-0"}, true},
+		{"linux headless", "linux", nil, false},
+		{"unsupported OS ignores display variables", "plan9", map[string]string{"DISPLAY": ":0"}, false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := guiEnvironmentFor(tt.goos, func(key string) string { return tt.env[key] })
+			if got != tt.want {
+				t.Fatalf("guiEnvironmentFor(%q) = %v, want %v", tt.goos, got, tt.want)
+			}
+		})
+	}
+}
+
+// forceGUIBuilt makes run treat the binary as GUI-capable so the dispatch
+// path is covered in builds without the Wails tags.
+func forceGUIBuilt(t *testing.T) {
+	t.Helper()
+	previous := guiBuilt
+	guiBuilt = true
+	t.Cleanup(func() { guiBuilt = previous })
+}
+
+func TestRun_GUICapableBuildStartsGUIWithAssets(t *testing.T) {
+	isolateRun(t)
+	headless(t)
+	forceGUIBuilt(t)
+
+	started := false
+	guiRun = func() error { started = true; return nil }
+	cliExecute = func() error {
+		t.Fatal("--gui must not fall through to the CLI")
+		return nil
+	}
+	gui.Assets = nil
+
+	code := run([]string{"xkey", "--gui"}, &bytes.Buffer{})
+
+	if code != 0 || !started {
+		t.Fatalf("code = %d, started = %v; want 0/true", code, started)
+	}
+	if gui.Assets == nil {
+		t.Fatal("frontend assets were not published to the GUI package")
+	}
+}
+
+func TestRun_GUICapableBuildReportsStartupFailure(t *testing.T) {
+	isolateRun(t)
+	headless(t)
+	forceGUIBuilt(t)
+
+	guiRun = func() error { return errors.New("wails exploded") }
+
+	var stderr bytes.Buffer
+	code := run([]string{"xkey", "--gui"}, &stderr)
+
+	if code != 1 {
+		t.Fatalf("exit code = %d, want 1", code)
+	}
+	if !strings.Contains(stderr.String(), "GUI error: wails exploded") {
+		t.Fatalf("stderr = %q", stderr.String())
+	}
+}
+
+func TestRun_GUICapableBuildReportsLoggingFailure(t *testing.T) {
+	isolateRun(t)
+	headless(t)
+	forceGUIBuilt(t)
+
+	guiRun = func() error {
+		t.Fatal("the GUI must not start when logging setup fails")
+		return nil
+	}
+	blocker := t.TempDir() + "/blocker"
+	if err := os.WriteFile(blocker, []byte("x"), 0600); err != nil {
+		t.Fatal(err)
+	}
+
+	var stderr bytes.Buffer
+	code := run([]string{"xkey", "--gui", "--log-file", blocker + "/xkey.log"}, &stderr)
+
+	if code != 1 || !strings.Contains(stderr.String(), "logging setup error") {
+		t.Fatalf("code = %d, stderr = %q", code, stderr.String())
+	}
+}
+
 // --- WrappedError ---
 
 func TestWrappedError(t *testing.T) {

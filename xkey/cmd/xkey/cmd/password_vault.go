@@ -442,7 +442,7 @@ func writeVaultStatus(out io.Writer, resp *transport.PasswordVaultStatusResponse
 		for _, f := range resp.Factors {
 			fmt.Fprintf(&b, "    %-36s %-10s %-20s %s\n", f.ID, f.Factor, f.Label, f.CreatedAt)
 			if f.KeyFingerprint != "" {
-				fmt.Fprintf(&b, "      key %s/%s  fingerprint %s", f.KeyRef.Backend, f.KeyRef.KeyID, f.KeyFingerprint[:16])
+				fmt.Fprintf(&b, "      key %s/%s  fingerprint %s", f.KeyRef.Backend, f.KeyRef.KeyID, shortVaultFingerprint(f.KeyFingerprint))
 				if f.KeyRef.TPMPolicy != "" {
 					fmt.Fprintf(&b, "  policy %s", f.KeyRef.TPMPolicy)
 				}
@@ -455,6 +455,20 @@ func writeVaultStatus(out io.Writer, resp *transport.PasswordVaultStatusResponse
 	}
 	_, err := io.WriteString(out, b.String())
 	return err
+}
+
+// vaultFingerprintDisplayLen is how much of a key factor's fingerprint the
+// status listing shows.
+const vaultFingerprintDisplayLen = 16
+
+// shortVaultFingerprint returns the display prefix of a key factor's
+// fingerprint. The fingerprint comes from the server, so one shorter than
+// the prefix is shown whole rather than sliced past its end.
+func shortVaultFingerprint(fingerprint string) string {
+	if len(fingerprint) <= vaultFingerprintDisplayLen {
+		return fingerprint
+	}
+	return fingerprint[:vaultFingerprintDisplayLen]
 }
 
 // writeVaultEnrollResult renders an enrolled factor and, when the server

@@ -141,7 +141,8 @@ func (s *DAOStore) Add(p *Profile) error {
 	now := time.Now().UTC()
 	p.CreatedAt = now
 	p.UpdatedAt = now
-	return s.create(p)
+	_, err := s.create(p)
+	return err
 }
 
 // Get retrieves a profile by ID, or by name when no ID matches.
@@ -442,21 +443,24 @@ func (s *DAOStore) Close() error {
 	return nil
 }
 
-// create stores p under its ID, or returns ErrExists if the ID is taken.
-func (s *DAOStore) create(p *Profile) error {
-	stored, err := s.profiles.SaveIfAbsent(context.Background(), &record{Key: p.ID, Profile: *p})
+// create stores p under its ID and returns the new record, which carries
+// the entity ID the DAO assigned, or returns ErrExists if the ID is taken.
+func (s *DAOStore) create(p *Profile) (*record, error) {
+	r := &record{Key: p.ID, Profile: *p}
+	stored, err := s.profiles.SaveIfAbsent(context.Background(), r)
 	if err != nil {
-		return &errs.Joined{Lead: ErrStorage, Detail: "create " + p.ID, Cause: err}
+		return nil, &errs.Joined{Lead: ErrStorage, Detail: "create " + p.ID, Cause: err}
 	}
 	if !stored {
-		return &errs.Detail{Err: ErrExists, Detail: p.Name}
+		return nil, &errs.Detail{Err: ErrExists, Detail: p.Name}
 	}
-	return nil
+	return r, nil
 }
 
 // replace stores p in place of existing. When p's name or folder moved it
 // to a new ID, the new record is created first, so a taken destination
-// leaves existing untouched.
+// leaves existing untouched, and removed again if existing cannot be
+// deleted, so a failed move leaves only existing behind.
 func (s *DAOStore) replace(existing *record, p *Profile) error {
 	p.ID = generateID(p.Name, p.FolderPath)
 	if p.ID == existing.Key {
@@ -465,11 +469,16 @@ func (s *DAOStore) replace(existing *record, p *Profile) error {
 		}
 		return nil
 	}
-	if err := s.create(p); err != nil {
+	moved, err := s.create(p)
+	if err != nil {
 		return err
 	}
 	if err := s.profiles.Delete(context.Background(), existing); err != nil {
-		return &errs.Joined{Lead: ErrStorage, Detail: "delete " + existing.Key, Cause: err}
+		deleteErr := &errs.Joined{Lead: ErrStorage, Detail: "delete " + existing.Key, Cause: err}
+		if undoErr := s.profiles.Delete(context.Background(), moved); undoErr != nil {
+			return errors.Join(deleteErr, &errs.Joined{Lead: ErrStorage, Detail: "undo create " + p.ID, Cause: undoErr})
+		}
+		return deleteErr
 	}
 	return nil
 }

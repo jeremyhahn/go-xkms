@@ -167,6 +167,12 @@ type App struct {
 	fido2Storage  authenticator.StatefulCredentialStorage
 	staticpwStore staticpw.Store
 
+	// staticpwBackend is the file backend the static password store was
+	// opened over when no barrier is in use. The store does not own it, so
+	// closeStaticPWStore releases it after the store. Nil on the barrier
+	// path, whose backend the barrier service owns.
+	staticpwBackend xkmssdk.StorageBackend
+
 	// staticpwBackendKind records which storage backend the static password
 	// store was opened on ("barrier" or "file"), so the live-state IPC
 	// surface can name where the store actually lives instead of leaving
@@ -731,6 +737,19 @@ func (a *App) openStore(dir string) (xkmssdk.StorageBackend, error) {
 	return xkmssdk.StorageOpenEngine(xkmssdk.StorageEngineConfig{Kind: a.storageEngineKind(), Path: dir})
 }
 
+// closeStaticPWStore closes the static password store and then the file
+// backend it was opened over, if this App owns one.
+func (a *App) closeStaticPWStore() error {
+	var err error
+	if a.staticpwStore != nil {
+		err = a.staticpwStore.Close()
+	}
+	if a.staticpwBackend != nil {
+		err = errors.Join(err, a.staticpwBackend.Close())
+	}
+	return err
+}
+
 func (a *App) initializeDataDir() error {
 	if a.dataDirInit {
 		return ErrDataDirAlreadyInit
@@ -864,9 +883,10 @@ func (a *App) initializeDataDir() error {
 		if spwErr != nil {
 			a.log.Warn("failed to create password file store", "error", spwErr)
 		} else if spwStore, storeErr := staticpw.NewBackendStore(spwBackend); storeErr != nil {
-			a.log.Warn("failed to create password store", "error", storeErr)
+			a.log.Warn("failed to create password store", "error", errors.Join(storeErr, spwBackend.Close()))
 		} else {
 			a.staticpwStore = spwStore
+			a.staticpwBackend = spwBackend
 			a.staticpwBackendKind = staticPWBackendFile
 			a.staticPWService.SetStore(spwStore)
 			a.log.Info("static password store using file backend (no barrier)")
@@ -3668,12 +3688,7 @@ func (a *App) shutdown(ctx context.Context) {
 			}
 			return nil
 		})
-		shutdownStep(a.log, "staticpw-store-close", 1*time.Second, func() error {
-			if a.staticpwStore != nil {
-				return a.staticpwStore.Close()
-			}
-			return nil
-		})
+		shutdownStep(a.log, "staticpw-store-close", 1*time.Second, a.closeStaticPWStore)
 		shutdownStep(a.log, "trust-store-close", 1*time.Second, func() error {
 			if a.trustStore != nil {
 				return a.trustStore.Close()

@@ -46,6 +46,61 @@ func newTestPasswordStore(t *testing.T, backend xkms.StorageBackend) *xkms.Stati
 	return store
 }
 
+// TestOpenPasswordStore_CloseReleasesBackend verifies that closing a store
+// from openPasswordStore also closes the file backend it opened, which the
+// DAO store does not own, and that the data survives into a reopen.
+func TestOpenPasswordStore_CloseReleasesBackend(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "passwords")
+
+	store, err := openPasswordStore(path)
+	if err != nil {
+		t.Fatalf("open: %v", err)
+	}
+	if err := store.Add(&xkms.StaticPassword{Name: "probe", Password: "secret"}); err != nil {
+		t.Fatalf("add: %v", err)
+	}
+	if err := store.Close(); err != nil {
+		t.Fatalf("close: %v", err)
+	}
+	if _, err := store.backend.List(context.Background(), ""); err == nil {
+		t.Fatal("the backend must be closed once the store is closed")
+	}
+
+	reopened, err := openPasswordStore(path)
+	if err != nil {
+		t.Fatalf("reopen: %v", err)
+	}
+	defer func() {
+		if err := reopened.Close(); err != nil {
+			t.Errorf("close reopened store: %v", err)
+		}
+	}()
+	pw, err := reopened.Get("probe")
+	if err != nil {
+		t.Fatalf("get after reopen: %v", err)
+	}
+	if pw.Password != "secret" {
+		t.Fatalf("password after reopen = %q, want %q", pw.Password, "secret")
+	}
+}
+
+// TestOpenPasswordStore_UnusablePath verifies that a store path that cannot
+// hold a directory fails with ErrPasswordStoreOpenFailed.
+func TestOpenPasswordStore_UnusablePath(t *testing.T) {
+	file := filepath.Join(t.TempDir(), "not-a-dir")
+	if err := os.WriteFile(file, nil, 0o600); err != nil {
+		t.Fatalf("write file: %v", err)
+	}
+
+	store, err := openPasswordStore(filepath.Join(file, "passwords"))
+	if !errors.Is(err, ErrPasswordStoreOpenFailed) {
+		t.Fatalf("open error = %v, want ErrPasswordStoreOpenFailed", err)
+	}
+	if store != nil {
+		t.Fatal("a failed open must not return a store")
+	}
+}
+
 // resetPasswordFlags resets all password subcommand flags to their default
 // values. This is necessary because Cobra retains flag state across
 // RootCmd.Execute() calls within the same process, which causes test

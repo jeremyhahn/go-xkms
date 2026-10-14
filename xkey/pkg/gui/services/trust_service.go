@@ -390,7 +390,14 @@ func (s *TrustService) ImportCertificateFile() (int, error) {
 		s.log.Debug("ImportCertificateFile: user cancelled the dialog")
 		return 0, nil
 	}
+	return s.importCertificatePath(filePath)
+}
 
+// importCertificatePath adds the certificates in the file at filePath to the
+// trust store and returns how many were added. A file holding a PEM
+// "CERTIFICATE" block is parsed as PEM (every block is added); anything else
+// is parsed as a single DER certificate.
+func (s *TrustService) importCertificatePath(filePath string) (int, error) {
 	s.log.Debug("ImportCertificateFile: reading selected file", "path", filePath)
 	data, err := os.ReadFile(filePath) // #nosec G304 -- user-selected file via native dialog
 	if err != nil {

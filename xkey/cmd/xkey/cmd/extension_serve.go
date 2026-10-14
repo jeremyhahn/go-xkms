@@ -208,9 +208,15 @@ func runExtensionServe(cmd *cobra.Command, _ []string) error {
 	// 5. Initialize stores: barrier-encrypted or plain.
 	if noBarrier {
 		logger.Warn("running without barrier encryption (no-barrier mode)")
-		if err := initPlainStores(dataDir, passwordSvc, oathSvc); err != nil {
+		pwStore, err := initPlainStores(dataDir, passwordSvc, oathSvc)
+		if err != nil {
 			return &SentinelCauseError{Sentinel: ErrServeStoreInitFailed, Cause: err}
 		}
+		defer func() {
+			if closeErr := pwStore.Close(); closeErr != nil {
+				logger.Warn("failed to close the password store", slog.String("error", closeErr.Error()))
+			}
+		}()
 	} else {
 		// Register post-unseal hook to wire encrypted stores.
 		barrierSvc.SetPostUnsealHook(func() error {
@@ -737,23 +743,24 @@ func resolveBarrierPassword(cmd *cobra.Command) (string, error) {
 
 // initPlainStores creates plain (unencrypted) file-based stores for no-barrier
 // mode. Paths match CLI defaults so data seeded via `xkey password add --store`
-// and `xkey oath add --store` is visible to the headless server.
-func initPlainStores(dataDir string, passwordSvc *services.StaticPasswordService, oathSvc *services.OATHService) error {
+// and `xkey oath add --store` is visible to the headless server. The caller
+// owns the returned password store and closes it at shutdown.
+func initPlainStores(dataDir string, passwordSvc *services.StaticPasswordService, oathSvc *services.OATHService) (io.Closer, error) {
 	// Password store: same as CLI default (data/staticpw subdirectory).
 	pwStore, err := openPasswordStore(filepath.Join(dataDir, "staticpw"))
 	if err != nil {
-		return err
+		return nil, err
 	}
-	passwordSvc.SetStore(pwStore)
 
 	// OATH store: same as CLI default (data/oath.json file).
 	oathStore, err := oath.NewFileStore(filepath.Join(dataDir, "oath.json"))
 	if err != nil {
-		return err
+		return nil, errors.Join(err, pwStore.Close())
 	}
-	oathSvc.SetStore(oathStore)
 
-	return nil
+	passwordSvc.SetStore(pwStore)
+	oathSvc.SetStore(oathStore)
+	return pwStore, nil
 }
 
 // initBarrierStores wires barrier-encrypted stores after a successful unseal.

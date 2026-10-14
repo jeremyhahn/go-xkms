@@ -1141,7 +1141,7 @@ func oathCounterFromInt64(counter int64) uint64 {
 // passwordStoreAdapter bridges the static password store to the backup
 // service's reader and writer contracts.
 type passwordStoreAdapter struct {
-	store *xkms.StaticPasswordDAOStore
+	store *localPasswordStore
 	path  string
 }
 

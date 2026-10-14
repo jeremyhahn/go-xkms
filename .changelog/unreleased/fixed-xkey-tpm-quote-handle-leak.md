@@ -1,0 +1,1 @@
+- **`xkey tpm quote` releases an uninitialized TPM** -- on a TPM with no EK or SRK yet, the TPM opener reports `ErrTPMNotInitialized` but still hands back an open handle, and `tpm quote` returned the error without closing it, leaving the device held. It now closes the handle and reports any close failure alongside the original error. Files: `xkey/cmd/xkey/cmd/tpm_quote.go`.

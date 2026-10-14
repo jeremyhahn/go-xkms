@@ -36,6 +36,10 @@ var guiRun = gui.Run
 // reason as guiRun.
 var cliExecute = cmd.Execute
 
+// guiBuilt reports whether this binary can start the GUI. It is a variable so
+// tests can exercise the GUI dispatch path in builds without the GUI tags.
+var guiBuilt = guiBuildTagPresent
+
 func main() {
 	// Before anything constructs protected memory: a debugger or a same-user
 	// process must not be able to read it through ptrace or /proc/<pid>/mem.
@@ -71,7 +75,7 @@ func run(argv []string, stderr io.Writer) int {
 	}
 
 	if !forceCLI && (forceGUI || hasGUIEnvironment()) {
-		if !guiBuildTagPresent {
+		if !guiBuilt {
 			printGUIBuildHelp(stderr)
 			return 2
 		}
@@ -293,17 +297,17 @@ func isNativeMessagingInvocation(args []string) bool {
 // have a graphical display available. On Linux this checks for X11 or
 // Wayland session variables. On macOS and Windows a GUI is assumed.
 func hasGUIEnvironment() bool {
-	switch runtime.GOOS {
+	return guiEnvironmentFor(runtime.GOOS, os.Getenv)
+}
+
+// guiEnvironmentFor reports whether the given OS and environment can host a
+// GUI: darwin and windows always can, linux needs an X11 or Wayland display.
+func guiEnvironmentFor(goos string, getenv func(string) string) bool {
+	switch goos {
 	case "darwin", "windows":
 		return true
 	case "linux":
-		if os.Getenv("DISPLAY") != "" {
-			return true
-		}
-		if os.Getenv("WAYLAND_DISPLAY") != "" {
-			return true
-		}
-		return false
+		return getenv("DISPLAY") != "" || getenv("WAYLAND_DISPLAY") != ""
 	default:
 		return false
 	}

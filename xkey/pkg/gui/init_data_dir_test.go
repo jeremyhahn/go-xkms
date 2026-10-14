@@ -130,6 +130,49 @@ func newMinimalApp(t *testing.T) *App {
 	}
 }
 
+// TestApp_CloseStaticPWStore_ReleasesFileBackend covers the no-barrier path of
+// initializeDataDir on the Pebble engine, which refuses a second open of a
+// store its own process still holds: the passwords store reopens only if
+// closeStaticPWStore released the file backend the DAO store does not own.
+func TestApp_CloseStaticPWStore_ReleasesFileBackend(t *testing.T) {
+	app := newMinimalApp(t)
+	app.storageEngineOnce.Do(func() { app.storageEngine = "pebble" })
+
+	require.NoError(t, app.initializeDataDir())
+	t.Cleanup(xkmssdk.Reset)
+	require.Equal(t, staticPWBackendFile, app.staticpwBackendKind,
+		"precondition: with no barrier the password store must open on a file backend")
+
+	require.NoError(t, app.closeStaticPWStore())
+
+	reopened, err := xkmssdk.StorageOpenEngine(xkmssdk.StorageEngineConfig{
+		Kind: "pebble",
+		Path: filepath.Join(app.dataDir, "passwords"),
+	})
+	require.NoError(t, err, "the password store's backend must be released on close")
+	require.NoError(t, reopened.Close())
+}
+
+// failingCloseBackend is a storage backend whose Close always fails.
+type failingCloseBackend struct {
+	xkmssdk.StorageBackend
+}
+
+var errBackendCloseFailed = errors.New("backend close failed")
+
+func (failingCloseBackend) Close() error { return errBackendCloseFailed }
+
+// TestApp_CloseStaticPWStore_ReportsBackendCloseError verifies a failure to
+// release the backend reaches the shutdown step rather than being dropped,
+// and that an App with no password store wired closes cleanly.
+func TestApp_CloseStaticPWStore_ReportsBackendCloseError(t *testing.T) {
+	app := newMinimalApp(t)
+	require.NoError(t, app.closeStaticPWStore(), "nothing wired must close cleanly")
+
+	app.staticpwBackend = failingCloseBackend{StorageBackend: xkmssdk.NewStorageMemory()}
+	assert.ErrorIs(t, app.closeStaticPWStore(), errBackendCloseFailed)
+}
+
 // TestInitializeDataDir_PreSetDataDirSucceeds is the primary regression test.
 //
 // It simulates the sealed-barrier startup path: a.dataDir is pre-resolved and

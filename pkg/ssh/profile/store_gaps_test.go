@@ -16,6 +16,7 @@ package profile
 import (
 	"context"
 	"errors"
+	"strings"
 	"testing"
 
 	"github.com/jeremyhahn/go-xkms/pkg/dao"
@@ -34,6 +35,19 @@ type faultBackend struct {
 	failDelete bool
 	failScan   bool
 	corrupt    bool
+
+	// deleteFailures fails that many of the next deletes, then lets the
+	// rest through.
+	deleteFailures int
+}
+
+// deleteFails reports whether this delete is one the test forces to fail.
+func (f *faultBackend) deleteFails() bool {
+	if f.deleteFailures > 0 {
+		f.deleteFailures--
+		return true
+	}
+	return f.failDelete
 }
 
 func (f *faultBackend) Get(ctx context.Context, key string) ([]byte, error) {
@@ -66,14 +80,14 @@ func (f *faultBackend) CompareAndSwap(ctx context.Context, key string, expected,
 }
 
 func (f *faultBackend) Delete(ctx context.Context, key string) error {
-	if f.failDelete {
+	if f.deleteFails() {
 		return errInjected
 	}
 	return f.Backend.Delete(ctx, key)
 }
 
 func (f *faultBackend) CompareAndDelete(ctx context.Context, key string, expected []byte) (bool, error) {
-	if f.failDelete {
+	if f.deleteFails() {
 		return false, errInjected
 	}
 	return f.Backend.(storage.CompareAndDeleter).CompareAndDelete(ctx, key, expected)
@@ -513,10 +527,10 @@ func TestStore_Update_Rename(t *testing.T) {
 	}
 }
 
-// TestStore_Update_RenameDeleteError covers the Delete-failure branch during an
-// Update that regenerates the ID.
-func TestStore_Update_RenameDeleteError(t *testing.T) {
-	st, fb := newFaultStore(t)
+// addRenamable stores a profile in folder f and returns it with its name
+// changed, ready for an Update that moves it to a new ID.
+func addRenamable(t *testing.T, st *DAOStore) *Profile {
+	t.Helper()
 	if err := st.Add(&Profile{Name: "orig", FolderPath: "f", Host: "h"}); err != nil {
 		t.Fatalf("Add: %v", err)
 	}
@@ -525,9 +539,65 @@ func TestStore_Update_RenameDeleteError(t *testing.T) {
 		t.Fatalf("Get: %v", err)
 	}
 	entry.Name = "moved"
-	fb.failDelete = true
+	return entry
+}
+
+// requireOnlyProfile fails unless name is the store's one profile.
+func requireOnlyProfile(t *testing.T, st *DAOStore, name string) {
+	t.Helper()
+	all, err := st.List()
+	if err != nil {
+		t.Fatalf("List: %v", err)
+	}
+	if len(all) != 1 || all[0].Name != name {
+		names := make([]string, 0, len(all))
+		for _, p := range all {
+			names = append(names, p.Name)
+		}
+		t.Fatalf("profiles = %v, want only %q", names, name)
+	}
+}
+
+// TestStore_Update_RenameDeleteError_RollsBack verifies that when an Update
+// that moves a profile to a new ID cannot delete the old record, the new one
+// is removed again: the store is left as it was, and retrying succeeds.
+func TestStore_Update_RenameDeleteError_RollsBack(t *testing.T) {
+	st, fb := newFaultStore(t)
+	entry := addRenamable(t, st)
+	oldID := entry.ID
+
+	fb.deleteFailures = 1
 	if err := st.Update(entry); !errors.Is(err, ErrStorage) {
 		t.Fatalf("Update(rename) with Delete failure: expected ErrStorage, got %v", err)
+	}
+	requireOnlyProfile(t, st, "orig")
+	if _, err := st.Get(generateID("moved", "f")); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("Get(new ID) after rollback: expected ErrNotFound, got %v", err)
+	}
+
+	entry.ID = oldID
+	if err := st.Update(entry); err != nil {
+		t.Fatalf("retried Update(rename): %v", err)
+	}
+	requireOnlyProfile(t, st, "moved")
+}
+
+// TestStore_Update_RenameDeleteError_UndoFails verifies that when the
+// rollback's delete fails too, both failures are reported.
+func TestStore_Update_RenameDeleteError_UndoFails(t *testing.T) {
+	st, fb := newFaultStore(t)
+	entry := addRenamable(t, st)
+	oldID := entry.ID
+
+	fb.failDelete = true
+	err := st.Update(entry)
+	if !errors.Is(err, ErrStorage) {
+		t.Fatalf("Update(rename) with Delete failure: expected ErrStorage, got %v", err)
+	}
+	for _, want := range []string{"delete " + oldID, "undo create " + generateID("moved", "f")} {
+		if !strings.Contains(err.Error(), want) {
+			t.Fatalf("error %q does not report %q", err, want)
+		}
 	}
 }
 

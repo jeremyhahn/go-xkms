@@ -133,9 +133,13 @@ else
 endif
 
 # xkey's production tag set comes from xkey/Makefile, the one place it is
-# declared; its WITH_* toggles pass through from this command line. Deferred
-# (=) so only the recipes that build xkey pay for the sub-make.
-XKEY_BUILD_TAGS = $(shell $(MAKE) -s --no-print-directory -C xkey print-build-tags)
+# declared. Every resolved toggle (umbrellas already applied) is passed on the
+# sub-make's command line: a $(shell) child does not inherit this make's
+# command-line variables on GNU make before 4.4, nor makefile assignments on
+# any version. Deferred (=) so only the recipes that build xkey pay for the
+# sub-make.
+XKEY_BUILD_TAGS = $(shell $(MAKE) -s --no-print-directory -C xkey \
+	$(foreach toggle,$(FEATURE_TOGGLES),$(toggle)=$($(toggle))) print-build-tags)
 
 # The pure-Go xkmsctl carries every selected feature except pkcs11, which
 # needs cgo.
@@ -1056,6 +1060,7 @@ test-scripts:
 	@bash test/scripts/open-server-barrier.test.sh
 	@bash test/scripts/check-public-literals.test.sh
 	@bash test/scripts/check-test-helpers.test.sh
+	@bash test/scripts/xkey-build-tags.test.sh
 	@bash test/scripts/gomodauth.test.sh
 	@echo "$(GREEN)✓ Shell script tests passed$(RESET)"
 

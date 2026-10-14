@@ -756,7 +756,7 @@ type fido2Device struct {
 	running         bool
 	keyboard        *keyboard.Keyboard
 	ipcServer       *ipc.Server
-	pwStore         *xkms.StaticPasswordDAOStore
+	pwStore         *localPasswordStore
 	socketHandler   *authenticator.SocketHandler
 	notifier        notify.Notifier
 	defaultPassword string

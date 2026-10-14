@@ -108,6 +108,11 @@ func runTPMQuote(cmd *cobra.Command, args []string) (err error) {
 	// Open TPM
 	tpm, err := openTPM()
 	if err != nil {
+		// openTPM hands back a live handle with ErrTPMNotInitialized;
+		// release it so the device is not left held.
+		if tpm != nil {
+			err = errors.Join(err, tpm.Close())
+		}
 		return err
 	}
 	defer func() {

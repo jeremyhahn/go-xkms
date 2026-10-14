@@ -1050,9 +1050,24 @@ func connectPasswordStore() (PasswordStoreClientService, error) {
 	return client, nil
 }
 
-// openPasswordStore creates a BackendStore backed by file storage at the
+// localPasswordStore is a static password store over a file backend this
+// process opened. staticpw.NewBackendStore leaves the backend with its
+// caller, so the store owns it here: Close closes the store and then
+// releases the backend.
+type localPasswordStore struct {
+	*xkms.StaticPasswordDAOStore
+	backend xkms.StorageBackend
+}
+
+// Close closes the store, then the backend it owns.
+func (s *localPasswordStore) Close() error {
+	return errors.Join(s.StaticPasswordDAOStore.Close(), s.backend.Close())
+}
+
+// openPasswordStore opens a static password store over file storage at the
 // given path. The file backend creates the directory if it does not exist.
-func openPasswordStore(storePath string) (*xkms.StaticPasswordDAOStore, error) {
+// Closing the returned store releases the backend.
+func openPasswordStore(storePath string) (*localPasswordStore, error) {
 	backend, err := xkms.NewFileStorageBackend(storePath)
 	if err != nil {
 		return nil, &SentinelCauseError{Sentinel: ErrPasswordStoreOpenFailed, Cause: err}
@@ -1061,7 +1076,7 @@ func openPasswordStore(storePath string) (*xkms.StaticPasswordDAOStore, error) {
 	if err != nil {
 		return nil, &SentinelCauseError{Sentinel: ErrPasswordStoreOpenFailed, Cause: errors.Join(err, backend.Close())}
 	}
-	return store, nil
+	return &localPasswordStore{StaticPasswordDAOStore: store, backend: backend}, nil
 }
 
 // PasswordStoreError represents a password store operation error.
