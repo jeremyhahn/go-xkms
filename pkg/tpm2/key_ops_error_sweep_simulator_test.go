@@ -71,7 +71,7 @@ func TestCreateLAK_EveryCommandFailurePropagates(t *testing.T) {
 		}
 	},
 		// The last command is a deferred best-effort session flush.
-		32)
+		-1)
 }
 
 // TestSealKey_EveryCommandFailurePropagates sweeps SealKey's command

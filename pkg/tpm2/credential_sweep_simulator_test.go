@@ -64,7 +64,7 @@ func TestActivateCredential_EveryCommandFailurePropagates(t *testing.T) {
 	},
 		// The last three commands are deferred flushes of the sessions and
 		// loaded objects; they are logged, not returned.
-		10, 11, 12)
+		-3, -2, -1)
 }
 
 // TestMakeCredentialWithExternalEK_EntropyFailure proves no challenge is

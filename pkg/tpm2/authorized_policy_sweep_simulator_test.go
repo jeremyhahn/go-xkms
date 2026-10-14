@@ -20,8 +20,10 @@ func TestAuthorizedPolicy_EveryCommandFailurePropagates(t *testing.T) {
 		name    string
 		fixture func(t *testing.T) *policyFixture
 		key     func(t *testing.T, f *policyFixture) *types.KeyAttributes
-		// flush is the position of Sign's last command, the deferred flush
-		// of the loaded key; it is logged, not returned.
+		// flush is the position, counted from the end, of Sign's last
+		// command: the deferred flush of the loaded key, which is logged,
+		// not returned. Counting from the end keeps the row independent of
+		// how many commands the policy session issues before it.
 		flush int
 	}{
 		{
@@ -30,7 +32,7 @@ func TestAuthorizedPolicy_EveryCommandFailurePropagates(t *testing.T) {
 			key: func(t *testing.T, f *policyFixture) *types.KeyAttributes {
 				return f.createBoundKey(t, "sweep-approved", nil)
 			},
-			flush: 35,
+			flush: -1,
 		},
 		{
 			name:    "outer password branch",
@@ -38,7 +40,7 @@ func TestAuthorizedPolicy_EveryCommandFailurePropagates(t *testing.T) {
 			key: func(t *testing.T, f *policyFixture) *types.KeyAttributes {
 				return f.createBoundKey(t, "sweep-outer-password", mustPassword(t, []byte("sweep-pin")))
 			},
-			flush: 19,
+			flush: -1,
 		},
 		{
 			name:    "approved branch of a password key",
@@ -46,7 +48,7 @@ func TestAuthorizedPolicy_EveryCommandFailurePropagates(t *testing.T) {
 			key: func(t *testing.T, f *policyFixture) *types.KeyAttributes {
 				return withoutPassword(f.createBoundKey(t, "sweep-approved-password", mustPassword(t, []byte("sweep-pin"))))
 			},
-			flush: 36,
+			flush: -1,
 		},
 		{
 			name: "composite password branch",
@@ -56,7 +58,7 @@ func TestAuthorizedPolicy_EveryCommandFailurePropagates(t *testing.T) {
 			key: func(t *testing.T, f *policyFixture) *types.KeyAttributes {
 				return f.createBoundKey(t, "sweep-composite-password", mustPassword(t, []byte("sweep-pin")))
 			},
-			flush: 35,
+			flush: -1,
 		},
 	}
 	for _, tt := range tests {

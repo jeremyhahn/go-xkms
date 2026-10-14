@@ -18,20 +18,22 @@ func TestUnsealFromBlobs_EveryCommandFailurePropagates(t *testing.T) {
 		name           string
 		platformPolicy bool
 		password       func(t *testing.T) types.Password
-		// flushes are the positions of the deferred flushes of the
-		// sessions and the loaded object; they are logged, not returned.
+		// flushes are the positions, counted from the end, of the deferred
+		// flushes of the sessions and the loaded object; they are logged,
+		// not returned. Counting from the end keeps each row independent of
+		// how many commands the authorizing session issues before them.
 		flushes []int
 	}{
 		{
 			name:     "password",
 			password: func(t *testing.T) types.Password { return mustPassword(t, []byte("object-password")) },
-			flushes:  []int{8, 9, 10},
+			flushes:  []int{-3, -2, -1},
 		},
 		{
 			name:           "platform policy",
 			platformPolicy: true,
 			password:       func(*testing.T) types.Password { return nil },
-			flushes:        []int{10, 11, 12},
+			flushes:        []int{-3, -2, -1},
 		},
 	}
 	for _, tt := range tests {

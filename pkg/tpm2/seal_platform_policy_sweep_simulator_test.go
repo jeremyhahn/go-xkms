@@ -47,5 +47,5 @@ func TestUnsealKey_PlatformPolicy_EveryCommandFailurePropagates(t *testing.T) {
 	},
 		// The last three commands are the deferred flushes of the sessions
 		// and the loaded object; they are logged, not returned.
-		10, 11, 12)
+		-3, -2, -1)
 }

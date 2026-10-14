@@ -118,6 +118,7 @@ func TestNVReadExtend_PlatformPolicy_EveryCommandFailurePropagates(t *testing.T)
 	}, policyReadFlush)
 }
 
-// policyReadFlush is the position of a policy read's last command, the
-// deferred flush of its policy session; it is logged, not returned.
-const policyReadFlush = 7
+// policyReadFlush is the position, counted from the end, of a policy read's
+// last command, the deferred flush of its policy session; it is logged, not
+// returned.
+const policyReadFlush = -1
