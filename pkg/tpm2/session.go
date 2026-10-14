@@ -483,8 +483,8 @@ func (tpm *TPM2) platformPolicySession(
 	// value is handed to the session -- and the session is salted. Unsalted,
 	// the session key is empty and the HMAC key is the auth value alone: a
 	// single captured command lets an observer brute force the PIN offline.
-	// The PCR branch proves no secret, passes a nil auth and so gets an
-	// unsalted session (see startPolicySession).
+	// The PCR branch proves no secret and passes a nil auth; its session is
+	// salted all the same (see startPolicySession).
 	session, closer, err := tpm.startPolicySession(hashAlgID, auth)
 	if err != nil {
 		return nil, nil, &errs.Joined{Lead: ErrPlatformPolicySession, Cause: err}
@@ -601,8 +601,7 @@ func (tpm *TPM2) NonceSession(hierarchyAuth types.Password) (tpm2.Session, func(
 		auth = hierarchyAuth.Bytes()
 	}
 
-	session, closer, err := tpm2.PolicySession(
-		tpm.transport, tpm2.TPMAlgSHA256, sessionNonceSize)
+	session, closer, err := tpm.startPolicySession(tpm2.TPMAlgSHA256, nil)
 	if err != nil {
 		tpm.logger.Error("failed to create nonce policy session", slog.String("error", err.Error()))
 		return nil, nil, err

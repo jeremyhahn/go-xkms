@@ -30,5 +30,5 @@ func TestPlatformPolicySession_EveryCommandFailurePropagates(t *testing.T) {
 			_, _, err := h.TPM.PlatformPolicySession(nil)
 			return err
 		}
-	}, 5)
+	}, -1)
 }

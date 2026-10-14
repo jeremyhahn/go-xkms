@@ -233,5 +233,5 @@ func TestCreateIDevID_EveryCommandFailurePropagates(t *testing.T) {
 		// TPM2_CreatePrimary succeeds; like every other tpm.Flush call in
 		// this package it logs a failure instead of returning it, and a
 		// defer always runs after every other command the function issues.
-		33)
+		-1)
 }

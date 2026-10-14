@@ -52,7 +52,9 @@ func (f *nSendTransport) Send(input []byte) ([]byte, error) {
 // but not returned, matching the same contract session.go and capabilities.go
 // pin elsewhere) rather than a dropped error check. Those positions are
 // asserted the other way: the operation must still succeed even though that
-// one command failed.
+// one command failed. A negative number counts from the end (-1 is the last
+// command issued), so a trailing command stays named correctly when an
+// earlier step gains or loses a command.
 //
 // This is a generic regression net for the "return nil, err" checks that
 // follow every TPM round trip in a multi-command operation: dropping any one
@@ -64,11 +66,6 @@ func sweepEachCommandFailure(
 	bestEffort ...int,
 ) {
 	t.Helper()
-
-	tolerated := make(map[int]bool, len(bestEffort))
-	for _, n := range bestEffort {
-		tolerated[n] = true
-	}
 
 	// The simulator is a one-per-process singleton (see newSimHarness):
 	// opening a second one blocks until the first is Close()d. Running the
@@ -84,6 +81,15 @@ func sweepEachCommandFailure(
 		total = unlimited.calls
 	})
 	require.Greater(t, total, 0, "precondition: the operation must issue at least one TPM command")
+
+	tolerated := make(map[int]bool, len(bestEffort))
+	for _, n := range bestEffort {
+		if n < 0 {
+			n += total + 1
+		}
+		require.True(t, n >= 1 && n <= total, "best-effort command %d is outside the %d commands issued", n, total)
+		tolerated[n] = true
+	}
 
 	for n := 0; n < total; n++ {
 		n := n

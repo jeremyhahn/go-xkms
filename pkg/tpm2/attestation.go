@@ -640,7 +640,7 @@ func (tpm *TPM2) activateCredential(
 		hierarchyAuth = ekAttrs.TPMAttributes.HierarchyAuth.Bytes()
 	}
 
-	session, closer, err := tpm2.PolicySession(tpm.transport, tpm2.TPMAlgSHA256, sessionNonceSize)
+	session, closer, err := tpm.startPolicySession(tpm2.TPMAlgSHA256, nil)
 	if err != nil {
 		tpm.logger.Error("failed to create policy session", slog.String("error", err.Error()))
 		return nil, err

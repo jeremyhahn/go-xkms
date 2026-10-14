@@ -436,23 +436,28 @@ func (tpm *TPM2) policyORBranches(session tpm2.Session, branches [][]byte) error
 	return err
 }
 
-// startPolicySession starts a policy session in hashAlg. A non-empty auth is
-// the auth value a PolicyAuthValue branch proves: it is handed to the session,
-// whose HMAC key becomes sessionKey || authValue (TPM 2.0 Part 1, section
-// 19.6), and the session is salted so a captured command neither reveals the
-// value nor lets it be brute forced offline. A session proving no secret
-// needs no salt.
+// startPolicySession starts a salted policy session in hashAlg. Every policy
+// session that authorizes a command starts here; trial sessions, which
+// authorize nothing, do not.
+//
+// The salt is what gives the session a key. Unsalted and unbound, the
+// session key is the Empty Buffer (TPM 2.0 Part 1, section 19.6.8), so a
+// session proving no auth value computes its command HMAC under a
+// zero-length key, which FIPS 140-only mode refuses (#1531). A non-empty
+// auth is the auth value a PolicyAuthValue branch proves: it is handed to
+// the session, whose HMAC key becomes sessionKey || authValue (section
+// 19.6), so a captured command neither reveals the value nor lets it be
+// brute forced offline.
 func (tpm *TPM2) startPolicySession(hashAlg tpm2.TPMAlgID, auth []byte) (tpm2.Session, func() error, error) {
-	if len(auth) == 0 {
-		return tpm2.PolicySession(tpm.transport, hashAlg, sessionNonceSize)
-	}
 	saltHandle, saltPub, release, err := tpm.saltKey()
 	if err != nil {
 		return nil, noopCloser, err
 	}
-	session, closer, err := tpm2.PolicySession(tpm.transport, hashAlg, sessionNonceSize,
-		tpm2.Auth(auth),
-		tpm2.Salted(saltHandle, saltPub))
+	opts := []tpm2.AuthOption{tpm2.Salted(saltHandle, saltPub)}
+	if len(auth) > 0 {
+		opts = append(opts, tpm2.Auth(auth))
+	}
+	session, closer, err := tpm2.PolicySession(tpm.transport, hashAlg, sessionNonceSize, opts...)
 	tpm.closeSession(release, "salt key")
 	if err != nil {
 		return nil, noopCloser, err

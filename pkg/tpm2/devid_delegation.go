@@ -342,9 +342,9 @@ func (tpm *TPM2) WriteDevIDDelegationPolicy(
 		return err
 	}
 
-	session, closer, err := tpm2.PolicySession(tpm.transport, nameAlg, 16)
+	session, closer, err := tpm.startPolicySession(nameAlg, nil)
 	if err != nil {
-		return &errs.Detail{Err: ErrDevIDDelegation, Detail: fmt.Sprintf("policy session: %v", err)}
+		return &errs.Joined{Lead: ErrDevIDDelegation, Detail: "policy session", Cause: err}
 	}
 	defer func() {
 		if closeErr := closer(); closeErr != nil {

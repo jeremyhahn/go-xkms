@@ -381,7 +381,7 @@ func (tpm *TPM2) nvPolicyReadAuth(index tpm2.TPMHandle, cc tpm2.TPMCC) (tpm2.Aut
 		return tpm2.AuthHandle{}, noopCloser, err
 	}
 
-	session, closer, err := tpm2.PolicySession(tpm.transport, pub.NameAlg, sessionNonceSize)
+	session, closer, err := tpm.startPolicySession(pub.NameAlg, nil)
 	if err != nil {
 		return tpm2.AuthHandle{}, noopCloser, err
 	}

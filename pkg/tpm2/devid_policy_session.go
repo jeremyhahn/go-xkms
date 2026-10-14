@@ -95,9 +95,9 @@ func (tpm *TPM2) devidPolicySession(
 		return nil, nil, err
 	}
 
-	session, closer, err := tpm2.PolicySession(tpm.transport, nameAlg, 16)
+	session, closer, err := tpm.startPolicySession(nameAlg, nil)
 	if err != nil {
-		return nil, nil, &errs.Detail{Err: ErrDevIDPolicySession, Detail: fmt.Sprintf("%v", err)}
+		return nil, nil, &errs.Joined{Lead: ErrDevIDPolicySession, Detail: "start policy session", Cause: err}
 	}
 	fail := func(stepErr error) (tpm2.Session, func() error, error) {
 		if closeErr := closer(); closeErr != nil {
