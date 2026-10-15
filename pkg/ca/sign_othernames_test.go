@@ -97,7 +97,11 @@ func TestSignCSR_OtherNamesFromTheIssuerReachTheCertificate(t *testing.T) {
 		key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
 		require.NoError(t, err)
 		nonce := deviceattest01.DICENonce("token.thumbprint")
-		der, err := deviceattest01.SignPossessionCSR(key, []byte{0xfe, 0xed}, nonce)
+		claims := &dice.ClaimsSet{Other: map[int64][]byte{
+			dice.ClaimUeid:         {0x42, 0xfe, 0xed}, // CBOR bstr h'feed'
+			dice.ClaimMeasurements: {0x00},
+		}}
+		der, err := deviceattest01.SignPossessionCSR(key, claims, nonce)
 		require.NoError(t, err)
 		requested := pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE REQUEST", Bytes: der})
 

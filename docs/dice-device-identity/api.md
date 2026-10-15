@@ -1,6 +1,6 @@
 # DICE Device Identity — API
 
-> **Status: NORMATIVE** · Feature: `dice-device-identity` · Repo: `go-xkms` · Last verified: 2026-10-13
+> **Status: NORMATIVE** · Feature: `dice-device-identity` · Repo: `go-xkms` · Last verified: 2026-10-15
 
 ## Transports
 
@@ -81,19 +81,21 @@ Verification is therefore two phases:
 | Call | When | Establishes |
 |------|------|-------------|
 | `VerifyAttestation(...) (*VerifiedAttestation, error)` | challenge | Format, registry anchoring, freshness. Returns the **verified leaf** and the **attested SPKI**, the key the provisioning record vouched for. |
-| `(*VerifiedAttestation).VerifyPossessionCSR(csr, orderIdentifiers)` | finalization, `dice` only | The CSR is the device's possession request: the fixed template, signed by the alias key, over `DICENonce(keyAuthorization)`, naming exactly the order's identifiers (`possession.go:358`). |
+| `(*VerifiedAttestation).VerifyPossessionCSR(csr, orderIdentifiers)` | finalization, `dice` only | The CSR is the device's possession request: the fixed template, signed by the alias key, over `DICENonce(keyAuthorization)`, naming exactly the order's identifiers (`possession.go:370`). |
 | `(*VerifiedAttestation).BindCSRKey(csr)` | finalization | The record carries an attested SPKI and the CSR's SubjectPublicKeyInfo is byte-equal to it; the CSR self-signature verifies; the alias certificate carries the same key, through `attestation.VerifyInvariants`. |
 | `(*VerifiedAttestation).ConfirmRegistration(ctx, verifier)` | finalization | The device registry still holds the device's record, and its key is still the attested SPKI. A refusal is `unauthorized`. |
 
 **The `dice` CSR is a possession request.** A template-minting device signs a
-CertificationRequestInfo built from a fixed template whose one host-supplied
-input is `b = DICENonce(keyAuthorization)`, and the host wraps the signature
-(`AssemblePossessionCSR`, `possession.go:232`). Its shape is an empty subject,
+CertificationRequestInfo built from a fixed template whose inputs are the
+attested key, the alias certificate's claims set and `b =
+DICENonce(keyAuthorization)`, and the host wraps the signature
+(`AssemblePossessionCSR`, `possession.go:268`). Its shape is an empty subject,
 a P-256 key and one `extensionRequest` holding a critical `subjectAltName` with
-the `permanentIdentifier` otherName `hex(DeviceID)` and a non-critical
-`tcg-dice-UCCS-evidence` whose `eat_nonce` is `b`
+the `permanentIdentifier` otherName `hex(ueid)` and a critical
+`tcg-dice-UCCS-evidence` carrying the alias claims `{10: b, 256: ueid, 273:
+measurements}`
 ([architecture.md](architecture.md#possession-at-finalize-the-device-signs-a-fixed-template)).
-The order's identifier is `permanent-identifier` / `hex(DeviceID)`. The ACME
+The order's identifier is `permanent-identifier` / `hex(ueid)`. The ACME
 finalize handler runs `VerifyPossessionCSR` and then `BindCSRKey` for a `dice`
 record (`pkg/acme/server/handlers/device_attest.go:228-235`); any other request
 is `badCSR`, so a `dice` order names one device and nothing else. The UCCS

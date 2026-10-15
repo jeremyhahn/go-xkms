@@ -1,6 +1,6 @@
 # ACME Issuance — API
 
-> **Status: NORMATIVE** · Feature: `acme-issuance` · Repo: `go-xkms` · Last verified: 2026-10-13
+> **Status: NORMATIVE** · Feature: `acme-issuance` · Repo: `go-xkms` · Last verified: 2026-10-15
 
 ACME is different from every other feature in this repo: **its wire format is
 defined by RFC 8555, not by us.** The six-transport rule applies to go-xkms's
@@ -217,11 +217,11 @@ than signed as an ordinary CSR. See
 
 For `dice` the CSR must also be the device's **possession request**: the
 fixed template (empty subject, P-256 key, one `extensionRequest` with a
-critical `subjectAltName` naming `permanentIdentifier` = `hex(DeviceID)` and a
-non-critical `tcg-dice-UCCS-evidence` whose `eat_nonce` is
-`SHA-256(keyAuthorization)`), signed by the attested key
-(`pkg/acme/challenges/device-attest-01/possession.go:38-73`, checked by
-`VerifyPossessionCSR` at `possession.go:358`). A `dice` order therefore names
+critical `subjectAltName` naming `permanentIdentifier` = `hex(ueid)` and a
+critical `tcg-dice-UCCS-evidence` carrying the alias certificate's claims
+`{10: SHA-256(keyAuthorization), 256: ueid, 273: measurements}`), signed by
+the attested key (`pkg/acme/challenges/device-attest-01/possession.go:38-77`,
+checked by `VerifyPossessionCSR` at `possession.go:370`). A `dice` order therefore names
 exactly one `permanent-identifier` and nothing else. The UCCS extension is
 never copied onto the certificate (`order_finalize.go:851`). The request's key must also be the key the device
 registry vouched for at the challenge, and finalize asks the registry again, so

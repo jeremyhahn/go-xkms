@@ -1,6 +1,6 @@
 # ACME Issuance — Engineering Contract
 
-> **Status: NORMATIVE** · Feature: `acme-issuance` · Repo: `go-xkms` · Last verified: 2026-10-13
+> **Status: NORMATIVE** · Feature: `acme-issuance` · Repo: `go-xkms` · Last verified: 2026-10-15
 
 ## Exported surface
 
@@ -783,24 +783,27 @@ requests.
 device's alias key is its static DeviceID key, so its challenge leaf says
 nothing about which finalize it belongs to. Its CSR is therefore a possession
 request: a PKCS#10 CertificationRequestInfo built from a fixed template whose
-one host-supplied input is `b = DICENonce(keyAuthorization)`, signed by the
-device and wrapped by the host
-(`pkg/acme/challenges/device-attest-01/possession.go:38-73`). The template is an
+inputs are the attested key, the alias certificate's claims set and one
+host-supplied value, `b = DICENonce(keyAuthorization)`, signed by the device
+and wrapped by the host
+(`pkg/acme/challenges/device-attest-01/possession.go:38-77`). The template is an
 empty subject, a P-256 key and one `extensionRequest` holding a critical
-`subjectAltName` with the `permanentIdentifier` otherName `hex(DeviceID)` and a
-non-critical `tcg-dice-UCCS-evidence` whose `eat_nonce` is `b`. The ACME
-identifier type is `permanent-identifier` (`possession.go:81`).
+`subjectAltName` with the `permanentIdentifier` otherName `hex(ueid)` and a
+critical `tcg-dice-UCCS-evidence` carrying the alias claims
+`{10: b, 256: ueid, 273: measurements}`; the ADR's 365-byte vector pins it
+(`possession_test.go:126`). The ACME identifier type is `permanent-identifier`
+(`possession.go:85`).
 `bindDeviceAttestationKey` runs `VerifyPossessionCSR` for every `dice` record
 before `BindCSRKey` (`pkg/acme/server/handlers/device_attest.go:228-235`).
-`ParsePossessionCSR` (`possession.go:280`) refuses anything the template would
+`ParsePossessionCSR` (`possession.go:318`) refuses anything the template would
 not have written, then four checks run, each its own `badCSR` cause:
 
 | Check | Error | Where |
 |---|---|---|
-| the signature verifies under the request's key | `ErrPossessionSignatureInvalid` | `possession.go:374` |
-| the SubjectPublicKeyInfo is byte-equal to the attested leaf's | `ErrPossessionKeyMismatch` | `possession.go:377` |
-| the UCCS nonce is SHA-256 of this order's key authorization | `ErrPossessionNonceMismatch` | `possession.go:380` |
-| the request's identifiers are exactly the order's | `ErrPossessionIdentifierMismatch` | `possession.go:383` |
+| the signature verifies under the request's key | `ErrPossessionSignatureInvalid` | `possession.go:386` |
+| the SubjectPublicKeyInfo is byte-equal to the attested leaf's | `ErrPossessionKeyMismatch` | `possession.go:389` |
+| the UCCS nonce is SHA-256 of this order's key authorization | `ErrPossessionNonceMismatch` | `possession.go:392` |
+| the request's identifiers are exactly the order's | `ErrPossessionIdentifierMismatch` | `possession.go:395` |
 
 `BindCSRKey` (`binding.go:153`) then refuses, as `ErrKeyBindingUnavailable`
 ("no attested SPKI"), a record without `AttestedSPKI`, the key the device

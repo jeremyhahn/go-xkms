@@ -46,6 +46,7 @@ import (
 	deviceattest01 "github.com/jeremyhahn/go-xkms/pkg/acme/challenges/device-attest-01"
 	caerrors "github.com/jeremyhahn/go-xkms/pkg/acme/errors"
 	acmeserver "github.com/jeremyhahn/go-xkms/pkg/acme/server"
+	"github.com/jeremyhahn/go-xkms/pkg/attestation/dice"
 	"github.com/jeremyhahn/go-xkms/pkg/ca"
 )
 
@@ -6549,20 +6550,71 @@ func TestDeviceAttestCSR_ReportsAKeyThatCannotSign(t *testing.T) {
 // A DICE device finalizes with the possession template over the challenge it
 // answered, naming itself by its DeviceID: the request the server's
 // possession checks accept (go-xkms#1441).
-func TestAttestedKeyCSR_DICEDeviceSendsThePossessionRequest(t *testing.T) {
+// aliasClaimsFixture is the claims set a DICE alias certificate carries: the
+// ueid 0a0b0c beside a measurement, under a nonce the challenge does not ask
+// for.
+func aliasClaimsFixture() *dice.ClaimsSet {
+	return &dice.ClaimsSet{
+		Nonce: bytes.Repeat([]byte{0x5a}, 32),
+		Other: map[int64][]byte{
+			dice.ClaimUeid:         {0x43, 0x0a, 0x0b, 0x0c}, // CBOR bstr h'0a0b0c'
+			dice.ClaimMeasurements: {0x00},
+		},
+	}
+}
+
+// diceAliasCert is a self-signed alias certificate for key carrying extensions.
+func diceAliasCert(t *testing.T, key *ecdsa.PrivateKey, extensions ...pkix.Extension) []byte {
+	t.Helper()
+	template := &x509.Certificate{
+		SerialNumber:    big.NewInt(1),
+		Subject:         pkix.Name{CommonName: "test dice alias"},
+		NotBefore:       time.Now().Add(-time.Hour),
+		NotAfter:        time.Now().Add(time.Hour),
+		ExtraExtensions: extensions,
+	}
+	der, err := x509.CreateCertificate(rand.Reader, template, template, key.Public(), key)
+	require.NoError(t, err)
+	return der
+}
+
+// diceStatement is the device-attest-01 attestation request naming x5c.
+func diceStatement(t *testing.T, x5c ...interface{}) []byte {
+	t.Helper()
+	statement, err := deviceattest01.EncodeAttestationRequest(&deviceattest01.AttestationObject{
+		Format:       deviceattest01.FormatDICE.String(),
+		AttStatement: deviceattest01.AttestationStatement{X5c: x5c},
+	})
+	require.NoError(t, err)
+	return statement
+}
+
+// diceAttestedKey is a DICE attested key whose statement carries an alias
+// certificate with claims.
+func diceAttestedKey(t *testing.T, claims *dice.ClaimsSet) (*ecdsa.PrivateKey, *AttestedKey) {
+	t.Helper()
 	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
 	require.NoError(t, err)
-	attested := &AttestedKey{Signer: key, Format: deviceattest01.FormatDICE}
+	uccs, err := dice.CreateUccsEvidenceExtension(claims)
+	require.NoError(t, err)
+	statement := diceStatement(t, diceAliasCert(t, key, uccs))
+	return key, &AttestedKey{Signer: key, Format: deviceattest01.FormatDICE, Statement: statement}
+}
 
-	der, err := attestedKeyCSR("device.example.com", "0a0b0c", "token.thumbprint", attested)
+func TestAttestedKeyCSR_DICEDeviceSendsThePossessionRequest(t *testing.T) {
+	alias := aliasClaimsFixture()
+	key, attested := diceAttestedKey(t, alias)
+
+	der, err := attestedKeyCSR("device.example.com", "ffff", "token.thumbprint", attested)
 	require.NoError(t, err)
 	csr, err := x509.ParseCertificateRequest(der)
 	require.NoError(t, err)
 
 	request, err := deviceattest01.ParsePossessionCSR(csr)
 	require.NoError(t, err)
-	assert.Equal(t, []byte{0x0a, 0x0b, 0x0c}, request.DeviceID)
-	assert.Equal(t, deviceattest01.DICENonce("token.thumbprint"), request.Nonce)
+	assert.Equal(t, []byte{0x0a, 0x0b, 0x0c}, request.DeviceID, "the identity is the alias certificate's ueid")
+	assert.Equal(t, deviceattest01.DICENonce("token.thumbprint"), request.Claims.Nonce)
+	assert.Equal(t, alias.Other, request.Claims.Other, "the alias certificate's claims are carried verbatim")
 	assert.True(t, key.PublicKey.Equal(request.PublicKey))
 	assert.Empty(t, csr.Subject.CommonName, "the template's subject is empty")
 }
@@ -6583,13 +6635,37 @@ func TestAttestedKeyCSR_OtherFormatsSendAnOrdinaryRequest(t *testing.T) {
 	assert.ErrorIs(t, err, deviceattest01.ErrPossessionCSRMalformed)
 }
 
-func TestAttestedKeyCSR_RefusesADICEIdentityThatIsNotHex(t *testing.T) {
+func TestAttestedKeyCSR_RefusesADICEStatementWithoutAliasClaims(t *testing.T) {
 	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
 	require.NoError(t, err)
-	attested := &AttestedKey{Signer: key, Format: deviceattest01.FormatDICE}
 
-	der, err := attestedKeyCSR("device.example.com", "not-hex", "token.thumbprint", attested)
-	assert.ErrorIs(t, err, ErrAttestationFailed)
+	cases := map[string][]byte{
+		"no statement":               nil,
+		"no alias certificate":       diceStatement(t),
+		"an alias that is not bytes": diceStatement(t, "alias"),
+		"an alias that is not DER":   diceStatement(t, []byte{0x30, 0x00}),
+		"an alias without UCCS":      diceStatement(t, diceAliasCert(t, key)),
+	}
+	for name, statement := range cases {
+		t.Run(name, func(t *testing.T) {
+			attested := &AttestedKey{Signer: key, Format: deviceattest01.FormatDICE, Statement: statement}
+
+			der, err := attestedKeyCSR("device.example.com", "0a0b0c", "token.thumbprint", attested)
+
+			assert.ErrorIs(t, err, ErrAttestationFailed)
+			assert.Nil(t, der)
+		})
+	}
+}
+
+func TestAttestedKeyCSR_RefusesAliasClaimsTheTemplateCannotCarry(t *testing.T) {
+	alias := aliasClaimsFixture()
+	delete(alias.Other, dice.ClaimMeasurements)
+	_, attested := diceAttestedKey(t, alias)
+
+	der, err := attestedKeyCSR("device.example.com", "0a0b0c", "token.thumbprint", attested)
+
+	assert.ErrorIs(t, err, deviceattest01.ErrPossessionCSRMalformed)
 	assert.Nil(t, der)
 }
 

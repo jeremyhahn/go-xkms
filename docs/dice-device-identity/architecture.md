@@ -1,6 +1,6 @@
 # DICE Device Identity — Architecture
 
-> **Status: NORMATIVE** · Feature: `dice-device-identity` · Repo: `go-xkms` · Last verified: 2026-10-13
+> **Status: NORMATIVE** · Feature: `dice-device-identity` · Repo: `go-xkms` · Last verified: 2026-10-15
 
 ## The question this answers
 
@@ -213,44 +213,50 @@ ACME, where the order's `permanentIdentifier` is the hex UEID read by
 
 A template-minting device has no ASN.1 encoder, and its alias key is its static
 DeviceID key, so the leaf it presents at the challenge says nothing about which
-finalize it belongs to (`pkg/acme/challenges/device-attest-01/possession.go:39-46`).
+finalize it belongs to (`pkg/acme/challenges/device-attest-01/possession.go:40-47`).
 It proves possession at finalize instead, by signing a PKCS#10
-CertificationRequestInfo filled in from a fixed template. The template's one
-host-supplied input is `b = SHA-256(keyAuthorization)`, the same `b` the
+CertificationRequestInfo filled in from a fixed template. The template's inputs
+are the attested key, the claims set the alias certificate carries, and one
+host-supplied value, `b = SHA-256(keyAuthorization)`, the same `b` the
 challenge carried (`DICENonce`, `deviceattest01.go:440`). The host rebuilds the
 CertificationRequestInfo and wraps the device's signature
-(`AssemblePossessionCSR`, `possession.go:232`); a device that can sign a
-digest through a Go `crypto.Signer` uses `SignPossessionCSR` (`:256`).
+(`AssemblePossessionCSR`, `possession.go:268`); a device that can sign a
+digest through a Go `crypto.Signer` uses `SignPossessionCSR` (`:292`). The ACME
+client reads the claims set from the alias certificate it presented at the
+challenge (`aliasClaims`, `pkg/acme/client/enrollment.go:1024`).
 
-The template, which `BuildPossessionCRI` (`:171`) writes and the package
-comment states byte for byte (`:51-62`):
+The template, which `BuildPossessionCRI` (`:179`) writes and the package
+comment states byte for byte (`:51-63`). The ADR's 365-byte vector pins it
+(`TestPossessionVector`, `possession_test.go:126`):
 
 | Field | Value |
 |-------|-------|
 | version | 0 |
 | subject | empty Name, `30 00` |
 | subjectPKInfo | id-ecPublicKey, prime256v1, uncompressed point |
-| attributes | one `extensionRequest` (1.2.840.113549.1.9.14, `:86`) |
-| extension 1 | `subjectAltName`, **critical** (RFC 5280 §4.2.1.6: the subject is empty), one otherName `id-on-permanentIdentifier` (RFC 4043), `identifierValue` = lower-case `hex(DeviceID)`, no assigner (`possessionExtensions`, `:212-227`) |
-| extension 2 | `tcg-dice-UCCS-evidence` (2.23.133.5.4.6), **not critical**, CBOR `{10: b}` |
+| attributes | one `extensionRequest` (1.2.840.113549.1.9.14, `:90`) |
+| extension 1 | `subjectAltName`, **critical** (RFC 5280 §4.2.1.6: the subject is empty), one otherName `id-on-permanentIdentifier` (RFC 4043), `identifierValue` = lower-case hex of the claims set's `ueid`, no assigner (`possessionExtensions`, `:248-263`) |
+| extension 2 | `tcg-dice-UCCS-evidence` (2.23.133.5.4.6), **critical**, the alias claims set with `eat_nonce` = `b`: CBOR `{10: b, 256: ueid, 273: measurements}` in deterministic order |
 | signature | ecdsa-with-SHA256 |
 
 The request names its device as the ACME identifier type
-`permanent-identifier` (`PossessionIdentifierType`, `:81`) with value
-`hex(DeviceID)` (`Identifier`, `:132-133`), the form the challenge's identity
-gate compares against the order.
+`permanent-identifier` (`PossessionIdentifierType`, `:85`) with value
+`hex(ueid)` (`Identifier`, `:138-139`), the form the challenge's identity
+gate compares against the order. `BuildPossessionCRI` refuses a claims set
+with no `ueid` or no claim 273, or with any claim besides 10, 256 and 273
+(`possessionUeid`, `:228-243`): the template has no place for them.
 
-`VerifyPossessionCSR` (`:358`) is the finalize side. `ParsePossessionCSR`
-(`:280`) first refuses any request that is not what the template writes for the
+`VerifyPossessionCSR` (`:370`) is the finalize side. `ParsePossessionCSR`
+(`:318`) rebuilds the template from the claims set it parsed and first refuses any request that is not what the template writes for the
 values it carries (`ErrPossessionCSRMalformed`), then four checks run, each
 with its own error:
 
 | Check | Error | Where |
 |-------|-------|-------|
-| the signature verifies under the request's own key | `ErrPossessionSignatureInvalid` | `possession.go:374` |
-| the SubjectPublicKeyInfo is byte-equal to the attested leaf's | `ErrPossessionKeyMismatch` | `possession.go:377` |
-| the UCCS nonce is SHA-256 of this order's key authorization, compared in constant time | `ErrPossessionNonceMismatch` | `possession.go:380` |
-| the request's identifiers are exactly the order's | `ErrPossessionIdentifierMismatch` | `possession.go:383` |
+| the signature verifies under the request's own key | `ErrPossessionSignatureInvalid` | `possession.go:386` |
+| the SubjectPublicKeyInfo is byte-equal to the attested leaf's | `ErrPossessionKeyMismatch` | `possession.go:389` |
+| the UCCS nonce is SHA-256 of this order's key authorization, compared in constant time | `ErrPossessionNonceMismatch` | `possession.go:392` |
+| the request's identifiers are exactly the order's | `ErrPossessionIdentifierMismatch` | `possession.go:395` |
 
 The ACME finalize handler runs it for every `dice` record and then still runs
 `BindCSRKey`, the gate every format shares
@@ -273,15 +279,20 @@ extensions are not copied" (`sign_othernames_test.go:96`) proves it at the CA.
 
 PKCS#9 `challengePassword` is a string a CA compares, which no DICE verifier
 reads as a challenge. The UCCS `eat_nonce` is where the challenge already
-travels at the challenge, so the binding goes there too (`possession.go:64-68`).
+travels at the challenge, so the binding goes there too (`possession.go:65-66`).
 
-#### Rejected: a critical UCCS extension
+#### Rejected: a non-critical UCCS extension, or a nonce-only claims set
 
-`CreateUccsEvidenceExtension` marks the extension critical on an alias
-certificate, because there the claims are what make the certificate an
-attestation. In the possession request it is never issued: it is evidence about
-the request, not a claim for the certificate, so it is not critical
-(`possession.go:65-68`).
+The request carries the UCCS extension exactly as the alias certificate does:
+critical, written by `CreateUccsEvidenceExtension`, holding the alias's own
+claims with `eat_nonce` replaced by `b` (`possession.go:59-61`, `:68-71`). The
+identifierValue is the hex of that claims set's `ueid`, so the name the request
+asks for and the evidence it carries cannot disagree (`:67-68`). A device
+writes these bytes from its template without an encoder, so the host has to
+produce the same bytes; the ADR's vector is the contract between them, and a
+request with a non-critical extension or a claims set of `{10: b}` alone is
+`ErrPossessionCSRMalformed`. The criticality does not reach a certificate: the
+CA copies no requested extension (above).
 
 ### Rejected: refusing claim keys this verifier does not know
 

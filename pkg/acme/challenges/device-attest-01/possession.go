@@ -41,8 +41,9 @@ import (
 // way: it has no ASN.1 encoder, and its alias key is its static DeviceID key,
 // so the leaf it presents at the challenge says nothing about which finalize it
 // belongs to. It proves possession at finalize instead, by signing a
-// CertificationRequestInfo it fills in from a fixed template. Its one
-// host-supplied input is b = SHA-256(keyAuthorization), the same b the
+// CertificationRequestInfo it fills in from a fixed template. Its inputs are
+// the attested key, the claims set its alias certificate carries, and one
+// host-supplied value, b = SHA-256(keyAuthorization), the same b the
 // challenge carried, so a request signed for one order cannot be replayed
 // into another.
 //
@@ -55,17 +56,20 @@ import (
 //	  attributes    [0] { extensionRequest { SEQUENCE OF Extension {
 //	    subjectAltName, critical (RFC 5280 4.2.1.6: the subject is empty)
 //	      otherName id-on-permanentIdentifier (RFC 4043)
-//	        identifierValue = lower-case hex(DeviceID), no assigner
-//	    tcg-dice-UCCS-evidence, not critical
-//	      uccs = CBOR { 10 (eat_nonce): b }
+//	        identifierValue = lower-case hex(ueid), no assigner
+//	    tcg-dice-UCCS-evidence, critical
+//	      uccs = the alias certificate's claims set with eat_nonce = b:
+//	        CBOR { 10 (eat_nonce): b, 256 (ueid), 273 (measurements) }
 //	  } } }
 //	}
 //
 // The binding is the UCCS nonce inside extensionRequest, where any DICE
-// verifier already looks for a challenge, and not challengePassword. The UCCS
-// extension is not critical because it is never issued: it is evidence about
-// this request, and the CA copies no requested extension onto the
-// certificate.
+// verifier already looks for a challenge, and not challengePassword. The
+// identifierValue is the hex of the claims set's own ueid, so the name the
+// request asks for and the evidence it carries cannot disagree. The UCCS
+// extension is critical, as dice.CreateUccsEvidenceExtension writes it on
+// the alias certificate; it is evidence about this request, and the CA copies
+// no requested extension onto the certificate.
 //
 // The host wraps the device's signature with ecdsa-with-SHA256
 // (AssemblePossessionCSR); the server reverses the template exactly
@@ -117,12 +121,14 @@ var (
 
 // PossessionRequest is what a possession certificate request states.
 type PossessionRequest struct {
-	// DeviceID is the device identifier the request names, the bytes whose
-	// hex is the permanentIdentifier's identifierValue.
-	DeviceID []byte
+	// Claims is the claims set the UCCS evidence carries: the alias
+	// certificate's claims, with Nonce the eat_nonce b =
+	// SHA-256(keyAuthorization).
+	Claims *dice.ClaimsSet
 
-	// Nonce is the UCCS eat_nonce, b = SHA-256(keyAuthorization).
-	Nonce []byte
+	// DeviceID is the claims set's ueid, the bytes whose hex is the
+	// permanentIdentifier's identifierValue.
+	DeviceID []byte
 
 	// PublicKey is the key the request is for.
 	PublicKey *ecdsa.PublicKey
@@ -167,29 +173,39 @@ var emptyName = []byte{0x30, 0x00}
 var oidSignatureECDSAWithSHA256 = asn1.ObjectIdentifier{1, 2, 840, 10045, 4, 3, 2}
 
 // BuildPossessionCRI returns the DER CertificationRequestInfo the possession
-// template produces for pub, deviceID and nonce: the bytes the device signs.
-func BuildPossessionCRI(pub *ecdsa.PublicKey, deviceID, nonce []byte) ([]byte, error) {
+// template produces for pub, the alias certificate's claims and nonce: the
+// bytes the device signs. claims.Nonce is ignored; the request carries nonce
+// in its place.
+func BuildPossessionCRI(pub *ecdsa.PublicKey, claims *dice.ClaimsSet, nonce []byte) ([]byte, error) {
+	cri, _, err := possessionTemplate(pub, claims, nonce)
+	return cri, err
+}
+
+// possessionTemplate writes the CertificationRequestInfo and returns it with
+// the ueid it names the device by.
+func possessionTemplate(pub *ecdsa.PublicKey, claims *dice.ClaimsSet, nonce []byte) ([]byte, []byte, error) {
 	if pub == nil || pub.Curve != elliptic.P256() {
-		return nil, &errs.Detail{Err: ErrPossessionCSRMalformed, Detail: "the key must be ECDSA P-256"}
-	}
-	if len(deviceID) == 0 {
-		return nil, &errs.Detail{Err: ErrPossessionCSRMalformed, Detail: "the device identifier is empty"}
+		return nil, nil, &errs.Detail{Err: ErrPossessionCSRMalformed, Detail: "the key must be ECDSA P-256"}
 	}
 	if len(nonce) != PossessionNonceSize {
-		return nil, &errs.Detail{Err: ErrPossessionCSRMalformed, Detail: "the nonce must be SHA-256 of the key authorization"}
+		return nil, nil, &errs.Detail{Err: ErrPossessionCSRMalformed, Detail: "the nonce must be SHA-256 of the key authorization"}
+	}
+	deviceID, err := possessionUeid(claims)
+	if err != nil {
+		return nil, nil, err
 	}
 
 	spki, err := x509.MarshalPKIXPublicKey(pub)
 	if err != nil {
-		return nil, &errs.Joined{Lead: ErrPossessionCSRMalformed, Detail: "the key does not encode", Cause: err}
+		return nil, nil, &errs.Joined{Lead: ErrPossessionCSRMalformed, Detail: "the key does not encode", Cause: err}
 	}
-	extensions, err := possessionExtensions(deviceID, nonce)
+	extensions, err := possessionExtensions(deviceID, &dice.ClaimsSet{Nonce: nonce, Other: claims.Other})
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	extensionsDER, err := asn1.Marshal(extensions)
 	if err != nil {
-		return nil, &errs.Joined{Lead: ErrPossessionCSRMalformed, Detail: "the extensions do not encode", Cause: err}
+		return nil, nil, &errs.Joined{Lead: ErrPossessionCSRMalformed, Detail: "the extensions do not encode", Cause: err}
 	}
 
 	cri, err := asn1.Marshal(possessionCRI{
@@ -201,15 +217,35 @@ func BuildPossessionCRI(pub *ecdsa.PublicKey, deviceID, nonce []byte) ([]byte, e
 		}},
 	})
 	if err != nil {
-		return nil, &errs.Joined{Lead: ErrPossessionCSRMalformed, Detail: "the request info does not encode", Cause: err}
+		return nil, nil, &errs.Joined{Lead: ErrPossessionCSRMalformed, Detail: "the request info does not encode", Cause: err}
 	}
-	return cri, nil
+	return cri, deviceID, nil
+}
+
+// possessionUeid returns the ueid of a claims set the template can carry:
+// exactly the ueid and measurements claims beside the nonce, the claims set a
+// template-minting device's alias certificate carries.
+func possessionUeid(claims *dice.ClaimsSet) ([]byte, error) {
+	if claims == nil {
+		return nil, &errs.Detail{Err: ErrPossessionCSRMalformed, Detail: "no claims set"}
+	}
+	ueid, err := claims.Ueid()
+	if err != nil {
+		return nil, &errs.Joined{Lead: ErrPossessionCSRMalformed, Detail: "the claims set names no ueid", Cause: err}
+	}
+	if _, present := claims.Other[dice.ClaimMeasurements]; !present {
+		return nil, &errs.Detail{Err: ErrPossessionCSRMalformed, Detail: "the claims set carries no measurements claim"}
+	}
+	if len(claims.Other) != 2 {
+		return nil, &errs.Detail{Err: ErrPossessionCSRMalformed, Detail: "the claims set carries a claim beside the nonce, ueid and measurements"}
+	}
+	return ueid, nil
 }
 
 // possessionExtensions returns the template's two extensions, in template
 // order: the subjectAltName naming the device, then the UCCS evidence
-// carrying the nonce.
-func possessionExtensions(deviceID, nonce []byte) ([]pkix.Extension, error) {
+// carrying the claims.
+func possessionExtensions(deviceID []byte, claims *dice.ClaimsSet) ([]pkix.Extension, error) {
 	identifier, err := ca.MarshalPermanentIdentifier(hex.EncodeToString(deviceID), nil)
 	if err != nil {
 		return nil, err
@@ -219,11 +255,11 @@ func possessionExtensions(deviceID, nonce []byte) ([]pkix.Extension, error) {
 	if err != nil {
 		return nil, err
 	}
-	uccs, err := dice.MarshalUccsEvidence(&dice.ClaimsSet{Nonce: nonce})
+	uccs, err := dice.CreateUccsEvidenceExtension(claims)
 	if err != nil {
-		return nil, err
+		return nil, &errs.Joined{Lead: ErrPossessionCSRMalformed, Detail: "the claims set does not encode", Cause: err}
 	}
-	return []pkix.Extension{san, {Id: dice.OIDUccsEvidence, Value: uccs}}, nil
+	return []pkix.Extension{san, uccs}, nil
 }
 
 // AssemblePossessionCSR wraps a CertificationRequestInfo and the device's
@@ -250,10 +286,10 @@ func AssemblePossessionCSR(cri, signature []byte) ([]byte, error) {
 	return csr, nil
 }
 
-// SignPossessionCSR builds the possession request for deviceID and nonce and
-// has signer -- the device's key -- sign it: the whole host side of the
-// exchange for a device reachable as a crypto.Signer.
-func SignPossessionCSR(signer crypto.Signer, deviceID, nonce []byte) ([]byte, error) {
+// SignPossessionCSR builds the possession request for the alias certificate's
+// claims and nonce and has signer -- the device's key -- sign it: the whole
+// host side of the exchange for a device reachable as a crypto.Signer.
+func SignPossessionCSR(signer crypto.Signer, claims *dice.ClaimsSet, nonce []byte) ([]byte, error) {
 	if signer == nil {
 		return nil, &errs.Detail{Err: ErrPossessionSigningFailed, Detail: "no signer"}
 	}
@@ -261,7 +297,7 @@ func SignPossessionCSR(signer crypto.Signer, deviceID, nonce []byte) ([]byte, er
 	if !ok {
 		return nil, &errs.Detail{Err: ErrPossessionCSRMalformed, Detail: "the key must be ECDSA P-256"}
 	}
-	cri, err := BuildPossessionCRI(pub, deviceID, nonce)
+	cri, err := BuildPossessionCRI(pub, claims, nonce)
 	if err != nil {
 		return nil, err
 	}
@@ -275,8 +311,10 @@ func SignPossessionCSR(signer crypto.Signer, deviceID, nonce []byte) ([]byte, er
 
 // ParsePossessionCSR reads a possession request back into the values it
 // carries, and refuses any request whose CertificationRequestInfo is not
-// exactly what BuildPossessionCRI writes for those values. It does not verify
-// the signature; VerifyPossessionCSR does.
+// exactly what BuildPossessionCRI writes for those values. The rebuild
+// starts from the whole claims set the request carries, so every claim, the
+// subjectAltName and both criticalities are covered by the comparison. It
+// does not verify the signature; VerifyPossessionCSR does.
 func ParsePossessionCSR(csr *x509.CertificateRequest) (*PossessionRequest, error) {
 	if csr == nil {
 		return nil, &errs.Detail{Err: ErrPossessionCSRMalformed, Detail: "no certificate request"}
@@ -289,49 +327,23 @@ func ParsePossessionCSR(csr *x509.CertificateRequest) (*PossessionRequest, error
 		return nil, &errs.Detail{Err: ErrPossessionCSRMalformed, Detail: "the key is not ECDSA P-256"}
 	}
 
-	deviceID, err := possessionDeviceID(csr.Extensions)
+	claims, err := possessionClaims(csr.Extensions)
 	if err != nil {
 		return nil, err
 	}
-	nonce, err := possessionNonce(csr.Extensions)
-	if err != nil {
-		return nil, err
-	}
-
-	template, err := BuildPossessionCRI(pub, deviceID, nonce)
+	template, deviceID, err := possessionTemplate(pub, claims, claims.Nonce)
 	if err != nil {
 		return nil, err
 	}
 	if !bytes.Equal(template, csr.RawTBSCertificateRequest) {
 		return nil, &errs.Detail{Err: ErrPossessionCSRMalformed, Detail: "the request info is not the template's encoding of the values it carries"}
 	}
-	return &PossessionRequest{DeviceID: deviceID, Nonce: nonce, PublicKey: pub}, nil
+	return &PossessionRequest{Claims: claims, DeviceID: deviceID, PublicKey: pub}, nil
 }
 
-// possessionDeviceID reads the device identifier out of the request's one
-// permanentIdentifier otherName.
-func possessionDeviceID(extensions []pkix.Extension) ([]byte, error) {
-	others, err := ca.ParseOtherNames(extensions)
-	if err != nil {
-		return nil, &errs.Joined{Lead: ErrPossessionCSRMalformed, Detail: "the subjectAltName does not parse", Cause: err}
-	}
-	if len(others) != 1 || !others[0].TypeID.Equal(ca.OIDPermanentIdentifier) {
-		return nil, &errs.Detail{Err: ErrPossessionCSRMalformed, Detail: "the subjectAltName must be exactly one permanentIdentifier"}
-	}
-	identifier, err := ca.ParsePermanentIdentifierExtension(others[0].Value)
-	if err != nil {
-		return nil, &errs.Joined{Lead: ErrPossessionCSRMalformed, Detail: "the permanentIdentifier does not parse", Cause: err}
-	}
-	deviceID, err := hex.DecodeString(identifier.IdentifierValue)
-	if err != nil {
-		return nil, &errs.Joined{Lead: ErrPossessionCSRMalformed, Detail: "the permanentIdentifier is not hex", Cause: err}
-	}
-	return deviceID, nil
-}
-
-// possessionNonce reads the eat_nonce out of the request's UCCS evidence
+// possessionClaims reads the claims set out of the request's UCCS evidence
 // extension, through the same parser the challenge verifier uses.
-func possessionNonce(extensions []pkix.Extension) ([]byte, error) {
+func possessionClaims(extensions []pkix.Extension) (*dice.ClaimsSet, error) {
 	for _, ext := range extensions {
 		if !ext.Id.Equal(dice.OIDUccsEvidence) {
 			continue
@@ -340,7 +352,7 @@ func possessionNonce(extensions []pkix.Extension) ([]byte, error) {
 		if err != nil {
 			return nil, &errs.Joined{Lead: ErrPossessionCSRMalformed, Detail: "the UCCS evidence does not parse", Cause: err}
 		}
-		return claims.Nonce, nil
+		return claims, nil
 	}
 	return nil, &errs.Detail{Err: ErrPossessionCSRMalformed, Detail: "no UCCS evidence extension"}
 }
@@ -377,7 +389,7 @@ func (v *VerifiedAttestation) VerifyPossessionCSR(csr *x509.CertificateRequest, 
 	if !bytes.Equal(csr.RawSubjectPublicKeyInfo, leaf.RawSubjectPublicKeyInfo) {
 		return ErrPossessionKeyMismatch
 	}
-	if subtle.ConstantTimeCompare(request.Nonce, DICENonce(v.KeyAuthorization)) != 1 {
+	if subtle.ConstantTimeCompare(request.Claims.Nonce, DICENonce(v.KeyAuthorization)) != 1 {
 		return ErrPossessionNonceMismatch
 	}
 	if len(orderIdentifiers) != 1 || orderIdentifiers[0] != request.Identifier() {

@@ -65,6 +65,13 @@ const ClaimEatNonce = 10
 // an RFC 9711 UEID, a byte string whose first byte is the type.
 const ClaimUeid = 256
 
+// ClaimMeasurements is the CWT claim key of the EAT measurements claim, 273.
+//
+// A template-minting device states its firmware measurement here, beside its
+// ueid. The value is kept verbatim in ClaimsSet.Other like every claim this
+// package does not model.
+const ClaimMeasurements = 273
+
 // nonceMinLen is the shortest nonce this verifier will read, 8 bytes, which is
 // the lower bound EAT places on eat_nonce.
 //

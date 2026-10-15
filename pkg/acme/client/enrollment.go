@@ -20,7 +20,6 @@ import (
 	"crypto/x509"
 	"crypto/x509/pkix"
 	"encoding/base64"
-	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -39,6 +38,7 @@ import (
 	deviceattest01 "github.com/jeremyhahn/go-xkms/pkg/acme/challenges/device-attest-01"
 	caerrors "github.com/jeremyhahn/go-xkms/pkg/acme/errors"
 	acmeserver "github.com/jeremyhahn/go-xkms/pkg/acme/server"
+	"github.com/jeremyhahn/go-xkms/pkg/attestation/dice"
 	"github.com/jeremyhahn/go-xkms/pkg/ca"
 	"github.com/jeremyhahn/go-xkms/pkg/errs"
 )
@@ -1005,17 +1005,43 @@ func (c *Client) DeviceAttest(ctx context.Context, config *EnrollmentConfig) (*x
 // -- never the Common Name, which is display text.
 // attestedKeyCSR is the finalize request for the attested key. A DICE device
 // mints it from the possession template over the challenge it answered
-// (go-xkms#1441), naming itself by its DeviceID; every other format sends an
-// ordinary request naming the device.
+// (go-xkms#1441), carrying the claims set of the alias certificate it
+// attested with; every other format sends an ordinary request naming the
+// device.
 func attestedKeyCSR(commonName, deviceIdentity, keyAuth string, attested *AttestedKey) ([]byte, error) {
 	if attested.Format != deviceattest01.FormatDICE {
 		return deviceAttestCSR(commonName, deviceIdentity, attested.Signer)
 	}
-	deviceID, err := hex.DecodeString(deviceIdentity)
+	claims, err := aliasClaims(attested.Statement)
 	if err != nil {
-		return nil, &errs.Joined{Lead: ErrAttestationFailed, Detail: "the DICE device identity is not the hex of a DeviceID", Cause: err}
+		return nil, err
 	}
-	return deviceattest01.SignPossessionCSR(attested.Signer, deviceID, deviceattest01.DICENonce(keyAuth))
+	return deviceattest01.SignPossessionCSR(attested.Signer, claims, deviceattest01.DICENonce(keyAuth))
+}
+
+// aliasClaims reads the claims set of the alias certificate a "dice"
+// attestation statement carries: the leaf of its x5c.
+func aliasClaims(statement []byte) (*dice.ClaimsSet, error) {
+	object, err := deviceattest01.ParseAttestationRequest(statement)
+	if err != nil {
+		return nil, &errs.Joined{Lead: ErrAttestationFailed, Detail: "the DICE statement does not parse", Cause: err}
+	}
+	if len(object.AttStatement.X5c) == 0 {
+		return nil, &errs.Detail{Err: ErrAttestationFailed, Detail: "the DICE statement carries no alias certificate"}
+	}
+	leafDER, ok := object.AttStatement.X5c[0].([]byte)
+	if !ok {
+		return nil, &errs.Detail{Err: ErrAttestationFailed, Detail: "the DICE alias certificate is not a byte string"}
+	}
+	leaf, err := x509.ParseCertificate(leafDER)
+	if err != nil {
+		return nil, &errs.Joined{Lead: ErrAttestationFailed, Detail: "the DICE alias certificate does not parse", Cause: err}
+	}
+	claims, err := dice.UccsFromCertificate(leaf)
+	if err != nil {
+		return nil, &errs.Joined{Lead: ErrAttestationFailed, Detail: "the DICE alias certificate carries no readable claims set", Cause: err}
+	}
+	return claims, nil
 }
 
 func deviceAttestCSR(commonName, permanentIdentifier string, signer crypto.Signer) ([]byte, error) {

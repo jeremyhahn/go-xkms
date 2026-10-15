@@ -1,6 +1,6 @@
 # DICE Device Identity — User
 
-> **Status: NORMATIVE** · Feature: `dice-device-identity` · Repo: `go-xkms` · Last verified: 2026-10-13
+> **Status: NORMATIVE** · Feature: `dice-device-identity` · Repo: `go-xkms` · Last verified: 2026-10-15
 
 ## Verifying a device's evidence
 
@@ -175,23 +175,26 @@ if err := verified.ConfirmRegistration(ctx, verifier); err != nil {
 ```
 
 The `dice` CSR is the device's **possession request**: a fixed template the
-device signs with its alias key over `b = deviceattest01.DICENonce(keyAuthorization)`,
-naming itself by `hex(DeviceID)` as a `permanent-identifier`. A device whose key
-sits behind a Go `crypto.Signer` produces it in one call:
+device signs with its alias key. It carries its alias certificate's claims set
+(ueid and measurements, nothing else) with the nonce set to
+`b = deviceattest01.DICENonce(keyAuthorization)`, and names the device by
+`hex(ueid)` as a `permanent-identifier`. A device whose key sits behind a Go
+`crypto.Signer` produces it in one call:
 
 ```go
-der, err := deviceattest01.SignPossessionCSR(signer, deviceID,
+claims, err := dice.UccsFromCertificate(aliasCert)
+der, err := deviceattest01.SignPossessionCSR(signer, claims,
     deviceattest01.DICENonce(keyAuthorization))
 ```
 
 A device that signs only raw digests gets the bytes to sign from
-`BuildPossessionCRI(pub, deviceID, b)` and hands its DER signature back to
+`BuildPossessionCRI(pub, claims, b)` and hands its DER signature back to
 `AssemblePossessionCSR(cri, signature)`. `acmeclient.DeviceAttest` does this for
 an `AttestedKey` whose `Format` is `deviceattest01.FormatDICE`.
 
 | Finalize refusal (`badCSR`) | What happened |
 |-----------------------------|---------------|
-| `ErrPossessionCSRMalformed` | The request is not exactly what the template writes: an ordinary CSR, a subject, an extra extension or attribute, another curve. |
+| `ErrPossessionCSRMalformed` | The request is not exactly what the template writes: an ordinary CSR, a subject, an extra extension, attribute or claim, a non-critical extension, a claims set without its ueid or measurements, an identifier that is not the claims set's ueid, another curve. |
 | `ErrPossessionSignatureInvalid` | The signature does not verify under the request's key. |
 | `ErrPossessionKeyMismatch` | The request is for a key other than the one the device attested. |
 | `ErrPossessionNonceMismatch` | The request was signed for another order's challenge. |

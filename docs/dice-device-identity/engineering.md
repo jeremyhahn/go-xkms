@@ -1,6 +1,6 @@
 # DICE Device Identity — Engineering
 
-> **Status: NORMATIVE** · Feature: `dice-device-identity` · Repo: `go-xkms` · Last verified: 2026-10-13
+> **Status: NORMATIVE** · Feature: `dice-device-identity` · Repo: `go-xkms` · Last verified: 2026-10-15
 
 ## Packages
 
@@ -82,20 +82,21 @@ way it does are in [architecture.md](architecture.md#possession-at-finalize-the-
 
 | Symbol | Contract |
 |--------|----------|
-| `PossessionNonceSize` | 32: the request carries `DICENonce(keyAuthorization)` (`possession.go:77`). |
-| `PossessionIdentifierType` | `permanent-identifier` (`possession.go:81`). |
-| `OIDExtensionRequest` | PKCS#9 extensionRequest, 1.2.840.113549.1.9.14 (`possession.go:86`). |
-| `PossessionRequest{DeviceID, Nonce, PublicKey}` | What a request states. `Identifier()` is `{permanent-identifier, hex(DeviceID)}` (`possession.go:132`). |
-| `BuildPossessionCRI(pub, deviceID, nonce) ([]byte, error)` | The DER CertificationRequestInfo the device signs (`possession.go:171`). Refuses a key that is not P-256, an empty DeviceID and a nonce that is not 32 bytes, with `ErrPossessionCSRMalformed`. |
-| `AssemblePossessionCSR(cri, signature) ([]byte, error)` | Wraps a device's DER ECDSA signature with ecdsa-with-SHA256 (`possession.go:232`). Refuses a request info that is not one DER value (`ErrPossessionCSRMalformed`) and a signature that is not one DER ECDSA-Sig-Value (`ErrPossessionSignatureInvalid`). It does not verify the signature; finalize does. |
-| `SignPossessionCSR(signer, deviceID, nonce) ([]byte, error)` | Builds, signs and assembles in one call for a key behind a `crypto.Signer` (`possession.go:256`). A signer that fails is `ErrPossessionSigningFailed`. |
-| `ParsePossessionCSR(*x509.CertificateRequest) (*PossessionRequest, error)` | Reverses the template exactly (`possession.go:280`): rebuilds the CertificationRequestInfo from the values it read and refuses the request with `ErrPossessionCSRMalformed` unless the bytes are identical, so no extra attribute, extension, subject or criticality survives. Does not check the signature. |
-| `(*VerifiedAttestation).VerifyPossessionCSR(csr, orderIdentifiers) error` | The four finalize checks, in order: signature (`:374`), key (`:377`), nonce (`:380`), identifiers (`:383`). Refuses a non-`dice` record with `ErrKeyBindingUnavailable` and a nil record with `ErrNoVerifiedAttestation` (`possession.go:358`). |
+| `PossessionNonceSize` | 32: the request carries `DICENonce(keyAuthorization)` (`possession.go:81`). |
+| `PossessionIdentifierType` | `permanent-identifier` (`possession.go:85`). |
+| `OIDExtensionRequest` | PKCS#9 extensionRequest, 1.2.840.113549.1.9.14 (`possession.go:90`). |
+| `PossessionRequest{Claims, DeviceID, PublicKey}` | What a request states: the claims set its UCCS evidence carries, whose `Nonce` is `b`, and that set's ueid (`possession.go:123`). `Identifier()` is `{permanent-identifier, hex(DeviceID)}` (`:138`). |
+| `BuildPossessionCRI(pub, claims, nonce) ([]byte, error)` | The DER CertificationRequestInfo the device signs (`possession.go:179`). `claims` is the alias certificate's claims set; `claims.Nonce` is replaced by `nonce`, and `Other` is carried verbatim. Refuses, with `ErrPossessionCSRMalformed`, a key that is not P-256, a nonce that is not 32 bytes, and a claims set that is not exactly ueid (256) and measurements (273) beside the nonce (`possessionUeid`, `:228-243`). |
+| `AssemblePossessionCSR(cri, signature) ([]byte, error)` | Wraps a device's DER ECDSA signature with ecdsa-with-SHA256 (`possession.go:268`). Refuses a request info that is not one DER value (`ErrPossessionCSRMalformed`) and a signature that is not one DER ECDSA-Sig-Value (`ErrPossessionSignatureInvalid`). It does not verify the signature; finalize does. |
+| `SignPossessionCSR(signer, claims, nonce) ([]byte, error)` | Builds, signs and assembles in one call for a key behind a `crypto.Signer` (`possession.go:292`). A signer that fails is `ErrPossessionSigningFailed`. |
+| `ParsePossessionCSR(*x509.CertificateRequest) (*PossessionRequest, error)` | Reverses the template exactly (`possession.go:318`): reads the whole claims set out of the UCCS evidence, rebuilds the CertificationRequestInfo from it and refuses the request with `ErrPossessionCSRMalformed` unless the bytes are identical, so no extra attribute, extension, claim, subject, other identifier or criticality survives. Does not check the signature. |
+| `(*VerifiedAttestation).VerifyPossessionCSR(csr, orderIdentifiers) error` | The four finalize checks, in order: signature (`:386`), key (`:389`), nonce (`:392`), identifiers (`:395`). Refuses a non-`dice` record with `ErrKeyBindingUnavailable` and a nil record with `ErrNoVerifiedAttestation` (`possession.go:370`). |
 
 The ACME client mints the request for a `dice` device:
 `AttestedKey.Format` selects it (`pkg/acme/client/tpm.go`), and
-`attestedKeyCSR` (`pkg/acme/client/enrollment.go:1010`) calls
-`SignPossessionCSR` with the hex-decoded device identity and
+`attestedKeyCSR` (`pkg/acme/client/enrollment.go:1011`) calls
+`SignPossessionCSR` with the claims set of the alias certificate in the key's
+attestation statement (`aliasClaims`, `:1024`) and
 `DICENonce(keyAuthorization)`. Every other format sends an ordinary request.
 
 ### VerifyOptions
@@ -165,7 +166,7 @@ re-exports `DeviceUeid` as `DICEDeviceUeid` and `ClaimUeid` as
 `DICEClaimUeid` (`attestation_dice.go:95-98`).
 
 The possession request's sentinels live beside it in
-`pkg/acme/challenges/device-attest-01/possession.go:87-115`:
+`pkg/acme/challenges/device-attest-01/possession.go:92-120`:
 `ErrPossessionCSRMalformed`, `ErrPossessionSignatureInvalid`,
 `ErrPossessionSigningFailed`, `ErrPossessionKeyMismatch`,
 `ErrPossessionNonceMismatch`, `ErrPossessionIdentifierMismatch`. The finalize
@@ -209,13 +210,19 @@ truncation.
 Nothing in the suite touches the host: certificate chains are generated in
 memory.
 
-The possession request has its own literal vector:
-`TestPossessionVector` (`pkg/acme/challenges/device-attest-01/possession_test.go:95`)
-pins the CertificationRequestInfo and the assembled request as hex for a fixed
-P-256 key, DeviceID and `b` (`possession_test.go:45-62`), and checks that the
-pinned signature verifies. A device implementation that mints the template
-must reproduce those bytes. `TestPossessionExtensionCriticality` pins the
-criticality of both extensions, `TestParsePossessionCSRRefusesAnythingButTheTemplate`
+The possession request has its own literal vector, the ADR's 365-byte
+CertificationRequestInfo and its SHA-256 (`possession_test.go:48-53`), the wire
+contract with the device firmware. `TestPossessionVector`
+(`pkg/acme/challenges/device-attest-01/possession_test.go:126`) checks that
+`BuildPossessionCRI` writes exactly those bytes for the vector's key, claims
+set (ueid `01a1b2c3…90` and a measurement) and `b` = `00..1f`, and that the
+parser reads them back. `TestPossessionSigningVector` (`:147`) signs the
+template with the RFC 6979 A.2.5 key, deterministically, and pins the signature
+and the assembled request (`:61-63`). A device implementation that mints the
+template must reproduce the vector; never regenerate it.
+`TestPossessionExtensionCriticality` (`:189`) pins the criticality of both
+extensions, `TestBuildPossessionCRIRefusesWhatTheTemplateCannotCarry` the
+builder's refusals, `TestParsePossessionCSRRefusesAnythingButTheTemplate`
 the parser's refusals, and `TestVerifyPossessionCSRSignature`, `...Key`,
 `...Nonce` and `...Identifiers` accept and refuse each finalize check. At the
 handler, `TestBindDeviceAttestationKey_DICERequiresThePossessionRequest`

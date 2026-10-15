@@ -44,12 +44,14 @@ import (
 	"testing"
 	"time"
 
+	"github.com/fxamacker/cbor/v2"
 	"github.com/go-jose/go-jose/v4"
 	deviceattest01 "github.com/jeremyhahn/go-xkms/pkg/acme/challenges/device-attest-01"
 	"github.com/jeremyhahn/go-xkms/pkg/acme/common"
 	"github.com/jeremyhahn/go-xkms/pkg/acme/entities"
 	"github.com/jeremyhahn/go-xkms/pkg/acme/policy"
 	"github.com/jeremyhahn/go-xkms/pkg/acme/storage/objstore"
+	"github.com/jeremyhahn/go-xkms/pkg/attestation/dice"
 	"github.com/jeremyhahn/go-xkms/pkg/ca"
 	"github.com/jeremyhahn/go-xkms/pkg/certstore"
 	xkmsstorage "github.com/jeremyhahn/go-xkms/pkg/storage"
@@ -615,14 +617,21 @@ func attachDeviceAttestation(t *testing.T, service *RestService, order *entities
 
 // devicePossessionCSR is the possession request a DICE device holding key
 // sends at finalization (go-xkms#1441): the deviceattest01 template naming
-// identity, the hex DeviceID an order carries, and answering keyAuth. Its
-// nonce answers the attestation attachDeviceAttestation leaves when keyAuth is
+// identity, the hex DeviceID an order carries, as its alias certificate's ueid
+// beside a measurement, and answering keyAuth. Its nonce answers the
+// attestation attachDeviceAttestation leaves when keyAuth is
 // deviceAttestTestKeyAuth.
 func devicePossessionCSR(t *testing.T, key *ecdsa.PrivateKey, identity, keyAuth string) *x509.CertificateRequest {
 	t.Helper()
 	deviceID, err := hex.DecodeString(identity)
 	require.NoError(t, err)
-	der, err := deviceattest01.SignPossessionCSR(key, deviceID, deviceattest01.DICENonce(keyAuth))
+	ueid, err := cbor.Marshal(deviceID)
+	require.NoError(t, err)
+	claims := &dice.ClaimsSet{Other: map[int64][]byte{
+		dice.ClaimUeid:         ueid,
+		dice.ClaimMeasurements: {0x00},
+	}}
+	der, err := deviceattest01.SignPossessionCSR(key, claims, deviceattest01.DICENonce(keyAuth))
 	require.NoError(t, err)
 	csr, err := x509.ParseCertificateRequest(der)
 	require.NoError(t, err)
