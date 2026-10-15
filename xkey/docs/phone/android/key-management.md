@@ -1,7 +1,7 @@
 # Unified Key Store
 
 > **Status: REFERENCE** · Last verified: 2026-10-13
-> Describes the phone-side key store of xkey-android, a separate Kotlin repository; superseded by [phone-hsm/architecture.md](../../phone-hsm/architecture.md). Only the wire-visible fields are verified against this tree (`KeyInfo`, `xkey/pkg/pairing/protocol_local.go:170`); the Room schema, DAO and migration below are not.
+> Describes the phone-side key store of xkey-android, a separate Kotlin repository; superseded by [phone-hsm/architecture.md](../../phone-hsm/architecture.md). Only the wire-visible fields are verified against this tree (`KeyInfo`, `pkg/pairingproto/protocol_local.go:170`); the Room schema, DAO and migration below are not.
 
 ## Overview
 
@@ -56,7 +56,7 @@ data class KeyEntity(
 | `symmetric` | Symmetric encryption/HMAC | AES128, AES256, HMAC-SHA256/512 |
 
 These are the `keyType` filter values `local.listKeys` accepts
-(`LocalListKeysParams`, `xkey/pkg/pairing/protocol_local.go:164`).
+(`LocalListKeysParams`, `pkg/pairingproto/protocol_local.go:164`).
 
 ## Key Sources
 

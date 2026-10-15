@@ -23,6 +23,7 @@ import (
 	"log/slog"
 	"time"
 
+	"github.com/jeremyhahn/go-xkms/sdk/go/pairingproto"
 	secure "github.com/jeremyhahn/go-xkms/sdk/go/secure"
 	"github.com/jeremyhahn/go-xkms/sdk/go/transport"
 	"github.com/jeremyhahn/go-xkms/xkey/pkg/audit"
@@ -193,7 +194,7 @@ type Bridge struct {
 // be connected. The Bridge does not own the client and will not close it.
 func NewBridge(client transport.Client, config *BridgeConfig) (*Bridge, error) {
 	if client == nil {
-		return nil, ErrBridgeNotConnected
+		return nil, pairingproto.ErrBridgeNotConnected
 	}
 	if config == nil {
 		config = DefaultBridgeConfig()
@@ -230,44 +231,44 @@ func NewBridge(client transport.Client, config *BridgeConfig) (*Bridge, error) {
 
 	// Initialize map-based dispatch for O(1) routing.
 	b.handlers = map[string]bridgeHandler{
-		MethodRemoteListBackends:         b.handleListBackends,
-		MethodRemoteListKeys:             b.handleListKeys,
-		MethodRemoteGetPublicKey:         b.handleGetPublicKey,
-		MethodRemoteSign:                 b.handleSign,
-		MethodRemoteVerify:               b.handleVerify,
-		MethodRemoteEncrypt:              b.handleEncrypt,
-		MethodRemoteDecrypt:              b.handleDecrypt,
-		MethodRemoteDeriveKey:            b.handleDeriveKey,
-		MethodRemoteGenerateKey:          b.handleGenerateKey,
-		MethodRemoteGetKeyInfo:           b.handleGetKeyInfo,
-		MethodRemoteDeleteKey:            b.handleDeleteKey,
-		MethodRemoteAttestKey:            b.handleAttestKey,
-		MethodRemoteAttestDevice:         b.handleAttestDevice,
-		MethodRemoteGetTCGCSRIDevID:      b.handleGetTCGCSRIDevID,
-		MethodRemoteActivateCredential:   b.handleActivateCredential,
-		MethodRemoteGetAttestationQuote:  b.handleGetAttestationQuote,
-		MethodRemoteStoreEnrollmentCerts: b.handleStoreEnrollmentCerts,
+		pairingproto.MethodRemoteListBackends:         b.handleListBackends,
+		pairingproto.MethodRemoteListKeys:             b.handleListKeys,
+		pairingproto.MethodRemoteGetPublicKey:         b.handleGetPublicKey,
+		pairingproto.MethodRemoteSign:                 b.handleSign,
+		pairingproto.MethodRemoteVerify:               b.handleVerify,
+		pairingproto.MethodRemoteEncrypt:              b.handleEncrypt,
+		pairingproto.MethodRemoteDecrypt:              b.handleDecrypt,
+		pairingproto.MethodRemoteDeriveKey:            b.handleDeriveKey,
+		pairingproto.MethodRemoteGenerateKey:          b.handleGenerateKey,
+		pairingproto.MethodRemoteGetKeyInfo:           b.handleGetKeyInfo,
+		pairingproto.MethodRemoteDeleteKey:            b.handleDeleteKey,
+		pairingproto.MethodRemoteAttestKey:            b.handleAttestKey,
+		pairingproto.MethodRemoteAttestDevice:         b.handleAttestDevice,
+		pairingproto.MethodRemoteGetTCGCSRIDevID:      b.handleGetTCGCSRIDevID,
+		pairingproto.MethodRemoteActivateCredential:   b.handleActivateCredential,
+		pairingproto.MethodRemoteGetAttestationQuote:  b.handleGetAttestationQuote,
+		pairingproto.MethodRemoteStoreEnrollmentCerts: b.handleStoreEnrollmentCerts,
 		// Key sharing handlers.
-		MethodRemoteSharePublicKey:  b.handleSharePublicKey,
-		MethodRemoteShareSymmetric:  b.handleShareSymmetric,
-		MethodRemoteImportSharedKey: b.handleImportSharedKey,
+		pairingproto.MethodRemoteSharePublicKey:  b.handleSharePublicKey,
+		pairingproto.MethodRemoteShareSymmetric:  b.handleShareSymmetric,
+		pairingproto.MethodRemoteImportSharedKey: b.handleImportSharedKey,
 		// Backup/restore handlers.
-		MethodRemoteCreateBackup:  b.handleCreateBackup,
-		MethodRemoteRestoreBackup: b.handleRestoreBackup,
-		MethodRemoteListBackups:   b.handleListBackupsForRestore,
+		pairingproto.MethodRemoteCreateBackup:  b.handleCreateBackup,
+		pairingproto.MethodRemoteRestoreBackup: b.handleRestoreBackup,
+		pairingproto.MethodRemoteListBackups:   b.handleListBackupsForRestore,
 		// OATH credential sync handlers.
-		MethodRemoteOATHAdd:      b.handleOATHAdd,
-		MethodRemoteOATHGenerate: b.handleOATHGenerate,
+		pairingproto.MethodRemoteOATHAdd:      b.handleOATHAdd,
+		pairingproto.MethodRemoteOATHGenerate: b.handleOATHGenerate,
 		// PIV handlers.
-		MethodRemotePIVListSlots: b.handlePIVListSlots,
-		MethodRemotePIVSign:      b.handlePIVSign,
-		MethodRemotePIVGetCert:   b.handlePIVGetCert,
+		pairingproto.MethodRemotePIVListSlots: b.handlePIVListSlots,
+		pairingproto.MethodRemotePIVSign:      b.handlePIVSign,
+		pairingproto.MethodRemotePIVGetCert:   b.handlePIVGetCert,
 		// Sync handlers.
-		MethodRemoteSyncTrustStore: b.handleSyncTrustStore,
-		MethodRemoteSyncOATH:       b.handleSyncOATH,
-		MethodRemoteSyncPasswords:  b.handleSyncPasswords,
-		MethodRemoteSyncAll:        b.handleSyncAll,
-		MethodRemoteSyncStatus:     b.handleSyncStatus,
+		pairingproto.MethodRemoteSyncTrustStore: b.handleSyncTrustStore,
+		pairingproto.MethodRemoteSyncOATH:       b.handleSyncOATH,
+		pairingproto.MethodRemoteSyncPasswords:  b.handleSyncPasswords,
+		pairingproto.MethodRemoteSyncAll:        b.handleSyncAll,
+		pairingproto.MethodRemoteSyncStatus:     b.handleSyncStatus,
 	}
 
 	return b, nil
@@ -276,9 +277,9 @@ func NewBridge(client transport.Client, config *BridgeConfig) (*Bridge, error) {
 // HandleRequest dispatches a remote.* JSON-RPC request to the appropriate
 // handler and returns the response. The caller (PhoneKeyBackend) is
 // responsible for encrypting/decrypting with Noise.
-func (b *Bridge) HandleRequest(ctx context.Context, req *Request) *Response {
+func (b *Bridge) HandleRequest(ctx context.Context, req *pairingproto.Request) *pairingproto.Response {
 	if req == nil {
-		return b.errorResponse(0, ErrorCodeInvalidRequest, "nil request")
+		return b.errorResponse(0, pairingproto.ErrorCodeInvalidRequest, "nil request")
 	}
 
 	b.logger.Debug("handling remote request",
@@ -289,7 +290,7 @@ func (b *Bridge) HandleRequest(ctx context.Context, req *Request) *Response {
 	handler, ok := b.handlers[req.Method]
 	if !ok {
 		b.logger.Warn("unknown remote method", "method", req.Method)
-		return b.errorResponse(req.ID, ErrorCodeMethodNotFound, "unknown method: "+req.Method)
+		return b.errorResponse(req.ID, pairingproto.ErrorCodeMethodNotFound, "unknown method: "+req.Method)
 	}
 
 	// Marshal params to json.RawMessage for handler consumption.
@@ -298,7 +299,7 @@ func (b *Bridge) HandleRequest(ctx context.Context, req *Request) *Response {
 		data, err := json.Marshal(req.Params)
 		if err != nil {
 			b.logger.Error("failed to marshal request params", "error", err)
-			return b.errorResponse(req.ID, ErrorCodeInvalidParams, "invalid parameters")
+			return b.errorResponse(req.ID, pairingproto.ErrorCodeInvalidParams, "invalid parameters")
 		}
 		rawParams = data
 	}
@@ -323,11 +324,11 @@ func (b *Bridge) HandleRequest(ctx context.Context, req *Request) *Response {
 	resultData, err := json.Marshal(result)
 	if err != nil {
 		b.logger.Error("failed to marshal result", "error", err)
-		return b.errorResponse(req.ID, ErrorCodeInternalError, "failed to encode result")
+		return b.errorResponse(req.ID, pairingproto.ErrorCodeInternalError, "failed to encode result")
 	}
 
-	return &Response{
-		JSONRPC: JSONRPCVersion,
+	return &pairingproto.Response{
+		JSONRPC: pairingproto.JSONRPCVersion,
 		ID:      req.ID,
 		Result:  resultData,
 	}
@@ -368,13 +369,13 @@ func (b *Bridge) checkBackendAccess(backend string) error {
 				b.config.DeviceID,
 				b.config.DeviceName,
 				false,
-				ErrBridgeBackendDenied,
+				pairingproto.ErrBridgeBackendDenied,
 				0,
 			); auditErr != nil {
 				return auditErr
 			}
 		}
-		return ErrBridgeBackendDenied
+		return pairingproto.ErrBridgeBackendDenied
 	}
 	return nil
 }
@@ -388,7 +389,7 @@ func (b *Bridge) handleListBackends(ctx context.Context, _ json.RawMessage) (int
 	}
 
 	// Filter backends through the access control policy.
-	backends := make([]BackendInfo, 0, len(resp.Backends))
+	backends := make([]pairingproto.BackendInfo, 0, len(resp.Backends))
 	for i := range resp.Backends {
 		sdkBackend := &resp.Backends[i]
 		if !b.isBackendAllowed(sdkBackend.ID) {
@@ -397,14 +398,14 @@ func (b *Bridge) handleListBackends(ctx context.Context, _ json.RawMessage) (int
 		backends = append(backends, mapSDKBackendInfo(sdkBackend))
 	}
 
-	return &RemoteListBackendsResult{Backends: backends}, nil
+	return &pairingproto.RemoteListBackendsResult{Backends: backends}, nil
 }
 
 // handleListKeys returns the keys in a specific xkmsd backend.
 func (b *Bridge) handleListKeys(ctx context.Context, params json.RawMessage) (interface{}, error) {
-	var p RemoteListKeysParams
+	var p pairingproto.RemoteListKeysParams
 	if err := unmarshalParams(params, &p); err != nil {
-		return nil, ErrBridgeInvalidParams
+		return nil, pairingproto.ErrBridgeInvalidParams
 	}
 	if err := b.checkBackendAccess(p.Backend); err != nil {
 		return nil, err
@@ -415,28 +416,28 @@ func (b *Bridge) handleListKeys(ctx context.Context, params json.RawMessage) (in
 		return nil, err
 	}
 
-	keys := make([]RemoteKeyInfo, 0, len(resp.Keys))
+	keys := make([]pairingproto.RemoteKeyInfo, 0, len(resp.Keys))
 	for i := range resp.Keys {
 		sdkKey := &resp.Keys[i]
 		// Apply algorithm filter if specified.
 		if p.Algorithm != "" && sdkKey.Algorithm != p.Algorithm {
 			continue
 		}
-		keys = append(keys, RemoteKeyInfo{
+		keys = append(keys, pairingproto.RemoteKeyInfo{
 			KeyID:     sdkKey.KeyID,
 			Backend:   sdkKey.Backend,
 			Algorithm: sdkKey.Algorithm,
 		})
 	}
 
-	return &RemoteListKeysResult{Keys: keys}, nil
+	return &pairingproto.RemoteListKeysResult{Keys: keys}, nil
 }
 
 // handleGetPublicKey retrieves the public key for a specific key.
 func (b *Bridge) handleGetPublicKey(ctx context.Context, params json.RawMessage) (interface{}, error) {
-	var p RemoteGetPublicKeyParams
+	var p pairingproto.RemoteGetPublicKeyParams
 	if err := unmarshalParams(params, &p); err != nil {
-		return nil, ErrBridgeInvalidParams
+		return nil, pairingproto.ErrBridgeInvalidParams
 	}
 	if err := b.checkBackendAccess(p.Backend); err != nil {
 		return nil, err
@@ -452,7 +453,7 @@ func (b *Bridge) handleGetPublicKey(ctx context.Context, params json.RawMessage)
 		return nil, err
 	}
 
-	return &RemoteGetPublicKeyResult{
+	return &pairingproto.RemoteGetPublicKeyResult{
 		PublicKey: publicKeyBytes,
 		Format:    format,
 		Algorithm: resp.Algorithm,
@@ -463,9 +464,9 @@ func (b *Bridge) handleGetPublicKey(ctx context.Context, params json.RawMessage)
 func (b *Bridge) handleSign(ctx context.Context, params json.RawMessage) (interface{}, error) {
 	start := time.Now()
 
-	var p RemoteSignParams
+	var p pairingproto.RemoteSignParams
 	if err := unmarshalParams(params, &p); err != nil {
-		return nil, ErrBridgeInvalidParams
+		return nil, pairingproto.ErrBridgeInvalidParams
 	}
 	if err := b.checkBackendAccess(p.Backend); err != nil {
 		return nil, err
@@ -500,7 +501,7 @@ func (b *Bridge) handleSign(ctx context.Context, params json.RawMessage) (interf
 		return nil, err
 	}
 
-	return &RemoteSignResult{
+	return &pairingproto.RemoteSignResult{
 		Signature: resp.Signature,
 		Algorithm: resp.Algorithm,
 	}, nil
@@ -510,9 +511,9 @@ func (b *Bridge) handleSign(ctx context.Context, params json.RawMessage) (interf
 func (b *Bridge) handleVerify(ctx context.Context, params json.RawMessage) (interface{}, error) {
 	start := time.Now()
 
-	var p RemoteVerifyParams
+	var p pairingproto.RemoteVerifyParams
 	if err := unmarshalParams(params, &p); err != nil {
-		return nil, ErrBridgeInvalidParams
+		return nil, pairingproto.ErrBridgeInvalidParams
 	}
 	if err := b.checkBackendAccess(p.Backend); err != nil {
 		return nil, err
@@ -548,16 +549,16 @@ func (b *Bridge) handleVerify(ctx context.Context, params json.RawMessage) (inte
 		return nil, err
 	}
 
-	return &RemoteVerifyResult{Valid: resp.Valid}, nil
+	return &pairingproto.RemoteVerifyResult{Valid: resp.Valid}, nil
 }
 
 // handleEncrypt encrypts data using a key in a xkmsd backend.
 func (b *Bridge) handleEncrypt(ctx context.Context, params json.RawMessage) (interface{}, error) {
 	start := time.Now()
 
-	var p RemoteEncryptParams
+	var p pairingproto.RemoteEncryptParams
 	if err := unmarshalParams(params, &p); err != nil {
-		return nil, ErrBridgeInvalidParams
+		return nil, pairingproto.ErrBridgeInvalidParams
 	}
 	if err := b.checkBackendAccess(p.Backend); err != nil {
 		return nil, err
@@ -592,16 +593,16 @@ func (b *Bridge) handleEncrypt(ctx context.Context, params json.RawMessage) (int
 		return nil, err
 	}
 
-	return &RemoteEncryptResult{Ciphertext: resp.Ciphertext}, nil
+	return &pairingproto.RemoteEncryptResult{Ciphertext: resp.Ciphertext}, nil
 }
 
 // handleDecrypt decrypts data using a key in a xkmsd backend.
 func (b *Bridge) handleDecrypt(ctx context.Context, params json.RawMessage) (interface{}, error) {
 	start := time.Now()
 
-	var p RemoteDecryptParams
+	var p pairingproto.RemoteDecryptParams
 	if err := unmarshalParams(params, &p); err != nil {
-		return nil, ErrBridgeInvalidParams
+		return nil, pairingproto.ErrBridgeInvalidParams
 	}
 	if err := b.checkBackendAccess(p.Backend); err != nil {
 		return nil, err
@@ -639,16 +640,16 @@ func (b *Bridge) handleDecrypt(ctx context.Context, params json.RawMessage) (int
 		return nil, err
 	}
 
-	return &RemoteDecryptResult{Plaintext: resp.Plaintext}, nil
+	return &pairingproto.RemoteDecryptResult{Plaintext: resp.Plaintext}, nil
 }
 
 // handleDeriveKey performs ECDH key agreement using a key in a xkmsd backend.
 func (b *Bridge) handleDeriveKey(ctx context.Context, params json.RawMessage) (interface{}, error) {
 	start := time.Now()
 
-	var p RemoteDeriveKeyParams
+	var p pairingproto.RemoteDeriveKeyParams
 	if err := unmarshalParams(params, &p); err != nil {
-		return nil, ErrBridgeInvalidParams
+		return nil, pairingproto.ErrBridgeInvalidParams
 	}
 	if err := b.checkBackendAccess(p.Backend); err != nil {
 		return nil, err
@@ -685,16 +686,16 @@ func (b *Bridge) handleDeriveKey(ctx context.Context, params json.RawMessage) (i
 		return nil, err
 	}
 
-	return &RemoteDeriveKeyResult{SharedSecret: resp.DerivedKey}, nil
+	return &pairingproto.RemoteDeriveKeyResult{SharedSecret: resp.DerivedKey}, nil
 }
 
 // handleGenerateKey generates a new key in a xkmsd backend.
 func (b *Bridge) handleGenerateKey(ctx context.Context, params json.RawMessage) (interface{}, error) {
 	start := time.Now()
 
-	var p RemoteGenerateKeyParams
+	var p pairingproto.RemoteGenerateKeyParams
 	if err := unmarshalParams(params, &p); err != nil {
-		return nil, ErrBridgeInvalidParams
+		return nil, pairingproto.ErrBridgeInvalidParams
 	}
 	if err := b.checkBackendAccess(p.Backend); err != nil {
 		return nil, err
@@ -740,7 +741,7 @@ func (b *Bridge) handleGenerateKey(ctx context.Context, params json.RawMessage) 
 		}
 	}
 
-	return &RemoteGenerateKeyResult{
+	return &pairingproto.RemoteGenerateKeyResult{
 		KeyID:     resp.KeyID,
 		PublicKey: pubKeyDER,
 		Algorithm: resp.KeyType,
@@ -750,9 +751,9 @@ func (b *Bridge) handleGenerateKey(ctx context.Context, params json.RawMessage) 
 
 // handleGetKeyInfo retrieves detailed information about a key in a xkmsd backend.
 func (b *Bridge) handleGetKeyInfo(ctx context.Context, params json.RawMessage) (interface{}, error) {
-	var p RemoteGetKeyInfoParams
+	var p pairingproto.RemoteGetKeyInfoParams
 	if err := unmarshalParams(params, &p); err != nil {
-		return nil, ErrBridgeInvalidParams
+		return nil, pairingproto.ErrBridgeInvalidParams
 	}
 	if err := b.checkBackendAccess(p.Backend); err != nil {
 		return nil, err
@@ -770,8 +771,8 @@ func (b *Bridge) handleGetKeyInfo(ctx context.Context, params json.RawMessage) (
 		hardwareBacked = backendInfo.HardwareBacked
 	}
 
-	return &RemoteGetKeyInfoResult{
-		RemoteKeyInfo: RemoteKeyInfo{
+	return &pairingproto.RemoteGetKeyInfoResult{
+		RemoteKeyInfo: pairingproto.RemoteKeyInfo{
 			KeyID:     keyResp.KeyID,
 			Backend:   keyResp.Backend,
 			Algorithm: keyResp.Algorithm,
@@ -784,9 +785,9 @@ func (b *Bridge) handleGetKeyInfo(ctx context.Context, params json.RawMessage) (
 func (b *Bridge) handleDeleteKey(ctx context.Context, params json.RawMessage) (interface{}, error) {
 	start := time.Now()
 
-	var p RemoteDeleteKeyParams
+	var p pairingproto.RemoteDeleteKeyParams
 	if err := unmarshalParams(params, &p); err != nil {
-		return nil, ErrBridgeInvalidParams
+		return nil, pairingproto.ErrBridgeInvalidParams
 	}
 	if err := b.checkBackendAccess(p.Backend); err != nil {
 		return nil, err
@@ -814,7 +815,7 @@ func (b *Bridge) handleDeleteKey(ctx context.Context, params json.RawMessage) (i
 		return nil, err
 	}
 
-	return &RemoteDeleteKeyResult{Deleted: resp.Success}, nil
+	return &pairingproto.RemoteDeleteKeyResult{Deleted: resp.Success}, nil
 }
 
 // handleAttestKey handles key attestation requests by forwarding them
@@ -822,9 +823,9 @@ func (b *Bridge) handleDeleteKey(ctx context.Context, params json.RawMessage) (i
 func (b *Bridge) handleAttestKey(ctx context.Context, params json.RawMessage) (interface{}, error) {
 	start := time.Now()
 
-	var p RemoteAttestKeyParams
+	var p pairingproto.RemoteAttestKeyParams
 	if err := unmarshalParams(params, &p); err != nil {
-		return nil, ErrBridgeInvalidParams
+		return nil, pairingproto.ErrBridgeInvalidParams
 	}
 	if err := b.checkBackendAccess(p.Backend); err != nil {
 		return nil, err
@@ -856,7 +857,7 @@ func (b *Bridge) handleAttestKey(ctx context.Context, params json.RawMessage) (i
 		return nil, err
 	}
 
-	return &RemoteAttestKeyResult{
+	return &pairingproto.RemoteAttestKeyResult{
 		Format:           resp.Format,
 		CertificateChain: resp.CertificateChain,
 		AttestationData:  resp.AttestationData,
@@ -870,14 +871,14 @@ func (b *Bridge) handleAttestKey(ctx context.Context, params json.RawMessage) (i
 func (b *Bridge) handleAttestDevice(ctx context.Context, params json.RawMessage) (interface{}, error) {
 	start := time.Now()
 
-	var p RemoteAttestDeviceParams
+	var p pairingproto.RemoteAttestDeviceParams
 	if err := unmarshalParams(params, &p); err != nil {
-		return nil, ErrBridgeInvalidParams
+		return nil, pairingproto.ErrBridgeInvalidParams
 	}
 
 	// Validate nonce length
 	if len(p.Nonce) != 32 {
-		return nil, ErrBridgeInvalidParams
+		return nil, pairingproto.ErrBridgeInvalidParams
 	}
 
 	// Query available backends to determine platform capabilities
@@ -929,7 +930,7 @@ func (b *Bridge) handleAttestDevice(ctx context.Context, params json.RawMessage)
 		"securityLevel", securityLevel,
 		"hasTPM2", hasTPM2)
 
-	return &RemoteAttestDeviceResult{
+	return &pairingproto.RemoteAttestDeviceResult{
 		Format:            format,
 		CertificateChain:  nil, // No cert chain for software attestation
 		SecurityLevel:     securityLevel,
@@ -992,17 +993,17 @@ func (b *Bridge) computeDeviceFingerprint(backends []transport.BackendInfo, hasT
 }
 
 // handleError maps Go errors to JSON-RPC error responses.
-func (b *Bridge) handleError(id uint64, err error) *Response {
+func (b *Bridge) handleError(id uint64, err error) *pairingproto.Response {
 	code, message := mapErrorToRPC(err)
 	return b.errorResponse(id, code, message)
 }
 
 // errorResponse constructs a JSON-RPC error response.
-func (b *Bridge) errorResponse(id uint64, code int, message string) *Response {
-	return &Response{
-		JSONRPC: JSONRPCVersion,
+func (b *Bridge) errorResponse(id uint64, code int, message string) *pairingproto.Response {
+	return &pairingproto.Response{
+		JSONRPC: pairingproto.JSONRPCVersion,
 		ID:      id,
-		Error: &RPCError{
+		Error: &pairingproto.RPCError{
 			Code:    code,
 			Message: message,
 		},
@@ -1018,91 +1019,91 @@ func mapErrorToRPC(err error) (int, string) {
 	// on real hardware — an unprovisioned IAK reported -32603 instead of an
 	// attestation code, with only the cause text to go on.
 	switch {
-	case errors.Is(err, ErrBridgeNotConnected):
-		return ErrorCodeInternalError, "xkmsd client not connected"
-	case errors.Is(err, ErrBridgeBackendDenied):
-		return ErrorCodeBackendDenied, "backend access denied"
-	case errors.Is(err, ErrBridgeInvalidParams):
-		return ErrorCodeInvalidParams, "invalid request parameters"
-	case errors.Is(err, ErrAttestationNotSupported):
-		return ErrorCodeAttestUnsupported, "attestation not supported via bridge"
-	case errors.Is(err, ErrTPM2DirectAccessRequired):
-		return ErrorCodeAttestUnsupported, "operation requires direct TPM2 access; use xkmsd TPM2 backend"
-	case errors.Is(err, ErrTPMNotConfigured):
-		return ErrorCodeAttestUnsupported, "no TPM is configured on this host"
-	case errors.Is(err, ErrTPMUnavailable):
-		return ErrorCodeAttestFailed, "this host has a TPM but xkey cannot reach it; check permissions on the TPM device"
-	case errors.Is(err, ErrEKCertificateMissing):
-		return ErrorCodeAttestUnsupported, "the TPM has no endorsement key certificate"
-	case errors.Is(err, ErrTPMKeyNotProvisioned):
-		return ErrorCodeAttestFailed, "TPM key is not provisioned; provision before enrolling"
-	case errors.Is(err, ErrTPMOperationFailed):
-		return ErrorCodeAttestFailed, "TPM operation failed"
-	case errors.Is(err, ErrInvalidCertificate):
-		return ErrorCodeInvalidParams, "certificate is not valid X.509"
-	case errors.Is(err, ErrShareDenied):
-		return ErrorCodeShareDenied, "key sharing denied by policy"
-	case errors.Is(err, ErrShareNotExportable):
-		return ErrorCodeShareNotExportable, "key not exportable for sharing"
-	case errors.Is(err, ErrInvalidPublicKey):
-		return ErrorCodeInvalidPublicKey, "invalid public key data"
-	case errors.Is(err, ErrKeyNotFound):
-		return ErrorCodeKeyNotFound, "key not found"
-	case errors.Is(err, ErrKeyExists):
-		return ErrorCodeKeyExists, "key already exists"
-	case errors.Is(err, ErrInvalidFormat):
-		return ErrorCodeInvalidFormat, "invalid format requested"
-	case errors.Is(err, ErrBackupFailed):
-		return ErrorCodeBackupFailed, "phone: backup creation failed"
-	case errors.Is(err, ErrBackupRestoreFailed):
-		return ErrorCodeBackupRestore, "phone: backup restore failed"
-	case errors.Is(err, ErrBackupNotFound):
-		return ErrorCodeBackupNotFound, "phone: backup not found"
-	case errors.Is(err, ErrOATHCredentialNotFound):
-		return ErrorCodeOATHNotFound, "phone: OATH credential not found"
-	case errors.Is(err, ErrOATHGenerateFailed):
-		return ErrorCodeOATHGenerate, "phone: OATH code generation failed"
-	case errors.Is(err, ErrOATHStoreFailed):
-		return ErrorCodeOATHStore, "phone: OATH store operation failed"
-	case errors.Is(err, ErrPIVSlotNotFound):
-		return ErrorCodePIVSlotNotFound, "phone: PIV slot not found"
-	case errors.Is(err, ErrPIVSlotOccupied):
-		return ErrorCodePIVSlotOccupied, "phone: PIV slot already occupied"
-	case errors.Is(err, ErrPIVSignFailed):
-		return ErrorCodePIVSignFailed, "phone: PIV signing failed"
-	case errors.Is(err, ErrPIVInvalidSlot):
-		return ErrorCodePIVInvalidSlot, "phone: invalid PIV slot identifier"
-	case errors.Is(err, ErrSyncFailed):
-		return ErrorCodeSyncFailed, "phone: sync failed"
-	case errors.Is(err, ErrSyncConflict):
-		return ErrorCodeSyncConflict, "phone: sync conflict detected"
-	case errors.Is(err, ErrSyncRemoteUnavailable):
-		return ErrorCodeSyncRemoteUnavail, "phone: sync remote device unavailable"
-	case errors.Is(err, ErrSyncNoData):
-		return ErrorCodeSyncNoData, "phone: no data available for sync"
-	case errors.Is(err, ErrSyncVersionMismatch):
-		return ErrorCodeSyncVersionMismatch, "phone: sync version mismatch"
-	case errors.Is(err, ErrOATHNotConfigured):
-		return ErrorCodeFeatureUnavailable, "phone: no OATH credential store is configured on this host"
-	case errors.Is(err, ErrPIVNotConfigured):
-		return ErrorCodeFeatureUnavailable, "phone: no PIV certificate storage is configured for this backend"
-	case errors.Is(err, ErrSyncNotConfigured):
-		return ErrorCodeFeatureUnavailable, "phone: sync is not configured on this host"
-	case errors.Is(err, ErrBackupNotConfigured):
-		return ErrorCodeFeatureUnavailable, "phone: backup is not configured on this host"
-	case errors.Is(err, ErrSyncApprovalRequired):
-		return ErrorCodeSyncApprovalRequired, "phone: exporting secrets to the phone requires desktop approval, which is not configured on this host"
-	case errors.Is(err, ErrSyncNotApproved):
-		return ErrorCodeSyncNotApproved, "phone: the desktop refused to export secrets to the phone"
+	case errors.Is(err, pairingproto.ErrBridgeNotConnected):
+		return pairingproto.ErrorCodeInternalError, "xkmsd client not connected"
+	case errors.Is(err, pairingproto.ErrBridgeBackendDenied):
+		return pairingproto.ErrorCodeBackendDenied, "backend access denied"
+	case errors.Is(err, pairingproto.ErrBridgeInvalidParams):
+		return pairingproto.ErrorCodeInvalidParams, "invalid request parameters"
+	case errors.Is(err, pairingproto.ErrAttestationNotSupported):
+		return pairingproto.ErrorCodeAttestUnsupported, "attestation not supported via bridge"
+	case errors.Is(err, pairingproto.ErrTPM2DirectAccessRequired):
+		return pairingproto.ErrorCodeAttestUnsupported, "operation requires direct TPM2 access; use xkmsd TPM2 backend"
+	case errors.Is(err, pairingproto.ErrTPMNotConfigured):
+		return pairingproto.ErrorCodeAttestUnsupported, "no TPM is configured on this host"
+	case errors.Is(err, pairingproto.ErrTPMUnavailable):
+		return pairingproto.ErrorCodeAttestFailed, "this host has a TPM but xkey cannot reach it; check permissions on the TPM device"
+	case errors.Is(err, pairingproto.ErrEKCertificateMissing):
+		return pairingproto.ErrorCodeAttestUnsupported, "the TPM has no endorsement key certificate"
+	case errors.Is(err, pairingproto.ErrTPMKeyNotProvisioned):
+		return pairingproto.ErrorCodeAttestFailed, "TPM key is not provisioned; provision before enrolling"
+	case errors.Is(err, pairingproto.ErrTPMOperationFailed):
+		return pairingproto.ErrorCodeAttestFailed, "TPM operation failed"
+	case errors.Is(err, pairingproto.ErrInvalidCertificate):
+		return pairingproto.ErrorCodeInvalidParams, "certificate is not valid X.509"
+	case errors.Is(err, pairingproto.ErrShareDenied):
+		return pairingproto.ErrorCodeShareDenied, "key sharing denied by policy"
+	case errors.Is(err, pairingproto.ErrShareNotExportable):
+		return pairingproto.ErrorCodeShareNotExportable, "key not exportable for sharing"
+	case errors.Is(err, pairingproto.ErrInvalidPublicKey):
+		return pairingproto.ErrorCodeInvalidPublicKey, "invalid public key data"
+	case errors.Is(err, pairingproto.ErrKeyNotFound):
+		return pairingproto.ErrorCodeKeyNotFound, "key not found"
+	case errors.Is(err, pairingproto.ErrKeyExists):
+		return pairingproto.ErrorCodeKeyExists, "key already exists"
+	case errors.Is(err, pairingproto.ErrInvalidFormat):
+		return pairingproto.ErrorCodeInvalidFormat, "invalid format requested"
+	case errors.Is(err, pairingproto.ErrBackupFailed):
+		return pairingproto.ErrorCodeBackupFailed, "phone: backup creation failed"
+	case errors.Is(err, pairingproto.ErrBackupRestoreFailed):
+		return pairingproto.ErrorCodeBackupRestore, "phone: backup restore failed"
+	case errors.Is(err, pairingproto.ErrBackupNotFound):
+		return pairingproto.ErrorCodeBackupNotFound, "phone: backup not found"
+	case errors.Is(err, pairingproto.ErrOATHCredentialNotFound):
+		return pairingproto.ErrorCodeOATHNotFound, "phone: OATH credential not found"
+	case errors.Is(err, pairingproto.ErrOATHGenerateFailed):
+		return pairingproto.ErrorCodeOATHGenerate, "phone: OATH code generation failed"
+	case errors.Is(err, pairingproto.ErrOATHStoreFailed):
+		return pairingproto.ErrorCodeOATHStore, "phone: OATH store operation failed"
+	case errors.Is(err, pairingproto.ErrPIVSlotNotFound):
+		return pairingproto.ErrorCodePIVSlotNotFound, "phone: PIV slot not found"
+	case errors.Is(err, pairingproto.ErrPIVSlotOccupied):
+		return pairingproto.ErrorCodePIVSlotOccupied, "phone: PIV slot already occupied"
+	case errors.Is(err, pairingproto.ErrPIVSignFailed):
+		return pairingproto.ErrorCodePIVSignFailed, "phone: PIV signing failed"
+	case errors.Is(err, pairingproto.ErrPIVInvalidSlot):
+		return pairingproto.ErrorCodePIVInvalidSlot, "phone: invalid PIV slot identifier"
+	case errors.Is(err, pairingproto.ErrSyncFailed):
+		return pairingproto.ErrorCodeSyncFailed, "phone: sync failed"
+	case errors.Is(err, pairingproto.ErrSyncConflict):
+		return pairingproto.ErrorCodeSyncConflict, "phone: sync conflict detected"
+	case errors.Is(err, pairingproto.ErrSyncRemoteUnavailable):
+		return pairingproto.ErrorCodeSyncRemoteUnavail, "phone: sync remote device unavailable"
+	case errors.Is(err, pairingproto.ErrSyncNoData):
+		return pairingproto.ErrorCodeSyncNoData, "phone: no data available for sync"
+	case errors.Is(err, pairingproto.ErrSyncVersionMismatch):
+		return pairingproto.ErrorCodeSyncVersionMismatch, "phone: sync version mismatch"
+	case errors.Is(err, pairingproto.ErrOATHNotConfigured):
+		return pairingproto.ErrorCodeFeatureUnavailable, "phone: no OATH credential store is configured on this host"
+	case errors.Is(err, pairingproto.ErrPIVNotConfigured):
+		return pairingproto.ErrorCodeFeatureUnavailable, "phone: no PIV certificate storage is configured for this backend"
+	case errors.Is(err, pairingproto.ErrSyncNotConfigured):
+		return pairingproto.ErrorCodeFeatureUnavailable, "phone: sync is not configured on this host"
+	case errors.Is(err, pairingproto.ErrBackupNotConfigured):
+		return pairingproto.ErrorCodeFeatureUnavailable, "phone: backup is not configured on this host"
+	case errors.Is(err, pairingproto.ErrSyncApprovalRequired):
+		return pairingproto.ErrorCodeSyncApprovalRequired, "phone: exporting secrets to the phone requires desktop approval, which is not configured on this host"
+	case errors.Is(err, pairingproto.ErrSyncNotApproved):
+		return pairingproto.ErrorCodeSyncNotApproved, "phone: the desktop refused to export secrets to the phone"
 	}
 
 	// Fall through to a generic internal error for unrecognized errors.
-	return ErrorCodeInternalError, err.Error()
+	return pairingproto.ErrorCodeInternalError, err.Error()
 }
 
 // mapSDKBackendInfo converts an SDK BackendInfo to the phone protocol BackendInfo.
-func mapSDKBackendInfo(sdk *transport.BackendInfo) BackendInfo {
-	return BackendInfo{
+func mapSDKBackendInfo(sdk *transport.BackendInfo) pairingproto.BackendInfo {
+	return pairingproto.BackendInfo{
 		Name:            sdk.ID,
 		Type:            sdk.Type,
 		HardwareBacked:  sdk.HardwareBacked,
@@ -1118,12 +1119,12 @@ func mapSDKBackendInfo(sdk *transport.BackendInfo) BackendInfo {
 // requested format.
 func extractPublicKey(publicKeyPEM string, requestedFormat string) ([]byte, string, error) {
 	if publicKeyPEM == "" {
-		return nil, "", ErrKeyNotFound
+		return nil, "", pairingproto.ErrKeyNotFound
 	}
 
 	block, _ := pem.Decode([]byte(publicKeyPEM))
 	if block == nil {
-		return nil, "", ErrInvalidPublicKey
+		return nil, "", pairingproto.ErrInvalidPublicKey
 	}
 
 	switch requestedFormat {
@@ -1133,14 +1134,14 @@ func extractPublicKey(publicKeyPEM string, requestedFormat string) ([]byte, stri
 		// Default to DER format.
 		return block.Bytes, "der", nil
 	default:
-		return nil, "", ErrInvalidFormat
+		return nil, "", pairingproto.ErrInvalidFormat
 	}
 }
 
 // unmarshalParams unmarshals json.RawMessage into the provided destination.
 func unmarshalParams(params json.RawMessage, dest interface{}) error {
 	if len(params) == 0 {
-		return ErrBridgeInvalidParams
+		return pairingproto.ErrBridgeInvalidParams
 	}
 	return json.Unmarshal(params, dest)
 }

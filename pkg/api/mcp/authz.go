@@ -337,6 +337,15 @@ var methodPermissions = map[string]permission{
 	"xkms.tenantVTPMStart":  {auth.ResourceTenants, auth.ActionSetTPMMode},
 	"xkms.tenantVTPMStop":   {auth.ResourceTenants, auth.ActionSetTPMMode},
 
+	// Platform trust roots (pkg/attestation/truststore) --
+	// pkg/auth.ResourceTrustRoots, matching the gRPC/REST/Unix TrustRoot*
+	// handlers.
+	"trust.root.list":       {auth.ResourceTrustRoots, auth.ActionList},
+	"trust.root.get":        {auth.ResourceTrustRoots, auth.ActionGet},
+	"trust.root.import":     {auth.ResourceTrustRoots, auth.ActionImport},
+	"trust.root.quarantine": {auth.ResourceTrustRoots, auth.ActionUpdate},
+	"trust.root.remove":     {auth.ResourceTrustRoots, auth.ActionDelete},
+
 	// Server-side OIDC credentials (pkg/oidc/credential) --
 	// pkg/auth.ResourceOIDCCredentials, an xkms-owned resource family scoped
 	// in pkg/apimodule/module_scopes.go. Mirrors the gRPC OIDCCredential*
@@ -352,6 +361,13 @@ var methodPermissions = map[string]permission{
 	"oidc.credential.token":        {auth.ResourceOIDCCredentials, auth.ActionToken},
 	"oidc.credential.device.start": {auth.ResourceOIDCCredentials, auth.ActionUpdate},
 	"oidc.credential.device.poll":  {auth.ResourceOIDCCredentials, auth.ActionUpdate},
+
+	// Attested-caller evidence (pkg/attestation/peergate) --
+	// pkg/auth.ResourcePeerAttestation, an xkms-owned resource family scoped
+	// in pkg/apimodule/module_scopes.go and exempt from the gate itself.
+	// Mirrors the gRPC PeerAttestationChallenge / SubmitPeerAttestation RPCs.
+	"peer.attestation.challenge": {auth.ResourcePeerAttestation, auth.ActionChallenge},
+	"peer.attestation.submit":    {auth.ResourcePeerAttestation, auth.ActionSubmit},
 
 	// SSH keys.
 	"ssh.keys.generate": {auth.ResourceSSH, auth.ActionWrite},

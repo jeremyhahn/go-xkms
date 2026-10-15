@@ -113,6 +113,10 @@ func buildCloudKMSBarrierStrategy(ctx context.Context, id xkms.StrategyID, dataD
 			Message:   fmt.Sprintf("%s strategy not available: this xkey binary was built without -tags %s", id, tag),
 		}
 	}
+	// Every builder reads its provider section from the loaded config.
+	if GetConfig() == nil {
+		return nil, nil, ErrBarrierConfigNotLoaded
+	}
 	return fn(ctx, dataDir)
 }
 

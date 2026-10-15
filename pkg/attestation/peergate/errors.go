@@ -15,7 +15,7 @@ package peergate
 
 import "strconv"
 
-// ConfigError reports a Collector, Verifier or MemoryStore configuration that
+// ConfigError reports a Collector, Verifier or DAOStore configuration that
 // does not describe a working component. Construction refuses it rather than
 // running a gate that could only ever refuse, or never refuse.
 type ConfigError struct {
@@ -36,6 +36,16 @@ func (e *ConfigError) Error() string {
 }
 
 func (e *ConfigError) Unwrap() error { return e.Cause }
+
+// ModeError reports a gate mode that is not off, optional or required.
+type ModeError struct {
+	// Value is the mode as configured.
+	Value string
+}
+
+func (e *ModeError) Error() string {
+	return "peergate: unknown gate mode " + strconv.Quote(e.Value) + " (want off, optional or required)"
+}
 
 // PeerCertificateError reports a connection that carries no verified client
 // certificate, so there is no peer to challenge or to collect evidence from.

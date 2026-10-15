@@ -18,10 +18,11 @@ import (
 	"testing"
 	"time"
 
+	"github.com/jeremyhahn/go-xkms/pkg/fido2/authenticator/keybackend"
+	"github.com/jeremyhahn/go-xkms/pkg/pairingproto"
+	"github.com/jeremyhahn/go-xkms/pkg/trust/bootstrap"
 	xkms "github.com/jeremyhahn/go-xkms/sdk/go"
-	"github.com/jeremyhahn/go-xkms/xkey/pkg/authenticator/keybackend"
 	"github.com/jeremyhahn/go-xkms/xkey/pkg/notify"
-	"github.com/jeremyhahn/go-xkms/xkey/pkg/pairing"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -33,13 +34,13 @@ func TestConstants(t *testing.T) {
 	assert.Equal(t, "f1d0f1d0-f1d0-f1d0-f1d0-f1d0f1d00002", ResponseUUIDString)
 	assert.Equal(t, "f1d0f1d0-f1d0-f1d0-f1d0-f1d0f1d00003", StatusUUIDString)
 	assert.Equal(t, 247, DefaultMTU)
-	assert.Equal(t, 23, pairing.MinMTU)
+	assert.Equal(t, 23, pairingproto.MinMTU)
 	assert.Equal(t, 30*time.Second, ScanTimeout)
 	assert.Equal(t, 10*time.Second, ConnectTimeout)
 	assert.Equal(t, 60*time.Second, OperationTimeout)
-	assert.Equal(t, -7, pairing.COSEAlgES256)
-	assert.Equal(t, -35, pairing.COSEAlgES384)
-	assert.Equal(t, -36, pairing.COSEAlgES512)
+	assert.Equal(t, -7, pairingproto.COSEAlgES256)
+	assert.Equal(t, -35, pairingproto.COSEAlgES384)
+	assert.Equal(t, -36, pairingproto.COSEAlgES512)
 }
 
 func TestDefaultPhoneKeyBackendConfig(t *testing.T) {
@@ -55,7 +56,7 @@ func TestDefaultPhoneKeyBackendConfig(t *testing.T) {
 
 func TestPhoneKeyHandle(t *testing.T) {
 	credID := []byte("test-credential-id")
-	alg := pairing.COSEAlgES256
+	alg := pairingproto.COSEAlgES256
 
 	handle := &phoneKeyHandle{
 		credentialID: credID,
@@ -71,9 +72,9 @@ func TestPhoneKeyHandle_DifferentAlgorithms(t *testing.T) {
 		name      string
 		algorithm int
 	}{
-		{"ES256", pairing.COSEAlgES256},
-		{"ES384", pairing.COSEAlgES384},
-		{"ES512", pairing.COSEAlgES512},
+		{"ES256", pairingproto.COSEAlgES256},
+		{"ES384", pairingproto.COSEAlgES384},
+		{"ES512", pairingproto.COSEAlgES512},
 	}
 
 	for _, tt := range tests {
@@ -89,16 +90,16 @@ func TestPhoneKeyHandle_DifferentAlgorithms(t *testing.T) {
 
 func TestCapabilities(t *testing.T) {
 	caps := keybackend.FIDO2KeyCapabilities{
-		SupportedAlgorithms: []int{pairing.COSEAlgES256, pairing.COSEAlgES384, pairing.COSEAlgES512},
+		SupportedAlgorithms: []int{pairingproto.COSEAlgES256, pairingproto.COSEAlgES384, pairingproto.COSEAlgES512},
 		SupportsExport:      false,
 		SupportsImport:      false,
 		SupportsAttestation: false,
 		HardwareBacked:      true,
 	}
 
-	assert.Contains(t, caps.SupportedAlgorithms, pairing.COSEAlgES256)
-	assert.Contains(t, caps.SupportedAlgorithms, pairing.COSEAlgES384)
-	assert.Contains(t, caps.SupportedAlgorithms, pairing.COSEAlgES512)
+	assert.Contains(t, caps.SupportedAlgorithms, pairingproto.COSEAlgES256)
+	assert.Contains(t, caps.SupportedAlgorithms, pairingproto.COSEAlgES384)
+	assert.Contains(t, caps.SupportedAlgorithms, pairingproto.COSEAlgES512)
 	assert.False(t, caps.SupportsExport)
 	assert.False(t, caps.SupportsImport)
 	assert.False(t, caps.SupportsAttestation)
@@ -106,7 +107,7 @@ func TestCapabilities(t *testing.T) {
 }
 
 func TestIsAlgorithmSupported(t *testing.T) {
-	supportedAlgs := []int{pairing.COSEAlgES256, pairing.COSEAlgES384, pairing.COSEAlgES512}
+	supportedAlgs := []int{pairingproto.COSEAlgES256, pairingproto.COSEAlgES384, pairingproto.COSEAlgES512}
 
 	isSupported := func(alg int) bool {
 		for _, supported := range supportedAlgs {
@@ -122,9 +123,9 @@ func TestIsAlgorithmSupported(t *testing.T) {
 		algorithm int
 		expected  bool
 	}{
-		{"ES256 supported", pairing.COSEAlgES256, true},
-		{"ES384 supported", pairing.COSEAlgES384, true},
-		{"ES512 supported", pairing.COSEAlgES512, true},
+		{"ES256 supported", pairingproto.COSEAlgES256, true},
+		{"ES384 supported", pairingproto.COSEAlgES384, true},
+		{"ES512 supported", pairingproto.COSEAlgES512, true},
 		{"EdDSA not supported", -8, false},
 		{"RS256 not supported", -257, false},
 		{"invalid algorithm", 0, false},
@@ -143,7 +144,7 @@ func TestHandlesCaching(t *testing.T) {
 	credID := []byte{0x01, 0x02, 0x03}
 	handle := &phoneKeyHandle{
 		credentialID: credID,
-		algorithm:    pairing.COSEAlgES256,
+		algorithm:    pairingproto.COSEAlgES256,
 	}
 	handles[hex.EncodeToString(credID)] = handle
 
@@ -171,7 +172,7 @@ func TestPhoneKeyBackendConfig_Validation(t *testing.T) {
 	})
 
 	t.Run("valid config with expected remote key", func(t *testing.T) {
-		key, err := pairing.GenerateStaticKey()
+		key, err := bootstrap.GenerateNoiseStaticKey()
 		require.NoError(t, err)
 
 		cfg := &PhoneKeyBackendConfig{
@@ -183,7 +184,7 @@ func TestPhoneKeyBackendConfig_Validation(t *testing.T) {
 		}
 
 		assert.NotEmpty(t, cfg.ExpectedRemoteStatic)
-		assert.Len(t, cfg.ExpectedRemoteStatic, pairing.NoiseKeySize)
+		assert.Len(t, cfg.ExpectedRemoteStatic, bootstrap.NoiseKeySize)
 	})
 }
 
@@ -236,10 +237,10 @@ func TestErrorConditions(t *testing.T) {
 }
 
 func TestGetInfoResult(t *testing.T) {
-	info := pairing.GetInfoResult{
+	info := pairingproto.GetInfoResult{
 		Version:             "1.0.0",
 		DeviceName:          "Pixel 8 Pro",
-		SupportedAlgorithms: []int{pairing.COSEAlgES256, pairing.COSEAlgES384},
+		SupportedAlgorithms: []int{pairingproto.COSEAlgES256, pairingproto.COSEAlgES384},
 		MaxCredentials:      100,
 		CurrentCredentials:  5,
 	}
@@ -252,10 +253,10 @@ func TestGetInfoResult(t *testing.T) {
 }
 
 func TestPingResult(t *testing.T) {
-	result := pairing.PingResult{Pong: true}
+	result := pairingproto.PingResult{Pong: true}
 	assert.True(t, result.Pong)
 
-	result2 := pairing.PingResult{Pong: false}
+	result2 := pairingproto.PingResult{Pong: false}
 	assert.False(t, result2.Pong)
 }
 
@@ -314,7 +315,7 @@ func (m *mockNotifierImpl) Close() error {
 func BenchmarkPhoneKeyHandle_CredentialID(b *testing.B) {
 	handle := &phoneKeyHandle{
 		credentialID: make([]byte, 64),
-		algorithm:    pairing.COSEAlgES256,
+		algorithm:    pairingproto.COSEAlgES256,
 	}
 
 	b.ResetTimer()

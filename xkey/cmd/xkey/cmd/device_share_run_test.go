@@ -25,6 +25,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	"github.com/jeremyhahn/go-xkms/pkg/pairingproto"
 	"github.com/jeremyhahn/go-xkms/xkey/pkg/pairing"
 )
 
@@ -147,7 +148,7 @@ func TestRunDeviceImport_ReportsTheImportedKey(t *testing.T) {
 	pairTestDevice(t, "Test Phone")
 
 	transport := &fakeDeviceTransport{results: map[string]any{
-		pairing.MethodLocalImportSharedKey: &pairing.LocalImportSharedKeyResult{
+		pairingproto.MethodLocalImportSharedKey: &pairingproto.LocalImportSharedKeyResult{
 			Algorithm:      "AES-256-GCM",
 			KeyType:        "symmetric",
 			Exportable:     true,
@@ -165,7 +166,7 @@ func TestRunDeviceImport_ReportsTheImportedKey(t *testing.T) {
 	require.NoError(t, runDeviceImport(cmd, []string{"my-key"}))
 
 	require.Len(t, transport.requests, 1)
-	params, ok := transport.requests[0].Params.(*pairing.LocalImportSharedKeyParams)
+	params, ok := transport.requests[0].Params.(*pairingproto.LocalImportSharedKeyParams)
 	require.True(t, ok)
 	assert.Equal(t, "my-key", params.KeyID)
 	assert.True(t, transport.closed)
@@ -190,7 +191,7 @@ func TestRunDeviceImport_OmitsAbsentMaterial(t *testing.T) {
 	isolatedBackupHome(t)
 	pairTestDevice(t, "Test Phone")
 	useFakeTransport(t, &fakeDeviceTransport{results: map[string]any{
-		pairing.MethodLocalImportSharedKey: &pairing.LocalImportSharedKeyResult{Algorithm: "Ed25519"},
+		pairingproto.MethodLocalImportSharedKey: &pairingproto.LocalImportSharedKeyResult{Algorithm: "Ed25519"},
 	}})
 
 	cmd := deviceImportTestCmd()
@@ -227,8 +228,8 @@ func TestRunDeviceImport_PhoneFailures(t *testing.T) {
 		},
 		{
 			name: "phone refuses",
-			transport: &fakeDeviceTransport{rpcErrors: map[string]*pairing.RPCError{
-				pairing.MethodLocalImportSharedKey: {Code: -32001, Message: "biometric cancelled"},
+			transport: &fakeDeviceTransport{rpcErrors: map[string]*pairingproto.RPCError{
+				pairingproto.MethodLocalImportSharedKey: {Code: -32001, Message: "biometric cancelled"},
 			}},
 			sentinel: ErrShareImportFailed,
 			detail:   "[-32001] biometric cancelled",
@@ -247,7 +248,7 @@ func TestRunDeviceImport_PhoneFailures(t *testing.T) {
 
 	t.Run("malformed reply", func(t *testing.T) {
 		useFakeTransport(t, &fakeDeviceTransport{results: map[string]any{
-			pairing.MethodLocalImportSharedKey: "not an object",
+			pairingproto.MethodLocalImportSharedKey: "not an object",
 		}})
 
 		err := runDeviceImport(deviceImportTestCmd(), []string{"my-key"})

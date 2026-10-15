@@ -19,6 +19,8 @@ import (
 	"errors"
 	"time"
 
+	"github.com/jeremyhahn/go-xkms/sdk/go/bootstrap"
+	"github.com/jeremyhahn/go-xkms/sdk/go/pairingproto"
 	"github.com/jeremyhahn/go-xkms/xkey/pkg/pairing"
 )
 
@@ -44,73 +46,73 @@ var ErrLiveAttestationUnavailable = errors.New("phone: this device requires a li
 // Errors delegated to pairing package. These are returned by pairing code
 // and must be the same values so errors.Is() works correctly.
 var (
-	ErrNotConnected             = pairing.ErrNotConnected
-	ErrConnectionFailed         = pairing.ErrConnectionFailed
-	ErrDeviceNotFound           = pairing.ErrDeviceNotFound
-	ErrPairingFailed            = pairing.ErrPairingFailed
-	ErrTimeout                  = pairing.ErrTimeout
-	ErrNoiseHandshakeFailed     = pairing.ErrNoiseHandshakeFailed
-	ErrEncryptionFailed         = pairing.ErrEncryptionFailed
-	ErrDecryptionFailed         = pairing.ErrDecryptionFailed
-	ErrInvalidResponse          = pairing.ErrInvalidResponse
-	ErrUserCancelled            = pairing.ErrUserCancelled
-	ErrBiometricFailed          = pairing.ErrBiometricFailed
-	ErrKeyNotFound              = pairing.ErrKeyNotFound
-	ErrProtocolError            = pairing.ErrProtocolError
-	ErrFragmentationError       = pairing.ErrFragmentationError
-	ErrBackendClosed            = pairing.ErrBackendClosed
-	ErrInvalidCredentialID      = pairing.ErrInvalidCredentialID
-	ErrUnsupportedAlgorithm     = pairing.ErrUnsupportedAlgorithm
-	ErrExportNotSupported       = pairing.ErrExportNotSupported
-	ErrImportNotSupported       = pairing.ErrImportNotSupported
-	ErrInvalidKeyHandle         = pairing.ErrInvalidKeyHandle
-	ErrMaxRetriesExceeded       = pairing.ErrMaxRetriesExceeded
-	ErrInvalidFragment          = pairing.ErrInvalidFragment
-	ErrSequenceNumber           = pairing.ErrSequenceNumber
-	ErrMTUTooSmall              = pairing.ErrMTUTooSmall
-	ErrSessionExpired           = pairing.ErrSessionExpired
-	ErrInvalidNoiseMessage      = pairing.ErrInvalidNoiseMessage
-	ErrStaticKeyMismatch        = pairing.ErrStaticKeyMismatch
-	ErrStorageFull              = pairing.ErrStorageFull
-	ErrKeyExists                = pairing.ErrKeyExists
-	ErrBackendDenied            = pairing.ErrBackendDenied
-	ErrAttestationFailed        = pairing.ErrAttestationFailed
-	ErrAttestationNotSupported  = pairing.ErrAttestationNotSupported
+	ErrNotConnected             = pairingproto.ErrNotConnected
+	ErrConnectionFailed         = pairingproto.ErrConnectionFailed
+	ErrDeviceNotFound           = pairingproto.ErrDeviceNotFound
+	ErrPairingFailed            = pairingproto.ErrPairingFailed
+	ErrTimeout                  = pairingproto.ErrTimeout
+	ErrNoiseHandshakeFailed     = bootstrap.ErrNoiseHandshakeFailed
+	ErrEncryptionFailed         = bootstrap.ErrNoiseEncryptionFailed
+	ErrDecryptionFailed         = bootstrap.ErrNoiseDecryptionFailed
+	ErrInvalidResponse          = pairingproto.ErrInvalidResponse
+	ErrUserCancelled            = pairingproto.ErrUserCancelled
+	ErrBiometricFailed          = pairingproto.ErrBiometricFailed
+	ErrKeyNotFound              = pairingproto.ErrKeyNotFound
+	ErrProtocolError            = pairingproto.ErrProtocolError
+	ErrFragmentationError       = pairingproto.ErrFragmentationError
+	ErrBackendClosed            = pairingproto.ErrBackendClosed
+	ErrInvalidCredentialID      = pairingproto.ErrInvalidCredentialID
+	ErrUnsupportedAlgorithm     = pairingproto.ErrUnsupportedAlgorithm
+	ErrExportNotSupported       = pairingproto.ErrExportNotSupported
+	ErrImportNotSupported       = pairingproto.ErrImportNotSupported
+	ErrInvalidKeyHandle         = pairingproto.ErrInvalidKeyHandle
+	ErrMaxRetriesExceeded       = pairingproto.ErrMaxRetriesExceeded
+	ErrInvalidFragment          = pairingproto.ErrInvalidFragment
+	ErrSequenceNumber           = pairingproto.ErrSequenceNumber
+	ErrMTUTooSmall              = pairingproto.ErrMTUTooSmall
+	ErrSessionExpired           = pairingproto.ErrSessionExpired
+	ErrInvalidNoiseMessage      = bootstrap.ErrNoiseInvalidMessage
+	ErrStaticKeyMismatch        = bootstrap.ErrNoiseStaticKeyMismatch
+	ErrStorageFull              = pairingproto.ErrStorageFull
+	ErrKeyExists                = pairingproto.ErrKeyExists
+	ErrBackendDenied            = pairingproto.ErrBackendDenied
+	ErrAttestationFailed        = pairingproto.ErrAttestationFailed
+	ErrAttestationNotSupported  = pairingproto.ErrAttestationNotSupported
 	ErrInvalidAttestationNonce  = pairing.ErrInvalidAttestationNonce
 	ErrTPM2Required             = pairing.ErrTPM2Required
-	ErrOperationDenied          = pairing.ErrOperationDenied
-	ErrInvalidPublicKey         = pairing.ErrInvalidPublicKey
-	ErrDecryptFailed            = pairing.ErrDecryptFailed
-	ErrHMACFailed               = pairing.ErrHMACFailed
-	ErrECDHFailed               = pairing.ErrECDHFailed
-	ErrInvalidFormat            = pairing.ErrInvalidFormat
-	ErrInvalidRpID              = pairing.ErrInvalidRpID
-	ErrInvalidClientDataHash    = pairing.ErrInvalidClientDataHash
-	ErrBridgeNotConnected       = pairing.ErrBridgeNotConnected
-	ErrBridgeInvalidParams      = pairing.ErrBridgeInvalidParams
-	ErrBridgeBackendDenied      = pairing.ErrBridgeBackendDenied
-	ErrPairingRejected          = pairing.ErrPairingRejected
-	ErrUntrustedDevice          = pairing.ErrUntrustedDevice
-	ErrTPM2DirectAccessRequired = pairing.ErrTPM2DirectAccessRequired
-	ErrShareDenied              = pairing.ErrShareDenied
-	ErrShareNotExportable       = pairing.ErrShareNotExportable
-	ErrSharePolicyNotFound      = pairing.ErrSharePolicyNotFound
-	ErrShareInvalidKeyType      = pairing.ErrShareInvalidKeyType
-	ErrBackupFailed             = pairing.ErrBackupFailed
-	ErrBackupRestoreFailed      = pairing.ErrBackupRestoreFailed
-	ErrBackupNotFound           = pairing.ErrBackupNotFound
-	ErrOATHCredentialNotFound   = pairing.ErrOATHCredentialNotFound
-	ErrOATHGenerateFailed       = pairing.ErrOATHGenerateFailed
-	ErrOATHStoreFailed          = pairing.ErrOATHStoreFailed
-	ErrPIVSlotNotFound          = pairing.ErrPIVSlotNotFound
-	ErrPIVSlotOccupied          = pairing.ErrPIVSlotOccupied
-	ErrPIVSignFailed            = pairing.ErrPIVSignFailed
-	ErrPIVInvalidSlot           = pairing.ErrPIVInvalidSlot
-	ErrSyncFailed               = pairing.ErrSyncFailed
-	ErrSyncConflict             = pairing.ErrSyncConflict
-	ErrSyncRemoteUnavailable    = pairing.ErrSyncRemoteUnavailable
-	ErrSyncNoData               = pairing.ErrSyncNoData
-	ErrSyncVersionMismatch      = pairing.ErrSyncVersionMismatch
+	ErrOperationDenied          = pairingproto.ErrOperationDenied
+	ErrInvalidPublicKey         = pairingproto.ErrInvalidPublicKey
+	ErrDecryptFailed            = pairingproto.ErrDecryptFailed
+	ErrHMACFailed               = pairingproto.ErrHMACFailed
+	ErrECDHFailed               = pairingproto.ErrECDHFailed
+	ErrInvalidFormat            = pairingproto.ErrInvalidFormat
+	ErrInvalidRpID              = pairingproto.ErrInvalidRpID
+	ErrInvalidClientDataHash    = pairingproto.ErrInvalidClientDataHash
+	ErrBridgeNotConnected       = pairingproto.ErrBridgeNotConnected
+	ErrBridgeInvalidParams      = pairingproto.ErrBridgeInvalidParams
+	ErrBridgeBackendDenied      = pairingproto.ErrBridgeBackendDenied
+	ErrPairingRejected          = pairingproto.ErrPairingRejected
+	ErrUntrustedDevice          = pairingproto.ErrUntrustedDevice
+	ErrTPM2DirectAccessRequired = pairingproto.ErrTPM2DirectAccessRequired
+	ErrShareDenied              = pairingproto.ErrShareDenied
+	ErrShareNotExportable       = pairingproto.ErrShareNotExportable
+	ErrSharePolicyNotFound      = pairingproto.ErrSharePolicyNotFound
+	ErrShareInvalidKeyType      = pairingproto.ErrShareInvalidKeyType
+	ErrBackupFailed             = pairingproto.ErrBackupFailed
+	ErrBackupRestoreFailed      = pairingproto.ErrBackupRestoreFailed
+	ErrBackupNotFound           = pairingproto.ErrBackupNotFound
+	ErrOATHCredentialNotFound   = pairingproto.ErrOATHCredentialNotFound
+	ErrOATHGenerateFailed       = pairingproto.ErrOATHGenerateFailed
+	ErrOATHStoreFailed          = pairingproto.ErrOATHStoreFailed
+	ErrPIVSlotNotFound          = pairingproto.ErrPIVSlotNotFound
+	ErrPIVSlotOccupied          = pairingproto.ErrPIVSlotOccupied
+	ErrPIVSignFailed            = pairingproto.ErrPIVSignFailed
+	ErrPIVInvalidSlot           = pairingproto.ErrPIVInvalidSlot
+	ErrSyncFailed               = pairingproto.ErrSyncFailed
+	ErrSyncConflict             = pairingproto.ErrSyncConflict
+	ErrSyncRemoteUnavailable    = pairingproto.ErrSyncRemoteUnavailable
+	ErrSyncNoData               = pairingproto.ErrSyncNoData
+	ErrSyncVersionMismatch      = pairingproto.ErrSyncVersionMismatch
 )
 
 // Phone-specific errors that are NOT in the pairing package.
@@ -123,11 +125,6 @@ var (
 	// will accept no further connections. Once Stop has released the
 	// peripheral's static key there is nothing left for a session to use.
 	ErrBLEPeripheralStopped = errors.New("phone: ble peripheral stopped")
-
-	// ErrUSBUnavailable indicates this binary was built without USB phone
-	// transport support (the "usb" build tag): the gousb/libusb dependency
-	// is excluded from static and CGO_ENABLED=0 builds.
-	ErrUSBUnavailable = errors.New("phone: usb transport not built (build with -tags usb)")
 
 	// ErrAdapterDisabled indicates the Bluetooth adapter is disabled.
 	ErrAdapterDisabled = errors.New("phone: bluetooth adapter disabled")

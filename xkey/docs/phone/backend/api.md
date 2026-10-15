@@ -1,7 +1,7 @@
 # Phone Backend API Reference
 
 > **Status: REFERENCE** · Last verified: 2026-10-13
-> `local.*` wire summary for the phone backend; superseded by [phone-hsm/api.md](../../phone-hsm/api.md). Where they disagree, the feature folder wins. Types are in `xkey/pkg/pairing/protocol_local.go`; byte fields are base64 on the wire.
+> `local.*` wire summary for the phone backend; superseded by [phone-hsm/api.md](../../phone-hsm/api.md). Where they disagree, the feature folder wins. Types are in `pkg/pairingproto/protocol_local.go`; byte fields are base64 on the wire.
 
 ## Overview
 
@@ -28,7 +28,7 @@ The phone backend uses JSON-RPC 2.0 over Noise XX encrypted channels. Methods in
 | `ping` | Connection health check | — |
 | `getInfo` | Device information | — |
 
-`ping` and `getInfo` are the base methods in `xkey/pkg/pairing/protocol.go`.
+`ping` and `getInfo` are the base methods in `pkg/pairingproto/protocol.go`.
 
 ## Key Generation
 
@@ -260,7 +260,7 @@ Takes no parameters. **Response** (`LocalGetCapabilitiesResult`, `protocol_local
 
 ## Error Codes
 
-From `xkey/pkg/pairing/protocol.go:47`; the full list continues past `-32019`
+From `pkg/pairingproto/protocol.go:47`; the full list continues past `-32019`
 with backup, OATH, PIV and sync codes.
 
 | Code | Constant |

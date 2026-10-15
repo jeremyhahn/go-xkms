@@ -23,7 +23,7 @@ import (
 	"errors"
 	"testing"
 
-	"github.com/jeremyhahn/go-xkms/xkey/pkg/pairing"
+	"github.com/jeremyhahn/go-xkms/pkg/pairingproto"
 )
 
 func TestPhoneSigner_Public(t *testing.T) {
@@ -60,11 +60,11 @@ func TestPhoneSigner_Sign_Success(t *testing.T) {
 	expectedSig := []byte("mock-signature-bytes")
 
 	sender := &mockSender{
-		sendFunc: func(ctx context.Context, req *pairing.Request) (*pairing.Response, error) {
-			if req.Method != pairing.MethodLocalSign {
-				t.Errorf("expected method %s, got %s", pairing.MethodLocalSign, req.Method)
+		sendFunc: func(ctx context.Context, req *pairingproto.Request) (*pairingproto.Response, error) {
+			if req.Method != pairingproto.MethodLocalSign {
+				t.Errorf("expected method %s, got %s", pairingproto.MethodLocalSign, req.Method)
 			}
-			return mockSuccessResponse(pairing.LocalSignResult{
+			return mockSuccessResponse(pairingproto.LocalSignResult{
 				Signature: expectedSig,
 				Algorithm: "ES256",
 			}), nil
@@ -92,8 +92,8 @@ func TestPhoneSigner_Sign_RPCError(t *testing.T) {
 	}
 
 	sender := &mockSender{
-		sendFunc: func(ctx context.Context, req *pairing.Request) (*pairing.Response, error) {
-			return mockErrorResponse(pairing.ErrorCodeBiometricFailed, "biometric failed"), nil
+		sendFunc: func(ctx context.Context, req *pairingproto.Request) (*pairingproto.Response, error) {
+			return mockErrorResponse(pairingproto.ErrorCodeBiometricFailed, "biometric failed"), nil
 		},
 	}
 
@@ -113,7 +113,7 @@ func TestPhoneSigner_Sign_TransportError(t *testing.T) {
 	}
 
 	sender := &mockSender{
-		sendFunc: func(ctx context.Context, req *pairing.Request) (*pairing.Response, error) {
+		sendFunc: func(ctx context.Context, req *pairingproto.Request) (*pairingproto.Response, error) {
 			return nil, errors.New("connection dropped")
 		},
 	}
@@ -157,17 +157,17 @@ func TestPhoneSigner_ImplementsCryptoSigner(t *testing.T) {
 	}
 
 	sender := &mockSender{
-		sendFunc: func(ctx context.Context, req *pairing.Request) (*pairing.Response, error) {
+		sendFunc: func(ctx context.Context, req *pairingproto.Request) (*pairingproto.Response, error) {
 			switch req.Method {
-			case pairing.MethodLocalGetKeyInfo:
-				return mockSuccessResponse(pairing.LocalGetKeyInfoResult{
-					KeyInfo: pairing.KeyInfo{
+			case pairingproto.MethodLocalGetKeyInfo:
+				return mockSuccessResponse(pairingproto.LocalGetKeyInfoResult{
+					KeyInfo: pairingproto.KeyInfo{
 						KeyID:     "test-key",
 						Algorithm: "ES256",
 					},
 				}), nil
-			case pairing.MethodLocalGetPublicKey:
-				return mockSuccessResponse(pairing.LocalGetPublicKeyResult{
+			case pairingproto.MethodLocalGetPublicKey:
+				return mockSuccessResponse(pairingproto.LocalGetPublicKeyResult{
 					PublicKey: pubDER,
 					Algorithm: "ES256",
 				}), nil

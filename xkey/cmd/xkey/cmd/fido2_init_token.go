@@ -21,7 +21,7 @@ import (
 
 	"github.com/spf13/cobra"
 
-	"github.com/jeremyhahn/go-xkms/xkey/pkg/authenticator"
+	"github.com/jeremyhahn/go-xkms/sdk/go/fido2/authenticator"
 )
 
 // This file is the operator-facing half of xKey's token lifecycle: the commands

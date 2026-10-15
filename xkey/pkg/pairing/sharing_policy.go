@@ -19,6 +19,7 @@ import (
 	"sync"
 
 	"github.com/jeremyhahn/go-xkms/sdk/go/fsutil"
+	"github.com/jeremyhahn/go-xkms/sdk/go/pairingproto"
 )
 
 // SharingPolicy controls what can be shared for a specific key.
@@ -94,7 +95,7 @@ func (s *FileSharingPolicyStore) GetPolicy(backend, keyID string) (*SharingPolic
 	key := policyKey(backend, keyID)
 	policy, ok := s.policies[key]
 	if !ok {
-		return nil, ErrSharePolicyNotFound
+		return nil, pairingproto.ErrSharePolicyNotFound
 	}
 
 	// Return a copy to prevent mutation of the stored policy.
@@ -110,10 +111,10 @@ func (s *FileSharingPolicyStore) GetPolicy(backend, keyID string) (*SharingPolic
 // The policy must have non-empty Backend and KeyID fields.
 func (s *FileSharingPolicyStore) SetPolicy(policy *SharingPolicy) error {
 	if policy == nil {
-		return ErrBridgeInvalidParams
+		return pairingproto.ErrBridgeInvalidParams
 	}
 	if policy.Backend == "" || policy.KeyID == "" {
-		return ErrBridgeInvalidParams
+		return pairingproto.ErrBridgeInvalidParams
 	}
 
 	s.mu.Lock()
@@ -140,7 +141,7 @@ func (s *FileSharingPolicyStore) DeletePolicy(backend, keyID string) error {
 
 	key := policyKey(backend, keyID)
 	if _, ok := s.policies[key]; !ok {
-		return ErrSharePolicyNotFound
+		return pairingproto.ErrSharePolicyNotFound
 	}
 
 	delete(s.policies, key)

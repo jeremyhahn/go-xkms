@@ -18,16 +18,17 @@ The wire protocol is **Noise XX** — mutual authentication with both static
 public keys exchanged during the handshake:
 
 ```go
-// xkey/pkg/pairing/noise.go:28
-NoiseProtocolName = "Noise_XX_25519_ChaChaPoly_SHA256"
+// pkg/trust/bootstrap/noise_session.go:29
+NoiseXXProtocolName = "Noise_XX_25519_ChaChaPoly_SHA256"
 ```
 
 XX rather than NK because both ends must authenticate: the desktop needs to know
 it is talking to the paired phone, and the phone needs to know it is talking to
 the paired desktop.
 
-Above the session sits a JSON-RPC protocol split by concern
-(`xkey/pkg/pairing/`):
+Above the session sits a JSON-RPC protocol split by concern. The wire types
+are in `pkg/pairingproto/`; xkey's bridges that serve them are in
+`xkey/pkg/pairing/`:
 
 | Concern | Protocol file | Bridge |
 |---|---|---|
@@ -51,8 +52,8 @@ say so honestly" for the wiring contract and what each unconfigured method
 reports.
 
 Transports: USB AOA (`go-xkms/pkg/api/transport/usb`), TCP relay
-(`tcp_transport.go`), and BLE. `fragmentation.go` exists because none of these
-carry arbitrarily large frames.
+(`xkey/pkg/pairing/tcp_transport.go`), and BLE. `pkg/pairingproto/fragmentation.go`
+exists because none of these carry arbitrarily large frames.
 
 Rejected alternatives:
 
@@ -68,7 +69,9 @@ Rejected alternatives:
 
 | Piece | Where | Owner |
 |---|---|---|
-| Pairing protocol, Noise session, bridges | `xkey/pkg/pairing` | go-xkms |
+| Pairing wire protocol | `go-xkms/pkg/pairingproto` | go-xkms |
+| Noise XX session | `go-xkms/pkg/trust/bootstrap` | go-xkms |
+| Bridges, pairing record, TCP relay | `xkey/pkg/pairing` | go-xkms |
 | Phone key backend | `go-xkms/pkg/backend/phone` | go-xkms |
 | USB AOA transport | `go-xkms/pkg/api/transport/usb` | go-xkms |
 | Android attestation verification | `go-xkms/pkg/attestation/android` | go-xkms |

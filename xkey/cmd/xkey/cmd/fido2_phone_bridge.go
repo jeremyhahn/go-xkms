@@ -20,8 +20,8 @@ import (
 	"io"
 	"log/slog"
 
+	"github.com/jeremyhahn/go-xkms/sdk/go/fido2/keybackend"
 	"github.com/jeremyhahn/go-xkms/sdk/go/transport"
-	"github.com/jeremyhahn/go-xkms/xkey/pkg/authenticator/keybackend"
 	"github.com/jeremyhahn/go-xkms/xkey/pkg/pairing"
 	"github.com/jeremyhahn/go-xkms/xkey/pkg/phone"
 	"github.com/spf13/cobra"

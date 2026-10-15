@@ -30,53 +30,55 @@ characteristics and the Android app are covered by
 credential keys. Three backends exist: software, TPM 2.0, and phone
 (`xkey/cmd/xkey/cmd/fido2.go:265` validates exactly those three names).
 `xkey/pkg/phone.PhoneKeyBackend` is the phone one: it holds a
-`pairing.Transport` and a `pairing.NoiseSession` and turns
+`pairingproto.Transport` and a `bootstrap.NoiseSession` and turns
 `GenerateCredentialKey`/`Sign`/`LoadKey`/`DeleteKey` into encrypted JSON-RPC
 round trips against the connected phone
-(`xkey/pkg/phone/phone.go:190-243`, `:848-1105`).
+(`xkey/pkg/phone/phone.go:192-245`, `:866-1123`).
 
 Private key material never crosses the wire in either direction: keys are
 generated inside the phone's TEE/StrongBox and the backend's
 `Capabilities()` reports `SupportsExport: false`, `SupportsImport: false`
-(`xkey/pkg/phone/phone.go:441-455`).
+(`xkey/pkg/phone/phone.go:452-469`).
 
 ## Package shape
 
 ```
 xkey/pkg/phone/
     phone.go              PhoneKeyBackend: keybackend.FIDO2KeyBackend impl
-    transport.go           BLECapableTransport (extends pairing.Transport)
+    transport.go           BLECapableTransport (extends pairingproto.Transport)
     ble_transport.go        BLE central role (build tag: ble)
     ble_transport_stub.go    stub for builds without "ble" (ErrBLEUnavailable)
     ble_peripheral.go       BLE peripheral/GATT-server role (build tag: ble)
     ble_peripheral_stub.go   stub for builds without "ble"
-    usb_transport.go        USB Accessory Mode (AOA) client (build tag: usb)
-    usb_transport_stub.go   stub for builds without "usb" (ErrUSBUnavailable)
-    aoa.go                  AOA protocol constants (build tag: usb)
     tcp_server.go           TCP relay responder: TCPPairingServer
     fingerprint.go          device-fingerprint continuity check
-    errors.go               sentinel errors (most re-exported from pairing)
+    errors.go               sentinel errors (most re-exported from pairingproto and bootstrap)
 ```
 
+The USB Accessory Mode (AOA) client — `usb_transport.go` (build tag `usb`),
+its `usb_transport_stub.go` and the `aoa.go` constants — lives in
+`pkg/pairingproto` beside the wire protocol, because root's
+`pkg/api/transport/usb` wraps it too.
+
 `ble_notify.go` carries desktop-notification wiring for pending biometric
-approvals. Everything under `pairing.Transport` is one of four concrete
+approvals. Everything under `pairingproto.Transport` is one of four concrete
 transports; `PhoneKeyBackend` is transport-agnostic and is constructed either
 with a BLE transport it manages itself (`NewPhoneKeyBackend`,
-`xkey/pkg/phone/phone.go:248-280`) or with any pre-connected
-`pairing.Transport` (`NewPhoneKeyBackendWithTransport`,
-`xkey/pkg/phone/phone.go:287-302`) — which is how USB and TCP get used.
+`xkey/pkg/phone/phone.go:247-282`) or with any pre-connected
+`pairingproto.Transport` (`NewPhoneKeyBackendWithTransport`,
+`xkey/pkg/phone/phone.go:284-304`) — which is how USB and TCP get used.
 
 ## Two build tags gate two hardware dependencies
 
 | Tag | Enables | Why gated |
 |---|---|---|
 | `ble` | `BLETransport` (central), `BLEPeripheral` (peripheral) | `tinygo.org/x/bluetooth` and BlueZ D-Bus are Linux/BlueZ-specific |
-| `usb` | `USBTransport`, AOA constants (`aoa.go`) | `google/gousb`'s libusb cgo dependency has no static/`CGO_ENABLED=0` build, so static release and FIPS-lane binaries exclude it (`xkey/pkg/phone/usb_transport_stub.go:16-21`) |
+| `usb` | `pairingproto.USBTransport`, AOA constants (`pkg/pairingproto/aoa.go`) | `google/gousb`'s libusb cgo dependency has no static/`CGO_ENABLED=0` build, so static release and FIPS-lane binaries exclude it (`pkg/pairingproto/usb_transport_stub.go:24-29`) |
 
 Without a tag, the corresponding type still compiles (stub files mirror the
 real exported surface field-for-field) but every method returns
-`ErrBLEUnavailable` or `ErrUSBUnavailable`
-(`xkey/pkg/phone/ble_transport_stub.go`, `xkey/pkg/phone/usb_transport_stub.go`).
+`ErrBLEUnavailable` or `pairingproto.ErrUSBUnavailable`
+(`xkey/pkg/phone/ble_transport_stub.go`, `pkg/pairingproto/usb_transport_stub.go`).
 This is why `xkey fido2 --backend phone` on a build without `ble` fails with
 `ErrFIDO2BLENotAvailable` rather than a panic
 (`xkey/cmd/xkey/cmd/fido2_phone_stub.go:24-30`).
@@ -87,7 +89,7 @@ Nothing here is a fixed "phone is always the server" design:
 
 - **Desktop as BLE central, phone as GATT peripheral** — the ordinary case.
   `BLETransport` scans, connects, and drives the Noise XX handshake as
-  initiator (`xkey/pkg/phone/phone.go:457-616`).
+  initiator (`xkey/pkg/phone/phone.go:476-634`).
 - **Desktop as BLE peripheral, phone as GATT central** — `BLEPeripheral`
   advertises and accepts a connection, driving the handshake as responder.
   Wired into `xkey device listen` (`xkey/cmd/xkey/cmd/device_listen.go:248`);
@@ -104,12 +106,12 @@ Nothing here is a fixed "phone is always the server" design:
   cli.md.
 - **USB AOA** — `USBTransport` is the desktop acting as USB host while the
   phone switches into Android Open Accessory mode
-  (`xkey/pkg/phone/usb_transport.go`, `aoa.go`). The same low-level
+  (`pkg/pairingproto/usb_transport.go`, `aoa.go`). The same low-level
   transport is wrapped by the SDK-facing `go-xkms/pkg/api/transport/usb`
   package that xkmsd uses to reach a phone directly (see phone-hsm's
   api.md, "The seventh transport").
 
-Every one of these is a `pairing.Transport`; the Noise session and JSON-RPC
+Every one of these is a `pairingproto.Transport`; the Noise session and JSON-RPC
 framing above the transport are identical regardless of which one carries
 it (phone-hsm's [architecture.md](../phone-hsm/architecture.md)).
 
@@ -129,14 +131,14 @@ this package owns only the first:
    continuity check, not a live proof — the value is a public key hash and
    the connection has no verified chain at the moment it is compared.
 2. **Live attestation** (`PhoneKeyBackendConfig.RequireLiveAttestation`
-   and `.LiveAttest`, `xkey/pkg/phone/phone.go:136-157`) — the #129
+   and `.LiveAttest`, `xkey/pkg/phone/phone.go:138-159`) — the #129
    challenge-response proof that the peer currently holds the attested key,
    run once per connection via `proveLiveness`
-   (`xkey/pkg/phone/phone.go:680-728`) immediately after the Noise
+   (`xkey/pkg/phone/phone.go:708-746`) immediately after the Noise
    handshake and before the backend serves any request. A device whose
    pairing record requires this and supplies no verifier gets
    `ErrLiveAttestationUnavailable` rather than a silently skipped check
-   (`xkey/pkg/phone/errors.go:24-33`) — a deliberate fail-closed choice: the
+   (`xkey/pkg/phone/errors.go:35-44`) — a deliberate fail-closed choice: the
    whole point of `RequireLiveAttestation` is that a missing verifier must
    never look like "no live-attestation policy".
 

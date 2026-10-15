@@ -23,6 +23,8 @@ import (
 	"sync"
 	"sync/atomic"
 	"time"
+
+	"github.com/jeremyhahn/go-xkms/sdk/go/pairingproto"
 )
 
 // TCP transport constants.
@@ -46,7 +48,7 @@ const (
 )
 
 // Compile-time interface check.
-var _ Transport = (*TCPTransport)(nil)
+var _ pairingproto.Transport = (*TCPTransport)(nil)
 
 // TCPTransportConfig configures the TCP transport for phone communication.
 type TCPTransportConfig struct {
@@ -116,7 +118,7 @@ func NewTCPTransport(cfg *TCPTransportConfig) (*TCPTransport, error) {
 // Connect establishes a TCP connection to the phone.
 func (t *TCPTransport) Connect(ctx context.Context) error {
 	if t.closed.Load() {
-		return ErrBackendClosed
+		return pairingproto.ErrBackendClosed
 	}
 	if t.connected.Load() {
 		return nil
@@ -128,7 +130,7 @@ func (t *TCPTransport) Connect(ctx context.Context) error {
 	conn, err := dialer.DialContext(ctx, "tcp", t.cfg.Address)
 	if err != nil {
 		t.log.Error("TCP connection failed", "address", t.cfg.Address, "error", err)
-		return ErrConnectionFailed
+		return pairingproto.ErrConnectionFailed
 	}
 
 	t.mu.Lock()
@@ -162,13 +164,13 @@ func (t *TCPTransport) Disconnect() error {
 // Send transmits a length-prefixed message to the connected phone.
 func (t *TCPTransport) Send(ctx context.Context, message []byte) error {
 	if t.closed.Load() {
-		return ErrBackendClosed
+		return pairingproto.ErrBackendClosed
 	}
 	if !t.connected.Load() {
-		return ErrNotConnected
+		return pairingproto.ErrNotConnected
 	}
 	if len(message) > MaxTCPMessageSize {
-		return ErrProtocolError
+		return pairingproto.ErrProtocolError
 	}
 
 	// Build the framed message: [2-byte big-endian length][payload]
@@ -181,21 +183,21 @@ func (t *TCPTransport) Send(ctx context.Context, message []byte) error {
 	t.mu.Unlock()
 
 	if conn == nil {
-		return ErrNotConnected
+		return pairingproto.ErrNotConnected
 	}
 
 	// Determine the deadline from either the context or the configured operation timeout.
 	deadline := t.resolveDeadline(ctx)
 	if err := conn.SetWriteDeadline(deadline); err != nil {
-		return ErrConnectionFailed
+		return pairingproto.ErrConnectionFailed
 	}
 
 	if _, err := conn.Write(frame); err != nil {
 		t.handleWriteError(err)
 		if isTimeoutError(err) {
-			return ErrTimeout
+			return pairingproto.ErrTimeout
 		}
-		return ErrConnectionFailed
+		return pairingproto.ErrConnectionFailed
 	}
 
 	t.log.Debug("sent TCP message", "size", len(message))
@@ -205,10 +207,10 @@ func (t *TCPTransport) Send(ctx context.Context, message []byte) error {
 // Receive reads a complete length-prefixed message from the phone.
 func (t *TCPTransport) Receive(ctx context.Context) ([]byte, error) {
 	if t.closed.Load() {
-		return nil, ErrBackendClosed
+		return nil, pairingproto.ErrBackendClosed
 	}
 	if !t.connected.Load() {
-		return nil, ErrNotConnected
+		return nil, pairingproto.ErrNotConnected
 	}
 
 	t.mu.Lock()
@@ -216,13 +218,13 @@ func (t *TCPTransport) Receive(ctx context.Context) ([]byte, error) {
 	t.mu.Unlock()
 
 	if conn == nil {
-		return nil, ErrNotConnected
+		return nil, pairingproto.ErrNotConnected
 	}
 
 	// Determine the deadline from either the context or the configured operation timeout.
 	deadline := t.resolveDeadline(ctx)
 	if err := conn.SetReadDeadline(deadline); err != nil {
-		return nil, ErrConnectionFailed
+		return nil, pairingproto.ErrConnectionFailed
 	}
 
 	// Read the 2-byte length header.
@@ -285,14 +287,14 @@ func (t *TCPTransport) classifyReadError(err error) error {
 	if errors.Is(err, io.EOF) || errors.Is(err, io.ErrUnexpectedEOF) {
 		t.log.Warn("peer disconnected during read")
 		t.connected.Store(false)
-		return ErrNotConnected
+		return pairingproto.ErrNotConnected
 	}
 	if isTimeoutError(err) {
-		return ErrTimeout
+		return pairingproto.ErrTimeout
 	}
 	t.log.Error("TCP read error", "error", err)
 	t.connected.Store(false)
-	return ErrConnectionFailed
+	return pairingproto.ErrConnectionFailed
 }
 
 // handleWriteError updates connection state on write failures.

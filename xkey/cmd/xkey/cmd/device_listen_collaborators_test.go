@@ -36,8 +36,9 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	"github.com/jeremyhahn/go-xkms/pkg/attestation/truststore"
+	"github.com/jeremyhahn/go-xkms/pkg/pairingproto"
 	"github.com/jeremyhahn/go-xkms/xkey/pkg/pairing"
-	"github.com/jeremyhahn/go-xkms/xkey/pkg/truststore"
 )
 
 // certFingerprintForTest computes the same SHA-256 fingerprint the trust
@@ -126,8 +127,8 @@ func TestBuildListenBridgeConfig_OATHRequestReachesRealStore(t *testing.T) {
 	bridge, err := pairing.NewBridge(&baseSDKClient{}, bridgeCfg)
 	require.NoError(t, err)
 
-	req := pairing.NewRequest(pairing.MethodRemoteOATHAdd, pairing.RemoteOATHAddParams{
-		Credential: pairing.OATHCredentialInfo{
+	req := pairingproto.NewRequest(pairingproto.MethodRemoteOATHAdd, pairingproto.RemoteOATHAddParams{
+		Credential: pairingproto.OATHCredentialInfo{
 			Name:   "GitHub",
 			Issuer: "GitHub",
 			Secret: mustSecretText("JBSWY3DPEHPK3PXP"),
@@ -137,7 +138,7 @@ func TestBuildListenBridgeConfig_OATHRequestReachesRealStore(t *testing.T) {
 	resp := bridge.HandleRequest(context.Background(), req)
 	require.Nil(t, resp.Error, "expected success but got: %v", resp.Error)
 
-	result, err := pairing.DecodeResult[pairing.RemoteOATHAddResult](resp)
+	result, err := pairingproto.DecodeResult[pairingproto.RemoteOATHAddResult](resp)
 	require.NoError(t, err)
 	assert.True(t, result.Success)
 	require.NotEmpty(t, result.CredentialID)
@@ -173,8 +174,8 @@ func TestBuildListenBridgeConfig_SyncTrustStoreRequestReachesRealStore(t *testin
 	require.NoError(t, err)
 
 	certPEM := newTestCertificatePEM(t, "phone-sent-cert")
-	req := pairing.NewRequest(pairing.MethodRemoteSyncTrustStore, pairing.RemoteSyncTrustStoreParams{
-		Certificates: []pairing.SyncCertificate{{
+	req := pairingproto.NewRequest(pairingproto.MethodRemoteSyncTrustStore, pairingproto.RemoteSyncTrustStoreParams{
+		Certificates: []pairingproto.SyncCertificate{{
 			PEM:         string(certPEM),
 			Fingerprint: certFingerprintForTest(t, certPEM),
 		}},
@@ -182,7 +183,7 @@ func TestBuildListenBridgeConfig_SyncTrustStoreRequestReachesRealStore(t *testin
 	resp := bridge.HandleRequest(context.Background(), req)
 	require.Nil(t, resp.Error, "expected success but got: %v", resp.Error)
 
-	result, err := pairing.DecodeResult[pairing.RemoteSyncTrustStoreResult](resp)
+	result, err := pairingproto.DecodeResult[pairingproto.RemoteSyncTrustStoreResult](resp)
 	require.NoError(t, err)
 	assert.Equal(t, 1, result.Added)
 

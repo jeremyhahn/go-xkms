@@ -37,7 +37,7 @@ The xkey binary communicates with an Android phone over BLE, USB or TCP for cryp
                                         +------------------+
 ```
 
-The protocol is bidirectional. The laptop sends `local.*` methods to operate on phone keys (`xkey/pkg/pairing/protocol_local.go:28`), and the phone sends `remote.*` methods to operate on laptop xkmsd backends (`xkey/pkg/pairing/protocol_remote.go:20`). Both directions share the same Noise XX encrypted channel.
+The protocol is bidirectional. The laptop sends `local.*` methods to operate on phone keys (`pkg/pairingproto/protocol_local.go:28`), and the phone sends `remote.*` methods to operate on laptop xkmsd backends (`pkg/pairingproto/protocol_remote.go:20`). Both directions share the same Noise XX encrypted channel.
 
 ## Capabilities
 

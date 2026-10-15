@@ -26,6 +26,7 @@ import (
 	"time"
 
 	android "github.com/jeremyhahn/go-xkms/pkg/attestation/android"
+	"github.com/jeremyhahn/go-xkms/pkg/pairingproto"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -93,11 +94,11 @@ func TestEnrollmentPolicy_DefaultsFailClosed(t *testing.T) {
 	assert.Nil(t, p.TrustedRoots, "no roots are trusted until configured")
 	assert.Empty(t, p.AllowedApplications, "no application is allowed until listed")
 	assert.True(t, p.RequireVerifiedBoot, "verified boot is demanded by default")
-	assert.Equal(t, SecurityLevelTEE, p.MinSecurityLevel,
+	assert.Equal(t, pairingproto.SecurityLevelTEE, p.MinSecurityLevel,
 		"software-held keys are refused by default")
 	assert.Equal(t, DefaultEnrollmentValidity, p.Validity)
 
-	_, err := p.Evaluate(&LocalGetDeviceEnrollmentRequestResult{
+	_, err := p.Evaluate(&pairingproto.LocalGetDeviceEnrollmentRequestResult{
 		AttestationChain: []string{"ignored"},
 	}, []byte("nonce"), time.Now())
 	assert.ErrorIs(t, err, ErrEnrollmentChainUntrusted)
@@ -111,10 +112,10 @@ func TestMinSecurityRank(t *testing.T) {
 		level string
 		want  int
 	}{
-		{"unset defaults to TEE", "", securityRank(SecurityLevelTEE)},
-		{"software", SecurityLevelSoftware, securityRank(SecurityLevelSoftware)},
-		{"TEE", SecurityLevelTEE, securityRank(SecurityLevelTEE)},
-		{"StrongBox", SecurityLevelStrongBox, securityRank(SecurityLevelStrongBox)},
+		{"unset defaults to TEE", "", securityRank(pairingproto.SecurityLevelTEE)},
+		{"software", pairingproto.SecurityLevelSoftware, securityRank(pairingproto.SecurityLevelSoftware)},
+		{"TEE", pairingproto.SecurityLevelTEE, securityRank(pairingproto.SecurityLevelTEE)},
+		{"StrongBox", pairingproto.SecurityLevelStrongBox, securityRank(pairingproto.SecurityLevelStrongBox)},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -133,10 +134,10 @@ func TestSecurityLevelName(t *testing.T) {
 		level android.SecurityLevel
 		want  string
 	}{
-		{"StrongBox", android.SecurityLevelStrongBox, SecurityLevelStrongBox},
-		{"TEE", android.SecurityLevelTrustedEnvironment, SecurityLevelTEE},
-		{"software", android.SecurityLevelSoftware, SecurityLevelSoftware},
-		{"unrecognised", android.SecurityLevel(99), SecurityLevelSoftware},
+		{"StrongBox", android.SecurityLevelStrongBox, pairingproto.SecurityLevelStrongBox},
+		{"TEE", android.SecurityLevelTrustedEnvironment, pairingproto.SecurityLevelTEE},
+		{"software", android.SecurityLevelSoftware, pairingproto.SecurityLevelSoftware},
+		{"unrecognised", android.SecurityLevel(99), pairingproto.SecurityLevelSoftware},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -151,14 +152,14 @@ func TestEnrollmentPolicy_RefusesMissingEvidence(t *testing.T) {
 	_, err := p.Evaluate(nil, []byte("nonce"), time.Now())
 	assert.ErrorIs(t, err, ErrEnrollmentNoEvidence)
 
-	_, err = p.Evaluate(&LocalGetDeviceEnrollmentRequestResult{}, []byte("nonce"), time.Now())
+	_, err = p.Evaluate(&pairingproto.LocalGetDeviceEnrollmentRequestResult{}, []byte("nonce"), time.Now())
 	assert.ErrorIs(t, err, ErrEnrollmentNoEvidence)
 }
 
 func TestEnrollmentPolicy_RefusesAnUnknownFormat(t *testing.T) {
 	p := newTestPolicy()
 
-	_, err := p.Evaluate(&LocalGetDeviceEnrollmentRequestResult{
+	_, err := p.Evaluate(&pairingproto.LocalGetDeviceEnrollmentRequestResult{
 		Format:           "tpm2-quote",
 		AttestationChain: []string{"ignored"},
 	}, []byte("nonce"), time.Now())
@@ -173,7 +174,7 @@ func TestEnrollmentPolicy_RefusesAnEmptyAllowList(t *testing.T) {
 	p := NewEnrollmentPolicy()
 	p.TrustedRoots = x509.NewCertPool()
 
-	_, err := p.Evaluate(&LocalGetDeviceEnrollmentRequestResult{
+	_, err := p.Evaluate(&pairingproto.LocalGetDeviceEnrollmentRequestResult{
 		AttestationChain: []string{"ignored"},
 	}, []byte("nonce"), time.Now())
 
@@ -274,9 +275,9 @@ func TestEnrollmentPolicy_ValidityIsTheReattestationCadence(t *testing.T) {
 }
 
 func TestSecurityRank_UnknownLevelsRankAsSoftware(t *testing.T) {
-	assert.Equal(t, 2, securityRank(SecurityLevelStrongBox))
-	assert.Equal(t, 1, securityRank(SecurityLevelTEE))
-	assert.Equal(t, 0, securityRank(SecurityLevelSoftware))
+	assert.Equal(t, 2, securityRank(pairingproto.SecurityLevelStrongBox))
+	assert.Equal(t, 1, securityRank(pairingproto.SecurityLevelTEE))
+	assert.Equal(t, 0, securityRank(pairingproto.SecurityLevelSoftware))
 
 	// A typo in configuration must not silently weaken the policy by ranking
 	// above the levels it is compared against.

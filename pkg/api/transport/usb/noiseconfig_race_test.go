@@ -21,7 +21,7 @@ import (
 	"time"
 
 	"github.com/jeremyhahn/go-enclave"
-	"github.com/jeremyhahn/go-xkms/xkey/pkg/pairing"
+	"github.com/jeremyhahn/go-xkms/pkg/trust/bootstrap"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -193,7 +193,7 @@ func TestWithNoiseConfigDestroysTheDisplacedKey(t *testing.T) {
 
 	// Destroy releases the private scalar's enclave, so a refused borrow is the
 	// observable evidence that the pages were released rather than dropped.
-	err = pairing.WithPrivateKey(displaced, func([]byte) error { return nil })
+	err = bootstrap.WithNoisePrivateKey(displaced, func([]byte) error { return nil })
 	assert.ErrorIs(t, err, enclave.ErrEnclaveDestroyed, "the displaced key's private scalar was not destroyed")
 	assert.Empty(t, displaced.PublicBytes(), "the displaced key was not cleared")
 	assert.Equal(t, []byte(second.PublicBytes()), []byte(tr.noise.localKey.PublicBytes()),

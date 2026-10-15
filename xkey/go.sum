@@ -371,6 +371,10 @@ github.com/jeremyhahn/go-luks2 v1.0.0-rc.4 h1:NwhaZe+C0inoAJ5ppUMJcj11qQXRnoSauG
 github.com/jeremyhahn/go-luks2 v1.0.0-rc.4/go.mod h1:kndeTQMU5fFKblUh3bToF3dzmMm6tkuxoJ6cfbBJ4ig=
 github.com/jeremyhahn/go-objstore v0.4.0-alpha h1:y8X+mnzFSKTSit0s13eBorgwSVm+9Wg9Z8mwuNeLA5s=
 github.com/jeremyhahn/go-objstore v0.4.0-alpha/go.mod h1:9Zti1zxi1sFxOLMj7eXVEc9UB1UixffXk6DMbU38uLU=
+github.com/jeremyhahn/go-qrdb v0.47.0-alpha h1:MOonZmr8VziDeGirvMkI++w0IEMxito1ZzLKMRXTjmU=
+github.com/jeremyhahn/go-qrdb v0.47.0-alpha/go.mod h1:2LTAOfccTMUn7ZNYxkjBAsguKSvaW2SBLBMo1Qb1l+8=
+github.com/jeremyhahn/go-qrdb/sdk/go v0.47.0-alpha h1:jFIQQJR0cw8HtbTnUa8P4UER6jeBBLVVo0G3JhXbyc8=
+github.com/jeremyhahn/go-qrdb/sdk/go v0.47.0-alpha/go.mod h1:Sn7wcvuhNJan30nsn9L0v6kSD+x5reo5Ls9hY//zr0w=
 github.com/jeremyhahn/go-qrdb v0.48.0-alpha h1:Ku9otEzjV8bGTyxfDNSxw2K9xjTOf5yq7/T5YMees+U=
 github.com/jeremyhahn/go-qrdb v0.48.0-alpha/go.mod h1:rb6DLPY5M80RsBXWgHAeKGuJ90WjUa3HEbkMKVeQaUY=
 github.com/jeremyhahn/go-qrdb/sdk/go v0.48.0-alpha h1:yy+xlpAWWHrv3mCu6p2bORirQf2nvsNY1lRh2LRC2p4=

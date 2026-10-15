@@ -21,7 +21,8 @@ import (
 	"log/slog"
 	"testing"
 
-	"github.com/jeremyhahn/go-xkms/xkey/pkg/pairing"
+	"github.com/jeremyhahn/go-xkms/pkg/pairingproto"
+	"github.com/jeremyhahn/go-xkms/pkg/trust/bootstrap"
 	"github.com/stretchr/testify/require"
 )
 
@@ -29,18 +30,18 @@ import (
 // live_attestation_test.go's fixtures cannot reach, because none of its
 // backends have a completed handshake to derive a channel binding from.
 // Everything here is in-memory: two real Noise sessions handshaken against
-// each other, and a fake pairing.Transport (an interface, so no BLE hardware
+// each other, and a fake pairingproto.Transport (an interface, so no BLE hardware
 // is ever touched).
 
 // establishedNoiseSessionPair returns two Noise sessions that completed a
 // real XX handshake against each other, mirroring the pattern used in
 // pkg/attestation's device_session_test.go.
-func establishedNoiseSessionPair(t *testing.T) (client, server *pairing.NoiseSession) {
+func establishedNoiseSessionPair(t *testing.T) (client, server *bootstrap.NoiseSession) {
 	t.Helper()
 
-	client, err := pairing.NewNoiseSession(&pairing.NoiseSessionConfig{IsInitiator: true})
+	client, err := bootstrap.NewNoiseSession(&bootstrap.NoiseSessionConfig{IsInitiator: true})
 	require.NoError(t, err)
-	server, err = pairing.NewNoiseSession(&pairing.NoiseSessionConfig{IsInitiator: false})
+	server, err = bootstrap.NewNoiseSession(&bootstrap.NoiseSessionConfig{IsInitiator: false})
 	require.NoError(t, err)
 
 	require.NoError(t, client.InitHandshake())
@@ -65,7 +66,7 @@ func establishedNoiseSessionPair(t *testing.T) (client, server *pairing.NoiseSes
 	return client, server
 }
 
-// scriptedTransport is a pairing.Transport whose SendAndReceive is supplied
+// scriptedTransport is a pairingproto.Transport whose SendAndReceive is supplied
 // by the test, so proveLiveness's exchange closure can be driven through
 // every branch without a real connection.
 type scriptedTransport struct {
@@ -87,9 +88,9 @@ func (s *scriptedTransport) Close() error      { return nil }
 // This is what makes the closure's internal branches reachable -- the real
 // verifier (attestation.NewLiveAttestor) does the same thing, but pulling
 // one layer further away would blur which package's test is pinning what.
-func callThroughExchange(gotResp **pairing.Response, gotErr *error) pairing.LiveAttestFunc {
-	return func(ctx context.Context, exchange pairing.RPCExchange, _ []byte) error {
-		resp, err := exchange(ctx, pairing.NewRequest("test.liveness", nil))
+func callThroughExchange(gotResp **pairingproto.Response, gotErr *error) pairingproto.LiveAttestFunc {
+	return func(ctx context.Context, exchange pairingproto.RPCExchange, _ []byte) error {
+		resp, err := exchange(ctx, pairingproto.NewRequest("test.liveness", nil))
 		*gotResp, *gotErr = resp, err
 		return err
 	}
@@ -99,7 +100,7 @@ func TestProveLiveness_ExchangeTransportFailure(t *testing.T) {
 	client, _ := establishedNoiseSessionPair(t)
 	transportErr := errors.New("link dropped")
 
-	var gotResp *pairing.Response
+	var gotResp *pairingproto.Response
 	var gotErr error
 	backend := &PhoneKeyBackend{
 		cfg: &PhoneKeyBackendConfig{
@@ -120,7 +121,7 @@ func TestProveLiveness_ExchangeTransportFailure(t *testing.T) {
 func TestProveLiveness_ExchangeUndecryptableResponse(t *testing.T) {
 	client, _ := establishedNoiseSessionPair(t)
 
-	var gotResp *pairing.Response
+	var gotResp *pairingproto.Response
 	var gotErr error
 	backend := &PhoneKeyBackend{
 		cfg: &PhoneKeyBackendConfig{
@@ -143,7 +144,7 @@ func TestProveLiveness_ExchangeUndecryptableResponse(t *testing.T) {
 func TestProveLiveness_ExchangeMalformedResponseJSON(t *testing.T) {
 	client, server := establishedNoiseSessionPair(t)
 
-	var gotResp *pairing.Response
+	var gotResp *pairingproto.Response
 	var gotErr error
 	backend := &PhoneKeyBackend{
 		cfg: &PhoneKeyBackendConfig{
@@ -170,7 +171,7 @@ func TestProveLiveness_ExchangeMalformedResponseJSON(t *testing.T) {
 func TestProveLiveness_ExchangeSuccessRoundTrip(t *testing.T) {
 	client, server := establishedNoiseSessionPair(t)
 
-	var gotResp *pairing.Response
+	var gotResp *pairingproto.Response
 	var gotErr error
 	backend := &PhoneKeyBackend{
 		cfg: &PhoneKeyBackendConfig{
@@ -183,7 +184,7 @@ func TestProveLiveness_ExchangeSuccessRoundTrip(t *testing.T) {
 			if err != nil {
 				return nil, err
 			}
-			req, err := pairing.DecodeRequest(plaintext)
+			req, err := pairingproto.DecodeRequest(plaintext)
 			if err != nil {
 				return nil, err
 			}
@@ -191,7 +192,7 @@ func TestProveLiveness_ExchangeSuccessRoundTrip(t *testing.T) {
 			if err != nil {
 				return nil, err
 			}
-			respBytes, err := pairing.EncodeResponse(req.ID, json.RawMessage(resultJSON))
+			respBytes, err := pairingproto.EncodeResponse(req.ID, json.RawMessage(resultJSON))
 			if err != nil {
 				return nil, err
 			}

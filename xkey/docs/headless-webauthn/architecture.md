@@ -51,7 +51,7 @@ Rejected alternatives:
 | Piece | Where |
 |---|---|
 | Authenticator adapter | `go-xkms/pkg/webauthn/client.HardwareAdapter`, re-exported at `sdk/go/webauthnclient` |
-| Authenticator | `xkey/pkg/authenticator`, `xkey/pkg/uhid` |
+| Authenticator | `pkg/fido2/authenticator`, `pkg/fido2/uhid` |
 | CLI and server-side ceremony glue | `xkey/cmd/xkey/cmd/auth.go`, `xkey/cmd/xkey/cmd/webauthn_ceremony.go` |
 | Session and token storage | `xkey/pkg/tokenstore`, `xkey/pkg/serverregistry` |
 | PIV login alternative | `xkey/cmd/xkey/cmd/auth_piv.go`, `pkg/pivcert` |

@@ -33,7 +33,7 @@ import (
 
 	xkms "github.com/jeremyhahn/go-xkms/sdk/go"
 
-	"github.com/jeremyhahn/go-xkms/xkey/pkg/truststore"
+	"github.com/jeremyhahn/go-xkms/pkg/attestation/truststore"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )

@@ -24,6 +24,8 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	"github.com/jeremyhahn/go-xkms/pkg/pairingproto"
+	"github.com/jeremyhahn/go-xkms/pkg/trust/bootstrap"
 	xkms "github.com/jeremyhahn/go-xkms/sdk/go"
 	"github.com/jeremyhahn/go-xkms/xkey/pkg/attestation"
 	"github.com/jeremyhahn/go-xkms/xkey/pkg/attestation/attesttest"
@@ -34,8 +36,8 @@ import (
 // verifyReattestation at the wire-transport level, complementing
 // device_test.go's exercise of VerifyDeviceAttestation directly.
 //
-// AttestOverSession is driven over a real pairing.NoiseSession, established
-// here by hand rather than through pairing.PerformHandshake: the property
+// AttestOverSession is driven over a real bootstrap.NoiseSession, established
+// here by hand rather than through pairingproto.PerformHandshake: the property
 // under test is what happens after the handshake, and a scripted transport
 // lets each failure be produced deliberately instead of relying on a full
 // phone responder to misbehave in exactly the right way.
@@ -43,14 +45,14 @@ import (
 // establishedSessionPair returns two Noise sessions that have completed a
 // real XX handshake against each other -- the minimum AttestOverSession
 // needs to derive a channel binding and encrypt/decrypt the exchange. It
-// skips the identity-exchange framing pairing.PerformHandshake performs,
+// skips the identity-exchange framing pairingproto.PerformHandshake performs,
 // because AttestOverSession itself never touches that layer.
-func establishedSessionPair(t *testing.T) (client, server *pairing.NoiseSession) {
+func establishedSessionPair(t *testing.T) (client, server *bootstrap.NoiseSession) {
 	t.Helper()
 
-	client, err := pairing.NewNoiseSession(&pairing.NoiseSessionConfig{IsInitiator: true})
+	client, err := bootstrap.NewNoiseSession(&bootstrap.NoiseSessionConfig{IsInitiator: true})
 	require.NoError(t, err)
-	server, err = pairing.NewNoiseSession(&pairing.NoiseSessionConfig{IsInitiator: false})
+	server, err = bootstrap.NewNoiseSession(&bootstrap.NoiseSessionConfig{IsInitiator: false})
 	require.NoError(t, err)
 
 	require.NoError(t, client.InitHandshake())
@@ -75,7 +77,7 @@ func establishedSessionPair(t *testing.T) (client, server *pairing.NoiseSession)
 	return client, server
 }
 
-// scriptedTransport implements pairing.Transport with a caller-supplied
+// scriptedTransport implements pairingproto.Transport with a caller-supplied
 // SendAndReceive, so AttestOverSession's branches past the transport call
 // can be driven directly without a full phone responder goroutine.
 type scriptedTransport struct {
@@ -104,7 +106,7 @@ func discardLogger() *slog.Logger {
 // honestResponder builds a scriptedTransport that answers exactly like a
 // contract-faithful phone: it decrypts the request the caller sent, signs
 // the nonce it finds there with dak, and encrypts a valid result back.
-func honestResponder(t *testing.T, server *pairing.NoiseSession, dak *attesttest.DAK) *scriptedTransport {
+func honestResponder(t *testing.T, server *bootstrap.NoiseSession, dak *attesttest.DAK) *scriptedTransport {
 	t.Helper()
 
 	return &scriptedTransport{
@@ -113,11 +115,11 @@ func honestResponder(t *testing.T, server *pairing.NoiseSession, dak *attesttest
 			if err != nil {
 				return nil, err
 			}
-			req, err := pairing.DecodeRequest(plaintext)
+			req, err := pairingproto.DecodeRequest(plaintext)
 			if err != nil {
 				return nil, err
 			}
-			var params pairing.LocalAttestDeviceParams
+			var params pairingproto.LocalAttestDeviceParams
 			raw, err := json.Marshal(req.Params)
 			if err != nil {
 				return nil, err
@@ -125,12 +127,12 @@ func honestResponder(t *testing.T, server *pairing.NoiseSession, dak *attesttest
 			if err := json.Unmarshal(raw, &params); err != nil {
 				return nil, err
 			}
-			binding, err := server.AttestChannelBinding()
+			binding, err := pairingproto.AttestChannelBinding(server)
 			if err != nil {
 				return nil, err
 			}
 			result := dak.Respond(t, params.Purpose, params.Nonce, binding)
-			respBytes, err := pairing.EncodeResponse(req.ID, result)
+			respBytes, err := pairingproto.EncodeResponse(req.ID, result)
 			if err != nil {
 				return nil, err
 			}
@@ -149,7 +151,7 @@ func TestAttestOverSession_Success(t *testing.T) {
 	client, server := establishedSessionPair(t)
 	transport := honestResponder(t, server, dak)
 
-	verified, err := attestation.AttestOverSession(context.Background(), transport, client, trust, pairing.AttestPurposePair, discardLogger())
+	verified, err := attestation.AttestOverSession(context.Background(), transport, client, trust, pairingproto.AttestPurposePair, discardLogger())
 
 	require.NoError(t, err)
 	require.NotNil(t, verified)
@@ -160,7 +162,7 @@ func TestAttestOverSession_Success(t *testing.T) {
 // handshake never completed is refused before the transport is ever used --
 // there is no authenticated peer key yet for the binding to commit to.
 func TestAttestOverSession_ChannelBindingUnavailable(t *testing.T) {
-	session, err := pairing.NewNoiseSession(&pairing.NoiseSessionConfig{IsInitiator: true})
+	session, err := bootstrap.NewNoiseSession(&bootstrap.NoiseSessionConfig{IsInitiator: true})
 	require.NoError(t, err)
 
 	transport := &scriptedTransport{respond: func(context.Context, []byte) ([]byte, error) {
@@ -168,7 +170,7 @@ func TestAttestOverSession_ChannelBindingUnavailable(t *testing.T) {
 		return nil, nil
 	}}
 
-	verified, err := attestation.AttestOverSession(context.Background(), transport, session, &attestation.Trust{}, pairing.AttestPurposePair, discardLogger())
+	verified, err := attestation.AttestOverSession(context.Background(), transport, session, &attestation.Trust{}, pairingproto.AttestPurposePair, discardLogger())
 
 	require.Error(t, err)
 	assert.ErrorIs(t, err, attestation.ErrDeviceAttestFailed)
@@ -184,7 +186,7 @@ func TestAttestOverSession_TransportError(t *testing.T) {
 		return nil, transportErr
 	}}
 
-	verified, err := attestation.AttestOverSession(context.Background(), transport, client, &attestation.Trust{}, pairing.AttestPurposePair, discardLogger())
+	verified, err := attestation.AttestOverSession(context.Background(), transport, client, &attestation.Trust{}, pairingproto.AttestPurposePair, discardLogger())
 
 	require.Error(t, err)
 	assert.ErrorIs(t, err, attestation.ErrDeviceAttestFailed)
@@ -201,7 +203,7 @@ func TestAttestOverSession_UndecryptableResponse(t *testing.T) {
 		return []byte("not a noise ciphertext"), nil
 	}}
 
-	verified, err := attestation.AttestOverSession(context.Background(), transport, client, &attestation.Trust{}, pairing.AttestPurposePair, discardLogger())
+	verified, err := attestation.AttestOverSession(context.Background(), transport, client, &attestation.Trust{}, pairingproto.AttestPurposePair, discardLogger())
 
 	require.Error(t, err)
 	assert.ErrorIs(t, err, attestation.ErrDeviceAttestFailed)
@@ -216,7 +218,7 @@ func TestAttestOverSession_MalformedResponseJSON(t *testing.T) {
 		return server.Encrypt([]byte("not json at all"))
 	}}
 
-	verified, err := attestation.AttestOverSession(context.Background(), transport, client, &attestation.Trust{}, pairing.AttestPurposePair, discardLogger())
+	verified, err := attestation.AttestOverSession(context.Background(), transport, client, &attestation.Trust{}, pairingproto.AttestPurposePair, discardLogger())
 
 	require.Error(t, err)
 	assert.ErrorIs(t, err, attestation.ErrDeviceAttestFailed)
@@ -228,12 +230,12 @@ func TestAttestOverSession_MalformedResponseJSON(t *testing.T) {
 func TestAttestOverSession_RPCError(t *testing.T) {
 	client, server := establishedSessionPair(t)
 	transport := &scriptedTransport{respond: func(context.Context, []byte) ([]byte, error) {
-		raw, err := pairing.EncodeErrorResponse(1, 1000, "user declined attestation", nil)
+		raw, err := pairingproto.EncodeErrorResponse(1, 1000, "user declined attestation", nil)
 		require.NoError(t, err)
 		return server.Encrypt(raw)
 	}}
 
-	verified, err := attestation.AttestOverSession(context.Background(), transport, client, &attestation.Trust{}, pairing.AttestPurposePair, discardLogger())
+	verified, err := attestation.AttestOverSession(context.Background(), transport, client, &attestation.Trust{}, pairingproto.AttestPurposePair, discardLogger())
 
 	require.Error(t, err)
 	assert.ErrorIs(t, err, attestation.ErrDeviceAttestFailed)
@@ -247,13 +249,13 @@ func TestAttestOverSession_RPCError(t *testing.T) {
 func TestAttestOverSession_MalformedResult(t *testing.T) {
 	client, server := establishedSessionPair(t)
 	transport := &scriptedTransport{respond: func(context.Context, []byte) ([]byte, error) {
-		resp := &pairing.Response{JSONRPC: "2.0", ID: 1, Result: json.RawMessage("123")}
+		resp := &pairingproto.Response{JSONRPC: "2.0", ID: 1, Result: json.RawMessage("123")}
 		raw, err := json.Marshal(resp)
 		require.NoError(t, err)
 		return server.Encrypt(raw)
 	}}
 
-	verified, err := attestation.AttestOverSession(context.Background(), transport, client, &attestation.Trust{}, pairing.AttestPurposePair, discardLogger())
+	verified, err := attestation.AttestOverSession(context.Background(), transport, client, &attestation.Trust{}, pairingproto.AttestPurposePair, discardLogger())
 
 	require.Error(t, err)
 	assert.ErrorIs(t, err, attestation.ErrDeviceAttestFailed)
@@ -283,7 +285,7 @@ func TestVerifyReattestation_Success(t *testing.T) {
 	ca := attesttest.NewCA(t, "Trusted Attestation Root")
 	dak := attesttest.NewDAK(t, ca, attesttest.GenesisChallenge(), xkms.AndroidSecurityLevelStrongBox, attesttest.AttestedBootState())
 	trust := &attestation.Trust{Pool: ca.Pool(), Applications: attesttest.Applications()}
-	binding := attestation.DeviceBinding{Fingerprint: hexFingerprint(dak), ProtocolVersion: pairing.AttestProtocolV2}
+	binding := attestation.DeviceBinding{Fingerprint: hexFingerprint(dak), ProtocolVersion: pairingproto.AttestProtocolV2}
 
 	client, server := establishedSessionPair(t)
 	transport := honestResponder(t, server, dak)
@@ -301,7 +303,7 @@ func TestVerifyReattestation_IdentityChangedRefusesAfterAValidProof(t *testing.T
 	dak := attesttest.NewDAK(t, ca, attesttest.GenesisChallenge(), xkms.AndroidSecurityLevelStrongBox, attesttest.AttestedBootState())
 	other := attesttest.NewDAK(t, ca, attesttest.GenesisChallenge(), xkms.AndroidSecurityLevelStrongBox, attesttest.AttestedBootState())
 	trust := &attestation.Trust{Pool: ca.Pool(), Applications: attesttest.Applications()}
-	binding := attestation.DeviceBinding{Fingerprint: hexFingerprint(dak), ProtocolVersion: pairing.AttestProtocolV2}
+	binding := attestation.DeviceBinding{Fingerprint: hexFingerprint(dak), ProtocolVersion: pairingproto.AttestProtocolV2}
 
 	client, server := establishedSessionPair(t)
 	transport := honestResponder(t, server, other)
@@ -322,7 +324,7 @@ func TestVerifyReattestation_RefusesAnotherApplication(t *testing.T) {
 	claims.ApplicationID.Packages[0].Name = "com.example.malicious"
 	dak := attesttest.NewDAKWithClaims(t, ca, attesttest.GenesisChallenge(), xkms.AndroidSecurityLevelStrongBox, claims)
 	trust := &attestation.Trust{Pool: ca.Pool(), Applications: attesttest.Applications()}
-	binding := attestation.DeviceBinding{Fingerprint: hexFingerprint(dak), ProtocolVersion: pairing.AttestProtocolV2}
+	binding := attestation.DeviceBinding{Fingerprint: hexFingerprint(dak), ProtocolVersion: pairingproto.AttestProtocolV2}
 
 	client, server := establishedSessionPair(t)
 	transport := honestResponder(t, server, dak)
@@ -335,18 +337,18 @@ func TestVerifyReattestation_RefusesAnotherApplication(t *testing.T) {
 // --- newLiveAttestor ---
 //
 // NewLiveAttestor closes over the binding and a trust loader and returns a
-// pairing.LiveAttestFunc: an RPCExchange closure plus a channel binding the
+// pairingproto.LiveAttestFunc: an RPCExchange closure plus a channel binding the
 // CALLER already derived. Both are supplied directly here, which is enough
 // control to drive every branch without a Noise session at all.
 
 // signedExchange returns an RPCExchange that answers local.attestDevice
 // exactly as a contract-faithful phone would, signing whatever nonce and
 // purpose the request actually carries against the given channel binding.
-func signedExchange(t *testing.T, dak *attesttest.DAK, channelBinding []byte) pairing.RPCExchange {
+func signedExchange(t *testing.T, dak *attesttest.DAK, channelBinding []byte) pairingproto.RPCExchange {
 	t.Helper()
 
-	return func(_ context.Context, req *pairing.Request) (*pairing.Response, error) {
-		var params pairing.LocalAttestDeviceParams
+	return func(_ context.Context, req *pairingproto.Request) (*pairingproto.Response, error) {
+		var params pairingproto.LocalAttestDeviceParams
 		raw, err := json.Marshal(req.Params)
 		require.NoError(t, err)
 		require.NoError(t, json.Unmarshal(raw, &params))
@@ -354,7 +356,7 @@ func signedExchange(t *testing.T, dak *attesttest.DAK, channelBinding []byte) pa
 		result := dak.Respond(t, params.Purpose, params.Nonce, channelBinding)
 		resultJSON, err := json.Marshal(result)
 		require.NoError(t, err)
-		return &pairing.Response{JSONRPC: "2.0", ID: req.ID, Result: resultJSON}, nil
+		return &pairingproto.Response{JSONRPC: "2.0", ID: req.ID, Result: resultJSON}, nil
 	}
 }
 
@@ -363,8 +365,8 @@ func signedExchange(t *testing.T, dak *attesttest.DAK, channelBinding []byte) pa
 func TestNewLiveAttestor_Success(t *testing.T) {
 	ca := attesttest.NewCA(t, "Trusted Attestation Root")
 	dak := attesttest.NewDAK(t, ca, attesttest.GenesisChallenge(), xkms.AndroidSecurityLevelStrongBox, attesttest.AttestedBootState())
-	binding := attestation.DeviceBinding{Fingerprint: hexFingerprint(dak), ProtocolVersion: pairing.AttestProtocolV2}
-	channelBinding := attesttest.FixedBytes(0x77, pairing.AttestChannelBindingSize)
+	binding := attestation.DeviceBinding{Fingerprint: hexFingerprint(dak), ProtocolVersion: pairingproto.AttestProtocolV2}
+	channelBinding := attesttest.FixedBytes(0x77, pairingproto.AttestChannelBindingSize)
 
 	attest := attestation.NewLiveAttestor(binding, func() (*attestation.Trust, error) {
 		return &attestation.Trust{Pool: ca.Pool(), Applications: attesttest.Applications()}, nil
@@ -384,8 +386,8 @@ func TestNewLiveAttestor_RefusesAnotherSigner(t *testing.T) {
 	claims.RootOfTrust = attesttest.AttestedBootState()
 	claims.ApplicationID.SignatureDigests = [][]byte{attesttest.FixedBytes(0x66, 32)}
 	dak := attesttest.NewDAKWithClaims(t, ca, attesttest.GenesisChallenge(), xkms.AndroidSecurityLevelStrongBox, claims)
-	binding := attestation.DeviceBinding{Fingerprint: hexFingerprint(dak), ProtocolVersion: pairing.AttestProtocolV2}
-	channelBinding := attesttest.FixedBytes(0x78, pairing.AttestChannelBindingSize)
+	binding := attestation.DeviceBinding{Fingerprint: hexFingerprint(dak), ProtocolVersion: pairingproto.AttestProtocolV2}
+	channelBinding := attesttest.FixedBytes(0x78, pairingproto.AttestChannelBindingSize)
 
 	attest := attestation.NewLiveAttestor(binding, func() (*attestation.Trust, error) {
 		return &attestation.Trust{Pool: ca.Pool(), Applications: attesttest.Applications()}, nil
@@ -401,14 +403,14 @@ func TestNewLiveAttestor_RefusesAnotherSigner(t *testing.T) {
 // loadTrust) is ever invoked -- nothing to prove possession of, nothing
 // worth asking for.
 func TestNewLiveAttestor_InvalidBindingRefusesBeforeExchanging(t *testing.T) {
-	binding := attestation.DeviceBinding{ProtocolVersion: pairing.AttestProtocolV2} // empty fingerprint
+	binding := attestation.DeviceBinding{ProtocolVersion: pairingproto.AttestProtocolV2} // empty fingerprint
 
 	attest := attestation.NewLiveAttestor(binding, func() (*attestation.Trust, error) {
 		t.Fatal("loadTrust must not run before the binding is validated")
 		return nil, nil
 	}, discardLogger())
 
-	err := attest(context.Background(), func(context.Context, *pairing.Request) (*pairing.Response, error) {
+	err := attest(context.Background(), func(context.Context, *pairingproto.Request) (*pairingproto.Response, error) {
 		t.Fatal("the exchange must not run before the binding is validated")
 		return nil, nil
 	}, nil)
@@ -422,14 +424,14 @@ func TestNewLiveAttestor_InvalidBindingRefusesBeforeExchanging(t *testing.T) {
 // device is ever asked to answer. The binding here is complete and
 // well-formed, so the refusal under test can only be the trust-loading one.
 func TestNewLiveAttestor_LoadTrustFailureRefusesBeforeExchanging(t *testing.T) {
-	binding := attestation.DeviceBinding{Fingerprint: attesttest2HexFingerprint(), ProtocolVersion: pairing.AttestProtocolV2}
+	binding := attestation.DeviceBinding{Fingerprint: attesttest2HexFingerprint(), ProtocolVersion: pairingproto.AttestProtocolV2}
 	loadErr := errors.New("trust store unavailable")
 
 	attest := attestation.NewLiveAttestor(binding, func() (*attestation.Trust, error) {
 		return nil, loadErr
 	}, discardLogger())
 
-	err := attest(context.Background(), func(context.Context, *pairing.Request) (*pairing.Response, error) {
+	err := attest(context.Background(), func(context.Context, *pairingproto.Request) (*pairingproto.Response, error) {
 		t.Fatal("the exchange must not run when trust material could not be loaded")
 		return nil, nil
 	}, nil)
@@ -444,7 +446,7 @@ func TestNewLiveAttestor_ExchangeFailure(t *testing.T) {
 	ca := attesttest.NewCA(t, "Trusted Attestation Root")
 	binding := attestation.DeviceBinding{
 		Fingerprint:     attesttest2HexFingerprint(),
-		ProtocolVersion: pairing.AttestProtocolV2,
+		ProtocolVersion: pairingproto.AttestProtocolV2,
 	}
 	exchangeErr := errors.New("session closed")
 
@@ -452,7 +454,7 @@ func TestNewLiveAttestor_ExchangeFailure(t *testing.T) {
 		return &attestation.Trust{Pool: ca.Pool(), Applications: attesttest.Applications()}, nil
 	}, discardLogger())
 
-	err := attest(context.Background(), func(context.Context, *pairing.Request) (*pairing.Response, error) {
+	err := attest(context.Background(), func(context.Context, *pairingproto.Request) (*pairingproto.Response, error) {
 		return nil, exchangeErr
 	}, nil)
 
@@ -467,18 +469,18 @@ func TestNewLiveAttestor_RPCError(t *testing.T) {
 	ca := attesttest.NewCA(t, "Trusted Attestation Root")
 	binding := attestation.DeviceBinding{
 		Fingerprint:     attesttest2HexFingerprint(),
-		ProtocolVersion: pairing.AttestProtocolV2,
+		ProtocolVersion: pairingproto.AttestProtocolV2,
 	}
 
 	attest := attestation.NewLiveAttestor(binding, func() (*attestation.Trust, error) {
 		return &attestation.Trust{Pool: ca.Pool(), Applications: attesttest.Applications()}, nil
 	}, discardLogger())
 
-	err := attest(context.Background(), func(_ context.Context, req *pairing.Request) (*pairing.Response, error) {
-		return &pairing.Response{
+	err := attest(context.Background(), func(_ context.Context, req *pairingproto.Request) (*pairingproto.Response, error) {
+		return &pairingproto.Response{
 			JSONRPC: "2.0",
 			ID:      req.ID,
-			Error:   &pairing.RPCError{Code: 1000, Message: "biometric check failed"},
+			Error:   &pairingproto.RPCError{Code: 1000, Message: "biometric check failed"},
 		}, nil
 	}, nil)
 
@@ -492,15 +494,15 @@ func TestNewLiveAttestor_MalformedResult(t *testing.T) {
 	ca := attesttest.NewCA(t, "Trusted Attestation Root")
 	binding := attestation.DeviceBinding{
 		Fingerprint:     attesttest2HexFingerprint(),
-		ProtocolVersion: pairing.AttestProtocolV2,
+		ProtocolVersion: pairingproto.AttestProtocolV2,
 	}
 
 	attest := attestation.NewLiveAttestor(binding, func() (*attestation.Trust, error) {
 		return &attestation.Trust{Pool: ca.Pool(), Applications: attesttest.Applications()}, nil
 	}, discardLogger())
 
-	err := attest(context.Background(), func(_ context.Context, req *pairing.Request) (*pairing.Response, error) {
-		return &pairing.Response{JSONRPC: "2.0", ID: req.ID, Result: json.RawMessage("\"not an object\"")}, nil
+	err := attest(context.Background(), func(_ context.Context, req *pairingproto.Request) (*pairingproto.Response, error) {
+		return &pairingproto.Response{JSONRPC: "2.0", ID: req.ID, Result: json.RawMessage("\"not an object\"")}, nil
 	}, nil)
 
 	require.Error(t, err)
@@ -514,18 +516,18 @@ func TestNewLiveAttestor_VerificationFailure(t *testing.T) {
 	ca := attesttest.NewCA(t, "Trusted Attestation Root")
 	binding := attestation.DeviceBinding{
 		Fingerprint:     attesttest2HexFingerprint(),
-		ProtocolVersion: pairing.AttestProtocolV2,
+		ProtocolVersion: pairingproto.AttestProtocolV2,
 	}
 
 	attest := attestation.NewLiveAttestor(binding, func() (*attestation.Trust, error) {
 		return &attestation.Trust{Pool: ca.Pool(), Applications: attesttest.Applications()}, nil
 	}, discardLogger())
 
-	err := attest(context.Background(), func(_ context.Context, req *pairing.Request) (*pairing.Response, error) {
-		result := &pairing.LocalAttestDeviceResult{ProtocolVersion: pairing.AttestProtocolV2}
+	err := attest(context.Background(), func(_ context.Context, req *pairingproto.Request) (*pairingproto.Response, error) {
+		result := &pairingproto.LocalAttestDeviceResult{ProtocolVersion: pairingproto.AttestProtocolV2}
 		resultJSON, jerr := json.Marshal(result)
 		require.NoError(t, jerr)
-		return &pairing.Response{JSONRPC: "2.0", ID: req.ID, Result: resultJSON}, nil
+		return &pairingproto.Response{JSONRPC: "2.0", ID: req.ID, Result: resultJSON}, nil
 	}, nil)
 
 	require.Error(t, err)
@@ -539,9 +541,9 @@ func TestNewLiveAttestor_IdentityChanged(t *testing.T) {
 	dak := attesttest.NewDAK(t, ca, attesttest.GenesisChallenge(), xkms.AndroidSecurityLevelStrongBox, attesttest.AttestedBootState())
 	binding := attestation.DeviceBinding{
 		Fingerprint:     attesttest2HexFingerprint(), // some other device's identity
-		ProtocolVersion: pairing.AttestProtocolV2,
+		ProtocolVersion: pairingproto.AttestProtocolV2,
 	}
-	channelBinding := attesttest.FixedBytes(0x88, pairing.AttestChannelBindingSize)
+	channelBinding := attesttest.FixedBytes(0x88, pairingproto.AttestChannelBindingSize)
 
 	attest := attestation.NewLiveAttestor(binding, func() (*attestation.Trust, error) {
 		return &attestation.Trust{Pool: ca.Pool(), Applications: attesttest.Applications()}, nil
@@ -558,7 +560,7 @@ func TestNewLiveAttestor_IdentityChanged(t *testing.T) {
 // that will never equal a freshly-generated DAK's fingerprint.
 func attesttest2HexFingerprint() string {
 	const hextable = "0123456789abcdef"
-	b := make([]byte, pairing.AttestFingerprintSize)
+	b := make([]byte, pairingproto.AttestFingerprintSize)
 	for i := range b {
 		b[i] = 0xee
 	}

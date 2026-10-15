@@ -195,6 +195,6 @@ type StartupState struct {
 | `config` | `xkey/pkg/config/` | Unified config, policy, HMAC, migration |
 | `services` | `xkey/pkg/gui/services/` | GUI service layer (auth, setup, PIN, TPM, etc.) |
 | `events` | `xkey/pkg/gui/events/` | Frontend event system |
-| `authenticator` | `xkey/pkg/authenticator/` | CTAP2 authenticator implementation |
-| `uhid` | `xkey/pkg/uhid/` | Linux UHID virtual USB HID interface |
-| `virtualdevice` | `xkey/pkg/virtualdevice/` | Native virtual device |
+| `authenticator` | `pkg/fido2/authenticator/` | CTAP2 authenticator implementation |
+| `uhid` | `pkg/fido2/uhid/` | Linux UHID virtual USB HID interface |
+| `virtualdevice` | `pkg/fido2/virtualdevice/` | Native virtual device |

@@ -19,6 +19,7 @@ import (
 	"errors"
 	"testing"
 
+	"github.com/jeremyhahn/go-xkms/pkg/pairingproto"
 	"github.com/jeremyhahn/go-xkms/sdk/go/transport"
 	"github.com/jeremyhahn/go-xkms/xkey/pkg/audit"
 	"github.com/stretchr/testify/assert"
@@ -71,14 +72,14 @@ func TestBridge_HandleSharePublicKey_Success(t *testing.T) {
 	b, err := NewBridge(client, &BridgeConfig{Logger: testLogger()})
 	require.NoError(t, err)
 
-	req := newRemoteRequest(MethodRemoteSharePublicKey, RemoteSharePublicKeyParams{
+	req := newRemoteRequest(pairingproto.MethodRemoteSharePublicKey, pairingproto.RemoteSharePublicKeyParams{
 		KeyID:        "phone-key-1",
 		PublicKeyPEM: []byte("-----BEGIN PUBLIC KEY-----\nMFkwEwYH..."),
 		Algorithm:    "ECDSA-P256",
 	})
 	resp := b.HandleRequest(context.Background(), req)
 
-	result := decodeResult[RemoteSharePublicKeyResult](t, resp)
+	result := decodeResult[pairingproto.RemoteSharePublicKeyResult](t, resp)
 	assert.True(t, result.Accepted)
 	assert.Equal(t, "shared-phone-key-1", result.ImportID)
 	assert.Equal(t, "software", result.Backend)
@@ -90,9 +91,9 @@ func TestBridge_HandleSharePublicKey_InvalidParams(t *testing.T) {
 	require.NoError(t, err)
 
 	// Nil params
-	req := newRemoteRequest(MethodRemoteSharePublicKey, nil)
+	req := newRemoteRequest(pairingproto.MethodRemoteSharePublicKey, nil)
 	resp := b.HandleRequest(context.Background(), req)
-	assertErrorResponse(t, resp, req.ID, ErrorCodeInvalidParams)
+	assertErrorResponse(t, resp, req.ID, pairingproto.ErrorCodeInvalidParams)
 }
 
 func TestBridge_HandleSharePublicKey_EmptyPublicKey(t *testing.T) {
@@ -100,13 +101,13 @@ func TestBridge_HandleSharePublicKey_EmptyPublicKey(t *testing.T) {
 	b, err := NewBridge(client, &BridgeConfig{Logger: testLogger()})
 	require.NoError(t, err)
 
-	req := newRemoteRequest(MethodRemoteSharePublicKey, RemoteSharePublicKeyParams{
+	req := newRemoteRequest(pairingproto.MethodRemoteSharePublicKey, pairingproto.RemoteSharePublicKeyParams{
 		KeyID:     "key1",
 		Algorithm: "ECDSA-P256",
 		// PublicKeyPEM intentionally empty
 	})
 	resp := b.HandleRequest(context.Background(), req)
-	assertErrorResponse(t, resp, req.ID, ErrorCodeInvalidPublicKey)
+	assertErrorResponse(t, resp, req.ID, pairingproto.ErrorCodeInvalidPublicKey)
 }
 
 func TestBridge_HandleSharePublicKey_EmptyAlgorithm(t *testing.T) {
@@ -114,13 +115,13 @@ func TestBridge_HandleSharePublicKey_EmptyAlgorithm(t *testing.T) {
 	b, err := NewBridge(client, &BridgeConfig{Logger: testLogger()})
 	require.NoError(t, err)
 
-	req := newRemoteRequest(MethodRemoteSharePublicKey, RemoteSharePublicKeyParams{
+	req := newRemoteRequest(pairingproto.MethodRemoteSharePublicKey, pairingproto.RemoteSharePublicKeyParams{
 		KeyID:        "key1",
 		PublicKeyPEM: []byte("-----BEGIN PUBLIC KEY-----\ntest..."),
 		// Algorithm intentionally empty
 	})
 	resp := b.HandleRequest(context.Background(), req)
-	assertErrorResponse(t, resp, req.ID, ErrorCodeInvalidParams)
+	assertErrorResponse(t, resp, req.ID, pairingproto.ErrorCodeInvalidParams)
 }
 
 func TestBridge_HandleSharePublicKey_BackendDenied(t *testing.T) {
@@ -133,14 +134,14 @@ func TestBridge_HandleSharePublicKey_BackendDenied(t *testing.T) {
 	b, err := NewBridge(client, config)
 	require.NoError(t, err)
 
-	req := newRemoteRequest(MethodRemoteSharePublicKey, RemoteSharePublicKeyParams{
+	req := newRemoteRequest(pairingproto.MethodRemoteSharePublicKey, pairingproto.RemoteSharePublicKeyParams{
 		KeyID:        "key1",
 		PublicKeyPEM: []byte("-----BEGIN PUBLIC KEY-----\ntest..."),
 		Algorithm:    "ECDSA-P256",
 		Backend:      "restricted",
 	})
 	resp := b.HandleRequest(context.Background(), req)
-	assertErrorResponse(t, resp, req.ID, ErrorCodeBackendDenied)
+	assertErrorResponse(t, resp, req.ID, pairingproto.ErrorCodeBackendDenied)
 }
 
 func TestBridge_HandleSharePublicKey_ImportError(t *testing.T) {
@@ -151,13 +152,13 @@ func TestBridge_HandleSharePublicKey_ImportError(t *testing.T) {
 	b, err := NewBridge(client, &BridgeConfig{Logger: testLogger()})
 	require.NoError(t, err)
 
-	req := newRemoteRequest(MethodRemoteSharePublicKey, RemoteSharePublicKeyParams{
+	req := newRemoteRequest(pairingproto.MethodRemoteSharePublicKey, pairingproto.RemoteSharePublicKeyParams{
 		KeyID:        "key1",
 		PublicKeyPEM: []byte("-----BEGIN PUBLIC KEY-----\ntest..."),
 		Algorithm:    "ECDSA-P256",
 	})
 	resp := b.HandleRequest(context.Background(), req)
-	assertErrorResponse(t, resp, req.ID, ErrorCodeInternalError)
+	assertErrorResponse(t, resp, req.ID, pairingproto.ErrorCodeInternalError)
 }
 
 func TestBridge_HandleSharePublicKey_WithCertificate(t *testing.T) {
@@ -171,7 +172,7 @@ func TestBridge_HandleSharePublicKey_WithCertificate(t *testing.T) {
 	b, err := NewBridge(client, &BridgeConfig{Logger: testLogger()})
 	require.NoError(t, err)
 
-	req := newRemoteRequest(MethodRemoteSharePublicKey, RemoteSharePublicKeyParams{
+	req := newRemoteRequest(pairingproto.MethodRemoteSharePublicKey, pairingproto.RemoteSharePublicKeyParams{
 		KeyID:          "key1",
 		PublicKeyPEM:   []byte("-----BEGIN PUBLIC KEY-----\ntest..."),
 		CertificatePEM: []byte("-----BEGIN CERTIFICATE-----\ncert..."),
@@ -179,7 +180,7 @@ func TestBridge_HandleSharePublicKey_WithCertificate(t *testing.T) {
 	})
 	resp := b.HandleRequest(context.Background(), req)
 
-	result := decodeResult[RemoteSharePublicKeyResult](t, resp)
+	result := decodeResult[pairingproto.RemoteSharePublicKeyResult](t, resp)
 	assert.True(t, result.Accepted)
 }
 
@@ -195,7 +196,7 @@ func TestBridge_HandleSharePublicKey_WithCertificateError(t *testing.T) {
 	b, err := NewBridge(client, &BridgeConfig{Logger: testLogger()})
 	require.NoError(t, err)
 
-	req := newRemoteRequest(MethodRemoteSharePublicKey, RemoteSharePublicKeyParams{
+	req := newRemoteRequest(pairingproto.MethodRemoteSharePublicKey, pairingproto.RemoteSharePublicKeyParams{
 		KeyID:          "key1",
 		PublicKeyPEM:   []byte("-----BEGIN PUBLIC KEY-----\ntest..."),
 		CertificatePEM: []byte("-----BEGIN CERTIFICATE-----\ncert..."),
@@ -204,7 +205,7 @@ func TestBridge_HandleSharePublicKey_WithCertificateError(t *testing.T) {
 	resp := b.HandleRequest(context.Background(), req)
 
 	// Should succeed even if cert save fails (cert is optional).
-	result := decodeResult[RemoteSharePublicKeyResult](t, resp)
+	result := decodeResult[pairingproto.RemoteSharePublicKeyResult](t, resp)
 	assert.True(t, result.Accepted)
 }
 
@@ -219,7 +220,7 @@ func TestBridge_HandleSharePublicKey_WithLabel(t *testing.T) {
 	b, err := NewBridge(client, &BridgeConfig{Logger: testLogger()})
 	require.NoError(t, err)
 
-	req := newRemoteRequest(MethodRemoteSharePublicKey, RemoteSharePublicKeyParams{
+	req := newRemoteRequest(pairingproto.MethodRemoteSharePublicKey, pairingproto.RemoteSharePublicKeyParams{
 		KeyID:        "key1",
 		PublicKeyPEM: []byte("-----BEGIN PUBLIC KEY-----\ntest..."),
 		Algorithm:    "ECDSA-P256",
@@ -227,7 +228,7 @@ func TestBridge_HandleSharePublicKey_WithLabel(t *testing.T) {
 	})
 	resp := b.HandleRequest(context.Background(), req)
 
-	result := decodeResult[RemoteSharePublicKeyResult](t, resp)
+	result := decodeResult[pairingproto.RemoteSharePublicKeyResult](t, resp)
 	assert.True(t, result.Accepted)
 	assert.Equal(t, "custom-label", result.ImportID)
 }
@@ -243,7 +244,7 @@ func TestBridge_HandleSharePublicKey_DefaultBackend(t *testing.T) {
 	b, err := NewBridge(client, &BridgeConfig{Logger: testLogger()})
 	require.NoError(t, err)
 
-	req := newRemoteRequest(MethodRemoteSharePublicKey, RemoteSharePublicKeyParams{
+	req := newRemoteRequest(pairingproto.MethodRemoteSharePublicKey, pairingproto.RemoteSharePublicKeyParams{
 		KeyID:        "key1",
 		PublicKeyPEM: []byte("-----BEGIN PUBLIC KEY-----\ntest..."),
 		Algorithm:    "ECDSA-P256",
@@ -251,7 +252,7 @@ func TestBridge_HandleSharePublicKey_DefaultBackend(t *testing.T) {
 	})
 	resp := b.HandleRequest(context.Background(), req)
 
-	result := decodeResult[RemoteSharePublicKeyResult](t, resp)
+	result := decodeResult[pairingproto.RemoteSharePublicKeyResult](t, resp)
 	assert.Equal(t, "software", result.Backend)
 }
 
@@ -268,7 +269,7 @@ func TestBridge_HandleShareSymmetric_Success(t *testing.T) {
 	b, err := NewBridge(client, &BridgeConfig{Logger: testLogger()})
 	require.NoError(t, err)
 
-	req := newRemoteRequest(MethodRemoteShareSymmetric, RemoteShareSymmetricParams{
+	req := newRemoteRequest(pairingproto.MethodRemoteShareSymmetric, pairingproto.RemoteShareSymmetricParams{
 		KeyID:      "sym-1",
 		WrappedKey: []byte("wrapped-material"),
 		Algorithm:  "AES-256-GCM",
@@ -276,7 +277,7 @@ func TestBridge_HandleShareSymmetric_Success(t *testing.T) {
 	})
 	resp := b.HandleRequest(context.Background(), req)
 
-	result := decodeResult[RemoteShareSymmetricResult](t, resp)
+	result := decodeResult[pairingproto.RemoteShareSymmetricResult](t, resp)
 	assert.True(t, result.Accepted)
 	assert.Equal(t, "shared-sym-key-1", result.ImportID)
 	assert.Equal(t, "software", result.Backend)
@@ -287,9 +288,9 @@ func TestBridge_HandleShareSymmetric_InvalidParams(t *testing.T) {
 	b, err := NewBridge(client, &BridgeConfig{Logger: testLogger()})
 	require.NoError(t, err)
 
-	req := newRemoteRequest(MethodRemoteShareSymmetric, nil)
+	req := newRemoteRequest(pairingproto.MethodRemoteShareSymmetric, nil)
 	resp := b.HandleRequest(context.Background(), req)
-	assertErrorResponse(t, resp, req.ID, ErrorCodeInvalidParams)
+	assertErrorResponse(t, resp, req.ID, pairingproto.ErrorCodeInvalidParams)
 }
 
 func TestBridge_HandleShareSymmetric_EmptyWrappedKey(t *testing.T) {
@@ -297,13 +298,13 @@ func TestBridge_HandleShareSymmetric_EmptyWrappedKey(t *testing.T) {
 	b, err := NewBridge(client, &BridgeConfig{Logger: testLogger()})
 	require.NoError(t, err)
 
-	req := newRemoteRequest(MethodRemoteShareSymmetric, RemoteShareSymmetricParams{
+	req := newRemoteRequest(pairingproto.MethodRemoteShareSymmetric, pairingproto.RemoteShareSymmetricParams{
 		KeyID:     "sym-1",
 		Algorithm: "AES-256-GCM",
 		// WrappedKey intentionally empty
 	})
 	resp := b.HandleRequest(context.Background(), req)
-	assertErrorResponse(t, resp, req.ID, ErrorCodeInvalidParams)
+	assertErrorResponse(t, resp, req.ID, pairingproto.ErrorCodeInvalidParams)
 }
 
 func TestBridge_HandleShareSymmetric_EmptyAlgorithm(t *testing.T) {
@@ -311,13 +312,13 @@ func TestBridge_HandleShareSymmetric_EmptyAlgorithm(t *testing.T) {
 	b, err := NewBridge(client, &BridgeConfig{Logger: testLogger()})
 	require.NoError(t, err)
 
-	req := newRemoteRequest(MethodRemoteShareSymmetric, RemoteShareSymmetricParams{
+	req := newRemoteRequest(pairingproto.MethodRemoteShareSymmetric, pairingproto.RemoteShareSymmetricParams{
 		KeyID:      "sym-1",
 		WrappedKey: []byte("wrapped-material"),
 		// Algorithm intentionally empty
 	})
 	resp := b.HandleRequest(context.Background(), req)
-	assertErrorResponse(t, resp, req.ID, ErrorCodeInvalidParams)
+	assertErrorResponse(t, resp, req.ID, pairingproto.ErrorCodeInvalidParams)
 }
 
 func TestBridge_HandleShareSymmetric_BackendDenied(t *testing.T) {
@@ -330,14 +331,14 @@ func TestBridge_HandleShareSymmetric_BackendDenied(t *testing.T) {
 	b, err := NewBridge(client, config)
 	require.NoError(t, err)
 
-	req := newRemoteRequest(MethodRemoteShareSymmetric, RemoteShareSymmetricParams{
+	req := newRemoteRequest(pairingproto.MethodRemoteShareSymmetric, pairingproto.RemoteShareSymmetricParams{
 		KeyID:      "sym-1",
 		WrappedKey: []byte("wrapped-material"),
 		Algorithm:  "AES-256-GCM",
 		Backend:    "restricted",
 	})
 	resp := b.HandleRequest(context.Background(), req)
-	assertErrorResponse(t, resp, req.ID, ErrorCodeBackendDenied)
+	assertErrorResponse(t, resp, req.ID, pairingproto.ErrorCodeBackendDenied)
 }
 
 func TestBridge_HandleShareSymmetric_ImportError(t *testing.T) {
@@ -348,13 +349,13 @@ func TestBridge_HandleShareSymmetric_ImportError(t *testing.T) {
 	b, err := NewBridge(client, &BridgeConfig{Logger: testLogger()})
 	require.NoError(t, err)
 
-	req := newRemoteRequest(MethodRemoteShareSymmetric, RemoteShareSymmetricParams{
+	req := newRemoteRequest(pairingproto.MethodRemoteShareSymmetric, pairingproto.RemoteShareSymmetricParams{
 		KeyID:      "sym-1",
 		WrappedKey: []byte("wrapped-material"),
 		Algorithm:  "AES-256-GCM",
 	})
 	resp := b.HandleRequest(context.Background(), req)
-	assertErrorResponse(t, resp, req.ID, ErrorCodeInternalError)
+	assertErrorResponse(t, resp, req.ID, pairingproto.ErrorCodeInternalError)
 }
 
 func TestBridge_HandleShareSymmetric_WithLabel(t *testing.T) {
@@ -368,7 +369,7 @@ func TestBridge_HandleShareSymmetric_WithLabel(t *testing.T) {
 	b, err := NewBridge(client, &BridgeConfig{Logger: testLogger()})
 	require.NoError(t, err)
 
-	req := newRemoteRequest(MethodRemoteShareSymmetric, RemoteShareSymmetricParams{
+	req := newRemoteRequest(pairingproto.MethodRemoteShareSymmetric, pairingproto.RemoteShareSymmetricParams{
 		KeyID:      "sym-1",
 		WrappedKey: []byte("wrapped-material"),
 		Algorithm:  "AES-256-GCM",
@@ -376,7 +377,7 @@ func TestBridge_HandleShareSymmetric_WithLabel(t *testing.T) {
 	})
 	resp := b.HandleRequest(context.Background(), req)
 
-	result := decodeResult[RemoteShareSymmetricResult](t, resp)
+	result := decodeResult[pairingproto.RemoteShareSymmetricResult](t, resp)
 	assert.True(t, result.Accepted)
 }
 
@@ -391,7 +392,7 @@ func TestBridge_HandleShareSymmetric_DefaultBackend(t *testing.T) {
 	b, err := NewBridge(client, &BridgeConfig{Logger: testLogger()})
 	require.NoError(t, err)
 
-	req := newRemoteRequest(MethodRemoteShareSymmetric, RemoteShareSymmetricParams{
+	req := newRemoteRequest(pairingproto.MethodRemoteShareSymmetric, pairingproto.RemoteShareSymmetricParams{
 		KeyID:      "sym-1",
 		WrappedKey: []byte("wrapped-material"),
 		Algorithm:  "AES-256-GCM",
@@ -399,7 +400,7 @@ func TestBridge_HandleShareSymmetric_DefaultBackend(t *testing.T) {
 	})
 	resp := b.HandleRequest(context.Background(), req)
 
-	result := decodeResult[RemoteShareSymmetricResult](t, resp)
+	result := decodeResult[pairingproto.RemoteShareSymmetricResult](t, resp)
 	assert.Equal(t, "software", result.Backend)
 }
 
@@ -425,13 +426,13 @@ func TestBridge_HandleImportSharedKey_PublicKeySuccess(t *testing.T) {
 	b, err := NewBridge(client, &BridgeConfig{Logger: testLogger()})
 	require.NoError(t, err)
 
-	req := newRemoteRequest(MethodRemoteImportSharedKey, RemoteImportSharedKeyParams{
+	req := newRemoteRequest(pairingproto.MethodRemoteImportSharedKey, pairingproto.RemoteImportSharedKeyParams{
 		Backend: "software",
 		KeyID:   "key1",
 	})
 	resp := b.HandleRequest(context.Background(), req)
 
-	result := decodeResult[RemoteImportSharedKeyResult](t, resp)
+	result := decodeResult[pairingproto.RemoteImportSharedKeyResult](t, resp)
 	assert.Equal(t, "ECDSA-P256", result.Algorithm)
 	assert.Equal(t, "public", result.KeyType)
 	assert.True(t, result.Exportable)
@@ -444,9 +445,9 @@ func TestBridge_HandleImportSharedKey_InvalidParams(t *testing.T) {
 	b, err := NewBridge(client, &BridgeConfig{Logger: testLogger()})
 	require.NoError(t, err)
 
-	req := newRemoteRequest(MethodRemoteImportSharedKey, nil)
+	req := newRemoteRequest(pairingproto.MethodRemoteImportSharedKey, nil)
 	resp := b.HandleRequest(context.Background(), req)
-	assertErrorResponse(t, resp, req.ID, ErrorCodeInvalidParams)
+	assertErrorResponse(t, resp, req.ID, pairingproto.ErrorCodeInvalidParams)
 }
 
 func TestBridge_HandleImportSharedKey_MissingBackend(t *testing.T) {
@@ -454,12 +455,12 @@ func TestBridge_HandleImportSharedKey_MissingBackend(t *testing.T) {
 	b, err := NewBridge(client, &BridgeConfig{Logger: testLogger()})
 	require.NoError(t, err)
 
-	req := newRemoteRequest(MethodRemoteImportSharedKey, RemoteImportSharedKeyParams{
+	req := newRemoteRequest(pairingproto.MethodRemoteImportSharedKey, pairingproto.RemoteImportSharedKeyParams{
 		KeyID: "key1",
 		// Backend intentionally empty
 	})
 	resp := b.HandleRequest(context.Background(), req)
-	assertErrorResponse(t, resp, req.ID, ErrorCodeInvalidParams)
+	assertErrorResponse(t, resp, req.ID, pairingproto.ErrorCodeInvalidParams)
 }
 
 func TestBridge_HandleImportSharedKey_MissingKeyID(t *testing.T) {
@@ -467,12 +468,12 @@ func TestBridge_HandleImportSharedKey_MissingKeyID(t *testing.T) {
 	b, err := NewBridge(client, &BridgeConfig{Logger: testLogger()})
 	require.NoError(t, err)
 
-	req := newRemoteRequest(MethodRemoteImportSharedKey, RemoteImportSharedKeyParams{
+	req := newRemoteRequest(pairingproto.MethodRemoteImportSharedKey, pairingproto.RemoteImportSharedKeyParams{
 		Backend: "software",
 		// KeyID intentionally empty
 	})
 	resp := b.HandleRequest(context.Background(), req)
-	assertErrorResponse(t, resp, req.ID, ErrorCodeInvalidParams)
+	assertErrorResponse(t, resp, req.ID, pairingproto.ErrorCodeInvalidParams)
 }
 
 func TestBridge_HandleImportSharedKey_BackendDenied(t *testing.T) {
@@ -485,12 +486,12 @@ func TestBridge_HandleImportSharedKey_BackendDenied(t *testing.T) {
 	b, err := NewBridge(client, config)
 	require.NoError(t, err)
 
-	req := newRemoteRequest(MethodRemoteImportSharedKey, RemoteImportSharedKeyParams{
+	req := newRemoteRequest(pairingproto.MethodRemoteImportSharedKey, pairingproto.RemoteImportSharedKeyParams{
 		Backend: "restricted",
 		KeyID:   "key1",
 	})
 	resp := b.HandleRequest(context.Background(), req)
-	assertErrorResponse(t, resp, req.ID, ErrorCodeBackendDenied)
+	assertErrorResponse(t, resp, req.ID, pairingproto.ErrorCodeBackendDenied)
 }
 
 func TestBridge_HandleImportSharedKey_GetKeyError(t *testing.T) {
@@ -503,12 +504,12 @@ func TestBridge_HandleImportSharedKey_GetKeyError(t *testing.T) {
 	b, err := NewBridge(client, &BridgeConfig{Logger: testLogger()})
 	require.NoError(t, err)
 
-	req := newRemoteRequest(MethodRemoteImportSharedKey, RemoteImportSharedKeyParams{
+	req := newRemoteRequest(pairingproto.MethodRemoteImportSharedKey, pairingproto.RemoteImportSharedKeyParams{
 		Backend: "software",
 		KeyID:   "key1",
 	})
 	resp := b.HandleRequest(context.Background(), req)
-	assertErrorResponse(t, resp, req.ID, ErrorCodeInternalError)
+	assertErrorResponse(t, resp, req.ID, pairingproto.ErrorCodeInternalError)
 }
 
 func TestBridge_HandleImportSharedKey_SymmetricKey(t *testing.T) {
@@ -532,13 +533,13 @@ func TestBridge_HandleImportSharedKey_SymmetricKey(t *testing.T) {
 	b, err := NewBridge(client, &BridgeConfig{Logger: testLogger()})
 	require.NoError(t, err)
 
-	req := newRemoteRequest(MethodRemoteImportSharedKey, RemoteImportSharedKeyParams{
+	req := newRemoteRequest(pairingproto.MethodRemoteImportSharedKey, pairingproto.RemoteImportSharedKeyParams{
 		Backend: "software",
 		KeyID:   "sym-key",
 	})
 	resp := b.HandleRequest(context.Background(), req)
 
-	result := decodeResult[RemoteImportSharedKeyResult](t, resp)
+	result := decodeResult[pairingproto.RemoteImportSharedKeyResult](t, resp)
 	assert.Equal(t, "AES-256-GCM", result.Algorithm)
 	assert.Equal(t, "symmetric", result.KeyType)
 	assert.True(t, result.Exportable)
@@ -564,14 +565,14 @@ func TestBridge_HandleImportSharedKey_SymmetricExportError(t *testing.T) {
 	b, err := NewBridge(client, &BridgeConfig{Logger: testLogger()})
 	require.NoError(t, err)
 
-	req := newRemoteRequest(MethodRemoteImportSharedKey, RemoteImportSharedKeyParams{
+	req := newRemoteRequest(pairingproto.MethodRemoteImportSharedKey, pairingproto.RemoteImportSharedKeyParams{
 		Backend: "software",
 		KeyID:   "sym-key",
 	})
 	resp := b.HandleRequest(context.Background(), req)
 
 	// Should still succeed, just without wrapped key material.
-	result := decodeResult[RemoteImportSharedKeyResult](t, resp)
+	result := decodeResult[pairingproto.RemoteImportSharedKeyResult](t, resp)
 	assert.Equal(t, "AES-256-GCM", result.Algorithm)
 	assert.False(t, result.Exportable)
 }
@@ -594,13 +595,13 @@ func TestBridge_HandleImportSharedKey_NoPublicKey(t *testing.T) {
 	b, err := NewBridge(client, &BridgeConfig{Logger: testLogger()})
 	require.NoError(t, err)
 
-	req := newRemoteRequest(MethodRemoteImportSharedKey, RemoteImportSharedKeyParams{
+	req := newRemoteRequest(pairingproto.MethodRemoteImportSharedKey, pairingproto.RemoteImportSharedKeyParams{
 		Backend: "software",
 		KeyID:   "key1",
 	})
 	resp := b.HandleRequest(context.Background(), req)
 
-	result := decodeResult[RemoteImportSharedKeyResult](t, resp)
+	result := decodeResult[pairingproto.RemoteImportSharedKeyResult](t, resp)
 	assert.Equal(t, "ECDSA-P256", result.Algorithm)
 	// No public key available, so KeyType and Exportable remain zero values.
 	assert.Empty(t, result.KeyType)
@@ -624,14 +625,14 @@ func TestBridge_HandleSharePublicKey_WithAuditLogger(t *testing.T) {
 	})
 	require.NoError(t, err)
 
-	req := newRemoteRequest(MethodRemoteSharePublicKey, RemoteSharePublicKeyParams{
+	req := newRemoteRequest(pairingproto.MethodRemoteSharePublicKey, pairingproto.RemoteSharePublicKeyParams{
 		KeyID:        "phone-key-1",
 		PublicKeyPEM: []byte("-----BEGIN PUBLIC KEY-----\nMFkwEwYH..."),
 		Algorithm:    "ECDSA-P256",
 	})
 	resp := b.HandleRequest(context.Background(), req)
 
-	result := decodeResult[RemoteSharePublicKeyResult](t, resp)
+	result := decodeResult[pairingproto.RemoteSharePublicKeyResult](t, resp)
 	assert.True(t, result.Accepted)
 	// Verify audit log was called.
 	assert.Contains(t, auditLog.keyOps, string(audit.OpKeyCreated))
@@ -652,14 +653,14 @@ func TestBridge_HandleShareSymmetric_WithAuditLogger(t *testing.T) {
 	})
 	require.NoError(t, err)
 
-	req := newRemoteRequest(MethodRemoteShareSymmetric, RemoteShareSymmetricParams{
+	req := newRemoteRequest(pairingproto.MethodRemoteShareSymmetric, pairingproto.RemoteShareSymmetricParams{
 		KeyID:      "sym-key-1",
 		WrappedKey: []byte("wrapped-material"),
 		Algorithm:  "AES-256-GCM",
 	})
 	resp := b.HandleRequest(context.Background(), req)
 
-	result := decodeResult[RemoteShareSymmetricResult](t, resp)
+	result := decodeResult[pairingproto.RemoteShareSymmetricResult](t, resp)
 	assert.True(t, result.Accepted)
 	assert.Contains(t, auditLog.keyOps, string(audit.OpKeyCreated))
 }
@@ -686,13 +687,13 @@ func TestBridge_HandleImportSharedKey_WithAuditLogger(t *testing.T) {
 	})
 	require.NoError(t, err)
 
-	req := newRemoteRequest(MethodRemoteImportSharedKey, RemoteImportSharedKeyParams{
+	req := newRemoteRequest(pairingproto.MethodRemoteImportSharedKey, pairingproto.RemoteImportSharedKeyParams{
 		Backend: "software",
 		KeyID:   "audit-key",
 	})
 	resp := b.HandleRequest(context.Background(), req)
 
-	result := decodeResult[RemoteImportSharedKeyResult](t, resp)
+	result := decodeResult[pairingproto.RemoteImportSharedKeyResult](t, resp)
 	assert.Equal(t, "ECDSA-P256", result.Algorithm)
 	assert.Contains(t, auditLog.keyOps, string(audit.OpKeyAccessed))
 }
@@ -723,12 +724,12 @@ func TestBridge_HandleImportSharedKey_KeyMaterialWipedAfterEncoding(t *testing.T
 	b, err := NewBridge(newSymmetricExportClient(material), &BridgeConfig{Logger: testLogger()})
 	require.NoError(t, err)
 
-	resp := b.HandleRequest(context.Background(), newRemoteRequest(MethodRemoteImportSharedKey, RemoteImportSharedKeyParams{
+	resp := b.HandleRequest(context.Background(), newRemoteRequest(pairingproto.MethodRemoteImportSharedKey, pairingproto.RemoteImportSharedKeyParams{
 		Backend: "software",
 		KeyID:   "sym-key",
 	}))
 
-	result := decodeResult[RemoteImportSharedKeyResult](t, resp)
+	result := decodeResult[pairingproto.RemoteImportSharedKeyResult](t, resp)
 	assert.Equal(t, []byte("exported-material"), result.WrappedKey)
 	assert.Equal(t, make([]byte, len(material)), material)
 }
@@ -741,7 +742,7 @@ func TestBridge_HandleImportSharedKey_AuditFailureWipesKeyMaterial(t *testing.T)
 	})
 	require.NoError(t, err)
 
-	params, err := json.Marshal(RemoteImportSharedKeyParams{Backend: "software", KeyID: "sym-key"})
+	params, err := json.Marshal(pairingproto.RemoteImportSharedKeyParams{Backend: "software", KeyID: "sym-key"})
 	require.NoError(t, err)
 
 	result, err := b.handleImportSharedKey(context.Background(), params)

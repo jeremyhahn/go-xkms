@@ -72,14 +72,14 @@ Laptop                                    Phone
 ```
 
 Params and result are `LocalAttestKeyParams` / `LocalAttestKeyResult`
-(`xkey/pkg/pairing/protocol_local.go:236`, `:242`).
+(`pkg/pairingproto/protocol_local.go:236`, `:242`).
 
 ---
 
 ## Laptop to Phone Attestation
 
 The phone calls `remote.attestKey` (`RemoteAttestKeyParams`:
-`backend`, `keyId`, `nonce`; `xkey/pkg/pairing/protocol_remote.go:233`). The
+`backend`, `keyId`, `nonce`; `pkg/pairingproto/protocol_remote.go:233`). The
 laptop bridge forwards it to xkmsd, and the result (`RemoteAttestKeyResult`,
 `protocol_remote.go:240`) carries `format`, `certificateChain`,
 `attestationData` and the echoed `nonce`. The attestation format depends on
@@ -112,7 +112,7 @@ certificates, others only provide basic certificate chains.
 
 A backend without attestation (for example the software backend) fails
 `remote.attestKey` with `-32010` `ErrorCodeAttestUnsupported`
-(`xkey/pkg/pairing/protocol.go:47`; mapped in `xkey/pkg/pairing/bridge.go:1021`).
+(`pkg/pairingproto/protocol.go:47`; mapped in `xkey/pkg/pairing/bridge.go:1021`).
 
 ### Verification Flow (Phone Side)
 
@@ -174,9 +174,9 @@ The `phone.attestation_policy` key of the xkey config is a single string
 Beyond key attestation, device-level attestation verifies the overall device
 state:
 
-- Phone: `local.attestDevice` (`xkey/pkg/pairing/protocol_local.go`).
+- Phone: `local.attestDevice` (`pkg/pairingproto/protocol_local.go`).
 - Laptop: `remote.attestDevice` and `remote.getAttestationQuote`, a TPM2 quote
-  over PCR values (`xkey/pkg/pairing/protocol_remote.go:32`, `:62`).
+  over PCR values (`pkg/pairingproto/protocol_remote.go:32`, `:62`).
 
 ---
 

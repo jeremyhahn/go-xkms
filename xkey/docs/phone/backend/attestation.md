@@ -80,7 +80,7 @@ Defined by the Android Key Attestation schema:
 
 ### Request: `local.attestKey`
 
-`LocalAttestKeyParams` (`xkey/pkg/pairing/protocol_local.go:236`):
+`LocalAttestKeyParams` (`pkg/pairingproto/protocol_local.go:236`):
 
 ```json
 {
@@ -113,7 +113,7 @@ Defined by the Android Key Attestation schema:
 
 ### Error Responses
 
-Codes from `xkey/pkg/pairing/protocol.go:47`:
+Codes from `pkg/pairingproto/protocol.go:47`:
 
 | Code | Constant |
 |------|----------|

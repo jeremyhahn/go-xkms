@@ -16,7 +16,7 @@ package cmd
 import (
 	"testing"
 
-	"github.com/jeremyhahn/go-xkms/xkey/pkg/authenticator"
+	"github.com/jeremyhahn/go-xkms/pkg/fido2/authenticator"
 	"github.com/stretchr/testify/require"
 )
 

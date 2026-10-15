@@ -24,8 +24,8 @@ import (
 
 	"github.com/jeremyhahn/go-xkms/xkey/internal/tpmpolicyfake"
 
+	"github.com/jeremyhahn/go-xkms/pkg/pairingproto"
 	"github.com/jeremyhahn/go-xkms/sdk/go/transport"
-	"github.com/jeremyhahn/go-xkms/xkey/pkg/pairing"
 	"github.com/jeremyhahn/go-xkms/xkey/pkg/phone"
 	"github.com/spf13/cobra"
 	"github.com/spf13/viper"
@@ -36,7 +36,7 @@ import (
 // errNotImplemented is returned by mock methods that are not implemented.
 var errNotImplemented = errors.New("not implemented")
 
-// mockCloserTransport implements pairing.Transport for testing.
+// mockCloserTransport implements pairingproto.Transport for testing.
 type mockCloserTransport struct {
 	closed bool
 }
@@ -72,6 +72,10 @@ type baseSDKClient struct {
 	// OIDCCredentialService is never called by these tests; a nil embed
 	// completes the client's method set.
 	transport.OIDCCredentialService
+
+	// TrustRootService completes transport.Client; these tests never call
+	// it.
+	transport.TrustRootService
 }
 
 func (b *baseSDKClient) ListKeyVersions(context.Context, *transport.ListKeyVersionsRequest) (*transport.ListKeyVersionsResponse, error) {
@@ -605,8 +609,8 @@ func (m *mockSDKClient) Close() error {
 
 // Compile-time interface assertions.
 var (
-	_ pairing.Transport = (*mockCloserTransport)(nil)
-	_ transport.Client  = (*mockSDKClient)(nil)
+	_ pairingproto.Transport = (*mockCloserTransport)(nil)
+	_ transport.Client       = (*mockSDKClient)(nil)
 )
 
 // newTestLogger creates a no-op logger for testing.
@@ -618,7 +622,7 @@ func newTestLogger() *slog.Logger {
 // It uses default configuration with TrustNewDevices enabled to allow
 // backend creation without a pre-configured expected remote static key,
 // simulating an initial pairing scenario.
-func newTestPhoneBackend(t *testing.T, tr pairing.Transport) *phone.PhoneKeyBackend {
+func newTestPhoneBackend(t *testing.T, tr pairingproto.Transport) *phone.PhoneKeyBackend {
 	t.Helper()
 	cfg := phone.DefaultPhoneKeyBackendConfig()
 	cfg.TrustNewDevices = true

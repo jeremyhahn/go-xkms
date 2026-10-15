@@ -17,7 +17,7 @@ import (
 	"errors"
 	"io"
 
-	"github.com/jeremyhahn/go-xkms/xkey/pkg/authenticator"
+	"github.com/jeremyhahn/go-xkms/sdk/go/fido2/authenticator"
 	"github.com/jeremyhahn/go-xkms/xkey/pkg/ipc"
 )
 

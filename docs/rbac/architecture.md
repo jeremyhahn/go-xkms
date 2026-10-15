@@ -169,7 +169,7 @@ declares the scope of every name it knows; xkms declares only the names it owns
 |---|---|---|
 | `ScopeSelf` | exercised in the identity's own tenant; a system-tenant identity reaches any tenant | `admin` (peers, status) · `audit` (read) · `backends` (list, read) · `barrier` (unseal-share) · `bootstrap`† (read) · `ceremony` (claim_cert, claim_share_begin, claim_share_complete, enroll_custodian, revoke_custodian, sign_csr, status) · `certs` (generate, list, read, revoke) · `keys` (create, decrypt, delete, derive, encrypt, export, get, import, list, rotate, sign, unwrap, update†, verify, wrap) · `passwords` (delete, generate, lock, read, unlock, write) · `pin` (read, write) · `piv` (delete, read, use, write) · `seal` (bootstrap, enable_encryption, generate_recovery, initialize_shamir, recover_with_keys, rekey, rotate_root_key, seal, status, unseal) · `ssh` (delete, read, write, service†) · `tenants` (create, delete, list, read, set_entitlements, set_quotas) · `tpm_policy`† (create, delete, get, list, revoke, rotate, update, verify) · `users` (create, delete, disable, enable, list, read, update) |
 | `ScopeTenantOnly` | exercised only in the identity's own tenant, never lifted across tenants | `tenant_barrier` (init, status, unseal) |
-| `ScopeCross` | exercised only by a system-tenant identity | `credentials` (strategy, submit) · `tenants` (set_tpm_mode†) |
+| `ScopeCross` | exercised only by a system-tenant identity | `credentials` (strategy, submit) · `tenants` (set_tpm_mode†) · `trust_roots`† (delete, get, import, list, update) |
 
 † declared by xkms; every other entry is go-qrdb's declaration.
 

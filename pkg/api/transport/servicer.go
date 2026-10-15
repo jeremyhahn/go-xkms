@@ -50,6 +50,7 @@ type XKMSServicer interface {
 	PasswordServicer
 	SealStoreServicer
 	TPMPolicyServicer
+	TrustRootServicer
 	OIDCCredentialServicer
 	TenantServicer
 	CredentialManagementServicer
@@ -270,6 +271,12 @@ type SealStoreServicer interface {
 // unchanged.
 type TPMPolicyServicer interface {
 	TPMPolicyService
+}
+
+// TrustRootServicer manages the platform trust-root store. Its method set
+// is TrustRootService's: every transport calls through it unchanged.
+type TrustRootServicer interface {
+	TrustRootService
 }
 
 // EscrowServicer provides external key-escrow operations (pkg/escrow):

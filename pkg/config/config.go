@@ -24,6 +24,7 @@ import (
 
 	"github.com/jeremyhahn/go-xkms/pkg/errs"
 
+	"github.com/jeremyhahn/go-xkms/pkg/attestation/peergate"
 	"github.com/jeremyhahn/go-xkms/pkg/ca"
 	"github.com/jeremyhahn/go-xkms/pkg/escrow"
 	"github.com/jeremyhahn/go-xkms/pkg/ratelimit"
@@ -1769,6 +1770,16 @@ func (c *Config) Validate() error {
 	// Validate escrow configuration (no-op unless escrow.enabled is true).
 	if err := c.Escrow.Validate(); err != nil {
 		return err
+	}
+
+	// The attested-caller gate is installed on the embedded qrdb node, so a
+	// gate needs this process to host one.
+	peerGate, err := c.Attestation.PeerGateMode()
+	if err != nil {
+		return &errs.Wrapped{Msg: "invalid attestation.peer_gate", Err: err}
+	}
+	if peerGate != peergate.ModeOff && !strings.EqualFold(c.Datastore.Mode, "standalone") {
+		return &errs.Message{Msg: fmt.Sprintf("attestation.peer_gate %q requires datastore.mode \"standalone\" (the gate is installed on the embedded qrdb node); got %q", peerGate, c.Datastore.Mode)}
 	}
 
 	// Validate clustering. When enabled it requires this process to host the

@@ -72,7 +72,7 @@ pkg/backend/phone/
 
 `RotateKey` returns `ErrRotationNotSupported` (`backend.go:439`). There is no
 `local.verify` or `local.encrypt` method; the full `local.*` set is
-`localMethodNames` (`xkey/pkg/pairing/protocol_local.go:392`).
+`localMethodNames` (`pkg/pairingproto/protocol_local.go:392`).
 
 ## Transport and Noise
 
@@ -150,7 +150,7 @@ xkmsd                Phone Backend           Phone (Android Keystore)
 `local.*` requests flow from the laptop to the phone through this backend.
 `remote.*` requests flow the other way — the phone using laptop keys — and are
 served by the xkey bridge (`xkey/pkg/pairing/bridge.go`), not by this package.
-The `remote.*` set is in `xkey/pkg/pairing/protocol_remote.go:20-32`; see
+The `remote.*` set is in `pkg/pairingproto/protocol_remote.go:20-32`; see
 [../bidirectional.md](../bidirectional.md).
 
 ## Error Handling

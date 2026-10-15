@@ -25,7 +25,8 @@ package auth
 // A small number of resources have no qrdb counterpart at all — qrdb's
 // registry simply does not know the name — so xkms both mints and scopes
 // them itself: bootstrap (the trust-bootstrap listener's own public keys,
-// go-xkms#632), tpm_policy (named TPM policies) and tenants:set_tpm_mode.
+// go-xkms#632), tpm_policy (named TPM policies), peer_attestation (the
+// attested-caller gate's evidence collection) and tenants:set_tpm_mode.
 // pkg/apimodule/module_scopes.go registers each one's tenancy scope
 // explicitly for the same reason it does for the four
 // keys/ssh exceptions documented there: go-qrdb#504 refuses to admit an
@@ -100,6 +101,14 @@ const (
 	// unseal/enrollment ceremony rather than this always-on listener.
 	ResourceBootstrap = "bootstrap"
 
+	// ResourcePeerAttestation is the attested-caller gate's evidence
+	// collection (pkg/attestation/peergate): a peer asks for a challenge
+	// nonce and submits a TPM quote over it, bound to its own connection.
+	// It acts only on the calling peer's own evidence. go-qrdb's canonical
+	// registry has no permission family for it, so xkms owns the name and
+	// declares its tenancy scope (pkg/apimodule/module_scopes.go).
+	ResourcePeerAttestation = "peer_attestation"
+
 	// ACME administration resources. RFC 8555 registration objects are
 	// neither certificates (certs:*) nor platform users (users:*); qrdb
 	// models each object family as its own resource so a deployment can mint
@@ -114,6 +123,13 @@ const (
 	// distinct from ResourceCerts, which is *leaf* certificate lifecycle —
 	// holding certs:issue must not imply authority to mint a signing CA.
 	ResourceCA = "ca"
+
+	// ResourceTrustRoots is the platform's purpose-classified trust-root
+	// store (pkg/attestation/truststore): listing and reading the roots,
+	// importing them, quarantining one and removing one. The store is
+	// process-wide, so every member is cross-scoped: only a system-tenant
+	// identity may exercise it.
+	ResourceTrustRoots = "trust_roots"
 
 	// ResourceBackup is whole-node backup and restore: capturing shard
 	// snapshots of the embedded go-qrdb node's replicated state, listing and
@@ -243,9 +259,14 @@ const (
 	ActionEnrollCustodian = "enroll_custodian"
 	ActionRevokeCustodian = "revoke_custodian"
 
-	// Credential submission actions.
+	// Credential submission actions. ActionSubmit also submits attestation
+	// evidence (peer_attestation:submit).
 	ActionSubmit   = "submit"
 	ActionStrategy = "strategy"
+
+	// ActionChallenge issues a single-use challenge nonce the caller must
+	// answer (peer_attestation:challenge).
+	ActionChallenge = "challenge"
 
 	// Password vault actions.
 	ActionLock   = "lock"

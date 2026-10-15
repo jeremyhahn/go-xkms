@@ -60,6 +60,7 @@ func TestResolveBarrierCloudSecrets_UnresolvedReferenceFails(t *testing.T) {
 func TestBuildCloudKMSBarrierStrategy_NotCompiledIn(t *testing.T) {
 	for _, id := range []xkms.StrategyID{xkms.StrategyAWSKMS, xkms.StrategyGCPKMS, xkms.StrategyAzureKV, xkms.StrategyVault} {
 		t.Run(string(id), func(t *testing.T) {
+			withoutCloudKMSBuilder(t, id)
 			_, _, err := buildCloudKMSBarrierStrategy(context.Background(), id, t.TempDir())
 			require.Error(t, err)
 			var barrierErr *BarrierError

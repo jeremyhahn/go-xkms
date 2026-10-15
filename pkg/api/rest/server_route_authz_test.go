@@ -145,6 +145,8 @@ var gatedRoutePermissions = []gatedRoute{
 	{http.MethodPost, "/api/v1/oidc/credentials/tenant/ci/token", "oidc_credentials", "token"},
 	{http.MethodPost, "/api/v1/oidc/credentials/tenant/ci/device", "oidc_credentials", "update"},
 	{http.MethodPost, "/api/v1/oidc/credentials/tenant/ci/device/poll", "oidc_credentials", "update"},
+	{http.MethodPost, "/api/v1/peer-attestation/challenge", "peer_attestation", "challenge"},
+	{http.MethodPost, "/api/v1/peer-attestation/evidence", "peer_attestation", "submit"},
 
 	// 2026-09-30, go-xkms#728). Mirrors go-qrdb's own backup:* permission
 	// family verbatim; restore is gated separately because it overwrites

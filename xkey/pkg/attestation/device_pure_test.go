@@ -23,6 +23,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	"github.com/jeremyhahn/go-xkms/pkg/pairingproto"
 	"github.com/jeremyhahn/go-xkms/xkey/pkg/attestation"
 	"github.com/jeremyhahn/go-xkms/xkey/pkg/attestation/attesttest"
 	"github.com/jeremyhahn/go-xkms/xkey/pkg/pairing"
@@ -33,13 +34,13 @@ import (
 func TestDeviceBindingFor(t *testing.T) {
 	record := pairing.PairedDevice{
 		DeviceFingerprint:          "abc123",
-		AttestationProtocolVersion: pairing.AttestProtocolV2,
+		AttestationProtocolVersion: pairingproto.AttestProtocolV2,
 	}
 
 	binding := attestation.DeviceBindingFor(record)
 
 	assert.Equal(t, "abc123", binding.Fingerprint)
-	assert.Equal(t, pairing.AttestProtocolV2, binding.ProtocolVersion)
+	assert.Equal(t, pairingproto.AttestProtocolV2, binding.ProtocolVersion)
 }
 
 // TestApplyVerifiedAttestation_PopulatesEveryField pins that every field a
@@ -52,7 +53,7 @@ func TestApplyVerifiedAttestation_PopulatesEveryField(t *testing.T) {
 		BootStateVerified: true,
 		BootHashHex:       "deadbeef",
 		DeviceFingerprint: "cafef00d",
-		ProtocolVersion:   pairing.AttestProtocolV2,
+		ProtocolVersion:   pairingproto.AttestProtocolV2,
 	}
 	record := &pairing.PairedDevice{}
 
@@ -63,19 +64,19 @@ func TestApplyVerifiedAttestation_PopulatesEveryField(t *testing.T) {
 	assert.True(t, record.BootStateVerified)
 	assert.Equal(t, "deadbeef", record.DeviceBootHashHex)
 	assert.Equal(t, "cafef00d", record.DeviceFingerprint)
-	assert.Equal(t, pairing.AttestProtocolV2, record.AttestationProtocolVersion)
+	assert.Equal(t, pairingproto.AttestProtocolV2, record.AttestationProtocolVersion)
 }
 
 // TestApplyVerifiedAttestation_NeverDowngradesTheProtocolVersion is the
 // anti-downgrade term (#129): the recorded version only ever moves up.
 func TestApplyVerifiedAttestation_NeverDowngradesTheProtocolVersion(t *testing.T) {
-	record := &pairing.PairedDevice{AttestationProtocolVersion: pairing.AttestProtocolV2}
+	record := &pairing.PairedDevice{AttestationProtocolVersion: pairingproto.AttestProtocolV2}
 
 	// A result claiming a version lower than what is already on record must
 	// not walk the record's version back down.
-	attestation.ApplyVerifiedAttestation(record, &attestation.Result{ProtocolVersion: pairing.AttestProtocolV1})
+	attestation.ApplyVerifiedAttestation(record, &attestation.Result{ProtocolVersion: pairingproto.AttestProtocolV1})
 
-	assert.Equal(t, pairing.AttestProtocolV2, record.AttestationProtocolVersion,
+	assert.Equal(t, pairingproto.AttestProtocolV2, record.AttestationProtocolVersion,
 		"the version an attacker could lower is not an anti-downgrade term")
 }
 
@@ -83,17 +84,17 @@ func TestApplyVerifiedAttestation_NeverDowngradesTheProtocolVersion(t *testing.T
 // channel binding (see the note on Challenge.Params in device.go).
 func TestChallenge_Params(t *testing.T) {
 	challenge := &attestation.Challenge{
-		Purpose:        pairing.AttestPurposePair,
-		Nonce:          attesttest.FixedBytes(0x42, pairing.AttestNonceSize),
-		ChannelBinding: attesttest.FixedBytes(0x43, pairing.AttestChannelBindingSize),
+		Purpose:        pairingproto.AttestPurposePair,
+		Nonce:          attesttest.FixedBytes(0x42, pairingproto.AttestNonceSize),
+		ChannelBinding: attesttest.FixedBytes(0x43, pairingproto.AttestChannelBindingSize),
 	}
 
 	params := challenge.Params()
 
 	require.NotNil(t, params)
-	assert.Equal(t, pairing.AttestProtocolV2, params.ProtocolVersion)
+	assert.Equal(t, pairingproto.AttestProtocolV2, params.ProtocolVersion)
 	assert.Equal(t, challenge.Nonce, params.Nonce)
-	assert.Equal(t, pairing.AttestPurposePair, params.Purpose)
+	assert.Equal(t, pairingproto.AttestPurposePair, params.Purpose)
 }
 
 // TestFormatTrustAnchor covers every branch of the display fallback: nil,
@@ -128,12 +129,12 @@ func TestVerifiedTrustAnchor_EmptyChain(t *testing.T) {
 // does not match the fresh one must be refused as a changed identity, not an
 // incomplete record.
 func TestValidateAttestedKeyMatch_IdentityChanged(t *testing.T) {
-	stored := attesttest.FixedBytes(0x01, pairing.AttestFingerprintSize)
-	fresh := attesttest.FixedBytes(0x02, pairing.AttestFingerprintSize)
+	stored := attesttest.FixedBytes(0x01, pairingproto.AttestFingerprintSize)
+	fresh := attesttest.FixedBytes(0x02, pairingproto.AttestFingerprintSize)
 
 	binding := attestation.DeviceBinding{
 		Fingerprint:     hex.EncodeToString(stored),
-		ProtocolVersion: pairing.AttestProtocolV2,
+		ProtocolVersion: pairingproto.AttestProtocolV2,
 	}
 
 	err := binding.ValidateAttestedKeyMatch(hex.EncodeToString(fresh))
@@ -145,8 +146,8 @@ func TestValidateAttestedKeyMatch_IdentityChanged(t *testing.T) {
 // TestValidateAttestedKeyMatch_SameKeyMatches is the accept path beside the
 // refusal above, so a change to the comparison itself cannot make both pass.
 func TestValidateAttestedKeyMatch_SameKeyMatches(t *testing.T) {
-	fp := hex.EncodeToString(attesttest.FixedBytes(0x09, pairing.AttestFingerprintSize))
-	binding := attestation.DeviceBinding{Fingerprint: fp, ProtocolVersion: pairing.AttestProtocolV2}
+	fp := hex.EncodeToString(attesttest.FixedBytes(0x09, pairingproto.AttestFingerprintSize))
+	binding := attestation.DeviceBinding{Fingerprint: fp, ProtocolVersion: pairingproto.AttestProtocolV2}
 
 	assert.NoError(t, binding.ValidateAttestedKeyMatch(fp))
 }

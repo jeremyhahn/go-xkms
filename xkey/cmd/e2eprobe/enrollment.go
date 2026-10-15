@@ -20,7 +20,7 @@ import (
 	"encoding/json"
 	"strings"
 
-	pairing "github.com/jeremyhahn/go-xkms/xkey/pkg/pairing"
+	"github.com/jeremyhahn/go-xkms/sdk/go/pairingproto"
 )
 
 // enrollmentFamily exercises device enrollment against the live app: the phone
@@ -40,7 +40,7 @@ func enrollmentFamily(p *prober) {
 	}
 	encodedNonce := base64.StdEncoding.EncodeToString(nonce)
 
-	out, err := p.call(pairing.MethodLocalGetDeviceEnrollmentRequest, map[string]interface{}{
+	out, err := p.call(pairingproto.MethodLocalGetDeviceEnrollmentRequest, map[string]interface{}{
 		"nonce":   encodedNonce,
 		"subject": "CN=e2eprobe device, O=xKey",
 	})
@@ -49,7 +49,7 @@ func enrollmentFamily(p *prober) {
 		return
 	}
 
-	var result pairing.LocalGetDeviceEnrollmentRequestResult
+	var result pairingproto.LocalGetDeviceEnrollmentRequestResult
 	if decodeErr := decodeInto(out, &result); decodeErr != nil {
 		p.record("enrollment package decodes", false, decodeErr, "")
 		return
@@ -57,7 +57,7 @@ func enrollmentFamily(p *prober) {
 
 	// The format tag exists so a verifier rejects what it cannot read rather
 	// than guessing at the bytes.
-	if result.Format != pairing.AttestationFormatAndroidKey {
+	if result.Format != pairingproto.AttestationFormatAndroidKey {
 		p.record("enrollment format tag", false,
 			&MessageError{Msg: "unexpected format " + result.Format}, "")
 	} else {
@@ -110,7 +110,7 @@ func enrollmentFamily(p *prober) {
 	}
 	p.record("probe CA issues a credential", false, nil, "")
 
-	storeOut, storeErr := p.call(pairing.MethodLocalStoreDeviceCredential, map[string]interface{}{
+	storeOut, storeErr := p.call(pairingproto.MethodLocalStoreDeviceCredential, map[string]interface{}{
 		"certificate": base64.StdEncoding.EncodeToString(certDER),
 	})
 	p.record("local.storeDeviceCredential", false, storeErr, "")
@@ -118,7 +118,7 @@ func enrollmentFamily(p *prober) {
 		return
 	}
 
-	var stored pairing.LocalStoreDeviceCredentialResult
+	var stored pairingproto.LocalStoreDeviceCredentialResult
 	if decodeErr := decodeInto(storeOut, &stored); decodeErr != nil {
 		p.record("store response decodes", false, decodeErr, "")
 		return
@@ -139,10 +139,10 @@ func enrollmentFamily(p *prober) {
 // claims, so a fake success issues certificates on no evidence.
 func tpmRefusalFamily(p *prober) {
 	for _, method := range []string{
-		pairing.MethodLocalGetTCGCSRIDevID,
-		pairing.MethodLocalActivateCredential,
-		pairing.MethodLocalGetAttestationQuote,
-		pairing.MethodLocalGetIAKPublicKey,
+		pairingproto.MethodLocalGetTCGCSRIDevID,
+		pairingproto.MethodLocalActivateCredential,
+		pairingproto.MethodLocalGetAttestationQuote,
+		pairingproto.MethodLocalGetIAKPublicKey,
 	} {
 		_, err := p.call(method, map[string]interface{}{})
 		name := method + " is refused as not applicable"

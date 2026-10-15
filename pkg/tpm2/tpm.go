@@ -527,6 +527,9 @@ func NewTPM2(params *Params) (TrustedPlatformModule, error) {
 		ObjectHandle: tpm2.TPMHandle(params.Config.EK.Handle),
 	}.Execute(tpm.transport)
 	if err != nil {
+		if !isTPMResponse(err) {
+			return nil, tpm.noResponse(err)
+		}
 		// Persistent EK handle doesn't exist — always fall back to checking for
 		// manufacturer EK certificate in NV RAM. TPMs return varying response codes
 		// (TPM_RC_VALUE 0x184, TPM_RC_HANDLE 0x18b, or other format-1 codes) depending
@@ -539,6 +542,9 @@ func NewTPM2(params *Params) (TrustedPlatformModule, error) {
 			NVIndex: tpm2.TPMHandle(params.Config.EK.CertHandle),
 		}.Execute(tpm.transport)
 
+		if nvErr != nil && !isTPMResponse(nvErr) {
+			return nil, tpm.noResponse(nvErr)
+		}
 		if nvErr != nil {
 			// Neither persistent EK nor manufacturer certificate exists
 			tpm.logger.Debug("TPM not initialized: no persistent EK and no manufacturer EK certificate",
@@ -633,6 +639,25 @@ func openDeviceError(err error) error {
 		return errors.Join(ErrOpeningDevice, err)
 	}
 	return ErrOpeningDevice
+}
+
+// isTPMResponse reports whether err is a response code the TPM returned, as
+// opposed to a transport failure that never reached a TPM answer. go-tpm
+// returns a TPM's answer as a bare tpm2.TPMRC; anything else (EOF, a closed
+// or wrong device, a timeout) means the TPM's state is unknown.
+func isTPMResponse(err error) bool {
+	var rc tpm2.TPMRC
+	return errors.As(err, &rc)
+}
+
+// noResponse releases what NewTPM2 opened and reports that the device never
+// answered, so callers cannot mistake a dead device for an unprovisioned TPM.
+func (tpm *TPM2) noResponse(err error) error {
+	tpm.logger.Error("TPM did not answer", slog.String("error", err.Error()))
+	// Close flushes transient handles over the transport; a dead transport
+	// has none to flush and could block, so only the device is released.
+	tpm.transport = nil
+	return errors.Join(ErrDeviceNoResponse, err, tpm.Close())
 }
 
 // OpenTCPTransport opens a connection to a TPM over TCP (e.g. swtpm).

@@ -24,7 +24,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	"github.com/jeremyhahn/go-xkms/xkey/pkg/pairing"
+	"github.com/jeremyhahn/go-xkms/pkg/pairingproto"
 )
 
 // runAttestWithPhone pairs a device, answers local.attestKey through the
@@ -48,19 +48,19 @@ func runAttestWithPhone(t *testing.T, transport *fakeDeviceTransport, noVerify b
 }
 
 // attestResultTransport answers local.attestKey with result.
-func attestResultTransport(result *pairing.LocalAttestKeyResult) *fakeDeviceTransport {
-	return &fakeDeviceTransport{results: map[string]any{pairing.MethodLocalAttestKey: result}}
+func attestResultTransport(result *pairingproto.LocalAttestKeyResult) *fakeDeviceTransport {
+	return &fakeDeviceTransport{results: map[string]any{pairingproto.MethodLocalAttestKey: result}}
 }
 
 func TestRunDeviceAttest_SendsKeyIDAndFreshNonce(t *testing.T) {
-	transport := attestResultTransport(&pairing.LocalAttestKeyResult{Format: "android-keystore"})
+	transport := attestResultTransport(&pairingproto.LocalAttestKeyResult{Format: "android-keystore"})
 
 	_, err := runAttestWithPhone(t, transport, true)
 	require.NoError(t, err)
 
 	require.Len(t, transport.wire, 1)
-	assert.Equal(t, pairing.MethodLocalAttestKey, transport.requests[0].Method)
-	var params pairing.LocalAttestKeyParams
+	assert.Equal(t, pairingproto.MethodLocalAttestKey, transport.requests[0].Method)
+	var params pairingproto.LocalAttestKeyParams
 	require.NoError(t, json.Unmarshal(transport.wire[0], &params))
 	assert.Equal(t, "signing-key", params.KeyID)
 	assert.Len(t, params.Nonce, 32, "the challenge nonce is 32 random bytes")
@@ -74,8 +74,8 @@ func TestRunDeviceAttest_PhoneFailures(t *testing.T) {
 	}{
 		{"connect fails", &fakeDeviceTransport{connectErr: errors.New("link down")}},
 		{"send fails", &fakeDeviceTransport{sendErr: errors.New("timeout")}},
-		{"phone refuses", &fakeDeviceTransport{rpcErrors: map[string]*pairing.RPCError{
-			pairing.MethodLocalAttestKey: {Code: -32000, Message: "key not found"},
+		{"phone refuses", &fakeDeviceTransport{rpcErrors: map[string]*pairingproto.RPCError{
+			pairingproto.MethodLocalAttestKey: {Code: -32000, Message: "key not found"},
 		}}},
 	}
 	for _, tt := range tests {
@@ -88,8 +88,8 @@ func TestRunDeviceAttest_PhoneFailures(t *testing.T) {
 }
 
 func TestRunDeviceAttest_PhoneRefusalCarriesTheRPCError(t *testing.T) {
-	transport := &fakeDeviceTransport{rpcErrors: map[string]*pairing.RPCError{
-		pairing.MethodLocalAttestKey: {Code: -32000, Message: "key not found"},
+	transport := &fakeDeviceTransport{rpcErrors: map[string]*pairingproto.RPCError{
+		pairingproto.MethodLocalAttestKey: {Code: -32000, Message: "key not found"},
 	}}
 
 	_, err := runAttestWithPhone(t, transport, true)
@@ -98,7 +98,7 @@ func TestRunDeviceAttest_PhoneRefusalCarriesTheRPCError(t *testing.T) {
 }
 
 func TestRunDeviceAttest_EmptyChainWarns(t *testing.T) {
-	transport := attestResultTransport(&pairing.LocalAttestKeyResult{
+	transport := attestResultTransport(&pairingproto.LocalAttestKeyResult{
 		Format:        "android-keystore",
 		SecurityLevel: "strongbox",
 	})
@@ -113,7 +113,7 @@ func TestRunDeviceAttest_EmptyChainWarns(t *testing.T) {
 }
 
 func TestRunDeviceAttest_UnparseableChainWarns(t *testing.T) {
-	transport := attestResultTransport(&pairing.LocalAttestKeyResult{
+	transport := attestResultTransport(&pairingproto.LocalAttestKeyResult{
 		CertificateChain: [][]byte{[]byte("not a certificate")},
 	})
 
@@ -124,7 +124,7 @@ func TestRunDeviceAttest_UnparseableChainWarns(t *testing.T) {
 }
 
 func TestRunDeviceAttest_NoVerifyPrintsTheChain(t *testing.T) {
-	transport := attestResultTransport(&pairing.LocalAttestKeyResult{
+	transport := attestResultTransport(&pairingproto.LocalAttestKeyResult{
 		CertificateChain: [][]byte{generateTestCertDER(t, x509.ECDSA)},
 	})
 
@@ -139,7 +139,7 @@ func TestRunDeviceAttest_NoVerifyPrintsTheChain(t *testing.T) {
 // root in the local trust store, is reported as FAILED and returns
 // ErrDeviceAttestVerifyFailed.
 func TestRunDeviceAttest_UntrustedChainFailsVerification(t *testing.T) {
-	transport := attestResultTransport(&pairing.LocalAttestKeyResult{
+	transport := attestResultTransport(&pairingproto.LocalAttestKeyResult{
 		CertificateChain: [][]byte{generateTestCertDER(t, x509.ECDSA)},
 	})
 

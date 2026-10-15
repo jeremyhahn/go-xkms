@@ -19,7 +19,7 @@ import (
 	"errors"
 	"log/slog"
 
-	"github.com/jeremyhahn/go-xkms/xkey/pkg/authenticator/keybackend"
+	"github.com/jeremyhahn/go-xkms/sdk/go/fido2/keybackend"
 )
 
 // ErrFIDO2BLENotAvailable indicates the phone backend requires BLE support.

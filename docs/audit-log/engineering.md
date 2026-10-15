@@ -102,7 +102,7 @@ write failure refuses the operation rather than let a completed action go
 unaudited (`pkg/ca/audit.go`'s `CA.emitAudit`; the attestation gate in
 `pkg/acme/server/handlers/challenge.go`'s `ChallengeHandler`;
 `establishPINLocked` and `storeCredentialWithPolicy` in
-`xkey/pkg/authenticator`):
+`pkg/fido2/authenticator`):
 
 - `pkg/ca` — `CA_INITIALIZED` (`CA.createRootCertificate`,
   `createIntermediateCertificates`, and `initializeAsIntermediate` for
@@ -128,14 +128,16 @@ unaudited (`pkg/ca/audit.go`'s `CA.emitAudit`; the attestation gate in
   `ChallengeHandler` already holds the account, challenge and `s.auditLog`
   the sibling `CHALLENGE_FAILED` gate uses. A successful `device-attest-01`
   challenge emits `DEVICE_ATTESTATION` the same way.
-- `xkey/pkg/authenticator` — `OpFIDO2CredentialCreated`
+- `pkg/fido2/authenticator` — `OpFIDO2CredentialCreated`
   (`storeCredentialWithPolicy`, the single persist path both `MakeCredential`
   call sites share) and `OpPINSeeded` (`establishPINLocked`, the single path
   both the CTAP `setPIN` wire ceremony and the in-process `SetInitialPIN`
-  share). The `Authenticator` takes its audit logger via `SetAuditLogger`
-  (nil disables it, like `SetPINVerifier`); `xkey/pkg/gui/app.go`'s
-  `PostBarrierUnseal` wires it alongside every other service's
-  `SetAuditLogger(auditStore)` call.
+  share). The `Authenticator` takes an `AuditLogger` (its own two-method
+  interface, `LogCredentialCreated`/`LogPINSeeded`) via `SetAuditLogger`
+  (nil disables it, like `SetPINVerifier`). xkey adapts its audit store with
+  `xkey/pkg/audit.NewFIDO2Logger`, which records both as `SeveritySecurity`
+  under backend `fido2`; `xkey/pkg/gui/app.go`'s `PostBarrierUnseal` wires it
+  alongside every other service's `SetAuditLogger(auditStore)` call.
 
 The authenticator itself never constructs a logger; every production
 entry point that can create a FIDO2 credential or seed a PIN wires one in
@@ -243,9 +245,10 @@ records after N days would be worse than one that grows.
   `ChallengeHandler`, plus `TestChallengeHandler_HTTP01_NoAttestationEvent`
   pinning the gate's scope to the two TCG challenge types);
   `pkg/api/rest/handlers_auth_audit_test.go` (`auth.login.piv` allow and deny
-  outcomes, `auth.logout`); `xkey/pkg/authenticator/cmd_clientpin_audit_test.go`
+  outcomes, `auth.logout`); `pkg/fido2/authenticator/cmd_clientpin_audit_test.go`
   (`OpPINSeeded`) and `cmd_makecredential_audit_test.go`
-  (`OpFIDO2CredentialCreated`).
+  (`OpFIDO2CredentialCreated`); `xkey/pkg/audit/fido2_test.go` (the adapter's
+  records and its write-failure error).
 - **#804's non-GUI entry points** — one `*_audit_test.go` per production
   entry point that wires `SetAuditLogger`:
   `xkey/cmd/xkey/cmd/fido2_audit_test.go` (the `xkey fido2` daemon) and

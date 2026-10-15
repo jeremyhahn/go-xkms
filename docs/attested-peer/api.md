@@ -18,52 +18,111 @@ a request next.
 
 | Transport | Status |
 |---|---|
-| REST / gRPC / QUIC / MCP / Unix / embedded | Not applicable here. The transport-facing half is go-qrdb's attested-caller gate, which calls the `pkg/attestation/peergate` verifier on every network transport and fails closed. |
+| REST / gRPC / QUIC / MCP / Unix / embedded | No verdict endpoint. The transport-facing half is go-qrdb's attested-caller gate, which calls the `pkg/attestation/peergate` verifier on every network transport and fails closed. What a peer calls is the collector: the two verbs below. |
 
-## The gate verifier: a composition-plane (Tier 2) capability
+## Installing the gate
 
-`pkg/attestation/peergate` is placed in Tier 2: a host injects the `Verifier`
-into go-qrdb's node through `qrdbsdk.NewPeerAttestationGate` and
-`node.WithPeerAttestationGate`, and mounts the `Collector`'s two calls on its
-own transports. Neither half has a transport of its own here, for the reasons
-above, and because both are defined over the `*tls.ConnectionState` of the
-request — a value that exists only inside the transport that terminated TLS.
+**xkmsd.** Set the mode and pass the policy:
+
+```yaml
+attestation:
+  peer_gate: required   # off (default) | optional | required
+```
+
+```go
+srv, err := server.New(cfg, server.WithAttestedCallerPolicy(peergate.GatePolicy{
+    Quote:          peer.Policy{Anchors: akRoots, Baseline: baseline, RequiredPCRs: []int{10}},
+    DeviceIdentity: &peer.DevIDPolicy{Anchors: deviceRoots}, // optional
+    Permissions:    []qrdbsdk.Permission{...},
+    MaxEvidenceAge: 15 * time.Minute,
+}))
+```
+
+The mode in the configuration overrides the policy's. `peer_gate` other than
+`off` requires `datastore.mode: standalone`, since the gate sits on the
+embedded node (`pkg/config/config.go:1801-1806`), and a policy:
+`ErrAttestedCallerPolicyMissing` otherwise (`pkg/server/peer_gate.go:54`).
+
+**A host composing the xkms module** (go-quicbaas):
 
 ```go
 import (
-    qrdbsdk  "github.com/jeremyhahn/go-qrdb/sdk/go"
     qrdbnode "github.com/jeremyhahn/go-qrdb/sdk/go/node"
     xkms     "github.com/jeremyhahn/go-xkms/sdk/go"
 )
 
-store, err := xkms.NewPeerMemoryEvidenceStore(xkms.PeerMemoryEvidenceStoreConfig{})
-collector, err := xkms.NewPeerEvidenceCollector(xkms.PeerEvidenceCollectorConfig{Store: store})
-verifier, err := xkms.NewPeerGateVerifier(xkms.PeerGateVerifierConfig{
-    Store:  store,
-    Policy: xkms.PeerPolicy{Anchors: akRoots, Baseline: baseline, RequiredPCRs: []int{10}},
-    DeviceIdentity: &xkms.PeerDevIDPolicy{Anchors: deviceRoots}, // optional
-})
-gate, err := qrdbsdk.NewPeerAttestationGate(verifier, qrdbsdk.PeerAttestationPolicy{
-    Permissions:    []qrdbsdk.Permission{...},
-    MaxEvidenceAge: 15 * time.Minute,
-})
-node, err := qrdbnode.NewStandaloneNode(ctx, cfg, serverOpts, qrdbnode.WithPeerAttestationGate(gate))
+module, err := xkms.NewServiceModule(resolve,
+    xkms.WithServiceModuleQRDBClient(client),
+    xkms.WithServiceModuleServiceContext(serviceContext),
+    xkms.WithAttestedCallerGate(xkms.AttestedCallerPolicy{
+        Mode:           xkms.AttestedCallerRequired,
+        Quote:          xkms.PeerPolicy{Anchors: akRoots, Baseline: baseline},
+        Permissions:    gated,
+        MaxEvidenceAge: 15 * time.Minute,
+    }))
+node, err := qrdbnode.NewStandaloneNode(ctx, cfg, serverOpts,
+    qrdbnode.WithPeerAttestationGate(module.PeerAttestationGate()))
 ```
 
-The two collector calls a host mounts, and what they mean on the wire:
+Without `WithServiceModuleQRDBClient`, `NewServiceModule` returns
+`*AttestedCallerClientError`: the evidence lives in the host's datastore.
+`serviceContext` is the node's `ServiceContext`: on a node that enforces
+authentication, the evidence storage runs as the node's service principal,
+and without the option it is refused (`qrdbsdk.ErrUnauthenticated`). The
+PCR baseline is the host's; go-xkms ships none.
 
-| Call | Input | Output | Refusals |
-|---|---|---|---|
-| `Challenge(ctx, r.TLS)` | the request's TLS state (the peer is its verified client certificate) | `PeerChallenge{Nonce, ExpiresAt}` | `*PeerCertificateError` (403), `*PeerGateCapacityError` (503) |
-| `Submit(ctx, r.TLS, evidence)` | the request's TLS state and a `PeerEvidence` (the wire shape below) | — | `*PeerCertificateError` (403), `*PeerChallengeError` (403), `*PeerChannelBindingError` (403), `*PeerEvidenceStoreError` (503) |
+The building blocks (`NewPeerDAOEvidenceStore`, `NewPeerEvidenceCollector`,
+`NewPeerGateVerifier`, then `qrdbsdk.NewPeerAttestationGate`) stay exported for
+a host that assembles a gate of its own.
+
+## The verbs: Challenge and Submit
+
+| Verb | REST | gRPC (`KeystoreService`) | MCP | Permission |
+|---|---|---|---|---|
+| Challenge | `POST /api/v1/peer-attestation/challenge` | `PeerAttestationChallenge` | `peer.attestation.challenge` | `peer_attestation:challenge` |
+| Submit | `POST /api/v1/peer-attestation/evidence` | `SubmitPeerAttestation` | `peer.attestation.submit` | `peer_attestation:submit` |
+
+Routes: `pkg/api/rest/routes.go:414-415`, `pkg/api/grpc/proto/xkmsv1/xkms.proto:777`
+and `:783`, `pkg/api/mcp/server.go:456-457`. Both permissions are self-scoped;
+the built-in User and Operator roles hold them
+(`pkg/apimodule/module_grants.go:94`, `:121`), Admin and Owner hold every
+module permission, SO and Auditor neither. The gate never gates them
+(`ExemptPermissions`, `pkg/attestation/peergate/gate.go:63`), since they are
+how a peer becomes attested.
+
+Challenge takes no input: the peer is the verified client certificate on the
+connection. It returns `nonce` (32 bytes) and `expires_at`. Submit takes the
+evidence quoted over that nonce, bound to **the same connection**:
+
+| Field | Notes |
+|---|---|
+| `quote` | marshaled `TPMS_ATTEST` |
+| `signature` | the quote signature |
+| `nonce` | the challenge nonce |
+| `pcrs` | index → value for the quoted selection |
+| `ak_certificate_pem` | the attestation key certificate chain |
 
 A submission whose quote is wrong is accepted and stored: the verifier refuses
 it on the next gated request, as a cryptographic failure, where go-qrdb's gate
-audits it. The status codes are a suggestion for an HTTP host.
+audits it. The collector keeps challenges in memory, so a peer answers a
+challenge on the node that issued it; the evidence itself is shared through
+the datastore.
 
-The verifier's outcome reaches the caller through go-qrdb's gate, which maps
-it: a refused verdict is `*PeerAttestationRefusedError` (REST 403, gRPC
-`PERMISSION_DENIED`), a verifier error is the same error with reason
+Errors, classified once for all three transports
+(`pkg/api/apierrors/tables.go:240-261`):
+
+| Error | Class | REST | gRPC |
+|---|---|---|---|
+| No verified client certificate (`*PeerCertificateError`), including the unix socket and the in-process caller | Unauthenticated | 401 | `UNAUTHENTICATED` |
+| No unexpired challenge, a different nonce, or a replay (`*PeerChallengeError`); a connection that cannot be bound (`*PeerChannelBindingError`) | FailedPrecondition | 409 | `FAILED_PRECONDITION` |
+| The challenge table is full (`*PeerGateCapacityError`) | ResourceExhausted | 429 | `RESOURCE_EXHAUSTED` |
+| No gate on this node (`ErrNotConfigured`), the evidence store or nonce source failed | Unavailable | 503 | `UNAVAILABLE` |
+
+MCP maps the same classes to its JSON-RPC codes.
+
+The verifier's outcome reaches the caller of a gated operation through
+go-qrdb's gate: a refused verdict is `*PeerAttestationRefusedError` (REST 403,
+gRPC `PERMISSION_DENIED`), a verifier error is the same error with reason
 `verifier-error` (REST 503, gRPC `UNAVAILABLE`).
 
 ## The SDK surface

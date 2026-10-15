@@ -32,7 +32,7 @@ import (
 
 	"github.com/google/go-tpm/tpm2"
 
-	"github.com/jeremyhahn/go-xkms/xkey/pkg/truststore"
+	"github.com/jeremyhahn/go-xkms/pkg/attestation/truststore"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )

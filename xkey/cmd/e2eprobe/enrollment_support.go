@@ -24,10 +24,11 @@ import (
 	"crypto/subtle"
 	"crypto/x509"
 	"crypto/x509/pkix"
-	pairing "github.com/jeremyhahn/go-xkms/xkey/pkg/pairing"
 	"math/big"
 	"strconv"
 	"time"
+
+	"github.com/jeremyhahn/go-xkms/sdk/go/bootstrap"
 
 	xkms "github.com/jeremyhahn/go-xkms/sdk/go"
 )
@@ -121,10 +122,10 @@ func issueProbeCredential(csrDER []byte) ([]byte, error) {
 // told about this peer in advance; without it a fresh key is generated and the
 // phone will ask a human to approve the pairing.
 // The caller owns the returned key and must Destroy it.
-func probeStaticKey() (*pairing.StaticKey, error) {
+func probeStaticKey() (*bootstrap.NoiseStaticKey, error) {
 	encoded := strings.TrimSpace(os.Getenv("XKEY_PROBE_STATIC_KEY"))
 	if encoded == "" {
-		return pairing.GenerateStaticKey()
+		return bootstrap.GenerateNoiseStaticKey()
 	}
 	raw, err := base64.StdEncoding.DecodeString(encoded)
 	if err != nil {
@@ -132,6 +133,6 @@ func probeStaticKey() (*pairing.StaticKey, error) {
 	}
 	// LoadStaticKey copies the scalar into protected memory, so the decoded
 	// heap copy can go.
-	defer pairing.WipeBytes(raw)
-	return pairing.LoadStaticKey(raw)
+	defer bootstrap.WipeNoiseBytes(raw)
+	return bootstrap.LoadNoiseStaticKey(raw)
 }

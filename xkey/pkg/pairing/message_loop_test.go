@@ -16,12 +16,15 @@ package pairing
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"log/slog"
 	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
 
+	"github.com/jeremyhahn/go-xkms/pkg/pairingproto"
+	"github.com/jeremyhahn/go-xkms/pkg/trust/bootstrap"
 	"github.com/jeremyhahn/go-xkms/xkey/pkg/notify"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -29,10 +32,10 @@ import (
 
 // mockRequestHandler implements RequestHandler for testing inbound request dispatch.
 type mockRequestHandler struct {
-	handleFunc func(ctx context.Context, req *Request) *Response
+	handleFunc func(ctx context.Context, req *pairingproto.Request) *pairingproto.Response
 }
 
-func (m *mockRequestHandler) HandleRequest(ctx context.Context, req *Request) *Response {
+func (m *mockRequestHandler) HandleRequest(ctx context.Context, req *pairingproto.Request) *pairingproto.Response {
 	if m.handleFunc != nil {
 		return m.handleFunc(ctx, req)
 	}
@@ -41,13 +44,13 @@ func (m *mockRequestHandler) HandleRequest(ctx context.Context, req *Request) *R
 
 // setupHandshakedNoiseSessions creates a pair of Noise sessions that have
 // completed a full XX handshake, ready for encrypted communication.
-func setupHandshakedNoiseSessions(t *testing.T) (*NoiseSession, *NoiseSession) {
+func setupHandshakedNoiseSessions(t *testing.T) (*bootstrap.NoiseSession, *bootstrap.NoiseSession) {
 	t.Helper()
 
-	initiator, err := NewNoiseSession(&NoiseSessionConfig{IsInitiator: true})
+	initiator, err := bootstrap.NewNoiseSession(&bootstrap.NoiseSessionConfig{IsInitiator: true})
 	require.NoError(t, err)
 
-	responder, err := NewNoiseSession(&NoiseSessionConfig{IsInitiator: false})
+	responder, err := bootstrap.NewNoiseSession(&bootstrap.NoiseSessionConfig{IsInitiator: false})
 	require.NoError(t, err)
 
 	err = initiator.InitHandshake()
@@ -81,6 +84,91 @@ func setupHandshakedNoiseSessions(t *testing.T) (*NoiseSession, *NoiseSession) {
 
 	require.True(t, initiator.IsHandshakeComplete())
 	require.True(t, responder.IsHandshakeComplete())
+
+	return initiator, responder
+}
+
+// errMockRecv is returned by the mock transport when Receive is configured to fail.
+var errMockRecv = errors.New("mock: receive failure")
+
+// mockPipeTransport implements pairingproto.Transport using a pair of
+// channels. One side writes to sendCh and reads from recvCh. A paired
+// transport reads from the first's sendCh and writes to its recvCh, forming
+// a bidirectional in-memory pipe.
+type mockPipeTransport struct {
+	sendCh    chan []byte
+	recvCh    chan []byte
+	connected atomic.Bool
+	closed    atomic.Bool
+
+	// sendErr, if non-nil, is returned from Send instead of writing to sendCh.
+	sendErr error
+	// recvErr, if non-nil, is returned from Receive instead of reading from recvCh.
+	recvErr error
+}
+
+func (m *mockPipeTransport) Send(_ context.Context, message []byte) error {
+	if m.closed.Load() {
+		return pairingproto.ErrBackendClosed
+	}
+	if !m.connected.Load() {
+		return pairingproto.ErrNotConnected
+	}
+	if m.sendErr != nil {
+		return m.sendErr
+	}
+	cp := make([]byte, len(message))
+	copy(cp, message)
+	m.sendCh <- cp
+	return nil
+}
+
+func (m *mockPipeTransport) Receive(_ context.Context) ([]byte, error) {
+	if m.closed.Load() {
+		return nil, pairingproto.ErrBackendClosed
+	}
+	if !m.connected.Load() {
+		return nil, pairingproto.ErrNotConnected
+	}
+	if m.recvErr != nil {
+		return nil, m.recvErr
+	}
+	msg, ok := <-m.recvCh
+	if !ok {
+		return nil, pairingproto.ErrNotConnected
+	}
+	return msg, nil
+}
+
+func (m *mockPipeTransport) SendAndReceive(ctx context.Context, message []byte) ([]byte, error) {
+	if err := m.Send(ctx, message); err != nil {
+		return nil, err
+	}
+	return m.Receive(ctx)
+}
+
+func (m *mockPipeTransport) IsConnected() bool {
+	return m.connected.Load() && !m.closed.Load()
+}
+
+func (m *mockPipeTransport) Close() error {
+	if m.closed.Swap(true) {
+		return nil
+	}
+	m.connected.Store(false)
+	return nil
+}
+
+// newPipeTransports creates a connected pair of mock transports.
+func newPipeTransports() (*mockPipeTransport, *mockPipeTransport) {
+	ch1 := make(chan []byte, 10)
+	ch2 := make(chan []byte, 10)
+
+	initiator := &mockPipeTransport{sendCh: ch1, recvCh: ch2}
+	responder := &mockPipeTransport{sendCh: ch2, recvCh: ch1}
+
+	initiator.connected.Store(true)
+	responder.connected.Store(true)
 
 	return initiator, responder
 }
@@ -137,13 +225,13 @@ func TestMessageRouter_SendRequest_Response(t *testing.T) {
 			return
 		}
 
-		var req Request
+		var req pairingproto.Request
 		if err := json.Unmarshal(plaintext, &req); err != nil {
 			return
 		}
 
-		resp := &Response{
-			JSONRPC: JSONRPCVersion,
+		resp := &pairingproto.Response{
+			JSONRPC: pairingproto.JSONRPCVersion,
 			ID:      req.ID,
 			Result:  json.RawMessage(`{"pong":true}`),
 		}
@@ -155,14 +243,14 @@ func TestMessageRouter_SendRequest_Response(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 
-	req := NewRequest(MethodPing, nil)
+	req := pairingproto.NewRequest(pairingproto.MethodPing, nil)
 	resp, err := router.SendRequest(ctx, req)
 	require.NoError(t, err)
 	require.NotNil(t, resp)
 	assert.Equal(t, req.ID, resp.ID)
 	assert.Nil(t, resp.Error)
 
-	result, err := DecodeResult[PingResult](resp)
+	result, err := pairingproto.DecodeResult[pairingproto.PingResult](resp)
 	require.NoError(t, err)
 	assert.True(t, result.Pong)
 }
@@ -178,13 +266,13 @@ func TestMessageRouter_InboundRequest(t *testing.T) {
 
 	handlerCalled := make(chan struct{}, 1)
 	handler := &mockRequestHandler{
-		handleFunc: func(_ context.Context, req *Request) *Response {
+		handleFunc: func(_ context.Context, req *pairingproto.Request) *pairingproto.Response {
 			handlerCalled <- struct{}{}
-			resultData, _ := json.Marshal(&RemoteListBackendsResult{
-				Backends: []BackendInfo{{Name: "tpm2", Type: "tpm2"}},
+			resultData, _ := json.Marshal(&pairingproto.RemoteListBackendsResult{
+				Backends: []pairingproto.BackendInfo{{Name: "tpm2", Type: "tpm2"}},
 			})
-			return &Response{
-				JSONRPC: JSONRPCVersion,
+			return &pairingproto.Response{
+				JSONRPC: pairingproto.JSONRPCVersion,
 				ID:      req.ID,
 				Result:  resultData,
 			}
@@ -196,10 +284,10 @@ func TestMessageRouter_InboundRequest(t *testing.T) {
 	defer router.Stop()
 
 	// Remote side sends an inbound request.
-	inboundReq := &Request{
-		JSONRPC: JSONRPCVersion,
+	inboundReq := &pairingproto.Request{
+		JSONRPC: pairingproto.JSONRPCVersion,
 		ID:      42,
-		Method:  MethodRemoteListBackends,
+		Method:  pairingproto.MethodRemoteListBackends,
 	}
 	reqBytes, err := json.Marshal(inboundReq)
 	require.NoError(t, err)
@@ -225,14 +313,14 @@ func TestMessageRouter_InboundRequest(t *testing.T) {
 	respPlaintext, err := remoteSession.Decrypt(respCiphertext)
 	require.NoError(t, err)
 
-	var resp Response
+	var resp pairingproto.Response
 	err = json.Unmarshal(respPlaintext, &resp)
 	require.NoError(t, err)
 
 	assert.Equal(t, uint64(42), resp.ID)
 	assert.Nil(t, resp.Error)
 
-	var result RemoteListBackendsResult
+	var result pairingproto.RemoteListBackendsResult
 	err = json.Unmarshal(resp.Result, &result)
 	require.NoError(t, err)
 	require.Len(t, result.Backends, 1)
@@ -245,11 +333,11 @@ func TestMessageRouter_InboundRequest_WipesEncodedResult(t *testing.T) {
 	initiatorTransport, remoteTransport := newPipeTransports()
 	initiatorSession, remoteSession := setupHandshakedNoiseSessions(t)
 
-	encodedResult, err := json.Marshal(&RemoteDeriveKeyResult{SharedSecret: []byte("shared-secret")})
+	encodedResult, err := json.Marshal(&pairingproto.RemoteDeriveKeyResult{SharedSecret: []byte("shared-secret")})
 	require.NoError(t, err)
 	handler := &mockRequestHandler{
-		handleFunc: func(_ context.Context, req *Request) *Response {
-			return &Response{JSONRPC: JSONRPCVersion, ID: req.ID, Result: encodedResult}
+		handleFunc: func(_ context.Context, req *pairingproto.Request) *pairingproto.Response {
+			return &pairingproto.Response{JSONRPC: pairingproto.JSONRPCVersion, ID: req.ID, Result: encodedResult}
 		},
 	}
 
@@ -257,7 +345,7 @@ func TestMessageRouter_InboundRequest_WipesEncodedResult(t *testing.T) {
 	router.Start()
 	defer router.Stop()
 
-	reqBytes, err := json.Marshal(&Request{JSONRPC: JSONRPCVersion, ID: 7, Method: MethodRemoteDeriveKey})
+	reqBytes, err := json.Marshal(&pairingproto.Request{JSONRPC: pairingproto.JSONRPCVersion, ID: 7, Method: pairingproto.MethodRemoteDeriveKey})
 	require.NoError(t, err)
 	ciphertext, err := remoteSession.Encrypt(reqBytes)
 	require.NoError(t, err)
@@ -268,9 +356,9 @@ func TestMessageRouter_InboundRequest_WipesEncodedResult(t *testing.T) {
 	respPlaintext, err := remoteSession.Decrypt(respCiphertext)
 	require.NoError(t, err)
 
-	var resp Response
+	var resp pairingproto.Response
 	require.NoError(t, json.Unmarshal(respPlaintext, &resp))
-	var result RemoteDeriveKeyResult
+	var result pairingproto.RemoteDeriveKeyResult
 	require.NoError(t, json.Unmarshal(resp.Result, &result))
 	assert.Equal(t, []byte("shared-secret"), result.SharedSecret)
 	// The handler's encoded result is wiped before the response is sent.
@@ -291,7 +379,7 @@ func TestMessageRouter_Stop_CancelsPending(t *testing.T) {
 	// Send a request that will never get a response because nobody is
 	// reading from the remote side's transport to produce one.
 	// However, the send will succeed since the channel has a buffer.
-	req := NewRequest(MethodPing, nil)
+	req := pairingproto.NewRequest(pairingproto.MethodPing, nil)
 	errCh := make(chan error, 1)
 	go func() {
 		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
@@ -315,7 +403,7 @@ func TestMessageRouter_Stop_CancelsPending(t *testing.T) {
 
 	select {
 	case err := <-errCh:
-		assert.ErrorIs(t, err, ErrBackendClosed)
+		assert.ErrorIs(t, err, pairingproto.ErrBackendClosed)
 	case <-time.After(5 * time.Second):
 		t.Fatal("SendRequest did not return after Stop()")
 	}
@@ -336,10 +424,10 @@ func TestMessageRouter_NilHandler_InboundRequest(t *testing.T) {
 	defer router.Stop()
 
 	// Remote side sends an inbound request.
-	inboundReq := &Request{
-		JSONRPC: JSONRPCVersion,
+	inboundReq := &pairingproto.Request{
+		JSONRPC: pairingproto.JSONRPCVersion,
 		ID:      99,
-		Method:  MethodRemoteListBackends,
+		Method:  pairingproto.MethodRemoteListBackends,
 	}
 	reqBytes, err := json.Marshal(inboundReq)
 	require.NoError(t, err)
@@ -365,11 +453,11 @@ func TestMessageRouter_NilHandler_InboundRequest(t *testing.T) {
 		if decErr != nil {
 			return
 		}
-		var req Request
+		var req pairingproto.Request
 		if err := json.Unmarshal(pt, &req); err != nil {
 			return
 		}
-		resp := &Response{JSONRPC: JSONRPCVersion, ID: req.ID, Result: json.RawMessage(`{"pong":true}`)}
+		resp := &pairingproto.Response{JSONRPC: pairingproto.JSONRPCVersion, ID: req.ID, Result: json.RawMessage(`{"pong":true}`)}
 		rb, _ := json.Marshal(resp)
 		rc, _ := remoteSession.Encrypt(rb)
 		remoteTransport.Send(context.Background(), rc)
@@ -378,7 +466,7 @@ func TestMessageRouter_NilHandler_InboundRequest(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 
-	req := NewRequest(MethodPing, nil)
+	req := pairingproto.NewRequest(pairingproto.MethodPing, nil)
 	resp, err := router.SendRequest(ctx, req)
 	require.NoError(t, err)
 	require.NotNil(t, resp)
@@ -416,11 +504,11 @@ func TestMessageRouter_InvalidDecrypt(t *testing.T) {
 		if decErr != nil {
 			return
 		}
-		var req Request
+		var req pairingproto.Request
 		if err := json.Unmarshal(pt, &req); err != nil {
 			return
 		}
-		resp := &Response{JSONRPC: JSONRPCVersion, ID: req.ID, Result: json.RawMessage(`{"pong":true}`)}
+		resp := &pairingproto.Response{JSONRPC: pairingproto.JSONRPCVersion, ID: req.ID, Result: json.RawMessage(`{"pong":true}`)}
 		rb, _ := json.Marshal(resp)
 		rc, _ := remoteSession.Encrypt(rb)
 		remoteTransport.Send(context.Background(), rc)
@@ -429,7 +517,7 @@ func TestMessageRouter_InvalidDecrypt(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 
-	req := NewRequest(MethodPing, nil)
+	req := pairingproto.NewRequest(pairingproto.MethodPing, nil)
 	resp, err := router.SendRequest(ctx, req)
 	require.NoError(t, err)
 	require.NotNil(t, resp)
@@ -452,7 +540,7 @@ func TestMessageRouter_ContextCancel(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 200*time.Millisecond)
 	defer cancel()
 
-	req := NewRequest(MethodPing, nil)
+	req := pairingproto.NewRequest(pairingproto.MethodPing, nil)
 	resp, err := router.SendRequest(ctx, req)
 	assert.Nil(t, resp)
 	assert.Error(t, err)
@@ -472,10 +560,10 @@ func TestMessageRouter_SendRequest_Closed(t *testing.T) {
 	router.Stop()
 
 	ctx := context.Background()
-	req := NewRequest(MethodPing, nil)
+	req := pairingproto.NewRequest(pairingproto.MethodPing, nil)
 	resp, err := router.SendRequest(ctx, req)
 	assert.Nil(t, resp)
-	assert.ErrorIs(t, err, ErrBackendClosed)
+	assert.ErrorIs(t, err, pairingproto.ErrBackendClosed)
 }
 
 // TestMessageRouter_Stop_Idempotent verifies that calling Stop multiple
@@ -510,8 +598,8 @@ func TestMessageRouter_UnknownResponseID(t *testing.T) {
 	defer router.Stop()
 
 	// Send a response with an ID that nobody is waiting for.
-	unknownResp := &Response{
-		JSONRPC: JSONRPCVersion,
+	unknownResp := &pairingproto.Response{
+		JSONRPC: pairingproto.JSONRPCVersion,
 		ID:      99999,
 		Result:  json.RawMessage(`{"pong":true}`),
 	}
@@ -537,11 +625,11 @@ func TestMessageRouter_UnknownResponseID(t *testing.T) {
 		if decErr != nil {
 			return
 		}
-		var req Request
+		var req pairingproto.Request
 		if err := json.Unmarshal(pt, &req); err != nil {
 			return
 		}
-		resp := &Response{JSONRPC: JSONRPCVersion, ID: req.ID, Result: json.RawMessage(`{"pong":true}`)}
+		resp := &pairingproto.Response{JSONRPC: pairingproto.JSONRPCVersion, ID: req.ID, Result: json.RawMessage(`{"pong":true}`)}
 		rb, _ := json.Marshal(resp)
 		rc, _ := remoteSession.Encrypt(rb)
 		remoteTransport.Send(context.Background(), rc)
@@ -550,7 +638,7 @@ func TestMessageRouter_UnknownResponseID(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 
-	req := NewRequest(MethodPing, nil)
+	req := pairingproto.NewRequest(pairingproto.MethodPing, nil)
 	resp, err := router.SendRequest(ctx, req)
 	require.NoError(t, err)
 	assert.NotNil(t, resp)
@@ -589,11 +677,11 @@ func TestMessageRouter_InvalidJSON(t *testing.T) {
 		if decErr != nil {
 			return
 		}
-		var req Request
+		var req pairingproto.Request
 		if err := json.Unmarshal(pt, &req); err != nil {
 			return
 		}
-		resp := &Response{JSONRPC: JSONRPCVersion, ID: req.ID, Result: json.RawMessage(`{"pong":true}`)}
+		resp := &pairingproto.Response{JSONRPC: pairingproto.JSONRPCVersion, ID: req.ID, Result: json.RawMessage(`{"pong":true}`)}
 		rb, _ := json.Marshal(resp)
 		rc, _ := remoteSession.Encrypt(rb)
 		remoteTransport.Send(context.Background(), rc)
@@ -602,7 +690,7 @@ func TestMessageRouter_InvalidJSON(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 
-	req := NewRequest(MethodPing, nil)
+	req := pairingproto.NewRequest(pairingproto.MethodPing, nil)
 	resp, err := router.SendRequest(ctx, req)
 	require.NoError(t, err)
 	assert.NotNil(t, resp)
@@ -618,7 +706,7 @@ func TestMessageRouter_InboundRequest_NilResponse(t *testing.T) {
 
 	handlerCalled := make(chan struct{}, 1)
 	handler := &mockRequestHandler{
-		handleFunc: func(_ context.Context, _ *Request) *Response {
+		handleFunc: func(_ context.Context, _ *pairingproto.Request) *pairingproto.Response {
 			handlerCalled <- struct{}{}
 			return nil // explicitly return nil
 		},
@@ -629,10 +717,10 @@ func TestMessageRouter_InboundRequest_NilResponse(t *testing.T) {
 	defer router.Stop()
 
 	// Remote side sends an inbound request.
-	inboundReq := &Request{
-		JSONRPC: JSONRPCVersion,
+	inboundReq := &pairingproto.Request{
+		JSONRPC: pairingproto.JSONRPCVersion,
 		ID:      77,
-		Method:  MethodRemoteListBackends,
+		Method:  pairingproto.MethodRemoteListBackends,
 	}
 	reqBytes, err := json.Marshal(inboundReq)
 	require.NoError(t, err)
@@ -658,11 +746,11 @@ func TestMessageRouter_InboundRequest_NilResponse(t *testing.T) {
 		if decErr != nil {
 			return
 		}
-		var req Request
+		var req pairingproto.Request
 		if err := json.Unmarshal(pt, &req); err != nil {
 			return
 		}
-		resp := &Response{JSONRPC: JSONRPCVersion, ID: req.ID, Result: json.RawMessage(`{"pong":true}`)}
+		resp := &pairingproto.Response{JSONRPC: pairingproto.JSONRPCVersion, ID: req.ID, Result: json.RawMessage(`{"pong":true}`)}
 		rb, _ := json.Marshal(resp)
 		rc, _ := remoteSession.Encrypt(rb)
 		remoteTransport.Send(context.Background(), rc)
@@ -671,7 +759,7 @@ func TestMessageRouter_InboundRequest_NilResponse(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 
-	req := NewRequest(MethodPing, nil)
+	req := pairingproto.NewRequest(pairingproto.MethodPing, nil)
 	resp, err := router.SendRequest(ctx, req)
 	require.NoError(t, err)
 	assert.NotNil(t, resp)
@@ -757,7 +845,7 @@ func TestMessageRouter_TransportError(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 300*time.Millisecond)
 	defer cancel()
 
-	req := NewRequest(MethodPing, nil)
+	req := pairingproto.NewRequest(pairingproto.MethodPing, nil)
 	_, err := router.SendRequest(ctx, req)
 	assert.Error(t, err)
 }
@@ -787,7 +875,7 @@ func TestMessageRouter_ConcurrentSendRequests(t *testing.T) {
 			if err != nil {
 				return
 			}
-			var req Request
+			var req pairingproto.Request
 			if err := json.Unmarshal(pt, &req); err != nil {
 				return
 			}
@@ -796,8 +884,8 @@ func TestMessageRouter_ConcurrentSendRequests(t *testing.T) {
 				"pong": true,
 				"echo": req.ID,
 			})
-			resp := &Response{
-				JSONRPC: JSONRPCVersion,
+			resp := &pairingproto.Response{
+				JSONRPC: pairingproto.JSONRPCVersion,
 				ID:      req.ID,
 				Result:  resultJSON,
 			}
@@ -809,7 +897,7 @@ func TestMessageRouter_ConcurrentSendRequests(t *testing.T) {
 
 	type result struct {
 		id   uint64
-		resp *Response
+		resp *pairingproto.Response
 		err  error
 	}
 
@@ -819,7 +907,7 @@ func TestMessageRouter_ConcurrentSendRequests(t *testing.T) {
 		go func() {
 			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 			defer cancel()
-			req := NewRequest(MethodPing, nil)
+			req := pairingproto.NewRequest(pairingproto.MethodPing, nil)
 			resp, err := router.SendRequest(ctx, req)
 			results <- result{id: req.ID, resp: resp, err: err}
 		}()
@@ -928,7 +1016,7 @@ func TestMessageRouter_BiometricPendingNotification(t *testing.T) {
 	defer router.Stop()
 
 	// Remote side sends a biometric pending notification.
-	params := &LocalBiometricPendingParams{
+	params := &pairingproto.LocalBiometricPendingParams{
 		Operation:   "sign",
 		RPName:      "Test RP",
 		TimeoutSecs: 30,
@@ -937,9 +1025,9 @@ func TestMessageRouter_BiometricPendingNotification(t *testing.T) {
 	require.NoError(t, err)
 
 	notification := &biometricPendingRequest{
-		JSONRPC: JSONRPCVersion,
+		JSONRPC: pairingproto.JSONRPCVersion,
 		ID:      123,
-		Method:  MethodLocalBiometricPending,
+		Method:  pairingproto.MethodLocalBiometricPending,
 		Params:  paramsJSON,
 	}
 	notifBytes, err := json.Marshal(notification)
@@ -978,7 +1066,7 @@ func TestMessageRouter_BiometricPendingNotification_NoHandler(t *testing.T) {
 	defer router.Stop()
 
 	// Remote side sends a biometric pending notification.
-	params := &LocalBiometricPendingParams{
+	params := &pairingproto.LocalBiometricPendingParams{
 		Operation:   "decrypt",
 		RPName:      "Example",
 		TimeoutSecs: 60,
@@ -987,9 +1075,9 @@ func TestMessageRouter_BiometricPendingNotification_NoHandler(t *testing.T) {
 	require.NoError(t, err)
 
 	notification := &biometricPendingRequest{
-		JSONRPC: JSONRPCVersion,
+		JSONRPC: pairingproto.JSONRPCVersion,
 		ID:      456,
-		Method:  MethodLocalBiometricPending,
+		Method:  pairingproto.MethodLocalBiometricPending,
 		Params:  paramsJSON,
 	}
 	notifBytes, err := json.Marshal(notification)
@@ -1014,11 +1102,11 @@ func TestMessageRouter_BiometricPendingNotification_NoHandler(t *testing.T) {
 		if decErr != nil {
 			return
 		}
-		var req Request
+		var req pairingproto.Request
 		if err := json.Unmarshal(pt, &req); err != nil {
 			return
 		}
-		resp := &Response{JSONRPC: JSONRPCVersion, ID: req.ID, Result: json.RawMessage(`{"pong":true}`)}
+		resp := &pairingproto.Response{JSONRPC: pairingproto.JSONRPCVersion, ID: req.ID, Result: json.RawMessage(`{"pong":true}`)}
 		rb, _ := json.Marshal(resp)
 		rc, _ := remoteSession.Encrypt(rb)
 		remoteTransport.Send(context.Background(), rc)
@@ -1027,7 +1115,7 @@ func TestMessageRouter_BiometricPendingNotification_NoHandler(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 
-	req := NewRequest(MethodPing, nil)
+	req := pairingproto.NewRequest(pairingproto.MethodPing, nil)
 	resp, err := router.SendRequest(ctx, req)
 	require.NoError(t, err)
 	assert.NotNil(t, resp)
@@ -1047,7 +1135,7 @@ func TestMessageRouter_BiometricPendingNotification_RequestHandlerNotCalled(t *t
 	// Track if the request handler was called.
 	var handlerCallCount atomic.Int32
 	handler := &mockRequestHandler{
-		handleFunc: func(_ context.Context, _ *Request) *Response {
+		handleFunc: func(_ context.Context, _ *pairingproto.Request) *pairingproto.Response {
 			handlerCallCount.Add(1)
 			return nil
 		},
@@ -1058,7 +1146,7 @@ func TestMessageRouter_BiometricPendingNotification_RequestHandlerNotCalled(t *t
 	defer router.Stop()
 
 	// Remote side sends a biometric pending notification.
-	params := &LocalBiometricPendingParams{
+	params := &pairingproto.LocalBiometricPendingParams{
 		Operation:   "attestKey",
 		RPName:      "Test",
 		TimeoutSecs: 45,
@@ -1067,9 +1155,9 @@ func TestMessageRouter_BiometricPendingNotification_RequestHandlerNotCalled(t *t
 	require.NoError(t, err)
 
 	notification := &biometricPendingRequest{
-		JSONRPC: JSONRPCVersion,
+		JSONRPC: pairingproto.JSONRPCVersion,
 		ID:      789,
-		Method:  MethodLocalBiometricPending,
+		Method:  pairingproto.MethodLocalBiometricPending,
 		Params:  paramsJSON,
 	}
 	notifBytes, err := json.Marshal(notification)

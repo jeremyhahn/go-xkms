@@ -299,6 +299,6 @@ opened.
 ## Parity coverage
 
 The multiprotocol parity runner in `go-xkms` covers `xkmsctl`, not `xkey`.
-Coverage here is the `xkey/pkg/authenticator` unit suites, the Playwright
+Coverage here is the `pkg/fido2/authenticator` unit suites, the Playwright
 browser specs via the CDP bridge, and
 `go-xkms/test/integration/{webauthn-browser,logins}`.

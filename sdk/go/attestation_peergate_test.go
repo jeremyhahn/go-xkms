@@ -21,6 +21,8 @@ import (
 	"time"
 
 	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
+
+	pkgxkms "github.com/jeremyhahn/go-xkms/pkg/xkms"
 )
 
 // The SDK's verifier is the value a host hands go-qrdb's gate.
@@ -30,9 +32,9 @@ var _ qrdbsdk.PeerAttestationVerifier = (*PeerGateVerifier)(nil)
 // the way a host does, and checks the fail-closed edges a host relies on.
 func TestPeerGateSurface(t *testing.T) {
 	ctx := context.Background()
-	store, err := NewPeerMemoryEvidenceStore(PeerMemoryEvidenceStoreConfig{})
+	store, err := NewPeerDAOEvidenceStore(PeerDAOEvidenceStoreConfig{DAOs: NewStoreDAOFactory(qrdbsdk.NewMemoryKVStore())})
 	if err != nil {
-		t.Fatalf("NewPeerMemoryEvidenceStore: %v", err)
+		t.Fatalf("NewPeerDAOEvidenceStore: %v", err)
 	}
 	collector, err := NewPeerEvidenceCollector(PeerEvidenceCollectorConfig{Store: store}, WithPeerGateClock(time.Now))
 	if err != nil {
@@ -74,5 +76,36 @@ func TestPeerGateSurface(t *testing.T) {
 	}
 	if PeerChallengeNonceLength != 32 || DefaultPeerChallengeTTL <= 0 || DefaultPeerGateMaxPeers <= 0 || DefaultPeerEvidenceRetention <= 0 {
 		t.Fatal("peer gate constants drifted")
+	}
+}
+
+// TestWithAttestedCallerGate_ThroughSDK proves a host composing the module
+// through the SDK gets the gate its policy describes, ready for go-qrdb's
+// node.WithPeerAttestationGate, and is refused without a client to keep the
+// evidence in.
+func TestWithAttestedCallerGate_ThroughSDK(t *testing.T) {
+	policy := AttestedCallerPolicy{
+		Mode:           AttestedCallerOptional,
+		Quote:          PeerPolicy{Anchors: x509.NewCertPool(), Baseline: map[int][]byte{0: make([]byte, 32)}},
+		Permissions:    []qrdbsdk.Permission{qrdbsdk.PermissionAdminStatus},
+		MaxEvidenceAge: time.Minute,
+	}
+	resolve := func() *pkgxkms.XKMSService { return nil }
+
+	module, err := NewServiceModule(resolve,
+		WithServiceModuleQRDBClient(func() *qrdbsdk.Client { return nil }),
+		WithAttestedCallerGate(policy))
+	if err != nil {
+		t.Fatalf("NewServiceModule: %v", err)
+	}
+	gate := module.PeerAttestationGate()
+	if gate == nil || !gate.Gates(qrdbsdk.PermissionAdminStatus) {
+		t.Fatalf("the module's gate does not gate %s", qrdbsdk.PermissionAdminStatus)
+	}
+
+	_, err = NewServiceModule(resolve, WithAttestedCallerGate(policy))
+	var clientErr *AttestedCallerClientError
+	if !errors.As(err, &clientErr) {
+		t.Fatalf("NewServiceModule without a client = %v, want *AttestedCallerClientError", err)
 	}
 }

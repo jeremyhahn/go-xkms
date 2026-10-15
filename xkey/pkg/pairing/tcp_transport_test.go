@@ -23,6 +23,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/jeremyhahn/go-xkms/pkg/pairingproto"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -30,7 +31,7 @@ import (
 // Compile-time interface satisfaction checks for both transport types.
 // These fail at build time if the types drift from the interface.
 var (
-	_ Transport = (*TCPTransport)(nil)
+	_ pairingproto.Transport = (*TCPTransport)(nil)
 )
 
 // startEchoTCPServer starts a local TCP server that echoes back messages using
@@ -303,7 +304,7 @@ func TestTCPTransport_ConnectClosed(t *testing.T) {
 	// Connect after close should return ErrBackendClosed.
 	ctx := context.Background()
 	err = transport.Connect(ctx)
-	assert.ErrorIs(t, err, ErrBackendClosed)
+	assert.ErrorIs(t, err, pairingproto.ErrBackendClosed)
 }
 
 func TestTCPTransport_ConnectFailure(t *testing.T) {
@@ -325,7 +326,7 @@ func TestTCPTransport_ConnectFailure(t *testing.T) {
 
 	ctx := context.Background()
 	err = transport.Connect(ctx)
-	assert.ErrorIs(t, err, ErrConnectionFailed)
+	assert.ErrorIs(t, err, pairingproto.ErrConnectionFailed)
 	assert.False(t, transport.IsConnected())
 }
 
@@ -348,7 +349,7 @@ func TestTCPTransport_ConnectCancelledContext(t *testing.T) {
 	cancel() // Cancel immediately.
 
 	err = transport.Connect(ctx)
-	assert.ErrorIs(t, err, ErrConnectionFailed)
+	assert.ErrorIs(t, err, pairingproto.ErrConnectionFailed)
 	assert.False(t, transport.IsConnected())
 }
 
@@ -595,7 +596,7 @@ func TestTCPTransport_SendTooLarge(t *testing.T) {
 	// Message exceeding MaxTCPMessageSize should return ErrProtocolError.
 	oversized := make([]byte, MaxTCPMessageSize+1)
 	err = transport.Send(ctx, oversized)
-	assert.ErrorIs(t, err, ErrProtocolError)
+	assert.ErrorIs(t, err, pairingproto.ErrProtocolError)
 }
 
 func TestTCPTransport_SendNotConnected(t *testing.T) {
@@ -609,7 +610,7 @@ func TestTCPTransport_SendNotConnected(t *testing.T) {
 
 	ctx := context.Background()
 	err = transport.Send(ctx, []byte("test"))
-	assert.ErrorIs(t, err, ErrNotConnected)
+	assert.ErrorIs(t, err, pairingproto.ErrNotConnected)
 }
 
 func TestTCPTransport_SendClosed(t *testing.T) {
@@ -623,7 +624,7 @@ func TestTCPTransport_SendClosed(t *testing.T) {
 
 	ctx := context.Background()
 	err = transport.Send(ctx, []byte("test"))
-	assert.ErrorIs(t, err, ErrBackendClosed)
+	assert.ErrorIs(t, err, pairingproto.ErrBackendClosed)
 }
 
 func TestTCPTransport_SendNilConn(t *testing.T) {
@@ -642,7 +643,7 @@ func TestTCPTransport_SendNilConn(t *testing.T) {
 
 	ctx := context.Background()
 	err = transport.Send(ctx, []byte("test"))
-	assert.ErrorIs(t, err, ErrNotConnected)
+	assert.ErrorIs(t, err, pairingproto.ErrNotConnected)
 }
 
 func TestTCPTransport_ReceiveNilConn(t *testing.T) {
@@ -661,7 +662,7 @@ func TestTCPTransport_ReceiveNilConn(t *testing.T) {
 
 	ctx := context.Background()
 	data, err := transport.Receive(ctx)
-	assert.ErrorIs(t, err, ErrNotConnected)
+	assert.ErrorIs(t, err, pairingproto.ErrNotConnected)
 	assert.Nil(t, data)
 }
 
@@ -676,7 +677,7 @@ func TestTCPTransport_ReceiveNotConnected(t *testing.T) {
 
 	ctx := context.Background()
 	data, err := transport.Receive(ctx)
-	assert.ErrorIs(t, err, ErrNotConnected)
+	assert.ErrorIs(t, err, pairingproto.ErrNotConnected)
 	assert.Nil(t, data)
 }
 
@@ -691,7 +692,7 @@ func TestTCPTransport_ReceiveClosed(t *testing.T) {
 
 	ctx := context.Background()
 	data, err := transport.Receive(ctx)
-	assert.ErrorIs(t, err, ErrBackendClosed)
+	assert.ErrorIs(t, err, pairingproto.ErrBackendClosed)
 	assert.Nil(t, data)
 }
 
@@ -725,7 +726,7 @@ func TestTCPTransport_ReceivePeerDisconnect(t *testing.T) {
 
 	// Peer has closed; Receive should detect the EOF and return ErrNotConnected.
 	data, err := transport.Receive(ctx)
-	assert.ErrorIs(t, err, ErrNotConnected)
+	assert.ErrorIs(t, err, pairingproto.ErrNotConnected)
 	assert.Nil(t, data)
 }
 
@@ -752,7 +753,7 @@ func TestTCPTransport_ReceiveTimeout(t *testing.T) {
 
 	// Receive should time out because the server never responds.
 	data, err := transport.Receive(ctx)
-	assert.ErrorIs(t, err, ErrTimeout)
+	assert.ErrorIs(t, err, pairingproto.ErrTimeout)
 	assert.Nil(t, data)
 }
 
@@ -838,7 +839,7 @@ func TestTCPTransport_SendAndReceiveNotConnected(t *testing.T) {
 
 	ctx := context.Background()
 	data, err := transport.SendAndReceive(ctx, []byte("test"))
-	assert.ErrorIs(t, err, ErrNotConnected)
+	assert.ErrorIs(t, err, pairingproto.ErrNotConnected)
 	assert.Nil(t, data)
 }
 
@@ -859,7 +860,7 @@ func TestTCPTransport_SendAndReceiveTooLarge(t *testing.T) {
 
 	oversized := make([]byte, MaxTCPMessageSize+1)
 	data, err := transport.SendAndReceive(ctx, oversized)
-	assert.ErrorIs(t, err, ErrProtocolError)
+	assert.ErrorIs(t, err, pairingproto.ErrProtocolError)
 	assert.Nil(t, data)
 }
 
@@ -1015,7 +1016,7 @@ func TestTCPTransport_ImplementsTransport(t *testing.T) {
 	t.Cleanup(func() { transport.Close() })
 
 	// Verify the concrete type satisfies the Transport interface.
-	var iface Transport = transport
+	var iface pairingproto.Transport = transport
 	assert.NotNil(t, iface)
 }
 
@@ -1041,7 +1042,7 @@ func TestIsTimeoutError_NonTimeout(t *testing.T) {
 
 	assert.False(t, isTimeoutError(io.EOF))
 	assert.False(t, isTimeoutError(io.ErrUnexpectedEOF))
-	assert.False(t, isTimeoutError(ErrNotConnected))
+	assert.False(t, isTimeoutError(pairingproto.ErrNotConnected))
 }
 
 // ---------------------------------------------------------------------------
@@ -1143,6 +1144,6 @@ func TestTCPTransport_ClassifyReadError_GenericError(t *testing.T) {
 	// Directly test classifyReadError with a non-EOF, non-timeout error.
 	genericErr := errors.New("generic read error")
 	result := transport.classifyReadError(genericErr)
-	assert.ErrorIs(t, result, ErrConnectionFailed)
+	assert.ErrorIs(t, result, pairingproto.ErrConnectionFailed)
 	assert.False(t, transport.IsConnected())
 }

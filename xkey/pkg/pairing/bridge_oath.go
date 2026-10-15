@@ -20,6 +20,7 @@ import (
 	"time"
 
 	xkms "github.com/jeremyhahn/go-xkms/sdk/go"
+	"github.com/jeremyhahn/go-xkms/sdk/go/pairingproto"
 	"github.com/jeremyhahn/go-xkms/sdk/go/secure"
 	"github.com/jeremyhahn/go-xkms/xkey/pkg/oath"
 )
@@ -33,22 +34,22 @@ import (
 // configured, ErrOATHNotConfigured is returned rather than a fabricated
 // success.
 func (b *Bridge) handleOATHAdd(_ context.Context, params json.RawMessage) (interface{}, error) {
-	var p RemoteOATHAddParams
+	var p pairingproto.RemoteOATHAddParams
 	defer p.Credential.Destroy()
 	if err := unmarshalParams(params, &p); err != nil {
-		return nil, ErrBridgeInvalidParams
+		return nil, pairingproto.ErrBridgeInvalidParams
 	}
 
 	if p.Credential.Name == "" {
-		return nil, ErrBridgeInvalidParams
+		return nil, pairingproto.ErrBridgeInvalidParams
 	}
 
 	if p.Credential.Secret.IsZero() {
-		return nil, ErrBridgeInvalidParams
+		return nil, pairingproto.ErrBridgeInvalidParams
 	}
 
 	if b.oathStore == nil {
-		return nil, ErrOATHNotConfigured
+		return nil, pairingproto.ErrOATHNotConfigured
 	}
 
 	b.logger.Info("OATH credential add requested",
@@ -58,17 +59,17 @@ func (b *Bridge) handleOATHAdd(_ context.Context, params json.RawMessage) (inter
 
 	cred, err := oathCredentialFromWire(&p.Credential)
 	if err != nil {
-		return nil, &SentinelCauseError{Sentinel: ErrOATHStoreFailed, Cause: err}
+		return nil, &pairingproto.SentinelCauseError{Sentinel: pairingproto.ErrOATHStoreFailed, Cause: err}
 	}
 
 	if err := b.oathStore.Add(cred); err != nil {
 		if errors.Is(err, oath.ErrCredentialExists) {
-			return nil, ErrKeyExists
+			return nil, pairingproto.ErrKeyExists
 		}
-		return nil, &SentinelCauseError{Sentinel: ErrOATHStoreFailed, Cause: err}
+		return nil, &pairingproto.SentinelCauseError{Sentinel: pairingproto.ErrOATHStoreFailed, Cause: err}
 	}
 
-	return &RemoteOATHAddResult{
+	return &pairingproto.RemoteOATHAddResult{
 		Success:      true,
 		CredentialID: cred.ID,
 		Message:      "credential stored",
@@ -83,17 +84,17 @@ func (b *Bridge) handleOATHAdd(_ context.Context, params json.RawMessage) (inter
 // family uses. When no store is configured, ErrOATHNotConfigured is
 // returned.
 func (b *Bridge) handleOATHGenerate(_ context.Context, params json.RawMessage) (interface{}, error) {
-	var p RemoteOATHGenerateParams
+	var p pairingproto.RemoteOATHGenerateParams
 	if err := unmarshalParams(params, &p); err != nil {
-		return nil, ErrBridgeInvalidParams
+		return nil, pairingproto.ErrBridgeInvalidParams
 	}
 
 	if p.CredentialID == "" {
-		return nil, ErrBridgeInvalidParams
+		return nil, pairingproto.ErrBridgeInvalidParams
 	}
 
 	if b.oathStore == nil {
-		return nil, ErrOATHNotConfigured
+		return nil, pairingproto.ErrOATHNotConfigured
 	}
 
 	b.logger.Info("OATH code generation requested",
@@ -102,19 +103,19 @@ func (b *Bridge) handleOATHGenerate(_ context.Context, params json.RawMessage) (
 	cred, err := b.oathStore.Get(p.CredentialID)
 	if err != nil {
 		if errors.Is(err, oath.ErrCredentialNotFound) {
-			return nil, ErrOATHCredentialNotFound
+			return nil, pairingproto.ErrOATHCredentialNotFound
 		}
-		return nil, &SentinelCauseError{Sentinel: ErrOATHStoreFailed, Cause: err}
+		return nil, &pairingproto.SentinelCauseError{Sentinel: pairingproto.ErrOATHStoreFailed, Cause: err}
 	}
 
 	gen, err := oath.NewGenerator(cred)
 	if err != nil {
-		return nil, &SentinelCauseError{Sentinel: ErrOATHGenerateFailed, Cause: err}
+		return nil, &pairingproto.SentinelCauseError{Sentinel: pairingproto.ErrOATHGenerateFailed, Cause: err}
 	}
 
 	code, err := gen.Generate()
 	if err != nil {
-		return nil, &SentinelCauseError{Sentinel: ErrOATHGenerateFailed, Cause: err}
+		return nil, &pairingproto.SentinelCauseError{Sentinel: pairingproto.ErrOATHGenerateFailed, Cause: err}
 	}
 
 	var expiresIn int
@@ -122,7 +123,7 @@ func (b *Bridge) handleOATHGenerate(_ context.Context, params json.RawMessage) (
 		expiresIn = cred.Period - int(time.Now().Unix()%int64(cred.Period))
 	}
 
-	return &RemoteOATHGenerateResult{
+	return &pairingproto.RemoteOATHGenerateResult{
 		Code:      code,
 		ExpiresIn: expiresIn,
 	}, nil
@@ -133,7 +134,7 @@ func (b *Bridge) handleOATHGenerate(_ context.Context, params json.RawMessage) (
 // applies when the phone omits optional fields, and minting the ID with the
 // package's own GenerateCredentialID so it matches what every store already
 // keys entries by.
-func oathCredentialFromWire(info *OATHCredentialInfo) (*oath.Credential, error) {
+func oathCredentialFromWire(info *pairingproto.OATHCredentialInfo) (*oath.Credential, error) {
 	accountForID := info.AccountName
 	if accountForID == "" {
 		accountForID = info.Name

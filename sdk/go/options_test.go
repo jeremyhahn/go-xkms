@@ -473,6 +473,21 @@ func (*mockService) OIDCCredentialGet(context.Context, *OIDCCredentialRef) (*OID
 func (*mockService) OIDCCredentialList(context.Context, *OIDCCredentialListRequest) (*OIDCCredentialListResponse, error) {
 	return nil, nil
 }
+func (*mockService) TrustRootList(context.Context, *TrustRootListRequest) (*TrustRootListResponse, error) {
+	return nil, nil
+}
+func (*mockService) TrustRootGet(context.Context, *TrustRootRequest) (*TrustRoot, error) {
+	return nil, nil
+}
+func (*mockService) TrustRootImport(context.Context, *TrustRootImportRequest) (*TrustRootImportResponse, error) {
+	return nil, nil
+}
+func (*mockService) TrustRootQuarantine(context.Context, *TrustRootRequest) (*TrustRoot, error) {
+	return nil, nil
+}
+func (*mockService) TrustRootRemove(context.Context, *TrustRootRequest) error {
+	return nil
+}
 func (*mockService) OIDCCredentialDelete(context.Context, *OIDCCredentialRef) error {
 	return nil
 }

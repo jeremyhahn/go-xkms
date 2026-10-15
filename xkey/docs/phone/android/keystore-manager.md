@@ -33,7 +33,7 @@ The `KeystoreManager` is extended beyond the original ES256 FIDO2 signing to sup
 | AES-256-GCM | 256 bits | GCM | 12-byte IV, 16-byte tag |
 
 On the wire `local.generateKey` names these `AES128` and `AES256`
-(`LocalGenerateKeyParams`, `xkey/pkg/pairing/protocol_local.go:51`).
+(`LocalGenerateKeyParams`, `pkg/pairingproto/protocol_local.go:51`).
 
 ### HMAC
 

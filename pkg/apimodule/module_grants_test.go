@@ -190,3 +190,21 @@ func TestNewModule_UserRoleStoresPasswords(t *testing.T) {
 	assert.False(t, qrdbsdk.HasPermissionRoleGrant(qrdbsdk.PermissionRoleUser,
 		qrdbsdk.Permission(auth.ResourceOIDCCredentials+":"+auth.ActionCreate)), "the user role gains nothing else")
 }
+
+// TestNewModule_PeerAttestationRoles proves the roles callers run as --
+// User and Operator -- can answer the attested-caller gate's challenge, while
+// the roles that run no workload -- SO and Auditor -- cannot.
+func TestNewModule_PeerAttestationRoles(t *testing.T) {
+	_, err := NewModule(func() *xkms.XKMSService { return nil })
+	require.NoError(t, err)
+
+	for _, action := range []string{auth.ActionChallenge, auth.ActionSubmit} {
+		perm := qrdbsdk.Permission(auth.ResourcePeerAttestation + ":" + action)
+		for _, role := range []string{qrdbsdk.PermissionRoleUser, qrdbsdk.PermissionRoleOperator} {
+			assert.True(t, qrdbsdk.HasPermissionRoleGrant(role, perm), "%s must hold %s", role, perm)
+		}
+		for _, role := range []string{qrdbsdk.PermissionRoleSO, qrdbsdk.PermissionRoleAuditor} {
+			assert.False(t, qrdbsdk.HasPermissionRoleGrant(role, perm), "%s must not hold %s", role, perm)
+		}
+	}
+}

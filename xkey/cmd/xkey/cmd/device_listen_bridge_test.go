@@ -22,6 +22,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	"github.com/jeremyhahn/go-xkms/pkg/pairingproto"
 	"github.com/jeremyhahn/go-xkms/sdk/go/transport"
 	"github.com/jeremyhahn/go-xkms/xkey/pkg/pairing"
 )
@@ -55,9 +56,9 @@ func newTestBridge(t *testing.T, client transport.Client) *pairing.Bridge {
 }
 
 // decodeListenResponse decodes the raw JSON-RPC bytes a handler returns.
-func decodeListenResponse(t *testing.T, raw []byte) *pairing.Response {
+func decodeListenResponse(t *testing.T, raw []byte) *pairingproto.Response {
 	t.Helper()
-	resp, err := pairing.DecodeResponse(raw)
+	resp, err := pairingproto.DecodeResponse(raw)
 	require.NoError(t, err)
 	return resp
 }
@@ -65,13 +66,13 @@ func decodeListenResponse(t *testing.T, raw []byte) *pairing.Response {
 func TestListenHandler_PingIsServedLocally(t *testing.T) {
 	handler := newListenHandler(t, nil)
 
-	raw, err := handler.HandleRequest(context.Background(), mustEncodeRequest(t, pairing.MethodPing, nil))
+	raw, err := handler.HandleRequest(context.Background(), mustEncodeRequest(t, pairingproto.MethodPing, nil))
 	require.NoError(t, err)
 
 	resp := decodeListenResponse(t, raw)
 	require.Nil(t, resp.Error)
 
-	result, err := pairing.DecodeResult[pairing.PingResult](resp)
+	result, err := pairingproto.DecodeResult[pairingproto.PingResult](resp)
 	require.NoError(t, err)
 	assert.True(t, result.Pong)
 }
@@ -83,12 +84,12 @@ func TestListenHandler_WithoutBridgeRejectsRemoteMethods(t *testing.T) {
 	handler := newListenHandler(t, nil)
 
 	raw, err := handler.HandleRequest(context.Background(),
-		mustEncodeRequest(t, pairing.MethodRemoteListBackends, nil))
+		mustEncodeRequest(t, pairingproto.MethodRemoteListBackends, nil))
 	require.NoError(t, err)
 
 	resp := decodeListenResponse(t, raw)
 	require.NotNil(t, resp.Error)
-	assert.Equal(t, pairing.ErrorCodeMethodNotFound, resp.Error.Code)
+	assert.Equal(t, pairingproto.ErrorCodeMethodNotFound, resp.Error.Code)
 }
 
 // TestListenHandler_BridgeServesRemoteMethods is the regression guard for the
@@ -101,13 +102,13 @@ func TestListenHandler_BridgeServesRemoteMethods(t *testing.T) {
 	handler := newListenHandler(t, newTestBridge(t, client))
 
 	raw, err := handler.HandleRequest(context.Background(),
-		mustEncodeRequest(t, pairing.MethodRemoteListBackends, nil))
+		mustEncodeRequest(t, pairingproto.MethodRemoteListBackends, nil))
 	require.NoError(t, err)
 
 	resp := decodeListenResponse(t, raw)
 	require.Nil(t, resp.Error, "the bridge must answer remote.listBackends")
 
-	result, err := pairing.DecodeResult[pairing.RemoteListBackendsResult](resp)
+	result, err := pairingproto.DecodeResult[pairingproto.RemoteListBackendsResult](resp)
 	require.NoError(t, err)
 	require.Len(t, result.Backends, 1)
 	assert.Equal(t, "software", result.Backends[0].Name)
@@ -121,13 +122,13 @@ func TestListenHandler_LocalAttestationWinsOverBridge(t *testing.T) {
 
 	nonce := make([]byte, 32)
 	raw, err := handler.HandleRequest(context.Background(),
-		mustEncodeRequest(t, pairing.MethodRemoteAttestDevice, &pairing.RemoteAttestDeviceParams{Nonce: nonce}))
+		mustEncodeRequest(t, pairingproto.MethodRemoteAttestDevice, &pairingproto.RemoteAttestDeviceParams{Nonce: nonce}))
 	require.NoError(t, err)
 
 	resp := decodeListenResponse(t, raw)
 	require.Nil(t, resp.Error)
 
-	result, err := pairing.DecodeResult[pairing.RemoteAttestDeviceResult](resp)
+	result, err := pairingproto.DecodeResult[pairingproto.RemoteAttestDeviceResult](resp)
 	require.NoError(t, err)
 	assert.Equal(t, "software", result.SecurityLevel,
 		"the software attestor configured on the handler must produce the result")
@@ -136,7 +137,7 @@ func TestListenHandler_LocalAttestationWinsOverBridge(t *testing.T) {
 // mustEncodeRequest encodes a JSON-RPC request for the handler under test.
 func mustEncodeRequest(t *testing.T, method string, params interface{}) []byte {
 	t.Helper()
-	raw, err := pairing.EncodeRequest(pairing.NewRequest(method, params))
+	raw, err := pairingproto.EncodeRequest(pairingproto.NewRequest(method, params))
 	require.NoError(t, err)
 	return raw
 }

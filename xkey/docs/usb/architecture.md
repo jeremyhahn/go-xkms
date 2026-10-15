@@ -19,7 +19,7 @@ This folder covers two unrelated xKey features that both live under
 They share nothing at the code level beyond the `xkey usb` command prefix
 and the theme of "acting like a piece of USB hardware." Do not confuse
 either of them with the phone-pairing protocol's **USB AOA transport**
-(`xkey/pkg/phone/usb_transport.go`, build tag `usb` — a different tag
+(`pkg/pairingproto/usb_transport.go`, build tag `usb` — a different tag
 namespace entirely, documented in `xkey/docs/phone-hsm/`): that is a wired
 alternative to BLE for reaching a paired phone, not a virtual device or a
 disk image.
@@ -134,7 +134,7 @@ script written onto the FAT32 partition that detects host architecture
 
 - Neither sub-feature has a network (xkmsd) or GUI (Wails) surface — see
   `api.md`.
-- The physical/ConfigFS gadget path additionally needs `xkey/pkg/uhid`
+- The physical/ConfigFS gadget path additionally needs `pkg/fido2/uhid`
   (`uhid_linux.go` / `uhid_stub.go`, split on the `linux` build constraint,
   not a custom tag) only for the UHID transport; the ConfigFS/FunctionFS
   path talks to the kernel gadget subsystem directly and does not use

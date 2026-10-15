@@ -24,13 +24,13 @@ import (
 	"fmt"
 	"sync"
 
-	"github.com/jeremyhahn/go-xkms/xkey/pkg/pairing"
+	"github.com/jeremyhahn/go-xkms/sdk/go/pairingproto"
 	"github.com/jeremyhahn/go-xkms/xkey/pkg/phone"
 )
 
 // HandlerFunc is a function that processes a JSON-RPC request and returns a
 // JSON-RPC response. Used for map-based dispatch of JSON-RPC methods.
-type HandlerFunc func(req *pairing.Request) *pairing.Response
+type HandlerFunc func(req *pairingproto.Request) *pairingproto.Response
 
 // MockPhoneRequestHandler implements phone.PeripheralRequestHandler for use
 // with the TCPPairingServer. Unlike MockPhone, this handler operates on
@@ -39,7 +39,7 @@ type HandlerFunc func(req *pairing.Request) *pairing.Response
 type MockPhoneRequestHandler struct {
 	mu           sync.Mutex
 	keys         map[string]*mockKey
-	capabilities pairing.GetInfoResult
+	capabilities pairingproto.GetInfoResult
 	handlers     map[string]HandlerFunc
 }
 
@@ -49,21 +49,21 @@ type MockPhoneRequestHandler struct {
 func NewMockPhoneRequestHandler() *MockPhoneRequestHandler {
 	h := &MockPhoneRequestHandler{
 		keys: make(map[string]*mockKey),
-		capabilities: pairing.GetInfoResult{
+		capabilities: pairingproto.GetInfoResult{
 			Version:             "1.0.0-mock-tcp",
 			DeviceName:          "Mock Phone (TCP)",
-			SupportedAlgorithms: []int{pairing.COSEAlgES256, pairing.COSEAlgES384, pairing.COSEAlgES512},
+			SupportedAlgorithms: []int{pairingproto.COSEAlgES256, pairingproto.COSEAlgES384, pairingproto.COSEAlgES512},
 			MaxCredentials:      100,
 			CurrentCredentials:  0,
 		},
 	}
 	h.handlers = map[string]HandlerFunc{
-		pairing.MethodPing:        h.handlePing,
-		pairing.MethodGetInfo:     h.handleGetInfo,
-		pairing.MethodGenerateKey: h.handleGenerateKey,
-		pairing.MethodSign:        h.handleSign,
-		pairing.MethodDeleteKey:   h.handleDeleteKey,
-		pairing.MethodLoadKey:     h.handleLoadKey,
+		pairingproto.MethodPing:        h.handlePing,
+		pairingproto.MethodGetInfo:     h.handleGetInfo,
+		pairingproto.MethodGenerateKey: h.handleGenerateKey,
+		pairingproto.MethodSign:        h.handleSign,
+		pairingproto.MethodDeleteKey:   h.handleDeleteKey,
+		pairingproto.MethodLoadKey:     h.handleLoadKey,
 	}
 	return h
 }
@@ -72,12 +72,12 @@ func NewMockPhoneRequestHandler() *MockPhoneRequestHandler {
 // plaintext JSON-RPC bytes, dispatches to the appropriate handler, and
 // returns plaintext JSON-RPC response bytes.
 func (h *MockPhoneRequestHandler) HandleRequest(_ context.Context, request []byte) ([]byte, error) {
-	var req pairing.Request
+	var req pairingproto.Request
 	if err := json.Unmarshal(request, &req); err != nil {
-		errResp := &pairing.Response{
-			JSONRPC: pairing.JSONRPCVersion,
-			Error: &pairing.RPCError{
-				Code:    pairing.ErrorCodeInvalidRequest,
+		errResp := &pairingproto.Response{
+			JSONRPC: pairingproto.JSONRPCVersion,
+			Error: &pairingproto.RPCError{
+				Code:    pairingproto.ErrorCodeInvalidRequest,
 				Message: "invalid JSON-RPC request",
 			},
 		}
@@ -89,11 +89,11 @@ func (h *MockPhoneRequestHandler) HandleRequest(_ context.Context, request []byt
 
 	handler, ok := h.handlers[req.Method]
 	if !ok {
-		resp := &pairing.Response{
-			JSONRPC: pairing.JSONRPCVersion,
+		resp := &pairingproto.Response{
+			JSONRPC: pairingproto.JSONRPCVersion,
 			ID:      req.ID,
-			Error: &pairing.RPCError{
-				Code:    pairing.ErrorCodeMethodNotFound,
+			Error: &pairingproto.RPCError{
+				Code:    pairingproto.ErrorCodeMethodNotFound,
 				Message: fmt.Sprintf("method not found: %s", req.Method),
 			},
 		}
@@ -111,33 +111,33 @@ func (h *MockPhoneRequestHandler) KeyCount() int {
 	return len(h.keys)
 }
 
-func (h *MockPhoneRequestHandler) handlePing(req *pairing.Request) *pairing.Response {
-	return &pairing.Response{
-		JSONRPC: pairing.JSONRPCVersion,
+func (h *MockPhoneRequestHandler) handlePing(req *pairingproto.Request) *pairingproto.Response {
+	return &pairingproto.Response{
+		JSONRPC: pairingproto.JSONRPCVersion,
 		ID:      req.ID,
-		Result:  mustMarshal(pairing.PingResult{Pong: true}),
+		Result:  mustMarshal(pairingproto.PingResult{Pong: true}),
 	}
 }
 
-func (h *MockPhoneRequestHandler) handleGetInfo(req *pairing.Request) *pairing.Response {
+func (h *MockPhoneRequestHandler) handleGetInfo(req *pairingproto.Request) *pairingproto.Response {
 	h.capabilities.CurrentCredentials = len(h.keys)
-	return &pairing.Response{
-		JSONRPC: pairing.JSONRPCVersion,
+	return &pairingproto.Response{
+		JSONRPC: pairingproto.JSONRPCVersion,
 		ID:      req.ID,
 		Result:  mustMarshal(h.capabilities),
 	}
 }
 
-func (h *MockPhoneRequestHandler) handleGenerateKey(req *pairing.Request) *pairing.Response {
-	resp := &pairing.Response{
-		JSONRPC: pairing.JSONRPCVersion,
+func (h *MockPhoneRequestHandler) handleGenerateKey(req *pairingproto.Request) *pairingproto.Response {
+	resp := &pairingproto.Response{
+		JSONRPC: pairingproto.JSONRPCVersion,
 		ID:      req.ID,
 	}
 
-	var params pairing.GenerateKeyParams
+	var params pairingproto.GenerateKeyParams
 	if err := unmarshalParams(req.Params, &params); err != nil {
-		resp.Error = &pairing.RPCError{
-			Code:    pairing.ErrorCodeInvalidParams,
+		resp.Error = &pairingproto.RPCError{
+			Code:    pairingproto.ErrorCodeInvalidParams,
 			Message: "invalid params",
 		}
 		return resp
@@ -145,8 +145,8 @@ func (h *MockPhoneRequestHandler) handleGenerateKey(req *pairing.Request) *pairi
 
 	curve := curveForAlgorithm(params.Algorithm)
 	if curve == nil {
-		resp.Error = &pairing.RPCError{
-			Code:    pairing.ErrorCodeUnsupportedAlg,
+		resp.Error = &pairingproto.RPCError{
+			Code:    pairingproto.ErrorCodeUnsupportedAlg,
 			Message: "unsupported algorithm",
 		}
 		return resp
@@ -154,8 +154,8 @@ func (h *MockPhoneRequestHandler) handleGenerateKey(req *pairing.Request) *pairi
 
 	privateKey, err := ecdsa.GenerateKey(curve, rand.Reader)
 	if err != nil {
-		resp.Error = &pairing.RPCError{
-			Code:    pairing.ErrorCodeInternalError,
+		resp.Error = &pairingproto.RPCError{
+			Code:    pairingproto.ErrorCodeInternalError,
 			Message: "key generation failed",
 		}
 		return resp
@@ -168,22 +168,22 @@ func (h *MockPhoneRequestHandler) handleGenerateKey(req *pairing.Request) *pairi
 	}
 
 	coseKey := encodeCOSEKey(privateKey, params.Algorithm)
-	resp.Result = mustMarshal(pairing.GenerateKeyResult{
+	resp.Result = mustMarshal(pairingproto.GenerateKeyResult{
 		PublicKeyCOSE: coseKey,
 	})
 	return resp
 }
 
-func (h *MockPhoneRequestHandler) handleSign(req *pairing.Request) *pairing.Response {
-	resp := &pairing.Response{
-		JSONRPC: pairing.JSONRPCVersion,
+func (h *MockPhoneRequestHandler) handleSign(req *pairingproto.Request) *pairingproto.Response {
+	resp := &pairingproto.Response{
+		JSONRPC: pairingproto.JSONRPCVersion,
 		ID:      req.ID,
 	}
 
-	var params pairing.SignParams
+	var params pairingproto.SignParams
 	if err := unmarshalParams(req.Params, &params); err != nil {
-		resp.Error = &pairing.RPCError{
-			Code:    pairing.ErrorCodeInvalidParams,
+		resp.Error = &pairingproto.RPCError{
+			Code:    pairingproto.ErrorCodeInvalidParams,
 			Message: "invalid params",
 		}
 		return resp
@@ -192,8 +192,8 @@ func (h *MockPhoneRequestHandler) handleSign(req *pairing.Request) *pairing.Resp
 	credID := hex.EncodeToString(params.CredentialID)
 	key, ok := h.keys[credID]
 	if !ok {
-		resp.Error = &pairing.RPCError{
-			Code:    pairing.ErrorCodeKeyNotFound,
+		resp.Error = &pairingproto.RPCError{
+			Code:    pairingproto.ErrorCodeKeyNotFound,
 			Message: "key not found",
 		}
 		return resp
@@ -201,30 +201,30 @@ func (h *MockPhoneRequestHandler) handleSign(req *pairing.Request) *pairing.Resp
 
 	r, s, err := ecdsa.Sign(rand.Reader, key.privateKey, params.DataHash)
 	if err != nil {
-		resp.Error = &pairing.RPCError{
-			Code:    pairing.ErrorCodeInternalError,
+		resp.Error = &pairingproto.RPCError{
+			Code:    pairingproto.ErrorCodeInternalError,
 			Message: "signing failed",
 		}
 		return resp
 	}
 
 	signature := encodeSignature(r, s, key.privateKey.Curve)
-	resp.Result = mustMarshal(pairing.SignResult{
+	resp.Result = mustMarshal(pairingproto.SignResult{
 		Signature: signature,
 	})
 	return resp
 }
 
-func (h *MockPhoneRequestHandler) handleDeleteKey(req *pairing.Request) *pairing.Response {
-	resp := &pairing.Response{
-		JSONRPC: pairing.JSONRPCVersion,
+func (h *MockPhoneRequestHandler) handleDeleteKey(req *pairingproto.Request) *pairingproto.Response {
+	resp := &pairingproto.Response{
+		JSONRPC: pairingproto.JSONRPCVersion,
 		ID:      req.ID,
 	}
 
-	var params pairing.DeleteKeyParams
+	var params pairingproto.DeleteKeyParams
 	if err := unmarshalParams(req.Params, &params); err != nil {
-		resp.Error = &pairing.RPCError{
-			Code:    pairing.ErrorCodeInvalidParams,
+		resp.Error = &pairingproto.RPCError{
+			Code:    pairingproto.ErrorCodeInvalidParams,
 			Message: "invalid params",
 		}
 		return resp
@@ -232,28 +232,28 @@ func (h *MockPhoneRequestHandler) handleDeleteKey(req *pairing.Request) *pairing
 
 	credID := hex.EncodeToString(params.CredentialID)
 	if _, ok := h.keys[credID]; !ok {
-		resp.Error = &pairing.RPCError{
-			Code:    pairing.ErrorCodeKeyNotFound,
+		resp.Error = &pairingproto.RPCError{
+			Code:    pairingproto.ErrorCodeKeyNotFound,
 			Message: "key not found",
 		}
 		return resp
 	}
 
 	delete(h.keys, credID)
-	resp.Result = mustMarshal(pairing.DeleteKeyResult{Deleted: true})
+	resp.Result = mustMarshal(pairingproto.DeleteKeyResult{Deleted: true})
 	return resp
 }
 
-func (h *MockPhoneRequestHandler) handleLoadKey(req *pairing.Request) *pairing.Response {
-	resp := &pairing.Response{
-		JSONRPC: pairing.JSONRPCVersion,
+func (h *MockPhoneRequestHandler) handleLoadKey(req *pairingproto.Request) *pairingproto.Response {
+	resp := &pairingproto.Response{
+		JSONRPC: pairingproto.JSONRPCVersion,
 		ID:      req.ID,
 	}
 
-	var params pairing.LoadKeyParams
+	var params pairingproto.LoadKeyParams
 	if err := unmarshalParams(req.Params, &params); err != nil {
-		resp.Error = &pairing.RPCError{
-			Code:    pairing.ErrorCodeInvalidParams,
+		resp.Error = &pairingproto.RPCError{
+			Code:    pairingproto.ErrorCodeInvalidParams,
 			Message: "invalid params",
 		}
 		return resp
@@ -262,15 +262,15 @@ func (h *MockPhoneRequestHandler) handleLoadKey(req *pairing.Request) *pairing.R
 	credID := hex.EncodeToString(params.CredentialID)
 	key, ok := h.keys[credID]
 	if !ok {
-		resp.Error = &pairing.RPCError{
-			Code:    pairing.ErrorCodeKeyNotFound,
+		resp.Error = &pairingproto.RPCError{
+			Code:    pairingproto.ErrorCodeKeyNotFound,
 			Message: "key not found",
 		}
 		return resp
 	}
 
 	coseKey := encodeCOSEKey(key.privateKey, key.algorithm)
-	resp.Result = mustMarshal(pairing.LoadKeyResult{
+	resp.Result = mustMarshal(pairingproto.LoadKeyResult{
 		PublicKeyCOSE: coseKey,
 	})
 	return resp
@@ -299,7 +299,7 @@ func NewTCPPhoneServer() (*TCPPhoneServer, error) {
 		// live-attestation gate a phone-initiated connection now requires
 		// on the real desktop responder, so it stands in an always-approve
 		// verifier rather than leaving every connection refused.
-		LiveAttest: func(context.Context, pairing.RPCExchange, []byte) error { return nil },
+		LiveAttest: func(context.Context, pairingproto.RPCExchange, []byte) error { return nil },
 	})
 	if err != nil {
 		return nil, &WrappedError{Msg: "failed to create TCP pairing server", Err: err}

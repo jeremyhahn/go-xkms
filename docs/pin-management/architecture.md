@@ -139,11 +139,11 @@ across FIDO2, PKCS#11 and file-based subsystems, backed by a `pkg/pin` package.
 **Neither exists in this repository.** There is no `PINCoordinator` type and no
 `pkg/pin` directory, so the coordinator design was dropped, not carried over.
 What does exist is `pkg/pinselect`, `pkg/pintpm2`, the PKCS#11 backend, and
-xkey's own authenticator PIN state. Its one cross-subsystem link is xkey's
-`UnifiedPIN` setting (`xkey/pkg/authenticator/config.go:468-476`). It mirrors
+the virtual authenticator's PIN state. Its one cross-subsystem link is the
+`UnifiedPIN` setting (`pkg/fido2/authenticator/config.go:468-476`). It mirrors
 the host user PIN into the FIDO2 authenticator's CTAP2 PIN hash and does not
 touch PKCS#11 or file PINs. Within the authenticator, a FIDO2 PIN set before the
 SO PIN is configured sets `PINSyncPending`
-(`xkey/pkg/authenticator/types.go:166-168`), and the next SO unlock wires it to
-the CMK (`xkey/pkg/authenticator/key_manager.go:467-478`). Both are documented in
+(`pkg/fido2/authenticator/types.go:166-168`), and the next SO unlock wires it to
+the CMK (`pkg/fido2/authenticator/key_manager.go:467-478`). Both are documented in
 [`../../xkey/docs/virtual-authenticator/`](../../xkey/docs/virtual-authenticator/architecture.md).

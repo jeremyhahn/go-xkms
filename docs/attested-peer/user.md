@@ -70,31 +70,42 @@ admit()
 
 ## Gating a go-qrdb node on attested peers
 
-A host that embeds a go-qrdb node composes the whole gate from the SDK
-(`api.md` has the full listing):
+`api.md` has the full listing.
 
-1. Build a `PeerMemoryEvidenceStore`, a `PeerEvidenceCollector` and a
-   `PeerGateVerifier` over the same store. Give the verifier the attestation
-   key anchors and the PCR baseline you enrolled, and, if your peers' TLS
+1. Decide the policy: the attestation key anchors and the PCR baseline you
+   enrolled (go-xkms ships no reference values), and, if your peers' TLS
    certificates are IDevIDs, a `DeviceIdentity` policy so a quote from another
-   TPM is refused.
-2. Wrap the verifier in `qrdbsdk.NewPeerAttestationGate` naming the
-   permissions that need an attested caller and the maximum evidence age, and
-   pass it to the node with `node.WithPeerAttestationGate`.
-3. Mount two routes on an mTLS listener your peers reach, passing the
-   request's `*tls.ConnectionState`: one calls `collector.Challenge`, the
-   other decodes a `PeerEvidence` and calls `collector.Submit`.
-4. On each peer, on a schedule shorter than the maximum evidence age: request
-   a challenge, call `PeerQuoteEvidence` with the client side of **that same
-   connection**, and submit the result on it. An HTTP client pinned to one
-   connection (`MaxConnsPerHost: 1`) does this; the response's `TLS` field is
-   the state to quote with.
+   TPM is refused. Name the permissions that need an attested caller and the
+   maximum evidence age.
+2. Pick the mode. `required` refuses a gated call from any peer without
+   fresh, passing evidence. `optional` lets a peer that has never submitted
+   through, and refuses one whose evidence fails: use it while peers are
+   being rolled onto attestation.
+3. Install it:
+   - **xkmsd:** set `attestation.peer_gate` to the mode (the embedded node
+     needs `datastore.mode: standalone`) and pass the policy with
+     `server.WithAttestedCallerPolicy`.
+   - **A host of the xkms module:** pass `WithAttestedCallerGate(policy)` and
+     `WithServiceModuleQRDBClient` to `NewServiceModule`, then
+     `module.PeerAttestationGate()` to `node.WithPeerAttestationGate`.
+4. On each peer, on a schedule shorter than the maximum evidence age, over
+   mTLS on one connection: call Challenge
+   (`POST /api/v1/peer-attestation/challenge`, gRPC
+   `PeerAttestationChallenge`, MCP `peer.attestation.challenge`), call
+   `PeerQuoteEvidence` with the client side of **that same connection**, and
+   Submit the result on it (`POST /api/v1/peer-attestation/evidence`,
+   `SubmitPeerAttestation`, `peer.attestation.submit`). An HTTP client pinned
+   to one connection (`MaxConnsPerHost: 1`) does this; the response's `TLS`
+   field is the state to quote with. The peer needs `peer_attestation:challenge`
+   and `peer_attestation:submit`, which the User and Operator roles hold.
+   In a cluster, answer a challenge on the node that issued it.
 
 What the peer then sees on a gated call:
 
 | Situation | Result |
 |---|---|
-| Never submitted, or evidence withdrawn (`store.Delete`) | refused |
+| Never submitted, or evidence withdrawn (`store.Delete`) | refused (`optional`: admitted) |
+| Challenge or Submit with no client certificate (the unix socket, the in-process caller) | refused as unauthenticated |
 | Latest submission valid and younger than the maximum age | admitted |
 | Latest submission older than the maximum age | refused until the peer submits again |
 | Latest submission forged, bound to another session, off the baseline, or from another TPM | refused, audited as a security event |

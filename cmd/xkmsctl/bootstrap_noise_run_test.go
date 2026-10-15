@@ -24,7 +24,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/jeremyhahn/go-xkms/xkey/pkg/pairing"
+	"github.com/jeremyhahn/go-xkms/pkg/trust/bootstrap"
 )
 
 // The Run wrapper is thin, but "thin" is not "untestable": with no assertion
@@ -94,12 +94,12 @@ func TestNoiseGenerateKeyCmd_Run(t *testing.T) {
 		// The key has to be the real one: decode it straight into protected
 		// memory, derive its public half, and require the command to have
 		// printed exactly that.
-		key, err := pairing.DecodeStaticKey(encoded)
+		key, err := bootstrap.DecodeNoiseStaticKey(encoded)
 		if err != nil {
 			t.Fatalf("the written key does not load: %v", err)
 		}
 		defer key.Destroy()
-		if err := pairing.WithPrivateKey(key, func(priv []byte) error {
+		if err := bootstrap.WithNoisePrivateKey(key, func(priv []byte) error {
 			if len(priv) != 32 {
 				t.Fatalf("private key is %d bytes, want 32", len(priv))
 			}

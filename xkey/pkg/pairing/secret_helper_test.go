@@ -53,17 +53,6 @@ func mustSecretText(text string) xkms.SecretText {
 	return s
 }
 
-// textOf returns the secret text as a string for assertions. It panics on a
-// protected-memory failure.
-func textOf(s xkms.SecretText) string {
-	b, err := s.Copy()
-	if err != nil {
-		panic(err)
-	}
-	defer secure.Wipe(b)
-	return string(b)
-}
-
 // mustCloneOATH returns an independent copy of info, as an accessor must hand
 // out: the sync service destroys the records it is given. It panics on a
 // protected-memory failure.

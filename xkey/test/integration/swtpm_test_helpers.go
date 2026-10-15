@@ -25,7 +25,7 @@
 // convention in pkg/tpm2/tpm.go), so every "xkey" CLI subprocess that
 // connects to the same socket sees the same on-disk NVRAM state.
 //
-// This mirrors xkey/pkg/authenticator/keybackend/adapter_integration_swtpm_test.go
+// This mirrors pkg/fido2/authenticator/keybackend/adapter_integration_swtpm_test.go
 // (unix-socket device, provisioned exactly once, retry loop for the
 // TPM_RC_RETRY/TPM_RC_INITIALIZE window right after swtpm start) and
 // xkey/test/integration/fido2-hardware-entrypoint.sh (the swtpm_setup +

@@ -17,8 +17,8 @@ import (
 	"context"
 
 	"github.com/jeremyhahn/go-xkms/pkg/backend"
+	"github.com/jeremyhahn/go-xkms/pkg/pairingproto"
 	"github.com/jeremyhahn/go-xkms/pkg/types"
-	"github.com/jeremyhahn/go-xkms/xkey/pkg/pairing"
 )
 
 // Compile-time check that Backend satisfies ImportExportBackend.
@@ -32,7 +32,7 @@ func (b *Backend) ExportPublicKey(ctx context.Context, attrs *types.KeyAttribute
 		return nil, ErrBackendClosed
 	}
 
-	params := &pairing.LocalGetPublicKeyParams{
+	params := &pairingproto.LocalGetPublicKeyParams{
 		KeyID:  attrs.CN,
 		Format: format,
 	}
@@ -40,12 +40,12 @@ func (b *Backend) ExportPublicKey(ctx context.Context, attrs *types.KeyAttribute
 	ctx, cancel := context.WithTimeout(ctx, b.config.RequestTimeout)
 	defer cancel()
 
-	resp, err := b.sendLocalRequest(ctx, pairing.MethodLocalGetPublicKey, params)
+	resp, err := b.sendLocalRequest(ctx, pairingproto.MethodLocalGetPublicKey, params)
 	if err != nil {
 		return nil, err
 	}
 
-	result, err := pairing.DecodeResult[pairing.LocalGetPublicKeyResult](resp)
+	result, err := pairingproto.DecodeResult[pairingproto.LocalGetPublicKeyResult](resp)
 	if err != nil {
 		return nil, ErrInvalidResponse
 	}

@@ -75,12 +75,16 @@ func (c *TCGConfig) ekRootPool() (*x509.CertPool, error) {
 	if err != nil {
 		return nil, &errs.Joined{Lead: ErrTCGEKCertUntrusted, Cause: err}
 	}
-	if ts.Count() == 0 {
+	roots, err := ts.Certificates()
+	if err != nil {
+		return nil, &errs.Joined{Lead: ErrTCGEKCertUntrusted, Cause: err}
+	}
+	if len(roots) == 0 {
 		return nil, &errs.Detail{Err: ErrTCGEKCertUntrusted, Detail: "no ek trust anchors configured"}
 	}
 
 	pool := x509.NewCertPool()
-	for _, root := range ts.Roots() {
+	for _, root := range roots {
 		evidence.StripEKCertificateQuirks(root)
 		pool.AddCert(root)
 	}

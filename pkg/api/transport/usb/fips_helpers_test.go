@@ -18,7 +18,7 @@ import (
 	"crypto/fips140"
 	"testing"
 
-	"github.com/jeremyhahn/go-xkms/xkey/pkg/pairing"
+	"github.com/jeremyhahn/go-xkms/pkg/trust/bootstrap"
 	"github.com/stretchr/testify/require"
 )
 
@@ -31,15 +31,15 @@ import (
 // primitive the Noise Protocol Framework specification names -- with no
 // FIPS-approved substitute offered at this layer (NIST P-256/P-384 are not
 // part of the standard Noise 25519/448 pattern this protocol implements).
-// pairing.GenerateStaticKey refuses outright under GODEBUG=fips140=only, so
+// bootstrap.GenerateNoiseStaticKey refuses outright under GODEBUG=fips140=only, so
 // this asserts that refusal and reports ok=false instead of letting the
 // caller dereference a nil key. Making the USB transport FIPS-capable would
 // mean redesigning its handshake pattern around an approved curve, which is
 // an architecture decision for go-xkms#23's follow-up, not one this test
 // suite makes unilaterally.
-func requireStaticKey(t *testing.T) (*pairing.StaticKey, bool) {
+func requireStaticKey(t *testing.T) (*bootstrap.NoiseStaticKey, bool) {
 	t.Helper()
-	key, err := pairing.GenerateStaticKey()
+	key, err := bootstrap.GenerateNoiseStaticKey()
 	if err != nil {
 		if fips140.Enforced() {
 			require.Error(t, err, "Noise Curve25519 static key generation must be refused under GODEBUG=fips140=only")
@@ -54,10 +54,10 @@ func requireStaticKey(t *testing.T) (*pairing.StaticKey, bool) {
 // privateKeyBytes copies key's private scalar onto the heap for a test that
 // must hand it to NoiseConfig.LocalStaticPrivateKey, the []byte field a caller
 // configures the transport with. The copy is wiped when the test ends.
-func privateKeyBytes(t *testing.T, key *pairing.StaticKey) []byte {
+func privateKeyBytes(t *testing.T, key *bootstrap.NoiseStaticKey) []byte {
 	t.Helper()
 	var private []byte
-	require.NoError(t, pairing.WithPrivateKey(key, func(privateKey []byte) error {
+	require.NoError(t, bootstrap.WithNoisePrivateKey(key, func(privateKey []byte) error {
 		private = bytes.Clone(privateKey)
 		return nil
 	}))

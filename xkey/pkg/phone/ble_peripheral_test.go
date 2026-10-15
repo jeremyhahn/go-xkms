@@ -22,7 +22,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/jeremyhahn/go-xkms/xkey/pkg/pairing"
+	"github.com/jeremyhahn/go-xkms/pkg/pairingproto"
+	"github.com/jeremyhahn/go-xkms/pkg/trust/bootstrap"
 )
 
 // echoHandler returns the request wrapped in a JSON-RPC result so the test can
@@ -59,34 +60,34 @@ func newTestPeripheral(t *testing.T, handler PeripheralRequestHandler, writer Fr
 	}
 
 	p.notifier = writer
-	p.fragmenter = pairing.NewFragmenter(p.mtu - bleNotifyOverhead)
-	p.reassembler = pairing.NewReassembler()
+	p.fragmenter = pairingproto.NewFragmenter(p.mtu - bleNotifyOverhead)
+	p.reassembler = pairingproto.NewReassembler()
 	p.sender = newFragmentSender(p.notifier, p.fragmenter, p.log)
 	return p
 }
 
 // establishSession runs a complete Noise XX handshake in memory and returns
 // the initiator session paired with the peripheral's responder session.
-func establishSession(t *testing.T, p *BLEPeripheral) *pairing.NoiseSession {
+func establishSession(t *testing.T, p *BLEPeripheral) *bootstrap.NoiseSession {
 	t.Helper()
 
-	initiatorKey, err := pairing.GenerateStaticKey()
+	initiatorKey, err := bootstrap.GenerateNoiseStaticKey()
 	if err != nil {
 		t.Fatalf("initiator key: %v", err)
 	}
-	responderKey, err := pairing.GenerateStaticKey()
+	responderKey, err := bootstrap.GenerateNoiseStaticKey()
 	if err != nil {
 		t.Fatalf("responder key: %v", err)
 	}
 
-	initiator, err := pairing.NewNoiseSession(&pairing.NoiseSessionConfig{
+	initiator, err := bootstrap.NewNoiseSession(&bootstrap.NoiseSessionConfig{
 		LocalStaticKey: initiatorKey,
 		IsInitiator:    true,
 	})
 	if err != nil {
 		t.Fatalf("initiator session: %v", err)
 	}
-	responder, err := pairing.NewNoiseSession(&pairing.NoiseSessionConfig{
+	responder, err := bootstrap.NewNoiseSession(&bootstrap.NoiseSessionConfig{
 		LocalStaticKey: responderKey,
 		IsInitiator:    false,
 	})
@@ -252,11 +253,11 @@ func TestBLEPeripheral_HandshakePropagatesSendFailure(t *testing.T) {
 	writer.failAt = 0
 	p := newTestPeripheral(t, &echoHandler{}, writer)
 
-	responderKey, err := pairing.GenerateStaticKey()
+	responderKey, err := bootstrap.GenerateNoiseStaticKey()
 	if err != nil {
 		t.Fatalf("responder key: %v", err)
 	}
-	p.session, err = pairing.NewNoiseSession(&pairing.NoiseSessionConfig{
+	p.session, err = bootstrap.NewNoiseSession(&bootstrap.NoiseSessionConfig{
 		LocalStaticKey: responderKey,
 		IsInitiator:    false,
 	})
@@ -264,11 +265,11 @@ func TestBLEPeripheral_HandshakePropagatesSendFailure(t *testing.T) {
 		t.Fatalf("responder session: %v", err)
 	}
 
-	initiatorKey, err := pairing.GenerateStaticKey()
+	initiatorKey, err := bootstrap.GenerateNoiseStaticKey()
 	if err != nil {
 		t.Fatalf("initiator key: %v", err)
 	}
-	initiator, err := pairing.NewNoiseSession(&pairing.NoiseSessionConfig{
+	initiator, err := bootstrap.NewNoiseSession(&bootstrap.NoiseSessionConfig{
 		LocalStaticKey: initiatorKey,
 		IsInitiator:    true,
 	})
@@ -326,7 +327,7 @@ func TestNewBLEPeripheral_MTUSelection(t *testing.T) {
 		{name: "unset MTU", cfg: &BLEPeripheralConfig{}, want: DefaultMTU},
 		{name: "below minimum", cfg: &BLEPeripheralConfig{MTU: 8}, want: DefaultMTU},
 		{name: "explicit MTU", cfg: &BLEPeripheralConfig{MTU: 512}, want: 512},
-		{name: "minimum MTU", cfg: &BLEPeripheralConfig{MTU: pairing.MinMTU}, want: pairing.MinMTU},
+		{name: "minimum MTU", cfg: &BLEPeripheralConfig{MTU: pairingproto.MinMTU}, want: pairingproto.MinMTU},
 	}
 
 	for _, tt := range tests {
@@ -356,9 +357,9 @@ func TestNewBLEPeripheral_RejectsInvalidPin(t *testing.T) {
 	}{
 		{name: "nil is unpinned, not an error", pin: nil, wantErr: nil},
 		{name: "empty is refused", pin: []byte{}, wantErr: ErrPeripheralInvalidPin},
-		{name: "too short is refused", pin: make([]byte, pairing.NoiseKeySize-1), wantErr: ErrPeripheralInvalidPin},
-		{name: "too long is refused", pin: make([]byte, pairing.NoiseKeySize+1), wantErr: ErrPeripheralInvalidPin},
-		{name: "correct length is accepted", pin: make([]byte, pairing.NoiseKeySize), wantErr: nil},
+		{name: "too short is refused", pin: make([]byte, bootstrap.NoiseKeySize-1), wantErr: ErrPeripheralInvalidPin},
+		{name: "too long is refused", pin: make([]byte, bootstrap.NoiseKeySize+1), wantErr: ErrPeripheralInvalidPin},
+		{name: "correct length is accepted", pin: make([]byte, bootstrap.NoiseKeySize), wantErr: nil},
 	}
 
 	for _, tt := range tests {

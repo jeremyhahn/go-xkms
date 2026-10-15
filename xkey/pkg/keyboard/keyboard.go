@@ -24,7 +24,7 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/jeremyhahn/go-xkms/xkey/pkg/uhid"
+	"github.com/jeremyhahn/go-xkms/sdk/go/fido2/uhid"
 )
 
 const (

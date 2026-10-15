@@ -36,10 +36,10 @@ import (
 	"testing"
 	"time"
 
+	"github.com/jeremyhahn/go-xkms/pkg/attestation/truststore"
 	xkms "github.com/jeremyhahn/go-xkms/sdk/go"
 	"github.com/jeremyhahn/go-xkms/xkey/pkg/backup"
 	"github.com/jeremyhahn/go-xkms/xkey/pkg/oath"
-	"github.com/jeremyhahn/go-xkms/xkey/pkg/truststore"
 	"github.com/spf13/cobra"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"

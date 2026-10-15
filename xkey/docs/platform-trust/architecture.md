@@ -41,7 +41,7 @@ is not a universal trust anchor; it is an unclassified one.
 `remote.syncTrustStore`, `xkey device sync`, or CA sync are stored as `synced`
 (`xkey/pkg/sync/service.go`, `syncedImportOptions`), never auto-classified: a
 phone is a peer, not an authority over this host's roots. `synced` is absent
-from the TLS anchor set (`tlsAnchorPurposes`, `xkey/pkg/truststore/import.go`)
+from the TLS anchor set (`tlsAnchorPurposes`, `pkg/attestation/truststore/import.go`)
 and refused by the attestation verifier's pool builder
 (`truststore.IsAnchorPurpose`), so it anchors nothing until the operator
 reclassifies it.
@@ -50,7 +50,7 @@ reclassifies it.
 path — `xkey trust bootstrap`, `xkey trust fetch`/`import-platform`, and the
 GUI's trust-strap import (`TrustService.ImportFromTrustStrap`) — files what it
 fetched under `bootstrap-ca`, sourced `platform:<host>`, through the one helper
-`truststore.BootstrapImportOptions` (`xkey/pkg/truststore/import.go`). The
+`truststore.BootstrapImportOptions` (`pkg/attestation/truststore/import.go`). The
 server chose the bundle; auto-classifying it would let the server choose an
 attestation purpose too. Only `fetch`/`import-platform` take `--purpose`/
 `--source` overrides.
@@ -103,7 +103,7 @@ Rejected alternatives:
 |---|---|
 | Bootstrap dispatch | `go-xkms/pkg/trust/bootstrap` |
 | SPKI-pinned direct fetch | `go-xkms/pkg/trust/fetcher` |
-| Local truststore | `xkey/pkg/truststore` |
+| Local truststore | `pkg/attestation/truststore` |
 | OS/NSS trust integration | `xkey/pkg/nssdb` |
 | CLI | `xkey/cmd/xkey/cmd/trust.go`, `xkey/cmd/xkey/cmd/trust_fetch.go` |
 | Platform CA import | `xkey trust fetch`/`import-platform`, over SPKI-pinned TLS |
@@ -125,7 +125,7 @@ between xkey and any server it bootstraps trust from, in either direction.
 xkey trust bootstrap --method dane,noise,spki --timeout 60s
    → go-xkms/pkg/trust/bootstrap.Fetch  (first configured method that verifies)
    ← CA bundle
-   → xkey/pkg/truststore: stored under bootstrap-ca, source platform:<host>
+   → pkg/attestation/truststore: stored under bootstrap-ca, source platform:<host>
 
 xkey trust classify <fingerprint> --purpose tpm-manufacturer
    → the certificate becomes an anchor for that purpose only

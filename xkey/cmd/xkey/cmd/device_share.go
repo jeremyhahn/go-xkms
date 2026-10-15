@@ -25,9 +25,9 @@ import (
 
 	"github.com/spf13/cobra"
 
+	"github.com/jeremyhahn/go-xkms/sdk/go/pairingproto"
 	secure "github.com/jeremyhahn/go-xkms/sdk/go/secure"
 	"github.com/jeremyhahn/go-xkms/sdk/go/transport"
-	"github.com/jeremyhahn/go-xkms/xkey/pkg/pairing"
 )
 
 // Key sharing errors.
@@ -224,7 +224,7 @@ func runDeviceShare(cmd *cobra.Command, args []string) (err error) {
 	if policy.SharePublic {
 		_, _ = fmt.Fprintln(cmd.OutOrStdout(), "Sending public key to phone...")
 
-		req := pairing.NewRequest(pairing.MethodLocalSharePublicKey, &pairing.LocalSharePublicKeyParams{
+		req := pairingproto.NewRequest(pairingproto.MethodLocalSharePublicKey, &pairingproto.LocalSharePublicKeyParams{
 			Backend:        backend,
 			KeyID:          keyID,
 			PublicKeyPEM:   material.PublicKeyPEM,
@@ -241,7 +241,7 @@ func runDeviceShare(cmd *cobra.Command, args []string) (err error) {
 			return &DetailError{Err: ErrShareRequestFailed, Detail: fmt.Sprintf(": [%d] %s", resp.Error.Code, resp.Error.Message)}
 		}
 
-		result, err := pairing.DecodeResult[pairing.LocalSharePublicKeyResult](resp)
+		result, err := pairingproto.DecodeResult[pairingproto.LocalSharePublicKeyResult](resp)
 		if err != nil {
 			return &WrappedError{Msg: "failed to decode share result", Err: err}
 		}
@@ -260,9 +260,9 @@ func runDeviceShare(cmd *cobra.Command, args []string) (err error) {
 		// The plaintext key material only materializes for the duration of
 		// the request marshal + send, borrowed from protected memory rather
 		// than copied into a long-lived local.
-		var resp *pairing.Response
+		var resp *pairingproto.Response
 		withErr := material.KeyMaterial.WithBytes(func(b []byte) error {
-			req := pairing.NewRequest(pairing.MethodLocalShareSymmetric, &pairing.LocalShareSymmetricParams{
+			req := pairingproto.NewRequest(pairingproto.MethodLocalShareSymmetric, &pairingproto.LocalShareSymmetricParams{
 				Backend:    backend,
 				KeyID:      keyID,
 				WrappedKey: b,
@@ -282,7 +282,7 @@ func runDeviceShare(cmd *cobra.Command, args []string) (err error) {
 			return &DetailError{Err: ErrShareRequestFailed, Detail: fmt.Sprintf(": [%d] %s", resp.Error.Code, resp.Error.Message)}
 		}
 
-		result, err := pairing.DecodeResult[pairing.LocalShareSymmetricResult](resp)
+		result, err := pairingproto.DecodeResult[pairingproto.LocalShareSymmetricResult](resp)
 		if err != nil {
 			return &WrappedError{Msg: "failed to decode share result", Err: err}
 		}
@@ -431,7 +431,7 @@ func runDeviceImport(cmd *cobra.Command, args []string) (err error) {
 	_, _ = fmt.Fprintln(cmd.OutOrStdout(), "Requesting key from phone (check phone for biometric prompt)...")
 	_, _ = fmt.Fprintln(cmd.OutOrStdout())
 
-	req := pairing.NewRequest(pairing.MethodLocalImportSharedKey, &pairing.LocalImportSharedKeyParams{
+	req := pairingproto.NewRequest(pairingproto.MethodLocalImportSharedKey, &pairingproto.LocalImportSharedKeyParams{
 		KeyID: keyID,
 	})
 
@@ -443,7 +443,7 @@ func runDeviceImport(cmd *cobra.Command, args []string) (err error) {
 		return &DetailError{Err: ErrShareImportFailed, Detail: fmt.Sprintf(": [%d] %s", resp.Error.Code, resp.Error.Message)}
 	}
 
-	result, err := pairing.DecodeResult[pairing.LocalImportSharedKeyResult](resp)
+	result, err := pairingproto.DecodeResult[pairingproto.LocalImportSharedKeyResult](resp)
 	if err != nil {
 		return &WrappedError{Msg: "failed to decode import result", Err: err}
 	}

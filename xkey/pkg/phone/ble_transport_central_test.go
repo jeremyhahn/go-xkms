@@ -24,7 +24,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/jeremyhahn/go-xkms/xkey/pkg/pairing"
+	"github.com/jeremyhahn/go-xkms/pkg/pairingproto"
 	"tinygo.org/x/bluetooth"
 )
 
@@ -73,7 +73,7 @@ func connectedTransport(t *testing.T) (*BLETransport, *fakePhone, *fakeBluetooth
 // fragments splits msg the way the phone would before notifying it.
 func fragments(t *testing.T, msg []byte) [][]byte {
 	t.Helper()
-	frags, err := pairing.NewFragmenter(DefaultMTU).Fragment(msg)
+	frags, err := pairingproto.NewFragmenter(DefaultMTU).Fragment(msg)
 	if err != nil {
 		t.Fatalf("Fragment() error = %v", err)
 	}
@@ -562,14 +562,14 @@ func TestBLETransport_Connect_CancelledContextDisconnects(t *testing.T) {
 
 func TestBLETransport_SendAndReceive_RoundTrip(t *testing.T) {
 	tr, phone, _ := connectedTransport(t)
-	tr.SetMTU(pairing.MinMTU)
+	tr.SetMTU(pairingproto.MinMTU)
 
 	// The phone reassembles what the control point receives and answers on
 	// the response characteristic.
 	request := bytes.Repeat([]byte("request-"), 20)
-	inbound := pairing.NewReassembler()
+	inbound := pairingproto.NewReassembler()
 	phone.control.onWrite = func(data []byte) {
-		frag, err := pairing.DecodeFragment(data)
+		frag, err := pairingproto.DecodeFragment(data)
 		if err != nil {
 			t.Errorf("phone received an undecodable fragment: %v", err)
 			return
@@ -583,7 +583,7 @@ func TestBLETransport_SendAndReceive_RoundTrip(t *testing.T) {
 			t.Errorf("phone could not assemble the request: %v", err)
 			return
 		}
-		reply, err := pairing.NewFragmenter(DefaultMTU).Fragment(append([]byte("echo:"), msg...))
+		reply, err := pairingproto.NewFragmenter(DefaultMTU).Fragment(append([]byte("echo:"), msg...))
 		if err != nil {
 			t.Errorf("phone could not fragment the reply: %v", err)
 			return
@@ -643,11 +643,11 @@ func TestBLETransport_Send_CancelledDuringBlockedWrite(t *testing.T) {
 
 func TestBLETransport_Send_MessageTooLargeToFragment(t *testing.T) {
 	tr, phone, _ := connectedTransport(t)
-	tr.SetMTU(pairing.MinMTU)
-	tooLarge := make([]byte, 65536*(pairing.MinMTU-pairing.FragmentHeaderSize))
+	tr.SetMTU(pairingproto.MinMTU)
+	tooLarge := make([]byte, 65536*(pairingproto.MinMTU-pairingproto.FragmentHeaderSize))
 
-	if err := tr.Send(context.Background(), tooLarge); !errors.Is(err, pairing.ErrFragmentationError) {
-		t.Fatalf("Send() error = %v, want %v", err, pairing.ErrFragmentationError)
+	if err := tr.Send(context.Background(), tooLarge); !errors.Is(err, pairingproto.ErrFragmentationError) {
+		t.Fatalf("Send() error = %v, want %v", err, pairingproto.ErrFragmentationError)
 	}
 	if n := len(phone.control.written()); n != 0 {
 		t.Fatalf("control point writes = %d, want 0", n)

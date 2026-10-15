@@ -66,7 +66,7 @@ The authenticator's own CTAP2 SO PIN is a separate credential, set with
 `xkey fido2 init-token` and changed with `change-so-pin`. Over CTAP it is
 reached through the `authenticatorConfig` vendor subcommand
 (`AuthConfigCmdVendorPrototype`, `0x80`), which carries vendor command IDs
-`0x01`-`0x0B` (`xkey/pkg/authenticator/cmd_config.go:38-75`). See
+`0x01`-`0x0B` (`pkg/fido2/authenticator/cmd_config.go:38-75`). See
 [virtual-authenticator/cli.md](../virtual-authenticator/cli.md#the-token-lifecycle--init-token-change-so-pin-and-provision-attestation).
 
 ## Where to Go Next

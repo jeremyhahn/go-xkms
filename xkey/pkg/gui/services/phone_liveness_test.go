@@ -23,8 +23,8 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	"github.com/jeremyhahn/go-xkms/pkg/pairingproto"
 	xkeyAttestation "github.com/jeremyhahn/go-xkms/xkey/pkg/attestation"
-	"github.com/jeremyhahn/go-xkms/xkey/pkg/pairing"
 )
 
 // The GUI's half of the #129 enforcement (go-xkms#130).
@@ -71,8 +71,8 @@ func TestProveDeviceLivenessRefusesWithoutATrustStore(t *testing.T) {
 
 	bound := &phoneConfigDevice{
 		Name:                       "bound",
-		DeviceFingerprint:          strings.Repeat("bb", pairing.AttestFingerprintSize), // well-formed, so Validate passes and the trust-store check is what's under test
-		AttestationProtocolVersion: pairing.AttestProtocolV2,
+		DeviceFingerprint:          strings.Repeat("bb", pairingproto.AttestFingerprintSize), // well-formed, so Validate passes and the trust-store check is what's under test
+		AttestationProtocolVersion: pairingproto.AttestProtocolV2,
 	}
 
 	err := svc.proveDeviceLiveness(context.Background(), nil, nil, bound)
@@ -89,10 +89,10 @@ func TestProveDeviceLivenessRefusesWithoutATrustStore(t *testing.T) {
 // unbound and the requirement evaporated. The field is carried now, and this
 // asserts the projection the verifier consumes actually reflects it.
 func TestAttestationBindingReadsTheRecordNotThePeer(t *testing.T) {
-	fp := strings.Repeat("cc", pairing.AttestFingerprintSize)
+	fp := strings.Repeat("cc", pairingproto.AttestFingerprintSize)
 	bound := &phoneConfigDevice{
 		DeviceFingerprint:          fp,
-		AttestationProtocolVersion: pairing.AttestProtocolV2,
+		AttestationProtocolVersion: pairingproto.AttestProtocolV2,
 	}
 	legacy := &phoneConfigDevice{DeviceFingerprint: fp}
 

@@ -93,6 +93,7 @@ func (m *Module) MCPToolPermissions() map[string]qrdbsdk.Permission {
 // lazy backend resolution.
 func (m *Module) mcpToolHandler(spec xkmsmcp.MethodSpec) mcpserver.ToolHandlerFunc {
 	return func(ctx context.Context, req mcpgo.CallToolRequest) (*mcpgo.CallToolResult, error) {
+		m.wirePeerEvidenceCollector()
 		backend := m.resolveMCP()
 		if backend == nil {
 			return mcpgo.NewToolResultError(

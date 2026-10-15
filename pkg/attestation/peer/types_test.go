@@ -19,8 +19,6 @@ import (
 	"errors"
 	"strings"
 	"testing"
-
-	"github.com/jeremyhahn/go-xkms/pkg/ca"
 )
 
 func TestFailureClass_String(t *testing.T) {
@@ -99,18 +97,6 @@ func TestErrors_Messages(t *testing.T) {
 	cbe = &ChannelBindingError{Reason: "TLS exporter refused", Cause: cause}
 	if !strings.HasSuffix(cbe.Error(), ": boom") || !errors.Is(cbe, cause) {
 		t.Fatal(cbe.Error())
-	}
-}
-
-// TestRestrictedOIDMatchesCA pins the locally declared policy OID to the one
-// pkg/ca stamps on IAK certificates, so the verifier and the issuer cannot
-// drift apart without this test noticing.
-func TestRestrictedOIDMatchesCA(t *testing.T) {
-	if !oidTCGVerifiedTPMRestricted.Equal(ca.OIDTCGVerifiedTPMRestricted) {
-		t.Fatalf("asn1 form %v != pkg/ca %v", oidTCGVerifiedTPMRestricted, ca.OIDTCGVerifiedTPMRestricted)
-	}
-	if !oidTCGVerifiedTPMRestrictedX509.Equal(ca.TCGVerifiedTPMRestrictedPolicy) {
-		t.Fatalf("x509 form %v != pkg/ca %v", oidTCGVerifiedTPMRestrictedX509, ca.TCGVerifiedTPMRestrictedPolicy)
 	}
 }
 

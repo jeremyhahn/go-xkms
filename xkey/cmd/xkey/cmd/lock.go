@@ -15,7 +15,6 @@ package cmd
 
 import (
 	"fmt"
-	"os"
 
 	"github.com/spf13/cobra"
 
@@ -61,7 +60,7 @@ func init() {
 
 func runLock(cmd *cobra.Command, args []string) error {
 	// Check for root privileges
-	if os.Geteuid() != 0 {
+	if geteuid() != 0 {
 		return luks.ErrPermissionDenied
 	}
 

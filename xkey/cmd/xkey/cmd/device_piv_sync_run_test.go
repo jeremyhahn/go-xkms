@@ -29,7 +29,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	"github.com/jeremyhahn/go-xkms/xkey/pkg/pairing"
+	"github.com/jeremyhahn/go-xkms/pkg/pairingproto"
 )
 
 func pivSyncTestCmd(extraFlags func(*cobra.Command)) *cobra.Command {
@@ -140,7 +140,7 @@ func pivFailureCases(method string) []struct {
 		},
 		{
 			name: "phone error",
-			transport: &fakeDeviceTransport{rpcErrors: map[string]*pairing.RPCError{
+			transport: &fakeDeviceTransport{rpcErrors: map[string]*pairingproto.RPCError{
 				method: {Code: -32000, Message: "slot locked"},
 			}},
 			detail: "[-32000] slot locked",
@@ -165,7 +165,7 @@ func TestRunPIVDeviceList_RendersEverySlot(t *testing.T) {
 	pairTestDevice(t, "Test Phone")
 
 	transport := &fakeDeviceTransport{results: map[string]any{
-		pairing.MethodLocalPIVListSlots: &pairing.LocalPIVListSlotsResult{Slots: []pairing.PIVSlotInfo{
+		pairingproto.MethodLocalPIVListSlots: &pairingproto.LocalPIVListSlotsResult{Slots: []pairingproto.PIVSlotInfo{
 			{Slot: "9a", Label: "PIV Authentication with a long label", Algorithm: "ECDSA-P256",
 				HasKey: true, HasCertificate: true, CertSubject: "alice"},
 			{Slot: "9c", Label: "Digital Signature"},
@@ -187,7 +187,7 @@ func TestRunPIVDeviceList_EmptyPhone(t *testing.T) {
 	isolatedBackupHome(t)
 	pairTestDevice(t, "Test Phone")
 	useFakeTransport(t, &fakeDeviceTransport{results: map[string]any{
-		pairing.MethodLocalPIVListSlots: &pairing.LocalPIVListSlotsResult{},
+		pairingproto.MethodLocalPIVListSlots: &pairingproto.LocalPIVListSlotsResult{},
 	}})
 
 	cmd := pivSyncTestCmd(nil)
@@ -199,7 +199,7 @@ func TestRunPIVDeviceList_PhoneFailures(t *testing.T) {
 	isolatedBackupHome(t)
 	pairTestDevice(t, "Test Phone")
 
-	for _, tt := range pivFailureCases(pairing.MethodLocalPIVListSlots) {
+	for _, tt := range pivFailureCases(pairingproto.MethodLocalPIVListSlots) {
 		t.Run(tt.name, func(t *testing.T) {
 			useFakeTransport(t, tt.transport)
 
@@ -230,7 +230,7 @@ func TestRunPIVDevicePushCert_SendsTheCertificate(t *testing.T) {
 	certPath, certDER := writePIVTestCert(t, "piv-push")
 
 	transport := &fakeDeviceTransport{results: map[string]any{
-		pairing.MethodLocalPIVImportCert: &pairing.LocalPIVImportCertResult{Success: true},
+		pairingproto.MethodLocalPIVImportCert: &pairingproto.LocalPIVImportCertResult{Success: true},
 	}}
 	useFakeTransport(t, transport)
 
@@ -238,7 +238,7 @@ func TestRunPIVDevicePushCert_SendsTheCertificate(t *testing.T) {
 	require.NoError(t, runPIVDevicePushCert(cmd, []string{"9c", certPath}))
 
 	require.Len(t, transport.requests, 1)
-	params, ok := transport.requests[0].Params.(*pairing.LocalPIVImportCertParams)
+	params, ok := transport.requests[0].Params.(*pairingproto.LocalPIVImportCertParams)
 	require.True(t, ok)
 	assert.Equal(t, "9c", params.Slot)
 	assert.Equal(t, certDER, params.CertificateDER)
@@ -263,7 +263,7 @@ func TestRunPIVDevicePushCert_PhoneFailures(t *testing.T) {
 	pairTestDevice(t, "Test Phone")
 	certPath, _ := writePIVTestCert(t, "piv-push")
 
-	for _, tt := range pivFailureCases(pairing.MethodLocalPIVImportCert) {
+	for _, tt := range pivFailureCases(pairingproto.MethodLocalPIVImportCert) {
 		t.Run(tt.name, func(t *testing.T) {
 			useFakeTransport(t, tt.transport)
 
@@ -289,7 +289,7 @@ func TestRunPIVDevicePullCert_PrintsOrSavesTheCertificate(t *testing.T) {
 	_, certDER := writePIVTestCert(t, "piv-pull")
 
 	transport := &fakeDeviceTransport{results: map[string]any{
-		pairing.MethodLocalPIVGetCert: &pairing.LocalPIVGetCertResult{CertificateDER: certDER},
+		pairingproto.MethodLocalPIVGetCert: &pairingproto.LocalPIVGetCertResult{CertificateDER: certDER},
 	}}
 	useFakeTransport(t, transport)
 	wantPEM := string(pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: certDER}))
@@ -316,7 +316,7 @@ func TestRunPIVDevicePullCert_PrintsOrSavesTheCertificate(t *testing.T) {
 		assert.NotContains(t, pivOutput(cmd), "BEGIN CERTIFICATE")
 	})
 
-	var sent pairing.LocalPIVGetCertParams
+	var sent pairingproto.LocalPIVGetCertParams
 	require.NoError(t, json.Unmarshal(transport.wire[0], &sent))
 	assert.Equal(t, "9d", sent.Slot)
 }
@@ -327,7 +327,7 @@ func TestRunPIVDevicePullCert_BadReplies(t *testing.T) {
 
 	t.Run("empty slot", func(t *testing.T) {
 		useFakeTransport(t, &fakeDeviceTransport{results: map[string]any{
-			pairing.MethodLocalPIVGetCert: &pairing.LocalPIVGetCertResult{},
+			pairingproto.MethodLocalPIVGetCert: &pairingproto.LocalPIVGetCertResult{},
 		}})
 
 		err := runPIVDevicePullCert(pivPullCmd(""), []string{"9a"})
@@ -337,14 +337,14 @@ func TestRunPIVDevicePullCert_BadReplies(t *testing.T) {
 
 	t.Run("unparseable certificate", func(t *testing.T) {
 		useFakeTransport(t, &fakeDeviceTransport{results: map[string]any{
-			pairing.MethodLocalPIVGetCert: &pairing.LocalPIVGetCertResult{CertificateDER: []byte("junk")},
+			pairingproto.MethodLocalPIVGetCert: &pairingproto.LocalPIVGetCertResult{CertificateDER: []byte("junk")},
 		}})
 
 		err := runPIVDevicePullCert(pivPullCmd(""), []string{"9a"})
 		require.ErrorIs(t, err, ErrPIVDevicePullCertFailed)
 	})
 
-	for _, tt := range pivFailureCases(pairing.MethodLocalPIVGetCert) {
+	for _, tt := range pivFailureCases(pairingproto.MethodLocalPIVGetCert) {
 		t.Run(tt.name, func(t *testing.T) {
 			useFakeTransport(t, tt.transport)
 
@@ -367,7 +367,7 @@ func TestRunPIVDeviceGenerateKey_ReportsTheNewKey(t *testing.T) {
 	pairTestDevice(t, "Test Phone")
 
 	transport := &fakeDeviceTransport{results: map[string]any{
-		pairing.MethodLocalPIVGenerateKey: &pairing.LocalPIVGenerateKeyResult{
+		pairingproto.MethodLocalPIVGenerateKey: &pairingproto.LocalPIVGenerateKeyResult{
 			Slot: "9e", Algorithm: "ECDSA-P384", PublicKeyDER: make([]byte, 120),
 		},
 	}}
@@ -376,7 +376,7 @@ func TestRunPIVDeviceGenerateKey_ReportsTheNewKey(t *testing.T) {
 	cmd := pivDeviceGenerateCmd("ECDSA-P384")
 	require.NoError(t, runPIVDeviceGenerateKey(cmd, []string{"9e"}))
 
-	params, ok := transport.requests[0].Params.(*pairing.LocalPIVGenerateKeyParams)
+	params, ok := transport.requests[0].Params.(*pairingproto.LocalPIVGenerateKeyParams)
 	require.True(t, ok)
 	assert.Equal(t, "9e", params.Slot)
 	assert.Equal(t, "ECDSA-P384", params.Algorithm)
@@ -391,7 +391,7 @@ func TestRunPIVDeviceGenerateKey_PhoneFailures(t *testing.T) {
 	isolatedBackupHome(t)
 	pairTestDevice(t, "Test Phone")
 
-	for _, tt := range pivFailureCases(pairing.MethodLocalPIVGenerateKey) {
+	for _, tt := range pivFailureCases(pairingproto.MethodLocalPIVGenerateKey) {
 		t.Run(tt.name, func(t *testing.T) {
 			useFakeTransport(t, tt.transport)
 

@@ -34,9 +34,9 @@ import (
 	"github.com/spf13/cobra"
 
 	xkms "github.com/jeremyhahn/go-xkms/sdk/go"
+	"github.com/jeremyhahn/go-xkms/sdk/go/pairingproto"
+	"github.com/jeremyhahn/go-xkms/sdk/go/truststore"
 	xkeyAttestation "github.com/jeremyhahn/go-xkms/xkey/pkg/attestation"
-	"github.com/jeremyhahn/go-xkms/xkey/pkg/pairing"
-	xkeyTruststore "github.com/jeremyhahn/go-xkms/xkey/pkg/truststore"
 )
 
 // Device attest errors.
@@ -201,7 +201,7 @@ func runDeviceAttest(cmd *cobra.Command, args []string) (err error) {
 	fmt.Println()
 
 	// Send attestation request
-	req := pairing.NewRequest(pairing.MethodLocalAttestKey, &pairing.LocalAttestKeyParams{
+	req := pairingproto.NewRequest(pairingproto.MethodLocalAttestKey, &pairingproto.LocalAttestKeyParams{
 		KeyID: keyID,
 		Nonce: nonce,
 	})
@@ -216,7 +216,7 @@ func runDeviceAttest(cmd *cobra.Command, args []string) (err error) {
 	}
 
 	// Decode the result
-	result, err := pairing.DecodeResult[pairing.LocalAttestKeyResult](resp)
+	result, err := pairingproto.DecodeResult[pairingproto.LocalAttestKeyResult](resp)
 	if err != nil {
 		return &WrappedError{Msg: "failed to decode attestation result", Err: err}
 	}
@@ -259,18 +259,18 @@ func runDeviceAttest(cmd *cobra.Command, args []string) (err error) {
 			}
 		}()
 
-		verifier, verifierErr := xkeyAttestation.NewVerifier(xkeyStore, xkeyTruststore.LoadEmbeddedRoots)
+		verifier, verifierErr := xkeyAttestation.NewVerifier(xkeyStore, truststore.LoadEmbeddedRoots)
 		if verifierErr != nil {
 			return &WrappedError{Msg: "failed to create attestation verifier", Err: verifierErr}
 		}
 
-		rootPool, poolErr := verifier.BuildTrustPool(xkeyTruststore.PurposeAndroidHardware)
+		rootPool, poolErr := verifier.BuildTrustPool(truststore.PurposeAndroidHardware)
 		if poolErr != nil {
 			return &WrappedError{Msg: "failed to build trust pool", Err: poolErr}
 		}
 
 		// Build allRoots slice for findMatchingTrustRoot: xkey store certs + embedded roots
-		allRoots := xkeyTruststore.LoadEmbeddedRoots(xkeyTruststore.PurposeAndroidHardware)
+		allRoots := truststore.LoadEmbeddedRoots(truststore.PurposeAndroidHardware)
 		xkeyCerts, certsErr := xkeyStore.Certificates()
 		if certsErr == nil && len(xkeyCerts) > 0 {
 			allRoots = append(allRoots, xkeyCerts...)

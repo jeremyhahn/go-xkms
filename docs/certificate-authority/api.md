@@ -170,7 +170,7 @@ invisible hole.
 implemented and tested (`pkg/ca/tcg_lak_test.go`,
 `pkg/tpm2/local_attestation_key_simulator_test.go`), and xkey's TPM-backed
 WebAuthn/FIDO2 authenticator already attests with the LAK
-(`xkey/pkg/authenticator/keybackend/tpm_attestation.go`). No REST, gRPC/Unix,
+(`pkg/fido2/authenticator/keybackend/tpm_attestation.go`). No REST, gRPC/Unix,
 QUIC, MCP or embedded verb submits `LAKCertificationEvidence` to a running
 `xkmsd` yet; a device today reaches `IssueLAKCertificate` only by embedding
 the CA in-process. Recorded as a gap rather than a row with a made-up

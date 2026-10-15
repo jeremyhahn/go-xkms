@@ -60,19 +60,21 @@ an agent whose environment names instance A never reaches instance B.
 The one Go API this feature owns is the handler an authenticator is built with:
 
 ```go
-// xkey/pkg/authenticator
+// pkg/fido2/authenticator
 type Config struct {
     // ...
     UserPresenceHandler UserPresenceHandler // required; nil is ErrUserPresenceHandlerRequired
 }
 
-func NewSocketHandler(notifier notify.Notifier, logger *slog.Logger) *SocketHandler
 func NewInteractiveHandler() (*InteractiveHandler, error)
 func NewAutoGrantHandler() *AutoGrantHandler
+
+// xkey/pkg/presence
+func NewSocketHandler(notifier notify.Notifier, logger *slog.Logger) *SocketHandler
 ```
 
 A programmatic device names `NewAutoGrantHandler()` at its own construction
-site (`xkey/pkg/virtualdevice` does, with the reason beside it). Auto-grant
+site (`pkg/fido2/virtualdevice` does, with the reason beside it). Auto-grant
 answers the presence test; it never sets the UV flag, which comes only from a
 verified PIN or a key backend that verifies a human itself.
 

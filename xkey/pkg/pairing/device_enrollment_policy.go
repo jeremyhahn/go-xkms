@@ -20,6 +20,7 @@ import (
 	"time"
 
 	xkms "github.com/jeremyhahn/go-xkms/sdk/go"
+	"github.com/jeremyhahn/go-xkms/sdk/go/pairingproto"
 )
 
 // Enrollment policy failures. Each names a distinct reason so an operator can
@@ -109,7 +110,7 @@ const DefaultEnrollmentValidity = 90 * 24 * time.Hour
 func NewEnrollmentPolicy() *EnrollmentPolicy {
 	return &EnrollmentPolicy{
 		Validity:            DefaultEnrollmentValidity,
-		MinSecurityLevel:    SecurityLevelTEE,
+		MinSecurityLevel:    pairingproto.SecurityLevelTEE,
 		RequireVerifiedBoot: true,
 	}
 }
@@ -146,7 +147,7 @@ func (p *EnrollmentPolicy) effectiveValidity() time.Duration {
 func (p *EnrollmentPolicy) minSecurityRank() int {
 	level := p.MinSecurityLevel
 	if level == "" {
-		level = SecurityLevelTEE
+		level = pairingproto.SecurityLevelTEE
 	}
 	return securityRank(level)
 }
@@ -155,9 +156,9 @@ func (p *EnrollmentPolicy) minSecurityRank() int {
 // with software, so a typo in configuration cannot silently weaken the policy.
 func securityRank(level string) int {
 	switch level {
-	case SecurityLevelStrongBox:
+	case pairingproto.SecurityLevelStrongBox:
 		return 2
-	case SecurityLevelTEE:
+	case pairingproto.SecurityLevelTEE:
 		return 1
 	default:
 		return 0
@@ -168,11 +169,11 @@ func securityRank(level string) int {
 func securityLevelName(level xkms.AndroidSecurityLevel) string {
 	switch level {
 	case xkms.AndroidSecurityLevelStrongBox:
-		return SecurityLevelStrongBox
+		return pairingproto.SecurityLevelStrongBox
 	case xkms.AndroidSecurityLevelTrustedEnvironment:
-		return SecurityLevelTEE
+		return pairingproto.SecurityLevelTEE
 	default:
-		return SecurityLevelSoftware
+		return pairingproto.SecurityLevelSoftware
 	}
 }
 
@@ -183,14 +184,14 @@ func securityLevelName(level xkms.AndroidSecurityLevel) string {
 // the claims inside it. Nothing in the evidence is believed until the chain has
 // been verified, because until then it is only bytes the phone sent.
 func (p *EnrollmentPolicy) Evaluate(
-	result *LocalGetDeviceEnrollmentRequestResult,
+	result *pairingproto.LocalGetDeviceEnrollmentRequestResult,
 	expectedNonce []byte,
 	now time.Time,
 ) (*EnrollmentDecision, error) {
 	if result == nil || len(result.AttestationChain) == 0 {
 		return nil, ErrEnrollmentNoEvidence
 	}
-	if result.Format != "" && result.Format != AttestationFormatAndroidKey {
+	if result.Format != "" && result.Format != pairingproto.AttestationFormatAndroidKey {
 		return nil, fmt.Errorf("%w: %q", ErrEnrollmentUnknownFormat, result.Format)
 	}
 	if p.TrustedRoots == nil {

@@ -33,9 +33,9 @@ import (
 
 	wailsruntime "github.com/wailsapp/wails/v2/pkg/runtime"
 
+	"github.com/jeremyhahn/go-xkms/sdk/go/truststore"
 	"github.com/jeremyhahn/go-xkms/xkey/pkg/audit"
 	"github.com/jeremyhahn/go-xkms/xkey/pkg/config"
-	"github.com/jeremyhahn/go-xkms/xkey/pkg/truststore"
 )
 
 // TagBrowserExport is the tag used to mark certificates for browser trust

@@ -563,6 +563,14 @@ type (
 	OIDCDeviceLogin             = transport.OIDCDeviceLogin
 	OIDCAccessToken             = transport.OIDCAccessToken
 
+	// Trust Root Operations
+	TrustRoot               = transport.TrustRoot
+	TrustRootRequest        = transport.TrustRootRequest
+	TrustRootListRequest    = transport.TrustRootListRequest
+	TrustRootListResponse   = transport.TrustRootListResponse
+	TrustRootImportRequest  = transport.TrustRootImportRequest
+	TrustRootImportResponse = transport.TrustRootImportResponse
+
 	// Audit Operations
 
 	// Backup Operations

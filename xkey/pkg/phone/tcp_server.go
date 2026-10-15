@@ -27,6 +27,8 @@ import (
 	secure "github.com/jeremyhahn/go-xkms/sdk/go/secure"
 	"github.com/jeremyhahn/go-xkms/xkey/internal/lifecycle"
 
+	"github.com/jeremyhahn/go-xkms/sdk/go/bootstrap"
+	"github.com/jeremyhahn/go-xkms/sdk/go/pairingproto"
 	"github.com/jeremyhahn/go-xkms/xkey/pkg/pairing"
 )
 
@@ -47,7 +49,7 @@ var (
 
 	// ErrTCPServerInvalidPin indicates ExpectedRemoteStatic was supplied but
 	// is not a usable Noise static public key: empty, or a length other than
-	// pairing.NoiseKeySize. Mirrors BLEPeripheralConfig's
+	// bootstrap.NoiseKeySize. Mirrors BLEPeripheralConfig's
 	// ErrPeripheralInvalidPin: a caller that meant to pin a key and supplied
 	// something unusable must be refused at construction, not silently
 	// downgraded to unpinned (phone.NewNoiseSession treats a zero-length
@@ -91,7 +93,7 @@ type TCPPairingConfig struct {
 
 	// LocalStaticKey is the persistent Noise static key, held in protected
 	// memory. If nil, a new key is generated on start.
-	LocalStaticKey *pairing.StaticKey
+	LocalStaticKey *bootstrap.NoiseStaticKey
 
 	// ExpectedRemoteStatic pins every accepted connection to one peer's
 	// static public key. If set, the Noise handshake fails for any
@@ -151,7 +153,7 @@ type TCPPairingConfig struct {
 	// it must say so with AlwaysApproveLiveAttest, matching
 	// pairing.AlwaysApproveSync's precedent -- leaving this nil is never
 	// read as "attestation not required."
-	LiveAttest pairing.LiveAttestFunc
+	LiveAttest pairingproto.LiveAttestFunc
 
 	// LiveAttestTimeout bounds LiveAttest's round trip, which prompts the
 	// phone's user for biometric confirmation. Default: 120 seconds
@@ -193,7 +195,7 @@ type TCPPairingServer struct {
 	stopOnce sync.Once
 	stopErr  error
 
-	localStaticKey *pairing.StaticKey
+	localStaticKey *bootstrap.NoiseStaticKey
 
 	// ownsStaticKey records whether the server generated localStaticKey
 	// itself. A key supplied by the caller stays the caller's to destroy;
@@ -214,7 +216,7 @@ func NewTCPPairingServer(cfg *TCPPairingConfig) (*TCPPairingServer, error) {
 	// refused construction must not leave a transferred key adopted with
 	// nothing to release it. nil means "run unpinned"; anything else must be
 	// a usable Noise static public key.
-	if cfg.ExpectedRemoteStatic != nil && len(cfg.ExpectedRemoteStatic) != pairing.NoiseKeySize {
+	if cfg.ExpectedRemoteStatic != nil && len(cfg.ExpectedRemoteStatic) != bootstrap.NoiseKeySize {
 		return nil, ErrTCPServerInvalidPin
 	}
 	if cfg.ListenAddr == "" {
@@ -244,7 +246,7 @@ func NewTCPPairingServer(cfg *TCPPairingConfig) (*TCPPairingServer, error) {
 	owns := false
 	switch {
 	case localKey == nil:
-		generated, err := pairing.GenerateStaticKey()
+		generated, err := bootstrap.GenerateNoiseStaticKey()
 		if err != nil {
 			return nil, ErrTCPServerStartFailed
 		}
@@ -549,7 +551,7 @@ func (s *TCPPairingServer) handleConnection(conn net.Conn) {
 	}
 
 	// Create a Noise session as responder for this connection.
-	session, err := pairing.NewNoiseSession(&pairing.NoiseSessionConfig{
+	session, err := bootstrap.NewNoiseSession(&bootstrap.NoiseSessionConfig{
 		LocalStaticKey:       s.localStaticKey,
 		ExpectedRemoteStatic: s.cfg.ExpectedRemoteStatic,
 		IsInitiator:          false,
@@ -576,8 +578,8 @@ func (s *TCPPairingServer) handleConnection(conn net.Conn) {
 		return
 	}
 	msg1 := first
-	if len(first) == pairing.IdentityMsgSize && first[0] == pairing.IdentityMsgVersion {
-		if err := tcpSend(conn, []byte{pairing.IdentityAckUnknown}); err != nil {
+	if len(first) == pairingproto.IdentityMsgSize && first[0] == pairingproto.IdentityMsgVersion {
+		if err := tcpSend(conn, []byte{pairingproto.IdentityAckUnknown}); err != nil {
 			s.log.Error("failed to send identity ack", "remote", remoteAddr, "error", err)
 			return
 		}
@@ -656,12 +658,12 @@ func (s *TCPPairingServer) handleConnection(conn net.Conn) {
 // requests with no liveness check (ErrLiveAttestationUnavailable), matching
 // PhoneKeyBackend.proveLiveness's own fail-closed contract for the same proof
 // on the initiator side.
-func (s *TCPPairingServer) performLiveAttestation(conn net.Conn, session *pairing.NoiseSession) error {
+func (s *TCPPairingServer) performLiveAttestation(conn net.Conn, session *bootstrap.NoiseSession) error {
 	if s.cfg.LiveAttest == nil {
 		return ErrLiveAttestationUnavailable
 	}
 
-	channelBinding, err := session.AttestChannelBinding()
+	channelBinding, err := pairingproto.AttestChannelBinding(session)
 	if err != nil {
 		return err
 	}
@@ -680,7 +682,7 @@ func (s *TCPPairingServer) performLiveAttestation(conn net.Conn, session *pairin
 
 // requestLoop reads encrypted JSON-RPC requests, decrypts them, delegates
 // to the RequestHandler, encrypts the response, and sends it back.
-func (s *TCPPairingServer) requestLoop(conn net.Conn, session *pairing.NoiseSession, remoteAddr string) {
+func (s *TCPPairingServer) requestLoop(conn net.Conn, session *bootstrap.NoiseSession, remoteAddr string) {
 	for {
 		// Check if the server is shutting down.
 		if s.closed.Load() {

@@ -24,6 +24,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	"github.com/jeremyhahn/go-xkms/pkg/pairingproto"
 	xkms "github.com/jeremyhahn/go-xkms/sdk/go"
 	"github.com/jeremyhahn/go-xkms/xkey/pkg/pairing"
 )
@@ -114,10 +115,10 @@ func TestListenHandler_WithoutAnEnrollmentTPM_ReportsUnavailable(t *testing.T) {
 
 	handler := newListenHandler(t, bridge)
 	raw, err := handler.HandleRequest(context.Background(),
-		mustEncodeRequest(t, pairing.MethodRemoteGetTCGCSRIDevID, map[string]any{"backend": "tpm2"}))
+		mustEncodeRequest(t, pairingproto.MethodRemoteGetTCGCSRIDevID, map[string]any{"backend": "tpm2"}))
 	require.NoError(t, err)
 
 	resp := decodeListenResponse(t, raw)
 	require.NotNil(t, resp.Error)
-	assert.Equal(t, pairing.ErrorCodeAttestUnsupported, resp.Error.Code)
+	assert.Equal(t, pairingproto.ErrorCodeAttestUnsupported, resp.Error.Code)
 }

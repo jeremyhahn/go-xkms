@@ -38,24 +38,45 @@
 | `Challenge` | `Nonce` (`NonceLength` = 32 bytes), `ExpiresAt`. |
 | `EvidenceStore` (interface) | `Put(ctx, Record)`, `Get(ctx, thumbprint) (Record, bool, error)`, `Delete(ctx, thumbprint)`. |
 | `Record` | `Thumbprint`, `Evidence peer.Evidence`, `ChannelBinding`. |
-| `MemoryStore`, `NewMemoryStore(MemoryStoreConfig, ...Option) (*MemoryStore, error)`, `Len()` | The in-process store. |
-| `MemoryStoreConfig` | `MaxPeers` (zero: `DefaultMaxPeers`, 100 000), `Retention` (zero: `DefaultRetention`, 24 h). |
-| `Option`, `WithClock(func() time.Time)` | Pins the clock of a collector, verifier or memory store. |
+| `DAOStore`, `NewDAOStore(DAOStoreConfig, ...Option) (*DAOStore, error)` | The store, persisted through a qrdb DAO in `DatabaseName` (`"peergate"`). |
+| `DAOStoreConfig` | `DAOs *qrdbsdk.DAOFactory` (required, `DatabaseName` ensured), `MaxPeers` (zero: `DefaultMaxPeers`, 100 000), `Retention` (zero: `DefaultRetention`, 24 h). |
+| `Gate`, `NewGate(GateConfig, ...Option) (*Gate, error)` | Store, collector and verifier behind one go-qrdb gate: `PeerAttestationGate()`, `Collector()`, `Verifier()`, `Mode()`. |
+| `GateConfig` | `Policy GatePolicy`, `DAOs DAOResolver` (required, called on first use), `Store DAOStoreConfig` and `Challenges CollectorConfig` (sizes only). |
+| `GatePolicy` | `Mode`, `Quote peer.Policy`, `DeviceIdentity *peer.DevIDPolicy`, `Permissions` (required, no exempt permission), `MaxEvidenceAge` (required, positive). |
+| `Mode`, `ParseMode(string) (Mode, error)` | `ModeOff` (`""` parses to it), `ModeOptional`, `ModeRequired`; the value of `attestation.peer_gate`. `*ModeError` otherwise. |
+| `DAOResolver` | `func() (*qrdbsdk.DAOFactory, error)`: the evidence storage, resolved lazily. |
+| `ExemptPermissions() []qrdbsdk.Permission` | `peer_attestation:challenge` and `peer_attestation:submit`, which no gate may gate. |
+| `Option`, `WithClock(func() time.Time)` | Pins the clock of a collector, verifier, store or gate. |
 | `Quoter` (interface), `QuoteEvidence(state, nonce, Quoter, pcrs, akCertificatePEM) (peer.Evidence, error)` | The quoting side. `*tpm2.TPM2` is a `Quoter`. |
 | `*ConfigError`, `*PeerCertificateError`, `*ChallengeError`, `*AttestedPeerError`, `*CapacityError`, `*StoreError`, `*QuoteError`, `*NonceError` | The typed errors. |
 
 SDK aliases in `sdk/go/attestation_peergate.go`: `PeerGateVerifier`,
 `PeerGateVerifierConfig`, `NewPeerGateVerifier`, `PeerEvidenceCollector`,
 `PeerEvidenceCollectorConfig`, `NewPeerEvidenceCollector`, `PeerChallenge`,
-`PeerEvidenceStore`, `PeerEvidenceRecord`, `PeerMemoryEvidenceStore`,
-`PeerMemoryEvidenceStoreConfig`, `NewPeerMemoryEvidenceStore`,
+`PeerEvidenceStore`, `PeerEvidenceRecord`, `PeerDAOEvidenceStore`,
+`PeerDAOEvidenceStoreConfig`, `NewPeerDAOEvidenceStore`, `PeerEvidenceDatabase`,
+`AttestedCallerPolicy`, `AttestedCallerOptional`, `AttestedCallerRequired`,
 `PeerGateOption`, `WithPeerGateClock`, `PeerQuoter`, `PeerQuoteEvidence`,
 `PeerVerifySameDevice`, `PeerDeviceMismatchError`, `PeerGateConfigError`,
 `PeerCertificateError`, `PeerChallengeError`, `PeerGateAttestedPeerError`,
 `PeerGateCapacityError`, `PeerEvidenceStoreError`, `PeerQuoteError`,
 `PeerNonceError`, and the constants `PeerChallengeNonceLength`,
 `DefaultPeerChallengeTTL`, `DefaultPeerGateMaxPeers`,
-`DefaultPeerEvidenceRetention`.
+`DefaultPeerEvidenceRetention`. `sdk/go/apimodule.go:213` re-exports the one
+module option, `WithAttestedCallerGate`, and its `AttestedCallerClientError`;
+the evidence storage runs on the host's service context through the module's
+general `WithServiceModuleServiceContext` (`sdk/go/apimodule.go:91`).
+
+## Exported surface — the module and xkmsd
+
+| Identifier | Role |
+|---|---|
+| `apimodule.WithAttestedCallerGate(peergate.GatePolicy) Option` (`pkg/apimodule/module_peergate.go:47`) | Builds the gate over the host's datastore; `NewModule` returns `*AttestedCallerClientError` without `WithQRDBClient`, and the gate's `*ConfigError` for a bad policy. The policy's permissions are copied. |
+| `apimodule.WithServiceContext(qrdbstorage.CallContext) Option` (`pkg/apimodule/module.go:141`) | Binds every datastore the module opens (evidence storage, host stores, WebAuthn) to the host's service context: initialisation and each DAO call. On a node that enforces authentication the storage is refused with `qrdbsdk.ErrUnauthenticated` without it. |
+| `(*apimodule.Module).PeerAttestationGate() *qrdbsdk.PeerAttestationGate` (`pkg/apimodule/module_peergate.go:56`) | The gate for the host's `node.WithPeerAttestationGate`; nil without the option. |
+| `server.WithAttestedCallerPolicy(peergate.GatePolicy) Option` (`pkg/server/peer_gate.go:32`) | xkmsd's policy; the mode comes from `attestation.peer_gate`. A mode other than `off` without it is `ErrAttestedCallerPolicyMissing` (`pkg/server/errors.go:48`). |
+| `(*xkms.XKMSService).SetPeerEvidenceCollector`, `PeerAttestationChallenge`, `SubmitPeerAttestation` (`pkg/xkms/servicer_peer_attestation.go:30`, `:38`, `:58`) | The service methods the three transports call; `ErrNotConfigured` with no collector wired. |
+| `config.AttestationConfig.PeerGate`, `PeerGateMode()` (`pkg/config/attestation.go:59`, `:64`) | The `attestation.peer_gate` key. `Validate` rejects an unknown mode, and any mode but `off` unless `datastore.mode` is `standalone` (`pkg/config/config.go:1801-1806`). |
 
 SDK aliases in `sdk/go/attestation_peer.go` carry a `Peer` prefix
 (`PeerAttestationVerifier`, `PeerEvidence`, `PeerPolicy`, `PeerVerdict`,
@@ -135,7 +156,22 @@ key-attestation surface in the flat `xkms` namespace.
 20. **Bounded memory.** Outstanding challenges and stored records are capped;
     at the cap only expired challenges and evidence past `Retention` are
     evicted, and a new peer is otherwise refused with `*CapacityError`.
-21. **Records never alias.** `MemoryStore` deep-copies on `Put` and `Get`.
+    Eviction deletes a record only if it is still the one scanned
+    (`DeleteIfMatch`), so a peer refreshing its evidence mid-eviction keeps
+    it, and only records actually removed make room.
+21. **Records never alias.** `DAOStore` saves a record as a qrdb entity and rebuilds it on `Get`,
+    so neither the caller's record nor a returned one shares memory with the
+    store.
+22. **The gate fails closed until its storage exists.** `DAOResolver` is
+    called on first use; until it succeeds every read and write is a
+    `*StoreError` and the gate refuses. `ModeOff` and an empty `Mode` never
+    build a gate that admits: `NewGate` rejects `ModeOff` and reads an empty
+    mode as `ModeRequired`.
+23. **Optional admits absence only.** `ModeOptional` passes a peer with no
+    record; a record is verified as in `ModeRequired`, and a failing one is
+    refused.
+24. **The verbs are never gated.** `NewGate` refuses a policy naming an
+    `ExemptPermissions` entry.
 
 ## Fail-closed paths, by condition
 
@@ -224,7 +260,7 @@ return `false` for any of them, including a nil certificate.
 | `MaxPendingChallenges` unexpired challenges for other peers | `*CapacityError` (`What` "challenges") |
 | No outstanding challenge, expired, or a different nonce | `*ChallengeError`; the challenge is consumed |
 | Connection cannot export keying material | `*peer.ChannelBindingError` |
-| Store `Put` fails | `*StoreError` (`Op` "put"); with a `MemoryStore` at capacity it wraps `*CapacityError` |
+| Store `Put` fails | `*StoreError` (`Op` "put"); with a `DAOStore` at capacity it wraps `*CapacityError` |
 
 ## Tests
 
@@ -307,12 +343,44 @@ own subjectAltName encoder:
 - Collector: never-challenged, wrong-nonce (and the nonce is then dead),
   expired, answered-twice, unbindable connection, no verified peer, the
   challenge bound and its expiry, a store failure.
-- `MemoryStore`: no aliasing in or out, capacity with eviction of only expired
-  evidence, context and configuration errors.
+- `DAOStore`, over an in-memory qrdb datastore: every field round-trips
+  through a second store on the same datastore; the latest evidence wins;
+  capacity with eviction of only expired evidence, sparing a record refreshed
+  between the scan and the delete; context, datastore and
+  configuration errors (`store_test.go`).
+- `Gate`: `required` refuses an unattested peer, `optional` admits only an
+  absent one and refuses failing evidence, only the policy's permissions are
+  gated, the gate refuses until its storage resolves, and a policy describing
+  no gate is a `*ConfigError` (`gate_test.go`).
 - `QuoteEvidence`: the evidence it assembles passes the verifier; a PCR
   extended between quote and read is re-quoted, one that never settles is
   refused; no quoter, nonce, PCRs, bank or value; no binding means no quote.
 - The verifier builds a go-qrdb `PeerAttestationGate`.
+
+The wiring is tested where it lives:
+
+- `pkg/config/attestation_peer_gate_test.go`: the mode parses, an unknown
+  mode and a gate without the embedded node fail validation.
+- `pkg/server/peer_gate_test.go`: `off` adds no node option, `optional` and
+  `required` add the gate, a mode without a policy is
+  `ErrAttestedCallerPolicyMissing`, the storage binds to the datastore, and
+  the verbs answer only with a gate installed.
+- `pkg/apimodule/module_peergate_test.go`: `WithAttestedCallerGate` builds the
+  gate, refuses without a client or with a bad policy, keeps its own copy of
+  the permissions, runs its storage on the host's service context over a node
+  that enforces authentication (and is refused without it), reports its storage as composing until the client
+  resolves, and serves a challenge and a submission once the service
+  resolves. `module_grants_test.go` proves User and Operator hold the two
+  verbs and SO and Auditor do not.
+- The transports (`pkg/api/rest/handlers_peer_attestation_test.go`,
+  `pkg/api/grpc/service_peer_attestation_test.go`,
+  `pkg/api/mcp/handlers_peer_attestation_test.go`) run an honest round on the
+  state of a real mTLS handshake, refuse a replayed nonce, a connection with
+  no client certificate and a malformed (REST, MCP) or nil (gRPC) submission,
+  and answer unavailable with no gate. The authorization goldens and `pkg/api/authz_consistency_test` pin
+  each verb to the same permission on all three.
+- `sdk/go/attestation_peergate_test.go`: a host builds the gate through the
+  SDK alone.
 
 `test/integration/tpm2/peergate_qrdb_node_test.go` composes a go-qrdb
 standalone node with `WithPeerAttestationGate` over this verifier, gating

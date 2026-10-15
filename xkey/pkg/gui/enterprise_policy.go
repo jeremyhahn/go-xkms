@@ -19,8 +19,8 @@ import (
 	"strings"
 	"time"
 
+	"github.com/jeremyhahn/go-xkms/sdk/go/fido2/authenticator"
 	"github.com/jeremyhahn/go-xkms/xkey/pkg/audit"
-	"github.com/jeremyhahn/go-xkms/xkey/pkg/authenticator"
 	"github.com/jeremyhahn/go-xkms/xkey/pkg/config"
 	"github.com/jeremyhahn/go-xkms/xkey/pkg/gui/services"
 )

@@ -69,7 +69,7 @@ xkmsd registers the same module on its own embedded node
 so registration can run before the XKMSService exists:
 
 - **gRPC.** `RegisterGRPC` attaches the whole `KeystoreService`
-  (`pkg/apimodule/module.go:394`). Every RPC answers `codes.Unavailable` until
+  (`pkg/apimodule/module.go:431`). Every RPC answers `codes.Unavailable` until
   the resolver yields a service (`module.go:430`). Per-RPC authorization is
   qrdb's interceptor enforcing each RPC's `(qrdb.v1.permission)` option.
   `Health` and `Algorithms` carry no option, so `PublicGRPCMethods` admits

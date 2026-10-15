@@ -1,7 +1,7 @@
 # Bidirectional JSON-RPC 2.0 Protocol
 
 > **Status: REFERENCE** · Last verified: 2026-10-13
-> Wire background for the xkey phone link; superseded by [phone/architecture.md](architecture.md) and [phone-hsm/api.md](../phone-hsm/api.md). Where they disagree, the feature folders win. Types are in `xkey/pkg/pairing/protocol*.go`; phone-side (Android app) behaviour is unverified here.
+> Wire background for the xkey phone link; superseded by [phone/architecture.md](architecture.md) and [phone-hsm/api.md](../phone-hsm/api.md). Where they disagree, the feature folders win. Types are in `pkg/pairingproto/protocol*.go`; phone-side (Android app) behaviour is unverified here.
 
 ## Overview
 
@@ -19,11 +19,11 @@ Both directions share the same encrypted Noise channel.
 |----------|-------|
 | Version | JSON-RPC 2.0 |
 | Encoding | JSON; `[]byte` fields are base64 strings |
-| Encryption | `Noise_XX_25519_ChaChaPoly_SHA256` (`xkey/pkg/pairing/noise.go:30`) |
+| Encryption | `Noise_XX_25519_ChaChaPoly_SHA256` (`pkg/trust/bootstrap/noise_session.go:29`) |
 | Transport | BLE GATT, USB (AOA) or TCP; see [transport.md](transport.md) |
 | Fragmentation | BLE only, for messages larger than the MTU |
 | Request IDs | One process-wide `atomic.Uint64` counter (`requestIDCounter`, `protocol.go:143`) |
-| Max message size | `NoiseMaxMessageSize` plaintext (`noise.go:36`) |
+| Max message size | `NoiseMaxMessageSize` plaintext (`pkg/trust/bootstrap/noise_session.go:35`) |
 
 ### Request Format
 
@@ -70,7 +70,7 @@ Both directions share the same encrypted Noise channel.
 
 ## `local.*` Methods (Laptop to Phone)
 
-These methods are sent by the laptop and executed on the phone's Android Keystore (TEE/StrongBox). The core set is `xkey/pkg/pairing/protocol_local.go:28-47`:
+These methods are sent by the laptop and executed on the phone's Android Keystore (TEE/StrongBox). The core set is `pkg/pairingproto/protocol_local.go:28-47`:
 
 | Method | Description |
 |--------|-------------|
@@ -116,7 +116,7 @@ Further `local.*` families live in their own files:
 
 These methods are sent by the phone and served on the laptop by the xkey
 bridge, which forwards them to xkmsd (see [bidirectional.md](bidirectional.md)).
-The core set is `xkey/pkg/pairing/protocol_remote.go:20-32`, plus the TPM
+The core set is `pkg/pairingproto/protocol_remote.go:20-32`, plus the TPM
 enrollment methods at `:60-67`.
 
 | Method | Description |
@@ -221,7 +221,7 @@ plus optional `platformPcrs`, `quoteData`, `quoteSignature`,
 
 ## Base Methods (No Namespace Prefix)
 
-`xkey/pkg/pairing/protocol.go:35-41`:
+`pkg/pairingproto/protocol.go:35-41`:
 
 | Method | Description |
 |--------|-------------|
@@ -239,7 +239,7 @@ The FIDO2 methods are documented in the [BLE Protocol Specification](../ble/prot
 
 ## Error Code Registry
 
-`xkey/pkg/pairing/protocol.go:47-139`.
+`pkg/pairingproto/protocol.go:47-139`.
 
 ### Standard JSON-RPC Errors
 

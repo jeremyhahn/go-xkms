@@ -24,8 +24,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/jeremyhahn/go-xkms/pkg/attestation/truststore"
 	xkeyAttestation "github.com/jeremyhahn/go-xkms/xkey/pkg/attestation"
-	"github.com/jeremyhahn/go-xkms/xkey/pkg/truststore"
 	"github.com/spf13/viper"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"

@@ -21,14 +21,15 @@ import (
 	"testing"
 	"time"
 
-	"github.com/jeremyhahn/go-xkms/xkey/pkg/pairing"
+	"github.com/jeremyhahn/go-xkms/pkg/pairingproto"
+	"github.com/jeremyhahn/go-xkms/pkg/trust/bootstrap"
 )
 
 // newTestPeripheralWithLiveAttest is newTestPeripheral, but lets the test
 // choose the LiveAttest verifier explicitly instead of the package's
 // always-approve stand-in -- for the tests in this file, which exercise the
 // gate itself.
-func newTestPeripheralWithLiveAttest(t *testing.T, handler PeripheralRequestHandler, writer FragmentWriter, liveAttest pairing.LiveAttestFunc) *BLEPeripheral {
+func newTestPeripheralWithLiveAttest(t *testing.T, handler PeripheralRequestHandler, writer FragmentWriter, liveAttest pairingproto.LiveAttestFunc) *BLEPeripheral {
 	t.Helper()
 
 	p, err := NewBLEPeripheral(&BLEPeripheralConfig{
@@ -41,8 +42,8 @@ func newTestPeripheralWithLiveAttest(t *testing.T, handler PeripheralRequestHand
 	}
 
 	p.notifier = writer
-	p.fragmenter = pairing.NewFragmenter(p.mtu - bleNotifyOverhead)
-	p.reassembler = pairing.NewReassembler()
+	p.fragmenter = pairingproto.NewFragmenter(p.mtu - bleNotifyOverhead)
+	p.reassembler = pairingproto.NewReassembler()
 	p.sender = newFragmentSender(p.notifier, p.fragmenter, p.log)
 	return p
 }
@@ -50,14 +51,14 @@ func newTestPeripheralWithLiveAttest(t *testing.T, handler PeripheralRequestHand
 // clientHandshakeBLE drives a simulated phone through the Noise XX handshake
 // against peripheral p over its in-memory notify/incomingData plumbing, and
 // returns the client's completed session.
-func clientHandshakeBLE(t *testing.T, p *BLEPeripheral, writer *fragmentChannelWriter, ctx context.Context) *pairing.NoiseSession {
+func clientHandshakeBLE(t *testing.T, p *BLEPeripheral, writer *fragmentChannelWriter, ctx context.Context) *bootstrap.NoiseSession {
 	t.Helper()
 
-	clientKey, err := pairing.GenerateStaticKey()
+	clientKey, err := bootstrap.GenerateNoiseStaticKey()
 	if err != nil {
 		t.Fatalf("client key: %v", err)
 	}
-	client, err := pairing.NewNoiseSession(&pairing.NoiseSessionConfig{
+	client, err := bootstrap.NewNoiseSession(&bootstrap.NoiseSessionConfig{
 		LocalStaticKey: clientKey,
 		IsInitiator:    true,
 	})
@@ -120,7 +121,7 @@ func TestBLEPeripheral_LiveAttest_DeniedRefusesConnection(t *testing.T) {
 	handler := &mockRequestHandler{}
 	writer := newFragmentChannelWriter()
 	denyErr := errors.New("test: attestation refused")
-	p := newTestPeripheralWithLiveAttest(t, handler, writer, func(context.Context, pairing.RPCExchange, []byte) error {
+	p := newTestPeripheralWithLiveAttest(t, handler, writer, func(context.Context, pairingproto.RPCExchange, []byte) error {
 		return denyErr
 	})
 
@@ -155,11 +156,11 @@ func TestBLEPeripheral_LiveAttest_ChallengeExchange(t *testing.T) {
 	writer := newFragmentChannelWriter()
 
 	var sawMethod string
-	p := newTestPeripheralWithLiveAttest(t, handler, writer, func(ctx context.Context, exchange pairing.RPCExchange, binding []byte) error {
+	p := newTestPeripheralWithLiveAttest(t, handler, writer, func(ctx context.Context, exchange pairingproto.RPCExchange, binding []byte) error {
 		if len(binding) == 0 {
 			return errors.New("test: empty channel binding")
 		}
-		resp, err := exchange(ctx, pairing.NewRequest("local.attestDevice", map[string]string{"nonce": "test"}))
+		resp, err := exchange(ctx, pairingproto.NewRequest("local.attestDevice", map[string]string{"nonce": "test"}))
 		if err != nil {
 			return err
 		}
@@ -183,13 +184,13 @@ func TestBLEPeripheral_LiveAttest_ChallengeExchange(t *testing.T) {
 	if err != nil {
 		t.Fatalf("decrypt challenge: %v", err)
 	}
-	req, err := pairing.DecodeRequest(challengePlaintext)
+	req, err := pairingproto.DecodeRequest(challengePlaintext)
 	if err != nil {
 		t.Fatalf("decode challenge: %v", err)
 	}
 	sawMethod = req.Method
 
-	respBytes, err := pairing.EncodeResponse(req.ID, map[string]bool{"ok": true})
+	respBytes, err := pairingproto.EncodeResponse(req.ID, map[string]bool{"ok": true})
 	if err != nil {
 		t.Fatalf("encode response: %v", err)
 	}

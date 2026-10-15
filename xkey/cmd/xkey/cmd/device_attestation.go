@@ -17,8 +17,9 @@ package cmd
 
 import (
 	"fmt"
-	"github.com/jeremyhahn/go-xkms/xkey/pkg/attestation"
 	"time"
+
+	"github.com/jeremyhahn/go-xkms/xkey/pkg/attestation"
 )
 
 const (

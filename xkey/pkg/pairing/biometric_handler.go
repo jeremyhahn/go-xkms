@@ -17,6 +17,7 @@ import (
 	"fmt"
 	"log/slog"
 
+	"github.com/jeremyhahn/go-xkms/sdk/go/pairingproto"
 	"github.com/jeremyhahn/go-xkms/xkey/pkg/notify"
 )
 
@@ -42,7 +43,7 @@ func NewBiometricPendingHandler(notifier notify.Notifier, logger *slog.Logger) *
 // HandleBiometricPending processes a biometric pending notification.
 // This shows a desktop notification to alert the user that the phone
 // is waiting for biometric approval.
-func (h *BiometricPendingHandler) HandleBiometricPending(params *LocalBiometricPendingParams) {
+func (h *BiometricPendingHandler) HandleBiometricPending(params *pairingproto.LocalBiometricPendingParams) {
 	if h.notifier == nil {
 		h.logger.Debug("no notifier configured, skipping biometric notification")
 		return

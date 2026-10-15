@@ -39,9 +39,9 @@ import (
 	"github.com/spf13/pflag"
 	"github.com/spf13/viper"
 
+	"github.com/jeremyhahn/go-xkms/pkg/fido2/authenticator"
+	"github.com/jeremyhahn/go-xkms/pkg/fido2/authenticator/keybackend"
 	"github.com/jeremyhahn/go-xkms/sdk/go/transport"
-	"github.com/jeremyhahn/go-xkms/xkey/pkg/authenticator"
-	"github.com/jeremyhahn/go-xkms/xkey/pkg/authenticator/keybackend"
 	"github.com/jeremyhahn/go-xkms/xkey/pkg/ipc"
 )
 

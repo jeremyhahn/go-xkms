@@ -28,6 +28,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	"github.com/jeremyhahn/go-xkms/pkg/pairingproto"
 	"github.com/jeremyhahn/go-xkms/pkg/tpm2"
 	"github.com/jeremyhahn/go-xkms/pkg/types"
 	"github.com/jeremyhahn/go-xkms/sdk/go/transport"
@@ -162,14 +163,14 @@ func TestBridge_EnrollmentReachesTheConfiguredTPM(t *testing.T) {
 		name   string
 		method string
 		params interface{}
-		verify func(t *testing.T, resp *Response)
+		verify func(t *testing.T, resp *pairingproto.Response)
 	}{
 		{
 			name:   "getTCGCSRIDevID",
-			method: MethodRemoteGetTCGCSRIDevID,
-			params: RemoteGetTCGCSRIDevIDParams{Backend: "tpm2"},
-			verify: func(t *testing.T, resp *Response) {
-				res := decodeResult[RemoteGetTCGCSRIDevIDResult](t, resp)
+			method: pairingproto.MethodRemoteGetTCGCSRIDevID,
+			params: pairingproto.RemoteGetTCGCSRIDevIDParams{Backend: "tpm2"},
+			verify: func(t *testing.T, resp *pairingproto.Response) {
+				res := decodeResult[pairingproto.RemoteGetTCGCSRIDevIDResult](t, resp)
 				assert.Equal(t, "ATT", res.PlatformManufacturer)
 				assert.NotEmpty(t, res.IAKPublicKey)
 				assert.NotEmpty(t, res.IDevIDPublicKey)
@@ -178,14 +179,14 @@ func TestBridge_EnrollmentReachesTheConfiguredTPM(t *testing.T) {
 		},
 		{
 			name:   "activateCredential",
-			method: MethodRemoteActivateCredential,
-			params: RemoteActivateCredentialParams{
+			method: pairingproto.MethodRemoteActivateCredential,
+			params: pairingproto.RemoteActivateCredentialParams{
 				Backend:         "tpm2",
 				CredentialBlob:  []byte("blob"),
 				EncryptedSecret: []byte("secret"),
 			},
-			verify: func(t *testing.T, resp *Response) {
-				res := decodeResult[RemoteActivateCredentialResult](t, resp)
+			verify: func(t *testing.T, resp *pairingproto.Response) {
+				res := decodeResult[pairingproto.RemoteActivateCredentialResult](t, resp)
 				assert.Equal(t, []byte("recovered-secret"), res.DecryptedSecret)
 				assert.Equal(t, [][]byte{[]byte("blob"), []byte("secret")}, enroller.activateIn,
 					"the challenge must reach the TPM unchanged")
@@ -216,23 +217,23 @@ func TestBridge_WithoutATPMEverythingElseStillWorks(t *testing.T) {
 	require.NoError(t, err)
 
 	enrollment := []string{
-		MethodRemoteGetTCGCSRIDevID,
-		MethodRemoteActivateCredential,
-		MethodRemoteGetAttestationQuote,
+		pairingproto.MethodRemoteGetTCGCSRIDevID,
+		pairingproto.MethodRemoteActivateCredential,
+		pairingproto.MethodRemoteGetAttestationQuote,
 	}
 	for _, method := range enrollment {
 		t.Run(method+" reports unavailable", func(t *testing.T) {
 			req := newRemoteRequest(method, map[string]any{"backend": "tpm2"})
 			resp := bridge.HandleRequest(context.Background(), req)
 			require.NotNil(t, resp.Error)
-			assert.Equal(t, ErrorCodeAttestUnsupported, resp.Error.Code)
+			assert.Equal(t, pairingproto.ErrorCodeAttestUnsupported, resp.Error.Code)
 		})
 	}
 
 	t.Run("listBackends still works", func(t *testing.T) {
-		req := newRemoteRequest(MethodRemoteListBackends, nil)
+		req := newRemoteRequest(pairingproto.MethodRemoteListBackends, nil)
 		resp := bridge.HandleRequest(context.Background(), req)
-		result := decodeResult[RemoteListBackendsResult](t, resp)
+		result := decodeResult[pairingproto.RemoteListBackendsResult](t, resp)
 		assert.Len(t, result.Backends, 1, "an absent TPM must not disable the rest of the bridge")
 	})
 }
@@ -248,13 +249,13 @@ func TestMapErrorToRPC_TPMStates(t *testing.T) {
 	}{
 		{
 			name:     "no TPM is a missing capability",
-			err:      ErrTPMNotConfigured,
-			wantCode: ErrorCodeAttestUnsupported,
+			err:      pairingproto.ErrTPMNotConfigured,
+			wantCode: pairingproto.ErrorCodeAttestUnsupported,
 		},
 		{
 			name:     "an unreachable TPM is a failure the operator can fix",
-			err:      ErrTPMUnavailable,
-			wantCode: ErrorCodeAttestFailed,
+			err:      pairingproto.ErrTPMUnavailable,
+			wantCode: pairingproto.ErrorCodeAttestFailed,
 		},
 	}
 
@@ -268,10 +269,10 @@ func TestMapErrorToRPC_TPMStates(t *testing.T) {
 
 	// The two must not collapse onto the same message, or the phone cannot
 	// tell the user which of the two situations it is looking at.
-	_, absent := mapErrorToRPC(ErrTPMNotConfigured)
-	_, unreachable := mapErrorToRPC(ErrTPMUnavailable)
+	_, absent := mapErrorToRPC(pairingproto.ErrTPMNotConfigured)
+	_, unreachable := mapErrorToRPC(pairingproto.ErrTPMUnavailable)
 	assert.NotEqual(t, absent, unreachable)
-	assert.False(t, errors.Is(ErrTPMUnavailable, ErrTPMNotConfigured))
+	assert.False(t, errors.Is(pairingproto.ErrTPMUnavailable, pairingproto.ErrTPMNotConfigured))
 }
 
 // TestBridge_UnopenableTPM_IsReportedDistinctlyFromNoTPM proves the phone can
@@ -295,19 +296,19 @@ func TestBridge_UnopenableTPM_IsReportedDistinctlyFromNoTPM(t *testing.T) {
 
 	_, unreachableErr := unreachable.enroller()
 	require.Error(t, unreachableErr)
-	assert.ErrorIs(t, unreachableErr, ErrTPMUnavailable)
+	assert.ErrorIs(t, unreachableErr, pairingproto.ErrTPMUnavailable)
 	assert.ErrorIs(t, unreachableErr, openErr, "the cause must survive for the operator")
-	assert.NotErrorIs(t, unreachableErr, ErrTPMNotConfigured)
+	assert.NotErrorIs(t, unreachableErr, pairingproto.ErrTPMNotConfigured)
 
 	_, absentErr := absent.enroller()
-	assert.ErrorIs(t, absentErr, ErrTPMNotConfigured)
-	assert.NotErrorIs(t, absentErr, ErrTPMUnavailable)
+	assert.ErrorIs(t, absentErr, pairingproto.ErrTPMNotConfigured)
+	assert.NotErrorIs(t, absentErr, pairingproto.ErrTPMUnavailable)
 
 	// And they must reach the phone as different codes.
 	unreachableCode, _ := mapErrorToRPC(unreachableErr)
 	absentCode, _ := mapErrorToRPC(absentErr)
-	assert.Equal(t, ErrorCodeAttestFailed, unreachableCode)
-	assert.Equal(t, ErrorCodeAttestUnsupported, absentCode)
+	assert.Equal(t, pairingproto.ErrorCodeAttestFailed, unreachableCode)
+	assert.Equal(t, pairingproto.ErrorCodeAttestUnsupported, absentCode)
 	assert.NotEqual(t, unreachableCode, absentCode)
 }
 
@@ -320,7 +321,7 @@ func TestMapErrorToRPC_MatchesWrappedCauses(t *testing.T) {
 
 	code, _ := mapErrorToRPC(wrapped)
 
-	assert.Equal(t, ErrorCodeAttestFailed, code,
+	assert.Equal(t, pairingproto.ErrorCodeAttestFailed, code,
 		"a wrapped TPM failure must keep its attestation code")
-	assert.NotEqual(t, ErrorCodeInternalError, code)
+	assert.NotEqual(t, pairingproto.ErrorCodeInternalError, code)
 }

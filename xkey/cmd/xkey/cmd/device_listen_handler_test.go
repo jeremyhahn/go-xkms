@@ -21,6 +21,8 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	"github.com/jeremyhahn/go-xkms/pkg/pairingproto"
+	"github.com/jeremyhahn/go-xkms/pkg/trust/bootstrap"
 	xkeyconfig "github.com/jeremyhahn/go-xkms/xkey/pkg/config"
 	"github.com/jeremyhahn/go-xkms/xkey/pkg/pairing"
 )
@@ -33,7 +35,7 @@ import (
 // same pair.
 func validNoisePublicKeyForTest(t *testing.T) string {
 	t.Helper()
-	key, err := pairing.GenerateStaticKey()
+	key, err := bootstrap.GenerateNoiseStaticKey()
 	require.NoError(t, err)
 	defer key.Destroy()
 	return base64.StdEncoding.EncodeToString(key.PublicBytes())
@@ -41,11 +43,11 @@ func validNoisePublicKeyForTest(t *testing.T) string {
 
 func validLocalNoisePrivateKeyForTest(t *testing.T) string {
 	t.Helper()
-	key, err := pairing.GenerateStaticKey()
+	key, err := bootstrap.GenerateNoiseStaticKey()
 	require.NoError(t, err)
 	defer key.Destroy()
 	var encoded string
-	require.NoError(t, pairing.WithPrivateKey(key, func(privateKey []byte) error {
+	require.NoError(t, bootstrap.WithNoisePrivateKey(key, func(privateKey []byte) error {
 		encoded = base64.StdEncoding.EncodeToString(privateKey)
 		return nil
 	}))
@@ -108,7 +110,7 @@ func TestAllowPhoneSyncExport_ProjectsTheTwoPlanes(t *testing.T) {
 func TestNewSessionSyncApproval_AllowedGrantsEveryRequest(t *testing.T) {
 	approve := newSessionSyncApproval("Pixel", true, discardLogger())
 
-	err := approve(context.Background(), &pairing.SyncApprovalRequest{Method: pairing.MethodRemoteSyncPasswords, DeviceName: "Pixel"})
+	err := approve(context.Background(), &pairing.SyncApprovalRequest{Method: pairingproto.MethodRemoteSyncPasswords, DeviceName: "Pixel"})
 
 	assert.NoError(t, err)
 }
@@ -116,10 +118,10 @@ func TestNewSessionSyncApproval_AllowedGrantsEveryRequest(t *testing.T) {
 func TestNewSessionSyncApproval_NotAllowedRefusesWithErrSyncNotApproved(t *testing.T) {
 	approve := newSessionSyncApproval("Pixel", false, discardLogger())
 
-	err := approve(context.Background(), &pairing.SyncApprovalRequest{Method: pairing.MethodRemoteSyncOATH, DeviceName: "Pixel"})
+	err := approve(context.Background(), &pairing.SyncApprovalRequest{Method: pairingproto.MethodRemoteSyncOATH, DeviceName: "Pixel"})
 
 	require.Error(t, err)
-	assert.ErrorIs(t, err, pairing.ErrSyncNotApproved)
+	assert.ErrorIs(t, err, pairingproto.ErrSyncNotApproved)
 }
 
 // --- resolveListenTargetDevice ---
@@ -136,7 +138,7 @@ func TestResolveListenTargetDevice_SingleDeviceAutoSelects(t *testing.T) {
 	defer localKey.Destroy()
 
 	assert.Equal(t, "Solo", device.Name)
-	assert.Len(t, remoteStatic, pairing.NoiseKeySize)
+	assert.Len(t, remoteStatic, bootstrap.NoiseKeySize)
 }
 
 func TestResolveListenTargetDevice_UnknownFilterReportsNotFound(t *testing.T) {

@@ -19,7 +19,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/jeremyhahn/go-xkms/xkey/pkg/pairing"
+	"github.com/jeremyhahn/go-xkms/pkg/trust/bootstrap"
 )
 
 // TestNewTCPPairingServer_RejectsInvalidPin mirrors
@@ -37,9 +37,9 @@ func TestNewTCPPairingServer_RejectsInvalidPin(t *testing.T) {
 	}{
 		{name: "nil is unpinned, not an error", pin: nil, wantErr: nil},
 		{name: "empty is refused", pin: []byte{}, wantErr: ErrTCPServerInvalidPin},
-		{name: "too short is refused", pin: make([]byte, pairing.NoiseKeySize-1), wantErr: ErrTCPServerInvalidPin},
-		{name: "too long is refused", pin: make([]byte, pairing.NoiseKeySize+1), wantErr: ErrTCPServerInvalidPin},
-		{name: "correct length is accepted", pin: make([]byte, pairing.NoiseKeySize), wantErr: nil},
+		{name: "too short is refused", pin: make([]byte, bootstrap.NoiseKeySize-1), wantErr: ErrTCPServerInvalidPin},
+		{name: "too long is refused", pin: make([]byte, bootstrap.NoiseKeySize+1), wantErr: ErrTCPServerInvalidPin},
+		{name: "correct length is accepted", pin: make([]byte, bootstrap.NoiseKeySize), wantErr: nil},
 	}
 
 	for _, tt := range tests {
@@ -68,7 +68,7 @@ func TestNewTCPPairingServer_RejectsInvalidPin(t *testing.T) {
 // gap where the relay "pinned nothing").
 func TestTCPPairingServer_PinRefusesAnUnexpectedInitiator(t *testing.T) {
 	// The key the server expects -- NOT the one the test client below uses.
-	expectedKey, err := pairing.GenerateStaticKey()
+	expectedKey, err := bootstrap.GenerateNoiseStaticKey()
 	if err != nil {
 		t.Fatalf("generate expected key: %v", err)
 	}

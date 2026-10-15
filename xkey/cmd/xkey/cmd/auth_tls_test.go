@@ -37,9 +37,9 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	"github.com/jeremyhahn/go-xkms/pkg/attestation/truststore"
 	xkms "github.com/jeremyhahn/go-xkms/sdk/go"
 	"github.com/jeremyhahn/go-xkms/xkey/pkg/serverregistry"
-	"github.com/jeremyhahn/go-xkms/xkey/pkg/truststore"
 )
 
 // authTLSFixture is a TLS test server plus the CA that issued its certificate.

@@ -24,8 +24,9 @@ every consumer reaches the same code (go-xkms#273).
 | Turning a TLS connection into bound evidence | **go-xkms** (this feature) | `EvidenceFromTLS`, `QualifyingDataFromTLS` |
 | The attested-caller gate: middleware that calls a verifier and fails closed on every transport | go-qrdb | `PeerAttestationGate`, `node.WithPeerAttestationGate` |
 | The verifier that gate calls, the evidence cache it reads and the collector that fills it | **go-xkms** (this feature) | `pkg/attestation/peergate`, aliased in `sdk/go/attestation_peergate.go` |
+| Wiring the gate into the node, and Challenge/Submit as verbs on REST, gRPC and MCP | **go-xkms** (`attested-caller-gate`) | `peergate.Gate`, `attestation.peer_gate`, `WithAttestedCallerGate` |
 | Pairing a device identity credential with its TPM's attestation key | **go-xkms** (this feature) | `VerifySameDevice` |
-| Mounting the collector on a transport, provisioning anchors and baselines, quarantine action | the host (go-quicbaas, go-trusted-platform) | the host composes the pieces above |
+| Provisioning anchors and baselines (the gate policy), quarantine action | the host (go-quicbaas, go-trusted-platform) | `WithAttestedCallerGate` / `server.WithAttestedCallerPolicy` |
 | Producing the quote | go-xkms `pkg/tpm2` | `TPM2.Quote(pcrs, qualifyingData)` |
 
 xkms owns all TPM 2.0 attestation (`docs/00-ownership-and-sdk-boundary.md`).
@@ -219,7 +220,7 @@ verdict about that same peer. go-qrdb owns that seam and nothing behind it.
 gate from go-qrdb and go-xkms alone and writes no verification code.
 
 ```
-peer                         host (collector mounted on its transport)        go-qrdb node
+peer                         xkms verbs (REST, gRPC, MCP) -> collector        go-qrdb node
  |  Challenge  ------------>  Collector.Challenge(state) -> nonce
  |  quote(H(nonce||exporter(conn)))  (QuoteEvidence)
  |  Submit(evidence) ------>  Collector.Submit(state, evidence)
@@ -286,10 +287,56 @@ cryptographic. The verifier returns an error, which the gate also refuses,
 only when it cannot decide at all: a peer description whose thumbprint is not
 its certificate's, a store failure, a done context.
 
-**The cache is per process by default.** `MemoryStore` serves one node. A host
-that spreads peers across nodes either routes submissions to every node or
-supplies its own `EvidenceStore`; the interface is three methods (`Put`,
-`Get`, `Delete`), and `Delete` is how a host withdraws a peer's evidence.
+**The cache is the node's datastore.** `DAOStore` persists each record
+through a qrdb DAO in the `peergate` database
+(`pkg/attestation/peergate/store.go:111`), so every node sharing the datastore
+sees the same evidence and it survives a restart. Challenges are not stored:
+the collector keeps them in memory, so a peer answers a challenge on the node
+that issued it. `Delete` is how a host withdraws a peer's evidence.
+
+## Wiring the gate into a node (`attested-caller-gate`)
+
+`peergate.Gate` (`pkg/attestation/peergate/gate.go:131`) assembles one
+`DAOStore`, the `Collector` that fills it and the `Verifier` that reads it,
+behind the go-qrdb `PeerAttestationGate` a node installs with
+`node.WithPeerAttestationGate`. Its `GatePolicy` is the embedder's: the quote
+policy (anchors and the PCR baseline), an optional device-identity policy, the
+gated permissions and the maximum evidence age. go-xkms ships no reference
+values. The mode is `optional` or `required`:
+
+- `required` refuses a gated request unless the peer's evidence is on record,
+  fresh and passing.
+- `optional` admits a peer that has never submitted evidence; evidence that is
+  on record is verified as always, and a peer whose quote fails is refused
+  (`AdmitUnattested`, `pkg/attestation/peergate/gate.go:153`).
+
+The storage is resolved on first use, not at construction
+(`DAOResolver`), because the gate is a node option and so exists before the
+node whose datastore holds its evidence. Until the datastore is bound every
+read fails and the gate refuses.
+
+Two hosts build it:
+
+- **xkmsd.** `attestation.peer_gate` selects the mode
+  (`pkg/config/attestation.go:59`). When it is `optional` or `required`,
+  `pkg/server/peer_gate.go:46` builds the gate from the policy passed with
+  `server.WithAttestedCallerPolicy` and adds it to the embedded node
+  (`pkg/server/qrdb_node.go:252`); `pkg/server/qrdb_storage.go:75` binds the
+  evidence storage once the datastore opens.
+- **A host composing the xkms module.** `WithAttestedCallerGate(policy)`
+  (`pkg/apimodule/module_peergate.go:47`, re-exported by `sdk/go`) builds the
+  gate over the host's datastore (it requires `WithQRDBClient`), and the host
+  passes `Module.PeerAttestationGate()` to `node.WithPeerAttestationGate`. go-qrdb
+  gives a service module no way to add a node option itself.
+
+**Challenge and Submit are module verbs.** The gate's collector is handed to
+`XKMSService` (`pkg/xkms/servicer_peer_attestation.go:30`), and the two calls
+are served on REST, gRPC and MCP under the `peer_attestation` resource. The
+gate never gates them (`ExemptPermissions`,
+`pkg/attestation/peergate/gate.go:63`): they are how an unattested peer
+becomes attested. The peer is still the connection's verified client
+certificate, so a transport with none (the unix socket, the in-process
+embedded caller) is refused as unauthenticated.
 
 ## What is deliberately not here
 
@@ -298,9 +345,8 @@ supplies its own `EvidenceStore`; the interface is three methods (`Put`,
   fails open. Neither changes this primitive.
 - **The transport middleware.** go-qrdb's gate is the middleware on every
   transport; this feature supplies the verifier it calls.
-- **The collector's transport.** `Collector.Challenge` and `Collector.Submit`
-  take the request's `*tls.ConnectionState`; the host mounts them on whatever
-  transport its peers reach, the same way it mounts any other route.
+- **Golden values.** The PCR baseline is the embedder's (go-quicbaas keeps
+  the reference values); go-xkms ships none.
 - **Event-log replay.** The verdict is over PCR values; reconstructing them
   from a TCG event log is a separate capability.
 

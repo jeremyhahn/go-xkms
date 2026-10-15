@@ -6,7 +6,7 @@
 
 | Piece | Package |
 |---|---|
-| Local truststore | `xkey/pkg/truststore` |
+| Local truststore | `pkg/attestation/truststore` |
 | OS / NSS integration | `xkey/pkg/nssdb` |
 | Bootstrap dispatch (consumed) | `go-xkms/pkg/trust/bootstrap`, re-exported as `xkms.TrustBootstrap*` in `sdk/go/trust.go` |
 | SPKI-pinned CA-bundle fetcher (consumed) | `go-xkms/pkg/trust/fetcher`, re-exported as `xkms.TrustFetcher*` in `sdk/go/trust.go` |
@@ -137,7 +137,7 @@ three cannot drift
 
 Bootstrap failures come back from the dispatch library as `*FetchError`
 carrying the attempted `Mode` and the truststrap cause — `errors.Is(err,
-ErrFetch)` for any fetch failure. Local failures are `xkey/pkg/truststore`'s.
+ErrFetch)` for any fetch failure. Local failures are `pkg/attestation/truststore`'s.
 
 `trust add` fails with `ErrTrustPEMReadFailed` (unreadable file),
 `ErrTrustAddFailed` wrapping `ErrTrustNoCertificates` (the file held no
@@ -189,21 +189,21 @@ bootstrap's.
 
 ## Persistence
 
-`xkey/pkg/truststore` holds certificates with their fingerprint, purpose and
+`pkg/attestation/truststore` holds certificates with their fingerprint, purpose and
 source. `xkey/pkg/nssdb` handles installation into the NSS database; OS trust
 store integration sits alongside it.
 
 Installation is **outside** xkey's data: uninstalling xkey does not by itself
 remove what `trust install` put into the system store.
 
-`fetch`/`import-platform` persist through the same `xkey/pkg/truststore`
+`fetch`/`import-platform` persist through the same `pkg/attestation/truststore`
 `FileStore` every other `trust` verb uses (`openTrustStore`,
 `xkey/cmd/xkey/cmd/trust.go:368`) — there is no separate store for
 platform-fetched certificates.
 
 ## Test strategy
 
-- **Unit** — `xkey/pkg/truststore` and `xkey/pkg/nssdb` suites.
+- **Unit** — `pkg/attestation/truststore` and `xkey/pkg/nssdb` suites.
 - **Bootstrap** — covered upstream in `go-xkms/pkg/trust/bootstrap/*_test.go`
   and `go-xkms/test/integration/bootstrap`; xkey's tests cover dispatch and
   storage, not the protocols.

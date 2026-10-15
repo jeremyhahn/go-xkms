@@ -20,8 +20,8 @@ import (
 	"log/slog"
 	"testing"
 
+	"github.com/jeremyhahn/go-xkms/pkg/fido2/authenticator"
 	"github.com/jeremyhahn/go-xkms/xkey/pkg/audit"
-	"github.com/jeremyhahn/go-xkms/xkey/pkg/authenticator"
 	"github.com/stretchr/testify/require"
 )
 
@@ -29,7 +29,7 @@ import (
 // fixed error. It is shared by the fido2.go and extension_serve.go audit
 // wiring tests (go-xkms#804) to prove that an audit-write failure refuses
 // the operation at each production entry point, the same way the
-// xkey/pkg/authenticator package tests prove it at the package boundary.
+// pkg/fido2/authenticator package tests prove it at the package boundary.
 type failingAuditLogger struct {
 	err error
 }
@@ -108,7 +108,7 @@ func TestNewFIDO2Device_AuditWriteFailureRefusesPINSeed(t *testing.T) {
 	defer func() { _ = device.Close() }()
 
 	auditErr := errors.New("audit backend unavailable")
-	device.auth.SetAuditLogger(&failingAuditLogger{err: auditErr})
+	device.auth.SetAuditLogger(audit.NewFIDO2Logger(&failingAuditLogger{err: auditErr}))
 
 	err = device.auth.SetInitialPIN([]byte("123456"))
 	require.ErrorIs(t, err, auditErr)
@@ -174,7 +174,7 @@ func TestNewFIDO2Device_AuditWriteFailureRefusesCredentialCreation(t *testing.T)
 	device.auth.SetUserPresenceHandler(authenticator.NewAutoGrantHandler())
 
 	auditErr := errors.New("audit backend unavailable")
-	device.auth.SetAuditLogger(&failingAuditLogger{err: auditErr})
+	device.auth.SetAuditLogger(audit.NewFIDO2Logger(&failingAuditLogger{err: auditErr}))
 
 	clientDataHash := sha256.Sum256([]byte("test client data"))
 	rp := authenticator.RelyingParty{ID: "example.com", Name: "Example Corp"}

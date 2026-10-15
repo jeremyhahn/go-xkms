@@ -23,7 +23,7 @@ xkey reaches a paired phone over three transports. All carry the same Noise XX e
 | Transport | Code | Build tag |
 |-----------|------|-----------|
 | BLE GATT | `xkey/pkg/phone/ble_transport.go`, `ble_peripheral.go` | `ble` |
-| USB (Android Open Accessory) | `xkey/pkg/phone/usb_transport.go`, `aoa.go` | `usb` |
+| USB (Android Open Accessory) | `pkg/pairingproto/usb_transport.go`, `aoa.go` | `usb` |
 | TCP | `xkey/pkg/phone/tcp_server.go` | none |
 
 Without the tag, the BLE and USB files are replaced by stubs
@@ -35,7 +35,7 @@ Without the tag, the BLE and USB files are replaced by stubs
 
 ### GATT Service
 
-UUIDs from `xkey/pkg/phone/phone.go:52-61`:
+UUIDs from `xkey/pkg/phone/phone.go:53-63`:
 
 ```
 xkey Service
@@ -57,7 +57,7 @@ UUID: f1d0f1d0-f1d0-f1d0-f1d0-f1d0f1d0f1d0
 ### Fragmentation
 
 Messages larger than the BLE MTU are fragmented before transmission and
-reassembled on the receiver side (`xkey/pkg/pairing/fragmentation.go`).
+reassembled on the receiver side (`pkg/pairingproto/fragmentation.go`).
 
 **Fragment header (7 bytes, `FragmentHeaderSize`):**
 
@@ -77,8 +77,8 @@ reassembled on the receiver side (`xkey/pkg/pairing/fragmentation.go`).
 | Total | 2 bytes | Total number of fragments (big-endian) |
 | Length | 2 bytes | Payload length in this fragment (big-endian) |
 
-**Default MTU:** 247 bytes (`DefaultMTU`, `phone.go:64`)
-**Minimum MTU:** 23 bytes (`MinMTU`, `xkey/pkg/pairing/constants.go:19`)
+**Default MTU:** 247 bytes (`DefaultMTU`, `phone.go:66`)
+**Minimum MTU:** 23 bytes (`MinMTU`, `pkg/pairingproto/constants.go:19`)
 
 **Reassembly** (`Reassembler.AddFragment`, `fragmentation.go:210`):
 
@@ -118,7 +118,7 @@ The Noise XX handshake runs again on every reconnection, with new ephemeral keys
 
 Built with the `usb` tag. The laptop switches the phone into accessory mode
 and talks to it over USB bulk endpoints, with no ADB or debug mode. Accessory
-devices are matched by Google's AOA IDs (`xkey/pkg/phone/aoa.go:30-36`):
+devices are matched by Google's AOA IDs (`pkg/pairingproto/aoa.go:30-36`):
 vendor `0x18D1`, product `0x2D00` (accessory) or `0x2D01` (accessory + ADB).
 
 Each message is framed with a 2-byte big-endian length prefix
@@ -176,14 +176,14 @@ The same Noise static key pair is used on every transport. Pairing over one tran
 
 | Constant | Value | Source |
 |----------|-------|--------|
-| `ScanTimeout` | 30s | `xkey/pkg/phone/phone.go:67` |
-| `ConnectTimeout` | 10s | `phone.go:70` |
-| `OperationTimeout` (includes biometric wait) | 60s | `phone.go:73` |
+| `ScanTimeout` | 30s | `xkey/pkg/phone/phone.go:69` |
+| `ConnectTimeout` | 10s | `phone.go:72` |
+| `OperationTimeout` (includes biometric wait) | 60s | `phone.go:75` |
 | `DefaultUSBOperationTimeout` | 60s | `usb_transport.go:38` |
 | `DefaultHandshakeTimeout` (TCP) | 30s | `tcp_server.go:74` |
 | `DefaultRequestTimeout` (TCP) | 30s | `tcp_server.go:80` |
 | `DefaultIdleTimeout` (TCP) | 5m | `tcp_server.go:77` |
-| `DefaultLiveAttestTimeout` | 120s | `xkey/pkg/phone/errors.go:31` |
+| `DefaultLiveAttestTimeout` | 120s | `xkey/pkg/phone/errors.go:33` |
 
 Biometric operations share the same timeout regardless of transport, since the bottleneck is user interaction on the phone.
 

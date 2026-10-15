@@ -22,6 +22,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/jeremyhahn/go-xkms/pkg/pairingproto"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -112,14 +113,14 @@ func TestOpenTPMEnroller_ReportsTheThreeHostStates(t *testing.T) {
 		{
 			name:         "no TPM on this host",
 			device:       missing,
-			wantSentinel: ErrTPMNotConfigured,
+			wantSentinel: pairingproto.ErrTPMNotConfigured,
 			wantLevel:    slog.LevelInfo.String(),
 			wantMessage:  "no TPM on this host",
 		},
 		{
 			name:         "TPM node present but not openable",
 			device:       unopenable,
-			wantSentinel: ErrTPMUnavailable,
+			wantSentinel: pairingproto.ErrTPMUnavailable,
 			wantLevel:    slog.LevelWarn.String(),
 			wantMessage:  "cannot reach it",
 			wantCause:    true,
@@ -127,7 +128,7 @@ func TestOpenTPMEnroller_ReportsTheThreeHostStates(t *testing.T) {
 		{
 			name:         "TPM socket present but not speaking TPM",
 			device:       listeningSocket(t),
-			wantSentinel: ErrTPMUnavailable,
+			wantSentinel: pairingproto.ErrTPMUnavailable,
 			wantLevel:    slog.LevelWarn.String(),
 			wantMessage:  "cannot reach it",
 			wantCause:    true,
@@ -166,7 +167,7 @@ func TestOpenTPMEnroller_MissingTPMIsNotAFault(t *testing.T) {
 		Device: filepath.Join(t.TempDir(), "absent"),
 		Logger: captureLogger(&buf),
 	})
-	require.ErrorIs(t, err, ErrTPMNotConfigured)
+	require.ErrorIs(t, err, pairingproto.ErrTPMNotConfigured)
 
 	for _, rec := range decodeLogs(t, &buf) {
 		assert.NotEqual(t, slog.LevelWarn.String(), rec.Level)
@@ -185,8 +186,8 @@ func TestOpenTPMEnroller_UnreachableIsDistinguishableFromAbsent(t *testing.T) {
 		Logger: captureLogger(&buf),
 	})
 
-	require.ErrorIs(t, err, ErrTPMUnavailable)
-	assert.NotErrorIs(t, err, ErrTPMNotConfigured)
+	require.ErrorIs(t, err, pairingproto.ErrTPMUnavailable)
+	assert.NotErrorIs(t, err, pairingproto.ErrTPMNotConfigured)
 }
 
 // withAbsentDefaultTPMEnrollerDevice points defaultTPMEnrollerDevice at a
@@ -213,7 +214,7 @@ func TestOpenTPMEnroller_Defaults(t *testing.T) {
 
 	enroller, err := OpenTPMEnroller(&TPMEnrollerConfig{Logger: captureLogger(&buf)})
 	assert.Nil(t, enroller)
-	require.ErrorIs(t, err, ErrTPMNotConfigured)
+	require.ErrorIs(t, err, pairingproto.ErrTPMNotConfigured)
 
 	rec, ok := findLog(decodeLogs(t, &buf), "no TPM on this host")
 	require.True(t, ok)
@@ -227,5 +228,5 @@ func TestOpenTPMEnroller_NilConfig(t *testing.T) {
 
 	enroller, err := OpenTPMEnroller(nil)
 	assert.Nil(t, enroller)
-	assert.ErrorIs(t, err, ErrTPMNotConfigured)
+	assert.ErrorIs(t, err, pairingproto.ErrTPMNotConfigured)
 }

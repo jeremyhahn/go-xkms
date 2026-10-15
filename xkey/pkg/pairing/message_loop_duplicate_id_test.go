@@ -21,6 +21,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/jeremyhahn/go-xkms/pkg/pairingproto"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -57,11 +58,11 @@ func TestMessageRouter_SendRequest_DuplicateIDRefused(t *testing.T) {
 		if err != nil {
 			return
 		}
-		var req Request
+		var req pairingproto.Request
 		if err := json.Unmarshal(plaintext, &req); err != nil {
 			return
 		}
-		resp := &Response{JSONRPC: JSONRPCVersion, ID: req.ID, Result: json.RawMessage(`{"pong":true}`)}
+		resp := &pairingproto.Response{JSONRPC: pairingproto.JSONRPCVersion, ID: req.ID, Result: json.RawMessage(`{"pong":true}`)}
 		respBytes, _ := json.Marshal(resp)
 		respCiphertext, _ := remoteSession.Encrypt(respBytes)
 		_ = remoteTransport.Send(context.Background(), respCiphertext)
@@ -70,9 +71,9 @@ func TestMessageRouter_SendRequest_DuplicateIDRefused(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 
-	first := NewRequest(MethodPing, nil)
+	first := pairingproto.NewRequest(pairingproto.MethodPing, nil)
 
-	firstDone := make(chan *Response, 1)
+	firstDone := make(chan *pairingproto.Response, 1)
 	firstErr := make(chan error, 1)
 	go func() {
 		resp, err := router.SendRequest(ctx, first)
@@ -87,13 +88,13 @@ func TestMessageRouter_SendRequest_DuplicateIDRefused(t *testing.T) {
 	}
 
 	// Same ID, different operation.
-	duplicate := NewRequest(MethodPing, nil)
+	duplicate := pairingproto.NewRequest(pairingproto.MethodPing, nil)
 	duplicate.ID = first.ID
 
 	_, err := router.SendRequest(ctx, duplicate)
 	require.Error(t, err, "a request reusing an in-flight ID must be refused")
-	assert.True(t, errors.Is(err, ErrDuplicateRequestID),
-		"want ErrDuplicateRequestID, got %v", err)
+	assert.True(t, errors.Is(err, pairingproto.ErrDuplicateRequestID),
+		"want pairingproto.ErrDuplicateRequestID, got %v", err)
 
 	// The refusal must not have disturbed the first request's route: it still
 	// receives its own response.
@@ -131,11 +132,11 @@ func TestMessageRouter_SendRequest_IDReusableAfterCompletion(t *testing.T) {
 			if err != nil {
 				return
 			}
-			var req Request
+			var req pairingproto.Request
 			if err := json.Unmarshal(plaintext, &req); err != nil {
 				return
 			}
-			resp := &Response{JSONRPC: JSONRPCVersion, ID: req.ID, Result: json.RawMessage(`{"pong":true}`)}
+			resp := &pairingproto.Response{JSONRPC: pairingproto.JSONRPCVersion, ID: req.ID, Result: json.RawMessage(`{"pong":true}`)}
 			respBytes, _ := json.Marshal(resp)
 			respCiphertext, _ := remoteSession.Encrypt(respBytes)
 			if err := remoteTransport.Send(context.Background(), respCiphertext); err != nil {
@@ -147,12 +148,12 @@ func TestMessageRouter_SendRequest_IDReusableAfterCompletion(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 
-	first := NewRequest(MethodPing, nil)
+	first := pairingproto.NewRequest(pairingproto.MethodPing, nil)
 	resp, err := router.SendRequest(ctx, first)
 	require.NoError(t, err)
 	require.NotNil(t, resp)
 
-	again := NewRequest(MethodPing, nil)
+	again := pairingproto.NewRequest(pairingproto.MethodPing, nil)
 	again.ID = first.ID
 
 	resp, err = router.SendRequest(ctx, again)
@@ -199,14 +200,14 @@ func TestMessageRouter_SendRequest_DuplicateIDRaceAdmitsOne(t *testing.T) {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
-			req := NewRequest(MethodPing, nil)
+			req := pairingproto.NewRequest(pairingproto.MethodPing, nil)
 			req.ID = id
 
 			_, err := router.SendRequest(ctx, req)
 
 			mu.Lock()
 			defer mu.Unlock()
-			if errors.Is(err, ErrDuplicateRequestID) {
+			if errors.Is(err, pairingproto.ErrDuplicateRequestID) {
 				duplicates++
 				return
 			}
@@ -250,7 +251,7 @@ func TestMessageRouter_SendRequest_AbandonedIDCannotBeReused(t *testing.T) {
 		received <- ciphertext
 	}()
 
-	abandoned := NewRequest(MethodPing, nil)
+	abandoned := pairingproto.NewRequest(pairingproto.MethodPing, nil)
 
 	cancelCtx, cancel := context.WithCancel(context.Background())
 	sendDone := make(chan error, 1)
@@ -276,7 +277,7 @@ func TestMessageRouter_SendRequest_AbandonedIDCannotBeReused(t *testing.T) {
 
 	// Reusing the abandoned ID is refused, so no later request can be sitting
 	// on it when the late answer arrives.
-	reuse := NewRequest(MethodPing, nil)
+	reuse := pairingproto.NewRequest(pairingproto.MethodPing, nil)
 	reuse.ID = abandoned.ID
 
 	ctx, ctxCancel := context.WithTimeout(context.Background(), 2*time.Second)
@@ -284,17 +285,17 @@ func TestMessageRouter_SendRequest_AbandonedIDCannotBeReused(t *testing.T) {
 
 	_, err := router.SendRequest(ctx, reuse)
 	require.Error(t, err, "an abandoned ID must not be reusable on the same connection")
-	assert.True(t, errors.Is(err, ErrDuplicateRequestID),
-		"want ErrDuplicateRequestID, got %v", err)
+	assert.True(t, errors.Is(err, pairingproto.ErrDuplicateRequestID),
+		"want pairingproto.ErrDuplicateRequestID, got %v", err)
 
 	// Deliver the late answer to prove nothing is waiting to receive it. The
 	// router logs it as unknown and drops it; the test asserts by not hanging
 	// and by the reuse having already been refused above.
 	plaintext, err := remoteSession.Decrypt(ciphertext)
 	require.NoError(t, err)
-	var req Request
+	var req pairingproto.Request
 	require.NoError(t, json.Unmarshal(plaintext, &req))
-	resp := &Response{JSONRPC: JSONRPCVersion, ID: req.ID, Result: json.RawMessage(`{"pong":true}`)}
+	resp := &pairingproto.Response{JSONRPC: pairingproto.JSONRPCVersion, ID: req.ID, Result: json.RawMessage(`{"pong":true}`)}
 	respBytes, err := json.Marshal(resp)
 	require.NoError(t, err)
 	respCiphertext, err := remoteSession.Encrypt(respBytes)
@@ -325,11 +326,11 @@ func TestMessageRouter_SendRequest_AnsweredIDIsNotRetired(t *testing.T) {
 			if err != nil {
 				return
 			}
-			var req Request
+			var req pairingproto.Request
 			if err := json.Unmarshal(plaintext, &req); err != nil {
 				return
 			}
-			resp := &Response{JSONRPC: JSONRPCVersion, ID: req.ID, Result: json.RawMessage(`{"pong":true}`)}
+			resp := &pairingproto.Response{JSONRPC: pairingproto.JSONRPCVersion, ID: req.ID, Result: json.RawMessage(`{"pong":true}`)}
 			respBytes, _ := json.Marshal(resp)
 			respCiphertext, _ := remoteSession.Encrypt(respBytes)
 			if err := remoteTransport.Send(context.Background(), respCiphertext); err != nil {
@@ -341,11 +342,11 @@ func TestMessageRouter_SendRequest_AnsweredIDIsNotRetired(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 
-	first := NewRequest(MethodPing, nil)
+	first := pairingproto.NewRequest(pairingproto.MethodPing, nil)
 	_, err := router.SendRequest(ctx, first)
 	require.NoError(t, err)
 
-	again := NewRequest(MethodPing, nil)
+	again := pairingproto.NewRequest(pairingproto.MethodPing, nil)
 	again.ID = first.ID
 	_, err = router.SendRequest(ctx, again)
 	require.NoError(t, err, "an answered ID must remain reusable")
@@ -374,7 +375,10 @@ func TestMessageRouterWithNotifier_AbandonedRequestDoesNotPanic(t *testing.T) {
 
 	ctx, cancel := context.WithCancel(context.Background())
 	sendDone := make(chan error, 1)
-	go func() { _, err := router.SendRequest(ctx, NewRequest(MethodPing, nil)); sendDone <- err }()
+	go func() {
+		_, err := router.SendRequest(ctx, pairingproto.NewRequest(pairingproto.MethodPing, nil))
+		sendDone <- err
+	}()
 
 	cancel()
 	select {
@@ -415,13 +419,13 @@ func TestMessageRouter_RetiredIDsAreBounded(t *testing.T) {
 
 	// An ID outside the seeded range, so the refusal is the CAP and not the
 	// per-ID tombstone check that runs before it.
-	fresh := NewRequest(MethodPing, nil)
+	fresh := pairingproto.NewRequest(pairingproto.MethodPing, nil)
 	fresh.ID = maxRetiredIDs + 1
 
 	_, err := router.SendRequest(ctx, fresh)
 	require.Error(t, err, "the router accepted a new request at the tombstone cap")
-	assert.True(t, errors.Is(err, ErrTooManyAbandonedRequests),
-		"want ErrTooManyAbandonedRequests, got %v", err)
+	assert.True(t, errors.Is(err, pairingproto.ErrTooManyAbandonedRequests),
+		"want pairingproto.ErrTooManyAbandonedRequests, got %v", err)
 
 	// Refused, not evicted: every tombstone must survive, or a reused ID could
 	// still collect a stale answer.
@@ -452,9 +456,9 @@ func TestMessageRouter_LateResponseKeepsTheTombstone(t *testing.T) {
 	answer := func(reqCipher []byte) []byte {
 		pt, err := remoteSession.Decrypt(reqCipher)
 		require.NoError(t, err)
-		var req Request
+		var req pairingproto.Request
 		require.NoError(t, json.Unmarshal(pt, &req))
-		resp := &Response{JSONRPC: JSONRPCVersion, ID: req.ID, Result: json.RawMessage(`{"pong":true}`)}
+		resp := &pairingproto.Response{JSONRPC: pairingproto.JSONRPCVersion, ID: req.ID, Result: json.RawMessage(`{"pong":true}`)}
 		respBytes, err := json.Marshal(resp)
 		require.NoError(t, err)
 		ct, err := remoteSession.Encrypt(respBytes)
@@ -488,7 +492,7 @@ func TestMessageRouter_LateResponseKeepsTheTombstone(t *testing.T) {
 		_ = remoteTransport.Send(bg, answer(ctB))
 	}()
 
-	abandoned := NewRequest(MethodPing, nil)
+	abandoned := pairingproto.NewRequest(pairingproto.MethodPing, nil)
 	cancelCtx, cancel := context.WithCancel(bg)
 	sendDone := make(chan error, 1)
 	go func() { _, err := router.SendRequest(cancelCtx, abandoned); sendDone <- err }()
@@ -517,7 +521,7 @@ func TestMessageRouter_LateResponseKeepsTheTombstone(t *testing.T) {
 
 	// Completing B proves the router processed A's late answer first (FIFO /
 	// strict Noise nonce order).
-	followUp := NewRequest(MethodPing, nil)
+	followUp := pairingproto.NewRequest(pairingproto.MethodPing, nil)
 	bctx, bcancel := context.WithTimeout(bg, 5*time.Second)
 	defer bcancel()
 	respB, err := router.SendRequest(bctx, followUp)
@@ -532,12 +536,12 @@ func TestMessageRouter_LateResponseKeepsTheTombstone(t *testing.T) {
 	router.mu.Unlock()
 	require.True(t, still, "the abandoned ID's tombstone must survive its late answer")
 
-	reuse := NewRequest(MethodPing, nil)
+	reuse := pairingproto.NewRequest(pairingproto.MethodPing, nil)
 	reuse.ID = abandoned.ID
 	rctx, rcancel := context.WithTimeout(bg, 500*time.Millisecond)
 	defer rcancel()
 	_, reuseErr := router.SendRequest(rctx, reuse)
-	require.ErrorIs(t, reuseErr, ErrDuplicateRequestID,
+	require.ErrorIs(t, reuseErr, pairingproto.ErrDuplicateRequestID,
 		"an abandoned ID must remain non-reusable after its late answer")
 
 	<-remoteDone
@@ -559,7 +563,7 @@ func TestMessageRouter_PreSendFailureDoesNotRetire(t *testing.T) {
 
 	// A channel is not JSON-encodable, so EncodeRequest fails before anything is
 	// sent.
-	bad := NewRequest(MethodPing, make(chan int))
+	bad := pairingproto.NewRequest(pairingproto.MethodPing, make(chan int))
 	_, err := router.SendRequest(context.Background(), bad)
 	require.Error(t, err, "an unencodable request must fail")
 
@@ -571,13 +575,13 @@ func TestMessageRouter_PreSendFailureDoesNotRetire(t *testing.T) {
 	// The ID is still usable: reusing it is NOT refused as a duplicate (it will
 	// time out waiting for a peer that never answers, which is a different
 	// error).
-	reuse := NewRequest(MethodPing, nil)
+	reuse := pairingproto.NewRequest(pairingproto.MethodPing, nil)
 	reuse.ID = bad.ID
 	ctx, cancel := context.WithTimeout(context.Background(), 200*time.Millisecond)
 	defer cancel()
 	_, err = router.SendRequest(ctx, reuse)
 	require.Error(t, err)
-	require.NotErrorIs(t, err, ErrDuplicateRequestID,
+	require.NotErrorIs(t, err, pairingproto.ErrDuplicateRequestID,
 		"the ID from a pre-send failure must remain reusable")
 }
 
@@ -611,7 +615,7 @@ func TestMessageRouter_FinalizeAbandon(t *testing.T) {
 
 	t.Run("answered is never retired", func(t *testing.T) {
 		r := newRouter()
-		ch := make(chan *Response, 1)
+		ch := make(chan *pairingproto.Response, 1)
 		r.mu.Lock()
 		r.pending[id] = ch
 		r.mu.Unlock()
@@ -622,22 +626,22 @@ func TestMessageRouter_FinalizeAbandon(t *testing.T) {
 
 	t.Run("pre-send failure is not retired", func(t *testing.T) {
 		r := newRouter()
-		ch := make(chan *Response, 1)
+		ch := make(chan *pairingproto.Response, 1)
 		r.finalizeAbandon(id, ch, false /*sent*/, false /*answered*/)
 		require.False(t, isRetired(r, id), "a request that never reached the wire must stay reusable")
 	})
 
 	t.Run("sent and unanswered is retired", func(t *testing.T) {
 		r := newRouter()
-		ch := make(chan *Response, 1) // empty: no response arrived
+		ch := make(chan *pairingproto.Response, 1) // empty: no response arrived
 		r.finalizeAbandon(id, ch, true /*sent*/, false /*answered*/)
 		require.True(t, isRetired(r, id), "a genuinely abandoned sent request must be retired")
 	})
 
 	t.Run("a raced-in response is drained, not retired (F3)", func(t *testing.T) {
 		r := newRouter()
-		ch := make(chan *Response, 1)
-		ch <- &Response{JSONRPC: JSONRPCVersion, ID: id} // delivered while ctx.Done won the select
+		ch := make(chan *pairingproto.Response, 1)
+		ch <- &pairingproto.Response{JSONRPC: pairingproto.JSONRPCVersion, ID: id} // delivered while ctx.Done won the select
 		r.finalizeAbandon(id, ch, true /*sent*/, false /*answered as far as the select knew*/)
 		require.False(t, isRetired(r, id),
 			"a response delivered under a racing cancellation must not leave a tombstone")

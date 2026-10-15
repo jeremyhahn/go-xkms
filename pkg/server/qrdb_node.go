@@ -252,6 +252,14 @@ func (s *Server) initEmbeddedQRDBNode() error {
 	nodeOpts = append(nodeOpts, sealNodeOpts...)
 	serverOpts = append(serverOpts, sealServerOpts...)
 
+	// The attested-caller gate (attestation.peer_gate): qrdb enforces it on
+	// every node transport after authorization.
+	gateOpts, err := s.attestedCallerNodeOptions()
+	if err != nil {
+		return &QRDBNodeError{Stage: "attested-caller gate", Err: err}
+	}
+	nodeOpts = append(nodeOpts, gateOpts...)
+
 	// newQRDBNode is build-tag specific: the default (!raft) build hosts a
 	// standalone node; the -tags raft build hosts a clustered node when
 	// Cluster.Enabled, falling back to standalone otherwise.

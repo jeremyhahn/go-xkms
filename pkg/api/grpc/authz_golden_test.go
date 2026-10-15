@@ -145,6 +145,8 @@ var goldenRPCPermissions = map[string]string{
 	"OIDCCredentialGetAccessToken": "oidc_credentials:token",
 	"OIDCCredentialDeviceStart":    "oidc_credentials:update",
 	"OIDCCredentialDevicePoll":     "oidc_credentials:update",
+	"PeerAttestationChallenge":     "peer_attestation:challenge",
+	"SubmitPeerAttestation":        "peer_attestation:submit",
 	// A tenant's TPM mode and vTPM (system scope only; tenants:set_tpm_mode
 	// is a cross-tenant permission xkms declares).
 	"GetTenantTPMMode": "tenants:read",
@@ -152,6 +154,14 @@ var goldenRPCPermissions = map[string]string{
 	"TenantVTPMStatus": "tenants:read",
 	"TenantVTPMStart":  "tenants:set_tpm_mode",
 	"TenantVTPMStop":   "tenants:set_tpm_mode",
+	// The platform trust-root store (pkg/attestation/truststore) --
+	// pkg/auth.ResourceTrustRoots, an xkms-owned, system-scope family.
+	// Quarantine reclassifies a root, so it is an update.
+	"TrustRootList":       "trust_roots:list",
+	"TrustRootGet":        "trust_roots:get",
+	"TrustRootImport":     "trust_roots:import",
+	"TrustRootQuarantine": "trust_roots:update",
+	"TrustRootRemove":     "trust_roots:delete",
 	// PKCS#11 remote-state RPCs persist a token's key/object state, so they
 	// gate on the keys resource with the same per-verb CRUD actions REST's
 	// /api/v1/pkcs11state/* routes carry (go-xkms#1249): create for the two

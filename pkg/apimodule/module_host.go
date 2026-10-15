@@ -21,8 +21,6 @@ import (
 
 	"github.com/jeremyhahn/go-xkms/pkg/api/rest"
 	"github.com/jeremyhahn/go-xkms/pkg/compose"
-	"github.com/jeremyhahn/go-xkms/pkg/config"
-	"github.com/jeremyhahn/go-xkms/pkg/datastore"
 	"github.com/jeremyhahn/go-xkms/pkg/xkms"
 )
 
@@ -74,6 +72,7 @@ func (e *HostBuildError) Unwrap() error { return e.Err }
 // construction failure; callers surface it as a loud 503 rather than the
 // generic "still composing" message.
 func (m *Module) restServer() (*rest.Server, error) {
+	m.wirePeerEvidenceCollector()
 	if m.resolveREST != nil {
 		return m.resolveREST(), nil
 	}
@@ -100,7 +99,7 @@ func (m *Module) restServer() (*rest.Server, error) {
 	if hc.QRDBClient != nil {
 		// WebAuthn credentials persist through the host datastore's DAO
 		// factory; without one the WebAuthn routes stay unmounted.
-		ds, err := datastore.New(hc.QRDBClient, config.DatastoreConfig{})
+		ds, err := m.openDatastore(hc.QRDBClient)
 		if err != nil {
 			return nil, &HostBuildError{Err: err}
 		}
@@ -159,7 +158,7 @@ func (m *Module) hostStores(x *xkms.XKMSService) *compose.Stores {
 		if client := m.resolveQRDBClient(); client != nil {
 			// Without storage compose leaves every store-backed feature
 			// off and records why.
-			open, daos, err := hostStorage(client, compose.Databases(deps))
+			open, daos, err := m.hostStorage(client, compose.Databases(deps))
 			if err != nil {
 				deps.Logger.Warn("module host storage unavailable", "error", err)
 			}
@@ -204,8 +203,8 @@ func (m *Module) HostStores() *compose.Stores { return m.stores.Load() }
 // share one backend and their Close does not close the host's client. A
 // database the host's client cannot open leaves the views and returns no
 // factory, so only the features persisting DAO entities go off.
-func hostStorage(client *qrdbsdk.Client, databases []string) (compose.StorageFactory, *qrdbsdk.DAOFactory, error) {
-	ds, err := datastore.New(client, config.DatastoreConfig{})
+func (m *Module) hostStorage(client *qrdbsdk.Client, databases []string) (compose.StorageFactory, *qrdbsdk.DAOFactory, error) {
+	ds, err := m.openDatastore(client)
 	if err != nil {
 		return nil, nil, err
 	}

@@ -17,7 +17,8 @@ import (
 	"context"
 	"sync"
 
-	"github.com/jeremyhahn/go-xkms/xkey/pkg/pairing"
+	"github.com/jeremyhahn/go-xkms/sdk/go/bootstrap"
+	"github.com/jeremyhahn/go-xkms/sdk/go/pairingproto"
 	"github.com/jeremyhahn/go-xkms/xkey/pkg/phone"
 )
 
@@ -26,9 +27,9 @@ import (
 type MockTransport struct {
 	mu            sync.Mutex
 	mockPhone     *MockPhone
-	noiseSession  *pairing.NoiseSession
-	fragmenter    *pairing.Fragmenter
-	reassembler   *pairing.Reassembler
+	noiseSession  *bootstrap.NoiseSession
+	fragmenter    *pairingproto.Fragmenter
+	reassembler   *pairingproto.Reassembler
 	mtu           int
 	connected     bool
 	handshakeDone bool
@@ -36,14 +37,14 @@ type MockTransport struct {
 
 // NewMockTransport creates a mock transport connected to a mock phone.
 func NewMockTransport(mockPhone *MockPhone, mtu int) *MockTransport {
-	if mtu < pairing.MinMTU {
+	if mtu < pairingproto.MinMTU {
 		mtu = phone.DefaultMTU
 	}
 	return &MockTransport{
 		mockPhone:   mockPhone,
 		mtu:         mtu,
-		fragmenter:  pairing.NewFragmenter(mtu),
-		reassembler: pairing.NewReassembler(),
+		fragmenter:  pairingproto.NewFragmenter(mtu),
+		reassembler: pairingproto.NewReassembler(),
 	}
 }
 
@@ -62,7 +63,7 @@ func (t *MockTransport) Connect(ctx context.Context) error {
 	}
 
 	// Initialize initiator's Noise session
-	session, err := pairing.NewNoiseSession(&pairing.NoiseSessionConfig{
+	session, err := bootstrap.NewNoiseSession(&bootstrap.NoiseSessionConfig{
 		IsInitiator: true,
 	})
 	if err != nil {
@@ -126,7 +127,7 @@ func (t *MockTransport) performHandshake() error {
 }
 
 // SendRequest sends a request and receives a response.
-func (t *MockTransport) SendRequest(req *pairing.Request) (*pairing.Response, error) {
+func (t *MockTransport) SendRequest(req *pairingproto.Request) (*pairingproto.Response, error) {
 	t.mu.Lock()
 	defer t.mu.Unlock()
 
@@ -135,7 +136,7 @@ func (t *MockTransport) SendRequest(req *pairing.Request) (*pairing.Response, er
 	}
 
 	// Encode request
-	reqBytes, err := pairing.EncodeRequest(req)
+	reqBytes, err := pairingproto.EncodeRequest(req)
 	if err != nil {
 		return nil, err
 	}
@@ -155,7 +156,7 @@ func (t *MockTransport) SendRequest(req *pairing.Request) (*pairing.Response, er
 	// Reassemble on "phone side" (simulates receiving fragments)
 	t.reassembler.Reset()
 	for _, fragData := range fragments {
-		frag, err := pairing.DecodeFragment(fragData)
+		frag, err := pairingproto.DecodeFragment(fragData)
 		if err != nil {
 			return nil, err
 		}
@@ -188,7 +189,7 @@ func (t *MockTransport) SendRequest(req *pairing.Request) (*pairing.Response, er
 	// Reassemble response on "desktop side"
 	t.reassembler.Reset()
 	for _, fragData := range respFragments {
-		frag, err := pairing.DecodeFragment(fragData)
+		frag, err := pairingproto.DecodeFragment(fragData)
 		if err != nil {
 			return nil, err
 		}
@@ -213,7 +214,7 @@ func (t *MockTransport) SendRequest(req *pairing.Request) (*pairing.Response, er
 	}
 
 	// Decode response
-	return pairing.DecodeResponse(decrypted)
+	return pairingproto.DecodeResponse(decrypted)
 }
 
 // Disconnect simulates BLE disconnection.

@@ -14,25 +14,36 @@
 package peergate
 
 import (
-	"bytes"
 	"context"
-	"sync"
 	"time"
 
+	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
+
 	"github.com/jeremyhahn/go-xkms/pkg/attestation/peer"
+	"github.com/jeremyhahn/go-xkms/pkg/dao"
 )
 
-// DefaultMaxPeers bounds a MemoryStore, and a Collector's outstanding
+// DefaultMaxPeers bounds a DAOStore, and a Collector's outstanding
 // challenges, when the configuration leaves the limit zero.
 const DefaultMaxPeers = 100_000
 
-// DefaultRetention is how long a MemoryStore keeps evidence it may evict to
-// make room for a new peer, when the configuration leaves it zero. Evidence
-// this old is far past any sensible maximum evidence age, so evicting it
-// changes no verdict: the gate would refuse it as stale anyway.
+// DefaultRetention is how long a DAOStore keeps a peer's evidence before it
+// may be evicted to make room, when the configuration leaves it zero. It is a
+// capacity policy, not a freshness one: the gate judges freshness itself.
 const DefaultRetention = 24 * time.Hour
 
-// Record is the latest evidence one peer submitted.
+// DatabaseName is the qrdb database the evidence store persists in. A host
+// ensures it on its datastore before handing the DAO factory to NewDAOStore.
+const DatabaseName = "peergate"
+
+const (
+	entityType = "peer_evidence"
+
+	// evictPageSize is how many records one eviction scan reads at a time.
+	evictPageSize = 500
+)
+
+// Record is one peer's latest evidence, keyed by its certificate thumbprint.
 type Record struct {
 	// Thumbprint is the canonical SPKI thumbprint of the verified client
 	// certificate the evidence arrived under. It is the record's key.
@@ -47,29 +58,8 @@ type Record struct {
 	ChannelBinding []byte
 }
 
-// clone returns a deep copy, so a record handed out never aliases a stored one.
-func (r Record) clone() Record {
-	pcrs := make(map[int][]byte, len(r.Evidence.PCRs))
-	for idx, value := range r.Evidence.PCRs {
-		pcrs[idx] = bytes.Clone(value)
-	}
-	return Record{
-		Thumbprint: r.Thumbprint,
-		Evidence: peer.Evidence{
-			Quote:            bytes.Clone(r.Evidence.Quote),
-			Signature:        bytes.Clone(r.Evidence.Signature),
-			Nonce:            bytes.Clone(r.Evidence.Nonce),
-			PCRs:             pcrs,
-			AKCertificatePEM: bytes.Clone(r.Evidence.AKCertificatePEM),
-			CollectedAt:      r.Evidence.CollectedAt,
-		},
-		ChannelBinding: bytes.Clone(r.ChannelBinding),
-	}
-}
-
-// EvidenceStore holds the latest evidence per peer, keyed by SPKI thumbprint.
-// The Collector writes it and the Verifier reads it. Implementations are safe
-// for concurrent use.
+// EvidenceStore holds the latest evidence per peer. Implementations must be
+// safe for concurrent use.
 type EvidenceStore interface {
 	// Put stores r, replacing any earlier record for r.Thumbprint. The latest
 	// evidence always wins, so a peer whose state turned bad cannot keep
@@ -85,8 +75,12 @@ type EvidenceStore interface {
 	Delete(ctx context.Context, thumbprint string) error
 }
 
-// MemoryStoreConfig bounds a MemoryStore.
-type MemoryStoreConfig struct {
+// DAOStoreConfig configures a DAOStore.
+type DAOStoreConfig struct {
+	// DAOs is the qrdb DAO factory the store persists through. DatabaseName
+	// must already be ensured on it. Required.
+	DAOs *qrdbsdk.DAOFactory
+
 	// MaxPeers is the most peers the store holds evidence for. Zero means
 	// DefaultMaxPeers; negative is invalid.
 	MaxPeers int
@@ -97,24 +91,27 @@ type MemoryStoreConfig struct {
 	Retention time.Duration
 }
 
-// MemoryStore is the in-process EvidenceStore. Evidence collected on one node
-// is visible only to that node's verifier; a host that load-balances peers
-// across nodes routes submissions to every node or supplies a shared
-// EvidenceStore.
-type MemoryStore struct {
-	mu        sync.RWMutex
-	records   map[string]Record
+// DAOStore is the EvidenceStore persisted through a qrdb DAO, so every node
+// sharing the datastore sees the same evidence and it survives a restart.
+//
+// MaxPeers is enforced per Put: two first submissions racing at the limit
+// may both be admitted, so the bound can be exceeded by the number of
+// concurrent first submissions, never by a single peer resubmitting.
+type DAOStore struct {
+	records   qrdbsdk.GenericDAO[*evidenceEntity]
 	maxPeers  int
 	retention time.Duration
 	now       func() time.Time
 }
 
-// Compile-time check that MemoryStore is an EvidenceStore.
-var _ EvidenceStore = (*MemoryStore)(nil)
+var _ EvidenceStore = (*DAOStore)(nil)
 
-// NewMemoryStore returns an empty MemoryStore. It returns *ConfigError for a
-// negative bound.
-func NewMemoryStore(cfg MemoryStoreConfig, opts ...Option) (*MemoryStore, error) {
+// NewDAOStore returns a DAOStore over cfg.DAOs. Zero bounds select the
+// defaults; a missing factory or a negative bound is a *ConfigError.
+func NewDAOStore(cfg DAOStoreConfig, opts ...Option) (*DAOStore, error) {
+	if cfg.DAOs == nil {
+		return nil, &ConfigError{Field: "DAOs", Reason: "is required"}
+	}
 	if cfg.MaxPeers < 0 {
 		return nil, &ConfigError{Field: "MaxPeers", Reason: "must not be negative"}
 	}
@@ -127,74 +124,123 @@ func NewMemoryStore(cfg MemoryStoreConfig, opts ...Option) (*MemoryStore, error)
 	if cfg.Retention == 0 {
 		cfg.Retention = DefaultRetention
 	}
-	return &MemoryStore{
-		records:   make(map[string]Record),
+	records, err := dao.New(cfg.DAOs, DatabaseName, entityType, newEvidenceEntity,
+		qrdbsdk.WithIDGenerator(qrdbsdk.NewCryptoFieldHashGenerator("Thumbprint")))
+	if err != nil {
+		return nil, &ConfigError{Field: "DAOs", Reason: "cannot open the evidence DAO", Cause: err}
+	}
+	return &DAOStore{
+		records:   records,
 		maxPeers:  cfg.MaxPeers,
 		retention: cfg.Retention,
 		now:       newSettings(opts).now,
 	}, nil
 }
 
-// Put implements EvidenceStore. A new peer beyond MaxPeers first evicts
-// records older than Retention; if none is that old it is refused with
-// *CapacityError and every existing record is kept.
-func (s *MemoryStore) Put(ctx context.Context, r Record) error {
+// Put stores r as the peer's latest evidence. When r is a new peer and the
+// store is full, records older than the retention are evicted first; a store
+// still full afterwards refuses r with a *CapacityError.
+func (s *DAOStore) Put(ctx context.Context, r Record) error {
 	if err := ctx.Err(); err != nil {
 		return &peer.ContextError{Cause: err}
 	}
-	stored := r.clone()
-
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	if _, exists := s.records[r.Thumbprint]; !exists && len(s.records) >= s.maxPeers {
-		s.evictExpiredLocked()
-		if len(s.records) >= s.maxPeers {
-			return &CapacityError{What: "evidence", Limit: s.maxPeers}
+	_, exists, err := s.load(ctx, r.Thumbprint)
+	if err != nil {
+		return err
+	}
+	if !exists {
+		if err := s.makeRoom(ctx); err != nil {
+			return err
 		}
 	}
-	s.records[r.Thumbprint] = stored
+	return s.records.Save(ctx, entityFromRecord(r))
+}
+
+// makeRoom evicts expired records when the store is at its limit and
+// reports a *CapacityError when eviction freed nothing.
+func (s *DAOStore) makeRoom(ctx context.Context) error {
+	count, err := s.records.Count(ctx)
+	if err != nil {
+		return err
+	}
+	if count < s.maxPeers {
+		return nil
+	}
+	evicted, err := s.evictExpired(ctx)
+	if err != nil {
+		return err
+	}
+	if count-evicted >= s.maxPeers {
+		return &CapacityError{What: "evidence", Limit: s.maxPeers}
+	}
 	return nil
 }
 
-// evictExpiredLocked drops every record older than the retention window. The
-// caller holds the write lock.
-func (s *MemoryStore) evictExpiredLocked() {
+// evictExpired deletes every record collected before the retention cutoff
+// and returns how many it deleted. The scan completes before any delete, so
+// removing records cannot shift the pages still to be read.
+func (s *DAOStore) evictExpired(ctx context.Context) (int, error) {
 	cutoff := s.now().Add(-s.retention)
-	for thumbprint, r := range s.records {
-		if r.Evidence.CollectedAt.Before(cutoff) {
-			delete(s.records, thumbprint)
+	var expired []*evidenceEntity
+	query := qrdbsdk.PageQuery{Page: 1, PageSize: evictPageSize, SortOrder: qrdbsdk.DAOSortAscending}
+	err := s.records.ForEachPage(ctx, query, func(page qrdbsdk.PageResult[*evidenceEntity]) error {
+		for _, e := range page.Entities {
+			if e.CollectedAt.Before(cutoff) {
+				expired = append(expired, e)
+			}
+		}
+		return nil
+	})
+	if err != nil {
+		return 0, err
+	}
+	// A peer may refresh its evidence between the scan and the delete, so
+	// each delete is conditional on the record still being the one scanned,
+	// and only records actually removed make room.
+	evicted := 0
+	for _, e := range expired {
+		deleted, err := s.records.DeleteIfMatch(ctx, e)
+		if err != nil {
+			return 0, err
+		}
+		if deleted {
+			evicted++
 		}
 	}
+	return evicted, nil
 }
 
-// Get implements EvidenceStore.
-func (s *MemoryStore) Get(ctx context.Context, thumbprint string) (Record, bool, error) {
+// Get returns the peer's latest evidence.
+func (s *DAOStore) Get(ctx context.Context, thumbprint string) (Record, bool, error) {
 	if err := ctx.Err(); err != nil {
 		return Record{}, false, &peer.ContextError{Cause: err}
 	}
-	s.mu.RLock()
-	r, ok := s.records[thumbprint]
-	s.mu.RUnlock()
-	if !ok {
-		return Record{}, false, nil
+	e, ok, err := s.load(ctx, thumbprint)
+	if err != nil || !ok {
+		return Record{}, false, err
 	}
-	return r.clone(), true, nil
+	return e.record(), true, nil
 }
 
-// Delete implements EvidenceStore.
-func (s *MemoryStore) Delete(ctx context.Context, thumbprint string) error {
+// Delete withdraws the peer's evidence. An absent record is not an error.
+func (s *DAOStore) Delete(ctx context.Context, thumbprint string) error {
 	if err := ctx.Err(); err != nil {
 		return &peer.ContextError{Cause: err}
 	}
-	s.mu.Lock()
-	delete(s.records, thumbprint)
-	s.mu.Unlock()
-	return nil
+	e, ok, err := s.load(ctx, thumbprint)
+	if err != nil || !ok {
+		return err
+	}
+	return s.records.Delete(ctx, e)
 }
 
-// Len reports how many peers the store holds evidence for.
-func (s *MemoryStore) Len() int {
-	s.mu.RLock()
-	defer s.mu.RUnlock()
-	return len(s.records)
+func (s *DAOStore) load(ctx context.Context, thumbprint string) (*evidenceEntity, bool, error) {
+	e, err := s.records.GetByNaturalKey(ctx, thumbprint)
+	if qrdbsdk.IsDAONotFound(err) {
+		return nil, false, nil
+	}
+	if err != nil {
+		return nil, false, err
+	}
+	return e, true, nil
 }

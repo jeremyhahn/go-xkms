@@ -51,10 +51,13 @@ import (
 	grpcapi "github.com/jeremyhahn/go-xkms/pkg/api/grpc"
 	pb "github.com/jeremyhahn/go-xkms/pkg/api/grpc/proto/xkmsv1"
 	"github.com/jeremyhahn/go-xkms/pkg/api/rest"
+	"github.com/jeremyhahn/go-xkms/pkg/attestation/peergate"
 	"github.com/jeremyhahn/go-xkms/pkg/ca"
 	"github.com/jeremyhahn/go-xkms/pkg/compose"
 	"github.com/jeremyhahn/go-xkms/pkg/config"
+	"github.com/jeremyhahn/go-xkms/pkg/datastore"
 	"github.com/jeremyhahn/go-xkms/pkg/seal"
+	qrdbstorage "github.com/jeremyhahn/go-xkms/pkg/storage/qrdb"
 	"github.com/jeremyhahn/go-xkms/pkg/tpm2/vtpm"
 	"github.com/jeremyhahn/go-xkms/pkg/types"
 	"github.com/jeremyhahn/go-xkms/pkg/xkms"
@@ -125,6 +128,26 @@ func WithQRDBClient(resolve QRDBClientResolver) Option {
 	return func(m *Module) {
 		m.resolveQRDBClient = resolve
 	}
+}
+
+// WithServiceContext wires the host's service-context binder: every call a
+// datastore the module opens on the host's qrdb client makes -- database
+// initialisation and each later DAO call -- runs on the context bind
+// derives, the way xkmsd binds its own datastore (pkg/server). An embedded
+// node's Node.ServiceContext is one: it binds the node's service principal,
+// without which a node that enforces authentication refuses the module's
+// storage with qrdbsdk.ErrUnauthenticated. Nil runs the calls on the
+// caller's context.
+func WithServiceContext(bind qrdbstorage.CallContext) Option {
+	return func(m *Module) {
+		m.serviceContext = bind
+	}
+}
+
+// openDatastore opens a datastore on the host's qrdb client, bound to the
+// host's service context (WithServiceContext).
+func (m *Module) openDatastore(client *qrdbsdk.Client) (*datastore.Datastore, error) {
+	return datastore.New(client, config.DatastoreConfig{}, datastore.WithCallContext(m.serviceContext))
 }
 
 // WithWebAuthnConfig enables the module's self-built WebAuthn relying-party
@@ -313,6 +336,10 @@ type Module struct {
 	resolveMCP        MCPResolver
 	resolveQRDBClient QRDBClientResolver
 
+	// serviceContext is WithServiceContext's binder, applied to every
+	// datastore the module opens (openDatastore).
+	serviceContext qrdbstorage.CallContext
+
 	// Host composition inputs (module_host.go): the dependencies the module
 	// builds its store-backed features from when it self-builds.
 	resolveBarrierRegistry BarrierRegistryResolver
@@ -361,6 +388,13 @@ type Module struct {
 	// by composeMu; the atomic keeps the steady-state read lock-free.
 	stores    atomic.Pointer[compose.Stores]
 	composeMu sync.Mutex
+
+	// attestedCallerPolicy is WithAttestedCallerGate's policy, and peerGate
+	// the gate NewModule built from it (module_peergate.go). peerGateWired
+	// records that the gate's collector reached the resolved service.
+	attestedCallerPolicy *peergate.GatePolicy
+	peerGate             *peergate.Gate
+	peerGateWired        atomic.Bool
 }
 
 // Compile-time interface check.
@@ -375,6 +409,9 @@ func NewModule(resolve ServiceResolver, opts ...Option) (*Module, error) {
 	m := &Module{resolve: resolve}
 	for _, opt := range opts {
 		opt(m)
+	}
+	if err := m.buildAttestedCallerGate(); err != nil {
+		return nil, err
 	}
 	// Contribute the module's permission set into qrdb's role-grant
 	// registry before the embedded node seeds roles (module_grants.go).
@@ -422,6 +459,7 @@ func (m *Module) PublicGRPCMethods() []string {
 // intentionally stays disabled — the interceptor decides before the handler
 // runs, and unannotated RPCs never reach it at all.
 func (m *Module) keystore() (pb.KeystoreServiceServer, error) {
+	m.wirePeerEvidenceCollector()
 	if svc := m.service.Load(); svc != nil {
 		return svc, nil
 	}

@@ -35,9 +35,9 @@ import (
 	"testing"
 	"time"
 
+	"github.com/jeremyhahn/go-xkms/pkg/pairingproto"
 	xkms "github.com/jeremyhahn/go-xkms/sdk/go"
 	"github.com/jeremyhahn/go-xkms/xkey/pkg/attestation/attesttest"
-	pairing "github.com/jeremyhahn/go-xkms/xkey/pkg/pairing"
 )
 
 func withFIPSMode(t *testing.T, on bool) {
@@ -149,7 +149,7 @@ type phone struct {
 
 	// mutateEnrollment, when set, edits the enrollment package before it
 	// is sent, to model a phone whose evidence is wrong in one way.
-	mutateEnrollment func(res *pairing.LocalGetDeviceEnrollmentRequestResult)
+	mutateEnrollment func(res *pairingproto.LocalGetDeviceEnrollmentRequestResult)
 }
 
 func newPhone(t *testing.T) *phone {
@@ -190,14 +190,14 @@ func newPhone(t *testing.T) *phone {
 		"local.shareSymmetric":   ph.shareSymmetric,
 		"local.importSharedKey":  ph.importSharedKey,
 
-		pairing.MethodLocalGetDeviceEnrollmentRequest: ph.enrollmentRequest,
-		pairing.MethodLocalStoreDeviceCredential:      ph.storeDeviceCredential,
+		pairingproto.MethodLocalGetDeviceEnrollmentRequest: ph.enrollmentRequest,
+		pairingproto.MethodLocalStoreDeviceCredential:      ph.storeDeviceCredential,
 	}
 	for _, method := range []string{
-		pairing.MethodLocalGetTCGCSRIDevID,
-		pairing.MethodLocalActivateCredential,
-		pairing.MethodLocalGetAttestationQuote,
-		pairing.MethodLocalGetIAKPublicKey,
+		pairingproto.MethodLocalGetTCGCSRIDevID,
+		pairingproto.MethodLocalActivateCredential,
+		pairingproto.MethodLocalGetAttestationQuote,
+		pairingproto.MethodLocalGetIAKPublicKey,
 	} {
 		ph.handlers[method] = notApplicable
 	}
@@ -524,8 +524,8 @@ func (ph *phone) enrollmentRequest(params map[string]interface{}) (interface{}, 
 		&x509.CertificateRequest{Subject: pkix.Name{CommonName: "e2eprobe device"}}, key)
 	ph.must(err)
 
-	res := &pairing.LocalGetDeviceEnrollmentRequestResult{
-		Format:           pairing.AttestationFormatAndroidKey,
+	res := &pairingproto.LocalGetDeviceEnrollmentRequestResult{
+		Format:           pairingproto.AttestationFormatAndroidKey,
 		CSR:              csr,
 		AttestationChain: []string{b64(leaf), b64(ph.attestCA.Cert.Raw)},
 		SecurityLevel:    "strongbox",
@@ -551,7 +551,7 @@ func (ph *phone) storeDeviceCredential(params map[string]interface{}) (interface
 	if !bytes.Equal(cert.RawSubjectPublicKeyInfo, spki) {
 		return nil, rpcError(-32602, "certificate is not for the device key")
 	}
-	return &pairing.LocalStoreDeviceCredentialResult{Stored: true, NotAfter: cert.NotAfter.UnixMilli()}, nil
+	return &pairingproto.LocalStoreDeviceCredentialResult{Stored: true, NotAfter: cert.NotAfter.UnixMilli()}, nil
 }
 
 // stepNamed returns the step the probe recorded under name.
@@ -605,7 +605,7 @@ func TestFamilies_PassAgainstAConformantPhone(t *testing.T) {
 		{"sharing", func(p *prober) { sharingFamily(p, "run", "hw-key") },
 			"local.importSharedKey (hardware public-only)"},
 		{"enrollment", enrollmentFamily, "credential was adopted"},
-		{"tpm refusal", tpmRefusalFamily, pairing.MethodLocalGetIAKPublicKey + " is refused as not applicable"},
+		{"tpm refusal", tpmRefusalFamily, pairingproto.MethodLocalGetIAKPublicKey + " is refused as not applicable"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -888,10 +888,10 @@ func TestTPMRefusalFamily_RequiresASpecificNotApplicableRefusal(t *testing.T) {
 		}, "expected NOT_APPLICABLE (-32036)"},
 	}
 	methods := []string{
-		pairing.MethodLocalGetTCGCSRIDevID,
-		pairing.MethodLocalActivateCredential,
-		pairing.MethodLocalGetAttestationQuote,
-		pairing.MethodLocalGetIAKPublicKey,
+		pairingproto.MethodLocalGetTCGCSRIDevID,
+		pairingproto.MethodLocalActivateCredential,
+		pairingproto.MethodLocalGetAttestationQuote,
+		pairingproto.MethodLocalGetIAKPublicKey,
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {

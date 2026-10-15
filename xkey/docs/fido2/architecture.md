@@ -5,7 +5,7 @@
 ## Boundary with `virtual-authenticator`
 
 This folder and [`../virtual-authenticator/`](../virtual-authenticator/architecture.md)
-both touch `xkey/pkg/authenticator`, and the split is deliberate rather than an
+both touch `pkg/fido2/authenticator`, and the split is deliberate rather than an
 oversight:
 
 - **`virtual-authenticator`** owns the CTAP2 authenticator as a product
@@ -36,14 +36,14 @@ different lifecycles for the same engine.
 
 ## Shape chosen: one authenticator engine, two hosts
 
-`xkey/pkg/authenticator.Authenticator` (documented in
+`pkg/fido2/authenticator.Authenticator` (documented in
 [`virtual-authenticator/engineering.md`](../virtual-authenticator/engineering.md))
 is constructed once and driven by whichever process is running it:
 
 | Host | Where | Front end |
 |---|---|---|
-| CLI daemon | `fido2Device` in `xkey/cmd/xkey/cmd/fido2.go:634` | `xkey/pkg/uhid.Device` + `authenticator.CTAPHIDHandler`, or the CDP bridge under `--cdp` |
-| GUI | `pkg/gui/services.FIDO2DeviceService` | `xkey/pkg/virtualdevice.NativeVirtualDevice`, which wraps the same UHID + CTAPHID pieces for the Wails app |
+| CLI daemon | `fido2Device` in `xkey/cmd/xkey/cmd/fido2.go:634` | `pkg/fido2/uhid.Device` + `authenticator.CTAPHIDHandler`, or the CDP bridge under `--cdp` |
+| GUI | `pkg/gui/services.FIDO2DeviceService` | `pkg/fido2/virtualdevice.NativeVirtualDevice`, which wraps the same UHID + CTAPHID pieces for the Wails app |
 
 Both hosts hold the same kind of moving parts — a UHID device, a presence
 handler, a notifier — but they are two independent Go processes with two
@@ -73,8 +73,8 @@ simpler than inventing a third process to own it.
 | Notifications | `xkey/pkg/notify` | Tells a human a touch is pending: D-Bus, a custom command, a log line, or the GUI's own event bus |
 | Virtual keyboard | `xkey/pkg/keyboard` | Types a stored password into whatever has focus, on `xkey touch --password` |
 | GUI device host | `xkey/pkg/gui/services` (`FIDO2DeviceService`, `FIDO2Service`) | Runs the authenticator inside the Wails app; manages credentials and RP policy for the GUI |
-| GUI UHID bridge | `xkey/pkg/virtualdevice` | `NativeVirtualDevice`: the GUI's equivalent of the daemon's `uhidDevice` + `hidHandler` pair |
-| CTAP2 authenticator | `xkey/pkg/authenticator`, `xkey/pkg/uhid` | Owned by [`virtual-authenticator`](../virtual-authenticator/architecture.md) |
+| GUI UHID bridge | `pkg/fido2/virtualdevice` | `NativeVirtualDevice`: the GUI's equivalent of the daemon's `uhidDevice` + `hidHandler` pair |
+| CTAP2 authenticator | `pkg/fido2/authenticator`, `pkg/fido2/uhid` | Owned by [`virtual-authenticator`](../virtual-authenticator/architecture.md) |
 | Attestation identity provisioning | `xkey/cmd/xkey/cmd/fido2_provision_attestation.go` | CLI verb that turns on real attestation; talks to the xkms enterprise CA over `sdk/go/transport` |
 
 ## Data flow

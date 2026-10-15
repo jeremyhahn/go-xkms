@@ -20,8 +20,9 @@ import (
 
 	"github.com/stretchr/testify/require"
 
+	"github.com/jeremyhahn/go-xkms/pkg/pairingproto"
+	"github.com/jeremyhahn/go-xkms/pkg/trust/bootstrap"
 	xkms "github.com/jeremyhahn/go-xkms/sdk/go"
-	pairing "github.com/jeremyhahn/go-xkms/xkey/pkg/pairing"
 )
 
 func TestMemTransportPair_DeliversInBothDirections(t *testing.T) {
@@ -70,13 +71,13 @@ func TestMemTransport_HonoursCancellation(t *testing.T) {
 }
 
 func TestChannelBinding_MatchesTheProductionDerivation(t *testing.T) {
-	initiatorPub := FixedBytes(0x01, pairing.AttestStaticKeySize)
-	responderPub := FixedBytes(0x02, pairing.AttestStaticKeySize)
+	initiatorPub := FixedBytes(0x01, pairingproto.AttestStaticKeySize)
+	responderPub := FixedBytes(0x02, pairingproto.AttestStaticKeySize)
 	prologue := FixedBytes(0x03, 32)
 
 	for name, p := range map[string][]byte{"first pairing": nil, "known device": prologue} {
 		t.Run(name, func(t *testing.T) {
-			want, err := pairing.ComputeAttestChannelBinding(initiatorPub, responderPub, p)
+			want, err := pairingproto.ComputeAttestChannelBinding(initiatorPub, responderPub, p)
 			require.NoError(t, err)
 			require.Equal(t, want, ChannelBinding(initiatorPub, responderPub, p))
 			require.NotEqual(t, want, ChannelBinding(responderPub, initiatorPub, p),
@@ -105,7 +106,7 @@ func TestPhoneRun_ServesAProductionInitiator(t *testing.T) {
 			if known {
 				expected = dak.Fingerprint()
 			}
-			require.NoError(t, pairing.PerformHandshake(context.Background(), &pairing.HandshakeConfig{
+			require.NoError(t, pairingproto.PerformHandshake(context.Background(), &pairingproto.HandshakeConfig{
 				Transport:                 tr,
 				Session:                   session,
 				LocalStaticPublicKey:      session.LocalStaticPublicKey(),
@@ -113,25 +114,25 @@ func TestPhoneRun_ServesAProductionInitiator(t *testing.T) {
 			}))
 			require.Equal(t, phone.StaticPublicKey(), session.RemoteStaticPublicKey())
 
-			confirm := exchange(t, session, tr, pairing.MethodPairingConfirm,
-				&pairing.PairingConfirmParams{DeviceName: "desktop", PublicKeyHex: "00ff"})
-			confirmed, err := pairing.DecodeResult[pairing.PairingConfirmResult](confirm)
+			confirm := exchange(t, session, tr, pairingproto.MethodPairingConfirm,
+				&pairingproto.PairingConfirmParams{DeviceName: "desktop", PublicKeyHex: "00ff"})
+			confirmed, err := pairingproto.DecodeResult[pairingproto.PairingConfirmResult](confirm)
 			require.NoError(t, err)
 			require.True(t, confirmed.Confirmed)
 			require.Equal(t, phone.Name, confirmed.DeviceName)
 
-			nonce := FixedBytes(0x77, pairing.AttestNonceSize)
-			attest := exchange(t, session, tr, pairing.MethodLocalAttestDevice, &pairing.LocalAttestDeviceParams{
-				ProtocolVersion: pairing.AttestProtocolV2, Nonce: nonce, Purpose: pairing.AttestPurposePair,
+			nonce := FixedBytes(0x77, pairingproto.AttestNonceSize)
+			attest := exchange(t, session, tr, pairingproto.MethodLocalAttestDevice, &pairingproto.LocalAttestDeviceParams{
+				ProtocolVersion: pairingproto.AttestProtocolV2, Nonce: nonce, Purpose: pairingproto.AttestPurposePair,
 			})
-			res, err := pairing.DecodeResult[pairing.LocalAttestDeviceResult](attest)
+			res, err := pairingproto.DecodeResult[pairingproto.LocalAttestDeviceResult](attest)
 			require.NoError(t, err)
 
-			binding, err := session.AttestChannelBinding()
+			binding, err := pairingproto.AttestChannelBinding(session)
 			require.NoError(t, err)
-			transcript, err := pairing.BuildAttestTranscript(res.Purpose, res.Nonce, binding, dak.FP)
+			transcript, err := pairingproto.BuildAttestTranscript(res.Purpose, res.Nonce, binding, dak.FP)
 			require.NoError(t, err)
-			require.NoError(t, pairing.VerifyAttestChallengeSignature(dak.Leaf, res.SignatureAlgorithm, res.Signature, transcript),
+			require.NoError(t, pairingproto.VerifyAttestChallengeSignature(dak.Leaf, res.SignatureAlgorithm, res.Signature, transcript),
 				"the phone signed a channel binding the initiator does not share")
 
 			require.NoError(t, <-done)
@@ -142,23 +143,23 @@ func TestPhoneRun_ServesAProductionInitiator(t *testing.T) {
 func TestPhoneRun_MutateDamagesTheResponseOnTheWire(t *testing.T) {
 	dak := NewDAK(t, NewCA(t, "root"), GenesisChallenge(), xkms.AndroidSecurityLevelStrongBox, AttestedBootState())
 	phone := NewPhone(t, dak)
-	phone.Mutate = func(res *pairing.LocalAttestDeviceResult) { res.Purpose = pairing.AttestPurposeReattest }
+	phone.Mutate = func(res *pairingproto.LocalAttestDeviceResult) { res.Purpose = pairingproto.AttestPurposeReattest }
 	session, tr, done := startPhone(t, phone, false, 1)
 	handshake(t, session, tr)
 
-	resp := exchange(t, session, tr, pairing.MethodLocalAttestDevice, &pairing.LocalAttestDeviceParams{
-		ProtocolVersion: pairing.AttestProtocolV2, Nonce: FixedBytes(0x01, pairing.AttestNonceSize),
-		Purpose: pairing.AttestPurposePair,
+	resp := exchange(t, session, tr, pairingproto.MethodLocalAttestDevice, &pairingproto.LocalAttestDeviceParams{
+		ProtocolVersion: pairingproto.AttestProtocolV2, Nonce: FixedBytes(0x01, pairingproto.AttestNonceSize),
+		Purpose: pairingproto.AttestPurposePair,
 	})
-	res, err := pairing.DecodeResult[pairing.LocalAttestDeviceResult](resp)
+	res, err := pairingproto.DecodeResult[pairingproto.LocalAttestDeviceResult](resp)
 	require.NoError(t, err)
-	require.Equal(t, pairing.AttestPurposeReattest, res.Purpose)
+	require.Equal(t, pairingproto.AttestPurposeReattest, res.Purpose)
 
-	binding, err := session.AttestChannelBinding()
+	binding, err := pairingproto.AttestChannelBinding(session)
 	require.NoError(t, err)
-	transcript, err := pairing.BuildAttestTranscript(res.Purpose, res.Nonce, binding, dak.FP)
+	transcript, err := pairingproto.BuildAttestTranscript(res.Purpose, res.Nonce, binding, dak.FP)
 	require.NoError(t, err)
-	require.Error(t, pairing.VerifyAttestChallengeSignature(dak.Leaf, res.SignatureAlgorithm, res.Signature, transcript),
+	require.Error(t, pairingproto.VerifyAttestChallengeSignature(dak.Leaf, res.SignatureAlgorithm, res.Signature, transcript),
 		"a mutated response still verified, so the damage happened before signing")
 	require.NoError(t, <-done)
 }
@@ -169,8 +170,8 @@ func TestPhoneRun_RefusesWhatTheContractDoesNotAllow(t *testing.T) {
 		params any
 	}{
 		"unknown method":             {"local.somethingElse", map[string]string{}},
-		"legacy attestation version": {pairing.MethodLocalAttestDevice, &pairing.LocalAttestDeviceParams{ProtocolVersion: 1}},
-		"confirm without a key":      {pairing.MethodPairingConfirm, &pairing.PairingConfirmParams{DeviceName: "desktop"}},
+		"legacy attestation version": {pairingproto.MethodLocalAttestDevice, &pairingproto.LocalAttestDeviceParams{ProtocolVersion: 1}},
+		"confirm without a key":      {pairingproto.MethodPairingConfirm, &pairingproto.PairingConfirmParams{DeviceName: "desktop"}},
 	}
 	for name, tt := range tests {
 		t.Run(name, func(t *testing.T) {
@@ -191,9 +192,9 @@ func TestPhoneRun_RefusesGarbageOnTheWire(t *testing.T) {
 		session, tr, done := startPhone(t, NewPhone(t, dak), false, 1)
 		ctx := timed(t)
 
-		ack, err := tr.SendAndReceive(ctx, append([]byte{pairing.IdentityMsgVersion}, session.LocalStaticPublicKey()...))
+		ack, err := tr.SendAndReceive(ctx, append([]byte{pairingproto.IdentityMsgVersion}, session.LocalStaticPublicKey()...))
 		require.NoError(t, err)
-		require.Equal(t, []byte{pairing.IdentityAckUnknown}, ack)
+		require.Equal(t, []byte{pairingproto.IdentityAckUnknown}, ack)
 		require.NoError(t, tr.Send(ctx, []byte("not a noise message")))
 
 		require.Error(t, <-done)
@@ -228,17 +229,17 @@ func TestPhoneRun_StopsWhenTheContextEnds(t *testing.T) {
 
 // startPhone runs the phone on one end of a fresh transport pair and returns
 // an initiator session for the other end.
-func startPhone(t *testing.T, phone *Phone, known bool, exchanges int) (*pairing.NoiseSession, *MemTransport, chan error) {
+func startPhone(t *testing.T, phone *Phone, known bool, exchanges int) (*bootstrap.NoiseSession, *MemTransport, chan error) {
 	t.Helper()
 
 	initiator, responder := NewMemTransportPair()
 	done := make(chan error, 1)
 	phone.Serve(timed(t), t, responder, known, exchanges, done)
 
-	key, err := pairing.GenerateStaticKey()
+	key, err := bootstrap.GenerateNoiseStaticKey()
 	require.NoError(t, err)
 	t.Cleanup(key.Destroy)
-	session, err := pairing.NewNoiseSession(&pairing.NoiseSessionConfig{LocalStaticKey: key, IsInitiator: true})
+	session, err := bootstrap.NewNoiseSession(&bootstrap.NoiseSessionConfig{LocalStaticKey: key, IsInitiator: true})
 	require.NoError(t, err)
 	return session, initiator, done
 }
@@ -246,13 +247,13 @@ func startPhone(t *testing.T, phone *Phone, known bool, exchanges int) (*pairing
 // handshake runs the initiator's side of a first pairing by hand: the identity
 // exchange and the three Noise XX messages, without PerformHandshake's
 // settling delay.
-func handshake(t *testing.T, session *pairing.NoiseSession, tr *MemTransport) {
+func handshake(t *testing.T, session *bootstrap.NoiseSession, tr *MemTransport) {
 	t.Helper()
 	ctx := timed(t)
 
-	ack, err := tr.SendAndReceive(ctx, append([]byte{pairing.IdentityMsgVersion}, session.LocalStaticPublicKey()...))
+	ack, err := tr.SendAndReceive(ctx, append([]byte{pairingproto.IdentityMsgVersion}, session.LocalStaticPublicKey()...))
 	require.NoError(t, err)
-	require.Equal(t, []byte{pairing.IdentityAckUnknown}, ack)
+	require.Equal(t, []byte{pairingproto.IdentityAckUnknown}, ack)
 
 	require.NoError(t, session.InitHandshake())
 	msg1, _, err := session.HandshakeMessage(nil)
@@ -265,17 +266,17 @@ func handshake(t *testing.T, session *pairing.NoiseSession, tr *MemTransport) {
 	require.NoError(t, tr.Send(ctx, msg3))
 }
 
-func send(t *testing.T, session *pairing.NoiseSession, tr *MemTransport, method string, params any) {
+func send(t *testing.T, session *bootstrap.NoiseSession, tr *MemTransport, method string, params any) {
 	t.Helper()
 
-	plaintext, err := pairing.EncodeRequest(pairing.NewRequest(method, params))
+	plaintext, err := pairingproto.EncodeRequest(pairingproto.NewRequest(method, params))
 	require.NoError(t, err)
 	ciphertext, err := session.Encrypt(plaintext)
 	require.NoError(t, err)
 	require.NoError(t, tr.Send(context.Background(), ciphertext))
 }
 
-func exchange(t *testing.T, session *pairing.NoiseSession, tr *MemTransport, method string, params any) *pairing.Response {
+func exchange(t *testing.T, session *bootstrap.NoiseSession, tr *MemTransport, method string, params any) *pairingproto.Response {
 	t.Helper()
 
 	send(t, session, tr, method, params)
@@ -283,7 +284,7 @@ func exchange(t *testing.T, session *pairing.NoiseSession, tr *MemTransport, met
 	require.NoError(t, err)
 	plaintext, err := session.Decrypt(ciphertext)
 	require.NoError(t, err)
-	resp, err := pairing.DecodeResponse(plaintext)
+	resp, err := pairingproto.DecodeResponse(plaintext)
 	require.NoError(t, err)
 	return resp
 }

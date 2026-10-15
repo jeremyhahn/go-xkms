@@ -18,6 +18,9 @@ import (
 
 	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
 
+	"github.com/jeremyhahn/go-xkms/pkg/attestation/peer"
+	"github.com/jeremyhahn/go-xkms/pkg/attestation/peergate"
+	"github.com/jeremyhahn/go-xkms/pkg/attestation/truststore"
 	"github.com/jeremyhahn/go-xkms/pkg/backend"
 	tpm2backend "github.com/jeremyhahn/go-xkms/pkg/backend/tpm2"
 	"github.com/jeremyhahn/go-xkms/pkg/crypto/aead"
@@ -101,6 +104,23 @@ var PIVSentinelClasses = []SentinelClass{
 	// Every operation on this platform-global state is platform-scoped: a
 	// tenant-scoped caller is refused with xkms.TenantBindingError, which
 	// unwraps to go-qrdb's unknown-tenant sentinel (go-xkms#1227).
+	{qrdbsdk.ErrTenantMissing, ClassNotFound},
+}
+
+// TrustRootSentinelClasses classifies the errors of the platform trust-root
+// store (pkg/attestation/truststore) the TrustRoot* verbs return.
+var TrustRootSentinelClasses = []SentinelClass{
+	{xkms.ErrNotConfigured, ClassUnavailable},
+	{xkms.ErrNilRequest, ClassInvalidArgument},
+	{truststore.ErrCertificateNotFound, ClassNotFound},
+	{truststore.ErrCertificateExists, ClassAlreadyExists},
+	{truststore.ErrInvalidCertificate, ClassInvalidArgument},
+	{truststore.ErrInvalidFingerprint, ClassInvalidArgument},
+	{truststore.ErrInvalidPurpose, ClassInvalidArgument},
+	{truststore.ErrStoreClosed, ClassUnavailable},
+	// Every operation on this platform-global state is platform-scoped: a
+	// tenant-scoped caller is refused with xkms.TenantBindingError, which
+	// unwraps to go-qrdb's unknown-tenant sentinel.
 	{qrdbsdk.ErrTenantMissing, ClassNotFound},
 }
 
@@ -228,6 +248,49 @@ func OIDCCredentialClassOf(err error) (Class, bool) {
 		}
 	}
 	return ClassOf(OIDCCredentialSentinelClasses, err)
+}
+
+// PeerAttestationSentinelClasses classifies the sentinel errors of the
+// attested-caller verbs (pkg/xkms's PeerAttestation servicer methods over
+// pkg/attestation/peergate). A server without the gate has nothing to
+// answer with. Its typed errors are classified by PeerAttestationClassOf,
+// which every transport reads.
+var PeerAttestationSentinelClasses = []SentinelClass{
+	{xkms.ErrNotConfigured, ClassUnavailable},
+	{xkms.ErrNilRequest, ClassInvalidArgument},
+}
+
+// PeerAttestationTypedClasses classifies the typed errors of the
+// attested-caller verbs:
+//
+//   - A request whose connection carries no verified client certificate names
+//     no peer to attest.
+//   - A submission without an outstanding, unexpired challenge, or one whose
+//     connection cannot be bound (no TLS 1.3 exporter), is refused for the
+//     connection's state, not for its content.
+//   - A full challenge table is a capacity limit, a failing evidence store
+//     or nonce source a fault a retry may overcome.
+var PeerAttestationTypedClasses = []TypedClass{
+	{As[*peergate.PeerCertificateError], ClassUnauthenticated},
+	{As[*peergate.ChallengeError], ClassFailedPrecondition},
+	{As[*peer.ChannelBindingError], ClassFailedPrecondition},
+	{As[*peergate.CapacityError], ClassResourceExhausted},
+	{As[*peergate.StoreError], ClassUnavailable},
+	{As[*peergate.NonceError], ClassUnavailable},
+}
+
+// PeerAttestationClassOf classifies an error of the attested-caller verbs:
+// its typed errors first, then its sentinels.
+func PeerAttestationClassOf(err error) (Class, bool) {
+	if err == nil {
+		return ClassInternal, false
+	}
+	for _, entry := range PeerAttestationTypedClasses {
+		if entry.Match(err) {
+			return entry.Class, true
+		}
+	}
+	return ClassOf(PeerAttestationSentinelClasses, err)
 }
 
 // TypedClass classifies a typed error: Match reports whether an error's

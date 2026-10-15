@@ -24,6 +24,7 @@ import (
 
 	"github.com/stretchr/testify/require"
 
+	"github.com/jeremyhahn/go-xkms/pkg/pairingproto"
 	xkms "github.com/jeremyhahn/go-xkms/sdk/go"
 	pairing "github.com/jeremyhahn/go-xkms/xkey/pkg/pairing"
 )
@@ -85,7 +86,7 @@ func TestNewDAK_FingerprintIsTheSPKIHashAndTheChainIsLeafFirst(t *testing.T) {
 
 	desc, err := xkms.ParseAndroidKeyAttestation(dak.Leaf)
 	require.NoError(t, err)
-	require.Equal(t, []byte(pairing.AttestGenesisChallenge), desc.AttestationChallenge)
+	require.Equal(t, []byte(pairingproto.AttestGenesisChallenge), desc.AttestationChallenge)
 }
 
 func TestNewDAK_WithoutAnIssuerCarriesOnlyTheLeaf(t *testing.T) {
@@ -96,40 +97,40 @@ func TestNewDAK_WithoutAnIssuerCarriesOnlyTheLeaf(t *testing.T) {
 
 func TestDAKSignRaw_VerifiesUnderTheProductionTranscript(t *testing.T) {
 	dak := NewDAK(t, NewCA(t, "root"), GenesisChallenge(), xkms.AndroidSecurityLevelStrongBox, AttestedBootState())
-	nonce := FixedBytes(0x11, pairing.AttestNonceSize)
-	binding := FixedBytes(0x22, pairing.AttestChannelBindingSize)
+	nonce := FixedBytes(0x11, pairingproto.AttestNonceSize)
+	binding := FixedBytes(0x22, pairingproto.AttestChannelBindingSize)
 
-	sig, err := dak.SignRaw(pairing.AttestPurposePair, nonce, binding)
+	sig, err := dak.SignRaw(pairingproto.AttestPurposePair, nonce, binding)
 	require.NoError(t, err)
 
-	transcript, err := pairing.BuildAttestTranscript(pairing.AttestPurposePair, nonce, binding, dak.FP)
+	transcript, err := pairingproto.BuildAttestTranscript(pairingproto.AttestPurposePair, nonce, binding, dak.FP)
 	require.NoError(t, err)
-	require.NoError(t, pairing.VerifyAttestChallengeSignature(dak.Leaf, pairing.AttestSignatureES256, sig, transcript),
+	require.NoError(t, pairingproto.VerifyAttestChallengeSignature(dak.Leaf, pairingproto.AttestSignatureES256, sig, transcript),
 		"the fixture's hand-built transcript drifted from BuildAttestTranscript")
 
 	// The purpose is in the transcript: a pairing signature must not satisfy
 	// a reconnect.
-	reattest, err := pairing.BuildAttestTranscript(pairing.AttestPurposeReattest, nonce, binding, dak.FP)
+	reattest, err := pairingproto.BuildAttestTranscript(pairingproto.AttestPurposeReattest, nonce, binding, dak.FP)
 	require.NoError(t, err)
-	require.Error(t, pairing.VerifyAttestChallengeSignature(dak.Leaf, pairing.AttestSignatureES256, sig, reattest))
+	require.Error(t, pairingproto.VerifyAttestChallengeSignature(dak.Leaf, pairingproto.AttestSignatureES256, sig, reattest))
 }
 
 func TestDAKRespond_IsAVersion2ResponseOverTheGivenChallenge(t *testing.T) {
 	dak := NewDAK(t, NewCA(t, "root"), GenesisChallenge(), xkms.AndroidSecurityLevelStrongBox, AttestedBootState())
-	nonce := FixedBytes(0x33, pairing.AttestNonceSize)
-	binding := FixedBytes(0x44, pairing.AttestChannelBindingSize)
+	nonce := FixedBytes(0x33, pairingproto.AttestNonceSize)
+	binding := FixedBytes(0x44, pairingproto.AttestChannelBindingSize)
 
-	res := dak.Respond(t, pairing.AttestPurposeReattest, nonce, binding)
+	res := dak.Respond(t, pairingproto.AttestPurposeReattest, nonce, binding)
 
-	require.Equal(t, pairing.AttestProtocolV2, res.ProtocolVersion)
-	require.Equal(t, pairing.AttestSignatureES256, res.SignatureAlgorithm)
-	require.Equal(t, pairing.AttestPurposeReattest, res.Purpose)
+	require.Equal(t, pairingproto.AttestProtocolV2, res.ProtocolVersion)
+	require.Equal(t, pairingproto.AttestSignatureES256, res.SignatureAlgorithm)
+	require.Equal(t, pairingproto.AttestPurposeReattest, res.Purpose)
 	require.Equal(t, nonce, res.Nonce)
 	require.Equal(t, dak.Chain, res.CertificateChain)
 
-	transcript, err := pairing.BuildAttestTranscript(res.Purpose, nonce, binding, dak.FP)
+	transcript, err := pairingproto.BuildAttestTranscript(res.Purpose, nonce, binding, dak.FP)
 	require.NoError(t, err)
-	require.NoError(t, pairing.VerifyAttestChallengeSignature(dak.Leaf, res.SignatureAlgorithm, res.Signature, transcript))
+	require.NoError(t, pairingproto.VerifyAttestChallengeSignature(dak.Leaf, res.SignatureAlgorithm, res.Signature, transcript))
 }
 
 func TestFixedBytes(t *testing.T) {

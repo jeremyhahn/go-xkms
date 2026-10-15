@@ -13,7 +13,12 @@
 
 package pairing
 
-import "encoding/binary"
+import (
+	"encoding/binary"
+
+	"github.com/jeremyhahn/go-xkms/sdk/go/bootstrap"
+	"github.com/jeremyhahn/go-xkms/sdk/go/pairingproto"
+)
 
 // ShortAuthString derives a short, human-comparable code from session's
 // attestation channel binding (#129's domain-separated SHA-256 of both
@@ -39,8 +44,8 @@ import "encoding/binary"
 // two bytes of the binding as a big-endian uint16 reduced mod 10000. This is
 // not a substitute for the full 32-byte binding -- it is a human-checkable
 // summary of it, the same role a Signal-style safety-number block plays.
-func ShortAuthString(session *NoiseSession) (string, error) {
-	binding, err := session.AttestChannelBinding()
+func ShortAuthString(session *bootstrap.NoiseSession) (string, error) {
+	binding, err := pairingproto.AttestChannelBinding(session)
 	if err != nil {
 		return "", err
 	}

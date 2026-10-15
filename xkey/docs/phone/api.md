@@ -13,7 +13,7 @@ JSON-RPC-over-Noise protocol documented in phone-hsm's
 [api.md](../phone-hsm/api.md) and [engineering.md](../phone-hsm/engineering.md)
 — including the bare methods (`generateKey`, `sign`, `loadKey`, `deleteKey`,
 `getInfo`, `ping`, `pairing.confirm`) that `PhoneKeyBackend` itself sends
-(`xkey/pkg/pairing/protocol.go:35-41`), and the `local.*`/`remote.*` bridge
+(`pkg/pairingproto/protocol.go:35-41`), and the `local.*`/`remote.*` bridge
 methods used once `EnableBidirectional` is active. This document does not
 restate that catalog.
 
@@ -75,7 +75,7 @@ outcomes (`emitPolicyViolationEvent`, `emitAttestationEvent`,
 
 ### Not exposed through the GUI
 
-USB AOA and the TCP relay (`phone.USBTransport`, `phone.TCPPairingServer`)
+USB AOA and the TCP relay (`pairingproto.USBTransport`, `phone.TCPPairingServer`)
 have no `PhoneService` construction site — GUI pairing and connection are
 BLE-only. Reaching a phone over USB or TCP relay today requires the CLI
 (`xkey device relay`, or `NewPhoneKeyBackendWithTransport` from Go code).
@@ -84,7 +84,7 @@ BLE-only. Reaching a phone over USB or TCP relay today requires the CLI
 
 `go-xkms/pkg/backend/phone.Backend` implements `types.KeyProvider` for an
 xkmsd server, proxying operations to a phone over the `local.*` methods via
-a `Sender` interface any `pairing.Transport`-backed sender can satisfy
+a `Sender` interface any `pairingproto.Transport`-backed sender can satisfy
 (`pkg/backend/phone/backend.go:36-62`). This is a `go-xkms` root capability
 consumed by xkmsd, not something `xkey/pkg/phone` calls into directly — see
 [`../../../docs/crypto-backends/engineering.md`](../../../docs/crypto-backends/engineering.md) and

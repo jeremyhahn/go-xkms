@@ -20,22 +20,22 @@ import (
 
 	"github.com/jeremyhahn/go-enclave"
 
-	"github.com/jeremyhahn/go-xkms/xkey/pkg/pairing"
+	"github.com/jeremyhahn/go-xkms/pkg/trust/bootstrap"
 	"github.com/jeremyhahn/go-xkms/xkey/pkg/phone"
 )
 
 // newLeasedConnection wires a PhoneService with a live active connection and
 // takes one lease against it, returning the key it published and the release
 // that retires the lease.
-func newLeasedConnection(t *testing.T) (*PhoneService, *pairing.StaticKey, func()) {
+func newLeasedConnection(t *testing.T) (*PhoneService, *bootstrap.NoiseStaticKey, func()) {
 	t.Helper()
 
-	key, err := pairing.GenerateStaticKey()
+	key, err := bootstrap.GenerateNoiseStaticKey()
 	if err != nil {
 		t.Fatalf("GenerateStaticKey: %v", err)
 	}
 
-	session, err := pairing.NewNoiseSession(&pairing.NoiseSessionConfig{
+	session, err := bootstrap.NewNoiseSession(&bootstrap.NoiseSessionConfig{
 		LocalStaticKey: key,
 		IsInitiator:    true,
 	})
@@ -82,8 +82,8 @@ func teardown(t *testing.T, svc *PhoneService, within time.Duration) bool {
 // Borrowing a destroyed key's private scalar fails with
 // enclave.ErrEnclaveDestroyed, which is the observable difference without
 // reading freed memory.
-func destroyed(key *pairing.StaticKey) bool {
-	err := pairing.WithPrivateKey(key, func([]byte) error { return nil })
+func destroyed(key *bootstrap.NoiseStaticKey) bool {
+	err := bootstrap.WithNoisePrivateKey(key, func([]byte) error { return nil })
 	return errors.Is(err, enclave.ErrEnclaveDestroyed)
 }
 
@@ -157,11 +157,11 @@ func TestCloseActiveConnection_DoesNotDestroyANewGeneration(t *testing.T) {
 
 	svc, oldKey, release := newLeasedConnection(t)
 
-	newKey, err := pairing.GenerateStaticKey()
+	newKey, err := bootstrap.GenerateNoiseStaticKey()
 	if err != nil {
 		t.Fatalf("GenerateStaticKey: %v", err)
 	}
-	newSession, err := pairing.NewNoiseSession(&pairing.NoiseSessionConfig{
+	newSession, err := bootstrap.NewNoiseSession(&bootstrap.NoiseSessionConfig{
 		LocalStaticKey: newKey,
 		IsInitiator:    true,
 	})

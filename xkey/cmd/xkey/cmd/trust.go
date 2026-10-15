@@ -28,7 +28,7 @@ import (
 	"time"
 
 	"github.com/jeremyhahn/go-xkms/sdk/go/bootstrap"
-	"github.com/jeremyhahn/go-xkms/xkey/pkg/truststore"
+	"github.com/jeremyhahn/go-xkms/sdk/go/truststore"
 	"github.com/spf13/cobra"
 	"github.com/spf13/viper"
 )

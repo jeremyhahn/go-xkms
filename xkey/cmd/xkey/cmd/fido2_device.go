@@ -22,7 +22,7 @@ import (
 	"log/slog"
 	"time"
 
-	"github.com/jeremyhahn/go-xkms/xkey/pkg/authenticator/keybackend"
+	"github.com/jeremyhahn/go-xkms/sdk/go/fido2/keybackend"
 	"github.com/jeremyhahn/go-xkms/xkey/pkg/phone"
 )
 

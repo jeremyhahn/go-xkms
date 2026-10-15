@@ -221,7 +221,7 @@ cross-repo work. It is recorded here rather than glossed.
 
 ## Error semantics
 
-`xkey/pkg/pairing/errors.go`; transport-side, `ErrNoiseNotConfigured`,
+`pkg/pairingproto/errors.go`; transport-side, `ErrNoiseNotConfigured`,
 `ErrNotConnected`, `ErrNotSupported`, `ErrRequestFailed`,
 wrapped in `errs.Detail` with `transport.ErrConnectionFailed`,
 `ErrInvalidRequest` or `ErrInvalidResponse`.
@@ -769,7 +769,7 @@ check: `ExpectedRemoteStatic` proves the peer holds the key paired earlier
 sufficient.
 
 Both `phone.TCPPairingConfig` and `phone.BLEPeripheralConfig` now carry a
-required `LiveAttest pairing.LiveAttestFunc`. Immediately after the Noise
+required `LiveAttest pairingproto.LiveAttestFunc`. Immediately after the Noise
 handshake completes and before any request reaches `RequestHandler`, the
 responder runs it: derives `session.AttestChannelBinding()`, builds a
 `pairing.RPCExchange` from `pairing.InlineExchange` (raw send/receive
@@ -911,7 +911,7 @@ reseal-on-use path #42 originally shipped); the operator re-pairs the device
 so a fresh record is written in the form that matches this host's current
 barrier state. The unsealed material never exists as a Go string:
 `SealLocalNoiseKey` takes the raw scalar as `[]byte` (lent by
-`pairing.WithPrivateKey` straight from the `pairing.StaticKey`'s go-enclave
+`bootstrap.WithNoisePrivateKey` straight from the `bootstrap.NoiseStaticKey`'s go-enclave
 `MemoryEnclave`, valid only for that borrow) and `UnsealLocalNoiseKey`
 returns an `sdk/go/secure.Buffer`, mlocked and wiped on `Destroy`.
 

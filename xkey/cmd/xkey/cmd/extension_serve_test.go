@@ -27,8 +27,8 @@ import (
 
 	"github.com/spf13/cobra"
 
+	"github.com/jeremyhahn/go-xkms/pkg/fido2/authenticator"
 	xkms "github.com/jeremyhahn/go-xkms/sdk/go"
-	"github.com/jeremyhahn/go-xkms/xkey/pkg/authenticator"
 	"github.com/jeremyhahn/go-xkms/xkey/pkg/config"
 	"github.com/jeremyhahn/go-xkms/xkey/pkg/gui/services"
 	"github.com/jeremyhahn/go-xkms/xkey/pkg/ipc"
@@ -816,6 +816,7 @@ func TestExtensionServe_ShamirStrategy_Refused(t *testing.T) {
 func TestExtensionServe_CloudKMSStrategy_Attempted(t *testing.T) {
 	for _, strategy := range []string{"awskms", "gcpkms", "azurekv", "vault"} {
 		t.Run(strategy, func(t *testing.T) {
+			withoutCloudKMSBuilder(t, xkms.StrategyID(strategy))
 			tmpDir := t.TempDir()
 			xhome.SetRoot(tmpDir)
 			enableLocalAppAccessForTest(t)

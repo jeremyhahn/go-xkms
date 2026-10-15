@@ -28,7 +28,7 @@ import (
 
 	xkms "github.com/jeremyhahn/go-xkms/sdk/go"
 	"github.com/jeremyhahn/go-xkms/sdk/go/fsutil"
-	"github.com/jeremyhahn/go-xkms/xkey/pkg/pairing"
+	"github.com/jeremyhahn/go-xkms/sdk/go/pairingproto"
 	"github.com/spf13/cobra"
 )
 
@@ -196,7 +196,7 @@ func runPIVDeviceList(cmd *cobra.Command, args []string) (err error) {
 	}
 
 	// Request PIV slot listing
-	req := pairing.NewRequest(pairing.MethodLocalPIVListSlots, &pairing.LocalPIVListSlotsParams{})
+	req := pairingproto.NewRequest(pairingproto.MethodLocalPIVListSlots, &pairingproto.LocalPIVListSlotsParams{})
 	resp, err := phoneBackend.SendRequest(ctx, req)
 	if err != nil {
 		return &SentinelCauseError{Sentinel: ErrPIVDeviceListSlotsFailed, Cause: err}
@@ -205,7 +205,7 @@ func runPIVDeviceList(cmd *cobra.Command, args []string) (err error) {
 		return &DetailError{Err: ErrPIVDeviceListSlotsFailed, Detail: fmt.Sprintf(": [%d] %s", resp.Error.Code, resp.Error.Message)}
 	}
 
-	result, err := pairing.DecodeResult[pairing.LocalPIVListSlotsResult](resp)
+	result, err := pairingproto.DecodeResult[pairingproto.LocalPIVListSlotsResult](resp)
 	if err != nil {
 		return &DetailError{Err: ErrPIVDeviceListSlotsFailed, Detail: fmt.Sprintf(": failed to decode result: %v", err)}
 	}
@@ -323,7 +323,7 @@ func runPIVDevicePushCert(cmd *cobra.Command, args []string) (err error) {
 
 	// Send certificate to phone
 	_, _ = fmt.Fprintln(cmd.OutOrStdout(), "Sending certificate...")
-	req := pairing.NewRequest(pairing.MethodLocalPIVImportCert, &pairing.LocalPIVImportCertParams{
+	req := pairingproto.NewRequest(pairingproto.MethodLocalPIVImportCert, &pairingproto.LocalPIVImportCertParams{
 		Slot:           string(slot),
 		CertificateDER: cert.Raw,
 	})
@@ -336,7 +336,7 @@ func runPIVDevicePushCert(cmd *cobra.Command, args []string) (err error) {
 		return &DetailError{Err: ErrPIVDevicePushCertFailed, Detail: fmt.Sprintf(": [%d] %s", resp.Error.Code, resp.Error.Message)}
 	}
 
-	result, err := pairing.DecodeResult[pairing.LocalPIVImportCertResult](resp)
+	result, err := pairingproto.DecodeResult[pairingproto.LocalPIVImportCertResult](resp)
 	if err != nil {
 		return &DetailError{Err: ErrPIVDevicePushCertFailed, Detail: fmt.Sprintf(": failed to decode result: %v", err)}
 	}
@@ -416,7 +416,7 @@ func runPIVDevicePullCert(cmd *cobra.Command, args []string) (err error) {
 
 	// Request certificate from phone
 	_, _ = fmt.Fprintln(cmd.OutOrStdout(), "Retrieving certificate...")
-	req := pairing.NewRequest(pairing.MethodLocalPIVGetCert, &pairing.LocalPIVGetCertParams{
+	req := pairingproto.NewRequest(pairingproto.MethodLocalPIVGetCert, &pairingproto.LocalPIVGetCertParams{
 		Slot: string(slot),
 	})
 
@@ -428,7 +428,7 @@ func runPIVDevicePullCert(cmd *cobra.Command, args []string) (err error) {
 		return &DetailError{Err: ErrPIVDevicePullCertFailed, Detail: fmt.Sprintf(": [%d] %s", resp.Error.Code, resp.Error.Message)}
 	}
 
-	result, err := pairing.DecodeResult[pairing.LocalPIVGetCertResult](resp)
+	result, err := pairingproto.DecodeResult[pairingproto.LocalPIVGetCertResult](resp)
 	if err != nil {
 		return &DetailError{Err: ErrPIVDevicePullCertFailed, Detail: fmt.Sprintf(": failed to decode result: %v", err)}
 	}
@@ -529,7 +529,7 @@ func runPIVDeviceGenerateKey(cmd *cobra.Command, args []string) (err error) {
 
 	// Request key generation on phone
 	_, _ = fmt.Fprintf(cmd.OutOrStdout(), "Generating %s key (check phone for biometric prompt)...\n", algorithm)
-	req := pairing.NewRequest(pairing.MethodLocalPIVGenerateKey, &pairing.LocalPIVGenerateKeyParams{
+	req := pairingproto.NewRequest(pairingproto.MethodLocalPIVGenerateKey, &pairingproto.LocalPIVGenerateKeyParams{
 		Slot:      string(slot),
 		Algorithm: algorithm,
 	})
@@ -542,7 +542,7 @@ func runPIVDeviceGenerateKey(cmd *cobra.Command, args []string) (err error) {
 		return &DetailError{Err: ErrPIVDeviceGenerateKeyFailed, Detail: fmt.Sprintf(": [%d] %s", resp.Error.Code, resp.Error.Message)}
 	}
 
-	result, err := pairing.DecodeResult[pairing.LocalPIVGenerateKeyResult](resp)
+	result, err := pairingproto.DecodeResult[pairingproto.LocalPIVGenerateKeyResult](resp)
 	if err != nil {
 		return &DetailError{Err: ErrPIVDeviceGenerateKeyFailed, Detail: fmt.Sprintf(": failed to decode result: %v", err)}
 	}

@@ -25,9 +25,10 @@ import (
 	"time"
 
 	xkms "github.com/jeremyhahn/go-xkms/sdk/go"
+	"github.com/jeremyhahn/go-xkms/sdk/go/fido2/authenticator"
+	"github.com/jeremyhahn/go-xkms/sdk/go/fido2/keybackend"
+	"github.com/jeremyhahn/go-xkms/sdk/go/pairingproto"
 	"github.com/jeremyhahn/go-xkms/xkey/pkg/audit"
-	"github.com/jeremyhahn/go-xkms/xkey/pkg/authenticator"
-	"github.com/jeremyhahn/go-xkms/xkey/pkg/authenticator/keybackend"
 	"github.com/jeremyhahn/go-xkms/xkey/pkg/pairing"
 	"github.com/jeremyhahn/go-xkms/xkey/pkg/tokenstore"
 )
@@ -500,8 +501,8 @@ func (s *FIDO2Service) HandleBridgeRequest(method string, params json.RawMessage
 		return nil, ErrFIDO2BridgeStopped
 	}
 	s.bridgeReqs.Add(1)
-	resp := s.bridge.HandleRequest(s.ctx, &pairing.Request{
-		JSONRPC: pairing.JSONRPCVersion,
+	resp := s.bridge.HandleRequest(s.ctx, &pairingproto.Request{
+		JSONRPC: pairingproto.JSONRPCVersion,
 		ID:      uint64(s.bridgeReqs.Load()),
 		Method:  method,
 		Params:  params,

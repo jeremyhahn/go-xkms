@@ -18,6 +18,7 @@ import (
 	"log/slog"
 	"testing"
 
+	"github.com/jeremyhahn/go-xkms/pkg/pairingproto"
 	"github.com/jeremyhahn/go-xkms/xkey/pkg/notify"
 	"github.com/stretchr/testify/assert"
 )
@@ -67,7 +68,7 @@ func TestHandleBiometricPending_NilNotifier(t *testing.T) {
 	handler := NewBiometricPendingHandler(nil, nil)
 
 	// Should not panic with nil notifier.
-	handler.HandleBiometricPending(&LocalBiometricPendingParams{
+	handler.HandleBiometricPending(&pairingproto.LocalBiometricPendingParams{
 		Operation:   "sign",
 		RPName:      "Example Corp",
 		TimeoutSecs: 30,
@@ -80,7 +81,7 @@ func TestHandleBiometricPending_Success(t *testing.T) {
 	notifier := &mockNotifier{}
 	handler := NewBiometricPendingHandler(notifier, nil)
 
-	params := &LocalBiometricPendingParams{
+	params := &pairingproto.LocalBiometricPendingParams{
 		Operation:   "sign",
 		RPName:      "Example Corp",
 		TimeoutSecs: 30,
@@ -99,7 +100,7 @@ func TestHandleBiometricPending_EmptyRPName(t *testing.T) {
 	notifier := &mockNotifier{}
 	handler := NewBiometricPendingHandler(notifier, nil)
 
-	params := &LocalBiometricPendingParams{
+	params := &pairingproto.LocalBiometricPendingParams{
 		Operation:   "decrypt",
 		RPName:      "",
 		TimeoutSecs: 60,
@@ -118,7 +119,7 @@ func TestHandleBiometricPending_NotifyError(t *testing.T) {
 	notifier := &mockNotifier{err: errors.New("notification failed")}
 	handler := NewBiometricPendingHandler(notifier, nil)
 
-	params := &LocalBiometricPendingParams{
+	params := &pairingproto.LocalBiometricPendingParams{
 		Operation:   "attestKey",
 		RPName:      "Test RP",
 		TimeoutSecs: 45,
@@ -133,11 +134,11 @@ func TestHandleBiometricPending_NotifyError(t *testing.T) {
 func TestLocalBiometricPendingParams_IsLocalMethod(t *testing.T) {
 	t.Parallel()
 
-	assert.True(t, IsLocalMethod(MethodLocalBiometricPending))
+	assert.True(t, pairingproto.IsLocalMethod(pairingproto.MethodLocalBiometricPending))
 }
 
 func TestMethodLocalBiometricPending_Constant(t *testing.T) {
 	t.Parallel()
 
-	assert.Equal(t, "local.biometricPending", MethodLocalBiometricPending)
+	assert.Equal(t, "local.biometricPending", pairingproto.MethodLocalBiometricPending)
 }

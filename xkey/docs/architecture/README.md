@@ -105,7 +105,7 @@ The Credential Master Key (CMK) is wrapped twice, once by the Admin Key (AK) der
 
 ### KeyManager Component
 
-`KeyManager` (`xkey/pkg/authenticator/key_manager.go:93`) orchestrates all key
+`KeyManager` (`pkg/fido2/authenticator/key_manager.go:93`) orchestrates all key
 derivation, wrapping, and unwrapping. It holds the unwrapped AK, CMK, SMK, and
 UMK in go-enclave-backed `*secure.Buffer`s (mlocked, wiped on `Lock`) and never
 caches the attestation key unwrapped: `AttestationSigner` unwraps it for each
@@ -127,7 +127,7 @@ signature.
 ### Key Derivation Parameters
 
 The UMK is derived with Argon2id using these parameters (`umk*` constants,
-`xkey/pkg/authenticator/key_manager.go:67-79`); the SMK is derived by the SO
+`pkg/fido2/authenticator/key_manager.go:67-79`); the SMK is derived by the SO
 PIN manager:
 
 | Parameter | Value | Description |
@@ -164,7 +164,7 @@ notifier, and CDP bridge.
 
 ### CTAPHIDHandler
 
-**Location**: `pkg/authenticator/hid_adapter.go`
+**Location**: `pkg/fido2/authenticator/hid_adapter.go`
 
 Handles CTAP-HID protocol framing over the 64-byte HID packets.
 
@@ -176,7 +176,7 @@ Handles CTAP-HID protocol framing over the 64-byte HID packets.
 
 ### Authenticator
 
-**Location**: `pkg/authenticator/authenticator.go`
+**Location**: `pkg/fido2/authenticator/authenticator.go`
 
 The core CTAP2 authenticator implementation.
 
@@ -228,7 +228,7 @@ The CTAP2.1 `authenticatorConfig` command provides device configuration manageme
 
 Vendor operations travel under the single `vendorPrototype` subcommand `0x80`
 (`AuthConfigCmdVendorPrototype`), which carries a vendor command ID
-(`VendorCmd*` constants, `xkey/pkg/authenticator/cmd_config.go:44-79`,
+(`VendorCmd*` constants, `pkg/fido2/authenticator/cmd_config.go:44-79`,
 dispatched by the map at `cmd_config.go:167`):
 
 | ID | Name | Description | Requires |
@@ -267,7 +267,7 @@ Xkey implements the `deviceConfig` extension for relying party configuration ver
 
 **Extension Processing:**
 
-`DeviceConfigExtension` (`xkey/pkg/authenticator/ext_deviceconfig.go:47`):
+`DeviceConfigExtension` (`pkg/fido2/authenticator/ext_deviceconfig.go:47`):
 
 ```go
 type DeviceConfigExtension struct {
@@ -299,7 +299,7 @@ marshals it to JSON, and returns its SHA-256.
 
 ## UserPresenceHandler Interface
 
-**Location**: `pkg/authenticator/user_presence.go`
+**Location**: `pkg/fido2/authenticator/user_presence.go`
 
 Abstracts user presence and verification handling, allowing different implementations for automation vs. interactive use.
 
@@ -344,7 +344,7 @@ type UserVerificationResult struct {
 
 ### AutoGrantHandler
 
-**Location**: `pkg/authenticator/user_presence_auto.go`
+**Location**: `pkg/fido2/authenticator/user_presence_auto.go`
 
 Automatically approves all user presence and verification requests. Default for automation scenarios.
 
@@ -360,7 +360,7 @@ Behavior:
 
 ### InteractiveHandler
 
-**Location**: `pkg/authenticator/user_presence_interactive.go`
+**Location**: `pkg/fido2/authenticator/user_presence_interactive.go`
 
 Prompts the user via terminal for presence confirmation and PIN entry.
 
@@ -383,7 +383,7 @@ Behavior:
 
 ## FIDO2KeyBackend Interface
 
-**Location**: `pkg/authenticator/keybackend/keybackend.go`
+**Location**: `pkg/fido2/authenticator/keybackend/keybackend.go`
 
 Abstracts cryptographic key operations, allowing different backend implementations.
 
@@ -440,7 +440,7 @@ type FIDO2KeyCapabilities struct {
 
 ### BackendAdapter
 
-**Location**: `pkg/authenticator/keybackend/adapter.go`
+**Location**: `pkg/fido2/authenticator/keybackend/adapter.go`
 
 There are no per-backend FIDO2 implementations. A single adapter wraps any
 go-xkms `KeyProvider` and implements `FIDO2KeyBackend` on top of it, translating
@@ -514,7 +514,7 @@ For full details on the barrier, barrier auto-unseal, and LUKS integration, see 
 
 ### CredentialStorage Interface
 
-**Location**: `pkg/authenticator/config.go`
+**Location**: `pkg/fido2/authenticator/config.go`
 
 Basic credential persistence interface.
 
@@ -531,7 +531,7 @@ type CredentialStorage interface {
 
 ### StatefulCredentialStorage Interface
 
-**Location**: `pkg/authenticator/storage.go`
+**Location**: `pkg/fido2/authenticator/storage.go`
 
 Extended interface with authenticator state persistence.
 
@@ -547,9 +547,9 @@ type StatefulCredentialStorage interface {
 
 ### Implementations
 
-**MemoryStorage** (`xkey/pkg/authenticator/storage_memory.go:25`): In-memory implementation for testing.
+**MemoryStorage** (`pkg/fido2/authenticator/storage_memory.go:25`): In-memory implementation for testing.
 
-**BackendStorage** (`xkey/pkg/authenticator/storage_backend.go:83`): Wraps a storage backend for persistent storage.
+**BackendStorage** (`pkg/fido2/authenticator/storage_backend.go:83`): Wraps a storage backend for persistent storage.
 
 ## Data Flow
 

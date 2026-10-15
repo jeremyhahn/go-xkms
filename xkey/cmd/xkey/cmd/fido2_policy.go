@@ -24,7 +24,7 @@ import (
 	"text/tabwriter"
 
 	xkms "github.com/jeremyhahn/go-xkms/sdk/go"
-	"github.com/jeremyhahn/go-xkms/xkey/pkg/authenticator"
+	"github.com/jeremyhahn/go-xkms/sdk/go/fido2/authenticator"
 	"github.com/spf13/cobra"
 )
 

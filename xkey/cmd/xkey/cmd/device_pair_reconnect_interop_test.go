@@ -27,10 +27,11 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	"github.com/jeremyhahn/go-xkms/pkg/pairingproto"
+	"github.com/jeremyhahn/go-xkms/pkg/trust/bootstrap"
 	xkms "github.com/jeremyhahn/go-xkms/sdk/go"
 	"github.com/jeremyhahn/go-xkms/xkey/pkg/attestation"
 	"github.com/jeremyhahn/go-xkms/xkey/pkg/attestation/attesttest"
-	"github.com/jeremyhahn/go-xkms/xkey/pkg/pairing"
 	"github.com/jeremyhahn/go-xkms/xkey/pkg/phone"
 )
 
@@ -51,7 +52,7 @@ import (
 //	             still live.
 //
 // Nothing here is a byte-echoing stub. The phone runs a real
-// pairing.NoiseSession as the XX responder, derives its own channel binding
+// bootstrap.NoiseSession as the XX responder, derives its own channel binding
 // from its own session, and signs a transcript it lays out itself. So a green
 // run means two independent implementations agreed on the prologue, the
 // channel binding, the transcript layout and the fingerprint derivation — the
@@ -84,7 +85,7 @@ func TestPairThenReconnectThenReattest_Interop(t *testing.T) {
 	// The desktop's Noise identity, generated once at pairing and stored in the
 	// pairing record. Reusing it on the reconnect leg is what makes that leg a
 	// RECONNECT rather than a second pairing.
-	desktopKey, err := pairing.GenerateStaticKey()
+	desktopKey, err := bootstrap.GenerateNoiseStaticKey()
 	require.NoError(t, err)
 	defer desktopKey.Destroy()
 
@@ -95,7 +96,7 @@ func TestPairThenReconnectThenReattest_Interop(t *testing.T) {
 	// The desktop's real pairing attestation: live session, live challenge,
 	// live verification.
 	pairInit, pairResp := attesttest.NewMemTransportPair()
-	pairSession, err := pairing.NewNoiseSession(&pairing.NoiseSessionConfig{
+	pairSession, err := bootstrap.NewNoiseSession(&bootstrap.NoiseSessionConfig{
 		LocalStaticKey: desktopKey,
 		IsInitiator:    true,
 	})
@@ -104,20 +105,20 @@ func TestPairThenReconnectThenReattest_Interop(t *testing.T) {
 	pairDone := make(chan error, 1)
 	device.Serve(ctx, t, pairResp, false, 1, pairDone)
 
-	require.NoError(t, pairing.PerformHandshake(ctx, &pairing.HandshakeConfig{
+	require.NoError(t, pairingproto.PerformHandshake(ctx, &pairingproto.HandshakeConfig{
 		Transport:            pairInit,
 		Session:              pairSession,
 		Logger:               logger,
 		LocalStaticPublicKey: pairSession.LocalStaticPublicKey(),
 	}), "the pairing handshake must complete")
 
-	verified, err := attestation.AttestOverSession(ctx, pairInit, pairSession, trust, pairing.AttestPurposePair, logger)
+	verified, err := attestation.AttestOverSession(ctx, pairInit, pairSession, trust, pairingproto.AttestPurposePair, logger)
 	require.NoError(t, err, "a contract-faithful device must pair")
 	require.NotNil(t, verified)
 	require.NoError(t, <-pairDone, "phone responder failed during pairing")
 
 	storedFingerprint := verified.Result.DeviceFingerprint
-	require.Equal(t, pairing.AttestProtocolV2, verified.Result.ProtocolVersion)
+	require.Equal(t, pairingproto.AttestProtocolV2, verified.Result.ProtocolVersion)
 
 	// WIRE AGREEMENT on the identity: the value the desktop persisted must be
 	// the one the phone will echo, derived independently from its own key.
@@ -141,7 +142,7 @@ func TestPairThenReconnectThenReattest_Interop(t *testing.T) {
 	require.NoError(t, err)
 
 	reconnectInit, reconnectResp := attesttest.NewMemTransportPair()
-	reconnectSession, err := pairing.NewNoiseSession(&pairing.NoiseSessionConfig{
+	reconnectSession, err := bootstrap.NewNoiseSession(&bootstrap.NoiseSessionConfig{
 		LocalStaticKey:       desktopKey,
 		ExpectedRemoteStatic: pairedPhoneStatic,
 		IsInitiator:          true,
@@ -151,7 +152,7 @@ func TestPairThenReconnectThenReattest_Interop(t *testing.T) {
 	reconnectDone := make(chan error, 1)
 	device.Serve(ctx, t, reconnectResp, true, 1, reconnectDone)
 
-	require.NoError(t, pairing.PerformHandshake(ctx, &pairing.HandshakeConfig{
+	require.NoError(t, pairingproto.PerformHandshake(ctx, &pairingproto.HandshakeConfig{
 		Transport:                 reconnectInit,
 		Session:                   reconnectSession,
 		Logger:                    logger,
@@ -164,13 +165,13 @@ func TestPairThenReconnectThenReattest_Interop(t *testing.T) {
 	// The point of the whole model: the SAME key proves itself again, on a new
 	// session, without rotating the device identity. Under the old
 	// embedded-challenge model this leg was impossible on Android.
-	reattested, err := attestation.AttestOverSession(ctx, reconnectInit, reconnectSession, trust, pairing.AttestPurposeReattest, logger)
+	reattested, err := attestation.AttestOverSession(ctx, reconnectInit, reconnectSession, trust, pairingproto.AttestPurposeReattest, logger)
 	require.NoError(t, err, "the persistent attested key must re-attest on a new session")
 	require.NoError(t, <-reconnectDone, "phone responder failed during reconnect")
 
 	assert.Equal(t, storedFingerprint, reattested.Result.DeviceFingerprint,
 		"re-attestation of the persistent key must not change the device identity")
-	assert.Equal(t, pairing.AttestProtocolV2, reattested.Result.ProtocolVersion)
+	assert.Equal(t, pairingproto.AttestProtocolV2, reattested.Result.ProtocolVersion)
 
 	// WHAT THE CHANNEL BINDING ACTUALLY PROVIDES — stated honestly, because the
 	// first version of this assertion did not.
@@ -187,9 +188,9 @@ func TestPairThenReconnectThenReattest_Interop(t *testing.T) {
 	// The binding is per KEY PAIR AND CONTEXT, not per session. Freshness is
 	// the nonce's job, and saying so here is what keeps the two from being
 	// confused again.
-	pairBinding, err := pairSession.AttestChannelBinding()
+	pairBinding, err := pairingproto.AttestChannelBinding(pairSession)
 	require.NoError(t, err)
-	reconnectBinding, err := reconnectSession.AttestChannelBinding()
+	reconnectBinding, err := pairingproto.AttestChannelBinding(reconnectSession)
 	require.NoError(t, err)
 
 	// Pairing and reconnect DO differ, but because of the prologue, not the
@@ -205,7 +206,7 @@ func TestPairThenReconnectThenReattest_Interop(t *testing.T) {
 	// is expected to be identical, and the signatures still differ because the
 	// nonces do. This is the property that actually holds.
 	secondInit, secondResp := attesttest.NewMemTransportPair()
-	secondSession, err := pairing.NewNoiseSession(&pairing.NoiseSessionConfig{
+	secondSession, err := bootstrap.NewNoiseSession(&bootstrap.NoiseSessionConfig{
 		LocalStaticKey:       desktopKey,
 		ExpectedRemoteStatic: pairedPhoneStatic,
 		IsInitiator:          true,
@@ -215,7 +216,7 @@ func TestPairThenReconnectThenReattest_Interop(t *testing.T) {
 	secondDone := make(chan error, 1)
 	device.Serve(ctx, t, secondResp, true, 1, secondDone)
 
-	require.NoError(t, pairing.PerformHandshake(ctx, &pairing.HandshakeConfig{
+	require.NoError(t, pairingproto.PerformHandshake(ctx, &pairingproto.HandshakeConfig{
 		Transport:                 secondInit,
 		Session:                   secondSession,
 		Logger:                    logger,
@@ -223,14 +224,14 @@ func TestPairThenReconnectThenReattest_Interop(t *testing.T) {
 		ExpectedDeviceFingerprint: expected,
 	}), "the persisted identities must keep reconnecting, not just once")
 
-	secondBinding, err := secondSession.AttestChannelBinding()
+	secondBinding, err := pairingproto.AttestChannelBinding(secondSession)
 	require.NoError(t, err)
 	assert.Equal(t, reconnectBinding, secondBinding,
 		"the binding is per key pair and context; two reconnects with the same "+
 			"identities and prologue share it, and the nonce is what makes each "+
 			"exchange unrepeatable")
 
-	secondAttest, err := attestation.AttestOverSession(ctx, secondInit, secondSession, trust, pairing.AttestPurposeReattest, logger)
+	secondAttest, err := attestation.AttestOverSession(ctx, secondInit, secondSession, trust, pairingproto.AttestPurposeReattest, logger)
 	require.NoError(t, err, "the third handshake with the persisted keys must also re-attest")
 	require.NoError(t, <-secondDone, "phone responder failed during the second reconnect")
 	assert.Equal(t, storedFingerprint, secondAttest.Result.DeviceFingerprint)
@@ -240,7 +241,7 @@ func TestPairThenReconnectThenReattest_Interop(t *testing.T) {
 	recordDeviceAttestation(record, verified.Result)
 	recordDeviceAttestation(record, reattested.Result)
 	assert.Equal(t, storedFingerprint, record.DeviceFingerprint)
-	assert.Equal(t, pairing.AttestProtocolV2, record.AttestationProtocolVersion,
+	assert.Equal(t, pairingproto.AttestProtocolV2, record.AttestationProtocolVersion,
 		"the record must remember it was bound under challenge-response")
 	assert.NoError(t, attestation.DeviceBindingFor(*record).ValidateAttestedKeyMatch(reattested.Result.DeviceFingerprint),
 		"an honest re-attestation must not read as a changed device")
@@ -272,13 +273,13 @@ func TestReconnectRefusesADeviceThatCannotProveLiveness(t *testing.T) {
 	defer cancel()
 
 	init, resp := attesttest.NewMemTransportPair()
-	session, err := pairing.NewNoiseSession(&pairing.NoiseSessionConfig{IsInitiator: true})
+	session, err := bootstrap.NewNoiseSession(&bootstrap.NoiseSessionConfig{IsInitiator: true})
 	require.NoError(t, err)
 
 	done := make(chan error, 1)
 	relay.Serve(ctx, t, resp, true, 1, done)
 
-	require.NoError(t, pairing.PerformHandshake(ctx, &pairing.HandshakeConfig{
+	require.NoError(t, pairingproto.PerformHandshake(ctx, &pairingproto.HandshakeConfig{
 		Transport:                 init,
 		Session:                   session,
 		Logger:                    logger,
@@ -286,10 +287,10 @@ func TestReconnectRefusesADeviceThatCannotProveLiveness(t *testing.T) {
 		ExpectedDeviceFingerprint: genuine.Fingerprint(),
 	}), "the fingerprint echo and the prologue still agree; that is the point")
 
-	verified, err := attestation.AttestOverSession(ctx, init, session, trust, pairing.AttestPurposeReattest, logger)
+	verified, err := attestation.AttestOverSession(ctx, init, session, trust, pairingproto.AttestPurposeReattest, logger)
 
 	require.Error(t, err, "a device that cannot sign the challenge must be refused")
-	require.ErrorIs(t, err, pairing.ErrAttestSignatureInvalid)
+	require.ErrorIs(t, err, pairingproto.ErrAttestSignatureInvalid)
 	assert.Nil(t, verified)
 	require.NoError(t, <-done, "the relay responder itself must not have errored")
 }
@@ -322,7 +323,7 @@ func TestReconnectEnforcesLivenessBeforeTheSessionIsUsable(t *testing.T) {
 		Name:                       "bound",
 		Address:                    "00:11:22:33:44:55",
 		DeviceFingerprint:          hex.EncodeToString(genuine.Fingerprint()),
-		AttestationProtocolVersion: pairing.AttestProtocolV2,
+		AttestationProtocolVersion: pairingproto.AttestProtocolV2,
 	}
 
 	// A record from before #129: no attested key was ever registered, so there
@@ -346,8 +347,8 @@ func TestReconnectEnforcesLivenessBeforeTheSessionIsUsable(t *testing.T) {
 		// PR5: the #129/#130 grace period for a record below version 2 is
 		// removed) -- the operator must re-pair.
 		device := attesttest.NewPairedPhone(t, genuine, genuine.Fingerprint())
-		err := runReattestAgainst(t, logger, ca, legacy, device, func(r *pairing.LocalAttestDeviceResult) {
-			r.ProtocolVersion = pairing.AttestProtocolV1
+		err := runReattestAgainst(t, logger, ca, legacy, device, func(r *pairingproto.LocalAttestDeviceResult) {
+			r.ProtocolVersion = pairingproto.AttestProtocolV1
 			r.Signature = nil
 		})
 		require.Error(t, err)
@@ -356,17 +357,17 @@ func TestReconnectEnforcesLivenessBeforeTheSessionIsUsable(t *testing.T) {
 
 	t.Run("a missing signature refuses the session", func(t *testing.T) {
 		device := attesttest.NewPairedPhone(t, genuine, genuine.Fingerprint())
-		err := runReattestAgainst(t, logger, ca, bound, device, func(r *pairing.LocalAttestDeviceResult) {
+		err := runReattestAgainst(t, logger, ca, bound, device, func(r *pairingproto.LocalAttestDeviceResult) {
 			r.Signature = nil
 		})
 		require.Error(t, err)
-		require.ErrorIs(t, err, pairing.ErrAttestSignatureMissing)
+		require.ErrorIs(t, err, pairingproto.ErrAttestSignatureMissing)
 	})
 
 	t.Run("a downgraded answer refuses the session", func(t *testing.T) {
 		device := attesttest.NewPairedPhone(t, genuine, genuine.Fingerprint())
-		err := runReattestAgainst(t, logger, ca, bound, device, func(r *pairing.LocalAttestDeviceResult) {
-			r.ProtocolVersion = pairing.AttestProtocolV1
+		err := runReattestAgainst(t, logger, ca, bound, device, func(r *pairingproto.LocalAttestDeviceResult) {
+			r.ProtocolVersion = pairingproto.AttestProtocolV1
 		})
 		require.Error(t, err,
 			"a peer must not opt out of a check by declaring itself unable to satisfy it")
@@ -382,7 +383,7 @@ func TestReconnectEnforcesLivenessBeforeTheSessionIsUsable(t *testing.T) {
 			genuine.Fingerprint())
 		err := runReattestAgainst(t, logger, ca, bound, relay, nil)
 		require.Error(t, err)
-		require.ErrorIs(t, err, pairing.ErrAttestSignatureInvalid)
+		require.ErrorIs(t, err, pairingproto.ErrAttestSignatureInvalid)
 	})
 
 	t.Run("a rotated attested key refuses the session", func(t *testing.T) {
@@ -408,7 +409,7 @@ func runReattestAgainst(
 	ca *attesttest.CA,
 	record *PairedDevice,
 	device *attesttest.Phone,
-	mutate func(*pairing.LocalAttestDeviceResult),
+	mutate func(*pairingproto.LocalAttestDeviceResult),
 ) error {
 	t.Helper()
 
@@ -418,7 +419,7 @@ func runReattestAgainst(
 	defer cancel()
 
 	init, resp := attesttest.NewMemTransportPair()
-	session, err := pairing.NewNoiseSession(&pairing.NoiseSessionConfig{IsInitiator: true})
+	session, err := bootstrap.NewNoiseSession(&bootstrap.NoiseSessionConfig{IsInitiator: true})
 	require.NoError(t, err)
 
 	done := make(chan error, 1)
@@ -440,7 +441,7 @@ func runReattestAgainst(
 	expected, err := phone.DecodeDeviceFingerprint(record.DeviceFingerprint)
 	require.NoError(t, err)
 
-	require.NoError(t, pairing.PerformHandshake(ctx, &pairing.HandshakeConfig{
+	require.NoError(t, pairingproto.PerformHandshake(ctx, &pairingproto.HandshakeConfig{
 		Transport:                 init,
 		Session:                   session,
 		Logger:                    logger,
@@ -474,19 +475,19 @@ func TestPairedDeviceBackendConfigCarriesEveryIdentityCheck(t *testing.T) {
 	ca := attesttest.NewCA(t, "Trusted Attestation Root")
 	dak := attesttest.NewDAK(t, ca, attesttest.GenesisChallenge(), xkms.AndroidSecurityLevelStrongBox, attesttest.AttestedBootState())
 
-	localKey, err := pairing.GenerateStaticKey()
+	localKey, err := bootstrap.GenerateNoiseStaticKey()
 	require.NoError(t, err)
 	defer localKey.Destroy()
 
 	// EncodeStaticKey writes HEX (NoiseHexKeySize bytes); the pairing record
 	// stores base64 of the raw scalar, so decode back to raw first.
-	encoded := make([]byte, pairing.NoiseHexKeySize)
-	require.NoError(t, pairing.EncodeStaticKey(encoded, localKey))
+	encoded := make([]byte, bootstrap.NoiseHexKeySize)
+	require.NoError(t, bootstrap.EncodeNoiseStaticKey(encoded, localKey))
 	raw, err := hex.DecodeString(string(encoded))
 	require.NoError(t, err)
-	defer pairing.WipeBytes(raw)
+	defer bootstrap.WipeNoiseBytes(raw)
 
-	remote, err := pairing.GenerateStaticKey()
+	remote, err := bootstrap.GenerateNoiseStaticKey()
 	require.NoError(t, err)
 	defer remote.Destroy()
 
@@ -496,7 +497,7 @@ func TestPairedDeviceBackendConfigCarriesEveryIdentityCheck(t *testing.T) {
 		LocalNoisePrivateKey:       base64.StdEncoding.EncodeToString(raw),
 		NoisePublicKey:             base64.StdEncoding.EncodeToString(remote.PublicBytes()),
 		DeviceFingerprint:          hex.EncodeToString(dak.Fingerprint()),
-		AttestationProtocolVersion: pairing.AttestProtocolV2,
+		AttestationProtocolVersion: pairingproto.AttestProtocolV2,
 	}
 
 	t.Run("a v2 record demands the liveness proof and supplies a verifier", func(t *testing.T) {

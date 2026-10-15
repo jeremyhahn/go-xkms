@@ -28,6 +28,7 @@ require (
 	github.com/golang-jwt/jwt/v5 v5.3.1
 	github.com/google/go-tpm v0.9.8
 	github.com/google/go-tpm-tools v0.4.8
+	github.com/google/gousb v1.1.3
 	github.com/google/uuid v1.6.0
 	github.com/gorilla/mux v1.8.1
 	github.com/gorilla/websocket v1.5.4-0.20250319132907-e064f32e3674
@@ -42,7 +43,6 @@ require (
 	github.com/jeremyhahn/go-qrdb/sdk/go v0.48.0-alpha
 	github.com/jeremyhahn/go-truststrap v0.6.0-alpha
 	github.com/jeremyhahn/go-xkms/sdk/go v0.55.0-alpha
-	github.com/jeremyhahn/go-xkms/xkey v0.55.0-alpha
 	github.com/kevinburke/ssh_config v1.6.0
 	github.com/mark3labs/mcp-go v0.45.0
 	github.com/miekg/dns v1.1.72
@@ -165,7 +165,6 @@ require (
 	github.com/gogo/protobuf v1.3.2 // indirect
 	github.com/golang/protobuf v1.5.4 // indirect
 	github.com/golang/snappy v1.0.0 // indirect
-	github.com/google/gousb v1.1.3 // indirect
 	github.com/google/s2a-go v0.1.9 // indirect
 	github.com/googleapis/enterprise-certificate-proxy v0.3.21 // indirect
 	github.com/googleapis/gax-go/v2 v2.23.0 // indirect
@@ -233,22 +232,16 @@ require (
 	github.com/rogpeppe/go-internal v1.14.1 // indirect
 	github.com/ryanuber/go-glob v1.0.0 // indirect
 	github.com/sagikazarmark/locafero v0.12.0 // indirect
-	github.com/saltosystems/winrt-go v0.0.0-20260513072510-45f10383b2b8 // indirect
 	github.com/samber/lo v1.53.0 // indirect
 	github.com/santhosh-tekuri/jsonschema/v6 v6.0.3 // indirect
 	github.com/segmentio/asm v1.2.1 // indirect
 	github.com/sirupsen/logrus v1.9.4 // indirect
-	github.com/soypat/cyw43439 v0.1.1 // indirect
-	github.com/soypat/lneto v0.1.0 // indirect
-	github.com/soypat/seqs v0.0.0-20260125140838-2c1c6b1bd69e // indirect
 	github.com/spf13/afero v1.15.0 // indirect
 	github.com/spf13/cast v1.10.0 // indirect
 	github.com/spiffe/go-spiffe/v2 v2.8.1 // indirect
 	github.com/stretchr/objx v0.5.3 // indirect
 	github.com/subosito/gotenv v1.6.0 // indirect
 	github.com/tidwall/btree v1.8.2 // indirect
-	github.com/tinygo-org/cbgo v0.0.4 // indirect
-	github.com/tinygo-org/pio v0.3.0 // indirect
 	github.com/tinylib/msgp v1.6.4 // indirect
 	github.com/tkrajina/go-reflector v0.5.8 // indirect
 	github.com/twitchyliquid64/golang-asm v0.15.1 // indirect
@@ -288,11 +281,8 @@ require (
 	google.golang.org/genproto/googleapis/api v0.0.0-20260810153831-ec0a7760b754 // indirect
 	gopkg.in/src-d/go-errors.v1 v1.0.0 // indirect
 	software.sslmate.com/src/go-pkcs12 v0.7.3 // indirect
-	tinygo.org/x/bluetooth v0.15.0 // indirect
 )
 
 replace github.com/armon/go-metrics => github.com/armon/go-metrics v0.4.1
 
 replace github.com/jeremyhahn/go-xkms/sdk/go => ./sdk/go
-
-replace github.com/jeremyhahn/go-xkms/xkey => ./xkey

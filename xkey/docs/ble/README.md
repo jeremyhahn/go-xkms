@@ -28,7 +28,7 @@ The phone backend enables xkey to use an Android phone as a remote signing devic
 
 ## Key Features
 
-- **Application-layer encryption**: every exchange runs inside a Noise XX session (`Noise_XX_25519_ChaChaPoly_SHA256`, `xkey/pkg/pairing/noise.go:28`). The desktop does not perform OS-level BLE pairing or require an encrypted link; Noise is the only confidentiality layer it relies on (`xkey/pkg/phone/ble_transport.go:506-507`).
+- **Application-layer encryption**: every exchange runs inside a Noise XX session (`Noise_XX_25519_ChaChaPoly_SHA256`, `pkg/trust/bootstrap/noise_session.go:29`). The desktop does not perform OS-level BLE pairing or require an encrypted link; Noise is the only confidentiality layer it relies on (`xkey/pkg/phone/ble_transport.go:506-507`).
 - **No network required**: direct BLE connection, works offline.
 - **Linux (BlueZ)**: the central's recovery paths shell out to `bluetoothctl` (`ble_transport.go:1161-1214`), so macOS and Windows support is unconfirmed.
 
@@ -88,7 +88,7 @@ Then use WebAuthn sites normally. When authentication is needed:
 | Threat | Mitigation |
 |--------|------------|
 | BLE eavesdropping | Noise XX session encryption |
-| BLE MITM | Noise XX against the phone's pinned static key (`ExpectedRemoteStatic`, required unless `TrustNewDevices`, `xkey/pkg/phone/phone.go:372`) |
+| BLE MITM | Noise XX against the phone's pinned static key (`ExpectedRemoteStatic`, required unless `TrustNewDevices`, `xkey/pkg/phone/phone.go:375`) |
 | Compromised BLE stack | Noise layer still protects |
 | Stolen laptop | No keys stored, just pairing info |
 | Replay attacks | Noise transport nonces |
@@ -102,7 +102,7 @@ Build with BLE support:
 go build -tags ble ./cmd/xkey/
 ```
 
-Without the `ble` tag, the BLE transport is a stub (`xkey/pkg/phone/ble_transport_stub.go:13`) and phone operations return `ErrBLEUnavailable` (`xkey/pkg/phone/errors.go:119`).
+Without the `ble` tag, the BLE transport is a stub (`xkey/pkg/phone/ble_transport_stub.go:13`) and phone operations return `ErrBLEUnavailable` (`xkey/pkg/phone/errors.go:122`).
 
 ### Linux
 

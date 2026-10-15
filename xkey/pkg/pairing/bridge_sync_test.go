@@ -31,10 +31,11 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	"github.com/jeremyhahn/go-xkms/pkg/attestation/truststore"
+	"github.com/jeremyhahn/go-xkms/pkg/pairingproto"
 	"github.com/jeremyhahn/go-xkms/xkey/pkg/audit"
 	"github.com/jeremyhahn/go-xkms/xkey/pkg/backup"
 	xkeysync "github.com/jeremyhahn/go-xkms/xkey/pkg/sync"
-	"github.com/jeremyhahn/go-xkms/xkey/pkg/truststore"
 )
 
 // errTestCredentialNotFound is returned by the in-memory sync accessor
@@ -203,11 +204,11 @@ func TestBridge_DispatchMap_ContainsSyncMethods(t *testing.T) {
 	require.NoError(t, err)
 
 	syncMethods := []string{
-		MethodRemoteSyncTrustStore,
-		MethodRemoteSyncOATH,
-		MethodRemoteSyncPasswords,
-		MethodRemoteSyncAll,
-		MethodRemoteSyncStatus,
+		pairingproto.MethodRemoteSyncTrustStore,
+		pairingproto.MethodRemoteSyncOATH,
+		pairingproto.MethodRemoteSyncPasswords,
+		pairingproto.MethodRemoteSyncAll,
+		pairingproto.MethodRemoteSyncStatus,
 	}
 
 	for _, method := range syncMethods {
@@ -236,14 +237,14 @@ func TestBridge_HandleSyncTrustStore_NotConfigured(t *testing.T) {
 	b, err := NewBridge(client, &BridgeConfig{Logger: testLogger()})
 	require.NoError(t, err)
 
-	req := newRemoteRequest(MethodRemoteSyncTrustStore, RemoteSyncTrustStoreParams{
-		Certificates: []SyncCertificate{
+	req := newRemoteRequest(pairingproto.MethodRemoteSyncTrustStore, pairingproto.RemoteSyncTrustStoreParams{
+		Certificates: []pairingproto.SyncCertificate{
 			{PEM: "cert1", Fingerprint: "fp1"},
 			{PEM: "cert2", Fingerprint: "fp2"},
 		},
 	})
 	resp := b.HandleRequest(context.Background(), req)
-	assertErrorResponse(t, resp, req.ID, ErrorCodeFeatureUnavailable)
+	assertErrorResponse(t, resp, req.ID, pairingproto.ErrorCodeFeatureUnavailable)
 }
 
 // TestBridge_HandleSyncTrustStore_Success verifies the real round trip
@@ -260,26 +261,26 @@ func TestBridge_HandleSyncTrustStore_Success(t *testing.T) {
 	require.NoError(t, err)
 
 	newCert := newTestPIVCertificate(t, "phone-cert")
-	req := newRemoteRequest(MethodRemoteSyncTrustStore, RemoteSyncTrustStoreParams{
-		Certificates: []SyncCertificate{
+	req := newRemoteRequest(pairingproto.MethodRemoteSyncTrustStore, pairingproto.RemoteSyncTrustStoreParams{
+		Certificates: []pairingproto.SyncCertificate{
 			{PEM: pemEncodeCertForTest(newCert), Fingerprint: certFingerprintForTest(newCert)},
 		},
 	})
 	resp := b.HandleRequest(context.Background(), req)
 
-	result := decodeResult[RemoteSyncTrustStoreResult](t, resp)
+	result := decodeResult[pairingproto.RemoteSyncTrustStoreResult](t, resp)
 	assert.Equal(t, 1, result.Added)
 	assert.Equal(t, 0, result.Skipped)
 	// Local echoes every laptop certificate, including the one just added.
 	assert.Len(t, result.Local, 2)
 
 	// Sending the same certificate again is deduplicated.
-	resp2 := b.HandleRequest(context.Background(), newRemoteRequest(MethodRemoteSyncTrustStore, RemoteSyncTrustStoreParams{
-		Certificates: []SyncCertificate{
+	resp2 := b.HandleRequest(context.Background(), newRemoteRequest(pairingproto.MethodRemoteSyncTrustStore, pairingproto.RemoteSyncTrustStoreParams{
+		Certificates: []pairingproto.SyncCertificate{
 			{PEM: pemEncodeCertForTest(newCert), Fingerprint: certFingerprintForTest(newCert)},
 		},
 	}))
-	result2 := decodeResult[RemoteSyncTrustStoreResult](t, resp2)
+	result2 := decodeResult[pairingproto.RemoteSyncTrustStoreResult](t, resp2)
 	assert.Equal(t, 0, result2.Added)
 	assert.Equal(t, 1, result2.Skipped)
 }
@@ -321,11 +322,11 @@ func TestBridge_HandleSyncTrustStore_ForgedAnchorIsQuarantined(t *testing.T) {
 
 	forged := newForgedGoogleAttestationRoot(t)
 	fp := certFingerprintForTest(forged)
-	resp := b.HandleRequest(context.Background(), newRemoteRequest(MethodRemoteSyncTrustStore, RemoteSyncTrustStoreParams{
-		Certificates: []SyncCertificate{{PEM: pemEncodeCertForTest(forged), Fingerprint: fp}},
+	resp := b.HandleRequest(context.Background(), newRemoteRequest(pairingproto.MethodRemoteSyncTrustStore, pairingproto.RemoteSyncTrustStoreParams{
+		Certificates: []pairingproto.SyncCertificate{{PEM: pemEncodeCertForTest(forged), Fingerprint: fp}},
 	}))
 
-	result := decodeResult[RemoteSyncTrustStoreResult](t, resp)
+	result := decodeResult[pairingproto.RemoteSyncTrustStoreResult](t, resp)
 	require.Equal(t, 1, result.Added)
 	assert.Equal(t, truststore.PurposeSynced, ts.purposes[fp])
 }
@@ -346,10 +347,10 @@ func TestBridge_HandleSyncTrustStore_AuditsTheWrite(t *testing.T) {
 	require.NoError(t, err)
 
 	cert := newTestPIVCertificate(t, "phone-cert")
-	resp := b.HandleRequest(context.Background(), newRemoteRequest(MethodRemoteSyncTrustStore, RemoteSyncTrustStoreParams{
-		Certificates: []SyncCertificate{{PEM: pemEncodeCertForTest(cert), Fingerprint: certFingerprintForTest(cert)}},
+	resp := b.HandleRequest(context.Background(), newRemoteRequest(pairingproto.MethodRemoteSyncTrustStore, pairingproto.RemoteSyncTrustStoreParams{
+		Certificates: []pairingproto.SyncCertificate{{PEM: pemEncodeCertForTest(cert), Fingerprint: certFingerprintForTest(cert)}},
 	}))
-	decodeResult[RemoteSyncTrustStoreResult](t, resp)
+	decodeResult[pairingproto.RemoteSyncTrustStoreResult](t, resp)
 
 	require.Len(t, auditLog.entries, 1)
 	entry := auditLog.entries[0]
@@ -378,12 +379,12 @@ func TestBridge_HandleSyncTrustStore_AuditFailureFailsTheCall(t *testing.T) {
 	require.NoError(t, err)
 
 	cert := newTestPIVCertificate(t, "phone-cert")
-	req := newRemoteRequest(MethodRemoteSyncTrustStore, RemoteSyncTrustStoreParams{
-		Certificates: []SyncCertificate{{PEM: pemEncodeCertForTest(cert), Fingerprint: certFingerprintForTest(cert)}},
+	req := newRemoteRequest(pairingproto.MethodRemoteSyncTrustStore, pairingproto.RemoteSyncTrustStoreParams{
+		Certificates: []pairingproto.SyncCertificate{{PEM: pemEncodeCertForTest(cert), Fingerprint: certFingerprintForTest(cert)}},
 	})
 	resp := b.HandleRequest(context.Background(), req)
 
-	assertErrorResponse(t, resp, req.ID, ErrorCodeSyncFailed)
+	assertErrorResponse(t, resp, req.ID, pairingproto.ErrorCodeSyncFailed)
 	assert.NotContains(t, resp.Error.Message, "audit sink unavailable")
 }
 
@@ -405,11 +406,11 @@ func TestBridge_HandleSyncOATH_AuditsAFailedApply(t *testing.T) {
 	})
 	require.NoError(t, err)
 
-	req := newRemoteRequest(MethodRemoteSyncOATH, RemoteSyncOATHParams{
-		Credentials: []SyncOATHCredential{{ID: "cred-1", Name: "example"}},
+	req := newRemoteRequest(pairingproto.MethodRemoteSyncOATH, pairingproto.RemoteSyncOATHParams{
+		Credentials: []pairingproto.SyncOATHCredential{{ID: "cred-1", Name: "example"}},
 	})
 	resp := b.HandleRequest(context.Background(), req)
-	assertErrorResponse(t, resp, req.ID, ErrorCodeSyncFailed)
+	assertErrorResponse(t, resp, req.ID, pairingproto.ErrorCodeSyncFailed)
 
 	require.Len(t, auditLog.entries, 1)
 	entry := auditLog.entries[0]
@@ -425,9 +426,9 @@ func TestBridge_HandleSyncTrustStore_InvalidParams(t *testing.T) {
 	b, err := NewBridge(client, &BridgeConfig{Logger: testLogger()})
 	require.NoError(t, err)
 
-	req := newRemoteRequest(MethodRemoteSyncTrustStore, nil)
+	req := newRemoteRequest(pairingproto.MethodRemoteSyncTrustStore, nil)
 	resp := b.HandleRequest(context.Background(), req)
-	assertErrorResponse(t, resp, req.ID, ErrorCodeInvalidParams)
+	assertErrorResponse(t, resp, req.ID, pairingproto.ErrorCodeInvalidParams)
 }
 
 func TestBridge_HandleSyncTrustStore_EmptyCertificates(t *testing.T) {
@@ -436,12 +437,12 @@ func TestBridge_HandleSyncTrustStore_EmptyCertificates(t *testing.T) {
 	b, err := NewBridge(client, &BridgeConfig{Logger: testLogger(), SyncService: svc})
 	require.NoError(t, err)
 
-	req := newRemoteRequest(MethodRemoteSyncTrustStore, RemoteSyncTrustStoreParams{
-		Certificates: []SyncCertificate{},
+	req := newRemoteRequest(pairingproto.MethodRemoteSyncTrustStore, pairingproto.RemoteSyncTrustStoreParams{
+		Certificates: []pairingproto.SyncCertificate{},
 	})
 	resp := b.HandleRequest(context.Background(), req)
 
-	result := decodeResult[RemoteSyncTrustStoreResult](t, resp)
+	result := decodeResult[pairingproto.RemoteSyncTrustStoreResult](t, resp)
 	assert.Equal(t, 0, result.Added)
 	assert.Equal(t, 0, result.Skipped)
 }
@@ -456,13 +457,13 @@ func TestBridge_HandleSyncOATH_NotConfigured(t *testing.T) {
 	b, err := NewBridge(client, &BridgeConfig{Logger: testLogger(), SyncApproval: AlwaysApproveSync})
 	require.NoError(t, err)
 
-	req := newRemoteRequest(MethodRemoteSyncOATH, RemoteSyncOATHParams{
-		Credentials: []SyncOATHCredential{
+	req := newRemoteRequest(pairingproto.MethodRemoteSyncOATH, pairingproto.RemoteSyncOATHParams{
+		Credentials: []pairingproto.SyncOATHCredential{
 			{ID: "c1", Name: "GitHub", Secret: mustSecretText("SEC"), Type: "totp"},
 		},
 	})
 	resp := b.HandleRequest(context.Background(), req)
-	assertErrorResponse(t, resp, req.ID, ErrorCodeFeatureUnavailable)
+	assertErrorResponse(t, resp, req.ID, pairingproto.ErrorCodeFeatureUnavailable)
 }
 
 // TestBridge_HandleSyncOATH_Success verifies the real round trip through the
@@ -478,15 +479,15 @@ func TestBridge_HandleSyncOATH_Success(t *testing.T) {
 	b, err := NewBridge(client, &BridgeConfig{Logger: testLogger(), SyncService: svc, SyncApproval: AlwaysApproveSync})
 	require.NoError(t, err)
 
-	req := newRemoteRequest(MethodRemoteSyncOATH, RemoteSyncOATHParams{
-		Credentials: []SyncOATHCredential{
+	req := newRemoteRequest(pairingproto.MethodRemoteSyncOATH, pairingproto.RemoteSyncOATHParams{
+		Credentials: []pairingproto.SyncOATHCredential{
 			{ID: "c1", Name: "GitHub", Secret: mustSecretText("SEC"), Type: "totp"},
 			{ID: "c2", Name: "Slack (new)", Secret: mustSecretText("SEC2"), Type: "totp", UpdatedAt: time.Now().UTC().Format(time.RFC3339)},
 		},
 	})
 	resp := b.HandleRequest(context.Background(), req)
 
-	result := decodeResult[RemoteSyncOATHResult](t, resp)
+	result := decodeResult[pairingproto.RemoteSyncOATHResult](t, resp)
 	assert.Equal(t, 1, result.Added)
 	assert.Equal(t, 1, result.Updated)
 	assert.Equal(t, 0, result.Skipped)
@@ -501,9 +502,9 @@ func TestBridge_HandleSyncOATH_InvalidParams(t *testing.T) {
 	b, err := NewBridge(client, &BridgeConfig{Logger: testLogger()})
 	require.NoError(t, err)
 
-	req := newRemoteRequest(MethodRemoteSyncOATH, nil)
+	req := newRemoteRequest(pairingproto.MethodRemoteSyncOATH, nil)
 	resp := b.HandleRequest(context.Background(), req)
-	assertErrorResponse(t, resp, req.ID, ErrorCodeInvalidParams)
+	assertErrorResponse(t, resp, req.ID, pairingproto.ErrorCodeInvalidParams)
 }
 
 // --- handleSyncPasswords tests ---
@@ -516,13 +517,13 @@ func TestBridge_HandleSyncPasswords_NotConfigured(t *testing.T) {
 	b, err := NewBridge(client, &BridgeConfig{Logger: testLogger(), SyncApproval: AlwaysApproveSync})
 	require.NoError(t, err)
 
-	req := newRemoteRequest(MethodRemoteSyncPasswords, RemoteSyncPasswordsParams{
-		Passwords: []SyncPassword{
+	req := newRemoteRequest(pairingproto.MethodRemoteSyncPasswords, pairingproto.RemoteSyncPasswordsParams{
+		Passwords: []pairingproto.SyncPassword{
 			{ID: "p1", Name: "GitHub", Password: mustSecretText("pw1")},
 		},
 	})
 	resp := b.HandleRequest(context.Background(), req)
-	assertErrorResponse(t, resp, req.ID, ErrorCodeFeatureUnavailable)
+	assertErrorResponse(t, resp, req.ID, pairingproto.ErrorCodeFeatureUnavailable)
 }
 
 // TestBridge_HandleSyncPasswords_Success verifies the real round trip
@@ -534,14 +535,14 @@ func TestBridge_HandleSyncPasswords_Success(t *testing.T) {
 	b, err := NewBridge(client, &BridgeConfig{Logger: testLogger(), SyncService: svc, SyncApproval: AlwaysApproveSync})
 	require.NoError(t, err)
 
-	req := newRemoteRequest(MethodRemoteSyncPasswords, RemoteSyncPasswordsParams{
-		Passwords: []SyncPassword{
+	req := newRemoteRequest(pairingproto.MethodRemoteSyncPasswords, pairingproto.RemoteSyncPasswordsParams{
+		Passwords: []pairingproto.SyncPassword{
 			{ID: "p1", Name: "GitHub", Password: mustSecretText("pw1")},
 		},
 	})
 	resp := b.HandleRequest(context.Background(), req)
 
-	result := decodeResult[RemoteSyncPasswordsResult](t, resp)
+	result := decodeResult[pairingproto.RemoteSyncPasswordsResult](t, resp)
 	assert.Equal(t, 1, result.Added)
 	assert.Equal(t, 0, result.Updated)
 	assert.Equal(t, 0, result.Skipped)
@@ -556,9 +557,9 @@ func TestBridge_HandleSyncPasswords_InvalidParams(t *testing.T) {
 	b, err := NewBridge(client, &BridgeConfig{Logger: testLogger()})
 	require.NoError(t, err)
 
-	req := newRemoteRequest(MethodRemoteSyncPasswords, nil)
+	req := newRemoteRequest(pairingproto.MethodRemoteSyncPasswords, nil)
 	resp := b.HandleRequest(context.Background(), req)
-	assertErrorResponse(t, resp, req.ID, ErrorCodeInvalidParams)
+	assertErrorResponse(t, resp, req.ID, pairingproto.ErrorCodeInvalidParams)
 }
 
 // --- handleSyncAll tests ---
@@ -571,13 +572,13 @@ func TestBridge_HandleSyncAll_NotConfigured(t *testing.T) {
 	b, err := NewBridge(client, &BridgeConfig{Logger: testLogger(), SyncApproval: AlwaysApproveSync})
 	require.NoError(t, err)
 
-	req := newRemoteRequest(MethodRemoteSyncAll, RemoteSyncAllParams{
+	req := newRemoteRequest(pairingproto.MethodRemoteSyncAll, pairingproto.RemoteSyncAllParams{
 		IncludeTrustStore: true,
 		IncludeOATH:       true,
 		IncludePasswords:  true,
 	})
 	resp := b.HandleRequest(context.Background(), req)
-	assertErrorResponse(t, resp, req.ID, ErrorCodeFeatureUnavailable)
+	assertErrorResponse(t, resp, req.ID, pairingproto.ErrorCodeFeatureUnavailable)
 }
 
 // TestBridge_HandleSyncAll_AllIncluded verifies the real round trip through
@@ -598,14 +599,14 @@ func TestBridge_HandleSyncAll_AllIncluded(t *testing.T) {
 	b, err := NewBridge(client, &BridgeConfig{Logger: testLogger(), SyncService: svc, SyncApproval: AlwaysApproveSync})
 	require.NoError(t, err)
 
-	req := newRemoteRequest(MethodRemoteSyncAll, RemoteSyncAllParams{
+	req := newRemoteRequest(pairingproto.MethodRemoteSyncAll, pairingproto.RemoteSyncAllParams{
 		IncludeTrustStore: true,
 		IncludeOATH:       true,
 		IncludePasswords:  true,
 	})
 	resp := b.HandleRequest(context.Background(), req)
 
-	result := decodeResult[RemoteSyncAllResult](t, resp)
+	result := decodeResult[pairingproto.RemoteSyncAllResult](t, resp)
 	require.NotNil(t, result.TrustStore)
 	require.NotNil(t, result.OATH)
 	require.NotNil(t, result.Passwords)
@@ -623,14 +624,14 @@ func TestBridge_HandleSyncAll_TrustStoreOnly(t *testing.T) {
 	b, err := NewBridge(client, &BridgeConfig{Logger: testLogger(), SyncService: svc, SyncApproval: AlwaysApproveSync})
 	require.NoError(t, err)
 
-	req := newRemoteRequest(MethodRemoteSyncAll, RemoteSyncAllParams{
+	req := newRemoteRequest(pairingproto.MethodRemoteSyncAll, pairingproto.RemoteSyncAllParams{
 		IncludeTrustStore: true,
 		IncludeOATH:       false,
 		IncludePasswords:  false,
 	})
 	resp := b.HandleRequest(context.Background(), req)
 
-	result := decodeResult[RemoteSyncAllResult](t, resp)
+	result := decodeResult[pairingproto.RemoteSyncAllResult](t, resp)
 	require.NotNil(t, result.TrustStore)
 	assert.Nil(t, result.OATH)
 	assert.Nil(t, result.Passwords)
@@ -642,14 +643,14 @@ func TestBridge_HandleSyncAll_NoneIncluded(t *testing.T) {
 	b, err := NewBridge(client, &BridgeConfig{Logger: testLogger(), SyncService: svc, SyncApproval: AlwaysApproveSync})
 	require.NoError(t, err)
 
-	req := newRemoteRequest(MethodRemoteSyncAll, RemoteSyncAllParams{
+	req := newRemoteRequest(pairingproto.MethodRemoteSyncAll, pairingproto.RemoteSyncAllParams{
 		IncludeTrustStore: false,
 		IncludeOATH:       false,
 		IncludePasswords:  false,
 	})
 	resp := b.HandleRequest(context.Background(), req)
 
-	result := decodeResult[RemoteSyncAllResult](t, resp)
+	result := decodeResult[pairingproto.RemoteSyncAllResult](t, resp)
 	assert.Nil(t, result.TrustStore)
 	assert.Nil(t, result.OATH)
 	assert.Nil(t, result.Passwords)
@@ -660,9 +661,9 @@ func TestBridge_HandleSyncAll_InvalidParams(t *testing.T) {
 	b, err := NewBridge(client, &BridgeConfig{Logger: testLogger()})
 	require.NoError(t, err)
 
-	req := newRemoteRequest(MethodRemoteSyncAll, nil)
+	req := newRemoteRequest(pairingproto.MethodRemoteSyncAll, nil)
 	resp := b.HandleRequest(context.Background(), req)
-	assertErrorResponse(t, resp, req.ID, ErrorCodeInvalidParams)
+	assertErrorResponse(t, resp, req.ID, pairingproto.ErrorCodeInvalidParams)
 }
 
 // --- Sync approval gating tests (go-xkms#1306) ---
@@ -677,9 +678,9 @@ var syncGatedMethods = []struct {
 	method string
 	params interface{}
 }{
-	{"OATH", MethodRemoteSyncOATH, RemoteSyncOATHParams{Credentials: []SyncOATHCredential{{ID: "c1", Name: "GitHub", Secret: mustSecretText("SEC"), Type: "totp"}}}},
-	{"Passwords", MethodRemoteSyncPasswords, RemoteSyncPasswordsParams{Passwords: []SyncPassword{{ID: "p1", Name: "GitHub", Password: mustSecretText("pw1")}}}},
-	{"All", MethodRemoteSyncAll, RemoteSyncAllParams{IncludeTrustStore: true}},
+	{"OATH", pairingproto.MethodRemoteSyncOATH, pairingproto.RemoteSyncOATHParams{Credentials: []pairingproto.SyncOATHCredential{{ID: "c1", Name: "GitHub", Secret: mustSecretText("SEC"), Type: "totp"}}}},
+	{"Passwords", pairingproto.MethodRemoteSyncPasswords, pairingproto.RemoteSyncPasswordsParams{Passwords: []pairingproto.SyncPassword{{ID: "p1", Name: "GitHub", Password: mustSecretText("pw1")}}}},
+	{"All", pairingproto.MethodRemoteSyncAll, pairingproto.RemoteSyncAllParams{IncludeTrustStore: true}},
 }
 
 // TestBridge_SyncApproval_NilRefusesEveryGatedMethod verifies that a bridge
@@ -695,7 +696,7 @@ func TestBridge_SyncApproval_NilRefusesEveryGatedMethod(t *testing.T) {
 
 			req := newRemoteRequest(tc.method, tc.params)
 			resp := b.HandleRequest(context.Background(), req)
-			assertErrorResponse(t, resp, req.ID, ErrorCodeSyncApprovalRequired)
+			assertErrorResponse(t, resp, req.ID, pairingproto.ErrorCodeSyncApprovalRequired)
 		})
 	}
 }
@@ -719,7 +720,7 @@ func TestBridge_SyncApproval_DenialRefusesTheCall(t *testing.T) {
 
 			req := newRemoteRequest(tc.method, tc.params)
 			resp := b.HandleRequest(context.Background(), req)
-			assertErrorResponse(t, resp, req.ID, ErrorCodeSyncNotApproved)
+			assertErrorResponse(t, resp, req.ID, pairingproto.ErrorCodeSyncNotApproved)
 		})
 	}
 }
@@ -741,13 +742,13 @@ func TestBridge_SyncApproval_ReceivesMethodAndDeviceName(t *testing.T) {
 	})
 	require.NoError(t, err)
 
-	req := newRemoteRequest(MethodRemoteSyncPasswords, RemoteSyncPasswordsParams{
-		Passwords: []SyncPassword{{ID: "p1", Name: "GitHub", Password: mustSecretText("pw1")}},
+	req := newRemoteRequest(pairingproto.MethodRemoteSyncPasswords, pairingproto.RemoteSyncPasswordsParams{
+		Passwords: []pairingproto.SyncPassword{{ID: "p1", Name: "GitHub", Password: mustSecretText("pw1")}},
 	})
 	b.HandleRequest(context.Background(), req)
 
 	require.NotNil(t, got)
-	assert.Equal(t, MethodRemoteSyncPasswords, got.Method)
+	assert.Equal(t, pairingproto.MethodRemoteSyncPasswords, got.Method)
 	assert.Equal(t, "Pixel", got.DeviceName)
 }
 
@@ -759,11 +760,11 @@ func TestBridge_SyncApproval_TrustStoreAndStatusAreNotGated(t *testing.T) {
 	b, err := NewBridge(&mockTransportClient{}, &BridgeConfig{Logger: testLogger(), SyncService: svc})
 	require.NoError(t, err)
 
-	trustResp := b.HandleRequest(context.Background(), newRemoteRequest(MethodRemoteSyncTrustStore, RemoteSyncTrustStoreParams{}))
-	decodeResult[RemoteSyncTrustStoreResult](t, trustResp)
+	trustResp := b.HandleRequest(context.Background(), newRemoteRequest(pairingproto.MethodRemoteSyncTrustStore, pairingproto.RemoteSyncTrustStoreParams{}))
+	decodeResult[pairingproto.RemoteSyncTrustStoreResult](t, trustResp)
 
-	statusResp := b.HandleRequest(context.Background(), newRemoteRequest(MethodRemoteSyncStatus, nil))
-	decodeResult[RemoteSyncStatusResult](t, statusResp)
+	statusResp := b.HandleRequest(context.Background(), newRemoteRequest(pairingproto.MethodRemoteSyncStatus, nil))
+	decodeResult[pairingproto.RemoteSyncStatusResult](t, statusResp)
 }
 
 // --- handleSyncStatus tests ---
@@ -776,10 +777,10 @@ func TestBridge_HandleSyncStatus_Success(t *testing.T) {
 	})
 	require.NoError(t, err)
 
-	req := newRemoteRequest(MethodRemoteSyncStatus, nil)
+	req := newRemoteRequest(pairingproto.MethodRemoteSyncStatus, nil)
 	resp := b.HandleRequest(context.Background(), req)
 
-	result := decodeResult[RemoteSyncStatusResult](t, resp)
+	result := decodeResult[pairingproto.RemoteSyncStatusResult](t, resp)
 	assert.Equal(t, "laptop-test-123", result.DeviceID)
 	assert.Empty(t, result.LastSync)
 	assert.NotNil(t, result.StoreChecksums)
@@ -791,10 +792,10 @@ func TestBridge_HandleSyncStatus_EmptyDeviceID(t *testing.T) {
 	b, err := NewBridge(client, &BridgeConfig{Logger: testLogger()})
 	require.NoError(t, err)
 
-	req := newRemoteRequest(MethodRemoteSyncStatus, nil)
+	req := newRemoteRequest(pairingproto.MethodRemoteSyncStatus, nil)
 	resp := b.HandleRequest(context.Background(), req)
 
-	result := decodeResult[RemoteSyncStatusResult](t, resp)
+	result := decodeResult[pairingproto.RemoteSyncStatusResult](t, resp)
 	assert.Empty(t, result.DeviceID)
 }
 
@@ -814,10 +815,10 @@ func TestBridge_HandleSyncStatus_WithSyncService(t *testing.T) {
 	})
 	require.NoError(t, err)
 
-	req := newRemoteRequest(MethodRemoteSyncStatus, nil)
+	req := newRemoteRequest(pairingproto.MethodRemoteSyncStatus, nil)
 	resp := b.HandleRequest(context.Background(), req)
 
-	result := decodeResult[RemoteSyncStatusResult](t, resp)
+	result := decodeResult[pairingproto.RemoteSyncStatusResult](t, resp)
 	assert.Equal(t, "laptop-test-123", result.DeviceID)
 	require.Contains(t, result.StoreChecksums, "trust_store")
 	assert.NotEmpty(t, result.StoreChecksums["trust_store"])
@@ -826,32 +827,32 @@ func TestBridge_HandleSyncStatus_WithSyncService(t *testing.T) {
 // --- Error mapping tests ---
 
 func TestMapErrorToRPC_SyncFailed(t *testing.T) {
-	code, msg := mapErrorToRPC(ErrSyncFailed)
-	assert.Equal(t, ErrorCodeSyncFailed, code)
+	code, msg := mapErrorToRPC(pairingproto.ErrSyncFailed)
+	assert.Equal(t, pairingproto.ErrorCodeSyncFailed, code)
 	assert.Contains(t, msg, "sync failed")
 }
 
 func TestMapErrorToRPC_SyncConflict(t *testing.T) {
-	code, msg := mapErrorToRPC(ErrSyncConflict)
-	assert.Equal(t, ErrorCodeSyncConflict, code)
+	code, msg := mapErrorToRPC(pairingproto.ErrSyncConflict)
+	assert.Equal(t, pairingproto.ErrorCodeSyncConflict, code)
 	assert.Contains(t, msg, "sync conflict")
 }
 
 func TestMapErrorToRPC_SyncRemoteUnavailable(t *testing.T) {
-	code, msg := mapErrorToRPC(ErrSyncRemoteUnavailable)
-	assert.Equal(t, ErrorCodeSyncRemoteUnavail, code)
+	code, msg := mapErrorToRPC(pairingproto.ErrSyncRemoteUnavailable)
+	assert.Equal(t, pairingproto.ErrorCodeSyncRemoteUnavail, code)
 	assert.Contains(t, msg, "remote device unavailable")
 }
 
 func TestMapErrorToRPC_SyncNoData(t *testing.T) {
-	code, msg := mapErrorToRPC(ErrSyncNoData)
-	assert.Equal(t, ErrorCodeSyncNoData, code)
+	code, msg := mapErrorToRPC(pairingproto.ErrSyncNoData)
+	assert.Equal(t, pairingproto.ErrorCodeSyncNoData, code)
 	assert.Contains(t, msg, "no data")
 }
 
 func TestMapErrorToRPC_SyncVersionMismatch(t *testing.T) {
-	code, msg := mapErrorToRPC(ErrSyncVersionMismatch)
-	assert.Equal(t, ErrorCodeSyncVersionMismatch, code)
+	code, msg := mapErrorToRPC(pairingproto.ErrSyncVersionMismatch)
+	assert.Equal(t, pairingproto.ErrorCodeSyncVersionMismatch, code)
 	assert.Contains(t, msg, "version mismatch")
 }
 
@@ -864,17 +865,17 @@ func TestBridge_NilParams_SyncHandlers(t *testing.T) {
 
 	// These handlers require params.
 	methodsRequiringParams := []string{
-		MethodRemoteSyncTrustStore,
-		MethodRemoteSyncOATH,
-		MethodRemoteSyncPasswords,
-		MethodRemoteSyncAll,
+		pairingproto.MethodRemoteSyncTrustStore,
+		pairingproto.MethodRemoteSyncOATH,
+		pairingproto.MethodRemoteSyncPasswords,
+		pairingproto.MethodRemoteSyncAll,
 	}
 
 	for _, method := range methodsRequiringParams {
 		t.Run(method, func(t *testing.T) {
 			req := newRemoteRequest(method, nil)
 			resp := b.HandleRequest(context.Background(), req)
-			assertErrorResponse(t, resp, req.ID, ErrorCodeInvalidParams)
+			assertErrorResponse(t, resp, req.ID, pairingproto.ErrorCodeInvalidParams)
 		})
 	}
 }
@@ -885,10 +886,10 @@ func TestBridge_NilParams_SyncStatus_Succeeds(t *testing.T) {
 	b, err := NewBridge(client, &BridgeConfig{Logger: testLogger()})
 	require.NoError(t, err)
 
-	req := newRemoteRequest(MethodRemoteSyncStatus, nil)
+	req := newRemoteRequest(pairingproto.MethodRemoteSyncStatus, nil)
 	resp := b.HandleRequest(context.Background(), req)
 
 	require.Nil(t, resp.Error, "expected success but got error: %v", resp.Error)
-	result := decodeResult[RemoteSyncStatusResult](t, resp)
+	result := decodeResult[pairingproto.RemoteSyncStatusResult](t, resp)
 	assert.NotNil(t, result.StoreChecksums)
 }

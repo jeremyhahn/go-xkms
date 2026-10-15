@@ -1283,6 +1283,21 @@ func (*mockXKMSService) OIDCCredentialGet(context.Context, *transport.OIDCCreden
 func (*mockXKMSService) OIDCCredentialList(context.Context, *transport.OIDCCredentialListRequest) (*transport.OIDCCredentialListResponse, error) {
 	return nil, nil
 }
+func (*mockXKMSService) TrustRootList(context.Context, *transport.TrustRootListRequest) (*transport.TrustRootListResponse, error) {
+	return nil, nil
+}
+func (*mockXKMSService) TrustRootGet(context.Context, *transport.TrustRootRequest) (*transport.TrustRoot, error) {
+	return nil, nil
+}
+func (*mockXKMSService) TrustRootImport(context.Context, *transport.TrustRootImportRequest) (*transport.TrustRootImportResponse, error) {
+	return nil, nil
+}
+func (*mockXKMSService) TrustRootQuarantine(context.Context, *transport.TrustRootRequest) (*transport.TrustRoot, error) {
+	return nil, nil
+}
+func (*mockXKMSService) TrustRootRemove(context.Context, *transport.TrustRootRequest) error {
+	return nil
+}
 func (*mockXKMSService) OIDCCredentialDelete(context.Context, *transport.OIDCCredentialRef) error {
 	return nil
 }

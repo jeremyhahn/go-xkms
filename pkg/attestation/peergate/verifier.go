@@ -18,6 +18,7 @@ import (
 	"crypto/x509"
 	"errors"
 	"strings"
+	"time"
 
 	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
 
@@ -48,15 +49,24 @@ type VerifierConfig struct {
 	// quoting with another machine's attestation key. Nil leaves the
 	// connection certificate to authentication.
 	DeviceIdentity *peer.DevIDPolicy
+
+	// AdmitUnattested passes a peer that has never submitted evidence: the
+	// gate's optional mode. The verdict is Passed, collected now, so the
+	// gate's freshness bound holds, and its Reason says no evidence was
+	// checked. Only absence is admitted: stored evidence is verified as
+	// always and a peer whose quote fails is refused.
+	AdmitUnattested bool
 }
 
 // Verifier is go-xkms's go-qrdb PeerAttestationVerifier: it judges the
 // evidence the Collector stored for the peer on a gated connection.
 type Verifier struct {
-	store  EvidenceStore
-	policy peer.Policy
-	device *peer.DevIDPolicy
-	engine peer.Verifier
+	store           EvidenceStore
+	policy          peer.Policy
+	device          *peer.DevIDPolicy
+	engine          peer.Verifier
+	admitUnattested bool
+	now             func() time.Time
 }
 
 // Compile-time check that Verifier satisfies go-qrdb's attested-caller seam.
@@ -92,7 +102,13 @@ func NewVerifier(cfg VerifierConfig, opts ...Option) (*Verifier, error) {
 		return nil, &ConfigError{Field: "Policy", Reason: "cannot be evaluated", Cause: err}
 	}
 
-	v := &Verifier{store: cfg.Store, policy: cfg.Policy, engine: engine}
+	v := &Verifier{
+		store:           cfg.Store,
+		policy:          cfg.Policy,
+		engine:          engine,
+		admitUnattested: cfg.AdmitUnattested,
+		now:             settings.now,
+	}
 	if cfg.DeviceIdentity != nil {
 		device := *cfg.DeviceIdentity
 		v.device = &device
@@ -158,6 +174,15 @@ func (v *Verifier) VerifyPeer(ctx context.Context, attested qrdbsdk.AttestedPeer
 		return nil, &StoreError{Op: "get", Cause: err}
 	}
 	if !ok {
+		if v.admitUnattested {
+			return &qrdbsdk.PeerAttestation{
+				PeerThumbprint: thumbprint,
+				CollectedAt:    v.now(),
+				Passed:         true,
+				Failure:        qrdbsdk.PeerAttestationFailureNone,
+				Reason:         "admitted unattested: no evidence has been collected from this peer (optional mode)",
+			}, nil
+		}
 		return &qrdbsdk.PeerAttestation{
 			PeerThumbprint: thumbprint,
 			Failure:        qrdbsdk.PeerAttestationFailureAbsence,

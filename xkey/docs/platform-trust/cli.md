@@ -38,7 +38,7 @@ DANE/Noise/SPKI/Direct dispatch chain `trust bootstrap` does
 | Flag | Type | Default | Purpose |
 |---|---|---|---|
 | `--spki-pin` | string | — | **Required.** 64-char hex SHA-256 of the server's leaf certificate SPKI. Obtain out-of-band. |
-| `--purpose` | string | `bootstrap-ca` | Certificate purpose recorded for every certificate added (`truststore.PurposeBootstrapCA`, `xkey/pkg/truststore/types.go`) |
+| `--purpose` | string | `bootstrap-ca` | Certificate purpose recorded for every certificate added (`truststore.PurposeBootstrapCA`, `pkg/attestation/truststore/types.go`) |
 | `--source` | string | `platform:<host:port>` of the URL | Recorded provenance string, overrides the default `platform:<host>` label |
 | `--install-system` | bool | `false` | After adding to the xKey trust store, install any self-signed root certificates in the bundle to the OS trust store |
 | `--timeout` | duration | `30s` (`xkms.TrustFetcherDefaultTimeout`) | HTTP transaction timeout |

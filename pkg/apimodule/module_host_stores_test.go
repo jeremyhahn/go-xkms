@@ -292,6 +292,7 @@ func TestModule_HostMount_MissingDependenciesAreTypedAndOff(t *testing.T) {
 		compose.FeatureTPMPolicies:     "TPM2 backend",
 		compose.FeatureOIDCCredentials: "barrier registry",
 		compose.FeatureKeyVersions:     "DAO factory",
+		compose.FeatureTrustRoots:      "DAO factory",
 		compose.FeatureSSH:             "DAO factory",
 	}, missing)
 

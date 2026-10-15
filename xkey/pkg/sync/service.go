@@ -33,8 +33,8 @@ import (
 	"path/filepath"
 
 	"github.com/jeremyhahn/go-xkms/sdk/go/fsutil"
+	"github.com/jeremyhahn/go-xkms/sdk/go/truststore"
 	"github.com/jeremyhahn/go-xkms/xkey/pkg/backup"
-	"github.com/jeremyhahn/go-xkms/xkey/pkg/truststore"
 )
 
 // Data type constants matching backup package conventions.

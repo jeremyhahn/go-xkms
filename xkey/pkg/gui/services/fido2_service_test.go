@@ -22,10 +22,10 @@ import (
 	"testing"
 	"time"
 
+	"github.com/jeremyhahn/go-xkms/pkg/fido2/authenticator"
+	"github.com/jeremyhahn/go-xkms/pkg/fido2/authenticator/keybackend"
 	xkms "github.com/jeremyhahn/go-xkms/sdk/go"
 	"github.com/jeremyhahn/go-xkms/xkey/pkg/audit"
-	"github.com/jeremyhahn/go-xkms/xkey/pkg/authenticator"
-	"github.com/jeremyhahn/go-xkms/xkey/pkg/authenticator/keybackend"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )

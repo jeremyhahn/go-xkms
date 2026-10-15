@@ -101,14 +101,11 @@ API_MODULES=("." "sdk/go" "xkey")
 #	grep -n 'jeremyhahn/go-xkms' <each>
 PIN_EDGES=(
 	"go.mod:github.com/jeremyhahn/go-xkms/sdk/go"
-	"go.mod:github.com/jeremyhahn/go-xkms/xkey"
 	"sdk/go/go.mod:github.com/jeremyhahn/go-xkms"
-	"sdk/go/go.mod:github.com/jeremyhahn/go-xkms/xkey"
 	"xkey/go.mod:github.com/jeremyhahn/go-xkms"
 	"xkey/go.mod:github.com/jeremyhahn/go-xkms/sdk/go"
 	"web/desktop/go.mod:github.com/jeremyhahn/go-xkms"
 	"web/desktop/go.mod:github.com/jeremyhahn/go-xkms/sdk/go"
-	"web/desktop/go.mod:github.com/jeremyhahn/go-xkms/xkey"
 )
 
 # Files the release commit is allowed to contain, and nothing else. DERIVED

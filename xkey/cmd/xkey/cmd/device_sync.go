@@ -25,7 +25,7 @@ import (
 
 	"github.com/spf13/cobra"
 
-	"github.com/jeremyhahn/go-xkms/xkey/pkg/pairing"
+	"github.com/jeremyhahn/go-xkms/sdk/go/pairingproto"
 	xkeysync "github.com/jeremyhahn/go-xkms/xkey/pkg/sync"
 )
 
@@ -324,8 +324,8 @@ func runDeviceSyncStatus(cmd *cobra.Command, args []string) (err error) {
 		return &SentinelCauseError{Sentinel: ErrDeviceSyncFailed, Cause: err}
 	}
 
-	status, err := sendSyncRequest[pairing.LocalSyncStatusResult](ctx, phoneBackend,
-		pairing.MethodLocalSyncStatus, &pairing.LocalSyncStatusParams{})
+	status, err := sendSyncRequest[pairingproto.LocalSyncStatusResult](ctx, phoneBackend,
+		pairingproto.MethodLocalSyncStatus, &pairingproto.LocalSyncStatusParams{})
 	if err != nil {
 		return err
 	}
@@ -424,7 +424,7 @@ func selectedSyncStores(scope syncScope) []syncStore {
 func exchangeTrustStore(ctx context.Context, backend pairedDeviceTransport, svc *xkeysync.Service, mode syncMode) (syncResult, error) {
 	var result syncResult
 
-	params := &pairing.LocalSyncTrustStoreParams{Certificates: []pairing.SyncCertificate{}}
+	params := &pairingproto.LocalSyncTrustStoreParams{Certificates: []pairingproto.SyncCertificate{}}
 	if mode.sends() {
 		delta, err := svc.ComputeLocalTrustStoreDelta()
 		if err != nil {
@@ -433,8 +433,8 @@ func exchangeTrustStore(ctx context.Context, backend pairedDeviceTransport, svc 
 		params.Certificates = wireCertificates(delta)
 	}
 
-	remote, err := sendSyncRequest[pairing.LocalSyncTrustStoreResult](ctx, backend,
-		pairing.MethodLocalSyncTrustStore, params)
+	remote, err := sendSyncRequest[pairingproto.LocalSyncTrustStoreResult](ctx, backend,
+		pairingproto.MethodLocalSyncTrustStore, params)
 	if err != nil {
 		return result, err
 	}
@@ -462,7 +462,7 @@ func exchangeOATH(ctx context.Context, backend pairedDeviceTransport, svc *xkeys
 
 	// params shares the local delta's protected secrets, so destroying params
 	// releases the delta's too.
-	params := &pairing.LocalSyncOATHParams{Credentials: []pairing.SyncOATHCredential{}}
+	params := &pairingproto.LocalSyncOATHParams{Credentials: []pairingproto.SyncOATHCredential{}}
 	defer params.Destroy()
 	if mode.sends() {
 		delta, err := svc.ComputeLocalOATHDelta()
@@ -472,8 +472,8 @@ func exchangeOATH(ctx context.Context, backend pairedDeviceTransport, svc *xkeys
 		params.Credentials = wireOATH(delta)
 	}
 
-	remote, err := sendSyncRequest[pairing.LocalSyncOATHResult](ctx, backend,
-		pairing.MethodLocalSyncOATH, params)
+	remote, err := sendSyncRequest[pairingproto.LocalSyncOATHResult](ctx, backend,
+		pairingproto.MethodLocalSyncOATH, params)
 	if err != nil {
 		return result, err
 	}
@@ -503,7 +503,7 @@ func exchangePasswords(ctx context.Context, backend pairedDeviceTransport, svc *
 
 	// params shares the local delta's protected passwords, so destroying params
 	// releases the delta's too.
-	params := &pairing.LocalSyncPasswordsParams{Passwords: []pairing.SyncPassword{}}
+	params := &pairingproto.LocalSyncPasswordsParams{Passwords: []pairingproto.SyncPassword{}}
 	defer params.Destroy()
 	if mode.sends() {
 		delta, err := svc.ComputeLocalPasswordDelta()
@@ -513,8 +513,8 @@ func exchangePasswords(ctx context.Context, backend pairedDeviceTransport, svc *
 		params.Passwords = wirePasswords(delta)
 	}
 
-	remote, err := sendSyncRequest[pairing.LocalSyncPasswordsResult](ctx, backend,
-		pairing.MethodLocalSyncPasswords, params)
+	remote, err := sendSyncRequest[pairingproto.LocalSyncPasswordsResult](ctx, backend,
+		pairingproto.MethodLocalSyncPasswords, params)
 	if err != nil {
 		return result, err
 	}
@@ -540,7 +540,7 @@ func exchangePasswords(ctx context.Context, backend pairedDeviceTransport, svc *
 // sendSyncRequest performs one request/response round trip and decodes the
 // result, mapping both transport and protocol failures onto the sync sentinel.
 func sendSyncRequest[T any](ctx context.Context, backend pairedDeviceTransport, method string, params interface{}) (*T, error) {
-	resp, err := backend.SendRequest(ctx, pairing.NewRequest(method, params))
+	resp, err := backend.SendRequest(ctx, pairingproto.NewRequest(method, params))
 	if err != nil {
 		return nil, &SentinelCauseError{Sentinel: ErrDeviceSyncFailed, Cause: err}
 	}
@@ -550,7 +550,7 @@ func sendSyncRequest[T any](ctx context.Context, backend pairedDeviceTransport, 
 			Detail: fmt.Sprintf(": %s: [%d] %s", method, resp.Error.Code, resp.Error.Message),
 		}
 	}
-	result, err := pairing.DecodeResult[T](resp)
+	result, err := pairingproto.DecodeResult[T](resp)
 	if err != nil {
 		return nil, &DetailError{
 			Err:    ErrDeviceSyncFailed,
@@ -573,13 +573,13 @@ func itemCounts(result *xkeysync.SyncItemResult) syncCounts {
 // ---------------------------------------------------------------------------
 
 // wireCertificates converts a local trust store delta to the pairing wire form.
-func wireCertificates(delta *xkeysync.TrustStoreDelta) []pairing.SyncCertificate {
+func wireCertificates(delta *xkeysync.TrustStoreDelta) []pairingproto.SyncCertificate {
 	if delta == nil {
-		return []pairing.SyncCertificate{}
+		return []pairingproto.SyncCertificate{}
 	}
-	out := make([]pairing.SyncCertificate, 0, len(delta.Certificates))
+	out := make([]pairingproto.SyncCertificate, 0, len(delta.Certificates))
 	for _, cert := range delta.Certificates {
-		out = append(out, pairing.SyncCertificate{
+		out = append(out, pairingproto.SyncCertificate{
 			PEM:         cert.PEM,
 			Fingerprint: cert.Fingerprint,
 			Purpose:     cert.Purpose,
@@ -591,7 +591,7 @@ func wireCertificates(delta *xkeysync.TrustStoreDelta) []pairing.SyncCertificate
 }
 
 // localCertificates converts wire certificates to a local trust store delta.
-func localCertificates(certs []pairing.SyncCertificate) []xkeysync.TrustStoreCertSync {
+func localCertificates(certs []pairingproto.SyncCertificate) []xkeysync.TrustStoreCertSync {
 	out := make([]xkeysync.TrustStoreCertSync, 0, len(certs))
 	for _, cert := range certs {
 		out = append(out, xkeysync.TrustStoreCertSync{
@@ -606,13 +606,13 @@ func localCertificates(certs []pairing.SyncCertificate) []xkeysync.TrustStoreCer
 }
 
 // wireOATH converts a local OATH delta to the pairing wire form.
-func wireOATH(delta *xkeysync.OATHDelta) []pairing.SyncOATHCredential {
+func wireOATH(delta *xkeysync.OATHDelta) []pairingproto.SyncOATHCredential {
 	if delta == nil {
-		return []pairing.SyncOATHCredential{}
+		return []pairingproto.SyncOATHCredential{}
 	}
-	out := make([]pairing.SyncOATHCredential, 0, len(delta.Credentials))
+	out := make([]pairingproto.SyncOATHCredential, 0, len(delta.Credentials))
 	for _, cred := range delta.Credentials {
-		out = append(out, pairing.SyncOATHCredential{
+		out = append(out, pairingproto.SyncOATHCredential{
 			ID:          cred.ID,
 			Name:        cred.Name,
 			Issuer:      cred.Issuer,
@@ -630,7 +630,7 @@ func wireOATH(delta *xkeysync.OATHDelta) []pairing.SyncOATHCredential {
 }
 
 // localOATH converts wire OATH credentials to a local delta.
-func localOATH(creds []pairing.SyncOATHCredential) []xkeysync.OATHCredentialSync {
+func localOATH(creds []pairingproto.SyncOATHCredential) []xkeysync.OATHCredentialSync {
 	out := make([]xkeysync.OATHCredentialSync, 0, len(creds))
 	for _, cred := range creds {
 		out = append(out, xkeysync.OATHCredentialSync{
@@ -651,13 +651,13 @@ func localOATH(creds []pairing.SyncOATHCredential) []xkeysync.OATHCredentialSync
 }
 
 // wirePasswords converts a local password delta to the pairing wire form.
-func wirePasswords(delta *xkeysync.PasswordDelta) []pairing.SyncPassword {
+func wirePasswords(delta *xkeysync.PasswordDelta) []pairingproto.SyncPassword {
 	if delta == nil {
-		return []pairing.SyncPassword{}
+		return []pairingproto.SyncPassword{}
 	}
-	out := make([]pairing.SyncPassword, 0, len(delta.Passwords))
+	out := make([]pairingproto.SyncPassword, 0, len(delta.Passwords))
 	for _, pw := range delta.Passwords {
-		out = append(out, pairing.SyncPassword{
+		out = append(out, pairingproto.SyncPassword{
 			ID:         pw.ID,
 			Name:       pw.Name,
 			Title:      pw.Title,
@@ -673,7 +673,7 @@ func wirePasswords(delta *xkeysync.PasswordDelta) []pairing.SyncPassword {
 }
 
 // localPasswords converts wire password entries to a local delta.
-func localPasswords(passwords []pairing.SyncPassword) []xkeysync.PasswordSync {
+func localPasswords(passwords []pairingproto.SyncPassword) []xkeysync.PasswordSync {
 	out := make([]xkeysync.PasswordSync, 0, len(passwords))
 	for _, pw := range passwords {
 		out = append(out, xkeysync.PasswordSync{

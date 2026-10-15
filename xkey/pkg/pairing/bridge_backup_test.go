@@ -17,6 +17,7 @@ import (
 	"context"
 	"testing"
 
+	"github.com/jeremyhahn/go-xkms/pkg/pairingproto"
 	"github.com/jeremyhahn/go-xkms/sdk/go/transport"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -30,9 +31,9 @@ func TestBridge_DispatchMap_ContainsBackupMethods(t *testing.T) {
 	require.NoError(t, err)
 
 	backupMethods := []string{
-		MethodRemoteCreateBackup,
-		MethodRemoteRestoreBackup,
-		MethodRemoteListBackups,
+		pairingproto.MethodRemoteCreateBackup,
+		pairingproto.MethodRemoteRestoreBackup,
+		pairingproto.MethodRemoteListBackups,
 	}
 
 	for _, method := range backupMethods {
@@ -63,7 +64,7 @@ func TestBridge_HandleCreateBackup_NotConfigured(t *testing.T) {
 	b, err := NewBridge(client, &BridgeConfig{Logger: testLogger()})
 	require.NoError(t, err)
 
-	req := newRemoteRequest(MethodRemoteCreateBackup, RemoteCreateBackupParams{
+	req := newRemoteRequest(pairingproto.MethodRemoteCreateBackup, pairingproto.RemoteCreateBackupParams{
 		IncludeTrustStore: true,
 		IncludeOATH:       false,
 		IncludePasswords:  false,
@@ -71,7 +72,7 @@ func TestBridge_HandleCreateBackup_NotConfigured(t *testing.T) {
 		Label:             "test-backup",
 	})
 	resp := b.HandleRequest(context.Background(), req)
-	assertErrorResponse(t, resp, req.ID, ErrorCodeFeatureUnavailable)
+	assertErrorResponse(t, resp, req.ID, pairingproto.ErrorCodeFeatureUnavailable)
 }
 
 func TestBridge_HandleCreateBackup_InvalidParams(t *testing.T) {
@@ -80,9 +81,9 @@ func TestBridge_HandleCreateBackup_InvalidParams(t *testing.T) {
 	require.NoError(t, err)
 
 	// Nil params
-	req := newRemoteRequest(MethodRemoteCreateBackup, nil)
+	req := newRemoteRequest(pairingproto.MethodRemoteCreateBackup, nil)
 	resp := b.HandleRequest(context.Background(), req)
-	assertErrorResponse(t, resp, req.ID, ErrorCodeInvalidParams)
+	assertErrorResponse(t, resp, req.ID, pairingproto.ErrorCodeInvalidParams)
 }
 
 func TestBridge_HandleCreateBackup_MinimalParams(t *testing.T) {
@@ -92,9 +93,9 @@ func TestBridge_HandleCreateBackup_MinimalParams(t *testing.T) {
 
 	// All booleans false, no label - minimal valid params, still reports
 	// unconfigured rather than an empty success.
-	req := newRemoteRequest(MethodRemoteCreateBackup, RemoteCreateBackupParams{})
+	req := newRemoteRequest(pairingproto.MethodRemoteCreateBackup, pairingproto.RemoteCreateBackupParams{})
 	resp := b.HandleRequest(context.Background(), req)
-	assertErrorResponse(t, resp, req.ID, ErrorCodeFeatureUnavailable)
+	assertErrorResponse(t, resp, req.ID, pairingproto.ErrorCodeFeatureUnavailable)
 }
 
 // --- handleRestoreBackup tests ---
@@ -107,11 +108,11 @@ func TestBridge_HandleRestoreBackup_NotConfigured(t *testing.T) {
 	b, err := NewBridge(client, &BridgeConfig{Logger: testLogger()})
 	require.NoError(t, err)
 
-	req := newRemoteRequest(MethodRemoteRestoreBackup, RemoteRestoreBackupParams{
+	req := newRemoteRequest(pairingproto.MethodRemoteRestoreBackup, pairingproto.RemoteRestoreBackupParams{
 		BackupData: []byte{0xDE, 0xAD, 0xBE, 0xEF, 0xCA, 0xFE},
 	})
 	resp := b.HandleRequest(context.Background(), req)
-	assertErrorResponse(t, resp, req.ID, ErrorCodeFeatureUnavailable)
+	assertErrorResponse(t, resp, req.ID, pairingproto.ErrorCodeFeatureUnavailable)
 }
 
 func TestBridge_HandleRestoreBackup_InvalidParams(t *testing.T) {
@@ -120,9 +121,9 @@ func TestBridge_HandleRestoreBackup_InvalidParams(t *testing.T) {
 	require.NoError(t, err)
 
 	// Nil params
-	req := newRemoteRequest(MethodRemoteRestoreBackup, nil)
+	req := newRemoteRequest(pairingproto.MethodRemoteRestoreBackup, nil)
 	resp := b.HandleRequest(context.Background(), req)
-	assertErrorResponse(t, resp, req.ID, ErrorCodeInvalidParams)
+	assertErrorResponse(t, resp, req.ID, pairingproto.ErrorCodeInvalidParams)
 }
 
 func TestBridge_HandleRestoreBackup_EmptyBackupData(t *testing.T) {
@@ -130,11 +131,11 @@ func TestBridge_HandleRestoreBackup_EmptyBackupData(t *testing.T) {
 	b, err := NewBridge(client, &BridgeConfig{Logger: testLogger()})
 	require.NoError(t, err)
 
-	req := newRemoteRequest(MethodRemoteRestoreBackup, RemoteRestoreBackupParams{
+	req := newRemoteRequest(pairingproto.MethodRemoteRestoreBackup, pairingproto.RemoteRestoreBackupParams{
 		BackupData: []byte{},
 	})
 	resp := b.HandleRequest(context.Background(), req)
-	assertErrorResponse(t, resp, req.ID, ErrorCodeInvalidParams)
+	assertErrorResponse(t, resp, req.ID, pairingproto.ErrorCodeInvalidParams)
 }
 
 func TestBridge_HandleRestoreBackup_NilBackupData(t *testing.T) {
@@ -142,11 +143,11 @@ func TestBridge_HandleRestoreBackup_NilBackupData(t *testing.T) {
 	b, err := NewBridge(client, &BridgeConfig{Logger: testLogger()})
 	require.NoError(t, err)
 
-	req := newRemoteRequest(MethodRemoteRestoreBackup, RemoteRestoreBackupParams{
+	req := newRemoteRequest(pairingproto.MethodRemoteRestoreBackup, pairingproto.RemoteRestoreBackupParams{
 		BackupData: nil,
 	})
 	resp := b.HandleRequest(context.Background(), req)
-	assertErrorResponse(t, resp, req.ID, ErrorCodeInvalidParams)
+	assertErrorResponse(t, resp, req.ID, pairingproto.ErrorCodeInvalidParams)
 }
 
 // --- handleListBackupsForRestore tests ---
@@ -160,9 +161,9 @@ func TestBridge_HandleListBackups_NotConfigured(t *testing.T) {
 	b, err := NewBridge(client, &BridgeConfig{Logger: testLogger()})
 	require.NoError(t, err)
 
-	req := newRemoteRequest(MethodRemoteListBackups, RemoteListBackupsParams{})
+	req := newRemoteRequest(pairingproto.MethodRemoteListBackups, pairingproto.RemoteListBackupsParams{})
 	resp := b.HandleRequest(context.Background(), req)
-	assertErrorResponse(t, resp, req.ID, ErrorCodeFeatureUnavailable)
+	assertErrorResponse(t, resp, req.ID, pairingproto.ErrorCodeFeatureUnavailable)
 }
 
 func TestBridge_HandleListBackups_NilParams(t *testing.T) {
@@ -171,28 +172,28 @@ func TestBridge_HandleListBackups_NilParams(t *testing.T) {
 	require.NoError(t, err)
 
 	// ListBackups does not require params; it still reports unconfigured.
-	req := newRemoteRequest(MethodRemoteListBackups, nil)
+	req := newRemoteRequest(pairingproto.MethodRemoteListBackups, nil)
 	resp := b.HandleRequest(context.Background(), req)
-	assertErrorResponse(t, resp, req.ID, ErrorCodeFeatureUnavailable)
+	assertErrorResponse(t, resp, req.ID, pairingproto.ErrorCodeFeatureUnavailable)
 }
 
 // --- Error mapping tests ---
 
 func TestMapErrorToRPC_BackupFailed(t *testing.T) {
-	code, msg := mapErrorToRPC(ErrBackupFailed)
-	assert.Equal(t, ErrorCodeBackupFailed, code)
+	code, msg := mapErrorToRPC(pairingproto.ErrBackupFailed)
+	assert.Equal(t, pairingproto.ErrorCodeBackupFailed, code)
 	assert.Contains(t, msg, "backup creation failed")
 }
 
 func TestMapErrorToRPC_BackupRestoreFailed(t *testing.T) {
-	code, msg := mapErrorToRPC(ErrBackupRestoreFailed)
-	assert.Equal(t, ErrorCodeBackupRestore, code)
+	code, msg := mapErrorToRPC(pairingproto.ErrBackupRestoreFailed)
+	assert.Equal(t, pairingproto.ErrorCodeBackupRestore, code)
 	assert.Contains(t, msg, "backup restore failed")
 }
 
 func TestMapErrorToRPC_BackupNotFound(t *testing.T) {
-	code, msg := mapErrorToRPC(ErrBackupNotFound)
-	assert.Equal(t, ErrorCodeBackupNotFound, code)
+	code, msg := mapErrorToRPC(pairingproto.ErrBackupNotFound)
+	assert.Equal(t, pairingproto.ErrorCodeBackupNotFound, code)
 	assert.Contains(t, msg, "backup not found")
 }
 
@@ -205,15 +206,15 @@ func TestBridge_NilParams_BackupHandlers(t *testing.T) {
 
 	// createBackup and restoreBackup require params.
 	methodsRequiringParams := []string{
-		MethodRemoteCreateBackup,
-		MethodRemoteRestoreBackup,
+		pairingproto.MethodRemoteCreateBackup,
+		pairingproto.MethodRemoteRestoreBackup,
 	}
 
 	for _, method := range methodsRequiringParams {
 		t.Run(method, func(t *testing.T) {
 			req := newRemoteRequest(method, nil)
 			resp := b.HandleRequest(context.Background(), req)
-			assertErrorResponse(t, resp, req.ID, ErrorCodeInvalidParams)
+			assertErrorResponse(t, resp, req.ID, pairingproto.ErrorCodeInvalidParams)
 		})
 	}
 }

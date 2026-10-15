@@ -36,13 +36,15 @@ import (
 
 	"gopkg.in/yaml.v3"
 
+	"github.com/jeremyhahn/go-xkms/sdk/go/bootstrap"
+	"github.com/jeremyhahn/go-xkms/sdk/go/pairingproto"
+	"github.com/jeremyhahn/go-xkms/sdk/go/truststore"
 	"github.com/jeremyhahn/go-xkms/xkey/internal/lifecycle"
 	xkeyAttestation "github.com/jeremyhahn/go-xkms/xkey/pkg/attestation"
 	"github.com/jeremyhahn/go-xkms/xkey/pkg/config"
 	"github.com/jeremyhahn/go-xkms/xkey/pkg/gui/events"
 	"github.com/jeremyhahn/go-xkms/xkey/pkg/pairing"
 	"github.com/jeremyhahn/go-xkms/xkey/pkg/phone"
-	"github.com/jeremyhahn/go-xkms/xkey/pkg/truststore"
 )
 
 // Phone service errors.
@@ -302,8 +304,8 @@ type PhoneService struct {
 	// slot during a teardown's drain was reported as disconnected by the
 	// teardown that followed it — a live session the UI showed as down.
 	connMu          sync.Mutex
-	activeTransport *phone.BLETransport   // nil when disconnected
-	activeSession   *pairing.NoiseSession // nil when disconnected
+	activeTransport *phone.BLETransport     // nil when disconnected
+	activeSession   *bootstrap.NoiseSession // nil when disconnected
 
 	// activeDevice names the device the published connection belongs to. The
 	// slot alone cannot answer "whose connection is this?", and teardown has
@@ -314,7 +316,7 @@ type PhoneService struct {
 	// activeStaticKey is the protected key backing activeSession. The session
 	// reads its pages in place, so it is released alongside the session in
 	// closeActiveConnectionLocked and never before.
-	activeStaticKey *pairing.StaticKey
+	activeStaticKey *bootstrap.NoiseStaticKey
 
 	// unpairing counts the in-flight Unpair calls per device. Publication
 	// consults it under connMu, so a Connect cannot install a connection to a
@@ -342,7 +344,7 @@ type PhoneService struct {
 
 	// retainedKeys holds static keys a teardown could not prove unreferenced.
 	// They are never destroyed; see closeActiveConnectionLocked.
-	retainedKeys []*pairing.StaticKey
+	retainedKeys []*bootstrap.NoiseStaticKey
 
 	// policy is the enterprise policy section gating the attested-application
 	// allow-list (#1305), but ONLY ever a genuinely VERIFIED section -- never
@@ -678,7 +680,7 @@ func (s *PhoneService) Pair(address string) (*PairedDevice, error) {
 	// Generate a local Noise static key for this pairing. It does not outlive
 	// this call: the session is built here, and the private half is sealed
 	// into the stored device record before we return (#42).
-	localKey, err := pairing.GenerateStaticKey()
+	localKey, err := bootstrap.GenerateNoiseStaticKey()
 	if err != nil {
 		s.log.Error("failed to generate local key", "error", err)
 		return nil, ErrPhonePairFailed
@@ -686,7 +688,7 @@ func (s *PhoneService) Pair(address string) (*PairedDevice, error) {
 	defer localKey.Destroy()
 
 	// Create a Noise session.
-	session, err := pairing.NewNoiseSession(&pairing.NoiseSessionConfig{
+	session, err := bootstrap.NewNoiseSession(&bootstrap.NoiseSessionConfig{
 		LocalStaticKey: localKey,
 		IsInitiator:    true,
 	})
@@ -740,9 +742,9 @@ func (s *PhoneService) Pair(address string) (*PairedDevice, error) {
 // returns, and a test hands in an in-memory one with nothing to disconnect.
 func (s *PhoneService) pairOverTransport(
 	ctx context.Context,
-	transport pairing.Transport,
-	session *pairing.NoiseSession,
-	localKey *pairing.StaticKey,
+	transport pairingproto.Transport,
+	session *bootstrap.NoiseSession,
+	localKey *bootstrap.NoiseStaticKey,
 	address string,
 ) (*PairedDevice, error) {
 	// Perform Noise XX handshake. The identity exchange runs on every
@@ -750,7 +752,7 @@ func (s *PhoneService) pairOverTransport(
 	// "new device" and both sides fall back to an empty prologue, so pairing
 	// and reconnecting negotiate the same way.
 	s.log.Info("performing Noise handshake")
-	handshakeCfg := &pairing.HandshakeConfig{
+	handshakeCfg := &pairingproto.HandshakeConfig{
 		Transport:            transport,
 		Session:              session,
 		Logger:               s.log,
@@ -758,7 +760,7 @@ func (s *PhoneService) pairOverTransport(
 		EnvelopeHeaderSize:   0,
 		LocalStaticPublicKey: session.LocalStaticPublicKey(),
 	}
-	if err := pairing.PerformHandshake(ctx, handshakeCfg); err != nil {
+	if err := pairingproto.PerformHandshake(ctx, handshakeCfg); err != nil {
 		s.log.Error("Noise handshake failed", "error", err)
 		return nil, ErrPhonePairFailed
 	}
@@ -766,11 +768,11 @@ func (s *PhoneService) pairOverTransport(
 	// Send pairing confirmation to phone.
 	s.log.Info("sending pairing confirmation")
 	deviceName := hostname()
-	pairingReq := pairing.NewRequest(pairing.MethodPairingConfirm, &pairing.PairingConfirmParams{
+	pairingReq := pairingproto.NewRequest(pairingproto.MethodPairingConfirm, &pairingproto.PairingConfirmParams{
 		DeviceName:   deviceName,
 		PublicKeyHex: hex.EncodeToString(session.LocalStaticPublicKey()),
 	})
-	pairingPlaintext, err := pairing.EncodeRequest(pairingReq)
+	pairingPlaintext, err := pairingproto.EncodeRequest(pairingReq)
 	if err != nil {
 		return nil, ErrPhonePairFailed
 	}
@@ -786,7 +788,7 @@ func (s *PhoneService) pairOverTransport(
 	if err != nil {
 		return nil, ErrPhonePairFailed
 	}
-	pairingResp, err := pairing.DecodeResponse(respPlaintext)
+	pairingResp, err := pairingproto.DecodeResponse(respPlaintext)
 	if err != nil {
 		return nil, ErrPhonePairFailed
 	}
@@ -794,7 +796,7 @@ func (s *PhoneService) pairOverTransport(
 		s.log.Error("phone rejected pairing", "error", pairingResp.Error.Message)
 		return nil, ErrPhonePairFailed
 	}
-	pairingResult, err := pairing.DecodeResult[pairing.PairingConfirmResult](pairingResp)
+	pairingResult, err := pairingproto.DecodeResult[pairingproto.PairingConfirmResult](pairingResp)
 	if err != nil {
 		return nil, ErrPhonePairFailed
 	}
@@ -852,7 +854,7 @@ func (s *PhoneService) pairOverTransport(
 	// the barrier's state is unchanged across a long-running BLE exchange
 	// and attestation round trip.
 	var noiseKeyField string
-	err = pairing.WithPrivateKey(localKey, func(priv []byte) error {
+	err = bootstrap.WithNoisePrivateKey(localKey, func(priv []byte) error {
 		var sealErr error
 		noiseKeyField, sealErr = s.sealOrWarnLocalNoiseKey(phoneName, priv)
 		return sealErr
@@ -933,8 +935,8 @@ func (s *PhoneService) pairOverTransport(
 // here is what is genuinely this surface's: which trust store to open.
 func (s *PhoneService) attestForPairing(
 	ctx context.Context,
-	transport pairing.Transport,
-	session *pairing.NoiseSession,
+	transport pairingproto.Transport,
+	session *bootstrap.NoiseSession,
 ) (*xkeyAttestation.Result, error) {
 	if s.trustStore == nil {
 		// No trust store means nothing to judge the evidence against, so the
@@ -951,7 +953,7 @@ func (s *PhoneService) attestForPairing(
 	}
 
 	verified, err := xkeyAttestation.AttestOverSession(
-		ctx, transport, session, trust, pairing.AttestPurposePair, s.log)
+		ctx, transport, session, trust, pairingproto.AttestPurposePair, s.log)
 	if err != nil {
 		return nil, err
 	}
@@ -1208,7 +1210,7 @@ func (s *PhoneService) Connect(name string) error {
 	// Reconstruct the local Noise DH key pair. Ownership stays local until it
 	// is published onto the service below; every failure path in between has
 	// to release the protected pages.
-	localKey, err := pairing.LoadStaticKeyFromBuffer(localPrivateKey)
+	localKey, err := bootstrap.LoadNoiseStaticKeyFromBuffer(localPrivateKey)
 	if err != nil {
 		s.log.Error("failed to load local static key", "device", name, "error", err)
 		return ErrPhoneMissingKeys
@@ -1231,7 +1233,7 @@ func (s *PhoneService) Connect(name string) error {
 	}
 
 	// Create Noise session with expected remote static key.
-	session, err := pairing.NewNoiseSession(&pairing.NoiseSessionConfig{
+	session, err := bootstrap.NewNoiseSession(&bootstrap.NoiseSessionConfig{
 		LocalStaticKey:       localKey,
 		ExpectedRemoteStatic: remotePublicKey,
 		IsInitiator:          true,
@@ -1268,7 +1270,7 @@ func (s *PhoneService) Connect(name string) error {
 
 	// Perform Noise XX handshake with identity exchange for prologue binding.
 	s.log.Info("performing Noise handshake", "device", name)
-	handshakeCfg := &pairing.HandshakeConfig{
+	handshakeCfg := &pairingproto.HandshakeConfig{
 		Transport:                 transport,
 		Session:                   session,
 		Logger:                    s.log,
@@ -1277,7 +1279,7 @@ func (s *PhoneService) Connect(name string) error {
 		LocalStaticPublicKey:      session.LocalStaticPublicKey(),
 		ExpectedDeviceFingerprint: expectedFingerprint,
 	}
-	if err := pairing.PerformHandshake(connectCtx, handshakeCfg); err != nil {
+	if err := pairingproto.PerformHandshake(connectCtx, handshakeCfg); err != nil {
 		cleanupErr := errors.Join(transport.Disconnect(), transport.Close())
 		s.log.Error("Noise handshake failed", "device", name, "error", err)
 		return errors.Join(ErrPhoneHandshakeFailed, cleanupErr)
@@ -1334,8 +1336,8 @@ func (s *PhoneService) Connect(name string) error {
 // while the app is running takes effect.
 func (s *PhoneService) proveDeviceLiveness(
 	ctx context.Context,
-	transport pairing.Transport,
-	session *pairing.NoiseSession,
+	transport pairingproto.Transport,
+	session *bootstrap.NoiseSession,
 	device *phoneConfigDevice,
 ) error {
 	binding := xkeyAttestation.DeviceBindingFor(*device)
@@ -1528,7 +1530,7 @@ func (s *PhoneService) emitPolicyViolationEvent(deviceName string, mismatches ma
 // is, closeActiveConnectionLocked will block rather than destroy.
 //
 // It reports false when nothing is connected.
-func (s *PhoneService) acquireActiveConnection() (*phone.BLETransport, *pairing.NoiseSession, func(), bool) {
+func (s *PhoneService) acquireActiveConnection() (*phone.BLETransport, *bootstrap.NoiseSession, func(), bool) {
 	s.connMu.Lock()
 	defer s.connMu.Unlock()
 
@@ -1578,13 +1580,13 @@ func (s *PhoneService) performAttestation(device *phoneConfigDevice) (*Attestati
 // independently, purely to populate fields the frontend shows; nothing
 // derived from them feeds back into whether the device was trusted.
 //
-// transport takes the pairing.Transport interface rather than the active
+// transport takes the pairingproto.Transport interface rather than the active
 // connection's concrete BLE type -- the same seam pairOverTransport uses --
 // so this can be driven by an in-memory phone fake in tests.
 func (s *PhoneService) attestOverTransport(
 	ctx context.Context,
-	transport pairing.Transport,
-	session *pairing.NoiseSession,
+	transport pairingproto.Transport,
+	session *bootstrap.NoiseSession,
 	device *phoneConfigDevice,
 ) (*AttestationResult, error) {
 	if s.trustStore == nil {
@@ -1602,17 +1604,17 @@ func (s *PhoneService) attestOverTransport(
 	// The challenge is bound to THIS session, exactly as attestForPairing and
 	// proveDeviceLiveness derive theirs, so the device's answer is useless to
 	// anyone relaying it onto a different connection.
-	channelBinding, err := session.AttestChannelBinding()
+	channelBinding, err := pairingproto.AttestChannelBinding(session)
 	if err != nil {
 		return nil, &DetailError{Err: ErrPhoneAttestFailed, Detail: ": channel binding unavailable"}
 	}
-	challenge, err := xkeyAttestation.NewChallenge(pairing.AttestPurposeReattest, channelBinding)
+	challenge, err := xkeyAttestation.NewChallenge(pairingproto.AttestPurposeReattest, channelBinding)
 	if err != nil {
 		return nil, &SentinelCauseError{Sentinel: ErrPhoneAttestFailed, Cause: err}
 	}
 
-	req := pairing.NewRequest(pairing.MethodLocalAttestDevice, challenge.Params())
-	reqPlaintext, err := pairing.EncodeRequest(req)
+	req := pairingproto.NewRequest(pairingproto.MethodLocalAttestDevice, challenge.Params())
+	reqPlaintext, err := pairingproto.EncodeRequest(req)
 	if err != nil {
 		return nil, &DetailError{Err: ErrPhoneAttestFailed, Detail: ": encode request failed"}
 	}
@@ -1641,7 +1643,7 @@ func (s *PhoneService) attestOverTransport(
 		return nil, &DetailError{Err: ErrPhoneAttestFailed, Detail: ": decrypt failed"}
 	}
 
-	resp, err := pairing.DecodeResponse(respPlaintext)
+	resp, err := pairingproto.DecodeResponse(respPlaintext)
 	if err != nil {
 		return nil, &DetailError{Err: ErrPhoneAttestFailed, Detail: ": decode response failed"}
 	}
@@ -1649,7 +1651,7 @@ func (s *PhoneService) attestOverTransport(
 		return nil, &DetailError{Err: ErrPhoneAttestFailed, Detail: fmt.Sprintf(": %s", resp.Error.Message)}
 	}
 
-	attestResult, err := pairing.DecodeResult[pairing.LocalAttestDeviceResult](resp)
+	attestResult, err := pairingproto.DecodeResult[pairingproto.LocalAttestDeviceResult](resp)
 	if err != nil {
 		return nil, &DetailError{Err: ErrPhoneAttestFailed, Detail: ": decode result failed"}
 	}
@@ -1847,7 +1849,7 @@ func (s *PhoneService) GetAttestationPolicy(deviceName string) (*pairing.PairedD
 // It is a method rather than inline code in Connect because those two refusals
 // are the contract; the only way to test them is to be able to attempt a
 // publication at the moment they apply.
-func (s *PhoneService) publishConnection(name string, transport *phone.BLETransport, session *pairing.NoiseSession, key *pairing.StaticKey) error {
+func (s *PhoneService) publishConnection(name string, transport *phone.BLETransport, session *bootstrap.NoiseSession, key *bootstrap.NoiseStaticKey) error {
 	s.connMu.Lock()
 
 	// REFUSE BEFORE TOUCHING THE PUBLISHED CONNECTION. Tearing down whatever is
@@ -1918,7 +1920,7 @@ func (s *PhoneService) publishConnection(name string, transport *phone.BLETransp
 // already inside that drain — a Connect racing a Disconnect over the same
 // lease counter — has to be able to publish without waiting on it a second
 // time.
-func (s *PhoneService) publishConnectionLocked(name string, transport *phone.BLETransport, session *pairing.NoiseSession, key *pairing.StaticKey) {
+func (s *PhoneService) publishConnectionLocked(name string, transport *phone.BLETransport, session *bootstrap.NoiseSession, key *bootstrap.NoiseStaticKey) {
 	s.activeTransport = transport
 	s.activeSession = session
 	s.activeStaticKey = key

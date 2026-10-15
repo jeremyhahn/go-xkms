@@ -379,6 +379,11 @@ func (e *ConfigError) Unwrap() error {
 	return e.Err
 }
 
+// geteuid reports the effective user ID the root-only commands check
+// before they touch a LUKS container or the TPM's physical presence
+// interface. Tests replace it to reach the code behind the check.
+var geteuid = os.Geteuid
+
 // checkLUKSVolume checks for an encrypted LUKS volume and prompts for
 // passphrase if the volume exists but is not mounted.
 func checkLUKSVolume() error {
@@ -417,7 +422,7 @@ func checkLUKSVolume() error {
 	// errors.Is(err, xkmssdk.ErrLUKSVolumeLocked) recognize a locked volume
 	// the same way regardless of which front end hit it; ErrPermissionDenied
 	// remains reachable as the cause for the specific reason it's locked.
-	if os.Geteuid() != 0 {
+	if geteuid() != 0 {
 		fmt.Fprintf(os.Stderr, "Encrypted storage detected at %s\n", vol.LUKSPath)
 		fmt.Fprintf(os.Stderr, "Run with sudo to unlock: sudo xkey luks2 unseal\n")
 		return &SentinelCauseError{Sentinel: xkmssdk.ErrLUKSVolumeLocked, Cause: luks.ErrPermissionDenied}

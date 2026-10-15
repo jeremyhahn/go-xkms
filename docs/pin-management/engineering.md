@@ -278,8 +278,8 @@ Per backend: the TPM holds its own state (and its lockout counter); a PKCS#11
 token holds its own; the software provider stores through go-qrdb. go-xkms
 persists no PIN material of its own.
 
-xkey's authenticator keeps a separate PIN state (`state.PINHash` in
-`xkey/pkg/authenticator`) for the virtual FIDO2 authenticator. It is a distinct
+The virtual authenticator keeps a separate PIN state (`state.PINHash` in
+`pkg/fido2/authenticator`) for the virtual FIDO2 authenticator. It is a distinct
 subsystem, not a view of this one — see the note in
 [`architecture.md`](architecture.md).
 

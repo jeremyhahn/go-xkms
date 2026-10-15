@@ -24,7 +24,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/jeremyhahn/go-xkms/xkey/pkg/pairing"
+	"github.com/jeremyhahn/go-xkms/pkg/pairingproto"
 )
 
 // This file exercises the guard clauses every exported method checks before
@@ -42,8 +42,8 @@ func newTestTransport(adapterPresent bool) *BLETransport {
 		log:          slog.New(slog.NewTextHandler(io.Discard, nil)),
 		bluetoothctl: newFakeBluetoothctl().run,
 		sleep:        func(time.Duration) {},
-		fragmenter:   pairing.NewFragmenter(DefaultMTU),
-		reassembler:  pairing.NewReassembler(),
+		fragmenter:   pairingproto.NewFragmenter(DefaultMTU),
+		reassembler:  pairingproto.NewReassembler(),
 		responseChan: make(chan []byte, 16),
 		statusChan:   make(chan []byte, 16),
 		done:         make(chan struct{}),
@@ -277,7 +277,7 @@ func TestBLETransport_HandleResponseNotification_MalformedFragmentDropped(t *tes
 func TestBLETransport_HandleResponseNotification_CompleteMessageQueued(t *testing.T) {
 	tr := newTestTransport(true)
 
-	fragments, err := pairing.NewFragmenter(DefaultMTU).Fragment([]byte("hello-response"))
+	fragments, err := pairingproto.NewFragmenter(DefaultMTU).Fragment([]byte("hello-response"))
 	if err != nil {
 		t.Fatalf("fragment: %v", err)
 	}
@@ -302,7 +302,7 @@ func TestBLETransport_HandleResponseNotification_FullChannelDropsMessage(t *test
 	tr.responseChan = make(chan []byte, 1)
 	tr.responseChan <- []byte("already queued")
 
-	fragments, err := pairing.NewFragmenter(DefaultMTU).Fragment([]byte("dropped"))
+	fragments, err := pairingproto.NewFragmenter(DefaultMTU).Fragment([]byte("dropped"))
 	if err != nil {
 		t.Fatalf("fragment: %v", err)
 	}
@@ -423,7 +423,7 @@ func TestBLETransport_Close_Idempotent(t *testing.T) {
 // notification handlers interleave.
 func TestBLETransport_NotificationsRaceClose(t *testing.T) {
 	statusPayload := []byte("status-update")
-	fragments, err := pairing.NewFragmenter(DefaultMTU).Fragment([]byte("response"))
+	fragments, err := pairingproto.NewFragmenter(DefaultMTU).Fragment([]byte("response"))
 	if err != nil {
 		t.Fatalf("fragment: %v", err)
 	}

@@ -15,7 +15,8 @@ import (
 	"time"
 
 	"github.com/jeremyhahn/go-xkms/pkg/api/transport"
-	"github.com/jeremyhahn/go-xkms/xkey/pkg/pairing"
+	"github.com/jeremyhahn/go-xkms/pkg/pairingproto"
+	"github.com/jeremyhahn/go-xkms/pkg/trust/bootstrap"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -26,16 +27,16 @@ import (
 type fakePhone struct {
 	connectErr error
 	closeErr   error
-	// connected is atomic because the real phone.USBTransport is: it holds
+	// connected is atomic because the real pairingproto.USBTransport is: it holds
 	// connected and closed as atomic.Bool, so Close and IsConnected are safe
 	// to call concurrently. A fixture that models the type with a plain bool
 	// reports a data race of its own making the moment a test exercises that
 	// concurrency, and hides whether the code under test is actually correct.
 	connected   atomic.Bool
 	fingerprint []byte // nil replies "unknown device" to the identity exchange
-	handler     func(*pairing.Request) *pairing.Response
+	handler     func(*pairingproto.Request) *pairingproto.Response
 
-	session   *pairing.NoiseSession
+	session   *bootstrap.NoiseSession
 	handshook bool
 	outbox    [][]byte
 	sendErr   error
@@ -100,10 +101,10 @@ func (f *fakePhone) SendAndReceive(ctx context.Context, message []byte) ([]byte,
 func (f *fakePhone) respond(message []byte) ([]byte, error) {
 	// Identity exchange: [0x01, 32-byte public key].
 	if f.session == nil {
-		if len(message) != pairing.IdentityMsgSize || message[0] != pairing.IdentityMsgVersion {
+		if len(message) != pairingproto.IdentityMsgSize || message[0] != pairingproto.IdentityMsgVersion {
 			return nil, errors.New("fake phone: expected identity message")
 		}
-		session, err := pairing.NewNoiseSession(&pairing.NoiseSessionConfig{IsInitiator: false})
+		session, err := bootstrap.NewNoiseSession(&bootstrap.NoiseSessionConfig{IsInitiator: false})
 		if err != nil {
 			return nil, err
 		}
@@ -115,9 +116,9 @@ func (f *fakePhone) respond(message []byte) ([]byte, error) {
 		}
 		f.session = session
 		if len(f.fingerprint) == 0 {
-			return []byte{pairing.IdentityAckUnknown}, nil
+			return []byte{pairingproto.IdentityAckUnknown}, nil
 		}
-		return append([]byte{pairing.IdentityAckKnown}, f.fingerprint...), nil
+		return append([]byte{pairingproto.IdentityAckKnown}, f.fingerprint...), nil
 	}
 
 	if !f.handshook {
@@ -136,7 +137,7 @@ func (f *fakePhone) respond(message []byte) ([]byte, error) {
 	if err != nil {
 		return nil, err
 	}
-	req, err := pairing.DecodeRequest(plaintext)
+	req, err := pairingproto.DecodeRequest(plaintext)
 	if err != nil {
 		return nil, err
 	}
@@ -416,12 +417,12 @@ func TestRequestMarshalError(t *testing.T) {
 // TestRequestSendsJSONRPCEnvelope pins the wire shape the phone expects: a
 // JSON-RPC 2.0 envelope carrying the method name, not the bare request body.
 func TestRequestSendsJSONRPCEnvelope(t *testing.T) {
-	var seen *pairing.Request
+	var seen *pairingproto.Request
 	fake := &fakePhone{
-		handler: func(req *pairing.Request) *pairing.Response {
+		handler: func(req *pairingproto.Request) *pairingproto.Response {
 			seen = req
 			result, _ := json.Marshal(map[string]string{"status": "ok"})
-			return &pairing.Response{JSONRPC: "2.0", ID: req.ID, Result: result}
+			return &pairingproto.Response{JSONRPC: "2.0", ID: req.ID, Result: result}
 		},
 	}
 	tr, ok := newPairedTransport(t, fake)
@@ -443,9 +444,9 @@ func TestRequestSendsJSONRPCEnvelope(t *testing.T) {
 
 func TestRequestNilResponseTarget(t *testing.T) {
 	fake := &fakePhone{
-		handler: func(req *pairing.Request) *pairing.Response {
+		handler: func(req *pairingproto.Request) *pairingproto.Response {
 			result, _ := json.Marshal(map[string]bool{"pong": true})
-			return &pairing.Response{JSONRPC: "2.0", ID: req.ID, Result: result}
+			return &pairingproto.Response{JSONRPC: "2.0", ID: req.ID, Result: result}
 		},
 	}
 	tr, ok := newPairedTransport(t, fake)
@@ -459,11 +460,11 @@ func TestRequestNilResponseTarget(t *testing.T) {
 
 func TestRequestPropagatesRPCError(t *testing.T) {
 	fake := &fakePhone{
-		handler: func(req *pairing.Request) *pairing.Response {
-			return &pairing.Response{
+		handler: func(req *pairingproto.Request) *pairingproto.Response {
+			return &pairingproto.Response{
 				JSONRPC: "2.0",
 				ID:      req.ID,
-				Error:   &pairing.RPCError{Code: -32601, Message: "Method not supported"},
+				Error:   &pairingproto.RPCError{Code: -32601, Message: "Method not supported"},
 			}
 		},
 	}
@@ -493,8 +494,8 @@ func TestRequestSendReceiveError(t *testing.T) {
 
 func TestRequestUnmarshalError(t *testing.T) {
 	fake := &fakePhone{
-		handler: func(req *pairing.Request) *pairing.Response {
-			return &pairing.Response{JSONRPC: "2.0", ID: req.ID, Result: json.RawMessage(`"a string"`)}
+		handler: func(req *pairingproto.Request) *pairingproto.Response {
+			return &pairingproto.Response{JSONRPC: "2.0", ID: req.ID, Result: json.RawMessage(`"a string"`)}
 		},
 	}
 	tr, ok := newPairedTransport(t, fake)
@@ -599,9 +600,9 @@ func TestPasswordSealStoreOperationsRoundTrip(t *testing.T) {
 		t.Run(op.name, func(t *testing.T) {
 			var seenMethod string
 			fake := &fakePhone{
-				handler: func(req *pairing.Request) *pairing.Response {
+				handler: func(req *pairingproto.Request) *pairingproto.Response {
 					seenMethod = req.Method
-					return &pairing.Response{JSONRPC: "2.0", ID: req.ID, Result: json.RawMessage(`{}`)}
+					return &pairingproto.Response{JSONRPC: "2.0", ID: req.ID, Result: json.RawMessage(`{}`)}
 				},
 			}
 			tr, ok := newPairedTransport(t, fake)
@@ -622,11 +623,11 @@ func TestPasswordSealStoreOperationsPropagateRPCError(t *testing.T) {
 	for _, op := range passwordSealStoreOps() {
 		t.Run(op.name, func(t *testing.T) {
 			fake := &fakePhone{
-				handler: func(req *pairing.Request) *pairing.Response {
-					return &pairing.Response{
+				handler: func(req *pairingproto.Request) *pairingproto.Response {
+					return &pairingproto.Response{
 						JSONRPC: "2.0",
 						ID:      req.ID,
-						Error:   &pairing.RPCError{Code: -32000, Message: "denied"},
+						Error:   &pairingproto.RPCError{Code: -32000, Message: "denied"},
 					}
 				},
 			}

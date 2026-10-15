@@ -33,16 +33,17 @@ import (
 
 	"github.com/jeremyhahn/go-enclave"
 	xkms "github.com/jeremyhahn/go-xkms/sdk/go"
+	"github.com/jeremyhahn/go-xkms/sdk/go/fido2/authenticator"
+	"github.com/jeremyhahn/go-xkms/sdk/go/fido2/keybackend"
+	"github.com/jeremyhahn/go-xkms/sdk/go/fido2/uhid"
 	secure "github.com/jeremyhahn/go-xkms/sdk/go/secure"
 	"github.com/jeremyhahn/go-xkms/xkey/pkg/audit"
-	"github.com/jeremyhahn/go-xkms/xkey/pkg/authenticator"
-	"github.com/jeremyhahn/go-xkms/xkey/pkg/authenticator/keybackend"
 	"github.com/jeremyhahn/go-xkms/xkey/pkg/cdp"
 	xkeyconfig "github.com/jeremyhahn/go-xkms/xkey/pkg/config"
 	"github.com/jeremyhahn/go-xkms/xkey/pkg/ipc"
 	"github.com/jeremyhahn/go-xkms/xkey/pkg/keyboard"
 	"github.com/jeremyhahn/go-xkms/xkey/pkg/notify"
-	"github.com/jeremyhahn/go-xkms/xkey/pkg/uhid"
+	"github.com/jeremyhahn/go-xkms/xkey/pkg/presence"
 	"github.com/jeremyhahn/go-xkms/xkey/pkg/xhome"
 	"github.com/spf13/cobra"
 	"github.com/spf13/viper"
@@ -757,7 +758,7 @@ type fido2Device struct {
 	keyboard        *keyboard.Keyboard
 	ipcServer       *ipc.Server
 	pwStore         *localPasswordStore
-	socketHandler   *authenticator.SocketHandler
+	socketHandler   *presence.SocketHandler
 	notifier        notify.Notifier
 	defaultPassword string
 	cdpBridge       *cdp.Bridge
@@ -865,7 +866,7 @@ func newFIDO2Device(ctx context.Context, cfg *FIDO2Config, logger *slog.Logger) 
 	// (OpPINSeeded, OpFIDO2CredentialCreated) are recorded in the structured
 	// log stream this daemon already writes, and SlogLogger has no
 	// persistent store to fail, so it never refuses an operation.
-	auth.SetAuditLogger(audit.NewSlogLogger(logger))
+	auth.SetAuditLogger(audit.NewFIDO2Logger(audit.NewSlogLogger(logger)))
 
 	// Establish the initial PIN if configured. --set-pin-stdin is the operator
 	// seeding a first PIN, so it goes through the authenticator's
@@ -1700,7 +1701,7 @@ func createBarrierStorage(cfg *FIDO2Config) (authenticator.StatefulCredentialSto
 // In non-interactive mode, it creates a SocketHandler backed by a notifier for
 // IPC-based approval via the touch command. The auto-grant handler remains
 // available for testing scenarios where PIN is pre-configured.
-func createFIDO2UserPresenceHandler(cfg *FIDO2Config, logger *slog.Logger) (authenticator.UserPresenceHandler, *authenticator.SocketHandler, notify.Notifier, error) {
+func createFIDO2UserPresenceHandler(cfg *FIDO2Config, logger *slog.Logger) (authenticator.UserPresenceHandler, *presence.SocketHandler, notify.Notifier, error) {
 	if cfg.Interactive {
 		logger.Info("using interactive user presence handler")
 		handler, err := authenticator.NewInteractiveHandler()
@@ -1716,7 +1717,7 @@ func createFIDO2UserPresenceHandler(cfg *FIDO2Config, logger *slog.Logger) (auth
 	if err != nil {
 		return nil, nil, nil, err
 	}
-	socketHandler := authenticator.NewSocketHandler(notifier, logger)
+	socketHandler := presence.NewSocketHandler(notifier, logger)
 	return socketHandler, socketHandler, notifier, nil
 }
 

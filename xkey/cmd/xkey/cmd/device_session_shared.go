@@ -18,6 +18,7 @@ import (
 	"log/slog"
 	"os"
 
+	"github.com/jeremyhahn/go-xkms/sdk/go/pairingproto"
 	secure "github.com/jeremyhahn/go-xkms/sdk/go/secure"
 	"github.com/jeremyhahn/go-xkms/xkey/pkg/attestation"
 	"github.com/jeremyhahn/go-xkms/xkey/pkg/pairing"
@@ -77,7 +78,7 @@ func unsealDeviceLocalKey(device *PairedDevice, logger *slog.Logger) (*secure.Bu
 // calls it per connection, so a root installed with `xkey trust` between
 // connections takes effect instead of a stale pool refusing a device the
 // machine now trusts.
-func newLiveAttestor(device *PairedDevice, logger *slog.Logger) pairing.LiveAttestFunc {
+func newLiveAttestor(device *PairedDevice, logger *slog.Logger) pairingproto.LiveAttestFunc {
 	return attestation.NewLiveAttestor(
 		attestation.DeviceBindingFor(*device), loadPairingAttestationTrust, logger)
 }

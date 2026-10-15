@@ -20,7 +20,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/jeremyhahn/go-xkms/xkey/pkg/pairing"
+	"github.com/jeremyhahn/go-xkms/pkg/pairingproto"
 )
 
 // TestTCPPairingServer_LiveAttestNil_RefusesConnection verifies that a
@@ -70,7 +70,7 @@ func TestTCPPairingServer_LiveAttest_DeniedRefusesConnection(t *testing.T) {
 	srv, err := NewTCPPairingServer(&TCPPairingConfig{
 		ListenAddr:     "127.0.0.1:0",
 		RequestHandler: handler,
-		LiveAttest: func(context.Context, pairing.RPCExchange, []byte) error {
+		LiveAttest: func(context.Context, pairingproto.RPCExchange, []byte) error {
 			return denyErr
 		},
 	})
@@ -116,11 +116,11 @@ func TestTCPPairingServer_LiveAttest_ChallengeExchange(t *testing.T) {
 	srv, err := NewTCPPairingServer(&TCPPairingConfig{
 		ListenAddr:     "127.0.0.1:0",
 		RequestHandler: handler,
-		LiveAttest: func(ctx context.Context, exchange pairing.RPCExchange, binding []byte) error {
+		LiveAttest: func(ctx context.Context, exchange pairingproto.RPCExchange, binding []byte) error {
 			if len(binding) == 0 {
 				return errors.New("test: empty channel binding")
 			}
-			resp, err := exchange(ctx, pairing.NewRequest("local.attestDevice", map[string]string{"nonce": "test"}))
+			resp, err := exchange(ctx, pairingproto.NewRequest("local.attestDevice", map[string]string{"nonce": "test"}))
 			if err != nil {
 				return err
 			}
@@ -159,13 +159,13 @@ func TestTCPPairingServer_LiveAttest_ChallengeExchange(t *testing.T) {
 	if err != nil {
 		t.Fatalf("decrypt challenge: %v", err)
 	}
-	req, err := pairing.DecodeRequest(challengePlaintext)
+	req, err := pairingproto.DecodeRequest(challengePlaintext)
 	if err != nil {
 		t.Fatalf("decode challenge: %v", err)
 	}
 	sawMethod = req.Method
 
-	respBytes, err := pairing.EncodeResponse(req.ID, map[string]bool{"ok": true})
+	respBytes, err := pairingproto.EncodeResponse(req.ID, map[string]bool{"ok": true})
 	if err != nil {
 		t.Fatalf("encode response: %v", err)
 	}

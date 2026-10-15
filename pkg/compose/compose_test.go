@@ -21,6 +21,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	"github.com/jeremyhahn/go-xkms/pkg/attestation/truststore"
 	"github.com/jeremyhahn/go-xkms/pkg/auth"
 	tpm2backend "github.com/jeremyhahn/go-xkms/pkg/backend/tpm2"
 	"github.com/jeremyhahn/go-xkms/pkg/certstore"
@@ -331,7 +332,7 @@ func TestBuilders_RejectNilDependencies(t *testing.T) {
 // feature's other dependency — the CA's for a CA configuration, the TPM policy
 // registry's for a TPM2 backend.
 func TestDatabases_FollowTheSuppliedDependencies(t *testing.T) {
-	always := []string{keyversion.DatabaseName, sshrecords.DatabaseName, staticpw.DatabaseName}
+	always := []string{keyversion.DatabaseName, sshrecords.DatabaseName, staticpw.DatabaseName, truststore.DatabaseName}
 	assert.Equal(t, always, Databases(Deps{}))
 	assert.Equal(t, append(always, certstore.DatabaseName), Databases(Deps{CA: hostdeps.NewCAConfig("Root")}))
 	assert.Equal(t, append(always, tpmpolicy.DatabaseName, tpmstore.DatabaseName), Databases(Deps{TPMBackend: &tpm2backend.Backend{}}))
@@ -444,6 +445,24 @@ func TestBuildKeyVersionStore(t *testing.T) {
 	var buildErr *FeatureBuildError
 	require.ErrorAs(t, err, &buildErr)
 	assert.Equal(t, FeatureKeyVersions, buildErr.Feature)
+	var unavailable *dao.DatabaseUnavailableError
+	assert.ErrorAs(t, err, &unavailable)
+}
+
+func TestBuildTrustRootStore(t *testing.T) {
+	store, err := BuildTrustRootStore(testutil.NewMemoryDAOFactory())
+	require.NoError(t, err)
+	require.NotNil(t, store)
+
+	_, err = BuildTrustRootStore(nil)
+	var nilDep *NilDependencyError
+	require.ErrorAs(t, err, &nilDep)
+	assert.Equal(t, FeatureTrustRoots, nilDep.Feature)
+
+	_, err = BuildTrustRootStore(dao.NewStoreFactory(nil))
+	var buildErr *FeatureBuildError
+	require.ErrorAs(t, err, &buildErr)
+	assert.Equal(t, FeatureTrustRoots, buildErr.Feature)
 	var unavailable *dao.DatabaseUnavailableError
 	assert.ErrorAs(t, err, &unavailable)
 }

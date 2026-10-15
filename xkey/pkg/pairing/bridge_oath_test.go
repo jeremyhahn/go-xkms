@@ -20,6 +20,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	"github.com/jeremyhahn/go-xkms/pkg/pairingproto"
 	"github.com/jeremyhahn/go-xkms/xkey/pkg/oath"
 )
 
@@ -31,8 +32,8 @@ func TestBridge_DispatchMap_ContainsOATHMethods(t *testing.T) {
 	require.NoError(t, err)
 
 	oathMethods := []string{
-		MethodRemoteOATHAdd,
-		MethodRemoteOATHGenerate,
+		pairingproto.MethodRemoteOATHAdd,
+		pairingproto.MethodRemoteOATHGenerate,
 	}
 
 	for _, method := range oathMethods {
@@ -61,8 +62,8 @@ func TestBridge_HandleOATHAdd_NotConfigured(t *testing.T) {
 	b, err := NewBridge(client, &BridgeConfig{Logger: testLogger()})
 	require.NoError(t, err)
 
-	req := newRemoteRequest(MethodRemoteOATHAdd, RemoteOATHAddParams{
-		Credential: OATHCredentialInfo{
+	req := newRemoteRequest(pairingproto.MethodRemoteOATHAdd, pairingproto.RemoteOATHAddParams{
+		Credential: pairingproto.OATHCredentialInfo{
 			Name:      "GitHub",
 			Issuer:    "GitHub",
 			Secret:    mustSecretText("JBSWY3DPEHPK3PXP"),
@@ -73,7 +74,7 @@ func TestBridge_HandleOATHAdd_NotConfigured(t *testing.T) {
 		},
 	})
 	resp := b.HandleRequest(context.Background(), req)
-	assertErrorResponse(t, resp, req.ID, ErrorCodeFeatureUnavailable)
+	assertErrorResponse(t, resp, req.ID, pairingproto.ErrorCodeFeatureUnavailable)
 }
 
 // TestBridge_HandleOATHAdd_Success verifies the real round trip through the
@@ -85,8 +86,8 @@ func TestBridge_HandleOATHAdd_Success(t *testing.T) {
 	b, err := NewBridge(client, &BridgeConfig{Logger: testLogger(), OATHStore: store})
 	require.NoError(t, err)
 
-	req := newRemoteRequest(MethodRemoteOATHAdd, RemoteOATHAddParams{
-		Credential: OATHCredentialInfo{
+	req := newRemoteRequest(pairingproto.MethodRemoteOATHAdd, pairingproto.RemoteOATHAddParams{
+		Credential: pairingproto.OATHCredentialInfo{
 			Name:        "GitHub",
 			Issuer:      "GitHub",
 			AccountName: "alice@example.com",
@@ -99,7 +100,7 @@ func TestBridge_HandleOATHAdd_Success(t *testing.T) {
 	})
 	resp := b.HandleRequest(context.Background(), req)
 
-	result := decodeResult[RemoteOATHAddResult](t, resp)
+	result := decodeResult[pairingproto.RemoteOATHAddResult](t, resp)
 	assert.True(t, result.Success)
 	assert.NotEmpty(t, result.CredentialID)
 	assert.Equal(t, "credential stored", result.Message)
@@ -119,8 +120,8 @@ func TestBridge_HandleOATHAdd_Duplicate(t *testing.T) {
 	b, err := NewBridge(client, &BridgeConfig{Logger: testLogger(), OATHStore: store})
 	require.NoError(t, err)
 
-	params := RemoteOATHAddParams{
-		Credential: OATHCredentialInfo{
+	params := pairingproto.RemoteOATHAddParams{
+		Credential: pairingproto.OATHCredentialInfo{
 			Name:   "GitHub",
 			Issuer: "GitHub",
 			Secret: mustSecretText("JBSWY3DPEHPK3PXP"),
@@ -128,11 +129,11 @@ func TestBridge_HandleOATHAdd_Duplicate(t *testing.T) {
 		},
 	}
 
-	first := b.HandleRequest(context.Background(), newRemoteRequest(MethodRemoteOATHAdd, params))
-	decodeResult[RemoteOATHAddResult](t, first)
+	first := b.HandleRequest(context.Background(), newRemoteRequest(pairingproto.MethodRemoteOATHAdd, params))
+	decodeResult[pairingproto.RemoteOATHAddResult](t, first)
 
-	second := b.HandleRequest(context.Background(), newRemoteRequest(MethodRemoteOATHAdd, params))
-	assertErrorResponse(t, second, 1, ErrorCodeKeyExists)
+	second := b.HandleRequest(context.Background(), newRemoteRequest(pairingproto.MethodRemoteOATHAdd, params))
+	assertErrorResponse(t, second, 1, pairingproto.ErrorCodeKeyExists)
 }
 
 func TestBridge_HandleOATHAdd_InvalidParams(t *testing.T) {
@@ -141,9 +142,9 @@ func TestBridge_HandleOATHAdd_InvalidParams(t *testing.T) {
 	require.NoError(t, err)
 
 	// Nil params
-	req := newRemoteRequest(MethodRemoteOATHAdd, nil)
+	req := newRemoteRequest(pairingproto.MethodRemoteOATHAdd, nil)
 	resp := b.HandleRequest(context.Background(), req)
-	assertErrorResponse(t, resp, req.ID, ErrorCodeInvalidParams)
+	assertErrorResponse(t, resp, req.ID, pairingproto.ErrorCodeInvalidParams)
 }
 
 func TestBridge_HandleOATHAdd_EmptyName(t *testing.T) {
@@ -151,15 +152,15 @@ func TestBridge_HandleOATHAdd_EmptyName(t *testing.T) {
 	b, err := NewBridge(client, &BridgeConfig{Logger: testLogger()})
 	require.NoError(t, err)
 
-	req := newRemoteRequest(MethodRemoteOATHAdd, RemoteOATHAddParams{
-		Credential: OATHCredentialInfo{
+	req := newRemoteRequest(pairingproto.MethodRemoteOATHAdd, pairingproto.RemoteOATHAddParams{
+		Credential: pairingproto.OATHCredentialInfo{
 			Name:   "",
 			Secret: mustSecretText("JBSWY3DPEHPK3PXP"),
 			Type:   "totp",
 		},
 	})
 	resp := b.HandleRequest(context.Background(), req)
-	assertErrorResponse(t, resp, req.ID, ErrorCodeInvalidParams)
+	assertErrorResponse(t, resp, req.ID, pairingproto.ErrorCodeInvalidParams)
 }
 
 func TestBridge_HandleOATHAdd_EmptySecret(t *testing.T) {
@@ -167,15 +168,15 @@ func TestBridge_HandleOATHAdd_EmptySecret(t *testing.T) {
 	b, err := NewBridge(client, &BridgeConfig{Logger: testLogger()})
 	require.NoError(t, err)
 
-	req := newRemoteRequest(MethodRemoteOATHAdd, RemoteOATHAddParams{
-		Credential: OATHCredentialInfo{
+	req := newRemoteRequest(pairingproto.MethodRemoteOATHAdd, pairingproto.RemoteOATHAddParams{
+		Credential: pairingproto.OATHCredentialInfo{
 			Name:   "GitHub",
 			Secret: mustSecretText(""),
 			Type:   "totp",
 		},
 	})
 	resp := b.HandleRequest(context.Background(), req)
-	assertErrorResponse(t, resp, req.ID, ErrorCodeInvalidParams)
+	assertErrorResponse(t, resp, req.ID, pairingproto.ErrorCodeInvalidParams)
 }
 
 // --- handleOATHGenerate tests ---
@@ -188,11 +189,11 @@ func TestBridge_HandleOATHGenerate_NotConfigured(t *testing.T) {
 	b, err := NewBridge(client, &BridgeConfig{Logger: testLogger()})
 	require.NoError(t, err)
 
-	req := newRemoteRequest(MethodRemoteOATHGenerate, RemoteOATHGenerateParams{
+	req := newRemoteRequest(pairingproto.MethodRemoteOATHGenerate, pairingproto.RemoteOATHGenerateParams{
 		CredentialID: "cred-001",
 	})
 	resp := b.HandleRequest(context.Background(), req)
-	assertErrorResponse(t, resp, req.ID, ErrorCodeFeatureUnavailable)
+	assertErrorResponse(t, resp, req.ID, pairingproto.ErrorCodeFeatureUnavailable)
 }
 
 // TestBridge_HandleOATHGenerate_NotFound verifies that a credential ID absent
@@ -204,11 +205,11 @@ func TestBridge_HandleOATHGenerate_NotFound(t *testing.T) {
 	b, err := NewBridge(client, &BridgeConfig{Logger: testLogger(), OATHStore: store})
 	require.NoError(t, err)
 
-	req := newRemoteRequest(MethodRemoteOATHGenerate, RemoteOATHGenerateParams{
+	req := newRemoteRequest(pairingproto.MethodRemoteOATHGenerate, pairingproto.RemoteOATHGenerateParams{
 		CredentialID: "cred-001",
 	})
 	resp := b.HandleRequest(context.Background(), req)
-	assertErrorResponse(t, resp, req.ID, ErrorCodeOATHNotFound)
+	assertErrorResponse(t, resp, req.ID, pairingproto.ErrorCodeOATHNotFound)
 }
 
 // TestBridge_HandleOATHGenerate_Success verifies the real round trip through
@@ -224,12 +225,12 @@ func TestBridge_HandleOATHGenerate_Success(t *testing.T) {
 	b, err := NewBridge(client, &BridgeConfig{Logger: testLogger(), OATHStore: store})
 	require.NoError(t, err)
 
-	req := newRemoteRequest(MethodRemoteOATHGenerate, RemoteOATHGenerateParams{
+	req := newRemoteRequest(pairingproto.MethodRemoteOATHGenerate, pairingproto.RemoteOATHGenerateParams{
 		CredentialID: cred.ID,
 	})
 	resp := b.HandleRequest(context.Background(), req)
 
-	result := decodeResult[RemoteOATHGenerateResult](t, resp)
+	result := decodeResult[pairingproto.RemoteOATHGenerateResult](t, resp)
 	assert.Len(t, result.Code, 6)
 	assert.Greater(t, result.ExpiresIn, 0)
 	assert.LessOrEqual(t, result.ExpiresIn, 30)
@@ -241,9 +242,9 @@ func TestBridge_HandleOATHGenerate_InvalidParams(t *testing.T) {
 	require.NoError(t, err)
 
 	// Nil params
-	req := newRemoteRequest(MethodRemoteOATHGenerate, nil)
+	req := newRemoteRequest(pairingproto.MethodRemoteOATHGenerate, nil)
 	resp := b.HandleRequest(context.Background(), req)
-	assertErrorResponse(t, resp, req.ID, ErrorCodeInvalidParams)
+	assertErrorResponse(t, resp, req.ID, pairingproto.ErrorCodeInvalidParams)
 }
 
 func TestBridge_HandleOATHGenerate_EmptyCredentialID(t *testing.T) {
@@ -251,30 +252,30 @@ func TestBridge_HandleOATHGenerate_EmptyCredentialID(t *testing.T) {
 	b, err := NewBridge(client, &BridgeConfig{Logger: testLogger()})
 	require.NoError(t, err)
 
-	req := newRemoteRequest(MethodRemoteOATHGenerate, RemoteOATHGenerateParams{
+	req := newRemoteRequest(pairingproto.MethodRemoteOATHGenerate, pairingproto.RemoteOATHGenerateParams{
 		CredentialID: "",
 	})
 	resp := b.HandleRequest(context.Background(), req)
-	assertErrorResponse(t, resp, req.ID, ErrorCodeInvalidParams)
+	assertErrorResponse(t, resp, req.ID, pairingproto.ErrorCodeInvalidParams)
 }
 
 // --- Error mapping tests ---
 
 func TestMapErrorToRPC_OATHCredentialNotFound(t *testing.T) {
-	code, msg := mapErrorToRPC(ErrOATHCredentialNotFound)
-	assert.Equal(t, ErrorCodeOATHNotFound, code)
+	code, msg := mapErrorToRPC(pairingproto.ErrOATHCredentialNotFound)
+	assert.Equal(t, pairingproto.ErrorCodeOATHNotFound, code)
 	assert.Contains(t, msg, "OATH credential not found")
 }
 
 func TestMapErrorToRPC_OATHGenerateFailed(t *testing.T) {
-	code, msg := mapErrorToRPC(ErrOATHGenerateFailed)
-	assert.Equal(t, ErrorCodeOATHGenerate, code)
+	code, msg := mapErrorToRPC(pairingproto.ErrOATHGenerateFailed)
+	assert.Equal(t, pairingproto.ErrorCodeOATHGenerate, code)
 	assert.Contains(t, msg, "OATH code generation failed")
 }
 
 func TestMapErrorToRPC_OATHStoreFailed(t *testing.T) {
-	code, msg := mapErrorToRPC(ErrOATHStoreFailed)
-	assert.Equal(t, ErrorCodeOATHStore, code)
+	code, msg := mapErrorToRPC(pairingproto.ErrOATHStoreFailed)
+	assert.Equal(t, pairingproto.ErrorCodeOATHStore, code)
 	assert.Contains(t, msg, "OATH store operation failed")
 }
 
@@ -287,15 +288,15 @@ func TestBridge_NilParams_OATHHandlers(t *testing.T) {
 
 	// Both OATH handlers require params.
 	methodsRequiringParams := []string{
-		MethodRemoteOATHAdd,
-		MethodRemoteOATHGenerate,
+		pairingproto.MethodRemoteOATHAdd,
+		pairingproto.MethodRemoteOATHGenerate,
 	}
 
 	for _, method := range methodsRequiringParams {
 		t.Run(method, func(t *testing.T) {
 			req := newRemoteRequest(method, nil)
 			resp := b.HandleRequest(context.Background(), req)
-			assertErrorResponse(t, resp, req.ID, ErrorCodeInvalidParams)
+			assertErrorResponse(t, resp, req.ID, pairingproto.ErrorCodeInvalidParams)
 		})
 	}
 }

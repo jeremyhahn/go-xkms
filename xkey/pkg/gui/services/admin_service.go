@@ -1211,6 +1211,7 @@ func (s *AdminService) buildBackendConfig(backendType string, params map[string]
 		}
 		category = backendregistry.CategoryPKCS11
 		caps[backendregistry.CapSigning] = true
+		caps[backendregistry.CapPIV] = true
 		caps[backendregistry.CapEncryption] = true
 		caps[backendregistry.CapSealing] = true
 
@@ -1224,6 +1225,7 @@ func (s *AdminService) buildBackendConfig(backendType string, params map[string]
 		}
 		category = backendregistry.CategoryTPM2
 		caps[backendregistry.CapSigning] = true
+		caps[backendregistry.CapPIV] = true
 		caps[backendregistry.CapEncryption] = true
 		caps[backendregistry.CapSealing] = true
 		caps[backendregistry.CapAttestation] = true

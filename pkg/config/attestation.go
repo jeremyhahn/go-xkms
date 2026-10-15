@@ -19,6 +19,7 @@ import (
 	"strings"
 
 	"github.com/jeremyhahn/go-xkms/pkg/attestation"
+	"github.com/jeremyhahn/go-xkms/pkg/attestation/peergate"
 	"github.com/jeremyhahn/go-xkms/pkg/attestation/truststore"
 	"github.com/jeremyhahn/go-xkms/pkg/errs"
 )
@@ -49,6 +50,22 @@ type AttestationConfig struct {
 	// ("tpm2", "yubikey-piv") to the trust store holding that format's root
 	// certificates. Format keys are matched case-insensitively.
 	Formats map[string]*truststore.Config `yaml:"formats"`
+
+	// PeerGate is the attested-caller gate's mode (pkg/attestation/peergate):
+	// "off" or unset installs nothing; "optional" or "required" installs the
+	// gate on the embedded qrdb node. The quote policy it verifies under is
+	// the embedder's (server.WithAttestedCallerPolicy); go-xkms ships no
+	// reference values.
+	PeerGate string `yaml:"peer_gate,omitempty"`
+}
+
+// PeerGateMode is the configured attested-caller gate mode. A nil config is
+// peergate.ModeOff; an unknown value is a *peergate.ModeError.
+func (a *AttestationConfig) PeerGateMode() (peergate.Mode, error) {
+	if a == nil {
+		return peergate.ModeOff, nil
+	}
+	return peergate.ParseMode(a.PeerGate)
 }
 
 // Verifiers builds the per-format attestation verifiers described by the
@@ -74,11 +91,15 @@ func (c *AttestationConfig) Verifiers() (map[string]*attestation.Verifier, error
 		if err != nil {
 			return nil, &errs.Wrapped{Msg: fmt.Sprintf("attestation: trust store for format %q", key), Err: err}
 		}
-		if store.Count() == 0 {
+		roots, err := store.Certificates()
+		if err != nil {
+			return nil, &errs.Wrapped{Msg: fmt.Sprintf("attestation: trust store for format %q", key), Err: err}
+		}
+		if len(roots) == 0 {
 			return nil, &errs.Detail{Err: ErrAttestationTrustStoreEmpty, Detail: key}
 		}
 
-		verifiers[key] = attestation.NewVerifier(store.Roots())
+		verifiers[key] = attestation.NewVerifier(roots)
 	}
 
 	return verifiers, nil

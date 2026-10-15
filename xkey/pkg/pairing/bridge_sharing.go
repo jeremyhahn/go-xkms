@@ -21,6 +21,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/jeremyhahn/go-xkms/sdk/go/pairingproto"
 	"github.com/jeremyhahn/go-xkms/sdk/go/transport"
 	"github.com/jeremyhahn/go-xkms/xkey/pkg/audit"
 )
@@ -31,17 +32,17 @@ import (
 func (b *Bridge) handleSharePublicKey(ctx context.Context, params json.RawMessage) (interface{}, error) {
 	start := time.Now()
 
-	var p RemoteSharePublicKeyParams
+	var p pairingproto.RemoteSharePublicKeyParams
 	if err := unmarshalParams(params, &p); err != nil {
-		return nil, ErrBridgeInvalidParams
+		return nil, pairingproto.ErrBridgeInvalidParams
 	}
 
 	// Validate required fields.
 	if len(p.PublicKeyPEM) == 0 {
-		return nil, ErrInvalidPublicKey
+		return nil, pairingproto.ErrInvalidPublicKey
 	}
 	if p.Algorithm == "" {
-		return nil, ErrBridgeInvalidParams
+		return nil, pairingproto.ErrBridgeInvalidParams
 	}
 
 	// Determine target backend (use specified or default to "software").
@@ -108,7 +109,7 @@ func (b *Bridge) handleSharePublicKey(ctx context.Context, params json.RawMessag
 		}
 	}
 
-	return &RemoteSharePublicKeyResult{
+	return &pairingproto.RemoteSharePublicKeyResult{
 		Accepted: true,
 		ImportID: resp.KeyID,
 		Backend:  targetBackend,
@@ -121,16 +122,16 @@ func (b *Bridge) handleSharePublicKey(ctx context.Context, params json.RawMessag
 func (b *Bridge) handleShareSymmetric(ctx context.Context, params json.RawMessage) (interface{}, error) {
 	start := time.Now()
 
-	var p RemoteShareSymmetricParams
+	var p pairingproto.RemoteShareSymmetricParams
 	if err := unmarshalParams(params, &p); err != nil {
-		return nil, ErrBridgeInvalidParams
+		return nil, pairingproto.ErrBridgeInvalidParams
 	}
 
 	if len(p.WrappedKey) == 0 {
-		return nil, ErrBridgeInvalidParams
+		return nil, pairingproto.ErrBridgeInvalidParams
 	}
 	if p.Algorithm == "" {
-		return nil, ErrBridgeInvalidParams
+		return nil, pairingproto.ErrBridgeInvalidParams
 	}
 
 	targetBackend := p.Backend
@@ -180,7 +181,7 @@ func (b *Bridge) handleShareSymmetric(ctx context.Context, params json.RawMessag
 		}
 	}
 
-	return &RemoteShareSymmetricResult{
+	return &pairingproto.RemoteShareSymmetricResult{
 		Accepted: true,
 		ImportID: resp.KeyID,
 		Backend:  targetBackend,
@@ -194,13 +195,13 @@ func (b *Bridge) handleShareSymmetric(ctx context.Context, params json.RawMessag
 func (b *Bridge) handleImportSharedKey(ctx context.Context, params json.RawMessage) (interface{}, error) {
 	start := time.Now()
 
-	var p RemoteImportSharedKeyParams
+	var p pairingproto.RemoteImportSharedKeyParams
 	if err := unmarshalParams(params, &p); err != nil {
-		return nil, ErrBridgeInvalidParams
+		return nil, pairingproto.ErrBridgeInvalidParams
 	}
 
 	if p.Backend == "" || p.KeyID == "" {
-		return nil, ErrBridgeInvalidParams
+		return nil, pairingproto.ErrBridgeInvalidParams
 	}
 
 	if err := b.checkBackendAccess(p.Backend); err != nil {
@@ -213,7 +214,7 @@ func (b *Bridge) handleImportSharedKey(ctx context.Context, params json.RawMessa
 		return nil, err
 	}
 
-	result := &RemoteImportSharedKeyResult{
+	result := &pairingproto.RemoteImportSharedKeyResult{
 		Algorithm: keyResp.Algorithm,
 	}
 

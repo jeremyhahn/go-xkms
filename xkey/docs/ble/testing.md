@@ -12,14 +12,16 @@ Noise session it uses are `xkey/pkg/pairing`.
 cd xkey
 make test-phone                      # go test ./pkg/phone/... (Makefile:449)
 go test ./pkg/pairing/
-go test ./pkg/pairing/ -run TestNoiseSession_FullHandshake
+cd ..
+go test ./pkg/pairingproto/ ./pkg/trust/bootstrap/
+go test ./pkg/trust/bootstrap/ -run TestNoiseSession_FullHandshake
 ```
 
 | Area | Test files |
 |------|-----------|
-| Noise handshake and transport | `pkg/pairing/noise_test.go`, `handshake_test.go` |
-| JSON-RPC encoding | `pkg/pairing/protocol_test.go` and `protocol_*_test.go` |
-| Fragment / reassemble | `pkg/pairing/fragmentation_test.go` |
+| Noise handshake and transport | `pkg/trust/bootstrap/noise_session_test.go`, `pkg/pairingproto/handshake_test.go` |
+| JSON-RPC encoding | `pkg/pairingproto/protocol_test.go` and `protocol_*_test.go` |
+| Fragment / reassemble | `pkg/pairingproto/fragmentation_test.go` |
 | Backend, config, error paths | `pkg/phone/phone_test.go`, `phone_*_test.go`, `errors_test.go` |
 | BLE central and peripheral (via seams and fakes, no hardware) | `pkg/phone/ble_transport_*_test.go`, `ble_peripheral_*_test.go` |
 | Builds without the `ble` tag | `pkg/phone/ble_stub_test.go` |
@@ -27,11 +29,12 @@ go test ./pkg/pairing/ -run TestNoiseSession_FullHandshake
 ### Benchmarks
 
 ```bash
-go test -bench=. ./pkg/pairing/ ./pkg/phone/
+go test -bench=. ./pkg/phone/                                # in xkey/
+go test -bench=. ./pkg/pairingproto/ ./pkg/trust/bootstrap/  # in the repo root
 ```
 
-- `BenchmarkNoiseHandshake`, `BenchmarkNoiseEncrypt` (`pkg/pairing/noise_test.go:482`, `:893`)
-- `BenchmarkFragment`, `BenchmarkReassemble` (`pkg/pairing/fragmentation_test.go:310`, `:321`)
+- `BenchmarkNoiseHandshake`, `BenchmarkNoiseEncrypt` (`pkg/trust/bootstrap/noise_session_test.go:483`, `:894`)
+- `BenchmarkFragment`, `BenchmarkReassemble` (`pkg/pairingproto/fragmentation_test.go:311`, `:322`)
 - `BenchmarkHexEncodeCredentialID` (`pkg/phone/phone_test.go:325`)
 
 ## Phone Integration Tests

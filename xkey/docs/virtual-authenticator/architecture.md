@@ -18,8 +18,8 @@ which *drives* an authenticator. Here xkey *is* one.
 
 ## Shape chosen: a CTAP2 implementation behind a UHID device
 
-`xkey/pkg/uhid` creates a Linux UHID device — the kernel then presents it to
-userspace as an ordinary USB HID authenticator. `xkey/pkg/authenticator`
+`pkg/fido2/uhid` creates a Linux UHID device — the kernel then presents it to
+userspace as an ordinary USB HID authenticator. `pkg/fido2/authenticator`
 implements the CTAP2 side of that wire:
 
 | CTAP2 command | File |
@@ -54,10 +54,10 @@ Rejected alternatives:
 
 | Piece | Package |
 |---|---|
-| UHID device (Linux) | `xkey/pkg/uhid` (`uhid_linux.go`, `uhid_stub.go` elsewhere) |
-| CTAP2 authenticator | `xkey/pkg/authenticator` |
-| HID framing adapter | `xkey/pkg/authenticator/hid_adapter.go` |
-| Key material backends | `xkey/pkg/authenticator/keybackend`, `key_manager.go`, `key_wrapper.go` |
+| UHID device (Linux) | `pkg/fido2/uhid` (`uhid_linux.go`, `uhid_stub.go` elsewhere) |
+| CTAP2 authenticator | `pkg/fido2/authenticator` |
+| HID framing adapter | `pkg/fido2/authenticator/hid_adapter.go` |
+| Key material backends | `pkg/fido2/authenticator/keybackend`, `key_manager.go`, `key_wrapper.go` |
 | Credential and RP-policy stores | `dao_credential_store.go`, `dao_rp_policy_store.go` |
 | Chrome DevTools bridge | `xkey/pkg/cdp` |
 | Notification / user presence | `xkey/pkg/notify` |
@@ -76,9 +76,9 @@ shell around the stack, never a second implementation of it.
 browser / ssh / sudo / any WebAuthn consumer
    │  (sees an ordinary USB HID authenticator)
    ▼
-Linux UHID  ←→  xkey/pkg/uhid
+Linux UHID  ←→  pkg/fido2/uhid
    ▼
-xkey/pkg/authenticator — CTAP2 commands, PIN protocol, extensions
+pkg/fido2/authenticator — CTAP2 commands, PIN protocol, extensions
    ├── user presence:  a handler named at construction (socket + xkey touch, terminal, auto-grant)
    ├── credentials:    DAO credential store
    └── key material:   key_manager → keybackend → software | tpm2 | pkcs11 | phone
@@ -98,7 +98,7 @@ bridge, for driving browser tests without a real device on the bus.
   where it lives.** The authenticator refuses to construct without one; the
   daemon installs a socket handler answered by a dialog or `xkey touch`, or a
   terminal handler under `--interactive`. Programmatic devices
-  (`xkey/pkg/virtualdevice`, the CDP bridge) name an auto-grant handler at
+  (`pkg/fido2/virtualdevice`, the CDP bridge) name an auto-grant handler at
   their own construction site, so the decision to drop the human is visible
   in the code that made it, never a default.
 - **User verification is never asserted, only performed.** The UV flag is set

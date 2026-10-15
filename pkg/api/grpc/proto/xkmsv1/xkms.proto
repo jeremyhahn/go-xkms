@@ -707,6 +707,38 @@ service KeystoreService {
     option (qrdb.v1.permission) = "tenants:set_tpm_mode";
   }
 
+  // ==================== Trust Root Operations ====================
+  // The platform's purpose-classified trust-root store
+  // (pkg/attestation/truststore). trust_roots:* is an xkms-owned permission
+  // family (pkg/auth.ResourceTrustRoots); the store is process-wide, so
+  // every RPC is system scope only.
+
+  // TrustRootList lists the roots, optionally of one purpose.
+  rpc TrustRootList(TrustRootListRequest) returns (TrustRootListResponse) {
+    option (qrdb.v1.permission) = "trust_roots:list";
+  }
+
+  // TrustRootGet returns one root, its PEM included.
+  rpc TrustRootGet(TrustRootRequest) returns (TrustRoot) {
+    option (qrdb.v1.permission) = "trust_roots:get";
+  }
+
+  // TrustRootImport adds the certificates of a PEM bundle.
+  rpc TrustRootImport(TrustRootImportRequest) returns (TrustRootImportResponse) {
+    option (qrdb.v1.permission) = "trust_roots:import";
+  }
+
+  // TrustRootQuarantine reclassifies a root as "synced", which anchors
+  // nothing.
+  rpc TrustRootQuarantine(TrustRootRequest) returns (TrustRoot) {
+    option (qrdb.v1.permission) = "trust_roots:update";
+  }
+
+  // TrustRootRemove deletes a root.
+  rpc TrustRootRemove(TrustRootRequest) returns (TrustRootRemoveResponse) {
+    option (qrdb.v1.permission) = "trust_roots:delete";
+  }
+
   // ==================== OIDC Credential Operations ====================
   // Server-side OIDC credentials (pkg/oidc/credential): named OAuth/OIDC
   // logins held on the tenant barrier and refreshed by the server,
@@ -764,6 +796,24 @@ service KeystoreService {
   // stays pending until the user approves.
   rpc OIDCCredentialDevicePoll(OIDCCredentialRef) returns (OIDCCredential) {
     option (qrdb.v1.permission) = "oidc_credentials:update";
+  }
+
+  // ==================== Peer Attestation Operations ====================
+  // The attested-caller verbs (pkg/attestation/peergate): a caller asks for a
+  // challenge and answers it with a TPM quote bound to its connection. Both
+  // identify the caller by the verified client certificate of the call's
+  // mutual-TLS connection, so they answer only over mTLS.
+
+  // PeerAttestationChallenge issues a single-use nonce to the caller's
+  // certificate.
+  rpc PeerAttestationChallenge(PeerAttestationChallengeRequest) returns (PeerAttestationChallengeResponse) {
+    option (qrdb.v1.permission) = "peer_attestation:challenge";
+  }
+
+  // SubmitPeerAttestation answers the caller's outstanding challenge with a
+  // TPM quote and stores the evidence the attested-caller gate checks.
+  rpc SubmitPeerAttestation(SubmitPeerAttestationRequest) returns (SubmitPeerAttestationResponse) {
+    option (qrdb.v1.permission) = "peer_attestation:submit";
   }
 
   // ==================== PKCS#11 State Operations ====================
@@ -3462,6 +3512,53 @@ message TPMPolicyDeleteRequest {
 // TPMPolicyDeleteResponse confirms a policy was deleted.
 message TPMPolicyDeleteResponse {}
 
+// TrustRoot is one certificate of the platform trust-root store.
+// Timestamps are RFC 3339 in UTC; pem is set by TrustRootGet only.
+message TrustRoot {
+  string fingerprint = 1;
+  string purpose = 2;
+  string subject = 3;
+  string issuer = 4;
+  string algorithm = 5;
+  string not_before = 6;
+  string not_after = 7;
+  string added_at = 8;
+  string source = 9;
+  string pem = 10;
+}
+
+// TrustRootListRequest optionally keeps only the roots of one purpose.
+message TrustRootListRequest {
+  string purpose = 1;
+}
+
+// TrustRootListResponse lists trust roots, sorted by subject.
+message TrustRootListResponse {
+  repeated TrustRoot roots = 1;
+}
+
+// TrustRootRequest names a trust root by its SHA-256 fingerprint.
+message TrustRootRequest {
+  string fingerprint = 1;
+}
+
+// TrustRootImportRequest imports a PEM bundle; an empty purpose classifies
+// each certificate from its contents.
+message TrustRootImportRequest {
+  string pem = 1;
+  string purpose = 2;
+  string source = 3;
+}
+
+// TrustRootImportResponse counts the certificates added and skipped.
+message TrustRootImportResponse {
+  int32 added = 1;
+  int32 skipped = 2;
+}
+
+// TrustRootRemoveResponse confirms a root was removed.
+message TrustRootRemoveResponse {}
+
 // TPMPolicyBranchVerification compares one branch's captured PCR values
 // with the live ones and reports whether its approval is current.
 message TPMPolicyBranchVerification {
@@ -3668,6 +3765,32 @@ message OIDCAccessToken {
   string id_token = 4;
   string scope = 5;
 }
+
+// ============================================================================
+// Peer Attestation Messages
+// ============================================================================
+
+message PeerAttestationChallengeRequest {}
+
+// PeerAttestationChallengeResponse is the nonce the caller's quote must
+// carry and when it stops being accepted.
+message PeerAttestationChallengeResponse {
+  bytes nonce = 1;
+  google.protobuf.Timestamp expires_at = 2;
+}
+
+// SubmitPeerAttestationRequest is a TPM quote answering the caller's
+// challenge: the quote and its signature, the challenge nonce, the quoted
+// PCR values by index, and the attestation key's certificate in PEM.
+message SubmitPeerAttestationRequest {
+  bytes quote = 1;
+  bytes signature = 2;
+  bytes nonce = 3;
+  map<uint32, bytes> pcrs = 4;
+  bytes ak_certificate_pem = 5;
+}
+
+message SubmitPeerAttestationResponse {}
 
 // ==================== FIDO2/WebAuthn Registration ====================
 

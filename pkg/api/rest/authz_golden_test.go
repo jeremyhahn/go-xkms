@@ -207,6 +207,11 @@ var goldenRESTPermissions = map[string]string{
 	"POST /api/v1/tpm/policies/{name}/description":               "tpm_policy:update",
 	"POST /api/v1/tpm/authority/rotate":                          "tpm_policy:rotate",
 	"GET /api/v1/keys/{id}/tpm-policy":                           "tpm_policy:get",
+	"GET /api/v1/trust-roots":                                    "trust_roots:list",
+	"POST /api/v1/trust-roots":                                   "trust_roots:import",
+	"GET /api/v1/trust-roots/{fingerprint}":                      "trust_roots:get",
+	"DELETE /api/v1/trust-roots/{fingerprint}":                   "trust_roots:delete",
+	"POST /api/v1/trust-roots/{fingerprint}/quarantine":          "trust_roots:update",
 	"GET /api/v1/tenants/{tenantID}/tpm":                         "tenants:read",
 	"PUT /api/v1/tenants/{tenantID}/tpm":                         "tenants:set_tpm_mode",
 	"GET /api/v1/tenants/{tenantID}/tpm/vtpm":                    "tenants:read",
@@ -221,6 +226,8 @@ var goldenRESTPermissions = map[string]string{
 	"POST /api/v1/oidc/credentials/{scope}/{name}/token":         "oidc_credentials:token",
 	"POST /api/v1/oidc/credentials/{scope}/{name}/device":        "oidc_credentials:update",
 	"POST /api/v1/oidc/credentials/{scope}/{name}/device/poll":   "oidc_credentials:update",
+	"POST /api/v1/peer-attestation/challenge":                    "peer_attestation:challenge",
+	"POST /api/v1/peer-attestation/evidence":                     "peer_attestation:submit",
 }
 
 // TestRESTPermissions_MatchWireContract pins the resource:action pair of

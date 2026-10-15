@@ -21,7 +21,7 @@ import (
 	"log/slog"
 	"strconv"
 
-	"github.com/jeremyhahn/go-xkms/xkey/pkg/pairing"
+	"github.com/jeremyhahn/go-xkms/sdk/go/pairingproto"
 )
 
 // bleNotifyOverhead is the number of bytes reserved out of the peripheral's
@@ -109,13 +109,13 @@ func (e *FragmentWriteError) Unwrap() error {
 // the peer over a FragmentWriter.
 type fragmentSender struct {
 	writer     FragmentWriter
-	fragmenter *pairing.Fragmenter
+	fragmenter *pairingproto.Fragmenter
 	log        *slog.Logger
 }
 
 // newFragmentSender binds a fragmenter to the characteristic that carries
 // outbound notifications.
-func newFragmentSender(writer FragmentWriter, fragmenter *pairing.Fragmenter, log *slog.Logger) *fragmentSender {
+func newFragmentSender(writer FragmentWriter, fragmenter *pairingproto.Fragmenter, log *slog.Logger) *fragmentSender {
 	if log == nil {
 		log = slog.Default()
 	}

@@ -273,6 +273,14 @@ type OIDCCredentialListResponse = pkgtransport.OIDCCredentialListResponse
 type OIDCDeviceLogin = pkgtransport.OIDCDeviceLogin
 type OIDCAccessToken = pkgtransport.OIDCAccessToken
 
+// Trust root types (the platform trust-root store).
+type TrustRoot = pkgtransport.TrustRoot
+type TrustRootRequest = pkgtransport.TrustRootRequest
+type TrustRootListRequest = pkgtransport.TrustRootListRequest
+type TrustRootListResponse = pkgtransport.TrustRootListResponse
+type TrustRootImportRequest = pkgtransport.TrustRootImportRequest
+type TrustRootImportResponse = pkgtransport.TrustRootImportResponse
+
 // OIDC credential scopes and statuses.
 const (
 	OIDCCredentialScopeTenant           = pkgtransport.OIDCCredentialScopeTenant

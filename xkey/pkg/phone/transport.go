@@ -16,17 +16,17 @@ package phone
 import (
 	"context"
 
-	"github.com/jeremyhahn/go-xkms/xkey/pkg/pairing"
+	"github.com/jeremyhahn/go-xkms/sdk/go/pairingproto"
 )
 
-// BLECapableTransport extends pairing.Transport with BLE-specific operations.
+// BLECapableTransport extends pairingproto.Transport with BLE-specific operations.
 // Transports that support BLE scanning, bonded address handling, and
 // BlueZ D-Bus management implement this interface. The PhoneKeyBackend
 // uses type assertions to detect BLE-capable transports and execute
 // BLE-specific connection logic (scan, connect with bonded address,
 // stale cache cleanup).
 type BLECapableTransport interface {
-	pairing.Transport
+	pairingproto.Transport
 
 	// Scan searches for xKey BLE devices and returns discovered devices.
 	Scan(ctx context.Context) ([]ScanResult, error)

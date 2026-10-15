@@ -26,6 +26,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/jeremyhahn/go-xkms/pkg/pairingproto"
 	xkms "github.com/jeremyhahn/go-xkms/sdk/go"
 	"github.com/jeremyhahn/go-xkms/xkey/pkg/attestation/attesttest"
 	"github.com/jeremyhahn/go-xkms/xkey/pkg/pairing"
@@ -38,7 +39,7 @@ import (
 // CA, and a CSR self-signed by that same key.
 type enrollmentEvidence struct {
 	ca     *attesttest.CA
-	result *pairing.LocalGetDeviceEnrollmentRequestResult
+	result *pairingproto.LocalGetDeviceEnrollmentRequestResult
 }
 
 // newEnrollmentEvidence attests a fresh key under nonce with the given
@@ -58,8 +59,8 @@ func newEnrollmentEvidence(
 	leaf := attesttest.AttestedLeafDER(t, ca, key, nonce, level, rot)
 	return &enrollmentEvidence{
 		ca: ca,
-		result: &pairing.LocalGetDeviceEnrollmentRequestResult{
-			Format: pairing.AttestationFormatAndroidKey,
+		result: &pairingproto.LocalGetDeviceEnrollmentRequestResult{
+			Format: pairingproto.AttestationFormatAndroidKey,
 			CSR:    csrFor(t, key),
 			AttestationChain: []string{
 				base64.StdEncoding.EncodeToString(leaf),
@@ -98,7 +99,7 @@ func TestEnrollmentPolicyEvaluate_AcceptsGenuineEvidence(t *testing.T) {
 
 	assert.Equal(t, attesttest.AppPackage, decision.PackageName)
 	assert.Equal(t, hex.EncodeToString(attesttest.AppSigningDigest()), decision.SigningDigest)
-	assert.Equal(t, pairing.SecurityLevelTEE, decision.SecurityLevel)
+	assert.Equal(t, pairingproto.SecurityLevelTEE, decision.SecurityLevel)
 	assert.True(t, decision.DeviceLocked)
 	assert.Equal(t, now.Add(pairing.DefaultEnrollmentValidity), decision.NotAfter)
 }
@@ -110,7 +111,7 @@ func TestEnrollmentPolicyEvaluate_StrongBoxMeetsTheTEEFloor(t *testing.T) {
 
 	decision, err := ev.policy().Evaluate(ev.result, nonce, time.Now())
 	require.NoError(t, err)
-	assert.Equal(t, pairing.SecurityLevelStrongBox, decision.SecurityLevel)
+	assert.Equal(t, pairingproto.SecurityLevelStrongBox, decision.SecurityLevel)
 }
 
 func TestEnrollmentPolicyEvaluate_RefusesASoftwareKey(t *testing.T) {

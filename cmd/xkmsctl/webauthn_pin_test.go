@@ -21,12 +21,12 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/jeremyhahn/go-xkms/pkg/fido2/authenticator"
+	"github.com/jeremyhahn/go-xkms/pkg/fido2/virtualdevice"
 	client "github.com/jeremyhahn/go-xkms/sdk/go"
 	"github.com/jeremyhahn/go-xkms/sdk/go/fido2"
 	secure "github.com/jeremyhahn/go-xkms/sdk/go/secure"
 	webauthnclient "github.com/jeremyhahn/go-xkms/sdk/go/webauthnclient"
-	"github.com/jeremyhahn/go-xkms/xkey/pkg/authenticator"
-	"github.com/jeremyhahn/go-xkms/xkey/pkg/virtualdevice"
 )
 
 // These tests cover the ceremony half of go-xkms#309: the resolved CTAP2 PIN

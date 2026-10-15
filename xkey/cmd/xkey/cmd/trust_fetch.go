@@ -23,7 +23,7 @@ import (
 	"github.com/spf13/cobra"
 
 	xkms "github.com/jeremyhahn/go-xkms/sdk/go"
-	"github.com/jeremyhahn/go-xkms/xkey/pkg/truststore"
+	"github.com/jeremyhahn/go-xkms/sdk/go/truststore"
 )
 
 // Trust fetch / import-platform errors.

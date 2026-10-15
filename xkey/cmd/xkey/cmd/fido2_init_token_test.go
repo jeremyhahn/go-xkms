@@ -23,7 +23,7 @@ import (
 	"github.com/spf13/pflag"
 	"github.com/spf13/viper"
 
-	"github.com/jeremyhahn/go-xkms/xkey/pkg/authenticator"
+	"github.com/jeremyhahn/go-xkms/pkg/fido2/authenticator"
 )
 
 // The Security Officer PINs these tests establish. They are never asserted on

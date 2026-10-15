@@ -19,6 +19,7 @@ import (
 	"log/slog"
 
 	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
+	"github.com/jeremyhahn/go-xkms/pkg/attestation/truststore"
 	tpm2backend "github.com/jeremyhahn/go-xkms/pkg/backend/tpm2"
 	"github.com/jeremyhahn/go-xkms/pkg/ca"
 	"github.com/jeremyhahn/go-xkms/pkg/ca/provider"
@@ -78,7 +79,7 @@ type Deps struct {
 
 	// DAOs serves the go-qrdb database of each feature that persists through
 	// DAOs; Databases names them, for the composition root to open first.
-	// Enables key versions and the Password Manager; with CA and Storage, the Certificate Authority;
+	// Enables key versions, trust roots and the Password Manager; with CA and Storage, the Certificate Authority;
 	// with TPMBackend, the TPM policy service.
 	DAOs *qrdbsdk.DAOFactory
 
@@ -154,6 +155,9 @@ type Stores struct {
 	// Invite is the enrollment-invitation store (go-xkms#1294 part B).
 	Invite xkms.InviteStore
 
+	// TrustRoots is the platform trust-root store.
+	TrustRoots *truststore.DAOStore
+
 	// Disabled holds one *FeatureDisabledError or *FeatureBuildError per
 	// feature Build left off.
 	Disabled []error
@@ -164,7 +168,7 @@ type Stores struct {
 // each on its datastore and sets d.DAOs to the factory serving them before
 // Build; a root that opens none leaves those features off.
 func Databases(d Deps) []string {
-	databases := []string{keyversion.DatabaseName, sshrecords.DatabaseName, staticpw.DatabaseName}
+	databases := []string{keyversion.DatabaseName, sshrecords.DatabaseName, staticpw.DatabaseName, truststore.DatabaseName}
 	if d.CA != nil {
 		databases = append(databases, certstore.DatabaseName)
 	}
@@ -258,6 +262,12 @@ func Build(ctx context.Context, d Deps) (*Stores, error) {
 		})
 	}
 
+	if b.need(FeatureTrustRoots, d.DAOs != nil, "DAO factory") {
+		st.TrustRoots = built(b, FeatureTrustRoots, func() (*truststore.DAOStore, error) {
+			return BuildTrustRootStore(d.DAOs)
+		})
+	}
+
 	if b.need(FeatureOIDCCredentials, d.BarrierRegistry != nil, "barrier registry") &&
 		b.need(FeatureOIDCCredentials, d.Leases != nil, "qrdb coordination") {
 		st.OIDCCredentials = built(b, FeatureOIDCCredentials, func() (*credential.Service, error) {
@@ -303,6 +313,9 @@ func (st *Stores) Wire(svc *xkms.XKMSService) {
 	}
 	if st.KeyVersions != nil {
 		svc.SetKeyVersionStore(st.KeyVersions)
+	}
+	if st.TrustRoots != nil {
+		svc.SetTrustRootStore(st.TrustRoots)
 	}
 	if st.OIDCCredentials != nil {
 		svc.SetOIDCCredentialService(st.OIDCCredentials)

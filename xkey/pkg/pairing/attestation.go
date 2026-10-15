@@ -21,6 +21,7 @@ import (
 	"log/slog"
 
 	xkms "github.com/jeremyhahn/go-xkms/sdk/go"
+	"github.com/jeremyhahn/go-xkms/sdk/go/pairingproto"
 )
 
 // AttestationMode specifies the attestation method.
@@ -59,7 +60,7 @@ var (
 // LaptopAttestor generates attestation for the laptop/desktop.
 type LaptopAttestor interface {
 	// GenerateAttestation creates an attestation response with the given nonce.
-	GenerateAttestation(nonce []byte) (*RemoteAttestDeviceResult, error)
+	GenerateAttestation(nonce []byte) (*pairingproto.RemoteAttestDeviceResult, error)
 	// Mode returns the current attestation mode.
 	Mode() AttestationMode
 	// IsTPM2Available returns true if TPM2 is available.
@@ -115,7 +116,7 @@ func (a *laptopAttestor) IsTPM2Available() bool {
 }
 
 // GenerateAttestation creates an attestation response with the given nonce.
-func (a *laptopAttestor) GenerateAttestation(nonce []byte) (*RemoteAttestDeviceResult, error) {
+func (a *laptopAttestor) GenerateAttestation(nonce []byte) (*pairingproto.RemoteAttestDeviceResult, error) {
 	if len(nonce) != attestationNonceSize {
 		return nil, ErrInvalidAttestationNonce
 	}
@@ -144,7 +145,7 @@ func (a *laptopAttestor) GenerateAttestation(nonce []byte) (*RemoteAttestDeviceR
 }
 
 // generateTPM2Attestation generates attestation using TPM2.
-func (a *laptopAttestor) generateTPM2Attestation(nonce []byte) (*RemoteAttestDeviceResult, error) {
+func (a *laptopAttestor) generateTPM2Attestation(nonce []byte) (*pairingproto.RemoteAttestDeviceResult, error) {
 	a.log.Info("generating TPM2 attestation", slog.Int("nonce_len", len(nonce)))
 
 	tpmDevice := a.cfg.TPM
@@ -207,7 +208,7 @@ func (a *laptopAttestor) generateTPM2Attestation(nonce []byte) (*RemoteAttestDev
 		firmwareVersion = fmt.Sprintf("%d.%d", props.FwMajor, props.FwMinor)
 	}
 
-	result := &RemoteAttestDeviceResult{
+	result := &pairingproto.RemoteAttestDeviceResult{
 		Format:            "tpm2",
 		SecurityLevel:     "hardware",
 		Nonce:             nonce,
@@ -230,10 +231,10 @@ func (a *laptopAttestor) generateTPM2Attestation(nonce []byte) (*RemoteAttestDev
 }
 
 // generateSoftwareAttestation generates software-only attestation.
-func (a *laptopAttestor) generateSoftwareAttestation(nonce []byte) (*RemoteAttestDeviceResult, error) {
+func (a *laptopAttestor) generateSoftwareAttestation(nonce []byte) (*pairingproto.RemoteAttestDeviceResult, error) {
 	a.log.Info("generating software attestation", slog.Int("nonce_len", len(nonce)))
 
-	result := &RemoteAttestDeviceResult{
+	result := &pairingproto.RemoteAttestDeviceResult{
 		Format:            "software",
 		SecurityLevel:     "software",
 		Nonce:             nonce,

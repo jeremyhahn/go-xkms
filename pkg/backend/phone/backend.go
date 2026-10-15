@@ -26,7 +26,7 @@ import (
 	"sync/atomic"
 
 	"github.com/jeremyhahn/go-xkms/pkg/errs"
-	"github.com/jeremyhahn/go-xkms/xkey/pkg/pairing"
+	"github.com/jeremyhahn/go-xkms/pkg/pairingproto"
 
 	"github.com/jeremyhahn/go-xkms/pkg/attestation/truststore"
 	"github.com/jeremyhahn/go-xkms/pkg/types"
@@ -37,16 +37,16 @@ import (
 // transport, allowing the caller to provide any implementation that can
 // deliver encrypted JSON-RPC messages to the phone.
 type Sender interface {
-	SendRequest(ctx context.Context, req *pairing.Request) (*pairing.Response, error)
+	SendRequest(ctx context.Context, req *pairingproto.Request) (*pairingproto.Response, error)
 }
 
 // SenderFunc adapts a plain function to the Sender interface. This enables
 // callers to wrap PhoneKeyBackend.SendRequest (or any compatible function)
 // as a Sender without creating a separate adapter struct.
-type SenderFunc func(ctx context.Context, req *pairing.Request) (*pairing.Response, error)
+type SenderFunc func(ctx context.Context, req *pairingproto.Request) (*pairingproto.Response, error)
 
 // SendRequest implements Sender by calling the wrapped function.
-func (f SenderFunc) SendRequest(ctx context.Context, req *pairing.Request) (*pairing.Response, error) {
+func (f SenderFunc) SendRequest(ctx context.Context, req *pairingproto.Request) (*pairingproto.Response, error) {
 	return f(ctx, req)
 }
 
@@ -57,13 +57,12 @@ func (f SenderFunc) SendRequest(ctx context.Context, req *pairing.Request) (*pai
 // Private keys never leave the phone's secure hardware (TEE/StrongBox).
 // The backend only receives public keys and signature/decryption results.
 type Backend struct {
-	config     *Config
-	sender     Sender
-	logger     *slog.Logger
-	trustStore *truststore.TrustStore
-	verifier   PlatformVerifier
-	mu         sync.RWMutex
-	closed     atomic.Bool
+	config   *Config
+	sender   Sender
+	logger   *slog.Logger
+	verifier PlatformVerifier
+	mu       sync.RWMutex
+	closed   atomic.Bool
 }
 
 // algorithmMapping maps KeyAttributes to JSON-RPC algorithm identifiers using
@@ -88,23 +87,23 @@ var algorithmMapping = map[x509.PublicKeyAlgorithm]map[string]string{
 // rpcErrorMapping maps JSON-RPC error codes from the phone protocol to
 // phone backend typed errors using O(1) map-based dispatch.
 var rpcErrorMapping = map[int]error{
-	pairing.ErrorCodeKeyNotFound:       ErrKeyNotFound,
-	pairing.ErrorCodeUserCancelled:     ErrUserCancelled,
-	pairing.ErrorCodeBiometricFailed:   ErrBiometricFailed,
-	pairing.ErrorCodeUnsupportedAlg:    ErrUnsupportedAlgorithm,
-	pairing.ErrorCodeOperationTimeout:  ErrOperationTimeout,
-	pairing.ErrorCodeKeyExists:         ErrKeyExists,
-	pairing.ErrorCodeParseError:        ErrProtocolError,
-	pairing.ErrorCodeInvalidRequest:    ErrProtocolError,
-	pairing.ErrorCodeInvalidParams:     ErrProtocolError,
-	pairing.ErrorCodeMethodNotFound:    ErrProtocolError,
-	pairing.ErrorCodeInternalError:     ErrInvalidResponse,
-	pairing.ErrorCodeBackendDenied:     ErrProtocolError,
-	pairing.ErrorCodeAttestFailed:      ErrAttestationFailed,
-	pairing.ErrorCodeAttestUnsupported: ErrProtocolError,
-	pairing.ErrorCodeOperationDenied:   ErrProtocolError,
-	pairing.ErrorCodeInvalidPublicKey:  ErrInvalidPublicKey,
-	pairing.ErrorCodeDecryptFailed:     ErrProtocolError,
+	pairingproto.ErrorCodeKeyNotFound:       ErrKeyNotFound,
+	pairingproto.ErrorCodeUserCancelled:     ErrUserCancelled,
+	pairingproto.ErrorCodeBiometricFailed:   ErrBiometricFailed,
+	pairingproto.ErrorCodeUnsupportedAlg:    ErrUnsupportedAlgorithm,
+	pairingproto.ErrorCodeOperationTimeout:  ErrOperationTimeout,
+	pairingproto.ErrorCodeKeyExists:         ErrKeyExists,
+	pairingproto.ErrorCodeParseError:        ErrProtocolError,
+	pairingproto.ErrorCodeInvalidRequest:    ErrProtocolError,
+	pairingproto.ErrorCodeInvalidParams:     ErrProtocolError,
+	pairingproto.ErrorCodeMethodNotFound:    ErrProtocolError,
+	pairingproto.ErrorCodeInternalError:     ErrInvalidResponse,
+	pairingproto.ErrorCodeBackendDenied:     ErrProtocolError,
+	pairingproto.ErrorCodeAttestFailed:      ErrAttestationFailed,
+	pairingproto.ErrorCodeAttestUnsupported: ErrProtocolError,
+	pairingproto.ErrorCodeOperationDenied:   ErrProtocolError,
+	pairingproto.ErrorCodeInvalidPublicKey:  ErrInvalidPublicKey,
+	pairingproto.ErrorCodeDecryptFailed:     ErrProtocolError,
 }
 
 // Compile-time interface satisfaction checks.
@@ -155,11 +154,18 @@ func (b *Backend) initAttestation() error {
 		return &errs.Detail{Err: ErrTrustStoreInit, Detail: fmt.Sprintf("%v", err)}
 	}
 
-	b.trustStore = ts
+	roots, err := ts.CertPool()
+	if err != nil {
+		return &errs.Detail{Err: ErrTrustStoreInit, Detail: fmt.Sprintf("%v", err)}
+	}
+	rootCount, err := ts.Count()
+	if err != nil {
+		return &errs.Detail{Err: ErrTrustStoreInit, Detail: fmt.Sprintf("%v", err)}
+	}
 
 	verifier, err := NewPlatformVerifier(
 		b.config.Attestation.Platform,
-		ts.CertPool(),
+		roots,
 		b.config.Attestation,
 	)
 	if err != nil {
@@ -169,7 +175,7 @@ func (b *Backend) initAttestation() error {
 
 	b.logger.Info("attestation verification enabled",
 		"platform", b.config.Attestation.Platform,
-		"trust_store_roots", ts.Count(),
+		"trust_store_roots", rootCount,
 		"min_security_level", b.config.Attestation.MinSecurityLevel,
 		"verify_boot_state", b.config.Attestation.VerifyBootState,
 	)
@@ -222,7 +228,7 @@ func (b *Backend) GenerateKey(ctx context.Context, attrs *types.KeyAttributes) (
 		return nil, err
 	}
 
-	params := &pairing.LocalGenerateKeyParams{
+	params := &pairingproto.LocalGenerateKeyParams{
 		KeyID:     attrs.CN,
 		Algorithm: algorithm,
 	}
@@ -235,12 +241,12 @@ func (b *Backend) GenerateKey(ctx context.Context, attrs *types.KeyAttributes) (
 	ctx, cancel := context.WithTimeout(ctx, b.config.RequestTimeout)
 	defer cancel()
 
-	resp, err := b.sendLocalRequest(ctx, pairing.MethodLocalGenerateKey, params)
+	resp, err := b.sendLocalRequest(ctx, pairingproto.MethodLocalGenerateKey, params)
 	if err != nil {
 		return nil, err
 	}
 
-	result, err := pairing.DecodeResult[pairing.LocalGenerateKeyResult](resp)
+	result, err := pairingproto.DecodeResult[pairingproto.LocalGenerateKeyResult](resp)
 	if err != nil {
 		return nil, ErrInvalidResponse
 	}
@@ -268,20 +274,20 @@ func (b *Backend) GetKey(ctx context.Context, attrs *types.KeyAttributes) (crypt
 	defer cancel()
 
 	// Verify the key exists on the phone.
-	infoResp, err := b.sendLocalRequest(ctx, pairing.MethodLocalGetKeyInfo, &pairing.LocalGetKeyInfoParams{
+	infoResp, err := b.sendLocalRequest(ctx, pairingproto.MethodLocalGetKeyInfo, &pairingproto.LocalGetKeyInfoParams{
 		KeyID: attrs.CN,
 	})
 	if err != nil {
 		return nil, err
 	}
 
-	keyInfo, err := pairing.DecodeResult[pairing.LocalGetKeyInfoResult](infoResp)
+	keyInfo, err := pairingproto.DecodeResult[pairingproto.LocalGetKeyInfoResult](infoResp)
 	if err != nil {
 		return nil, ErrInvalidResponse
 	}
 
 	// Retrieve the public key in DER format.
-	pubResp, err := b.sendLocalRequest(ctx, pairing.MethodLocalGetPublicKey, &pairing.LocalGetPublicKeyParams{
+	pubResp, err := b.sendLocalRequest(ctx, pairingproto.MethodLocalGetPublicKey, &pairingproto.LocalGetPublicKeyParams{
 		KeyID:  attrs.CN,
 		Format: "der",
 	})
@@ -289,7 +295,7 @@ func (b *Backend) GetKey(ctx context.Context, attrs *types.KeyAttributes) (crypt
 		return nil, err
 	}
 
-	pubResult, err := pairing.DecodeResult[pairing.LocalGetPublicKeyResult](pubResp)
+	pubResult, err := pairingproto.DecodeResult[pairingproto.LocalGetPublicKeyResult](pubResp)
 	if err != nil {
 		return nil, ErrInvalidResponse
 	}
@@ -314,14 +320,14 @@ func (b *Backend) DeleteKey(ctx context.Context, attrs *types.KeyAttributes) err
 	ctx, cancel := context.WithTimeout(ctx, b.config.RequestTimeout)
 	defer cancel()
 
-	resp, err := b.sendLocalRequest(ctx, pairing.MethodLocalDeleteKey, &pairing.LocalDeleteKeyParams{
+	resp, err := b.sendLocalRequest(ctx, pairingproto.MethodLocalDeleteKey, &pairingproto.LocalDeleteKeyParams{
 		KeyID: attrs.CN,
 	})
 	if err != nil {
 		return err
 	}
 
-	result, err := pairing.DecodeResult[pairing.LocalDeleteKeyResult](resp)
+	result, err := pairingproto.DecodeResult[pairingproto.LocalDeleteKeyResult](resp)
 	if err != nil {
 		return ErrInvalidResponse
 	}
@@ -342,12 +348,12 @@ func (b *Backend) ListKeys(ctx context.Context) ([]*types.KeyAttributes, error) 
 	ctx, cancel := context.WithTimeout(ctx, b.config.RequestTimeout)
 	defer cancel()
 
-	resp, err := b.sendLocalRequest(ctx, pairing.MethodLocalListKeys, &pairing.LocalListKeysParams{})
+	resp, err := b.sendLocalRequest(ctx, pairingproto.MethodLocalListKeys, &pairingproto.LocalListKeysParams{})
 	if err != nil {
 		return nil, err
 	}
 
-	result, err := pairing.DecodeResult[pairing.LocalListKeysResult](resp)
+	result, err := pairingproto.DecodeResult[pairingproto.LocalListKeysResult](resp)
 	if err != nil {
 		return nil, ErrInvalidResponse
 	}
@@ -399,20 +405,20 @@ func (b *Backend) Decrypter(ctx context.Context, attrs *types.KeyAttributes) (cr
 	defer cancel()
 
 	// Retrieve key info to get the algorithm.
-	infoResp, err := b.sendLocalRequest(ctx, pairing.MethodLocalGetKeyInfo, &pairing.LocalGetKeyInfoParams{
+	infoResp, err := b.sendLocalRequest(ctx, pairingproto.MethodLocalGetKeyInfo, &pairingproto.LocalGetKeyInfoParams{
 		KeyID: attrs.CN,
 	})
 	if err != nil {
 		return nil, err
 	}
 
-	keyInfo, err := pairing.DecodeResult[pairing.LocalGetKeyInfoResult](infoResp)
+	keyInfo, err := pairingproto.DecodeResult[pairingproto.LocalGetKeyInfoResult](infoResp)
 	if err != nil {
 		return nil, ErrInvalidResponse
 	}
 
 	// Retrieve the public key in DER format.
-	pubResp, err := b.sendLocalRequest(ctx, pairing.MethodLocalGetPublicKey, &pairing.LocalGetPublicKeyParams{
+	pubResp, err := b.sendLocalRequest(ctx, pairingproto.MethodLocalGetPublicKey, &pairingproto.LocalGetPublicKeyParams{
 		KeyID:  attrs.CN,
 		Format: "der",
 	})
@@ -420,7 +426,7 @@ func (b *Backend) Decrypter(ctx context.Context, attrs *types.KeyAttributes) (cr
 		return nil, err
 	}
 
-	pubResult, err := pairing.DecodeResult[pairing.LocalGetPublicKeyResult](pubResp)
+	pubResult, err := pairingproto.DecodeResult[pairingproto.LocalGetPublicKeyResult](pubResp)
 	if err != nil {
 		return nil, ErrInvalidResponse
 	}
@@ -450,7 +456,7 @@ func (b *Backend) Close() error {
 // sendLocalRequest creates a JSON-RPC request and sends it to the phone via
 // the Sender interface. It applies the configured request timeout and maps
 // any RPC errors to typed backend errors.
-func (b *Backend) sendLocalRequest(ctx context.Context, method string, params interface{}) (*pairing.Response, error) {
+func (b *Backend) sendLocalRequest(ctx context.Context, method string, params interface{}) (*pairingproto.Response, error) {
 	b.mu.RLock()
 	defer b.mu.RUnlock()
 
@@ -458,7 +464,7 @@ func (b *Backend) sendLocalRequest(ctx context.Context, method string, params in
 		return nil, ErrBackendClosed
 	}
 
-	req := pairing.NewRequest(method, params)
+	req := pairingproto.NewRequest(method, params)
 
 	b.logger.Debug("sending local request",
 		"method", method,
@@ -549,7 +555,7 @@ func parsePublicKey(derBytes []byte, algorithm string) (crypto.PublicKey, error)
 }
 
 // mapKeyInfoToAttributes converts phone KeyInfo metadata to a types.KeyAttributes struct.
-func mapKeyInfoToAttributes(info *pairing.KeyInfo) *types.KeyAttributes {
+func mapKeyInfoToAttributes(info *pairingproto.KeyInfo) *types.KeyAttributes {
 	attrs := &types.KeyAttributes{
 		CN:        info.KeyID,
 		StoreType: types.StorePhone,
@@ -632,7 +638,7 @@ func mapAlgorithmToAttributes(algorithm string, keySizeBits int) (string, x509.P
 }
 
 // mapRPCError converts a phone protocol RPC error to a typed backend error.
-func mapRPCError(rpcErr *pairing.RPCError) error {
+func mapRPCError(rpcErr *pairingproto.RPCError) error {
 	if rpcErr == nil {
 		return nil
 	}

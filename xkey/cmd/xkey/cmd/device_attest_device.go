@@ -27,6 +27,8 @@ import (
 	"github.com/spf13/cobra"
 	"github.com/spf13/viper"
 
+	"github.com/jeremyhahn/go-xkms/sdk/go/bootstrap"
+	"github.com/jeremyhahn/go-xkms/sdk/go/pairingproto"
 	"github.com/jeremyhahn/go-xkms/xkey/pkg/attestation"
 	"github.com/jeremyhahn/go-xkms/xkey/pkg/pairing"
 	"github.com/jeremyhahn/go-xkms/xkey/pkg/phone"
@@ -198,7 +200,7 @@ func runDeviceAttestDevice(cmd *cobra.Command, args []string) (err error) {
 	// scalar would be left sitting in protected memory nothing releases.
 	defer localPrivateKey.Destroy()
 
-	localKey, err := pairing.LoadStaticKeyFromBuffer(localPrivateKey)
+	localKey, err := bootstrap.LoadNoiseStaticKeyFromBuffer(localPrivateKey)
 	if err != nil {
 		return &WrappedError{Msg: "failed to load local noise key", Err: err}
 	}
@@ -244,7 +246,7 @@ func runDeviceAttestDevice(cmd *cobra.Command, args []string) (err error) {
 	}()
 
 	// Create Noise session with existing keys
-	session, err := pairing.NewNoiseSession(&pairing.NoiseSessionConfig{
+	session, err := bootstrap.NewNoiseSession(&bootstrap.NoiseSessionConfig{
 		LocalStaticKey:       localKey,
 		ExpectedRemoteStatic: remotePublicKey,
 		IsInitiator:          true,
@@ -277,7 +279,7 @@ func runDeviceAttestDevice(cmd *cobra.Command, args []string) (err error) {
 	// "unknown". A device that HAS a fingerprint cannot return to that state,
 	// and performIdentityExchange refuses if it claims to.
 	fmt.Println("Establishing secure channel...")
-	handshakeCfg := &pairing.HandshakeConfig{
+	handshakeCfg := &pairingproto.HandshakeConfig{
 		Transport:                 transport,
 		Session:                   session,
 		Logger:                    logger,
@@ -286,7 +288,7 @@ func runDeviceAttestDevice(cmd *cobra.Command, args []string) (err error) {
 		LocalStaticPublicKey:      session.LocalStaticPublicKey(),
 		ExpectedDeviceFingerprint: expectedFingerprint,
 	}
-	if err := pairing.PerformHandshake(connectCtx, handshakeCfg); err != nil {
+	if err := pairingproto.PerformHandshake(connectCtx, handshakeCfg); err != nil {
 		return &WrappedError{Msg: "handshake failed", Err: err}
 	}
 
@@ -314,7 +316,7 @@ func runDeviceAttestDevice(cmd *cobra.Command, args []string) (err error) {
 	fmt.Println("Verifying attestation chain...")
 
 	verified, err := attestation.AttestOverSession(
-		connectCtx, transport, session, trust, pairing.AttestPurposeReattest, logger)
+		connectCtx, transport, session, trust, pairingproto.AttestPurposeReattest, logger)
 	if err != nil {
 		return err
 	}

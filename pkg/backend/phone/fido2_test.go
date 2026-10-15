@@ -19,7 +19,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/jeremyhahn/go-xkms/xkey/pkg/pairing"
+	"github.com/jeremyhahn/go-xkms/pkg/pairingproto"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -27,7 +27,7 @@ import (
 // --- ListFido2Credentials ---
 
 func TestListFido2Credentials_Success(t *testing.T) {
-	expectedCreds := []pairing.Fido2CredentialInfo{
+	expectedCreds := []pairingproto.Fido2CredentialInfo{
 		{
 			CredentialID:    []byte("cred-1"),
 			RpID:            "example.com",
@@ -51,9 +51,9 @@ func TestListFido2Credentials_Success(t *testing.T) {
 	}
 
 	sender := &mockSender{
-		sendFunc: func(ctx context.Context, req *pairing.Request) (*pairing.Response, error) {
-			assert.Equal(t, pairing.MethodLocalListFido2Credentials, req.Method)
-			return mockSuccessResponse(pairing.LocalListFido2CredentialsResult{
+		sendFunc: func(ctx context.Context, req *pairingproto.Request) (*pairingproto.Response, error) {
+			assert.Equal(t, pairingproto.MethodLocalListFido2Credentials, req.Method)
+			return mockSuccessResponse(pairingproto.LocalListFido2CredentialsResult{
 				Credentials: expectedCreds,
 			}), nil
 		},
@@ -97,9 +97,9 @@ func TestListFido2Credentials_EmptyRpID(t *testing.T) {
 
 func TestListFido2Credentials_EmptyResult(t *testing.T) {
 	sender := &mockSender{
-		sendFunc: func(ctx context.Context, req *pairing.Request) (*pairing.Response, error) {
-			return mockSuccessResponse(pairing.LocalListFido2CredentialsResult{
-				Credentials: []pairing.Fido2CredentialInfo{},
+		sendFunc: func(ctx context.Context, req *pairingproto.Request) (*pairingproto.Response, error) {
+			return mockSuccessResponse(pairingproto.LocalListFido2CredentialsResult{
+				Credentials: []pairingproto.Fido2CredentialInfo{},
 			}), nil
 		},
 	}
@@ -114,8 +114,8 @@ func TestListFido2Credentials_EmptyResult(t *testing.T) {
 
 func TestListFido2Credentials_RPCError(t *testing.T) {
 	sender := &mockSender{
-		sendFunc: func(ctx context.Context, req *pairing.Request) (*pairing.Response, error) {
-			return mockErrorResponse(pairing.ErrorCodeInternalError, "internal error"), nil
+		sendFunc: func(ctx context.Context, req *pairingproto.Request) (*pairingproto.Response, error) {
+			return mockErrorResponse(pairingproto.ErrorCodeInternalError, "internal error"), nil
 		},
 	}
 
@@ -129,7 +129,7 @@ func TestListFido2Credentials_RPCError(t *testing.T) {
 func TestListFido2Credentials_TransportError(t *testing.T) {
 	transportErr := errors.New("connection refused")
 	sender := &mockSender{
-		sendFunc: func(ctx context.Context, req *pairing.Request) (*pairing.Response, error) {
+		sendFunc: func(ctx context.Context, req *pairingproto.Request) (*pairingproto.Response, error) {
 			return nil, transportErr
 		},
 	}
@@ -143,7 +143,7 @@ func TestListFido2Credentials_TransportError(t *testing.T) {
 
 func TestListFido2Credentials_InvalidDecodeResult(t *testing.T) {
 	sender := &mockSender{
-		sendFunc: func(ctx context.Context, req *pairing.Request) (*pairing.Response, error) {
+		sendFunc: func(ctx context.Context, req *pairingproto.Request) (*pairingproto.Response, error) {
 			return mockInvalidResultResponse(), nil
 		},
 	}
@@ -163,9 +163,9 @@ func TestSignFido2Assertion_Success(t *testing.T) {
 	expectedUserHandle := []byte("user-handle")
 
 	sender := &mockSender{
-		sendFunc: func(ctx context.Context, req *pairing.Request) (*pairing.Response, error) {
-			assert.Equal(t, pairing.MethodLocalSignFido2Assertion, req.Method)
-			return mockSuccessResponse(pairing.LocalSignFido2AssertionResult{
+		sendFunc: func(ctx context.Context, req *pairingproto.Request) (*pairingproto.Response, error) {
+			assert.Equal(t, pairingproto.MethodLocalSignFido2Assertion, req.Method)
+			return mockSuccessResponse(pairingproto.LocalSignFido2AssertionResult{
 				AuthenticatorData: expectedAuthData,
 				Signature:         expectedSignature,
 				UserHandle:        expectedUserHandle,
@@ -176,7 +176,7 @@ func TestSignFido2Assertion_Success(t *testing.T) {
 
 	b := newTestBackend(t, sender)
 
-	params := &pairing.LocalSignFido2AssertionParams{
+	params := &pairingproto.LocalSignFido2AssertionParams{
 		CredentialID:             []byte("cred-id-123"),
 		ClientDataHash:           []byte("client-data-hash-32-bytes-long!!"),
 		RpID:                     "example.com",
@@ -198,7 +198,7 @@ func TestSignFido2Assertion_BackendClosed(t *testing.T) {
 	b := newTestBackend(t, sender)
 	_ = b.Close()
 
-	params := &pairing.LocalSignFido2AssertionParams{
+	params := &pairingproto.LocalSignFido2AssertionParams{
 		CredentialID:   []byte("cred-id"),
 		ClientDataHash: []byte("hash"),
 		RpID:           "example.com",
@@ -222,7 +222,7 @@ func TestSignFido2Assertion_EmptyCredentialID(t *testing.T) {
 	sender := &mockSender{}
 	b := newTestBackend(t, sender)
 
-	params := &pairing.LocalSignFido2AssertionParams{
+	params := &pairingproto.LocalSignFido2AssertionParams{
 		CredentialID:   nil,
 		ClientDataHash: []byte("hash"),
 		RpID:           "example.com",
@@ -237,7 +237,7 @@ func TestSignFido2Assertion_EmptyClientDataHash(t *testing.T) {
 	sender := &mockSender{}
 	b := newTestBackend(t, sender)
 
-	params := &pairing.LocalSignFido2AssertionParams{
+	params := &pairingproto.LocalSignFido2AssertionParams{
 		CredentialID:   []byte("cred-id"),
 		ClientDataHash: nil,
 		RpID:           "example.com",
@@ -252,7 +252,7 @@ func TestSignFido2Assertion_EmptyRpID(t *testing.T) {
 	sender := &mockSender{}
 	b := newTestBackend(t, sender)
 
-	params := &pairing.LocalSignFido2AssertionParams{
+	params := &pairingproto.LocalSignFido2AssertionParams{
 		CredentialID:   []byte("cred-id"),
 		ClientDataHash: []byte("hash"),
 		RpID:           "",
@@ -265,14 +265,14 @@ func TestSignFido2Assertion_EmptyRpID(t *testing.T) {
 
 func TestSignFido2Assertion_RPCError(t *testing.T) {
 	sender := &mockSender{
-		sendFunc: func(ctx context.Context, req *pairing.Request) (*pairing.Response, error) {
-			return mockErrorResponse(pairing.ErrorCodeUserCancelled, "user cancelled"), nil
+		sendFunc: func(ctx context.Context, req *pairingproto.Request) (*pairingproto.Response, error) {
+			return mockErrorResponse(pairingproto.ErrorCodeUserCancelled, "user cancelled"), nil
 		},
 	}
 
 	b := newTestBackend(t, sender)
 
-	params := &pairing.LocalSignFido2AssertionParams{
+	params := &pairingproto.LocalSignFido2AssertionParams{
 		CredentialID:   []byte("cred-id"),
 		ClientDataHash: []byte("hash"),
 		RpID:           "example.com",
@@ -286,14 +286,14 @@ func TestSignFido2Assertion_RPCError(t *testing.T) {
 func TestSignFido2Assertion_TransportError(t *testing.T) {
 	transportErr := errors.New("bluetooth disconnected")
 	sender := &mockSender{
-		sendFunc: func(ctx context.Context, req *pairing.Request) (*pairing.Response, error) {
+		sendFunc: func(ctx context.Context, req *pairingproto.Request) (*pairingproto.Response, error) {
 			return nil, transportErr
 		},
 	}
 
 	b := newTestBackend(t, sender)
 
-	params := &pairing.LocalSignFido2AssertionParams{
+	params := &pairingproto.LocalSignFido2AssertionParams{
 		CredentialID:   []byte("cred-id"),
 		ClientDataHash: []byte("hash"),
 		RpID:           "example.com",
@@ -306,14 +306,14 @@ func TestSignFido2Assertion_TransportError(t *testing.T) {
 
 func TestSignFido2Assertion_InvalidDecodeResult(t *testing.T) {
 	sender := &mockSender{
-		sendFunc: func(ctx context.Context, req *pairing.Request) (*pairing.Response, error) {
+		sendFunc: func(ctx context.Context, req *pairingproto.Request) (*pairingproto.Response, error) {
 			return mockInvalidResultResponse(), nil
 		},
 	}
 
 	b := newTestBackend(t, sender)
 
-	params := &pairing.LocalSignFido2AssertionParams{
+	params := &pairingproto.LocalSignFido2AssertionParams{
 		CredentialID:   []byte("cred-id"),
 		ClientDataHash: []byte("hash"),
 		RpID:           "example.com",
@@ -326,14 +326,14 @@ func TestSignFido2Assertion_InvalidDecodeResult(t *testing.T) {
 
 func TestSignFido2Assertion_BiometricFailed(t *testing.T) {
 	sender := &mockSender{
-		sendFunc: func(ctx context.Context, req *pairing.Request) (*pairing.Response, error) {
-			return mockErrorResponse(pairing.ErrorCodeBiometricFailed, "biometric failed"), nil
+		sendFunc: func(ctx context.Context, req *pairingproto.Request) (*pairingproto.Response, error) {
+			return mockErrorResponse(pairingproto.ErrorCodeBiometricFailed, "biometric failed"), nil
 		},
 	}
 
 	b := newTestBackend(t, sender)
 
-	params := &pairing.LocalSignFido2AssertionParams{
+	params := &pairingproto.LocalSignFido2AssertionParams{
 		CredentialID:             []byte("cred-id"),
 		ClientDataHash:           []byte("hash"),
 		RpID:                     "example.com",
@@ -349,10 +349,10 @@ func TestSignFido2Assertion_BiometricFailed(t *testing.T) {
 
 func TestGetFido2CredentialInfo_Success(t *testing.T) {
 	sender := &mockSender{
-		sendFunc: func(ctx context.Context, req *pairing.Request) (*pairing.Response, error) {
-			assert.Equal(t, pairing.MethodLocalGetKeyInfo, req.Method)
-			return mockSuccessResponse(pairing.LocalGetKeyInfoResult{
-				KeyInfo: pairing.KeyInfo{
+		sendFunc: func(ctx context.Context, req *pairingproto.Request) (*pairingproto.Response, error) {
+			assert.Equal(t, pairingproto.MethodLocalGetKeyInfo, req.Method)
+			return mockSuccessResponse(pairingproto.LocalGetKeyInfoResult{
+				KeyInfo: pairingproto.KeyInfo{
 					KeyID:     "fido2-key-1",
 					Algorithm: "ES256",
 					KeyType:   "fido2",
@@ -407,8 +407,8 @@ func TestGetFido2CredentialInfo_EmptyKeyID(t *testing.T) {
 
 func TestGetFido2CredentialInfo_RPCError(t *testing.T) {
 	sender := &mockSender{
-		sendFunc: func(ctx context.Context, req *pairing.Request) (*pairing.Response, error) {
-			return mockErrorResponse(pairing.ErrorCodeKeyNotFound, "key not found"), nil
+		sendFunc: func(ctx context.Context, req *pairingproto.Request) (*pairingproto.Response, error) {
+			return mockErrorResponse(pairingproto.ErrorCodeKeyNotFound, "key not found"), nil
 		},
 	}
 
@@ -422,7 +422,7 @@ func TestGetFido2CredentialInfo_RPCError(t *testing.T) {
 func TestGetFido2CredentialInfo_TransportError(t *testing.T) {
 	transportErr := errors.New("connection timeout")
 	sender := &mockSender{
-		sendFunc: func(ctx context.Context, req *pairing.Request) (*pairing.Response, error) {
+		sendFunc: func(ctx context.Context, req *pairingproto.Request) (*pairingproto.Response, error) {
 			return nil, transportErr
 		},
 	}
@@ -436,7 +436,7 @@ func TestGetFido2CredentialInfo_TransportError(t *testing.T) {
 
 func TestGetFido2CredentialInfo_InvalidDecodeResult(t *testing.T) {
 	sender := &mockSender{
-		sendFunc: func(ctx context.Context, req *pairing.Request) (*pairing.Response, error) {
+		sendFunc: func(ctx context.Context, req *pairingproto.Request) (*pairingproto.Response, error) {
 			return mockInvalidResultResponse(), nil
 		},
 	}
@@ -450,9 +450,9 @@ func TestGetFido2CredentialInfo_InvalidDecodeResult(t *testing.T) {
 
 func TestGetFido2CredentialInfo_NonFido2Key(t *testing.T) {
 	sender := &mockSender{
-		sendFunc: func(ctx context.Context, req *pairing.Request) (*pairing.Response, error) {
-			return mockSuccessResponse(pairing.LocalGetKeyInfoResult{
-				KeyInfo: pairing.KeyInfo{
+		sendFunc: func(ctx context.Context, req *pairingproto.Request) (*pairingproto.Response, error) {
+			return mockSuccessResponse(pairingproto.LocalGetKeyInfoResult{
+				KeyInfo: pairingproto.KeyInfo{
 					KeyID:     "signing-key-1",
 					Algorithm: "ES256",
 					KeyType:   "signing",

@@ -77,6 +77,25 @@ set when the PIN manager is enabled (`pkg/server/pin_manager.go:61-67`).
 - [PIN Management](../pin-management/architecture.md)
 - [CLI PIN Commands](../../xkey/docs/usage/cli/pin.md)
 
+### Attested-Caller Gate
+
+`attestation.peer_gate` (`pkg/config/attestation.go:59`) installs go-qrdb's
+attested-caller gate on the embedded node:
+
+```yaml
+attestation:
+  # off (default) | optional | required. optional admits a peer that has
+  # never submitted evidence and refuses one whose evidence fails; required
+  # refuses any gated call without fresh, passing evidence.
+  peer_gate: required
+```
+
+Any value but `off` requires `datastore.mode: standalone`, and an unknown value
+fails validation (`pkg/config/config.go:1801-1806`). The policy (anchors, PCR
+baseline, gated permissions, maximum evidence age) is not configuration: the
+embedder passes it with `server.WithAttestedCallerPolicy`. See
+[Attested Peer](../attested-peer/api.md#installing-the-gate).
+
 ### Backend-Specific Configuration
 - [TPM2 Session Encryption](../tpm2/engineering.md#bus-protection) - TPM 2.0 session encryption (always on, not configurable)
 

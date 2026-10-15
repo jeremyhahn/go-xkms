@@ -19,8 +19,8 @@ import (
 	"github.com/jeremyhahn/go-xkms/pkg/backend"
 	"github.com/jeremyhahn/go-xkms/pkg/crypto/aead"
 	"github.com/jeremyhahn/go-xkms/pkg/errs"
+	"github.com/jeremyhahn/go-xkms/pkg/pairingproto"
 	"github.com/jeremyhahn/go-xkms/pkg/types"
-	"github.com/jeremyhahn/go-xkms/xkey/pkg/pairing"
 )
 
 // Compile-time interface satisfaction check for SymmetricBackend.
@@ -99,7 +99,7 @@ func (b *Backend) GenerateSymmetricKey(ctx context.Context, attrs *types.KeyAttr
 		return nil, err
 	}
 
-	params := &pairing.LocalGenerateKeyParams{
+	params := &pairingproto.LocalGenerateKeyParams{
 		KeyID:     attrs.CN,
 		Algorithm: phoneAlgo,
 	}
@@ -107,12 +107,12 @@ func (b *Backend) GenerateSymmetricKey(ctx context.Context, attrs *types.KeyAttr
 	ctx, cancel := context.WithTimeout(ctx, b.config.RequestTimeout)
 	defer cancel()
 
-	resp, err := b.sendLocalRequest(ctx, pairing.MethodLocalGenerateKey, params)
+	resp, err := b.sendLocalRequest(ctx, pairingproto.MethodLocalGenerateKey, params)
 	if err != nil {
 		return nil, err
 	}
 
-	result, err := pairing.DecodeResult[pairing.LocalGenerateKeyResult](resp)
+	result, err := pairingproto.DecodeResult[pairingproto.LocalGenerateKeyResult](resp)
 	if err != nil {
 		return nil, ErrInvalidResponse
 	}
@@ -140,14 +140,14 @@ func (b *Backend) GetSymmetricKey(ctx context.Context, attrs *types.KeyAttribute
 	ctx, cancel := context.WithTimeout(ctx, b.config.RequestTimeout)
 	defer cancel()
 
-	resp, err := b.sendLocalRequest(ctx, pairing.MethodLocalGetKeyInfo, &pairing.LocalGetKeyInfoParams{
+	resp, err := b.sendLocalRequest(ctx, pairingproto.MethodLocalGetKeyInfo, &pairingproto.LocalGetKeyInfoParams{
 		KeyID: attrs.CN,
 	})
 	if err != nil {
 		return nil, err
 	}
 
-	keyInfo, err := pairing.DecodeResult[pairing.LocalGetKeyInfoResult](resp)
+	keyInfo, err := pairingproto.DecodeResult[pairingproto.LocalGetKeyInfoResult](resp)
 	if err != nil {
 		return nil, ErrInvalidResponse
 	}
@@ -176,14 +176,14 @@ func (b *Backend) SymmetricEncrypter(ctx context.Context, attrs *types.KeyAttrib
 	defer cancel()
 
 	// Verify the key exists on the phone.
-	resp, err := b.sendLocalRequest(ctx, pairing.MethodLocalGetKeyInfo, &pairing.LocalGetKeyInfoParams{
+	resp, err := b.sendLocalRequest(ctx, pairingproto.MethodLocalGetKeyInfo, &pairingproto.LocalGetKeyInfoParams{
 		KeyID: attrs.CN,
 	})
 	if err != nil {
 		return nil, err
 	}
 
-	keyInfo, err := pairing.DecodeResult[pairing.LocalGetKeyInfoResult](resp)
+	keyInfo, err := pairingproto.DecodeResult[pairingproto.LocalGetKeyInfoResult](resp)
 	if err != nil {
 		return nil, ErrInvalidResponse
 	}
@@ -223,7 +223,7 @@ func (e *phoneSymmetricEncrypter) Encrypt(plaintext []byte, opts *types.EncryptO
 		}
 	}
 
-	params := &pairing.LocalSymmetricEncryptParams{
+	params := &pairingproto.LocalSymmetricEncryptParams{
 		KeyID:     e.keyID,
 		Plaintext: plaintext,
 	}
@@ -235,12 +235,12 @@ func (e *phoneSymmetricEncrypter) Encrypt(plaintext []byte, opts *types.EncryptO
 	ctx, cancel := context.WithTimeout(context.Background(), e.backend.config.RequestTimeout)
 	defer cancel()
 
-	resp, err := e.backend.sendLocalRequest(ctx, pairing.MethodLocalSymmetricEncrypt, params)
+	resp, err := e.backend.sendLocalRequest(ctx, pairingproto.MethodLocalSymmetricEncrypt, params)
 	if err != nil {
 		return nil, err
 	}
 
-	result, err := pairing.DecodeResult[pairing.LocalSymmetricEncryptResult](resp)
+	result, err := pairingproto.DecodeResult[pairingproto.LocalSymmetricEncryptResult](resp)
 	if err != nil {
 		return nil, ErrInvalidResponse
 	}
@@ -266,7 +266,7 @@ func (e *phoneSymmetricEncrypter) Decrypt(data *types.EncryptedData, opts *types
 		}
 	}
 
-	params := &pairing.LocalSymmetricDecryptParams{
+	params := &pairingproto.LocalSymmetricDecryptParams{
 		KeyID:      e.keyID,
 		Ciphertext: data.Ciphertext,
 	}
@@ -278,12 +278,12 @@ func (e *phoneSymmetricEncrypter) Decrypt(data *types.EncryptedData, opts *types
 	ctx, cancel := context.WithTimeout(context.Background(), e.backend.config.RequestTimeout)
 	defer cancel()
 
-	resp, err := e.backend.sendLocalRequest(ctx, pairing.MethodLocalSymmetricDecrypt, params)
+	resp, err := e.backend.sendLocalRequest(ctx, pairingproto.MethodLocalSymmetricDecrypt, params)
 	if err != nil {
 		return nil, err
 	}
 
-	result, err := pairing.DecodeResult[pairing.LocalSymmetricDecryptResult](resp)
+	result, err := pairingproto.DecodeResult[pairingproto.LocalSymmetricDecryptResult](resp)
 	if err != nil {
 		return nil, ErrInvalidResponse
 	}

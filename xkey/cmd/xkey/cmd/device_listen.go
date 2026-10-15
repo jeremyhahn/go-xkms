@@ -25,6 +25,7 @@ import (
 	"syscall"
 
 	xkms "github.com/jeremyhahn/go-xkms/sdk/go"
+	"github.com/jeremyhahn/go-xkms/sdk/go/bootstrap"
 	"github.com/jeremyhahn/go-xkms/xkey/pkg/pairing"
 	"github.com/jeremyhahn/go-xkms/xkey/pkg/phone"
 	"github.com/spf13/cobra"
@@ -159,7 +160,7 @@ func runDeviceListen(cmd *cobra.Command, args []string) (runErr error) {
 	defer localPrivateKey.Destroy()
 
 	// Reconstruct the Noise static key from stored private key
-	localStaticKey, err := pairing.LoadStaticKeyFromBuffer(localPrivateKey)
+	localStaticKey, err := bootstrap.LoadNoiseStaticKeyFromBuffer(localPrivateKey)
 	if err != nil {
 		return &WrappedError{Msg: "failed to reconstruct local key", Err: err}
 	}

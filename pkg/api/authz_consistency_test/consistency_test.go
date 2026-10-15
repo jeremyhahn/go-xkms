@@ -270,6 +270,8 @@ var canonicalCapabilities = map[string]capability{
 	"oidc.credential.token":       {GRPC: "OIDCCredentialGetAccessToken", MCP: "oidc.credential.token", REST: "POST /api/v1/oidc/credentials/{scope}/{name}/token"},
 	"oidc.credential.deviceStart": {GRPC: "OIDCCredentialDeviceStart", MCP: "oidc.credential.device.start", REST: "POST /api/v1/oidc/credentials/{scope}/{name}/device"},
 	"oidc.credential.devicePoll":  {GRPC: "OIDCCredentialDevicePoll", MCP: "oidc.credential.device.poll", REST: "POST /api/v1/oidc/credentials/{scope}/{name}/device/poll"},
+	"peer.attestation.challenge":  {GRPC: "PeerAttestationChallenge", MCP: "peer.attestation.challenge", REST: "POST /api/v1/peer-attestation/challenge"},
+	"peer.attestation.submit":     {GRPC: "SubmitPeerAttestation", MCP: "peer.attestation.submit", REST: "POST /api/v1/peer-attestation/evidence"},
 }
 
 // scan re-derives the three transports' wire tables from their own source,

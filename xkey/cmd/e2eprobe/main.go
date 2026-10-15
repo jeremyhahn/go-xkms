@@ -39,13 +39,15 @@ import (
 	"os"
 	"time"
 
+	"github.com/jeremyhahn/go-xkms/sdk/go/bootstrap"
+	"github.com/jeremyhahn/go-xkms/sdk/go/pairingproto"
 	"github.com/jeremyhahn/go-xkms/sdk/go/secure"
 	"github.com/jeremyhahn/go-xkms/xkey/pkg/pairing"
 )
 
 type noopHandler struct{}
 
-func (noopHandler) HandleRequest(ctx context.Context, req *pairing.Request) *pairing.Response {
+func (noopHandler) HandleRequest(ctx context.Context, req *pairingproto.Request) *pairingproto.Response {
 	return nil
 }
 
@@ -161,9 +163,9 @@ func main() {
 	fatalIf(tr.Connect(ctx), "tcp connect to "+addr)
 	fmt.Println("OK   tcp connected:", addr)
 
-	session, err := pairing.NewNoiseSession(&pairing.NoiseSessionConfig{LocalStaticKey: staticKey, IsInitiator: true})
+	session, err := bootstrap.NewNoiseSession(&bootstrap.NoiseSessionConfig{LocalStaticKey: staticKey, IsInitiator: true})
 	fatalIf(err, "create noise session")
-	fatalIf(pairing.PerformHandshake(ctx, &pairing.HandshakeConfig{
+	fatalIf(pairingproto.PerformHandshake(ctx, &pairingproto.HandshakeConfig{
 		Transport: tr, Session: session, Logger: logger, LocalStaticPublicKey: staticKey.PublicBytes(),
 	}), "noise handshake")
 	fmt.Println("OK   noise handshake (identity exchange + XX)")
@@ -173,7 +175,7 @@ func main() {
 
 	p := &prober{}
 	p.call = func(method string, params interface{}) (map[string]json.RawMessage, error) {
-		resp, err := router.SendRequest(ctx, pairing.NewRequest(method, params))
+		resp, err := router.SendRequest(ctx, pairingproto.NewRequest(method, params))
 		if err != nil {
 			return nil, err
 		}
@@ -205,7 +207,7 @@ func main() {
 	// hand-writes the JSON it expects proves only that the probe and the phone
 	// agree with each other — it cannot catch a field the Go contract renamed.
 	decodeInto := func(name, method string, params interface{}, target interface{}) {
-		resp, err := router.SendRequest(ctx, pairing.NewRequest(method, params))
+		resp, err := router.SendRequest(ctx, pairingproto.NewRequest(method, params))
 		if err != nil {
 			p.record(name, true, err, "")
 			return
@@ -217,7 +219,7 @@ func main() {
 		p.record(name, true, json.Unmarshal(resp.Result, target), "")
 	}
 
-	var info pairing.GetInfoResult
+	var info pairingproto.GetInfoResult
 	decodeInto("getInfo", "getInfo", nil, &info)
 	p.record("getInfo carries deviceName", true, requireNonEmpty("deviceName", info.DeviceName), "")
 	p.record("getInfo carries supportedAlgorithms", true,
@@ -225,7 +227,7 @@ func main() {
 	p.record("getInfo carries maxCredentials", true,
 		requireNonZero("maxCredentials", info.MaxCredentials), "")
 
-	var caps pairing.LocalGetCapabilitiesResult
+	var caps pairingproto.LocalGetCapabilitiesResult
 	decodeInto("local.getCapabilities", "local.getCapabilities", map[string]interface{}{}, &caps)
 	p.record("getCapabilities carries deviceName", true, requireNonEmpty("deviceName", caps.DeviceName), "")
 	p.record("getCapabilities carries supportedAlgorithms", true,

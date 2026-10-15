@@ -378,6 +378,21 @@ func (*stubClient) OIDCCredentialGet(context.Context, *OIDCCredentialRef) (*OIDC
 func (*stubClient) OIDCCredentialList(context.Context, *OIDCCredentialListRequest) (*OIDCCredentialListResponse, error) {
 	panic("stub")
 }
+func (*stubClient) TrustRootList(context.Context, *TrustRootListRequest) (*TrustRootListResponse, error) {
+	panic("stub")
+}
+func (*stubClient) TrustRootGet(context.Context, *TrustRootRequest) (*TrustRoot, error) {
+	panic("stub")
+}
+func (*stubClient) TrustRootImport(context.Context, *TrustRootImportRequest) (*TrustRootImportResponse, error) {
+	panic("stub")
+}
+func (*stubClient) TrustRootQuarantine(context.Context, *TrustRootRequest) (*TrustRoot, error) {
+	panic("stub")
+}
+func (*stubClient) TrustRootRemove(context.Context, *TrustRootRequest) error {
+	panic("stub")
+}
 func (*stubClient) OIDCCredentialDelete(context.Context, *OIDCCredentialRef) error {
 	panic("stub")
 }

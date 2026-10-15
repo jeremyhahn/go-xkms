@@ -130,6 +130,10 @@ var (
 	ErrInvalidNonce                = errors.New("tpm: invalid nonce")
 	ErrNotInitialized              = errors.New("tpm: not initialized")
 
+	// ErrDeviceNoResponse indicates the TPM transport failed before the TPM
+	// returned a response code, so whether the TPM is provisioned is unknown.
+	ErrDeviceNoResponse = errors.New("tpm: device did not answer")
+
 	// ErrPCRDataTooLarge indicates encoded PCR banks longer than
 	// maxEncodedPCRBytes were refused before decoding. The encoding arrives
 	// from remote attesters, and encoding/gob is not hardened against

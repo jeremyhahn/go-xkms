@@ -118,7 +118,7 @@ func migrateKeyringPreflight() error {
 
 func runMigrate(cmd *cobra.Command, args []string) error {
 	// Check for root privileges
-	if os.Geteuid() != 0 {
+	if geteuid() != 0 {
 		return luks.ErrPermissionDenied
 	}
 

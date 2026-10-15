@@ -612,36 +612,24 @@ jobs:
         working-directory: xkey
         run: go test -race -v -tags "codec_json tpm_simulator" ./internal/lifecycle/... ./pkg/phone/... ./pkg/pairing/...
 
-      # pkg/authenticator holds the FIDO2 ClientPIN command handling, including
-      # the ChangePIN buffer-aliasing regression test. `go vet -tags ble ./...`
-      # below COMPILES that test but never runs it, and a test that is only
-      # compiled cannot fail -- so the corruption it guards against could
-      # return with CI green.
-      #
-      # codec_json is required: without it the package's DAO-backed tests fail
-      # on "codec json is not supported in this build" rather than on anything
-      # about the code.
-      #
-      # pkg/oath is here for the same reason, added with the FIPS gate in #22.
-      # Its suite was in exactly the state the paragraph above describes: 464
-      # lines of gate tests that `go vet -tags ble ./...` compiled and no job
-      # ran. A FIPS refusal that CI never executes is a refusal nobody has
+      # pkg/oath's FIPS gate tests (#22) run here because `go vet -tags ble
+      # ./...` below COMPILES a test but never runs it, and a test that is
+      # only compiled cannot fail: 464 lines of gate tests sat in exactly that
+      # state. codec_json is required: without it the package's DAO-backed
+      # tests fail on "codec json is not supported in this build" rather than
+      # on anything about the code. A FIPS refusal that CI never executes is a refusal nobody has
       # checked -- and under GODEBUG=fips140=only the thing being refused is a
       # standard-library PANIC, so the untested direction is a process kill on
       # a user-driven path.
-      # -tags tpm_simulator: pkg/authenticator/keybackend's TPM attestation
-      # tests exercise TPM2_Certify and go-webauthn's own "tpm" format
-      # verifier against the in-process simulator (#985). Without the tag
-      # those files are excluded from the build entirely.
-      - name: xkey authenticator and oath tests
+      - name: xkey oath tests
         working-directory: xkey
-        run: go test -race -v -tags "codec_json tpm_simulator" ./pkg/authenticator/... ./pkg/oath/...
+        run: go test -race -v -tags codec_json ./pkg/oath/...
 
       # Every other xkey unit package (#147). Before this step CI executed
       # 2,483 of the module's 13,725 test functions: the 41 packages below had
       # tests that `go vet -tags ble ./...` compiled and no job ran, and a test
       # that is only compiled cannot fail. The set is the security surface of
-      # the product -- truststore, tokenstore, luks, secretservice, nssdb,
+      # the product -- tokenstore, luks, secretservice, nssdb,
       # pivcert, sshstore, sshlocal, config, audit -- and #182 was
       # an open defect in truststore while its 266 tests sat dark.
       #
@@ -654,7 +642,7 @@ jobs:
       # subpackages), so neither is listed.
       #
       # -tags codec_json for the same reason as the step above: the DAO-backed
-      # packages (tokenstore 49 tests, truststore 20, oath 30) fail without it
+      # packages (tokenstore 49 tests, oath 30) fail without it
       # on the codec, not on the code. Measured warm at nice 19 on the runner
       # host: 159 CPU-s for the 40 packages, 1.0-2.2x under -race, so about
       # three wall-minutes against this job's 20-minute median.
@@ -752,8 +740,7 @@ jobs:
             ./pkg/oidc/aws ./pkg/oidc/handlers \
             ./pkg/pwimport ./pkg/qrgen ./pkg/qrscan ./pkg/secretservice \
             ./pkg/serverregistry ./pkg/shellquote ./pkg/sshlocal ./pkg/sshstore ./pkg/sync \
-            ./pkg/tokenstore ./pkg/truststore ./pkg/uhid ./pkg/usb \
-            ./pkg/virtualdevice ./pkg/xhome
+            ./pkg/tokenstore ./pkg/usb ./pkg/xhome
           # -tags ble: createFIDO2PhoneKeyBackend and the CLI's fail-closed
           # fingerprint tests are ble-only, and the four *HarnessArgv* tests
           # are the logins harness guard (#409). Measured as an unprivileged

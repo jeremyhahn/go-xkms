@@ -22,7 +22,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/jeremyhahn/go-xkms/xkey/pkg/pairing"
+	"github.com/jeremyhahn/go-xkms/pkg/pairingproto"
+	"github.com/jeremyhahn/go-xkms/pkg/trust/bootstrap"
 )
 
 // This file drives BLEPeripheral.AcceptConnection end to end -- the
@@ -58,11 +59,11 @@ func (w *fragmentChannelWriter) Write(p []byte) (int, error) {
 func (w *fragmentChannelWriter) nextMessage(ctx context.Context, t *testing.T) []byte {
 	t.Helper()
 
-	r := pairing.NewReassembler()
+	r := pairingproto.NewReassembler()
 	for {
 		select {
 		case raw := <-w.ch:
-			frag, err := pairing.DecodeFragment(raw)
+			frag, err := pairingproto.DecodeFragment(raw)
 			if err != nil {
 				t.Fatalf("fragment failed to decode: %v", err)
 			}
@@ -90,7 +91,7 @@ func (w *fragmentChannelWriter) nextMessage(ctx context.Context, t *testing.T) [
 func deliverToPeripheral(t *testing.T, p *BLEPeripheral, mtu int, message []byte) {
 	t.Helper()
 
-	f := pairing.NewFragmenter(mtu - bleNotifyOverhead)
+	f := pairingproto.NewFragmenter(mtu - bleNotifyOverhead)
 	fragments, err := f.Fragment(message)
 	if err != nil {
 		t.Fatalf("fragment message: %v", err)
@@ -116,13 +117,13 @@ func TestBLEPeripheral_AcceptConnection_HandshakeThenRequest(t *testing.T) {
 	go func() { acceptDone <- p.AcceptConnection(ctx) }()
 
 	// The simulated phone: a real Noise XX initiator.
-	clientKey, err := pairing.GenerateStaticKey()
+	clientKey, err := bootstrap.GenerateNoiseStaticKey()
 	if err != nil {
 		t.Fatalf("client key: %v", err)
 	}
 	defer clientKey.Destroy()
 
-	client, err := pairing.NewNoiseSession(&pairing.NoiseSessionConfig{
+	client, err := bootstrap.NewNoiseSession(&bootstrap.NoiseSessionConfig{
 		LocalStaticKey: clientKey,
 		IsInitiator:    true,
 	})

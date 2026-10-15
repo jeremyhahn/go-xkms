@@ -23,9 +23,9 @@ import (
 	"encoding/json"
 	"testing"
 
+	"github.com/jeremyhahn/go-xkms/pkg/pairingproto"
 	xkms "github.com/jeremyhahn/go-xkms/sdk/go"
 	"github.com/jeremyhahn/go-xkms/xkey/pkg/attestation/attesttest"
-	pairing "github.com/jeremyhahn/go-xkms/xkey/pkg/pairing"
 )
 
 // Every enrollment step is informational: an emulator cannot produce evidence
@@ -42,35 +42,35 @@ func requireAllOptional(t *testing.T, p *prober) {
 func TestEnrollmentFamily_RecordsEachDeviationInTheEvidence(t *testing.T) {
 	tests := []struct {
 		name       string
-		mutate     func(t *testing.T, ph *phone, res *pairing.LocalGetDeviceEnrollmentRequestResult)
+		mutate     func(t *testing.T, ph *phone, res *pairingproto.LocalGetDeviceEnrollmentRequestResult)
 		step       string
 		wantDetail string
 		wantStore  bool
 	}{
 		{
 			name: "unknown format tag",
-			mutate: func(_ *testing.T, _ *phone, res *pairing.LocalGetDeviceEnrollmentRequestResult) {
+			mutate: func(_ *testing.T, _ *phone, res *pairingproto.LocalGetDeviceEnrollmentRequestResult) {
 				res.Format = "tpm2-quote"
 			},
 			step: "enrollment format tag", wantDetail: "unexpected format tpm2-quote", wantStore: true,
 		},
 		{
 			name: "lone self-signed certificate",
-			mutate: func(_ *testing.T, _ *phone, res *pairing.LocalGetDeviceEnrollmentRequestResult) {
+			mutate: func(_ *testing.T, _ *phone, res *pairingproto.LocalGetDeviceEnrollmentRequestResult) {
 				res.AttestationChain = res.AttestationChain[:1]
 			},
 			step: "attestation chain has a path", wantDetail: "chain too short",
 		},
 		{
 			name: "chain entry is not base64",
-			mutate: func(_ *testing.T, _ *phone, res *pairing.LocalGetDeviceEnrollmentRequestResult) {
+			mutate: func(_ *testing.T, _ *phone, res *pairingproto.LocalGetDeviceEnrollmentRequestResult) {
 				res.AttestationChain[1] = "!!"
 			},
 			step: "attestation chain parses", wantDetail: "illegal base64",
 		},
 		{
 			name: "attestation over an earlier exchange's challenge",
-			mutate: func(t *testing.T, ph *phone, res *pairing.LocalGetDeviceEnrollmentRequestResult) {
+			mutate: func(t *testing.T, ph *phone, res *pairingproto.LocalGetDeviceEnrollmentRequestResult) {
 				replayed := attesttest.AttestedLeafDER(t, ph.attestCA, ph.deviceKey, []byte("an earlier nonce"),
 					xkms.AndroidSecurityLevelStrongBox, attesttest.AttestedBootState())
 				res.AttestationChain[0] = b64(replayed)
@@ -79,7 +79,7 @@ func TestEnrollmentFamily_RecordsEachDeviationInTheEvidence(t *testing.T) {
 		},
 		{
 			name: "leaf carries no attestation extension",
-			mutate: func(t *testing.T, _ *phone, res *pairing.LocalGetDeviceEnrollmentRequestResult) {
+			mutate: func(t *testing.T, _ *phone, res *pairingproto.LocalGetDeviceEnrollmentRequestResult) {
 				plain, err := selfSignedCert("no attestation")
 				if err != nil {
 					t.Fatalf("selfSignedCert: %v", err)
@@ -90,7 +90,7 @@ func TestEnrollmentFamily_RecordsEachDeviationInTheEvidence(t *testing.T) {
 		},
 		{
 			name: "CSR asks for a key nobody attested",
-			mutate: func(t *testing.T, _ *phone, res *pairing.LocalGetDeviceEnrollmentRequestResult) {
+			mutate: func(t *testing.T, _ *phone, res *pairingproto.LocalGetDeviceEnrollmentRequestResult) {
 				res.CSR = csrFor(t, newKey(t))
 			},
 			step: "CSR is bound to the attested key", wantDetail: "the CSR key is not the attested key",
@@ -98,7 +98,7 @@ func TestEnrollmentFamily_RecordsEachDeviationInTheEvidence(t *testing.T) {
 		},
 		{
 			name: "CSR does not parse",
-			mutate: func(_ *testing.T, _ *phone, res *pairing.LocalGetDeviceEnrollmentRequestResult) {
+			mutate: func(_ *testing.T, _ *phone, res *pairingproto.LocalGetDeviceEnrollmentRequestResult) {
 				res.CSR = []byte("not a CSR")
 			},
 			step: "probe CA issues a credential", wantDetail: " -> ",
@@ -107,7 +107,7 @@ func TestEnrollmentFamily_RecordsEachDeviationInTheEvidence(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			ph := newPhone(t)
-			ph.mutateEnrollment = func(res *pairing.LocalGetDeviceEnrollmentRequestResult) {
+			ph.mutateEnrollment = func(res *pairingproto.LocalGetDeviceEnrollmentRequestResult) {
 				tt.mutate(t, ph, res)
 			}
 			p := ph.prober()
@@ -116,7 +116,7 @@ func TestEnrollmentFamily_RecordsEachDeviationInTheEvidence(t *testing.T) {
 
 			requireFailedStep(t, p, tt.step, tt.wantDetail)
 			requireAllOptional(t, p)
-			if got := ph.called(pairing.MethodLocalStoreDeviceCredential); got != tt.wantStore {
+			if got := ph.called(pairingproto.MethodLocalStoreDeviceCredential); got != tt.wantStore {
 				t.Fatalf("storeDeviceCredential called = %v, want %v", got, tt.wantStore)
 			}
 		})
@@ -125,8 +125,8 @@ func TestEnrollmentFamily_RecordsEachDeviationInTheEvidence(t *testing.T) {
 
 func TestEnrollmentFamily_RecordsACredentialThePhoneDidNotAdopt(t *testing.T) {
 	ph := newPhone(t)
-	ph.handlers[pairing.MethodLocalStoreDeviceCredential] = func(map[string]interface{}) (interface{}, error) {
-		return &pairing.LocalStoreDeviceCredentialResult{Stored: false}, nil
+	ph.handlers[pairingproto.MethodLocalStoreDeviceCredential] = func(map[string]interface{}) (interface{}, error) {
+		return &pairingproto.LocalStoreDeviceCredentialResult{Stored: false}, nil
 	}
 	p := ph.prober()
 
@@ -143,15 +143,15 @@ func TestEnrollmentFamily_StopsWhenThePhoneRefuses(t *testing.T) {
 		answer phoneHandler
 		step   string
 	}{
-		{"request refused", pairing.MethodLocalGetDeviceEnrollmentRequest, notApplicable,
+		{"request refused", pairingproto.MethodLocalGetDeviceEnrollmentRequest, notApplicable,
 			"local.getDeviceEnrollmentRequest"},
-		{"package undecodable", pairing.MethodLocalGetDeviceEnrollmentRequest,
+		{"package undecodable", pairingproto.MethodLocalGetDeviceEnrollmentRequest,
 			func(map[string]interface{}) (interface{}, error) {
 				return map[string]interface{}{"attestationChain": "not an array"}, nil
 			}, "enrollment package decodes"},
-		{"store refused", pairing.MethodLocalStoreDeviceCredential, notApplicable,
+		{"store refused", pairingproto.MethodLocalStoreDeviceCredential, notApplicable,
 			"local.storeDeviceCredential"},
-		{"store answer undecodable", pairing.MethodLocalStoreDeviceCredential,
+		{"store answer undecodable", pairingproto.MethodLocalStoreDeviceCredential,
 			func(map[string]interface{}) (interface{}, error) {
 				return map[string]interface{}{"stored": "yes"}, nil
 			}, "store response decodes"},
@@ -174,7 +174,7 @@ func TestEnrollmentFamily_StopsWhenThePhoneRefuses(t *testing.T) {
 }
 
 func TestDecodeInto(t *testing.T) {
-	var stored pairing.LocalStoreDeviceCredentialResult
+	var stored pairingproto.LocalStoreDeviceCredentialResult
 	ok := map[string]json.RawMessage{"stored": json.RawMessage(`true`), "notAfter": json.RawMessage(`99`)}
 	if err := decodeInto(ok, &stored); err != nil {
 		t.Fatalf("decodeInto: %v", err)

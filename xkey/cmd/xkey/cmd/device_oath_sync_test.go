@@ -20,8 +20,8 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	"github.com/jeremyhahn/go-xkms/pkg/pairingproto"
 	"github.com/jeremyhahn/go-xkms/xkey/pkg/oath"
-	"github.com/jeremyhahn/go-xkms/xkey/pkg/pairing"
 )
 
 // --- OATH sync command structure tests ---
@@ -248,7 +248,7 @@ func TestCredentialToPhoneInfo_HOTP(t *testing.T) {
 }
 
 func TestPhoneInfoToCredential(t *testing.T) {
-	info := pairing.OATHCredentialInfo{
+	info := pairingproto.OATHCredentialInfo{
 		Name:        "AWS",
 		Issuer:      "Amazon",
 		AccountName: "admin@example.com",
@@ -275,7 +275,7 @@ func TestPhoneInfoToCredential(t *testing.T) {
 }
 
 func TestPhoneInfoToCredential_Defaults(t *testing.T) {
-	info := pairing.OATHCredentialInfo{
+	info := pairingproto.OATHCredentialInfo{
 		Name:   "Simple",
 		Secret: mustSecretText("JBSWY3DPEHPK3PXP"),
 	}
@@ -292,7 +292,7 @@ func TestPhoneInfoToCredential_Defaults(t *testing.T) {
 }
 
 func TestPhoneInfoToCredential_EmptyNameWithIssuer(t *testing.T) {
-	info := pairing.OATHCredentialInfo{
+	info := pairingproto.OATHCredentialInfo{
 		Issuer: "TestIssuer",
 		Secret: mustSecretText("JBSWY3DPEHPK3PXP"),
 	}
@@ -305,7 +305,7 @@ func TestPhoneInfoToCredential_EmptyNameWithIssuer(t *testing.T) {
 }
 
 func TestPhoneInfoToCredential_WithIssuerAndAccount(t *testing.T) {
-	info := pairing.OATHCredentialInfo{
+	info := pairingproto.OATHCredentialInfo{
 		Name:        "GitHub",
 		Issuer:      "GitHub",
 		AccountName: "user@test.com",
@@ -321,7 +321,7 @@ func TestPhoneInfoToCredential_WithIssuerAndAccount(t *testing.T) {
 }
 
 func TestPhoneInfoToCredential_HOTP(t *testing.T) {
-	info := pairing.OATHCredentialInfo{
+	info := pairingproto.OATHCredentialInfo{
 		Name:    "HotpService",
 		Secret:  mustSecretText("JBSWY3DPEHPK3PXP"),
 		Type:    "hotp",

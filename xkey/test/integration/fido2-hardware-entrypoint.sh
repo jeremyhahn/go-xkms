@@ -149,17 +149,19 @@ export PKCS11_LIBRARY="${PKCS11_LIB}"
 # 5. Run FIDO2 backend adapter integration tests
 # ---------------------------------------------------------------------------
 # TPM_DEVICE points the tpm2 backend test at the swtpm unix-socket device.
+# The key backends live in the root module (pkg/fido2/authenticator), so the
+# tests run from the repository root rather than the xkey working directory.
 
 echo "[fido2-hardware] Running FIDO2 backend adapter integration tests..."
 echo "[fido2-hardware]   TPM_DEVICE=${TPM_DEVICE}"
 echo "[fido2-hardware]   PKCS11_LIBRARY=${PKCS11_LIBRARY}"
 
-go test \
+(cd .. && go test \
     -v \
     -count=1 \
     -timeout=20m \
-    -tags "integration swtpm pkcs11 production codec_json ble" \
-    ./pkg/authenticator/keybackend/...
+    -tags "integration swtpm pkcs11 codec_json" \
+    ./pkg/fido2/authenticator/keybackend/...)
 
 TEST_EXIT=$?
 

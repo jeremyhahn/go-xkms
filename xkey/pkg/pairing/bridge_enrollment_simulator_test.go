@@ -31,6 +31,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	"github.com/jeremyhahn/go-xkms/pkg/pairingproto"
 	"github.com/jeremyhahn/go-xkms/pkg/tpm2"
 	"github.com/jeremyhahn/go-xkms/pkg/tpm2/store"
 )
@@ -152,11 +153,11 @@ func TestBridge_GetTCGCSRIDevID_AgainstARealTPM(t *testing.T) {
 	})
 	require.NoError(t, err)
 
-	req := newRemoteRequest(MethodRemoteGetTCGCSRIDevID, RemoteGetTCGCSRIDevIDParams{Backend: "tpm2"})
+	req := newRemoteRequest(pairingproto.MethodRemoteGetTCGCSRIDevID, pairingproto.RemoteGetTCGCSRIDevIDParams{Backend: "tpm2"})
 	resp := bridge.HandleRequest(context.Background(), req)
 	require.Nil(t, resp.Error, "a bridge with a TPM must not report enrollment as unavailable")
 
-	result := decodeResult[RemoteGetTCGCSRIDevIDResult](t, resp)
+	result := decodeResult[pairingproto.RemoteGetTCGCSRIDevIDResult](t, resp)
 	require.NotEmpty(t, result.CSR, "the phone must receive a packed TCG-CSR-IDEVID")
 
 	// The CSR must be the real TCG structure, not an opaque blob: parsing the
@@ -196,7 +197,7 @@ func TestBridge_GetAttestationQuote_AgainstARealTPM(t *testing.T) {
 	_, err = rand.Read(nonce)
 	require.NoError(t, err)
 
-	req := newRemoteRequest(MethodRemoteGetAttestationQuote, RemoteGetAttestationQuoteParams{
+	req := newRemoteRequest(pairingproto.MethodRemoteGetAttestationQuote, pairingproto.RemoteGetAttestationQuoteParams{
 		Backend:    "tpm2",
 		Nonce:      nonce,
 		PCRIndices: []int{0, 7},
@@ -204,7 +205,7 @@ func TestBridge_GetAttestationQuote_AgainstARealTPM(t *testing.T) {
 	resp := bridge.HandleRequest(context.Background(), req)
 	require.Nil(t, resp.Error, "a bridge with a TPM must produce a quote")
 
-	result := decodeResult[RemoteGetAttestationQuoteResult](t, resp)
+	result := decodeResult[pairingproto.RemoteGetAttestationQuoteResult](t, resp)
 	assert.NotEmpty(t, result.Quoted, "the signed TPMS_ATTEST must reach the CA")
 	assert.NotEmpty(t, result.Signature, "the IAK signature over the quote must reach the CA")
 }

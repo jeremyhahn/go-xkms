@@ -26,6 +26,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/jeremyhahn/go-xkms/pkg/pairingproto"
 	"github.com/jeremyhahn/go-xkms/xkey/internal/tpmpolicyfake"
 
 	"github.com/jeremyhahn/go-xkms/sdk/go/transport"
@@ -401,9 +402,9 @@ func generateTestPEM(t *testing.T) string {
 }
 
 // newRemoteRequest constructs a JSON-RPC request for handler tests.
-func newRemoteRequest(method string, params interface{}) *Request {
-	return &Request{
-		JSONRPC: JSONRPCVersion,
+func newRemoteRequest(method string, params interface{}) *pairingproto.Request {
+	return &pairingproto.Request{
+		JSONRPC: pairingproto.JSONRPCVersion,
 		ID:      1,
 		Method:  method,
 		Params:  params,
@@ -424,7 +425,7 @@ type discardWriter struct{}
 func (d *discardWriter) Write(p []byte) (int, error) { return len(p), nil }
 
 // decodeResult is a helper that unmarshals a successful response's Result into T.
-func decodeResult[T any](t *testing.T, resp *Response) T {
+func decodeResult[T any](t *testing.T, resp *pairingproto.Response) T {
 	t.Helper()
 	require.NotNil(t, resp)
 	require.Nil(t, resp.Error, "expected success but got error: %v", resp.Error)
@@ -436,10 +437,10 @@ func decodeResult[T any](t *testing.T, resp *Response) T {
 }
 
 // assertErrorResponse validates a JSON-RPC error response.
-func assertErrorResponse(t *testing.T, resp *Response, expectedID uint64, expectedCode int) {
+func assertErrorResponse(t *testing.T, resp *pairingproto.Response, expectedID uint64, expectedCode int) {
 	t.Helper()
 	require.NotNil(t, resp)
-	assert.Equal(t, JSONRPCVersion, resp.JSONRPC)
+	assert.Equal(t, pairingproto.JSONRPCVersion, resp.JSONRPC)
 	assert.Equal(t, expectedID, resp.ID)
 	require.NotNil(t, resp.Error)
 	assert.Equal(t, expectedCode, resp.Error.Code)
@@ -450,7 +451,7 @@ func assertErrorResponse(t *testing.T, resp *Response, expectedID uint64, expect
 
 func TestNewBridge_NilClient(t *testing.T) {
 	b, err := NewBridge(nil, nil)
-	require.ErrorIs(t, err, ErrBridgeNotConnected)
+	require.ErrorIs(t, err, pairingproto.ErrBridgeNotConnected)
 	assert.Nil(t, b)
 }
 
@@ -478,23 +479,23 @@ func TestNewBridge_Success(t *testing.T) {
 
 	// Verify all 16 remote handlers are registered (13 original + 3 TCG-CSR-IDEVID).
 	expectedMethods := []string{
-		MethodRemoteListBackends,
-		MethodRemoteListKeys,
-		MethodRemoteGetPublicKey,
-		MethodRemoteSign,
-		MethodRemoteVerify,
-		MethodRemoteEncrypt,
-		MethodRemoteDecrypt,
-		MethodRemoteDeriveKey,
-		MethodRemoteGenerateKey,
-		MethodRemoteGetKeyInfo,
-		MethodRemoteDeleteKey,
-		MethodRemoteAttestKey,
-		MethodRemoteAttestDevice,
+		pairingproto.MethodRemoteListBackends,
+		pairingproto.MethodRemoteListKeys,
+		pairingproto.MethodRemoteGetPublicKey,
+		pairingproto.MethodRemoteSign,
+		pairingproto.MethodRemoteVerify,
+		pairingproto.MethodRemoteEncrypt,
+		pairingproto.MethodRemoteDecrypt,
+		pairingproto.MethodRemoteDeriveKey,
+		pairingproto.MethodRemoteGenerateKey,
+		pairingproto.MethodRemoteGetKeyInfo,
+		pairingproto.MethodRemoteDeleteKey,
+		pairingproto.MethodRemoteAttestKey,
+		pairingproto.MethodRemoteAttestDevice,
 		// TCG-CSR-IDEVID enrollment methods
-		MethodRemoteGetTCGCSRIDevID,
-		MethodRemoteActivateCredential,
-		MethodRemoteGetAttestationQuote,
+		pairingproto.MethodRemoteGetTCGCSRIDevID,
+		pairingproto.MethodRemoteActivateCredential,
+		pairingproto.MethodRemoteGetAttestationQuote,
 	}
 	for _, method := range expectedMethods {
 		_, ok := b.handlers[method]
@@ -542,7 +543,7 @@ func TestHandleRequest_NilRequest(t *testing.T) {
 	require.NoError(t, err)
 
 	resp := b.HandleRequest(context.Background(), nil)
-	assertErrorResponse(t, resp, 0, ErrorCodeInvalidRequest)
+	assertErrorResponse(t, resp, 0, pairingproto.ErrorCodeInvalidRequest)
 }
 
 func TestHandleRequest_UnknownMethod(t *testing.T) {
@@ -552,7 +553,7 @@ func TestHandleRequest_UnknownMethod(t *testing.T) {
 
 	req := newRemoteRequest("unknown.method", nil)
 	resp := b.HandleRequest(context.Background(), req)
-	assertErrorResponse(t, resp, req.ID, ErrorCodeMethodNotFound)
+	assertErrorResponse(t, resp, req.ID, pairingproto.ErrorCodeMethodNotFound)
 	assert.Contains(t, resp.Error.Message, "unknown.method")
 }
 
@@ -649,11 +650,11 @@ func TestBridge_ListBackends(t *testing.T) {
 	b, err := NewBridge(client, &BridgeConfig{Logger: testLogger()})
 	require.NoError(t, err)
 
-	req := newRemoteRequest(MethodRemoteListBackends, nil)
+	req := newRemoteRequest(pairingproto.MethodRemoteListBackends, nil)
 	resp := b.HandleRequest(context.Background(), req)
 
-	result := decodeResult[RemoteListBackendsResult](t, resp)
-	assert.Equal(t, JSONRPCVersion, resp.JSONRPC)
+	result := decodeResult[pairingproto.RemoteListBackendsResult](t, resp)
+	assert.Equal(t, pairingproto.JSONRPCVersion, resp.JSONRPC)
 	assert.Equal(t, uint64(1), resp.ID)
 	require.Len(t, result.Backends, 2)
 
@@ -689,10 +690,10 @@ func TestBridge_ListBackends_FiltersDenied(t *testing.T) {
 	b, err := NewBridge(client, config)
 	require.NoError(t, err)
 
-	req := newRemoteRequest(MethodRemoteListBackends, nil)
+	req := newRemoteRequest(pairingproto.MethodRemoteListBackends, nil)
 	resp := b.HandleRequest(context.Background(), req)
 
-	result := decodeResult[RemoteListBackendsResult](t, resp)
+	result := decodeResult[pairingproto.RemoteListBackendsResult](t, resp)
 	require.Len(t, result.Backends, 2)
 	for _, backend := range result.Backends {
 		assert.NotEqual(t, "insecure", backend.Name)
@@ -708,9 +709,9 @@ func TestBridge_ListBackends_ClientError(t *testing.T) {
 	b, err := NewBridge(client, &BridgeConfig{Logger: testLogger()})
 	require.NoError(t, err)
 
-	req := newRemoteRequest(MethodRemoteListBackends, nil)
+	req := newRemoteRequest(pairingproto.MethodRemoteListBackends, nil)
 	resp := b.HandleRequest(context.Background(), req)
-	assertErrorResponse(t, resp, req.ID, ErrorCodeInternalError)
+	assertErrorResponse(t, resp, req.ID, pairingproto.ErrorCodeInternalError)
 	assert.Contains(t, resp.Error.Message, "connection refused")
 }
 
@@ -727,13 +728,13 @@ func TestBridge_ListKeys_Success(t *testing.T) {
 	b, err := NewBridge(client, &BridgeConfig{Logger: testLogger()})
 	require.NoError(t, err)
 
-	req := newRemoteRequest(MethodRemoteListKeys, RemoteListKeysParams{
+	req := newRemoteRequest(pairingproto.MethodRemoteListKeys, pairingproto.RemoteListKeysParams{
 		Backend: "tpm2",
 	})
 	resp := b.HandleRequest(context.Background(), req)
 
-	result := decodeResult[RemoteListKeysResult](t, resp)
-	assert.Equal(t, JSONRPCVersion, resp.JSONRPC)
+	result := decodeResult[pairingproto.RemoteListKeysResult](t, resp)
+	assert.Equal(t, pairingproto.JSONRPCVersion, resp.JSONRPC)
 	require.Len(t, result.Keys, 2)
 	assert.Equal(t, "key1", result.Keys[0].KeyID)
 	assert.Equal(t, "ECDSA-P256", result.Keys[0].Algorithm)
@@ -750,11 +751,11 @@ func TestBridge_ListKeys_BackendDenied(t *testing.T) {
 	b, err := NewBridge(client, config)
 	require.NoError(t, err)
 
-	req := newRemoteRequest(MethodRemoteListKeys, RemoteListKeysParams{
+	req := newRemoteRequest(pairingproto.MethodRemoteListKeys, pairingproto.RemoteListKeysParams{
 		Backend: "secret",
 	})
 	resp := b.HandleRequest(context.Background(), req)
-	assertErrorResponse(t, resp, req.ID, ErrorCodeBackendDenied)
+	assertErrorResponse(t, resp, req.ID, pairingproto.ErrorCodeBackendDenied)
 }
 
 func TestBridge_ListKeys_AlgorithmFilter(t *testing.T) {
@@ -771,13 +772,13 @@ func TestBridge_ListKeys_AlgorithmFilter(t *testing.T) {
 	b, err := NewBridge(client, &BridgeConfig{Logger: testLogger()})
 	require.NoError(t, err)
 
-	req := newRemoteRequest(MethodRemoteListKeys, RemoteListKeysParams{
+	req := newRemoteRequest(pairingproto.MethodRemoteListKeys, pairingproto.RemoteListKeysParams{
 		Backend:   "software",
 		Algorithm: "ECDSA-P256",
 	})
 	resp := b.HandleRequest(context.Background(), req)
 
-	result := decodeResult[RemoteListKeysResult](t, resp)
+	result := decodeResult[pairingproto.RemoteListKeysResult](t, resp)
 	require.Len(t, result.Keys, 2)
 	for _, key := range result.Keys {
 		assert.Equal(t, "ECDSA-P256", key.Algorithm)
@@ -789,9 +790,9 @@ func TestBridge_ListKeys_NilParams(t *testing.T) {
 	b, err := NewBridge(client, &BridgeConfig{Logger: testLogger()})
 	require.NoError(t, err)
 
-	req := newRemoteRequest(MethodRemoteListKeys, nil)
+	req := newRemoteRequest(pairingproto.MethodRemoteListKeys, nil)
 	resp := b.HandleRequest(context.Background(), req)
-	assertErrorResponse(t, resp, req.ID, ErrorCodeInvalidParams)
+	assertErrorResponse(t, resp, req.ID, pairingproto.ErrorCodeInvalidParams)
 }
 
 func TestBridge_GetPublicKey_DER(t *testing.T) {
@@ -811,14 +812,14 @@ func TestBridge_GetPublicKey_DER(t *testing.T) {
 	b, err := NewBridge(client, &BridgeConfig{Logger: testLogger()})
 	require.NoError(t, err)
 
-	req := newRemoteRequest(MethodRemoteGetPublicKey, RemoteGetPublicKeyParams{
+	req := newRemoteRequest(pairingproto.MethodRemoteGetPublicKey, pairingproto.RemoteGetPublicKeyParams{
 		Backend: "tpm2",
 		KeyID:   "ec-key-1",
 		Format:  "der",
 	})
 	resp := b.HandleRequest(context.Background(), req)
 
-	result := decodeResult[RemoteGetPublicKeyResult](t, resp)
+	result := decodeResult[pairingproto.RemoteGetPublicKeyResult](t, resp)
 	assert.Equal(t, "der", result.Format)
 	assert.Equal(t, "ECDSA-P256", result.Algorithm)
 	assert.NotEmpty(t, result.PublicKey)
@@ -847,14 +848,14 @@ func TestBridge_GetPublicKey_PEM(t *testing.T) {
 	b, err := NewBridge(client, &BridgeConfig{Logger: testLogger()})
 	require.NoError(t, err)
 
-	req := newRemoteRequest(MethodRemoteGetPublicKey, RemoteGetPublicKeyParams{
+	req := newRemoteRequest(pairingproto.MethodRemoteGetPublicKey, pairingproto.RemoteGetPublicKeyParams{
 		Backend: "software",
 		KeyID:   "ec-key-1",
 		Format:  "pem",
 	})
 	resp := b.HandleRequest(context.Background(), req)
 
-	result := decodeResult[RemoteGetPublicKeyResult](t, resp)
+	result := decodeResult[pairingproto.RemoteGetPublicKeyResult](t, resp)
 	assert.Equal(t, "pem", result.Format)
 	assert.Equal(t, []byte(testPEM), result.PublicKey)
 }
@@ -877,14 +878,14 @@ func TestBridge_GetPublicKey_DefaultFormat(t *testing.T) {
 	require.NoError(t, err)
 
 	// Empty format should default to DER.
-	req := newRemoteRequest(MethodRemoteGetPublicKey, RemoteGetPublicKeyParams{
+	req := newRemoteRequest(pairingproto.MethodRemoteGetPublicKey, pairingproto.RemoteGetPublicKeyParams{
 		Backend: "tpm2",
 		KeyID:   "ec-key-1",
 		Format:  "",
 	})
 	resp := b.HandleRequest(context.Background(), req)
 
-	result := decodeResult[RemoteGetPublicKeyResult](t, resp)
+	result := decodeResult[pairingproto.RemoteGetPublicKeyResult](t, resp)
 	assert.Equal(t, "der", result.Format)
 	assert.NotEmpty(t, result.PublicKey)
 }
@@ -901,7 +902,7 @@ func TestBridge_Sign_Success(t *testing.T) {
 	b, err := NewBridge(client, &BridgeConfig{Logger: testLogger()})
 	require.NoError(t, err)
 
-	req := newRemoteRequest(MethodRemoteSign, RemoteSignParams{
+	req := newRemoteRequest(pairingproto.MethodRemoteSign, pairingproto.RemoteSignParams{
 		Backend:   "tpm2",
 		KeyID:     "signing-key",
 		Data:      []byte("data-to-sign"),
@@ -909,8 +910,8 @@ func TestBridge_Sign_Success(t *testing.T) {
 	})
 	resp := b.HandleRequest(context.Background(), req)
 
-	result := decodeResult[RemoteSignResult](t, resp)
-	assert.Equal(t, JSONRPCVersion, resp.JSONRPC)
+	result := decodeResult[pairingproto.RemoteSignResult](t, resp)
+	assert.Equal(t, pairingproto.JSONRPCVersion, resp.JSONRPC)
 	assert.Equal(t, expectedSig, result.Signature)
 	assert.Equal(t, "ECDSA-SHA256", result.Algorithm)
 }
@@ -925,14 +926,14 @@ func TestBridge_Sign_BackendDenied(t *testing.T) {
 	b, err := NewBridge(client, config)
 	require.NoError(t, err)
 
-	req := newRemoteRequest(MethodRemoteSign, RemoteSignParams{
+	req := newRemoteRequest(pairingproto.MethodRemoteSign, pairingproto.RemoteSignParams{
 		Backend:   "restricted",
 		KeyID:     "key1",
 		Data:      []byte("data"),
 		Algorithm: "SHA-256",
 	})
 	resp := b.HandleRequest(context.Background(), req)
-	assertErrorResponse(t, resp, req.ID, ErrorCodeBackendDenied)
+	assertErrorResponse(t, resp, req.ID, pairingproto.ErrorCodeBackendDenied)
 }
 
 func TestBridge_Verify_Success(t *testing.T) {
@@ -945,7 +946,7 @@ func TestBridge_Verify_Success(t *testing.T) {
 	b, err := NewBridge(client, &BridgeConfig{Logger: testLogger()})
 	require.NoError(t, err)
 
-	req := newRemoteRequest(MethodRemoteVerify, RemoteVerifyParams{
+	req := newRemoteRequest(pairingproto.MethodRemoteVerify, pairingproto.RemoteVerifyParams{
 		Backend:   "software",
 		KeyID:     "verify-key",
 		Data:      []byte("original-data"),
@@ -954,7 +955,7 @@ func TestBridge_Verify_Success(t *testing.T) {
 	})
 	resp := b.HandleRequest(context.Background(), req)
 
-	result := decodeResult[RemoteVerifyResult](t, resp)
+	result := decodeResult[pairingproto.RemoteVerifyResult](t, resp)
 	assert.True(t, result.Valid)
 }
 
@@ -968,7 +969,7 @@ func TestBridge_Verify_Invalid(t *testing.T) {
 	b, err := NewBridge(client, &BridgeConfig{Logger: testLogger()})
 	require.NoError(t, err)
 
-	req := newRemoteRequest(MethodRemoteVerify, RemoteVerifyParams{
+	req := newRemoteRequest(pairingproto.MethodRemoteVerify, pairingproto.RemoteVerifyParams{
 		Backend:   "software",
 		KeyID:     "verify-key",
 		Data:      []byte("original-data"),
@@ -977,7 +978,7 @@ func TestBridge_Verify_Invalid(t *testing.T) {
 	})
 	resp := b.HandleRequest(context.Background(), req)
 
-	result := decodeResult[RemoteVerifyResult](t, resp)
+	result := decodeResult[pairingproto.RemoteVerifyResult](t, resp)
 	assert.False(t, result.Valid)
 }
 
@@ -992,7 +993,7 @@ func TestBridge_Encrypt_Success(t *testing.T) {
 	b, err := NewBridge(client, &BridgeConfig{Logger: testLogger()})
 	require.NoError(t, err)
 
-	req := newRemoteRequest(MethodRemoteEncrypt, RemoteEncryptParams{
+	req := newRemoteRequest(pairingproto.MethodRemoteEncrypt, pairingproto.RemoteEncryptParams{
 		Backend:   "software",
 		KeyID:     "aes-key",
 		Plaintext: []byte("secret-data"),
@@ -1000,7 +1001,7 @@ func TestBridge_Encrypt_Success(t *testing.T) {
 	})
 	resp := b.HandleRequest(context.Background(), req)
 
-	result := decodeResult[RemoteEncryptResult](t, resp)
+	result := decodeResult[pairingproto.RemoteEncryptResult](t, resp)
 	assert.Equal(t, expectedCiphertext, result.Ciphertext)
 }
 
@@ -1015,7 +1016,7 @@ func TestBridge_Decrypt_Success(t *testing.T) {
 	b, err := NewBridge(client, &BridgeConfig{Logger: testLogger()})
 	require.NoError(t, err)
 
-	req := newRemoteRequest(MethodRemoteDecrypt, RemoteDecryptParams{
+	req := newRemoteRequest(pairingproto.MethodRemoteDecrypt, pairingproto.RemoteDecryptParams{
 		Backend:    "tpm2",
 		KeyID:      "aes-key",
 		Ciphertext: []byte("encrypted-data"),
@@ -1023,7 +1024,7 @@ func TestBridge_Decrypt_Success(t *testing.T) {
 	})
 	resp := b.HandleRequest(context.Background(), req)
 
-	result := decodeResult[RemoteDecryptResult](t, resp)
+	result := decodeResult[pairingproto.RemoteDecryptResult](t, resp)
 	assert.Equal(t, []byte("decrypted-data"), result.Plaintext)
 	// The plaintext the backend returned is wiped once the response is encoded.
 	assert.Equal(t, make([]byte, len(backendPlaintext)), backendPlaintext)
@@ -1040,14 +1041,14 @@ func TestBridge_DeriveKey_Success(t *testing.T) {
 	b, err := NewBridge(client, &BridgeConfig{Logger: testLogger()})
 	require.NoError(t, err)
 
-	req := newRemoteRequest(MethodRemoteDeriveKey, RemoteDeriveKeyParams{
+	req := newRemoteRequest(pairingproto.MethodRemoteDeriveKey, pairingproto.RemoteDeriveKeyParams{
 		Backend:       "software",
 		KeyID:         "ecdh-key",
 		PeerPublicKey: []byte("peer-pubkey-bytes"),
 	})
 	resp := b.HandleRequest(context.Background(), req)
 
-	result := decodeResult[RemoteDeriveKeyResult](t, resp)
+	result := decodeResult[pairingproto.RemoteDeriveKeyResult](t, resp)
 	assert.Equal(t, []byte("shared-secret-32-bytes-long-key!"), result.SharedSecret)
 	// The shared secret the backend returned is wiped once the response is encoded.
 	assert.Equal(t, make([]byte, len(backendSecret)), backendSecret)
@@ -1063,13 +1064,13 @@ func TestBridge_DeriveKey_BackendDenied(t *testing.T) {
 	b, err := NewBridge(client, config)
 	require.NoError(t, err)
 
-	req := newRemoteRequest(MethodRemoteDeriveKey, RemoteDeriveKeyParams{
+	req := newRemoteRequest(pairingproto.MethodRemoteDeriveKey, pairingproto.RemoteDeriveKeyParams{
 		Backend:       "forbidden",
 		KeyID:         "key1",
 		PeerPublicKey: []byte("peer-pubkey"),
 	})
 	resp := b.HandleRequest(context.Background(), req)
-	assertErrorResponse(t, resp, req.ID, ErrorCodeBackendDenied)
+	assertErrorResponse(t, resp, req.ID, pairingproto.ErrorCodeBackendDenied)
 }
 
 func TestBridge_DeriveKey_NilParams(t *testing.T) {
@@ -1077,9 +1078,9 @@ func TestBridge_DeriveKey_NilParams(t *testing.T) {
 	b, err := NewBridge(client, &BridgeConfig{Logger: testLogger()})
 	require.NoError(t, err)
 
-	req := newRemoteRequest(MethodRemoteDeriveKey, nil)
+	req := newRemoteRequest(pairingproto.MethodRemoteDeriveKey, nil)
 	resp := b.HandleRequest(context.Background(), req)
-	assertErrorResponse(t, resp, req.ID, ErrorCodeInvalidParams)
+	assertErrorResponse(t, resp, req.ID, pairingproto.ErrorCodeInvalidParams)
 }
 
 func TestBridge_DeriveKey_ClientError(t *testing.T) {
@@ -1091,13 +1092,13 @@ func TestBridge_DeriveKey_ClientError(t *testing.T) {
 	b, err := NewBridge(client, &BridgeConfig{Logger: testLogger()})
 	require.NoError(t, err)
 
-	req := newRemoteRequest(MethodRemoteDeriveKey, RemoteDeriveKeyParams{
+	req := newRemoteRequest(pairingproto.MethodRemoteDeriveKey, pairingproto.RemoteDeriveKeyParams{
 		Backend:       "software",
 		KeyID:         "ecdh-key",
 		PeerPublicKey: []byte("peer-pubkey"),
 	})
 	resp := b.HandleRequest(context.Background(), req)
-	assertErrorResponse(t, resp, req.ID, ErrorCodeInternalError)
+	assertErrorResponse(t, resp, req.ID, pairingproto.ErrorCodeInternalError)
 }
 
 func TestBridge_GenerateKey_Success(t *testing.T) {
@@ -1112,14 +1113,14 @@ func TestBridge_GenerateKey_Success(t *testing.T) {
 	b, err := NewBridge(client, &BridgeConfig{Logger: testLogger()})
 	require.NoError(t, err)
 
-	req := newRemoteRequest(MethodRemoteGenerateKey, RemoteGenerateKeyParams{
+	req := newRemoteRequest(pairingproto.MethodRemoteGenerateKey, pairingproto.RemoteGenerateKeyParams{
 		Backend:   "software",
 		KeyID:     "new-key-1",
 		Algorithm: "ECDSA-P256",
 	})
 	resp := b.HandleRequest(context.Background(), req)
 
-	result := decodeResult[RemoteGenerateKeyResult](t, resp)
+	result := decodeResult[pairingproto.RemoteGenerateKeyResult](t, resp)
 	assert.Equal(t, "new-key-1", result.KeyID)
 	assert.Equal(t, "software", result.Backend)
 }
@@ -1134,13 +1135,13 @@ func TestBridge_GenerateKey_BackendDenied(t *testing.T) {
 	b, err := NewBridge(client, config)
 	require.NoError(t, err)
 
-	req := newRemoteRequest(MethodRemoteGenerateKey, RemoteGenerateKeyParams{
+	req := newRemoteRequest(pairingproto.MethodRemoteGenerateKey, pairingproto.RemoteGenerateKeyParams{
 		Backend:   "restricted",
 		KeyID:     "key1",
 		Algorithm: "ECDSA-P256",
 	})
 	resp := b.HandleRequest(context.Background(), req)
-	assertErrorResponse(t, resp, req.ID, ErrorCodeBackendDenied)
+	assertErrorResponse(t, resp, req.ID, pairingproto.ErrorCodeBackendDenied)
 }
 
 func TestBridge_GenerateKey_NilParams(t *testing.T) {
@@ -1148,9 +1149,9 @@ func TestBridge_GenerateKey_NilParams(t *testing.T) {
 	b, err := NewBridge(client, &BridgeConfig{Logger: testLogger()})
 	require.NoError(t, err)
 
-	req := newRemoteRequest(MethodRemoteGenerateKey, nil)
+	req := newRemoteRequest(pairingproto.MethodRemoteGenerateKey, nil)
 	resp := b.HandleRequest(context.Background(), req)
-	assertErrorResponse(t, resp, req.ID, ErrorCodeInvalidParams)
+	assertErrorResponse(t, resp, req.ID, pairingproto.ErrorCodeInvalidParams)
 }
 
 func TestBridge_GenerateKey_ClientError(t *testing.T) {
@@ -1162,13 +1163,13 @@ func TestBridge_GenerateKey_ClientError(t *testing.T) {
 	b, err := NewBridge(client, &BridgeConfig{Logger: testLogger()})
 	require.NoError(t, err)
 
-	req := newRemoteRequest(MethodRemoteGenerateKey, RemoteGenerateKeyParams{
+	req := newRemoteRequest(pairingproto.MethodRemoteGenerateKey, pairingproto.RemoteGenerateKeyParams{
 		Backend:   "software",
 		KeyID:     "new-key",
 		Algorithm: "RSA-2048",
 	})
 	resp := b.HandleRequest(context.Background(), req)
-	assertErrorResponse(t, resp, req.ID, ErrorCodeInternalError)
+	assertErrorResponse(t, resp, req.ID, pairingproto.ErrorCodeInternalError)
 }
 
 func TestBridge_GetKeyInfo_Success(t *testing.T) {
@@ -1190,13 +1191,13 @@ func TestBridge_GetKeyInfo_Success(t *testing.T) {
 	b, err := NewBridge(client, &BridgeConfig{Logger: testLogger()})
 	require.NoError(t, err)
 
-	req := newRemoteRequest(MethodRemoteGetKeyInfo, RemoteGetKeyInfoParams{
+	req := newRemoteRequest(pairingproto.MethodRemoteGetKeyInfo, pairingproto.RemoteGetKeyInfoParams{
 		Backend: "tpm2",
 		KeyID:   "test-key",
 	})
 	resp := b.HandleRequest(context.Background(), req)
 
-	result := decodeResult[RemoteGetKeyInfoResult](t, resp)
+	result := decodeResult[pairingproto.RemoteGetKeyInfoResult](t, resp)
 	assert.Equal(t, "test-key", result.KeyID)
 	assert.Equal(t, "tpm2", result.Backend)
 	assert.Equal(t, "ECDSA-P256", result.Algorithm)
@@ -1213,12 +1214,12 @@ func TestBridge_GetKeyInfo_BackendDenied(t *testing.T) {
 	b, err := NewBridge(client, config)
 	require.NoError(t, err)
 
-	req := newRemoteRequest(MethodRemoteGetKeyInfo, RemoteGetKeyInfoParams{
+	req := newRemoteRequest(pairingproto.MethodRemoteGetKeyInfo, pairingproto.RemoteGetKeyInfoParams{
 		Backend: "secret",
 		KeyID:   "key1",
 	})
 	resp := b.HandleRequest(context.Background(), req)
-	assertErrorResponse(t, resp, req.ID, ErrorCodeBackendDenied)
+	assertErrorResponse(t, resp, req.ID, pairingproto.ErrorCodeBackendDenied)
 }
 
 func TestBridge_GetKeyInfo_NilParams(t *testing.T) {
@@ -1226,9 +1227,9 @@ func TestBridge_GetKeyInfo_NilParams(t *testing.T) {
 	b, err := NewBridge(client, &BridgeConfig{Logger: testLogger()})
 	require.NoError(t, err)
 
-	req := newRemoteRequest(MethodRemoteGetKeyInfo, nil)
+	req := newRemoteRequest(pairingproto.MethodRemoteGetKeyInfo, nil)
 	resp := b.HandleRequest(context.Background(), req)
-	assertErrorResponse(t, resp, req.ID, ErrorCodeInvalidParams)
+	assertErrorResponse(t, resp, req.ID, pairingproto.ErrorCodeInvalidParams)
 }
 
 func TestBridge_GetKeyInfo_ClientError(t *testing.T) {
@@ -1240,12 +1241,12 @@ func TestBridge_GetKeyInfo_ClientError(t *testing.T) {
 	b, err := NewBridge(client, &BridgeConfig{Logger: testLogger()})
 	require.NoError(t, err)
 
-	req := newRemoteRequest(MethodRemoteGetKeyInfo, RemoteGetKeyInfoParams{
+	req := newRemoteRequest(pairingproto.MethodRemoteGetKeyInfo, pairingproto.RemoteGetKeyInfoParams{
 		Backend: "tpm2",
 		KeyID:   "missing-key",
 	})
 	resp := b.HandleRequest(context.Background(), req)
-	assertErrorResponse(t, resp, req.ID, ErrorCodeInternalError)
+	assertErrorResponse(t, resp, req.ID, pairingproto.ErrorCodeInternalError)
 }
 
 func TestBridge_GetKeyInfo_BackendInfoError(t *testing.T) {
@@ -1263,14 +1264,14 @@ func TestBridge_GetKeyInfo_BackendInfoError(t *testing.T) {
 	b, err := NewBridge(client, &BridgeConfig{Logger: testLogger()})
 	require.NoError(t, err)
 
-	req := newRemoteRequest(MethodRemoteGetKeyInfo, RemoteGetKeyInfoParams{
+	req := newRemoteRequest(pairingproto.MethodRemoteGetKeyInfo, pairingproto.RemoteGetKeyInfoParams{
 		Backend: "software",
 		KeyID:   "test-key",
 	})
 	resp := b.HandleRequest(context.Background(), req)
 
 	// Should succeed, just without hardware_backed info.
-	result := decodeResult[RemoteGetKeyInfoResult](t, resp)
+	result := decodeResult[pairingproto.RemoteGetKeyInfoResult](t, resp)
 	assert.Equal(t, "test-key", result.KeyID)
 	assert.False(t, result.HardwareBacked)
 }
@@ -1285,13 +1286,13 @@ func TestBridge_DeleteKey_Success(t *testing.T) {
 	b, err := NewBridge(client, &BridgeConfig{Logger: testLogger()})
 	require.NoError(t, err)
 
-	req := newRemoteRequest(MethodRemoteDeleteKey, RemoteDeleteKeyParams{
+	req := newRemoteRequest(pairingproto.MethodRemoteDeleteKey, pairingproto.RemoteDeleteKeyParams{
 		Backend: "software",
 		KeyID:   "key-to-delete",
 	})
 	resp := b.HandleRequest(context.Background(), req)
 
-	result := decodeResult[RemoteDeleteKeyResult](t, resp)
+	result := decodeResult[pairingproto.RemoteDeleteKeyResult](t, resp)
 	assert.True(t, result.Deleted)
 }
 
@@ -1305,12 +1306,12 @@ func TestBridge_DeleteKey_BackendDenied(t *testing.T) {
 	b, err := NewBridge(client, config)
 	require.NoError(t, err)
 
-	req := newRemoteRequest(MethodRemoteDeleteKey, RemoteDeleteKeyParams{
+	req := newRemoteRequest(pairingproto.MethodRemoteDeleteKey, pairingproto.RemoteDeleteKeyParams{
 		Backend: "restricted",
 		KeyID:   "key1",
 	})
 	resp := b.HandleRequest(context.Background(), req)
-	assertErrorResponse(t, resp, req.ID, ErrorCodeBackendDenied)
+	assertErrorResponse(t, resp, req.ID, pairingproto.ErrorCodeBackendDenied)
 }
 
 func TestBridge_DeleteKey_NilParams(t *testing.T) {
@@ -1318,9 +1319,9 @@ func TestBridge_DeleteKey_NilParams(t *testing.T) {
 	b, err := NewBridge(client, &BridgeConfig{Logger: testLogger()})
 	require.NoError(t, err)
 
-	req := newRemoteRequest(MethodRemoteDeleteKey, nil)
+	req := newRemoteRequest(pairingproto.MethodRemoteDeleteKey, nil)
 	resp := b.HandleRequest(context.Background(), req)
-	assertErrorResponse(t, resp, req.ID, ErrorCodeInvalidParams)
+	assertErrorResponse(t, resp, req.ID, pairingproto.ErrorCodeInvalidParams)
 }
 
 func TestBridge_DeleteKey_ClientError(t *testing.T) {
@@ -1332,12 +1333,12 @@ func TestBridge_DeleteKey_ClientError(t *testing.T) {
 	b, err := NewBridge(client, &BridgeConfig{Logger: testLogger()})
 	require.NoError(t, err)
 
-	req := newRemoteRequest(MethodRemoteDeleteKey, RemoteDeleteKeyParams{
+	req := newRemoteRequest(pairingproto.MethodRemoteDeleteKey, pairingproto.RemoteDeleteKeyParams{
 		Backend: "software",
 		KeyID:   "key1",
 	})
 	resp := b.HandleRequest(context.Background(), req)
-	assertErrorResponse(t, resp, req.ID, ErrorCodeInternalError)
+	assertErrorResponse(t, resp, req.ID, pairingproto.ErrorCodeInternalError)
 }
 
 func TestBridge_AttestKey_Success(t *testing.T) {
@@ -1353,14 +1354,14 @@ func TestBridge_AttestKey_Success(t *testing.T) {
 	b, err := NewBridge(client, &BridgeConfig{Logger: testLogger()})
 	require.NoError(t, err)
 
-	req := newRemoteRequest(MethodRemoteAttestKey, RemoteAttestKeyParams{
+	req := newRemoteRequest(pairingproto.MethodRemoteAttestKey, pairingproto.RemoteAttestKeyParams{
 		Backend: "tpm2",
 		KeyID:   "attest-key",
 		Nonce:   []byte("challenge-nonce"),
 	})
 	resp := b.HandleRequest(context.Background(), req)
 
-	result := decodeResult[RemoteAttestKeyResult](t, resp)
+	result := decodeResult[pairingproto.RemoteAttestKeyResult](t, resp)
 	assert.Equal(t, "tpm2", result.Format)
 	require.Len(t, result.CertificateChain, 2)
 	assert.Equal(t, []byte("attest-data"), result.AttestationData)
@@ -1377,13 +1378,13 @@ func TestBridge_AttestKey_BackendDenied(t *testing.T) {
 	b, err := NewBridge(client, config)
 	require.NoError(t, err)
 
-	req := newRemoteRequest(MethodRemoteAttestKey, RemoteAttestKeyParams{
+	req := newRemoteRequest(pairingproto.MethodRemoteAttestKey, pairingproto.RemoteAttestKeyParams{
 		Backend: "restricted",
 		KeyID:   "key1",
 		Nonce:   []byte("nonce"),
 	})
 	resp := b.HandleRequest(context.Background(), req)
-	assertErrorResponse(t, resp, req.ID, ErrorCodeBackendDenied)
+	assertErrorResponse(t, resp, req.ID, pairingproto.ErrorCodeBackendDenied)
 }
 
 func TestBridge_AttestKey_NilParams(t *testing.T) {
@@ -1391,9 +1392,9 @@ func TestBridge_AttestKey_NilParams(t *testing.T) {
 	b, err := NewBridge(client, &BridgeConfig{Logger: testLogger()})
 	require.NoError(t, err)
 
-	req := newRemoteRequest(MethodRemoteAttestKey, nil)
+	req := newRemoteRequest(pairingproto.MethodRemoteAttestKey, nil)
 	resp := b.HandleRequest(context.Background(), req)
-	assertErrorResponse(t, resp, req.ID, ErrorCodeInvalidParams)
+	assertErrorResponse(t, resp, req.ID, pairingproto.ErrorCodeInvalidParams)
 }
 
 func TestBridge_AttestKey_ClientError(t *testing.T) {
@@ -1405,13 +1406,13 @@ func TestBridge_AttestKey_ClientError(t *testing.T) {
 	b, err := NewBridge(client, &BridgeConfig{Logger: testLogger()})
 	require.NoError(t, err)
 
-	req := newRemoteRequest(MethodRemoteAttestKey, RemoteAttestKeyParams{
+	req := newRemoteRequest(pairingproto.MethodRemoteAttestKey, pairingproto.RemoteAttestKeyParams{
 		Backend: "tpm2",
 		KeyID:   "key1",
 		Nonce:   []byte("nonce"),
 	})
 	resp := b.HandleRequest(context.Background(), req)
-	assertErrorResponse(t, resp, req.ID, ErrorCodeInternalError)
+	assertErrorResponse(t, resp, req.ID, pairingproto.ErrorCodeInternalError)
 }
 
 func TestBridge_AttestDevice_SoftwareOnly(t *testing.T) {
@@ -1431,12 +1432,12 @@ func TestBridge_AttestDevice_SoftwareOnly(t *testing.T) {
 		nonce[i] = byte(i)
 	}
 
-	req := newRemoteRequest(MethodRemoteAttestDevice, RemoteAttestDeviceParams{
+	req := newRemoteRequest(pairingproto.MethodRemoteAttestDevice, pairingproto.RemoteAttestDeviceParams{
 		Nonce: nonce,
 	})
 	resp := b.HandleRequest(context.Background(), req)
 
-	result := decodeResult[RemoteAttestDeviceResult](t, resp)
+	result := decodeResult[pairingproto.RemoteAttestDeviceResult](t, resp)
 	assert.Equal(t, "software", result.Format)
 	assert.Equal(t, "software", result.SecurityLevel)
 	assert.Equal(t, nonce, result.Nonce)
@@ -1461,12 +1462,12 @@ func TestBridge_AttestDevice_WithTPM2(t *testing.T) {
 		nonce[i] = byte(i)
 	}
 
-	req := newRemoteRequest(MethodRemoteAttestDevice, RemoteAttestDeviceParams{
+	req := newRemoteRequest(pairingproto.MethodRemoteAttestDevice, pairingproto.RemoteAttestDeviceParams{
 		Nonce: nonce,
 	})
 	resp := b.HandleRequest(context.Background(), req)
 
-	result := decodeResult[RemoteAttestDeviceResult](t, resp)
+	result := decodeResult[pairingproto.RemoteAttestDeviceResult](t, resp)
 	assert.Equal(t, "tpm2", result.Format)
 	assert.Equal(t, "hardware", result.SecurityLevel)
 	assert.True(t, result.BootStateVerified)
@@ -1479,11 +1480,11 @@ func TestBridge_AttestDevice_InvalidNonce(t *testing.T) {
 	require.NoError(t, err)
 
 	// Nonce must be exactly 32 bytes.
-	req := newRemoteRequest(MethodRemoteAttestDevice, RemoteAttestDeviceParams{
+	req := newRemoteRequest(pairingproto.MethodRemoteAttestDevice, pairingproto.RemoteAttestDeviceParams{
 		Nonce: []byte("short"),
 	})
 	resp := b.HandleRequest(context.Background(), req)
-	assertErrorResponse(t, resp, req.ID, ErrorCodeInvalidParams)
+	assertErrorResponse(t, resp, req.ID, pairingproto.ErrorCodeInvalidParams)
 }
 
 func TestBridge_AttestDevice_NilParams(t *testing.T) {
@@ -1491,9 +1492,9 @@ func TestBridge_AttestDevice_NilParams(t *testing.T) {
 	b, err := NewBridge(client, &BridgeConfig{Logger: testLogger()})
 	require.NoError(t, err)
 
-	req := newRemoteRequest(MethodRemoteAttestDevice, nil)
+	req := newRemoteRequest(pairingproto.MethodRemoteAttestDevice, nil)
 	resp := b.HandleRequest(context.Background(), req)
-	assertErrorResponse(t, resp, req.ID, ErrorCodeInvalidParams)
+	assertErrorResponse(t, resp, req.ID, pairingproto.ErrorCodeInvalidParams)
 }
 
 func TestBridge_AttestDevice_ListBackendsError(t *testing.T) {
@@ -1506,11 +1507,11 @@ func TestBridge_AttestDevice_ListBackendsError(t *testing.T) {
 	require.NoError(t, err)
 
 	nonce := make([]byte, 32)
-	req := newRemoteRequest(MethodRemoteAttestDevice, RemoteAttestDeviceParams{
+	req := newRemoteRequest(pairingproto.MethodRemoteAttestDevice, pairingproto.RemoteAttestDeviceParams{
 		Nonce: nonce,
 	})
 	resp := b.HandleRequest(context.Background(), req)
-	assertErrorResponse(t, resp, req.ID, ErrorCodeInternalError)
+	assertErrorResponse(t, resp, req.ID, pairingproto.ErrorCodeInternalError)
 }
 
 // --- TCG-CSR-IDEVID Handler Tests ---
@@ -1520,11 +1521,11 @@ func TestBridge_GetTCGCSRIDevID_WithoutATPM_ReportsUnsupported(t *testing.T) {
 	b, err := NewBridge(client, &BridgeConfig{Logger: testLogger()})
 	require.NoError(t, err)
 
-	req := newRemoteRequest(MethodRemoteGetTCGCSRIDevID, RemoteGetTCGCSRIDevIDParams{
+	req := newRemoteRequest(pairingproto.MethodRemoteGetTCGCSRIDevID, pairingproto.RemoteGetTCGCSRIDevIDParams{
 		Backend: "tpm2",
 	})
 	resp := b.HandleRequest(context.Background(), req)
-	assertErrorResponse(t, resp, req.ID, ErrorCodeAttestUnsupported)
+	assertErrorResponse(t, resp, req.ID, pairingproto.ErrorCodeAttestUnsupported)
 }
 
 func TestBridge_GetTCGCSRIDevID_DefaultBackend(t *testing.T) {
@@ -1533,9 +1534,9 @@ func TestBridge_GetTCGCSRIDevID_DefaultBackend(t *testing.T) {
 	require.NoError(t, err)
 
 	// Empty backend should default to "tpm2".
-	req := newRemoteRequest(MethodRemoteGetTCGCSRIDevID, RemoteGetTCGCSRIDevIDParams{})
+	req := newRemoteRequest(pairingproto.MethodRemoteGetTCGCSRIDevID, pairingproto.RemoteGetTCGCSRIDevIDParams{})
 	resp := b.HandleRequest(context.Background(), req)
-	assertErrorResponse(t, resp, req.ID, ErrorCodeAttestUnsupported)
+	assertErrorResponse(t, resp, req.ID, pairingproto.ErrorCodeAttestUnsupported)
 }
 
 func TestBridge_GetTCGCSRIDevID_BackendDenied(t *testing.T) {
@@ -1548,11 +1549,11 @@ func TestBridge_GetTCGCSRIDevID_BackendDenied(t *testing.T) {
 	b, err := NewBridge(client, config)
 	require.NoError(t, err)
 
-	req := newRemoteRequest(MethodRemoteGetTCGCSRIDevID, RemoteGetTCGCSRIDevIDParams{
+	req := newRemoteRequest(pairingproto.MethodRemoteGetTCGCSRIDevID, pairingproto.RemoteGetTCGCSRIDevIDParams{
 		Backend: "tpm2",
 	})
 	resp := b.HandleRequest(context.Background(), req)
-	assertErrorResponse(t, resp, req.ID, ErrorCodeBackendDenied)
+	assertErrorResponse(t, resp, req.ID, pairingproto.ErrorCodeBackendDenied)
 }
 
 func TestBridge_ActivateCredential_WithoutATPM_ReportsUnsupported(t *testing.T) {
@@ -1560,13 +1561,13 @@ func TestBridge_ActivateCredential_WithoutATPM_ReportsUnsupported(t *testing.T) 
 	b, err := NewBridge(client, &BridgeConfig{Logger: testLogger()})
 	require.NoError(t, err)
 
-	req := newRemoteRequest(MethodRemoteActivateCredential, RemoteActivateCredentialParams{
+	req := newRemoteRequest(pairingproto.MethodRemoteActivateCredential, pairingproto.RemoteActivateCredentialParams{
 		Backend:         "tpm2",
 		CredentialBlob:  []byte("blob"),
 		EncryptedSecret: []byte("secret"),
 	})
 	resp := b.HandleRequest(context.Background(), req)
-	assertErrorResponse(t, resp, req.ID, ErrorCodeAttestUnsupported)
+	assertErrorResponse(t, resp, req.ID, pairingproto.ErrorCodeAttestUnsupported)
 }
 
 func TestBridge_ActivateCredential_BackendDenied(t *testing.T) {
@@ -1579,13 +1580,13 @@ func TestBridge_ActivateCredential_BackendDenied(t *testing.T) {
 	b, err := NewBridge(client, config)
 	require.NoError(t, err)
 
-	req := newRemoteRequest(MethodRemoteActivateCredential, RemoteActivateCredentialParams{
+	req := newRemoteRequest(pairingproto.MethodRemoteActivateCredential, pairingproto.RemoteActivateCredentialParams{
 		Backend:         "tpm2",
 		CredentialBlob:  []byte("blob"),
 		EncryptedSecret: []byte("secret"),
 	})
 	resp := b.HandleRequest(context.Background(), req)
-	assertErrorResponse(t, resp, req.ID, ErrorCodeBackendDenied)
+	assertErrorResponse(t, resp, req.ID, pairingproto.ErrorCodeBackendDenied)
 }
 
 func TestBridge_GetAttestationQuote_WithoutATPM_ReportsUnsupported(t *testing.T) {
@@ -1593,14 +1594,14 @@ func TestBridge_GetAttestationQuote_WithoutATPM_ReportsUnsupported(t *testing.T)
 	b, err := NewBridge(client, &BridgeConfig{Logger: testLogger()})
 	require.NoError(t, err)
 
-	req := newRemoteRequest(MethodRemoteGetAttestationQuote, RemoteGetAttestationQuoteParams{
+	req := newRemoteRequest(pairingproto.MethodRemoteGetAttestationQuote, pairingproto.RemoteGetAttestationQuoteParams{
 		Backend:    "tpm2",
 		Nonce:      []byte("nonce"),
 		PCRIndices: []int{0, 1, 2},
 		PCRBank:    "sha256",
 	})
 	resp := b.HandleRequest(context.Background(), req)
-	assertErrorResponse(t, resp, req.ID, ErrorCodeAttestUnsupported)
+	assertErrorResponse(t, resp, req.ID, pairingproto.ErrorCodeAttestUnsupported)
 }
 
 func TestBridge_GetAttestationQuote_BackendDenied(t *testing.T) {
@@ -1613,42 +1614,42 @@ func TestBridge_GetAttestationQuote_BackendDenied(t *testing.T) {
 	b, err := NewBridge(client, config)
 	require.NoError(t, err)
 
-	req := newRemoteRequest(MethodRemoteGetAttestationQuote, RemoteGetAttestationQuoteParams{
+	req := newRemoteRequest(pairingproto.MethodRemoteGetAttestationQuote, pairingproto.RemoteGetAttestationQuoteParams{
 		Backend: "tpm2",
 		Nonce:   []byte("nonce"),
 	})
 	resp := b.HandleRequest(context.Background(), req)
-	assertErrorResponse(t, resp, req.ID, ErrorCodeBackendDenied)
+	assertErrorResponse(t, resp, req.ID, pairingproto.ErrorCodeBackendDenied)
 }
 
 // --- Helper Function Tests ---
 
 func TestExtractPublicKey_EmptyPEM(t *testing.T) {
 	_, _, err := extractPublicKey("", "der")
-	require.ErrorIs(t, err, ErrKeyNotFound)
+	require.ErrorIs(t, err, pairingproto.ErrKeyNotFound)
 }
 
 func TestExtractPublicKey_InvalidPEM(t *testing.T) {
 	_, _, err := extractPublicKey("not-a-pem", "der")
-	require.ErrorIs(t, err, ErrInvalidPublicKey)
+	require.ErrorIs(t, err, pairingproto.ErrInvalidPublicKey)
 }
 
 func TestExtractPublicKey_InvalidFormat(t *testing.T) {
 	testPEM := generateTestPEM(t)
 	_, _, err := extractPublicKey(testPEM, "jwk")
-	require.ErrorIs(t, err, ErrInvalidFormat)
+	require.ErrorIs(t, err, pairingproto.ErrInvalidFormat)
 }
 
 func TestUnmarshalParams_NilParams(t *testing.T) {
-	var dest RemoteListKeysParams
+	var dest pairingproto.RemoteListKeysParams
 	err := unmarshalParams(nil, &dest)
-	require.ErrorIs(t, err, ErrBridgeInvalidParams)
+	require.ErrorIs(t, err, pairingproto.ErrBridgeInvalidParams)
 }
 
 func TestUnmarshalParams_EmptyParams(t *testing.T) {
-	var dest RemoteListKeysParams
+	var dest pairingproto.RemoteListKeysParams
 	err := unmarshalParams(json.RawMessage{}, &dest)
-	require.ErrorIs(t, err, ErrBridgeInvalidParams)
+	require.ErrorIs(t, err, pairingproto.ErrBridgeInvalidParams)
 }
 
 func TestMapErrorToRPC_BridgeErrors(t *testing.T) {
@@ -1657,30 +1658,30 @@ func TestMapErrorToRPC_BridgeErrors(t *testing.T) {
 		err          error
 		expectedCode int
 	}{
-		{"not connected", ErrBridgeNotConnected, ErrorCodeInternalError},
-		{"backend denied", ErrBridgeBackendDenied, ErrorCodeBackendDenied},
-		{"invalid params", ErrBridgeInvalidParams, ErrorCodeInvalidParams},
-		{"attestation not supported", ErrAttestationNotSupported, ErrorCodeAttestUnsupported},
-		{"tpm2 direct access", ErrTPM2DirectAccessRequired, ErrorCodeAttestUnsupported},
-		{"no TPM configured", ErrTPMNotConfigured, ErrorCodeAttestUnsupported},
-		{"share denied", ErrShareDenied, ErrorCodeShareDenied},
-		{"share not exportable", ErrShareNotExportable, ErrorCodeShareNotExportable},
-		{"invalid public key", ErrInvalidPublicKey, ErrorCodeInvalidPublicKey},
-		{"backup failed", ErrBackupFailed, ErrorCodeBackupFailed},
-		{"backup restore failed", ErrBackupRestoreFailed, ErrorCodeBackupRestore},
-		{"backup not found", ErrBackupNotFound, ErrorCodeBackupNotFound},
-		{"oath not found", ErrOATHCredentialNotFound, ErrorCodeOATHNotFound},
-		{"oath generate", ErrOATHGenerateFailed, ErrorCodeOATHGenerate},
-		{"oath store", ErrOATHStoreFailed, ErrorCodeOATHStore},
-		{"piv slot not found", ErrPIVSlotNotFound, ErrorCodePIVSlotNotFound},
-		{"piv slot occupied", ErrPIVSlotOccupied, ErrorCodePIVSlotOccupied},
-		{"piv sign failed", ErrPIVSignFailed, ErrorCodePIVSignFailed},
-		{"piv invalid slot", ErrPIVInvalidSlot, ErrorCodePIVInvalidSlot},
-		{"sync failed", ErrSyncFailed, ErrorCodeSyncFailed},
-		{"sync conflict", ErrSyncConflict, ErrorCodeSyncConflict},
-		{"sync remote unavailable", ErrSyncRemoteUnavailable, ErrorCodeSyncRemoteUnavail},
-		{"sync no data", ErrSyncNoData, ErrorCodeSyncNoData},
-		{"sync version mismatch", ErrSyncVersionMismatch, ErrorCodeSyncVersionMismatch},
+		{"not connected", pairingproto.ErrBridgeNotConnected, pairingproto.ErrorCodeInternalError},
+		{"backend denied", pairingproto.ErrBridgeBackendDenied, pairingproto.ErrorCodeBackendDenied},
+		{"invalid params", pairingproto.ErrBridgeInvalidParams, pairingproto.ErrorCodeInvalidParams},
+		{"attestation not supported", pairingproto.ErrAttestationNotSupported, pairingproto.ErrorCodeAttestUnsupported},
+		{"tpm2 direct access", pairingproto.ErrTPM2DirectAccessRequired, pairingproto.ErrorCodeAttestUnsupported},
+		{"no TPM configured", pairingproto.ErrTPMNotConfigured, pairingproto.ErrorCodeAttestUnsupported},
+		{"share denied", pairingproto.ErrShareDenied, pairingproto.ErrorCodeShareDenied},
+		{"share not exportable", pairingproto.ErrShareNotExportable, pairingproto.ErrorCodeShareNotExportable},
+		{"invalid public key", pairingproto.ErrInvalidPublicKey, pairingproto.ErrorCodeInvalidPublicKey},
+		{"backup failed", pairingproto.ErrBackupFailed, pairingproto.ErrorCodeBackupFailed},
+		{"backup restore failed", pairingproto.ErrBackupRestoreFailed, pairingproto.ErrorCodeBackupRestore},
+		{"backup not found", pairingproto.ErrBackupNotFound, pairingproto.ErrorCodeBackupNotFound},
+		{"oath not found", pairingproto.ErrOATHCredentialNotFound, pairingproto.ErrorCodeOATHNotFound},
+		{"oath generate", pairingproto.ErrOATHGenerateFailed, pairingproto.ErrorCodeOATHGenerate},
+		{"oath store", pairingproto.ErrOATHStoreFailed, pairingproto.ErrorCodeOATHStore},
+		{"piv slot not found", pairingproto.ErrPIVSlotNotFound, pairingproto.ErrorCodePIVSlotNotFound},
+		{"piv slot occupied", pairingproto.ErrPIVSlotOccupied, pairingproto.ErrorCodePIVSlotOccupied},
+		{"piv sign failed", pairingproto.ErrPIVSignFailed, pairingproto.ErrorCodePIVSignFailed},
+		{"piv invalid slot", pairingproto.ErrPIVInvalidSlot, pairingproto.ErrorCodePIVInvalidSlot},
+		{"sync failed", pairingproto.ErrSyncFailed, pairingproto.ErrorCodeSyncFailed},
+		{"sync conflict", pairingproto.ErrSyncConflict, pairingproto.ErrorCodeSyncConflict},
+		{"sync remote unavailable", pairingproto.ErrSyncRemoteUnavailable, pairingproto.ErrorCodeSyncRemoteUnavail},
+		{"sync no data", pairingproto.ErrSyncNoData, pairingproto.ErrorCodeSyncNoData},
+		{"sync version mismatch", pairingproto.ErrSyncVersionMismatch, pairingproto.ErrorCodeSyncVersionMismatch},
 	}
 
 	for _, tt := range tests {
@@ -1695,7 +1696,7 @@ func TestMapErrorToRPC_BridgeErrors(t *testing.T) {
 func TestMapErrorToRPC_UnknownError(t *testing.T) {
 	err := errors.New("something unexpected")
 	code, msg := mapErrorToRPC(err)
-	assert.Equal(t, ErrorCodeInternalError, code)
+	assert.Equal(t, pairingproto.ErrorCodeInternalError, code)
 	assert.Equal(t, "something unexpected", msg)
 }
 
@@ -2017,7 +2018,7 @@ func TestBridge_Sign_WithAuditLogger(t *testing.T) {
 	})
 	require.NoError(t, err)
 
-	req := newRemoteRequest(MethodRemoteSign, RemoteSignParams{
+	req := newRemoteRequest(pairingproto.MethodRemoteSign, pairingproto.RemoteSignParams{
 		Backend:   "software",
 		KeyID:     "key1",
 		Data:      []byte("data"),
@@ -2041,7 +2042,7 @@ func TestBridge_Sign_WithAuditLogger_ClientError(t *testing.T) {
 	})
 	require.NoError(t, err)
 
-	req := newRemoteRequest(MethodRemoteSign, RemoteSignParams{
+	req := newRemoteRequest(pairingproto.MethodRemoteSign, pairingproto.RemoteSignParams{
 		Backend: "software",
 		KeyID:   "key1",
 		Data:    []byte("data"),
@@ -2064,7 +2065,7 @@ func TestBridge_Verify_WithAuditLogger(t *testing.T) {
 	})
 	require.NoError(t, err)
 
-	req := newRemoteRequest(MethodRemoteVerify, RemoteVerifyParams{
+	req := newRemoteRequest(pairingproto.MethodRemoteVerify, pairingproto.RemoteVerifyParams{
 		Backend:   "software",
 		KeyID:     "key1",
 		Data:      []byte("data"),
@@ -2088,7 +2089,7 @@ func TestBridge_Encrypt_WithAuditLogger(t *testing.T) {
 	})
 	require.NoError(t, err)
 
-	req := newRemoteRequest(MethodRemoteEncrypt, RemoteEncryptParams{
+	req := newRemoteRequest(pairingproto.MethodRemoteEncrypt, pairingproto.RemoteEncryptParams{
 		Backend:   "software",
 		KeyID:     "key1",
 		Plaintext: []byte("data"),
@@ -2111,7 +2112,7 @@ func TestBridge_Decrypt_WithAuditLogger(t *testing.T) {
 	})
 	require.NoError(t, err)
 
-	req := newRemoteRequest(MethodRemoteDecrypt, RemoteDecryptParams{
+	req := newRemoteRequest(pairingproto.MethodRemoteDecrypt, pairingproto.RemoteDecryptParams{
 		Backend:    "software",
 		KeyID:      "key1",
 		Ciphertext: []byte("ct"),
@@ -2134,7 +2135,7 @@ func TestBridge_DeriveKey_WithAuditLogger(t *testing.T) {
 	})
 	require.NoError(t, err)
 
-	req := newRemoteRequest(MethodRemoteDeriveKey, RemoteDeriveKeyParams{
+	req := newRemoteRequest(pairingproto.MethodRemoteDeriveKey, pairingproto.RemoteDeriveKeyParams{
 		Backend:       "software",
 		KeyID:         "key1",
 		PeerPublicKey: []byte("peer"),
@@ -2156,7 +2157,7 @@ func TestBridge_DeriveKey_AuditFailureWipesSharedSecret(t *testing.T) {
 	})
 	require.NoError(t, err)
 
-	req := newRemoteRequest(MethodRemoteDeriveKey, RemoteDeriveKeyParams{
+	req := newRemoteRequest(pairingproto.MethodRemoteDeriveKey, pairingproto.RemoteDeriveKeyParams{
 		Backend:       "software",
 		KeyID:         "key1",
 		PeerPublicKey: []byte("peer"),
@@ -2177,7 +2178,7 @@ func TestBridge_Decrypt_AuditFailureWipesPlaintext(t *testing.T) {
 	})
 	require.NoError(t, err)
 
-	req := newRemoteRequest(MethodRemoteDecrypt, RemoteDecryptParams{
+	req := newRemoteRequest(pairingproto.MethodRemoteDecrypt, pairingproto.RemoteDecryptParams{
 		Backend:    "software",
 		KeyID:      "key1",
 		Ciphertext: []byte("ct"),
@@ -2202,7 +2203,7 @@ func TestBridge_GenerateKey_WithAuditLogger(t *testing.T) {
 	})
 	require.NoError(t, err)
 
-	req := newRemoteRequest(MethodRemoteGenerateKey, RemoteGenerateKeyParams{
+	req := newRemoteRequest(pairingproto.MethodRemoteGenerateKey, pairingproto.RemoteGenerateKeyParams{
 		Backend:   "software",
 		KeyID:     "new-key",
 		Algorithm: "ECDSA-P256",
@@ -2227,14 +2228,14 @@ func TestBridge_GenerateKey_WithPublicKeyPEM(t *testing.T) {
 	b, err := NewBridge(client, &BridgeConfig{Logger: testLogger()})
 	require.NoError(t, err)
 
-	req := newRemoteRequest(MethodRemoteGenerateKey, RemoteGenerateKeyParams{
+	req := newRemoteRequest(pairingproto.MethodRemoteGenerateKey, pairingproto.RemoteGenerateKeyParams{
 		Backend:   "software",
 		KeyID:     "new-key",
 		Algorithm: "ECDSA-P256",
 	})
 	resp := b.HandleRequest(context.Background(), req)
 
-	result := decodeResult[RemoteGenerateKeyResult](t, resp)
+	result := decodeResult[pairingproto.RemoteGenerateKeyResult](t, resp)
 	assert.Equal(t, "new-key", result.KeyID)
 	assert.NotEmpty(t, result.PublicKey) // Should have DER bytes
 }
@@ -2251,7 +2252,7 @@ func TestBridge_DeleteKey_WithAuditLogger(t *testing.T) {
 	})
 	require.NoError(t, err)
 
-	req := newRemoteRequest(MethodRemoteDeleteKey, RemoteDeleteKeyParams{
+	req := newRemoteRequest(pairingproto.MethodRemoteDeleteKey, pairingproto.RemoteDeleteKeyParams{
 		Backend: "software",
 		KeyID:   "key1",
 	})
@@ -2277,7 +2278,7 @@ func TestBridge_AttestKey_WithAuditLogger(t *testing.T) {
 	})
 	require.NoError(t, err)
 
-	req := newRemoteRequest(MethodRemoteAttestKey, RemoteAttestKeyParams{
+	req := newRemoteRequest(pairingproto.MethodRemoteAttestKey, pairingproto.RemoteAttestKeyParams{
 		Backend: "tpm2",
 		KeyID:   "key1",
 		Nonce:   []byte("nonce"),
@@ -2305,7 +2306,7 @@ func TestBridge_AttestDevice_WithAuditLogger(t *testing.T) {
 	require.NoError(t, err)
 
 	nonce := make([]byte, 32)
-	req := newRemoteRequest(MethodRemoteAttestDevice, RemoteAttestDeviceParams{
+	req := newRemoteRequest(pairingproto.MethodRemoteAttestDevice, pairingproto.RemoteAttestDeviceParams{
 		Nonce: nonce,
 	})
 	resp := b.HandleRequest(context.Background(), req)
@@ -2329,11 +2330,11 @@ func TestBridge_CheckBackendAccess_WithAuditLogger(t *testing.T) {
 	require.NoError(t, err)
 
 	// Trigger a backend denied to exercise the audit logging in checkBackendAccess.
-	req := newRemoteRequest(MethodRemoteListKeys, RemoteListKeysParams{
+	req := newRemoteRequest(pairingproto.MethodRemoteListKeys, pairingproto.RemoteListKeysParams{
 		Backend: "restricted",
 	})
 	resp := b.HandleRequest(context.Background(), req)
-	assertErrorResponse(t, resp, req.ID, ErrorCodeBackendDenied)
+	assertErrorResponse(t, resp, req.ID, pairingproto.ErrorCodeBackendDenied)
 	require.Len(t, auditLog.cryptoOps, 1)
 	assert.Equal(t, string(audit.OpPolicyDenied), auditLog.cryptoOps[0])
 }
@@ -2347,13 +2348,13 @@ func TestBridge_GetPublicKey_ClientError(t *testing.T) {
 	b, err := NewBridge(client, &BridgeConfig{Logger: testLogger()})
 	require.NoError(t, err)
 
-	req := newRemoteRequest(MethodRemoteGetPublicKey, RemoteGetPublicKeyParams{
+	req := newRemoteRequest(pairingproto.MethodRemoteGetPublicKey, pairingproto.RemoteGetPublicKeyParams{
 		Backend: "software",
 		KeyID:   "missing-key",
 		Format:  "der",
 	})
 	resp := b.HandleRequest(context.Background(), req)
-	assertErrorResponse(t, resp, req.ID, ErrorCodeInternalError)
+	assertErrorResponse(t, resp, req.ID, pairingproto.ErrorCodeInternalError)
 }
 
 func TestBridge_GetPublicKey_NilParams(t *testing.T) {
@@ -2361,9 +2362,9 @@ func TestBridge_GetPublicKey_NilParams(t *testing.T) {
 	b, err := NewBridge(client, &BridgeConfig{Logger: testLogger()})
 	require.NoError(t, err)
 
-	req := newRemoteRequest(MethodRemoteGetPublicKey, nil)
+	req := newRemoteRequest(pairingproto.MethodRemoteGetPublicKey, nil)
 	resp := b.HandleRequest(context.Background(), req)
-	assertErrorResponse(t, resp, req.ID, ErrorCodeInvalidParams)
+	assertErrorResponse(t, resp, req.ID, pairingproto.ErrorCodeInvalidParams)
 }
 
 func TestBridge_GetPublicKey_BackendDenied(t *testing.T) {
@@ -2376,13 +2377,13 @@ func TestBridge_GetPublicKey_BackendDenied(t *testing.T) {
 	b, err := NewBridge(client, config)
 	require.NoError(t, err)
 
-	req := newRemoteRequest(MethodRemoteGetPublicKey, RemoteGetPublicKeyParams{
+	req := newRemoteRequest(pairingproto.MethodRemoteGetPublicKey, pairingproto.RemoteGetPublicKeyParams{
 		Backend: "restricted",
 		KeyID:   "key1",
 		Format:  "der",
 	})
 	resp := b.HandleRequest(context.Background(), req)
-	assertErrorResponse(t, resp, req.ID, ErrorCodeBackendDenied)
+	assertErrorResponse(t, resp, req.ID, pairingproto.ErrorCodeBackendDenied)
 }
 
 func TestBridge_GetPublicKey_InvalidFormat(t *testing.T) {
@@ -2400,13 +2401,13 @@ func TestBridge_GetPublicKey_InvalidFormat(t *testing.T) {
 	b, err := NewBridge(client, &BridgeConfig{Logger: testLogger()})
 	require.NoError(t, err)
 
-	req := newRemoteRequest(MethodRemoteGetPublicKey, RemoteGetPublicKeyParams{
+	req := newRemoteRequest(pairingproto.MethodRemoteGetPublicKey, pairingproto.RemoteGetPublicKeyParams{
 		Backend: "software",
 		KeyID:   "key1",
 		Format:  "jwk",
 	})
 	resp := b.HandleRequest(context.Background(), req)
-	assertErrorResponse(t, resp, req.ID, ErrorCodeInvalidFormat)
+	assertErrorResponse(t, resp, req.ID, pairingproto.ErrorCodeInvalidFormat)
 }
 
 func TestBridge_Verify_NilParams(t *testing.T) {
@@ -2414,9 +2415,9 @@ func TestBridge_Verify_NilParams(t *testing.T) {
 	b, err := NewBridge(client, &BridgeConfig{Logger: testLogger()})
 	require.NoError(t, err)
 
-	req := newRemoteRequest(MethodRemoteVerify, nil)
+	req := newRemoteRequest(pairingproto.MethodRemoteVerify, nil)
 	resp := b.HandleRequest(context.Background(), req)
-	assertErrorResponse(t, resp, req.ID, ErrorCodeInvalidParams)
+	assertErrorResponse(t, resp, req.ID, pairingproto.ErrorCodeInvalidParams)
 }
 
 func TestBridge_Verify_ClientError(t *testing.T) {
@@ -2427,14 +2428,14 @@ func TestBridge_Verify_ClientError(t *testing.T) {
 	b, err := NewBridge(client, &BridgeConfig{Logger: testLogger()})
 	require.NoError(t, err)
 
-	req := newRemoteRequest(MethodRemoteVerify, RemoteVerifyParams{
+	req := newRemoteRequest(pairingproto.MethodRemoteVerify, pairingproto.RemoteVerifyParams{
 		Backend:   "software",
 		KeyID:     "key1",
 		Data:      []byte("data"),
 		Signature: []byte("sig"),
 	})
 	resp := b.HandleRequest(context.Background(), req)
-	assertErrorResponse(t, resp, req.ID, ErrorCodeInternalError)
+	assertErrorResponse(t, resp, req.ID, pairingproto.ErrorCodeInternalError)
 }
 
 func TestBridge_Encrypt_NilParams(t *testing.T) {
@@ -2442,9 +2443,9 @@ func TestBridge_Encrypt_NilParams(t *testing.T) {
 	b, err := NewBridge(client, &BridgeConfig{Logger: testLogger()})
 	require.NoError(t, err)
 
-	req := newRemoteRequest(MethodRemoteEncrypt, nil)
+	req := newRemoteRequest(pairingproto.MethodRemoteEncrypt, nil)
 	resp := b.HandleRequest(context.Background(), req)
-	assertErrorResponse(t, resp, req.ID, ErrorCodeInvalidParams)
+	assertErrorResponse(t, resp, req.ID, pairingproto.ErrorCodeInvalidParams)
 }
 
 func TestBridge_Encrypt_ClientError(t *testing.T) {
@@ -2455,13 +2456,13 @@ func TestBridge_Encrypt_ClientError(t *testing.T) {
 	b, err := NewBridge(client, &BridgeConfig{Logger: testLogger()})
 	require.NoError(t, err)
 
-	req := newRemoteRequest(MethodRemoteEncrypt, RemoteEncryptParams{
+	req := newRemoteRequest(pairingproto.MethodRemoteEncrypt, pairingproto.RemoteEncryptParams{
 		Backend:   "software",
 		KeyID:     "key1",
 		Plaintext: []byte("data"),
 	})
 	resp := b.HandleRequest(context.Background(), req)
-	assertErrorResponse(t, resp, req.ID, ErrorCodeInternalError)
+	assertErrorResponse(t, resp, req.ID, pairingproto.ErrorCodeInternalError)
 }
 
 func TestBridge_Encrypt_BackendDenied(t *testing.T) {
@@ -2474,13 +2475,13 @@ func TestBridge_Encrypt_BackendDenied(t *testing.T) {
 	b, err := NewBridge(client, config)
 	require.NoError(t, err)
 
-	req := newRemoteRequest(MethodRemoteEncrypt, RemoteEncryptParams{
+	req := newRemoteRequest(pairingproto.MethodRemoteEncrypt, pairingproto.RemoteEncryptParams{
 		Backend:   "restricted",
 		KeyID:     "key1",
 		Plaintext: []byte("data"),
 	})
 	resp := b.HandleRequest(context.Background(), req)
-	assertErrorResponse(t, resp, req.ID, ErrorCodeBackendDenied)
+	assertErrorResponse(t, resp, req.ID, pairingproto.ErrorCodeBackendDenied)
 }
 
 func TestBridge_Decrypt_NilParams(t *testing.T) {
@@ -2488,9 +2489,9 @@ func TestBridge_Decrypt_NilParams(t *testing.T) {
 	b, err := NewBridge(client, &BridgeConfig{Logger: testLogger()})
 	require.NoError(t, err)
 
-	req := newRemoteRequest(MethodRemoteDecrypt, nil)
+	req := newRemoteRequest(pairingproto.MethodRemoteDecrypt, nil)
 	resp := b.HandleRequest(context.Background(), req)
-	assertErrorResponse(t, resp, req.ID, ErrorCodeInvalidParams)
+	assertErrorResponse(t, resp, req.ID, pairingproto.ErrorCodeInvalidParams)
 }
 
 func TestBridge_Decrypt_ClientError(t *testing.T) {
@@ -2501,13 +2502,13 @@ func TestBridge_Decrypt_ClientError(t *testing.T) {
 	b, err := NewBridge(client, &BridgeConfig{Logger: testLogger()})
 	require.NoError(t, err)
 
-	req := newRemoteRequest(MethodRemoteDecrypt, RemoteDecryptParams{
+	req := newRemoteRequest(pairingproto.MethodRemoteDecrypt, pairingproto.RemoteDecryptParams{
 		Backend:    "software",
 		KeyID:      "key1",
 		Ciphertext: []byte("ct"),
 	})
 	resp := b.HandleRequest(context.Background(), req)
-	assertErrorResponse(t, resp, req.ID, ErrorCodeInternalError)
+	assertErrorResponse(t, resp, req.ID, pairingproto.ErrorCodeInternalError)
 }
 
 func TestBridge_Decrypt_BackendDenied(t *testing.T) {
@@ -2520,13 +2521,13 @@ func TestBridge_Decrypt_BackendDenied(t *testing.T) {
 	b, err := NewBridge(client, config)
 	require.NoError(t, err)
 
-	req := newRemoteRequest(MethodRemoteDecrypt, RemoteDecryptParams{
+	req := newRemoteRequest(pairingproto.MethodRemoteDecrypt, pairingproto.RemoteDecryptParams{
 		Backend:    "restricted",
 		KeyID:      "key1",
 		Ciphertext: []byte("ct"),
 	})
 	resp := b.HandleRequest(context.Background(), req)
-	assertErrorResponse(t, resp, req.ID, ErrorCodeBackendDenied)
+	assertErrorResponse(t, resp, req.ID, pairingproto.ErrorCodeBackendDenied)
 }
 
 func TestBridge_Sign_NilParams(t *testing.T) {
@@ -2534,9 +2535,9 @@ func TestBridge_Sign_NilParams(t *testing.T) {
 	b, err := NewBridge(client, &BridgeConfig{Logger: testLogger()})
 	require.NoError(t, err)
 
-	req := newRemoteRequest(MethodRemoteSign, nil)
+	req := newRemoteRequest(pairingproto.MethodRemoteSign, nil)
 	resp := b.HandleRequest(context.Background(), req)
-	assertErrorResponse(t, resp, req.ID, ErrorCodeInvalidParams)
+	assertErrorResponse(t, resp, req.ID, pairingproto.ErrorCodeInvalidParams)
 }
 
 func TestBridge_Sign_ClientError(t *testing.T) {
@@ -2547,13 +2548,13 @@ func TestBridge_Sign_ClientError(t *testing.T) {
 	b, err := NewBridge(client, &BridgeConfig{Logger: testLogger()})
 	require.NoError(t, err)
 
-	req := newRemoteRequest(MethodRemoteSign, RemoteSignParams{
+	req := newRemoteRequest(pairingproto.MethodRemoteSign, pairingproto.RemoteSignParams{
 		Backend: "software",
 		KeyID:   "key1",
 		Data:    []byte("data"),
 	})
 	resp := b.HandleRequest(context.Background(), req)
-	assertErrorResponse(t, resp, req.ID, ErrorCodeInternalError)
+	assertErrorResponse(t, resp, req.ID, pairingproto.ErrorCodeInternalError)
 }
 
 func TestBridge_Verify_BackendDenied(t *testing.T) {
@@ -2566,14 +2567,14 @@ func TestBridge_Verify_BackendDenied(t *testing.T) {
 	b, err := NewBridge(client, config)
 	require.NoError(t, err)
 
-	req := newRemoteRequest(MethodRemoteVerify, RemoteVerifyParams{
+	req := newRemoteRequest(pairingproto.MethodRemoteVerify, pairingproto.RemoteVerifyParams{
 		Backend:   "restricted",
 		KeyID:     "key1",
 		Data:      []byte("data"),
 		Signature: []byte("sig"),
 	})
 	resp := b.HandleRequest(context.Background(), req)
-	assertErrorResponse(t, resp, req.ID, ErrorCodeBackendDenied)
+	assertErrorResponse(t, resp, req.ID, pairingproto.ErrorCodeBackendDenied)
 }
 
 func TestBridge_ListKeys_ClientError(t *testing.T) {
@@ -2584,11 +2585,11 @@ func TestBridge_ListKeys_ClientError(t *testing.T) {
 	b, err := NewBridge(client, &BridgeConfig{Logger: testLogger()})
 	require.NoError(t, err)
 
-	req := newRemoteRequest(MethodRemoteListKeys, RemoteListKeysParams{
+	req := newRemoteRequest(pairingproto.MethodRemoteListKeys, pairingproto.RemoteListKeysParams{
 		Backend: "software",
 	})
 	resp := b.HandleRequest(context.Background(), req)
-	assertErrorResponse(t, resp, req.ID, ErrorCodeInternalError)
+	assertErrorResponse(t, resp, req.ID, pairingproto.ErrorCodeInternalError)
 }
 
 // --- Coverage gap tests: HandleRequest edge cases ---
@@ -2600,16 +2601,16 @@ func TestBridge_HandleRequest_UnmarshalableParams(t *testing.T) {
 	b, err := NewBridge(client, &BridgeConfig{Logger: testLogger()})
 	require.NoError(t, err)
 
-	req := &Request{
-		JSONRPC: JSONRPCVersion,
+	req := &pairingproto.Request{
+		JSONRPC: pairingproto.JSONRPCVersion,
 		ID:      999,
-		Method:  MethodRemoteListBackends,
+		Method:  pairingproto.MethodRemoteListBackends,
 		Params:  make(chan int), // channels are not JSON-marshalable
 	}
 	resp := b.HandleRequest(context.Background(), req)
 	require.NotNil(t, resp)
 	require.NotNil(t, resp.Error)
-	assert.Equal(t, ErrorCodeInvalidParams, resp.Error.Code)
+	assert.Equal(t, pairingproto.ErrorCodeInvalidParams, resp.Error.Code)
 }
 
 // --- Coverage gap tests: ActivateCredential/AttestationQuote nil params and empty backend ---
@@ -2619,9 +2620,9 @@ func TestBridge_ActivateCredential_NilParams(t *testing.T) {
 	b, err := NewBridge(client, &BridgeConfig{Logger: testLogger()})
 	require.NoError(t, err)
 
-	req := newRemoteRequest(MethodRemoteActivateCredential, nil)
+	req := newRemoteRequest(pairingproto.MethodRemoteActivateCredential, nil)
 	resp := b.HandleRequest(context.Background(), req)
-	assertErrorResponse(t, resp, req.ID, ErrorCodeInvalidParams)
+	assertErrorResponse(t, resp, req.ID, pairingproto.ErrorCodeInvalidParams)
 }
 
 func TestBridge_ActivateCredential_EmptyBackendDefaultsToTPM2(t *testing.T) {
@@ -2630,14 +2631,14 @@ func TestBridge_ActivateCredential_EmptyBackendDefaultsToTPM2(t *testing.T) {
 	b, err := NewBridge(client, &BridgeConfig{Logger: testLogger()})
 	require.NoError(t, err)
 
-	req := newRemoteRequest(MethodRemoteActivateCredential, RemoteActivateCredentialParams{
+	req := newRemoteRequest(pairingproto.MethodRemoteActivateCredential, pairingproto.RemoteActivateCredentialParams{
 		Backend:         "", // empty, should default to tpm2
 		CredentialBlob:  []byte("blob"),
 		EncryptedSecret: []byte("secret"),
 	})
 	resp := b.HandleRequest(context.Background(), req)
 	// Should hit ErrTPM2DirectAccessRequired since backend defaults to allowed tpm2.
-	assertErrorResponse(t, resp, req.ID, ErrorCodeAttestUnsupported)
+	assertErrorResponse(t, resp, req.ID, pairingproto.ErrorCodeAttestUnsupported)
 }
 
 func TestBridge_GetAttestationQuote_NilParams(t *testing.T) {
@@ -2645,9 +2646,9 @@ func TestBridge_GetAttestationQuote_NilParams(t *testing.T) {
 	b, err := NewBridge(client, &BridgeConfig{Logger: testLogger()})
 	require.NoError(t, err)
 
-	req := newRemoteRequest(MethodRemoteGetAttestationQuote, nil)
+	req := newRemoteRequest(pairingproto.MethodRemoteGetAttestationQuote, nil)
 	resp := b.HandleRequest(context.Background(), req)
-	assertErrorResponse(t, resp, req.ID, ErrorCodeInvalidParams)
+	assertErrorResponse(t, resp, req.ID, pairingproto.ErrorCodeInvalidParams)
 }
 
 func TestBridge_GetAttestationQuote_EmptyBackendDefaultsToTPM2(t *testing.T) {
@@ -2655,12 +2656,12 @@ func TestBridge_GetAttestationQuote_EmptyBackendDefaultsToTPM2(t *testing.T) {
 	b, err := NewBridge(client, &BridgeConfig{Logger: testLogger()})
 	require.NoError(t, err)
 
-	req := newRemoteRequest(MethodRemoteGetAttestationQuote, RemoteGetAttestationQuoteParams{
+	req := newRemoteRequest(pairingproto.MethodRemoteGetAttestationQuote, pairingproto.RemoteGetAttestationQuoteParams{
 		Backend: "", // empty, should default to tpm2
 		Nonce:   []byte("nonce"),
 	})
 	resp := b.HandleRequest(context.Background(), req)
-	assertErrorResponse(t, resp, req.ID, ErrorCodeAttestUnsupported)
+	assertErrorResponse(t, resp, req.ID, pairingproto.ErrorCodeAttestUnsupported)
 }
 
 func TestBridge_GetTCGCSRIDevID_NilParams(t *testing.T) {
@@ -2668,9 +2669,9 @@ func TestBridge_GetTCGCSRIDevID_NilParams(t *testing.T) {
 	b, err := NewBridge(client, &BridgeConfig{Logger: testLogger()})
 	require.NoError(t, err)
 
-	req := newRemoteRequest(MethodRemoteGetTCGCSRIDevID, nil)
+	req := newRemoteRequest(pairingproto.MethodRemoteGetTCGCSRIDevID, nil)
 	resp := b.HandleRequest(context.Background(), req)
-	assertErrorResponse(t, resp, req.ID, ErrorCodeInvalidParams)
+	assertErrorResponse(t, resp, req.ID, pairingproto.ErrorCodeInvalidParams)
 }
 
 // --- Coverage gap tests: mapErrorToRPC ErrKeyNotFound ---
@@ -2690,13 +2691,13 @@ func TestBridge_GetPublicKey_KeyNotFound(t *testing.T) {
 	b, err := NewBridge(client, &BridgeConfig{Logger: testLogger()})
 	require.NoError(t, err)
 
-	req := newRemoteRequest(MethodRemoteGetPublicKey, RemoteGetPublicKeyParams{
+	req := newRemoteRequest(pairingproto.MethodRemoteGetPublicKey, pairingproto.RemoteGetPublicKeyParams{
 		Backend: "software",
 		KeyID:   "key1",
 		Format:  "der",
 	})
 	resp := b.HandleRequest(context.Background(), req)
-	assertErrorResponse(t, resp, req.ID, ErrorCodeKeyNotFound)
+	assertErrorResponse(t, resp, req.ID, pairingproto.ErrorCodeKeyNotFound)
 }
 
 // --- Coverage gap tests: PIV handlePIVListSlots bad JSON ---
@@ -2707,21 +2708,16 @@ func TestBridge_HandlePIVListSlots_BadJSON(t *testing.T) {
 	b, err := NewBridge(client, &BridgeConfig{Logger: testLogger()})
 	require.NoError(t, err)
 
-	req := &Request{
-		JSONRPC: JSONRPCVersion,
-		ID:      nextRequestID(),
-		Method:  MethodRemotePIVListSlots,
-		Params:  42,
-	}
+	req := pairingproto.NewRequest(pairingproto.MethodRemotePIVListSlots, 42)
 	resp := b.HandleRequest(context.Background(), req)
-	assertErrorResponse(t, resp, req.ID, ErrorCodeInvalidParams)
+	assertErrorResponse(t, resp, req.ID, pairingproto.ErrorCodeInvalidParams)
 }
 
 // --- Coverage gap tests: EncodeResponse marshal error ---
 
 func TestEncodeResponse_MarshalError(t *testing.T) {
 	// Pass a value that cannot be marshaled to JSON.
-	_, err := EncodeResponse(1, make(chan int))
+	_, err := pairingproto.EncodeResponse(1, make(chan int))
 	require.Error(t, err)
 }
 
@@ -2753,12 +2749,7 @@ func TestMessageRouter_HandleInboundRequest_NoHandler(t *testing.T) {
 	defer router.Stop()
 
 	// Remote side sends an inbound request (not biometric).
-	inboundReq := &Request{
-		JSONRPC: JSONRPCVersion,
-		ID:      nextRequestID(),
-		Method:  MethodRemoteListBackends,
-		Params:  nil,
-	}
+	inboundReq := pairingproto.NewRequest(pairingproto.MethodRemoteListBackends, nil)
 	reqBytes, err := json.Marshal(inboundReq)
 	require.NoError(t, err)
 	ciphertext, err := remoteSession.Encrypt(reqBytes)
@@ -2777,7 +2768,7 @@ func TestMessageRouter_HandleInboundRequest_BadJSON(t *testing.T) {
 	initiatorSession, remoteSession := setupHandshakedNoiseSessions(t)
 
 	handler := &mockRequestHandler{
-		handleFunc: func(_ context.Context, _ *Request) *Response {
+		handleFunc: func(_ context.Context, _ *pairingproto.Request) *pairingproto.Response {
 			return nil
 		},
 	}
@@ -2806,7 +2797,7 @@ func TestMessageRouter_HandleInboundRequest_HandlerReturnsNil(t *testing.T) {
 	initiatorSession, remoteSession := setupHandshakedNoiseSessions(t)
 
 	handler := &mockRequestHandler{
-		handleFunc: func(_ context.Context, _ *Request) *Response {
+		handleFunc: func(_ context.Context, _ *pairingproto.Request) *pairingproto.Response {
 			return nil // handler returns nil response
 		},
 	}
@@ -2815,11 +2806,7 @@ func TestMessageRouter_HandleInboundRequest_HandlerReturnsNil(t *testing.T) {
 	router.Start()
 	defer router.Stop()
 
-	inboundReq := &Request{
-		JSONRPC: JSONRPCVersion,
-		ID:      nextRequestID(),
-		Method:  MethodRemoteListBackends,
-	}
+	inboundReq := pairingproto.NewRequest(pairingproto.MethodRemoteListBackends, nil)
 	reqBytes, err := json.Marshal(inboundReq)
 	require.NoError(t, err)
 	ciphertext, err := remoteSession.Encrypt(reqBytes)
@@ -2843,19 +2830,14 @@ func TestMessageRouter_SendRequest_EncodeError(t *testing.T) {
 	defer router.Stop()
 
 	// A request with unmarshalable params should fail EncodeRequest.
-	req := &Request{
-		JSONRPC: JSONRPCVersion,
-		ID:      nextRequestID(),
-		Method:  MethodPing,
-		Params:  make(chan int), // cannot be marshaled
-	}
+	req := pairingproto.NewRequest(pairingproto.MethodPing, make(chan int))
 
 	ctx, cancel := context.WithTimeout(context.Background(), 1*time.Second)
 	defer cancel()
 
 	_, err := router.SendRequest(ctx, req)
 	require.Error(t, err)
-	assert.ErrorIs(t, err, ErrProtocolError)
+	assert.ErrorIs(t, err, pairingproto.ErrProtocolError)
 }
 
 // --- Coverage gap tests: routeResponse edge cases ---
@@ -2891,8 +2873,8 @@ func TestMessageRouter_RouteResponse_UnknownID(t *testing.T) {
 	defer router.Stop()
 
 	// Send a valid response with an ID that has no pending request.
-	resp := &Response{
-		JSONRPC: JSONRPCVersion,
+	resp := &pairingproto.Response{
+		JSONRPC: pairingproto.JSONRPCVersion,
 		ID:      99999,
 		Result:  json.RawMessage(`{"pong":true}`),
 	}
@@ -2965,7 +2947,7 @@ func TestMessageRouter_SendRequest_SendError(t *testing.T) {
 	router.Start()
 	defer router.Stop()
 
-	req := NewRequest(MethodPing, nil)
+	req := pairingproto.NewRequest(pairingproto.MethodPing, nil)
 	ctx, cancel := context.WithTimeout(context.Background(), 1*time.Second)
 	defer cancel()
 
@@ -2982,7 +2964,7 @@ func TestMessageRouter_SendRequest_ChannelClosed(t *testing.T) {
 	router := NewMessageRouter(initiatorTransport, initiatorSession, nil, testLogger())
 	router.Start()
 
-	req := NewRequest(MethodPing, nil)
+	req := pairingproto.NewRequest(pairingproto.MethodPing, nil)
 
 	// Send a request but close the router's done channel before response
 	// comes. Wait for req.ID to actually land in router.pending instead of
@@ -3048,6 +3030,21 @@ func (*mockTransportClient) OIDCCredentialGet(context.Context, *transport.OIDCCr
 }
 func (*mockTransportClient) OIDCCredentialList(context.Context, *transport.OIDCCredentialListRequest) (*transport.OIDCCredentialListResponse, error) {
 	return nil, nil
+}
+func (*mockTransportClient) TrustRootList(context.Context, *transport.TrustRootListRequest) (*transport.TrustRootListResponse, error) {
+	return nil, nil
+}
+func (*mockTransportClient) TrustRootGet(context.Context, *transport.TrustRootRequest) (*transport.TrustRoot, error) {
+	return nil, nil
+}
+func (*mockTransportClient) TrustRootImport(context.Context, *transport.TrustRootImportRequest) (*transport.TrustRootImportResponse, error) {
+	return nil, nil
+}
+func (*mockTransportClient) TrustRootQuarantine(context.Context, *transport.TrustRootRequest) (*transport.TrustRoot, error) {
+	return nil, nil
+}
+func (*mockTransportClient) TrustRootRemove(context.Context, *transport.TrustRootRequest) error {
+	return nil
 }
 func (*mockTransportClient) OIDCCredentialDelete(context.Context, *transport.OIDCCredentialRef) error {
 	return nil

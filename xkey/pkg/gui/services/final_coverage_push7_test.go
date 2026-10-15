@@ -29,8 +29,8 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	"github.com/jeremyhahn/go-xkms/pkg/fido2/authenticator"
 	"github.com/jeremyhahn/go-xkms/xkey/pkg/agent"
-	"github.com/jeremyhahn/go-xkms/xkey/pkg/authenticator"
 )
 
 // ===========================================================================

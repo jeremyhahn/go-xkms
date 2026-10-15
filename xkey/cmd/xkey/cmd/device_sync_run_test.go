@@ -24,7 +24,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	"github.com/jeremyhahn/go-xkms/xkey/pkg/pairing"
+	"github.com/jeremyhahn/go-xkms/pkg/pairingproto"
 )
 
 // syncTestCmd builds a fresh sync command carrying the production flag set,
@@ -57,10 +57,10 @@ func runSyncMode(t *testing.T, mode syncMode, flags map[string]string) (string, 
 // phone, and reports what the phone did with the laptop's items.
 func remoteSyncResults() map[string]any {
 	return map[string]any{
-		pairing.MethodLocalSyncTrustStore: &pairing.LocalSyncTrustStoreResult{Added: 1},
-		pairing.MethodLocalSyncOATH: &pairing.LocalSyncOATHResult{
+		pairingproto.MethodLocalSyncTrustStore: &pairingproto.LocalSyncTrustStoreResult{Added: 1},
+		pairingproto.MethodLocalSyncOATH: &pairingproto.LocalSyncOATHResult{
 			Added: 1,
-			Remote: []pairing.SyncOATHCredential{{
+			Remote: []pairingproto.SyncOATHCredential{{
 				ID:        "phone-oath",
 				Name:      "PhoneOATH",
 				Issuer:    "Example",
@@ -72,9 +72,9 @@ func remoteSyncResults() map[string]any {
 				UpdatedAt: "2026-01-02T03:04:05Z",
 			}},
 		},
-		pairing.MethodLocalSyncPasswords: &pairing.LocalSyncPasswordsResult{
+		pairingproto.MethodLocalSyncPasswords: &pairingproto.LocalSyncPasswordsResult{
 			Updated: 1,
-			Remote: []pairing.SyncPassword{{
+			Remote: []pairingproto.SyncPassword{{
 				ID:       "phone-password",
 				Name:     "PhoneEntry",
 				Username: "phone-user",
@@ -183,11 +183,11 @@ func TestRunDeviceSyncMode_SyncExchangesEveryStore(t *testing.T) {
 	require.NoError(t, err, output)
 
 	require.Len(t, transport.requests, 3)
-	trust, ok := transport.requests[0].Params.(*pairing.LocalSyncTrustStoreParams)
+	trust, ok := transport.requests[0].Params.(*pairingproto.LocalSyncTrustStoreParams)
 	require.True(t, ok)
 	assert.Len(t, trust.Certificates, 1, "the seeded certificate is sent")
-	assert.Equal(t, pairing.MethodLocalSyncOATH, transport.requests[1].Method)
-	assert.Equal(t, pairing.MethodLocalSyncPasswords, transport.requests[2].Method)
+	assert.Equal(t, pairingproto.MethodLocalSyncOATH, transport.requests[1].Method)
+	assert.Equal(t, pairingproto.MethodLocalSyncPasswords, transport.requests[2].Method)
 
 	assert.Contains(t, output, `Syncing with device "Test Phone"`)
 	assert.Contains(t, output, "trust-store: phone applied 1 added, 0 updated, 0 skipped; locally applied 0 added")
@@ -203,7 +203,7 @@ func TestRunDeviceSyncMode_SyncExchangesEveryStore(t *testing.T) {
 
 	// ... and the run was recorded for sync-status.
 	statusTransport := &fakeDeviceTransport{results: map[string]any{
-		pairing.MethodLocalSyncStatus: &pairing.LocalSyncStatusResult{DeviceID: "phone-1"},
+		pairingproto.MethodLocalSyncStatus: &pairingproto.LocalSyncStatusResult{DeviceID: "phone-1"},
 	}}
 	useFakeTransport(t, statusTransport)
 	output, err = runSyncStatus(t, nil)
@@ -223,7 +223,7 @@ func TestRunDeviceSyncMode_PushDiscardsThePhoneReply(t *testing.T) {
 	require.NoError(t, err, output)
 
 	require.Len(t, transport.requests, 1, "only the selected store is exchanged")
-	params, ok := transport.requests[0].Params.(*pairing.LocalSyncOATHParams)
+	params, ok := transport.requests[0].Params.(*pairingproto.LocalSyncOATHParams)
 	require.True(t, ok)
 	require.Len(t, params.Credentials, 1)
 	assert.Equal(t, "oath-unit-test", params.Credentials[0].ID)
@@ -248,7 +248,7 @@ func TestRunDeviceSyncMode_PullSendsNothing(t *testing.T) {
 	require.NoError(t, err, output)
 
 	require.Len(t, transport.requests, 1)
-	params, ok := transport.requests[0].Params.(*pairing.LocalSyncPasswordsParams)
+	params, ok := transport.requests[0].Params.(*pairingproto.LocalSyncPasswordsParams)
 	require.True(t, ok)
 	assert.Empty(t, params.Passwords, "a pull must not hand local passwords to the phone")
 	assert.Contains(t, output, "passwords:   locally applied 1 added, 0 updated, 0 skipped")
@@ -260,11 +260,11 @@ func TestRunDeviceSyncMode_ReportsEveryFailedStore(t *testing.T) {
 	pairTestDevice(t, "Test Phone")
 
 	results := remoteSyncResults()
-	results[pairing.MethodLocalSyncPasswords] = "not an object"
+	results[pairingproto.MethodLocalSyncPasswords] = "not an object"
 	transport := &fakeDeviceTransport{
 		results: results,
-		rpcErrors: map[string]*pairing.RPCError{
-			pairing.MethodLocalSyncTrustStore: {Code: -32000, Message: "store locked"},
+		rpcErrors: map[string]*pairingproto.RPCError{
+			pairingproto.MethodLocalSyncTrustStore: {Code: -32000, Message: "store locked"},
 		},
 	}
 	useFakeTransport(t, transport)
@@ -332,7 +332,7 @@ func TestRunDeviceSyncStatus_ReportsBothSides(t *testing.T) {
 
 	t.Run("with checksums", func(t *testing.T) {
 		useFakeTransport(t, &fakeDeviceTransport{results: map[string]any{
-			pairing.MethodLocalSyncStatus: &pairing.LocalSyncStatusResult{
+			pairingproto.MethodLocalSyncStatus: &pairingproto.LocalSyncStatusResult{
 				DeviceID: "phone-1",
 				LastSync: "2026-01-02T03:04:05Z",
 				StoreChecksums: map[string]string{
@@ -357,7 +357,7 @@ func TestRunDeviceSyncStatus_ReportsBothSides(t *testing.T) {
 
 	t.Run("without checksums", func(t *testing.T) {
 		useFakeTransport(t, &fakeDeviceTransport{results: map[string]any{
-			pairing.MethodLocalSyncStatus: &pairing.LocalSyncStatusResult{DeviceID: "phone-1"},
+			pairingproto.MethodLocalSyncStatus: &pairingproto.LocalSyncStatusResult{DeviceID: "phone-1"},
 		}})
 
 		output, err := runSyncStatus(t, nil)
@@ -384,8 +384,8 @@ func TestRunDeviceSyncStatus_Failures(t *testing.T) {
 	})
 
 	t.Run("phone error", func(t *testing.T) {
-		useFakeTransport(t, &fakeDeviceTransport{rpcErrors: map[string]*pairing.RPCError{
-			pairing.MethodLocalSyncStatus: {Code: -32000, Message: "busy"},
+		useFakeTransport(t, &fakeDeviceTransport{rpcErrors: map[string]*pairingproto.RPCError{
+			pairingproto.MethodLocalSyncStatus: {Code: -32000, Message: "busy"},
 		}})
 
 		output, err := runSyncStatus(t, nil)

@@ -19,9 +19,9 @@ import (
 	"errors"
 	"testing"
 
+	"github.com/jeremyhahn/go-xkms/pkg/fido2/authenticator"
 	xkms "github.com/jeremyhahn/go-xkms/sdk/go"
 	"github.com/jeremyhahn/go-xkms/xkey/pkg/audit"
-	"github.com/jeremyhahn/go-xkms/xkey/pkg/authenticator"
 	"github.com/jeremyhahn/go-xkms/xkey/pkg/gui/services"
 	"github.com/stretchr/testify/require"
 )
@@ -29,7 +29,7 @@ import (
 // These tests exercise the same audit wiring runExtensionServe installs on
 // the authenticator initHeadlessAuthenticator returns (go-xkms#804):
 //
-//	auth.SetAuditLogger(auditLogger)
+//	auth.SetAuditLogger(audit.NewFIDO2Logger(auditLogger))
 //
 // runExtensionServe itself is not driven end to end here -- it opens a real
 // IPC socket and (in barrier mode) a real barrier, which the existing
@@ -57,7 +57,7 @@ func TestExtensionServeAuthenticator_SetPINEmitsAuditRecord(t *testing.T) {
 	defer func() { _ = auth.Close() }()
 
 	auditLogger := audit.NewSlogLogger(logger)
-	auth.SetAuditLogger(auditLogger)
+	auth.SetAuditLogger(audit.NewFIDO2Logger(auditLogger))
 
 	require.NoError(t, auth.SetInitialPIN([]byte("123456")))
 
@@ -80,7 +80,7 @@ func TestExtensionServeAuthenticator_AuditWriteFailureRefusesPINSeed(t *testing.
 	defer func() { _ = auth.Close() }()
 
 	auditErr := errors.New("audit backend unavailable")
-	auth.SetAuditLogger(&failingAuditLogger{err: auditErr})
+	auth.SetAuditLogger(audit.NewFIDO2Logger(&failingAuditLogger{err: auditErr}))
 
 	err = auth.SetInitialPIN([]byte("123456"))
 	require.ErrorIs(t, err, auditErr)
@@ -111,7 +111,7 @@ func TestExtensionServeAuthenticator_MakeCredentialEmitsAuditRecord(t *testing.T
 	defer func() { _ = auth.Close() }()
 
 	auditLogger := audit.NewSlogLogger(logger)
-	auth.SetAuditLogger(auditLogger)
+	auth.SetAuditLogger(audit.NewFIDO2Logger(auditLogger))
 
 	clientDataHash := sha256.Sum256([]byte("test client data"))
 	rp := authenticator.RelyingParty{ID: "example.com", Name: "Example Corp"}
@@ -141,7 +141,7 @@ func TestExtensionServeAuthenticator_AuditWriteFailureRefusesCredentialCreation(
 	defer func() { _ = auth.Close() }()
 
 	auditErr := errors.New("audit backend unavailable")
-	auth.SetAuditLogger(&failingAuditLogger{err: auditErr})
+	auth.SetAuditLogger(audit.NewFIDO2Logger(&failingAuditLogger{err: auditErr}))
 
 	clientDataHash := sha256.Sum256([]byte("test client data"))
 	rp := authenticator.RelyingParty{ID: "example.com", Name: "Example Corp"}

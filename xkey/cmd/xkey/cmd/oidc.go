@@ -97,8 +97,12 @@ func openLaunchURL(rawURL string) error {
 	if err != nil {
 		return &SentinelCauseError{Sentinel: ErrOIDCInvalidLaunchURL, Cause: err}
 	}
-	return browser.OpenURL(validated.String())
+	return launchBrowser(validated.String())
 }
+
+// launchBrowser is the system browser opener; tests replace it so a login
+// flow never starts a real browser.
+var launchBrowser = browser.OpenURL
 
 // OIDCExecPayload is the JSON structure passed to exec scripts. The tokens
 // are SecretBytes so they stay wipeable until the script has run; they encode
@@ -1989,6 +1993,17 @@ func loadRefreshStatus(tokenStore, providerName string) (*OIDCRefreshStatus, err
 	return &status, nil
 }
 
+// backgroundWorkerCommand builds the detached worker a --background login
+// hands its refresh loop to: this same executable, run with args. Tests
+// replace it with a stand-in process.
+var backgroundWorkerCommand = func(args ...string) (*exec.Cmd, error) {
+	executable, err := os.Executable()
+	if err != nil {
+		return nil, err
+	}
+	return exec.Command(executable, args...), nil
+}
+
 // startBackgroundRefresh starts a background refresh process.
 //
 // barrierPasswordFile, if non-empty, is forwarded to the detached process as
@@ -2026,11 +2041,6 @@ func startBackgroundRefresh(out io.Writer, providerName, tokenEndpoint, clientID
 	}
 
 	// Build command to run ourselves with special --background-worker flag
-	executable, err := os.Executable()
-	if err != nil {
-		return &WrappedError{Msg: "failed to get executable path", Err: errors.Join(err, logFileHandle.Close())}
-	}
-
 	args := []string{
 		"oidc", "login",
 		"--background-worker",
@@ -2051,7 +2061,10 @@ func startBackgroundRefresh(out io.Writer, providerName, tokenEndpoint, clientID
 		args = append(args, "--barrier-password-file", barrierPasswordFile)
 	}
 
-	cmd := exec.Command(executable, args...)
+	cmd, err := backgroundWorkerCommand(args...)
+	if err != nil {
+		return &WrappedError{Msg: "failed to get executable path", Err: errors.Join(err, logFileHandle.Close())}
+	}
 	cmd.Stdout = logFileHandle
 	cmd.Stderr = logFileHandle
 
@@ -2367,6 +2380,7 @@ func runAWSProviderLogin(cmd *cobra.Command, provider *OIDCProvider) error {
 	logFile, _ := cmd.Flags().GetString("log-file")
 	autoRefresh, _ := cmd.Flags().GetInt("auto-refresh")
 	execCmd, _ := cmd.Flags().GetString("exec")
+	noBrowser, _ := cmd.Flags().GetBool("no-browser")
 
 	// Apply provider defaults
 	if !background && provider.Background {
@@ -2422,7 +2436,7 @@ func runAWSProviderLogin(cmd *cobra.Command, provider *OIDCProvider) error {
 		region,
 		profile,
 		crossDevice,
-		false, // noBrowser
+		noBrowser,
 		output,
 		credentialsFile,
 		execCmd,

@@ -16,6 +16,8 @@ package pairing
 import (
 	"context"
 	"encoding/json"
+
+	"github.com/jeremyhahn/go-xkms/sdk/go/pairingproto"
 )
 
 // The remote.*Backup* methods are unimplemented pending an architecture
@@ -45,9 +47,9 @@ import (
 // to create an encrypted backup and return it. See the package-level note
 // above: this always reports ErrBackupNotConfigured.
 func (b *Bridge) handleCreateBackup(_ context.Context, params json.RawMessage) (interface{}, error) {
-	var p RemoteCreateBackupParams
+	var p pairingproto.RemoteCreateBackupParams
 	if err := unmarshalParams(params, &p); err != nil {
-		return nil, ErrBridgeInvalidParams
+		return nil, pairingproto.ErrBridgeInvalidParams
 	}
 
 	b.logger.Info("backup creation requested",
@@ -57,26 +59,26 @@ func (b *Bridge) handleCreateBackup(_ context.Context, params json.RawMessage) (
 		"includeCA", p.IncludeCA,
 		"label", p.Label)
 
-	return nil, ErrBackupNotConfigured
+	return nil, pairingproto.ErrBackupNotConfigured
 }
 
 // handleRestoreBackup handles remote.restoreBackup - the phone sends an
 // encrypted backup blob to the laptop for restoration. See the package-level
 // note above: this always reports ErrBackupNotConfigured.
 func (b *Bridge) handleRestoreBackup(_ context.Context, params json.RawMessage) (interface{}, error) {
-	var p RemoteRestoreBackupParams
+	var p pairingproto.RemoteRestoreBackupParams
 	if err := unmarshalParams(params, &p); err != nil {
-		return nil, ErrBridgeInvalidParams
+		return nil, pairingproto.ErrBridgeInvalidParams
 	}
 
 	if len(p.BackupData) == 0 {
-		return nil, ErrBridgeInvalidParams
+		return nil, pairingproto.ErrBridgeInvalidParams
 	}
 
 	b.logger.Info("backup restore requested",
 		"backupDataLen", len(p.BackupData))
 
-	return nil, ErrBackupNotConfigured
+	return nil, pairingproto.ErrBackupNotConfigured
 }
 
 // handleListBackupsForRestore handles remote.listBackups - the phone asks the
@@ -85,5 +87,5 @@ func (b *Bridge) handleRestoreBackup(_ context.Context, params json.RawMessage) 
 func (b *Bridge) handleListBackupsForRestore(_ context.Context, _ json.RawMessage) (interface{}, error) {
 	b.logger.Info("backup list requested")
 
-	return nil, ErrBackupNotConfigured
+	return nil, pairingproto.ErrBackupNotConfigured
 }

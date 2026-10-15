@@ -19,7 +19,8 @@ import (
 	"sync/atomic"
 	"testing"
 
-	"github.com/jeremyhahn/go-xkms/xkey/pkg/pairing"
+	"github.com/jeremyhahn/go-xkms/pkg/pairingproto"
+	"github.com/jeremyhahn/go-xkms/pkg/trust/bootstrap"
 	"github.com/stretchr/testify/require"
 )
 
@@ -120,19 +121,19 @@ func testPhoneKeyBackendConfig() *PhoneKeyBackendConfig {
 // 1. Read identity message: [0x01, public_key_32_bytes]
 // 2. Send identity ack: [0x00] for new device
 // 3. Proceed with Noise XX handshake
-func runResponderWithIdentity(t *testing.T, transport *mockPipeTransport) *pairing.NoiseSession {
+func runResponderWithIdentity(t *testing.T, transport *mockPipeTransport) *bootstrap.NoiseSession {
 	t.Helper()
 
 	// Step 1: Read identity message from initiator
 	identityMsg := <-transport.recvCh
-	require.Len(t, identityMsg, pairing.IdentityMsgSize, "identity message should be 33 bytes")
-	require.Equal(t, byte(pairing.IdentityMsgVersion), identityMsg[0], "identity message version should be 0x01")
+	require.Len(t, identityMsg, pairingproto.IdentityMsgSize, "identity message should be 33 bytes")
+	require.Equal(t, byte(pairingproto.IdentityMsgVersion), identityMsg[0], "identity message version should be 0x01")
 
 	// Step 2: Send identity ack for new device (0x00)
-	transport.sendCh <- []byte{pairing.IdentityAckUnknown}
+	transport.sendCh <- []byte{pairingproto.IdentityAckUnknown}
 
 	// Step 3: Proceed with Noise XX handshake
-	responderSession, err := pairing.NewNoiseSession(&pairing.NoiseSessionConfig{IsInitiator: false})
+	responderSession, err := bootstrap.NewNoiseSession(&bootstrap.NoiseSessionConfig{IsInitiator: false})
 	require.NoError(t, err)
 
 	err = responderSession.InitHandshake()

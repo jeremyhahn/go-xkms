@@ -75,9 +75,9 @@ The phone-bridge wiring itself is built only with the
 
 The phone decides which of its keys the laptop may use. On the wire, a key's
 `shareable` flag is reported in `KeyInfo` and changed with
-`local.setKeyPolicy` (`xkey/pkg/pairing/protocol_local.go:223`); refusals
+`local.setKeyPolicy` (`pkg/pairingproto/protocol_local.go:223`); refusals
 come back as `-32018` `ErrorCodeShareDenied` or `-32019`
-`ErrorCodeShareNotExportable` (`xkey/pkg/pairing/protocol.go:47`). How the
+`ErrorCodeShareNotExportable` (`pkg/pairingproto/protocol.go:47`). How the
 Android app presents and prompts for these policies is phone-side and not
 verified here.
 
@@ -183,7 +183,7 @@ not increment phone credential counters itself.
 ### Channel Security
 
 All bidirectional traffic uses the same Noise channel,
-`Noise_XX_25519_ChaChaPoly_SHA256` (`xkey/pkg/pairing/noise.go:30`):
+`Noise_XX_25519_ChaChaPoly_SHA256` (`pkg/trust/bootstrap/noise_session.go:29`):
 
 - Mutual authentication via static Curve25519 keys
 - Forward secrecy via ephemeral key exchange

@@ -839,6 +839,21 @@ func (*noopClient) OIDCCredentialGet(context.Context, *transport.OIDCCredentialR
 func (*noopClient) OIDCCredentialList(context.Context, *transport.OIDCCredentialListRequest) (*transport.OIDCCredentialListResponse, error) {
 	return nil, nil
 }
+func (*noopClient) TrustRootList(context.Context, *transport.TrustRootListRequest) (*transport.TrustRootListResponse, error) {
+	return nil, nil
+}
+func (*noopClient) TrustRootGet(context.Context, *transport.TrustRootRequest) (*transport.TrustRoot, error) {
+	return nil, nil
+}
+func (*noopClient) TrustRootImport(context.Context, *transport.TrustRootImportRequest) (*transport.TrustRootImportResponse, error) {
+	return nil, nil
+}
+func (*noopClient) TrustRootQuarantine(context.Context, *transport.TrustRootRequest) (*transport.TrustRoot, error) {
+	return nil, nil
+}
+func (*noopClient) TrustRootRemove(context.Context, *transport.TrustRootRequest) error {
+	return nil
+}
 func (*noopClient) OIDCCredentialDelete(context.Context, *transport.OIDCCredentialRef) error {
 	return nil
 }

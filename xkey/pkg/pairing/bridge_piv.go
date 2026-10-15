@@ -19,6 +19,7 @@ import (
 	"time"
 
 	xkms "github.com/jeremyhahn/go-xkms/sdk/go"
+	"github.com/jeremyhahn/go-xkms/sdk/go/pairingproto"
 	"github.com/jeremyhahn/go-xkms/sdk/go/transport"
 )
 
@@ -54,10 +55,10 @@ func pivBackendOrDefault(backend string) string {
 // holds. When no storage provider is configured, ErrPIVNotConfigured is
 // returned.
 func (b *Bridge) handlePIVListSlots(ctx context.Context, params json.RawMessage) (interface{}, error) {
-	var p RemotePIVListSlotsParams
+	var p pairingproto.RemotePIVListSlotsParams
 	if len(params) > 0 {
 		if err := json.Unmarshal(params, &p); err != nil {
-			return nil, ErrBridgeInvalidParams
+			return nil, pairingproto.ErrBridgeInvalidParams
 		}
 	}
 
@@ -67,12 +68,12 @@ func (b *Bridge) handlePIVListSlots(ctx context.Context, params json.RawMessage)
 		"backend", backend)
 
 	if b.pivStorage == nil {
-		return nil, ErrPIVNotConfigured
+		return nil, pairingproto.ErrPIVNotConfigured
 	}
 
 	storage, err := b.pivStorage(backend)
 	if err != nil {
-		return nil, &SentinelCauseError{Sentinel: ErrPIVNotConfigured, Cause: err}
+		return nil, &pairingproto.SentinelCauseError{Sentinel: pairingproto.ErrPIVNotConfigured, Cause: err}
 	}
 	defer func() {
 		if closeErr := storage.Close(); closeErr != nil {
@@ -82,15 +83,15 @@ func (b *Bridge) handlePIVListSlots(ctx context.Context, params json.RawMessage)
 
 	slots, err := storage.List()
 	if err != nil {
-		return nil, &SentinelCauseError{Sentinel: ErrPIVSlotNotFound, Cause: err}
+		return nil, &pairingproto.SentinelCauseError{Sentinel: pairingproto.ErrPIVSlotNotFound, Cause: err}
 	}
 
 	keysWithSlot := b.pivBackendKeyIDs(ctx, backend)
 
-	result := make([]PIVSlotInfo, 0, len(slots))
+	result := make([]pairingproto.PIVSlotInfo, 0, len(slots))
 	for _, slot := range slots {
 		_, hasKey := keysWithSlot[string(slot.Slot)]
-		result = append(result, PIVSlotInfo{
+		result = append(result, pairingproto.PIVSlotInfo{
 			Slot:           string(slot.Slot),
 			Label:          xkms.PIVSlotName(slot.Slot),
 			Algorithm:      slot.Algorithm,
@@ -101,7 +102,7 @@ func (b *Bridge) handlePIVListSlots(ctx context.Context, params json.RawMessage)
 		})
 	}
 
-	return &RemotePIVListSlotsResult{Slots: result}, nil
+	return &pairingproto.RemotePIVListSlotsResult{Slots: result}, nil
 }
 
 // pivBackendKeyIDs returns the set of KeyIDs present in backend, via the same
@@ -132,16 +133,16 @@ func (b *Bridge) pivBackendKeyIDs(ctx context.Context, backend string) map[strin
 // signing is served by Client.Sign exactly like remote.sign: no separate PIV
 // signer plumbing is needed on the bridge.
 func (b *Bridge) handlePIVSign(ctx context.Context, params json.RawMessage) (interface{}, error) {
-	var p RemotePIVSignParams
+	var p pairingproto.RemotePIVSignParams
 	if err := unmarshalParams(params, &p); err != nil {
-		return nil, ErrBridgeInvalidParams
+		return nil, pairingproto.ErrBridgeInvalidParams
 	}
 
 	if p.Slot == "" {
-		return nil, ErrPIVInvalidSlot
+		return nil, pairingproto.ErrPIVInvalidSlot
 	}
 	if len(p.Data) == 0 {
-		return nil, ErrBridgeInvalidParams
+		return nil, pairingproto.ErrBridgeInvalidParams
 	}
 
 	backend := pivBackendOrDefault(p.Backend)
@@ -163,7 +164,7 @@ func (b *Bridge) handlePIVSign(ctx context.Context, params json.RawMessage) (int
 		Hash:    p.Algorithm,
 	})
 	if err != nil {
-		return nil, &SentinelCauseError{Sentinel: ErrPIVSignFailed, Cause: err}
+		return nil, &pairingproto.SentinelCauseError{Sentinel: pairingproto.ErrPIVSignFailed, Cause: err}
 	}
 
 	algorithm := resp.Algorithm
@@ -171,7 +172,7 @@ func (b *Bridge) handlePIVSign(ctx context.Context, params json.RawMessage) (int
 		algorithm = p.Algorithm
 	}
 
-	return &RemotePIVSignResult{
+	return &pairingproto.RemotePIVSignResult{
 		Signature: resp.Signature,
 		Algorithm: algorithm,
 	}, nil
@@ -183,13 +184,13 @@ func (b *Bridge) handlePIVSign(ctx context.Context, params json.RawMessage) (int
 // The certificate comes from the Bridge's configured PIVStorageProvider.
 // When no storage provider is configured, ErrPIVNotConfigured is returned.
 func (b *Bridge) handlePIVGetCert(_ context.Context, params json.RawMessage) (interface{}, error) {
-	var p RemotePIVGetCertParams
+	var p pairingproto.RemotePIVGetCertParams
 	if err := unmarshalParams(params, &p); err != nil {
-		return nil, ErrBridgeInvalidParams
+		return nil, pairingproto.ErrBridgeInvalidParams
 	}
 
 	if p.Slot == "" {
-		return nil, ErrPIVInvalidSlot
+		return nil, pairingproto.ErrPIVInvalidSlot
 	}
 
 	backend := pivBackendOrDefault(p.Backend)
@@ -199,12 +200,12 @@ func (b *Bridge) handlePIVGetCert(_ context.Context, params json.RawMessage) (in
 		"backend", backend)
 
 	if b.pivStorage == nil {
-		return nil, ErrPIVNotConfigured
+		return nil, pairingproto.ErrPIVNotConfigured
 	}
 
 	storage, err := b.pivStorage(backend)
 	if err != nil {
-		return nil, &SentinelCauseError{Sentinel: ErrPIVNotConfigured, Cause: err}
+		return nil, &pairingproto.SentinelCauseError{Sentinel: pairingproto.ErrPIVNotConfigured, Cause: err}
 	}
 	defer func() {
 		if closeErr := storage.Close(); closeErr != nil {
@@ -214,10 +215,10 @@ func (b *Bridge) handlePIVGetCert(_ context.Context, params json.RawMessage) (in
 
 	cert, err := storage.Retrieve(xkms.PIVSlot(p.Slot))
 	if err != nil {
-		return nil, &SentinelCauseError{Sentinel: ErrPIVSlotNotFound, Cause: err}
+		return nil, &pairingproto.SentinelCauseError{Sentinel: pairingproto.ErrPIVSlotNotFound, Cause: err}
 	}
 
-	return &RemotePIVGetCertResult{
+	return &pairingproto.RemotePIVGetCertResult{
 		CertificateDER: cert.Raw,
 		Subject:        cert.Subject.String(),
 		Issuer:         cert.Issuer.String(),

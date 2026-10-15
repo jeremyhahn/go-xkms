@@ -19,6 +19,7 @@ import (
 	"errors"
 	"time"
 
+	"github.com/jeremyhahn/go-xkms/sdk/go/pairingproto"
 	"github.com/jeremyhahn/go-xkms/sdk/go/secure"
 	"github.com/jeremyhahn/go-xkms/xkey/pkg/audit"
 	xkeysync "github.com/jeremyhahn/go-xkms/xkey/pkg/sync"
@@ -43,16 +44,16 @@ const (
 // merge them too. When no sync service is configured, ErrSyncNotConfigured
 // is returned.
 func (b *Bridge) handleSyncTrustStore(_ context.Context, params json.RawMessage) (interface{}, error) {
-	var p RemoteSyncTrustStoreParams
+	var p pairingproto.RemoteSyncTrustStoreParams
 	if err := unmarshalParams(params, &p); err != nil {
-		return nil, ErrBridgeInvalidParams
+		return nil, pairingproto.ErrBridgeInvalidParams
 	}
 
 	b.logger.Info("trust store sync requested",
 		"certificateCount", len(p.Certificates))
 
 	if b.syncService == nil {
-		return nil, ErrSyncNotConfigured
+		return nil, pairingproto.ErrSyncNotConfigured
 	}
 
 	applied, err := b.syncService.ApplyTrustStoreDelta(wireToTrustStoreDelta(p.Certificates))
@@ -62,10 +63,10 @@ func (b *Bridge) handleSyncTrustStore(_ context.Context, params json.RawMessage)
 
 	local, err := b.syncService.ComputeLocalTrustStoreDelta()
 	if err != nil {
-		return nil, &SentinelCauseError{Sentinel: ErrSyncFailed, Cause: err}
+		return nil, &pairingproto.SentinelCauseError{Sentinel: pairingproto.ErrSyncFailed, Cause: err}
 	}
 
-	return &RemoteSyncTrustStoreResult{
+	return &pairingproto.RemoteSyncTrustStoreResult{
 		Added:   applied.Added,
 		Skipped: applied.Skipped,
 		Local:   trustStoreDeltaToWire(local),
@@ -79,21 +80,21 @@ func (b *Bridge) handleSyncTrustStore(_ context.Context, params json.RawMessage)
 // last-modified-wins conflict resolution on UpdatedAt. When no sync service
 // is configured, ErrSyncNotConfigured is returned.
 func (b *Bridge) handleSyncOATH(ctx context.Context, params json.RawMessage) (interface{}, error) {
-	var p RemoteSyncOATHParams
+	var p pairingproto.RemoteSyncOATHParams
 	defer p.Destroy()
 	if err := unmarshalParams(params, &p); err != nil {
-		return nil, ErrBridgeInvalidParams
+		return nil, pairingproto.ErrBridgeInvalidParams
 	}
 
 	b.logger.Info("OATH sync requested",
 		"credentialCount", len(p.Credentials))
 
-	if err := b.approveSync(ctx, MethodRemoteSyncOATH); err != nil {
+	if err := b.approveSync(ctx, pairingproto.MethodRemoteSyncOATH); err != nil {
 		return nil, err
 	}
 
 	if b.syncService == nil {
-		return nil, ErrSyncNotConfigured
+		return nil, pairingproto.ErrSyncNotConfigured
 	}
 
 	applied, err := b.syncService.ApplyOATHDelta(wireToOATHDelta(p.Credentials))
@@ -103,12 +104,12 @@ func (b *Bridge) handleSyncOATH(ctx context.Context, params json.RawMessage) (in
 
 	local, err := b.syncService.ComputeLocalOATHDelta()
 	if err != nil {
-		return nil, &SentinelCauseError{Sentinel: ErrSyncFailed, Cause: err}
+		return nil, &pairingproto.SentinelCauseError{Sentinel: pairingproto.ErrSyncFailed, Cause: err}
 	}
 
 	// The result shares local's secret slices; HandleRequest destroys the
 	// result once it has been encoded.
-	return &RemoteSyncOATHResult{
+	return &pairingproto.RemoteSyncOATHResult{
 		Added:   applied.Added,
 		Updated: applied.Updated,
 		Skipped: applied.Skipped,
@@ -123,21 +124,21 @@ func (b *Bridge) handleSyncOATH(ctx context.Context, params json.RawMessage) (in
 // last-modified-wins conflict resolution on UpdatedAt. When no sync service
 // is configured, ErrSyncNotConfigured is returned.
 func (b *Bridge) handleSyncPasswords(ctx context.Context, params json.RawMessage) (interface{}, error) {
-	var p RemoteSyncPasswordsParams
+	var p pairingproto.RemoteSyncPasswordsParams
 	defer p.Destroy()
 	if err := unmarshalParams(params, &p); err != nil {
-		return nil, ErrBridgeInvalidParams
+		return nil, pairingproto.ErrBridgeInvalidParams
 	}
 
 	b.logger.Info("password sync requested",
 		"passwordCount", len(p.Passwords))
 
-	if err := b.approveSync(ctx, MethodRemoteSyncPasswords); err != nil {
+	if err := b.approveSync(ctx, pairingproto.MethodRemoteSyncPasswords); err != nil {
 		return nil, err
 	}
 
 	if b.syncService == nil {
-		return nil, ErrSyncNotConfigured
+		return nil, pairingproto.ErrSyncNotConfigured
 	}
 
 	applied, err := b.syncService.ApplyPasswordDelta(wireToPasswordDelta(p.Passwords))
@@ -147,12 +148,12 @@ func (b *Bridge) handleSyncPasswords(ctx context.Context, params json.RawMessage
 
 	local, err := b.syncService.ComputeLocalPasswordDelta()
 	if err != nil {
-		return nil, &SentinelCauseError{Sentinel: ErrSyncFailed, Cause: err}
+		return nil, &pairingproto.SentinelCauseError{Sentinel: pairingproto.ErrSyncFailed, Cause: err}
 	}
 
 	// The result shares local's password slices; HandleRequest destroys the
 	// result once it has been encoded.
-	return &RemoteSyncPasswordsResult{
+	return &pairingproto.RemoteSyncPasswordsResult{
 		Added:   applied.Added,
 		Updated: applied.Updated,
 		Skipped: applied.Skipped,
@@ -169,9 +170,9 @@ func (b *Bridge) handleSyncPasswords(ctx context.Context, params json.RawMessage
 // per-store remote.sync* methods instead. When no sync service is
 // configured, ErrSyncNotConfigured is returned.
 func (b *Bridge) handleSyncAll(ctx context.Context, params json.RawMessage) (interface{}, error) {
-	var p RemoteSyncAllParams
+	var p pairingproto.RemoteSyncAllParams
 	if err := unmarshalParams(params, &p); err != nil {
-		return nil, ErrBridgeInvalidParams
+		return nil, pairingproto.ErrBridgeInvalidParams
 	}
 
 	b.logger.Info("full sync requested",
@@ -179,22 +180,22 @@ func (b *Bridge) handleSyncAll(ctx context.Context, params json.RawMessage) (int
 		"includeOATH", p.IncludeOATH,
 		"includePasswords", p.IncludePasswords)
 
-	if err := b.approveSync(ctx, MethodRemoteSyncAll); err != nil {
+	if err := b.approveSync(ctx, pairingproto.MethodRemoteSyncAll); err != nil {
 		return nil, err
 	}
 
 	if b.syncService == nil {
-		return nil, ErrSyncNotConfigured
+		return nil, pairingproto.ErrSyncNotConfigured
 	}
 
-	result := &RemoteSyncAllResult{}
+	result := &pairingproto.RemoteSyncAllResult{}
 
 	if p.IncludeTrustStore {
 		local, err := b.syncService.ComputeLocalTrustStoreDelta()
 		if err != nil {
-			return nil, &SentinelCauseError{Sentinel: ErrSyncFailed, Cause: err}
+			return nil, &pairingproto.SentinelCauseError{Sentinel: pairingproto.ErrSyncFailed, Cause: err}
 		}
-		result.TrustStore = &RemoteSyncTrustStoreResult{
+		result.TrustStore = &pairingproto.RemoteSyncTrustStoreResult{
 			Local: trustStoreDeltaToWire(local),
 		}
 	}
@@ -202,9 +203,9 @@ func (b *Bridge) handleSyncAll(ctx context.Context, params json.RawMessage) (int
 	if p.IncludeOATH {
 		local, err := b.syncService.ComputeLocalOATHDelta()
 		if err != nil {
-			return nil, &SentinelCauseError{Sentinel: ErrSyncFailed, Cause: err}
+			return nil, &pairingproto.SentinelCauseError{Sentinel: pairingproto.ErrSyncFailed, Cause: err}
 		}
-		result.OATH = &RemoteSyncOATHResult{
+		result.OATH = &pairingproto.RemoteSyncOATHResult{
 			Local: oathDeltaToWire(local),
 		}
 	}
@@ -213,9 +214,9 @@ func (b *Bridge) handleSyncAll(ctx context.Context, params json.RawMessage) (int
 		local, err := b.syncService.ComputeLocalPasswordDelta()
 		if err != nil {
 			result.Destroy()
-			return nil, &SentinelCauseError{Sentinel: ErrSyncFailed, Cause: err}
+			return nil, &pairingproto.SentinelCauseError{Sentinel: pairingproto.ErrSyncFailed, Cause: err}
 		}
-		result.Passwords = &RemoteSyncPasswordsResult{
+		result.Passwords = &pairingproto.RemoteSyncPasswordsResult{
 			Local: passwordDeltaToWire(local),
 		}
 	}
@@ -235,7 +236,7 @@ func (b *Bridge) handleSyncStatus(_ context.Context, _ json.RawMessage) (interfa
 	b.logger.Info("sync status requested")
 
 	if b.syncService == nil {
-		return &RemoteSyncStatusResult{
+		return &pairingproto.RemoteSyncStatusResult{
 			DeviceID:       b.config.DeviceID,
 			StoreChecksums: map[string]string{},
 		}, nil
@@ -243,7 +244,7 @@ func (b *Bridge) handleSyncStatus(_ context.Context, _ json.RawMessage) (interfa
 
 	state, err := b.syncService.LoadState()
 	if err != nil {
-		return nil, &SentinelCauseError{Sentinel: ErrSyncFailed, Cause: err}
+		return nil, &pairingproto.SentinelCauseError{Sentinel: pairingproto.ErrSyncFailed, Cause: err}
 	}
 
 	deviceID := state.DeviceID
@@ -282,7 +283,7 @@ func (b *Bridge) handleSyncStatus(_ context.Context, _ json.RawMessage) (interfa
 		delta.Destroy()
 	}
 
-	return &RemoteSyncStatusResult{
+	return &pairingproto.RemoteSyncStatusResult{
 		LastSync:       lastSync,
 		DeviceID:       deviceID,
 		StoreChecksums: checksums,
@@ -298,7 +299,7 @@ func (b *Bridge) handleSyncStatus(_ context.Context, _ json.RawMessage) (interfa
 func (b *Bridge) approveSync(ctx context.Context, method string) error {
 	var approveErr error
 	if b.syncApproval == nil {
-		approveErr = ErrSyncApprovalRequired
+		approveErr = pairingproto.ErrSyncApprovalRequired
 	} else {
 		approveErr = b.syncApproval(ctx, &SyncApprovalRequest{
 			Method:     method,
@@ -331,10 +332,10 @@ func (b *Bridge) approveSync(ctx context.Context, method string) error {
 		}
 	}
 
-	if errors.Is(approveErr, ErrSyncApprovalRequired) {
+	if errors.Is(approveErr, pairingproto.ErrSyncApprovalRequired) {
 		return approveErr
 	}
-	return &SentinelCauseError{Sentinel: ErrSyncNotApproved, Cause: approveErr}
+	return &pairingproto.SentinelCauseError{Sentinel: pairingproto.ErrSyncNotApproved, Cause: approveErr}
 }
 
 // ---------------------------------------------------------------------------
@@ -342,7 +343,7 @@ func (b *Bridge) approveSync(ctx context.Context, method string) error {
 // ---------------------------------------------------------------------------
 
 // wireToTrustStoreDelta converts wire certificates to a sync.TrustStoreDelta.
-func wireToTrustStoreDelta(certs []SyncCertificate) *xkeysync.TrustStoreDelta {
+func wireToTrustStoreDelta(certs []pairingproto.SyncCertificate) *xkeysync.TrustStoreDelta {
 	delta := &xkeysync.TrustStoreDelta{
 		Certificates: make([]xkeysync.TrustStoreCertSync, 0, len(certs)),
 	}
@@ -359,13 +360,13 @@ func wireToTrustStoreDelta(certs []SyncCertificate) *xkeysync.TrustStoreDelta {
 }
 
 // trustStoreDeltaToWire converts a sync.TrustStoreDelta to wire certificates.
-func trustStoreDeltaToWire(delta *xkeysync.TrustStoreDelta) []SyncCertificate {
+func trustStoreDeltaToWire(delta *xkeysync.TrustStoreDelta) []pairingproto.SyncCertificate {
 	if delta == nil {
-		return []SyncCertificate{}
+		return []pairingproto.SyncCertificate{}
 	}
-	out := make([]SyncCertificate, 0, len(delta.Certificates))
+	out := make([]pairingproto.SyncCertificate, 0, len(delta.Certificates))
 	for _, c := range delta.Certificates {
-		out = append(out, SyncCertificate{
+		out = append(out, pairingproto.SyncCertificate{
 			PEM:         c.PEM,
 			Fingerprint: c.Fingerprint,
 			Purpose:     c.Purpose,
@@ -377,7 +378,7 @@ func trustStoreDeltaToWire(delta *xkeysync.TrustStoreDelta) []SyncCertificate {
 }
 
 // wireToOATHDelta converts wire OATH credentials to a sync.OATHDelta.
-func wireToOATHDelta(creds []SyncOATHCredential) *xkeysync.OATHDelta {
+func wireToOATHDelta(creds []pairingproto.SyncOATHCredential) *xkeysync.OATHDelta {
 	delta := &xkeysync.OATHDelta{
 		Credentials: make([]xkeysync.OATHCredentialSync, 0, len(creds)),
 	}
@@ -400,13 +401,13 @@ func wireToOATHDelta(creds []SyncOATHCredential) *xkeysync.OATHDelta {
 }
 
 // oathDeltaToWire converts a sync.OATHDelta to wire OATH credentials.
-func oathDeltaToWire(delta *xkeysync.OATHDelta) []SyncOATHCredential {
+func oathDeltaToWire(delta *xkeysync.OATHDelta) []pairingproto.SyncOATHCredential {
 	if delta == nil {
-		return []SyncOATHCredential{}
+		return []pairingproto.SyncOATHCredential{}
 	}
-	out := make([]SyncOATHCredential, 0, len(delta.Credentials))
+	out := make([]pairingproto.SyncOATHCredential, 0, len(delta.Credentials))
 	for _, c := range delta.Credentials {
-		out = append(out, SyncOATHCredential{
+		out = append(out, pairingproto.SyncOATHCredential{
 			ID:          c.ID,
 			Name:        c.Name,
 			Issuer:      c.Issuer,
@@ -424,7 +425,7 @@ func oathDeltaToWire(delta *xkeysync.OATHDelta) []SyncOATHCredential {
 }
 
 // wireToPasswordDelta converts wire passwords to a sync.PasswordDelta.
-func wireToPasswordDelta(passwords []SyncPassword) *xkeysync.PasswordDelta {
+func wireToPasswordDelta(passwords []pairingproto.SyncPassword) *xkeysync.PasswordDelta {
 	delta := &xkeysync.PasswordDelta{
 		Passwords: make([]xkeysync.PasswordSync, 0, len(passwords)),
 	}
@@ -445,13 +446,13 @@ func wireToPasswordDelta(passwords []SyncPassword) *xkeysync.PasswordDelta {
 }
 
 // passwordDeltaToWire converts a sync.PasswordDelta to wire passwords.
-func passwordDeltaToWire(delta *xkeysync.PasswordDelta) []SyncPassword {
+func passwordDeltaToWire(delta *xkeysync.PasswordDelta) []pairingproto.SyncPassword {
 	if delta == nil {
-		return []SyncPassword{}
+		return []pairingproto.SyncPassword{}
 	}
-	out := make([]SyncPassword, 0, len(delta.Passwords))
+	out := make([]pairingproto.SyncPassword, 0, len(delta.Passwords))
 	for _, p := range delta.Passwords {
-		out = append(out, SyncPassword{
+		out = append(out, pairingproto.SyncPassword{
 			ID:         p.ID,
 			Name:       p.Name,
 			Title:      p.Title,
@@ -526,7 +527,7 @@ func (b *Bridge) auditSyncApplied(dataType string, received int, applied *xkeysy
 	}
 
 	if applyErr != nil || auditErr != nil {
-		return &SentinelCauseError{Sentinel: ErrSyncFailed, Cause: errors.Join(applyErr, auditErr)}
+		return &pairingproto.SentinelCauseError{Sentinel: pairingproto.ErrSyncFailed, Cause: errors.Join(applyErr, auditErr)}
 	}
 	return nil
 }

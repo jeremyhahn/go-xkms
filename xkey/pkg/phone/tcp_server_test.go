@@ -27,13 +27,13 @@ import (
 
 	"github.com/jeremyhahn/go-enclave"
 
-	"github.com/jeremyhahn/go-xkms/xkey/pkg/pairing"
+	"github.com/jeremyhahn/go-xkms/pkg/trust/bootstrap"
 )
 
 // staticKeyAlive returns nil while key still holds its private scalar, and
 // the borrow error (enclave.ErrEnclaveDestroyed) once it has been destroyed.
-func staticKeyAlive(key *pairing.StaticKey) error {
-	return pairing.WithPrivateKey(key, func([]byte) error { return nil })
+func staticKeyAlive(key *bootstrap.NoiseStaticKey) error {
+	return bootstrap.WithNoisePrivateKey(key, func([]byte) error { return nil })
 }
 
 // mockRequestHandler is a test helper that echoes back the request as a response
@@ -69,15 +69,15 @@ func (m *mockRequestHandler) receivedRequests() [][]byte {
 // clientHandshake performs a Noise XX handshake as initiator over a raw TCP
 // connection using the 2-byte length-prefixed framing. Returns the established
 // NoiseSession.
-func clientHandshake(t *testing.T, conn net.Conn) *pairing.NoiseSession {
+func clientHandshake(t *testing.T, conn net.Conn) *bootstrap.NoiseSession {
 	t.Helper()
 
-	clientKey, err := pairing.GenerateStaticKey()
+	clientKey, err := bootstrap.GenerateNoiseStaticKey()
 	if err != nil {
 		t.Fatalf("generate client key: %v", err)
 	}
 
-	clientSession, err := pairing.NewNoiseSession(&pairing.NoiseSessionConfig{
+	clientSession, err := bootstrap.NewNoiseSession(&bootstrap.NoiseSessionConfig{
 		LocalStaticKey: clientKey,
 		IsInitiator:    true,
 	})
@@ -393,7 +393,7 @@ func TestTCPPairingServer_StopDrainsConnections(t *testing.T) {
 }
 
 func TestTCPPairingServer_LocalStaticPublicKey(t *testing.T) {
-	key, err := pairing.GenerateStaticKey()
+	key, err := bootstrap.GenerateNoiseStaticKey()
 	if err != nil {
 		t.Fatalf("GenerateStaticKey: %v", err)
 	}
@@ -752,7 +752,7 @@ func TestTCPPairingServer_MaxConnections(t *testing.T) {
 
 	// Open 2 connections and complete handshakes (they hold semaphore slots).
 	conns := make([]net.Conn, 2)
-	sessions := make([]*pairing.NoiseSession, 2)
+	sessions := make([]*bootstrap.NoiseSession, 2)
 	for i := 0; i < 2; i++ {
 		c, err := net.DialTimeout("tcp", srv.Addr(), 2*time.Second)
 		if err != nil {
@@ -1007,7 +1007,7 @@ func TestTCPReceive_ConnectionClosed(t *testing.T) {
 // caller, so Stop must leave it usable. Destroying a borrowed key would free
 // pages another session is still reading.
 func TestTCPPairingServer_StopKeepsSuppliedKey(t *testing.T) {
-	key, err := pairing.GenerateStaticKey()
+	key, err := bootstrap.GenerateNoiseStaticKey()
 	if err != nil {
 		t.Fatalf("GenerateStaticKey: %v", err)
 	}
@@ -1033,7 +1033,7 @@ func TestTCPPairingServer_StopKeepsSuppliedKey(t *testing.T) {
 	if err := staticKeyAlive(key); err != nil {
 		t.Fatalf("supplied key was destroyed by Stop: %v", err)
 	}
-	if _, err := pairing.NewNoiseSession(&pairing.NoiseSessionConfig{LocalStaticKey: key, IsInitiator: true}); err != nil {
+	if _, err := bootstrap.NewNoiseSession(&bootstrap.NoiseSessionConfig{LocalStaticKey: key, IsInitiator: true}); err != nil {
 		t.Fatalf("supplied key unusable after Stop: %v", err)
 	}
 }
@@ -1253,7 +1253,7 @@ func TestSecondStopDoesNotDestroyARetainedKey(t *testing.T) {
 // config cannot hand the same protected pages to a second owner, and destroy
 // it on Stop exactly like a key it generated itself.
 func TestTCPPairingServer_OwnsSuppliedKey(t *testing.T) {
-	key, err := pairing.GenerateStaticKey()
+	key, err := bootstrap.GenerateNoiseStaticKey()
 	if err != nil {
 		t.Fatalf("GenerateStaticKey: %v", err)
 	}

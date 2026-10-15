@@ -18,7 +18,8 @@ import (
 
 	"github.com/stretchr/testify/require"
 
-	"github.com/jeremyhahn/go-xkms/xkey/pkg/pairing"
+	"github.com/jeremyhahn/go-xkms/sdk/go/bootstrap"
+	"github.com/jeremyhahn/go-xkms/sdk/go/pairingproto"
 )
 
 // This file is the in-memory phone the pairing surfaces are tested against.
@@ -31,13 +32,13 @@ import (
 // which is exactly what this package exists to prevent.
 //
 // Nothing here is a byte-echoing stub. The phone runs a real
-// pairing.NoiseSession as the XX responder, derives its own channel binding
+// bootstrap.NoiseSession as the XX responder, derives its own channel binding
 // from its own session, and signs a transcript it lays out itself. So a green
 // run means two independent implementations agreed on the prologue, the
 // channel binding, the transcript layout and the fingerprint derivation — the
 // four values that must match on the wire or nothing connects.
 
-// MemTransport is an in-memory pairing.Transport: a crossed pair carries the
+// MemTransport is an in-memory pairingproto.Transport: a crossed pair carries the
 // initiator's bytes to the responder and back.
 type MemTransport struct {
 	rx <-chan []byte
@@ -111,7 +112,7 @@ type Phone struct {
 	// device that answers but cannot prove what it claims — the damage happens
 	// on the WIRE, after a correct response was built, so nothing about the
 	// honest path is bypassed to produce it.
-	Mutate func(*pairing.LocalAttestDeviceResult)
+	Mutate func(*pairingproto.LocalAttestDeviceResult)
 
 	// staticKey is the phone's PERSISTENT Noise identity, the one written into
 	// the pairing record. It must be the same key on every leg: production
@@ -120,7 +121,7 @@ type Phone struct {
 	// which is a different code path with different bindings. A test that
 	// rotates the identity it is meant to persist cannot see a break in
 	// reconnecting with persisted keys. (Codex, #124.)
-	staticKey *pairing.StaticKey
+	staticKey *bootstrap.NoiseStaticKey
 
 	// staticPub is a COPY of the static key's public half, taken at
 	// construction. The responder goroutine derives its channel binding from
@@ -138,7 +139,7 @@ type Phone struct {
 func NewPhone(t *testing.T, dak *DAK) *Phone {
 	t.Helper()
 
-	key, err := pairing.GenerateStaticKey()
+	key, err := bootstrap.GenerateNoiseStaticKey()
 	require.NoError(t, err)
 	t.Cleanup(key.Destroy)
 
@@ -192,7 +193,7 @@ func (p *Phone) Run(ctx context.Context, tr *MemTransport, known bool, exchanges
 	if err != nil {
 		return err
 	}
-	if len(idMsg) != pairing.IdentityMsgSize || idMsg[0] != pairing.IdentityMsgVersion {
+	if len(idMsg) != pairingproto.IdentityMsgSize || idMsg[0] != pairingproto.IdentityMsgVersion {
 		return fmt.Errorf("bad identity message: len=%d", len(idMsg))
 	}
 	initiatorPub := append([]byte(nil), idMsg[1:]...)
@@ -201,18 +202,18 @@ func (p *Phone) Run(ctx context.Context, tr *MemTransport, known bool, exchanges
 	//    way the initiator does. An empty prologue is the first-pairing case.
 	var prologue []byte
 	if known {
-		if err := tr.Send(ctx, append([]byte{pairing.IdentityAckKnown}, p.EchoFingerprint...)); err != nil {
+		if err := tr.Send(ctx, append([]byte{pairingproto.IdentityAckKnown}, p.EchoFingerprint...)); err != nil {
 			return err
 		}
 		prologue = Prologue(initiatorPub, p.EchoFingerprint)
 	} else {
-		if err := tr.Send(ctx, []byte{pairing.IdentityAckUnknown}); err != nil {
+		if err := tr.Send(ctx, []byte{pairingproto.IdentityAckUnknown}); err != nil {
 			return err
 		}
 	}
 
 	// 3. Real Noise XX responder.
-	sess, err := pairing.NewNoiseSession(&pairing.NoiseSessionConfig{
+	sess, err := bootstrap.NewNoiseSession(&bootstrap.NoiseSessionConfig{
 		LocalStaticKey: p.staticKey,
 		IsInitiator:    false,
 		Prologue:       prologue,
@@ -275,22 +276,22 @@ func (p *Phone) Run(ctx context.Context, tr *MemTransport, known bool, exchanges
 
 // exchangeHandler answers one decoded request. The binding is the channel
 // binding this phone derived for the session the request arrived on.
-type exchangeHandler func(p *Phone, req *pairing.Request, binding []byte) (any, error)
+type exchangeHandler func(p *Phone, req *pairingproto.Request, binding []byte) (any, error)
 
 // exchangeHandlers routes a request by method. A method a real handset would
 // refuse is refused here too: the loop returns an error rather than inventing
 // an answer, so a desktop that sends something unexpected fails the test
 // instead of being humoured.
 var exchangeHandlers = map[string]exchangeHandler{
-	pairing.MethodPairingConfirm:    (*Phone).confirmPairing,
-	pairing.MethodLocalAttestDevice: (*Phone).attestDevice,
+	pairingproto.MethodPairingConfirm:    (*Phone).confirmPairing,
+	pairingproto.MethodLocalAttestDevice: (*Phone).attestDevice,
 }
 
 // serveExchange handles one encrypted JSON-RPC round trip.
 func (p *Phone) serveExchange(
 	ctx context.Context,
 	tr *MemTransport,
-	sess *pairing.NoiseSession,
+	sess *bootstrap.NoiseSession,
 	binding []byte,
 ) error {
 	ciphertext, err := tr.Receive(ctx)
@@ -302,7 +303,7 @@ func (p *Phone) serveExchange(
 		return err
 	}
 
-	req, err := pairing.DecodeRequest(plaintext)
+	req, err := pairingproto.DecodeRequest(plaintext)
 	if err != nil {
 		return err
 	}
@@ -315,7 +316,7 @@ func (p *Phone) serveExchange(
 		return err
 	}
 
-	response, err := pairing.EncodeResponse(req.ID, result)
+	response, err := pairingproto.EncodeResponse(req.ID, result)
 	if err != nil {
 		return err
 	}
@@ -328,25 +329,25 @@ func (p *Phone) serveExchange(
 
 // confirmPairing answers pairing.confirm the way a handset whose user tapped
 // "pair" does.
-func (p *Phone) confirmPairing(req *pairing.Request, _ []byte) (any, error) {
-	var params pairing.PairingConfirmParams
+func (p *Phone) confirmPairing(req *pairingproto.Request, _ []byte) (any, error) {
+	var params pairingproto.PairingConfirmParams
 	if err := decodeParams(req, &params); err != nil {
 		return nil, err
 	}
 	if params.PublicKeyHex == "" {
 		return nil, fmt.Errorf("pairing.confirm carried no desktop public key")
 	}
-	return &pairing.PairingConfirmResult{Confirmed: true, DeviceName: p.Name}, nil
+	return &pairingproto.PairingConfirmResult{Confirmed: true, DeviceName: p.Name}, nil
 }
 
 // attestDevice answers local.attestDevice by signing the challenge with the
 // persistent attested key.
-func (p *Phone) attestDevice(req *pairing.Request, binding []byte) (any, error) {
-	var params pairing.LocalAttestDeviceParams
+func (p *Phone) attestDevice(req *pairingproto.Request, binding []byte) (any, error) {
+	var params pairingproto.LocalAttestDeviceParams
 	if err := decodeParams(req, &params); err != nil {
 		return nil, err
 	}
-	if params.ProtocolVersion != pairing.AttestProtocolV2 {
+	if params.ProtocolVersion != pairingproto.AttestProtocolV2 {
 		return nil, fmt.Errorf("desktop asked for protocol version %d", params.ProtocolVersion)
 	}
 
@@ -361,15 +362,15 @@ func (p *Phone) attestDevice(req *pairing.Request, binding []byte) (any, error) 
 		return nil, err
 	}
 
-	result := &pairing.LocalAttestDeviceResult{
-		ProtocolVersion:    pairing.AttestProtocolV2,
+	result := &pairingproto.LocalAttestDeviceResult{
+		ProtocolVersion:    pairingproto.AttestProtocolV2,
 		Format:             "android-keystore",
 		CertificateChain:   p.DAK.Chain,
 		SecurityLevel:      "strongbox",
 		Nonce:              params.Nonce,
 		Purpose:            params.Purpose,
 		Signature:          sig,
-		SignatureAlgorithm: pairing.AttestSignatureES256,
+		SignatureAlgorithm: pairingproto.AttestSignatureES256,
 	}
 
 	if p.Mutate != nil {
@@ -380,7 +381,7 @@ func (p *Phone) attestDevice(req *pairing.Request, binding []byte) (any, error) 
 
 // decodeParams re-marshals the generic JSON params into the wire struct, the
 // same way any responder must.
-func decodeParams(req *pairing.Request, into any) error {
+func decodeParams(req *pairingproto.Request, into any) error {
 	raw, err := json.Marshal(req.Params)
 	if err != nil {
 		return err
@@ -402,7 +403,7 @@ func decodeParams(req *pairing.Request, into any) error {
 // when the two SIDES disagree, and a shared helper guarantees they never do.
 func ChannelBinding(initiatorPub, responderPub, prologue []byte) []byte {
 	h := sha256.New()
-	h.Write([]byte(pairing.AttestChannelBindingDomain))
+	h.Write([]byte(pairingproto.AttestChannelBindingDomain))
 	h.Write([]byte{byte(len(initiatorPub))})
 	h.Write(initiatorPub)
 	h.Write([]byte{byte(len(responderPub))})

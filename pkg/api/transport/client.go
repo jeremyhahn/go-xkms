@@ -489,6 +489,28 @@ type TPMPolicyService interface {
 	TenantVTPMStop(ctx context.Context, tenantID string) (*TenantVTPMStatusResponse, error)
 }
 
+// TrustRootService manages the platform's purpose-classified trust-root
+// store (pkg/attestation/truststore). The store is process-wide, so every
+// operation is system-scope only.
+type TrustRootService interface {
+	// TrustRootList lists the roots, optionally of one purpose.
+	TrustRootList(ctx context.Context, req *TrustRootListRequest) (*TrustRootListResponse, error)
+
+	// TrustRootGet returns one root, its PEM included.
+	TrustRootGet(ctx context.Context, req *TrustRootRequest) (*TrustRoot, error)
+
+	// TrustRootImport adds the certificates of a PEM bundle, skipping the
+	// ones the store already holds.
+	TrustRootImport(ctx context.Context, req *TrustRootImportRequest) (*TrustRootImportResponse, error)
+
+	// TrustRootQuarantine reclassifies a root as "synced": it stays listed
+	// but no longer anchors any verification.
+	TrustRootQuarantine(ctx context.Context, req *TrustRootRequest) (*TrustRoot, error)
+
+	// TrustRootRemove deletes a root.
+	TrustRootRemove(ctx context.Context, req *TrustRootRequest) error
+}
+
 // CredentialManagementService handles credential management operations.
 type CredentialManagementService interface {
 	// SubmitCredential submits a credential for manual mode.
@@ -575,6 +597,7 @@ type Client interface {
 	PasswordService
 	SealStoreService
 	TPMPolicyService
+	TrustRootService
 	OIDCCredentialService
 	TenantService
 	CredentialManagementService

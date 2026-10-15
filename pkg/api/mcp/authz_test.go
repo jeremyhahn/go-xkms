@@ -691,6 +691,13 @@ var goldenMethodPermissions = map[string]string{
 	"xkms.tenantVTPMStart":      "tenants:set_tpm_mode",
 	"xkms.tenantVTPMStop":       "tenants:set_tpm_mode",
 
+	// Platform trust roots — pkg/api/grpc's TrustRoot* RPCs.
+	"trust.root.list":       "trust_roots:list",
+	"trust.root.get":        "trust_roots:get",
+	"trust.root.import":     "trust_roots:import",
+	"trust.root.quarantine": "trust_roots:update",
+	"trust.root.remove":     "trust_roots:delete",
+
 	// Server-side OIDC credentials — pkg/api/grpc's OIDCCredential* RPCs.
 	"oidc.credential.create":       "oidc_credentials:create",
 	"oidc.credential.import":       "oidc_credentials:update",
@@ -701,6 +708,10 @@ var goldenMethodPermissions = map[string]string{
 	"oidc.credential.token":        "oidc_credentials:token",
 	"oidc.credential.device.start": "oidc_credentials:update",
 	"oidc.credential.device.poll":  "oidc_credentials:update",
+
+	// Attested-caller evidence.
+	"peer.attestation.challenge": "peer_attestation:challenge",
+	"peer.attestation.submit":    "peer_attestation:submit",
 
 	// SSH key, known-host, and authorized-key stores —
 	// pkg/api/quic/handlers_ssh.go.
@@ -790,6 +801,8 @@ func TestMethodPermissions_NoInventedVocabulary(t *testing.T) {
 		auth.ResourceAudit: {}, auth.ResourceBootstrap: {},
 		auth.ResourceTPMPolicy:       {},
 		auth.ResourceOIDCCredentials: {},
+		auth.ResourceTrustRoots:      {},
+		auth.ResourcePeerAttestation: {},
 		auth.ResourcePIN:             {}, auth.ResourceTenants: {}, auth.ResourceTenantBarrier: {},
 		auth.ResourceUsers: {}, auth.ResourceBackup: {},
 	}

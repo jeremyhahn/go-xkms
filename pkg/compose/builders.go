@@ -20,6 +20,7 @@ import (
 	"time"
 
 	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
+	"github.com/jeremyhahn/go-xkms/pkg/attestation/truststore"
 	tpm2backend "github.com/jeremyhahn/go-xkms/pkg/backend/tpm2"
 	"github.com/jeremyhahn/go-xkms/pkg/ca"
 	"github.com/jeremyhahn/go-xkms/pkg/certstore"
@@ -95,6 +96,20 @@ func BuildKeyVersionStore(daos *qrdbsdk.DAOFactory) (*keyversion.Store, error) {
 	store, err := keyversion.NewStore(daos)
 	if err != nil {
 		return nil, &FeatureBuildError{Feature: FeatureKeyVersions, Err: err}
+	}
+	return store, nil
+}
+
+// BuildTrustRootStore builds the platform trust-root store over the
+// truststore.DatabaseName database daos serves. The XKMSService it is wired
+// into (SetTrustRootStore) serves it as the trust_roots module verbs.
+func BuildTrustRootStore(daos *qrdbsdk.DAOFactory) (*truststore.DAOStore, error) {
+	if daos == nil {
+		return nil, &NilDependencyError{Feature: FeatureTrustRoots, Dependency: "DAO factory"}
+	}
+	store, err := truststore.NewDAOStore(daos)
+	if err != nil {
+		return nil, &FeatureBuildError{Feature: FeatureTrustRoots, Err: err}
 	}
 	return store, nil
 }

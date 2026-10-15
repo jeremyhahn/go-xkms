@@ -21,7 +21,7 @@ import (
 
 	"github.com/flynn/noise"
 
-	"github.com/jeremyhahn/go-xkms/xkey/pkg/pairing"
+	"github.com/jeremyhahn/go-xkms/pkg/trust/bootstrap"
 )
 
 // TestRetainedPagesSurviveLosingEveryGoReference settles, by execution, a
@@ -47,7 +47,7 @@ import (
 // become the use-after-free they were written to avoid — and this fails
 // instead.
 func TestRetainedPagesSurviveLosingEveryGoReference(t *testing.T) {
-	key, err := pairing.GenerateStaticKey()
+	key, err := bootstrap.GenerateNoiseStaticKey()
 	if err != nil {
 		t.Fatalf("GenerateStaticKey: %v", err)
 	}

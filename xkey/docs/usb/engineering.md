@@ -33,7 +33,7 @@ surrounding).
 |---|---|---|
 | `gadget.Transport` | interface | `Read(ctx) ([]byte, error)`, `Write(data) error`, `Close() error` (`transport.go:18-33`) — deliberately small "to accommodate future transports such as NFC" |
 | `gadget.TransportType` | type | `TransportUHID`, and the ConfigFS/FunctionFS equivalent |
-| `gadget.UHIDTransport` / `NewUHIDTransport(dev *uhid.Device, logger)` | type/func | wraps `xkey/pkg/uhid` |
+| `gadget.UHIDTransport` / `NewUHIDTransport(dev *uhid.Device, logger)` | type/func | wraps `pkg/fido2/uhid` |
 | `gadget.FunctionFSTransport` / `NewFunctionFSTransport(mountDir, fs, logger)` | type/func | ConfigFS/FunctionFS gadget I/O |
 | `gadget.ConfigFS` / `NewConfigFS(config, fs, logger)` | type/func | `Create`, `Bind`, `Unbind`, `Destroy`, `GadgetDir`, `IsBound` — manages the kernel gadget's ConfigFS tree |
 | `gadget.GadgetConfig` / `DefaultGadgetConfig()` | type/func | vendor/product IDs, functions to enable |

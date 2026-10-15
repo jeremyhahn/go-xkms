@@ -18,8 +18,8 @@ import (
 	"testing"
 
 	"github.com/jeremyhahn/go-xkms/pkg/backend"
+	"github.com/jeremyhahn/go-xkms/pkg/pairingproto"
 	"github.com/jeremyhahn/go-xkms/pkg/types"
-	"github.com/jeremyhahn/go-xkms/xkey/pkg/pairing"
 )
 
 // --- ExportPublicKey ---
@@ -28,11 +28,11 @@ func TestBackend_ExportPublicKey_Success(t *testing.T) {
 	expectedPubKey := generateTestECDSAPublicKeyDER(t)
 
 	sender := &mockSender{
-		sendFunc: func(ctx context.Context, req *pairing.Request) (*pairing.Response, error) {
-			if req.Method != pairing.MethodLocalGetPublicKey {
-				t.Errorf("expected method %s, got %s", pairing.MethodLocalGetPublicKey, req.Method)
+		sendFunc: func(ctx context.Context, req *pairingproto.Request) (*pairingproto.Response, error) {
+			if req.Method != pairingproto.MethodLocalGetPublicKey {
+				t.Errorf("expected method %s, got %s", pairingproto.MethodLocalGetPublicKey, req.Method)
 			}
-			return mockSuccessResponse(pairing.LocalGetPublicKeyResult{
+			return mockSuccessResponse(pairingproto.LocalGetPublicKeyResult{
 				PublicKey: expectedPubKey,
 				Format:    "der",
 				Algorithm: "ES256",
@@ -56,8 +56,8 @@ func TestBackend_ExportPublicKey_PEMFormat(t *testing.T) {
 	pemData := []byte("-----BEGIN PUBLIC KEY-----\nMFkw...\n-----END PUBLIC KEY-----\n")
 
 	sender := &mockSender{
-		sendFunc: func(ctx context.Context, req *pairing.Request) (*pairing.Response, error) {
-			return mockSuccessResponse(pairing.LocalGetPublicKeyResult{
+		sendFunc: func(ctx context.Context, req *pairingproto.Request) (*pairingproto.Response, error) {
+			return mockSuccessResponse(pairingproto.LocalGetPublicKeyResult{
 				PublicKey: pemData,
 				Format:    "pem",
 				Algorithm: "ES256",
@@ -89,8 +89,8 @@ func TestBackend_ExportPublicKey_Closed(t *testing.T) {
 
 func TestBackend_ExportPublicKey_RPCError(t *testing.T) {
 	sender := &mockSender{
-		sendFunc: func(ctx context.Context, req *pairing.Request) (*pairing.Response, error) {
-			return mockErrorResponse(pairing.ErrorCodeKeyNotFound, "not found"), nil
+		sendFunc: func(ctx context.Context, req *pairingproto.Request) (*pairingproto.Response, error) {
+			return mockErrorResponse(pairingproto.ErrorCodeKeyNotFound, "not found"), nil
 		},
 	}
 

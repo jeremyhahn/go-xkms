@@ -62,6 +62,7 @@ var paramsOptionalMethods = map[string]string{
 	"xkms.listCustodianGroups":   "no parameters",
 	"xkms.listTenants":           "no parameters",
 	"xkms.listBackups":           "no parameters",
+	"peer.attestation.challenge": "no parameters (the caller is the connection's client certificate)",
 }
 
 // methodContext supplies a per-method context override for the handful of

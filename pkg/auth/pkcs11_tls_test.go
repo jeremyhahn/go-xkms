@@ -466,6 +466,21 @@ func (*authMockClient) OIDCCredentialGet(context.Context, *transport.OIDCCredent
 func (*authMockClient) OIDCCredentialList(context.Context, *transport.OIDCCredentialListRequest) (*transport.OIDCCredentialListResponse, error) {
 	return nil, nil
 }
+func (*authMockClient) TrustRootList(context.Context, *transport.TrustRootListRequest) (*transport.TrustRootListResponse, error) {
+	return nil, nil
+}
+func (*authMockClient) TrustRootGet(context.Context, *transport.TrustRootRequest) (*transport.TrustRoot, error) {
+	return nil, nil
+}
+func (*authMockClient) TrustRootImport(context.Context, *transport.TrustRootImportRequest) (*transport.TrustRootImportResponse, error) {
+	return nil, nil
+}
+func (*authMockClient) TrustRootQuarantine(context.Context, *transport.TrustRootRequest) (*transport.TrustRoot, error) {
+	return nil, nil
+}
+func (*authMockClient) TrustRootRemove(context.Context, *transport.TrustRootRequest) error {
+	return nil
+}
 func (*authMockClient) OIDCCredentialDelete(context.Context, *transport.OIDCCredentialRef) error {
 	return nil
 }

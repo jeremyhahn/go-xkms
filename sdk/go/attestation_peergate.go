@@ -22,17 +22,33 @@ import (
 // (sdk.NewPeerAttestationGate, node.WithPeerAttestationGate) and the seam it
 // calls; pkg/attestation/peergate implements that seam over the verification
 // primitive above, with the evidence cache it reads and the collector that
-// fills it. A host composes them:
+// fills it. A host hosting the xkms module builds it with one option and
+// installs it on its node:
 //
-//	store, _ := xkms.NewPeerMemoryEvidenceStore(xkms.PeerMemoryEvidenceStoreConfig{})
-//	collector, _ := xkms.NewPeerEvidenceCollector(xkms.PeerEvidenceCollectorConfig{Store: store})
-//	verifier, _ := xkms.NewPeerGateVerifier(xkms.PeerGateVerifierConfig{Store: store, Policy: policy})
-//	gate, _ := qrdbsdk.NewPeerAttestationGate(verifier, qrdbsdk.PeerAttestationPolicy{...})
-//	node, _ := qrdbnode.NewStandaloneNode(ctx, cfg, serverOpts, qrdbnode.WithPeerAttestationGate(gate))
+//	module, _ := xkms.NewServiceModule(resolve,
+//		xkms.WithServiceModuleQRDBClient(client),
+//		xkms.WithAttestedCallerGate(policy))
+//	node, _ := qrdbnode.NewStandaloneNode(ctx, cfg, serverOpts,
+//		qrdbnode.WithPeerAttestationGate(module.PeerAttestationGate()))
 //
-// and mounts collector.Challenge and collector.Submit on the transports its
-// peers reach, passing each request's *tls.ConnectionState. A peer answers a
-// challenge with PeerQuoteEvidence.
+// The module serves the Challenge/Submit verbs on every transport and keeps
+// the evidence in the host's datastore. A peer answers a challenge with
+// PeerQuoteEvidence. The policy's PCR values are the host's; go-xkms ships
+// none.
+
+// AttestedCallerPolicy is the policy WithAttestedCallerGate builds the gate
+// from: its mode, the quote policy each peer's evidence is verified under,
+// the gated permissions and the oldest evidence accepted.
+type AttestedCallerPolicy = peergate.GatePolicy
+
+const (
+	// AttestedCallerOptional admits a peer without evidence and refuses one
+	// whose evidence fails.
+	AttestedCallerOptional = peergate.ModeOptional
+	// AttestedCallerRequired refuses every gated call from a peer that is
+	// not currently attested. It is the policy's zero value.
+	AttestedCallerRequired = peergate.ModeRequired
+)
 
 // PeerGateVerifier is go-qrdb's PeerAttestationVerifier: VerifyPeer judges the
 // evidence collected from the peer on a gated connection, from the cache, on
@@ -69,19 +85,24 @@ type PeerEvidenceStore = peergate.EvidenceStore
 // PeerEvidenceRecord is one peer's stored evidence and channel binding.
 type PeerEvidenceRecord = peergate.Record
 
-// PeerMemoryEvidenceStore is the in-process PeerEvidenceStore.
-type PeerMemoryEvidenceStore = peergate.MemoryStore
+// PeerDAOEvidenceStore is the PeerEvidenceStore persisted through a qrdb DAO.
+type PeerDAOEvidenceStore = peergate.DAOStore
 
-// PeerMemoryEvidenceStoreConfig bounds a PeerMemoryEvidenceStore.
-type PeerMemoryEvidenceStoreConfig = peergate.MemoryStoreConfig
+// PeerDAOEvidenceStoreConfig is the DAO factory and bounds of a
+// PeerDAOEvidenceStore.
+type PeerDAOEvidenceStoreConfig = peergate.DAOStoreConfig
 
-// NewPeerMemoryEvidenceStore constructs an empty PeerMemoryEvidenceStore.
-var NewPeerMemoryEvidenceStore = peergate.NewMemoryStore
+// NewPeerDAOEvidenceStore constructs a PeerDAOEvidenceStore.
+var NewPeerDAOEvidenceStore = peergate.NewDAOStore
 
-// PeerGateOption configures a collector, verifier or memory store.
+// PeerEvidenceDatabase is the qrdb database a PeerDAOEvidenceStore persists
+// in; the host ensures it on its datastore first.
+const PeerEvidenceDatabase = peergate.DatabaseName
+
+// PeerGateOption configures a collector, verifier or evidence store.
 type PeerGateOption = peergate.Option
 
-// WithPeerGateClock pins the clock of a collector, verifier or memory store.
+// WithPeerGateClock pins the clock of a collector, verifier or evidence store.
 var WithPeerGateClock = peergate.WithClock
 
 // PeerQuoter produces a TPM 2.0 quote; the TPM2 keystore is one.
@@ -133,7 +154,7 @@ const (
 	// DefaultPeerGateMaxPeers bounds a store and the outstanding challenges
 	// when no bound is set.
 	DefaultPeerGateMaxPeers = peergate.DefaultMaxPeers
-	// DefaultPeerEvidenceRetention is how long a memory store keeps evidence
+	// DefaultPeerEvidenceRetention is how long an evidence store keeps evidence
 	// before it may evict it for a new peer, when none is set.
 	DefaultPeerEvidenceRetention = peergate.DefaultRetention
 )

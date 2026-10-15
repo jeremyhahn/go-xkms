@@ -16,8 +16,8 @@ package phone
 import (
 	"context"
 
+	"github.com/jeremyhahn/go-xkms/pkg/pairingproto"
 	"github.com/jeremyhahn/go-xkms/pkg/types"
-	"github.com/jeremyhahn/go-xkms/xkey/pkg/pairing"
 )
 
 // Compile-time interface satisfaction check.
@@ -76,17 +76,17 @@ func (b *Backend) DeriveKeyECDH(
 
 	// Send the ECDH request to the phone. The phone performs the raw ECDH
 	// in its secure hardware and returns the shared secret.
-	params := &pairing.LocalECDHParams{
+	params := &pairingproto.LocalECDHParams{
 		KeyID:         privateKeyAttrs.CN,
 		PeerPublicKey: peerPublicKey,
 	}
 
-	resp, err := b.sendLocalRequest(ctx, pairing.MethodLocalECDH, params)
+	resp, err := b.sendLocalRequest(ctx, pairingproto.MethodLocalECDH, params)
 	if err != nil {
 		return nil, err
 	}
 
-	result, err := pairing.DecodeResult[pairing.LocalECDHResult](resp)
+	result, err := pairingproto.DecodeResult[pairingproto.LocalECDHResult](resp)
 	if err != nil {
 		return nil, ErrInvalidResponse
 	}

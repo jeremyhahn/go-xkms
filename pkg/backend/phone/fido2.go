@@ -16,13 +16,13 @@ package phone
 import (
 	"context"
 
-	"github.com/jeremyhahn/go-xkms/xkey/pkg/pairing"
+	"github.com/jeremyhahn/go-xkms/pkg/pairingproto"
 )
 
 // ListFido2Credentials retrieves FIDO2 credentials from the phone that are
 // registered for the given relying party identifier. The phone returns
 // credential metadata without exposing private key material.
-func (b *Backend) ListFido2Credentials(ctx context.Context, rpID string) ([]pairing.Fido2CredentialInfo, error) {
+func (b *Backend) ListFido2Credentials(ctx context.Context, rpID string) ([]pairingproto.Fido2CredentialInfo, error) {
 	if b.closed.Load() {
 		return nil, ErrBackendClosed
 	}
@@ -30,14 +30,14 @@ func (b *Backend) ListFido2Credentials(ctx context.Context, rpID string) ([]pair
 		return nil, ErrInvalidRpID
 	}
 
-	resp, err := b.sendLocalRequest(ctx, pairing.MethodLocalListFido2Credentials, &pairing.LocalListFido2CredentialsParams{
+	resp, err := b.sendLocalRequest(ctx, pairingproto.MethodLocalListFido2Credentials, &pairingproto.LocalListFido2CredentialsParams{
 		RpID: rpID,
 	})
 	if err != nil {
 		return nil, err
 	}
 
-	result, err := pairing.DecodeResult[pairing.LocalListFido2CredentialsResult](resp)
+	result, err := pairingproto.DecodeResult[pairingproto.LocalListFido2CredentialsResult](resp)
 	if err != nil {
 		return nil, ErrInvalidResponse
 	}
@@ -49,7 +49,7 @@ func (b *Backend) ListFido2Credentials(ctx context.Context, rpID string) ([]pair
 // for the specified credential. The phone performs user verification if required,
 // increments the signature counter, and returns the authenticator data and
 // signature. Private keys never leave the phone's secure hardware.
-func (b *Backend) SignFido2Assertion(ctx context.Context, params *pairing.LocalSignFido2AssertionParams) (*pairing.LocalSignFido2AssertionResult, error) {
+func (b *Backend) SignFido2Assertion(ctx context.Context, params *pairingproto.LocalSignFido2AssertionParams) (*pairingproto.LocalSignFido2AssertionResult, error) {
 	if b.closed.Load() {
 		return nil, ErrBackendClosed
 	}
@@ -66,12 +66,12 @@ func (b *Backend) SignFido2Assertion(ctx context.Context, params *pairing.LocalS
 		return nil, ErrInvalidRpID
 	}
 
-	resp, err := b.sendLocalRequest(ctx, pairing.MethodLocalSignFido2Assertion, params)
+	resp, err := b.sendLocalRequest(ctx, pairingproto.MethodLocalSignFido2Assertion, params)
 	if err != nil {
 		return nil, err
 	}
 
-	result, err := pairing.DecodeResult[pairing.LocalSignFido2AssertionResult](resp)
+	result, err := pairingproto.DecodeResult[pairingproto.LocalSignFido2AssertionResult](resp)
 	if err != nil {
 		return nil, ErrInvalidResponse
 	}
@@ -82,7 +82,7 @@ func (b *Backend) SignFido2Assertion(ctx context.Context, params *pairing.LocalS
 // GetFido2CredentialInfo retrieves detailed information about a key stored on
 // the phone. When the key type is "fido2", the result includes FIDO2-specific
 // fields such as relying party ID, user handle, and signature counter.
-func (b *Backend) GetFido2CredentialInfo(ctx context.Context, keyID string) (*pairing.LocalGetKeyInfoResult, error) {
+func (b *Backend) GetFido2CredentialInfo(ctx context.Context, keyID string) (*pairingproto.LocalGetKeyInfoResult, error) {
 	if b.closed.Load() {
 		return nil, ErrBackendClosed
 	}
@@ -90,14 +90,14 @@ func (b *Backend) GetFido2CredentialInfo(ctx context.Context, keyID string) (*pa
 		return nil, ErrEmptyKeyID
 	}
 
-	resp, err := b.sendLocalRequest(ctx, pairing.MethodLocalGetKeyInfo, &pairing.LocalGetKeyInfoParams{
+	resp, err := b.sendLocalRequest(ctx, pairingproto.MethodLocalGetKeyInfo, &pairingproto.LocalGetKeyInfoParams{
 		KeyID: keyID,
 	})
 	if err != nil {
 		return nil, err
 	}
 
-	result, err := pairing.DecodeResult[pairing.LocalGetKeyInfoResult](resp)
+	result, err := pairingproto.DecodeResult[pairingproto.LocalGetKeyInfoResult](resp)
 	if err != nil {
 		return nil, ErrInvalidResponse
 	}

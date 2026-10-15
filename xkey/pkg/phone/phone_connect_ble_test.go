@@ -21,8 +21,9 @@ import (
 	"testing"
 	"time"
 
+	"github.com/jeremyhahn/go-xkms/pkg/pairingproto"
+	"github.com/jeremyhahn/go-xkms/pkg/trust/bootstrap"
 	"github.com/jeremyhahn/go-xkms/xkey/pkg/audit"
-	"github.com/jeremyhahn/go-xkms/xkey/pkg/pairing"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -180,7 +181,7 @@ func runRetryResponder(t *testing.T, transport *mockPipeTransport, failFirst int
 		}
 
 		attempt++
-		if len(identityMsg) != pairing.IdentityMsgSize || identityMsg[0] != pairing.IdentityMsgVersion {
+		if len(identityMsg) != pairingproto.IdentityMsgSize || identityMsg[0] != pairingproto.IdentityMsgVersion {
 			t.Errorf("responder: malformed identity message: %v", identityMsg)
 			return
 		}
@@ -191,9 +192,9 @@ func runRetryResponder(t *testing.T, transport *mockPipeTransport, failFirst int
 			continue
 		}
 
-		transport.sendCh <- []byte{pairing.IdentityAckUnknown}
+		transport.sendCh <- []byte{pairingproto.IdentityAckUnknown}
 
-		session, err := pairing.NewNoiseSession(&pairing.NoiseSessionConfig{IsInitiator: false})
+		session, err := bootstrap.NewNoiseSession(&bootstrap.NoiseSessionConfig{IsInitiator: false})
 		if err != nil {
 			t.Errorf("responder: new session: %v", err)
 			return

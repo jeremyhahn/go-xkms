@@ -17,7 +17,7 @@ import (
 	"context"
 	"testing"
 
-	"github.com/jeremyhahn/go-xkms/xkey/pkg/pairing"
+	"github.com/jeremyhahn/go-xkms/pkg/pairingproto"
 )
 
 func TestBackend_AttestKey_Success(t *testing.T) {
@@ -29,11 +29,11 @@ func TestBackend_AttestKey_Success(t *testing.T) {
 	nonce := []byte("challenge-nonce-12345")
 
 	sender := &mockSender{
-		sendFunc: func(ctx context.Context, req *pairing.Request) (*pairing.Response, error) {
-			if req.Method != pairing.MethodLocalAttestKey {
-				t.Errorf("expected method %s, got %s", pairing.MethodLocalAttestKey, req.Method)
+		sendFunc: func(ctx context.Context, req *pairingproto.Request) (*pairingproto.Response, error) {
+			if req.Method != pairingproto.MethodLocalAttestKey {
+				t.Errorf("expected method %s, got %s", pairingproto.MethodLocalAttestKey, req.Method)
 			}
-			return mockSuccessResponse(pairing.LocalAttestKeyResult{
+			return mockSuccessResponse(pairingproto.LocalAttestKeyResult{
 				Format:           "android-keystore",
 				CertificateChain: certChain,
 				SecurityLevel:    "strongbox",
@@ -79,8 +79,8 @@ func TestBackend_AttestKey_TEE(t *testing.T) {
 	nonce := []byte("nonce")
 
 	sender := &mockSender{
-		sendFunc: func(ctx context.Context, req *pairing.Request) (*pairing.Response, error) {
-			return mockSuccessResponse(pairing.LocalAttestKeyResult{
+		sendFunc: func(ctx context.Context, req *pairingproto.Request) (*pairingproto.Response, error) {
+			return mockSuccessResponse(pairingproto.LocalAttestKeyResult{
 				Format:           "android-keystore",
 				CertificateChain: [][]byte{[]byte("cert")},
 				SecurityLevel:    "tee",
@@ -105,8 +105,8 @@ func TestBackend_AttestKey_UnknownSecurityLevel(t *testing.T) {
 	nonce := []byte("nonce")
 
 	sender := &mockSender{
-		sendFunc: func(ctx context.Context, req *pairing.Request) (*pairing.Response, error) {
-			return mockSuccessResponse(pairing.LocalAttestKeyResult{
+		sendFunc: func(ctx context.Context, req *pairingproto.Request) (*pairingproto.Response, error) {
+			return mockSuccessResponse(pairingproto.LocalAttestKeyResult{
 				Format:           "android-keystore",
 				CertificateChain: [][]byte{[]byte("cert")},
 				SecurityLevel:    "software",
@@ -150,8 +150,8 @@ func TestBackend_AttestKey_NilAttrs(t *testing.T) {
 
 func TestBackend_AttestKey_RPCError(t *testing.T) {
 	sender := &mockSender{
-		sendFunc: func(ctx context.Context, req *pairing.Request) (*pairing.Response, error) {
-			return mockErrorResponse(pairing.ErrorCodeAttestFailed, "attestation failed"), nil
+		sendFunc: func(ctx context.Context, req *pairingproto.Request) (*pairingproto.Response, error) {
+			return mockErrorResponse(pairingproto.ErrorCodeAttestFailed, "attestation failed"), nil
 		},
 	}
 
@@ -165,8 +165,8 @@ func TestBackend_AttestKey_RPCError(t *testing.T) {
 
 func TestBackend_AttestKey_NilNonce(t *testing.T) {
 	sender := &mockSender{
-		sendFunc: func(ctx context.Context, req *pairing.Request) (*pairing.Response, error) {
-			return mockSuccessResponse(pairing.LocalAttestKeyResult{
+		sendFunc: func(ctx context.Context, req *pairingproto.Request) (*pairingproto.Response, error) {
+			return mockSuccessResponse(pairingproto.LocalAttestKeyResult{
 				Format:           "android-keystore",
 				CertificateChain: [][]byte{[]byte("cert")},
 				SecurityLevel:    "tee",
@@ -190,8 +190,8 @@ func TestBackend_AttestKey_NilNonce(t *testing.T) {
 
 func TestBackend_AttestKey_VerifiedFalseWithoutTrustStore(t *testing.T) {
 	sender := &mockSender{
-		sendFunc: func(ctx context.Context, req *pairing.Request) (*pairing.Response, error) {
-			return mockSuccessResponse(pairing.LocalAttestKeyResult{
+		sendFunc: func(ctx context.Context, req *pairingproto.Request) (*pairingproto.Response, error) {
+			return mockSuccessResponse(pairingproto.LocalAttestKeyResult{
 				Format:           "android-keystore",
 				CertificateChain: [][]byte{[]byte("cert")},
 				SecurityLevel:    "strongbox",
@@ -221,8 +221,8 @@ func TestBackend_AttestKey_WithVerifier(t *testing.T) {
 	platformData := "test-platform-data"
 
 	sender := &mockSender{
-		sendFunc: func(ctx context.Context, req *pairing.Request) (*pairing.Response, error) {
-			return mockSuccessResponse(pairing.LocalAttestKeyResult{
+		sendFunc: func(ctx context.Context, req *pairingproto.Request) (*pairingproto.Response, error) {
+			return mockSuccessResponse(pairingproto.LocalAttestKeyResult{
 				Format:           "android-keystore",
 				CertificateChain: [][]byte{[]byte("cert")},
 				SecurityLevel:    "tee",
@@ -261,8 +261,8 @@ func TestBackend_AttestKey_VerifierError(t *testing.T) {
 	nonce := []byte("nonce")
 
 	sender := &mockSender{
-		sendFunc: func(ctx context.Context, req *pairing.Request) (*pairing.Response, error) {
-			return mockSuccessResponse(pairing.LocalAttestKeyResult{
+		sendFunc: func(ctx context.Context, req *pairingproto.Request) (*pairingproto.Response, error) {
+			return mockSuccessResponse(pairingproto.LocalAttestKeyResult{
 				Format:           "android-keystore",
 				CertificateChain: [][]byte{[]byte("cert")},
 				SecurityLevel:    "tee",

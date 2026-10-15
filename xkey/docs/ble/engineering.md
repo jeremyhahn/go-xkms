@@ -9,9 +9,9 @@
 | Symbol | Kind | Notes |
 |---|---|---|
 | `phone.BLETransportConfig` | type | `DeviceAddress`, `ScanTimeout`, `ConnectTimeout`, `OperationTimeout`, `MTU`, `Logger` |
-| `phone.DefaultBLETransportConfig()` | func | `ScanTimeout=30s`, `ConnectTimeout=10s`, `OperationTimeout=60s`, `MTU=247` (`phone.go:63-73`) |
+| `phone.DefaultBLETransportConfig()` | func | `ScanTimeout=30s`, `ConnectTimeout=10s`, `OperationTimeout=60s`, `MTU=247` (`phone.go:66-75`) |
 | `phone.NewBLETransport(cfg)` | func | enables the default adapter; returns `ErrBLEUnavailable` if it can't |
-| `phone.BLETransport` | type | implements `pairing.Transport` and the package-local `BLECapableTransport` |
+| `phone.BLETransport` | type | implements `pairingproto.Transport` and the package-local `BLECapableTransport` |
 | `(*BLETransport).Scan/ScanAll/ScanWithOptions(ctx, ...)` | methods | `Scan` stops on first match, `ScanAll` runs the full timeout |
 | `phone.ScanResult` | type | `Address`, `LocalName`, `RSSI`; `DisplayName()` falls back to `"xKey (<last 5 of address>)"` |
 | `(*BLETransport).Connect(ctx, address)` / `ConnectWithBondedAddress(ctx, address, bondedAddress)` | methods | see architecture.md "BlueZ integration quirks" |
@@ -24,7 +24,7 @@
 
 | Symbol | Kind | Notes |
 |---|---|---|
-| `phone.BLEPeripheralConfig` | type | `LocalStaticKey *pairing.StaticKey`, `OwnsStaticKey bool`, `ExpectedRemoteStatic []byte`, `DeviceName string`, `MTU int`, `AdapterID string`, `Logger *slog.Logger`, `RequestHandler PeripheralRequestHandler` |
+| `phone.BLEPeripheralConfig` | type | `LocalStaticKey *bootstrap.NoiseStaticKey`, `OwnsStaticKey bool`, `ExpectedRemoteStatic []byte`, `DeviceName string`, `MTU int`, `AdapterID string`, `Logger *slog.Logger`, `RequestHandler PeripheralRequestHandler` |
 | `phone.PeripheralRequestHandler` | interface | `HandleRequest(ctx, request []byte) ([]byte, error)` |
 | `phone.NewBLEPeripheral(cfg)` | func | — |
 | `phone.BLEPeripheral` | type | GATT server; advertises `XKeyServiceUUID` |
@@ -39,17 +39,17 @@ Same type and method signatures as above; every method returns
 what `make test` links against (architecture.md "Where BLE sits in the
 build").
 
-### `xkey/pkg/pairing` — shared, no build tag
+### `pkg/pairingproto`, `pkg/trust/bootstrap`, `xkey/pkg/pairing` — shared, no build tag
 
 | Symbol | Kind | Notes |
 |---|---|---|
-| `pairing.Transport` | interface | `Send(ctx, []byte) error`, `Receive(ctx) ([]byte, error)`, `Close() error` — satisfied by `*BLETransport` and the USB/TCP transports alike |
-| `pairing.Fragmenter` / `NewFragmenter(mtu)` | type/func | `Fragment(message) ([][]byte, error)` |
-| `pairing.Reassembler` / `NewReassembler()` | type/func | `AddFragment`, `Assemble`, `Reset`, `IsComplete`, `Progress` |
-| `pairing.DecodeFragment(data)` | func | wire → `*Fragment` |
-| `pairing.FragmentHeaderSize` / `MinMTU` | const | `7`, `23` |
-| `pairing.NoiseProtocolName` | const | `"Noise_XX_25519_ChaChaPoly_SHA256"` |
-| `pairing.StaticKey` | type alias | → `noiseproto.StaticKey` |
+| `pairingproto.Transport` | interface | `Send(ctx, []byte) error`, `Receive(ctx) ([]byte, error)`, `Close() error` — satisfied by `*BLETransport` and the USB/TCP transports alike |
+| `pairingproto.Fragmenter` / `NewFragmenter(mtu)` | type/func | `Fragment(message) ([][]byte, error)` |
+| `pairingproto.Reassembler` / `NewReassembler()` | type/func | `AddFragment`, `Assemble`, `Reset`, `IsComplete`, `Progress` |
+| `pairingproto.DecodeFragment(data)` | func | wire → `*Fragment` |
+| `pairingproto.FragmentHeaderSize` / `MinMTU` | const | `7`, `23` |
+| `bootstrap.NoiseXXProtocolName` | const | `"Noise_XX_25519_ChaChaPoly_SHA256"` |
+| `bootstrap.NoiseSession` | type | the Noise XX session; static keys are `bootstrap.NoiseStaticKey` |
 | `pairing.NoiseKeyBarrier` | interface | how the local Noise static private key is sealed/unsealed (#42; full detail in `xkey/docs/phone-hsm/engineering.md`) |
 
 ## Errors
@@ -67,13 +67,13 @@ BLE-only sentinels, from `xkey/pkg/phone/errors.go`:
 | `phone.ErrPeripheralAlreadyRunning` / `ErrPeripheralNotRunning` / `ErrPeripheralStartFailed` | peripheral lifecycle |
 | `phone.ErrClientDisconnected` | the connected phone disconnected mid-session |
 | `phone.ErrNotifyUnavailable` | GATT service not registered, or the Response characteristic handle never bound (`ble_notify.go`) |
-| `phone.ErrUSBUnavailable` | **not a BLE error** — "phone: usb transport not built (build with `-tags usb`)"; the AOA transport's sentinel, listed here only to disambiguate it from BLE (architecture.md "Naming collision to avoid") |
+| `pairingproto.ErrUSBUnavailable` | **not a BLE error** — "pairing: usb transport not built (build with `-tags usb`)"; the AOA transport's sentinel, listed here only to disambiguate it from BLE (architecture.md "Naming collision to avoid") |
 
 Every generic pairing-session error (`ErrNotConnected`, `ErrConnectionFailed`,
 `ErrDeviceNotFound`, `ErrTimeout`, `ErrBackendClosed`, `ErrNoiseHandshakeFailed`,
-and the rest of `pairing.Err*`) is re-exported by value from `xkey/pkg/pairing`
-so `errors.Is` matches identically regardless of transport
-(`xkey/pkg/phone/errors.go:37-107`); the full list belongs to
+and the rest of `pairingproto.Err*`) is re-exported by value from
+`pkg/pairingproto` and `pkg/trust/bootstrap` so `errors.Is` matches
+identically regardless of transport (`xkey/pkg/phone/errors.go:46-116`); the full list belongs to
 `xkey/docs/phone-hsm/engineering.md`, not duplicated here.
 
 ## Configuration
@@ -94,7 +94,7 @@ and TCP relay alternatives are separate commands/flags documented in
 | `pkg/phone` | `ble_peripheral_test.go` | request/response notify path, large-response fragmentation, send-failure propagation, MTU selection, fragment reassembly, malformed-fragment handling, `IsConnected`, `LocalStaticPublicKey` |
 | `pkg/phone` | `ble_peripheral_advertising_test.go`, `ble_peripheral_shutdown_test.go` | advertising lifecycle; shutdown / `OwnsStaticKey` release semantics |
 | `pkg/phone` | `phone_connect_ble_test.go` | central `Connect` retry logic: handshake retry, stale D-Bus recovery, scan-failure fallback to a saved address |
-| `pkg/pairing` | `fragmentation_test.go`, `noise_test.go`, `noise_android_compat_test.go` | wire-format round-trips; Noise handshake compatibility with the Android app's expected byte sequences |
+| root `pkg/pairingproto`, `pkg/trust/bootstrap` | `fragmentation_test.go`; `noise_session_test.go`, `noise_session_android_test.go` | wire-format round-trips; Noise handshake compatibility with the Android app's expected byte sequences |
 | `test/integration/ble` | `ble_integration_test.go` (build tags `integration linux ble`) | a virtual-HCI harness (`TestVirtualHCIHarness`) and full peripheral round-trip/repeated-request tests against it — no physical hardware, but a real BlueZ stack |
 
 `make test` links the `!ble` stub (fast, no adapter) per architecture.md;

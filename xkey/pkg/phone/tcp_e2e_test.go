@@ -23,6 +23,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/jeremyhahn/go-xkms/pkg/pairingproto"
+	"github.com/jeremyhahn/go-xkms/pkg/trust/bootstrap"
 	"github.com/jeremyhahn/go-xkms/xkey/pkg/pairing"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -65,7 +67,7 @@ func (h *rpcTestHandler) paramsFor(method string) json.RawMessage {
 }
 
 func (h *rpcTestHandler) HandleRequest(_ context.Context, request []byte) ([]byte, error) {
-	req, err := pairing.DecodeRequest(request)
+	req, err := pairingproto.DecodeRequest(request)
 	if err != nil {
 		return nil, err
 	}
@@ -77,40 +79,40 @@ func (h *rpcTestHandler) HandleRequest(_ context.Context, request []byte) ([]byt
 	h.record(req.Method, rawParams)
 
 	if h.failMethod != "" && req.Method == h.failMethod {
-		return pairing.EncodeErrorResponse(req.ID, h.failCode, "rejected by test handler", nil)
+		return pairingproto.EncodeErrorResponse(req.ID, h.failCode, "rejected by test handler", nil)
 	}
 
 	switch req.Method {
-	case pairing.MethodPing:
-		return pairing.EncodeResponse(req.ID, &pairing.PingResult{Pong: true})
-	case pairing.MethodGetInfo:
-		return pairing.EncodeResponse(req.ID, &pairing.GetInfoResult{
+	case pairingproto.MethodPing:
+		return pairingproto.EncodeResponse(req.ID, &pairingproto.PingResult{Pong: true})
+	case pairingproto.MethodGetInfo:
+		return pairingproto.EncodeResponse(req.ID, &pairingproto.GetInfoResult{
 			Version:             "2.0",
 			DeviceName:          "tcp-phone",
-			SupportedAlgorithms: []int{pairing.COSEAlgES256},
+			SupportedAlgorithms: []int{pairingproto.COSEAlgES256},
 			MaxCredentials:      10,
 			CurrentCredentials:  1,
 		})
-	case pairing.MethodGenerateKey:
-		return pairing.EncodeResponse(req.ID, &pairing.GenerateKeyResult{PublicKeyCOSE: []byte{0xa5, 0x01, 0x02}})
-	case pairing.MethodSign:
-		return pairing.EncodeResponse(req.ID, &pairing.SignResult{Signature: []byte{0x30, 0x45, 0x02}})
-	case pairing.MethodLoadKey:
-		return pairing.EncodeResponse(req.ID, &pairing.LoadKeyResult{Exists: true})
-	case pairing.MethodDeleteKey:
-		return pairing.EncodeResponse(req.ID, &pairing.DeleteKeyResult{Deleted: true})
-	case pairing.MethodPairingConfirm:
-		return pairing.EncodeResponse(req.ID, &pairing.PairingConfirmResult{Confirmed: true, DeviceName: "tcp-phone"})
+	case pairingproto.MethodGenerateKey:
+		return pairingproto.EncodeResponse(req.ID, &pairingproto.GenerateKeyResult{PublicKeyCOSE: []byte{0xa5, 0x01, 0x02}})
+	case pairingproto.MethodSign:
+		return pairingproto.EncodeResponse(req.ID, &pairingproto.SignResult{Signature: []byte{0x30, 0x45, 0x02}})
+	case pairingproto.MethodLoadKey:
+		return pairingproto.EncodeResponse(req.ID, &pairingproto.LoadKeyResult{Exists: true})
+	case pairingproto.MethodDeleteKey:
+		return pairingproto.EncodeResponse(req.ID, &pairingproto.DeleteKeyResult{Deleted: true})
+	case pairingproto.MethodPairingConfirm:
+		return pairingproto.EncodeResponse(req.ID, &pairingproto.PairingConfirmResult{Confirmed: true, DeviceName: "tcp-phone"})
 	default:
-		return pairing.EncodeErrorResponse(req.ID, -32601, "method not found", req.Method)
+		return pairingproto.EncodeErrorResponse(req.ID, -32601, "method not found", req.Method)
 	}
 }
 
-// alwaysLiveAttestForTest is a pairing.LiveAttestFunc stand-in for tests that
+// alwaysLiveAttestForTest is a pairingproto.LiveAttestFunc stand-in for tests that
 // exercise the request-serving loop, not the #129 live-attestation gate that
 // now runs ahead of it. It is deliberately local to the test binary: nothing
 // in production may treat "no live attestation" as automatically approved.
-func alwaysLiveAttestForTest(context.Context, pairing.RPCExchange, []byte) error {
+func alwaysLiveAttestForTest(context.Context, pairingproto.RPCExchange, []byte) error {
 	return nil
 }
 
@@ -199,24 +201,24 @@ func TestTCPPairingServer_EndToEndWithPhoneBackend(t *testing.T) {
 	assert.Equal(t, "2.0", info.Version)
 
 	credID := []byte("tcp-credential-id")
-	handle, pub, err := backend.GenerateCredentialKey(pairing.COSEAlgES256, credID)
+	handle, pub, err := backend.GenerateCredentialKey(pairingproto.COSEAlgES256, credID)
 	require.NoError(t, err)
 	assert.Equal(t, []byte{0xa5, 0x01, 0x02}, pub)
 	assert.Equal(t, credID, handle.CredentialID())
-	assert.Equal(t, pairing.COSEAlgES256, handle.Algorithm())
+	assert.Equal(t, pairingproto.COSEAlgES256, handle.Algorithm())
 
-	sig, err := backend.Sign(handle, pairing.COSEAlgES256, []byte("digest"))
+	sig, err := backend.Sign(handle, pairingproto.COSEAlgES256, []byte("digest"))
 	require.NoError(t, err)
 	assert.Equal(t, []byte{0x30, 0x45, 0x02}, sig)
 
 	// The generate call cached the handle, so LoadKey is served locally.
-	cached, err := backend.LoadKey(credID, pairing.COSEAlgES256)
+	cached, err := backend.LoadKey(credID, pairingproto.COSEAlgES256)
 	require.NoError(t, err)
 	assert.Equal(t, handle, cached)
 
 	// A different credential ID must go over the wire.
 	otherID := []byte("other-credential-id")
-	loaded, err := backend.LoadKey(otherID, pairing.COSEAlgES256)
+	loaded, err := backend.LoadKey(otherID, pairingproto.COSEAlgES256)
 	require.NoError(t, err)
 	assert.Equal(t, otherID, loaded.CredentialID())
 
@@ -228,18 +230,18 @@ func TestTCPPairingServer_EndToEndWithPhoneBackend(t *testing.T) {
 	require.NoError(t, backend.DeleteKey(handle))
 
 	assert.Equal(t, []string{
-		pairing.MethodPing,
-		pairing.MethodGetInfo,
-		pairing.MethodGenerateKey,
-		pairing.MethodSign,
-		pairing.MethodLoadKey,
-		pairing.MethodPairingConfirm,
-		pairing.MethodDeleteKey,
+		pairingproto.MethodPing,
+		pairingproto.MethodGetInfo,
+		pairingproto.MethodGenerateKey,
+		pairingproto.MethodSign,
+		pairingproto.MethodLoadKey,
+		pairingproto.MethodPairingConfirm,
+		pairingproto.MethodDeleteKey,
 	}, handler.seenMethods())
 
 	// The sign request must carry the credential ID and force user verification.
-	var signParams pairing.SignParams
-	require.NoError(t, json.Unmarshal(handler.paramsFor(pairing.MethodSign), &signParams))
+	var signParams pairingproto.SignParams
+	require.NoError(t, json.Unmarshal(handler.paramsFor(pairingproto.MethodSign), &signParams))
 	assert.Equal(t, credID, signParams.CredentialID)
 	assert.Equal(t, []byte("digest"), signParams.DataHash)
 	assert.True(t, signParams.UserVerificationRequired,
@@ -253,7 +255,7 @@ func TestTCPPairingServer_RemoteKeyMismatchAbortsHandshake(t *testing.T) {
 
 	srv := startTCPPairingServer(t, &TCPPairingConfig{RequestHandler: &rpcTestHandler{}})
 
-	wrongKey, err := pairing.GenerateStaticKey()
+	wrongKey, err := bootstrap.GenerateNoiseStaticKey()
 	require.NoError(t, err)
 
 	transport, err := pairing.NewTCPTransport(&pairing.TCPTransportConfig{
@@ -341,17 +343,17 @@ func TestTCPPairingServer_MidStreamTransportFailure(t *testing.T) {
 func TestTCPPairingServer_PhoneErrorResponseIsMapped(t *testing.T) {
 	t.Parallel()
 
-	handler := &rpcTestHandler{failMethod: pairing.MethodSign, failCode: pairing.ErrorCodeUserCancelled}
+	handler := &rpcTestHandler{failMethod: pairingproto.MethodSign, failCode: pairingproto.ErrorCodeUserCancelled}
 	srv := startTCPPairingServer(t, &TCPPairingConfig{RequestHandler: handler})
 	backend := dialPhoneBackend(t, srv, &PhoneKeyBackendConfig{TrustNewDevices: true})
 
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 
-	handle, _, err := backend.GenerateCredentialKey(pairing.COSEAlgES256, []byte("cred-for-cancel"))
+	handle, _, err := backend.GenerateCredentialKey(pairingproto.COSEAlgES256, []byte("cred-for-cancel"))
 	require.NoError(t, err)
 
-	_, err = backend.Sign(handle, pairing.COSEAlgES256, []byte("digest"))
+	_, err = backend.Sign(handle, pairingproto.COSEAlgES256, []byte("digest"))
 	assert.ErrorIs(t, err, ErrUserCancelled)
 
 	// The channel must remain usable after a protocol-level (non-fatal) error.
@@ -370,13 +372,13 @@ func TestTCPPairingServer_HandshakeMsg1GarbageClosesConnection(t *testing.T) {
 	defer conn.Close()
 
 	// Perform the identity exchange, then send junk in place of msg1.
-	identity := make([]byte, pairing.IdentityMsgSize)
-	identity[0] = pairing.IdentityMsgVersion
+	identity := make([]byte, pairingproto.IdentityMsgSize)
+	identity[0] = pairingproto.IdentityMsgVersion
 	require.NoError(t, tcpSend(conn, identity))
 
 	ack, err := tcpReceive(conn)
 	require.NoError(t, err)
-	require.Equal(t, []byte{pairing.IdentityAckUnknown}, ack)
+	require.Equal(t, []byte{pairingproto.IdentityAckUnknown}, ack)
 
 	require.NoError(t, tcpSend(conn, []byte("not a noise handshake message")))
 
@@ -396,7 +398,7 @@ func TestTCPPairingServer_HandshakeMsg3GarbageClosesConnection(t *testing.T) {
 	require.NoError(t, err)
 	defer conn.Close()
 
-	session, err := pairing.NewNoiseSession(&pairing.NoiseSessionConfig{IsInitiator: true})
+	session, err := bootstrap.NewNoiseSession(&bootstrap.NoiseSessionConfig{IsInitiator: true})
 	require.NoError(t, err)
 	require.NoError(t, session.InitHandshake())
 
@@ -430,7 +432,7 @@ func TestTCPPairingServer_UndecryptableRequestClosesConnection(t *testing.T) {
 	clientSession := clientHandshake(t, conn)
 
 	// A legitimate request first, to prove the channel works.
-	req, err := pairing.EncodeRequest(pairing.NewRequest(pairing.MethodPing, nil))
+	req, err := pairingproto.EncodeRequest(pairingproto.NewRequest(pairingproto.MethodPing, nil))
 	require.NoError(t, err)
 	ciphertext, err := clientSession.Encrypt(req)
 	require.NoError(t, err)
@@ -439,7 +441,7 @@ func TestTCPPairingServer_UndecryptableRequestClosesConnection(t *testing.T) {
 	require.NoError(t, err)
 	respPlain, err := clientSession.Decrypt(respCiphertext)
 	require.NoError(t, err)
-	resp, err := pairing.DecodeResponse(respPlain)
+	resp, err := pairingproto.DecodeResponse(respPlain)
 	require.NoError(t, err)
 	require.Nil(t, resp.Error)
 
@@ -451,7 +453,7 @@ func TestTCPPairingServer_UndecryptableRequestClosesConnection(t *testing.T) {
 	_, err = tcpReceive(conn)
 	assert.Error(t, err, "server must close the connection when decryption fails")
 
-	assert.Equal(t, []string{pairing.MethodPing}, handler.seenMethods(),
+	assert.Equal(t, []string{pairingproto.MethodPing}, handler.seenMethods(),
 		"the replayed frame must never reach the request handler")
 }
 
@@ -490,7 +492,7 @@ func TestTCPPairingServer_SkipsIdentityExchange(t *testing.T) {
 
 	clientSession := clientHandshake(t, conn)
 
-	req, err := pairing.EncodeRequest(pairing.NewRequest(pairing.MethodGetInfo, nil))
+	req, err := pairingproto.EncodeRequest(pairingproto.NewRequest(pairingproto.MethodGetInfo, nil))
 	require.NoError(t, err)
 	ciphertext, err := clientSession.Encrypt(req)
 	require.NoError(t, err)
@@ -501,11 +503,11 @@ func TestTCPPairingServer_SkipsIdentityExchange(t *testing.T) {
 	respPlain, err := clientSession.Decrypt(respCiphertext)
 	require.NoError(t, err)
 
-	resp, err := pairing.DecodeResponse(respPlain)
+	resp, err := pairingproto.DecodeResponse(respPlain)
 	require.NoError(t, err)
 	require.Nil(t, resp.Error)
 
-	info, err := pairing.DecodeResult[pairing.GetInfoResult](resp)
+	info, err := pairingproto.DecodeResult[pairingproto.GetInfoResult](resp)
 	require.NoError(t, err)
 	assert.Equal(t, "tcp-phone", info.DeviceName)
 }
@@ -520,13 +522,13 @@ func TestTCPPairingServer_IdentityAckThenDisconnect(t *testing.T) {
 	conn, err := net.DialTimeout("tcp", srv.Addr(), 5*time.Second)
 	require.NoError(t, err)
 
-	identity := make([]byte, pairing.IdentityMsgSize)
-	identity[0] = pairing.IdentityMsgVersion
+	identity := make([]byte, pairingproto.IdentityMsgSize)
+	identity[0] = pairingproto.IdentityMsgVersion
 	require.NoError(t, tcpSend(conn, identity))
 
 	ack, err := tcpReceive(conn)
 	require.NoError(t, err)
-	require.Equal(t, []byte{pairing.IdentityAckUnknown}, ack)
+	require.Equal(t, []byte{pairingproto.IdentityAckUnknown}, ack)
 
 	require.NoError(t, conn.Close())
 
@@ -596,15 +598,15 @@ func TestTCPPairingServer_DisconnectBeforeMsg3(t *testing.T) {
 	conn, err := net.DialTimeout("tcp", srv.Addr(), 5*time.Second)
 	require.NoError(t, err)
 
-	identity := make([]byte, pairing.IdentityMsgSize)
-	identity[0] = pairing.IdentityMsgVersion
+	identity := make([]byte, pairingproto.IdentityMsgSize)
+	identity[0] = pairingproto.IdentityMsgVersion
 	require.NoError(t, tcpSend(conn, identity))
 
 	ack, err := tcpReceive(conn)
 	require.NoError(t, err)
-	require.Equal(t, []byte{pairing.IdentityAckUnknown}, ack)
+	require.Equal(t, []byte{pairingproto.IdentityAckUnknown}, ack)
 
-	session, err := pairing.NewNoiseSession(&pairing.NoiseSessionConfig{IsInitiator: true})
+	session, err := bootstrap.NewNoiseSession(&bootstrap.NoiseSessionConfig{IsInitiator: true})
 	require.NoError(t, err)
 	require.NoError(t, session.InitHandshake())
 	msg1, _, err := session.HandshakeMessage(nil)

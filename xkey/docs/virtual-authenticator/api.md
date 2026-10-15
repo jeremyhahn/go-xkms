@@ -18,7 +18,7 @@ someone else's security key.
 
 | CTAP2 command | Implementation |
 |---|---|
-| `authenticatorMakeCredential` | `xkey/pkg/authenticator/cmd_makecredential.go` |
+| `authenticatorMakeCredential` | `pkg/fido2/authenticator/cmd_makecredential.go` |
 | `authenticatorGetAssertion` | `cmd_getassertion.go` |
 | `authenticatorGetInfo` | `cmd_getinfo.go` |
 | `authenticatorClientPIN` | `cmd_clientpin.go`, `pin_protocol.go`, `pin_protocol_v1.go` |

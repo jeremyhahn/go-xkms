@@ -18,6 +18,8 @@ import (
 	"errors"
 	"testing"
 
+	"github.com/jeremyhahn/go-xkms/pkg/pairingproto"
+	"github.com/jeremyhahn/go-xkms/pkg/trust/bootstrap"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -31,7 +33,7 @@ var (
 // with its own Noise session and answers it with the request's method name.
 type echoPhone struct {
 	t       *testing.T
-	session *NoiseSession
+	session *bootstrap.NoiseSession
 	reply   []byte
 	method  string
 }
@@ -39,11 +41,11 @@ type echoPhone struct {
 func (p *echoPhone) send(_ context.Context, ciphertext []byte) error {
 	plaintext, err := p.session.Decrypt(ciphertext)
 	require.NoError(p.t, err)
-	req, err := DecodeRequest(plaintext)
+	req, err := pairingproto.DecodeRequest(plaintext)
 	require.NoError(p.t, err)
 	p.method = req.Method
 
-	resp, err := EncodeResponse(req.ID, map[string]string{"echo": req.Method})
+	resp, err := pairingproto.EncodeResponse(req.ID, map[string]string{"echo": req.Method})
 	require.NoError(p.t, err)
 	p.reply, err = p.session.Encrypt(resp)
 	require.NoError(p.t, err)
@@ -59,15 +61,15 @@ func TestInlineExchange_RoundTripsThroughTheSession(t *testing.T) {
 	phone := &echoPhone{t: t, session: phoneSession}
 	exchange := InlineExchange(laptop, phone.send, phone.receive)
 
-	req := NewRequest(MethodLocalSyncStatus, nil)
+	req := pairingproto.NewRequest(pairingproto.MethodLocalSyncStatus, nil)
 	resp, err := exchange(context.Background(), req)
 	require.NoError(t, err)
 
-	assert.Equal(t, MethodLocalSyncStatus, phone.method)
+	assert.Equal(t, pairingproto.MethodLocalSyncStatus, phone.method)
 	assert.Equal(t, req.ID, resp.ID)
-	result, err := DecodeResult[map[string]string](resp)
+	result, err := pairingproto.DecodeResult[map[string]string](resp)
 	require.NoError(t, err)
-	assert.Equal(t, MethodLocalSyncStatus, (*result)["echo"])
+	assert.Equal(t, pairingproto.MethodLocalSyncStatus, (*result)["echo"])
 }
 
 func TestInlineExchange_PropagatesTransportErrors(t *testing.T) {
@@ -78,14 +80,14 @@ func TestInlineExchange_PropagatesTransportErrors(t *testing.T) {
 
 	failSend := func(context.Context, []byte) error { return errExchangeSend }
 	_, err := InlineExchange(laptop, failSend, phone.receive)(
-		context.Background(), NewRequest(MethodLocalSyncStatus, nil))
+		context.Background(), pairingproto.NewRequest(pairingproto.MethodLocalSyncStatus, nil))
 	assert.ErrorIs(t, err, errExchangeSend)
 
 	laptop, phoneSession = setupHandshakedNoiseSessions(t)
 	phone = &echoPhone{t: t, session: phoneSession}
 	failReceive := func(context.Context) ([]byte, error) { return nil, errExchangeReceive }
 	_, err = InlineExchange(laptop, phone.send, failReceive)(
-		context.Background(), NewRequest(MethodLocalSyncStatus, nil))
+		context.Background(), pairingproto.NewRequest(pairingproto.MethodLocalSyncStatus, nil))
 	assert.ErrorIs(t, err, errExchangeReceive)
 }
 
@@ -98,7 +100,7 @@ func TestInlineExchange_RefusesAReplyTheSessionCannotDecrypt(t *testing.T) {
 	}
 
 	_, err := InlineExchange(laptop, send, receive)(
-		context.Background(), NewRequest(MethodLocalSyncStatus, nil))
+		context.Background(), pairingproto.NewRequest(pairingproto.MethodLocalSyncStatus, nil))
 	assert.True(t, sent)
 	assert.Error(t, err)
 }
@@ -111,6 +113,6 @@ func TestInlineExchange_RefusesARequestThatDoesNotEncode(t *testing.T) {
 	}
 
 	_, err := InlineExchange(laptop, send, nil)(
-		context.Background(), NewRequest(MethodLocalSyncStatus, make(chan int)))
+		context.Background(), pairingproto.NewRequest(pairingproto.MethodLocalSyncStatus, make(chan int)))
 	assert.Error(t, err)
 }

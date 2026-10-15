@@ -18,7 +18,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/jeremyhahn/go-xkms/xkey/pkg/pairing"
+	"github.com/jeremyhahn/go-xkms/pkg/pairingproto"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -121,7 +121,7 @@ func TestSignFido2Assertion_BackendClosed(t *testing.T) {
 
 	backend := newClosedBackend(t)
 
-	params := &pairing.LocalSignFido2AssertionParams{
+	params := &pairingproto.LocalSignFido2AssertionParams{
 		CredentialID:   []byte("test-cred-id"),
 		ClientDataHash: []byte("test-client-data-hash"),
 		RpID:           "example.com",
@@ -151,7 +151,7 @@ func TestSignFido2Assertion_EmptyCredentialID(t *testing.T) {
 	backend, _ := newTestBackend(t)
 	defer backend.Close()
 
-	params := &pairing.LocalSignFido2AssertionParams{
+	params := &pairingproto.LocalSignFido2AssertionParams{
 		CredentialID:   []byte{},
 		ClientDataHash: []byte("test-client-data-hash"),
 		RpID:           "example.com",
@@ -169,7 +169,7 @@ func TestSignFido2Assertion_EmptyClientDataHash(t *testing.T) {
 	backend, _ := newTestBackend(t)
 	defer backend.Close()
 
-	params := &pairing.LocalSignFido2AssertionParams{
+	params := &pairingproto.LocalSignFido2AssertionParams{
 		CredentialID:   []byte("test-cred-id"),
 		ClientDataHash: []byte{},
 		RpID:           "example.com",
@@ -187,7 +187,7 @@ func TestSignFido2Assertion_EmptyRpID(t *testing.T) {
 	backend, _ := newTestBackend(t)
 	defer backend.Close()
 
-	params := &pairing.LocalSignFido2AssertionParams{
+	params := &pairingproto.LocalSignFido2AssertionParams{
 		CredentialID:   []byte("test-cred-id"),
 		ClientDataHash: []byte("test-client-data-hash"),
 		RpID:           "",
@@ -208,7 +208,7 @@ func TestSignFido2Assertion_NotConnected_ConnectFails(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
 	defer cancel()
 
-	params := &pairing.LocalSignFido2AssertionParams{
+	params := &pairingproto.LocalSignFido2AssertionParams{
 		CredentialID:   []byte("test-cred-id"),
 		ClientDataHash: []byte("test-client-data-hash"),
 		RpID:           "example.com",

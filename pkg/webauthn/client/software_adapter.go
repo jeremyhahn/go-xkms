@@ -27,10 +27,10 @@ import (
 
 	softwarebackend "github.com/jeremyhahn/go-xkms/pkg/backend/software"
 	"github.com/jeremyhahn/go-xkms/pkg/fido2"
+	"github.com/jeremyhahn/go-xkms/pkg/fido2/authenticator"
+	"github.com/jeremyhahn/go-xkms/pkg/fido2/authenticator/keybackend"
 	"github.com/jeremyhahn/go-xkms/pkg/storage"
 	"github.com/jeremyhahn/go-xkms/pkg/types"
-	"github.com/jeremyhahn/go-xkms/xkey/pkg/authenticator"
-	"github.com/jeremyhahn/go-xkms/xkey/pkg/authenticator/keybackend"
 )
 
 // SoftwareAdapter implements AuthenticatorAdapter by delegating to the real

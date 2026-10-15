@@ -151,7 +151,7 @@ Properties:
 Keys generated with `biometricRequired` need biometric authentication on the
 phone for key operations (sign, decrypt, ECDH); the flag and
 `authDurationSeconds` are per-key (`LocalGenerateKeyParams`,
-`xkey/pkg/pairing/protocol_local.go:53`) and can be changed with
+`pkg/pairingproto/protocol_local.go:53`) and can be changed with
 `local.setKeyPolicy`.
 
 ### Authentication Duration
@@ -181,8 +181,8 @@ phone for key operations (sign, decrypt, ECDH); the flag and
 ### Stage 2: Android Open Accessory
 
 xkey's own USB transport uses Android Open Accessory mode instead of ADB, so
-USB debugging is not needed (`xkey/pkg/phone/aoa.go`,
-`xkey/pkg/phone/usb_transport.go`). The xkmsd phone backend itself still
+USB debugging is not needed (`pkg/pairingproto/aoa.go`,
+`pkg/pairingproto/usb_transport.go`). The xkmsd phone backend itself still
 reaches a USB phone over `tcp` through ADB forwarding.
 
 ## Best Practices

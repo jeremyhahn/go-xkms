@@ -19,6 +19,7 @@ import (
 	"path/filepath"
 	"testing"
 
+	"github.com/jeremyhahn/go-xkms/pkg/pairingproto"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -106,7 +107,7 @@ func TestFileSharingPolicyStore_SetPolicy_NilPolicy(t *testing.T) {
 	require.NoError(t, err)
 
 	err = store.SetPolicy(nil)
-	assert.Equal(t, ErrBridgeInvalidParams, err)
+	assert.Equal(t, pairingproto.ErrBridgeInvalidParams, err)
 }
 
 func TestFileSharingPolicyStore_SetPolicy_EmptyBackend(t *testing.T) {
@@ -117,7 +118,7 @@ func TestFileSharingPolicyStore_SetPolicy_EmptyBackend(t *testing.T) {
 	require.NoError(t, err)
 
 	err = store.SetPolicy(&SharingPolicy{KeyID: "k1"})
-	assert.Equal(t, ErrBridgeInvalidParams, err)
+	assert.Equal(t, pairingproto.ErrBridgeInvalidParams, err)
 }
 
 func TestFileSharingPolicyStore_SetPolicy_EmptyKeyID(t *testing.T) {
@@ -128,7 +129,7 @@ func TestFileSharingPolicyStore_SetPolicy_EmptyKeyID(t *testing.T) {
 	require.NoError(t, err)
 
 	err = store.SetPolicy(&SharingPolicy{Backend: "tpm2"})
-	assert.Equal(t, ErrBridgeInvalidParams, err)
+	assert.Equal(t, pairingproto.ErrBridgeInvalidParams, err)
 }
 
 func TestFileSharingPolicyStore_SetPolicy_UpdateExisting(t *testing.T) {
@@ -187,7 +188,7 @@ func TestFileSharingPolicyStore_DeletePolicy(t *testing.T) {
 
 	// Verify it no longer exists.
 	_, err = store.GetPolicy("software", "delete-me")
-	assert.Equal(t, ErrSharePolicyNotFound, err)
+	assert.Equal(t, pairingproto.ErrSharePolicyNotFound, err)
 }
 
 func TestFileSharingPolicyStore_DeletePolicy_NotFound(t *testing.T) {
@@ -198,7 +199,7 @@ func TestFileSharingPolicyStore_DeletePolicy_NotFound(t *testing.T) {
 	require.NoError(t, err)
 
 	err = store.DeletePolicy("software", "nonexistent")
-	assert.Equal(t, ErrSharePolicyNotFound, err)
+	assert.Equal(t, pairingproto.ErrSharePolicyNotFound, err)
 }
 
 func TestFileSharingPolicyStore_ListPolicies(t *testing.T) {
@@ -394,7 +395,7 @@ func TestFileSharingPolicyStore_PolicyNotFound(t *testing.T) {
 	require.NoError(t, err)
 
 	_, err = store.GetPolicy("nonexistent-backend", "nonexistent-key")
-	assert.Equal(t, ErrSharePolicyNotFound, err)
+	assert.Equal(t, pairingproto.ErrSharePolicyNotFound, err)
 }
 
 func TestFileSharingPolicyStore_GetPolicy_ReturnsCopy(t *testing.T) {

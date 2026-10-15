@@ -1144,6 +1144,46 @@ func (t *Transport) TenantVTPMStop(ctx context.Context, tenantID string) (*trans
 	return t.service.TenantVTPMStop(ctx, tenantID)
 }
 
+// TrustRootList lists the platform trust roots, optionally of one purpose.
+func (t *Transport) TrustRootList(ctx context.Context, req *transport.TrustRootListRequest) (*transport.TrustRootListResponse, error) {
+	if !t.connected {
+		return nil, ErrNotConnected
+	}
+	return t.service.TrustRootList(ctx, req)
+}
+
+// TrustRootGet returns one platform trust root, its PEM included.
+func (t *Transport) TrustRootGet(ctx context.Context, req *transport.TrustRootRequest) (*transport.TrustRoot, error) {
+	if !t.connected {
+		return nil, ErrNotConnected
+	}
+	return t.service.TrustRootGet(ctx, req)
+}
+
+// TrustRootImport adds the certificates of a PEM bundle to the trust roots.
+func (t *Transport) TrustRootImport(ctx context.Context, req *transport.TrustRootImportRequest) (*transport.TrustRootImportResponse, error) {
+	if !t.connected {
+		return nil, ErrNotConnected
+	}
+	return t.service.TrustRootImport(ctx, req)
+}
+
+// TrustRootQuarantine reclassifies a platform trust root as synced.
+func (t *Transport) TrustRootQuarantine(ctx context.Context, req *transport.TrustRootRequest) (*transport.TrustRoot, error) {
+	if !t.connected {
+		return nil, ErrNotConnected
+	}
+	return t.service.TrustRootQuarantine(ctx, req)
+}
+
+// TrustRootRemove deletes a platform trust root.
+func (t *Transport) TrustRootRemove(ctx context.Context, req *transport.TrustRootRequest) error {
+	if !t.connected {
+		return ErrNotConnected
+	}
+	return t.service.TrustRootRemove(ctx, req)
+}
+
 // OIDC Credential Operations
 
 // OIDCCredentialCreate creates a server-side OIDC credential.

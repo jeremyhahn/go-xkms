@@ -118,14 +118,14 @@ a no-op unless the daemon was started with `--default-password`, in which case
 it types that password; a script that loops on `xkey touch` must run the
 daemon without one.
 
-### Presence handlers (`xkey/pkg/authenticator`)
+### Presence handlers (`pkg/fido2/authenticator`, `xkey/pkg/presence`)
 
 `NewAuthenticator` returns `ErrUserPresenceHandlerRequired` when
 `Config.UserPresenceHandler` is nil. There is no default. The handlers:
 
 | Handler | Constructor | Who installs it |
 |---|---|---|
-| `SocketHandler` | `NewSocketHandler(notifier, logger)` | `xkey fido2` (default) and the GUI; answered by a dialog or `xkey touch` |
+| `presence.SocketHandler` | `presence.NewSocketHandler(notifier, logger)` | `xkey fido2` (default) and the GUI; answered by a dialog or `xkey touch` |
 | `InteractiveHandler` | `NewInteractiveHandler()` | `xkey fido2 --interactive`; terminal prompts |
 | `AutoGrantHandler` | `NewAutoGrantHandler()` | programmatic devices only, named at their construction site |
 
@@ -135,7 +135,7 @@ itself.
 
 ### Programmatic devices
 
-`xkey/pkg/virtualdevice` (`native_virtual_device.go`) installs
+`pkg/fido2/virtualdevice` (`native_virtual_device.go`) installs
 `NewAutoGrantHandler()` when its caller supplies no handler, with the reason
 stated at that line: a native virtual device is driven programmatically and
 has no prompt channel. The CDP bridge (`xkey/pkg/cdp`) registers a Chrome
@@ -216,7 +216,7 @@ it as skipped, rather than failing the whole run over one step that cannot
 succeed either way it is ordered.
 
 FIDO2 token initialization normally waits on an interactive user-presence
-prompt (`requestUserPresence`, `pkg/authenticator/token.go`).
+prompt (`requestUserPresence`, `pkg/fido2/authenticator/token.go`).
 `provisionFIDO2` substitutes `authenticator.NewAutoGrantHandler()` — the same
 handler `extension_serve.go` installs for headless operation — for the
 interactive handler `fido2 init-token` installs. It also forces
@@ -384,7 +384,7 @@ Nothing new. Credentials are the authenticator's; sessions are
   daemon headlessly and drives registration and login unattended, supplying
   presence with `xkey touch` in a loop. Automation is what makes that suite
   possible, so it is also the suite that covers it.
-- **Presence and verification flags** — `xkey/pkg/authenticator` suites prove
+- **Presence and verification flags** — `pkg/fido2/authenticator` suites prove
   that a missing handler is refused, that auto-grant sets UP and not UV, and
   that UV follows a verified PIN or a verifying backend only.
 - **Browser automation** — Playwright specs through the CDP bridge.

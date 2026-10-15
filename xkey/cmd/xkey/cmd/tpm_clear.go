@@ -119,28 +119,35 @@ func runTPMClear(cmd *cobra.Command, args []string) error {
 	return runStandardTPMClear(cmd)
 }
 
+// tpmSysfsClassDir is where the kernel exposes each TPM's Physical Presence
+// Interface, and rebootSystem restarts the machine once a clear is
+// scheduled. Tests point them at a temporary tree and a recorder.
+var (
+	tpmSysfsClassDir = "/sys/class/tpm"
+	rebootSystem     = func() error { return syscall.Reboot(syscall.LINUX_REBOOT_CMD_RESTART) }
+)
+
 // runForceTPMClear performs a TPM clear via UEFI Physical Presence Interface
 func runForceTPMClear(cmd *cobra.Command) error {
 	// Check for root privileges
-	if os.Geteuid() != 0 {
+	if geteuid() != 0 {
 		cmd.PrintErrln("Error: Force clear requires root privileges")
 		cmd.PrintErrln("Hint: Run with sudo: sudo xkey tpm clear --force")
 		return ErrTPMClearNotRoot
 	}
 
-	// Determine the TPM device name from the device path
+	// The PPI belongs to the TPM itself: /dev/tpmrmN is the resource
+	// manager in front of tpmN, and any other name falls back to tpm0.
 	deviceName := filepath.Base(tpmCfg.device)
-	// Handle /dev/tpmrm0 -> tpm0 mapping
-	deviceName = strings.TrimPrefix(deviceName, "tpmrm")
 	if strings.HasPrefix(deviceName, "tpmrm") {
 		deviceName = "tpm" + strings.TrimPrefix(deviceName, "tpmrm")
 	} else if !strings.HasPrefix(deviceName, "tpm") {
-		deviceName = "tpm0" // Default
+		deviceName = "tpm0"
 	}
 
 	// PPI request file path
 	// See: https://github.com/tpm2-software/tpm2-tools/issues/1956
-	ppiRequestPath := fmt.Sprintf("/sys/class/tpm/%s/ppi/request", deviceName)
+	ppiRequestPath := filepath.Join(tpmSysfsClassDir, deviceName, "ppi", "request")
 
 	// Check if PPI interface exists
 	if _, err := os.Stat(ppiRequestPath); os.IsNotExist(err) {
@@ -172,7 +179,7 @@ func runForceTPMClear(cmd *cobra.Command) error {
 	}
 
 	// Initiate system reboot
-	err = syscall.Reboot(syscall.LINUX_REBOOT_CMD_RESTART)
+	err = rebootSystem()
 	if err != nil {
 		cmd.PrintErrf("Error: Failed to initiate reboot: %v\n", err)
 		cmd.PrintErrln("Please reboot manually to complete the TPM clear operation.")

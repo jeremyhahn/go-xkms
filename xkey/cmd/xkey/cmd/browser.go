@@ -21,8 +21,8 @@ import (
 
 	"github.com/spf13/cobra"
 
+	"github.com/jeremyhahn/go-xkms/sdk/go/truststore"
 	"github.com/jeremyhahn/go-xkms/xkey/pkg/gui/services"
-	"github.com/jeremyhahn/go-xkms/xkey/pkg/truststore"
 	"github.com/jeremyhahn/go-xkms/xkey/pkg/xhome"
 )
 

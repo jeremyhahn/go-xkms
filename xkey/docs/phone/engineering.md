@@ -16,7 +16,7 @@ const BackendTypePhone xkms.BackendType = xkms.BackendTypePhone
 
 type PhoneKeyBackendConfig struct {
 	DeviceAddress             string
-	LocalStaticKey            *pairing.StaticKey
+	LocalStaticKey            *bootstrap.NoiseStaticKey
 	OwnsStaticKey              bool
 	ExpectedRemoteStatic       []byte
 	TrustNewDevices            bool
@@ -28,12 +28,12 @@ type PhoneKeyBackendConfig struct {
 	AuditLogger                audit.Logger
 	DeviceName                 string
 	RequireLiveAttestation     bool
-	LiveAttest                 pairing.LiveAttestFunc
+	LiveAttest                 pairingproto.LiveAttestFunc
 }
 
 func DefaultPhoneKeyBackendConfig() *PhoneKeyBackendConfig
 func NewPhoneKeyBackend(cfg *PhoneKeyBackendConfig) (*PhoneKeyBackend, error)
-func NewPhoneKeyBackendWithTransport(cfg *PhoneKeyBackendConfig, transport pairing.Transport) (*PhoneKeyBackend, error)
+func NewPhoneKeyBackendWithTransport(cfg *PhoneKeyBackendConfig, transport pairingproto.Transport) (*PhoneKeyBackend, error)
 
 type PhoneKeyBackend struct{ … } // implements keybackend.FIDO2KeyBackend
 ```
@@ -45,14 +45,14 @@ type PhoneKeyBackend struct{ … } // implements keybackend.FIDO2KeyBackend
 the phone), `Close`, `IsConnected`, `ConnectedAddress`,
 `LocalStaticPublicKey`, `RemoteStaticPublicKey`, `GetDeviceInfo`, `Ping`,
 `SendPairingConfirm`, `ListFido2Credentials`, `SignFido2Assertion`,
-`Notifier` (`xkey/pkg/phone/phone.go:436-1584`).
+`Notifier` (`xkey/pkg/phone/phone.go:435-1603`).
 
 ### Transports
 
 ```go
 // xkey/pkg/phone/transport.go
 type BLECapableTransport interface {
-	pairing.Transport
+	pairingproto.Transport
 	Scan(ctx context.Context) ([]ScanResult, error)
 	ConnectWithBondedAddress(ctx context.Context, address, bondedAddress string) error
 	Disconnect() error
@@ -66,20 +66,21 @@ type BLECapableTransport interface {
 |---|---|---|---|
 | `BLETransport` | `ble_transport.go` | `ble` | BLE central (this host initiates) |
 | `BLEPeripheral` | `ble_peripheral.go` | `ble` | BLE peripheral/GATT server (this host accepts) |
-| `USBTransport` | `usb_transport.go` | `usb` | USB Accessory Mode client |
+| `pairingproto.USBTransport` | `pkg/pairingproto/usb_transport.go` | `usb` | USB Accessory Mode client |
 | `TCPPairingServer` | `tcp_server.go` | (none) | TCP relay responder, default `:8444` |
 
 Without the `ble`/`usb` tag, `BLETransport`/`BLEPeripheral`/`USBTransport`
 still exist with the identical exported surface (constructors, config
 structs, methods) but every method returns `ErrBLEUnavailable` /
-`ErrUSBUnavailable` — callers compile against one surface regardless of build
-(`ble_transport_stub.go`, `ble_peripheral_stub.go`, `usb_transport_stub.go`).
+`pairingproto.ErrUSBUnavailable` — callers compile against one surface
+regardless of build (`ble_transport_stub.go`, `ble_peripheral_stub.go`,
+`pkg/pairingproto/usb_transport_stub.go`).
 
 ### Attestation continuity
 
 ```go
 // xkey/pkg/phone/fingerprint.go
-const DeviceFingerprintSize = pairing.IdentityAckKnownSize - 1 // 32
+const DeviceFingerprintSize = pairingproto.IdentityAckKnownSize - 1 // 32
 
 func DecodeDeviceFingerprint(encoded string) ([]byte, error)
 
@@ -98,26 +99,27 @@ the only input that does. Every other invalid input returns
 
 ### Errors — `xkey/pkg/phone/errors.go`
 
-Most sentinels are re-exported from `xkey/pkg/pairing` so `errors.Is`
-matches across both packages (`ErrNotConnected`, `ErrConnectionFailed`,
-`ErrDeviceNotFound`, `ErrPairingFailed`, `ErrNoiseHandshakeFailed`,
-`ErrBackendClosed`, `ErrUnsupportedAlgorithm`, `ErrExportNotSupported`,
-`ErrImportNotSupported`, and ~50 more — see `errors.go:37-105` for the full
-list). Phone-only sentinels:
+Most sentinels are re-exported from `pkg/pairingproto` (and the Noise ones
+from `pkg/trust/bootstrap`) so `errors.Is` matches across packages
+(`ErrNotConnected`, `ErrConnectionFailed`, `ErrDeviceNotFound`,
+`ErrPairingFailed`, `ErrNoiseHandshakeFailed`, `ErrBackendClosed`,
+`ErrUnsupportedAlgorithm`, `ErrExportNotSupported`, `ErrImportNotSupported`,
+and ~50 more — see `errors.go:46-116` for the full list). The USB transport's
+`pairingproto.ErrUSBUnavailable` (built without `-tags usb`) lives with the
+transport. Phone-only sentinels:
 
 | Error | Meaning |
 |---|---|
 | `ErrBLEUnavailable` | Bluetooth unavailable, or built without `-tags ble` |
-| `ErrUSBUnavailable` | Built without `-tags usb` |
 | `ErrBLEPeripheralStopped` | Peripheral stopped; no further connections accepted |
 | `ErrAdapterDisabled` | Bluetooth adapter disabled |
 | `ErrServiceNotFound` / `ErrCharacteristicNotFound` | The xKey BLE GATT service/characteristic was not found — see [../ble/](../ble/architecture.md) |
 | `ErrDBusStaleObject` | BlueZ D-Bus stale object; caller should re-scan |
-| `ErrShutdownIncomplete` | `Close`/`Stop` could not confirm every reader finished; the component IS shut down, but a caller that supplied a *borrowed* static key must not destroy it on this error — see the doc comment at `errors.go:136-154` |
-| `ErrLiveAttestationUnavailable` | `RequireLiveAttestation` set with no `LiveAttest` verifier configured — a refusal, not a skip (`errors.go:24-33`) |
+| `ErrShutdownIncomplete` | `Close`/`Stop` could not confirm every reader finished; the component IS shut down, but a caller that supplied a *borrowed* static key must not destroy it on this error — see the doc comment at `errors.go:142-160` |
+| `ErrLiveAttestationUnavailable` | `RequireLiveAttestation` set with no `LiveAttest` verifier configured — a refusal, not a skip (`errors.go:35-44`) |
 
 Typed wrappers `MessageError`, `SentinelCauseError`, `WrappedError`
-(`errors.go:157-202`) replace inline `fmt.Errorf` construction throughout
+(`errors.go:163-207`) replace inline `fmt.Errorf` construction throughout
 the package.
 
 ## Invariants
@@ -127,23 +129,23 @@ the package.
   must not keep using the pointer afterward — `newPhoneKeyBackend` and
   `NewTCPPairingServer` both consume it out of the config on success rather
   than leaving a second owner for the same protected pages
-  (`phone.go:343-361`, `tcp_server.go:194-201`).
+  (`phone.go:344-362`, `tcp_server.go:194-201`).
 - **`Close`/`Stop` is idempotent and latched**, not "first caller wins."
   `sync.Once` ensures every caller — concurrent or repeated — observes the
   same outcome, including `ErrShutdownIncomplete`
-  (`phone.go:1130-1147`, `tcp_server.go:262-272`).
+  (`phone.go:1148-1165`, `tcp_server.go:262-272`).
 - **A borrowed key is retained, never destroyed, on `ErrShutdownIncomplete`.**
   The error means "a reader might still be using those pages," and it is
   reported precisely so the key's actual owner — not this package — decides
-  whether to free them (`phone.go:1117-1147`, `errors.go:136-154`).
+  whether to free them (`phone.go:1135-1165`, `errors.go:142-160`).
 - **`directMu` serializes the whole encrypt→send→receive→decrypt sequence**
   on the direct (non-router) send path, because a Noise `CipherState`
   advances a monotonic nonce per message and is not concurrency-safe
-  (`phone.go:196-209`).
+  (`phone.go:199-211`).
 - **`RequireLiveAttestation` fails closed on a missing verifier.** Treating
   a nil `LiveAttest` as "no policy configured" would make the control
   vanish on exactly the caller mistake it exists to catch
-  (`phone.go:136-147`).
+  (`phone.go:138-149`).
 
 ## Configuration
 

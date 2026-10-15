@@ -28,6 +28,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	"github.com/jeremyhahn/go-xkms/pkg/pairingproto"
 	xkms "github.com/jeremyhahn/go-xkms/sdk/go"
 	"github.com/jeremyhahn/go-xkms/xkey/pkg/attestation"
 	"github.com/jeremyhahn/go-xkms/xkey/pkg/attestation/attesttest"
@@ -227,7 +228,7 @@ func TestRunDevicePair_SavesAVerifiedAttestationUnderDefaultPolicy(t *testing.T)
 	record := flow.saved.Devices[0]
 	assert.Equal(t, hex.EncodeToString(flow.device.DAK.Fingerprint()), record.DeviceFingerprint,
 		"the stored fingerprint must be the one the phone derived from its own key")
-	assert.Equal(t, pairing.AttestProtocolV2, record.AttestationProtocolVersion)
+	assert.Equal(t, pairingproto.AttestProtocolV2, record.AttestationProtocolVersion)
 	assert.NotEmpty(t, record.SecurityLevel)
 	assert.False(t, record.LastDeviceAttestationTime.IsZero())
 	require.NoError(t, <-flow.done)

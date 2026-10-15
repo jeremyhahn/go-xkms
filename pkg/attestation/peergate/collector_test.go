@@ -16,6 +16,7 @@ package peergate_test
 import (
 	"context"
 	"crypto/tls"
+	"crypto/x509"
 	"errors"
 	"testing"
 	"time"
@@ -26,6 +27,7 @@ import (
 
 	"github.com/jeremyhahn/go-xkms/pkg/attestation/peer"
 	"github.com/jeremyhahn/go-xkms/pkg/attestation/peergate"
+	"github.com/jeremyhahn/go-xkms/pkg/testutil"
 )
 
 // clock is a settable test clock.
@@ -35,11 +37,19 @@ func (c *clock) Now() time.Time { return c.now }
 
 func newClock() *clock { return &clock{now: time.Now().UTC()} }
 
-func newStore(t *testing.T, opts ...peergate.Option) *peergate.MemoryStore {
+func newStore(t *testing.T, opts ...peergate.Option) *peergate.DAOStore {
 	t.Helper()
-	store, err := peergate.NewMemoryStore(peergate.MemoryStoreConfig{}, opts...)
+	store, err := peergate.NewDAOStore(peergate.DAOStoreConfig{DAOs: testutil.NewMemoryDAOFactory()}, opts...)
 	require.NoError(t, err)
 	return store
+}
+
+// assertNoEvidence asserts the store holds no evidence for leaf's peer.
+func assertNoEvidence(t *testing.T, store peergate.EvidenceStore, leaf *x509.Certificate) {
+	t.Helper()
+	_, ok, err := store.Get(context.Background(), qrdbsdk.ComputeSPKIThumbprint(leaf))
+	require.NoError(t, err)
+	assert.False(t, ok, "no evidence may be stored for the peer")
 }
 
 func newCollector(t *testing.T, store peergate.EvidenceStore, c *clock) *peergate.Collector {
@@ -97,7 +107,7 @@ func TestCollector_RefusesConnectionsWithoutAVerifiedPeer(t *testing.T) {
 func TestCollector_RefusesEvidenceThatAnswersNoChallenge(t *testing.T) {
 	ctx := context.Background()
 	p := newPKI(t)
-	client, _ := p.clientCert(t, device{})
+	client, leaf := p.clientCert(t, device{})
 	conn := p.connect(t, client)
 	ak := p.newAK(t, device{})
 
@@ -107,7 +117,7 @@ func TestCollector_RefusesEvidenceThatAnswersNoChallenge(t *testing.T) {
 		err := collector.Submit(ctx, conn.server, ak.evidence(t, conn, []byte("unissued-nonce-unissued-nonce-00"), goldenPCRs()))
 		var challengeErr *peergate.ChallengeError
 		require.True(t, errors.As(err, &challengeErr), "Submit = %v", err)
-		assert.Zero(t, store.Len())
+		assertNoEvidence(t, store, leaf)
 	})
 
 	t.Run("wrong nonce consumes the challenge", func(t *testing.T) {
@@ -124,7 +134,7 @@ func TestCollector_RefusesEvidenceThatAnswersNoChallenge(t *testing.T) {
 		// the challenge.
 		err = collector.Submit(ctx, conn.server, ak.evidence(t, conn, challenge.Nonce, goldenPCRs()))
 		require.True(t, errors.As(err, &challengeErr), "replayed Submit = %v", err)
-		assert.Zero(t, store.Len())
+		assertNoEvidence(t, store, leaf)
 	})
 
 	t.Run("expired challenge", func(t *testing.T) {
@@ -139,7 +149,7 @@ func TestCollector_RefusesEvidenceThatAnswersNoChallenge(t *testing.T) {
 		var challengeErr *peergate.ChallengeError
 		require.True(t, errors.As(err, &challengeErr), "Submit = %v", err)
 		assert.Contains(t, challengeErr.Reason, "expired")
-		assert.Zero(t, store.Len())
+		assertNoEvidence(t, store, leaf)
 	})
 
 	t.Run("answered twice", func(t *testing.T) {
@@ -159,7 +169,7 @@ func TestCollector_RefusesEvidenceThatAnswersNoChallenge(t *testing.T) {
 func TestCollector_RefusesAConnectionThatCannotBind(t *testing.T) {
 	ctx := context.Background()
 	p := newPKI(t)
-	client, _ := p.clientCert(t, device{})
+	client, leaf := p.clientCert(t, device{})
 	conn := p.connect(t, client)
 	store := newStore(t)
 	collector := newCollector(t, store, newClock())
@@ -171,7 +181,7 @@ func TestCollector_RefusesAConnectionThatCannotBind(t *testing.T) {
 	err = collector.Submit(ctx, &incomplete, peer.Evidence{Nonce: challenge.Nonce})
 	var bindingErr *peer.ChannelBindingError
 	require.True(t, errors.As(err, &bindingErr), "Submit = %v", err)
-	assert.Zero(t, store.Len(), "unbound evidence is never stored")
+	assertNoEvidence(t, store, leaf)
 }
 
 func TestCollector_BoundsOutstandingChallenges(t *testing.T) {

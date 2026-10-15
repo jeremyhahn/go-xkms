@@ -36,7 +36,7 @@ type harness struct {
 	leaf      *x509.Certificate
 	ak        attestationKey
 	clock     *clock
-	store     *peergate.MemoryStore
+	store     *peergate.DAOStore
 	collector *peergate.Collector
 }
 

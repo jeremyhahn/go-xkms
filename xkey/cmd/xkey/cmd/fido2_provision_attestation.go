@@ -28,9 +28,9 @@ import (
 	"github.com/fxamacker/cbor/v2"
 	"github.com/spf13/cobra"
 
+	"github.com/jeremyhahn/go-xkms/sdk/go/fido2/authenticator"
+	"github.com/jeremyhahn/go-xkms/sdk/go/fido2/keybackend"
 	"github.com/jeremyhahn/go-xkms/sdk/go/transport"
-	"github.com/jeremyhahn/go-xkms/xkey/pkg/authenticator"
-	"github.com/jeremyhahn/go-xkms/xkey/pkg/authenticator/keybackend"
 )
 
 // This file is the operator-facing half of xKey's Basic attestation: the

@@ -46,6 +46,10 @@ type mockPIVClient struct {
 	// call it.
 	transport.OIDCCredentialService
 
+	// TrustRootService completes transport.Client; these tests never call
+	// it.
+	transport.TrustRootService
+
 	listPIVSlotsResp *transport.ListPIVSlotsResponse
 	listPIVSlotsErr  error
 

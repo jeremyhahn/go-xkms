@@ -84,7 +84,7 @@ func init() {
 }
 
 func runImportData(cmd *cobra.Command, args []string) (err error) {
-	if os.Geteuid() != 0 {
+	if geteuid() != 0 {
 		return luks.ErrPermissionDenied
 	}
 

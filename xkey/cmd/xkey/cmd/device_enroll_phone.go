@@ -27,6 +27,7 @@ import (
 	"os"
 	"time"
 
+	"github.com/jeremyhahn/go-xkms/sdk/go/pairingproto"
 	"github.com/jeremyhahn/go-xkms/xkey/pkg/pairing"
 	"github.com/spf13/cobra"
 	"github.com/spf13/viper"
@@ -247,8 +248,8 @@ func enrollPhone(ctx context.Context, opts *enrollPhoneOptions, logger *slog.Log
 	defer closeSession()
 
 	fmt.Println("Requesting a device enrollment package...")
-	raw, err := session.Call(callCtx, pairing.MethodLocalGetDeviceEnrollmentRequest,
-		&pairing.LocalGetDeviceEnrollmentRequestParams{
+	raw, err := session.Call(callCtx, pairingproto.MethodLocalGetDeviceEnrollmentRequest,
+		&pairingproto.LocalGetDeviceEnrollmentRequestParams{
 			Nonce:   base64.StdEncoding.EncodeToString(nonce),
 			Subject: opts.Subject,
 		})
@@ -256,7 +257,7 @@ func enrollPhone(ctx context.Context, opts *enrollPhoneOptions, logger *slog.Log
 		return err
 	}
 
-	var result pairing.LocalGetDeviceEnrollmentRequestResult
+	var result pairingproto.LocalGetDeviceEnrollmentRequestResult
 	if err := json.Unmarshal(raw, &result); err != nil {
 		return &WrappedError{Msg: "failed to decode the enrollment package", Err: err}
 	}
@@ -285,8 +286,8 @@ func enrollPhone(ctx context.Context, opts *enrollPhoneOptions, logger *slog.Log
 	}
 
 	fmt.Println("Delivering the credential to the phone...")
-	storeRaw, err := session.Call(callCtx, pairing.MethodLocalStoreDeviceCredential,
-		&pairing.LocalStoreDeviceCredentialParams{
+	storeRaw, err := session.Call(callCtx, pairingproto.MethodLocalStoreDeviceCredential,
+		&pairingproto.LocalStoreDeviceCredentialParams{
 			Certificate: base64.StdEncoding.EncodeToString(certDER),
 			Chain:       encodeChain(chainDER),
 		})
@@ -294,7 +295,7 @@ func enrollPhone(ctx context.Context, opts *enrollPhoneOptions, logger *slog.Log
 		return &SentinelCauseError{Sentinel: ErrEnrollPhoneRejectedCredential, Cause: err}
 	}
 
-	var stored pairing.LocalStoreDeviceCredentialResult
+	var stored pairingproto.LocalStoreDeviceCredentialResult
 	if err := json.Unmarshal(storeRaw, &stored); err != nil {
 		return &WrappedError{Msg: "failed to decode the store response", Err: err}
 	}

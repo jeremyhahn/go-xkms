@@ -24,7 +24,7 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/jeremyhahn/go-xkms/xkey/pkg/pairing"
+	"github.com/jeremyhahn/go-xkms/sdk/go/pairingproto"
 	"tinygo.org/x/bluetooth"
 )
 
@@ -57,8 +57,8 @@ var (
 
 // Compile-time interface checks.
 var (
-	_ pairing.Transport   = (*BLETransport)(nil)
-	_ BLECapableTransport = (*BLETransport)(nil)
+	_ pairingproto.Transport = (*BLETransport)(nil)
+	_ BLECapableTransport    = (*BLETransport)(nil)
 )
 
 // BLETransportConfig configures the BLE transport.
@@ -228,8 +228,8 @@ type BLETransport struct {
 	bluetoothctl func(args ...string) ([]byte, error)
 	sleep        func(time.Duration)
 
-	fragmenter   *pairing.Fragmenter
-	reassembler  *pairing.Reassembler
+	fragmenter   *pairingproto.Fragmenter
+	reassembler  *pairingproto.Reassembler
 	responseChan chan []byte
 	statusChan   chan []byte
 
@@ -268,7 +268,7 @@ func newBLETransport(cfg *BLETransportConfig, adapter bleCentral, bluetoothctl f
 	if cfg.Logger == nil {
 		cfg.Logger = slog.Default()
 	}
-	if cfg.MTU < pairing.MinMTU {
+	if cfg.MTU < pairingproto.MinMTU {
 		cfg.MTU = DefaultMTU
 	}
 
@@ -282,8 +282,8 @@ func newBLETransport(cfg *BLETransportConfig, adapter bleCentral, bluetoothctl f
 		adapter:      adapter,
 		bluetoothctl: bluetoothctl,
 		sleep:        time.Sleep,
-		fragmenter:   pairing.NewFragmenter(cfg.MTU),
-		reassembler:  pairing.NewReassembler(),
+		fragmenter:   pairingproto.NewFragmenter(cfg.MTU),
+		reassembler:  pairingproto.NewReassembler(),
 		responseChan: make(chan []byte, 16),
 		statusChan:   make(chan []byte, 16),
 		done:         make(chan struct{}),
@@ -777,7 +777,7 @@ func (t *BLETransport) handleResponseNotification(data []byte) {
 		"raw_hex", fmt.Sprintf("%x", data[:min(len(data), 32)]),
 	)
 
-	frag, err := pairing.DecodeFragment(data)
+	frag, err := pairingproto.DecodeFragment(data)
 	if err != nil {
 		t.log.Warn("invalid response fragment",
 			"error", err,
@@ -1135,7 +1135,7 @@ func (t *BLETransport) StatusChannel() <-chan []byte {
 
 // SetMTU updates the MTU for fragmentation.
 func (t *BLETransport) SetMTU(mtu int) {
-	if mtu >= pairing.MinMTU {
+	if mtu >= pairingproto.MinMTU {
 		t.fragmenter.SetMTU(mtu)
 	}
 }

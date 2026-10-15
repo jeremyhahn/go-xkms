@@ -856,7 +856,7 @@ test-pkcs11-compat: build-pkcs11-module
 ## test-uhid: Run UHID package unit tests
 test-uhid:
 	@echo "$(CYAN)→ Testing UHID package...$(RESET)"
-	@cd xkey && $(GOTEST) $(TEST_FLAGS) ./pkg/uhid/...
+	@$(GOTEST) $(TEST_FLAGS) ./pkg/fido2/uhid/...
 
 .PHONY: test-xkey
 ## test-xkey: Run xkey command unit tests
@@ -874,20 +874,20 @@ test-staticpw:
 ## test-webauthn-verification: Run WebAuthn end-to-end verification tests (MakeCredential → GetAssertion → RP verify)
 test-webauthn-verification:
 	@echo "$(CYAN)→ Testing WebAuthn verification flow...$(RESET)"
-	@cd xkey && $(GOTEST) $(TEST_FLAGS) -run TestWebAuthnVerification ./pkg/authenticator/...
+	@$(GOTEST) $(TEST_FLAGS) -run TestWebAuthnVerification ./pkg/fido2/authenticator/...
 
 .PHONY: test-authenticator
 ## test-authenticator: Run the CTAP2 authenticator package unit tests
 test-authenticator:
 	@echo "$(CYAN)→ Testing CTAP2 authenticator package...$(RESET)"
-	@cd xkey && $(GOTEST) $(TEST_FLAGS) ./pkg/authenticator/...
+	@$(GOTEST) $(TEST_FLAGS) ./pkg/fido2/authenticator/...
 
 .PHONY: coverage-uhid
 ## coverage-uhid: Generate UHID package coverage report
 coverage-uhid:
 	@echo "$(CYAN)→ Generating UHID coverage report...$(RESET)"
 	@mkdir -p $(COVERAGE_DIR)
-	@cd xkey && $(GOTEST) -race -coverprofile=../$(COVERAGE_DIR)/uhid.out -covermode=atomic ./pkg/uhid/...
+	@$(GOTEST) -race -coverprofile=$(COVERAGE_DIR)/uhid.out -covermode=atomic ./pkg/fido2/uhid/...
 	@$(GO) tool cover -html=$(COVERAGE_DIR)/uhid.out -o $(COVERAGE_DIR)/uhid.html
 	@$(GO) tool cover -func=$(COVERAGE_DIR)/uhid.out | tail -1
 	@echo "$(GREEN)✓ Coverage report: $(COVERAGE_DIR)/uhid.html$(RESET)"
@@ -2997,7 +2997,7 @@ integration-test-xkey: integration-test-xkey-backends integration-test-xkey-ctap
 ## Note: Tests require root access to /dev/uhid, so run with sudo using full go path
 coverage-uhid-integration:
 	@echo "$(CYAN)$(BOLD)→ Generating UHID integration coverage report...$(RESET)"
-	$(call run_in_devcontainer,cd xkey && sudo /usr/local/go/bin/go test -v -tags='integration$(comma)linux' -coverprofile=coverage-uhid-integration.out -covermode=atomic ./test/integration/uhid/... ./pkg/uhid/... && /usr/local/go/bin/go tool cover -func=coverage-uhid-integration.out | tail -1,coverage-uhid-integration)
+	$(call run_in_devcontainer,cd xkey && sudo /usr/local/go/bin/go test -v -tags='integration$(comma)linux' -coverprofile=coverage-uhid-integration.out -covermode=atomic -coverpkg=github.com/jeremyhahn/go-xkms/pkg/fido2/uhid ./test/integration/uhid/... && /usr/local/go/bin/go tool cover -func=coverage-uhid-integration.out | tail -1,coverage-uhid-integration)
 	@echo "$(GREEN)✓ UHID integration coverage report generated$(RESET)"
 
 .PHONY: coverage-xkey-integration
@@ -3005,7 +3005,7 @@ coverage-uhid-integration:
 ## Note: Tests require root access to /dev/uhid, so run with sudo using full go path
 coverage-xkey-integration:
 	@echo "$(CYAN)$(BOLD)→ Generating xkey integration coverage report...$(RESET)"
-	$(call run_in_devcontainer,cd xkey && sudo /usr/local/go/bin/go test -v -tags='integration$(comma)linux' -coverprofile=coverage-xkey-integration.out -covermode=atomic -coverpkg=./cmd/xkey/...$(comma)./pkg/uhid/... ./test/integration/... ./cmd/xkey/... && /usr/local/go/bin/go tool cover -func=coverage-xkey-integration.out | tail -1,coverage-xkey-integration)
+	$(call run_in_devcontainer,cd xkey && sudo /usr/local/go/bin/go test -v -tags='integration$(comma)linux' -coverprofile=coverage-xkey-integration.out -covermode=atomic -coverpkg=./cmd/xkey/...$(comma)github.com/jeremyhahn/go-xkms/pkg/fido2/uhid ./test/integration/... ./cmd/xkey/... && /usr/local/go/bin/go tool cover -func=coverage-xkey-integration.out | tail -1,coverage-xkey-integration)
 	@echo "$(GREEN)✓ xkey integration coverage report generated$(RESET)"
 
 .PHONY: coverage-fido2

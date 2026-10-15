@@ -34,9 +34,11 @@ import (
 	"time"
 
 	xkms "github.com/jeremyhahn/go-xkms/sdk/go"
+	"github.com/jeremyhahn/go-xkms/sdk/go/bootstrap"
+	"github.com/jeremyhahn/go-xkms/sdk/go/fido2/keybackend"
+	"github.com/jeremyhahn/go-xkms/sdk/go/pairingproto"
 	"github.com/jeremyhahn/go-xkms/xkey/internal/lifecycle"
 	"github.com/jeremyhahn/go-xkms/xkey/pkg/audit"
-	"github.com/jeremyhahn/go-xkms/xkey/pkg/authenticator/keybackend"
 	"github.com/jeremyhahn/go-xkms/xkey/pkg/notify"
 	"github.com/jeremyhahn/go-xkms/xkey/pkg/pairing"
 )
@@ -82,7 +84,7 @@ type PhoneKeyBackendConfig struct {
 	// LocalStaticKey is the persistent local Noise static key, held in
 	// protected memory. If nil, the constructor generates one and sets
 	// OwnsStaticKey, so the backend always holds a key it can release.
-	LocalStaticKey *pairing.StaticKey
+	LocalStaticKey *bootstrap.NoiseStaticKey
 
 	// OwnsStaticKey transfers ownership of LocalStaticKey to the backend, so
 	// that Close destroys it. Set it when the key has no other owner — a
@@ -154,7 +156,7 @@ type PhoneKeyBackendConfig struct {
 	// exchange runs one encrypted JSON-RPC round trip over the session just
 	// established; channelBinding is that session's attestation channel
 	// binding.
-	LiveAttest pairing.LiveAttestFunc
+	LiveAttest pairingproto.LiveAttestFunc
 }
 
 // DefaultPhoneKeyBackendConfig returns default configuration.
@@ -207,8 +209,8 @@ type PhoneKeyBackend struct {
 	// would order the frames and still mismatch the answers. Close does NOT
 	// take it, so a stalled device cannot make this lock block shutdown.
 	directMu  sync.Mutex
-	transport pairing.Transport
-	session   *pairing.NoiseSession
+	transport pairingproto.Transport
+	session   *bootstrap.NoiseSession
 
 	// ownedKey is the static key this backend destroys on Close — either one
 	// the caller transferred by setting OwnsStaticKey, or one the constructor
@@ -219,7 +221,7 @@ type PhoneKeyBackend struct {
 	// constructions; a cfg that silently gained a key after a successful
 	// construction would hand the next backend a key the previous one owns
 	// and will destroy.
-	ownedKey *pairing.StaticKey
+	ownedKey *bootstrap.NoiseStaticKey
 
 	// ops counts operations that took a reference to session and transport
 	// and are still using them outside mu — SendRequest encrypts, does a bus
@@ -284,7 +286,7 @@ func NewPhoneKeyBackend(cfg *PhoneKeyBackendConfig) (*PhoneKeyBackend, error) {
 // (BLE, TCP, or custom) as the communication layer. The caller is responsible
 // for establishing the transport-level connection before calling Connect()
 // on non-BLE transports.
-func NewPhoneKeyBackendWithTransport(cfg *PhoneKeyBackendConfig, transport pairing.Transport) (*PhoneKeyBackend, error) {
+func NewPhoneKeyBackendWithTransport(cfg *PhoneKeyBackendConfig, transport pairingproto.Transport) (*PhoneKeyBackend, error) {
 	if cfg == nil {
 		cfg = DefaultPhoneKeyBackendConfig()
 	}
@@ -319,7 +321,7 @@ func releaseOwnedKey(cfg *PhoneKeyBackendConfig) {
 
 // newPhoneKeyBackend is the internal constructor shared by both public
 // constructors. It initializes the Noise session and assembles the backend.
-func newPhoneKeyBackend(cfg *PhoneKeyBackendConfig, transport pairing.Transport) (*PhoneKeyBackend, error) {
+func newPhoneKeyBackend(cfg *PhoneKeyBackendConfig, transport pairingproto.Transport) (*PhoneKeyBackend, error) {
 	// Ownership transfers on entry, so construction failing must not strand
 	// the key: the caller set OwnsStaticKey precisely because it kept no
 	// reference of its own, and Close is unreachable when there is no backend.
@@ -331,10 +333,10 @@ func newPhoneKeyBackend(cfg *PhoneKeyBackendConfig, transport pairing.Transport)
 	// it — the config's documented "if nil, a new key will be generated" would
 	// quietly opt out of the whole protected-key lifecycle.
 	staticKey := cfg.LocalStaticKey
-	var ownedKey *pairing.StaticKey
+	var ownedKey *bootstrap.NoiseStaticKey
 	switch {
 	case staticKey == nil:
-		generated, err := pairing.GenerateStaticKey()
+		generated, err := bootstrap.GenerateNoiseStaticKey()
 		if err != nil {
 			return nil, errors.Join(err, transport.Close())
 		}
@@ -379,7 +381,7 @@ func newPhoneKeyBackend(cfg *PhoneKeyBackendConfig, transport pairing.Transport)
 	// in performHandshake, which sends our public key to Android and receives
 	// the device's attestation fingerprint. This enables trusted device binding
 	// for reconnections while allowing empty prologue for initial pairing.
-	session, err := pairing.NewNoiseSession(&pairing.NoiseSessionConfig{
+	session, err := bootstrap.NewNoiseSession(&bootstrap.NoiseSessionConfig{
 		LocalStaticKey:       staticKey,
 		ExpectedRemoteStatic: cfg.ExpectedRemoteStatic,
 		IsInitiator:          true,
@@ -409,7 +411,7 @@ func newPhoneKeyBackend(cfg *PhoneKeyBackendConfig, transport pairing.Transport)
 // rather than clearing the session or destroying an owned key.
 //
 // It reports false once the backend is closed or disconnected.
-func (b *PhoneKeyBackend) acquireSession() (pairing.Transport, *pairing.NoiseSession, func(), bool) {
+func (b *PhoneKeyBackend) acquireSession() (pairingproto.Transport, *bootstrap.NoiseSession, func(), bool) {
 	b.mu.Lock()
 	defer b.mu.Unlock()
 
@@ -450,7 +452,7 @@ func (b *PhoneKeyBackend) HandlesUserPresenceFor(backendID xkms.BackendType) boo
 // Capabilities returns the backend capabilities.
 func (b *PhoneKeyBackend) Capabilities() keybackend.FIDO2KeyCapabilities {
 	return keybackend.FIDO2KeyCapabilities{
-		SupportedAlgorithms:     []int{pairing.COSEAlgES256, pairing.COSEAlgES384, pairing.COSEAlgES512},
+		SupportedAlgorithms:     []int{pairingproto.COSEAlgES256, pairingproto.COSEAlgES384, pairingproto.COSEAlgES512},
 		SupportsExport:          false, // Keys never leave the phone's secure element
 		SupportsImport:          false, // Cannot import keys to phone
 		SupportsAttestation:     false, // Phone provides its own attestation
@@ -676,7 +678,7 @@ func (b *PhoneKeyBackend) scanForDevice(ctx context.Context, bleTransport BLECap
 // Connect, which holds the write lock for the whole connection attempt — so do
 // not take the lock here, it would deadlock.
 func (b *PhoneKeyBackend) performHandshake(ctx context.Context) error {
-	cfg := &pairing.HandshakeConfig{
+	cfg := &pairingproto.HandshakeConfig{
 		Transport:           b.transport,
 		Session:             b.session,
 		Logger:              b.log,
@@ -686,7 +688,7 @@ func (b *PhoneKeyBackend) performHandshake(ctx context.Context) error {
 		LocalStaticPublicKey:      b.session.LocalStaticPublicKey(),
 		ExpectedDeviceFingerprint: b.cfg.ExpectedDeviceFingerprint,
 	}
-	if err := pairing.PerformHandshake(ctx, cfg); err != nil {
+	if err := pairingproto.PerformHandshake(ctx, cfg); err != nil {
 		return err
 	}
 
@@ -712,7 +714,7 @@ func (b *PhoneKeyBackend) proveLiveness(ctx context.Context) error {
 		return ErrLiveAttestationUnavailable
 	}
 
-	binding, err := b.session.AttestChannelBinding()
+	binding, err := pairingproto.AttestChannelBinding(b.session)
 	if err != nil {
 		return err
 	}
@@ -720,8 +722,8 @@ func (b *PhoneKeyBackend) proveLiveness(ctx context.Context) error {
 	// The exchange goes straight through the transport and session rather than
 	// SendRequest, which gates on b.connected — and the whole point is that
 	// this runs BEFORE the backend is connected enough to serve anything.
-	exchange := func(ctx context.Context, req *pairing.Request) (*pairing.Response, error) {
-		plaintext, err := pairing.EncodeRequest(req)
+	exchange := func(ctx context.Context, req *pairingproto.Request) (*pairingproto.Response, error) {
+		plaintext, err := pairingproto.EncodeRequest(req)
 		if err != nil {
 			return nil, err
 		}
@@ -737,7 +739,7 @@ func (b *PhoneKeyBackend) proveLiveness(ctx context.Context) error {
 		if err != nil {
 			return nil, err
 		}
-		return pairing.DecodeResponse(responsePlaintext)
+		return pairingproto.DecodeResponse(responsePlaintext)
 	}
 
 	return b.cfg.LiveAttest(ctx, exchange, binding)
@@ -780,7 +782,7 @@ func (b *PhoneKeyBackend) EnableBidirectional(handler pairing.RequestHandler) er
 }
 
 // SendRequest sends an encrypted request and receives the decrypted response.
-func (b *PhoneKeyBackend) SendRequest(ctx context.Context, req *pairing.Request) (*pairing.Response, error) {
+func (b *PhoneKeyBackend) SendRequest(ctx context.Context, req *pairingproto.Request) (*pairingproto.Response, error) {
 	if !b.connected.Load() {
 		b.log.Error("SendRequest called but not connected")
 		return nil, ErrNotConnected
@@ -813,7 +815,7 @@ func (b *PhoneKeyBackend) SendRequest(ctx context.Context, req *pairing.Request)
 	)
 
 	// Encode request
-	plaintext, err := pairing.EncodeRequest(req)
+	plaintext, err := pairingproto.EncodeRequest(req)
 	if err != nil {
 		b.log.Error("failed to encode request", "error", err)
 		return nil, ErrProtocolError
@@ -846,7 +848,7 @@ func (b *PhoneKeyBackend) SendRequest(ctx context.Context, req *pairing.Request)
 	b.log.Debug("response decrypted", "plaintext_len", len(responsePlaintext))
 
 	// Decode response
-	resp, err := pairing.DecodeResponse(responsePlaintext)
+	resp, err := pairingproto.DecodeResponse(responsePlaintext)
 	if err != nil {
 		b.log.Error("failed to decode response", "error", err)
 		return nil, ErrInvalidResponse
@@ -886,7 +888,7 @@ func (b *PhoneKeyBackend) GenerateCredentialKey(algorithm int, credentialID []by
 
 	// Send generate request
 	// Always require biometric for key generation - this is a sensitive operation
-	req := pairing.NewRequest(pairing.MethodGenerateKey, &pairing.GenerateKeyParams{
+	req := pairingproto.NewRequest(pairingproto.MethodGenerateKey, &pairingproto.GenerateKeyParams{
 		CredentialID:             credentialID,
 		Algorithm:                algorithm,
 		UserVerificationRequired: true,
@@ -902,11 +904,11 @@ func (b *PhoneKeyBackend) GenerateCredentialKey(algorithm int, credentialID []by
 			"error_code", resp.Error.Code,
 			"error_message", resp.Error.Message,
 			"error_data", resp.Error.Data)
-		return nil, nil, pairing.MapRPCError(resp.Error)
+		return nil, nil, pairingproto.MapRPCError(resp.Error)
 	}
 
 	// Decode result
-	result, err := pairing.DecodeResult[pairing.GenerateKeyResult](resp)
+	result, err := pairingproto.DecodeResult[pairingproto.GenerateKeyResult](resp)
 	if err != nil {
 		return nil, nil, ErrInvalidResponse
 	}
@@ -960,7 +962,7 @@ func (b *PhoneKeyBackend) Sign(handle keybackend.KeyHandle, algorithm int, data 
 	b.log.Debug("Sign: sending request to phone",
 		"credential_id", shortCredID(credIDHex),
 		"data_hash_len", len(data))
-	req := pairing.NewRequest(pairing.MethodSign, &pairing.SignParams{
+	req := pairingproto.NewRequest(pairingproto.MethodSign, &pairingproto.SignParams{
 		CredentialID:             phoneHandle.credentialID,
 		DataHash:                 data,
 		UserVerificationRequired: true,
@@ -978,11 +980,11 @@ func (b *PhoneKeyBackend) Sign(handle keybackend.KeyHandle, algorithm int, data 
 			"error_code", resp.Error.Code,
 			"error_message", resp.Error.Message,
 			"error_data", resp.Error.Data)
-		return nil, pairing.MapRPCError(resp.Error)
+		return nil, pairingproto.MapRPCError(resp.Error)
 	}
 
 	// Decode result
-	result, err := pairing.DecodeResult[pairing.SignResult](resp)
+	result, err := pairingproto.DecodeResult[pairingproto.SignResult](resp)
 	if err != nil {
 		b.log.Error("Sign: failed to decode result", "error", err)
 		return nil, ErrInvalidResponse
@@ -1031,7 +1033,7 @@ func (b *PhoneKeyBackend) LoadKey(credentialID []byte, algorithm int) (keybacken
 
 	// Send load request to verify key exists
 	b.log.Debug("LoadKey: sending request to phone", "credential_id", shortCredID(credIDHex))
-	req := pairing.NewRequest(pairing.MethodLoadKey, &pairing.LoadKeyParams{
+	req := pairingproto.NewRequest(pairingproto.MethodLoadKey, &pairingproto.LoadKeyParams{
 		CredentialID: credentialID,
 		Algorithm:    algorithm,
 	})
@@ -1048,11 +1050,11 @@ func (b *PhoneKeyBackend) LoadKey(credentialID []byte, algorithm int) (keybacken
 			"error_code", resp.Error.Code,
 			"error_message", resp.Error.Message,
 			"error_data", resp.Error.Data)
-		return nil, pairing.MapRPCError(resp.Error)
+		return nil, pairingproto.MapRPCError(resp.Error)
 	}
 
 	// Decode result
-	result, err := pairing.DecodeResult[pairing.LoadKeyResult](resp)
+	result, err := pairingproto.DecodeResult[pairingproto.LoadKeyResult](resp)
 	if err != nil {
 		b.log.Error("LoadKey: failed to decode result", "error", err)
 		return nil, ErrInvalidResponse
@@ -1099,7 +1101,7 @@ func (b *PhoneKeyBackend) DeleteKey(handle keybackend.KeyHandle) error {
 	}
 
 	// Send delete request
-	req := pairing.NewRequest(pairing.MethodDeleteKey, &pairing.DeleteKeyParams{
+	req := pairingproto.NewRequest(pairingproto.MethodDeleteKey, &pairingproto.DeleteKeyParams{
 		CredentialID: phoneHandle.credentialID,
 	})
 
@@ -1109,7 +1111,7 @@ func (b *PhoneKeyBackend) DeleteKey(handle keybackend.KeyHandle) error {
 	}
 
 	if resp.Error != nil {
-		return pairing.MapRPCError(resp.Error)
+		return pairingproto.MapRPCError(resp.Error)
 	}
 
 	// Remove from local cache
@@ -1292,7 +1294,7 @@ func shortCredID(credIDHex string) string {
 // isAlgorithmSupported checks if the algorithm is supported.
 func (b *PhoneKeyBackend) isAlgorithmSupported(algorithm int) bool {
 	switch algorithm {
-	case pairing.COSEAlgES256, pairing.COSEAlgES384, pairing.COSEAlgES512:
+	case pairingproto.COSEAlgES256, pairingproto.COSEAlgES384, pairingproto.COSEAlgES512:
 		return true
 	default:
 		return false
@@ -1347,7 +1349,7 @@ func (b *PhoneKeyBackend) RemoteStaticPublicKey() []byte {
 }
 
 // GetDeviceInfo retrieves information about the connected phone.
-func (b *PhoneKeyBackend) GetDeviceInfo(ctx context.Context) (*pairing.GetInfoResult, error) {
+func (b *PhoneKeyBackend) GetDeviceInfo(ctx context.Context) (*pairingproto.GetInfoResult, error) {
 	if b.closed.Load() {
 		return nil, ErrBackendClosed
 	}
@@ -1358,7 +1360,7 @@ func (b *PhoneKeyBackend) GetDeviceInfo(ctx context.Context) (*pairing.GetInfoRe
 		}
 	}
 
-	req := pairing.NewRequest(pairing.MethodGetInfo, nil)
+	req := pairingproto.NewRequest(pairingproto.MethodGetInfo, nil)
 
 	resp, err := b.SendRequest(ctx, req)
 	if err != nil {
@@ -1366,10 +1368,10 @@ func (b *PhoneKeyBackend) GetDeviceInfo(ctx context.Context) (*pairing.GetInfoRe
 	}
 
 	if resp.Error != nil {
-		return nil, pairing.MapRPCError(resp.Error)
+		return nil, pairingproto.MapRPCError(resp.Error)
 	}
 
-	return pairing.DecodeResult[pairing.GetInfoResult](resp)
+	return pairingproto.DecodeResult[pairingproto.GetInfoResult](resp)
 }
 
 // Ping sends a ping to verify the connection is alive.
@@ -1382,7 +1384,7 @@ func (b *PhoneKeyBackend) Ping(ctx context.Context) error {
 		return ErrNotConnected
 	}
 
-	req := pairing.NewRequest(pairing.MethodPing, nil)
+	req := pairingproto.NewRequest(pairingproto.MethodPing, nil)
 
 	resp, err := b.SendRequest(ctx, req)
 	if err != nil {
@@ -1390,10 +1392,10 @@ func (b *PhoneKeyBackend) Ping(ctx context.Context) error {
 	}
 
 	if resp.Error != nil {
-		return pairing.MapRPCError(resp.Error)
+		return pairingproto.MapRPCError(resp.Error)
 	}
 
-	result, err := pairing.DecodeResult[pairing.PingResult](resp)
+	result, err := pairingproto.DecodeResult[pairingproto.PingResult](resp)
 	if err != nil {
 		return ErrInvalidResponse
 	}
@@ -1409,7 +1411,7 @@ func (b *PhoneKeyBackend) Ping(ctx context.Context) error {
 // This should be called after the Noise handshake completes during pairing.
 // The phone will prompt the user to confirm the pairing. If the user rejects,
 // ErrPairingRejected is returned.
-func (b *PhoneKeyBackend) SendPairingConfirm(ctx context.Context, deviceName string) (*pairing.PairingConfirmResult, error) {
+func (b *PhoneKeyBackend) SendPairingConfirm(ctx context.Context, deviceName string) (*pairingproto.PairingConfirmResult, error) {
 	if b.closed.Load() {
 		return nil, ErrBackendClosed
 	}
@@ -1419,7 +1421,7 @@ func (b *PhoneKeyBackend) SendPairingConfirm(ctx context.Context, deviceName str
 
 	publicKeyHex := hex.EncodeToString(b.LocalStaticPublicKey())
 
-	req := pairing.NewRequest(pairing.MethodPairingConfirm, &pairing.PairingConfirmParams{
+	req := pairingproto.NewRequest(pairingproto.MethodPairingConfirm, &pairingproto.PairingConfirmParams{
 		DeviceName:   deviceName,
 		PublicKeyHex: publicKeyHex,
 	})
@@ -1443,10 +1445,10 @@ func (b *PhoneKeyBackend) SendPairingConfirm(ctx context.Context, deviceName str
 				return nil, auditErr
 			}
 		}
-		return nil, pairing.MapRPCError(resp.Error)
+		return nil, pairingproto.MapRPCError(resp.Error)
 	}
 
-	result, err := pairing.DecodeResult[pairing.PairingConfirmResult](resp)
+	result, err := pairingproto.DecodeResult[pairingproto.PairingConfirmResult](resp)
 	if err != nil {
 		return nil, ErrInvalidResponse
 	}
@@ -1487,7 +1489,7 @@ func (b *PhoneKeyBackend) SendPairingConfirm(ctx context.Context, deviceName str
 // given relying party. This enables credential discovery for cross-device
 // authentication flows where the laptop needs to know which credentials
 // are available on the phone for a specific relying party.
-func (b *PhoneKeyBackend) ListFido2Credentials(ctx context.Context, rpID string) ([]pairing.Fido2CredentialInfo, error) {
+func (b *PhoneKeyBackend) ListFido2Credentials(ctx context.Context, rpID string) ([]pairingproto.Fido2CredentialInfo, error) {
 	if b.closed.Load() {
 		return nil, ErrBackendClosed
 	}
@@ -1501,7 +1503,7 @@ func (b *PhoneKeyBackend) ListFido2Credentials(ctx context.Context, rpID string)
 		}
 	}
 
-	req := pairing.NewRequest(pairing.MethodLocalListFido2Credentials, &pairing.LocalListFido2CredentialsParams{
+	req := pairingproto.NewRequest(pairingproto.MethodLocalListFido2Credentials, &pairingproto.LocalListFido2CredentialsParams{
 		RpID: rpID,
 	})
 
@@ -1516,10 +1518,10 @@ func (b *PhoneKeyBackend) ListFido2Credentials(ctx context.Context, rpID string)
 			"rp_id", rpID,
 			"error_code", resp.Error.Code,
 			"error_message", resp.Error.Message)
-		return nil, pairing.MapRPCError(resp.Error)
+		return nil, pairingproto.MapRPCError(resp.Error)
 	}
 
-	result, err := pairing.DecodeResult[pairing.LocalListFido2CredentialsResult](resp)
+	result, err := pairingproto.DecodeResult[pairingproto.LocalListFido2CredentialsResult](resp)
 	if err != nil {
 		b.log.Error("ListFido2Credentials: failed to decode result", "error", err)
 		return nil, ErrInvalidResponse
@@ -1535,7 +1537,7 @@ func (b *PhoneKeyBackend) ListFido2Credentials(ctx context.Context, rpID string)
 // This is used for cross-device authentication flows where the phone acts as
 // a FIDO2 authenticator for the laptop. The phone will prompt for biometric
 // verification before signing.
-func (b *PhoneKeyBackend) SignFido2Assertion(ctx context.Context, params *pairing.LocalSignFido2AssertionParams) (*pairing.LocalSignFido2AssertionResult, error) {
+func (b *PhoneKeyBackend) SignFido2Assertion(ctx context.Context, params *pairingproto.LocalSignFido2AssertionParams) (*pairingproto.LocalSignFido2AssertionResult, error) {
 	if b.closed.Load() {
 		return nil, ErrBackendClosed
 	}
@@ -1560,7 +1562,7 @@ func (b *PhoneKeyBackend) SignFido2Assertion(ctx context.Context, params *pairin
 
 	credIDHex := hex.EncodeToString(params.CredentialID)
 
-	req := pairing.NewRequest(pairing.MethodLocalSignFido2Assertion, params)
+	req := pairingproto.NewRequest(pairingproto.MethodLocalSignFido2Assertion, params)
 
 	b.log.Debug("SignFido2Assertion: sending request to phone",
 		"credential_id", credIDHex,
@@ -1579,10 +1581,10 @@ func (b *PhoneKeyBackend) SignFido2Assertion(ctx context.Context, params *pairin
 			"credential_id", credIDHex,
 			"error_code", resp.Error.Code,
 			"error_message", resp.Error.Message)
-		return nil, pairing.MapRPCError(resp.Error)
+		return nil, pairingproto.MapRPCError(resp.Error)
 	}
 
-	result, err := pairing.DecodeResult[pairing.LocalSignFido2AssertionResult](resp)
+	result, err := pairingproto.DecodeResult[pairingproto.LocalSignFido2AssertionResult](resp)
 	if err != nil {
 		b.log.Error("SignFido2Assertion: failed to decode result", "error", err)
 		return nil, ErrInvalidResponse

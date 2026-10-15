@@ -686,6 +686,21 @@ func (*MockXKMSService) OIDCCredentialGet(context.Context, *transport.OIDCCreden
 func (*MockXKMSService) OIDCCredentialList(context.Context, *transport.OIDCCredentialListRequest) (*transport.OIDCCredentialListResponse, error) {
 	return nil, &mockUnsupportedError{capability: "oidc credentials"}
 }
+func (*MockXKMSService) TrustRootList(context.Context, *transport.TrustRootListRequest) (*transport.TrustRootListResponse, error) {
+	return nil, &mockUnsupportedError{capability: "trust roots"}
+}
+func (*MockXKMSService) TrustRootGet(context.Context, *transport.TrustRootRequest) (*transport.TrustRoot, error) {
+	return nil, &mockUnsupportedError{capability: "trust roots"}
+}
+func (*MockXKMSService) TrustRootImport(context.Context, *transport.TrustRootImportRequest) (*transport.TrustRootImportResponse, error) {
+	return nil, &mockUnsupportedError{capability: "trust roots"}
+}
+func (*MockXKMSService) TrustRootQuarantine(context.Context, *transport.TrustRootRequest) (*transport.TrustRoot, error) {
+	return nil, &mockUnsupportedError{capability: "trust roots"}
+}
+func (*MockXKMSService) TrustRootRemove(context.Context, *transport.TrustRootRequest) error {
+	return &mockUnsupportedError{capability: "trust roots"}
+}
 func (*MockXKMSService) OIDCCredentialDelete(context.Context, *transport.OIDCCredentialRef) error {
 	return &mockUnsupportedError{capability: "oidc credentials"}
 }

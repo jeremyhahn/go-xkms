@@ -20,7 +20,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	"github.com/jeremyhahn/go-xkms/xkey/pkg/pairing"
+	"github.com/jeremyhahn/go-xkms/pkg/pairingproto"
 )
 
 // TestEncodeBridgeResponse_WipesTheEncodedResult proves the bridge's encoded
@@ -28,7 +28,7 @@ import (
 // once it has been copied into the response frame.
 func TestEncodeBridgeResponse_WipesTheEncodedResult(t *testing.T) {
 	result := json.RawMessage(`{"plaintext":"c2VjcmV0"}`)
-	resp := &pairing.Response{JSONRPC: "2.0", ID: 7, Result: result}
+	resp := &pairingproto.Response{JSONRPC: "2.0", ID: 7, Result: result}
 
 	frame, err := encodeBridgeResponse(resp)
 	require.NoError(t, err)
@@ -41,7 +41,7 @@ func TestEncodeBridgeResponse_WipesTheEncodedResult(t *testing.T) {
 // when the response cannot be encoded.
 func TestEncodeBridgeResponse_WipesOnEncodeError(t *testing.T) {
 	result := json.RawMessage(`{"plaintext":`) // not valid JSON
-	resp := &pairing.Response{JSONRPC: "2.0", ID: 7, Result: result}
+	resp := &pairingproto.Response{JSONRPC: "2.0", ID: 7, Result: result}
 
 	_, err := encodeBridgeResponse(resp)
 	require.Error(t, err)

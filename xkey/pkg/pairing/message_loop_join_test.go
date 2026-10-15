@@ -19,6 +19,8 @@ import (
 	"sync"
 	"testing"
 	"time"
+
+	"github.com/jeremyhahn/go-xkms/pkg/pairingproto"
 )
 
 const joinTestWait = 5 * time.Second
@@ -73,7 +75,7 @@ func (g *gatedSendTransport) Send(context.Context, []byte) error {
 
 func (g *gatedSendTransport) Receive(context.Context) ([]byte, error) {
 	<-g.closed
-	return nil, ErrBackendClosed
+	return nil, pairingproto.ErrBackendClosed
 }
 
 func (g *gatedSendTransport) SendAndReceive(ctx context.Context, m []byte) ([]byte, error) {
@@ -100,7 +102,7 @@ func TestJoinWaitsForInFlightSendRequest(t *testing.T) {
 	sendDone := make(chan struct{})
 	go func() {
 		defer close(sendDone)
-		_, _ = router.SendRequest(context.Background(), NewRequest("probe", nil))
+		_, _ = router.SendRequest(context.Background(), pairingproto.NewRequest("probe", nil))
 	}()
 
 	// The sender is now parked inside Send, mid-exchange.
@@ -163,7 +165,7 @@ func TestSendRequestRefusedAfterStop(t *testing.T) {
 		t.Fatal("Join did not drain an idle router")
 	}
 	before := transport.sendCount()
-	if _, err := router.SendRequest(context.Background(), NewRequest("probe", nil)); err == nil {
+	if _, err := router.SendRequest(context.Background(), pairingproto.NewRequest("probe", nil)); err == nil {
 		t.Fatal("SendRequest was accepted after Stop and Join")
 	}
 	if got := transport.sendCount(); got != before {
@@ -216,7 +218,7 @@ func (immediateErrorTransport) Send(context.Context, []byte) error {
 	return nil
 }
 func (immediateErrorTransport) Receive(context.Context) ([]byte, error) {
-	return nil, ErrBackendClosed
+	return nil, pairingproto.ErrBackendClosed
 }
 func (t immediateErrorTransport) SendAndReceive(ctx context.Context, m []byte) ([]byte, error) {
 	if err := t.Send(ctx, m); err != nil {

@@ -25,13 +25,15 @@ import (
 	"github.com/stretchr/testify/require"
 	"gopkg.in/yaml.v3"
 
+	"github.com/jeremyhahn/go-xkms/pkg/attestation/truststore"
+	"github.com/jeremyhahn/go-xkms/pkg/pairingproto"
+	"github.com/jeremyhahn/go-xkms/pkg/trust/bootstrap"
 	xkms "github.com/jeremyhahn/go-xkms/sdk/go"
 	xkeyAttestation "github.com/jeremyhahn/go-xkms/xkey/pkg/attestation"
 	"github.com/jeremyhahn/go-xkms/xkey/pkg/attestation/attesttest"
 	"github.com/jeremyhahn/go-xkms/xkey/pkg/config"
 	"github.com/jeremyhahn/go-xkms/xkey/pkg/gui/events"
 	"github.com/jeremyhahn/go-xkms/xkey/pkg/pairing"
-	"github.com/jeremyhahn/go-xkms/xkey/pkg/truststore"
 )
 
 // These tests are the GUI half of the pairing-time attestation contract
@@ -165,15 +167,15 @@ func (h *pairingHarness) pair(device *attesttest.Phone, exchanges int, address s
 	done := make(chan error, 1)
 	device.Serve(ctx, h.t, responder, false, exchanges, done)
 
-	localKey, err := pairing.GenerateStaticKey()
+	localKey, err := bootstrap.GenerateNoiseStaticKey()
 	require.NoError(h.t, err)
 	defer localKey.Destroy()
-	require.NoError(h.t, pairing.WithPrivateKey(localKey, func(privateKey []byte) error {
+	require.NoError(h.t, bootstrap.WithNoisePrivateKey(localKey, func(privateKey []byte) error {
 		h.lastLocalPrivate = bytes.Clone(privateKey)
 		return nil
 	}))
 
-	session, err := pairing.NewNoiseSession(&pairing.NoiseSessionConfig{
+	session, err := bootstrap.NewNoiseSession(&bootstrap.NoiseSessionConfig{
 		LocalStaticKey: localKey,
 		IsInitiator:    true,
 	})
@@ -290,7 +292,7 @@ func TestPairRefusesAMalformedAttestationByDefault(t *testing.T) {
 	h.trust(ca)
 
 	device := attesttest.NewPhone(t, healthyDAK(t, ca))
-	device.Mutate = func(r *pairing.LocalAttestDeviceResult) { r.Signature[0] ^= 0xff }
+	device.Mutate = func(r *pairingproto.LocalAttestDeviceResult) { r.Signature[0] ^= 0xff }
 
 	_, err := h.pair(device, 2, testPairAddress)
 
@@ -342,7 +344,7 @@ func TestPairRecordsAVerifiedAttestation(t *testing.T) {
 	rec := h.savedDevice(testPairAddress)
 	require.Equal(t, hex.EncodeToString(dak.Fingerprint()), rec.DeviceFingerprint,
 		"the stored fingerprint must equal the phone's own SPKI hash — the identity the reconnect check binds to")
-	require.Equal(t, pairing.AttestProtocolV2, rec.AttestationProtocolVersion,
+	require.Equal(t, pairingproto.AttestProtocolV2, rec.AttestationProtocolVersion,
 		"a GUI pairing must establish the same challenge-response binding the CLI does")
 	require.Equal(t, "strongbox", rec.SecurityLevel)
 	require.True(t, rec.BootStateVerified)
@@ -596,15 +598,15 @@ func TestPairPreservesTheUsersAttestationPolicyBlock(t *testing.T) {
 // anti-downgrade term of the record projection: a later result at a lower
 // version must not walk a record back to the weaker model.
 func TestRecordVerifiedAttestationNeverLowersTheProtocolVersion(t *testing.T) {
-	rec := &phoneConfigDevice{AttestationProtocolVersion: pairing.AttestProtocolV2, DeviceFingerprint: "old"}
+	rec := &phoneConfigDevice{AttestationProtocolVersion: pairingproto.AttestProtocolV2, DeviceFingerprint: "old"}
 
 	xkeyAttestation.ApplyVerifiedAttestation(rec, &xkeyAttestation.Result{
-		ProtocolVersion:   pairing.AttestProtocolV1,
+		ProtocolVersion:   pairingproto.AttestProtocolV1,
 		DeviceFingerprint: "new",
 		SecurityLevel:     "tee",
 	})
 
-	require.Equal(t, pairing.AttestProtocolV2, rec.AttestationProtocolVersion,
+	require.Equal(t, pairingproto.AttestProtocolV2, rec.AttestationProtocolVersion,
 		"the version is the anti-downgrade term; a term an attacker could lower is not one")
 	require.Equal(t, "new", rec.DeviceFingerprint, "every other verified field is applied")
 	require.Equal(t, "tee", rec.SecurityLevel)
@@ -618,14 +620,14 @@ func TestRecordVerifiedAttestationRaisesALegacyRecord(t *testing.T) {
 
 	xkeyAttestation.ApplyVerifiedAttestation(rec, &xkeyAttestation.Result{
 		AttestationTime:   when,
-		ProtocolVersion:   pairing.AttestProtocolV2,
+		ProtocolVersion:   pairingproto.AttestProtocolV2,
 		DeviceFingerprint: "fp",
 		SecurityLevel:     "strongbox",
 		BootStateVerified: true,
 		BootHashHex:       "deadbeef",
 	})
 
-	require.Equal(t, pairing.AttestProtocolV2, rec.AttestationProtocolVersion)
+	require.Equal(t, pairingproto.AttestProtocolV2, rec.AttestationProtocolVersion)
 	require.Equal(t, when, rec.LastDeviceAttestationTime)
 	require.Equal(t, "fp", rec.DeviceFingerprint)
 	require.Equal(t, "strongbox", rec.SecurityLevel)
@@ -662,7 +664,7 @@ func TestPhoneConfigAllowsUnattestablePairingReadsOnlyAnExplicitYes(t *testing.T
 // needs, so a test can drive one more exchange on the SAME connection
 // exactly as a user clicking "Attest Device" after connecting would.
 func (h *pairingHarness) attestReadyHarness(device *attesttest.Phone, extraExchanges int, address string) (
-	transport pairing.Transport, session *pairing.NoiseSession, cfgDevice *phoneConfigDevice, done <-chan error, cancel context.CancelFunc,
+	transport pairingproto.Transport, session *bootstrap.NoiseSession, cfgDevice *phoneConfigDevice, done <-chan error, cancel context.CancelFunc,
 ) {
 	h.t.Helper()
 
@@ -675,11 +677,11 @@ func (h *pairingHarness) attestReadyHarness(device *attesttest.Phone, extraExcha
 	// manual attestations the test will drive afterward.
 	device.Serve(ctx, h.t, responder, false, 2+extraExchanges, doneCh)
 
-	localKey, err := pairing.GenerateStaticKey()
+	localKey, err := bootstrap.GenerateNoiseStaticKey()
 	require.NoError(h.t, err)
 	h.t.Cleanup(localKey.Destroy)
 
-	pairSession, err := pairing.NewNoiseSession(&pairing.NoiseSessionConfig{
+	pairSession, err := bootstrap.NewNoiseSession(&bootstrap.NoiseSessionConfig{
 		LocalStaticKey: localKey,
 		IsInitiator:    true,
 	})
@@ -750,7 +752,7 @@ func TestAttestOverTransport_RefusesAMalformedSignature(t *testing.T) {
 
 	// Damage only the MANUAL exchange's answer; pairing above must still
 	// have succeeded honestly.
-	device.Mutate = func(r *pairing.LocalAttestDeviceResult) { r.Signature[0] ^= 0xff }
+	device.Mutate = func(r *pairingproto.LocalAttestDeviceResult) { r.Signature[0] ^= 0xff }
 
 	ctx, exchangeCancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer exchangeCancel()

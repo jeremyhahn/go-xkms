@@ -441,6 +441,13 @@ var rpcMethodHandlers = map[string]rpcHandler{
 	"xkms.tenantVTPMStart":      (*Server).handleTenantVTPMStart,
 	"xkms.tenantVTPMStop":       (*Server).handleTenantVTPMStop,
 
+	// Platform trust roots (pkg/attestation/truststore)
+	"trust.root.list":       (*Server).handleTrustRootList,
+	"trust.root.get":        (*Server).handleTrustRootGet,
+	"trust.root.import":     (*Server).handleTrustRootImport,
+	"trust.root.quarantine": (*Server).handleTrustRootQuarantine,
+	"trust.root.remove":     (*Server).handleTrustRootRemove,
+
 	// Server-side OIDC credentials (pkg/oidc/credential)
 	"oidc.credential.create":       (*Server).handleOIDCCredentialCreate,
 	"oidc.credential.import":       (*Server).handleOIDCCredentialImport,
@@ -451,6 +458,10 @@ var rpcMethodHandlers = map[string]rpcHandler{
 	"oidc.credential.token":        (*Server).handleOIDCCredentialToken,
 	"oidc.credential.device.start": (*Server).handleOIDCCredentialDeviceStart,
 	"oidc.credential.device.poll":  (*Server).handleOIDCCredentialDevicePoll,
+
+	// Attested-caller evidence
+	"peer.attestation.challenge": (*Server).handlePeerAttestationChallenge,
+	"peer.attestation.submit":    (*Server).handlePeerAttestationSubmit,
 
 	// SSH key operations
 	"ssh.keys.generate": (*Server).handleSSHKeysGenerate,

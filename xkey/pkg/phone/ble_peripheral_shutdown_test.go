@@ -24,7 +24,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/jeremyhahn/go-xkms/xkey/pkg/pairing"
+	"github.com/jeremyhahn/go-xkms/pkg/trust/bootstrap"
 )
 
 // shrinkPeripheralTimeout makes the connection join bounded by something a
@@ -73,7 +73,7 @@ func TestBLEPeripheral_StopBoundsTheConnectionJoin(t *testing.T) {
 
 	p := newTestPeripheral(t, &echoHandler{}, newCaptureWriter())
 
-	key, err := pairing.GenerateStaticKey()
+	key, err := bootstrap.GenerateNoiseStaticKey()
 	if err != nil {
 		t.Fatalf("GenerateStaticKey: %v", err)
 	}
@@ -114,7 +114,7 @@ func TestBLEPeripheral_StopDestroysTheKeyOnACleanJoin(t *testing.T) {
 
 	p := newTestPeripheral(t, &echoHandler{}, newCaptureWriter())
 
-	key, err := pairing.GenerateStaticKey()
+	key, err := bootstrap.GenerateNoiseStaticKey()
 	if err != nil {
 		t.Fatalf("GenerateStaticKey: %v", err)
 	}
@@ -155,7 +155,7 @@ func TestBLEPeripheral_StopDestroysTheKeyOnACleanJoin(t *testing.T) {
 // already present and stop regenerating. The two fields stay separate, and
 // this test fails if they are merged.
 func TestAdoptedStaticKeyIsSeparateFromTheGeneratedOne(t *testing.T) {
-	key, err := pairing.GenerateStaticKey()
+	key, err := bootstrap.GenerateNoiseStaticKey()
 	if err != nil {
 		t.Fatalf("GenerateStaticKey: %v", err)
 	}

@@ -22,6 +22,8 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/jeremyhahn/go-xkms/sdk/go/bootstrap"
+	"github.com/jeremyhahn/go-xkms/sdk/go/pairingproto"
 	secure "github.com/jeremyhahn/go-xkms/sdk/go/secure"
 	"github.com/jeremyhahn/go-xkms/xkey/internal/lifecycle"
 	"github.com/jeremyhahn/go-xkms/xkey/pkg/notify"
@@ -30,7 +32,7 @@ import (
 // RequestHandler processes inbound JSON-RPC requests from a remote peer.
 // Implementations must be safe for concurrent use.
 type RequestHandler interface {
-	HandleRequest(ctx context.Context, req *Request) *Response
+	HandleRequest(ctx context.Context, req *pairingproto.Request) *pairingproto.Response
 }
 
 // MessageRouter handles bidirectional JSON-RPC message routing over an
@@ -40,14 +42,14 @@ type RequestHandler interface {
 //
 // MessageRouter is safe for concurrent use from multiple goroutines.
 type MessageRouter struct {
-	transport        Transport
-	session          *NoiseSession
+	transport        pairingproto.Transport
+	session          *bootstrap.NoiseSession
 	logger           *slog.Logger
 	requestHandler   RequestHandler
 	biometricHandler *BiometricPendingHandler
 
 	mu      sync.Mutex
-	pending map[uint64]chan *Response
+	pending map[uint64]chan *pairingproto.Response
 
 	// retired holds IDs whose request may have reached the peer but exited
 	// WITHOUT the caller consuming a response -- cancelled or timed out after
@@ -121,7 +123,7 @@ const maxRetiredIDs = 4096
 // The transport and session must have completed the Noise handshake.
 // The handler processes inbound requests (can be nil to reject all
 // inbound requests with a warning log).
-func NewMessageRouter(transport Transport, session *NoiseSession, handler RequestHandler, logger *slog.Logger) *MessageRouter {
+func NewMessageRouter(transport pairingproto.Transport, session *bootstrap.NoiseSession, handler RequestHandler, logger *slog.Logger) *MessageRouter {
 	if logger == nil {
 		logger = slog.Default()
 	}
@@ -130,7 +132,7 @@ func NewMessageRouter(transport Transport, session *NoiseSession, handler Reques
 		session:        session,
 		logger:         logger.With("component", "message_router"),
 		requestHandler: handler,
-		pending:        make(map[uint64]chan *Response),
+		pending:        make(map[uint64]chan *pairingproto.Response),
 		retired:        make(map[uint64]struct{}),
 		done:           make(chan struct{}),
 	}
@@ -143,7 +145,7 @@ func NewMessageRouter(transport Transport, session *NoiseSession, handler Reques
 // and a router built here then panicked with "assignment to entry in nil map"
 // on any responseless exit -- cancellation, encode failure, send failure,
 // Stop. One initialization site cannot drift from itself.
-func NewMessageRouterWithNotifier(transport Transport, session *NoiseSession, handler RequestHandler, notifier notify.Notifier, logger *slog.Logger) *MessageRouter {
+func NewMessageRouterWithNotifier(transport pairingproto.Transport, session *bootstrap.NoiseSession, handler RequestHandler, notifier notify.Notifier, logger *slog.Logger) *MessageRouter {
 	router := NewMessageRouter(transport, session, handler, logger)
 	if notifier != nil {
 		router.biometricHandler = NewBiometricPendingHandler(notifier, logger)
@@ -268,7 +270,7 @@ func (r *MessageRouter) Join(timeout time.Duration) bool {
 
 // SendRequest sends an encrypted outbound request and waits for the
 // matching response from the background receive loop.
-func (r *MessageRouter) SendRequest(ctx context.Context, req *Request) (*Response, error) {
+func (r *MessageRouter) SendRequest(ctx context.Context, req *pairingproto.Request) (*pairingproto.Response, error) {
 	// Register on the same WaitGroup Join waits for, and pair the closed check
 	// with the Add under mu: a sender either registers before Stop marks the
 	// router closed and is therefore counted, or sees closed and never
@@ -277,12 +279,12 @@ func (r *MessageRouter) SendRequest(ctx context.Context, req *Request) (*Respons
 	// this method is public, and its constructor is re-exported from
 	// xkey/pkg/phone, so a consumer can reach it without going through
 	// PhoneKeyBackend's lease.
-	respCh := make(chan *Response, 1)
+	respCh := make(chan *pairingproto.Response, 1)
 
 	r.mu.Lock()
 	if r.closed.Load() {
 		r.mu.Unlock()
-		return nil, ErrBackendClosed
+		return nil, pairingproto.ErrBackendClosed
 	}
 	// Refuse a collision rather than overwriting the route. pending maps an ID
 	// to the one channel awaiting that response, so a second registration
@@ -294,21 +296,21 @@ func (r *MessageRouter) SendRequest(ctx context.Context, req *Request) (*Respons
 	// racing on the same ID cannot both pass it.
 	if _, inFlight := r.pending[req.ID]; inFlight {
 		r.mu.Unlock()
-		return nil, &DetailError{Err: ErrDuplicateRequestID, Detail: fmt.Sprintf(": id %d", req.ID)}
+		return nil, &pairingproto.DetailError{Err: pairingproto.ErrDuplicateRequestID, Detail: fmt.Sprintf(": id %d", req.ID)}
 	}
 	// An ID whose request was abandoned is refused for the rest of the
 	// connection: the peer may still answer it, and that answer must not be
 	// delivered to whoever reuses the number. See the retired field.
 	if _, abandoned := r.retired[req.ID]; abandoned {
 		r.mu.Unlock()
-		return nil, &DetailError{Err: ErrDuplicateRequestID, Detail: fmt.Sprintf(": id %d was abandoned by an earlier request and cannot be reused on this connection", req.ID)}
+		return nil, &pairingproto.DetailError{Err: pairingproto.ErrDuplicateRequestID, Detail: fmt.Sprintf(": id %d was abandoned by an earlier request and cannot be reused on this connection", req.ID)}
 	}
 	// Fail closed at the cap. See the retired field: the alternative is
 	// evicting a tombstone, which hands the reused ID a stale answer.
 	if len(r.retired) >= maxRetiredIDs {
 		r.mu.Unlock()
-		return nil, &DetailError{
-			Err:    ErrTooManyAbandonedRequests,
+		return nil, &pairingproto.DetailError{
+			Err:    pairingproto.ErrTooManyAbandonedRequests,
 			Detail: fmt.Sprintf(": %d requests on this connection were abandoned without a response; reconnect", len(r.retired)),
 		}
 	}
@@ -327,9 +329,9 @@ func (r *MessageRouter) SendRequest(ctx context.Context, req *Request) (*Respons
 	defer func() { r.finalizeAbandon(req.ID, respCh, sent, answered) }()
 
 	// Encode and encrypt the request.
-	plaintext, err := EncodeRequest(req)
+	plaintext, err := pairingproto.EncodeRequest(req)
 	if err != nil {
-		return nil, ErrProtocolError
+		return nil, pairingproto.ErrProtocolError
 	}
 
 	// Serialize encrypt+send: Noise CipherState nonce is sequential.
@@ -353,14 +355,14 @@ func (r *MessageRouter) SendRequest(ctx context.Context, req *Request) (*Respons
 	select {
 	case resp, ok := <-respCh:
 		if !ok {
-			return nil, ErrBackendClosed
+			return nil, pairingproto.ErrBackendClosed
 		}
 		answered = true
 		return resp, nil
 	case <-ctx.Done():
 		return nil, ctx.Err()
 	case <-r.done:
-		return nil, ErrBackendClosed
+		return nil, pairingproto.ErrBackendClosed
 	}
 }
 
@@ -380,7 +382,7 @@ func (r *MessageRouter) SendRequest(ctx context.Context, req *Request) (*Respons
 //   - sent and still unanswered: a genuine abandonment. Retire the ID for the
 //     connection lifetime (routeResponse never clears it) so a late -- or
 //     duplicate -- response cannot reach a later reuser of the number.
-func (r *MessageRouter) finalizeAbandon(id uint64, respCh <-chan *Response, sent, answered bool) {
+func (r *MessageRouter) finalizeAbandon(id uint64, respCh <-chan *pairingproto.Response, sent, answered bool) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 
@@ -444,10 +446,10 @@ func (r *MessageRouter) receiveLoop() {
 // messageProbe is used to determine if a JSON message is a request or response
 // without fully unmarshalling it.
 type messageProbe struct {
-	Method string          `json:"method,omitempty"`
-	ID     uint64          `json:"id"`
-	Result json.RawMessage `json:"result,omitempty"`
-	Error  *RPCError       `json:"error,omitempty"`
+	Method string                 `json:"method,omitempty"`
+	ID     uint64                 `json:"id"`
+	Result json.RawMessage        `json:"result,omitempty"`
+	Error  *pairingproto.RPCError `json:"error,omitempty"`
 }
 
 // handleInboundRequest processes an inbound JSON-RPC request from the remote
@@ -455,7 +457,7 @@ type messageProbe struct {
 // it back over the transport.
 func (r *MessageRouter) handleInboundRequest(plaintext []byte, method string) {
 	// Handle biometric pending notification specially (fire-and-forget, no response).
-	if method == MethodLocalBiometricPending {
+	if method == pairingproto.MethodLocalBiometricPending {
 		r.handleBiometricPending(plaintext)
 		return
 	}
@@ -465,7 +467,7 @@ func (r *MessageRouter) handleInboundRequest(plaintext []byte, method string) {
 		return
 	}
 
-	var req Request
+	var req pairingproto.Request
 	if err := json.Unmarshal(plaintext, &req); err != nil {
 		r.logger.Error("failed to unmarshal inbound request", "error", err)
 		return
@@ -530,7 +532,7 @@ func (r *MessageRouter) handleBiometricPending(plaintext []byte) {
 	}
 
 	// Decode the params.
-	var params LocalBiometricPendingParams
+	var params pairingproto.LocalBiometricPendingParams
 	if len(req.Params) > 0 {
 		if err := json.Unmarshal(req.Params, &params); err != nil {
 			r.logger.Error("failed to unmarshal biometric pending params", "error", err)
@@ -562,7 +564,7 @@ func (r *MessageRouter) dispatchMessage(plaintext []byte) {
 
 // routeResponse delivers a response to the pending request's channel.
 func (r *MessageRouter) routeResponse(plaintext []byte, id uint64) {
-	var resp Response
+	var resp pairingproto.Response
 	if err := json.Unmarshal(plaintext, &resp); err != nil {
 		r.logger.Error("failed to unmarshal response", "error", err)
 		return

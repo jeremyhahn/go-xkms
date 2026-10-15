@@ -22,7 +22,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/jeremyhahn/go-xkms/xkey/pkg/pairing"
+	"github.com/jeremyhahn/go-xkms/pkg/pairingproto"
 )
 
 // TestBLEPeripheral_RegisterConnection_RefusesWhenClosed pins the refusal
@@ -64,8 +64,8 @@ func TestBLEPeripheral_ReceiveMessageTimeout_ReassemblyErrorContinues(t *testing
 	// accepts it (the header is well-formed); Reassembler.AddFragment is what
 	// refuses it, exercising the branch DecodeFragment's own error test
 	// (TestBLEPeripheral_ReceiveMessageDiscardsMalformedFragment) cannot reach.
-	bad := make([]byte, pairing.FragmentHeaderSize+5)
-	bad[0] = pairing.FlagFirstFragment
+	bad := make([]byte, pairingproto.FragmentHeaderSize+5)
+	bad[0] = pairingproto.FlagFirstFragment
 	binary.BigEndian.PutUint16(bad[1:3], 5) // sequence
 	binary.BigEndian.PutUint16(bad[3:5], 3) // total
 	binary.BigEndian.PutUint16(bad[5:7], 5) // length

@@ -18,6 +18,7 @@ import (
 	"errors"
 	"strings"
 
+	"github.com/jeremyhahn/go-xkms/sdk/go/pairingproto"
 	secure "github.com/jeremyhahn/go-xkms/sdk/go/secure"
 )
 
@@ -89,10 +90,10 @@ func IsSealedNoiseKey(stored string) bool {
 }
 
 // SealLocalNoiseKey seals priv -- the raw Curve25519 private scalar, e.g.
-// StaticKey.Private -- under barrier and returns the marker-prefixed,
+// bootstrap.NoiseStaticKey.Private -- under barrier and returns the marker-prefixed,
 // base64-encoded value to store in a PairedDevice's LocalNoisePrivateKey
 // field. priv is the caller's: SealLocalNoiseKey neither mutates nor
-// destroys it, so the caller wipes/destroys it (StaticKey.Destroy, or
+// destroys it, so the caller wipes/destroys it (bootstrap.NoiseStaticKey.Destroy, or
 // secure.Buffer.Destroy) once sealing returns, on every path.
 func SealLocalNoiseKey(barrier NoiseKeyBarrier, priv []byte) (string, error) {
 	if barrier == nil {
@@ -104,7 +105,7 @@ func SealLocalNoiseKey(barrier NoiseKeyBarrier, priv []byte) (string, error) {
 
 	ciphertext, err := barrier.Encrypt(priv)
 	if err != nil {
-		return "", &SentinelCauseError{Sentinel: ErrNoiseKeySealFailed, Cause: err}
+		return "", &pairingproto.SentinelCauseError{Sentinel: ErrNoiseKeySealFailed, Cause: err}
 	}
 	return NoiseKeySealedPrefix + base64.StdEncoding.EncodeToString(ciphertext), nil
 }
@@ -131,18 +132,18 @@ func UnsealLocalNoiseKey(barrier NoiseKeyBarrier, stored string) (*secure.Buffer
 		}
 		ciphertext, err := base64.StdEncoding.DecodeString(strings.TrimPrefix(stored, NoiseKeySealedPrefix))
 		if err != nil {
-			return nil, &SentinelCauseError{Sentinel: ErrNoiseKeyUnsealFailed, Cause: err}
+			return nil, &pairingproto.SentinelCauseError{Sentinel: ErrNoiseKeyUnsealFailed, Cause: err}
 		}
 		plaintext, err := barrier.Decrypt(ciphertext)
 		if err != nil {
-			return nil, &SentinelCauseError{Sentinel: ErrNoiseKeyUnsealFailed, Cause: err}
+			return nil, &pairingproto.SentinelCauseError{Sentinel: ErrNoiseKeyUnsealFailed, Cause: err}
 		}
 		// NewBufferFromBytes copies plaintext into protected memory and wipes
 		// the caller's slice, so the barrier-decrypted heap copy above does
 		// not outlive this call.
 		buf, err := secure.NewBufferFromBytes(plaintext)
 		if err != nil {
-			return nil, &SentinelCauseError{Sentinel: ErrNoiseKeyUnsealFailed, Cause: err}
+			return nil, &pairingproto.SentinelCauseError{Sentinel: ErrNoiseKeyUnsealFailed, Cause: err}
 		}
 		return buf, nil
 	}
@@ -154,11 +155,11 @@ func UnsealLocalNoiseKey(barrier NoiseKeyBarrier, stored string) (*secure.Buffer
 	// Legacy plaintext base64: the expected form when no barrier is open.
 	raw, err := base64.StdEncoding.DecodeString(stored)
 	if err != nil {
-		return nil, &SentinelCauseError{Sentinel: ErrNoiseKeyUnsealFailed, Cause: err}
+		return nil, &pairingproto.SentinelCauseError{Sentinel: ErrNoiseKeyUnsealFailed, Cause: err}
 	}
 	buf, err := secure.NewBufferFromBytes(raw)
 	if err != nil {
-		return nil, &SentinelCauseError{Sentinel: ErrNoiseKeyUnsealFailed, Cause: err}
+		return nil, &pairingproto.SentinelCauseError{Sentinel: ErrNoiseKeyUnsealFailed, Cause: err}
 	}
 	return buf, nil
 }

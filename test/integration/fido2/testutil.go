@@ -24,7 +24,7 @@ import (
 	"time"
 
 	"github.com/jeremyhahn/go-xkms/pkg/fido2"
-	"github.com/jeremyhahn/go-xkms/xkey/pkg/virtualdevice"
+	"github.com/jeremyhahn/go-xkms/pkg/fido2/virtualdevice"
 	"github.com/stretchr/testify/require"
 )
 

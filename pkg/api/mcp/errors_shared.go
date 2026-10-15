@@ -145,3 +145,9 @@ func mapTPMPolicyError(err error, operation string) error {
 func mapOIDCCredentialError(err error, operation string) error {
 	return mapClassifiedError(err, operation, apierrors.OIDCCredentialClassOf)
 }
+
+// mapPeerAttestationError converts an attested-caller verb's error into a
+// *KeyOpError through apierrors.PeerAttestationClassOf.
+func mapPeerAttestationError(err error, operation string) error {
+	return mapClassifiedError(err, operation, apierrors.PeerAttestationClassOf)
+}

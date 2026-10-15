@@ -105,7 +105,7 @@ const (
 	// User presence operations.
 	//
 	// OpTouchEventReceived was removed (issue #688): SocketHandler
-	// (pkg/authenticator/user_presence_socket.go) reports a touch gesture
+	// (xkey/pkg/presence/socket.go) reports a touch gesture
 	// through the Requested/Confirmed/TimedOut/Cancelled lifecycle below,
 	// never as a separate raw "touch received" signal, so there was no call
 	// site to emit it from anywhere in the codebase. If a lower-level touch

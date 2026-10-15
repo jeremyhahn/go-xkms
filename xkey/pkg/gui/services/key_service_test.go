@@ -43,6 +43,10 @@ type mockClient struct {
 	// call it.
 	transport.OIDCCredentialService
 
+	// TrustRootService completes transport.Client; these tests never call
+	// it.
+	transport.TrustRootService
+
 	listBackendsFn func(ctx context.Context) (*transport.ListBackendsResponse, error)
 	getBackendFn   func(ctx context.Context, id string) (*transport.BackendInfo, error)
 	listKeysFn     func(ctx context.Context, backend string) (*transport.ListKeysResponse, error)

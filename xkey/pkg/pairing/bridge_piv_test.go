@@ -28,6 +28,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	"github.com/jeremyhahn/go-xkms/pkg/pairingproto"
 	xkms "github.com/jeremyhahn/go-xkms/sdk/go"
 	"github.com/jeremyhahn/go-xkms/sdk/go/transport"
 )
@@ -135,9 +136,9 @@ func TestBridge_DispatchMap_ContainsPIVMethods(t *testing.T) {
 	require.NoError(t, err)
 
 	pivMethods := []string{
-		MethodRemotePIVListSlots,
-		MethodRemotePIVSign,
-		MethodRemotePIVGetCert,
+		pairingproto.MethodRemotePIVListSlots,
+		pairingproto.MethodRemotePIVSign,
+		pairingproto.MethodRemotePIVGetCert,
 	}
 
 	for _, method := range pivMethods {
@@ -156,11 +157,11 @@ func TestBridge_HandlePIVListSlots_NotConfigured(t *testing.T) {
 	b, err := NewBridge(client, &BridgeConfig{Logger: testLogger()})
 	require.NoError(t, err)
 
-	req := newRemoteRequest(MethodRemotePIVListSlots, RemotePIVListSlotsParams{
+	req := newRemoteRequest(pairingproto.MethodRemotePIVListSlots, pairingproto.RemotePIVListSlotsParams{
 		Backend: "pkcs11",
 	})
 	resp := b.HandleRequest(context.Background(), req)
-	assertErrorResponse(t, resp, req.ID, ErrorCodeFeatureUnavailable)
+	assertErrorResponse(t, resp, req.ID, pairingproto.ErrorCodeFeatureUnavailable)
 }
 
 // TestBridge_HandlePIVListSlots_Success verifies the real round trip through
@@ -169,11 +170,11 @@ func TestBridge_HandlePIVListSlots_NotConfigured(t *testing.T) {
 func TestBridge_HandlePIVListSlots_Success(t *testing.T) {
 	storage := newFakePIVStorage()
 	cert := newTestPIVCertificate(t, "Authentication")
-	require.NoError(t, storage.Store(xkms.PIVSlot(PIVSlotAuthentication), cert))
+	require.NoError(t, storage.Store(xkms.PIVSlot(pairingproto.PIVSlotAuthentication), cert))
 
 	client := &mockTransportClient{
 		listKeysResp: &transport.ListKeysResponse{
-			Keys: []transport.KeyInfo{{KeyID: PIVSlotAuthentication, Backend: "software"}},
+			Keys: []transport.KeyInfo{{KeyID: pairingproto.PIVSlotAuthentication, Backend: "software"}},
 		},
 	}
 	b, err := NewBridge(client, &BridgeConfig{
@@ -182,14 +183,14 @@ func TestBridge_HandlePIVListSlots_Success(t *testing.T) {
 	})
 	require.NoError(t, err)
 
-	req := newRemoteRequest(MethodRemotePIVListSlots, RemotePIVListSlotsParams{
+	req := newRemoteRequest(pairingproto.MethodRemotePIVListSlots, pairingproto.RemotePIVListSlotsParams{
 		Backend: "software",
 	})
 	resp := b.HandleRequest(context.Background(), req)
 
-	result := decodeResult[RemotePIVListSlotsResult](t, resp)
+	result := decodeResult[pairingproto.RemotePIVListSlotsResult](t, resp)
 	require.Len(t, result.Slots, 1)
-	assert.Equal(t, PIVSlotAuthentication, result.Slots[0].Slot)
+	assert.Equal(t, pairingproto.PIVSlotAuthentication, result.Slots[0].Slot)
 	assert.True(t, result.Slots[0].HasCertificate)
 	assert.True(t, result.Slots[0].HasKey)
 	assert.Equal(t, "Authentication", result.Slots[0].CertSubject)
@@ -207,11 +208,11 @@ func TestBridge_HandlePIVListSlots_NilParams(t *testing.T) {
 	})
 	require.NoError(t, err)
 
-	req := newRemoteRequest(MethodRemotePIVListSlots, nil)
+	req := newRemoteRequest(pairingproto.MethodRemotePIVListSlots, nil)
 	resp := b.HandleRequest(context.Background(), req)
 
 	require.Nil(t, resp.Error, "expected success but got error: %v", resp.Error)
-	result := decodeResult[RemotePIVListSlotsResult](t, resp)
+	result := decodeResult[pairingproto.RemotePIVListSlotsResult](t, resp)
 	assert.Empty(t, result.Slots)
 }
 
@@ -224,10 +225,10 @@ func TestBridge_HandlePIVListSlots_EmptyParams(t *testing.T) {
 	})
 	require.NoError(t, err)
 
-	req := newRemoteRequest(MethodRemotePIVListSlots, RemotePIVListSlotsParams{})
+	req := newRemoteRequest(pairingproto.MethodRemotePIVListSlots, pairingproto.RemotePIVListSlotsParams{})
 	resp := b.HandleRequest(context.Background(), req)
 
-	result := decodeResult[RemotePIVListSlotsResult](t, resp)
+	result := decodeResult[pairingproto.RemotePIVListSlotsResult](t, resp)
 	assert.Empty(t, result.Slots)
 }
 
@@ -247,15 +248,15 @@ func TestBridge_HandlePIVSign_Success(t *testing.T) {
 	b, err := NewBridge(client, &BridgeConfig{Logger: testLogger()})
 	require.NoError(t, err)
 
-	req := newRemoteRequest(MethodRemotePIVSign, RemotePIVSignParams{
-		Slot:      PIVSlotAuthentication,
+	req := newRemoteRequest(pairingproto.MethodRemotePIVSign, pairingproto.RemotePIVSignParams{
+		Slot:      pairingproto.PIVSlotAuthentication,
 		Data:      []byte("data to sign"),
 		Algorithm: "SHA256withECDSA",
 		Backend:   "software",
 	})
 	resp := b.HandleRequest(context.Background(), req)
 
-	result := decodeResult[RemotePIVSignResult](t, resp)
+	result := decodeResult[pairingproto.RemotePIVSignResult](t, resp)
 	assert.Equal(t, expectedSig, result.Signature)
 	assert.Equal(t, "SHA256withECDSA", result.Algorithm)
 }
@@ -268,12 +269,12 @@ func TestBridge_HandlePIVSign_TransportFailure(t *testing.T) {
 	b, err := NewBridge(client, &BridgeConfig{Logger: testLogger()})
 	require.NoError(t, err)
 
-	req := newRemoteRequest(MethodRemotePIVSign, RemotePIVSignParams{
-		Slot: PIVSlotAuthentication,
+	req := newRemoteRequest(pairingproto.MethodRemotePIVSign, pairingproto.RemotePIVSignParams{
+		Slot: pairingproto.PIVSlotAuthentication,
 		Data: []byte("data to sign"),
 	})
 	resp := b.HandleRequest(context.Background(), req)
-	assertErrorResponse(t, resp, req.ID, ErrorCodePIVSignFailed)
+	assertErrorResponse(t, resp, req.ID, pairingproto.ErrorCodePIVSignFailed)
 }
 
 func TestBridge_HandlePIVSign_InvalidParams(t *testing.T) {
@@ -282,9 +283,9 @@ func TestBridge_HandlePIVSign_InvalidParams(t *testing.T) {
 	require.NoError(t, err)
 
 	// Nil params
-	req := newRemoteRequest(MethodRemotePIVSign, nil)
+	req := newRemoteRequest(pairingproto.MethodRemotePIVSign, nil)
 	resp := b.HandleRequest(context.Background(), req)
-	assertErrorResponse(t, resp, req.ID, ErrorCodeInvalidParams)
+	assertErrorResponse(t, resp, req.ID, pairingproto.ErrorCodeInvalidParams)
 }
 
 func TestBridge_HandlePIVSign_EmptySlot(t *testing.T) {
@@ -292,11 +293,11 @@ func TestBridge_HandlePIVSign_EmptySlot(t *testing.T) {
 	b, err := NewBridge(client, &BridgeConfig{Logger: testLogger()})
 	require.NoError(t, err)
 
-	req := newRemoteRequest(MethodRemotePIVSign, RemotePIVSignParams{
+	req := newRemoteRequest(pairingproto.MethodRemotePIVSign, pairingproto.RemotePIVSignParams{
 		Data: []byte("data to sign"),
 	})
 	resp := b.HandleRequest(context.Background(), req)
-	assertErrorResponse(t, resp, req.ID, ErrorCodePIVInvalidSlot)
+	assertErrorResponse(t, resp, req.ID, pairingproto.ErrorCodePIVInvalidSlot)
 }
 
 func TestBridge_HandlePIVSign_EmptyData(t *testing.T) {
@@ -304,12 +305,12 @@ func TestBridge_HandlePIVSign_EmptyData(t *testing.T) {
 	b, err := NewBridge(client, &BridgeConfig{Logger: testLogger()})
 	require.NoError(t, err)
 
-	req := newRemoteRequest(MethodRemotePIVSign, RemotePIVSignParams{
-		Slot: PIVSlotAuthentication,
+	req := newRemoteRequest(pairingproto.MethodRemotePIVSign, pairingproto.RemotePIVSignParams{
+		Slot: pairingproto.PIVSlotAuthentication,
 		Data: []byte{},
 	})
 	resp := b.HandleRequest(context.Background(), req)
-	assertErrorResponse(t, resp, req.ID, ErrorCodeInvalidParams)
+	assertErrorResponse(t, resp, req.ID, pairingproto.ErrorCodeInvalidParams)
 }
 
 // --- handlePIVGetCert tests ---
@@ -322,12 +323,12 @@ func TestBridge_HandlePIVGetCert_NotConfigured(t *testing.T) {
 	b, err := NewBridge(client, &BridgeConfig{Logger: testLogger()})
 	require.NoError(t, err)
 
-	req := newRemoteRequest(MethodRemotePIVGetCert, RemotePIVGetCertParams{
-		Slot:    PIVSlotAuthentication,
+	req := newRemoteRequest(pairingproto.MethodRemotePIVGetCert, pairingproto.RemotePIVGetCertParams{
+		Slot:    pairingproto.PIVSlotAuthentication,
 		Backend: "pkcs11",
 	})
 	resp := b.HandleRequest(context.Background(), req)
-	assertErrorResponse(t, resp, req.ID, ErrorCodeFeatureUnavailable)
+	assertErrorResponse(t, resp, req.ID, pairingproto.ErrorCodeFeatureUnavailable)
 }
 
 // TestBridge_HandlePIVGetCert_Success verifies the real round trip through
@@ -336,7 +337,7 @@ func TestBridge_HandlePIVGetCert_NotConfigured(t *testing.T) {
 func TestBridge_HandlePIVGetCert_Success(t *testing.T) {
 	storage := newFakePIVStorage()
 	cert := newTestPIVCertificate(t, "Authentication")
-	require.NoError(t, storage.Store(xkms.PIVSlot(PIVSlotAuthentication), cert))
+	require.NoError(t, storage.Store(xkms.PIVSlot(pairingproto.PIVSlotAuthentication), cert))
 
 	client := &mockTransportClient{}
 	b, err := NewBridge(client, &BridgeConfig{
@@ -345,13 +346,13 @@ func TestBridge_HandlePIVGetCert_Success(t *testing.T) {
 	})
 	require.NoError(t, err)
 
-	req := newRemoteRequest(MethodRemotePIVGetCert, RemotePIVGetCertParams{
-		Slot:    PIVSlotAuthentication,
+	req := newRemoteRequest(pairingproto.MethodRemotePIVGetCert, pairingproto.RemotePIVGetCertParams{
+		Slot:    pairingproto.PIVSlotAuthentication,
 		Backend: "software",
 	})
 	resp := b.HandleRequest(context.Background(), req)
 
-	result := decodeResult[RemotePIVGetCertResult](t, resp)
+	result := decodeResult[pairingproto.RemotePIVGetCertResult](t, resp)
 	assert.Equal(t, cert.Raw, result.CertificateDER)
 	assert.Contains(t, result.Subject, "Authentication")
 	assert.True(t, storage.closed)
@@ -368,11 +369,11 @@ func TestBridge_HandlePIVGetCert_NotFound(t *testing.T) {
 	})
 	require.NoError(t, err)
 
-	req := newRemoteRequest(MethodRemotePIVGetCert, RemotePIVGetCertParams{
-		Slot: PIVSlotAuthentication,
+	req := newRemoteRequest(pairingproto.MethodRemotePIVGetCert, pairingproto.RemotePIVGetCertParams{
+		Slot: pairingproto.PIVSlotAuthentication,
 	})
 	resp := b.HandleRequest(context.Background(), req)
-	assertErrorResponse(t, resp, req.ID, ErrorCodePIVSlotNotFound)
+	assertErrorResponse(t, resp, req.ID, pairingproto.ErrorCodePIVSlotNotFound)
 }
 
 func TestBridge_HandlePIVGetCert_InvalidParams(t *testing.T) {
@@ -381,9 +382,9 @@ func TestBridge_HandlePIVGetCert_InvalidParams(t *testing.T) {
 	require.NoError(t, err)
 
 	// Nil params
-	req := newRemoteRequest(MethodRemotePIVGetCert, nil)
+	req := newRemoteRequest(pairingproto.MethodRemotePIVGetCert, nil)
 	resp := b.HandleRequest(context.Background(), req)
-	assertErrorResponse(t, resp, req.ID, ErrorCodeInvalidParams)
+	assertErrorResponse(t, resp, req.ID, pairingproto.ErrorCodeInvalidParams)
 }
 
 func TestBridge_HandlePIVGetCert_EmptySlot(t *testing.T) {
@@ -391,36 +392,36 @@ func TestBridge_HandlePIVGetCert_EmptySlot(t *testing.T) {
 	b, err := NewBridge(client, &BridgeConfig{Logger: testLogger()})
 	require.NoError(t, err)
 
-	req := newRemoteRequest(MethodRemotePIVGetCert, RemotePIVGetCertParams{
+	req := newRemoteRequest(pairingproto.MethodRemotePIVGetCert, pairingproto.RemotePIVGetCertParams{
 		Backend: "pkcs11",
 	})
 	resp := b.HandleRequest(context.Background(), req)
-	assertErrorResponse(t, resp, req.ID, ErrorCodePIVInvalidSlot)
+	assertErrorResponse(t, resp, req.ID, pairingproto.ErrorCodePIVInvalidSlot)
 }
 
 // --- Error mapping tests ---
 
 func TestMapErrorToRPC_PIVSlotNotFound(t *testing.T) {
-	code, msg := mapErrorToRPC(ErrPIVSlotNotFound)
-	assert.Equal(t, ErrorCodePIVSlotNotFound, code)
+	code, msg := mapErrorToRPC(pairingproto.ErrPIVSlotNotFound)
+	assert.Equal(t, pairingproto.ErrorCodePIVSlotNotFound, code)
 	assert.Contains(t, msg, "PIV slot not found")
 }
 
 func TestMapErrorToRPC_PIVSlotOccupied(t *testing.T) {
-	code, msg := mapErrorToRPC(ErrPIVSlotOccupied)
-	assert.Equal(t, ErrorCodePIVSlotOccupied, code)
+	code, msg := mapErrorToRPC(pairingproto.ErrPIVSlotOccupied)
+	assert.Equal(t, pairingproto.ErrorCodePIVSlotOccupied, code)
 	assert.Contains(t, msg, "PIV slot already occupied")
 }
 
 func TestMapErrorToRPC_PIVSignFailed(t *testing.T) {
-	code, msg := mapErrorToRPC(ErrPIVSignFailed)
-	assert.Equal(t, ErrorCodePIVSignFailed, code)
+	code, msg := mapErrorToRPC(pairingproto.ErrPIVSignFailed)
+	assert.Equal(t, pairingproto.ErrorCodePIVSignFailed, code)
 	assert.Contains(t, msg, "PIV signing failed")
 }
 
 func TestMapErrorToRPC_PIVInvalidSlot(t *testing.T) {
-	code, msg := mapErrorToRPC(ErrPIVInvalidSlot)
-	assert.Equal(t, ErrorCodePIVInvalidSlot, code)
+	code, msg := mapErrorToRPC(pairingproto.ErrPIVInvalidSlot)
+	assert.Equal(t, pairingproto.ErrorCodePIVInvalidSlot, code)
 	assert.Contains(t, msg, "invalid PIV slot")
 }
 
@@ -433,15 +434,15 @@ func TestBridge_NilParams_PIVHandlers(t *testing.T) {
 
 	// pivSign and pivGetCert require params.
 	methodsRequiringParams := []string{
-		MethodRemotePIVSign,
-		MethodRemotePIVGetCert,
+		pairingproto.MethodRemotePIVSign,
+		pairingproto.MethodRemotePIVGetCert,
 	}
 
 	for _, method := range methodsRequiringParams {
 		t.Run(method, func(t *testing.T) {
 			req := newRemoteRequest(method, nil)
 			resp := b.HandleRequest(context.Background(), req)
-			assertErrorResponse(t, resp, req.ID, ErrorCodeInvalidParams)
+			assertErrorResponse(t, resp, req.ID, pairingproto.ErrorCodeInvalidParams)
 		})
 	}
 }

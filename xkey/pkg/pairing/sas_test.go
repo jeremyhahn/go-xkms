@@ -17,6 +17,7 @@ import (
 	"regexp"
 	"testing"
 
+	"github.com/jeremyhahn/go-xkms/pkg/trust/bootstrap"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -76,11 +77,11 @@ func TestShortAuthString_DiffersForDifferentPeers(t *testing.T) {
 // AttestChannelBinding's own precondition: there is no authenticated peer
 // static key to bind to before the handshake finishes.
 func TestShortAuthString_RefusesBeforeHandshakeCompletes(t *testing.T) {
-	key, err := GenerateStaticKey()
+	key, err := bootstrap.GenerateNoiseStaticKey()
 	require.NoError(t, err)
 	defer key.Destroy()
 
-	session, err := NewNoiseSession(&NoiseSessionConfig{LocalStaticKey: key, IsInitiator: true})
+	session, err := bootstrap.NewNoiseSession(&bootstrap.NoiseSessionConfig{LocalStaticKey: key, IsInitiator: true})
 	require.NoError(t, err)
 
 	_, err = ShortAuthString(session)
@@ -91,19 +92,19 @@ func TestShortAuthString_RefusesBeforeHandshakeCompletes(t *testing.T) {
 // in-memory and returns the initiator and responder sessions, each as it
 // would exist immediately after PerformHandshake on either side of a real
 // connection.
-func newHandshakenSessionPairForTest(t *testing.T) (initiator, responder *NoiseSession) {
+func newHandshakenSessionPairForTest(t *testing.T) (initiator, responder *bootstrap.NoiseSession) {
 	t.Helper()
 
-	initiatorKey, err := GenerateStaticKey()
+	initiatorKey, err := bootstrap.GenerateNoiseStaticKey()
 	require.NoError(t, err)
 	t.Cleanup(initiatorKey.Destroy)
-	responderKey, err := GenerateStaticKey()
+	responderKey, err := bootstrap.GenerateNoiseStaticKey()
 	require.NoError(t, err)
 	t.Cleanup(responderKey.Destroy)
 
-	initiator, err = NewNoiseSession(&NoiseSessionConfig{LocalStaticKey: initiatorKey, IsInitiator: true})
+	initiator, err = bootstrap.NewNoiseSession(&bootstrap.NoiseSessionConfig{LocalStaticKey: initiatorKey, IsInitiator: true})
 	require.NoError(t, err)
-	responder, err = NewNoiseSession(&NoiseSessionConfig{LocalStaticKey: responderKey, IsInitiator: false})
+	responder, err = bootstrap.NewNoiseSession(&bootstrap.NoiseSessionConfig{LocalStaticKey: responderKey, IsInitiator: false})
 	require.NoError(t, err)
 
 	require.NoError(t, initiator.InitHandshake())

@@ -22,9 +22,9 @@ import (
 	"time"
 
 	xkms "github.com/jeremyhahn/go-xkms/sdk/go"
+	"github.com/jeremyhahn/go-xkms/sdk/go/pairingproto"
 	secure "github.com/jeremyhahn/go-xkms/sdk/go/secure"
 	"github.com/jeremyhahn/go-xkms/xkey/pkg/oath"
-	"github.com/jeremyhahn/go-xkms/xkey/pkg/pairing"
 	"github.com/spf13/cobra"
 )
 
@@ -127,17 +127,17 @@ func runOATHPullStub(cmd *cobra.Command, args []string) error {
 // protocol representation. The result carries a copy of the shared secret in
 // protected memory, which the caller releases with OATHCredentialInfo.Destroy
 // once it has been sent.
-func credentialToPhoneInfo(cred *oath.Credential) (pairing.OATHCredentialInfo, error) {
+func credentialToPhoneInfo(cred *oath.Credential) (pairingproto.OATHCredentialInfo, error) {
 	plain, err := cred.Secret()
 	if err != nil {
-		return pairing.OATHCredentialInfo{}, err
+		return pairingproto.OATHCredentialInfo{}, err
 	}
 	defer secure.Wipe(plain)
 	secret, err := xkms.NewSecretText(plain)
 	if err != nil {
-		return pairing.OATHCredentialInfo{}, err
+		return pairingproto.OATHCredentialInfo{}, err
 	}
-	return pairing.OATHCredentialInfo{
+	return pairingproto.OATHCredentialInfo{
 		Name:        cred.Name,
 		Issuer:      cred.Issuer,
 		AccountName: cred.AccountName,
@@ -153,7 +153,7 @@ func credentialToPhoneInfo(cred *oath.Credential) (pairing.OATHCredentialInfo, e
 // deviceInfoToCredential converts a phone OATH credential to a local
 // OATH credential, adopting the secret into protected memory. The error is
 // oath.ErrProtectedMemory (wrapped) when that allocation fails.
-func deviceInfoToCredential(info pairing.OATHCredentialInfo) (*oath.Credential, error) {
+func deviceInfoToCredential(info pairingproto.OATHCredentialInfo) (*oath.Credential, error) {
 	algorithm := info.Algorithm
 	if algorithm == "" {
 		algorithm = oath.DefaultAlgorithm

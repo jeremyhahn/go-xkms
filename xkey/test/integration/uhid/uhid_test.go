@@ -21,7 +21,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/jeremyhahn/go-xkms/xkey/pkg/uhid"
+	"github.com/jeremyhahn/go-xkms/pkg/fido2/uhid"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )

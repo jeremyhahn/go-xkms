@@ -23,17 +23,14 @@ require (
 	github.com/fxamacker/cbor/v2 v2.9.2
 	github.com/go-jose/go-jose/v4 v4.1.4
 	github.com/go-viper/mapstructure/v2 v2.5.0
-	github.com/go-webauthn/webauthn v0.17.4
 	github.com/godbus/dbus/v5 v5.2.2
 	github.com/golang-jwt/jwt/v5 v5.3.1
 	github.com/google/go-tpm v0.9.8
-	github.com/google/gousb v1.1.3
 	github.com/google/uuid v1.6.0
 	github.com/gorilla/websocket v1.5.4-0.20250319132907-e064f32e3674
 	github.com/jeremyhahn/go-enclave v0.8.0-alpha
 	github.com/jeremyhahn/go-luks2 v1.0.0-rc.4
 	github.com/jeremyhahn/go-qrdb/sdk/go v0.48.0-alpha
-	github.com/jeremyhahn/go-truststrap v0.6.0-alpha
 	github.com/jeremyhahn/go-xkms v0.55.0-alpha
 	github.com/jeremyhahn/go-xkms/sdk/go v0.55.0-alpha
 	github.com/kbinani/screenshot v0.0.0-20250624051815-089614a94018
@@ -144,6 +141,7 @@ require (
 	github.com/go-playground/locales v0.14.1 // indirect
 	github.com/go-playground/universal-translator v0.18.1 // indirect
 	github.com/go-playground/validator/v10 v10.30.3 // indirect
+	github.com/go-webauthn/webauthn v0.17.4 // indirect
 	github.com/go-webauthn/x v0.2.6 // indirect
 	github.com/goccy/go-json v0.10.6 // indirect
 	github.com/goccy/go-yaml v1.19.2 // indirect
@@ -151,6 +149,7 @@ require (
 	github.com/golang/protobuf v1.5.4 // indirect
 	github.com/golang/snappy v1.0.0 // indirect
 	github.com/google/go-tpm-tools v0.4.8 // indirect
+	github.com/google/gousb v1.1.3 // indirect
 	github.com/google/s2a-go v0.1.9 // indirect
 	github.com/googleapis/enterprise-certificate-proxy v0.3.21 // indirect
 	github.com/googleapis/gax-go/v2 v2.23.0 // indirect
@@ -178,6 +177,7 @@ require (
 	github.com/jeremyhahn/go-objstore v0.4.0-alpha // indirect
 	github.com/jeremyhahn/go-qrdb v0.48.0-alpha // indirect
 	github.com/jeremyhahn/go-quicraft v0.20.0 // indirect
+	github.com/jeremyhahn/go-truststrap v0.6.0-alpha // indirect
 	github.com/jeroenrinzema/psql-wire v0.18.0 // indirect
 	github.com/jezek/xgb v1.1.1 // indirect
 	github.com/jmespath/go-jmespath v0.4.0 // indirect

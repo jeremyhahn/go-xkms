@@ -8,7 +8,7 @@
 The Android app (xkey-android, a separate repository) handles `local.*` JSON-RPC requests from the laptop. These requests arrive over the Noise-encrypted BLE, USB or TCP channel and are served by the Android Keystore. The phone effectively operates as a remote HSM for the laptop.
 
 The desktop side defines every method name and its params/result types in
-`xkey/pkg/pairing/protocol_local.go`; `IsLocalMethod` (`protocol_local.go:418`)
+`pkg/pairingproto/protocol_local.go`; `IsLocalMethod` (`protocol_local.go:418`)
 validates names against the `localMethodNames` map (`protocol_local.go:392`).
 Byte fields (`[]byte` in Go) are base64 strings on the wire (Go's
 `encoding/json` default).
@@ -362,7 +362,7 @@ and `timeoutSecs` (`LocalBiometricPendingParams`, `protocol_local.go:385`).
 
 ## Error codes
 
-Errors use the JSON-RPC codes in `xkey/pkg/pairing/protocol.go:47`: the
+Errors use the JSON-RPC codes in `pkg/pairingproto/protocol.go:47`: the
 standard `-32700`, `-32600`, `-32601`, `-32602`, `-32603`, and the
 application range starting at `-32000`, including:
 

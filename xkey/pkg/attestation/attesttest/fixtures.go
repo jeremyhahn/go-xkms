@@ -41,6 +41,7 @@ import (
 	"time"
 
 	xkms "github.com/jeremyhahn/go-xkms/sdk/go"
+	"github.com/jeremyhahn/go-xkms/sdk/go/pairingproto"
 	"github.com/jeremyhahn/go-xkms/xkey/pkg/pairing"
 	"github.com/stretchr/testify/require"
 )
@@ -102,7 +103,7 @@ func AttestedBootState() *xkms.AndroidRootOfTrust {
 
 // GenesisChallenge is the attestation challenge a contract-faithful device
 // generates its attestation key under.
-func GenesisChallenge() []byte { return []byte(pairing.AttestGenesisChallenge) }
+func GenesisChallenge() []byte { return []byte(pairingproto.AttestGenesisChallenge) }
 
 // AppPackage is the package name the fixture application attests under.
 const AppPackage = "com.automatethethings.xkey"
@@ -298,7 +299,7 @@ func (d *DAK) Fingerprint() []byte { return d.FP }
 // require would abort the wrong test.
 func (d *DAK) SignRaw(purpose string, nonce, channelBinding []byte) ([]byte, error) {
 	transcript := make([]byte, 0, 160)
-	transcript = append(transcript, []byte(pairing.AttestTranscriptDomain)...)
+	transcript = append(transcript, []byte(pairingproto.AttestTranscriptDomain)...)
 	transcript = append(transcript, byte(len(purpose)))
 	transcript = append(transcript, []byte(purpose)...)
 	transcript = append(transcript, nonce...)
@@ -320,18 +321,18 @@ func (d *DAK) Sign(t *testing.T, purpose string, nonce, channelBinding []byte) [
 
 // Respond is the whole local.attestDevice answer a contract-faithful phone
 // returns for the given purpose, nonce and channel binding.
-func (d *DAK) Respond(t *testing.T, purpose string, nonce, channelBinding []byte) *pairing.LocalAttestDeviceResult {
+func (d *DAK) Respond(t *testing.T, purpose string, nonce, channelBinding []byte) *pairingproto.LocalAttestDeviceResult {
 	t.Helper()
 
-	return &pairing.LocalAttestDeviceResult{
-		ProtocolVersion:    pairing.AttestProtocolV2,
+	return &pairingproto.LocalAttestDeviceResult{
+		ProtocolVersion:    pairingproto.AttestProtocolV2,
 		Format:             "android-keystore",
 		CertificateChain:   d.Chain,
 		SecurityLevel:      "strongbox",
 		Nonce:              nonce,
 		Purpose:            purpose,
 		Signature:          d.Sign(t, purpose, nonce, channelBinding),
-		SignatureAlgorithm: pairing.AttestSignatureES256,
+		SignatureAlgorithm: pairingproto.AttestSignatureES256,
 	}
 }
 

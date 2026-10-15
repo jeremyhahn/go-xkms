@@ -225,7 +225,7 @@ The application allow-list is resolved on unattended reconnects too, so there on
 
 The GUI follows the same rule. Before any SO login, an enterprise-mode GUI runs on `DefaultPolicy()`. When the SO logs in and the HMAC verifies, the verified section replaces those defaults for the rest of the session (`auth_service.go:205-206`). A section that fails verification leaves the defaults in place.
 
-The authenticator core enforces its own lock independently of the GUI: when the stored HMAC fails to verify, user-mode CTAP commands are refused with `CTAP2_ERR_INTEGRITY_FAILURE` while `getInfo` still answers (`xkey/pkg/authenticator/authenticator.go:207`). See [Tamper Lock](../fido2/engineering.md#tamper-lock).
+The authenticator core enforces its own lock independently of the GUI: when the stored HMAC fails to verify, user-mode CTAP commands are refused with `CTAP2_ERR_INTEGRITY_FAILURE` while `getInfo` still answers (`pkg/fido2/authenticator/authenticator.go:207`). See [Tamper Lock](../fido2/engineering.md#tamper-lock).
 
 ## Authentication Gate
 

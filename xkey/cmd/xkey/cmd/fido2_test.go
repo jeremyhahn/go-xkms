@@ -26,9 +26,10 @@ import (
 
 	"golang.org/x/sys/unix"
 
-	"github.com/jeremyhahn/go-xkms/xkey/pkg/authenticator"
+	"github.com/jeremyhahn/go-xkms/pkg/fido2/authenticator"
 	"github.com/jeremyhahn/go-xkms/xkey/pkg/ipc"
 	"github.com/jeremyhahn/go-xkms/xkey/pkg/notify"
+	"github.com/jeremyhahn/go-xkms/xkey/pkg/presence"
 	"github.com/jeremyhahn/go-xkms/xkey/pkg/xhome"
 )
 
@@ -866,8 +867,8 @@ func TestFido2Device_Close_NilSubsystems_NoErrors(t *testing.T) {
 // fakeSocketHandlerNoPending creates a SocketHandler with no pending requests.
 // This is used to test the HandleTouch path where the socket handler exists
 // but has no pending user presence request.
-func fakeSocketHandlerNoPending(n notify.Notifier, logger *slog.Logger) *authenticator.SocketHandler {
-	return authenticator.NewSocketHandler(n, logger)
+func fakeSocketHandlerNoPending(n notify.Notifier, logger *slog.Logger) *presence.SocketHandler {
+	return presence.NewSocketHandler(n, logger)
 }
 
 // --- resolveFIDO2StoragePath (go-xkms#929) ---

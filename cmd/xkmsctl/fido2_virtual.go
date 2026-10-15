@@ -28,8 +28,7 @@ import (
 
 	client "github.com/jeremyhahn/go-xkms/sdk/go"
 	"github.com/jeremyhahn/go-xkms/sdk/go/fido2"
-	"github.com/jeremyhahn/go-xkms/xkey/pkg/authenticator"
-	"github.com/jeremyhahn/go-xkms/xkey/pkg/virtualdevice"
+	"github.com/jeremyhahn/go-xkms/sdk/go/fido2/virtualdevice"
 )
 
 // init overrides the production factory with one that also understands the
@@ -90,13 +89,13 @@ func virtualFIDO2HandlerFactory(config *fido2.Config) (fido2.Handler, error) {
 // newFileCredentialStorage creates a file-backed StatefulCredentialStorage using
 // the given directory as the root for file storage. This adapts the go-xkms
 // file storage backend into the authenticator's credential storage interface.
-func newFileCredentialStorage(stateDir string) (authenticator.StatefulCredentialStorage, error) {
+func newFileCredentialStorage(stateDir string) (virtualdevice.StatefulCredentialStorage, error) {
 	backend, err := client.NewFileStorageBackend(stateDir)
 	if err != nil {
 		return nil, &WrappedError{Sentinel: ErrVirtualStorageInit, Err: err}
 	}
 
-	storage, err := authenticator.NewBackendStorage(backend, "fido2/virtual/")
+	storage, err := virtualdevice.NewBackendStorage(backend, "fido2/virtual/")
 	if err != nil {
 		return nil, &WrappedError{Sentinel: ErrVirtualCredentialStorageInit, Err: err}
 	}

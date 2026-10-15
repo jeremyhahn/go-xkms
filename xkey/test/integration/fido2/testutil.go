@@ -32,11 +32,12 @@ import (
 
 	"github.com/fxamacker/cbor/v2"
 	xkms "github.com/jeremyhahn/go-xkms/sdk/go"
-	"github.com/jeremyhahn/go-xkms/xkey/pkg/authenticator"
-	"github.com/jeremyhahn/go-xkms/xkey/pkg/authenticator/keybackend"
+	"github.com/jeremyhahn/go-xkms/sdk/go/fido2/authenticator"
+	"github.com/jeremyhahn/go-xkms/sdk/go/fido2/keybackend"
+	"github.com/jeremyhahn/go-xkms/sdk/go/fido2/uhid"
 	"github.com/jeremyhahn/go-xkms/xkey/pkg/ipc"
 	"github.com/jeremyhahn/go-xkms/xkey/pkg/notify"
-	"github.com/jeremyhahn/go-xkms/xkey/pkg/uhid"
+	"github.com/jeremyhahn/go-xkms/xkey/pkg/presence"
 	"github.com/stretchr/testify/require"
 )
 
@@ -103,7 +104,7 @@ type TestDevice struct {
 	auth          *authenticator.Authenticator
 	hidHandler    *authenticator.CTAPHIDHandler
 	storage       authenticator.StatefulCredentialStorage
-	socketHandler *authenticator.SocketHandler
+	socketHandler *presence.SocketHandler
 	ipcServer     *ipc.Server
 	notifier      notify.Notifier
 	logger        *slog.Logger
@@ -197,13 +198,13 @@ func NewTestDevice(t *testing.T, cfg *TestDeviceConfig) *TestDevice {
 
 	// Create user presence handler
 	var upHandler authenticator.UserPresenceHandler
-	var socketHandler *authenticator.SocketHandler
+	var socketHandler *presence.SocketHandler
 
 	if cfg.Interactive {
 		upHandler, err = authenticator.NewInteractiveHandler()
 		require.NoError(t, err)
 	} else if cfg.RequireUserPresence {
-		socketHandler = authenticator.NewSocketHandler(notifier, logger)
+		socketHandler = presence.NewSocketHandler(notifier, logger)
 		upHandler = socketHandler
 	} else {
 		// Auto-approve for tests

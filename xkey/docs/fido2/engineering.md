@@ -4,7 +4,7 @@
 
 This file has two halves. The first documents the exported surface this
 folder actually owns: the daemon and GUI process composition. The second is a
-protocol/security reference for `xkey/pkg/authenticator` — PIN protocol wire
+protocol/security reference for `pkg/fido2/authenticator` — PIN protocol wire
 behavior, hmac-secret, credential-management enforcement and the SO/tamper
 security model — kept here rather than in
 [`virtual-authenticator/engineering.md`](../virtual-authenticator/engineering.md)
@@ -28,7 +28,7 @@ same package; neither repeats the other's tables.
 | `keyboard` | `keyboard.Keyboard` | Types stored passwords |
 | `ipcServer` | `ipc.Server` | The daemon's IPC socket |
 | `pwStore` | `xkms.StaticPasswordDAOStore` | Backs `xkey touch --password` and browser-extension autofill |
-| `socketHandler` | `authenticator.SocketHandler` | Turns an IPC `touch` into a CTAP2 presence answer |
+| `socketHandler` | `presence.SocketHandler` | Turns an IPC `touch` into a CTAP2 presence answer |
 | `notifier` | `notify.Notifier` | Tells a human a touch is pending |
 | `cdpBridge` | `cdp.Bridge` | Alternative to UHID under `--cdp` |
 
@@ -105,7 +105,7 @@ GUI's FIDO2 settings screen — no UHID involvement:
 | `StartPhoneBridge`, `StopPhoneBridge`, `GetBridgeStatus`, `HandleBridgeRequest` | The phone pairing bridge — [`phone-hsm`](../phone-hsm/engineering.md) owns this, not `fido2` |
 | `StoreAuthResponse`, `GetAuthResponses`, `GetLatestToken` | Records completed WebAuthn ceremonies for the GUI's own history view |
 
-### `xkey/pkg/virtualdevice`
+### `pkg/fido2/virtualdevice`
 
 `NativeVirtualDevice` (`native_virtual_device.go:121`), constructed by
 `NewNativeVirtualDevice`. It is the GUI's equivalent of the CLI daemon's
@@ -143,7 +143,7 @@ wire the GUI's authenticator instance to it.
   `ErrAttestProvisionVolatileStorage` rather than provisioning something
   that cannot survive a restart.
 
-## Protocol reference: `xkey/pkg/authenticator`
+## Protocol reference: `pkg/fido2/authenticator`
 
 The exported Go surface (types, storage seams, key wrapping) is
 `virtual-authenticator`'s to document. What follows is wire-level and
@@ -199,7 +199,7 @@ token's `userVerified` flag.
 `CTAP2_ERR_INVALID_SUBCOMMAND` for every backend (`cmd_clientpin.go:278`). It
 used to treat a backend's `HandlesUserVerification` capability as an implicit
 successful verification. The phone backend reports that capability
-(`pkg/phone/phone.go:459`), so any local HID client could mint a `cm`, `acfg`
+(`pkg/phone/phone.go:461`), so any local HID client could mint a `cm`, `acfg`
 or `lbw` token without anyone being verified, then enumerate or delete
 resident credentials or change configuration. The capability means the backend
 verifies the user *inside its own key operation*: the phone's biometric gates
@@ -245,7 +245,7 @@ the key backend as a whole. It asks
 `backendID`, the same routing `Sign` uses. An empty or unregistered ID answers
 false (`keybackend/composite.go:138`, `:150`), so the local presence check runs
 and no UV is claimed. The phone answers true only for its own backend type
-(`pkg/phone/phone.go:440`, `:446`). `BackendAdapter` answers from its
+(`pkg/phone/phone.go:442`, `:448`). `BackendAdapter` answers from its
 capabilities, and no go-xkms provider claims either
 (`keybackend/adapter.go:88`, `:95`). Previously the composite OR-merged both
 capabilities, so registering a phone skipped the local presence check and set
@@ -447,7 +447,7 @@ the wrapping-key borrow before the plaintext borrow is taken.
 
 ### WebAuthn Level 2 §8.3 "tpm" attestation attests with the LAK, not the IAK (go-xkms#715)
 
-`keybackend.TPM2AttestingBackend` (`xkey/pkg/authenticator/keybackend/tpm_attestation.go`)
+`keybackend.TPM2AttestingBackend` (`pkg/fido2/authenticator/keybackend/tpm_attestation.go`)
 produces the "tpm" attestation statement for a TPM2-backed credential by
 certifying the credential's key with `TPM2_Certify`. The attesting key is the
 device's Local Attestation Key (LAK), not its Initial Attestation Key (IAK):

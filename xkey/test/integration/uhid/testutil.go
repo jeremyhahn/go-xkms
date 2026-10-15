@@ -21,7 +21,7 @@ import (
 	"sync/atomic"
 	"testing"
 
-	"github.com/jeremyhahn/go-xkms/xkey/pkg/uhid"
+	"github.com/jeremyhahn/go-xkms/sdk/go/fido2/uhid"
 )
 
 // deviceCounter ensures unique device names across tests.

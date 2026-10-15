@@ -11,158 +11,126 @@
 // 2. Commercial License
 //    Contact licensing@automatethethings.com for commercial licensing options.
 
-// Package truststore manages trusted root certificate pools for attestation
-// verification. It supports both embedded well-known roots (such as Google's
-// Hardware Attestation Root CAs) and external PEM files loaded from disk.
+// Package truststore is the stack's one root store: trusted certificates
+// classified by purpose (CA, TCG EK manufacturer, Android hardware, IDevID
+// issuer, image signer), with synced certificates held in quarantine.
+//
+// TrustStore is the store contract. DAOStore persists it on a go-qrdb DAO
+// (the xkmsd store), BackendStore on a storage.Backend, FileStore in a
+// directory of PEM files with a JSON metadata index, and New builds an
+// in-memory store from configured embedded roots and PEM files. Android,
+// TCG EK and IDevID verification all take their roots from a store of this
+// package.
 package truststore
 
 import (
+	"crypto/sha256"
 	"crypto/x509"
-	_ "embed"
-	"encoding/pem"
-	"errors"
+	"encoding/hex"
 	"fmt"
-	"os"
-
-	"github.com/jeremyhahn/go-xkms/pkg/errs"
 )
 
-//go:embed google_hardware_attestation_root.pem
-var googleHardwareAttestationRootPEM []byte
+// TrustStore manages a persistent collection of trusted CA certificates.
+type TrustStore interface {
+	// AddCertificate adds a trusted certificate to the store.
+	// Returns ErrCertificateExists if the certificate is already present.
+	// Returns ErrInvalidCertificate if cert is nil.
+	AddCertificate(cert *x509.Certificate) error
 
-// WellKnownRoot identifies a well-known embedded root certificate.
-type WellKnownRoot string
+	// AddCertificateWithOptions adds a certificate with explicit metadata options.
+	AddCertificateWithOptions(cert *x509.Certificate, opts *AddCertificateOptions) error
 
-const (
-	// GoogleHardwareAttestation is Google's Hardware Attestation Root CA,
-	// used to anchor Android Key Attestation certificate chains.
-	GoogleHardwareAttestation WellKnownRoot = "google-hardware-attestation"
-)
+	// AddPEM parses and adds all certificates from PEM-encoded data.
+	// Returns the number of certificates added and any error encountered.
+	// Certificates that already exist are silently skipped.
+	AddPEM(pemData []byte) (int, error)
 
-// embeddedRootMapping provides O(1) constant-time lookup for embedded root certificates.
-var embeddedRootMapping = map[WellKnownRoot][]byte{
-	GoogleHardwareAttestation: googleHardwareAttestationRootPEM,
+	// ImportPEM parses and adds all certificates from PEM-encoded data,
+	// filing each under opts (a nil opts auto-classifies, as AddPEM does).
+	// Certificates that already exist are counted as skipped.
+	ImportPEM(pemData []byte, opts *AddCertificateOptions) (ImportResult, error)
+
+	// RemoveCertificate removes a certificate by its SHA-256 fingerprint (hex-encoded).
+	// Returns ErrCertificateNotFound if no certificate matches.
+	RemoveCertificate(fingerprint string) error
+
+	// Certificates returns all trusted certificates in the store.
+	Certificates() ([]*x509.Certificate, error)
+
+	// CertificatesByPurpose returns all certificates matching the given purpose.
+	CertificatesByPurpose(purpose CertPurpose) ([]*x509.Certificate, error)
+
+	// CertPool returns an x509.CertPool containing all trusted certificates.
+	// The pool is cached and invalidated on mutations.
+	CertPool() (*x509.CertPool, error)
+
+	// Contains checks if a certificate with the given fingerprint is trusted.
+	Contains(fingerprint string) (bool, error)
+
+	// Count returns the number of trusted certificates.
+	Count() (int, error)
+
+	// Metadata returns the metadata for a certificate by fingerprint.
+	Metadata(fingerprint string) (*CertMetadata, error)
+
+	// SetPurpose updates the purpose classification for a certificate.
+	SetPurpose(fingerprint string, purpose CertPurpose) error
+
+	// SetSource updates the source information for a certificate.
+	SetSource(fingerprint string, source string) error
+
+	// SetSystemInstalled marks whether the certificate is installed in the OS trust store.
+	SetSystemInstalled(fingerprint string, installed bool) error
+
+	// SetTags updates the tags for a certificate.
+	SetTags(fingerprint string, tags []string) error
+
+	// Close releases any resources held by the trust store.
+	// Reload discards the in-memory cache and re-reads it from the backing
+	// store, so certificates added or removed by another process become
+	// visible.
+	//
+	// The cache is REPLACED, not merged. A certificate another process removed
+	// must disappear here too: merging would leave the store trusting an anchor
+	// the operator revoked, which is a worse failure than not seeing a new one.
+	//
+	// Returns ErrStoreClosed if the store has been closed.
+	Reload() error
+
+	Close() error
 }
 
-// Typed errors for the truststore package.
+// Compile-time assertions that both stores satisfy TrustStore.
+//
+// Asserted because the interface is small enough that an implementer can drift
+// out of it silently: a method added here is otherwise only caught where a
+// concrete store is assigned to the interface, which may be in another package
+// or in no non-test code at all.
 var (
-	ErrInvalidPEM          = errors.New("truststore: invalid PEM data")
-	ErrCertificateParse    = errors.New("truststore: failed to parse certificate")
-	ErrFileNotFound        = errors.New("truststore: file not found")
-	ErrUnknownEmbeddedRoot = errors.New("truststore: unknown embedded root")
-	ErrNilConfig           = errors.New("truststore: nil configuration")
-	ErrEmptyTrustStore     = errors.New("truststore: no root certificates loaded")
+	_ TrustStore = (*BackendStore)(nil)
+	_ TrustStore = (*FileStore)(nil)
 )
 
-// Config holds the configuration for the trust store.
-type Config struct {
-	// EmbeddedRoots lists well-known embedded root certificate identifiers to include.
-	EmbeddedRoots []string `yaml:"embedded_roots" json:"embedded_roots"`
-
-	// ExternalRootPaths lists file paths to additional PEM-encoded root certificates.
-	ExternalRootPaths []string `yaml:"external_root_paths" json:"external_root_paths"`
+// Fingerprint computes the SHA-256 fingerprint of a certificate, returned
+// as a lowercase hex-encoded string.
+func Fingerprint(cert *x509.Certificate) string {
+	hash := sha256.Sum256(cert.Raw)
+	return hex.EncodeToString(hash[:])
 }
 
-// TrustStore manages a set of trusted root certificates for attestation verification.
-type TrustStore struct {
-	roots []*x509.Certificate
+// algorithmNames maps x509.PublicKeyAlgorithm values to human-readable strings.
+var algorithmNames = map[x509.PublicKeyAlgorithm]string{
+	x509.UnknownPublicKeyAlgorithm: "Unknown",
+	x509.RSA:                       "RSA",
+	x509.DSA:                       "DSA",
+	x509.ECDSA:                     "ECDSA",
+	x509.Ed25519:                   "Ed25519",
 }
 
-// New creates a new TrustStore from the given configuration. It loads embedded
-// roots and external root certificate files, merging both into a single pool.
-func New(config *Config) (*TrustStore, error) {
-	if config == nil {
-		return nil, ErrNilConfig
+// algorithmName returns a human-readable name for the given public key algorithm.
+func algorithmName(algo x509.PublicKeyAlgorithm) string {
+	if name, ok := algorithmNames[algo]; ok {
+		return name
 	}
-
-	var roots []*x509.Certificate
-
-	// Load embedded roots
-	for _, name := range config.EmbeddedRoots {
-		pemData, ok := embeddedRootMapping[WellKnownRoot(name)]
-		if !ok {
-			return nil, &errs.Detail{Err: ErrUnknownEmbeddedRoot, Detail: name}
-		}
-		certs, err := parsePEMCertificates(pemData)
-		if err != nil {
-			return nil, &errs.Wrapped{Msg: fmt.Sprintf("truststore: failed to parse embedded root %q", name), Err: err}
-		}
-		roots = append(roots, certs...)
-	}
-
-	// Load external roots
-	for _, path := range config.ExternalRootPaths {
-		pemData, err := os.ReadFile(path)
-		if err != nil {
-			if os.IsNotExist(err) {
-				return nil, &errs.Detail{Err: ErrFileNotFound, Detail: path}
-			}
-			return nil, &errs.Wrapped{Msg: fmt.Sprintf("truststore: failed to read %q", path), Err: err}
-		}
-		certs, err := parsePEMCertificates(pemData)
-		if err != nil {
-			return nil, &errs.Wrapped{Msg: fmt.Sprintf("truststore: failed to parse %q", path), Err: err}
-		}
-		roots = append(roots, certs...)
-	}
-
-	return &TrustStore{roots: roots}, nil
-}
-
-// Roots returns all trusted root certificates. The returned slice is a copy;
-// modifying it does not affect the TrustStore.
-func (ts *TrustStore) Roots() []*x509.Certificate {
-	result := make([]*x509.Certificate, len(ts.roots))
-	copy(result, ts.roots)
-	return result
-}
-
-// CertPool returns an x509.CertPool containing all trusted roots.
-// This is suitable for use with x509.VerifyOptions.
-func (ts *TrustStore) CertPool() *x509.CertPool {
-	pool := x509.NewCertPool()
-	for _, cert := range ts.roots {
-		pool.AddCert(cert)
-	}
-	return pool
-}
-
-// Count returns the number of root certificates in the trust store.
-func (ts *TrustStore) Count() int {
-	return len(ts.roots)
-}
-
-// GoogleHardwareAttestationRoots parses and returns the embedded Google Hardware
-// Attestation Root CA certificates. This is a convenience method for direct access
-// without constructing a full TrustStore.
-func GoogleHardwareAttestationRoots() ([]*x509.Certificate, error) {
-	return parsePEMCertificates(googleHardwareAttestationRootPEM)
-}
-
-// parsePEMCertificates parses all PEM-encoded certificates from the given data.
-func parsePEMCertificates(pemData []byte) ([]*x509.Certificate, error) {
-	var certs []*x509.Certificate
-	rest := pemData
-
-	for {
-		var block *pem.Block
-		block, rest = pem.Decode(rest)
-		if block == nil {
-			break
-		}
-		if block.Type != "CERTIFICATE" {
-			continue
-		}
-		cert, err := x509.ParseCertificate(block.Bytes)
-		if err != nil {
-			return nil, &errs.Detail{Err: ErrCertificateParse, Detail: fmt.Sprintf("%v", err)}
-		}
-		certs = append(certs, cert)
-	}
-
-	if len(certs) == 0 {
-		return nil, ErrInvalidPEM
-	}
-
-	return certs, nil
+	return fmt.Sprintf("Unknown(%d)", int(algo))
 }

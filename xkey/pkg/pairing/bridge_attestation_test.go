@@ -27,6 +27,7 @@ import (
 	"time"
 
 	gotpm2 "github.com/google/go-tpm/tpm2"
+	"github.com/jeremyhahn/go-xkms/pkg/pairingproto"
 	xkms "github.com/jeremyhahn/go-xkms/sdk/go"
 	"github.com/jeremyhahn/go-xkms/xkey/pkg/audit"
 	"github.com/stretchr/testify/assert"
@@ -165,19 +166,19 @@ func TestPCRSelection_ValidIndices(t *testing.T) {
 func TestPCRSelection_Empty(t *testing.T) {
 	pcrs, err := pcrSelection(nil)
 	assert.Nil(t, pcrs)
-	assert.ErrorIs(t, err, ErrBridgeInvalidParams)
+	assert.ErrorIs(t, err, pairingproto.ErrBridgeInvalidParams)
 }
 
 func TestPCRSelection_NegativeIndex(t *testing.T) {
 	pcrs, err := pcrSelection([]int{-1})
 	assert.Nil(t, pcrs)
-	assert.ErrorIs(t, err, ErrBridgeInvalidParams)
+	assert.ErrorIs(t, err, pairingproto.ErrBridgeInvalidParams)
 }
 
 func TestPCRSelection_IndexTooLarge(t *testing.T) {
 	pcrs, err := pcrSelection([]int{maxPCRIndex + 1})
 	assert.Nil(t, pcrs)
-	assert.ErrorIs(t, err, ErrBridgeInvalidParams)
+	assert.ErrorIs(t, err, pairingproto.ErrBridgeInvalidParams)
 }
 
 func TestPCRSelection_BoundaryIndex(t *testing.T) {
@@ -207,7 +208,7 @@ func TestPCRBankName_KnownAlgorithms(t *testing.T) {
 
 func TestPCRBankName_Unsupported(t *testing.T) {
 	_, err := pcrBankName(gotpm2.TPMAlgNull)
-	assert.ErrorIs(t, err, ErrUnsupportedAlgorithm)
+	assert.ErrorIs(t, err, pairingproto.ErrUnsupportedAlgorithm)
 }
 
 // --- pcrValues ---
@@ -245,14 +246,14 @@ func TestPCRValues_BankNotFound(t *testing.T) {
 	require.NoError(t, err)
 
 	_, err = pcrValues(encoded, "sha384")
-	assert.ErrorIs(t, err, ErrPCRBankUnavailable)
-	assert.ErrorIs(t, err, ErrTPMOperationFailed)
+	assert.ErrorIs(t, err, pairingproto.ErrPCRBankUnavailable)
+	assert.ErrorIs(t, err, pairingproto.ErrTPMOperationFailed)
 }
 
 func TestPCRValues_UndecodableInput(t *testing.T) {
 	_, err := pcrValues([]byte("not gob data"), "sha256")
 	assert.Error(t, err)
-	assert.ErrorIs(t, err, ErrTPMOperationFailed)
+	assert.ErrorIs(t, err, pairingproto.ErrTPMOperationFailed)
 }
 
 // --- handleStoreEnrollmentCerts ---
@@ -265,7 +266,7 @@ func TestHandleStoreEnrollmentCerts_Success(t *testing.T) {
 	idevid := selfSignedTestCert(t, "idevid")
 	chainCert := selfSignedTestCert(t, "intermediate")
 
-	params, err := json.Marshal(RemoteStoreEnrollmentCertsParams{
+	params, err := json.Marshal(pairingproto.RemoteStoreEnrollmentCertsParams{
 		IAKCert:    iak.Raw,
 		IDevIDCert: idevid.Raw,
 		Chain:      [][]byte{chainCert.Raw},
@@ -275,7 +276,7 @@ func TestHandleStoreEnrollmentCerts_Success(t *testing.T) {
 	result, err := b.handleStoreEnrollmentCerts(context.Background(), params)
 	require.NoError(t, err)
 
-	res, ok := result.(*RemoteStoreEnrollmentCertsResult)
+	res, ok := result.(*pairingproto.RemoteStoreEnrollmentCertsResult)
 	require.True(t, ok)
 	assert.True(t, res.Stored)
 	assert.Equal(t, certFingerprint(iak), res.IAKCertFingerprint)
@@ -288,7 +289,7 @@ func TestHandleStoreEnrollmentCerts_InvalidParams(t *testing.T) {
 	b := newTestBridgeWithTPM(t, &mockTPMEnroller{})
 
 	_, err := b.handleStoreEnrollmentCerts(context.Background(), json.RawMessage(`{not-json`))
-	assert.ErrorIs(t, err, ErrBridgeInvalidParams)
+	assert.ErrorIs(t, err, pairingproto.ErrBridgeInvalidParams)
 }
 
 func TestHandleStoreEnrollmentCerts_BackendDenied(t *testing.T) {
@@ -300,7 +301,7 @@ func TestHandleStoreEnrollmentCerts_BackendDenied(t *testing.T) {
 	})
 	require.NoError(t, err)
 
-	params, err := json.Marshal(RemoteStoreEnrollmentCertsParams{
+	params, err := json.Marshal(pairingproto.RemoteStoreEnrollmentCertsParams{
 		IAKCert:    []byte{0x01},
 		IDevIDCert: []byte{0x01},
 	})
@@ -314,14 +315,14 @@ func TestHandleStoreEnrollmentCerts_BackendDenied(t *testing.T) {
 func TestHandleStoreEnrollmentCerts_TPMNotConfigured(t *testing.T) {
 	b := newTestBridgeWithTPM(t, nil)
 
-	params, err := json.Marshal(RemoteStoreEnrollmentCertsParams{
+	params, err := json.Marshal(pairingproto.RemoteStoreEnrollmentCertsParams{
 		IAKCert:    []byte{0x01},
 		IDevIDCert: []byte{0x01},
 	})
 	require.NoError(t, err)
 
 	_, err = b.handleStoreEnrollmentCerts(context.Background(), params)
-	assert.ErrorIs(t, err, ErrTPMNotConfigured)
+	assert.ErrorIs(t, err, pairingproto.ErrTPMNotConfigured)
 }
 
 func TestHandleStoreEnrollmentCerts_MissingCerts(t *testing.T) {
@@ -329,11 +330,11 @@ func TestHandleStoreEnrollmentCerts_MissingCerts(t *testing.T) {
 
 	tests := []struct {
 		name   string
-		params RemoteStoreEnrollmentCertsParams
+		params pairingproto.RemoteStoreEnrollmentCertsParams
 	}{
-		{"missing IAK cert", RemoteStoreEnrollmentCertsParams{IDevIDCert: []byte{0x01}}},
-		{"missing IDevID cert", RemoteStoreEnrollmentCertsParams{IAKCert: []byte{0x01}}},
-		{"both missing", RemoteStoreEnrollmentCertsParams{}},
+		{"missing IAK cert", pairingproto.RemoteStoreEnrollmentCertsParams{IDevIDCert: []byte{0x01}}},
+		{"missing IDevID cert", pairingproto.RemoteStoreEnrollmentCertsParams{IAKCert: []byte{0x01}}},
+		{"both missing", pairingproto.RemoteStoreEnrollmentCertsParams{}},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -341,7 +342,7 @@ func TestHandleStoreEnrollmentCerts_MissingCerts(t *testing.T) {
 			require.NoError(t, err)
 
 			_, err = b.handleStoreEnrollmentCerts(context.Background(), raw)
-			assert.ErrorIs(t, err, ErrBridgeInvalidParams)
+			assert.ErrorIs(t, err, pairingproto.ErrBridgeInvalidParams)
 		})
 	}
 }
@@ -350,28 +351,28 @@ func TestHandleStoreEnrollmentCerts_IAKCertDoesNotParse(t *testing.T) {
 	b := newTestBridgeWithTPM(t, &mockTPMEnroller{})
 	idevid := selfSignedTestCert(t, "idevid")
 
-	params, err := json.Marshal(RemoteStoreEnrollmentCertsParams{
+	params, err := json.Marshal(pairingproto.RemoteStoreEnrollmentCertsParams{
 		IAKCert:    []byte("not a certificate"),
 		IDevIDCert: idevid.Raw,
 	})
 	require.NoError(t, err)
 
 	_, err = b.handleStoreEnrollmentCerts(context.Background(), params)
-	assert.ErrorIs(t, err, ErrInvalidCertificate)
+	assert.ErrorIs(t, err, pairingproto.ErrInvalidCertificate)
 }
 
 func TestHandleStoreEnrollmentCerts_IDevIDCertDoesNotParse(t *testing.T) {
 	b := newTestBridgeWithTPM(t, &mockTPMEnroller{})
 	iak := selfSignedTestCert(t, "iak")
 
-	params, err := json.Marshal(RemoteStoreEnrollmentCertsParams{
+	params, err := json.Marshal(pairingproto.RemoteStoreEnrollmentCertsParams{
 		IAKCert:    iak.Raw,
 		IDevIDCert: []byte("not a certificate"),
 	})
 	require.NoError(t, err)
 
 	_, err = b.handleStoreEnrollmentCerts(context.Background(), params)
-	assert.ErrorIs(t, err, ErrInvalidCertificate)
+	assert.ErrorIs(t, err, pairingproto.ErrInvalidCertificate)
 }
 
 func TestHandleStoreEnrollmentCerts_ChainCertDoesNotParse(t *testing.T) {
@@ -379,7 +380,7 @@ func TestHandleStoreEnrollmentCerts_ChainCertDoesNotParse(t *testing.T) {
 	iak := selfSignedTestCert(t, "iak")
 	idevid := selfSignedTestCert(t, "idevid")
 
-	params, err := json.Marshal(RemoteStoreEnrollmentCertsParams{
+	params, err := json.Marshal(pairingproto.RemoteStoreEnrollmentCertsParams{
 		IAKCert:    iak.Raw,
 		IDevIDCert: idevid.Raw,
 		Chain:      [][]byte{[]byte("garbage")},
@@ -387,7 +388,7 @@ func TestHandleStoreEnrollmentCerts_ChainCertDoesNotParse(t *testing.T) {
 	require.NoError(t, err)
 
 	_, err = b.handleStoreEnrollmentCerts(context.Background(), params)
-	assert.ErrorIs(t, err, ErrInvalidCertificate)
+	assert.ErrorIs(t, err, pairingproto.ErrInvalidCertificate)
 }
 
 func TestHandleStoreEnrollmentCerts_ProvisionIAKFails(t *testing.T) {
@@ -396,14 +397,14 @@ func TestHandleStoreEnrollmentCerts_ProvisionIAKFails(t *testing.T) {
 	iak := selfSignedTestCert(t, "iak")
 	idevid := selfSignedTestCert(t, "idevid")
 
-	params, err := json.Marshal(RemoteStoreEnrollmentCertsParams{
+	params, err := json.Marshal(pairingproto.RemoteStoreEnrollmentCertsParams{
 		IAKCert:    iak.Raw,
 		IDevIDCert: idevid.Raw,
 	})
 	require.NoError(t, err)
 
 	_, err = b.handleStoreEnrollmentCerts(context.Background(), params)
-	assert.ErrorIs(t, err, ErrTPMOperationFailed)
+	assert.ErrorIs(t, err, pairingproto.ErrTPMOperationFailed)
 	assert.Nil(t, tpm.provisionedIDevID, "IDevID must not be provisioned after an IAK failure")
 }
 
@@ -413,14 +414,14 @@ func TestHandleStoreEnrollmentCerts_ProvisionIDevIDFails(t *testing.T) {
 	iak := selfSignedTestCert(t, "iak")
 	idevid := selfSignedTestCert(t, "idevid")
 
-	params, err := json.Marshal(RemoteStoreEnrollmentCertsParams{
+	params, err := json.Marshal(pairingproto.RemoteStoreEnrollmentCertsParams{
 		IAKCert:    iak.Raw,
 		IDevIDCert: idevid.Raw,
 	})
 	require.NoError(t, err)
 
 	_, err = b.handleStoreEnrollmentCerts(context.Background(), params)
-	assert.ErrorIs(t, err, ErrTPMOperationFailed)
+	assert.ErrorIs(t, err, pairingproto.ErrTPMOperationFailed)
 	assert.NotNil(t, tpm.provisionedIAK, "the IAK cert was provisioned before the IDevID failure")
 }
 
@@ -428,19 +429,19 @@ func TestHandleStoreEnrollmentCerts_ProvisionIDevIDFails(t *testing.T) {
 
 func TestPublicArea_NilAttrs(t *testing.T) {
 	_, err := publicArea(nil)
-	assert.ErrorIs(t, err, ErrTPMKeyNotProvisioned)
-	assert.ErrorIs(t, err, ErrTPMOperationFailed)
+	assert.ErrorIs(t, err, pairingproto.ErrTPMKeyNotProvisioned)
+	assert.ErrorIs(t, err, pairingproto.ErrTPMOperationFailed)
 }
 
 func TestPublicArea_NilTPMAttributes(t *testing.T) {
 	_, err := publicArea(&xkms.KeyAttributes{})
-	assert.ErrorIs(t, err, ErrTPMKeyNotProvisioned)
+	assert.ErrorIs(t, err, pairingproto.ErrTPMKeyNotProvisioned)
 }
 
 func TestPublicArea_EmptyBPublic(t *testing.T) {
 	attrs := &xkms.KeyAttributes{TPMAttributes: &xkms.TPMAttributes{}}
 	_, err := publicArea(attrs)
-	assert.ErrorIs(t, err, ErrTPMKeyNotProvisioned)
+	assert.ErrorIs(t, err, pairingproto.ErrTPMKeyNotProvisioned)
 }
 
 func TestPublicArea_Success(t *testing.T) {
@@ -471,27 +472,27 @@ func validIDevIDAttrs() *xkms.KeyAttributes {
 func TestBuildTCGCSRIDevID_EKCertificateError(t *testing.T) {
 	tpm := &mockTPMEnroller{ekCertErr: errors.New("ek unreadable")}
 	_, err := buildTCGCSRIDevID(tpm)
-	assert.ErrorIs(t, err, ErrTPMOperationFailed)
+	assert.ErrorIs(t, err, pairingproto.ErrTPMOperationFailed)
 }
 
 func TestBuildTCGCSRIDevID_EKCertificateMissing(t *testing.T) {
 	tpm := &mockTPMEnroller{ekCert: nil}
 	_, err := buildTCGCSRIDevID(tpm)
-	assert.ErrorIs(t, err, ErrEKCertificateMissing)
+	assert.ErrorIs(t, err, pairingproto.ErrEKCertificateMissing)
 }
 
 func TestBuildTCGCSRIDevID_IAKAttributesError(t *testing.T) {
 	ek := selfSignedTestCert(t, "ek")
 	tpm := &mockTPMEnroller{ekCert: ek, iakAttrsErr: errors.New("iak unreadable")}
 	_, err := buildTCGCSRIDevID(tpm)
-	assert.ErrorIs(t, err, ErrTPMOperationFailed)
+	assert.ErrorIs(t, err, pairingproto.ErrTPMOperationFailed)
 }
 
 func TestBuildTCGCSRIDevID_IDevIDAttributesError(t *testing.T) {
 	ek := selfSignedTestCert(t, "ek")
 	tpm := &mockTPMEnroller{ekCert: ek, iakAttrs: validIAKAttrs(), idevidAttrsErr: errors.New("idevid unreadable")}
 	_, err := buildTCGCSRIDevID(tpm)
-	assert.ErrorIs(t, err, ErrTPMOperationFailed)
+	assert.ErrorIs(t, err, pairingproto.ErrTPMOperationFailed)
 }
 
 func TestBuildTCGCSRIDevID_IAKPublicAreaError(t *testing.T) {
@@ -502,7 +503,7 @@ func TestBuildTCGCSRIDevID_IAKPublicAreaError(t *testing.T) {
 		idevidAttrs: validIDevIDAttrs(),
 	}
 	_, err := buildTCGCSRIDevID(tpm)
-	assert.ErrorIs(t, err, ErrTPMKeyNotProvisioned)
+	assert.ErrorIs(t, err, pairingproto.ErrTPMKeyNotProvisioned)
 }
 
 func TestBuildTCGCSRIDevID_IDevIDPublicAreaError(t *testing.T) {
@@ -513,7 +514,7 @@ func TestBuildTCGCSRIDevID_IDevIDPublicAreaError(t *testing.T) {
 		idevidAttrs: &xkms.KeyAttributes{},
 	}
 	_, err := buildTCGCSRIDevID(tpm)
-	assert.ErrorIs(t, err, ErrTPMKeyNotProvisioned)
+	assert.ErrorIs(t, err, pairingproto.ErrTPMKeyNotProvisioned)
 }
 
 func TestBuildTCGCSRIDevID_CreateCSRError(t *testing.T) {
@@ -525,7 +526,7 @@ func TestBuildTCGCSRIDevID_CreateCSRError(t *testing.T) {
 		csrErr:      errors.New("csr build failed"),
 	}
 	_, err := buildTCGCSRIDevID(tpm)
-	assert.ErrorIs(t, err, ErrTPMOperationFailed)
+	assert.ErrorIs(t, err, pairingproto.ErrTPMOperationFailed)
 }
 
 func TestBuildTCGCSRIDevID_FixedPropertiesError(t *testing.T) {
@@ -537,7 +538,7 @@ func TestBuildTCGCSRIDevID_FixedPropertiesError(t *testing.T) {
 		fixedPropsErr: errors.New("properties unreadable"),
 	}
 	_, err := buildTCGCSRIDevID(tpm)
-	assert.ErrorIs(t, err, ErrTPMOperationFailed)
+	assert.ErrorIs(t, err, pairingproto.ErrTPMOperationFailed)
 }
 
 func TestBuildTCGCSRIDevID_Success(t *testing.T) {
@@ -583,12 +584,12 @@ func TestHandleGetTCGCSRIDevID_Success(t *testing.T) {
 	}
 	b := newTestBridgeWithTPM(t, tpm)
 
-	params, err := json.Marshal(RemoteGetTCGCSRIDevIDParams{})
+	params, err := json.Marshal(pairingproto.RemoteGetTCGCSRIDevIDParams{})
 	require.NoError(t, err)
 
 	result, err := b.handleGetTCGCSRIDevID(context.Background(), params)
 	require.NoError(t, err)
-	res, ok := result.(*RemoteGetTCGCSRIDevIDResult)
+	res, ok := result.(*pairingproto.RemoteGetTCGCSRIDevIDResult)
 	require.True(t, ok)
 	assert.NotEmpty(t, res.CSR)
 }
@@ -596,7 +597,7 @@ func TestHandleGetTCGCSRIDevID_Success(t *testing.T) {
 func TestHandleGetTCGCSRIDevID_InvalidParams(t *testing.T) {
 	b := newTestBridgeWithTPM(t, &mockTPMEnroller{})
 	_, err := b.handleGetTCGCSRIDevID(context.Background(), json.RawMessage(`{not-json`))
-	assert.ErrorIs(t, err, ErrBridgeInvalidParams)
+	assert.ErrorIs(t, err, pairingproto.ErrBridgeInvalidParams)
 }
 
 func TestHandleGetTCGCSRIDevID_BackendDenied(t *testing.T) {
@@ -607,7 +608,7 @@ func TestHandleGetTCGCSRIDevID_BackendDenied(t *testing.T) {
 	})
 	require.NoError(t, err)
 
-	params, err := json.Marshal(RemoteGetTCGCSRIDevIDParams{})
+	params, err := json.Marshal(pairingproto.RemoteGetTCGCSRIDevIDParams{})
 	require.NoError(t, err)
 
 	_, err = b.handleGetTCGCSRIDevID(context.Background(), params)
@@ -616,21 +617,21 @@ func TestHandleGetTCGCSRIDevID_BackendDenied(t *testing.T) {
 
 func TestHandleGetTCGCSRIDevID_TPMNotConfigured(t *testing.T) {
 	b := newTestBridgeWithTPM(t, nil)
-	params, err := json.Marshal(RemoteGetTCGCSRIDevIDParams{})
+	params, err := json.Marshal(pairingproto.RemoteGetTCGCSRIDevIDParams{})
 	require.NoError(t, err)
 
 	_, err = b.handleGetTCGCSRIDevID(context.Background(), params)
-	assert.ErrorIs(t, err, ErrTPMNotConfigured)
+	assert.ErrorIs(t, err, pairingproto.ErrTPMNotConfigured)
 }
 
 func TestHandleGetTCGCSRIDevID_BuildFails(t *testing.T) {
 	tpm := &mockTPMEnroller{ekCertErr: errors.New("ek unreadable")}
 	b := newTestBridgeWithTPM(t, tpm)
-	params, err := json.Marshal(RemoteGetTCGCSRIDevIDParams{})
+	params, err := json.Marshal(pairingproto.RemoteGetTCGCSRIDevIDParams{})
 	require.NoError(t, err)
 
 	_, err = b.handleGetTCGCSRIDevID(context.Background(), params)
-	assert.ErrorIs(t, err, ErrTPMOperationFailed)
+	assert.ErrorIs(t, err, pairingproto.ErrTPMOperationFailed)
 }
 
 // --- handleActivateCredential ---
@@ -639,7 +640,7 @@ func TestHandleActivateCredential_Success(t *testing.T) {
 	tpm := &mockTPMEnroller{activateSecret: []byte("recovered-secret")}
 	b := newTestBridgeWithTPM(t, tpm)
 
-	params, err := json.Marshal(RemoteActivateCredentialParams{
+	params, err := json.Marshal(pairingproto.RemoteActivateCredentialParams{
 		CredentialBlob:  []byte{0x01},
 		EncryptedSecret: []byte{0x02},
 	})
@@ -647,7 +648,7 @@ func TestHandleActivateCredential_Success(t *testing.T) {
 
 	result, err := b.handleActivateCredential(context.Background(), params)
 	require.NoError(t, err)
-	res, ok := result.(*RemoteActivateCredentialResult)
+	res, ok := result.(*pairingproto.RemoteActivateCredentialResult)
 	require.True(t, ok)
 	assert.Equal(t, []byte("recovered-secret"), res.DecryptedSecret)
 }
@@ -656,12 +657,12 @@ func TestHandleActivateCredential_SecretWipedAfterEncoding(t *testing.T) {
 	tpmSecret := []byte("recovered-secret")
 	b := newTestBridgeWithTPM(t, &mockTPMEnroller{activateSecret: tpmSecret})
 
-	resp := b.HandleRequest(context.Background(), newRemoteRequest(MethodRemoteActivateCredential, RemoteActivateCredentialParams{
+	resp := b.HandleRequest(context.Background(), newRemoteRequest(pairingproto.MethodRemoteActivateCredential, pairingproto.RemoteActivateCredentialParams{
 		CredentialBlob:  []byte{0x01},
 		EncryptedSecret: []byte{0x02},
 	}))
 
-	result := decodeResult[RemoteActivateCredentialResult](t, resp)
+	result := decodeResult[pairingproto.RemoteActivateCredentialResult](t, resp)
 	assert.Equal(t, []byte("recovered-secret"), result.DecryptedSecret)
 	assert.Equal(t, make([]byte, len(tpmSecret)), tpmSecret)
 }
@@ -675,7 +676,7 @@ func TestHandleActivateCredential_AuditFailureWipesSecret(t *testing.T) {
 	})
 	require.NoError(t, err)
 
-	params, err := json.Marshal(RemoteActivateCredentialParams{
+	params, err := json.Marshal(pairingproto.RemoteActivateCredentialParams{
 		CredentialBlob:  []byte{0x01},
 		EncryptedSecret: []byte{0x02},
 	})
@@ -689,13 +690,13 @@ func TestHandleActivateCredential_AuditFailureWipesSecret(t *testing.T) {
 func TestHandleActivateCredential_InvalidParams(t *testing.T) {
 	b := newTestBridgeWithTPM(t, &mockTPMEnroller{})
 	_, err := b.handleActivateCredential(context.Background(), json.RawMessage(`{not-json`))
-	assert.ErrorIs(t, err, ErrBridgeInvalidParams)
+	assert.ErrorIs(t, err, pairingproto.ErrBridgeInvalidParams)
 }
 
 func TestHandleActivateCredential_MissingFields(t *testing.T) {
 	b := newTestBridgeWithTPM(t, &mockTPMEnroller{})
 
-	tests := []RemoteActivateCredentialParams{
+	tests := []pairingproto.RemoteActivateCredentialParams{
 		{EncryptedSecret: []byte{0x01}},
 		{CredentialBlob: []byte{0x01}},
 		{},
@@ -704,34 +705,34 @@ func TestHandleActivateCredential_MissingFields(t *testing.T) {
 		params, err := json.Marshal(tt)
 		require.NoError(t, err)
 		_, err = b.handleActivateCredential(context.Background(), params)
-		assert.ErrorIs(t, err, ErrBridgeInvalidParams)
+		assert.ErrorIs(t, err, pairingproto.ErrBridgeInvalidParams)
 	}
 }
 
 func TestHandleActivateCredential_TPMNotConfigured(t *testing.T) {
 	b := newTestBridgeWithTPM(t, nil)
-	params, err := json.Marshal(RemoteActivateCredentialParams{
+	params, err := json.Marshal(pairingproto.RemoteActivateCredentialParams{
 		CredentialBlob:  []byte{0x01},
 		EncryptedSecret: []byte{0x02},
 	})
 	require.NoError(t, err)
 
 	_, err = b.handleActivateCredential(context.Background(), params)
-	assert.ErrorIs(t, err, ErrTPMNotConfigured)
+	assert.ErrorIs(t, err, pairingproto.ErrTPMNotConfigured)
 }
 
 func TestHandleActivateCredential_ActivateFails(t *testing.T) {
 	tpm := &mockTPMEnroller{activateErr: errors.New("bad blob")}
 	b := newTestBridgeWithTPM(t, tpm)
 
-	params, err := json.Marshal(RemoteActivateCredentialParams{
+	params, err := json.Marshal(pairingproto.RemoteActivateCredentialParams{
 		CredentialBlob:  []byte{0x01},
 		EncryptedSecret: []byte{0x02},
 	})
 	require.NoError(t, err)
 
 	_, err = b.handleActivateCredential(context.Background(), params)
-	assert.ErrorIs(t, err, ErrTPMOperationFailed)
+	assert.ErrorIs(t, err, pairingproto.ErrTPMOperationFailed)
 }
 
 // --- handleGetAttestationQuote ---
@@ -762,7 +763,7 @@ func TestHandleGetAttestationQuote_Success(t *testing.T) {
 	}
 	b := newTestBridgeWithTPM(t, tpm)
 
-	params, err := json.Marshal(RemoteGetAttestationQuoteParams{
+	params, err := json.Marshal(pairingproto.RemoteGetAttestationQuoteParams{
 		Nonce:      []byte("nonce"),
 		PCRIndices: []int{0, 7},
 	})
@@ -770,7 +771,7 @@ func TestHandleGetAttestationQuote_Success(t *testing.T) {
 
 	result, err := b.handleGetAttestationQuote(context.Background(), params)
 	require.NoError(t, err)
-	res, ok := result.(*RemoteGetAttestationQuoteResult)
+	res, ok := result.(*pairingproto.RemoteGetAttestationQuoteResult)
 	require.True(t, ok)
 	assert.Equal(t, "sha256", res.PCRBank)
 	assert.Equal(t, map[int][]byte{0: {0x01}}, res.PCRValues)
@@ -779,7 +780,7 @@ func TestHandleGetAttestationQuote_Success(t *testing.T) {
 func TestHandleGetAttestationQuote_InvalidParams(t *testing.T) {
 	b := newTestBridgeWithTPM(t, &mockTPMEnroller{})
 	_, err := b.handleGetAttestationQuote(context.Background(), json.RawMessage(`{not-json`))
-	assert.ErrorIs(t, err, ErrBridgeInvalidParams)
+	assert.ErrorIs(t, err, pairingproto.ErrBridgeInvalidParams)
 }
 
 func TestHandleGetAttestationQuote_BackendDenied(t *testing.T) {
@@ -790,7 +791,7 @@ func TestHandleGetAttestationQuote_BackendDenied(t *testing.T) {
 	})
 	require.NoError(t, err)
 
-	params, err := json.Marshal(RemoteGetAttestationQuoteParams{Nonce: []byte("n"), PCRIndices: []int{0}})
+	params, err := json.Marshal(pairingproto.RemoteGetAttestationQuoteParams{Nonce: []byte("n"), PCRIndices: []int{0}})
 	require.NoError(t, err)
 
 	_, err = b.handleGetAttestationQuote(context.Background(), params)
@@ -799,49 +800,49 @@ func TestHandleGetAttestationQuote_BackendDenied(t *testing.T) {
 
 func TestHandleGetAttestationQuote_TPMNotConfigured(t *testing.T) {
 	b := newTestBridgeWithTPM(t, nil)
-	params, err := json.Marshal(RemoteGetAttestationQuoteParams{Nonce: []byte("n"), PCRIndices: []int{0}})
+	params, err := json.Marshal(pairingproto.RemoteGetAttestationQuoteParams{Nonce: []byte("n"), PCRIndices: []int{0}})
 	require.NoError(t, err)
 
 	_, err = b.handleGetAttestationQuote(context.Background(), params)
-	assert.ErrorIs(t, err, ErrTPMNotConfigured)
+	assert.ErrorIs(t, err, pairingproto.ErrTPMNotConfigured)
 }
 
 func TestHandleGetAttestationQuote_InvalidPCRIndices(t *testing.T) {
 	b := newTestBridgeWithTPM(t, &mockTPMEnroller{})
-	params, err := json.Marshal(RemoteGetAttestationQuoteParams{Nonce: []byte("n"), PCRIndices: []int{-1}})
+	params, err := json.Marshal(pairingproto.RemoteGetAttestationQuoteParams{Nonce: []byte("n"), PCRIndices: []int{-1}})
 	require.NoError(t, err)
 
 	_, err = b.handleGetAttestationQuote(context.Background(), params)
-	assert.ErrorIs(t, err, ErrBridgeInvalidParams)
+	assert.ErrorIs(t, err, pairingproto.ErrBridgeInvalidParams)
 }
 
 func TestHandleGetAttestationQuote_MissingNonce(t *testing.T) {
 	b := newTestBridgeWithTPM(t, &mockTPMEnroller{})
-	params, err := json.Marshal(RemoteGetAttestationQuoteParams{PCRIndices: []int{0}})
+	params, err := json.Marshal(pairingproto.RemoteGetAttestationQuoteParams{PCRIndices: []int{0}})
 	require.NoError(t, err)
 
 	_, err = b.handleGetAttestationQuote(context.Background(), params)
-	assert.ErrorIs(t, err, ErrBridgeInvalidParams)
+	assert.ErrorIs(t, err, pairingproto.ErrBridgeInvalidParams)
 }
 
 func TestHandleGetAttestationQuote_IAKAttributesError(t *testing.T) {
 	tpm := &mockTPMEnroller{iakAttrsErr: errors.New("unreadable")}
 	b := newTestBridgeWithTPM(t, tpm)
-	params, err := json.Marshal(RemoteGetAttestationQuoteParams{Nonce: []byte("n"), PCRIndices: []int{0}})
+	params, err := json.Marshal(pairingproto.RemoteGetAttestationQuoteParams{Nonce: []byte("n"), PCRIndices: []int{0}})
 	require.NoError(t, err)
 
 	_, err = b.handleGetAttestationQuote(context.Background(), params)
-	assert.ErrorIs(t, err, ErrTPMOperationFailed)
+	assert.ErrorIs(t, err, pairingproto.ErrTPMOperationFailed)
 }
 
 func TestHandleGetAttestationQuote_IAKAttributesNilTPMAttributes(t *testing.T) {
 	tpm := &mockTPMEnroller{iakAttrs: &xkms.KeyAttributes{}}
 	b := newTestBridgeWithTPM(t, tpm)
-	params, err := json.Marshal(RemoteGetAttestationQuoteParams{Nonce: []byte("n"), PCRIndices: []int{0}})
+	params, err := json.Marshal(pairingproto.RemoteGetAttestationQuoteParams{Nonce: []byte("n"), PCRIndices: []int{0}})
 	require.NoError(t, err)
 
 	_, err = b.handleGetAttestationQuote(context.Background(), params)
-	assert.ErrorIs(t, err, ErrTPMKeyNotProvisioned)
+	assert.ErrorIs(t, err, pairingproto.ErrTPMKeyNotProvisioned)
 }
 
 func TestHandleGetAttestationQuote_UnsupportedSigningAlgorithm(t *testing.T) {
@@ -849,23 +850,23 @@ func TestHandleGetAttestationQuote_UnsupportedSigningAlgorithm(t *testing.T) {
 		HashAlg: gotpm2.TPMAlgNull,
 	}}}
 	b := newTestBridgeWithTPM(t, tpm)
-	params, err := json.Marshal(RemoteGetAttestationQuoteParams{Nonce: []byte("n"), PCRIndices: []int{0}})
+	params, err := json.Marshal(pairingproto.RemoteGetAttestationQuoteParams{Nonce: []byte("n"), PCRIndices: []int{0}})
 	require.NoError(t, err)
 
 	_, err = b.handleGetAttestationQuote(context.Background(), params)
-	assert.ErrorIs(t, err, ErrUnsupportedAlgorithm)
+	assert.ErrorIs(t, err, pairingproto.ErrUnsupportedAlgorithm)
 }
 
 func TestHandleGetAttestationQuote_BankMismatch(t *testing.T) {
 	tpm := &mockTPMEnroller{iakAttrs: quoteReadyIAKAttrs()} // signs with sha256
 	b := newTestBridgeWithTPM(t, tpm)
-	params, err := json.Marshal(RemoteGetAttestationQuoteParams{
+	params, err := json.Marshal(pairingproto.RemoteGetAttestationQuoteParams{
 		Nonce: []byte("n"), PCRIndices: []int{0}, PCRBank: "sha384",
 	})
 	require.NoError(t, err)
 
 	_, err = b.handleGetAttestationQuote(context.Background(), params)
-	assert.ErrorIs(t, err, ErrUnsupportedAlgorithm)
+	assert.ErrorIs(t, err, pairingproto.ErrUnsupportedAlgorithm)
 }
 
 func TestHandleGetAttestationQuote_QuoteFails(t *testing.T) {
@@ -874,11 +875,11 @@ func TestHandleGetAttestationQuote_QuoteFails(t *testing.T) {
 		quoteErr: errors.New("quote failed"),
 	}
 	b := newTestBridgeWithTPM(t, tpm)
-	params, err := json.Marshal(RemoteGetAttestationQuoteParams{Nonce: []byte("n"), PCRIndices: []int{0}})
+	params, err := json.Marshal(pairingproto.RemoteGetAttestationQuoteParams{Nonce: []byte("n"), PCRIndices: []int{0}})
 	require.NoError(t, err)
 
 	_, err = b.handleGetAttestationQuote(context.Background(), params)
-	assert.ErrorIs(t, err, ErrTPMOperationFailed)
+	assert.ErrorIs(t, err, pairingproto.ErrTPMOperationFailed)
 }
 
 func TestHandleGetAttestationQuote_PCRValuesBankUnavailable(t *testing.T) {
@@ -892,11 +893,11 @@ func TestHandleGetAttestationQuote_PCRValuesBankUnavailable(t *testing.T) {
 		quote:    xkms.Quote{PCRs: encoded},
 	}
 	b := newTestBridgeWithTPM(t, tpm)
-	params, err := json.Marshal(RemoteGetAttestationQuoteParams{Nonce: []byte("n"), PCRIndices: []int{0}})
+	params, err := json.Marshal(pairingproto.RemoteGetAttestationQuoteParams{Nonce: []byte("n"), PCRIndices: []int{0}})
 	require.NoError(t, err)
 
 	_, err = b.handleGetAttestationQuote(context.Background(), params)
-	assert.ErrorIs(t, err, ErrPCRBankUnavailable)
+	assert.ErrorIs(t, err, pairingproto.ErrPCRBankUnavailable)
 }
 
 // --- logTPM ---

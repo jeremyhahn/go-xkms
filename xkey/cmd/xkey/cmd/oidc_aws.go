@@ -20,7 +20,6 @@ import (
 	"io"
 	"log/slog"
 	"os"
-	"os/exec"
 	"os/signal"
 	"path/filepath"
 	"strconv"
@@ -501,11 +500,6 @@ func startAWSBackgroundRefresh(parentCmd *cobra.Command, out io.Writer, region, 
 	}
 
 	// Build command to run ourselves with --background-worker flag (skips login)
-	executable, err := os.Executable()
-	if err != nil {
-		return &WrappedError{Msg: "failed to get executable path", Err: errors.Join(err, logFileHandle.Close())}
-	}
-
 	args := []string{
 		"oidc", "aws",
 		"--background-worker",
@@ -539,7 +533,10 @@ func startAWSBackgroundRefresh(parentCmd *cobra.Command, out io.Writer, region, 
 		args = append(args, "--barrier-password-file", barrierPasswordFile)
 	}
 
-	cmd := exec.Command(executable, args...)
+	cmd, err := backgroundWorkerCommand(args...)
+	if err != nil {
+		return &WrappedError{Msg: "failed to get executable path", Err: errors.Join(err, logFileHandle.Close())}
+	}
 	cmd.Stdout = logFileHandle
 	cmd.Stderr = logFileHandle
 

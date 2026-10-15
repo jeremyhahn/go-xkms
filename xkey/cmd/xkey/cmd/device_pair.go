@@ -27,6 +27,8 @@ import (
 
 	"github.com/spf13/cobra"
 
+	"github.com/jeremyhahn/go-xkms/sdk/go/bootstrap"
+	"github.com/jeremyhahn/go-xkms/sdk/go/pairingproto"
 	"github.com/jeremyhahn/go-xkms/xkey/pkg/attestation"
 	"github.com/jeremyhahn/go-xkms/xkey/pkg/pairing"
 	"github.com/jeremyhahn/go-xkms/xkey/pkg/phone"
@@ -95,7 +97,7 @@ var (
 // transport is the production implementation; a test supplies one backed
 // by an in-memory pair so the command can be driven without a phone.
 type pairingTransport interface {
-	pairing.Transport
+	pairingproto.Transport
 	Scan(ctx context.Context) ([]phone.ScanResult, error)
 	ScanAll(ctx context.Context) ([]phone.ScanResult, error)
 	Connect(ctx context.Context, address string) error
@@ -315,7 +317,7 @@ func runDevicePair(cmd *cobra.Command, args []string) (err error) {
 	fmt.Printf("\nPairing with \"%s\" (%s)...\n", deviceName, selectedDevice.Address)
 
 	// Generate local Noise static key
-	localKey, err := pairing.GenerateStaticKey()
+	localKey, err := bootstrap.GenerateNoiseStaticKey()
 	if err != nil {
 		return &WrappedError{Msg: "failed to generate local key", Err: err}
 	}
@@ -324,7 +326,7 @@ func runDevicePair(cmd *cobra.Command, args []string) (err error) {
 	defer localKey.Destroy()
 
 	// Create Noise session for handshake
-	session, err := pairing.NewNoiseSession(&pairing.NoiseSessionConfig{
+	session, err := bootstrap.NewNoiseSession(&bootstrap.NoiseSessionConfig{
 		LocalStaticKey: localKey,
 		IsInitiator:    true,
 	})
@@ -349,7 +351,7 @@ func runDevicePair(cmd *cobra.Command, args []string) (err error) {
 	// phone answers an unknown key with "new device" and both sides fall back
 	// to an empty prologue, so pairing and reconnecting negotiate the same way.
 	fmt.Println("Performing secure key exchange...")
-	handshakeCfg := &pairing.HandshakeConfig{
+	handshakeCfg := &pairingproto.HandshakeConfig{
 		Transport:            transport,
 		Session:              session,
 		Logger:               logger,
@@ -357,7 +359,7 @@ func runDevicePair(cmd *cobra.Command, args []string) (err error) {
 		EnvelopeHeaderSize:   0,
 		LocalStaticPublicKey: session.LocalStaticPublicKey(),
 	}
-	if err := pairing.PerformHandshake(connectCtx, handshakeCfg); err != nil {
+	if err := pairingproto.PerformHandshake(connectCtx, handshakeCfg); err != nil {
 		return abortPairing(transport, &WrappedError{Msg: "key exchange failed", Err: err})
 	}
 
@@ -388,11 +390,11 @@ func runDevicePair(cmd *cobra.Command, args []string) (err error) {
 
 	// Send pairing confirmation request to phone
 	fmt.Println("Waiting for confirmation on phone...")
-	pairingReq := pairing.NewRequest(pairing.MethodPairingConfirm, &pairing.PairingConfirmParams{
+	pairingReq := pairingproto.NewRequest(pairingproto.MethodPairingConfirm, &pairingproto.PairingConfirmParams{
 		DeviceName:   hostname(),
 		PublicKeyHex: hex.EncodeToString(session.LocalStaticPublicKey()),
 	})
-	pairingPlaintext, err := pairing.EncodeRequest(pairingReq)
+	pairingPlaintext, err := pairingproto.EncodeRequest(pairingReq)
 	if err != nil {
 		return abortPairing(transport, &WrappedError{Msg: "failed to encode pairing request", Err: err})
 	}
@@ -408,14 +410,14 @@ func runDevicePair(cmd *cobra.Command, args []string) (err error) {
 	if err != nil {
 		return abortPairing(transport, &WrappedError{Msg: "failed to decrypt pairing response", Err: err})
 	}
-	pairingResp, err := pairing.DecodeResponse(pairingResponsePlaintext)
+	pairingResp, err := pairingproto.DecodeResponse(pairingResponsePlaintext)
 	if err != nil {
 		return abortPairing(transport, &WrappedError{Msg: "failed to decode pairing response", Err: err})
 	}
 	if pairingResp.Error != nil {
-		return abortPairing(transport, pairing.MapRPCError(pairingResp.Error))
+		return abortPairing(transport, pairingproto.MapRPCError(pairingResp.Error))
 	}
-	pairingResult, err := pairing.DecodeResult[pairing.PairingConfirmResult](pairingResp)
+	pairingResult, err := pairingproto.DecodeResult[pairingproto.PairingConfirmResult](pairingResp)
 	if err != nil {
 		return abortPairing(transport, &WrappedError{Msg: "failed to decode pairing result", Err: err})
 	}
@@ -468,7 +470,7 @@ func runDevicePair(cmd *cobra.Command, args []string) (err error) {
 	// it is destroyed by the deferred localKey.Destroy() above, which has not
 	// run yet.
 	var noiseKeyField string
-	err = pairing.WithPrivateKey(localKey, func(priv []byte) error {
+	err = bootstrap.WithNoisePrivateKey(localKey, func(priv []byte) error {
 		var sealErr error
 		noiseKeyField, sealErr = sealOrWarnLocalNoiseKey(logger, deviceName, barrier, priv)
 		return sealErr
@@ -523,8 +525,8 @@ func runDevicePair(cmd *cobra.Command, args []string) (err error) {
 // what the operator sees.
 func performPairingAttestation(
 	ctx context.Context,
-	transport pairing.Transport,
-	session *pairing.NoiseSession,
+	transport pairingproto.Transport,
+	session *bootstrap.NoiseSession,
 	logger *slog.Logger,
 ) (*attestation.Result, error) {
 	fmt.Println("Verifying device security...")
@@ -536,7 +538,7 @@ func performPairingAttestation(
 	}
 
 	verified, err := attestation.AttestOverSession(
-		ctx, transport, session, trust, pairing.AttestPurposePair, logger)
+		ctx, transport, session, trust, pairingproto.AttestPurposePair, logger)
 	if err != nil {
 		logger.Error("pairing refused: attestation verification failed", "error", err)
 		fmt.Println("  Chain Status:   FAILED")

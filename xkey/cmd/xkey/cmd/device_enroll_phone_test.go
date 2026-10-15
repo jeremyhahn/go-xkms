@@ -30,6 +30,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/jeremyhahn/go-xkms/pkg/pairingproto"
 	"github.com/jeremyhahn/go-xkms/xkey/pkg/pairing"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -96,7 +97,7 @@ func TestBuildEnrollmentPolicy_FailsClosedWithNoAllowList(t *testing.T) {
 	assert.True(t, policy.RequireVerifiedBoot ||
 		!policy.RequireVerifiedBoot, "flag default is applied by cobra")
 
-	_, err := policy.Evaluate(&pairing.LocalGetDeviceEnrollmentRequestResult{
+	_, err := policy.Evaluate(&pairingproto.LocalGetDeviceEnrollmentRequestResult{
 		AttestationChain: loadEnrollFixtureChain(t),
 	}, []byte(enrollFixtureNonce), time.Now())
 
@@ -141,8 +142,8 @@ func TestEnrollmentPolicy_RefusesTheRealEmulatorUnderProductionDefaults(t *testi
 	require.NoError(t, err, "the embedded Google roots must load")
 	policy.TrustedRoots = roots
 
-	_, err = policy.Evaluate(&pairing.LocalGetDeviceEnrollmentRequestResult{
-		Format:           pairing.AttestationFormatAndroidKey,
+	_, err = policy.Evaluate(&pairingproto.LocalGetDeviceEnrollmentRequestResult{
+		Format:           pairingproto.AttestationFormatAndroidKey,
 		AttestationChain: loadEnrollFixtureChain(t),
 		SecurityLevel:    "software",
 	}, []byte(enrollFixtureNonce), time.Now())
@@ -154,7 +155,7 @@ func TestSignEnrollmentCSR_RejectsAnUnknownCASource(t *testing.T) {
 	_, _, err := signEnrollmentCSR(
 		t.Context(),
 		&enrollPhoneOptions{CASource: "nonsense"},
-		&pairing.LocalGetDeviceEnrollmentRequestResult{CSR: []byte{0x30, 0x00}},
+		&pairingproto.LocalGetDeviceEnrollmentRequestResult{CSR: []byte{0x30, 0x00}},
 		[]byte("nonce"),
 		&pairing.EnrollmentDecision{NotAfter: time.Now().Add(time.Hour)},
 	)
@@ -185,7 +186,7 @@ func TestSignEnrollmentCSR_SubmitsToTheConfiguredCA(t *testing.T) {
 		useTestXKMSdEndpoint(t, fake.server.URL)
 
 		certDER, chainDER, err := signEnrollmentCSR(t.Context(), &enrollPhoneOptions{},
-			&pairing.LocalGetDeviceEnrollmentRequestResult{CSR: csr}, []byte(enrollFixtureNonce), decision)
+			&pairingproto.LocalGetDeviceEnrollmentRequestResult{CSR: csr}, []byte(enrollFixtureNonce), decision)
 		require.NoError(t, err)
 
 		block, _ := pem.Decode(fake.signResponse.CertificatePEM)
@@ -209,7 +210,7 @@ func TestSignEnrollmentCSR_SubmitsToTheConfiguredCA(t *testing.T) {
 		useTestXKMSdEndpoint(t, fake.server.URL)
 
 		_, _, err := signEnrollmentCSR(t.Context(), &enrollPhoneOptions{CASource: " XKMS "},
-			&pairing.LocalGetDeviceEnrollmentRequestResult{CSR: csr, AttestationChain: loadEnrollFixtureChain(t)},
+			&pairingproto.LocalGetDeviceEnrollmentRequestResult{CSR: csr, AttestationChain: loadEnrollFixtureChain(t)},
 			[]byte(enrollFixtureNonce), decision)
 		require.NoError(t, err)
 		assert.Equal(t, enrollmentCertProfile, fake.lastSignRequest.Profile)
@@ -219,7 +220,7 @@ func TestSignEnrollmentCSR_SubmitsToTheConfiguredCA(t *testing.T) {
 		useTestXKMSdEndpoint(t, "")
 
 		_, _, err := signEnrollmentCSR(t.Context(), &enrollPhoneOptions{CASource: caSourceXKMS},
-			&pairing.LocalGetDeviceEnrollmentRequestResult{CSR: csr, AttestationChain: []string{"not!base64"}},
+			&pairingproto.LocalGetDeviceEnrollmentRequestResult{CSR: csr, AttestationChain: []string{"not!base64"}},
 			[]byte(enrollFixtureNonce), decision)
 		require.ErrorIs(t, err, ErrEnrollPhoneRefused)
 		assert.NotErrorIs(t, err, ErrEnrollPhoneNoCA)
@@ -229,7 +230,7 @@ func TestSignEnrollmentCSR_SubmitsToTheConfiguredCA(t *testing.T) {
 		useTestXKMSdEndpoint(t, "")
 
 		_, _, err := signEnrollmentCSR(t.Context(), &enrollPhoneOptions{},
-			&pairing.LocalGetDeviceEnrollmentRequestResult{CSR: csr}, []byte(enrollFixtureNonce), decision)
+			&pairingproto.LocalGetDeviceEnrollmentRequestResult{CSR: csr}, []byte(enrollFixtureNonce), decision)
 		assert.ErrorIs(t, err, ErrEnrollPhoneNoCA)
 	})
 
@@ -239,7 +240,7 @@ func TestSignEnrollmentCSR_SubmitsToTheConfiguredCA(t *testing.T) {
 		useTestXKMSdEndpoint(t, fake.server.URL)
 
 		_, _, err := signEnrollmentCSR(t.Context(), &enrollPhoneOptions{},
-			&pairing.LocalGetDeviceEnrollmentRequestResult{CSR: csr}, []byte(enrollFixtureNonce), decision)
+			&pairingproto.LocalGetDeviceEnrollmentRequestResult{CSR: csr}, []byte(enrollFixtureNonce), decision)
 		assert.ErrorIs(t, err, ErrEnrollPhoneRefused)
 	})
 
@@ -249,7 +250,7 @@ func TestSignEnrollmentCSR_SubmitsToTheConfiguredCA(t *testing.T) {
 		useTestXKMSdEndpoint(t, fake.server.URL)
 
 		_, _, err := signEnrollmentCSR(t.Context(), &enrollPhoneOptions{},
-			&pairing.LocalGetDeviceEnrollmentRequestResult{CSR: csr}, []byte(enrollFixtureNonce), decision)
+			&pairingproto.LocalGetDeviceEnrollmentRequestResult{CSR: csr}, []byte(enrollFixtureNonce), decision)
 		assert.ErrorIs(t, err, ErrEnrollPhoneRefused)
 	})
 }
@@ -331,8 +332,8 @@ func TestEncodeChain_OmitsAnEmptyChain(t *testing.T) {
 // the method simply stops being routed.
 func TestEnrollmentMethodNames_MatchTheAndroidSpelling(t *testing.T) {
 	assert.Equal(t, "local.getDeviceEnrollmentRequest",
-		pairing.MethodLocalGetDeviceEnrollmentRequest)
+		pairingproto.MethodLocalGetDeviceEnrollmentRequest)
 	assert.Equal(t, "local.storeDeviceCredential",
-		pairing.MethodLocalStoreDeviceCredential)
-	assert.Equal(t, "android-key-attestation", pairing.AttestationFormatAndroidKey)
+		pairingproto.MethodLocalStoreDeviceCredential)
+	assert.Equal(t, "android-key-attestation", pairingproto.AttestationFormatAndroidKey)
 }

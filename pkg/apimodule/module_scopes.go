@@ -113,6 +113,15 @@ func selfScopedPermissions() []qrdbsdk.Permission {
 		qrdbsdk.Permission(auth.ResourceOIDCCredentials + ":" + auth.ActionDelete),
 		qrdbsdk.Permission(auth.ResourceOIDCCredentials + ":" + auth.ActionToken),
 
+		// peer_attestation:* is the attested-caller verbs
+		// (pkg/attestation/peergate): a caller asks for a challenge and
+		// answers it with a TPM quote. Both act only on the caller's own
+		// evidence -- the record is keyed by the verified client certificate
+		// of the caller's own connection -- so no identity reaches another's,
+		// which is ScopeSelf. qrdb does not declare this name; xkms owns it.
+		qrdbsdk.Permission(auth.ResourcePeerAttestation + ":" + auth.ActionChallenge),
+		qrdbsdk.Permission(auth.ResourcePeerAttestation + ":" + auth.ActionSubmit),
+
 		// ssh:service admits a caller to service-scoped SSH assets, which no
 		// user owns (pkg/scope Service; checked in pkg/ssh/tenancy). It is
 		// ScopeSelf like its siblings ssh:read/write/delete, which qrdb
@@ -131,8 +140,21 @@ func selfScopedPermissions() []qrdbsdk.Permission {
 // be allowed to move its own objects onto -- or off -- it, so only a
 // platform operator may hold it. qrdb does not declare this name; xkms owns
 // it.
+//
+// trust_roots:* manages the platform trust-root store
+// (pkg/attestation/truststore): the CA, TCG EK, Android, IDevID and image
+// signer roots every attestation verifier anchors on. The store is
+// process-wide and the service refuses a tenant-scoped caller, so only a
+// platform operator may hold any member. qrdb does not declare this name;
+// xkms owns it. PIN EACH MEMBER: a family helper here would tag a future
+// action nobody reviewed.
 func crossScopedPermissions() []qrdbsdk.Permission {
 	return []qrdbsdk.Permission{
 		qrdbsdk.Permission(auth.ResourceTenants + ":" + auth.ActionSetTPMMode),
+		qrdbsdk.Permission(auth.ResourceTrustRoots + ":" + auth.ActionList),
+		qrdbsdk.Permission(auth.ResourceTrustRoots + ":" + auth.ActionGet),
+		qrdbsdk.Permission(auth.ResourceTrustRoots + ":" + auth.ActionImport),
+		qrdbsdk.Permission(auth.ResourceTrustRoots + ":" + auth.ActionUpdate),
+		qrdbsdk.Permission(auth.ResourceTrustRoots + ":" + auth.ActionDelete),
 	}
 }

@@ -54,7 +54,7 @@ credential service (`initializePlatformStore`,
 
 A host that embeds the `xkms` ServiceModule instead of running `xkmsd` picks
 the strategy with `WithServiceModuleCredentialStrategy`
-(`sdk/go/apimodule.go:188`). `pkg/compose` builds the service there
+(`sdk/go/apimodule.go:195`). `pkg/compose` builds the service there
 (`BuildCredentialService`, `pkg/compose/builders.go:158-166`). A strategy
 whose storage the host did not compose turns the feature **off**; it does
 not fail startup (`pkg/compose/compose.go:346-359`). See

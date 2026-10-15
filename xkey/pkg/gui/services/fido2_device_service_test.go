@@ -22,9 +22,10 @@ import (
 	"sync"
 	"testing"
 
+	"github.com/jeremyhahn/go-xkms/pkg/fido2/authenticator"
+	"github.com/jeremyhahn/go-xkms/pkg/fido2/virtualdevice"
 	"github.com/jeremyhahn/go-xkms/xkey/pkg/audit"
-	"github.com/jeremyhahn/go-xkms/xkey/pkg/authenticator"
-	"github.com/jeremyhahn/go-xkms/xkey/pkg/virtualdevice"
+	"github.com/jeremyhahn/go-xkms/xkey/pkg/presence"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -298,7 +299,7 @@ func TestFIDO2DeviceService_GetStatus_Running_WithSocketHandler(t *testing.T) {
 	svc := NewFIDO2DeviceService(slog.Default())
 	svc.running.Store(true)
 
-	handler := authenticator.NewSocketHandler(nil, slog.Default())
+	handler := presence.NewSocketHandler(nil, slog.Default())
 	svc.socketHandler.Store(handler)
 
 	status := svc.GetStatus()
@@ -437,7 +438,7 @@ func TestFIDO2DeviceService_ApproveTouchRequest_NilSocketHandler(t *testing.T) {
 
 func TestFIDO2DeviceService_ApproveTouchRequest_NoPending(t *testing.T) {
 	svc := NewFIDO2DeviceService(slog.Default())
-	handler := authenticator.NewSocketHandler(nil, slog.Default())
+	handler := presence.NewSocketHandler(nil, slog.Default())
 	svc.socketHandler.Store(handler)
 
 	result := svc.ApproveTouchRequest()
@@ -446,7 +447,7 @@ func TestFIDO2DeviceService_ApproveTouchRequest_NoPending(t *testing.T) {
 
 func TestFIDO2DeviceService_ApproveTouchRequest_EmitsEvent(t *testing.T) {
 	svc := NewFIDO2DeviceService(slog.Default())
-	handler := authenticator.NewSocketHandler(nil, slog.Default())
+	handler := presence.NewSocketHandler(nil, slog.Default())
 	svc.socketHandler.Store(handler)
 
 	var emittedType string
@@ -477,7 +478,7 @@ func TestFIDO2DeviceService_DenyTouchRequest_NilSocketHandler(t *testing.T) {
 
 func TestFIDO2DeviceService_DenyTouchRequest_NoPending(t *testing.T) {
 	svc := NewFIDO2DeviceService(slog.Default())
-	handler := authenticator.NewSocketHandler(nil, slog.Default())
+	handler := presence.NewSocketHandler(nil, slog.Default())
 	svc.socketHandler.Store(handler)
 
 	result := svc.DenyTouchRequest()
@@ -486,7 +487,7 @@ func TestFIDO2DeviceService_DenyTouchRequest_NoPending(t *testing.T) {
 
 func TestFIDO2DeviceService_DenyTouchRequest_EmitsEvent(t *testing.T) {
 	svc := NewFIDO2DeviceService(slog.Default())
-	handler := authenticator.NewSocketHandler(nil, slog.Default())
+	handler := presence.NewSocketHandler(nil, slog.Default())
 	svc.socketHandler.Store(handler)
 
 	var emittedType string
@@ -511,7 +512,7 @@ func TestFIDO2DeviceService_HasPendingTouch_NilSocketHandler(t *testing.T) {
 
 func TestFIDO2DeviceService_HasPendingTouch_NoPending(t *testing.T) {
 	svc := NewFIDO2DeviceService(slog.Default())
-	handler := authenticator.NewSocketHandler(nil, slog.Default())
+	handler := presence.NewSocketHandler(nil, slog.Default())
 	svc.socketHandler.Store(handler)
 
 	assert.False(t, svc.HasPendingTouch())

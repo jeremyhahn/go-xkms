@@ -28,7 +28,7 @@ import (
 	secure "github.com/jeremyhahn/go-xkms/sdk/go/secure"
 	"golang.org/x/crypto/chacha20poly1305"
 
-	"github.com/jeremyhahn/go-xkms/xkey/pkg/truststore"
+	"github.com/jeremyhahn/go-xkms/sdk/go/truststore"
 )
 
 // ---------------------------------------------------------------------------

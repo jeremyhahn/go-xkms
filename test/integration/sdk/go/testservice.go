@@ -1242,6 +1242,21 @@ func (*TestXKMSService) OIDCCredentialGet(context.Context, *xkms.OIDCCredentialR
 func (*TestXKMSService) OIDCCredentialList(context.Context, *xkms.OIDCCredentialListRequest) (*xkms.OIDCCredentialListResponse, error) {
 	return nil, ErrNotImplemented
 }
+func (*TestXKMSService) TrustRootList(context.Context, *xkms.TrustRootListRequest) (*xkms.TrustRootListResponse, error) {
+	return nil, ErrNotImplemented
+}
+func (*TestXKMSService) TrustRootGet(context.Context, *xkms.TrustRootRequest) (*xkms.TrustRoot, error) {
+	return nil, ErrNotImplemented
+}
+func (*TestXKMSService) TrustRootImport(context.Context, *xkms.TrustRootImportRequest) (*xkms.TrustRootImportResponse, error) {
+	return nil, ErrNotImplemented
+}
+func (*TestXKMSService) TrustRootQuarantine(context.Context, *xkms.TrustRootRequest) (*xkms.TrustRoot, error) {
+	return nil, ErrNotImplemented
+}
+func (*TestXKMSService) TrustRootRemove(context.Context, *xkms.TrustRootRequest) error {
+	return ErrNotImplemented
+}
 func (*TestXKMSService) OIDCCredentialDelete(context.Context, *xkms.OIDCCredentialRef) error {
 	return ErrNotImplemented
 }

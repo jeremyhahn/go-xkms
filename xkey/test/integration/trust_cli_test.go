@@ -35,7 +35,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/jeremyhahn/go-xkms/xkey/pkg/truststore"
+	"github.com/jeremyhahn/go-xkms/pkg/attestation/truststore"
 )
 
 // isolateTrustHome creates a temporary directory and points HOME at it.

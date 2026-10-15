@@ -22,12 +22,13 @@ There is no `xkey/pkg/ble` package. BLE support lives in two places:
   that returns `ErrBLEUnavailable` for every method, so a binary built
   without the tag still links and the CLI verbs that need it still exist
   (`cli.md`).
-- `xkey/pkg/pairing` — the transport-agnostic machinery BLE shares with the
-  USB AOA and TCP relay transports: `Fragmenter`/`Reassembler`
-  (`fragmentation.go`), the `Transport` interface (`transport.go`), the
-  Noise XX session and `StaticKey`/`NoiseKeyBarrier` types (`noise.go`,
-  `noise_key_seal.go`). None of these files carry a build tag; they compile
-  into every xkey binary.
+- `pkg/pairingproto`, `pkg/trust/bootstrap` and `xkey/pkg/pairing` — the
+  transport-agnostic machinery BLE shares with the USB AOA and TCP relay
+  transports: `Fragmenter`/`Reassembler` (`pkg/pairingproto/fragmentation.go`),
+  the `Transport` interface (`pkg/pairingproto/transport.go`), the Noise XX
+  session (`pkg/trust/bootstrap/noise_session.go`) and the `NoiseKeyBarrier`
+  type (`xkey/pkg/pairing/noise_key_seal.go`). None of these files carry a
+  build tag; they compile into every xkey binary.
 
 ## Two roles, one GATT service
 
@@ -58,11 +59,11 @@ either role (`ble_peripheral.go:438-456`) — see "Security model" below.
 
 ## Fragmentation
 
-Both roles use the same 7-byte wire header from `xkey/pkg/pairing/
-fragmentation.go:21-44`: `[1 byte flags][2 bytes sequence][2 bytes
+Both roles use the same 7-byte wire header from `pkg/pairingproto/
+fragmentation.go`: `[1 byte flags][2 bytes sequence][2 bytes
 total][2 bytes length]`, flags `0x01` first / `0x02` last / `0x03` single /
-`0x00` middle. `MinMTU = 23` and the central's `DefaultMTU = 247`
-(`xkey/pkg/phone/phone.go:63-64`) come straight from BLE 4.0's floor and
+`0x00` middle. `MinMTU = 23` (`pairingproto`) and the central's
+`DefaultMTU = 247` (`xkey/pkg/phone/phone.go:66`) come straight from BLE 4.0's floor and
 the ATT default negotiated MTU. The peripheral cannot read back the ATT
 MTU the central actually negotiated — `tinygo.org/x/bluetooth`'s
 `DeviceCharacteristic.GetMTU` exists only on the central side — so it
@@ -73,7 +74,7 @@ reserves 7 bytes of headroom per notification rather than the strict
 ## Security model — what the code actually establishes
 
 The **one** cryptographic layer this code establishes is the Noise XX
-session (`Noise_XX_25519_ChaChaPoly_SHA256`, `xkey/pkg/pairing/noise.go:28`)
+session (`Noise_XX_25519_ChaChaPoly_SHA256`, `pkg/trust/bootstrap/noise_session.go:29`)
 documented in `xkey/docs/phone-hsm/`. Two things worth stating plainly,
 because they correct a claim in the superseded `xkey/docs/ble/`
 documentation (see this repo's docs conventions on legacy-vs-code
@@ -154,7 +155,7 @@ container (`xkey/Makefile:609-618`, `xkey/test/integration/ble`).
 ## Naming collision to avoid
 
 `xkey usb` (`xkey/docs/usb/`) and the phone-hsm USB **AOA** transport
-(`xkey/pkg/phone/usb_transport.go`, gated by a *different* build tag,
+(`pkg/pairingproto/usb_transport.go`, gated by a *different* build tag,
 `usb`) are unrelated features that happen to share the word "USB": one is
 a virtual CCID reader and portable disk image, the other is a wired
 alternative to this BLE transport for the same pairing protocol. Neither

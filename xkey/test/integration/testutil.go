@@ -22,7 +22,7 @@ import (
 	"syscall"
 	"testing"
 
-	"github.com/jeremyhahn/go-xkms/xkey/pkg/uhid"
+	"github.com/jeremyhahn/go-xkms/sdk/go/fido2/uhid"
 )
 
 // pkgTempDir holds a package-level temporary directory for the compiled binary.

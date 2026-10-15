@@ -25,7 +25,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/jeremyhahn/go-xkms/xkey/pkg/truststore"
+	"github.com/jeremyhahn/go-xkms/pkg/attestation/truststore"
 )
 
 // androidKeyAttestationOID is the Android Key Attestation extension OID.

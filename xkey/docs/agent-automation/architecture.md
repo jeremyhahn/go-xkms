@@ -82,9 +82,10 @@ Rejected alternatives:
 
 | Piece | Where |
 |---|---|
-| Presence handlers (socket, terminal, auto-grant) | `xkey/pkg/authenticator` (`user_presence*.go`) |
-| UP/UV flag decisions | `xkey/pkg/authenticator` (`cmd_makecredential.go`, `cmd_getassertion.go`) |
-| Programmatic device (explicit auto-grant) | `xkey/pkg/virtualdevice` |
+| Presence handlers (terminal, auto-grant) | `pkg/fido2/authenticator` (`user_presence*.go`) |
+| Presence handler (IPC socket) | `xkey/pkg/presence` (`socket.go`) |
+| UP/UV flag decisions | `pkg/fido2/authenticator` (`cmd_makecredential.go`, `cmd_getassertion.go`) |
+| Programmatic device (explicit auto-grant) | `pkg/fido2/virtualdevice` |
 | Notification routing | `xkey/pkg/notify` |
 | PIN input (`--pin-stdin`, `XKEY_PIN`) | `xkey/cmd/xkey/cmd/pin_input.go` |
 | Unlock-attempt budget | `xkey/pkg/gui/services/app_lock_attempts.go` |
@@ -119,7 +120,7 @@ a named password through `xkey/pkg/keyboard`, which is what makes the vault
 usable from a non-browser context. `xkey unlock` is for an xkey instance that
 owns an app lock (the GUI or headless app); `xkey fido2` owns none and says so.
 
-A programmatic device — `xkey/pkg/virtualdevice`, or the Chrome virtual
+A programmatic device — `pkg/fido2/virtualdevice`, or the Chrome virtual
 authenticator behind `--cdp` — has no daemon and no socket. It states
 auto-grant at construction and drives ceremonies in-process.
 

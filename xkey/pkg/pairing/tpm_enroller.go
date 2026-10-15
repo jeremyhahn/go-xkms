@@ -21,6 +21,7 @@ import (
 	"os"
 
 	xkms "github.com/jeremyhahn/go-xkms/sdk/go"
+	"github.com/jeremyhahn/go-xkms/sdk/go/pairingproto"
 )
 
 // TPM enrollment defaults.
@@ -115,7 +116,7 @@ func OpenTPMEnroller(config *TPMEnrollerConfig) (TPMEnrollerCloser, error) {
 		if errors.Is(err, fs.ErrNotExist) {
 			logger.Info("no TPM on this host; TCG device enrollment is unavailable",
 				slog.String("device", device))
-			return nil, ErrTPMNotConfigured
+			return nil, pairingproto.ErrTPMNotConfigured
 		}
 		return nil, unreachableTPM(logger, device, err)
 	}
@@ -162,7 +163,7 @@ func unreachableTPM(logger *slog.Logger, device string, cause error) error {
 	logger.Warn("this host has a TPM but xkey cannot reach it; TCG device enrollment is unavailable",
 		slog.String("device", device),
 		slog.String("error", cause.Error()))
-	return &SentinelCauseError{Sentinel: ErrTPMUnavailable, Cause: cause}
+	return &pairingproto.SentinelCauseError{Sentinel: pairingproto.ErrTPMUnavailable, Cause: cause}
 }
 
 // deviceOpenCause recovers the real reason a device node would not open.

@@ -7,7 +7,7 @@
 
 ### Fragment Header (7 bytes)
 
-`FragmentHeaderSize` and the flag constants are in `xkey/pkg/pairing/fragmentation.go:22-33`.
+`FragmentHeaderSize` and the flag constants are in `pkg/pairingproto/fragmentation.go:22-33`.
 
 ```
 ┌─────────┬──────────┬─────────┬──────────┐
@@ -30,8 +30,8 @@
 
 ### MTU Handling
 
-Default MTU: 247 bytes (`DefaultMTU`, `xkey/pkg/phone/phone.go:63`)
-Minimum MTU: 23 bytes (`MinMTU`, `xkey/pkg/pairing/constants.go:18`)
+Default MTU: 247 bytes (`DefaultMTU`, `xkey/pkg/phone/phone.go:66`)
+Minimum MTU: 23 bytes (`MinMTU`, `pkg/pairingproto/constants.go:18`)
 Max payload per fragment: MTU - 7 (header)
 
 Large messages are split across multiple fragments and reassembled in order.
@@ -77,7 +77,7 @@ All messages use JSON-RPC 2.0 format over the Noise-encrypted channel.
 
 ## Methods
 
-The core methods are declared in `xkey/pkg/pairing/protocol.go:34-40` and
+The core methods are declared in `pkg/pairingproto/protocol.go:34-40` and
 their parameter and result types at `protocol.go:151-249`. Byte fields
 (`credentialId`, `publicKey`, `dataHash`, `signature`) are `[]byte` and
 therefore standard base64 in JSON. Further method families (attestation,
@@ -277,7 +277,7 @@ carries `confirmed` and `deviceName` (`protocol.go:242-249`).
 | -32602 | Invalid params | Invalid method parameters |
 | -32603 | Internal error | Internal server error |
 
-Declared at `xkey/pkg/pairing/protocol.go:46-50`.
+Declared at `pkg/pairingproto/protocol.go:46-50`.
 
 ### Application Errors
 
@@ -317,8 +317,8 @@ Public keys are returned in COSE_Key format (CBOR encoded):
 
 | Operation | Timeout |
 |-----------|---------|
-| BLE scan | 30 seconds (`ScanTimeout`, `xkey/pkg/phone/phone.go:66`) |
-| Connection | 10 seconds (`ConnectTimeout`, `phone.go:69`) |
-| Operation (sign, generate) | 60 seconds (`OperationTimeout`, `phone.go:72`) |
+| BLE scan | 30 seconds (`ScanTimeout`, `xkey/pkg/phone/phone.go:69`) |
+| Connection | 10 seconds (`ConnectTimeout`, `phone.go:72`) |
+| Operation (sign, generate) | 60 seconds (`OperationTimeout`, `phone.go:75`) |
 
 Operations requiring biometric may take longer as they wait for user interaction.

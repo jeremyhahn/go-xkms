@@ -57,17 +57,19 @@ type Server struct {
 	rbacMiddleware  *RBACMiddleware
 
 	// Custodian handlers
-	tenantHandlers         *TenantHandlers
-	passwordHandlers       *PasswordHandlers
-	pkcs11StateHandlers    *PKCS11StateHandlers
-	platformHandlers       *SealStoreHandlers
-	tpmPolicyHandlers      *TPMPolicyHandlers
-	oidcCredentialHandlers *OIDCCredentialHandlers
-	credentialHandlers     *CredentialHandlers
-	bootstrapHandlers      *BootstrapHandlers
-	caHandlers             *CAHandlers
-	sshHandlers            *SSHHandlers
-	sshClient              sdkssh.Client
+	tenantHandlers          *TenantHandlers
+	passwordHandlers        *PasswordHandlers
+	pkcs11StateHandlers     *PKCS11StateHandlers
+	platformHandlers        *SealStoreHandlers
+	tpmPolicyHandlers       *TPMPolicyHandlers
+	trustRootHandlers       *TrustRootHandlers
+	oidcCredentialHandlers  *OIDCCredentialHandlers
+	peerAttestationHandlers *PeerAttestationHandlers
+	credentialHandlers      *CredentialHandlers
+	bootstrapHandlers       *BootstrapHandlers
+	caHandlers              *CAHandlers
+	sshHandlers             *SSHHandlers
+	sshClient               sdkssh.Client
 
 	// cors carries the CORS policy for the router; nil disables CORS
 	// entirely (no headers emitted — correct for the same-origin web UI).
@@ -443,7 +445,9 @@ func NewServer(cfg *Config) (*Server, error) {
 	if cfg.XKMSService != nil {
 		server.platformHandlers = NewSealStoreHandlers(cfg.XKMSService)
 		server.tpmPolicyHandlers = NewTPMPolicyHandlers(cfg.XKMSService)
+		server.trustRootHandlers = NewTrustRootHandlers(cfg.XKMSService)
 		server.oidcCredentialHandlers = NewOIDCCredentialHandlers(cfg.XKMSService)
+		server.peerAttestationHandlers = NewPeerAttestationHandlers(cfg.XKMSService)
 		server.credentialHandlers = NewCredentialHandlers(cfg.XKMSService, log)
 	}
 

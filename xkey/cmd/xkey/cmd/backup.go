@@ -32,10 +32,10 @@ import (
 
 	"github.com/jeremyhahn/go-enclave"
 	xkms "github.com/jeremyhahn/go-xkms/sdk/go"
+	"github.com/jeremyhahn/go-xkms/sdk/go/truststore"
 	"github.com/jeremyhahn/go-xkms/xkey/pkg/backup"
 	"github.com/jeremyhahn/go-xkms/xkey/pkg/oath"
 	xkeysync "github.com/jeremyhahn/go-xkms/xkey/pkg/sync"
-	"github.com/jeremyhahn/go-xkms/xkey/pkg/truststore"
 	"github.com/jeremyhahn/go-xkms/xkey/pkg/xhome"
 	"github.com/spf13/cobra"
 )

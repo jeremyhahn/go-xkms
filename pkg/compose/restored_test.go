@@ -46,6 +46,7 @@ func TestBuild_EveryDependencyComposesEveryFeature(t *testing.T) {
 	assert.Nil(t, st.TPMPolicies)
 	assert.NotNil(t, st.KeyVersions)
 	assert.NotNil(t, st.Invite)
+	assert.NotNil(t, st.TrustRoots)
 	assert.NotNil(t, st.OIDCCredentials)
 	assert.Equal(t, "barrier", st.Credentials.Strategy())
 	t.Cleanup(func() { require.NoError(t, st.Close()) })
@@ -82,6 +83,12 @@ func TestBuild_EveryDependencyComposesEveryFeature(t *testing.T) {
 	rotated, err := svc.RotateKey(ctx, &transport.RotateKeyRequest{Backend: hostdeps.BackendName, KeyID: "composed"})
 	require.NoError(t, err)
 	assert.Equal(t, uint32(2), rotated.KeyVersion)
+
+	// The trust-root store is wired: it answers a list instead of "not
+	// configured".
+	roots, err := svc.TrustRootList(ctx, &transport.TrustRootListRequest{})
+	require.NoError(t, err)
+	assert.Empty(t, roots.Roots)
 }
 
 // TestBuild_NoDependenciesLeavesEveryFeatureOffWithTypedReasons proves a
@@ -111,6 +118,7 @@ func TestBuild_NoDependenciesLeavesEveryFeatureOffWithTypedReasons(t *testing.T)
 		FeatureKeyVersions:     "DAO factory",
 		FeatureOIDCCredentials: "barrier registry",
 		FeatureInvite:          "storage",
+		FeatureTrustRoots:      "DAO factory",
 	}, missing)
 
 	assert.Nil(t, st.PasswordStore)
@@ -121,6 +129,7 @@ func TestBuild_NoDependenciesLeavesEveryFeatureOffWithTypedReasons(t *testing.T)
 	assert.Nil(t, st.TPMPolicies)
 	assert.Nil(t, st.KeyVersions)
 	assert.Nil(t, st.Invite)
+	assert.Nil(t, st.TrustRoots)
 
 	// Wiring an empty composition leaves the service answering "not
 	// configured" for each feature.
@@ -131,5 +140,7 @@ func TestBuild_NoDependenciesLeavesEveryFeatureOffWithTypedReasons(t *testing.T)
 	assert.ErrorIs(t, err, xkms.ErrNotConfigured)
 	_, err = svc.RotateScopeKeys(platformCtx(), &transport.RotateScopeKeysRequest{})
 	assert.ErrorIs(t, err, xkms.ErrNotConfigured, "rotation needs the key-version store")
+	_, err = svc.TrustRootList(platformCtx(), &transport.TrustRootListRequest{})
+	assert.ErrorIs(t, err, xkms.ErrNotConfigured)
 	assert.NoError(t, st.Close(), "closing stores without a TPM policy service is a no-op")
 }

@@ -72,6 +72,9 @@ func (s *Server) initializeQRDBStorage() error {
 			return &ErrStorageCreate{Resource: "standalone datastore", Err: err}
 		}
 		s.datastore = ds
+		if err := s.bindPeerEvidenceStorage(); err != nil {
+			return err
+		}
 		s.logger.Info("Initialized standalone datastore",
 			"engine", s.config.Datastore.Engine, "path", s.config.Datastore.Path)
 

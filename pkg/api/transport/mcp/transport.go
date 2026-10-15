@@ -1821,6 +1821,61 @@ func (t *Transport) TenantVTPMStop(ctx context.Context, tenantID string) (*trans
 	return &result, nil
 }
 
+// TrustRootList lists the platform trust roots, optionally of one purpose.
+func (t *Transport) TrustRootList(ctx context.Context, req *transport.TrustRootListRequest) (*transport.TrustRootListResponse, error) {
+	if !t.IsConnected() {
+		return nil, ErrNotConnected
+	}
+	var result transport.TrustRootListResponse
+	if err := t.rpcCall(ctx, "trust.root.list", req, &result); err != nil {
+		return nil, err
+	}
+	return &result, nil
+}
+
+// TrustRootGet returns one platform trust root, its PEM included.
+func (t *Transport) TrustRootGet(ctx context.Context, req *transport.TrustRootRequest) (*transport.TrustRoot, error) {
+	return t.trustRootCall(ctx, "trust.root.get", req)
+}
+
+// TrustRootImport adds the certificates of a PEM bundle to the trust roots.
+func (t *Transport) TrustRootImport(ctx context.Context, req *transport.TrustRootImportRequest) (*transport.TrustRootImportResponse, error) {
+	if !t.IsConnected() {
+		return nil, ErrNotConnected
+	}
+	var result transport.TrustRootImportResponse
+	if err := t.rpcCall(ctx, "trust.root.import", req, &result); err != nil {
+		return nil, err
+	}
+	return &result, nil
+}
+
+// TrustRootQuarantine reclassifies a platform trust root as synced.
+func (t *Transport) TrustRootQuarantine(ctx context.Context, req *transport.TrustRootRequest) (*transport.TrustRoot, error) {
+	return t.trustRootCall(ctx, "trust.root.quarantine", req)
+}
+
+// TrustRootRemove deletes a platform trust root.
+func (t *Transport) TrustRootRemove(ctx context.Context, req *transport.TrustRootRequest) error {
+	if !t.IsConnected() {
+		return ErrNotConnected
+	}
+	return t.rpcCall(ctx, "trust.root.remove", req, nil)
+}
+
+// trustRootCall runs method, a call that names a trust root and is
+// answered by one.
+func (t *Transport) trustRootCall(ctx context.Context, method string, req *transport.TrustRootRequest) (*transport.TrustRoot, error) {
+	if !t.IsConnected() {
+		return nil, ErrNotConnected
+	}
+	var result transport.TrustRoot
+	if err := t.rpcCall(ctx, method, req, &result); err != nil {
+		return nil, err
+	}
+	return &result, nil
+}
+
 // OIDC Credential Operations
 //
 // Each method calls the oidc.credential.* tool of the same name with the

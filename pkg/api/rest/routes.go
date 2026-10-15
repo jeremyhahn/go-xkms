@@ -385,6 +385,17 @@ func Routes() []RouteSpec {
 	permIf("POST", "/tenants/{tenantID}/tpm/vtpm/start", auth.ResourceTenants, auth.ActionSetTPMMode, hasTPMPolicies, func(s *Server) http.HandlerFunc { return s.tpmPolicyHandlers.VTPMStartHandler })
 	permIf("POST", "/tenants/{tenantID}/tpm/vtpm/stop", auth.ResourceTenants, auth.ActionSetTPMMode, hasTPMPolicies, func(s *Server) http.HandlerFunc { return s.tpmPolicyHandlers.VTPMStopHandler })
 
+	// --- Platform trust roots (pkg/attestation/truststore). trust_roots:*
+	// is an xkms-owned permission family whose tenancy scope
+	// pkg/apimodule/module_scopes.go declares; the service refuses a
+	// tenant-scoped caller, the store being process-wide.
+	hasTrustRoots := func(s *Server) bool { return s.trustRootHandlers != nil }
+	permIf("GET", "/trust-roots", auth.ResourceTrustRoots, auth.ActionList, hasTrustRoots, func(s *Server) http.HandlerFunc { return s.trustRootHandlers.ListHandler })
+	permIf("POST", "/trust-roots", auth.ResourceTrustRoots, auth.ActionImport, hasTrustRoots, func(s *Server) http.HandlerFunc { return s.trustRootHandlers.ImportHandler })
+	permIf("GET", "/trust-roots/{fingerprint}", auth.ResourceTrustRoots, auth.ActionGet, hasTrustRoots, func(s *Server) http.HandlerFunc { return s.trustRootHandlers.GetHandler })
+	permIf("DELETE", "/trust-roots/{fingerprint}", auth.ResourceTrustRoots, auth.ActionDelete, hasTrustRoots, func(s *Server) http.HandlerFunc { return s.trustRootHandlers.RemoveHandler })
+	permIf("POST", "/trust-roots/{fingerprint}/quarantine", auth.ResourceTrustRoots, auth.ActionUpdate, hasTrustRoots, func(s *Server) http.HandlerFunc { return s.trustRootHandlers.QuarantineHandler })
+
 	// --- Server-side OIDC credentials (pkg/oidc/credential).
 	// oidc_credentials:* is an xkms-owned permission family
 	// (pkg/auth.ResourceOIDCCredentials) whose tenancy scope
@@ -403,6 +414,16 @@ func Routes() []RouteSpec {
 	permIf("POST", "/oidc/credentials/{scope}/{name}/token", auth.ResourceOIDCCredentials, auth.ActionToken, hasOIDCCredentials, func(s *Server) http.HandlerFunc { return s.oidcCredentialHandlers.TokenHandler })
 	permIf("POST", "/oidc/credentials/{scope}/{name}/device", auth.ResourceOIDCCredentials, auth.ActionUpdate, hasOIDCCredentials, func(s *Server) http.HandlerFunc { return s.oidcCredentialHandlers.DeviceStartHandler })
 	permIf("POST", "/oidc/credentials/{scope}/{name}/device/poll", auth.ResourceOIDCCredentials, auth.ActionUpdate, hasOIDCCredentials, func(s *Server) http.HandlerFunc { return s.oidcCredentialHandlers.DevicePollHandler })
+
+	// --- Attested-caller evidence (pkg/attestation/peergate). A caller
+	// asks for a nonce and answers it with a TPM quote; both identify the
+	// caller by the connection's verified client certificate, so they answer
+	// only over mutual TLS. peer_attestation:* is an xkms-owned permission
+	// family (pkg/auth.ResourcePeerAttestation) the gate itself exempts, so
+	// an unattested caller can attest. A server without the gate answers 503. ---
+	hasPeerAttestation := func(s *Server) bool { return s.peerAttestationHandlers != nil }
+	permIf("POST", "/peer-attestation/challenge", auth.ResourcePeerAttestation, auth.ActionChallenge, hasPeerAttestation, func(s *Server) http.HandlerFunc { return s.peerAttestationHandlers.ChallengeHandler })
+	permIf("POST", "/peer-attestation/evidence", auth.ResourcePeerAttestation, auth.ActionSubmit, hasPeerAttestation, func(s *Server) http.HandlerFunc { return s.peerAttestationHandlers.EvidenceHandler })
 
 	// --- Credentials. submit and strategy carry the credentials:* pairs
 	// the MCP credentials.* methods are gated with; neither is on the

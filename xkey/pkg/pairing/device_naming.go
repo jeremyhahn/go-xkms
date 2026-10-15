@@ -18,6 +18,8 @@ import (
 	"fmt"
 	"unicode"
 	"unicode/utf8"
+
+	"github.com/jeremyhahn/go-xkms/sdk/go/pairingproto"
 )
 
 // Device naming and identity errors (#1307).
@@ -70,17 +72,17 @@ const MaxDeviceNameLength = 64
 // device set and applies a different rule (same name, different key).
 func ValidateDeviceName(name string) error {
 	if name == "" {
-		return &DetailError{Err: ErrDeviceNameInvalid, Detail: ": name is empty"}
+		return &pairingproto.DetailError{Err: ErrDeviceNameInvalid, Detail: ": name is empty"}
 	}
 	if n := utf8.RuneCountInString(name); n > MaxDeviceNameLength {
-		return &DetailError{
+		return &pairingproto.DetailError{
 			Err:    ErrDeviceNameInvalid,
 			Detail: fmt.Sprintf(": name is %d characters, exceeds the %d character limit", n, MaxDeviceNameLength),
 		}
 	}
 	for _, r := range name {
 		if !unicode.IsPrint(r) {
-			return &DetailError{
+			return &pairingproto.DetailError{
 				Err:    ErrDeviceNameInvalid,
 				Detail: fmt.Sprintf(": name contains a non-printable character %U", r),
 			}
@@ -207,7 +209,7 @@ func FindPairedDeviceByName(devices []PairedDevice, name string) (*PairedDevice,
 	case 1:
 		return found, nil
 	default:
-		return nil, &DetailError{
+		return nil, &pairingproto.DetailError{
 			Err:    ErrDeviceNameAmbiguous,
 			Detail: fmt.Sprintf(": %d paired devices are named %q; re-pair or remove the duplicate", count, name),
 		}

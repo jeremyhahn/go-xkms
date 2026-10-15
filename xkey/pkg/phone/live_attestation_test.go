@@ -20,7 +20,8 @@ import (
 	"log/slog"
 	"testing"
 
-	"github.com/jeremyhahn/go-xkms/xkey/pkg/pairing"
+	"github.com/jeremyhahn/go-xkms/pkg/pairingproto"
+	"github.com/jeremyhahn/go-xkms/pkg/trust/bootstrap"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -75,14 +76,14 @@ func TestProveLivenessSkipsWhenNotRequired(t *testing.T) {
 func TestProveLivenessPropagatesTheVerifiersRefusal(t *testing.T) {
 	refused := errors.New("device could not prove possession")
 
-	session, err := pairing.NewNoiseSession(&pairing.NoiseSessionConfig{IsInitiator: true})
+	session, err := bootstrap.NewNoiseSession(&bootstrap.NoiseSessionConfig{IsInitiator: true})
 	require.NoError(t, err)
 
 	called := false
 	backend := &PhoneKeyBackend{
 		cfg: &PhoneKeyBackendConfig{
 			RequireLiveAttestation: true,
-			LiveAttest: func(context.Context, pairing.RPCExchange, []byte) error {
+			LiveAttest: func(context.Context, pairingproto.RPCExchange, []byte) error {
 				called = true
 				return refused
 			},

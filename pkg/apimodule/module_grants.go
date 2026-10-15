@@ -87,6 +87,11 @@ func registerRoleGrants() {
 		// deleting credentials stays with Admin and Owner. The password
 		// vault is a store for users, so the User role writes entries.
 		qrdbsdk.RegisterPermissionRoleGrant(qrdbsdk.PermissionRoleUser, userPermissions()...)
+
+		// The attested-caller gate may require evidence from any caller, so
+		// the roles workloads and end users run as -- Operator and User --
+		// answer the challenge for their own connection.
+		qrdbsdk.RegisterPermissionRoleGrant(qrdbsdk.PermissionRoleOperator, peerAttestationPermissions()...)
 	})
 }
 
@@ -97,14 +102,26 @@ func registerRoleGrants() {
 // tenant. Changing or deleting a shared entry stays with its owner or an
 // administrator, which the service enforces
 // (XKMSService.checkSharedPasswordOwnership); without passwords:delete an
-// owner could not delete even their own entry.
+// owner could not delete even their own entry. It also holds the
+// peer_attestation pair, peerAttestationPermissions.
 func userPermissions() []qrdbsdk.Permission {
-	return []qrdbsdk.Permission{
+	perms := []qrdbsdk.Permission{
 		qrdbsdk.Permission(auth.ResourcePasswords + ":" + auth.ActionWrite),
 		qrdbsdk.Permission(auth.ResourcePasswords + ":" + auth.ActionDelete),
 		qrdbsdk.Permission(auth.ResourceOIDCCredentials + ":" + auth.ActionGet),
 		qrdbsdk.Permission(auth.ResourceOIDCCredentials + ":" + auth.ActionList),
 		qrdbsdk.Permission(auth.ResourceOIDCCredentials + ":" + auth.ActionToken),
+	}
+	return append(perms, peerAttestationPermissions()...)
+}
+
+// peerAttestationPermissions returns the attested-caller verbs' permissions
+// (pkg/attestation/peergate): asking for a challenge and answering it with
+// a TPM quote, both for the caller's own connection only.
+func peerAttestationPermissions() []qrdbsdk.Permission {
+	return []qrdbsdk.Permission{
+		qrdbsdk.Permission(auth.ResourcePeerAttestation + ":" + auth.ActionChallenge),
+		qrdbsdk.Permission(auth.ResourcePeerAttestation + ":" + auth.ActionSubmit),
 	}
 }
 

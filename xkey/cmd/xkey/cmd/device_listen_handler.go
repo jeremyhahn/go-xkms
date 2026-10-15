@@ -23,6 +23,8 @@ import (
 	"log/slog"
 
 	xkms "github.com/jeremyhahn/go-xkms/sdk/go"
+	"github.com/jeremyhahn/go-xkms/sdk/go/bootstrap"
+	"github.com/jeremyhahn/go-xkms/sdk/go/pairingproto"
 	secure "github.com/jeremyhahn/go-xkms/sdk/go/secure"
 	"github.com/jeremyhahn/go-xkms/sdk/go/transport"
 	"github.com/jeremyhahn/go-xkms/xkey/pkg/audit"
@@ -79,7 +81,7 @@ const defaultTPMDevice = "/dev/tpmrm0"
 // when there is exactly one, and otherwise the caller must disambiguate.
 //
 // The caller owns the returned *secure.Buffer and must Destroy it once the
-// local static key has been reconstructed from it (pairing.LoadStaticKey)
+// local static key has been reconstructed from it (bootstrap.LoadNoiseStaticKey)
 // -- this function does not destroy it itself, matching every other
 // resolver in this package that hands back protected memory.
 func resolveListenTargetDevice(
@@ -130,7 +132,7 @@ func resolveListenTargetDevice(
 	// and proceeding with it would pin nothing (a zero-length PeerStaticKey
 	// is treated as "no key to pin," not as an error), silently accepting a
 	// handshake from any phone rather than the one that was paired.
-	if len(expectedRemoteStatic) != pairing.NoiseKeySize {
+	if len(expectedRemoteStatic) != bootstrap.NoiseKeySize {
 		return nil, nil, nil, &DetailError{Err: ErrDevicePinInvalid, Detail: fmt.Sprintf(": %s", targetDevice.Name)}
 	}
 
@@ -175,7 +177,7 @@ func newSessionSyncApproval(deviceName string, allowed bool, logger *slog.Logger
 		}
 		logger.Warn("phone sync refused: this session was not started with --allow-sync",
 			slog.String("method", req.Method), slog.String("device", deviceName))
-		return pairing.ErrSyncNotApproved
+		return pairingproto.ErrSyncNotApproved
 	}
 }
 
@@ -247,7 +249,7 @@ func resolveListenEnroller(
 		// A host with no TPM reports nothing to the phone beyond "unsupported".
 		// A TPM we could not open is a fault someone can fix, so the cause is
 		// carried to the bridge and reported distinctly.
-		if errors.Is(err, pairing.ErrTPMNotConfigured) {
+		if errors.Is(err, pairingproto.ErrTPMNotConfigured) {
 			return nil, nil, nil
 		}
 		return nil, nil, err
@@ -360,7 +362,7 @@ func listenPIVStorageProvider(cmd *cobra.Command, logger *slog.Logger) pairing.P
 // syncApproval gates the bridge's secret-exporting remote.sync* methods
 // (go-xkms#1306); see pairing.BridgeConfig.SyncApproval. Every caller must
 // supply one -- nil is a valid, explicit "refuse every sync request" choice
-// (pairing.ErrSyncApprovalRequired), never an oversight silently read as
+// (pairingproto.ErrSyncApprovalRequired), never an oversight silently read as
 // "sync unchecked".
 //
 // The returned collaborators must be closed at shutdown by the caller
@@ -484,10 +486,10 @@ func (h *listenRequestHandler) HandleRequest(ctx context.Context, request []byte
 	h.logger.Debug("received request from phone", slog.Int("size", len(request)))
 
 	// Decode the request
-	req, err := pairing.DecodeRequest(request)
+	req, err := pairingproto.DecodeRequest(request)
 	if err != nil {
 		h.logger.Error("failed to decode request", slog.String("error", err.Error()))
-		return pairing.EncodeErrorResponse(0, pairing.ErrorCodeParseError, "Failed to parse request", nil)
+		return pairingproto.EncodeErrorResponse(0, pairingproto.ErrorCodeParseError, "Failed to parse request", nil)
 	}
 
 	h.logger.Info("processing request",
@@ -508,16 +510,16 @@ func (h *listenRequestHandler) HandleRequest(ctx context.Context, request []byte
 	}
 
 	h.logger.Warn("unsupported method", slog.String("method", req.Method))
-	return pairing.EncodeErrorResponse(req.ID, pairing.ErrorCodeMethodNotFound, "Method not supported", nil)
+	return pairingproto.EncodeErrorResponse(req.ID, pairingproto.ErrorCodeMethodNotFound, "Method not supported", nil)
 }
 
 // handleViaBridge dispatches a request to the xkmsd bridge and encodes the
 // bridge's JSON-RPC response.
-func (h *listenRequestHandler) handleViaBridge(ctx context.Context, req *pairing.Request) ([]byte, error) {
+func (h *listenRequestHandler) handleViaBridge(ctx context.Context, req *pairingproto.Request) ([]byte, error) {
 	resp := h.bridge.HandleRequest(ctx, req)
 	if resp == nil {
 		h.logger.Error("bridge returned no response", slog.String("method", req.Method))
-		return pairing.EncodeErrorResponse(req.ID, pairing.ErrorCodeInternalError, "Bridge returned no response", nil)
+		return pairingproto.EncodeErrorResponse(req.ID, pairingproto.ErrorCodeInternalError, "Bridge returned no response", nil)
 	}
 	return encodeBridgeResponse(resp)
 }
@@ -526,26 +528,26 @@ func (h *listenRequestHandler) handleViaBridge(ctx context.Context, req *pairing
 // encrypts. The encoded result can carry a decrypted plaintext or a shared
 // secret, so it is wiped once copied into the frame; the transport wipes the
 // frame after Noise has encrypted it.
-func encodeBridgeResponse(resp *pairing.Response) ([]byte, error) {
+func encodeBridgeResponse(resp *pairingproto.Response) ([]byte, error) {
 	encoded, err := json.Marshal(resp)
 	secure.Wipe(resp.Result)
 	return encoded, err
 }
 
 // methodHandler is a function type for handling specific methods.
-type methodHandler func(ctx context.Context, req *pairing.Request) ([]byte, error)
+type methodHandler func(ctx context.Context, req *pairingproto.Request) ([]byte, error)
 
 // methodHandlers returns the map of method names to handlers.
 func (h *listenRequestHandler) methodHandlers() map[string]methodHandler {
 	return map[string]methodHandler{
-		pairing.MethodPing:               h.handlePing,
-		pairing.MethodRemoteAttestDevice: h.handleRemoteAttestDevice,
+		pairingproto.MethodPing:               h.handlePing,
+		pairingproto.MethodRemoteAttestDevice: h.handleRemoteAttestDevice,
 	}
 }
 
 // handlePing handles the ping method.
-func (h *listenRequestHandler) handlePing(_ context.Context, req *pairing.Request) ([]byte, error) {
-	return pairing.EncodeResponse(req.ID, &pairing.PingResult{
+func (h *listenRequestHandler) handlePing(_ context.Context, req *pairingproto.Request) ([]byte, error) {
+	return pairingproto.EncodeResponse(req.ID, &pairingproto.PingResult{
 		Pong: true,
 	})
 }
@@ -554,16 +556,16 @@ func (h *listenRequestHandler) handlePing(_ context.Context, req *pairing.Reques
 // This is called when the phone requests the laptop to attest itself.
 // The phone generates a nonce and sends it here; we generate our attestation
 // (using TPM2 if available) and return it to the phone for verification.
-func (h *listenRequestHandler) handleRemoteAttestDevice(_ context.Context, req *pairing.Request) ([]byte, error) {
+func (h *listenRequestHandler) handleRemoteAttestDevice(_ context.Context, req *pairingproto.Request) ([]byte, error) {
 	// Decode the parameters
 	paramsJSON, err := json.Marshal(req.Params)
 	if err != nil {
-		return pairing.EncodeErrorResponse(req.ID, pairing.ErrorCodeInvalidParams, "Invalid parameters", nil)
+		return pairingproto.EncodeErrorResponse(req.ID, pairingproto.ErrorCodeInvalidParams, "Invalid parameters", nil)
 	}
 
-	var params pairing.RemoteAttestDeviceParams
+	var params pairingproto.RemoteAttestDeviceParams
 	if err := json.Unmarshal(paramsJSON, &params); err != nil {
-		return pairing.EncodeErrorResponse(req.ID, pairing.ErrorCodeInvalidParams, "Failed to decode parameters", nil)
+		return pairingproto.EncodeErrorResponse(req.ID, pairingproto.ErrorCodeInvalidParams, "Failed to decode parameters", nil)
 	}
 
 	h.logger.Info("laptop attestation requested by phone",
@@ -580,11 +582,11 @@ func (h *listenRequestHandler) handleRemoteAttestDevice(_ context.Context, req *
 		// Map errors to appropriate RPC error codes
 		switch {
 		case errors.Is(err, phone.ErrInvalidAttestationNonce):
-			return pairing.EncodeErrorResponse(req.ID, pairing.ErrorCodeInvalidParams, "Nonce must be 32 bytes", nil)
+			return pairingproto.EncodeErrorResponse(req.ID, pairingproto.ErrorCodeInvalidParams, "Nonce must be 32 bytes", nil)
 		case errors.Is(err, phone.ErrTPM2Required):
-			return pairing.EncodeErrorResponse(req.ID, pairing.ErrorCodeAttestUnsupported, "TPM2 required but not available", nil)
+			return pairingproto.EncodeErrorResponse(req.ID, pairingproto.ErrorCodeAttestUnsupported, "TPM2 required but not available", nil)
 		default:
-			return pairing.EncodeErrorResponse(req.ID, pairing.ErrorCodeAttestFailed, err.Error(), nil)
+			return pairingproto.EncodeErrorResponse(req.ID, pairingproto.ErrorCodeAttestFailed, err.Error(), nil)
 		}
 	}
 
@@ -595,5 +597,5 @@ func (h *listenRequestHandler) handleRemoteAttestDevice(_ context.Context, req *
 		slog.Bool("boot_verified", result.BootStateVerified),
 	)
 
-	return pairing.EncodeResponse(req.ID, result)
+	return pairingproto.EncodeResponse(req.ID, result)
 }

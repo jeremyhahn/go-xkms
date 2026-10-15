@@ -19,15 +19,15 @@ import (
 	"errors"
 	"strconv"
 
-	"github.com/jeremyhahn/go-xkms/xkey/pkg/pairing"
+	"github.com/jeremyhahn/go-xkms/sdk/go/pairingproto"
 )
 
 // DeviceFingerprintSize is the length in bytes of a device fingerprint, fixed
 // by the wire contract: the identity ack for a known device is one status byte
-// followed by the fingerprint (pairing.IdentityAckKnownSize), and both
+// followed by the fingerprint (pairingproto.IdentityAckKnownSize), and both
 // producers hash with SHA-256. Deriving it from the wire constant rather than
 // restating 32 keeps the two from drifting apart.
-const DeviceFingerprintSize = pairing.IdentityAckKnownSize - 1
+const DeviceFingerprintSize = pairingproto.IdentityAckKnownSize - 1
 
 // Compile-time check that the wire contract and SHA-256 still agree. If the
 // identity ack ever carries a different digest, this is where it is noticed.

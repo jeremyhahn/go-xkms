@@ -1,7 +1,7 @@
 # Remote Key Access (remote.* Client)
 
 > **Status: REFERENCE** · Last verified: 2026-10-13
-> Wire reference for the `remote.*` methods; superseded by [phone-hsm/api.md](../../phone-hsm/api.md). The phone-side `RemoteKeyClient`, Room references and UI belong to xkey-android, a separate Kotlin repository, and are not verifiable here; the Go wire types (`xkey/pkg/pairing/protocol_remote.go`) and the bridge are.
+> Wire reference for the `remote.*` methods; superseded by [phone-hsm/api.md](../../phone-hsm/api.md). The phone-side `RemoteKeyClient`, Room references and UI belong to xkey-android, a separate Kotlin repository, and are not verifiable here; the Go wire types (`pkg/pairingproto/protocol_remote.go`) and the bridge are.
 
 ## Overview
 
@@ -60,7 +60,7 @@ Response back through the same path
 
 ## Method Reference
 
-Method names are the constants in `xkey/pkg/pairing/protocol_remote.go:20`:
+Method names are the constants in `pkg/pairingproto/protocol_remote.go:20`:
 `listBackends`, `listKeys`, `getPublicKey`, `sign`, `verify`, `encrypt`,
 `decrypt`, `deriveKey`, `generateKey`, `getKeyInfo`, `deleteKey`, `attestKey`,
 `attestDevice`, `getTCGCSRIDevID`, `activateCredential`,
@@ -274,7 +274,7 @@ Phone app -> remote.encrypt("pkcs11", "rsa-enc", plaintext)
 
 ## Error Handling
 
-Remote key errors use the JSON-RPC codes in `xkey/pkg/pairing/protocol.go:47`,
+Remote key errors use the JSON-RPC codes in `pkg/pairingproto/protocol.go:47`,
 including:
 
 | Code | Constant |

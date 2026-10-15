@@ -25,10 +25,10 @@ import (
 	"github.com/spf13/cobra"
 	"github.com/spf13/viper"
 
+	"github.com/jeremyhahn/go-xkms/sdk/go/fido2/uhid"
 	"github.com/jeremyhahn/go-xkms/xkey/pkg/ccid"
 	"github.com/jeremyhahn/go-xkms/xkey/pkg/gadget"
 	"github.com/jeremyhahn/go-xkms/xkey/pkg/pkcs11"
-	"github.com/jeremyhahn/go-xkms/xkey/pkg/uhid"
 )
 
 // USB device command errors.

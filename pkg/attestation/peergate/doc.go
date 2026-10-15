@@ -30,9 +30,9 @@
 //     certificate on the connection, never by anything the request carries,
 //     and the evidence is bound to that connection through the TLS exporter
 //     (peer.EvidenceFromTLS). The collector stamps the receipt time.
-//   - EvidenceStore holds the latest evidence per thumbprint. MemoryStore is
-//     the in-process implementation; a host serving several nodes can supply
-//     a shared one.
+//   - EvidenceStore holds the latest evidence per thumbprint. DAOStore
+//     persists it through a qrdb DAO, so every node sharing the datastore
+//     sees the same evidence.
 //   - Verifier implements go-qrdb's PeerAttestationVerifier. It re-verifies
 //     the cached evidence under the provisioned policy on every call, so a
 //     baseline change, an expired attestation key certificate or stale

@@ -41,6 +41,12 @@ var (
 	// server opened its datastore.
 	ErrNoDatastore = errors.New("server: the datastore is not open")
 
+	// ErrAttestedCallerPolicyMissing indicates attestation.peer_gate asks for
+	// the attested-caller gate but the embedder supplied no policy through
+	// WithAttestedCallerPolicy. go-xkms ships no reference values, so there
+	// is nothing to verify peers against.
+	ErrAttestedCallerPolicyMissing = errors.New("server: attestation.peer_gate is set but no attested-caller policy was supplied (WithAttestedCallerPolicy)")
+
 	// ErrQRDBNodeNotServing is returned by a certificate lookup made before
 	// the embedded qrdb node has completed boot (a sealed node, for example).
 	ErrQRDBNodeNotServing = errors.New("server: the embedded qrdb node has not completed boot")

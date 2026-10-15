@@ -25,24 +25,24 @@ import (
 
 	phonebackend "github.com/jeremyhahn/go-xkms/pkg/backend/phone"
 	"github.com/jeremyhahn/go-xkms/pkg/config"
+	"github.com/jeremyhahn/go-xkms/pkg/pairingproto"
 	credentialspkg "github.com/jeremyhahn/go-xkms/pkg/server/credentials"
 	"github.com/jeremyhahn/go-xkms/pkg/types"
 	"github.com/jeremyhahn/go-xkms/pkg/xkms"
-	"github.com/jeremyhahn/go-xkms/xkey/pkg/pairing"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
 
 // mockPhoneSender implements phonebackend.Sender for testing.
 type mockPhoneSender struct {
-	sendFunc func(ctx context.Context, req *pairing.Request) (*pairing.Response, error)
+	sendFunc func(ctx context.Context, req *pairingproto.Request) (*pairingproto.Response, error)
 }
 
-func (m *mockPhoneSender) SendRequest(ctx context.Context, req *pairing.Request) (*pairing.Response, error) {
+func (m *mockPhoneSender) SendRequest(ctx context.Context, req *pairingproto.Request) (*pairingproto.Response, error) {
 	if m.sendFunc != nil {
 		return m.sendFunc(ctx, req)
 	}
-	return &pairing.Response{
+	return &pairingproto.Response{
 		JSONRPC: "2.0",
 		ID:      req.ID,
 	}, nil

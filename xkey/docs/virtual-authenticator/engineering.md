@@ -4,13 +4,13 @@
 
 ## Exported surface
 
-### `xkey/pkg/uhid`
+### `pkg/fido2/uhid`
 
 Linux UHID device creation and the HID report wire format:
 `uhid_linux.go` (real), `uhid_stub.go` (non-Linux builds), `types.go`,
 `serialize.go`, `errors.go`.
 
-### `xkey/pkg/authenticator`
+### `pkg/fido2/authenticator`
 
 The CTAP2 implementation. One file per command:
 
@@ -48,7 +48,7 @@ PIN state lives on the authenticator as `state.PINHash` with a fixed
 `PINHashSize` (`cmd_config.go:474`), and `key_manager.go:253` carries a
 `PINSyncPending` path that re-initializes the user PIN when a sync was deferred.
 
-### `xkey/pkg/authenticator` — exported Go surface
+### `pkg/fido2/authenticator` — exported Go surface
 
 Constructor: `authenticator.go:256` `NewAuthenticator(config *Config) (*Authenticator, error)`.
 Returns `ErrUserPresenceHandlerRequired` (`user_presence.go:28`) when
@@ -367,7 +367,7 @@ first run and the wrong one for daily use.
 
 ## Error semantics
 
-`xkey/pkg/authenticator/errors.go` and `xkey/pkg/uhid/errors.go`. CTAP2 status
+`pkg/fido2/authenticator/errors.go` and `pkg/fido2/uhid/errors.go`. CTAP2 status
 codes are returned to the consumer, so failures surface as `CTAP2_ERR_*` in a
 browser's console rather than as Go errors.
 
@@ -397,9 +397,9 @@ for the GUI/TPM path) and the deprecated `FilePINManager` they came from.
 
 ## Test strategy
 
-- **Unit** — per-command suites in `xkey/pkg/authenticator`, plus PIN protocol,
+- **Unit** — per-command suites in `pkg/fido2/authenticator`, plus PIN protocol,
   extensions, key wrapping, `BackendStorage`, and the RP policy DAO store.
-- **UHID** — `xkey/pkg/uhid` serialization and device tests; the stub build is
+- **UHID** — `pkg/fido2/uhid` serialization and device tests; the stub build is
   compiled on non-Linux.
 - **Browser end to end** — Playwright specs against the CDP bridge, and
   `go-xkms/test/integration/webauthn-browser`.

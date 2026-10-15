@@ -46,6 +46,7 @@ type UserServicer = pkgtransport.UserServicer
 type PasswordServicer = pkgtransport.PasswordServicer
 type SealStoreServicer = pkgtransport.SealStoreServicer
 type TPMPolicyServicer = pkgtransport.TPMPolicyServicer
+type TrustRootServicer = pkgtransport.TrustRootServicer
 type TenantServicer = pkgtransport.TenantServicer
 type CredentialManagementServicer = pkgtransport.CredentialManagementServicer
 type EscrowServicer = pkgtransport.EscrowServicer

@@ -154,7 +154,6 @@ require (
 	github.com/jeremyhahn/go-quicraft v0.20.0 // indirect
 	github.com/jeremyhahn/go-truststrap v0.6.0-alpha // indirect
 	github.com/jeremyhahn/go-xkms/sdk/go v0.55.0-alpha // indirect
-	github.com/jeremyhahn/go-xkms/xkey v0.55.0-alpha // indirect
 	github.com/jeroenrinzema/psql-wire v0.18.0 // indirect
 	github.com/jmespath/go-jmespath v0.4.0 // indirect
 	github.com/json-iterator/go v1.1.12 // indirect

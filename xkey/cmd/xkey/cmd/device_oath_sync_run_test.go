@@ -27,8 +27,8 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	"github.com/jeremyhahn/go-xkms/pkg/pairingproto"
 	"github.com/jeremyhahn/go-xkms/xkey/pkg/oath"
-	"github.com/jeremyhahn/go-xkms/xkey/pkg/pairing"
 )
 
 // oathSyncTestCmd builds a fresh cobra.Command carrying the same flags the
@@ -179,8 +179,8 @@ func storedOATHNames(t *testing.T, storePath string) []string {
 }
 
 // phoneOATH is a credential as the phone reports it.
-func phoneOATH(name string) pairing.OATHCredentialInfo {
-	return pairing.OATHCredentialInfo{
+func phoneOATH(name string) pairingproto.OATHCredentialInfo {
+	return pairingproto.OATHCredentialInfo{
 		Name:   name,
 		Secret: mustSecretText("GEZDGNBVGY3TQOJQ"),
 		Type:   oath.TypeTOTP,
@@ -188,10 +188,10 @@ func phoneOATH(name string) pairing.OATHCredentialInfo {
 }
 
 // phoneOATHList answers local.oathList with the given credentials.
-func phoneOATHList(creds ...pairing.OATHCredentialInfo) map[string]any {
+func phoneOATHList(creds ...pairingproto.OATHCredentialInfo) map[string]any {
 	return map[string]any{
-		pairing.MethodLocalOATHList: &pairing.LocalOATHListResult{Credentials: creds},
-		pairing.MethodLocalOATHAdd:  &pairing.LocalOATHAddResult{Success: true, CredentialID: "phone-id-1"},
+		pairingproto.MethodLocalOATHList: &pairingproto.LocalOATHListResult{Credentials: creds},
+		pairingproto.MethodLocalOATHAdd:  &pairingproto.LocalOATHAddResult{Success: true, CredentialID: "phone-id-1"},
 	}
 }
 
@@ -201,10 +201,10 @@ func pushedOATHNames(t *testing.T, transport *fakeDeviceTransport) []string {
 
 	var names []string
 	for _, req := range transport.requests {
-		if req.Method != pairing.MethodLocalOATHAdd {
+		if req.Method != pairingproto.MethodLocalOATHAdd {
 			continue
 		}
-		params, ok := req.Params.(*pairing.LocalOATHAddParams)
+		params, ok := req.Params.(*pairingproto.LocalOATHAddParams)
 		require.True(t, ok, "unexpected params type %T", req.Params)
 		names = append(names, params.Credential.Name)
 	}
@@ -241,7 +241,7 @@ func TestRunOATHSync_PhoneRefusesAPush(t *testing.T) {
 
 	transport := &fakeDeviceTransport{
 		results:   phoneOATHList(),
-		rpcErrors: map[string]*pairing.RPCError{pairing.MethodLocalOATHAdd: {Code: -32000, Message: "storage full"}},
+		rpcErrors: map[string]*pairingproto.RPCError{pairingproto.MethodLocalOATHAdd: {Code: -32000, Message: "storage full"}},
 	}
 	useFakeTransport(t, transport)
 
@@ -297,15 +297,15 @@ func TestRunOATHSync_ListFailures(t *testing.T) {
 		},
 		{
 			name: "phone error",
-			transport: &fakeDeviceTransport{rpcErrors: map[string]*pairing.RPCError{
-				pairing.MethodLocalOATHList: {Code: -32000, Message: "locked"},
+			transport: &fakeDeviceTransport{rpcErrors: map[string]*pairingproto.RPCError{
+				pairingproto.MethodLocalOATHList: {Code: -32000, Message: "locked"},
 			}},
 			detail: "[-32000] locked",
 		},
 		{
 			name: "malformed reply",
 			transport: &fakeDeviceTransport{results: map[string]any{
-				pairing.MethodLocalOATHList: "not an object",
+				pairingproto.MethodLocalOATHList: "not an object",
 			}},
 			detail: "failed to decode list result",
 		},
@@ -334,7 +334,7 @@ func TestRunOATHPush_SendsTheCredential(t *testing.T) {
 	require.NoError(t, runOATHPush(cmd, []string{"GitHub"}))
 
 	require.Equal(t, []string{"GitHub"}, pushedOATHNames(t, transport))
-	var sent pairing.LocalOATHAddParams
+	var sent pairingproto.LocalOATHAddParams
 	require.NoError(t, json.Unmarshal(transport.wire[0], &sent))
 	assert.Equal(t, "JBSWY3DPEHPK3PXP", textOf(sent.Credential.Secret))
 
@@ -366,15 +366,15 @@ func TestRunOATHPush_PhoneFailures(t *testing.T) {
 		},
 		{
 			name: "phone error",
-			transport: &fakeDeviceTransport{rpcErrors: map[string]*pairing.RPCError{
-				pairing.MethodLocalOATHAdd: {Code: -32000, Message: "duplicate"},
+			transport: &fakeDeviceTransport{rpcErrors: map[string]*pairingproto.RPCError{
+				pairingproto.MethodLocalOATHAdd: {Code: -32000, Message: "duplicate"},
 			}},
 			detail: "[-32000] duplicate",
 		},
 		{
 			name: "malformed reply",
 			transport: &fakeDeviceTransport{results: map[string]any{
-				pairing.MethodLocalOATHAdd: "not an object",
+				pairingproto.MethodLocalOATHAdd: "not an object",
 			}},
 			detail: "failed to decode push result",
 		},
@@ -447,15 +447,15 @@ func TestRunOATHPull_PhoneFailures(t *testing.T) {
 		},
 		{
 			name: "phone error",
-			transport: &fakeDeviceTransport{rpcErrors: map[string]*pairing.RPCError{
-				pairing.MethodLocalOATHList: {Code: -32000, Message: "locked"},
+			transport: &fakeDeviceTransport{rpcErrors: map[string]*pairingproto.RPCError{
+				pairingproto.MethodLocalOATHList: {Code: -32000, Message: "locked"},
 			}},
 			detail: "[-32000] locked",
 		},
 		{
 			name: "malformed reply",
 			transport: &fakeDeviceTransport{results: map[string]any{
-				pairing.MethodLocalOATHList: "not an object",
+				pairingproto.MethodLocalOATHList: "not an object",
 			}},
 			detail: "failed to decode list result",
 		},

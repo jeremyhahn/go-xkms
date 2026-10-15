@@ -416,7 +416,7 @@ their AEAD with `cipher.NewGCMWithRandomNonce` instead:
   separate `nonce` field alongside a caller-IV-sealed `ciphertext`; version 2
   folds the nonce into `ciphertext` and drops the field. A version 1 file is
   refused with `ErrRestoreUnsupportedVersion`, not migrated.
-- **`xkey/pkg/authenticator/key_wrapper.go`** (`AESGCMKeyWrapper`, the
+- **`pkg/fido2/authenticator/key_wrapper.go`** (`AESGCMKeyWrapper`, the
   in-process key-wrap format `nonce (12) || ciphertext || tag (16)`). The
   wire format is byte-for-byte unchanged — `cipher.NewGCMWithRandomNonce`'s
   own framing already matches it — only the nonce's source moved from

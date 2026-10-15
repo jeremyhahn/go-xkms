@@ -19,19 +19,19 @@ import (
 	"testing"
 
 	"github.com/jeremyhahn/go-xkms/pkg/backend"
+	"github.com/jeremyhahn/go-xkms/pkg/pairingproto"
 	"github.com/jeremyhahn/go-xkms/pkg/types"
-	"github.com/jeremyhahn/go-xkms/xkey/pkg/pairing"
 )
 
 // --- GenerateSymmetricKey ---
 
 func TestBackend_GenerateSymmetricKey_Success(t *testing.T) {
 	sender := &mockSender{
-		sendFunc: func(ctx context.Context, req *pairing.Request) (*pairing.Response, error) {
-			if req.Method != pairing.MethodLocalGenerateKey {
-				t.Errorf("expected method %s, got %s", pairing.MethodLocalGenerateKey, req.Method)
+		sendFunc: func(ctx context.Context, req *pairingproto.Request) (*pairingproto.Response, error) {
+			if req.Method != pairingproto.MethodLocalGenerateKey {
+				t.Errorf("expected method %s, got %s", pairingproto.MethodLocalGenerateKey, req.Method)
 			}
-			return mockSuccessResponse(pairing.LocalGenerateKeyResult{
+			return mockSuccessResponse(pairingproto.LocalGenerateKeyResult{
 				KeyID:     "sym-key",
 				Algorithm: "AES256-GCM",
 			}), nil
@@ -61,8 +61,8 @@ func TestBackend_GenerateSymmetricKey_Success(t *testing.T) {
 
 func TestBackend_GenerateSymmetricKey_AES128(t *testing.T) {
 	sender := &mockSender{
-		sendFunc: func(ctx context.Context, req *pairing.Request) (*pairing.Response, error) {
-			return mockSuccessResponse(pairing.LocalGenerateKeyResult{
+		sendFunc: func(ctx context.Context, req *pairingproto.Request) (*pairingproto.Response, error) {
+			return mockSuccessResponse(pairingproto.LocalGenerateKeyResult{
 				KeyID:     "sym-key-128",
 				Algorithm: "AES128-GCM",
 			}), nil
@@ -127,8 +127,8 @@ func TestBackend_GenerateSymmetricKey_UnsupportedAlgorithm(t *testing.T) {
 
 func TestBackend_GenerateSymmetricKey_RPCError(t *testing.T) {
 	sender := &mockSender{
-		sendFunc: func(ctx context.Context, req *pairing.Request) (*pairing.Response, error) {
-			return mockErrorResponse(pairing.ErrorCodeKeyExists, "exists"), nil
+		sendFunc: func(ctx context.Context, req *pairingproto.Request) (*pairingproto.Response, error) {
+			return mockErrorResponse(pairingproto.ErrorCodeKeyExists, "exists"), nil
 		},
 	}
 
@@ -148,9 +148,9 @@ func TestBackend_GenerateSymmetricKey_RPCError(t *testing.T) {
 
 func TestBackend_GetSymmetricKey_Success(t *testing.T) {
 	sender := &mockSender{
-		sendFunc: func(ctx context.Context, req *pairing.Request) (*pairing.Response, error) {
-			return mockSuccessResponse(pairing.LocalGetKeyInfoResult{
-				KeyInfo: pairing.KeyInfo{
+		sendFunc: func(ctx context.Context, req *pairingproto.Request) (*pairingproto.Response, error) {
+			return mockSuccessResponse(pairingproto.LocalGetKeyInfoResult{
+				KeyInfo: pairingproto.KeyInfo{
 					KeyID:     "sym-key",
 					Algorithm: "AES256-GCM",
 				},
@@ -199,8 +199,8 @@ func TestBackend_GetSymmetricKey_NilAttrs(t *testing.T) {
 
 func TestBackend_GetSymmetricKey_NotFound(t *testing.T) {
 	sender := &mockSender{
-		sendFunc: func(ctx context.Context, req *pairing.Request) (*pairing.Response, error) {
-			return mockErrorResponse(pairing.ErrorCodeKeyNotFound, "not found"), nil
+		sendFunc: func(ctx context.Context, req *pairingproto.Request) (*pairingproto.Response, error) {
+			return mockErrorResponse(pairingproto.ErrorCodeKeyNotFound, "not found"), nil
 		},
 	}
 
@@ -216,9 +216,9 @@ func TestBackend_GetSymmetricKey_NotFound(t *testing.T) {
 
 func TestBackend_SymmetricEncrypter_Success(t *testing.T) {
 	sender := &mockSender{
-		sendFunc: func(ctx context.Context, req *pairing.Request) (*pairing.Response, error) {
-			return mockSuccessResponse(pairing.LocalGetKeyInfoResult{
-				KeyInfo: pairing.KeyInfo{
+		sendFunc: func(ctx context.Context, req *pairingproto.Request) (*pairingproto.Response, error) {
+			return mockSuccessResponse(pairingproto.LocalGetKeyInfoResult{
+				KeyInfo: pairingproto.KeyInfo{
 					KeyID:     "sym-key",
 					Algorithm: "AES256-GCM",
 				},
@@ -264,8 +264,8 @@ func TestBackend_SymmetricEncrypter_NilAttrs(t *testing.T) {
 
 func TestBackend_SymmetricEncrypter_KeyNotFound(t *testing.T) {
 	sender := &mockSender{
-		sendFunc: func(ctx context.Context, req *pairing.Request) (*pairing.Response, error) {
-			return mockErrorResponse(pairing.ErrorCodeKeyNotFound, "not found"), nil
+		sendFunc: func(ctx context.Context, req *pairingproto.Request) (*pairingproto.Response, error) {
+			return mockErrorResponse(pairingproto.ErrorCodeKeyNotFound, "not found"), nil
 		},
 	}
 
@@ -325,11 +325,11 @@ func TestPhoneSymmetricEncrypter_Encrypt_Success(t *testing.T) {
 	expectedCiphertext := []byte("iv-encrypted-data-tag")
 
 	sender := &mockSender{
-		sendFunc: func(ctx context.Context, req *pairing.Request) (*pairing.Response, error) {
-			if req.Method != pairing.MethodLocalSymmetricEncrypt {
-				t.Errorf("expected method %s, got %s", pairing.MethodLocalSymmetricEncrypt, req.Method)
+		sendFunc: func(ctx context.Context, req *pairingproto.Request) (*pairingproto.Response, error) {
+			if req.Method != pairingproto.MethodLocalSymmetricEncrypt {
+				t.Errorf("expected method %s, got %s", pairingproto.MethodLocalSymmetricEncrypt, req.Method)
 			}
-			return mockSuccessResponse(pairing.LocalSymmetricEncryptResult{
+			return mockSuccessResponse(pairingproto.LocalSymmetricEncryptResult{
 				Ciphertext: expectedCiphertext,
 			}), nil
 		},
@@ -356,8 +356,8 @@ func TestPhoneSymmetricEncrypter_Encrypt_Success(t *testing.T) {
 
 func TestPhoneSymmetricEncrypter_Encrypt_WithAAD(t *testing.T) {
 	sender := &mockSender{
-		sendFunc: func(ctx context.Context, req *pairing.Request) (*pairing.Response, error) {
-			return mockSuccessResponse(pairing.LocalSymmetricEncryptResult{
+		sendFunc: func(ctx context.Context, req *pairingproto.Request) (*pairingproto.Response, error) {
+			return mockSuccessResponse(pairingproto.LocalSymmetricEncryptResult{
 				Ciphertext: []byte("encrypted"),
 			}), nil
 		},
@@ -390,7 +390,7 @@ func TestPhoneSymmetricEncrypter_Encrypt_WithAAD(t *testing.T) {
 // (go-xkms#1223).
 func TestPhoneSymmetricEncrypter_Encrypt_RejectsCallerNonce(t *testing.T) {
 	sender := &mockSender{
-		sendFunc: func(ctx context.Context, req *pairing.Request) (*pairing.Response, error) {
+		sendFunc: func(ctx context.Context, req *pairingproto.Request) (*pairingproto.Response, error) {
 			t.Fatal("Encrypt() should not reach the phone when a caller nonce is refused locally")
 			return nil, nil
 		},
@@ -414,8 +414,8 @@ func TestPhoneSymmetricEncrypter_Encrypt_RejectsCallerNonce(t *testing.T) {
 // EncryptOptions.
 func TestPhoneSymmetricEncrypter_Encrypt_AllowsNilNonce(t *testing.T) {
 	sender := &mockSender{
-		sendFunc: func(ctx context.Context, req *pairing.Request) (*pairing.Response, error) {
-			return mockSuccessResponse(pairing.LocalSymmetricEncryptResult{
+		sendFunc: func(ctx context.Context, req *pairingproto.Request) (*pairingproto.Response, error) {
+			return mockSuccessResponse(pairingproto.LocalSymmetricEncryptResult{
 				Ciphertext: []byte("encrypted"),
 			}), nil
 		},
@@ -450,7 +450,7 @@ func TestPhoneSymmetricEncrypter_Encrypt_NilPlaintext(t *testing.T) {
 
 func TestPhoneSymmetricEncrypter_Encrypt_RPCError(t *testing.T) {
 	sender := &mockSender{
-		sendFunc: func(ctx context.Context, req *pairing.Request) (*pairing.Response, error) {
+		sendFunc: func(ctx context.Context, req *pairingproto.Request) (*pairingproto.Response, error) {
 			return nil, errors.New("connection lost")
 		},
 	}
@@ -472,11 +472,11 @@ func TestPhoneSymmetricEncrypter_Decrypt_Success(t *testing.T) {
 	expectedPlaintext := []byte("decrypted-plaintext")
 
 	sender := &mockSender{
-		sendFunc: func(ctx context.Context, req *pairing.Request) (*pairing.Response, error) {
-			if req.Method != pairing.MethodLocalSymmetricDecrypt {
-				t.Errorf("expected method %s, got %s", pairing.MethodLocalSymmetricDecrypt, req.Method)
+		sendFunc: func(ctx context.Context, req *pairingproto.Request) (*pairingproto.Response, error) {
+			if req.Method != pairingproto.MethodLocalSymmetricDecrypt {
+				t.Errorf("expected method %s, got %s", pairingproto.MethodLocalSymmetricDecrypt, req.Method)
 			}
-			return mockSuccessResponse(pairing.LocalSymmetricDecryptResult{
+			return mockSuccessResponse(pairingproto.LocalSymmetricDecryptResult{
 				Plaintext: expectedPlaintext,
 			}), nil
 		},
@@ -505,8 +505,8 @@ func TestPhoneSymmetricEncrypter_Decrypt_Success(t *testing.T) {
 
 func TestPhoneSymmetricEncrypter_Decrypt_WithAAD(t *testing.T) {
 	sender := &mockSender{
-		sendFunc: func(ctx context.Context, req *pairing.Request) (*pairing.Response, error) {
-			return mockSuccessResponse(pairing.LocalSymmetricDecryptResult{
+		sendFunc: func(ctx context.Context, req *pairingproto.Request) (*pairingproto.Response, error) {
+			return mockSuccessResponse(pairingproto.LocalSymmetricDecryptResult{
 				Plaintext: []byte("decrypted"),
 			}), nil
 		},
@@ -552,8 +552,8 @@ func TestPhoneSymmetricEncrypter_Decrypt_NilData(t *testing.T) {
 
 func TestPhoneSymmetricEncrypter_Decrypt_RPCError(t *testing.T) {
 	sender := &mockSender{
-		sendFunc: func(ctx context.Context, req *pairing.Request) (*pairing.Response, error) {
-			return mockErrorResponse(pairing.ErrorCodeDecryptFailed, "decrypt failed"), nil
+		sendFunc: func(ctx context.Context, req *pairingproto.Request) (*pairingproto.Response, error) {
+			return mockErrorResponse(pairingproto.ErrorCodeDecryptFailed, "decrypt failed"), nil
 		},
 	}
 

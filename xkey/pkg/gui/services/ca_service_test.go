@@ -46,6 +46,10 @@ type mockCAClient struct {
 	// call it.
 	transport.OIDCCredentialService
 
+	// TrustRootService completes transport.Client; these tests never call
+	// it.
+	transport.TrustRootService
+
 	getCACertificateResp  *transport.GetCACertificateResponse
 	getCACertificateErr   error
 	issueCertificateResp  *transport.IssueCertificateResponse

@@ -13,7 +13,12 @@
 
 package pairing
 
-import "context"
+import (
+	"context"
+
+	"github.com/jeremyhahn/go-xkms/sdk/go/bootstrap"
+	"github.com/jeremyhahn/go-xkms/sdk/go/pairingproto"
+)
 
 // InlineExchange builds an RPCExchange from raw send/receive primitives over
 // an already-established Noise session, for a caller that normally acts as
@@ -29,12 +34,12 @@ import "context"
 // completing and its normal request-serving loop starting -- exactly where
 // TCPPairingServer and BLEPeripheral call it.
 func InlineExchange(
-	session *NoiseSession,
+	session *bootstrap.NoiseSession,
 	send func(ctx context.Context, ciphertext []byte) error,
 	receive func(ctx context.Context) ([]byte, error),
-) RPCExchange {
-	return func(ctx context.Context, req *Request) (*Response, error) {
-		plaintext, err := EncodeRequest(req)
+) pairingproto.RPCExchange {
+	return func(ctx context.Context, req *pairingproto.Request) (*pairingproto.Response, error) {
+		plaintext, err := pairingproto.EncodeRequest(req)
 		if err != nil {
 			return nil, err
 		}
@@ -53,6 +58,6 @@ func InlineExchange(
 		if err != nil {
 			return nil, err
 		}
-		return DecodeResponse(responsePlaintext)
+		return pairingproto.DecodeResponse(responsePlaintext)
 	}
 }

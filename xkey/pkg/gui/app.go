@@ -42,9 +42,10 @@ import (
 	sshclient "github.com/jeremyhahn/go-xkms/sdk/go/client/ssh"
 	"github.com/jeremyhahn/go-xkms/sdk/go/localtpm"
 
+	"github.com/jeremyhahn/go-xkms/sdk/go/fido2/authenticator"
+	"github.com/jeremyhahn/go-xkms/sdk/go/fido2/keybackend"
+	"github.com/jeremyhahn/go-xkms/sdk/go/truststore"
 	"github.com/jeremyhahn/go-xkms/xkey/pkg/audit"
-	"github.com/jeremyhahn/go-xkms/xkey/pkg/authenticator"
-	"github.com/jeremyhahn/go-xkms/xkey/pkg/authenticator/keybackend"
 	"github.com/jeremyhahn/go-xkms/xkey/pkg/backendregistry"
 	"github.com/jeremyhahn/go-xkms/xkey/pkg/config"
 	"github.com/jeremyhahn/go-xkms/xkey/pkg/gui/events"
@@ -55,11 +56,11 @@ import (
 	"github.com/jeremyhahn/go-xkms/xkey/pkg/notify"
 	"github.com/jeremyhahn/go-xkms/xkey/pkg/oath"
 	pkcs11svc "github.com/jeremyhahn/go-xkms/xkey/pkg/pkcs11"
+	"github.com/jeremyhahn/go-xkms/xkey/pkg/presence"
 	"github.com/jeremyhahn/go-xkms/xkey/pkg/serverregistry"
 	"github.com/jeremyhahn/go-xkms/xkey/pkg/sshstore"
 	"github.com/jeremyhahn/go-xkms/xkey/pkg/staticpw"
 	"github.com/jeremyhahn/go-xkms/xkey/pkg/tokenstore"
-	"github.com/jeremyhahn/go-xkms/xkey/pkg/truststore"
 	"github.com/jeremyhahn/go-xkms/xkey/pkg/xhome"
 	"gopkg.in/yaml.v3"
 )
@@ -627,18 +628,7 @@ func initLocalPIV(log *slog.Logger, dir string, barrierBackend xkmssdk.StorageBa
 		// use file storage as a placeholder.
 
 		// Other backends get a namespaced store.
-		ns, nsErr := xkmssdk.NewStoragePrefixBackend(pivBackend, "backends/"+cat+"/")
-		if nsErr != nil {
-			log.Warn("failed to create namespaced PIV backend, using shared store",
-				"backend", id, "category", cat, "error", nsErr)
-			stores[id] = pivFileStore
-			if cat != id {
-				stores[cat] = pivFileStore
-			}
-			continue
-		}
-
-		nsStore, nsStoreErr := newPIVFileStore(ns)
+		nsStore, nsStoreErr := newNamespacedPIVStore(pivBackend, cat)
 		if nsStoreErr != nil {
 			log.Warn("failed to create namespaced PIV store, using shared store",
 				"backend", id, "category", cat, "error", nsStoreErr)
@@ -670,11 +660,7 @@ func initLocalPIV(log *slog.Logger, dir string, barrierBackend xkmssdk.StorageBa
 		// PKCS#11 backends get on-device cert storage when the connect
 		// hook fires; the store factory returns file storage as a fallback.
 
-		ns, nsErr := xkmssdk.NewStoragePrefixBackend(pivBackend, "backends/"+backendName+"/")
-		if nsErr != nil {
-			return nil, nsErr
-		}
-		return newPIVFileStore(ns)
+		return newNamespacedPIVStore(pivBackend, backendName)
 	}
 
 	if err := xkmssdk.InitializePIV(&xkmssdk.PIVManagerConfig{
@@ -702,6 +688,17 @@ func newPIVFileStore(backend xkmssdk.StorageBackend) (xkmssdk.PIVCertificateStor
 		return nil, err
 	}
 	return store, nil
+}
+
+// newNamespacedPIVStore returns a PIV certificate store isolated under
+// "backends/{name}/" of backend, so one backend's certificates never appear
+// when listing another's.
+func newNamespacedPIVStore(backend xkmssdk.StorageBackend, name string) (xkmssdk.PIVCertificateStorage, error) {
+	ns, err := xkmssdk.NewStoragePrefixBackend(backend, "backends/"+name+"/")
+	if err != nil {
+		return nil, err
+	}
+	return newPIVFileStore(ns)
 }
 
 // closeBackend is a helper that closes a xkmssdk.StorageBackend and logs any error.
@@ -1274,7 +1271,7 @@ func (a *App) initializeAuthenticator() {
 	// nobody and its requests time out, which is a refusal. Nothing can be
 	// authorized in the window before AttachPresenceHandler supplies the real
 	// notifier, which is the correct direction to fail.
-	presenceHandler := authenticator.NewSocketHandler(a.deviceNotifier, a.log)
+	presenceHandler := presence.NewSocketHandler(a.deviceNotifier, a.log)
 
 	auth, err := authenticator.NewAuthenticator(&authenticator.Config{
 		Storage:             a.fido2Storage,
@@ -1443,12 +1440,7 @@ func (a *App) initLocalKeyStore(barrierBackend xkmssdk.StorageBackend) {
 				}
 				continue
 			}
-			ns, nsErr := xkmssdk.NewStoragePrefixBackend(a.pivStorageBE, "backends/"+name+"/")
-			if nsErr != nil {
-				a.log.Warn("failed to create namespaced PIV store", "backend", name, "error", nsErr)
-				continue
-			}
-			nsStore, storeErr := newPIVFileStore(ns)
+			nsStore, storeErr := newNamespacedPIVStore(a.pivStorageBE, name)
 			if storeErr != nil {
 				a.log.Warn("failed to create PIV file store for backend", "backend", name, "error", storeErr)
 				continue
@@ -2142,7 +2134,7 @@ func NewApp(cfg *GUIConfig) *App {
 		apiExplorerSvc.SetAuditLogger(auditStore)
 	}
 	if a.authenticatorInstance != nil {
-		a.authenticatorInstance.SetAuditLogger(auditStore)
+		a.authenticatorInstance.SetAuditLogger(audit.NewFIDO2Logger(auditStore))
 	}
 
 	// SSH services are wired in initializeDataDir() (via
@@ -2270,8 +2262,15 @@ func NewApp(cfg *GUIConfig) *App {
 			return
 		}
 
-		store := a.pivFileStore
-		if store == nil {
+		if a.pivStorageBE == nil {
+			return
+		}
+		// Isolate the backend's certificates under its category's namespace,
+		// the same store initLocalPIV gives it after a restart.
+		store, err := newNamespacedPIVStore(a.pivStorageBE, category)
+		if err != nil {
+			a.log.Warn("failed to create PIV store for new backend",
+				"backend_id", backendID, "category", category, "error", err)
 			return
 		}
 		if err := xkmssdk.RegisterPIVStore(backendID, store); err != nil {

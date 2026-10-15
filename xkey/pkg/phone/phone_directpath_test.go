@@ -19,7 +19,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/jeremyhahn/go-xkms/xkey/pkg/pairing"
+	"github.com/jeremyhahn/go-xkms/pkg/pairingproto"
 )
 
 // TestDirectRequestPathSerializesTheCipherState covers the nonce race on the
@@ -81,7 +81,7 @@ func TestDirectRequestPathSerializesTheCipherState(t *testing.T) {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
-			_, _ = backend.SendRequest(ctx, pairing.NewRequest(pairing.MethodPing, nil))
+			_, _ = backend.SendRequest(ctx, pairingproto.NewRequest(pairingproto.MethodPing, nil))
 		}()
 	}
 	wg.Wait()
@@ -99,7 +99,7 @@ func TestDirectRequestPathSerializesTheCipherState(t *testing.T) {
 
 // countingTransport reports when a call is inside the underlying transport.
 type countingTransport struct {
-	pairing.Transport
+	pairingproto.Transport
 	enter func()
 	exit  func()
 }

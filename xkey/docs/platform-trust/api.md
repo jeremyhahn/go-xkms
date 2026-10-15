@@ -86,7 +86,7 @@ base64-decoded (`pkg/trust/fetcher/fetcher.go:57-81`).
 
 | Thing | Where | Notes |
 |---|---|---|
-| Stored certificates, purposes, sources | `xkey/pkg/truststore` | keyed by fingerprint |
+| Stored certificates, purposes, sources | `pkg/attestation/truststore` | keyed by fingerprint |
 | NSS database integration | `xkey/pkg/nssdb` | `trust install` / `uninstall` |
 | OS trust store | system-dependent | mutated by `trust install` |
 

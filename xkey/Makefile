@@ -396,20 +396,6 @@ test-gui:
 	@$(GOTEST) $(TEST_FLAGS) ./pkg/gui/...
 	@echo "$(GREEN)GUI service tests passed$(RESET)"
 
-.PHONY: test-authenticator
-## test-authenticator: Run authenticator package unit tests
-test-authenticator:
-	@echo "$(CYAN)Running authenticator tests...$(RESET)"
-	@$(GOTEST) $(TEST_FLAGS) ./pkg/authenticator/...
-	@echo "$(GREEN)Authenticator tests passed$(RESET)"
-
-.PHONY: test-uhid
-## test-uhid: Run UHID package unit tests
-test-uhid:
-	@echo "$(CYAN)Running UHID tests...$(RESET)"
-	@$(GOTEST) $(TEST_FLAGS) ./pkg/uhid/...
-	@echo "$(GREEN)UHID tests passed$(RESET)"
-
 .PHONY: test-ipc
 ## test-ipc: Run IPC package unit tests
 test-ipc:
@@ -458,13 +444,6 @@ test-oidc:
 	@echo "$(CYAN)Running OIDC tests...$(RESET)"
 	@$(GOTEST) $(TEST_FLAGS) ./pkg/oidc/...
 	@echo "$(GREEN)OIDC tests passed$(RESET)"
-
-.PHONY: test-virtualdevice
-## test-virtualdevice: Run virtual device package unit tests
-test-virtualdevice:
-	@echo "$(CYAN)Running virtual device tests...$(RESET)"
-	@$(GOTEST) $(TEST_FLAGS) ./pkg/virtualdevice/...
-	@echo "$(GREEN)Virtual device tests passed$(RESET)"
 
 .PHONY: test-gadget
 ## test-gadget: Run USB gadget package unit tests
@@ -530,7 +509,7 @@ integration-test-fido2:
 	@# TPM2 host entry is opt-in via XKEY_ALLOW_HOST_TPM and skips here). Runs in
 	@# the devcontainer with INTEGRATION_TEST_FLAGS (includes tpm_simulator), so
 	@# no host hardware is touched by default.
-	@$(GO) test $(INTEGRATION_TEST_FLAGS) -timeout=10m ./pkg/authenticator/keybackend/...
+	@cd .. && $(GO) test $(INTEGRATION_TEST_FLAGS) -timeout=10m ./pkg/fido2/authenticator/keybackend/...
 	@echo "$(GREEN)FIDO2 integration tests passed$(RESET)"
 
 .PHONY: integration-test-uhid
@@ -725,26 +704,6 @@ coverage-gui:
 	@$(GO) tool cover -html=$(COVERAGE_DIR)/gui.out -o $(COVERAGE_DIR)/gui.html
 	@$(GO) tool cover -func=$(COVERAGE_DIR)/gui.out | tail -1
 	@echo "$(GREEN)Coverage report: $(COVERAGE_DIR)/gui.html$(RESET)"
-
-.PHONY: coverage-authenticator
-## coverage-authenticator: Generate authenticator package coverage report
-coverage-authenticator:
-	@echo "$(CYAN)Generating authenticator coverage report...$(RESET)"
-	@mkdir -p $(COVERAGE_DIR)
-	@$(GOTEST) -race -coverprofile=$(COVERAGE_DIR)/authenticator.out -covermode=atomic ./pkg/authenticator/...
-	@$(GO) tool cover -html=$(COVERAGE_DIR)/authenticator.out -o $(COVERAGE_DIR)/authenticator.html
-	@$(GO) tool cover -func=$(COVERAGE_DIR)/authenticator.out | tail -1
-	@echo "$(GREEN)Coverage report: $(COVERAGE_DIR)/authenticator.html$(RESET)"
-
-.PHONY: coverage-uhid
-## coverage-uhid: Generate UHID package coverage report
-coverage-uhid:
-	@echo "$(CYAN)Generating UHID coverage report...$(RESET)"
-	@mkdir -p $(COVERAGE_DIR)
-	@$(GOTEST) -race -coverprofile=$(COVERAGE_DIR)/uhid.out -covermode=atomic ./pkg/uhid/...
-	@$(GO) tool cover -html=$(COVERAGE_DIR)/uhid.out -o $(COVERAGE_DIR)/uhid.html
-	@$(GO) tool cover -func=$(COVERAGE_DIR)/uhid.out | tail -1
-	@echo "$(GREEN)Coverage report: $(COVERAGE_DIR)/uhid.html$(RESET)"
 
 .PHONY: coverage-gadget
 ## coverage-gadget: Run USB gadget tests with coverage report
@@ -943,14 +902,6 @@ bench-gui:
 	@$(GO) test -tags "$(BUILD_TAGS)" -bench=. -benchmem -run=^$$ ./pkg/gui/... | tee $(BUILD_DIR)/bench/gui.txt
 	@echo "$(GREEN)Benchmarks complete: $(BUILD_DIR)/bench/gui.txt$(RESET)"
 
-.PHONY: bench-authenticator
-## bench-authenticator: Run authenticator benchmarks
-bench-authenticator:
-	@echo "$(CYAN)$(BOLD)Running authenticator benchmarks...$(RESET)"
-	@mkdir -p $(BUILD_DIR)/bench
-	@$(GO) test -tags "$(BUILD_TAGS)" -bench=. -benchmem -run=^$$ ./pkg/authenticator/... | tee $(BUILD_DIR)/bench/authenticator.txt
-	@echo "$(GREEN)Benchmarks complete: $(BUILD_DIR)/bench/authenticator.txt$(RESET)"
-
 # Wildcard benchmark target for any package under pkg/
 .PHONY: bench-%
 bench-%:
@@ -990,7 +941,7 @@ playwright-test-piv:
 ## test-fido2-pkcs11: FIDO2 PKCS#11 composite key backend unit tests
 test-fido2-pkcs11:
 	@echo "$(CYAN)$(BOLD)Running FIDO2 PKCS#11 composite backend tests...$(RESET)"
-	@go test -v -tags "pkcs11,fido2,webauthn" -count=1 -timeout 60s -run 'TestComposite.*PKCS11' ./pkg/authenticator/keybackend/...
+	@cd .. && go test -v -tags "pkcs11,fido2,webauthn" -count=1 -timeout 60s -run 'TestComposite.*PKCS11' ./pkg/fido2/authenticator/keybackend/...
 	@echo "$(GREEN)FIDO2 PKCS#11 composite backend tests passed$(RESET)"
 
 .PHONY: integration-test-fido2-adapter
@@ -999,7 +950,7 @@ integration-test-fido2-adapter:
 	@echo "$(CYAN)$(BOLD)Setting up SoftHSM PIV test certificates...$(RESET)"
 	@bash test/e2e/setup-softhsm-piv.sh
 	@echo "$(CYAN)$(BOLD)Running FIDO2 adapter integration tests (software + TPM2 + PKCS#11)...$(RESET)"
-	@go test -v -tags "pkcs11,fido2,webauthn,integration" -count=1 -timeout 120s -run 'TestAllBackends' ./pkg/authenticator/keybackend/...
+	@cd .. && go test -v -tags "pkcs11,fido2,webauthn,integration" -count=1 -timeout 120s -run 'TestAllBackends' ./pkg/fido2/authenticator/keybackend/...
 	@echo "$(GREEN)FIDO2 adapter integration tests passed (all backends)$(RESET)"
 
 .PHONY: integration-test-piv-pkcs11
@@ -1127,7 +1078,6 @@ help:
 	@echo "  make build                    Build CLI and GUI binaries"
 	@echo "  make dev-gui                  Start Wails dev mode with hot reload"
 	@echo "  make test                     Run all unit tests"
-	@echo "  make test-authenticator       Run authenticator package tests"
 	@echo "  make coverage-gui             Generate GUI coverage report"
 	@echo "  make lint-all                 Run Go and frontend linters"
 	@echo "  make deps                     Install Go and npm dependencies"

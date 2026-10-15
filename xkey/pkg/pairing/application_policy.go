@@ -20,6 +20,7 @@ import (
 	"strings"
 
 	xkms "github.com/jeremyhahn/go-xkms/sdk/go"
+	"github.com/jeremyhahn/go-xkms/sdk/go/pairingproto"
 )
 
 // Attested-application refusals, shared by every decision that reads the
@@ -108,7 +109,7 @@ func (p ApplicationPolicy) Match(appID *xkms.AndroidAttestationApplicationID) (s
 		return "", "", ErrApplicationPolicyUnconfigured
 	}
 	if appID == nil || len(appID.Packages) == 0 {
-		return "", "", &DetailError{Err: ErrApplicationDenied, Detail: ": the attestation names no application"}
+		return "", "", &pairingproto.DetailError{Err: ErrApplicationDenied, Detail: ": the attestation names no application"}
 	}
 
 	digests := make([]string, 0, len(appID.SignatureDigests))
@@ -138,7 +139,7 @@ func (p ApplicationPolicy) Match(appID *xkms.AndroidAttestationApplicationID) (s
 	if unpinnedRefused {
 		detail += " (an allow-listed entry carries no signing digest and allow_unpinned_signatures is off)"
 	}
-	return "", "", &DetailError{Err: ErrApplicationDenied, Detail: detail}
+	return "", "", &pairingproto.DetailError{Err: ErrApplicationDenied, Detail: detail}
 }
 
 // signerAllowed reports whether one of the attested signing digests satisfies

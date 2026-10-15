@@ -15,14 +15,30 @@ package phone
 
 import (
 	"errors"
+	"slices"
 	"testing"
 
+	"github.com/jeremyhahn/go-xkms/pkg/pairingproto"
+	"github.com/jeremyhahn/go-xkms/pkg/trust/bootstrap"
 	"github.com/jeremyhahn/go-xkms/xkey/pkg/pairing"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
 
-// allDelegatedErrors returns every error that is delegated to pairing.
+// allNoiseErrors returns every error that is delegated to the Noise session
+// in pkg/trust/bootstrap.
+func allNoiseErrors() []error {
+	return []error{
+		ErrNoiseHandshakeFailed,
+		ErrEncryptionFailed,
+		ErrDecryptionFailed,
+		ErrInvalidNoiseMessage,
+		ErrStaticKeyMismatch,
+	}
+}
+
+// allDelegatedErrors returns every error that is delegated to the pairing
+// wire protocol.
 func allDelegatedErrors() []error {
 	return []error{
 		ErrNotConnected,
@@ -30,9 +46,6 @@ func allDelegatedErrors() []error {
 		ErrDeviceNotFound,
 		ErrPairingFailed,
 		ErrTimeout,
-		ErrNoiseHandshakeFailed,
-		ErrEncryptionFailed,
-		ErrDecryptionFailed,
 		ErrInvalidResponse,
 		ErrUserCancelled,
 		ErrBiometricFailed,
@@ -50,8 +63,6 @@ func allDelegatedErrors() []error {
 		ErrSequenceNumber,
 		ErrMTUTooSmall,
 		ErrSessionExpired,
-		ErrInvalidNoiseMessage,
-		ErrStaticKeyMismatch,
 		ErrStorageFull,
 		ErrKeyExists,
 		ErrBackendDenied,
@@ -107,7 +118,7 @@ func allPhoneOnlyErrors() []error {
 }
 
 func TestErrors_AllErrorsDefined(t *testing.T) {
-	allErrors := append(allDelegatedErrors(), allPhoneOnlyErrors()...)
+	allErrors := slices.Concat(allDelegatedErrors(), allNoiseErrors(), allPhoneOnlyErrors())
 	for _, err := range allErrors {
 		require.NotNil(t, err)
 		assert.NotEmpty(t, err.Error())
@@ -115,7 +126,7 @@ func TestErrors_AllErrorsDefined(t *testing.T) {
 }
 
 func TestErrors_Uniqueness(t *testing.T) {
-	allErrors := append(allDelegatedErrors(), allPhoneOnlyErrors()...)
+	allErrors := slices.Concat(allDelegatedErrors(), allNoiseErrors(), allPhoneOnlyErrors())
 	seen := make(map[string]bool)
 	for _, err := range allErrors {
 		msg := err.Error()
@@ -128,6 +139,13 @@ func TestErrors_DelegatedErrorsUsePairingPrefix(t *testing.T) {
 	for _, err := range allDelegatedErrors() {
 		assert.Contains(t, err.Error(), "pairing:",
 			"delegated error should have pairing: prefix: %s", err.Error())
+	}
+}
+
+func TestErrors_NoiseErrorsUseNoisePrefix(t *testing.T) {
+	for _, err := range allNoiseErrors() {
+		assert.Contains(t, err.Error(), "noise:",
+			"Noise session error should have noise: prefix: %s", err.Error())
 	}
 }
 
@@ -145,23 +163,23 @@ func TestErrors_DelegatedErrorsMatchPairing(t *testing.T) {
 		phoneErr   error
 		pairingErr error
 	}{
-		{ErrNotConnected, pairing.ErrNotConnected},
-		{ErrConnectionFailed, pairing.ErrConnectionFailed},
-		{ErrDeviceNotFound, pairing.ErrDeviceNotFound},
-		{ErrPairingFailed, pairing.ErrPairingFailed},
-		{ErrTimeout, pairing.ErrTimeout},
-		{ErrNoiseHandshakeFailed, pairing.ErrNoiseHandshakeFailed},
-		{ErrEncryptionFailed, pairing.ErrEncryptionFailed},
-		{ErrDecryptionFailed, pairing.ErrDecryptionFailed},
-		{ErrInvalidResponse, pairing.ErrInvalidResponse},
-		{ErrUserCancelled, pairing.ErrUserCancelled},
-		{ErrBiometricFailed, pairing.ErrBiometricFailed},
-		{ErrKeyNotFound, pairing.ErrKeyNotFound},
-		{ErrProtocolError, pairing.ErrProtocolError},
-		{ErrFragmentationError, pairing.ErrFragmentationError},
-		{ErrBackendClosed, pairing.ErrBackendClosed},
-		{ErrBackupFailed, pairing.ErrBackupFailed},
-		{ErrSyncFailed, pairing.ErrSyncFailed},
+		{ErrNotConnected, pairingproto.ErrNotConnected},
+		{ErrConnectionFailed, pairingproto.ErrConnectionFailed},
+		{ErrDeviceNotFound, pairingproto.ErrDeviceNotFound},
+		{ErrPairingFailed, pairingproto.ErrPairingFailed},
+		{ErrTimeout, pairingproto.ErrTimeout},
+		{ErrNoiseHandshakeFailed, bootstrap.ErrNoiseHandshakeFailed},
+		{ErrEncryptionFailed, bootstrap.ErrNoiseEncryptionFailed},
+		{ErrDecryptionFailed, bootstrap.ErrNoiseDecryptionFailed},
+		{ErrInvalidResponse, pairingproto.ErrInvalidResponse},
+		{ErrUserCancelled, pairingproto.ErrUserCancelled},
+		{ErrBiometricFailed, pairingproto.ErrBiometricFailed},
+		{ErrKeyNotFound, pairingproto.ErrKeyNotFound},
+		{ErrProtocolError, pairingproto.ErrProtocolError},
+		{ErrFragmentationError, pairingproto.ErrFragmentationError},
+		{ErrBackendClosed, pairingproto.ErrBackendClosed},
+		{ErrBackupFailed, pairingproto.ErrBackupFailed},
+		{ErrSyncFailed, pairingproto.ErrSyncFailed},
 		{ErrInvalidAttestationNonce, pairing.ErrInvalidAttestationNonce},
 		{ErrTPM2Required, pairing.ErrTPM2Required},
 	}
@@ -200,15 +218,15 @@ func TestErrors_IsChecks(t *testing.T) {
 			want:   true,
 		},
 		{
-			name:   "phone.ErrNotConnected matches pairing.ErrNotConnected",
+			name:   "phone.ErrNotConnected matches pairingproto.ErrNotConnected",
 			err:    ErrNotConnected,
-			target: pairing.ErrNotConnected,
+			target: pairingproto.ErrNotConnected,
 			want:   true,
 		},
 		{
 			name:   "phone.ErrBLEUnavailable does not match pairing errors",
 			err:    ErrBLEUnavailable,
-			target: pairing.ErrNotConnected,
+			target: pairingproto.ErrNotConnected,
 			want:   false,
 		},
 	}

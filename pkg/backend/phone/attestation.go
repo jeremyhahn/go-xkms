@@ -17,8 +17,8 @@ import (
 	"context"
 	"fmt"
 
+	"github.com/jeremyhahn/go-xkms/pkg/pairingproto"
 	"github.com/jeremyhahn/go-xkms/pkg/types"
-	"github.com/jeremyhahn/go-xkms/xkey/pkg/pairing"
 )
 
 // Compile-time interface check.
@@ -88,7 +88,7 @@ func (b *Backend) AttestKey(ctx context.Context, attrs *types.KeyAttributes, non
 		return nil, ErrInvalidConfig
 	}
 
-	params := &pairing.LocalAttestKeyParams{
+	params := &pairingproto.LocalAttestKeyParams{
 		KeyID: attrs.CN,
 		Nonce: nonce,
 	}
@@ -96,12 +96,12 @@ func (b *Backend) AttestKey(ctx context.Context, attrs *types.KeyAttributes, non
 	ctx, cancel := context.WithTimeout(ctx, b.config.RequestTimeout)
 	defer cancel()
 
-	resp, err := b.sendLocalRequest(ctx, pairing.MethodLocalAttestKey, params)
+	resp, err := b.sendLocalRequest(ctx, pairingproto.MethodLocalAttestKey, params)
 	if err != nil {
 		return nil, err
 	}
 
-	result, err := pairing.DecodeResult[pairing.LocalAttestKeyResult](resp)
+	result, err := pairingproto.DecodeResult[pairingproto.LocalAttestKeyResult](resp)
 	if err != nil {
 		return nil, ErrInvalidResponse
 	}

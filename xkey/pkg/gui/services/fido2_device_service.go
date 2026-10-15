@@ -25,11 +25,12 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/jeremyhahn/go-xkms/sdk/go/fido2/authenticator"
+	"github.com/jeremyhahn/go-xkms/sdk/go/fido2/uhid"
+	"github.com/jeremyhahn/go-xkms/sdk/go/fido2/virtualdevice"
 	"github.com/jeremyhahn/go-xkms/xkey/pkg/audit"
-	"github.com/jeremyhahn/go-xkms/xkey/pkg/authenticator"
 	"github.com/jeremyhahn/go-xkms/xkey/pkg/notify"
-	"github.com/jeremyhahn/go-xkms/xkey/pkg/uhid"
-	"github.com/jeremyhahn/go-xkms/xkey/pkg/virtualdevice"
+	"github.com/jeremyhahn/go-xkms/xkey/pkg/presence"
 )
 
 // FIDO2 device service errors.
@@ -82,7 +83,7 @@ type FIDO2DeviceService struct {
 	log           *slog.Logger
 	device        *virtualdevice.NativeVirtualDevice
 	uhidDev       *uhid.Device
-	socketHandler atomic.Pointer[authenticator.SocketHandler]
+	socketHandler atomic.Pointer[presence.SocketHandler]
 	emitFunc      func(eventType string, data any)
 	auditLogger   audit.Logger
 	externalAuth  *authenticator.Authenticator
@@ -219,12 +220,12 @@ func (s *FIDO2DeviceService) AttachPresenceHandler(notifier notify.Notifier) {
 // first use. Start and AttachPresenceHandler can run on different goroutines —
 // Wails dispatches bound method calls — so creation is a compare-and-swap and
 // every caller ends up with the same instance.
-func (s *FIDO2DeviceService) ensurePresenceHandler(notifier notify.Notifier) *authenticator.SocketHandler {
+func (s *FIDO2DeviceService) ensurePresenceHandler(notifier notify.Notifier) *presence.SocketHandler {
 	if handler := s.socketHandler.Load(); handler != nil {
 		return handler
 	}
 
-	candidate := authenticator.NewSocketHandler(notifier, s.log)
+	candidate := presence.NewSocketHandler(notifier, s.log)
 
 	// Emit fido2:touch_resolved on every resolution (approve, deny, timeout)
 	// so the frontend clears the pending TouchButton state. Without this,
@@ -244,7 +245,7 @@ func (s *FIDO2DeviceService) ensurePresenceHandler(notifier notify.Notifier) *au
 
 // presenceHandler returns the GUI touch prompt, or nil when none has been
 // created yet.
-func (s *FIDO2DeviceService) presenceHandler() *authenticator.SocketHandler {
+func (s *FIDO2DeviceService) presenceHandler() *presence.SocketHandler {
 	return s.socketHandler.Load()
 }
 

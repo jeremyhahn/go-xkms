@@ -24,8 +24,10 @@ import (
 	"time"
 
 	xkms "github.com/jeremyhahn/go-xkms/sdk/go"
+	"github.com/jeremyhahn/go-xkms/sdk/go/bootstrap"
+	"github.com/jeremyhahn/go-xkms/sdk/go/pairingproto"
+	"github.com/jeremyhahn/go-xkms/sdk/go/truststore"
 	"github.com/jeremyhahn/go-xkms/xkey/pkg/pairing"
-	"github.com/jeremyhahn/go-xkms/xkey/pkg/truststore"
 )
 
 // Device attestation: the security decision that judges whether a phone is the
@@ -167,7 +169,7 @@ func ApplyVerifiedAttestation(d *pairing.PairedDevice, result *Result) {
 // requested: what makes a version 2 record safe is the pair of claims
 // together, and half of that pair is not a weaker version of it.
 func (b DeviceBinding) Validate() error {
-	if b.ProtocolVersion < pairing.AttestProtocolV2 {
+	if b.ProtocolVersion < pairingproto.AttestProtocolV2 {
 		return ErrDeviceAttestationVersionUnsupported
 	}
 	if b.Fingerprint == "" {
@@ -177,9 +179,9 @@ func (b DeviceBinding) Validate() error {
 	if err != nil {
 		return fmt.Errorf("%w: fingerprint is not valid hex", ErrDeviceBindingIncomplete)
 	}
-	if len(raw) != pairing.AttestFingerprintSize {
+	if len(raw) != pairingproto.AttestFingerprintSize {
 		return fmt.Errorf("%w: fingerprint is %d bytes, want %d",
-			ErrDeviceBindingIncomplete, len(raw), pairing.AttestFingerprintSize)
+			ErrDeviceBindingIncomplete, len(raw), pairingproto.AttestFingerprintSize)
 	}
 	return nil
 }
@@ -317,7 +319,7 @@ type Challenge struct {
 // exchange. channelBinding comes from the session the exchange will run on, so
 // the signature is also useless on any other connection.
 func NewChallenge(purpose string, channelBinding []byte) (*Challenge, error) {
-	nonce := make([]byte, pairing.AttestNonceSize)
+	nonce := make([]byte, pairingproto.AttestNonceSize)
 	if _, err := rand.Read(nonce); err != nil {
 		return nil, fmt.Errorf("%w: %w", ErrDeviceAttestNonceFailed, err)
 	}
@@ -331,9 +333,9 @@ func NewChallenge(purpose string, channelBinding []byte) (*Challenge, error) {
 // prover that signs the value it was handed byte-indistinguishable from one
 // that derived its own, right up until the relay attack the binding exists to
 // stop. See the note in protocol_local.go.
-func (c *Challenge) Params() *pairing.LocalAttestDeviceParams {
-	return &pairing.LocalAttestDeviceParams{
-		ProtocolVersion: pairing.AttestProtocolV2,
+func (c *Challenge) Params() *pairingproto.LocalAttestDeviceParams {
+	return &pairingproto.LocalAttestDeviceParams{
+		ProtocolVersion: pairingproto.AttestProtocolV2,
 		Nonce:           c.Nonce,
 		Purpose:         c.Purpose,
 	}
@@ -423,7 +425,7 @@ func VerifyOptions(pool *x509.CertPool) *xkms.AndroidVerifyOptions {
 // IMPORTED into the TEE proves only that the hardware safeguards a key that
 // existed somewhere else first.
 func VerifyDeviceAttestation(
-	result *pairing.LocalAttestDeviceResult,
+	result *pairingproto.LocalAttestDeviceResult,
 	challenge *Challenge,
 	trust *Trust,
 ) (*Verified, error) {
@@ -444,9 +446,9 @@ func VerifyDeviceAttestation(
 	// offer this path, and everything below assumes a signature will arrive —
 	// so refusing here is clearer than letting it fail later on a missing
 	// field, and it makes the downgrade an explicit, named outcome.
-	if result.ProtocolVersion != pairing.AttestProtocolV2 {
+	if result.ProtocolVersion != pairingproto.AttestProtocolV2 {
 		return nil, fmt.Errorf("%w: %w (device answered version %d)",
-			ErrDeviceAttestVerifyFailed, pairing.ErrAttestProtocolDowngrade, result.ProtocolVersion)
+			ErrDeviceAttestVerifyFailed, pairingproto.ErrAttestProtocolDowngrade, result.ProtocolVersion)
 	}
 
 	chain, err := ParseDERChain(result.CertificateChain)
@@ -463,7 +465,7 @@ func VerifyDeviceAttestation(
 	// value — see VerifyOptions — but it does establish that the key was
 	// created for this protocol, so a chain minted for some unrelated Android
 	// attestation cannot be presented here.
-	if err := pairing.VerifyGenesisChallenge(desc.AttestationChallenge); err != nil {
+	if err := pairingproto.VerifyGenesisChallenge(desc.AttestationChallenge); err != nil {
 		return nil, fmt.Errorf("%w: %w", ErrDeviceAttestVerifyFailed, err)
 	}
 
@@ -493,7 +495,7 @@ func VerifyDeviceAttestation(
 	// The device identity: the SHA-256 of the verified leaf's
 	// SubjectPublicKeyInfo — the per-device key generated inside this
 	// handset's TEE/StrongBox (#93).
-	fingerprint, err := pairing.AttestedKeyFingerprint(chain[0])
+	fingerprint, err := pairingproto.AttestedKeyFingerprint(chain[0])
 	if err != nil {
 		return nil, fmt.Errorf("%w: %w", ErrDeviceAttestVerifyFailed, err)
 	}
@@ -501,12 +503,12 @@ func VerifyDeviceAttestation(
 	// The liveness proof. The transcript is rebuilt from the challenge WE
 	// issued and the fingerprint WE derived, so the only thing the device
 	// contributes is the signature itself.
-	transcript, err := pairing.BuildAttestTranscript(
+	transcript, err := pairingproto.BuildAttestTranscript(
 		challenge.Purpose, challenge.Nonce, challenge.ChannelBinding, fingerprint[:])
 	if err != nil {
 		return nil, fmt.Errorf("%w: %w", ErrDeviceAttestVerifyFailed, err)
 	}
-	if err := pairing.VerifyAttestChallengeSignature(
+	if err := pairingproto.VerifyAttestChallengeSignature(
 		chain[0], result.SignatureAlgorithm, result.Signature, transcript); err != nil {
 		return nil, fmt.Errorf("%w: %w", ErrDeviceAttestVerifyFailed, err)
 	}
@@ -521,7 +523,7 @@ func VerifyDeviceAttestation(
 			DeviceFingerprint: hex.EncodeToString(fingerprint[:]),
 			BootStateVerified: true,
 			BootHashHex:       hex.EncodeToString(rot.VerifiedBootHash),
-			ProtocolVersion:   pairing.AttestProtocolV2,
+			ProtocolVersion:   pairingproto.AttestProtocolV2,
 		},
 	}, nil
 }
@@ -541,8 +543,8 @@ func VerifyDeviceAttestation(
 // machine's trust store happens to hold.
 func AttestOverSession(
 	ctx context.Context,
-	transport pairing.Transport,
-	session *pairing.NoiseSession,
+	transport pairingproto.Transport,
+	session *bootstrap.NoiseSession,
 	trust *Trust,
 	purpose string,
 	logger *slog.Logger,
@@ -554,7 +556,7 @@ func AttestOverSession(
 	// The challenge is bound to THIS session. Deriving it from the session
 	// rather than passing a constant is what makes the device's answer useless
 	// to anyone relaying it onto a different connection.
-	channelBinding, err := session.AttestChannelBinding()
+	channelBinding, err := pairingproto.AttestChannelBinding(session)
 	if err != nil {
 		logger.Error("attestation refused: channel binding unavailable", "error", err)
 		return nil, fmt.Errorf("%w: %w", ErrDeviceAttestFailed, err)
@@ -574,9 +576,9 @@ func AttestOverSession(
 	logger.Debug("attestation channel binding derived",
 		"purpose", purpose, "binding", hex.EncodeToString(channelBinding))
 
-	req := pairing.NewRequest(pairing.MethodLocalAttestDevice, challenge.Params())
+	req := pairingproto.NewRequest(pairingproto.MethodLocalAttestDevice, challenge.Params())
 
-	plaintext, err := pairing.EncodeRequest(req)
+	plaintext, err := pairingproto.EncodeRequest(req)
 	if err != nil {
 		logger.Error("attestation refused: request encoding failed", "error", err)
 		return nil, fmt.Errorf("%w: %w", ErrDeviceAttestFailed, err)
@@ -600,7 +602,7 @@ func AttestOverSession(
 		return nil, fmt.Errorf("%w: %w", ErrDeviceAttestFailed, err)
 	}
 
-	resp, err := pairing.DecodeResponse(responsePlaintext)
+	resp, err := pairingproto.DecodeResponse(responsePlaintext)
 	if err != nil {
 		logger.Error("attestation refused: response decode failed", "error", err)
 		return nil, fmt.Errorf("%w: %w", ErrDeviceAttestFailed, err)
@@ -612,7 +614,7 @@ func AttestOverSession(
 		return nil, fmt.Errorf("%w: %s", ErrDeviceAttestFailed, resp.Error.Message)
 	}
 
-	result, err := pairing.DecodeResult[pairing.LocalAttestDeviceResult](resp)
+	result, err := pairingproto.DecodeResult[pairingproto.LocalAttestDeviceResult](resp)
 	if err != nil {
 		logger.Error("attestation refused: result decode failed", "error", err)
 		return nil, fmt.Errorf("%w: %w", ErrDeviceAttestFailed, err)
@@ -640,8 +642,8 @@ func AttestOverSession(
 // a chain that was just verified and whose key just signed a live challenge.
 func VerifyReattestation(
 	ctx context.Context,
-	transport pairing.Transport,
-	session *pairing.NoiseSession,
+	transport pairingproto.Transport,
+	session *bootstrap.NoiseSession,
 	binding DeviceBinding,
 	trust *Trust,
 	logger *slog.Logger,
@@ -653,7 +655,7 @@ func VerifyReattestation(
 		return err
 	}
 
-	verified, err := AttestOverSession(ctx, transport, session, trust, pairing.AttestPurposeReattest, logger)
+	verified, err := AttestOverSession(ctx, transport, session, trust, pairingproto.AttestPurposeReattest, logger)
 	if err != nil {
 		return err
 	}
@@ -679,12 +681,12 @@ func NewLiveAttestor(
 	binding DeviceBinding,
 	loadTrust func() (*Trust, error),
 	logger *slog.Logger,
-) pairing.LiveAttestFunc {
+) pairingproto.LiveAttestFunc {
 	if logger == nil {
 		logger = slog.Default()
 	}
 
-	return func(ctx context.Context, exchange pairing.RPCExchange, channelBinding []byte) error {
+	return func(ctx context.Context, exchange pairingproto.RPCExchange, channelBinding []byte) error {
 		if err := binding.Validate(); err != nil {
 			return err
 		}
@@ -694,12 +696,12 @@ func NewLiveAttestor(
 			return err
 		}
 
-		challenge, err := NewChallenge(pairing.AttestPurposeReattest, channelBinding)
+		challenge, err := NewChallenge(pairingproto.AttestPurposeReattest, channelBinding)
 		if err != nil {
 			return err
 		}
 
-		resp, err := exchange(ctx, pairing.NewRequest(pairing.MethodLocalAttestDevice, challenge.Params()))
+		resp, err := exchange(ctx, pairingproto.NewRequest(pairingproto.MethodLocalAttestDevice, challenge.Params()))
 		if err != nil {
 			return fmt.Errorf("%w: %w", ErrDeviceAttestFailed, err)
 		}
@@ -709,7 +711,7 @@ func NewLiveAttestor(
 			return fmt.Errorf("%w: %s", ErrDeviceAttestFailed, resp.Error.Message)
 		}
 
-		result, err := pairing.DecodeResult[pairing.LocalAttestDeviceResult](resp)
+		result, err := pairingproto.DecodeResult[pairingproto.LocalAttestDeviceResult](resp)
 		if err != nil {
 			return fmt.Errorf("%w: %w", ErrDeviceAttestFailed, err)
 		}

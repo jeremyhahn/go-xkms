@@ -23,6 +23,7 @@ import (
 	"syscall"
 
 	xkms "github.com/jeremyhahn/go-xkms/sdk/go"
+	"github.com/jeremyhahn/go-xkms/sdk/go/bootstrap"
 	"github.com/jeremyhahn/go-xkms/xkey/pkg/pairing"
 	"github.com/jeremyhahn/go-xkms/xkey/pkg/phone"
 	"github.com/spf13/cobra"
@@ -144,7 +145,7 @@ func runDeviceRelay(cmd *cobra.Command, args []string) (runErr error) {
 	// per invocation: a relay that generated a new key every run could
 	// never be pinned to by anything, and never proved it was the same
 	// laptop the phone paired with.
-	localStaticKey, err := pairing.LoadStaticKeyFromBuffer(localPrivateKey)
+	localStaticKey, err := bootstrap.LoadNoiseStaticKeyFromBuffer(localPrivateKey)
 	if err != nil {
 		return &WrappedError{Msg: "failed to reconstruct local key", Err: err}
 	}

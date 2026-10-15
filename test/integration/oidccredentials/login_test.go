@@ -19,6 +19,7 @@ import (
 	"crypto/x509"
 	"encoding/pem"
 	"net/http"
+	"net/http/httptest"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -27,8 +28,6 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
-
-	"github.com/jeremyhahn/go-xkms/xkey/pkg/serverid/serveridtest"
 )
 
 // TestXKeyLoginServesEveryTransport logs in once with `xkey auth login
@@ -80,12 +79,17 @@ func TestXKeyLoginServesEveryTransport(t *testing.T) {
 	t.Run("another certificate on the same host gets no login", func(t *testing.T) {
 		var mu sync.Mutex
 		var seen []string
-		decoy, decoyCA := serveridtest.NewTLSServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		decoy := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			mu.Lock()
 			seen = append(seen, r.Header.Get("Authorization"))
 			mu.Unlock()
 			http.Error(w, "decoy", http.StatusTeapot)
 		}))
+		t.Cleanup(decoy.Close)
+		// The decoy's self-signed certificate is its own CA.
+		decoyCA := filepath.Join(t.TempDir(), "decoy-ca.pem")
+		decoyPEM := pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: decoy.Certificate().Raw})
+		require.NoError(t, os.WriteFile(decoyCA, decoyPEM, 0o600))
 		vars := append(base, "XKMSD_TLS_CA="+decoyCA, "XKMSD_URL="+decoy.URL)
 		out, err := runXKey(vars, "", "oidc", "providers", "list")
 		require.Error(t, err, "the decoy is not an xkmsd:\n%s", out)

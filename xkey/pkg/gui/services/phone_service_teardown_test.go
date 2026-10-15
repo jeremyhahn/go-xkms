@@ -22,6 +22,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/jeremyhahn/go-xkms/pkg/trust/bootstrap"
 	"github.com/jeremyhahn/go-xkms/xkey/pkg/gui/events"
 	"github.com/jeremyhahn/go-xkms/xkey/pkg/pairing"
 	"github.com/jeremyhahn/go-xkms/xkey/pkg/phone"
@@ -29,14 +30,14 @@ import (
 
 // newGeneration builds the transport, session and protected key a completed
 // Connect would hand to publishConnection.
-func newGeneration(t *testing.T) (*phone.BLETransport, *pairing.NoiseSession, *pairing.StaticKey) {
+func newGeneration(t *testing.T) (*phone.BLETransport, *bootstrap.NoiseSession, *bootstrap.NoiseStaticKey) {
 	t.Helper()
 
-	key, err := pairing.GenerateStaticKey()
+	key, err := bootstrap.GenerateNoiseStaticKey()
 	if err != nil {
 		t.Fatalf("GenerateStaticKey: %v", err)
 	}
-	session, err := pairing.NewNoiseSession(&pairing.NoiseSessionConfig{
+	session, err := bootstrap.NewNoiseSession(&bootstrap.NoiseSessionConfig{
 		LocalStaticKey: key,
 		IsInitiator:    true,
 	})
@@ -48,7 +49,7 @@ func newGeneration(t *testing.T) (*phone.BLETransport, *pairing.NoiseSession, *p
 
 // publishGeneration drives Connect's own publication step and returns the
 // protected key backing the connection it installed.
-func publishGeneration(t *testing.T, svc *PhoneService, device string) *pairing.StaticKey {
+func publishGeneration(t *testing.T, svc *PhoneService, device string) *bootstrap.NoiseStaticKey {
 	t.Helper()
 
 	transport, session, key := newGeneration(t)
@@ -67,7 +68,7 @@ func publishGeneration(t *testing.T, svc *PhoneService, device string) *pairing.
 // this test holds open is the very thing that drain is waiting for — so the
 // racing Connect would park behind the teardown instead of landing in its
 // window. The publication step itself is the same code either way.
-func publishFromInsideTheDrain(t *testing.T, svc *PhoneService, device string) *pairing.StaticKey {
+func publishFromInsideTheDrain(t *testing.T, svc *PhoneService, device string) *bootstrap.NoiseStaticKey {
 	t.Helper()
 
 	transport, session, key := newGeneration(t)
@@ -596,7 +597,7 @@ func TestAStatusCallbackMayReEnterTheService(t *testing.T) {
 		_ = svc.Disconnect(deviceName)
 	})
 
-	key := make(chan *pairing.StaticKey, 1)
+	key := make(chan *bootstrap.NoiseStaticKey, 1)
 	go func() { key <- publishGeneration(t, svc, "Pixel 9") }()
 
 	select {

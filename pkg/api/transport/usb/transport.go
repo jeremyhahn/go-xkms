@@ -39,8 +39,8 @@ import (
 	"github.com/jeremyhahn/go-xkms/pkg/errs"
 
 	"github.com/jeremyhahn/go-xkms/pkg/api/transport"
-	"github.com/jeremyhahn/go-xkms/xkey/pkg/pairing"
-	"github.com/jeremyhahn/go-xkms/xkey/pkg/phone"
+	"github.com/jeremyhahn/go-xkms/pkg/pairingproto"
+	"github.com/jeremyhahn/go-xkms/pkg/trust/bootstrap"
 )
 
 var (
@@ -142,7 +142,7 @@ type Transport struct {
 	noise *noiseMaterial
 
 	phoneUSB  phoneTransport
-	session   *pairing.NoiseSession
+	session   *bootstrap.NoiseSession
 	connected bool
 	log       *slog.Logger
 
@@ -150,7 +150,7 @@ type Transport struct {
 	// its pages in place, so Connect keeps it here and Close releases it;
 	// dropping it on the floor would leave a locked, unswappable page
 	// resident for every connection the process ever makes.
-	localKey *pairing.StaticKey
+	localKey *bootstrap.NoiseStaticKey
 
 	// mu serializes requests. A Noise cipherstate advances a monotonic nonce
 	// per message, so concurrent senders would put frames on the wire out of
@@ -220,7 +220,7 @@ func NewWithConfig(cfg *transport.Config) (*Transport, error) {
 
 // noiseMaterial is the transport's own copy of the pairing key material.
 //
-// The private key is held as a *pairing.StaticKey -- go-enclave-backed protected
+// The private key is held as a *bootstrap.NoiseStaticKey -- go-enclave-backed protected
 // memory -- and NOT as a []byte. The transport has to keep its own copy so a
 // caller cannot mutate the key under an in-flight handshake, but a copy taken
 // with bytes.Clone would be a second plaintext scalar on the ordinary Go heap:
@@ -233,7 +233,7 @@ func NewWithConfig(cfg *transport.Config) (*Transport, error) {
 type noiseMaterial struct {
 	// localKey is protected and owned by the transport. Replacing or clearing
 	// the configuration destroys it.
-	localKey *pairing.StaticKey
+	localKey *bootstrap.NoiseStaticKey
 
 	// loadErr records a private key that could not be loaded. WithNoiseConfig
 	// returns the transport so it can be chained onto a constructor and has no
@@ -273,7 +273,7 @@ func newNoiseMaterial(cfg *NoiseConfig) *noiseMaterial {
 		return m
 	}
 
-	key, err := pairing.LoadStaticKey(cfg.LocalStaticPrivateKey)
+	key, err := bootstrap.LoadNoiseStaticKey(cfg.LocalStaticPrivateKey)
 	if err != nil {
 		m.loadErr = err
 		return m
@@ -343,7 +343,7 @@ func (t *Transport) Connect(ctx context.Context) error {
 	// the session must not destroy a key the configuration still owns. The
 	// source scalar goes from protected memory straight back into protected
 	// memory, never touching the Go heap in between.
-	localKey, err := pairing.CloneStaticKey(noise.localKey)
+	localKey, err := bootstrap.CloneNoiseStaticKey(noise.localKey)
 	if err != nil {
 		return &errs.Detail{Err: ErrNoiseNotConfigured, Detail: fmt.Sprintf("%v", err)}
 	}
@@ -357,13 +357,13 @@ func (t *Transport) Connect(ctx context.Context) error {
 	}()
 
 	if t.phoneUSB == nil {
-		usbCfg := phone.DefaultUSBTransportConfig()
+		usbCfg := pairingproto.DefaultUSBTransportConfig()
 		if t.config.Timeout > 0 {
 			usbCfg.OperationTimeout = t.config.Timeout
 		}
 		usbCfg.Logger = t.log
 
-		usb, err := phone.NewUSBTransport(usbCfg)
+		usb, err := pairingproto.NewUSBTransport(usbCfg)
 		if err != nil {
 			return &errs.Detail{Err: transport.ErrConnectionFailed, Detail: fmt.Sprintf("%v", err)}
 		}
@@ -383,7 +383,7 @@ func (t *Transport) Connect(ctx context.Context) error {
 		return &errs.Detail{Err: transport.ErrConnectionFailed, Detail: fmt.Sprintf("%v", err)}
 	}
 
-	session, err := pairing.NewNoiseSession(&pairing.NoiseSessionConfig{
+	session, err := bootstrap.NewNoiseSession(&bootstrap.NoiseSessionConfig{
 		LocalStaticKey:       localKey,
 		ExpectedRemoteStatic: noise.expectedRemoteStatic,
 		IsInitiator:          true,
@@ -396,7 +396,7 @@ func (t *Transport) Connect(ctx context.Context) error {
 	// The identity exchange runs on every connection: the phone's stream
 	// responder always expects it, and it binds the phone's attestation
 	// fingerprint into the prologue.
-	if err := pairing.PerformHandshake(ctx, &pairing.HandshakeConfig{
+	if err := pairingproto.PerformHandshake(ctx, &pairingproto.HandshakeConfig{
 		Transport:                 t.phoneUSB,
 		Session:                   session,
 		Logger:                    t.log,
@@ -543,7 +543,7 @@ func (t *Transport) Conn() interface{} {
 // channel. The method parameter becomes the JSON-RPC method name and req its
 // params; the JSON-RPC result is unmarshalled into resp.
 func (t *Transport) Request(ctx context.Context, method string, req, resp interface{}) error {
-	plaintext, err := pairing.EncodeRequest(pairing.NewRequest(method, req))
+	plaintext, err := pairingproto.EncodeRequest(pairingproto.NewRequest(method, req))
 	if err != nil {
 		return &errs.Detail{Err: transport.ErrInvalidRequest, Detail: fmt.Sprintf("failed to marshal request: %v", err)}
 	}
@@ -581,7 +581,7 @@ func (t *Transport) Request(ctx context.Context, method string, req, resp interf
 		return &errs.Detail{Err: transport.ErrInvalidResponse, Detail: fmt.Sprintf("failed to decrypt response: %v", err)}
 	}
 
-	rpcResp, err := pairing.DecodeResponse(responsePlaintext)
+	rpcResp, err := pairingproto.DecodeResponse(responsePlaintext)
 	if err != nil {
 		return &errs.Detail{Err: transport.ErrInvalidResponse, Detail: fmt.Sprintf("failed to decode response: %v", err)}
 	}
@@ -813,6 +813,38 @@ func (t *Transport) TenantVTPMStart(_ context.Context, _ string) (*transport.Ten
 // TenantVTPMStop stops a tenant's virtual TPM. It is not available over USB.
 func (t *Transport) TenantVTPMStop(_ context.Context, _ string) (*transport.TenantVTPMStatusResponse, error) {
 	return nil, ErrNotSupported
+}
+
+// Trust Root Operations
+//
+// The xkey Android companion app keeps no platform trust-root store: the
+// API is unavailable over this transport for the structural reason the TPM
+// policy surface is. Serving it would need a phone-side (xkey Android)
+// change, outside this repository.
+
+// TrustRootList lists the platform trust roots. It is not available over USB.
+func (t *Transport) TrustRootList(_ context.Context, _ *transport.TrustRootListRequest) (*transport.TrustRootListResponse, error) {
+	return nil, ErrNotSupported
+}
+
+// TrustRootGet returns one platform trust root. It is not available over USB.
+func (t *Transport) TrustRootGet(_ context.Context, _ *transport.TrustRootRequest) (*transport.TrustRoot, error) {
+	return nil, ErrNotSupported
+}
+
+// TrustRootImport imports trust roots. It is not available over USB.
+func (t *Transport) TrustRootImport(_ context.Context, _ *transport.TrustRootImportRequest) (*transport.TrustRootImportResponse, error) {
+	return nil, ErrNotSupported
+}
+
+// TrustRootQuarantine quarantines a trust root. It is not available over USB.
+func (t *Transport) TrustRootQuarantine(_ context.Context, _ *transport.TrustRootRequest) (*transport.TrustRoot, error) {
+	return nil, ErrNotSupported
+}
+
+// TrustRootRemove deletes a trust root. It is not available over USB.
+func (t *Transport) TrustRootRemove(_ context.Context, _ *transport.TrustRootRequest) error {
+	return ErrNotSupported
 }
 
 // OIDC Credential Operations

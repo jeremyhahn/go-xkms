@@ -42,6 +42,7 @@ import (
 	"github.com/jeremyhahn/go-xkms/pkg/attestation/peer"
 	"github.com/jeremyhahn/go-xkms/pkg/attestation/peergate"
 	"github.com/jeremyhahn/go-xkms/pkg/ca"
+	"github.com/jeremyhahn/go-xkms/pkg/testutil"
 	tpm2lib "github.com/jeremyhahn/go-xkms/pkg/tpm2"
 )
 
@@ -123,7 +124,7 @@ func (p *gatePKI) serverTLS(t *testing.T, clientAuth tls.ClientAuthType) *tls.Co
 type gateHost struct {
 	pki       *gatePKI
 	node      *qrdbnode.Node
-	store     *peergate.MemoryStore
+	store     *peergate.DAOStore
 	verifier  *peergate.Verifier
 	collector *peergate.Collector
 	collect   string // the collector's base URL
@@ -133,7 +134,7 @@ func newGateHost(t *testing.T, policy peer.Policy, p *gatePKI) *gateHost {
 	t.Helper()
 	ctx := context.Background()
 
-	store, err := peergate.NewMemoryStore(peergate.MemoryStoreConfig{})
+	store, err := peergate.NewDAOStore(peergate.DAOStoreConfig{DAOs: testutil.NewMemoryDAOFactory()})
 	require.NoError(t, err)
 	verifier, err := peergate.NewVerifier(peergate.VerifierConfig{Store: store, Policy: policy})
 	require.NoError(t, err)

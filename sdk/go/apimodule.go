@@ -83,6 +83,13 @@ type ServiceModuleQRDBClientResolver = apimodule.QRDBClientResolver
 // disabled.
 var WithServiceModuleQRDBClient = apimodule.WithQRDBClient
 
+// WithServiceModuleServiceContext wires the host's service-context binder:
+// every call the module's storage makes into the host's qrdb node --
+// database initialisation and each later DAO call -- runs on the context it
+// derives. Pass an embedded node's Node.ServiceContext; a node that enforces
+// authentication refuses the module's storage without it.
+var WithServiceModuleServiceContext = apimodule.WithServiceContext
+
 // ServiceModuleWebAuthnConfig is the operator-facing WebAuthn configuration
 // shape (rp_id, rp_origins, rp_display_name, ...) -- the same section
 // xkmsd's own config file uses. Distinct from WebAuthnConfig (this SDK's
@@ -196,6 +203,18 @@ var WithServiceModuleCA = apimodule.WithCA
 // the module composes over its XKMSService's TPM2 backend (see
 // TPMVTPMConfig).
 var WithServiceModuleVTPM = apimodule.WithVTPM
+
+// WithAttestedCallerGate builds go-xkms's attested-caller gate from the
+// host's AttestedCallerPolicy. The module serves the gate's Challenge/Submit
+// verbs and keeps its evidence in the host's datastore (requires
+// WithServiceModuleQRDBClient); the host installs
+// (*ServiceModule).PeerAttestationGate on its node with go-qrdb's
+// node.WithPeerAttestationGate.
+var WithAttestedCallerGate = apimodule.WithAttestedCallerGate
+
+// AttestedCallerClientError reports WithAttestedCallerGate configured
+// without WithServiceModuleQRDBClient.
+type AttestedCallerClientError = apimodule.AttestedCallerClientError
 
 // ServiceModuleHostStores is what a self-built module composed:
 // (*ServiceModule).HostStores returns it after the module's first use.

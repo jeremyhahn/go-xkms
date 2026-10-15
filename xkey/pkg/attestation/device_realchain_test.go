@@ -23,10 +23,11 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	"github.com/jeremyhahn/go-xkms/pkg/attestation/truststore"
+	"github.com/jeremyhahn/go-xkms/pkg/pairingproto"
 	xkms "github.com/jeremyhahn/go-xkms/sdk/go"
 	"github.com/jeremyhahn/go-xkms/xkey/pkg/attestation"
 	"github.com/jeremyhahn/go-xkms/xkey/pkg/pairing"
-	"github.com/jeremyhahn/go-xkms/xkey/pkg/truststore"
 )
 
 // galaxyS23UltraChain is a genuine StrongBox attestation chain captured from a
@@ -136,16 +137,16 @@ func TestRealHandsetAttestationSatisfiesTheHardwarePolicy(t *testing.T) {
 // than a pairing genesis challenge, and no live signature accompanies it. A
 // public chain replayed without the protocol's challenge must be refused.
 func TestRealHandsetAttestationIsRefusedAsAPairingAnswer(t *testing.T) {
-	result := &pairing.LocalAttestDeviceResult{
-		ProtocolVersion:  pairing.AttestProtocolV2,
+	result := &pairingproto.LocalAttestDeviceResult{
+		ProtocolVersion:  pairingproto.AttestProtocolV2,
 		CertificateChain: loadDERChain(t, galaxyS23UltraChain),
 	}
-	challenge, err := attestation.NewChallenge(pairing.AttestPurposePair, []byte("channel-binding"))
+	challenge, err := attestation.NewChallenge(pairingproto.AttestPurposePair, []byte("channel-binding"))
 	require.NoError(t, err)
 
 	_, err = attestation.VerifyDeviceAttestation(result, challenge, loadProductionTrust(t))
 	require.Error(t, err)
 	require.ErrorIs(t, err, attestation.ErrDeviceAttestVerifyFailed)
-	require.ErrorIs(t, err, pairing.ErrAttestGenesisChallenge,
+	require.ErrorIs(t, err, pairingproto.ErrAttestGenesisChallenge,
 		"the chain itself passes policy; only the missing protocol challenge may refuse it")
 }

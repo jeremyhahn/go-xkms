@@ -20,7 +20,8 @@ import (
 	"log/slog"
 	"time"
 
-	"github.com/jeremyhahn/go-xkms/xkey/pkg/pairing"
+	"github.com/jeremyhahn/go-xkms/sdk/go/bootstrap"
+	"github.com/jeremyhahn/go-xkms/sdk/go/pairingproto"
 )
 
 // BLE Peripheral errors - defined in ble_peripheral.go for BLE builds.
@@ -36,7 +37,7 @@ var (
 type BLEPeripheralConfig struct {
 	// LocalStaticKey is the persistent local Noise static key, held in
 	// protected memory. If nil, a new key will be generated.
-	LocalStaticKey *pairing.StaticKey
+	LocalStaticKey *bootstrap.NoiseStaticKey
 
 	// OwnsStaticKey transfers ownership of LocalStaticKey to the peripheral.
 	// Present here for API parity: a consumer writing against the documented
@@ -69,7 +70,7 @@ type BLEPeripheralConfig struct {
 	// LiveAttest is present here for API parity with the ble-tagged
 	// configuration; this stub never starts a peripheral, so it is never
 	// consulted. See ble_peripheral.go's BLEPeripheralConfig.LiveAttest.
-	LiveAttest pairing.LiveAttestFunc
+	LiveAttest pairingproto.LiveAttestFunc
 
 	// LiveAttestTimeout is present here for the same reason.
 	LiveAttestTimeout time.Duration

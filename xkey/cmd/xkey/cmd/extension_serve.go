@@ -33,8 +33,8 @@ import (
 
 	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
 	xkms "github.com/jeremyhahn/go-xkms/sdk/go"
+	"github.com/jeremyhahn/go-xkms/sdk/go/fido2/authenticator"
 	"github.com/jeremyhahn/go-xkms/xkey/pkg/audit"
-	"github.com/jeremyhahn/go-xkms/xkey/pkg/authenticator"
 	"github.com/jeremyhahn/go-xkms/xkey/pkg/config"
 	"github.com/jeremyhahn/go-xkms/xkey/pkg/gui/services"
 	"github.com/jeremyhahn/go-xkms/xkey/pkg/ipc"
@@ -505,7 +505,7 @@ func runExtensionServe(cmd *cobra.Command, _ []string) error {
 				// the authenticator's security events (OpPINSeeded,
 				// OpFIDO2CredentialCreated) reach the same audit trail as
 				// every other headless-daemon security event (#688).
-				auth.SetAuditLogger(auditLogger)
+				auth.SetAuditLogger(audit.NewFIDO2Logger(auditLogger))
 
 				// Wire FIDO2 hash setter so PIN changes propagate to the authenticator.
 				pinBackendSvc.SetFIDO2HashSetter(func(hash []byte) {

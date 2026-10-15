@@ -67,6 +67,10 @@ const (
 
 	// FeatureInvite is the enrollment-invitation store (go-xkms#1294 part B).
 	FeatureInvite Feature = "invite"
+
+	// FeatureTrustRoots is the platform trust-root store
+	// (pkg/attestation/truststore).
+	FeatureTrustRoots Feature = "trust-roots"
 )
 
 // FeatureDisabledError reports a feature left off because a dependency it

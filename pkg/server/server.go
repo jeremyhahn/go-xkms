@@ -48,6 +48,7 @@ import (
 	grpcinternal "github.com/jeremyhahn/go-xkms/pkg/api/grpc"
 	"github.com/jeremyhahn/go-xkms/pkg/api/mcp"
 	"github.com/jeremyhahn/go-xkms/pkg/api/rest"
+	"github.com/jeremyhahn/go-xkms/pkg/attestation/peergate"
 	"github.com/jeremyhahn/go-xkms/pkg/auth"
 	"github.com/jeremyhahn/go-xkms/pkg/auth/token"
 	"github.com/jeremyhahn/go-xkms/pkg/backend/software"
@@ -450,6 +451,17 @@ type Server struct {
 	// the admin surface) supplies its own ServiceModule this way instead of
 	// xkms hosting a second embedded node.
 	extraModules []qrdbsdk.ServiceModule
+
+	// attestedCallerPolicy is the embedder's attested-caller gate policy, set
+	// via WithAttestedCallerPolicy. attestation.peer_gate decides whether a
+	// gate is built from it; its Mode is overridden by that key.
+	attestedCallerPolicy *peergate.GatePolicy
+
+	// peerGate is the attested-caller gate installed on the embedded node,
+	// nil when attestation.peer_gate is off. Its evidence store binds to
+	// peerEvidenceDAOs, published once the datastore opens.
+	peerGate         *peergate.Gate
+	peerEvidenceDAOs atomic.Pointer[qrdbsdk.DAOFactory]
 
 	// restListener, when non-nil, is handed to the REST transport so it
 	// serves a pre-bound listener (loopback launcher: 127.0.0.1:0) instead of
@@ -898,6 +910,7 @@ func New(cfg *config.Config, opts ...Option) (*Server, error) {
 		if s.escrowRegistry != nil {
 			svc.SetEscrowRegistry(s.escrowRegistry)
 		}
+		s.wirePeerEvidenceCollector(svc)
 		// Wire leader-endpoint resolution for not-leader redirects. Only
 		// attach the live qrdb cluster client when clustering is enabled; a
 		// standalone node leaves it nil and has no redirect target. The shard

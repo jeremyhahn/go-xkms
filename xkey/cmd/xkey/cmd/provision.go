@@ -32,7 +32,7 @@ import (
 	sshsdk "github.com/jeremyhahn/go-xkms/sdk/go/client/ssh"
 	"github.com/jeremyhahn/go-xkms/sdk/go/transport"
 
-	"github.com/jeremyhahn/go-xkms/xkey/pkg/authenticator"
+	"github.com/jeremyhahn/go-xkms/sdk/go/fido2/authenticator"
 	xkeyconfig "github.com/jeremyhahn/go-xkms/xkey/pkg/config"
 	"github.com/jeremyhahn/go-xkms/xkey/pkg/gui/services"
 	"github.com/jeremyhahn/go-xkms/xkey/pkg/nativemsg"

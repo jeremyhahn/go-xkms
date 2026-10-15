@@ -292,3 +292,39 @@ var (
 	// handshake.
 	EnsureSuiteAvailable = pkgbootstrap.EnsureSuiteAvailable
 )
+
+// The Noise transport the device pairing channel runs over. xkey and the
+// phone peer establish a pairing session with these and carry the
+// pairingproto JSON-RPC envelope inside it.
+type (
+	// NoiseSession is an established Noise transport session.
+	NoiseSession = pkgbootstrap.NoiseSession
+
+	// NoiseSessionConfig configures a Noise transport session.
+	NoiseSessionConfig = pkgbootstrap.NoiseSessionConfig
+)
+
+// NoiseKeySize is the length of a Noise static public key.
+const NoiseKeySize = pkgbootstrap.NoiseKeySize
+
+var (
+	// NewNoiseSession constructs a Noise transport session.
+	NewNoiseSession = pkgbootstrap.NewNoiseSession
+
+	// LoadNoiseStaticKey loads a Noise static key pair from its private key.
+	LoadNoiseStaticKey = pkgbootstrap.LoadNoiseStaticKey
+
+	// LoadNoiseStaticKeyFromBuffer loads a Noise static key pair from a
+	// private key held in a secure buffer.
+	LoadNoiseStaticKeyFromBuffer = pkgbootstrap.LoadNoiseStaticKeyFromBuffer
+
+	// WithNoisePrivateKey runs fn with the key's private bytes in scope.
+	WithNoisePrivateKey = pkgbootstrap.WithNoisePrivateKey
+
+	// The sentinels a Noise session's handshake and transport return.
+	ErrNoiseHandshakeFailed   = pkgbootstrap.ErrNoiseHandshakeFailed
+	ErrNoiseStaticKeyMismatch = pkgbootstrap.ErrNoiseStaticKeyMismatch
+	ErrNoiseEncryptionFailed  = pkgbootstrap.ErrNoiseEncryptionFailed
+	ErrNoiseDecryptionFailed  = pkgbootstrap.ErrNoiseDecryptionFailed
+	ErrNoiseInvalidMessage    = pkgbootstrap.ErrNoiseInvalidMessage
+)

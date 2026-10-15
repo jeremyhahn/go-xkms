@@ -138,15 +138,14 @@ func TestNewTPM2_Device_RegularFileOpenError(t *testing.T) {
 	require.ErrorIs(t, err, ErrOpeningDevice)
 }
 
-// TestNewTPM2_Device_RegularFileOpensThenReportsUnprovisioned proves
-// NewTPM2's device branch, when os.OpenFile succeeds against a plain
-// regular file standing in for a device node, wraps it with
-// transport.FromReadWriter and proceeds into the normal
-// "is this TPM provisioned" probe rather than short-circuiting. A file with
-// no TPM behind it cannot answer TPM2_ReadPublic or TPM2_NV_ReadPublic
-// coherently, so the probe must fail both ways and report ErrNotInitialized
-// -- exactly as an unprovisioned real device would.
-func TestNewTPM2_Device_RegularFileOpensThenReportsUnprovisioned(t *testing.T) {
+// TestNewTPM2_Device_RegularFileNeverAnswers proves NewTPM2's device
+// branch, when os.OpenFile succeeds against a plain regular file standing
+// in for a device node, wraps it with transport.FromReadWriter and proceeds
+// into the "is this TPM provisioned" probe rather than short-circuiting. A
+// file with no TPM behind it never returns a TPM response code, so the probe
+// must report ErrDeviceNoResponse, not ErrNotInitialized: a caller that
+// provisions an unprovisioned TPM must not try to provision a dead device.
+func TestNewTPM2_Device_RegularFileNeverAnswers(t *testing.T) {
 	devicePath := filepath.Join(t.TempDir(), "fake-tpm-device")
 	f, err := os.Create(devicePath)
 	require.NoError(t, err)
@@ -158,6 +157,7 @@ func TestNewTPM2_Device_RegularFileOpensThenReportsUnprovisioned(t *testing.T) {
 	}
 
 	tpmIface, err := NewTPM2(params)
-	require.NotNil(t, tpmIface, "the instance is still returned so the caller can Provision it")
-	require.ErrorIs(t, err, ErrNotInitialized)
+	require.Nil(t, tpmIface)
+	require.ErrorIs(t, err, ErrDeviceNoResponse)
+	require.NotErrorIs(t, err, ErrNotInitialized)
 }

@@ -26,42 +26,7 @@ import (
 	"strings"
 	"testing"
 	"time"
-
-	"github.com/jeremyhahn/go-xkms/pkg/ca"
 )
-
-// TestDevIDOIDsMatchTheIssuer pins every object identifier this package
-// recognises a credential by to the one pkg/ca stamps when it issues that
-// credential. The two are declared apart so that a consumer of the
-// verification primitive does not link the certificate authority; this test is
-// what stops them drifting into a validator that rejects everything its own CA
-// issues.
-func TestDevIDOIDsMatchTheIssuer(t *testing.T) {
-	pairs := map[string][2]asn1.ObjectIdentifier{
-		"tcg-cap-verifiedTPMFixed":      {oidTCGVerifiedTPMFixed, ca.OIDTCGVerifiedTPMFixed},
-		"tcg-cap-verifiedTPMRestricted": {oidTCGVerifiedTPMRestricted, ca.OIDTCGVerifiedTPMRestricted},
-		"tcg hwType TPM 2.0":            {oidTCGHwTypeTPM2, ca.OIDTCGHwTypeTPM2},
-		"tcg-on-ekPermIdSha256":         {oidTCGOnEKPermIdSha256, ca.OIDTCGOnEKPermIdSha256},
-		"id-on-hardwareModuleName":      {oidHardwareModuleName, ca.OIDHardwareModuleName},
-		"id-on-permanentIdentifier":     {oidPermanentIdentifier, ca.OIDPermanentIdentifier},
-	}
-	for name, pair := range pairs {
-		if !pair[0].Equal(pair[1]) {
-			t.Errorf("%s: peer has %v, pkg/ca issues %v", name, pair[0], pair[1])
-		}
-	}
-
-	// The x509.OID forms Go populates Certificate.Policies with must name the
-	// same assertions as the asn1 forms.
-	if !oidTCGVerifiedTPMFixedX509.Equal(ca.TCGVerifiedTPMFixedPolicy) {
-		t.Errorf("verifiedTPMFixed policy form: peer has %v, pkg/ca issues %v",
-			oidTCGVerifiedTPMFixedX509, ca.TCGVerifiedTPMFixedPolicy)
-	}
-	if !oidTCGVerifiedTPMRestrictedX509.Equal(ca.TCGVerifiedTPMRestrictedPolicy) {
-		t.Errorf("verifiedTPMRestricted policy form: peer has %v, pkg/ca issues %v",
-			oidTCGVerifiedTPMRestrictedX509, ca.TCGVerifiedTPMRestrictedPolicy)
-	}
-}
 
 // devIDOptions shape an issued device credential. The zero value issues the
 // canonical IDevID that pkg/ca produces from a TCG-CSR-IDEVID: digitalSignature

@@ -456,11 +456,11 @@ type PIVKeyBackend interface {
 
 ### Phase 6: Virtual CCID Device (`xkey/pkg/ccid/`) — Done (different layout)
 
-xkey presents a USB smart card reader to the host OS. The CCID message layer is `xkey/pkg/ccid/ccid.go` (`PC_to_RDR_XfrBlock` → `handleXfrBlock` → `RDR_to_PC_DataBlock`, `ccid.go:317`, `:391`); descriptors are in `descriptor.go`; APDUs go to the `PKCS11Bridge` of Phase 5. The USB transports (UHID or USB gadget) live in `xkey/pkg/uhid/` and `xkey/pkg/gadget/`; see [usb/ccid.md](../usb/ccid.md). There are no `uhid.go` or `transport.go` files in `xkey/pkg/ccid/`.
+xkey presents a USB smart card reader to the host OS. The CCID message layer is `xkey/pkg/ccid/ccid.go` (`PC_to_RDR_XfrBlock` → `handleXfrBlock` → `RDR_to_PC_DataBlock`, `ccid.go:317`, `:391`); descriptors are in `descriptor.go`; APDUs go to the `PKCS11Bridge` of Phase 5. The USB transports (UHID or USB gadget) live in `pkg/fido2/uhid/` and `xkey/pkg/gadget/`; see [usb/ccid.md](../usb/ccid.md). There are no `uhid.go` or `transport.go` files in `xkey/pkg/ccid/`.
 
 ### Phase 7: Derived Credentials + Phone Provisioning — Open
 
-Depends on Phase 1 (no PIV-I Card Auth profile exists yet). The desktop side of the pairing protocol already carries PIV methods (generate key, import cert, list slots, sign, get cert; `xkey/pkg/pairing/protocol_piv.go`), but none issues a PIV-I certificate. The xkey-android app lives in a separate repository and is not verified here; the plan assumes it has Noise_XX pairing with device attestation. This phase adds PIV credential provisioning over the existing secure channel.
+Depends on Phase 1 (no PIV-I Card Auth profile exists yet). The desktop side of the pairing protocol already carries PIV methods (generate key, import cert, list slots, sign, get cert; `pkg/pairingproto/protocol_piv.go`), but none issues a PIV-I certificate. The xkey-android app lives in a separate repository and is not verified here; the plan assumes it has Noise_XX pairing with device attestation. This phase adds PIV credential provisioning over the existing secure channel.
 
 **Flow**:
 1. Phone is already paired via BLE Noise_XX (existing)
