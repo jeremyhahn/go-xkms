@@ -125,6 +125,18 @@ func IssueAttestationKey(ca *Authority, restricted bool) (*AttestationKey, error
 	if err != nil {
 		return nil, &FixtureError{Step: "generate AK", Cause: err}
 	}
+	cert, err := CertifyAttestationKey(ca, &key.PublicKey, restricted)
+	if err != nil {
+		return nil, err
+	}
+	return &AttestationKey{Certificate: cert, Key: key}, nil
+}
+
+// CertifyAttestationKey issues an AK certificate under ca for a key the caller
+// already holds, such as the IAK of a real or simulated TPM, standing in for
+// the CA that enrolls it. restricted controls whether it carries
+// tcg-cap-verifiedTPMRestricted, which a Verifier requires.
+func CertifyAttestationKey(ca *Authority, pub crypto.PublicKey, restricted bool) (*x509.Certificate, error) {
 	tmpl := &x509.Certificate{
 		SerialNumber: big.NewInt(serial.Add(1)),
 		Subject:      pkix.Name{CommonName: "attestation key " + strconv.FormatInt(serial.Load(), 10)},
@@ -135,11 +147,7 @@ func IssueAttestationKey(ca *Authority, restricted bool) (*AttestationKey, error
 	if restricted {
 		tmpl.Policies = []x509.OID{evidence.OIDTCGVerifiedTPMRestrictedPolicy}
 	}
-	cert, err := createCertificate(tmpl, ca.Certificate, &key.PublicKey, ca.Key)
-	if err != nil {
-		return nil, err
-	}
-	return &AttestationKey{Certificate: cert, Key: key}, nil
+	return createCertificate(tmpl, ca.Certificate, pub, ca.Key)
 }
 
 // PCRValues returns deterministic SHA-256 register values for the indices.
@@ -158,8 +166,44 @@ func PCRValues(indices ...uint32) map[uint32][]byte {
 // chain's root accepts it; otherwise the signature verifies only under a
 // pinned public key.
 func SignCoRIM(pcrs map[uint32][]byte, signer crypto.Signer, chain []*x509.Certificate) ([]byte, error) {
-	indices := make([]uint32, 0, len(pcrs))
-	for idx := range pcrs {
+	return SignCoRIMDigests(SHA256Digests(pcrs), signer, chain)
+}
+
+// SHA256Digests returns pcrs as SHA-256 bank digests; nil stays nil.
+func SHA256Digests(pcrs map[uint32][]byte) []PCRDigest {
+	if pcrs == nil {
+		return nil
+	}
+	digests := make([]PCRDigest, 0, len(pcrs))
+	for idx, value := range pcrs {
+		digests = append(digests, PCRDigest{Index: idx, Hash: crypto.SHA256, Value: value})
+	}
+	return digests
+}
+
+// PCRDigest is one reference digest for a PCR in the bank of Hash.
+type PCRDigest struct {
+	Index uint32
+	Hash  crypto.Hash
+	Value []byte
+}
+
+// swidHashAlgs maps a PCR bank's hash to its CoRIM digest algorithm.
+var swidHashAlgs = map[crypto.Hash]uint64{
+	crypto.SHA256: swid.Sha256,
+	crypto.SHA384: swid.Sha384,
+	crypto.SHA512: swid.Sha512,
+}
+
+// SignCoRIMDigests is SignCoRIM over digests in any mix of PCR banks: one
+// measurement per PCR, carrying every digest given for it.
+func SignCoRIMDigests(digests []PCRDigest, signer crypto.Signer, chain []*x509.Certificate) ([]byte, error) {
+	byIndex := make(map[uint32][]PCRDigest)
+	for _, d := range digests {
+		byIndex[d.Index] = append(byIndex[d.Index], d)
+	}
+	indices := make([]uint32, 0, len(byIndex))
+	for idx := range byIndex {
 		indices = append(indices, idx)
 	}
 	sort.Slice(indices, func(i, j int) bool { return indices[i] < indices[j] })
@@ -170,7 +214,13 @@ func SignCoRIM(pcrs map[uint32][]byte, signer crypto.Signer, chain []*x509.Certi
 		if err != nil {
 			return nil, &FixtureError{Step: "measurement", Cause: err}
 		}
-		m.AddDigest(swid.Sha256, pcrs[idx])
+		for _, d := range byIndex[idx] {
+			alg, ok := swidHashAlgs[d.Hash]
+			if !ok {
+				return nil, &FixtureError{Step: "measurement digest " + d.Hash.String()}
+			}
+			m.AddDigest(alg, d.Value)
+		}
 		measurements.AddMeasurement(m)
 	}
 	class := comid.NewClassOID("1.3.6.1.4.1.29377.200.1")
@@ -282,12 +332,24 @@ func SignQuote(ak *AttestationKey, pcrs map[uint32][]byte, nonce []byte) (*Quote
 			PCRDigest: tpm2.TPM2BDigest{Buffer: h.Sum(nil)},
 		}),
 	})
+	signature, err := SignAttest(ak, attest)
+	if err != nil {
+		return nil, err
+	}
+	return &Quote{Attest: attest, Signature: signature, Nonce: nonce, PCRs: pcrs}, nil
+}
+
+// SignAttest signs a marshaled TPMS_ATTEST with ak the way a TPM signs a
+// quote: ECDSA, ASN.1-encoded, over the SHA-256 of the structure. It lets a
+// fake TPM that builds its own TPMS_ATTEST produce a signature the Verifier
+// accepts.
+func SignAttest(ak *AttestationKey, attest []byte) ([]byte, error) {
 	digest := sha256.Sum256(attest)
 	signature, err := ecdsa.SignASN1(rand.Reader, ak.Key, digest[:])
 	if err != nil {
 		return nil, &FixtureError{Step: "sign quote", Cause: err}
 	}
-	return &Quote{Attest: attest, Signature: signature, Nonce: nonce, PCRs: pcrs}, nil
+	return signature, nil
 }
 
 func createCertificate(tmpl, parent *x509.Certificate, pub crypto.PublicKey, signer crypto.Signer) (*x509.Certificate, error) {

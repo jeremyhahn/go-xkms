@@ -26,6 +26,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/google/go-tpm/tpm2"
 	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
 	qrdbtransport "github.com/jeremyhahn/go-qrdb/sdk/go/transport"
 	"github.com/jeremyhahn/go-xkms/pkg/attestation/evidence"
@@ -661,10 +662,14 @@ func (s *attestationService) verifyCoRIM(ctx context.Context, store AttestationS
 	return nil, &ReferenceValuesRejectedError{Reason: reason, Cause: cause}
 }
 
+// referenceBanks are the PCR banks reference values may cover. SHA-1 is not
+// one: a SHA-1 bank is never appraised.
+var referenceBanks = []crypto.Hash{crypto.SHA256, crypto.SHA384, crypto.SHA512}
+
 // referenceValuesRecord builds the stored record of a verified CoRIM.
 func referenceValuesRecord(name string, signed []byte, manifest *refvalue.Manifest, storedAt time.Time) (*ReferenceValues, error) {
 	indices := map[uint32]bool{}
-	for _, hash := range []crypto.Hash{crypto.SHA256, crypto.SHA384, crypto.SHA512} {
+	for _, hash := range referenceBanks {
 		digests, err := manifest.PCRDigests(hash)
 		if err != nil {
 			return nil, &ReferenceValuesRejectedError{Reason: err.Error(), Cause: err}
@@ -785,20 +790,29 @@ func (s *attestationService) DeleteReferenceValues(ctx context.Context, req *Del
 // only when the request is unusable or the store is unreachable; evidence that
 // fails appraisal is a successful call whose result says Verified=false.
 func (s *attestationService) AppraiseQuote(ctx context.Context, req *AppraiseQuoteRequest) (*AttestationResult, error) {
+	result, _, err := s.appraiseQuote(ctx, req, nil)
+	return result, err
+}
+
+// appraiseQuote is AppraiseQuote, also returning the PCRs the baseline found
+// divergent, which a host appraiser reports in detail. launchPCRs are quoted
+// registers extended at container launch: the event-log replay leaves them
+// to the baseline.
+func (s *attestationService) appraiseQuote(ctx context.Context, req *AppraiseQuoteRequest, launchPCRs []uint32) (*AttestationResult, []pcrDivergence, error) {
 	const op = "AttestationService.AppraiseQuote"
 	if req == nil {
-		return nil, ErrAttestationNilRequest
+		return nil, nil, ErrAttestationNilRequest
 	}
 	store, err := s.verifierStore(op)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	now := s.now()
 	result := &AttestationResult{AppraisedAt: now.UTC(), ReferenceValues: req.ReferenceValues}
 
 	akKey, akCheck, err := s.appraiseAKCertificate(ctx, store, req.AKCertificatePEM, now)
 	if err != nil {
-		return nil, verifierError(op, errors.ErrUnavailable, err)
+		return nil, nil, verifierError(op, errors.ErrUnavailable, err)
 	}
 	result.Checks = append(result.Checks, akCheck)
 
@@ -824,11 +838,11 @@ func (s *attestationService) AppraiseQuote(ctx context.Context, req *AppraiseQuo
 		}
 	}
 
-	result.Checks = append(result.Checks, appraiseEventLog(req.EventLog, quote, proven))
+	result.Checks = append(result.Checks, appraiseEventLog(req.EventLog, quote, proven, launchPCRs))
 
-	baseline, err := s.appraiseBaseline(ctx, store, req.ReferenceValues, quote, proven, result)
+	baseline, divergences, err := s.appraiseBaseline(ctx, store, req.ReferenceValues, quote, proven, result)
 	if err != nil {
-		return nil, verifierError(op, errors.ErrUnavailable, err)
+		return nil, nil, verifierError(op, errors.ErrUnavailable, err)
 	}
 	result.Checks = append(result.Checks, baseline)
 
@@ -842,7 +856,7 @@ func (s *attestationService) AppraiseQuote(ctx context.Context, req *AppraiseQuo
 			result.Verified = false
 		}
 	}
-	return result, nil
+	return result, divergences, nil
 }
 
 // appraiseAKCertificate chains the AK certificate to the tenant's ak-root
@@ -879,8 +893,9 @@ func (s *attestationService) appraiseAKCertificate(ctx context.Context, store At
 	return key, AppraisalCheck{Name: AppraisalCheckAKCertificate, Outcome: AppraisalPass}, nil
 }
 
-// appraiseEventLog replays the optional event log against the quoted PCRs.
-func appraiseEventLog(eventLog []byte, quote *evidence.Quote, proven map[int][]byte) AppraisalCheck {
+// appraiseEventLog replays the optional event log against the quoted boot
+// PCRs: every quoted register except launchPCRs.
+func appraiseEventLog(eventLog []byte, quote *evidence.Quote, proven map[int][]byte, launchPCRs []uint32) AppraisalCheck {
 	if len(eventLog) == 0 {
 		return AppraisalCheck{Name: AppraisalCheckEventLog, Outcome: AppraisalSkipped, Reason: "no event log in evidence"}
 	}
@@ -891,69 +906,125 @@ func appraiseEventLog(eventLog []byte, quote *evidence.Quote, proven map[int][]b
 	if err != nil {
 		return AppraisalCheck{Name: AppraisalCheckEventLog, Outcome: AppraisalForged, Reason: err.Error()}
 	}
-	return evidenceCheck(AppraisalCheckEventLog, evidence.VerifyEventLog(log, quote.Bank, proven))
+	boot := bootPCRs(proven, launchPCRs)
+	if len(boot) == 0 {
+		return AppraisalCheck{Name: AppraisalCheckEventLog, Outcome: AppraisalSkipped, Reason: "no quoted register is one the boot event log records"}
+	}
+	return evidenceCheck(AppraisalCheckEventLog, evidence.VerifyEventLog(log, quote.Bank, boot))
+}
+
+// bootPCRs is proven without the launch registers: the registers the boot
+// event log is authoritative for. A launch register is left out even when
+// the log carries events for it, because the runtime's extension is never in
+// the log; the baseline judges that register against the signed reference
+// values instead.
+func bootPCRs(proven map[int][]byte, launchPCRs []uint32) map[int][]byte {
+	boot := make(map[int][]byte, len(proven))
+	for idx, value := range proven {
+		boot[idx] = value
+	}
+	for _, idx := range launchPCRs {
+		delete(boot, int(idx))
+	}
+	return boot
 }
 
 // appraiseBaseline compares the proven PCRs with the named reference values,
 // re-verifying their signature against the current endorsements first.
-func (s *attestationService) appraiseBaseline(ctx context.Context, store AttestationStore, name string, quote *evidence.Quote, proven map[int][]byte, result *AttestationResult) (AppraisalCheck, error) {
+func (s *attestationService) appraiseBaseline(ctx context.Context, store AttestationStore, name string, quote *evidence.Quote, proven map[int][]byte, result *AttestationResult) (AppraisalCheck, []pcrDivergence, error) {
 	if name == "" {
-		return absentCheck(AppraisalCheckBaseline, "no reference values named"), nil
+		return absentCheck(AppraisalCheckBaseline, "no reference values named"), nil, nil
 	}
 	if err := validateAttestationName(name); err != nil {
-		return absentCheck(AppraisalCheckBaseline, err.Error()), nil
+		return absentCheck(AppraisalCheckBaseline, err.Error()), nil, nil
 	}
 	record, err := s.loadReferenceValues(ctx, store, name)
 	if err != nil {
 		var missing *AttestationRecordNotFoundError
 		if stderrors.As(err, &missing) {
-			return absentCheck(AppraisalCheckBaseline, missing.Error()), nil
+			return absentCheck(AppraisalCheckBaseline, missing.Error()), nil, nil
 		}
-		return AppraisalCheck{}, err
+		return AppraisalCheck{}, nil, err
 	}
 	manifest, err := s.verifyCoRIM(ctx, store, record.SignedCoRIM)
 	if err != nil {
 		var rejected *ReferenceValuesRejectedError
 		if stderrors.As(err, &rejected) {
-			return absentCheck(AppraisalCheckBaseline, "reference values are no longer endorsed: "+rejected.Reason), nil
+			return absentCheck(AppraisalCheckBaseline, "reference values are no longer endorsed: "+rejected.Reason), nil, nil
 		}
-		return AppraisalCheck{}, err
+		return AppraisalCheck{}, nil, err
 	}
 	result.ManifestID, result.Signer, result.BaselineSource = manifest.ID, manifest.Signer, BaselineSourceSigned
 	if quote == nil {
-		return absentCheck(AppraisalCheckBaseline, "not evaluated: the quote did not verify"), nil
+		return absentCheck(AppraisalCheckBaseline, "not evaluated: the quote did not verify"), nil, nil
 	}
-	reference, err := manifest.PCRDigests(quote.Hash)
+	// The reference digests are compared with the quoted PCR values, so they
+	// are taken in the selected bank's algorithm. quote.Hash is the signing
+	// scheme's hash, which a TPM may pair with a bank of another size.
+	bankHash, err := tpm2.TPMIAlgHash(quote.Bank).Hash()
 	if err != nil {
-		return absentCheck(AppraisalCheckBaseline, err.Error()), nil
+		return absentCheck(AppraisalCheckBaseline, "quoted PCR bank names no supported hash: "+err.Error()), nil, nil
 	}
-	return comparePCRBaseline(proven, reference), nil
+	reference, err := manifest.PCRDigests(bankHash)
+	if err != nil {
+		return absentCheck(AppraisalCheckBaseline, err.Error()), nil, nil
+	}
+	check, divergences := comparePCRBaseline(proven, reference)
+	return check, divergences, nil
 }
 
 // comparePCRBaseline compares proven PCR values with reference values that
 // may admit several acceptable digests per register. The index sets must be
 // equal (an absence when they are not: the evidence does not cover what the
 // reference describes); a value no reference admits is forged.
-func comparePCRBaseline(proven map[int][]byte, reference map[int][][]byte) AppraisalCheck {
+func comparePCRBaseline(proven map[int][]byte, reference map[int][][]byte) (AppraisalCheck, []pcrDivergence) {
 	if len(reference) == 0 {
-		return absentCheck(AppraisalCheckBaseline, "the reference values hold no digests in the quote's bank")
+		return absentCheck(AppraisalCheckBaseline, "the reference values hold no digests in the quote's bank"), nil
 	}
 	provenIdx, referenceIdx := sortedPCRKeys(proven), sortedPCRKeys(reference)
 	if !equalInts(provenIdx, referenceIdx) {
 		return absentCheck(AppraisalCheckBaseline, "quoted PCR set "+evidence.FormatIndices(provenIdx)+
-			" does not equal the reference set "+evidence.FormatIndices(referenceIdx))
+			" does not equal the reference set "+evidence.FormatIndices(referenceIdx)), uncoveredPCRs(proven, reference)
 	}
 	var diverged []int
+	var divergences []pcrDivergence
 	for _, idx := range referenceIdx {
 		if !admits(reference[idx], proven[idx]) {
 			diverged = append(diverged, idx)
+			divergences = append(divergences, pcrDivergence{Index: idx, Expected: reference[idx], Quoted: proven[idx]})
 		}
 	}
 	if len(diverged) > 0 {
 		return AppraisalCheck{Name: AppraisalCheckBaseline, Outcome: AppraisalForged,
-			Reason: "PCR " + evidence.FormatIndices(diverged) + " diverges from the signed reference values"}
+			Reason: "PCR " + evidence.FormatIndices(diverged) + " diverges from the signed reference values"}, divergences
 	}
-	return AppraisalCheck{Name: AppraisalCheckBaseline, Outcome: AppraisalPass}
+	return AppraisalCheck{Name: AppraisalCheckBaseline, Outcome: AppraisalPass}, nil
+}
+
+// pcrDivergence is one PCR whose proven value the reference values do not
+// admit: a divergent value, or an index only one side covers.
+type pcrDivergence struct {
+	Index    int
+	Expected [][]byte
+	Quoted   []byte
+}
+
+// uncoveredPCRs lists, ascending, the indices that only one of proven and
+// reference covers.
+func uncoveredPCRs(proven map[int][]byte, reference map[int][][]byte) []pcrDivergence {
+	var out []pcrDivergence
+	for _, idx := range sortedPCRKeys(proven) {
+		if _, ok := reference[idx]; !ok {
+			out = append(out, pcrDivergence{Index: idx, Quoted: proven[idx]})
+		}
+	}
+	for _, idx := range sortedPCRKeys(reference) {
+		if _, ok := proven[idx]; !ok {
+			out = append(out, pcrDivergence{Index: idx, Expected: reference[idx]})
+		}
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].Index < out[j].Index })
+	return out
 }
 
 // admits reports whether any acceptable digest equals value, in constant time

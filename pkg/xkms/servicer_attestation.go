@@ -258,9 +258,10 @@ type AttestContainerRequest struct {
 	// "measured". Empty defers to the attestor's own policy.
 	TrustLevel string `json:"trust_level,omitempty"`
 
-	// ExpectedPCRs is the golden PCR set the host quote is checked
-	// against, keyed by index.
-	ExpectedPCRs map[uint32][]byte `json:"expected_pcrs,omitempty"`
+	// ReferenceValues names the stored reference values (PutReferenceValues)
+	// the Verifier appraises the host quote against. Required at the
+	// "attested" tier and above.
+	ReferenceValues string `json:"reference_values,omitempty"`
 
 	// MeasurementPCR is the PCR index carrying the launch measurement for
 	// a measured launch. Zero selects the attestor's default.
@@ -409,7 +410,7 @@ func (a *runtimeContainerAttestor) AttestContainer(ctx context.Context, req *Att
 	spec := &orchestration.ContainerSpec{
 		Image:           req.Image,
 		ImageDigest:     req.ImageDigest,
-		ExpectedPCRs:    req.ExpectedPCRs,
+		ReferenceValues: req.ReferenceValues,
 		TrustLevel:      level,
 		TrustLabel:      req.TrustLabel,
 		MeasurementPCR:  req.MeasurementPCR,

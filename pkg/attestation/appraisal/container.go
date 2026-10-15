@@ -16,13 +16,16 @@ package orchestration
 import (
 	"bytes"
 	"context"
+	"crypto"
 	"crypto/rand"
+	"crypto/x509"
 	"sort"
 	"strings"
 	"time"
 
 	"github.com/jeremyhahn/go-xkms/pkg/attestation/evidence"
 	xkmstpm2 "github.com/jeremyhahn/go-xkms/pkg/tpm2"
+	"github.com/jeremyhahn/go-xkms/pkg/types"
 
 	"github.com/jeremyhahn/go-quicbaas/pkg/interfaces"
 )
@@ -64,7 +67,7 @@ const attestationNonceBytes = 20
 // implements xkms's TrustedPlatformModule (including its software simulator),
 // so no adapter type exists between quicbaas and xkms. Declaring the narrow
 // interface rather than depending on the full TrustedPlatformModule keeps the
-// runtime mockable and states exactly which three primitives the trust tiers
+// runtime mockable and states exactly which primitives the trust tiers
 // rest on.
 type HostTPM interface {
 	// Quote produces a TPM 2.0 quote over the supplied PCR indices, bound
@@ -78,7 +81,19 @@ type HostTPM interface {
 	// ExtendPCR hashes data with hashAlg and extends the result into the
 	// PCR at pcrIndex.
 	ExtendPCR(pcrIndex int, hashAlg string, data []byte) error
+
+	// IAKCertificate returns the certificate of the attestation key that
+	// signs Quote. The Verifier checks it chains to an ak-root endorsement.
+	IAKCertificate() (*x509.Certificate, error)
+
+	// IAKAttributes returns the attributes of the attestation key that
+	// signs Quote. Its TPM hash algorithm names the PCR bank Quote covers.
+	IAKAttributes() (*types.KeyAttributes, error)
 }
+
+// go-xkms's TPM is the production quote producer; HostTPM is the subset of it
+// the attesting runtime drives.
+var _ HostTPM = (*xkmstpm2.TPM2)(nil)
 
 // AttestingContainerRuntime is the trusted-computing seam: a ContainerRuntime
 // that can additionally prove, to a remote verifier, what it launched and
@@ -105,7 +120,8 @@ type AttestingContainerRuntime interface {
 	TrustCapabilities() TrustCapabilities
 
 	// Attest produces attestation evidence for a container launched from
-	// spec. It verifies the host quote against spec.ExpectedPCRs and, for
+	// spec. The Verifier appraises the host quote against the reference
+	// values spec.ReferenceValues names and, for
 	// a measured launch, that the measurement PCR carries the expected
 	// launch measurement. containerID may be empty when attesting a host
 	// before scheduling anything onto it.
@@ -214,8 +230,9 @@ type TPMAttestingRuntime struct {
 	// and RunInteractive is promoted from it unchanged.
 	ContainerRuntime
 
-	tpm    HostTPM
-	logger interfaces.Logger
+	tpm       HostTPM
+	appraiser HostAppraiser
+	logger    interfaces.Logger
 }
 
 // Compile-time interface check.
@@ -223,21 +240,26 @@ var _ AttestingContainerRuntime = (*TPMAttestingRuntime)(nil)
 
 // NewTPMAttestingRuntime wraps base with TPM-backed attestation.
 //
-// base supplies Tier 0 (digest pinning); tpm supplies Tiers 1 and 2. Both are
-// required — an attesting runtime with no TPM would silently degrade to Tier 0
-// while advertising more, which is exactly the failure mode deny-by-default
-// exists to prevent.
-func NewTPMAttestingRuntime(base ContainerRuntime, tpm HostTPM, logger interfaces.Logger) (*TPMAttestingRuntime, error) {
+// base supplies Tier 0 (digest pinning); tpm supplies the evidence for Tiers 1
+// and 2; appraiser (service.NewHostAppraiser) is the Verifier that judges it
+// against signed reference values. All are required — an attesting runtime
+// with no TPM or no appraiser would silently degrade to Tier 0 while
+// advertising more, which is exactly the failure mode deny-by-default exists
+// to prevent.
+func NewTPMAttestingRuntime(base ContainerRuntime, tpm HostTPM, appraiser HostAppraiser, logger interfaces.Logger) (*TPMAttestingRuntime, error) {
 	if base == nil {
 		return nil, &InputValidationError{Field: "base", Message: "cannot be nil"}
 	}
 	if tpm == nil {
 		return nil, &InputValidationError{Field: "tpm", Message: "cannot be nil"}
 	}
+	if appraiser == nil {
+		return nil, &InputValidationError{Field: "appraiser", Message: "cannot be nil"}
+	}
 	if logger == nil {
 		return nil, &InputValidationError{Field: "logger", Message: "cannot be nil"}
 	}
-	return &TPMAttestingRuntime{ContainerRuntime: base, tpm: tpm, logger: logger}, nil
+	return &TPMAttestingRuntime{ContainerRuntime: base, tpm: tpm, appraiser: appraiser, logger: logger}, nil
 }
 
 // TrustCapabilities reports the tiers this runtime can satisfy. Digest
@@ -317,17 +339,19 @@ func (s *ContainerSpec) EffectiveMeasurementPCR() int {
 
 // Attest produces attestation evidence for a container launched from spec.
 //
-// It quotes the union of the spec's expected PCR indices and — for a measured
-// launch — the measurement PCR, binds the PCR read to the signed quote body
-// (see bindQuotedPCRs), and only then verifies every expected value against
-// the bound one. Any mismatch is a PCRMismatchError: the host is not in the
-// state the operator approved and the agent must not be trusted on it.
+// It quotes the PCRs the reference values named by spec.ReferenceValues cover
+// and — for a measured launch — the measurement PCR, binds the PCR read to the
+// signed quote body (see bindQuotedPCRs), and only then hands the bound
+// evidence, with the attestation key's certificate, to the Verifier
+// (HostAppraiser). Anything short of a verified appraisal is a
+// HostAppraisalError: the host is not in the state the operator approved and
+// the agent must not be trusted on it.
 //
-// The golden-value comparison is deliberately downstream of the binding. A
-// comparison against a bare TPM2_PCR_Read proves nothing — the read is
-// unauthenticated and a PCR can be extended between the quote and the read —
-// so a read that does not reproduce the signed pcrDigest is rejected as
-// QuotedPCRDigestMismatchError before any golden value is looked at.
+// The appraisal is deliberately downstream of the binding. A comparison
+// against a bare TPM2_PCR_Read proves nothing — the read is unauthenticated
+// and a PCR can be extended between the quote and the read — so a read that
+// does not reproduce the signed pcrDigest is rejected as
+// QuotedPCRDigestMismatchError before the Verifier is asked anything.
 func (r *TPMAttestingRuntime) Attest(ctx context.Context, spec *ContainerSpec, containerID string) (*ContainerAttestation, error) {
 	if spec == nil {
 		return nil, &InputValidationError{Field: "spec", Message: "cannot be nil"}
@@ -350,8 +374,17 @@ func (r *TPMAttestingRuntime) Attest(ctx context.Context, spec *ContainerSpec, c
 		return nil, err
 	}
 
+	bank, err := r.quoteBank(spec.Image)
+	if err != nil {
+		return nil, err
+	}
+	reference, err := r.appraiser.ReferencePCRs(ctx, spec.ReferenceValues, bank)
+	if err != nil {
+		return nil, err
+	}
+
 	measured := spec.TrustLevel.RequiresMeasuredLaunch()
-	pcrIndices := quotePCRIndices(spec, measured)
+	pcrIndices := quotePCRIndices(reference, spec, measured)
 
 	nonce := make([]byte, attestationNonceBytes)
 	if _, err := rand.Read(nonce); err != nil {
@@ -375,7 +408,7 @@ func (r *TPMAttestingRuntime) Attest(ctx context.Context, spec *ContainerSpec, c
 		return nil, err
 	}
 
-	if err := verifyExpectedPCRs(spec.ExpectedPCRs, bound.values); err != nil {
+	if err := r.appraise(ctx, spec, nonce, quote, bound); err != nil {
 		return nil, err
 	}
 
@@ -410,11 +443,11 @@ func (r *TPMAttestingRuntime) Attest(ctx context.Context, spec *ContainerSpec, c
 }
 
 // quotePCRIndices returns the sorted, de-duplicated set of PCR indices to
-// quote: every index with an expected value, plus the measurement PCR for a
-// measured launch.
-func quotePCRIndices(spec *ContainerSpec, measured bool) []uint {
-	seen := make(map[uint]struct{}, len(spec.ExpectedPCRs)+1)
-	for index := range spec.ExpectedPCRs {
+// quote: every index the reference values cover, plus the measurement PCR for
+// a measured launch.
+func quotePCRIndices(reference []uint32, spec *ContainerSpec, measured bool) []uint {
+	seen := make(map[uint]struct{}, len(reference)+1)
+	for _, index := range reference {
 		seen[uint(index)] = struct{}{}
 	}
 	if measured {
@@ -429,6 +462,37 @@ func quotePCRIndices(spec *ContainerSpec, measured bool) []uint {
 	// because the selection is part of the signed TPMS_ATTEST structure.
 	sort.Slice(indices, func(i, j int) bool { return indices[i] < indices[j] })
 	return indices
+}
+
+// appraise hands the bound evidence to the Verifier and turns anything short
+// of a verified appraisal into a HostAppraisalError.
+func (r *TPMAttestingRuntime) appraise(ctx context.Context, spec *ContainerSpec, nonce []byte, quote xkmstpm2.Quote, bound *boundPCRs) error {
+	akCert, err := r.tpm.IAKCertificate()
+	if err != nil {
+		return &ContainerQuoteError{Image: spec.Image, Cause: err}
+	}
+	appraisal, err := r.appraiser.AppraiseHost(ctx, &HostEvidence{
+		ReferenceValues: spec.ReferenceValues,
+		AKCertificate:   akCert,
+		Nonce:           nonce,
+		Quoted:          quote.Quoted,
+		Signature:       quote.Signature,
+		PCRs:            bound.values,
+		EventLog:        quote.EventLog,
+		LaunchPCRs:      []uint32{uint32(spec.EffectiveMeasurementPCR())},
+	})
+	if err != nil {
+		return err
+	}
+	if appraisal != nil && appraisal.Verified {
+		return nil
+	}
+	appraisalErr := &HostAppraisalError{Image: spec.Image, ReferenceValues: spec.ReferenceValues}
+	if appraisal != nil {
+		appraisalErr.CryptographicFailure = appraisal.CryptographicFailure
+		appraisalErr.Failures = appraisal.Failures
+	}
+	return appraisalErr
 }
 
 // =============================================================================
@@ -560,6 +624,31 @@ func pcrBankName(algID uint16) (string, error) {
 	return "", &PCRBankUnavailableError{Requested: "TPM algorithm 0x" + hexOrAbsent([]byte{byte(algID >> 8), byte(algID)})}
 }
 
+// quoteBank returns the hash of the PCR bank the host TPM quotes. A go-xkms
+// quote covers the bank of its attestation key's hash algorithm, so the
+// reference PCRs are chosen in that bank before quoting. A quote that covers
+// another bank anyway is caught downstream: the Verifier compares the
+// reference values in the bank the quote names. SHA-1 is refused, as
+// everywhere else.
+func (r *TPMAttestingRuntime) quoteBank(image string) (crypto.Hash, error) {
+	attrs, err := r.tpm.IAKAttributes()
+	if err != nil {
+		return 0, &ContainerQuoteError{Image: image, Cause: err}
+	}
+	if attrs == nil || attrs.TPMAttributes == nil {
+		return 0, &PCRBankUnavailableError{Requested: "the attestation key names no TPM hash algorithm"}
+	}
+	name, err := pcrBankName(uint16(attrs.TPMAttributes.HashAlg))
+	if err != nil {
+		return 0, err
+	}
+	hash, err := attrs.TPMAttributes.HashAlg.Hash()
+	if err != nil {
+		return 0, &PCRBankUnavailableError{Requested: name}
+	}
+	return hash, nil
+}
+
 // flattenPCRBanks reduces the multi-bank PCR read to a single index->digest
 // map for the named bank.
 //
@@ -593,31 +682,6 @@ func flattenPCRBanks(banks []xkmstpm2.PCRBank, name string) (map[uint32][]byte, 
 	return nil, &PCRBankUnavailableError{Requested: name, Available: available}
 }
 
-// verifyExpectedPCRs compares every expected PCR against the quoted value.
-// A missing quoted PCR is a mismatch, not a pass: absence of evidence is not
-// evidence of a match.
-func verifyExpectedPCRs(expected, quoted map[uint32][]byte) error {
-	indices := make([]uint32, 0, len(expected))
-	for index := range expected {
-		indices = append(indices, index)
-	}
-	// Sorted so the reported mismatch is the lowest-numbered failing PCR
-	// rather than whichever one map iteration happened to reach first.
-	sort.Slice(indices, func(i, j int) bool { return indices[i] < indices[j] })
-
-	for _, index := range indices {
-		want := expected[index]
-		got, ok := quoted[index]
-		if !ok {
-			return &PCRMismatchError{Index: index, Expected: want, Actual: nil}
-		}
-		if !bytes.Equal(want, got) {
-			return &PCRMismatchError{Index: index, Expected: want, Actual: got}
-		}
-	}
-	return nil
-}
-
 // =============================================================================
 // Typed Attestation Errors
 // =============================================================================
@@ -638,25 +702,6 @@ func (e *AttestationUnavailableError) Error() string {
 // Unwrap returns the sentinel error for errors.Is support.
 func (e *AttestationUnavailableError) Unwrap() error {
 	return ErrAttestationUnavailable
-}
-
-// PCRMismatchError indicates a quoted PCR does not match the expected golden
-// value, meaning the host is not in the state the operator approved.
-type PCRMismatchError struct {
-	Index    uint32
-	Expected []byte
-	Actual   []byte
-}
-
-// Error implements the error interface.
-func (e *PCRMismatchError) Error() string {
-	return ErrPCRMismatch.Error() + ": PCR " + intToStr(int(e.Index)) +
-		" expected " + hexOrAbsent(e.Expected) + " but quoted " + hexOrAbsent(e.Actual)
-}
-
-// Unwrap returns the sentinel error for errors.Is support.
-func (e *PCRMismatchError) Unwrap() error {
-	return ErrPCRMismatch
 }
 
 // QuoteBindingError indicates the PCR values read from the TPM could not be

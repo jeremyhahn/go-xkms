@@ -526,11 +526,11 @@ func TestAttestationService_AttestContainer(t *testing.T) {
 		svc := NewAttestationService(nil, attestor)
 
 		req := &AttestContainerRequest{
-			DeviceID:     "device-1",
-			ContainerID:  "container-1",
-			Image:        "alpine@sha256:abc",
-			TrustLevel:   "measured",
-			ExpectedPCRs: map[uint32][]byte{7: {0x01}},
+			DeviceID:        "device-1",
+			ContainerID:     "container-1",
+			Image:           "alpine@sha256:abc",
+			TrustLevel:      "measured",
+			ReferenceValues: "golden",
 		}
 
 		resp, err := svc.AttestContainer(t.Context(), req)
@@ -543,8 +543,8 @@ func TestAttestationService_AttestContainer(t *testing.T) {
 		if attestor.lastRequest.DeviceID != "device-1" {
 			t.Errorf("device id not forwarded: %+v", attestor.lastRequest)
 		}
-		if len(attestor.lastRequest.ExpectedPCRs) != 1 {
-			t.Errorf("expected PCRs not forwarded: %+v", attestor.lastRequest)
+		if attestor.lastRequest.ReferenceValues != "golden" {
+			t.Errorf("reference values not forwarded: %+v", attestor.lastRequest)
 		}
 	})
 

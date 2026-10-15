@@ -14,11 +14,19 @@
 package service
 
 import (
+	"bytes"
 	"context"
+	"crypto"
+	"crypto/ecdsa"
+	"crypto/rand"
+	"crypto/sha256"
+	"crypto/sha512"
 	"crypto/x509"
 	stderrors "errors"
 	"strings"
 	"testing"
+
+	"github.com/google/go-tpm/tpm2"
 
 	"github.com/jeremyhahn/go-quicbaas/pkg/errors"
 	"github.com/jeremyhahn/go-quicbaas/pkg/service/attestationtest"
@@ -33,6 +41,7 @@ type verifierWorld struct {
 	akCA       *attestationtest.Authority
 	rvCA       *attestationtest.Authority
 	signerCert *x509.Certificate
+	signerKey  crypto.Signer
 	ak         *attestationtest.AttestationKey
 	pcrs       map[uint32][]byte
 	corim      []byte
@@ -54,6 +63,7 @@ func newVerifierWorld(t testing.TB) *verifierWorld {
 		t.Fatal(err)
 	}
 	w.signerCert = signerCert
+	w.signerKey = signerKey
 	if w.ak, err = attestationtest.IssueAttestationKey(w.akCA, true); err != nil {
 		t.Fatal(err)
 	}
@@ -125,6 +135,64 @@ func TestVerifier_AppraisesGenuineEvidenceAgainstSignedReferenceValues(t *testin
 	}
 	if result.BaselineSource != BaselineSourceSigned || result.ManifestID == "" || result.Signer == "" || result.ReferenceValues != "golden" {
 		t.Fatalf("result does not identify its signed baseline: %+v", result)
+	}
+}
+
+// TestVerifier_BaselineUsesTheQuotedBankNotTheSigningHash drives a quote
+// whose signing scheme hash (SHA-384, named by the PCR digest length) differs
+// from its PCR bank (SHA-256), as a TPM produces when an attestation key with
+// a SHA-384 scheme quotes the SHA-256 bank. The quoted registers are SHA-256
+// values, so the reference values must be read in the bank's algorithm; read
+// in the signing hash they hold no digest for any PCR and the baseline could
+// never pass.
+func TestVerifier_BaselineUsesTheQuotedBankNotTheSigningHash(t *testing.T) {
+	w := newVerifierWorld(t)
+	w.endorse(t)
+	nonce := []byte("verifier-nonce-bank")
+
+	indices := []uint32{0, 4, 7}
+	pcrDigest := sha512.New384()
+	selection := make([]uint, 0, len(indices))
+	for _, idx := range indices {
+		pcrDigest.Write(w.pcrs[idx])
+		selection = append(selection, uint(idx))
+	}
+	attest := tpm2.Marshal(tpm2.TPMSAttest{
+		Magic:           tpm2.TPMGeneratedValue,
+		Type:            tpm2.TPMSTAttestQuote,
+		QualifiedSigner: tpm2.TPM2BName{Buffer: []byte("ak")},
+		ExtraData:       tpm2.TPM2BData{Buffer: nonce},
+		ClockInfo:       tpm2.TPMSClockInfo{Clock: 1, Safe: true},
+		Attested: tpm2.NewTPMUAttest(tpm2.TPMSTAttestQuote, &tpm2.TPMSQuoteInfo{
+			PCRSelect: tpm2.TPMLPCRSelection{PCRSelections: []tpm2.TPMSPCRSelection{{
+				Hash:      tpm2.TPMAlgSHA256,
+				PCRSelect: tpm2.PCClientCompatible.PCRs(selection...),
+			}}},
+			PCRDigest: tpm2.TPM2BDigest{Buffer: pcrDigest.Sum(nil)},
+		}),
+	})
+	signed := sha512.Sum384(attest)
+	signature, err := ecdsa.SignASN1(rand.Reader, w.ak.Key, signed[:])
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	result, err := w.svc.AppraiseQuote(w.ctx, &AppraiseQuoteRequest{
+		AKCertificatePEM: w.ak.CertificatePEM(),
+		Quote:            attest,
+		Signature:        signature,
+		Nonce:            nonce,
+		PCRs:             w.pcrs,
+		ReferenceValues:  "golden",
+	})
+	if err != nil {
+		t.Fatalf("AppraiseQuote: %v", err)
+	}
+	if outcomeOf(result, AppraisalCheckQuote) != AppraisalPass {
+		t.Fatalf("quote = %s, want pass: the SHA-384 scheme over the SHA-256 bank must verify (%+v)", outcomeOf(result, AppraisalCheckQuote), result.Checks)
+	}
+	if outcomeOf(result, AppraisalCheckBaseline) != AppraisalPass || !result.Verified {
+		t.Fatalf("baseline = %s, want pass against the SHA-256 reference values (%+v)", outcomeOf(result, AppraisalCheckBaseline), result.Checks)
 	}
 }
 
@@ -403,18 +471,71 @@ func TestVerifier_StoreFailures(t *testing.T) {
 
 func TestComparePCRBaseline(t *testing.T) {
 	a, b := []byte{1, 1}, []byte{2, 2}
-	if got := comparePCRBaseline(map[int][]byte{0: a}, map[int][][]byte{0: {b, a}}); got.Outcome != AppraisalPass {
+	if got, _ := comparePCRBaseline(map[int][]byte{0: a}, map[int][][]byte{0: {b, a}}); got.Outcome != AppraisalPass {
 		t.Fatalf("a second acceptable digest = %+v, want pass", got)
 	}
-	if got := comparePCRBaseline(map[int][]byte{0: a, 1: a}, map[int][][]byte{0: {a}}); got.Outcome != AppraisalAbsent {
+	if got, _ := comparePCRBaseline(map[int][]byte{0: a, 1: a}, map[int][][]byte{0: {a}}); got.Outcome != AppraisalAbsent {
 		t.Fatalf("index set mismatch = %+v, want absent", got)
 	}
-	if got := comparePCRBaseline(map[int][]byte{0: a}, map[int][][]byte{}); got.Outcome != AppraisalAbsent {
+	if got, _ := comparePCRBaseline(map[int][]byte{0: a}, map[int][][]byte{}); got.Outcome != AppraisalAbsent {
 		t.Fatalf("no reference digests = %+v, want absent", got)
 	}
-	if got := comparePCRBaseline(map[int][]byte{0: a}, map[int][][]byte{0: {b}}); got.Outcome != AppraisalForged {
+	if got, _ := comparePCRBaseline(map[int][]byte{0: a}, map[int][][]byte{0: {b}}); got.Outcome != AppraisalForged {
 		t.Fatalf("divergent value = %+v, want forged", got)
 	}
+
+	// The cases below moved here from orchestration's TestVerifyExpectedPCRs
+	// when the Tier 1 golden comparison moved onto the Verifier.
+	golden := bytes.Repeat([]byte{0xAB}, sha256.Size)
+
+	t.Run("MatchingSetPasses", func(t *testing.T) {
+		got, divergences := comparePCRBaseline(
+			map[int][]byte{7: golden, 8: {0x01}},
+			map[int][][]byte{7: {golden}, 8: {{0x01}}},
+		)
+		if got.Outcome != AppraisalPass || len(divergences) != 0 {
+			t.Fatalf("matching set = %+v, %+v; want pass with no divergence", got, divergences)
+		}
+	})
+
+	t.Run("AbsentPCRIsAMismatch", func(t *testing.T) {
+		got, divergences := comparePCRBaseline(map[int][]byte{}, map[int][][]byte{7: {golden}})
+		if got.Outcome == AppraisalPass {
+			t.Fatalf("absent PCR = %+v, want a failing baseline", got)
+		}
+		if len(divergences) != 1 || divergences[0].Index != 7 || divergences[0].Quoted != nil {
+			t.Fatalf("divergences = %+v, want PCR 7 with no quoted value", divergences)
+		}
+	})
+
+	t.Run("ExtraQuotedPCRIsAbsent", func(t *testing.T) {
+		got, divergences := comparePCRBaseline(
+			map[int][]byte{7: golden, 8: {0x01}},
+			map[int][][]byte{7: {golden}},
+		)
+		if got.Outcome != AppraisalAbsent {
+			t.Fatalf("extra quoted PCR = %+v, want absent", got)
+		}
+		if len(divergences) != 1 || divergences[0].Index != 8 || divergences[0].Expected != nil {
+			t.Fatalf("divergences = %+v, want PCR 8 with no reference digest", divergences)
+		}
+	})
+
+	t.Run("LowestFailingIndexIsReported", func(t *testing.T) {
+		got, divergences := comparePCRBaseline(
+			map[int][]byte{0: {0x01}, 7: {0x02}, 14: {0x03}},
+			map[int][][]byte{14: {golden}, 0: {golden}, 7: {golden}},
+		)
+		if got.Outcome != AppraisalForged {
+			t.Fatalf("divergent set = %+v, want forged", got)
+		}
+		if len(divergences) != 3 || divergences[0].Index != 0 {
+			t.Fatalf("divergences = %+v, want all three with the lowest failing index 0 first", divergences)
+		}
+		if !bytes.Equal(divergences[0].Quoted, []byte{0x01}) || !bytes.Equal(divergences[0].Expected[0], golden) {
+			t.Fatalf("divergence 0 = %+v, want the quoted and expected digests", divergences[0])
+		}
+	})
 }
 
 func TestVerifierErrors_Messages(t *testing.T) {

@@ -16,7 +16,10 @@ package orchestration
 import (
 	"bytes"
 	"context"
+	"crypto"
 	"crypto/sha256"
+	"crypto/sha512"
+	"crypto/x509"
 	"encoding/binary"
 	"errors"
 	"io"
@@ -25,8 +28,12 @@ import (
 	"sync"
 	"testing"
 
+	"github.com/google/go-tpm/tpm2"
 	xkmsevidence "github.com/jeremyhahn/go-xkms/pkg/attestation/evidence"
 	xkmstpm2 "github.com/jeremyhahn/go-xkms/pkg/tpm2"
+	"github.com/jeremyhahn/go-xkms/pkg/types"
+
+	"github.com/jeremyhahn/go-quicbaas/pkg/service/attestationtest"
 )
 
 // =============================================================================
@@ -53,11 +60,22 @@ type fakeHostTPM struct {
 	// covers a bank the read did not supply.
 	quoteBank string
 
+	// iakBank is the bank the attestation key's hash algorithm names. It
+	// defaults to bank.
+	iakBank string
+
 	pcrs map[uint32][]byte
+
+	// ak signs every quote. Its certificate chains to the ak-root the
+	// test's Verifier endorses, so the appraisal judges a genuine signature.
+	ak *attestationtest.AttestationKey
 
 	quoteErr  error
 	extendErr error
 	readErr   error
+	iakErr    error
+
+	iakAttrsErr error
 
 	// tamperPCRDigest corrupts the pcrDigest inside the signed body, so the
 	// signed evidence and the PCR read disagree — the exact condition the
@@ -71,6 +89,9 @@ type fakeHostTPM struct {
 	// corruptQuoteBody replaces the signed body with bytes that are not a
 	// TPMS_ATTEST structure at all.
 	corruptQuoteBody bool
+
+	// eventLog is the boot event log every quote carries; nil means none.
+	eventLog []byte
 
 	quoteCalls  int
 	extendCalls int
@@ -251,15 +272,57 @@ func (f *fakeHostTPM) quote(t *testing.T, pcrs []uint, nonce []byte) (xkmstpm2.Q
 		quoted = []byte("tpms-attest")
 	}
 
+	if f.ak == nil {
+		t.Fatal("fakeHostTPM has no attestation key: build the runtime with newAttestingTestRuntime")
+	}
+	signature, err := attestationtest.SignAttest(f.ak, quoted)
+	if err != nil {
+		t.Fatalf("SignAttest: %v", err)
+	}
+
+	// No event log unless a test sets one: the Verifier skips an absent
+	// log, and a placeholder would be appraised as forged.
 	return xkmstpm2.Quote{
 		Quoted:    quoted,
-		Signature: []byte("signature"),
+		Signature: signature,
 		Nonce:     nonce,
-		EventLog:  []byte("event-log"),
+		EventLog:  f.eventLog,
 	}, nil
 }
 
+// IAKCertificate returns the certificate of the key that signs the quotes.
+func (f *fakeHostTPM) IAKCertificate() (*x509.Certificate, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if f.iakErr != nil {
+		return nil, f.iakErr
+	}
+	if f.ak == nil {
+		return nil, errors.New("fakeHostTPM has no attestation key")
+	}
+	return f.ak.Certificate, nil
+}
+
 // signedBank is the bank named inside the signed selection.
+// IAKAttributes reports the attestation key's hash algorithm. It names the
+// TPM's bank, as go-xkms does, unless iakBank overrides it.
+func (f *fakeHostTPM) IAKAttributes() (*types.KeyAttributes, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if f.iakAttrsErr != nil {
+		return nil, f.iakAttrsErr
+	}
+	bank := f.iakBank
+	if bank == "" {
+		bank = f.bank
+	}
+	alg, err := xkmstpm2.ParsePCRBankAlgID(bank)
+	if err != nil {
+		return nil, err
+	}
+	return &types.KeyAttributes{TPMAttributes: &types.TPMAttributes{HashAlg: tpm2.TPMIAlgHash(alg)}}, nil
+}
+
 func (f *fakeHostTPM) signedBank() string {
 	if f.quoteBank != "" {
 		return f.quoteBank
@@ -297,6 +360,14 @@ func (b *boundHostTPM) ReadPCRs(pcrList []uint) ([]xkmstpm2.PCRBank, error) {
 
 func (b *boundHostTPM) ExtendPCR(pcrIndex int, hashAlg string, data []byte) error {
 	return b.inner.ExtendPCR(pcrIndex, hashAlg, data)
+}
+
+func (b *boundHostTPM) IAKCertificate() (*x509.Certificate, error) {
+	return b.inner.IAKCertificate()
+}
+
+func (b *boundHostTPM) IAKAttributes() (*types.KeyAttributes, error) {
+	return b.inner.IAKAttributes()
 }
 
 func (f *fakeHostTPM) ReadPCRs(pcrList []uint) ([]xkmstpm2.PCRBank, error) {
@@ -391,20 +462,49 @@ func (r *recordingRuntime) launchCount() int {
 	return len(r.runSpecs)
 }
 
-// newAttestingTestRuntime wires the recording base runtime to a fake TPM. A
-// bare *fakeHostTPM is bound to the test so it can synthesize signed quotes.
-func newAttestingTestRuntime(t *testing.T, tpm HostTPM) (*TPMAttestingRuntime, *recordingRuntime) {
+// newAttestingTestRuntime wires the recording base runtime to a fake TPM and
+// the real Verifier. A bare *fakeHostTPM is given an AK under the Verifier's
+// ak-root and bound to the test so it can synthesize signed quotes. reference
+// is stored as the reference values "golden"; nil stores none.
+func newAttestingTestRuntime(t *testing.T, tpm HostTPM, reference map[uint32][]byte) (*TPMAttestingRuntime, *recordingRuntime) {
 	t.Helper()
+	return newAttestingTestRuntimeDigests(t, tpm, attestationtest.SHA256Digests(reference))
+}
+
+// newAttestingTestRuntimeDigests is newAttestingTestRuntime with reference
+// digests in any mix of PCR banks.
+func newAttestingTestRuntimeDigests(t *testing.T, tpm HostTPM, reference []attestationtest.PCRDigest) (*TPMAttestingRuntime, *recordingRuntime) {
+	t.Helper()
+	if NewTestHostAppraiser == nil {
+		t.Fatal("NewTestHostAppraiser is not installed; host_appraisal_verifier_test.go installs it")
+	}
+	akRoot, err := attestationtest.NewAuthority("AK CA")
+	if err != nil {
+		t.Fatal(err)
+	}
+	ak, err := attestationtest.IssueAttestationKey(akRoot, true)
+	if err != nil {
+		t.Fatal(err)
+	}
 	if fake, ok := tpm.(*fakeHostTPM); ok {
+		fake.ak = ak
 		tpm = newBoundHostTPM(t, fake)
 	}
 	base := &recordingRuntime{}
-	rt, err := NewTPMAttestingRuntime(base, tpm, newContainerTestLogger(t))
+	appraiser := NewTestHostAppraiser(t, akRoot, reference)
+	rt, err := NewTPMAttestingRuntime(base, tpm, appraiser, newContainerTestLogger(t))
 	if err != nil {
 		t.Fatalf("NewTPMAttestingRuntime: %v", err)
 	}
 	return rt, base
 }
+
+// NewTestHostAppraiser builds the Verifier a runtime test appraises against:
+// its tenant endorses akRoot as the ak-root and, when reference is non-nil,
+// stores reference as the signed reference values "golden". The service
+// package owns the Verifier and imports this one, so the external test
+// package installs this from host_appraisal_verifier_test.go.
+var NewTestHostAppraiser func(t testing.TB, akRoot *attestationtest.Authority, reference []attestationtest.PCRDigest) HostAppraiser
 
 // =============================================================================
 // Construction
@@ -412,9 +512,14 @@ func newAttestingTestRuntime(t *testing.T, tpm HostTPM) (*TPMAttestingRuntime, *
 
 func TestNewTPMAttestingRuntime_Validation(t *testing.T) {
 	logger := newContainerTestLogger(t)
+	akRoot, err := attestationtest.NewAuthority("AK CA")
+	if err != nil {
+		t.Fatal(err)
+	}
+	appraiser := NewTestHostAppraiser(t, akRoot, nil)
 
 	t.Run("Complete", func(t *testing.T) {
-		rt, err := NewTPMAttestingRuntime(&recordingRuntime{}, newFakeHostTPM(), logger)
+		rt, err := NewTPMAttestingRuntime(&recordingRuntime{}, newFakeHostTPM(), appraiser, logger)
 		if err != nil {
 			t.Fatalf("unexpected error: %v", err)
 		}
@@ -425,35 +530,52 @@ func TestNewTPMAttestingRuntime_Validation(t *testing.T) {
 	})
 
 	t.Run("MissingDependencies", func(t *testing.T) {
-		if _, err := NewTPMAttestingRuntime(nil, newFakeHostTPM(), logger); err == nil {
+		if _, err := NewTPMAttestingRuntime(nil, newFakeHostTPM(), appraiser, logger); err == nil {
 			t.Fatal("expected an error for a nil base runtime")
 		}
-		if _, err := NewTPMAttestingRuntime(&recordingRuntime{}, nil, logger); err == nil {
+		if _, err := NewTPMAttestingRuntime(&recordingRuntime{}, nil, appraiser, logger); err == nil {
 			t.Fatal("expected an error for a nil TPM")
 		}
-		if _, err := NewTPMAttestingRuntime(&recordingRuntime{}, newFakeHostTPM(), nil); err == nil {
+		if _, err := NewTPMAttestingRuntime(&recordingRuntime{}, newFakeHostTPM(), appraiser, nil); err == nil {
 			t.Fatal("expected an error for a nil logger")
+		}
+	})
+
+	// Tier 1 fails closed: without a Verifier there is nothing to appraise
+	// the quote against, so the runtime is never built.
+	t.Run("MissingAppraiser", func(t *testing.T) {
+		rt, err := NewTPMAttestingRuntime(&recordingRuntime{}, newFakeHostTPM(), nil, logger)
+		if rt != nil {
+			t.Fatal("no runtime may be built without an appraiser")
+		}
+		var invalid *InputValidationError
+		if !errors.As(err, &invalid) {
+			t.Fatalf("expected *InputValidationError, got %T (%v)", err, err)
+		}
+		if invalid.Field != "appraiser" {
+			t.Fatalf("Field = %q, want appraiser", invalid.Field)
 		}
 	})
 }
 
 // =============================================================================
-// Tier 1 — host quote verified against expected PCRs
+// Tier 1 — host quote appraised by the Verifier against named reference values
 // =============================================================================
 
 func TestTPMAttestingRuntime_Attest_Tier1(t *testing.T) {
 	golden := bytes.Repeat([]byte{0xAB}, sha256.Size)
+	reference := map[uint32][]byte{7: golden}
 
 	t.Run("MatchingPCRsProduceEvidence", func(t *testing.T) {
 		tpm := newFakeHostTPM()
 		tpm.setPCR(7, golden)
-		rt, _ := newAttestingTestRuntime(t, tpm)
+		rt, _ := newAttestingTestRuntime(t, tpm, reference)
 
 		spec := &ContainerSpec{
-			Image:        "alpine@" + testDigest,
-			TrustLevel:   TrustLevelAttested,
-			TrustLabel:   "prod-agent",
-			ExpectedPCRs: map[uint32][]byte{7: golden},
+			Image:           "alpine@" + testDigest,
+			TrustLevel:      TrustLevelAttested,
+			TrustLabel:      "prod-agent",
+			ReferenceValues: "golden",
 		}
 
 		evidence, err := rt.Attest(t.Context(), spec, "container-1")
@@ -495,12 +617,12 @@ func TestTPMAttestingRuntime_Attest_Tier1(t *testing.T) {
 	t.Run("DriftedPCRIsRejected", func(t *testing.T) {
 		tpm := newFakeHostTPM()
 		tpm.setPCR(7, bytes.Repeat([]byte{0xCD}, sha256.Size))
-		rt, _ := newAttestingTestRuntime(t, tpm)
+		rt, _ := newAttestingTestRuntime(t, tpm, reference)
 
 		spec := &ContainerSpec{
-			Image:        "alpine@" + testDigest,
-			TrustLevel:   TrustLevelAttested,
-			ExpectedPCRs: map[uint32][]byte{7: golden},
+			Image:           "alpine@" + testDigest,
+			TrustLevel:      TrustLevelAttested,
+			ReferenceValues: "golden",
 		}
 
 		_, err := rt.Attest(t.Context(), spec, "container-1")
@@ -510,12 +632,36 @@ func TestTPMAttestingRuntime_Attest_Tier1(t *testing.T) {
 		if !errors.Is(err, ErrPCRMismatch) {
 			t.Fatalf("error %v does not wrap ErrPCRMismatch", err)
 		}
-		var mismatch *PCRMismatchError
-		if !errors.As(err, &mismatch) {
-			t.Fatalf("expected *PCRMismatchError, got %T", err)
+		if !errors.Is(err, ErrHostNotVerified) {
+			t.Fatalf("error %v does not wrap ErrHostNotVerified", err)
 		}
-		if mismatch.Index != 7 {
-			t.Errorf("mismatch index = %d, want 7", mismatch.Index)
+		var appraisal *HostAppraisalError
+		if !errors.As(err, &appraisal) {
+			t.Fatalf("expected *HostAppraisalError, got %T", err)
+		}
+		if !appraisal.CryptographicFailure {
+			t.Error("a drifted PCR is a cryptographic failure of the baseline")
+		}
+		if appraisal.ReferenceValues != "golden" {
+			t.Errorf("ReferenceValues = %q, want golden", appraisal.ReferenceValues)
+		}
+		var divergence *PCRDivergence
+		for _, failure := range appraisal.Failures {
+			for i := range failure.PCRs {
+				divergence = &failure.PCRs[i]
+			}
+		}
+		if divergence == nil {
+			t.Fatalf("the appraisal must name the diverging PCR, got %+v", appraisal.Failures)
+		}
+		if divergence.Index != 7 {
+			t.Errorf("divergence index = %d, want 7", divergence.Index)
+		}
+		if !bytes.Equal(divergence.Quoted, bytes.Repeat([]byte{0xCD}, sha256.Size)) {
+			t.Errorf("quoted digest = %x, want the drifted value", divergence.Quoted)
+		}
+		if len(divergence.Expected) != 1 || !bytes.Equal(divergence.Expected[0], golden) {
+			t.Errorf("expected digests = %x, want [%x]", divergence.Expected, golden)
 		}
 	})
 
@@ -525,13 +671,13 @@ func TestTPMAttestingRuntime_Attest_Tier1(t *testing.T) {
 		// the attestation is refused before any golden value is consulted:
 		// absence of evidence is not evidence of a match.
 		tpm := newFakeHostTPM()
-		rt, _ := newAttestingTestRuntime(t, tpm)
+		rt, _ := newAttestingTestRuntime(t, tpm, reference)
 		rt.tpm = &pcrOmittingTPM{t: t, inner: tpm}
 
 		spec := &ContainerSpec{
-			Image:        "alpine@" + testDigest,
-			TrustLevel:   TrustLevelAttested,
-			ExpectedPCRs: map[uint32][]byte{7: golden},
+			Image:           "alpine@" + testDigest,
+			TrustLevel:      TrustLevelAttested,
+			ReferenceValues: "golden",
 		}
 
 		_, err := rt.Attest(t.Context(), spec, "container-1")
@@ -544,12 +690,12 @@ func TestTPMAttestingRuntime_Attest_Tier1(t *testing.T) {
 		tpm := newFakeHostTPM()
 		tpm.setPCR(7, golden)
 		tpm.quoteErr = errors.New("tpm busy")
-		rt, _ := newAttestingTestRuntime(t, tpm)
+		rt, _ := newAttestingTestRuntime(t, tpm, reference)
 
 		spec := &ContainerSpec{
-			Image:        "alpine@" + testDigest,
-			TrustLevel:   TrustLevelAttested,
-			ExpectedPCRs: map[uint32][]byte{7: golden},
+			Image:           "alpine@" + testDigest,
+			TrustLevel:      TrustLevelAttested,
+			ReferenceValues: "golden",
 		}
 
 		_, err := rt.Attest(t.Context(), spec, "container-1")
@@ -562,12 +708,32 @@ func TestTPMAttestingRuntime_Attest_Tier1(t *testing.T) {
 		tpm := newFakeHostTPM()
 		tpm.setPCR(7, golden)
 		tpm.readErr = errors.New("pcr read denied")
-		rt, _ := newAttestingTestRuntime(t, tpm)
+		rt, _ := newAttestingTestRuntime(t, tpm, reference)
 
 		spec := &ContainerSpec{
-			Image:        "alpine@" + testDigest,
-			TrustLevel:   TrustLevelAttested,
-			ExpectedPCRs: map[uint32][]byte{7: golden},
+			Image:           "alpine@" + testDigest,
+			TrustLevel:      TrustLevelAttested,
+			ReferenceValues: "golden",
+		}
+
+		_, err := rt.Attest(t.Context(), spec, "container-1")
+		if !errors.Is(err, ErrQuoteFailed) {
+			t.Fatalf("error %v does not wrap ErrQuoteFailed", err)
+		}
+	})
+
+	t.Run("AKCertificateFailurePropagates", func(t *testing.T) {
+		// Without the AK certificate the Verifier cannot judge the
+		// signature, so the quote is refused before any appraisal.
+		tpm := newFakeHostTPM()
+		tpm.setPCR(7, golden)
+		tpm.iakErr = errors.New("no IAK certificate provisioned")
+		rt, _ := newAttestingTestRuntime(t, tpm, reference)
+
+		spec := &ContainerSpec{
+			Image:           "alpine@" + testDigest,
+			TrustLevel:      TrustLevelAttested,
+			ReferenceValues: "golden",
 		}
 
 		_, err := rt.Attest(t.Context(), spec, "container-1")
@@ -577,7 +743,7 @@ func TestTPMAttestingRuntime_Attest_Tier1(t *testing.T) {
 	})
 
 	t.Run("BelowAttestedLevelIsRefused", func(t *testing.T) {
-		rt, _ := newAttestingTestRuntime(t, newFakeHostTPM())
+		rt, _ := newAttestingTestRuntime(t, newFakeHostTPM(), nil)
 		spec := &ContainerSpec{Image: "alpine@" + testDigest, TrustLevel: TrustLevelPinned}
 
 		_, err := rt.Attest(t.Context(), spec, "container-1")
@@ -587,7 +753,7 @@ func TestTPMAttestingRuntime_Attest_Tier1(t *testing.T) {
 	})
 
 	t.Run("InvalidSpecIsRefused", func(t *testing.T) {
-		rt, _ := newAttestingTestRuntime(t, newFakeHostTPM())
+		rt, _ := newAttestingTestRuntime(t, newFakeHostTPM(), nil)
 
 		if _, err := rt.Attest(t.Context(), nil, ""); err == nil {
 			t.Fatal("expected an error for a nil spec")
@@ -595,9 +761,9 @@ func TestTPMAttestingRuntime_Attest_Tier1(t *testing.T) {
 
 		// Attested level with only a tag: the tier gate fires in Validate.
 		spec := &ContainerSpec{
-			Image:        "alpine:3.20",
-			TrustLevel:   TrustLevelAttested,
-			ExpectedPCRs: map[uint32][]byte{7: golden},
+			Image:           "alpine:3.20",
+			TrustLevel:      TrustLevelAttested,
+			ReferenceValues: "golden",
 		}
 		if _, err := rt.Attest(t.Context(), spec, ""); !errors.Is(err, ErrImageNotPinned) {
 			t.Fatalf("error %v does not wrap ErrImageNotPinned", err)
@@ -607,15 +773,15 @@ func TestTPMAttestingRuntime_Attest_Tier1(t *testing.T) {
 	t.Run("CanceledContextIsRefused", func(t *testing.T) {
 		tpm := newFakeHostTPM()
 		tpm.setPCR(7, golden)
-		rt, _ := newAttestingTestRuntime(t, tpm)
+		rt, _ := newAttestingTestRuntime(t, tpm, reference)
 
 		ctx, cancel := context.WithCancel(t.Context())
 		cancel()
 
 		spec := &ContainerSpec{
-			Image:        "alpine@" + testDigest,
-			TrustLevel:   TrustLevelAttested,
-			ExpectedPCRs: map[uint32][]byte{7: golden},
+			Image:           "alpine@" + testDigest,
+			TrustLevel:      TrustLevelAttested,
+			ReferenceValues: "golden",
 		}
 		if _, err := rt.Attest(ctx, spec, ""); !errors.Is(err, context.Canceled) {
 			t.Fatalf("error %v is not a context cancellation", err)
@@ -642,20 +808,30 @@ func (p *pcrOmittingTPM) ExtendPCR(index int, alg string, data []byte) error {
 	return p.inner.ExtendPCR(index, alg, data)
 }
 
+func (p *pcrOmittingTPM) IAKCertificate() (*x509.Certificate, error) {
+	return p.inner.IAKCertificate()
+}
+
+func (p *pcrOmittingTPM) IAKAttributes() (*types.KeyAttributes, error) {
+	return p.inner.IAKAttributes()
+}
+
 // =============================================================================
 // Tier 2 — measured launch
 // =============================================================================
 
 func TestTPMAttestingRuntime_MeasuredLaunch(t *testing.T) {
+	reference := map[uint32][]byte{7: make([]byte, sha256.Size)}
+
 	t.Run("ExtendsMeasurementPCRBeforeLaunch", func(t *testing.T) {
 		tpm := newFakeHostTPM()
-		rt, base := newAttestingTestRuntime(t, tpm)
+		rt, base := newAttestingTestRuntime(t, tpm, reference)
 
 		spec := &ContainerSpec{
-			Image:        "alpine@" + testDigest,
-			TrustLevel:   TrustLevelMeasured,
-			TrustLabel:   "prod-agent",
-			ExpectedPCRs: map[uint32][]byte{7: bytes.Repeat([]byte{0x00}, sha256.Size)},
+			Image:           "alpine@" + testDigest,
+			TrustLevel:      TrustLevelMeasured,
+			TrustLabel:      "prod-agent",
+			ReferenceValues: "golden",
 		}
 
 		zero := make([]byte, sha256.Size)
@@ -688,12 +864,12 @@ func TestTPMAttestingRuntime_MeasuredLaunch(t *testing.T) {
 		// before it was measured is not a measured launch.
 		tpm := newFakeHostTPM()
 		tpm.extendErr = errors.New("pcr locked")
-		rt, base := newAttestingTestRuntime(t, tpm)
+		rt, base := newAttestingTestRuntime(t, tpm, reference)
 
 		spec := &ContainerSpec{
-			Image:        "alpine@" + testDigest,
-			TrustLevel:   TrustLevelMeasured,
-			ExpectedPCRs: map[uint32][]byte{7: make([]byte, sha256.Size)},
+			Image:           "alpine@" + testDigest,
+			TrustLevel:      TrustLevelMeasured,
+			ReferenceValues: "golden",
 		}
 
 		_, err := rt.Run(t.Context(), spec)
@@ -707,12 +883,12 @@ func TestTPMAttestingRuntime_MeasuredLaunch(t *testing.T) {
 
 	t.Run("InteractiveIsMeasuredToo", func(t *testing.T) {
 		tpm := newFakeHostTPM()
-		rt, base := newAttestingTestRuntime(t, tpm)
+		rt, base := newAttestingTestRuntime(t, tpm, reference)
 
 		spec := &ContainerSpec{
-			Image:        "alpine@" + testDigest,
-			TrustLevel:   TrustLevelMeasured,
-			ExpectedPCRs: map[uint32][]byte{7: make([]byte, sha256.Size)},
+			Image:           "alpine@" + testDigest,
+			TrustLevel:      TrustLevelMeasured,
+			ReferenceValues: "golden",
 		}
 
 		if _, err := rt.RunInteractive(t.Context(), spec); err != nil {
@@ -728,13 +904,13 @@ func TestTPMAttestingRuntime_MeasuredLaunch(t *testing.T) {
 
 	t.Run("LowerTiersDoNotTouchTheTPM", func(t *testing.T) {
 		tpm := newFakeHostTPM()
-		rt, base := newAttestingTestRuntime(t, tpm)
+		rt, base := newAttestingTestRuntime(t, tpm, reference)
 
 		for _, level := range []TrustLevel{TrustLevelDefault, TrustLevelNone, TrustLevelPinned, TrustLevelAttested} {
 			spec := &ContainerSpec{
-				Image:        "alpine@" + testDigest,
-				TrustLevel:   level,
-				ExpectedPCRs: map[uint32][]byte{7: make([]byte, sha256.Size)},
+				Image:           "alpine@" + testDigest,
+				TrustLevel:      level,
+				ReferenceValues: "golden",
 			}
 			if _, err := rt.Run(t.Context(), spec); err != nil {
 				t.Fatalf("Run at level %v: %v", level, err)
@@ -749,15 +925,24 @@ func TestTPMAttestingRuntime_MeasuredLaunch(t *testing.T) {
 	})
 
 	t.Run("AttestIncludesMeasurementPCRAndLaunchMeasurement", func(t *testing.T) {
-		tpm := newFakeHostTPM()
-		rt, _ := newAttestingTestRuntime(t, tpm)
-
 		spec := &ContainerSpec{
-			Image:        "alpine@" + testDigest,
-			TrustLevel:   TrustLevelMeasured,
-			TrustLabel:   "prod-agent",
-			ExpectedPCRs: map[uint32][]byte{7: make([]byte, sha256.Size)},
+			Image:           "alpine@" + testDigest,
+			TrustLevel:      TrustLevelMeasured,
+			TrustLabel:      "prod-agent",
+			ReferenceValues: "golden",
 		}
+
+		// The Verifier compares equal sets, so the reference values for a
+		// measured launch carry the measurement PCR the launch produces.
+		measurement, err := LaunchMeasurement(spec)
+		if err != nil {
+			t.Fatalf("LaunchMeasurement: %v", err)
+		}
+		tpm := newFakeHostTPM()
+		rt, _ := newAttestingTestRuntime(t, tpm, map[uint32][]byte{
+			7:                             make([]byte, sha256.Size),
+			uint32(MeasurementPCRDefault): expectedExtend(make([]byte, sha256.Size), measurement),
+		})
 
 		if _, err := rt.Run(t.Context(), spec); err != nil {
 			t.Fatalf("Run: %v", err)
@@ -798,13 +983,13 @@ func TestTPMAttestingRuntime_MeasuredLaunch(t *testing.T) {
 
 	t.Run("CustomMeasurementPCR", func(t *testing.T) {
 		tpm := newFakeHostTPM()
-		rt, _ := newAttestingTestRuntime(t, tpm)
+		rt, _ := newAttestingTestRuntime(t, tpm, reference)
 
 		spec := &ContainerSpec{
-			Image:          "alpine@" + testDigest,
-			TrustLevel:     TrustLevelMeasured,
-			MeasurementPCR: 12,
-			ExpectedPCRs:   map[uint32][]byte{7: make([]byte, sha256.Size)},
+			Image:           "alpine@" + testDigest,
+			TrustLevel:      TrustLevelMeasured,
+			MeasurementPCR:  12,
+			ReferenceValues: "golden",
 		}
 
 		if _, err := rt.Run(t.Context(), spec); err != nil {
@@ -815,6 +1000,73 @@ func TestTPMAttestingRuntime_MeasuredLaunch(t *testing.T) {
 		}
 		if !bytes.Equal(tpm.pcr(uint32(MeasurementPCRDefault)), make([]byte, sha256.Size)) {
 			t.Fatal("the default measurement PCR must be left untouched")
+		}
+	})
+}
+
+// TestTPMAttestingRuntime_MeasuredLaunchWithBootLog is the regression guard
+// for a measured launch on a host that supplies its firmware event log. The
+// log explains the boot registers; the runtime extended the measurement PCR
+// after boot, so the log cannot explain that one. Replaying every quoted
+// register refused every such host; the replay now leaves the measurement
+// PCR to the reference values.
+func TestTPMAttestingRuntime_MeasuredLaunchWithBootLog(t *testing.T) {
+	spec := &ContainerSpec{
+		Image:           "alpine@" + testDigest,
+		TrustLevel:      TrustLevelMeasured,
+		ReferenceValues: "golden",
+	}
+	measurement, err := LaunchMeasurement(spec)
+	if err != nil {
+		t.Fatalf("LaunchMeasurement: %v", err)
+	}
+	digest := func(b byte) []byte { return bytes.Repeat([]byte{b}, sha256.Size) }
+	bootLog, boot := attestationtest.BootEventLog([]attestationtest.LogEvent{
+		{PCR: 0, Digest: digest(0x01)},
+		{PCR: 7, Digest: digest(0x07)},
+	})
+
+	// measuredHost boots the fake TPM through the log, with pcr7 standing in
+	// for whatever PCR 7 holds, and launches the container.
+	measuredHost := func(t *testing.T, pcr7 []byte) (*TPMAttestingRuntime, *fakeHostTPM) {
+		t.Helper()
+		tpm := newFakeHostTPM()
+		tpm.eventLog = bootLog
+		tpm.setPCR(0, boot[0])
+		tpm.setPCR(7, pcr7)
+		rt, _ := newAttestingTestRuntime(t, tpm, map[uint32][]byte{
+			0:                             boot[0],
+			7:                             pcr7,
+			uint32(MeasurementPCRDefault): expectedExtend(make([]byte, sha256.Size), measurement),
+		})
+		if _, err := rt.Run(t.Context(), spec); err != nil {
+			t.Fatalf("Run: %v", err)
+		}
+		return rt, tpm
+	}
+
+	t.Run("BootLogAndExtendedMeasurementPCRPass", func(t *testing.T) {
+		rt, _ := measuredHost(t, boot[7])
+		evidence, err := rt.Attest(t.Context(), spec, "container-1")
+		if err != nil {
+			t.Fatalf("Attest: %v", err)
+		}
+		if !bytes.Equal(evidence.EventLog, bootLog) {
+			t.Fatal("the evidence must carry the boot event log the quote supplied")
+		}
+	})
+
+	t.Run("TamperedBootPCRIsRefused", func(t *testing.T) {
+		// The reference values were signed over the tampered value, so only
+		// the log replay can catch it.
+		rt, _ := measuredHost(t, digest(0xEE))
+		_, err := rt.Attest(t.Context(), spec, "container-1")
+		var appraisal *HostAppraisalError
+		if !errors.As(err, &appraisal) || !errors.Is(err, ErrHostNotVerified) {
+			t.Fatalf("Attest = %v, want a *HostAppraisalError", err)
+		}
+		if !appraisal.CryptographicFailure || len(appraisal.Failures) != 1 || appraisal.Failures[0].Check != "event-log" {
+			t.Fatalf("failures = %+v, want only a forged event log", appraisal.Failures)
 		}
 	})
 }
@@ -876,16 +1128,14 @@ func TestLaunchMeasurement(t *testing.T) {
 
 func TestQuotePCRIndices(t *testing.T) {
 	t.Run("SortedAndDeduplicated", func(t *testing.T) {
-		spec := &ContainerSpec{
-			ExpectedPCRs:   map[uint32][]byte{14: {1}, 0: {1}, 7: {1}, 16: {1}},
-			MeasurementPCR: 16,
-		}
+		reference := []uint32{14, 0, 7, 16}
+		spec := &ContainerSpec{MeasurementPCR: 16}
 		want := []uint{0, 7, 14, 16}
 
-		// Repeat: the input is a map, so an unsorted implementation would
-		// pass intermittently.
+		// Repeat: the indices pass through a set, so an unsorted
+		// implementation would pass intermittently.
 		for i := 0; i < 100; i++ {
-			got := quotePCRIndices(spec, true)
+			got := quotePCRIndices(reference, spec, true)
 			if !reflect.DeepEqual(got, want) {
 				t.Fatalf("quotePCRIndices = %v, want %v", got, want)
 			}
@@ -893,12 +1143,13 @@ func TestQuotePCRIndices(t *testing.T) {
 	})
 
 	t.Run("MeasurementPCRAddedOnlyWhenMeasured", func(t *testing.T) {
-		spec := &ContainerSpec{ExpectedPCRs: map[uint32][]byte{7: {1}}}
-		if got := quotePCRIndices(spec, false); !reflect.DeepEqual(got, []uint{7}) {
+		reference := []uint32{7}
+		spec := &ContainerSpec{}
+		if got := quotePCRIndices(reference, spec, false); !reflect.DeepEqual(got, []uint{7}) {
 			t.Fatalf("quotePCRIndices = %v, want [7]", got)
 		}
 		want := []uint{7, uint(MeasurementPCRDefault)}
-		if got := quotePCRIndices(spec, true); !reflect.DeepEqual(got, want) {
+		if got := quotePCRIndices(reference, spec, true); !reflect.DeepEqual(got, want) {
 			t.Fatalf("quotePCRIndices = %v, want %v", got, want)
 		}
 	})
@@ -1017,12 +1268,13 @@ func TestFlattenPCRBanks(t *testing.T) {
 // otherwise.
 func TestTPMAttestingRuntime_Attest_BindsPCRsToSignedQuote(t *testing.T) {
 	golden := bytes.Repeat([]byte{0xAB}, sha256.Size)
+	reference := map[uint32][]byte{7: golden}
 
 	attestedSpec := func() *ContainerSpec {
 		return &ContainerSpec{
-			Image:        "alpine@" + testDigest,
-			TrustLevel:   TrustLevelAttested,
-			ExpectedPCRs: map[uint32][]byte{7: golden},
+			Image:           "alpine@" + testDigest,
+			TrustLevel:      TrustLevelAttested,
+			ReferenceValues: "golden",
 		}
 	}
 
@@ -1033,7 +1285,7 @@ func TestTPMAttestingRuntime_Attest_BindsPCRsToSignedQuote(t *testing.T) {
 		tpm := newFakeHostTPM()
 		tpm.setPCR(7, golden)
 		tpm.tamperPCRDigest = true
-		rt, _ := newAttestingTestRuntime(t, tpm)
+		rt, _ := newAttestingTestRuntime(t, tpm, reference)
 
 		evidence, err := rt.Attest(t.Context(), attestedSpec(), "container-1")
 		if evidence != nil {
@@ -1069,7 +1321,7 @@ func TestTPMAttestingRuntime_Attest_BindsPCRsToSignedQuote(t *testing.T) {
 	t.Run("PCRChangedBetweenQuoteAndReadIsRejected", func(t *testing.T) {
 		tpm := newFakeHostTPM()
 		tpm.setPCR(7, golden)
-		rt, _ := newAttestingTestRuntime(t, tpm)
+		rt, _ := newAttestingTestRuntime(t, tpm, reference)
 		rt.tpm = &extendBetweenQuoteAndReadTPM{t: t, inner: tpm, index: 7, value: golden}
 
 		_, err := rt.Attest(t.Context(), attestedSpec(), "container-1")
@@ -1082,7 +1334,7 @@ func TestTPMAttestingRuntime_Attest_BindsPCRsToSignedQuote(t *testing.T) {
 		tpm := newFakeHostTPM()
 		tpm.setPCR(7, golden)
 		tpm.tamperNonce = true
-		rt, _ := newAttestingTestRuntime(t, tpm)
+		rt, _ := newAttestingTestRuntime(t, tpm, reference)
 
 		_, err := rt.Attest(t.Context(), attestedSpec(), "container-1")
 		if !errors.Is(err, ErrQuoteNotBound) {
@@ -1094,7 +1346,7 @@ func TestTPMAttestingRuntime_Attest_BindsPCRsToSignedQuote(t *testing.T) {
 		tpm := newFakeHostTPM()
 		tpm.setPCR(7, golden)
 		tpm.corruptQuoteBody = true
-		rt, _ := newAttestingTestRuntime(t, tpm)
+		rt, _ := newAttestingTestRuntime(t, tpm, reference)
 
 		_, err := rt.Attest(t.Context(), attestedSpec(), "container-1")
 		if !errors.Is(err, ErrQuoteNotBound) {
@@ -1116,7 +1368,7 @@ func TestTPMAttestingRuntime_Attest_BindsPCRsToSignedQuote(t *testing.T) {
 		tpm := newFakeHostTPM()
 		tpm.setPCR(7, golden)
 		tpm.quoteBank = "sha384" // signed selection names a bank ReadPCRs does not report
-		rt, _ := newAttestingTestRuntime(t, tpm)
+		rt, _ := newAttestingTestRuntime(t, tpm, reference)
 
 		_, err := rt.Attest(t.Context(), attestedSpec(), "container-1")
 		if !errors.Is(err, ErrPCRBankUnavailable) {
@@ -1130,7 +1382,7 @@ func TestTPMAttestingRuntime_Attest_BindsPCRsToSignedQuote(t *testing.T) {
 		tpm := newFakeHostTPM()
 		tpm.bank = "SHA256"
 		tpm.setPCR(7, golden)
-		rt, _ := newAttestingTestRuntime(t, tpm)
+		rt, _ := newAttestingTestRuntime(t, tpm, reference)
 
 		evidence, err := rt.Attest(t.Context(), attestedSpec(), "container-1")
 		if err != nil {
@@ -1149,21 +1401,95 @@ func TestTPMAttestingRuntime_Attest_BindsPCRsToSignedQuote(t *testing.T) {
 		tpm.setPCR(0, bytes.Repeat([]byte{0x01}, sha256.Size))
 		tpm.setPCR(7, golden)
 		tpm.setPCR(14, bytes.Repeat([]byte{0x0E}, sha256.Size))
-		rt, _ := newAttestingTestRuntime(t, tpm)
-
-		spec := attestedSpec()
-		spec.ExpectedPCRs = map[uint32][]byte{
+		rt, _ := newAttestingTestRuntime(t, tpm, map[uint32][]byte{
 			0:  bytes.Repeat([]byte{0x01}, sha256.Size),
 			7:  golden,
 			14: bytes.Repeat([]byte{0x0E}, sha256.Size),
-		}
+		})
 
-		evidence, err := rt.Attest(t.Context(), spec, "container-1")
+		evidence, err := rt.Attest(t.Context(), attestedSpec(), "container-1")
 		if err != nil {
 			t.Fatalf("Attest: %v", err)
 		}
 		if len(evidence.PCRs) != 3 {
 			t.Fatalf("evidence carries %d PCRs, want 3", len(evidence.PCRs))
+		}
+	})
+}
+
+// The reference PCRs are chosen in the bank the attestation key quotes:
+// digests in another bank are neither quoted nor appraised, and reference
+// values with none in that bank are refused before any quote.
+func TestTPMAttestingRuntime_Attest_QuotesTheAttestationKeyBank(t *testing.T) {
+	pcr0 := bytes.Repeat([]byte{0x01}, sha256.Size)
+	pcr7 := bytes.Repeat([]byte{0x07}, sha512.Size384)
+	mixed := []attestationtest.PCRDigest{
+		{Index: 0, Hash: crypto.SHA256, Value: pcr0},
+		{Index: 7, Hash: crypto.SHA384, Value: pcr7},
+	}
+	spec := func() *ContainerSpec {
+		return &ContainerSpec{Image: "alpine@" + testDigest, TrustLevel: TrustLevelAttested, ReferenceValues: "golden"}
+	}
+
+	t.Run("MixedReferencesQuoteOnlyTheHostBank", func(t *testing.T) {
+		tpm := newFakeHostTPM()
+		tpm.setPCR(0, pcr0)
+		rt, _ := newAttestingTestRuntimeDigests(t, tpm, mixed)
+
+		evidence, err := rt.Attest(t.Context(), spec(), "container-1")
+		if err != nil {
+			t.Fatalf("Attest: %v", err)
+		}
+		if want := []uint{0}; !reflect.DeepEqual(tpm.lastQuoted, want) {
+			t.Fatalf("quoted PCRs %v, want %v", tpm.lastQuoted, want)
+		}
+		if len(evidence.PCRs) != 1 || !bytes.Equal(evidence.PCRs[0], pcr0) {
+			t.Fatalf("evidence PCRs = %x, want only PCR 0", evidence.PCRs)
+		}
+	})
+
+	t.Run("ReferencesOnlyInAnotherBankAreRefused", func(t *testing.T) {
+		tpm := newFakeHostTPM()
+		rt, _ := newAttestingTestRuntimeDigests(t, tpm, []attestationtest.PCRDigest{
+			{Index: 0, Hash: crypto.SHA384, Value: bytes.Repeat([]byte{0x10}, sha512.Size384)},
+			{Index: 7, Hash: crypto.SHA384, Value: pcr7},
+		})
+
+		_, err := rt.Attest(t.Context(), spec(), "container-1")
+		var uncovered *ReferenceBankUncoveredError
+		if !errors.As(err, &uncovered) || !errors.Is(err, ErrReferenceBankUncovered) {
+			t.Fatalf("error %v, want *ReferenceBankUncoveredError", err)
+		}
+		if uncovered.Bank != crypto.SHA256 {
+			t.Errorf("Bank = %s, want SHA-256", uncovered.Bank)
+		}
+		if tpm.quoteCalls != 0 {
+			t.Fatalf("quoted %d times; nothing may be quoted without reference values in the bank", tpm.quoteCalls)
+		}
+	})
+
+	t.Run("SHA1AttestationKeyIsRefused", func(t *testing.T) {
+		tpm := newFakeHostTPM()
+		tpm.iakBank = "sha1"
+		rt, _ := newAttestingTestRuntimeDigests(t, tpm, mixed)
+
+		_, err := rt.Attest(t.Context(), spec(), "container-1")
+		if !errors.Is(err, ErrPCRBankUnavailable) {
+			t.Fatalf("error %v does not wrap ErrPCRBankUnavailable", err)
+		}
+		if tpm.quoteCalls != 0 {
+			t.Fatal("a SHA-1 bank must be refused before quoting")
+		}
+	})
+
+	t.Run("UnreadableAttestationKeyIsAQuoteFailure", func(t *testing.T) {
+		tpm := newFakeHostTPM()
+		tpm.iakAttrsErr = errors.New("IAK attributes unavailable")
+		rt, _ := newAttestingTestRuntimeDigests(t, tpm, mixed)
+
+		_, err := rt.Attest(t.Context(), spec(), "container-1")
+		if !errors.Is(err, ErrQuoteFailed) || !errors.Is(err, tpm.iakAttrsErr) {
+			t.Fatalf("error %v, want ErrQuoteFailed carrying the cause", err)
 		}
 	})
 }
@@ -1256,45 +1582,12 @@ func (p *extendBetweenQuoteAndReadTPM) ExtendPCR(index int, alg string, data []b
 	return p.inner.ExtendPCR(index, alg, data)
 }
 
-// TestVerifyExpectedPCRs covers the golden comparison in isolation, including
-// the case a bound quote can no longer reach: a PCR the read does not carry.
-func TestVerifyExpectedPCRs(t *testing.T) {
-	golden := bytes.Repeat([]byte{0xAB}, sha256.Size)
+func (p *extendBetweenQuoteAndReadTPM) IAKCertificate() (*x509.Certificate, error) {
+	return p.inner.IAKCertificate()
+}
 
-	t.Run("MatchingSetPasses", func(t *testing.T) {
-		err := verifyExpectedPCRs(
-			map[uint32][]byte{7: golden},
-			map[uint32][]byte{7: golden, 8: {0x01}},
-		)
-		if err != nil {
-			t.Fatalf("verifyExpectedPCRs: %v", err)
-		}
-	})
-
-	t.Run("AbsentPCRIsAMismatch", func(t *testing.T) {
-		err := verifyExpectedPCRs(map[uint32][]byte{7: golden}, map[uint32][]byte{})
-		var mismatch *PCRMismatchError
-		if !errors.As(err, &mismatch) {
-			t.Fatalf("expected *PCRMismatchError, got %T (%v)", err, err)
-		}
-		if mismatch.Actual != nil {
-			t.Errorf("Actual = %x, want nil for an absent PCR", mismatch.Actual)
-		}
-	})
-
-	t.Run("LowestFailingIndexIsReported", func(t *testing.T) {
-		err := verifyExpectedPCRs(
-			map[uint32][]byte{14: golden, 0: golden, 7: golden},
-			map[uint32][]byte{0: {0x01}, 7: {0x02}, 14: {0x03}},
-		)
-		var mismatch *PCRMismatchError
-		if !errors.As(err, &mismatch) {
-			t.Fatalf("expected *PCRMismatchError, got %T (%v)", err, err)
-		}
-		if mismatch.Index != 0 {
-			t.Fatalf("reported index = %d, want the lowest failing index 0", mismatch.Index)
-		}
-	})
+func (p *extendBetweenQuoteAndReadTPM) IAKAttributes() (*types.KeyAttributes, error) {
+	return p.inner.IAKAttributes()
 }
 
 // TestPCRBankName proves the TPM algorithm ID in a signed selection maps back
@@ -1336,14 +1629,25 @@ func TestAttestationErrorsUnwrap(t *testing.T) {
 			target: ErrAttestationUnavailable,
 		},
 		{
-			name:   "PCRMismatch",
-			err:    &PCRMismatchError{Index: 7, Expected: []byte{0x01}, Actual: []byte{0x02}},
+			name: "PCRMismatch",
+			err: &HostAppraisalError{Image: "alpine", ReferenceValues: "golden", CryptographicFailure: true, Failures: []HostAppraisalFailure{{
+				Check: "baseline", Outcome: "forged",
+				PCRs: []PCRDivergence{{Index: 7, Expected: [][]byte{{0x01}}, Quoted: []byte{0x02}}},
+			}}},
 			target: ErrPCRMismatch,
 		},
 		{
-			name:   "PCRMismatchAbsent",
-			err:    &PCRMismatchError{Index: 7, Expected: []byte{0x01}},
+			name: "PCRMismatchAbsent",
+			err: &HostAppraisalError{Image: "alpine", ReferenceValues: "golden", Failures: []HostAppraisalFailure{{
+				Check: "baseline", Outcome: "absent",
+				PCRs: []PCRDivergence{{Index: 7, Expected: [][]byte{{0x01}}}},
+			}}},
 			target: ErrPCRMismatch,
+		},
+		{
+			name:   "HostNotVerified",
+			err:    &HostAppraisalError{Image: "alpine", ReferenceValues: "golden", Failures: []HostAppraisalFailure{{Check: "ak-certificate", Outcome: "absent"}}},
+			target: ErrHostNotVerified,
 		},
 		{
 			name:   "MeasurementNoCause",
@@ -1413,7 +1717,7 @@ func TestAttestationErrorsUnwrap(t *testing.T) {
 // attesting runtime is a drop-in ContainerRuntime, so an orchestrator holds
 // one interface and type-asserts only when it needs evidence.
 func TestAttestingRuntimeSatisfiesContainerRuntime(t *testing.T) {
-	rt, _ := newAttestingTestRuntime(t, newFakeHostTPM())
+	rt, _ := newAttestingTestRuntime(t, newFakeHostTPM(), nil)
 
 	var runtime ContainerRuntime = rt
 	if !runtime.IsAvailable() {
