@@ -25,20 +25,23 @@ protocols:
 # Unix socket configuration
 unix:
   socket_path: /var/run/xkms/xkms.sock
-  socket_mode: "0660"
 
 logging:
   level: info
   format: json
 
-# TLS is not required when only using Unix socket
+# The Unix socket is TLS-only. Without cert_file/key_file the node serves its
+# bootstrap certificate, which names localhost (the authority a unix:// client
+# dials).
 tls:
-  enabled: false
+  enabled: true
+  include_localhost_sans: true
 
-# Authentication can be disabled for local Unix socket
+# Authentication cannot be disabled. The composite chain verifies client
+# certificates and the session JWTs the built-in token issuer mints.
 auth:
-  enabled: false
-  type: noop
+  enabled: true
+  type: composite
 
 # Rate limiting is typically not needed for local access
 ratelimit:

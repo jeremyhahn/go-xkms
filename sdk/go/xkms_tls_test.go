@@ -452,7 +452,7 @@ func TestConfigFromURL_SchemeImpliedTLS(t *testing.T) {
 		{rawURL: "http://localhost:8443", protocol: ProtocolREST, tlsEnabled: false},
 		{rawURL: "grpc://localhost:9443", protocol: ProtocolGRPC, tlsEnabled: false},
 		{rawURL: "mcp://localhost:9444", protocol: ProtocolMCP, tlsEnabled: false},
-		{rawURL: "unix:///var/run/xkms.sock", protocol: ProtocolUnix, tlsEnabled: false},
+		{rawURL: "unix:///var/run/xkms.sock", protocol: ProtocolUnix, tlsEnabled: true},
 		{rawURL: "localhost:8443", protocol: ProtocolREST, tlsEnabled: false},
 	}
 

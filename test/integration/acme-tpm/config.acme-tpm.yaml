@@ -54,10 +54,7 @@ protocols:
   mcp: false
 
 unix:
-  enabled: true
   socket_path: "/data/xkms.sock"
-  socket_mode: "0660"
-  protocol: "grpc"
 
 server:
   host: "0.0.0.0"

@@ -41,14 +41,18 @@ The xkey binary bridges the phone to xkmsd backends on the laptop. When the phon
 
 The bridge reaches xkmsd over the unix socket only; any other `xkmsd.protocol`
 fails with `ErrXKMSdUnsupportedProtocol` (`createXKMSdClient`,
-`xkey/cmd/xkey/cmd/dial_xkmsd.go:153`). The keys are read at
-`dial_xkmsd.go:88-99`:
+`xkey/cmd/xkey/cmd/dial_xkmsd.go`). The socket is the qrdb node's TLS
+listener, so the bridge dials it over TLS and presents the configured client
+certificate. The keys are read by `loadXKMSdBridgeConfig` in the same file:
 
 ```yaml
 xkmsd:
   enabled: true
   protocol: unix                  # default; the only supported value
   address: "<path to xkms.sock>"  # default xkms-data/xkms.sock
+  tls_ca_file: ""                 # CA for the socket's certificate; empty = system trust store
+  tls_cert_file: ""               # client certificate that admits xkey
+  tls_key_file: ""
   connect_timeout: 10s
   request_timeout: 30s
   sharing:
@@ -60,8 +64,7 @@ xkmsd:
     pcr_bank: ""
 ```
 
-`xkmsd.tls.enabled` and `xkmsd.tls.ca_file` are also read but have no effect on
-the unix transport. The phone-bridge wiring itself is built only with the
+The phone-bridge wiring itself is built only with the
 `ble` build tag (`xkey/cmd/xkey/cmd/fido2_phone_bridge.go`).
 
 ---

@@ -14,6 +14,7 @@
 package config
 
 import (
+	"errors"
 	"fmt"
 
 	"github.com/jeremyhahn/go-xkms/pkg/errs"
@@ -21,17 +22,20 @@ import (
 	"github.com/jeremyhahn/go-xkms/pkg/auth"
 )
 
-// CreateAuthenticator creates an authenticator from the configuration.
-// use the server's initializeAuthentication method instead.
+// ErrAuthenticationDisabled reports an auth configuration that names no
+// authenticator: auth.enabled=false or an empty auth.type. xkms has no
+// unauthenticated mode.
+var ErrAuthenticationDisabled = errors.New("config: authentication is disabled; xkms has no unauthenticated mode")
+
+// CreateAuthenticator creates the authenticator auth.type names. JWT and
+// composite chains need server-level key material, so the server builds those
+// in initializeAuthentication.
 func (cfg *AuthConfig) CreateAuthenticator() (auth.Authenticator, error) {
-	if !cfg.Enabled {
-		return auth.NewNoOpAuthenticator(), nil
+	if !cfg.Enabled || cfg.Type == "" {
+		return nil, ErrAuthenticationDisabled
 	}
 
 	switch cfg.Type {
-	case "noop", "none", "":
-		return auth.NewNoOpAuthenticator(), nil
-
 	case "mtls":
 		return cfg.createMTLSAuthenticator()
 

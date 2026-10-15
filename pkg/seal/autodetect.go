@@ -20,6 +20,7 @@ import (
 
 	tpm2backend "github.com/jeremyhahn/go-xkms/pkg/backend/tpm2"
 	"github.com/jeremyhahn/go-xkms/pkg/storage/file"
+	"github.com/jeremyhahn/go-xkms/pkg/tpm2"
 	"github.com/jeremyhahn/go-xkms/pkg/tpm2/store"
 	"github.com/jeremyhahn/go-xkms/pkg/types"
 )
@@ -62,14 +63,13 @@ const RequiredTPMOpenTimeout = 30 * time.Second
 // autodetect probe needs. Callers map their own config onto it so this package
 // does not depend on any consumer's config type.
 type TPM2ProbeConfig struct {
-	Device          string
-	KeyDir          string
-	UseSimulator    bool
-	SimulatorHost   string
-	SimulatorPort   int
-	SRKHandle       uint32
-	PlatformPCR     uint
-	PlatformPCRBank string
+	Device        string
+	KeyDir        string
+	UseSimulator  bool
+	SimulatorHost string
+	SimulatorPort int
+	SRKHandle     uint32
+	tpm2.PlatformPCRSelection
 }
 
 // AutodetectOptions configures BuildBestStrategy.
@@ -145,14 +145,13 @@ var openTPM2Backend = func(cfg *TPM2ProbeConfig) (tpm2Sealer, error) {
 		return nil, err
 	}
 	return tpm2backend.NewBackend(&tpm2backend.Config{
-		Device:          cfg.Device,
-		Keys:            keys,
-		UseSimulator:    cfg.UseSimulator,
-		SimulatorHost:   cfg.SimulatorHost,
-		SimulatorPort:   cfg.SimulatorPort,
-		SRKHandle:       cfg.SRKHandle,
-		PlatformPCR:     cfg.PlatformPCR,
-		PlatformPCRBank: cfg.PlatformPCRBank,
+		Device:               cfg.Device,
+		Keys:                 keys,
+		UseSimulator:         cfg.UseSimulator,
+		SimulatorHost:        cfg.SimulatorHost,
+		SimulatorPort:        cfg.SimulatorPort,
+		SRKHandle:            cfg.SRKHandle,
+		PlatformPCRSelection: cfg.PlatformPCRSelection,
 	})
 }
 

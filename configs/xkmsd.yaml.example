@@ -24,19 +24,17 @@ protocols:
 
 # Unix domain socket configuration
 unix:
-  enabled: true
   socket_path: "/var/run/xkms/xkms.sock"
-  socket_mode: "0660"
-  protocol: "grpc"  # Protocol to use over Unix socket: "grpc" or "http"
 
 # Logging configuration
 logging:
   level: "info"     # Options: debug, info, warn, error, fatal
   format: "json"    # Options: json, text, console
 
-# TLS configuration (required for REST, gRPC, QUIC protocols)
+# TLS configuration (required: every transport, the Unix socket included, is
+# TLS-only; without cert_file/key_file the node serves a bootstrap certificate)
 tls:
-  enabled: false
+  enabled: true
   cert_file: "/etc/xkms/tls/server.crt"
   key_file: "/etc/xkms/tls/server.key"
   ca_file: ""
@@ -59,9 +57,10 @@ tls:
   watch_cert_files: false
 
 # Authentication configuration
+# Authentication cannot be disabled; "noop" and enabled: false are refused.
 auth:
-  enabled: false
-  type: "noop"  # Options: noop, apikey, mtls, jwt, custom
+  enabled: true
+  type: "composite"  # Options: apikey, mtls, jwt, composite, custom
 
   # API key authentication
   # api_keys:
@@ -200,8 +199,6 @@ backends:
 # - XKMS_SERVER_QUIC_PORT: Override QUIC port
 # - XKMS_SERVER_MCP_PORT: Override MCP port
 # - XKMS_UNIX_SOCKET_PATH: Override Unix socket path
-# - XKMS_UNIX_SOCKET_MODE: Override Unix socket permissions
-# - XKMS_UNIX_PROTOCOL: Override Unix socket protocol (grpc or http)
 # - XKMS_LOGGING_LEVEL: Override log level
 # - XKMS_LOGGING_FORMAT: Override log format
 # - XKMS_STORAGE_PATH: Override storage path

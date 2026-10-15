@@ -44,12 +44,16 @@ import (
 	"crypto/tls"
 	"crypto/x509"
 	"crypto/x509/pkix"
+	"encoding/pem"
 	"log/slog"
 	"math/big"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
 	"regexp"
 	"slices"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -60,6 +64,9 @@ import (
 
 	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
 	qrdbtransport "github.com/jeremyhahn/go-qrdb/sdk/go/transport"
+
+	"github.com/jeremyhahn/go-xkms/pkg/config"
+	"github.com/jeremyhahn/go-xkms/pkg/server"
 )
 
 // Messages the admin PermissionGate logs for each decision
@@ -130,13 +137,21 @@ type adminRoute struct {
 
 func (r adminRoute) String() string { return r.method + " " + r.path }
 
+// insideTenant reports whether r addresses a tenant's own roles or users,
+// which qrdb's strict tenant isolation keeps the platform out of.
+func (r adminRoute) insideTenant() bool {
+	return strings.HasPrefix(r.path, "/api/v1/tenants/") &&
+		(strings.Contains(r.path, "/roles") || strings.Contains(r.path, "/users"))
+}
+
 // adminAuthzFixture is an embedded, first-boot-seeded qrdb node with the ACME
 // admin plane composed on it exactly as xkmsd composes it.
 type adminAuthzFixture struct {
-	client *qrdbsdk.Client
-	router http.Handler
-	routes []adminRoute
-	log    *gateLog
+	client    *qrdbsdk.Client
+	router    http.Handler
+	routes    []adminRoute
+	log       *gateLog
+	adminCert *x509.Certificate
 }
 
 // newAdminAuthzFixture builds the fixture. server.New runs qrdb's canonical
@@ -147,7 +162,13 @@ func newAdminAuthzFixture(t *testing.T) *adminAuthzFixture {
 	original := adminRouterState.Load()
 	t.Cleanup(func() { adminRouterState.Store(original) })
 
-	srv, _ := newEmbeddedQRDBServer(t)
+	// The node runs qrdb's auth chain, so first boot must bind the bootstrap
+	// admin's certificate; the serve fixture's TLS + mTLS configuration is
+	// what makes the ceremony issue one.
+	cfg := newServeTestConfig(t)
+	srv, err := server.New(cfg)
+	require.NoError(t, err)
+	t.Cleanup(func() { assert.NoError(t, srv.Shutdown()) })
 	log := &gateLog{}
 	require.NoError(t, finalizeAdminModule(srv, nil, slog.New(log)))
 
@@ -157,10 +178,11 @@ func newAdminAuthzFixture(t *testing.T) *adminAuthzFixture {
 	require.True(t, ok, "published admin router is %T, want *mux.Router", *published)
 
 	return &adminAuthzFixture{
-		client: srv.QRDBClient(),
-		router: muxRouter,
-		routes: walkAdminRoutes(t, muxRouter),
-		log:    log,
+		client:    srv.QRDBClient(),
+		router:    muxRouter,
+		routes:    walkAdminRoutes(t, muxRouter),
+		log:       log,
+		adminCert: firstBootAdminCert(t, cfg),
 	}
 }
 
@@ -193,10 +215,26 @@ func walkAdminRoutes(t *testing.T, router *mux.Router) []adminRoute {
 	return routes
 }
 
+// oracleContext is the context the fixtures' own qrdb calls run under. The
+// node runs qrdb's auth chain and its strict tenant isolation, so those calls
+// act as an Admin and SO of tenantID itself (the SO holds roles:create); the
+// admin plane under test never sees this identity.
+func oracleContext(tenantID string) context.Context {
+	admin := &qrdbsdk.Identity{
+		Subject:  "admin-plane-oracle",
+		TenantID: tenantID,
+		Roles: []string{
+			qrdbsdk.SystemRoleID(tenantID, qrdbsdk.RoleNameAdmin),
+			qrdbsdk.SystemRoleID(tenantID, qrdbsdk.RoleNameSO),
+		},
+	}
+	return qrdbsdk.ContextWithTenant(qrdbsdk.WithIdentity(context.Background(), admin), tenantID)
+}
+
 // systemRole resolves a built-in role of the system tenant.
 func systemRole(t *testing.T, client *qrdbsdk.Client, name string) *qrdbtransport.Role {
 	t.Helper()
-	r, err := client.Roles().GetRoleByName(context.Background(),
+	r, err := client.Roles().GetRoleByName(oracleContext(qrdbsdk.SystemTenantID),
 		&qrdbtransport.GetRoleByNameRequest{TenantID: qrdbsdk.SystemTenantID, Name: name})
 	require.NoError(t, err, "first boot must seed the %q role", name)
 	return r
@@ -207,7 +245,7 @@ func systemRole(t *testing.T, client *qrdbsdk.Client, name string) *qrdbtranspor
 func firstBootAdmin(t *testing.T, client *qrdbsdk.Client) *qrdbtransport.User {
 	t.Helper()
 	adminRole := systemRole(t, client, qrdbsdk.RoleNameAdmin)
-	list, err := client.Users().ListUsers(context.Background(),
+	list, err := client.Users().ListUsers(oracleContext(qrdbsdk.SystemTenantID),
 		&qrdbtransport.ListUsersRequest{TenantID: qrdbsdk.SystemTenantID})
 	require.NoError(t, err)
 	for _, u := range list.Users {
@@ -217,6 +255,21 @@ func firstBootAdmin(t *testing.T, client *qrdbsdk.Client) *qrdbtransport.User {
 	}
 	t.Fatal("first boot created no system-tenant user holding the Admin role")
 	return nil
+}
+
+// firstBootAdminCert returns the certificate the first-boot ceremony issued
+// and bound to the bootstrap administrator. qrdb refuses to bind any other
+// certificate to a system Admin, so this is the administrator's only
+// credential.
+func firstBootAdminCert(t *testing.T, cfg *config.Config) *x509.Certificate {
+	t.Helper()
+	certPEM, err := os.ReadFile(filepath.Join(cfg.Datastore.Path, "admin-cert.pem"))
+	require.NoError(t, err, "first boot must persist the administrator's certificate")
+	block, _ := pem.Decode(certPEM)
+	require.NotNil(t, block, "admin-cert.pem holds no PEM block")
+	cert, err := x509.ParseCertificate(block.Bytes)
+	require.NoError(t, err)
+	return cert
 }
 
 // newClientCert returns a self-signed client certificate for commonName. The
@@ -249,8 +302,7 @@ func bindClientCert(t *testing.T, client *qrdbsdk.Client, u *qrdbtransport.User)
 	// (go-xkms#1240).
 	cert := newClientCert(t, u.Username, u.TenantID)
 	// qrdb resolves the user within the context's tenant.
-	ctx := qrdbsdk.ContextWithTenant(context.Background(), u.TenantID)
-	_, err := client.Users().AddCertBinding(ctx, u.ID, qrdbsdk.ComputeSPKIThumbprint(cert), 0)
+	_, err := client.Users().AddCertBinding(oracleContext(u.TenantID), u.ID, qrdbsdk.ComputeSPKIThumbprint(cert), 0)
 	require.NoError(t, err)
 	return cert
 }
@@ -279,10 +331,9 @@ func serveAdminRoute(t *testing.T, router http.Handler, route adminRoute, cert *
 func TestAdminPlane_FirstBootAdminAuthorizedOnEveryRoute(t *testing.T) {
 	f := newAdminAuthzFixture(t)
 	admin := firstBootAdmin(t, f.client)
-	cert := bindClientCert(t, f.client, admin)
 
 	for _, route := range f.routes {
-		status := serveAdminRoute(t, f.router, route, cert)
+		status := serveAdminRoute(t, f.router, route, f.adminCert)
 		decisions := f.log.take()
 
 		require.Len(t, decisions, 1, "%s: want exactly one gate decision", route)
@@ -290,6 +341,11 @@ func TestAdminPlane_FirstBootAdminAuthorizedOnEveryRoute(t *testing.T) {
 			route, decisions[0].permission)
 		assert.Equal(t, admin.Username, decisions[0].subject, "%s: gate saw the wrong subject", route)
 		assert.NotEqual(t, http.StatusUnauthorized, status, "%s", route)
+		if route.insideTenant() {
+			// Past the gate, qrdb refuses the platform a tenant's own roles
+			// and users; the gate's grant above is what this test proves.
+			continue
+		}
 		assert.NotEqual(t, http.StatusForbidden, status, "%s", route)
 	}
 }
@@ -300,7 +356,7 @@ func TestAdminPlane_FirstBootAdminAuthorizedOnEveryRoute(t *testing.T) {
 func TestAdminPlane_IdentityWithoutRoleRefusedOnEveryRoute(t *testing.T) {
 	f := newAdminAuthzFixture(t)
 
-	roleless, err := f.client.Users().CreateUser(context.Background(), &qrdbtransport.CreateUserRequest{
+	roleless, err := f.client.Users().CreateUser(oracleContext(qrdbsdk.SystemTenantID), &qrdbtransport.CreateUserRequest{
 		Username:             "roleless-1069",
 		TenantID:             qrdbsdk.SystemTenantID,
 		WithoutEmailLoginKey: true,
@@ -354,7 +410,7 @@ func TestAdminPlane_UnboundCertificateRefusedAtAuthentication(t *testing.T) {
 // roles:update or roles:delete).
 func TestAdminPlane_RoutePermissionsRegisteredAndGranted(t *testing.T) {
 	f := newAdminAuthzFixture(t)
-	cert := bindClientCert(t, f.client, firstBootAdmin(t, f.client))
+	cert := f.adminCert
 
 	demanded := map[string]bool{}
 	for _, route := range f.routes {

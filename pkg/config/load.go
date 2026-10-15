@@ -144,6 +144,9 @@ func Load(path string) (*Config, error) {
 	cfg := Defaults()
 	if err := v.Unmarshal(cfg, func(dc *mapstructure.DecoderConfig) {
 		dc.TagName = "yaml"
+		// Embedded structs are yaml-inline, so their fields decode at the
+		// embedding struct's level.
+		dc.Squash = true
 		dc.DecodeHook = mapstructure.ComposeDecodeHookFunc(dc.DecodeHook, stringToSecretValueHookFunc)
 	}); err != nil {
 		return nil, &errs.Wrapped{Msg: "failed to parse config file", Err: err}
@@ -223,7 +226,14 @@ func walkYAMLKeys(t reflect.Type, prefix string, visit func(key ...string) error
 		if !f.IsExported() {
 			continue
 		}
-		name, _, _ := strings.Cut(f.Tag.Get("yaml"), ",")
+		name, opts, _ := strings.Cut(f.Tag.Get("yaml"), ",")
+		if f.Anonymous && name == "" && opts == "inline" {
+			// An inline embed contributes its fields at this level.
+			if err := walkYAMLKeys(f.Type, prefix, visit); err != nil {
+				return err
+			}
+			continue
+		}
 		if name == "" || name == "-" {
 			continue
 		}

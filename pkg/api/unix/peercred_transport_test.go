@@ -20,14 +20,9 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
-	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
-	"google.golang.org/grpc"
-	"google.golang.org/grpc/credentials/insecure"
-	"google.golang.org/grpc/health"
-	healthpb "google.golang.org/grpc/health/grpc_health_v1"
 )
 
 // TestPeerCredentialTransport_Properties proves the transport describes
@@ -96,32 +91,6 @@ func TestValidateSocketDir_RefusesSymlink(t *testing.T) {
 
 // TestGRPCServer_ExtraServicesServed proves a composition-root service
 // registration is served on the same socket as the keystore service.
-func TestGRPCServer_ExtraServicesServed(t *testing.T) {
-	socketPath := filepath.Join(privateSocketDir(t), "extra.sock")
-	server, err := NewGRPCServer(&GRPCConfig{
-		SocketPath: socketPath,
-		ExtraServices: []func(*grpc.Server){
-			func(s *grpc.Server) { healthpb.RegisterHealthServer(s, health.NewServer()) },
-		},
-	})
-	require.NoError(t, err)
-
-	errCh := make(chan error, 1)
-	go func() { errCh <- server.Start() }()
-	waitForGRPCServerReady(t, server, socketPath)
-	defer func() { _ = server.Stop(context.Background()) }()
-
-	conn, err := grpc.NewClient("unix://"+socketPath, grpc.WithTransportCredentials(insecure.NewCredentials()))
-	require.NoError(t, err)
-	defer func() { _ = conn.Close() }()
-
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-	defer cancel()
-	resp, err := healthpb.NewHealthClient(conn).Check(ctx, &healthpb.HealthCheckRequest{})
-	require.NoError(t, err)
-	assert.Equal(t, healthpb.HealthCheckResponse_SERVING, resp.Status)
-}
-
 // TestGRPCServer_Start_ListenFailure proves Start reports a socket path the
 // kernel cannot bind instead of serving nothing.
 func TestGRPCServer_Start_ListenFailure(t *testing.T) {

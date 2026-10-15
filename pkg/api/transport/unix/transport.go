@@ -17,17 +17,12 @@
 package unix
 
 import (
-	"bytes"
 	"context"
 	"crypto/tls"
 	"crypto/x509"
-	"encoding/json"
 	"errors"
 	"fmt"
-	"io"
 	"log/slog"
-	"net"
-	"net/http"
 	"os"
 	"time"
 
@@ -61,11 +56,10 @@ var (
 // standard gRPC transport but connects through a local Unix socket instead
 // of a TCP network connection.
 type Transport struct {
-	config     *transport.Config
-	conn       *grpc.ClientConn
-	client     pb.KeystoreServiceClient
-	httpClient *http.Client
-	connected  bool
+	config    *transport.Config
+	conn      *grpc.ClientConn
+	client    pb.KeystoreServiceClient
+	connected bool
 }
 
 // New creates a new Unix domain socket transport with the given options.
@@ -165,18 +159,6 @@ func (t *Transport) Connect(ctx context.Context) error {
 	t.conn = conn
 	t.client = pb.NewKeystoreServiceClient(conn)
 
-	// Build an HTTP client that dials the same Unix socket. This allows REST
-	// endpoints (init ceremony, credential management) that are not available
-	// via gRPC to be reached over the same socket path.
-	socketPath := t.config.Address
-	t.httpClient = &http.Client{
-		Transport: &http.Transport{
-			DialContext: func(ctx context.Context, _, _ string) (net.Conn, error) {
-				return (&net.Dialer{}).DialContext(ctx, "unix", socketPath)
-			},
-		},
-	}
-
 	_, err = t.Health(ctx)
 	if err != nil {
 		if closeErr := t.conn.Close(); closeErr != nil {
@@ -185,7 +167,6 @@ func (t *Transport) Connect(ctx context.Context) error {
 		}
 		t.conn = nil
 		t.client = nil
-		t.httpClient = nil
 		return &errs.Detail{Err: ErrConnectionFailed, Detail: fmt.Sprintf("%v", err)}
 	}
 
@@ -195,7 +176,6 @@ func (t *Transport) Connect(ctx context.Context) error {
 
 // Close closes the gRPC connection over the Unix socket.
 func (t *Transport) Close() error {
-	t.httpClient = nil
 	if t.conn != nil {
 		if err := t.conn.Close(); err != nil {
 			return err
@@ -1626,28 +1606,20 @@ func (t *Transport) IssueEKCertificate(ctx context.Context, req *transport.Issue
 		return nil, ErrNotConnected
 	}
 
-	body := map[string]interface{}{
-		"common_name":   req.CommonName,
-		"ek_public_key": req.EKPublicKey,
-	}
-	if req.Organization != "" {
-		body["organization"] = req.Organization
-	}
-	if req.TenantID != "" {
-		body["tenant_id"] = req.TenantID
-	}
-
-	data, err := t.doRawRequest(ctx, http.MethodPost, "/api/v1/ca/tcg/ek", body)
+	resp, err := t.client.IssueEKCertificate(ctx, &pb.IssueEKCertificateRequest{
+		CommonName:   req.CommonName,
+		Organization: req.Organization,
+		EkPublicKey:  req.EKPublicKey,
+	})
 	if err != nil {
-		return nil, err
+		return nil, &errs.Wrapped{Msg: "issue EK certificate failed", Err: err}
 	}
 
-	var resp transport.IssueEKCertificateResponse
-	if err := json.Unmarshal(data, &resp); err != nil {
-		return nil, &errs.Wrapped{Msg: "failed to parse response", Err: err}
-	}
-
-	return &resp, nil
+	return &transport.IssueEKCertificateResponse{
+		CertificateDER: resp.GetCertificateDer(),
+		CertificatePEM: resp.GetCertificatePem(),
+		SerialNumber:   resp.GetSerialNumber(),
+	}, nil
 }
 
 // IssueAKCertificate issues an Attestation Key certificate.
@@ -1656,28 +1628,20 @@ func (t *Transport) IssueAKCertificate(ctx context.Context, req *transport.Issue
 		return nil, ErrNotConnected
 	}
 
-	body := map[string]interface{}{
-		"common_name": req.CommonName,
-		"public_key":  req.PublicKey,
-	}
-	if req.Organization != "" {
-		body["organization"] = req.Organization
-	}
-	if req.TenantID != "" {
-		body["tenant_id"] = req.TenantID
-	}
-
-	data, err := t.doRawRequest(ctx, http.MethodPost, "/api/v1/ca/tcg/ak", body)
+	resp, err := t.client.IssueAKCertificate(ctx, &pb.IssueAKCertificateRequest{
+		CommonName:   req.CommonName,
+		Organization: req.Organization,
+		PublicKey:    req.PublicKey,
+	})
 	if err != nil {
-		return nil, err
+		return nil, &errs.Wrapped{Msg: "issue AK certificate failed", Err: err}
 	}
 
-	var resp transport.IssueAKCertificateResponse
-	if err := json.Unmarshal(data, &resp); err != nil {
-		return nil, &errs.Wrapped{Msg: "failed to parse response", Err: err}
-	}
-
-	return &resp, nil
+	return &transport.IssueAKCertificateResponse{
+		CertificateDER: resp.GetCertificateDer(),
+		CertificatePEM: resp.GetCertificatePem(),
+		SerialNumber:   resp.GetSerialNumber(),
+	}, nil
 }
 
 // SignTCGCSR signs a TCG-CSR-IDEVID for device identity enrollment.
@@ -1686,28 +1650,19 @@ func (t *Transport) SignTCGCSR(ctx context.Context, req *transport.SignTCGCSRReq
 		return nil, ErrNotConnected
 	}
 
-	body := map[string]interface{}{
-		"common_name": req.CommonName,
-		"tcg_csr":     req.TCGCSR,
-	}
-	if req.Organization != "" {
-		body["organization"] = req.Organization
-	}
-	if req.TenantID != "" {
-		body["tenant_id"] = req.TenantID
-	}
-
-	data, err := t.doRawRequest(ctx, http.MethodPost, "/api/v1/ca/tcg/sign-csr", body)
+	resp, err := t.client.SignTCGCSR(ctx, &pb.SignTCGCSRRequest{
+		CommonName:   req.CommonName,
+		Organization: req.Organization,
+		TcgCsr:       req.TCGCSR,
+	})
 	if err != nil {
-		return nil, err
+		return nil, &errs.Wrapped{Msg: "sign TCG CSR failed", Err: err}
 	}
 
-	var resp transport.SignTCGCSRResponse
-	if err := json.Unmarshal(data, &resp); err != nil {
-		return nil, &errs.Wrapped{Msg: "failed to parse response", Err: err}
-	}
-
-	return &resp, nil
+	return &transport.SignTCGCSRResponse{
+		IAKCertDER:    resp.GetIakCertDer(),
+		IDevIDCertDER: resp.GetIdevidCertDer(),
+	}, nil
 }
 
 // EnrollDevice performs complete TCG device enrollment.
@@ -1716,28 +1671,22 @@ func (t *Transport) EnrollDevice(ctx context.Context, req *transport.EnrollDevic
 		return nil, ErrNotConnected
 	}
 
-	body := map[string]interface{}{
-		"common_name": req.CommonName,
-		"packed_csr":  req.PackedCSR,
-	}
-	if req.Organization != "" {
-		body["organization"] = req.Organization
-	}
-	if req.TenantID != "" {
-		body["tenant_id"] = req.TenantID
-	}
-
-	data, err := t.doRawRequest(ctx, http.MethodPost, "/api/v1/ca/tcg/enroll", body)
+	resp, err := t.client.EnrollDevice(ctx, &pb.EnrollDeviceRequest{
+		CommonName:   req.CommonName,
+		Organization: req.Organization,
+		PackedCsr:    req.PackedCSR,
+	})
 	if err != nil {
-		return nil, err
+		return nil, &errs.Wrapped{Msg: "enroll device failed", Err: err}
 	}
 
-	var resp transport.EnrollDeviceResponse
-	if err := json.Unmarshal(data, &resp); err != nil {
-		return nil, &errs.Wrapped{Msg: "failed to parse response", Err: err}
-	}
-
-	return &resp, nil
+	return &transport.EnrollDeviceResponse{
+		IAKCertDER:      resp.GetIakCertDer(),
+		IDevIDCertDER:   resp.GetIdevidCertDer(),
+		CredentialBlob:  resp.GetCredentialBlob(),
+		EncryptedSecret: resp.GetEncryptedSecret(),
+		PlainSecret:     resp.GetPlainSecret(),
+	}, nil
 }
 
 // IssueLAKCertificate issues a Local Attestation Key certificate in the
@@ -1747,32 +1696,26 @@ func (t *Transport) IssueLAKCertificate(ctx context.Context, req *transport.Issu
 		return nil, ErrNotConnected
 	}
 
-	body := map[string]interface{}{
-		"tpm_manufacturer":     req.TPMManufacturer,
-		"tpm_model":            req.TPMModel,
-		"tpm_firmware_version": req.TPMFirmwareVersion,
-		"iak_certificate_der":  req.IAKCertificateDER,
-		"certify_info":         req.CertifyInfo,
-		"signature":            req.Signature,
-		"signature_algorithm":  req.SignatureAlgorithm,
-		"lak_public_area":      req.LAKPublicArea,
-		"nonce":                req.Nonce,
-	}
-	if req.TenantID != "" {
-		body["tenant_id"] = req.TenantID
-	}
-
-	data, err := t.doRawRequest(ctx, http.MethodPost, "/api/v1/ca/tcg/lak", body)
+	resp, err := t.client.IssueLAKCertificate(ctx, &pb.IssueLAKCertificateRequest{
+		TpmManufacturer:    req.TPMManufacturer,
+		TpmModel:           req.TPMModel,
+		TpmFirmwareVersion: req.TPMFirmwareVersion,
+		IakCertificateDer:  req.IAKCertificateDER,
+		CertifyInfo:        req.CertifyInfo,
+		Signature:          req.Signature,
+		SignatureAlgorithm: int32(req.SignatureAlgorithm), // #nosec G115 -- x509.SignatureAlgorithm is a small enum
+		LakPublicArea:      req.LAKPublicArea,
+		Nonce:              req.Nonce,
+	})
 	if err != nil {
-		return nil, err
+		return nil, &errs.Wrapped{Msg: "issue lak certificate failed", Err: err}
 	}
 
-	var resp transport.IssueLAKCertificateResponse
-	if err := json.Unmarshal(data, &resp); err != nil {
-		return nil, &errs.Wrapped{Msg: "failed to parse response", Err: err}
-	}
-
-	return &resp, nil
+	return &transport.IssueLAKCertificateResponse{
+		CertificateDER: resp.GetCertificateDer(),
+		CertificatePEM: resp.GetCertificatePem(),
+		SerialNumber:   resp.GetSerialNumber(),
+	}, nil
 }
 
 // PIN Operations
@@ -2593,103 +2536,24 @@ func (t *Transport) UpdateTenantQuotas(ctx context.Context, req *transport.Updat
 
 // Init Ceremony Operations
 
-// doRawRequest performs an HTTP request over the Unix domain socket and returns
-// the raw response body. It is used for REST endpoints that have no gRPC equivalent,
-// such as init ceremony and credential management operations.
-func (t *Transport) doRawRequest(ctx context.Context, method, path string, body interface{}) ([]byte, error) {
-	if t.httpClient == nil {
-		return nil, ErrNotConnected
-	}
-
-	var reqBody io.Reader
-	if body != nil {
-		data, err := json.Marshal(body)
-		if err != nil {
-			return nil, &errs.Wrapped{Msg: "failed to marshal request body", Err: err}
-		}
-		reqBody = bytes.NewReader(data)
-	}
-
-	// Use a dummy host; the actual connection is routed through the unix socket dialer.
-	reqURL := "http://localhost" + path
-
-	req, err := http.NewRequestWithContext(ctx, method, reqURL, reqBody)
-	if err != nil {
-		return nil, &errs.Wrapped{Msg: "failed to create request", Err: err}
-	}
-
-	if body != nil {
-		req.Header.Set("Content-Type", "application/json")
-	}
-
-	if t.config.JWTToken != "" {
-		req.Header.Set("Authorization", "Bearer "+t.config.JWTToken)
-	}
-
-	for k, v := range t.config.Headers {
-		req.Header.Set(k, v)
-	}
-
-	resp, err := t.httpClient.Do(req)
-	if err != nil {
-		return nil, &errs.Wrapped{Msg: "request failed", Err: err}
-	}
-	defer func() {
-		if cerr := resp.Body.Close(); cerr != nil {
-			slog.Debug("unix transport: failed to close HTTP response body", "error", cerr)
-		}
-	}()
-
-	respData, err := io.ReadAll(resp.Body)
-	if err != nil {
-		return nil, &errs.Wrapped{Msg: "failed to read response body", Err: err}
-	}
-
-	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		return nil, &errs.Message{Msg: fmt.Sprintf("server returned status %d: %s", resp.StatusCode, string(respData))}
-	}
-
-	return respData, nil
-}
-
 // Credential Management Operations
 
 // SubmitCredential submits a credential for manual mode.
+// Note: This endpoint is only available via REST API; the socket serves gRPC.
 func (t *Transport) SubmitCredential(ctx context.Context, req *transport.CredentialSubmitRequest) (*transport.CredentialSubmitResponse, error) {
 	if !t.connected {
 		return nil, ErrNotConnected
 	}
-
-	data, err := t.doRawRequest(ctx, http.MethodPost, "/api/v1/credentials/submit", req)
-	if err != nil {
-		return nil, err
-	}
-
-	var resp transport.CredentialSubmitResponse
-	if err := json.Unmarshal(data, &resp); err != nil {
-		return nil, &errs.Wrapped{Msg: "failed to parse response", Err: err}
-	}
-
-	return &resp, nil
+	return nil, ErrNotSupported
 }
 
 // GetCredentialStrategy returns the configured credential strategy.
+// Note: This endpoint is only available via REST API; the socket serves gRPC.
 func (t *Transport) GetCredentialStrategy(ctx context.Context) (*transport.CredentialStrategyResponse, error) {
 	if !t.connected {
 		return nil, ErrNotConnected
 	}
-
-	data, err := t.doRawRequest(ctx, http.MethodGet, "/api/v1/credentials/strategy", nil)
-	if err != nil {
-		return nil, err
-	}
-
-	var resp transport.CredentialStrategyResponse
-	if err := json.Unmarshal(data, &resp); err != nil {
-		return nil, &errs.Wrapped{Msg: "failed to parse response", Err: err}
-	}
-
-	return &resp, nil
+	return nil, ErrNotSupported
 }
 
 // ==================== User Operations ====================

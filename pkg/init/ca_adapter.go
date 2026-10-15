@@ -138,7 +138,9 @@ func (a *CAAdapter) IssueCertificate(ctx context.Context, req *qrdbsdk.IssueCert
 		return nil, err
 	}
 
-	issued, err := a.ca.IssueCertificate(ctx, xkmsReq)
+	// The requester keeps its key: the CA certifies req.PublicKey and never
+	// generates or returns a private key.
+	issued, err := a.ca.IssueCertificateForKey(ctx, xkmsReq, req.PublicKey)
 	if err != nil {
 		return nil, err
 	}
@@ -146,6 +148,5 @@ func (a *CAAdapter) IssueCertificate(ctx context.Context, req *qrdbsdk.IssueCert
 	return &qrdbsdk.IssuedCert{
 		Certificate: issued.Certificate,
 		CertPEM:     issued.CertificatePEM,
-		KeyPEM:      issued.PrivateKeyPEM,
 	}, nil
 }

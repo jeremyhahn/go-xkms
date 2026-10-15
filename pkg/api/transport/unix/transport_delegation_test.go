@@ -15,11 +15,7 @@ package unix
 
 import (
 	"context"
-	"encoding/json"
-	"io"
 	"net"
-	"net/http"
-	"net/http/httptest"
 	"path"
 	"sync/atomic"
 	"testing"
@@ -282,75 +278,4 @@ func TestBootstrapListenerKeys(t *testing.T) {
 
 	_, err = (&Transport{}).BootstrapListenerKeys(ctx)
 	assert.ErrorIs(t, err, ErrNotConnected)
-}
-
-// httpRecorderTransport returns a transport whose HTTP requests are
-// answered with status and body, and a function returning the last request
-// as "METHOD path" with its body.
-func httpRecorderTransport(status int, body string) (*Transport, func() (string, []byte)) {
-	var route string
-	var sent []byte
-	tr := &Transport{
-		config: transport.DefaultConfig(),
-		httpClient: &http.Client{
-			Transport: roundTripFunc(func(r *http.Request) (*http.Response, error) {
-				route = r.Method + " " + r.URL.Path
-				data, err := io.ReadAll(r.Body)
-				if err != nil {
-					return nil, err
-				}
-				sent = data
-				rec := httptest.NewRecorder()
-				rec.WriteHeader(status)
-				_, _ = rec.WriteString(body)
-				return rec.Result(), nil
-			}),
-		},
-		connected: true,
-	}
-	return tr, func() (string, []byte) { return route, sent }
-}
-
-// TestIssueLAKCertificate proves the LAK request carries the IAK evidence
-// and the tenant to the canonical TCG route, and decodes the certificate.
-func TestIssueLAKCertificate(t *testing.T) {
-	tr, last := httpRecorderTransport(http.StatusOK, `{"certificate_der":"AQI=","serial_number":"0a"}`)
-	resp, err := tr.IssueLAKCertificate(context.Background(), &transport.IssueLAKCertificateRequest{
-		TenantID: "acme", TPMManufacturer: "IFX",
-	})
-	require.NoError(t, err)
-
-	route, sent := last()
-	assert.Equal(t, "POST /api/v1/ca/tcg/lak", route)
-	var body map[string]any
-	require.NoError(t, json.Unmarshal(sent, &body))
-	assert.Equal(t, "acme", body["tenant_id"])
-	assert.Equal(t, "IFX", body["tpm_manufacturer"])
-	assert.Equal(t, []byte{1, 2}, resp.CertificateDER)
-	assert.Equal(t, "0a", resp.SerialNumber)
-}
-
-// TestIssueLAKCertificate_Errors proves the LAK request leaves the tenant
-// out when none is named, and fails unconnected, on a server error and on
-// an unreadable reply.
-func TestIssueLAKCertificate_Errors(t *testing.T) {
-	ctx := context.Background()
-	req := &transport.IssueLAKCertificateRequest{TPMManufacturer: "IFX"}
-
-	_, err := (&Transport{}).IssueLAKCertificate(ctx, req)
-	assert.ErrorIs(t, err, ErrNotConnected)
-
-	denied, last := httpRecorderTransport(http.StatusForbidden, `iak not trusted`)
-	_, err = denied.IssueLAKCertificate(ctx, req)
-	require.Error(t, err)
-	assert.Contains(t, err.Error(), "server returned status 403: iak not trusted")
-	_, sent := last()
-	var body map[string]any
-	require.NoError(t, json.Unmarshal(sent, &body))
-	assert.NotContains(t, body, "tenant_id")
-
-	garbled, _ := httpRecorderTransport(http.StatusOK, `not json`)
-	_, err = garbled.IssueLAKCertificate(ctx, req)
-	require.Error(t, err)
-	assert.Contains(t, err.Error(), "failed to parse response")
 }

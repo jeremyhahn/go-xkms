@@ -166,12 +166,13 @@ a code change.
   with no tenant barrier and is still confined to the system tenant by the
   service binding and `pkg/scope`. `auth.IsCrossTenant` survives only for
   tenant IAM administration in `pkg/acme/admin`.
-- **Every unix-socket peer carries an identity.** `pkg/api/unix` attaches
+- **Every unix-socket caller carries an identity.** xkmsd's socket is the
+  qrdb node's TLS listener and authenticates through the node chain like any
+  network transport. The sign server's socket (`pkg/api/unix`) attaches
   `uid:<peer uid>`, the system tenant and `auth_method=unix-peer`
   (`unix.PeerAuthMethod`) to every peer its credential policy admits, ahead
   of the tenant and embedder interceptors (`pkg/api/unix/peercred.go`,
-  `grpc_server.go`), so the keystore service and the hosted qrdb control
-  plane see the same identity.
+  `grpc_server.go`).
 - **Isolation mode is fixed at creation.** There is no in-place upgrade from
   `prefix` to `barrier`; that is a data migration.
 - **A requested mode outside the tenant's entitlements is refused**, not

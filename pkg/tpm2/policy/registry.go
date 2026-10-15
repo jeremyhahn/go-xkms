@@ -16,6 +16,7 @@ package policy
 import (
 	"context"
 	"sort"
+	"strconv"
 	"strings"
 	"sync"
 
@@ -32,14 +33,18 @@ const listPageSize = 500
 // created under, so this is the record of it, queryable in both directions.
 //
 // Every entity's ID derives from its natural key, which starts with the
-// tenant's root ("<tenant>/"), so one tenant's records never answer for
-// another's. An object's assignment entity is the one record of which policy
-// it uses; the policy -> objects direction is a scan of the tenant's
-// assignments.
+// node's ID and the tenant's root ("<node>/<tenant>/"). TPM objects are bound
+// to the node whose TPM holds them, so each node owns its own records: nodes
+// sharing one database never read or overwrite each other's, and one tenant's
+// records never answer for another's. An object's assignment entity is the
+// one record of which policy it uses; the policy -> objects direction is a
+// scan of the node's assignments for the tenant.
 //
-// Mutations of one tenant's registry are serialized in-process. TPM objects
-// are bound to the node whose TPM holds them, so the registry has one writer.
+// Mutations of one tenant's records are serialized within the node that owns
+// them.
 type Registry struct {
+	node uint64
+
 	scopes      qrdbsdk.GenericDAO[*scopeEntity]
 	policies    qrdbsdk.GenericDAO[*policyEntity]
 	assignments qrdbsdk.GenericDAO[*assignmentEntity]
@@ -49,8 +54,10 @@ type Registry struct {
 }
 
 // NewRegistry returns a Registry whose DAOs daos builds in DatabaseName. The
-// factory must already serve that database; the errors are pkg/dao's.
-func NewRegistry(daos *qrdbsdk.DAOFactory) (*Registry, error) {
+// factory must already serve that database; the errors are pkg/dao's. node is
+// the deployment's node ID (the cluster replica ID, 0 on a single node): the
+// registry reads and writes only that node's records.
+func NewRegistry(daos *qrdbsdk.DAOFactory, node uint64) (*Registry, error) {
 	scopes, err := newDAO(daos, scopeEntityType, func() *scopeEntity { return &scopeEntity{} })
 	if err != nil {
 		return nil, err
@@ -64,6 +71,7 @@ func NewRegistry(daos *qrdbsdk.DAOFactory) (*Registry, error) {
 		return nil, err
 	}
 	return &Registry{
+		node:        node,
 		scopes:      scopes,
 		policies:    policies,
 		assignments: assignments,
@@ -144,14 +152,15 @@ func (r *Registry) lock(tenant string) *sync.Mutex {
 	return mu
 }
 
-// tenantRoot returns tenant's root ("<tenant>/"), the prefix of the natural
-// key of each of its records, and its normalized name.
-func tenantRoot(tenant string) (root, name string, err error) {
+// tenantRoot returns the node's root for tenant ("<node>/<tenant>/"), the
+// prefix of the natural key of each of the tenant's records on this node, and
+// the tenant's normalized name.
+func (r *Registry) tenantRoot(tenant string) (root, name string, err error) {
 	root, err = xscope.TenantRoot(tenant)
 	if err != nil {
 		return "", "", &InvalidTenantError{Tenant: tenant, Err: err}
 	}
-	return root, xscope.TenantName(tenant), nil
+	return strconv.FormatUint(r.node, 10) + "/" + root, xscope.TenantName(tenant), nil
 }
 
 // validName refuses names that cannot be a single key segment.
@@ -187,7 +196,7 @@ func ObjectID(kind ObjectKind, name string) string {
 
 // Scope returns tenant's scope record, or ErrScopeNotFound.
 func (r *Registry) Scope(ctx context.Context, tenant string) (*Scope, error) {
-	root, _, err := tenantRoot(tenant)
+	root, _, err := r.tenantRoot(tenant)
 	if err != nil {
 		return nil, err
 	}
@@ -206,17 +215,17 @@ func (r *Registry) PutScope(ctx context.Context, s *Scope) error {
 	if s == nil {
 		return ErrNilScope
 	}
-	root, name, err := tenantRoot(s.Tenant)
+	root, name, err := r.tenantRoot(s.Tenant)
 	if err != nil {
 		return err
 	}
-	return save(ctx, r.scopes, root, &scopeEntity{Key: root, Tenant: name, Scope: *s})
+	return save(ctx, r.scopes, root, &scopeEntity{Key: root, Node: r.node, Tenant: name, Scope: *s})
 }
 
 // DeleteScope removes tenant's scope record. It refuses while the tenant has
 // any object or named policy: TPM objects cannot leave their TPM.
 func (r *Registry) DeleteScope(ctx context.Context, tenant string) error {
-	root, name, err := tenantRoot(tenant)
+	root, name, err := r.tenantRoot(tenant)
 	if err != nil {
 		return err
 	}
@@ -253,11 +262,11 @@ func (r *Registry) refuseIfPopulated(ctx context.Context, tenant string) error {
 
 // policyKey returns the natural key of tenant's policy name, and the
 // tenant's normalized name.
-func policyKey(tenant, name string) (key, tenantName string, err error) {
+func (r *Registry) policyKey(tenant, name string) (key, tenantName string, err error) {
 	if err := validName(name); err != nil {
 		return "", "", err
 	}
-	root, tenantName, err := tenantRoot(tenant)
+	root, tenantName, err := r.tenantRoot(tenant)
 	if err != nil {
 		return "", "", err
 	}
@@ -273,11 +282,11 @@ func (r *Registry) CreatePolicy(ctx context.Context, tenant string, p *Policy) e
 	if p.Name == PlatformPolicy {
 		return ErrReservedPolicy
 	}
-	k, name, err := policyKey(tenant, p.Name)
+	k, name, err := r.policyKey(tenant, p.Name)
 	if err != nil {
 		return err
 	}
-	stored, err := r.policies.SaveIfAbsent(ctx, &policyEntity{Key: k, Tenant: name, Policy: *p})
+	stored, err := r.policies.SaveIfAbsent(ctx, &policyEntity{Key: k, Node: r.node, Tenant: name, Policy: *p})
 	if err != nil {
 		return &StoreError{Op: "put", Key: k, Err: err}
 	}
@@ -296,16 +305,16 @@ func (r *Registry) UpdatePolicy(ctx context.Context, tenant string, p *Policy) e
 	if _, err := r.Policy(ctx, tenant, p.Name); err != nil {
 		return err
 	}
-	k, name, err := policyKey(tenant, p.Name)
+	k, name, err := r.policyKey(tenant, p.Name)
 	if err != nil {
 		return err
 	}
-	return save(ctx, r.policies, k, &policyEntity{Key: k, Tenant: name, Policy: *p})
+	return save(ctx, r.policies, k, &policyEntity{Key: k, Node: r.node, Tenant: name, Policy: *p})
 }
 
 // Policy returns tenant's named policy, or ErrPolicyNotFound.
 func (r *Registry) Policy(ctx context.Context, tenant, name string) (*Policy, error) {
-	k, _, err := policyKey(tenant, name)
+	k, _, err := r.policyKey(tenant, name)
 	if err != nil {
 		return nil, err
 	}
@@ -321,11 +330,11 @@ func (r *Registry) Policy(ctx context.Context, tenant, name string) (*Policy, er
 
 // ListPolicies returns tenant's named policies, sorted by name.
 func (r *Registry) ListPolicies(ctx context.Context, tenant string) ([]*Policy, error) {
-	_, name, err := tenantRoot(tenant)
+	_, name, err := r.tenantRoot(tenant)
 	if err != nil {
 		return nil, err
 	}
-	entities, err := list(ctx, r.policies, policyEntityType, func(e *policyEntity) bool { return e.Tenant == name })
+	entities, err := list(ctx, r.policies, policyEntityType, func(e *policyEntity) bool { return e.Node == r.node && e.Tenant == name })
 	if err != nil {
 		return nil, err
 	}
@@ -343,7 +352,7 @@ func (r *Registry) DeletePolicy(ctx context.Context, tenant, name string) error 
 	if name == PlatformPolicy {
 		return ErrReservedPolicy
 	}
-	k, tenantName, err := policyKey(tenant, name)
+	k, tenantName, err := r.policyKey(tenant, name)
 	if err != nil {
 		return err
 	}
@@ -366,11 +375,11 @@ func (r *Registry) DeletePolicy(ctx context.Context, tenant, name string) error 
 
 // assignmentKey returns the natural key of tenant's object objectID's
 // assignment, and the tenant's normalized name.
-func assignmentKey(tenant, objectID string) (key, tenantName string, err error) {
+func (r *Registry) assignmentKey(tenant, objectID string) (key, tenantName string, err error) {
 	if err := validObjectID(objectID); err != nil {
 		return "", "", err
 	}
-	root, tenantName, err := tenantRoot(tenant)
+	root, tenantName, err := r.tenantRoot(tenant)
 	if err != nil {
 		return "", "", err
 	}
@@ -383,7 +392,7 @@ func (r *Registry) Assign(ctx context.Context, tenant string, a *Assignment) err
 	if a == nil {
 		return ErrNilAssignment
 	}
-	k, name, err := assignmentKey(tenant, a.ObjectID)
+	k, name, err := r.assignmentKey(tenant, a.ObjectID)
 	if err != nil {
 		return err
 	}
@@ -396,13 +405,13 @@ func (r *Registry) Assign(ctx context.Context, tenant string, a *Assignment) err
 			return err
 		}
 	}
-	return save(ctx, r.assignments, k, &assignmentEntity{Key: k, Tenant: name, Assignment: *a})
+	return save(ctx, r.assignments, k, &assignmentEntity{Key: k, Node: r.node, Tenant: name, Assignment: *a})
 }
 
 // Unassign removes object objectID's assignment. An object with none is not
 // an error: deletion paths call this unconditionally.
 func (r *Registry) Unassign(ctx context.Context, tenant, objectID string) error {
-	k, name, err := assignmentKey(tenant, objectID)
+	k, name, err := r.assignmentKey(tenant, objectID)
 	if err != nil {
 		return err
 	}
@@ -414,7 +423,7 @@ func (r *Registry) Unassign(ctx context.Context, tenant, objectID string) error 
 
 // PolicyOf returns object objectID's assignment, or ErrNotAssigned.
 func (r *Registry) PolicyOf(ctx context.Context, tenant, objectID string) (*Assignment, error) {
-	k, _, err := assignmentKey(tenant, objectID)
+	k, _, err := r.assignmentKey(tenant, objectID)
 	if err != nil {
 		return nil, err
 	}
@@ -433,7 +442,7 @@ func (r *Registry) ObjectsOf(ctx context.Context, tenant, name string) ([]string
 	if err := validName(name); err != nil {
 		return nil, err
 	}
-	_, tenantName, err := tenantRoot(tenant)
+	_, tenantName, err := r.tenantRoot(tenant)
 	if err != nil {
 		return nil, err
 	}
@@ -473,9 +482,10 @@ func (r *Registry) listObjectIDs(ctx context.Context, tenant string) ([]string, 
 	return out, nil
 }
 
-// Scopes returns the names of every scope with a scope record, sorted.
+// Scopes returns the names of every scope with a scope record on this node,
+// sorted.
 func (r *Registry) Scopes(ctx context.Context) ([]string, error) {
-	entities, err := list(ctx, r.scopes, scopeEntityType, func(*scopeEntity) bool { return true })
+	entities, err := list(ctx, r.scopes, scopeEntityType, func(e *scopeEntity) bool { return e.Node == r.node })
 	if err != nil {
 		return nil, err
 	}
@@ -490,11 +500,11 @@ func (r *Registry) Scopes(ctx context.Context) ([]string, error) {
 // Assignments returns every assignment recorded in tenant's scope, sorted by
 // object ID.
 func (r *Registry) Assignments(ctx context.Context, tenant string) ([]*Assignment, error) {
-	_, name, err := tenantRoot(tenant)
+	_, name, err := r.tenantRoot(tenant)
 	if err != nil {
 		return nil, err
 	}
-	entities, err := list(ctx, r.assignments, assignmentEntityType, func(e *assignmentEntity) bool { return e.Tenant == name })
+	entities, err := list(ctx, r.assignments, assignmentEntityType, func(e *assignmentEntity) bool { return e.Node == r.node && e.Tenant == name })
 	if err != nil {
 		return nil, err
 	}

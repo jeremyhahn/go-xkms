@@ -112,7 +112,7 @@ func TestDAOFactory_ServesTheOpenedDatabase(t *testing.T) {
 
 	daos, err := s.daoFactory(tpmpolicy.DatabaseName)
 	require.NoError(t, err)
-	registry, err := tpmpolicy.NewRegistry(daos)
+	registry, err := tpmpolicy.NewRegistry(daos, 0)
 	require.NoError(t, err)
 	require.NoError(t, registry.PutScope(s.ctx, &tpmpolicy.Scope{Tenant: "acme", Mode: tpmpolicy.ModeShared}))
 	scope, err := registry.Scope(s.ctx, "acme")
@@ -190,7 +190,7 @@ func TestFeatureDAOs_RunAsServicePrincipal(t *testing.T) {
 
 	daos, err = s.daoFactory(tpmpolicy.DatabaseName)
 	require.NoError(t, err)
-	registry, err := tpmpolicy.NewRegistry(daos)
+	registry, err := tpmpolicy.NewRegistry(daos, 0)
 	require.NoError(t, err)
 	require.NoError(t, registry.PutScope(ctx, &tpmpolicy.Scope{Tenant: "acme", Mode: tpmpolicy.ModeShared}))
 	_, err = registry.Scope(ctx, "acme")

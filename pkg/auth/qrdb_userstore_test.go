@@ -107,9 +107,88 @@ func (f *fakeQRDBUserClient) DisableUser(ctx context.Context, id uint64) error {
 
 func TestNewQRDBUserStore(t *testing.T) {
 	users := newFakeQRDBUserClient()
+	users.getErr = errors.New("client reached")
 	store := NewQRDBUserStore(users)
 	require.NotNil(t, store)
-	assert.Same(t, users, store.users)
+	_, err := store.GetByCertFingerprint(context.Background(), "thumb")
+	assert.ErrorIs(t, err, users.getErr, "the store must resolve through the client it was given")
+}
+
+// fakeCertUserResolver is an in-memory CertUserResolver, the shape of an
+// embedded node's user service.
+type fakeCertUserResolver struct {
+	byThumbprint map[string]*qrdbsdk.User
+	err          error
+	// lastCtx is the context of the last lookup.
+	lastCtx context.Context
+}
+
+func (f *fakeCertUserResolver) UserByCertThumbprint(ctx context.Context, thumbprint string) (*qrdbsdk.User, error) {
+	f.lastCtx = ctx
+	if f.err != nil {
+		return nil, f.err
+	}
+	u, ok := f.byThumbprint[thumbprint]
+	if !ok {
+		return nil, &qrdbsdk.UserNotFoundError{Lookup: "cert_spki/" + thumbprint}
+	}
+	return u, nil
+}
+
+// TestQRDBServiceUserStore_GetByCertFingerprint_Success proves a user resolved
+// by the node's user service is projected exactly as a client-resolved one:
+// every role ID verbatim and copied, the tenant, the login key and the
+// permitted-method policy, on the caller's own (tenant-bound) context.
+func TestQRDBServiceUserStore_GetByCertFingerprint_Success(t *testing.T) {
+	record := &qrdbsdk.User{
+		Username:    "alice",
+		Email:       "alice@example.com",
+		TenantID:    "tenant-a",
+		RoleIDs:     []string{"role-id-admin", "role-id-owner"},
+		Lifecycle:   qrdbsdk.LifecycleActive,
+		AuthMethods: []string{"mtls"},
+	}
+	users := &fakeCertUserResolver{byThumbprint: map[string]*qrdbsdk.User{"thumb-1": record}}
+	ctx := qrdbsdk.ContextWithTenant(context.Background(), "tenant-a")
+
+	u, err := NewQRDBServiceUserStore(users).GetByCertFingerprint(ctx, "thumb-1")
+	require.NoError(t, err)
+	assert.Equal(t, MTLSUser{
+		Username:    "alice",
+		Email:       "alice@example.com",
+		Roles:       []string{"role-id-admin", "role-id-owner"},
+		TenantID:    "tenant-a",
+		Enabled:     true,
+		AuthMethods: []string{"mtls"},
+	}, u)
+	assert.Same(t, ctx, users.lastCtx, "the lookup must run in the tenant the caller bound")
+	u.Roles[0] = "tampered"
+	assert.Equal(t, "role-id-admin", record.RoleIDs[0], "the projected roles must not alias the record")
+}
+
+// TestQRDBServiceUserStore_GetByCertFingerprint_InactiveUser proves an account
+// in any lifecycle state but active is projected as disabled.
+func TestQRDBServiceUserStore_GetByCertFingerprint_InactiveUser(t *testing.T) {
+	users := &fakeCertUserResolver{byThumbprint: map[string]*qrdbsdk.User{
+		"thumb-2": {Username: "bob", TenantID: "tenant-a", Lifecycle: qrdbsdk.LifecycleDisabled},
+	}}
+
+	u, err := NewQRDBServiceUserStore(users).GetByCertFingerprint(context.Background(), "thumb-2")
+	require.NoError(t, err)
+	assert.False(t, u.Enabled)
+}
+
+// TestQRDBServiceUserStore_GetByCertFingerprint_Errors proves the user
+// service's refusals reach the authenticator unchanged: the typed not-found
+// for an unbound thumbprint, and any other failure as itself.
+func TestQRDBServiceUserStore_GetByCertFingerprint_Errors(t *testing.T) {
+	_, err := NewQRDBServiceUserStore(&fakeCertUserResolver{}).GetByCertFingerprint(context.Background(), "missing")
+	var notFound *qrdbsdk.UserNotFoundError
+	assert.ErrorAs(t, err, &notFound)
+
+	sealed := errors.New("sealed")
+	_, err = NewQRDBServiceUserStore(&fakeCertUserResolver{err: sealed}).GetByCertFingerprint(context.Background(), "thumb")
+	assert.ErrorIs(t, err, sealed)
 }
 
 // TestQRDBUserStore_GetByCertFingerprint_Success proves the store carries

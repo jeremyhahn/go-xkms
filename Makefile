@@ -3905,6 +3905,19 @@ LINT_TAGS_xkey := ble,pkcs11,usb,codec_json,tpm_simulator,tpm2,awskms,azurekv,gc
 LINT_TAGS_root_backends := $(LINT_TAGS_root),pkcs8,tpm2,awskms,gcpkms,azurekv,pkcs11,vault
 LINT_TAGS_root_raft := $(LINT_TAGS_root),raft
 
+# LINT_CI=1 is set by the CI Lint job only (go-xkms#1553); `make lint` for a
+# developer is unchanged. The job runs in a container whose writable layer
+# holds GOMODCACHE, GOCACHE and golangci-lint's analysis cache, and the six
+# passes below wrote 15-16 GB into it. With LINT_CI set, every pass is
+# followed by .github/scripts/disk-usage.sh, and golangci-lint's cache is
+# cleaned before any pass whose tag set differs from the previous pass's:
+# that cache is keyed by build tags, so a different tag set reuses none of
+# it, while root -> sdk/go (same tags, sdk/go replaces root with ../..) does.
+# GOCACHE is NOT cleaned: golangci-lint loads every dependency from the
+# export data `make vet` already compiled under the same tags, so cleaning it
+# would recompile the whole graph once more.
+LINT_CI ?=
+
 vet_empty :=
 vet_space := $(vet_empty) $(vet_empty)
 vet_comma := ,
@@ -4010,24 +4023,40 @@ lint: actionlint
 		echo "$(YELLOW)  Install with: make install-tools$(RESET)"; \
 		exit 1; \
 	fi; \
+	lint_ci_prev=""; \
+	lint_ci_before() { \
+		[ -n "$(LINT_CI)" ] || return 0; \
+		if [ -n "$$lint_ci_prev" ] && [ "$$lint_ci_prev" != "x$$1" ]; then \
+			echo "$(CYAN)  → golangci-lint cache clean (tags changed, nothing reusable)$(RESET)"; \
+			$$GOLANGCI_LINT_BIN cache clean || exit 1; \
+		fi; \
+		lint_ci_prev="x$$1"; \
+	}; \
+	lint_ci_after() { \
+		[ -z "$(LINT_CI)" ] || .github/scripts/disk-usage.sh "after golangci-lint $$1"; \
+	}; \
 	for m in $(LINT_MODULES); do \
 		case "$$m" in \
 			xkey) tags="$(LINT_TAGS_xkey)" ;; \
 			web/desktop) tags="" ;; \
 			*) tags="$(LINT_TAGS_root)" ;; \
 		esac; \
+		lint_ci_before "$$tags"; \
 		echo "$(CYAN)  → golangci-lint ($$m)$${tags:+ [tags: $$tags]}$(RESET)"; \
 		if ! ( cd "$$m" && $$GOLANGCI_LINT_BIN run $${tags:+--build-tags "$$tags"} ); then \
 			echo "$(RED)$(BOLD)✗ Linting failed in $$m$(RESET)"; \
 			exit 1; \
 		fi; \
+		lint_ci_after "($$m)$${tags:+ [tags: $$tags]}"; \
 	done; \
 	for tags in "$(LINT_TAGS_root_backends)" "$(LINT_TAGS_root_raft)"; do \
+		lint_ci_before "$$tags"; \
 		echo "$(CYAN)  → golangci-lint (.) [tags: $$tags]$(RESET)"; \
 		if ! CGO_ENABLED=1 $$GOLANGCI_LINT_BIN run --build-tags "$$tags"; then \
 			echo "$(RED)$(BOLD)✗ Linting failed (.) [tags: $$tags]$(RESET)"; \
 			exit 1; \
 		fi; \
+		lint_ci_after "(.) [tags: $$tags]"; \
 	done; \
 	echo "$(GREEN)✓ Linting complete ($(LINT_MODULES), plus root backend and raft tag sets)$(RESET)"
 

@@ -32,7 +32,6 @@ func TestServer_Reload_LogsWhenListenersRunning(t *testing.T) {
 	defer xkms.Reset()
 
 	cfg := createMinimalConfig(t)
-	cfg.Auth.Enabled = false
 
 	server, err := New(cfg)
 	require.NoError(t, err)

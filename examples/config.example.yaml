@@ -23,7 +23,6 @@ protocols:
 # Unix socket configuration
 unix:
   socket_path: "/var/run/xkms/xkms.sock"
-  socket_mode: "0660"  # File permissions for the socket
 
 logging:
   level: "info"        # debug, info, warn, error

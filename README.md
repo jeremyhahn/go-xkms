@@ -274,11 +274,8 @@ protocols:
   quic: false
   mcp: false
 
-unix:
-  enabled: true
+unix:                       # the node's TLS listener, behind its auth chain
   socket_path: "xkms-data/xkms.sock"
-  socket_mode: "0660"
-  protocol: "grpc"
 
 # --- the four settings the compliance gate requires ---
 

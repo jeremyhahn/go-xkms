@@ -35,67 +35,54 @@ func admitsAnonymousRequest(t *testing.T, s *Server) bool {
 	return err == nil
 }
 
-// A reload that tightens auth.* must rebuild the authenticator; keeping the old
-// one would leave an operator believing authentication was enabled when it was
-// not.
+// A reload that changes auth.* must rebuild the authenticator; keeping the old
+// one would leave an operator believing the new authentication was enforced
+// when it was not.
 func TestServer_Reload_RebuildsAuthenticator(t *testing.T) {
 	xkms.Reset()
 	defer xkms.Reset()
 
-	cfg := createMinimalConfig(t)
-	cfg.Auth.Enabled = false
-
-	server, err := New(cfg)
+	server, err := New(createMinimalConfig(t))
 	require.NoError(t, err)
 	defer func() { _ = server.Shutdown() }()
 
-	require.Equal(t, "noop", server.authenticator.Name())
-	require.True(t, admitsAnonymousRequest(t, server),
-		"precondition: the no-op authenticator admits anonymous requests")
+	require.Equal(t, "jwt", server.authenticator.Name())
+	previous := server.authenticator
 
 	newCfg := createMinimalConfig(t)
-	newCfg.Auth.Enabled = true
-	newCfg.Auth.Type = "jwt"
-	newCfg.Auth.JWT = &config.JWTConfig{
-		PublicKeyFile: writeTestJWTPublicKey(t),
-		Issuer:        "test-issuer",
-		Audience:      []string{"test-audience"},
-	}
+	newCfg.Auth.JWT.Issuer = "rotated-issuer"
 
 	require.NoError(t, server.Reload(newCfg))
 
 	assert.Equal(t, "jwt", server.authenticator.Name())
+	assert.NotSame(t, previous, server.authenticator, "the authenticator must be rebuilt")
 	assert.False(t, admitsAnonymousRequest(t, server),
 		"the rebuilt JWT authenticator must reject an anonymous request")
 	assert.Equal(t, newCfg, server.config)
 }
 
-// A reload that relaxes auth.* is applied too: the stored configuration and the
-// authenticator must never disagree about what is enforced.
-func TestServer_Reload_AppliesRelaxedAuthentication(t *testing.T) {
+// A reload that disables authentication is refused: the server has no
+// unauthenticated mode, so the previous authenticator and configuration stay
+// in force.
+func TestServer_Reload_RefusesDisabledAuthentication(t *testing.T) {
 	xkms.Reset()
 	defer xkms.Reset()
 
 	cfg := createMinimalConfig(t)
-	cfg.Auth.Enabled = true
-	cfg.Auth.Type = "jwt"
-	cfg.Auth.JWT = &config.JWTConfig{
-		PublicKeyFile: writeTestJWTPublicKey(t),
-		Issuer:        "test-issuer",
-		Audience:      []string{"test-audience"},
-	}
-
 	server, err := New(cfg)
 	require.NoError(t, err)
 	defer func() { _ = server.Shutdown() }()
 
-	require.Equal(t, "jwt", server.authenticator.Name())
+	previous := server.authenticator
 
 	newCfg := createMinimalConfig(t)
 	newCfg.Auth.Enabled = false
 
-	require.NoError(t, server.Reload(newCfg))
-	assert.Equal(t, "noop", server.authenticator.Name())
+	err = server.Reload(newCfg)
+	var disabled *ErrAuthenticationDisabled
+	require.ErrorAs(t, err, &disabled)
+	assert.Same(t, previous, server.authenticator)
+	assert.Equal(t, cfg, server.config)
 }
 
 // An invalid auth configuration must fail the reload outright and leave the

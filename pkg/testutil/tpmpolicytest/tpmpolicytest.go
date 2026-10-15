@@ -40,7 +40,7 @@ import (
 // tested over the simulator. The service is closed when the test ends.
 func NewOffline(t *testing.T) (*tpmpolicy.Service, *tpmpolicy.Registry) {
 	t.Helper()
-	registry, err := tpmpolicy.NewRegistry(testutil.NewMemoryDAOFactory())
+	registry, err := tpmpolicy.NewRegistry(testutil.NewMemoryDAOFactory(), 0)
 	require.NoError(t, err)
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
 	tpm := &pkgtpm2.TPM2{}

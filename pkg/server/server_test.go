@@ -28,9 +28,13 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
+	"github.com/golang-jwt/jwt/v5"
+	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
+	"github.com/jeremyhahn/go-xkms/pkg/ca"
 	"github.com/jeremyhahn/go-xkms/pkg/config"
 	"github.com/jeremyhahn/go-xkms/pkg/storage"
 	"github.com/jeremyhahn/go-xkms/pkg/types"
@@ -47,9 +51,8 @@ func createMinimalConfig(t *testing.T) *config.Config {
 	// testing.(*common).makeTempDir), so its effective mode depends on the
 	// process umask and can come out group- or world-writable (e.g. umask
 	// 002). This config uses tempDir as the Unix socket directory
-	// (Unix.SocketPath below), which pkg/api/unix's Start now refuses to
-	// bind inside unless it is privately owned -- chmod it the way a real
-	// daemon's runtime directory would be.
+	// (Unix.SocketPath below) -- chmod it the way a real daemon's runtime
+	// directory would be.
 	require.NoError(t, os.Chmod(tempDir, 0700))
 
 	return &config.Config{
@@ -68,20 +71,21 @@ func createMinimalConfig(t *testing.T) *config.Config {
 			MCP:  false,
 		},
 		Unix: config.UnixConfig{
-			Enabled:    true,
 			SocketPath: filepath.Join(tempDir, "xkms.sock"),
-			Protocol:   "grpc",
 		},
 		Logging: config.LoggingConfig{
 			Level:  "info",
 			Format: "json",
 		},
+		// The Unix socket is the node's TLS listener; without cert files it
+		// serves the persisted bootstrap certificate. The defaults layer
+		// turns include_localhost_sans on, so it names localhost: the
+		// authority gRPC uses for a unix target.
 		TLS: config.TLSConfig{
-			Enabled: false,
+			Enabled:              true,
+			IncludeLocalhostSANs: true,
 		},
-		Auth: config.AuthConfig{
-			Enabled: false,
-		},
+		Auth:      testJWTAuthConfig(t),
 		Datastore: config.DatastoreConfig{Engine: "file", Path: tempDir},
 		Default:   config.DefaultConfig("software"),
 		Backends: config.BackendsConfig{
@@ -509,7 +513,6 @@ func TestServer_Accessors(t *testing.T) {
 	// Test all accessor methods
 	assert.Nil(t, server.RESTServer(), "REST server should be nil before start")
 	assert.Nil(t, server.MCPServer(), "MCP server should be nil before start")
-	assert.Nil(t, server.UnixGRPCServer(), "Unix gRPC server should be nil before start")
 }
 
 func TestServer_StartAndShutdown(t *testing.T) {
@@ -602,36 +605,34 @@ func TestServer_BuildTLSConfig_Success(t *testing.T) {
 }
 
 func TestServer_BuildTLSConfig_TLSDisabled(t *testing.T) {
-	xkms.Reset()
-	defer xkms.Reset()
+	// New refuses TLS off while the TLS-only Unix socket is enabled, so the
+	// method is exercised directly on a server with TLS off.
+	server := newMinimalServer(t, &config.Config{TLS: config.TLSConfig{Enabled: false}})
 
-	cfg := createMinimalConfig(t)
-	cfg.TLS.Enabled = false
-
-	server, err := New(cfg)
-	require.NoError(t, err)
-	require.NotNil(t, server)
-	defer func() { _ = server.Shutdown() }()
-
-	_, err = server.buildTLSConfig()
-	assert.Error(t, err)
-	assert.Contains(t, err.Error(), "TLS is not enabled")
+	_, err := server.buildTLSConfig()
+	assert.ErrorIs(t, err, ErrTLSNotEnabled)
 }
 
 func TestServer_BuildTLSConfig_InvalidCert(t *testing.T) {
 	xkms.Reset()
 	defer xkms.Reset()
 
+	// The node's Unix socket loads the configured files at New, which
+	// refuses missing ones outright.
 	cfg := createMinimalConfig(t)
-	cfg.TLS.Enabled = true
 	cfg.TLS.CertFile = "/nonexistent/cert.pem"
 	cfg.TLS.KeyFile = "/nonexistent/key.pem"
+	_, err := New(cfg)
+	require.Error(t, err)
 
+	// A file that disappears after New fails the REST listener's TLS build.
+	cfg = createMinimalConfig(t)
+	cfg.TLS.CertFile, cfg.TLS.KeyFile, _ = createTestTLSFiles(t)
 	server, err := New(cfg)
 	require.NoError(t, err)
-	require.NotNil(t, server)
 	defer func() { _ = server.Shutdown() }()
 
+	server.config.TLS.CertFile = "/nonexistent/cert.pem"
 	_, err = server.buildTLSConfig()
 	assert.Error(t, err)
 	assert.Contains(t, err.Error(), "failed to load server certificate")
@@ -774,16 +775,31 @@ func TestServer_InitializeAuthentication_Disabled(t *testing.T) {
 	xkms.Reset()
 	defer xkms.Reset()
 
-	cfg := createMinimalConfig(t)
-	cfg.Auth.Enabled = false
+	// The server has no unauthenticated mode: disabling authentication and
+	// each explicit no-op type are refused, never served anonymously.
+	tests := []struct {
+		name    string
+		enabled bool
+		typ     string
+	}{
+		{name: "auth disabled", enabled: false, typ: "jwt"},
+		{name: "type none", enabled: true, typ: "none"},
+		{name: "type noop", enabled: true, typ: "noop"},
+		{name: "type empty", enabled: true, typ: ""},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			cfg := createMinimalConfig(t)
+			cfg.Auth.Enabled = tt.enabled
+			cfg.Auth.Type = tt.typ
 
-	server, err := New(cfg)
-	require.NoError(t, err)
-	require.NotNil(t, server)
-	defer func() { _ = server.Shutdown() }()
-
-	assert.NotNil(t, server.authenticator)
-	assert.Equal(t, "noop", server.authenticator.Name())
+			server, err := New(cfg)
+			require.Error(t, err)
+			assert.Nil(t, server)
+			var disabled *ErrAuthenticationDisabled
+			assert.ErrorAs(t, err, &disabled)
+		})
+	}
 }
 
 func TestServer_InitializeAuthentication_Unknown(t *testing.T) {
@@ -803,20 +819,6 @@ func TestServer_InitializeAuthentication_Unknown(t *testing.T) {
 	var unknown *ErrUnknownAuthType
 	require.ErrorAs(t, err, &unknown)
 	assert.Equal(t, "unknown_type", unknown.Type)
-}
-
-func TestServer_InitializeAuthentication_MTLS_NoTLS(t *testing.T) {
-	xkms.Reset()
-	defer xkms.Reset()
-
-	cfg := createMinimalConfig(t)
-	cfg.Auth.Enabled = true
-	cfg.Auth.Type = "mtls"
-	cfg.TLS.Enabled = false
-
-	_, err := New(cfg)
-	assert.Error(t, err)
-	assert.Contains(t, err.Error(), "mTLS authentication requires TLS to be enabled")
 }
 
 func TestServer_InitializeAuthentication_JWT_NoPublicKey(t *testing.T) {
@@ -900,7 +902,7 @@ func TestServer_InitializeAuthentication_CompositeDerived(t *testing.T) {
 func writeTestJWTPublicKey(t *testing.T) string {
 	t.Helper()
 
-	key, err := rsa.GenerateKey(rand.Reader, 2048)
+	key, err := testJWTSigningKey()
 	require.NoError(t, err)
 
 	pubKeyDER, err := x509.MarshalPKIXPublicKey(&key.PublicKey)
@@ -913,6 +915,71 @@ func writeTestJWTPublicKey(t *testing.T) string {
 	return path
 }
 
+// testJWTSigningKey is the package's one RSA test key, generated once: the
+// server has no unauthenticated mode, so nearly every test configures JWT
+// authentication, and a 2048-bit key per test would dominate the run time.
+var testJWTSigningKey = sync.OnceValues(func() (*rsa.PrivateKey, error) {
+	return rsa.GenerateKey(rand.Reader, 2048)
+})
+
+// testJWTAuthConfig returns JWT authentication verifying against a test
+// public key: the server refuses to start with authentication disabled.
+func testJWTAuthConfig(t *testing.T) config.AuthConfig {
+	t.Helper()
+	return config.AuthConfig{
+		Enabled: true,
+		Type:    "jwt",
+		JWT: &config.JWTConfig{
+			PublicKeyFile: writeTestJWTPublicKey(t),
+			Issuer:        "test-issuer",
+			Audience:      []string{"test-audience"},
+		},
+	}
+}
+
+// mintTestSessionJWT returns a short-lived session token the authenticator
+// testJWTAuthConfig configures accepts: RS256 over the package test key, with
+// the configured issuer and audience, holding the system tenant's built-in
+// Admin role as a login-minted administrator session does.
+func mintTestSessionJWT(t *testing.T) string {
+	t.Helper()
+	key, err := testJWTSigningKey()
+	require.NoError(t, err)
+
+	now := time.Now()
+	token := jwt.NewWithClaims(jwt.SigningMethodRS256, jwt.MapClaims{
+		"sub":   "e2e-operator",
+		"roles": []string{qrdbsdk.SystemRoleID(qrdbsdk.SystemTenantID, qrdbsdk.RoleNameAdmin)},
+		"iss":   "test-issuer",
+		"aud":   []string{"test-audience"},
+		"iat":   now.Unix(),
+		"exp":   now.Add(5 * time.Minute).Unix(),
+	})
+	signed, err := token.SignedString(key)
+	require.NoError(t, err)
+	return signed
+}
+
+// testFirstBootCAConfig is a minimal root CA. Authentication is always on, so
+// the embedded node serves its data plane only once first boot has bound the
+// bootstrap admin's certificate ("awaiting admin credential" otherwise), and
+// first boot issues that certificate from the CA.
+func testFirstBootCAConfig() *ca.MultiIdentityCAConfig {
+	return &ca.MultiIdentityCAConfig{
+		SelectedCA:          0,
+		DefaultValidityDays: 365,
+		Identity: []ca.Identity{{
+			IsRoot:  true,
+			Valid:   1,
+			Subject: ca.Subject{CommonName: "pkg/server test root CA", Organization: "go-xkms", Country: "US"},
+			Keys: []*types.KeyConfig{{
+				KeyAlgorithm: types.AlgorithmECDSA,
+				ECCConfig:    &types.ECCConfig{Curve: types.CurveP256},
+			}},
+		}},
+	}
+}
+
 // Test WebAuthn configuration
 
 func TestServer_InitializeAuthentication_WithWebAuthn(t *testing.T) {
@@ -920,7 +987,6 @@ func TestServer_InitializeAuthentication_WithWebAuthn(t *testing.T) {
 	defer xkms.Reset()
 
 	cfg := createMinimalConfig(t)
-	cfg.Auth.Enabled = false
 	cfg.WebAuthn = &config.WebAuthnConfig{
 		Enabled:       true,
 		RPID:          "localhost",
@@ -1199,15 +1265,16 @@ func TestServer_CreateJWTAuthenticator_FileNotFound(t *testing.T) {
 	xkms.Reset()
 	defer xkms.Reset()
 
-	cfg := createMinimalConfig(t)
-	cfg.Auth.JWT = &config.JWTConfig{
-		PublicKeyFile: "/nonexistent/public.pem",
-	}
-
-	server, err := New(cfg)
+	server, err := New(createMinimalConfig(t))
 	require.NoError(t, err)
 	require.NotNil(t, server)
 	defer func() { _ = server.Shutdown() }()
+
+	// New refuses a config whose authenticator cannot be built, so the bad
+	// key file is set on the running server's config instead.
+	server.config.Auth.JWT = &config.JWTConfig{
+		PublicKeyFile: "/nonexistent/public.pem",
+	}
 
 	_, err = server.createJWTAuthenticator()
 	assert.Error(t, err)
@@ -1223,15 +1290,14 @@ func TestServer_CreateJWTAuthenticator_InvalidKey(t *testing.T) {
 	err := os.WriteFile(pubKeyFile, []byte("not a valid key"), 0600)
 	require.NoError(t, err)
 
-	cfg := createMinimalConfig(t)
-	cfg.Auth.JWT = &config.JWTConfig{
-		PublicKeyFile: pubKeyFile,
-	}
-
-	server, err := New(cfg)
+	server, err := New(createMinimalConfig(t))
 	require.NoError(t, err)
 	require.NotNil(t, server)
 	defer func() { _ = server.Shutdown() }()
+
+	server.config.Auth.JWT = &config.JWTConfig{
+		PublicKeyFile: pubKeyFile,
+	}
 
 	_, err = server.createJWTAuthenticator()
 	assert.Error(t, err)
@@ -1259,17 +1325,16 @@ func TestServer_CreateJWTAuthenticator_KeyFileRequiresIssuerAndAudience(t *testi
 
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			cfg := createMinimalConfig(t)
-			cfg.Auth.JWT = &config.JWTConfig{
+			server, err := New(createMinimalConfig(t))
+			require.NoError(t, err)
+			require.NotNil(t, server)
+			defer func() { _ = server.Shutdown() }()
+
+			server.config.Auth.JWT = &config.JWTConfig{
 				PublicKeyFile: writeTestJWTPublicKey(t),
 				Issuer:        tc.issuer,
 				Audience:      tc.audience,
 			}
-
-			server, err := New(cfg)
-			require.NoError(t, err)
-			require.NotNil(t, server)
-			defer func() { _ = server.Shutdown() }()
 
 			_, err = server.createJWTAuthenticator()
 			require.Error(t, err)
@@ -1421,8 +1486,8 @@ func TestServer_InitializeAuthentication_CompositeWithJWTKeyFile(t *testing.T) {
 	defer func() { _ = server.Shutdown() }()
 
 	assert.NotNil(t, server.authenticator)
-	assert.Equal(t, "jwt", server.authenticator.Name(),
-		"TLS is off, so the derived chain is jwt alone")
+	assert.Equal(t, "composite", server.authenticator.Name(),
+		"TLS is on in the minimal config, so the derived chain is mtls+jwt")
 }
 
 // Test adaptive auth without a JWT key file succeeds via the built-in issuer
@@ -1444,7 +1509,7 @@ func TestServer_InitializeAuthentication_CompositeWithoutJWTConfig(t *testing.T)
 	defer func() { _ = server.Shutdown() }()
 
 	require.NotNil(t, server.tokenIssuer)
-	assert.Equal(t, "jwt", server.authenticator.Name())
+	assert.Equal(t, "composite", server.authenticator.Name())
 }
 
 // TestServer_InitializeAuthentication_CompositeDerivesBothVehicles proves
@@ -1500,7 +1565,7 @@ func TestServer_InitializeAuthentication_CompositeWebAuthnNoJWTFile(t *testing.T
 	defer func() { _ = server.Shutdown() }()
 
 	require.NotNil(t, server.tokenIssuer)
-	assert.Equal(t, "jwt", server.authenticator.Name())
+	assert.Equal(t, "composite", server.authenticator.Name())
 }
 
 // Test composite auth with an unparsable JWT public key fails closed
@@ -1618,20 +1683,21 @@ func TestServer_WithDefaultPKCS8Backend(t *testing.T) {
 			GRPC: false,
 		},
 		Unix: config.UnixConfig{
-			Enabled:    true,
 			SocketPath: filepath.Join(tempDir, "xkms.sock"),
-			Protocol:   "grpc",
 		},
 		Logging: config.LoggingConfig{
 			Level:  "info",
 			Format: "json",
 		},
+		// The Unix socket is the node's TLS listener; without cert files it
+		// serves the persisted bootstrap certificate. The defaults layer
+		// turns include_localhost_sans on, so it names localhost: the
+		// authority gRPC uses for a unix target.
 		TLS: config.TLSConfig{
-			Enabled: false,
+			Enabled:              true,
+			IncludeLocalhostSANs: true,
 		},
-		Auth: config.AuthConfig{
-			Enabled: false,
-		},
+		Auth:      testJWTAuthConfig(t),
 		Datastore: config.DatastoreConfig{Engine: "file", Path: tempDir},
 		Default:   config.DefaultConfig("pkcs8"),
 		Backends: config.BackendsConfig{
@@ -1793,7 +1859,6 @@ func TestServer_Reload_AuthChange(t *testing.T) {
 	defer xkms.Reset()
 
 	cfg := createMinimalConfig(t)
-	cfg.Auth.Enabled = false
 
 	server, err := New(cfg)
 	require.NoError(t, err)
@@ -1815,8 +1880,8 @@ func TestServer_Reload_AuthChange(t *testing.T) {
 	err = server.Reload(newCfg)
 	require.NoError(t, err)
 	require.NotNil(t, server.authenticator)
-	assert.Equal(t, "jwt", server.authenticator.Name(),
-		"the rebuilt chain derives jwt alone (TLS off in the minimal config)")
+	assert.Equal(t, "composite", server.authenticator.Name(),
+		"TLS is on in the minimal config, so the derived chain is mtls+jwt")
 }
 
 // Test BuildTLSConfig with TLS 1.3 only
@@ -2217,7 +2282,6 @@ func TestServer_Shutdown_WithAllServers(t *testing.T) {
 	require.NotNil(t, server)
 
 	// Manually set server instances to nil to test nil checks in Shutdown
-	server.unixGRPCServer = nil
 	server.restServer = nil
 	server.metricsCollector = nil
 
@@ -2355,164 +2419,11 @@ func TestPemDecode_NoTypeTerminator(t *testing.T) {
 
 // Test Unix IPC server startup with default socket path
 
-func TestServer_StartUnix_IPCProtocol(t *testing.T) {
-	xkms.Reset()
-	defer xkms.Reset()
-
-	cfg := createMinimalConfig(t)
-	cfg.Protocols.Unix = true
-	cfg.Protocols.REST = false
-	cfg.Protocols.GRPC = false
-	cfg.Protocols.QUIC = false
-	cfg.Protocols.MCP = false
-	cfg.Metrics.Enabled = false
-	cfg.Unix.Protocol = "grpc"
-
-	server, err := New(cfg)
-	require.NoError(t, err)
-	require.NotNil(t, server)
-
-	// Start server
-	err = server.Start()
-	assert.NoError(t, err)
-
-	// Give the server time to start
-	time.Sleep(100 * time.Millisecond)
-
-	// Unix IPC server should be set
-	assert.NotNil(t, server.UnixGRPCServer())
-
-	// Shutdown
-	err = server.Shutdown()
-	assert.NoError(t, err)
-}
-
 // Test Unix HTTP server startup
-
-func TestServer_StartUnix_HTTPProtocol(t *testing.T) {
-	xkms.Reset()
-	defer xkms.Reset()
-
-	cfg := createMinimalConfig(t)
-	cfg.Protocols.Unix = true
-	cfg.Protocols.REST = false
-	cfg.Protocols.GRPC = false
-	cfg.Protocols.QUIC = false
-	cfg.Protocols.MCP = false
-	cfg.Metrics.Enabled = false
-	cfg.Unix.Protocol = "grpc"
-
-	server, err := New(cfg)
-	require.NoError(t, err)
-	require.NotNil(t, server)
-
-	// Start server
-	err = server.Start()
-	assert.NoError(t, err)
-
-	// Give the server time to start
-	time.Sleep(100 * time.Millisecond)
-
-	// Unix HTTP server should be set
-	assert.NotNil(t, server.UnixGRPCServer())
-
-	// Shutdown
-	err = server.Shutdown()
-	assert.NoError(t, err)
-}
 
 // Test Unix gRPC server startup
 
-func TestServer_StartUnix_GRPCProtocol(t *testing.T) {
-	xkms.Reset()
-	defer xkms.Reset()
-
-	cfg := createMinimalConfig(t)
-	cfg.Protocols.Unix = true
-	cfg.Protocols.REST = false
-	cfg.Protocols.GRPC = false
-	cfg.Protocols.QUIC = false
-	cfg.Protocols.MCP = false
-	cfg.Metrics.Enabled = false
-	cfg.Unix.Protocol = "grpc"
-
-	server, err := New(cfg)
-	require.NoError(t, err)
-	require.NotNil(t, server)
-
-	// Start server
-	err = server.Start()
-	assert.NoError(t, err)
-
-	// Wait for startUnix's goroutine to assign the Unix gRPC server instance
-	// instead of sleeping a fixed duration: under a loaded scheduler the
-	// goroutine may not have run yet within a short sleep.
-	require.Eventually(t, func() bool {
-		return server.UnixGRPCServer() != nil
-	}, 10*time.Second, 10*time.Millisecond, "Unix gRPC server was not set")
-
-	// Shutdown
-	err = server.Shutdown()
-	assert.NoError(t, err)
-}
-
-// Test Unix server with unknown protocol
-//
-// config.Validate rejects an unrecognized unix.protocol, so this cannot
-// reach here through New(); it constructs the server directly with
-// newMinimalServer and calls Start(), the seam
-// TestServer_StartUnix_UnknownProtocolVariant and TestStartUnix_UnknownProtocol
-// use for the same reason. Shutdown is not called: startUnix returns
-// immediately on the unrecognized protocol (nothing to drain), and
-// newMinimalServer does not populate shutdownCh the way New() does.
-func TestServer_StartUnix_UnknownProtocol(t *testing.T) {
-	cfg := createMinimalConfig(t)
-	cfg.Unix.Protocol = "unknown_protocol"
-
-	server := newMinimalServer(t, cfg)
-
-	// Start server
-	err := server.Start()
-	assert.NoError(t, err)
-
-	// Give the server time to attempt start
-	time.Sleep(100 * time.Millisecond)
-
-	// No Unix server should be set for unknown protocol
-	assert.Nil(t, server.UnixGRPCServer())
-	assert.Nil(t, server.UnixGRPCServer())
-	assert.Nil(t, server.UnixGRPCServer())
-}
-
 // Test Unix server with empty socket path (uses default)
-
-func TestServer_StartUnix_DefaultSocketPath(t *testing.T) {
-	xkms.Reset()
-	defer xkms.Reset()
-
-	cfg := createMinimalConfig(t)
-	cfg.Protocols.Unix = true
-	cfg.Protocols.REST = false
-	cfg.Protocols.GRPC = false
-	cfg.Protocols.QUIC = false
-	cfg.Protocols.MCP = false
-	cfg.Metrics.Enabled = false
-	cfg.Unix.Protocol = "grpc"
-	cfg.Unix.SocketPath = "" // Empty - should use default
-
-	server, err := New(cfg)
-	require.NoError(t, err)
-	require.NotNil(t, server)
-
-	// Start server - may fail due to permissions on default path, but tests the code path
-	_ = server.Start()
-
-	// Give the server time to attempt start
-	time.Sleep(100 * time.Millisecond)
-
-	// Shutdown
-	_ = server.Shutdown()
-}
 
 // Test initTPM2Backend with nil config
 
@@ -2790,20 +2701,21 @@ func TestServer_InitializeBackends_PKCS8Only(t *testing.T) {
 			GRPC: false,
 		},
 		Unix: config.UnixConfig{
-			Enabled:    true,
 			SocketPath: filepath.Join(tempDir, "xkms.sock"),
-			Protocol:   "grpc",
 		},
 		Logging: config.LoggingConfig{
 			Level:  "info",
 			Format: "json",
 		},
+		// The Unix socket is the node's TLS listener; without cert files it
+		// serves the persisted bootstrap certificate. The defaults layer
+		// turns include_localhost_sans on, so it names localhost: the
+		// authority gRPC uses for a unix target.
 		TLS: config.TLSConfig{
-			Enabled: false,
+			Enabled:              true,
+			IncludeLocalhostSANs: true,
 		},
-		Auth: config.AuthConfig{
-			Enabled: false,
-		},
+		Auth:      testJWTAuthConfig(t),
 		Datastore: config.DatastoreConfig{Engine: "file", Path: tempDir},
 		Default:   config.DefaultConfig("pkcs8"),
 		Backends: config.BackendsConfig{
@@ -2856,39 +2768,6 @@ func TestServer_Reload_UpdatesConfig(t *testing.T) {
 	assert.Equal(t, "text", server.config.Logging.Format)
 }
 
-// Test Shutdown with Unix servers
-func TestServer_Shutdown_WithUnixServers(t *testing.T) {
-	xkms.Reset()
-	defer xkms.Reset()
-
-	cfg := createMinimalConfig(t)
-	cfg.Protocols.Unix = true
-	cfg.Protocols.REST = false
-	cfg.Protocols.GRPC = false
-	cfg.Protocols.QUIC = false
-	cfg.Protocols.MCP = false
-	cfg.Metrics.Enabled = false
-	cfg.Unix.Protocol = "grpc"
-
-	server, err := New(cfg)
-	require.NoError(t, err)
-	require.NotNil(t, server)
-
-	// Start server
-	err = server.Start()
-	assert.NoError(t, err)
-
-	// Give the server time to start
-	time.Sleep(100 * time.Millisecond)
-
-	// Unix HTTP server should be set
-	assert.NotNil(t, server.UnixGRPCServer())
-
-	// Shutdown should properly stop Unix server
-	err = server.Shutdown()
-	assert.NoError(t, err)
-}
-
 // Test server with empty default (uses first available).
 //
 // config.Validate requires default_backend to be set, so an empty Default
@@ -2934,39 +2813,6 @@ func TestNew_KeyStoreInitFailure(t *testing.T) {
 	_, err := New(cfg)
 	assert.Error(t, err)
 	assert.Contains(t, err.Error(), "failed")
-}
-
-// Test startUnix with different protocol modes
-func TestServer_StartUnix_AllModes(t *testing.T) {
-	protocols := []string{"grpc"}
-
-	for _, proto := range protocols {
-		t.Run(proto, func(t *testing.T) {
-			xkms.Reset()
-			defer xkms.Reset()
-
-			cfg := createMinimalConfig(t)
-			cfg.Protocols.Unix = true
-			cfg.Protocols.REST = false
-			cfg.Protocols.GRPC = false
-			cfg.Protocols.QUIC = false
-			cfg.Protocols.MCP = false
-			cfg.Metrics.Enabled = false
-			cfg.Unix.Protocol = proto
-
-			server, err := New(cfg)
-			require.NoError(t, err)
-			require.NotNil(t, server)
-
-			err = server.Start()
-			assert.NoError(t, err)
-
-			time.Sleep(100 * time.Millisecond)
-
-			err = server.Shutdown()
-			assert.NoError(t, err)
-		})
-	}
 }
 
 // Test closeBackends is idempotent

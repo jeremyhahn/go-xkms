@@ -1693,6 +1693,14 @@ func (ca *CA) signCSR(ctx context.Context, csrPEM []byte, opts *SignOptions, req
 		return nil, &errs.Detail{Err: ErrInvalidCSR, Detail: fmt.Sprintf("invalid CSR signature: %v", err)}
 	}
 
+	return ca.signVerifiedCSR(ctx, csr, opts, request)
+}
+
+// signVerifiedCSR issues a certificate for a certificate request whose key
+// the caller has already established: a parsed CSR whose signature
+// checked, or a request IssueCertificateForKey assembled for a public key
+// the caller vouches for.
+func (ca *CA) signVerifiedCSR(ctx context.Context, csr *x509.CertificateRequest, opts *SignOptions, request *CertificateRequest) (*x509.Certificate, error) {
 	// Determine the signing key and issuer certificate. When the caller
 	// supplies an external Signer on SignOptions, we use it instead of the
 	// CA's own key — this is the multi-tenant signing path where a tenant's
@@ -2161,6 +2169,59 @@ func (ca *CA) IssueCertificateWithProfile(ctx context.Context, request *Certific
 	}
 
 	return issued, nil
+}
+
+// IssueCertificateForKey issues a certificate that binds publicKey, a key the
+// caller holds: the CA neither generates nor sees its private half, and no
+// proof of possession is asked for, so the caller vouches that the key is the
+// requester's. It honors the request's subject, SANs, key usage, validity,
+// SPIFFE binding and extra extensions as IssueCertificate does, and records
+// the issuance the same way.
+func (ca *CA) IssueCertificateForKey(ctx context.Context, request *CertificateRequest, publicKey crypto.PublicKey) (*IssuedCertificate, error) {
+	if !ca.initialized.Load() {
+		return nil, ErrNotInitialized
+	}
+	if publicKey == nil {
+		return nil, ErrPublicKeyRequired
+	}
+	if err := request.Validate(); err != nil {
+		return nil, err
+	}
+
+	// The SANs travel on the sign options alone: signVerifiedCSR appends them
+	// to the request's own, so naming them on both would list each twice.
+	csr := &x509.CertificateRequest{
+		Subject:   request.Subject.ToPkixName(),
+		PublicKey: publicKey,
+	}
+	opts := &SignOptions{
+		ValidityDays:      request.Valid,
+		KeyUsage:          request.KeyUsage,
+		ExtKeyUsage:       request.ExtKeyUsage,
+		SANS:              request.SANS,
+		SPIFFETrustDomain: request.SPIFFETrustDomain,
+		TenantID:          request.TenantID,
+		SPIFFEKind:        request.SPIFFEKind,
+		SPIFFEName:        request.SPIFFEName,
+		ExtraExtensions:   request.ExtraExtensions,
+	}
+	cert, err := ca.signVerifiedCSR(ctx, csr, opts, request)
+	if err != nil {
+		return nil, err
+	}
+
+	caCertPEM, err := ca.CABundle()
+	if err != nil {
+		return nil, err
+	}
+	return &IssuedCertificate{
+		Certificate:      cert,
+		CertificatePEM:   pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: cert.Raw}),
+		CACertificatePEM: caCertPEM,
+		SerialNumber:     cert.SerialNumber,
+		NotBefore:        cert.NotBefore,
+		NotAfter:         cert.NotAfter,
+	}, nil
 }
 
 // =============================================================================

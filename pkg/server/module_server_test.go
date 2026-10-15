@@ -36,6 +36,9 @@ func moduleServerTestFixture(t *testing.T) *Server {
 	xkms.Reset()
 	t.Cleanup(xkms.Reset)
 	cfg := createMinimalConfig(t)
+	// The legacy REST server needs a certificate it can load: the node's
+	// bootstrap certificate serves only the node's own listeners.
+	cfg.TLS.CertFile, cfg.TLS.KeyFile, _ = createTestTLSFiles(t)
 	s, err := New(cfg)
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = s.Shutdown() })

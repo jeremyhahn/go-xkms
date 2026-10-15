@@ -87,7 +87,7 @@ func newFixture(t *testing.T, tpm *pkgtpm2.TPM2, keys store.KeyBackend, vtpmCfg 
 	t.Helper()
 	srk, err := tpm.PlatformSRKAttributes()
 	require.NoError(t, err)
-	registry, err := NewRegistry(testutil.NewMemoryDAOFactory())
+	registry, err := NewRegistry(testutil.NewMemoryDAOFactory(), 0)
 	require.NoError(t, err)
 	f := &fixture{
 		t:          t,

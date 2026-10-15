@@ -444,6 +444,8 @@ func (m *mockTPM) Sign(_ io.Reader, _ []byte, _ crypto.SignerOpts) ([]byte, erro
 func (m *mockTPM) SetHierarchyAuth(_, _ xkms.Password, _ *tpm2.TPMHandle) error {
 	return m.setHierarchyAuthErr
 }
+
+func (m *mockTPM) SetPolicyBindingResolver(xkms.TPMPolicyBindingResolver) {}
 func (m *mockTPM) SecretFromShares(_ []string) (string, error) {
 	panic("mockTPM: SecretFromShares not expected")
 }

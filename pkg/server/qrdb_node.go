@@ -24,6 +24,7 @@ import (
 
 	"github.com/jeremyhahn/go-xkms/pkg/api/mcp"
 	"github.com/jeremyhahn/go-xkms/pkg/api/rest"
+	"github.com/jeremyhahn/go-xkms/pkg/api/unix"
 	"github.com/jeremyhahn/go-xkms/pkg/apimodule"
 	"github.com/jeremyhahn/go-xkms/pkg/auth"
 	"github.com/jeremyhahn/go-xkms/pkg/embeddednode"
@@ -70,18 +71,22 @@ func (s *Server) buildXKMSQRDBConfig() *qrdbsdk.DaemonConfig {
 	// never "this process has no datastore" -- so createStorage still
 	// resolves through the node's KV below; only the node's OWN network
 	// listeners are skipped, avoiding a double bind on the same host.
-	if s.config.NetworkServing() && !s.config.LoopbackDesktop {
+	if s.config.NodeServing() && !s.config.LoopbackDesktop {
 		qcfg.Server.Host = s.config.Server.Host
 		qcfg.Server.AdminPort = s.config.Server.RESTPort
 		qcfg.Server.GRPCPort = s.config.Server.GRPCPort
 		qcfg.Protocols.REST = s.config.Protocols.REST
 		qcfg.Protocols.GRPC = s.config.Protocols.GRPC
 		qcfg.Protocols.MCP = s.config.Protocols.MCP
-		// The Unix socket is deliberately NOT mapped onto the node: qrdb's
-		// transports are TLS-only, and the local IPC contract for xkmsd's
-		// socket is plaintext gRPC guarded by filesystem permissions (the
-		// pkcs11 module, the CLI, and the SDK unix transport all speak it).
-		// xkmsd keeps serving its own socket (startUnix) in every mode.
+		// The Unix socket is the node's TLS unix listener: the same auth
+		// chain as every other transport (client certificate or session
+		// JWT), so the CLI and the pkcs11 module present credentials over
+		// it like any network client.
+		qcfg.Protocols.Unix = s.config.Protocols.Unix
+		qcfg.Unix.SocketPath = s.config.Unix.SocketPath
+		if qcfg.Unix.SocketPath == "" {
+			qcfg.Unix.SocketPath = unix.DefaultSocketPath
+		}
 		if s.config.Protocols.MCP {
 			qcfg.MCP.Port = s.config.Server.MCPPort
 		}
@@ -150,7 +155,7 @@ func (s *Server) initEmbeddedQRDBNode() error {
 	}
 	nodeOpts := []qrdbnode.NodeOption{
 		qrdbnode.WithLogger(s.logger),
-		qrdbnode.WithAuthenticators(auth.NewQRDBBearerAuthenticator(s.liveAuthenticator)),
+		qrdbnode.WithAuthenticators(qrdbsdk.ChainAfterMTLS, auth.NewQRDBBearerAuthenticator(s.liveAuthenticator)),
 	}
 
 	// The audit sink and the hardware auth-factor registry are wired into the
@@ -175,7 +180,7 @@ func (s *Server) initEmbeddedQRDBNode() error {
 	// above: it never serves through this node's transports, so building
 	// the unified TLS material (and persisting a bootstrap cert under
 	// Datastore.Path) would be pure waste.
-	if s.config.NetworkServing() && !s.config.LoopbackDesktop {
+	if s.config.NodeServing() && !s.config.LoopbackDesktop {
 		tlsCfg, err := s.buildUnifiedTLSConfig()
 		if err != nil {
 			return &QRDBNodeError{Stage: "build unified server TLS config", Err: err}
@@ -326,9 +331,15 @@ func (s *Server) waitForClusterLeader() error {
 	if shardID == 0 {
 		shardID = 1
 	}
+	// The leader query is xkms's own boot gating, so it runs as the node's
+	// service principal; the authentication chain refuses a bare context.
+	ctx, err := s.qrdbNode.ServiceContext(s.ctx)
+	if err != nil {
+		return &QRDBNodeError{Stage: "await cluster leader", Err: err}
+	}
 	deadline := time.Now().Add(timeout)
 	for {
-		if _, hasLeader, err := s.qrdbClient.Cluster().Leader(s.ctx, shardID); err == nil && hasLeader {
+		if _, hasLeader, err := s.qrdbClient.Cluster().Leader(ctx, shardID); err == nil && hasLeader {
 			s.logger.Info("cluster leader elected", "shard_id", shardID)
 			return nil
 		}

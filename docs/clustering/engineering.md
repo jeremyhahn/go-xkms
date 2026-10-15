@@ -97,7 +97,6 @@ func (s *Server) initEmbeddedQRDBNode() error                      // qrdb_node.
 func (s *Server) newQRDBNode(qcfg, serverOpts, nodeOpts) (*qrdbnode.Node, error) // build-tag specific: qrdb_node_standalone.go / qrdb_node_cluster.go
 func (s *Server) waitForClusterLeader() error                      // qrdb_node.go
 func (s *Server) resolveRaftMTLS(ctx, members) (*qrdbnode.RaftMTLSConfig, *clusterenroll.Advertiser, error) // raft build only, qrdb_node_cluster.go
-func (s *Server) registerQRDBControlPlane(gs *grpc.Server)         // qrdb_control_plane.go
 ```
 
 ### `pkg/xkms` — leader-endpoint resolution (`pkg/xkms/servicer_cluster.go`)

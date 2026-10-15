@@ -62,10 +62,11 @@ node when enabled, standalone otherwise. There is no second node builder.
 ## One cluster control plane: go-qrdb's
 
 Cluster status, membership and membership changes have exactly one surface:
-go-qrdb's own control plane, registered directly onto xkmsd's gRPC server and
-Unix socket with zero xkms-authored handlers
-(`pkg/server/qrdb_control_plane.go:registerQRDBControlPlane`), plus the
-embedded node's admin-plane `GET /peers`. `xkmsctl cluster
+go-qrdb's own control plane, which the embedded node serves itself on its TLS
+Unix socket with zero xkms-authored handlers (xkms only maps
+`protocols.unix` and `unix.socket_path` onto the node,
+`pkg/server/qrdb_node.go:85-89`), plus the embedded node's admin-plane
+`GET /peers`. `xkmsctl cluster
 status|members|add|remove` and `xkmsctl rebalance ...`
 (`cmd/xkmsctl/cluster.go`, `rebalance.go`) drive it as a qrdb SDK client over
 gRPC or the Unix socket. go-qrdb's `AdminService`/`RebalanceService` RPCs
@@ -204,19 +205,12 @@ certificates is a separate design surface from Raft membership itself. See
   circular. Operator-supplied PEM files or the dedicated auto-provisioned
   cluster CA are used instead (`ClusterConfig.RaftTLS` doc comment,
   `pkg/config/config.go`).
-- **The qrdb control plane's authorization posture is transitional.** `registerQRDBControlPlane`
-  (`pkg/server/qrdb_control_plane.go`) states explicitly that its RPCs sit
-  behind xkmsd's transport authentication (TLS + adaptive auth; the Unix
-  socket adds filesystem-permission trust) and are **not yet** gated by
-  xkms's own resource:action RBAC — membership mutation (`cluster
-  add`/`remove`) requires only whatever the transport it is reached over
-  already requires.
-- **The KV data plane is deliberately unreachable through the qrdb control
-  plane.** `registerQRDBControlPlane` registers the admin/rebalance/user
-  surfaces with the KV servicer nil, so every data-plane RPC answers
-  `Unimplemented` — "go-xkms is not a database server product" (comment,
-  same file). Clustering replicates xkms's own data; it does not turn
-  `xkmsd` into a general KV service.
+- **The qrdb control plane authenticates every caller.** Its RPCs are
+  served by the embedded node behind go-qrdb's authentication chain, which
+  carries xkms's session-JWT authenticator; an anonymous call answers
+  `Unauthenticated` on every transport (`pkg/server/unified_api_e2e_test.go`).
+  The former plaintext Unix control plane, which trusted filesystem
+  permissions alone, was removed.
 - **A joiner's claimed address is not its cluster identity.** The ACME
   `permanent-identifier` is client-declared. enroll-01 proves a TPM holds
   the key, not that the TPM belongs at that address. So the node URI is

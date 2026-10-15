@@ -20,7 +20,6 @@ import (
 	"time"
 
 	"github.com/jeremyhahn/go-xkms/sdk/go/transport"
-	unixtransport "github.com/jeremyhahn/go-xkms/sdk/go/transport/unix"
 	"github.com/spf13/viper"
 )
 
@@ -58,11 +57,14 @@ type XKMSdBridgeConfig struct {
 	// RequestTimeout is the timeout for individual requests to xkmsd.
 	RequestTimeout time.Duration
 
-	// TLSEnabled enables TLS for the connection.
-	TLSEnabled bool
-
-	// TLSCAFile is the CA cert file for server verification.
+	// TLSCAFile is the CA cert file for server verification. Empty means
+	// the system trust store.
 	TLSCAFile string
+
+	// TLSCertFile and TLSKeyFile are the PEM client certificate and key
+	// that admit xkey on xkmsd's socket, the qrdb node's TLS listener.
+	TLSCertFile string
+	TLSKeyFile  string
 
 	// AllowedBackends restricts which xkmsd backends the phone can access.
 	AllowedBackends []string
@@ -90,8 +92,9 @@ func loadXKMSdBridgeConfig() *XKMSdBridgeConfig {
 		Address:         viper.GetString("xkmsd.address"),
 		ConnectTimeout:  viper.GetDuration("xkmsd.connect_timeout"),
 		RequestTimeout:  viper.GetDuration("xkmsd.request_timeout"),
-		TLSEnabled:      viper.GetBool("xkmsd.tls.enabled"),
-		TLSCAFile:       viper.GetString("xkmsd.tls.ca_file"),
+		TLSCAFile:       viper.GetString("xkmsd.tls_ca_file"),
+		TLSCertFile:     viper.GetString("xkmsd.tls_cert_file"),
+		TLSKeyFile:      viper.GetString("xkmsd.tls_key_file"),
 		AllowedBackends: viper.GetStringSlice("xkmsd.sharing.allowed_backends"),
 		DeniedBackends:  viper.GetStringSlice("xkmsd.sharing.denied_backends"),
 		TPMEnrollment:   viper.GetBool("xkmsd.tpm.enrollment"),
@@ -150,12 +153,18 @@ func dialXKMSd(cfg *XKMSdBridgeConfig, logger *slog.Logger) (transport.Client, e
 }
 
 // createXKMSdClient creates an SDK transport client for the given protocol.
+// xkmsd's socket is the qrdb node's TLS listener, so the client dials it
+// over TLS with the configured client certificate, through the same
+// endpoint dispatch the xkmsd CLI commands use.
 func createXKMSdClient(cfg *XKMSdBridgeConfig) (transport.Client, error) {
 	switch cfg.Protocol {
 	case "unix":
-		return unixtransport.New(
-			transport.WithAddress(cfg.Address),
-		)
+		return XKMSdEndpoint{
+			URL:         "unix://" + cfg.Address,
+			TLSCAFile:   cfg.TLSCAFile,
+			TLSCertFile: cfg.TLSCertFile,
+			TLSKeyFile:  cfg.TLSKeyFile,
+		}.Client()
 	default:
 		return nil, ErrXKMSdUnsupportedProtocol
 	}

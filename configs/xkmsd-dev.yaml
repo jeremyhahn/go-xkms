@@ -16,10 +16,7 @@ protocols:
   mcp: false
 
 unix:
-  enabled: true
   socket_path: "xkms-data/xkms.sock"
-  socket_mode: "0660"
-  protocol: "grpc"
 
 logging:
   level: "debug"

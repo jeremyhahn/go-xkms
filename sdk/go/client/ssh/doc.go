@@ -21,7 +21,7 @@
 //   - rest: HTTP/JSON to xkmsd, with a custom passphrase Unmarshaler
 //     that lands bytes in a secure.Buffer.
 //   - grpc: the xkmsd KeystoreService SSH RPCs.
-//   - unix: gRPC dialed over a Unix domain socket (plaintext, local only).
+//   - unix: gRPC over TLS on xkmsd's Unix domain socket.
 //   - quic: HTTP/3 with the same JSON wire format as rest.
 //   - mcp: JSON-RPC 2.0 over TCP, the same wire format as
 //     pkg/api/transport/mcp.

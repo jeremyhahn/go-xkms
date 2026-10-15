@@ -7,9 +7,6 @@ package unix
 
 import (
 	"context"
-	"encoding/json"
-	"net/http"
-	"net/http/httptest"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -306,109 +303,6 @@ func TestGeneratePIVCSR_Connected(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, "9a", resp.Slot)
 	assert.NotEmpty(t, resp.CSR)
-}
-
-// newTCGTransport builds a Transport whose HTTP client is backed by a
-// roundTripFunc that returns canned TCG-CA JSON responses.  The gRPC client
-// is nil — TCG methods use HTTP only, so no gRPC connection is needed.
-func newTCGTransport(t *testing.T) *Transport {
-	t.Helper()
-	client := &http.Client{
-		Transport: roundTripFunc(func(r *http.Request) (*http.Response, error) {
-			rec := httptest.NewRecorder()
-			rec.Header().Set("Content-Type", "application/json")
-			_ = json.NewEncoder(rec).Encode(map[string]interface{}{
-				"certificate_pem": "Y2VydA==",
-				"certificate_der": "Y2VydA==",
-				"serial_number":   "1234",
-				"iak_cert_der":    "aWFrLWNlcnQ=",
-				"idevid_cert_der": "aWRldmlkLWNlcnQ=",
-			})
-			return rec.Result(), nil
-		}),
-	}
-	cfg := transport.DefaultConfig()
-	cfg.Address = "/tmp/test-tcg.sock"
-	return &Transport{config: cfg, httpClient: client, connected: true}
-}
-
-// --- TCG certificate happy-path ---
-
-func TestIssueEKCertificate_Connected(t *testing.T) {
-	tr := newTCGTransport(t)
-	resp, err := tr.IssueEKCertificate(context.Background(), &transport.IssueEKCertificateRequest{CommonName: "test-ek"})
-	require.NoError(t, err)
-	assert.NotEmpty(t, resp.CertificatePEM)
-}
-
-func TestIssueAKCertificate_Connected(t *testing.T) {
-	tr := newTCGTransport(t)
-	resp, err := tr.IssueAKCertificate(context.Background(), &transport.IssueAKCertificateRequest{CommonName: "test-ak"})
-	require.NoError(t, err)
-	assert.NotEmpty(t, resp.CertificatePEM)
-}
-
-func TestSignTCGCSR_Connected(t *testing.T) {
-	tr := newTCGTransport(t)
-	resp, err := tr.SignTCGCSR(context.Background(), &transport.SignTCGCSRRequest{CommonName: "test-device"})
-	require.NoError(t, err)
-	assert.NotEmpty(t, resp.IAKCertDER)
-}
-
-func TestEnrollDevice_Connected(t *testing.T) {
-	tr := newTCGTransport(t)
-	resp, err := tr.EnrollDevice(context.Background(), &transport.EnrollDeviceRequest{CommonName: "test-device"})
-	require.NoError(t, err)
-	assert.NotEmpty(t, resp.IAKCertDER)
-}
-
-// --- doRawRequest error paths ---
-
-func TestDoRawRequest_MarshalError(t *testing.T) {
-	cfg := transport.DefaultConfig()
-	cfg.Address = "/tmp/test.sock"
-	tr := &Transport{
-		config:     cfg,
-		httpClient: &http.Client{},
-		connected:  true,
-	}
-	// Pass a channel (non-JSON-serializable) to trigger marshal error.
-	_, err := tr.doRawRequest(context.Background(), "POST", "/test", make(chan int))
-	require.Error(t, err)
-	assert.Contains(t, err.Error(), "failed to marshal request body")
-}
-
-func TestDoRawRequest_ServerErrorStatus(t *testing.T) {
-	client := &http.Client{
-		Transport: roundTripFunc(func(r *http.Request) (*http.Response, error) {
-			rec := httptest.NewRecorder()
-			rec.WriteHeader(http.StatusInternalServerError)
-			_, _ = rec.WriteString(`{"error":"internal error"}`)
-			return rec.Result(), nil
-		}),
-	}
-	cfg := transport.DefaultConfig()
-	cfg.Address = "/tmp/test.sock"
-	tr := &Transport{config: cfg, httpClient: client, connected: true}
-	_, err := tr.doRawRequest(context.Background(), "GET", "/v1/init/status", nil)
-	require.Error(t, err)
-	assert.Contains(t, err.Error(), "server returned status")
-}
-
-// --- REST-method error paths (HTTP server returns 500) ---
-
-func TestSubmitCredential_HTTPError(t *testing.T) {
-	tr, cleanup := newErrTransport(t)
-	defer cleanup()
-	_, err := tr.SubmitCredential(context.Background(), &transport.CredentialSubmitRequest{})
-	require.Error(t, err)
-}
-
-func TestGetCredentialStrategy_HTTPError(t *testing.T) {
-	tr, cleanup := newErrTransport(t)
-	defer cleanup()
-	_, err := tr.GetCredentialStrategy(context.Background())
-	require.Error(t, err)
 }
 
 // --- Close with nil conn ---

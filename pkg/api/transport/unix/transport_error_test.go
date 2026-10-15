@@ -12,12 +12,9 @@ import (
 	"crypto/rand"
 	"crypto/tls"
 	"crypto/x509"
-	"encoding/json"
 	"encoding/pem"
 	"math/big"
 	"net"
-	"net/http"
-	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"testing"
@@ -282,8 +279,7 @@ func (s *errServer) PasswordGenerate(context.Context, *pb.PasswordGenerateReques
 	return nil, status.Error(codes.Internal, "fail")
 }
 
-// newErrTransport creates a Transport backed by an error-returning gRPC server
-// and a 500-returning HTTP server.
+// newErrTransport creates a Transport backed by an error-returning gRPC server.
 func newErrTransport(t *testing.T) (*Transport, func()) {
 	t.Helper()
 
@@ -304,60 +300,23 @@ func newErrTransport(t *testing.T) (*Transport, func()) {
 	)
 	require.NoError(t, err)
 
-	httpSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.WriteHeader(http.StatusInternalServerError)
-		_ = json.NewEncoder(w).Encode(map[string]string{"error": "fail"})
-	}))
-
 	cfg := transport.DefaultConfig()
 	cfg.Address = "/tmp/test-err.sock"
 
 	tr := &Transport{
-		config:     cfg,
-		conn:       conn,
-		client:     pb.NewKeystoreServiceClient(conn),
-		httpClient: httpSrv.Client(),
-		connected:  true,
+		config:    cfg,
+		conn:      conn,
+		client:    pb.NewKeystoreServiceClient(conn),
+		connected: true,
 	}
 
 	cleanup := func() {
 		conn.Close()
 		srv.Stop()
 		lis.Close()
-		httpSrv.Close()
 	}
 
 	return tr, cleanup
-}
-
-// newHTTPOnlyTransport returns a transport with HTTP client for REST-only methods.
-func newHTTPOnlyTransport(t *testing.T) (*Transport, func()) {
-	t.Helper()
-
-	client := &http.Client{
-		Transport: roundTripFunc(func(r *http.Request) (*http.Response, error) {
-			rec := httptest.NewRecorder()
-			rec.Header().Set("Content-Type", "application/json")
-			_ = json.NewEncoder(rec).Encode(map[string]interface{}{
-				"status": "initialized", "strategy": "manual",
-				"challenge_nonce": "abc123", "officer_name": "alice",
-				"share": "c2hhcmU=", "claimed": true, "accepted": true,
-				"certificate_pem": "Y2VydA==", "serial_number": "1234",
-			})
-			return rec.Result(), nil
-		}),
-	}
-
-	cfg := transport.DefaultConfig()
-	cfg.Address = "/tmp/test-http.sock"
-
-	tr := &Transport{
-		config:     cfg,
-		httpClient: client,
-		connected:  true,
-	}
-
-	return tr, func() {}
 }
 
 // --- Connect error tests ---
@@ -941,72 +900,17 @@ func TestDeleteTenant_ServerErr(t *testing.T) {
 
 // --- REST-only method tests (HTTP) ---
 
-func TestSubmitCredential_Connected(t *testing.T) {
-	tr, cleanup := newHTTPOnlyTransport(t)
+// TestCredentialEndpoints_NotSupported proves the REST-only credential
+// endpoints refuse on a connected socket, which serves gRPC alone.
+func TestCredentialEndpoints_NotSupported(t *testing.T) {
+	tr, cleanup := newErrTransport(t)
 	defer cleanup()
-	resp, err := tr.SubmitCredential(context.Background(), &transport.CredentialSubmitRequest{})
-	require.NoError(t, err)
-	assert.NotNil(t, resp)
-}
 
-func TestGetCredentialStrategy_Connected(t *testing.T) {
-	tr, cleanup := newHTTPOnlyTransport(t)
-	defer cleanup()
-	resp, err := tr.GetCredentialStrategy(context.Background())
-	require.NoError(t, err)
-	assert.NotNil(t, resp)
-}
+	_, err := tr.SubmitCredential(context.Background(), &transport.CredentialSubmitRequest{})
+	assert.ErrorIs(t, err, ErrNotSupported)
 
-// --- doRawRequest tests ---
-
-func TestDoRawRequest_NilHTTPClient(t *testing.T) {
-	cfg := transport.DefaultConfig()
-	cfg.Address = "/tmp/test.sock"
-	tr, err := NewWithConfig(cfg)
-	require.NoError(t, err)
-	tr.httpClient = nil
-
-	_, err = tr.doRawRequest(context.Background(), http.MethodGet, "/test", nil)
-	require.ErrorIs(t, err, ErrNotConnected)
-}
-
-func TestDoRawRequest_WithJWTAndHeaders(t *testing.T) {
-	// Use a round-tripper that captures headers and returns a response
-	var capturedReq *http.Request
-	client := &http.Client{
-		Transport: roundTripFunc(func(r *http.Request) (*http.Response, error) {
-			capturedReq = r
-			rec := httptest.NewRecorder()
-			rec.Header().Set("Content-Type", "application/json")
-			json.NewEncoder(rec).Encode(map[string]string{"ok": "true"})
-			return rec.Result(), nil
-		}),
-	}
-
-	cfg := transport.DefaultConfig()
-	cfg.Address = "/tmp/test.sock"
-	cfg.JWTToken = "test-token"
-	cfg.Headers = map[string]string{"X-Custom": "custom-value"}
-
-	tr := &Transport{
-		config:     cfg,
-		httpClient: client,
-		connected:  true,
-	}
-
-	data, err := tr.doRawRequest(context.Background(), http.MethodGet, "/test", nil)
-	require.NoError(t, err)
-	assert.Contains(t, string(data), "ok")
-	require.NotNil(t, capturedReq)
-	assert.Equal(t, "Bearer test-token", capturedReq.Header.Get("Authorization"))
-	assert.Equal(t, "custom-value", capturedReq.Header.Get("X-Custom"))
-}
-
-// roundTripFunc adapts a function to http.RoundTripper.
-type roundTripFunc func(*http.Request) (*http.Response, error)
-
-func (f roundTripFunc) RoundTrip(r *http.Request) (*http.Response, error) {
-	return f(r)
+	_, err = tr.GetCredentialStrategy(context.Background())
+	assert.ErrorIs(t, err, ErrNotSupported)
 }
 
 // testCAPEM returns a minimal self-signed CA cert for testing.

@@ -486,13 +486,13 @@ func TestValidate_TLS(t *testing.T) {
 	})
 
 	// The legacy cert_file/key_file-required rule only applies to
-	// non-network-serving (local IPC) deployments, so these cases run with
-	// no network protocol enabled to keep exercising it.
+	// deployments the node does not serve, so these cases run Noise only to
+	// keep exercising it.
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			cfg := Config{
-				Protocols: ProtocolsConfig{Unix: true},
-				Server:    ServerConfig{RESTPort: 8443},
+				Protocols: ProtocolsConfig{Noise: true},
+				Server:    ServerConfig{NoisePort: 9000},
 				Logging:   LoggingConfig{Level: "info", Format: "json"},
 				TLS:       tt.tls,
 				Datastore: DatastoreConfig{Engine: "pebble", Path: "/data"},
@@ -590,8 +590,8 @@ func TestValidate_Datastore(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			cfg := Config{
-				Protocols: ProtocolsConfig{Unix: true},
-				Server:    ServerConfig{RESTPort: 8443},
+				Protocols: ProtocolsConfig{Noise: true},
+				Server:    ServerConfig{NoisePort: 9000},
 				Logging:   LoggingConfig{Level: "info", Format: "json"},
 				Datastore: tt.datastore,
 				Default:   "pkcs8",
@@ -1401,8 +1401,8 @@ func TestCredentialsBarrierStrategySupported(t *testing.T) {
 func TestValidate_CredentialsBarrierStrategy(t *testing.T) {
 	baseline := func() Config {
 		return Config{
-			Protocols: ProtocolsConfig{Unix: true},
-			Server:    ServerConfig{RESTPort: 8443},
+			Protocols: ProtocolsConfig{Noise: true},
+			Server:    ServerConfig{NoisePort: 9000},
 			Logging:   LoggingConfig{Level: "info", Format: "json"},
 			Default:   "pkcs8",
 			Backends:  BackendsConfig{PKCS8: &PKCS8Config{Enabled: true, Path: "/data/pkcs8"}},
@@ -1517,12 +1517,13 @@ func TestValidate_NoisePort(t *testing.T) {
 	}
 }
 
-// TestValidate_UnixSocketProtocol tests validation of Unix socket protocol field
-func TestValidate_UnixSocketProtocol(t *testing.T) {
+// TestValidate_UnixSocketIsServedByTheNode proves the Unix socket is a node
+// protocol: it needs the standalone node and TLS like the network protocols.
+func TestValidate_UnixSocketIsServedByTheNode(t *testing.T) {
 	baseConfig := func() Config {
 		return Config{
-			Protocols: ProtocolsConfig{REST: true},
-			Server:    ServerConfig{RESTPort: 8443},
+			Protocols: ProtocolsConfig{Unix: true},
+			Unix:      UnixConfig{SocketPath: "/run/xkms/xkms.sock"},
 			Logging:   LoggingConfig{Level: "info", Format: "json"},
 			Datastore: DatastoreConfig{Path: "/data"},
 			TLS:       TLSConfig{Enabled: true},
@@ -1532,53 +1533,44 @@ func TestValidate_UnixSocketProtocol(t *testing.T) {
 	}
 
 	tests := []struct {
-		name      string
-		unix      UnixConfig
-		wantError bool
-		errorMsg  string
+		name     string
+		mutate   func(*Config)
+		errorMsg string
 	}{
 		{
-			name:      "valid grpc protocol",
-			unix:      UnixConfig{Enabled: true, Protocol: "grpc"},
-			wantError: false,
+			name:   "standalone node with TLS",
+			mutate: func(*Config) {},
 		},
 		{
-			name:      "valid http protocol",
-			unix:      UnixConfig{Enabled: true, Protocol: "http"},
-			wantError: false,
+			name:     "TLS disabled",
+			mutate:   func(c *Config) { c.TLS.Enabled = false },
+			errorMsg: "require tls.enabled",
 		},
 		{
-			name:      "empty protocol is valid (default)",
-			unix:      UnixConfig{Enabled: true, Protocol: ""},
-			wantError: false,
-		},
-		{
-			name:      "invalid protocol",
-			unix:      UnixConfig{Enabled: true, Protocol: "websocket"},
-			wantError: true,
-			errorMsg:  "invalid Unix socket protocol",
-		},
-		{
-			name:      "disabled unix socket skips validation",
-			unix:      UnixConfig{Enabled: false, Protocol: "invalid"},
-			wantError: false,
+			name: "remote datastore hosts no node",
+			mutate: func(c *Config) {
+				c.Datastore = DatastoreConfig{Mode: "remote", Remote: DatastoreRemoteConfig{Address: "https://node1:63002", Transport: "grpc"}}
+			},
+			errorMsg: "require datastore.mode \"standalone\"",
 		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			cfg := baseConfig()
-			cfg.Unix = tt.unix
+			tt.mutate(&cfg)
+			if !cfg.NodeServing() {
+				t.Fatal("NodeServing() = false with the unix socket enabled")
+			}
 			err := cfg.Validate()
-			if tt.wantError {
-				if err == nil {
-					t.Fatal("Validate() error = nil, want error")
+			if tt.errorMsg == "" {
+				if err != nil {
+					t.Fatalf("Validate() error = %v, want nil", err)
 				}
-				if !strings.Contains(err.Error(), tt.errorMsg) {
-					t.Errorf("Validate() error = %v, want error containing %q", err, tt.errorMsg)
-				}
-			} else if err != nil {
-				t.Fatalf("Validate() error = %v, want nil", err)
+				return
+			}
+			if err == nil || !strings.Contains(err.Error(), tt.errorMsg) {
+				t.Fatalf("Validate() error = %v, want error containing %q", err, tt.errorMsg)
 			}
 		})
 	}
@@ -1851,24 +1843,6 @@ func TestGetEnabledBackends_PhoneOnly(t *testing.T) {
 	}
 }
 
-// TestValidate_UnixProtocolCaseSensitivity verifies the protocol matching is case-insensitive
-func TestValidate_UnixProtocolCaseSensitivity(t *testing.T) {
-	cfg := Config{
-		Protocols: ProtocolsConfig{REST: true},
-		Server:    ServerConfig{RESTPort: 8443},
-		Logging:   LoggingConfig{Level: "info", Format: "json"},
-		Datastore: DatastoreConfig{Path: "/data"},
-		TLS:       TLSConfig{Enabled: true},
-		Default:   "pkcs8",
-		Backends:  BackendsConfig{PKCS8: &PKCS8Config{Enabled: true, Path: "/data/pkcs8"}},
-		Unix:      UnixConfig{Enabled: true, Protocol: "GRPC"},
-	}
-	err := cfg.Validate()
-	if err != nil {
-		t.Fatalf("Validate() error = %v, want nil for uppercase GRPC protocol", err)
-	}
-}
-
 // TestDatastoreConfig_Remote tests validation of the "remote" datastore mode.
 func TestDatastoreConfig_Remote(t *testing.T) {
 	tests := []struct {
@@ -1918,8 +1892,8 @@ func TestDatastoreConfig_Remote(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			cfg := Config{
-				Protocols: ProtocolsConfig{Unix: true},
-				Server:    ServerConfig{RESTPort: 8443},
+				Protocols: ProtocolsConfig{Noise: true},
+				Server:    ServerConfig{NoisePort: 9000},
 				Logging:   LoggingConfig{Level: "info", Format: "json"},
 				Datastore: tt.datastore,
 				Default:   "pkcs8",
@@ -1959,9 +1933,8 @@ func TestDatastoreRemoteConfig_ZeroValue(t *testing.T) {
 // TestConfig_ComplianceGaps verifies the secure-by-default posture check that
 // the daemon uses to refuse an insecure start.
 func TestConfig_ComplianceGaps(t *testing.T) {
-	// A fully compliant config reports no gaps. A real (non-noop) auth type is
-	// required: auth.enabled alone is not sufficient if the type resolves to the
-	// no-op authenticator.
+	// A fully compliant config reports no gaps. auth.enabled alone is not
+	// sufficient: auth.type must name an authenticator.
 	secure := &Config{}
 	secure.Barrier.Enabled = true
 	secure.TLS.Enabled = true
@@ -1972,17 +1945,17 @@ func TestConfig_ComplianceGaps(t *testing.T) {
 		t.Errorf("compliant config should report no gaps, got %v", gaps)
 	}
 
-	// auth.enabled=true but a no-op / empty auth type is still effectively
-	// anonymous, so it is reported as a gap.
-	for _, noopType := range []string{"", "noop", "none", "NoOp"} {
+	// auth.enabled=true with an empty or "none"/"noop" auth type names no
+	// authenticator, so it is reported as a gap.
+	for _, emptyType := range []string{"", "  ", "noop", "none", "NoOp"} {
 		c := &Config{}
 		c.Barrier.Enabled = true
 		c.TLS.Enabled = true
 		c.Auth.Enabled = true
-		c.Auth.Type = noopType
+		c.Auth.Type = emptyType
 		c.CA = &ca.MultiIdentityCAConfig{}
 		if gaps := c.ComplianceGaps(); len(gaps) != 1 {
-			t.Errorf("auth.type=%q should report 1 gap (no-op auth), got %d: %v", noopType, len(gaps), gaps)
+			t.Errorf("auth.type=%q should report 1 gap (no authenticator), got %d: %v", emptyType, len(gaps), gaps)
 		}
 	}
 

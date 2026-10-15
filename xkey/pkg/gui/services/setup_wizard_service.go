@@ -1347,7 +1347,6 @@ func (s *SetupWizardService) ApplySOProvisioning(choices *SetupChoices) (result 
 	policy := config.DefaultPolicy()
 
 	// Core security requirements — PlatformSRK is always created.
-	policy.PlatformPCRBank = "sha256"
 	if choices.StorageType != "" {
 		policy.StorageType = choices.StorageType
 	}

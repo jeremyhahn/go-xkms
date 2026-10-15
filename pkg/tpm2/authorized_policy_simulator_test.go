@@ -730,6 +730,9 @@ func TestAuthorizedPolicy_BindingRecordLifecycle(t *testing.T) {
 	binding, err := f.h.TPM.loadPolicyBinding(key, f.h.Backend)
 	require.NoError(t, err)
 	require.NotNil(t, binding)
+	assert.NotEmpty(t, binding.Authority, "the record carries the scope authority")
+	assert.Len(t, binding.Approvals, 1, "the record carries the policy's approval")
+	binding.Authority, binding.Approvals = nil, nil
 	assert.Equal(t, &store.TPMPolicyBinding{
 		Scope:           SystemPolicyScope,
 		Policy:          testPolicyName,
@@ -740,7 +743,7 @@ func TestAuthorizedPolicy_BindingRecordLifecycle(t *testing.T) {
 
 	record, err := f.h.Backend.Get(key, store.FSEXT_TPM_POLICY)
 	require.NoError(t, err)
-	assert.Equal(t, store.TPMPolicyBindingVersion, record[4], "new records are version 2")
+	assert.Equal(t, store.TPMPolicyBindingVersion, record[4], "new records are the current version")
 
 	require.NoError(t, f.h.Backend.Save(key, []byte("XTPB-garbage"), store.FSEXT_TPM_POLICY, true))
 	var formatErr *store.TPMPolicyBindingFormatError

@@ -35,8 +35,9 @@ var ErrAuthenticatorNotConfigured = errors.New("admin: mTLS authenticator not co
 // scoping, audit attribution) and the canonical auth.Identity the
 // PermissionGate authorizes against.
 //
-// The admin routes are public module routes: qrdb's authentication
-// middleware binds no tenant before this handler runs. The handler applies
+// The admin routes are identity-gated module routes: qrdb's authentication
+// chain has already refused an anonymous caller, but this handler resolves
+// the caller itself rather than trusting the module boundary. It applies
 // qrdb's own certificate-to-tenant rule (qrdbsdk.TenantFromClientCert) under
 // the deployment's trust domain, binds that tenant, and only then looks the
 // certificate's thumbprint up — within that tenant alone, so a tenant user

@@ -22,6 +22,8 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+
+	"github.com/jeremyhahn/go-xkms/sdk/go/transport"
 )
 
 func TestXkmsctlSSHClient_RemoteServer(t *testing.T) {
@@ -61,4 +63,31 @@ func TestXkmsctlSSHClient_Refusals(t *testing.T) {
 			assert.Nil(t, closer)
 		})
 	}
+}
+
+// TestSSHTLSConfig_PresentsClientCert pins that the SSH SDK dials with the
+// --tls-cert/--tls-key pair, which is what admits the caller on xkmsd's TLS
+// unix socket.
+func TestSSHTLSConfig_PresentsClientCert(t *testing.T) {
+	certFile, keyFile := generateTempCertKeyPair(t)
+	cfg := NewConfig()
+	cfg.TLSCert, cfg.TLSKey = certFile, keyFile
+
+	tlsCfg, err := sshTLSConfig(cfg)
+	require.NoError(t, err)
+	assert.Len(t, tlsCfg.Certificates, 1)
+}
+
+func TestSSHTLSConfig_UnreadableClientCert(t *testing.T) {
+	cfg := NewConfig()
+	cfg.Protocol, cfg.Server = "unix", "unix:///run/xkmsd/xkmsd.sock"
+	cfg.TLSCert = filepath.Join(t.TempDir(), "missing.pem")
+	cfg.TLSKey = filepath.Join(t.TempDir(), "missing.key")
+	withGlobalConfig(t, cfg)
+
+	cl, closer, err := xkmsctlSSHClient()
+	var certErr *transport.ClientCertLoadError
+	assert.ErrorAs(t, err, &certErr)
+	assert.Nil(t, cl)
+	assert.Nil(t, closer)
 }

@@ -143,6 +143,36 @@ fake golangci-lint 0
 expect nonzero "make lint fails when actionlint reports findings" lint
 fake actionlint 0 "$pin"
 expect 0 "make lint passes when actionlint and golangci-lint pass" lint
+
+# make lint LINT_CI=1 (go-xkms#1553) cleans golangci-lint's cache before each
+# pass whose tags differ from the previous pass's, and only then: sdk/go runs
+# under root's tags and keeps root's analysis. Every pass is measured. A
+# developer's plain `make lint` does neither.
+cat > "$work/bin/golangci-lint" <<EOF
+#!/bin/sh
+echo "\$1" >> "$work/golangci-lint.calls"
+EOF
+chmod +x "$work/bin/golangci-lint"
+# expect_lint_calls <description> <want>: the golangci-lint subcommands the
+# last make lint ran, in order, and the number of disk-usage reports it printed.
+expect_lint_calls() {
+	got="$(tr '\n' ' ' < "$work/golangci-lint.calls")"
+	reports="$(grep -c '^disk usage after golangci-lint' "$work/out" || true)"
+	if [ "$got" = "$2" ] && [ "$reports" = "$3" ]; then
+		echo "ok    $1"
+	else
+		echo "FAIL  $1: calls '$got' (want '$2'), $reports disk reports (want $3)" >&2
+		sed 's/^/      /' "$work/out" >&2
+		fails=$((fails + 1))
+	fi
+}
+rm -f "$work/golangci-lint.calls"
+expect 0 "make lint LINT_CI=1 passes" LINT_CI=1 lint
+expect_lint_calls "make lint LINT_CI=1 cleans the lint cache only when the tags change, and measures every pass" \
+	"run run cache run cache run cache run cache run " 6
+rm -f "$work/golangci-lint.calls"
+expect 0 "make lint passes without LINT_CI" lint
+expect_lint_calls "make lint without LINT_CI neither cleans nor measures" "run run run run run run " 0
 unfake golangci-lint
 fake actionlint 0 "v0.0.1"
 expect nonzero "make actionlint fails when the pin is not installed and cannot be" actionlint

@@ -104,6 +104,12 @@ Its keys (`config.go:588-620`) mirror the remote-mode variables below:
 Defaults: target `unix:///var/run/xkms/xkms.sock` (`config.go:40`), timeout 30s
 (`:37`), backend `software` (`:43`).
 
+A `unix://` target dials with the same transport options as a network target
+(`createUnixClient`, `module.go:1063-1065`). xkmsd's socket is the embedded
+qrdb node's TLS listener and refuses anonymous callers, so reaching it takes
+`tls_enabled` with `tls_cert`/`tls_key`/`tls_ca`; only the sign server's
+socket is plaintext.
+
 `Validate` (`config.go:203`) refuses: a nil config (`ErrNilConfig`, `:205`), an
 empty target (`ErrEmptyTarget`, `:209`), a non-`unix://` target without TLS
 unless insecure transport is allowed (`ErrInsecureRemoteTarget`, `:228`;

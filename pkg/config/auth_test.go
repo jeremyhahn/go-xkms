@@ -14,89 +14,43 @@
 package config
 
 import (
+	"errors"
 	"testing"
 )
 
+// TestCreateAuthenticator_Disabled verifies a configuration that names no
+// authenticator is refused: xkms has no unauthenticated mode.
 func TestCreateAuthenticator_Disabled(t *testing.T) {
-	cfg := &AuthConfig{
-		Enabled: false,
-	}
-
-	authenticator, err := cfg.CreateAuthenticator()
-
-	if err != nil {
-		t.Fatalf("CreateAuthenticator() error = %v, want nil", err)
-	}
-
-	if authenticator == nil {
-		t.Fatal("CreateAuthenticator() returned nil")
-	}
-
-	if authenticator.Name() != "noop" {
-		t.Errorf("authenticator.Name() = %v, want noop", authenticator.Name())
+	for name, cfg := range map[string]*AuthConfig{
+		"auth disabled":   {Enabled: false, Type: "mtls"},
+		"empty auth type": {Enabled: true, Type: ""},
+	} {
+		t.Run(name, func(t *testing.T) {
+			authenticator, err := cfg.CreateAuthenticator()
+			if !errors.Is(err, ErrAuthenticationDisabled) {
+				t.Fatalf("CreateAuthenticator() error = %v, want ErrAuthenticationDisabled", err)
+			}
+			if authenticator != nil {
+				t.Errorf("CreateAuthenticator() = %v, want nil", authenticator)
+			}
+		})
 	}
 }
 
-func TestCreateAuthenticator_TypeNoop(t *testing.T) {
-	cfg := &AuthConfig{
-		Enabled: true,
-		Type:    "noop",
-	}
-
-	authenticator, err := cfg.CreateAuthenticator()
-
-	if err != nil {
-		t.Fatalf("CreateAuthenticator() error = %v, want nil", err)
-	}
-
-	if authenticator == nil {
-		t.Fatal("CreateAuthenticator() returned nil")
-	}
-
-	if authenticator.Name() != "noop" {
-		t.Errorf("authenticator.Name() = %v, want noop", authenticator.Name())
-	}
-}
-
-func TestCreateAuthenticator_TypeNone(t *testing.T) {
-	cfg := &AuthConfig{
-		Enabled: true,
-		Type:    "none",
-	}
-
-	authenticator, err := cfg.CreateAuthenticator()
-
-	if err != nil {
-		t.Fatalf("CreateAuthenticator() error = %v, want nil", err)
-	}
-
-	if authenticator == nil {
-		t.Fatal("CreateAuthenticator() returned nil")
-	}
-
-	if authenticator.Name() != "noop" {
-		t.Errorf("authenticator.Name() = %v, want noop", authenticator.Name())
-	}
-}
-
-func TestCreateAuthenticator_TypeEmpty(t *testing.T) {
-	cfg := &AuthConfig{
-		Enabled: true,
-		Type:    "",
-	}
-
-	authenticator, err := cfg.CreateAuthenticator()
-
-	if err != nil {
-		t.Fatalf("CreateAuthenticator() error = %v, want nil", err)
-	}
-
-	if authenticator == nil {
-		t.Fatal("CreateAuthenticator() returned nil")
-	}
-
-	if authenticator.Name() != "noop" {
-		t.Errorf("authenticator.Name() = %v, want noop", authenticator.Name())
+// TestCreateAuthenticator_NoOpTypesAreUnknown verifies the removed "noop" and
+// "none" auth types are refused as unknown rather than admitting every caller.
+func TestCreateAuthenticator_NoOpTypesAreUnknown(t *testing.T) {
+	for _, authType := range []string{"noop", "none"} {
+		t.Run(authType, func(t *testing.T) {
+			cfg := &AuthConfig{Enabled: true, Type: authType}
+			authenticator, err := cfg.CreateAuthenticator()
+			if err == nil {
+				t.Fatalf("CreateAuthenticator() with type %q succeeded, want an error", authType)
+			}
+			if authenticator != nil {
+				t.Errorf("CreateAuthenticator() = %v, want nil", authenticator)
+			}
+		})
 	}
 }
 

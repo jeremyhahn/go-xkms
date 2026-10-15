@@ -35,7 +35,7 @@ func newFailingVTPMFixture(t *testing.T) *fixture {
 func newServiceOverFailingStore(t *testing.T, f *fixture, entity string) (*Service, *entityFailingStore) {
 	t.Helper()
 	store := &entityFailingStore{AtomicKVStore: qrdbsdk.NewMemoryKVStore(), entity: entity, ops: map[string]bool{}}
-	registry, err := NewRegistry(dao.NewStoreFactory(store))
+	registry, err := NewRegistry(dao.NewStoreFactory(store), 0)
 	require.NoError(t, err)
 	cfg := f.cfg
 	cfg.Registry = registry

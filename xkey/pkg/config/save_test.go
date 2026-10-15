@@ -232,8 +232,6 @@ func TestSaveToPath_RoundTrip_AllSections(t *testing.T) {
 	cfg.GUI.Server.AutoConnect = true
 	cfg.GUI.AutoUnseal.Enabled = true
 	cfg.GUI.AutoUnseal.BlobID = "blob1"
-	cfg.GUI.AutoUnseal.PCRs = []int{0, 1, 7}
-	cfg.GUI.AutoUnseal.PCRBank = "sha256"
 	cfg.State.SetupComplete = true
 	cfg.State.StorageType = "barrier"
 	cfg.State.BarrierInitialized = true
@@ -265,7 +263,7 @@ func TestSaveToPath_RoundTrip_AllSections(t *testing.T) {
 	assert.True(t, loaded.GUI.StartMinimized)
 	assert.Equal(t, "10.0.0.1:443", loaded.GUI.Server.Address)
 	assert.True(t, loaded.GUI.AutoUnseal.Enabled)
-	assert.Equal(t, []int{0, 1, 7}, loaded.GUI.AutoUnseal.PCRs)
+	assert.Equal(t, "blob1", loaded.GUI.AutoUnseal.BlobID)
 	assert.True(t, loaded.State.SetupComplete)
 	assert.Equal(t, "tpm-pcr", loaded.State.BarrierStrategy)
 }

@@ -9,9 +9,9 @@ not-leader redirect that applies to every write endpoint on every transport.
 
 xkms carries no cluster status, membership or membership-mutation endpoint of
 its own on any transport. Those belong to go-qrdb's control plane: its
-`AdminService` (registered on xkmsd's Unix gRPC socket by
-`pkg/server/qrdb_control_plane.go:registerQRDBControlPlane`) and the embedded
-node's admin-plane `GET /peers`. `xkmsctl cluster` and `rebalance` (cli.md)
+`AdminService`, which the embedded node itself serves on its TLS Unix socket
+behind its authentication chain (go-qrdb `pkg/server/server.go`, enabled by
+`pkg/server/qrdb_node.go:85-89`), and the node's admin-plane `GET /peers`. `xkmsctl cluster` and `rebalance` (cli.md)
 speak that control plane directly. The former `GET /api/v1/cluster/status` and
 `GET /api/v1/cluster/members` REST routes re-hosted it and were removed.
 

@@ -264,14 +264,13 @@ func openNodeTPM(cfg *config.Config, logger *slog.Logger) (*seal.AutodetectResul
 	}
 	res, err := seal.OpenTPM2Strategy(seal.AutodetectOptions{
 		TPM2: &seal.TPM2ProbeConfig{
-			Device:          tpmCfg.DevicePath,
-			KeyDir:          keyDir,
-			UseSimulator:    tpmCfg.UseSimulator,
-			SimulatorHost:   tpmCfg.SimulatorHost,
-			SimulatorPort:   tpmCfg.SimulatorPort,
-			SRKHandle:       tpmCfg.SRKHandle,
-			PlatformPCR:     tpmCfg.PlatformPCR,
-			PlatformPCRBank: tpmCfg.PlatformPCRBank,
+			Device:               tpmCfg.DevicePath,
+			KeyDir:               keyDir,
+			UseSimulator:         tpmCfg.UseSimulator,
+			SimulatorHost:        tpmCfg.SimulatorHost,
+			SimulatorPort:        tpmCfg.SimulatorPort,
+			SRKHandle:            tpmCfg.SRKHandle,
+			PlatformPCRSelection: tpmCfg.PlatformPCRSelection,
 		},
 		ProbeTimeout: seal.RequiredTPMOpenTimeout,
 		Logger:       logger,

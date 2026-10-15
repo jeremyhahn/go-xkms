@@ -15,10 +15,9 @@ package ssh_test
 
 import (
 	"context"
+	"crypto/tls"
 	"errors"
 	"net"
-	"os"
-	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -230,23 +229,18 @@ func TestGRPCSessionDial_SignerErrorPropagates(t *testing.T) {
 }
 
 // TestUnixSessionDial_Success proves the "unix" scheme dispatched by
-// NewClientForServer (gRPC over a Unix domain socket) reaches the same
-// Session.Dial implementation as TCP gRPC: NewClientForServer builds a
-// plaintext GRPCOptions for the socket path and grpcSessionClient.Dial has
-// no transport-specific branch, so this exercises the identical code path
+// NewClientForServerWith (gRPC over TLS on a Unix domain socket) reaches the
+// same Session.Dial implementation as TCP gRPC: grpcSessionClient.Dial has no
+// transport-specific branch, so this exercises the identical code path
 // end-to-end over a real UDS listener.
 func TestUnixSessionDial_Success(t *testing.T) {
-	sockPath := filepath.Join(t.TempDir(), "xkms-ssh.sock")
-	lis, err := net.Listen("unix", sockPath)
-	if err != nil {
-		t.Fatalf("listen unix: %v", err)
-	}
-	newGRPCSSHServerFixture(t, lis)
-	t.Cleanup(func() { _ = os.Remove(sockPath) })
+	server, pool, _ := serveUnixTLS(t)
 
-	client, err := sdkssh.NewClientForServer("unix://"+sockPath, "", "")
+	client, err := sdkssh.NewClientForServerWith(server, sdkssh.ServerOptions{
+		TLSConfig: &tls.Config{RootCAs: pool, ServerName: "127.0.0.1", MinVersion: tls.VersionTLS13},
+	})
 	if err != nil {
-		t.Fatalf("NewClientForServer: %v", err)
+		t.Fatalf("NewClientForServerWith: %v", err)
 	}
 	defer func() { _ = client.Close() }()
 

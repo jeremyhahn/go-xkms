@@ -229,6 +229,8 @@ func (m *mockTPMForPKS) SetHierarchyAuth(oldSecret, newSecret types.Password, hi
 	return m.setAuthErr
 }
 
+func (m *mockTPMForPKS) SetPolicyBindingResolver(PolicyBindingResolver) {}
+
 func (m *mockTPMForPKS) CreateSRK(keyAttrs *types.KeyAttributes) error {
 	m.createSRKCalled.Store(true)
 	m.createSRKAttrs = keyAttrs

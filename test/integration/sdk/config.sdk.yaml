@@ -19,8 +19,6 @@ protocols:
 # Unix socket configuration
 unix:
   socket_path: /var/run/xkms/xkms.sock
-  socket_mode: "0660"
-  protocol: grpc  # Use gRPC over Unix socket
 
 logging:
   level: "debug"

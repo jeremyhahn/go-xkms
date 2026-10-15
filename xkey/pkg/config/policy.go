@@ -32,7 +32,6 @@ type PolicySection struct {
 	RequireEncryptedStorage    bool     `yaml:"require_encrypted_storage" json:"require_encrypted_storage" mapstructure:"require_encrypted_storage"`
 	StorageType                string   `yaml:"storage_type" json:"storage_type" mapstructure:"storage_type"`
 	RequireTPM                 bool     `yaml:"require_tpm" json:"require_tpm" mapstructure:"require_tpm"`
-	PlatformPCRBank            string   `yaml:"platform_pcr_bank" json:"platform_pcr_bank" mapstructure:"platform_pcr_bank"`
 	AllowedBackends            []string `yaml:"allowed_backends" json:"allowed_backends" mapstructure:"allowed_backends"`
 	DefaultBackend             string   `yaml:"default_backend" json:"default_backend" mapstructure:"default_backend"`
 	FIDO2AlwaysUV              bool     `yaml:"fido2_always_uv" json:"fido2_always_uv" mapstructure:"fido2_always_uv"`

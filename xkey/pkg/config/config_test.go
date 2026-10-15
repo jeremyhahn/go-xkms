@@ -305,7 +305,6 @@ func TestConfigYAMLRoundtrip(t *testing.T) {
 	original.FIDO2.ResidentKey = true
 	original.FIDO2.ConformanceMode = true
 	original.FIDO2.Extensions = map[string]bool{"hmac-secret": true}
-	original.TPM.PlatformPCRBank = "sha256"
 	original.TPM.SRKHandle = 0x81000001
 	original.GUI.StartMinimized = true
 	original.GUI.RememberPosition = true
@@ -373,7 +372,6 @@ func TestConfigYAMLRoundtrip(t *testing.T) {
 	assert.Equal(t, original.FIDO2.ConformanceMode, restored.FIDO2.ConformanceMode)
 	assert.Equal(t, original.FIDO2.Extensions, restored.FIDO2.Extensions)
 	assert.Equal(t, original.TPM.Device, restored.TPM.Device)
-	assert.Equal(t, original.TPM.PlatformPCRBank, restored.TPM.PlatformPCRBank)
 	assert.Equal(t, original.TPM.SRKHandle, restored.TPM.SRKHandle)
 	assert.Equal(t, original.Log.Level, restored.Log.Level)
 	assert.Equal(t, original.GUI.Theme, restored.GUI.Theme)

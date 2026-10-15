@@ -27,6 +27,7 @@ import (
 	"github.com/jeremyhahn/go-xkms/pkg/ca"
 	"github.com/jeremyhahn/go-xkms/pkg/escrow"
 	"github.com/jeremyhahn/go-xkms/pkg/ratelimit"
+	"github.com/jeremyhahn/go-xkms/pkg/tpm2"
 	"github.com/jeremyhahn/go-xkms/pkg/trust/resolver"
 	"github.com/jeremyhahn/go-xkms/pkg/types"
 )
@@ -79,10 +80,10 @@ type Config struct {
 	// LoopbackDesktop marks this Config as backing the in-process loopback
 	// desktop engine (pkg/server/loopback), not a network-facing deployment.
 	// desktopConfig forces Protocols.REST on so the SPA can reach the engine
-	// over 127.0.0.1, which makes NetworkServing report true; Validate uses
+	// over 127.0.0.1, which makes NodeServing report true; Validate uses
 	// this field to skip, for that one launch shape only, the
 	// datastore.mode "standalone" and tls.enabled requirements
-	// NetworkServing's doc comment describes as exempt for local IPC. No
+	// NodeServing's doc comment describes as exempt for local IPC. No
 	// other check is affected: a loopback config still needs a valid port,
 	// a configured datastore, and everything else Validate enforces.
 	//
@@ -328,23 +329,22 @@ type ServerConfig struct {
 	TrustedProxies []string `yaml:"trusted_proxies,omitempty"`
 }
 
-// NetworkServing reports whether any network protocol is enabled. Network
-// serving runs exclusively on the unified API server: the embedded qrdb
-// node's multi-protocol server takes the ports above and serves the xkms
-// capability plane through the registered ServiceModule (pkg/apimodule).
-// It therefore requires datastore.mode "standalone" (the node this process
-// hosts) and explicit TLS material (qrdb's transports are TLS-only and the
-// xkms CA is not yet composed when the node starts) -- see Validate. QUIC
-// is served as HTTP/3 on the REST
-// port (advertised via Alt-Svc); the Unix socket is local IPC and never sets
-// a protocol this method looks at, so it never makes NetworkServing true.
+// NodeServing reports whether any protocol the embedded qrdb node serves is
+// enabled: the network protocols and the Unix socket. Serving runs
+// exclusively on the unified API server: the embedded qrdb node's
+// multi-protocol server takes the ports and socket path above and serves the
+// xkms capability plane through the registered ServiceModule
+// (pkg/apimodule). It therefore requires datastore.mode "standalone" (the
+// node this process hosts) and tls.enabled (qrdb's transports, the Unix
+// socket included, are TLS-only) -- see Validate. QUIC is served as HTTP/3
+// on the REST port (advertised via Alt-Svc).
 //
-// The loopback desktop engine (pkg/server/loopback) is also local IPC, but
-// it does so by forcing Protocols.REST on for a 127.0.0.1 listener, so this
+// The loopback desktop engine (pkg/server/loopback) is local IPC, but it
+// does so by forcing Protocols.REST on for a 127.0.0.1 listener, so this
 // method reports true for it same as a real network deployment; Validate is
 // what carves it back out, via Config.LoopbackDesktop.
-func (c *Config) NetworkServing() bool {
-	return c.Protocols.REST || c.Protocols.GRPC || c.Protocols.QUIC || c.Protocols.MCP
+func (c *Config) NodeServing() bool {
+	return c.Protocols.Unix || c.Protocols.REST || c.Protocols.GRPC || c.Protocols.QUIC || c.Protocols.MCP
 }
 
 // ProtocolsConfig controls which protocols are enabled
@@ -360,16 +360,9 @@ type ProtocolsConfig struct {
 
 // UnixConfig contains Unix domain socket server settings
 type UnixConfig struct {
-	// Enabled controls whether Unix socket is active (default: true)
-	Enabled bool `yaml:"enabled"`
-	// SocketPath is the path to the Unix socket file
+	// SocketPath is the path of the embedded qrdb node's TLS Unix listener
+	// (default: the pkg/api/unix default path). Protocols.Unix turns it on.
 	SocketPath string `yaml:"socket_path"`
-	// SocketMode is the file permissions for the socket (default: 0660)
-	SocketMode string `yaml:"socket_mode"`
-	// Protocol specifies the protocol to use over the Unix socket
-	// Valid values: "grpc"
-	// Default: "grpc"
-	Protocol string `yaml:"protocol"`
 }
 
 // LoggingConfig controls logging behavior
@@ -419,7 +412,7 @@ type TLSConfig struct {
 // AuthConfig controls authentication and authorization
 type AuthConfig struct {
 	Enabled bool   `yaml:"enabled"`
-	Type    string `yaml:"type"` // noop, mtls, jwt, adaptive, composite
+	Type    string `yaml:"type"` // mtls, jwt, composite
 
 	// JWT authentication
 	JWT *JWTConfig `yaml:"jwt,omitempty"`
@@ -1151,14 +1144,13 @@ type TPM2Config struct {
 	// SRKHandle is the persistent Storage Root Key handle (default 0x81000001).
 	SRKHandle uint32 `yaml:"srk_handle,omitempty"`
 
-	// PlatformPCR / PlatformPCRBank select the PCR index and bank of the
+	// PlatformPCRSelection selects the PCR index and bank of the
 	// built-in "platform" TPM policy. An unset PlatformPCR resolves to
 	// tpm2.DefaultPlatformPCR (16) and an unset bank to sha256, the same
 	// defaults xkey applies -- zero never selects PCR 0. Which policy a key
 	// or sealed object is bound to is a per-object reference (its TPM
 	// policy name), not a backend setting.
-	PlatformPCR     uint   `yaml:"platform_pcr,omitempty"`
-	PlatformPCRBank string `yaml:"platform_pcr_bank,omitempty"`
+	tpm2.PlatformPCRSelection `yaml:",inline"`
 
 	// VTPM configures the per-tenant virtual TPMs (swtpm) of tenants in
 	// vtpm TPM mode. vTPMs are off unless enabled here: a tenant set to vtpm
@@ -1371,11 +1363,11 @@ func (c *Config) ComplianceGaps() []string {
 	if !c.Auth.Enabled {
 		gaps = append(gaps, "authentication disabled (auth.enabled=false): access is anonymous")
 	} else if t := strings.ToLower(strings.TrimSpace(c.Auth.Type)); t == "" || t == "noop" || t == "none" {
-		// auth.enabled=true but the type resolves to the no-op authenticator
-		// (see config/auth.go: "noop"/"none"/"" all map to NewNoOpAuthenticator),
-		// so every request is admitted without credentials — indistinguishable
-		// from disabled auth for FedRAMP IA-2 / PCI 8.x / HIPAA.
-		gaps = append(gaps, "authentication is no-op (auth.type=\""+c.Auth.Type+"\"): access is effectively anonymous")
+		// auth.enabled=true with an empty or "none"/"noop" auth.type names no
+		// authenticator, so no caller could be identified: FedRAMP IA-2 /
+		// PCI 8.x / HIPAA treat it as disabled authentication, and the server
+		// refuses it.
+		gaps = append(gaps, "authentication disabled (auth.type=\""+c.Auth.Type+"\"): no authenticator identifies callers")
 	}
 	// RBAC is the authorization engine for every transport (REST, gRPC, QUIC,
 	// MCP), and it is backed by the one qrdb identity plane every deployment
@@ -1540,25 +1532,21 @@ func (c *Config) Validate() error {
 	}
 
 	// Validate server ports
-	// Network serving runs exclusively on the unified API server: the
-	// embedded qrdb node takes xkmsd's ports and serves the capability
+	// Serving runs exclusively on the unified API server: the embedded qrdb
+	// node takes xkmsd's ports and Unix socket and serves the capability
 	// plane through the registered ServiceModule. The node is the single
-	// core, so network protocols require this process to host it
-	// (datastore.mode "standalone"); and qrdb's transports are TLS-only
-	// while xkms's CA cannot auto-provision the node's certificate (the CA
-	// composes after — and stores into — the node), so explicit TLS
-	// material is required. Fail closed at validation rather than at node
-	// construction. Local IPC (the Unix socket and the loopback desktop
-	// engine) is exempt: the Unix socket never sets a NetworkServing
-	// protocol, and the loopback desktop engine opts out explicitly via
-	// LoopbackDesktop, which only trusted embedder code
-	// (pkg/server/loopback) can set.
-	if c.NetworkServing() && !c.LoopbackDesktop {
+	// core, so every served protocol requires this process to host it
+	// (datastore.mode "standalone"); and qrdb's transports, the Unix socket
+	// included, are TLS-only, so tls.enabled is required. Fail closed at
+	// validation rather than at node construction. The loopback desktop
+	// engine opts out explicitly via LoopbackDesktop, which only trusted
+	// embedder code (pkg/server/loopback) can set.
+	if c.NodeServing() && !c.LoopbackDesktop {
 		if !strings.EqualFold(c.Datastore.Mode, "standalone") {
-			return &errs.Message{Msg: fmt.Sprintf("network protocols require datastore.mode \"standalone\" (the embedded qrdb node is the unified API server); got %q — local-only deployments disable rest/grpc/quic/mcp and use the unix socket", c.Datastore.Mode)}
+			return &errs.Message{Msg: fmt.Sprintf("the unix, rest, grpc, quic and mcp protocols require datastore.mode \"standalone\" (the embedded qrdb node is the unified API server); got %q", c.Datastore.Mode)}
 		}
 		if !c.TLS.Enabled {
-			return &errs.Message{Msg: "network protocols require tls.enabled: the unified API server's transports are TLS-only (explicit cert_file/key_file are optional — without them a bootstrap certificate serves until the CA issues the real one)"}
+			return &errs.Message{Msg: "the unix, rest, grpc, quic and mcp protocols require tls.enabled: the unified API server's transports, the unix socket included, are TLS-only (explicit cert_file/key_file are optional — without them a bootstrap certificate serves until the CA issues the real one)"}
 		}
 	}
 
@@ -1598,17 +1586,6 @@ func (c *Config) Validate() error {
 	// Validate at least one protocol is enabled (Unix socket counts as a protocol)
 	if !c.Protocols.Unix && !c.Protocols.REST && !c.Protocols.GRPC && !c.Protocols.QUIC && !c.Protocols.MCP && !c.Protocols.Noise {
 		return &errs.Message{Msg: "at least one protocol must be enabled"}
-	}
-
-	// Validate Unix socket protocol
-	if c.Unix.Enabled && c.Unix.Protocol != "" {
-		validProtocols := map[string]bool{
-			"grpc": true,
-			"http": true,
-		}
-		if !validProtocols[strings.ToLower(c.Unix.Protocol)] {
-			return &errs.Message{Msg: fmt.Sprintf("invalid Unix socket protocol: %s (must be grpc or http)", c.Unix.Protocol)}
-		}
 	}
 
 	// Validate logging level
@@ -1673,10 +1650,9 @@ func (c *Config) Validate() error {
 	// certificates are generated from the CA, hardware-backed
 	// crypto.Signer) nor on the unified API server (a persisted bootstrap
 	// certificate serves until the CA issues the real one — see
-	// pkg/server/unified_tls.go). Only a TLS-enabled local-IPC deployment
-	// with neither a CA nor the unified server has no certificate source
-	// and must supply files.
-	if c.TLS.Enabled && c.CA == nil && !c.NetworkServing() {
+	// pkg/server/unified_tls.go). Only a TLS-enabled deployment with neither a
+	// CA nor the unified server (Noise only) has no certificate source and must supply files.
+	if c.TLS.Enabled && c.CA == nil && !c.NodeServing() {
 		if c.TLS.CertFile == "" {
 			return &errs.Message{Msg: "TLS cert_file is required when TLS is enabled without CA"}
 		}

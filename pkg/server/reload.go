@@ -122,8 +122,7 @@ func (s *Server) Reload(cfg *config.Config) error {
 // running listener does pick up a rebuilt authenticator, because it holds the
 // server's auth.LiveAuthenticator rather than a captured one.
 func (s *Server) listenersRunning() bool {
-	return s.unixGRPCServer != nil ||
-		s.restServer != nil ||
+	return s.restServer != nil ||
 		s.qrdbNode != nil ||
 		s.moduleMCP != nil
 }

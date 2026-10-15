@@ -58,7 +58,7 @@ func newScopedFixture(t *testing.T) *scopedFixture {
 	require.NoError(t, err)
 	tpm, ok := backend.TPM().(*pkgtpm2.TPM2)
 	require.True(t, ok)
-	registry, err := tpmpolicy.NewRegistry(testutil.NewMemoryDAOFactory())
+	registry, err := tpmpolicy.NewRegistry(testutil.NewMemoryDAOFactory(), 0)
 	require.NoError(t, err)
 	svc, err := tpmpolicy.NewService(tpmpolicy.Config{
 		Registry:    registry,

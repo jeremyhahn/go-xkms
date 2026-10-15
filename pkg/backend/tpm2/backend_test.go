@@ -306,6 +306,8 @@ func (m *mockTPM) Sign(rand io.Reader, digest []byte, opts crypto.SignerOpts) ([
 func (m *mockTPM) SetHierarchyAuth(oldSecret, newSecret types.Password, hierarchy *tpm2.TPMHandle) error {
 	return nil
 }
+
+func (m *mockTPM) SetPolicyBindingResolver(pkgtpm2.PolicyBindingResolver) {}
 func (m *mockTPM) SRKPublic() (tpm2.TPM2BName, tpm2.TPMTPublic, error) {
 	return tpm2.TPM2BName{}, tpm2.TPMTPublic{}, nil
 }

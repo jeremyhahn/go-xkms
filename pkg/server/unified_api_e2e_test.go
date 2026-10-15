@@ -27,6 +27,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/quic-go/quic-go/http3"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
@@ -34,6 +35,7 @@ import (
 	apitransport "github.com/jeremyhahn/go-xkms/pkg/api/transport"
 	mcptransport "github.com/jeremyhahn/go-xkms/pkg/api/transport/mcp"
 	quictransport "github.com/jeremyhahn/go-xkms/pkg/api/transport/quic"
+	"github.com/jeremyhahn/go-xkms/pkg/apimodule"
 	"github.com/jeremyhahn/go-xkms/pkg/ca"
 	"github.com/jeremyhahn/go-xkms/pkg/config"
 	"github.com/jeremyhahn/go-xkms/pkg/types"
@@ -41,7 +43,9 @@ import (
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/credentials"
+	"google.golang.org/grpc/metadata"
 	"google.golang.org/grpc/status"
+	"google.golang.org/protobuf/types/known/emptypb"
 )
 
 // loopbackPortReservation holds open listeners on ephemeral loopback ports, so
@@ -133,6 +137,12 @@ func TestUnifiedAPIServer_E2E_RESTThroughEmbeddedNode(t *testing.T) {
 	// carries the "localhost" SAN.
 	certFile, keyFile, caFile := createTestTLSFiles(t)
 
+	// The Unix socket lives in a private runtime directory, as a daemon's
+	// would.
+	socketDir := t.TempDir()
+	require.NoError(t, os.Chmod(socketDir, 0o700))
+	socketPath := filepath.Join(socketDir, "xkms.sock")
+
 	cfg := &config.Config{
 		Server: config.ServerConfig{
 			Host:     "127.0.0.1",
@@ -142,10 +152,12 @@ func TestUnifiedAPIServer_E2E_RESTThroughEmbeddedNode(t *testing.T) {
 			MCPPort:  ports.port(3),
 		},
 		Protocols: config.ProtocolsConfig{
+			Unix: true,
 			REST: true,
 			GRPC: true,
 			MCP:  true,
 		},
+		Unix:    config.UnixConfig{SocketPath: socketPath},
 		Logging: config.LoggingConfig{Level: "error", Format: "json"},
 		TLS: config.TLSConfig{
 			Enabled:  true,
@@ -153,7 +165,7 @@ func TestUnifiedAPIServer_E2E_RESTThroughEmbeddedNode(t *testing.T) {
 			KeyFile:  keyFile,
 			CAFile:   caFile,
 		},
-		Auth:      config.AuthConfig{Enabled: false},
+		Auth:      testJWTAuthConfig(t),
 		Datastore: config.DatastoreConfig{Path: tempDir},
 		Default:   config.DefaultConfig("software"),
 		Backends: config.BackendsConfig{
@@ -182,9 +194,18 @@ func TestUnifiedAPIServer_E2E_RESTThroughEmbeddedNode(t *testing.T) {
 
 	// Hand the ports over. Nothing may run between here and New: every
 	// statement in between is window in which another process can take one.
+	// The admin plane as xkmsd mounts it: identity-gated routes over a
+	// resolved router that answers once the node has authenticated a caller.
+	adminModule, err := apimodule.NewAdminModule(func() http.Handler {
+		return http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+			w.WriteHeader(http.StatusOK)
+		})
+	}, []string{"/admin", "/api/v1/tenants"})
+	require.NoError(t, err)
+
 	ports.Release(t)
 
-	server, err := New(cfg)
+	server, err := New(cfg, WithExtraModules(adminModule))
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = server.Shutdown() })
 
@@ -228,11 +249,34 @@ func TestUnifiedAPIServer_E2E_RESTThroughEmbeddedNode(t *testing.T) {
 	_ = resp.Body.Close()
 	assert.Equal(t, http.StatusOK, resp.StatusCode)
 
-	// gRPC surface: the module's KeystoreService must be registered on the
-	// node's gRPC transport. An unauthenticated call is expected to be
-	// denied by qrdb's default-deny interceptor — the discriminator is that
-	// the service RESOLVES: an "unknown service" error would mean the
-	// module never registered.
+	// A session JWT as xkmsd's login plane mints it: signed by the key the
+	// configured authenticator verifies against.
+	session := mintTestSessionJWT(t)
+
+	// Admin plane: the node's chain refuses an anonymous caller before the
+	// admin router runs, over HTTP/1.1-2 and over HTTP/3 alike; the session
+	// JWT is let through to it. gRPC and MCP carry no admin routes and refuse
+	// anonymous callers outright (below).
+	h3 := &http3.Transport{TLSClientConfig: &tls.Config{RootCAs: pool, MinVersion: tls.VersionTLS13}}
+	t.Cleanup(func() { _ = h3.Close() })
+	adminClients := map[string]*http.Client{
+		"REST":   client,
+		"HTTP/3": {Timeout: 2 * time.Second, Transport: h3},
+	}
+	for name, c := range adminClients {
+		for _, path := range []string{"/admin/api/v1/accounts", "/api/v1/tenants"} {
+			assert.Equal(t, http.StatusUnauthorized, adminStatus(t, c, base+path, ""),
+				"%s %s: an anonymous admin-plane call must be refused", name, path)
+			assert.Equal(t, http.StatusOK, adminStatus(t, c, base+path, session),
+				"%s %s: a session JWT must reach the admin router", name, path)
+		}
+	}
+
+	// gRPC surface: the module's KeystoreService is registered on the node's
+	// gRPC transport. An anonymous call is refused by the node's
+	// authentication chain (Unauthenticated, not Unimplemented: the service
+	// resolves), and the same call carrying the session JWT as bearer
+	// metadata is authenticated by the chain and served by the module.
 	grpcConn, err := grpc.NewClient(
 		fmt.Sprintf("localhost:%d", cfg.Server.GRPCPort),
 		grpc.WithTransportCredentials(credentials.NewTLS(&tls.Config{RootCAs: pool, MinVersion: tls.VersionTLS12})),
@@ -242,13 +286,35 @@ func TestUnifiedAPIServer_E2E_RESTThroughEmbeddedNode(t *testing.T) {
 
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
-	_, err = pb.NewKeystoreServiceClient(grpcConn).ListBackends(ctx, &pb.ListBackendsRequest{})
-	if err != nil {
-		st, ok := status.FromError(err)
-		require.True(t, ok, "expected a gRPC status error, got: %v", err)
-		assert.NotEqual(t, codes.Unimplemented, st.Code(),
-			"Unimplemented means the xkms KeystoreService was never registered on the unified server: %v", err)
-	}
+	keystore := pb.NewKeystoreServiceClient(grpcConn)
+	_, err = keystore.ListBackends(ctx, &pb.ListBackendsRequest{})
+	assert.Equal(t, codes.Unauthenticated, status.Code(err), "an anonymous gRPC call must be refused: %v", err)
+
+	authed := metadata.AppendToOutgoingContext(ctx, "authorization", "Bearer "+session)
+	backends, err := keystore.ListBackends(authed, &pb.ListBackendsRequest{})
+	require.NoError(t, err, "a session JWT must reach the module RPC over gRPC")
+	assert.NotEmpty(t, backends.GetBackends())
+
+	// Unix surface: the node's TLS unix listener carries the same chain.
+	// gRPC dials a unix target with the authority "localhost", which the
+	// server certificate names. An anonymous module RPC and an anonymous
+	// qrdb control-plane RPC are both refused; the session JWT is served.
+	unixConn, err := grpc.NewClient("unix://"+socketPath,
+		grpc.WithTransportCredentials(credentials.NewTLS(&tls.Config{RootCAs: pool, MinVersion: tls.VersionTLS12})),
+	)
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = unixConn.Close() })
+
+	unixKeystore := pb.NewKeystoreServiceClient(unixConn)
+	_, err = unixKeystore.ListBackends(ctx, &pb.ListBackendsRequest{})
+	assert.Equal(t, codes.Unauthenticated, status.Code(err), "an anonymous unix module call must be refused: %v", err)
+
+	err = unixConn.Invoke(ctx, "/qrdb.v1.QRDBService/ListUsers", &emptypb.Empty{}, &emptypb.Empty{})
+	assert.Equal(t, codes.Unauthenticated, status.Code(err), "an anonymous unix control-plane call must be refused: %v", err)
+
+	unixBackends, err := unixKeystore.ListBackends(authed, &pb.ListBackendsRequest{})
+	require.NoError(t, err, "a session JWT must reach the module RPC over the unix socket")
+	assert.NotEmpty(t, unixBackends.GetBackends())
 
 	// QUIC surface: qrdb's REST server serves the identical handler over an
 	// HTTP/3 listener on the same port, and xkms's QUIC wire IS HTTP/3 with
@@ -269,20 +335,41 @@ func TestUnifiedAPIServer_E2E_RESTThroughEmbeddedNode(t *testing.T) {
 	assert.NotNil(t, algs)
 
 	// MCP surface: the node's real MCP server (Streamable HTTP at /mcp)
-	// carries the module's xkms_* tools; the rewritten MCP transport client
-	// connects (health via the xkms_health tool) and drives a discovery
-	// method end to end.
-	mcpClient, err := mcptransport.NewWithConfig(&apitransport.Config{
+	// carries the module's xkms_* tools. An anonymous client cannot open a
+	// session; with the session JWT the rewritten MCP transport client
+	// connects (health via the xkms_health tool) and drives a module tool.
+	mcpConfig := &apitransport.Config{
 		Address:    fmt.Sprintf("localhost:%d", cfg.Server.MCPPort),
 		TLSEnabled: true,
 		TLSCAFile:  caFile,
-	})
+	}
+	anonymous, err := mcptransport.NewWithConfig(mcpConfig)
+	require.NoError(t, err)
+	require.Error(t, anonymous.Connect(ctx), "an anonymous MCP session must be refused")
+
+	mcpConfig.JWTToken = session
+	mcpClient, err := mcptransport.NewWithConfig(mcpConfig)
 	require.NoError(t, err)
 	require.NoError(t, mcpClient.Connect(ctx),
-		"real-MCP client must initialize a session against the unified MCP port")
+		"a session JWT must open an MCP session against the unified MCP port")
 	t.Cleanup(func() { _ = mcpClient.Close() })
 
 	mcpAlgs, err := mcpClient.Algorithms(ctx)
 	require.NoError(t, err, "module MCP tool must serve")
 	assert.NotNil(t, mcpAlgs)
+}
+
+// adminStatus issues GET url through c, as bearer when token is set, and
+// returns the response status.
+func adminStatus(t *testing.T, c *http.Client, url, token string) int {
+	t.Helper()
+	req, err := http.NewRequest(http.MethodGet, url, nil)
+	require.NoError(t, err)
+	if token != "" {
+		req.Header.Set("Authorization", "Bearer "+token)
+	}
+	resp, err := c.Do(req)
+	require.NoError(t, err)
+	require.NoError(t, resp.Body.Close())
+	return resp.StatusCode
 }

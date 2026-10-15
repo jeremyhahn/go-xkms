@@ -34,6 +34,7 @@ const naturalKeyField = "Key"
 type scopeEntity struct {
 	ID     uint64 `json:"id"`
 	Key    string `json:"key"`
+	Node   uint64 `json:"node"`
 	Tenant string `json:"tenant"`
 	Scope  Scope  `json:"scope"`
 }
@@ -49,6 +50,7 @@ func (e *scopeEntity) SetEntityID(id uint64) { e.ID = id }
 type policyEntity struct {
 	ID     uint64 `json:"id"`
 	Key    string `json:"key"`
+	Node   uint64 `json:"node"`
 	Tenant string `json:"tenant"`
 	Policy Policy `json:"policy"`
 }
@@ -64,6 +66,7 @@ func (e *policyEntity) SetEntityID(id uint64) { e.ID = id }
 type assignmentEntity struct {
 	ID         uint64     `json:"id"`
 	Key        string     `json:"key"`
+	Node       uint64     `json:"node"`
 	Tenant     string     `json:"tenant"`
 	Assignment Assignment `json:"assignment"`
 }

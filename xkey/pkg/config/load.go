@@ -265,10 +265,10 @@ func unmarshalAndValidate(v *viper.Viper) (*Config, error) {
 
 // stringToWeakSliceHookFunc splits a string into a []string on sep for ANY
 // slice target type (not just []string -- see mapstructure.StringToSliceHookFunc,
-// which only fires when the target is exactly []string, leaving a []int
-// field like AutoUnsealConfig.PCRs to WeaklyTypedInput's scalar-to-single-
-// element-slice path instead, which fails to parse a multi-value string as
-// one int). This is viper's own DecodeHook default
+// which only fires when the target is exactly []string, leaving any other
+// slice to WeaklyTypedInput's scalar-to-single-element-slice path instead,
+// which fails to parse a multi-value string as one element). This is viper's
+// own DecodeHook default
 // (stringToWeakSliceHookFunc, viper.go) reproduced here because passing
 // viper.DecodeHook at all replaces that default outright rather than
 // extending it, and it is unexported so it cannot be composed directly.

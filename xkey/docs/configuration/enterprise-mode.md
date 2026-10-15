@@ -55,7 +55,6 @@ would lock out the one person who could fix the deployment.
 | `require_encrypted_storage` | bool | true | GUI `storage_type` must be `barrier` (`enterprise_policy.go:171`) |
 | `storage_type` | string | "barrier" | Storage type chosen at provisioning (provisioning only) |
 | `require_tpm` | bool | false | TPM must be available on this host |
-| `platform_pcr_bank` | string | "" | PCR bank; SO provisioning sets `sha256` (provisioning only) |
 
 ### Backend Control
 

@@ -65,13 +65,11 @@ func TestXkmsdMetrics_ACMERegistryReachesServerMetrics(t *testing.T) {
 			Unix: true,
 		},
 		Unix: config.UnixConfig{
-			Enabled:    true,
 			SocketPath: filepath.Join(tempDir, "xkms.sock"),
-			Protocol:   "grpc",
 		},
 		Logging:   config.LoggingConfig{Level: "error", Format: "json"},
-		TLS:       config.TLSConfig{Enabled: false},
-		Auth:      config.AuthConfig{Enabled: false},
+		TLS:       config.TLSConfig{Enabled: true},
+		Auth:      jwtAuthConfig(t, tempDir),
 		Datastore: config.DatastoreConfig{Engine: "file", Path: tempDir},
 		Default:   config.DefaultConfig("software"),
 		Backends: config.BackendsConfig{

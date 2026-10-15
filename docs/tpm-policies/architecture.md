@@ -137,10 +137,14 @@ approval is current". The server makes no software comparison.
 ## Policy-authority lifecycle
 
 1. **Binding record.** Each object stores a binding record beside its blobs
-   (`.tpmpolicy`, format `XTPB` v2): scope, policy, index, hash, whether it
-   has an outer auth-value branch, and whether the policy has an
-   `auth_value` condition. Version 1 records still decode. The session code reads this record, not the
-   caller's attributes.
+   (`.tpmpolicy`, format `XTPB` v3, `pkg/tpm2/store/tpm_policy_binding.go:56`):
+   scope, policy, index, hash, whether it has an outer auth-value branch,
+   whether the policy has an `auth_value` condition, the scope authority's
+   public area (`TPM2B_PUBLIC`) and the policy's current approvals
+   (`tpm_policy_binding.go:114,118`). A revoked policy's record carries
+   neither. Older versions do not decode. The session code reads this
+   record, not the caller's attributes. See
+   [Offline authorization](#offline-authorization).
 2. **Scope creation** runs when a tenant's `tpm.mode` becomes `shared` or
    `vtpm`, and at first boot for `system`. It creates the scope's storage
    key, then the authority under it, then the counter, and writes the scope
@@ -331,16 +335,24 @@ in `<data dir>/tpm-policies`.
 
 | Entity type | Natural key | Holds |
 |---|---|---|
-| `tpm_scopes` | `<tenant>/` | the scope record (mode, handles, authority public, counter index, epoch) |
-| `tpm_policies` | `<tenant>/<name>` | the named policy and its current approval |
-| `tpm_assignments` | `<tenant>/<objectID>` | object → policy (name, policyRef, authority Name, authPolicy digest) |
+| `tpm_scopes` | `<node>/<tenant>/` | the scope record (mode, handles, authority public, counter index, epoch) |
+| `tpm_policies` | `<node>/<tenant>/<name>` | the named policy and its current approval |
+| `tpm_assignments` | `<node>/<tenant>/<objectID>` | object → policy (name, policyRef, authority Name, authPolicy digest) |
 
 - An entity's ID is the hash of its natural key, so a record is read and
   replaced by key, and `CreatePolicy` is a create-if-absent that refuses an
   existing name with `ErrPolicyExists`.
-- Every entity also carries its tenant. Listing filters on it, and the
-  natural key is prefixed with the tenant's root, so one tenant never reads
-  another's records.
+- Every entity also carries its tenant and its node. Listing filters on both,
+  and the natural key is prefixed with the node and the tenant's root
+  (`pkg/tpm2/policy/registry.go:158`), so one tenant never reads another's
+  records and nodes sharing the database never read or overwrite each
+  other's. Each node's records describe its own TPM.
+- `<node>` is the deployment's node ID, passed to `NewRegistry`
+  (`registry.go:60`) through `compose.TPMPolicyParams.NodeID`
+  (`pkg/compose/builders.go:322`). xkmsd passes `cluster.node_id`
+  (`pkg/server/backend_tpm2.go:154`), which is 0 on a single node. `pkg/localtpm`
+  (`localtpm.go:183`) and the embedding host (`pkg/apimodule/module_host.go:147`)
+  have no node ID and use 0.
 - `DeletePolicy` refuses with `*PolicyInUseError{Policy, Objects}` while an
   assignment names the policy, and lists the object IDs.
 - A store failure is a `*StoreError{Op, Key, Err}`, never a not-found answer.
@@ -462,6 +474,40 @@ and every transport calls it through `XKMSService`.
   scoped to the caller's tenant. `tenant:set_tpm_mode` is system-scope only.
 - The SDK exposes the same verbs on `xkms.Client`.
 
+## Offline authorization
+
+An object's binding record carries what its named policy needs to authorize
+without the registry, so a node can use a policy-bound object (for example,
+unseal at boot) before its database is reachable.
+
+- **Writing.** Creating a bound object fills the record's authority and
+  approvals from the resolver (`bindingApprovals`,
+  `pkg/tpm2/policy_binding_record.go:201`). Approvals signed by different
+  authorities (an object created mid-rotation) and a revoked policy leave both
+  out.
+- **Refreshing.** Whenever the scope's approvals change, the service rewrites
+  the record of every object assigned a named policy (`refreshBindings`,
+  `pkg/tpm2/policy/inventory.go:79`, through `RefreshPolicyBinding`,
+  `policy_binding_record.go:238`): after re-signing at a new epoch (update,
+  revoke, reconcile; `service.go:358`) and after an authority rotation
+  (`service.go:653`).
+- **Resolving.** `NewStaticPolicyResolver(records...)`
+  (`policy_binding_record.go:293`) builds a `PolicyBindingResolver`
+  (`pkg/tpm2/authorized_policy.go:293`) from records alone. It refuses an
+  approval not signed by the record's authority or not describing the
+  record's policy (`ErrPolicyApprovalMismatch`), a malformed approval
+  (`ErrInvalidPolicyApproval`), and two different records for one policy.
+  `Approvals` returns `ErrPolicyRevoked` for a record with none, and
+  `ErrPolicyBindingUnknown` (`policy_binding_record.go:30`) for a policy no
+  record names. Install it with `SetPolicyBindingResolver`, a method of the
+  `TrustedPlatformModule` interface (`pkg/tpm2/tpm.go:203`).
+- **Trust.** The record is not trusted. The TPM checks each approval's
+  signature against the authority the policy's NV index names
+  (`PolicyAuthorizeNV`) and its epoch against the scope's revocation counter
+  (`PolicyNV`), so a stale record (an old authority or a revoked epoch)
+  authorizes nothing (`TestService_OfflineAuthorization`,
+  `pkg/tpm2/policy/service_simulator_test.go`).
+
 ## Planned: unattended unlock across updates
 
 Not built yet; the SPEC.md row is `in progress`.
@@ -477,15 +523,6 @@ Not built yet; the SPEC.md row is `in progress`.
   `ErrPCRValuesSupplied` (`pkg/tpm2/policy/errors.go:93`) keeps its meaning.
   `verify` reports a branch approved for a registered image. Both are on every
   transport and in xkey and xkmsctl.
-- **Offline binding record with a static resolver.** The `.tpmpolicy` binding
-  record carries the approvals and the scope authority's public key. A static
-  `PolicyBindingResolver` (`pkg/tpm2/authorized_policy.go:287`) built from it
-  is exported through `sdk/go`. `SetPolicyBindingResolver`, today a method on
-  `*TPM2` only (`pkg/tpm2/authorized_policy.go:298`), joins the
-  `TrustedPlatformModule` interface (`pkg/tpm2/tpm.go:53`).
-- **Per-node records.** The `tpmpolicy` database is shared by every node of a
-  deployment, so the scope, policy and assignment records carry the node's
-  identity in their key, beside the tenant (see [Registry](#registry)).
 - **Consumer.** go-quicbaas consumes this surface by SDK re-export
   (`Security().TPMPolicy()` and the initrd static-resolver re-exports).
   go-trusted-platform reaches it only through go-quicbaas.

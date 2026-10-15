@@ -641,7 +641,7 @@ ChaCha20-Poly1305 and XChaCha20-Poly1305
 
 | Surface | Keys |
 |---|---|
-| `xkmsd` | `enabled`, `device_path`, `use_simulator`, `simulator_host`, `simulator_port`, `srk_handle` (default `0x81000001`), `platform_pcr` (default 16), `platform_pcr_bank` (default `sha256`), `vtpm` (`pkg/config/config.go:1139`; mapped at `pkg/server/backend_tpm2.go:122-127`) |
+| `xkmsd` | `enabled`, `device_path`, `use_simulator`, `simulator_host`, `simulator_port`, `srk_handle` (default `0x81000001`), `platform-pcr` (default 16) and `platform-pcr-bank` (default `sha256`) from the embedded `tpm2.PlatformPCRSelection` (`pkg/tpm2/config.go:182-185`), `vtpm` (`pkg/config/config.go:1141`; mapped at `pkg/server/backend_tpm2.go:109-117`) |
 | SDK | `device`, `key_storage`, `use_simulator`, `simulator_host`, `simulator_port` (`pkg/xkms/register_tpm2.go:54-66`) |
 
 When neither a device nor the simulator is configured, `Validate`

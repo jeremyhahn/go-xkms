@@ -126,7 +126,7 @@ func TestServer_CreateCompositeAuthenticator_NilConfigDerives(t *testing.T) {
 	server, err := New(cfg)
 	require.NoError(t, err)
 	defer func() { _ = server.Shutdown() }()
-	assert.Equal(t, "jwt", server.authenticator.Name())
+	assert.Equal(t, "composite", server.authenticator.Name())
 }
 
 // Empty methods behave identically to an absent section: derive.
@@ -144,7 +144,7 @@ func TestServer_CreateCompositeAuthenticator_EmptyMethodsDerives(t *testing.T) {
 	server, err := New(cfg)
 	require.NoError(t, err)
 	defer func() { _ = server.Shutdown() }()
-	assert.Equal(t, "jwt", server.authenticator.Name())
+	assert.Equal(t, "composite", server.authenticator.Name())
 }
 
 // The fail-closed branch: nothing derivable (no issuer, no JWT key, no TLS)
@@ -192,20 +192,19 @@ func TestServer_CreateCompositeAuthenticator_JWTMissingConfig(t *testing.T) {
 }
 
 func TestServer_CreateCompositeAuthenticator_MTLSNoTLS(t *testing.T) {
-	xkms.Reset()
-	defer xkms.Reset()
+	// New refuses TLS off while the TLS-only Unix socket is enabled, so the
+	// method is exercised directly on a server with TLS off.
+	s := newMinimalServer(t, &config.Config{
+		Auth: config.AuthConfig{
+			Enabled:   true,
+			Type:      "composite",
+			Composite: &config.CompositeAuthConfig{Methods: []string{"mtls"}},
+		},
+		TLS: config.TLSConfig{Enabled: false},
+	})
 
-	cfg := createMinimalConfig(t)
-	cfg.Auth.Enabled = true
-	cfg.Auth.Type = "composite"
-	cfg.Auth.Composite = &config.CompositeAuthConfig{
-		Methods: []string{"mtls"},
-	}
-	cfg.TLS.Enabled = false
-
-	_, err := New(cfg)
-	assert.Error(t, err)
-	assert.True(t, errors.Is(err, ErrCompositeMTLSRequiresTLS))
+	_, err := s.createCompositeAuthenticator()
+	assert.ErrorIs(t, err, ErrCompositeMTLSRequiresTLS)
 }
 
 func TestServer_CreateCompositeAuthenticator_MTLSSuccess(t *testing.T) {
@@ -413,6 +412,9 @@ func TestServer_CreateStorage_DistinctPrefixesOverOneStore(t *testing.T) {
 
 	cfg := createMinimalConfig(t)
 	cfg.Datastore.Engine = "memory"
+	// The node serves data only once first boot binds the admin a
+	// certificate, which needs the CA.
+	cfg.CA = testFirstBootCAConfig()
 
 	server, err := New(cfg)
 	require.NoError(t, err)

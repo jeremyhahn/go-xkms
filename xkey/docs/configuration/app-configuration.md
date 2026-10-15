@@ -225,8 +225,6 @@ agent:
 ```yaml
 tpm:
   device: "/dev/tpmrm0"
-  platform_pcr_bank: "sha256"
-  seal_pcr_bank: ""
   srk_handle: 0
   ek_handle: 0
 ```
@@ -289,8 +287,6 @@ gui:
   auto_unseal:
     enabled: false
     blob_id: ""
-    pcrs: []
-    pcr_bank: ""
     policy_type: ""
     policy_name: ""
     backend: ""

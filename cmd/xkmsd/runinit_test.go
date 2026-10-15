@@ -164,6 +164,7 @@ func TestRunInit_LoadsConfigFile(t *testing.T) {
 	dir := t.TempDir()
 	content := "server:\n  host: \"init-config.example.com\"\n" +
 		"protocols:\n  unix: true\n" +
+		"tls:\n  enabled: true\n" +
 		"unix:\n  enabled: true\n  socket_path: \"" + filepath.Join(dir, "xkms.sock") + "\"\n  protocol: \"grpc\"\n" +
 		"datastore:\n  engine: \"pebble\"\n  mode: \"standalone\"\n  path: \"" + filepath.Join(dir, "storage") + "\"\n" +
 		"barrier:\n  enabled: true\n  strategy: \"none\"\n" +

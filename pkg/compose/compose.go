@@ -91,6 +91,10 @@ type Deps struct {
 	// leaves vtpm mode unavailable.
 	VTPM *vtpm.Config
 
+	// NodeID is the deployment's node ID (cluster.node_id; 0 on a single
+	// node), which keys the TPM policy registry's records to this node.
+	NodeID uint64
+
 	// Leases is the host qrdb node's lease primitive
 	// (qrdbsdk.Client.Coordination()), which serializes OIDC credential
 	// refreshes and elects their scheduler's leader across a cluster. The
@@ -241,6 +245,7 @@ func Build(ctx context.Context, d Deps) (*Stores, error) {
 			return BuildTPMPolicyService(TPMPolicyParams{
 				Backend: d.TPMBackend,
 				DAOs:    d.DAOs,
+				NodeID:  d.NodeID,
 				VTPM:    d.VTPM,
 				Logger:  b.logger,
 			})

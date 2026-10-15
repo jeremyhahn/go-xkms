@@ -240,10 +240,11 @@ Each was replaced by the model the operation already declared:
   permission (go-qrdb#504: there is no implicit default any more). xkms
   declares scope only for the handful of resource:action pairs it alone
   owns; qrdb declares the rest.
-- **The cluster control plane is a separate, weaker-gated surface.**
+- **The cluster control plane is a separate surface.**
   `xkmsctl cluster`/`rebalance` dial go-qrdb's own control-plane service,
-  which is authorized by transport trust (TLS + adaptive auth; Unix socket
-  filesystem permissions) rather than this RBAC vocabulary — see
+  which authenticates every caller through the node chain (the Unix socket
+  included; anonymous calls are refused) and authorizes with go-qrdb's admin
+  permissions rather than this RBAC vocabulary — see
   [`../clustering/architecture.md`](../clustering/architecture.md).
 - **The ACME admin surface has its own, separate `roles:*` API** for
   per-tenant ACME role CRUD (`pkg/acme/admin`, `pkg/acme/api/server`). It

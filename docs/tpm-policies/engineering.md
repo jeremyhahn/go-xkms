@@ -52,16 +52,21 @@ Design: [`architecture.md`](architecture.md). Surface: [`api.md`](api.md).
   service's error, such as `tpmpolicy.ErrTPMModeNone`.
 - `Unseal` of in-memory blobs reads a named policy's binding record from the
   key store in `UnsealOptions.Backend`. The backend passes the scope's store.
+- `SetPolicyBindingResolver` (`pkg/tpm2/tpm.go:203`) replaces the resolver a
+  named policy is authorized through; a `tpm2.StaticPolicyResolver` built
+  from binding records authorizes with no database (architecture.md,
+  "Offline authorization").
 - `TenantBoundSealing()` reports true with a scope provider;
   `xkms.TenantScopedBackend` then permits TPM2 sealing for a tenant, which it
   refuses otherwise (go-xkms#1228).
 
 ## Composition
 
-`compose.BuildTPMPolicyService(TPMPolicyParams{Backend, DAOs, VTPM,
+`compose.BuildTPMPolicyService(TPMPolicyParams{Backend, DAOs, NodeID, VTPM,
 Logger})`:
 
-- registry (`tpmpolicy.NewRegistry(DAOs)`) over the DAO factory serving the
+- registry (`tpmpolicy.NewRegistry(DAOs, NodeID)`,
+  `pkg/compose/builders.go:350`) over the DAO factory serving the
   `tpmpolicy.DatabaseName` database; tenant object blobs as `TPMBlob`
   entities (`tpmstore.NewBlobStore(DAOs)`, one `Tenant` store per scope) in
   the `tpmstore.DatabaseName` (`tpm2`) database. A factory that does not

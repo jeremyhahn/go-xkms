@@ -18,7 +18,9 @@ import (
 	"strings"
 
 	xscope "github.com/jeremyhahn/go-xkms/pkg/scope"
+	pkgtpm2 "github.com/jeremyhahn/go-xkms/pkg/tpm2"
 	"github.com/jeremyhahn/go-xkms/pkg/tpm2/store"
+	"github.com/jeremyhahn/go-xkms/pkg/types"
 )
 
 // reservedPrefixes are the CN prefixes of the objects the service itself
@@ -69,4 +71,28 @@ func (s *Service) KeyStore(tenant string) (store.KeyBackend, error) {
 		return s.keys, nil
 	}
 	return s.tenantKeys(name)
+}
+
+// refreshBindings rewrites the binding record of every object of st's scope
+// bound to a named policy with the scope's current approvals, so each record
+// keeps authorizing offline after the approvals change.
+func (s *Service) refreshBindings(ctx context.Context, st *scopeState) error {
+	assignments, err := s.registry.Assignments(ctx, st.name)
+	if err != nil {
+		return err
+	}
+	keys, err := s.KeyStore(st.name)
+	if err != nil {
+		return err
+	}
+	for _, a := range assignments {
+		if a.Policy == PlatformPolicy {
+			continue
+		}
+		attrs := &types.KeyAttributes{CN: strings.TrimPrefix(a.ObjectID, string(a.Kind)+"/")}
+		if err := pkgtpm2.RefreshPolicyBinding(s, attrs, keys); err != nil {
+			return &TPMError{Scope: st.name, Op: "refresh binding record of " + a.ObjectID, Err: err}
+		}
+	}
+	return nil
 }

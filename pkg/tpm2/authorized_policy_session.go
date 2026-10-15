@@ -98,6 +98,10 @@ func (tpm *TPM2) namedPolicyBinding(
 		slog.Bool("auth_value_branch", withAuthValue),
 		slog.Bool("auth_value_condition", info.AuthValueCondition))
 
+	authority, approvals, err := bindingApprovals(resolver, scope, keyAttrs.TPMPolicy)
+	if err != nil {
+		return nil, err
+	}
 	return &store.TPMPolicyBinding{
 		Scope:              scope,
 		Policy:             keyAttrs.TPMPolicy,
@@ -105,6 +109,8 @@ func (tpm *TPM2) namedPolicyBinding(
 		HashAlg:            uint16(info.HashAlg),
 		AuthValueBranch:    withAuthValue,
 		AuthValueCondition: info.AuthValueCondition,
+		Authority:          authority,
+		Approvals:          approvals,
 	}, nil
 }
 

@@ -15,6 +15,7 @@ package initialize
 
 import (
 	"context"
+	"crypto"
 	"crypto/ecdsa"
 	"crypto/elliptic"
 	"crypto/rand"
@@ -50,6 +51,14 @@ func (r *recordingCA) IssueCertificate(ctx context.Context, req *ca.CertificateR
 		return nil, r.issueErr
 	}
 	return r.mockCA.IssueCertificate(ctx, req)
+}
+
+func (r *recordingCA) IssueCertificateForKey(ctx context.Context, req *ca.CertificateRequest, publicKey crypto.PublicKey) (*ca.IssuedCertificate, error) {
+	r.lastIssueReq = req
+	if r.issueErr != nil {
+		return nil, r.issueErr
+	}
+	return r.mockCA.IssueCertificateForKey(ctx, req, publicKey)
 }
 
 func (r *recordingCA) SignCSR(ctx context.Context, csrPEM []byte, opts *ca.SignOptions) (*x509.Certificate, error) {
@@ -225,6 +234,7 @@ func TestCeremonyIssuePath_StillPinsSystemTenant(t *testing.T) {
 	adapter := NewCAAdapter(rec, "example.org")
 
 	_, err := adapter.IssueCertificate(context.Background(), &qrdbsdk.IssueCertRequest{
+		PublicKey:  newTestPublicKey(t),
 		CommonName: "so-officer",
 	})
 	require.NoError(t, err)

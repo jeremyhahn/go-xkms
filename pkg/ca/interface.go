@@ -225,6 +225,16 @@ type CAIssuer interface {
 	// Thread-safe: Yes
 	IssueCertificate(ctx context.Context, request *CertificateRequest) (*IssuedCertificate, error)
 
+	// IssueCertificateForKey issues a certificate binding publicKey, a key
+	// the caller holds. The CA neither generates nor sees the private half,
+	// and asks for no proof of possession: the caller vouches for the key.
+	// The returned IssuedCertificate carries no private key.
+	//
+	// Returns ErrPublicKeyRequired if publicKey is nil.
+	//
+	// Thread-safe: Yes
+	IssueCertificateForKey(ctx context.Context, request *CertificateRequest, publicKey crypto.PublicKey) (*IssuedCertificate, error)
+
 	// IssueCertificateWithProfile issues a certificate using a named profile.
 	//
 	// Profiles define standard configurations for different certificate types

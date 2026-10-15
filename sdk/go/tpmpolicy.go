@@ -16,6 +16,7 @@ package xkms
 import (
 	"github.com/jeremyhahn/go-xkms/pkg/compose"
 	"github.com/jeremyhahn/go-xkms/pkg/scope"
+	"github.com/jeremyhahn/go-xkms/pkg/tpm2"
 	tpmpolicy "github.com/jeremyhahn/go-xkms/pkg/tpm2/policy"
 	"github.com/jeremyhahn/go-xkms/pkg/tpm2/vtpm"
 	pkgxkms "github.com/jeremyhahn/go-xkms/pkg/xkms"
@@ -77,6 +78,15 @@ type TPMPolicyAuthority = tpmpolicy.Authority
 
 // TPMPolicyApproval is the authority's signed approval of a policy.
 type TPMPolicyApproval = tpmpolicy.Approval
+
+// TPMPolicyBindingResolver is what a TPM consults to create and use objects
+// bound to named policies: a TPMPolicyService or a TPMStaticPolicyResolver.
+type TPMPolicyBindingResolver = tpm2.PolicyBindingResolver
+
+// TPMStaticPolicyResolver resolves named TPM policies from binding records
+// alone, with no registry or database, so a node can authorize its policies
+// offline. Install it with TPM.SetPolicyBindingResolver.
+type TPMStaticPolicyResolver = tpm2.StaticPolicyResolver
 
 // TPMMode is a tenant's TPM mode.
 type TPMMode = tpmpolicy.Mode
@@ -189,6 +199,10 @@ var (
 	// NewTPMPolicyPCRBranch returns an in-process branch holding one pcr
 	// condition.
 	NewTPMPolicyPCRBranch = tpmpolicy.PCRBranch
+
+	// NewTPMStaticPolicyResolver returns a TPMStaticPolicyResolver over
+	// binding records (.tpmpolicy blobs).
+	NewTPMStaticPolicyResolver = tpm2.NewStaticPolicyResolver
 )
 
 // TPM policy service errors.
@@ -198,6 +212,7 @@ var (
 	ErrTPMPolicyReserved    = tpmpolicy.ErrReservedPolicy
 	ErrTPMPolicyNotAssigned = tpmpolicy.ErrNotAssigned
 	ErrTPMPolicyRevoked     = tpmpolicy.ErrPolicyRevoked
+	ErrTPMPolicyUnbound     = tpm2.ErrPolicyBindingUnknown
 	ErrTPMScopeNotFound     = tpmpolicy.ErrScopeNotFound
 	ErrTPMModeNone          = tpmpolicy.ErrTPMModeNone
 	ErrTPMVTPMUnavailable   = tpmpolicy.ErrVTPMUnavailable

@@ -355,16 +355,18 @@ func TestXKMSdEndpoint_Client_SchemeDispatch(t *testing.T) {
 		wantTLS    bool
 	}{
 		{
-			name:       "unix socket strips scheme",
+			name:       "unix socket strips scheme and uses tls",
 			url:        "unix:///run/xkms/xkms.sock",
 			wantClient: &unixtransport.Transport{},
 			wantAddr:   "/run/xkms/xkms.sock",
+			wantTLS:    true,
 		},
 		{
 			name:       "unix socket keeps relative path",
 			url:        "unix://xkms-data/xkms.sock",
 			wantClient: &unixtransport.Transport{},
 			wantAddr:   "xkms-data/xkms.sock",
+			wantTLS:    true,
 		},
 		{
 			name:       "http uses full url",
@@ -487,14 +489,21 @@ func TestXKMSdEndpoint_Client_ThreadsClientCertificate(t *testing.T) {
 	assert.Len(t, configured.Config().TLSConfig.Certificates, 1, "the mTLS client credential is presented")
 }
 
+// TestXKMSdEndpoint_Client_UnreadableClientCertificate verifies every TLS
+// transport, xkmsd's unix socket included, refuses to build a client whose
+// client certificate cannot be loaded.
 func TestXKMSdEndpoint_Client_UnreadableClientCertificate(t *testing.T) {
-	client, err := XKMSdEndpoint{
-		URL:         "grpcs://xkmsd.example.com:9443",
-		TLSCertFile: filepath.Join(t.TempDir(), "absent-cert.pem"),
-		TLSKeyFile:  filepath.Join(t.TempDir(), "absent-key.pem"),
-	}.Client()
-	assert.Nil(t, client)
-	assert.ErrorIs(t, err, ErrXKMSdTLSConfigFailed)
+	for _, rawURL := range []string{"grpcs://xkmsd.example.com:9443", "unix:///run/xkms/xkms.sock"} {
+		t.Run(rawURL, func(t *testing.T) {
+			client, err := XKMSdEndpoint{
+				URL:         rawURL,
+				TLSCertFile: filepath.Join(t.TempDir(), "absent-cert.pem"),
+				TLSKeyFile:  filepath.Join(t.TempDir(), "absent-key.pem"),
+			}.Client()
+			assert.Nil(t, client)
+			assert.ErrorIs(t, err, ErrXKMSdTLSConfigFailed)
+		})
+	}
 }
 
 // writeTestClientCredential writes a self-signed client certificate and its

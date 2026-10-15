@@ -20,11 +20,17 @@ package main
 // for a standalone deployment -- rather than faking the client.
 
 import (
+	"crypto/ecdsa"
+	"crypto/elliptic"
+	"crypto/rand"
+	"crypto/x509"
+	"encoding/pem"
 	"errors"
 	"io"
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"path/filepath"
 	"testing"
 
@@ -40,12 +46,40 @@ import (
 
 // embeddedQRDBConfig returns the base configuration every embedded-qrdb
 // fixture in this package shares: an embedded qrdb node rooted at a fresh
-// temp dir, network protocols off (RESTPort 0, only the Unix socket
-// enabled), TLS and auth both disabled, and a single software backend. It
-// passes config.Config.Validate (no NetworkServing protocol is on, so the
-// qrdb-storage + TLS requirement never engages) -- the "compliant
+// temp dir, network protocols off (RESTPort 0, only the node's TLS Unix
+// socket enabled, serving its bootstrap certificate), and a single software
+// backend. It passes config.Config.Validate (standalone datastore plus
+// tls.enabled, which the Unix socket requires) -- the "compliant
 // server.New fixture" #705's triage asked for, shared by every caller below
 // rather than each hand-rolling its own literal.
+// jwtAuthConfig returns a JWT auth configuration whose verification key is a
+// freshly generated P-256 public key written under dir. xkmsd has no
+// unauthenticated mode, so every test server needs a real authenticator.
+func jwtAuthConfig(t *testing.T, dir string) config.AuthConfig {
+	t.Helper()
+	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	if err != nil {
+		t.Fatalf("generate JWT key: %v", err)
+	}
+	der, err := x509.MarshalPKIXPublicKey(&key.PublicKey)
+	if err != nil {
+		t.Fatalf("marshal JWT public key: %v", err)
+	}
+	keyFile := filepath.Join(dir, "jwt-public.pem")
+	if err := os.WriteFile(keyFile, pem.EncodeToMemory(&pem.Block{Type: "PUBLIC KEY", Bytes: der}), 0o600); err != nil {
+		t.Fatalf("write JWT public key: %v", err)
+	}
+	return config.AuthConfig{
+		Enabled: true,
+		Type:    "jwt",
+		JWT: &config.JWTConfig{
+			PublicKeyFile: keyFile,
+			Issuer:        "xkmsd-test",
+			Audience:      []string{"xkmsd-test"},
+		},
+	}
+}
+
 func embeddedQRDBConfig(t *testing.T) *config.Config {
 	t.Helper()
 	tempDir := t.TempDir()
@@ -53,13 +87,11 @@ func embeddedQRDBConfig(t *testing.T) *config.Config {
 		Server:    config.ServerConfig{Host: "127.0.0.1", RESTPort: 0},
 		Protocols: config.ProtocolsConfig{Unix: true},
 		Unix: config.UnixConfig{
-			Enabled:    true,
 			SocketPath: filepath.Join(tempDir, "xkms.sock"),
-			Protocol:   "grpc",
 		},
 		Logging:   config.LoggingConfig{Level: "error", Format: "json"},
-		TLS:       config.TLSConfig{Enabled: false},
-		Auth:      config.AuthConfig{Enabled: false},
+		TLS:       config.TLSConfig{Enabled: true},
+		Auth:      jwtAuthConfig(t, tempDir),
 		Datastore: config.DatastoreConfig{Path: tempDir},
 		Default:   config.DefaultConfig("software"),
 		Backends: config.BackendsConfig{

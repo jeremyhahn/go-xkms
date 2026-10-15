@@ -14,6 +14,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	unixapi "github.com/jeremyhahn/go-xkms/pkg/api/unix"
 	"github.com/jeremyhahn/go-xkms/pkg/config"
 	"github.com/jeremyhahn/go-xkms/pkg/datastore"
 	"github.com/jeremyhahn/go-xkms/pkg/xkms"
@@ -234,6 +235,42 @@ func TestBuildXKMSQRDBConfig_StandaloneUsesMemory(t *testing.T) {
 	require.NotNil(t, qcfg)
 	require.Len(t, qcfg.Databases, 1)
 	assert.Equal(t, "memory", qcfg.Databases[0].Backend)
+}
+
+// TestBuildXKMSQRDBConfig_UnixSocket proves the Unix socket is mapped onto the
+// node's TLS unix listener: the configured path is kept, an empty one falls
+// back to the documented default, and a disabled socket stays off.
+func TestBuildXKMSQRDBConfig_UnixSocket(t *testing.T) {
+	tests := []struct {
+		name       string
+		socketPath string
+		wantPath   string
+	}{
+		{name: "configured path", socketPath: "/run/xkms/custom.sock", wantPath: "/run/xkms/custom.sock"},
+		{name: "default path", socketPath: "", wantPath: unixapi.DefaultSocketPath},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			cfg := &config.Config{
+				Protocols: config.ProtocolsConfig{Unix: true},
+				Unix:      config.UnixConfig{SocketPath: tt.socketPath},
+				Datastore: config.DatastoreConfig{Path: t.TempDir()},
+			}
+			qcfg := newMinimalServer(t, cfg).buildXKMSQRDBConfig()
+			assert.True(t, qcfg.Protocols.Unix)
+			assert.Equal(t, tt.wantPath, qcfg.Unix.SocketPath)
+		})
+	}
+
+	t.Run("disabled socket stays off", func(t *testing.T) {
+		cfg := &config.Config{
+			Protocols: config.ProtocolsConfig{Noise: true},
+			Unix:      config.UnixConfig{SocketPath: "/run/xkms/custom.sock"},
+			Datastore: config.DatastoreConfig{Path: t.TempDir()},
+		}
+		qcfg := newMinimalServer(t, cfg).buildXKMSQRDBConfig()
+		assert.False(t, qcfg.Protocols.Unix)
+	})
 }
 
 // TestBuildXKMSQRDBConfig_ClusterFields exercises the Cluster.Enabled branch

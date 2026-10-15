@@ -18,6 +18,11 @@ func pebbleMinimalConfig(t *testing.T) *config.Config {
 	cfg := createMinimalConfig(t)
 	cfg.Datastore.Engine = "pebble"
 	cfg.Datastore.Mode = "standalone"
+	// The node serves its data plane, the feature databases New creates
+	// included, only once first boot binds the admin a certificate, which
+	// needs the CA. Without it New fails at the first feature database,
+	// before the config under test is read.
+	cfg.CA = testFirstBootCAConfig()
 	return cfg
 }
 

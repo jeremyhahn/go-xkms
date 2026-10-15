@@ -53,7 +53,7 @@ func TestRegisterConfigKeys_EveryLeafIsKnownToViper(t *testing.T) {
 	}
 	for _, key := range []string{
 		"log.level", "backend.default", "backend.tpm2.device", "gui.theme",
-		"gui.server.address", "gui.auto_unseal.pcrs", "tpm.device",
+		"gui.server.address", "gui.auto_unseal.blob_id", "tpm.device",
 		"fido2.always_uv", "xkmsd.address", "policy.min_pin_length",
 		"oidc.callback_host", "oidc.callback_port",
 		"agent.listen_address", "phone.relay_listen_address",

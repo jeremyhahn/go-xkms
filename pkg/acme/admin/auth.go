@@ -89,10 +89,11 @@ func (u *AuthenticatedUser) identity() *auth.Identity {
 // to resolve the caller's qrdb role grants, and qrdb's own services read the
 // bound tenant to confine every identity-plane call the request makes.
 //
-// The ACME admin routes are public routes on the qrdb module boundary, so
-// qrdb's middleware never binds a tenant for them; without this binding every
-// call the admin service makes into qrdb (roles, users) resolves to the
-// system tenant and qrdb's EffectiveTenant enforcement admits it everywhere.
+// The admin surface binds the tenant itself rather than relying on whatever
+// qrdb's middleware bound for the identity-gated module route; without this
+// binding every call the admin service makes into qrdb (roles, users) could
+// resolve to the system tenant, which qrdb's EffectiveTenant enforcement
+// admits everywhere.
 // The tenant is normalized first, so a user with no tenant binds the system
 // tenant explicitly (qrdbsdk.NormalizeTenantID).
 func withUser(ctx context.Context, user *AuthenticatedUser) context.Context {

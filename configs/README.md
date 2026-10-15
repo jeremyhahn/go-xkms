@@ -100,9 +100,7 @@ when the file pins a host.
 - `XKMS_SERVER_MCP_PORT` - MCP server port
 
 ### Unix Socket Configuration
-- `XKMS_UNIX_SOCKET_PATH` - Unix socket file path
-- `XKMS_UNIX_SOCKET_MODE` - Unix socket permissions (e.g., "0660")
-- `XKMS_UNIX_PROTOCOL` - Unix socket protocol ("grpc" or "http")
+- `XKMS_UNIX_SOCKET_PATH` - Unix socket file path (the socket is gRPC over TLS)
 
 ### Logging Configuration
 - `XKMS_LOGGING_LEVEL` - Log level (debug, info, warn, error, fatal)

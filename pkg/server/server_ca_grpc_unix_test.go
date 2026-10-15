@@ -13,7 +13,7 @@
 
 // server_ca_grpc_unix_test.go is the go-xkms#951 end-to-end regression test:
 // it drives the real xkmsd composition root (New + Start) and proves a CA
-// RPC over the Unix socket gRPC listener succeeds when a CA is configured
+// RPC over the node's TLS Unix socket, carrying a session JWT, succeeds when a CA is configured
 // and answers codes.Unavailable when none is. Before the fix, the gRPC
 // service's CA servicer came from a package-level grpcinternal.SetCA global
 // that startUnix never called, so this RPC answered Unavailable even with a
@@ -24,6 +24,7 @@ import (
 	"context"
 	"crypto/rand"
 	"crypto/rsa"
+	"crypto/tls"
 	"crypto/x509"
 	"crypto/x509/pkix"
 	"math/big"
@@ -34,11 +35,14 @@ import (
 	"github.com/stretchr/testify/require"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
-	"google.golang.org/grpc/credentials/insecure"
+	"google.golang.org/grpc/credentials"
+	"google.golang.org/grpc/metadata"
 	"google.golang.org/grpc/status"
 
 	pb "github.com/jeremyhahn/go-xkms/pkg/api/grpc/proto/xkmsv1"
+	"github.com/jeremyhahn/go-xkms/pkg/ca"
 	"github.com/jeremyhahn/go-xkms/pkg/ca/provider"
+	"github.com/jeremyhahn/go-xkms/pkg/types"
 	"github.com/jeremyhahn/go-xkms/pkg/xkms"
 )
 
@@ -99,9 +103,38 @@ func generateServerTestCACert(t *testing.T) *x509.Certificate {
 // dialServerUnixGRPC opens a client connection to a Unix-socket gRPC
 // listener started by the real composition root, waiting for the socket
 // file to appear first.
-func dialServerUnixGRPC(t *testing.T, socketPath string) *grpc.ClientConn {
+// newUnixCATestServer composes a server whose only listener is the node's TLS
+// Unix socket. A CA is configured so first boot issues and binds the
+// administrator's certificate: a node without that binding answers every
+// authenticated call with "awaiting admin credential".
+func newUnixCATestServer(t *testing.T) *Server {
 	t.Helper()
 
+	cfg := createMinimalConfig(t)
+	cfg.Metrics.Enabled = false
+	cfg.CA = &ca.MultiIdentityCAConfig{
+		DefaultValidityDays: 365,
+		Identity: []ca.Identity{
+			{
+				IsRoot:  true,
+				Valid:   1,
+				Subject: ca.Subject{CommonName: "Unix gRPC CA Test Root", Organization: "Test Org", Country: "US"},
+				Keys: []*types.KeyConfig{
+					{KeyAlgorithm: types.AlgorithmECDSA, ECCConfig: &types.ECCConfig{Curve: types.CurveP256}},
+				},
+			},
+		},
+	}
+
+	server, err := New(cfg)
+	require.NoError(t, err)
+	return server
+}
+
+func dialServerUnixGRPC(t *testing.T, s *Server) *grpc.ClientConn {
+	t.Helper()
+
+	socketPath := s.config.Unix.SocketPath
 	deadline := time.Now().Add(5 * time.Second)
 	for time.Now().Before(deadline) {
 		if _, err := os.Stat(socketPath); err == nil {
@@ -111,8 +144,17 @@ func dialServerUnixGRPC(t *testing.T, socketPath string) *grpc.ClientConn {
 		time.Sleep(10 * time.Millisecond)
 	}
 
+	// The socket serves the node's bootstrap certificate; createMinimalConfig
+	// has it name localhost, the authority gRPC uses for a unix target.
+	served, err := s.ensureBootstrapCert()
+	require.NoError(t, err)
+	leaf, err := x509.ParseCertificate(served.Certificate[0])
+	require.NoError(t, err)
+	roots := x509.NewCertPool()
+	roots.AddCert(leaf)
+
 	conn, err := grpc.NewClient("unix://"+socketPath,
-		grpc.WithTransportCredentials(insecure.NewCredentials()),
+		grpc.WithTransportCredentials(credentials.NewTLS(&tls.Config{RootCAs: roots, MinVersion: tls.VersionTLS12})),
 	)
 	require.NoError(t, err)
 	return conn
@@ -125,31 +167,31 @@ func TestServer_UnixGRPC_GetCACertificate_NoCA(t *testing.T) {
 	xkms.Reset()
 	defer xkms.Reset()
 
-	cfg := createMinimalConfig(t)
-	cfg.Protocols.REST = false
-	cfg.Protocols.GRPC = false
-	cfg.Protocols.QUIC = false
-	cfg.Protocols.MCP = false
-	cfg.Metrics.Enabled = false
+	server := newUnixCATestServer(t)
 
-	server, err := New(cfg)
-	require.NoError(t, err)
+	// First boot needed the configured CA to bind the administrator; the
+	// crypto service is then left without one, which the module sees on
+	// its first RPC.
+	server.xkmsService.SetCA(nil)
 
 	require.NoError(t, server.Start())
 	defer func() { _ = server.Shutdown() }()
 
-	conn := dialServerUnixGRPC(t, cfg.Unix.SocketPath)
+	conn := dialServerUnixGRPC(t, server)
 	defer func() { _ = conn.Close() }()
 	client := pb.NewKeystoreServiceClient(conn)
 
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
+	ctx = metadata.AppendToOutgoingContext(ctx, "authorization", "Bearer "+mintTestSessionJWT(t))
 
-	_, err = client.GetCACertificate(ctx, &pb.GetCACertificateRequest{})
+	_, err := client.GetCACertificate(ctx, &pb.GetCACertificateRequest{})
 	require.Error(t, err)
 	st, ok := status.FromError(err)
 	require.True(t, ok)
 	require.Equal(t, codes.Unavailable, st.Code())
+	require.NotContains(t, st.Message(), "awaiting admin credential",
+		"the refusal must come from the missing CA, not from an unbound node")
 }
 
 // TestServer_UnixGRPC_GetCACertificate_WithCA verifies a CA RPC over the
@@ -161,15 +203,7 @@ func TestServer_UnixGRPC_GetCACertificate_WithCA(t *testing.T) {
 	xkms.Reset()
 	defer xkms.Reset()
 
-	cfg := createMinimalConfig(t)
-	cfg.Protocols.REST = false
-	cfg.Protocols.GRPC = false
-	cfg.Protocols.QUIC = false
-	cfg.Protocols.MCP = false
-	cfg.Metrics.Enabled = false
-
-	server, err := New(cfg)
-	require.NoError(t, err)
+	server := newUnixCATestServer(t)
 
 	// Wire a CA the same way real composition does: s.ca gates whether the
 	// CA servicer is forwarded to the gRPC/REST transports, and
@@ -182,12 +216,13 @@ func TestServer_UnixGRPC_GetCACertificate_WithCA(t *testing.T) {
 	require.NoError(t, server.Start())
 	defer func() { _ = server.Shutdown() }()
 
-	conn := dialServerUnixGRPC(t, cfg.Unix.SocketPath)
+	conn := dialServerUnixGRPC(t, server)
 	defer func() { _ = conn.Close() }()
 	client := pb.NewKeystoreServiceClient(conn)
 
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
+	ctx = metadata.AppendToOutgoingContext(ctx, "authorization", "Bearer "+mintTestSessionJWT(t))
 
 	resp, err := client.GetCACertificate(ctx, &pb.GetCACertificateRequest{})
 	require.NoError(t, err)

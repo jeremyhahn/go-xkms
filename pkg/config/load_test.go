@@ -20,6 +20,7 @@ import (
 	"reflect"
 	"testing"
 
+	"github.com/jeremyhahn/go-xkms/pkg/tpm2"
 	"github.com/jeremyhahn/go-xkms/pkg/types"
 )
 
@@ -295,6 +296,46 @@ func TestLoad_IncludeLocalhostSANs(t *testing.T) {
 		}
 		if cfg.TLS.IncludeLocalhostSANs {
 			t.Fatal("TLS.IncludeLocalhostSANs = true, want the environment's false over the defaults layer")
+		}
+	})
+}
+
+// TestLoad_TPM2PlatformPCRSelection pins the keys of the embedded
+// tpm2.PlatformPCRSelection: they decode at backends.tpm2's own level from the
+// file and from the environment.
+func TestLoad_TPM2PlatformPCRSelection(t *testing.T) {
+	tpmLines := "  tpm2:\n    enabled: true\n    device_path: /dev/tpmrm0\n    platform-pcr: 23\n    platform-pcr-bank: sha384\n"
+
+	t.Run("file", func(t *testing.T) {
+		cfg, err := Load(writeConfigBody(t, "", tpmLines))
+		if err != nil {
+			t.Fatalf("Load() error = %v", err)
+		}
+		got := cfg.Backends.TPM2.PlatformPCRSelection
+		want := tpm2.PlatformPCRSelection{PlatformPCR: 23, PlatformPCRBank: "sha384"}
+		if got != want {
+			t.Fatalf("Backends.TPM2.PlatformPCRSelection = %+v, want %+v", got, want)
+		}
+	})
+
+	t.Run("environment overrides file", func(t *testing.T) {
+		t.Setenv("XKMS_BACKENDS_TPM2_PLATFORM_PCR", "22")
+		t.Setenv("XKMS_BACKENDS_TPM2_PLATFORM_PCR_BANK", "sha512")
+		cfg, err := Load(writeConfigBody(t, "", tpmLines))
+		if err != nil {
+			t.Fatalf("Load() error = %v", err)
+		}
+		got := cfg.Backends.TPM2.PlatformPCRSelection
+		want := tpm2.PlatformPCRSelection{PlatformPCR: 22, PlatformPCRBank: "sha512"}
+		if got != want {
+			t.Fatalf("Backends.TPM2.PlatformPCRSelection = %+v, want %+v", got, want)
+		}
+	})
+
+	t.Run("non-numeric PCR is rejected", func(t *testing.T) {
+		t.Setenv("XKMS_BACKENDS_TPM2_PLATFORM_PCR", "sixteen")
+		if _, err := Load(writeConfigBody(t, "", tpmLines)); err == nil {
+			t.Fatal("Load() accepted platform-pcr \"sixteen\", want a decode error")
 		}
 	})
 }

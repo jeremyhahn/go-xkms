@@ -17,6 +17,8 @@ import (
 	"errors"
 	"fmt"
 	"strings"
+
+	pkgtpm2 "github.com/jeremyhahn/go-xkms/pkg/tpm2"
 )
 
 var (
@@ -70,8 +72,9 @@ var (
 
 	// ErrPolicyRevoked is returned for a policy whose approval has been
 	// revoked: its objects answer only to their password branch until the
-	// policy is updated.
-	ErrPolicyRevoked = errors.New("tpmpolicy: the policy's approval has been revoked")
+	// policy is updated. It is pkg/tpm2's sentinel, so the TPM can tell a
+	// revoked policy from a resolver failure.
+	ErrPolicyRevoked = pkgtpm2.ErrPolicyRevoked
 
 	// ErrEmptyPCRSelection is returned for a pcr condition that selects no
 	// PCR.

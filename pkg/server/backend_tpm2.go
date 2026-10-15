@@ -107,15 +107,14 @@ func (s *Server) initTPM2Backend() error {
 
 	// Create TPM2 backend configuration
 	tpmConfig := &tpm2backend.Config{
-		Device:          devicePath,
-		Keys:            keys,
-		CN:              "xkms",
-		UseSimulator:    s.config.Backends.TPM2.UseSimulator,
-		SimulatorHost:   s.config.Backends.TPM2.SimulatorHost,
-		SimulatorPort:   s.config.Backends.TPM2.SimulatorPort,
-		SRKHandle:       s.config.Backends.TPM2.SRKHandle,
-		PlatformPCR:     s.config.Backends.TPM2.PlatformPCR,
-		PlatformPCRBank: s.config.Backends.TPM2.PlatformPCRBank,
+		Device:               devicePath,
+		Keys:                 keys,
+		CN:                   "xkms",
+		UseSimulator:         s.config.Backends.TPM2.UseSimulator,
+		SimulatorHost:        s.config.Backends.TPM2.SimulatorHost,
+		SimulatorPort:        s.config.Backends.TPM2.SimulatorPort,
+		SRKHandle:            s.config.Backends.TPM2.SRKHandle,
+		PlatformPCRSelection: s.config.Backends.TPM2.PlatformPCRSelection,
 	}
 
 	// Create TPM2 backend
@@ -151,6 +150,7 @@ func (s *Server) initTPMPolicyService() error {
 	svc, err := compose.BuildTPMPolicyService(compose.TPMPolicyParams{
 		Backend: backend,
 		DAOs:    daos,
+		NodeID:  s.config.Cluster.NodeID,
 		VTPM:    s.vtpmConfig(),
 		Logger:  s.logger,
 	})

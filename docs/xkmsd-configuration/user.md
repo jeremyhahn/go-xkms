@@ -80,9 +80,8 @@ the key. Fix the value; there is no fallback.
 
 ## Quoting
 
-Quote values that look like numbers but are strings, such as the socket
-permission mode: `socket_mode: "0660"`. An unquoted `0660` is read as the
-number 432.
+Quote values that look like numbers but are strings, such as a file
+permission mode: `"0660"`. An unquoted `0660` is read as the number 432.
 
 ## Certificate names
 

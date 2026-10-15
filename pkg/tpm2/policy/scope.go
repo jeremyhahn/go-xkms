@@ -548,8 +548,15 @@ func (s *Service) release(st *scopeState) error {
 // reconcile finishes what a crash interrupted when a scope is opened: an
 // authority rotation in progress, and approvals signed at an epoch the
 // counter has moved past. Re-signing every branch at the counter's value is
-// safe: the stored PCR values are the ones already approved. The caller holds st.mu.
-func (s *Service) reconcile(ctx context.Context, st *scopeState, scope *Scope) error {
+// safe: the stored PCR values are the ones already approved. A failure
+// releases the open scope, so its next use reconciles again. The caller holds
+// st.mu.
+func (s *Service) reconcile(ctx context.Context, st *scopeState, scope *Scope) (err error) {
+	defer func() {
+		if err != nil {
+			err = errors.Join(err, s.release(st))
+		}
+	}()
 	if scope.Rotating != nil {
 		if err := s.finishRotation(ctx, st, scope); err != nil {
 			return err

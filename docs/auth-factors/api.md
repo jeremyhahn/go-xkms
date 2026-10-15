@@ -47,9 +47,18 @@ is set (`sdk/go/auth.go:151-165`). A missing dependency is not an error.
 PIV slot certificate is the TLS client certificate, so this client speaks
 mTLS HTTPS directly; possession of the card key is the credential.
 
-The factor-record service itself is go-qrdb's `UserAuthFactorService`, hosted
-on xkmsd's gRPC server and unix socket (`pkg/server/qrdb_control_plane.go:57`).
-go-xkms has no REST proxy for it.
+The factor-record service itself is go-qrdb's `UserAuthFactorService`, which
+xkmsd's embedded node serves on its TLS unix socket behind the node's
+authentication chain (enabled by `pkg/server/qrdb_node.go:85-89`). go-xkms has
+no REST proxy for it.
+
+## One authentication chain on every transport
+
+The node's chain carries xkms's session-JWT authenticator
+(`node.WithAuthenticators`), so the bearer token `auth login` mints is accepted
+on REST, gRPC, MCP and the unix socket alike, and the admin plane refuses an
+anonymous caller with `Unauthenticated` on each of them
+(`pkg/server/unified_api_e2e_test.go`).
 
 ## Factor challenge and response payloads
 

@@ -60,8 +60,9 @@ const (
 	envXKMSdTLSCert = "XKMSD_TLS_CERT"
 	envXKMSdTLSKey  = "XKMSD_TLS_KEY"
 
-	// envXKMSdServerName names the server reached without TLS (a Unix
-	// socket), selecting the stored login whose server name matches.
+	// envXKMSdServerName names a server whose TLS identity is not probed
+	// (plaintext transports and the Unix socket), selecting the stored login
+	// whose server name matches.
 	envXKMSdServerName = "XKMSD_SERVER_NAME"
 )
 
@@ -138,7 +139,7 @@ type xkmsdTransport struct {
 // the SDK's own scheme handling; the SDK's xkms.NewFromURL cannot be used
 // directly because it carries neither an auth token nor a CA bundle.
 var xkmsdTransports = map[string]xkmsdTransport{
-	"unix":  {protocol: xkms.ProtocolUnix, address: xkmsdSocketPath},
+	"unix":  {protocol: xkms.ProtocolUnix, tls: true, address: xkmsdSocketPath},
 	"http":  {protocol: xkms.ProtocolREST, address: xkmsdFullURL},
 	"https": {protocol: xkms.ProtocolREST, tls: true, address: xkmsdFullURL},
 	"grpc":  {protocol: xkms.ProtocolGRPC, address: xkmsdHostPort},
@@ -216,8 +217,8 @@ func withXKMSdToken(endpoint XKMSdEndpoint) (XKMSdEndpoint, error) {
 // one login serves every transport of that server and never a different
 // server on the same host. On a transport without TLS the configured server
 // name (XKMSD_SERVER_NAME, xkmsd.server_name) selects the login. No stored
-// login is no token (the call relies on mTLS or the Unix socket's peer
-// credentials); an expired one is an error naming the refresh command.
+// login is no token (the call relies on its mTLS client certificate); an
+// expired one is an error naming the refresh command.
 func resolveXKMSdToken(endpoint XKMSdEndpoint) (string, error) {
 	if token := strings.TrimSpace(os.Getenv(envXKMSdToken)); token != "" {
 		return token, nil
@@ -425,8 +426,8 @@ func (e XKMSdEndpoint) TLSConfig() (*tls.Config, error) {
 }
 
 // Client constructs an SDK transport client for the endpoint. The URL scheme
-// selects the transport (http(s) → REST, grpc(s) → gRPC, unix → gRPC over a
-// Unix socket, quic → HTTP/3, mcp(s) → JSON-RPC). The client is not connected;
+// selects the transport (http(s) → REST, grpc(s) → gRPC, unix → gRPC over
+// TLS on a Unix socket, quic → HTTP/3, mcp(s) → JSON-RPC). The client is not connected;
 // callers own Close.
 func (e XKMSdEndpoint) Client() (transport.Client, error) {
 	rawURL := strings.TrimSpace(e.URL)

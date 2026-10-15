@@ -16,6 +16,7 @@ package main
 import (
 	"context"
 	"crypto/rand"
+	"crypto/tls"
 	"encoding/base64"
 	"errors"
 	"fmt"
@@ -28,6 +29,7 @@ import (
 
 	sshsdk "github.com/jeremyhahn/go-xkms/sdk/go/client/ssh"
 	"github.com/jeremyhahn/go-xkms/sdk/go/secure"
+	"github.com/jeremyhahn/go-xkms/sdk/go/transport"
 )
 
 // Sentinel errors for absent or unusable SSH command inputs.
@@ -272,11 +274,34 @@ func xkmsctlSSHClient() (sshsdk.Client, func(), error) {
 	if strings.TrimSpace(cfg.Server) == "" {
 		return nil, nil, ErrSSHServerRequired
 	}
-	c, err := sshsdk.NewClientForServer(cfg.Server, cfg.TLSCACert, cfg.JWTToken)
+	tlsCfg, err := sshTLSConfig(cfg)
+	if err != nil {
+		return nil, nil, err
+	}
+	c, err := sshsdk.NewClientForServerWith(cfg.Server, sshsdk.ServerOptions{TLSConfig: tlsCfg, Token: cfg.JWTToken})
 	if err != nil {
 		return nil, nil, err
 	}
 	return c, func() { closeQuietly(c) }, nil
+}
+
+// sshTLSConfig builds the TLS configuration the SSH SDK dials with. The
+// client certificate admits the caller on TLS transports, xkmsd's unix
+// socket included: a --pkcs11-module token certificate when set, else the
+// --tls-cert/--tls-key files.
+func sshTLSConfig(cfg *Config) (*tls.Config, error) {
+	backend, err := cfg.backendConfig()
+	if err != nil {
+		return nil, err
+	}
+	if backend.TLSConfig != nil {
+		return backend.TLSConfig, nil
+	}
+	return transport.BuildTLSConfig(transport.TLSOptions{
+		CAFile:   cfg.TLSCACert,
+		CertFile: cfg.TLSCert,
+		KeyFile:  cfg.TLSKey,
+	})
 }
 
 func runXkmsctlSSHGenerate(cmd *cobra.Command, _ []string) error {

@@ -23,6 +23,7 @@ import (
 	"time"
 
 	"github.com/gorilla/mux"
+	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
 	db "github.com/jeremyhahn/go-qrdb/sdk/go/transport"
 
 	"github.com/jeremyhahn/go-xkms/pkg/auth"
@@ -161,10 +162,15 @@ func writeTenantNotFound(w http.ResponseWriter) {
 }
 
 // writeIdentityError answers a failed role or user operation. A refused or
-// missing tenant, role or user is not-found; anything else is an internal
-// failure described by failure.
+// missing tenant, role or user is not-found; an operation qrdb's authorizer
+// refuses the caller (strict tenant isolation keeps even a platform caller out
+// of another tenant's users and roles) is permission-denied; anything else is
+// an internal failure described by failure.
 func writeIdentityError(w http.ResponseWriter, err error, failure string) {
+	var denied *qrdbsdk.PermissionDeniedError
 	switch {
+	case errors.As(err, &denied):
+		writePermissionDenied(w)
 	case errors.Is(err, ErrTenantNotFound):
 		writeTenantNotFound(w)
 	case errors.Is(err, ErrRoleNotFound):

@@ -332,11 +332,14 @@ once, to the externally visible base.
 
 - **The admin plane resolves every mTLS caller's tenant from its certificate,
   then its qrdb user within that tenant (go-xkms#1240).** The admin routes
-  are public module routes, so qrdb's middleware binds no tenant first.
-  `MTLSAuthHandler` (`pkg/acme/admin/auth_mtls.go:84-107`) applies qrdb's
+  are identity-gated module routes (`pkg/apimodule/admin_module.go:146`), so
+  qrdb's authentication chain refuses an anonymous caller before the admin
+  package runs (go-xkms#1380). The admin package still resolves the caller
+  itself rather than trusting the module boundary.
+  `MTLSAuthHandler` (`pkg/acme/admin/auth_mtls.go:85-108`) applies qrdb's
   own rule, `qrdbsdk.TenantFromClientCert`, pinned to the deployment's trust
   domain (`Server.TrustDomain`, `pkg/server/firstboot.go:376`, passed at
-  `cmd/xkmsd/admin.go:157`): a tenant SPIFFE SAN wins, else the first
+  `cmd/xkmsd/admin.go:158`): a tenant SPIFFE SAN wins, else the first
   Subject OU, else the system tenant. It binds that tenant and looks the
   SPKI thumbprint up in it alone — a certificate is never searched for in
   another tenant. The refusals are typed and all answer `401`:
@@ -350,7 +353,8 @@ once, to the externally visible base.
   tenant user to its own tenant's routes.
 - **The admin plane resolves every mTLS caller to its qrdb user before the
   permission gate runs.** xkmsd builds the admin plane's authenticator with
-  the qrdb SPKI-thumbprint user store (`cmd/xkmsd/admin.go:152`), so the
+  the qrdb SPKI-thumbprint user store (`cmd/xkmsd/admin.go:153`,
+  `Server.QRDBUserStore`, `pkg/server/server.go:1586`), so the
   identity `PermissionGate.Authorize` (`pkg/acme/admin/authz.go:83`) hands to
   qrdb's RBAC carries the user's tenant and **qrdb role IDs** — every role,
   verbatim (`pkg/auth/qrdb_userstore.go:50-59`, `pkg/auth/mtls.go:220`).

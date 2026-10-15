@@ -134,11 +134,14 @@ plane works before any tenant barrier unseals
 - **Every caller is confined to its own tenant.** The service-layer binding
   (`pkg/xkms/tenant_binding.go`) compares the caller's tenant with the target
   tenant and refuses any mismatch, for the system tenant as for every other.
-- **A unix-socket peer is the system tenant, by uid.** The local gRPC listener
-  admits a peer by its kernel credentials (socket file mode, and the
-  `SO_PEERCRED` allowlist when exclusive), then attaches the identity
-  `uid:<peer uid>` in the system tenant with `auth_method=unix-peer`. A peer
-  the policy refuses never reaches a handler and gets no identity.
+- **A unix-socket caller authenticates like any other.** xkmsd's socket is
+  the embedded qrdb node's TLS listener (`pkg/server/qrdb_node.go`); it runs
+  the same authentication chain as every network transport (client
+  certificate or session JWT), so the caller's tenant is the one its
+  credential names, and an anonymous caller is refused before any handler.
+  Only the sign server's socket (`pkg/api/unix`) still admits a peer by its
+  kernel credentials and attaches `uid:<peer uid>` in the system tenant with
+  `auth_method=unix-peer`.
 - **An in-process caller is the system tenant.** The embedded SDK (the xkey
   GUI, for example) calls the service with
   no identity; the service binding treats that as the system tenant, confined

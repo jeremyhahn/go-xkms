@@ -162,11 +162,12 @@ No CLI flags — config file / environment only, read via viper
 | Key | Default | Meaning |
 |---|---|---|
 | `xkmsd.enabled` | `false` | Bridge is a no-op unless set |
-| `xkmsd.protocol` | `unix` | `unix` or `grpc` |
+| `xkmsd.protocol` | `unix` | `unix` only |
 | `xkmsd.address` | `xkms-data/xkms.sock` | Socket path or `host:port` |
 | `xkmsd.connect_timeout` | `10s` | |
 | `xkmsd.request_timeout` | `30s` | |
-| `xkmsd.tls.enabled` / `xkmsd.tls.ca_file` | `false` / — | |
+| `xkmsd.tls_ca_file` | system trust store | CA that verifies xkmsd's socket certificate |
+| `xkmsd.tls_cert_file` / `xkmsd.tls_key_file` | — | Client certificate and key that admit xkey on xkmsd's TLS socket |
 | `xkmsd.sharing.allowed_backends` / `xkmsd.sharing.denied_backends` | — | Restricts which xkmsd backends the phone's `remote.*` requests can reach |
 | `xkmsd.tpm.enrollment` | `false` | Offer this host's TPM to the phone acting as enterprise CA |
 | `xkmsd.tpm.device` / `xkmsd.tpm.pcr_bank` | `/dev/tpmrm0` / stack default | |

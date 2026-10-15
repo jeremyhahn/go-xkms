@@ -19,7 +19,7 @@
 //
 // The SDK supports the following communication protocols:
 //
-//   - Unix domain socket (default): Fastest option for local communication
+//   - Unix domain socket (default): gRPC over TLS, fastest for local communication
 //   - gRPC: High-performance RPC with protocol buffers
 //   - REST: HTTP/HTTPS for maximum compatibility
 //   - QUIC: HTTP/3 over QUIC for modern networks
@@ -28,9 +28,9 @@
 //
 // # Quick Start
 //
-// Create a client using the default Unix socket protocol:
+// Create a client for xkmsd's Unix socket (gRPC over TLS):
 //
-//	client, err := xkms.New(nil)
+//	client, err := xkms.NewFromURL("unix:///path/to/xkms.sock")
 //	if err != nil {
 //	    log.Fatal(err)
 //	}
@@ -136,8 +136,9 @@
 // material (a certificate without its key, or the reverse) fails closed with
 // ErrIncompleteTLSMaterial instead of connecting without the credential.
 //
-// The URL schemes https, grpcs, mcps, and quic imply TLS; http, grpc, mcp,
-// and unix do not.
+// The URL schemes https, grpcs, mcps, quic, and unix imply TLS; http, grpc,
+// and mcp do not. xkmsd's unix socket is the qrdb node's TLS listener, so a
+// client dialing it sets TLS and presents a client certificate or JWT.
 //
 // # Error Handling
 //

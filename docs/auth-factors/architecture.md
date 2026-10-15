@@ -108,6 +108,33 @@ go-xkms never decides whether a user is authenticated. It answers one question
 per factor — "did this hardware produce a valid response to this challenge?" —
 and qrdb composes the answers into an authentication decision.
 
+## After authentication: the session JWT on every transport
+
+A login ends in an xkms session JWT. xkmsd registers its configured
+authenticator (`buildAuthenticator`, `pkg/server/server.go:1259`) in the qrdb
+node's authentication chain, after mTLS
+(`node.WithAuthenticators(ChainAfterMTLS, ...)`, `pkg/server/qrdb_node.go:153`).
+The bridge, `QRDBBearerAuthenticator.Authenticate`
+(`pkg/auth/qrdb_bearer.go:82`), takes the `Authorization: Bearer` value from
+whichever transport carried the call and verifies it with the live xkms
+authenticator. Because of that, one token reaches module RPCs over REST,
+HTTP/3, gRPC and MCP alike. The JWT's roles decide what the token may do:
+qrdb RBAC checks them per permission, and a token without a role is refused
+even when its signature is valid.
+
+There is no anonymous mode. `auth.enabled: false` and `auth.type: none` are
+refused at boot (`ErrAuthenticationDisabled`, `pkg/server/errors.go:510`).
+The admin plane (`/admin`, `/api/v1/tenants`) is a permissioned module route
+(`AdminModule.RegisterHTTP`, `pkg/apimodule/admin_module.go:146`), not a
+public one. `TestUnifiedAPIServer_E2E_RESTThroughEmbeddedNode`
+(`pkg/server/unified_api_e2e_test.go:125`) is the proof:
+- REST and HTTP/3 calls to the admin plane get 401 when anonymous and 200
+  with the session JWT.
+- gRPC `ListBackends` gets `Unauthenticated` when anonymous and succeeds with
+  the JWT.
+- An anonymous MCP connect fails, and with the JWT a connected MCP client
+  lists algorithms.
+
 ## Trust boundaries
 
 - **Challenges are qrdb's and are time-bounded.** Default TTL is five minutes

@@ -93,17 +93,32 @@ func listKeys(t *testing.T, client sdkssh.Client) {
 	}
 }
 
-// TestNewClientForServerWith_UnixPresentsToken proves the bearer token rides
-// gRPC over a Unix socket.
-func TestNewClientForServerWith_UnixPresentsToken(t *testing.T) {
+// serveUnixTLS serves the SSH keystore over TLS on a Unix socket, as xkmsd's
+// qrdb node listener does, and returns the socket URL and the root that
+// verifies it.
+func serveUnixTLS(t *testing.T) (string, *x509.CertPool, *authRecorder) {
+	t.Helper()
+	cert, pool := selfSignedLoopbackCert(t)
 	sock := filepath.Join(t.TempDir(), "xkms.sock")
 	lis, err := net.Listen("unix", sock)
 	if err != nil {
 		t.Fatalf("listen: %v", err)
 	}
-	rec := serveSSHKeystore(t, lis)
+	rec := serveSSHKeystore(t, lis, googlegrpc.Creds(credentials.NewTLS(&tls.Config{
+		Certificates: []tls.Certificate{cert}, MinVersion: tls.VersionTLS13,
+	})))
+	return "unix://" + sock, pool, rec
+}
 
-	client, err := sdkssh.NewClientForServerWith("unix://"+sock, sdkssh.ServerOptions{Token: "tok-unix"})
+// TestNewClientForServerWith_UnixPresentsToken proves the socket is dialed
+// over TLS with the caller's tls.Config and the bearer token rides it.
+func TestNewClientForServerWith_UnixPresentsToken(t *testing.T) {
+	server, pool, rec := serveUnixTLS(t)
+
+	client, err := sdkssh.NewClientForServerWith(server, sdkssh.ServerOptions{
+		TLSConfig: &tls.Config{RootCAs: pool, ServerName: "127.0.0.1", MinVersion: tls.VersionTLS13},
+		Token:     "tok-unix",
+	})
 	if err != nil {
 		t.Fatalf("NewClientForServerWith: %v", err)
 	}
@@ -112,6 +127,25 @@ func TestNewClientForServerWith_UnixPresentsToken(t *testing.T) {
 
 	if got := rec.values(); len(got) != 1 || got[0] != "Bearer tok-unix" {
 		t.Fatalf("authorization = %v, want [Bearer tok-unix]", got)
+	}
+}
+
+// TestNewClientForServerWith_UnixUntrustedRefused proves the socket's TLS is
+// enforced: a pool without the node's root fails.
+func TestNewClientForServerWith_UnixUntrustedRefused(t *testing.T) {
+	server, _, _ := serveUnixTLS(t)
+
+	client, err := sdkssh.NewClientForServerWith(server, sdkssh.ServerOptions{
+		TLSConfig: &tls.Config{RootCAs: x509.NewCertPool(), ServerName: "127.0.0.1", MinVersion: tls.VersionTLS13},
+	})
+	if err != nil {
+		t.Fatalf("NewClientForServerWith: %v", err)
+	}
+	defer func() { _ = client.Close() }()
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	if _, err := client.Keys().List(ctx, sdkssh.ListKeysRequest{Scope: "user", Owner: "alice"}); err == nil {
+		t.Fatal("an untrusted socket must be refused")
 	}
 }
 

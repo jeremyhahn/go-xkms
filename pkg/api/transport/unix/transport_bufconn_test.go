@@ -7,10 +7,7 @@ package unix
 
 import (
 	"context"
-	"encoding/json"
 	"net"
-	"net/http"
-	"net/http/httptest"
 	"testing"
 	"time"
 
@@ -528,29 +525,14 @@ func newBufconnTransport(t *testing.T) (*Transport, func()) {
 	cfg := transport.DefaultConfig()
 	cfg.Address = "/tmp/test.sock"
 
-	// Create a mock HTTP server for REST endpoints
-	httpSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Content-Type", "application/json")
-		w.WriteHeader(http.StatusOK)
-		// Return minimal valid JSON for any endpoint
-		resp := map[string]interface{}{
-			"status": "ok", "success": true,
-			"iak_cert_der": "aWFrLWNlcnQ=", "idevid_cert_der": "aWRldmlkLWNlcnQ=",
-			"credential_blob": "Y3JlZA==", "encrypted_secret": "ZW5j", "plain_secret": "cGxhaW4=",
-		}
-		_ = json.NewEncoder(w).Encode(resp)
-	}))
-
 	tr := &Transport{
-		config:     cfg,
-		conn:       conn,
-		client:     pb.NewKeystoreServiceClient(conn),
-		httpClient: httpSrv.Client(),
-		connected:  true,
+		config:    cfg,
+		conn:      conn,
+		client:    pb.NewKeystoreServiceClient(conn),
+		connected: true,
 	}
 
 	cleanup := func() {
-		httpSrv.Close()
 		conn.Close()
 		srv.Stop()
 		lis.Close()

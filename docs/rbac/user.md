@@ -88,10 +88,11 @@ it.
 
 ## What RBAC does not cover
 
-- **The cluster control plane** (`xkmsctl cluster`/`rebalance`) is not
-  gated by these roles today — it trusts whoever can reach the transport
-  (TLS-authenticated network access, or the Unix socket's filesystem
-  permissions). See [`../clustering/user.md`](../clustering/user.md).
+- **The cluster control plane** (`xkmsctl cluster`/`rebalance`) is go-qrdb's
+  own admin service. It needs an authenticated caller on every transport,
+  the Unix socket included (client certificate or session JWT; anonymous
+  calls are refused), and go-qrdb's admin permissions decide what that
+  caller may do. See [`../clustering/user.md`](../clustering/user.md).
 - **The ACME server's tenant admin API** has its own, separate role model
   for ACME tenant administration — not the same roles or grants as here.
 

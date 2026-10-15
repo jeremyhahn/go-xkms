@@ -114,6 +114,15 @@ func (m *MockCertificateAuthority) IssueCertificate(ctx context.Context, request
 	return args.Get(0).(*ca.IssuedCertificate), args.Error(1)
 }
 
+// IssueCertificateForKey issues a certificate for a caller-held public key.
+func (m *MockCertificateAuthority) IssueCertificateForKey(ctx context.Context, request *ca.CertificateRequest, publicKey crypto.PublicKey) (*ca.IssuedCertificate, error) {
+	args := m.Called(request, publicKey)
+	if args.Get(0) == nil {
+		return nil, args.Error(1)
+	}
+	return args.Get(0).(*ca.IssuedCertificate), args.Error(1)
+}
+
 // IssueCertificateWithProfile issues a certificate using a named profile.
 func (m *MockCertificateAuthority) IssueCertificateWithProfile(ctx context.Context, request *ca.CertificateRequest, profile string) (*ca.IssuedCertificate, error) {
 	args := m.Called(request, profile)

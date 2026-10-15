@@ -101,7 +101,7 @@ func TestReloadConfiguration_RefusesInsecureConfig(t *testing.T) {
 // (reloadConfiguration's secure-by-default gate): barrier, TLS, mTLS
 // authentication, and a CA are all present. Network protocols stay off
 // (only the Unix socket is enabled) so Validate's storage.backend=="qrdb"
-// + tls.enabled coupling (NetworkServing-gated) never engages and a plain
+// + tls.enabled coupling (NodeServing-gated) never engages and a plain
 // file storage backend suffices -- and so nothing here binds a port, fixed
 // or otherwise.
 func writeCompliantReloadConfig(t *testing.T, host string) string {

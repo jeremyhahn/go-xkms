@@ -160,39 +160,47 @@ func (m *mockCA) SignCSR(_ context.Context, csrPEM []byte, opts *ca.SignOptions)
 	return x509.ParseCertificate(certDER)
 }
 
-func (m *mockCA) IssueCertificate(_ context.Context, req *ca.CertificateRequest) (*ca.IssuedCertificate, error) {
+func (m *mockCA) IssueCertificate(ctx context.Context, req *ca.CertificateRequest) (*ca.IssuedCertificate, error) {
 	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
 	if err != nil {
 		return nil, err
 	}
-	serial := big.NewInt(time.Now().UnixNano())
+	issued, err := m.IssueCertificateForKey(ctx, req, key.Public())
+	if err != nil {
+		return nil, err
+	}
+	keyDER, err := x509.MarshalECPrivateKey(key)
+	if err != nil {
+		return nil, err
+	}
+	issued.PrivateKey = key
+	issued.PrivateKeyPEM = pem.EncodeToMemory(&pem.Block{Type: "EC PRIVATE KEY", Bytes: keyDER})
+	return issued, nil
+}
+
+func (m *mockCA) IssueCertificateForKey(_ context.Context, req *ca.CertificateRequest, publicKey crypto.PublicKey) (*ca.IssuedCertificate, error) {
+	if publicKey == nil {
+		return nil, ca.ErrPublicKeyRequired
+	}
 	template := &x509.Certificate{
-		SerialNumber: serial,
+		SerialNumber: big.NewInt(time.Now().UnixNano()),
 		Subject:      pkix.Name{CommonName: req.Subject.CommonName},
 		NotBefore:    time.Now(),
 		NotAfter:     time.Now().Add(365 * 24 * time.Hour),
 		KeyUsage:     req.KeyUsage,
 		ExtKeyUsage:  req.ExtKeyUsage,
 	}
-	certDER, err := x509.CreateCertificate(rand.Reader, template, m.cert, &key.PublicKey, m.privateKey)
+	certDER, err := x509.CreateCertificate(rand.Reader, template, m.cert, publicKey, m.privateKey)
 	if err != nil {
 		return nil, err
 	}
-	certPEM := pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: certDER})
-	keyDER, err := x509.MarshalECPrivateKey(key)
-	if err != nil {
-		return nil, err
-	}
-	keyPEM := pem.EncodeToMemory(&pem.Block{Type: "EC PRIVATE KEY", Bytes: keyDER})
 	cert, err := x509.ParseCertificate(certDER)
 	if err != nil {
 		return nil, err
 	}
 	return &ca.IssuedCertificate{
 		Certificate:    cert,
-		CertificatePEM: certPEM,
-		PrivateKey:     key,
-		PrivateKeyPEM:  keyPEM,
+		CertificatePEM: pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: certDER}),
 	}, nil
 }
 
@@ -365,6 +373,13 @@ func (e *errorCA) IssueCertificate(ctx context.Context, req *ca.CertificateReque
 		return nil, e.issueCertErr
 	}
 	return e.mockCA.IssueCertificate(ctx, req)
+}
+
+func (e *errorCA) IssueCertificateForKey(ctx context.Context, req *ca.CertificateRequest, publicKey crypto.PublicKey) (*ca.IssuedCertificate, error) {
+	if e.issueCertErr != nil {
+		return nil, e.issueCertErr
+	}
+	return e.mockCA.IssueCertificateForKey(ctx, req, publicKey)
 }
 
 func (e *errorCA) IssueCertificateWithProfile(ctx context.Context, req *ca.CertificateRequest, profile string) (*ca.IssuedCertificate, error) {

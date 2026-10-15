@@ -801,9 +801,13 @@ lengths against the input before allocating. Regression and fuzz coverage:
   Policy NV Index with the platform Delegation Policy (see Invariants). The
   default configuration sets it on the IDevID. It does not alter the key.
 - **PCR selection and policy** — named TPM policies in `pkg/tpm2/policy` ([`../tpm-policies/`](../tpm-policies/)) and `pcr.go`.
-- **Platform PCR** (`platform-pcr`, backend `platform_pcr`) — the PCR the
+- **Platform PCR** (`platform-pcr`, `platform-pcr-bank`) — the PCR the
   golden measurement is extended into and every platform policy is computed
-  over. Unset (zero) means `DefaultPlatformPCR` (16) on every path: the
+  over. One type, `PlatformPCRSelection` (`pkg/tpm2/config.go:182-185`),
+  carries it; `tpm2.Config`, `pkg/backend/tpm2.Config`, xkmsd's
+  `backends.tpm2` and the seal autodetect probe embed it, and
+  `platformPolicyPCRSelection` (`pkg/tpm2/tpm.go:727`) builds both the policy's and the PCR read's
+  selection from it. Unset (zero) means `DefaultPlatformPCR` (16) on every path: the
   library `DefaultConfig`, `pkg/backend/tpm2.Config.Validate` (xkmsd's
   `backends.tpm2`, node-seal and platform-store opens), and xKey's CLI and
   GUI. It never means PCR 0, the firmware PCR. An unset bank means

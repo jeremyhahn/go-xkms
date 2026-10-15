@@ -62,6 +62,7 @@ func qrdbBarrierConfig(t *testing.T) *config.Config {
 	t.Helper()
 	cfg := createMinimalConfig(t)
 	cfg.Datastore = config.DatastoreConfig{Path: t.TempDir()}
+	cfg.CA = testFirstBootCAConfig()
 	return cfg
 }
 

@@ -59,7 +59,7 @@ func TestDesktopConfig_ForcesLoopbackRESTOnly(t *testing.T) {
 	}
 	// LoopbackDesktop must be set: it is the signal config.Config.Validate
 	// reads to skip the storage.backend "qrdb" + tls.enabled requirement
-	// NetworkServing otherwise imposes now that Protocols.REST is true
+	// NodeServing otherwise imposes now that Protocols.REST is true
 	// (go-xkms#666).
 	if !cfg.LoopbackDesktop {
 		t.Error("LoopbackDesktop must be set so Validate exempts this launch shape")

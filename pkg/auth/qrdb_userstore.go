@@ -38,29 +38,61 @@ var _ UserStore = (*QRDBUserStore)(nil)
 // identity the authorizer could not resolve — "role: not found" — so every
 // request it authenticated was denied (go-xkms#1069).
 type QRDBUserStore struct {
-	users qrdbtransport.UserClient
+	resolve func(ctx context.Context, thumbprint string) (MTLSUser, error)
+}
+
+// CertUserResolver is go-qrdb's server-side certificate lookup: the user
+// service an embedded node exposes (Node.UserService). It resolves a
+// thumbprint in the tenant the context names without authorizing a caller,
+// which is what an authenticator needs — the certificate is resolved before
+// its holder is authenticated, so there is no caller identity to authorize.
+type CertUserResolver interface {
+	UserByCertThumbprint(ctx context.Context, thumbprint string) (*qrdbsdk.User, error)
 }
 
 // NewQRDBUserStore wires the qrdb user client into a UserStore.
 func NewQRDBUserStore(users qrdbtransport.UserClient) *QRDBUserStore {
-	return &QRDBUserStore{users: users}
+	return &QRDBUserStore{resolve: func(ctx context.Context, thumbprint string) (MTLSUser, error) {
+		u, err := users.GetUserByCertThumbprint(ctx, thumbprint)
+		if err != nil {
+			return MTLSUser{}, err
+		}
+		return MTLSUser{
+			Username: u.Username,
+			Email:    u.Email,
+			Roles:    append([]string(nil), u.RoleIDs...),
+			TenantID: u.TenantID,
+			// Lifecycle is qrdb's only account state; only active authenticates.
+			Enabled:     u.Lifecycle == string(qrdbsdk.LifecycleActive),
+			AuthMethods: u.AuthMethods,
+		}, nil
+	}}
+}
+
+// NewQRDBServiceUserStore wires an embedded node's user service into a
+// UserStore. Over an embedded node this is the lookup to use: the node's auth
+// chain refuses an anonymous client call, and its service principal belongs
+// to the system tenant, so a client lookup could never resolve a tenant
+// user's certificate under qrdb's strict tenant isolation.
+func NewQRDBServiceUserStore(users CertUserResolver) *QRDBUserStore {
+	return &QRDBUserStore{resolve: func(ctx context.Context, thumbprint string) (MTLSUser, error) {
+		u, err := users.UserByCertThumbprint(ctx, thumbprint)
+		if err != nil {
+			return MTLSUser{}, err
+		}
+		return MTLSUser{
+			Username:    u.Username,
+			Email:       u.Email,
+			Roles:       append([]string(nil), u.RoleIDs...),
+			TenantID:    u.TenantID,
+			Enabled:     u.Lifecycle == qrdbsdk.LifecycleActive,
+			AuthMethods: u.AuthMethods,
+		}, nil
+	}}
 }
 
 // GetByCertFingerprint resolves the qrdb user bound to the given SPKI
 // thumbprint and projects it onto MTLSUser, carrying every assigned role ID.
 func (s *QRDBUserStore) GetByCertFingerprint(ctx context.Context, fingerprint string) (MTLSUser, error) {
-	u, err := s.users.GetUserByCertThumbprint(ctx, fingerprint)
-	if err != nil {
-		return MTLSUser{}, err
-	}
-
-	return MTLSUser{
-		Username: u.Username,
-		Email:    u.Email,
-		Roles:    append([]string(nil), u.RoleIDs...),
-		TenantID: u.TenantID,
-		// Lifecycle is qrdb's only account state; only active authenticates.
-		Enabled:     u.Lifecycle == string(qrdbsdk.LifecycleActive),
-		AuthMethods: u.AuthMethods,
-	}, nil
+	return s.resolve(ctx, fingerprint)
 }

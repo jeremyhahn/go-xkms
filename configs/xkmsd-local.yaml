@@ -18,10 +18,7 @@ protocols:
   noise: true
 
 unix:
-  enabled: true
   socket_path: "/tmp/xkms-local/xkms.sock"
-  socket_mode: "0660"
-  protocol: "grpc"
 
 logging:
   level: "info"

@@ -882,6 +882,8 @@ func (m *mockXKMSTPM) SetHierarchyAuth(oldSecret, newSecret xkmssdk.Password, hi
 	return nil
 }
 
+func (m *mockXKMSTPM) SetPolicyBindingResolver(xkmssdk.TPMPolicyBindingResolver) {}
+
 func (m *mockXKMSTPM) VerifyAuth(handle tpm2.TPMHandle, authValue []byte) error {
 	return nil
 }

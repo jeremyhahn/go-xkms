@@ -949,7 +949,7 @@ func (m *Module) initializeClient() error {
 	// Unix socket format: unix:///path/to/socket
 	if strings.HasPrefix(target, "unix://") {
 		socketPath := strings.TrimPrefix(target, "unix://")
-		client, err := unix.New(transport.WithAddress(socketPath))
+		client, err := m.createUnixClient(socketPath)
 		if err != nil {
 			return &errs.Wrapped{Msg: "failed to create unix transport", Err: err}
 		}
@@ -1011,7 +1011,7 @@ func (m *Module) initializeClient() error {
 	}
 
 	// Default: treat as Unix socket path for backward compatibility
-	client, err := unix.New(transport.WithAddress(target))
+	client, err := m.createUnixClient(target)
 	if err != nil {
 		return &errs.Wrapped{Msg: "failed to create unix transport for default target", Err: err}
 	}
@@ -1020,7 +1020,7 @@ func (m *Module) initializeClient() error {
 }
 
 // buildTransportOptions assembles the dial options shared by every network
-// transport (gRPC, REST, QUIC): the address plus the module's TLS configuration.
+// transport (gRPC, Unix, REST, QUIC): the address plus the module's TLS configuration.
 // TLS modes:
 //   - mTLS: Both CertFile and KeyFile configured (mutual TLS authentication)
 //   - TLS: Only CAFile configured (server certificate verification)
@@ -1055,6 +1055,14 @@ func (m *Module) buildTransportOptions(address string) []transport.Option {
 // createGRPCClient creates a gRPC transport client with the shared TLS options.
 func (m *Module) createGRPCClient(address string) (PKCS11Transport, error) {
 	return grpc.New(m.buildTransportOptions(address)...)
+}
+
+// createUnixClient creates a Unix domain socket transport with the module's
+// TLS configuration. xkmsd's socket is the embedded qrdb node's TLS listener,
+// so reaching it takes TLS with a client certificate; a plaintext socket
+// (TLS disabled) is a node-local signserver.
+func (m *Module) createUnixClient(socketPath string) (PKCS11Transport, error) {
+	return unix.New(m.buildTransportOptions(socketPath)...)
 }
 
 // createQUICClient creates a QUIC transport client with the shared TLS options.

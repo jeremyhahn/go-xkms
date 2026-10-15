@@ -37,6 +37,7 @@ func tpm2PINConfig(t *testing.T, strategy string) *config.Config {
 	cfg := createMinimalConfig(t)
 	cfg.Backends.TPM2 = &config.TPM2Config{Enabled: true, UseSimulator: true}
 	cfg.PIN = config.PINConfig{Enabled: true, Strategy: strategy}
+	cfg.CA = testFirstBootCAConfig()
 	return cfg
 }
 

@@ -41,6 +41,10 @@ var (
 	// server opened its datastore.
 	ErrNoDatastore = errors.New("server: the datastore is not open")
 
+	// ErrQRDBNodeNotServing is returned by a certificate lookup made before
+	// the embedded qrdb node has completed boot (a sealed node, for example).
+	ErrQRDBNodeNotServing = errors.New("server: the embedded qrdb node has not completed boot")
+
 	// ErrBootstrapCABundleUnavailable is returned by the GET /v1/ca/bootstrap
 	// provider before Start has computed the CA bundle.
 	ErrBootstrapCABundleUnavailable = errors.New("server: the bootstrap CA bundle is not available yet")
@@ -498,13 +502,7 @@ func (e *ErrSealBackendNotConfigured) Error() string {
 
 // ErrUnknownAuthType indicates the configured auth.type is not a recognized
 // authentication method. It is fatal: falling back to an unauthenticated server
-// would turn a configuration typo into a silently wide-open API. The only ways
-// to run without authentication are the explicit opt-ins auth.enabled=false or
-// auth.type="none"/"noop", both of which are reported by
-// config.ComplianceGaps() and therefore cannot start cmd/xkmsd at all: the
-// daemon refuses a configuration with any gap and offers no override. This
-// package stays permissive so embedded and test callers can still construct an
-// unauthenticated server deliberately.
+// would turn a configuration typo into a silently wide-open API.
 type ErrUnknownAuthType struct {
 	Type string
 }
@@ -512,8 +510,23 @@ type ErrUnknownAuthType struct {
 // Error returns the error message.
 func (e *ErrUnknownAuthType) Error() string {
 	return fmt.Sprintf(
-		"server: unknown auth.type %q: valid types are \"jwt\", \"mtls\", \"composite\", "+
-			"or \"none\"/\"noop\" to disable authentication explicitly", e.Type)
+		"server: unknown auth.type %q: valid types are \"jwt\", \"mtls\" and \"composite\"", e.Type)
+}
+
+// ErrAuthenticationDisabled indicates the configuration disables
+// authentication (auth.enabled=false, or auth.type "none", "noop" or empty).
+// The server has no unauthenticated mode: the qrdb authentication chain and
+// every transport verify through the configured authenticator, so such a
+// configuration is refused instead of served anonymously.
+type ErrAuthenticationDisabled struct {
+	Type string
+}
+
+// Error returns the error message.
+func (e *ErrAuthenticationDisabled) Error() string {
+	return fmt.Sprintf(
+		"server: authentication cannot be disabled (auth.type %q): configure "+
+			"auth.enabled=true with auth.type \"jwt\", \"mtls\" or \"composite\"", e.Type)
 }
 
 // ErrNoBootstrapSuite reports that the bootstrap listener was enabled but this

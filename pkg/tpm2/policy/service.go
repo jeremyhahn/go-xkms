@@ -329,8 +329,14 @@ func (s *Service) approve(st *scopeState, scope *Scope, p *Policy, authority *Au
 // branch of every policy of the scope that is approved, stores them, and
 // records epoch on the scope. changed, when set, replaces the stored policy
 // of its name and is approved even if it was revoked; it is returned as
-// stored. The caller holds st.mu.
-func (s *Service) resignAll(ctx context.Context, st *scopeState, scope *Scope, epoch uint64, changed *Policy) (*Policy, error) {
+// stored. A failure releases the open scope, so its next use reconciles the
+// change. The caller holds st.mu.
+func (s *Service) resignAll(ctx context.Context, st *scopeState, scope *Scope, epoch uint64, changed *Policy) (_ *Policy, err error) {
+	defer func() {
+		if err != nil {
+			err = errors.Join(err, s.release(st))
+		}
+	}()
 	policies, err := s.registry.ListPolicies(ctx, st.name)
 	if err != nil {
 		return nil, err
@@ -349,6 +355,12 @@ func (s *Service) resignAll(ctx context.Context, st *scopeState, scope *Scope, e
 		if err := s.registry.UpdatePolicy(ctx, st.name, p); err != nil {
 			return nil, err
 		}
+	}
+	// The binding records are refreshed before the scope records epoch: until
+	// it does, the counter is ahead of the scope's epoch, so a crash or a
+	// failed write part-way is finished by reconcile.
+	if err := s.refreshBindings(ctx, st); err != nil {
+		return nil, err
 	}
 	scope.Epoch = epoch
 	scope.UpdatedAt = now
@@ -618,8 +630,14 @@ func (s *Service) RotateAuthority(ctx context.Context, tenant string) (*Scope, e
 // finishRotation completes the rotation to scope.Rotating: it rewrites every
 // policy index to name the new authority, re-signs every branch of every
 // approved policy with it, records it as the scope's authority, and deletes the old one. Each
-// step is safe to repeat. The caller holds st.mu.
-func (s *Service) finishRotation(ctx context.Context, st *scopeState, scope *Scope) error {
+// step is safe to repeat, and a failure releases the open scope, so its next
+// use finishes the rotation. The caller holds st.mu.
+func (s *Service) finishRotation(ctx context.Context, st *scopeState, scope *Scope) (err error) {
+	defer func() {
+		if err != nil {
+			err = errors.Join(err, s.release(st))
+		}
+	}()
 	next := scope.Rotating
 	policies, err := s.registry.ListPolicies(ctx, st.name)
 	if err != nil {
@@ -639,6 +657,12 @@ func (s *Service) finishRotation(ctx context.Context, st *scopeState, scope *Sco
 		if err := s.registry.UpdatePolicy(ctx, st.name, p); err != nil {
 			return err
 		}
+	}
+	// The binding records are refreshed while the scope still records the
+	// rotation, which resolves approvals by the new authority: a crash or a
+	// failed write part-way leaves the rotation for reconcile to finish.
+	if err := s.refreshBindings(ctx, st); err != nil {
+		return err
 	}
 	old := scope.Authority
 	scope.Authority = *next

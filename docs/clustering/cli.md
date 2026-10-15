@@ -15,6 +15,13 @@ cluster control plane: go-qrdb's". The target follows the standard `--server`/`-
 conventions; every scheme other than the Unix socket or `grpc(s)://` is
 rejected with a typed `QRDBControlUnsupportedTransportError`.
 
+The node refuses anonymous callers, so authenticate with a client
+certificate (`--tls-cert`/`--tls-key`) or a session token (`--token`).
+With `--token`, the connect and every `cluster` and `rebalance` RPC present
+it as an `authorization: Bearer` header (`cmd/xkmsctl/cluster_bearer.go`). A
+token is never sent over plaintext `grpc://`. That case fails with
+`QRDBControlPlaintextBearerError`.
+
 Cluster join and node identity (ACME enroll-01, the node URI) have no CLI
 verb. They are driven by `cluster.peers` and `cluster.raft_enrollment` in the
 `xkmsd` configuration; see user.md.

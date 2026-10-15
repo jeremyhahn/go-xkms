@@ -271,9 +271,10 @@ func NewFromURL(rawURL string) (Client, error) {
 }
 
 // configFromURL maps a client URL onto a BackendConfig. The TLS-implying
-// schemes (https, grpcs, mcps, quic) set TLSEnabled so the transport dials
-// with TLS even when the caller supplies no CA bundle; the plaintext schemes
-// (http, grpc, mcp, unix) leave it unset.
+// schemes (https, grpcs, mcps, quic, and unix, since xkmsd's socket is the
+// qrdb node's TLS listener) set TLSEnabled so the transport dials with TLS
+// even when the caller supplies no CA bundle; the plaintext schemes (http,
+// grpc, mcp) leave it unset.
 func configFromURL(rawURL string) (*BackendConfig, error) {
 	// Handle host:port without scheme
 	if !strings.Contains(rawURL, "://") {
@@ -292,6 +293,7 @@ func configFromURL(rawURL string) (*BackendConfig, error) {
 	switch strings.ToLower(u.Scheme) {
 	case "unix":
 		cfg.Protocol = ProtocolUnix
+		cfg.TLSEnabled = true
 		if u.Path != "" {
 			cfg.Address = u.Path
 		}

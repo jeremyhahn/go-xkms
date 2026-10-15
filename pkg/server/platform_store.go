@@ -152,7 +152,7 @@ func (s *Server) buildPlatformSealer(strategy string) (types.Sealer, error) {
 // enrolled, TPM.PlatformSRKAttributes() reports it and this fails closed
 // with a typed error rather than falling back to any other key. The
 // returned sealer additionally binds every sealed object to the built-in
-// "platform" TPM policy (Backends.TPM2.PlatformPCR/PlatformPCRBank), via
+// "platform" TPM policy (Backends.TPM2.PlatformPCRSelection), via
 // platformPolicySealer.
 func (s *Server) buildTPM2PlatformSealer() (types.Sealer, error) {
 	backend, ok := s.nodeSealTPM.(*tpm2backend.Backend)
@@ -172,14 +172,13 @@ func (s *Server) buildTPM2PlatformSealer() (types.Sealer, error) {
 		// never mistaken for a missing TPM (go-xkms#1528).
 		res, err := seal.OpenTPM2Strategy(seal.AutodetectOptions{
 			TPM2: &seal.TPM2ProbeConfig{
-				Device:          s.config.Backends.TPM2.DevicePath,
-				KeyDir:          keyDir,
-				UseSimulator:    s.config.Backends.TPM2.UseSimulator,
-				SimulatorHost:   s.config.Backends.TPM2.SimulatorHost,
-				SimulatorPort:   s.config.Backends.TPM2.SimulatorPort,
-				SRKHandle:       s.config.Backends.TPM2.SRKHandle,
-				PlatformPCR:     s.config.Backends.TPM2.PlatformPCR,
-				PlatformPCRBank: s.config.Backends.TPM2.PlatformPCRBank,
+				Device:               s.config.Backends.TPM2.DevicePath,
+				KeyDir:               keyDir,
+				UseSimulator:         s.config.Backends.TPM2.UseSimulator,
+				SimulatorHost:        s.config.Backends.TPM2.SimulatorHost,
+				SimulatorPort:        s.config.Backends.TPM2.SimulatorPort,
+				SRKHandle:            s.config.Backends.TPM2.SRKHandle,
+				PlatformPCRSelection: s.config.Backends.TPM2.PlatformPCRSelection,
 			},
 			ProbeTimeout: seal.RequiredTPMOpenTimeout,
 			Logger:       s.logger,

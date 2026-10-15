@@ -100,18 +100,8 @@ func TestExampleConfigs_ProduceValidAuthenticator(t *testing.T) {
 			require.NoError(t, s.initializeAuthentication(),
 				"example configuration must produce an authenticator")
 			require.NotNil(t, s.authenticator)
-
-			authType := strings.ToLower(strings.TrimSpace(cfg.Auth.Type))
-			anonymous := !cfg.Auth.Enabled || authType == "" || authType == "noop" || authType == "none"
-			if anonymous {
-				// An example that disables authentication must say so
-				// unambiguously, since ComplianceGaps reports it and the
-				// daemon then refuses to start at all.
-				assert.Equal(t, "noop", s.authenticator.Name())
-				return
-			}
-			assert.NotContains(t, s.authenticator.Name(), "noop",
-				"example enables authentication, so it must not resolve to the no-op authenticator")
+			assert.NotEqual(t, "noop", s.authenticator.Name(),
+				"an example must never resolve to the no-op authenticator")
 		})
 	}
 }

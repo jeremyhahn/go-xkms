@@ -1005,7 +1005,9 @@ jobs:
   # Job 3: Lint
   lint:
     name: Lint
-    runs-on: ubuntu-latest
+    # Dell-only runners (go-xkms#1553, DS-1849): the job's caches outgrew
+    # the disk floor of the smaller fleet hosts.
+    runs-on: dells
     # Backstop above golangci-lint's own 30m budget (run.timeout in
     # .golangci.yml, #360/#363), so a genuinely hung linter fails as a job
     # timeout instead of running to the runner's implicit limit. Sized from
@@ -1020,11 +1022,15 @@ jobs:
         uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
           persist-credentials: false
+      # No setup-go cache (go-xkms#1553). It never restored on this job, so
+      # GOMODCACHE and GOCACHE always filled from cold, and the post step then
+      # tarred both into the same container: a second copy of the largest
+      # thing on the disk, written at the job's peak.
       - name: Set up Go
         uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5
         with:
           go-version: ${{ env.GO_VERSION }}
-          cache: true
+          cache: false
       # go vet (and golangci-lint below, which type-checks the same graph)
       # need to compile every package reached by `./...`, including cgo
       # packages pulled in unconditionally by the module graph
@@ -1049,6 +1055,17 @@ jobs:
 
       - name: Run go vet
         run: make vet
+
+      # Disk use of the three caches this job fills (go-xkms#1553): the
+      # module cache, the build cache `make vet` compiled, and golangci-lint's
+      # analysis cache. `make lint LINT_CI=1` below reports again after every
+      # pass. always(): a run that fails on disk is the one to measure.
+      - name: Report cache disk use after go vet
+        if: always()
+        run: .github/scripts/disk-usage.sh "after make vet"
+
+      - name: Test the cache disk-use report
+        run: .github/scripts/disk-usage-test.sh
 
       # The version gate has its own tests, and they run HERE rather than only
       # on a developer's machine — a guard nothing executes is a guard that can
@@ -1120,9 +1137,15 @@ jobs:
             github.com/golangci/golangci-lint/v2/cmd/golangci-lint
 
       # `make lint` resolves golangci-lint with `command -v`, so it picks up
-      # the baked binary the step above just verified.
+      # the baked binary the step above just verified. LINT_CI=1 reports the
+      # caches' disk use after every pass and cleans golangci-lint's cache
+      # whenever the next pass's tags could not reuse it (Makefile LINT_CI).
       - name: Run golangci-lint
-        run: make lint
+        run: make lint LINT_CI=1
+
+      - name: Report cache disk use after golangci-lint
+        if: always()
+        run: .github/scripts/disk-usage.sh "after make lint"
 
       # The xkey agent skill's CLI reference is generated from the cobra
       # tree. This fails when the committed reference is stale, or when

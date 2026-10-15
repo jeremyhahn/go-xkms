@@ -59,9 +59,7 @@ protocols:
   mcp: false
 
 unix:
-  enabled: true
   socket_path: ${SOCKET}
-  socket_mode: 0666
 
 tls:
   enabled: true

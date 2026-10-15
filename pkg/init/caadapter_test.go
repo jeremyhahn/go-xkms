@@ -15,10 +15,14 @@ package initialize
 
 import (
 	"context"
+	"crypto/ecdsa"
+	"crypto/elliptic"
+	"crypto/rand"
 	"errors"
 	"testing"
 
 	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
+	"github.com/jeremyhahn/go-xkms/pkg/ca"
 	"github.com/jeremyhahn/go-xkms/pkg/spiffe"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -68,6 +72,7 @@ func TestCAAdapter_IssueCertificate_EmptySANsNotMapped(t *testing.T) {
 	adapter := NewCAAdapter(sanCA, "")
 
 	req := &qrdbsdk.IssueCertRequest{
+		PublicKey:  newTestPublicKey(t),
 		CommonName: "no-sans",
 	}
 
@@ -83,6 +88,7 @@ func TestCAAdapter_IssueCertificate_Error(t *testing.T) {
 	adapter := NewCAAdapter(errCA, "")
 
 	req := &qrdbsdk.IssueCertRequest{
+		PublicKey:    newTestPublicKey(t),
 		CommonName:   "fail-cn",
 		ValidityDays: 365,
 	}
@@ -96,6 +102,7 @@ func TestCAAdapter_IssueCertificate_SANsPassedThrough(t *testing.T) {
 	adapter := NewCAAdapter(sanCA, "")
 
 	req := &qrdbsdk.IssueCertRequest{
+		PublicKey:  newTestPublicKey(t),
 		CommonName: "with-sans",
 		SANs:       []string{"foo.example.com", "bar.example.com"},
 	}
@@ -115,6 +122,7 @@ func TestCAAdapter_IssueCertificate_SPIFFEStampFailurePropagates(t *testing.T) {
 	adapter := NewCAAdapter(mCA, "xkms.example.com")
 
 	req := &qrdbsdk.IssueCertRequest{
+		PublicKey:    newTestPublicKey(t),
 		CommonName:   "",
 		ValidityDays: 365,
 	}
@@ -128,6 +136,7 @@ func TestCAAdapter_IssueCertificate_WithoutSANs(t *testing.T) {
 	adapter := NewCAAdapter(mCA, "")
 
 	req := &qrdbsdk.IssueCertRequest{
+		PublicKey:    newTestPublicKey(t),
 		CommonName:   "no-sans",
 		ValidityDays: 365,
 	}
@@ -141,7 +150,9 @@ func TestCAAdapter_IssueCertificate_WithSANs(t *testing.T) {
 	mCA := newMockCA(t)
 	adapter := NewCAAdapter(mCA, "")
 
+	publicKey := newTestPublicKey(t)
 	req := &qrdbsdk.IssueCertRequest{
+		PublicKey:    publicKey,
 		CommonName:   "test-cn",
 		SANs:         []string{"dns1.example.com", "dns2.example.com"},
 		ValidityDays: 365,
@@ -149,10 +160,29 @@ func TestCAAdapter_IssueCertificate_WithSANs(t *testing.T) {
 
 	issued, err := adapter.IssueCertificate(context.Background(), req)
 	require.NoError(t, err)
-	assert.NotNil(t, issued)
-	assert.NotNil(t, issued.Certificate)
+	require.NotNil(t, issued)
+	require.NotNil(t, issued.Certificate)
 	assert.NotEmpty(t, issued.CertPEM)
-	assert.NotEmpty(t, issued.KeyPEM)
+	assert.True(t, publicKey.Equal(issued.Certificate.PublicKey), "the certificate must bind the requester's key")
+}
+
+// TestCAAdapter_IssueCertificate_RequiresPublicKey verifies that a request
+// naming no key is refused rather than certifying a key the CA invents.
+func TestCAAdapter_IssueCertificate_RequiresPublicKey(t *testing.T) {
+	adapter := NewCAAdapter(newMockCA(t), "")
+
+	issued, err := adapter.IssueCertificate(context.Background(), &qrdbsdk.IssueCertRequest{CommonName: "keyless"})
+	assert.ErrorIs(t, err, ca.ErrPublicKeyRequired)
+	assert.Nil(t, issued)
+}
+
+// newTestPublicKey returns the public half of a fresh P-256 key, standing in
+// for the key a certificate requester keeps.
+func newTestPublicKey(t *testing.T) *ecdsa.PublicKey {
+	t.Helper()
+	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	require.NoError(t, err)
+	return &key.PublicKey
 }
 func TestCAAdapter_SignCSR_Error(t *testing.T) {
 	errCA := &errorCA{

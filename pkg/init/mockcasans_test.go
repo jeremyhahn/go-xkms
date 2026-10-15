@@ -15,6 +15,7 @@ package initialize
 
 import (
 	"context"
+	"crypto"
 
 	"github.com/jeremyhahn/go-xkms/pkg/ca"
 )
@@ -28,4 +29,9 @@ type mockCAWithSANs struct {
 func (m *mockCAWithSANs) IssueCertificate(ctx context.Context, req *ca.CertificateRequest) (*ca.IssuedCertificate, error) {
 	m.lastSANs = req.SANS
 	return m.mockCA.IssueCertificate(ctx, req)
+}
+
+func (m *mockCAWithSANs) IssueCertificateForKey(ctx context.Context, req *ca.CertificateRequest, publicKey crypto.PublicKey) (*ca.IssuedCertificate, error) {
+	m.lastSANs = req.SANS
+	return m.mockCA.IssueCertificateForKey(ctx, req, publicKey)
 }

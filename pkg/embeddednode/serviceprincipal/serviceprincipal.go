@@ -50,6 +50,9 @@ const Name = "xkms"
 //     entity declares and looks entities up through them.
 //   - kv:range -- a feature DAO's paged listing (ForEachPage) scans its
 //     entity type's keys, as pkcs11state.Store.List does.
+//   - admin:shard_state -- a clustered xkmsd waits for its shard's leader
+//     before serving (Server.waitForClusterLeader); the leader query is a
+//     shard-state read.
 var grant = []qrdbsdk.Permission{
 	"kv:get",
 	"kv:put",
@@ -64,6 +67,7 @@ var grant = []qrdbsdk.Permission{
 	"databases:create",
 	"index:create",
 	"index:query",
+	"admin:shard_state",
 }
 
 var registerOnce sync.Once

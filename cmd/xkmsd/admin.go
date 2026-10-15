@@ -57,13 +57,14 @@ const adminUIPrefix = "/admin-ui"
 // adminAPIPrefixes are the ACME admin API's route table prefixes: Handlers
 // (pkg/acme/admin/handlers.go) mounts at "/admin", TenantHandlers
 // (pkg/acme/admin/tenant_handlers.go) mounts at "/api/v1/tenants". Both are
-// registered as public routes on the unified server's qrdb module boundary
-// (apimodule.AdminModule) because the admin package authenticates and
-// authorizes every request itself — see admin_router_state below.
+// registered identity-gated on the unified server's qrdb module boundary
+// (apimodule.AdminModule): qrdb's authentication chain refuses an anonymous
+// caller, and the admin package authorizes every route itself — see
+// admin_router_state below.
 //
-// Public routes get no tenant binding from qrdb's middleware, so the admin
-// package binds it: its authentication boundary binds the caller's tenant as
-// the context's qrdb tenant (pkg/acme/admin withUser), which confines every
+// The admin package also binds the caller's tenant itself: its
+// authentication boundary binds the caller's tenant as the context's qrdb
+// tenant (pkg/acme/admin withUser), which confines every
 // identity-plane call the admin service makes through the embedded client,
 // and its service binds every tenant, role, user, account and certificate the
 // request names to that tenant (pkg/acme/admin tenant_binding.go,
@@ -149,7 +150,7 @@ func finalizeAdminModule(srv *server.Server, acme *acmeServer, logger *slog.Logg
 	// Without the store the authenticator can only read certificate fields: no
 	// roles, no tenant, and qrdb's authorizer denies every route — even for
 	// the first-boot administrator (go-xkms#1069).
-	mtlsConfig := &auth.MTLSConfig{UserStore: auth.NewQRDBUserStore(qrdbClient.Users())}
+	mtlsConfig := &auth.MTLSConfig{UserStore: srv.QRDBUserStore()}
 	authorizer := auth.NewAuthorizer(qrdbClient.RBAC())
 	// The certificate's tenant is read under the deployment's own trust
 	// domain, and its thumbprint is looked up in that tenant only, so a

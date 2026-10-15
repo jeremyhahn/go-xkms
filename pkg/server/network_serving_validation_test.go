@@ -22,12 +22,12 @@ import (
 	"github.com/jeremyhahn/go-xkms/pkg/config"
 )
 
-// TestConfig_Validate_NetworkServingRequiresStandaloneDatastore proves the
+// TestConfig_Validate_NodeServingRequiresStandaloneDatastore proves the
 // unified API server contract: enabling any network protocol
 // (REST/gRPC/QUIC/MCP) with a "remote" datastore must fail validation,
 // since only the embedded qrdb node this process hosts serves those
 // protocols now.
-func TestConfig_Validate_NetworkServingRequiresStandaloneDatastore(t *testing.T) {
+func TestConfig_Validate_NodeServingRequiresStandaloneDatastore(t *testing.T) {
 	cfg := createMinimalConfig(t)
 	cfg.Protocols.REST = true
 	cfg.TLS.Enabled = true
@@ -41,11 +41,11 @@ func TestConfig_Validate_NetworkServingRequiresStandaloneDatastore(t *testing.T)
 	assert.Contains(t, err.Error(), `datastore.mode "standalone"`)
 }
 
-// TestConfig_Validate_NetworkServingRequiresTLS proves that a standalone
+// TestConfig_Validate_NodeServingRequiresTLS proves that a standalone
 // datastore alone is not enough: the unified API server's transports are
 // TLS-only, so enabling a network protocol without tls.enabled must also
 // fail validation.
-func TestConfig_Validate_NetworkServingRequiresTLS(t *testing.T) {
+func TestConfig_Validate_NodeServingRequiresTLS(t *testing.T) {
 	cfg := createMinimalConfig(t)
 	cfg.Protocols.GRPC = true
 	cfg.TLS.Enabled = false
@@ -55,12 +55,12 @@ func TestConfig_Validate_NetworkServingRequiresTLS(t *testing.T) {
 	assert.Contains(t, err.Error(), "tls.enabled")
 }
 
-// TestConfig_Validate_NetworkServingWithStandaloneDatastoreAndTLSIsValid
+// TestConfig_Validate_NodeServingWithStandaloneDatastoreAndTLSIsValid
 // proves the positive case: a standalone datastore plus tls.enabled with
 // explicit cert/key material satisfies the unified API server contract and
 // Validate accepts it, matching the pattern unified_api_e2e_test.go
 // exercises end to end.
-func TestConfig_Validate_NetworkServingWithStandaloneDatastoreAndTLSIsValid(t *testing.T) {
+func TestConfig_Validate_NodeServingWithStandaloneDatastoreAndTLSIsValid(t *testing.T) {
 	certFile, keyFile, _ := createTestTLSFiles(t)
 
 	cfg := createMinimalConfig(t)
@@ -72,13 +72,13 @@ func TestConfig_Validate_NetworkServingWithStandaloneDatastoreAndTLSIsValid(t *t
 	assert.NoError(t, cfg.Validate())
 }
 
-// TestConfig_Validate_LoopbackDesktopExemptsNetworkServingRequirements
+// TestConfig_Validate_LoopbackDesktopExemptsNodeServingRequirements
 // proves the go-xkms#666 exemption: a config with Protocols.REST enabled
 // (as pkg/server/loopback.desktopConfig forces for the 127.0.0.1-only
 // desktop listener) but no TLS passes Validate when LoopbackDesktop is set,
-// exactly as NetworkServing's doc comment says the loopback desktop engine
+// exactly as NodeServing's doc comment says the loopback desktop engine
 // is exempt.
-func TestConfig_Validate_LoopbackDesktopExemptsNetworkServingRequirements(t *testing.T) {
+func TestConfig_Validate_LoopbackDesktopExemptsNodeServingRequirements(t *testing.T) {
 	cfg := createMinimalConfig(t)
 	cfg.Protocols.REST = true
 	cfg.TLS.Enabled = false

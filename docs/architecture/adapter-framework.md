@@ -36,7 +36,7 @@ really is role membership.
 | `MTLSAuthenticator` | `NewMTLSAuthenticator(*MTLSConfig)` (`mtls.go:131`) | `qrdbsdk.MethodMTLS` | TLS client certificate; see below |
 | `OIDCAuthenticator` | `NewOIDCAuthenticator(ctx, *OIDCConfig)` (`oidc.go:163`) | `oidc` | OIDC ID and access tokens; `OIDCConfig` (`oidc.go:98`) takes `Issuer`, `ClientID`, `Audience`, `JWKSCacheTTL` (default one hour) and `HTTPClient` |
 | `CompositeAuthenticator` | `NewCompositeAuthenticator(...Authenticator)` (`composite.go:35`) | `composite` | Tries each in order. The first success wins; if all fail, the last error is returned (`composite.go:26-28`) |
-| `NoOpAuthenticator` | `NewNoOpAuthenticator()` (`noop.go:28`) | `noop` | Admits every request anonymously |
+| `NoOpAuthenticator` | `NewNoOpAuthenticator()` (`noop.go:28`) | `noop` | Admits every request anonymously. `xkmsd` never builds it, and the bearer bridge admits nothing through it (`qrdb_bearer.go:91`) |
 | `QRDBBearerAuthenticator` | `NewQRDBBearerAuthenticator(source)` (`qrdb_bearer.go:62`) | `jwt` | Carries a host's session tokens into an embedded go-qrdb node's authenticator chain (`qrdb_bearer.go:39-43`) |
 | `StaticTokenAuthenticator` | `NewStaticTokenAuthenticator(token, identity)` (`statictoken.go:39`) | `statictoken` | One per-launch bearer token, accepted over loopback HTTP only, for the desktop standalone mode (`statictoken.go:26-30`) |
 | `LiveAuthenticator` | `NewLiveAuthenticator(a)` (`live.go:68`) | the wrapped one | Wraps an authenticator so it can be replaced while requests are in flight (`live.go:32-36`) |
@@ -81,16 +81,19 @@ fields:
 
 ## How xkmsd builds the authenticator
 
-`(*Server).buildAuthenticator` (`pkg/server/server.go:1257`) reads `auth:`
-(`AuthConfig`, `pkg/config/config.go:420`):
+`(*Server).buildAuthenticator` (`pkg/server/server.go:1259`) reads `auth:`
+(`AuthConfig`, `pkg/config/config.go:420`). The result verifies xkms's REST
+routes and, registered on the embedded node with `node.WithAuthenticators`
+after mTLS (`pkg/server/qrdb_node.go:153`), the node's gRPC, MCP and HTTP/3
+surfaces too:
 
 | `auth.type` | Result |
 |---|---|
-| `enabled: false`, or `none`/`noop`/`""` | `NoOpAuthenticator`. `cmd/xkmsd` refuses to start on it, because the config flags it as a compliance gap |
+| `enabled: false`, or `none`/`noop`/`""` | Refused with `ErrAuthenticationDisabled` (`server.go:1276-1287`): there is no unauthenticated mode |
 | `jwt` | `JWTAuthenticator`. Requires `auth.jwt.public_key_file`, else `ErrJWTPublicKeyRequired` |
 | `mtls` | `MTLSAuthenticator` with the qrdb user store. Requires `tls.enabled`, else `ErrMTLSRequiresTLS` |
-| `composite` | `auth.composite.methods` (`jwt`, `mtls`) chained in order (`server.go:1371`) |
-| `adaptive` | Removed. Fails with `ErrAdaptiveRemoved` and names `composite` as the replacement (`server.go:1329-1334`, `pkg/config/auth.go:43`) |
+| `composite` | `auth.composite.methods` (`jwt`, `mtls`) chained in order (`server.go:1373`) |
+| `adaptive` | Removed. Fails with `ErrAdaptiveRemoved` and names `composite` as the replacement (`server.go:1322-1328`, `pkg/config/auth.go:43`) |
 | anything else | `ErrUnknownAuthType`: fails closed |
 
 When `composite.methods` is empty, the chain is derived

@@ -197,6 +197,10 @@ type TrustedPlatformModule interface {
 		overwrite bool) (*tpm2.CreateResponse, error)
 	Sign(rand io.Reader, digest []byte, opts crypto.SignerOpts) (signature []byte, err error)
 	SetHierarchyAuth(oldSecret, newSecret types.Password, hierarchy *tpm2.TPMHandle) error
+	// SetPolicyBindingResolver sets the resolver that key creation and key
+	// use consult for named policies: the policy service's registry, or a
+	// static resolver built from binding records. Nil clears it.
+	SetPolicyBindingResolver(r PolicyBindingResolver)
 
 	// VerifyAuth verifies the auth value on a persistent key at the given handle.
 	// The TPM validates the auth by executing a lightweight command (Create)

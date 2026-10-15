@@ -51,7 +51,8 @@ import (
 // embedded qrdb storage engine rooted at dataDir, with a software-backed CA
 // identity whose KeyConfig leaves key-type unset -- the exact condition
 // go-xkms#793 reproduces.
-func reproCA793Config(dataDir string) *config.Config {
+func reproCA793Config(t *testing.T, dataDir string) *config.Config {
+	t.Helper()
 	return &config.Config{
 		Server: config.ServerConfig{
 			Host:     "127.0.0.1",
@@ -62,13 +63,11 @@ func reproCA793Config(dataDir string) *config.Config {
 		},
 		Protocols: config.ProtocolsConfig{Unix: true},
 		Unix: config.UnixConfig{
-			Enabled:    true,
 			SocketPath: filepath.Join(dataDir, "xkms.sock"),
-			Protocol:   "grpc",
 		},
 		Logging:   config.LoggingConfig{Level: "info", Format: "json"},
-		TLS:       config.TLSConfig{Enabled: false},
-		Auth:      config.AuthConfig{Enabled: false},
+		TLS:       config.TLSConfig{Enabled: true},
+		Auth:      testJWTAuthConfig(t),
 		Datastore: config.DatastoreConfig{Path: filepath.Join(dataDir, "storage")},
 		Default:   config.DefaultConfig("software"),
 		Backends: config.BackendsConfig{
@@ -113,7 +112,7 @@ func TestInitializeCA_QRDB_ReloadsPersistedCAAcrossRestarts(t *testing.T) {
 
 	dataDir := t.TempDir()
 
-	s1, err := New(reproCA793Config(dataDir))
+	s1, err := New(reproCA793Config(t, dataDir))
 	require.NoError(t, err)
 	require.NotNil(t, s1.ca)
 	cert1, err := s1.ca.CACertificate()
@@ -121,7 +120,7 @@ func TestInitializeCA_QRDB_ReloadsPersistedCAAcrossRestarts(t *testing.T) {
 	require.NoError(t, s1.Shutdown())
 
 	xkms.Reset()
-	s2, err := New(reproCA793Config(dataDir))
+	s2, err := New(reproCA793Config(t, dataDir))
 	require.NoError(t, err)
 	require.NotNil(t, s2.ca)
 	cert2, err := s2.ca.CACertificate()
@@ -145,7 +144,7 @@ func TestInitializeCA_QRDB_CorruptPersistedCertificateFailsClosed(t *testing.T) 
 
 	dataDir := t.TempDir()
 
-	s1, err := New(reproCA793Config(dataDir))
+	s1, err := New(reproCA793Config(t, dataDir))
 	require.NoError(t, err)
 	require.NoError(t, s1.Shutdown())
 
@@ -163,7 +162,7 @@ func TestInitializeCA_QRDB_CorruptPersistedCertificateFailsClosed(t *testing.T) 
 	require.NoError(t, corrupt.closeQRDBStorage())
 
 	xkms.Reset()
-	s2, err := New(reproCA793Config(dataDir))
+	s2, err := New(reproCA793Config(t, dataDir))
 	require.Error(t, err, "startup must fail closed rather than silently replace a damaged CA")
 	if s2 != nil {
 		defer func() { _ = s2.Shutdown() }()

@@ -33,8 +33,9 @@ import (
 	"github.com/quic-go/quic-go"
 )
 
-// ErrNoTLS is returned for a URL whose transport carries no TLS (unix://,
-// http://, grpc://, mcp://): no certificate identifies the server there.
+// ErrNoTLS is returned for a URL whose transport carries no TLS (http://,
+// grpc://, mcp://), where no certificate identifies the server, and for
+// unix://, whose server is named by configuration rather than probed.
 var ErrNoTLS = errors.New("serverid: the transport has no TLS identity")
 
 // ProbeError is returned when the server's identity cannot be read.

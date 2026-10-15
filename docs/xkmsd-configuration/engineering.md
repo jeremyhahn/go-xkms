@@ -131,7 +131,7 @@ viper reads the YAML into a map before mapstructure decodes it with
 
 - map keys are lowercased (the only map-typed field, `attestation.formats`, is
   matched case-insensitively by its consumer, so nothing changes);
-- an unquoted scalar such as `socket_mode: 0660` is a YAML integer, so a
+- an unquoted scalar such as `0660` is a YAML integer, so a
   string field receives `"432"`. The shipped configurations quote such values;
   operators must too;
 - a `types.SecretValue` field does not decode through `SecretValue.UnmarshalYAML`
@@ -246,17 +246,19 @@ viper reads the YAML into a map before mapstructure decodes it with
 
 ## Authentication and client-certificate settings
 
-`Server.buildAuthenticator` (`pkg/server/server.go:1257`) turns `auth.*` into
-one authenticator and fails closed on anything it does not recognize:
+`Server.buildAuthenticator` (`pkg/server/server.go:1259`) turns `auth.*` into
+one authenticator and fails closed on anything it does not recognize. There is
+no unauthenticated mode: the same authenticator verifies xkms's REST routes and,
+through the embedded node's chain, its gRPC, MCP and HTTP/3 surfaces.
 
 | `auth.type` | Result | Refused with |
 |---|---|---|
-| `none`, `noop`, empty, or `auth.enabled: false` | no-op, every request anonymous; `Config.ComplianceGaps` flags it, so `xkmsd` will not start on it (`server.go:1276-1294`) | — |
-| `jwt` | `JWTAuthenticator` (`:1296`) | `ErrJWTPublicKeyRequired` without `auth.jwt.public_key_file` (`pkg/server/errors.go:57`) |
-| `mtls` | `MTLSAuthenticator` over the qrdb user store (`:1309`) | `ErrMTLSRequiresTLS` without `tls.enabled` (`errors.go:71`) |
-| `composite` | see below (`:1322`) | |
-| `adaptive` | removed: first boot provisions the administrator's credential, so there is no anonymous window to bridge (`:1329`) | `*ErrAdaptiveRemoved` (`errors.go:142`) |
-| anything else | — | `*ErrUnknownAuthType` (`errors.go:493`) |
+| `none`, `noop`, empty, or `auth.enabled: false` | refused; `xkmsd` does not start (`server.go:1276-1287`) | `*ErrAuthenticationDisabled` (`pkg/server/errors.go:510`) |
+| `jwt` | `JWTAuthenticator` (`:1289`) | `ErrJWTPublicKeyRequired` without `auth.jwt.public_key_file` (`errors.go:65`) |
+| `mtls` | `MTLSAuthenticator` over the qrdb user store (`:1302`) | `ErrMTLSRequiresTLS` without `tls.enabled` (`errors.go:79`) |
+| `composite` | see below (`:1315`) | |
+| `adaptive` | removed: first boot provisions the administrator's credential, so there is no anonymous window to bridge (`:1322`) | `*ErrAdaptiveRemoved` (`errors.go:150`) |
+| anything else | — | `*ErrUnknownAuthType` (`errors.go:495`) |
 
 With `auth.composite.methods` set, each name goes through a `jwt`/`mtls`
 factory map (`createCompositeAuthenticator`, `server.go:1371`): `jwt` without

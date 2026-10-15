@@ -21,6 +21,7 @@ package main
 
 import (
 	"context"
+	"crypto/tls"
 	"errors"
 	"sort"
 	"strconv"
@@ -94,6 +95,20 @@ func (e *QRDBControlConnectError) Error() string {
 // Unwrap returns the wrapped cause for errors.Is/As.
 func (e *QRDBControlConnectError) Unwrap() error { return e.Cause }
 
+// QRDBControlClientCertError is returned when the --tls-cert/--tls-key pair
+// for the control-plane connection cannot be loaded.
+type QRDBControlClientCertError struct {
+	Cause error
+}
+
+// Error returns a human-readable description.
+func (e *QRDBControlClientCertError) Error() string {
+	return "cluster: failed to load the client certificate: " + e.Cause.Error()
+}
+
+// Unwrap returns the wrapped cause for errors.Is/As.
+func (e *QRDBControlClientCertError) Unwrap() error { return e.Cause }
+
 // QRDBControlClientMissingError is returned when no control-plane client
 // factory is wired (e.g., a test cleared it without installing a fake).
 type QRDBControlClientMissingError struct{}
@@ -101,6 +116,16 @@ type QRDBControlClientMissingError struct{}
 // Error returns a human-readable description.
 func (e *QRDBControlClientMissingError) Error() string {
 	return "cluster: qrdb control-plane client is not configured"
+}
+
+// QRDBControlPlaintextBearerError is returned when --token is set for a
+// plaintext grpc:// control plane, which would send the token in the clear.
+type QRDBControlPlaintextBearerError struct {
+	Address string
+}
+
+func (e *QRDBControlPlaintextBearerError) Error() string {
+	return "cluster: refusing to send --token over plaintext gRPC to " + e.Address + "; use grpcs:// or --tls-ca"
 }
 
 // ---------------------------------------------------------------------------
@@ -166,9 +191,11 @@ func qrdbControlClient(ctx context.Context) (*QRDBControlClient, func() error, e
 
 // defaultQRDBControlClientFactory derives the qrdb transport from the same
 // --server/--transport/TLS flag conventions every other xkmsctl command
-// uses, connects, and exposes the SDK's Cluster()/Rebalance() facades.
+// uses, connects, and exposes the SDK's Cluster()/Rebalance() facades. With
+// --token, the connect and every control-plane RPC present it as a bearer.
 func defaultQRDBControlClientFactory(ctx context.Context) (*QRDBControlClient, func() error, error) {
-	tr, err := newQRDBControlTransport(getConfig())
+	cfg := getConfig()
+	tr, err := newQRDBControlTransport(cfg)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -177,15 +204,16 @@ func defaultQRDBControlClientFactory(ctx context.Context) (*QRDBControlClient, f
 	if err != nil {
 		return nil, nil, &QRDBControlConnectError{Cause: err}
 	}
-	if err := qc.Connect(ctx); err != nil {
+	if err := qc.Connect(withControlPlaneBearer(ctx, cfg.JWTToken)); err != nil {
 		closeQuietly(qc)
 		return nil, nil, &QRDBControlConnectError{Cause: err}
 	}
 
-	return &QRDBControlClient{
+	ctrl := &QRDBControlClient{
 		Cluster:   qc.Cluster(),
 		Rebalance: qc.Rebalance(),
-	}, qc.Close, nil
+	}
+	return ctrl.withBearer(cfg.JWTToken), qc.Close, nil
 }
 
 // newQRDBControlTransport maps the CLI's target conventions onto a qrdb
@@ -194,7 +222,8 @@ func defaultQRDBControlClientFactory(ctx context.Context) (*QRDBControlClient, f
 //   - no --server: the unix socket the CLI already defaults to
 //     (client.DefaultUnixSocketPath), or gRPC when --transport grpc.
 //   - unix:///path: qrdb unix transport at that socket path. xkmsd's unix
-//     socket serves plaintext gRPC, so TLS is never enabled over UDS.
+//     socket is the embedded node's TLS listener, so TLS is always on
+//     (see newQRDBControlUnixTransport).
 //   - grpc://host:port: qrdb grpc transport, plaintext.
 //   - grpcs://host:port: qrdb grpc transport with the CLI's TLS material
 //     flags (--tls-cert/--tls-key/--tls-ca).
@@ -207,7 +236,7 @@ func newQRDBControlTransport(cfg *Config) (qrdbtransport.Transport, error) {
 	case server == "":
 		switch cfg.Protocol {
 		case "", "unix":
-			return qrdbunix.New(qrdbtransport.WithAddress(client.DefaultUnixSocketPath))
+			return newQRDBControlUnixTransport(cfg, client.DefaultUnixSocketPath)
 		case "grpc":
 			return newQRDBControlGRPCTransport(cfg, defaultQRDBGRPCAddress, false)
 		default:
@@ -219,7 +248,7 @@ func newQRDBControlTransport(cfg *Config) (qrdbtransport.Transport, error) {
 		if path == "" {
 			path = client.DefaultUnixSocketPath
 		}
-		return qrdbunix.New(qrdbtransport.WithAddress(path))
+		return newQRDBControlUnixTransport(cfg, path)
 
 	case hasPrefix(server, "grpc://"):
 		return newQRDBControlGRPCTransport(cfg, trimPrefix(server, "grpc://"), false)
@@ -230,7 +259,7 @@ func newQRDBControlTransport(cfg *Config) (qrdbtransport.Transport, error) {
 	case !hasScheme(server):
 		switch cfg.Protocol {
 		case "", "unix":
-			return qrdbunix.New(qrdbtransport.WithAddress(server))
+			return newQRDBControlUnixTransport(cfg, server)
 		case "grpc":
 			return newQRDBControlGRPCTransport(cfg, server, false)
 		default:
@@ -242,14 +271,39 @@ func newQRDBControlTransport(cfg *Config) (qrdbtransport.Transport, error) {
 	}
 }
 
+// newQRDBControlUnixTransport builds the qrdb unix transport for path.
+// xkmsd's socket is the embedded qrdb node's TLS listener, so TLS is always
+// on: --tls-ca names the trust anchor (the system roots apply without it)
+// and --tls-cert/--tls-key present the client certificate the node's
+// authentication chain checks.
+func newQRDBControlUnixTransport(cfg *Config, path string) (qrdbtransport.Transport, error) {
+	if cfg.TLSCACert != "" {
+		return qrdbunix.New(
+			qrdbtransport.WithAddress(path),
+			qrdbtransport.WithTLS(cfg.TLSCert, cfg.TLSKey, cfg.TLSCACert),
+		)
+	}
+	tlsCfg := &tls.Config{MinVersion: tls.VersionTLS13}
+	if cfg.TLSCert != "" || cfg.TLSKey != "" {
+		cert, err := tls.LoadX509KeyPair(cfg.TLSCert, cfg.TLSKey)
+		if err != nil {
+			return nil, &QRDBControlClientCertError{Cause: err}
+		}
+		tlsCfg.Certificates = []tls.Certificate{cert}
+	}
+	return qrdbunix.New(qrdbtransport.WithAddress(path), qrdbtransport.WithTLSConfig(tlsCfg))
+}
+
 // newQRDBControlGRPCTransport builds the qrdb grpc transport for addr.
 // TLS is enabled when the scheme demands it (grpcs://) or when the
 // operator supplied TLS material flags, mirroring the CLI's existing
-// TLS-enabled grpc convention.
+// TLS-enabled grpc convention. A bearer token is never sent in the clear.
 func newQRDBControlGRPCTransport(cfg *Config, addr string, forceTLS bool) (qrdbtransport.Transport, error) {
 	opts := []qrdbtransport.Option{qrdbtransport.WithAddress(addr)}
 	if forceTLS || cfg.TLSCert != "" || cfg.TLSKey != "" || cfg.TLSCACert != "" {
 		opts = append(opts, qrdbtransport.WithTLS(cfg.TLSCert, cfg.TLSKey, cfg.TLSCACert))
+	} else if cfg.JWTToken != "" {
+		return nil, &QRDBControlPlaintextBearerError{Address: addr}
 	}
 	return qrdbgrpc.New(opts...)
 }
@@ -268,7 +322,8 @@ xkmsd registers go-qrdb's own control-plane service on its gRPC server
 and unix socket; these verbs drive it through the qrdb SDK client. The
 target follows the standard --server/--transport conventions: the local
 unix socket by default, unix:///path, grpc://host:port, or
-grpcs://host:port with --tls-cert/--tls-key/--tls-ca.`,
+grpcs://host:port. The unix socket and grpcs:// speak TLS with
+--tls-cert/--tls-key/--tls-ca; the control plane refuses anonymous callers.`,
 }
 
 // newClusterStatusCmd implements "cluster status [--shard]".

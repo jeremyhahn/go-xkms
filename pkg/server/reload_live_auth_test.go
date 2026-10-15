@@ -42,14 +42,26 @@ func (c *capturedAuthenticator) admitsAnonymous() bool {
 	return err == nil
 }
 
+// compositeAuthConfig returns an explicit one-method composite chain verifying
+// JWTs against a fresh test key: an authenticator distinguishable by name from
+// the "jwt" one createMinimalConfig configures. The method list is explicit
+// because a derived single-method chain collapses to the bare authenticator.
+func compositeAuthConfig(t *testing.T) config.AuthConfig {
+	t.Helper()
+	cfg := testJWTAuthConfig(t)
+	cfg.Type = "composite"
+	cfg.Composite = &config.CompositeAuthConfig{Methods: []string{"jwt"}}
+	return cfg
+}
+
 // TestReload_RunningListenerPicksUpNewAuthenticator is the property that makes
 // SIGHUP meaningful for authentication.
 //
 // A transport captures its Authenticator at construction, so before the
 // LiveAuthenticator indirection a reload rebuilt the authenticator but every
 // already-running listener kept admitting traffic under the old one. An
-// operator who disabled anonymous access and reloaded would be told the reload
-// succeeded while the server kept serving anonymous requests.
+// operator who changed authentication and reloaded would be told the reload
+// succeeded while the server kept enforcing the old authenticator.
 //
 // The capture happens BEFORE the reload here, deliberately: capturing after
 // would pass even with the bug present.
@@ -57,33 +69,24 @@ func TestReload_RunningListenerPicksUpNewAuthenticator(t *testing.T) {
 	xkms.Reset()
 	defer xkms.Reset()
 
-	cfg := createMinimalConfig(t)
-	cfg.Auth.Enabled = false
-
-	server, err := New(cfg)
+	server, err := New(createMinimalConfig(t))
 	require.NoError(t, err)
 	defer func() { _ = server.Shutdown() }()
 
 	listener := captureLikeTransport(server)
 	require.NotNil(t, listener.Authenticator, "transports must be handed the live authenticator")
-	require.True(t, listener.admitsAnonymous(),
-		"precondition: the no-op authenticator admits anonymous requests")
+	require.Equal(t, "jwt", listener.Name(), "precondition: the JWT authenticator is in force")
+	require.False(t, listener.admitsAnonymous(), "precondition: anonymous refused")
 
-	tightened := createMinimalConfig(t)
-	tightened.Auth.Enabled = true
-	tightened.Auth.Type = "jwt"
-	tightened.Auth.JWT = &config.JWTConfig{
-		PublicKeyFile: writeTestJWTPublicKey(t),
-		Issuer:        "test-issuer",
-		Audience:      []string{"test-audience"},
-	}
+	changed := createMinimalConfig(t)
+	changed.Auth = compositeAuthConfig(t)
 
-	require.NoError(t, server.Reload(tightened))
+	require.NoError(t, server.Reload(changed))
 
-	assert.False(t, listener.admitsAnonymous(),
-		"a listener constructed before the reload must enforce the authenticator installed by it")
+	assert.Equal(t, "composite", server.authenticator.Name())
 	assert.Equal(t, server.authenticator.Name(), listener.Name(),
-		"the listener must report the authenticator now in force")
+		"a listener constructed before the reload must enforce the authenticator installed by it")
+	assert.False(t, listener.admitsAnonymous(), "the new authenticator must still refuse anonymous requests")
 }
 
 // TestReload_FailedReloadRestoresListenerAuthenticator covers the rollback
@@ -94,25 +97,22 @@ func TestReload_FailedReloadRestoresListenerAuthenticator(t *testing.T) {
 	xkms.Reset()
 	defer xkms.Reset()
 
-	cfg := createMinimalConfig(t)
-	cfg.Auth.Enabled = false
-
-	server, err := New(cfg)
+	server, err := New(createMinimalConfig(t))
 	require.NoError(t, err)
 	defer func() { _ = server.Shutdown() }()
 
 	listener := captureLikeTransport(server)
-	require.True(t, listener.admitsAnonymous(), "precondition: anonymous admitted")
+	previous := server.authenticator
+	require.Equal(t, "jwt", listener.Name(), "precondition: the JWT authenticator is in force")
 
 	// An auth type that cannot produce an authenticator fails the reload.
 	broken := createMinimalConfig(t)
-	broken.Auth.Enabled = true
 	broken.Auth.Type = "definitely-not-a-real-authenticator"
 
 	require.Error(t, server.Reload(broken), "an unbuildable authenticator must fail the reload")
 
-	assert.Equal(t, server.authenticator.Name(), listener.Name(),
+	assert.Same(t, previous, server.authenticator, "the previous authenticator must still be in force")
+	assert.Same(t, previous, server.liveAuthenticator.Load(),
 		"after a failed reload the listener must hold the authenticator actually in force")
-	assert.True(t, listener.admitsAnonymous(),
-		"the previous authenticator must still be the one enforced")
+	assert.False(t, listener.admitsAnonymous(), "the previous authenticator must still refuse anonymous requests")
 }

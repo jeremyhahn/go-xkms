@@ -161,8 +161,7 @@ var (
 			SRKHandle:      0x81000002,
 			PlatformPolicy: true,
 		},
-		PlatformPCR:     DefaultPlatformPCR,
-		PlatformPCRBank: PCRBankSHA256,
+		PlatformPCRSelection: DefaultPlatformPCRSelection(),
 		SSRK: &SRKConfig{
 			Debug:  false,
 			Handle: 0x81000001,
@@ -174,6 +173,22 @@ var (
 		},
 	}
 )
+
+// PlatformPCRSelection selects the PCR and bank of the built-in "platform"
+// policy: the PCR the golden platform measurement is extended into, read
+// in the named bank. It is the one definition every configuration that
+// carries the selection embeds. A zero PlatformPCR means unset and resolves
+// to DefaultPlatformPCR, never PCR 0.
+type PlatformPCRSelection struct {
+	PlatformPCR     uint   `yaml:"platform-pcr" json:"platform_pcr" mapstructure:"platform-pcr"`
+	PlatformPCRBank string `yaml:"platform-pcr-bank" json:"platform_pcr_bank" mapstructure:"platform-pcr-bank"`
+}
+
+// DefaultPlatformPCRSelection returns the default platform selection:
+// DefaultPlatformPCR in the SHA-256 bank.
+func DefaultPlatformPCRSelection() PlatformPCRSelection {
+	return PlatformPCRSelection{PlatformPCR: DefaultPlatformPCR, PlatformPCRBank: PCRBankSHA256}
+}
 
 type Config struct {
 	CommandAddress string `yaml:"command-address,omitempty" json:"command_address" mapstructure:"command-address"`
@@ -231,14 +246,13 @@ type Config struct {
 	// resolved plaintext is sealed into this field's own go-enclave sealed enclave
 	// rather than kept as a plain Go string. See types.SecretValue and
 	// types.SecretValueBytes.
-	LockoutAuth     *types.SecretValue      `yaml:"lockout-auth,omitempty" json:"lockout-auth" mapstructure:"lockout-auth"`
-	PlatformAddress string                  `yaml:"platform-address,omitempty" json:"platform_address" mapstructure:"platform-address"`
-	PlatformPCR     uint                    `yaml:"platform-pcr" json:"platform_pcr" mapstructure:"platform-pcr"`
-	PlatformPCRBank string                  `yaml:"platform-pcr-bank" json:"platform_pcr_bank" mapstructure:"platform-pcr-bank"`
-	SSRK            *SRKConfig              `yaml:"ssrk" json:"ssrk" mapstructure:"ssrk"`
-	Tracker         types.AEADSafetyTracker `yaml:"-" json:"-" mapstructure:"-"`
-	UseEntropy      bool                    `yaml:"entropy" json:"entropy" mapstructure:"entropyr"`
-	UseSimulator    bool                    `yaml:"simulator" json:"simulator" mapstructure:"simulator"`
+	LockoutAuth          *types.SecretValue `yaml:"lockout-auth,omitempty" json:"lockout-auth" mapstructure:"lockout-auth"`
+	PlatformAddress      string             `yaml:"platform-address,omitempty" json:"platform_address" mapstructure:"platform-address"`
+	PlatformPCRSelection `yaml:",inline" mapstructure:",squash"`
+	SSRK                 *SRKConfig              `yaml:"ssrk" json:"ssrk" mapstructure:"ssrk"`
+	Tracker              types.AEADSafetyTracker `yaml:"-" json:"-" mapstructure:"-"`
+	UseEntropy           bool                    `yaml:"entropy" json:"entropy" mapstructure:"entropyr"`
+	UseSimulator         bool                    `yaml:"simulator" json:"simulator" mapstructure:"simulator"`
 }
 
 // PlatformSRKConfig configures the Platform SRK, xkms's own storage parent

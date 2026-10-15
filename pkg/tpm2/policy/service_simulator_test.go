@@ -263,6 +263,62 @@ func TestService_RotateAuthority(t *testing.T) {
 	assert.False(t, errors.As(err, &mismatch), "the PCRs did not move")
 }
 
+// bindingRecord returns the binding record (.tpmpolicy blob) of tenant's key.
+func (f *fixture) bindingRecord(tenant string, key *types.KeyAttributes) []byte {
+	f.t.Helper()
+	st := f.scopeTPM(tenant)
+	defer f.closeScopeTPM(st)
+	record, err := st.Keys.Get(key, store.FSEXT_TPM_POLICY)
+	require.NoError(f.t, err)
+	return record
+}
+
+// signOffline signs with key, resolving its policy from records alone.
+func (f *fixture) signOffline(tenant string, key *types.KeyAttributes, records ...[]byte) error {
+	f.t.Helper()
+	offline, err := pkgtpm2.NewStaticPolicyResolver(records...)
+	require.NoError(f.t, err)
+	f.tpm.SetPolicyBindingResolver(offline)
+	defer f.tpm.SetPolicyBindingResolver(f.svc)
+	return f.sign(tenant, key)
+}
+
+// TestService_OfflineAuthorization proves a key's binding record carries
+// what its policy needs to authorize without the registry: the scope
+// authority and the current approvals, refreshed when the approvals change.
+// A stale record authorizes nothing: the TPM refuses an old authority and a
+// revoked epoch.
+func TestService_OfflineAuthorization(t *testing.T) {
+	f := newSimFixture(t)
+	f.createPolicy("acme", "boot")
+	key := f.createKey("acme", "signer", "boot", nil)
+
+	first := f.bindingRecord("acme", key)
+	binding, err := store.UnmarshalTPMPolicyBinding(first)
+	require.NoError(t, err)
+	scope, err := f.registry.Scope(f.ctx, "acme")
+	require.NoError(t, err)
+	assert.Equal(t, tpm2.Marshal(tpm2.BytesAs2B[tpm2.TPMTPublic](scope.Authority.Public)), binding.Authority)
+	assert.Len(t, binding.Approvals, 1)
+	require.NoError(t, f.signOffline("acme", key, first))
+
+	_, err = f.svc.RotateAuthority(f.ctx, "acme")
+	require.NoError(t, err)
+	rotated := f.bindingRecord("acme", key)
+	assert.NotEqual(t, first, rotated, "rotation refreshes the record")
+	require.NoError(t, f.signOffline("acme", key, rotated))
+	require.ErrorIs(t, f.signOffline("acme", key, first), tpm2.TPMRCValue, "the old authority no longer authorizes")
+
+	_, err = f.svc.RevokePolicy(f.ctx, "acme", "boot")
+	require.NoError(t, err)
+	require.ErrorIs(t, f.signOffline("acme", key, f.bindingRecord("acme", key)), ErrPolicyRevoked)
+	require.Error(t, f.signOffline("acme", key, rotated), "the revoked epoch no longer authorizes")
+
+	_, err = f.svc.UpdatePolicy(f.ctx, "acme", "boot")
+	require.NoError(t, err)
+	require.NoError(t, f.signOffline("acme", key, f.bindingRecord("acme", key)))
+}
+
 // TestService_SharedModeIsolation proves two shared-mode tenants using the
 // same policy and key names each see only their own, cannot load each
 // other's keys, and keep their blobs in their own tenant scope.

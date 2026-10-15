@@ -193,11 +193,23 @@ func (c *Config) CreateClient() (client.Client, error) {
 	}
 
 	if c.Server == "" {
-		// Default to Unix socket with gRPC (server uses gRPC on Unix socket)
-		return client.New(&client.BackendConfig{
-			Protocol: client.ProtocolUnixGRPC,
-			Address:  client.DefaultUnixSocketPath,
-		})
+		// Default to xkmsd's Unix socket: gRPC over the qrdb node's TLS
+		// listener, which admits the caller by its client certificate or
+		// session JWT.
+		cfg, err := c.backendConfig()
+		if err != nil {
+			return nil, err
+		}
+		cfg.Protocol = client.ProtocolUnixGRPC
+		cfg.Address = client.DefaultUnixSocketPath
+		cfg.TLSEnabled = true
+		return client.New(cfg)
+	}
+
+	// xkmsd's socket is the qrdb node's TLS listener, so a unix:// server
+	// always takes the TLS-bearing path, with or without credential flags.
+	if hasPrefix(c.Server, "unix://") {
+		return c.createClientWithTLS()
 	}
 
 	// Parse the server URL to determine protocol
@@ -216,7 +228,11 @@ func (c *Config) CreateClient() (client.Client, error) {
 }
 
 // createClientFromProtocol creates a client based on the Protocol field
-func (c *Config) createClientFromProtocol() (client.Client, error) {
+// backendConfig builds the client configuration every network transport
+// shares: the mTLS certificate files, the session JWT, and, when
+// --pkcs11-module is set, a PKCS#11-backed client certificate. The caller
+// sets the protocol and address.
+func (c *Config) backendConfig() (*client.BackendConfig, error) {
 	cfg := &client.BackendConfig{
 		TLSCertFile: c.TLSCert,
 		TLSKeyFile:  c.TLSKey,
@@ -240,10 +256,19 @@ func (c *Config) createClientFromProtocol() (client.Client, error) {
 		cfg.TLSConfig = tlsCfg
 		cfg.TLSEnabled = true
 	}
+	return cfg, nil
+}
+
+func (c *Config) createClientFromProtocol() (client.Client, error) {
+	cfg, err := c.backendConfig()
+	if err != nil {
+		return nil, err
+	}
 
 	switch c.Protocol {
 	case "unix":
 		cfg.Protocol = client.ProtocolUnix
+		cfg.TLSEnabled = true // xkmsd's socket is the qrdb node's TLS listener
 		// Strip the unix:// scheme — the unix transport prepends it when dialing,
 		// so passing it through here yields "unix://unix:///path" (gRPC rejects it
 		// with "invalid (non-empty) authority: unix:"). Matches the NewFromURL path.
@@ -285,28 +310,9 @@ func (c *Config) createClientFromProtocol() (client.Client, error) {
 
 // createClientWithTLS creates a client with TLS options
 func (c *Config) createClientWithTLS() (client.Client, error) {
-	cfg := &client.BackendConfig{
-		TLSCertFile: c.TLSCert,
-		TLSKeyFile:  c.TLSKey,
-		TLSCAFile:   c.TLSCACert,
-		JWTToken:    c.JWTToken,
-	}
-
-	// Wire PKCS#11-backed mTLS if --pkcs11-module is set. The returned
-	// cleanup is intentionally not called: the PKCS#11 session/module
-	// backing tlsCfg lives for the lifetime of the client and is cleaned up
-	// when the process exits.
-	if c.PKCS11Module != "" {
-		tlsCfg, _, err := client.NewPKCS11TLSConfig(&client.PKCS11TLSConfig{
-			ModulePath: c.PKCS11Module,
-			SlotID:     c.PKCS11Slot,
-			PIN:        c.PKCS11PIN,
-		})
-		if err != nil {
-			return nil, &WrappedError{Sentinel: ErrCreatePKCS11TLSConfigFailed, Err: err}
-		}
-		cfg.TLSConfig = tlsCfg
-		cfg.TLSEnabled = true
+	cfg, err := c.backendConfig()
+	if err != nil {
+		return nil, err
 	}
 
 	// Parse the server URL
@@ -316,6 +322,7 @@ func (c *Config) createClientWithTLS() (client.Client, error) {
 	case hasPrefix(serverURL, "unix://"):
 		cfg.Protocol = client.ProtocolUnix
 		cfg.Address = trimPrefix(serverURL, "unix://")
+		cfg.TLSEnabled = true // xkmsd's socket is the qrdb node's TLS listener
 
 	case hasPrefix(serverURL, "http://"):
 		cfg.Protocol = client.ProtocolREST

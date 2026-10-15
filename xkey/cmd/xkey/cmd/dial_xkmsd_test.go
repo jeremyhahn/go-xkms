@@ -14,6 +14,7 @@
 package cmd
 
 import (
+	"os"
 	"strings"
 	"testing"
 	"time"
@@ -22,23 +23,56 @@ import (
 )
 
 // TestDialXKMSd_Success dials a real, in-process xkmsd unix-socket gRPC
-// server (the same harness ca/cert tests use), proving dialXKMSd's "unix"
-// protocol path actually connects rather than only being exercised through
-// a stub.
+// server over TLS (the same harness ca/cert tests use) with the client
+// certificate it admits, proving dialXKMSd's "unix" protocol path actually
+// connects rather than only being exercised through a stub.
 func TestDialXKMSd_Success(t *testing.T) {
 	address, _ := startTestXKMSd(t)
-	socketPath := strings.TrimPrefix(address, "unix://")
 
-	cfg := &XKMSdBridgeConfig{
-		Protocol:       "unix",
-		Address:        socketPath,
-		ConnectTimeout: 5 * time.Second,
-	}
-
-	client, err := dialXKMSd(cfg, discardLogger())
+	client, err := dialXKMSd(testBridgeConfig(address), discardLogger())
 	require.NoError(t, err)
 	require.NotNil(t, client)
 	defer func() { _ = client.Close() }()
+}
+
+// TestDialXKMSd_NoClientCertificateRefused proves xkmsd's TLS socket refuses
+// a caller that presents no client certificate.
+func TestDialXKMSd_NoClientCertificateRefused(t *testing.T) {
+	address, _ := startTestXKMSd(t)
+	cfg := testBridgeConfig(address)
+	cfg.TLSCertFile = ""
+	cfg.TLSKeyFile = ""
+
+	_, err := dialXKMSd(cfg, discardLogger())
+	require.ErrorIs(t, err, ErrXKMSdConnectionFailed)
+}
+
+// TestDialXKMSd_UnreadableClientCertificate proves a client certificate
+// that cannot be loaded fails before any dial, with the typed cause.
+func TestDialXKMSd_UnreadableClientCertificate(t *testing.T) {
+	cfg := &XKMSdBridgeConfig{
+		Protocol:    "unix",
+		Address:     t.TempDir() + "/xkmsd.sock",
+		TLSCertFile: t.TempDir() + "/absent-cert.pem",
+		TLSKeyFile:  t.TempDir() + "/absent-key.pem",
+	}
+
+	_, err := dialXKMSd(cfg, discardLogger())
+	require.ErrorIs(t, err, ErrXKMSdConnectionFailed)
+	require.ErrorIs(t, err, ErrXKMSdTLSConfigFailed)
+}
+
+// testBridgeConfig returns a bridge configuration for the harness server at
+// address, carrying the TLS material startTestXKMSd published.
+func testBridgeConfig(address string) *XKMSdBridgeConfig {
+	return &XKMSdBridgeConfig{
+		Protocol:       "unix",
+		Address:        strings.TrimPrefix(address, "unix://"),
+		ConnectTimeout: 5 * time.Second,
+		TLSCAFile:      os.Getenv(envXKMSdTLSCA),
+		TLSCertFile:    os.Getenv(envXKMSdTLSCert),
+		TLSKeyFile:     os.Getenv(envXKMSdTLSKey),
+	}
 }
 
 // TestDialXKMSd_NoServer proves the connection-failure path wraps

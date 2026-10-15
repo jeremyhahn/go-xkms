@@ -78,12 +78,9 @@ type Config struct {
 	// Hash specifies the hash algorithm to use (default: "SHA-256")
 	Hash string `yaml:"hash" json:"hash"`
 
-	// PlatformPCR is the PCR index used for platform policy. Zero means
-	// unset and resolves to pkgtpm2.DefaultPlatformPCR (16), never PCR 0.
-	PlatformPCR uint `yaml:"platform_pcr" json:"platform_pcr"`
-
-	// PlatformPCRBank is the PCR bank hash algorithm (default: pkgtpm2.PCRBankSHA256)
-	PlatformPCRBank string `yaml:"platform_pcr_bank" json:"platform_pcr_bank"`
+	// PlatformPCRSelection is the platform policy's PCR and bank. Unset
+	// fields resolve to pkgtpm2.DefaultPlatformPCRSelection.
+	pkgtpm2.PlatformPCRSelection `yaml:",inline"`
 
 	// CN is the common name prefix for keys created by this backend
 	CN string `yaml:"cn" json:"cn"`
@@ -162,12 +159,11 @@ func (c *Config) ToTPMConfig() *pkgtpm2.Config {
 	}
 
 	cfg := &pkgtpm2.Config{
-		Device:          c.Device,
-		UseSimulator:    c.UseSimulator,
-		Hash:            c.Hash,
-		PlatformPCR:     c.PlatformPCR,
-		PlatformPCRBank: c.PlatformPCRBank,
-		Tracker:         c.Tracker,
+		Device:               c.Device,
+		UseSimulator:         c.UseSimulator,
+		Hash:                 c.Hash,
+		PlatformPCRSelection: c.PlatformPCRSelection,
+		Tracker:              c.Tracker,
 		EK: &pkgtpm2.EKConfig{
 			Handle:       c.EKHandle,
 			CertHandle:   0x01C00002, // TCG standard RSA EK cert NV index

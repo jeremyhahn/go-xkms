@@ -639,8 +639,9 @@ func TestLoadXKMSdBridgeConfig_Defaults(t *testing.T) {
 	assert.Empty(t, cfg.Address)
 	assert.Equal(t, time.Duration(0), cfg.ConnectTimeout)
 	assert.Equal(t, time.Duration(0), cfg.RequestTimeout)
-	assert.False(t, cfg.TLSEnabled)
 	assert.Empty(t, cfg.TLSCAFile)
+	assert.Empty(t, cfg.TLSCertFile)
+	assert.Empty(t, cfg.TLSKeyFile)
 	assert.Empty(t, cfg.AllowedBackends)
 	assert.Empty(t, cfg.DeniedBackends)
 
@@ -662,12 +663,18 @@ func TestLoadXKMSdBridgeConfig_FromViper(t *testing.T) {
 	viper.Set("xkmsd.sharing.allowed_backends", []string{"tpm2", "software"})
 	viper.Set("xkmsd.sharing.denied_backends", []string{"vault"})
 	viper.Set("xkmsd.request_timeout", "45s")
+	viper.Set("xkmsd.tls_ca_file", "/etc/xkey/ca.pem")
+	viper.Set("xkmsd.tls_cert_file", "/etc/xkey/client.pem")
+	viper.Set("xkmsd.tls_key_file", "/etc/xkey/client-key.pem")
 
 	cfg := loadXKMSdBridgeConfig()
 
 	assert.True(t, cfg.Enabled)
 	assert.Equal(t, "unix", cfg.Protocol)
 	assert.Equal(t, "/tmp/test.sock", cfg.Address)
+	assert.Equal(t, "/etc/xkey/ca.pem", cfg.TLSCAFile)
+	assert.Equal(t, "/etc/xkey/client.pem", cfg.TLSCertFile)
+	assert.Equal(t, "/etc/xkey/client-key.pem", cfg.TLSKeyFile)
 	assert.Equal(t, 45*time.Second, cfg.RequestTimeout)
 	assert.Equal(t, []string{"tpm2", "software"}, cfg.AllowedBackends)
 	assert.Equal(t, []string{"vault"}, cfg.DeniedBackends)
@@ -752,9 +759,12 @@ func TestCreateXKMSdClient_Unix(t *testing.T) {
 	client, err := createXKMSdClient(cfg)
 	require.NoError(t, err)
 	require.NotNil(t, client)
+	defer func() { _ = client.Close() }()
 
-	// Clean up the client.
-	_ = client.Close()
+	configured, ok := client.(configuredTransport)
+	require.True(t, ok)
+	assert.Equal(t, "/tmp/test.sock", configured.Config().Address)
+	assert.True(t, configured.Config().TLSEnabled, "xkmsd's socket is a TLS listener")
 }
 
 func TestCreateXKMSdClient_UnsupportedProtocol(t *testing.T) {

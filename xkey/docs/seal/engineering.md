@@ -170,9 +170,9 @@ it exposed two properties of xkey's existing config loader
    `stringToWeakSliceHookFunc` locally (`stringToWeakSliceHookFunc` in
    `load.go`) alongside `mapstructure.StringToTimeDurationHookFunc()` —
    dropping it in favour of the general-purpose
-   `mapstructure.StringToSliceHookFunc` broke every non-`[]string` slice
-   env-var override (`XKEY_GUI_AUTO_UNSEAL_PCRS=0,7` into `[]int`), because
-   that hook only fires when the target type is exactly `[]string`.
+   `mapstructure.StringToSliceHookFunc` would break any non-`[]string` slice
+   env-var override, because that hook only fires when the target type is
+   exactly `[]string`.
 
 A future `*SecretValue` (or any other direct struct-pointer) field added to
 `Config` gets both of these for free; nothing further to wire.
@@ -317,7 +317,7 @@ Sealed-blob store (`SealService`/`AutoUnsealService`, GUI-only):
 | `xkey/cmd/xkey/cmd/tpm_policy_test.go`, `tpm_policy_simulator_test.go` | (none) / `tpm_simulator` | `xkey tpm policy` in server mode over a fake server and in local mode over the simulator, including `auto-unseal` sealing the barrier password; `tryBarrierPolicyAutoUnseal` failing with `ErrLocalTPMPoliciesOpenFailed` without a (provisioned) TPM |
 | `xkey/cmd/xkey/cmd/barrier_cli_test.go`, `extension_serve_test.go`, `fido2_*_test.go` | `ble codec_json` | CLI flag parsing, non-TPM barrier flows, extension-serve/fido2 wiring |
 | `xkey/pkg/config/barrier_cloud_test.go` | `ble codec_json` | `BarrierAWSKMSConfig`/`BarrierGCPKMSConfig`/`BarrierAzureKVConfig`/`BarrierVaultConfig.Validate()` — required fields, credential-field pairing; `TestBarrierCloudKMSConfig_SecretValueRoundTrip` — a `*SecretValue` reference survives `Save`→`Load` intact |
-| `xkey/pkg/config/load_test.go`, `load_partial_test.go`, `save_test.go` | `ble codec_json` | Pre-existing config-loader suite, re-run by this feature: `secretValueDecodeHookFunc`/`stringToWeakSliceHookFunc` (`load.go`) must not regress a `*SecretValue`-free `Load()`/`Save()` round trip or an env-var slice override (`TestLoadFromPath_EnvOverride`'s `XKEY_GUI_AUTO_UNSEAL_PCRS`) |
+| `xkey/pkg/config/load_test.go`, `load_partial_test.go`, `save_test.go` | `ble codec_json` | Pre-existing config-loader suite, re-run by this feature: `secretValueDecodeHookFunc`/`stringToWeakSliceHookFunc` (`load.go`) must not regress a `*SecretValue`-free `Load()`/`Save()` round trip or an env-var override (`TestLoadFromPath_EnvOverride`) |
 | `xkey/cmd/xkey/cmd/barrier_cloudkms_test.go` | `ble codec_json` | `resolveBarrierCloudSecrets` (nil field skipped, unclaimed reference fails), `buildCloudKMSBarrierStrategy`'s "not compiled in" error, `persistBarrierCloudKMSConfig` (no-op for non-cloud strategies, missing-config error, a full init→save→reload round trip including `KeyID`), `--aws-key-id` flag registration |
 | `xkey/pkg/config/barrier_cloud_test.go` | `ble codec_json` | (also) `TestBarrierAWSKMSConfig_KeyIDRoundTrip` — `KeyID` survives `Save`→`Load` intact; `TestBarrierAWSKMSConfig_Validate_KeyIDNotCheckedHere` — `Validate` accepts any `KeyID` value, format checking is `awskms.Config.Validate`'s job |
 | `xkey/pkg/gui/services/barrier_cloudkms_test.go` | `ble codec_json tpm_simulator` | `assembleStrategy`'s cloud KMS branch: unavailable without `SetExternalStrategyFunc`, a full Initialize→Seal→Unseal round trip via `sdk/go.NewCloudKMSStrategy` over a mock sealer, injected-function error propagation |

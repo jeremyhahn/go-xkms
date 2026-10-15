@@ -203,11 +203,9 @@ type AgentConfig struct {
 
 // TPMConfig holds direct TPM access parameters.
 type TPMConfig struct {
-	Device          string `yaml:"device" json:"device" mapstructure:"device"`
-	PlatformPCRBank string `yaml:"platform_pcr_bank" json:"platform_pcr_bank" mapstructure:"platform_pcr_bank"`
-	SealPCRBank     string `yaml:"seal_pcr_bank" json:"seal_pcr_bank" mapstructure:"seal_pcr_bank"`
-	SRKHandle       uint32 `yaml:"srk_handle" json:"srk_handle" mapstructure:"srk_handle"`
-	EKHandle        uint32 `yaml:"ek_handle" json:"ek_handle" mapstructure:"ek_handle"`
+	Device    string `yaml:"device" json:"device" mapstructure:"device"`
+	SRKHandle uint32 `yaml:"srk_handle" json:"srk_handle" mapstructure:"srk_handle"`
+	EKHandle  uint32 `yaml:"ek_handle" json:"ek_handle" mapstructure:"ek_handle"`
 }
 
 // PasswordProtectionConfig holds barrier/encryption at-rest settings.
@@ -266,8 +264,6 @@ type GUIServerConfig struct {
 type AutoUnsealConfig struct {
 	Enabled    bool   `yaml:"enabled" json:"enabled" mapstructure:"enabled"`
 	BlobID     string `yaml:"blob_id" json:"blob_id" mapstructure:"blob_id"`
-	PCRs       []int  `yaml:"pcrs" json:"pcrs" mapstructure:"pcrs"`
-	PCRBank    string `yaml:"pcr_bank" json:"pcr_bank" mapstructure:"pcr_bank"`
 	PolicyType string `yaml:"policy_type" json:"policy_type" mapstructure:"policy_type"`
 	PolicyName string `yaml:"policy_name" json:"policy_name" mapstructure:"policy_name"`
 	Backend    string `yaml:"backend" json:"backend" mapstructure:"backend"`
@@ -430,8 +426,7 @@ func DefaultConfig() *Config {
 			PKCS11Library: "/usr/lib/softhsm/libsofthsm2.so",
 		},
 		TPM: TPMConfig{
-			Device:          "/dev/tpmrm0",
-			PlatformPCRBank: "sha256",
+			Device: "/dev/tpmrm0",
 		},
 		OIDC: OIDCConfig{
 			CallbackHost: "localhost",

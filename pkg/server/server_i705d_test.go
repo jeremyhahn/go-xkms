@@ -44,7 +44,7 @@ func TestInitializeCA_TLSEnabledAutoIssuesServerCert(t *testing.T) {
 	defer xkms.Reset()
 
 	dataDir := t.TempDir()
-	cfg := reproCA793Config(dataDir)
+	cfg := reproCA793Config(t, dataDir)
 	cfg.TLS = config.TLSConfig{Enabled: true, ServerCN: "xkms-i705-tls-test"}
 
 	s, err := New(cfg)
@@ -273,7 +273,7 @@ func TestParseClientAuthMode_AllValues(t *testing.T) {
 // ============================================================================
 
 // TestUpgradeUnifiedTLSCert_NilProviderIsNoOp proves that a server whose
-// unified TLS provider was never built (e.g. NetworkServing() is false) is a
+// unified TLS provider was never built (e.g. NodeServing() is false) is a
 // safe no-op rather than a nil dereference.
 func TestUpgradeUnifiedTLSCert_NilProviderIsNoOp(t *testing.T) {
 	s := newMinimalServer(t, &config.Config{})

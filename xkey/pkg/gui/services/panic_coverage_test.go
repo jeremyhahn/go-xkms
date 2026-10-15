@@ -261,6 +261,10 @@ func (m *allPanicTPM) Sign(_ io.Reader, _ []byte, _ crypto.SignerOpts) ([]byte, 
 func (m *allPanicTPM) SetHierarchyAuth(_, _ xkms.Password, _ *tpm2.TPMHandle) error {
 	panic("allPanicTPM: SetHierarchyAuth")
 }
+
+func (m *allPanicTPM) SetPolicyBindingResolver(xkms.TPMPolicyBindingResolver) {
+	panic("allPanicTPM: SetPolicyBindingResolver")
+}
 func (m *allPanicTPM) SecretFromShares(_ []string) (string, error) {
 	panic("allPanicTPM: SecretFromShares")
 }

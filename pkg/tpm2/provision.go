@@ -1012,13 +1012,7 @@ func (tpm *TPM2) platformPCRDigest(hashAlg tpm2.TPMAlgID) ([]byte, error) {
 	}
 
 	pcrReadRsp, err := tpm2.PCRRead{
-		PCRSelectionIn: tpm2.TPMLPCRSelection{
-			PCRSelections: []tpm2.TPMSPCRSelection{{
-				Hash:      bank,
-				PCRSelect: tpm2.PCClientCompatible.PCRs(uint(tpm.config.PlatformPCR)),
-			},
-			},
-		},
+		PCRSelectionIn: platformPolicyPCRSelection(bank, tpm.config.PlatformPCR),
 	}.Execute(tpm.transport)
 	if err != nil {
 		tpm.logger.Error("PCRRead failed", slog.String("error", err.Error()))
@@ -1105,23 +1099,10 @@ func (tpm *TPM2) CreatePlatformPolicy() error {
 		}
 	}()
 
-	// Create PCR selection using "platform-pcr" defined in the platform
-	// configuration file TPM section.
-	sel := tpm2.TPMLPCRSelection{
-		PCRSelections: []tpm2.TPMSPCRSelection{
-			{
-				Hash:      hashAlgID,
-				PCRSelect: tpm2.PCClientCompatible.PCRs(tpm.config.PlatformPCR),
-			},
-		},
-	}
-
 	// Create policy digest for the selected PCR
 	_, err = tpm2.PolicyPCR{
 		PolicySession: trialSession.Handle(),
-		Pcrs: tpm2.TPMLPCRSelection{
-			PCRSelections: sel.PCRSelections,
-		},
+		Pcrs:          platformPolicyPCRSelection(hashAlgID, tpm.config.PlatformPCR),
 		PcrDigest: tpm2.TPM2BDigest{
 			Buffer: hash,
 		},

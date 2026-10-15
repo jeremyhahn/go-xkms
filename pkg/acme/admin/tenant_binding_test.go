@@ -761,3 +761,18 @@ func TestTenantBinding_OwnershipLookupFailureIsNotNotFound(t *testing.T) {
 	writeIdentityError(rec, err, "Failed to update role")
 	assert.Equal(t, http.StatusInternalServerError, rec.Code)
 }
+
+// TestWriteIdentityError_PermissionDenied proves an operation qrdb's
+// authorizer refuses is answered as permission-denied rather than as an
+// internal failure or a miss.
+func TestWriteIdentityError_PermissionDenied(t *testing.T) {
+	denied := &qrdbsdk.PermissionDeniedError{Resource: "users", Action: "update", Reason: "self-scope permission: identity not in target tenant"}
+
+	rec := httptest.NewRecorder()
+	writeIdentityError(rec, denied, "Failed to update user")
+	assert.Equal(t, http.StatusForbidden, rec.Code, rec.Body.String())
+
+	rec = httptest.NewRecorder()
+	writeIdentityError(rec, ErrUserNotFound, "Failed to update user")
+	assert.Equal(t, http.StatusNotFound, rec.Code, "a miss is still not-found")
+}

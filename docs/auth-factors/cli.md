@@ -10,12 +10,13 @@ user's set of enrolled factors.
 ## `xkmsctl auth factor` and `xkmsctl auth login`
 
 Factor records belong to go-qrdb. The CLI builds a qrdb SDK client and calls
-`UserAuthFactors()` on it (`cmd/xkmsctl/auth_factor_handlers.go:217`). xkmsd
-serves that service on its gRPC server and unix socket
-(`pkg/server/qrdb_control_plane.go:57`). The transport follows the CLI's
-`--server` / `--transport` flags (`cmd/xkmsctl/cluster.go:204`): the default
-unix socket when there is no `--server`, then `unix:///path`, `grpc://host:port`,
-or `grpcs://host:port` (which uses the CLI's `--tls-cert/--tls-key/--tls-ca`).
+`UserAuthFactors()` on it (`cmd/xkmsctl/auth_factor_handlers.go:217`). xkmsd's
+embedded node serves that service on its TLS unix socket. The transport follows
+the CLI's `--server` / `--transport` flags (`cmd/xkmsctl/cluster.go:204`): the
+default unix socket when there is no `--server`, then `unix:///path`,
+`grpc://host:port`, or `grpcs://host:port`. Every one of them speaks TLS with
+the CLI's `--tls-cert/--tls-key/--tls-ca`; the unix socket included, since it
+refuses anonymous callers.
 
 | Verb | Arguments and flags | Source |
 |---|---|---|

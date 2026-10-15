@@ -19,9 +19,7 @@ protocols:
 
 # Unix socket configuration
 unix:
-  enabled: true
   socket_path: /var/run/xkms/xkms.sock
-  socket_mode: 0755
 
 # TLS configuration
 tls:

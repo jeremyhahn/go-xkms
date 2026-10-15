@@ -92,7 +92,6 @@ export namespace config {
 	    require_encrypted_storage: boolean;
 	    storage_type: string;
 	    require_tpm: boolean;
-	    platform_pcr_bank: string;
 	    allowed_backends: string[];
 	    default_backend: string;
 	    fido2_always_uv: boolean;
@@ -141,7 +140,6 @@ export namespace config {
 	        this.require_encrypted_storage = source["require_encrypted_storage"];
 	        this.storage_type = source["storage_type"];
 	        this.require_tpm = source["require_tpm"];
-	        this.platform_pcr_bank = source["platform_pcr_bank"];
 	        this.allowed_backends = source["allowed_backends"];
 	        this.default_backend = source["default_backend"];
 	        this.fido2_always_uv = source["fido2_always_uv"];

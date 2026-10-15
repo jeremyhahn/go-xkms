@@ -39,7 +39,6 @@ import (
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/prometheus/client_golang/prometheus/promhttp"
 	dto "github.com/prometheus/client_model/go"
-	"google.golang.org/grpc"
 
 	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
 	qrdbnode "github.com/jeremyhahn/go-qrdb/sdk/go/node"
@@ -49,7 +48,6 @@ import (
 	grpcinternal "github.com/jeremyhahn/go-xkms/pkg/api/grpc"
 	"github.com/jeremyhahn/go-xkms/pkg/api/mcp"
 	"github.com/jeremyhahn/go-xkms/pkg/api/rest"
-	"github.com/jeremyhahn/go-xkms/pkg/api/unix"
 	"github.com/jeremyhahn/go-xkms/pkg/auth"
 	"github.com/jeremyhahn/go-xkms/pkg/auth/token"
 	"github.com/jeremyhahn/go-xkms/pkg/backend/software"
@@ -149,7 +147,6 @@ type Server struct {
 	xkmsService *xkms.XKMSService
 
 	// Protocol servers
-	unixGRPCServer       *unix.GRPCServer
 	restServer           *rest.Server
 	moduleREST           *rest.Server
 	moduleRESTOnce       sync.Once
@@ -1224,13 +1221,11 @@ func (s *Server) initializeKeyStore() error {
 
 // initializeAuthentication sets up the authentication subsystem.
 //
-// Authenticator selection is fail-closed. The no-op authenticator is reachable
-// only through an explicit, unambiguous opt-in — auth.enabled=false or
-// auth.type "none"/"noop"/"" — which config.ComplianceGaps() reports, so the
-// daemon refuses to start on it at all and offers no override. Every
-// other outcome that cannot produce a real authenticator (an unrecognized
-// auth.type, a broken JWT key, a composite chain with nothing to derive) is a
-// fatal startup error rather than a silently unauthenticated server.
+// Authenticator selection is fail-closed and has no unauthenticated mode:
+// auth.enabled=false and auth.type "none"/"noop"/"" are refused with
+// ErrAuthenticationDisabled. Every other outcome that cannot produce a real
+// authenticator (an unrecognized auth.type, a broken JWT key, a composite
+// chain with nothing to derive) is likewise a fatal startup error.
 func (s *Server) initializeAuthentication() error {
 	if err := s.buildAuthenticator(); err != nil {
 		return err
@@ -1281,27 +1276,18 @@ func (s *Server) buildAuthenticator() error {
 			"rp_display_name", s.webauthnConfig.RPDisplayName)
 	}
 
-	// If auth is disabled, use NoOp authenticator. This is an explicit opt-in
-	// that config.ComplianceGaps() flags, so cmd/xkmsd refuses to start on it
-	// outright; only embedded and test callers of this package reach here.
+	// There is no unauthenticated mode: the qrdb authentication chain and
+	// every transport verify through this authenticator, so a configuration
+	// that disables authentication is refused rather than served anonymously.
 	if !s.config.Auth.Enabled {
-		s.authenticator = auth.NewNoOpAuthenticator()
-		s.logger.Warn("Authentication disabled (auth.enabled=false), using NoOp authenticator: all requests are anonymous")
-		return nil
+		return &ErrAuthenticationDisabled{Type: s.config.Auth.Type}
 	}
 
 	// Determine the required authenticator based on config type
 	var requiredAuth auth.Authenticator
 	switch strings.ToLower(strings.TrimSpace(s.config.Auth.Type)) {
 	case "none", "noop", "":
-		// Explicit, unambiguous opt-in to unauthenticated access. This mirrors
-		// config.AuthConfig.CreateAuthenticator and is reported by
-		// config.ComplianceGaps(), so the daemon refuses to start on it
-		// outright; only embedded and test callers of this package reach here.
-		s.authenticator = auth.NewNoOpAuthenticator()
-		s.logger.Warn("Authentication explicitly set to no-op, all requests are anonymous",
-			"type", s.config.Auth.Type)
-		return nil
+		return &ErrAuthenticationDisabled{Type: s.config.Auth.Type}
 
 	case "jwt":
 		// JWT authenticator requires a public key
@@ -1347,7 +1333,7 @@ func (s *Server) buildAuthenticator() error {
 	default:
 		// Fail closed: an unrecognized auth.type is almost always a typo, and
 		// admitting every request because of one would be the worst possible
-		// outcome. Unauthenticated access must be requested explicitly.
+		// outcome.
 		return &ErrUnknownAuthType{Type: s.config.Auth.Type}
 	}
 
@@ -1376,8 +1362,8 @@ func (s *Server) buildAuthenticator() error {
 //     certificate; included whenever TLS is enabled.
 //
 // An empty derivation (no TLS, no JWT key) fails closed: there is nothing a
-// caller could authenticate with, and unauthenticated access must be an
-// explicit opt-in, never a fallback.
+// caller could authenticate with, and the server has no unauthenticated
+// mode to fall back to.
 func (s *Server) createCompositeAuthenticator() (auth.Authenticator, error) {
 	if s.config.Auth.Composite == nil || len(s.config.Auth.Composite.Methods) == 0 {
 		return s.deriveCompositeAuthenticator()
@@ -1585,21 +1571,45 @@ func (s *Server) initializeAuditLogger() error {
 // certificate-field extraction (handled in buildIdentity when the store is
 // nil).
 func (s *Server) mtlsUserStore() auth.UserStore {
-	if qs := s.qrdbUserStore(); qs != nil {
+	if qs := s.QRDBUserStore(); qs != nil {
 		return qs
 	}
 	return nil
 }
 
-// qrdbUserStore builds the qrdb-backed identity store (cert-thumbprint
+// QRDBUserStore builds the qrdb-backed identity store (cert-thumbprint
 // resolution + user existence checks) when xkms hosts or dials the qrdb
 // engine. It returns nil when no qrdb client is configured, so callers can
 // distinguish "no identity plane" from a usable store.
-func (s *Server) qrdbUserStore() *auth.QRDBUserStore {
+//
+// Over the embedded node its lookups go to the node's user service rather than
+// its client: a certificate is resolved before its holder is authenticated,
+// the node's auth chain refuses an anonymous client call, and the user service
+// resolves the certificate in the tenant the caller's certificate names.
+func (s *Server) QRDBUserStore() *auth.QRDBUserStore {
 	if s.qrdbClient == nil {
 		return nil
 	}
-	return auth.NewQRDBUserStore(s.qrdbClient.Users())
+	if s.qrdbNode == nil {
+		return auth.NewQRDBUserStore(s.qrdbClient.Users())
+	}
+	return auth.NewQRDBServiceUserStore(nodeCertUsers{node: s.qrdbNode})
+}
+
+// nodeCertUsers resolves certificates through the embedded node's user
+// service, read at each lookup: the node publishes the service only once it
+// has completed boot, which a sealed node does after it is unsealed.
+type nodeCertUsers struct {
+	node *qrdbnode.Node
+}
+
+// UserByCertThumbprint resolves thumbprint in the tenant ctx names.
+func (n nodeCertUsers) UserByCertThumbprint(ctx context.Context, thumbprint string) (*qrdbsdk.User, error) {
+	users := n.node.UserService()
+	if users == nil {
+		return nil, ErrQRDBNodeNotServing
+	}
+	return users.UserByCertThumbprint(ctx, thumbprint)
 }
 
 // initializeKeyVersionStore builds the key-version record store through
@@ -2426,40 +2436,24 @@ func (s *Server) Start() error {
 		}
 	}
 
-	// Network serving runs exclusively on the unified API server: the
-	// embedded qrdb node's multi-protocol server took xkmsd's
-	// REST/gRPC/MCP ports during node construction (buildXKMSQRDBConfig;
-	// config.Validate guarantees datastore.mode "standalone" + TLS
-	// material) and serves the xkms capability plane through the
-	// registered ServiceModule. QUIC is HTTP/3 on the REST port,
-	// advertised via Alt-Svc. Local IPC stays in-process: xkmsd's own
-	// plaintext Unix socket serves local clients in every datastore mode.
-	// The loopback desktop engine is the one NetworkServing() deployment
+	// Serving runs exclusively on the unified API server: the embedded
+	// qrdb node's multi-protocol server took xkmsd's REST/gRPC/MCP ports
+	// and the Unix socket during node construction (buildXKMSQRDBConfig;
+	// config.Validate guarantees datastore.mode "standalone" + TLS) and
+	// serves the xkms capability plane through the registered
+	// ServiceModule, behind one authentication chain on every transport.
+	// QUIC is HTTP/3 on the REST port, advertised via Alt-Svc.
+	// The loopback desktop engine is the one NodeServing() deployment
 	// that does NOT reach this node's own listeners (Config.LoopbackDesktop
 	// -- see buildXKMSQRDBConfig): it forces Protocols.REST on but serves
 	// REST itself on an injected, pre-bound listener instead.
-	if s.config.NetworkServing() && !s.config.LoopbackDesktop {
-		s.logger.Info("unified API server: embedded qrdb node serves the network protocols via the xkms ServiceModule",
+	if s.config.NodeServing() && !s.config.LoopbackDesktop {
+		s.logger.Info("unified API server: embedded qrdb node serves the xkms protocols via the xkms ServiceModule",
 			"rest_port", s.config.Server.RESTPort,
 			"grpc_port", s.config.Server.GRPCPort,
 			"mcp_port", s.config.Server.MCPPort,
+			"unix", s.config.Protocols.Unix,
 			"quic", "http3 on rest_port")
-	}
-
-	// Unix socket for local IPC. xkmsd always serves its own socket: the
-	// local IPC contract is plaintext gRPC guarded by filesystem
-	// permissions, and the plaintext clients (pkcs11 module, CLI, SDK unix
-	// transport) depend on it in every storage mode. The embedded node's
-	// TLS-only UDS is deliberately not used for this plane
-	// (buildXKMSQRDBConfig leaves the node's Unix protocol off).
-	if s.config.Protocols.Unix {
-		// The server is built and stored before Start returns, so the
-		// listener accessors are valid as soon as Start does; only the
-		// blocking accept loop runs on its own goroutine.
-		if grpcServer := s.prepareUnix(); grpcServer != nil {
-			s.wg.Add(1)
-			go s.startUnix(grpcServer)
-		}
 	}
 
 	// Loopback desktop engine: serve REST on the injected pre-bound
@@ -2514,89 +2508,6 @@ func (s *Server) startWebAuthnSessionSweeper() {
 		defer s.wg.Done()
 		s.webauthnService.SweepSessions(s.ctx, webauthn.DefaultSessionSweepInterval)
 	}()
-}
-
-// startUnix runs the accept loop of the Unix domain socket server built by
-// prepareUnix. It blocks until the server stops.
-func (s *Server) startUnix(grpcServer *unix.GRPCServer) {
-	defer s.wg.Done()
-
-	if err := grpcServer.Start(); err != nil {
-		s.logger.Error("Unix gRPC server error", slog.Any("error", err))
-	}
-}
-
-// prepareUnix builds the Unix domain socket server from configuration and
-// stores it so Shutdown can stop it. It returns nil when no server is to be
-// run: the protocol is unknown, construction failed, or Shutdown already began.
-func (s *Server) prepareUnix() *unix.GRPCServer {
-	// Determine socket path
-	socketPath := s.config.Unix.SocketPath
-	if socketPath == "" {
-		socketPath = unix.DefaultSocketPath
-	}
-
-	// Determine protocol (default to gRPC)
-	protocol := s.config.Unix.Protocol
-	if protocol == "" {
-		protocol = "grpc"
-	}
-
-	// Start server based on protocol configuration
-	switch protocol {
-	case "grpc":
-		s.logger.Info("Starting Unix socket with gRPC protocol", "socket", socketPath)
-
-		// The XKMSService is forwarded as the CA servicer under the same
-		// condition buildRESTConfig gates restConfig.CA on: a configured CA
-		// (s.ca != nil) AND a composed XKMSService. Before go-xkms#951, CA
-		// RPCs over this listener always answered Unavailable because
-		// nothing wired a CA into the gRPC service's (then package-level)
-		// SetCA at all.
-		var caServicer any
-		if s.ca != nil && s.xkmsService != nil {
-			caServicer = s.xkmsService
-		}
-
-		// Create Unix gRPC server configuration
-		// Note: Logger is nil - the unix package will use its internal noOpLogger
-		grpcConfig := &unix.GRPCConfig{
-			SocketPath:      socketPath,
-			Logger:          nil,
-			XKMSService:     s.xkmsService,
-			SSHClient:       s.ensureSSHClient(),
-			BarrierRegistry: s.barrierRegistry,
-			CA:              caServicer,
-			CABundler:       s.grpcCABundler,
-			// Host the embedded qrdb node's control plane (cluster admin,
-			// rebalance, user auth factors) on the unix socket — xkmsctl's
-			// default transport. Same socket-file-mode trust boundary as the
-			// keystore service above, and the same unix-peer identity
-			// (uid:<peer uid>, system tenant) on every admitted call (#1406).
-			ExtraServices: []func(*grpc.Server){s.registerQRDBControlPlane},
-		}
-
-		grpcServer, err := unix.NewGRPCServer(grpcConfig)
-		if err != nil {
-			s.logger.Error("Failed to create Unix gRPC server", slog.Any("error", err))
-			return nil
-		}
-
-		// Store the server so Shutdown can stop it. If Shutdown already began
-		// (ctx cancelled), do not run it: Shutdown could not stop a server it
-		// never saw.
-		s.mu.Lock()
-		defer s.mu.Unlock()
-		if s.ctx.Err() != nil {
-			return nil
-		}
-		s.unixGRPCServer = grpcServer
-		return grpcServer
-
-	default:
-		s.logger.Error("Unknown Unix socket protocol", "protocol", protocol)
-		return nil
-	}
 }
 
 // XKMSService returns the composed XKMSService reference under the
@@ -3551,7 +3462,6 @@ func (s *Server) shutdown() error {
 	// independently, and destroy pages the other caller is still draining.
 	// A write lock rather than a read lock, for the same reason.
 	s.mu.Lock()
-	unixGRPC := s.unixGRPCServer
 	restSrv := s.restServer
 	noiseSrv := s.noiseBootstrapServer
 	noiseKeys := &bootstrapKeys{noise: s.noiseBootstrapKey, p256: s.p256BootstrapKey}
@@ -3572,14 +3482,6 @@ func (s *Server) shutdown() error {
 		s.logger.Info("Shutting down metrics server...")
 		if err := metricsSrv.Shutdown(shutdownCtx); err != nil {
 			s.logger.Error("Error shutting down metrics server", slog.Any("error", err))
-		}
-	}
-
-	// Shutdown Unix gRPC socket server
-	if unixGRPC != nil {
-		s.logger.Info("Shutting down Unix gRPC socket server...")
-		if err := unixGRPC.Stop(shutdownCtx); err != nil {
-			s.logger.Error("Error shutting down Unix gRPC socket server", slog.Any("error", err))
 		}
 	}
 
@@ -3784,11 +3686,4 @@ func (s *Server) NoiseBootstrapServer() *noiseboot.Server {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 	return s.noiseBootstrapServer
-}
-
-// UnixGRPCServer returns the Unix gRPC socket server instance
-func (s *Server) UnixGRPCServer() *unix.GRPCServer {
-	s.mu.RLock()
-	defer s.mu.RUnlock()
-	return s.unixGRPCServer
 }

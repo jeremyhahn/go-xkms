@@ -78,8 +78,8 @@ func TestLoadFromPath_PartialSectionKeepsDefaults(t *testing.T) {
 		},
 		{
 			name: "tpm",
-			yaml: "tpm:\n  seal_pcr_bank: sha384\n",
-			want: func(c *Config) { c.TPM.SealPCRBank = "sha384" },
+			yaml: "tpm:\n  srk_handle: 2164260866\n",
+			want: func(c *Config) { c.TPM.SRKHandle = 2164260866 },
 		},
 		{
 			name: "password_protection",
@@ -165,11 +165,10 @@ func TestLoadFromPath_ExplicitZeroValueWins(t *testing.T) {
 // replaces the seeded default outright rather than appending to it or
 // leaving default elements behind past the file's length.
 func TestLoadFromPath_SliceReplacesDefault(t *testing.T) {
-	cfg, err := LoadFromPath(writeConfigFile(t, "policy:\n  allowed_backends: [tpm2]\ngui:\n  auto_unseal:\n    pcrs: [0, 7]\n"))
+	cfg, err := LoadFromPath(writeConfigFile(t, "policy:\n  allowed_backends: [tpm2]\n"))
 	require.NoError(t, err)
 
 	assert.Equal(t, []string{"tpm2"}, cfg.Policy.AllowedBackends)
-	assert.Equal(t, []int{0, 7}, cfg.GUI.AutoUnseal.PCRs)
 	assert.True(t, cfg.Policy.RequireUserPIN)
 }
 

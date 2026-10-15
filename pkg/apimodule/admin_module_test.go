@@ -54,17 +54,13 @@ func TestAdminModule_Name(t *testing.T) {
 	assert.NotEqual(t, ModuleName, m.Name())
 }
 
-// TestAdminModule_RegisterHTTP_PublicForEveryPrefixAndMethod proves every
-// configured API prefix is registered as a PUBLIC route (at the qrdb
-// module-registration layer) for every method the admin route tables use,
-// both at the bare prefix and its wildcard. Public registration here is
-// deliberate: pkg/acme/admin's Handlers/TenantHandlers authenticate and
-// authorize every request themselves (admin.AuthHandler + PermissionGate,
-// both backed by the same qrdb RBAC service other transports use) — see
-// AdminRouterResolver's doc comment. This test proves the module does not
-// additionally gate these routes at the qrdb layer, which would require an
-// identity qrdb's own authenticators cannot produce for this credential.
-func TestAdminModule_RegisterHTTP_PublicForEveryPrefixAndMethod(t *testing.T) {
+// TestAdminModule_RegisterHTTP_IdentityGatedForEveryPrefixAndMethod proves
+// every configured API prefix is registered under qrdb's identity-gated
+// sentinel, never public, for every method the admin route tables use, both
+// at the bare prefix and its wildcard. qrdb's authentication chain therefore
+// refuses an anonymous caller before the admin handlers run; the handlers'
+// PermissionGate still authorizes each route (see AdminRouterResolver).
+func TestAdminModule_RegisterHTTP_IdentityGatedForEveryPrefixAndMethod(t *testing.T) {
 	prefixes := []string{"/admin", "/api/v1/tenants"}
 	m, err := NewAdminModule(func() http.Handler { return nil }, prefixes)
 	require.NoError(t, err)
@@ -72,17 +68,18 @@ func TestAdminModule_RegisterHTTP_PublicForEveryPrefixAndMethod(t *testing.T) {
 	reg, recs := newCaptureRegistrar()
 	m.RegisterHTTP(reg)
 
-	got := map[string]bool{} // "method pattern" -> public
+	got := map[string]captured{} // "method pattern" -> registration
 	for _, r := range *recs {
-		got[r.method+" "+r.pattern] = r.public
+		got[r.method+" "+r.pattern] = r
 	}
 
 	for _, prefix := range prefixes {
 		for _, method := range adminAPIMethods {
 			for _, pattern := range []string{prefix, prefix + "/*"} {
-				public, ok := got[method+" "+pattern]
+				rec, ok := got[method+" "+pattern]
 				if assert.True(t, ok, "missing registration for %s %s", method, pattern) {
-					assert.True(t, public, "%s %s must be registered public (admin package self-authenticates)", method, pattern)
+					assert.False(t, rec.public, "%s %s must not be registered public", method, pattern)
+					assert.Equal(t, identityGatedPermission, rec.perm, "%s %s must be identity-gated", method, pattern)
 				}
 			}
 		}

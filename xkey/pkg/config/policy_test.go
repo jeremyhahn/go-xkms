@@ -56,7 +56,6 @@ func TestDefaultPolicyZeroFields(t *testing.T) {
 
 	// These fields must NOT be set by DefaultPolicy.
 	assert.False(t, p.RequireTPM)
-	assert.Empty(t, p.PlatformPCRBank)
 	assert.Nil(t, p.AllowedBackends)
 	assert.Empty(t, p.DefaultBackend)
 	assert.False(t, p.FIDO2AlwaysUV)
@@ -197,7 +196,6 @@ func TestPolicyCanonicalJSON_FieldOrder(t *testing.T) {
 		"require_encrypted_storage",
 		"storage_type",
 		"require_tpm",
-		"platform_pcr_bank",
 		"allowed_backends",
 		"default_backend",
 		"fido2_always_uv",
@@ -248,7 +246,6 @@ func TestPolicyCanonicalJSON_WithAllFields(t *testing.T) {
 		RequireEncryptedStorage:        true,
 		StorageType:                    "barrier",
 		RequireTPM:                     true,
-		PlatformPCRBank:                "sha256",
 		AllowedBackends:                []string{"software", "tpm2"},
 		DefaultBackend:                 "tpm2",
 		FIDO2AlwaysUV:                  true,
@@ -294,7 +291,6 @@ func TestPolicyCanonicalJSON_WithAllFields(t *testing.T) {
 	assert.Equal(t, p.RequireEncryptedStorage, restored.RequireEncryptedStorage)
 	assert.Equal(t, p.StorageType, restored.StorageType)
 	assert.Equal(t, p.RequireTPM, restored.RequireTPM)
-	assert.Equal(t, p.PlatformPCRBank, restored.PlatformPCRBank)
 	assert.Equal(t, p.AllowedBackends, restored.AllowedBackends)
 	assert.Equal(t, p.DefaultBackend, restored.DefaultBackend)
 	assert.Equal(t, p.FIDO2AlwaysUV, restored.FIDO2AlwaysUV)
@@ -328,7 +324,6 @@ func TestPolicyCanonicalJSON_WithAllFields(t *testing.T) {
 	assert.Contains(t, jsonStr, `"min_pin_length":8`)
 	assert.Contains(t, jsonStr, `"organization_name":"Test Organization"`)
 	assert.Contains(t, jsonStr, `"policy_version":42`)
-	assert.Contains(t, jsonStr, `"platform_pcr_bank":"sha256"`)
 	assert.Contains(t, jsonStr, `"allowed_backends":["software","tpm2"]`)
 	assert.Contains(t, jsonStr, `"api_explorer_enabled":true`)
 	assert.Contains(t, jsonStr, `"api_explorer_sandbox_policy":"strict"`)
@@ -583,7 +578,6 @@ var policySectionFieldReaders = map[string]string{
 	"RequireEncryptedStorage":         "pkg/gui/enterprise_policy.go checkStartupPreconditions (#668)",
 	"StorageType":                     "cmd/xkey/cmd fido2.go/piv.go backend selection; pkg/gui/app.go barrier storage type",
 	"RequireTPM":                      "pkg/gui/enterprise_policy.go checkStartupPreconditions (#668)",
-	"PlatformPCRBank":                 "pkg/pairing/tpm_enroller.go TPM enrollment PCR bank; cmd/xkey/cmd/tpm_status.go",
 	"AllowedBackends":                 "pkg/pairing/bridge.go backend access control allow-list",
 	"DefaultBackend":                  "pkg/gui/services/admin_service.go default seal backend reporting",
 	"FIDO2AlwaysUV":                   "pkg/gui/enterprise_policy.go applyFIDO2Policy -> Authenticator.SetAlwaysUV (#668)",

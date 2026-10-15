@@ -87,7 +87,7 @@ func (s entityFailingStore) List(ctx context.Context, prefix string) ([]string, 
 func newEntityFailingRegistry(t *testing.T, entity string) (*Registry, *entityFailingStore) {
 	t.Helper()
 	store := &entityFailingStore{AtomicKVStore: qrdbsdk.NewMemoryKVStore(), entity: entity, ops: map[string]bool{}}
-	r, err := NewRegistry(dao.NewStoreFactory(store))
+	r, err := NewRegistry(dao.NewStoreFactory(store), 0)
 	require.NoError(t, err)
 	return r, store
 }

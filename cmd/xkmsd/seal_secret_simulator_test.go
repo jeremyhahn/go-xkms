@@ -38,6 +38,7 @@ func TestPresealSecretCommand_SealsWhatTheBootReleases(t *testing.T) {
 			configPath := filepath.Join(t.TempDir(), "xkmsd.yaml")
 			yaml := "datastore:\n  path: " + dataDir + "\n" +
 				"protocols:\n  unix: true\n" +
+				"tls:\n  enabled: true\n" +
 				"logging:\n  level: info\n  format: json\n" +
 				"default_backend: pkcs8\n" +
 				"backends:\n  pkcs8:\n    enabled: true\n    path: " + filepath.Join(dataDir, "pkcs8") + "\n  tpm2:\n    use_simulator: true\n"

@@ -121,6 +121,10 @@ var (
 	// ErrInvalidKeyAlgorithm indicates an unsupported key algorithm was specified.
 	ErrInvalidKeyAlgorithm = errors.New("ca: invalid key algorithm")
 
+	// ErrPublicKeyRequired indicates a certificate was requested for a key
+	// without naming the key's public half.
+	ErrPublicKeyRequired = errors.New("ca: public key required")
+
 	// ErrInvalidStoreType indicates an unsupported store type was specified.
 	ErrInvalidStoreType = errors.New("ca: invalid store type")
 

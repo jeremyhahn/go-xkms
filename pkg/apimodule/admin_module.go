@@ -58,11 +58,12 @@ func (e *NilAdminRouterResolverError) Error() string {
 // the admin package's authn/authz composition entirely in the composing
 // binary (cmd/xkmsd), where it already lives.
 //
-// Because the resolved handler is self-authenticating, AdminModule registers
-// its routes as public at the qrdb layer — the qrdb node's own authenticators
-// have no way to understand the admin plane's credential — mirroring how the
-// crypto-plane Module's embedded web UI is public at the qrdb layer while its
-// own REST surface still authenticates every request underneath (module_http.go).
+// AdminModule registers the admin API under qrdb's identity-gated sentinel,
+// exactly as the crypto-plane Module registers its authenticated-session
+// routes (module_http.go): the qrdb node's authentication chain (mTLS, then
+// the xkms session JWT) refuses an anonymous caller before the handler runs,
+// and the resolved handler's PermissionGate still decides each route's
+// resource:action grant.
 type AdminRouterResolver func() http.Handler
 
 // AdminModuleOption configures optional AdminModule behavior at construction
@@ -138,16 +139,16 @@ func (e *NilAdminAPIPrefixesError) Error() string {
 // Name uniquely identifies the module.
 func (m *AdminModule) Name() string { return AdminModuleName }
 
-// RegisterHTTP registers the admin API's route prefixes (public at the qrdb
-// layer; see AdminRouterResolver's doc comment on why authn/authz still
-// happens underneath) and, when WithAdminWebUI configured one, the admin SPA
+// RegisterHTTP registers the admin API's route prefixes (identity-gated at
+// the qrdb layer, authorized per route underneath; see AdminRouterResolver's
+// doc comment) and, when WithAdminWebUI configured one, the public admin SPA
 // under its own prefix.
 func (m *AdminModule) RegisterHTTP(r *qrdbsdk.ModuleHTTPRegistrar) {
 	h := m.lazyAPIHandler()
 	for _, prefix := range m.apiPrefixes {
 		for _, method := range adminAPIMethods {
-			r.HandlePublic(method, prefix, h)
-			r.HandlePublic(method, prefix+"/*", h)
+			r.Handle(method, prefix, identityGatedPermission, h)
+			r.Handle(method, prefix+"/*", identityGatedPermission, h)
 		}
 	}
 

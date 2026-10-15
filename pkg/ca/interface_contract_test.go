@@ -72,6 +72,7 @@ var trustedCAMethods = map[string]struct{}{
 	"IsInitialized":                          {},
 	"IsRevoked":                              {},
 	"IssueCertificate":                       {},
+	"IssueCertificateForKey":                 {},
 	"IssueCertificateWithProfile":            {},
 	"IssuingIdentity":                        {},
 	"KeyStore":                               {},

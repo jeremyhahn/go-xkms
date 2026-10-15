@@ -194,6 +194,20 @@ gRPC (`xkms.v1`, pre-v1, one wire format; removed numbers are reserved):
 | `TPMPolicyBranchVerification` (new) | `match` = 1, `mismatched` = 2, `approved` = 3 |
 | `TPMPolicyVerifyResponse` | `branches` = 5; `mismatched` (3) removed |
 
+## Go SDK: offline authorization
+
+Design: [`architecture.md`](architecture.md), "Offline authorization".
+`sdk/go/tpmpolicy.go` exports:
+
+- `TPMPolicyBindingResolver` (`:84`), what a TPM consults for named
+  policies; `TPM.SetPolicyBindingResolver` installs one.
+- `TPMStaticPolicyResolver` (`:89`) and `NewTPMStaticPolicyResolver(records
+  ...[]byte)` (`:205`): a resolver over `.tpmpolicy` binding records, needing
+  no database. Two records for one policy that disagree are refused
+  (`tpm2.ErrPolicyApprovalMismatch`).
+- `ErrTPMPolicyUnbound` (`:215`): the policy has no record in the resolver. A
+  record without approvals resolves to `ErrTPMPolicyRevoked`.
+
 ## Errors
 
 Classified by `apierrors.TPMPolicyClassOf` (typed errors, then

@@ -223,7 +223,6 @@ xkmsd:
   tls_enabled: true
 tpm:
   device: /dev/tpmrm0
-  platform_pcr_bank: sha256
   srk_handle: 2164260865
 password_protection:
   enabled: true
@@ -260,8 +259,6 @@ gui:
   auto_unseal:
     enabled: true
     blob_id: myblob
-    pcrs: [0, 1, 7]
-    pcr_bank: sha256
     policy_type: pcr
     policy_name: boot-policy
     backend: tpm2
@@ -318,7 +315,6 @@ device:
 
 	// TPM
 	assert.Equal(t, "/dev/tpmrm0", cfg.TPM.Device)
-	assert.Equal(t, "sha256", cfg.TPM.PlatformPCRBank)
 	assert.Equal(t, uint32(2164260865), cfg.TPM.SRKHandle)
 
 	// PasswordProtection
@@ -361,8 +357,6 @@ device:
 	// GUI.AutoUnseal
 	assert.True(t, cfg.GUI.AutoUnseal.Enabled)
 	assert.Equal(t, "myblob", cfg.GUI.AutoUnseal.BlobID)
-	assert.Equal(t, []int{0, 1, 7}, cfg.GUI.AutoUnseal.PCRs)
-	assert.Equal(t, "sha256", cfg.GUI.AutoUnseal.PCRBank)
 	assert.Equal(t, "pcr", cfg.GUI.AutoUnseal.PolicyType)
 	assert.Equal(t, "boot-policy", cfg.GUI.AutoUnseal.PolicyName)
 	assert.Equal(t, "tpm2", cfg.GUI.AutoUnseal.Backend)
@@ -406,7 +400,6 @@ log:
 	t.Setenv("XKEY_GUI_SERVER_ADDRESS", "gui.example.com:8443")
 	t.Setenv("XKEY_BACKEND_TPM2_DEVICE", "/dev/env-backend-tpm")
 	t.Setenv("XKEY_POLICY_MIN_PIN_LENGTH", "8")
-	t.Setenv("XKEY_GUI_AUTO_UNSEAL_PCRS", "0,7")
 
 	cfg, err := LoadFromPath(cfgPath)
 	require.NoError(t, err)
@@ -422,7 +415,6 @@ log:
 	assert.Equal(t, "gui.example.com:8443", cfg.GUI.Server.Address, "a leaf two sections deep is settable")
 	assert.Equal(t, "/dev/env-backend-tpm", cfg.Backend.TPM2.Device, "a nested sub-section leaf is settable")
 	assert.Equal(t, 8, cfg.Policy.MinPINLength, "a policy leaf is settable")
-	assert.Equal(t, []int{0, 7}, cfg.GUI.AutoUnseal.PCRs, "a list of ints splits on commas")
 
 	assert.Equal(t, "/dev/tpmrm0", DefaultConfig().TPM.Device, "the probe value must differ from the default")
 }

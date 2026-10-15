@@ -43,6 +43,23 @@ import (
 // file-backed software engine with every network protocol off (desktopConfig
 // overwrites Protocols anyway, so what matters here is that construction
 // itself does not need qrdb storage or TLS material).
+// jwtAuthConfig returns a JWT auth configuration whose verification key is a
+// freshly generated P-256 public key written under dir. The engine has no
+// unauthenticated mode, so every launch needs a real authenticator beneath
+// the loopback token.
+func jwtAuthConfig(t *testing.T) config.AuthConfig {
+	t.Helper()
+	return config.AuthConfig{
+		Enabled: true,
+		Type:    "jwt",
+		JWT: &config.JWTConfig{
+			PublicKeyFile: generateJWTPublicKeyFile(t),
+			Issuer:        "loopback-test",
+			Audience:      []string{"loopback-test"},
+		},
+	}
+}
+
 func minimalLoopbackConfig(t *testing.T) *config.Config {
 	t.Helper()
 	tempDir := t.TempDir()
@@ -53,7 +70,7 @@ func minimalLoopbackConfig(t *testing.T) *config.Config {
 			Format: "json",
 		},
 		TLS:       config.TLSConfig{Enabled: false},
-		Auth:      config.AuthConfig{Enabled: false},
+		Auth:      jwtAuthConfig(t),
 		Datastore: config.DatastoreConfig{Engine: "file", Path: tempDir},
 		Default:   config.DefaultConfig("software"),
 		Backends: config.BackendsConfig{
@@ -353,7 +370,8 @@ func TestLaunch_TLSEnabled_UsesHTTPSScheme(t *testing.T) {
 func TestLaunch_ConstructEngineError(t *testing.T) {
 	cfg := minimalLoopbackConfig(t)
 	cfg.Auth.Enabled = true
-	cfg.Auth.Type = "jwt" // no cfg.Auth.JWT: server.New must fail closed
+	cfg.Auth.Type = "jwt"
+	cfg.Auth.JWT = nil // server.New must fail closed
 
 	_, err := Launch(context.Background(), Options{Config: cfg})
 	if err == nil {

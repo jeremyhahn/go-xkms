@@ -196,8 +196,8 @@ backends:
     use_simulator: true
     simulator_host: %[5]q
     simulator_port: %[6]d
-    platform_pcr: %[9]d
-    platform_pcr_bank: %[10]q
+    platform-pcr: %[9]d
+    platform-pcr-bank: %[10]q
   pkcs11:
     enabled: false
     library: %[7]s

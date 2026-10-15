@@ -9,6 +9,7 @@ import (
 	"context"
 	"crypto"
 	"crypto/ecdsa"
+	"crypto/elliptic"
 	"crypto/rand"
 	"crypto/sha256"
 	"crypto/x509"
@@ -228,6 +229,47 @@ func TestCA_IssueCertificate_NotInitialized(t *testing.T) {
 	}
 	_, err := ca.IssueCertificate(context.Background(), request)
 	assert.ErrorIs(t, err, ErrNotInitialized)
+}
+
+// TestCA_IssueCertificateForKey proves the issued certificate binds the
+// caller's public key (the CA never generates or holds the private half) and
+// carries the requested subject and SANs exactly once.
+func TestCA_IssueCertificateForKey(t *testing.T) {
+	ca := setupTestCA(t)
+	subjectKey, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	require.NoError(t, err)
+	request := &CertificateRequest{
+		Subject: Subject{CommonName: "ceremony-admin"},
+		SANS:    &SubjectAlternativeNames{DNS: []string{"admin.example.com"}},
+		Valid:   30,
+	}
+
+	issued, err := ca.IssueCertificateForKey(context.Background(), request, &subjectKey.PublicKey)
+	require.NoError(t, err)
+	require.NotNil(t, issued.Certificate)
+	assert.True(t, subjectKey.PublicKey.Equal(issued.Certificate.PublicKey), "certificate must bind the supplied key")
+	assert.Equal(t, "ceremony-admin", issued.Certificate.Subject.CommonName)
+	assert.Equal(t, []string{"admin.example.com"}, issued.Certificate.DNSNames)
+	assert.NotEmpty(t, issued.CertificatePEM)
+	assert.NotEmpty(t, issued.CACertificatePEM)
+}
+
+// TestCA_IssueCertificateForKey_Errors covers the refusals: an uninitialized
+// CA, a missing public key and an invalid request.
+func TestCA_IssueCertificateForKey_Errors(t *testing.T) {
+	subjectKey, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	require.NoError(t, err)
+	valid := &CertificateRequest{Subject: Subject{CommonName: "ceremony-admin"}, Valid: 30}
+
+	_, err = (&CA{}).IssueCertificateForKey(context.Background(), valid, &subjectKey.PublicKey)
+	assert.ErrorIs(t, err, ErrNotInitialized)
+
+	ca := setupTestCA(t)
+	_, err = ca.IssueCertificateForKey(context.Background(), valid, nil)
+	assert.ErrorIs(t, err, ErrPublicKeyRequired)
+
+	_, err = ca.IssueCertificateForKey(context.Background(), &CertificateRequest{}, &subjectKey.PublicKey)
+	assert.ErrorIs(t, err, ErrSubjectCommonNameRequired)
 }
 
 func TestCA_IssueCertificate_DuplicateCN(t *testing.T) {

@@ -17,6 +17,11 @@ package admin_test
 
 import (
 	"context"
+	"crypto/ecdsa"
+	"crypto/elliptic"
+	"crypto/rand"
+	"crypto/x509"
+	"encoding/pem"
 	"log/slog"
 	"os"
 	"path/filepath"
@@ -46,6 +51,28 @@ type TestContext struct {
 // barrier engaged. ACME storage comes from the node's datastore DAO factory,
 // tenant identity from the node's TenantService, and roles and users from the
 // node's client.
+// jwtAuthConfig returns a JWT auth configuration whose verification key is a
+// freshly generated P-256 public key written under dir. The server has no
+// unauthenticated mode, so the composed node needs a real authenticator.
+func jwtAuthConfig(tb testing.TB, dir string) config.AuthConfig {
+	tb.Helper()
+	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	require.NoError(tb, err)
+	der, err := x509.MarshalPKIXPublicKey(&key.PublicKey)
+	require.NoError(tb, err)
+	keyFile := filepath.Join(dir, "jwt-public.pem")
+	require.NoError(tb, os.WriteFile(keyFile, pem.EncodeToMemory(&pem.Block{Type: "PUBLIC KEY", Bytes: der}), 0o600))
+	return config.AuthConfig{
+		Enabled: true,
+		Type:    "jwt",
+		JWT: &config.JWTConfig{
+			PublicKeyFile: keyFile,
+			Issuer:        "acme-admin-integration",
+			Audience:      []string{"acme-admin-integration"},
+		},
+	}
+}
+
 func setupTestContext(tb testing.TB) *TestContext {
 	tb.Helper()
 
@@ -56,13 +83,11 @@ func setupTestContext(tb testing.TB) *TestContext {
 		Server:    config.ServerConfig{Host: "127.0.0.1", RESTPort: 0},
 		Protocols: config.ProtocolsConfig{Unix: true},
 		Unix: config.UnixConfig{
-			Enabled:    true,
 			SocketPath: filepath.Join(dir, "xkms.sock"),
-			Protocol:   "grpc",
 		},
 		Logging:   config.LoggingConfig{Level: "error", Format: "json"},
-		TLS:       config.TLSConfig{Enabled: false},
-		Auth:      config.AuthConfig{Enabled: false},
+		TLS:       config.TLSConfig{Enabled: true},
+		Auth:      jwtAuthConfig(tb, dir),
 		Datastore: config.DatastoreConfig{Engine: "memory", Path: dir},
 		Barrier:   config.BarrierConfig{Enabled: true, Strategy: "none"},
 		Default:   config.DefaultConfig("software"),

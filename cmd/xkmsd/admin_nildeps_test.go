@@ -88,8 +88,7 @@ func TestFinalizeAdminModule_NilQRDBClientRefused(t *testing.T) {
 // dereference the moment a request reached it.
 func TestAdminPlane_ACMEDisabled_NoRouteEverPanics(t *testing.T) {
 	f := newAdminAuthzFixture(t)
-	admin := firstBootAdmin(t, f.client)
-	cert := bindClientCert(t, f.client, admin)
+	cert := f.adminCert
 
 	for _, route := range f.routes {
 		t.Run(route.String(), func(t *testing.T) {
@@ -117,7 +116,7 @@ func TestAdminPlane_ACMEDisabled_NoRouteEverPanics(t *testing.T) {
 // never a bare 200 with invented data and never an unhandled 500.
 func TestAdminPlane_ACMEDisabled_CABackedRoutesAnswerNotImplemented(t *testing.T) {
 	f := newAdminAuthzFixture(t)
-	cert := bindClientCert(t, f.client, firstBootAdmin(t, f.client))
+	cert := f.adminCert
 
 	for _, route := range []adminRoute{
 		{method: "GET", path: "/admin/certificates"},

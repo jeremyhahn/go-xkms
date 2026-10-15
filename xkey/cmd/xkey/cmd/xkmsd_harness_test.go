@@ -27,15 +27,19 @@ import (
 	"math/big"
 	"net"
 	"net/http"
+	"os"
 	"path/filepath"
 	"testing"
 	"time"
 
 	"github.com/stretchr/testify/require"
+	"google.golang.org/grpc"
+	"google.golang.org/grpc/credentials"
 	"google.golang.org/grpc/metadata"
 
+	grpcapi "github.com/jeremyhahn/go-xkms/pkg/api/grpc"
+	pb "github.com/jeremyhahn/go-xkms/pkg/api/grpc/proto/xkmsv1"
 	restapi "github.com/jeremyhahn/go-xkms/pkg/api/rest"
-	unixapi "github.com/jeremyhahn/go-xkms/pkg/api/unix"
 	"github.com/jeremyhahn/go-xkms/pkg/auth"
 	"github.com/jeremyhahn/go-xkms/pkg/backend/software"
 	pkgca "github.com/jeremyhahn/go-xkms/pkg/ca"
@@ -131,14 +135,16 @@ func newTestXKMSService(t *testing.T) *pkgxkms.XKMSService {
 	return svc
 }
 
-// startTestXKMSd starts a real xkmsd gRPC service on a Unix domain socket
-// inside t.TempDir(), using pkg/api/unix.NewGRPCServer — the exact listener
-// cmd/xkmsd binds in production. It returns the "unix://" address xkey's own
+// startTestXKMSd starts a real xkmsd keystore gRPC service on a Unix domain
+// socket inside a private temp dir, served over TLS that requires a client
+// certificate -- the shape of the qrdb node's TLS listener cmd/xkmsd binds in
+// production. It returns the "unix://" address xkey's own
 // connectXKMSdClient dispatch table expects and a cleanup func that stops the
 // server; cleanup also runs automatically via t.Cleanup.
 //
-// The CA is supplied through unix.GRPCConfig.CA, the same per-Service
-// wiring pkg/server's startUnix uses in production (go-xkms#951).
+// The harness points XKMSD_TLS_CA, XKMSD_TLS_CERT and XKMSD_TLS_KEY at the
+// server's certificate and a client credential it admits, so a test that
+// resolves the endpoint after starting the server dials it with mTLS.
 func startTestXKMSd(t *testing.T) (address string, cleanup func()) {
 	t.Helper()
 	return startTestXKMSdService(t, newTestXKMSService(t))
@@ -149,19 +155,31 @@ func startTestXKMSd(t *testing.T) (address string, cleanup func()) {
 func startTestXKMSdService(t *testing.T, svc *pkgxkms.XKMSService) (address string, cleanup func()) {
 	t.Helper()
 
-	// The unix gRPC server refuses a group- or world-writable socket
-	// directory (#1299), so the socket lives in a private directory.
+	serverTLS := newTestXKMSdTLS(t)
+	logger := testXKMSdQuietLogger()
+	srv := grpc.NewServer(
+		grpc.Creds(credentials.NewTLS(serverTLS)),
+		grpc.ChainUnaryInterceptor(
+			testOperatorUnaryInterceptor,
+			grpcapi.TenantUnaryInterceptor(nil, logger),
+		),
+		grpc.ChainStreamInterceptor(
+			testOperatorStreamInterceptor,
+			grpcapi.TenantStreamInterceptor(nil, logger),
+		),
+	)
+	// The CA is supplied through SetCA, the per-Service wiring the keystore
+	// service reads (go-xkms#951).
+	service := grpcapi.NewService(nil, nil, svc, grpcapi.WithLocalTrust())
+	service.SetCA(svc)
+	pb.RegisterKeystoreServiceServer(srv, service)
+
 	socketPath := filepath.Join(privateTempDir(t), "xkmsd.sock")
-	srv, err := unixapi.NewGRPCServer(&unixapi.GRPCConfig{
-		SocketPath:  socketPath,
-		XKMSService: svc,
-		CA:          svc,
-		Logger:      testXKMSdQuietLogger(),
-	})
+	listener, err := net.Listen("unix", socketPath)
 	require.NoError(t, err)
 
 	serveErr := make(chan error, 1)
-	go func() { serveErr <- srv.Start() }()
+	go func() { serveErr <- srv.Serve(listener) }()
 
 	waitForSocket(t, socketPath)
 
@@ -171,9 +189,7 @@ func startTestXKMSdService(t *testing.T, svc *pkgxkms.XKMSService) (address stri
 			return
 		}
 		stopped = true
-		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-		defer cancel()
-		_ = srv.Stop(ctx)
+		srv.GracefulStop()
 		select {
 		case <-serveErr:
 		case <-time.After(5 * time.Second):
@@ -184,6 +200,65 @@ func startTestXKMSdService(t *testing.T, svc *pkgxkms.XKMSService) (address stri
 
 	return "unix://" + socketPath, cleanup
 }
+
+// newTestXKMSdTLS returns the harness server's TLS configuration: a
+// certificate for localhost (gRPC's authority on a Unix socket) that
+// requires and verifies a client certificate. It points the xkmsd TLS
+// environment at the server certificate and the client credential it
+// admits.
+func newTestXKMSdTLS(t *testing.T) *tls.Config {
+	t.Helper()
+
+	serverCert, serverLeaf := newTestServerCertificate(t)
+	caFile := filepath.Join(t.TempDir(), "xkmsd-ca.pem")
+	require.NoError(t, os.WriteFile(caFile, pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: serverLeaf.Raw}), 0o600))
+
+	clientCertFile, clientKeyFile := writeTestClientCredential(t)
+	clientPEM, err := os.ReadFile(clientCertFile)
+	require.NoError(t, err)
+	clientCAs := x509.NewCertPool()
+	require.True(t, clientCAs.AppendCertsFromPEM(clientPEM))
+
+	t.Setenv(envXKMSdTLSCA, caFile)
+	t.Setenv(envXKMSdTLSCert, clientCertFile)
+	t.Setenv(envXKMSdTLSKey, clientKeyFile)
+
+	return &tls.Config{
+		Certificates: []tls.Certificate{serverCert},
+		ClientCAs:    clientCAs,
+		ClientAuth:   tls.RequireAndVerifyClientCert,
+		MinVersion:   tls.VersionTLS13,
+	}
+}
+
+// testOperatorUnaryInterceptor gives every caller the TLS handshake admitted
+// the harness operator identity, standing in for the qrdb node's unified
+// authentication chain.
+func testOperatorUnaryInterceptor(ctx context.Context, req any, _ *grpc.UnaryServerInfo, handler grpc.UnaryHandler) (any, error) {
+	identity, err := testOperatorAuthenticator{}.AuthenticateGRPC(ctx, nil)
+	if err != nil {
+		return nil, err
+	}
+	return handler(auth.WithIdentity(ctx, identity), req)
+}
+
+// testOperatorStreamInterceptor is testOperatorUnaryInterceptor for streams.
+func testOperatorStreamInterceptor(srv any, ss grpc.ServerStream, _ *grpc.StreamServerInfo, handler grpc.StreamHandler) error {
+	identity, err := testOperatorAuthenticator{}.AuthenticateGRPC(ss.Context(), nil)
+	if err != nil {
+		return err
+	}
+	return handler(srv, &identityServerStream{ServerStream: ss, ctx: auth.WithIdentity(ss.Context(), identity)})
+}
+
+// identityServerStream carries the authenticated identity in its context.
+type identityServerStream struct {
+	grpc.ServerStream
+	ctx context.Context
+}
+
+// Context returns the stream's authenticated context.
+func (s *identityServerStream) Context() context.Context { return s.ctx }
 
 // waitForSocket polls until the Unix socket file exists (or gives up),
 // avoiding a race between the server goroutine's Start() and the client's
@@ -259,8 +334,8 @@ func startTestXKMSdREST(t *testing.T) (baseURL, spkiPin string) {
 }
 
 // newTestServerCertificate mints a real, self-signed ECDSA server
-// certificate for 127.0.0.1, returning both the tls.Certificate the REST
-// listener serves and the parsed leaf so the caller can pin its SPKI hash.
+// certificate for 127.0.0.1 and localhost, returning both the
+// tls.Certificate the REST and unix listeners serve and the parsed leaf so the caller can pin its SPKI hash.
 func newTestServerCertificate(t *testing.T) (tls.Certificate, *x509.Certificate) {
 	t.Helper()
 
@@ -274,6 +349,7 @@ func newTestServerCertificate(t *testing.T) (tls.Certificate, *x509.Certificate)
 		NotAfter:     time.Now().Add(time.Hour),
 		KeyUsage:     x509.KeyUsageDigitalSignature | x509.KeyUsageKeyEncipherment,
 		ExtKeyUsage:  []x509.ExtKeyUsage{x509.ExtKeyUsageServerAuth},
+		DNSNames:     []string{"localhost"},
 		IPAddresses:  []net.IP{net.ParseIP("127.0.0.1")},
 	}
 	der, err := x509.CreateCertificate(rand.Reader, template, template, &key.PublicKey, key)

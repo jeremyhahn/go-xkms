@@ -9,7 +9,6 @@ require (
 	github.com/Azure/azure-sdk-for-go/sdk/resourcemanager/dns/armdns v1.2.0
 	github.com/Azure/azure-sdk-for-go/sdk/security/keyvault/azkeys v1.5.0
 	github.com/Azure/azure-sdk-for-go/sdk/security/keyvault/azsecrets v1.5.0
-	github.com/awnumar/memguard v0.23.0 // indirect
 	github.com/aws/aws-sdk-go-v2 v1.43.5
 	github.com/aws/aws-sdk-go-v2/config v1.32.36
 	github.com/aws/aws-sdk-go-v2/credentials v1.19.35
@@ -39,8 +38,8 @@ require (
 	github.com/jeremyhahn/go-frost v0.3.0-alpha
 	github.com/jeremyhahn/go-luks2 v1.0.0-rc.4
 	github.com/jeremyhahn/go-objstore v0.4.0-alpha
-	github.com/jeremyhahn/go-qrdb v0.47.0-alpha
-	github.com/jeremyhahn/go-qrdb/sdk/go v0.47.0-alpha
+	github.com/jeremyhahn/go-qrdb v0.48.0-alpha
+	github.com/jeremyhahn/go-qrdb/sdk/go v0.48.0-alpha
 	github.com/jeremyhahn/go-truststrap v0.6.0-alpha
 	github.com/jeremyhahn/go-xkms/sdk/go v0.55.0-alpha
 	github.com/jeremyhahn/go-xkms/xkey v0.55.0-alpha
@@ -106,6 +105,7 @@ require (
 	github.com/RaduBerinde/btreemap v0.0.0-20260105202824-d3184786f603 // indirect
 	github.com/anatol/devmapper.go v0.0.0-20260315162726-c47dfb6cf674 // indirect
 	github.com/awnumar/memcall v0.5.0 // indirect
+	github.com/awnumar/memguard v0.23.0 // indirect
 	github.com/aws/aws-sdk-go v1.55.8 // indirect
 	github.com/aws/aws-sdk-go-v2/feature/ec2/imds v1.18.36 // indirect
 	github.com/aws/aws-sdk-go-v2/internal/configsources v1.4.36 // indirect

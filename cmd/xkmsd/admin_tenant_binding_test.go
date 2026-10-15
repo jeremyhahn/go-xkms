@@ -34,7 +34,6 @@ package main
 
 import (
 	"bytes"
-	"context"
 	"crypto/tls"
 	"crypto/x509"
 	"encoding/json"
@@ -51,7 +50,6 @@ import (
 	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
 	qrdbtransport "github.com/jeremyhahn/go-qrdb/sdk/go/transport"
 
-	"github.com/jeremyhahn/go-xkms/pkg/config"
 	"github.com/jeremyhahn/go-xkms/pkg/server"
 )
 
@@ -89,8 +87,7 @@ func newTenantBindingFixture(t *testing.T) *tenantBindingFixture {
 	original := adminRouterState.Load()
 	t.Cleanup(func() { adminRouterState.Store(original) })
 
-	cfg := embeddedQRDBConfig(t)
-	cfg.Barrier = config.BarrierConfig{Enabled: true, Strategy: "none"}
+	cfg := newServeTestConfig(t)
 	srv, err := server.New(cfg)
 	require.NoError(t, err)
 	t.Cleanup(func() {
@@ -104,35 +101,37 @@ func newTenantBindingFixture(t *testing.T) *tenantBindingFixture {
 	published := adminRouterState.Load()
 	require.NotNil(t, published)
 
-	ctx := context.Background()
+	ctx := oracleContext(qrdbsdk.SystemTenantID)
 	for _, id := range []string{bindingTenantA, bindingTenantB} {
 		_, err := srv.TenantService().CreateTenant(ctx, id, id, qrdbsdk.TenantIsolationPrefix)
 		require.NoError(t, err)
 	}
 
-	// Seed each tenant's built-in roles, as tenant provisioning does. qrdb
-	// reconciles a tenant's roles only from within that tenant.
+	// CreateTenant seeds each prefix tenant's built-in roles.
 	client := srv.QRDBClient()
-	for _, id := range []string{bindingTenantA, bindingTenantB} {
-		tenantCtx := qrdbsdk.ContextWithTenant(ctx, id)
-		_, err := client.Roles().ReconcileBuiltInRoles(tenantCtx, &qrdbtransport.ReconcileRolesRequest{TenantID: id})
-		require.NoError(t, err)
-	}
 	f := &tenantBindingFixture{srv: srv, client: client, router: *published}
 
 	adminA := tenantRole(t, client, bindingTenantA, qrdbsdk.RoleNameAdmin)
-	soA := tenantRole(t, client, bindingTenantA, qrdbsdk.RoleNameSO)
-	userA, err := client.Users().CreateUser(qrdbsdk.ContextWithTenant(ctx, bindingTenantA), &qrdbtransport.CreateUserRequest{
+	// qrdb refuses certificate issuance to an SO or Owner, and role management
+	// is the SO's alone among the built-in roles, so the caller is an Admin
+	// holding a custom role that manages roles.
+	roleManagerA, err := client.Roles().CreateRole(oracleContext(bindingTenantA), &qrdbtransport.CreateRoleRequest{
+		Name:        "role-manager-1225",
+		TenantID:    bindingTenantA,
+		Permissions: []string{"roles:create", "roles:read", "roles:update", "roles:delete", "roles:list"},
+	})
+	require.NoError(t, err)
+	userA, err := client.Users().CreateUser(oracleContext(bindingTenantA), &qrdbtransport.CreateUserRequest{
 		Username:             "admin-a-1225",
 		TenantID:             bindingTenantA,
-		RoleIDs:              []string{adminA.ID, soA.ID},
+		RoleIDs:              []string{adminA.ID, roleManagerA.ID},
 		WithoutEmailLoginKey: true,
 	})
 	require.NoError(t, err)
 	f.callerA = adminCaller{cert: bindClientCert(t, client, userA), tenantID: bindingTenantA}
-	f.platform = adminCaller{cert: bindClientCert(t, client, firstBootAdmin(t, client))}
+	f.platform = adminCaller{cert: firstBootAdminCert(t, cfg)}
 
-	ctxB := qrdbsdk.ContextWithTenant(ctx, bindingTenantB)
+	ctxB := oracleContext(bindingTenantB)
 	f.userB, err = client.Users().CreateUser(ctxB, &qrdbtransport.CreateUserRequest{
 		Username:             "victim-b-1225",
 		Name:                 "Victim B",
@@ -152,7 +151,7 @@ func newTenantBindingFixture(t *testing.T) *tenantBindingFixture {
 // tenantRole resolves a built-in role of tenantID.
 func tenantRole(t *testing.T, client *qrdbsdk.Client, tenantID, name string) *qrdbtransport.Role {
 	t.Helper()
-	r, err := client.Roles().GetRoleByName(qrdbsdk.ContextWithTenant(context.Background(), tenantID),
+	r, err := client.Roles().GetRoleByName(oracleContext(tenantID),
 		&qrdbtransport.GetRoleByNameRequest{TenantID: tenantID, Name: name})
 	require.NoError(t, err, "tenant %s must be seeded with the %q role", tenantID, name)
 	return r
@@ -192,7 +191,7 @@ func problemDetail(t *testing.T, rec *httptest.ResponseRecorder) string {
 // regression over every tenant-lifecycle, role and user route.
 func TestAdminPlane_TenantCallerCannotReachAnotherTenant(t *testing.T) {
 	f := newTenantBindingFixture(t)
-	ctx := context.Background()
+	ctx := oracleContext(qrdbsdk.SystemTenantID)
 	userBID := strconv.FormatUint(f.userB.ID, 10)
 
 	// A genuinely missing tenant, as the tenant caller sees it: the answer
@@ -258,7 +257,7 @@ func TestAdminPlane_TenantCallerCannotReachAnotherTenant(t *testing.T) {
 	// Tenant B is untouched.
 	_, err := f.srv.TenantService().GetTenant(ctx, bindingTenantB)
 	require.NoError(t, err, "tenant-b must survive a tenant-a caller")
-	ctxB := qrdbsdk.ContextWithTenant(ctx, bindingTenantB)
+	ctxB := oracleContext(bindingTenantB)
 	gotUser, err := f.client.Users().GetUser(ctxB, f.userB.ID)
 	require.NoError(t, err, "tenant-b's user must survive a tenant-a caller")
 	assert.Equal(t, "Victim B", gotUser.Name)
@@ -308,7 +307,7 @@ func TestAdminPlane_TenantCallerCannotCreateTenants(t *testing.T) {
 	rec := f.do(t, f.callerA, http.MethodPost, "/api/v1/tenants",
 		map[string]string{"id": "tenant-c-1225", "name": "Tenant C"})
 	assert.Equal(t, http.StatusForbidden, rec.Code, rec.Body.String())
-	_, err := f.srv.TenantService().GetTenant(context.Background(), "tenant-c-1225")
+	_, err := f.srv.TenantService().GetTenant(oracleContext(qrdbsdk.SystemTenantID), "tenant-c-1225")
 	assert.ErrorIs(t, err, qrdbsdk.ErrTenantMissing, "a tenant-a caller created a tenant")
 }
 
@@ -338,7 +337,7 @@ func TestAdminPlane_TenantCallerManagesItsOwnTenant(t *testing.T) {
 // tenant caller is refused.
 func TestAdminPlane_PlatformAdminReachesEveryTenant(t *testing.T) {
 	f := newTenantBindingFixture(t)
-	ctx := context.Background()
+	ctx := oracleContext(qrdbsdk.SystemTenantID)
 	userBID := strconv.FormatUint(f.userB.ID, 10)
 
 	rec := f.do(t, f.platform, http.MethodGet, "/api/v1/tenants", nil)
@@ -346,20 +345,27 @@ func TestAdminPlane_PlatformAdminReachesEveryTenant(t *testing.T) {
 	assert.Contains(t, rec.Body.String(), bindingTenantA)
 	assert.Contains(t, rec.Body.String(), bindingTenantB)
 
+	// qrdb's strict tenant isolation keeps the platform out of a tenant's own
+	// users and roles: it manages tenants, the tenant's administrators manage
+	// what is inside them.
 	rec = f.do(t, f.platform, http.MethodPut, "/api/v1/tenants/"+bindingTenantB+"/users/"+userBID,
 		map[string]any{"name": "Renamed B"})
-	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
-	gotUser, err := f.client.Users().GetUser(qrdbsdk.ContextWithTenant(ctx, bindingTenantB), f.userB.ID)
+	assert.Equal(t, http.StatusForbidden, rec.Code, rec.Body.String())
+	gotUser, err := f.client.Users().GetUser(oracleContext(bindingTenantB), f.userB.ID)
 	require.NoError(t, err)
-	assert.Equal(t, "Renamed B", gotUser.Name)
+	assert.Equal(t, "Victim B", gotUser.Name)
 
 	rec = f.do(t, f.platform, http.MethodDelete, "/api/v1/tenants/"+bindingTenantB+"/roles/"+f.roleB.ID, nil)
-	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
+	assert.Equal(t, http.StatusForbidden, rec.Code, rec.Body.String())
+	_, err = f.client.Roles().GetRole(oracleContext(bindingTenantB), f.roleB.ID)
+	require.NoError(t, err, "the platform deleted a tenant's role")
 
-	// The role/user ownership check applies to the platform too: tenant-b's
-	// user addressed under tenant-a's path is not tenant-a's user.
+	// Tenant-a's users are as closed to the platform as tenant-b's: tenant-b's
+	// user addressed under tenant-a's path is refused, and survives.
 	rec = f.do(t, f.platform, http.MethodDelete, "/api/v1/tenants/"+bindingTenantA+"/users/"+userBID, nil)
-	assert.Equal(t, http.StatusNotFound, rec.Code, rec.Body.String())
+	assert.Equal(t, http.StatusForbidden, rec.Code, rec.Body.String())
+	_, err = f.client.Users().GetUser(oracleContext(bindingTenantB), f.userB.ID)
+	require.NoError(t, err, "the platform deleted a tenant's user")
 
 	rec = f.do(t, f.platform, http.MethodDelete, "/api/v1/tenants/"+bindingTenantB, nil)
 	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())

@@ -38,7 +38,7 @@ import (
 // an unopened TPM2 that the registry-only paths never reach.
 func validConfig(t *testing.T) Config {
 	t.Helper()
-	registry, err := NewRegistry(testutil.NewMemoryDAOFactory())
+	registry, err := NewRegistry(testutil.NewMemoryDAOFactory(), 0)
 	require.NoError(t, err)
 	tpm := &pkgtpm2.TPM2{}
 	return Config{

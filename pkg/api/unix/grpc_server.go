@@ -164,13 +164,6 @@ type GRPCConfig struct {
 	// *seal.BarrierRegistry, so there is no later reconfiguration to track.
 	// Nil disables tenant enforcement.
 	BarrierRegistry *seal.BarrierRegistry
-
-	// ExtraServices are additional gRPC service registration hooks invoked on
-	// this listener's *grpc.Server after the keystore service registers. The
-	// composition root uses this to host the embedded qrdb node's own
-	// control-plane services (cluster admin, rebalance, user auth factors) on
-	// the unix socket without this package importing qrdb.
-	ExtraServices []func(*grpc.Server)
 }
 
 // GRPCServer represents a gRPC server listening on a Unix domain socket
@@ -343,13 +336,6 @@ func (s *GRPCServer) Start() error {
 	service.SetCA(s.config.CA)
 	service.SetCABundler(s.config.CABundler)
 	pb.RegisterKeystoreServiceServer(s.server, service)
-
-	// Composition-root service registrations (e.g. the embedded qrdb node's
-	// control plane) attach to the same server, after the keystore service. The
-	// trust boundary is the same socket file mode noted above.
-	for _, register := range s.config.ExtraServices {
-		register(s.server)
-	}
 	s.mu.Unlock()
 
 	s.logger.Info("Starting gRPC Unix socket server", slog.String("socket", s.config.SocketPath))

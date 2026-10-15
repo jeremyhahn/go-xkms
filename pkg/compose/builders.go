@@ -316,6 +316,11 @@ type TPMPolicyParams struct {
 	// object blobs (tpmstore.DatabaseName). Required.
 	DAOs *qrdbsdk.DAOFactory
 
+	// NodeID is the deployment's node ID, the cluster replica ID
+	// (cluster.node_id; 0 on a single node). The registry keeps this node's
+	// records apart from those of other nodes sharing the database.
+	NodeID uint64
+
 	// VTPM configures the per-tenant vTPM supervisor. Nil leaves vtpm mode
 	// unavailable: a tenant set to it is refused with
 	// tpmpolicy.ErrVTPMUnavailable.
@@ -342,7 +347,7 @@ func BuildTPMPolicyService(p TPMPolicyParams) (*tpmpolicy.Service, error) {
 	if !ok {
 		return nil, &FeatureBuildError{Feature: FeatureTPMPolicies, Err: ErrUnsupportedTPM}
 	}
-	registry, err := tpmpolicy.NewRegistry(p.DAOs)
+	registry, err := tpmpolicy.NewRegistry(p.DAOs, p.NodeID)
 	if err != nil {
 		return nil, &FeatureBuildError{Feature: FeatureTPMPolicies, Err: err}
 	}

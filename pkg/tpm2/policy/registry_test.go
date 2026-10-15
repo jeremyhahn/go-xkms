@@ -16,6 +16,7 @@ package policy
 import (
 	"context"
 	"errors"
+	"strconv"
 	"testing"
 
 	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
@@ -30,7 +31,7 @@ import (
 // store serving DatabaseName.
 func newTestRegistry(t *testing.T) *Registry {
 	t.Helper()
-	r, err := NewRegistry(testutil.NewMemoryDAOFactory())
+	r, err := NewRegistry(testutil.NewMemoryDAOFactory(), 0)
 	require.NoError(t, err)
 	return r
 }
@@ -137,13 +138,13 @@ func TestRegistry_ReassignMovesTheObject(t *testing.T) {
 func TestRegistry_PersistsThroughTheDAO(t *testing.T) {
 	ctx := context.Background()
 	factory := testutil.NewMemoryDAOFactory()
-	first, err := NewRegistry(factory)
+	first, err := NewRegistry(factory, 0)
 	require.NoError(t, err)
 	require.NoError(t, first.PutScope(ctx, &Scope{Tenant: "acme", Mode: ModeVTPM, Epoch: 3}))
 	require.NoError(t, first.CreatePolicy(ctx, "acme", testPolicy("boot")))
 	require.NoError(t, first.Assign(ctx, "acme", &Assignment{ObjectID: "sealed/s", Kind: ObjectSealed, Policy: "boot"}))
 
-	second, err := NewRegistry(factory)
+	second, err := NewRegistry(factory, 0)
 	require.NoError(t, err)
 	s, err := second.Scope(ctx, "acme")
 	require.NoError(t, err)
@@ -160,13 +161,62 @@ func TestRegistry_PersistsThroughTheDAO(t *testing.T) {
 	assert.Equal(t, []string{"acme"}, scopes)
 }
 
+// TestRegistry_NodesOwnTheirRecords proves nodes sharing one database keep
+// separate records: two registries with different node IDs write the same
+// tenant, policy and object names, and each reads back only its own.
+func TestRegistry_NodesOwnTheirRecords(t *testing.T) {
+	ctx := context.Background()
+	factory := testutil.NewMemoryDAOFactory()
+	nodeA, err := NewRegistry(factory, 1)
+	require.NoError(t, err)
+	nodeB, err := NewRegistry(factory, 2)
+	require.NoError(t, err)
+
+	for i, r := range []*Registry{nodeA, nodeB} {
+		epoch := uint64(i + 1)
+		policy := testPolicy("boot")
+		policy.Description = strconv.FormatUint(epoch, 10)
+		require.NoError(t, r.PutScope(ctx, &Scope{Tenant: "acme", Mode: ModeVTPM, Epoch: epoch}))
+		require.NoError(t, r.CreatePolicy(ctx, "acme", policy))
+		require.NoError(t, r.Assign(ctx, "acme", &Assignment{ObjectID: "sealed/s", Kind: ObjectSealed, Policy: "boot"}))
+	}
+
+	for i, r := range []*Registry{nodeA, nodeB} {
+		epoch := uint64(i + 1)
+		s, err := r.Scope(ctx, "acme")
+		require.NoError(t, err)
+		assert.Equal(t, epoch, s.Epoch)
+		p, err := r.Policy(ctx, "acme", "boot")
+		require.NoError(t, err)
+		assert.Equal(t, strconv.FormatUint(epoch, 10), p.Description)
+		policies, err := r.ListPolicies(ctx, "acme")
+		require.NoError(t, err)
+		assert.Len(t, policies, 1)
+		assignments, err := r.Assignments(ctx, "acme")
+		require.NoError(t, err)
+		assert.Len(t, assignments, 1)
+		scopes, err := r.Scopes(ctx)
+		require.NoError(t, err)
+		assert.Equal(t, []string{"acme"}, scopes)
+	}
+
+	require.NoError(t, nodeA.Unassign(ctx, "acme", "sealed/s"))
+	require.NoError(t, nodeA.DeletePolicy(ctx, "acme", "boot"))
+	_, err = nodeA.Policy(ctx, "acme", "boot")
+	require.ErrorIs(t, err, ErrPolicyNotFound)
+	_, err = nodeB.Policy(ctx, "acme", "boot")
+	require.NoError(t, err, "deleting node 1's policy must leave node 2's")
+	_, err = nodeB.PolicyOf(ctx, "acme", "sealed/s")
+	require.NoError(t, err)
+}
+
 // TestNewRegistry_RefusesAFactoryWithoutTheDatabase proves the registry is
 // never built over a factory that does not serve DatabaseName.
 func TestNewRegistry_RefusesAFactoryWithoutTheDatabase(t *testing.T) {
-	_, err := NewRegistry(nil)
+	_, err := NewRegistry(nil, 0)
 	assert.ErrorIs(t, err, dao.ErrNilFactory)
 
-	_, err = NewRegistry(dao.NewStoreFactory(nil))
+	_, err = NewRegistry(dao.NewStoreFactory(nil), 0)
 	var unavailable *dao.DatabaseUnavailableError
 	require.ErrorAs(t, err, &unavailable)
 	assert.Equal(t, DatabaseName, unavailable.Database)
@@ -191,7 +241,7 @@ func (failingStore) List(context.Context, string) ([]string, error) { return nil
 // naming the operation and carrying the cause, never a not-found answer.
 func TestRegistry_ReportsStoreFailures(t *testing.T) {
 	ctx := context.Background()
-	r, err := NewRegistry(dao.NewStoreFactory(failingStore{qrdbsdk.NewMemoryKVStore()}))
+	r, err := NewRegistry(dao.NewStoreFactory(failingStore{qrdbsdk.NewMemoryKVStore()}), 0)
 	require.NoError(t, err)
 
 	tests := map[string]struct {

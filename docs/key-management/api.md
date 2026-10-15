@@ -9,7 +9,7 @@ Read this once; every feature folder's `api.md` uses the same convention.
 | Transport | Wire form | Where it is served | Client |
 |---|---|---|---|
 | **embedded** | direct Go call, no wire | `pkg/xkms.XKMSService` | `sdk/go`, `transport.Client` |
-| **unix** | gRPC `xkmsv1.KeystoreService` over a Unix domain socket | `pkg/api/unix/grpc_server.go` | `pkg/api/transport/unix` |
+| **unix** | gRPC `xkmsv1.KeystoreService` over TLS on a Unix domain socket | the embedded qrdb node's unix listener, which hosts the xkms module (`pkg/server/qrdb_node.go`) | `pkg/api/transport/unix` |
 | **rest** | HTTP/1.1+HTTP/2 JSON, route table in `pkg/api/rest/routes.go` | `pkg/api/rest` | `pkg/api/transport/rest` |
 | **grpc** | gRPC `xkmsv1.KeystoreService` over TCP | `pkg/api/grpc` | `pkg/api/transport/grpc` |
 | **quic** | **HTTP/3 over the same REST paths** | the REST handler set | `pkg/api/transport/quic` |

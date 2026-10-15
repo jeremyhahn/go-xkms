@@ -22,8 +22,8 @@ import (
 )
 
 func main() {
-    // Create a client using default Unix socket
-    client, err := xkms.New(nil)
+    // Create a client for xkmsd's Unix socket (gRPC over TLS)
+    client, err := xkms.NewFromURL("unix:///path/to/xkms.sock")
     if err != nil {
         log.Fatal(err)
     }
@@ -73,7 +73,7 @@ func main() {
 
 | Protocol | Scheme | Description |
 |----------|--------|-------------|
-| Unix Socket | `unix://` | Default, fastest for local |
+| Unix Socket | `unix://` | Default, gRPC over TLS, fastest for local |
 | gRPC | `grpc://`, `grpcs://` | High-performance RPC |
 | REST | `http://`, `https://` | HTTP/HTTPS REST API |
 | QUIC | `quic://` | HTTP/3 over QUIC |
@@ -83,12 +83,18 @@ func main() {
 
 ### Unix Socket (Default)
 
+xkmsd's socket is the qrdb node's TLS listener: dial it with TLS and a
+client certificate (or a session JWT). `NewFromURL("unix://...")` turns
+TLS on.
+
 ```go
-client, _ := xkms.New(nil)
-// or
 client, _ := xkms.New(&xkms.BackendConfig{
-    Protocol: xkms.ProtocolUnix,
-    Address:  "/path/to/xkms.sock",
+    Protocol:    xkms.ProtocolUnix,
+    Address:     "/path/to/xkms.sock",
+    TLSEnabled:  true,
+    TLSCAFile:   "/etc/xkms/ca.pem",
+    TLSCertFile: "/etc/xkms/client.pem",
+    TLSKeyFile:  "/etc/xkms/client.key",
 })
 ```
 

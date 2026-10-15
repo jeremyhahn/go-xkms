@@ -49,7 +49,7 @@ func NewClientForServer(server, tlsCA, token string) (Client, error) {
 //
 //   - http://, https://      → REST
 //   - grpc://, grpcs://       → gRPC (grpcs enables TLS)
-//   - unix://<path>           → gRPC over a Unix domain socket
+//   - unix://<path>           → gRPC over TLS on a Unix domain socket
 //   - quic://<host:port>      → HTTP/3
 //   - mcp://, mcps://         → MCP JSON-RPC (mcps enables TLS)
 //
@@ -81,9 +81,10 @@ func NewClientForServerWith(server string, opts ServerOptions) (Client, error) {
 		}
 		return NewGRPC(grpcOpts)
 	case "unix":
-		// The local socket carries no TLS; NewGRPC dials it with local
-		// credentials, which carry the token.
-		return NewGRPC(GRPCOptions{Endpoint: server, AuthToken: opts.Token})
+		// xkmsd's socket is the qrdb node's TLS listener, so the socket
+		// takes TLS like grpcs; opts.TLSConfig verifies the node and may
+		// carry the client certificate.
+		return NewGRPC(GRPCOptions{Endpoint: server, TLSEnabled: true, TLSConfig: tlsCfg, AuthToken: opts.Token})
 	case "quic":
 		return NewQUIC(QUICOptions{BaseURL: "https://" + u.Host, TLSConfig: tlsCfg, AuthToken: opts.Token})
 	case "mcp", "mcps":

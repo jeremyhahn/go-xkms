@@ -78,6 +78,11 @@ var (
 	// policy but no PolicyBindingResolver has been set on the TPM.
 	ErrPolicyResolverUnset = errors.New("tpm2: a named TPM policy was requested but no policy binding resolver is set")
 
+	// ErrPolicyRevoked is returned for a policy whose approval has been
+	// revoked: its objects answer only to their password branch until the
+	// policy is updated.
+	ErrPolicyRevoked = errors.New("tpm2: the policy's approval has been revoked")
+
 	// ErrPolicyApprovalMismatch is returned when a policy session does not
 	// reach the approved policy digest, or when an approval does not describe
 	// the policy the object is bound to.
@@ -283,13 +288,15 @@ type PolicyIndexInfo struct {
 }
 
 // PolicyBindingResolver supplies the TPM with the state of named policies,
-// which lives outside it: the policy registry.
+// which lives outside it: the policy registry, or the binding records a
+// StaticPolicyResolver is built from.
 type PolicyBindingResolver interface {
 	// PolicyIndex returns what an object bound to a named policy commits to.
 	PolicyIndex(scope, name string) (PolicyIndexInfo, error)
 
 	// Approvals returns the current approval of every branch of a named
-	// policy, in branch order.
+	// policy, in branch order, or an error wrapping ErrPolicyRevoked for a
+	// policy whose approval has been revoked.
 	Approvals(scope, name string) ([]*PolicyApproval, error)
 }
 

@@ -114,6 +114,20 @@ func (m *MockCA) IssueCertificateWithProfile(_ context.Context, _ *ca.Certificat
 	return &ca.IssuedCertificate{}, nil
 }
 
+// IssueCertificateForKey refuses what the real CA refuses (no key, an
+// invalid request) and returns a certificate binding the request's subject
+// to the given key.
+func (m *MockCA) IssueCertificateForKey(_ context.Context, req *ca.CertificateRequest, publicKey crypto.PublicKey) (*ca.IssuedCertificate, error) {
+	if publicKey == nil {
+		return nil, ca.ErrPublicKeyRequired
+	}
+	if err := req.Validate(); err != nil {
+		return nil, err
+	}
+	cert := &x509.Certificate{Subject: req.Subject.ToPkixName(), PublicKey: publicKey}
+	return &ca.IssuedCertificate{Certificate: cert}, nil
+}
+
 // Trust Chain
 
 func (m *MockCA) CACertificate() (*x509.Certificate, error) { return &x509.Certificate{}, nil }

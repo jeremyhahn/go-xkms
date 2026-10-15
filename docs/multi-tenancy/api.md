@@ -82,10 +82,16 @@ operations reach only the system tenant's vault.
 
 ## Identity on the unix socket
 
-The local gRPC listener (`KeystoreService` over a unix socket, xkmsctl's
-default transport) admits a peer by its kernel credentials — the socket file
-mode, plus the `SO_PEERCRED` uid/gid allowlist when exclusive peers are
-configured — and then attaches this identity to every call:
+xkmsd's unix socket (xkmsctl's default transport) is the embedded qrdb node's
+TLS listener (`pkg/server/qrdb_node.go`). It authenticates a caller with the
+same chain as every network transport -- client certificate or session JWT --
+so the caller's tenant is the one its credential names, and an anonymous
+caller is refused (`Unauthenticated`) before any handler runs.
+
+Only the sign server's socket (`pkg/api/unix`) admits a peer by its kernel
+credentials -- the socket file mode, plus the `SO_PEERCRED` uid/gid allowlist
+when exclusive peers are configured -- and attaches this identity to every
+call:
 
 | Field | Value |
 |---|---|
@@ -95,10 +101,8 @@ configured — and then attaches this identity to every call:
 | `Metadata["uid"]`, `["gid"]`, `["pid"]` | the peer's kernel credentials |
 
 The identity is attached before the tenant interceptors and any embedder
-interceptor, so the keystore service and the qrdb control plane hosted on the
-same socket see the same caller. A peer the policy refuses is closed before
-any handler runs (`Unavailable`) and never gets an identity. Personal
-(`user`-scope) objects created over the socket are owned by `uid:<peer uid>`.
+interceptor. A peer the policy refuses is closed before any handler runs
+(`Unavailable`) and never gets an identity.
 
 ## What actually narrows the key namespace
 

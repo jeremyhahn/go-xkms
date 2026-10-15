@@ -295,14 +295,14 @@ func TestBarrierConfig_SealedWindowTimeoutDuration(t *testing.T) {
 	})
 }
 
-// TestServeSealedWindow_NetworkServingUsesUnifiedTLS reproduces the
+// TestServeSealedWindow_NodeServingUsesUnifiedTLS reproduces the
 // passphrase-barrier deployment with network transports: the node's pending
 // boot serves REST, qrdb's transports are TLS-only, and the sealed-window
 // listener must receive the same unified TLS material the full server
 // serves. Without it the window fails to start ("no TLS configured") and
 // xkmsd cannot boot. The test proves the window serves TLS with that
 // certificate and completes the boot once the barrier is unsealed.
-func TestServeSealedWindow_NetworkServingUsesUnifiedTLS(t *testing.T) {
+func TestServeSealedWindow_NodeServingUsesUnifiedTLS(t *testing.T) {
 	dataDir := t.TempDir()
 	port := freeLoopbackPort(t)
 	qcfg := sealedWindowTestConfig(dataDir)

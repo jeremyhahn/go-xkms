@@ -105,10 +105,19 @@ environment overrides it. Offline mode reads only the environment.
 
 ```ini
 target = unix:///var/run/xkms/xkms.sock
+tls_enabled = true
+tls_cert = /etc/xkms/pkcs11-client.pem
+tls_key = /etc/xkms/pkcs11-client-key.pem
+tls_ca = /etc/xkms/ca.pem
 default_backend = software
 token_label = example-token
 piv_backends = software
 ```
+
+xkmsd's socket is its embedded node's TLS listener, which refuses anonymous
+callers, so a module pointed at it sets `tls_enabled` and presents a client
+certificate xkmsd trusts (`module.go:1061-1066`). A sign server's socket is
+plain gRPC and needs none of the `tls_*` keys.
 
 The file must not be readable or writable by group or other (`chmod 600`), or
 `C_Initialize` fails. Every key is listed in
@@ -191,7 +200,8 @@ Each item is enforced by the code cited.
 
 - **Use TLS or a unix socket.** A non-`unix://` target without TLS fails
   `C_Initialize` (`config.go:228`); leave
-  `XKMS_PKCS11_ALLOW_INSECURE_TRANSPORT` off.
+  `XKMS_PKCS11_ALLOW_INSECURE_TRANSPORT` off. xkmsd's own unix socket
+  needs TLS as well (see the configuration file above).
 - **Protect the config file.** Group- or world-accessible files are refused
   (`config.go:507-512`); it may hold PINs.
 - **Keep the seal strategy at `passphrase`** in offline mode.
