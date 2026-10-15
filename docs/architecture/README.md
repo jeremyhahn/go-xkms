@@ -11,6 +11,7 @@
 | [quick-reference.md](./quick-reference.md) | One-page cheat sheet: binaries, Make targets, configuration keys |
 | [api-specifications.md](./api-specifications.md) | REST routes, gRPC services and the CLI, checked against the code |
 | [adapter-framework.md](./adapter-framework.md) | The auth, logging and adapter seams |
+| [trusted-service-plane.md](./trusted-service-plane.md) | The trusted service plane: attested-caller gate, trust roots, image signing, workload identity, transparency log, moves |
 
 ## Absorbed documents
 
