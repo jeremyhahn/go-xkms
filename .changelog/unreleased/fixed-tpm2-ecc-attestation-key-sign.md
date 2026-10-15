@@ -1,1 +1,0 @@
-- **ECC attestation keys can sign.** `TPM2.Sign` read RSA details unconditionally on the restricted (attestation/LAK) path, so every ECC LAK or AK failed with "did not contain rsaDetail". An ECC restricted key now signs ECDSA over the TPM-computed digest under the TPM's hash-check ticket, exactly as an RSA one does (`sign_restricted_paths_simulator_test.go`). SPEC: tpm2.

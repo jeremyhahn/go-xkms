@@ -1,1 +1,0 @@
-- **A malformed NV_Extend response no longer panics.** `TPM2.NVExtend` sliced the response by its header size field, so a success response claiming fewer bytes than the header crashed the process. Every response the parser cannot trust is now refused with `ErrMalformedNVExtendResponse` (`nv_extend_response_test.go`). SPEC: tpm2.
