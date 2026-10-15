@@ -81,7 +81,8 @@ Facts are from go-xkms c9a1cdb25, go-qrdb b65df70 and #722, go-quicbaas 0f45b54 
 - The tenant key is `Subject.OrganizationalUnit[0]` (DS-1736):
   - go-qrdb sets it at `pkg/cert/default_provider.go:472,574` and reads it at `pkg/auth/mtls.go:233`;
   - go-xkms reads it at `pkg/auth/mtls.go:282`;
-  - permanentIdentifier is untouched.
+  - permanentIdentifier is untouched;
+  - the owner confirmed it on 2026-10-15 15:50Z (DS-1898): the X.509 subject OU carries the tenant on every layer.
 
 **Seams.** Consumes go-qrdb's per-tenant trust-domain verification (ordered). Provides go-quicbaas with SVIDs.
 

@@ -265,3 +265,34 @@ Each was replaced by the model the operation already declared:
 - **It does not expose a way to change a user's role after creation.**
   `xkmsctl user update` only enables/disables an account; role assignment
   happens once, at `xkmsctl user register --role`.
+
+## Planned: authorization clean-up
+
+Every place go-xkms keeps its own roles, permissions or authorization checks instead of go-qrdb's (sdk/go v0.47.0-alpha), and the qrdb re-export that replaces it (DS-1898).
+
+| Row | Status | Departure | Replacement |
+|---|---|---|---|
+| authz-perm-vocab | blocked (go-qrdb) | `pkg/auth/permissions.go:38-259` defines its own `Resource*`/`Action*` strings, duplicating go-qrdb's keys, certs, users, roles, passwords, ssh, pin and piv keys. | go-qrdb sdk/go re-exports those constants; the xkms-only ones (tpm_policy, oidc_credentials, bootstrap, ssh:service, set_tpm_mode) stay a module registration. |
+| authz-admin-grants | planned | `pkg/apimodule/module_grants.go:81` grants every module permission to Admin; nothing goes to Operator or Auditor and no duties are registered. | `RegisterPermissionDuty` and grants split across Operator, User and Auditor (sdk `types_permission.go:216-258`, `307`). |
+| authz-owner-grant | planned | `pkg/apimodule/module_grants.go:82` grants every module permission to `RoleNameOwner`, who already holds `AllPermissions`. | Delete the grant. |
+| authz-admin-public | planned | `pkg/apimodule/admin_module.go:145-152` mounts the ACME admin API with `HandlePublic` and authorizes underneath. | `ModuleHTTPRegistrar.Handle(perm)` per route. |
+| authz-method-tables | planned | Hand-kept method/route-to-permission maps: `pkg/acme/api/server/interceptor_authz.go:49`, `pkg/acme/api/server/mcp_authz.go:35-75`, `pkg/api/mcp/authz.go:123`, `pkg/acme/admin/handlers.go:107-143`, `pkg/acme/admin/tenant_handlers.go:60-126`. | `ModuleMCPToolPermissioner` and `Handle`; gRPC needs an upstream equivalent. |
+| authz-tenant-cross | planned | `pkg/acme/admin/tenant_handlers.go:60-71` gates tenant CRUD with self-scoped `tenants:*`, then re-checks platform scope by hand. | `sdk.PermissionTenants*Cross` (`types_permission_cross.go:35-51`). |
+| authz-platform-scope | planned | `requirePlatformScope`/`requireSystemTenant`: `pkg/acme/admin/tenant_binding.go:124-130`, `pkg/acme/admin/handlers.go:447`, `pkg/acme/admin/tenant_service.go:191`, `pkg/xkms/tenant_binding.go:120-125`. | A ScopeCross permission and `sdk.IdentityIsSystemTenant`; audit:read is ScopeSelf in go-qrdb. |
+| authz-tenant-bind | planned | `bindTenantTarget`/`bindTenantRecord`/`targetTenant`: `pkg/acme/admin/tenant_binding.go:86-120`, `pkg/xkms/tenant_binding.go:89-149`, `pkg/xkms/servicer_pkcs11state.go:108-118`. | `sdk.EffectiveTenant`, `sdk.OwnTenant` (`types_tenant.go:62`, `71`). |
+| authz-holds-role | blocked (go-qrdb) | `pkg/auth/rolemembership.go:75-107` re-implements role membership. | go-qrdb re-exports `role.HoldsSystemRole`. |
+| authz-shared-pw | blocked (go-qrdb) | `pkg/xkms/servicer_password.go:102-142`: Admin or SO membership overrides shared-password ownership. | A go-qrdb permission (e.g. passwords:administer) granted to Admin and SO. |
+| authz-reconcile | planned | `pkg/qrdbrole/reconcile.go:72-111` reconciles the built-in roles. | `RoleClient.ReconcileBuiltInRoles`. |
+| authz-ui-matrix | planned | `pkg/api/rest/handlers_auth.go:367-398`, `591`: one `Authorize` call per UI permission. | `RBAC().ListPermissions`. |
+| authz-cli-roles | planned | `cmd/xkmsctl/roles.go:20-44`: its own `Role` type and `IsValidRole`, which rejects custom roles. | `sdk.RoleName*`, `sdk.IsSystemRoleName`. |
+| authz-role-id | planned | `pkg/xkms/servicer_user.go:32-70`: a linear `ListRoles` scan, and only `RoleIDs[0]`. | `sdk.SystemRoleID` / `GetRoleByName`. |
+| authz-peercred-roles | planned | `pkg/acme/api/server/role_mapper.go:28-137` maps peer uid/gid to role names. | `SystemRoleID(SystemTenantID, name)`. |
+| authz-cert-ou-roles | planned | Certificate OU values become role names: `pkg/acme/admin/auth.go:268-332`, `pkg/acme/api/server/interceptor_identity.go:96-111`. | Role IDs, or upstream claim mapping (blocked on go-qrdb). |
+| authz-claim-roles | blocked (go-qrdb) | Role names taken from IdP and token claims: `pkg/auth/oidc.go:609-646`, `pkg/auth/jwt.go:233`, `270-295`, `pkg/auth/statictoken.go:92`, `pkg/webauthn/jwt_generator.go:132-133`, `pkg/api/rest/host.go:296-298`. | Upstream claim-to-role mapping. |
+| authz-loopback-admin | planned | `pkg/server/loopback/loopback.go:128-132`: a static identity with Roles `["admin"]`. | `SystemRoleID(SystemTenantID, RoleNameAdmin)`. |
+| authz-admin-perms-field | planned | `pkg/acme/admin/auth.go:64`, `142`: `AuthenticatedUser.Permissions` copied from token claims. | Delete the field; rely on `Authorize`. |
+| authz-object-owner | blocked (go-qrdb) | `pkg/scope/principal.go:86-108` (re-exported by `sdk/go/scope.go`): object tenancy, owner and ServiceAccess checks. | Tenant part: `sdk.OwnTenant`; owner part: upstream object-owner ABAC. |
+| authz-rest-role-ctx | planned | `pkg/api/rest/rbac_middleware.go:104-115` `WithUserRole`/`GetUserRole`, referenced only by its tests. | Delete. |
+| authz-xkey-uid0 | planned | `xkey/pkg/gui/services/admin_service.go:222-229`: `IsAdmin` is uid 0, and it gates audit logs. | `audit:read` through the SDK. |
+| authz-683-tenant-iam | blocked (go-qrdb) | `bindTenantIAM` (`pkg/acme/admin/tenant_service.go:1518-1724`, `pkg/acme/admin/tenant_binding.go:115-120`) and `pkg/api/grpc/service_user.go:43-60` forwarding `req.TenantId`: a system-tenant admin administers another tenant's users. | go-qrdb #683. |
+| authz-device-onboarding | blocked (go-qrdb) | User onboarding is public invite routes (`pkg/api/rest/routes.go:455-461`, `pkg/api/mcp/authz.go:75-76`), with invites created under users:create (`pkg/api/grpc/service_user.go:47`); go-qrdb's users:invite is unused. | users:invite, and device-onboarding permissions in go-qrdb's vocabulary on the default roles (blocked on their go-qrdb registration). |

@@ -1,16 +1,16 @@
 # go-xkms roadmap
 
-> **Status: REFERENCE** · Owner: Software Department · Last verified: 2026-10-14
-> Per handbook `software/conventions/roadmap.md`: the Software Department refreshes it; the project agent proposes changes by PR.
+> **Status: REFERENCE** · Owner: Software Department · Last verified: 2026-10-15
 
 ## Mission
 
-The third layer of the stack: hardware crypto, auth factors, KMS, CA, ACME and TPM policies as services on top of go-qrdb through ServiceModule (TPM2, PKCS#11 backend and provider module, cloud KMS, FIDO2/WebAuthn/PIV, `TrustedCA` + ACME, trust bootstrap, phone-as-HSM and attestation crypto primitives), with every go-qrdb service re-exported through `sdk/go`, so the go-qrdb client works unchanged against an xkms node. Scope and boundaries: [docs/SPEC.md](docs/SPEC.md).
+Hardware crypto, auth factors, KMS, CA, ACME and TPM policies as services on go-qrdb, with every go-qrdb service re-exported through `sdk/go`.
+Scope and boundaries: [docs/SPEC.md](docs/SPEC.md).
 
 ## Milestones
 
-- [Dev complete](../../milestone/14) — RC — due: 2026-11-09 — 10 open / 36 closed — multi-tenancy, auth-factors, webauthn, acme-issuance, init-ceremony, release-engineering, backend-registry, transparency-log, attested-caller-gate, trust-roots, image-signing, workload-identity; closing criteria in [docs/SPEC.md](docs/SPEC.md#release-criteria)
-- [Working fundamentally: 3-node raft + quicbaas surface](../../milestone/30) — release — due: 2026-10-23 — 1 open / 7 closed — release-engineering, sealing-and-barrier
+- [Working fundamentally: 3-node raft + quicbaas surface](../../milestone/30) — release — due 2026-11-04 — 1 open / 7 closed
+- [Dev complete](../../milestone/14) — RC — due 2026-11-09 — 18 open / 38 closed
 
 ## Complete
 
@@ -86,42 +86,35 @@ The third layer of the stack: hardware crypto, auth factors, KMS, CA, ACME and T
 
 ## Now
 
-- **tpm-policies** — steps 1 and 2 of unattended unlock across updates: branch update from signed reference values, offline binding record with a static resolver, per-node records — [#1443](../../issues/1443) — open
-- **attestation-verifier** — reference-value replay of an event log with a component digest from a signed CoRIM — [#1443](../../issues/1443) — open
-- **acme-issuance** — phase C: `sdk/go` exports `AssemblePossessionCSR` for trusted-firmware's xkms adapter at device-attest-01 finalize — [trusted-firmware #28](../../../trusted-firmware/issues/28) — open
+- **tpm-policies** — unattended unlock across updates, steps 1 and 2 — [#1443](../../issues/1443) — open
+- **attestation-verifier** — event-log replay against signed CoRIM reference values — [#1443](../../issues/1443) — open
+- **acme-issuance** — `sdk/go` `AssemblePossessionCSR` for device-attest-01 finalize — [trusted-firmware #28](../../../trusted-firmware/issues/28) — open
 
 ## Next
 
-- **acme-issuance** — ACME admin listeners (gRPC, QUIC, MCP, unix) and the desktop admin GUI hosted by xkmsd — [#743](../../issues/743), [#746](../../issues/746) — open
-- **acme-issuance** — finalize through `pkg/acme/issuance` with goodkey and zlint — [#744](../../issues/744) — open
-- **acme-issuance** — CT precertificates and SCT embedding — [#745](../../issues/745) — open
-- **attested-caller-gate** — wire `pkg/attestation/peergate` into the node through go-qrdb's peer-attestation gate, Challenge/Submit verbs, `sdk/go` `WithAttestedCallerGate`; provides go-quicbaas, through which go-trusted-platform consumes the gate — Dev complete — open
-- **trust-roots** — one purpose-classified root store on a qrdb DAO, built from xkey's truststore; provides go-quicbaas — Dev complete — open
-- **image-signing** — `pkg/image` DSSE/in-toto image signatures as OCI referrers with `VerifyImage` against trust-roots, and the `pkg/signing` verify for gtp's manifest RSA check; provides go-quicbaas, through which go-trusted-platform consumes the `pkg/signing` verify — Dev complete — open
-- **transparency-log** — the transparency log as a CA service on go-qrdb's verifiable-log type, tree heads signed with the CA key through go-qrdb's `HeadSignerProvider`; consumes go-qrdb's verifiable log, provides go-quicbaas (tlog append) — Dev complete — blocked: go-qrdb's verifiable-log type (go-qrdb #721/#722)
-- **workload-identity** — the tenant as the SPIFFE trust domain, SVIDs through ACME at deploy; provides go-quicbaas with SVIDs — Dev complete — blocked: go-qrdb accepting `spiffe://<tenant>/...`
+- **acme-issuance** — admin listeners, goodkey/zlint finalize, CT precertificates — [#743](../../issues/743), [#744](../../issues/744), [#745](../../issues/745), [#746](../../issues/746) — open
+- **attested-caller-gate** — `pkg/attestation/peergate` behind go-qrdb's peer-attestation gate — [Dev complete](../../milestone/14) — open
+- **trust-roots** — one purpose-classified root store on a qrdb DAO — [Dev complete](../../milestone/14) — open
+- **image-signing** — DSSE/in-toto image signatures as OCI referrers with `VerifyImage` — [Dev complete](../../milestone/14) — open
+- **transparency-log** — CA transparency log on go-qrdb's verifiable-log type — [Dev complete](../../milestone/14) — blocked: go-qrdb #721/#722
+- **workload-identity** — tenant as SPIFFE trust domain, SVIDs through ACME — [Dev complete](../../milestone/14) — blocked: go-qrdb `spiffe://<tenant>/...` support
 
 ## Later
 
-- **platform-pcr-selection** — platform policy PCR selection: PCR 16 (`DefaultPlatformPCR`) or the board's boot PCRs — [#1443](../../issues/1443) — blocked: decision pending on PCR 16 versus boot PCRs
-- **ca** — standalone xkey CA: local `TrustedCA` (`xkey ca --local`) or remote-only with the GUI `CAService` in remote mode — [#729](../../issues/729) — blocked: decision pending on local `TrustedCA` versus remote-only
+- **platform-pcr-selection** — PCR 16 or the board's boot PCRs for the platform policy — [#1443](../../issues/1443) — blocked: decision pending
+- **ca** — standalone xkey CA, local or remote-only — [#729](../../issues/729) — blocked: decision pending
+- **ota-image-keys** — one OTA image-signing key per trusted-firmware board id — [SPEC](docs/SPEC.md#features) — open
 
 ## Future
 
-- **hsm-device-protocol** — wire protocol between xkmsd and HSM devices, direct-attached or network over 10G/1G; FRDM-IMX95-PRO first — [#1521](../../issues/1521) — open
-- **media-signing** — multi-signer, region- and segment-aware photo and video signing — [xkey/docs/roadmap/media.md](xkey/docs/roadmap/media.md) — open
-- **piv-i** — PIV-I profiles with every PIV key on FIPS-validated hardware — [xkey/docs/roadmap/piv.md](xkey/docs/roadmap/piv.md) — open
-- **browser-mode** — the Svelte GUI as a browser web app authenticated with WebAuthn — [xkey/docs/roadmap/web.md](xkey/docs/roadmap/web.md) — open
+- **hsm-device-protocol** — xkmsd-to-HSM-device wire protocol, FRDM-IMX95-PRO first — [#1521](../../issues/1521) — open
+- **hsm-self-defence** — lockdown or key wipe as predetermined HSM device responses — [SPEC](docs/SPEC.md#features) — open
+- **media-signing** — multi-signer photo and video signing — [xkey/docs/roadmap/media.md](xkey/docs/roadmap/media.md) — open
+- **piv-i** — PIV-I profiles on FIPS-validated hardware — [xkey/docs/roadmap/piv.md](xkey/docs/roadmap/piv.md) — open
+- **browser-mode** — the GUI as a WebAuthn-authenticated web app — [xkey/docs/roadmap/web.md](xkey/docs/roadmap/web.md) — open
 
 ## Dependencies
 
-- Up: go-qrdb v0.47.0-alpha, the layer below, inherited whole and re-exported through `sdk/go` (datastore, clustering, sealing-and-barrier, auth-factors); go-xkms v0.52.0-alpha is built on it ([#1447](../../issues/1447)).
-- Up: go-enclave v0.8.0-alpha (sealing-and-barrier) — [#1426](../../issues/1426).
-- Up: go-luks2 v1.0.0-rc.4 (luks) — [#1427](../../issues/1427).
-- Up: go-qrdb's verifiable-log type with its `HeadSignerProvider` (transparency-log, go-qrdb #721/#722), no version yet.
-- Up: go-qrdb's peer-attestation hook, `node.WithPeerAttestationGate` (attested-caller-gate); go-qrdb's per-tenant trust-domain verification of `spiffe://<tenant>/...` (workload-identity), ordered.
-- Up, current: go-quicraft v0.20.0 (clustering, through go-qrdb), go-objstore v0.4.0-alpha (certificate-authority), go-truststrap v0.6.0-alpha (trust-bootstrap), go-frost v0.3.0-alpha (frost-threshold-signing), go-codec v1.4.0 (audit-log).
-- Down: go-quicbaas composes go-qrdb and go-xkms and waits on the SDK exports [#1442](../../issues/1442) (signing) and [#1480](../../issues/1480) (acme-issuance); xkey-android by wire (phone-hsm, handbook `docs/12`).
-- Down: trusted-firmware's xkms adapter provides the AVR backend through backend-registry at v0.52.0-alpha; go-quicbaas composes it by blank import, and at device-attest-01 finalize the adapter assembles the possession request with `sdk/go`'s `AssemblePossessionCSR` (acme-issuance, [trusted-firmware #28](../../../trusted-firmware/issues/28) phase C); xkey ([#1440](../../issues/1440)) takes it by blank import; go-trusted-platform ([#771](../../../go-trusted-platform/issues/771) in that repository) reaches it only through go-quicbaas.
-- Down: go-quicbaas consumes tpm-policies by SDK re-export (`Security().TPMPolicy()`, the initrd static-resolver re-exports) ([#1443](../../issues/1443)); go-trusted-platform reaches it only through go-quicbaas.
-- Down: go-quicbaas consumes the attested-caller-gate option, SVIDs (workload-identity), `VerifyImage` (image-signing), transparency-log append and trust-roots, and provides the PCR policy.
+- Up: go-qrdb v0.47.0-alpha (re-exported through `sdk/go`), go-enclave v0.8.0-alpha, go-luks2 v1.0.0-rc.4, go-quicraft v0.20.0, go-objstore v0.4.0-alpha, go-truststrap v0.6.0-alpha, go-frost v0.3.0-alpha, go-codec v1.4.0.
+- Up, needed: go-qrdb verifiable log (#721/#722), `node.WithPeerAttestationGate`, per-tenant `spiffe://` verification.
+- Down: go-quicbaas (SDK re-exports: [#1442](../../issues/1442), [#1480](../../issues/1480), [#1443](../../issues/1443)), trusted-firmware's xkms adapter ([#28](../../../trusted-firmware/issues/28)), xkey ([#1440](../../issues/1440)), xkey-android by wire; go-trusted-platform only through go-quicbaas.
