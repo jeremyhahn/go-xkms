@@ -32,7 +32,7 @@ import (
 // A device-attest-01 attestation proves two different things and neither
 // alone is an authorization: that the evidence's key lives in a genuine,
 // chain-anchored device (VerifyAttestation), and, separately, WHICH device --
-// the identity draft-ietf-acme-device-attest's permanent-identifier binds an
+// the identity draft-ietf-acme-device-attest-10's permanent-identifier binds an
 // order to. Both are established here, at the challenge: NewDeviceAttestVerifier
 // reads the attested device identity from the evidence and reports it as
 // common.AttestedIdentity.Identifier. ChallengeHandler is what refuses a
@@ -65,7 +65,7 @@ import (
 // refused at verification time with deviceattest01.ErrNoAttestationVerifier,
 // never run without anchors.
 //
-// draft-ietf-acme-device-attest's identifier binding is defined for
+// draft-ietf-acme-device-attest-10's identifier binding is defined for
 // permanent-identifier only, and deviceattest01.VerifiedAttestation.DeviceIdentity
 // reads exactly that otherName -- there is no attested identity a TPM/DICE
 // evidence chain could carry for a "dns" authorization, so any other

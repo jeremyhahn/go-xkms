@@ -844,7 +844,7 @@ func (c *Client) startEndorseServer(config *EnrollmentConfig, req ekRequest, tok
 }
 
 // DeviceAttest performs device attestation using the device-attest-01 challenge
-// (draft-ietf-acme-device-attest).
+// (draft-ietf-acme-device-attest-10).
 //
 // The certificate is issued for the TPM key config.TPMModule attests under
 // config.CommonName (TPMModule.CreateAttestedKey): the challenge response is

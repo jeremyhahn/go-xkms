@@ -91,7 +91,7 @@ func newDICEAliasCert(t *testing.T, key *ecdsa.PrivateKey, keyAuth string, ueid 
 
 // deviceAttestPayload is the body a device-attest-01 client POSTs to the
 // challenge URL for a "dice" attestation statement carrying leafDER
-// (draft-ietf-acme-device-attest): {"attObj": base64url(CBOR)}.
+// (draft-ietf-acme-device-attest-10): {"attObj": base64url(CBOR)}.
 func deviceAttestPayload(t *testing.T, leafDER []byte) json.RawMessage {
 	t.Helper()
 
@@ -453,7 +453,7 @@ func TestNewDeviceAttestVerifier_NoVerifierRefused(t *testing.T) {
 
 // TestNewDeviceAttestVerifier_WrongIdentifierTypeRefused proves an
 // authorization of any type other than permanent-identifier is refused
-// before a device identity is even read: draft-ietf-acme-device-attest's
+// before a device identity is even read: draft-ietf-acme-device-attest-10's
 // identity binding is defined for permanent-identifier, and this server offers
 // no other identifier type for device-attest-01.
 func TestNewDeviceAttestVerifier_WrongIdentifierTypeRefused(t *testing.T) {

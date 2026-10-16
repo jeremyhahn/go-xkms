@@ -29,15 +29,15 @@ import (
 // device-attest-01 Challenge Implementation
 //
 // The device-attest-01 challenge is the ACME extension for remote attestation
-// of devices defined by draft-ietf-acme-device-attest. It implements the
+// of devices defined by draft-ietf-acme-device-attest-10. It implements the
 // draft's challenge-response model together with the WebAuthn TPM attestation
 // format and the DICE format this repository models.
 //
 // References:
-// - https://datatracker.ietf.org/doc/draft-ietf-acme-device-attest
+// - https://datatracker.ietf.org/doc/draft-ietf-acme-device-attest-10
 // - https://www.w3.org/TR/webauthn/#sctn-tpm-attestation
 //
-// The exchange (draft-ietf-acme-device-attest, "Device Attestation Challenge"):
+// The exchange (draft-ietf-acme-device-attest-10, "Device Attestation Challenge"):
 // the server issues a challenge carrying a token; the client answers by POSTing
 // the challenge URL, as an ordinary authenticated ACME request, with a payload
 //
@@ -119,7 +119,7 @@ type AttestationStatement struct {
 }
 
 // AttestationRequest is the payload of the client's POST to the challenge URL
-// (draft-ietf-acme-device-attest, "Device Attestation Challenge").
+// (draft-ietf-acme-device-attest-10, "Device Attestation Challenge").
 type AttestationRequest struct {
 	// AttObj is the base64url (RFC 4648 section 5, unpadded) encoding of the
 	// CBOR attestation object. EncodeAttestationForSubmission produces it.

@@ -109,7 +109,7 @@ var coseAlgorithms = map[x509.SignatureAlgorithm]webauthncose.COSEAlgorithmIdent
 // signed by key, or BindCSRKey refuses it.
 //
 // The result is the payload of the client's POST to the challenge URL
-// (draft-ietf-acme-device-attest): an AttestationRequest whose attObj is the
+// (draft-ietf-acme-device-attest-10): an AttestationRequest whose attObj is the
 // base64url CBOR attestation object.
 func Setup(keyAuth string, tpm TrustedPlatformModule, key *types.KeyAttributes, backend store.KeyBackend) ([]byte, error) {
 	if tpm == nil {

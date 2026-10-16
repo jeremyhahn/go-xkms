@@ -257,7 +257,7 @@ func TestACMENewTrustAnchorVerifier_RefusesNoAnchors(t *testing.T) {
 	}
 }
 
-// TestACMEDeviceAttestPayloadRoundTrip pins the draft-ietf-acme-device-attest
+// TestACMEDeviceAttestPayloadRoundTrip pins the draft-ietf-acme-device-attest-10
 // payload through the SDK surface a device tool uses.
 func TestACMEDeviceAttestPayloadRoundTrip(t *testing.T) {
 	object := &ACMEDeviceAttestObject{

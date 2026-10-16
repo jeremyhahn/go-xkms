@@ -369,7 +369,7 @@ func ValidateNetworkTarget(host string) error {
 
 // ValidatePermanentIdentifier validates the value of a permanent-identifier
 // ACME identifier. The ACME device-attestation draft
-// (draft-ietf-acme-device-attest, section "Permanent Identifier") carries the
+// (draft-ietf-acme-device-attest-10, section "Permanent Identifier") carries the
 // value as the identifierValue of an RFC 4043 PermanentIdentifier, a
 // UTF8String with no further syntax, so the value is opaque: a device
 // serial, a base64url public key (endorse-01), or a host (enroll-01). It

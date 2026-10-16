@@ -62,3 +62,9 @@ Scope and boundaries: [docs/SPEC.md](docs/SPEC.md).
 - Up: go-qrdb v0.47.0-alpha (re-exported through `sdk/go`), go-enclave v0.8.0-alpha, go-luks2 v1.0.0-rc.4, go-quicraft v0.20.0, go-objstore v0.4.0-alpha, go-truststrap v0.6.0-alpha, go-frost v0.3.0-alpha, go-codec v1.4.0.
 - Up, needed: go-qrdb verifiable log (#721/#722), `node.WithPeerAttestationGate`, per-tenant `spiffe://` verification.
 - Down: go-quicbaas (SDK re-exports: [#1442](../../issues/1442), [#1480](../../issues/1480), [#1443](../../issues/1443)), trusted-firmware's xkms adapter ([#28](../../../trusted-firmware/issues/28)), xkey ([#1440](../../issues/1440)), xkey-android by wire; go-trusted-platform only through go-quicbaas.
+
+### Standards watch
+
+- draft-ietf-rats-corim pinned at -11 ([docs/references/rats/](docs/references/rats/README.md)); `pkg/attestation/refvalue`.
+- draft-ietf-lamps-csr-attestation pinned at -29 ([docs/references/rats/](docs/references/rats/README.md)); `pkg/ca`, `pkg/acme`.
+- draft-ietf-acme-device-attest pinned at -10 ([docs/references/rats/](docs/references/rats/README.md)); `pkg/acme/challenges/device-attest-01`.

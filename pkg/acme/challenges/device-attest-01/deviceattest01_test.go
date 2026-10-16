@@ -706,7 +706,7 @@ func TestParseAttestationObject_AllPaths(t *testing.T) {
 	})
 }
 
-// TestAttestationRequest_WireName pins the draft-ietf-acme-device-attest
+// TestAttestationRequest_WireName pins the draft-ietf-acme-device-attest-10
 // payload member name: a client and server that disagree on it never interoperate.
 func TestAttestationRequest_WireName(t *testing.T) {
 	payload, err := json.Marshal(AttestationRequest{AttObj: "abc"})
@@ -771,7 +771,7 @@ func BenchmarkParseAttestationObject(b *testing.B) {
 	}
 }
 
-// draft-ietf-acme-device-attest: authData "SHOULD be omitted", and a server
+// draft-ietf-acme-device-attest-10: authData "SHOULD be omitted", and a server
 // "MUST ignore unrecognized fields in the challenge response". A client that
 // sends either is not refused.
 func TestParseAttestationRequest_IgnoresWhatTheDraftSaysToIgnore(t *testing.T) {

@@ -295,7 +295,7 @@ type IDevIDCSR struct {
 // response that attests it.
 type AttestedKey struct {
 	// Statement is the payload the client POSTs to the challenge URL
-	// (draft-ietf-acme-device-attest): the JSON {"attObj": base64url(CBOR)}
+	// (draft-ietf-acme-device-attest-10): the JSON {"attObj": base64url(CBOR)}
 	// whose attestation object is a WebAuthn "tpm" statement certifying the
 	// key.
 	Statement []byte

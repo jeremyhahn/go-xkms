@@ -1,6 +1,6 @@
 # Reference specifications
 
-> **Status: REFERENCE** · Last verified: 2026-10-12
+> **Status: REFERENCE** · Last verified: 2026-10-16
 > Index of the public specifications kept in `docs/references/` and the code that implements each.
 
 Public specification documents this project implements against. Nothing here
@@ -36,3 +36,5 @@ implementation work does not depend on the publisher's site staying up.
 - `pkcs11-3.2.html`, `pkcs11-v3.0-to-v3.2-changes.md` — OASIS PKCS#11
   Cryptographic Token Interface, version 3.2, and its changes from 3.0, the
   API `pkg/pkcs11` and `cmd/pkcs11-module` implement.
+- `rats/` — the IETF RATS, EAT, CoRIM, CMW, CSR-attestation and ACME
+  device-attestation specifications, indexed in [rats/README.md](rats/README.md).

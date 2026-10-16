@@ -72,7 +72,7 @@ func ACMEAttestationVerifiers(client *ACMEChallengeClient, enroll, endorse bool)
 //     cert; server-side verification is a no-op (the CA is not consulted here),
 //     and issuance is gated by External Account Binding in the challenge handler.
 //   - device-attest-01 verifies a TPM or DICE attestation object the client
-//     POSTs to the challenge URL (draft-ietf-acme-device-attest: the server
+//     POSTs to the challenge URL (draft-ietf-acme-device-attest-10: the server
 //     never contacts the device) and reports the device identity the evidence
 //     carries (the AIK permanentIdentifier, or the DICE Ueid) together with the
 //     verified evidence finalization binds the certificate request's key to

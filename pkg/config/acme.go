@@ -766,7 +766,7 @@ type ACMEChallengesConfig struct {
 	Endorse01 bool `yaml:"endorse01"`
 
 	// DeviceAttest01 enables the device-attest-01 challenge
-	// (draft-ietf-acme-device-attest): remote attestation of a TPM- or
+	// (draft-ietf-acme-device-attest-10): remote attestation of a TPM- or
 	// DICE-resident key, binding both the attested device identity to the
 	// order's permanent-identifier (go-xkms#828) and the attested key to the
 	// certificate request at finalization (go-xkms#789). The client POSTs its

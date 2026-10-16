@@ -191,7 +191,7 @@ func coseSignatureAlgorithm(alg int64) (x509.SignatureAlgorithm, error) {
 //
 // WebAuthn Level 2 section 8.3 requires "extraData is set to the hash of
 // attToBeSigned using the hash algorithm employed in alg", where attToBeSigned
-// is authenticatorData || clientDataHash. draft-ietf-acme-device-attest
+// is authenticatorData || clientDataHash. draft-ietf-acme-device-attest-10
 // ("device-attest-01 Challenge") has the client produce the attestation over
 // the key authorization in place of that pair, with no authenticator data, so
 // attToBeSigned is the key authorization itself.

@@ -523,7 +523,7 @@ var ACMEErrNoTrustAnchors = deviceattest01.ErrNoTrustAnchors
 var ACMEErrNoAttestationVerifier = deviceattest01.ErrNoAttestationVerifier
 
 // ACMEDeviceAttestRequest is the payload a device-attest-01 client POSTs to
-// the challenge URL (draft-ietf-acme-device-attest): {"attObj": base64url}.
+// the challenge URL (draft-ietf-acme-device-attest-10): {"attObj": base64url}.
 type ACMEDeviceAttestRequest = deviceattest01.AttestationRequest
 
 // ACMEParseDeviceAttestRequest decodes a device-attest-01 challenge payload

@@ -672,7 +672,7 @@ func isDeviceAttestChallenge(challengeType string) bool {
 
 // dialsDevice reports whether the server answers the challenge by contacting
 // the device: enroll-01 and endorse-01. device-attest-01 does not
-// (draft-ietf-acme-device-attest): the client POSTs its attestation, so the
+// (draft-ietf-acme-device-attest-10): the client POSTs its attestation, so the
 // device needs no address, no listener and no loopback substitution.
 func dialsDevice(challengeType string) bool {
 	return isEnrollXChallenge(challengeType) && !isDeviceAttestChallenge(challengeType)
