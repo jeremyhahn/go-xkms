@@ -381,6 +381,32 @@ A missing `Path` is `ErrEnginePathRequired`, an unknown kind wraps
 `*EngineError`, rendered `storage: engine <op> "<path or provider>": <cause>`
 (`pkg/storage/engine.go:39-41`).
 
+### CA blob storage
+
+`pkg/ca` keeps its non-certificate blobs in a go-qrdb storage engine, the
+`qrdbsdk.Storage` the embedder passes as `ca.Params.ObjectStore` or builds
+per CA with `ca.Params.ObjectStoreFactory` (`pkg/ca/ca.go:144,172`,
+`pkg/ca/constructors.go:82`). go-xkms imports go-objstore nowhere: the
+backend is chosen by configuration through go-qrdb. `sdk/go` exposes the
+engine as `ObjectStorage`, opened by `NewObjectStorage(provider, settings)`
+(`qrdbsdk.NewObjStoreStorage`; `"local"` needs no build tag, cloud providers
+need go-objstore's tag) or `NewObjectStorageMemory()`
+(`sdk/go/storage.go:70,131,135`). The engine is optional; a CA without one
+refuses only the blob operations, with `ca.ErrObjectStoreRequired`
+(`pkg/ca/errors.go:163`).
+
+| Blob | Key |
+|---|---|
+| Cross-signed certificates (PEM) | `cross-signed/<issuer CN>/<subject CN>.pem` (`pkg/ca/cross_signing.go:41`) |
+| Distribution-point CRLs | `crls/distribution/<sha256(url)>.crl` (`pkg/ca/crl_import.go:55`) |
+| Attestation evidence | `attestation/<AK key>/{data,signature,digest}` and `attestation/<AK CN>/ak-cert.{der,digest,sig}` (`pkg/ca/attestation.go:56,109-111,146-166`) |
+
+A missing key is `ca.ErrObjectNotFound` and any engine failure wraps
+`ca.ErrStorageError` (`pkg/ca/object_store.go:24-47`,
+`pkg/ca/errors.go:167`). Certificates, chains, serials and revocations are
+not blobs: they live in the CA's go-qrdb database (see
+`docs/certificate-authority/engineering.md`).
+
 ### `pkg/storage/file` — the file engine's validation and permission wrapper
 
 ```go

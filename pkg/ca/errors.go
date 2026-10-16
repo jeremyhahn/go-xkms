@@ -163,6 +163,10 @@ var (
 	// blob-style store that CertStore's CN-keyed model cannot serve.
 	ErrObjectStoreRequired = errors.New("ca: object store required")
 
+	// ErrObjectNotFound indicates the object store holds no blob under the
+	// requested key.
+	ErrObjectNotFound = errors.New("ca: object not found")
+
 	// ErrRevocationStoreRequired indicates a durable revocation store
 	// (Params.RevocationStore) must be configured. Revocation state and the
 	// derived CRL artifact are always persisted through RevocationStore; there

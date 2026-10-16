@@ -172,8 +172,8 @@ func TestImportXSignedCertificate_AuditWriteFailure_FailsAndDoesNotPersist(t *te
 	require.ErrorAs(t, err, &writeErr)
 
 	key := crossSignedStoreKey("external-issuer", "leaf")
-	_, getErr := ca.objectStore.Get(key)
-	assert.Error(t, getErr)
+	_, getErr := ca.getObject(key)
+	assert.ErrorIs(t, getErr, ErrObjectNotFound)
 }
 
 func TestImportXSignedCertificate_OperationFailure_DoesNotReachAuditGate(t *testing.T) {

@@ -25,12 +25,11 @@ import (
 	"crypto/x509/pkix"
 	"encoding/pem"
 	"errors"
-	"io"
 	"math/big"
 	"testing"
 	"time"
 
-	objmemory "github.com/jeremyhahn/go-objstore/pkg/memory"
+	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
@@ -51,7 +50,7 @@ func setupCAWithObjectStoreAndXSignedCert(t *testing.T, leafCN string) (*CA, *x5
 	t.Helper()
 
 	ca := setupTestCA(t)
-	ca.objectStore = objmemory.New()
+	ca.objectStore = qrdbsdk.NewMemoryStorage()
 
 	// Manufacture a self-signed cert that will act as the cross-signed issuer cert.
 	xKey, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
@@ -75,7 +74,7 @@ func setupCAWithObjectStoreAndXSignedCert(t *testing.T, leafCN string) (*CA, *x5
 	issuerCN := "xsigner-b8"
 	key := "cross-signed/" + issuerCN + "/" + leafCN + ".pem"
 	certPEM := pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: xCert.Raw})
-	require.NoError(t, ca.objectStore.Put(key, &pemBytesReader{data: certPEM}))
+	require.NoError(t, ca.putObject(key, certPEM))
 
 	return ca, xCert
 }
@@ -112,7 +111,7 @@ func setupCAWithObjStoreAndXSignedRootCert(t *testing.T, leafCN string) *CA {
 	t.Helper()
 
 	ca := setupTestCA(t)
-	ca.objectStore = objmemory.New()
+	ca.objectStore = qrdbsdk.NewMemoryStorage()
 
 	ca.mu.RLock()
 	root := ca.rootCert
@@ -142,7 +141,7 @@ func setupCAWithObjStoreAndXSignedRootCert(t *testing.T, leafCN string) *CA {
 	rootCN := root.Subject.CommonName
 	key := "cross-signed/xroot-b8/" + rootCN + ".pem"
 	certPEM := pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: xCert.Raw})
-	require.NoError(t, ca.objectStore.Put(key, &pemBytesReader{data: certPEM}))
+	require.NoError(t, ca.putObject(key, certPEM))
 
 	return ca
 }
@@ -173,7 +172,7 @@ func TestTLSConfigWithXSigner_XSignedRootCertsExist_B8(t *testing.T) {
 // intermediate cert and cross-signed certs stored for its CN.
 func TestTLSConfigWithXSigner_WithIntermediateAndXSignedCerts_B8(t *testing.T) {
 	ca := setupTestCAWithRealIntermediate(t)
-	ca.objectStore = objmemory.New()
+	ca.objectStore = qrdbsdk.NewMemoryStorage()
 
 	ca.mu.RLock()
 	intermediate := ca.intermediateCert
@@ -201,7 +200,7 @@ func TestTLSConfigWithXSigner_WithIntermediateAndXSignedCerts_B8(t *testing.T) {
 	intCN := intermediate.Subject.CommonName
 	key := "cross-signed/xsign-int-b8/" + intCN + ".pem"
 	certPEM := pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: xCert.Raw})
-	require.NoError(t, ca.objectStore.Put(key, &pemBytesReader{data: certPEM}))
+	require.NoError(t, ca.putObject(key, certPEM))
 
 	leafCN := "tls-xcfg-int-b8"
 	issueCertAndSaveToKeyStore(t, ca, leafCN)
@@ -224,7 +223,7 @@ func TestTLSConfigWithXSigner_WithIntermediateAndXSignedCerts_B8(t *testing.T) {
 // to the object store so the pool-append loop executes.
 func TestTrustedRootCertPoolWithXSigner_XSignedCerts_B8(t *testing.T) {
 	ca := setupTestCA(t)
-	ca.objectStore = objmemory.New()
+	ca.objectStore = qrdbsdk.NewMemoryStorage()
 
 	ca.mu.RLock()
 	root := ca.rootCert
@@ -252,7 +251,7 @@ func TestTrustedRootCertPoolWithXSigner_XSignedCerts_B8(t *testing.T) {
 	rootCN := root.Subject.CommonName
 	key := "cross-signed/xroot-pool-b8/" + rootCN + ".pem"
 	certPEM := pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: xCert.Raw})
-	require.NoError(t, ca.objectStore.Put(key, &pemBytesReader{data: certPEM}))
+	require.NoError(t, ca.putObject(key, certPEM))
 
 	pool, err := ca.TrustedRootCertPoolWithXSigner(root, xKey)
 	require.NoError(t, err)
@@ -266,7 +265,7 @@ func TestTrustedRootCertPoolWithXSigner_XSignedCerts_B8(t *testing.T) {
 
 func TestTrustedIntermediateCertPoolWithXSigner_XSignedCerts_B8(t *testing.T) {
 	ca := setupTestCAWithRealIntermediate(t)
-	ca.objectStore = objmemory.New()
+	ca.objectStore = qrdbsdk.NewMemoryStorage()
 
 	ca.mu.RLock()
 	intermediate := ca.intermediateCert
@@ -294,7 +293,7 @@ func TestTrustedIntermediateCertPoolWithXSigner_XSignedCerts_B8(t *testing.T) {
 	intCN := intermediate.Subject.CommonName
 	key := "cross-signed/xsign-intpool-b8/" + intCN + ".pem"
 	certPEM := pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: xCert.Raw})
-	require.NoError(t, ca.objectStore.Put(key, &pemBytesReader{data: certPEM}))
+	require.NoError(t, ca.putObject(key, certPEM))
 
 	leaf := &x509.Certificate{Issuer: pkix.Name{CommonName: "leaf-intpool-b8"}}
 	pool, err := ca.TrustedIntermediateCertPoolWithXSigner(leaf, xKey)
@@ -823,30 +822,4 @@ func TestImportCertificatePEM_NoCertStore_B8(t *testing.T) {
 	pemBytes := pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: cert.Raw})
 	err := ca.ImportCertificatePEM(context.Background(), "pem-no-certstore-b8", pemBytes)
 	assert.ErrorIs(t, err, ErrCertStoreRequired)
-}
-
-// =============================================================================
-// io.Reader helper used across boost8 tests (honors io.Reader contract)
-// =============================================================================
-
-// pemBytesReader is defined in coverage_boost6_test.go; re-export is not
-// possible in the same package so we use an inline read helper here via
-// the io.Reader interface through bytes.NewReader — but we already have the
-// pemBytesReader type from boost6. We therefore refer to it directly.
-
-// b8certDERReader is a trivial io.Reader over DER bytes used in this file only
-// (avoids dependency on the pemBytesReader from boost6 at the call sites that
-// use raw DER rather than PEM).
-type b8certDERReader struct {
-	data   []byte
-	offset int
-}
-
-func (r *b8certDERReader) Read(p []byte) (int, error) {
-	if r.offset >= len(r.data) {
-		return 0, io.EOF
-	}
-	n := copy(p, r.data[r.offset:])
-	r.offset += n
-	return n, nil
 }

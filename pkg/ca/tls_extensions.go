@@ -23,7 +23,6 @@ import (
 	"crypto/x509"
 	"encoding/pem"
 	"fmt"
-	"log/slog"
 
 	"github.com/jeremyhahn/go-xkms/pkg/errs"
 
@@ -110,10 +109,7 @@ func (ca *CA) TLSBundleWithCrossSigner(ctx context.Context, attrs *types.KeyAttr
 	// entries are still good and are used below, so gate on the result, not
 	// the error. The error is worth knowing about, so it is logged rather
 	// than dropped.
-	xsignedCerts, err := ca.getXSignedCertificates(attrs.CN)
-	if err != nil {
-		slog.Warn("ca: cross-signed certificate lookup encountered an error", "cn", attrs.CN, "error", err)
-	}
+	xsignedCerts := ca.getXSignedCertificates(attrs.CN)
 	if len(xsignedCerts) == 0 {
 		return base, nil
 	}
@@ -159,10 +155,7 @@ func (ca *CA) TLSConfigWithXSigner(ctx context.Context, attrs *types.KeyAttribut
 	// invalidate the certificates that were already parsed successfully
 	// (a Close failure on the store reader), so the result is used
 	// regardless; the error itself is logged, not dropped.
-	xsignedRoots, err := ca.getXSignedCertificates(root.Subject.CommonName)
-	if err != nil {
-		slog.Warn("ca: cross-signed root certificate lookup encountered an error", "cn", root.Subject.CommonName, "error", err)
-	}
+	xsignedRoots := ca.getXSignedCertificates(root.Subject.CommonName)
 	for _, c := range xsignedRoots {
 		if cfg.RootCAs == nil {
 			cfg.RootCAs = x509.NewCertPool()
@@ -173,10 +166,7 @@ func (ca *CA) TLSConfigWithXSigner(ctx context.Context, attrs *types.KeyAttribut
 		}
 	}
 	if intermediate != nil {
-		xsignedInt, err := ca.getXSignedCertificates(intermediate.Subject.CommonName)
-		if err != nil {
-			slog.Warn("ca: cross-signed intermediate certificate lookup encountered an error", "cn", intermediate.Subject.CommonName, "error", err)
-		}
+		xsignedInt := ca.getXSignedCertificates(intermediate.Subject.CommonName)
 		for _, c := range xsignedInt {
 			if cfg.RootCAs == nil {
 				cfg.RootCAs = x509.NewCertPool()

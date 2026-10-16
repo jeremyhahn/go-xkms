@@ -746,8 +746,13 @@ REST routes for the CA group are gated by the `hasCA` predicate in
   failure is a `*certstore.StoreError` naming the operation.
 - Serial and revocation records: through `go-qrdb/sdk/go`.
 - CA signing keys: the keystore backend, never a file this package writes.
-- Cross-signed material is keyed by issuer CN.
-- Attestation blobs are keyed by AK key attributes and blob type.
+- Blobs — cross-signed certificates (`cross-signed/<issuer CN>/<subject CN>.pem`),
+  distribution-point CRLs (`crls/distribution/<sha256(url)>.crl`) and
+  attestation evidence (`attestation/...`, keyed by AK key attributes and
+  blob type): the go-qrdb storage engine in `Params.ObjectStore`
+  (`qrdbsdk.Storage`, `pkg/ca/ca.go:144`), whose backend is chosen by
+  configuration. go-xkms never imports go-objstore. Layout and errors:
+  `docs/datastore/engineering.md`, "CA blob storage".
 
 The composition root opens the `ca` database and hands its factory to
 `compose.BuildCA` (`CAParams.DAOs`): `xkmsd` through the shared datastore

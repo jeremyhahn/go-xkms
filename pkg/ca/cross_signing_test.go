@@ -264,7 +264,7 @@ func TestCrossSignedPEM_EmptyCN(t *testing.T) {
 func TestReadCrossSignedCertificate_InvalidPEM(t *testing.T) {
 	ca := setupTestCAWithObjectStore(t)
 	key := crossSignedStoreKey("ExtIssuer", "tampered")
-	require.NoError(t, ca.objectStore.Put(key, bytes.NewReader([]byte("not a PEM"))))
+	require.NoError(t, ca.putObject(key, []byte("not a PEM")))
 
 	_, err := ca.XSignedCertificate("ExtIssuer", &types.KeyAttributes{CN: "tampered"})
 	assert.ErrorIs(t, err, ErrInvalidPEM)

@@ -26,7 +26,6 @@ import (
 	"encoding/pem"
 	"errors"
 	"fmt"
-	"io"
 	"log/slog"
 	"math/big"
 	"sync"
@@ -294,16 +293,7 @@ func (ca *CA) Blob(key []byte) ([]byte, error) {
 	if ca.objectStore == nil {
 		return nil, ErrObjectStoreRequired
 	}
-	reader, err := ca.objectStore.Get(string(key))
-	if err != nil {
-		return nil, &errs.Detail{Err: ErrStorageError, Detail: fmt.Sprintf("%v", err)}
-	}
-	defer func() {
-		if cerr := reader.Close(); cerr != nil {
-			slog.Debug("ca: failed to close object store blob reader", "key", string(key), "error", cerr)
-		}
-	}()
-	return io.ReadAll(reader)
+	return ca.getObject(string(key))
 }
 
 // ImportBlob stores raw blob data in the object store under key.
@@ -313,10 +303,7 @@ func (ca *CA) ImportBlob(key, data []byte) error {
 	if ca.objectStore == nil {
 		return ErrObjectStoreRequired
 	}
-	if err := ca.objectStore.Put(string(key), bytes.NewReader(data)); err != nil {
-		return &errs.Detail{Err: ErrStorageError, Detail: fmt.Sprintf("%v", err)}
-	}
-	return nil
+	return ca.putObject(string(key), data)
 }
 
 // =============================================================================

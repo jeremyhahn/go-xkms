@@ -30,8 +30,7 @@ import (
 	"testing"
 	"time"
 
-	objstore "github.com/jeremyhahn/go-objstore/pkg/common"
-	objmemory "github.com/jeremyhahn/go-objstore/pkg/memory"
+	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
 	backendpkg "github.com/jeremyhahn/go-xkms/pkg/backend"
 	"github.com/jeremyhahn/go-xkms/pkg/backend/mocks"
 	"github.com/jeremyhahn/go-xkms/pkg/backend/software"
@@ -614,14 +613,14 @@ func TestResolveStores_CertStoreFactoryNil_B9(t *testing.T) {
 func TestResolveStores_ObjectStoreFactory_B9(t *testing.T) {
 	t.Parallel()
 	backend, cs := newB9Backend(t)
-	objStore := objmemory.New()
+	objStore := qrdbsdk.NewMemoryStorage()
 
 	p := &Params{
 		KeyStore:        backend,
 		BackendForStore: singleBackendFactory(backend),
 		RevocationStore: storage.NewMemory(),
 		CertStore:       cs,
-		ObjectStoreFactory: ObjectStoreFactoryFunc(func(cn string) (objstore.Storage, error) {
+		ObjectStoreFactory: ObjectStoreFactoryFunc(func(cn string) (qrdbsdk.Storage, error) {
 			return objStore, nil
 		}),
 	}
@@ -640,7 +639,7 @@ func TestResolveStores_ObjectStoreFactoryError_B9(t *testing.T) {
 		BackendForStore: singleBackendFactory(backend),
 		RevocationStore: storage.NewMemory(),
 		CertStore:       cs,
-		ObjectStoreFactory: ObjectStoreFactoryFunc(func(cn string) (objstore.Storage, error) {
+		ObjectStoreFactory: ObjectStoreFactoryFunc(func(cn string) (qrdbsdk.Storage, error) {
 			return nil, errors.New("objstore factory failure")
 		}),
 	}
@@ -679,7 +678,7 @@ func b9MakeSelfSignedCACert(t *testing.T, cn string) (*x509.Certificate, *ecdsa.
 func TestImportXSignedCertificate_Success_B9(t *testing.T) {
 	t.Parallel()
 	ca := setupTestCA(t)
-	ca.objectStore = objmemory.New()
+	ca.objectStore = qrdbsdk.NewMemoryStorage()
 
 	cert, _ := b9MakeSelfSignedCACert(t, "xsigned-import-b9")
 	err := ca.ImportXSignedCertificate("issuer-b9", cert)
@@ -701,7 +700,7 @@ func TestImportXSignedCertificate_NoObjectStore_B9(t *testing.T) {
 func TestImportXSignedCertificate_EmptyIssuer_B9(t *testing.T) {
 	t.Parallel()
 	ca := setupTestCA(t)
-	ca.objectStore = objmemory.New()
+	ca.objectStore = qrdbsdk.NewMemoryStorage()
 
 	cert, _ := b9MakeSelfSignedCACert(t, "xsigned-emptyissuer-b9")
 	err := ca.ImportXSignedCertificate("", cert)
@@ -712,7 +711,7 @@ func TestImportXSignedCertificate_EmptyIssuer_B9(t *testing.T) {
 func TestImportXSignedCertificate_NilCert_B9(t *testing.T) {
 	t.Parallel()
 	ca := setupTestCA(t)
-	ca.objectStore = objmemory.New()
+	ca.objectStore = qrdbsdk.NewMemoryStorage()
 
 	err := ca.ImportXSignedCertificate("issuer-b9", nil)
 	assert.ErrorIs(t, err, ErrInvalidCertificate)
@@ -723,7 +722,7 @@ func TestImportXSignedCertificate_NilCert_B9(t *testing.T) {
 func TestXSignedRootCertificate_SelfSigned_B9(t *testing.T) {
 	t.Parallel()
 	ca := setupTestCA(t)
-	ca.objectStore = objmemory.New()
+	ca.objectStore = qrdbsdk.NewMemoryStorage()
 
 	cert, _ := b9MakeSelfSignedCACert(t, "xroot-selfsigned-b9")
 	got, err := ca.XSignedRootCertificate("issuer-b9", cert)
@@ -747,7 +746,7 @@ func TestXSignedRootCertificate_NoObjectStore_B9(t *testing.T) {
 func TestXSignedIntermediateCertificates_Empty_B9(t *testing.T) {
 	t.Parallel()
 	ca := setupTestCA(t)
-	ca.objectStore = objmemory.New()
+	ca.objectStore = qrdbsdk.NewMemoryStorage()
 
 	// Manufacture a non-self-signed cert (Issuer != Subject) so the loop runs.
 	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
@@ -791,7 +790,7 @@ func TestXSignedIntermediateCertificates_NoObjectStore_B9(t *testing.T) {
 func TestCrossSignedPEM_NilAttrs_B9(t *testing.T) {
 	t.Parallel()
 	ca := setupTestCA(t)
-	ca.objectStore = objmemory.New()
+	ca.objectStore = qrdbsdk.NewMemoryStorage()
 
 	_, err := ca.CrossSignedPEM(nil)
 	require.Error(t, err)
@@ -812,7 +811,7 @@ func TestCrossSignedPEM_NoObjectStore_B9(t *testing.T) {
 func TestCrossSignedPEM_NotFound_B9(t *testing.T) {
 	t.Parallel()
 	ca := setupTestCA(t)
-	ca.objectStore = objmemory.New() // empty store
+	ca.objectStore = qrdbsdk.NewMemoryStorage() // empty store
 
 	attrs := &types.KeyAttributes{CN: "missing-cn-b9"}
 	_, err := ca.CrossSignedPEM(attrs)
@@ -823,7 +822,7 @@ func TestCrossSignedPEM_NotFound_B9(t *testing.T) {
 func TestCrossSignedPEM_Found_B9(t *testing.T) {
 	t.Parallel()
 	ca := setupTestCA(t)
-	ca.objectStore = objmemory.New()
+	ca.objectStore = qrdbsdk.NewMemoryStorage()
 
 	subjectCN := "crosssignedpem-subject-b9"
 	cert, _ := b9MakeSelfSignedCACert(t, subjectCN)

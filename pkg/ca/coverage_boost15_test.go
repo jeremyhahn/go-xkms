@@ -18,7 +18,6 @@
 package ca
 
 import (
-	"bytes"
 	"context"
 	"crypto"
 	"crypto/ecdsa"
@@ -238,7 +237,7 @@ func TestVerifyStoredAttestation_SignatureNotFound_B15(t *testing.T) {
 	// Compute the digest the same way ImportAttestation does.
 	h := sha256.Sum256(data)
 	// Store ONLY the digest key — the signature key is intentionally absent.
-	require.NoError(t, ca.objectStore.Put(digestKey, bytes.NewReader(h[:])))
+	require.NoError(t, ca.putObject(digestKey, h[:]))
 
 	// Now verify: digest lookup succeeds, digest matches, sig lookup fails → line 265.
 	err := ca.VerifyAttestationQuote(akAttrs, data)
@@ -265,7 +264,7 @@ func TestVerifyCASignature_ECDSAFail_B15(t *testing.T) {
 	safeCN := "ecdsa-sig-fail-b15"
 	blobKey := safeCN + "/" + AttestBlobQuote
 	sigKey := "attestation/" + blobKey + "/signature"
-	require.NoError(t, ca.objectStore.Put(sigKey, bytes.NewReader([]byte("garbage-sig"))))
+	require.NoError(t, ca.putObject(sigKey, []byte("garbage-sig")))
 
 	err := ca.VerifyAttestationQuote(akAttrs, data)
 	assert.Error(t, err)
@@ -701,7 +700,7 @@ func TestReadCrossSignedCertificate_ParseError_B15(t *testing.T) {
 	require.NotNil(t, garbagePEM)
 
 	key := crossSignedStoreKey(issuerCN, subjectCN)
-	require.NoError(t, ca.objectStore.Put(key, bytes.NewReader(garbagePEM)))
+	require.NoError(t, ca.putObject(key, garbagePEM))
 
 	_, err := ca.readCrossSignedCertificate(issuerCN, subjectCN)
 	assert.Error(t, err)

@@ -26,7 +26,6 @@ import (
 	"encoding/pem"
 	"fmt"
 	"io"
-	"log/slog"
 
 	"github.com/jeremyhahn/go-xkms/pkg/errs"
 )
@@ -98,10 +97,7 @@ func (ca *CA) TrustedRootCertPoolWithXSigner(cert *x509.Certificate, xsigner cry
 	// those entries are still good and are used below, so gate on the
 	// result, not the error. The error is worth knowing about, so it is
 	// logged rather than dropped.
-	xsigned, err := ca.getXSignedCertificates(root.Subject.CommonName)
-	if err != nil {
-		slog.Warn("ca: cross-signed root certificate lookup encountered an error", "cn", root.Subject.CommonName, "error", err)
-	}
+	xsigned := ca.getXSignedCertificates(root.Subject.CommonName)
 	if len(xsigned) == 0 {
 		return pool, nil
 	}
@@ -137,10 +133,7 @@ func (ca *CA) TrustedIntermediateCertPoolWithXSigner(cert *x509.Certificate, xsi
 		return pool, nil
 	}
 
-	xsigned, err := ca.getXSignedCertificates(intermediate.Subject.CommonName)
-	if err != nil {
-		slog.Warn("ca: cross-signed intermediate certificate lookup encountered an error", "cn", intermediate.Subject.CommonName, "error", err)
-	}
+	xsigned := ca.getXSignedCertificates(intermediate.Subject.CommonName)
 	if len(xsigned) == 0 {
 		return pool, nil
 	}

@@ -16,7 +16,6 @@
 package tpm_test
 
 import (
-	"bytes"
 	"crypto/ecdsa"
 	"crypto/rand"
 	"crypto/x509"
@@ -24,7 +23,6 @@ import (
 	"encoding/asn1"
 	"encoding/pem"
 	"fmt"
-	"io"
 	"math/big"
 	"net"
 	"os"
@@ -35,11 +33,10 @@ import (
 
 	"github.com/google/go-tpm/tpm2"
 	"github.com/google/go-tpm/tpm2/transport"
-	"github.com/jeremyhahn/go-objstore/pkg/common"
-	"github.com/jeremyhahn/go-objstore/pkg/local"
 	"github.com/jeremyhahn/go-xkms/pkg/acme/client/service"
 	caerrors "github.com/jeremyhahn/go-xkms/pkg/acme/errors"
 	"github.com/jeremyhahn/go-xkms/pkg/ca"
+	"github.com/jeremyhahn/go-xkms/pkg/tpm2/store"
 	xkmssdk "github.com/jeremyhahn/go-xkms/sdk/go"
 	"github.com/jeremyhahn/go-xkms/sdk/go/xkmstest"
 	"github.com/stretchr/testify/require"
@@ -117,13 +114,13 @@ func (s *SwtpmConnection) InitializeTPM() error {
 	}
 
 	// Create local storage backends for testing
-	keysStorage := local.New()
-	if err := keysStorage.Configure(map[string]string{"path": keysDir}); err != nil {
-		return caerrors.StorageFailureError("failed to configure keys storage: %v", err)
+	keysStorage, err := xkmssdk.NewObjectStorage("local", map[string]string{"path": keysDir})
+	if err != nil {
+		return caerrors.StorageFailureError("failed to open keys storage: %v", err)
 	}
-	certsStorage := local.New()
-	if err := certsStorage.Configure(map[string]string{"path": certsDir}); err != nil {
-		return caerrors.StorageFailureError("failed to configure certs storage: %v", err)
+	certsStorage, err := xkmssdk.NewObjectStorage("local", map[string]string{"path": certsDir})
+	if err != nil {
+		return caerrors.StorageFailureError("failed to open certs storage: %v", err)
 	}
 
 	// Create storage adapters
@@ -189,13 +186,13 @@ func (s *SwtpmConnection) InitializeTPMWithECDSA() error {
 	}
 
 	// Create storage backends
-	keysStorage := local.New()
-	if err := keysStorage.Configure(map[string]string{"path": keysDir}); err != nil {
-		return caerrors.StorageFailureError("failed to configure keys storage: %v", err)
+	keysStorage, err := xkmssdk.NewObjectStorage("local", map[string]string{"path": keysDir})
+	if err != nil {
+		return caerrors.StorageFailureError("failed to open keys storage: %v", err)
 	}
-	certsStorage := local.New()
-	if err := certsStorage.Configure(map[string]string{"path": certsDir}); err != nil {
-		return caerrors.StorageFailureError("failed to configure certs storage: %v", err)
+	certsStorage, err := xkmssdk.NewObjectStorage("local", map[string]string{"path": certsDir})
+	if err != nil {
+		return caerrors.StorageFailureError("failed to open certs storage: %v", err)
 	}
 
 	// Create storage adapters
@@ -536,15 +533,15 @@ func (s *SwtpmConnection) generateEKCertificate() ([]byte, error) {
 	return certDER, nil
 }
 
-// LocalBackendAdapter implements KeyBackend using go-objstore local storage
+// LocalBackendAdapter implements KeyBackend using a go-qrdb objstore engine on the local provider
 type LocalBackendAdapter struct {
 	t       *testing.T
-	storage common.Storage
+	storage xkmssdk.ObjectStorage
 	dir     string
 }
 
 // NewLocalBackendAdapter creates a new local-storage-based key backend
-func NewLocalBackendAdapter(t *testing.T, storage common.Storage, dir string) *LocalBackendAdapter {
+func NewLocalBackendAdapter(t *testing.T, storage xkmssdk.ObjectStorage, dir string) *LocalBackendAdapter {
 	return &LocalBackendAdapter{
 		t:       t,
 		storage: storage,
@@ -556,19 +553,21 @@ func NewLocalBackendAdapter(t *testing.T, storage common.Storage, dir string) *L
 func (l *LocalBackendAdapter) Get(attrs *xkmssdk.KeyAttributes, ext xkmssdk.FSExtension) ([]byte, error) {
 	// Use just the filename - storage is already configured with base path
 	key := attrs.CN + string(ext)
-	reader, err := l.storage.Get(key)
+	data, err := l.storage.Get([]byte(key))
 	if err != nil {
 		return nil, err
 	}
-	defer reader.Close()
-	return io.ReadAll(reader)
+	if data == nil {
+		return nil, store.ErrBlobNotFound
+	}
+	return data, nil
 }
 
 // Save writes key data
 func (l *LocalBackendAdapter) Save(attrs *xkmssdk.KeyAttributes, data []byte, ext xkmssdk.FSExtension, overwrite bool) error {
 	// Use just the filename - storage is already configured with base path
 	key := attrs.CN + string(ext)
-	return l.storage.Put(key, bytes.NewReader(data))
+	return l.storage.Set([]byte(key), data)
 }
 
 // Delete removes key data
@@ -577,20 +576,22 @@ func (l *LocalBackendAdapter) Delete(attrs *xkmssdk.KeyAttributes) error {
 	for _, ext := range extensions {
 		// Use just the filename - storage is already configured with base path
 		key := attrs.CN + string(ext)
-		l.storage.Delete(key)
+		if err := l.storage.Delete([]byte(key)); err != nil {
+			return err
+		}
 	}
 	return nil
 }
 
-// LocalCertStoreAdapter implements CertificateStorer using go-objstore local storage
+// LocalCertStoreAdapter implements CertificateStorer using a go-qrdb objstore engine on the local provider
 type LocalCertStoreAdapter struct {
 	t       *testing.T
-	storage common.Storage
+	storage xkmssdk.ObjectStorage
 	dir     string
 }
 
 // NewLocalCertStoreAdapter creates a new local-storage-based cert store
-func NewLocalCertStoreAdapter(t *testing.T, storage common.Storage, dir string) *LocalCertStoreAdapter {
+func NewLocalCertStoreAdapter(t *testing.T, storage xkmssdk.ObjectStorage, dir string) *LocalCertStoreAdapter {
 	return &LocalCertStoreAdapter{
 		t:       t,
 		storage: storage,
@@ -602,14 +603,12 @@ func NewLocalCertStoreAdapter(t *testing.T, storage common.Storage, dir string) 
 func (l *LocalCertStoreAdapter) Get(attrs *xkmssdk.KeyAttributes) (*x509.Certificate, error) {
 	// Use just the filename - storage is already configured with base path
 	key := fmt.Sprintf("%s.pem", attrs.CN)
-	reader, err := l.storage.Get(key)
+	data, err := l.storage.Get([]byte(key))
 	if err != nil {
 		return nil, err
 	}
-	defer reader.Close()
-	data, err := io.ReadAll(reader)
-	if err != nil {
-		return nil, err
+	if data == nil {
+		return nil, store.ErrBlobNotFound
 	}
 	return x509.ParseCertificate(data)
 }
@@ -618,14 +617,14 @@ func (l *LocalCertStoreAdapter) Get(attrs *xkmssdk.KeyAttributes) (*x509.Certifi
 func (l *LocalCertStoreAdapter) Save(attrs *xkmssdk.KeyAttributes, cert *x509.Certificate) error {
 	// Use just the filename - storage is already configured with base path
 	key := fmt.Sprintf("%s.pem", attrs.CN)
-	return l.storage.Put(key, bytes.NewReader(cert.Raw))
+	return l.storage.Set([]byte(key), cert.Raw)
 }
 
 // Delete removes a certificate
 func (l *LocalCertStoreAdapter) Delete(attrs *xkmssdk.KeyAttributes) error {
 	// Use just the filename - storage is already configured with base path
 	key := fmt.Sprintf("%s.pem", attrs.CN)
-	return l.storage.Delete(key)
+	return l.storage.Delete([]byte(key))
 }
 
 // ImportCertificate imports a certificate from PEM-encoded bytes

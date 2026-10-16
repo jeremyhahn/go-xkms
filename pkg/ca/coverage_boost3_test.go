@@ -29,7 +29,6 @@ import (
 	"encoding/json"
 	"encoding/pem"
 	"math/big"
-	"strings"
 	"testing"
 	"time"
 
@@ -665,7 +664,7 @@ func TestListRevocationBlobs_WithObjectStore_Empty_B3(t *testing.T) {
 func TestListRevocationBlobs_ObjectStoreEntryIgnored_B3(t *testing.T) {
 	ca := setupTestCAWithObjectStore(t)
 	key := revocationKeyPrefix + "test-serial.json"
-	require.NoError(t, ca.objectStore.Put(key, strings.NewReader(`{"serial":"01"}`)))
+	require.NoError(t, ca.putObject(key, []byte(`{"serial":"01"}`)))
 
 	blobs, err := ca.listRevocationBlobs(context.Background())
 	require.NoError(t, err)
@@ -678,15 +677,13 @@ func TestListRevocationBlobs_ObjectStoreEntryIgnored_B3(t *testing.T) {
 
 func TestGetXSignedCertificates_NilObjectStore_B3(t *testing.T) {
 	ca := setupTestCA(t) // no object store
-	certs, err := ca.getXSignedCertificates("some-cn")
-	require.NoError(t, err)
+	certs := ca.getXSignedCertificates("some-cn")
 	assert.Nil(t, certs)
 }
 
 func TestGetXSignedCertificates_EmptyStore_B3(t *testing.T) {
 	ca := setupTestCAWithObjectStore(t)
-	certs, err := ca.getXSignedCertificates("nonexistent-cn")
-	require.NoError(t, err)
+	certs := ca.getXSignedCertificates("nonexistent-cn")
 	assert.Empty(t, certs)
 }
 

@@ -27,7 +27,7 @@ import (
 	"testing"
 	"time"
 
-	objmemory "github.com/jeremyhahn/go-objstore/pkg/memory"
+	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
 	"github.com/jeremyhahn/go-xkms/pkg/storage"
 	"github.com/jeremyhahn/go-xkms/pkg/types"
 	"github.com/jeremyhahn/go-xkms/pkg/xkms"
@@ -183,7 +183,7 @@ func TestInit_AlreadyInitialized_B10(t *testing.T) {
 func TestXSignedCertificate_EmptyIssuer_B10(t *testing.T) {
 	t.Parallel()
 	ca := setupTestCA(t)
-	ca.objectStore = objmemory.New()
+	ca.objectStore = qrdbsdk.NewMemoryStorage()
 
 	attrs := &types.KeyAttributes{CN: "some-cn"}
 	_, err := ca.XSignedCertificate("", attrs)
@@ -194,7 +194,7 @@ func TestXSignedCertificate_EmptyIssuer_B10(t *testing.T) {
 func TestXSignedCertificate_NilAttrs_B10(t *testing.T) {
 	t.Parallel()
 	ca := setupTestCA(t)
-	ca.objectStore = objmemory.New()
+	ca.objectStore = qrdbsdk.NewMemoryStorage()
 
 	_, err := ca.XSignedCertificate("issuer-b10", nil)
 	require.Error(t, err)
@@ -215,7 +215,7 @@ func TestXSignedCertificate_NoObjectStore_B10(t *testing.T) {
 func TestXSignedCertificate_NotFound_B10(t *testing.T) {
 	t.Parallel()
 	ca := setupTestCA(t)
-	ca.objectStore = objmemory.New() // empty
+	ca.objectStore = qrdbsdk.NewMemoryStorage() // empty
 
 	attrs := &types.KeyAttributes{CN: "nonexistent-cn"}
 	_, err := ca.XSignedCertificate("issuer-b10", attrs)
@@ -226,7 +226,7 @@ func TestXSignedCertificate_NotFound_B10(t *testing.T) {
 func TestXSignedCertificate_Found_B10(t *testing.T) {
 	t.Parallel()
 	ca := setupTestCA(t)
-	ca.objectStore = objmemory.New()
+	ca.objectStore = qrdbsdk.NewMemoryStorage()
 
 	subjectCN := "xsignedcert-subject-b10"
 	cert, _ := b9MakeSelfSignedCACert(t, subjectCN)
@@ -247,7 +247,7 @@ func TestXSignedCertificate_Found_B10(t *testing.T) {
 func TestXSignedRootCertificate_WithParentInStore_B10(t *testing.T) {
 	t.Parallel()
 	ca := setupTestCA(t)
-	ca.objectStore = objmemory.New()
+	ca.objectStore = qrdbsdk.NewMemoryStorage()
 
 	// Build a 2-cert chain: child → parent (self-signed).
 	parentCert, parentKey := b9MakeSelfSignedCACert(t, "xroot-parent-b10")
@@ -290,7 +290,7 @@ func TestXSignedRootCertificate_WithParentInStore_B10(t *testing.T) {
 func TestXSignedIntermediateCertificates_IntermediateFound_B10(t *testing.T) {
 	t.Parallel()
 	ca := setupTestCA(t)
-	ca.objectStore = objmemory.New()
+	ca.objectStore = qrdbsdk.NewMemoryStorage()
 
 	issuerCN := "xint-issuer-b10"
 
@@ -385,7 +385,7 @@ func TestSign_Ed25519_B10(t *testing.T) {
 func TestPutRevocationBlob_ObjectStoreIgnored_B10(t *testing.T) {
 	t.Parallel()
 	ca := setupTestCA(t)
-	ca.objectStore = objmemory.New()
+	ca.objectStore = qrdbsdk.NewMemoryStorage()
 	ca.revocationStore = storage.NewMemory()
 
 	payload := []byte(`{"serial":"77777","reason":0,"revoked_at":"2024-01-01T00:00:00Z"}`)
@@ -394,8 +394,8 @@ func TestPutRevocationBlob_ObjectStoreIgnored_B10(t *testing.T) {
 	assert.True(t, stored)
 
 	// Persisted through revocationStore, not objectStore.
-	_, err = ca.objectStore.Get(revocationKey(big.NewInt(77777)) + ".json")
-	assert.Error(t, err, "objectStore must not receive the revocation blob")
+	_, err = ca.getObject(revocationKey(big.NewInt(77777)) + ".json")
+	assert.ErrorIs(t, err, ErrObjectNotFound, "objectStore must not receive the revocation blob")
 	got, err := ca.revocationStore.Get(context.Background(), revocationKey(big.NewInt(77777))+".json")
 	require.NoError(t, err)
 	assert.Equal(t, payload, got)
@@ -488,15 +488,14 @@ func TestPrivateKey_Success_B10(t *testing.T) {
 func TestGetXSignedCertificates_SuffixMismatch_B10(t *testing.T) {
 	t.Parallel()
 	ca := setupTestCA(t)
-	ca.objectStore = objmemory.New()
+	ca.objectStore = qrdbsdk.NewMemoryStorage()
 
 	// Store cross-signed cert under "other-cn", not "target-cn".
 	otherCert, _ := b9MakeSelfSignedCACert(t, "other-cn-b10")
 	require.NoError(t, ca.ImportXSignedCertificate("issuer-b10", otherCert))
 
 	// getXSignedCertificates for "target-cn" should return empty (suffix mismatch).
-	certs, err := ca.getXSignedCertificates("target-cn-b10")
-	require.NoError(t, err)
+	certs := ca.getXSignedCertificates("target-cn-b10")
 	assert.Empty(t, certs)
 }
 
@@ -505,14 +504,13 @@ func TestGetXSignedCertificates_SuffixMismatch_B10(t *testing.T) {
 func TestGetXSignedCertificates_MatchingSuffix_B10(t *testing.T) {
 	t.Parallel()
 	ca := setupTestCA(t)
-	ca.objectStore = objmemory.New()
+	ca.objectStore = qrdbsdk.NewMemoryStorage()
 
 	cn := "getxsigned-match-b10"
 	cert, _ := b9MakeSelfSignedCACert(t, cn)
 	require.NoError(t, ca.ImportXSignedCertificate("issuer-b10", cert))
 
-	certs, err := ca.getXSignedCertificates(cn)
-	require.NoError(t, err)
+	certs := ca.getXSignedCertificates(cn)
 	assert.Len(t, certs, 1)
 	assert.Equal(t, cn, certs[0].Subject.CommonName)
 }
@@ -522,15 +520,14 @@ func TestGetXSignedCertificates_MatchingSuffix_B10(t *testing.T) {
 func TestGetXSignedCertificates_InvalidPEM_B10(t *testing.T) {
 	t.Parallel()
 	ca := setupTestCA(t)
-	ca.objectStore = objmemory.New()
+	ca.objectStore = qrdbsdk.NewMemoryStorage()
 
 	cn := "getxsigned-badpem-b10"
 	// Write raw garbage (not PEM) to a key that matches the suffix.
 	key := "cross-signed/issuer-b10/" + cn + ".pem"
-	require.NoError(t, ca.objectStore.Put(key, &b8certDERReader{data: []byte("not-pem")}))
+	require.NoError(t, ca.putObject(key, []byte("not-pem")))
 
-	certs, err := ca.getXSignedCertificates(cn)
-	require.NoError(t, err)
+	certs := ca.getXSignedCertificates(cn)
 	assert.Empty(t, certs) // corrupt entry silently skipped
 }
 
@@ -591,12 +588,12 @@ func TestCABundleFiltered_NotInitialized_B10(t *testing.T) {
 func TestReadCrossSignedCertificate_InvalidPEM_B10(t *testing.T) {
 	t.Parallel()
 	ca := setupTestCA(t)
-	ca.objectStore = objmemory.New()
+	ca.objectStore = qrdbsdk.NewMemoryStorage()
 
 	cn := "rcsc-badpem-b10"
 	issuerCN := "rcsc-issuer-b10"
 	key := "cross-signed/" + issuerCN + "/" + cn + ".pem"
-	require.NoError(t, ca.objectStore.Put(key, &b8certDERReader{data: []byte("not-pem")}))
+	require.NoError(t, ca.putObject(key, []byte("not-pem")))
 
 	_, err := ca.XSignedCertificate(issuerCN, &types.KeyAttributes{CN: cn})
 	assert.ErrorIs(t, err, ErrInvalidPEM)

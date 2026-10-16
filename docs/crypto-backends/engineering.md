@@ -777,8 +777,9 @@ and ed25519. Symmetric and BYOK keys are `aes256-gcm96`
 
 Backends persist through their own store: a device, a provider, or — for
 software and PKCS#8 — files under the configured key directory, held under the
-barrier. Certificate blobs go to go-objstore via
-`certstore.CertificateStorageAdapter` (`Backend.CertStorage()`).
+barrier. Certificate blobs go through
+`certstore.CertificateStorageAdapter` (`Backend.CertStorage()`), backed by a
+go-qrdb `storage.Backend` (`pkg/storage/certadapter.go:35`).
 
 ## Test strategy
 

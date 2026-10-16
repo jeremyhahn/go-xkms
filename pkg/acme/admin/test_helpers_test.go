@@ -23,7 +23,6 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/jeremyhahn/go-objstore/pkg/local"
 	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
 	xkmssdk "github.com/jeremyhahn/go-xkms/sdk/go"
 	"github.com/stretchr/testify/require"
@@ -155,10 +154,6 @@ func createTestInfrastructure(t *testing.T) (ca.TCGCA, acmestorage.Factory, func
 	})
 	require.NoError(t, err)
 
-	blobStorage := local.New()
-	err = blobStorage.Configure(map[string]string{"path": caDir + "/blobs"})
-	require.NoError(t, err)
-
 	// Build a native multi-identity (root + intermediate) CA configuration with
 	// algorithm agility: each identity carries ECDSA, RSA, and Ed25519 key
 	// configurations. The first KeyConfig (ECDSA) is the active signing key;
@@ -203,7 +198,7 @@ func createTestInfrastructure(t *testing.T) (ca.TCGCA, acmestorage.Factory, func
 		BackendForStore: singleBackendFactory(keyStore),
 		RevocationStore: xkmsstorage.NewMemory(),
 		CertStore:       certStore,
-		ObjectStore:     blobStorage,
+		ObjectStore:     qrdbsdk.NewMemoryStorage(),
 	})
 	require.NoError(t, err)
 	testCA, ok := intermediate.(ca.TCGCA)

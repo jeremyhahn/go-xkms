@@ -50,7 +50,7 @@ import (
 	"time"
 
 	"github.com/gorilla/mux"
-	objmemory "github.com/jeremyhahn/go-objstore/pkg/memory"
+	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
 	clusterenroll "github.com/jeremyhahn/go-qrdb/sdk/go/clusterenroll"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -370,7 +370,7 @@ func newTestCA(t *testing.T, ekRoot *testIssuer) ca.TCGCA {
 			return keyStore, nil
 		},
 		RevocationStore: xkmsstorage.NewMemory(),
-		ObjectStore:     objmemory.New(),
+		ObjectStore:     qrdbsdk.NewMemoryStorage(),
 	})
 	require.NoError(t, err)
 

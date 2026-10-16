@@ -725,8 +725,9 @@ Precedence: explicit flag → config file → built-in default.
 
 ## Persistence
 
-Key metadata and software-backend blobs are stored through `go-qrdb/sdk/go`;
-certificate and serial blobs go to go-objstore. go-xkms defines no schema of
+Key metadata, software-backend blobs, certificates and CA blobs are all
+stored through `go-qrdb/sdk/go`; go-xkms never imports go-objstore (see
+`docs/datastore/engineering.md`, "CA blob storage"). go-xkms defines no schema of
 its own beyond the key-ID encoding in `pkg/xkms/keyid.go`. Hardware and cloud
 backends persist nothing locally — the device or the provider is the store, and
 xkms holds only the handle.

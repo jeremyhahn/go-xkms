@@ -25,7 +25,6 @@ import (
 	"crypto/x509"
 	"crypto/x509/pkix"
 	"encoding/pem"
-	"io"
 	"math/big"
 	"net/http"
 	"net/http/httptest"
@@ -251,30 +250,10 @@ func TestGetXSignedCertificates_WithStoredCert_B6(t *testing.T) {
 
 	issuerCN := "fake-xsigner"
 	key := "cross-signed/" + issuerCN + "/xsigned-cn-b6.pem"
-	require.NoError(t, ca.objectStore.Put(key, pemReader(certPEM)))
+	require.NoError(t, ca.putObject(key, certPEM))
 
-	certs, err := ca.getXSignedCertificates("xsigned-cn-b6")
-	require.NoError(t, err)
+	certs := ca.getXSignedCertificates("xsigned-cn-b6")
 	assert.Len(t, certs, 1)
-}
-
-// pemReader is a lightweight io.Reader over a PEM byte slice.
-func pemReader(data []byte) *pemBytesReader {
-	return &pemBytesReader{data: data}
-}
-
-type pemBytesReader struct {
-	data   []byte
-	offset int
-}
-
-func (r *pemBytesReader) Read(p []byte) (int, error) {
-	if r.offset >= len(r.data) {
-		return 0, io.EOF
-	}
-	n := copy(p, r.data[r.offset:])
-	r.offset += n
-	return n, nil
 }
 
 // =============================================================================
@@ -310,9 +289,9 @@ func TestLookupRevocation_IgnoresObjectStore(t *testing.T) {
 
 	// A record in the legacy object store is not revocation state: the
 	// revocation store is the sole persistence medium.
-	require.NoError(t, ca.objectStore.Put(
+	require.NoError(t, ca.putObject(
 		revocationKeyPrefix+"999888777.json",
-		pemReader([]byte(`{"serial":"999888777"}`)),
+		[]byte(`{"serial":"999888777"}`),
 	))
 
 	info, err := ca.lookupRevocation(context.Background(), big.NewInt(999888777))

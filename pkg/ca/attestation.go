@@ -41,8 +41,6 @@ import (
 	"crypto/x509"
 	"encoding/hex"
 	"fmt"
-	"io"
-	"log/slog"
 	"strings"
 
 	"github.com/jeremyhahn/go-xkms/pkg/errs"
@@ -113,13 +111,13 @@ func (ca *CA) ImportAttestation(ctx context.Context, akAttrs *types.KeyAttribute
 	sigKey := fmt.Sprintf("%s/%s/signature", AttestBlobRoot, blobKey)
 	digestKey := fmt.Sprintf("%s/%s/digest", AttestBlobRoot, blobKey)
 
-	if err := ca.objectStore.Put(dataKey, bytes.NewReader(data)); err != nil {
+	if err := ca.objectStore.Set([]byte(dataKey), data); err != nil {
 		return &errs.Detail{Err: ErrStorageError, Detail: fmt.Sprintf("failed to store attestation data: %v", err)}
 	}
-	if err := ca.objectStore.Put(sigKey, bytes.NewReader(signature)); err != nil {
+	if err := ca.objectStore.Set([]byte(sigKey), signature); err != nil {
 		return &errs.Detail{Err: ErrStorageError, Detail: fmt.Sprintf("failed to store attestation signature: %v", err)}
 	}
-	if err := ca.objectStore.Put(digestKey, bytes.NewReader(digest[:])); err != nil {
+	if err := ca.objectStore.Set([]byte(digestKey), digest[:]); err != nil {
 		return &errs.Detail{Err: ErrStorageError, Detail: fmt.Sprintf("failed to store attestation digest: %v", err)}
 	}
 	return nil
@@ -147,13 +145,13 @@ func (ca *CA) ImportAttestationKeyCertificate(ctx context.Context, attrs *types.
 	}
 
 	certKey := fmt.Sprintf("%s/%s/ak-cert.der", AttestBlobRoot, attrs.CN)
-	if err := ca.objectStore.Put(certKey, bytes.NewReader(akDER)); err != nil {
+	if err := ca.objectStore.Set([]byte(certKey), akDER); err != nil {
 		return &errs.Detail{Err: ErrStorageError, Detail: fmt.Sprintf("failed to store AK certificate: %v", err)}
 	}
 
 	digest := sha256.Sum256(akDER)
 	digestKey := fmt.Sprintf("%s/%s/ak-cert.digest", AttestBlobRoot, attrs.CN)
-	if err := ca.objectStore.Put(digestKey, bytes.NewReader(digest[:])); err != nil {
+	if err := ca.objectStore.Set([]byte(digestKey), digest[:]); err != nil {
 		return &errs.Detail{Err: ErrStorageError, Detail: fmt.Sprintf("failed to store AK certificate digest: %v", err)}
 	}
 
@@ -167,7 +165,7 @@ func (ca *CA) ImportAttestationKeyCertificate(ctx context.Context, attrs *types.
 		return &errs.Detail{Err: ErrSigningFailed, Detail: fmt.Sprintf("failed to sign AK certificate: %v", err)}
 	}
 	sigKey := fmt.Sprintf("%s/%s/ak-cert.sig", AttestBlobRoot, attrs.CN)
-	if err := ca.objectStore.Put(sigKey, bytes.NewReader(signature)); err != nil {
+	if err := ca.objectStore.Set([]byte(sigKey), signature); err != nil {
 		return &errs.Detail{Err: ErrStorageError, Detail: fmt.Sprintf("failed to store AK certificate signature: %v", err)}
 	}
 
@@ -253,7 +251,7 @@ func (ca *CA) verifyStoredAttestation(akAttrs *types.KeyAttributes, blobType str
 	}
 
 	digestKey := fmt.Sprintf("%s/%s/digest", AttestBlobRoot, blobKey)
-	storedDigest, err := ca.readBlobData(digestKey)
+	storedDigest, err := ca.getObject(digestKey)
 	if err != nil {
 		return &errs.Detail{Err: ErrCertificateNotFound, Detail: fmt.Sprintf("attestation digest not found: %v", err)}
 	}
@@ -264,7 +262,7 @@ func (ca *CA) verifyStoredAttestation(akAttrs *types.KeyAttributes, blobType str
 	}
 
 	sigKey := fmt.Sprintf("%s/%s/signature", AttestBlobRoot, blobKey)
-	storedSig, err := ca.readBlobData(sigKey)
+	storedSig, err := ca.getObject(sigKey)
 	if err != nil {
 		return &errs.Detail{Err: ErrCertificateNotFound, Detail: fmt.Sprintf("attestation signature not found: %v", err)}
 	}
@@ -339,15 +337,3 @@ func (ca *CA) attestationBlobKey(cn, blobType string) (string, error) {
 }
 
 // readBlobData returns the raw bytes stored under key in the object store.
-func (ca *CA) readBlobData(key string) ([]byte, error) {
-	reader, err := ca.objectStore.Get(key)
-	if err != nil {
-		return nil, err
-	}
-	defer func() {
-		if cerr := reader.Close(); cerr != nil {
-			slog.Debug("ca: failed to close object store blob reader", "key", key, "error", cerr)
-		}
-	}()
-	return io.ReadAll(reader)
-}

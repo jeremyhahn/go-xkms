@@ -26,7 +26,7 @@ import (
 	"encoding/asn1"
 	"testing"
 
-	objmemory "github.com/jeremyhahn/go-objstore/pkg/memory"
+	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
 	"github.com/jeremyhahn/go-xkms/pkg/storage"
 	"github.com/jeremyhahn/go-xkms/pkg/types"
 	"github.com/jeremyhahn/go-xkms/pkg/xkms"
@@ -286,7 +286,7 @@ func TestGetSigner_GetCAKeyAttributesError_B11(t *testing.T) {
 func TestListRevocationBlobs_RevocationStoreScan_B11(t *testing.T) {
 	t.Parallel()
 	ca := setupTestCA(t)
-	ca.objectStore = objmemory.New()
+	ca.objectStore = qrdbsdk.NewMemoryStorage()
 
 	issued, err := ca.IssueCertificate(context.Background(), &CertificateRequest{
 		Subject: Subject{CommonName: "revoked-listblobs-b11"},
@@ -300,7 +300,7 @@ func TestListRevocationBlobs_RevocationStoreScan_B11(t *testing.T) {
 	require.NoError(t, err)
 	assert.NotEmpty(t, blobs)
 
-	objKeys, err := ca.objectStore.List(revocationKeyPrefix)
+	objKeys, err := ca.listObjects(revocationKeyPrefix)
 	require.NoError(t, err)
 	assert.Empty(t, objKeys, "objectStore must not receive revocation blobs")
 }

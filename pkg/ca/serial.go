@@ -287,7 +287,7 @@ func generateRandomSerial() (*big.Int, error) {
 // This implementation is suitable for testing and development but should
 // NOT be used in production as serial numbers are lost on restart.
 // For production use, implement Storage with a durable backend such as
-// a database or the go-objstore abstraction.
+// a go-qrdb database.
 //
 // Thread-safe: Uses RWMutex for concurrent read access optimization.
 type memoryStorage struct {
@@ -305,7 +305,7 @@ type memoryStorage struct {
 // backend such as:
 //   - Database (PostgreSQL, SQLite)
 //   - Key-value store (etcd, Consul)
-//   - Object storage (via go-objstore)
+//   - A go-qrdb storage engine (qrdbsdk.Storage)
 func NewMemoryStorage() Storage {
 	return &memoryStorage{
 		serials: make(map[string]bool),

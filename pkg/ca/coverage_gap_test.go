@@ -1181,15 +1181,13 @@ func TestHashCRLURL_DifferentURLs(t *testing.T) {
 
 func TestGetXSignedCertificates_NilObjectStore(t *testing.T) {
 	ca := setupTestCA(t)
-	certs, err := ca.getXSignedCertificates("some-cn")
-	require.NoError(t, err)
+	certs := ca.getXSignedCertificates("some-cn")
 	assert.Nil(t, certs)
 }
 
 func TestGetXSignedCertificates_EmptyStore(t *testing.T) {
 	ca := setupTestCAWithObjectStore(t)
-	certs, err := ca.getXSignedCertificates("nonexistent-cn")
-	require.NoError(t, err)
+	certs := ca.getXSignedCertificates("nonexistent-cn")
 	assert.Empty(t, certs)
 }
 
@@ -1198,8 +1196,7 @@ func TestGetXSignedCertificates_WithStoredCert(t *testing.T) {
 	cert, _ := makeSelfSignedCert(t, "xsigned-subject")
 	require.NoError(t, ca.ImportXSignedCertificate("ExternalIssuer", cert))
 
-	certs, err := ca.getXSignedCertificates("xsigned-subject")
-	require.NoError(t, err)
+	certs := ca.getXSignedCertificates("xsigned-subject")
 	assert.Len(t, certs, 1)
 	assert.Equal(t, cert.Raw, certs[0].Raw)
 }

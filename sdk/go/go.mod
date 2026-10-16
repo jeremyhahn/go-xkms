@@ -6,7 +6,6 @@ require (
 	github.com/go-chi/chi/v5 v5.3.2
 	github.com/google/go-tpm v0.9.8
 	github.com/jeremyhahn/go-enclave v0.8.0-alpha
-	github.com/jeremyhahn/go-objstore v0.4.0-alpha
 	github.com/jeremyhahn/go-qrdb/sdk/go v0.48.0-alpha
 	github.com/jeremyhahn/go-truststrap v0.6.0-alpha
 	github.com/jeremyhahn/go-xkms v0.55.0-alpha
@@ -148,6 +147,7 @@ require (
 	github.com/jeremyhahn/go-codec v1.4.0 // indirect
 	github.com/jeremyhahn/go-frost v0.3.0-alpha // indirect
 	github.com/jeremyhahn/go-luks2 v1.0.0-rc.4 // indirect
+	github.com/jeremyhahn/go-objstore v0.4.0-alpha // indirect
 	github.com/jeremyhahn/go-qrdb v0.48.0-alpha // indirect
 	github.com/jeremyhahn/go-quicraft v0.20.0 // indirect
 	github.com/jeroenrinzema/psql-wire v0.18.0 // indirect

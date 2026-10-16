@@ -34,7 +34,6 @@ import (
 	"testing"
 	"time"
 
-	objmemory "github.com/jeremyhahn/go-objstore/pkg/memory"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"golang.org/x/crypto/ocsp"
@@ -515,7 +514,3 @@ func TestVerify_RevokedCertWithXSigner(t *testing.T) {
 	assert.ErrorIs(t, err, ErrCertificateRevoked,
 		"revocation must short-circuit Verify even on the xsigner path")
 }
-
-// Sanity-check: objmemory is imported so fresh CAs with object stores can
-// be constructed for the tests above.
-var _ = objmemory.New
