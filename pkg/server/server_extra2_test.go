@@ -2098,7 +2098,7 @@ func TestServer_FactorRegistry_Nil(t *testing.T) {
 // when qrdbStorage is nil and qrdbNode is nil.
 func TestCloseQRDBStorage_NilStorage(t *testing.T) {
 	s := newMinimalServer(t, &config.Config{})
-	s.qrdbStorage = nil
+	s.qrdbStorage.Store(nil)
 	s.qrdbNode = nil
 	err := s.closeQRDBStorage()
 	require.NoError(t, err)
@@ -2370,9 +2370,9 @@ func TestInitializeKeyStore_DefaultBackendFallback(t *testing.T) {
 	// newMinimalServer bypasses New(), so s.qrdbStorage is never built;
 	// give this test a real one (initializeKeyStore also builds
 	// certificate storage).
-	var qerr error
-	s.qrdbStorage, qerr = storage.NewMemoryBackend()
+	memBackend, qerr := storage.NewMemoryBackend()
 	require.NoError(t, qerr)
+	s.setSharedStorage(memBackend)
 	s.keyProviders = map[string]types.KeyProvider{"software": &nonSealerProvider{}}
 	s.backends = map[string]xkms.Backend{}
 
@@ -2403,7 +2403,7 @@ func (b *errStorageBackend) Close() error { return b.closeErr }
 func TestCloseQRDBStorage_StorageCloseError(t *testing.T) {
 	s := newMinimalServer(t, &config.Config{})
 	inner := errors.New("disk I/O error")
-	s.qrdbStorage = &errStorageBackend{closeErr: inner}
+	s.setSharedStorage(&errStorageBackend{closeErr: inner})
 	s.qrdbNode = nil // no node to close
 
 	err := s.closeQRDBStorage()
@@ -2879,7 +2879,7 @@ func TestNew_BarrierStorageCreateFails(t *testing.T) {
 // returns an error, closeBackends logs it without panicking (fire-and-forget).
 func TestServer_CloseBackends_QRDBStorageError(t *testing.T) {
 	s := newMinimalServer(t, &config.Config{})
-	s.qrdbStorage = &errStorageBackend{closeErr: errors.New("qrdb storage close error")}
+	s.setSharedStorage(&errStorageBackend{closeErr: errors.New("qrdb storage close error")})
 	s.qrdbNode = nil
 	s.keyProviders = map[string]types.KeyProvider{}
 	// closeBackends should log the error and not propagate it.
@@ -3400,9 +3400,9 @@ func TestInitializeKeyStore_ErrKeystoreCreate(t *testing.T) {
 	// datastore createStorage now always resolves through, including for
 	// the certificate storage initializeKeyStore also builds -- is never
 	// built; give this test a real one.
-	var qerr error
-	s.qrdbStorage, qerr = storage.NewMemoryBackend()
+	memBackend, qerr := storage.NewMemoryBackend()
 	require.NoError(t, qerr)
+	s.setSharedStorage(memBackend)
 	// Inject a nil provider — xkms.New will fail with ErrBackendRequired.
 	s.keyProviders = map[string]types.KeyProvider{"software": nil}
 	s.backends = map[string]xkms.Backend{}
@@ -3484,9 +3484,9 @@ func TestInitializeKeyStore_EmptyBackends(t *testing.T) {
 	// newMinimalServer bypasses New(), so s.qrdbStorage is never built;
 	// give this test a real one (initializeKeyStore also builds
 	// certificate storage before the keyProviders loop runs).
-	var qerr error
-	s.qrdbStorage, qerr = storage.NewMemoryBackend()
+	memBackend, qerr := storage.NewMemoryBackend()
 	require.NoError(t, qerr)
+	s.setSharedStorage(memBackend)
 	// No key providers → the for loop never runs → s.backends stays empty.
 	s.keyProviders = map[string]types.KeyProvider{}
 	s.backends = map[string]xkms.Backend{}
@@ -3522,7 +3522,7 @@ func TestInitializeKeyStore_DefaultBackendIsDeterministic(t *testing.T) {
 		// builds certificate storage).
 		qrdbStorage, qerr := storage.NewMemoryBackend()
 		require.NoError(t, qerr)
-		s.qrdbStorage = qrdbStorage
+		s.setSharedStorage(qrdbStorage)
 		s.keyProviders = make(map[string]types.KeyProvider, len(names))
 		for _, name := range names {
 			s.keyProviders[name] = &nonSealerProvider{}
@@ -3557,7 +3557,7 @@ func TestInitializeKeyStore_UnloadedConfiguredDefaultResolvesDeterministically(t
 		// builds certificate storage).
 		qrdbStorage, qerr := storage.NewMemoryBackend()
 		require.NoError(t, qerr)
-		s.qrdbStorage = qrdbStorage
+		s.setSharedStorage(qrdbStorage)
 		s.keyProviders = make(map[string]types.KeyProvider, len(names))
 		for _, name := range names {
 			s.keyProviders[name] = &nonSealerProvider{}
@@ -3583,9 +3583,9 @@ func TestInitializeKeyStore_ConfiguredDefaultBackendIsHonoured(t *testing.T) {
 	// newMinimalServer bypasses New(), so s.qrdbStorage is never built;
 	// give this test a real one (initializeKeyStore also builds
 	// certificate storage).
-	var qerr error
-	s.qrdbStorage, qerr = storage.NewMemoryBackend()
+	memBackend, qerr := storage.NewMemoryBackend()
 	require.NoError(t, qerr)
+	s.setSharedStorage(memBackend)
 	s.keyProviders = map[string]types.KeyProvider{
 		"software": &nonSealerProvider{},
 		"tpm2":     &nonSealerProvider{},

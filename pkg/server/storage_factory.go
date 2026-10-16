@@ -27,15 +27,16 @@ import (
 // every call of the stores it serves, as the embedded node's service
 // principal (datastore.WithCallContext in initializeQRDBStorage).
 func (s *Server) daoFactory(databases ...string) (*qrdbsdk.DAOFactory, error) {
-	if s.datastore == nil {
+	ds := s.datastore.Load()
+	if ds == nil {
 		return nil, ErrNoDatastore
 	}
 	for _, name := range databases {
-		if _, err := s.datastore.DatabaseKVStore(s.ctx, name); err != nil {
+		if _, err := ds.DatabaseKVStore(s.ctx, name); err != nil {
 			return nil, &ErrStorageCreate{Resource: name + " database", Err: err}
 		}
 	}
-	return s.datastore.DAOFactory(), nil
+	return ds.DAOFactory(), nil
 }
 
 // createStorage opens a storage view for subdir on the server's single
@@ -48,7 +49,7 @@ func (s *Server) daoFactory(databases ...string) (*qrdbsdk.DAOFactory, error) {
 // datastore.engine and datastore.mode (config.DatastoreConfig) select the
 // ONE engine and topology the whole server uses.
 func (s *Server) createStorage(subdir string) (storage.Backend, error) {
-	return storage.NewPrefixBackend(s.qrdbStorage, subdir+"/")
+	return storage.NewPrefixBackend(s.sharedStorage(), subdir+"/")
 }
 
 // createStorageAt opens a storage view on the single shared datastore for an
@@ -59,5 +60,5 @@ func (s *Server) createStorage(subdir string) (storage.Backend, error) {
 // initializeQRDBStorage -- never a separate, private storage engine.
 func (s *Server) createStorageAt(path string) (storage.Backend, error) {
 	base := filepath.Base(path)
-	return storage.NewPrefixBackend(s.qrdbStorage, base+"/")
+	return storage.NewPrefixBackend(s.sharedStorage(), base+"/")
 }

@@ -252,8 +252,8 @@ func openInMemoryDatastore(t *testing.T, s *Server) {
 			t.Errorf("close in-memory datastore: %v", err)
 		}
 	})
-	s.datastore = ds
-	s.qrdbStorage = qrdbstorage.NewBackend(ds.Client().KV())
+	s.datastore.Store(ds)
+	s.setSharedStorage(qrdbstorage.NewBackend(ds.Client().KV()))
 }
 
 // ============================================================================

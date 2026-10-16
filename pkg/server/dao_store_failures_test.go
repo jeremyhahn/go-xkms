@@ -24,7 +24,7 @@ func newNoDatabaseServer(t *testing.T) *Server {
 	require.NoError(t, err)
 
 	s := newMinimalServer(t, &config.Config{})
-	s.datastore = ds
+	s.datastore.Store(ds)
 	return s
 }
 

@@ -184,7 +184,7 @@ func TestInitializePKCS11StateStore_StorageCreateFails(t *testing.T) {
 	require.NoError(t, err)
 	s := newMinimalServer(t, &config.Config{})
 	s.ctx = context.Background()
-	s.datastore = ds
+	s.datastore.Store(ds)
 
 	err = s.initializePKCS11StateStore()
 	var storageErr *ErrStorageCreate

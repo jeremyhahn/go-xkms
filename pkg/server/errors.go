@@ -38,7 +38,7 @@ var (
 	ErrWebAuthnNoDatastore = errors.New("server: webauthn requires an initialized datastore")
 
 	// ErrNoDatastore indicates a feature asked for its database before the
-	// server opened its datastore.
+	// server opened its datastore or after Shutdown closed it.
 	ErrNoDatastore = errors.New("server: the datastore is not open")
 
 	// ErrAttestedCallerPolicyMissing indicates attestation.peer_gate asks for

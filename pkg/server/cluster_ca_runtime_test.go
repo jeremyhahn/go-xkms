@@ -123,9 +123,9 @@ func TestResolveClusterCARuntimeBackend_BarrierStrategy(t *testing.T) {
 	// clusterRuntimeTestServer bypasses New(), so s.qrdbStorage -- the one
 	// shared datastore every createStorage call now resolves through -- is
 	// never built; give this test a real one to resolve against.
-	var err error
-	s.qrdbStorage, err = storage.NewMemoryBackend()
+	memBackend, err := storage.NewMemoryBackend()
 	require.NoError(t, err)
+	s.setSharedStorage(memBackend)
 
 	strategy, err := clustercapkg.NewKeyStrategy(clustercapkg.KeyStrategyBarrier)
 	require.NoError(t, err)

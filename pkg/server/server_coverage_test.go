@@ -453,9 +453,9 @@ func TestServer_CreateStorageAt_PrefixesOverSharedStore(t *testing.T) {
 		Datastore: config.DatastoreConfig{Engine: "memory"},
 	}
 	s := newMinimalServer(t, cfg)
-	var err error
-	s.qrdbStorage, err = storage.NewMemoryBackend()
+	memBackend, err := storage.NewMemoryBackend()
 	require.NoError(t, err)
+	s.setSharedStorage(memBackend)
 
 	store, err := s.createStorageAt(filepath.Join(tmpDir, "at-test"))
 	require.NoError(t, err)

@@ -2785,9 +2785,9 @@ func TestServer_EmptyDefault(t *testing.T) {
 	// newMinimalServer bypasses New(), so s.qrdbStorage is never built;
 	// give this test a real one (initializeKeyStore also builds
 	// certificate storage).
-	var err error
-	s.qrdbStorage, err = storage.NewMemoryBackend()
+	memBackend, err := storage.NewMemoryBackend()
 	require.NoError(t, err)
+	s.setSharedStorage(memBackend)
 	s.keyProviders = map[string]types.KeyProvider{"software": &nonSealerProvider{}}
 	s.backends = map[string]xkms.Backend{}
 

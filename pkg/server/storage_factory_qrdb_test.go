@@ -47,7 +47,7 @@ func newQRDBTestServer(t *testing.T) *Server {
 	}
 
 	require.NoError(t, s.initializeQRDBStorage())
-	require.NotNil(t, s.qrdbStorage)
+	require.NotNil(t, s.sharedStorage())
 	return s
 }
 
@@ -196,7 +196,7 @@ func TestFeatureDAOs_RunAsServicePrincipal(t *testing.T) {
 	_, err = registry.Scope(ctx, "acme")
 	require.NoError(t, err)
 
-	acmeStores, err := acmeobjstore.NewFactory(s.datastore.DAOFactory())
+	acmeStores, err := acmeobjstore.NewFactory(s.datastore.Load().DAOFactory())
 	require.NoError(t, err)
 	accounts, err := acmeStores.AccountDAO()
 	require.NoError(t, err)
@@ -342,7 +342,7 @@ func TestCloseQRDBStorage_Idempotent(t *testing.T) {
 	s := newQRDBTestServer(t)
 
 	require.NoError(t, s.closeQRDBStorage())
-	assert.Nil(t, s.qrdbStorage)
+	assert.Nil(t, s.sharedStorage())
 	// Second call is a no-op.
 	require.NoError(t, s.closeQRDBStorage())
 }

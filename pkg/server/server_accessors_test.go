@@ -186,7 +186,7 @@ func TestDatastore_ReturnsTheSharedDatastore(t *testing.T) {
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, ds.Close()) })
 
-	s.datastore = ds
+	s.datastore.Store(ds)
 	require.Same(t, ds, s.Datastore())
 }
 

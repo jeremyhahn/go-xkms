@@ -153,9 +153,9 @@ func tpm2EnrolledServer(t *testing.T, platformPolicy bool, platformPCRs pkgtpm2.
 	// newMinimalServer bypasses New(), so s.qrdbStorage -- the one shared
 	// datastore createStorage now always resolves through -- is never
 	// built; give this test a real one.
-	var err error
-	s.qrdbStorage, err = storage.NewMemoryBackend()
+	memBackend, err := storage.NewMemoryBackend()
 	require.NoError(t, err)
+	s.setSharedStorage(memBackend)
 	return s
 }
 

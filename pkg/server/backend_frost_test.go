@@ -147,7 +147,7 @@ func TestInitFrostBackend_DatabaseUnavailable(t *testing.T) {
 			},
 		},
 	})
-	s.datastore = ds
+	s.datastore.Store(ds)
 	s.keyProviders = map[string]types.KeyProvider{
 		"software": newSoftwareKeyProviderForTest(t),
 	}

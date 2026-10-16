@@ -148,7 +148,7 @@ func TestInitTPM2Backend_StoresKeysInTPM2Database(t *testing.T) {
 	_, err := kp.GenerateKey(context.Background(), attrs)
 	require.NoError(t, err)
 
-	keys, err := store.NewBlobStore(s.logger, s.datastore.DAOFactory())
+	keys, err := store.NewBlobStore(s.logger, s.datastore.Load().DAOFactory())
 	require.NoError(t, err)
 	blob, err := keys.Get(attrs, store.FSEXT_PUBLIC_BLOB)
 	require.NoError(t, err, "the key's public blob must be a TPMBlob in the tpm2 database")

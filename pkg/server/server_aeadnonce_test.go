@@ -80,7 +80,7 @@ func TestInitializeAEADNonceStore_StorageCreateFails(t *testing.T) {
 	require.NoError(t, err)
 	s := newMinimalServer(t, &config.Config{})
 	s.ctx = context.Background()
-	s.datastore = ds
+	s.datastore.Store(ds)
 
 	err = s.initializeAEADNonceStore()
 	require.Error(t, err)

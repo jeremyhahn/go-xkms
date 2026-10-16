@@ -19,7 +19,7 @@ func TestInitializeQRDBStorage_UnsupportedModeFails(t *testing.T) {
 	var modeErr *datastore.ErrUnsupportedDatastoreMode
 	require.ErrorAs(t, err, &modeErr)
 	assert.Equal(t, "sideways", modeErr.Mode)
-	assert.Nil(t, s.datastore)
+	assert.Nil(t, s.datastore.Load())
 }
 
 // TestInitializeQRDBStorage_RemoteDialFailureWraps names a transport the
@@ -38,5 +38,5 @@ func TestInitializeQRDBStorage_RemoteDialFailureWraps(t *testing.T) {
 	assert.Equal(t, "remote datastore", createErr.Resource)
 	var unsupported *datastore.ErrUnsupportedStorageBackend
 	assert.ErrorAs(t, err, &unsupported)
-	assert.Nil(t, s.datastore)
+	assert.Nil(t, s.datastore.Load())
 }

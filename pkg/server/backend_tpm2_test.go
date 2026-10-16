@@ -86,7 +86,7 @@ func TestInitTPM2Backend_KeyDatabaseUnavailable(t *testing.T) {
 	ds, err := datastore.Open(context.Background(), cfg, s.logger)
 	require.NoError(t, err)
 	require.NoError(t, ds.Close())
-	s.datastore = ds
+	s.datastore.Store(ds)
 	s.keyProviders = map[string]types.KeyProvider{}
 
 	err = s.initTPM2Backend()

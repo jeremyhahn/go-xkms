@@ -395,12 +395,19 @@ type Server struct {
 	// stores through and the DAO factory features persist through. In remote
 	// mode it owns the dialed client; in standalone mode it borrows the
 	// embedded node's client, whose lifecycle stopQRDBNode owns.
-	datastore *datastore.Datastore
+	//
+	// It and qrdbStorage are atomic because a request handler still running
+	// when Shutdown begins reads them (the module REST binding is built on
+	// first use) while closeQRDBStorage retracts them. Nil before
+	// initializeQRDBStorage and after closeQRDBStorage.
+	datastore atomic.Pointer[datastore.Datastore]
 
 	// qrdbStorage is the storage backend over the datastore's client. All
 	// per-subdir storage views are key-prefixed views over this one backend
-	// (see createStorage). Only the server closes it, during Shutdown.
-	qrdbStorage storage.Backend
+	// (see createStorage). Only the server closes it, during Shutdown. The
+	// interface value is boxed: read and set it through sharedStorage and
+	// setSharedStorage.
+	qrdbStorage atomic.Pointer[storage.Backend]
 
 	// qrdbNode is the in-process qrdb engine that xkms hosts as its single
 	// core: storage, barrier, bootstrap, and clustering all come from this
@@ -1482,7 +1489,8 @@ func (s *Server) initializeWebAuthnService() error {
 	if s.webauthnConfig == nil {
 		return nil
 	}
-	if s.datastore == nil {
+	ds := s.datastore.Load()
+	if ds == nil {
 		return &ErrServiceInit{Service: "webauthn service", Err: ErrWebAuthnNoDatastore}
 	}
 
@@ -1490,8 +1498,8 @@ func (s *Server) initializeWebAuthnService() error {
 
 	svc, err := rest.BuildWebAuthnService(rest.WebAuthnServiceParams{
 		Config:      s.webauthnConfig,
-		QRDBClient:  s.datastore.Client(),
-		DAOFactory:  s.datastore.DAOFactory(),
+		QRDBClient:  ds.Client(),
+		DAOFactory:  ds.DAOFactory(),
 		TenantID:    webAuthnSystemTenant,
 		TokenIssuer: s.tokenIssuer,
 		Logger:      s.logger,

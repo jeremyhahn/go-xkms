@@ -18,6 +18,7 @@ import (
 	"strings"
 
 	"github.com/jeremyhahn/go-xkms/pkg/datastore"
+	"github.com/jeremyhahn/go-xkms/pkg/storage"
 	qrdbstorage "github.com/jeremyhahn/go-xkms/pkg/storage/qrdb"
 )
 
@@ -71,7 +72,7 @@ func (s *Server) initializeQRDBStorage() error {
 		if err != nil {
 			return &ErrStorageCreate{Resource: "standalone datastore", Err: err}
 		}
-		s.datastore = ds
+		s.datastore.Store(ds)
 		if err := s.bindPeerEvidenceStorage(); err != nil {
 			return err
 		}
@@ -83,7 +84,7 @@ func (s *Server) initializeQRDBStorage() error {
 		if err != nil {
 			return &ErrStorageCreate{Resource: "remote datastore", Err: err}
 		}
-		s.datastore = ds
+		s.datastore.Store(ds)
 		s.logger.Info("Initialized remote datastore",
 			"transport", s.config.Datastore.Remote.Transport, "address", s.config.Datastore.Remote.Address)
 
@@ -91,7 +92,7 @@ func (s *Server) initializeQRDBStorage() error {
 		return &datastore.ErrUnsupportedDatastoreMode{Mode: s.config.Datastore.Mode}
 	}
 
-	s.qrdbStorage = qrdbstorage.NewBackend(s.datastore.Client().KV(), s.storageCallContext()...)
+	s.setSharedStorage(qrdbstorage.NewBackend(s.datastore.Load().Client().KV(), s.storageCallContext()...))
 	return nil
 }
 
@@ -108,22 +109,37 @@ func (s *Server) storageCallContext() []qrdbstorage.Option {
 	return []qrdbstorage.Option{qrdbstorage.WithCallContext(s.qrdbNode.ServiceContext)}
 }
 
-// closeQRDBStorage closes the shared storage backend and the datastore if
-// they were created, and tears down the in-process qrdb node when xkms hosts
-// it (embedded mode). It is safe to call when no datastore is in use. The
-// datastore closes the client it dialed (remote mode); the embedded node's
-// client is borrowed, so the node itself is the lifecycle owner and is
-// closed via stopQRDBNode after the datastore.
+// closeQRDBStorage tears down the in-process qrdb node when xkms hosts it
+// (embedded mode), then retracts and closes the shared storage backend and
+// the datastore if they were created. It is safe to call when no datastore is
+// in use, and more than once. The datastore closes the client it dialed
+// (remote mode); the embedded node's client is borrowed, so the node itself
+// is the lifecycle owner and closes it in stopQRDBNode. A caller that reaches
+// for the datastore afterwards gets ErrNoDatastore (daoFactory).
 func (s *Server) closeQRDBStorage() error {
-	var errs []error
-	if s.qrdbStorage != nil {
-		errs = append(errs, s.qrdbStorage.Close())
-		s.qrdbStorage = nil
+	// The node goes first: its Close stops the transports it serves and
+	// drains the requests in flight, whose handlers read the storage and the
+	// datastore retracted below.
+	errs := []error{s.stopQRDBNode()}
+	if backend := s.qrdbStorage.Swap(nil); backend != nil {
+		errs = append(errs, (*backend).Close())
 	}
-	if s.datastore != nil {
-		errs = append(errs, s.datastore.Close())
-		s.datastore = nil
+	if ds := s.datastore.Swap(nil); ds != nil {
+		errs = append(errs, ds.Close())
 	}
-	errs = append(errs, s.stopQRDBNode())
 	return errors.Join(errs...)
+}
+
+// sharedStorage returns the shared storage backend, or nil before
+// initializeQRDBStorage has built it and after closeQRDBStorage.
+func (s *Server) sharedStorage() storage.Backend {
+	if backend := s.qrdbStorage.Load(); backend != nil {
+		return *backend
+	}
+	return nil
+}
+
+// setSharedStorage publishes backend as the shared storage backend.
+func (s *Server) setSharedStorage(backend storage.Backend) {
+	s.qrdbStorage.Store(&backend)
 }

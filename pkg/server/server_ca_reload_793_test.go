@@ -195,7 +195,7 @@ func openCADatabaseOutOfBand(t *testing.T, dataDir string) (*Server, qrdbsdk.KVS
 		logger: slog.New(slog.NewTextHandler(io.Discard, nil)),
 	}
 	require.NoError(t, s.initializeQRDBStorage())
-	records, err := s.datastore.DatabaseKVStore(context.Background(), certstore.DatabaseName)
+	records, err := s.datastore.Load().DatabaseKVStore(context.Background(), certstore.DatabaseName)
 	require.NoError(t, err)
 	return s, records
 }

@@ -47,14 +47,12 @@ func (s *Server) QRDBClient() *qrdbsdk.Client {
 
 // Datastore returns the server's single shared datastore -- its go-qrdb
 // client and DAO factory, standalone or remote -- or nil before
-// initializeQRDBStorage has run. Features a composing binary builds (e.g.
+// initializeQRDBStorage has run and after Shutdown has closed it. Features a composing binary builds (e.g.
 // the ACME server) persist through its DAOFactory and report its health
 // through its HealthCheck. The server owns its lifecycle: callers never
 // close it.
 func (s *Server) Datastore() *datastore.Datastore {
-	s.mu.RLock()
-	defer s.mu.RUnlock()
-	return s.datastore
+	return s.datastore.Load()
 }
 
 // TenantService returns go-qrdb's canonical TenantServicer composed on the

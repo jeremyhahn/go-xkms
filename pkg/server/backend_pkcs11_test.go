@@ -36,7 +36,7 @@ import (
 // (including secret resolution) without depending on a real PKCS#11 module.
 func newTestServerForPKCS11(t *testing.T, pkcs11Cfg *config.PKCS11Config) *Server {
 	t.Helper()
-	return &Server{
+	s := &Server{
 		config: &config.Config{
 			Datastore: config.DatastoreConfig{Engine: "memory"},
 			Backends:  config.BackendsConfig{PKCS11: pkcs11Cfg},
@@ -44,10 +44,11 @@ func newTestServerForPKCS11(t *testing.T, pkcs11Cfg *config.PKCS11Config) *Serve
 		backends:     make(map[string]xkms.Backend),
 		keyProviders: make(map[string]types.KeyProvider),
 		logger:       slog.Default(),
-		// The one shared datastore every createStorage call is a view over
-		// (go-xkms#1345); Server.New would have opened it.
-		qrdbStorage: storage.NewMemory(),
 	}
+	// The one shared datastore every createStorage call is a view over
+	// (go-xkms#1345); Server.New would have opened it.
+	s.setSharedStorage(storage.NewMemory())
+	return s
 }
 
 // TestInitPKCS11Backend_UnresolvedCredentialReferenceFails proves the
