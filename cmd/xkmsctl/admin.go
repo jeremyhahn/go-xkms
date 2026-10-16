@@ -19,6 +19,8 @@ import (
 	"encoding/pem"
 	"fmt"
 	"os"
+	"slices"
+	"strings"
 	"time"
 
 	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
@@ -371,7 +373,7 @@ var adminListCmd = &cobra.Command{
 		// Filter to administrator accounts only.
 		admins := make([]client.UserInfo, 0, len(resp.Users))
 		for _, u := range resp.Users {
-			if u.Role == qrdbsdk.RoleNameAdmin {
+			if slices.Contains(u.Roles, qrdbsdk.RoleNameAdmin) {
 				admins = append(admins, u)
 			}
 		}
@@ -391,7 +393,7 @@ var adminListCmd = &cobra.Command{
 					"username":     a.Username,
 					"email":        a.Email,
 					"display_name": a.DisplayName,
-					"role":         a.Role,
+					"roles":        a.Roles,
 					"enabled":      a.Enabled,
 					"created_at":   a.CreatedAt.Format(time.RFC3339),
 				}
@@ -409,14 +411,14 @@ var adminListCmd = &cobra.Command{
 			// EMAIL is the canonical login key; a certificate-authenticated
 			// admin legitimately has none and renders blank, which is itself
 			// the useful signal.
-			fmt.Printf("%-20s %-28s %-20s %-12s %-8s\n", "USERNAME", "EMAIL", "DISPLAY NAME", "ROLE", "ENABLED")
+			fmt.Printf("%-20s %-28s %-20s %-12s %-8s\n", "USERNAME", "EMAIL", "DISPLAY NAME", "ROLES", "ENABLED")
 			fmt.Println(repeatString("-", 92))
 			for _, a := range admins {
 				fmt.Printf("%-20s %-28s %-20s %-12s %-8t\n",
 					truncateString(a.Username, 20),
 					truncateString(a.Email, 28),
 					truncateString(a.DisplayName, 20),
-					a.Role,
+					strings.Join(a.Roles, ","),
 					a.Enabled,
 				)
 			}
@@ -472,7 +474,7 @@ var adminGetCmd = &cobra.Command{
 				// distinction a script needs to make and could not.
 				"email":        a.Email,
 				"display_name": a.DisplayName,
-				"role":         a.Role,
+				"roles":        a.Roles,
 				"enabled":      a.Enabled,
 				"created_at":   a.CreatedAt.Format(time.RFC3339),
 			}
@@ -496,7 +498,7 @@ var adminGetCmd = &cobra.Command{
 			fmt.Printf("Administrator Details:\n")
 			fmt.Printf("  Username:     %s\n", a.Username)
 			fmt.Printf("  Display Name: %s\n", a.DisplayName)
-			fmt.Printf("  Role:         %s\n", a.Role)
+			fmt.Printf("  Roles:        %s\n", strings.Join(a.Roles, ", "))
 			fmt.Printf("  Enabled:      %t\n", a.Enabled)
 			fmt.Printf("  Created:      %s\n", a.CreatedAt.Format(time.RFC3339))
 			if a.LastLogin != nil {
@@ -682,7 +684,7 @@ var adminStatusCmd = &cobra.Command{
 
 		adminCount := 0
 		for _, u := range resp.Users {
-			if u.Role == qrdbsdk.RoleNameAdmin {
+			if slices.Contains(u.Roles, qrdbsdk.RoleNameAdmin) {
 				adminCount++
 			}
 		}

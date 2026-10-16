@@ -19,6 +19,8 @@ import (
 	"log/slog"
 	"net/http"
 
+	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
+
 	"github.com/jeremyhahn/go-xkms/pkg/auth"
 )
 
@@ -153,6 +155,13 @@ func (g *PermissionGate) Wrap(resource, action string, next http.HandlerFunc) ht
 			writePermissionDenied(w)
 		}
 	})
+}
+
+// WrapPermission is Wrap for a grant named by one qrdb permission constant,
+// such as the three-part qrdbsdk.PermissionTenantsListCross, split into its
+// resource and action the way qrdb splits it.
+func (g *PermissionGate) WrapPermission(p qrdbsdk.Permission, next http.HandlerFunc) http.Handler {
+	return g.Wrap(qrdbsdk.PermissionResource(p), qrdbsdk.PermissionAction(p), next)
 }
 
 // writePermissionDenied writes the single response for a caller that may not

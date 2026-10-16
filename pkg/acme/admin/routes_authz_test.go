@@ -65,12 +65,12 @@ var adminRouteCases = []routeCase{
 // tenantRouteCases covers every route registered by
 // TenantHandlers.RegisterRoutes.
 var tenantRouteCases = []routeCase{
-	{"list tenants", http.MethodGet, "/api/v1/tenants", auth.ResourceTenants, auth.ActionList, qrdbsdk.RoleNameAdmin, qrdbsdk.RoleNameUser},
-	{"create tenant", http.MethodPost, "/api/v1/tenants", auth.ResourceTenants, auth.ActionCreate, qrdbsdk.RoleNameAdmin, qrdbsdk.RoleNameAuditor},
-	{"get tenant", http.MethodGet, "/api/v1/tenants/t1", auth.ResourceTenants, auth.ActionRead, qrdbsdk.RoleNameAuditor, qrdbsdk.RoleNameUser},
-	{"update tenant", http.MethodPut, "/api/v1/tenants/t1", auth.ResourceTenants, auth.ActionUpdate, qrdbsdk.RoleNameAdmin, qrdbsdk.RoleNameAuditor},
-	{"delete tenant", http.MethodDelete, "/api/v1/tenants/t1", auth.ResourceTenants, auth.ActionDelete, qrdbsdk.RoleNameAdmin, qrdbsdk.RoleNameOperator},
-	{"update tenant status", http.MethodPut, "/api/v1/tenants/t1/status", auth.ResourceTenants, auth.ActionUpdate, qrdbsdk.RoleNameAdmin, qrdbsdk.RoleNameOperator},
+	crossRouteCase("list tenants", http.MethodGet, "/api/v1/tenants", qrdbsdk.PermissionTenantsListCross, qrdbsdk.RoleNameUser),
+	crossRouteCase("create tenant", http.MethodPost, "/api/v1/tenants", qrdbsdk.PermissionTenantsCreateCross, qrdbsdk.RoleNameAuditor),
+	crossRouteCase("get tenant", http.MethodGet, "/api/v1/tenants/t1", qrdbsdk.PermissionTenantsReadCross, qrdbsdk.RoleNameUser),
+	crossRouteCase("update tenant", http.MethodPut, "/api/v1/tenants/t1", qrdbsdk.PermissionTenantsUpdateCross, qrdbsdk.RoleNameAuditor),
+	crossRouteCase("delete tenant", http.MethodDelete, "/api/v1/tenants/t1", qrdbsdk.PermissionTenantsDeleteCross, qrdbsdk.RoleNameOperator),
+	crossRouteCase("update tenant status", http.MethodPut, "/api/v1/tenants/t1/status", qrdbsdk.PermissionTenantsUpdateCross, qrdbsdk.RoleNameOperator),
 
 	{"create tenant root CA", http.MethodPost, "/api/v1/tenants/t1/root-ca", auth.ResourceCA, auth.ActionCreate, qrdbsdk.RoleNameAdmin, qrdbsdk.RoleNameOperator},
 	{"list intermediate CAs", http.MethodGet, "/api/v1/tenants/t1/intermediate-cas", auth.ResourceCA, auth.ActionList, qrdbsdk.RoleNameOperator, qrdbsdk.RoleNameUser},
@@ -130,7 +130,7 @@ func requestWithRoles(tc routeCase, roles ...string) *http.Request {
 	// The tenant routes address tenant "t1"; scoping the caller there keeps the
 	// tenant-scope check out of the way so the assertion is purely about the
 	// permission gate. The platform-only routes are reached from the system
-	// tenant for the same reason. withUser publishes both the AuthenticatedUser
+	// tenant, the only tenant their grants reach from. withUser publishes both the AuthenticatedUser
 	// the handlers read and the canonical identity the gate reads, exactly as
 	// the auth middleware does.
 	tenantID := "t1"
@@ -142,11 +142,31 @@ func requestWithRoles(tc routeCase, roles ...string) *http.Request {
 }
 
 // platformOnlyRoutes are the routes a tenant-scoped caller is refused whatever
-// it holds (PlatformScopeError): creating a tenant, and reading the audit
-// trail, which records no tenant to confine it by.
+// it holds: the tenant lifecycle routes, gated on qrdb's cross-scope tenant
+// grants, and reading the audit trail (PlatformScopeError), which records no
+// tenant to confine it by.
 var platformOnlyRoutes = map[string]bool{
-	"create tenant":   true,
-	"list audit logs": true,
+	"list tenants":         true,
+	"create tenant":        true,
+	"get tenant":           true,
+	"update tenant":        true,
+	"delete tenant":        true,
+	"update tenant status": true,
+	"list audit logs":      true,
+}
+
+// crossRouteCase builds a routeCase for a route gated on one cross-scope qrdb
+// permission, which the Admin role holds and deniedRole does not.
+func crossRouteCase(name, method, path string, p qrdbsdk.Permission, deniedRole string) routeCase {
+	return routeCase{
+		name:        name,
+		method:      method,
+		path:        path,
+		resource:    qrdbsdk.PermissionResource(p),
+		action:      qrdbsdk.PermissionAction(p),
+		allowedRole: qrdbsdk.RoleNameAdmin,
+		deniedRole:  deniedRole,
+	}
 }
 
 // TestACMEAdminRoutes_RequestExactPermission verifies every ACME admin REST

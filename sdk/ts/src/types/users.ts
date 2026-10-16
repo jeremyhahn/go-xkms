@@ -29,7 +29,8 @@ export interface UserInfo {
   id: string;
   username: string;
   display_name?: string;
-  role?: string;
+  /** Every role the user holds, in the order qrdb stores them. */
+  roles?: string[];
   enabled: boolean;
   created_at: RFC3339;
   last_login?: RFC3339;

@@ -121,7 +121,7 @@ func TestAdminListCmd_ListError(t *testing.T) {
 
 func TestAdminListCmd_NoAdmins(t *testing.T) {
 	mock := &mockAdminCRUDClient{listUsersResp: &transport.ListUsersResponse{
-		Users: []transport.UserInfo{{Username: "bob", Role: "user"}},
+		Users: []transport.UserInfo{{Username: "bob", Roles: []string{"user"}}},
 	}}
 	withGlobalConfig(t, newAdminCRUDConfig("text", mock))
 	out := captureStdout(t, func() {
@@ -136,8 +136,8 @@ func TestAdminListCmd_TextWithAdmins(t *testing.T) {
 	last := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
 	mock := &mockAdminCRUDClient{listUsersResp: &transport.ListUsersResponse{
 		Users: []transport.UserInfo{
-			{Username: "root", DisplayName: "Root", Role: "admin", Enabled: true, CreatedAt: last, LastLogin: &last},
-			{Username: "bob", Role: "user"},
+			{Username: "root", DisplayName: "Root", Roles: []string{"admin"}, Enabled: true, CreatedAt: last, LastLogin: &last},
+			{Username: "bob", Roles: []string{"user"}},
 		},
 	}}
 	withGlobalConfig(t, newAdminCRUDConfig("text", mock))
@@ -155,7 +155,7 @@ func TestAdminListCmd_TextWithAdmins(t *testing.T) {
 func TestAdminListCmd_JSONWithAdmins(t *testing.T) {
 	last := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
 	mock := &mockAdminCRUDClient{listUsersResp: &transport.ListUsersResponse{
-		Users: []transport.UserInfo{{Username: "root", Role: "admin", CreatedAt: last, LastLogin: &last}},
+		Users: []transport.UserInfo{{Username: "root", Roles: []string{"admin"}, CreatedAt: last, LastLogin: &last}},
 	}}
 	withGlobalConfig(t, newAdminCRUDConfig("json", mock))
 	out := captureStdout(t, func() {
@@ -206,7 +206,7 @@ func TestAdminGetCmd_TextWithCredentials(t *testing.T) {
 	last := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
 	mock := &mockAdminCRUDClient{
 		getUserResp: &transport.GetUserResponse{User: transport.UserInfo{
-			Username: "root", DisplayName: "Root", Role: "admin", Enabled: true, CreatedAt: last, LastLogin: &last,
+			Username: "root", DisplayName: "Root", Roles: []string{"admin"}, Enabled: true, CreatedAt: last, LastLogin: &last,
 		}},
 		listCredsResp: &transport.ListUserCredentialsResponse{
 			Credentials: []transport.CredentialInfo{{ID: "cred-1"}},
@@ -387,7 +387,7 @@ func TestAdminStatusCmd_NotConfiguredText(t *testing.T) {
 
 func TestAdminStatusCmd_ConfiguredText(t *testing.T) {
 	mock := &mockAdminCRUDClient{listUsersResp: &transport.ListUsersResponse{
-		Users: []transport.UserInfo{{Username: "root", Role: "admin"}},
+		Users: []transport.UserInfo{{Username: "root", Roles: []string{"admin"}}},
 	}}
 	withGlobalConfig(t, newAdminCRUDConfig("text", mock))
 	out := captureStdout(t, func() {
@@ -411,7 +411,7 @@ func TestAdminStatusCmd_JSONNotConfigured(t *testing.T) {
 
 func TestAdminStatusCmd_JSONConfigured(t *testing.T) {
 	mock := &mockAdminCRUDClient{listUsersResp: &transport.ListUsersResponse{
-		Users: []transport.UserInfo{{Username: "root", Role: "admin"}},
+		Users: []transport.UserInfo{{Username: "root", Roles: []string{"admin"}}},
 	}}
 	withGlobalConfig(t, newAdminCRUDConfig("json", mock))
 	out := captureStdout(t, func() {

@@ -205,7 +205,7 @@ func TestUserUpdate_JSON(t *testing.T) {
 	assert.Equal(t, true, got["success"])
 	assert.Equal(t, "alice", got["username"])
 	assert.Equal(t, false, got["enabled"])
-	assert.Contains(t, got, "role")
+	assert.Contains(t, got, "roles")
 }
 
 func TestUserUpdate_Failures(t *testing.T) {

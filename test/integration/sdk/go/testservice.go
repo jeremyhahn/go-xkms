@@ -492,7 +492,7 @@ func (s *TestXKMSService) ListUsers(ctx context.Context, _ ...transport.ListOpti
 		users = append(users, xkms.UserInfo{
 			Username:    u.username,
 			DisplayName: u.displayName,
-			Role:        u.role,
+			Roles:       []string{u.role},
 			Enabled:     u.enabled,
 			CreatedAt:   u.createdAt,
 			LastLogin:   u.lastLogin,
@@ -528,7 +528,7 @@ func (s *TestXKMSService) CreateUser(ctx context.Context, req *xkms.CreateUserRe
 		User: xkms.UserInfo{
 			Username:    u.username,
 			DisplayName: u.displayName,
-			Role:        u.role,
+			Roles:       []string{u.role},
 			Enabled:     u.enabled,
 			CreatedAt:   u.createdAt,
 			LastLogin:   u.lastLogin,
@@ -549,7 +549,7 @@ func (s *TestXKMSService) GetUser(ctx context.Context, username string) (*xkms.G
 		User: xkms.UserInfo{
 			Username:    u.username,
 			DisplayName: u.displayName,
-			Role:        u.role,
+			Roles:       []string{u.role},
 			Enabled:     u.enabled,
 			CreatedAt:   u.createdAt,
 			LastLogin:   u.lastLogin,

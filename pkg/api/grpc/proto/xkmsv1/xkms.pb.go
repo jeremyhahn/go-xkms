@@ -154,7 +154,6 @@ type UserInfo struct {
 	state       protoimpl.MessageState `protogen:"open.v1"`
 	Username    string                 `protobuf:"bytes,1,opt,name=username,proto3" json:"username,omitempty"`
 	DisplayName string                 `protobuf:"bytes,2,opt,name=display_name,json=displayName,proto3" json:"display_name,omitempty"`
-	Role        string                 `protobuf:"bytes,3,opt,name=role,proto3" json:"role,omitempty"`
 	Enabled     bool                   `protobuf:"varint,4,opt,name=enabled,proto3" json:"enabled,omitempty"`
 	// id is the numeric identifier the embedded qrdb node assigns. The
 	// N-factor endpoints are keyed by it, so callers that manage factors need
@@ -162,7 +161,9 @@ type UserInfo struct {
 	Id uint64 `protobuf:"varint,5,opt,name=id,proto3" json:"id,omitempty"`
 	// email is the canonical tenant-unique login key. Without it a client can
 	// create a user with a login key and never read it back.
-	Email         string `protobuf:"bytes,6,opt,name=email,proto3" json:"email,omitempty"`
+	Email string `protobuf:"bytes,6,opt,name=email,proto3" json:"email,omitempty"`
+	// roles names every role the user holds, in the order qrdb stores them.
+	Roles         []string `protobuf:"bytes,7,rep,name=roles,proto3" json:"roles,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -211,13 +212,6 @@ func (x *UserInfo) GetDisplayName() string {
 	return ""
 }
 
-func (x *UserInfo) GetRole() string {
-	if x != nil {
-		return x.Role
-	}
-	return ""
-}
-
 func (x *UserInfo) GetEnabled() bool {
 	if x != nil {
 		return x.Enabled
@@ -237,6 +231,13 @@ func (x *UserInfo) GetEmail() string {
 		return x.Email
 	}
 	return ""
+}
+
+func (x *UserInfo) GetRoles() []string {
+	if x != nil {
+		return x.Roles
+	}
+	return nil
 }
 
 // CreateUserRequest creates a new xkms user.
@@ -22421,14 +22422,14 @@ var File_pkg_api_grpc_proto_xkmsv1_xkms_proto protoreflect.FileDescriptor
 
 const file_pkg_api_grpc_proto_xkmsv1_xkms_proto_rawDesc = "" +
 	"\n" +
-	"$pkg/api/grpc/proto/xkmsv1/xkms.proto\x12\axkms.v1\x1a\x1bgoogle/protobuf/empty.proto\x1a\x1fgoogle/protobuf/timestamp.proto\x1a%pkg/api/grpc/proto/qrdbv1/authz.proto\"\x9d\x01\n" +
+	"$pkg/api/grpc/proto/xkmsv1/xkms.proto\x12\axkms.v1\x1a\x1bgoogle/protobuf/empty.proto\x1a\x1fgoogle/protobuf/timestamp.proto\x1a%pkg/api/grpc/proto/qrdbv1/authz.proto\"\xab\x01\n" +
 	"\bUserInfo\x12\x1a\n" +
 	"\busername\x18\x01 \x01(\tR\busername\x12!\n" +
-	"\fdisplay_name\x18\x02 \x01(\tR\vdisplayName\x12\x12\n" +
-	"\x04role\x18\x03 \x01(\tR\x04role\x12\x18\n" +
+	"\fdisplay_name\x18\x02 \x01(\tR\vdisplayName\x12\x18\n" +
 	"\aenabled\x18\x04 \x01(\bR\aenabled\x12\x0e\n" +
 	"\x02id\x18\x05 \x01(\x04R\x02id\x12\x14\n" +
-	"\x05email\x18\x06 \x01(\tR\x05email\"\xfe\x01\n" +
+	"\x05email\x18\x06 \x01(\tR\x05email\x12\x14\n" +
+	"\x05roles\x18\a \x03(\tR\x05rolesJ\x04\b\x03\x10\x04R\x04role\"\xfe\x01\n" +
 	"\x11CreateUserRequest\x12\x1a\n" +
 	"\busername\x18\x01 \x01(\tR\busername\x12!\n" +
 	"\fdisplay_name\x18\x02 \x01(\tR\vdisplayName\x12\x12\n" +

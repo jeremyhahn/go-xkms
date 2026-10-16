@@ -194,7 +194,7 @@ func TestCreateUser_Success(t *testing.T) {
 			User: transport.UserInfo{
 				ID:       1,
 				Username: "bob",
-				Role:     "admin",
+				Roles:    []string{"admin"},
 				Enabled:  true,
 			},
 		})
@@ -209,7 +209,7 @@ func TestCreateUser_Success(t *testing.T) {
 	})
 	require.NoError(t, err)
 	assert.Equal(t, "bob", resp.User.Username)
-	assert.Equal(t, "admin", resp.User.Role)
+	assert.Equal(t, []string{"admin"}, resp.User.Roles)
 	assert.True(t, resp.User.Enabled)
 }
 

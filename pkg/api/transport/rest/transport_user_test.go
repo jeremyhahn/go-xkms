@@ -19,6 +19,7 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"slices"
 	"testing"
 
 	"github.com/go-chi/chi/v5"
@@ -88,7 +89,7 @@ func TestTransport_CreateUser_Success(t *testing.T) {
 				User: transport.UserInfo{
 					Username:    "alice",
 					DisplayName: "Alice",
-					Role:        "admin",
+					Roles:       []string{"admin"},
 					Enabled:     true,
 				},
 			})
@@ -223,7 +224,7 @@ func TestTransport_GetUser_Success(t *testing.T) {
 			if got := chi.URLParam(req, "username"); got != "alice" {
 				t.Errorf("expected username alice in path, got %q", got)
 			}
-			writeJSON(t, w, http.StatusOK, transport.UserInfo{Username: "alice", Role: "operator", Enabled: true})
+			writeJSON(t, w, http.StatusOK, transport.UserInfo{Username: "alice", Roles: []string{"operator"}, Enabled: true})
 		})
 	})
 
@@ -234,8 +235,8 @@ func TestTransport_GetUser_Success(t *testing.T) {
 	if resp.User.Username != "alice" {
 		t.Errorf("expected username alice, got %q", resp.User.Username)
 	}
-	if resp.User.Role != "operator" {
-		t.Errorf("expected role operator, got %q", resp.User.Role)
+	if !slices.Equal(resp.User.Roles, []string{"operator"}) {
+		t.Errorf("expected roles [operator], got %q", resp.User.Roles)
 	}
 }
 

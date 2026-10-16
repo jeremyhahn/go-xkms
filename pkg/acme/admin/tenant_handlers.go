@@ -57,19 +57,20 @@ func (h *TenantHandlers) RegisterRoutes(router *mux.Router, authMiddleware AuthH
 		tenantsRouter.Use(authMiddleware.Authenticate)
 	}
 
-	// Tenant lifecycle.
+	// Tenant lifecycle. Every route reaches across tenants, so each is gated
+	// on qrdb's cross-scope grant, which only a system-tenant caller holds.
 	tenantsRouter.Handle("",
-		gate.Wrap(auth.ResourceTenants, auth.ActionList, h.ListTenants)).Methods("GET")
+		gate.WrapPermission(qrdbsdk.PermissionTenantsListCross, h.ListTenants)).Methods("GET")
 	tenantsRouter.Handle("",
-		gate.Wrap(auth.ResourceTenants, auth.ActionCreate, h.CreateTenant)).Methods("POST")
+		gate.WrapPermission(qrdbsdk.PermissionTenantsCreateCross, h.CreateTenant)).Methods("POST")
 	tenantsRouter.Handle("/{id}",
-		gate.Wrap(auth.ResourceTenants, auth.ActionRead, h.GetTenant)).Methods("GET")
+		gate.WrapPermission(qrdbsdk.PermissionTenantsReadCross, h.GetTenant)).Methods("GET")
 	tenantsRouter.Handle("/{id}",
-		gate.Wrap(auth.ResourceTenants, auth.ActionUpdate, h.UpdateTenant)).Methods("PUT")
+		gate.WrapPermission(qrdbsdk.PermissionTenantsUpdateCross, h.UpdateTenant)).Methods("PUT")
 	tenantsRouter.Handle("/{id}",
-		gate.Wrap(auth.ResourceTenants, auth.ActionDelete, h.DeleteTenant)).Methods("DELETE")
+		gate.WrapPermission(qrdbsdk.PermissionTenantsDeleteCross, h.DeleteTenant)).Methods("DELETE")
 	tenantsRouter.Handle("/{id}/status",
-		gate.Wrap(auth.ResourceTenants, auth.ActionUpdate, h.UpdateTenantStatus)).Methods("PUT")
+		gate.WrapPermission(qrdbsdk.PermissionTenantsUpdateCross, h.UpdateTenantStatus)).Methods("PUT")
 
 	// Tenant CA hierarchy. Creating or retiring a signing CA is strictly more
 	// privileged than issuing a leaf certificate, so it is gated on ca:* rather
@@ -182,16 +183,9 @@ func writeIdentityError(w http.ResponseWriter, err error, failure string) {
 	}
 }
 
-// CreateTenant handles POST /api/v1/tenants. Creating a tenant is a platform
-// operation: a tenant-scoped caller is answered exactly as a caller lacking
-// the grant is.
+// CreateTenant handles POST /api/v1/tenants.
 func (h *TenantHandlers) CreateTenant(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
-
-	if err := requirePlatformScope(ctx, "create tenant"); err != nil {
-		writePermissionDenied(w)
-		return
-	}
 
 	var req CreateTenantRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {

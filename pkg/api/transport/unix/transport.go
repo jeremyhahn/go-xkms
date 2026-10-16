@@ -2617,7 +2617,7 @@ func protoToUserInfo(u *pb.UserInfo) transport.UserInfo {
 		// (Codex, go-xkms #190).
 		Email:       u.GetEmail(),
 		DisplayName: u.GetDisplayName(),
-		Role:        u.GetRole(),
+		Roles:       u.GetRoles(),
 		Enabled:     u.GetEnabled(),
 	}
 }

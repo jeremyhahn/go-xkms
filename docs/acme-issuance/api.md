@@ -441,13 +441,16 @@ The ACME admin plane's tenant routes (`TenantHandlers.RegisterRoutes`,
 tenant routes in [`../multi-tenancy/api.md`](../multi-tenancy/api.md): these
 carry the ACME tenant's CA hierarchy, settings and EABs
 ([`engineering.md`](engineering.md#acme-tenant-ca-hierarchy)). Each route is
-`gate.Wrap(resource, action)`, a qrdb permission:
+`gate.Wrap(resource, action)`, a qrdb permission. The tenant lifecycle rows
+are `gate.WrapPermission(qrdbsdk.PermissionTenants*Cross)`: qrdb's cross-scope
+grants, which only a system-tenant caller (the platform Admin) can exercise, so
+the handlers carry no platform-scope check of their own:
 
 | Route | Method | Permission |
 |---|---|---|
-| `/api/v1/tenants` | `GET` / `POST` | `tenants:list` / `tenants:create` |
-| `/api/v1/tenants/{id}` | `GET` / `PUT` / `DELETE` | `tenants:read` / `tenants:update` / `tenants:delete` |
-| `/api/v1/tenants/{id}/status` | `PUT` | `tenants:update` |
+| `/api/v1/tenants` | `GET` / `POST` | `tenants:list:cross` / `tenants:create:cross` |
+| `/api/v1/tenants/{id}` | `GET` / `PUT` / `DELETE` | `tenants:read:cross` / `tenants:update:cross` / `tenants:delete:cross` |
+| `/api/v1/tenants/{id}/status` | `PUT` | `tenants:update:cross` |
 | `/api/v1/tenants/{id}/root-ca` | `POST` | `ca:create` |
 | `/api/v1/tenants/{id}/intermediate-cas` | `GET` / `POST` | `ca:list` / `ca:create` |
 | `/api/v1/tenants/{id}/intermediate-cas/{caid}` | `GET` | `ca:read` |

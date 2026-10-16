@@ -34,7 +34,7 @@ func userInfoToProto(u transport.UserInfo) *pb.UserInfo {
 		Username:    u.Username,
 		Email:       u.Email,
 		DisplayName: u.DisplayName,
-		Role:        u.Role,
+		Roles:       u.Roles,
 		Enabled:     u.Enabled,
 	}
 }

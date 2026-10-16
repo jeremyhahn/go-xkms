@@ -38,6 +38,7 @@ import (
 // grpc's own golden keys by, so it is this seam's label argument instead.
 var authzSeams = []authzscan.Seam{
 	{Method: "Wrap", Args: 3, ResourceArg: 0, ActionArg: 1, LabelArgs: []int{2}},
+	{Method: "WrapPermission", Args: 2, ResourceArg: 0, Permission: true, LabelArgs: []int{1}},
 }
 
 // goldenAdminPermissions is the complete, literal resource:action pair every
@@ -49,13 +50,13 @@ var authzSeams = []authzscan.Seam{
 // retyped, repointed, or swapped for a different one. It is the ACME admin
 // counterpart of pkg/api/grpc's goldenRPCPermissions.
 var goldenAdminPermissions = map[string]string{
-	"CreateTenant":                     "tenants:create",
+	"CreateTenant":                     "tenants:create:cross",
 	"CreateTenantEAB":                  "acme_eab:create",
 	"CreateTenantIntermediateCA":       "ca:create",
 	"CreateTenantRole":                 "roles:create",
 	"CreateTenantRootCA":               "ca:create",
 	"CreateTenantUser":                 "users:create",
-	"DeleteTenant":                     "tenants:delete",
+	"DeleteTenant":                     "tenants:delete:cross",
 	"DeleteTenantEAB":                  "acme_eab:delete",
 	"DeleteTenantRole":                 "roles:delete",
 	"DeleteTenantUser":                 "users:delete",
@@ -66,7 +67,7 @@ var goldenAdminPermissions = map[string]string{
 	"GetOrder":                         "acme_orders:read",
 	"GetStats":                         "admin:status",
 	"GetStatus":                        "admin:status",
-	"GetTenant":                        "tenants:read",
+	"GetTenant":                        "tenants:read:cross",
 	"GetTenantCAStatus":                "ca:read",
 	"GetTenantEAB":                     "acme_eab:read",
 	"GetTenantIntermediateCA":          "ca:read",
@@ -81,13 +82,13 @@ var goldenAdminPermissions = map[string]string{
 	"ListTenantIntermediateCAs":        "ca:list",
 	"ListTenantRoles":                  "roles:list",
 	"ListTenantUsers":                  "users:list",
-	"ListTenants":                      "tenants:list",
+	"ListTenants":                      "tenants:list:cross",
 	"RevokeCertificate":                "certs:revoke",
 	"SetTenantDefaultIntermediateCA":   "ca:update",
-	"UpdateTenant":                     "tenants:update",
+	"UpdateTenant":                     "tenants:update:cross",
 	"UpdateTenantIntermediateCAStatus": "ca:update",
 	"UpdateTenantRole":                 "roles:update",
-	"UpdateTenantStatus":               "tenants:update",
+	"UpdateTenantStatus":               "tenants:update:cross",
 	"UpdateTenantUser":                 "users:update",
 }
 

@@ -36,14 +36,14 @@ func TestProtoToUserInfo_CarriesEmail(t *testing.T) {
 		Username:    "alice",
 		Email:       "alice@example.com",
 		DisplayName: "Alice Smith",
-		Role:        "admin",
+		Roles:       []string{"admin", "auditor"},
 		Enabled:     true,
 	})
 
 	assert.Equal(t, "alice@example.com", got.Email, "the canonical login key was dropped in projection")
 	assert.Equal(t, "alice", got.Username)
 	assert.Equal(t, "Alice Smith", got.DisplayName)
-	assert.Equal(t, "admin", got.Role)
+	assert.Equal(t, []string{"admin", "auditor"}, got.Roles)
 	assert.True(t, got.Enabled)
 }
 

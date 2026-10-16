@@ -120,8 +120,8 @@ func (m *mockUserClient) DisableUser(ctx context.Context, id uint64) error {
 }
 
 type mockRoleClient struct {
-	getRole   func(ctx context.Context, id string) (*qrdbtransport.Role, error)
-	listRoles func(ctx context.Context, req *qrdbtransport.ListRolesRequest) (*qrdbtransport.ListRolesResponse, error)
+	getRole       func(ctx context.Context, id string) (*qrdbtransport.Role, error)
+	getRoleByName func(ctx context.Context, req *qrdbtransport.GetRoleByNameRequest) (*qrdbtransport.Role, error)
 }
 
 var _ qrdbtransport.RoleClient = (*mockRoleClient)(nil)
@@ -134,7 +134,7 @@ func (m *mockRoleClient) GetRole(ctx context.Context, id string) (*qrdbtransport
 	return m.getRole(ctx, id)
 }
 func (m *mockRoleClient) GetRoleByName(ctx context.Context, req *qrdbtransport.GetRoleByNameRequest) (*qrdbtransport.Role, error) {
-	return nil, nil
+	return m.getRoleByName(ctx, req)
 }
 func (m *mockRoleClient) ResolvePermissions(ctx context.Context, req *qrdbtransport.ResolvePermissionsRequest) (*qrdbtransport.ResolvePermissionsResponse, error) {
 	return nil, nil
@@ -149,7 +149,7 @@ func (m *mockRoleClient) DeleteRole(ctx context.Context, id string) error {
 }
 
 func (m *mockRoleClient) ListRoles(ctx context.Context, req *qrdbtransport.ListRolesRequest) (*qrdbtransport.ListRolesResponse, error) {
-	return m.listRoles(ctx, req)
+	return nil, errors.New("not used")
 }
 
 func (m *mockRoleClient) AssignRole(ctx context.Context, userID uint64, roleID string) error {
@@ -211,53 +211,59 @@ func setupServiceWithUserClients(t *testing.T) (*XKMSService, *mockUserClient, *
 // userToTransport
 // ============================================================================
 
-func TestUserToTransport_ResolvesFirstRoleName(t *testing.T) {
+func TestUserToTransport_ResolvesEveryRoleName(t *testing.T) {
 	svc, _, roles := setupServiceWithUserClients(t)
 
+	names := map[string]string{"role-1": "admin", "role-2": "custom-ops"}
 	roles.getRole = func(_ context.Context, id string) (*qrdbtransport.Role, error) {
-		assert.Equal(t, "role-1", id)
-		return &qrdbtransport.Role{ID: "role-1", Name: "admin"}, nil
+		return &qrdbtransport.Role{ID: id, Name: names[id]}, nil
 	}
 
-	info := svc.userToTransport(context.Background(), &qrdbtransport.User{
+	info, err := svc.userToTransport(context.Background(), &qrdbtransport.User{
 		Username:  "alice",
 		Lifecycle: string(qrdbsdk.LifecycleActive),
 		RoleIDs:   []string{"role-1", "role-2"},
 	})
+	require.NoError(t, err)
 
 	assert.Equal(t, "alice", info.Username)
-	assert.Equal(t, "admin", info.Role)
+	assert.Equal(t, []string{"admin", "custom-ops"}, info.Roles)
 	assert.True(t, info.Enabled)
 }
 
 func TestUserToTransport_NoRoles(t *testing.T) {
 	svc, _, _ := setupServiceWithUserClients(t)
 
-	info := svc.userToTransport(context.Background(), &qrdbtransport.User{
+	info, err := svc.userToTransport(context.Background(), &qrdbtransport.User{
 		Username:  "bob",
 		Lifecycle: string(qrdbsdk.LifecycleDisabled),
 	})
+	require.NoError(t, err)
 
 	assert.Equal(t, "bob", info.Username)
-	assert.Empty(t, info.Role)
+	assert.Empty(t, info.Roles)
 	assert.False(t, info.Enabled)
 }
 
-func TestUserToTransport_RoleLookupErrorLeavesRoleEmpty(t *testing.T) {
+func TestUserToTransport_RoleLookupErrorFails(t *testing.T) {
 	svc, _, roles := setupServiceWithUserClients(t)
 
+	storeErr := errors.New("role store offline")
 	roles.getRole = func(_ context.Context, _ string) (*qrdbtransport.Role, error) {
-		return nil, errors.New("role store offline")
+		return nil, storeErr
 	}
 
-	info := svc.userToTransport(context.Background(), &qrdbtransport.User{
+	_, err := svc.userToTransport(context.Background(), &qrdbtransport.User{
 		Username: "carol",
 		RoleIDs:  []string{"missing"},
 	})
 
-	// A lookup error must not propagate; the role name simply stays empty.
-	assert.Equal(t, "carol", info.Username)
-	assert.Empty(t, info.Role)
+	// A role the store cannot resolve is an error, never a silently
+	// shortened role list.
+	var opErr *ErrUserOperation
+	require.ErrorAs(t, err, &opErr)
+	assert.Equal(t, "resolve role", opErr.Operation)
+	assert.ErrorIs(t, err, storeErr)
 }
 
 // ============================================================================
@@ -267,36 +273,55 @@ func TestUserToTransport_RoleLookupErrorLeavesRoleEmpty(t *testing.T) {
 func TestRoleNameToID_EmptyNameResolvesEmptyID(t *testing.T) {
 	svc, _, _ := setupServiceWithUserClients(t)
 
-	id, err := svc.roleNameToID(context.Background(), "")
+	id, err := svc.roleNameToID(context.Background(), "", "")
 	require.NoError(t, err)
 	assert.Empty(t, id)
 }
 
-func TestRoleNameToID_Match(t *testing.T) {
+func TestRoleNameToID_BuiltInRoleIsSystemRoleID(t *testing.T) {
 	svc, _, roles := setupServiceWithUserClients(t)
 
-	roles.listRoles = func(_ context.Context, _ *qrdbtransport.ListRolesRequest) (*qrdbtransport.ListRolesResponse, error) {
-		return &qrdbtransport.ListRolesResponse{Roles: []*qrdbtransport.Role{
-			{ID: "id-operator", Name: "operator"},
-			{ID: "id-admin", Name: "admin"},
-		}}, nil
+	roles.getRoleByName = func(_ context.Context, _ *qrdbtransport.GetRoleByNameRequest) (*qrdbtransport.Role, error) {
+		t.Fatal("a built-in role must not be looked up")
+		return nil, nil
 	}
 
-	id, err := svc.roleNameToID(context.Background(), "admin")
+	id, err := svc.roleNameToID(context.Background(), "acme", qrdbsdk.RoleNameAdmin)
 	require.NoError(t, err)
-	assert.Equal(t, "id-admin", id)
+	assert.Equal(t, qrdbsdk.SystemRoleID("acme", qrdbsdk.RoleNameAdmin), id)
+}
+
+func TestRoleNameToID_BuiltInRoleUsesContextTenant(t *testing.T) {
+	svc, _, _ := setupServiceWithUserClients(t)
+
+	ctx := qrdbsdk.ContextWithTenant(context.Background(), "acme")
+	id, err := svc.roleNameToID(ctx, "", qrdbsdk.RoleNameOperator)
+	require.NoError(t, err)
+	assert.Equal(t, qrdbsdk.SystemRoleID("acme", qrdbsdk.RoleNameOperator), id)
+}
+
+func TestRoleNameToID_CustomRoleByName(t *testing.T) {
+	svc, _, roles := setupServiceWithUserClients(t)
+
+	roles.getRoleByName = func(_ context.Context, req *qrdbtransport.GetRoleByNameRequest) (*qrdbtransport.Role, error) {
+		assert.Equal(t, "acme", req.TenantID)
+		assert.Equal(t, "custom-ops", req.Name)
+		return &qrdbtransport.Role{ID: "id-custom", Name: req.Name}, nil
+	}
+
+	id, err := svc.roleNameToID(context.Background(), "acme", "custom-ops")
+	require.NoError(t, err)
+	assert.Equal(t, "id-custom", id)
 }
 
 func TestRoleNameToID_UnknownRole(t *testing.T) {
 	svc, _, roles := setupServiceWithUserClients(t)
 
-	roles.listRoles = func(_ context.Context, _ *qrdbtransport.ListRolesRequest) (*qrdbtransport.ListRolesResponse, error) {
-		return &qrdbtransport.ListRolesResponse{Roles: []*qrdbtransport.Role{
-			{ID: "id-operator", Name: "operator"},
-		}}, nil
+	roles.getRoleByName = func(_ context.Context, req *qrdbtransport.GetRoleByNameRequest) (*qrdbtransport.Role, error) {
+		return nil, &qrdbsdk.RoleNotFoundError{}
 	}
 
-	id, err := svc.roleNameToID(context.Background(), "ghost")
+	id, err := svc.roleNameToID(context.Background(), "", "ghost")
 	require.Error(t, err)
 	assert.Empty(t, id)
 
@@ -307,17 +332,19 @@ func TestRoleNameToID_UnknownRole(t *testing.T) {
 	assert.Equal(t, "ghost", unknown.Role)
 }
 
-func TestRoleNameToID_ListError(t *testing.T) {
+func TestRoleNameToID_LookupError(t *testing.T) {
 	svc, _, roles := setupServiceWithUserClients(t)
 
-	roles.listRoles = func(_ context.Context, _ *qrdbtransport.ListRolesRequest) (*qrdbtransport.ListRolesResponse, error) {
-		return nil, errors.New("role list backend down")
+	roles.getRoleByName = func(_ context.Context, _ *qrdbtransport.GetRoleByNameRequest) (*qrdbtransport.Role, error) {
+		return nil, errors.New("role backend down")
 	}
 
-	_, err := svc.roleNameToID(context.Background(), "admin")
+	_, err := svc.roleNameToID(context.Background(), "", "custom-ops")
 	var opErr *ErrUserOperation
 	require.ErrorAs(t, err, &opErr)
 	assert.Equal(t, "resolve role", opErr.Operation)
+	var unknown *ErrUnknownRole
+	assert.False(t, errors.As(err, &unknown), "a store failure is not an unknown role")
 }
 
 // ============================================================================
@@ -327,22 +354,18 @@ func TestRoleNameToID_ListError(t *testing.T) {
 func TestCreateUser_Success(t *testing.T) {
 	svc, users, roles := setupServiceWithUserClients(t)
 
-	roles.listRoles = func(_ context.Context, _ *qrdbtransport.ListRolesRequest) (*qrdbtransport.ListRolesResponse, error) {
-		return &qrdbtransport.ListRolesResponse{Roles: []*qrdbtransport.Role{
-			{ID: "id-admin", Name: "admin"},
-		}}, nil
-	}
+	adminID := qrdbsdk.SystemRoleID("", qrdbsdk.RoleNameAdmin)
 	roles.getRole = func(_ context.Context, id string) (*qrdbtransport.Role, error) {
-		return &qrdbtransport.Role{ID: id, Name: "admin"}, nil
+		return &qrdbtransport.Role{ID: id, Name: qrdbsdk.RoleNameAdmin}, nil
 	}
 	users.createUser = func(_ context.Context, req *qrdbtransport.CreateUserRequest) (*qrdbtransport.User, error) {
 		assert.Equal(t, "dave", req.Username)
-		assert.Equal(t, []string{"id-admin"}, req.RoleIDs)
+		assert.Equal(t, []string{adminID}, req.RoleIDs)
 		// Echo what a real store persists — dropping Name here would hide a
 		// projection bug in exactly the way this one hid.
 		return &qrdbtransport.User{
 			Username: "dave", Email: req.Email, Name: req.Name,
-			Lifecycle: string(qrdbsdk.LifecycleActive), RoleIDs: []string{"id-admin"},
+			Lifecycle: string(qrdbsdk.LifecycleActive), RoleIDs: []string{adminID},
 		}, nil
 	}
 
@@ -350,12 +373,39 @@ func TestCreateUser_Success(t *testing.T) {
 		Username:    "dave",
 		Email:       "dave@example.com",
 		DisplayName: "Dave Doe",
-		Role:        "admin",
+		Role:        qrdbsdk.RoleNameAdmin,
 	})
 	require.NoError(t, err)
 	assert.Equal(t, "dave", resp.User.Username)
-	assert.Equal(t, "admin", resp.User.Role)
+	assert.Equal(t, []string{qrdbsdk.RoleNameAdmin}, resp.User.Roles)
 	assert.Equal(t, "Dave Doe", resp.User.DisplayName)
+}
+
+func TestCreateUser_ProjectionErrorRollsBack(t *testing.T) {
+	svc, users, roles := setupServiceWithUserClients(t)
+
+	roles.getRole = func(_ context.Context, _ string) (*qrdbtransport.Role, error) {
+		return nil, errors.New("role store offline")
+	}
+	users.createUser = func(_ context.Context, req *qrdbtransport.CreateUserRequest) (*qrdbtransport.User, error) {
+		return &qrdbtransport.User{ID: 42, Username: req.Username, RoleIDs: req.RoleIDs}, nil
+	}
+	var deleted uint64
+	users.deleteUser = func(_ context.Context, id uint64) error {
+		deleted = id
+		return nil
+	}
+
+	_, err := svc.CreateUser(context.Background(), &transport.CreateUserRequest{
+		Username: "erin",
+		Email:    "erin@example.com",
+		Role:     qrdbsdk.RoleNameOperator,
+	})
+
+	// A user the caller cannot be shown is removed rather than left behind.
+	var opErr *ErrUserOperation
+	require.ErrorAs(t, err, &opErr)
+	assert.Equal(t, uint64(42), deleted)
 }
 
 func TestCreateUser_NoRoleAssigned(t *testing.T) {
@@ -369,18 +419,19 @@ func TestCreateUser_NoRoleAssigned(t *testing.T) {
 	resp, err := svc.CreateUser(context.Background(), &transport.CreateUserRequest{Username: "noroles", Email: "noroles@example.com"})
 	require.NoError(t, err)
 	assert.Equal(t, "noroles", resp.User.Username)
-	assert.Empty(t, resp.User.Role)
+	assert.Empty(t, resp.User.Roles)
 }
 
 func TestCreateUser_RoleResolutionError(t *testing.T) {
 	svc, _, roles := setupServiceWithUserClients(t)
 
-	roles.listRoles = func(_ context.Context, _ *qrdbtransport.ListRolesRequest) (*qrdbtransport.ListRolesResponse, error) {
-		return &qrdbtransport.ListRolesResponse{}, nil
+	roles.getRoleByName = func(_ context.Context, _ *qrdbtransport.GetRoleByNameRequest) (*qrdbtransport.Role, error) {
+		return nil, &qrdbsdk.RoleNotFoundError{}
 	}
 
 	_, err := svc.CreateUser(context.Background(), &transport.CreateUserRequest{Username: "x", Email: "x@example.com", Role: "nope"})
-	require.Error(t, err)
+	var unknown *ErrUnknownRole
+	require.ErrorAs(t, err, &unknown)
 }
 
 func TestCreateUser_CreateError(t *testing.T) {
@@ -521,9 +572,9 @@ func TestListUsers_Success(t *testing.T) {
 	require.NoError(t, err)
 	require.Len(t, resp.Users, 2)
 	assert.Equal(t, "u1", resp.Users[0].Username)
-	assert.Equal(t, "viewer", resp.Users[0].Role)
+	assert.Equal(t, []string{"viewer"}, resp.Users[0].Roles)
 	assert.Equal(t, "u2", resp.Users[1].Username)
-	assert.Empty(t, resp.Users[1].Role)
+	assert.Empty(t, resp.Users[1].Roles)
 }
 
 func TestListUsers_Error(t *testing.T) {

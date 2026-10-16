@@ -996,7 +996,8 @@ service KeystoreService {
 message UserInfo {
   string username = 1;
   string display_name = 2;
-  string role = 3;
+  reserved 3;
+  reserved "role";
   bool enabled = 4;
   // id is the numeric identifier the embedded qrdb node assigns. The
   // N-factor endpoints are keyed by it, so callers that manage factors need
@@ -1005,6 +1006,8 @@ message UserInfo {
   // email is the canonical tenant-unique login key. Without it a client can
   // create a user with a login key and never read it back.
   string email = 6;
+  // roles names every role the user holds, in the order qrdb stores them.
+  repeated string roles = 7;
 }
 
 // CreateUserRequest creates a new xkms user.

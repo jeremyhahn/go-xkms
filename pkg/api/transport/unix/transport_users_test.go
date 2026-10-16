@@ -30,7 +30,7 @@ func TestProtoToUserInfo_Populated(t *testing.T) {
 		Username:    "alice",
 		Email:       "alice@example.com",
 		DisplayName: "Alice Smith",
-		Role:        "admin",
+		Roles:       []string{"admin", "auditor"},
 		Enabled:     true,
 	}
 	result := protoToUserInfo(u)
@@ -40,7 +40,7 @@ func TestProtoToUserInfo_Populated(t *testing.T) {
 	// empty for a user that has one (Codex, go-xkms #190).
 	assert.Equal(t, "alice@example.com", result.Email)
 	assert.Equal(t, "Alice Smith", result.DisplayName)
-	assert.Equal(t, "admin", result.Role)
+	assert.Equal(t, []string{"admin", "auditor"}, result.Roles)
 	assert.True(t, result.Enabled)
 }
 
@@ -170,17 +170,17 @@ func TestListUserCredentials_ServerErr(t *testing.T) {
 }
 
 func (s *mockKeystoreServer) CreateUser(_ context.Context, req *pb.CreateUserRequest) (*pb.UserResponse, error) {
-	return &pb.UserResponse{User: &pb.UserInfo{Username: req.Username, DisplayName: req.DisplayName, Role: req.Role, Enabled: true}}, nil
+	return &pb.UserResponse{User: &pb.UserInfo{Username: req.Username, DisplayName: req.DisplayName, Roles: []string{req.Role}, Enabled: true}}, nil
 }
 
 func (s *mockKeystoreServer) ListUsers(_ context.Context, _ *pb.ListUsersRequest) (*pb.ListUsersResponse, error) {
 	return &pb.ListUsersResponse{Users: []*pb.UserInfo{
-		{Username: "alice", DisplayName: "Alice", Role: "admin", Enabled: true},
+		{Username: "alice", DisplayName: "Alice", Roles: []string{"admin"}, Enabled: true},
 	}}, nil
 }
 
 func (s *mockKeystoreServer) GetUser(_ context.Context, req *pb.GetUserRequest) (*pb.UserResponse, error) {
-	return &pb.UserResponse{User: &pb.UserInfo{Username: req.Username, DisplayName: "Test User", Role: "user", Enabled: true}}, nil
+	return &pb.UserResponse{User: &pb.UserInfo{Username: req.Username, DisplayName: "Test User", Roles: []string{"user"}, Enabled: true}}, nil
 }
 
 func (s *mockKeystoreServer) DeleteUser(_ context.Context, _ *pb.DeleteUserRequest) (*pb.DeleteUserResponse, error) {

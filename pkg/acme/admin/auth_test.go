@@ -25,6 +25,8 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
+
 	"github.com/jeremyhahn/go-xkms/pkg/acme/auth"
 	xkmsauth "github.com/jeremyhahn/go-xkms/pkg/auth"
 )
@@ -71,6 +73,45 @@ func TestAuthMiddleware_ValidToken(t *testing.T) {
 	assert.Equal(t, "user-123", identity.Subject)
 	assert.Equal(t, "tenant-abc", identity.TenantID)
 	assert.Equal(t, []string{"admin"}, identity.Roles)
+}
+
+// TestAuthMiddleware_TokenPermissionsGrantNothing proves a permission listed
+// in the token's claims is never an authorization input: behind the
+// middleware, the gate admits or refuses on the caller's qrdb role grants
+// alone, whatever the token claims to hold.
+func TestAuthMiddleware_TokenPermissionsGrantNothing(t *testing.T) {
+	for name, tc := range map[string]struct {
+		role string
+		want int
+	}{
+		"role lacks the grant": {role: qrdbsdk.RoleNameUser, want: http.StatusForbidden},
+		"role holds the grant": {role: qrdbsdk.RoleNameAdmin, want: http.StatusOK},
+	} {
+		t.Run(name, func(t *testing.T) {
+			client := auth.NewMemoryClient()
+			client.AddToken("token", &auth.TokenClaims{
+				Valid:       true,
+				UserID:      "user-123",
+				TenantID:    qrdbsdk.SystemTenantID,
+				Roles:       []string{tc.role},
+				Permissions: []string{qrdbsdk.PermissionTenantsListCross.String()},
+				ExpiresAt:   time.Now().Add(time.Hour),
+			})
+
+			gate := newEnforcingGate()
+			handler := NewAuthMiddleware(client).Authenticate(
+				gate.WrapPermission(qrdbsdk.PermissionTenantsListCross, func(w http.ResponseWriter, _ *http.Request) {
+					w.WriteHeader(http.StatusOK)
+				}))
+
+			req := httptest.NewRequest(http.MethodGet, "/api/v1/tenants", nil)
+			req.Header.Set("Authorization", "Bearer token")
+			rec := httptest.NewRecorder()
+			handler.ServeHTTP(rec, req)
+
+			assert.Equal(t, tc.want, rec.Code)
+		})
+	}
 }
 
 func TestAuthMiddleware_InvalidToken(t *testing.T) {

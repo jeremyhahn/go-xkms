@@ -46,6 +46,8 @@ import (
 	"strconv"
 	"strings"
 
+	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
+
 	"github.com/jeremyhahn/go-xkms/pkg/auth"
 )
 
@@ -76,6 +78,12 @@ import (
 // two helpers can be called with the identical literal pattern ("/keys")
 // while registering entirely different routes. LabelPrefix restores that
 // mount point to the Key so the two cannot collide.
+//
+// Permission marks a helper whose ResourceArg carries one whole qrdb
+// permission constant (qrdbsdk.Permission*) rather than a resource; the
+// constant supplies both halves of the pair and ActionArg is ignored. The
+// ACME admin routes gated on three-part cross-scope grants such as
+// tenants:list:cross register through such a helper.
 type Seam struct {
 	Method        string
 	Args          int
@@ -83,6 +91,7 @@ type Seam struct {
 	ActionArg     int
 	FixedResource string
 	Bare          bool
+	Permission    bool
 	LabelArgs     []int
 	LabelPrefix   string
 }
@@ -140,6 +149,31 @@ type UnknownConstantError struct {
 
 func (e *UnknownConstantError) Error() string {
 	return fmt.Sprintf("authzscan: %s: unknown pkg/auth constant %q; add it to authzscan.Constants", e.Pos, e.Name)
+}
+
+// UnknownPermissionError reports a permission-seam argument that is not a
+// qrdbsdk permission constant this package knows, which means the golden
+// tables cannot vouch for it.
+type UnknownPermissionError struct {
+	Pos  string
+	Name string
+}
+
+func (e *UnknownPermissionError) Error() string {
+	return fmt.Sprintf("authzscan: %s: unknown qrdbsdk permission %q; add it to authzscan.Permissions", e.Pos, e.Name)
+}
+
+// Permissions is every qrdbsdk permission constant a permission seam may
+// name, by name. The values come from the SDK itself, so a renamed or
+// re-valued grant fails to compile here rather than drifting silently.
+func Permissions() map[string]qrdbsdk.Permission {
+	return map[string]qrdbsdk.Permission{
+		"PermissionTenantsListCross":   qrdbsdk.PermissionTenantsListCross,
+		"PermissionTenantsCreateCross": qrdbsdk.PermissionTenantsCreateCross,
+		"PermissionTenantsReadCross":   qrdbsdk.PermissionTenantsReadCross,
+		"PermissionTenantsUpdateCross": qrdbsdk.PermissionTenantsUpdateCross,
+		"PermissionTenantsDeleteCross": qrdbsdk.PermissionTenantsDeleteCross,
+	}
 }
 
 // Constants is every pkg/auth resource and action constant, by name. The values
@@ -336,21 +370,12 @@ func scanFunc(fset *token.FileSet, fn *ast.FuncDecl, seams []Seam, constants map
 		}
 		pos := position(fset, call.Lparen)
 
-		resource := seam.FixedResource
-		if seam.ResourceArg >= 0 {
-			resource, fail = resolve(fset, call.Args[seam.ResourceArg], constants)
-			if fail != nil {
-				return false
-			}
-		} else if value, known := constants[resource]; known {
-			resource = value
+		var resource, action string
+		if seam.Permission {
+			resource, action, fail = resolvePermission(fset, call.Args[seam.ResourceArg])
 		} else {
-			fail = &UnknownConstantError{Pos: pos, Name: resource}
-			return false
+			resource, action, fail = resolvePair(fset, pos, call.Args, seam, constants)
 		}
-
-		var action string
-		action, fail = resolve(fset, call.Args[seam.ActionArg], constants)
 		if fail != nil {
 			return false
 		}
@@ -375,6 +400,49 @@ func scanFunc(fset *token.FileSet, fn *ast.FuncDecl, seams []Seam, constants map
 }
 
 // matchSeam returns the seam a call matches, by method name and arity.
+// resolvePair resolves the resource and action a resource/action seam's call
+// names, taking the resource from FixedResource when the seam pins it.
+func resolvePair(fset *token.FileSet, pos string, args []ast.Expr, seam Seam, constants map[string]string) (string, string, error) {
+	resource := seam.FixedResource
+	if seam.ResourceArg >= 0 {
+		var err error
+		resource, err = resolve(fset, args[seam.ResourceArg], constants)
+		if err != nil {
+			return "", "", err
+		}
+	} else if value, known := constants[resource]; known {
+		resource = value
+	} else {
+		return "", "", &UnknownConstantError{Pos: pos, Name: resource}
+	}
+
+	action, err := resolve(fset, args[seam.ActionArg], constants)
+	if err != nil {
+		return "", "", err
+	}
+	return resource, action, nil
+}
+
+// resolvePermission resolves a permission seam's argument, which must be a
+// qrdbsdk permission constant listed in Permissions, into the resource and
+// action qrdb splits it into.
+func resolvePermission(fset *token.FileSet, arg ast.Expr) (string, string, error) {
+	pos := position(fset, arg.Pos())
+	switch expr := arg.(type) {
+	case *ast.BasicLit:
+		return "", "", &RawLiteralError{Pos: pos, Literal: expr.Value}
+	case *ast.SelectorExpr:
+		if ident, ok := expr.X.(*ast.Ident); ok && ident.Name == "qrdbsdk" {
+			if p, known := Permissions()[expr.Sel.Name]; known {
+				return qrdbsdk.PermissionResource(p), qrdbsdk.PermissionAction(p), nil
+			}
+		}
+		return "", "", &UnknownPermissionError{Pos: pos, Name: expr.Sel.Name}
+	default:
+		return "", "", &UnknownPermissionError{Pos: pos, Name: fmt.Sprintf("%T", arg)}
+	}
+}
+
 func matchSeam(seams []Seam, method string, args int) (Seam, bool) {
 	for _, s := range seams {
 		if s.Method == method && s.Args == args {

@@ -23,6 +23,7 @@ import (
 	"net/mail"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"time"
 
@@ -518,7 +519,7 @@ var userListCmd = &cobra.Command{
 					// while the table showed it (Codex, go-xkms #190).
 					"email":        u.Email,
 					"display_name": u.DisplayName,
-					"role":         u.Role,
+					"roles":        u.Roles,
 					"enabled":      u.Enabled,
 					"created_at":   u.CreatedAt.Format(time.RFC3339),
 				}
@@ -536,14 +537,14 @@ var userListCmd = &cobra.Command{
 			// EMAIL is the canonical login key everything resolves by, so it
 			// belongs in the operator's view of a user; JSON output already
 			// carries it through the struct tag.
-			fmt.Printf("%-20s %-28s %-20s %-12s %-8s\n", "USERNAME", "EMAIL", "DISPLAY NAME", "ROLE", "ENABLED")
+			fmt.Printf("%-20s %-28s %-20s %-12s %-8s\n", "USERNAME", "EMAIL", "DISPLAY NAME", "ROLES", "ENABLED")
 			fmt.Println(repeatString("-", 92))
 			for _, u := range users {
 				fmt.Printf("%-20s %-28s %-20s %-12s %-8t\n",
 					truncateString(u.Username, 20),
 					truncateString(u.Email, 28),
 					truncateString(u.DisplayName, 20),
-					u.Role,
+					strings.Join(u.Roles, ","),
 					u.Enabled,
 				)
 			}
@@ -597,7 +598,7 @@ var userGetCmd = &cobra.Command{
 				"username":     u.Username,
 				"email":        u.Email,
 				"display_name": u.DisplayName,
-				"role":         u.Role,
+				"roles":        u.Roles,
 				"enabled":      u.Enabled,
 				"created_at":   u.CreatedAt.Format(time.RFC3339),
 			}
@@ -621,7 +622,7 @@ var userGetCmd = &cobra.Command{
 			fmt.Printf("User Details:\n")
 			fmt.Printf("  Username:     %s\n", u.Username)
 			fmt.Printf("  Display Name: %s\n", u.DisplayName)
-			fmt.Printf("  Role:         %s\n", u.Role)
+			fmt.Printf("  Roles:        %s\n", strings.Join(u.Roles, ", "))
 			fmt.Printf("  Enabled:      %t\n", u.Enabled)
 			fmt.Printf("  Created:      %s\n", u.CreatedAt.Format(time.RFC3339))
 			if u.LastLogin != nil {
@@ -808,7 +809,7 @@ var userStatusCmd = &cobra.Command{
 		count := len(resp.Users)
 		adminCount := 0
 		for _, u := range resp.Users {
-			if u.Role == qrdbsdk.RoleNameAdmin {
+			if slices.Contains(u.Roles, qrdbsdk.RoleNameAdmin) {
 				adminCount++
 			}
 		}
@@ -990,7 +991,7 @@ func userUpdate(cfg *Config, printer *Printer, username string, enable bool) {
 			"success":  true,
 			"username": u.Username,
 			"enabled":  u.Enabled,
-			"role":     u.Role,
+			"roles":    u.Roles,
 		}); err != nil {
 			handleError(err)
 		}

@@ -208,7 +208,10 @@ func (r grpcSingleStoreResolver) Resolve(context.Context, string) (qrdbsdk.KVSto
 func newUserGRPCService(t *testing.T) (*Service, *grpcFakeUserClient) {
 	t.Helper()
 	users := newGRPCFakeUserClient()
-	roles := &grpcFakeRoleClient{roles: []*qrdbtransport.Role{{ID: "role-operator", Name: "operator"}}}
+	roles := &grpcFakeRoleClient{roles: []*qrdbtransport.Role{{
+		ID:   qrdbsdk.SystemRoleID("", qrdbsdk.RoleNameOperator),
+		Name: qrdbsdk.RoleNameOperator,
+	}}}
 	xkmsSvc := &xkms.XKMSService{}
 	xkmsSvc.SetUserClients(users, roles)
 	// CreateUser mints an invitation for every account created with an

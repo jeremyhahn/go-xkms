@@ -55,16 +55,15 @@ const (
 // It carries attribution and tenant scope only: authorization is decided by the
 // qrdb RBAC engine through PermissionGate, never by inspecting these fields.
 type AuthenticatedUser struct {
-	UserID      string
-	Username    string
-	Email       string
-	TenantID    string
-	Roles       []string
-	Groups      []string
-	Permissions []string
-	SessionID   string
-	IssuedAt    time.Time
-	ExpiresAt   time.Time
+	UserID    string
+	Username  string
+	Email     string
+	TenantID  string
+	Roles     []string
+	Groups    []string
+	SessionID string
+	IssuedAt  time.Time
+	ExpiresAt time.Time
 }
 
 // identity converts the authenticated user into the canonical qrdb-shaped
@@ -134,16 +133,15 @@ func (am *AuthMiddleware) Authenticate(next http.Handler) http.Handler {
 		}
 
 		user := &AuthenticatedUser{
-			UserID:      claims.UserID,
-			Username:    claims.Username,
-			Email:       claims.Email,
-			TenantID:    claims.TenantID,
-			Roles:       claims.Roles,
-			Groups:      claims.Groups,
-			Permissions: claims.Permissions,
-			SessionID:   claims.SessionID,
-			IssuedAt:    claims.IssuedAt,
-			ExpiresAt:   claims.ExpiresAt,
+			UserID:    claims.UserID,
+			Username:  claims.Username,
+			Email:     claims.Email,
+			TenantID:  claims.TenantID,
+			Roles:     claims.Roles,
+			Groups:    claims.Groups,
+			SessionID: claims.SessionID,
+			IssuedAt:  claims.IssuedAt,
+			ExpiresAt: claims.ExpiresAt,
 		}
 
 		next.ServeHTTP(w, r.WithContext(withUser(r.Context(), user)))

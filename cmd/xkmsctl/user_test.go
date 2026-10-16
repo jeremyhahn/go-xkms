@@ -213,7 +213,7 @@ func TestUserRegisterCmd_ConnectError(t *testing.T) {
 
 func TestUserRegisterCmd_CustomRolePassesThrough(t *testing.T) {
 	mock := &mockUserClient{
-		listUsersResp: &transport.ListUsersResponse{Users: []transport.UserInfo{{Username: "existing", Role: qrdbsdk.RoleNameAdmin}}},
+		listUsersResp: &transport.ListUsersResponse{Users: []transport.UserInfo{{Username: "existing", Roles: []string{qrdbsdk.RoleNameAdmin}}}},
 	}
 	withGlobalConfig(t, newUserTestConfig("text", mock))
 
@@ -234,7 +234,7 @@ func TestUserRegisterCmd_CustomRolePassesThrough(t *testing.T) {
 
 func TestUserRegisterCmd_RoleRefusedByServer(t *testing.T) {
 	mock := &mockUserClient{
-		listUsersResp: &transport.ListUsersResponse{Users: []transport.UserInfo{{Username: "existing", Role: qrdbsdk.RoleNameAdmin}}},
+		listUsersResp: &transport.ListUsersResponse{Users: []transport.UserInfo{{Username: "existing", Roles: []string{qrdbsdk.RoleNameAdmin}}}},
 		createUserErr: errors.New("unknown role"),
 	}
 	withGlobalConfig(t, newUserTestConfig("text", mock))
@@ -291,7 +291,7 @@ func TestUserRegisterCmd_FirstUserCreatesInvitedAccount(t *testing.T) {
 
 func TestUserRegisterCmd_CreateUserError(t *testing.T) {
 	mock := &mockUserClient{
-		listUsersResp: &transport.ListUsersResponse{Users: []transport.UserInfo{{Username: "existing", Role: "admin"}}},
+		listUsersResp: &transport.ListUsersResponse{Users: []transport.UserInfo{{Username: "existing", Roles: []string{"admin"}}}},
 		createUserErr: errors.New("username exists"),
 	}
 	withGlobalConfig(t, newUserTestConfig("json", mock))
@@ -308,7 +308,7 @@ func TestUserRegisterCmd_CreateUserError(t *testing.T) {
 // asked for, and that JSON output reports the pending account.
 func TestUserRegisterCmd_RequestedRoleJSON(t *testing.T) {
 	mock := &mockUserClient{
-		listUsersResp: &transport.ListUsersResponse{Users: []transport.UserInfo{{Username: "existing", Role: "admin"}}},
+		listUsersResp: &transport.ListUsersResponse{Users: []transport.UserInfo{{Username: "existing", Roles: []string{"admin"}}}},
 	}
 	withGlobalConfig(t, newUserTestConfig("json", mock))
 
@@ -445,8 +445,8 @@ func TestUserListCmd_TextWithUsers(t *testing.T) {
 	last := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
 	mock := &mockUserClient{listUsersResp: &transport.ListUsersResponse{
 		Users: []transport.UserInfo{
-			{Username: "alice", DisplayName: "Alice", Role: "admin", Enabled: true, CreatedAt: last, LastLogin: &last},
-			{Username: "bob", DisplayName: "Bob", Role: "user", Enabled: false, CreatedAt: last},
+			{Username: "alice", DisplayName: "Alice", Roles: []string{"admin"}, Enabled: true, CreatedAt: last, LastLogin: &last},
+			{Username: "bob", DisplayName: "Bob", Roles: []string{"user"}, Enabled: false, CreatedAt: last},
 		},
 	}}
 	withGlobalConfig(t, newUserTestConfig("text", mock))
@@ -466,7 +466,7 @@ func TestUserListCmd_JSONWithUsers(t *testing.T) {
 	last := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
 	mock := &mockUserClient{listUsersResp: &transport.ListUsersResponse{
 		Users: []transport.UserInfo{
-			{Username: "alice", DisplayName: "Alice", Role: "admin", Enabled: true, CreatedAt: last, LastLogin: &last},
+			{Username: "alice", DisplayName: "Alice", Roles: []string{"admin"}, Enabled: true, CreatedAt: last, LastLogin: &last},
 		},
 	}}
 	withGlobalConfig(t, newUserTestConfig("json", mock))
@@ -508,7 +508,7 @@ func TestUserGetCmd_TextWithCredentials(t *testing.T) {
 	last := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
 	mock := &mockUserClient{
 		getUserResp: &transport.GetUserResponse{User: transport.UserInfo{
-			Username: "alice", DisplayName: "Alice", Role: "admin", Enabled: true, CreatedAt: last, LastLogin: &last,
+			Username: "alice", DisplayName: "Alice", Roles: []string{"admin"}, Enabled: true, CreatedAt: last, LastLogin: &last,
 		}},
 		listCredsResp: &transport.ListUserCredentialsResponse{
 			Credentials: []transport.CredentialInfo{{ID: "cred-1", DisplayName: "YubiKey"}},
@@ -706,7 +706,7 @@ func TestUserStatusCmd_NotConfiguredText(t *testing.T) {
 
 func TestUserStatusCmd_ConfiguredText(t *testing.T) {
 	mock := &mockUserClient{listUsersResp: &transport.ListUsersResponse{
-		Users: []transport.UserInfo{{Username: "alice", Role: "admin"}, {Username: "bob", Role: "user"}},
+		Users: []transport.UserInfo{{Username: "alice", Roles: []string{"admin"}}, {Username: "bob", Roles: []string{"user"}}},
 	}}
 	withGlobalConfig(t, newUserTestConfig("text", mock))
 	out := captureStdout(t, func() {
@@ -733,7 +733,7 @@ func TestUserStatusCmd_JSONNotConfigured(t *testing.T) {
 
 func TestUserStatusCmd_JSONConfigured(t *testing.T) {
 	mock := &mockUserClient{listUsersResp: &transport.ListUsersResponse{
-		Users: []transport.UserInfo{{Username: "alice", Role: "admin"}},
+		Users: []transport.UserInfo{{Username: "alice", Roles: []string{"admin"}}},
 	}}
 	withGlobalConfig(t, newUserTestConfig("json", mock))
 	out := captureStdout(t, func() {
@@ -894,10 +894,10 @@ func TestUserListCmd_JSONCarriesEmail(t *testing.T) {
 	created := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
 	mock := &mockUserClient{listUsersResp: &transport.ListUsersResponse{
 		Users: []transport.UserInfo{
-			{Username: "alice", Email: "alice@example.com", DisplayName: "Alice", Role: "admin", Enabled: true, CreatedAt: created},
+			{Username: "alice", Email: "alice@example.com", DisplayName: "Alice", Roles: []string{"admin"}, Enabled: true, CreatedAt: created},
 			// A certificate-authenticated principal legitimately has none; a
 			// script must be able to tell the two apart.
-			{Username: "root", Email: "", DisplayName: "Root", Role: "admin", Enabled: true, CreatedAt: created},
+			{Username: "root", Email: "", DisplayName: "Root", Roles: []string{"admin"}, Enabled: true, CreatedAt: created},
 		},
 	}}
 	withGlobalConfig(t, newUserTestConfig("json", mock))

@@ -16,6 +16,7 @@ package xkms
 import (
 	"context"
 	"encoding/base64"
+	"errors"
 	"log"
 	"time"
 
@@ -27,14 +28,16 @@ import (
 )
 
 // userToTransport projects an embedded-qrdb user onto the xkms-facing
-// UserInfo. The user's first role id is resolved to its role name so callers
-// see xkms role names rather than qrdb role ids.
-func (s *XKMSService) userToTransport(ctx context.Context, u *qrdbtransport.User) transport.UserInfo {
-	role := ""
-	if len(u.RoleIDs) > 0 {
-		if r, err := s.roles.GetRole(ctx, u.RoleIDs[0]); err == nil {
-			role = r.Name
+// UserInfo. Every role id the user holds is resolved to its role name, in
+// stored order, so callers see role names rather than qrdb role ids.
+func (s *XKMSService) userToTransport(ctx context.Context, u *qrdbtransport.User) (transport.UserInfo, error) {
+	var roles []string
+	for _, id := range u.RoleIDs {
+		r, err := s.roles.GetRole(ctx, id)
+		if err != nil {
+			return transport.UserInfo{}, &ErrUserOperation{Operation: "resolve role", Err: err}
 		}
+		roles = append(roles, r.Name)
 	}
 	return transport.UserInfo{
 		ID:       u.ID,
@@ -45,28 +48,37 @@ func (s *XKMSService) userToTransport(ctx context.Context, u *qrdbtransport.User
 		// empty display name for a user that had one (Codex, go-xkms #190).
 		Email:       u.Email,
 		DisplayName: u.Name,
-		Role:        role,
+		Roles:       roles,
 		// qrdb v0.20: Lifecycle is the only account state; only active is enabled.
 		Enabled: u.Lifecycle == string(qrdbsdk.LifecycleActive),
-	}
+	}, nil
 }
 
-// roleNameToID resolves an xkms role name to its embedded-qrdb role id. An
-// empty name resolves to an empty id (no role assignment).
-func (s *XKMSService) roleNameToID(ctx context.Context, name string) (string, error) {
+// roleNameToID resolves a role name to its qrdb role id in tenantID (the
+// context tenant when empty). A built-in role's id is deterministic
+// (qrdbsdk.SystemRoleID); a custom role is looked up by name. An empty name
+// resolves to an empty id (no role assignment).
+func (s *XKMSService) roleNameToID(ctx context.Context, tenantID, name string) (string, error) {
 	if name == "" {
 		return "", nil
 	}
-	resp, err := s.roles.ListRoles(ctx, &qrdbtransport.ListRolesRequest{})
-	if err != nil {
-		return "", &ErrUserOperation{Operation: "resolve role", Err: err}
-	}
-	for _, r := range resp.Roles {
-		if r.Name == name {
-			return r.ID, nil
+	if tenantID == "" {
+		if fromCtx, ok := qrdbsdk.TenantFromContext(ctx); ok {
+			tenantID = fromCtx
 		}
 	}
-	return "", &ErrUserOperation{Operation: "resolve role", Err: &ErrUnknownRole{Role: name}}
+	if qrdbsdk.IsSystemRoleName(name) {
+		return qrdbsdk.SystemRoleID(tenantID, name), nil
+	}
+	r, err := s.roles.GetRoleByName(ctx, &qrdbtransport.GetRoleByNameRequest{TenantID: tenantID, Name: name})
+	if err != nil {
+		var notFound *qrdbsdk.RoleNotFoundError
+		if errors.As(err, &notFound) {
+			return "", &ErrUserOperation{Operation: "resolve role", Err: &ErrUnknownRole{Role: name}}
+		}
+		return "", &ErrUserOperation{Operation: "resolve role", Err: err}
+	}
+	return r.ID, nil
 }
 
 // CreateUser creates a new xkms user backed by the embedded qrdb node.
@@ -127,7 +139,7 @@ func (s *XKMSService) CreateUser(ctx context.Context, req *transport.CreateUserR
 	if !req.WithoutEmailLoginKey && s.inviteStore == nil {
 		return nil, ErrNotConfigured
 	}
-	roleID, err := s.roleNameToID(ctx, req.Role)
+	roleID, err := s.roleNameToID(ctx, req.TenantID, req.Role)
 	if err != nil {
 		return nil, err
 	}
@@ -157,7 +169,12 @@ func (s *XKMSService) CreateUser(ctx context.Context, req *transport.CreateUserR
 	// so the response reflects what the store actually holds. Assigning the
 	// request value back masked the fact that Name was never read on the way
 	// out — create looked right while GetUser and ListUsers returned nothing.
-	resp := &transport.GetUserResponse{User: s.userToTransport(ctx, u)}
+	info, err := s.userToTransport(ctx, u)
+	if err != nil {
+		s.rollbackCreatedUser(ctx, u.ID)
+		return nil, err
+	}
+	resp := &transport.GetUserResponse{User: info}
 	if req.WithoutEmailLoginKey {
 		return resp, nil
 	}
@@ -171,16 +188,21 @@ func (s *XKMSService) CreateUser(ctx context.Context, req *transport.CreateUserR
 	invite, err := s.createInvite(ctx, u.TenantID, u.ID, time.Duration(req.InviteTTLSeconds)*time.Second)
 	if err != nil {
 		// A user this build cannot activate is worse than no user: roll it
-		// back rather than return an account stuck pending forever. The
-		// rollback is best-effort — the caller is already being told create
-		// failed, and a cleanup failure must not replace the reason it did.
-		if delErr := s.users.DeleteUser(ctx, u.ID); delErr != nil {
-			log.Printf("xkms: rollback of user %d after invite mint failure failed: %v", u.ID, delErr)
-		}
+		// back rather than return an account stuck pending forever.
+		s.rollbackCreatedUser(ctx, u.ID)
 		return nil, err
 	}
 	resp.Invite = invite
 	return resp, nil
+}
+
+// rollbackCreatedUser deletes a user CreateUser has just created when a later
+// step of the create fails. It is best-effort: the caller is already being
+// told create failed, and a cleanup failure must not replace the reason it did.
+func (s *XKMSService) rollbackCreatedUser(ctx context.Context, id uint64) {
+	if err := s.users.DeleteUser(ctx, id); err != nil {
+		log.Printf("xkms: rollback of user %d after a failed create failed: %v", id, err)
+	}
 }
 
 // ListUsers returns all xkms users.
@@ -194,7 +216,9 @@ func (s *XKMSService) ListUsers(ctx context.Context, opts ...transport.ListOptio
 	}
 	infos := make([]transport.UserInfo, len(resp.Users))
 	for i, u := range resp.Users {
-		infos[i] = s.userToTransport(ctx, u)
+		if infos[i], err = s.userToTransport(ctx, u); err != nil {
+			return nil, err
+		}
 	}
 	return &transport.ListUsersResponse{Users: infos}, nil
 }
@@ -208,7 +232,11 @@ func (s *XKMSService) GetUser(ctx context.Context, username string) (*transport.
 	if err != nil {
 		return nil, &ErrUserOperation{Operation: "get user", Err: err}
 	}
-	return &transport.GetUserResponse{User: s.userToTransport(ctx, u)}, nil
+	info, err := s.userToTransport(ctx, u)
+	if err != nil {
+		return nil, err
+	}
+	return &transport.GetUserResponse{User: info}, nil
 }
 
 // DeleteUser removes an xkms user.

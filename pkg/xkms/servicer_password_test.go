@@ -6,6 +6,7 @@ import (
 	"testing"
 
 	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
+	qrdbtransport "github.com/jeremyhahn/go-qrdb/sdk/go/transport"
 	"github.com/jeremyhahn/go-xkms/pkg/api/transport"
 	"github.com/jeremyhahn/go-xkms/pkg/auth"
 	"github.com/jeremyhahn/go-xkms/pkg/seal"
@@ -1288,7 +1289,12 @@ func TestCheckSharedPasswordOwnership_NoRoleClientDenied(t *testing.T) {
 // that cannot answer fails the request closed with the typed resolution error
 // rather than granting or silently refusing.
 func TestCheckSharedPasswordOwnership_RoleResolutionFailure(t *testing.T) {
-	svc, _, _ := setupServiceWithUserClients(t) // mockRoleClient answers GetRoleByName with (nil, nil)
+	svc, _, roles := setupServiceWithUserClients(t)
+	// A store that answers with neither a role nor an error cannot resolve
+	// Admin@tenant.
+	roles.getRoleByName = func(_ context.Context, _ *qrdbtransport.GetRoleByNameRequest) (*qrdbtransport.Role, error) {
+		return nil, nil
+	}
 
 	err := svc.checkSharedPasswordOwnership(sharedPasswordCtx("bob", "some-role-id"), alicesSharedPassword())
 	var resErr *auth.RoleResolutionError

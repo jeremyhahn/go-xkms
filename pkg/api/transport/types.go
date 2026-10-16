@@ -823,12 +823,13 @@ type UserInfo struct {
 	// Email is the canonical tenant-unique login key. It is projected on every
 	// read: without it a caller can create a user with a login key and never
 	// see it again, which is how the display name went missing too.
-	Email       string     `json:"email,omitempty"`
-	DisplayName string     `json:"display_name,omitempty"`
-	Role        string     `json:"role,omitempty"`
-	Enabled     bool       `json:"enabled"`
-	CreatedAt   time.Time  `json:"created_at"`
-	LastLogin   *time.Time `json:"last_login,omitempty"`
+	Email       string `json:"email,omitempty"`
+	DisplayName string `json:"display_name,omitempty"`
+	// Roles names every role the user holds, in the order qrdb stores them.
+	Roles     []string   `json:"roles,omitempty"`
+	Enabled   bool       `json:"enabled"`
+	CreatedAt time.Time  `json:"created_at"`
+	LastLogin *time.Time `json:"last_login,omitempty"`
 }
 
 // CredentialInfo contains information about a user credential.

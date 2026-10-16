@@ -22,6 +22,8 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
+
 	"github.com/jeremyhahn/go-xkms/pkg/auth"
 )
 
@@ -295,6 +297,7 @@ func TestErrorMessages(t *testing.T) {
 	assert.Contains(t, (&ParseError{File: "a.go", Err: errors.New("boom")}).Error(), "parse a.go: boom")
 	assert.Contains(t, (&RawLiteralError{Pos: "a.go:1", Literal: `"keys"`}).Error(), `raw authorization literal "keys"`)
 	assert.Contains(t, (&UnknownConstantError{Pos: "a.go:1", Name: "Nope"}).Error(), `unknown pkg/auth constant "Nope"`)
+	assert.Contains(t, (&UnknownPermissionError{Pos: "a.go:1", Name: "Nope"}).Error(), `unknown qrdbsdk permission "Nope"`)
 	assert.Contains(t, (&VarNotFoundError{Dir: "pkg/x", Name: "table"}).Error(), `pkg/x: variable "table" not found`)
 	assert.Contains(t, (&MapEntryError{Pos: "a.go:1", Msg: "boom"}).Error(), "a.go:1: boom")
 	assert.Contains(t, (&LabelArgError{Pos: "a.go:1", Index: 2}).Error(), "label argument index 2")
@@ -331,6 +334,82 @@ func Routes() {
 		"GET /api/v1/backends": auth.ResourceBackends + ":" + auth.ActionList,
 		"POST /api/v1/keys":    auth.ResourceKeys + ":" + auth.ActionCreate,
 	}, got)
+}
+
+// permissionSeams mirrors the ACME admin WrapPermission helper: one whole
+// qrdbsdk permission constant, then the handler that labels the site.
+var permissionSeams = []Seam{
+	{Method: "Wrap", Args: 3, ResourceArg: 0, ActionArg: 1, LabelArgs: []int{2}},
+	{Method: "WrapPermission", Args: 2, ResourceArg: 0, Permission: true, LabelArgs: []int{1}},
+}
+
+func TestScan_PermissionSeamSplitsQRDBConstant(t *testing.T) {
+	dir := writePkg(t, map[string]string{
+		"routes.go": `package admin
+
+func RegisterRoutes() {
+	r.Handle("", gate.WrapPermission(qrdbsdk.PermissionTenantsListCross, h.ListTenants))
+	r.Handle("/{id}", gate.Wrap(auth.ResourceCA, auth.ActionRead, h.GetCA))
+}
+`,
+	})
+
+	sites, err := Scan(dir, permissionSeams)
+	require.NoError(t, err)
+
+	got := map[string]string{}
+	for _, s := range sites {
+		got[s.Key] = s.Pair()
+	}
+	assert.Equal(t, map[string]string{
+		"ListTenants": qrdbsdk.PermissionTenantsListCross.String(),
+		"GetCA":       auth.ResourceCA + ":" + auth.ActionRead,
+	}, got)
+}
+
+func TestScan_PermissionSeamRejectsUnvouchedArgument(t *testing.T) {
+	for name, tc := range map[string]struct {
+		arg     string
+		wantRaw bool
+	}{
+		"raw literal":         {arg: `"tenants:list:cross"`, wantRaw: true},
+		"unlisted constant":   {arg: "qrdbsdk.PermissionKeysSign"},
+		"other package":       {arg: "auth.ResourceTenants"},
+		"non-selector":        {arg: "perm"},
+		"computed permission": {arg: "qrdbsdk.Permission(name)"},
+	} {
+		t.Run(name, func(t *testing.T) {
+			dir := writePkg(t, map[string]string{"routes.go": `package admin
+
+func RegisterRoutes() {
+	r.Handle("", gate.WrapPermission(` + tc.arg + `, h.ListTenants))
+}
+`})
+
+			sites, err := Scan(dir, permissionSeams)
+			require.Error(t, err, "a permission seam must only accept a listed qrdbsdk constant")
+			assert.Nil(t, sites)
+
+			if tc.wantRaw {
+				var rawErr *RawLiteralError
+				require.True(t, errors.As(err, &rawErr), "want *RawLiteralError, got %T", err)
+				return
+			}
+			var permErr *UnknownPermissionError
+			require.True(t, errors.As(err, &permErr), "want *UnknownPermissionError, got %T", err)
+			assert.Contains(t, permErr.Pos, "routes.go:")
+		})
+	}
+}
+
+func TestPermissions_ResolveToRegisteredQRDBGrants(t *testing.T) {
+	registered := map[qrdbsdk.Permission]bool{}
+	for _, p := range qrdbsdk.AllPermissions() {
+		registered[p] = true
+	}
+	for name, p := range Permissions() {
+		assert.True(t, registered[p], "%s (%s) must be a registered qrdb permission", name, p)
+	}
 }
 
 func TestScan_NonBareSeamIgnoresIdentifierCall(t *testing.T) {

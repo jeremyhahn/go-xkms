@@ -40,13 +40,13 @@ import (
 func (s *mockKeystoreServer) CreateUser(_ context.Context, req *pb.CreateUserRequest) (*pb.UserResponse, error) {
 	return &pb.UserResponse{User: &pb.UserInfo{
 		Username: req.GetUsername(), Email: req.GetEmail(), DisplayName: req.GetDisplayName(),
-		Role: req.GetRole(), Enabled: true, Id: 1,
+		Roles: []string{req.GetRole()}, Enabled: true, Id: 1,
 	}}, nil
 }
 
 func (s *mockKeystoreServer) ListUsers(_ context.Context, _ *pb.ListUsersRequest) (*pb.ListUsersResponse, error) {
 	return &pb.ListUsersResponse{Users: []*pb.UserInfo{
-		{Username: "alice", Email: "alice@example.com", Role: "admin", Enabled: true},
+		{Username: "alice", Email: "alice@example.com", Roles: []string{"admin"}, Enabled: true},
 	}}, nil
 }
 
@@ -316,7 +316,7 @@ func TestCreateUser_Connected(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, "bob", resp.User.Username)
 	assert.Equal(t, "bob@example.com", resp.User.Email)
-	assert.Equal(t, "operator", resp.User.Role)
+	assert.Equal(t, []string{"operator"}, resp.User.Roles)
 }
 
 func TestListUsers_Connected(t *testing.T) {
