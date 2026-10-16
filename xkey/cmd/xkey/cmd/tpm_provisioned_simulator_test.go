@@ -63,9 +63,9 @@ type provisionedSimulator struct {
 
 	// The PCR overrides the last openTPMForProvisioningWithPCROverrides
 	// call asked for.
-	pcrBank     string
-	goldenPCRs  []uint
-	platformPCR int
+	pcrBank      string
+	goldenPCRs   []uint
+	platformPCRs []uint
 }
 
 // withProvisionedSimulatorTPM opens the in-process simulator, provisions
@@ -88,7 +88,7 @@ func withProvisionedSimulatorTPMWithoutEKCert(t *testing.T) *provisionedSimulato
 	t.Helper()
 	withSimulatorTPMCfg(t)
 
-	tpm, err := openConfiguredTPMForProvisioningWithPCROverrides("sha256", []uint{0, 7}, 0)
+	tpm, err := openConfiguredTPMForProvisioningWithPCROverrides("sha256", []uint{0, 7}, nil)
 	require.NoError(t, err)
 	return shareProvisionedSimulatorTPM(t, tpm, ekCertHandleRSA)
 }
@@ -145,8 +145,8 @@ func shareProvisionedSimulatorTPM(t *testing.T, tpm xkms.TrustedPlatformModule, 
 		return shared, nil
 	}
 	openTPMForEKRestore = openTPMForEKCert
-	openTPMForProvisioningWithPCROverrides = func(pcrBank string, goldenPCRs []uint, platformPCR int) (xkms.TrustedPlatformModule, error) {
-		sim.pcrBank, sim.goldenPCRs, sim.platformPCR = pcrBank, goldenPCRs, platformPCR
+	openTPMForProvisioningWithPCROverrides = func(pcrBank string, goldenPCRs, platformPCRs []uint) (xkms.TrustedPlatformModule, error) {
+		sim.pcrBank, sim.goldenPCRs, sim.platformPCRs = pcrBank, goldenPCRs, platformPCRs
 		return shared, nil
 	}
 	return sim
@@ -1325,7 +1325,7 @@ func TestRunTPMInstall_ProvisionedSimulator(t *testing.T) {
 	setVar(t, &installHierarchyAuth, "")
 	setVar(t, &installPCRBank, "sha256")
 	setVar(t, &installGoldenPCRs, "0,7")
-	setVar(t, &installPlatformPCR, 0)
+	setVar(t, &installPlatformPCRs, "")
 
 	install := func(t *testing.T) ProvisionResult {
 		t.Helper()
@@ -1366,7 +1366,7 @@ func TestRunTPMProvision_FreshSimulator(t *testing.T) {
 	setVar(t, &provisionHierarchyAuth, "")
 	setVar(t, &provisionPCRBank, "sha256")
 	setVar(t, &provisionGoldenPCRs, "0,7")
-	setVar(t, &provisionPlatformPCR, 0)
+	setVar(t, &provisionPlatformPCRs, "")
 
 	t.Run("warns and stops without confirm", func(t *testing.T) {
 		setVar(t, &provisionConfirm, false)
@@ -1406,7 +1406,7 @@ func TestRunTPMInstall_UsesTheSuppliedHierarchyAuth(t *testing.T) {
 			setVar(t, &installHierarchyAuth, tt.flagAuth)
 			setVar(t, &installPCRBank, "sha256")
 			setVar(t, &installGoldenPCRs, "0,7")
-			setVar(t, &installPlatformPCR, 0)
+			setVar(t, &installPlatformPCRs, "")
 
 			stdout, _, err := runTPMSubcommand(runTPMInstall)
 			require.ErrorIs(t, err, ErrProvisioningFailed)
@@ -1437,17 +1437,17 @@ func TestRunTPMProvision_TakesOwnershipWithTheSuppliedHierarchyAuth(t *testing.T
 				c.outputFormat = "text"
 				c.hierarchyAuth = tt.configAuth
 			})
-			tpm, err := openConfiguredTPMForProvisioningWithPCROverrides("sha256", []uint{0, 7}, 0)
+			tpm, err := openConfiguredTPMForProvisioningWithPCROverrides("sha256", []uint{0, 7}, nil)
 			require.NoError(t, err)
 			t.Cleanup(func() { assert.NoError(t, tpm.Close()) })
-			setVar(t, &openTPMForProvisioningWithPCROverrides, func(string, []uint, int) (xkms.TrustedPlatformModule, error) {
+			setVar(t, &openTPMForProvisioningWithPCROverrides, func(string, []uint, []uint) (xkms.TrustedPlatformModule, error) {
 				return sharedTPM{tpm}, nil
 			})
 			setVar(t, &provisionConfirm, true)
 			setVar(t, &provisionHierarchyAuth, tt.flagAuth)
 			setVar(t, &provisionPCRBank, "sha256")
 			setVar(t, &provisionGoldenPCRs, "0,7")
-			setVar(t, &provisionPlatformPCR, 0)
+			setVar(t, &provisionPlatformPCRs, "")
 			pipeStdin(t, "")
 
 			stdout, _, err := runTPMSubcommand(runTPMProvision)

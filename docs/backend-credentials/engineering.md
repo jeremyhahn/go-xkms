@@ -63,7 +63,7 @@ The service is installed with `XKMSService.SetCredentialService`
 
 | Key | Values | Default | Source |
 |---|---|---|---|
-| `credentials.seal_strategy` | `manual`, `barrier`, `tpm2`, `pkcs11`, `awskms`, `gcpkms`, `azurekv`, `vault`, `passphrase` | `manual` | `pkg/config/config.go:57`, `:271-282` |
+| `credentials.seal_strategy` | `manual`, `barrier`, `tpm2`, `pkcs11`, `awskms`, `gcpkms`, `azurekv`, `vault`, `passphrase` | `manual` | `pkg/config/config.go:58`, `:271-282` |
 
 There is no other key under `credentials:`. For what `xkmsd` does with each
 value, see [`architecture.md`](architecture.md) §"What `xkmsd` actually

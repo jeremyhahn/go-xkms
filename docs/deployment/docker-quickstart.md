@@ -72,7 +72,7 @@ backends:
 EOF
 ```
 
-The `datastore` keys are `DatastoreConfig` (`pkg/config/config.go:686`);
+The `datastore` keys are `DatastoreConfig` (`pkg/config/config.go:687`);
 `datastore.path` is required in standalone mode for every engine.
 
 ### 3. Run the Server

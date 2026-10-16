@@ -46,7 +46,7 @@ credential service (`initializePlatformStore`,
 | `seal_strategy` | `xkmsd` behaviour | Source |
 |---|---|---|
 | `manual`, `barrier` | No platform store is built. | `platform_store.go:63-66` |
-| `barrier` | Refused at config validation unless `datastore.mode` is `standalone` (or unset) and `barrier.enabled` is true. | `pkg/config/config.go:1588-1592`, `CredentialsBarrierStrategySupported` `config.go:291` |
+| `barrier` | Refused at config validation unless `datastore.mode` is `standalone` (or unset) and `barrier.enabled` is true. | `pkg/config/config.go:1590-1594`, `CredentialsBarrierStrategySupported` `config.go:291` |
 | `tpm2` | The value is sealed under the TPM's Platform SRK and bound to the built-in `platform` PCR policy. Startup fails if the Platform SRK is not enrolled. | `buildTPM2PlatformSealer`, `platform_store.go:146-157` |
 | `awskms`, `gcpkms`, `azurekv` | Needs a `backends.<name>` section and the matching build tag. Without the tag, startup fails with `ErrNotCompiledIn`. | `platform_store_awskms.go:39-45`, `platform_store_gcpkms.go:33-39`, `platform_store_azurekv.go:31-37`, `*_stub.go:21-22` |
 | `pkcs11`, `vault` | **Startup fails** with `ErrPlatformStoreStrategyUnavailable`. Sealing the credential would need the credential it seals (a cycle). | `platform_store.go:107-121` |
@@ -121,7 +121,7 @@ Reading the strategy has no scope check (`servicer_credentials.go:59-69`).
   (`cmd/xkmsctl/credential.go:64-66`).
 - **Strategy-specific config sub-sections** (`credentials.tpm2.*`,
   `credentials.awskms.*`). `CredentialsConfig` has only `seal_strategy`
-  (`pkg/config/config.go:271-282`). The sealers reuse the backend's own
+  (`pkg/config/config.go:272-283`). The sealers reuse the backend's own
   config (`backends.tpm2`, `backends.awskms`, ...).
 - **A random passphrase stored next to the data** for `passphrase`. It was
   removed because it does not seal anything (`platform_store.go:91-100`).

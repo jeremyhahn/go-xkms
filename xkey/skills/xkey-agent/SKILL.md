@@ -365,7 +365,7 @@ xkey tpm provision --confirm                         # clears the TPM, the manuf
 xkey tpm clear --hierarchy lockout --yes
 ```
 
-TPM group flags are `--device`, `--simulator`, `--hierarchy-auth` and `-o json`. Named TPM policies bind keys and sealed data to a PCR state the TPM enforces; the built-in `platform` policy (PCR 16 or the object's password) is the default. With `--xkmsd-url` (or `XKMSD_URL`) they run on the server, otherwise on this host's TPM:
+TPM group flags are `--device`, `--simulator`, `--hierarchy-auth` and `-o json`. Named TPM policies bind keys and sealed data to a PCR state the TPM enforces; the built-in `platform` policy (the sealing PCR set, default 7 and 11, or the object's password) is the default. With `--xkmsd-url` (or `XKMSD_URL`) they run on the server, otherwise on this host's TPM:
 
 ```bash
 xkey tpm policy create <name> --pcrs 0,7 --bank sha256   # values are read from the TPM

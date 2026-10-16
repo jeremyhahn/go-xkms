@@ -54,7 +54,6 @@ func setupTPM2WithCapture(t *testing.T) (tpm2lib.TrustedPlatformModule, *TPMCapt
 		Device:          "", // Not using device, using custom transport
 		UseSimulator:    false,
 		Hash:            "SHA-256",
-		PlatformPCR:     16,
 		PlatformPCRBank: "sha256",
 		EK: &tpm2lib.EKConfig{
 			CertHandle:    0x01C00002,

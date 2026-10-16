@@ -200,7 +200,7 @@ through `pkg/acme/audit` (xkmsd opens it with `audit.NewFileAuditLogger`,
 | `format` | `json`, the only accepted value (`ErrACMEAuditUnsupportedFormat`, `:59`) |
 
 Turning the trail off while ACME is enabled is a compliance gap
-(`pkg/config/config.go:1424-1427`): xkmsd refuses to start
+(`pkg/config/config.go:1426-1429`): xkmsd refuses to start
 (`cmd/xkmsd/main.go:162-167`) and refuses a reload into it
 (`main.go:350-352`). The read side is `GET /admin/audit`
 ([api.md](api.md#acme-audit-trail)); its queries are bounded by

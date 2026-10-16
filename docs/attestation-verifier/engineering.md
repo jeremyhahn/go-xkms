@@ -139,7 +139,7 @@ distinguished by the wrapped `errs.Detail`'s text, not by a second sentinel
 
 ## Configuration
 
-Top-level `attestation:` key on the xkmsd `Config` (`pkg/config/config.go:64`,
+Top-level `attestation:` key on the xkmsd `Config` (`pkg/config/config.go:65`,
 `yaml:"attestation,omitempty"`). `nil` means attestation-gated CSR signing
 fails closed for every format (`config.go:61-63`).
 

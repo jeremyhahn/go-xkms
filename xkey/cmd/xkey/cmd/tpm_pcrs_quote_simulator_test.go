@@ -127,7 +127,7 @@ func withFaultTPM(t *testing.T, sim *provisionedSimulator) *faultTPM {
 	t.Helper()
 	f := &faultTPM{sharedTPM: sharedTPM{sim.tpm}}
 	setVar(t, &openTPM, func() (xkms.TrustedPlatformModule, error) { return f, nil })
-	setVar(t, &openTPMForProvisioningWithPCROverrides, func(string, []uint, int) (xkms.TrustedPlatformModule, error) {
+	setVar(t, &openTPMForProvisioningWithPCROverrides, func(string, []uint, []uint) (xkms.TrustedPlatformModule, error) {
 		return f, nil
 	})
 	return f

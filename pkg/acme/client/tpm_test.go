@@ -724,10 +724,6 @@ func (m *mockXKMSTPM) IsFIPS140_2() (bool, error) {
 	return false, nil
 }
 
-func (m *mockXKMSTPM) IsPlatformPCRExtended() (bool, error) {
-	return false, nil
-}
-
 func (m *mockXKMSTPM) ExtendPCR(pcrIndex int, hashAlg string, data []byte) error {
 	return nil
 }

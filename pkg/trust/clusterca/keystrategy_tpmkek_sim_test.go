@@ -151,7 +151,6 @@ func simulatorTPMConfig(t testing.TB) *pkgtpm2.Config {
 	return &pkgtpm2.Config{
 		UseSimulator:                 true,
 		Hash:                         crypto.SHA256.String(),
-		PlatformPCR:                  16,
 		PlatformPCRBank:              pkgtpm2.PCRBankSHA256,
 		IdentityProvisioningStrategy: string(pkgtpm2.EnrollmentStrategyIAK),
 		EK: &pkgtpm2.EKConfig{

@@ -22,7 +22,7 @@ when it is embedded with a zero port or no address.
 | HTTP/3 (QUIC) | — | on `rest_port` | — |
 | gRPC | `server.grpc_port` | 9443 | none |
 | MCP | `server.mcp_port` | 8445 | SDK dials `localhost:9444` (`sdk/go/options.go:33`) |
-| Noise | `server.noise_port` (`pkg/config/config.go:320`) | 8447 in `configs/xkmsd-local.yaml:10` | 8445 (`DefaultNoisePort`, `pkg/trust/bootstrap/bootstrap.go:103`) |
+| Noise | `server.noise_port` (`pkg/config/config.go:321`) | 8447 in `configs/xkmsd-local.yaml:10` | 8445 (`DefaultNoisePort`, `pkg/trust/bootstrap/bootstrap.go:103`) |
 | Metrics | `metrics.port` | 9090 | none |
 
 The SDK's MCP default (9444) differs from the shipped `mcp_port` (8445):
@@ -60,7 +60,7 @@ xkmsctl key delete <key-id>
 ## Configuration skeleton
 
 Ports live under `server:` as `*_port` integers, and protocols are switched
-on under `protocols:` (`ServerConfig`, `pkg/config/config.go:309`;
+on under `protocols:` (`ServerConfig`, `pkg/config/config.go:310`;
 `ProtocolsConfig`, `config.go:351`).
 
 ```yaml

@@ -69,7 +69,7 @@ The directory document is built in
 `pkg/acme/server/handlers/directory.go` from the configured `baseRESTURI`. When
 ACME is mounted inside the unified API server, the externally visible directory
 URL is `https://<host>:<rest_port>/api/v1/acme/directory` — that is the form the
-cluster enrollment config uses (`pkg/config/config.go:710`). Setting
+cluster enrollment config uses (`pkg/config/config.go:711`). Setting
 `baseRESTURI` wrong yields doubled prefixes such as
 `https://host/api/v1/api/v1/acme/new-account`; the code comments this at
 `pkg/acme/server/handlers/service.go:581`. The standalone `TrustedCA` takes

@@ -160,7 +160,7 @@ func TestOpenTPMForProvisioningWithPCROverrides_Simulator_Success(t *testing.T) 
 		c.useSimulator = true
 	})
 
-	tpm, err := openTPMForProvisioningWithPCROverrides("sha256", []uint{0, 1, 7}, 16)
+	tpm, err := openTPMForProvisioningWithPCROverrides("sha256", []uint{0, 1, 7}, []uint{7, 14})
 	if err != nil {
 		t.Fatalf("openTPMForProvisioningWithPCROverrides() error = %v, want nil", err)
 	}
@@ -182,7 +182,7 @@ func TestOpenTPMForProvisioningWithPCROverrides_DeviceNotFound(t *testing.T) {
 		c.device = missing
 	})
 
-	tpm, err := openTPMForProvisioningWithPCROverrides("sha256", nil, 0)
+	tpm, err := openTPMForProvisioningWithPCROverrides("sha256", nil, nil)
 	if err == nil {
 		t.Fatal("openTPMForProvisioningWithPCROverrides() error = nil, want a device-open error")
 	}

@@ -217,7 +217,7 @@ and exposes it through `types.SymmetricKeyProviderWithTracking.GetTracker()`
 | symmetric | `pkg/keyprovider/symmetric/backend.go:97` | `backend.go:1807` |
 | software | `pkg/backend/software/config.go:38` | `software.go:1307` |
 | PKCS#11 | `pkg/backend/pkcs11/config.go:86` | `pkcs11_symmetric.go:1019` |
-| TPM2 | `pkg/backend/tpm2/config.go:97`, `pkg/tpm2/config.go:239` | `pkg/backend/tpm2/backend.go:1261` |
+| TPM2 | `pkg/backend/tpm2/config.go:97`, `pkg/tpm2/config.go:367` | `pkg/backend/tpm2/backend.go:1261` |
 | AWS KMS | `pkg/backend/awskms/config.go:78` | `awskms_symmetric.go:393` |
 | Azure Key Vault | `pkg/backend/azurekv/config.go:76` | `azurekv_symmetric.go:546` |
 | GCP KMS | `pkg/backend/gcpkms/config.go:82` | `gcpkms.go:1655` |

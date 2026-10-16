@@ -13,21 +13,6 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-func TestIsPlatformPCRExtended_AfterProvisioning(t *testing.T) {
-	// The simulator extends PCR 16 during provisioning with the golden measurement
-	_, tpm := createSim(t, false)
-	defer func() { _ = tpm.Close() }()
-
-	tpm2, ok := tpm.(*TPM2)
-	require.True(t, ok)
-
-	extended, err := tpm2.IsPlatformPCRExtended()
-	require.NoError(t, err)
-
-	// Platform PCR 16 should be extended after provisioning
-	assert.True(t, extended)
-}
-
 func TestExtendPCR_EmptyData(t *testing.T) {
 	_, tpm := createSim(t, false)
 	defer func() { _ = tpm.Close() }()
@@ -83,14 +68,17 @@ func TestExtendPCR_SHA256_ValidInput(t *testing.T) {
 	tpm2, ok := tpm.(*TPM2)
 	require.True(t, ok)
 
+	before, err := tpm2.ReadPCRs([]uint{16})
+	require.NoError(t, err)
+
 	// Debug PCR 16 is extendable
-	err := tpm2.ExtendPCR(16, "sha256", []byte("test data"))
+	err = tpm2.ExtendPCR(16, "sha256", []byte("test data"))
 	assert.NoError(t, err)
 
 	// Verify PCR is extended
-	extended, err := tpm2.IsPlatformPCRExtended()
+	after, err := tpm2.ReadPCRs([]uint{16})
 	require.NoError(t, err)
-	assert.True(t, extended)
+	assert.NotEqual(t, before, after)
 }
 
 func TestExtendPCR_SHA384_ValidInput(t *testing.T) {
@@ -138,8 +126,11 @@ func TestExtendPCR_MultipleExtensions(t *testing.T) {
 	tpm2, ok := tpm.(*TPM2)
 	require.True(t, ok)
 
+	before, err := tpm2.ReadPCRs([]uint{16})
+	require.NoError(t, err)
+
 	// Extend PCR multiple times
-	err := tpm2.ExtendPCR(16, "sha256", []byte("data 1"))
+	err = tpm2.ExtendPCR(16, "sha256", []byte("data 1"))
 	require.NoError(t, err)
 
 	err = tpm2.ExtendPCR(16, "sha256", []byte("data 2"))
@@ -149,7 +140,7 @@ func TestExtendPCR_MultipleExtensions(t *testing.T) {
 	require.NoError(t, err)
 
 	// PCR should be extended
-	extended, err := tpm2.IsPlatformPCRExtended()
+	after, err := tpm2.ReadPCRs([]uint{16})
 	require.NoError(t, err)
-	assert.True(t, extended)
+	assert.NotEqual(t, before, after)
 }

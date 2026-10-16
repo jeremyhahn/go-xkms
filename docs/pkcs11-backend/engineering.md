@@ -9,7 +9,7 @@ All symbols below require `-tags pkcs11` and cgo. See
 
 | Type | Where | Purpose |
 |---|---|---|
-| `config.PKCS11Config` | `pkg/config/config.go:1056` | The fields exposed in `xkmsd.yaml` |
+| `config.PKCS11Config` | `pkg/config/config.go:1057` | The fields exposed in `xkmsd.yaml` |
 | `pkcs11.Config` | `pkg/backend/pkcs11/config.go:32` | Full library-level configuration |
 
 `pkg/server/backend_pkcs11.go` maps the first onto the second. Anything not
@@ -37,7 +37,7 @@ type PKCS11Config struct {
 ```
 
 `Enabled: true` with an empty `Library` fails config validation
-(`"PKCS11 library is required"`, `pkg/config/config.go:1536`).
+(`"PKCS11 library is required"`, `pkg/config/config.go:1538`).
 `ListEnabledBackends()` reports `pkcs11`. Environment override:
 `backends.pkcs11.library` resolves under `XKMS_BACKENDS_PKCS11_LIBRARY`
 (the generic `XKMS_<SECTION>_<KEY>` rule — no field-specific override code,

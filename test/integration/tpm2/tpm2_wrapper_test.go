@@ -1132,7 +1132,7 @@ func TestIntegration_TPM2_Config(t *testing.T) {
 		t.Error("IAK config is nil")
 	}
 
-	t.Logf("Config: Hash=%s, PlatformPCR=%d", config.Hash, config.PlatformPCR)
+	t.Logf("Config: Hash=%s, PlatformPCRs=%v", config.Hash, config.PlatformPCRs)
 }
 
 // TestIntegration_TPM2_Transport tests transport access

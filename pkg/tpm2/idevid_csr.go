@@ -405,10 +405,10 @@ func (tpm *TPM2) createProdCaData() ([]byte, uint32, error) {
 		return nil, 0, nil
 	}
 
-	// Use GoldenPCRs from config, or default to PlatformPCR if not configured
+	// Use GoldenPCRs from config, or the platform PCR set if not configured
 	pcrs := tpm.config.GoldenPCRs
 	if len(pcrs) == 0 {
-		pcrs = []uint{tpm.config.PlatformPCR}
+		pcrs = tpm.config.PlatformPCRs
 	}
 
 	// Generate a random nonce for the quote

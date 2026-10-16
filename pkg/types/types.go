@@ -1125,7 +1125,7 @@ type PasswordCacheConfig struct {
 // KeyAttributes contains all configuration parameters for a cryptographic key,
 // including algorithm selection, store configuration, and optional parent keys.
 // TPMPolicyPlatform is the built-in TPM policy every scope has: the platform
-// PCR (tpm2.DefaultPlatformPCR unless configured) OR the object's auth value.
+// PCR set (tpm2.DefaultPlatformPCRs unless configured) OR the object's auth value.
 // It is the policy a TPM key gets when its caller names none, and it cannot
 // be created, updated or deleted.
 const TPMPolicyPlatform = "platform"

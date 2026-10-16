@@ -59,7 +59,7 @@ tpm:
   device: /dev/tpm0
   hash: SHA-384
   entropy: true
-  platform-pcr: 14
+  platform-pcrs: [7, 14]
   platform-pcr-bank: SHA-384
   golden-pcrs: [0, 7, 14]
   ek:
@@ -82,7 +82,7 @@ tpm:
 	assert.Equal(t, "/dev/tpm0", cfg.Device)
 	assert.Equal(t, "SHA-384", cfg.Hash)
 	assert.True(t, cfg.UseEntropy)
-	assert.Equal(t, uint(14), cfg.PlatformPCR)
+	assert.Equal(t, xkms.TPMPCRSet{7, 14}, cfg.PlatformPCRs)
 	assert.Equal(t, "SHA-384", cfg.PlatformPCRBank)
 	assert.Equal(t, []uint{0, 7, 14}, cfg.GoldenPCRs)
 	assert.NotNil(t, cfg.EK)
@@ -119,7 +119,7 @@ tpm:
 
 	// Default fields should be preserved.
 	assert.Equal(t, xkms.DefaultTPMConfig.Device, cfg.Device)
-	assert.Equal(t, xkms.DefaultTPMConfig.PlatformPCR, cfg.PlatformPCR)
+	assert.Equal(t, xkms.DefaultTPMConfig.PlatformPCRs, cfg.PlatformPCRs)
 	assert.Equal(t, xkms.DefaultTPMConfig.PlatformPCRBank, cfg.PlatformPCRBank)
 	assert.NotNil(t, cfg.EK)
 	assert.Equal(t, xkms.DefaultTPMConfig.EK.Handle, cfg.EK.Handle)
@@ -146,6 +146,25 @@ func TestLoadTPMConfig_InvalidYAML(t *testing.T) {
 	assert.Equal(t, xkms.DefaultTPMConfig.Hash, cfg.Hash)
 	assert.NotNil(t, cfg.EK)
 	assert.Equal(t, xkms.DefaultTPMConfig.EK.Handle, cfg.EK.Handle)
+}
+
+// TestLoadTPMConfig_RefusedPlatformPCRs verifies a sealing PCR set holding
+// resettable PCR 16 is refused at parse time and never reaches the TPM
+// config: the loader keeps the default set.
+func TestLoadTPMConfig_RefusedPlatformPCRs(t *testing.T) {
+	tmpDir := t.TempDir()
+	config.SetConfigDir(tmpDir)
+	defer config.ResetConfigDir()
+
+	require.NoError(t, os.WriteFile(
+		filepath.Join(tmpDir, "xkey.yaml"),
+		[]byte("tpm:\n  platform-pcrs: [7, 16]\n"),
+		0600,
+	))
+
+	cfg := loadTPMConfig(testLogger())
+
+	assert.Equal(t, xkms.DefaultPlatformPCRs(), cfg.PlatformPCRs)
 }
 
 // TestLoadTPMConfig_MissingUserConfig verifies that loadTPMConfig returns
@@ -193,7 +212,7 @@ func TestMergeTPMConfig(t *testing.T) {
 
 		assert.Equal(t, defaults.Device, merged.Device)
 		assert.Equal(t, defaults.Hash, merged.Hash)
-		assert.Equal(t, defaults.PlatformPCR, merged.PlatformPCR)
+		assert.Equal(t, defaults.PlatformPCRs, merged.PlatformPCRs)
 		assert.Equal(t, defaults.PlatformPCRBank, merged.PlatformPCRBank)
 		assert.NotNil(t, merged.EK)
 		assert.Equal(t, defaults.EK.Handle, merged.EK.Handle)
@@ -227,13 +246,13 @@ func TestMergeTPMConfig(t *testing.T) {
 		assert.True(t, merged.UseEntropy)
 	})
 
-	t.Run("numeric fields override when non-zero", func(t *testing.T) {
+	t.Run("sealing PCR set overrides when set", func(t *testing.T) {
 		file := xkms.TPMConfig{
-			PlatformPCR: 14,
+			PlatformPCRs: xkms.TPMPCRSet{7, 14},
 		}
 		merged := mergeTPMConfig(defaults, file)
 
-		assert.Equal(t, uint(14), merged.PlatformPCR)
+		assert.Equal(t, xkms.TPMPCRSet{7, 14}, merged.PlatformPCRs)
 	})
 
 	t.Run("slice fields override when non-empty", func(t *testing.T) {

@@ -45,14 +45,14 @@ var (
 	installHierarchyAuth   string
 
 	// PCR override flags for install command
-	installPCRBank     string
-	installGoldenPCRs  string
-	installPlatformPCR int
+	installPCRBank      string
+	installGoldenPCRs   string
+	installPlatformPCRs string
 
 	// PCR override flags for provision command
-	provisionPCRBank     string
-	provisionGoldenPCRs  string
-	provisionPlatformPCR int
+	provisionPCRBank      string
+	provisionGoldenPCRs   string
+	provisionPlatformPCRs string
 )
 
 // tpmInstallCmd represents the tpm install command (safe)
@@ -82,7 +82,7 @@ Examples:
   xkey tpm install --simulator
 
   # Install with custom PCR configuration
-  xkey tpm install --pcr-bank sha256 --golden-pcrs 0,1,2,7 --platform-pcr 16`,
+  xkey tpm install --pcr-bank sha256 --golden-pcrs 0,1,2,7 --platform-pcrs 7,11`,
 	RunE: runTPMInstall,
 }
 
@@ -118,7 +118,7 @@ Examples:
   xkey tpm provision --confirm --auth mypassword
 
   # Provision with custom PCR configuration
-  xkey tpm provision --confirm --pcr-bank sha256 --golden-pcrs 0,1,2,7 --platform-pcr 16`,
+  xkey tpm provision --confirm --pcr-bank sha256 --golden-pcrs 0,1,2,7 --platform-pcrs 7,11`,
 	RunE: runTPMProvision,
 }
 
@@ -130,8 +130,8 @@ func init() {
 		"Override the platform PCR bank (e.g., sha256, sha384)")
 	tpmInstallCmd.Flags().StringVar(&installGoldenPCRs, "golden-pcrs", "",
 		"Comma-separated list of PCR indices for golden measurement (e.g., \"0,1,2,7\")")
-	tpmInstallCmd.Flags().IntVar(&installPlatformPCR, "platform-pcr", 0,
-		"Override which PCR to extend with golden measurement (e.g., 16)")
+	tpmInstallCmd.Flags().StringVar(&installPlatformPCRs, "platform-pcrs", "",
+		"Comma-separated sealing PCR set of the platform policy (default \"7,11\"; 16 and 23 are refused)")
 
 	// Provision command flags
 	tpmProvisionCmd.Flags().BoolVar(&provisionConfirm, "confirm", false,
@@ -142,8 +142,8 @@ func init() {
 		"Override the platform PCR bank (e.g., sha256, sha384)")
 	tpmProvisionCmd.Flags().StringVar(&provisionGoldenPCRs, "golden-pcrs", "",
 		"Comma-separated list of PCR indices for golden measurement (e.g., \"0,1,2,7\")")
-	tpmProvisionCmd.Flags().IntVar(&provisionPlatformPCR, "platform-pcr", 0,
-		"Override which PCR to extend with golden measurement (e.g., 16)")
+	tpmProvisionCmd.Flags().StringVar(&provisionPlatformPCRs, "platform-pcrs", "",
+		"Comma-separated sealing PCR set of the platform policy (default \"7,11\"; 16 and 23 are refused)")
 }
 
 // parseGoldenPCRs parses a comma-separated string of PCR indices into a []uint slice
@@ -174,6 +174,21 @@ func parseGoldenPCRs(s string) ([]uint, error) {
 	}
 
 	return result, nil
+}
+
+// parsePlatformPCRs parses a --platform-pcrs flag value into the sealing PCR
+// set of the platform policy. An empty value returns nil, which takes
+// xkms.DefaultPlatformPCRs; any other value must be a valid set, so PCR 16,
+// PCR 23 and duplicates are refused here rather than at TPM open.
+func parsePlatformPCRs(s string) ([]uint, error) {
+	pcrs, err := parseGoldenPCRs(s)
+	if err != nil || pcrs == nil {
+		return pcrs, err
+	}
+	if err := xkms.TPMPCRSet(pcrs).Validate(); err != nil {
+		return nil, err
+	}
+	return pcrs, nil
 }
 
 // validatePCRBank validates a PCR bank string
@@ -207,9 +222,13 @@ func runTPMInstall(cmd *cobra.Command, args []string) (err error) {
 	if err != nil {
 		return err
 	}
+	platformPCRs, err := parsePlatformPCRs(installPlatformPCRs)
+	if err != nil {
+		return err
+	}
 
 	// Open TPM for provisioning with PCR overrides
-	tpm, err := openTPMForProvisioningWithPCROverrides(installPCRBank, goldenPCRs, installPlatformPCR)
+	tpm, err := openTPMForProvisioningWithPCROverrides(installPCRBank, goldenPCRs, platformPCRs)
 	if err != nil {
 		return &SentinelCauseError{Sentinel: ErrTPMDeviceNotFound, Cause: err}
 	}
@@ -313,6 +332,10 @@ func runTPMProvision(cmd *cobra.Command, args []string) (err error) {
 	if err != nil {
 		return err
 	}
+	platformPCRs, err := parsePlatformPCRs(provisionPlatformPCRs)
+	if err != nil {
+		return err
+	}
 
 	// Double-check with interactive prompt if running in a terminal
 	if isTerminal() {
@@ -334,7 +357,7 @@ func runTPMProvision(cmd *cobra.Command, args []string) (err error) {
 	}
 
 	// Open TPM for provisioning with PCR overrides
-	tpm, err := openTPMForProvisioningWithPCROverrides(provisionPCRBank, goldenPCRs, provisionPlatformPCR)
+	tpm, err := openTPMForProvisioningWithPCROverrides(provisionPCRBank, goldenPCRs, platformPCRs)
 	if err != nil {
 		return &SentinelCauseError{Sentinel: ErrTPMDeviceNotFound, Cause: err}
 	}

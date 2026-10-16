@@ -1056,7 +1056,7 @@ func TestDefaultConfig(t *testing.T) {
 		assert.Equal(t, "/dev/tpmrm0", DefaultConfig.Device)
 		assert.True(t, DefaultConfig.UseSimulator)
 		assert.Equal(t, "SHA-256", DefaultConfig.Hash)
-		assert.Equal(t, uint(16), DefaultConfig.PlatformPCR)
+		assert.Equal(t, PCRSet{7, 11}, DefaultConfig.PlatformPCRs)
 		assert.Equal(t, PCRBankSHA256, DefaultConfig.PlatformPCRBank)
 		assert.NotNil(t, DefaultConfig.EK)
 		assert.NotNil(t, DefaultConfig.IAK)
@@ -1166,7 +1166,7 @@ func TestConfigStructTags_Extended(t *testing.T) {
 		Device:                       "/dev/tpmrm0",
 		UseSimulator:                 false,
 		Hash:                         "SHA-256",
-		PlatformPCR:                  16,
+		PlatformPCRs:                 PCRSet{7, 11},
 		PlatformPCRBank:              "sha256",
 		IdentityProvisioningStrategy: "IAK_IDEVID_SINGLE_PASS",
 		UseEntropy:                   true,
@@ -1181,7 +1181,7 @@ func TestConfigStructTags_Extended(t *testing.T) {
 	assert.Equal(t, "/dev/tpmrm0", config.Device)
 	assert.False(t, config.UseSimulator)
 	assert.Equal(t, "SHA-256", config.Hash)
-	assert.Equal(t, uint(16), config.PlatformPCR)
+	assert.Equal(t, PCRSet{7, 11}, config.PlatformPCRs)
 	assert.Equal(t, "sha256", config.PlatformPCRBank)
 	assert.True(t, config.UseEntropy)
 	assert.Equal(t, []byte("test-lockout"), secretBytes(t, config.LockoutAuth))
@@ -1796,9 +1796,7 @@ func TestConfigVal_DefaultConfig_Values(t *testing.T) {
 		t.Errorf("DefaultConfig.SSRK.Handle = %#x, want %#x", cfg.SSRK.Handle, 0x81000001)
 	}
 
-	if cfg.PlatformPCR != 16 {
-		t.Errorf("DefaultConfig.PlatformPCR = %d, want 16", cfg.PlatformPCR)
-	}
+	assert.Equal(t, PCRSet{7, 11}, cfg.PlatformPCRs, "DefaultConfig.PlatformPCRs")
 	if cfg.PlatformPCRBank != PCRBankSHA256 {
 		t.Errorf("DefaultConfig.PlatformPCRBank = %q, want %q", cfg.PlatformPCRBank, PCRBankSHA256)
 	}

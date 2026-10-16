@@ -349,7 +349,6 @@ func (m *mockTPMForPKS) IDevID() (crypto.PublicKey, error)               { retur
 func (m *mockTPMForPKS) IDevIDAttributes() (*types.KeyAttributes, error) { return nil, nil }
 func (m *mockTPMForPKS) Info() (string, error)                           { return "", nil }
 func (m *mockTPMForPKS) IsFIPS140_2() (bool, error)                      { return false, nil }
-func (m *mockTPMForPKS) IsPlatformPCRExtended() (bool, error)            { return false, nil }
 func (m *mockTPMForPKS) ExtendPCR(_ int, _ string, _ []byte) error       { return nil }
 func (m *mockTPMForPKS) KeyAttributes(_ tpm2.TPMHandle) (*types.KeyAttributes, error) {
 	return nil, nil

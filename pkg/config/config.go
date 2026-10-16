@@ -1145,12 +1145,14 @@ type TPM2Config struct {
 	// SRKHandle is the persistent Storage Root Key handle (default 0x81000001).
 	SRKHandle uint32 `yaml:"srk_handle,omitempty"`
 
-	// PlatformPCRSelection selects the PCR index and bank of the
-	// built-in "platform" TPM policy. An unset PlatformPCR resolves to
-	// tpm2.DefaultPlatformPCR (16) and an unset bank to sha256, the same
-	// defaults xkey applies -- zero never selects PCR 0. Which policy a key
-	// or sealed object is bound to is a per-object reference (its TPM
-	// policy name), not a backend setting.
+	// PlatformPCRSelection selects the sealing PCR set and bank of the
+	// built-in "platform" TPM policy. The set is tpm2.PCRSet, the one type
+	// tpm2.Config uses: unset means tpm2.DefaultPlatformPCRs ({7, 11}), and
+	// loading refuses an empty set, duplicates, indexes above 23 and the
+	// resettable PCRs 16 and 23 (tpm2.PCRSet.Validate). An unset bank means
+	// sha256, the same defaults xkey applies. Which policy a key or sealed
+	// object is bound to is a per-object reference (its TPM policy name),
+	// not a backend setting.
 	tpm2.PlatformPCRSelection `yaml:",inline"`
 
 	// VTPM configures the per-tenant virtual TPMs (swtpm) of tenants in
@@ -1707,6 +1709,11 @@ func (c *Config) Validate() error {
 		// path this check otherwise guards.
 		if c.Backends.TPM2.DevicePath == "" && !c.Backends.TPM2.UseSimulator {
 			return &errs.Message{Msg: "TPM2 device_path is required when enabled"}
+		}
+		if c.Backends.TPM2.PlatformPCRs != nil {
+			if err := c.Backends.TPM2.PlatformPCRs.Validate(); err != nil {
+				return err
+			}
 		}
 	}
 	if c.Backends.PKCS11 != nil && c.Backends.PKCS11.Enabled {

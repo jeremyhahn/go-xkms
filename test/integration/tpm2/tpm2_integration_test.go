@@ -205,7 +205,6 @@ func createTPM2Instance(t *testing.T) (tpm2lib.TrustedPlatformModule, func()) {
 		Device:                       "", // Not using device, using custom transport
 		UseSimulator:                 false,
 		Hash:                         "SHA-256",
-		PlatformPCR:                  16,
 		PlatformPCRBank:              "sha256",
 		IdentityProvisioningStrategy: "IAK",
 		EK: &tpm2lib.EKConfig{

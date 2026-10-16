@@ -72,7 +72,7 @@ func TestChangeAuth_NoTransport(t *testing.T) {
 // command -- and that the refusal is the typed ErrPlatformPolicyDigestCompute
 // every other producer of a platform policy digest reports.
 func TestPlatformPolicyBranchDigests_UnsupportedHashAlgorithm(t *testing.T) {
-	branch1, branch2, err := platformPolicyBranchDigests(tpm2.TPMAlgID(0xFFFF), 16, make([]byte, 32))
+	branch1, branch2, err := platformPolicyBranchDigests(tpm2.TPMAlgID(0xFFFF), DefaultPlatformPCRs(), make([]byte, 32))
 	assert.Nil(t, branch1)
 	assert.Nil(t, branch2)
 	assert.ErrorIs(t, err, ErrPlatformPolicyDigestCompute)
@@ -105,7 +105,7 @@ func TestPlatformPolicyDigestFromPin_NilPin(t *testing.T) {
 func TestPlatformPolicyDigestFromPin_UnsupportedHashAlgorithm(t *testing.T) {
 	pin := &store.PlatformPolicyPin{
 		PCRBank:   0xFFFF,
-		PCRIndex:  16,
+		PCRSelect: DefaultPlatformPCRs().Mask(),
 		PCRDigest: make([]byte, 32),
 	}
 	digest, err := platformPolicyDigestFromPin(pin)
@@ -152,17 +152,6 @@ func TestIsTPMAuthError_StringFallback(t *testing.T) {
 	assert.True(t, isTPMAuthError(errors.New("session 1: TPM_RC_BAD_AUTH")))
 	assert.True(t, isTPMAuthError(errors.New("handle 1: TPM_RC_AUTH_FAIL")))
 	assert.False(t, isTPMAuthError(errors.New("connection reset by peer")))
-}
-
-// TestIsPlatformPCRExtended_InvalidPCRBank proves IsPlatformPCRExtended
-// refuses a configured PCR bank name the package does not recognize before
-// ever issuing TPM2_PCR_Read, rather than falling back to a default bank
-// the operator did not choose.
-func TestIsPlatformPCRExtended_InvalidPCRBank(t *testing.T) {
-	tpm := &TPM2{config: &Config{PlatformPCRBank: "not-a-real-bank"}}
-	extended, err := tpm.IsPlatformPCRExtended()
-	assert.False(t, extended)
-	assert.ErrorIs(t, err, ErrInvalidPCRBankType)
 }
 
 // TestPlatformPolicySession_InvalidPCRBank proves platformPolicySession

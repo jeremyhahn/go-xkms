@@ -960,7 +960,7 @@ func (tpm *TPM2) CreateIAK(
 		PCRSelections: []tpm2.TPMSPCRSelection{
 			{
 				Hash:      pcrBankHashAlg,
-				PCRSelect: tpm2.PCClientCompatible.PCRs(tpm.config.PlatformPCR),
+				PCRSelect: tpm2.PCClientCompatible.PCRs(tpm.config.PlatformPCRs...),
 			},
 		},
 	}

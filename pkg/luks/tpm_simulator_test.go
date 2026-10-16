@@ -88,7 +88,7 @@ func newLUKSSimHarness(t *testing.T) *pkgtpm2.TPM2 {
 			SRKHandle:      0x81000002,
 			PlatformPolicy: true,
 		},
-		PlatformPCR:     pkgtpm2.DefaultPlatformPCR,
+		PlatformPCRs:    pkgtpm2.DefaultPlatformPCRs(),
 		PlatformPCRBank: pkgtpm2.PCRBankSHA256,
 	}
 
@@ -156,7 +156,7 @@ func TestTPMSealer_PSRK_Seal_PolicyBindsPCRState(t *testing.T) {
 	// Perturb the platform PCR so the policy digest no longer matches.
 	_, err = (libtpm2.PCRExtend{
 		PCRHandle: libtpm2.AuthHandle{
-			Handle: libtpm2.TPMHandle(pkgtpm2.DefaultPlatformPCR),
+			Handle: libtpm2.TPMHandle(pkgtpm2.DefaultPlatformPCRs()[0]),
 			Auth:   libtpm2.PasswordAuth(nil),
 		},
 		Digests: libtpm2.TPMLDigestValues{

@@ -49,8 +49,8 @@ func createSimNoStore(t *testing.T) TrustedPlatformModule {
 			},
 			SignatureAlgorithm: "SHA256-RSAPSS",
 		},
-		PlatformPCR:     debugPCR,
-		PlatformPCRBank: debugPCRBank,
+		PlatformPCRs:    DefaultPlatformPCRs(),
+		PlatformPCRBank: PCRBankSHA256,
 		GoldenPCRs:      []uint{0, 7},
 		SSRK: &SRKConfig{
 			Handle:        0x81000001,

@@ -71,11 +71,11 @@ auth:
     login_rate_per_min: 10   # 0 selects 10
 ```
 
-Source: `UIConfig` (`pkg/config/config.go:611`), `CORSConfig`
-(`pkg/config/config.go:593`), `PIVLoginConfig` (`pkg/config/config.go:450`),
-`SessionConfig` (`pkg/config/config.go:478`). Startup refuses
+Source: `UIConfig` (`pkg/config/config.go:612`), `CORSConfig`
+(`pkg/config/config.go:594`), `PIVLoginConfig` (`pkg/config/config.go:451`),
+`SessionConfig` (`pkg/config/config.go:479`). Startup refuses
 `attestation_roots` together with `allow_unattested`
-(`pkg/config/config.go:1649`).
+(`pkg/config/config.go:1651`).
 
 ## If the daemon refuses to start
 

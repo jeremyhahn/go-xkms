@@ -63,7 +63,7 @@ import (
 // *tpm2backend.Backend, ready to assign to s.nodeSealTPM so
 // buildTPM2PlatformSealer's reuse path adopts it without opening a second
 // TPM.
-func enrollPlatformSRKForTest(t *testing.T, platformPCR uint) *tpm2backend.Backend {
+func enrollPlatformSRKForTest(t *testing.T, platformPCRs pkgtpm2.PCRSet) *tpm2backend.Backend {
 	t.Helper()
 
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
@@ -72,7 +72,7 @@ func enrollPlatformSRKForTest(t *testing.T, platformPCR uint) *tpm2backend.Backe
 	tpmConfig := &pkgtpm2.Config{
 		UseSimulator:                 true,
 		Hash:                         "SHA-256",
-		PlatformPCR:                  platformPCR,
+		PlatformPCRs:                 platformPCRs,
 		PlatformPCRBank:              pkgtpm2.PCRBankSHA256,
 		IdentityProvisioningStrategy: string(pkgtpm2.EnrollmentStrategyIAK),
 		EK: &pkgtpm2.EKConfig{
@@ -136,7 +136,7 @@ func enrollPlatformSRKForTest(t *testing.T, platformPCR uint) *tpm2backend.Backe
 // tpm2EnrolledServer builds a minimal *Server whose s.nodeSealTPM is a
 // simulator with an enrolled Platform SRK, ready for
 // s.initializePlatformStore() to reuse without a second TPM open.
-func tpm2EnrolledServer(t *testing.T, platformPolicy bool, platformPCR uint) *Server {
+func tpm2EnrolledServer(t *testing.T, platformPolicy bool, platformPCRs pkgtpm2.PCRSet) *Server {
 	t.Helper()
 
 	s := newMinimalServer(t, &config.Config{
@@ -144,12 +144,12 @@ func tpm2EnrolledServer(t *testing.T, platformPolicy bool, platformPCR uint) *Se
 		Credentials: config.CredentialsConfig{SealStrategy: "tpm2"},
 		Backends: config.BackendsConfig{
 			TPM2: &config.TPM2Config{
-				PlatformPCR:     platformPCR,
+				PlatformPCRs:    platformPCRs,
 				PlatformPCRBank: "SHA256",
 			},
 		},
 	})
-	s.nodeSealTPM = enrollPlatformSRKForTest(t, platformPCR)
+	s.nodeSealTPM = enrollPlatformSRKForTest(t, platformPCRs)
 	// newMinimalServer bypasses New(), so s.qrdbStorage -- the one shared
 	// datastore createStorage now always resolves through -- is never
 	// built; give this test a real one.
@@ -160,7 +160,7 @@ func tpm2EnrolledServer(t *testing.T, platformPolicy bool, platformPCR uint) *Se
 }
 
 func TestInitializePlatformStore_TPM2BuildsWorkingStore(t *testing.T) {
-	s := tpm2EnrolledServer(t, false, 0)
+	s := tpm2EnrolledServer(t, false, nil)
 
 	require.NoError(t, s.initializePlatformStore())
 	require.NotNil(t, s.platformStore)
@@ -183,7 +183,7 @@ func TestInitializePlatformStore_TPM2BuildsWorkingStore(t *testing.T) {
 // proves the credential service stores and loads through the platform store
 // end to end for the tpm2 strategy once the Platform SRK is enrolled.
 func TestCredentialService_TPM2Strategy_StoresAndLoadsThroughPlatformStore(t *testing.T) {
-	s := tpm2EnrolledServer(t, false, 0)
+	s := tpm2EnrolledServer(t, false, nil)
 	require.NoError(t, s.initializePlatformStore())
 	require.NoError(t, s.initializeCredentialService())
 	require.NotNil(t, s.credentialService)
@@ -255,18 +255,20 @@ func TestInitializePlatformStore_TPM2ReusesNodeSealFlip(t *testing.T) {
 // Get fail with a typed error, exactly the property a measured-boot
 // deployment relies on.
 func TestInitializePlatformStore_TPM2PlatformPolicy_PCRExtendBreaksGet(t *testing.T) {
-	const testPCR = 16 // resettable/debug PCR, safe to extend in a test
+	// A board set other than the default proves the configured set, not
+	// the default, reaches the seal.
+	const testPCR = 14
 
-	s := tpm2EnrolledServer(t, true, testPCR)
+	s := tpm2EnrolledServer(t, true, pkgtpm2.PCRSet{7, testPCR})
 	require.NoError(t, s.initializePlatformStore())
 	require.NotNil(t, s.platformStore)
 
 	ctx := context.Background()
-	require.NoError(t, s.platformStore.Put(ctx, "pcr-bound", []byte("bound-to-pcr16")))
+	require.NoError(t, s.platformStore.Put(ctx, "pcr-bound", []byte("bound-to-board-pcrs")))
 
 	got, err := s.platformStore.Get(ctx, "pcr-bound")
 	require.NoError(t, err, "Get must succeed while the platform PCR is unchanged")
-	assert.Equal(t, []byte("bound-to-pcr16"), got)
+	assert.Equal(t, []byte("bound-to-board-pcrs"), got)
 
 	backend, ok := s.platformStoreTPM.(*tpm2backend.Backend)
 	require.True(t, ok, "buildTPM2PlatformSealer must record the raw TPM2 backend")
@@ -296,7 +298,7 @@ func TestInitializePlatformStore_TPM2PlatformPolicy_PCRExtendBreaksGet(t *testin
 // never by the barrier. Moved here from server_extra2_test.go because it
 // needs the simulator-backed enrollment harness.
 func TestInitializePlatformStore_BuildsWithoutBarrier(t *testing.T) {
-	s := tpm2EnrolledServer(t, false, 0)
+	s := tpm2EnrolledServer(t, false, nil)
 	s.barrier = nil
 	err := s.initializePlatformStore()
 	require.NoError(t, err)

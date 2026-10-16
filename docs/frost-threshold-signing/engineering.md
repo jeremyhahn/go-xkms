@@ -142,7 +142,7 @@ backends:
 
 | Key | Rule (`FrostConfig.Validate`, `pkg/config/frost.go:92`) |
 |---|---|
-| `secret_backend` | Required. One of `software`, `pkcs8`, `tpm2`, `pkcs11`, `awskms`, `gcpkms`, `azurekv`, `vault` (`frost.go:29`), and that `backends.*` section must be configured and enabled (`pkg/config/config.go:1767`, `enabledBackendNamed`, `frost.go:140`). |
+| `secret_backend` | Required. One of `software`, `pkcs8`, `tpm2`, `pkcs11`, `awskms`, `gcpkms`, `azurekv`, `vault` (`frost.go:29`), and that `backends.*` section must be configured and enabled (`pkg/config/config.go:1774`, `enabledBackendNamed`, `frost.go:140`). |
 | `algorithm` | Defaults to `FROST-Ed25519-SHA512`; must be one of the five ciphersuites. |
 | `default_threshold` | Defaults to `2`; must be 2–255. |
 | `default_total` | Defaults to `3`; must be ≤ 255 and ≥ `default_threshold`. |

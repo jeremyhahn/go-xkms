@@ -48,7 +48,7 @@ func TestProvision_ClearBlockedByLockout_SchedulesForceClearThenFails(t *testing
 // TestProvision_EveryCommandFailurePropagates sweeps Provision's full
 // command sequence -- TPM2_Clear, the three hierarchy TPM2_HierarchyChangeAuth
 // calls, ProvisionOwner's EK and SRK creation, CreatePlatformPolicy's PCR
-// read/extend, and CreateIAK's own command sequence -- proving a failure at
+// read and trial policy session, and CreateIAK's own command sequence -- proving a failure at
 // any step surfaces as an error instead of Provision reporting success over
 // a TPM it only partially provisioned.
 func TestProvision_EveryCommandFailurePropagates(t *testing.T) {
@@ -66,7 +66,7 @@ func TestProvision_EveryCommandFailurePropagates(t *testing.T) {
 		// TestCreateIAK_EveryCommandFailurePropagates); like every other
 		// tpm.Flush call in this package it logs a failure instead of
 		// returning it, and a defer always runs last.
-		71)
+		-1)
 }
 
 // TestInstall_EveryCommandFailurePropagates sweeps Install's full command
@@ -114,18 +114,17 @@ func TestInstall_EveryCommandFailurePropagates(t *testing.T) {
 		// CreateIAK's own deferred best-effort flush of its primary's
 		// transient handle -- the same single command
 		// TestCreateIAK_EveryCommandFailurePropagates already documents and
-		// tolerates at its position 9 -- reached here at absolute position
-		// 81 because IAK creation's CertifyCreation runs 80th in Install's
-		// full sequence.
-		81,
+		// tolerates at its position 9 -- reached here fourth from last,
+		// directly after IAK creation's CertifyCreation.
+		-4,
 		// Install's trailing "Retrieve the EK certificate or log warning if
 		// not available" block (provision.go): PlatformPolicyDigest's PCR
-		// read (82) and EKCertificate's two readEKCertFromNV NV_ReadPublic
-		// probes, RSA then EC index (83, 84). A manufacturer EK certificate
+		// read (-3) and EKCertificate's two readEKCertFromNV NV_ReadPublic
+		// probes, RSA then EC index (-2, -1). A manufacturer EK certificate
 		// is commonly absent -- this simulator never has one -- and
 		// EKCertificate returning any error here, not only "not found", is
 		// deliberately non-fatal: Install has already fully provisioned the
 		// EK, SSRK, platform policy and IAK by this point, and a device
 		// without a burned-in EK certificate still has a usable identity.
-		82, 83, 84)
+		-3, -2, -1)
 }

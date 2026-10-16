@@ -41,13 +41,13 @@ func withUnprovisionedSimulatorTPM(t *testing.T) xkms.TrustedPlatformModule {
 		c.outputFormat = "text"
 		c.hierarchyAuth = ""
 	})
-	tpm, err := openConfiguredTPMForProvisioningWithPCROverrides("sha256", []uint{0, 7}, 0)
+	tpm, err := openConfiguredTPMForProvisioningWithPCROverrides("sha256", []uint{0, 7}, nil)
 	require.NoError(t, err)
 	t.Cleanup(func() { assert.NoError(t, tpm.Close()) })
 
 	shared := sharedTPM{tpm}
 	setVar(t, &openTPM, func() (xkms.TrustedPlatformModule, error) { return shared, nil })
-	setVar(t, &openTPMForProvisioningWithPCROverrides, func(string, []uint, int) (xkms.TrustedPlatformModule, error) {
+	setVar(t, &openTPMForProvisioningWithPCROverrides, func(string, []uint, []uint) (xkms.TrustedPlatformModule, error) {
 		return shared, nil
 	})
 	return tpm
@@ -252,7 +252,7 @@ func TestRunTPMProvision_TerminalConfirmation(t *testing.T) {
 			setVar(t, &provisionHierarchyAuth, "")
 			setVar(t, &provisionPCRBank, "sha256")
 			setVar(t, &provisionGoldenPCRs, "0,7")
-			setVar(t, &provisionPlatformPCR, 0)
+			setVar(t, &provisionPlatformPCRs, "")
 
 			stdout, err := runTPMSubcommandWithInput(runTPMProvision, tt.input)
 			assert.Contains(t, stdout, "Type 'DESTROY' to continue")
@@ -299,7 +299,7 @@ func TestRunTPMInstall_WrongHierarchyAuthIsProvisioningFailed(t *testing.T) {
 			setVar(t, &installHierarchyAuth, tt.auth)
 			setVar(t, &installPCRBank, "sha256")
 			setVar(t, &installGoldenPCRs, "0,7")
-			setVar(t, &installPlatformPCR, 0)
+			setVar(t, &installPlatformPCRs, "")
 
 			stdout, _, err := runTPMSubcommand(runTPMInstall)
 			assert.ErrorIs(t, err, ErrProvisioningFailed)

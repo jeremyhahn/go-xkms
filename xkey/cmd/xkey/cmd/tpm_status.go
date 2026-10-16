@@ -52,7 +52,7 @@ type CertStatus struct {
 type PlatformPolicyStatus struct {
 	PCRBank      string `json:"pcr_bank"`
 	GoldenPCRs   []uint `json:"golden_pcrs"`
-	PlatformPCR  uint   `json:"platform_pcr"`
+	PlatformPCRs []uint `json:"platform_pcrs"`
 	PolicyDigest string `json:"policy_digest"`
 	Configured   bool   `json:"configured"`
 }
@@ -310,9 +310,9 @@ func buildCertStatus(tpm xkms.TrustedPlatformModule, config *xkms.TPMConfig) []C
 
 func buildPlatformPolicyStatus(tpm xkms.TrustedPlatformModule, config *xkms.TPMConfig) PlatformPolicyStatus {
 	policyStatus := PlatformPolicyStatus{
-		PCRBank:     config.PlatformPCRBank,
-		PlatformPCR: config.PlatformPCR,
-		GoldenPCRs:  config.GoldenPCRs,
+		PCRBank:      config.PlatformPCRBank,
+		PlatformPCRs: config.PlatformPCRs,
+		GoldenPCRs:   config.GoldenPCRs,
 	}
 
 	if policyStatus.PCRBank == "" {
@@ -453,7 +453,7 @@ func outputStatusText(out io.Writer, status *TPMStatusOutput) error {
 	_, _ = fmt.Fprintln(out, "Platform Policy:")
 	_, _ = fmt.Fprintf(out, "  PCR Bank:        %s\n", status.PlatformPolicy.PCRBank)
 	_, _ = fmt.Fprintf(out, "  Golden PCRs:     %v\n", status.PlatformPolicy.GoldenPCRs)
-	_, _ = fmt.Fprintf(out, "  Platform PCR:    %d\n", status.PlatformPolicy.PlatformPCR)
+	_, _ = fmt.Fprintf(out, "  Platform PCRs:   %v\n", status.PlatformPolicy.PlatformPCRs)
 	if status.PlatformPolicy.Configured {
 		// Truncate long digest for display
 		digest := status.PlatformPolicy.PolicyDigest

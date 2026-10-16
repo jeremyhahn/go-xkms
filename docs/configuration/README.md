@@ -20,11 +20,11 @@ This directory contains configuration guides for various aspects of go-xkms.
 
 The barrier encrypts the node's data plane at rest; the PIN manager governs
 the user PIN. Both are top-level sections of the `xkmsd` configuration
-(`pkg/config/config.go:55-56`).
+(`pkg/config/config.go:56-57`).
 
 #### Barrier Configuration
 
-Keys of `BarrierConfig` (`pkg/config/config.go:160`):
+Keys of `BarrierConfig` (`pkg/config/config.go:161`):
 
 ```yaml
 barrier:
@@ -57,7 +57,7 @@ barrier:
 
 #### PIN Configuration
 
-Keys of `PINConfig` (`pkg/config/config.go:261`):
+Keys of `PINConfig` (`pkg/config/config.go:262`):
 
 ```yaml
 pin:

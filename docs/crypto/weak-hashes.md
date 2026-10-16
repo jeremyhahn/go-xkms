@@ -35,7 +35,7 @@ digest must not be weak unless the policy admits it. A refused name resolves to
 name the caller did supply.
 
 One resolver sits outside the policy: `tpm2.ParseHash`
-(`pkg/tpm2/types.go:1049`) maps the `hash` name in the IAK, LAK, IDevID and
+(`pkg/tpm2/types.go:1045`) maps the `hash` name in the IAK, LAK, IDevID and
 LDevID configuration (`pkg/tpm2/config.go`) to SHA-1, SHA-256, SHA-384 or
 SHA-512 without consulting `types.AllowWeakHashes`.
 

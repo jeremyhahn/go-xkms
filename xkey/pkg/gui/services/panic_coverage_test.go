@@ -144,9 +144,6 @@ func (m *allPanicTPM) IDevIDAttributes() (*xkms.KeyAttributes, error) {
 }
 func (m *allPanicTPM) Info() (string, error)      { panic("allPanicTPM: Info") }
 func (m *allPanicTPM) IsFIPS140_2() (bool, error) { panic("allPanicTPM: IsFIPS140_2") }
-func (m *allPanicTPM) IsPlatformPCRExtended() (bool, error) {
-	panic("allPanicTPM: IsPlatformPCRExtended")
-}
 func (m *allPanicTPM) ExtendPCR(_ int, _ string, _ []byte) error {
 	panic("allPanicTPM: ExtendPCR")
 }

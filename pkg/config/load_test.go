@@ -304,7 +304,7 @@ func TestLoad_IncludeLocalhostSANs(t *testing.T) {
 // tpm2.PlatformPCRSelection: they decode at backends.tpm2's own level from the
 // file and from the environment.
 func TestLoad_TPM2PlatformPCRSelection(t *testing.T) {
-	tpmLines := "  tpm2:\n    enabled: true\n    device_path: /dev/tpmrm0\n    platform-pcr: 23\n    platform-pcr-bank: sha384\n"
+	tpmLines := "  tpm2:\n    enabled: true\n    device_path: /dev/tpmrm0\n    platform-pcrs: [7, 14]\n    platform-pcr-bank: sha384\n"
 
 	t.Run("file", func(t *testing.T) {
 		cfg, err := Load(writeConfigBody(t, "", tpmLines))
@@ -312,30 +312,38 @@ func TestLoad_TPM2PlatformPCRSelection(t *testing.T) {
 			t.Fatalf("Load() error = %v", err)
 		}
 		got := cfg.Backends.TPM2.PlatformPCRSelection
-		want := tpm2.PlatformPCRSelection{PlatformPCR: 23, PlatformPCRBank: "sha384"}
-		if got != want {
+		want := tpm2.PlatformPCRSelection{PlatformPCRs: tpm2.PCRSet{7, 14}, PlatformPCRBank: "sha384"}
+		if !reflect.DeepEqual(got, want) {
 			t.Fatalf("Backends.TPM2.PlatformPCRSelection = %+v, want %+v", got, want)
 		}
 	})
 
 	t.Run("environment overrides file", func(t *testing.T) {
-		t.Setenv("XKMS_BACKENDS_TPM2_PLATFORM_PCR", "22")
+		t.Setenv("XKMS_BACKENDS_TPM2_PLATFORM_PCRS", "0,7,11")
 		t.Setenv("XKMS_BACKENDS_TPM2_PLATFORM_PCR_BANK", "sha512")
 		cfg, err := Load(writeConfigBody(t, "", tpmLines))
 		if err != nil {
 			t.Fatalf("Load() error = %v", err)
 		}
 		got := cfg.Backends.TPM2.PlatformPCRSelection
-		want := tpm2.PlatformPCRSelection{PlatformPCR: 22, PlatformPCRBank: "sha512"}
-		if got != want {
+		want := tpm2.PlatformPCRSelection{PlatformPCRs: tpm2.PCRSet{0, 7, 11}, PlatformPCRBank: "sha512"}
+		if !reflect.DeepEqual(got, want) {
 			t.Fatalf("Backends.TPM2.PlatformPCRSelection = %+v, want %+v", got, want)
 		}
 	})
 
 	t.Run("non-numeric PCR is rejected", func(t *testing.T) {
-		t.Setenv("XKMS_BACKENDS_TPM2_PLATFORM_PCR", "sixteen")
+		t.Setenv("XKMS_BACKENDS_TPM2_PLATFORM_PCRS", "seven")
 		if _, err := Load(writeConfigBody(t, "", tpmLines)); err == nil {
-			t.Fatal("Load() accepted platform-pcr \"sixteen\", want a decode error")
+			t.Fatal("Load() accepted platform-pcrs \"seven\", want a decode error")
+		}
+	})
+
+	t.Run("resettable PCR is refused", func(t *testing.T) {
+		t.Setenv("XKMS_BACKENDS_TPM2_PLATFORM_PCRS", "7,16")
+		_, err := Load(writeConfigBody(t, "", tpmLines))
+		if !errors.Is(err, tpm2.ErrPlatformPCRResettable) {
+			t.Fatalf("Load() error = %v, want %v", err, tpm2.ErrPlatformPCRResettable)
 		}
 	})
 }

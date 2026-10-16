@@ -25,9 +25,9 @@ import (
 //
 //	offset  size  field
 //	     0     4  magic ("XPPP")
-//	     4     1  version (currently 1)
+//	     4     1  version (currently 2)
 //	     5     2  PCR bank TPM_ALG_ID, big endian
-//	     7     4  PCR index, big endian
+//	     7     4  PCR selection bitmap (bit n = PCR n), big endian
 //	    11     2  PCR digest length, big endian
 //	    13     n  PCR digest
 //
@@ -39,7 +39,7 @@ import (
 // can only make an authorization attempt fail.
 const (
 	// PlatformPolicyPinVersion is the version written into new pin records.
-	PlatformPolicyPinVersion uint8 = 1
+	PlatformPolicyPinVersion uint8 = 2
 
 	platformPolicyPinMagic     = "XPPP"
 	platformPolicyPinHeaderLen = 13
@@ -48,6 +48,10 @@ const (
 	// largest TPM 2.0 PCR bank digest is SHA-512 (64 bytes); the bound is
 	// generous enough for future banks while still rejecting garbage.
 	platformPolicyPinMaxDigest = 128
+
+	// platformPolicyPinPCRMask holds the bits of PCRs 0-23, the PCRs a PC
+	// Client TPM implements.
+	platformPolicyPinPCRMask uint32 = 1<<24 - 1
 )
 
 // PlatformPolicyPin records the TPM2_PolicyPCR branch inputs that were in
@@ -71,8 +75,9 @@ type PlatformPolicyPin struct {
 	// over (TCG TPM 2.0 Part 2, Section 6.3).
 	PCRBank uint16
 
-	// PCRIndex is the platform PCR the policy was computed over.
-	PCRIndex uint32
+	// PCRSelect is the platform PCR set the policy was computed over, as a
+	// bitmap: bit n stands for PCR n.
+	PCRSelect uint32
 
 	// PCRDigest is the digest of the platform PCR value that was current
 	// when the policy was computed. This is the pcrDigest parameter of
@@ -84,6 +89,9 @@ type PlatformPolicyPin struct {
 func (p *PlatformPolicyPin) MarshalBinary() ([]byte, error) {
 	if p == nil {
 		return nil, &PlatformPolicyPinFormatError{Reason: "nil pin"}
+	}
+	if err := checkPCRSelect(p.PCRSelect); err != nil {
+		return nil, err
 	}
 	if len(p.PCRDigest) == 0 {
 		return nil, &PlatformPolicyPinFormatError{Reason: "empty PCR digest"}
@@ -98,7 +106,7 @@ func (p *PlatformPolicyPin) MarshalBinary() ([]byte, error) {
 	copy(out[0:4], platformPolicyPinMagic)
 	out[4] = PlatformPolicyPinVersion
 	binary.BigEndian.PutUint16(out[5:7], p.PCRBank)
-	binary.BigEndian.PutUint32(out[7:11], p.PCRIndex)
+	binary.BigEndian.PutUint32(out[7:11], p.PCRSelect)
 	binary.BigEndian.PutUint16(out[11:13], uint16(len(p.PCRDigest)))
 	copy(out[platformPolicyPinHeaderLen:], p.PCRDigest)
 
@@ -123,6 +131,11 @@ func UnmarshalPlatformPolicyPin(data []byte) (*PlatformPolicyPin, error) {
 		return nil, &PlatformPolicyPinVersionError{Version: data[4]}
 	}
 
+	pcrSelect := binary.BigEndian.Uint32(data[7:11])
+	if err := checkPCRSelect(pcrSelect); err != nil {
+		return nil, err
+	}
+
 	digestLen := int(binary.BigEndian.Uint16(data[11:13]))
 	if digestLen == 0 {
 		return nil, &PlatformPolicyPinFormatError{Reason: "empty PCR digest"}
@@ -144,9 +157,23 @@ func UnmarshalPlatformPolicyPin(data []byte) (*PlatformPolicyPin, error) {
 
 	return &PlatformPolicyPin{
 		PCRBank:   binary.BigEndian.Uint16(data[5:7]),
-		PCRIndex:  binary.BigEndian.Uint32(data[7:11]),
+		PCRSelect: pcrSelect,
 		PCRDigest: digest,
 	}, nil
+}
+
+// checkPCRSelect refuses a PCR selection bitmap that selects no PCR or a PCR
+// above 23.
+func checkPCRSelect(pcrSelect uint32) error {
+	if pcrSelect == 0 {
+		return &PlatformPolicyPinFormatError{Reason: "empty PCR selection"}
+	}
+	if pcrSelect&^platformPolicyPinPCRMask != 0 {
+		return &PlatformPolicyPinFormatError{
+			Reason: "PCR selection names a PCR above 23: 0x" + strconv.FormatUint(uint64(pcrSelect), 16),
+		}
+	}
+	return nil
 }
 
 // PlatformPolicyPinFormatError indicates a platform policy pin record could

@@ -276,7 +276,7 @@ configuration shape, configured independently
   plain-password shape for the Platform SRK (go-xkms#677: `authValue` = user
   PIN, `authPolicy` = platform PCR policy). Two callers violated this and
   disagreed with each other until go-xkms#997: `pkg/backend/tpm2`'s
-  `Config.ToTPMConfig` (`pkg/backend/tpm2/config.go:211-213`) hardcoded
+  `Config.ToTPMConfig` (`pkg/backend/tpm2/config.go:207-209`) hardcoded
   `PlatformPolicy: false` into the `PlatformSRKConfig` it built, so a Platform
   SRK created by that backend's simulator first-boot recipe
   (`provisionSimulatorEKSRK`, `pkg/backend/tpm2/backend.go:264-299`) carried
@@ -290,7 +290,7 @@ configuration shape, configured independently
   the mismatch instead of surfacing it — a Platform SRK autodetected this way
   reported `PlatformPolicy: true` no matter what the underlying TPM object
   actually was. The fix set `ToTPMConfig`'s `PlatformSRKConfig` to
-  `PlatformPolicy: true` (`pkg/backend/tpm2/config.go:211-213`) and deleted the
+  `PlatformPolicy: true` (`pkg/backend/tpm2/config.go:207-209`) and deleted the
   override (`pkg/server/platform_store.go:224-234`), so `buildTPM2PlatformSealer`
   now reports exactly what `PlatformSRKAttributes()` resolves, same as every
   other caller.

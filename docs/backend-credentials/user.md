@@ -10,7 +10,7 @@ backend config refers to them by name with `credential://<name>`.
 ## Choose a strategy
 
 Set it in the `xkmsd` config. This is the only key under `credentials:`
-(`pkg/config/config.go:271-282`):
+(`pkg/config/config.go:272-283`):
 
 ```yaml
 credentials:

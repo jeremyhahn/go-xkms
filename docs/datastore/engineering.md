@@ -542,7 +542,7 @@ check reads an already-defaulted `Datastore`):
 - `Mode == "remote"`: `Remote.Address` is required, and `Remote.Transport`
   must be `"rest"` or `"grpc"`.
 - `Engine` and `Mode` are trimmed and lowercased before the check, and
-  `Validate` stores the normalised values (`pkg/config/config.go:1480-1494`).
+  `Validate` stores the normalised values (`pkg/config/config.go:1482-1496`).
   Any other value is a hard error, `*config.ErrUnknownDatastoreEngine` or
   `*config.ErrUnknownDatastoreMode`, naming the value and the accepted ones
   (`pkg/config/datastore.go:24-45`). The accepted engines are go-qrdb's SDK
@@ -555,7 +555,7 @@ check reads an already-defaulted `Datastore`):
   engine.
 - `Databases`: each entry needs a non-empty `Name`, names must not repeat,
   and a non-empty `Backend` must be `memory`, `file`, `pebble`, `raft`, or
-  `objstore` (`pkg/config/config.go:1535-1537`). An empty `Backend` is valid
+  `objstore` (`pkg/config/config.go:1537-1539`). An empty `Backend` is valid
   — it defers to `Engine`.
 
 Two other `Validate` rules key off `Datastore.Mode` and matter for this

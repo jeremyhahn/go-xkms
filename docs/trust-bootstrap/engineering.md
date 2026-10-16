@@ -184,7 +184,7 @@ strategies through `bootstrap.Fetch` (`resolver.go:506`). The local ones,
 | `tofu` | first-use pin, via `WithTOFUPinStore` | `config.go:66` |
 
 Scopes are free-form keys under `trust.scopes` in the xkmsd config
-(`pkg/config/config.go:69`, `resolver/config.go:72-125`):
+(`pkg/config/config.go:70`, `resolver/config.go:72-125`):
 
 ```yaml
 trust:
@@ -446,7 +446,7 @@ protocols:
   noise: true             # the only switch that starts the listener
 ```
 
-`server.noise_port` is `ServerConfig.NoisePort` (`pkg/config/config.go:319`).
+`server.noise_port` is `ServerConfig.NoisePort` (`pkg/config/config.go:320`).
 When `protocols.noise` is set, validation rejects a port outside 1–65535
 (`config.go:1572-1574`). Nothing checks that the port differs from the other
 listeners' ports.
@@ -507,7 +507,7 @@ but the value is never read.
 The struct is still named `NoiseBootstrapConfig` and still lives under the
 `bootstrap.noise` YAML key. That is historical — it predates the second suite.
 
-The same block bounds the listener (`pkg/config/config.go:1314-1326`, applied
+The same block bounds the listener (`pkg/config/config.go:1316-1328`, applied
 at `pkg/server/server.go:3147-3165`):
 
 ```yaml
@@ -525,7 +525,7 @@ default stays, without an error or a warning.
 **Parsed but unread, as shipped:** `bootstrap.spki` (`enabled`, `pin_sha256`)
 and `bootstrap.dane` (`enabled`, `hostname`, `port`, `dns_server`) decode into
 `SPKIBootstrapConfig` and `DANEBootstrapConfig`
-(`pkg/config/config.go:1329-1351`), but no xkmsd code reads either. SPKI and
+(`pkg/config/config.go:1331-1353`), but no xkmsd code reads either. SPKI and
 DANE are client-side anchors: the pin and the TLSA lookup are configured on the
 client (`xkmsctl bootstrap` flags, or the resolver's scope), not on the server.
 

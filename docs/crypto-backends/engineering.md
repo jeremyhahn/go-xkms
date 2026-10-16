@@ -563,7 +563,7 @@ as well as the cause with `errors.Is` (`pkg/xkms/errors_auto.go:58-72`).
 ### Per-backend configuration
 
 Every backend has two configuration surfaces. The first is the `xkmsd` YAML
-section `backends.<name>`: `config.BackendsConfig` (`pkg/config/config.go:1113`),
+section `backends.<name>`: `config.BackendsConfig` (`pkg/config/config.go:1114`),
 mapped onto the package `Config` by `pkg/server/backend_<name>.go`. The second
 is the SDK map `AutoConfig.BackendConfigs[<name>]`, read by the factory in
 `pkg/xkms/register_<name>.go`. The two do not expose the same keys. Every
@@ -600,7 +600,7 @@ also set `KeyStorage: storage.New()` (in memory), so they ignore the
 
 | Surface | Keys |
 |---|---|
-| `xkmsd` | `enabled`, `path` (`pkg/config/config.go:1127`; built at `pkg/server/server.go:1065`) |
+| `xkmsd` | `enabled`, `path` (`pkg/config/config.go:1128`; built at `pkg/server/server.go:1065`) |
 | SDK | `key_storage` |
 
 `software.Config` needs `KeyStorage`; `Tracker` is optional
@@ -623,7 +623,7 @@ ChaCha20-Poly1305 and XChaCha20-Poly1305
 
 | Surface | Keys |
 |---|---|
-| `xkmsd` | `enabled`, `path` (`pkg/config/config.go:1133`; built at `pkg/server/server.go:1083`) |
+| `xkmsd` | `enabled`, `path` (`pkg/config/config.go:1134`; built at `pkg/server/server.go:1083`) |
 | SDK | `key_storage`, `allow_plaintext_keys` |
 
 - **Password protection.** When `KeyAttributes.Password` is set, the key is
@@ -641,7 +641,7 @@ ChaCha20-Poly1305 and XChaCha20-Poly1305
 
 | Surface | Keys |
 |---|---|
-| `xkmsd` | `enabled`, `device_path`, `use_simulator`, `simulator_host`, `simulator_port`, `srk_handle` (default `0x81000001`), `platform-pcr` (default 16) and `platform-pcr-bank` (default `sha256`) from the embedded `tpm2.PlatformPCRSelection` (`pkg/tpm2/config.go:182-185`), `vtpm` (`pkg/config/config.go:1141`; mapped at `pkg/server/backend_tpm2.go:109-117`) |
+| `xkmsd` | `enabled`, `device_path`, `use_simulator`, `simulator_host`, `simulator_port`, `srk_handle` (default `0x81000001`), `platform-pcrs` (sealing PCR set, default `[7, 11]`; PCR 16 and 23 refused) and `platform-pcr-bank` (default `sha256`) from the embedded `tpm2.PlatformPCRSelection` (`pkg/tpm2/config.go:306-309`), `vtpm` (`pkg/config/config.go:1132`; mapped at `pkg/server/backend_tpm2.go:109-117`) |
 | SDK | `device`, `key_storage`, `use_simulator`, `simulator_host`, `simulator_port` (`pkg/xkms/register_tpm2.go:54-66`) |
 
 When neither a device nor the simulator is configured, `Validate`
@@ -654,7 +654,7 @@ Everything about SRK, sessions, PCR policy, PIN enrollment and NV storage is in
 
 | Surface | Keys |
 |---|---|
-| `xkmsd` | `enabled`, `library`, `token` (label), `pin` (`pkg/config/config.go:1188`) |
+| `xkmsd` | `enabled`, `library`, `token` (label), `pin` (`pkg/config/config.go:1190`) |
 | SDK | `library`, `config`, `pin`, `so_pin`, `label`, `slot`, `key_storage`, `cert_storage`, `key_dir` (`pkg/xkms/register_pkcs11.go:54-111`) |
 
 `xkmsd` only logs in (`pkg/server/backend_pkcs11.go:23`). Initializing a token
@@ -667,7 +667,7 @@ session pool and PIN handling are in
 
 | Surface | Keys |
 |---|---|
-| `xkmsd` | `enabled`, `region`, `access_key`, `secret_key`, `endpoint`, `key_id` (`pkg/config/config.go:1202`) |
+| `xkmsd` | `enabled`, `region`, `access_key`, `secret_key`, `endpoint`, `key_id` (`pkg/config/config.go:1204`) |
 | SDK | `region`, `access_key_id`, `secret_access_key`, `session_token`, `endpoint`, `key_id` (`pkg/xkms/register_awskms.go:49-64`) |
 
 `key_id` names an existing CMK for the barrier seal key. It accepts a key ID,
@@ -695,7 +695,7 @@ SHA-256/384/512, and ECDSA with SHA-256/384/512 (`awskms.go:947-974`).
 
 | Surface | Keys |
 |---|---|
-| `xkmsd` | `enabled`, `project_id`, `location`, `key_ring`, `credentials_file` (`pkg/config/config.go:1222`) |
+| `xkmsd` | `enabled`, `project_id`, `location`, `key_ring`, `credentials_file` (`pkg/config/config.go:1224`) |
 | SDK | `project_id`, `location_id`, `key_ring_id`, `credentials_file`, `endpoint`, `insecure` (`pkg/xkms/register_gcpkms.go:51-66`) |
 
 `Validate` (`pkg/backend/gcpkms/config.go:87`) checks the following:
@@ -724,7 +724,7 @@ SHA-256/384/512, and ECDSA with SHA-256/384/512 (`awskms.go:947-974`).
 
 | Surface | Keys |
 |---|---|
-| `xkmsd` | `enabled`, `vault_url`, `tenant_id`, `client_id`, `client_secret`, `allow_local_vault_url` (`pkg/config/config.go:1231`) |
+| `xkmsd` | `enabled`, `vault_url`, `tenant_id`, `client_id`, `client_secret`, `allow_local_vault_url` (`pkg/config/config.go:1233`) |
 | SDK | `vault_url`, `tenant_id`, `client_id`, `client_secret`, `allow_local_vault_url` (`pkg/xkms/register_azurekv.go:56-72`) |
 
 `Validate` (`pkg/backend/azurekv/config.go:81`) requires a well-formed
@@ -757,7 +757,7 @@ Symmetric keys are `oct` keys. Imported keys are `RSA-HSM`/`EC-HSM`
 
 | Surface | Keys |
 |---|---|
-| `xkmsd` | `enabled`, `address`, `token`, `namespace`, `mount_path` (default `transit`) (`pkg/config/config.go:1251`) |
+| `xkmsd` | `enabled`, `address`, `token`, `namespace`, `mount_path` (default `transit`) (`pkg/config/config.go:1253`) |
 | SDK | `address`, `token`, `transit_path`, `namespace`, `tls_ca_file`, `tls_ca_path`, `tls_cert_file`, `tls_key_file` (`pkg/xkms/register_vault.go:55-76`) |
 
 `Validate` (`pkg/backend/vault/config.go:70`) requires `address` and `token`.

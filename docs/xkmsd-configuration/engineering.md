@@ -10,7 +10,7 @@
 | `Defaults() *Config` | The defaults layer. The only place an infrastructure literal may live. |
 | `DefaultServerHost` | `""` — every interface, dual-stack. See architecture.md for why not `0.0.0.0`. |
 | `ServerConfig.Host` | The bind host shared by every network listener and handed to the embedded qrdb node. |
-| `ServerConfig.TrustedProxies` (`yaml:"trusted_proxies"`, `pkg/config/config.go:366`) | Reverse proxies (IP or CIDR) whose `X-Forwarded-For` / `X-Real-IP` the REST rate limiters believe. Empty trusts none. `Validate` parses it with `ratelimit.ParseTrustedProxies` (`config.go:1489`) and fails with `*errs.Wrapped` around `*ratelimit.InvalidTrustedProxyError`; `pkg/server` parses it again into `rest.Config.TrustedProxies` (`pkg/server/server.go:2892`), and `cmd/xkmsd/acme.go`'s `startACMEServer` (`acme.go:164`) parses it a third time for the embedded ACME listener, feeding the identical result into `acmeserver.TrustedProxies` (the ACME rate limiter's resolver) and `audit.SetTrustedProxies` (`acme.go:168-169`, `pkg/acme/audit/hooks.go:117`) — one config key drives REST rate limiting, ACME rate limiting, and ACME audit source-IP attribution alike. Resolution rules: `pkg/ratelimit/clientip.go:102`. IPv6 rate-limit *bucket keys* (not audit records) are additionally folded to their `/64` by `ratelimit.RateLimitKey` (`clientip.go:171`); see `docs/acme-issuance/engineering.md`. |
+| `ServerConfig.TrustedProxies` (`yaml:"trusted_proxies"`, `pkg/config/config.go:367`) | Reverse proxies (IP or CIDR) whose `X-Forwarded-For` / `X-Real-IP` the REST rate limiters believe. Empty trusts none. `Validate` parses it with `ratelimit.ParseTrustedProxies` (`config.go:1489`) and fails with `*errs.Wrapped` around `*ratelimit.InvalidTrustedProxyError`; `pkg/server` parses it again into `rest.Config.TrustedProxies` (`pkg/server/server.go:2892`), and `cmd/xkmsd/acme.go`'s `startACMEServer` (`acme.go:164`) parses it a third time for the embedded ACME listener, feeding the identical result into `acmeserver.TrustedProxies` (the ACME rate limiter's resolver) and `audit.SetTrustedProxies` (`acme.go:168-169`, `pkg/acme/audit/hooks.go:117`) — one config key drives REST rate limiting, ACME rate limiting, and ACME audit source-IP attribution alike. Resolution rules: `pkg/ratelimit/clientip.go:102`. IPv6 rate-limit *bucket keys* (not audit records) are additionally folded to their `/64` by `ratelimit.RateLimitKey` (`clientip.go:171`); see `docs/acme-issuance/engineering.md`. |
 
 Unexported but load-bearing, all in `pkg/config/load.go`:
 
@@ -116,7 +116,7 @@ either is ever reached without going through `New`.
    §Configuration for that custody decision, which this file does not own).
 9. **Network serving is the unified API server.** `NetworkServing` is true
    when any of `protocols.rest`, `grpc`, `quic` or `mcp` is on
-   (`pkg/config/config.go:345`); the Unix socket never counts. Such a
+   (`pkg/config/config.go:346`); the Unix socket never counts. Such a
    configuration must set `datastore.mode: standalone`, because the embedded
    qrdb node's multi-protocol server owns those ports, and `tls.enabled`,
    because its transports are TLS-only; `Validate` refuses either omission
@@ -295,7 +295,7 @@ After the embedded CA composes, the unified listener verifies client
 certificates against the union of `tls.ca_file`, `tls.client_cas` and the
 CA's own bundle, not the bundle alone (`unifiedClientCAPool`,
 `unified_tls.go:198`, called at `:174`). `auth.piv_login.enabled` refuses an
-empty or `none` `tls.client_auth` (`pkg/config/config.go:1632-1636`).
+empty or `none` `tls.client_auth` (`pkg/config/config.go:1634-1638`).
 `tls.prefer_server_ciphers` and `tls.watch_cert_files` are parsed
 (`config.go:413`, `:416`) but read by nothing: certificates are not reloaded
 when the files change.

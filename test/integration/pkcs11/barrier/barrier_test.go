@@ -67,8 +67,8 @@ const (
 	xkmsdTags = "codec_cbor codec_json codec_msgpack pkcs11"
 
 	// platformPCR and platformPCRBank are the platform PCR policy the PIN is
-	// sealed under; they match the defaults in pkg/tpm2.
-	platformPCR     = 16
+	// sealed under: a one-PCR board set holding boot PCR 7.
+	platformPCR     = 7
 	platformPCRBank = "sha256"
 
 	tokenLabel   = "xkms-barrier"
@@ -196,7 +196,7 @@ backends:
     use_simulator: true
     simulator_host: %[5]q
     simulator_port: %[6]d
-    platform-pcr: %[9]d
+    platform-pcrs: [%[9]d]
     platform-pcr-bank: %[10]q
   pkcs11:
     enabled: false

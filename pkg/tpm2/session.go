@@ -395,7 +395,7 @@ func (tpm *TPM2) HMACSaltedSession(
 // the session so the HMAC computation includes it (per TPM 2.0 Part 1,
 // Section 19.6: HMAC key = sessionKey || authValue).
 //
-// Both branch digests are derived from the live platform PCR. This is the
+// Both branch digests are derived from the live platform PCRs. This is the
 // right behaviour for an object whose recorded policy pin is unknown -- every
 // object created before pins existed, and every non-sealed platform-policy key
 // -- and it is what makes the PCR branch fail once the platform state moves.
@@ -419,7 +419,7 @@ func (tpm *TPM2) PlatformPolicySession(auth []byte) (tpm2.Session, func() error,
 // operand of TPM2_PolicyOR comes from the key's pin.
 //
 //   - PCR branch (auth == nil): the session runs TPM2_PolicyPCR against live
-//     PCRs, so branch 1 is computed from the live platform PCR whether or not
+//     PCRs, so branch 1 is computed from the live platform PCRs whether or not
 //     a pin exists. If the platform state moved, the session digest no longer
 //     equals the key's AuthPolicy and the TPM refuses the authorization with
 //     TPM_RC_POLICY_FAIL. That is the platform binding and it is deliberately
@@ -455,7 +455,7 @@ func (tpm *TPM2) platformPolicySession(
 	pinned := !usePCRBranch && pin != nil
 	if pinned {
 		branch1Digest, branch2Digest, err = platformPolicyBranchDigests(
-			tpm2.TPMAlgID(pin.PCRBank), uint(pin.PCRIndex), pin.PCRDigest)
+			tpm2.TPMAlgID(pin.PCRBank), PCRSetFromMask(pin.PCRSelect), pin.PCRDigest)
 		if err != nil {
 			return nil, nil, &errs.Detail{Err: ErrPlatformPolicySession, Detail: fmt.Sprintf("%v", err)}
 		}
@@ -470,7 +470,7 @@ func (tpm *TPM2) platformPolicySession(
 			return nil, nil, &errs.Detail{Err: ErrPlatformPolicySession, Detail: fmt.Sprintf("%v", err)}
 		}
 		branch1Digest, branch2Digest, err = platformPolicyBranchDigests(
-			hashAlgID, tpm.config.PlatformPCR, pcrDigest)
+			hashAlgID, tpm.config.PlatformPCRs, pcrDigest)
 		if err != nil {
 			return nil, nil, &errs.Detail{Err: ErrPlatformPolicySession, Detail: fmt.Sprintf("%v", err)}
 		}
@@ -546,8 +546,8 @@ func (tpm *TPM2) platformPolicySession(
 	return session, closer, nil
 }
 
-// platformPolicyPCR executes TPM2_PolicyPCR over the platform PCR in session,
-// asserting pcrDigest, the digest of the platform PCR as it reads now.
+// platformPolicyPCR executes TPM2_PolicyPCR over the platform PCR set in
+// session, asserting pcrDigest, the digest of the set as it reads now.
 func (tpm *TPM2) platformPolicyPCR(
 	session tpm2.Session,
 	hashAlgID tpm2.TPMAlgID,
@@ -556,7 +556,7 @@ func (tpm *TPM2) platformPolicyPCR(
 	_, err := tpm2.PolicyPCR{
 		PolicySession: session.Handle(),
 		PcrDigest:     tpm2.TPM2BDigest{Buffer: pcrDigest},
-		Pcrs:          platformPolicyPCRSelection(hashAlgID, tpm.config.PlatformPCR),
+		Pcrs:          platformPolicyPCRSelection(hashAlgID, tpm.config.PlatformPCRs),
 	}.Execute(tpm.transport)
 	if err != nil {
 		return &errs.Detail{Err: ErrPlatformPolicySession, Detail: fmt.Sprintf("PolicyPCR execute: %v", err)}
@@ -565,7 +565,7 @@ func (tpm *TPM2) platformPolicyPCR(
 }
 
 // platformPCRSession returns a policy session that has executed
-// TPM2_PolicyPCR over the live platform PCR and nothing else. It satisfies
+// TPM2_PolicyPCR over the live platform PCRs and nothing else. It satisfies
 // the authPolicy of an object sealed to the platform policy without a
 // password, which is the PolicyPCR branch alone (see sealKeyInternal): the
 // session proves no secret, so it is unsalted. It fails with
@@ -782,7 +782,7 @@ func (tpm *TPM2) loadPlatformPolicyPin(
 
 	tpm.logger.Debug("tpm: loaded platform policy pin",
 		slog.String("cn", keyAttrs.CN),
-		slog.Uint64("pcr", uint64(pin.PCRIndex)),
+		slog.Any("pcrs", PCRSetFromMask(pin.PCRSelect)),
 		slog.String("pcr_digest", fmt.Sprintf("%x", pin.PCRDigest)))
 
 	return pin, nil
@@ -883,7 +883,7 @@ func (tpm *TPM2) createKeySession(
 // policy, PolicyOR(PolicyPCR, PolicyAuthValue). A key with a non-empty auth
 // value takes the PolicyAuthValue branch, its PolicyPCR operand rebuilt from
 // the pin recorded beside the key in backend; one without takes the PolicyPCR
-// branch against the live platform PCR. An empty auth value is treated as
+// branch against the live platform PCRs. An empty auth value is treated as
 // none, for the reason CreateSession gives. backend may be nil, in which case
 // the platform backend is used.
 func (tpm *TPM2) platformKeySession(

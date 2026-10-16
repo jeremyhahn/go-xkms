@@ -111,7 +111,6 @@ func TestMain(m *testing.M) {
 			Model:              "TestDevice",
 			Serial:             "SN123456",
 		},
-		PlatformPCR:     16,
 		PlatformPCRBank: "SHA256",
 		FileIntegrity:   []string{},
 	}

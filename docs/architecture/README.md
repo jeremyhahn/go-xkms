@@ -33,7 +33,7 @@ Earlier documents in this directory were folded into feature folders
 ## Transports at a glance
 
 `xkmsd` binds every network listener on `server.host`
-(`ServerConfig`, `pkg/config/config.go:309`); each transport is switched on under
+(`ServerConfig`, `pkg/config/config.go:310`); each transport is switched on under
 `protocols:` (`config.go:351-358`). The shipped `configs/xkmsd.yaml` uses:
 
 | Transport | Port key | Shipped value | Notes |

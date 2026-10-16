@@ -105,7 +105,7 @@ Scope and boundaries: [docs/SPEC.md](docs/SPEC.md).
 
 ## Later
 
-- **platform-pcr-selection** — PCR 16 or the board's boot PCRs for the platform policy — [#1443](../../issues/1443) — blocked: decision pending
+- **platform-pcr-selection** — the board's boot PCRs for the platform policy, `TPMConfig.PlatformPCRs` (default 7 and 11) — [#1443](../../issues/1443), [#1551](../../issues/1551) — open
 - **ca** — standalone xkey CA, local or remote-only — [#729](../../issues/729) — blocked: decision pending
 - **ota-image-keys** — one OTA image-signing key per trusted-firmware board id — [SPEC](docs/SPEC.md#features) — open
 - **authz-admin-grants** — module permissions granted per role with declared duties — [Dev complete](../../milestone/14) — open

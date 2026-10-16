@@ -424,8 +424,8 @@ func TestProvisionEKCertWithCertStoreCoverage(t *testing.T) {
 	config := &Config{
 		UseSimulator:    true,
 		Hash:            "SHA-256",
-		PlatformPCR:     debugPCR,
-		PlatformPCRBank: debugPCRBank,
+		PlatformPCRs:    DefaultPlatformPCRs(),
+		PlatformPCRBank: PCRBankSHA256,
 		GoldenPCRs:      []uint{0, 7},
 		EK: &EKConfig{
 			CertHandle:    0, // Use cert store
@@ -491,8 +491,8 @@ func TestProvisionEKCertNilCertStoreCoverage(t *testing.T) {
 	config := &Config{
 		UseSimulator:    true,
 		Hash:            "SHA-256",
-		PlatformPCR:     debugPCR,
-		PlatformPCRBank: debugPCRBank,
+		PlatformPCRs:    DefaultPlatformPCRs(),
+		PlatformPCRBank: PCRBankSHA256,
 		GoldenPCRs:      []uint{0, 7},
 		EK: &EKConfig{
 			CertHandle:    0, // Use cert store
@@ -562,8 +562,8 @@ func TestDownloadEKCertFromManufacturer_RejectsECCEK(t *testing.T) {
 	config := &Config{
 		UseSimulator:    true,
 		Hash:            "SHA-256",
-		PlatformPCR:     debugPCR,
-		PlatformPCRBank: debugPCRBank,
+		PlatformPCRs:    DefaultPlatformPCRs(),
+		PlatformPCRBank: PCRBankSHA256,
 		GoldenPCRs:      []uint{0, 7},
 		EK: &EKConfig{
 			CertHandle:    0,
@@ -630,8 +630,8 @@ func TestWriteEKCertCoverage(t *testing.T) {
 	config := &Config{
 		UseSimulator:    true,
 		Hash:            "SHA-256",
-		PlatformPCR:     debugPCR,
-		PlatformPCRBank: debugPCRBank,
+		PlatformPCRs:    DefaultPlatformPCRs(),
+		PlatformPCRBank: PCRBankSHA256,
 		GoldenPCRs:      []uint{0, 7},
 		EK: &EKConfig{
 			CertHandle:    0, // Use cert store
@@ -768,8 +768,8 @@ func TestCreatePlatformPolicyEmptyGoldenPCRsCoverage(t *testing.T) {
 	config := &Config{
 		UseSimulator:    true,
 		Hash:            "SHA-256",
-		PlatformPCR:     debugPCR,
-		PlatformPCRBank: debugPCRBank,
+		PlatformPCRs:    DefaultPlatformPCRs(),
+		PlatformPCRBank: PCRBankSHA256,
 		GoldenPCRs:      []uint{}, // Empty golden PCRs
 		EK: &EKConfig{
 			CertHandle:    0x01C00002,

@@ -26,6 +26,7 @@ import (
 	"io"
 	"log/slog"
 	"math/big"
+	"slices"
 	"testing"
 
 	"github.com/google/go-tpm/tpm2"
@@ -211,7 +212,6 @@ func (m *mockTPM) IDevID() (crypto.PublicKey, error)                            
 func (m *mockTPM) IDevIDAttributes() (*types.KeyAttributes, error)                   { return nil, nil }
 func (m *mockTPM) Info() (string, error)                                             { return "", nil }
 func (m *mockTPM) IsFIPS140_2() (bool, error)                                        { return false, nil }
-func (m *mockTPM) IsPlatformPCRExtended() (bool, error)                              { return false, nil }
 func (m *mockTPM) ExtendPCR(pcrIndex int, hashAlg string, data []byte) error         { return nil }
 func (m *mockTPM) Install(soPIN types.Password, opts *pkgtpm2.InstallOptions) error  { return nil }
 func (m *mockTPM) KeyAttributes(handle tpm2.TPMHandle) (*types.KeyAttributes, error) { return nil, nil }
@@ -518,41 +518,52 @@ func TestConfig_Validate_DefaultValues(t *testing.T) {
 	}
 }
 
-// TestConfig_Validate_PlatformPCRDefault verifies an unset platform PCR takes
-// the pkg/tpm2 library default, the same PCR xkey extends, rather than PCR 0
-// (the firmware PCR). xkmsd's backends.tpm2 path and xkey must agree on the
-// PCR a Platform SRK policy is computed over, or a TPM enrolled by one is not
-// usable by the other.
-func TestConfig_Validate_PlatformPCRDefault(t *testing.T) {
+// TestConfig_ToTPMConfig_PlatformPCRsUnsetTakesLibraryDefault verifies an
+// unset sealing PCR set reaches pkgtpm2.Config unset, so pkgtpm2.NewTPM2
+// applies its one default. xkmsd's backends.tpm2 path and xkey must agree on
+// the set a Platform SRK policy is computed over, or a TPM enrolled by one is
+// not usable by the other.
+func TestConfig_ToTPMConfig_PlatformPCRsUnsetTakesLibraryDefault(t *testing.T) {
 	config := &Config{UseSimulator: true, Keys: tpmblobtest.New(t)}
 	if err := config.Validate(); err != nil {
 		t.Fatalf("Validate() error = %v", err)
 	}
-	if config.PlatformPCR != pkgtpm2.DefaultPlatformPCR {
-		t.Errorf("PlatformPCR default = %d, want %d", config.PlatformPCR, pkgtpm2.DefaultPlatformPCR)
+	if got := config.ToTPMConfig().PlatformPCRs; got != nil {
+		t.Errorf("ToTPMConfig().PlatformPCRs = %v, want nil for the library default", got)
 	}
-	if got := config.ToTPMConfig().PlatformPCR; got != pkgtpm2.DefaultPlatformPCR {
-		t.Errorf("ToTPMConfig().PlatformPCR = %d, want %d", got, pkgtpm2.DefaultPlatformPCR)
-	}
-	if pkgtpm2.DefaultConfig.PlatformPCR != pkgtpm2.DefaultPlatformPCR {
-		t.Errorf("DefaultConfig.PlatformPCR = %d, want %d", pkgtpm2.DefaultConfig.PlatformPCR, pkgtpm2.DefaultPlatformPCR)
+	if !slices.Equal(pkgtpm2.DefaultConfig.PlatformPCRs, pkgtpm2.DefaultPlatformPCRs()) {
+		t.Errorf("DefaultConfig.PlatformPCRs = %v, want %v", pkgtpm2.DefaultConfig.PlatformPCRs, pkgtpm2.DefaultPlatformPCRs())
 	}
 }
 
-// TestConfig_Validate_PlatformPCRExplicit verifies an operator-chosen platform
-// PCR is kept, not overwritten by the default.
-func TestConfig_Validate_PlatformPCRExplicit(t *testing.T) {
-	config := &Config{UseSimulator: true, Keys: tpmblobtest.New(t), PlatformPCR: 23}
+// TestConfig_ToTPMConfig_PlatformPCRsBoardSet verifies an operator-chosen
+// board set is passed through unchanged, not replaced by the default.
+func TestConfig_ToTPMConfig_PlatformPCRsBoardSet(t *testing.T) {
+	board := pkgtpm2.PCRSet{0, 7, 14}
+	config := &Config{UseSimulator: true, Keys: tpmblobtest.New(t), PlatformPCRs: board}
 	if err := config.Validate(); err != nil {
 		t.Fatalf("Validate() error = %v", err)
 	}
-	if config.PlatformPCR != 23 {
-		t.Errorf("PlatformPCR = %d, want 23", config.PlatformPCR)
+	if got := config.ToTPMConfig().PlatformPCRs; !slices.Equal(got, board) {
+		t.Errorf("ToTPMConfig().PlatformPCRs = %v, want %v", got, board)
+	}
+}
+
+// TestNewBackend_RefusesResettablePlatformPCR verifies a set holding PCR 16
+// is refused when the backend opens its TPM, not silently sealed over.
+func TestNewBackend_RefusesResettablePlatformPCR(t *testing.T) {
+	_, err := NewBackend(&Config{
+		UseSimulator: true,
+		Keys:         tpmblobtest.New(t),
+		PlatformPCRs: pkgtpm2.PCRSet{7, 16},
+	})
+	if !errors.Is(err, pkgtpm2.ErrPlatformPCRResettable) {
+		t.Fatalf("NewBackend() error = %v, want ErrPlatformPCRResettable", err)
 	}
 }
 
 func TestConfig_ToTPMConfig(t *testing.T) {
-	config := &Config{Device: "/dev/tpmrm0", Keys: tpmblobtest.New(t), UseSimulator: true, SRKHandle: 0x81000001, EKHandle: 0x81010001, Hash: "SHA-256", PlatformPCR: 7, PlatformPCRBank: "SHA256"}
+	config := &Config{Device: "/dev/tpmrm0", Keys: tpmblobtest.New(t), UseSimulator: true, SRKHandle: 0x81000001, EKHandle: 0x81010001, Hash: "SHA-256", PlatformPCRs: pkgtpm2.PCRSet{7, 11}, PlatformPCRBank: "SHA256"}
 	tpmConfig := config.ToTPMConfig()
 	if tpmConfig == nil {
 		t.Fatal("ToTPMConfig returned nil")
@@ -1665,7 +1676,7 @@ func TestConfig_ToTPMConfig_AllFields(t *testing.T) {
 		SRKHandle:       0x81000002,
 		EKHandle:        0x81010002,
 		Hash:            "SHA-384",
-		PlatformPCR:     7,
+		PlatformPCRs:    pkgtpm2.PCRSet{7, 11},
 		PlatformPCRBank: "SHA384",
 	}
 	tpmConfig := config.ToTPMConfig()
@@ -1679,8 +1690,8 @@ func TestConfig_ToTPMConfig_AllFields(t *testing.T) {
 	if tpmConfig.Hash != config.Hash {
 		t.Errorf("Hash: got %s, want %s", tpmConfig.Hash, config.Hash)
 	}
-	if tpmConfig.PlatformPCR != config.PlatformPCR {
-		t.Errorf("PlatformPCR: got %d, want %d", tpmConfig.PlatformPCR, config.PlatformPCR)
+	if !slices.Equal(tpmConfig.PlatformPCRs, config.PlatformPCRs) {
+		t.Errorf("PlatformPCRs: got %v, want %v", tpmConfig.PlatformPCRs, config.PlatformPCRs)
 	}
 	if tpmConfig.PlatformPCRBank != config.PlatformPCRBank {
 		t.Errorf("PlatformPCRBank: got %s, want %s", tpmConfig.PlatformPCRBank, config.PlatformPCRBank)
@@ -1819,7 +1830,7 @@ func TestNewBackend_ConfigToTPMConfigConversion(t *testing.T) {
 		SRKHandle:       0x81000002,
 		EKHandle:        0x81010002,
 		Hash:            "SHA-384",
-		PlatformPCR:     7,
+		PlatformPCRs:    pkgtpm2.PCRSet{7, 11},
 		PlatformPCRBank: "SHA384",
 		CN:              "test-cn",
 		Tracker:         tracker,
@@ -1837,8 +1848,8 @@ func TestNewBackend_ConfigToTPMConfigConversion(t *testing.T) {
 	if tpmConfig.Hash != config.Hash {
 		t.Errorf("Hash mismatch: got %s, want %s", tpmConfig.Hash, config.Hash)
 	}
-	if tpmConfig.PlatformPCR != config.PlatformPCR {
-		t.Errorf("PlatformPCR mismatch: got %d, want %d", tpmConfig.PlatformPCR, config.PlatformPCR)
+	if !slices.Equal(tpmConfig.PlatformPCRs, config.PlatformPCRs) {
+		t.Errorf("PlatformPCRs mismatch: got %v, want %v", tpmConfig.PlatformPCRs, config.PlatformPCRs)
 	}
 	if tpmConfig.PlatformPCRBank != config.PlatformPCRBank {
 		t.Errorf("PlatformPCRBank mismatch: got %s, want %s", tpmConfig.PlatformPCRBank, config.PlatformPCRBank)

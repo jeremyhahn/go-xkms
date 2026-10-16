@@ -5,12 +5,16 @@ package store
 
 import (
 	"bytes"
+	"encoding/binary"
 	"testing"
 
 	"github.com/jeremyhahn/go-xkms/pkg/types"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
+
+// boardPCRSelect selects PCRs 7 and 11, the default sealing PCR set.
+const boardPCRSelect uint32 = 1<<7 | 1<<11
 
 // TestPlatformPolicyPin_RoundTrip proves a pin survives the on-disk encoding
 // byte for byte. The PIN branch of the platform policy rebuilds a PolicyOR
@@ -21,7 +25,7 @@ func TestPlatformPolicyPin_RoundTrip(t *testing.T) {
 
 	pin := &PlatformPolicyPin{
 		PCRBank:   0x000B, // TPM_ALG_SHA256
-		PCRIndex:  16,
+		PCRSelect: boardPCRSelect,
 		PCRDigest: digest,
 	}
 
@@ -35,7 +39,7 @@ func TestPlatformPolicyPin_RoundTrip(t *testing.T) {
 	decoded, err := UnmarshalPlatformPolicyPin(encoded)
 	require.NoError(t, err)
 	assert.Equal(t, pin.PCRBank, decoded.PCRBank)
-	assert.Equal(t, pin.PCRIndex, decoded.PCRIndex)
+	assert.Equal(t, pin.PCRSelect, decoded.PCRSelect)
 	assert.Equal(t, pin.PCRDigest, decoded.PCRDigest)
 
 	// The decoded digest must not alias the input buffer: a caller that
@@ -54,9 +58,21 @@ func TestPlatformPolicyPin_Marshal_InvalidInput(t *testing.T) {
 	assert.Nil(t, out)
 	assert.IsType(t, &PlatformPolicyPinFormatError{}, err)
 
-	out, err = (&PlatformPolicyPin{PCRBank: 0x000B, PCRIndex: 16}).MarshalBinary()
+	out, err = (&PlatformPolicyPin{PCRBank: 0x000B, PCRSelect: boardPCRSelect}).MarshalBinary()
 	assert.Nil(t, out)
 	assert.IsType(t, &PlatformPolicyPinFormatError{}, err)
+
+	digest := bytes.Repeat([]byte{0x01}, 32)
+	for name, pcrSelect := range map[string]uint32{
+		"empty PCR selection": 0,
+		"PCR above 23":        1 << 24,
+	} {
+		t.Run(name, func(t *testing.T) {
+			out, err := (&PlatformPolicyPin{PCRBank: 0x000B, PCRSelect: pcrSelect, PCRDigest: digest}).MarshalBinary()
+			assert.Nil(t, out)
+			assert.IsType(t, &PlatformPolicyPinFormatError{}, err)
+		})
+	}
 
 	out, err = (&PlatformPolicyPin{
 		PCRDigest: bytes.Repeat([]byte{0x01}, platformPolicyPinMaxDigest+1),
@@ -72,7 +88,7 @@ func TestPlatformPolicyPin_Marshal_InvalidInput(t *testing.T) {
 func TestUnmarshalPlatformPolicyPin_Rejections(t *testing.T) {
 	valid, err := (&PlatformPolicyPin{
 		PCRBank:   0x000B,
-		PCRIndex:  16,
+		PCRSelect: boardPCRSelect,
 		PCRDigest: bytes.Repeat([]byte{0x5A}, 32),
 	}).MarshalBinary()
 	require.NoError(t, err)
@@ -95,7 +111,15 @@ func TestUnmarshalPlatformPolicyPin_Rejections(t *testing.T) {
 	oversizedDigestLen := append([]byte(nil), valid...)
 	oversizedDigestLen[11], oversizedDigestLen[12] = 0xFF, 0xFF
 
+	emptySelect := append([]byte(nil), valid...)
+	binary.BigEndian.PutUint32(emptySelect[7:11], 0)
+
+	selectAbove23 := append([]byte(nil), valid...)
+	binary.BigEndian.PutUint32(selectAbove23[7:11], boardPCRSelect|1<<24)
+
 	for name, record := range map[string][]byte{
+		"empty PCR selection":  emptySelect,
+		"PCR above 23":         selectAbove23,
 		"empty":                {},
 		"truncated header":     truncatedHeader,
 		"bad magic":            badMagic,
@@ -117,6 +141,16 @@ func TestUnmarshalPlatformPolicyPin_Rejections(t *testing.T) {
 		require.IsType(t, &PlatformPolicyPinVersionError{}, err)
 		assert.Contains(t, err.Error(), "unsupported platform policy pin record version")
 	})
+
+	// A version 1 record pinned a single PCR index, not a selection
+	// bitmap; reading it as one would hand the TPM the wrong PCR set.
+	t.Run("version 1 single-PCR record", func(t *testing.T) {
+		v1 := append([]byte(nil), valid...)
+		v1[4] = 1
+		pin, err := UnmarshalPlatformPolicyPin(v1)
+		assert.Nil(t, pin)
+		require.IsType(t, &PlatformPolicyPinVersionError{}, err)
+	})
 }
 
 // TestBlobStore_Delete_RemovesPlatformPolicyPin proves the pin record shares
@@ -129,7 +163,7 @@ func TestBlobStore_Delete_RemovesPlatformPolicyPin(t *testing.T) {
 
 	pin := &PlatformPolicyPin{
 		PCRBank:   0x000B,
-		PCRIndex:  16,
+		PCRSelect: boardPCRSelect,
 		PCRDigest: bytes.Repeat([]byte{0x33}, 32),
 	}
 	record, err := pin.MarshalBinary()

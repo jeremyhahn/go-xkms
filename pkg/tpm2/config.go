@@ -19,14 +19,139 @@ import (
 
 type PCRBankAlgo string
 
-// DefaultPlatformPCR is the PCR the golden platform measurement is extended
-// into, and so the PCR every platform policy (the Platform SRK's, and any
-// key or sealed object bound to it) is computed over, when a configuration
-// leaves it unset. PCR 16 is the TCG "debug" PCR: resettable and never
-// extended by firmware or the OS, so the measurement xkms extends is the
-// only thing in it. xkmsd and xkey both resolve an unset platform PCR to
-// this value; a zero value never means PCR 0 (the firmware PCR).
-const DefaultPlatformPCR uint = 16
+// PCRSet is the PCR selection every platform policy (the Platform SRK's, and
+// any key or sealed object bound to it) is computed over. It holds real boot
+// PCRs, which firmware and the OS measure and xkms never extends, so a sealed
+// object releases only on a board that booted the same measured chain. The set
+// is configurable per board through Config.PlatformPCRs; Validate states what
+// a set may hold.
+type PCRSet []uint
+
+// DefaultPlatformPCRs returns the platform PCR set used when a configuration
+// leaves it unset: PCR 7 (Secure Boot policy) and PCR 11 (the unified kernel
+// image and OS measurements). It returns a fresh slice on every call.
+func DefaultPlatformPCRs() PCRSet {
+	return PCRSet{7, 11}
+}
+
+var (
+	// ErrPlatformPCRSetEmpty reports a platform PCR set with no PCRs, which
+	// would bind the platform policy to nothing.
+	ErrPlatformPCRSetEmpty = errors.New("tpm2: the platform PCR set is empty")
+
+	// ErrPlatformPCROutOfRange reports a PCR index above the highest PCR a
+	// PC Client TPM implements.
+	ErrPlatformPCROutOfRange = errors.New("tpm2: platform PCR index out of range")
+
+	// ErrPlatformPCRDuplicate reports a PCR listed more than once.
+	ErrPlatformPCRDuplicate = errors.New("tpm2: platform PCR listed more than once")
+
+	// ErrPlatformPCRResettable reports PCR 16 (debug) or PCR 23 (application
+	// support). Both are resettable from locality 0, so any process could put
+	// them back into the sealed state; they are never used for sealing.
+	ErrPlatformPCRResettable = errors.New("tpm2: resettable PCR cannot seal the platform policy")
+)
+
+// resettablePCRs are the PCRs a platform PCR set never holds.
+var resettablePCRs = map[uint]struct{}{16: {}, 23: {}}
+
+// PlatformPCRError is the typed error PCRSet.Validate returns for a PCR the
+// set cannot hold. Err is one of the ErrPlatformPCR* sentinels.
+type PlatformPCRError struct {
+	PCR uint
+	Err error
+}
+
+func (e *PlatformPCRError) Error() string {
+	return fmt.Sprintf("%s: PCR %d", e.Err.Error(), e.PCR)
+}
+
+// Unwrap reports the sentinel so callers can match with errors.Is.
+func (e *PlatformPCRError) Unwrap() error { return e.Err }
+
+// Validate refuses an empty set, an index above PCR 23, a duplicate, and the
+// resettable PCRs 16 and 23.
+func (s PCRSet) Validate() error {
+	if len(s) == 0 {
+		return ErrPlatformPCRSetEmpty
+	}
+	var seen uint32
+	for _, pcr := range s {
+		if pcr > maxPCRIndex {
+			return &PlatformPCRError{PCR: pcr, Err: ErrPlatformPCROutOfRange}
+		}
+		if _, ok := resettablePCRs[pcr]; ok {
+			return &PlatformPCRError{PCR: pcr, Err: ErrPlatformPCRResettable}
+		}
+		bit := uint32(1) << pcr
+		if seen&bit != 0 {
+			return &PlatformPCRError{PCR: pcr, Err: ErrPlatformPCRDuplicate}
+		}
+		seen |= bit
+	}
+	return nil
+}
+
+// Mask returns the set as a PCR bitmap, bit n standing for PCR n. The set
+// must be valid.
+func (s PCRSet) Mask() uint32 {
+	var mask uint32
+	for _, pcr := range s {
+		mask |= uint32(1) << pcr
+	}
+	return mask
+}
+
+// PCRSetFromMask returns the PCRs of a bitmap in ascending order, bit n
+// standing for PCR n.
+func PCRSetFromMask(mask uint32) PCRSet {
+	set := PCRSet{}
+	for pcr := uint(0); pcr <= maxPCRIndex; pcr++ {
+		if mask&(uint32(1)<<pcr) != 0 {
+			set = append(set, pcr)
+		}
+	}
+	return set
+}
+
+// Sorted returns a copy of the set in ascending order, the order the TPM
+// concatenates PCR values in when it computes a PolicyPCR digest.
+func (s PCRSet) Sorted() PCRSet {
+	return PCRSetFromMask(s.Mask())
+}
+
+// UnmarshalYAML decodes a YAML sequence of PCR indexes and refuses a set
+// Validate rejects, so a bad set fails at configuration load.
+func (s *PCRSet) UnmarshalYAML(node *yaml.Node) error {
+	var pcrs []uint
+	if err := node.Decode(&pcrs); err != nil {
+		return err
+	}
+	set := PCRSet(pcrs)
+	if err := set.Validate(); err != nil {
+		return err
+	}
+	*s = set
+	return nil
+}
+
+// UnmarshalJSON decodes a JSON array of PCR indexes and refuses a set
+// Validate rejects, so a bad set fails at configuration load.
+func (s *PCRSet) UnmarshalJSON(data []byte) error {
+	if string(data) == "null" {
+		return nil
+	}
+	var pcrs []uint
+	if err := json.Unmarshal(data, &pcrs); err != nil {
+		return err
+	}
+	set := PCRSet(pcrs)
+	if err := set.Validate(); err != nil {
+		return err
+	}
+	*s = set
+	return nil
+}
 
 var (
 	PCRBankSHA1   = "sha1"
@@ -174,20 +299,20 @@ var (
 	}
 )
 
-// PlatformPCRSelection selects the PCR and bank of the built-in "platform"
-// policy: the PCR the golden platform measurement is extended into, read
-// in the named bank. It is the one definition every configuration that
-// carries the selection embeds. A zero PlatformPCR means unset and resolves
-// to DefaultPlatformPCR, never PCR 0.
+// PlatformPCRSelection selects the PCRs and bank of the built-in "platform"
+// policy: the board's sealing PCR set, read in the named bank, that every
+// platform policy binds to. It is the one definition every configuration
+// that carries the selection embeds. An unset PlatformPCRs means
+// DefaultPlatformPCRs ({7, 11}); PCRSet.Validate lists what is refused.
 type PlatformPCRSelection struct {
-	PlatformPCR     uint   `yaml:"platform-pcr" json:"platform_pcr" mapstructure:"platform-pcr"`
+	PlatformPCRs    PCRSet `yaml:"platform-pcrs,omitempty" json:"platform_pcrs,omitempty" mapstructure:"platform-pcrs"`
 	PlatformPCRBank string `yaml:"platform-pcr-bank" json:"platform_pcr_bank" mapstructure:"platform-pcr-bank"`
 }
 
 // DefaultPlatformPCRSelection returns the default platform selection:
-// DefaultPlatformPCR in the SHA-256 bank.
+// DefaultPlatformPCRs in the SHA-256 bank.
 func DefaultPlatformPCRSelection() PlatformPCRSelection {
-	return PlatformPCRSelection{PlatformPCR: DefaultPlatformPCR, PlatformPCRBank: PCRBankSHA256}
+	return PlatformPCRSelection{PlatformPCRs: DefaultPlatformPCRs(), PlatformPCRBank: PCRBankSHA256}
 }
 
 type Config struct {

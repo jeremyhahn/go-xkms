@@ -10,6 +10,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"slices"
 	"strings"
 	"time"
 
@@ -350,7 +351,7 @@ func (tpm *TPM2) factoryResetInternal(ownerAuth []byte, attemptClear bool) error
 type InstallOptions struct {
 	EK             bool // Ensure EK exists at configured handle
 	SSRK           bool // Ensure SSRK exists at configured handle
-	PlatformPolicy bool // Extend PCR 23 with golden measurements
+	PlatformPolicy bool // Compute the platform policy over the platform PCR set
 	IAK            bool // Ensure IAK exists
 	IDevID         bool // Ensure IDevID exists
 }
@@ -729,10 +730,8 @@ func (tpm *TPM2) ProvisionOwner(
 		return nil, err
 	}
 
-	// Create Shared SRK. It takes no platform policy: this runs before
-	// CreatePlatformPolicy extends the golden measurement into the platform
-	// PCR, so a policy computed here would be stale the moment provisioning
-	// returns. The Platform SRK, created after that extend, is the
+	// Create Shared SRK. It takes no platform policy: the Shared SRK
+	// outlives every platform PCR state, and the Platform SRK is the
 	// platform-bound storage parent.
 	srkAttrs, err := SRKAttributesFromConfig(*tpm.config.SSRK)
 	if err != nil {
@@ -982,8 +981,8 @@ func (tpm *TPM2) GoldenMeasurements() ([]byte, error) {
 	return gold, nil
 }
 
-// PlatformPolicyDigestHash reads the current value of the platform PCR and
-// returns its digest in the PCR bank's own algorithm: the pcrDigest a
+// PlatformPolicyDigestHash reads the current values of the platform PCR set
+// and returns their digest in the PCR bank's own algorithm: the pcrDigest a
 // TPM2_PolicyPCR session in that algorithm is checked against.
 func (tpm *TPM2) PlatformPolicyDigestHash() ([]byte, error) {
 
@@ -994,8 +993,8 @@ func (tpm *TPM2) PlatformPolicyDigestHash() ([]byte, error) {
 	return tpm.platformPCRDigest(hashAlgID)
 }
 
-// platformPCRDigest reads the platform PCR from the configured bank and
-// digests its value with hashAlg. TPM2_PolicyPCR compares against a digest
+// platformPCRDigest reads the platform PCR set from the configured bank and
+// digests its values with hashAlg. TPM2_PolicyPCR compares against a digest
 // in the session's hash algorithm, which is the bank algorithm for the
 // platform policy and the key's nameAlg for a DevID platform delegation, so
 // the algorithm is the caller's choice and the PCR read is not.
@@ -1011,76 +1010,66 @@ func (tpm *TPM2) platformPCRDigest(hashAlg tpm2.TPMAlgID) ([]byte, error) {
 		return nil, err
 	}
 
-	pcrReadRsp, err := tpm2.PCRRead{
-		PCRSelectionIn: platformPolicyPCRSelection(bank, tpm.config.PlatformPCR),
-	}.Execute(tpm.transport)
-	if err != nil {
-		tpm.logger.Error("PCRRead failed", slog.String("error", err.Error()))
-		return nil, err
-	}
-	if len(pcrReadRsp.PCRValues.Digests) == 0 {
-		return nil, &errs.Detail{Err: ErrPlatformPolicyDigestCompute,
-			Detail: fmt.Sprintf("PCR %d is not present in bank 0x%04x", tpm.config.PlatformPCR, uint16(bank))}
-	}
-	buffer := pcrReadRsp.PCRValues.Digests[0].Buffer
-
-	// Create digest of the golden PCR
+	// TPM2_PolicyPCR hashes the selected PCR values concatenated in
+	// ascending index order. A PCRRead response carries at most eight
+	// digests, lowest index first, and names the PCRs it read in
+	// pcrSelectionOut, so the rest of the set is read again until every
+	// PCR is hashed.
 	hash := cryptoHashAlg.New()
-	hash.Reset()
-	hash.Write(buffer)
-	digest := hash.Sum(nil)
+	remaining := tpm.config.PlatformPCRs.Sorted()
+	for len(remaining) > 0 {
+		pcrReadRsp, err := tpm2.PCRRead{
+			PCRSelectionIn: PolicyPCRSelection(bank, remaining...),
+		}.Execute(tpm.transport)
+		if err != nil {
+			tpm.logger.Error("PCRRead failed", slog.String("error", err.Error()))
+			return nil, err
+		}
+		read := pcrSetFromSelection(pcrReadRsp.PCRSelectionOut, bank)
+		if len(read) == 0 || len(read) > len(remaining) ||
+			len(read) != len(pcrReadRsp.PCRValues.Digests) ||
+			!slices.Equal(read, remaining[:len(read)]) {
+			return nil, &errs.Detail{Err: ErrPlatformPolicyDigestCompute,
+				Detail: fmt.Sprintf("PCR %d is not present in bank 0x%04x", remaining[0], uint16(bank))}
+		}
+		for _, digest := range pcrReadRsp.PCRValues.Digests {
+			hash.Write(digest.Buffer)
+		}
+		remaining = remaining[len(read):]
+	}
 
-	return digest, nil
+	return hash.Sum(nil), nil
 }
 
-// Returns the Golden Integrity Measurement and Policy Digest ready
-// to be attached to a key.
+// pcrSetFromSelection returns, in ascending order, the PCRs sel selects in
+// bank.
+func pcrSetFromSelection(sel tpm2.TPMLPCRSelection, bank tpm2.TPMAlgID) PCRSet {
+	var mask uint32
+	for _, s := range sel.PCRSelections {
+		if s.Hash != bank {
+			continue
+		}
+		for i, b := range s.PCRSelect {
+			if i < 4 {
+				mask |= uint32(b) << (8 * i)
+			}
+		}
+	}
+	return PCRSetFromMask(mask)
+}
+
+// CreatePlatformPolicy computes, in a trial session, the TPM2_PolicyPCR
+// digest over the platform PCR set as it reads now and caches it as the
+// platform policy digest.
 func (tpm *TPM2) CreatePlatformPolicy() error {
-
-	// Capture platform measurements and extend the Golden
-	// Integrity Measurement into the platform selected PCR
-	// specified in the platform configuration file
-	measurement, err := tpm.GoldenMeasurements()
-	if err != nil {
-		return err
-	}
-
-	// If no golden PCRs are configured, skip PCR extension
-	if len(measurement) == 0 {
-		tpm.logger.Info("tpm: no golden PCRs configured, skipping platform policy")
-		return nil
-	}
 
 	hashAlgID, err := ParsePCRBankAlgID(tpm.config.PlatformPCRBank)
 	if err != nil {
 		return err
 	}
 
-	tpm.logger.Info("tpm: CreatePlatformPolicy - extending golden measurement",
-		slog.String("measurement", fmt.Sprintf("%x", measurement)),
-		slog.String("bank", tpm.config.PlatformPCRBank),
-		slog.Uint64("pcr", uint64(tpm.config.PlatformPCR)))
-
-	_, err = tpm2.PCRExtend{
-		PCRHandle: tpm2.AuthHandle{
-			Handle: tpm2.TPMHandle(tpm.config.PlatformPCR),
-			Auth:   tpm2.PasswordAuth(nil),
-		},
-		Digests: tpm2.TPMLDigestValues{
-			Digests: []tpm2.TPMTHA{
-				{
-					HashAlg: hashAlgID,
-					Digest:  measurement,
-				},
-			},
-		},
-	}.Execute(tpm.transport)
-	if err != nil {
-		tpm.logger.Error("PCRExtend failed", slog.String("error", err.Error()))
-		return err
-	}
-
-	// Get a digest of the current PCR value
+	// Digest of the platform PCR set as firmware and the OS measured it.
+	// xkms never extends these PCRs.
 	hash, err := tpm.PlatformPolicyDigestHash()
 	if err != nil {
 		return err
@@ -1099,10 +1088,9 @@ func (tpm *TPM2) CreatePlatformPolicy() error {
 		}
 	}()
 
-	// Create policy digest for the selected PCR
 	_, err = tpm2.PolicyPCR{
 		PolicySession: trialSession.Handle(),
-		Pcrs:          platformPolicyPCRSelection(hashAlgID, tpm.config.PlatformPCR),
+		Pcrs:          platformPolicyPCRSelection(hashAlgID, tpm.config.PlatformPCRs),
 		PcrDigest: tpm2.TPM2BDigest{
 			Buffer: hash,
 		},
@@ -1119,12 +1107,10 @@ func (tpm *TPM2) CreatePlatformPolicy() error {
 		return err
 	}
 
-	tpm.logger.Info("tpm: CreatePlatformPolicy - golden measurement",
-		slog.String("measurement", fmt.Sprintf("%x", measurement)))
 	tpm.logger.Info("tpm: CreatePlatformPolicy - policy digest",
 		slog.String("digest", fmt.Sprintf("%x", pgd.PolicyDigest.Buffer)))
 	tpm.logger.Info("tpm: CreatePlatformPolicy - PCR hash",
-		slog.Uint64("pcr", uint64(tpm.config.PlatformPCR)),
+		slog.Any("pcrs", tpm.config.PlatformPCRs),
 		slog.String("hash", fmt.Sprintf("%x", hash)))
 
 	tpm.policyDigest = pgd.PolicyDigest

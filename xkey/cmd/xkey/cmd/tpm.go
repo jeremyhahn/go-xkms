@@ -226,7 +226,7 @@ func newTPMConfig(device string, useSimulator bool, ekCertHandle uint32) (*xkms.
 			KeyAlgorithm:       "RSA",
 			SignatureAlgorithm: "SHA256-RSA-PSS",
 		},
-		PlatformPCR:     xkms.DefaultPlatformPCR,
+		PlatformPCRs:    xkms.DefaultPlatformPCRs(),
 		PlatformPCRBank: xkms.PCRBankSHA256,
 	}, nil
 }
@@ -259,7 +259,7 @@ func discardTPM(tpm xkms.TrustedPlatformModule, err error) error {
 
 // openTPMForProvisioning creates a TPM connection that allows for unprovisioned TPMs
 func openTPMForProvisioning() (xkms.TrustedPlatformModule, error) {
-	return openTPMForProvisioningWithPCROverrides("", nil, 0)
+	return openTPMForProvisioningWithPCROverrides("", nil, nil)
 }
 
 // openConfiguredTPMForProvisioningWithPCROverrides creates a TPM connection for provisioning
@@ -267,9 +267,9 @@ func openTPMForProvisioning() (xkms.TrustedPlatformModule, error) {
 // own --device/--simulator flags (tpmCfg).
 // - pcrBank: override the platform PCR bank (empty string uses default "sha256")
 // - goldenPCRs: override which PCRs to include in golden measurement (nil uses config default)
-// - platformPCR: override which PCR to extend with golden measurement (0 uses xkms.DefaultPlatformPCR)
-func openConfiguredTPMForProvisioningWithPCROverrides(pcrBank string, goldenPCRs []uint, platformPCR int) (xkms.TrustedPlatformModule, error) {
-	return openTPMForProvisioningWithDeviceAndPCROverrides(tpmCfg.device, tpmCfg.useSimulator, pcrBank, goldenPCRs, platformPCR)
+// - platformPCRs: override the sealing PCR set (nil uses xkms.DefaultPlatformPCRs)
+func openConfiguredTPMForProvisioningWithPCROverrides(pcrBank string, goldenPCRs, platformPCRs []uint) (xkms.TrustedPlatformModule, error) {
+	return openTPMForProvisioningWithDeviceAndPCROverrides(tpmCfg.device, tpmCfg.useSimulator, pcrBank, goldenPCRs, platformPCRs)
 }
 
 // openTPMForProvisioningWithDeviceAndPCROverrides is the device-parameterized
@@ -277,7 +277,7 @@ func openConfiguredTPMForProvisioningWithPCROverrides(pcrBank string, goldenPCRs
 // outside the `tpm` command group (e.g. `policy`, which has its own
 // --tpm-device/--tpm-simulator flags) can open a TPM connection without
 // depending on the `tpm` command's package-level tpmCfg flags.
-func openTPMForProvisioningWithDeviceAndPCROverrides(device string, useSimulator bool, pcrBank string, goldenPCRs []uint, platformPCR int) (xkms.TrustedPlatformModule, error) {
+func openTPMForProvisioningWithDeviceAndPCROverrides(device string, useSimulator bool, pcrBank string, goldenPCRs, platformPCRs []uint) (xkms.TrustedPlatformModule, error) {
 	config, err := newTPMConfig(device, useSimulator, ekCertHandleRSA)
 	if err != nil {
 		return nil, err
@@ -288,8 +288,8 @@ func openTPMForProvisioningWithDeviceAndPCROverrides(device string, useSimulator
 	if pcrBank != "" {
 		config.PlatformPCRBank = strings.ToLower(pcrBank)
 	}
-	if platformPCR > 0 {
-		config.PlatformPCR = uint(platformPCR)
+	if platformPCRs != nil {
+		config.PlatformPCRs = platformPCRs
 	}
 
 	// For provisioning, we accept ErrNotInitialized since we're about to initialize

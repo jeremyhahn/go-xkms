@@ -90,11 +90,11 @@ func extendRandomBytes(transport transport.TPM) {
 
 	fmt.Printf(
 		"tpm: extending %s measurement to platform PCR %d\n",
-		string(bytes), debugPCR)
+		string(bytes), DefaultPlatformPCRs()[0])
 
 	_, err = tpm2.PCRExtend{
 		PCRHandle: tpm2.AuthHandle{
-			Handle: tpm2.TPMHandle(debugPCR),
+			Handle: tpm2.TPMHandle(DefaultPlatformPCRs()[0]),
 			Auth:   tpm2.PasswordAuth(nil),
 		},
 		Digests: tpm2.TPMLDigestValues{
@@ -215,8 +215,8 @@ func createSim(t testing.TB, entropy bool) (*slog.Logger, TrustedPlatformModule)
 			},
 			SignatureAlgorithm: x509.SHA256WithRSAPSS.String(),
 		},
-		PlatformPCR:     debugPCR,
-		PlatformPCRBank: debugPCRBank,
+		PlatformPCRs:    DefaultPlatformPCRs(),
+		PlatformPCRBank: PCRBankSHA256,
 		GoldenPCRs:      []uint{0, 7},
 		SSRK: &SRKConfig{
 			Handle:        0x81000001,
@@ -334,7 +334,7 @@ func TestNewTPM2_ConfigDefaultsApplied(t *testing.T) {
 	assert.NotNil(t, config.EK)
 	assert.NotNil(t, config.SSRK)
 	assert.NotNil(t, config.PlatformSRK)
-	assert.Equal(t, uint(16), config.PlatformPCR)
+	assert.Equal(t, DefaultPlatformPCRs(), config.PlatformPCRs)
 }
 
 func TestNewTPM2_WithExistingTransport(t *testing.T) {
@@ -1183,17 +1183,6 @@ func TestEventLog(t *testing.T) {
 	} else {
 		assert.NotNil(t, eventLog)
 	}
-}
-
-// TestIsPlatformPCRExtended_CovTPM tests the IsPlatformPCRExtended method
-func TestIsPlatformPCRExtended_CovTPM(t *testing.T) {
-	_, tpm := createSim(t, false)
-	defer func() { _ = tpm.Close() }()
-
-	extended, err := tpm.IsPlatformPCRExtended()
-	require.NoError(t, err)
-	// May be true or false depending on TPM state
-	_ = extended
 }
 
 // TestClose tests the Close method

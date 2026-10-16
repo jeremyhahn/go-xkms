@@ -707,7 +707,7 @@ with a software key, a TPM key and an HSM key at once.
 
 ### CA-backed server TLS
 
-With `tls.enabled` and `tls.server_cn` set (`pkg/config/config.go:390`),
+With `tls.enabled` and `tls.server_cn` set (`pkg/config/config.go:391`),
 xkmsd issues its own TLS server certificate from its CA at boot
 (`ensureTLSServerCert`, `pkg/server/server.go:2154`), adding
 `tls.extra_sans` (`config.go:396`). Without `tls.ca_file`

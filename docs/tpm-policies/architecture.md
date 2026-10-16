@@ -13,7 +13,7 @@ A TPM cannot report which policy an object was created under. It only compares
 an object's `authPolicy` digest with the digest a session reaches. Today:
 
 - A key has one policy switch, `KeyAttributes.PlatformPolicy`. Its value is
-  the fixed platform policy `PolicyOR(PolicyPCR(PCR 16), PolicyAuthValue)`.
+  the fixed platform policy `PolicyOR(PolicyPCR(sealing PCR set), PolicyAuthValue)`.
   There is no way to choose another policy.
 - A seal request's PCR selection is copied into `TPMAttributes.PCRSelection`
   and never turned into an `authPolicy`. A "PCR-bound" sealed object is not
@@ -38,7 +38,8 @@ an object's `authPolicy` digest with the digest a session reaches. Today:
 | **Assignment** | `(scope, object ID)` | policy name, `policyRef`, authority Name, and the key's `authPolicy` digest at creation | written at creation, removed with the object |
 
 `platform` is a built-in named policy in every scope. It is today's platform
-policy (PCR 16 in the platform bank, OR the object's auth value), with no
+policy (the sealing PCR set `tpm2.Config.PlatformPCRs`, default {7, 11}, in
+the platform bank, OR the object's auth value), with no
 authority and no approval. It cannot be created, updated or deleted. It is the
 default when a caller names no policy. It replaces `KeyAttributes.PlatformPolicy`,
 the key backend's `platform_policy` setting and the probe's `PlatformPolicy`.

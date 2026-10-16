@@ -165,7 +165,6 @@ func createTPMWithFullProvisioning(t *testing.T) (tpm2pkg.TrustedPlatformModule,
 			Model:              "TestDevice",
 			Serial:             "SN123456",
 		},
-		PlatformPCR:   16,
 		FileIntegrity: []string{},
 	}
 

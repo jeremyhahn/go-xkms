@@ -294,7 +294,7 @@ certAuthority, tpm, serializer)` (`endorse01.go:167`) is the endorse-01
 counterpart.
 
 The TCG-CSR-IDEVID `enroll-01` finalizes carries `TCG_IDEVID_CONTENT`
-(`pkg/tpm2/types.go:857`); finalize reads `ProdModel`, `ProdSerial`,
+(`pkg/tpm2/types.go:853`); finalize reads `ProdModel`, `ProdSerial`,
 `EkCert`, `AttestPub`, `SigningPub`, `BootEvntLog` and `ProdCaData`
 (`order_finalize.go:1638-1647`). See [`api.md`](api.md#enroll-01-finalize)
 for what it returns.
@@ -1431,7 +1431,7 @@ and degradation".
 
 ACME configuration lives in the server config (`pkg/config`). The
 cluster-enrollment block is the one with non-obvious semantics —
-`RaftACMEEnrollmentConfig` (`pkg/config/config.go:703`):
+`RaftACMEEnrollmentConfig` (`pkg/config/config.go:704`):
 
 ```yaml
 cluster:

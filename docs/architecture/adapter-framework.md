@@ -122,7 +122,7 @@ is permissive (`server.go:1513-1519`). See
 
 ## TLS
 
-`tls:` (`TLSConfig`, `pkg/config/config.go:382`) is turned into a
+`tls:` (`TLSConfig`, `pkg/config/config.go:383`) is turned into a
 `*tls.Config` by `(*TLSConfig).LoadTLSConfig` (`pkg/config/tls.go:26`). It
 has these keys:
 

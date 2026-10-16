@@ -55,7 +55,7 @@ func (b *policyPinRecordingBackend) Save(attrs *types.KeyAttributes, data []byte
 func TestRecordPrimaryPolicyPin_NoTPMAttributes(t *testing.T) {
 	tpm := &TPM2{logger: discardLogger()}
 	keyAttrs := &types.KeyAttributes{CN: "no-tpm-attrs"}
-	pin := &store.PlatformPolicyPin{PCRBank: uint16(tpm2.TPMAlgSHA256), PCRIndex: 16, PCRDigest: make([]byte, 32)}
+	pin := &store.PlatformPolicyPin{PCRBank: uint16(tpm2.TPMAlgSHA256), PCRSelect: DefaultPlatformPCRs().Mask(), PCRDigest: make([]byte, 32)}
 
 	err := tpm.recordPrimaryPolicyPin(keyAttrs, pin)
 	require.Error(t, err)
@@ -72,7 +72,7 @@ func TestRecordPrimaryPolicyPin_NilBackend(t *testing.T) {
 		CN:            "no-backend",
 		TPMAttributes: &types.TPMAttributes{Handle: tpm2.TPMHandle(0x81000099)},
 	}
-	pin := &store.PlatformPolicyPin{PCRBank: uint16(tpm2.TPMAlgSHA256), PCRIndex: 16, PCRDigest: make([]byte, 32)}
+	pin := &store.PlatformPolicyPin{PCRBank: uint16(tpm2.TPMAlgSHA256), PCRSelect: DefaultPlatformPCRs().Mask(), PCRDigest: make([]byte, 32)}
 
 	require.NoError(t, tpm.recordPrimaryPolicyPin(keyAttrs, pin))
 }
@@ -87,7 +87,7 @@ func TestRecordPrimaryPolicyPin_MarshalError(t *testing.T) {
 		CN:            "bad-pin",
 		TPMAttributes: &types.TPMAttributes{Handle: tpm2.TPMHandle(0x81000099)},
 	}
-	pin := &store.PlatformPolicyPin{PCRBank: uint16(tpm2.TPMAlgSHA256), PCRIndex: 16}
+	pin := &store.PlatformPolicyPin{PCRBank: uint16(tpm2.TPMAlgSHA256), PCRSelect: DefaultPlatformPCRs().Mask()}
 
 	err := tpm.recordPrimaryPolicyPin(keyAttrs, pin)
 	require.Error(t, err)
@@ -105,7 +105,7 @@ func TestRecordPrimaryPolicyPin_SaveError(t *testing.T) {
 		CN:            "save-fails",
 		TPMAttributes: &types.TPMAttributes{Handle: tpm2.TPMHandle(0x81000099)},
 	}
-	pin := &store.PlatformPolicyPin{PCRBank: uint16(tpm2.TPMAlgSHA256), PCRIndex: 16, PCRDigest: make([]byte, 32)}
+	pin := &store.PlatformPolicyPin{PCRBank: uint16(tpm2.TPMAlgSHA256), PCRSelect: DefaultPlatformPCRs().Mask(), PCRDigest: make([]byte, 32)}
 
 	err := tpm.recordPrimaryPolicyPin(keyAttrs, pin)
 	require.Error(t, err)
@@ -121,7 +121,7 @@ func TestRecordKeyPolicyPin_NilBackendFallsBackToTPMBackend(t *testing.T) {
 	fallback := &policyPinRecordingBackend{}
 	tpm := &TPM2{logger: discardLogger(), backend: fallback}
 	keyAttrs := &types.KeyAttributes{CN: "child-key"}
-	pin := &store.PlatformPolicyPin{PCRBank: uint16(tpm2.TPMAlgSHA256), PCRIndex: 16, PCRDigest: make([]byte, 32)}
+	pin := &store.PlatformPolicyPin{PCRBank: uint16(tpm2.TPMAlgSHA256), PCRSelect: DefaultPlatformPCRs().Mask(), PCRDigest: make([]byte, 32)}
 
 	require.NoError(t, tpm.recordKeyPolicyPin(keyAttrs, nil, pin, true))
 	assert.NotNil(t, fallback.saved, "the fallback tpm.backend must have received the save")
@@ -134,7 +134,7 @@ func TestRecordKeyPolicyPin_NilBackendFallsBackToTPMBackend(t *testing.T) {
 func TestRecordKeyPolicyPin_NoBackendAtAll(t *testing.T) {
 	tpm := &TPM2{logger: discardLogger(), backend: nil}
 	keyAttrs := &types.KeyAttributes{CN: "child-key"}
-	pin := &store.PlatformPolicyPin{PCRBank: uint16(tpm2.TPMAlgSHA256), PCRIndex: 16, PCRDigest: make([]byte, 32)}
+	pin := &store.PlatformPolicyPin{PCRBank: uint16(tpm2.TPMAlgSHA256), PCRSelect: DefaultPlatformPCRs().Mask(), PCRDigest: make([]byte, 32)}
 
 	require.NoError(t, tpm.recordKeyPolicyPin(keyAttrs, nil, pin, true))
 }
@@ -146,7 +146,7 @@ func TestRecordKeyPolicyPin_SaveError(t *testing.T) {
 	backend := &policyPinRecordingBackend{saveErr: saveErr}
 	tpm := &TPM2{logger: discardLogger()}
 	keyAttrs := &types.KeyAttributes{CN: "child-key"}
-	pin := &store.PlatformPolicyPin{PCRBank: uint16(tpm2.TPMAlgSHA256), PCRIndex: 16, PCRDigest: make([]byte, 32)}
+	pin := &store.PlatformPolicyPin{PCRBank: uint16(tpm2.TPMAlgSHA256), PCRSelect: DefaultPlatformPCRs().Mask(), PCRDigest: make([]byte, 32)}
 
 	err := tpm.recordKeyPolicyPin(keyAttrs, backend, pin, false)
 	require.Error(t, err)

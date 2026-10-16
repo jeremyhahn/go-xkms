@@ -62,7 +62,7 @@ go-qrdb database `tpm2` (`store.DatabaseName`), written through a DAO built by
 
 **Pre-barrier exception.** The node-barrier seal key must exist before the
 datastore it unseals, so the seal autodetect keeps its blobs in the node's
-TPM2 key directory (`openTPM2Backend`, `pkg/seal/autodetect.go:130`), and the
+TPM2 key directory (`openTPM2Backend`, `pkg/seal/autodetect.go:131`), and the
 general TPM2 backend that shares that TPM open reuses the same store
 (`pkg/server/backend_tpm2.go:75`). Those blobs are TPM-wrapped and are the only
 TPM blobs outside the barrier.
@@ -801,25 +801,48 @@ lengths against the input before allocating. Regression and fuzz coverage:
   Policy NV Index with the platform Delegation Policy (see Invariants). The
   default configuration sets it on the IDevID. It does not alter the key.
 - **PCR selection and policy** — named TPM policies in `pkg/tpm2/policy` ([`../tpm-policies/`](../tpm-policies/)) and `pcr.go`.
-- **Platform PCR** (`platform-pcr`, `platform-pcr-bank`) — the PCR the
-  golden measurement is extended into and every platform policy is computed
-  over. One type, `PlatformPCRSelection` (`pkg/tpm2/config.go:182-185`),
-  carries it; `tpm2.Config`, `pkg/backend/tpm2.Config`, xkmsd's
-  `backends.tpm2` and the seal autodetect probe embed it, and
-  `platformPolicyPCRSelection` (`pkg/tpm2/tpm.go:727`) builds both the policy's and the PCR read's
-  selection from it. Unset (zero) means `DefaultPlatformPCR` (16) on every path: the
-  library `DefaultConfig`, `pkg/backend/tpm2.Config.Validate` (xkmsd's
-  `backends.tpm2`, node-seal and platform-store opens), and xKey's CLI and
-  GUI. It never means PCR 0, the firmware PCR. An unset bank means
-  `PCRBankSHA256`. Before 2026-09-29, xkmsd left an unset `platform_pcr` at 0
-  while xKey used 16, so the two computed different platform policies on one
-  TPM.
+- **Sealing PCR set** (`platform-pcrs`, `platform-pcr-bank`) — the boot PCRs,
+  in the named bank, every platform policy is computed over. The set is one
+  type, `tpm2.PCRSet` (`pkg/tpm2/config.go:27`), held with the bank by one
+  struct, `PlatformPCRSelection` (`pkg/tpm2/config.go:306`).
+  `tpm2.Config` (`pkg/tpm2/config.go:375`), `pkg/backend/tpm2.Config`
+  (`pkg/backend/tpm2/config.go:83`), xkmsd's `backends.tpm2`
+  (`pkg/config/config.go:1154`) and the seal autodetect probe embed it and
+  pass it through unchanged (`pkg/server/backend_tpm2.go:116`,
+  `pkg/server/platform_store.go:180`, `pkg/embeddednode/embedded_node.go:272`,
+  `pkg/seal/autodetect.go:153`, `pkg/backend/tpm2/config.go:161`). The SDK
+  re-exports the set as `xkms.TPMPCRSet` with `xkms.DefaultPlatformPCRs`
+  (`sdk/go/tpm.go:84,382`). xKey reads `tpm.platform-pcrs` from its config
+  file into the SDK `TPMConfig` (`xkey/pkg/gui/app.go:3912,3964`) and takes
+  `--platform-pcrs` on `tpm install` / `tpm provision`, checked before the TPM
+  is opened (`xkey/cmd/xkey/cmd/tpm_provision.go:182`).
+  - Unset means `DefaultPlatformPCRs()`, `{7, 11}`
+    (`pkg/tpm2/config.go:32`), applied by `DefaultPlatformPCRSelection`
+    (`pkg/tpm2/config.go:313`) and `NewTPM2` (`pkg/tpm2/tpm.go:409`).
+  - `PCRSet.Validate` (`pkg/tpm2/config.go:73`) refuses an empty set, an
+    index above 23, a duplicate, and the resettable PCRs 16 and 23, each as a
+    `*PlatformPCRError` wrapping `ErrPlatformPCRSetEmpty`,
+    `ErrPlatformPCROutOfRange`, `ErrPlatformPCRDuplicate` or
+    `ErrPlatformPCRResettable` (`pkg/tpm2/config.go:39-51`). YAML and JSON
+    decoding run it; xkmsd's `Config.Validate` (`pkg/config/config.go:1712`)
+    runs it at load, environment overrides included, and `NewTPM2`
+    (`pkg/tpm2/tpm.go:411`) runs it for sets built in code.
+  - xkms extends no PCR. The platform policy's `PolicyPCR` is computed over
+    the live values of the set, read at most eight PCRs per `PCRRead`
+    (`pkg/tpm2/provision.go:1018,1092`, `pkg/tpm2/session.go:472,558`);
+    `platformPolicyPCRSelection` (`pkg/tpm2/tpm.go:734`) builds the policy's
+    selection. The policy pin records the set as a bitmap
+    (`PlatformPolicyPin.PCRSelect`, `pkg/tpm2/tpm.go:823`). The IDevID
+    delegation policy, the platform quote and the IDevID CSR quote use the
+    same set (`pkg/tpm2/devid_delegation.go:190`,
+    `pkg/tpm2/attestation.go:839`, `pkg/tpm2/idevid_csr.go:410`).
+  - An unset bank means `PCRBankSHA256`.
 - **Session encryption** — not configurable. Every secret crosses the TPM bus
   encrypted, always; the `encrypt-sessions` / `EncryptSession` switch was
   removed (#1147). See [Bus protection](#bus-protection).
 - **`Debug`** (`EKConfig`, `IAKConfig`, `IDevIDConfig`, `SRKConfig` — each
   carries its own field) — defaults to `false` for every key type
-  (`pkg/tpm2/config.go:91,109,120,141`). It gates non-secret diagnostic
+  (`pkg/tpm2/config.go:399,551,532,457`). It gates non-secret diagnostic
   logging only: `PlatformPassword.Bytes`'s cache-hit/unseal-attempt log
   lines (`pkg/tpm2/password.go:121,168`) and
   `store.DebugKeyAttributes`'s attribute dump

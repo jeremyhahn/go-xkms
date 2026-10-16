@@ -363,26 +363,6 @@ func TestPCRExtend_Simulator(t *testing.T) {
 		"extending the SHA-256 bank must not disturb the SHA-384 bank")
 }
 
-// Test IsPlatformPCRExtended method
-// Note: createSim() provisions the TPM which calls CreatePlatformPolicy(),
-// so PCR 16 is already extended when this test runs.
-// This test verifies the method correctly detects the extended state.
-func TestIsPlatformPCRExtended_Simulator(t *testing.T) {
-	_, tpm := createSim(t, false)
-	defer func() { _ = tpm.Close() }()
-
-	// After provisioning, PCR 16 should be extended (provisioning calls CreatePlatformPolicy)
-	extended, err := tpm.IsPlatformPCRExtended()
-	require.NoError(t, err)
-	assert.True(t, extended, "PCR should be extended after provisioning")
-
-	// Verify the method returns no errors and consistent results
-	extended2, err := tpm.IsPlatformPCRExtended()
-	require.NoError(t, err)
-	assert.True(t, extended2, "PCR extended state should be consistent")
-	assert.Equal(t, extended, extended2, "Multiple calls should return same result")
-}
-
 // Test Random Number Generation
 func TestRandomBytes_Simulator(t *testing.T) {
 	_, tpm := createSim(t, false)
@@ -689,8 +669,8 @@ func BenchmarkRandomBytes_Simulator(b *testing.B) {
 			},
 			SignatureAlgorithm: x509.SHA256WithRSAPSS.String(),
 		},
-		PlatformPCR:     debugPCR,
-		PlatformPCRBank: debugPCRBank,
+		PlatformPCRs:    DefaultPlatformPCRs(),
+		PlatformPCRBank: PCRBankSHA256,
 		SSRK: &SRKConfig{
 			Handle:        0x81000001,
 			HierarchyAuth: secrettest.Literal(b, []byte(store.DEFAULT_PASSWORD)),
@@ -1452,7 +1432,7 @@ func TestInstallHierarchyAuthError(t *testing.T) {
 						KeySize: 2048,
 					},
 				},
-				PlatformPCR:     16,
+				PlatformPCRs:    DefaultPlatformPCRs(),
 				PlatformPCRBank: PCRBankSHA256,
 			},
 		}
@@ -1737,7 +1717,7 @@ func TestInstallEKNotExists(t *testing.T) {
 						KeySize: 2048,
 					},
 				},
-				PlatformPCR:     16,
+				PlatformPCRs:    DefaultPlatformPCRs(),
 				PlatformPCRBank: PCRBankSHA256,
 			},
 		}
@@ -2079,7 +2059,7 @@ func TestInstallCreatesIDevID(t *testing.T) {
 				Model:              "test-device",
 				Serial:             "001",
 			},
-			PlatformPCR:     16,
+			PlatformPCRs:    DefaultPlatformPCRs(),
 			PlatformPCRBank: "sha256",
 		}
 

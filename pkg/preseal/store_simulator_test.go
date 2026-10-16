@@ -27,11 +27,12 @@ import (
 	pkgtpm2 "github.com/jeremyhahn/go-xkms/pkg/tpm2"
 )
 
-// simulatorPlatformPCR is the PCR the simulator's platform policy reads.
-const simulatorPlatformPCR = 16
+// simulatorPlatformPCR is a boot PCR in the default sealing set the
+// simulator's platform policy reads.
+var simulatorPlatformPCR = pkgtpm2.DefaultPlatformPCRs()[0]
 
 // openSimulator provisions a fresh in-process simulator whose Platform SRK
-// carries the platform policy over simulatorPlatformPCR. The simulator is a
+// carries the platform policy over the default sealing set. The simulator is a
 // process-wide singleton, so these tests never run in parallel.
 func openSimulator(t *testing.T) *tpm2backend.Backend {
 	t.Helper()
@@ -39,7 +40,7 @@ func openSimulator(t *testing.T) *tpm2backend.Backend {
 		UseSimulator:    true,
 		Keys:            tpmblobtest.New(t),
 		CN:              "preseal-simulator",
-		PlatformPCR:     simulatorPlatformPCR,
+		PlatformPCRs:    pkgtpm2.DefaultPlatformPCRs(),
 		PlatformPCRBank: pkgtpm2.PCRBankSHA256,
 	})
 	require.NoError(t, err)
@@ -85,7 +86,7 @@ func TestStore_SimulatorRefusesAfterThePlatformChanges(t *testing.T) {
 	require.NoError(t, err)
 	require.NoError(t, store.Put(ctx, PKCS11PIN, []byte("1234")))
 
-	require.NoError(t, tpm.ExtendPCR(simulatorPlatformPCR, "sha256", []byte("a different boot")))
+	require.NoError(t, tpm.ExtendPCR(int(simulatorPlatformPCR), "sha256", []byte("a different boot")))
 
 	_, err = store.Get(ctx, PKCS11PIN)
 	var refused *RefusedError

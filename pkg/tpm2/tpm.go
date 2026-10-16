@@ -134,7 +134,6 @@ type TrustedPlatformModule interface {
 	IDevIDAttributes() (*types.KeyAttributes, error)
 	Info() (string, error)
 	IsFIPS140_2() (bool, error)
-	IsPlatformPCRExtended() (bool, error)
 	ExtendPCR(pcrIndex int, hashAlg string, data []byte) error
 	Install(soPIN types.Password, opts *InstallOptions) error
 	KeyAttributes(handle tpm2.TPMHandle) (*types.KeyAttributes, error)
@@ -403,6 +402,15 @@ func NewTPM2(params *Params) (TrustedPlatformModule, error) {
 	// Ensure PlatformSRK config is set with defaults
 	if params.Config.PlatformSRK == nil {
 		params.Config.PlatformSRK = DefaultConfig.PlatformSRK
+	}
+
+	// An unset sealing PCR set means the default; an explicit empty or
+	// otherwise invalid set is refused before any transport is opened.
+	if params.Config.PlatformPCRs == nil {
+		params.Config.PlatformPCRs = DefaultPlatformPCRs()
+	}
+	if err := params.Config.PlatformPCRs.Validate(); err != nil {
+		return nil, err
 	}
 
 	// Create default logger if none provided
@@ -747,10 +755,10 @@ func (tpm *TPM2) AlgID() tpm2.TPMAlgID {
 }
 
 // platformPolicyPCRSelection returns the TPML_PCR_SELECTION used by every
-// branch of the platform policy: the single platform PCR in the platform PCR
+// branch of the platform policy: the platform PCR set in the platform PCR
 // bank (TCG TPM 2.0 Part 2, Section 10.6.2).
-func platformPolicyPCRSelection(hashAlgID tpm2.TPMAlgID, pcr uint) tpm2.TPMLPCRSelection {
-	return PolicyPCRSelection(hashAlgID, pcr)
+func platformPolicyPCRSelection(hashAlgID tpm2.TPMAlgID, pcrs PCRSet) tpm2.TPMLPCRSelection {
+	return PolicyPCRSelection(hashAlgID, pcrs...)
 }
 
 // platformPolicyBranchDigests computes the two branch digests of the platform
@@ -764,7 +772,7 @@ func platformPolicyPCRSelection(hashAlgID tpm2.TPMAlgID, pcr uint) tpm2.TPMLPCRS
 // drift apart.
 func platformPolicyBranchDigests(
 	hashAlgID tpm2.TPMAlgID,
-	pcr uint,
+	pcrs PCRSet,
 	pcrDigest []byte) (branch1, branch2 []byte, err error) {
 
 	pcrCalc, err := tpm2.NewPolicyCalculator(hashAlgID)
@@ -775,7 +783,7 @@ func platformPolicyBranchDigests(
 		PcrDigest: tpm2.TPM2BDigest{
 			Buffer: pcrDigest,
 		},
-		Pcrs: platformPolicyPCRSelection(hashAlgID, pcr),
+		Pcrs: platformPolicyPCRSelection(hashAlgID, pcrs),
 	}
 	if err := pcrCmd.Update(pcrCalc); err != nil {
 		return nil, nil, &errs.Detail{Err: ErrPlatformPolicyDigestCompute, Detail: fmt.Sprintf("PolicyPCR trial: %v", err)}
@@ -838,7 +846,7 @@ func (tpm *TPM2) capturePlatformPolicyPin() (*store.PlatformPolicyPin, error) {
 
 	return &store.PlatformPolicyPin{
 		PCRBank:   uint16(hashAlgID),
-		PCRIndex:  uint32(tpm.config.PlatformPCR),
+		PCRSelect: tpm.config.PlatformPCRs.Mask(),
 		PCRDigest: pcrDigest,
 	}, nil
 }
@@ -859,7 +867,7 @@ func platformPolicyDigestFromPin(pin *store.PlatformPolicyPin) (tpm2.TPM2BDigest
 	hashAlgID := tpm2.TPMAlgID(pin.PCRBank)
 
 	branch1, branch2, err := platformPolicyBranchDigests(
-		hashAlgID, uint(pin.PCRIndex), pin.PCRDigest)
+		hashAlgID, PCRSetFromMask(pin.PCRSelect), pin.PCRDigest)
 	if err != nil {
 		return tpm2.TPM2BDigest{}, err
 	}
@@ -887,7 +895,7 @@ func platformPCRPolicyDigestFromPin(pin *store.PlatformPolicyPin) (tpm2.TPM2BDig
 	}
 
 	branch1, _, err := platformPolicyBranchDigests(
-		tpm2.TPMAlgID(pin.PCRBank), uint(pin.PCRIndex), pin.PCRDigest)
+		tpm2.TPMAlgID(pin.PCRBank), PCRSetFromMask(pin.PCRSelect), pin.PCRDigest)
 	if err != nil {
 		return tpm2.TPM2BDigest{}, err
 	}

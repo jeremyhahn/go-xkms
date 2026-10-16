@@ -96,7 +96,7 @@ func TestService_VTPMMode(t *testing.T) {
 	assert.Equal(t, []Condition{{
 		Type:      ConditionPCR,
 		Bank:      pkgtpm2.PCRBankSHA256,
-		PCRs:      []uint{pkgtpm2.DefaultPlatformPCR},
+		PCRs:      []uint(pkgtpm2.DefaultPlatformPCRs()),
 		PCRValues: statePolicy.Branches[0].Conditions[0].PCRValues,
 		PCRDigest: statePolicy.Branches[0].Conditions[0].PCRDigest,
 	}}, statePolicy.Branches[0].Conditions)

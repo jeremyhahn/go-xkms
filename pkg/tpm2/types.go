@@ -104,10 +104,6 @@ const (
 const DefaultEKCertDownloadTimeout = 10 * time.Second
 
 var (
-	// debugPCR and debugPCRBank are used in test files.
-	debugPCR     = uint(16)
-	debugPCRBank = PCRBankSHA256
-
 	ErrPlatformPasswordUnavailable = errors.New("tpm: failed to retrieve platform password")
 	ErrCertStoreNotInitialized     = errors.New("tpm: certificate store not initialized")
 	ErrInvalidAKAttributes         = errors.New("tpm: invalid AK attributes")

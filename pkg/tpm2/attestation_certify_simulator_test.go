@@ -294,7 +294,7 @@ func TestQuote_SignatureVerifiesOverSelectedPCRs(t *testing.T) {
 	h := newSimHarness(t, nil)
 
 	nonce := []byte("quote-nonce-abcdef0123456789")
-	quote, err := h.TPM.Quote([]uint{0, 7, uint(h.TPM.config.PlatformPCR)}, nonce)
+	quote, err := h.TPM.Quote(append([]uint{0}, h.TPM.config.PlatformPCRs...), nonce)
 	require.NoError(t, err)
 	require.NotEmpty(t, quote.Quoted)
 	require.NotEmpty(t, quote.Signature)
@@ -346,7 +346,7 @@ func TestQuote_TamperedQuoteFailsVerification(t *testing.T) {
 func TestQuote_ReflectsPCRExtension(t *testing.T) {
 	h := newSimHarness(t, nil)
 
-	pcr := uint(h.TPM.config.PlatformPCR)
+	pcr := h.TPM.config.PlatformPCRs[0]
 	nonce := []byte("stable-nonce-for-comparison")
 
 	before, err := h.TPM.Quote([]uint{pcr}, nonce)

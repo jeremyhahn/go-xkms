@@ -837,7 +837,7 @@ func (tpm *TPM2) PlatformQuote(
 	if err != nil {
 		return Quote{}, nil, err
 	}
-	quote, err := tpm.Quote([]uint{uint(tpm.config.PlatformPCR)}, nonce)
+	quote, err := tpm.Quote(tpm.config.PlatformPCRs, nonce)
 	if err != nil {
 		return Quote{}, nil, err
 	}

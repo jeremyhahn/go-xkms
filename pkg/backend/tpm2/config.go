@@ -78,8 +78,9 @@ type Config struct {
 	// Hash specifies the hash algorithm to use (default: "SHA-256")
 	Hash string `yaml:"hash" json:"hash"`
 
-	// PlatformPCRSelection is the platform policy's PCR and bank. Unset
-	// fields resolve to pkgtpm2.DefaultPlatformPCRSelection.
+	// PlatformPCRSelection is the platform policy's sealing PCR set and
+	// bank, passed through to pkgtpm2.Config, which defaults and validates
+	// the set. Unset fields resolve to pkgtpm2.DefaultPlatformPCRSelection.
 	pkgtpm2.PlatformPCRSelection `yaml:",inline"`
 
 	// CN is the common name prefix for keys created by this backend
@@ -122,10 +123,6 @@ func (c *Config) Validate() error {
 
 	if c.Hash == "" {
 		c.Hash = "SHA-256"
-	}
-
-	if c.PlatformPCR == 0 {
-		c.PlatformPCR = pkgtpm2.DefaultPlatformPCR
 	}
 
 	if c.PlatformPCRBank == "" {

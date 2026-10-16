@@ -188,7 +188,7 @@ func (tpm *TPM2) DevIDPlatformDelegation(nameAlg tpm2.TPMAlgID) (DevIDDelegation
 	if err != nil {
 		return DevIDDelegation{}, err
 	}
-	selection := platformPolicyPCRSelection(bank, tpm.config.PlatformPCR)
+	selection := platformPolicyPCRSelection(bank, tpm.config.PlatformPCRs)
 
 	calc, err := devidPolicyCalculator(nameAlg)
 	if err != nil {

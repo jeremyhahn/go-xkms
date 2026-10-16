@@ -122,7 +122,6 @@ func NewTPM2TestSetup(t *testing.T) *TPM2TestSetup {
 		Device:          "", // Not using device, using custom transport
 		UseSimulator:    false,
 		Hash:            "SHA-256",
-		PlatformPCR:     16,
 		PlatformPCRBank: "sha256",
 		EK: &tpm2ks.EKConfig{
 			CertHandle:    0x01C00002,

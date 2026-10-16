@@ -47,11 +47,11 @@ import (
 // independent simulators, one through each path, and compare the persisted
 // AuthPolicy digest.
 
-// psrkShapeTestPCR/psrkShapeTestBank pin both provisioning paths to the same
-// platform PCR selection, so a digest mismatch below can only mean a real
-// difference in the two paths' derivation, never a difference in which PCR
+// psrkShapeTestPCRs/psrkShapeTestBank pin both provisioning paths to the same
+// board sealing PCR set, so a digest mismatch below can only mean a real
+// difference in the two paths' derivation, never a difference in which PCRs
 // each happened to read.
-const psrkShapeTestPCR uint = 7
+var psrkShapeTestPCRs = pkgtpm2.PCRSet{7, 14}
 
 // psrkShapeTestBank is not a constant: pkgtpm2.PCRBankSHA256 is itself a
 // package-level var, not a compile-time constant.
@@ -70,7 +70,7 @@ func autodetectedPlatformSRKAuthPolicy(t *testing.T) []byte {
 		UseSimulator:    true,
 		Keys:            tpmblobtest.New(t),
 		CN:              "psrk-shape-autodetect",
-		PlatformPCR:     psrkShapeTestPCR,
+		PlatformPCRs:    psrkShapeTestPCRs,
 		PlatformPCRBank: psrkShapeTestBank,
 	}
 	backend, err := NewBackend(cfg)
@@ -96,7 +96,7 @@ func enrolledPlatformSRKAuthPolicy(t *testing.T) []byte {
 	tpmConfig := &pkgtpm2.Config{
 		UseSimulator:    true,
 		Hash:            "SHA-256",
-		PlatformPCR:     psrkShapeTestPCR,
+		PlatformPCRs:    psrkShapeTestPCRs,
 		PlatformPCRBank: psrkShapeTestBank,
 		PlatformSRK: &pkgtpm2.PlatformSRKConfig{
 			SRKHandle:      platformSRKHandle,
@@ -146,7 +146,7 @@ func TestPlatformSRK_AutodetectAndEnrollmentAgreeOnAuthPolicy(t *testing.T) {
 
 // TestPlatformSRK_AutodetectWithoutPlatformPolicyConfigStillBindsAuthPolicy
 // proves the fix is unconditional: a caller that builds this backend's
-// Config with the zero-value PlatformPCR/PlatformPCRBank (i.e. never touches
+// Config with the zero-value PlatformPCRs/PlatformPCRBank (i.e. never touches
 // platform-policy settings at all) still gets a Platform SRK whose AuthPolicy
 // is baked in -- the design settled in go-xkms#677 has no plain
 // password-only shape for the Platform SRK to fall back to.
@@ -184,7 +184,7 @@ func TestBackend_SealUnseal_PINEnrolledPlatformSRK(t *testing.T) {
 	tpmConfig := &pkgtpm2.Config{
 		UseSimulator:    true,
 		Hash:            "SHA-256",
-		PlatformPCR:     psrkShapeTestPCR,
+		PlatformPCRs:    psrkShapeTestPCRs,
 		PlatformPCRBank: psrkShapeTestBank,
 		PlatformSRK: &pkgtpm2.PlatformSRKConfig{
 			SRKHandle:      platformSRKHandle,

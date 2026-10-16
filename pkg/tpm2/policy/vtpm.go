@@ -245,7 +245,7 @@ func (s *Service) ensureStateKey(ctx context.Context, tenant string, ownerAuth [
 }
 
 // ensureStatePolicy creates the system scope's vtpm-state policy over the
-// physical TPM's platform PCR when it does not exist. The caller holds the
+// physical TPM's platform PCR set when it does not exist. The caller holds the
 // system scope's lock.
 func (s *Service) ensureStatePolicy(ctx context.Context, st *scopeState, scope *Scope, ownerAuth []byte) error {
 	_, err := s.registry.Policy(ctx, st.name, VTPMStatePolicy)
@@ -253,15 +253,11 @@ func (s *Service) ensureStatePolicy(ctx context.Context, st *scopeState, scope *
 		return err
 	}
 	cfg := s.tpm.Config()
-	pcr := cfg.PlatformPCR
-	if pcr == 0 {
-		pcr = pkgtpm2.DefaultPlatformPCR
-	}
 	bank := cfg.PlatformPCRBank
 	if bank == "" {
 		bank = pkgtpm2.PCRBankSHA256
 	}
-	branches, err := validateBranches([]Branch{PCRBranch(bank, pcr)})
+	branches, err := validateBranches([]Branch{PCRBranch(bank, cfg.PlatformPCRs...)})
 	if err != nil {
 		return err
 	}

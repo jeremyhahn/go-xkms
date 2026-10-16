@@ -3961,8 +3961,8 @@ func mergeTPMConfig(defaults, file xkmssdk.TPMConfig) xkmssdk.TPMConfig {
 	if file.PlatformPCRBank != "" {
 		cfg.PlatformPCRBank = file.PlatformPCRBank
 	}
-	if file.PlatformPCR != 0 {
-		cfg.PlatformPCR = file.PlatformPCR
+	if file.PlatformPCRs != nil {
+		cfg.PlatformPCRs = file.PlatformPCRs
 	}
 	if len(file.GoldenPCRs) > 0 {
 		cfg.GoldenPCRs = file.GoldenPCRs

@@ -35,8 +35,8 @@ import (
 	"github.com/jeremyhahn/go-xkms/pkg/types"
 )
 
-// PlatformPolicy is the built-in policy every scope has (PCR 16 OR the
-// object's auth value). It cannot be created, updated or deleted.
+// PlatformPolicy is the built-in policy every scope has (the sealing PCR set
+// of tpm2.Config.PlatformPCRs OR the object's auth value). It cannot be created, updated or deleted.
 const PlatformPolicy = types.TPMPolicyPlatform
 
 // VTPMStatePolicy is the system-scope policy a vTPM's state key is sealed

@@ -149,6 +149,33 @@ func TestParseGoldenPCRs_Invalid(t *testing.T) {
 	}
 }
 
+func TestParsePlatformPCRs(t *testing.T) {
+	got, err := parsePlatformPCRs("")
+	require.NoError(t, err)
+	assert.Nil(t, got, "an unset --platform-pcrs must leave the default sealing set in place")
+
+	got, err = parsePlatformPCRs("7, 14")
+	require.NoError(t, err)
+	assert.Equal(t, []uint{7, 14}, got)
+}
+
+func TestParsePlatformPCRs_Invalid(t *testing.T) {
+	tests := map[string]error{
+		"abc":  ErrInvalidPCRIndices,
+		"24":   ErrInvalidPCRIndices,
+		"7,16": xkms.ErrTPMPlatformPCRResettable,
+		"23":   xkms.ErrTPMPlatformPCRResettable,
+		"7,7":  xkms.ErrTPMPlatformPCRDuplicate,
+		",":    xkms.ErrTPMPlatformPCRSetEmpty,
+	}
+	for in, want := range tests {
+		got, err := parsePlatformPCRs(in)
+		require.Error(t, err, "parsePlatformPCRs(%q)", in)
+		assert.ErrorIs(t, err, want, "parsePlatformPCRs(%q)", in)
+		assert.Nil(t, got, "parsePlatformPCRs(%q)", in)
+	}
+}
+
 func TestValidatePCRBank(t *testing.T) {
 	for _, bank := range []string{"", "sha1", "sha256", "SHA256", "sha384", "sha512"} {
 		assert.NoError(t, validatePCRBank(bank), "bank %q must be accepted", bank)
@@ -238,7 +265,7 @@ func TestOutputStatusText_RendersEverySection(t *testing.T) {
 
 	assert.Contains(t, out, "PCR Bank:        sha256")
 	assert.Contains(t, out, "Golden PCRs:     [0 1 7]")
-	assert.Contains(t, out, "Platform PCR:    16")
+	assert.Contains(t, out, "Platform PCRs:   [7 11]")
 
 	// A configured 64-char digest is truncated to 32 chars plus an ellipsis.
 	assert.Contains(t, out, "Policy Digest:   "+strings.Repeat("ab", 16)+"...")
@@ -684,7 +711,7 @@ func sampleTPMStatus() *TPMStatusOutput {
 		PlatformPolicy: PlatformPolicyStatus{
 			PCRBank:      "sha256",
 			GoldenPCRs:   []uint{0, 1, 7},
-			PlatformPCR:  16,
+			PlatformPCRs: []uint{7, 11},
 			PolicyDigest: strings.Repeat("ab", 32),
 			Configured:   true,
 		},

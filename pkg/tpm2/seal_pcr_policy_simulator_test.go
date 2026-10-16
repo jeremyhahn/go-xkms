@@ -711,6 +711,59 @@ func TestSealUnseal_PCRMismatch_UnsealFailsAfterPCRExtend(t *testing.T) {
 		"the TPM must reject the unseal with TPM_RC_POLICY_FAIL, got %v", err)
 }
 
+// TestSealUnseal_BoardPCRSet_BindsOnlyConfiguredPCRs proves sealing reads the
+// sealing PCR set from Config: with a board set of {7, 14}, a change to PCR
+// 11 (in the default set, not the board's) leaves the secret reachable, while
+// a change to PCR 14 (in the board's set, not the default) locks it.
+func TestSealUnseal_BoardPCRSet_BindsOnlyConfiguredPCRs(t *testing.T) {
+	h := newSimHarness(t, func(c *Config) { c.PlatformPCRs = PCRSet{7, 14} })
+
+	secret := []byte("board-pcr-set-secret-0123456789ab")
+	keyAttrs := sealedKeyAttrs(t, h, "board-pcr-set-secret", true, nil)
+	keyAttrs.SealData = types.NewSealData(secret)
+
+	_, err := h.TPM.SealKey(keyAttrs, h.Backend, true)
+	require.NoError(t, err, "sealing under the board PCR set must succeed")
+
+	h.extendPCR(t, 11, []byte("outside-the-board-set"))
+	got, err := h.TPM.UnsealKey(keyAttrs, h.Backend)
+	require.NoError(t, err, "a PCR outside the board set must not bind the secret")
+	require.Equal(t, secret, got)
+
+	h.extendPCR(t, 14, []byte("inside-the-board-set"))
+	after, err := h.TPM.UnsealKey(keyAttrs, h.Backend)
+	assert.Nil(t, after, "no plaintext may be returned when the policy check fails")
+	assert.Equal(t, ErrPolicyCheckFailed, err,
+		"a change to a board PCR must fail the policy, got %v", err)
+}
+
+// TestSealUnseal_BoardPCRSet_ReadsPastEightDigests seals to a set larger than
+// the eight digests one PCRRead returns, so the policy digest needs a second
+// read, and shows the PCR only that second read covers still binds the
+// secret.
+func TestSealUnseal_BoardPCRSet_ReadsPastEightDigests(t *testing.T) {
+	h := newSimHarness(t, func(c *Config) {
+		c.PlatformPCRs = PCRSet{0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10}
+	})
+
+	secret := []byte("wide-pcr-set-secret-0123456789abc")
+	keyAttrs := sealedKeyAttrs(t, h, "wide-pcr-set-secret", true, nil)
+	keyAttrs.SealData = types.NewSealData(secret)
+
+	_, err := h.TPM.SealKey(keyAttrs, h.Backend, true)
+	require.NoError(t, err, "sealing under an eleven-PCR set must succeed")
+
+	got, err := h.TPM.UnsealKey(keyAttrs, h.Backend)
+	require.NoError(t, err, "unsealing in the sealed platform state must succeed")
+	require.Equal(t, secret, got)
+
+	h.extendPCR(t, 10, []byte("past-the-first-read"))
+	after, err := h.TPM.UnsealKey(keyAttrs, h.Backend)
+	assert.Nil(t, after, "no plaintext may be returned when the policy check fails")
+	assert.Equal(t, ErrPolicyCheckFailed, err,
+		"a change to a PCR past the first eight must fail the policy, got %v", err)
+}
+
 // TestSealUnseal_PlatformPolicyWithPassword_PINBranchOpensTheObject is the
 // PIN-fallback regression test.
 //
@@ -955,7 +1008,7 @@ func TestSealKey_PlatformPolicy_RecordsLivePCRState(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, live, recorded.PCRDigest,
 		"the recorded PCR digest must be the platform state the object was sealed on")
-	assert.Equal(t, uint32(h.TPM.config.PlatformPCR), recorded.PCRIndex)
+	assert.Equal(t, h.TPM.config.PlatformPCRs.Mask(), recorded.PCRSelect)
 	assert.Equal(t, uint16(tpm2.TPMAlgSHA256), recorded.PCRBank)
 
 	// A sealed object without the platform policy has no policy to pin.

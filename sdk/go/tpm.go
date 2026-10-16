@@ -81,6 +81,12 @@ type LAKConfig = tpm2.LAKConfig
 // PlatformSRKConfig holds Platform Storage Root Key configuration.
 type PlatformSRKConfig = tpm2.PlatformSRKConfig
 
+// TPMPCRSet is the sealing PCR set of TPMConfig.PlatformPCRs.
+type TPMPCRSet = tpm2.PCRSet
+
+// TPMPlatformPCRError is the typed error TPMPCRSet.Validate returns.
+type TPMPlatformPCRError = tpm2.PlatformPCRError
+
 // PlatformKeyStore provides TPM-backed key storage with integrated PIN management.
 type PlatformKeyStore = tpm2.PlatformKeyStore
 
@@ -372,9 +378,9 @@ var (
 	DefaultTPMConfig = tpm2.DefaultConfig
 )
 
-// DefaultPlatformPCR is the PCR an unset platform PCR resolves to, in xkmsd
-// and xkey alike.
-const DefaultPlatformPCR = tpm2.DefaultPlatformPCR
+// DefaultPlatformPCRs returns the sealing PCR set an unset TPMConfig
+// PlatformPCRs resolves to ({7, 11}), in xkmsd and xkey alike.
+var DefaultPlatformPCRs = tpm2.DefaultPlatformPCRs
 
 // ---------------------------------------------------------------------------
 // TPM public key template variables
@@ -470,6 +476,10 @@ var (
 	ErrTPMNotConfigured               = tpm2.ErrNotConfigured
 	ErrTPMEndorsementCertNotFound     = tpm2.ErrEndorsementCertNotFound
 	ErrTPMInvalidPlatformSRKConfig    = tpm2.ErrInvalidPlatformSRKConfiguration
+	ErrTPMPlatformPCRSetEmpty         = tpm2.ErrPlatformPCRSetEmpty
+	ErrTPMPlatformPCROutOfRange       = tpm2.ErrPlatformPCROutOfRange
+	ErrTPMPlatformPCRDuplicate        = tpm2.ErrPlatformPCRDuplicate
+	ErrTPMPlatformPCRResettable       = tpm2.ErrPlatformPCRResettable
 	ErrTPMInvalidHashFunction         = tpm2.ErrInvalidHashFunction
 	ErrTPMInvalidSessionAuthorization = tpm2.ErrInvalidSessionAuthorization
 	ErrTPMMissingMeasurementLog       = tpm2.ErrMissingMeasurementLog

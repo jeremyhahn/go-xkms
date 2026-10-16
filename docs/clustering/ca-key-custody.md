@@ -59,7 +59,7 @@ composition root supplies: the node-local data dir, the CA hierarchy config, the
 `KeyProtection` mode, the replicated (qrdb-routed) key and cert storage, the
 shared HSM backend, the TPM sealer and credential activator, and a
 `Bootstrapping` flag. Selection is a one-line config choice,
-`cluster.raft_enrollment.ca_key_strategy` (`pkg/config/config.go:933`); empty
+`cluster.raft_enrollment.ca_key_strategy` (`pkg/config/config.go:934`); empty
 selects `barrier`, and an unknown name fails with `ErrUnknownKeyStrategy`
 (`keystrategy.go:142-153`).
 

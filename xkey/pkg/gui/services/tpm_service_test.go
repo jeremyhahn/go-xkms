@@ -325,9 +325,6 @@ func (m *mockTPM) HMACSession(_ []byte) (tpm2.Session, func() error, error) {
 	panic("mockTPM: HMACSession not expected")
 }
 func (m *mockTPM) Info() (string, error) { panic("mockTPM: Info not expected") }
-func (m *mockTPM) IsPlatformPCRExtended() (bool, error) {
-	panic("mockTPM: IsPlatformPCRExtended not expected")
-}
 func (m *mockTPM) ExtendPCR(_ int, _ string, _ []byte) error {
 	panic("mockTPM: ExtendPCR not expected")
 }

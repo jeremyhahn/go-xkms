@@ -12,48 +12,6 @@ import (
 	"github.com/google/go-tpm/tpm2"
 )
 
-// IsPlatformPCRExtended checks if the platform PCR (configured in tpm.config.PlatformPCR)
-// has been extended from its initial zero state. This is useful for determining
-// if platform measurements have already been recorded.
-//
-// Returns true if the PCR contains non-zero values (already extended),
-// false if the PCR is all zeros (initial boot state).
-func (tpm *TPM2) IsPlatformPCRExtended() (bool, error) {
-	hashAlgID, err := ParsePCRBankAlgID(tpm.config.PlatformPCRBank)
-	if err != nil {
-		return false, err
-	}
-
-	pcrRead := tpm2.PCRRead{
-		PCRSelectionIn: tpm2.TPMLPCRSelection{
-			PCRSelections: []tpm2.TPMSPCRSelection{
-				{
-					Hash:      hashAlgID,
-					PCRSelect: tpm2.PCClientCompatible.PCRs(tpm.config.PlatformPCR),
-				},
-			},
-		},
-	}
-	response, err := pcrRead.Execute(tpm.transport)
-	if err != nil {
-		return false, err
-	}
-
-	// Check if any digests were returned
-	if len(response.PCRValues.Digests) == 0 {
-		return false, nil
-	}
-
-	// Check if the PCR value is all zeros (initial state)
-	pcrValue := response.PCRValues.Digests[0].Buffer
-	for _, b := range pcrValue {
-		if b != 0 {
-			return true, nil // PCR has been extended
-		}
-	}
-	return false, nil // PCR is at initial state (all zeros)
-}
-
 // ExtendPCR extends a Platform Configuration Register (PCR) with the provided data.
 // The data is first hashed using the specified hash algorithm, then the hash is
 // extended into the PCR. This operation is irreversible until TPM reset.

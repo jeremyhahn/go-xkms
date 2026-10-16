@@ -137,8 +137,8 @@ func newSimConfig(t testing.TB) *Config {
 			},
 			SignatureAlgorithm: x509.SHA256WithRSAPSS.String(),
 		},
-		PlatformPCR:     debugPCR,
-		PlatformPCRBank: debugPCRBank,
+		PlatformPCRs:    DefaultPlatformPCRs(),
+		PlatformPCRBank: PCRBankSHA256,
 		GoldenPCRs:      []uint{0, 7},
 		SSRK: &SRKConfig{
 			Handle:        0x81000001,
@@ -156,11 +156,17 @@ func newSimConfig(t testing.TB) *Config {
 	}
 }
 
-// extendPlatformPCR extends the harness's configured platform PCR with the
-// supplied measurement, invalidating any policy previously satisfied by the
-// old PCR value. This is the "the machine booted different software" event
-// that PCR-sealed data is supposed to detect.
+// extendPlatformPCR extends the first PCR of the harness's configured platform
+// PCR set with the supplied measurement, invalidating any policy previously
+// satisfied by the old PCR values. This is the "the machine booted different
+// software" event that PCR-sealed data is supposed to detect.
 func (h *simHarness) extendPlatformPCR(t *testing.T, measurement []byte) {
+	t.Helper()
+	h.extendPCR(t, h.TPM.config.PlatformPCRs[0], measurement)
+}
+
+// extendPCR extends one PCR of the sha256 bank with the supplied measurement.
+func (h *simHarness) extendPCR(t *testing.T, pcr uint, measurement []byte) {
 	t.Helper()
 
 	digest := make([]byte, 32)
@@ -168,7 +174,7 @@ func (h *simHarness) extendPlatformPCR(t *testing.T, measurement []byte) {
 
 	_, err := tpm2.PCRExtend{
 		PCRHandle: tpm2.AuthHandle{
-			Handle: tpm2.TPMHandle(h.TPM.config.PlatformPCR),
+			Handle: tpm2.TPMHandle(pcr),
 			Auth:   tpm2.PasswordAuth(nil),
 		},
 		Digests: tpm2.TPMLDigestValues{
@@ -178,5 +184,5 @@ func (h *simHarness) extendPlatformPCR(t *testing.T, measurement []byte) {
 			}},
 		},
 	}.Execute(h.TPM.transport)
-	require.NoError(t, err, "extending the platform PCR must succeed")
+	require.NoError(t, err, "extending PCR %d must succeed", pcr)
 }

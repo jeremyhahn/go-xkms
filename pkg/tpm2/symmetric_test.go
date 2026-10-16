@@ -749,8 +749,8 @@ func createSimWithTracker(t testing.TB, entropy bool) (*slog.Logger, TrustedPlat
 			},
 			SignatureAlgorithm: x509.SHA256WithRSAPSS.String(),
 		},
-		PlatformPCR:     debugPCR,
-		PlatformPCRBank: debugPCRBank,
+		PlatformPCRs:    DefaultPlatformPCRs(),
+		PlatformPCRBank: PCRBankSHA256,
 		SSRK: &SRKConfig{
 			Handle:        0x81000001,
 			HierarchyAuth: secrettest.Literal(t, []byte(store.DEFAULT_PASSWORD)),

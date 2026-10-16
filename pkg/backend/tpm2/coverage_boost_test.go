@@ -21,6 +21,7 @@ import (
 	"crypto/x509"
 	"errors"
 	"os"
+	"slices"
 	"testing"
 
 	"github.com/jeremyhahn/go-xkms/pkg/testutil/tpmblobtest"
@@ -255,7 +256,7 @@ func TestConfig_ToTPMConfig_CompleteConfig(t *testing.T) {
 		SRKHandle:       0x81000002,
 		EKHandle:        0x81010002,
 		Hash:            "SHA-384",
-		PlatformPCR:     7,
+		PlatformPCRs:    pkgtpm2.PCRSet{7, 11},
 		PlatformPCRBank: "SHA384",
 		CN:              "test-cn",
 	}
@@ -280,8 +281,8 @@ func TestConfig_ToTPMConfig_CompleteConfig(t *testing.T) {
 	if tpmConfig.Hash != config.Hash {
 		t.Errorf("Hash: expected %s, got %s", config.Hash, tpmConfig.Hash)
 	}
-	if tpmConfig.PlatformPCR != config.PlatformPCR {
-		t.Errorf("PlatformPCR: expected %d, got %d", config.PlatformPCR, tpmConfig.PlatformPCR)
+	if !slices.Equal(tpmConfig.PlatformPCRs, config.PlatformPCRs) {
+		t.Errorf("PlatformPCRs: expected %v, got %v", config.PlatformPCRs, tpmConfig.PlatformPCRs)
 	}
 	if tpmConfig.PlatformPCRBank != config.PlatformPCRBank {
 		t.Errorf("PlatformPCRBank: expected %s, got %s", config.PlatformPCRBank, tpmConfig.PlatformPCRBank)

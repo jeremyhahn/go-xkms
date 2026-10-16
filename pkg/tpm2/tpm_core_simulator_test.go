@@ -129,13 +129,13 @@ func TestParsePublicKey_MalformedInput_Rejected(t *testing.T) {
 func TestReadPCRs_ReflectsExtensions(t *testing.T) {
 	h := newSimHarness(t, nil)
 
-	before, err := h.TPM.ReadPCRs([]uint{0, 7, uint(h.TPM.config.PlatformPCR)})
+	before, err := h.TPM.ReadPCRs(append([]uint{0}, h.TPM.config.PlatformPCRs...))
 	require.NoError(t, err)
 	require.NotEmpty(t, before)
 
 	h.extendPlatformPCR(t, []byte("a-new-measurement"))
 
-	after, err := h.TPM.ReadPCRs([]uint{0, 7, uint(h.TPM.config.PlatformPCR)})
+	after, err := h.TPM.ReadPCRs(append([]uint{0}, h.TPM.config.PlatformPCRs...))
 	require.NoError(t, err)
 	require.Equal(t, len(before), len(after), "the same banks must be reported")
 
