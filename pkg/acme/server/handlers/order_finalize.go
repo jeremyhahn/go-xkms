@@ -314,6 +314,17 @@ func tenantSigningCAProblem(err error) *entities.Error {
 	return common.ServerInternal("Failed to resolve tenant signing CA")
 }
 
+// issuanceTenant returns the tenant a certificate issued for account carries
+// as its subject's first organizational unit: the account's tenant, or the
+// system tenant for an account that is not tenant-bound. It never comes from
+// the CSR.
+func issuanceTenant(account *entities.ACMEAccount) string {
+	if account.TenantID == "" {
+		return qrdbsdk.SystemTenantID
+	}
+	return account.TenantID
+}
+
 // resolveTenantComplianceConfig retrieves the effective compliance configuration
 // for certificate issuance based on tenant settings and global configuration.
 //
@@ -754,17 +765,16 @@ func (s *RestService) OrderFinalizeHandler(w http.ResponseWriter, r *http.Reques
 				CommonName: csr.Subject.CommonName,
 			},
 			PermanentID: order.Identifiers[0].Value,
+			TenantID:    issuanceTenant(account),
 		}
 
 		// Validated with the CSR, before the order moved to processing.
 		ekRequest.TPMManufacturer = endorse01Manufacturer
 
-		// Copy organization info from CSR if available
+		// Copy organization info from CSR if available. The organizational
+		// unit is the account's tenant, never the CSR's.
 		if len(csr.Subject.Organization) > 0 {
 			ekRequest.Subject.Organization = csr.Subject.Organization[0]
-		}
-		if len(csr.Subject.OrganizationalUnit) > 0 {
-			ekRequest.Subject.OrganizationalUnit = csr.Subject.OrganizationalUnit[0]
 		}
 		if len(csr.Subject.Country) > 0 {
 			ekRequest.Subject.Country = csr.Subject.Country[0]
@@ -835,7 +845,7 @@ func (s *RestService) OrderFinalizeHandler(w http.ResponseWriter, r *http.Reques
 		}
 
 		// Standard certificate or device-attest-01 - sign the CSR
-		signOpts := &ca.SignOptions{}
+		signOpts := &ca.SignOptions{TenantID: issuanceTenant(account)}
 
 		// The certificate asserts the identity the attestation established,
 		// as the RFC 4043 permanentIdentifier otherName. It is the issuer's
@@ -1454,17 +1464,14 @@ func (s *RestService) finalizeTCGCSR(
 		tcgCSR.CsrContents.ProdModel,
 		tcgCSR.CsrContents.ProdSerial)
 
-	// Build the IDevID certificate request using CA subject information
+	// Build the IDevID certificate request using CA subject information.
+	// The organizational unit is the account's tenant, not the CA's.
 	organization := ""
-	orgUnit := ""
 	country := ""
 	locality := ""
 	province := ""
 	if len(caCert.Subject.Organization) > 0 {
 		organization = caCert.Subject.Organization[0]
-	}
-	if len(caCert.Subject.OrganizationalUnit) > 0 {
-		orgUnit = caCert.Subject.OrganizationalUnit[0]
 	}
 	if len(caCert.Subject.Country) > 0 {
 		country = caCert.Subject.Country[0]
@@ -1478,13 +1485,13 @@ func (s *RestService) finalizeTCGCSR(
 
 	tcgCSRRequest := &ca.CertificateRequest{
 		Subject: ca.Subject{
-			CommonName:         idevidCN,
-			Organization:       organization,
-			OrganizationalUnit: orgUnit,
-			Country:            country,
-			Locality:           locality,
-			Province:           province,
+			CommonName:   idevidCN,
+			Organization: organization,
+			Country:      country,
+			Locality:     locality,
+			Province:     province,
 		},
+		TenantID: issuanceTenant(account),
 	}
 
 	// Execute pre-issuance hooks before TCG-CSR signing

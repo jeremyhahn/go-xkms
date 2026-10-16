@@ -354,19 +354,22 @@ func TestCertificateRequest_Validate_Success(t *testing.T) {
 		{
 			name: "minimal valid request",
 			req: CertificateRequest{
-				Subject: Subject{CommonName: "example.com"},
+				TenantID: testTenant,
+				Subject:  Subject{CommonName: "example.com"},
 			},
 		},
 		{
 			name: "with validity period",
 			req: CertificateRequest{
-				Subject: Subject{CommonName: "example.com"},
-				Valid:   365,
+				TenantID: testTenant,
+				Subject:  Subject{CommonName: "example.com"},
+				Valid:    365,
 			},
 		},
 		{
 			name: "CA certificate request",
 			req: CertificateRequest{
+				TenantID:   testTenant,
 				Subject:    Subject{CommonName: "Intermediate CA"},
 				IsCA:       true,
 				MaxPathLen: 0,
@@ -375,7 +378,8 @@ func TestCertificateRequest_Validate_Success(t *testing.T) {
 		{
 			name: "with SANs",
 			req: CertificateRequest{
-				Subject: Subject{CommonName: "example.com"},
+				TenantID: testTenant,
+				Subject:  Subject{CommonName: "example.com"},
 				SANS: &SubjectAlternativeNames{
 					DNS: []string{"www.example.com"},
 					IPs: []string{"192.168.1.1"},
@@ -385,6 +389,7 @@ func TestCertificateRequest_Validate_Success(t *testing.T) {
 		{
 			name: "with key usage",
 			req: CertificateRequest{
+				TenantID:    testTenant,
 				Subject:     Subject{CommonName: "example.com"},
 				KeyUsage:    x509.KeyUsageDigitalSignature | x509.KeyUsageKeyEncipherment,
 				ExtKeyUsage: []x509.ExtKeyUsage{x509.ExtKeyUsageServerAuth},
@@ -413,21 +418,24 @@ func TestCertificateRequest_Validate_Error(t *testing.T) {
 		{
 			name: "missing common name",
 			req: CertificateRequest{
-				Subject: Subject{CommonName: ""},
+				TenantID: testTenant,
+				Subject:  Subject{CommonName: ""},
 			},
 			expectedErr: ErrSubjectCommonNameRequired,
 		},
 		{
 			name: "negative validity period",
 			req: CertificateRequest{
-				Subject: Subject{CommonName: "example.com"},
-				Valid:   -1,
+				TenantID: testTenant,
+				Subject:  Subject{CommonName: "example.com"},
+				Valid:    -1,
 			},
 			expectedErr: ErrInvalidValidityPeriod,
 		},
 		{
 			name: "negative path length for CA",
 			req: CertificateRequest{
+				TenantID:   testTenant,
 				Subject:    Subject{CommonName: "CA"},
 				IsCA:       true,
 				MaxPathLen: -1,

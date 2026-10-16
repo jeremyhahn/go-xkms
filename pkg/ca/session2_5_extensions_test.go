@@ -100,6 +100,7 @@ func TestSignCSR_MultiTenantSigner(t *testing.T) {
 	csrPEM, _ := makeLeafCSR(t, "tenant-leaf.example.com")
 
 	cert, err := ca.SignCSR(context.Background(), csrPEM, &SignOptions{
+		TenantID:   testTenant,
 		Signer:     extKey,
 		IssuerCert: extIssuer,
 		Profile:    "",
@@ -127,6 +128,7 @@ func TestSignCSR_MultiTenantSignerWithoutIssuerCert(t *testing.T) {
 	csrPEM, _ := makeLeafCSR(t, "tenant-leaf.example.com")
 
 	_, err := ca.SignCSR(context.Background(), csrPEM, &SignOptions{
+		TenantID:   testTenant,
 		Signer:     extKey,
 		IssuerCert: nil,
 	})
@@ -141,7 +143,7 @@ func TestSignCSR_NativePathStillWorks(t *testing.T) {
 	ca := setupTestCA(t)
 	csrPEM, _ := makeLeafCSR(t, "native-leaf.example.com")
 
-	cert, err := ca.SignCSR(context.Background(), csrPEM, nil)
+	cert, err := ca.SignCSR(context.Background(), csrPEM, &SignOptions{TenantID: testTenant})
 	require.NoError(t, err)
 	require.NotNil(t, cert)
 	assert.Equal(t, "Test Root CA", cert.Issuer.CommonName,
@@ -159,8 +161,9 @@ func TestRevokeCert_PersistsToObjectStore(t *testing.T) {
 	ca := setupTestCAWithObjectStore(t)
 
 	issued, err := ca.IssueCertificate(context.Background(), &CertificateRequest{
-		Subject: Subject{CommonName: "persisted-revoke.example.com"},
-		Valid:   30,
+		TenantID: testTenant,
+		Subject:  Subject{CommonName: "persisted-revoke.example.com"},
+		Valid:    30,
 	})
 	require.NoError(t, err)
 
@@ -195,8 +198,9 @@ func TestRevokeCert_NoObjectStore(t *testing.T) {
 		"precondition: setupTestCA must not wire an objectStore")
 
 	issued, err := ca.IssueCertificate(context.Background(), &CertificateRequest{
-		Subject: Subject{CommonName: "no-store-revoke.example.com"},
-		Valid:   30,
+		TenantID: testTenant,
+		Subject:  Subject{CommonName: "no-store-revoke.example.com"},
+		Valid:    30,
 	})
 	require.NoError(t, err)
 
@@ -236,8 +240,9 @@ func TestRevokeCert_DoubleRevokeWithPersistence(t *testing.T) {
 	ca := setupTestCAWithObjectStore(t)
 
 	issued, err := ca.IssueCertificate(context.Background(), &CertificateRequest{
-		Subject: Subject{CommonName: "double-revoke.example.com"},
-		Valid:   30,
+		TenantID: testTenant,
+		Subject:  Subject{CommonName: "double-revoke.example.com"},
+		Valid:    30,
 	})
 	require.NoError(t, err)
 
@@ -287,8 +292,9 @@ func TestOCSPResponder_GoodStatus(t *testing.T) {
 	require.NotNil(t, responder)
 
 	issued, err := ca.IssueCertificate(context.Background(), &CertificateRequest{
-		Subject: Subject{CommonName: "ocsp-good.example.com"},
-		Valid:   30,
+		TenantID: testTenant,
+		Subject:  Subject{CommonName: "ocsp-good.example.com"},
+		Valid:    30,
 	})
 	require.NoError(t, err)
 
@@ -313,8 +319,9 @@ func TestOCSPResponder_RevokedStatus(t *testing.T) {
 	responder := NewOCSPResponder(ca, OCSPResponderConfig{})
 
 	issued, err := ca.IssueCertificate(context.Background(), &CertificateRequest{
-		Subject: Subject{CommonName: "ocsp-revoked.example.com"},
-		Valid:   30,
+		TenantID: testTenant,
+		Subject:  Subject{CommonName: "ocsp-revoked.example.com"},
+		Valid:    30,
 	})
 	require.NoError(t, err)
 
@@ -361,8 +368,9 @@ func TestOCSPResponder_ClearCache(t *testing.T) {
 
 	// Populate the cache via a GOOD lookup.
 	issued, err := ca.IssueCertificate(context.Background(), &CertificateRequest{
-		Subject: Subject{CommonName: "ocsp-cache.example.com"},
-		Valid:   30,
+		TenantID: testTenant,
+		Subject:  Subject{CommonName: "ocsp-cache.example.com"},
+		Valid:    30,
 	})
 	require.NoError(t, err)
 	rootCert, err := ca.CACertificate()
@@ -467,8 +475,9 @@ func TestVerifyTBSDeterminism_MalformedInput(t *testing.T) {
 func TestVerify_NoXSigner(t *testing.T) {
 	ca := setupTestCA(t)
 	issued, err := ca.IssueCertificate(context.Background(), &CertificateRequest{
-		Subject: Subject{CommonName: "verify-plain.example.com"},
-		Valid:   30,
+		TenantID: testTenant,
+		Subject:  Subject{CommonName: "verify-plain.example.com"},
+		Valid:    30,
 	})
 	require.NoError(t, err)
 
@@ -484,8 +493,9 @@ func TestVerify_NoXSigner(t *testing.T) {
 func TestVerify_ExplicitNilXSigner(t *testing.T) {
 	ca := setupTestCA(t)
 	issued, err := ca.IssueCertificate(context.Background(), &CertificateRequest{
-		Subject: Subject{CommonName: "verify-nil-xsigner.example.com"},
-		Valid:   30,
+		TenantID: testTenant,
+		Subject:  Subject{CommonName: "verify-nil-xsigner.example.com"},
+		Valid:    30,
 	})
 	require.NoError(t, err)
 
@@ -501,8 +511,9 @@ func TestVerify_ExplicitNilXSigner(t *testing.T) {
 func TestVerify_RevokedCertWithXSigner(t *testing.T) {
 	ca := setupTestCAWithObjectStore(t)
 	issued, err := ca.IssueCertificate(context.Background(), &CertificateRequest{
-		Subject: Subject{CommonName: "verify-revoked.example.com"},
-		Valid:   30,
+		TenantID: testTenant,
+		Subject:  Subject{CommonName: "verify-revoked.example.com"},
+		Valid:    30,
 	})
 	require.NoError(t, err)
 

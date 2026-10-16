@@ -47,7 +47,8 @@ type mockCA struct {
 	certErr     error
 	signCSRCert *x509.Certificate
 	signCSRErr  error
-	// signCSRTenant records the tenant SignCSRWithSPIFFE was asked to stamp.
+	// signCSRTenant records the tenant SignCSRWithSPIFFE or SignCSRRaw was
+	// asked to stamp.
 	signCSRTenant string
 	issueCertPEM  []byte
 	issueChainPEM []byte
@@ -74,7 +75,8 @@ type mockCA struct {
 
 func (m *mockCA) CABundle() ([]byte, error)                 { return m.bundlePEM, m.bundleErr }
 func (m *mockCA) CACertificate() (*x509.Certificate, error) { return m.cert, m.certErr }
-func (m *mockCA) SignCSRRaw(_ context.Context, csrPEM []byte, profile string, validityDays int) (*x509.Certificate, error) {
+func (m *mockCA) SignCSRRaw(_ context.Context, csrPEM []byte, profile string, validityDays int, tenantID string) (*x509.Certificate, error) {
+	m.signCSRTenant = tenantID
 	return m.signCSRCert, m.signCSRErr
 }
 func (m *mockCA) SignCSRWithSPIFFE(_ context.Context, csrPEM []byte, profile string, validityDays int, trustDomain, tenantID, kind, name string) (*x509.Certificate, error) {

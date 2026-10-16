@@ -504,8 +504,9 @@ func TestRootCertificate_IssuerResolvesToRoot(t *testing.T) {
 	ca := setupTestCA(t)
 	// Issue a leaf; its issuer should resolve to the root CA.
 	issued, err := ca.IssueCertificate(context.Background(), &CertificateRequest{
-		Subject: Subject{CommonName: "leaf.example.com"},
-		Valid:   365,
+		TenantID: testTenant,
+		Subject:  Subject{CommonName: "leaf.example.com"},
+		Valid:    365,
 	})
 	require.NoError(t, err)
 
@@ -686,8 +687,9 @@ func TestTLSConfigWithOptions_ClientMode(t *testing.T) {
 
 	// Issue a server cert to have a real TLS cert available.
 	issued, err := ca.IssueCertificate(context.Background(), &CertificateRequest{
-		Subject: Subject{CommonName: "tls-opts-client.example.com"},
-		Valid:   365,
+		TenantID: testTenant,
+		Subject:  Subject{CommonName: "tls-opts-client.example.com"},
+		Valid:    365,
 	})
 	require.NoError(t, err)
 
@@ -743,8 +745,9 @@ func TestVerifyChain_NilCert(t *testing.T) {
 func TestVerifyChain_HappyPath(t *testing.T) {
 	ca := setupTestCA(t)
 	issued, err := ca.IssueCertificate(context.Background(), &CertificateRequest{
-		Subject: Subject{CommonName: "chain-verify.example.com"},
-		Valid:   365,
+		TenantID: testTenant,
+		Subject:  Subject{CommonName: "chain-verify.example.com"},
+		Valid:    365,
 	})
 	require.NoError(t, err)
 
@@ -820,8 +823,9 @@ func TestVerifyWithOptions_Expired(t *testing.T) {
 func TestVerifyWithOptions_WithCRLRevoked(t *testing.T) {
 	ca := setupTestCA(t)
 	issued, err := ca.IssueCertificate(context.Background(), &CertificateRequest{
-		Subject: Subject{CommonName: "crl-test.example.com"},
-		Valid:   365,
+		TenantID: testTenant,
+		Subject:  Subject{CommonName: "crl-test.example.com"},
+		Valid:    365,
 	})
 	require.NoError(t, err)
 
@@ -936,8 +940,9 @@ func TestIsIssuedBy_NilIssuer(t *testing.T) {
 func TestIsIssuedBy_NoAKI(t *testing.T) {
 	ca := setupTestCA(t)
 	issued, err := ca.IssueCertificate(context.Background(), &CertificateRequest{
-		Subject: Subject{CommonName: "aki-test.example.com"},
-		Valid:   365,
+		TenantID: testTenant,
+		Subject:  Subject{CommonName: "aki-test.example.com"},
+		Valid:    365,
 	})
 	require.NoError(t, err)
 	root, err := ca.TrustedRoot()
@@ -1392,7 +1397,7 @@ func TestVerifyOCSPResponse_InvalidBytes(t *testing.T) {
 
 func TestIssueEKCertificateRaw_InvalidDER(t *testing.T) {
 	ca := setupTestCA(t)
-	_, err := ca.IssueEKCertificateRaw(context.Background(), "ek-raw", "Test Org", []byte("garbage"))
+	_, err := ca.IssueEKCertificateRaw(context.Background(), "ek-raw", "Test Org", []byte("garbage"), testTenant)
 	assert.Error(t, err)
 }
 
@@ -1403,7 +1408,7 @@ func TestIssueEKCertificateRaw_Success(t *testing.T) {
 	pubDER, err := x509.MarshalPKIXPublicKey(&key.PublicKey)
 	require.NoError(t, err)
 
-	certDER, err := ca.IssueEKCertificateRaw(context.Background(), "ek-raw-ok", "Test Org", pubDER)
+	certDER, err := ca.IssueEKCertificateRaw(context.Background(), "ek-raw-ok", "Test Org", pubDER, testTenant)
 	require.NoError(t, err)
 	cert, err := x509.ParseCertificate(certDER)
 	require.NoError(t, err)
@@ -1412,7 +1417,7 @@ func TestIssueEKCertificateRaw_Success(t *testing.T) {
 
 func TestIssueAKCertificateRaw_InvalidDER(t *testing.T) {
 	ca := setupTestCA(t)
-	_, err := ca.IssueAKCertificateRaw(context.Background(), "ak-raw", "Test Org", []byte("garbage"))
+	_, err := ca.IssueAKCertificateRaw(context.Background(), "ak-raw", "Test Org", []byte("garbage"), testTenant)
 	assert.Error(t, err)
 }
 
@@ -1423,7 +1428,7 @@ func TestIssueAKCertificateRaw_Success(t *testing.T) {
 	pubDER, err := x509.MarshalPKIXPublicKey(&key.PublicKey)
 	require.NoError(t, err)
 
-	certDER, err := ca.IssueAKCertificateRaw(context.Background(), "ak-raw-ok", "Test Org", pubDER)
+	certDER, err := ca.IssueAKCertificateRaw(context.Background(), "ak-raw-ok", "Test Org", pubDER, testTenant)
 	require.NoError(t, err)
 	cert, err := x509.ParseCertificate(certDER)
 	require.NoError(t, err)

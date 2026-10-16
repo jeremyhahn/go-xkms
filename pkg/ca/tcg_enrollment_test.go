@@ -222,7 +222,8 @@ func TestEnrollDevice_NotInitialized(t *testing.T) {
 
 	ca := uninitializedEnrollmentTestCA(t)
 	request := &CertificateRequest{
-		Subject: Subject{CommonName: "test-device"},
+		TenantID: testTenant,
+		Subject:  Subject{CommonName: "test-device"},
 	}
 
 	result, err := ca.EnrollDevice(context.Background(), []byte("any-data"), request)
@@ -255,7 +256,8 @@ func TestEnrollDevice_NoTPMConfigured(t *testing.T) {
 
 	ca := enrollmentTestCA(t)
 	request := &CertificateRequest{
-		Subject: Subject{CommonName: "test-device"},
+		TenantID: testTenant,
+		Subject:  Subject{CommonName: "test-device"},
 	}
 
 	result, err := ca.EnrollDevice(context.Background(), []byte("any-data"), request)
@@ -617,7 +619,8 @@ func TestEnrollDevice_ErrorPriority_InitializedBeforeTPM(t *testing.T) {
 	ca := uninitializedEnrollmentTestCA(t)
 
 	_, err := ca.EnrollDevice(context.Background(), []byte("data"), &CertificateRequest{
-		Subject: Subject{CommonName: "device"},
+		TenantID: testTenant,
+		Subject:  Subject{CommonName: "device"},
 	})
 	if !errors.Is(err, ErrNotInitialized) {
 		t.Fatalf("Expected ErrNotInitialized when CA is not initialized, got: %v", err)
@@ -633,7 +636,8 @@ func TestEnrollDevice_ErrorPriority_TPMBeforeCSR(t *testing.T) {
 	ca := enrollmentTestCA(t)
 
 	_, err := ca.EnrollDevice(context.Background(), []byte("garbage-csr"), &CertificateRequest{
-		Subject: Subject{CommonName: "device"},
+		TenantID: testTenant,
+		Subject:  Subject{CommonName: "device"},
 	})
 	if !errors.Is(err, ErrTPMNotConfigured) {
 		t.Fatalf("Expected ErrTPMNotConfigured when TPM is not set, got: %v", err)
@@ -833,6 +837,7 @@ func TestEnrollDevice_InvalidEKCert_CSRBuilds(t *testing.T) {
 
 func TestCertificateRequest_ValidForEnrollment(t *testing.T) {
 	request := &CertificateRequest{
+		TenantID: testTenant,
 		Subject: Subject{
 			CommonName:   "device-001.example.com",
 			Organization: "Test Corp",
@@ -850,6 +855,7 @@ func TestCertificateRequest_ValidForEnrollment(t *testing.T) {
 
 func TestCertificateRequest_MissingCommonName(t *testing.T) {
 	request := &CertificateRequest{
+		TenantID: testTenant,
 		Subject: Subject{
 			Organization: "Test Corp",
 		},
@@ -863,8 +869,9 @@ func TestCertificateRequest_MissingCommonName(t *testing.T) {
 
 func TestCertificateRequest_InvalidValidity(t *testing.T) {
 	request := &CertificateRequest{
-		Subject: Subject{CommonName: "test"},
-		Valid:   -1,
+		TenantID: testTenant,
+		Subject:  Subject{CommonName: "test"},
+		Valid:    -1,
 	}
 
 	err := request.Validate()

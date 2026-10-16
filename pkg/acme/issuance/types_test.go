@@ -88,6 +88,7 @@ func TestSerialMetadata(t *testing.T) {
 
 func TestRequestFields(t *testing.T) {
 	req := &Request{
+		TenantID: testTenant,
 		Profile:  "tls",
 		SkipCT:   true,
 		SkipLint: true,

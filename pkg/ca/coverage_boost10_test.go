@@ -692,7 +692,8 @@ func TestCreateCSR_EmptyCN_B10(t *testing.T) {
 func TestBuildCSRTemplate_WithSANs_B10(t *testing.T) {
 	t.Parallel()
 	req := &CertificateRequest{
-		Subject: Subject{CommonName: "csr-sans-b10"},
+		TenantID: testTenant,
+		Subject:  Subject{CommonName: "csr-sans-b10"},
 		SANS: &SubjectAlternativeNames{
 			DNS:   []string{"san-dns-b10.local"},
 			Email: []string{"user@b10.local"},

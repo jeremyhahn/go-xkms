@@ -48,6 +48,10 @@ import (
 // singleBackendFactory returns a ca.BackendForStoreFunc that resolves every
 // StoreType to the same backend — the canonical, explicit way for a fixture
 // with one uniform backend to satisfy the required BackendForStore.
+// e2eTenant is the tenant the package's external tests issue certificates
+// for.
+const e2eTenant = "tenant-e2e"
+
 func singleBackendFactory(b xkms.Backend) ca.BackendForStoreFunc {
 	return func(string, types.StoreType) (xkms.Backend, error) {
 		return b, nil
@@ -311,8 +315,9 @@ func issueLeaf(t *testing.T, trustedCA ca.TrustedCA, cn, profile string) *x509.C
 	t.Helper()
 
 	issued, err := trustedCA.IssueCertificateWithProfile(context.Background(), &ca.CertificateRequest{
-		Subject: ca.Subject{CommonName: cn},
-		SANS:    &ca.SubjectAlternativeNames{DNS: []string{cn}},
+		TenantID: e2eTenant,
+		Subject:  ca.Subject{CommonName: cn},
+		SANS:     &ca.SubjectAlternativeNames{DNS: []string{cn}},
 	}, profile)
 	require.NoError(t, err)
 	require.NotNil(t, issued)
@@ -388,7 +393,7 @@ func TestIssuance_LeafEndpointsOnCSRPath(t *testing.T) {
 	trustedCA := newIssuingCA(t, config, nil)
 
 	cert, err := trustedCA.SignCSR(context.Background(),
-		generateCSR(t, "csr-endpoints.example.com"), &ca.SignOptions{Profile: "server"})
+		generateCSR(t, "csr-endpoints.example.com"), &ca.SignOptions{TenantID: e2eTenant, Profile: "server"})
 	require.NoError(t, err)
 
 	assert.Equal(t, []string{"http://crl.example.com/csr.crl"}, cert.CRLDistributionPoints)
@@ -476,6 +481,7 @@ func TestIssuance_ExternalSignerKeepsCallerEndpoints(t *testing.T) {
 
 	cert, err := trustedCA.SignCSR(context.Background(),
 		generateCSR(t, "tenant-leaf.example.com"), &ca.SignOptions{
+			TenantID:   e2eTenant,
 			Signer:     tenantKey,
 			IssuerCert: tenantCert,
 		})
@@ -512,7 +518,7 @@ func TestIssuance_PIVProfileOnCSRPath(t *testing.T) {
 
 	cert, err := trustedCA.SignCSR(context.Background(),
 		generateCSR(t, "piv-csr.example.com"),
-		&ca.SignOptions{Profile: pivCardAuthProfileName})
+		&ca.SignOptions{TenantID: e2eTenant, Profile: pivCardAuthProfileName})
 	require.NoError(t, err)
 
 	assert.Contains(t, cert.UnknownExtKeyUsage, oidPIVCardAuthentication,
@@ -553,7 +559,7 @@ func TestIssuance_ProfileApplyFailureIsTyped(t *testing.T) {
 	trustedCA := newIssuingCA(t, rootOnlyConfig(t, "Rejecting Root CA"), registry)
 
 	_, err := trustedCA.SignCSR(context.Background(),
-		generateCSR(t, "rejected.example.com"), &ca.SignOptions{Profile: "rejecting"})
+		generateCSR(t, "rejected.example.com"), &ca.SignOptions{TenantID: e2eTenant, Profile: "rejecting"})
 	require.Error(t, err)
 	assert.ErrorIs(t, err, ca.ErrInvalidProfile)
 	assert.Contains(t, err.Error(), "rejecting")
@@ -565,7 +571,7 @@ func TestIssuance_UnknownProfileRejected(t *testing.T) {
 	trustedCA := newIssuingCA(t, rootOnlyConfig(t, "Unknown Profile Root CA"), nil)
 
 	_, err := trustedCA.SignCSR(context.Background(),
-		generateCSR(t, "unknown.example.com"), &ca.SignOptions{Profile: "does-not-exist"})
+		generateCSR(t, "unknown.example.com"), &ca.SignOptions{TenantID: e2eTenant, Profile: "does-not-exist"})
 	require.Error(t, err)
 	assert.ErrorIs(t, err, ca.ErrProfileNotFound)
 }

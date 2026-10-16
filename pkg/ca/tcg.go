@@ -180,6 +180,10 @@ func (ca *CA) IssueEKCertificate(ctx context.Context, request *CertificateReques
 
 	ekSubject := request.Subject.ToPkixName()
 	applyDeviceSerialNumber(&ekSubject, []byte(request.ProdSerial))
+	ekSubject, _, err = StampTenant(request.TenantID, ekSubject, nil)
+	if err != nil {
+		return nil, err
+	}
 
 	cert, err := ca.issueTCGCertificate(signer, signingCert, &CertificateSpec{
 		Serial:             serial,
@@ -256,9 +260,14 @@ func (ca *CA) IssueAKCertificate(ctx context.Context, request *CertificateReques
 		return nil, err
 	}
 
+	akSubject, _, err := StampTenant(request.TenantID, request.Subject.ToPkixName(), nil)
+	if err != nil {
+		return nil, err
+	}
+
 	cert, err := ca.issueTCGCertificate(signer, signingCert, &CertificateSpec{
 		Serial:             serial,
-		Subject:            request.Subject.ToPkixName(),
+		Subject:            akSubject,
 		NotBefore:          time.Now().Add(-1 * time.Minute),
 		NotAfter:           tcgNotAfter,
 		PublicKey:          pubKey,
@@ -454,6 +463,10 @@ func (ca *CA) SignTCGCSRIDevID(
 		string(unpacked.CsrContents.ProdModel),
 		string(unpacked.CsrContents.ProdSerial))
 	applyDeviceSerialNumber(&iakSubject, unpacked.CsrContents.ProdSerial)
+	iakSubject, _, err = StampTenant(request.TenantID, iakSubject, nil)
+	if err != nil {
+		return nil, nil, err
+	}
 
 	iakCert, err := ca.issueTCGCertificate(signer, signingCert, &CertificateSpec{
 		Serial:             iakSerial,
@@ -483,6 +496,10 @@ func (ca *CA) SignTCGCSRIDevID(
 
 	idevidSubject := request.Subject.ToPkixName()
 	applyDeviceSerialNumber(&idevidSubject, unpacked.CsrContents.ProdSerial)
+	idevidSubject, _, err = StampTenant(request.TenantID, idevidSubject, nil)
+	if err != nil {
+		return nil, nil, err
+	}
 
 	// Generate IDevID serial number
 	idevidSerial, err := ca.serialGen.Generate(ctx)

@@ -70,6 +70,7 @@ func issueServerKeyedCert(t *testing.T, ca *CA, cn string) (*x509.Certificate, *
 		},
 	}
 	issued, err := ca.IssueCertificate(context.Background(), &CertificateRequest{
+		TenantID:      testTenant,
 		Subject:       Subject{CommonName: cn},
 		Valid:         365,
 		KeyAttributes: attrs,
@@ -115,7 +116,7 @@ func TestRevokeCert_DeleteKeys_CSRSigned_NoOp(t *testing.T) {
 	ca := setupTestCA(t)
 	csrPEM, _ := makeLeafCSR(t, "revoke-csrsigned.example.com")
 
-	cert, err := ca.SignCSR(context.Background(), csrPEM, nil)
+	cert, err := ca.SignCSR(context.Background(), csrPEM, &SignOptions{TenantID: testTenant})
 	require.NoError(t, err)
 
 	// Precondition: issuance never wrote an issued-key record for this
@@ -245,8 +246,9 @@ func TestIssueCertificateWithProfile_RecordIssuedKeyFailurePropagates(t *testing
 	ca.revocationStore = &revokeFailingRevocationStore{Backend: ca.revocationStore, failPut: injected}
 
 	_, err := ca.IssueCertificate(context.Background(), &CertificateRequest{
-		Subject: Subject{CommonName: "issue-recordkey-fail.example.com"},
-		Valid:   365,
+		TenantID: testTenant,
+		Subject:  Subject{CommonName: "issue-recordkey-fail.example.com"},
+		Valid:    365,
 	})
 	require.Error(t, err)
 	assert.ErrorIs(t, err, injected)

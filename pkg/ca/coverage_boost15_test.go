@@ -744,8 +744,9 @@ func TestVerifyWithOptions_CRLParseError_B15(t *testing.T) {
 
 	// Issue a leaf cert to get a valid certificate.
 	issued, err := ca.IssueCertificate(context.Background(), &CertificateRequest{
-		Subject: Subject{CommonName: "verify-crl-error-b15"},
-		Valid:   365,
+		TenantID: testTenant,
+		Subject:  Subject{CommonName: "verify-crl-error-b15"},
+		Valid:    365,
 	})
 	require.NoError(t, err)
 	cert := issued.Certificate
@@ -774,8 +775,9 @@ func TestIssueCertificate_CNFromSubject_B15(t *testing.T) {
 
 	// Provide KeyAttributes with CN="" so the if-branch at line 198 is taken.
 	_, err := ca.IssueCertificate(context.Background(), &CertificateRequest{
-		Subject: Subject{CommonName: "cn-from-subject-b15"},
-		Valid:   365,
+		TenantID: testTenant,
+		Subject:  Subject{CommonName: "cn-from-subject-b15"},
+		Valid:    365,
 		KeyAttributes: &types.KeyAttributes{
 			CN:           "", // empty — will be set from Subject.CommonName
 			KeyAlgorithm: x509.ECDSA,
@@ -1060,8 +1062,9 @@ func TestOCSPCheckCertificateStatus_ColdPathRevoked_B15(t *testing.T) {
 
 	// Issue a cert and revoke it so the revocation is written to the object store.
 	issued, err := ca.IssueCertificate(context.Background(), &CertificateRequest{
-		Subject: Subject{CommonName: "ocsp-cold-revoked-b15"},
-		Valid:   365,
+		TenantID: testTenant,
+		Subject:  Subject{CommonName: "ocsp-cold-revoked-b15"},
+		Valid:    365,
 	})
 	require.NoError(t, err)
 	cert := issued.Certificate

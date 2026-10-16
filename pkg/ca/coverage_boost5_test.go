@@ -107,6 +107,7 @@ func TestOCSPCreateResponse_CacheHit(t *testing.T) {
 func TestCreateCSR_NilKeyAttributes_DefaultsToECDSA(t *testing.T) {
 	ca := setupTestCA(t)
 	req := &CertificateRequest{
+		TenantID:      testTenant,
 		Subject:       Subject{CommonName: "csr-default-algo-b5"},
 		SANS:          &SubjectAlternativeNames{DNS: []string{"csr-default-algo-b5.local"}},
 		KeyAttributes: nil, // triggers default ECDSA P-256 path
@@ -176,9 +177,10 @@ func TestIssueCertificate_IntermediateCA_FullChain(t *testing.T) {
 
 	for _, cn := range []string{"chain-leaf-1-b5", "chain-leaf-2-b5"} {
 		result, err := ca.IssueCertificate(context.Background(), &CertificateRequest{
-			Subject: Subject{CommonName: cn},
-			SANS:    &SubjectAlternativeNames{DNS: []string{cn + ".local"}},
-			Valid:   365,
+			TenantID: testTenant,
+			Subject:  Subject{CommonName: cn},
+			SANS:     &SubjectAlternativeNames{DNS: []string{cn + ".local"}},
+			Valid:    365,
 		})
 		require.NoError(t, err, "IssueCertificate(%s)", cn)
 
@@ -214,7 +216,8 @@ func TestCreateCSR_WithURISAN(t *testing.T) {
 	require.NoError(t, err)
 
 	req := &CertificateRequest{
-		Subject: Subject{CommonName: "csr-uri"},
+		TenantID: testTenant,
+		Subject:  Subject{CommonName: "csr-uri"},
 		SANS: &SubjectAlternativeNames{
 			DNS:  []string{"csr-uri.local"},
 			URIs: []string{"spiffe://cluster.local/ns/default/sa/app"},
@@ -238,9 +241,10 @@ func TestCreateCSR_WithURISAN(t *testing.T) {
 func TestRevokeCert_DeleteKeys_B5(t *testing.T) {
 	ca := setupTestCA(t)
 	issued, err := ca.IssueCertificate(context.Background(), &CertificateRequest{
-		Subject: Subject{CommonName: "revoke-del-keys-b5"},
-		SANS:    &SubjectAlternativeNames{DNS: []string{"revoke-del-keys-b5.local"}},
-		Valid:   365,
+		TenantID: testTenant,
+		Subject:  Subject{CommonName: "revoke-del-keys-b5"},
+		SANS:     &SubjectAlternativeNames{DNS: []string{"revoke-del-keys-b5.local"}},
+		Valid:    365,
 	})
 	require.NoError(t, err)
 
@@ -262,9 +266,10 @@ func TestRevokeCert_DeleteKeys_B5(t *testing.T) {
 func TestTrustedRootCertPool_IntermediateIssuedCert(t *testing.T) {
 	ca := setupTestCAWithRealIntermediate(t)
 	issued, err := ca.IssueCertificate(context.Background(), &CertificateRequest{
-		Subject: Subject{CommonName: "root-pool-int-b5"},
-		SANS:    &SubjectAlternativeNames{DNS: []string{"root-pool-int-b5.local"}},
-		Valid:   365,
+		TenantID: testTenant,
+		Subject:  Subject{CommonName: "root-pool-int-b5"},
+		SANS:     &SubjectAlternativeNames{DNS: []string{"root-pool-int-b5.local"}},
+		Valid:    365,
 	})
 	require.NoError(t, err)
 
@@ -301,6 +306,7 @@ func TestVerify_NilCert(t *testing.T) {
 func TestCreateCSR_GenerateEd25519Key(t *testing.T) {
 	ca := setupTestCA(t)
 	req := &CertificateRequest{
+		TenantID:      testTenant,
 		Subject:       Subject{CommonName: "csr-gen-ed25519-b5"},
 		SANS:          &SubjectAlternativeNames{DNS: []string{"csr-gen-ed25519-b5.local"}},
 		KeyAttributes: softwareKeyAttrsAlgo("csr-gen-ed25519-b5", x509.Ed25519),

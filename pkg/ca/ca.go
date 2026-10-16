@@ -2006,10 +2006,20 @@ func (ca *CA) issueSignedSpec(
 	// the one profile that opts in, for id-fido-gen-ce-aaguid.
 	spec.Request.CSRExtensions = csr.Extensions
 
+	tenantID := ""
 	if opts != nil {
 		spec.ExtraExtensions = opts.ExtraExtensions
 		spec.OtherNames = opts.OtherNames
+		tenantID = opts.TenantID
 	}
+
+	// The certificate carries its tenant as the subject's first
+	// organizational unit, in place of any the CSR or the caller named.
+	subject, rawSubject, err := StampTenant(tenantID, spec.Subject, spec.RawSubject)
+	if err != nil {
+		return nil, err
+	}
+	spec.Subject, spec.RawSubject = subject, rawSubject
 
 	// Certificates signed with a caller-supplied Signer belong to a different
 	// issuer whose CRL and OCSP services this CA cannot speak for, so that
@@ -2036,15 +2046,10 @@ func (ca *CA) issueSignedSpec(
 		}
 	}
 
-	// Record the issuing tenant (empty for the system/platform scope) so a
-	// later revoke request can be refused for a caller bound to a different
-	// tenant (go-xkms#1229). This is the single recording site for both
-	// direct CSR signing and keypair issuance -- IssueCertificateWithProfile
-	// routes through this method.
-	tenantID := ""
-	if opts != nil {
-		tenantID = opts.TenantID
-	}
+	// Record the issuing tenant so a later revoke request can be refused for
+	// a caller bound to a different tenant (go-xkms#1229). This is the single
+	// recording site for both direct CSR signing and keypair issuance --
+	// IssueCertificateWithProfile routes through this method.
 	if err := ca.recordCertTenant(ctx, cert.SerialNumber, tenantID); err != nil {
 		return nil, err
 	}

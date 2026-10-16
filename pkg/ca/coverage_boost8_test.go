@@ -577,9 +577,10 @@ func TestVerifySignature_Success_B8(t *testing.T) {
 
 	// Issue a real certificate so VerifySignature has something to verify.
 	issued, err := ca.IssueCertificate(context.Background(), &CertificateRequest{
-		Subject: Subject{CommonName: "verify-sig-success-b8"},
-		SANS:    &SubjectAlternativeNames{DNS: []string{"verify-sig-success-b8.local"}},
-		Valid:   365,
+		TenantID: testTenant,
+		Subject:  Subject{CommonName: "verify-sig-success-b8"},
+		SANS:     &SubjectAlternativeNames{DNS: []string{"verify-sig-success-b8.local"}},
+		Valid:    365,
 	})
 	require.NoError(t, err)
 	err = ca.VerifySignature(issued.Certificate)

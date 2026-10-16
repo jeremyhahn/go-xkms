@@ -88,8 +88,10 @@ func (a *CAAdapter) SignCSR(ctx context.Context, csrPEM []byte, opts *qrdbsdk.Si
 		// opts.Profile is go-qrdb's holder label, carried as the second OU
 		// in raw; it is not one of this CA's certificate profiles, whose
 		// key usage, extended key usage and validity the options state
-		// directly.
+		// directly. opts.TenantID is the first OU in raw, the tenant the
+		// CA stamps.
 		ValidityDays: opts.ValidityDays,
+		TenantID:     opts.TenantID,
 		KeyUsage:     opts.KeyUsage,
 		ExtKeyUsage:  opts.ExtKeyUsage,
 		RawSubject:   raw,
@@ -122,6 +124,7 @@ func (a *CAAdapter) IssueCertificate(ctx context.Context, req *qrdbsdk.IssueCert
 		KeyUsage:    req.KeyUsage,
 		ExtKeyUsage: req.ExtKeyUsage,
 		Valid:       req.ValidityDays,
+		TenantID:    systemTenantID,
 	}
 
 	// Map SANs if provided.

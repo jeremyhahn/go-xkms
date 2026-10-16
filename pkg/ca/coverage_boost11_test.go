@@ -229,8 +229,9 @@ func TestVerify_Revoked_B11(t *testing.T) {
 	ca := setupTestCA(t)
 
 	issued, err := ca.IssueCertificate(context.Background(), &CertificateRequest{
-		Subject: Subject{CommonName: "revoked-verify-b11"},
-		Valid:   365,
+		TenantID: testTenant,
+		Subject:  Subject{CommonName: "revoked-verify-b11"},
+		Valid:    365,
 	})
 	require.NoError(t, err)
 
@@ -289,8 +290,9 @@ func TestListRevocationBlobs_RevocationStoreScan_B11(t *testing.T) {
 	ca.objectStore = qrdbsdk.NewMemoryStorage()
 
 	issued, err := ca.IssueCertificate(context.Background(), &CertificateRequest{
-		Subject: Subject{CommonName: "revoked-listblobs-b11"},
-		Valid:   365,
+		TenantID: testTenant,
+		Subject:  Subject{CommonName: "revoked-listblobs-b11"},
+		Valid:    365,
 	})
 	require.NoError(t, err)
 
@@ -351,8 +353,9 @@ func TestGenerateCRL_WithRevocations_B11(t *testing.T) {
 	ca := setupTestCA(t)
 
 	issued, err := ca.IssueCertificate(context.Background(), &CertificateRequest{
-		Subject: Subject{CommonName: "revoked-crl-b11"},
-		Valid:   365,
+		TenantID: testTenant,
+		Subject:  Subject{CommonName: "revoked-crl-b11"},
+		Valid:    365,
 	})
 	require.NoError(t, err)
 	require.NoError(t, ca.Revoke(context.Background(), issued.Certificate.SerialNumber, 1))
@@ -376,7 +379,8 @@ func TestGetOrGenerateKey_RSA_B11(t *testing.T) {
 	ca := setupTestCA(t)
 
 	req := &CertificateRequest{
-		Subject: Subject{CommonName: "rsa-key-gen-b11"},
+		TenantID: testTenant,
+		Subject:  Subject{CommonName: "rsa-key-gen-b11"},
 		KeyAttributes: &types.KeyAttributes{
 			CN:           "rsa-key-gen-b11",
 			KeyAlgorithm: x509.RSA,
@@ -398,7 +402,8 @@ func TestGetOrGenerateKey_Ed25519_B11(t *testing.T) {
 	ca := setupEd25519CA(t)
 
 	req := &CertificateRequest{
-		Subject: Subject{CommonName: "ed25519-key-gen-b11"},
+		TenantID: testTenant,
+		Subject:  Subject{CommonName: "ed25519-key-gen-b11"},
 		KeyAttributes: &types.KeyAttributes{
 			CN:           "ed25519-key-gen-b11",
 			KeyAlgorithm: x509.Ed25519,

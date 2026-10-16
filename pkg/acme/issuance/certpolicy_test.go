@@ -48,8 +48,11 @@ import (
 // KeyUsage digitalSignature+keyEncipherment, EKU serverAuth+clientAuth,
 // AKI, DNS SAN; BasicConstraints absent (optional for subscriber
 // certificates per CA/Browser Forum BRs).
+//
+// Re-pinned 2026-10-16 (#1557): the subject carries the tenant as its
+// first organizational unit.
 var acmeIssuancePolicyGoldens = map[string]string{
-	"acme_leaf": "ff6a5d65e97102354ec78d86c3d11680d65c7086e611e52bf2655dd84a675722",
+	"acme_leaf": "94660a754ad187a75bdad293e4f4be294e546d3c8625058fcfdea15378b7ba83",
 }
 
 // issueACMEPath drives the CT issuance pipeline with CT and linting disabled
@@ -83,6 +86,7 @@ func issueACMEPath(t *testing.T) *x509.Certificate {
 	// only the arithmetic is made zone-independent.
 	now := time.Now().UTC()
 	result, err := iss.Issue(context.Background(), &Request{
+		TenantID:  testTenant,
 		CSR:       csr,
 		NotBefore: now,
 		NotAfter:  now.AddDate(0, 0, 90),
@@ -145,6 +149,7 @@ func TestCertificatePolicy_IssuerIdentityReachesACMEPath(t *testing.T) {
 	// only the arithmetic is made zone-independent.
 	now := time.Now().UTC()
 	result, err := iss.Issue(context.Background(), &Request{
+		TenantID:  testTenant,
 		CSR:       csr,
 		NotBefore: now,
 		NotAfter:  now.AddDate(0, 0, 90),
@@ -187,6 +192,7 @@ func TestCertificatePolicy_CertificateProfileReachesACMEPath(t *testing.T) {
 	// only the arithmetic is made zone-independent.
 	now := time.Now().UTC()
 	result, err := iss.Issue(context.Background(), &Request{
+		TenantID:  testTenant,
 		CSR:       csr,
 		NotBefore: now,
 		NotAfter:  now.AddDate(0, 0, 90),

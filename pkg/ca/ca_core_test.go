@@ -205,6 +205,7 @@ func TestCA_GenerateCRL_Empty(t *testing.T) {
 func TestCA_IssueCertificate(t *testing.T) {
 	ca := setupTestCA(t)
 	request := &CertificateRequest{
+		TenantID: testTenant,
 		Subject: Subject{
 			CommonName:   "test-server.example.com",
 			Organization: "Test Org",
@@ -225,7 +226,8 @@ func TestCA_IssueCertificate(t *testing.T) {
 func TestCA_IssueCertificate_NotInitialized(t *testing.T) {
 	ca := &CA{}
 	request := &CertificateRequest{
-		Subject: Subject{CommonName: "test"},
+		TenantID: testTenant,
+		Subject:  Subject{CommonName: "test"},
 	}
 	_, err := ca.IssueCertificate(context.Background(), request)
 	assert.ErrorIs(t, err, ErrNotInitialized)
@@ -239,9 +241,10 @@ func TestCA_IssueCertificateForKey(t *testing.T) {
 	subjectKey, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
 	require.NoError(t, err)
 	request := &CertificateRequest{
-		Subject: Subject{CommonName: "ceremony-admin"},
-		SANS:    &SubjectAlternativeNames{DNS: []string{"admin.example.com"}},
-		Valid:   30,
+		TenantID: testTenant,
+		Subject:  Subject{CommonName: "ceremony-admin"},
+		SANS:     &SubjectAlternativeNames{DNS: []string{"admin.example.com"}},
+		Valid:    30,
 	}
 
 	issued, err := ca.IssueCertificateForKey(context.Background(), request, &subjectKey.PublicKey)
@@ -275,6 +278,7 @@ func TestCA_IssueCertificateForKey_Errors(t *testing.T) {
 func TestCA_IssueCertificate_DuplicateCN(t *testing.T) {
 	ca := setupTestCA(t)
 	request := &CertificateRequest{
+		TenantID: testTenant,
 		Subject: Subject{
 			CommonName:   "duplicate.example.com",
 			Organization: "Test",
@@ -462,7 +466,8 @@ func TestQuantumVerificationError(t *testing.T) {
 
 func TestCertificateRequest_Validate_MissingCN(t *testing.T) {
 	req := &CertificateRequest{
-		Subject: Subject{Organization: "Test"},
+		TenantID: testTenant,
+		Subject:  Subject{Organization: "Test"},
 	}
 	err := req.Validate()
 	assert.Error(t, err)
@@ -470,8 +475,9 @@ func TestCertificateRequest_Validate_MissingCN(t *testing.T) {
 
 func TestCertificateRequest_Validate_NegativeValid(t *testing.T) {
 	req := &CertificateRequest{
-		Subject: Subject{CommonName: "test"},
-		Valid:   -1,
+		TenantID: testTenant,
+		Subject:  Subject{CommonName: "test"},
+		Valid:    -1,
 	}
 	err := req.Validate()
 	assert.ErrorIs(t, err, ErrInvalidValidityPeriod)

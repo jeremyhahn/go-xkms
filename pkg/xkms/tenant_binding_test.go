@@ -277,8 +277,9 @@ func TestSignCSR_TenantBinding(t *testing.T) {
 
 	_, err = svc.SignCSR(ctx, &transport.SignCSRRequest{CSRPEM: csr})
 	require.NoError(t, err, "naming no tenant stamps no tenant SAN and is not a cross-tenant target")
-	assert.Empty(t, ca.signCSRTenant)
+	assert.Equal(t, "tenant-a", ca.signCSRTenant, "the certificate still carries the caller's tenant")
 
+	ca.signCSRTenant = ""
 	platformAdmin := auth.WithIdentity(context.Background(), &auth.Identity{
 		Subject: "so@example.com", TenantID: qrdbsdk.SystemTenantID, Roles: []string{"admin"},
 	})

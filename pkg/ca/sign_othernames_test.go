@@ -70,6 +70,7 @@ func TestSignCSR_OtherNamesFromTheIssuerReachTheCertificate(t *testing.T) {
 		})
 
 		cert, err := trustedCA.SignCSR(context.Background(), csr, &ca.SignOptions{
+			TenantID:   e2eTenant,
 			OtherNames: []ca.OtherName{{TypeID: ca.OIDPermanentIdentifier, Value: identifier}},
 		})
 
@@ -87,7 +88,7 @@ func TestSignCSR_OtherNamesFromTheIssuerReachTheCertificate(t *testing.T) {
 			}},
 		})
 
-		cert, err := trustedCA.SignCSR(context.Background(), requested, nil)
+		cert, err := trustedCA.SignCSR(context.Background(), requested, &ca.SignOptions{TenantID: e2eTenant})
 
 		require.NoError(t, err)
 		assert.Empty(t, permanentIdentifierOf(t, cert), "a requester must not name its own otherName")
@@ -106,6 +107,7 @@ func TestSignCSR_OtherNamesFromTheIssuerReachTheCertificate(t *testing.T) {
 		requested := pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE REQUEST", Bytes: der})
 
 		cert, err := trustedCA.SignCSR(context.Background(), requested, &ca.SignOptions{
+			TenantID:   e2eTenant,
 			OtherNames: []ca.OtherName{{TypeID: ca.OIDPermanentIdentifier, Value: identifier}},
 		})
 
@@ -120,6 +122,7 @@ func TestSignCSR_OtherNamesFromTheIssuerReachTheCertificate(t *testing.T) {
 		csr := csrWith(t, &x509.CertificateRequest{Subject: pkix.Name{CommonName: "device-3"}})
 
 		cert, err := trustedCA.SignCSR(context.Background(), csr, &ca.SignOptions{
+			TenantID:        e2eTenant,
 			OtherNames:      []ca.OtherName{{TypeID: ca.OIDPermanentIdentifier, Value: identifier}},
 			ExtraExtensions: []pkix.Extension{{Id: []int{2, 5, 29, 17}, Value: mustSAN(t, "another")}},
 		})

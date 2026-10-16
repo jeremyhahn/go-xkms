@@ -60,9 +60,10 @@ func TestCreateCSR_Ed25519Key(t *testing.T) {
 	require.NoError(t, err)
 
 	req := &CertificateRequest{
-		Subject: Subject{CommonName: "csr-ed25519"},
-		SANS:    &SubjectAlternativeNames{DNS: []string{"csr-ed25519.local"}},
-		Signer:  privKey,
+		TenantID: testTenant,
+		Subject:  Subject{CommonName: "csr-ed25519"},
+		SANS:     &SubjectAlternativeNames{DNS: []string{"csr-ed25519.local"}},
+		Signer:   privKey,
 		KeyAttributes: &types.KeyAttributes{
 			CN:           "csr-ed25519",
 			KeyAlgorithm: x509.Ed25519,
@@ -82,8 +83,9 @@ func TestCreateCSR_Ed25519Key(t *testing.T) {
 func TestCreateCSR_RSAKey(t *testing.T) {
 	ca := setupTestCA(t)
 	req := &CertificateRequest{
-		Subject: Subject{CommonName: "csr-rsa-b4"},
-		SANS:    &SubjectAlternativeNames{DNS: []string{"csr-rsa-b4.local"}},
+		TenantID: testTenant,
+		Subject:  Subject{CommonName: "csr-rsa-b4"},
+		SANS:     &SubjectAlternativeNames{DNS: []string{"csr-rsa-b4.local"}},
 		KeyAttributes: &types.KeyAttributes{
 			CN:           "csr-rsa-b4",
 			KeyAlgorithm: x509.RSA,
@@ -110,7 +112,8 @@ func TestCreateCSR_WithEmailSAN(t *testing.T) {
 	require.NoError(t, err)
 
 	req := &CertificateRequest{
-		Subject: Subject{CommonName: "email-csr"},
+		TenantID: testTenant,
+		Subject:  Subject{CommonName: "email-csr"},
 		SANS: &SubjectAlternativeNames{
 			DNS:   []string{"email-csr.local"},
 			Email: []string{"test@example.com"},
@@ -135,9 +138,10 @@ func TestCreateCSR_WithEmailSAN(t *testing.T) {
 func TestVerify_WithNonNilXSigner_NoXSignedCerts(t *testing.T) {
 	ca := setupTestCAWithObjectStore(t)
 	issued, err := ca.IssueCertificate(context.Background(), &CertificateRequest{
-		Subject: Subject{CommonName: "verify-xsign-b4"},
-		SANS:    &SubjectAlternativeNames{DNS: []string{"verify-xsign-b4.local"}},
-		Valid:   365,
+		TenantID: testTenant,
+		Subject:  Subject{CommonName: "verify-xsign-b4"},
+		SANS:     &SubjectAlternativeNames{DNS: []string{"verify-xsign-b4.local"}},
+		Valid:    365,
 	})
 	require.NoError(t, err)
 
@@ -159,9 +163,10 @@ func TestVerify_WithNonNilXSigner_NoXSignedCerts(t *testing.T) {
 func TestTrustedRootCertPoolWithXSigner_WithXSigner_EmptyStore(t *testing.T) {
 	ca := setupTestCAWithObjectStore(t)
 	issued, err := ca.IssueCertificate(context.Background(), &CertificateRequest{
-		Subject: Subject{CommonName: "root-pool-xsign-b4"},
-		SANS:    &SubjectAlternativeNames{DNS: []string{"root-pool-xsign-b4.local"}},
-		Valid:   365,
+		TenantID: testTenant,
+		Subject:  Subject{CommonName: "root-pool-xsign-b4"},
+		SANS:     &SubjectAlternativeNames{DNS: []string{"root-pool-xsign-b4.local"}},
+		Valid:    365,
 	})
 	require.NoError(t, err)
 
@@ -180,9 +185,10 @@ func TestTrustedRootCertPoolWithXSigner_WithXSigner_EmptyStore(t *testing.T) {
 func TestTrustedIntermediateCertPoolWithXSigner_NilXSigner_B4(t *testing.T) {
 	ca := setupTestCA(t)
 	issued, err := ca.IssueCertificate(context.Background(), &CertificateRequest{
-		Subject: Subject{CommonName: "int-pool-xsign-nil"},
-		SANS:    &SubjectAlternativeNames{DNS: []string{"int-pool-xsign-nil.local"}},
-		Valid:   365,
+		TenantID: testTenant,
+		Subject:  Subject{CommonName: "int-pool-xsign-nil"},
+		SANS:     &SubjectAlternativeNames{DNS: []string{"int-pool-xsign-nil.local"}},
+		Valid:    365,
 	})
 	require.NoError(t, err)
 
@@ -267,9 +273,10 @@ func TestNewIntermediateCA_Via_setupTestCAWithRealIntermediate(t *testing.T) {
 func TestNewIntermediateCA_IssueAndVerify(t *testing.T) {
 	ca := setupTestCAWithRealIntermediate(t)
 	req := &CertificateRequest{
-		Subject: Subject{CommonName: "intermediate-leaf-b4"},
-		SANS:    &SubjectAlternativeNames{DNS: []string{"intermediate-leaf-b4.local"}},
-		Valid:   365,
+		TenantID: testTenant,
+		Subject:  Subject{CommonName: "intermediate-leaf-b4"},
+		SANS:     &SubjectAlternativeNames{DNS: []string{"intermediate-leaf-b4.local"}},
+		Valid:    365,
 	}
 	issued, err := ca.IssueCertificate(context.Background(), req)
 	require.NoError(t, err)
@@ -313,7 +320,8 @@ func TestCreateCSR_WithHardwareModuleNameSAN(t *testing.T) {
 	require.NoError(t, err)
 
 	req := &CertificateRequest{
-		Subject: Subject{CommonName: "csr-hwmodule"},
+		TenantID: testTenant,
+		Subject:  Subject{CommonName: "csr-hwmodule"},
 		SANS: &SubjectAlternativeNames{
 			DNS: []string{"csr-hwmodule.local"},
 			HardwareModuleName: &HardwareModuleInfo{
@@ -350,9 +358,10 @@ func TestCABundleCertPool_Initialized(t *testing.T) {
 func TestTrustedIntermediateCertPool_WithIntermediate_B4(t *testing.T) {
 	ca := setupTestCAWithRealIntermediate(t)
 	issued, err := ca.IssueCertificate(context.Background(), &CertificateRequest{
-		Subject: Subject{CommonName: "int-pool-b4"},
-		SANS:    &SubjectAlternativeNames{DNS: []string{"int-pool-b4.local"}},
-		Valid:   365,
+		TenantID: testTenant,
+		Subject:  Subject{CommonName: "int-pool-b4"},
+		SANS:     &SubjectAlternativeNames{DNS: []string{"int-pool-b4.local"}},
+		Valid:    365,
 	})
 	require.NoError(t, err)
 
@@ -368,9 +377,10 @@ func TestTrustedIntermediateCertPool_WithIntermediate_B4(t *testing.T) {
 func TestIssueCertificate_RSAKeyViaGetOrGenerate(t *testing.T) {
 	ca := setupTestCA(t)
 	req := &CertificateRequest{
-		Subject: Subject{CommonName: "rsa-generated-b4"},
-		SANS:    &SubjectAlternativeNames{DNS: []string{"rsa-generated-b4.local"}},
-		Valid:   365,
+		TenantID: testTenant,
+		Subject:  Subject{CommonName: "rsa-generated-b4"},
+		SANS:     &SubjectAlternativeNames{DNS: []string{"rsa-generated-b4.local"}},
+		Valid:    365,
 		KeyAttributes: &types.KeyAttributes{
 			CN:           "rsa-generated-b4",
 			KeyAlgorithm: x509.RSA,

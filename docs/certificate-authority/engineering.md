@@ -394,6 +394,37 @@ e-mail addresses are valid tenant names and are not SPIFFE path segments.
 
 ## Invariants
 
+- **Every issued certificate carries its tenant as `Subject.OrganizationalUnit[0]`**
+  (go-xkms#1557, SPEC `tenant-subject-ou`). `StampTenant`
+  (`pkg/ca/tenant_subject.go:42`) is the one place a certificate gets its
+  tenant: a `pkix.Name` subject has every OU replaced by `[tenant]` (OUs in
+  `ExtraNames` are dropped), never appended to; a caller-chosen `RawSubject`
+  (go-qrdb's `CN, OU=<tenant>, OU=<profile>` ceremony) has its first OU set to
+  the tenant, or the tenant inserted before the CN, and is kept byte for byte
+  when it already names the tenant. An empty tenant is refused with
+  `ErrTenantRequired`; the system tenant's own certificates name
+  `qrdbsdk.SystemTenantID`. `qrdbsdk.TenantFromClientCert` reads the tenant
+  back when the certificate has no SPIFFE tenant SAN. The tenant is the
+  request's, never one the CSR asserts:
+  - `SignCSR`/`IssueCertificate*` through the `issueSignedSpec` funnel
+    (`pkg/ca/ca.go:2018`) take `SignOptions.TenantID` / `CertificateRequest.TenantID`;
+  - TCG EK, AK, IAK and IDevID (`pkg/ca/tcg.go:182`, `:262`, `:465`, `:498`)
+    take `CertificateRequest.TenantID`;
+  - the xkms servicers pass the authenticated caller's tenant (`callerTenant`,
+    `pkg/xkms/servicer_ca_tcg.go:55`, `:86`, `:117`, `pkg/xkms/servicer_piv.go:127`,
+    and `SignCSR`'s `SignCSRWithSPIFFE` call in `pkg/xkms/servicer_ca.go`);
+  - the init ceremony passes go-qrdb's `SignCSROptions.TenantID`
+    (`pkg/init/ca_adapter.go:93`) or the system tenant (`:126`), first-boot
+    admin enrollment the admin's tenant or the system tenant
+    (`pkg/init/firstboot_adapter.go:96`), and the node's own transport and
+    server certificates the system tenant (`pkg/server/server.go:2251`,
+    `pkg/trust/clusterca/acme.go:250`);
+  - ACME issuance is in [acme-issuance](../acme-issuance/engineering.md#invariants).
+
+  Not stamped: CA hierarchy certificates (roots, intermediates, subordinate
+  CAs, per-tenant ACME roots), whose subject names the CA; the TCG LAK, whose
+  subject must be empty; and the FIDO2 attestation profile, which rewrites the
+  subject to WebAuthn §8.2.1's fixed OU after the tenant is required.
 - **Certificate storage is confined to the caller's tenant** (go-xkms#1228).
   The `XKMSService` certificate methods resolve the backend with
   `resolveTenantBackend` (`pkg/xkms/servicer_cert.go:29-284`), so a tenant's

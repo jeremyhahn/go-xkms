@@ -2248,6 +2248,8 @@ func (s *Server) ensureTLSServerCert(xkmsCA tlsBootstrapCA, keystoreType types.S
 			x509.ExtKeyUsageServerAuth,
 			x509.ExtKeyUsageClientAuth,
 		},
+		// The server's own certificate belongs to the system tenant.
+		TenantID: qrdbsdk.SystemTenantID,
 	}
 
 	issued, err := xkmsCA.IssueCertificateWithProfile(s.ctx, request, "server")

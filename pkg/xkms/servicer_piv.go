@@ -125,7 +125,7 @@ func (s *XKMSService) InitPIVCASignFunc() error {
 	}
 
 	fn := func(ctx context.Context, csrPEM []byte, profile string, validityDays int) ([]byte, []byte, error) {
-		cert, signErr := ca.SignCSRRaw(ctx, csrPEM, profile, validityDays)
+		cert, signErr := ca.SignCSRRaw(ctx, csrPEM, profile, validityDays, callerTenant(ctx))
 		if signErr != nil {
 			return nil, nil, signErr
 		}

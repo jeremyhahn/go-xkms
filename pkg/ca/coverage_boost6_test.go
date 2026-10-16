@@ -178,9 +178,10 @@ func TestOCSPHandleRequest_WithCAIssuedCert(t *testing.T) {
 
 	// Issue a cert so the CA has a real certificate.
 	issued, err := ca.IssueCertificate(context.Background(), &CertificateRequest{
-		Subject: Subject{CommonName: "ocsp-issued-b6"},
-		SANS:    &SubjectAlternativeNames{DNS: []string{"ocsp-issued-b6.local"}},
-		Valid:   365,
+		TenantID: testTenant,
+		Subject:  Subject{CommonName: "ocsp-issued-b6"},
+		SANS:     &SubjectAlternativeNames{DNS: []string{"ocsp-issued-b6.local"}},
+		Valid:    365,
 	})
 	require.NoError(t, err)
 
@@ -213,9 +214,10 @@ func TestOCSPCreateResponse_RevokedCert(t *testing.T) {
 	resp := NewOCSPResponder(ca, DefaultOCSPResponderConfig())
 
 	issued, err := ca.IssueCertificate(context.Background(), &CertificateRequest{
-		Subject: Subject{CommonName: "ocsp-revoked-b6"},
-		SANS:    &SubjectAlternativeNames{DNS: []string{"ocsp-revoked-b6.local"}},
-		Valid:   365,
+		TenantID: testTenant,
+		Subject:  Subject{CommonName: "ocsp-revoked-b6"},
+		SANS:     &SubjectAlternativeNames{DNS: []string{"ocsp-revoked-b6.local"}},
+		Valid:    365,
 	})
 	require.NoError(t, err)
 

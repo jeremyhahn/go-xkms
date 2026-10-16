@@ -49,6 +49,7 @@ func TestIssuer_Issue_AdditionalErrorPaths(t *testing.T) {
 
 		csr, _ := createTestCSR(t)
 		req := &Request{
+			TenantID:  testTenant,
 			CSR:       csr,
 			NotBefore: time.Now(),
 			NotAfter:  time.Now().AddDate(0, 0, 90),
@@ -73,6 +74,7 @@ func TestIssuer_Issue_AdditionalErrorPaths(t *testing.T) {
 
 		csr, _ := createTestCSR(t)
 		req := &Request{
+			TenantID:  testTenant,
 			CSR:       csr,
 			NotBefore: time.Now(),
 			NotAfter:  time.Now().AddDate(0, 0, 90),
@@ -99,6 +101,7 @@ func TestIssuer_Issue_AdditionalErrorPaths(t *testing.T) {
 
 		csr, _ := createTestCSR(t)
 		req := &Request{
+			TenantID:  testTenant,
 			CSR:       csr,
 			NotBefore: time.Now(),
 			NotAfter:  time.Now().AddDate(0, 0, 90),
@@ -126,6 +129,7 @@ func TestIssuer_Issue_AdditionalErrorPaths(t *testing.T) {
 
 		csr, _ := createTestCSR(t)
 		req := &Request{
+			TenantID:  testTenant,
 			CSR:       csr,
 			NotBefore: time.Now(),
 			NotAfter:  time.Now().AddDate(0, 0, 90),
@@ -154,6 +158,7 @@ func TestIssuer_Issue_AdditionalErrorPaths(t *testing.T) {
 
 		csr, _ := createTestCSR(t)
 		req := &Request{
+			TenantID:  testTenant,
 			CSR:       csr,
 			NotBefore: time.Now(),
 			NotAfter:  time.Now().AddDate(0, 0, 90),
@@ -195,6 +200,7 @@ func TestIssuer_Issue_AdditionalErrorPaths(t *testing.T) {
 		}
 
 		req := &Request{
+			TenantID:  testTenant,
 			CSR:       csr,
 			Template:  template,
 			NotBefore: time.Now(),
@@ -220,6 +226,7 @@ func TestIssuer_Issue_AdditionalErrorPaths(t *testing.T) {
 
 		csr, _ := createTestCSR(t)
 		req := &Request{
+			TenantID: testTenant,
 			CSR:      csr,
 			NotAfter: time.Now().AddDate(0, 0, 90),
 		}
@@ -243,6 +250,7 @@ func TestIssuer_Issue_AdditionalErrorPaths(t *testing.T) {
 
 		csr, _ := createTestCSR(t)
 		req := &Request{
+			TenantID:  testTenant,
 			CSR:       csr,
 			NotBefore: time.Now(),
 		}
@@ -288,6 +296,7 @@ func TestIssuer_Issue_AdditionalErrorPaths(t *testing.T) {
 		require.NoError(t, err)
 
 		req := &Request{
+			TenantID:  testTenant,
 			CSR:       csr,
 			NotBefore: time.Now(),
 			NotAfter:  time.Now().AddDate(0, 0, 90),
@@ -320,6 +329,7 @@ func TestIssuer_Issue_AdditionalErrorPaths(t *testing.T) {
 
 		csr, _ := createTestCSR(t)
 		req := &Request{
+			TenantID:  testTenant,
 			CSR:       csr,
 			NotBefore: time.Now(),
 			NotAfter:  time.Now().AddDate(0, 0, 90),
@@ -353,6 +363,7 @@ func TestIssuer_Issue_AdditionalErrorPaths(t *testing.T) {
 
 		csr, _ := createTestCSR(t)
 		req := &Request{
+			TenantID:  testTenant,
 			CSR:       csr,
 			NotBefore: time.Now(),
 			NotAfter:  time.Now().AddDate(0, 0, 90),
@@ -387,6 +398,7 @@ func TestIssuer_ValidateKey_Coverage(t *testing.T) {
 
 		csr, _ := createTestCSR(t)
 		req := &Request{
+			TenantID:  testTenant,
 			CSR:       csr,
 			NotBefore: time.Now(),
 			NotAfter:  time.Now().AddDate(0, 0, 90),
@@ -419,6 +431,7 @@ func TestIssuer_ValidateKey_Coverage(t *testing.T) {
 
 		csr, _ := createTestCSR(t)
 		req := &Request{
+			TenantID:  testTenant,
 			CSR:       csr,
 			NotBefore: time.Now(),
 			NotAfter:  time.Now().AddDate(0, 0, 90),
@@ -450,6 +463,7 @@ func TestIssuer_LogFailure_Coverage(t *testing.T) {
 
 		csr, _ := createTestCSR(t)
 		req := &Request{
+			TenantID:  testTenant,
 			CSR:       csr,
 			NotBefore: time.Now(),
 			NotAfter:  time.Now().AddDate(0, 0, -1), // Invalid - will fail
@@ -475,6 +489,7 @@ func TestIssuer_LogFailure_Coverage(t *testing.T) {
 
 		csr, _ := createTestCSR(t)
 		req := &Request{
+			TenantID:  testTenant,
 			CSR:       csr,
 			NotBefore: time.Now(),
 			NotAfter:  time.Now().AddDate(0, 0, -1), // Invalid - will fail
@@ -511,6 +526,7 @@ func TestIssuer_ReplacePoisonWithSCTs_Coverage(t *testing.T) {
 
 		csr, _ := createTestCSR(t)
 		req := &Request{
+			TenantID:  testTenant,
 			CSR:       csr,
 			NotBefore: time.Now(),
 			NotAfter:  time.Now().AddDate(0, 0, 90),
@@ -634,6 +650,7 @@ func TestIssuer_PersistSerial_NilStorage_Coverage(t *testing.T) {
 
 	csr, _ := createTestCSR(t)
 	req := &Request{
+		TenantID:  testTenant,
 		CSR:       csr,
 		NotBefore: time.Now(),
 		NotAfter:  time.Now().AddDate(0, 0, 90),
@@ -665,6 +682,7 @@ func TestIssuer_GetIssuerChain_Coverage(t *testing.T) {
 
 	csr, _ := createTestCSR(t)
 	req := &Request{
+		TenantID:  testTenant,
 		CSR:       csr,
 		NotBefore: time.Now(),
 		NotAfter:  time.Now().AddDate(0, 0, 90),
@@ -722,6 +740,7 @@ func TestIssuer_GetIssuerChain_FullChain(t *testing.T) {
 
 	csr, _ := createTestCSR(t)
 	req := &Request{
+		TenantID:  testTenant,
 		CSR:       csr,
 		NotBefore: time.Now(),
 		NotAfter:  time.Now().AddDate(0, 0, 90),
@@ -760,6 +779,7 @@ func TestIssuer_SignCertificate_Error_Coverage(t *testing.T) {
 
 	csr, _ := createTestCSR(t)
 	req := &Request{
+		TenantID:  testTenant,
 		CSR:       csr,
 		NotBefore: time.Now(),
 		NotAfter:  time.Now().AddDate(0, 0, 90),
@@ -817,6 +837,7 @@ func TestIssuer_CSRSignatureVerification_Coverage(t *testing.T) {
 
 		csr, _ := createTestCSR(t)
 		req := &Request{
+			TenantID:  testTenant,
 			CSR:       csr,
 			NotBefore: time.Now(),
 			NotAfter:  time.Now().AddDate(0, 0, 90),
@@ -853,6 +874,7 @@ func TestIssuer_CSRSignatureVerification_Coverage(t *testing.T) {
 		csr.PublicKey = &key2.PublicKey
 
 		req := &Request{
+			TenantID:  testTenant,
 			CSR:       csr,
 			NotBefore: time.Now(),
 			NotAfter:  time.Now().AddDate(0, 0, 90),
@@ -886,6 +908,7 @@ func TestIssuer_NilCertStorage_Coverage(t *testing.T) {
 
 	csr, _ := createTestCSR(t)
 	req := &Request{
+		TenantID:  testTenant,
 		CSR:       csr,
 		NotBefore: time.Now(),
 		NotAfter:  time.Now().AddDate(0, 0, 90),
@@ -918,6 +941,7 @@ func TestIssuer_AuditLogging_Complete_Coverage(t *testing.T) {
 
 	csr, _ := createTestCSR(t)
 	req := &Request{
+		TenantID:  testTenant,
 		CSR:       csr,
 		NotBefore: time.Now(),
 		NotAfter:  time.Now().AddDate(0, 0, 90),

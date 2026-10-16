@@ -246,7 +246,9 @@ func (p *Provisioner) issueNodeLeaf(ctx context.Context, issuer CAIssuer, signer
 	}
 	csrPEM := pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE REQUEST", Bytes: csrDER})
 
+	// The node's transport certificate belongs to the system tenant.
 	opts := &ca.SignOptions{
+		TenantID:    qrdbsdk.SystemTenantID,
 		KeyUsage:    x509.KeyUsageDigitalSignature,
 		ExtKeyUsage: []x509.ExtKeyUsage{x509.ExtKeyUsageClientAuth, x509.ExtKeyUsageServerAuth},
 	}

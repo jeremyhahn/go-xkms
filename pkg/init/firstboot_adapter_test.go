@@ -196,8 +196,9 @@ func TestSignAdminCSR_PathB(t *testing.T) {
 	assert.Equal(t, "ops-admin", opts.SPIFFEName)
 }
 
-// TestSignAdminCSR_NoTrustDomainOmitsSPIFFE pins the legacy behavior: with no
-// trust domain configured, no SPIFFE fields are requested at all.
+// TestSignAdminCSR_NoTrustDomainOmitsSPIFFE pins that, with no trust domain
+// configured, no SPIFFE fields are requested; the admin's tenant is still
+// requested, as the subject's first organizational unit.
 func TestSignAdminCSR_NoTrustDomainOmitsSPIFFE(t *testing.T) {
 	rec := newRecordingCA(t)
 	adapter := NewCAAdapter(rec, "")
@@ -208,8 +209,21 @@ func TestSignAdminCSR_NoTrustDomainOmitsSPIFFE(t *testing.T) {
 	opts := rec.lastSignOpts
 	require.NotNil(t, opts)
 	assert.Empty(t, opts.SPIFFETrustDomain)
-	assert.Empty(t, opts.TenantID)
+	assert.Equal(t, "tenant-7", opts.TenantID)
 	assert.Empty(t, opts.SPIFFEName)
+}
+
+// TestSignAdminCSR_NoTenantIssuesForTheSystemTenant pins that a bootstrap
+// admin named without a tenant is the system tenant's.
+func TestSignAdminCSR_NoTenantIssuesForTheSystemTenant(t *testing.T) {
+	rec := newRecordingCA(t)
+	adapter := NewCAAdapter(rec, "")
+
+	_, err := adapter.SignAdminCSR(context.Background(), "", "ops-admin", adminCSR(t, "ops-admin"))
+	require.NoError(t, err)
+
+	require.NotNil(t, rec.lastSignOpts)
+	assert.Equal(t, qrdbsdk.SystemTenantID, rec.lastSignOpts.TenantID)
 }
 
 // TestSignAdminCSR_PropagatesSignError proves a signing failure surfaces.

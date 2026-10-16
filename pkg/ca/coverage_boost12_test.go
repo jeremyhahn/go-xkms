@@ -81,8 +81,9 @@ func TestPutRevocationBlob_RevocationStore_B12(t *testing.T) {
 	ca.revocationStore = storage.NewMemory()
 
 	issued, err := ca.IssueCertificate(context.Background(), &CertificateRequest{
-		Subject: Subject{CommonName: "revoked-revstore-b12"},
-		Valid:   365,
+		TenantID: testTenant,
+		Subject:  Subject{CommonName: "revoked-revstore-b12"},
+		Valid:    365,
 	})
 	require.NoError(t, err)
 
@@ -109,8 +110,9 @@ func TestListRevocationBlobs_RevocationStore_B12(t *testing.T) {
 	ca.revocationStore = storage.NewMemory()
 
 	issued, err := ca.IssueCertificate(context.Background(), &CertificateRequest{
-		Subject: Subject{CommonName: "revoked-scan-b12"},
-		Valid:   365,
+		TenantID: testTenant,
+		Subject:  Subject{CommonName: "revoked-scan-b12"},
+		Valid:    365,
 	})
 	require.NoError(t, err)
 	require.NoError(t, ca.Revoke(context.Background(), issued.Certificate.SerialNumber, 1))
@@ -292,8 +294,9 @@ func TestRecordRevocation_AlreadyRevoked_B12(t *testing.T) {
 	ca := setupTestCA(t)
 
 	issued, err := ca.IssueCertificate(context.Background(), &CertificateRequest{
-		Subject: Subject{CommonName: "double-revoke-b12"},
-		Valid:   365,
+		TenantID: testTenant,
+		Subject:  Subject{CommonName: "double-revoke-b12"},
+		Valid:    365,
 	})
 	require.NoError(t, err)
 

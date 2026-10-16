@@ -342,6 +342,7 @@ func TestIssuer_Issue(t *testing.T) {
 
 		csr, _ := createTestCSR(t)
 		req := &Request{
+			TenantID:  testTenant,
 			CSR:       csr,
 			NotBefore: time.Now(),
 			NotAfter:  time.Now().AddDate(0, 0, 90),
@@ -404,6 +405,7 @@ func TestIssuer_Issue(t *testing.T) {
 
 		csr, _ := createTestCSR(t)
 		req := &Request{
+			TenantID:  testTenant,
 			CSR:       csr,
 			NotBefore: time.Now(),
 			NotAfter:  time.Now().AddDate(0, 0, 90),
@@ -449,6 +451,7 @@ func TestIssuer_Issue(t *testing.T) {
 
 		csr, _ := createTestCSR(t)
 		req := &Request{
+			TenantID:  testTenant,
 			CSR:       csr,
 			NotBefore: time.Now(),
 			NotAfter:  time.Now().AddDate(0, 0, 90),
@@ -479,6 +482,7 @@ func TestIssuer_Issue(t *testing.T) {
 
 		csr, _ := createTestCSR(t)
 		req := &Request{
+			TenantID:  testTenant,
 			CSR:       csr,
 			NotBefore: time.Now(),
 			NotAfter:  time.Now().AddDate(0, 0, 90),
@@ -514,6 +518,7 @@ func TestIssuer_Issue(t *testing.T) {
 
 		csr, _ := createTestCSR(t)
 		req := &Request{
+			TenantID:  testTenant,
 			CSR:       csr,
 			NotBefore: time.Now(),
 			NotAfter:  time.Now().AddDate(0, 0, 90),
@@ -556,6 +561,7 @@ func TestIssuer_Issue(t *testing.T) {
 
 		csr, _ := createTestCSR(t)
 		req := &Request{
+			TenantID:  testTenant,
 			CSR:       csr,
 			NotBefore: time.Now(),
 			NotAfter:  time.Now().AddDate(0, 0, 90),
@@ -594,6 +600,7 @@ func TestIssuer_Issue(t *testing.T) {
 
 		csr, _ := createTestCSR(t)
 		req := &Request{
+			TenantID:  testTenant,
 			CSR:       csr,
 			NotBefore: time.Now(),
 			NotAfter:  time.Now().AddDate(0, 0, 90),
@@ -615,6 +622,7 @@ func TestIssuer_Issue(t *testing.T) {
 
 		csr, _ := createTestCSR(t)
 		req := &Request{
+			TenantID:  testTenant,
 			CSR:       csr,
 			NotBefore: time.Now(),
 			NotAfter:  time.Now().AddDate(5, 0, 0), // 5 years, exceeds 398 days
@@ -639,6 +647,7 @@ func TestIssuer_Issue(t *testing.T) {
 
 		csr, _ := createTestCSR(t)
 		req := &Request{
+			TenantID:  testTenant,
 			CSR:       csr,
 			NotBefore: time.Now(),
 			NotAfter:  time.Now().AddDate(0, 0, -1), // In the past
@@ -660,6 +669,7 @@ func TestIssuer_Issue(t *testing.T) {
 
 		csr, _ := createTestCSR(t)
 		req := &Request{
+			TenantID:  testTenant,
 			CSR:       csr,
 			NotBefore: time.Now(),
 			NotAfter:  time.Now().AddDate(0, 0, 90),
@@ -687,6 +697,7 @@ func TestIssuer_Issue(t *testing.T) {
 
 		csr, _ := createTestCSR(t)
 		req := &Request{
+			TenantID:  testTenant,
 			CSR:       csr,
 			NotBefore: time.Now(),
 			NotAfter:  time.Now().AddDate(0, 0, 90),
@@ -718,6 +729,7 @@ func TestIssuer_Issue(t *testing.T) {
 
 		csr, _ := createTestCSR(t)
 		req := &Request{
+			TenantID:  testTenant,
 			CSR:       csr,
 			NotBefore: time.Now(),
 			NotAfter:  time.Now().AddDate(0, 0, 90),

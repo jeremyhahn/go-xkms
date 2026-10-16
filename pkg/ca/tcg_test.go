@@ -190,6 +190,7 @@ func createSelfSignedCACert(t *testing.T, key crypto.Signer) *x509.Certificate {
 func createTestCertRequest(t *testing.T, signer crypto.Signer, issuerCert *x509.Certificate) *CertificateRequest {
 	t.Helper()
 	return &CertificateRequest{
+		TenantID: testTenant,
 		Subject: Subject{
 			CommonName:   "Test Device EK",
 			Organization: "Test Org",
@@ -504,8 +505,9 @@ func TestIssueEKCertificate_SignerWithoutIssuerCert(t *testing.T) {
 
 	// Set signer but no issuer cert
 	request := &CertificateRequest{
-		Subject: Subject{CommonName: "EK Missing Issuer"},
-		Signer:  signerKey,
+		TenantID: testTenant,
+		Subject:  Subject{CommonName: "EK Missing Issuer"},
+		Signer:   signerKey,
 		// IssuerCert intentionally omitted
 	}
 
@@ -682,6 +684,7 @@ func TestIssueAKCertificate_ExternalSigner_Ed25519(t *testing.T) {
 	akEd25519Key := generateTestEd25519Key(t)
 
 	request := &CertificateRequest{
+		TenantID: testTenant,
 		Subject: Subject{
 			CommonName:   "Ed25519 AK Certificate",
 			Organization: "Test Org",
@@ -783,8 +786,9 @@ func TestIssueAKCertificate_SignerWithoutIssuerCert(t *testing.T) {
 	akKey := generateTestECDSAKey(t)
 
 	request := &CertificateRequest{
-		Subject: Subject{CommonName: "AK Missing Issuer"},
-		Signer:  signerKey,
+		TenantID: testTenant,
+		Subject:  Subject{CommonName: "AK Missing Issuer"},
+		Signer:   signerKey,
 		// IssuerCert intentionally omitted
 	}
 
@@ -847,7 +851,8 @@ func TestSignTCGCSRIDevID_NilCSR(t *testing.T) {
 	ca := createTestCAForTCG(t)
 
 	request := &CertificateRequest{
-		Subject: Subject{CommonName: "Device"},
+		TenantID: testTenant,
+		Subject:  Subject{CommonName: "Device"},
 	}
 
 	_, _, err := ca.SignTCGCSRIDevID(context.Background(), nil, request)
@@ -861,7 +866,8 @@ func TestSignTCGCSRIDevID_NotInitialized(t *testing.T) {
 
 	csr := &tpm2.TCG_CSR_IDEVID{}
 	request := &CertificateRequest{
-		Subject: Subject{CommonName: "Device"},
+		TenantID: testTenant,
+		Subject:  Subject{CommonName: "Device"},
 	}
 
 	_, _, err := ca.SignTCGCSRIDevID(context.Background(), csr, request)
@@ -880,6 +886,7 @@ func TestSignTCGCSRIDevID_InvalidCSR(t *testing.T) {
 	csr := &tpm2.TCG_CSR_IDEVID{}
 
 	request := &CertificateRequest{
+		TenantID:   testTenant,
 		Subject:    Subject{CommonName: "Device"},
 		Signer:     signerKey,
 		IssuerCert: issuerCert,
@@ -902,8 +909,9 @@ func TestSignTCGCSRIDevID_SignerWithoutIssuerCert(t *testing.T) {
 	csr := &tpm2.TCG_CSR_IDEVID{}
 
 	request := &CertificateRequest{
-		Subject: Subject{CommonName: "Device"},
-		Signer:  signerKey,
+		TenantID: testTenant,
+		Subject:  Subject{CommonName: "Device"},
+		Signer:   signerKey,
 		// IssuerCert omitted
 	}
 
@@ -924,6 +932,7 @@ func TestResolveTCGSigner_ExternalSigner(t *testing.T) {
 	issuerCert := createSelfSignedCACert(t, signerKey)
 
 	request := &CertificateRequest{
+		TenantID:   testTenant,
 		Subject:    Subject{CommonName: "Test"},
 		Signer:     signerKey,
 		IssuerCert: issuerCert,
@@ -963,8 +972,9 @@ func TestResolveTCGSigner_SignerWithoutCert(t *testing.T) {
 	signerKey := generateTestECDSAKey(t)
 
 	request := &CertificateRequest{
-		Subject: Subject{CommonName: "Test"},
-		Signer:  signerKey,
+		TenantID: testTenant,
+		Subject:  Subject{CommonName: "Test"},
+		Signer:   signerKey,
 		// IssuerCert omitted
 	}
 
@@ -979,7 +989,8 @@ func TestResolveTCGSigner_NoSignerNoConfig(t *testing.T) {
 	ca := createTestCAForTCG(t)
 
 	request := &CertificateRequest{
-		Subject: Subject{CommonName: "Test"},
+		TenantID: testTenant,
+		Subject:  Subject{CommonName: "Test"},
 		// No Signer, no IssuerCert
 	}
 
@@ -996,6 +1007,7 @@ func TestResolveTCGSigner_RSASigner(t *testing.T) {
 	issuerCert := createSelfSignedCACert(t, signerKey)
 
 	request := &CertificateRequest{
+		TenantID:   testTenant,
 		Subject:    Subject{CommonName: "Test"},
 		Signer:     signerKey,
 		IssuerCert: issuerCert,
@@ -1292,6 +1304,7 @@ func TestIssueEKCertificate_ConcurrentAccess(t *testing.T) {
 				return
 			}
 			request := &CertificateRequest{
+				TenantID: testTenant,
 				Subject: Subject{
 					CommonName: "Concurrent EK " + big.NewInt(int64(idx)).String(),
 				},
@@ -1326,6 +1339,7 @@ func TestIssueAKCertificate_ConcurrentAccess(t *testing.T) {
 				return
 			}
 			request := &CertificateRequest{
+				TenantID: testTenant,
 				Subject: Subject{
 					CommonName: "Concurrent AK " + big.NewInt(int64(idx)).String(),
 				},
@@ -1359,6 +1373,7 @@ func TestIssueEKAndAKCertificates_UniqueSerials(t *testing.T) {
 	for i := 0; i < 5; i++ {
 		ekKey := generateTestECDSAKey(t)
 		request := &CertificateRequest{
+			TenantID: testTenant,
 			Subject: Subject{
 				CommonName: "EK-" + big.NewInt(int64(i)).String(),
 			},
@@ -1381,6 +1396,7 @@ func TestIssueEKAndAKCertificates_UniqueSerials(t *testing.T) {
 	for i := 0; i < 5; i++ {
 		akKey := generateTestECDSAKey(t)
 		request := &CertificateRequest{
+			TenantID: testTenant,
 			Subject: Subject{
 				CommonName: "AK-" + big.NewInt(int64(i)).String(),
 			},

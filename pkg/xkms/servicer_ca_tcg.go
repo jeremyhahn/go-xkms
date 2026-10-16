@@ -53,7 +53,7 @@ func (s *XKMSService) IssueEKCertificate(ctx context.Context, req *transport.Iss
 		return nil, err
 	}
 
-	certDER, err := tcg.IssueEKCertificateRaw(ctx, req.CommonName, req.Organization, req.EKPublicKey)
+	certDER, err := tcg.IssueEKCertificateRaw(ctx, req.CommonName, req.Organization, req.EKPublicKey, callerTenant(ctx))
 	if err != nil {
 		return nil, &ErrCAOperation{Operation: "issue ek certificate", Err: err}
 	}
@@ -84,7 +84,7 @@ func (s *XKMSService) IssueAKCertificate(ctx context.Context, req *transport.Iss
 		return nil, err
 	}
 
-	certDER, err := tcg.IssueAKCertificateRaw(ctx, req.CommonName, req.Organization, req.PublicKey)
+	certDER, err := tcg.IssueAKCertificateRaw(ctx, req.CommonName, req.Organization, req.PublicKey, callerTenant(ctx))
 	if err != nil {
 		return nil, &ErrCAOperation{Operation: "issue ak certificate", Err: err}
 	}
@@ -115,7 +115,7 @@ func (s *XKMSService) SignTCGCSR(ctx context.Context, req *transport.SignTCGCSRR
 		return nil, err
 	}
 
-	iakDER, idevidDER, err := tcg.SignTCGCSRIDevIDRaw(ctx, req.CommonName, req.Organization, req.TCGCSR)
+	iakDER, idevidDER, err := tcg.SignTCGCSRIDevIDRaw(ctx, req.CommonName, req.Organization, req.TCGCSR, callerTenant(ctx))
 	if err != nil {
 		return nil, &ErrCAOperation{Operation: "sign tcg csr", Err: err}
 	}
@@ -146,6 +146,7 @@ func (s *XKMSService) EnrollDevice(ctx context.Context, req *transport.EnrollDev
 	iakDER, idevidDER, credBlob, encSecret, plainSecret, err := tcg.EnrollDeviceRaw(
 		ctx,
 		req.CommonName, req.Organization, req.PackedCSR,
+		callerTenant(ctx),
 	)
 	if err != nil {
 		return nil, &ErrCAOperation{Operation: "enroll device", Err: err}

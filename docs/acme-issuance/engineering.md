@@ -319,6 +319,18 @@ once, to the externally visible base.
 
 ## Invariants
 
+- **An ACME certificate carries the account's tenant as its first subject OU
+  (go-xkms#1557).** `OrderFinalizeHandler` takes the tenant from the
+  authenticated account, never the CSR: `issuanceTenant`
+  (`pkg/acme/server/handlers/order_finalize.go:320`) returns the account's
+  `TenantID`, or `qrdbsdk.SystemTenantID` for a tenant-less account, and is
+  set on the endorse-01 EK request (`:767`), the CA `SignOptions` (`:847`) and
+  the enroll-01 TCG request (`:1493`). The pipeline issuer's `buildTemplate`
+  (`pkg/acme/issuance/issuance.go:461`, `:473`) stamps `Request.TenantID`
+  through `ca.StampTenant`, replacing any OU the CSR carries; a request with
+  no tenant fails with `ca.ErrTenantRequired` wrapped in an `IssuanceError`
+  (`PhasePrecertSigning`). The rule itself is in
+  [certificate-authority](../certificate-authority/engineering.md#invariants).
 - **Attestation PCR data is decoded under bounds.** The compliance hooks
   decode the PCR banks inside a request's `ProdCaData`
   (`pkg/acme/server/handlers/compliance_attestation.go:187`, `:764`) through

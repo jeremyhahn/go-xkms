@@ -219,7 +219,7 @@ func TestCAAdapter_SignCSR_IssuesTheHolderSubject(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, want, rec.lastSignOpts.RawSubject)
 	assert.Empty(t, rec.lastSignOpts.SPIFFETrustDomain)
-	assert.Empty(t, rec.lastSignOpts.TenantID)
+	assert.Equal(t, "acme", rec.lastSignOpts.TenantID, "the tenant the CA stamps as the first OU")
 	assert.Nil(t, rec.lastSignOpts.SANS)
 	assert.Empty(t, rec.lastSignOpts.Profile, "go-qrdb's holder label is an OU, not a CA profile")
 }

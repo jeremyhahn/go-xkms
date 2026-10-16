@@ -53,6 +53,7 @@ func TestIssuer_TBSVerificationFailure(t *testing.T) {
 
 		csr, _ := createTestCSR(t)
 		req := &Request{
+			TenantID:  testTenant,
 			CSR:       csr,
 			NotBefore: time.Now(),
 			NotAfter:  time.Now().AddDate(0, 0, 90),
@@ -99,6 +100,7 @@ func TestIssuer_ProfileWithoutCT(t *testing.T) {
 
 	csr, _ := createTestCSR(t)
 	req := &Request{
+		TenantID:  testTenant,
 		CSR:       csr,
 		NotBefore: time.Now(),
 		NotAfter:  time.Now().AddDate(0, 0, 90),
@@ -141,6 +143,7 @@ func TestIssuer_CTRequired_NoSubmitter(t *testing.T) {
 
 	csr, _ := createTestCSR(t)
 	req := &Request{
+		TenantID:  testTenant,
 		CSR:       csr,
 		NotBefore: time.Now(),
 		NotAfter:  time.Now().AddDate(0, 0, 90),
@@ -177,6 +180,7 @@ func TestIssuer_SerialConfirmation(t *testing.T) {
 
 	csr, _ := createTestCSR(t)
 	req := &Request{
+		TenantID:  testTenant,
 		CSR:       csr,
 		NotBefore: time.Now(),
 		NotAfter:  time.Now().AddDate(0, 0, 90),
@@ -239,6 +243,7 @@ func TestIssuer_CTIssuerChainError(t *testing.T) {
 
 	csr, _ := createTestCSR(t)
 	req := &Request{
+		TenantID:  testTenant,
 		CSR:       csr,
 		NotBefore: time.Now(),
 		NotAfter:  time.Now().AddDate(0, 0, 90),
@@ -317,6 +322,7 @@ func TestIssuer_ReplacePoisonWithSCTs_ValidSCTs(t *testing.T) {
 
 	csr, _ := createTestCSR(t)
 	req := &Request{
+		TenantID:  testTenant,
 		CSR:       csr,
 		NotBefore: time.Now(),
 		NotAfter:  time.Now().AddDate(0, 0, 90),
@@ -368,6 +374,7 @@ func TestIssuer_TemplateWithExtraExtensions(t *testing.T) {
 	}
 
 	req := &Request{
+		TenantID:  testTenant,
 		CSR:       csr,
 		Template:  template,
 		NotBefore: time.Now(),

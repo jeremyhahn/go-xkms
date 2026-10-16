@@ -63,11 +63,12 @@ func TestCodeSigning_SignsConformingCSR(t *testing.T) {
 		},
 	})
 
-	cert, err := c.SignCSR(context.Background(), csr, &SignOptions{Profile: ProfileNameCodeSigning})
+	cert, err := c.SignCSR(context.Background(), csr, &SignOptions{TenantID: testTenant, Profile: ProfileNameCodeSigning})
 	require.NoError(t, err)
 
 	assert.Equal(t, "firmware signer", cert.Subject.CommonName)
-	assert.Len(t, cert.Subject.Names, 1)
+	requireTenant(t, cert, testTenant)
+	assert.Len(t, cert.Subject.Names, 2, "the common name and the tenant")
 	assert.Equal(t, x509.KeyUsageDigitalSignature, cert.KeyUsage)
 	assert.Equal(t, []x509.ExtKeyUsage{x509.ExtKeyUsageCodeSigning}, cert.ExtKeyUsage)
 	assert.True(t, cert.BasicConstraintsValid)
@@ -86,6 +87,7 @@ func TestCodeSigning_IssuesAtTheLifetimeBound(t *testing.T) {
 	})
 
 	cert, err := c.SignCSR(context.Background(), csr, &SignOptions{
+		TenantID: testTenant,
 		Profile:  ProfileNameCodeSigning,
 		Validity: codeSigningMaxLifetime,
 	})
@@ -188,6 +190,7 @@ func TestCodeSigning_Refusals(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			opts := tt.opts
 			opts.Profile = ProfileNameCodeSigning
+			opts.TenantID = testTenant
 			_, err := c.SignCSR(context.Background(), codeSigningCSR(t, key, tt.csr), &opts)
 			require.ErrorIs(t, err, tt.want)
 		})
@@ -225,7 +228,7 @@ func TestCodeSigning_RefusesUndecodableSubject(t *testing.T) {
 func TestCodeSigning_TemplateRefusesEncodedSubjectAltName(t *testing.T) {
 	profile := NewCodeSigningProfile().(TemplateValidator)
 	err := profile.ValidateTemplate(&x509.Certificate{
-		Subject:         pkix.Name{CommonName: "firmware signer"},
+		Subject:         pkix.Name{CommonName: "firmware signer", OrganizationalUnit: []string{testTenant}},
 		ExtraExtensions: []pkix.Extension{{Id: oidSubjectAltNameExt, Value: []byte{0x30, 0x00}}},
 	})
 	require.ErrorIs(t, err, ErrSubjectAltNameNotPermitted)
@@ -255,7 +258,7 @@ func TestSignCSR_BoundKeyMatches(t *testing.T) {
 	attrs, signer := boundSoftwareKey(t, c, "boot-signer")
 	csr := codeSigningCSR(t, signer, &x509.CertificateRequest{Subject: pkix.Name{CommonName: "boot-signer"}})
 
-	cert, err := c.SignCSR(context.Background(), csr, &SignOptions{Profile: ProfileNameCodeSigning, BoundKey: attrs})
+	cert, err := c.SignCSR(context.Background(), csr, &SignOptions{TenantID: testTenant, Profile: ProfileNameCodeSigning, BoundKey: attrs})
 	require.NoError(t, err)
 
 	want, err := x509.MarshalPKIXPublicKey(signer.Public())
@@ -268,7 +271,7 @@ func TestSignCSR_BoundKeyMismatch(t *testing.T) {
 	attrs, _ := boundSoftwareKey(t, c, "boot-signer")
 	csr := codeSigningCSR(t, newECKey(t, elliptic.P256()), &x509.CertificateRequest{Subject: pkix.Name{CommonName: "boot-signer"}})
 
-	_, err := c.SignCSR(context.Background(), csr, &SignOptions{Profile: ProfileNameCodeSigning, BoundKey: attrs})
+	_, err := c.SignCSR(context.Background(), csr, &SignOptions{TenantID: testTenant, Profile: ProfileNameCodeSigning, BoundKey: attrs})
 	require.ErrorIs(t, err, ErrBoundKeyMismatch)
 }
 
@@ -277,7 +280,8 @@ func TestSignCSR_BoundKeyNotFound(t *testing.T) {
 	csr := codeSigningCSR(t, newECKey(t, elliptic.P256()), &x509.CertificateRequest{Subject: pkix.Name{CommonName: "boot-signer"}})
 
 	_, err := c.SignCSR(context.Background(), csr, &SignOptions{
-		Profile: ProfileNameCodeSigning,
+		TenantID: testTenant,
+		Profile:  ProfileNameCodeSigning,
 		BoundKey: &types.KeyAttributes{
 			CN:            "never-generated",
 			StoreType:     types.StoreSoftware,

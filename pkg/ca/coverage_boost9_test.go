@@ -865,6 +865,7 @@ func TestGetOrGenerateKey_ExistingKey_B9(t *testing.T) {
 	issueCertAndSaveToKeyStore(t, ca, cn)
 
 	req := &CertificateRequest{
+		TenantID:      testTenant,
 		Subject:       Subject{CommonName: cn},
 		KeyAttributes: softwareKeyAttrs(cn),
 	}
@@ -880,7 +881,8 @@ func TestGetOrGenerateKey_DefaultFallback_B9(t *testing.T) {
 	ca := setupTestCA(t)
 
 	req := &CertificateRequest{
-		Subject: Subject{CommonName: "default-fallback-b9"},
+		TenantID: testTenant,
+		Subject:  Subject{CommonName: "default-fallback-b9"},
 		KeyAttributes: &types.KeyAttributes{
 			CN:           "default-fallback-b9",
 			KeyAlgorithm: x509.UnknownPublicKeyAlgorithm, // triggers default branch

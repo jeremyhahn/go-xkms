@@ -38,17 +38,16 @@ var (
 // ca types (breaking the import cycle between pkg/xkms and pkg/ca).
 //
 // If profile and validityDays are both zero-values, CA defaults are used.
+// tenantID is the caller's tenant, which the certificate carries as its
+// subject's first organizational unit (StampTenant).
 //
 // Thread-safe: Yes
-func (ca *CA) SignCSRRaw(ctx context.Context, csrPEM []byte, profile string, validityDays int) (*x509.Certificate, error) {
-	var opts *SignOptions
-	if profile != "" || validityDays > 0 {
-		opts = &SignOptions{
-			Profile:      profile,
-			ValidityDays: validityDays,
-		}
-	}
-	return ca.SignCSR(ctx, csrPEM, opts)
+func (ca *CA) SignCSRRaw(ctx context.Context, csrPEM []byte, profile string, validityDays int, tenantID string) (*x509.Certificate, error) {
+	return ca.SignCSR(ctx, csrPEM, &SignOptions{
+		Profile:      profile,
+		ValidityDays: validityDays,
+		TenantID:     tenantID,
+	})
 }
 
 // SignCSRWithSPIFFE signs a CSR and optionally stamps a tenant-scoped SPIFFE
@@ -179,9 +178,9 @@ func (ca *CA) GetCACertificatePEM() ([]byte, error) {
 }
 
 // IssueEKCertificateRaw issues an EK certificate using primitive types.
-// ekPubDER is DER-encoded public key bytes.
+// ekPubDER is DER-encoded public key bytes. tenantID is the caller's tenant.
 // Thread-safe: Yes
-func (ca *CA) IssueEKCertificateRaw(ctx context.Context, commonName, organization string, ekPubDER []byte) (certDER []byte, err error) {
+func (ca *CA) IssueEKCertificateRaw(ctx context.Context, commonName, organization string, ekPubDER []byte, tenantID string) (certDER []byte, err error) {
 	pubKey, err := x509.ParsePKIXPublicKey(ekPubDER)
 	if err != nil {
 		return nil, &errs.Wrapped{Msg: "parse EK public key", Err: err}
@@ -192,6 +191,7 @@ func (ca *CA) IssueEKCertificateRaw(ctx context.Context, commonName, organizatio
 			CommonName:   commonName,
 			Organization: organization,
 		},
+		TenantID: tenantID,
 	}
 
 	cert, err := ca.IssueEKCertificate(ctx, request, pubKey)
@@ -203,9 +203,9 @@ func (ca *CA) IssueEKCertificateRaw(ctx context.Context, commonName, organizatio
 }
 
 // IssueAKCertificateRaw issues an AK certificate using primitive types.
-// pubDER is DER-encoded public key bytes.
+// pubDER is DER-encoded public key bytes. tenantID is the caller's tenant.
 // Thread-safe: Yes
-func (ca *CA) IssueAKCertificateRaw(ctx context.Context, commonName, organization string, pubDER []byte) (certDER []byte, err error) {
+func (ca *CA) IssueAKCertificateRaw(ctx context.Context, commonName, organization string, pubDER []byte, tenantID string) (certDER []byte, err error) {
 	pubKey, err := x509.ParsePKIXPublicKey(pubDER)
 	if err != nil {
 		return nil, &errs.Wrapped{Msg: "parse AK public key", Err: err}
@@ -216,6 +216,7 @@ func (ca *CA) IssueAKCertificateRaw(ctx context.Context, commonName, organizatio
 			CommonName:   commonName,
 			Organization: organization,
 		},
+		TenantID: tenantID,
 	}
 
 	cert, err := ca.IssueAKCertificate(ctx, request, pubKey)
@@ -228,9 +229,9 @@ func (ca *CA) IssueAKCertificateRaw(ctx context.Context, commonName, organizatio
 
 // SignTCGCSRIDevIDRaw signs a packed TCG-CSR-IDEVID using primitive types.
 // packedCSR is the binary-marshalled TCG_CSR_IDEVID bytes.
-// Returns IAK cert DER and IDevID cert DER.
+// Returns IAK cert DER and IDevID cert DER. tenantID is the caller's tenant.
 // Thread-safe: Yes
-func (ca *CA) SignTCGCSRIDevIDRaw(ctx context.Context, commonName, organization string, packedCSR []byte) (iakDER, idevidDER []byte, err error) {
+func (ca *CA) SignTCGCSRIDevIDRaw(ctx context.Context, commonName, organization string, packedCSR []byte, tenantID string) (iakDER, idevidDER []byte, err error) {
 	// Unmarshal the packed bytes into a TCG_CSR_IDEVID structure.
 	tcgCSR, err := tpm2.UnmarshalIDevIDCSR(packedCSR)
 	if err != nil {
@@ -242,15 +243,17 @@ func (ca *CA) SignTCGCSRIDevIDRaw(ctx context.Context, commonName, organization 
 			CommonName:   commonName,
 			Organization: organization,
 		},
+		TenantID: tenantID,
 	}
 
 	return ca.SignTCGCSRIDevID(ctx, tcgCSR, request)
 }
 
 // EnrollDeviceRaw performs TCG device enrollment using primitive types.
-// packedCSR is the binary-packed TCG_CSR_IDEVID bytes.
+// packedCSR is the binary-packed TCG_CSR_IDEVID bytes. tenantID is the
+// caller's tenant.
 // Thread-safe: Yes
-func (ca *CA) EnrollDeviceRaw(ctx context.Context, commonName, organization string, packedCSR []byte) (
+func (ca *CA) EnrollDeviceRaw(ctx context.Context, commonName, organization string, packedCSR []byte, tenantID string) (
 	iakDER, idevidDER, credBlob, encSecret, plainSecret []byte, err error,
 ) {
 	request := &CertificateRequest{
@@ -258,6 +261,7 @@ func (ca *CA) EnrollDeviceRaw(ctx context.Context, commonName, organization stri
 			CommonName:   commonName,
 			Organization: organization,
 		},
+		TenantID: tenantID,
 	}
 
 	result, err := ca.EnrollDevice(ctx, packedCSR, request)

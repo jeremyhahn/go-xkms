@@ -383,9 +383,10 @@ func TestCreateCSR_WithExplicitSigner(t *testing.T) {
 	require.NoError(t, err)
 
 	req := &CertificateRequest{
-		Subject: Subject{CommonName: "csr-explicit-signer"},
-		SANS:    &SubjectAlternativeNames{DNS: []string{"csr-explicit-signer.local"}},
-		Signer:  key,
+		TenantID: testTenant,
+		Subject:  Subject{CommonName: "csr-explicit-signer"},
+		SANS:     &SubjectAlternativeNames{DNS: []string{"csr-explicit-signer.local"}},
+		Signer:   key,
 	}
 	csrPEM, err := ca.CreateCSR(context.Background(), req)
 	require.NoError(t, err)
@@ -399,8 +400,9 @@ func TestCreateCSR_WithExplicitSigner(t *testing.T) {
 func TestCreateCSR_DefaultKeyAttributes(t *testing.T) {
 	ca := setupTestCA(t)
 	req := &CertificateRequest{
-		Subject: Subject{CommonName: "csr-default-key"},
-		SANS:    &SubjectAlternativeNames{DNS: []string{"csr-default-key.local"}},
+		TenantID: testTenant,
+		Subject:  Subject{CommonName: "csr-default-key"},
+		SANS:     &SubjectAlternativeNames{DNS: []string{"csr-default-key.local"}},
 	}
 	csrPEM, err := ca.CreateCSR(context.Background(), req)
 	require.NoError(t, err)
@@ -409,7 +411,8 @@ func TestCreateCSR_DefaultKeyAttributes(t *testing.T) {
 
 func TestCreateCSRWithKey_NilSigner_B3(t *testing.T) {
 	req := &CertificateRequest{
-		Subject: Subject{CommonName: "csr-nil-signer"},
+		TenantID: testTenant,
+		Subject:  Subject{CommonName: "csr-nil-signer"},
 	}
 	_, err := CreateCSRWithKey(req, nil)
 	assert.ErrorIs(t, err, ErrCSRGenerationFailed)
@@ -422,9 +425,10 @@ func TestCreateCSRWithKey_NilSigner_B3(t *testing.T) {
 func TestVerify_IssuedCertificate(t *testing.T) {
 	ca := setupTestCA(t)
 	issued, err := ca.IssueCertificate(context.Background(), &CertificateRequest{
-		Subject: Subject{CommonName: "verify-leaf"},
-		SANS:    &SubjectAlternativeNames{DNS: []string{"verify-leaf.local"}},
-		Valid:   365,
+		TenantID: testTenant,
+		Subject:  Subject{CommonName: "verify-leaf"},
+		SANS:     &SubjectAlternativeNames{DNS: []string{"verify-leaf.local"}},
+		Valid:    365,
 	})
 	require.NoError(t, err)
 
@@ -436,9 +440,10 @@ func TestVerify_IssuedCertificate(t *testing.T) {
 func TestVerify_RevokedCert(t *testing.T) {
 	ca := setupTestCA(t)
 	issued, err := ca.IssueCertificate(context.Background(), &CertificateRequest{
-		Subject: Subject{CommonName: "verify-revoked"},
-		SANS:    &SubjectAlternativeNames{DNS: []string{"verify-revoked.local"}},
-		Valid:   365,
+		TenantID: testTenant,
+		Subject:  Subject{CommonName: "verify-revoked"},
+		SANS:     &SubjectAlternativeNames{DNS: []string{"verify-revoked.local"}},
+		Valid:    365,
 	})
 	require.NoError(t, err)
 
@@ -450,9 +455,10 @@ func TestVerify_RevokedCert(t *testing.T) {
 func TestVerify_WithNilXSigner(t *testing.T) {
 	ca := setupTestCA(t)
 	issued, err := ca.IssueCertificate(context.Background(), &CertificateRequest{
-		Subject: Subject{CommonName: "verify-xsign-nil"},
-		SANS:    &SubjectAlternativeNames{DNS: []string{"verify-xsign-nil.local"}},
-		Valid:   365,
+		TenantID: testTenant,
+		Subject:  Subject{CommonName: "verify-xsign-nil"},
+		SANS:     &SubjectAlternativeNames{DNS: []string{"verify-xsign-nil.local"}},
+		Valid:    365,
 	})
 	require.NoError(t, err)
 
@@ -759,8 +765,9 @@ func TestSign_DigestAndVerify(t *testing.T) {
 func TestCreateCSRWithKey_RSA_B3(t *testing.T) {
 	key := generateTestRSAKey(t)
 	req := &CertificateRequest{
-		Subject: Subject{CommonName: "csr-rsa"},
-		SANS:    &SubjectAlternativeNames{DNS: []string{"csr-rsa.local"}},
+		TenantID: testTenant,
+		Subject:  Subject{CommonName: "csr-rsa"},
+		SANS:     &SubjectAlternativeNames{DNS: []string{"csr-rsa.local"}},
 	}
 	csrPEM, err := CreateCSRWithKey(req, key)
 	require.NoError(t, err)
@@ -789,9 +796,10 @@ func TestCABundleCertPool_WithObjectStore(t *testing.T) {
 func TestTrustedRootCertPoolWithXSigner_NilXSigner_B3(t *testing.T) {
 	ca := setupTestCA(t)
 	issued, err := ca.IssueCertificate(context.Background(), &CertificateRequest{
-		Subject: Subject{CommonName: "root-pool-xsign"},
-		SANS:    &SubjectAlternativeNames{DNS: []string{"root-pool-xsign.local"}},
-		Valid:   365,
+		TenantID: testTenant,
+		Subject:  Subject{CommonName: "root-pool-xsign"},
+		SANS:     &SubjectAlternativeNames{DNS: []string{"root-pool-xsign.local"}},
+		Valid:    365,
 	})
 	require.NoError(t, err)
 
@@ -810,10 +818,11 @@ func TestIssueCertificate_RSAKey(t *testing.T) {
 	ca := setupTestCA(t)
 	rsaKey := generateTestRSAKey(t)
 	req := &CertificateRequest{
-		Subject: Subject{CommonName: "rsa-leaf"},
-		SANS:    &SubjectAlternativeNames{DNS: []string{"rsa-leaf.local"}},
-		Valid:   365,
-		Signer:  rsaKey,
+		TenantID: testTenant,
+		Subject:  Subject{CommonName: "rsa-leaf"},
+		SANS:     &SubjectAlternativeNames{DNS: []string{"rsa-leaf.local"}},
+		Valid:    365,
+		Signer:   rsaKey,
 		KeyAttributes: &types.KeyAttributes{
 			CN:           "rsa-leaf",
 			KeyAlgorithm: x509.RSA,
@@ -917,10 +926,11 @@ func TestIssueCertificate_WithRSASigner_Verifies(t *testing.T) {
 	require.NoError(t, err)
 
 	req := &CertificateRequest{
-		Subject: Subject{CommonName: "rsa-verify-leaf"},
-		SANS:    &SubjectAlternativeNames{DNS: []string{"rsa-verify-leaf.local"}},
-		Valid:   365,
-		Signer:  rsaKey,
+		TenantID: testTenant,
+		Subject:  Subject{CommonName: "rsa-verify-leaf"},
+		SANS:     &SubjectAlternativeNames{DNS: []string{"rsa-verify-leaf.local"}},
+		Valid:    365,
+		Signer:   rsaKey,
 	}
 	result, err := ca.IssueCertificate(context.Background(), req)
 	require.NoError(t, err)

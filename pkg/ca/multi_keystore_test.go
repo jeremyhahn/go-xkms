@@ -303,8 +303,9 @@ func TestNewCA_ExplicitSingleBackend(t *testing.T) {
 
 	// ...and the CA can still issue and verify a leaf certificate.
 	issued, err := root.IssueCertificate(context.Background(), &CertificateRequest{
-		Subject: Subject{CommonName: "leaf.example.com"},
-		Valid:   1,
+		TenantID: testTenant,
+		Subject:  Subject{CommonName: "leaf.example.com"},
+		Valid:    1,
 	})
 	require.NoError(t, err)
 	require.NotNil(t, issued)
@@ -457,8 +458,9 @@ func TestInit_SecondaryKeyFailureIsRecordedNotFatal(t *testing.T) {
 
 	// The CA is still fully usable off its primary key.
 	issued, err := caImpl.IssueCertificate(context.Background(), &CertificateRequest{
-		Subject: Subject{CommonName: "leaf.example.com"},
-		Valid:   1,
+		TenantID: testTenant,
+		Subject:  Subject{CommonName: "leaf.example.com"},
+		Valid:    1,
 	})
 	require.NoError(t, err)
 	require.NotNil(t, issued)

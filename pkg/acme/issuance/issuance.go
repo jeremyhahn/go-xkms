@@ -459,6 +459,11 @@ func (i *issuer) persistSerial(ctx context.Context, serial *big.Int, req *Reques
 func (i *issuer) buildTemplate(certIssuer *ca.Issuer, req *Request, serial *big.Int) (*x509.Certificate, error) {
 	if req.Template != nil {
 		template := *req.Template
+		subject, rawSubject, err := ca.StampTenant(req.TenantID, template.Subject, template.RawSubject)
+		if err != nil {
+			return nil, NewIssuanceError(PhasePrecertSigning, "failed to stamp the tenant", err)
+		}
+		template.Subject, template.RawSubject = subject, rawSubject
 		template.SerialNumber = serial
 		template.NotBefore = req.NotBefore
 		template.NotAfter = req.NotAfter
@@ -466,9 +471,13 @@ func (i *issuer) buildTemplate(certIssuer *ca.Issuer, req *Request, serial *big.
 	}
 
 	csr := req.CSR
+	subject, _, err := ca.StampTenant(req.TenantID, csr.Subject, nil)
+	if err != nil {
+		return nil, NewIssuanceError(PhasePrecertSigning, "failed to stamp the tenant", err)
+	}
 	template, err := certIssuer.Template(&ca.CertificateSpec{
 		Serial:         serial,
-		Subject:        csr.Subject,
+		Subject:        subject,
 		NotBefore:      req.NotBefore,
 		NotAfter:       req.NotAfter,
 		PublicKey:      csr.PublicKey,

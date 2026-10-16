@@ -51,6 +51,7 @@ func TestIssuer_SignerErrors(t *testing.T) {
 
 		csr, _ := createTestCSR(t)
 		req := &Request{
+			TenantID:  testTenant,
 			CSR:       csr,
 			NotBefore: time.Now(),
 			NotAfter:  time.Now().AddDate(0, 0, 90),
@@ -80,6 +81,7 @@ func TestIssuer_SignerErrors(t *testing.T) {
 
 		csr, _ := createTestCSR(t)
 		req := &Request{
+			TenantID:  testTenant,
 			CSR:       csr,
 			NotBefore: time.Now(),
 			NotAfter:  time.Now().AddDate(0, 0, 90),
@@ -124,6 +126,7 @@ func TestIssuer_WithTemplate(t *testing.T) {
 	}
 
 	req := &Request{
+		TenantID:  testTenant,
 		CSR:       csr,
 		Template:  template,
 		NotBefore: time.Now(),
@@ -158,6 +161,7 @@ func TestIssuer_SkipLint(t *testing.T) {
 
 	csr, _ := createTestCSR(t)
 	req := &Request{
+		TenantID:  testTenant,
 		CSR:       csr,
 		NotBefore: time.Now(),
 		NotAfter:  time.Now().AddDate(0, 0, 90),
@@ -191,6 +195,7 @@ func TestIssuer_LinterError(t *testing.T) {
 
 	csr, _ := createTestCSR(t)
 	req := &Request{
+		TenantID:  testTenant,
 		CSR:       csr,
 		NotBefore: time.Now(),
 		NotAfter:  time.Now().AddDate(0, 0, 90),
@@ -222,6 +227,7 @@ func TestIssuer_SerialStorageErrors(t *testing.T) {
 
 	csr, _ := createTestCSR(t)
 	req := &Request{
+		TenantID:  testTenant,
 		CSR:       csr,
 		NotBefore: time.Now(),
 		NotAfter:  time.Now().AddDate(0, 0, 90),
@@ -252,6 +258,7 @@ func TestIssuer_MissingSCTs(t *testing.T) {
 
 	csr, _ := createTestCSR(t)
 	req := &Request{
+		TenantID:  testTenant,
 		CSR:       csr,
 		NotBefore: time.Now(),
 		NotAfter:  time.Now().AddDate(0, 0, 90),
@@ -292,6 +299,7 @@ func TestIssuer_InvalidCSRSignature(t *testing.T) {
 	csr.Signature = []byte("corrupted")
 
 	req := &Request{
+		TenantID:  testTenant,
 		CSR:       csr,
 		NotBefore: time.Now(),
 		NotAfter:  time.Now().AddDate(0, 0, 90),
@@ -316,6 +324,7 @@ func TestIssuer_ZeroValidityPeriod(t *testing.T) {
 
 	t.Run("zero NotBefore", func(t *testing.T) {
 		req := &Request{
+			TenantID: testTenant,
 			CSR:      csr,
 			NotAfter: time.Now().AddDate(0, 0, 90),
 		}
@@ -325,6 +334,7 @@ func TestIssuer_ZeroValidityPeriod(t *testing.T) {
 
 	t.Run("zero NotAfter", func(t *testing.T) {
 		req := &Request{
+			TenantID:  testTenant,
 			CSR:       csr,
 			NotBefore: time.Now(),
 		}
@@ -356,6 +366,7 @@ func TestIssuer_AllAuditCallbacks(t *testing.T) {
 
 	csr, _ := createTestCSR(t)
 	req := &Request{
+		TenantID:  testTenant,
 		CSR:       csr,
 		NotBefore: time.Now(),
 		NotAfter:  time.Now().AddDate(0, 0, 90),
@@ -429,6 +440,7 @@ func TestIssuer_AlgorithmNotAllowed(t *testing.T) {
 	// Create ECDSA CSR
 	csr, _ := createTestCSR(t) // This creates an ECDSA CSR
 	req := &Request{
+		TenantID:  testTenant,
 		CSR:       csr,
 		NotBefore: time.Now(),
 		NotAfter:  time.Now().AddDate(0, 0, 90),
@@ -461,6 +473,7 @@ func TestIssuer_IssuerChainError(t *testing.T) {
 
 	csr, _ := createTestCSR(t)
 	req := &Request{
+		TenantID:  testTenant,
 		CSR:       csr,
 		NotBefore: time.Now(),
 		NotAfter:  time.Now().AddDate(0, 0, 90),

@@ -48,7 +48,7 @@ type mockModuleProviderCA struct {
 
 func (m *mockModuleProviderCA) CABundle() ([]byte, error)                 { return nil, nil }
 func (m *mockModuleProviderCA) CACertificate() (*x509.Certificate, error) { return m.cert, nil }
-func (m *mockModuleProviderCA) SignCSRRaw(context.Context, []byte, string, int) (*x509.Certificate, error) {
+func (m *mockModuleProviderCA) SignCSRRaw(context.Context, []byte, string, int, string) (*x509.Certificate, error) {
 	return nil, nil
 }
 func (m *mockModuleProviderCA) SignCSRWithSPIFFE(context.Context, []byte, string, int, string, string, string, string) (*x509.Certificate, error) {

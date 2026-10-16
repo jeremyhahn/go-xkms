@@ -17,6 +17,7 @@ import (
 	"crypto/x509"
 	"crypto/x509/pkix"
 	"encoding/asn1"
+	"slices"
 	"time"
 
 	"github.com/jeremyhahn/go-xkms/pkg/errs"
@@ -69,7 +70,8 @@ type codeSigningProfile struct {
 //
 //   - Key usage: digitalSignature. Extended key usage: codeSigning.
 //   - Not a CA: basic constraints asserted with cA false.
-//   - Subject: exactly one common name, and no subject alternative names.
+//   - Subject: exactly one common name, and no subject alternative names. The
+//     issued certificate adds the tenant as its only organizational unit.
 //   - Lifetime: 365 days by default, 460 days at most.
 //
 // A CSR is validated, never reshaped: one whose subject carries any other
@@ -96,7 +98,7 @@ func (p *codeSigningProfile) MaxLifetime() time.Duration { return codeSigningMax
 
 // ValidateCSR implements CSRValidator.
 func (p *codeSigningProfile) ValidateCSR(csr *x509.CertificateRequest) error {
-	if err := checkCommonNameOnly(p.name, csr.RawSubject, csr.Subject); err != nil {
+	if err := checkCommonNameOnly(p.name, csr.RawSubject, csr.Subject, false); err != nil {
 		return err
 	}
 	for _, ext := range csr.Extensions {
@@ -111,9 +113,10 @@ func (p *codeSigningProfile) ValidateCSR(csr *x509.CertificateRequest) error {
 
 // ValidateTemplate implements TemplateValidator. It holds the issued
 // certificate to the same subject and name rules as the request, so names the
-// issuing caller adds through SignOptions are refused too.
+// issuing caller adds through SignOptions are refused too. The one attribute
+// the issued subject adds is the tenant's organizational unit (StampTenant).
 func (p *codeSigningProfile) ValidateTemplate(template *x509.Certificate) error {
-	if err := checkCommonNameOnly(p.name, template.RawSubject, template.Subject); err != nil {
+	if err := checkCommonNameOnly(p.name, template.RawSubject, template.Subject, true); err != nil {
 		return err
 	}
 	names := len(template.DNSNames) + len(template.EmailAddresses) + len(template.IPAddresses) + len(template.URIs)
@@ -130,14 +133,23 @@ func (p *codeSigningProfile) ValidateTemplate(template *x509.Certificate) error 
 
 // checkCommonNameOnly refuses a subject other than one RDN holding one
 // non-empty commonName. raw, when present, is the encoded subject and wins
-// over name, which is only consulted for a subject not yet encoded.
-func checkCommonNameOnly(profile string, raw []byte, name pkix.Name) error {
+// over name, which is only consulted for a subject not yet encoded. When
+// tenantStamped is set, the subject is an issued one and must also carry
+// exactly one RDN holding only the tenant's organizational unit.
+func checkCommonNameOnly(profile string, raw []byte, name pkix.Name, tenantStamped bool) error {
 	rdns := name.ToRDNSequence()
 	if len(raw) > 0 {
 		rdns = nil
 		if rest, err := asn1.Unmarshal(raw, &rdns); err != nil || len(rest) > 0 {
 			return &errs.Detail{Err: ErrSubjectNotCommonNameOnly, Detail: profile + ": the subject does not decode"}
 		}
+	}
+	if tenantStamped {
+		withoutTenant, ok := withoutTenantRDN(rdns)
+		if !ok {
+			return &errs.Detail{Err: ErrSubjectNotCommonNameOnly, Detail: profile + ": the subject must carry the tenant as its only organizational unit"}
+		}
+		rdns = withoutTenant
 	}
 	if len(rdns) != 1 || len(rdns[0]) != 1 || !rdns[0][0].Type.Equal(oidAttributeCommonName) {
 		return &errs.Detail{Err: ErrSubjectNotCommonNameOnly, Detail: profile + ": the subject must be a single common name"}
@@ -146,6 +158,25 @@ func checkCommonNameOnly(profile string, raw []byte, name pkix.Name) error {
 		return &errs.Detail{Err: ErrSubjectNotCommonNameOnly, Detail: profile + ": the common name is empty"}
 	}
 	return nil
+}
+
+// withoutTenantRDN returns rdns without the RDN holding only the tenant's
+// organizational unit, which StampTenant sets on every issued certificate,
+// and whether rdns held exactly one such RDN.
+func withoutTenantRDN(rdns pkix.RDNSequence) (pkix.RDNSequence, bool) {
+	at := -1
+	for i, rdn := range rdns {
+		if len(rdn) == 1 && rdn[0].Type.Equal(oidAttributeOrganizationalUnit) {
+			if at >= 0 {
+				return nil, false
+			}
+			at = i
+		}
+	}
+	if at < 0 {
+		return nil, false
+	}
+	return slices.Delete(slices.Clone(rdns), at, at+1), true
 }
 
 // refuseRequestedSubjectAltName refuses any requested subjectAltName.

@@ -38,8 +38,9 @@ func TestOCSPCheckCertificateStatus_ColdPath_RevocationStore(t *testing.T) {
 	ca := setupTestCAWithRevocationStore(t)
 
 	issued, err := ca.IssueCertificate(context.Background(), &CertificateRequest{
-		Subject: Subject{CommonName: "ocsp-cold-revocationstore"},
-		Valid:   365,
+		TenantID: testTenant,
+		Subject:  Subject{CommonName: "ocsp-cold-revocationstore"},
+		Valid:    365,
 	})
 	require.NoError(t, err)
 	cert := issued.Certificate

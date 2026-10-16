@@ -51,21 +51,29 @@ type mockTCGCA struct {
 
 	lakCertDER []byte
 	lakCertErr error
+
+	// tenant records the tenantID the last EK, AK, IDevID or enrollment
+	// call was asked to stamp.
+	tenant string
 }
 
-func (m *mockTCGCA) IssueEKCertificateRaw(_ context.Context, commonName, organization string, ekPubDER []byte) ([]byte, error) {
+func (m *mockTCGCA) IssueEKCertificateRaw(_ context.Context, commonName, organization string, ekPubDER []byte, tenantID string) ([]byte, error) {
+	m.tenant = tenantID
 	return m.ekCertDER, m.ekCertErr
 }
 
-func (m *mockTCGCA) IssueAKCertificateRaw(_ context.Context, commonName, organization string, pubDER []byte) ([]byte, error) {
+func (m *mockTCGCA) IssueAKCertificateRaw(_ context.Context, commonName, organization string, pubDER []byte, tenantID string) ([]byte, error) {
+	m.tenant = tenantID
 	return m.akCertDER, m.akCertErr
 }
 
-func (m *mockTCGCA) SignTCGCSRIDevIDRaw(_ context.Context, commonName, organization string, packedCSR []byte) ([]byte, []byte, error) {
+func (m *mockTCGCA) SignTCGCSRIDevIDRaw(_ context.Context, commonName, organization string, packedCSR []byte, tenantID string) ([]byte, []byte, error) {
+	m.tenant = tenantID
 	return m.iakDER, m.idevidDER, m.signErr
 }
 
-func (m *mockTCGCA) EnrollDeviceRaw(_ context.Context, commonName, organization string, packedCSR []byte) ([]byte, []byte, []byte, []byte, []byte, error) {
+func (m *mockTCGCA) EnrollDeviceRaw(_ context.Context, commonName, organization string, packedCSR []byte, tenantID string) ([]byte, []byte, []byte, []byte, []byte, error) {
+	m.tenant = tenantID
 	return m.enrollIAK, m.enrollDev, m.credBlob, m.encSecret, m.plainSec, m.enrollErr
 }
 

@@ -38,6 +38,7 @@ func TestParseCSR_ValidCSR(t *testing.T) {
 	}
 
 	request := &CertificateRequest{
+		TenantID: testTenant,
 		Subject: Subject{
 			CommonName:   "parse.example.com",
 			Organization: "Parse Test Org",
@@ -237,7 +238,8 @@ func TestParseSANsFromCSR_AllSANTypes(t *testing.T) {
 	}
 
 	request := &CertificateRequest{
-		Subject: Subject{CommonName: "sans.example.com"},
+		TenantID: testTenant,
+		Subject:  Subject{CommonName: "sans.example.com"},
 		SANS: &SubjectAlternativeNames{
 			DNS:   []string{"sans.example.com", "www.sans.example.com"},
 			IPs:   []string{"192.168.1.1", "10.0.0.1"},
@@ -316,7 +318,8 @@ func TestParseSANsFromCSR_DNSOnly(t *testing.T) {
 	}
 
 	request := &CertificateRequest{
-		Subject: Subject{CommonName: "dns.example.com"},
+		TenantID: testTenant,
+		Subject:  Subject{CommonName: "dns.example.com"},
 		SANS: &SubjectAlternativeNames{
 			DNS: []string{"dns.example.com"},
 		},
@@ -365,8 +368,9 @@ func TestParseSANsFromCSR_NoSANs(t *testing.T) {
 	}
 
 	request := &CertificateRequest{
-		Subject: Subject{CommonName: "nosans.example.com"},
-		SANS:    nil, // No SANs
+		TenantID: testTenant,
+		Subject:  Subject{CommonName: "nosans.example.com"},
+		SANS:     nil, // No SANs
 	}
 
 	csrPEM, err := CreateCSRWithKey(request, key)
@@ -867,7 +871,8 @@ func TestIsValidCSRPEM_Valid(t *testing.T) {
 	}
 
 	request := &CertificateRequest{
-		Subject: Subject{CommonName: "valid.example.com"},
+		TenantID: testTenant,
+		Subject:  Subject{CommonName: "valid.example.com"},
 	}
 
 	csrPEM, err := CreateCSRWithKey(request, key)
@@ -1066,6 +1071,7 @@ func TestFullCSRParseFlow(t *testing.T) {
 	}
 
 	request := &CertificateRequest{
+		TenantID: testTenant,
 		Subject: Subject{
 			CommonName:         "full.example.com",
 			Organization:       "Full Test Org",
@@ -1447,7 +1453,8 @@ func TestCreateCSRWithKey_LongCommonName(t *testing.T) {
 	// CommonName should be limited to 64 characters per RFC 5280
 	longCN := strings.Repeat("a", 64)
 	request := &CertificateRequest{
-		Subject: Subject{CommonName: longCN},
+		TenantID: testTenant,
+		Subject:  Subject{CommonName: longCN},
 	}
 
 	csrPEM, err := CreateCSRWithKey(request, key)

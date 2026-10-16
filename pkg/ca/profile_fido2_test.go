@@ -141,7 +141,8 @@ func signAttestationCSR(t *testing.T, trustedCA ca.TrustedCA, csrPEM []byte) *x5
 	t.Helper()
 
 	cert, err := trustedCA.SignCSR(context.Background(), csrPEM, &ca.SignOptions{
-		Profile: ca.ProfileNameFIDO2Attestation,
+		TenantID: e2eTenant,
+		Profile:  ca.ProfileNameFIDO2Attestation,
 	})
 	require.NoError(t, err)
 	require.NotNil(t, cert)
@@ -238,7 +239,8 @@ func attestationRequest(t *testing.T) *ca.CertificateRequest {
 func requestWithAAGUID(t *testing.T, aaguid []byte) *ca.CertificateRequest {
 	t.Helper()
 	return &ca.CertificateRequest{
-		Subject: ca.Subject{CommonName: "xkey Attestation"},
+		TenantID: e2eTenant,
+		Subject:  ca.Subject{CommonName: "xkey Attestation"},
 		CSRExtensions: []pkix.Extension{{
 			Id:    oidFIDOGenCEAAGUID,
 			Value: marshalAAGUIDExtensionValue(t, aaguid),
@@ -394,7 +396,8 @@ func TestFIDO2AttestationProfile_IgnoresOtherRequestedExtensions(t *testing.T) {
 // rather than issued as a certificate that vouches for nothing.
 func TestFIDO2AttestationProfile_RefusesRequestWithoutAAGUID(t *testing.T) {
 	cert, err := attestationVendorCA(t).SignCSR(context.Background(), attestationCSR(t), &ca.SignOptions{
-		Profile: ca.ProfileNameFIDO2Attestation,
+		TenantID: e2eTenant,
+		Profile:  ca.ProfileNameFIDO2Attestation,
 	})
 
 	require.ErrorIs(t, err, ca.ErrFIDO2AttestationAAGUIDMissing)
@@ -446,7 +449,8 @@ func TestFIDO2AttestationProfile_RefusesMalformedAAGUID(t *testing.T) {
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
 			cert, err := trustedCA.SignCSR(context.Background(), attestationCSR(t, test.extension), &ca.SignOptions{
-				Profile: ca.ProfileNameFIDO2Attestation,
+				TenantID: e2eTenant,
+				Profile:  ca.ProfileNameFIDO2Attestation,
 			})
 
 			require.ErrorIs(t, err, ca.ErrFIDO2AttestationAAGUIDInvalid)
@@ -461,7 +465,8 @@ func TestFIDO2AttestationProfile_RefusesMalformedAAGUID(t *testing.T) {
 // the profile runs, so the certificate must carry exactly one copy.
 func TestFIDO2AttestationProfile_AcceptsAAGUIDFromCallerExtensions(t *testing.T) {
 	issued, err := attestationVendorCA(t).IssueCertificateWithProfile(context.Background(), &ca.CertificateRequest{
-		Subject: ca.Subject{CommonName: "xkey Attestation Direct"},
+		TenantID: e2eTenant,
+		Subject:  ca.Subject{CommonName: "xkey Attestation Direct"},
 		ExtraExtensions: []pkix.Extension{{
 			Id:    oidFIDOGenCEAAGUID,
 			Value: marshalAAGUIDExtensionValue(t, testAAGUID),
@@ -492,7 +497,8 @@ func TestFIDO2AttestationProfile_AcceptsAAGUIDFromCallerExtensions(t *testing.T)
 // the certificate by that route.
 func TestFIDO2AttestationProfile_RefusesMalformedCallerExtension(t *testing.T) {
 	issued, err := attestationVendorCA(t).IssueCertificateWithProfile(context.Background(), &ca.CertificateRequest{
-		Subject: ca.Subject{CommonName: "xkey Attestation Direct"},
+		TenantID: e2eTenant,
+		Subject:  ca.Subject{CommonName: "xkey Attestation Direct"},
 		ExtraExtensions: []pkix.Extension{{
 			Id:    oidFIDOGenCEAAGUID,
 			Value: marshalAAGUIDExtensionValue(t, testAAGUID[:8]),
@@ -580,7 +586,8 @@ func TestFIDO2AttestationProfile_RefusalNamesTheAAGUID(t *testing.T) {
 // that does not go through a device.
 func TestFIDO2AttestationProfile_RefusesUnpermittedCallerExtension(t *testing.T) {
 	issued, err := attestationVendorCA(t).IssueCertificateWithProfile(context.Background(), &ca.CertificateRequest{
-		Subject: ca.Subject{CommonName: "xkey Attestation Direct"},
+		TenantID: e2eTenant,
+		Subject:  ca.Subject{CommonName: "xkey Attestation Direct"},
 		ExtraExtensions: []pkix.Extension{{
 			Id:    oidFIDOGenCEAAGUID,
 			Value: marshalAAGUIDExtensionValue(t, foreignAAGUID),
@@ -706,7 +713,7 @@ func TestFIDO2AttestationProfile_ReplacesExistingAAGUIDExtension(t *testing.T) {
 // as a test so a future change that makes the default path conformant is
 // noticed rather than assumed.
 func TestSignCSR_DefaultProfileIsNotAttestationConformant(t *testing.T) {
-	cert, err := attestationVendorCA(t).SignCSR(context.Background(), conformantAttestationCSR(t), nil)
+	cert, err := attestationVendorCA(t).SignCSR(context.Background(), conformantAttestationCSR(t), &ca.SignOptions{TenantID: e2eTenant})
 	require.NoError(t, err)
 
 	assert.Empty(t, cert.Subject.Country,
@@ -759,7 +766,7 @@ func TestSignCSR_RequestedExtensionsReachTheProfile(t *testing.T) {
 
 	csrPEM := attestationCSR(t, pkix.Extension{Id: unknownOID, Value: []byte{0x04, 0x01, 0x2a}})
 
-	cert, err := trustedCA.SignCSR(context.Background(), csrPEM, &ca.SignOptions{Profile: profileName})
+	cert, err := trustedCA.SignCSR(context.Background(), csrPEM, &ca.SignOptions{TenantID: e2eTenant, Profile: profileName})
 	require.NoError(t, err)
 
 	require.NotNil(t, recorder.request, "the profile must receive an issuance context")
@@ -786,8 +793,9 @@ func TestSignCSR_RequestedExtensionsDoNotMutateCallerRequest(t *testing.T) {
 	// extension. Without one there would be nothing to write back into the
 	// caller's value, and the assertion below would hold either way.
 	request := &ca.CertificateRequest{
-		Subject: ca.Subject{CommonName: "recorded"},
-		SANS:    &ca.SubjectAlternativeNames{DNS: []string{"recorded.example.com"}},
+		TenantID: e2eTenant,
+		Subject:  ca.Subject{CommonName: "recorded"},
+		SANS:     &ca.SubjectAlternativeNames{DNS: []string{"recorded.example.com"}},
 	}
 	_, err := trustedCA.IssueCertificateWithProfile(context.Background(), request, profileName)
 	require.NoError(t, err)

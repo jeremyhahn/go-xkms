@@ -52,6 +52,7 @@
 //	}
 //
 //	result, err := issuer.Issue(ctx, &issuance.Request{
+//	    TenantID:  tenantID, // the requester's tenant, stamped as the first subject OU
 //	    CSR:       csr,
 //	    Template:  template,
 //	    NotBefore: time.Now(),

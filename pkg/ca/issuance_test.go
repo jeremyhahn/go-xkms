@@ -148,6 +148,7 @@ func TestApplyProfile_CAProfileSetsBasicConstraints(t *testing.T) {
 	template := &x509.Certificate{}
 
 	require.NoError(t, applyProfile(template, NewCAProfile(), &CertificateRequest{
+		TenantID:       testTenant,
 		IsCA:           true,
 		MaxPathLen:     2,
 		MaxPathLenZero: false,

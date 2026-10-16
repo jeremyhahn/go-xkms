@@ -150,8 +150,9 @@ func TestRevokeCert_DeleteKeysSuccess(t *testing.T) {
 func issueTestLeafCert(t *testing.T, ca *CA, cn string) *x509.Certificate {
 	t.Helper()
 	issued, err := ca.IssueCertificate(context.Background(), &CertificateRequest{
-		Subject: Subject{CommonName: cn},
-		Valid:   365,
+		TenantID: testTenant,
+		Subject:  Subject{CommonName: cn},
+		Valid:    365,
 	})
 	require.NoError(t, err)
 	return issued.Certificate

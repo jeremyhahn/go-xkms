@@ -117,8 +117,9 @@ func TestOCSPResponder_VerifyOCSPResponse_Success_B14(t *testing.T) {
 	responder := NewOCSPResponder(ca, DefaultOCSPResponderConfig())
 
 	issued, err := ca.IssueCertificate(context.Background(), &CertificateRequest{
-		Subject: Subject{CommonName: "ocsp-verify-b14"},
-		Valid:   365,
+		TenantID: testTenant,
+		Subject:  Subject{CommonName: "ocsp-verify-b14"},
+		Valid:    365,
 	})
 	require.NoError(t, err)
 
@@ -150,8 +151,9 @@ func TestOCSPResponder_CacheHit_B14(t *testing.T) {
 	responder := NewOCSPResponder(ca, DefaultOCSPResponderConfig())
 
 	issued, err := ca.IssueCertificate(context.Background(), &CertificateRequest{
-		Subject: Subject{CommonName: "ocsp-cache-hit-b14"},
-		Valid:   365,
+		TenantID: testTenant,
+		Subject:  Subject{CommonName: "ocsp-cache-hit-b14"},
+		Valid:    365,
 	})
 	require.NoError(t, err)
 
@@ -185,8 +187,9 @@ func TestOCSPResponder_IntermediateCA_B14(t *testing.T) {
 	responder := NewOCSPResponder(ca, DefaultOCSPResponderConfig())
 
 	issued, err := ca.IssueCertificate(context.Background(), &CertificateRequest{
-		Subject: Subject{CommonName: "ocsp-intermediate-b14"},
-		Valid:   365,
+		TenantID: testTenant,
+		Subject:  Subject{CommonName: "ocsp-intermediate-b14"},
+		Valid:    365,
 	})
 	require.NoError(t, err)
 
@@ -367,7 +370,8 @@ func TestBaseProfileApply_NilTemplate_B14(t *testing.T) {
 	require.NoError(t, err)
 	require.NotNil(t, serverProfile, "server profile must be registered")
 	err = serverProfile.Apply(nil, &CertificateRequest{
-		Subject: Subject{CommonName: "nil-template-b14"},
+		TenantID: testTenant,
+		Subject:  Subject{CommonName: "nil-template-b14"},
 	})
 	assert.ErrorIs(t, err, ErrInvalidProfile)
 }

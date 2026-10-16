@@ -120,8 +120,9 @@ func TestCA_TPM2Key_InitAndSign(t *testing.T) {
 
 	// The CA can issue and verify a certificate (signed by the software primary).
 	issued, err := root.IssueCertificate(context.Background(), &CertificateRequest{
-		Subject: Subject{CommonName: "leaf.tpm-secondary.example.com"},
-		Valid:   1,
+		TenantID: testTenant,
+		Subject:  Subject{CommonName: "leaf.tpm-secondary.example.com"},
+		Valid:    1,
 	})
 	require.NoError(t, err)
 	_, err = root.Verify(issued.Certificate)
@@ -190,8 +191,9 @@ func TestCA_TPM2PrimaryKey_InitAndSign(t *testing.T) {
 
 	// Issuance signs with the TPM key and verifies against the CA root.
 	issued, err := root.IssueCertificate(context.Background(), &CertificateRequest{
-		Subject: Subject{CommonName: "leaf.tpm-primary.example.com"},
-		Valid:   1,
+		TenantID: testTenant,
+		Subject:  Subject{CommonName: "leaf.tpm-primary.example.com"},
+		Valid:    1,
 	})
 	require.NoError(t, err)
 	_, err = root.Verify(issued.Certificate)

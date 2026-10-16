@@ -185,7 +185,8 @@ func TestIssuance_CAPresetPublishesRevocationEndpoints(t *testing.T) {
 
 	trustedCA := newIssuingCA(t, config, registry)
 	cert := issueWithProfile(t, trustedCA, &ca.CertificateRequest{
-		Subject: ca.Subject{CommonName: "Preset Issuing CA"},
+		TenantID: e2eTenant,
+		Subject:  ca.Subject{CommonName: "Preset Issuing CA"},
 	}, intermediateCAProfileName)
 
 	assert.Equal(t, []string{presetCRL}, cert.CRLDistributionPoints,
@@ -226,7 +227,8 @@ func TestIssuance_RegisterCAProfilesSeedsRegistry(t *testing.T) {
 	trustedCA := newIssuingCA(t, rootOnlyConfig(t, "Preset Registry Root CA"), registry)
 
 	rootPreset := issueWithProfile(t, trustedCA, &ca.CertificateRequest{
-		Subject: ca.Subject{CommonName: "Preset Root CA"},
+		TenantID: e2eTenant,
+		Subject:  ca.Subject{CommonName: "Preset Root CA"},
 	}, rootCAProfileName)
 
 	assert.True(t, rootPreset.IsCA)
@@ -239,7 +241,8 @@ func TestIssuance_RegisterCAProfilesSeedsRegistry(t *testing.T) {
 		"a root CA must not restrict the purposes it can issue for")
 
 	intermediatePreset := issueWithProfile(t, trustedCA, &ca.CertificateRequest{
-		Subject: ca.Subject{CommonName: "Preset Intermediate CA"},
+		TenantID: e2eTenant,
+		Subject:  ca.Subject{CommonName: "Preset Intermediate CA"},
 	}, intermediateCAProfileName)
 
 	assert.True(t, intermediatePreset.IsCA)
@@ -259,6 +262,7 @@ func TestIssuance_CAPresetPathLenHonoursRequest(t *testing.T) {
 
 	t.Run("request_tightens_constraint", func(t *testing.T) {
 		cert := issueWithProfile(t, trustedCA, &ca.CertificateRequest{
+			TenantID:       e2eTenant,
 			Subject:        ca.Subject{CommonName: "Tightened Issuing CA"},
 			MaxPathLen:     0,
 			MaxPathLenZero: true,
@@ -270,6 +274,7 @@ func TestIssuance_CAPresetPathLenHonoursRequest(t *testing.T) {
 
 	t.Run("request_cannot_widen_constraint", func(t *testing.T) {
 		cert := issueWithProfile(t, trustedCA, &ca.CertificateRequest{
+			TenantID:   e2eTenant,
 			Subject:    ca.Subject{CommonName: "Widened Issuing CA"},
 			MaxPathLen: 9,
 		}, intermediateCAProfileName)
@@ -280,7 +285,8 @@ func TestIssuance_CAPresetPathLenHonoursRequest(t *testing.T) {
 
 	t.Run("no_request_constraint_uses_profile", func(t *testing.T) {
 		cert := issueWithProfile(t, trustedCA, &ca.CertificateRequest{
-			Subject: ca.Subject{CommonName: "Default Issuing CA"},
+			TenantID: e2eTenant,
+			Subject:  ca.Subject{CommonName: "Default Issuing CA"},
 		}, intermediateCAProfileName)
 
 		assert.Equal(t, 2, cert.MaxPathLen)
@@ -302,7 +308,7 @@ func TestIssuance_CAPresetOnCSRPath(t *testing.T) {
 
 	cert, err := trustedCA.SignCSR(context.Background(),
 		generateCSR(t, "csr-issuing-ca.example.com"),
-		&ca.SignOptions{Profile: intermediateCAProfileName})
+		&ca.SignOptions{TenantID: e2eTenant, Profile: intermediateCAProfileName})
 	require.NoError(t, err)
 
 	assert.True(t, cert.IsCA, "the CA preset must promote the CSR to a CA certificate")
@@ -319,6 +325,7 @@ func TestIssuance_CAPresetChainVerifies(t *testing.T) {
 	trustedCA := newIssuingCA(t, rootOnlyConfig(t, "Chainable Root CA"), registry)
 
 	intermediate := issueWithProfile(t, trustedCA, &ca.CertificateRequest{
+		TenantID:   e2eTenant,
 		Subject:    ca.Subject{CommonName: "Chainable Issuing CA"},
 		MaxPathLen: 1,
 	}, intermediateCAProfileName)

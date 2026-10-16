@@ -300,8 +300,9 @@ func TestEndorsementKeyCertificate_EKOIDFound_B17(t *testing.T) {
 
 	const cn = "ek-oid-found-b17"
 	req := &CertificateRequest{
-		Subject: Subject{CommonName: cn},
-		Valid:   1,
+		TenantID: testTenant,
+		Subject:  Subject{CommonName: cn},
+		Valid:    1,
 	}
 
 	issuedCert, err := ca.IssueEKCertificate(context.Background(), req, &ekKey.PublicKey)

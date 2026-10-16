@@ -116,9 +116,10 @@ func TestCA_IntermediateCA_IssueCertificate(t *testing.T) {
 	ca := setupTestCAWithRealIntermediate(t)
 
 	request := &CertificateRequest{
-		Subject: Subject{CommonName: "leaf.example.com", Organization: "Test"},
-		SANS:    &SubjectAlternativeNames{DNS: []string{"leaf.example.com"}},
-		Valid:   365,
+		TenantID: testTenant,
+		Subject:  Subject{CommonName: "leaf.example.com", Organization: "Test"},
+		SANS:     &SubjectAlternativeNames{DNS: []string{"leaf.example.com"}},
+		Valid:    365,
 	}
 
 	issued, err := ca.IssueCertificate(context.Background(), request)
@@ -132,7 +133,7 @@ func TestCA_IntermediateCA_SignCSR(t *testing.T) {
 	ca := setupTestCAWithRealIntermediate(t)
 
 	csrPEM := generateTestCSRPEM(t, "signed-by-intermediate.example.com")
-	cert, err := ca.SignCSR(context.Background(), csrPEM, nil)
+	cert, err := ca.SignCSR(context.Background(), csrPEM, &SignOptions{TenantID: testTenant})
 	require.NoError(t, err)
 
 	err = cert.CheckSignatureFrom(ca.intermediateCert)
@@ -143,9 +144,10 @@ func TestCA_IntermediateCA_Verify(t *testing.T) {
 	ca := setupTestCAWithRealIntermediate(t)
 
 	request := &CertificateRequest{
-		Subject: Subject{CommonName: "verify-intermediate.example.com", Organization: "Test"},
-		SANS:    &SubjectAlternativeNames{DNS: []string{"verify-intermediate.example.com"}},
-		Valid:   365,
+		TenantID: testTenant,
+		Subject:  Subject{CommonName: "verify-intermediate.example.com", Organization: "Test"},
+		SANS:     &SubjectAlternativeNames{DNS: []string{"verify-intermediate.example.com"}},
+		Valid:    365,
 	}
 
 	issued, err := ca.IssueCertificate(context.Background(), request)
@@ -299,9 +301,10 @@ func TestCA_VerifySignature_ValidCert(t *testing.T) {
 	ca := setupTestCA(t)
 
 	request := &CertificateRequest{
-		Subject: Subject{CommonName: "verify-sig.example.com", Organization: "Test"},
-		SANS:    &SubjectAlternativeNames{DNS: []string{"verify-sig.example.com"}},
-		Valid:   365,
+		TenantID: testTenant,
+		Subject:  Subject{CommonName: "verify-sig.example.com", Organization: "Test"},
+		SANS:     &SubjectAlternativeNames{DNS: []string{"verify-sig.example.com"}},
+		Valid:    365,
 	}
 
 	issued, err := ca.IssueCertificate(context.Background(), request)
@@ -338,9 +341,10 @@ func TestCA_VerifySignature_WithIntermediate(t *testing.T) {
 	ca := setupTestCAWithRealIntermediate(t)
 
 	request := &CertificateRequest{
-		Subject: Subject{CommonName: "verify-sig-inter.example.com", Organization: "Test"},
-		SANS:    &SubjectAlternativeNames{DNS: []string{"verify-sig-inter.example.com"}},
-		Valid:   365,
+		TenantID: testTenant,
+		Subject:  Subject{CommonName: "verify-sig-inter.example.com", Organization: "Test"},
+		SANS:     &SubjectAlternativeNames{DNS: []string{"verify-sig-inter.example.com"}},
+		Valid:    365,
 	}
 
 	issued, err := ca.IssueCertificate(context.Background(), request)
@@ -370,9 +374,10 @@ func TestCA_Verify_RevokedCert(t *testing.T) {
 	ca := setupTestCA(t)
 
 	request := &CertificateRequest{
-		Subject: Subject{CommonName: "revoked-verify.example.com", Organization: "Test"},
-		SANS:    &SubjectAlternativeNames{DNS: []string{"revoked-verify.example.com"}},
-		Valid:   365,
+		TenantID: testTenant,
+		Subject:  Subject{CommonName: "revoked-verify.example.com", Organization: "Test"},
+		SANS:     &SubjectAlternativeNames{DNS: []string{"revoked-verify.example.com"}},
+		Valid:    365,
 	}
 
 	issued, err := ca.IssueCertificate(context.Background(), request)
@@ -389,9 +394,10 @@ func TestCA_Verify_ValidCert(t *testing.T) {
 	ca := setupTestCA(t)
 
 	request := &CertificateRequest{
-		Subject: Subject{CommonName: "verify-valid.example.com", Organization: "Test"},
-		SANS:    &SubjectAlternativeNames{DNS: []string{"verify-valid.example.com"}},
-		Valid:   365,
+		TenantID: testTenant,
+		Subject:  Subject{CommonName: "verify-valid.example.com", Organization: "Test"},
+		SANS:     &SubjectAlternativeNames{DNS: []string{"verify-valid.example.com"}},
+		Valid:    365,
 	}
 
 	issued, err := ca.IssueCertificate(context.Background(), request)
@@ -406,9 +412,10 @@ func TestCA_Verify_WithIntermediateCA(t *testing.T) {
 	ca := setupTestCAWithRealIntermediate(t)
 
 	request := &CertificateRequest{
-		Subject: Subject{CommonName: "verify-chain.example.com", Organization: "Test"},
-		SANS:    &SubjectAlternativeNames{DNS: []string{"verify-chain.example.com"}},
-		Valid:   365,
+		TenantID: testTenant,
+		Subject:  Subject{CommonName: "verify-chain.example.com", Organization: "Test"},
+		SANS:     &SubjectAlternativeNames{DNS: []string{"verify-chain.example.com"}},
+		Valid:    365,
 	}
 
 	issued, err := ca.IssueCertificate(context.Background(), request)
@@ -740,6 +747,7 @@ func TestCA_SignCSR_WithOptions(t *testing.T) {
 	ca := setupTestCA(t)
 	csrPEM := generateTestCSRPEM(t, "custom-options.example.com")
 	opts := &SignOptions{
+		TenantID:     testTenant,
 		ValidityDays: 90,
 		KeyUsage:     x509.KeyUsageDigitalSignature,
 		ExtKeyUsage:  []x509.ExtKeyUsage{x509.ExtKeyUsageClientAuth},
@@ -757,7 +765,7 @@ func TestCA_SignCSR_WithOptions(t *testing.T) {
 func TestCA_SignCSR_WithProfile(t *testing.T) {
 	ca := setupTestCA(t)
 	csrPEM := generateTestCSRPEM(t, "profile-signed.example.com")
-	opts := &SignOptions{Profile: "server"}
+	opts := &SignOptions{TenantID: testTenant, Profile: "server"}
 
 	cert, err := ca.SignCSR(context.Background(), csrPEM, opts)
 	require.NoError(t, err)
@@ -767,7 +775,7 @@ func TestCA_SignCSR_WithProfile(t *testing.T) {
 func TestCA_SignCSR_WithProfileAndCustomValidity(t *testing.T) {
 	ca := setupTestCA(t)
 	csrPEM := generateTestCSRPEM(t, "profile-custom-valid.example.com")
-	opts := &SignOptions{Profile: "client", ValidityDays: 30}
+	opts := &SignOptions{TenantID: testTenant, Profile: "client", ValidityDays: 30}
 
 	cert, err := ca.SignCSR(context.Background(), csrPEM, opts)
 	require.NoError(t, err)
@@ -777,19 +785,19 @@ func TestCA_SignCSR_WithProfileAndCustomValidity(t *testing.T) {
 func TestCA_SignCSR_InvalidProfile(t *testing.T) {
 	ca := setupTestCA(t)
 	csrPEM := generateTestCSRPEM(t, "bad-profile.example.com")
-	_, err := ca.SignCSR(context.Background(), csrPEM, &SignOptions{Profile: "nonexistent-profile"})
+	_, err := ca.SignCSR(context.Background(), csrPEM, &SignOptions{TenantID: testTenant, Profile: "nonexistent-profile"})
 	assert.Error(t, err)
 }
 
 func TestCA_SignCSR_InvalidCSR(t *testing.T) {
 	ca := setupTestCA(t)
-	_, err := ca.SignCSR(context.Background(), []byte("not a CSR"), nil)
+	_, err := ca.SignCSR(context.Background(), []byte("not a CSR"), &SignOptions{TenantID: testTenant})
 	assert.ErrorIs(t, err, ErrInvalidCSR)
 }
 
 func TestCA_SignCSR_NotInitialized(t *testing.T) {
 	ca := &CA{}
-	_, err := ca.SignCSR(context.Background(), []byte("unused"), nil)
+	_, err := ca.SignCSR(context.Background(), []byte("unused"), &SignOptions{TenantID: testTenant})
 	assert.ErrorIs(t, err, ErrNotInitialized)
 }
 
@@ -1040,6 +1048,7 @@ func TestCAProfile_Apply(t *testing.T) {
 		NotAfter:     time.Now().Add(24 * time.Hour),
 	}
 	err := profile.Apply(template, &CertificateRequest{
+		TenantID:       testTenant,
 		MaxPathLen:     2,
 		MaxPathLenZero: false,
 	})
@@ -1073,6 +1082,7 @@ func TestCustomCAProfile_Apply(t *testing.T) {
 		SerialNumber: big.NewInt(1),
 	}
 	err := profile.Apply(template, &CertificateRequest{
+		TenantID:       testTenant,
 		MaxPathLen:     1,
 		MaxPathLenZero: false,
 	})

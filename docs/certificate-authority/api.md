@@ -77,6 +77,15 @@ permission from go-qrdb's own registry (`registerAdminGrants`,
 `pkg/permission/builtin_role_grants.go` in go-qrdb); xkms registers no
 grant of its own for it.
 
+### Issued certificates carry the tenant as their first OU (go-xkms#1557)
+
+Every certificate `SignCSR`, `IssueCertificate`, TCG enrollment and PIV
+attestation issue has the caller's tenant as `Subject.OrganizationalUnit[0]`
+and no other OU: an OU the CSR asserts is replaced. A system-tenant caller's
+certificates name `system`. The CA refuses a request that reaches it without
+a tenant with `ca.ErrTenantRequired`. See
+[`engineering.md`](engineering.md#invariants).
+
 ### TCG enrollment (`TCGCAService`)
 
 | Capability | REST | gRPC / Unix | QUIC | MCP | Embedded | Auth / permission |

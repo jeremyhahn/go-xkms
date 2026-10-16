@@ -462,8 +462,9 @@ func TestRevokeCert_NilRejected(t *testing.T) {
 func TestRevokeCert_DeleteKeys(t *testing.T) {
 	ca := setupTestCA(t)
 	issued, err := ca.IssueCertificate(context.Background(), &CertificateRequest{
-		Subject: Subject{CommonName: "revoke-me.example.com"},
-		Valid:   30,
+		TenantID: testTenant,
+		Subject:  Subject{CommonName: "revoke-me.example.com"},
+		Valid:    30,
 	})
 	require.NoError(t, err)
 
@@ -481,8 +482,9 @@ func TestRevokeCert_DeleteKeys(t *testing.T) {
 func TestRevokeCert_AlreadyRevoked(t *testing.T) {
 	ca := setupTestCA(t)
 	issued, err := ca.IssueCertificate(context.Background(), &CertificateRequest{
-		Subject: Subject{CommonName: "duplicate-revoke.example.com"},
-		Valid:   30,
+		TenantID: testTenant,
+		Subject:  Subject{CommonName: "duplicate-revoke.example.com"},
+		Valid:    30,
 	})
 	require.NoError(t, err)
 
@@ -538,8 +540,9 @@ func TestVerifyTCG_CSR_IDevIDBytes_NoTPMRequired(t *testing.T) {
 func TestVerify_NilXSigner(t *testing.T) {
 	ca := setupTestCA(t)
 	issued, err := ca.IssueCertificate(context.Background(), &CertificateRequest{
-		Subject: Subject{CommonName: "verify-xsigner.example.com"},
-		Valid:   30,
+		TenantID: testTenant,
+		Subject:  Subject{CommonName: "verify-xsigner.example.com"},
+		Valid:    30,
 	})
 	require.NoError(t, err)
 	var nilSigner crypto.Signer
@@ -560,8 +563,9 @@ func TestVerify_NilCertWithXSigner(t *testing.T) {
 func TestTrustedRootCertPoolWithXSigner_NoSigner(t *testing.T) {
 	ca := setupTestCA(t)
 	issued, err := ca.IssueCertificate(context.Background(), &CertificateRequest{
-		Subject: Subject{CommonName: "root-pool-xsigner.example.com"},
-		Valid:   30,
+		TenantID: testTenant,
+		Subject:  Subject{CommonName: "root-pool-xsigner.example.com"},
+		Valid:    30,
 	})
 	require.NoError(t, err)
 	pool, err := ca.TrustedRootCertPoolWithXSigner(issued.Certificate, nil)
@@ -572,8 +576,9 @@ func TestTrustedRootCertPoolWithXSigner_NoSigner(t *testing.T) {
 func TestTrustedIntermediateCertPoolWithXSigner_NoSigner(t *testing.T) {
 	ca := setupTestCA(t)
 	issued, err := ca.IssueCertificate(context.Background(), &CertificateRequest{
-		Subject: Subject{CommonName: "intermediate-pool-xsigner.example.com"},
-		Valid:   30,
+		TenantID: testTenant,
+		Subject:  Subject{CommonName: "intermediate-pool-xsigner.example.com"},
+		Valid:    30,
 	})
 	require.NoError(t, err)
 	pool, err := ca.TrustedIntermediateCertPoolWithXSigner(issued.Certificate, nil)

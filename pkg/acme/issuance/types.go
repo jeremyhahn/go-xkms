@@ -41,6 +41,13 @@ type Request struct {
 	// Profile is the issuance profile to use (e.g., "default", "tls", "ca").
 	Profile string
 
+	// TenantID is the tenant the certificate is issued to: the ACME
+	// account's, or qrdbsdk.SystemTenantID for an account that is not
+	// tenant-bound. The certificate carries it as its subject's first
+	// organizational unit, in place of any the CSR or Template names. It is
+	// required.
+	TenantID string
+
 	// SkipCT skips Certificate Transparency if true.
 	// Should only be used for internal/private certificates.
 	SkipCT bool

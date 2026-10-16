@@ -59,6 +59,7 @@ func TestIssuer_SerialCleanupOnFailure(t *testing.T) {
 
 		csr, _ := createTestCSR(t)
 		req := &Request{
+			TenantID:  testTenant,
 			CSR:       csr,
 			NotBefore: time.Now(),
 			NotAfter:  time.Now().AddDate(0, 0, 90),
@@ -103,6 +104,7 @@ func TestIssuer_SerialCleanupOnFailure(t *testing.T) {
 
 		csr, _ := createTestCSR(t)
 		req := &Request{
+			TenantID:  testTenant,
 			CSR:       csr,
 			NotBefore: time.Now(),
 			NotAfter:  time.Now().AddDate(0, 0, 90),
@@ -143,6 +145,7 @@ func TestIssuer_SerialCleanupOnFailure(t *testing.T) {
 
 		csr, _ := createTestCSR(t)
 		req := &Request{
+			TenantID:  testTenant,
 			CSR:       csr,
 			NotBefore: time.Now(),
 			NotAfter:  time.Now().AddDate(0, 0, 90),
@@ -177,6 +180,7 @@ func TestIssuer_SerialCleanupOnFailure(t *testing.T) {
 
 		csr, _ := createTestCSR(t)
 		req := &Request{
+			TenantID:  testTenant,
 			CSR:       csr,
 			NotBefore: time.Now(),
 			NotAfter:  time.Now().AddDate(0, 0, 90),
@@ -211,6 +215,7 @@ func TestIssuer_SignCertificateErrorPaths(t *testing.T) {
 
 		csr, _ := createTestCSR(t)
 		req := &Request{
+			TenantID:  testTenant,
 			CSR:       csr,
 			NotBefore: time.Now(),
 			NotAfter:  time.Now().AddDate(0, 0, 90),
@@ -241,6 +246,7 @@ func TestIssuer_SignCertificateErrorPaths(t *testing.T) {
 
 		csr, _ := createTestCSR(t)
 		req := &Request{
+			TenantID:  testTenant,
 			CSR:       csr,
 			NotBefore: time.Now(),
 			NotAfter:  time.Now().AddDate(0, 0, 90),
@@ -275,6 +281,7 @@ func TestIssuer_SignCertificateErrorPaths(t *testing.T) {
 
 		csr, _ := createTestCSR(t)
 		req := &Request{
+			TenantID:  testTenant,
 			CSR:       csr,
 			NotBefore: time.Now(),
 			NotAfter:  time.Now().AddDate(0, 0, 90),
@@ -310,6 +317,7 @@ func TestIssuer_SignCertificateErrorPaths(t *testing.T) {
 
 		csr, _ := createTestCSR(t)
 		req := &Request{
+			TenantID:  testTenant,
 			CSR:       csr,
 			NotBefore: time.Now(),
 			NotAfter:  time.Now().AddDate(0, 0, 90),
@@ -345,6 +353,7 @@ func TestIssuer_CreateLintDERErrorPaths(t *testing.T) {
 
 		csr, _ := createTestCSR(t)
 		req := &Request{
+			TenantID:  testTenant,
 			CSR:       csr,
 			NotBefore: time.Now(),
 			NotAfter:  time.Now().AddDate(0, 0, 90),
@@ -375,6 +384,7 @@ func TestIssuer_CreateLintDERErrorPaths(t *testing.T) {
 
 		csr, _ := createTestCSR(t)
 		req := &Request{
+			TenantID:  testTenant,
 			CSR:       csr,
 			NotBefore: time.Now(),
 			NotAfter:  time.Now().AddDate(0, 0, 90),
@@ -408,6 +418,7 @@ func TestIssuer_CreateLintDERErrorPaths(t *testing.T) {
 
 		csr, _ := createTestCSR(t)
 		req := &Request{
+			TenantID:  testTenant,
 			CSR:       csr,
 			NotBefore: time.Now(),
 			NotAfter:  time.Now().AddDate(0, 0, 90),
@@ -443,6 +454,7 @@ func TestIssuer_CreateLintDERErrorPaths(t *testing.T) {
 
 		csr, _ := createTestCSR(t)
 		req := &Request{
+			TenantID:  testTenant,
 			CSR:       csr,
 			NotBefore: time.Now(),
 			NotAfter:  time.Now().AddDate(0, 0, 90),
@@ -485,6 +497,7 @@ func TestIssuer_GetIssuerChainError(t *testing.T) {
 
 		csr, _ := createTestCSR(t)
 		req := &Request{
+			TenantID:  testTenant,
 			CSR:       csr,
 			NotBefore: time.Now(),
 			NotAfter:  time.Now().AddDate(0, 0, 90),
@@ -524,6 +537,7 @@ func TestIssuer_CertificateStorageFailure(t *testing.T) {
 
 		csr, _ := createTestCSR(t)
 		req := &Request{
+			TenantID:  testTenant,
 			CSR:       csr,
 			NotBefore: time.Now(),
 			NotAfter:  time.Now().AddDate(0, 0, 90),

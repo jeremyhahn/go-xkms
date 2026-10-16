@@ -277,8 +277,9 @@ func TestIssueEKCertificate_NilRSAKey_B16(t *testing.T) {
 	badRSAPub := &rsa.PublicKey{} // N=nil, E=0
 
 	req := &CertificateRequest{
-		Subject: Subject{CommonName: "ek-bad-rsa-b16"},
-		Valid:   365,
+		TenantID: testTenant,
+		Subject:  Subject{CommonName: "ek-bad-rsa-b16"},
+		Valid:    365,
 	}
 
 	_, err := ca.IssueEKCertificate(context.Background(), req, badRSAPub)
@@ -299,8 +300,9 @@ func TestIssueAKCertificate_NilRSAKey_B16(t *testing.T) {
 	badRSAPub := &rsa.PublicKey{} // N=nil, E=0
 
 	req := &CertificateRequest{
-		Subject: Subject{CommonName: "ak-bad-rsa-b16"},
-		Valid:   365,
+		TenantID: testTenant,
+		Subject:  Subject{CommonName: "ak-bad-rsa-b16"},
+		Valid:    365,
 	}
 
 	_, err := ca.IssueAKCertificate(context.Background(), req, badRSAPub)
@@ -340,6 +342,6 @@ func TestSignTCGCSRIDevIDRaw_UnmarshalSucceeds_B16(t *testing.T) {
 	// UnmarshalIDevIDCSR will succeed (valid structure); SignTCGCSRIDevID
 	// will fail at CSR signature verification because the placeholder
 	// signature is not valid. Lines 232-239 are covered.
-	_, _, signErr := ca.SignTCGCSRIDevIDRaw(context.Background(), "ek-test-b16", "test-org-b16", packedCSR)
+	_, _, signErr := ca.SignTCGCSRIDevIDRaw(context.Background(), "ek-test-b16", "test-org-b16", packedCSR, testTenant)
 	assert.Error(t, signErr)
 }

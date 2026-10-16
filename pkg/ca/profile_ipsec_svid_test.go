@@ -230,6 +230,7 @@ func TestIPsecVTEP_Shape(t *testing.T) {
 	}
 
 	cert, err := f.ca.SignCSR(context.Background(), csr, &SignOptions{
+		TenantID:        testTenant,
 		Profile:         ProfileNameIPsecVTEP,
 		Signer:          f.tunnelKey,
 		IssuerCert:      f.tunnel,
@@ -283,7 +284,8 @@ func TestIPsecVTEP_Refusals(t *testing.T) {
 
 	base := func() *SignOptions {
 		return &SignOptions{
-			Profile: ProfileNameIPsecVTEP, Signer: f.tunnelKey, IssuerCert: f.tunnel,
+			TenantID: testTenant,
+			Profile:  ProfileNameIPsecVTEP, Signer: f.tunnelKey, IssuerCert: f.tunnel,
 			SANS: &SubjectAlternativeNames{IPs: []string{"10.4.0.7"}},
 		}
 	}
@@ -356,6 +358,7 @@ func TestX509SVID_Shape(t *testing.T) {
 	csr := csrFor(t, key, "csr-cn", nil, []*url.URL{{Scheme: "spiffe", Host: "example.org", Path: "/admin"}}, nil)
 
 	cert, err := f.ca.SignCSR(context.Background(), csr, &SignOptions{
+		TenantID:   testTenant,
 		Profile:    ProfileNameX509SVID,
 		Signer:     f.svidKey,
 		IssuerCert: f.svid,
@@ -394,7 +397,8 @@ func TestX509SVID_RSAKeyAddsKeyEncipherment(t *testing.T) {
 		t.Fatal(err)
 	}
 	cert, err := f.ca.SignCSR(context.Background(), csrFor(t, key, "", nil, nil, nil), &SignOptions{
-		Profile: ProfileNameX509SVID, Signer: f.svidKey, IssuerCert: f.svid, Validity: 10 * time.Minute,
+		TenantID: testTenant,
+		Profile:  ProfileNameX509SVID, Signer: f.svidKey, IssuerCert: f.svid, Validity: 10 * time.Minute,
 		SANS: &SubjectAlternativeNames{URIs: []string{"spiffe://example.org/w"}},
 	})
 	if err != nil {
@@ -429,7 +433,7 @@ func TestX509SVID_Refusals(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			opts := &SignOptions{Profile: ProfileNameX509SVID, Signer: f.svidKey, IssuerCert: f.svid, SANS: tc.sans}
+			opts := &SignOptions{TenantID: testTenant, Profile: ProfileNameX509SVID, Signer: f.svidKey, IssuerCert: f.svid, SANS: tc.sans}
 			if tc.opts != nil {
 				tc.opts(opts)
 			}
@@ -482,9 +486,10 @@ func TestIssueCertificateWithProfile_IPsecVTEP(t *testing.T) {
 	// the same names as caller SANs; the certificate carries them once.
 	c := setupTestCA(t)
 	issued, err := c.IssueCertificateWithProfile(context.Background(), &CertificateRequest{
-		Subject: Subject{CommonName: "vtep-kp"},
-		SANS:    &SubjectAlternativeNames{IPs: []string{"10.9.0.1"}},
-		Signer:  newECKey(t, elliptic.P256()),
+		TenantID: testTenant,
+		Subject:  Subject{CommonName: "vtep-kp"},
+		SANS:     &SubjectAlternativeNames{IPs: []string{"10.9.0.1"}},
+		Signer:   newECKey(t, elliptic.P256()),
 	}, ProfileNameIPsecVTEP)
 	if err != nil {
 		t.Fatalf("issue: %v", err)

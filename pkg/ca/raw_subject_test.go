@@ -65,13 +65,13 @@ func hostileCSR(t *testing.T) ([]byte, *ecdsa.PrivateKey) {
 func TestSignCSR_RawSubjectIsTheWholeName(t *testing.T) {
 	ca := setupTestCA(t)
 	csrPEM, key := hostileCSR(t)
-	raw := holderRawSubject(t, "officer-1", "a-tenant-with-a-long-name", "custodian")
+	raw := holderRawSubject(t, "officer-1", testTenant, "custodian")
 
-	cert, err := ca.SignCSR(context.Background(), csrPEM, &SignOptions{RawSubject: raw})
+	cert, err := ca.SignCSR(context.Background(), csrPEM, &SignOptions{TenantID: testTenant, RawSubject: raw})
 	require.NoError(t, err)
 	assert.Equal(t, raw, cert.RawSubject)
 	assert.Equal(t, "officer-1", cert.Subject.CommonName)
-	assert.Equal(t, []string{"a-tenant-with-a-long-name", "custodian"}, cert.Subject.OrganizationalUnit)
+	assert.Equal(t, []string{testTenant, "custodian"}, cert.Subject.OrganizationalUnit)
 	assert.Empty(t, cert.DNSNames)
 	assert.Empty(t, cert.URIs)
 	assert.Empty(t, cert.EmailAddresses)
@@ -109,7 +109,7 @@ func TestSignCSR_RawSubjectMustBeADistinguishedName(t *testing.T) {
 		"empty sequence": empty,
 	} {
 		t.Run(name, func(t *testing.T) {
-			_, err := ca.SignCSR(context.Background(), csrPEM, &SignOptions{RawSubject: raw})
+			_, err := ca.SignCSR(context.Background(), csrPEM, &SignOptions{TenantID: testTenant, RawSubject: raw})
 			require.ErrorIs(t, err, ErrInvalidRawSubject)
 		})
 	}
@@ -153,6 +153,7 @@ func TestSignCSR_RawSubjectIgnoresTheCSRsExtensions(t *testing.T) {
 	raw := holderRawSubject(t, "officer-1", "acme", "officer")
 
 	cert, err := ca.SignCSR(context.Background(), csrAskingToBeACA(t), &SignOptions{
+		TenantID:    testTenant,
 		RawSubject:  raw,
 		KeyUsage:    x509.KeyUsageDigitalSignature,
 		ExtKeyUsage: []x509.ExtKeyUsage{x509.ExtKeyUsageClientAuth},

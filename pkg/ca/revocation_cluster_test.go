@@ -102,8 +102,9 @@ func newUnloadedPeer(node *CA, revocationStore storage.Backend) *CA {
 func issueTestCert(t *testing.T, ca *CA, cn string) *x509.Certificate {
 	t.Helper()
 	issued, err := ca.IssueCertificate(context.Background(), &CertificateRequest{
-		Subject: Subject{CommonName: cn},
-		Valid:   365,
+		TenantID: testTenant,
+		Subject:  Subject{CommonName: cn},
+		Valid:    365,
 	})
 	require.NoError(t, err)
 	require.NotNil(t, issued.Certificate)

@@ -40,7 +40,9 @@ type CA interface {
 
 	// SignCSRRaw signs a CSR using primitive parameter types.
 	// If profile and validityDays are both zero-values, CA defaults are used.
-	SignCSRRaw(ctx context.Context, csrPEM []byte, profile string, validityDays int) (*x509.Certificate, error)
+	// tenantID is the caller's tenant, which the certificate carries as its
+	// subject's first organizational unit.
+	SignCSRRaw(ctx context.Context, csrPEM []byte, profile string, validityDays int, tenantID string) (*x509.Certificate, error)
 
 	// SignCSRWithSPIFFE signs a CSR and, when trustDomain and tenantID are
 	// both non-empty, synthesizes a tenant-scoped SPIFFE URI SAN of the form
@@ -96,26 +98,28 @@ type CA interface {
 // for TPM device identity, attestation keys, and endorsement keys.
 //
 // The concrete ca.CA type satisfies this interface directly via its
-// Raw adapter methods in pkg/ca/service_adapter.go.
+// Raw adapter methods in pkg/ca/service_adapter.go. Each tenantID is the
+// caller's tenant, which the EK, AK, IAK and IDevID certificates carry as
+// their subject's first organizational unit.
 type TCGCA interface {
 	CA
 
 	// IssueEKCertificateRaw issues an Endorsement Key certificate.
 	// ekPubDER is DER-encoded public key bytes.
-	IssueEKCertificateRaw(ctx context.Context, commonName, organization string, ekPubDER []byte) (certDER []byte, err error)
+	IssueEKCertificateRaw(ctx context.Context, commonName, organization string, ekPubDER []byte, tenantID string) (certDER []byte, err error)
 
 	// IssueAKCertificateRaw issues an Attestation Key certificate.
 	// pubDER is DER-encoded public key bytes.
-	IssueAKCertificateRaw(ctx context.Context, commonName, organization string, pubDER []byte) (certDER []byte, err error)
+	IssueAKCertificateRaw(ctx context.Context, commonName, organization string, pubDER []byte, tenantID string) (certDER []byte, err error)
 
 	// SignTCGCSRIDevIDRaw signs a packed TCG-CSR-IDEVID.
 	// packedCSR is the binary-marshalled TCG_CSR_IDEVID bytes.
 	// Returns IAK cert DER and IDevID cert DER.
-	SignTCGCSRIDevIDRaw(ctx context.Context, commonName, organization string, packedCSR []byte) (iakDER, idevidDER []byte, err error)
+	SignTCGCSRIDevIDRaw(ctx context.Context, commonName, organization string, packedCSR []byte, tenantID string) (iakDER, idevidDER []byte, err error)
 
 	// EnrollDeviceRaw performs TCG device enrollment.
 	// packedCSR is the binary-packed TCG_CSR_IDEVID bytes.
-	EnrollDeviceRaw(ctx context.Context, commonName, organization string, packedCSR []byte) (
+	EnrollDeviceRaw(ctx context.Context, commonName, organization string, packedCSR []byte, tenantID string) (
 		iakDER, idevidDER, credBlob, encSecret, plainSecret []byte, err error,
 	)
 

@@ -94,10 +94,10 @@ func (a *CAAdapter) SignAdminCSR(ctx context.Context, tenantID, subject string, 
 	opts := &ca.SignOptions{
 		KeyUsage:    profile.KeyUsage(),
 		ExtKeyUsage: profile.ExtKeyUsage(),
+		TenantID:    tenantOrSystem(tenantID),
 	}
 	if a.spiffeTrustDomain != "" {
 		opts.SPIFFETrustDomain = a.spiffeTrustDomain
-		opts.TenantID = tenantOrSystem(tenantID)
 		opts.SPIFFEKind = spiffe.KindUser
 		opts.SPIFFEName = subject
 	}

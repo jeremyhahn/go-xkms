@@ -353,6 +353,12 @@ var (
 	// ErrTCGTenantIDEmpty indicates an empty tenant ID was provided.
 	ErrTCGTenantIDEmpty = errors.New("ca: tenant id must not be empty")
 
+	// ErrTenantRequired indicates a certificate request that names no tenant.
+	// Every certificate the CA issues carries its tenant as the subject's
+	// first organizational unit; the system tenant's own certificates name
+	// qrdbsdk.SystemTenantID.
+	ErrTenantRequired = errors.New("ca: certificate request names no tenant")
+
 	// ErrTCGNetworkZoneEmpty indicates an empty network zone was provided.
 	ErrTCGNetworkZoneEmpty = errors.New("ca: network zone must not be empty")
 

@@ -122,8 +122,9 @@ func TestCA_PKCS11Key_InitAndSign(t *testing.T) {
 
 	// Issue and verify a certificate (signed by the software primary).
 	issued, err := root.IssueCertificate(context.Background(), &CertificateRequest{
-		Subject: Subject{CommonName: "leaf.pkcs11.example.com"},
-		Valid:   1,
+		TenantID: testTenant,
+		Subject:  Subject{CommonName: "leaf.pkcs11.example.com"},
+		Valid:    1,
 	})
 	require.NoError(t, err)
 	_, err = root.Verify(issued.Certificate)

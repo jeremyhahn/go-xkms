@@ -52,9 +52,9 @@ import (
 // A deliberate policy change updates these; an accidental one fails the build.
 var caPolicyGoldens = map[string]string{
 	"root":                "7bba11261e267fe9de786327a6a90ed919943b949d9071fc7192ddc3a5cb8b5f",
-	"leaf_no_profile":     "7720bfa160f082041993a519657a3056a6fb77341c47e372c86cbcd03d7a9d06",
-	"leaf_server_profile": "e337d5c264dadb0d1346b49a6f8dda9d0ccd357fd8b88951f8d69850d62c4055",
-	"leaf_ca_profile":     "6b9899392802b2a53313bb2c26870fbbd2d54f17cbd6d1cf54e39957e803e190",
+	"leaf_no_profile":     "f3504bb4896ac1d445b3791e146d845ebded6bdbd6fa7584e547e2a43d580418",
+	"leaf_server_profile": "9aa2c2df622bd5a7f4a5e587b882bc9788a7d5b5c1adb2c55ea28154cb55ec6b",
+	"leaf_ca_profile":     "685341dd3605b6bed20fa3258383844c72cdbec64004eb2e2340a5a9a97e9bd1",
 	// tcg_ek changed 2026-09-08 (TCG DevID §8.1 conformance): the permanent
 	// identifier moved from a standalone extension under the RFC 4043
 	// otherName OID into subjectAltName where the otherName belongs; the device
@@ -69,7 +69,7 @@ var caPolicyGoldens = map[string]string{
 	// into the standard ExtKeyUsage extension's unknown_ext_key_usage, where
 	// RFC 5280 section 4.2.1.12 puts extended key usage purposes and where
 	// requireTCGEKCertificateEKU already looked for it.
-	"tcg_ek": "a213376725473c2e005717a7f7ef6a28d30fc01c9ac052acc65374903b154e8d",
+	"tcg_ek": "f6d77797f0bacb5e642ab3d39068fc0048c64fdd7443998310ec64b3e121364a",
 	// tcg_ak changed 2026-09-04 (#358): the certificatePolicies extension
 	// carries tcg-cap-verifiedTPMRestricted (2.23.133.11.1.3). TCG DevID v1 r12
 	// §8.2 makes checking it a MUST for a relying party evaluating an
@@ -89,7 +89,7 @@ var caPolicyGoldens = map[string]string{
 	// verifier requires it; and basicConstraints is now explicitly asserted
 	// with CA:false (requirement 5), which the TCG spec never mentions for an
 	// AK/IAK certificate and therefore does not forbid.
-	"tcg_ak": "b31b34b2efa8d19e98e6390bcee2796f137aa716f3a1d230a6f1a3a12f562218",
+	"tcg_ak": "a5cdb57d553972da4e23942823c7c052dcdf8f23acf85c67b1cc513fceb31512",
 }
 
 // caPolicyCase names one issuance path and the certificate it produced.
@@ -121,15 +121,15 @@ func issueAllCAPaths(t *testing.T) []caPolicyCase {
 	require.NoError(t, err)
 	csrPEM := pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE REQUEST", Bytes: csrDER})
 
-	leaf, err := testCA.SignCSR(ctx, csrPEM, nil)
+	leaf, err := testCA.SignCSR(ctx, csrPEM, &SignOptions{TenantID: testTenant})
 	require.NoError(t, err)
 	cases = append(cases, caPolicyCase{name: "leaf_no_profile", cert: leaf})
 
-	leafServer, err := testCA.SignCSR(ctx, csrPEM, &SignOptions{Profile: "server"})
+	leafServer, err := testCA.SignCSR(ctx, csrPEM, &SignOptions{TenantID: testTenant, Profile: "server"})
 	require.NoError(t, err)
 	cases = append(cases, caPolicyCase{name: "leaf_server_profile", cert: leafServer})
 
-	leafCA, err := testCA.SignCSR(ctx, csrPEM, &SignOptions{Profile: "ca"})
+	leafCA, err := testCA.SignCSR(ctx, csrPEM, &SignOptions{TenantID: testTenant, Profile: "ca"})
 	require.NoError(t, err)
 	cases = append(cases, caPolicyCase{name: "leaf_ca_profile", cert: leafCA})
 
@@ -137,6 +137,7 @@ func issueAllCAPaths(t *testing.T) []caPolicyCase {
 	ekKey, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
 	require.NoError(t, err)
 	ekCert, err := testCA.IssueEKCertificate(ctx, &CertificateRequest{
+		TenantID:    testTenant,
 		Subject:     Subject{CommonName: "tpm-ek", Organization: "Test Organization"},
 		ProdModel:   "model-1",
 		ProdSerial:  "serial-1",
@@ -148,7 +149,8 @@ func issueAllCAPaths(t *testing.T) []caPolicyCase {
 	akKey, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
 	require.NoError(t, err)
 	akCert, err := testCA.IssueAKCertificate(ctx, &CertificateRequest{
-		Subject: Subject{CommonName: "tpm-ak", Organization: "Test Organization"},
+		TenantID: testTenant,
+		Subject:  Subject{CommonName: "tpm-ak", Organization: "Test Organization"},
 	}, &akKey.PublicKey)
 	require.NoError(t, err)
 	cases = append(cases, caPolicyCase{name: "tcg_ak", cert: akCert})
@@ -252,23 +254,25 @@ func TestCertificatePolicy_EndpointsReachEveryPath(t *testing.T) {
 	require.NoError(t, err)
 	csrPEM := pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE REQUEST", Bytes: csrDER})
 
-	leaf, err := testCA.SignCSR(ctx, csrPEM, nil)
+	leaf, err := testCA.SignCSR(ctx, csrPEM, &SignOptions{TenantID: testTenant})
 	require.NoError(t, err)
 
-	leafWithProfile, err := testCA.SignCSR(ctx, csrPEM, &SignOptions{Profile: "server"})
+	leafWithProfile, err := testCA.SignCSR(ctx, csrPEM, &SignOptions{TenantID: testTenant, Profile: "server"})
 	require.NoError(t, err)
 
 	ekKey, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
 	require.NoError(t, err)
 	ekCert, err := testCA.IssueEKCertificate(ctx, &CertificateRequest{
-		Subject: Subject{CommonName: "reach-ek"},
+		TenantID: testTenant,
+		Subject:  Subject{CommonName: "reach-ek"},
 	}, &ekKey.PublicKey)
 	require.NoError(t, err)
 
 	akKey, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
 	require.NoError(t, err)
 	akCert, err := testCA.IssueAKCertificate(ctx, &CertificateRequest{
-		Subject: Subject{CommonName: "reach-ak"},
+		TenantID: testTenant,
+		Subject:  Subject{CommonName: "reach-ak"},
 	}, &akKey.PublicKey)
 	require.NoError(t, err)
 
@@ -317,7 +321,7 @@ func TestCertificatePolicy_ProfileChangeReachesCAPaths(t *testing.T) {
 	require.NoError(t, err)
 	csrPEM := pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE REQUEST", Bytes: csrDER})
 
-	sub, err := testCA.SignCSR(ctx, csrPEM, &SignOptions{Profile: ProfileNameCA})
+	sub, err := testCA.SignCSR(ctx, csrPEM, &SignOptions{TenantID: testTenant, Profile: ProfileNameCA})
 	require.NoError(t, err)
 
 	require.True(t, sub.IsCA)

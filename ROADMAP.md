@@ -85,6 +85,7 @@ Scope and boundaries: [docs/SPEC.md](docs/SPEC.md).
 - **secret-service** — the `org.freedesktop.secrets` D-Bus daemon — [v0.25.0-alpha](../../releases/tag/v0.25.0-alpha) — done
 - **setup-wizard** — first-run personal and enterprise setup and SO provisioning — [#432](../../issues/432) — done
 - **ssh** — SSH keys, profiles, host keys, connect/console and the GUI SSH services — [v0.3.0-alpha](../../releases/tag/v0.3.0-alpha) — done
+- **tenant-subject-ou** — the tenant as subject OU on every issued certificate — [#1557](../../issues/1557) — done
 - **usb** — the virtual USB CCID smartcard and portable USB disk images — [v0.3.0-alpha](../../releases/tag/v0.3.0-alpha) — done
 - **virtual-authenticator** — the virtual FIDO2/CTAP2 authenticator over Linux UHID — [v0.9.0-alpha](../../releases/tag/v0.9.0-alpha) — done
 - **xkeysigner** — `crypto.Signer` over IPC to the GUI's PIV slot — [v0.3.0-alpha](../../releases/tag/v0.3.0-alpha) — done
@@ -128,7 +129,6 @@ Scope and boundaries: [docs/SPEC.md](docs/SPEC.md).
 - **authz-tenant-iam** — cross-tenant user and role administration — [Dev complete](../../milestone/14) — blocked: go-qrdb #683
 - **authz-ui-matrix** — UI permissions from go-qrdb's permission listing — [Dev complete](../../milestone/14) — open
 - **authz-xkey-uid0** — xkey audit access by `audit:read` — [Dev complete](../../milestone/14) — open
-- **tenant-subject-ou** — the tenant as subject OU on every issued certificate — [Dev complete](../../milestone/14) — open
 
 ## Future
 

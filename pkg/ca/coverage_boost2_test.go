@@ -60,9 +60,10 @@ func softwareKeyAttrs(cn string) *types.KeyAttributes {
 func issueCertAndSaveToKeyStore(t *testing.T, ca *CA, cn string) {
 	t.Helper()
 	issued, err := ca.IssueCertificate(context.Background(), &CertificateRequest{
-		Subject: Subject{CommonName: cn},
-		SANS:    &SubjectAlternativeNames{DNS: []string{cn}},
-		Valid:   365,
+		TenantID: testTenant,
+		Subject:  Subject{CommonName: cn},
+		SANS:     &SubjectAlternativeNames{DNS: []string{cn}},
+		Valid:    365,
 	})
 	require.NoError(t, err)
 	// SaveCert via ImportCertificate so keyStore.GetCert resolves.
@@ -219,7 +220,7 @@ func TestIssueEKCertificateRaw_Success_B2(t *testing.T) {
 	ekPubDER, err := x509.MarshalPKIXPublicKey(&ekKey.PublicKey)
 	require.NoError(t, err)
 
-	certDER, err := ca.IssueEKCertificateRaw(context.Background(), "test-ek-raw", "Test Org", ekPubDER)
+	certDER, err := ca.IssueEKCertificateRaw(context.Background(), "test-ek-raw", "Test Org", ekPubDER, testTenant)
 	require.NoError(t, err)
 	assert.NotEmpty(t, certDER)
 
@@ -230,7 +231,7 @@ func TestIssueEKCertificateRaw_Success_B2(t *testing.T) {
 
 func TestIssueEKCertificateRaw_InvalidDER_B2(t *testing.T) {
 	ca := createTestCAForTCG(t)
-	_, err := ca.IssueEKCertificateRaw(context.Background(), "test-ek", "Test Org", []byte("not-valid-der"))
+	_, err := ca.IssueEKCertificateRaw(context.Background(), "test-ek", "Test Org", []byte("not-valid-der"), testTenant)
 	assert.Error(t, err)
 }
 
@@ -245,7 +246,7 @@ func TestIssueAKCertificateRaw_Success_B2(t *testing.T) {
 	akPubDER, err := x509.MarshalPKIXPublicKey(&akKey.PublicKey)
 	require.NoError(t, err)
 
-	certDER, err := ca.IssueAKCertificateRaw(context.Background(), "test-ak-raw", "Test Org", akPubDER)
+	certDER, err := ca.IssueAKCertificateRaw(context.Background(), "test-ak-raw", "Test Org", akPubDER, testTenant)
 	require.NoError(t, err)
 	assert.NotEmpty(t, certDER)
 
@@ -256,7 +257,7 @@ func TestIssueAKCertificateRaw_Success_B2(t *testing.T) {
 
 func TestIssueAKCertificateRaw_InvalidDER_B2(t *testing.T) {
 	ca := createTestCAForTCG(t)
-	_, err := ca.IssueAKCertificateRaw(context.Background(), "test-ak", "Test Org", []byte("bad"))
+	_, err := ca.IssueAKCertificateRaw(context.Background(), "test-ak", "Test Org", []byte("bad"), testTenant)
 	assert.Error(t, err)
 }
 
@@ -266,7 +267,7 @@ func TestIssueAKCertificateRaw_InvalidDER_B2(t *testing.T) {
 
 func TestSignTCGCSRIDevIDRaw_InvalidCSR(t *testing.T) {
 	ca := createTestCAForTCG(t)
-	_, _, err := ca.SignTCGCSRIDevIDRaw(context.Background(), "device", "Org", []byte("garbage"))
+	_, _, err := ca.SignTCGCSRIDevIDRaw(context.Background(), "device", "Org", []byte("garbage"), testTenant)
 	assert.Error(t, err)
 }
 
@@ -276,7 +277,7 @@ func TestSignTCGCSRIDevIDRaw_InvalidCSR(t *testing.T) {
 
 func TestEnrollDeviceRaw_InvalidCSR(t *testing.T) {
 	ca := createTestCAForTCG(t)
-	_, _, _, _, _, err := ca.EnrollDeviceRaw(context.Background(), "device", "Org", []byte("garbage"))
+	_, _, _, _, _, err := ca.EnrollDeviceRaw(context.Background(), "device", "Org", []byte("garbage"), testTenant)
 	assert.Error(t, err)
 }
 
@@ -324,8 +325,9 @@ func TestTrustedIntermediateCertPool_NoIntermediate(t *testing.T) {
 
 	// Leaf issued by root (no intermediate).
 	issued, err := ca.IssueCertificate(context.Background(), &CertificateRequest{
-		Subject: Subject{CommonName: "leaf-no-int.example.com"},
-		Valid:   365,
+		TenantID: testTenant,
+		Subject:  Subject{CommonName: "leaf-no-int.example.com"},
+		Valid:    365,
 	})
 	require.NoError(t, err)
 	_ = issued.Certificate
@@ -340,9 +342,10 @@ func TestTrustedIntermediateCertPool_WithIntermediate(t *testing.T) {
 	ca := setupTestCAWithRealIntermediate(t)
 
 	issued, err := ca.IssueCertificate(context.Background(), &CertificateRequest{
-		Subject: Subject{CommonName: "leaf-int.example.com"},
-		SANS:    &SubjectAlternativeNames{DNS: []string{"leaf-int.example.com"}},
-		Valid:   365,
+		TenantID: testTenant,
+		Subject:  Subject{CommonName: "leaf-int.example.com"},
+		SANS:     &SubjectAlternativeNames{DNS: []string{"leaf-int.example.com"}},
+		Valid:    365,
 	})
 	require.NoError(t, err)
 
@@ -688,8 +691,9 @@ func TestRevokeCert_Success(t *testing.T) {
 	ca := setupTestCA(t)
 
 	issued, err := ca.IssueCertificate(context.Background(), &CertificateRequest{
-		Subject: Subject{CommonName: "to-revoke.example.com"},
-		Valid:   365,
+		TenantID: testTenant,
+		Subject:  Subject{CommonName: "to-revoke.example.com"},
+		Valid:    365,
 	})
 	require.NoError(t, err)
 
@@ -701,8 +705,9 @@ func TestRevokeCert_DeleteKeys_B2(t *testing.T) {
 	ca := setupTestCA(t)
 
 	issued, err := ca.IssueCertificate(context.Background(), &CertificateRequest{
-		Subject: Subject{CommonName: "revoke-delkey.example.com"},
-		Valid:   365,
+		TenantID: testTenant,
+		Subject:  Subject{CommonName: "revoke-delkey.example.com"},
+		Valid:    365,
 	})
 	require.NoError(t, err)
 
@@ -783,8 +788,9 @@ func TestExists_NilCN(t *testing.T) {
 func TestExists_Found(t *testing.T) {
 	ca := setupTestCA(t)
 	issued, err := ca.IssueCertificate(context.Background(), &CertificateRequest{
-		Subject: Subject{CommonName: "exists-check.example.com"},
-		Valid:   365,
+		TenantID: testTenant,
+		Subject:  Subject{CommonName: "exists-check.example.com"},
+		Valid:    365,
 	})
 	require.NoError(t, err)
 
@@ -796,8 +802,9 @@ func TestExists_Found(t *testing.T) {
 func TestExists_WrongAlgo(t *testing.T) {
 	ca := setupTestCA(t)
 	issued, err := ca.IssueCertificate(context.Background(), &CertificateRequest{
-		Subject: Subject{CommonName: "exists-wrong-algo.example.com"},
-		Valid:   365,
+		TenantID: testTenant,
+		Subject:  Subject{CommonName: "exists-wrong-algo.example.com"},
+		Valid:    365,
 	})
 	require.NoError(t, err)
 
@@ -819,8 +826,9 @@ func TestRecordRevocation_NilSerial(t *testing.T) {
 func TestRecordRevocation_AlreadyRevoked(t *testing.T) {
 	ca := setupTestCA(t)
 	issued, err := ca.IssueCertificate(context.Background(), &CertificateRequest{
-		Subject: Subject{CommonName: "double-revoke.example.com"},
-		Valid:   365,
+		TenantID: testTenant,
+		Subject:  Subject{CommonName: "double-revoke.example.com"},
+		Valid:    365,
 	})
 	require.NoError(t, err)
 
@@ -845,8 +853,9 @@ func TestLoadPersistedRevocations_WithObjectStore_ValidRecord(t *testing.T) {
 
 	// Revoke a cert so a blob is written.
 	issued, err := ca.IssueCertificate(context.Background(), &CertificateRequest{
-		Subject: Subject{CommonName: "persist-revoke.example.com"},
-		Valid:   365,
+		TenantID: testTenant,
+		Subject:  Subject{CommonName: "persist-revoke.example.com"},
+		Valid:    365,
 	})
 	require.NoError(t, err)
 
@@ -994,9 +1003,10 @@ func TestVerify_NotInitialized(t *testing.T) {
 func TestVerify_ValidCert(t *testing.T) {
 	ca := setupTestCA(t)
 	issued, err := ca.IssueCertificate(context.Background(), &CertificateRequest{
-		Subject: Subject{CommonName: "verify-valid.example.com"},
-		SANS:    &SubjectAlternativeNames{DNS: []string{"verify-valid.example.com"}},
-		Valid:   365,
+		TenantID: testTenant,
+		Subject:  Subject{CommonName: "verify-valid.example.com"},
+		SANS:     &SubjectAlternativeNames{DNS: []string{"verify-valid.example.com"}},
+		Valid:    365,
 	})
 	require.NoError(t, err)
 

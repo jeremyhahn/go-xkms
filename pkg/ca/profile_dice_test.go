@@ -91,6 +91,7 @@ var diceTestUeid = []byte{0xDE, 0xAD, 0xBE, 0xEF, 0x01, 0x02, 0x03, 0x04}
 func diceTestRequest(t *testing.T, extensions ...pkix.Extension) *CertificateRequest {
 	t.Helper()
 	return &CertificateRequest{
+		TenantID:      testTenant,
 		Subject:       Subject{CommonName: "avr-device-0001"},
 		CSRExtensions: extensions,
 	}
@@ -310,7 +311,8 @@ func TestDICEProfileValidatesExtraExtensionsInPlace(t *testing.T) {
 	profile := NewDICEDeviceIdentityProfile()
 	template := &x509.Certificate{}
 	request := &CertificateRequest{
-		Subject: Subject{CommonName: "avr-device-0002"},
+		TenantID: testTenant,
+		Subject:  Subject{CommonName: "avr-device-0002"},
 		ExtraExtensions: []pkix.Extension{
 			diceTcbInfoExtension(t, diceTestTcbInfo()),
 			diceUeidExtension(t, diceTestUeid),
@@ -326,7 +328,8 @@ func TestDICEProfileValidatesExtraExtensionsInPlace(t *testing.T) {
 func TestDICEProfileRejectsMalformedExtraExtensions(t *testing.T) {
 	profile := NewDICEDeviceIdentityProfile()
 	request := &CertificateRequest{
-		Subject: Subject{CommonName: "avr-device-0003"},
+		TenantID: testTenant,
+		Subject:  Subject{CommonName: "avr-device-0003"},
 		ExtraExtensions: []pkix.Extension{
 			{Id: OIDTCGDiceTcbInfo, Value: []byte{0x04, 0x01, 0x00}},
 		},
@@ -425,7 +428,8 @@ func TestDICEProfileRefusesEvidenceWithNoMeasurement(t *testing.T) {
 			// second path to the same signature and needs the same refusal.
 			template = &x509.Certificate{}
 			direct := &CertificateRequest{
-				Subject: Subject{CommonName: "avr-device-0001"},
+				TenantID: testTenant,
+				Subject:  Subject{CommonName: "avr-device-0001"},
 				ExtraExtensions: []pkix.Extension{{
 					Id: OIDTCGDiceTcbInfo, Critical: true, Value: test.value,
 				}},

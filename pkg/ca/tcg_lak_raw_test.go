@@ -38,7 +38,8 @@ import (
 func issueInternalTestIAK(t *testing.T, ca *CA, iakKey *ecdsa.PrivateKey) []byte {
 	t.Helper()
 	cert, err := ca.IssueAKCertificate(context.Background(), &CertificateRequest{
-		Subject: Subject{CommonName: "iak-raw-fixture"},
+		TenantID: testTenant,
+		Subject:  Subject{CommonName: "iak-raw-fixture"},
 	}, iakKey.Public())
 	if err != nil {
 		t.Fatalf("IssueAKCertificate() for IAK fixture: %v", err)

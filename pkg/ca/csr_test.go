@@ -70,6 +70,7 @@ func csrTestEd25519Key(t *testing.T) ed25519.PrivateKey {
 func TestCreateCSRWithKey_ECDSA_P256(t *testing.T) {
 	key := csrTestECDSAKey(t, elliptic.P256())
 	request := &CertificateRequest{
+		TenantID: testTenant,
 		Subject: Subject{
 			CommonName:   "test.example.com",
 			Organization: "Test Org",
@@ -113,7 +114,8 @@ func TestCreateCSRWithKey_ECDSA_P256(t *testing.T) {
 func TestCreateCSRWithKey_ECDSA_P384(t *testing.T) {
 	key := csrTestECDSAKey(t, elliptic.P384())
 	request := &CertificateRequest{
-		Subject: Subject{CommonName: "p384.example.com"},
+		TenantID: testTenant,
+		Subject:  Subject{CommonName: "p384.example.com"},
 	}
 
 	csrPEM, err := CreateCSRWithKey(request, key)
@@ -135,7 +137,8 @@ func TestCreateCSRWithKey_ECDSA_P384(t *testing.T) {
 func TestCreateCSRWithKey_ECDSA_P521(t *testing.T) {
 	key := csrTestECDSAKey(t, elliptic.P521())
 	request := &CertificateRequest{
-		Subject: Subject{CommonName: "p521.example.com"},
+		TenantID: testTenant,
+		Subject:  Subject{CommonName: "p521.example.com"},
 	}
 
 	csrPEM, err := CreateCSRWithKey(request, key)
@@ -157,6 +160,7 @@ func TestCreateCSRWithKey_ECDSA_P521(t *testing.T) {
 func TestCreateCSRWithKey_RSA(t *testing.T) {
 	key := csrTestRSAKey(t, 2048)
 	request := &CertificateRequest{
+		TenantID: testTenant,
 		Subject: Subject{
 			CommonName:   "rsa.example.com",
 			Organization: "RSA Test Org",
@@ -194,6 +198,7 @@ func TestCreateCSRWithKey_RSA(t *testing.T) {
 func TestCreateCSRWithKey_Ed25519(t *testing.T) {
 	key := csrTestEd25519Key(t)
 	request := &CertificateRequest{
+		TenantID: testTenant,
 		Subject: Subject{
 			CommonName:   "ed25519.example.com",
 			Organization: "Ed25519 Test Org",
@@ -230,7 +235,8 @@ func TestCreateCSRWithKey_Ed25519(t *testing.T) {
 
 func TestCreateCSRWithKey_NilSigner(t *testing.T) {
 	request := &CertificateRequest{
-		Subject: Subject{CommonName: "test.example.com"},
+		TenantID: testTenant,
+		Subject:  Subject{CommonName: "test.example.com"},
 	}
 
 	_, err := CreateCSRWithKey(request, nil)
@@ -259,6 +265,7 @@ func TestCreateCSRWithKey_NilRequest(t *testing.T) {
 func TestCreateCSRWithKey_MissingCommonName(t *testing.T) {
 	key := csrTestECDSAKey(t, elliptic.P256())
 	request := &CertificateRequest{
+		TenantID: testTenant,
 		Subject: Subject{
 			Organization: "Test Org",
 			// CommonName is intentionally empty
@@ -281,6 +288,7 @@ func TestCreateCSRWithKey_MissingCommonName(t *testing.T) {
 
 func TestBuildCSRTemplate_FullSubject(t *testing.T) {
 	request := &CertificateRequest{
+		TenantID: testTenant,
 		Subject: Subject{
 			CommonName:         "test.example.com",
 			Organization:       "Test Organization",
@@ -326,6 +334,7 @@ func TestBuildCSRTemplate_FullSubject(t *testing.T) {
 
 func TestBuildCSRTemplate_MinimalSubject(t *testing.T) {
 	request := &CertificateRequest{
+		TenantID: testTenant,
 		Subject: Subject{
 			CommonName: "minimal.example.com",
 		},
@@ -346,7 +355,8 @@ func TestBuildCSRTemplate_MinimalSubject(t *testing.T) {
 
 func TestBuildCSRTemplate_WithDNSSANs(t *testing.T) {
 	request := &CertificateRequest{
-		Subject: Subject{CommonName: "test.example.com"},
+		TenantID: testTenant,
+		Subject:  Subject{CommonName: "test.example.com"},
 		SANS: &SubjectAlternativeNames{
 			DNS: []string{"test.example.com", "www.example.com", "api.example.com"},
 		},
@@ -374,7 +384,8 @@ func TestBuildCSRTemplate_WithDNSSANs(t *testing.T) {
 
 func TestBuildCSRTemplate_WithIPSANs(t *testing.T) {
 	request := &CertificateRequest{
-		Subject: Subject{CommonName: "test.example.com"},
+		TenantID: testTenant,
+		Subject:  Subject{CommonName: "test.example.com"},
 		SANS: &SubjectAlternativeNames{
 			IPs: []string{"192.168.1.100", "10.0.0.1", "::1", "2001:db8::1"},
 		},
@@ -404,7 +415,8 @@ func TestBuildCSRTemplate_WithIPSANs(t *testing.T) {
 
 func TestBuildCSRTemplate_WithEmailSANs(t *testing.T) {
 	request := &CertificateRequest{
-		Subject: Subject{CommonName: "user@example.com"},
+		TenantID: testTenant,
+		Subject:  Subject{CommonName: "user@example.com"},
 		SANS: &SubjectAlternativeNames{
 			Email: []string{"user@example.com", "admin@example.com"},
 		},
@@ -431,7 +443,8 @@ func TestBuildCSRTemplate_WithEmailSANs(t *testing.T) {
 
 func TestBuildCSRTemplate_WithURISANs(t *testing.T) {
 	request := &CertificateRequest{
-		Subject: Subject{CommonName: "service.example.com"},
+		TenantID: testTenant,
+		Subject:  Subject{CommonName: "service.example.com"},
 		SANS: &SubjectAlternativeNames{
 			URIs: []string{"https://example.com", "spiffe://cluster.local/ns/default/sa/service"},
 		},
@@ -458,7 +471,8 @@ func TestBuildCSRTemplate_WithURISANs(t *testing.T) {
 
 func TestBuildCSRTemplate_WithAllSANTypes(t *testing.T) {
 	request := &CertificateRequest{
-		Subject: Subject{CommonName: "full.example.com"},
+		TenantID: testTenant,
+		Subject:  Subject{CommonName: "full.example.com"},
 		SANS: &SubjectAlternativeNames{
 			DNS:   []string{"full.example.com", "www.example.com"},
 			IPs:   []string{"192.168.1.1", "10.0.0.1"},
@@ -488,8 +502,9 @@ func TestBuildCSRTemplate_WithAllSANTypes(t *testing.T) {
 
 func TestBuildCSRTemplate_NilSANs(t *testing.T) {
 	request := &CertificateRequest{
-		Subject: Subject{CommonName: "nosans.example.com"},
-		SANS:    nil,
+		TenantID: testTenant,
+		Subject:  Subject{CommonName: "nosans.example.com"},
+		SANS:     nil,
 	}
 
 	template, err := buildCSRTemplate(request)
@@ -769,7 +784,8 @@ func TestEncodeCSRToPEM_ValidDER(t *testing.T) {
 	// Create a valid CSR to get DER bytes
 	key := csrTestECDSAKey(t, elliptic.P256())
 	request := &CertificateRequest{
-		Subject: Subject{CommonName: "test.example.com"},
+		TenantID: testTenant,
+		Subject:  Subject{CommonName: "test.example.com"},
 	}
 
 	template, _ := buildCSRTemplate(request)
@@ -815,7 +831,8 @@ func TestEncodeCSRToPEM_EmptyDER(t *testing.T) {
 
 func TestValidateCSRRequest_Valid(t *testing.T) {
 	request := &CertificateRequest{
-		Subject: Subject{CommonName: "valid.example.com"},
+		TenantID: testTenant,
+		Subject:  Subject{CommonName: "valid.example.com"},
 	}
 	err := validateCSRRequest(request)
 	if err != nil {
@@ -835,6 +852,7 @@ func TestValidateCSRRequest_NilRequest(t *testing.T) {
 
 func TestValidateCSRRequest_EmptyCommonName(t *testing.T) {
 	request := &CertificateRequest{
+		TenantID: testTenant,
 		Subject: Subject{
 			Organization: "Test Org",
 		},
@@ -855,6 +873,7 @@ func TestValidateCSRRequest_EmptyCommonName(t *testing.T) {
 func TestCreateCSRWithKey_FullFlow_ECDSA(t *testing.T) {
 	key := csrTestECDSAKey(t, elliptic.P256())
 	request := &CertificateRequest{
+		TenantID: testTenant,
 		Subject: Subject{
 			CommonName:         "fullflow.example.com",
 			Organization:       "Full Flow Org",
@@ -911,6 +930,7 @@ func TestCreateCSRWithKey_FullFlow_ECDSA(t *testing.T) {
 func TestCreateCSRWithKey_FullFlow_RSA(t *testing.T) {
 	key := csrTestRSAKey(t, 2048)
 	request := &CertificateRequest{
+		TenantID: testTenant,
 		Subject: Subject{
 			CommonName:   "rsaflow.example.com",
 			Organization: "RSA Flow Org",
@@ -943,6 +963,7 @@ func TestCreateCSRWithKey_FullFlow_RSA(t *testing.T) {
 func TestCreateCSRWithKey_FullFlow_Ed25519(t *testing.T) {
 	key := csrTestEd25519Key(t)
 	request := &CertificateRequest{
+		TenantID: testTenant,
 		Subject: Subject{
 			CommonName:   "ed25519flow.example.com",
 			Organization: "Ed25519 Flow Org",
@@ -1036,8 +1057,9 @@ func TestCreateCSRWithKey_TableDriven(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			signer := tt.signerFunc(t)
 			request := &CertificateRequest{
-				Subject: tt.subject,
-				SANS:    tt.sans,
+				TenantID: testTenant,
+				Subject:  tt.subject,
+				SANS:     tt.sans,
 			}
 
 			csrPEM, err := CreateCSRWithKey(request, signer)
@@ -1102,7 +1124,8 @@ func TestCreateCSRWithKey_ErrorHandling(t *testing.T) {
 		{
 			name: "nil signer",
 			request: &CertificateRequest{
-				Subject: Subject{CommonName: "test.example.com"},
+				TenantID: testTenant,
+				Subject:  Subject{CommonName: "test.example.com"},
 			},
 			signer:      nil,
 			expectError: ErrCSRGenerationFailed,
@@ -1110,7 +1133,8 @@ func TestCreateCSRWithKey_ErrorHandling(t *testing.T) {
 		{
 			name: "empty common name",
 			request: &CertificateRequest{
-				Subject: Subject{Organization: "Test Org"},
+				TenantID: testTenant,
+				Subject:  Subject{Organization: "Test Org"},
 			},
 			signer:      csrTestECDSAKey(t, elliptic.P256()),
 			expectError: ErrSubjectCommonNameRequired,
