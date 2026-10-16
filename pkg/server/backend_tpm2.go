@@ -14,8 +14,10 @@
 package server
 
 import (
+	"os"
 	"path/filepath"
 
+	"github.com/jeremyhahn/go-xkms/pkg/attestation/refvalue"
 	tpm2backend "github.com/jeremyhahn/go-xkms/pkg/backend/tpm2"
 	"github.com/jeremyhahn/go-xkms/pkg/compose"
 	"github.com/jeremyhahn/go-xkms/pkg/embeddednode"
@@ -147,12 +149,18 @@ func (s *Server) initTPMPolicyService() error {
 	if err != nil {
 		return err
 	}
+	referenceSigner, err := s.referenceSigner()
+	if err != nil {
+		return err
+	}
 	svc, err := compose.BuildTPMPolicyService(compose.TPMPolicyParams{
 		Backend: backend,
 		DAOs:    daos,
 		NodeID:  s.config.Cluster.NodeID,
 		VTPM:    s.vtpmConfig(),
 		Logger:  s.logger,
+
+		ReferenceSigner: referenceSigner,
 	})
 	if err != nil {
 		return err
@@ -183,6 +191,37 @@ func (s *Server) vtpmConfig() *vtpm.Config {
 		cfg.RunDir = filepath.Join(s.config.Datastore.Path, vtpmRunSubdir)
 	}
 	return cfg
+}
+
+// referenceSigner loads the reference-value signer's endorsement named by
+// backends.tpm2.reference_signer: a pinned public key, or the certificate
+// roots a signer's x5chain must chain to. Unset returns nil, which leaves
+// reference-value branch updates refused (tpmpolicy.ErrNoReferenceSigner).
+func (s *Server) referenceSigner() (*refvalue.VerifyOptions, error) {
+	tpmCfg := s.config.Backends.TPM2
+	if tpmCfg == nil || tpmCfg.ReferenceSigner == nil {
+		return nil, nil
+	}
+	if path := tpmCfg.ReferenceSigner.PublicKey; path != "" {
+		// #nosec G304 - the path comes from validated configuration.
+		data, err := os.ReadFile(path)
+		if err != nil {
+			return nil, &ErrFileRead{Path: path, Err: err}
+		}
+		key, err := parsePublicKey(data)
+		if err != nil {
+			return nil, &ErrFileRead{Path: path, Err: err}
+		}
+		return &refvalue.VerifyOptions{PublicKey: key}, nil
+	}
+	roots, err := loadClientCAsUnion([]string{tpmCfg.ReferenceSigner.Roots})
+	if err != nil {
+		return nil, err
+	}
+	if roots == nil {
+		return nil, ErrReferenceSignerUnset
+	}
+	return &refvalue.VerifyOptions{Roots: roots}, nil
 }
 
 // closeTPMPolicies closes the TPM policy service -- its open scopes and

@@ -425,7 +425,7 @@ func (m *authMockClient) TPMPolicyList(context.Context, *transport.TPMPolicyList
 	return &transport.TPMPolicyListResponse{}, nil
 }
 
-func (m *authMockClient) TPMPolicyUpdate(context.Context, *transport.TPMPolicyRequest) (*transport.TPMPolicy, error) {
+func (m *authMockClient) TPMPolicyUpdate(context.Context, *transport.TPMPolicyUpdateRequest) (*transport.TPMPolicy, error) {
 	return &transport.TPMPolicy{}, nil
 }
 

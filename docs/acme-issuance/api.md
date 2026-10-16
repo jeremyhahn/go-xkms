@@ -156,7 +156,7 @@ enroll-01 validated the order and the CSR's endorsement key and IAK are the ones
 that passed credential activation.
 
 The EK certificate endorse-01 issues uses the `tcg-ek` profile: extended key
-usage tcg-kp-EKCertificate (2.23.133.8.1) (`pkg/ca/profiles.go:506,575`), and
+usage tcg-kp-EKCertificate (2.23.133.8.1) (`pkg/ca/profiles.go:510,590`), and
 the TPM's permanent identifier as an otherName in the subjectAltName
 (`pkg/ca/tcg.go:140`).
 

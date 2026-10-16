@@ -340,7 +340,7 @@ before this layout must be regenerated.
   over `certifyInfo` to verify under the IAK's certified public key, the
   attestation to carry `TPM_GENERATED_VALUE`, and the certified Name to match
   the LAK's public area. The issued certificate follows the WebAuthn Level 2
-  §8.3.1 profile (`ca.NewTCGLocalAttestationKeyProfile`, `profiles.go:709`):
+  §8.3.1 profile (`ca.NewTCGLocalAttestationKeyProfile`, `profiles.go:717`):
   empty Subject, a critical subjectAltName directoryName carrying
   tcg-at-tpmManufacturer/tpmModel/tpmVersion, the tcg-kp-AIKCertificate EKU
   alone (no TLS purposes, no TCG certificate policies — this is not a TCG

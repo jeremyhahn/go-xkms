@@ -18,6 +18,7 @@ import (
 	"crypto"
 	"encoding/binary"
 	"errors"
+	"strings"
 	"testing"
 
 	"github.com/google/go-tpm/tpm2"
@@ -169,6 +170,61 @@ func TestReplay_Failures(t *testing.T) {
 	wantClass(t, VerifyEventLog(nil, tpm2.TPMAlgSHA256, map[int][]byte{0: nil}), ClassAbsent, CheckEventLog, "no event log")
 	wantClass(t, VerifyEventLog(log, tpm2.TPMAlgSHA256, nil), ClassAbsent, CheckEventLog, "no quoted PCR")
 	wantClass(t, VerifyEventLog(log, tpm2.TPMAlgSHA1, map[int][]byte{0: nil}), ClassAbsent, CheckEventLog, "not accepted")
+}
+
+func TestReplayWith_SubstitutesInPlace(t *testing.T) {
+	log, err := ParseEventLog(sampleLog())
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, bank := range []tpm2.TPMAlgID{tpm2.TPMAlgSHA256, tpm2.TPMAlgSHA384} {
+		h := algHash[bank]
+		component := digestOf(h, []byte("secureboot-v2"))
+		got, err := log.ReplayWith(bank, []Substitution{{PCR: 7, Ordinal: 0, Digest: component}})
+		if err != nil {
+			t.Fatalf("ReplayWith(%v): %v", bank, err)
+		}
+		// The replaced event is followed by the recorded separator.
+		x := h.New()
+		x.Write(make([]byte, h.Size()))
+		x.Write(component)
+		want7 := extend(h, x.Sum(nil), []byte{0, 0, 0, 0})
+		if !bytes.Equal(got[7], want7) {
+			t.Fatalf("ReplayWith(%v) PCR 7 = %x, want %x", bank, got[7], want7)
+		}
+		if !bytes.Equal(got[0], expectedPCRs(h)[0]) {
+			t.Fatalf("ReplayWith(%v) changed PCR 0, which no substitution names", bank)
+		}
+	}
+}
+
+func TestReplayWith_Refusals(t *testing.T) {
+	log, err := ParseEventLog(sampleLog())
+	if err != nil {
+		t.Fatal(err)
+	}
+	digest := digestOf(crypto.SHA256, []byte("x"))
+	tests := []struct {
+		name string
+		subs []Substitution
+		want string
+	}{
+		{"wrong length", []Substitution{{PCR: 7, Ordinal: 0, Digest: digest[:20]}}, "digest length"},
+		{"twice", []Substitution{{PCR: 7, Ordinal: 0, Digest: digest}, {PCR: 7, Ordinal: 0, Digest: digest}}, "substituted twice"},
+		{"beyond the PCR's events", []Substitution{{PCR: 7, Ordinal: 2, Digest: digest}}, "no such event"},
+		{"PCR the log never extends", []Substitution{{PCR: 9, Ordinal: 0, Digest: digest}}, "no such event"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			_, err := log.ReplayWith(tpm2.TPMAlgSHA256, tt.subs)
+			var subErr *SubstitutionError
+			if !errors.As(err, &subErr) || !strings.Contains(subErr.Error(), tt.want) {
+				t.Fatalf("ReplayWith = %v, want *SubstitutionError containing %q", err, tt.want)
+			}
+		})
+	}
+	_, err = log.ReplayWith(tpm2.TPMAlgSHA1, []Substitution{{PCR: 7, Digest: digest}})
+	wantClass(t, err, ClassAbsent, CheckEventLog, "not accepted for replay")
 }
 
 func TestResetValue(t *testing.T) {

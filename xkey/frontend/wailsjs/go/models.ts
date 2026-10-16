@@ -5800,6 +5800,24 @@ export namespace transport {
 	        this.name = source["name"];
 	    }
 	}
+	export class TPMPolicyReference {
+	    id?: string;
+	    profile?: string;
+	    signer?: string;
+	    digest: number[];
+	
+	    static createFrom(source: any = {}) {
+	        return new TPMPolicyReference(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.id = source["id"];
+	        this.profile = source["profile"];
+	        this.signer = source["signer"];
+	        this.digest = source["digest"];
+	    }
+	}
 	export class TPMPolicyCondition {
 	    type: string;
 	    bank?: string;
@@ -5825,6 +5843,7 @@ export namespace transport {
 	export class TPMPolicyBranch {
 	    conditions: TPMPolicyCondition[];
 	    approved: boolean;
+	    reference?: TPMPolicyReference;
 	
 	    static createFrom(source: any = {}) {
 	        return new TPMPolicyBranch(source);
@@ -5834,6 +5853,7 @@ export namespace transport {
 	        if ('string' === typeof source) source = JSON.parse(source);
 	        this.conditions = this.convertValues(source["conditions"], TPMPolicyCondition);
 	        this.approved = source["approved"];
+	        this.reference = this.convertValues(source["reference"], TPMPolicyReference);
 	    }
 	
 		convertValues(a: any, classs: any, asMap: boolean = false): any {
@@ -5858,6 +5878,7 @@ export namespace transport {
 	    match: boolean;
 	    mismatched?: number[];
 	    approved: boolean;
+	    reference?: TPMPolicyReference;
 	
 	    static createFrom(source: any = {}) {
 	        return new TPMPolicyBranchVerification(source);
@@ -5868,8 +5889,28 @@ export namespace transport {
 	        this.match = source["match"];
 	        this.mismatched = source["mismatched"];
 	        this.approved = source["approved"];
+	        this.reference = this.convertValues(source["reference"], TPMPolicyReference);
 	    }
+	
+		convertValues(a: any, classs: any, asMap: boolean = false): any {
+		    if (!a) {
+		        return a;
+		    }
+		    if (a.slice && a.map) {
+		        return (a as any[]).map(elem => this.convertValues(elem, classs));
+		    } else if ("object" === typeof a) {
+		        if (asMap) {
+		            for (const key of Object.keys(a)) {
+		                a[key] = new classs(a[key]);
+		            }
+		            return a;
+		        }
+		        return new classs(a);
+		    }
+		    return a;
+		}
 	}
+	
 
 }
 

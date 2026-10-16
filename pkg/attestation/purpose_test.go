@@ -25,7 +25,6 @@ import (
 	"time"
 
 	"github.com/jeremyhahn/go-xkms/pkg/attestation/truststore"
-	"github.com/jeremyhahn/go-xkms/xkey/pkg/pairing"
 )
 
 // --- Mock trust store ---
@@ -239,26 +238,46 @@ func generateLeafCert(t *testing.T, signer *testCA, cn string) *x509.Certificate
 	return cert
 }
 
-// --- NewVerifier tests ---
+// --- WithTrustStore tests ---
 
-func TestNewVerifier_Success(t *testing.T) {
+func TestWithTrustStore_BacksPurposeChecks(t *testing.T) {
+	rootCA := generateTestCA(t, "Store Root CA")
 	store := newMockTrustStore()
-	v, err := NewVerifier(store, nil)
+	store.addCertForPurpose(rootCA.cert, truststore.PurposeTPMManufacturer)
+
+	v := NewVerifier(nil, WithTrustStore(store, nil))
+
+	pool, err := v.BuildTrustPool(truststore.PurposeTPMManufacturer)
 	if err != nil {
-		t.Fatalf("NewVerifier() unexpected error: %v", err)
+		t.Fatalf("BuildTrustPool() error: %v", err)
 	}
-	if v == nil {
-		t.Fatal("NewVerifier() returned nil verifier")
+	if pool == nil {
+		t.Fatal("BuildTrustPool() returned nil pool")
 	}
 }
 
-func TestNewVerifier_NilStore(t *testing.T) {
-	v, err := NewVerifier(nil, nil)
-	if !errors.Is(err, ErrNilTrustStore) {
-		t.Errorf("NewVerifier(nil) error = %v, want %v", err, ErrNilTrustStore)
+// TestNewVerifier_WithoutTrustStoreRefusesPurposeChecks pins that a verifier
+// built only for attestation statements refuses every purpose-pooled check
+// rather than dereferencing a missing store.
+func TestNewVerifier_WithoutTrustStoreRefusesPurposeChecks(t *testing.T) {
+	v := NewVerifier(nil)
+	ca := generateTestCA(t, "Some CA")
+	leaf := generateLeafCert(t, ca, "Leaf")
+
+	if _, err := v.BuildTrustPool(truststore.PurposeTPMManufacturer); !errors.Is(err, ErrNilTrustStore) {
+		t.Errorf("BuildTrustPool() error = %v, want %v", err, ErrNilTrustStore)
 	}
-	if v != nil {
-		t.Error("NewVerifier(nil) returned non-nil verifier")
+	if _, err := v.VerifyTPMAttestation(leaf); !errors.Is(err, ErrNilTrustStore) {
+		t.Errorf("VerifyTPMAttestation() error = %v, want %v", err, ErrNilTrustStore)
+	}
+	if _, err := v.VerifyIDevID(leaf); !errors.Is(err, ErrNilTrustStore) {
+		t.Errorf("VerifyIDevID() error = %v, want %v", err, ErrNilTrustStore)
+	}
+	if _, err := v.VerifyAndroidAttestation([]*x509.Certificate{leaf}, []byte("nonce")); !errors.Is(err, ErrNilTrustStore) {
+		t.Errorf("VerifyAndroidAttestation() error = %v, want %v", err, ErrNilTrustStore)
+	}
+	if _, err := v.VerifyPurposeChain([]*x509.Certificate{leaf}, truststore.PurposeGeneral); !errors.Is(err, ErrNilTrustStore) {
+		t.Errorf("VerifyPurposeChain() error = %v, want %v", err, ErrNilTrustStore)
 	}
 }
 
@@ -270,10 +289,7 @@ func TestVerifyTPMAttestation_Success(t *testing.T) {
 	store := newMockTrustStore()
 	store.addCertForPurpose(rootCA.cert, truststore.PurposeTPMManufacturer)
 
-	v, err := NewVerifier(store, nil)
-	if err != nil {
-		t.Fatalf("NewVerifier() error: %v", err)
-	}
+	v := NewVerifier(nil, WithTrustStore(store, nil))
 
 	ekCert := generateLeafCert(t, rootCA, "TPM EK Certificate")
 
@@ -304,10 +320,7 @@ func TestVerifyTPMAttestation_WithEmbeddedRoots(t *testing.T) {
 		return nil
 	}
 
-	v, err := NewVerifier(store, loader)
-	if err != nil {
-		t.Fatalf("NewVerifier() error: %v", err)
-	}
+	v := NewVerifier(nil, WithTrustStore(store, loader))
 
 	ekCert := generateLeafCert(t, rootCA, "TPM EK via Embedded")
 
@@ -325,12 +338,9 @@ func TestVerifyTPMAttestation_WithEmbeddedRoots(t *testing.T) {
 
 func TestVerifyTPMAttestation_NilCert(t *testing.T) {
 	store := newMockTrustStore()
-	v, err := NewVerifier(store, nil)
-	if err != nil {
-		t.Fatalf("NewVerifier() error: %v", err)
-	}
+	v := NewVerifier(nil, WithTrustStore(store, nil))
 
-	_, err = v.VerifyTPMAttestation(nil)
+	_, err := v.VerifyTPMAttestation(nil)
 	if !errors.Is(err, ErrNilCertificate) {
 		t.Errorf("VerifyTPMAttestation(nil) error = %v, want %v", err, ErrNilCertificate)
 	}
@@ -338,15 +348,12 @@ func TestVerifyTPMAttestation_NilCert(t *testing.T) {
 
 func TestVerifyTPMAttestation_NoAnchors(t *testing.T) {
 	store := newMockTrustStore()
-	v, err := NewVerifier(store, nil)
-	if err != nil {
-		t.Fatalf("NewVerifier() error: %v", err)
-	}
+	v := NewVerifier(nil, WithTrustStore(store, nil))
 
 	unrelatedCA := generateTestCA(t, "Unrelated CA")
 	ekCert := generateLeafCert(t, unrelatedCA, "Orphan EK")
 
-	_, err = v.VerifyTPMAttestation(ekCert)
+	_, err := v.VerifyTPMAttestation(ekCert)
 	if !errors.Is(err, ErrNoTrustAnchors) {
 		t.Errorf("VerifyTPMAttestation() error = %v, want %v", err, ErrNoTrustAnchors)
 	}
@@ -359,17 +366,14 @@ func TestVerifyTPMAttestation_InvalidChain(t *testing.T) {
 	store := newMockTrustStore()
 	store.addCertForPurpose(trustedCA.cert, truststore.PurposeTPMManufacturer)
 
-	v, err := NewVerifier(store, nil)
-	if err != nil {
-		t.Fatalf("NewVerifier() error: %v", err)
-	}
+	v := NewVerifier(nil, WithTrustStore(store, nil))
 
 	// Leaf signed by untrusted CA, not by the one in the store.
 	ekCert := generateLeafCert(t, untrustedCA, "Wrong Issuer EK")
 
 	result, err := v.VerifyTPMAttestation(ekCert)
-	if !errors.Is(err, ErrChainVerification) {
-		t.Errorf("VerifyTPMAttestation() error = %v, want %v", err, ErrChainVerification)
+	if !errors.Is(err, ErrChainVerificationFailed) {
+		t.Errorf("VerifyTPMAttestation() error = %v, want %v", err, ErrChainVerificationFailed)
 	}
 	if result == nil {
 		t.Fatal("VerifyTPMAttestation() returned nil result on failure")
@@ -384,15 +388,12 @@ func TestVerifyTPMAttestation_StoreError(t *testing.T) {
 	store := newMockTrustStore()
 	store.err = storeErr
 
-	v, err := NewVerifier(store, nil)
-	if err != nil {
-		t.Fatalf("NewVerifier() error: %v", err)
-	}
+	v := NewVerifier(nil, WithTrustStore(store, nil))
 
 	ca := generateTestCA(t, "Some CA")
 	ekCert := generateLeafCert(t, ca, "EK")
 
-	_, err = v.VerifyTPMAttestation(ekCert)
+	_, err := v.VerifyTPMAttestation(ekCert)
 	if !errors.Is(err, ErrTrustStoreQuery) {
 		t.Errorf("VerifyTPMAttestation() error = %v, want %v", err, ErrTrustStoreQuery)
 	}
@@ -410,10 +411,7 @@ func TestVerifyAndroidAttestation_Success(t *testing.T) {
 	store := newMockTrustStore()
 	store.addCertForPurpose(rootCA.cert, truststore.PurposeAndroidHardware)
 
-	v, err := NewVerifier(store, nil)
-	if err != nil {
-		t.Fatalf("NewVerifier() error: %v", err)
-	}
+	v := NewVerifier(nil, WithTrustStore(store, nil))
 
 	chain := []*x509.Certificate{leaf, intermediateCA.cert, rootCA.cert}
 
@@ -438,10 +436,7 @@ func TestVerifyAndroidAttestation_TwoCertChain(t *testing.T) {
 	store := newMockTrustStore()
 	store.addCertForPurpose(rootCA.cert, truststore.PurposeAndroidHardware)
 
-	v, err := NewVerifier(store, nil)
-	if err != nil {
-		t.Fatalf("NewVerifier() error: %v", err)
-	}
+	v := NewVerifier(nil, WithTrustStore(store, nil))
 
 	chain := []*x509.Certificate{leaf, rootCA.cert}
 
@@ -456,19 +451,16 @@ func TestVerifyAndroidAttestation_TwoCertChain(t *testing.T) {
 
 func TestVerifyAndroidAttestation_EmptyChain(t *testing.T) {
 	store := newMockTrustStore()
-	v, err := NewVerifier(store, nil)
-	if err != nil {
-		t.Fatalf("NewVerifier() error: %v", err)
-	}
+	v := NewVerifier(nil, WithTrustStore(store, nil))
 
-	_, err = v.VerifyAndroidAttestation(nil, nil)
-	if !errors.Is(err, ErrEmptyCertChain) {
-		t.Errorf("VerifyAndroidAttestation(nil) error = %v, want %v", err, ErrEmptyCertChain)
+	_, err := v.VerifyAndroidAttestation(nil, nil)
+	if !errors.Is(err, ErrEmptyCertificateChain) {
+		t.Errorf("VerifyAndroidAttestation(nil) error = %v, want %v", err, ErrEmptyCertificateChain)
 	}
 
 	_, err = v.VerifyAndroidAttestation([]*x509.Certificate{}, nil)
-	if !errors.Is(err, ErrEmptyCertChain) {
-		t.Errorf("VerifyAndroidAttestation([]) error = %v, want %v", err, ErrEmptyCertChain)
+	if !errors.Is(err, ErrEmptyCertificateChain) {
+		t.Errorf("VerifyAndroidAttestation([]) error = %v, want %v", err, ErrEmptyCertificateChain)
 	}
 }
 
@@ -481,10 +473,7 @@ func TestVerifyAndroidAttestation_SingleCert(t *testing.T) {
 	store := newMockTrustStore()
 	store.addCertForPurpose(rootCA.cert, truststore.PurposeAndroidHardware)
 
-	v, err := NewVerifier(store, nil)
-	if err != nil {
-		t.Fatalf("NewVerifier() error: %v", err)
-	}
+	v := NewVerifier(nil, WithTrustStore(store, nil))
 
 	chain := []*x509.Certificate{rootCA.cert}
 
@@ -504,18 +493,15 @@ func TestVerifyAndroidAttestation_InvalidChain(t *testing.T) {
 	store := newMockTrustStore()
 	store.addCertForPurpose(trustedCA.cert, truststore.PurposeAndroidHardware)
 
-	v, err := NewVerifier(store, nil)
-	if err != nil {
-		t.Fatalf("NewVerifier() error: %v", err)
-	}
+	v := NewVerifier(nil, WithTrustStore(store, nil))
 
 	challenge := []byte("challenge-generated-by-this-host")
 	leaf := generateAttestedLeaf(t, untrustedCA, "Wrong Android Leaf", challenge, androidSecurityLevelTrustedEnv)
 	chain := []*x509.Certificate{leaf}
 
 	result, err := v.VerifyAndroidAttestation(chain, challenge)
-	if !errors.Is(err, ErrChainVerification) {
-		t.Errorf("error = %v, want %v", err, ErrChainVerification)
+	if !errors.Is(err, ErrChainVerificationFailed) {
+		t.Errorf("error = %v, want %v", err, ErrChainVerificationFailed)
 	}
 	if result == nil {
 		t.Fatal("returned nil result on failure")
@@ -535,10 +521,7 @@ func TestVerifyAndroidAttestation_WithNonce(t *testing.T) {
 	store := newMockTrustStore()
 	store.addCertForPurpose(rootCA.cert, truststore.PurposeAndroidHardware)
 
-	v, err := NewVerifier(store, nil)
-	if err != nil {
-		t.Fatalf("NewVerifier() error: %v", err)
-	}
+	v := NewVerifier(nil, WithTrustStore(store, nil))
 
 	chain := []*x509.Certificate{leaf, rootCA.cert}
 
@@ -559,10 +542,7 @@ func TestVerifyIDevID_Success(t *testing.T) {
 	store := newMockTrustStore()
 	store.addCertForPurpose(rootCA.cert, truststore.PurposeIDevIDIssuer)
 
-	v, err := NewVerifier(store, nil)
-	if err != nil {
-		t.Fatalf("NewVerifier() error: %v", err)
-	}
+	v := NewVerifier(nil, WithTrustStore(store, nil))
 
 	idevidCert := generateLeafCert(t, rootCA, "Device IDevID")
 
@@ -580,12 +560,9 @@ func TestVerifyIDevID_Success(t *testing.T) {
 
 func TestVerifyIDevID_NilCert(t *testing.T) {
 	store := newMockTrustStore()
-	v, err := NewVerifier(store, nil)
-	if err != nil {
-		t.Fatalf("NewVerifier() error: %v", err)
-	}
+	v := NewVerifier(nil, WithTrustStore(store, nil))
 
-	_, err = v.VerifyIDevID(nil)
+	_, err := v.VerifyIDevID(nil)
 	if !errors.Is(err, ErrNilCertificate) {
 		t.Errorf("VerifyIDevID(nil) error = %v, want %v", err, ErrNilCertificate)
 	}
@@ -598,16 +575,13 @@ func TestVerifyIDevID_InvalidChain(t *testing.T) {
 	store := newMockTrustStore()
 	store.addCertForPurpose(trustedCA.cert, truststore.PurposeIDevIDIssuer)
 
-	v, err := NewVerifier(store, nil)
-	if err != nil {
-		t.Fatalf("NewVerifier() error: %v", err)
-	}
+	v := NewVerifier(nil, WithTrustStore(store, nil))
 
 	cert := generateLeafCert(t, untrustedCA, "Wrong IDevID")
 
 	result, err := v.VerifyIDevID(cert)
-	if !errors.Is(err, ErrChainVerification) {
-		t.Errorf("error = %v, want %v", err, ErrChainVerification)
+	if !errors.Is(err, ErrChainVerificationFailed) {
+		t.Errorf("error = %v, want %v", err, ErrChainVerificationFailed)
 	}
 	if result == nil {
 		t.Fatal("returned nil result on failure")
@@ -619,21 +593,18 @@ func TestVerifyIDevID_InvalidChain(t *testing.T) {
 
 func TestVerifyIDevID_NoAnchors(t *testing.T) {
 	store := newMockTrustStore()
-	v, err := NewVerifier(store, nil)
-	if err != nil {
-		t.Fatalf("NewVerifier() error: %v", err)
-	}
+	v := NewVerifier(nil, WithTrustStore(store, nil))
 
 	ca := generateTestCA(t, "Some CA")
 	cert := generateLeafCert(t, ca, "Orphan IDevID")
 
-	_, err = v.VerifyIDevID(cert)
+	_, err := v.VerifyIDevID(cert)
 	if !errors.Is(err, ErrNoTrustAnchors) {
 		t.Errorf("error = %v, want %v", err, ErrNoTrustAnchors)
 	}
 }
 
-// --- VerifyChain tests ---
+// --- VerifyPurposeChain tests ---
 
 func TestVerifyChain_Success(t *testing.T) {
 	rootCA := generateTestCA(t, "User CA Root")
@@ -643,16 +614,13 @@ func TestVerifyChain_Success(t *testing.T) {
 	store := newMockTrustStore()
 	store.addCertForPurpose(rootCA.cert, truststore.PurposeUserCA)
 
-	v, err := NewVerifier(store, nil)
-	if err != nil {
-		t.Fatalf("NewVerifier() error: %v", err)
-	}
+	v := NewVerifier(nil, WithTrustStore(store, nil))
 
 	chain := []*x509.Certificate{leaf, intermediateCA.cert}
 
-	result, err := v.VerifyChain(chain, truststore.PurposeUserCA)
+	result, err := v.VerifyPurposeChain(chain, truststore.PurposeUserCA)
 	if err != nil {
-		t.Fatalf("VerifyChain() error: %v", err)
+		t.Fatalf("VerifyPurposeChain() error: %v", err)
 	}
 	if !result.Verified {
 		t.Error("Verified = false, want true")
@@ -664,35 +632,29 @@ func TestVerifyChain_Success(t *testing.T) {
 
 func TestVerifyChain_EmptyChain(t *testing.T) {
 	store := newMockTrustStore()
-	v, err := NewVerifier(store, nil)
-	if err != nil {
-		t.Fatalf("NewVerifier() error: %v", err)
+	v := NewVerifier(nil, WithTrustStore(store, nil))
+
+	_, err := v.VerifyPurposeChain(nil, truststore.PurposeGeneral)
+	if !errors.Is(err, ErrEmptyCertificateChain) {
+		t.Errorf("VerifyPurposeChain(nil) error = %v, want %v", err, ErrEmptyCertificateChain)
 	}
 
-	_, err = v.VerifyChain(nil, truststore.PurposeGeneral)
-	if !errors.Is(err, ErrEmptyCertChain) {
-		t.Errorf("VerifyChain(nil) error = %v, want %v", err, ErrEmptyCertChain)
-	}
-
-	_, err = v.VerifyChain([]*x509.Certificate{}, truststore.PurposeGeneral)
-	if !errors.Is(err, ErrEmptyCertChain) {
-		t.Errorf("VerifyChain([]) error = %v, want %v", err, ErrEmptyCertChain)
+	_, err = v.VerifyPurposeChain([]*x509.Certificate{}, truststore.PurposeGeneral)
+	if !errors.Is(err, ErrEmptyCertificateChain) {
+		t.Errorf("VerifyPurposeChain([]) error = %v, want %v", err, ErrEmptyCertificateChain)
 	}
 }
 
 func TestVerifyChain_UnsupportedPurpose(t *testing.T) {
 	store := newMockTrustStore()
-	v, err := NewVerifier(store, nil)
-	if err != nil {
-		t.Fatalf("NewVerifier() error: %v", err)
-	}
+	v := NewVerifier(nil, WithTrustStore(store, nil))
 
 	ca := generateTestCA(t, "CA")
 	leaf := generateLeafCert(t, ca, "Leaf")
 
-	_, err = v.VerifyChain([]*x509.Certificate{leaf}, truststore.CertPurpose("invalid-purpose"))
+	_, err := v.VerifyPurposeChain([]*x509.Certificate{leaf}, truststore.CertPurpose("invalid-purpose"))
 	if !errors.Is(err, ErrUnsupportedPurpose) {
-		t.Errorf("VerifyChain() error = %v, want %v", err, ErrUnsupportedPurpose)
+		t.Errorf("VerifyPurposeChain() error = %v, want %v", err, ErrUnsupportedPurpose)
 	}
 }
 
@@ -703,16 +665,13 @@ func TestVerifyChain_SingleLeafInStore(t *testing.T) {
 	store := newMockTrustStore()
 	store.addCertForPurpose(rootCA.cert, truststore.PurposeBootstrapCA)
 
-	v, err := NewVerifier(store, nil)
-	if err != nil {
-		t.Fatalf("NewVerifier() error: %v", err)
-	}
+	v := NewVerifier(nil, WithTrustStore(store, nil))
 
 	chain := []*x509.Certificate{leaf}
 
-	result, err := v.VerifyChain(chain, truststore.PurposeBootstrapCA)
+	result, err := v.VerifyPurposeChain(chain, truststore.PurposeBootstrapCA)
 	if err != nil {
-		t.Fatalf("VerifyChain() error: %v", err)
+		t.Fatalf("VerifyPurposeChain() error: %v", err)
 	}
 	if !result.Verified {
 		t.Error("Verified = false, want true")
@@ -729,17 +688,14 @@ func TestVerifyChain_InvalidChain(t *testing.T) {
 	store := newMockTrustStore()
 	store.addCertForPurpose(trustedCA.cert, truststore.PurposeGeneral)
 
-	v, err := NewVerifier(store, nil)
-	if err != nil {
-		t.Fatalf("NewVerifier() error: %v", err)
-	}
+	v := NewVerifier(nil, WithTrustStore(store, nil))
 
 	leaf := generateLeafCert(t, untrustedCA, "Wrong Leaf")
 	chain := []*x509.Certificate{leaf}
 
-	result, err := v.VerifyChain(chain, truststore.PurposeGeneral)
-	if !errors.Is(err, ErrChainVerification) {
-		t.Errorf("error = %v, want %v", err, ErrChainVerification)
+	result, err := v.VerifyPurposeChain(chain, truststore.PurposeGeneral)
+	if !errors.Is(err, ErrChainVerificationFailed) {
+		t.Errorf("error = %v, want %v", err, ErrChainVerificationFailed)
 	}
 	if result == nil {
 		t.Fatal("returned nil result on failure")
@@ -749,7 +705,7 @@ func TestVerifyChain_InvalidChain(t *testing.T) {
 	}
 }
 
-// --- buildTrustPool tests ---
+// --- BuildTrustPool tests ---
 
 func TestBuildTrustPool_MergesStoreAndEmbedded(t *testing.T) {
 	storeCA := generateTestCA(t, "Store Root CA")
@@ -765,10 +721,7 @@ func TestBuildTrustPool_MergesStoreAndEmbedded(t *testing.T) {
 		return nil
 	}
 
-	v, err := NewVerifier(store, loader)
-	if err != nil {
-		t.Fatalf("NewVerifier() error: %v", err)
-	}
+	v := NewVerifier(nil, WithTrustStore(store, loader))
 
 	// Verify a cert signed by the store CA.
 	storeLeaf := generateLeafCert(t, storeCA, "Store Leaf")
@@ -803,10 +756,7 @@ func TestBuildTrustPool_EmptyStoreWithLoader(t *testing.T) {
 		return nil
 	}
 
-	v, err := NewVerifier(store, loader)
-	if err != nil {
-		t.Fatalf("NewVerifier() error: %v", err)
-	}
+	v := NewVerifier(nil, WithTrustStore(store, loader))
 
 	challenge := []byte("challenge-generated-by-this-host")
 	leaf := generateAttestedLeaf(t, embeddedCA, "Embedded-Only Leaf", challenge, androidSecurityLevelTrustedEnv)
@@ -829,15 +779,12 @@ func TestBuildTrustPool_NoAnchors(t *testing.T) {
 		return nil
 	}
 
-	v, err := NewVerifier(store, loader)
-	if err != nil {
-		t.Fatalf("NewVerifier() error: %v", err)
-	}
+	v := NewVerifier(nil, WithTrustStore(store, loader))
 
 	ca := generateTestCA(t, "Orphan CA")
 	cert := generateLeafCert(t, ca, "Orphan Leaf")
 
-	_, err = v.VerifyTPMAttestation(cert)
+	_, err := v.VerifyTPMAttestation(cert)
 	if !errors.Is(err, ErrNoTrustAnchors) {
 		t.Errorf("error = %v, want %v", err, ErrNoTrustAnchors)
 	}
@@ -848,15 +795,12 @@ func TestBuildTrustPool_StoreError(t *testing.T) {
 	store := newMockTrustStore()
 	store.err = storeErr
 
-	v, err := NewVerifier(store, nil)
-	if err != nil {
-		t.Fatalf("NewVerifier() error: %v", err)
-	}
+	v := NewVerifier(nil, WithTrustStore(store, nil))
 
 	ca := generateTestCA(t, "Some CA")
 	cert := generateLeafCert(t, ca, "Leaf")
 
-	_, err = v.VerifyIDevID(cert)
+	_, err := v.VerifyIDevID(cert)
 	if !errors.Is(err, ErrTrustStoreQuery) {
 		t.Errorf("error = %v, want %v", err, ErrTrustStoreQuery)
 	}
@@ -899,10 +843,7 @@ func TestVerificationResult_FailureFields(t *testing.T) {
 	store := newMockTrustStore()
 	store.addCertForPurpose(trustedCA.cert, truststore.PurposeTPMManufacturer)
 
-	v, err := NewVerifier(store, nil)
-	if err != nil {
-		t.Fatalf("NewVerifier() error: %v", err)
-	}
+	v := NewVerifier(nil, WithTrustStore(store, nil))
 
 	ekCert := generateLeafCert(t, untrustedCA, "Bad EK Cert")
 
@@ -933,10 +874,7 @@ func TestVerificationResult_SuccessFields(t *testing.T) {
 	store := newMockTrustStore()
 	store.addCertForPurpose(rootCA.cert, truststore.PurposeTPMManufacturer)
 
-	v, err := NewVerifier(store, nil)
-	if err != nil {
-		t.Fatalf("NewVerifier() error: %v", err)
-	}
+	v := NewVerifier(nil, WithTrustStore(store, nil))
 
 	ekCert := generateLeafCert(t, rootCA, "Good EK")
 
@@ -968,16 +906,13 @@ func TestVerifyChain_ThreeLevelChain(t *testing.T) {
 	store := newMockTrustStore()
 	store.addCertForPurpose(rootCA.cert, truststore.PurposeUserCA)
 
-	v, err := NewVerifier(store, nil)
-	if err != nil {
-		t.Fatalf("NewVerifier() error: %v", err)
-	}
+	v := NewVerifier(nil, WithTrustStore(store, nil))
 
 	chain := []*x509.Certificate{leaf, intermediateCA.cert}
 
-	result, err := v.VerifyChain(chain, truststore.PurposeUserCA)
+	result, err := v.VerifyPurposeChain(chain, truststore.PurposeUserCA)
 	if err != nil {
-		t.Fatalf("VerifyChain() error: %v", err)
+		t.Fatalf("VerifyPurposeChain() error: %v", err)
 	}
 	if !result.Verified {
 		t.Error("Verified = false, want true")
@@ -997,10 +932,7 @@ func TestVerifyAndroidAttestation_ThreeLevelChain(t *testing.T) {
 	store := newMockTrustStore()
 	store.addCertForPurpose(rootCA.cert, truststore.PurposeAndroidHardware)
 
-	v, err := NewVerifier(store, nil)
-	if err != nil {
-		t.Fatalf("NewVerifier() error: %v", err)
-	}
+	v := NewVerifier(nil, WithTrustStore(store, nil))
 
 	chain := []*x509.Certificate{leaf, intermediateCA.cert, rootCA.cert}
 
@@ -1032,10 +964,7 @@ func TestEmbeddedLoader_PurposeFiltering(t *testing.T) {
 		return purposeRoots[purpose]
 	}
 
-	v, err := NewVerifier(store, loader)
-	if err != nil {
-		t.Fatalf("NewVerifier() error: %v", err)
-	}
+	v := NewVerifier(nil, WithTrustStore(store, loader))
 
 	// TPM leaf should verify against TPM embedded root.
 	tpmLeaf := generateLeafCert(t, tpmCA, "TPM Leaf")
@@ -1070,101 +999,6 @@ func TestEmbeddedLoader_PurposeFiltering(t *testing.T) {
 	}
 }
 
-// --- LoadTrust tests ---
-//
-// LoadTrust (device.go) is the entry point every pairing surface calls
-// before asking a phone for an attestation (see the "load it BEFORE asking"
-// note on the function itself). Both of its failure branches must refuse
-// fatally rather than hand the caller unjudgeable trust material.
-
-// TestLoadTrust_NilStoreRefuses pins the first failure branch: a nil store
-// makes NewVerifier refuse, and LoadTrust must surface that as its own
-// umbrella refusal rather than panicking on a nil receiver later.
-func TestLoadTrust_NilStoreRefuses(t *testing.T) {
-	trust, err := LoadTrust(nil, testApplications())
-
-	if err == nil {
-		t.Fatal("LoadTrust(nil) succeeded, want a refusal")
-	}
-	if !errors.Is(err, ErrDeviceAttestVerifyFailed) {
-		t.Errorf("error = %v, want wrapping %v", err, ErrDeviceAttestVerifyFailed)
-	}
-	if !errors.Is(err, ErrNilTrustStore) {
-		t.Errorf("error = %v, want wrapping %v", err, ErrNilTrustStore)
-	}
-	if trust != nil {
-		t.Error("LoadTrust returned non-nil trust material on failure")
-	}
-}
-
-// TestLoadTrust_StoreQueryFailureRefuses pins the second failure branch: a
-// store that cannot answer the Android-hardware query must refuse rather
-// than silently proceed on the embedded roots alone.
-func TestLoadTrust_StoreQueryFailureRefuses(t *testing.T) {
-	storeErr := errors.New("trust store unavailable")
-	store := newMockTrustStore()
-	store.err = storeErr
-
-	trust, err := LoadTrust(store, testApplications())
-
-	if err == nil {
-		t.Fatal("LoadTrust succeeded against a broken store, want a refusal")
-	}
-	if !errors.Is(err, ErrDeviceAttestVerifyFailed) {
-		t.Errorf("error = %v, want wrapping %v", err, ErrDeviceAttestVerifyFailed)
-	}
-	if !errors.Is(err, ErrTrustStoreQuery) {
-		t.Errorf("error = %v, want wrapping %v", err, ErrTrustStoreQuery)
-	}
-	if trust != nil {
-		t.Error("LoadTrust returned non-nil trust material on failure")
-	}
-}
-
-// testApplications is a configured allow-list, so the LoadTrust tests reach
-// the branch they name rather than the unconfigured-policy refusal.
-func testApplications() pairing.ApplicationPolicy {
-	return pairing.ApplicationPolicy{AllowedApplications: []pairing.AllowedApplication{{
-		PackageName:    "com.automatethethings.xkey",
-		SigningDigests: []string{"5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a"},
-	}}}
-}
-
-// TestLoadTrust_UnconfiguredApplicationsRefuses pins #1305's early refusal:
-// with no application allow-listed, LoadTrust refuses before any phone is
-// asked for evidence it could only reject, naming the missing configuration.
-func TestLoadTrust_UnconfiguredApplicationsRefuses(t *testing.T) {
-	trust, err := LoadTrust(newMockTrustStore(), pairing.ApplicationPolicy{})
-
-	if !errors.Is(err, ErrDeviceAttestVerifyFailed) {
-		t.Errorf("error = %v, want wrapping %v", err, ErrDeviceAttestVerifyFailed)
-	}
-	if !errors.Is(err, pairing.ErrApplicationPolicyUnconfigured) {
-		t.Errorf("error = %v, want wrapping %v", err, pairing.ErrApplicationPolicyUnconfigured)
-	}
-	if trust != nil {
-		t.Error("LoadTrust returned non-nil trust material on failure")
-	}
-}
-
-// TestLoadTrust_CarriesTheApplicationPolicy pins that the allow-list LoadTrust
-// was given is the one VerifyDeviceAttestation will judge against.
-func TestLoadTrust_CarriesTheApplicationPolicy(t *testing.T) {
-	apps := testApplications()
-
-	trust, err := LoadTrust(newMockTrustStore(), apps)
-	if err != nil {
-		t.Fatalf("LoadTrust: %v", err)
-	}
-	if len(trust.Applications.AllowedApplications) != 1 ||
-		trust.Applications.AllowedApplications[0].PackageName != apps.AllowedApplications[0].PackageName {
-		t.Errorf("trust applications = %+v, want %+v", trust.Applications, apps)
-	}
-	if trust.Pool == nil {
-		t.Error("trust pool is nil")
-	}
-}
-
 // --- Synced-certificate quarantine (#1304) ---
 
 // TestBuildTrustPool_RefusesSyncedPurpose pins that the synced quarantine a
@@ -1174,10 +1008,7 @@ func TestBuildTrustPool_RefusesSyncedPurpose(t *testing.T) {
 	store := newMockTrustStore()
 	store.addCertForPurpose(generateTestCA(t, "Synced CA").cert, truststore.PurposeSynced)
 
-	v, err := NewVerifier(store, truststore.LoadEmbeddedRoots)
-	if err != nil {
-		t.Fatalf("NewVerifier() error: %v", err)
-	}
+	v := NewVerifier(nil, WithTrustStore(store, truststore.LoadEmbeddedRoots))
 
 	pool, err := v.BuildTrustPool(truststore.PurposeSynced)
 	if !errors.Is(err, ErrUnsupportedPurpose) {
@@ -1185,51 +1016,5 @@ func TestBuildTrustPool_RefusesSyncedPurpose(t *testing.T) {
 	}
 	if pool != nil {
 		t.Error("BuildTrustPool(synced) returned a pool, want nil")
-	}
-}
-
-// TestLoadTrust_ExcludesSyncedForgedGoogleRoot is the #1304 attack end to
-// end at the trust-store layer: a self-signed CA dressed as a Google
-// hardware attestation root, stored the way sync stores it, must not anchor
-// a chain it signed. The control store proves the same chain verifies once
-// the root genuinely sits under the Android hardware purpose, so the refusal
-// is the quarantine's doing and not an artifact of the fixture.
-func TestLoadTrust_ExcludesSyncedForgedGoogleRoot(t *testing.T) {
-	forged := generateTestCA(t, "Google Hardware Attestation Root")
-	leaf := generateLeafCert(t, forged, "Attested Key")
-
-	verifyAgainst := func(purpose truststore.CertPurpose) error {
-		t.Helper()
-		store, err := truststore.NewFileStore(&truststore.FileStoreConfig{BaseDir: t.TempDir()})
-		if err != nil {
-			t.Fatalf("NewFileStore() error: %v", err)
-		}
-		t.Cleanup(func() {
-			if closeErr := store.Close(); closeErr != nil {
-				t.Errorf("Close() error: %v", closeErr)
-			}
-		})
-		if err := store.AddCertificateWithOptions(forged.cert, &truststore.AddCertificateOptions{Purpose: purpose}); err != nil {
-			t.Fatalf("AddCertificateWithOptions() error: %v", err)
-		}
-		trust, err := LoadTrust(store, testApplications())
-		if err != nil {
-			t.Fatalf("LoadTrust() error: %v", err)
-		}
-		_, err = leaf.Verify(x509.VerifyOptions{
-			Roots:     trust.Pool,
-			KeyUsages: []x509.ExtKeyUsage{x509.ExtKeyUsageAny},
-		})
-		return err
-	}
-
-	if err := verifyAgainst(truststore.PurposeAndroidHardware); err != nil {
-		t.Fatalf("control: chain did not verify with the root under android-hardware: %v", err)
-	}
-
-	err := verifyAgainst(truststore.PurposeSynced)
-	var unknownAuthority x509.UnknownAuthorityError
-	if !errors.As(err, &unknownAuthority) {
-		t.Errorf("chain verification against a synced root = %v, want x509.UnknownAuthorityError", err)
 	}
 }

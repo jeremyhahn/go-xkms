@@ -74,7 +74,7 @@ func Calls(ctx context.Context, svc transport.TPMPolicyService) map[string]func(
 		"TPMPolicyGet":  func() error { _, err := svc.TPMPolicyGet(ctx, &transport.TPMPolicyRequest{Name: "boot"}); return err },
 		"TPMPolicyList": func() error { _, err := svc.TPMPolicyList(ctx, &transport.TPMPolicyListRequest{}); return err },
 		"TPMPolicyUpdate": func() error {
-			_, err := svc.TPMPolicyUpdate(ctx, &transport.TPMPolicyRequest{Name: "boot"})
+			_, err := svc.TPMPolicyUpdate(ctx, &transport.TPMPolicyUpdateRequest{Name: "boot"})
 			return err
 		},
 		"TPMPolicyRevoke": func() error {

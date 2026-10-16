@@ -146,7 +146,7 @@ func TestTPMPolicy_EndToEnd(t *testing.T) {
 	assert.True(t, verified.Match)
 	assert.True(t, verified.Approved)
 
-	updated, err := svc.TPMPolicyUpdate(sys, &transport.TPMPolicyRequest{Name: "boot"})
+	updated, err := svc.TPMPolicyUpdate(sys, &transport.TPMPolicyUpdateRequest{Name: "boot"})
 	require.NoError(t, err)
 	assert.Greater(t, updated.Epoch, created.Epoch, "an update re-approves at the next epoch")
 	signWith(t, svc, qrdbsdk.SystemTenantID, "boot-signer-a", pubA)

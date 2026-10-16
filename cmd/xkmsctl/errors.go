@@ -1271,6 +1271,10 @@ var (
 	// ErrUpdateTPMPolicyFailed is the sentinel error "failed to update TPM policy".
 	ErrUpdateTPMPolicyFailed = errors.New("failed to update TPM policy")
 
+	// ErrReadReferenceValuesFailed is the sentinel error "failed to read the
+	// signed reference values".
+	ErrReadReferenceValuesFailed = errors.New("failed to read the signed reference values")
+
 	// ErrRevokeTPMPolicyFailed is the sentinel error "failed to revoke TPM policy".
 	ErrRevokeTPMPolicyFailed = errors.New("failed to revoke TPM policy")
 

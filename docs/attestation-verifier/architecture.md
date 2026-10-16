@@ -1,6 +1,6 @@
 # Attestation Verifier — Architecture
 
-> **Status: NORMATIVE** · Feature: `attestation-verifier` · Module: `go-xkms` · Last verified: 2026-10-14
+> **Status: NORMATIVE** · Feature: `attestation-verifier` · Module: `go-xkms` · Last verified: 2026-10-15
 
 ## The problem
 
@@ -100,11 +100,48 @@ invariant halves only. This is not a gap: an `AttestationStatement`'s
 (`yubikey-piv`, `tpm2`, `android-key-attestation`) never populate, so nothing
 today calls `Verify()` with a chain-based `Evidence`.
 
+## Purpose-pooled checks: the same verifier, backed by a trust store
+
+xkey verifies a phone's Android hardware chain, a TPM EK certificate and an
+IDevID against the trust store's anchors for a certificate purpose. Until
+go-xkms#1548 that was a second `Verifier` in `xkey/pkg/attestation`. It now
+lives in `pkg/attestation/purpose.go` as methods on the one `Verifier`:
+
+- `WithTrustStore(store, embeddedLoader)` (`purpose.go:83`) is a
+  `NewVerifier` option (`verifier.go:67`). It backs the purpose-pooled checks
+  with a `truststore.TrustStore` plus an optional loader of compiled-in roots.
+- `BuildTrustPool(purpose)` (`purpose.go:314`) merges the store's anchors for
+  the purpose with the embedded roots.
+  - It refuses a non-anchor purpose (`ErrUnsupportedPurpose`,
+    `purpose.go:318`). Neither an unknown purpose nor the synced quarantine
+    that a paired device's certificates land in ever yields anchors. A root
+    synced in that way cannot vouch for a phone, even one claiming Google's
+    name.
+  - It refuses an empty pool (`ErrNoTrustAnchors`).
+  - It refuses a verifier built without a store (`ErrNilTrustStore`).
+- `VerifyTPMAttestation` (`purpose.go:93`), `VerifyAndroidAttestation`
+  (`purpose.go:141`), `VerifyIDevID` (`purpose.go:223`) and
+  `VerifyPurposeChain` (`purpose.go:259`) return a `VerificationResult` with a
+  `TrustLevel`. Chain failures wrap `ErrChainVerificationFailed`.
+
+xkey reaches these only through the SDK aliases in
+`sdk/go/attestation_verifier.go`: `NewAttestationVerifier`,
+`WithAttestationTrustStore`, `AttestationVerificationResult` and the
+`AttestationTrustLevel*` constants. The callers are:
+
+- `xkey/pkg/attestation/device.go:286` (`LoadTrust`, the pairing attestation
+  pool);
+- `xkey/cmd/xkey/cmd/device_attest.go:260`;
+- `xkey/cmd/xkey/cmd/device_enroll_phone_ca.go:73`;
+- `xkey/cmd/xkey/cmd/tpm_ek.go:401`.
+
 ## Component boundaries
 
 | Piece | Where | Owner |
 |---|---|---|
 | Chain/signature verifier | `pkg/attestation/verifier.go`, `types.go`, `errors.go` | this feature |
+| Purpose-pooled checks (TPM EK, Android hardware, IDevID) | `pkg/attestation/purpose.go` | this feature |
+| SDK surface for xkey and downstream consumers | `sdk/go/attestation_verifier.go` | this feature |
 | Format-agnostic key-binding gate | `pkg/attestation/invariants.go` | this feature |
 | Per-format trust-anchor config | `pkg/config/attestation.go` (`AttestationConfig`) | this feature |
 | CSR-attestation gate (consumer, generic `SignCSR`) | `pkg/xkms/servicer_ca.go`, `servicer_ca_attestpolicy.go` | `pkg/xkms` |
@@ -116,7 +153,7 @@ today calls `Verify()` with a chain-based `Evidence`.
 | Well-known/external root pools | `pkg/attestation/truststore` | consumed by both this feature (`AttestationConfig.Verifiers`) and [`certificate-authority`](../certificate-authority/) (TCG EK trust) — not owned by either |
 
 This folder documents the root `pkg/attestation` package: `verifier.go`,
-`types.go`, `errors.go`, `invariants.go`, and the config/wiring that connects
+`purpose.go`, `types.go`, `errors.go`, `invariants.go`, and the config/wiring that connects
 them to CSR issuance. It does not document the `peer`, `android`, or
 `truststore` subpackages — each has its own home, above — and it does not
 document attestation *generation* (`AttestKey`), which is a key-provider
@@ -214,22 +251,36 @@ TCG-CSR-IDEVID arrives (packed TPM public areas + TPM2_Certify structure)
   (`servicer_ca.go:303`). Verifiers are per-format, keyed and checked
   independently.
 
-## Planned: reference-value replay
+## Reference-value replay
 
-Not built yet; the SPEC.md row is `in progress`. Reference-value replay
-predicts a PCR value for a new component image from a signed CoRIM, for
-[tpm-policies](../tpm-policies/architecture.md#planned-unattended-unlock-across-updates)
-branch updates.
+`attestation.PredictPCRs` (`pkg/attestation/predict.go:48`) predicts the PCR
+values a platform will measure after an update, from a signed CoRIM, for
+[tpm-policies](../tpm-policies/architecture.md#branch-update-from-signed-reference-values)
+branch updates. The CoRIM is verified first with `VerifySigned`
+(`pkg/attestation/refvalue/refvalue.go:287`); the prediction trusts only a
+manifest that verification returned.
 
-- It applies TCG extend arithmetic, `PCR = H(PCR ‖ digest)`, generic over the
-  bank (sha256, sha384).
-- It replays an event log up to the replaced component's event, then extends
-  the component digest taken from the signed CoRIM in its place.
-- It extends `EventLog.Replay`
-  (`pkg/attestation/evidence/eventlog.go:333`), which replays a whole log, and
-  takes digests from `Manifest.PCRDigests`
-  (`pkg/attestation/refvalue/refvalue.go:167`) after `VerifySigned`
-  (`pkg/attestation/refvalue/refvalue.go:199`).
+- **Final values.** A reference value without an environment class index is
+  a final PCR value (`Manifest.PCRDigests`,
+  `pkg/attestation/refvalue/refvalue.go:177`) and replaces the PCR as stated.
+- **Components.** A reference value whose environment class carries an index
+  is a `Component` (`refvalue.go:215`; `Manifest.ComponentDigests`,
+  `refvalue.go:225`): its measurement key is the PCR and its index the event's
+  ordinal within that PCR, counted from 0 without `EV_NO_ACTION` events.
+  The node's boot event log is checked against the live PCRs with
+  `VerifyEventLog` (`pkg/attestation/evidence/eventlog.go:435`), then replayed
+  with `EventLog.ReplayWith` (`eventlog.go:356`), which extends each
+  `Substitution`'s digest (`eventlog.go:340`) in place of the event it names:
+  TCG extend arithmetic, `PCR = H(PCR ‖ digest)`, over the requested bank
+  (sha256, sha384). A substitution naming no event in the log is a
+  `*SubstitutionError` (`pkg/attestation/evidence/errors.go:135`).
+  `EventLog.Replay` (`eventlog.go:333`) is `ReplayWith` without substitutions.
+- **Uncovered PCRs.** A selected PCR the CoRIM does not mention keeps its live
+  value.
+- **Refusals.** A PCR given both a final value and a component is
+  `ErrConflictingReference`, a PCR given more than one final value
+  `ErrAmbiguousReference`, and a CoRIM covering none of the selected PCRs
+  `ErrNoReferencedPCR` (`pkg/attestation/errors.go:107-115`).
 
 ## What this feature deliberately does not do
 

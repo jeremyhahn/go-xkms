@@ -20,10 +20,13 @@ package ca
 
 import (
 	"crypto/x509"
+	"crypto/x509/pkix"
 	"encoding/asn1"
 	"sort"
 	"strings"
 	"sync"
+
+	"github.com/jeremyhahn/go-xkms/pkg/errs"
 )
 
 // =============================================================================
@@ -364,6 +367,33 @@ func NewTimestampingProfile() ProfileProvider {
 			basicConstraintsValid: true,
 		},
 	}
+}
+
+// oidKPTimeStamping is id-kp-timeStamping, RFC 5280 section 4.2.1.12.
+var oidKPTimeStamping = asn1.ObjectIdentifier{1, 3, 6, 1, 5, 5, 7, 3, 8}
+
+// Apply sets the timestamping usages and marks the extended key usage
+// extension critical, as RFC 3161 section 2.3 requires of a TSA certificate.
+// crypto/x509 always encodes the extension it derives from ExtKeyUsage
+// non-critical, so the profile supplies its own, which
+// x509.CreateCertificate encodes in place of the derived one.
+func (p *timestampingProfile) Apply(template *x509.Certificate, request *CertificateRequest) error {
+	if err := p.baseProfile.Apply(template, request); err != nil {
+		return err
+	}
+	value, err := asn1.Marshal([]asn1.ObjectIdentifier{oidKPTimeStamping})
+	if err != nil {
+		return &errs.Joined{Lead: ErrInvalidProfile, Cause: err}
+	}
+	extension := pkix.Extension{Id: oidExtKeyUsageExt, Critical: true, Value: value}
+	for i := range template.ExtraExtensions {
+		if template.ExtraExtensions[i].Id.Equal(oidExtKeyUsageExt) {
+			template.ExtraExtensions[i] = extension
+			return nil
+		}
+	}
+	template.ExtraExtensions = append(template.ExtraExtensions, extension)
+	return nil
 }
 
 // ProfileNameCA is the registry name of the CA profile. Root, intermediate and

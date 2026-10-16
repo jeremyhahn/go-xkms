@@ -29,7 +29,6 @@ import (
 	"github.com/jeremyhahn/go-enclave"
 	xkms "github.com/jeremyhahn/go-xkms/sdk/go"
 	"github.com/jeremyhahn/go-xkms/sdk/go/fsutil"
-	xkeyAttestation "github.com/jeremyhahn/go-xkms/xkey/pkg/attestation"
 	"github.com/spf13/cobra"
 )
 
@@ -384,14 +383,14 @@ func verifyEKCertificate(out io.Writer, cert *x509.Certificate) {
 // verifyEKCertificateResult performs the actual EK certificate verification
 // against the trust store. Returns nil if the trust store cannot be opened
 // or the verifier cannot be created.
-func verifyEKCertificateResult(cert *x509.Certificate) *xkeyAttestation.VerificationResult {
+func verifyEKCertificateResult(cert *x509.Certificate) *xkms.AttestationVerificationResult {
 	store, err := openTrustStore()
 	if err != nil {
 		return nil
 	}
 	// This function has no error return -- its documented contract is a nil
-	// *VerificationResult on any setup failure -- so a close failure is
-	// logged rather than dropped.
+	// *AttestationVerificationResult on any setup failure -- so a close
+	// failure is logged rather than dropped.
 	defer func() {
 		if closeErr := store.Close(); closeErr != nil {
 			slog.Default().Debug("tpm: failed to close trust store", "error", closeErr)
@@ -400,10 +399,7 @@ func verifyEKCertificateResult(cert *x509.Certificate) *xkeyAttestation.Verifica
 
 	// Create verifier with the trust store. Pass nil for embedded roots
 	// loader since embedded TPM manufacturer roots are not yet available.
-	verifier, err := xkeyAttestation.NewVerifier(store, nil)
-	if err != nil {
-		return nil
-	}
+	verifier := xkms.NewAttestationVerifier(nil, xkms.WithAttestationTrustStore(store, nil))
 
 	result, err := verifier.VerifyTPMAttestation(cert)
 	if err != nil {
@@ -411,9 +407,9 @@ func verifyEKCertificateResult(cert *x509.Certificate) *xkeyAttestation.Verifica
 		if result != nil {
 			return result
 		}
-		return &xkeyAttestation.VerificationResult{
+		return &xkms.AttestationVerificationResult{
 			Verified:    false,
-			TrustLevel:  xkeyAttestation.TrustLevelUnknown,
+			TrustLevel:  xkms.AttestationTrustLevelUnknown,
 			Subject:     cert.Subject.String(),
 			Issuer:      cert.Issuer.String(),
 			ChainLength: 1,

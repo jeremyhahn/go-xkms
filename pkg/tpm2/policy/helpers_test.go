@@ -83,7 +83,7 @@ func memoryBlobs(t *testing.T) *store.BlobStore {
 
 // newFixture builds a Service over tpm, whose own key store is keys. A nil
 // vtpmCfg leaves vtpm mode unavailable.
-func newFixture(t *testing.T, tpm *pkgtpm2.TPM2, keys store.KeyBackend, vtpmCfg *vtpm.Config) *fixture {
+func newFixture(t *testing.T, tpm *pkgtpm2.TPM2, keys store.KeyBackend, vtpmCfg *vtpm.Config, configure ...func(*Config)) *fixture {
 	t.Helper()
 	srk, err := tpm.PlatformSRKAttributes()
 	require.NoError(t, err)
@@ -105,6 +105,9 @@ func newFixture(t *testing.T, tpm *pkgtpm2.TPM2, keys store.KeyBackend, vtpmCfg 
 		Sealer:      tpm,
 		VTPM:        vtpmCfg,
 		Logger:      quietLogger,
+	}
+	for _, c := range configure {
+		c(&f.cfg)
 	}
 	f.svc, err = NewService(f.cfg)
 	require.NoError(t, err)

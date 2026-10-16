@@ -98,4 +98,43 @@ var (
 	// consistent but does not terminate at any configured trust anchor. This is
 	// the error returned for an attacker-supplied, self-consistent chain.
 	ErrChainNotAnchored = errors.New("attestation: certificate chain does not chain to a trusted anchor")
+
+	// ErrUnsupportedPCRBank indicates a PCR bank PredictPCRs cannot predict.
+	ErrUnsupportedPCRBank = errors.New("attestation: PCR bank cannot be predicted from reference values")
+
+	// ErrNoReferencedPCR indicates the reference values state nothing about
+	// any of the PCRs to predict.
+	ErrNoReferencedPCR = errors.New("attestation: reference values cover none of the selected PCRs")
+
+	// ErrAmbiguousReference indicates the reference values state more than
+	// one final value for a PCR, so no single value can be predicted.
+	ErrAmbiguousReference = errors.New("attestation: reference values state more than one value for a PCR")
+
+	// ErrConflictingReference indicates the reference values state both a
+	// final value and a component for the same PCR.
+	ErrConflictingReference = errors.New("attestation: reference values state both a final value and a component for a PCR")
+
+	// ErrNilTrustStore indicates a purpose-pooled check ran on a Verifier
+	// built without WithTrustStore.
+	ErrNilTrustStore = errors.New("attestation: nil trust store")
+
+	// ErrNilCertificate indicates a nil certificate was provided for verification.
+	ErrNilCertificate = errors.New("attestation: nil certificate")
+
+	// ErrUnsupportedPurpose indicates the certificate purpose is not an
+	// anchor purpose.
+	ErrUnsupportedPurpose = errors.New("attestation: unsupported certificate purpose")
+
+	// ErrTrustStoreQuery indicates a failure querying the trust store.
+	ErrTrustStoreQuery = errors.New("attestation: trust store query failed")
+
+	// ErrMissingNonce indicates an attestation was submitted without the
+	// challenge it must be bound to. Verifying without a challenge accepts
+	// replayed attestations, so the verifier refuses instead.
+	ErrMissingNonce = errors.New("attestation: challenge nonce is required")
+
+	// ErrChallengeVerification indicates the attestation challenge could not be
+	// bound to the supplied nonce: the key attestation extension was absent,
+	// unparseable, or carried a different challenge.
+	ErrChallengeVerification = errors.New("attestation: challenge verification failed")
 )

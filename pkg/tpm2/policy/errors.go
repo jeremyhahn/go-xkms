@@ -91,8 +91,8 @@ var (
 	ErrEmptyBranch = errors.New("tpmpolicy: a policy branch must have at least one condition")
 
 	// ErrPCRValuesSupplied is returned for a condition that carries PCR
-	// values or a PCR digest: they are captured from the TPM, never
-	// supplied.
+	// values or a PCR digest: they are captured from the TPM or predicted
+	// from signed reference values, never supplied.
 	ErrPCRValuesSupplied = errors.New("tpmpolicy: PCR values are captured from the TPM and cannot be supplied")
 
 	// ErrMalformedSecrets is returned when a scope's unsealed secrets do not
@@ -102,6 +102,18 @@ var (
 	// ErrUnexpectedTPM is returned when a vTPM connection does not open as
 	// a *tpm2.TPM2, which the authorized-policy primitives require.
 	ErrUnexpectedTPM = errors.New("tpmpolicy: the vTPM did not open as a pkg/tpm2 TPM")
+
+	// ErrNoReferenceSigner is returned for a reference-value update when no
+	// reference-value signer is configured to verify the CoRIM against.
+	ErrNoReferenceSigner = errors.New("tpmpolicy: no reference-value signer is configured")
+
+	// ErrNoSuchBranch is returned (in an InvalidBranchError) for a branch
+	// index the policy does not have.
+	ErrNoSuchBranch = errors.New("tpmpolicy: the policy has no such branch")
+
+	// ErrNoPCRCondition is returned (in an InvalidBranchError) for a
+	// reference-value update of a branch without a pcr condition.
+	ErrNoPCRCondition = errors.New("tpmpolicy: the branch has no pcr condition to update")
 )
 
 // InvalidTenantError reports a tenant ID that cannot name a scope.
@@ -363,3 +375,19 @@ func (e *VTPMError) Error() string {
 
 // Unwrap returns the underlying cause.
 func (e *VTPMError) Unwrap() error { return e.Err }
+
+// ReferenceValuesError reports signed reference values a branch cannot be
+// updated from: the CoRIM did not verify under the reference signer, or the
+// PCR values it describes could not be predicted.
+type ReferenceValuesError struct {
+	Op  string
+	Err error
+}
+
+// Error implements the error interface.
+func (e *ReferenceValuesError) Error() string {
+	return fmt.Sprintf("tpmpolicy: reference values: %s: %v", e.Op, e.Err)
+}
+
+// Unwrap returns the underlying cause.
+func (e *ReferenceValuesError) Unwrap() error { return e.Err }

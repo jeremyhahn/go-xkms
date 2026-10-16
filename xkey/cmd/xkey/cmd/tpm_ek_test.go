@@ -25,7 +25,7 @@ import (
 	"time"
 
 	"github.com/jeremyhahn/go-xkms/pkg/attestation/truststore"
-	xkeyAttestation "github.com/jeremyhahn/go-xkms/xkey/pkg/attestation"
+	xkms "github.com/jeremyhahn/go-xkms/sdk/go"
 	"github.com/spf13/viper"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -176,7 +176,7 @@ func TestVerifyEKCertificateResult_Verified(t *testing.T) {
 	result := verifyEKCertificateResult(ekLeaf)
 	require.NotNil(t, result)
 	assert.True(t, result.Verified)
-	assert.Equal(t, xkeyAttestation.TrustLevelHardware, result.TrustLevel)
+	assert.Equal(t, xkms.AttestationTrustLevelHardware, result.TrustLevel)
 	assert.Equal(t, ekLeaf.Subject.String(), result.Subject)
 	assert.Equal(t, ekLeaf.Issuer.String(), result.Issuer)
 	assert.GreaterOrEqual(t, result.ChainLength, 2)
@@ -336,7 +336,7 @@ func TestVerifyEKCertificate_SelfSignedCA(t *testing.T) {
 	result := verifyEKCertificateResult(caCert)
 	require.NotNil(t, result)
 	assert.True(t, result.Verified)
-	assert.Equal(t, xkeyAttestation.TrustLevelHardware, result.TrustLevel)
+	assert.Equal(t, xkms.AttestationTrustLevelHardware, result.TrustLevel)
 }
 
 // TestTPMEKCmdStructure verifies the tpm ek command tree is properly initialized.

@@ -94,7 +94,7 @@ func TestTPMPolicy_TenantCannotAddressAnotherTenant(t *testing.T) {
 			return err
 		},
 		"update": func() error {
-			_, err := svc.TPMPolicyUpdate(ctx, &transport.TPMPolicyRequest{TenantID: "globex", Name: "boot"})
+			_, err := svc.TPMPolicyUpdate(ctx, &transport.TPMPolicyUpdateRequest{TenantID: "globex", Name: "boot"})
 			return err
 		},
 		"revoke": func() error {

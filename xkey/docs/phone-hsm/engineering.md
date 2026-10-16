@@ -6,19 +6,13 @@
 
 ### Noise session
 
-```go
-const (
-	// XX pattern: mutual authentication, public keys transmitted in handshake.
-	NoiseProtocolName = "Noise_XX_25519_ChaChaPoly_SHA256"
-	NoiseKeySize        = noiseproto.KeySize
-	NoiseMaxMessageSize = noiseproto.MaxMessageSize
-)
-
-type NoiseSession struct{ … }  // wraps noiseproto.Session with phone-domain errors
-```
-
-Built on `go-truststrap/pkg/noiseproto`. `NoiseSession` adds phone-domain error
-mapping and a backward-compatible `RemoteStaticPublicKey` accessor.
+The pairing package defines no Noise session of its own. It takes
+`*bootstrap.NoiseSession` from `go-xkms/sdk/go/bootstrap`
+(sdk/go/bootstrap/bootstrap.go:196), a type alias of the one interactive
+Noise XX session in go-xkms `pkg/trust/bootstrap/noise_session.go:51`
+(`Noise_XX_25519_ChaChaPoly_SHA256`, `NoiseXXProtocolName` at line 28).
+`InlineExchange`, `NewMessageRouter` and `ShortAuthString` all take that
+session (go-xkms#1548).
 
 ### Protocol and bridges
 
@@ -210,9 +204,10 @@ pairing keys are configured (`ErrNoiseNotConfigured`).
 
 ## The cipher suite is fixed, and not FIPS-approved
 
-`NoiseProtocolName` is a constant: `Noise_XX_25519_ChaChaPoly_SHA256`.
-ChaChaPoly is not FIPS-approved, there is **no AES-GCM alternative in this
-package**, and no `fips` reference anywhere under `xkey/pkg/pairing/`. The suite
+`NoiseXXProtocolName` (go-xkms `pkg/trust/bootstrap/noise_session.go:28`) is a
+constant: `Noise_XX_25519_ChaChaPoly_SHA256`. ChaChaPoly is not FIPS-approved,
+there is **no AES-GCM alternative**, and no `fips` reference anywhere under
+`xkey/pkg/pairing/`. The suite
 is also fixed in the Android compatibility tests, and the separate `Noise_NK`
 bootstrap path delegates to `go-truststrap/pkg/noiseproto`.
 

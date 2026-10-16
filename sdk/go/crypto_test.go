@@ -798,7 +798,7 @@ func (n *noopClient) TPMPolicyList(context.Context, *transport.TPMPolicyListRequ
 	return nil, nil
 }
 
-func (n *noopClient) TPMPolicyUpdate(context.Context, *transport.TPMPolicyRequest) (*transport.TPMPolicy, error) {
+func (n *noopClient) TPMPolicyUpdate(context.Context, *transport.TPMPolicyUpdateRequest) (*transport.TPMPolicy, error) {
 	return nil, nil
 }
 

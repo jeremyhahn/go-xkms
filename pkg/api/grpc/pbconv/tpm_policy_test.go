@@ -15,6 +15,7 @@ package pbconv
 
 import (
 	"context"
+	"math"
 	"net"
 	"testing"
 
@@ -40,7 +41,7 @@ func samplePolicy() *transport.TPMPolicy {
 			{Conditions: []transport.TPMPolicyCondition{
 				{Type: "pcr", Bank: "sha256", PCRs: []uint{0, 7}, PCRValues: map[uint]string{0: "aa", 7: "bb"}, PCRDigest: "cc"},
 				{Type: "locality", Localities: []uint{0, 3}},
-			}, Approved: true},
+			}, Approved: true, Reference: &transport.TPMPolicyReference{ID: "boot-image-v2", Profile: "p", Signer: "s", Digest: []byte{0xab}}},
 			{Conditions: []transport.TPMPolicyCondition{{Type: "auth_value"}}, Approved: true},
 		},
 		Index:               0x01500010,
@@ -68,6 +69,12 @@ func TestConversions_RoundTrip(t *testing.T) {
 	named := &transport.TPMPolicyRequest{TenantID: "acme", Name: "boot"}
 	assert.Equal(t, named, TPMPolicyRequestFromProto(TPMPolicyRequestToProto(named)))
 
+	capture := &transport.TPMPolicyUpdateRequest{TenantID: "acme", Name: "boot"}
+	assert.Equal(t, capture, TPMPolicyUpdateRequestFromProto(TPMPolicyUpdateRequestToProto(capture)))
+	branch := 1
+	update := &transport.TPMPolicyUpdateRequest{TenantID: "acme", Name: "boot", Branch: &branch, ReferenceValues: []byte{0xd2, 0x84}}
+	assert.Equal(t, update, TPMPolicyUpdateRequestFromProto(TPMPolicyUpdateRequestToProto(update)))
+
 	list := &transport.TPMPolicyListResponse{Policies: []transport.TPMPolicy{*p}}
 	assert.Equal(t, list, TPMPolicyListResponseFromProto(TPMPolicyListResponseToProto(list)))
 
@@ -75,7 +82,7 @@ func TestConversions_RoundTrip(t *testing.T) {
 	assert.Equal(t, del, TPMPolicyDeleteRequestFromProto(TPMPolicyDeleteRequestToProto(del)))
 
 	verify := &transport.TPMPolicyVerifyResponse{Name: "boot", Match: false, Approved: true, Branches: []transport.TPMPolicyBranchVerification{
-		{Match: false, Mismatched: []uint{7}, Approved: true},
+		{Match: false, Mismatched: []uint{7}, Approved: true, Reference: &transport.TPMPolicyReference{ID: "boot-image-v2", Profile: "p", Signer: "s", Digest: []byte{0xab}}},
 		{Match: true, Approved: true},
 	}}
 	assert.Equal(t, verify, TPMPolicyVerifyResponseFromProto(TPMPolicyVerifyResponseToProto(verify)))
@@ -106,6 +113,17 @@ func TestConversions_RoundTrip(t *testing.T) {
 
 	vtpm := &transport.TenantVTPMStatusResponse{TenantID: "acme", Running: true, PID: 42, Socket: "/run/x.sock", Restarts: 1}
 	assert.Equal(t, vtpm, TenantVTPMStatusResponseFromProto(TenantVTPMStatusResponseToProto(vtpm)))
+}
+
+// TestTPMPolicyUpdateRequestToProto_BranchOutOfRange proves a branch index
+// int32 cannot carry is sent as -1, which names no branch, rather than as a
+// truncated index naming another one.
+func TestTPMPolicyUpdateRequestToProto_BranchOutOfRange(t *testing.T) {
+	for _, branch := range []int{-2, math.MaxInt32 + 1} {
+		got := TPMPolicyUpdateRequestToProto(&transport.TPMPolicyUpdateRequest{Name: "boot", Branch: &branch})
+		require.NotNil(t, got.Branch)
+		assert.Equal(t, int32(-1), got.GetBranch(), "branch %d", branch)
+	}
 }
 
 // TestConversions_EmptyObjectsAreNotNil proves an empty object list decodes
@@ -141,7 +159,7 @@ func (s *recordingServer) TPMPolicyList(_ context.Context, r *pb.TPMPolicyListRe
 	s.record("list", r)
 	return &pb.TPMPolicyListResponse{Policies: []*pb.TPMPolicy{{Name: "boot", TenantId: r.GetTenantId()}}}, nil
 }
-func (s *recordingServer) TPMPolicyUpdate(_ context.Context, r *pb.TPMPolicyRequest) (*pb.TPMPolicy, error) {
+func (s *recordingServer) TPMPolicyUpdate(_ context.Context, r *pb.TPMPolicyUpdateRequest) (*pb.TPMPolicy, error) {
 	s.record("update", r)
 	return &pb.TPMPolicy{Name: r.GetName(), Epoch: 2}, nil
 }
@@ -242,9 +260,13 @@ func TestTPMPolicyClient_CarriesEveryRequest(t *testing.T) {
 	require.Len(t, list.Policies, 1)
 	assert.Equal(t, "acme", list.Policies[0].TenantID)
 
-	p, err = c.TPMPolicyUpdate(ctx, &transport.TPMPolicyRequest{Name: "boot"})
+	branch := 1
+	p, err = c.TPMPolicyUpdate(ctx, &transport.TPMPolicyUpdateRequest{Name: "boot", Branch: &branch, ReferenceValues: []byte{0xd2, 0x84}})
 	require.NoError(t, err)
 	assert.Equal(t, uint64(2), p.Epoch)
+	sent := rec.last["update"].(*pb.TPMPolicyUpdateRequest)
+	assert.Equal(t, int32(1), sent.GetBranch())
+	assert.Equal(t, []byte{0xd2, 0x84}, sent.GetReferenceValues())
 
 	p, err = c.TPMPolicyRevoke(ctx, &transport.TPMPolicyRequest{Name: "boot"})
 	require.NoError(t, err)

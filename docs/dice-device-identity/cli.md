@@ -10,7 +10,7 @@ that already existed:
 
 ## Issuing with the DICE profile
 
-`dice-idevid` is a built-in certificate profile (`pkg/ca/profiles.go:83`), so
+`dice-idevid` is a built-in certificate profile (`pkg/ca/profiles.go:86`), so
 the `xkmsctl ca` verbs that take `--profile` — `ca sign-csr` and `ca issue`
 (`cmd/xkmsctl/ca.go:573-580`) — can name it. The profile refuses a request that carries no
 `tcg-dice-TcbInfo` extension, which is every request not produced by a DICE

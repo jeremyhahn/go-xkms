@@ -163,7 +163,7 @@ val spec = KeyGenParameterSpec.Builder(alias, PURPOSE_SIGN)
 2. Intermediate certificate
 3. Google hardware attestation root
 
-**Attestation extension OID:** `1.3.6.1.4.1.11129.2.1.17` (read on the desktop side by `xkey/pkg/attestation/verifier.go`)
+**Attestation extension OID:** `1.3.6.1.4.1.11129.2.1.17` (read on the desktop side by go-xkms `pkg/attestation/android/extension.go:647`, `VerifyKeyAttestation`, which xkey reaches through `sdk/go` as `VerifyAndroidKeyAttestation`)
 
 The extension contains:
 - Attestation version and security level (Software, TEE, StrongBox)

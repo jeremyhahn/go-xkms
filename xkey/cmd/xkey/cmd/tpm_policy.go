@@ -20,6 +20,7 @@ import (
 	"io"
 	"log/slog"
 	"os"
+	"path/filepath"
 	"sort"
 	"strings"
 	"text/tabwriter"
@@ -46,15 +47,21 @@ var (
 	// ErrTPMPolicyServerConnect indicates the configured xkmsd could not be
 	// reached.
 	ErrTPMPolicyServerConnect = errors.New("tpm policy: failed to connect to xkmsd")
+
+	// ErrTPMPolicyReferenceValuesRead indicates the --reference-values file
+	// could not be read.
+	ErrTPMPolicyReferenceValuesRead = errors.New("tpm policy: failed to read the signed reference values")
 )
 
 var (
-	tpmPolicyPCRs        string
-	tpmPolicyBank        string
-	tpmPolicyBranchSpecs []string
-	tpmPolicyDescription string
-	tpmPolicyAutoUnseal  bool
-	tpmPolicyOff         bool
+	tpmPolicyPCRs            string
+	tpmPolicyBank            string
+	tpmPolicyBranchSpecs     []string
+	tpmPolicyDescription     string
+	tpmPolicyAutoUnseal      bool
+	tpmPolicyOff             bool
+	tpmPolicyUpdateBranch    int
+	tpmPolicyReferenceValues string
 )
 
 // tpmPolicySession is the TPM policy service one command runs on, and what
@@ -214,12 +221,21 @@ var tpmPolicyGetCmd = &cobra.Command{
 // tpmPolicyUpdateCmd is `xkey tpm policy update`.
 var tpmPolicyUpdateCmd = &cobra.Command{
 	Use:   "update <name>",
-	Short: "Re-capture the PCR values and re-approve the policy",
-	Long: `Re-capture the policy's PCR values from the TPM and re-approve it.
+	Short: "Update the PCR values and re-approve the policy",
+	Long: `Update the policy's PCR values and re-approve it, for an intended change
+of platform state (a firmware or boot loader update). No key or sealed object
+is re-keyed; a revoked policy is approved again.
 
-Use it after an intended change of platform state (a firmware or boot loader
-update). No key or sealed object is re-keyed; a revoked policy is approved
-again.`,
+Without --branch, every branch's PCR values are re-captured from the TPM,
+so the update runs after the change.
+
+With --branch (counted from 0) and --reference-values, only that branch is
+updated, to the PCR values the signed CoRIM predicts the platform will hold
+once the images it describes are booted, so the update runs before the
+change and the objects unseal unattended after it. The CoRIM must verify
+under the reference signer xkmsd is configured with.`,
+	Example: `  xkey tpm policy update boot
+  xkey tpm policy update boot --branch 0 --reference-values bootloader-v2.corim`,
 	Args: cobra.ExactArgs(1),
 	RunE: runTPMPolicyUpdate,
 }
@@ -319,6 +335,10 @@ func init() {
 	tpmPolicyCreateCmd.Flags().BoolVar(&tpmPolicyAutoUnseal, "auto-unseal", false,
 		"Also make it the barrier auto-unseal policy (see 'tpm policy auto-unseal')")
 	tpmPolicyAutoUnsealCmd.Flags().BoolVar(&tpmPolicyOff, "off", false, "Clear the auto-unseal policy")
+	tpmPolicyUpdateCmd.Flags().IntVar(&tpmPolicyUpdateBranch, "branch", 0,
+		"Update only this branch, counted from 0 (needs --reference-values)")
+	tpmPolicyUpdateCmd.Flags().StringVar(&tpmPolicyReferenceValues, "reference-values", "",
+		"Signed CoRIM file the branch's PCR values are predicted from (needs --branch)")
 
 	tpmPolicyCmd.AddCommand(tpmPolicyCreateCmd, tpmPolicyDescribeCmd, tpmPolicyListCmd, tpmPolicyGetCmd, tpmPolicyUpdateCmd,
 		tpmPolicyRevokeCmd, tpmPolicyVerifyCmd, tpmPolicyDeleteCmd, tpmPolicyObjectsCmd, tpmPolicyKeyCmd,
@@ -393,7 +413,19 @@ func runTPMPolicyGet(cmd *cobra.Command, args []string) error {
 }
 
 func runTPMPolicyUpdate(cmd *cobra.Command, args []string) error {
-	return runTPMPolicyShow(cmd, args[0], (*services.TPMPolicyService).UpdatePolicy)
+	if cmd.Flags().Changed("branch") != (tpmPolicyReferenceValues != "") {
+		return xkms.ErrTPMPolicyBranchUpdate
+	}
+	if tpmPolicyReferenceValues == "" {
+		return runTPMPolicyShow(cmd, args[0], (*services.TPMPolicyService).UpdatePolicy)
+	}
+	corim, err := os.ReadFile(filepath.Clean(tpmPolicyReferenceValues))
+	if err != nil {
+		return &SentinelCauseError{Sentinel: ErrTPMPolicyReferenceValuesRead, Cause: err}
+	}
+	return runTPMPolicyShow(cmd, args[0], func(svc *services.TPMPolicyService, name string) (*services.TPMPolicyInfo, error) {
+		return svc.UpdateBranch(name, tpmPolicyUpdateBranch, corim)
+	})
 }
 
 func runTPMPolicyRevoke(cmd *cobra.Command, args []string) error {
@@ -605,6 +637,9 @@ func renderTPMPolicy(out io.Writer, p *services.TPMPolicyInfo) error {
 	fmt.Fprintf(&b, "Objects:      %d\n", p.ObjectCount)
 	for i, branch := range p.Branches {
 		fmt.Fprintf(&b, "Branch %d:     %s (approved: %s)\n", i, branch.String(), yesNo(branch.Approved))
+		if branch.Reference != nil {
+			fmt.Fprintf(&b, "  Reference   %s\n", branch.Reference)
+		}
 		for _, c := range branch.Conditions {
 			pcrs := make([]uint, 0, len(c.PCRValues))
 			for pcr := range c.PCRValues {
@@ -639,6 +674,9 @@ func renderTPMPolicyVerification(out io.Writer, v *services.TPMPolicyVerificatio
 			approval = "not current (revoked or out of date)"
 		}
 		fmt.Fprintf(&b, "Branch %d:  %s; approval %s\n", i, state, approval)
+		if branch.Reference != nil {
+			fmt.Fprintf(&b, "  Reference: %s\n", branch.Reference)
+		}
 	}
 	_, err := io.WriteString(out, b.String())
 	return err

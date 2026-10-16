@@ -227,20 +227,27 @@ call in `pkg/ca` (`issuance.go:348`); `Issue` (`issuance.go:297`) is
 
 ### Built-in profiles
 
-`NewDefaultProfileRegistry` (`profiles.go:55`, filled by
-`registerBuiltinProfiles` at `profiles.go:67`) registers, keyed by lowercase
+`NewDefaultProfileRegistry` (`profiles.go:58`, filled by
+`registerBuiltinProfiles` at `profiles.go:70`) registers, keyed by lowercase
 name: `server`, `client`, `code-signing`, `email`, `ocsp-responder`,
-`timestamping`, `ca` (`ProfileNameCA`, `profiles.go:398`), `acme-leaf`
-(`ProfileNameACMELeaf`, `profiles.go:453`), the TCG set `tcg-ek`, `tcg-ak`,
-`tcg-iak`, `tcg-idevid`, `tcg-lak` (`profiles.go:506-510`),
+`timestamping`, `ca` (`ProfileNameCA`, `profiles.go:402`), `acme-leaf`
+(`ProfileNameACMELeaf`, `profiles.go:457`), the TCG set `tcg-ek`, `tcg-ak`,
+`tcg-iak`, `tcg-idevid`, `tcg-lak` (`profiles.go:510-514`),
 `fido2-attestation` (`profile_fido2.go:42`), `dice-idevid`
 (`profile_dice.go:38`), `ipsec-vtep` and `x509-svid`
 (`profile_ipsec_svid.go:35`, `:38`).
 
+`timestamping` issues its extended key usage extension critical, listing
+id-kp-timeStamping alone, as RFC 3161 section 2.3 requires of a TSA
+certificate and as the image verifier enforces. crypto/x509 encodes the
+extension it derives from `ExtKeyUsage` non-critical, so the profile's
+`Apply` (`profiles.go:380`) supplies its own in `ExtraExtensions`, replacing
+any already there.
+
 A CA's registry is `(*CA).Profiles()` (`ca_extensions.go:340`).
 `ProfileRegistry.Register(name, profile)` (`interface.go:820`, implemented at
-`profiles.go:101`) adds or replaces a profile; `NewProfileBuilder`
-(`profiles.go:743`) with `WithKeyUsage`, `AsCA` and `Build` composes one.
+`profiles.go:104`) adds or replaces a profile; `NewProfileBuilder`
+(`profiles.go:747`) with `WithKeyUsage`, `AsCA` and `Build` composes one.
 
 **FIDO2 attestation profile.** `NewFIDO2AttestationProfile(permitted ...[16]byte)`
 (`profile_fido2.go:136`) issues WebAuthn §8.2.1 packed-attestation

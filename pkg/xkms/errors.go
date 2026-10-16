@@ -328,6 +328,11 @@ var (
 	// object and returns its key ID, so there is no default object to fall
 	// back to.
 	ErrTPMSealedObjectKeyIDRequired = errors.New("keystore: a TPM2 unseal needs the key ID its seal returned")
+
+	// ErrTPMPolicyBranchUpdate indicates a TPM policy update named a branch
+	// without signed reference values, or reference values without a
+	// branch; a branch is updated only from reference values.
+	ErrTPMPolicyBranchUpdate = errors.New("keystore: a TPM policy branch update needs both the branch and its signed reference values")
 )
 
 // Subsystem errors

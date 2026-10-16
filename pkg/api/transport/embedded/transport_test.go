@@ -795,7 +795,7 @@ func (m *mockService) TPMPolicyList(context.Context, *transport.TPMPolicyListReq
 	return &transport.TPMPolicyListResponse{}, nil
 }
 
-func (m *mockService) TPMPolicyUpdate(context.Context, *transport.TPMPolicyRequest) (*transport.TPMPolicy, error) {
+func (m *mockService) TPMPolicyUpdate(context.Context, *transport.TPMPolicyUpdateRequest) (*transport.TPMPolicy, error) {
 	if m.shouldFail {
 		return nil, errMock
 	}

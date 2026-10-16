@@ -160,11 +160,13 @@ func policyAction(w http.ResponseWriter, r *http.Request) (*transport.TPMPolicyR
 
 // UpdatePolicyHandler handles POST /api/v1/tpm/policies/{name}/update.
 func (h *TPMPolicyHandlers) UpdatePolicyHandler(w http.ResponseWriter, r *http.Request) {
-	req, ok := policyAction(w, r)
-	if !ok {
+	var req transport.TPMPolicyUpdateRequest
+	if err := decodeOptionalJSON(r, &req); err != nil {
+		writeError(w, ErrInvalidRequest, http.StatusBadRequest)
 		return
 	}
-	resp, err := h.servicer.TPMPolicyUpdate(r.Context(), req)
+	req.Name = chi.URLParam(r, "name")
+	resp, err := h.servicer.TPMPolicyUpdate(r.Context(), &req)
 	respond(w, resp, err, http.StatusOK)
 }
 

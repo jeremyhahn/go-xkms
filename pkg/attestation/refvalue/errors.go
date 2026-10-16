@@ -52,4 +52,12 @@ var (
 
 	// ErrUnsupportedHash reports a hash PCRDigests cannot select.
 	ErrUnsupportedHash = errors.New("refvalue: hash is not one of SHA-256, SHA-384, SHA-512")
+
+	// ErrComponentDigest is returned when a component measurement does not
+	// carry exactly one digest of the requested hash.
+	ErrComponentDigest = errors.New("refvalue: component measurement needs exactly one digest of the requested hash")
+
+	// ErrComponentOrdinal is returned when a component's class index is too
+	// large to name an event.
+	ErrComponentOrdinal = errors.New("refvalue: component class index is out of range")
 )

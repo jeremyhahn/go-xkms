@@ -161,6 +161,7 @@ var TPMPolicySentinelClasses = []SentinelClass{
 	{xkms.ErrNilRequest, ClassInvalidArgument},
 	{xkms.ErrTenantIDRequired, ClassInvalidArgument},
 	{xkms.ErrTPMPolicyNotSupported, ClassInvalidArgument},
+	{xkms.ErrTPMPolicyBranchUpdate, ClassInvalidArgument},
 	// A tenant-scoped caller naming another tenant, or any tenant-scoped
 	// caller of a system-scope operation, is refused with
 	// xkms.TenantBindingError, which unwraps to go-qrdb's unknown-tenant
@@ -176,6 +177,10 @@ var TPMPolicySentinelClasses = []SentinelClass{
 	{tpmpolicy.ErrNoBranches, ClassInvalidArgument},
 	{tpmpolicy.ErrEmptyBranch, ClassInvalidArgument},
 	{tpmpolicy.ErrPCRValuesSupplied, ClassInvalidArgument},
+	{tpmpolicy.ErrNoSuchBranch, ClassInvalidArgument},
+	{tpmpolicy.ErrNoPCRCondition, ClassInvalidArgument},
+	// A branch update from reference values needs a configured signer.
+	{tpmpolicy.ErrNoReferenceSigner, ClassFailedPrecondition},
 	// A key or sealed object without a password cannot be bound to a policy
 	// with an auth_value condition.
 	{pkgtpm2.ErrPolicyAuthValueRequired, ClassInvalidArgument},
@@ -326,6 +331,7 @@ var TPMPolicyTypedClasses = []TypedClass{
 	{As[*tpmpolicy.DuplicateConditionError], ClassInvalidArgument},
 	{As[*tpmpolicy.ConditionOperandError], ClassInvalidArgument},
 	{As[*tpmpolicy.DescriptionTooLongError], ClassInvalidArgument},
+	{As[*tpmpolicy.ReferenceValuesError], ClassInvalidArgument},
 	{As[*xkms.InvalidTPMObjectKindError], ClassInvalidArgument},
 	{As[*xkms.ErrKeyIDParse], ClassInvalidArgument},
 }

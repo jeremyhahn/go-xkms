@@ -1242,7 +1242,7 @@ func (m *mockXKMSService) TPMPolicyList(context.Context, *transport.TPMPolicyLis
 	return nil, nil
 }
 
-func (m *mockXKMSService) TPMPolicyUpdate(context.Context, *transport.TPMPolicyRequest) (*transport.TPMPolicy, error) {
+func (m *mockXKMSService) TPMPolicyUpdate(context.Context, *transport.TPMPolicyUpdateRequest) (*transport.TPMPolicy, error) {
 	return nil, nil
 }
 

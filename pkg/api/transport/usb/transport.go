@@ -745,8 +745,8 @@ func (t *Transport) TPMPolicyList(_ context.Context, _ *transport.TPMPolicyListR
 	return nil, ErrNotSupported
 }
 
-// TPMPolicyUpdate re-captures and re-approves a TPM policy. It is not available over USB.
-func (t *Transport) TPMPolicyUpdate(_ context.Context, _ *transport.TPMPolicyRequest) (*transport.TPMPolicy, error) {
+// TPMPolicyUpdate updates and re-approves a TPM policy. It is not available over USB.
+func (t *Transport) TPMPolicyUpdate(_ context.Context, _ *transport.TPMPolicyUpdateRequest) (*transport.TPMPolicy, error) {
 	return nil, ErrNotSupported
 }
 

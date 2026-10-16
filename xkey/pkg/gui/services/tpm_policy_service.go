@@ -67,7 +67,7 @@ type tpmPolicyBackend interface {
 	TPMPolicyCreate(ctx context.Context, req *transport.TPMPolicyCreateRequest) (*transport.TPMPolicy, error)
 	TPMPolicyGet(ctx context.Context, req *transport.TPMPolicyRequest) (*transport.TPMPolicy, error)
 	TPMPolicyList(ctx context.Context, req *transport.TPMPolicyListRequest) (*transport.TPMPolicyListResponse, error)
-	TPMPolicyUpdate(ctx context.Context, req *transport.TPMPolicyRequest) (*transport.TPMPolicy, error)
+	TPMPolicyUpdate(ctx context.Context, req *transport.TPMPolicyUpdateRequest) (*transport.TPMPolicy, error)
 	TPMPolicyRevoke(ctx context.Context, req *transport.TPMPolicyRequest) (*transport.TPMPolicy, error)
 	TPMPolicyVerify(ctx context.Context, req *transport.TPMPolicyRequest) (*transport.TPMPolicyVerifyResponse, error)
 	TPMPolicyDelete(ctx context.Context, req *transport.TPMPolicyDeleteRequest) error
@@ -351,7 +351,21 @@ func (s *TPMPolicyService) GetPolicy(name string) (retVal *TPMPolicyInfo, retErr
 // re-approves it. No object is re-keyed; a revoked policy is approved again.
 func (s *TPMPolicyService) UpdatePolicy(name string) (retVal *TPMPolicyInfo, retErr error) {
 	defer s.recoverPanic("UpdatePolicy", &retErr)
-	return s.changePolicy(name, tpmPolicyBackend.TPMPolicyUpdate)
+	return s.changePolicy(name, func(b tpmPolicyBackend, ctx context.Context, req *transport.TPMPolicyRequest) (*transport.TPMPolicy, error) {
+		return b.TPMPolicyUpdate(ctx, &transport.TPMPolicyUpdateRequest{Name: req.Name})
+	})
+}
+
+// UpdateBranch updates one branch of the policy, counted from 0, to the PCR
+// values referenceValues, a signed CoRIM, predicts the platform will hold
+// once the images it describes are booted, and re-approves the policy. The
+// CoRIM must verify under the reference signer the TPM policy service is
+// configured with.
+func (s *TPMPolicyService) UpdateBranch(name string, branch int, referenceValues []byte) (retVal *TPMPolicyInfo, retErr error) {
+	defer s.recoverPanic("UpdateBranch", &retErr)
+	return s.changePolicy(name, func(b tpmPolicyBackend, ctx context.Context, req *transport.TPMPolicyRequest) (*transport.TPMPolicy, error) {
+		return b.TPMPolicyUpdate(ctx, &transport.TPMPolicyUpdateRequest{Name: req.Name, Branch: &branch, ReferenceValues: referenceValues})
+	})
 }
 
 // RevokePolicy withdraws the policy's approval: its objects answer only to

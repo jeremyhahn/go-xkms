@@ -284,10 +284,7 @@ func LoadTrust(store truststore.TrustStore, apps pairing.ApplicationPolicy) (*Tr
 		return nil, &SentinelCauseError{Sentinel: ErrDeviceAttestVerifyFailed, Cause: pairing.ErrApplicationPolicyUnconfigured}
 	}
 
-	verifier, err := NewVerifier(store, truststore.LoadEmbeddedRoots)
-	if err != nil {
-		return nil, fmt.Errorf("%w: %w", ErrDeviceAttestVerifyFailed, err)
-	}
+	verifier := xkms.NewAttestationVerifier(nil, xkms.WithAttestationTrustStore(store, truststore.LoadEmbeddedRoots))
 
 	pool, err := verifier.BuildTrustPool(truststore.PurposeAndroidHardware)
 	if err != nil {
@@ -879,7 +876,7 @@ func VerifiedTrustAnchor(chain []*x509.Certificate, pool *x509.CertPool) (*x509.
 // duplication this file exists to end.
 func ParseDERChain(derChain [][]byte) ([]*x509.Certificate, error) {
 	if len(derChain) == 0 {
-		return nil, ErrEmptyCertChain
+		return nil, xkms.ErrAttestationEmptyCertificateChain
 	}
 
 	chain := make([]*x509.Certificate, 0, len(derChain))

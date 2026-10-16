@@ -105,8 +105,24 @@ func (t *TenantTPMPolicies) TPMPolicyGet(ctx context.Context, req *transport.TPM
 
 // TPMPolicyUpdate re-captures a policy's PCR values and re-approves it at the
 // scope's next epoch. No object is re-keyed.
-func (t *TenantTPMPolicies) TPMPolicyUpdate(ctx context.Context, req *transport.TPMPolicyRequest) (*transport.TPMPolicy, error) {
-	return t.policyOp(ctx, req, (*tpmpolicy.Service).UpdatePolicy)
+func (t *TenantTPMPolicies) TPMPolicyUpdate(ctx context.Context, req *transport.TPMPolicyUpdateRequest) (*transport.TPMPolicy, error) {
+	if req == nil {
+		return nil, ErrNilRequest
+	}
+	if (req.Branch == nil) != (len(req.ReferenceValues) == 0) {
+		return nil, ErrTPMPolicyBranchUpdate
+	}
+	var p *tpmpolicy.Policy
+	var err error
+	if req.Branch == nil {
+		p, err = t.svc.UpdatePolicy(ctx, t.tenant, req.Name)
+	} else {
+		p, err = t.svc.UpdateBranch(ctx, t.tenant, req.Name, *req.Branch, req.ReferenceValues)
+	}
+	if err != nil {
+		return nil, err
+	}
+	return tpmPolicyToTransport(t.tenant, p), nil
 }
 
 // TPMPolicyRevoke withdraws a policy's approval; its objects answer only to
@@ -164,7 +180,12 @@ func (t *TenantTPMPolicies) TPMPolicyVerify(ctx context.Context, req *transport.
 		Branches: make([]transport.TPMPolicyBranchVerification, len(v.Branches)),
 	}
 	for i, b := range v.Branches {
-		resp.Branches[i] = transport.TPMPolicyBranchVerification{Match: b.Match, Mismatched: b.Mismatched, Approved: b.Approved}
+		resp.Branches[i] = transport.TPMPolicyBranchVerification{
+			Match:      b.Match,
+			Mismatched: b.Mismatched,
+			Approved:   b.Approved,
+			Reference:  tpmReferenceToTransport(b.Reference),
+		}
 	}
 	return resp, nil
 }
@@ -299,7 +320,11 @@ func tpmPolicyToTransport(tenant string, p *tpmpolicy.Policy) *transport.TPMPoli
 
 // tpmBranchToTransport converts a stored branch to its API form.
 func tpmBranchToTransport(b tpmpolicy.Branch, approved bool) transport.TPMPolicyBranch {
-	out := transport.TPMPolicyBranch{Conditions: make([]transport.TPMPolicyCondition, len(b.Conditions)), Approved: approved}
+	out := transport.TPMPolicyBranch{
+		Conditions: make([]transport.TPMPolicyCondition, len(b.Conditions)),
+		Approved:   approved,
+		Reference:  tpmReferenceToTransport(b.Reference),
+	}
 	for i, c := range b.Conditions {
 		out.Conditions[i] = transport.TPMPolicyCondition{
 			Type:       string(c.Type),
@@ -317,6 +342,15 @@ func tpmBranchToTransport(b tpmpolicy.Branch, approved bool) transport.TPMPolicy
 		}
 	}
 	return out
+}
+
+// tpmReferenceToTransport converts a branch's reference, nil when the
+// branch was captured from the live PCRs.
+func tpmReferenceToTransport(r *tpmpolicy.Reference) *transport.TPMPolicyReference {
+	if r == nil {
+		return nil
+	}
+	return &transport.TPMPolicyReference{ID: r.ID, Profile: r.Profile, Signer: r.Signer, Digest: r.Digest}
 }
 
 // tpmBranchesFromTransport converts requested branches to the policy

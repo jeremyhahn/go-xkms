@@ -31,13 +31,13 @@ import (
 // newSimFixture opens a fresh, provisioned simulator as the physical TPM and
 // builds a Service over it. The simulator is a process-wide singleton: each
 // test opens exactly one, and closes it when it ends.
-func newSimFixture(t *testing.T) *fixture {
+func newSimFixture(t *testing.T, configure ...func(*Config)) *fixture {
 	t.Helper()
 	keys := memoryBlobs(t)
 	cfg := pkgtpm2.DefaultConfig
 	cfg.UseSimulator = true
 	tpm := provisionedTPM(t, &pkgtpm2.Params{Config: &cfg, Backend: keys, Logger: quietLogger})
-	return newFixture(t, tpm, keys, nil)
+	return newFixture(t, tpm, keys, nil, configure...)
 }
 
 // sealObject seals secret in tenant's scope bound to policy.

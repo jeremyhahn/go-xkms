@@ -20,6 +20,7 @@ import (
 
 	"github.com/stretchr/testify/assert"
 
+	"github.com/jeremyhahn/go-xkms/pkg/attestation/refvalue"
 	tpm2backend "github.com/jeremyhahn/go-xkms/pkg/backend/tpm2"
 	pkgtpm2 "github.com/jeremyhahn/go-xkms/pkg/tpm2"
 	tpmpolicy "github.com/jeremyhahn/go-xkms/pkg/tpm2/policy"
@@ -64,6 +65,11 @@ func TestTPMPolicyClassOf(t *testing.T) {
 		{"symmetric keys unsupported by the TPM", tpm2backend.ErrSymmetricKeysUnsupported, ClassUnimplemented},
 		{"not configured", xkms.ErrNotConfigured, ClassUnavailable},
 		{"policy off TPM", xkms.ErrTPMPolicyNotSupported, ClassInvalidArgument},
+		{"branch without reference values", xkms.ErrTPMPolicyBranchUpdate, ClassInvalidArgument},
+		{"no such branch", &tpmpolicy.InvalidBranchError{Branch: 3, Err: tpmpolicy.ErrNoSuchBranch}, ClassInvalidArgument},
+		{"branch without a pcr condition", &tpmpolicy.InvalidBranchError{Err: tpmpolicy.ErrNoPCRCondition}, ClassInvalidArgument},
+		{"refused reference values", &tpmpolicy.ReferenceValuesError{Op: "verify the signed CoRIM", Err: refvalue.ErrSignature}, ClassInvalidArgument},
+		{"no reference signer", tpmpolicy.ErrNoReferenceSigner, ClassFailedPrecondition},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {

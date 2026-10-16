@@ -53,6 +53,31 @@ type (
 var (
 	// NewSignerOpts creates a new SignerOpts with the specified hash function.
 	NewSignerOpts = signing.NewSignerOpts
+
+	// VerifySignature checks an RSA PKCS#1 v1.5 signature over a SHA-256,
+	// SHA-384 or SHA-512 digest. Any other key type or hash is refused with
+	// a typed error. The check runs through types.SimpleVerifier.
+	VerifySignature = signing.Verify
+)
+
+// Signature verification errors re-exported from pkg/signing.
+var (
+	// ErrSigningPublicKeyRequired is returned when no public key is given.
+	ErrSigningPublicKeyRequired = signing.ErrPublicKeyRequired
+
+	// ErrSigningSignatureRequired is returned when the signature is empty.
+	ErrSigningSignatureRequired = signing.ErrSignatureRequired
+
+	// ErrSigningUnsupportedKeyType is returned for a public key that is not RSA.
+	ErrSigningUnsupportedKeyType = signing.ErrUnsupportedKeyType
+
+	// ErrSigningInvalidHashFunction is returned for a hash other than
+	// SHA-256, SHA-384 or SHA-512.
+	ErrSigningInvalidHashFunction = signing.ErrInvalidHashFunction
+
+	// ErrSigningVerificationFailed is returned when the signature does not
+	// verify against the public key and digest.
+	ErrSigningVerificationFailed = signing.ErrVerificationFailed
 )
 
 // Crypto adapter error types.

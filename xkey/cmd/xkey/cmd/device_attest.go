@@ -36,7 +36,6 @@ import (
 	xkms "github.com/jeremyhahn/go-xkms/sdk/go"
 	"github.com/jeremyhahn/go-xkms/sdk/go/pairingproto"
 	"github.com/jeremyhahn/go-xkms/sdk/go/truststore"
-	xkeyAttestation "github.com/jeremyhahn/go-xkms/xkey/pkg/attestation"
 )
 
 // Device attest errors.
@@ -259,11 +258,7 @@ func runDeviceAttest(cmd *cobra.Command, args []string) (err error) {
 			}
 		}()
 
-		verifier, verifierErr := xkeyAttestation.NewVerifier(xkeyStore, truststore.LoadEmbeddedRoots)
-		if verifierErr != nil {
-			return &WrappedError{Msg: "failed to create attestation verifier", Err: verifierErr}
-		}
-
+		verifier := xkms.NewAttestationVerifier(nil, xkms.WithAttestationTrustStore(xkeyStore, truststore.LoadEmbeddedRoots))
 		rootPool, poolErr := verifier.BuildTrustPool(truststore.PurposeAndroidHardware)
 		if poolErr != nil {
 			return &WrappedError{Msg: "failed to build trust pool", Err: poolErr}

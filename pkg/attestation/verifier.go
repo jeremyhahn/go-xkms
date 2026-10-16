@@ -23,6 +23,7 @@ import (
 	"fmt"
 	"time"
 
+	"github.com/jeremyhahn/go-xkms/pkg/attestation/truststore"
 	"github.com/jeremyhahn/go-xkms/pkg/errs"
 )
 
@@ -41,25 +42,39 @@ var rsaHashAlgorithms = map[x509.SignatureAlgorithm]crypto.Hash{
 }
 
 // Verifier implements the Attestation interface and provides
-// cryptographic verification of attestation statements.
+// cryptographic verification of attestation statements. Built
+// WithTrustStore, it also verifies certificate chains against trust anchors
+// pooled from the trust store by certificate purpose (see purpose.go).
 type Verifier struct {
 	// trustedRoots are root certificates trusted for chain validation
 	trustedRoots []*x509.Certificate
+
+	// store supplies purpose-scoped trust anchors; nil refuses the
+	// purpose-pooled checks.
+	store truststore.TrustStore
+
+	// embeddedLoader supplies compiled-in manufacturer roots per purpose.
+	embeddedLoader EmbeddedRootsLoader
 }
 
 // NewVerifier creates a new attestation verifier.
 //
 // Parameters:
 //   - trustedRoots: Root certificates to trust (can be empty for self-signed)
+//   - opts: optional configuration, such as WithTrustStore
 //
 // Returns:
 //   - A new Verifier instance
-func NewVerifier(trustedRoots []*x509.Certificate) *Verifier {
+func NewVerifier(trustedRoots []*x509.Certificate, opts ...VerifierOption) *Verifier {
 	roots := make([]*x509.Certificate, len(trustedRoots))
 	copy(roots, trustedRoots)
-	return &Verifier{
+	v := &Verifier{
 		trustedRoots: roots,
 	}
+	for _, opt := range opts {
+		opt(v)
+	}
+	return v
 }
 
 // Verify validates the entire attestation statement.

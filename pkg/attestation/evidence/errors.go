@@ -129,3 +129,19 @@ func (e *EventLogError) Error() string {
 
 // Is matches ErrEventLogMalformed.
 func (e *EventLogError) Is(target error) bool { return target == ErrEventLogMalformed }
+
+// SubstitutionError reports a replay substitution (EventLog.ReplayWith) that
+// cannot be applied to the log.
+type SubstitutionError struct {
+	// PCR and Ordinal name the event the substitution replaces.
+	PCR     int
+	Ordinal int
+	// Reason says what was wrong.
+	Reason string
+}
+
+// Error implements error.
+func (e *SubstitutionError) Error() string {
+	return "evidence: replay substitution for PCR " + strconv.Itoa(e.PCR) +
+		" event " + strconv.Itoa(e.Ordinal) + ": " + e.Reason
+}

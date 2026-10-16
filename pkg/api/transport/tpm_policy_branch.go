@@ -79,6 +79,20 @@ func (b TPMPolicyBranch) String() string {
 	return strings.Join(parts, ";")
 }
 
+// String describes the signed reference values: the CoRIM's ID, its signer
+// and its SHA-256 digest, e.g. "boot-image-v2 signed by Example Provider,
+// sha256 3f…".
+func (r TPMPolicyReference) String() string {
+	id := r.ID
+	if id == "" {
+		id = "(no id)"
+	}
+	if r.Signer != "" {
+		id += " signed by " + r.Signer
+	}
+	return fmt.Sprintf("%s, sha256 %x", id, r.Digest)
+}
+
 // String returns the condition in branch-spec form.
 func (c TPMPolicyCondition) String() string {
 	switch c.Type {

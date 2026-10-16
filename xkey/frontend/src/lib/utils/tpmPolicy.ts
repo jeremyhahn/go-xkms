@@ -17,7 +17,8 @@
  * readable summaries of stored policies for tables and pickers.
  */
 
-import type { TPMPolicyBranch, TPMPolicyCondition, TPMPolicyInfo } from '$lib/api/backend';
+import type { TPMPolicyBranch, TPMPolicyCondition, TPMPolicyInfo, TPMPolicyReference } from '$lib/api/backend';
+import { base64ToHex } from '$lib/utils/encoding';
 
 /** PCR banks a pcr condition may select. */
 export const BANKS = ['sha256', 'sha384', 'sha512', 'sha1'];
@@ -95,6 +96,15 @@ function describeCondition(c: TPMPolicyCondition): string {
 /** Summarizes a branch: its conditions joined by " + ". */
 export function describeBranch(branch: TPMPolicyBranch): string {
   return branch.conditions.map(describeCondition).join(' + ');
+}
+
+/**
+ * Describes signed reference values like `xkey tpm policy get`, e.g.
+ * "boot-image-v2 signed by Example Provider, sha256 3f…".
+ */
+export function describeReference(ref: TPMPolicyReference): string {
+  const signer = ref.signer ? ` signed by ${ref.signer}` : '';
+  return `${ref.id || '(no id)'}${signer}, sha256 ${base64ToHex(ref.digest)}`;
 }
 
 /** Summarizes a policy: its branches joined by " or ". */

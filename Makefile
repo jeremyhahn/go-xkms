@@ -1316,6 +1316,12 @@ test-signing:
 	@echo "$(CYAN)→ Testing signing package...$(RESET)"
 	@$(GOTEST) $(TEST_FLAGS) ./pkg/signing/...
 
+.PHONY: test-image
+## test-image: Run container image signing package unit tests
+test-image:
+	@echo "$(CYAN)→ Testing image package...$(RESET)"
+	@$(GOTEST) $(TEST_FLAGS) ./pkg/image/...
+
 .PHONY: test-attestation
 ## test-attestation: Run attestation package unit tests (invariants, android, dice)
 test-attestation:

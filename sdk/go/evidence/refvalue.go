@@ -65,4 +65,5 @@ var (
 	ErrCoRIMPCRIndex        = refvalue.ErrPCRIndex
 	ErrCoRIMDigestLength    = refvalue.ErrDigestLength
 	ErrCoRIMUnsupportedHash = refvalue.ErrUnsupportedHash
+	ErrCoRIMComponentDigest = refvalue.ErrComponentDigest
 )

@@ -1159,6 +1159,25 @@ type TPM2Config struct {
 	// vtpm TPM mode. vTPMs are off unless enabled here: a tenant set to vtpm
 	// mode is then refused (tpmpolicy.ErrVTPMUnavailable).
 	VTPM *VTPMConfig `yaml:"vtpm,omitempty"`
+
+	// ReferenceSigner is the endorsement of the reference-value signer: a
+	// signed CoRIM must verify under it before a TPM policy branch is updated
+	// from it. Unset leaves reference-value branch updates unavailable
+	// (tpmpolicy.ErrNoReferenceSigner).
+	ReferenceSigner *ReferenceSignerConfig `yaml:"reference_signer,omitempty"`
+}
+
+// ReferenceSignerConfig names the reference-value signer's endorsement. Set
+// exactly one of PublicKey and Roots.
+type ReferenceSignerConfig struct {
+	// PublicKey is a PEM file holding the signer's public key (or a
+	// certificate carrying it), which pins the signer.
+	PublicKey string `yaml:"public_key,omitempty"`
+
+	// Roots is a PEM file of CA certificates. A signer whose certificate,
+	// carried in the CoRIM's COSE x5chain header, chains to one of them is
+	// trusted.
+	Roots string `yaml:"roots,omitempty"`
 }
 
 // VTPMConfig configures the node's per-tenant vTPM supervisor
@@ -1709,6 +1728,9 @@ func (c *Config) Validate() error {
 		// path this check otherwise guards.
 		if c.Backends.TPM2.DevicePath == "" && !c.Backends.TPM2.UseSimulator {
 			return &errs.Message{Msg: "TPM2 device_path is required when enabled"}
+		}
+		if rs := c.Backends.TPM2.ReferenceSigner; rs != nil && (rs.PublicKey == "") == (rs.Roots == "") {
+			return &errs.Message{Msg: "TPM2 reference_signer needs exactly one of public_key and roots"}
 		}
 		if c.Backends.TPM2.PlatformPCRs != nil {
 			if err := c.Backends.TPM2.PlatformPCRs.Validate(); err != nil {

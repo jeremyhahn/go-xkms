@@ -199,14 +199,19 @@ gRPC (`xkms.v1`, pre-v1, one wire format; removed numbers are reserved):
 Design: [`architecture.md`](architecture.md), "Offline authorization".
 `sdk/go/tpmpolicy.go` exports:
 
-- `TPMPolicyBindingResolver` (`:84`), what a TPM consults for named
+- `TPMPolicyBindingResolver` (`:89`), what a TPM consults for named
   policies; `TPM.SetPolicyBindingResolver` installs one.
-- `TPMStaticPolicyResolver` (`:89`) and `NewTPMStaticPolicyResolver(records
-  ...[]byte)` (`:205`): a resolver over `.tpmpolicy` binding records, needing
-  no database. Two records for one policy that disagree are refused
-  (`tpm2.ErrPolicyApprovalMismatch`).
-- `ErrTPMPolicyUnbound` (`:215`): the policy has no record in the resolver. A
+- `TPMStaticPolicyResolver` (`:94`) and `NewTPMStaticPolicyResolver(records
+  ...[]byte)` (`:214`): a resolver over `.tpmpolicy` binding records, needing
+  no database.
+- `ErrTPMPolicyUnbound` (`:224`): the policy has no record in the resolver. A
   record without approvals resolves to `ErrTPMPolicyRevoked`.
+- Refusals of `NewTPMStaticPolicyResolver`: `*TPMPolicyBindingFormatError`
+  (`:253`) for a record that does not decode, `ErrTPMPolicyApprovalInvalid`
+  (`:259`) for an approval that does not decode or is unsigned, and
+  `ErrTPMPolicyApprovalMismatch` (`:264`) for an approval not signed by the
+  record's authority or approving another policy, and for two records of one
+  policy that disagree.
 
 ## Errors
 

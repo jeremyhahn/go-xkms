@@ -133,6 +133,7 @@ func validateDescription(description string) error {
 // from the scope's TPM. The values are never supplied by a caller.
 func capture(t *pkgtpm2.TPM2, scope string, p *Policy) error {
 	for i := range p.Branches {
+		p.Branches[i].Reference = nil
 		conditions := p.Branches[i].Conditions
 		for j := range conditions {
 			spec, ok := conditionSpecs[conditions[j].Type]
@@ -312,7 +313,7 @@ func pcrDigest(pcrs []uint, values map[uint][]byte) []byte {
 // verifyBranch compares b's pcr condition, if it has one, with the live PCRs
 // of t.
 func verifyBranch(t *pkgtpm2.TPM2, scope string, b Branch) (BranchVerification, error) {
-	v := BranchVerification{Match: true}
+	v := BranchVerification{Match: true, Reference: b.Reference}
 	for _, c := range b.Conditions {
 		if c.Type != ConditionPCR {
 			continue

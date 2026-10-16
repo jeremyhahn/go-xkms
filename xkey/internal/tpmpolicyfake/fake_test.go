@@ -15,6 +15,7 @@ package tpmpolicyfake
 
 import (
 	"context"
+	"crypto/sha256"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -97,12 +98,38 @@ func TestFake_VerifyDetectsDriftAndUpdateRecaptures(t *testing.T) {
 	assert.False(t, v.Match)
 	assert.Equal(t, []transport.TPMPolicyBranchVerification{{Mismatched: []uint{7}, Approved: true}}, v.Branches)
 
-	_, err = f.TPMPolicyUpdate(ctx, &transport.TPMPolicyRequest{Name: "boot"})
+	_, err = f.TPMPolicyUpdate(ctx, &transport.TPMPolicyUpdateRequest{Name: "boot"})
 	require.NoError(t, err)
 	v, err = f.TPMPolicyVerify(ctx, &transport.TPMPolicyRequest{Name: "boot"})
 	require.NoError(t, err)
 	assert.True(t, v.Match)
 	assert.True(t, v.Approved)
+}
+
+// TestFake_UpdateBranchRecordsTheReference proves a branch update approves
+// the branch for the reference values' digest, a live capture drops it, and
+// an unpaired or out-of-range update is refused like the service's.
+func TestFake_UpdateBranchRecordsTheReference(t *testing.T) {
+	f := &Fake{}
+	ctx := context.Background()
+	create(t, f, "boot", 0, 7)
+	branch := 0
+	corim := []byte{0xd2, 0x84}
+
+	p, err := f.TPMPolicyUpdate(ctx, &transport.TPMPolicyUpdateRequest{Name: "boot", Branch: &branch, ReferenceValues: corim})
+	require.NoError(t, err)
+	digest := sha256.Sum256(corim)
+	assert.Equal(t, &transport.TPMPolicyReference{Digest: digest[:]}, p.Branches[0].Reference)
+
+	p, err = f.TPMPolicyUpdate(ctx, &transport.TPMPolicyUpdateRequest{Name: "boot"})
+	require.NoError(t, err)
+	assert.Nil(t, p.Branches[0].Reference, "a live capture drops the reference")
+
+	_, err = f.TPMPolicyUpdate(ctx, &transport.TPMPolicyUpdateRequest{Name: "boot", Branch: &branch})
+	assert.ErrorIs(t, err, xkms.ErrTPMPolicyBranchUpdate)
+	missing := 1
+	_, err = f.TPMPolicyUpdate(ctx, &transport.TPMPolicyUpdateRequest{Name: "boot", Branch: &missing, ReferenceValues: corim})
+	assert.ErrorIs(t, err, xkms.ErrTPMPolicyNoSuchBranch)
 }
 
 func TestFake_RevokeWithdrawsApprovalAndUnknownPolicyFails(t *testing.T) {

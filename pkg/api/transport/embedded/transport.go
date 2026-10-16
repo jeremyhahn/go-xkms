@@ -1032,8 +1032,9 @@ func (t *Transport) TPMPolicyList(ctx context.Context, req *transport.TPMPolicyL
 	return t.service.TPMPolicyList(ctx, req)
 }
 
-// TPMPolicyUpdate re-captures and re-approves a TPM policy.
-func (t *Transport) TPMPolicyUpdate(ctx context.Context, req *transport.TPMPolicyRequest) (*transport.TPMPolicy, error) {
+// TPMPolicyUpdate re-captures a TPM policy, or updates one branch from
+// signed reference values, and re-approves it.
+func (t *Transport) TPMPolicyUpdate(ctx context.Context, req *transport.TPMPolicyUpdateRequest) (*transport.TPMPolicy, error) {
 	if !t.connected {
 		return nil, ErrNotConnected
 	}

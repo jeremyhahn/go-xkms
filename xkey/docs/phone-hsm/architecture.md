@@ -158,8 +158,9 @@ phone's attestation fingerprint into the Noise prologue.
 
 ## Known constraint: the cipher suite is fixed and not FIPS-approved
 
-`NoiseProtocolName` is a constant. ChaChaPoly is not a FIPS-approved cipher,
-there is no AES-GCM alternative in this package, and the suite is also fixed in
+`NoiseXXProtocolName` (go-xkms `pkg/trust/bootstrap`, reached through
+`sdk/go/bootstrap`) is a constant. ChaChaPoly is not a FIPS-approved cipher,
+there is no AES-GCM alternative, and the suite is also fixed in
 the Android compatibility tests. Under the portfolio's FIPS mandate that is a
 real gap, and it is a **cross-repo** one: changing the suite requires
 xkey-android to change in the same release, and the `Noise_NK` bootstrap path

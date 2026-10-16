@@ -179,7 +179,7 @@ func tpmPolicyRPCs(s *Service, tenant string) map[string]func(context.Context) e
 			return err
 		},
 		"TPMPolicyUpdate": func(ctx context.Context) error {
-			_, err := s.TPMPolicyUpdate(ctx, req)
+			_, err := s.TPMPolicyUpdate(ctx, &pb.TPMPolicyUpdateRequest{TenantId: tenant, Name: "boot"})
 			return err
 		},
 		"TPMPolicyRevoke": func(ctx context.Context) error {

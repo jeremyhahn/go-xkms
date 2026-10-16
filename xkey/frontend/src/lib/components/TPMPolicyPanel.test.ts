@@ -22,6 +22,7 @@ function installMock(mode: 'local' | 'server', policies = [platform, boot]) {
     ListPolicies: vi.fn().mockResolvedValue(policies),
     CreatePolicy: vi.fn().mockResolvedValue({ ...boot, name: 'new' }),
     UpdatePolicy: vi.fn().mockResolvedValue(boot),
+    UpdateBranch: vi.fn().mockResolvedValue(boot),
     RevokePolicy: vi.fn().mockResolvedValue({ ...boot, approved: false }),
     VerifyPolicy: vi.fn().mockResolvedValue({
       name: 'boot', match: false, approved: true,
@@ -229,5 +230,60 @@ describe('TPMPolicyPanel details', () => {
     const rows = detailsView.querySelectorAll('tbody tr');
     expect(rows[0]).toHaveTextContent('0aa');
     expect(rows[1]).toHaveTextContent('7bb');
+    expect(view.queryByTestId('branch-1-reference')).toBeNull();
+    expect(view.queryByLabelText('Reference values for branch 2')).toBeNull();
+  });
+
+  it('updates one branch from a signed CoRIM and shows its reference', async () => {
+    const { tpm, view } = await renderLoaded();
+    tpm.UpdateBranch.mockResolvedValue({
+      ...boot, epoch: 4,
+      branches: [{
+        conditions: [{ type: 'pcr', bank: 'sha256', pcrs: [0, 7], pcr_values: { 0: 'aa', 7: 'cc' } }],
+        approved: true,
+        reference: { id: 'boot-image-v2', signer: 'Example Provider', digest: 'q80=' },
+      }],
+    });
+    await fireEvent.click(view.getByLabelText('Details of boot'));
+    const input = await waitFor(() => view.getByLabelText('Reference values for branch 1') as HTMLInputElement);
+    await fireEvent.change(input, { target: { files: [corimFile([0xd2, 0x84])] } });
+
+    await waitFor(() => expect(tpm.UpdateBranch).toHaveBeenCalledWith('boot', 0, [0xd2, 0x84]));
+    await waitFor(() => expect(view.getByTestId('branch-1-reference'))
+      .toHaveTextContent('Reference values: boot-image-v2 signed by Example Provider, sha256 abcd'));
+    expect(view.getByTestId('policy-details')).toHaveTextContent('approved at epoch 4');
+  });
+
+  it('keeps the details when the server refuses the reference values', async () => {
+    const { tpm, view } = await renderLoaded();
+    tpm.UpdateBranch.mockRejectedValue(new Error('tpmpolicy: invalid reference values: verify the signed CoRIM'));
+    await fireEvent.click(view.getByLabelText('Details of boot'));
+    const input = await waitFor(() => view.getByLabelText('Reference values for branch 1') as HTMLInputElement);
+    await fireEvent.change(input, { target: { files: [corimFile([0x00])] } });
+
+    await waitFor(() => expect(tpm.UpdateBranch).toHaveBeenCalledOnce());
+    expect(view.getByTestId('policy-details')).toHaveTextContent('approved at epoch 3');
+    expect(view.queryByTestId('branch-1-reference')).toBeNull();
+  });
+
+  it('shows the reference values a verified branch is approved for', async () => {
+    const { tpm, view } = await renderLoaded();
+    tpm.VerifyPolicy.mockResolvedValue({
+      name: 'boot', match: false, approved: true,
+      branches: [{ match: false, mismatched: [7], approved: true, reference: { id: 'boot-image-v2', digest: 'q80=' } }],
+    });
+    await fireEvent.click(within(view.getByTestId('policy-row-boot')).getByText('Verify'));
+    await waitFor(() => expect(view.getByTestId('verify-result'))
+      .toHaveTextContent('approval current; approved for reference values boot-image-v2, sha256 abcd'));
   });
 });
+
+/**
+ * corimFile is a picked CoRIM file of bytes. Its arrayBuffer is defined
+ * explicitly so the tests do not depend on the DOM implementation's Blob.
+ */
+function corimFile(bytes: number[]): File {
+  const file = new File([new Uint8Array(bytes)], 'boot.corim');
+  Object.defineProperty(file, 'arrayBuffer', { value: async () => new Uint8Array(bytes).buffer });
+  return file;
+}

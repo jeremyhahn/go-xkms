@@ -58,12 +58,17 @@ func (c TPMPolicyClient) TPMPolicyGet(ctx context.Context, req *transport.TPMPol
 	return c.policyCall(ctx, req, c.Client.TPMPolicyGet)
 }
 
-// TPMPolicyUpdate re-captures and re-approves a TPM policy.
-func (c TPMPolicyClient) TPMPolicyUpdate(ctx context.Context, req *transport.TPMPolicyRequest) (*transport.TPMPolicy, error) {
+// TPMPolicyUpdate re-captures a TPM policy, or updates one branch from
+// signed reference values, and re-approves it.
+func (c TPMPolicyClient) TPMPolicyUpdate(ctx context.Context, req *transport.TPMPolicyUpdateRequest) (*transport.TPMPolicy, error) {
 	if req == nil {
 		return nil, ErrNilRequest
 	}
-	return c.policyCall(ctx, req, c.Client.TPMPolicyUpdate)
+	resp, err := c.Client.TPMPolicyUpdate(ctx, TPMPolicyUpdateRequestToProto(req))
+	if err != nil {
+		return nil, err
+	}
+	return TPMPolicyFromProto(resp), nil
 }
 
 // TPMPolicyRevoke withdraws a TPM policy's approval.

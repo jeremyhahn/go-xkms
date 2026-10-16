@@ -100,13 +100,14 @@ func (s *Service) TPMPolicyList(ctx context.Context, req *pb.TPMPolicyListReques
 	})
 }
 
-// TPMPolicyUpdate re-captures and re-approves a TPM policy.
-func (s *Service) TPMPolicyUpdate(ctx context.Context, req *pb.TPMPolicyRequest) (*pb.TPMPolicy, error) {
+// TPMPolicyUpdate re-captures a TPM policy, or updates one branch from
+// signed reference values, and re-approves it.
+func (s *Service) TPMPolicyUpdate(ctx context.Context, req *pb.TPMPolicyUpdateRequest) (*pb.TPMPolicy, error) {
 	if err := s.authorize(ctx, auth.ResourceTPMPolicy, auth.ActionUpdate, req.GetName()); err != nil {
 		return nil, err
 	}
 	return tpmPolicyCall(s, func(x *xkms.XKMSService) (*pb.TPMPolicy, error) {
-		p, err := x.TPMPolicyUpdate(ctx, pbconv.TPMPolicyRequestFromProto(req))
+		p, err := x.TPMPolicyUpdate(ctx, pbconv.TPMPolicyUpdateRequestFromProto(req))
 		if err != nil {
 			return nil, err
 		}

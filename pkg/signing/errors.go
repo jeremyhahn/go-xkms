@@ -30,4 +30,16 @@ var (
 
 	// ErrSigningFailed indicates the signing operation failed
 	ErrSigningFailed = errors.New("signing: operation failed")
+
+	// ErrPublicKeyRequired indicates a nil public key was given to Verify
+	ErrPublicKeyRequired = errors.New("signing: public key is required")
+
+	// ErrSignatureRequired indicates an empty signature was given to Verify
+	ErrSignatureRequired = errors.New("signing: signature is required")
+
+	// ErrUnsupportedKeyType indicates Verify was given a key that is not RSA
+	ErrUnsupportedKeyType = errors.New("signing: unsupported key type, RSA required")
+
+	// ErrVerificationFailed indicates the signature does not verify
+	ErrVerificationFailed = errors.New("signing: signature verification failed")
 )

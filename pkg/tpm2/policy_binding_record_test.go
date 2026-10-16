@@ -288,7 +288,7 @@ func TestStaticPolicyResolver(t *testing.T) {
 }
 
 // TestNewStaticPolicyResolver_Rejects covers records the resolver refuses:
-// malformed, signed by another authority, approving another policy, or
+// malformed, unsigned, signed by another authority, approving another policy, or
 // conflicting with another record.
 func TestNewStaticPolicyResolver_Rejects(t *testing.T) {
 	record := func(mutate func(*store.TPMPolicyBinding)) []byte {
@@ -299,6 +299,10 @@ func TestNewStaticPolicyResolver_Rejects(t *testing.T) {
 	otherPolicy := recordApproval(recordAuthority(1))
 	otherPolicy.PolicyRef = PolicyRef(recordScope, "other")
 	otherApproval, err := marshalPolicyApproval(otherPolicy)
+	require.NoError(t, err)
+	unsigned := recordApproval(recordAuthority(1))
+	unsigned.Signature = tpm2.TPMTSignature{SigAlg: tpm2.TPMAlgNull}
+	unsignedApproval, err := marshalPolicyApproval(unsigned)
 	require.NoError(t, err)
 
 	_, err = NewStaticPolicyResolver([]byte("not a binding"))
@@ -312,6 +316,7 @@ func TestNewStaticPolicyResolver_Rejects(t *testing.T) {
 	}{
 		{"malformed approval", [][]byte{record(func(b *store.TPMPolicyBinding) { b.Approvals[0] = []byte("x") })}, ErrInvalidPolicyApproval},
 		{"wrong authority", [][]byte{record(func(b *store.TPMPolicyBinding) { b.Authority = tpm2.Marshal(recordAuthority(2)) })}, ErrPolicyApprovalMismatch},
+		{"unsigned approval", [][]byte{record(func(b *store.TPMPolicyBinding) { b.Approvals[0] = unsignedApproval })}, ErrInvalidPolicyApproval},
 		{"approval of another policy", [][]byte{record(func(b *store.TPMPolicyBinding) { b.Approvals[0] = otherApproval })}, ErrPolicyApprovalMismatch},
 		{"conflicting records", [][]byte{record(func(*store.TPMPolicyBinding) {}), record(func(b *store.TPMPolicyBinding) { b.Index++ })}, ErrPolicyApprovalMismatch},
 	}

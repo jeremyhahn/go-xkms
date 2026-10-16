@@ -176,7 +176,7 @@ func TestHost_ServesThePolicyAPI(t *testing.T) {
 	verified, err := host.TPMPolicyVerify(ctx, boot)
 	require.NoError(t, err)
 	assert.False(t, verified.Match)
-	_, err = host.TPMPolicyUpdate(ctx, boot)
+	_, err = host.TPMPolicyUpdate(ctx, &transport.TPMPolicyUpdateRequest{Name: "boot"})
 	require.NoError(t, err)
 	verified, err = host.TPMPolicyVerify(ctx, boot)
 	require.NoError(t, err)

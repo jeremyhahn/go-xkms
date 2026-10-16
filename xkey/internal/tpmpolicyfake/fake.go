@@ -22,6 +22,7 @@ package tpmpolicyfake
 
 import (
 	"context"
+	"crypto/sha256"
 	"encoding/hex"
 	"errors"
 	"sort"
@@ -123,17 +124,42 @@ func (f *Fake) policy(tenant, name string) (*transport.TPMPolicy, error) {
 // caller holds f.mu.
 func (f *Fake) capture(p *transport.TPMPolicy) {
 	for i := range p.Branches {
-		for j := range p.Branches[i].Conditions {
-			c := &p.Branches[i].Conditions[j]
-			if c.Type != transport.TPMPolicyConditionPCR {
-				continue
-			}
-			c.PCRValues = make(map[uint]string, len(c.PCRs))
-			for _, pcr := range c.PCRs {
-				c.PCRValues[pcr] = f.pcrs[pcr]
-			}
-		}
+		p.Branches[i].Reference = nil
+		f.captureBranch(&p.Branches[i])
 	}
+}
+
+// captureBranch gives b's pcr conditions the live values and reports whether
+// b has one.
+func (f *Fake) captureBranch(b *transport.TPMPolicyBranch) bool {
+	captured := false
+	for j := range b.Conditions {
+		c := &b.Conditions[j]
+		if c.Type != transport.TPMPolicyConditionPCR {
+			continue
+		}
+		c.PCRValues = make(map[uint]string, len(c.PCRs))
+		for _, pcr := range c.PCRs {
+			c.PCRValues[pcr] = f.pcrs[pcr]
+		}
+		captured = true
+	}
+	return captured
+}
+
+// updateBranch gives p's branch, counted from 0, the live values of its pcr
+// condition and records referenceValues' SHA-256 as its reference.
+func (f *Fake) updateBranch(p *transport.TPMPolicy, branch int, referenceValues []byte) error {
+	if branch < 0 || branch >= len(p.Branches) {
+		return xkms.ErrTPMPolicyNoSuchBranch
+	}
+	b := &p.Branches[branch]
+	if !f.captureBranch(b) {
+		return xkms.ErrTPMPolicyNoPCRCondition
+	}
+	digest := sha256.Sum256(referenceValues)
+	b.Reference = &transport.TPMPolicyReference{Digest: digest[:]}
+	return nil
 }
 
 // approve sets the approval of p and of every branch of it.
@@ -167,6 +193,11 @@ func copyBranches(branches []transport.TPMPolicyBranch) []transport.TPMPolicyBra
 	out := make([]transport.TPMPolicyBranch, len(branches))
 	for i, b := range branches {
 		out[i] = transport.TPMPolicyBranch{Conditions: make([]transport.TPMPolicyCondition, len(b.Conditions)), Approved: b.Approved}
+		if b.Reference != nil {
+			ref := *b.Reference
+			ref.Digest = append([]byte(nil), b.Reference.Digest...)
+			out[i].Reference = &ref
+		}
 		for j, c := range b.Conditions {
 			c.PCRs = append([]uint(nil), c.PCRs...)
 			c.Localities = append([]uint(nil), c.Localities...)
@@ -265,8 +296,14 @@ func (f *Fake) TPMPolicyList(_ context.Context, req *transport.TPMPolicyListRequ
 	return resp, nil
 }
 
-// TPMPolicyUpdate re-captures a policy's values and re-approves it.
-func (f *Fake) TPMPolicyUpdate(_ context.Context, req *transport.TPMPolicyRequest) (*transport.TPMPolicy, error) {
+// TPMPolicyUpdate re-captures a policy's values and re-approves it. Given a
+// branch and its reference values, it updates only that branch and records
+// the reference values' SHA-256 as the branch's reference; it does not
+// parse or verify them, and the branch takes the live values.
+func (f *Fake) TPMPolicyUpdate(_ context.Context, req *transport.TPMPolicyUpdateRequest) (*transport.TPMPolicy, error) {
+	if (req.Branch == nil) != (len(req.ReferenceValues) == 0) {
+		return nil, xkms.ErrTPMPolicyBranchUpdate
+	}
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	f.init()
@@ -274,7 +311,11 @@ func (f *Fake) TPMPolicyUpdate(_ context.Context, req *transport.TPMPolicyReques
 	if err != nil {
 		return nil, err
 	}
-	f.capture(p)
+	if req.Branch == nil {
+		f.capture(p)
+	} else if err := f.updateBranch(p, *req.Branch, req.ReferenceValues); err != nil {
+		return nil, err
+	}
 	approve(p, true)
 	p.AuthorityGeneration = f.generation
 	p.UpdatedAt = "2026-01-02T00:00:00Z"

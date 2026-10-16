@@ -537,6 +537,8 @@ type (
 	TPMPolicyBranchVerification = transport.TPMPolicyBranchVerification
 	TPMPolicyBranchSpecError    = transport.TPMPolicyBranchSpecError
 	TPMPolicyRequest            = transport.TPMPolicyRequest
+	TPMPolicyUpdateRequest      = transport.TPMPolicyUpdateRequest
+	TPMPolicyReference          = transport.TPMPolicyReference
 	TPMPolicyListRequest        = transport.TPMPolicyListRequest
 	TPMPolicyListResponse       = transport.TPMPolicyListResponse
 	TPMPolicyDeleteRequest      = transport.TPMPolicyDeleteRequest

@@ -337,7 +337,7 @@ func (s *stubClient) TPMPolicyList(context.Context, *TPMPolicyListRequest) (*TPM
 	panic("stub")
 }
 
-func (s *stubClient) TPMPolicyUpdate(context.Context, *TPMPolicyRequest) (*TPMPolicy, error) {
+func (s *stubClient) TPMPolicyUpdate(context.Context, *TPMPolicyUpdateRequest) (*TPMPolicy, error) {
 	panic("stub")
 }
 

@@ -16,37 +16,6 @@ package attestation
 import "errors"
 
 var (
-	// ErrNilTrustStore indicates the trust store provided to the verifier is nil.
-	ErrNilTrustStore = errors.New("attestation: nil trust store")
-
-	// ErrNilCertificate indicates a nil certificate was provided for verification.
-	ErrNilCertificate = errors.New("attestation: nil certificate")
-
-	// ErrEmptyCertChain indicates an empty certificate chain was provided.
-	ErrEmptyCertChain = errors.New("attestation: empty certificate chain")
-
-	// ErrNoTrustAnchors indicates no trust anchors were found for the requested purpose.
-	ErrNoTrustAnchors = errors.New("attestation: no trust anchors found for purpose")
-
-	// ErrChainVerification indicates the X.509 chain verification failed.
-	ErrChainVerification = errors.New("attestation: chain verification failed")
-
-	// ErrUnsupportedPurpose indicates the certificate purpose is not recognized.
-	ErrUnsupportedPurpose = errors.New("attestation: unsupported certificate purpose")
-
-	// ErrTrustStoreQuery indicates a failure querying the trust store.
-	ErrTrustStoreQuery = errors.New("attestation: trust store query failed")
-
-	// ErrMissingNonce indicates an attestation was submitted without the
-	// challenge it must be bound to. Verifying without a challenge accepts
-	// replayed attestations, so the verifier refuses instead.
-	ErrMissingNonce = errors.New("attestation: challenge nonce is required")
-
-	// ErrChallengeVerification indicates the attestation challenge could not be
-	// bound to the supplied nonce: the key attestation extension was absent,
-	// unparseable, or carried a different challenge.
-	ErrChallengeVerification = errors.New("attestation: challenge verification failed")
-
 	// ErrAttestationKeyOriginNotGenerated indicates the attested key's
 	// TEE-enforced Origin claim is not GENERATED: the key was derived,
 	// imported, or the TEE made no origin claim at all (go-xkms#132).

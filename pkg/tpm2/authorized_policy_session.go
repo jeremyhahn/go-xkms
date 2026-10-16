@@ -387,6 +387,8 @@ func validateApproval(approval *PolicyApproval, binding *store.TPMPolicyBinding,
 		return &errs.Detail{Err: ErrPolicyApprovalMismatch, Detail: "policy reference"}
 	case approval.Counter == 0:
 		return &errs.Detail{Err: ErrInvalidPolicyApproval, Detail: "no counter index"}
+	case approval.Signature.SigAlg == tpm2.TPMAlgNull:
+		return &errs.Detail{Err: ErrInvalidPolicyApproval, Detail: "unsigned approval"}
 	}
 	return nil
 }

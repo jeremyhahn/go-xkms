@@ -18,6 +18,7 @@ import (
 	"github.com/jeremyhahn/go-xkms/pkg/scope"
 	"github.com/jeremyhahn/go-xkms/pkg/tpm2"
 	tpmpolicy "github.com/jeremyhahn/go-xkms/pkg/tpm2/policy"
+	"github.com/jeremyhahn/go-xkms/pkg/tpm2/store"
 	"github.com/jeremyhahn/go-xkms/pkg/tpm2/vtpm"
 	pkgxkms "github.com/jeremyhahn/go-xkms/pkg/xkms"
 	"github.com/jeremyhahn/go-xkms/sdk/go/transport"
@@ -62,6 +63,10 @@ type TPMPolicyConditionType = tpmpolicy.ConditionType
 // TPMPolicyVerificationBranch compares one branch's captured PCR values
 // with the live ones.
 type TPMPolicyVerificationBranch = tpmpolicy.BranchVerification
+
+// TPMPolicyDefinitionReference identifies the signed reference values a
+// branch was last updated from.
+type TPMPolicyDefinitionReference = tpmpolicy.Reference
 
 // TPMPolicyVerification compares a policy's captured PCR values with the
 // live ones.
@@ -121,6 +126,10 @@ type TPMPolicyInUseError = tpmpolicy.PolicyInUseError
 // TPMScopeInUseError is returned when a tenant's TPM mode cannot change
 // because its scope still holds objects or policies.
 type TPMScopeInUseError = tpmpolicy.ScopeInUseError
+
+// TPMPolicyReferenceValuesError is returned when signed reference values
+// do not verify or do not predict a branch's PCR values.
+type TPMPolicyReferenceValuesError = tpmpolicy.ReferenceValuesError
 
 // TPM modes and object kinds.
 const (
@@ -225,10 +234,32 @@ var (
 	ErrTPMPolicyEmptyLocalities   = tpmpolicy.ErrEmptyLocalitySelection
 	ErrTPMPolicyPCRValuesSupplied = tpmpolicy.ErrPCRValuesSupplied
 
+	// Branch update errors (update from signed reference values).
+	ErrTPMPolicyNoReferenceSigner = tpmpolicy.ErrNoReferenceSigner
+	ErrTPMPolicyNoSuchBranch      = tpmpolicy.ErrNoSuchBranch
+	ErrTPMPolicyNoPCRCondition    = tpmpolicy.ErrNoPCRCondition
+	ErrTPMPolicyBranchUpdate      = pkgxkms.ErrTPMPolicyBranchUpdate
+
 	// Branch spec errors (ParseTPMPolicyBranch).
 	ErrTPMPolicyBranchEmpty      = transport.ErrTPMPolicyBranchEmpty
 	ErrTPMPolicyConditionUnknown = transport.ErrTPMPolicyConditionUnknown
 	ErrTPMPolicyConditionValue   = transport.ErrTPMPolicyConditionValue
 	ErrTPMPolicyNoSelection      = transport.ErrTPMPolicyNoSelection
 	ErrTPMPolicyPCRsAndBranches  = transport.ErrTPMPolicyPCRsAndBranches
+)
+
+// TPMPolicyBindingFormatError is returned by NewTPMStaticPolicyResolver for a
+// binding record that does not decode.
+type TPMPolicyBindingFormatError = store.TPMPolicyBindingFormatError
+
+// Binding record refusals of NewTPMStaticPolicyResolver.
+var (
+	// ErrTPMPolicyApprovalInvalid is returned for an approval that does not
+	// decode or is unsigned.
+	ErrTPMPolicyApprovalInvalid = tpm2.ErrInvalidPolicyApproval
+
+	// ErrTPMPolicyApprovalMismatch is returned for an approval signed by a
+	// key other than the record's authority or approving another policy,
+	// and for two records of one policy that differ.
+	ErrTPMPolicyApprovalMismatch = tpm2.ErrPolicyApprovalMismatch
 )

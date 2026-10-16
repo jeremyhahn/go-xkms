@@ -2771,9 +2771,14 @@ Usage: `xkey tpm policy revoke <name>`
 
 ## xkey tpm policy update
 
-Re-capture the PCR values and re-approve the policy
+Update the PCR values and re-approve the policy
 
-Usage: `xkey tpm policy update <name>`
+Usage: `xkey tpm policy update <name> [flags]`
+
+| Flag | Type | Default | Description |
+|---|---|---|---|
+| `--branch` | int | 0 | Update only this branch, counted from 0 (needs --reference-values) |
+| `--reference-values` | string |  | Signed CoRIM file the branch's PCR values are predicted from (needs --branch) |
 
 ## xkey tpm policy verify
 

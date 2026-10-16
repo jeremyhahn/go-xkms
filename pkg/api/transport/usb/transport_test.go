@@ -671,7 +671,7 @@ func TestPolicyOperationsNotSupported(t *testing.T) {
 		{"TPMPolicyCreate", func() error { _, e := tr.TPMPolicyCreate(ctx, &transport.TPMPolicyCreateRequest{}); return e }},
 		{"TPMPolicyGet", func() error { _, e := tr.TPMPolicyGet(ctx, &transport.TPMPolicyRequest{}); return e }},
 		{"TPMPolicyList", func() error { _, e := tr.TPMPolicyList(ctx, &transport.TPMPolicyListRequest{}); return e }},
-		{"TPMPolicyUpdate", func() error { _, e := tr.TPMPolicyUpdate(ctx, &transport.TPMPolicyRequest{}); return e }},
+		{"TPMPolicyUpdate", func() error { _, e := tr.TPMPolicyUpdate(ctx, &transport.TPMPolicyUpdateRequest{}); return e }},
 		{"TPMPolicyRevoke", func() error { _, e := tr.TPMPolicyRevoke(ctx, &transport.TPMPolicyRequest{}); return e }},
 		{"TPMPolicyVerify", func() error { _, e := tr.TPMPolicyVerify(ctx, &transport.TPMPolicyRequest{}); return e }},
 		{"TPMPolicyDelete", func() error { return tr.TPMPolicyDelete(ctx, &transport.TPMPolicyDeleteRequest{}) }},

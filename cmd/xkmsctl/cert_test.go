@@ -3098,7 +3098,7 @@ func (m *mockCertClient) TPMPolicyList(context.Context, *transport.TPMPolicyList
 	return nil, nil
 }
 
-func (m *mockCertClient) TPMPolicyUpdate(context.Context, *transport.TPMPolicyRequest) (*transport.TPMPolicy, error) {
+func (m *mockCertClient) TPMPolicyUpdate(context.Context, *transport.TPMPolicyUpdateRequest) (*transport.TPMPolicy, error) {
 	return nil, nil
 }
 

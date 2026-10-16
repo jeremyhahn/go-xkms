@@ -132,7 +132,7 @@ func forwardingCalls(ctx context.Context, tr *Transport) map[string]func() error
 		"TPMPolicyCreate":          func() error { return errOf(tr.TPMPolicyCreate(ctx, &transport.TPMPolicyCreateRequest{})) },
 		"TPMPolicyGet":             func() error { return errOf(tr.TPMPolicyGet(ctx, &transport.TPMPolicyRequest{})) },
 		"TPMPolicyList":            func() error { return errOf(tr.TPMPolicyList(ctx, &transport.TPMPolicyListRequest{})) },
-		"TPMPolicyUpdate":          func() error { return errOf(tr.TPMPolicyUpdate(ctx, &transport.TPMPolicyRequest{})) },
+		"TPMPolicyUpdate":          func() error { return errOf(tr.TPMPolicyUpdate(ctx, &transport.TPMPolicyUpdateRequest{})) },
 		"TPMPolicyRevoke":          func() error { return errOf(tr.TPMPolicyRevoke(ctx, &transport.TPMPolicyRequest{})) },
 		"TPMPolicyVerify":          func() error { return errOf(tr.TPMPolicyVerify(ctx, &transport.TPMPolicyRequest{})) },
 		"TPMPolicyDelete":          func() error { return tr.TPMPolicyDelete(ctx, &transport.TPMPolicyDeleteRequest{}) },

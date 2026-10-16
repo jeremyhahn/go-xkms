@@ -40,7 +40,7 @@ Leaf Certificate (key attestation)
        +-- Google Hardware Attestation Root CA
 ```
 
-The leaf certificate contains the attestation extension at OID `1.3.6.1.4.1.11129.2.1.17` (read by `xkey/pkg/attestation/verifier.go`), which encodes the key properties and device security state.
+The leaf certificate contains the attestation extension at OID `1.3.6.1.4.1.11129.2.1.17` (read by go-xkms `pkg/attestation/android/extension.go:647`, `VerifyKeyAttestation`, which xkey reaches through `sdk/go` as `VerifyAndroidKeyAttestation`), which encodes the key properties and device security state.
 
 ### Attestation Extension Fields
 

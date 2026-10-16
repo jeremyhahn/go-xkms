@@ -62,6 +62,10 @@ export function SetLocal(arg1) {
   return window['go']['services']['TPMPolicyService']['SetLocal'](arg1);
 }
 
+export function UpdateBranch(arg1, arg2, arg3) {
+  return window['go']['services']['TPMPolicyService']['UpdateBranch'](arg1, arg2, arg3);
+}
+
 export function UpdatePolicy(arg1) {
   return window['go']['services']['TPMPolicyService']['UpdatePolicy'](arg1);
 }

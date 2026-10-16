@@ -25,7 +25,7 @@
     TPMPolicyInfo, TPMPolicyStatus, TPMPolicyVerification, TPMAuthorityInfo,
   } from '$lib/api/backend';
   import {
-    BANKS, LOCALITIES, PCR_INDICES, describeBranch, draftError, draftToBranch, newBranchDraft,
+    BANKS, LOCALITIES, PCR_INDICES, describeBranch, describeReference, draftError, draftToBranch, newBranchDraft,
     pcrBranch, policySummary, toggleIndex,
   } from '$lib/utils/tpmPolicy';
   import type { BranchDraft } from '$lib/utils/tpmPolicy';
@@ -184,6 +184,31 @@
     details = result;
   }
 
+  /**
+   * updateBranchFromReference updates branch (counted from 0) of the policy
+   * shown in details to the PCR values the signed CoRIM picked in input
+   * predicts, like `xkey tpm policy update --branch --reference-values`.
+   */
+  async function updateBranchFromReference(branch: number, input: HTMLInputElement): Promise<void> {
+    const file = input.files?.[0];
+    input.value = '';
+    if (!details || !file) {
+      return;
+    }
+    const name = details.name;
+    busy = `UpdateBranch:${name}:${branch}`;
+    const corim = Array.from(new Uint8Array(await file.arrayBuffer()));
+    const { result, error } = await callBackendWithError<TPMPolicyInfo>('TPMPolicyService', 'UpdateBranch', name, branch, corim);
+    busy = '';
+    if (error || !result) {
+      addNotification('error', error || `Failed to update branch ${branch + 1} of "${name}"`);
+      return;
+    }
+    details = result;
+    addNotification('success', `Branch ${branch + 1} of "${name}" updated from signed reference values and re-approved`);
+    await load();
+  }
+
   function sortedValues(values: Record<string, string> | undefined): Array<[string, string]> {
     return Object.entries(values ?? {}).sort((a, b) => Number(a[0]) - Number(b[0]));
   }
@@ -324,7 +349,8 @@
       A named policy is one or more branches, each requiring all of its conditions: the live values of
       selected PCRs, the object's password, or the TPM locality. It is approved by a TPM-resident authority,
       and keys and sealed data bound to it open only while a branch holds. After an intended change (a
-      firmware update), <em>Update</em> re-captures and re-approves it without re-keying anything.
+      firmware update), <em>Update</em> re-captures and re-approves it without re-keying anything. Before an
+      update, a policy's details can instead set one branch to the values a signed CoRIM predicts.
     </p>
 
     {#if loading}
@@ -494,7 +520,7 @@
         {#each verification.branches as branch, i}
           <li class="text-body-small">
             Branch {i + 1}: {branch.match ? 'PCRs match' : `PCRs changed: ${(branch.mismatched ?? []).join(', ')}`};
-            {branch.approved ? 'approval current' : 'approval not current (revoked or out of date)'}
+            {branch.approved ? 'approval current' : 'approval not current (revoked or out of date)'}{#if branch.reference}; approved for reference values {describeReference(branch.reference)}{/if}
           </li>
         {/each}
       </ul>
@@ -516,6 +542,11 @@
       </p>
       {#each details.branches ?? [] as branch, i}
         <p class="text-label-large">Branch {i + 1}: {describeBranch(branch)}</p>
+        {#if branch.reference}
+          <p class="text-body-small value-cell" data-testid="branch-{i + 1}-reference">
+            Reference values: {describeReference(branch.reference)}
+          </p>
+        {/if}
         {#each branch.conditions.filter((c) => c.type === 'pcr') as condition}
           <table class="policy-table" aria-label="Captured PCR values of branch {i + 1}">
             <thead><tr><th class="text-label-small" scope="col">PCR</th><th class="text-label-small" scope="col">Captured value</th></tr></thead>
@@ -525,6 +556,11 @@
               {/each}
             </tbody>
           </table>
+          <label class="form-field text-label-medium">
+            Update branch {i + 1} from signed reference values (CoRIM)
+            <input type="file" aria-label="Reference values for branch {i + 1}" disabled={busy !== ''}
+              on:change={(e) => updateBranchFromReference(i, e.currentTarget)} />
+          </label>
         {/each}
       {/each}
     </div>

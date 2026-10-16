@@ -531,7 +531,7 @@ func TestNewLiveAttestor_VerificationFailure(t *testing.T) {
 	}, nil)
 
 	require.Error(t, err)
-	assert.ErrorIs(t, err, attestation.ErrEmptyCertChain)
+	assert.ErrorIs(t, err, xkms.ErrAttestationEmptyCertificateChain)
 }
 
 // TestNewLiveAttestor_IdentityChanged pins the final refusal: a genuinely

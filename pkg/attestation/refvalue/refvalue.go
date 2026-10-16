@@ -23,6 +23,11 @@
 // deliberately out of scope for this primitive; a CoRIM that carries them
 // still verifies, and they are ignored.
 //
+// A uint measurement key names a PCR. A reference value whose environment
+// class carries no index states final PCR values (PCRDigests); one whose class
+// carries an index states the digest of one event a component image extends
+// into that PCR, the index being the event's position (ComponentDigests).
+//
 // Decoding, CoRIM validation and the COSE signature check are delegated to
 // the Veraison reference implementation (github.com/veraison/corim and
 // github.com/veraison/go-cose); this package adds the trust decision (a
@@ -34,6 +39,7 @@ import (
 	"bytes"
 	"crypto"
 	"crypto/x509"
+	"strconv"
 	"time"
 
 	"github.com/veraison/corim/comid"
@@ -160,24 +166,31 @@ func (d Digest) Hash() (crypto.Hash, bool) {
 // maxPCRIndex is the highest PCR index a TPM 2.0 PC Client platform defines.
 const maxPCRIndex = 23
 
+// maxComponentOrdinal bounds a component's event position; no event log
+// holds more events than this (evidence.MaxEvents is far lower).
+const maxComponentOrdinal = 1 << 20
+
 // PCRDigests collects, for every measurement keyed by a uint (the PCR index
 // convention of TPM CoRIM profiles), each digest computed with hash. The
 // result maps a PCR index to every acceptable value for it. Measurements with
-// another key kind are skipped.
+// another key kind, and components (see Component), are skipped.
 func (m *Manifest) PCRDigests(hash crypto.Hash) (map[int][][]byte, error) {
-	if hash != crypto.SHA256 && hash != crypto.SHA384 && hash != crypto.SHA512 {
+	if !selectableHash(hash) {
 		return nil, &errs.Detail{Err: ErrUnsupportedHash, Detail: hash.String()}
 	}
 	out := make(map[int][][]byte)
 	for _, rv := range m.ReferenceValues {
+		if rv.Environment.Index != nil {
+			continue // a component's digests; see ComponentDigests
+		}
 		for _, meas := range rv.Measurements {
 			if meas.Key.Kind != KeyKindUint {
 				continue
 			}
-			if meas.Key.Uint > maxPCRIndex {
-				return nil, &errs.Detail{Err: ErrPCRIndex, Detail: meas.Key.String}
+			idx, err := pcrIndex(meas.Key)
+			if err != nil {
+				return nil, err
 			}
-			idx := int(meas.Key.Uint)
 			for _, d := range meas.Digests {
 				if h, ok := d.Hash(); !ok || h != hash {
 					continue
@@ -190,6 +203,81 @@ func (m *Manifest) PCRDigests(hash crypto.Hash) (map[int][][]byte, error) {
 		}
 	}
 	return out, nil
+}
+
+// Component is the expected digest of one event a component image extends
+// into a PCR, rather than a PCR's final value. A reference value is a
+// component when its environment's class carries an index: each of its
+// uint-keyed measurements names the PCR, the class index is the event's
+// position among the events extended into that PCR (counting from 0, as
+// evidence.Substitution counts), and the measurement's digest is the event
+// digest the new image produces.
+type Component struct {
+	PCR     int
+	Ordinal int
+	Digest  []byte
+}
+
+// ComponentDigests returns every component measurement of the manifest with
+// its digest computed with hash. A component measurement must carry exactly
+// one digest of that hash; none, or more than one, is refused with
+// ErrComponentDigest, because the event it replaces could not be predicted.
+func (m *Manifest) ComponentDigests(hash crypto.Hash) ([]Component, error) {
+	if !selectableHash(hash) {
+		return nil, &errs.Detail{Err: ErrUnsupportedHash, Detail: hash.String()}
+	}
+	var out []Component
+	for _, rv := range m.ReferenceValues {
+		if rv.Environment.Index == nil {
+			continue
+		}
+		if *rv.Environment.Index > maxComponentOrdinal {
+			return nil, &errs.Detail{Err: ErrComponentOrdinal, Detail: strconv.FormatUint(*rv.Environment.Index, 10)}
+		}
+		ordinal := int(*rv.Environment.Index)
+		for _, meas := range rv.Measurements {
+			if meas.Key.Kind != KeyKindUint {
+				continue
+			}
+			idx, err := pcrIndex(meas.Key)
+			if err != nil {
+				return nil, err
+			}
+			var digest []byte
+			for _, d := range meas.Digests {
+				if h, ok := d.Hash(); !ok || h != hash {
+					continue
+				}
+				if digest != nil {
+					return nil, &errs.Detail{Err: ErrComponentDigest, Detail: "PCR " + meas.Key.String + ": more than one " + hash.String() + " digest"}
+				}
+				if len(d.Value) != hash.Size() {
+					return nil, &errs.Detail{Err: ErrDigestLength, Detail: "PCR " + meas.Key.String}
+				}
+				digest = bytes.Clone(d.Value)
+			}
+			if digest == nil {
+				return nil, &errs.Detail{Err: ErrComponentDigest, Detail: "PCR " + meas.Key.String + ": no " + hash.String() + " digest"}
+			}
+			out = append(out, Component{PCR: idx, Ordinal: ordinal, Digest: digest})
+		}
+	}
+	return out, nil
+}
+
+// selectableHash reports whether PCRDigests and ComponentDigests can select
+// digests of hash.
+func selectableHash(hash crypto.Hash) bool {
+	return hash == crypto.SHA256 || hash == crypto.SHA384 || hash == crypto.SHA512
+}
+
+// pcrIndex returns a uint measurement key as a PCR index, refusing one past
+// the highest PCR.
+func pcrIndex(key MeasurementKey) (int, error) {
+	if key.Uint > maxPCRIndex {
+		return 0, &errs.Detail{Err: ErrPCRIndex, Detail: key.String}
+	}
+	return int(key.Uint), nil
 }
 
 // VerifySigned verifies a COSE_Sign1 signed CoRIM and returns its reference

@@ -35,6 +35,8 @@ export function SetDescription(arg1:string,arg2:string):Promise<services.TPMPoli
 
 export function SetLocal(arg1:localtpm.Policies):Promise<void>;
 
+export function UpdateBranch(arg1:string,arg2:number,arg3:Array<number>):Promise<services.TPMPolicyInfo>;
+
 export function UpdatePolicy(arg1:string):Promise<services.TPMPolicyInfo>;
 
 export function VerifyPolicy(arg1:string):Promise<services.TPMPolicyVerification>;

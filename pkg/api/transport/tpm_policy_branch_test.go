@@ -96,6 +96,14 @@ func TestTPMPolicyBranch_String(t *testing.T) {
 	assert.Empty(t, TPMPolicyBranch{}.String())
 }
 
+// TestTPMPolicyReference_String proves a reference names its CoRIM, the
+// signer when the CoRIM names one, and the CoRIM's digest.
+func TestTPMPolicyReference_String(t *testing.T) {
+	assert.Equal(t, "boot-image-v2 signed by Example Provider, sha256 abcd",
+		TPMPolicyReference{ID: "boot-image-v2", Signer: "Example Provider", Digest: []byte{0xab, 0xcd}}.String())
+	assert.Equal(t, "(no id), sha256 00", TPMPolicyReference{Digest: []byte{0x00}}.String())
+}
+
 // TestTPMPolicyBranches builds the one pcr branch of a PCR selection, with
 // the default bank when none is named, or the parsed branch specs, and
 // refuses both, neither, or a malformed spec.

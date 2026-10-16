@@ -459,6 +459,7 @@ and every transport calls it through `XKMSService`.
 | Create a policy (captures live PCRs) | `POST /api/v1/tpm/policies` | `TPMPolicyCreate` | `tpm.policy.create` | `tpm policy create <name> --pcrs 0,7 --bank sha256 [--auto-unseal]` |
 | List or get | `GET /api/v1/tpm/policies[/{name}]` | `TPMPolicyList/Get` | `tpm.policy.list/get` | `tpm policy list/get` |
 | Update (re-capture, re-approve) | `POST …/{name}/update` | `TPMPolicyUpdate` | `tpm.policy.update` | `tpm policy update <name>` |
+| Update one branch from signed reference values | `POST …/{name}/update` `{branch, reference_values}` | `TPMPolicyUpdate{branch, reference_values}` | `tpm.policy.update{branch, reference_values}` | `tpm policy update <name> --branch <n> --reference-values <corim>` |
 | Revoke the current approval | `POST …/{name}/revoke` | `TPMPolicyRevoke` | `tpm.policy.revoke` | `tpm policy revoke <name>` |
 | Verify live PCRs against a policy | `POST …/{name}/verify` | `TPMPolicyVerify` | `tpm.policy.verify` | `tpm policy verify <name>` |
 | Delete (refused while assigned) | `DELETE …/{name}` | `TPMPolicyDelete` | `tpm.policy.delete` | `tpm policy delete <name>` |
@@ -496,8 +497,10 @@ unseal at boot) before its database is reachable.
   (`policy_binding_record.go:293`) builds a `PolicyBindingResolver`
   (`pkg/tpm2/authorized_policy.go:293`) from records alone. It refuses an
   approval not signed by the record's authority or not describing the
-  record's policy (`ErrPolicyApprovalMismatch`), a malformed approval
-  (`ErrInvalidPolicyApproval`), and two different records for one policy.
+  record's policy (`ErrPolicyApprovalMismatch`), a malformed or unsigned
+  approval (`ErrInvalidPolicyApproval`, `validateApproval`,
+  `pkg/tpm2/authorized_policy_session.go:378`), and two different records for
+  one policy.
   `Approvals` returns `ErrPolicyRevoked` for a record with none, and
   `ErrPolicyBindingUnknown` (`policy_binding_record.go:30`) for a policy no
   record names. Install it with `SetPolicyBindingResolver`, a method of the
@@ -507,23 +510,68 @@ unseal at boot) before its database is reachable.
   (`PolicyAuthorizeNV`) and its epoch against the scope's revocation counter
   (`PolicyNV`), so a stale record (an old authority or a revoked epoch)
   authorizes nothing (`TestService_OfflineAuthorization`,
-  `pkg/tpm2/policy/service_simulator_test.go`).
+  `pkg/tpm2/policy/service_simulator_test.go`). A tampered signature fails
+  `TPM2_VerifySignature` (`TPM_RC_SIGNATURE`), and a record consistently
+  re-signed by a foreign authority fails `PolicyAuthorizeNV` (`TPM_RC_VALUE`)
+  (`TestStaticPolicyResolver_Refusals`,
+  `pkg/tpm2/policy_binding_record_simulator_test.go`).
 
-## Planned: unattended unlock across updates
+## Branch update from signed reference values
 
-Not built yet; the SPEC.md row is `in progress`.
+A platform update changes PCR values, so a policy captured before the update
+refuses the updated platform. `Service.UpdateBranch`
+(`pkg/tpm2/policy/reference.go:36`) approves one branch for the values the
+updated platform will measure, before it boots, from a CoRIM its reference
+value provider signed. Nobody supplies raw PCR values: `ErrPCRValuesSupplied`
+(`pkg/tpm2/policy/errors.go:96`) keeps its meaning.
 
-- **Branch update from signed reference values.** `Service.UpdatePolicy`
-  (`pkg/tpm2/policy/service.go:399`) re-captures live PCRs today. It gains a
-  form that updates one named branch from a signed CoRIM, verified against the
-  configured reference-signer endorsement (`refvalue.VerifySigned`,
-  `pkg/attestation/refvalue/refvalue.go:199`). It takes the final digests the
-  CoRIM carries, replays the node's event log for a component-measured PCR
-  (see [attestation-verifier](../attestation-verifier/architecture.md#planned-reference-value-replay)),
-  and signs the branch at the current epoch. Nobody supplies raw PCR values:
-  `ErrPCRValuesSupplied` (`pkg/tpm2/policy/errors.go:93`) keeps its meaning.
-  `verify` reports a branch approved for a registered image. Both are on every
-  transport and in xkey and xkmsctl.
+- **Signer.** The CoRIM is verified with `refvalue.VerifySigned`
+  (`pkg/attestation/refvalue/refvalue.go:287`) against the service's
+  `Config.ReferenceSigner` (`pkg/tpm2/policy/service.go:76`). xkmsd fills it
+  from `backends.tpm2.reference_signer` (`pkg/config/config.go:1164`), a pinned
+  `public_key` or a `roots` certificate bundle (`Server.referenceSigner`,
+  `pkg/server/backend_tpm2.go:200`). With no signer configured every branch
+  update is refused with `ErrNoReferenceSigner`
+  (`pkg/tpm2/policy/errors.go:108`); xKey's local mode configures none.
+- **Branch.** Branches count from 0. The branch must exist (`ErrNoSuchBranch`,
+  `errors.go:112`) and carry a pcr condition (`ErrNoPCRCondition`,
+  `errors.go:116`; `branchPCRCondition`, `reference.go:79`).
+- **Prediction.** `predictPCRs` (`reference.go:91`) reads the branch's live
+  PCRs and calls `attestation.PredictPCRs` (`pkg/attestation/predict.go:48`):
+  a final value in the CoRIM replaces the PCR, a component digest is replayed
+  through the node's boot event log, and a PCR the CoRIM does not mention keeps
+  its live value (see
+  [attestation-verifier](../attestation-verifier/architecture.md#reference-value-replay)).
+  Only the scope on the node's own TPM reads the event log; a vTPM has none,
+  so a vTPM branch takes final values only.
+- **Approval.** The branch's values and digest are replaced and it records a
+  `Reference` (`pkg/tpm2/policy/types.go:193`): the CoRIM's id, profile, signer
+  and SHA-256 digest. The scope's counter is incremented and every policy
+  re-signed at the new epoch, as for a re-capture (`reference.go:71-75`).
+  A live re-capture (`UpdatePolicy`, `service.go:432`) drops every reference
+  (`pkg/tpm2/policy/conditions.go:136`).
+- **Verify.** `verify` reports the reference of each branch
+  (`conditions.go:316`), so a branch that does not match the running platform
+  but is approved for a registered image says which one.
+- **Refusals.** A CoRIM that is unsigned, signed by another key or tampered
+  with, or whose values cannot be predicted, is refused with
+  `*ReferenceValuesError` (`errors.go:382`), classed as an invalid argument.
+  A refused update leaves the approvals at their epoch
+  (`TestService_UpdateBranchRefusals`,
+  `pkg/tpm2/policy/reference_simulator_test.go:174`).
+- **Surface.** `TPMPolicyUpdateRequest` (`pkg/api/transport/types.go:2271`)
+  gains `branch` and `reference_values`; they come together or the request is
+  refused with `ErrTPMPolicyBranchUpdate` (`pkg/xkms/errors.go:335`;
+  `TenantTPMPolicies.TPMPolicyUpdate`, `pkg/xkms/tenant_tpm_policies.go:108`).
+  gRPC carries `optional int32 branch` (`xkms.proto:3461`); a branch index
+  int32 cannot carry is sent as -1, which names no branch
+  (`pkg/api/grpc/pbconv/tpm_policy.go:203`). The permission is
+  `tpm_policy:update`, unchanged. xkmsctl and xkey take
+  `tpm policy update <name> --branch <n> --reference-values <corim>`
+  (`cmd/xkmsctl/tpm_policy.go:737-738`,
+  `xkey/cmd/xkey/cmd/tpm_policy.go:338-340`); the xKey GUI updates a branch
+  from a CoRIM file in the policy details (`TPMPolicyService.UpdateBranch`,
+  `xkey/pkg/gui/services/tpm_policy_service.go:364`).
 - **Consumer.** go-quicbaas consumes this surface by SDK re-export
   (`Security().TPMPolicy()` and the initrd static-resolver re-exports).
   go-trusted-platform reaches it only through go-quicbaas.

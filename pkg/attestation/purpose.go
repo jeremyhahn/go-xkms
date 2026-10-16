@@ -11,10 +11,11 @@
 // 2. Commercial License
 //    Contact licensing@automatethethings.com for commercial licensing options.
 
-// Package attestation provides an auto-selecting attestation verifier that
-// queries the xkey trust store by certificate purpose and merges in embedded
-// manufacturer roots as fallback. It performs standard PKIX chain validation
-// for TPM, Android hardware, and IDevID attestation chains.
+// Purpose-pooled verification: a Verifier built WithTrustStore queries the
+// trust store by certificate purpose, merges in embedded manufacturer roots
+// as fallback, and performs standard PKIX chain validation for TPM, Android
+// hardware, and IDevID attestation chains.
+
 package attestation
 
 import (
@@ -22,8 +23,9 @@ import (
 	"fmt"
 	"time"
 
-	xkms "github.com/jeremyhahn/go-xkms/sdk/go"
-	"github.com/jeremyhahn/go-xkms/sdk/go/truststore"
+	"github.com/jeremyhahn/go-xkms/pkg/attestation/android"
+	"github.com/jeremyhahn/go-xkms/pkg/attestation/truststore"
+	"github.com/jeremyhahn/go-xkms/pkg/errs"
 )
 
 // TrustLevel indicates the level of trust for a verified attestation.
@@ -70,26 +72,20 @@ type VerificationResult struct {
 // not contain sufficient anchors.
 type EmbeddedRootsLoader func(purpose truststore.CertPurpose) []*x509.Certificate
 
-// Verifier performs attestation chain verification by auto-selecting trust
-// anchors from the trust store based on certificate purpose, with optional
-// embedded root fallback.
-type Verifier struct {
-	store          truststore.TrustStore
-	embeddedLoader EmbeddedRootsLoader
-}
+// VerifierOption configures a Verifier.
+type VerifierOption func(*Verifier)
 
-// NewVerifier creates a new attestation verifier backed by the given trust store.
-// An optional EmbeddedRootsLoader can be provided to supply compiled-in manufacturer
-// roots as fallback trust anchors. Pass nil for embeddedLoader if no embedded
-// roots are needed.
-func NewVerifier(store truststore.TrustStore, embeddedLoader EmbeddedRootsLoader) (*Verifier, error) {
-	if store == nil {
-		return nil, ErrNilTrustStore
+// WithTrustStore backs the Verifier's purpose-pooled checks (VerifyPurposeChain,
+// VerifyTPMAttestation, VerifyAndroidAttestation, VerifyIDevID and
+// BuildTrustPool) with store. embeddedLoader supplies compiled-in manufacturer
+// roots as fallback trust anchors; pass nil if no embedded roots are needed.
+// A Verifier without a trust store refuses every purpose-pooled check with
+// ErrNilTrustStore.
+func WithTrustStore(store truststore.TrustStore, embeddedLoader EmbeddedRootsLoader) VerifierOption {
+	return func(v *Verifier) {
+		v.store = store
+		v.embeddedLoader = embeddedLoader
 	}
-	return &Verifier{
-		store:          store,
-		embeddedLoader: embeddedLoader,
-	}, nil
 }
 
 // VerifyTPMAttestation verifies a TPM endorsement key certificate against
@@ -100,12 +96,12 @@ func (v *Verifier) VerifyTPMAttestation(ekCert *x509.Certificate) (*Verification
 		return nil, ErrNilCertificate
 	}
 
-	roots, err := v.buildTrustPool(truststore.PurposeTPMManufacturer)
+	roots, err := v.BuildTrustPool(truststore.PurposeTPMManufacturer)
 	if err != nil {
 		return nil, err
 	}
 
-	chains, err := v.verifyLeaf(ekCert, nil, roots)
+	chains, err := verifyPurposeLeaf(ekCert, nil, roots)
 	if err != nil {
 		return &VerificationResult{
 			Verified:    false,
@@ -114,7 +110,7 @@ func (v *Verifier) VerifyTPMAttestation(ekCert *x509.Certificate) (*Verification
 			Issuer:      ekCert.Issuer.String(),
 			ChainLength: 1,
 			Message:     fmt.Sprintf("chain verification failed: %v", err),
-		}, &SentinelCauseError{Sentinel: ErrChainVerification, Cause: err}
+		}, &errs.Joined{Lead: ErrChainVerificationFailed, Cause: err}
 	}
 
 	return &VerificationResult{
@@ -145,7 +141,7 @@ func (v *Verifier) VerifyTPMAttestation(ekCert *x509.Certificate) (*Verification
 // software attestation is not.
 func (v *Verifier) VerifyAndroidAttestation(chain []*x509.Certificate, nonce []byte) (*VerificationResult, error) {
 	if len(chain) == 0 {
-		return nil, ErrEmptyCertChain
+		return nil, ErrEmptyCertificateChain
 	}
 	if len(nonce) == 0 {
 		return nil, ErrMissingNonce
@@ -153,7 +149,7 @@ func (v *Verifier) VerifyAndroidAttestation(chain []*x509.Certificate, nonce []b
 
 	leaf := chain[0]
 
-	roots, err := v.buildTrustPool(truststore.PurposeAndroidHardware)
+	roots, err := v.BuildTrustPool(truststore.PurposeAndroidHardware)
 	if err != nil {
 		return nil, err
 	}
@@ -172,7 +168,7 @@ func (v *Verifier) VerifyAndroidAttestation(chain []*x509.Certificate, nonce []b
 		intermediates = chain[1:]
 	}
 
-	chains, err := v.verifyLeaf(leaf, intermediates, roots)
+	chains, err := verifyPurposeLeaf(leaf, intermediates, roots)
 	if err != nil {
 		return &VerificationResult{
 			Verified:    false,
@@ -181,13 +177,13 @@ func (v *Verifier) VerifyAndroidAttestation(chain []*x509.Certificate, nonce []b
 			Issuer:      leaf.Issuer.String(),
 			ChainLength: len(chain),
 			Message:     fmt.Sprintf("chain verification failed: %v", err),
-		}, &SentinelCauseError{Sentinel: ErrChainVerification, Cause: err}
+		}, &errs.Joined{Lead: ErrChainVerificationFailed, Cause: err}
 	}
 
 	// Bind the verified chain to this request. The chain is already anchored
 	// above, so the canonical verifier is asked for the extension claims only
 	// (TrustedRoots nil skips its own chain build).
-	description, err := xkms.VerifyAndroidKeyAttestation(chain, &xkms.AndroidVerifyOptions{
+	description, err := android.VerifyKeyAttestation(chain, &android.VerifyOptions{
 		ExpectedNonce: nonce,
 	})
 	if err != nil {
@@ -198,7 +194,7 @@ func (v *Verifier) VerifyAndroidAttestation(chain []*x509.Certificate, nonce []b
 			Issuer:      leaf.Issuer.String(),
 			ChainLength: len(chains[0]),
 			Message:     fmt.Sprintf("attestation challenge verification failed: %v", err),
-		}, &SentinelCauseError{Sentinel: ErrChallengeVerification, Cause: err}
+		}, &errs.Joined{Lead: ErrChallengeVerification, Cause: err}
 	}
 
 	return &VerificationResult{
@@ -213,10 +209,10 @@ func (v *Verifier) VerifyAndroidAttestation(chain []*x509.Certificate, nonce []b
 }
 
 // androidTrustLevel maps the attestation security level recorded in the key
-// attestation extension onto an xkey trust level. TEE and StrongBox both
+// attestation extension onto a trust level. TEE and StrongBox both
 // place the key inside a hardware boundary; anything below that is software.
-func androidTrustLevel(description *xkms.AndroidKeyDescription) TrustLevel {
-	if description.AttestationSecurityLevel >= xkms.AndroidSecurityLevelTrustedEnvironment {
+func androidTrustLevel(description *android.KeyDescription) TrustLevel {
+	if description.AttestationSecurityLevel >= android.SecurityLevelTrustedEnvironment {
 		return TrustLevelHardware
 	}
 	return TrustLevelSoftware
@@ -230,12 +226,12 @@ func (v *Verifier) VerifyIDevID(cert *x509.Certificate) (*VerificationResult, er
 		return nil, ErrNilCertificate
 	}
 
-	roots, err := v.buildTrustPool(truststore.PurposeIDevIDIssuer)
+	roots, err := v.BuildTrustPool(truststore.PurposeIDevIDIssuer)
 	if err != nil {
 		return nil, err
 	}
 
-	chains, err := v.verifyLeaf(cert, nil, roots)
+	chains, err := verifyPurposeLeaf(cert, nil, roots)
 	if err != nil {
 		return &VerificationResult{
 			Verified:    false,
@@ -244,7 +240,7 @@ func (v *Verifier) VerifyIDevID(cert *x509.Certificate) (*VerificationResult, er
 			Issuer:      cert.Issuer.String(),
 			ChainLength: 1,
 			Message:     fmt.Sprintf("chain verification failed: %v", err),
-		}, &SentinelCauseError{Sentinel: ErrChainVerification, Cause: err}
+		}, &errs.Joined{Lead: ErrChainVerificationFailed, Cause: err}
 	}
 
 	return &VerificationResult{
@@ -257,18 +253,18 @@ func (v *Verifier) VerifyIDevID(cert *x509.Certificate) (*VerificationResult, er
 	}, nil
 }
 
-// VerifyChain performs generic certificate chain verification for the given
+// VerifyPurposeChain performs generic certificate chain verification for the given
 // purpose. The chain should be ordered as [leaf, intermediate(s)...].
 // Trust anchors are loaded from the trust store by purpose and merged with
 // any embedded roots.
-func (v *Verifier) VerifyChain(chain []*x509.Certificate, purpose truststore.CertPurpose) (*VerificationResult, error) {
+func (v *Verifier) VerifyPurposeChain(chain []*x509.Certificate, purpose truststore.CertPurpose) (*VerificationResult, error) {
 	if len(chain) == 0 {
-		return nil, ErrEmptyCertChain
+		return nil, ErrEmptyCertificateChain
 	}
 
 	leaf := chain[0]
 
-	roots, err := v.buildTrustPool(purpose)
+	roots, err := v.BuildTrustPool(purpose)
 	if err != nil {
 		return nil, err
 	}
@@ -278,7 +274,7 @@ func (v *Verifier) VerifyChain(chain []*x509.Certificate, purpose truststore.Cer
 		intermediates = chain[1:]
 	}
 
-	chains, err := v.verifyLeaf(leaf, intermediates, roots)
+	chains, err := verifyPurposeLeaf(leaf, intermediates, roots)
 	if err != nil {
 		return &VerificationResult{
 			Verified:    false,
@@ -287,7 +283,7 @@ func (v *Verifier) VerifyChain(chain []*x509.Certificate, purpose truststore.Cer
 			Issuer:      leaf.Issuer.String(),
 			ChainLength: len(chain),
 			Message:     fmt.Sprintf("chain verification failed: %v", err),
-		}, &SentinelCauseError{Sentinel: ErrChainVerification, Cause: err}
+		}, &errs.Joined{Lead: ErrChainVerificationFailed, Cause: err}
 	}
 
 	trustLevel, ok := purposeTrustLevels[purpose]
@@ -305,25 +301,21 @@ func (v *Verifier) VerifyChain(chain []*x509.Certificate, purpose truststore.Cer
 	}, nil
 }
 
-// BuildTrustPool assembles an x509.CertPool for the given purpose by merging
-// trust store certificates and embedded manufacturer roots. This is useful when
-// callers need the pool for their own verification logic (e.g., Android extension
-// parsing via android.VerifyKeyAttestation).
+// BuildTrustPool assembles an x509.CertPool for the given purpose from two
+// sources: the trust store's certificates for that purpose, and the embedded
+// manufacturer roots from the optional EmbeddedRootsLoader. Callers use the
+// pool for their own verification logic (e.g., Android extension parsing via
+// android.VerifyKeyAttestation).
 //
-// Returns ErrNoTrustAnchors if both sources produce zero certificates.
-func (v *Verifier) BuildTrustPool(purpose truststore.CertPurpose) (*x509.CertPool, error) {
-	return v.buildTrustPool(purpose)
-}
-
-// buildTrustPool assembles an x509.CertPool from two sources:
-// 1. Certificates in the trust store matching the given purpose
-// 2. Embedded manufacturer roots from the optional EmbeddedRootsLoader
-//
+// Returns ErrNilTrustStore if the Verifier was built without WithTrustStore.
 // Returns ErrUnsupportedPurpose if purpose is not an anchor purpose (see
 // truststore.IsAnchorPurpose): an unknown purpose, or the synced quarantine a
 // paired device's certificates land in, never yields trust anchors.
 // Returns ErrNoTrustAnchors if both sources produce zero certificates.
-func (v *Verifier) buildTrustPool(purpose truststore.CertPurpose) (*x509.CertPool, error) {
+func (v *Verifier) BuildTrustPool(purpose truststore.CertPurpose) (*x509.CertPool, error) {
+	if v.store == nil {
+		return nil, ErrNilTrustStore
+	}
 	if !truststore.IsAnchorPurpose(purpose) {
 		return nil, ErrUnsupportedPurpose
 	}
@@ -334,7 +326,7 @@ func (v *Verifier) buildTrustPool(purpose truststore.CertPurpose) (*x509.CertPoo
 	// Load purpose-scoped certificates from the trust store.
 	storeCerts, err := v.store.CertificatesByPurpose(purpose)
 	if err != nil {
-		return nil, &SentinelCauseError{Sentinel: ErrTrustStoreQuery, Cause: err}
+		return nil, &errs.Joined{Lead: ErrTrustStoreQuery, Cause: err}
 	}
 	for _, cert := range storeCerts {
 		pool.AddCert(cert)
@@ -357,10 +349,10 @@ func (v *Verifier) buildTrustPool(purpose truststore.CertPurpose) (*x509.CertPoo
 	return pool, nil
 }
 
-// verifyLeaf performs X.509 chain verification on the leaf certificate using
+// verifyPurposeLeaf performs X.509 chain verification on the leaf certificate using
 // the provided roots pool and optional intermediate certificates. It sets
 // the verification time to the current time.
-func (v *Verifier) verifyLeaf(leaf *x509.Certificate, intermediates []*x509.Certificate, roots *x509.CertPool) ([][]*x509.Certificate, error) {
+func verifyPurposeLeaf(leaf *x509.Certificate, intermediates []*x509.Certificate, roots *x509.CertPool) ([][]*x509.Certificate, error) {
 	opts := x509.VerifyOptions{
 		Roots:       roots,
 		KeyUsages:   []x509.ExtKeyUsage{x509.ExtKeyUsageAny},

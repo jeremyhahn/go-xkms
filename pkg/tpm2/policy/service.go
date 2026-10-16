@@ -21,6 +21,8 @@ import (
 	"time"
 
 	"github.com/google/go-tpm/tpm2"
+	"github.com/jeremyhahn/go-xkms/pkg/attestation/evidence"
+	"github.com/jeremyhahn/go-xkms/pkg/attestation/refvalue"
 	pkgtpm2 "github.com/jeremyhahn/go-xkms/pkg/tpm2"
 	"github.com/jeremyhahn/go-xkms/pkg/tpm2/store"
 	"github.com/jeremyhahn/go-xkms/pkg/tpm2/vtpm"
@@ -67,6 +69,16 @@ type Config struct {
 	// StateKeyProvider, which is why it builds the supervisor itself.
 	VTPM *vtpm.Config
 
+	// ReferenceSigner is the reference-value signer's endorsement: the
+	// pinned key or the certificate roots a signed CoRIM must verify under
+	// before a branch is updated from it. Its Now is ignored; Clock is used.
+	// Nil makes reference-value updates unavailable (ErrNoReferenceSigner).
+	ReferenceSigner *refvalue.VerifyOptions
+
+	// EventLog reads the physical TPM's boot event log, which predicts a
+	// component-measured PCR. Nil parses the log the kernel exposes for TPM.
+	EventLog func() (*evidence.EventLog, error)
+
 	// Logger receives lifecycle events. Nil uses slog.Default().
 	Logger *slog.Logger
 
@@ -87,6 +99,9 @@ type Service struct {
 	vtpm        *vtpm.Manager
 	logger      *slog.Logger
 	clock       func() time.Time
+
+	referenceSigner *refvalue.VerifyOptions
+	eventLog        func() (*evidence.EventLog, error)
 
 	statesMu sync.Mutex
 	states   map[string]*scopeState
@@ -132,12 +147,18 @@ func NewService(cfg Config) (*Service, error) {
 		logger:      cfg.Logger,
 		clock:       cfg.Clock,
 		states:      make(map[string]*scopeState),
+
+		referenceSigner: cfg.ReferenceSigner,
+		eventLog:        cfg.EventLog,
 	}
 	if s.logger == nil {
 		s.logger = slog.Default()
 	}
 	if s.clock == nil {
 		s.clock = time.Now
+	}
+	if s.eventLog == nil {
+		s.eventLog = s.kernelEventLog
 	}
 	if cfg.VTPM != nil {
 		manager, err := vtpm.NewManager(*cfg.VTPM, s)

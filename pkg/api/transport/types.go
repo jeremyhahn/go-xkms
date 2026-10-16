@@ -2193,6 +2193,11 @@ type TPMPolicyBranch struct {
 	// Approved reports whether the branch holds an approval. It is reported
 	// on a policy and has no meaning in a create request.
 	Approved bool `json:"approved"`
+
+	// Reference identifies the signed reference values the branch was last
+	// updated from; nil when its values were captured from the live PCRs.
+	// Like Approved, it has no meaning in a create request.
+	Reference *TPMPolicyReference `json:"reference,omitempty"`
 }
 
 // TPMPolicy describes a named TPM policy: an OR of branches, tried in order
@@ -2209,7 +2214,7 @@ type TPMPolicy struct {
 	Description string `json:"description,omitempty"`
 
 	// Branches are the policy's branches. Their structure never changes
-	// after creation; an update only re-captures their PCR values.
+	// after creation; an update only replaces their PCR values.
 	Branches []TPMPolicyBranch `json:"branches"`
 
 	// Index is the policy's NV index, which objects bound to it follow.
@@ -2251,10 +2256,36 @@ type TPMPolicyDescriptionRequest struct {
 }
 
 // TPMPolicyRequest names one TPM policy of a tenant. It is the request of
-// get, update, revoke, verify and objects.
+// get, revoke, verify and objects.
 type TPMPolicyRequest struct {
 	TenantID string `json:"tenant_id,omitempty"`
 	Name     string `json:"name"`
+}
+
+// TPMPolicyUpdateRequest updates a TPM policy to its next epoch. Without a
+// Branch it re-captures every branch's PCR values from the live PCRs. With
+// a Branch, counted from 0, it updates only that branch, to the values
+// ReferenceValues, a COSE_Sign1 signed CoRIM, predicts; the CoRIM must
+// verify under the server's configured reference signer. ReferenceValues
+// is set exactly when Branch is.
+type TPMPolicyUpdateRequest struct {
+	TenantID        string `json:"tenant_id,omitempty"`
+	Name            string `json:"name"`
+	Branch          *int   `json:"branch,omitempty"`
+	ReferenceValues []byte `json:"reference_values,omitempty"`
+}
+
+// TPMPolicyReference identifies the signed reference values a branch was
+// last updated from.
+type TPMPolicyReference struct {
+	// ID is the CoRIM's identifier, Profile its profile and Signer the name
+	// its signer gives itself, each empty when the CoRIM omits it.
+	ID      string `json:"id,omitempty"`
+	Profile string `json:"profile,omitempty"`
+	Signer  string `json:"signer,omitempty"`
+
+	// Digest is the SHA-256 digest of the signed CoRIM.
+	Digest []byte `json:"digest"`
 }
 
 // TPMPolicyListRequest lists a tenant's TPM policies.
@@ -2287,6 +2318,10 @@ type TPMPolicyBranchVerification struct {
 	// Approved reports whether the branch's approval is current, so the
 	// branch can be satisfied.
 	Approved bool `json:"approved"`
+
+	// Reference identifies the signed reference values the branch is
+	// approved for; nil when its values were captured from the live PCRs.
+	Reference *TPMPolicyReference `json:"reference,omitempty"`
 }
 
 // TPMPolicyVerifyResponse compares a policy's captured PCR values with the

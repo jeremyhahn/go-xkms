@@ -16,10 +16,13 @@ package cmd
 import (
 	"bytes"
 	"context"
+	"crypto/sha256"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"log/slog"
+	"os"
 	"path/filepath"
 	"testing"
 
@@ -187,6 +190,49 @@ func TestTPMPolicyGetUpdateRevoke(t *testing.T) {
 
 	_, err = runTPMPolicyCommand(t, runTPMPolicyGet, "missing")
 	assert.ErrorIs(t, err, xkms.ErrTPMPolicyNotFound)
+}
+
+// runTPMPolicyBranchUpdate runs update with --reference-values corim and,
+// unless branch is "", --branch branch.
+func runTPMPolicyBranchUpdate(t *testing.T, branch, corim string) (string, error) {
+	t.Helper()
+	prevBranch, prevCorim := tpmPolicyUpdateBranch, tpmPolicyReferenceValues
+	t.Cleanup(func() { tpmPolicyUpdateBranch, tpmPolicyReferenceValues = prevBranch, prevCorim })
+	cmd := &cobra.Command{}
+	cmd.Flags().IntVar(&tpmPolicyUpdateBranch, "branch", 0, "")
+	if branch != "" {
+		require.NoError(t, cmd.Flags().Set("branch", branch))
+	}
+	tpmPolicyReferenceValues = corim
+	var out bytes.Buffer
+	cmd.SetOut(&out)
+	cmd.SetErr(io.Discard)
+	cmd.SetContext(context.Background())
+	err := runTPMPolicyUpdate(cmd, []string{"boot"})
+	return out.String(), err
+}
+
+// TestTPMPolicyUpdate_FromReferenceValues proves --branch and
+// --reference-values update that branch from the file's bytes, and that the
+// flags come together and the file must be readable.
+func TestTPMPolicyUpdate_FromReferenceValues(t *testing.T) {
+	serverTPMPolicies(t)
+	withTPMPolicyFlags(t, "7", "sha256", false, false)
+	_, err := runTPMPolicyCommand(t, runTPMPolicyCreate, "boot")
+	require.NoError(t, err)
+
+	corim := []byte{0xd2, 0x84}
+	path := filepath.Join(t.TempDir(), "boot.corim")
+	require.NoError(t, os.WriteFile(path, corim, 0o600))
+	out, err := runTPMPolicyBranchUpdate(t, "0", path)
+	require.NoError(t, err)
+	digest := sha256.Sum256(corim)
+	assert.Contains(t, out, fmt.Sprintf("(no id), sha256 %x", digest))
+
+	_, err = runTPMPolicyBranchUpdate(t, "", path)
+	assert.ErrorIs(t, err, xkms.ErrTPMPolicyBranchUpdate, "reference values without a branch")
+	_, err = runTPMPolicyBranchUpdate(t, "0", filepath.Join(t.TempDir(), "missing.corim"))
+	assert.ErrorIs(t, err, ErrTPMPolicyReferenceValuesRead)
 }
 
 func TestTPMPolicyVerify_FailsWhenThePlatformChanged(t *testing.T) {

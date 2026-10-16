@@ -15,6 +15,7 @@ package services
 
 import (
 	"context"
+	"crypto/sha256"
 	"errors"
 	"testing"
 
@@ -110,6 +111,8 @@ func TestTPMPolicyService_RejectsMissingAndBuiltinNames(t *testing.T) {
 	assert.ErrorIs(t, err, ErrTPMPolicyBuiltin)
 	_, err = svc.UpdatePolicy(xkms.TPMPolicyPlatform)
 	assert.ErrorIs(t, err, ErrTPMPolicyBuiltin)
+	_, err = svc.UpdateBranch(xkms.TPMPolicyPlatform, 0, []byte{0xd2})
+	assert.ErrorIs(t, err, ErrTPMPolicyBuiltin)
 	_, err = svc.RevokePolicy("")
 	assert.ErrorIs(t, err, ErrTPMPolicyNameRequired)
 	_, err = svc.VerifyPolicy(xkms.TPMPolicyPlatform)
@@ -200,6 +203,25 @@ func TestTPMPolicyService_VerifyUpdateAndRevoke(t *testing.T) {
 	v, err = svc.VerifyPolicy("boot")
 	require.NoError(t, err)
 	assert.False(t, v.Approved)
+}
+
+// TestTPMPolicyService_UpdateBranch proves the GUI sends the branch and the
+// reference values' bytes, and the result names the reference the branch
+// now approves.
+func TestTPMPolicyService_UpdateBranch(t *testing.T) {
+	svc, _ := newServerTPMPolicies(t)
+	_, err := svc.CreatePolicy("boot", "", pcrBranches(7), false, "")
+	require.NoError(t, err)
+
+	corim := []byte{0xd2, 0x84}
+	p, err := svc.UpdateBranch("boot", 0, corim)
+	require.NoError(t, err)
+	require.NotNil(t, p.Branches[0].Reference)
+	digest := sha256.Sum256(corim)
+	assert.Equal(t, digest[:], p.Branches[0].Reference.Digest)
+
+	_, err = svc.UpdateBranch("boot", 1, corim)
+	assert.ErrorIs(t, err, xkms.ErrTPMPolicyNoSuchBranch)
 }
 
 func TestTPMPolicyService_SetAutoUnsealMarksOnePolicy(t *testing.T) {
@@ -296,7 +318,7 @@ func (f *failingTPMPolicies) TPMPolicyGet(context.Context, *transport.TPMPolicyR
 func (f *failingTPMPolicies) TPMPolicyList(context.Context, *transport.TPMPolicyListRequest) (*transport.TPMPolicyListResponse, error) {
 	return nil, f.err
 }
-func (f *failingTPMPolicies) TPMPolicyUpdate(context.Context, *transport.TPMPolicyRequest) (*transport.TPMPolicy, error) {
+func (f *failingTPMPolicies) TPMPolicyUpdate(context.Context, *transport.TPMPolicyUpdateRequest) (*transport.TPMPolicy, error) {
 	return nil, f.err
 }
 func (f *failingTPMPolicies) TPMPolicyRevoke(context.Context, *transport.TPMPolicyRequest) (*transport.TPMPolicy, error) {
@@ -334,6 +356,7 @@ func TestTPMPolicyService_ServerErrorsPropagate(t *testing.T) {
 		"ListPolicies": func() error { _, err := svc.ListPolicies(); return err },
 		"GetPolicy":    func() error { _, err := svc.GetPolicy("boot"); return err },
 		"UpdatePolicy": func() error { _, err := svc.UpdatePolicy("boot"); return err },
+		"UpdateBranch": func() error { _, err := svc.UpdateBranch("boot", 0, []byte{0xd2}); return err },
 		"RevokePolicy": func() error { _, err := svc.RevokePolicy("boot"); return err },
 		"VerifyPolicy": func() error { _, err := svc.VerifyPolicy("boot"); return err },
 		"DeletePolicy": func() error { return svc.DeletePolicy("boot", "owner") },

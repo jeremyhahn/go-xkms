@@ -167,7 +167,8 @@ type Condition struct {
 	PCRs []uint `json:"pcrs,omitempty"`
 
 	// PCRValues are a pcr condition's values, captured from the TPM when
-	// the policy was created or last updated, and PCRDigest the PolicyPCR
+	// the policy was created or last updated, or predicted from signed
+	// reference values (Branch.Reference), and PCRDigest the PolicyPCR
 	// digest over them. A caller never supplies them.
 	PCRValues map[uint][]byte `json:"pcr_values,omitempty"`
 	PCRDigest []byte          `json:"pcr_digest,omitempty"`
@@ -181,6 +182,24 @@ type Condition struct {
 // one condition of each type.
 type Branch struct {
 	Conditions []Condition `json:"conditions"`
+
+	// Reference names the signed reference values the branch's pcr
+	// condition values were predicted from, when the branch was last
+	// updated from a CoRIM rather than from the live PCRs; nil otherwise.
+	Reference *Reference `json:"reference,omitempty"`
+}
+
+// Reference identifies the signed CoRIM a branch was updated from.
+type Reference struct {
+	// ID, Profile and Signer are the CoRIM's identifier, profile and
+	// corim-meta signer name.
+	ID      string `json:"id"`
+	Profile string `json:"profile,omitempty"`
+	Signer  string `json:"signer,omitempty"`
+
+	// Digest is the SHA-256 digest of the signed CoRIM, naming exactly the
+	// manifest the values came from.
+	Digest []byte `json:"digest"`
 }
 
 // PCRBranch returns a branch holding one pcr condition over pcrs of bank:
@@ -191,7 +210,9 @@ func PCRBranch(bank string, pcrs ...uint) Branch {
 
 // Policy is a named, reusable TPM policy: an OR of branches, bound to an NV
 // index objects authorize through. Its structure never changes after
-// creation; an update only re-captures the values of its pcr conditions.
+// creation; an update only replaces the values of its pcr conditions, either
+// re-captured from the live PCRs or, for one branch, predicted from signed
+// reference values.
 type Policy struct {
 	Name string `json:"name"`
 
@@ -306,6 +327,12 @@ type BranchVerification struct {
 	// Approved reports whether the branch holds an approval at the scope
 	// counter's current value, so it can be satisfied.
 	Approved bool
+
+	// Reference names the signed reference values the branch was updated
+	// from, nil for live-captured values. An approved branch with a
+	// Reference is approved for the image that CoRIM registers, so it does
+	// not match until that image is booted.
+	Reference *Reference
 }
 
 // Verification compares a policy's captured PCR values with the live ones.

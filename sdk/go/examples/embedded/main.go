@@ -645,7 +645,7 @@ func (m *MockXKMSService) TPMPolicyList(context.Context, *transport.TPMPolicyLis
 	return nil, &mockUnsupportedError{capability: "policy"}
 }
 
-func (m *MockXKMSService) TPMPolicyUpdate(context.Context, *transport.TPMPolicyRequest) (*transport.TPMPolicy, error) {
+func (m *MockXKMSService) TPMPolicyUpdate(context.Context, *transport.TPMPolicyUpdateRequest) (*transport.TPMPolicy, error) {
 	return nil, &mockUnsupportedError{capability: "policy"}
 }
 

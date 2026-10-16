@@ -58,8 +58,10 @@ func TestValidate_PeerGate(t *testing.T) {
 
 func TestValidate_PeerGateNeedsTheEmbeddedNode(t *testing.T) {
 	cfg := peerGateTestConfig("required")
-	cfg.Protocols = ProtocolsConfig{Noise: true}
-	cfg.Server.NoisePort = 9000
+	// The loopback desktop engine is exempt from the unified API server's
+	// standalone requirement, so the gate's own check is what rejects it.
+	cfg.LoopbackDesktop = true
+	cfg.Protocols = ProtocolsConfig{Unix: true}
 	cfg.Datastore = DatastoreConfig{Mode: "remote", Remote: DatastoreRemoteConfig{Address: "qrdb:8443", Transport: "grpc"}}
 	err := cfg.Validate()
 	require.Error(t, err)

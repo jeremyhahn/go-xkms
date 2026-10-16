@@ -485,8 +485,9 @@ type KeystoreServiceClient interface {
 	TPMPolicyGet(ctx context.Context, in *TPMPolicyRequest, opts ...grpc.CallOption) (*TPMPolicy, error)
 	// TPMPolicyList returns the tenant's named policies.
 	TPMPolicyList(ctx context.Context, in *TPMPolicyListRequest, opts ...grpc.CallOption) (*TPMPolicyListResponse, error)
-	// TPMPolicyUpdate re-captures a policy's PCR values and re-approves it.
-	TPMPolicyUpdate(ctx context.Context, in *TPMPolicyRequest, opts ...grpc.CallOption) (*TPMPolicy, error)
+	// TPMPolicyUpdate re-captures a policy's PCR values, or updates one
+	// branch from signed reference values, and re-approves it.
+	TPMPolicyUpdate(ctx context.Context, in *TPMPolicyUpdateRequest, opts ...grpc.CallOption) (*TPMPolicy, error)
 	// TPMPolicyRevoke withdraws a policy's current approval.
 	TPMPolicyRevoke(ctx context.Context, in *TPMPolicyRequest, opts ...grpc.CallOption) (*TPMPolicy, error)
 	// TPMPolicyVerify compares a policy's captured PCR values with the live
@@ -1739,7 +1740,7 @@ func (c *keystoreServiceClient) TPMPolicyList(ctx context.Context, in *TPMPolicy
 	return out, nil
 }
 
-func (c *keystoreServiceClient) TPMPolicyUpdate(ctx context.Context, in *TPMPolicyRequest, opts ...grpc.CallOption) (*TPMPolicy, error) {
+func (c *keystoreServiceClient) TPMPolicyUpdate(ctx context.Context, in *TPMPolicyUpdateRequest, opts ...grpc.CallOption) (*TPMPolicy, error) {
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
 	out := new(TPMPolicy)
 	err := c.cc.Invoke(ctx, KeystoreService_TPMPolicyUpdate_FullMethodName, in, out, cOpts...)
@@ -2737,8 +2738,9 @@ type KeystoreServiceServer interface {
 	TPMPolicyGet(context.Context, *TPMPolicyRequest) (*TPMPolicy, error)
 	// TPMPolicyList returns the tenant's named policies.
 	TPMPolicyList(context.Context, *TPMPolicyListRequest) (*TPMPolicyListResponse, error)
-	// TPMPolicyUpdate re-captures a policy's PCR values and re-approves it.
-	TPMPolicyUpdate(context.Context, *TPMPolicyRequest) (*TPMPolicy, error)
+	// TPMPolicyUpdate re-captures a policy's PCR values, or updates one
+	// branch from signed reference values, and re-approves it.
+	TPMPolicyUpdate(context.Context, *TPMPolicyUpdateRequest) (*TPMPolicy, error)
 	// TPMPolicyRevoke withdraws a policy's current approval.
 	TPMPolicyRevoke(context.Context, *TPMPolicyRequest) (*TPMPolicy, error)
 	// TPMPolicyVerify compares a policy's captured PCR values with the live
@@ -3221,7 +3223,7 @@ func (UnimplementedKeystoreServiceServer) TPMPolicyGet(context.Context, *TPMPoli
 func (UnimplementedKeystoreServiceServer) TPMPolicyList(context.Context, *TPMPolicyListRequest) (*TPMPolicyListResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "method TPMPolicyList not implemented")
 }
-func (UnimplementedKeystoreServiceServer) TPMPolicyUpdate(context.Context, *TPMPolicyRequest) (*TPMPolicy, error) {
+func (UnimplementedKeystoreServiceServer) TPMPolicyUpdate(context.Context, *TPMPolicyUpdateRequest) (*TPMPolicy, error) {
 	return nil, status.Error(codes.Unimplemented, "method TPMPolicyUpdate not implemented")
 }
 func (UnimplementedKeystoreServiceServer) TPMPolicyRevoke(context.Context, *TPMPolicyRequest) (*TPMPolicy, error) {
@@ -5439,7 +5441,7 @@ func _KeystoreService_TPMPolicyList_Handler(srv interface{}, ctx context.Context
 }
 
 func _KeystoreService_TPMPolicyUpdate_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
-	in := new(TPMPolicyRequest)
+	in := new(TPMPolicyUpdateRequest)
 	if err := dec(in); err != nil {
 		return nil, err
 	}
@@ -5451,7 +5453,7 @@ func _KeystoreService_TPMPolicyUpdate_Handler(srv interface{}, ctx context.Conte
 		FullMethod: KeystoreService_TPMPolicyUpdate_FullMethodName,
 	}
 	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
-		return srv.(KeystoreServiceServer).TPMPolicyUpdate(ctx, req.(*TPMPolicyRequest))
+		return srv.(KeystoreServiceServer).TPMPolicyUpdate(ctx, req.(*TPMPolicyUpdateRequest))
 	}
 	return interceptor(ctx, in, info, handler)
 }

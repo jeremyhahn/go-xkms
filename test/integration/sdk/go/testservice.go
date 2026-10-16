@@ -1201,7 +1201,7 @@ func (s *TestXKMSService) TPMPolicyList(context.Context, *xkms.TPMPolicyListRequ
 	return nil, ErrNotImplemented
 }
 
-func (s *TestXKMSService) TPMPolicyUpdate(context.Context, *xkms.TPMPolicyRequest) (*xkms.TPMPolicy, error) {
+func (s *TestXKMSService) TPMPolicyUpdate(context.Context, *xkms.TPMPolicyUpdateRequest) (*xkms.TPMPolicy, error) {
 	return nil, ErrNotImplemented
 }
 

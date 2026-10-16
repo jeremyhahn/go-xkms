@@ -26,10 +26,10 @@ import (
 	"strings"
 	"time"
 
+	xkms "github.com/jeremyhahn/go-xkms/sdk/go"
 	"github.com/jeremyhahn/go-xkms/sdk/go/pairingproto"
 	"github.com/jeremyhahn/go-xkms/sdk/go/transport"
 	"github.com/jeremyhahn/go-xkms/sdk/go/truststore"
-	"github.com/jeremyhahn/go-xkms/xkey/pkg/attestation"
 	"github.com/jeremyhahn/go-xkms/xkey/pkg/pairing"
 )
 
@@ -71,11 +71,7 @@ func androidAttestationRoots() (_ *x509.CertPool, err error) {
 		}
 	}()
 
-	verifier, err := attestation.NewVerifier(store, truststore.LoadEmbeddedRoots)
-	if err != nil {
-		return nil, &WrappedError{Msg: "failed to create attestation verifier", Err: err}
-	}
-
+	verifier := xkms.NewAttestationVerifier(nil, xkms.WithAttestationTrustStore(store, truststore.LoadEmbeddedRoots))
 	pool, err := verifier.BuildTrustPool(truststore.PurposeAndroidHardware)
 	if err != nil {
 		return nil, &WrappedError{Msg: "failed to build the attestation trust pool", Err: err}

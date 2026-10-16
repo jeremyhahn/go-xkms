@@ -19,6 +19,8 @@
 package pbconv
 
 import (
+	"math"
+
 	pb "github.com/jeremyhahn/go-xkms/pkg/api/grpc/proto/xkmsv1"
 	"github.com/jeremyhahn/go-xkms/pkg/api/transport"
 )
@@ -87,7 +89,7 @@ func TPMPolicyBranchesToProto(in []transport.TPMPolicyBranch) []*pb.TPMPolicyBra
 				Localities: uintsToProto(c.Localities),
 			}
 		}
-		out[i] = &pb.TPMPolicyBranch{Conditions: conditions, Approved: b.Approved}
+		out[i] = &pb.TPMPolicyBranch{Conditions: conditions, Approved: b.Approved, Reference: tpmReferenceToProto(b.Reference)}
 	}
 	return out
 }
@@ -108,7 +110,7 @@ func TPMPolicyBranchesFromProto(in []*pb.TPMPolicyBranch) []transport.TPMPolicyB
 				Localities: uintsFromProto(c.GetLocalities()),
 			}
 		}
-		out[i] = transport.TPMPolicyBranch{Conditions: conditions, Approved: b.GetApproved()}
+		out[i] = transport.TPMPolicyBranch{Conditions: conditions, Approved: b.GetApproved(), Reference: tpmReferenceFromProto(b.GetReference())}
 	}
 	return out
 }
@@ -195,6 +197,49 @@ func TPMPolicyRequestFromProto(r *pb.TPMPolicyRequest) *transport.TPMPolicyReque
 	return &transport.TPMPolicyRequest{TenantID: r.GetTenantId(), Name: r.GetName()}
 }
 
+// TPMPolicyUpdateRequestToProto converts a policy update request to its
+// proto form. A branch index int32 cannot carry becomes -1, which names no
+// branch, so the server refuses it rather than updating a truncated index.
+func TPMPolicyUpdateRequestToProto(r *transport.TPMPolicyUpdateRequest) *pb.TPMPolicyUpdateRequest {
+	out := &pb.TPMPolicyUpdateRequest{TenantId: r.TenantID, Name: r.Name, ReferenceValues: r.ReferenceValues}
+	if r.Branch != nil {
+		branch := int32(-1)
+		if *r.Branch >= 0 && *r.Branch <= math.MaxInt32 {
+			branch = int32(*r.Branch) // #nosec G115 -- bounds checked above
+		}
+		out.Branch = &branch
+	}
+	return out
+}
+
+// TPMPolicyUpdateRequestFromProto converts a proto policy update request to
+// its transport form.
+func TPMPolicyUpdateRequestFromProto(r *pb.TPMPolicyUpdateRequest) *transport.TPMPolicyUpdateRequest {
+	out := &transport.TPMPolicyUpdateRequest{TenantID: r.GetTenantId(), Name: r.GetName(), ReferenceValues: r.GetReferenceValues()}
+	if r.Branch != nil {
+		branch := int(r.GetBranch())
+		out.Branch = &branch
+	}
+	return out
+}
+
+// tpmReferenceToProto converts a branch's reference to its proto form.
+func tpmReferenceToProto(r *transport.TPMPolicyReference) *pb.TPMPolicyReference {
+	if r == nil {
+		return nil
+	}
+	return &pb.TPMPolicyReference{Id: r.ID, Profile: r.Profile, Signer: r.Signer, Digest: r.Digest}
+}
+
+// tpmReferenceFromProto converts a proto branch reference to its transport
+// form.
+func tpmReferenceFromProto(r *pb.TPMPolicyReference) *transport.TPMPolicyReference {
+	if r == nil {
+		return nil
+	}
+	return &transport.TPMPolicyReference{ID: r.GetId(), Profile: r.GetProfile(), Signer: r.GetSigner(), Digest: r.GetDigest()}
+}
+
 // TPMPolicyListResponseToProto converts a policy list to its proto form.
 func TPMPolicyListResponseToProto(r *transport.TPMPolicyListResponse) *pb.TPMPolicyListResponse {
 	out := &pb.TPMPolicyListResponse{Policies: make([]*pb.TPMPolicy, 0, len(r.Policies))}
@@ -229,7 +274,12 @@ func TPMPolicyDeleteRequestFromProto(r *pb.TPMPolicyDeleteRequest) *transport.TP
 func TPMPolicyVerifyResponseToProto(r *transport.TPMPolicyVerifyResponse) *pb.TPMPolicyVerifyResponse {
 	branches := make([]*pb.TPMPolicyBranchVerification, len(r.Branches))
 	for i, b := range r.Branches {
-		branches[i] = &pb.TPMPolicyBranchVerification{Match: b.Match, Mismatched: uintsToProto(b.Mismatched), Approved: b.Approved}
+		branches[i] = &pb.TPMPolicyBranchVerification{
+			Match:      b.Match,
+			Mismatched: uintsToProto(b.Mismatched),
+			Approved:   b.Approved,
+			Reference:  tpmReferenceToProto(b.Reference),
+		}
 	}
 	return &pb.TPMPolicyVerifyResponse{
 		Name:     r.Name,
@@ -244,7 +294,12 @@ func TPMPolicyVerifyResponseToProto(r *transport.TPMPolicyVerifyResponse) *pb.TP
 func TPMPolicyVerifyResponseFromProto(r *pb.TPMPolicyVerifyResponse) *transport.TPMPolicyVerifyResponse {
 	branches := make([]transport.TPMPolicyBranchVerification, len(r.GetBranches()))
 	for i, b := range r.GetBranches() {
-		branches[i] = transport.TPMPolicyBranchVerification{Match: b.GetMatch(), Mismatched: uintsFromProto(b.GetMismatched()), Approved: b.GetApproved()}
+		branches[i] = transport.TPMPolicyBranchVerification{
+			Match:      b.GetMatch(),
+			Mismatched: uintsFromProto(b.GetMismatched()),
+			Approved:   b.GetApproved(),
+			Reference:  tpmReferenceFromProto(b.GetReference()),
+		}
 	}
 	return &transport.TPMPolicyVerifyResponse{
 		Name:     r.GetName(),

@@ -634,8 +634,9 @@ service KeystoreService {
     option (qrdb.v1.permission) = "tpm_policy:list";
   }
 
-  // TPMPolicyUpdate re-captures a policy's PCR values and re-approves it.
-  rpc TPMPolicyUpdate(TPMPolicyRequest) returns (TPMPolicy) {
+  // TPMPolicyUpdate re-captures a policy's PCR values, or updates one
+  // branch from signed reference values, and re-approves it.
+  rpc TPMPolicyUpdate(TPMPolicyUpdateRequest) returns (TPMPolicy) {
     option (qrdb.v1.permission) = "tpm_policy:update";
   }
 
@@ -3441,10 +3442,22 @@ message TPMPolicyCondition {
 }
 
 // TPMPolicyBranch is one branch of a TPM policy: the AND of its conditions.
-// approved is reported on a policy and has no meaning in a create request.
+// approved and reference are reported on a policy and have no meaning in a
+// create request.
 message TPMPolicyBranch {
   repeated TPMPolicyCondition conditions = 1;
   bool approved = 2;
+  TPMPolicyReference reference = 3;
+}
+
+// TPMPolicyReference identifies the signed reference values a branch was
+// last updated from: the CoRIM's id, profile and signer name, and the
+// SHA-256 digest of the signed CoRIM.
+message TPMPolicyReference {
+  string id = 1;
+  string profile = 2;
+  string signer = 3;
+  bytes digest = 4;
 }
 
 // TPMPolicy describes a named TPM policy: an OR of branches, tried in order.
@@ -3490,6 +3503,16 @@ message TPMPolicyDescriptionRequest {
 message TPMPolicyRequest {
   string tenant_id = 1;
   string name = 2;
+}
+
+// TPMPolicyUpdateRequest updates a policy to its next epoch: every branch
+// from the live PCRs without a branch, or only the branch, counted from 0,
+// from reference_values, a COSE_Sign1 signed CoRIM, when one is set.
+message TPMPolicyUpdateRequest {
+  string tenant_id = 1;
+  string name = 2;
+  optional int32 branch = 3;
+  bytes reference_values = 4;
 }
 
 // TPMPolicyListRequest lists a tenant's policies.
@@ -3565,6 +3588,7 @@ message TPMPolicyBranchVerification {
   bool match = 1;
   repeated uint32 mismatched = 2;
   bool approved = 3;
+  TPMPolicyReference reference = 4;
 }
 
 // TPMPolicyVerifyResponse compares a policy's captured PCR values with the

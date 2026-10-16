@@ -20,6 +20,7 @@ import (
 	"time"
 
 	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
+	"github.com/jeremyhahn/go-xkms/pkg/attestation/refvalue"
 	"github.com/jeremyhahn/go-xkms/pkg/attestation/truststore"
 	tpm2backend "github.com/jeremyhahn/go-xkms/pkg/backend/tpm2"
 	"github.com/jeremyhahn/go-xkms/pkg/ca"
@@ -341,6 +342,12 @@ type TPMPolicyParams struct {
 	// tpmpolicy.ErrVTPMUnavailable.
 	VTPM *vtpm.Config
 
+	// ReferenceSigner is the reference-value signer's endorsement a signed
+	// CoRIM must verify under before a branch is updated from it. Nil
+	// leaves those updates unavailable: they are refused with
+	// tpmpolicy.ErrNoReferenceSigner.
+	ReferenceSigner *refvalue.VerifyOptions
+
 	// Logger receives the service's lifecycle events. Nil selects
 	// slog.Default().
 	Logger *slog.Logger
@@ -379,6 +386,8 @@ func BuildTPMPolicyService(p TPMPolicyParams) (*tpmpolicy.Service, error) {
 		Sealer:      tpm,
 		VTPM:        p.VTPM,
 		Logger:      orDefault(p.Logger),
+
+		ReferenceSigner: p.ReferenceSigner,
 	})
 	if err != nil {
 		return nil, &FeatureBuildError{Feature: FeatureTPMPolicies, Err: err}

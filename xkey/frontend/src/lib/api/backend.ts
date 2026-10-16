@@ -794,6 +794,17 @@ export interface TPMPolicyBranch {
   conditions: TPMPolicyCondition[];
   /** Whether the branch holds an approval; reported only. */
   approved?: boolean;
+  /** The signed reference values the branch was last updated from; absent after a live capture. */
+  reference?: TPMPolicyReference;
+}
+
+/** The signed reference values (a CoRIM) a TPM policy branch was updated from. */
+export interface TPMPolicyReference {
+  id?: string;
+  profile?: string;
+  signer?: string;
+  /** The SHA-256 digest of the signed CoRIM, base64-encoded. */
+  digest: string;
 }
 
 /** A named TPM policy (services.TPMPolicyInfo): an OR of branches. */
@@ -819,6 +830,8 @@ export interface TPMPolicyBranchVerification {
   match: boolean;
   mismatched?: number[];
   approved: boolean;
+  /** The signed reference values the branch is approved for; absent after a live capture. */
+  reference?: TPMPolicyReference;
 }
 
 /** Live PCRs compared with a policy's captured values, per branch (services.TPMPolicyVerification). */

@@ -19,6 +19,7 @@ import (
 	"log/slog"
 
 	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
+	"github.com/jeremyhahn/go-xkms/pkg/attestation/refvalue"
 	"github.com/jeremyhahn/go-xkms/pkg/attestation/truststore"
 	tpm2backend "github.com/jeremyhahn/go-xkms/pkg/backend/tpm2"
 	"github.com/jeremyhahn/go-xkms/pkg/ca"
@@ -91,6 +92,11 @@ type Deps struct {
 	// VTPM configures the TPM policy service's per-tenant vTPMs. Nil
 	// leaves vtpm mode unavailable.
 	VTPM *vtpm.Config
+
+	// ReferenceSigner is the reference-value signer's endorsement the TPM
+	// policy service verifies a signed CoRIM under. Nil leaves
+	// reference-value branch updates unavailable.
+	ReferenceSigner *refvalue.VerifyOptions
 
 	// NodeID is the deployment's node ID (cluster.node_id; 0 on a single
 	// node), which keys the TPM policy registry's records to this node.
@@ -252,6 +258,8 @@ func Build(ctx context.Context, d Deps) (*Stores, error) {
 				NodeID:  d.NodeID,
 				VTPM:    d.VTPM,
 				Logger:  b.logger,
+
+				ReferenceSigner: d.ReferenceSigner,
 			})
 		})
 	}

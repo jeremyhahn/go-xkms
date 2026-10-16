@@ -20,7 +20,11 @@ func tpm2BackendConfig(platformPCRs tpm2.PCRSet) *Config {
 		TLS:       TLSConfig{Enabled: true},
 		Default:   "tpm2",
 		Backends: BackendsConfig{
-			TPM2: &TPM2Config{Enabled: true, DevicePath: "/dev/tpmrm0", PlatformPCRs: platformPCRs},
+			TPM2: &TPM2Config{
+				Enabled:              true,
+				DevicePath:           "/dev/tpmrm0",
+				PlatformPCRSelection: tpm2.PlatformPCRSelection{PlatformPCRs: platformPCRs},
+			},
 		},
 	}
 }

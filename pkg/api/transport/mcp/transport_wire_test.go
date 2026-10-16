@@ -41,6 +41,8 @@ func wireCases() []wireCase {
 	keyVersion := &transport.KeyVersionRequest{Backend: "software", KeyID: "signer", Version: 2}
 	allVersions := &transport.AllKeyVersionsRequest{Backend: "software", KeyID: "signer"}
 	policy := &transport.TPMPolicyRequest{Name: "boot", TenantID: "acme"}
+	branch := 1
+	update := &transport.TPMPolicyUpdateRequest{Name: "boot", TenantID: "acme", Branch: &branch, ReferenceValues: []byte{0xd2, 0x84}}
 	oidcRef := &transport.OIDCCredentialRef{Owner: "alice"}
 	return []wireCase{
 		{"Algorithms", "xkms.algorithms", nil, func(ctx context.Context, tr *Transport) error {
@@ -82,8 +84,8 @@ func wireCases() []wireCase {
 		{"TPMPolicyList", "tpm.policy.list", &transport.TPMPolicyListRequest{}, func(ctx context.Context, tr *Transport) error {
 			return errOf(tr.TPMPolicyList(ctx, &transport.TPMPolicyListRequest{}))
 		}},
-		{"TPMPolicyUpdate", "tpm.policy.update", policy, func(ctx context.Context, tr *Transport) error {
-			return errOf(tr.TPMPolicyUpdate(ctx, policy))
+		{"TPMPolicyUpdate", "tpm.policy.update", update, func(ctx context.Context, tr *Transport) error {
+			return errOf(tr.TPMPolicyUpdate(ctx, update))
 		}},
 		{"TPMPolicyRevoke", "tpm.policy.revoke", policy, func(ctx context.Context, tr *Transport) error {
 			return errOf(tr.TPMPolicyRevoke(ctx, policy))

@@ -95,9 +95,10 @@ func (s *XKMSService) TPMPolicyList(ctx context.Context, req *transport.TPMPolic
 	return p.TPMPolicyList(ctx, req)
 }
 
-// TPMPolicyUpdate re-captures a policy's PCR values and re-approves it at the
-// scope's next epoch. No object is re-keyed.
-func (s *XKMSService) TPMPolicyUpdate(ctx context.Context, req *transport.TPMPolicyRequest) (*transport.TPMPolicy, error) {
+// TPMPolicyUpdate re-captures a policy's PCR values, or updates one branch
+// from signed reference values, and re-approves it at the scope's next
+// epoch. No object is re-keyed.
+func (s *XKMSService) TPMPolicyUpdate(ctx context.Context, req *transport.TPMPolicyUpdateRequest) (*transport.TPMPolicy, error) {
 	if req == nil {
 		return nil, ErrNilRequest
 	}

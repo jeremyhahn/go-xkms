@@ -443,9 +443,10 @@ type TPMPolicyService interface {
 	// TPMPolicyList returns the tenant's named policies.
 	TPMPolicyList(ctx context.Context, req *TPMPolicyListRequest) (*TPMPolicyListResponse, error)
 
-	// TPMPolicyUpdate re-captures a policy's PCR values and re-approves
-	// it. No object is re-keyed.
-	TPMPolicyUpdate(ctx context.Context, req *TPMPolicyRequest) (*TPMPolicy, error)
+	// TPMPolicyUpdate re-captures a policy's PCR values, or updates one
+	// branch from signed reference values, and re-approves it. No object is
+	// re-keyed.
+	TPMPolicyUpdate(ctx context.Context, req *TPMPolicyUpdateRequest) (*TPMPolicy, error)
 
 	// TPMPolicyRevoke withdraws a policy's current approval.
 	TPMPolicyRevoke(ctx context.Context, req *TPMPolicyRequest) (*TPMPolicy, error)

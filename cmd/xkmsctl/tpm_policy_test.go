@@ -18,6 +18,8 @@ import (
 	"context"
 	"encoding/base64"
 	"errors"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -70,7 +72,7 @@ func (m *mockTPMClient) TPMPolicyGet(_ context.Context, req *client.TPMPolicyReq
 func (m *mockTPMClient) TPMPolicyList(_ context.Context, req *client.TPMPolicyListRequest) (*client.TPMPolicyListResponse, error) {
 	return m.list, m.record("list", req)
 }
-func (m *mockTPMClient) TPMPolicyUpdate(_ context.Context, req *client.TPMPolicyRequest) (*client.TPMPolicy, error) {
+func (m *mockTPMClient) TPMPolicyUpdate(_ context.Context, req *client.TPMPolicyUpdateRequest) (*client.TPMPolicy, error) {
 	return m.policy, m.record("update", req)
 }
 func (m *mockTPMClient) TPMPolicyRevoke(_ context.Context, req *client.TPMPolicyRequest) (*client.TPMPolicy, error) {
@@ -257,14 +259,15 @@ func TestTPMPolicyListCmd(t *testing.T) {
 // prints its answer, and exits non-zero on a server error.
 func TestTPMPolicyNameCmds(t *testing.T) {
 	tests := []struct {
-		cmd    *cobra.Command
-		method string
-		want   string
+		cmd     *cobra.Command
+		method  string
+		request any
+		want    string
 	}{
-		{tpmPolicyGetCmd, "get", "TPM Policy:"},
-		{tpmPolicyUpdateCmd, "update", "TPM Policy Updated"},
-		{tpmPolicyRevokeCmd, "revoke", "TPM Policy Revoked"},
-		{tpmPolicyObjectsCmd, "objects", "key/a"},
+		{tpmPolicyGetCmd, "get", &client.TPMPolicyRequest{TenantID: "acme", Name: "boot"}, "TPM Policy:"},
+		{tpmPolicyUpdateCmd, "update", &client.TPMPolicyUpdateRequest{TenantID: "acme", Name: "boot"}, "TPM Policy Updated"},
+		{tpmPolicyRevokeCmd, "revoke", &client.TPMPolicyRequest{TenantID: "acme", Name: "boot"}, "TPM Policy Revoked"},
+		{tpmPolicyObjectsCmd, "objects", &client.TPMPolicyRequest{TenantID: "acme", Name: "boot"}, "key/a"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.method, func(t *testing.T) {
@@ -274,13 +277,40 @@ func TestTPMPolicyNameCmds(t *testing.T) {
 			}
 			out, code := runTPMCmd(t, mock, tt.cmd, []string{"boot"}, map[string]string{"tenant": "acme"})
 			assert.Equal(t, -1, code)
-			assert.Equal(t, &client.TPMPolicyRequest{TenantID: "acme", Name: "boot"}, mock.requests[tt.method])
+			assert.Equal(t, tt.request, mock.requests[tt.method])
 			assert.Contains(t, out, tt.want)
 
 			_, code = runTPMCmd(t, &mockTPMClient{err: errTPMRunBoom}, tt.cmd, []string{"boot"}, nil)
 			assert.Equal(t, 1, code)
 		})
 	}
+}
+
+// TestTPMPolicyUpdateCmd_FromReferenceValues proves --branch and
+// --reference-values send the branch and the file's bytes, and the result
+// names the reference values the branch now approves.
+func TestTPMPolicyUpdateCmd_FromReferenceValues(t *testing.T) {
+	corim := filepath.Join(t.TempDir(), "boot.corim")
+	require.NoError(t, os.WriteFile(corim, []byte{0xd2, 0x84}, 0o600))
+	mock := &mockTPMClient{policy: &client.TPMPolicy{Name: "boot", Branches: []client.TPMPolicyBranch{{
+		Reference: &client.TPMPolicyReference{ID: "boot-image-v2", Signer: "Example Provider", Digest: []byte{0xab, 0xcd}},
+	}}}}
+
+	out, code := runTPMCmd(t, mock, tpmPolicyUpdateCmd, []string{"boot"}, map[string]string{"branch": "1", "reference-values": corim})
+	assert.Equal(t, -1, code)
+	branch := 1
+	assert.Equal(t, &client.TPMPolicyUpdateRequest{Name: "boot", Branch: &branch, ReferenceValues: []byte{0xd2, 0x84}}, mock.requests["update"])
+	assert.Contains(t, out, "Reference: boot-image-v2 signed by Example Provider, sha256 abcd")
+}
+
+// TestTPMPolicyUpdateCmd_UnreadableReferenceValues proves a reference-values
+// file that cannot be read stops the command before any request is sent.
+func TestTPMPolicyUpdateCmd_UnreadableReferenceValues(t *testing.T) {
+	mock := &mockTPMClient{policy: &client.TPMPolicy{Name: "boot"}}
+	missing := filepath.Join(t.TempDir(), "missing.corim")
+	_, code := runTPMCmd(t, mock, tpmPolicyUpdateCmd, []string{"boot"}, map[string]string{"branch": "0", "reference-values": missing})
+	assert.Equal(t, 1, code)
+	assert.Empty(t, mock.requests)
 }
 
 // TestTPMPolicyVerifyCmd reports each branch and succeeds only when every

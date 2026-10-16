@@ -331,6 +331,29 @@ func (r *logReader) event2(spec *SpecID) (*Event, error) {
 // initial value to its locality (PFP §192.0.2.3). Every other register the log
 // touches starts from zero. The result holds only registers the log touched.
 func (l *EventLog) Replay(bank tpm2.TPMAlgID) (map[int][]byte, error) {
+	return l.ReplayWith(bank, nil)
+}
+
+// Substitution names one measured event a replay extends a different digest
+// for: the event a component's new image will produce in place of the one the
+// log records.
+type Substitution struct {
+	// PCR is the register the replaced event extends.
+	PCR int
+	// Ordinal is the replaced event's position, counting from 0, among the
+	// events the log extends into PCR (EV_NO_ACTION events are not counted).
+	Ordinal int
+	// Digest is extended in the replaced event's place. Its length is the
+	// replayed bank's digest size.
+	Digest []byte
+}
+
+// ReplayWith replays the log in one bank as Replay does, extending each
+// substitution's Digest in place of the event it names; every event before and
+// after it is replayed as recorded. Two substitutions for the same event, a
+// digest of the wrong length, and a substitution for an event the log does not
+// hold are refused with *SubstitutionError.
+func (l *EventLog) ReplayWith(bank tpm2.TPMAlgID, subs []Substitution) (map[int][]byte, error) {
 	hash, ok := bankHash[bank]
 	if !ok {
 		return nil, absent(CheckEventLog, "PCR bank 0x"+strconv.FormatUint(uint64(bank), 16)+" is not accepted for replay")
@@ -339,7 +362,21 @@ func (l *EventLog) Replay(bank tpm2.TPMAlgID) (map[int][]byte, error) {
 		return nil, absent(CheckEventLog, "event log carries no digests for PCR bank 0x"+strconv.FormatUint(uint64(bank), 16))
 	}
 	size := hash.Size()
+	type eventKey struct{ pcr, ordinal int }
+	pending := make(map[eventKey][]byte, len(subs))
+	for _, s := range subs {
+		key := eventKey{s.PCR, s.Ordinal}
+		if len(s.Digest) != size {
+			return nil, &SubstitutionError{PCR: s.PCR, Ordinal: s.Ordinal, Reason: "digest length does not match the replayed bank"}
+		}
+		if _, dup := pending[key]; dup {
+			return nil, &SubstitutionError{PCR: s.PCR, Ordinal: s.Ordinal, Reason: "event is substituted twice"}
+		}
+		pending[key] = s.Digest
+	}
+
 	pcrs := make(map[int][]byte)
+	ordinals := make(map[int]int)
 	for _, ev := range l.Events {
 		if ev.Type == EventNoAction {
 			if ev.PCR == 0 && len(ev.Data) == len(startupLocalitySignature)+1 && bytes.HasPrefix(ev.Data, startupLocalitySignature) {
@@ -353,6 +390,12 @@ func (l *EventLog) Replay(bank tpm2.TPMAlgID) (map[int][]byte, error) {
 		if !ok {
 			return nil, forged(CheckEventLog, "event "+strconv.Itoa(ev.Index)+" carries no digest for the replayed bank")
 		}
+		key := eventKey{ev.PCR, ordinals[ev.PCR]}
+		ordinals[ev.PCR]++
+		if replacement, ok := pending[key]; ok {
+			digest = replacement
+			delete(pending, key)
+		}
 		current, ok := pcrs[ev.PCR]
 		if !ok {
 			current = make([]byte, size)
@@ -361,6 +404,11 @@ func (l *EventLog) Replay(bank tpm2.TPMAlgID) (map[int][]byte, error) {
 		h.Write(current)
 		h.Write(digest)
 		pcrs[ev.PCR] = h.Sum(nil)
+	}
+	for _, s := range subs {
+		if _, unused := pending[eventKey{s.PCR, s.Ordinal}]; unused {
+			return nil, &SubstitutionError{PCR: s.PCR, Ordinal: s.Ordinal, Reason: "the event log holds no such event"}
+		}
 	}
 	return pcrs, nil
 }

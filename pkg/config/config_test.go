@@ -676,6 +676,29 @@ func TestValidate_Backends(t *testing.T) {
 			wantError: false,
 		},
 		{
+			name: "TPM2 reference signer pinned by a public key",
+			backends: BackendsConfig{
+				TPM2: &TPM2Config{Enabled: true, DevicePath: "/dev/tpm0", ReferenceSigner: &ReferenceSignerConfig{PublicKey: "/etc/xkms/refsigner.pem"}},
+			},
+			wantError: false,
+		},
+		{
+			name: "TPM2 reference signer with neither a key nor roots",
+			backends: BackendsConfig{
+				TPM2: &TPM2Config{Enabled: true, DevicePath: "/dev/tpm0", ReferenceSigner: &ReferenceSignerConfig{}},
+			},
+			wantError: true,
+			errorMsg:  "TPM2 reference_signer needs exactly one of public_key and roots",
+		},
+		{
+			name: "TPM2 reference signer with both a key and roots",
+			backends: BackendsConfig{
+				TPM2: &TPM2Config{Enabled: true, DevicePath: "/dev/tpm0", ReferenceSigner: &ReferenceSignerConfig{PublicKey: "/etc/xkms/refsigner.pem", Roots: "/etc/xkms/refroots.pem"}},
+			},
+			wantError: true,
+			errorMsg:  "TPM2 reference_signer needs exactly one of public_key and roots",
+		},
+		{
 			name: "valid PKCS11 backend",
 			backends: BackendsConfig{
 				PKCS11: &PKCS11Config{Enabled: true, Library: "/usr/lib/libpkcs11.so"},

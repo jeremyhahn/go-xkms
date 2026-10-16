@@ -56,7 +56,7 @@ func buildCoMID(t *testing.T) comid.Comid {
 		t.Fatalf("instance: %v", err)
 	}
 	class := comid.NewClassOID("1.3.6.1.4.1.29377.200.1")
-	class.SetVendor("Example Vendor").SetModel("Example Board").SetLayer(0).SetIndex(1)
+	class.SetVendor("Example Vendor").SetModel("Example Board").SetLayer(0)
 
 	m0, err := comid.NewMeasurement(uint64(0), comid.UintType)
 	if err != nil {
@@ -241,7 +241,7 @@ func checkManifest(t *testing.T, m *Manifest) {
 	if env.Vendor != "Example Vendor" || env.Model != "Example Board" || env.ClassIDType != "oid" || env.ClassID != "1.3.6.1.4.1.29377.200.1" {
 		t.Fatalf("environment class = %+v", env)
 	}
-	if env.Layer == nil || *env.Layer != 0 || env.Index == nil || *env.Index != 1 {
+	if env.Layer == nil || *env.Layer != 0 || env.Index != nil {
 		t.Fatalf("layer/index = %v/%v", env.Layer, env.Index)
 	}
 	if env.InstanceType != "bytes" || !bytes.Equal(env.InstanceBytes, []byte{0xde, 0xad, 0xbe, 0xef}) {
@@ -450,6 +450,88 @@ func TestPCRDigests_Errors(t *testing.T) {
 	if _, err := uintMeasurement(0, Digest{Algorithm: swid.Sha256, Value: good[:]}).PCRDigests(crypto.SHA1); !errors.Is(err, ErrUnsupportedHash) {
 		t.Fatalf("sha1: %v", err)
 	}
+}
+
+// componentManifest is a manifest holding one final PCR 0 value and one
+// component of PCR 7 at event ordinal 2.
+func componentManifest(component ...Digest) *Manifest {
+	ordinal := uint64(2)
+	return &Manifest{ReferenceValues: []ReferenceValue{
+		{Measurements: []Measurement{{
+			Key:     MeasurementKey{Kind: KeyKindUint, Uint: 0, String: "0"},
+			Digests: []Digest{{Algorithm: swid.Sha256, Value: pcr0SHA256[:]}},
+		}}},
+		{Environment: Environment{Index: &ordinal}, Measurements: []Measurement{
+			{Key: MeasurementKey{Kind: KeyKindUint, Uint: 7, String: "7"}, Digests: component},
+			{Key: MeasurementKey{Kind: KeyKindOID, String: "1.2.3.4"}},
+		}},
+	}}
+}
+
+func TestComponentDigests(t *testing.T) {
+	m := componentManifest(
+		Digest{Algorithm: swid.Sha256, Value: pcr7SHA256[:]},
+		Digest{Algorithm: swid.Sha384, Value: pcr0SHA384[:]},
+	)
+
+	components, err := m.ComponentDigests(crypto.SHA256)
+	if err != nil {
+		t.Fatalf("ComponentDigests(SHA256): %v", err)
+	}
+	if len(components) != 1 || components[0].PCR != 7 || components[0].Ordinal != 2 || !bytes.Equal(components[0].Digest, pcr7SHA256[:]) {
+		t.Fatalf("components = %+v", components)
+	}
+	components, err = m.ComponentDigests(crypto.SHA384)
+	if err != nil || len(components) != 1 || !bytes.Equal(components[0].Digest, pcr0SHA384[:]) {
+		t.Fatalf("ComponentDigests(SHA384) = %+v, %v", components, err)
+	}
+
+	// A component is not a final PCR value.
+	finals, err := m.PCRDigests(crypto.SHA256)
+	if err != nil {
+		t.Fatalf("PCRDigests: %v", err)
+	}
+	if len(finals) != 1 || len(finals[0]) != 1 {
+		t.Fatalf("final values = %v, want only PCR 0", finals)
+	}
+}
+
+func TestComponentDigests_Errors(t *testing.T) {
+	good := Digest{Algorithm: swid.Sha256, Value: pcr7SHA256[:]}
+	tests := []struct {
+		name string
+		m    *Manifest
+		hash crypto.Hash
+		want error
+	}{
+		{"no digest of the hash", componentManifest(Digest{Algorithm: swid.Sha384, Value: pcr0SHA384[:]}), crypto.SHA256, ErrComponentDigest},
+		{"two digests of the hash", componentManifest(good, good), crypto.SHA256, ErrComponentDigest},
+		{"short digest", componentManifest(Digest{Algorithm: swid.Sha256, Value: pcr7SHA256[:20]}), crypto.SHA256, ErrDigestLength},
+		{"unsupported hash", componentManifest(good), crypto.SHA1, ErrUnsupportedHash},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			if _, err := tc.m.ComponentDigests(tc.hash); !errors.Is(err, tc.want) {
+				t.Fatalf("err = %v, want %v", err, tc.want)
+			}
+		})
+	}
+
+	t.Run("ordinal out of range", func(t *testing.T) {
+		m := componentManifest(good)
+		huge := uint64(maxComponentOrdinal + 1)
+		m.ReferenceValues[1].Environment.Index = &huge
+		if _, err := m.ComponentDigests(crypto.SHA256); !errors.Is(err, ErrComponentOrdinal) {
+			t.Fatalf("err = %v, want ErrComponentOrdinal", err)
+		}
+	})
+	t.Run("PCR index out of range", func(t *testing.T) {
+		m := componentManifest(good)
+		m.ReferenceValues[1].Measurements[0].Key.Uint = 24
+		if _, err := m.ComponentDigests(crypto.SHA256); !errors.Is(err, ErrPCRIndex) {
+			t.Fatalf("err = %v, want ErrPCRIndex", err)
+		}
+	})
 }
 
 func TestDigestHash(t *testing.T) {

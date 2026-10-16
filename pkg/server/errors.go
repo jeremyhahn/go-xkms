@@ -102,6 +102,10 @@ var (
 	// ErrParsePublicKey indicates a public key could not be parsed.
 	ErrParsePublicKey = errors.New("server: unable to parse public key")
 
+	// ErrReferenceSignerUnset indicates backends.tpm2.reference_signer
+	// names neither a public key nor certificate roots.
+	ErrReferenceSignerUnset = errors.New("server: tpm2 reference_signer names neither public_key nor roots")
+
 	// ErrCANotInitialized indicates the CA has not been initialized yet.
 	ErrCANotInitialized = errors.New("server: CA not initialized")
 

@@ -432,7 +432,7 @@ func (m *mockService) TPMPolicyList(context.Context, *TPMPolicyListRequest) (*TP
 	return nil, nil
 }
 
-func (m *mockService) TPMPolicyUpdate(context.Context, *TPMPolicyRequest) (*TPMPolicy, error) {
+func (m *mockService) TPMPolicyUpdate(context.Context, *TPMPolicyUpdateRequest) (*TPMPolicy, error) {
 	return nil, nil
 }
 

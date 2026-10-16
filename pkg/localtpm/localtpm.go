@@ -379,8 +379,9 @@ func (l *Policies) TPMPolicyGet(ctx context.Context, req *transport.TPMPolicyReq
 	return locked(ctx, l, req, (*xkms.TenantTPMPolicies).TPMPolicyGet)
 }
 
-// TPMPolicyUpdate re-captures a policy's PCR values and re-approves it.
-func (l *Policies) TPMPolicyUpdate(ctx context.Context, req *transport.TPMPolicyRequest) (*transport.TPMPolicy, error) {
+// TPMPolicyUpdate re-captures a policy's PCR values, or updates one branch
+// from signed reference values, and re-approves it.
+func (l *Policies) TPMPolicyUpdate(ctx context.Context, req *transport.TPMPolicyUpdateRequest) (*transport.TPMPolicy, error) {
 	return locked(ctx, l, req, (*xkms.TenantTPMPolicies).TPMPolicyUpdate)
 }
 

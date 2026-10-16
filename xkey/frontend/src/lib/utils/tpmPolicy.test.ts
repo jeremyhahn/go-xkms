@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import {
-  describeBranch, draftError, draftToBranch, newBranchDraft, pcrBranch, policySummary, toggleIndex,
+  describeBranch, describeReference, draftError, draftToBranch, newBranchDraft, pcrBranch, policySummary, toggleIndex,
 } from './tpmPolicy';
 
 describe('tpmPolicy helpers', () => {
@@ -38,5 +38,11 @@ describe('tpmPolicy helpers', () => {
     })).toBe('sha256 PCR 0, 7 or password');
     expect(policySummary({ name: 'platform', builtin: true, approved: true, auto_unseal: false, object_count: 0 }))
       .toBe('platform PCR or password');
+  });
+
+  it('describes signed reference values like the CLI', () => {
+    expect(describeReference({ id: 'boot-image-v2', signer: 'Example Provider', digest: 'q80=' }))
+      .toBe('boot-image-v2 signed by Example Provider, sha256 abcd');
+    expect(describeReference({ digest: 'AA==' })).toBe('(no id), sha256 00');
   });
 });

@@ -78,6 +78,25 @@ func TestTenantTPMPolicies_NilRequest(t *testing.T) {
 	}
 }
 
+// TestTenantTPMPolicies_BranchUpdate proves an update naming a branch needs
+// its reference values and the reverse, and a complete branch update reaches
+// the policy service's reference-value update rather than a live capture.
+func TestTenantTPMPolicies_BranchUpdate(t *testing.T) {
+	policies, _ := tpmpolicytest.NewOffline(t)
+	p, err := NewTenantTPMPolicies(policies, "")
+	require.NoError(t, err)
+	ctx := context.Background()
+	branch := 0
+
+	_, err = p.TPMPolicyUpdate(ctx, &transport.TPMPolicyUpdateRequest{Name: "boot", Branch: &branch})
+	require.ErrorIs(t, err, ErrTPMPolicyBranchUpdate, "a branch without reference values")
+	_, err = p.TPMPolicyUpdate(ctx, &transport.TPMPolicyUpdateRequest{Name: "boot", ReferenceValues: []byte{0xd2}})
+	require.ErrorIs(t, err, ErrTPMPolicyBranchUpdate, "reference values without a branch")
+
+	_, err = p.TPMPolicyUpdate(ctx, &transport.TPMPolicyUpdateRequest{Name: "boot", Branch: &branch, ReferenceValues: []byte{0xd2}})
+	require.ErrorIs(t, err, tpmpolicy.ErrNoReferenceSigner, "the branch update is the service's, which trusts no signer here")
+}
+
 // TestParseTPMObjectKind proves the API's object kinds map to the policy
 // service's, "" meaning a key, and any other kind is a typed error.
 func TestParseTPMObjectKind(t *testing.T) {

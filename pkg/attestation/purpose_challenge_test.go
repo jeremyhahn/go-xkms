@@ -195,10 +195,7 @@ func newAndroidVerifier(t *testing.T, root *x509.Certificate) *Verifier {
 	store := newMockTrustStore()
 	store.addCertForPurpose(root, truststore.PurposeAndroidHardware)
 
-	v, err := NewVerifier(store, nil)
-	if err != nil {
-		t.Fatalf("NewVerifier() error: %v", err)
-	}
+	v := NewVerifier(nil, WithTrustStore(store, nil))
 
 	return v
 }
@@ -378,8 +375,8 @@ func TestVerifyAndroidAttestation_ChallengeCheckedAfterChainFails(t *testing.T) 
 	v := newAndroidVerifier(t, trustedCA.cert)
 
 	result, err := v.VerifyAndroidAttestation([]*x509.Certificate{leaf}, challenge)
-	if !errors.Is(err, ErrChainVerification) {
-		t.Fatalf("error = %v, want %v", err, ErrChainVerification)
+	if !errors.Is(err, ErrChainVerificationFailed) {
+		t.Fatalf("error = %v, want %v", err, ErrChainVerificationFailed)
 	}
 	if result.Verified {
 		t.Error("Verified = true for an untrusted chain, want false")
