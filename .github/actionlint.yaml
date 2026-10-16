@@ -3,3 +3,4 @@ self-hosted-runner:
     - qwen
     - batch
     - dells
+    - ci-gate

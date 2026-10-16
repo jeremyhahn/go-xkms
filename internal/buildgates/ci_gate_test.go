@@ -128,8 +128,8 @@ func tierProblems(wf workflow) []string {
 	}
 	entries, problems := gateEntries(gate)
 
-	if !slices.Contains(wf.On.PullRequest.Types, "labeled") {
-		problems = append(problems, "on.pull_request.types lacks labeled, so adding ci:full starts no run")
+	if slices.Contains(wf.On.PullRequest.Types, "labeled") {
+		problems = append(problems, "on.pull_request.types has labeled, so every label change restarts the PR's run")
 	}
 
 	names := make([]string, 0, len(wf.Jobs))
@@ -203,7 +203,7 @@ func TestCIGateTiersMatchTheJobs(t *testing.T) {
 const fixture = `
 on:
   pull_request:
-    types: [opened, synchronize, reopened, labeled]
+    types: [opened, synchronize, reopened]
 jobs:
   changes:
     runs-on: x
@@ -243,7 +243,7 @@ func TestCIGateTiersCatchEachMismatch(t *testing.T) {
 		{"line reads another job", `build   "${{ needs.build.result }}"`, `build   "${{ needs.race.result }}"`, "reads needs.race.result"},
 		{"docs flag dropped", `"${{ needs.build.result }}" docs`, `"${{ needs.build.result }}"`, "build: CI Gate docs flag is false"},
 		{"pr job needs a full job", "needs: [changes]\n    if: needs.changes.outputs.docs_only", "needs: [changes, race]\n    if: needs.changes.outputs.docs_only", "pr-tier build needs full-tier race"},
-		{"no labeled trigger", "reopened, labeled]", "reopened]", "lacks labeled"},
+		{"labeled trigger", "reopened]", "reopened, labeled]", "has labeled"},
 		{"label missing from full if", "contains(github.event.pull_request.labels.*.name, 'ci:full') ||\n", "", "race is tagged full but its if:"},
 	}
 	for _, tc := range cases {

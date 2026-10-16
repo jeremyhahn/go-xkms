@@ -140,9 +140,16 @@ on:
     branches: [ main ]
   pull_request:
     branches: [ main ]
-    # `labeled` (#1483): adding the ci:full label starts a run that takes the
-    # full tier for that PR, without waiting for the next push.
-    types: [opened, synchronize, reopened, labeled]
+    # No `labeled` (go-trusted-platform #853, CA m369). Gitea 1.27.1 sends
+    # every label add AND remove as `label_updated`, and its matcher maps that
+    # to `labeled` whichever label moved, with no `github.event.label` in the
+    # payload. Each `task:*`, `code-review` or review-lock change then started
+    # a run that the `concurrency` block let cancel the PR's run in progress,
+    # and a run whose jobs an `if:` skips would post `skipped` over the real
+    # run's `CI / *` contexts, CI Gate included. An action outside `types`
+    # matches nothing: no run, no status. The cost: adding `ci:full` waits for
+    # the PR's next push or update-branch, or a workflow_dispatch.
+    types: [opened, synchronize, reopened]
   workflow_dispatch:                    # manual rerun — Gitea has no rerun API
 
 # Supersession control (#392). A newer head on the same ref cancels the older
@@ -1940,7 +1947,7 @@ jobs:
   # guessing from the result alone.
   ci-gate:
     name: CI Gate
-    runs-on: ubuntu-latest
+    runs-on: ci-gate
     if: always()
     needs: [changes, test, test-changed, nested-module-test, nested-module-build, lint, static-analysis, security, build, build-raft, arch-gates, docker, race, tpm2-simulator]
 
