@@ -110,6 +110,9 @@ func newClipboardServiceWithFakeXclip(t *testing.T) *ClipboardService {
 		tool: clipToolXclip,
 	}
 	svc.timeout.Store(int32(DefaultClipboardTimeout))
+	// Registered after t.TempDir, so it runs first: no scheduled clear may
+	// still be running the fake xclip when the temp dir is removed.
+	t.Cleanup(svc.stopPendingClear)
 	return svc
 }
 
@@ -322,6 +325,30 @@ func TestCB91_ScheduleClear_ContextCancelled(t *testing.T) {
 	content, err := svc.readClipboard()
 	require.NoError(t, err)
 	assert.Equal(t, "test-content", content)
+}
+
+func TestCB91_StopPendingClear_CancelsAndWaits(t *testing.T) {
+	svc := newClipboardServiceWithFakeXclip(t)
+	require.NoError(t, svc.writeClipboard("pending"))
+
+	svc.scheduleClear("pending", 10*time.Second)
+	svc.stopPendingClear()
+
+	svc.clearMu.Lock()
+	assert.Nil(t, svc.cancelFn, "stopPendingClear must drop the cancel func")
+	svc.clearMu.Unlock()
+
+	content, err := svc.readClipboard()
+	require.NoError(t, err)
+	assert.Equal(t, "pending", content, "a stopped clear must not touch the clipboard")
+}
+
+func TestCB91_StopPendingClear_NothingScheduled(t *testing.T) {
+	svc := &ClipboardService{log: slog.Default(), tool: clipToolNone}
+
+	svc.stopPendingClear()
+
+	assert.Nil(t, svc.cancelFn)
 }
 
 // ---------------------------------------------------------------------------

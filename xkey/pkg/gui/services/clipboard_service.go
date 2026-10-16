@@ -48,6 +48,7 @@ type ClipboardService struct {
 	timeout  atomic.Int32
 	clearMu  sync.Mutex
 	cancelFn context.CancelFunc
+	clearWG  sync.WaitGroup // tracks scheduled-clear goroutines
 	tool     clipboardTool
 }
 
@@ -162,7 +163,9 @@ func (s *ClipboardService) scheduleClear(expectedText string, delay time.Duratio
 	ctx, cancel := context.WithCancel(context.Background())
 	s.cancelFn = cancel
 
+	s.clearWG.Add(1)
 	go func() {
+		defer s.clearWG.Done()
 		defer zeroBytes(expected)
 
 		timer := time.NewTimer(delay)
@@ -179,6 +182,12 @@ func (s *ClipboardService) scheduleClear(expectedText string, delay time.Duratio
 				return
 			}
 
+			// A clear cancelled while the clipboard was being read was
+			// superseded; it must not overwrite the clipboard.
+			if ctx.Err() != nil {
+				return
+			}
+
 			if strings.TrimSpace(current) == strings.TrimSpace(string(expected)) {
 				// Overwrite first, then clear.
 				if overwriteErr := s.writeClipboard(" "); overwriteErr != nil {
@@ -192,6 +201,18 @@ func (s *ClipboardService) scheduleClear(expectedText string, delay time.Duratio
 			}
 		}
 	}()
+}
+
+// stopPendingClear cancels any scheduled clear and waits until every clear
+// goroutine, and the clipboard tool processes it started, has finished.
+func (s *ClipboardService) stopPendingClear() {
+	s.clearMu.Lock()
+	if s.cancelFn != nil {
+		s.cancelFn()
+		s.cancelFn = nil
+	}
+	s.clearMu.Unlock()
+	s.clearWG.Wait()
 }
 
 // writeClipboard writes text to the system clipboard.
