@@ -14,7 +14,7 @@ folder.
 
 | Flag | Type | Default | Purpose |
 |---|---|---|---|
-| `--role` | string | `""` (resolves to `user`) | one of `so`, `admin`, `operator`, `user`, `auditor`, `custodian` |
+| `--role` | string | `""` (resolves to `user`) | a built-in role (`so`, `admin`, `operator`, `user`, `auditor`) or a custom role the tenant holds; the server refuses a role the tenant does not hold |
 
 ```
 xkmsctl user register alice --email alice@example.com --role operator

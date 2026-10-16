@@ -231,8 +231,8 @@ func TestNewModule_RegistersRoleGrants(t *testing.T) {
 	} {
 		assert.True(t, qrdbsdk.HasPermissionRoleGrant(qrdbsdk.PermissionRoleAdmin, perm),
 			"admin must hold %s", perm)
-		assert.True(t, qrdbsdk.HasPermissionRoleGrant(qrdbsdk.RoleNameOwner, perm),
-			"owner must hold %s", perm)
+		assert.Contains(t, qrdbsdk.AllPermissions(), perm,
+			"owner must hold %s through go-qrdb", perm)
 	}
 
 	// Role creation validates grants against the global permission

@@ -608,9 +608,6 @@ var (
 	// ErrInvalidMessageHex is the sentinel error "invalid message hex".
 	ErrInvalidMessageHex = errors.New("invalid message hex")
 
-	// ErrInvalidRole is the sentinel error "invalid role".
-	ErrInvalidRole = errors.New("invalid role")
-
 	// ErrInvalidSalt is the sentinel error "invalid salt".
 	ErrInvalidSalt = errors.New("invalid salt")
 

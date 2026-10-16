@@ -698,30 +698,6 @@ func TestUserAuthFactorClient_NilFactory(t *testing.T) {
 }
 
 // =============================================================================
-// roles.go — IsValidRole (0%)
-// =============================================================================
-
-// TestIsValidRole exercises all canonical and non-canonical role values.
-func TestIsValidRole(t *testing.T) {
-	valid := []Role{RoleSO, RoleAdmin, RoleOperator, RoleUser, RoleAuditor}
-	for _, r := range valid {
-		t.Run(string(r), func(t *testing.T) {
-			if !IsValidRole(r) {
-				t.Errorf("IsValidRole(%q) = false, want true", r)
-			}
-		})
-	}
-	invalid := []Role{"root", "superuser", "guest", ""}
-	for _, r := range invalid {
-		t.Run("invalid-"+string(r), func(t *testing.T) {
-			if IsValidRole(r) {
-				t.Errorf("IsValidRole(%q) = true, want false", r)
-			}
-		})
-	}
-}
-
-// =============================================================================
 // canonical.go — PendingCredentialBackendError (0%)
 // =============================================================================
 

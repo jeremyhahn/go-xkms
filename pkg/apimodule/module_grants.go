@@ -78,8 +78,9 @@ func registerRoleGrants() {
 		qrdbsdk.RegisterPermissionScope(qrdbsdk.PermissionScopeSelf, selfScopedPermissions()...)
 		qrdbsdk.RegisterPermissionScope(qrdbsdk.PermissionScopeCross, crossScopedPermissions()...)
 
+		// Owner is not granted here: go-qrdb gives Owner every registered
+		// permission, so registering the permissions above is its grant.
 		qrdbsdk.RegisterPermissionRoleGrant(qrdbsdk.PermissionRoleAdmin, perms...)
-		qrdbsdk.RegisterPermissionRoleGrant(qrdbsdk.RoleNameOwner, perms...)
 
 		// A tenant's shared OIDC credentials are visible to every user of
 		// the tenant, so the User role consumes them: it reads their

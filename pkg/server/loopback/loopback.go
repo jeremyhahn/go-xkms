@@ -31,6 +31,8 @@ import (
 	"log/slog"
 	"net"
 
+	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
+
 	"github.com/jeremyhahn/go-xkms/pkg/auth"
 	"github.com/jeremyhahn/go-xkms/pkg/config"
 	"github.com/jeremyhahn/go-xkms/pkg/server"
@@ -125,11 +127,7 @@ func Launch(ctx context.Context, o Options) (*Instance, error) {
 	// authenticator: the desktop owner authenticates by holding the token,
 	// while the normal login flows remain available for remote-style use.
 	decorator := func(base auth.Authenticator) auth.Authenticator {
-		staticAuth := auth.NewStaticTokenAuthenticator(token, auth.Identity{
-			Subject:  "desktop-owner",
-			TenantID: "system",
-			Roles:    []string{"admin"},
-		})
+		staticAuth := auth.NewStaticTokenAuthenticator(token, desktopOwnerIdentity())
 		composite, cErr := auth.NewCompositeAuthenticator(staticAuth, base)
 		if cErr != nil {
 			// Fall back to the token authenticator alone; a desktop engine
@@ -181,6 +179,17 @@ func Launch(ctx context.Context, o Options) (*Instance, error) {
 
 	logger.Info("loopback engine launched", "base_url", inst.BaseURL, "port", port)
 	return inst, nil
+}
+
+// desktopOwnerIdentity is the identity the per-launch token authenticates as:
+// the system tenant's Admin. Identity.Roles carries role IDs, so the role is
+// addressed by go-qrdb's deterministic system role ID, never by its name.
+func desktopOwnerIdentity() auth.Identity {
+	return auth.Identity{
+		Subject:  "desktop-owner",
+		TenantID: qrdbsdk.SystemTenantID,
+		Roles:    []string{qrdbsdk.SystemRoleID(qrdbsdk.SystemTenantID, qrdbsdk.RoleNameAdmin)},
+	}
 }
 
 // Close stops the engine and releases its resources.

@@ -200,14 +200,11 @@ Example:
 		printVerbose("Connected to xkms service")
 
 		// The first user registered becomes the administrator; otherwise use the
-		// requested role (defaulting to the standard user role).
-		role := string(RoleUser)
+		// requested role (defaulting to the standard user role). Any role name
+		// the tenant holds is accepted, custom roles included: the server
+		// resolves it and refuses one the tenant does not hold.
+		role := qrdbsdk.RoleNameUser
 		if roleStr != "" {
-			r := Role(roleStr)
-			if !IsValidRole(r) {
-				handleError(&WrappedDetailError{Sentinel: ErrInvalidRole, Detail: roleStr})
-				return
-			}
 			role = roleStr
 		}
 
@@ -218,7 +215,7 @@ Example:
 		}
 		firstUser := len(listResp.Users) == 0
 		if firstUser {
-			role = string(RoleAdmin)
+			role = qrdbsdk.RoleNameAdmin
 			if err := printer.PrintMessage("No users exist. First user will be administrator."); err != nil {
 				handleError(err)
 				return
@@ -811,7 +808,7 @@ var userStatusCmd = &cobra.Command{
 		count := len(resp.Users)
 		adminCount := 0
 		for _, u := range resp.Users {
-			if u.Role == string(RoleAdmin) {
+			if u.Role == qrdbsdk.RoleNameAdmin {
 				adminCount++
 			}
 		}
@@ -1128,7 +1125,7 @@ func init() {
 	// register flags
 	userRegisterCmd.Flags().String("email", "", "canonical login key for the user (REQUIRED)")
 	userRegisterCmd.Flags().String("display-name", "", "user display name (defaults to username)")
-	userRegisterCmd.Flags().String("role", "", "user role (so, admin, operator, user, auditor, custodian)")
+	userRegisterCmd.Flags().String("role", "", "user role: a built-in role (so, admin, operator, user, auditor) or a custom role the tenant holds")
 
 	// login flags. The server supplies the credential allow-list during the
 	// authentication ceremony, so no credential-id/salt flags are needed.

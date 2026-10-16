@@ -52,7 +52,6 @@ request → authenticator → auth.WithIdentity(ctx, id)
 | Deriving and registering xkms's permission set + granting it to Admin/Owner | `pkg/apimodule/module_grants.go` | go-xkms |
 | Wiring (`auth.enable_rbac` → `auth.NewAuthorizer`) | `Server.initializeAuthorization`, `pkg/server/server.go` | go-xkms |
 | Per-transport enforcement | `pkg/api/rest/rbac_middleware.go`, `pkg/api/grpc/service.go`, `pkg/api/mcp/authz.go` | go-xkms |
-| CLI role-name mirroring for user registration | `cmd/xkmsctl/roles.go` | go-xkms |
 
 ## Requires the qrdb storage backend
 

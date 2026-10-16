@@ -144,7 +144,7 @@ func enrollFIDO2Admin(cmd *cobra.Command, username string, cfg *Config, printer 
 		return err
 	}
 
-	resp, err := createInvitedUser(ctx, cl, username, email, displayName, string(RoleAdmin))
+	resp, err := createInvitedUser(ctx, cl, username, email, displayName, qrdbsdk.RoleNameAdmin)
 	if err != nil {
 		return err
 	}
@@ -162,7 +162,7 @@ func enrollFIDO2Admin(cmd *cobra.Command, username string, cfg *Config, printer 
 			"success":      true,
 			"username":     username,
 			"display_name": displayName,
-			"role":         "admin",
+			"role":         qrdbsdk.RoleNameAdmin,
 			"pending":      true,
 		}
 		if err := printer.PrintJSON(summary); err != nil {
@@ -170,7 +170,7 @@ func enrollFIDO2Admin(cmd *cobra.Command, username string, cfg *Config, printer 
 		}
 	} else {
 		fmt.Printf("\nUsername: %s\n", username)
-		fmt.Printf("Role: %s\n", string(RoleAdmin))
+		fmt.Printf("Role: %s\n", qrdbsdk.RoleNameAdmin)
 	}
 
 	return nil
@@ -238,7 +238,7 @@ func enrollMTLSAdmin(cmd *cobra.Command, username string, cfg *Config, printer *
 		// distinguishable from one that lost its key by accident.
 		WithoutEmailLoginKey: true,
 		DisplayName:          displayName,
-		Role:                 string(RoleAdmin),
+		Role:                 qrdbsdk.RoleNameAdmin,
 	}); err != nil {
 		return &WrappedError{Sentinel: ErrCreateAdminFailed, Err: err}
 	}
@@ -261,7 +261,7 @@ func enrollMTLSAdmin(cmd *cobra.Command, username string, cfg *Config, printer *
 			"success":      true,
 			"username":     username,
 			"display_name": displayName,
-			"role":         "admin",
+			"role":         qrdbsdk.RoleNameAdmin,
 			"auth_method":  "mtls",
 			"fingerprint":  fingerprint,
 			"subject":      cert.Subject.String(),
@@ -273,7 +273,7 @@ func enrollMTLSAdmin(cmd *cobra.Command, username string, cfg *Config, printer *
 		}
 	} else {
 		fmt.Printf("\nUsername: %s\n", username)
-		fmt.Printf("Role: %s\n", string(RoleAdmin))
+		fmt.Printf("Role: %s\n", qrdbsdk.RoleNameAdmin)
 		fmt.Printf("Auth Method: mTLS\n")
 		fmt.Printf("Fingerprint: %s\n", fingerprint)
 		fmt.Printf("Subject: %s\n", cert.Subject.String())
@@ -371,7 +371,7 @@ var adminListCmd = &cobra.Command{
 		// Filter to administrator accounts only.
 		admins := make([]client.UserInfo, 0, len(resp.Users))
 		for _, u := range resp.Users {
-			if u.Role == string(RoleAdmin) {
+			if u.Role == qrdbsdk.RoleNameAdmin {
 				admins = append(admins, u)
 			}
 		}
@@ -682,7 +682,7 @@ var adminStatusCmd = &cobra.Command{
 
 		adminCount := 0
 		for _, u := range resp.Users {
-			if u.Role == string(RoleAdmin) {
+			if u.Role == qrdbsdk.RoleNameAdmin {
 				adminCount++
 			}
 		}

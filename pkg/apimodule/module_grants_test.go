@@ -171,7 +171,8 @@ func TestNewModule_AdminAndOwnerHoldEveryRESTPermission(t *testing.T) {
 		perm := qrdbsdk.Permission(pair)
 		assert.True(t, qrdbsdk.IsPermissionRegistered(perm), "%s must be registered", pair)
 		assert.True(t, qrdbsdk.HasPermissionRoleGrant(qrdbsdk.PermissionRoleAdmin, perm), "admin must hold %s", pair)
-		assert.True(t, qrdbsdk.HasPermissionRoleGrant(qrdbsdk.RoleNameOwner, perm), "owner must hold %s", pair)
+		assert.False(t, qrdbsdk.HasPermissionRoleGrant(qrdbsdk.RoleNameOwner, perm), "owner must not carry an xkms grant for %s", pair)
+		assert.Contains(t, qrdbsdk.AllPermissions(), perm, "owner must hold %s through go-qrdb", pair)
 	}
 }
 

@@ -19,6 +19,10 @@ Scope and boundaries: [docs/SPEC.md](docs/SPEC.md).
 - **attested-peer** — quote-to-verdict peer attestation behind go-qrdb's attested-caller gate — [v0.9.5-alpha](../../releases/tag/v0.9.5-alpha) — done
 - **audit-log** — xkms product audit events into go-qrdb's audit logger — [v0.9.0-alpha](../../releases/tag/v0.9.0-alpha) — done
 - **auth-factors** — hardware factor adapters behind go-qrdb's `Factor` interface — [v0.9.0-alpha](../../releases/tag/v0.9.0-alpha) — done
+- **authz-cli-roles** — xkmsctl on go-qrdb's role names — [#1557](../../issues/1557) — done
+- **authz-loopback-admin** — loopback identity by go-qrdb role ID — [#1557](../../issues/1557) — done
+- **authz-owner-grant** — the redundant Owner grant removed — [#1557](../../issues/1557) — done
+- **authz-rest-role-ctx** — unused role context helpers removed — [#1557](../../issues/1557) — done
 - **backend-credentials** — backend secrets under `credentials.seal_strategy` and `credential://` resolution — [#1450](../../issues/1450), [#1464](../../issues/1464), [#1465](../../issues/1465) — done
 - **backend-registry** — the external backend registration hook — [v0.52.0-alpha](../../releases/tag/v0.52.0-alpha) — done
 - **certificate-authority** — `TrustedCA` root pool, AIA import, DANE TLSA and issuance profiles — [#1438](../../issues/1438) — done
@@ -109,17 +113,13 @@ Scope and boundaries: [docs/SPEC.md](docs/SPEC.md).
 - **authz-admin-routes** — each ACME admin route under its own permission — [Dev complete](../../milestone/14) — open
 - **authz-cert-ou-roles** — subject OU read as the tenant, roles from go-qrdb bindings — [Dev complete](../../milestone/14) — open
 - **authz-claim-roles** — roles from go-qrdb, not IdP or token claims — [Dev complete](../../milestone/14) — blocked: go-qrdb gap
-- **authz-cli-roles** — xkmsctl on go-qrdb's role names — [Dev complete](../../milestone/14) — open
 - **authz-device-onboarding** — onboarding as users:invite and device-onboarding permissions — [Dev complete](../../milestone/14) — blocked: go-qrdb gap
 - **authz-holds-role** — role membership from go-qrdb — [Dev complete](../../milestone/14) — blocked: go-qrdb gap
-- **authz-loopback-admin** — loopback identity by go-qrdb role ID — [Dev complete](../../milestone/14) — open
 - **authz-method-tables** — method permissions declared on the proto and module seams — [Dev complete](../../milestone/14) — open
 - **authz-object-owner** — object tenancy on go-qrdb's tenant rule — [Dev complete](../../milestone/14) — blocked: go-qrdb gap
-- **authz-owner-grant** — the redundant Owner grant removed — [Dev complete](../../milestone/14) — open
 - **authz-peercred-roles** — peer-credential roles by go-qrdb role ID — [Dev complete](../../milestone/14) — blocked: go-qrdb gap
 - **authz-permission-vocabulary** — go-qrdb's permission constants, xkms-only ones registered — [Dev complete](../../milestone/14) — blocked: go-qrdb gap
 - **authz-platform-scope** — system-tenant checks as cross-scoped permissions — [Dev complete](../../milestone/14) — open
-- **authz-rest-role-ctx** — unused role context helpers removed — [Dev complete](../../milestone/14) — open
 - **authz-role-id** — role lookup by go-qrdb role ID and name — [Dev complete](../../milestone/14) — open
 - **authz-role-reconcile** — built-in roles reconciled by go-qrdb — [Dev complete](../../milestone/14) — open
 - **authz-shared-password** — shared-password override as a go-qrdb permission — [Dev complete](../../milestone/14) — blocked: go-qrdb gap

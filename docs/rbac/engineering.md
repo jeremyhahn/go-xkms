@@ -207,32 +207,15 @@ directly, and `pkg/api/authz_consistency_test` cross-checks all three
 against a hand-built capability table so the same capability cannot require
 different permissions on different transports (go-xkms#1232).
 
-### `cmd/xkmsctl/roles.go` — CLI role names
+### `cmd/xkmsctl/user.go` — CLI role names
 
-```go
-type Role string
-const (
-	RoleSO        Role = "so"
-	RoleAdmin     Role = "admin"
-	RoleOperator  Role = "operator"
-	RoleUser      Role = "user"
-	RoleAuditor   Role = "auditor"
-	RoleCustodian Role = "custodian"
-)
-func IsValidRole(r Role) bool
-```
-
-These mirror **six** of go-qrdb's seven built-in roles (verified against
-the vendored `go-qrdb@v0.19.0-alpha` dependency, `pkg/permission/builtin_role_grants.go`):
-SO, Admin, Operator, User, Auditor are derived from a shared registry;
-Custodian holds a fixed, minimal Shamir/barrier share-submission set; Owner
-is the standard-posture superuser (`permission.All()`). **`xkmsctl` cannot
-assign `"owner"`** — `IsValidRole` rejects it; only the six roles above are
-CLI-assignable.
-
-`userRegisterCmd`'s `--role` flag help text (`cmd/xkmsctl/user.go`) lists
-exactly these six roles; any other value fails at runtime with
-`ErrInvalidRole`.
+xkmsctl defines no role type of its own. `user register --role` sends the
+role name as given (`cmd/xkmsctl/user.go:205-207`): a built-in name
+(`qrdbsdk.RoleNameSO`…`RoleNameAuditor`) or a custom role the tenant holds.
+The CLI does not validate it; the server resolves the name and refuses one
+the tenant does not hold (`*ErrUnknownRole`). The default is
+`qrdbsdk.RoleNameUser`, and the first user registered is always
+`qrdbsdk.RoleNameAdmin` (`cmd/xkmsctl/user.go:217`).
 
 ### `pkg/apimodule/module_scopes.go` — the permissions xkms alone scopes
 
@@ -456,7 +439,6 @@ specific permission before assuming a non-Admin role holds it.
 | qrdb's `PermissionDeniedError` | returned by `rbac.Authorize` | grant missing, or tenant scope gate rejects the request |
 | `ErrAuthorizerRequired` | `pkg/api/rest/errors.go` | `rest.NewServer` refuses to construct when `EnableRBAC` is true but no usable authorizer was supplied — fails closed at construction, never falls back to allow-all |
 | `*ErrUnknownRole{Role}` | `pkg/xkms/errors.go` | `CreateUser`'s role name does not match any existing qrdb role, wrapped in `*ErrUserOperation{Operation: "resolve role"}` |
-| `ErrInvalidRole` | `cmd/xkmsctl` | `--role` value fails `IsValidRole` |
 | `ErrRoleClientRequired` | `pkg/auth/rolemembership.go:29` | `HoldsSystemRole` called without a role client: membership unknown, fail closed |
 | `*RoleResolutionError{TenantID, Role, Err}` | `pkg/auth/rolemembership.go:35` | the role store could not resolve the system role's identifier; surfaces from `PasswordUpdate` / `PasswordDelete` on a non-owner's shared entry |
 

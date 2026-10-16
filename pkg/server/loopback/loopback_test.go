@@ -18,6 +18,8 @@ import (
 	"errors"
 	"testing"
 
+	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
+
 	"github.com/jeremyhahn/go-xkms/pkg/config"
 )
 
@@ -79,5 +81,20 @@ func TestItoa(t *testing.T) {
 		if got := itoa(in); got != want {
 			t.Errorf("itoa(%d) = %q, want %q", in, got, want)
 		}
+	}
+}
+
+// TestDesktopOwnerIdentity_HoldsSystemAdminRoleID pins the token identity to
+// go-qrdb's Admin@system role ID: Identity.Roles carries IDs, so a bare role
+// name there would resolve to no role at all.
+func TestDesktopOwnerIdentity_HoldsSystemAdminRoleID(t *testing.T) {
+	id := desktopOwnerIdentity()
+
+	if id.TenantID != qrdbsdk.SystemTenantID {
+		t.Errorf("TenantID = %q, want %q", id.TenantID, qrdbsdk.SystemTenantID)
+	}
+	want := qrdbsdk.SystemRoleID(qrdbsdk.SystemTenantID, qrdbsdk.RoleNameAdmin)
+	if len(id.Roles) != 1 || id.Roles[0] != want {
+		t.Fatalf("Roles = %v, want [%s]", id.Roles, want)
 	}
 }

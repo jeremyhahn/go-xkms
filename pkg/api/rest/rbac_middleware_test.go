@@ -183,14 +183,3 @@ func TestRBACMiddleware_RequirePermission(t *testing.T) {
 		assert.Equal(t, http.StatusOK, w.Code)
 	})
 }
-
-func TestUserRoleContext(t *testing.T) {
-	t.Run("stores and retrieves role", func(t *testing.T) {
-		ctx := WithUserRole(context.Background(), "admin")
-		assert.Equal(t, "admin", GetUserRole(ctx))
-	})
-
-	t.Run("returns empty string for missing role", func(t *testing.T) {
-		assert.Equal(t, "", GetUserRole(context.Background()))
-	})
-}

@@ -14,7 +14,6 @@
 package rest
 
 import (
-	"context"
 	"log/slog"
 	"net/http"
 
@@ -96,20 +95,4 @@ func (m *RBACMiddleware) RequirePermission(resource, action string) func(http.Ha
 			next.ServeHTTP(w, r)
 		})
 	}
-}
-
-// userRoleContextKey is a context key for storing the user's role.
-type userRoleContextKey struct{}
-
-// WithUserRole adds the user's role to the context.
-func WithUserRole(ctx context.Context, role string) context.Context {
-	return context.WithValue(ctx, userRoleContextKey{}, role)
-}
-
-// GetUserRole retrieves the user's role from the context.
-func GetUserRole(ctx context.Context) string {
-	if role, ok := ctx.Value(userRoleContextKey{}).(string); ok {
-		return role
-	}
-	return ""
 }

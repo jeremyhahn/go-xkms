@@ -102,7 +102,7 @@ it.
 |---|---|---|
 | server refuses to start: RBAC compliance gap | `auth.enable_rbac: true` with a non-`qrdb` storage backend | switch `storage.backend` to `qrdb`, or turn RBAC off |
 | `403 Forbidden` on a request you expect to work | the identity's role doesn't hold that permission, or the tenant scope excludes it | check which role the account has (`xkmsctl user get <username>`) against the table above |
-| `xkmsctl user register ... --role readonly` fails | `readonly` is not a real role — the help text is wrong (see cli.md) | use one of `so`, `admin`, `operator`, `user`, `auditor`, `custodian` |
+| `xkmsctl user register ... --role readonly` fails | the tenant holds no role named `readonly` | use a built-in role (`so`, `admin`, `operator`, `user`, `auditor`) or create the custom role first |
 | new user isn't `admin` even though you passed `--role admin` on the very first registration | irrelevant — the first user is always `admin` regardless of the flag | nothing to fix |
 | an `operator`/`user`/`auditor`/`custodian` can't reach SSH/PIV/password-vault/seal operations | those built-in roles are not automatically extended to xkms's own hardware surfaces | grant `admin`, or build a custom role via the SDK |
 | an identity provider puts `admin` or `so` in the token's `roles`/`groups` claim, but the caller still gets `403` | xkms and qrdb match a role by its qrdb identifier, never by name: a claimed role name confers nothing | create the account in qrdb with the role (`xkmsctl user register --role ...`); authentication then carries the role's identifier |

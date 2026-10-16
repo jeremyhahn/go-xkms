@@ -29,6 +29,7 @@ import (
 	"testing"
 	"time"
 
+	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
 	client "github.com/jeremyhahn/go-xkms/sdk/go"
 	"github.com/jeremyhahn/go-xkms/sdk/go/transport"
 	"github.com/spf13/cobra"
@@ -210,18 +211,43 @@ func TestUserRegisterCmd_ConnectError(t *testing.T) {
 	}
 }
 
-func TestUserRegisterCmd_InvalidRole(t *testing.T) {
-	mock := &mockUserClient{}
+func TestUserRegisterCmd_CustomRolePassesThrough(t *testing.T) {
+	mock := &mockUserClient{
+		listUsersResp: &transport.ListUsersResponse{Users: []transport.UserInfo{{Username: "existing", Role: qrdbsdk.RoleNameAdmin}}},
+	}
 	withGlobalConfig(t, newUserTestConfig("text", mock))
 
 	cmd := newUserRegisterCmd()
-	_ = cmd.Flags().Set("role", "not-a-real-role")
+	if err := cmd.Flags().Set("role", "release-signer"); err != nil {
+		t.Fatalf("set role: %v", err)
+	}
+	code := captureExit(t, func() {
+		userRegisterCmd.Run(cmd, []string{"alice"})
+	})
+	if code != -1 {
+		t.Fatalf("expected success (no exit) for a custom role, got exit code %d", code)
+	}
+	if mock.gotCreateUser == nil || mock.gotCreateUser.Role != "release-signer" {
+		t.Fatalf("CreateUser role = %+v, want %q", mock.gotCreateUser, "release-signer")
+	}
+}
 
+func TestUserRegisterCmd_RoleRefusedByServer(t *testing.T) {
+	mock := &mockUserClient{
+		listUsersResp: &transport.ListUsersResponse{Users: []transport.UserInfo{{Username: "existing", Role: qrdbsdk.RoleNameAdmin}}},
+		createUserErr: errors.New("unknown role"),
+	}
+	withGlobalConfig(t, newUserTestConfig("text", mock))
+
+	cmd := newUserRegisterCmd()
+	if err := cmd.Flags().Set("role", "not-a-real-role"); err != nil {
+		t.Fatalf("set role: %v", err)
+	}
 	code := captureExit(t, func() {
 		userRegisterCmd.Run(cmd, []string{"alice"})
 	})
 	if code != 1 {
-		t.Errorf("expected exit code 1 for invalid role, got %d", code)
+		t.Errorf("expected exit code 1 when the server refuses the role, got %d", code)
 	}
 }
 
@@ -258,7 +284,7 @@ func TestUserRegisterCmd_FirstUserCreatesInvitedAccount(t *testing.T) {
 	if mock.gotCreateUser == nil {
 		t.Fatal("expected CreateUser to be called")
 	}
-	if mock.gotCreateUser.Role != string(RoleAdmin) {
+	if mock.gotCreateUser.Role != qrdbsdk.RoleNameAdmin {
 		t.Errorf("the first user must be created admin, got role %q", mock.gotCreateUser.Role)
 	}
 }
@@ -287,7 +313,7 @@ func TestUserRegisterCmd_RequestedRoleJSON(t *testing.T) {
 	withGlobalConfig(t, newUserTestConfig("json", mock))
 
 	cmd := newUserRegisterCmd()
-	if err := cmd.Flags().Set("role", string(RoleOperator)); err != nil {
+	if err := cmd.Flags().Set("role", qrdbsdk.RoleNameOperator); err != nil {
 		t.Fatalf("set role: %v", err)
 	}
 	code := -1
@@ -297,11 +323,11 @@ func TestUserRegisterCmd_RequestedRoleJSON(t *testing.T) {
 	if code != -1 {
 		t.Fatalf("expected success (no exit), got exit code %d", code)
 	}
-	if mock.gotCreateUser == nil || mock.gotCreateUser.Role != string(RoleOperator) {
-		t.Fatalf("CreateUser role = %+v, want %q", mock.gotCreateUser, RoleOperator)
+	if mock.gotCreateUser == nil || mock.gotCreateUser.Role != qrdbsdk.RoleNameOperator {
+		t.Fatalf("CreateUser role = %+v, want %q", mock.gotCreateUser, qrdbsdk.RoleNameOperator)
 	}
 	got := lastJSONObject(t, out)
-	if got["role"] != string(RoleOperator) || got["first_user"] != false || got["pending"] != true || got["display_name"] != "alice" {
+	if got["role"] != qrdbsdk.RoleNameOperator || got["first_user"] != false || got["pending"] != true || got["display_name"] != "alice" {
 		t.Errorf("JSON result = %v", got)
 	}
 }
