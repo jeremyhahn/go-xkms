@@ -22,10 +22,11 @@ import (
 
 // Kernel-provided directories these helpers read. Named rather than inlined
 // so filepath.Join receives no separator-bearing literal.
-const (
-	sysBlockDir = "/sys/block"
-	devDir      = "/dev"
-)
+const devDir = "/dev"
+
+// sysBlockDir is the sysfs block-device directory. A variable so tests can
+// point the scan at a fabricated sysfs tree.
+var sysBlockDir = "/sys/block"
 
 // USBDevice represents a detected USB mass storage device.
 type USBDevice struct {
@@ -109,11 +110,11 @@ func ValidateBlockDevice(path string) error {
 // DetectUSBDevices returns a list of USB mass storage devices by
 // scanning /sys/block for removable devices with a USB transport.
 func DetectUSBDevices() ([]USBDevice, error) {
-	entries, err := os.ReadDir("/sys/block")
+	entries, err := os.ReadDir(sysBlockDir)
 	if err != nil {
 		return nil, &USBError{
 			Operation: "scan_devices",
-			Path:      "/sys/block",
+			Path:      sysBlockDir,
 			Err:       err,
 		}
 	}

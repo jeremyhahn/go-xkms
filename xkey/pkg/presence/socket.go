@@ -92,13 +92,8 @@ func (h *SocketHandler) RequestUserPresence(ctx context.Context, req *authentica
 	timeoutCtx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
 
-	pending := &pendingPresenceRequest{
-		request:  req,
-		resultCh: make(chan *authenticator.UserPresenceResult, 1),
-	}
-	h.pendingReq.Store(pending)
-
-	// Log user presence request.
+	// Log the request before publishing it: a request whose audit record
+	// cannot be written fails closed and leaves nothing for Approve to resolve.
 	if auditErr := h.logUserPresence(audit.OpUserPresenceRequested, "fido2", true, map[string]any{
 		"operation": req.Operation,
 		"rpid":      req.RPID,
@@ -107,6 +102,12 @@ func (h *SocketHandler) RequestUserPresence(ctx context.Context, req *authentica
 	}); auditErr != nil {
 		return nil, auditErr
 	}
+
+	pending := &pendingPresenceRequest{
+		request:  req,
+		resultCh: make(chan *authenticator.UserPresenceResult, 1),
+	}
+	h.pendingReq.Store(pending)
 
 	// Fire notification; failures are logged but do not abort the UP request.
 	if h.notifier != nil {
