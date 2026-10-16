@@ -776,4 +776,5 @@ var (
 	ErrCAExtKeyUsageNotPermitted    = pkgca.ErrExtKeyUsageNotPermitted
 	ErrCABoundKeyNotFound           = pkgca.ErrBoundKeyNotFound
 	ErrCABoundKeyMismatch           = pkgca.ErrBoundKeyMismatch
+	ErrCATenantRequired             = pkgca.ErrTenantRequired
 )

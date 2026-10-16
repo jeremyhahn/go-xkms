@@ -31,6 +31,9 @@ import (
 	"github.com/jeremyhahn/go-xkms/pkg/testutil"
 )
 
+// sdkTestTenant is the tenant the SDK tests' leaf certificates are bound to.
+const sdkTestTenant = "tenant-sdk"
+
 // newSDKTestCA builds an initialized in-memory TrustedCA using only the SDK's
 // exported names, the way a consumer of this module does.
 func newSDKTestCA(t *testing.T) TrustedCA {
@@ -125,6 +128,7 @@ func TestSDK_OverlayProfilesUnderNameConstrainedSubordinates(t *testing.T) {
 			t.Fatal(err)
 		}
 		cert, err := trustedCA.SignCSR(ctx, sdkCSR(t, newKey()), &TrustedCASignOptions{
+			TenantID:        sdkTestTenant,
 			Profile:         ProfileNameIPsecVTEP,
 			Signer:          tunnelKey,
 			IssuerCert:      tunnel,
@@ -145,7 +149,8 @@ func TestSDK_OverlayProfilesUnderNameConstrainedSubordinates(t *testing.T) {
 		}
 
 		_, err = trustedCA.SignCSR(ctx, sdkCSR(t, newKey()), &TrustedCASignOptions{
-			Profile: ProfileNameIPsecVTEP, Signer: tunnelKey, IssuerCert: tunnel,
+			TenantID: sdkTestTenant,
+			Profile:  ProfileNameIPsecVTEP, Signer: tunnelKey, IssuerCert: tunnel,
 			SANS: &TrustedCASubjectAlternativeNames{IPs: []string{"192.0.2.1"}},
 		})
 		if !errors.Is(err, ErrCANameConstraintViolation) {
@@ -164,6 +169,7 @@ func TestSDK_OverlayProfilesUnderNameConstrainedSubordinates(t *testing.T) {
 			t.Fatalf("subordinate: %v", err)
 		}
 		cert, err := trustedCA.SignCSR(ctx, sdkCSR(t, newKey()), &TrustedCASignOptions{
+			TenantID:   sdkTestTenant,
 			Profile:    ProfileNameX509SVID,
 			Signer:     svidKey,
 			IssuerCert: svidCA,
@@ -180,7 +186,8 @@ func TestSDK_OverlayProfilesUnderNameConstrainedSubordinates(t *testing.T) {
 		}
 
 		_, err = trustedCA.SignCSR(ctx, sdkCSR(t, newKey()), &TrustedCASignOptions{
-			Profile: ProfileNameX509SVID, Signer: svidKey, IssuerCert: svidCA,
+			TenantID: sdkTestTenant,
+			Profile:  ProfileNameX509SVID, Signer: svidKey, IssuerCert: svidCA,
 		})
 		if !errors.Is(err, ErrCACallerSANsRequired) {
 			t.Errorf("no caller SANs: err = %v", err)

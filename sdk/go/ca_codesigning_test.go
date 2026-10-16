@@ -59,16 +59,25 @@ func TestSDK_CodeSigningProfile(t *testing.T) {
 	}
 	csr := sdkCSR(t, key)
 
-	cert, err := trustedCA.SignCSR(ctx, csr, &TrustedCASignOptions{Profile: ProfileNameCodeSigning})
+	_, err = trustedCA.SignCSR(ctx, csr, &TrustedCASignOptions{Profile: ProfileNameCodeSigning})
+	if !errors.Is(err, ErrCATenantRequired) {
+		t.Fatalf("no tenant: err = %v, want ErrCATenantRequired", err)
+	}
+
+	cert, err := trustedCA.SignCSR(ctx, csr, &TrustedCASignOptions{TenantID: sdkTestTenant, Profile: ProfileNameCodeSigning})
 	if err != nil {
 		t.Fatalf("sign under %s: %v", ProfileNameCodeSigning, err)
 	}
 	if len(cert.ExtKeyUsage) != 1 || cert.ExtKeyUsage[0] != x509.ExtKeyUsageCodeSigning {
 		t.Errorf("ExtKeyUsage = %v, want [codeSigning]", cert.ExtKeyUsage)
 	}
+	if len(cert.Subject.OrganizationalUnit) == 0 || cert.Subject.OrganizationalUnit[0] != sdkTestTenant {
+		t.Errorf("OU = %v, want the tenant %q first", cert.Subject.OrganizationalUnit, sdkTestTenant)
+	}
 
 	_, err = trustedCA.SignCSR(ctx, csr, &TrustedCASignOptions{
-		Profile: ProfileNameCodeSigning,
+		TenantID: sdkTestTenant,
+		Profile:  ProfileNameCodeSigning,
 		BoundKey: &KeyAttributes{
 			CN:            "never-generated",
 			StoreType:     StoreSoftware,
