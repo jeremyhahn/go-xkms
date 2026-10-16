@@ -1,6 +1,6 @@
 # go-xkms roadmap
 
-> **Status: REFERENCE** · Owner: Software Department · Last verified: 2026-10-15
+> **Status: REFERENCE** · Owner: Software Department · Last verified: 2026-10-16
 
 ## Mission
 
@@ -104,6 +104,31 @@ Scope and boundaries: [docs/SPEC.md](docs/SPEC.md).
 - **platform-pcr-selection** — PCR 16 or the board's boot PCRs for the platform policy — [#1443](../../issues/1443) — blocked: decision pending
 - **ca** — standalone xkey CA, local or remote-only — [#729](../../issues/729) — blocked: decision pending
 - **ota-image-keys** — one OTA image-signing key per trusted-firmware board id — [SPEC](docs/SPEC.md#features) — open
+- **authz-admin-grants** — module permissions granted per role with declared duties — [Dev complete](../../milestone/14) — open
+- **authz-admin-perms-field** — ACME admin decisions from go-qrdb's authorizer, not token claims — [Dev complete](../../milestone/14) — open
+- **authz-admin-routes** — each ACME admin route under its own permission — [Dev complete](../../milestone/14) — open
+- **authz-cert-ou-roles** — subject OU read as the tenant, roles from go-qrdb bindings — [Dev complete](../../milestone/14) — open
+- **authz-claim-roles** — roles from go-qrdb, not IdP or token claims — [Dev complete](../../milestone/14) — blocked: go-qrdb gap
+- **authz-cli-roles** — xkmsctl on go-qrdb's role names — [Dev complete](../../milestone/14) — open
+- **authz-device-onboarding** — onboarding as users:invite and device-onboarding permissions — [Dev complete](../../milestone/14) — blocked: go-qrdb gap
+- **authz-holds-role** — role membership from go-qrdb — [Dev complete](../../milestone/14) — blocked: go-qrdb gap
+- **authz-loopback-admin** — loopback identity by go-qrdb role ID — [Dev complete](../../milestone/14) — open
+- **authz-method-tables** — method permissions declared on the proto and module seams — [Dev complete](../../milestone/14) — open
+- **authz-object-owner** — object tenancy on go-qrdb's tenant rule — [Dev complete](../../milestone/14) — blocked: go-qrdb gap
+- **authz-owner-grant** — the redundant Owner grant removed — [Dev complete](../../milestone/14) — open
+- **authz-peercred-roles** — peer-credential roles by go-qrdb role ID — [Dev complete](../../milestone/14) — blocked: go-qrdb gap
+- **authz-permission-vocabulary** — go-qrdb's permission constants, xkms-only ones registered — [Dev complete](../../milestone/14) — blocked: go-qrdb gap
+- **authz-platform-scope** — system-tenant checks as cross-scoped permissions — [Dev complete](../../milestone/14) — open
+- **authz-rest-role-ctx** — unused role context helpers removed — [Dev complete](../../milestone/14) — open
+- **authz-role-id** — role lookup by go-qrdb role ID and name — [Dev complete](../../milestone/14) — open
+- **authz-role-reconcile** — built-in roles reconciled by go-qrdb — [Dev complete](../../milestone/14) — open
+- **authz-shared-password** — shared-password override as a go-qrdb permission — [Dev complete](../../milestone/14) — blocked: go-qrdb gap
+- **authz-tenant-bind** — target tenant from go-qrdb's tenant rules — [Dev complete](../../milestone/14) — open
+- **authz-tenant-cross** — tenant CRUD under go-qrdb's cross-tenant permissions — [Dev complete](../../milestone/14) — open
+- **authz-tenant-iam** — cross-tenant user and role administration — [Dev complete](../../milestone/14) — blocked: go-qrdb #683
+- **authz-ui-matrix** — UI permissions from go-qrdb's permission listing — [Dev complete](../../milestone/14) — open
+- **authz-xkey-uid0** — xkey audit access by `audit:read` — [Dev complete](../../milestone/14) — open
+- **tenant-subject-ou** — the tenant as subject OU on every issued certificate — [Dev complete](../../milestone/14) — open
 
 ## Future
 
