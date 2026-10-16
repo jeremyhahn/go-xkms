@@ -269,8 +269,7 @@ tree was absorbed into that folder and deleted (go-xkms#1433).
 build, operational and contributor documentation, not features.
 
 **Roadmaps stay out of feature folders.** Feature folders document what *is*.
-The one roadmap is the repository-root [ROADMAP.md](../ROADMAP.md);
-`tpm-refactor-roadmap.md` and `cli-gui-parity.md` stay where they are.
+The one roadmap is the repository-root [ROADMAP.md](../ROADMAP.md).
 
 **Operator checklists.** `pkcs11/module/security.md` became
 [`pkcs11-provider-module/user.md`](pkcs11-provider-module/user.md#hardening)

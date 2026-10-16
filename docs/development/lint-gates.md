@@ -208,8 +208,7 @@ how this gate is meant to be extended; ask before adding a new class.
 The secure-analyzer gate enforces protected-memory handling at the source
 level — imports, parse calls, struct fields. It cannot reach a second copy
 of a secret that a standard-library package holds in a field of its own,
-unexported type. That is a distinct, narrower class of exception, ruled on
-separately (owner ruling 2026-09-21, go-xkms#133): the residue is accepted
+unexported type. That is a distinct, narrower class of exception: the residue is accepted
 and documented in place rather than reached with `unsafe` pointer
 arithmetic over another package's private layout. `unsafe` layout pokes are
 declined here for the same reason a stale allowlist entry is refused above

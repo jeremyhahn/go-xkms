@@ -40,11 +40,11 @@ keep them current as the fleet changes. It scans with `grep -rIniE`, so
 binary files are skipped automatically (`-I`), and excludes `.git` (file or
 directory, so it works from an ordinary checkout or a worktree), `.claude/`,
 `CLAUDE.md`, `AGENTS.md` and its own source — those are agent-instruction
-files the owner publishes on a separate schedule, not part of the scrub. The
-one known fleet name in the omega family is matched as a literal, not a
-wildcard: the bare word alone is ordinary English (a public gTLD, and an
-unrelated xkey SSH test fixture value), so widening the match would flag
-both as false positives. `make check-public-literals` runs it against the
+files the owner publishes on a separate schedule, not part of the scrub. A fleet
+host name that is also an ordinary word is matched as its exact full host
+name, not a wildcard on the bare word: the bare word appears legitimately
+(a public gTLD, an unrelated test fixture value), so widening the match
+would flag those as false positives. `make check-public-literals` runs it against the
 repository root; the script takes an optional root-directory argument
 (`ROOT`, default the repository root) so its own test can point it at a
 scratch tree instead.

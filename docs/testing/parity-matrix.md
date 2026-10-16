@@ -107,6 +107,22 @@ These are covered by the mocked-UI Playwright tier (`tests/e2e/*.spec.ts`)
 plus the Go unit / integration tests. Adding a live-backend tier for them
 has no value because there's no backend to talk to.
 
+## CLI-only by design
+
+These commands have no GUI entry point, and a parity gap is not reported
+against them:
+
+- `xkey fido2` — starts a virtual authenticator; the GUI app is itself the
+  authenticator.
+- `xkey extension host` — the browser native-messaging stdio launcher.
+- `xkey extension serve` — the headless IPC server.
+- `xkey device listen` and `xkey device relay` — long-running daemon
+  processes.
+- `xkey uhid setup` — a one-time privileged setup command.
+- `xkmsctl bootstrap auto|noise|dane|spki` — provisioning that runs before
+  any GUI session exists.
+- `xkey completion` — shell integration.
+
 ## Summary
 
 | Category | Operations | Live tests |

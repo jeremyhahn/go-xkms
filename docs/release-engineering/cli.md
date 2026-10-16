@@ -41,7 +41,7 @@ follow-up command:
 
 ```
 release-alpha: pushed release/v0.10.0-alpha to dev at a1b2c3d...
-release-alpha: opened pull request "chore(release): v0.10.0-alpha": http://kms.example.com:3001/jeremyhahn/go-xkms/pulls/42
+release-alpha: opened pull request "chore(release): v0.10.0-alpha": https://git.example.com/jeremyhahn/go-xkms/pulls/42
 release-alpha: once that pull request is reviewed and merged, run: make release-tag VERSION=0.10.0-alpha
 ```
 
@@ -50,13 +50,14 @@ forms:
 
 | Remote URL | Forge repository |
 |---|---|
-| `ssh://git@kms.example.com:2222/jeremyhahn/go-xkms.git` | `http://kms.example.com:3001/jeremyhahn/go-xkms` |
-| `git@kms.example.com:jeremyhahn/go-xkms.git` | `http://kms.example.com:3001/jeremyhahn/go-xkms` |
-| `http://kms.example.com:3001/jeremyhahn/go-xkms.git` | `http://kms.example.com:3001/jeremyhahn/go-xkms` |
-| `https://user:pass@kms.example.com/jeremyhahn/go-xkms` | `https://kms.example.com/jeremyhahn/go-xkms` |
+| `ssh://git@git.example.com/jeremyhahn/go-xkms.git` | `https://git.example.com/jeremyhahn/go-xkms` |
+| `git@git.example.com:jeremyhahn/go-xkms.git` | `https://git.example.com/jeremyhahn/go-xkms` |
+| `https://git.example.com/jeremyhahn/go-xkms.git` | `https://git.example.com/jeremyhahn/go-xkms` |
+| `https://user:pass@git.example.com/jeremyhahn/go-xkms` | `https://git.example.com/jeremyhahn/go-xkms` |
 
-An SSH remote names the SSH port, so the forge's web port comes from
-`GITEA_HTTP_PORT` (default `3001`). A remote that is a local path or a
+An SSH remote names the SSH port, not the web port, so for an SSH remote the
+forge URL is `http` on the port in `GITEA_HTTP_PORT`; the table leaves the
+scheme and port of that mapping to the deployment. A remote that is a local path or a
 `file://` URL names no forge, and the run is refused. If the forge refuses the
 pull request after the push (one is already open, say), the run fails and
 prints the `compare/` URL and the exact title, so you can open it by hand.
@@ -109,7 +110,7 @@ would be assembled into, and each entry a real cut would consume is named:
 +- **thing** ...
 release-alpha: would remove .changelog/unreleased/fixed-thing-1.md
 release-alpha: DRY RUN -- would push release/v0.9.2-alpha to dev and open a pull request into main:
-  "chore(release): v0.9.2-alpha" on http://kms.example.com:3001/jeremyhahn/go-xkms
+  "chore(release): v0.9.2-alpha" on https://git.example.com/jeremyhahn/go-xkms
 release-alpha: nothing was changed
 ```
 
@@ -152,11 +153,8 @@ make check-public-literals
 
 ```
 check-public-literals.sh: internal literal(s) found (go-xkms#1030):
-docs/example.md:12:reach the CA at 192.0.2.50:3001
+docs/example.md:12:reach the CA at <lab-network address>
 ```
-
-(That example uses `192.0.2.0/24`, RFC 5737 TEST-NET-1 -- not the real lab
-subnet, so this documentation does not itself trip the gate it documents.)
 
 A clean tree prints nothing and exits 0. See
 [engineering.md](engineering.md#surface) for the pattern list and the

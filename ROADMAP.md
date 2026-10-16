@@ -15,6 +15,7 @@ Scope and boundaries: [docs/SPEC.md](docs/SPEC.md).
 ## Complete
 
 - **attestation-evidence** — RFC 9334 evidence primitives in `sdk/go/evidence` — [v0.48.0-alpha](../../releases/tag/v0.48.0-alpha) — done
+- **attested-caller-gate** — `pkg/attestation/peergate` behind go-qrdb's peer-attestation gate — [#1544](../../issues/1544) — done
 - **attested-peer** — quote-to-verdict peer attestation behind go-qrdb's attested-caller gate — [v0.9.5-alpha](../../releases/tag/v0.9.5-alpha) — done
 - **audit-log** — xkms product audit events into go-qrdb's audit logger — [v0.9.0-alpha](../../releases/tag/v0.9.0-alpha) — done
 - **auth-factors** — hardware factor adapters behind go-qrdb's `Factor` interface — [v0.9.0-alpha](../../releases/tag/v0.9.0-alpha) — done
@@ -93,7 +94,6 @@ Scope and boundaries: [docs/SPEC.md](docs/SPEC.md).
 ## Next
 
 - **acme-issuance** — admin listeners, goodkey/zlint finalize, CT precertificates — [#743](../../issues/743), [#744](../../issues/744), [#745](../../issues/745), [#746](../../issues/746) — open
-- **attested-caller-gate** — `pkg/attestation/peergate` behind go-qrdb's peer-attestation gate — [Dev complete](../../milestone/14) — open
 - **trust-roots** — one purpose-classified root store on a qrdb DAO — [Dev complete](../../milestone/14) — open
 - **image-signing** — DSSE/in-toto image signatures as OCI referrers with `VerifyImage` — [Dev complete](../../milestone/14) — open
 - **transparency-log** — CA transparency log on go-qrdb's verifiable-log type — [Dev complete](../../milestone/14) — blocked: go-qrdb #721/#722
