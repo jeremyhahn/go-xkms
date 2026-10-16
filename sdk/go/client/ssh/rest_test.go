@@ -29,7 +29,6 @@ import (
 	"strings"
 	"sync/atomic"
 	"testing"
-	"time"
 
 	"github.com/go-chi/chi/v5"
 	gossh "golang.org/x/crypto/ssh"
@@ -574,40 +573,73 @@ func TestRESTImportDTO_NoPlaintextString(t *testing.T) {
 	}
 }
 
-// TestREST_PassphraseBufferDestroyed ensures the client-side base64
-// buffer is cleared after Import returns — both success and failure
-// paths.
+// retainingProvider is a PassphraseProvider that keeps the Buffer it hands
+// out, so a test can check after the call that the caller destroyed it.
+type retainingProvider struct {
+	buf *secure.Buffer
+}
+
+func (p *retainingProvider) Passphrase(_ context.Context, _ string) (*secure.Buffer, error) {
+	buf, err := secure.NewBufferFromBytes([]byte("testpassphrase"))
+	if err != nil {
+		return nil, err
+	}
+	p.buf = buf
+	return buf, nil
+}
+
+// TestREST_PassphraseBufferDestroyed ensures the passphrase Buffer the
+// provider returns is destroyed by the time Import returns, on both the
+// success and failure paths.
+//
+// The calls run under the test's own context, not a fixed deadline: the
+// success path decrypts an OpenSSH key, whose bcrypt KDF is CPU-bound and
+// several times slower under -race and a loaded host, and there is no wait
+// in it for a shorter deadline to guard. go test's -timeout bounds a hang.
 func TestREST_PassphraseBufferDestroyed(t *testing.T) {
 	_, client, cleanup := newRESTFixture(t)
 	defer cleanup()
 
-	// Generate an encrypted PEM and a provider whose buffer we can
-	// inspect post-return via a sentinel.
 	priv, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
 	if err != nil {
 		t.Fatalf("ecdsa: %v", err)
 	}
-	pass := []byte("testpassphrase")
-	block, err := gossh.MarshalPrivateKeyWithPassphrase(priv, "", pass)
+	block, err := gossh.MarshalPrivateKeyWithPassphrase(priv, "", []byte("testpassphrase"))
 	if err != nil {
 		t.Fatalf("marshal: %v", err)
 	}
 	pemBytes := pem.EncodeToMemory(block)
 
-	provider := secure.NewCallbackProvider(func(_ context.Context, _ string) ([]byte, error) {
-		return []byte("testpassphrase"), nil
+	t.Run("success", func(t *testing.T) {
+		provider := &retainingProvider{}
+		if _, err := client.Keys().Import(t.Context(), sdkssh.ImportRequest{
+			Scope: "user", Owner: "alice", Name: "wiped", PEM: pemBytes,
+		}, provider); err != nil {
+			t.Fatalf("Import: %v", err)
+		}
+		if provider.buf == nil {
+			t.Fatal("provider was not asked for a passphrase")
+		}
+		if size := provider.buf.Size(); size != 0 {
+			t.Fatalf("passphrase buffer size after Import = %d, want 0 (destroyed)", size)
+		}
 	})
 
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-	defer cancel()
-	if _, err := client.Keys().Import(ctx, sdkssh.ImportRequest{
-		Scope: "user", Owner: "alice", Name: "wiped", PEM: pemBytes,
-	}, provider); err != nil {
-		t.Fatalf("Import: %v", err)
-	}
-	// Nothing further to assert here that isn't covered by the canary
-	// scan — this test documents intent and guarantees the code path
-	// executes without panics.
+	t.Run("failure", func(t *testing.T) {
+		provider := &retainingProvider{}
+		_, err := client.Keys().Import(t.Context(), sdkssh.ImportRequest{
+			Scope: "bogus", Owner: "alice", Name: "wiped", PEM: pemBytes,
+		}, provider)
+		if err == nil {
+			t.Fatal("Import with an invalid scope succeeded, want an error")
+		}
+		if provider.buf == nil {
+			t.Fatal("provider was not asked for a passphrase")
+		}
+		if size := provider.buf.Size(); size != 0 {
+			t.Fatalf("passphrase buffer size after failed Import = %d, want 0 (destroyed)", size)
+		}
+	})
 }
 
 // TestRESTKeys_ImportSendsProviderPassphraseAsBase64 verifies, on the
