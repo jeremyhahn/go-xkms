@@ -197,35 +197,6 @@ func TestResolvePairingPolicy_EmptyStdinIsReported(t *testing.T) {
 	require.ErrorIs(t, err, ErrSOPINInputStdinEmpty)
 }
 
-// applicationLockedConfig is the policy a fleet that locks the attested-
-// application allow-list would seal (#1305): a narrower list than whatever an
-// operator might write into devices.yaml.
-func applicationLockedConfig() *xkeyconfig.Config {
-	cfg := xkeyconfig.DefaultConfig()
-	cfg.Policy.LockPairingApplicationPolicy = true
-	cfg.Policy.PairingAllowedApplications = []pairing.AllowedApplication{{
-		PackageName:    "com.automatethethings.xkey",
-		SigningDigests: []string{"5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a"},
-	}}
-	return cfg
-}
-
-// sealPolicyFixtureNoCommand seals cfg's policy under soPIN into a fresh
-// config directory and points the config package at it, with no
-// *cobra.Command: resolveEnterpriseApplicationPolicy reads XKEY_SO_PIN
-// directly, the same env-only path a deep re-attestation call graph with no
-// command in hand must use (unlike newPairingPolicyFixture above, which
-// exists to drive --so-pin-stdin too).
-func sealPolicyFixtureNoCommand(t *testing.T, cfg *xkeyconfig.Config, soPIN string) {
-	t.Helper()
-	configDir := t.TempDir()
-	xkeyconfig.SetConfigDir(configDir)
-	t.Cleanup(xkeyconfig.ResetConfigDir)
-	if soPIN != "" {
-		require.NoError(t, xkeyconfig.WritePolicyHMAC(&cfg.Policy, soPIN, xkeyconfig.PolicyHMACPath(configDir)))
-	}
-}
-
 // TestResolveEnterpriseApplicationPolicy_NilConfigUnsealedIsNotConsulted
 // covers a caller with no loaded config at all -- loadPairingAttestationTrust's
 // own unit tests, chiefly, which never run through RootCmd's initConfig --

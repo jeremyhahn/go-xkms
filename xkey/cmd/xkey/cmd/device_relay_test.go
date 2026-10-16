@@ -11,11 +11,11 @@
 // 2. Commercial License
 //    Contact licensing@automatethethings.com for commercial licensing options.
 
-//go:build ble
-
 package cmd
 
 import (
+	"bytes"
+	"path/filepath"
 	"testing"
 
 	"github.com/spf13/cobra"
@@ -137,6 +137,88 @@ func TestRunDeviceRelay_RefusesEmptyPinnedKey(t *testing.T) {
 
 	require.Error(t, err)
 	assert.ErrorIs(t, err, ErrDevicePinInvalid)
+}
+
+// pairedRelayCommand seeds one paired device in an isolated home and returns
+// a relay command bound to loopback with an ephemeral port, so the relay
+// really listens and stops on its own once timeout elapses.
+func pairedRelayCommand(t *testing.T, timeout string) (*cobra.Command, *bytes.Buffer) {
+	t.Helper()
+	isolateDeviceBarrierHome(t)
+	require.NoError(t, saveDevicesConfig(&DevicesConfig{
+		Devices: []PairedDevice{{
+			Name:                 "Pixel",
+			Address:              "11:22:33:44:55:66",
+			NoisePublicKey:       validNoisePublicKeyForTest(t),
+			LocalNoisePrivateKey: validLocalNoisePrivateKeyForTest(t),
+		}},
+	}))
+
+	cmd := relayCommand(t)
+	require.NoError(t, setFlagForTest(t, cmd.Flags(), "listen", "127.0.0.1:0"))
+	require.NoError(t, setFlagForTest(t, cmd.Flags(), "timeout", timeout))
+	out := &bytes.Buffer{}
+	cmd.SetOut(out)
+	return cmd, out
+}
+
+// TestRunDeviceRelay_ServesUntilTimeoutInSoftwareMode pins the relay's whole
+// session: it binds the configured address, reports software attestation,
+// a disabled bridge and refused sync, then stops cleanly at the timeout.
+func TestRunDeviceRelay_ServesUntilTimeoutInSoftwareMode(t *testing.T) {
+	cmd, out := pairedRelayCommand(t, "50ms")
+	require.NoError(t, setFlagForTest(t, cmd.Flags(), "attestation-mode", "software"))
+
+	require.NoError(t, runDeviceRelay(cmd, nil))
+
+	got := out.String()
+	assert.Contains(t, got, "TCP pairing relay listening on 127.0.0.1:")
+	assert.Contains(t, got, `Serving paired device "Pixel"`)
+	assert.Contains(t, got, "Attestation mode: software")
+	assert.Contains(t, got, "xkmsd bridge: disabled")
+	assert.Contains(t, got, "Phone sync: refused")
+	assert.Contains(t, got, "Relay timeout reached")
+	assert.Contains(t, got, "Stopping relay server...")
+}
+
+// TestRunDeviceRelay_AutoModeFallsBackToSoftwareWithoutATPM covers the auto
+// attestation mode: a TPM that cannot be opened is a warning, not a refusal,
+// and the session runs with software attestation.
+func TestRunDeviceRelay_AutoModeFallsBackToSoftwareWithoutATPM(t *testing.T) {
+	cmd, out := pairedRelayCommand(t, "50ms")
+	require.NoError(t, setFlagForTest(t, cmd.Flags(), "attestation-mode", "auto"))
+	require.NoError(t, setFlagForTest(t, cmd.Flags(), "tpm-device", filepath.Join(t.TempDir(), "no-tpm")))
+	require.NoError(t, setFlagForTest(t, cmd.Flags(), "allow-sync", "true"))
+
+	require.NoError(t, runDeviceRelay(cmd, nil))
+
+	assert.Contains(t, out.String(), "Attestation mode: software")
+	assert.Contains(t, out.String(), "Phone sync: allowed for this session")
+}
+
+// TestRunDeviceRelay_TPM2ModeRefusesWithoutATPM is the strict counterpart:
+// --attestation-mode tpm2 must not silently degrade to software.
+func TestRunDeviceRelay_TPM2ModeRefusesWithoutATPM(t *testing.T) {
+	cmd, out := pairedRelayCommand(t, "50ms")
+	require.NoError(t, setFlagForTest(t, cmd.Flags(), "attestation-mode", "tpm2"))
+	require.NoError(t, setFlagForTest(t, cmd.Flags(), "tpm-device", filepath.Join(t.TempDir(), "no-tpm")))
+
+	err := runDeviceRelay(cmd, nil)
+
+	require.ErrorIs(t, err, ErrTPM2InitFailed)
+	assert.NotContains(t, out.String(), "TCP pairing relay listening")
+}
+
+// TestRunDeviceRelay_UnbindableAddressFailsToStart covers a listen address
+// the relay cannot bind: the start failure is reported as such.
+func TestRunDeviceRelay_UnbindableAddressFailsToStart(t *testing.T) {
+	cmd, _ := pairedRelayCommand(t, "50ms")
+	require.NoError(t, setFlagForTest(t, cmd.Flags(), "attestation-mode", "software"))
+	require.NoError(t, setFlagForTest(t, cmd.Flags(), "listen", "127.0.0.1:not-a-port"))
+
+	err := runDeviceRelay(cmd, nil)
+
+	require.ErrorIs(t, err, ErrDeviceRelayStartFailed)
 }
 
 // TestRunDeviceRelay_RefusesAmbiguousDeviceName mirrors #1315/#1307 for the

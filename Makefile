@@ -897,9 +897,11 @@ coverage-uhid:
 coverage-xkey-cmd:
 	@echo "$(CYAN)→ Generating xkey command coverage report...$(RESET)"
 	@mkdir -p $(COVERAGE_DIR)
-	@cd xkey && $(GOTEST) -race -coverprofile=../$(COVERAGE_DIR)/xkey-cmd.out -covermode=atomic ./cmd/xkey/...
-	@$(GO) tool cover -html=$(COVERAGE_DIR)/xkey-cmd.out -o $(COVERAGE_DIR)/xkey-cmd.html
-	@$(GO) tool cover -func=$(COVERAGE_DIR)/xkey-cmd.out | tail -1
+	@# tpm_simulator, as xkey's own TEST_TAGS: the TPM commands' tests run on
+	@# the in-process simulator and are invisible to a run without it.
+	@cd xkey && $(GO) test -tags "$(BUILD_TAGS) tpm_simulator" -race -coverprofile=../$(COVERAGE_DIR)/xkey-cmd.out -covermode=atomic ./cmd/xkey/...
+	@cd xkey && $(GO) tool cover -html=../$(COVERAGE_DIR)/xkey-cmd.out -o ../$(COVERAGE_DIR)/xkey-cmd.html
+	@cd xkey && $(GO) tool cover -func=../$(COVERAGE_DIR)/xkey-cmd.out | tail -1
 	@echo "$(GREEN)✓ Coverage report: $(COVERAGE_DIR)/xkey-cmd.html$(RESET)"
 
 .PHONY: coverage-staticpw

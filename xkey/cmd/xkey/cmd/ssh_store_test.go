@@ -22,6 +22,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/spf13/cobra"
 	gossh "golang.org/x/crypto/ssh"
 
 	xkmssdk "github.com/jeremyhahn/go-xkms/sdk/go"
@@ -212,6 +213,73 @@ func TestSSHClientWithHostKeys_BarrierEncryptedStore(t *testing.T) {
 	writeBarrierRootKey(t, filepath.Join(home, ".xkey-store"), []byte("sealed"))
 
 	if _, _, _, err := sshClientWithHostKeys(nil); !errors.Is(err, ErrSSHStoreBarrierEncrypted) {
+		t.Fatalf("expected ErrSSHStoreBarrierEncrypted, got %v", err)
+	}
+}
+
+// sshServerCommand is a command carrying the --server and TLS CA flags the
+// ssh verbs register, set to server.
+func sshServerCommand(t *testing.T, server string) *cobra.Command {
+	t.Helper()
+	cmd := &cobra.Command{Use: "ssh"}
+	cmd.Flags().String("server", "", "")
+	cmd.Flags().String(tlsCAFlagName, "", "")
+	if err := cmd.Flags().Set("server", server); err != nil {
+		t.Fatalf("set --server: %v", err)
+	}
+	return cmd
+}
+
+// TestSSHClientWithHostKeys_ServerFlagPairsARemoteClientWithLocalPins pins
+// the --server path: SSH operations go to the named xkmsd while host-key pins
+// stay in this machine's own store.
+func TestSSHClientWithHostKeys_ServerFlagPairsARemoteClientWithLocalPins(t *testing.T) {
+	withCLIHome(t)
+	t.Setenv(envXKMSdToken, "test-token")
+
+	client, hostKeys, closer, err := sshClientWithHostKeys(sshServerCommand(t, "https://127.0.0.1:1"))
+	if err != nil {
+		t.Fatalf("sshClientWithHostKeys: %v", err)
+	}
+	defer closer()
+	if client == nil || hostKeys == nil {
+		t.Fatalf("got client=%v hostKeys=%v, want both", client, hostKeys)
+	}
+	pins, err := hostKeys.List(context.Background(), "", "")
+	if err != nil {
+		t.Fatalf("list local pins: %v", err)
+	}
+	if len(pins) != 0 {
+		t.Fatalf("fresh home: got %d pins, want none", len(pins))
+	}
+}
+
+// TestSSHClientWithHostKeys_ServerFlagRefusesAnUnreadableCA covers the remote
+// client's construction failure: a --tls-ca that cannot be read refuses
+// before any connection or local store is opened.
+func TestSSHClientWithHostKeys_ServerFlagRefusesAnUnreadableCA(t *testing.T) {
+	withCLIHome(t)
+	t.Setenv(envXKMSdToken, "test-token")
+	cmd := sshServerCommand(t, "https://127.0.0.1:1")
+	if err := cmd.Flags().Set(tlsCAFlagName, filepath.Join(t.TempDir(), "missing-ca.pem")); err != nil {
+		t.Fatalf("set --tls-ca: %v", err)
+	}
+
+	if _, _, _, err := sshClientWithHostKeys(cmd); err == nil {
+		t.Fatal("expected an unreadable CA file to refuse")
+	}
+}
+
+// TestSSHClientWithHostKeys_ServerFlagRefusesABarrierEncryptedPinStore covers
+// the remote path's local half: a barrier-encrypted pin store refuses with
+// the same typed error as the local path.
+func TestSSHClientWithHostKeys_ServerFlagRefusesABarrierEncryptedPinStore(t *testing.T) {
+	home := withCLIHome(t)
+	t.Setenv(envXKMSdToken, "test-token")
+	writeBarrierRootKey(t, filepath.Join(home, ".xkey-store"), []byte("sealed"))
+
+	_, _, _, err := sshClientWithHostKeys(sshServerCommand(t, "https://127.0.0.1:1"))
+	if !errors.Is(err, ErrSSHStoreBarrierEncrypted) {
 		t.Fatalf("expected ErrSSHStoreBarrierEncrypted, got %v", err)
 	}
 }

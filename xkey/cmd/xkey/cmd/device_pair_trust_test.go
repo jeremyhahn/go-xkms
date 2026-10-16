@@ -11,8 +11,6 @@
 // 2. Commercial License
 //    Contact licensing@automatethethings.com for commercial licensing options.
 
-//go:build ble
-
 package cmd
 
 import (
@@ -25,8 +23,71 @@ import (
 
 	"github.com/jeremyhahn/go-xkms/xkey/pkg/attestation"
 	"github.com/jeremyhahn/go-xkms/xkey/pkg/attestation/attesttest"
+	xkeyconfig "github.com/jeremyhahn/go-xkms/xkey/pkg/config"
 	"github.com/jeremyhahn/go-xkms/xkey/pkg/pairing"
 )
+
+// applicationLockedConfig is the policy a fleet that locks the attested-
+// application allow-list would seal (#1305): a narrower list than whatever an
+// operator might write into devices.yaml.
+func applicationLockedConfig() *xkeyconfig.Config {
+	cfg := xkeyconfig.DefaultConfig()
+	cfg.Policy.LockPairingApplicationPolicy = true
+	cfg.Policy.PairingAllowedApplications = []pairing.AllowedApplication{{
+		PackageName:    "com.automatethethings.xkey",
+		SigningDigests: []string{"5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a"},
+	}}
+	return cfg
+}
+
+// sealPolicyFixtureNoCommand seals cfg's policy into a fresh config directory
+// without a *cobra.Command: resolveEnterpriseApplicationPolicy reads
+// XKEY_SO_PIN directly, the same env-only path a deep re-attestation call
+// graph with no command in hand must use.
+func sealPolicyFixtureNoCommand(t *testing.T, cfg *xkeyconfig.Config, soPIN string) {
+	t.Helper()
+	configDir := t.TempDir()
+	xkeyconfig.SetConfigDir(configDir)
+	t.Cleanup(xkeyconfig.ResetConfigDir)
+	if soPIN != "" {
+		require.NoError(t, xkeyconfig.WritePolicyHMAC(&cfg.Policy, soPIN, xkeyconfig.PolicyHMACPath(configDir)))
+	}
+}
+
+// TestAllowUnattestablePairing_FailsClosedWithoutAPolicy pins the default:
+// with no verified policy in hand, devices.yaml's own opt-in cannot let an
+// unattestable device pair.
+func TestAllowUnattestablePairing_FailsClosedWithoutAPolicy(t *testing.T) {
+	userAllows := &DevicesConfig{AttestationPolicy: &AttestationPolicy{AllowUnattestableDevices: true}}
+
+	require.False(t, allowUnattestablePairing(userAllows, nil))
+	require.False(t, allowUnattestablePairing(nil, nil))
+}
+
+// TestAllowUnattestablePairing_UserSettingGovernsAnUnlockedPolicy covers the
+// verified-but-unlocked policy: the user's devices.yaml decides, and a
+// missing devices.yaml or attestation block means no.
+func TestAllowUnattestablePairing_UserSettingGovernsAnUnlockedPolicy(t *testing.T) {
+	policy := &xkeyconfig.VerifiedPolicy{}
+
+	require.True(t, allowUnattestablePairing(
+		&DevicesConfig{AttestationPolicy: &AttestationPolicy{AllowUnattestableDevices: true}}, policy))
+	require.False(t, allowUnattestablePairing(&DevicesConfig{}, policy))
+	require.False(t, allowUnattestablePairing(nil, policy))
+}
+
+// TestAllowUnattestablePairing_LockedPolicyOverridesTheUser pins the SO's
+// lock: while it is set, the sealed policy's answer wins either way.
+func TestAllowUnattestablePairing_LockedPolicyOverridesTheUser(t *testing.T) {
+	userAllows := &DevicesConfig{AttestationPolicy: &AttestationPolicy{AllowUnattestableDevices: true}}
+	locked := &xkeyconfig.VerifiedPolicy{}
+	locked.Policy.LockPairingAttestationPolicy = true
+
+	require.False(t, allowUnattestablePairing(userAllows, locked))
+
+	locked.Policy.PairingAllowUnattestableDevices = true
+	require.True(t, allowUnattestablePairing(&DevicesConfig{}, locked))
+}
 
 // TestLoadPairingAttestationTrust_SealedUnverifiedRefusesDespiteDevicesYAML
 // is the end-to-end proof of the fix for the bypass a locked enterprise

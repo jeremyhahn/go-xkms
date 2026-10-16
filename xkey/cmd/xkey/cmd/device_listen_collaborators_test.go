@@ -11,8 +11,6 @@
 // 2. Commercial License
 //    Contact licensing@automatethethings.com for commercial licensing options.
 
-//go:build ble
-
 package cmd
 
 // Tests for go-xkms#690's follow-up: "xkey device listen" must wire real
