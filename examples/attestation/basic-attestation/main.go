@@ -150,11 +150,12 @@ if err != nil { log.Fatal(err) }
 // Verify attestation
 verifier := attestation.NewVerifier(trustedRoots)
 opts := attestation.DefaultVerifyOptions()
-err = verifier.Verify(attestStmt.(*attestation.AttestationStatement), opts)
+result, err := verifier.Verify(attestStmt.(*attestation.AttestationStatement), opts)
 if err != nil { log.Fatal("attestation verification failed:", err) }
 
 // Attestation is valid - key is proven to be hardware-backed
 fmt.Println("Key attestation verified successfully")
+fmt.Println("Root of trust:", result.RootType) // DICE only; "unreported" otherwise
 `)
 	fmt.Println()
 

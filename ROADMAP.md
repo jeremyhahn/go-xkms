@@ -1,6 +1,6 @@
 # go-xkms roadmap
 
-> **Status: REFERENCE** · Owner: Software Department · Last verified: 2026-10-16
+> **Status: REFERENCE** · Owner: Software Department · Last verified: 2026-10-17
 
 ## Mission
 
@@ -32,7 +32,6 @@ Scope and boundaries: [docs/SPEC.md](docs/SPEC.md).
 - **clustering** — embedded go-qrdb clustered node behind the `raft` tag — [#1393](../../issues/1393) — done
 - **crypto-backends** — one `Backend` contract with every implementation behind `WITH_*` toggles — [#1513](../../issues/1513) — done
 - **datastore** — every subsystem on the deployment's one go-qrdb datastore — [#1345](../../issues/1345) — done
-- **dice-device-identity** — DICE device identity and the `dice-idevid` profile — [#658](../../issues/658), [#1510](../../issues/1510) — done
 - **escrow** — KMIP and xkms-federation key escrow — [v0.3.0-alpha](../../releases/tag/v0.3.0-alpha) — done
 - **fido2-ctap2** — the stack's single FIDO2 CTAP2 client — [v0.9.0-alpha](../../releases/tag/v0.9.0-alpha) — done
 - **frost-threshold-signing** — RFC 9591 FROST threshold signing under `-tags frost` — [v0.25.0-alpha](../../releases/tag/v0.25.0-alpha) — done
@@ -48,6 +47,7 @@ Scope and boundaries: [docs/SPEC.md](docs/SPEC.md).
 - **piv-smartcard** — PIV slot operations as a factor and a CLI/SDK verb — [#1095](../../issues/1095), [#1467](../../issues/1467) — done
 - **pkcs11-backend** — xkms as a PKCS#11 client under `-tags pkcs11` — [v0.25.0-alpha](../../releases/tag/v0.25.0-alpha) — done
 - **pkcs11-provider-module** — the `pkcs11-module` Cryptoki provider — [#1512](../../issues/1512) — done
+- **platform-pcr-selection** — the board's boot PCRs for the platform policy, `TPMConfig.PlatformPCRs` (default 7 and 11) — [#1551](../../issues/1551) — done
 - **platform-secrets** — platform secret storage and resolution — [v0.9.0-alpha](../../releases/tag/v0.9.0-alpha) — done
 - **post-quantum** — ML-KEM and ML-DSA key generation and use — [v0.25.0-alpha](../../releases/tag/v0.25.0-alpha) — done
 - **rbac** — the `auth.Authorizer` seam and xkms permission vocabulary — [v0.25.0-alpha](../../releases/tag/v0.25.0-alpha) — done
@@ -97,7 +97,8 @@ Scope and boundaries: [docs/SPEC.md](docs/SPEC.md).
 
 - **tpm-policies** — unattended unlock across updates, steps 1 and 2 — [#1443](../../issues/1443) — open
 - **attestation-verifier** — event-log replay against signed CoRIM reference values — [#1443](../../issues/1443) — open
-- **acme-issuance** — `sdk/go` `AssemblePossessionCSR` for device-attest-01 finalize — [trusted-firmware #28](../../../trusted-firmware/issues/28) — open
+- **acme-issuance** — `sdk/go` `AssemblePossessionCSR` for device-attest-01 finalize, and the server refusing any measurements (273) shape but the fixed one — [trusted-firmware #28](../../../trusted-firmware/issues/28), [SPEC](docs/SPEC.md#features) — open
+- **dice-device-identity** — alias claims in the fixed measurements (273) shape, which closes with acme-issuance's server check above; the root type (hardware or software UDS, from DiceTcbInfo) is in the evidence, the attestation `Result` and device-attest-01, and `dice-idevid` shipped in [#658](../../issues/658), [#1510](../../issues/1510) — [SPEC](docs/SPEC.md#features) — open
 
 ## Next
 
@@ -109,7 +110,6 @@ Scope and boundaries: [docs/SPEC.md](docs/SPEC.md).
 
 ## Later
 
-- **platform-pcr-selection** — the board's boot PCRs for the platform policy, `TPMConfig.PlatformPCRs` (default 7 and 11) — [#1443](../../issues/1443), [#1551](../../issues/1551) — open
 - **ca** — standalone xkey CA, local or remote-only — [#729](../../issues/729) — blocked: decision pending
 - **ota-image-keys** — one OTA image-signing key per trusted-firmware board id — [SPEC](docs/SPEC.md#features) — open
 - **authz-admin-grants** — module permissions granted per role with declared duties — [Dev complete](../../milestone/14) — open

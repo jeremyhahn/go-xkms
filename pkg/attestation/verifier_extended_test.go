@@ -28,6 +28,8 @@ import (
 	"math/big"
 	"testing"
 	"time"
+
+	"github.com/jeremyhahn/go-xkms/pkg/attestation/dice"
 )
 
 // TestVerify tests the complete Verify function
@@ -94,9 +96,15 @@ func TestVerify(t *testing.T) {
 		ExpectedNonce:   []byte("test-nonce"),
 	}
 
-	err = v.Verify(stmt, opts)
+	result, err := v.Verify(stmt, opts)
 	if err != nil {
-		t.Errorf("Verify() failed: %v", err)
+		t.Fatalf("Verify() failed: %v", err)
+	}
+	if !result.Valid || !result.ChainValid || !result.SignatureValid || !result.FreshnessValid {
+		t.Errorf("Verify() result = %+v, want every check valid", result)
+	}
+	if result.RootType != dice.RootTypeUnreported {
+		t.Errorf("Verify() RootType = %v for a tpm2 statement, want unreported", result.RootType)
 	}
 }
 
@@ -109,7 +117,7 @@ func TestVerifyInvalidStatement(t *testing.T) {
 		Format: "", // Invalid - empty format
 	}
 
-	err := v.Verify(stmt, opts)
+	_, err := v.Verify(stmt, opts)
 	if err == nil {
 		t.Errorf("Verify() should fail with invalid statement")
 	}
@@ -143,7 +151,7 @@ func TestVerifyInvalidOptions(t *testing.T) {
 	v := NewVerifier(nil)
 
 	// Test with nil options
-	err := v.Verify(stmt, nil)
+	_, err := v.Verify(stmt, nil)
 	if err == nil {
 		t.Errorf("Verify() should fail with nil options")
 	}
@@ -153,7 +161,7 @@ func TestVerifyInvalidOptions(t *testing.T) {
 		FreshnessWindow: -1,
 	}
 
-	err = v.Verify(stmt, opts)
+	_, err = v.Verify(stmt, opts)
 	if err == nil {
 		t.Errorf("Verify() should fail with invalid freshness window")
 	}
@@ -1169,7 +1177,7 @@ func TestVerifyWithPCRs(t *testing.T) {
 		ExpectedPCRs:    pcrValues,
 	}
 
-	err := v.Verify(stmt, opts)
+	_, err := v.Verify(stmt, opts)
 	if err != nil {
 		t.Errorf("Verify() with PCRs failed: %v", err)
 	}
@@ -1231,7 +1239,7 @@ func TestVerifyFailsOnInvalidPCRs(t *testing.T) {
 		},
 	}
 
-	err := v.Verify(stmt, opts)
+	_, err := v.Verify(stmt, opts)
 	if err == nil {
 		t.Errorf("Verify() should fail with mismatched PCRs")
 	}
@@ -1278,7 +1286,7 @@ func TestVerifyFailsOnInvalidSignature(t *testing.T) {
 		AllowSelfSigned: true,
 	}
 
-	err := v.Verify(stmt, opts)
+	_, err := v.Verify(stmt, opts)
 	if err == nil {
 		t.Errorf("Verify() should fail with invalid signature")
 	}
@@ -1336,7 +1344,7 @@ func TestVerifyFailsOnFreshness(t *testing.T) {
 		ExpectedNonce:   []byte("test-nonce"),
 	}
 
-	err := v.Verify(stmt, opts)
+	_, err := v.Verify(stmt, opts)
 	if err == nil {
 		t.Errorf("Verify() should fail on freshness check")
 	}

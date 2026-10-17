@@ -190,6 +190,7 @@ type App struct {
 	tpmUnavailable    bool              // true after first probe found no TPM device
 	tpmConfigOnce     sync.Once         // ensures config is loaded and logged once
 	tpmCachedConfig   xkmssdk.TPMConfig // config loaded by tpmConfigOnce
+	tpmConfigErr      error             // refusal from tpmConfigOnce's load
 
 	// tpmAccessor serializes cross-service TPM access and coordinates
 	// shutdown to prevent use-after-close panics.
@@ -2502,12 +2503,19 @@ func (a *App) getTPM() xkmssdk.TrustedPlatformModule {
 
 	// Load and cache TPM config exactly once.
 	a.tpmConfigOnce.Do(func() {
-		a.tpmCachedConfig = loadTPMConfig(a.log)
+		a.tpmCachedConfig, a.tpmConfigErr = loadTPMConfig(a.log)
+		if a.tpmConfigErr != nil {
+			a.log.Error("TPM config refused, not opening the TPM", "error", a.tpmConfigErr)
+			return
+		}
 		a.tpmCachedConfig.UseSimulator = false
 		if a.tpmCachedConfig.Device == "" {
 			a.tpmCachedConfig.Device = "/dev/tpmrm0"
 		}
 	})
+	if a.tpmConfigErr != nil {
+		return nil
+	}
 	cfg := a.tpmCachedConfig
 
 	if _, err := os.Stat(cfg.Device); err != nil {
@@ -3908,36 +3916,35 @@ func detectEKHandle(log *slog.Logger, device string) uint32 {
 // and the tpm2 backend share one source of truth. Previously this read the
 // legacy xhome config.yaml, which diverged from the unified xkey.yaml and
 // silently fell back to the /dev/tpmrm0 default even when a `tpm:` section was
-// configured. Falls back to DefaultConfig if no config file is found.
-func loadTPMConfig(logger *slog.Logger) xkmssdk.TPMConfig {
+// configured. Falls back to DefaultConfig if no config file is found; a file
+// that cannot be read or parsed is refused with ErrConfigLoad.
+func loadTPMConfig(logger *slog.Logger) (xkmssdk.TPMConfig, error) {
 	cfg := xkmssdk.DefaultTPMConfig
 
 	configPath := config.ConfigPath()
 	if _, err := os.Stat(configPath); err != nil {
 		logger.Debug("no config file found, using TPM defaults", "path", configPath)
-		return cfg
+		return cfg, nil
 	}
 
 	data, err := os.ReadFile(configPath)
 	if err != nil {
-		logger.Warn("failed to read config file, using defaults",
-			"path", configPath, "error", err)
-		return cfg
+		return cfg, &SentinelCauseError{Sentinel: ErrConfigLoad, Cause: err}
 	}
 
-	// Parse the full config file to extract the "tpm" section.
+	// Parse the full config file to extract the "tpm" section. Decoding
+	// refuses an invalid tpm.platform-pcrs (tpm2.PCRSet.Validate), and a
+	// refused set must never be replaced by the default.
 	var fileConfig struct {
 		TPM xkmssdk.TPMConfig `yaml:"tpm"`
 	}
 	if err := yaml.Unmarshal(data, &fileConfig); err != nil {
-		logger.Warn("failed to parse config file, using defaults",
-			"path", configPath, "error", err)
-		return cfg
+		return cfg, &SentinelCauseError{Sentinel: ErrConfigLoad, Cause: err}
 	}
 
 	merged := mergeTPMConfig(cfg, fileConfig.TPM)
 	logger.Info("loaded TPM config from file", "path", configPath)
-	return merged
+	return merged, nil
 }
 
 // isYubiKeyLibrary returns true if the library path points to a YubiKey

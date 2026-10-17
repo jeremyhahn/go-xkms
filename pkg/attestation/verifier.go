@@ -23,6 +23,7 @@ import (
 	"fmt"
 	"time"
 
+	"github.com/jeremyhahn/go-xkms/pkg/attestation/dice"
 	"github.com/jeremyhahn/go-xkms/pkg/attestation/truststore"
 	"github.com/jeremyhahn/go-xkms/pkg/errs"
 )
@@ -80,16 +81,20 @@ func NewVerifier(trustedRoots []*x509.Certificate, opts ...VerifierOption) *Veri
 // Verify validates the entire attestation statement.
 //
 // Performs three main checks:
-//  1. Certificate chain validation
+//  1. Certificate chain validation, and for the DICE format the root type
+//     its DiceTcbInfo declares
 //  2. Signature verification
 //  3. Optional freshness and PCR validation
-func (v *Verifier) Verify(stmt *AttestationStatement, opts *VerifyOptions) error {
+//
+// The Result records every check that ran, so a caller can tell which one
+// failed; it is nil only when stmt or opts is invalid.
+func (v *Verifier) Verify(stmt *AttestationStatement, opts *VerifyOptions) (*Result, error) {
 	if err := stmt.Validate(); err != nil {
-		return &errs.Wrapped{Msg: "attestation: invalid statement", Err: err}
+		return nil, &errs.Wrapped{Msg: "attestation: invalid statement", Err: err}
 	}
 
 	if err := opts.Validate(); err != nil {
-		return &errs.Wrapped{Msg: "attestation: invalid options", Err: err}
+		return nil, &errs.Wrapped{Msg: "attestation: invalid options", Err: err}
 	}
 
 	result := &Result{
@@ -97,19 +102,34 @@ func (v *Verifier) Verify(stmt *AttestationStatement, opts *VerifyOptions) error
 	}
 
 	// Verify certificate chain
-	if err := v.VerifyChain(stmt, opts); err != nil {
+	paths, err := v.verifyChain(stmt, opts)
+	if err != nil {
 		result.ChainValid = false
 		result.ChainErrors = append(result.ChainErrors, err)
 		result.Error = err
-		return err
+		return result, err
 	}
 	result.ChainValid = true
+
+	// A DICE chain declares its root of trust in DiceTcbInfo (TCG DICE
+	// Attestation Architecture r0.23 section 6.1.1). CA m452: it is read only
+	// from the certificates on the paths that verified to a trust anchor, so
+	// an unanchored chain reports unreported, and a software root -- notSecure
+	// or a software vendorInfo -- on any layer makes the result software.
+	if Normalize(stmt.Format) == FormatDICE {
+		rootType, err := dice.RootTypeFromPaths(paths)
+		if err != nil {
+			result.Error = err
+			return result, &errs.Wrapped{Msg: "attestation: dice root type", Err: err}
+		}
+		result.RootType = rootType
+	}
 
 	// Verify signature
 	if err := v.VerifySignature(stmt, opts); err != nil {
 		result.SignatureValid = false
 		result.Error = err
-		return &errs.Detail{Err: ErrSignatureVerificationFailed, Detail: fmt.Sprintf("%v", err)}
+		return result, &errs.Detail{Err: ErrSignatureVerificationFailed, Detail: fmt.Sprintf("%v", err)}
 	}
 	result.SignatureValid = true
 
@@ -118,7 +138,7 @@ func (v *Verifier) Verify(stmt *AttestationStatement, opts *VerifyOptions) error
 		if err := v.verifyFreshness(stmt, opts); err != nil {
 			result.FreshnessValid = false
 			result.Error = err
-			return &errs.Wrapped{Msg: "attestation: freshness check failed", Err: err}
+			return result, &errs.Wrapped{Msg: "attestation: freshness check failed", Err: err}
 		}
 		result.FreshnessValid = true
 	}
@@ -128,13 +148,13 @@ func (v *Verifier) Verify(stmt *AttestationStatement, opts *VerifyOptions) error
 		if err := v.verifyPCRs(stmt, opts); err != nil {
 			result.PCRsValid = false
 			result.Error = err
-			return &errs.Wrapped{Msg: "attestation: PCR verification failed", Err: err}
+			return result, &errs.Wrapped{Msg: "attestation: PCR verification failed", Err: err}
 		}
 		result.PCRsValid = true
 	}
 
 	result.Valid = true
-	return nil
+	return result, nil
 }
 
 // TrustAnchorCount returns the number of trust anchors configured on the
@@ -174,11 +194,18 @@ func (v *Verifier) anchors(opts *VerifyOptions) []*x509.Certificate {
 // security decision on hardware provenance must use VerifyChainAnchored, which
 // fails closed when no anchors are configured.
 func (v *Verifier) VerifyChain(stmt *AttestationStatement, opts *VerifyOptions) error {
+	_, err := v.verifyChain(stmt, opts)
+	return err
+}
+
+// verifyChain is VerifyChain returning the paths anchoring verified, or nil
+// when no anchors are configured and the chain was checked structurally only.
+func (v *Verifier) verifyChain(stmt *AttestationStatement, opts *VerifyOptions) ([][]*x509.Certificate, error) {
 	if stmt == nil {
-		return ErrNilStatement
+		return nil, ErrNilStatement
 	}
 	if len(stmt.CertificateChain) == 0 {
-		return ErrEmptyCertificateChain
+		return nil, ErrEmptyCertificateChain
 	}
 
 	now := time.Now()
@@ -187,14 +214,14 @@ func (v *Verifier) VerifyChain(stmt *AttestationStatement, opts *VerifyOptions) 
 	}
 
 	if err := verifyChainStructure(stmt.CertificateChain, now); err != nil {
-		return err
+		return nil, err
 	}
 
 	if anchors := v.anchors(opts); len(anchors) > 0 {
-		return verifyChainAnchoring(stmt.CertificateChain, anchors, now)
+		return verifyChainAnchoring(stmt.CertificateChain, anchors, stmt.Format, now)
 	}
 
-	return nil
+	return nil, nil
 }
 
 // VerifyChainAnchored validates the certificate chain and requires that it
@@ -278,27 +305,49 @@ func verifyChainStructure(chain []*x509.Certificate, now time.Time) error {
 // vendor extended key usages (for example the TCG tcg-kp-EKCertificate OID
 // 2.23.133.8.1 on TPM EK certificates) rather than the TLS usages Go checks by
 // default.
-func verifyChainAnchoring(chain []*x509.Certificate, anchors []*x509.Certificate, now time.Time) error {
+//
+// A DICE chain is anchored through dice.VerifyChain, which decodes the
+// critical DiceTcbInfo every DICE certificate carries (TCG DICE Attestation
+// Architecture r0.23 section 6.1.1: it SHOULD be critical) before marking it
+// handled; crypto/x509 alone refuses that extension, and without a verified
+// path CA m452 leaves the root type unreported.
+//
+// It returns the verified paths, so that a caller reading claims out of the
+// chain can confine itself to the certificates they authenticate.
+func verifyChainAnchoring(chain []*x509.Certificate, anchors []*x509.Certificate, format string, now time.Time) ([][]*x509.Certificate, error) {
 	roots := x509.NewCertPool()
 	for _, anchor := range anchors {
 		roots.AddCert(anchor)
 	}
 
+	var paths [][]*x509.Certificate
+	var err error
+	if Normalize(format) == FormatDICE {
+		paths, err = dice.VerifyChain(chain, roots, now)
+	} else {
+		paths, err = verifyX509Chain(chain, roots, now)
+	}
+	if err != nil {
+		return nil, &errs.Detail{Err: ErrChainNotAnchored, Detail: fmt.Sprintf("%v", err)}
+	}
+
+	return paths, nil
+}
+
+// verifyX509Chain validates the leaf-first chain to roots with crypto/x509
+// alone, offering every certificate beyond the leaf as an intermediate.
+func verifyX509Chain(chain []*x509.Certificate, roots *x509.CertPool, now time.Time) ([][]*x509.Certificate, error) {
 	intermediates := x509.NewCertPool()
 	for _, cert := range chain[1:] {
 		intermediates.AddCert(cert)
 	}
 
-	if _, err := chain[0].Verify(x509.VerifyOptions{
+	return chain[0].Verify(x509.VerifyOptions{
 		Roots:         roots,
 		Intermediates: intermediates,
 		CurrentTime:   now,
 		KeyUsages:     []x509.ExtKeyUsage{x509.ExtKeyUsageAny},
-	}); err != nil {
-		return &errs.Detail{Err: ErrChainNotAnchored, Detail: fmt.Sprintf("%v", err)}
-	}
-
-	return nil
+	})
 }
 
 // VerifySignature verifies the cryptographic signature over the attestation data.

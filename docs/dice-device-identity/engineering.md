@@ -1,6 +1,6 @@
 # DICE Device Identity — Engineering
 
-> **Status: NORMATIVE** · Feature: `dice-device-identity` · Repo: `go-xkms` · Last verified: 2026-10-15
+> **Status: NORMATIVE** · Feature: `dice-device-identity` · Repo: `go-xkms` · Last verified: 2026-10-17
 
 ## Packages
 
@@ -9,6 +9,7 @@
 | `pkg/attestation/dice/extension.go` | OIDs, `TcbInfo`, `FWID`, `OperationalFlags`, `Ueid`, marshal/parse, certificate helpers |
 | `pkg/attestation/dice/uccs.go` | `ClaimsSet`, the `tcg-dice-UCCS-evidence` codec and the CBOR claims-set reader |
 | `pkg/attestation/dice/verify.go` | `VerifyOptions`, `Evidence`, `Verify` |
+| `pkg/attestation/dice/roottype.go` | `RootType`, its vendorInfo OIDs, `RootTypeVendorInfo`, `RootTypeFromPaths` |
 | `pkg/attestation/dice/errors.go` | every sentinel this package returns |
 | `pkg/ca/profile_dice.go` | the `dice-idevid` certificate profile |
 | `pkg/acme/challenges/device-attest-01/possession.go` | the possession request profile: builder, parser and the finalize checks |
@@ -73,7 +74,10 @@ absent, which is unambiguous — an empty vendor name is not a claim.
 | `MarshalClaimsSet` / `ParseClaimsSet` | The CBOR layer on its own. Parsing refuses a non-map, a tagged map, an indefinite-length item, a duplicate claim key, a non-integer claim key, an empty claims set, trailing bytes, a missing nonce, a nonce that is not a single byte string, and a nonce shorter than eight bytes. |
 | `CreateUccsEvidenceExtension(*ClaimsSet) (pkix.Extension, error)` | **Critical**, for the reason `CreateTcbInfoExtension` is: the claims are what make the certificate an attestation. §6.1.4 states no criticality, so this is a choice. |
 | `UccsFromCertificate(*x509.Certificate)` | `ErrUccsEvidenceNotFound` when absent. |
-| `Verify([]*x509.Certificate, *VerifyOptions) (*Evidence, error)` | Chain leaf-first. |
+| `Verify([]*x509.Certificate, *VerifyOptions) (*Evidence, error)` | Chain leaf-first. `Evidence.RootType` is `RootTypeFromPaths` of the paths anchoring verified (`verify.go:229`), so it is `RootTypeUnreported` without `TrustedRoots` (CA m452). A software root on any certificate of those paths is refused as `ErrOperationalStateNotPermitted` unless `PermittedFlags.NotSecure` (`verify.go:512`). |
+| `RootTypeVendorInfo(RootType) ([]byte, error)` | The DiceTcbInfo `vendorInfo` naming a root: the DER OID `OIDRootOfTrustHardware` (1.3.6.1.4.1.29377.101.24.1) or `OIDRootOfTrustSoftware` (.24.2), under `OIDRootOfTrust` (`roottype.go:70-104`). `ErrUnknownRootType` for `RootTypeUnreported` or an undefined value. |
+| `RootTypeFromPaths(paths [][]*x509.Certificate) (RootType, error)` | The root type the DiceTcbInfo on the authenticated certificates declares (`roottype.go:157`). `paths` are what `x509.Certificate.Verify` returned for the leaf against a configured trusted root. No other certificate is read, and no paths (an unanchored chain) is `RootTypeUnreported` whatever the certificates declare (CA m452). A layer declares software when its §6.1.1 `notSecure` flag is set or its `vendorInfo` is `OIDRootOfTrustSoftware`, and hardware when its `vendorInfo` is `OIDRootOfTrustHardware` with `notSecure` clear (`declaredRootType`, `roottype.go:126`); any other `vendorInfo` is another vendor's data and declares nothing. A path is software if any layer declares software, else hardware if any layer declares hardware, else unreported (`pathRootType`, `roottype.go:177`); across paths the weakest wins. An unreadable DiceTcbInfo on a path is returned as its own error. |
+| `VerifyChain(chain []*x509.Certificate, roots *x509.CertPool, now time.Time) ([][]*x509.Certificate, error)` | Anchors the leaf-first chain to `roots` with every DICE evidence extension decoded, then marked handled (invariant 3a), and returns the verified paths (`verify.go:363`). `attestation.Verifier` anchors a `dice` statement through it (`pkg/attestation/verifier.go:317`), because `crypto/x509` alone refuses the leaf's critical DiceTcbInfo. `ErrChainVerificationFailed` or `ErrCriticalEvidenceUnreadable`. |
 
 ### The possession request
 
@@ -103,7 +107,7 @@ attestation statement (`aliasClaims`, `:1024`) and
 
 | Field | Default | Meaning |
 |-------|---------|---------|
-| `TrustedRoots` | nil | Nil skips anchoring. Only correct when the caller anchored by another route: an unanchored chain is self-consistent whoever generated it. device-attest-01's raw-key path is that route: it verifies the leaf's signature under the provisioned DeviceID key first. |
+| `TrustedRoots` | nil | Nil skips anchoring. Only correct when the caller anchored by another route: an unanchored chain is self-consistent whoever generated it. device-attest-01's raw-key path is that route: it verifies the leaf's signature under the provisioned DeviceID key first. Without it `Evidence.RootType` is `RootTypeUnreported`: an unanchored chain carries no DiceTcbInfo a verifier may believe (CA m452). |
 | `ExpectedNonce` | — | **Required.** `ErrNonceRequired` without it. |
 | `ExpectedUeid` | nil | "This is the device I enrolled" rather than "a device from this manufacturer". |
 | `RequireUeid` | false | Demand a device identifier without matching it — the `tcg-dice-Ueid` extension **or** UCCS claim 256, as `DeviceUeid` reads them (`verify.go:47-50`, `verifyUeid` at `:473`). Without `RequireUeid` or `ExpectedUeid`, a leaf with neither yields `Evidence.Ueid == nil`; a malformed or conflicting identifier is an error either way. |
@@ -140,6 +144,14 @@ attestation statement (`aliasClaims`, `:1024`) and
    input bytes; the operational flags BIT STRING is DER-minimal.
 7. **The CA never strips evidence.** `notSecure` is carried onto the
    certificate.
+8. **The root type is one value, derived once.** `dice.RootType` is the only
+   definition; `attestation.Result`, device-attest-01's `VerifiedAttestation`
+   and its persisted record, the AVR backend's `Attestation` and `sdk/go`
+   (`DICERootType`) carry that type, and every reader derives it through
+   `RootTypeFromPaths`, only from the certificates on paths verified to a
+   trusted root (CA m452). A software root on any layer of those paths makes
+   it software. Its numbers (0 unreported, 1 hardware, 2 software) are
+   persisted and do not change.
 
 ## Errors
 
@@ -157,13 +169,14 @@ and claim 256 disagree, `errors.go:41`). UCCS evidence: `ErrNilClaimsSet`,
 `ErrUnsupportedKeyType`, `ErrUnsupportedSignatureAlgorithm`,
 `ErrNonceMismatch`, `ErrNonceRequired`, `ErrUeidMismatch`,
 `ErrOperationalStateNotPermitted`, `ErrNoMeasurement`,
-`ErrCriticalEvidenceUnreadable`.
+`ErrCriticalEvidenceUnreadable`. Root type: `ErrUnknownRootType`.
 
 Every one of them is re-exported from `sdk/go/attestation_dice.go` as
 `ErrDICE<Name>`, aliased to the canonical value rather than copied, so a
 consumer that cannot import `pkg/` can still use `errors.Is`. The same file
-re-exports `DeviceUeid` as `DICEDeviceUeid` and `ClaimUeid` as
-`DICEClaimUeid` (`attestation_dice.go:95-98`).
+re-exports `DeviceUeid` as `DICEDeviceUeid`, `ClaimUeid` as
+`DICEClaimUeid`, and the root type as `DICERootType`, its constants, OIDs,
+`DICERootTypeVendorInfo` and `DICERootTypeFromPaths`.
 
 The possession request's sentinels live beside it in
 `pkg/acme/challenges/device-attest-01/possession.go:92-120`:

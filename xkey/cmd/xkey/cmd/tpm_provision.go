@@ -131,7 +131,7 @@ func init() {
 	tpmInstallCmd.Flags().StringVar(&installGoldenPCRs, "golden-pcrs", "",
 		"Comma-separated list of PCR indices for golden measurement (e.g., \"0,1,2,7\")")
 	tpmInstallCmd.Flags().StringVar(&installPlatformPCRs, "platform-pcrs", "",
-		"Comma-separated sealing PCR set of the platform policy (default \"7,11\"; 16 and 23 are refused)")
+		"Comma-separated sealing PCR set of the platform policy (default tpm.platform-pcrs, else \"7,11\"; 16 and 23 are refused)")
 
 	// Provision command flags
 	tpmProvisionCmd.Flags().BoolVar(&provisionConfirm, "confirm", false,
@@ -143,7 +143,7 @@ func init() {
 	tpmProvisionCmd.Flags().StringVar(&provisionGoldenPCRs, "golden-pcrs", "",
 		"Comma-separated list of PCR indices for golden measurement (e.g., \"0,1,2,7\")")
 	tpmProvisionCmd.Flags().StringVar(&provisionPlatformPCRs, "platform-pcrs", "",
-		"Comma-separated sealing PCR set of the platform policy (default \"7,11\"; 16 and 23 are refused)")
+		"Comma-separated sealing PCR set of the platform policy (default tpm.platform-pcrs, else \"7,11\"; 16 and 23 are refused)")
 }
 
 // parseGoldenPCRs parses a comma-separated string of PCR indices into a []uint slice
@@ -177,8 +177,8 @@ func parseGoldenPCRs(s string) ([]uint, error) {
 }
 
 // parsePlatformPCRs parses a --platform-pcrs flag value into the sealing PCR
-// set of the platform policy. An empty value returns nil, which takes
-// xkms.DefaultPlatformPCRs; any other value must be a valid set, so PCR 16,
+// set of the platform policy. An empty value returns nil, which keeps
+// tpm.platform-pcrs from the config file or else xkms.DefaultPlatformPCRs; any other value must be a valid set, so PCR 16,
 // PCR 23 and duplicates are refused here rather than at TPM open.
 func parsePlatformPCRs(s string) ([]uint, error) {
 	pcrs, err := parseGoldenPCRs(s)

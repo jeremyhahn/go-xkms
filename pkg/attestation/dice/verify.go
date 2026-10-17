@@ -132,6 +132,11 @@ type Evidence struct {
 	// field decodes to all four inactive, which is what the specification
 	// says an omitted field means.
 	Flags OperationalFlags
+
+	// RootType is where the device keeps its UDS, as the DiceTcbInfo of the
+	// certificates on the verified path declares it (RootTypeFromPaths), or
+	// RootTypeUnreported when they declare none or the chain was not anchored.
+	RootType RootType
 }
 
 // Verify checks a DICE certificate chain and returns what it established.
@@ -149,8 +154,15 @@ type Evidence struct {
 //  3. The leaf carries a readable DiceTcbInfo.
 //  4. The device echoed the verifier's nonce in the eat_nonce claim of its
 //     tcg-dice-UCCS-evidence extension.
-//  5. The device reports no operational state the verifier refuses.
+//  5. The device reports no operational state the verifier refuses: neither
+//     in the leaf's flags nor as a software root of trust -- notSecure or a
+//     software vendorInfo -- on any certificate of the verified path.
 //  6. The UEID and firmware measurement requirements the caller set are met.
+//
+// The root type is read only from the certificates on the paths that
+// verified to TrustedRoots (RootTypeFromPaths, CA m452). Without
+// TrustedRoots it is RootTypeUnreported, whatever the chain declares, and a
+// supplied certificate on no verified path is never read.
 //
 // The order matters: nothing read out of the evidence means anything until the
 // chain is known to descend from a root the operator configured, so anchoring
@@ -183,8 +195,13 @@ func Verify(chain []*x509.Certificate, opts *VerifyOptions) (*Evidence, error) {
 		}
 	}
 
+	// paths stays nil for an unanchored chain, which RootTypeFromPaths reports
+	// as unreported: nothing authenticated its DiceTcbInfo (CA m452).
+	var paths [][]*x509.Certificate
 	if opts.TrustedRoots != nil {
-		if err := verifyChain(chain, opts.TrustedRoots, opts.CurrentTime); err != nil {
+		var err error
+		paths, err = VerifyChain(chain, opts.TrustedRoots, opts.CurrentTime)
+		if err != nil {
 			return nil, err
 		}
 	}
@@ -207,6 +224,13 @@ func Verify(chain []*x509.Certificate, opts *VerifyOptions) (*Evidence, error) {
 		return nil, err
 	}
 
+	// Read before the flags are judged against policy, so that an unreadable
+	// DiceTcbInfo on the path is refused as that, whatever the policy permits.
+	rootType, err := RootTypeFromPaths(paths)
+	if err != nil {
+		return nil, err
+	}
+
 	claims, err := verifyNonce(leaf, opts.ExpectedNonce)
 	if err != nil {
 		return nil, err
@@ -217,6 +241,9 @@ func Verify(chain []*x509.Certificate, opts *VerifyOptions) (*Evidence, error) {
 		flags = *info.Flags
 	}
 	if err := verifyOperationalFlags(flags, opts.PermittedFlags); err != nil {
+		return nil, err
+	}
+	if err := verifyRootTypePermitted(rootType, opts.PermittedFlags); err != nil {
 		return nil, err
 	}
 
@@ -231,7 +258,7 @@ func Verify(chain []*x509.Certificate, opts *VerifyOptions) (*Evidence, error) {
 		return nil, err
 	}
 
-	return &Evidence{TcbInfo: info, Claims: claims, Ueid: ueid, Flags: flags}, nil
+	return &Evidence{TcbInfo: info, Claims: claims, Ueid: ueid, Flags: flags, RootType: rootType}, nil
 }
 
 // verifyDeviceKeys enforces the ECDSA P-256 constraint on the certificates the
@@ -305,7 +332,9 @@ func verifyDeviceSignature(cert *x509.Certificate) error {
 	return nil
 }
 
-// verifyChain anchors the chain to the configured roots.
+// VerifyChain anchors the chain to roots and returns the verified paths.
+// attestation.Verifier anchors a DICE statement through it as well, so both
+// verifiers read the root type from the same paths (CA m452).
 //
 // The DICE evidence extensions are removed from each certificate's unhandled
 // critical extension set before verifying. DICE Attestation Architecture
@@ -328,30 +357,34 @@ func verifyDeviceSignature(cert *x509.Certificate) error {
 // The clearing is done on copies. Mutating the caller's certificates would
 // leave them permanently marked as handled for every later verifier in the
 // process, including ones that do not understand DICE.
-func verifyChain(chain []*x509.Certificate, roots *x509.CertPool, now time.Time) error {
+//
+// It returns the verified paths, so that RootTypeFromPaths reads only the
+// certificates they authenticate.
+func VerifyChain(chain []*x509.Certificate, roots *x509.CertPool, now time.Time) ([][]*x509.Certificate, error) {
 	leaf, err := withDICEExtensionsHandled(chain[0])
 	if err != nil {
-		return err
+		return nil, err
 	}
 
 	intermediates := x509.NewCertPool()
 	for _, cert := range chain[1:] {
 		handled, err := withDICEExtensionsHandled(cert)
 		if err != nil {
-			return err
+			return nil, err
 		}
 		intermediates.AddCert(handled)
 	}
 
-	if _, err := leaf.Verify(x509.VerifyOptions{
+	paths, err := leaf.Verify(x509.VerifyOptions{
 		Roots:         roots,
 		Intermediates: intermediates,
 		KeyUsages:     []x509.ExtKeyUsage{x509.ExtKeyUsageAny},
 		CurrentTime:   now,
-	}); err != nil {
-		return &errs.Joined{Lead: ErrChainVerificationFailed, Detail: describeSubject(chain[0]), Cause: err}
+	})
+	if err != nil {
+		return nil, &errs.Joined{Lead: ErrChainVerificationFailed, Detail: describeSubject(chain[0]), Cause: err}
 	}
-	return nil
+	return paths, nil
 }
 
 // withDICEExtensionsHandled returns a shallow copy of the certificate with the
@@ -466,6 +499,21 @@ func verifyOperationalFlags(reported, permitted OperationalFlags) error {
 		Err:    ErrOperationalStateNotPermitted,
 		Detail: "device reports " + refused.String(),
 	}
+}
+
+// verifyRootTypePermitted holds a software root of trust to the notSecure
+// policy wherever on the verified path it was declared. CA m452: "A software
+// root anywhere in the ancestry makes the identity software-rooted, so
+// NotSecure on any layer propagates to attestation.Result."
+// verifyOperationalFlags judges the leaf's own flags (TCG DICE Attestation
+// Architecture r0.23 section 6.1.1), but an embedded CA may be the only
+// certificate that sets notSecure, and a device whose UDS sits in storage is
+// no more secure for having said so one certificate up.
+func verifyRootTypePermitted(rootType RootType, permitted OperationalFlags) error {
+	if rootType == RootTypeSoftware && !permitted.NotSecure {
+		return &errs.Detail{Err: ErrOperationalStateNotPermitted, Detail: "the chain declares a software root of trust (notSecure)"}
+	}
+	return nil
 }
 
 // verifyUeid reads the device identifier and checks it against the caller's

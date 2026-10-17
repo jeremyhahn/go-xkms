@@ -2628,7 +2628,7 @@ Usage: `xkey tpm install [flags]`
 | `--auth` | string |  | Hierarchy authorization password to set |
 | `--golden-pcrs` | string |  | Comma-separated list of PCR indices for golden measurement (e.g., "0,1,2,7") |
 | `--pcr-bank` | string |  | Override the platform PCR bank (e.g., sha256, sha384) |
-| `--platform-pcrs` | string |  | Comma-separated sealing PCR set of the platform policy (default "7,11"; 16 and 23 are refused) |
+| `--platform-pcrs` | string |  | Comma-separated sealing PCR set of the platform policy (default tpm.platform-pcrs, else "7,11"; 16 and 23 are refused) |
 
 ## xkey tpm lak
 
@@ -2798,7 +2798,7 @@ Usage: `xkey tpm provision [flags]`
 | `--confirm` | bool | false | Confirm that you want to destroy manufacturer keys (REQUIRED) |
 | `--golden-pcrs` | string |  | Comma-separated list of PCR indices for golden measurement (e.g., "0,1,2,7") |
 | `--pcr-bank` | string |  | Override the platform PCR bank (e.g., sha256, sha384) |
-| `--platform-pcrs` | string |  | Comma-separated sealing PCR set of the platform policy (default "7,11"; 16 and 23 are refused) |
+| `--platform-pcrs` | string |  | Comma-separated sealing PCR set of the platform policy (default tpm.platform-pcrs, else "7,11"; 16 and 23 are refused) |
 
 ## xkey tpm quote
 

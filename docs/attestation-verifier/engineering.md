@@ -9,17 +9,17 @@ subpackages — see [`architecture.md`](architecture.md)):
 
 | Symbol | Kind | Where |
 |---|---|---|
-| `Verifier` | type | `verifier.go:45` |
-| `NewVerifier(trustedRoots []*x509.Certificate) *Verifier` | func | `verifier.go:57` |
-| `(*Verifier).Verify(stmt, opts) error` | method | `verifier.go:71` |
-| `(*Verifier).TrustAnchorCount() int` | method | `verifier.go:128` |
-| `(*Verifier).VerifyChain(stmt, opts) error` | method | `verifier.go:161` |
-| `(*Verifier).VerifyChainAnchored(stmt, opts) error` | method | `verifier.go:192` |
-| `(*Verifier).VerifySignature(stmt, opts) error` | method | `verifier.go:290` |
+| `Verifier` | type | `verifier.go:49` |
+| `NewVerifier(trustedRoots []*x509.Certificate, opts ...VerifierOption) *Verifier` | func | `verifier.go:69` |
+| `(*Verifier).Verify(stmt, opts) (*Result, error)` | method | `verifier.go:91` |
+| `(*Verifier).TrustAnchorCount() int` | method | `verifier.go:162` |
+| `(*Verifier).VerifyChain(stmt, opts) error` | method | `verifier.go:195` |
+| `(*Verifier).VerifyChainAnchored(stmt, opts) error` | method | `verifier.go:233` |
+| `(*Verifier).VerifySignature(stmt, opts) error` | method | `verifier.go:335` |
 | `AttestationStatement` | type | `types.go:47` |
 | `(*AttestationStatement).String() string` | method | `types.go:228` |
 | `(*AttestationStatement).Validate() error` | method | `types.go:241` |
-| `(*AttestationStatement).Hash() ([]byte, error)` | method | `verifier.go:445` |
+| `(*AttestationStatement).Hash() ([]byte, error)` | method | `verifier.go:490` |
 | `Attestation` | interface (`Verify`/`VerifyChain`/`VerifySignature`) | `types.go:100` |
 | `VerifyOptions` | type | `types.go:148` |
 | `(*VerifyOptions).Validate() error` | method | `types.go:270` |
@@ -49,7 +49,7 @@ name:
 
 - **`VerifyChainAnchored` fails closed with zero anchors.** It returns
   `ErrNoTrustAnchors` rather than degrading to `VerifyChain`'s structural-only
-  path (`verifier.go:192-200`). `SetAttestationVerifiers` and
+  path (`verifier.go:233-241`). `SetAttestationVerifiers` and
   `AttestationConfig.Verifiers` both additionally refuse to construct or
   register an anchorless verifier in the first place
   (`servicer_ca.go:229-231`, `attestation.go:77-79`) — the same guarantee
@@ -57,7 +57,7 @@ name:
 - **Chain anchoring alone is not provenance.** `VerifyChain` with no anchors
   configured validates structure only; it is `VerifyChainAnchored` a caller
   must use to gate a security decision on hardware provenance
-  (`verifier.go:144-160`).
+  (`verifier.go:190-194`).
 - **Binding and freshness invariants are not configurable**, except one
   narrow, logged opt-in. `VerifyInvariants` enforces `ErrKeyNotBound` and
   `ErrStaleEvidence` unconditionally; only `ErrBindingUnavailable` (the

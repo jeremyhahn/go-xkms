@@ -36,7 +36,8 @@ func TestLoadTPMConfig_NoFile(t *testing.T) {
 	tmpDir := t.TempDir()
 	t.Setenv("HOME", tmpDir)
 
-	cfg := loadTPMConfig(testLogger())
+	cfg, err := loadTPMConfig(testLogger())
+	require.NoError(t, err)
 
 	assert.Equal(t, xkms.DefaultTPMConfig.Device, cfg.Device)
 	assert.Equal(t, xkms.DefaultTPMConfig.Hash, cfg.Hash)
@@ -77,7 +78,8 @@ tpm:
 		0600,
 	))
 
-	cfg := loadTPMConfig(testLogger())
+	cfg, err := loadTPMConfig(testLogger())
+	require.NoError(t, err)
 
 	assert.Equal(t, "/dev/tpm0", cfg.Device)
 	assert.Equal(t, "SHA-384", cfg.Hash)
@@ -112,7 +114,8 @@ tpm:
 		0600,
 	))
 
-	cfg := loadTPMConfig(testLogger())
+	cfg, err := loadTPMConfig(testLogger())
+	require.NoError(t, err)
 
 	// Overridden field.
 	assert.Equal(t, "SHA-512", cfg.Hash)
@@ -140,31 +143,61 @@ func TestLoadTPMConfig_InvalidYAML(t *testing.T) {
 		0600,
 	))
 
-	cfg := loadTPMConfig(testLogger())
+	_, err := loadTPMConfig(testLogger())
 
-	assert.Equal(t, xkms.DefaultTPMConfig.Device, cfg.Device)
-	assert.Equal(t, xkms.DefaultTPMConfig.Hash, cfg.Hash)
-	assert.NotNil(t, cfg.EK)
-	assert.Equal(t, xkms.DefaultTPMConfig.EK.Handle, cfg.EK.Handle)
+	assert.ErrorIs(t, err, ErrConfigLoad)
 }
 
 // TestLoadTPMConfig_RefusedPlatformPCRs verifies a sealing PCR set holding
 // resettable PCR 16 is refused at parse time and never reaches the TPM
 // config: the loader keeps the default set.
 func TestLoadTPMConfig_RefusedPlatformPCRs(t *testing.T) {
+	tests := map[string]struct {
+		pcrs    string
+		wantErr error
+	}{
+		"resettable PCR 16": {pcrs: "[7, 16]", wantErr: xkms.ErrTPMPlatformPCRResettable},
+		"resettable PCR 23": {pcrs: "[23]", wantErr: xkms.ErrTPMPlatformPCRResettable},
+		"out of range":      {pcrs: "[7, 24]", wantErr: xkms.ErrTPMPlatformPCROutOfRange},
+		"duplicate":         {pcrs: "[7, 7]", wantErr: xkms.ErrTPMPlatformPCRDuplicate},
+		"explicit empty":    {pcrs: "[]", wantErr: xkms.ErrTPMPlatformPCRSetEmpty},
+	}
+	for name, tc := range tests {
+		t.Run(name, func(t *testing.T) {
+			tmpDir := t.TempDir()
+			config.SetConfigDir(tmpDir)
+			defer config.ResetConfigDir()
+
+			require.NoError(t, os.WriteFile(
+				filepath.Join(tmpDir, "xkey.yaml"),
+				[]byte("tpm:\n  platform-pcrs: "+tc.pcrs+"\n"),
+				0600,
+			))
+
+			_, err := loadTPMConfig(testLogger())
+
+			assert.ErrorIs(t, err, ErrConfigLoad)
+			assert.ErrorIs(t, err, tc.wantErr)
+		})
+	}
+}
+
+// TestGetTPM_RefusedPlatformPCRs proves the GUI never opens the TPM with a
+// configuration whose sealing PCR set was refused.
+func TestGetTPM_RefusedPlatformPCRs(t *testing.T) {
 	tmpDir := t.TempDir()
 	config.SetConfigDir(tmpDir)
 	defer config.ResetConfigDir()
 
 	require.NoError(t, os.WriteFile(
 		filepath.Join(tmpDir, "xkey.yaml"),
-		[]byte("tpm:\n  platform-pcrs: [7, 16]\n"),
+		[]byte("tpm:\n  device: "+filepath.Join(tmpDir, "xkey.yaml")+"\n  platform-pcrs: [7, 16]\n"),
 		0600,
 	))
+	app := &App{log: testLogger()}
 
-	cfg := loadTPMConfig(testLogger())
-
-	assert.Equal(t, xkms.DefaultPlatformPCRs(), cfg.PlatformPCRs)
+	assert.Nil(t, app.getTPM())
+	assert.ErrorIs(t, app.tpmConfigErr, xkms.ErrTPMPlatformPCRResettable)
 }
 
 // TestLoadTPMConfig_MissingUserConfig verifies that loadTPMConfig returns
@@ -176,7 +209,8 @@ func TestLoadTPMConfig_MissingUserConfig(t *testing.T) {
 	config.SetConfigDir(tmpDir)
 	defer config.ResetConfigDir()
 
-	cfg := loadTPMConfig(testLogger())
+	cfg, err := loadTPMConfig(testLogger())
+	require.NoError(t, err)
 	assert.Equal(t, xkms.DefaultTPMConfig.Device, cfg.Device)
 	assert.Equal(t, xkms.DefaultTPMConfig.Hash, cfg.Hash)
 	assert.NotNil(t, cfg.EK)
@@ -195,7 +229,8 @@ func TestLoadTPMConfig_NoTPMSection(t *testing.T) {
 		0600,
 	))
 
-	cfg := loadTPMConfig(testLogger())
+	cfg, err := loadTPMConfig(testLogger())
+	require.NoError(t, err)
 
 	// All defaults should be preserved since "tpm" section is missing.
 	assert.Equal(t, xkms.DefaultTPMConfig.Device, cfg.Device)

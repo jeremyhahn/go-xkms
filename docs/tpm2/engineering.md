@@ -813,9 +813,13 @@ lengths against the input before allocating. Regression and fuzz coverage:
   `pkg/seal/autodetect.go:153`, `pkg/backend/tpm2/config.go:161`). The SDK
   re-exports the set as `xkms.TPMPCRSet` with `xkms.DefaultPlatformPCRs`
   (`sdk/go/tpm.go:84,382`). xKey reads `tpm.platform-pcrs` from its config
-  file into the SDK `TPMConfig` (`xkey/pkg/gui/app.go:3912,3964`) and takes
-  `--platform-pcrs` on `tpm install` / `tpm provision`, checked before the TPM
-  is opened (`xkey/cmd/xkey/cmd/tpm_provision.go:182`).
+  file, and loading refuses an invalid set with the `PCRSet.Validate` error
+  (`xkey/pkg/config/config.go:579`). The GUI refuses to open the TPM when its
+  config is refused (`xkey/pkg/gui/app.go:3920,3970`). The CLI `tpm` commands
+  seal to the configured set (`xkey/cmd/xkey/cmd/tpm.go:237`), and
+  `--platform-pcrs` on `tpm install` / `tpm provision` overrides it
+  (`xkey/cmd/xkey/cmd/tpm.go:309`), checked before the TPM is opened
+  (`xkey/cmd/xkey/cmd/tpm_provision.go:182`).
   - Unset means `DefaultPlatformPCRs()`, `{7, 11}`
     (`pkg/tpm2/config.go:32`), applied by `DefaultPlatformPCRSelection`
     (`pkg/tpm2/config.go:313`) and `NewTPM2` (`pkg/tpm2/tpm.go:409`).

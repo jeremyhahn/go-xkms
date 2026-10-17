@@ -105,6 +105,7 @@ func TestDICEErrorsAreTheCanonicalSentinels(t *testing.T) {
 		{"empty chain", xkms.ErrDICEEmptyChain, dice.ErrEmptyChain},
 		{"nil verify options", xkms.ErrDICENilVerifyOptions, dice.ErrNilVerifyOptions},
 		{"ueid conflict", xkms.ErrDICEUeidConflict, dice.ErrUeidConflict},
+		{"unknown root type", xkms.ErrDICEUnknownRootType, dice.ErrUnknownRootType},
 	}
 
 	for _, pair := range pairs {
@@ -112,6 +113,39 @@ func TestDICEErrorsAreTheCanonicalSentinels(t *testing.T) {
 			assert.Same(t, pair.pkg, pair.sdk, "the SDK re-exports a copy rather than the sentinel")
 		})
 	}
+}
+
+func TestDICERootTypeIsReachableFromTheSDK(t *testing.T) {
+	t.Run("the root types and their vendorInfo values are the canonical ones", func(t *testing.T) {
+		assert.Equal(t, dice.RootTypeUnreported, xkms.DICERootTypeUnreported)
+		assert.Equal(t, dice.RootTypeHardware, xkms.DICERootTypeHardware)
+		assert.Equal(t, dice.RootTypeSoftware, xkms.DICERootTypeSoftware)
+		assert.Equal(t, dice.OIDRootOfTrust, xkms.DICEOIDRootOfTrust)
+		assert.Equal(t, dice.OIDRootOfTrustHardware, xkms.DICEOIDRootOfTrustHardware)
+		assert.Equal(t, dice.OIDRootOfTrustSoftware, xkms.DICEOIDRootOfTrustSoftware)
+
+		value, err := xkms.DICERootTypeVendorInfo(xkms.DICERootTypeHardware)
+		require.NoError(t, err)
+		expected, err := dice.RootTypeVendorInfo(dice.RootTypeHardware)
+		require.NoError(t, err)
+		assert.Equal(t, expected, value)
+	})
+
+	t.Run("an unreported root type has no vendorInfo value", func(t *testing.T) {
+		value, err := xkms.DICERootTypeVendorInfo(xkms.DICERootTypeUnreported)
+		assert.ErrorIs(t, err, xkms.ErrDICEUnknownRootType)
+		assert.Nil(t, value)
+	})
+
+	t.Run("a chain is read through the SDK", func(t *testing.T) {
+		root, err := xkms.DICERootTypeFromPaths(nil)
+		require.NoError(t, err)
+		assert.Equal(t, xkms.DICERootTypeUnreported, root)
+
+		root, err = xkms.DICERootTypeFromPaths([][]*x509.Certificate{{nil}})
+		assert.Error(t, err)
+		assert.Equal(t, xkms.DICERootTypeUnreported, root)
+	})
 }
 
 // And the property a consumer actually relies on: an error out of the SDK's own

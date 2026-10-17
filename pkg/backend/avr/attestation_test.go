@@ -126,6 +126,7 @@ func TestAttestKeyVerifiesTheCertificateARealDeviceEmits(t *testing.T) {
 	assert.Equal(t, types.AttestLevelHardware, att.AttestLevel)
 	assert.Equal(t, aggeneric.CryptoSecureElement, att.CryptoTier)
 	assert.False(t, att.Anchored, "no roots were configured")
+	assert.Equal(t, dice.RootTypeUnreported, att.RootType, "the device's alias certificate carries no DiceTcbInfo")
 	assert.Equal(t, "ag Alias", att.Certificate.Subject.CommonName)
 
 	// The ueid and the firmware measurement travel as CWT claims inside the
@@ -313,6 +314,45 @@ func TestAttestKeyAnchorsAgainstConfiguredRoots(t *testing.T) {
 	require.NoError(t, err)
 
 	assert.True(t, result.(*Attestation).Anchored)
+}
+
+func TestAttestKeyReportsTheRootTypeTheChainDeclares(t *testing.T) {
+	device := newAliasDevice(t)
+	nonce := make([]byte, aggeneric.AliasNonceLen)
+	nonce[0] = 0x24
+
+	uccs, err := dice.CreateUccsEvidenceExtension(&dice.ClaimsSet{Nonce: nonce})
+	require.NoError(t, err)
+	vendorInfo, err := dice.RootTypeVendorInfo(dice.RootTypeHardware)
+	require.NoError(t, err)
+	tcbInfo, err := dice.CreateTcbInfoExtension(&dice.TcbInfo{Vendor: "Automate The Things", VendorInfo: vendorInfo})
+	require.NoError(t, err)
+	der := device.sign(t, []pkix.Extension{uccs, tcbInfo})
+
+	// CA m452: the declaration is believed only from a chain that verified to
+	// a configured root, so the same certificate reads unreported unanchored.
+	tests := map[string]struct {
+		backend  func(link *fakeLink) *Backend
+		expected dice.RootType
+	}{
+		"anchored": {
+			backend:  func(link *fakeLink) *Backend { return newAnchoredBackend(t, link, device) },
+			expected: dice.RootTypeHardware,
+		},
+		"unanchored": {
+			backend:  func(link *fakeLink) *Backend { return newTestBackend(t, link) },
+			expected: dice.RootTypeUnreported,
+		},
+	}
+	for name, test := range tests {
+		t.Run(name, func(t *testing.T) {
+			b := test.backend(secureElementLink().answerAttestCert(der))
+
+			result, err := b.AttestKey(context.Background(), &types.KeyAttributes{CN: DefaultKeyCN}, nonce)
+			require.NoError(t, err)
+			assert.Equal(t, test.expected, result.(*Attestation).RootType)
+		})
+	}
 }
 
 // A certificate from a device the operator never enrolled is refused, not

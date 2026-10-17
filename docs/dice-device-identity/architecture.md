@@ -1,6 +1,6 @@
 # DICE Device Identity — Architecture
 
-> **Status: NORMATIVE** · Feature: `dice-device-identity` · Repo: `go-xkms` · Last verified: 2026-10-15
+> **Status: NORMATIVE** · Feature: `dice-device-identity` · Repo: `go-xkms` · Last verified: 2026-10-17
 
 ## The question this answers
 
@@ -177,6 +177,68 @@ nothing. A leaf with no UCCS extension is refused with
 `ErrUccsEvidenceNotFound`, and a claims set with no nonce with
 `ErrNonceClaimMissing`; the two are distinct because an operator needs to tell
 a device that answered the wrong way from one that did not answer.
+
+### The root of trust is hardware or software, and the chain says which
+
+A device keeps its Unique Device Secret either in a secure element (a
+**hardware** root) or in device storage, as an AVR device without a secure
+element does (a **software** root). The relying party needs to know which, and
+the TCG `notSecure` flag alone does not tell it: it says the TCB is not secure,
+not where the UDS lives.
+
+The chain declares it in DiceTcbInfo (TCG DICE Attestation Architecture r0.23
+§6.1.1). `vendorInfo` is vendor-defined, so go-xkms defines two values in its
+own arc, each the DER encoding of an OBJECT IDENTIFIER under
+id-tp-diceRootOfTrust (`pkg/attestation/dice/roottype.go:70-82`):
+
+| Root type | vendorInfo | `notSecure` |
+|-----------|------------|-------------|
+| hardware | DER OID `1.3.6.1.4.1.29377.101.24.1` | clear |
+| software | DER OID `1.3.6.1.4.1.29377.101.24.2` | set |
+
+A software root anywhere in the ancestry makes the identity software-rooted
+(CA m452). A layer whose `notSecure` flag is set is a software root whatever
+its `vendorInfo` says, and so is a layer whose `vendorInfo` names software;
+the chain is hardware only when some layer names hardware and none is a
+software root (`roottype.go:126-197`). A chain that declares nothing, or whose
+`vendorInfo` is another vendor's data, reports `RootTypeUnreported`, the zero
+value. A software root on any layer is held to the `notSecure` policy, so a
+verifier that does not permit `NotSecure` refuses it with
+`ErrOperationalStateNotPermitted` even when only an embedded CA said so
+(`verify.go:512`).
+
+The root type is read only from a chain that verified to a trusted root
+(CA m452): an unauthenticated chain carries no DiceTcbInfo a verifier may
+believe. It comes from the certificates on the paths `x509.Verify`
+authenticated to a configured root and nothing else (`RootTypeFromPaths`,
+`roottype.go:157`); a certificate appended beside those paths is signed by no
+one the verifier trusts, so its declaration — a hardware root, say — is never
+read. Without a trusted root, or when the chain did not verify to one, the
+root type is `RootTypeUnreported` whatever the certificates declare. That
+includes device-attest-01's raw-key records, whose leaf is authenticated by
+the provisioned DeviceID key rather than by a root (`registry.go:193`); its
+endorsed DeviceID path reports one (`registry.go:218`). `attestation.Verifier`
+anchors a `dice` statement through `dice.VerifyChain` (`verifier.go:317`),
+which handles the critical DiceTcbInfo that `crypto/x509` alone would refuse.
+`dice.Verify` puts the result on
+`Evidence.RootType`, and every path that hands a DICE result to a caller
+carries it: `attestation.Result.RootType`, device-attest-01's
+`VerifiedAttestation.RootType` (persisted with the challenge, so finalize sees
+it), the AVR backend's `Attestation.RootType`, and `sdk/go`'s `DICERootType`.
+
+Rejected: a claim inside measurements (273). The possession set
+{10, 256, 273} and the fixed 273 shape belong to the application's evidence,
+and RFC 9711 has no root-type claim to borrow. DiceTcbInfo is the TCG's place
+for what the device's layer says about itself, and a verifier that does not
+know the go-xkms values still reads `notSecure` correctly.
+
+A software root is `notSecure`, so the operational-state policy refuses it
+unless `PermittedFlags.NotSecure` allows it, wherever in the chain it was
+declared — an embedded CA's declaration is held to the policy as the leaf's
+flags are (`verify.go:507`); accepting software roots is a fleet decision, not
+a default. Today's AVR alias certificates carry UCCS
+without DiceTcbInfo and report unreported until the firmware emits the
+declaration.
 
 ### One device identifier, two placements
 

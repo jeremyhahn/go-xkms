@@ -93,10 +93,17 @@ func newP256Key(t *testing.T) *ecdsa.PrivateKey {
 // would have to forge.
 func mintAlias(t *testing.T, subject *ecdsa.PublicKey, signer *ecdsa.PrivateKey, algorithm x509.SignatureAlgorithm, digest []byte) *x509.Certificate {
 	t.Helper()
-	tcbInfo, err := dice.CreateTcbInfoExtension(&dice.TcbInfo{
+	return mintAliasWithTcbInfo(t, subject, nil, signer, algorithm, &dice.TcbInfo{
 		Vendor: "Automate The Things",
 		FWIDs:  []dice.FWID{{HashAlg: asn1.ObjectIdentifier{2, 16, 840, 1, 101, 3, 4, 2, 1}, Digest: digest}},
 	})
+}
+
+// mintAliasWithTcbInfo is mintAlias with info as the alias's DiceTcbInfo,
+// issued by parent; a nil parent makes it self-signed.
+func mintAliasWithTcbInfo(t *testing.T, subject *ecdsa.PublicKey, parent *x509.Certificate, signer *ecdsa.PrivateKey, algorithm x509.SignatureAlgorithm, info *dice.TcbInfo) *x509.Certificate {
+	t.Helper()
+	tcbInfo, err := dice.CreateTcbInfoExtension(info)
 	require.NoError(t, err)
 	uccs, err := dice.CreateUccsEvidenceExtension(&dice.ClaimsSet{Nonce: DICENonce(diceKeyAuth)})
 	require.NoError(t, err)
@@ -109,7 +116,10 @@ func mintAlias(t *testing.T, subject *ecdsa.PublicKey, signer *ecdsa.PrivateKey,
 		SignatureAlgorithm: algorithm,
 		ExtraExtensions:    []pkix.Extension{tcbInfo, uccs, ueidExtension(t)},
 	}
-	der, err := x509.CreateCertificate(rand.Reader, template, template, subject, signer)
+	if parent == nil {
+		parent = template
+	}
+	der, err := x509.CreateCertificate(rand.Reader, template, parent, subject, signer)
 	require.NoError(t, err)
 	leaf, err := x509.ParseCertificate(der)
 	require.NoError(t, err)
@@ -126,7 +136,9 @@ func TestVerifyRegisteredDeviceRawKey(t *testing.T) {
 		leaf := mintAlias(t, &deviceKey.PublicKey, deviceKey, x509.ECDSAWithSHA256, genuineDigest)
 		attested, err := verifier.VerifyRegisteredDevice(ctx, leaf, diceKeyAuth)
 		require.NoError(t, err)
-		assert.Equal(t, spkiOf(t, deviceKey), attested)
+		assert.Equal(t, spkiOf(t, deviceKey), attested.AttestedSPKI)
+		assert.Same(t, leaf, attested.Leaf)
+		assert.Equal(t, dice.RootTypeUnreported, attested.RootType)
 	})
 
 	t.Run("an alias for another key is refused", func(t *testing.T) {
@@ -189,7 +201,8 @@ func TestVerifyRegisteredDeviceEndorsed(t *testing.T) {
 	t.Run("an alias endorsed by the provisioned DeviceID certificate is accepted", func(t *testing.T) {
 		attested, err := fixture.verifier(t, DICEPolicy{}).VerifyRegisteredDevice(ctx, leaf, diceKeyAuth)
 		require.NoError(t, err)
-		assert.Equal(t, fixture.deviceID.RawSubjectPublicKeyInfo, attested)
+		assert.Equal(t, fixture.deviceID.RawSubjectPublicKeyInfo, attested.AttestedSPKI)
+		assert.Same(t, leaf, attested.Leaf)
 	})
 
 	t.Run("a DeviceID certificate for another UEID is refused", func(t *testing.T) {

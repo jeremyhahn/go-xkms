@@ -18,6 +18,7 @@ import (
 	"crypto/x509"
 
 	"github.com/jeremyhahn/go-xkms/pkg/attestation"
+	"github.com/jeremyhahn/go-xkms/pkg/attestation/dice"
 	"github.com/jeremyhahn/go-xkms/pkg/errs"
 )
 
@@ -105,6 +106,13 @@ type VerifiedAttestation struct {
 	// request for any other key, and a FormatDICE record without one. Nil for
 	// FormatTPM.
 	AttestedSPKI []byte
+
+	// RootType is, for FormatDICE, where the device keeps its Unique Device
+	// Secret, as the verified chain's DiceTcbInfo declares it (TCG DICE
+	// Attestation Architecture r0.23 section 6.1.1). It is
+	// dice.RootTypeUnreported for a chain that declares nothing and for
+	// FormatTPM.
+	RootType dice.RootType
 }
 
 // csrEvidence builds the evidence the binding gate judges for one format,

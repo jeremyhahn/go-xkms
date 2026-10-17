@@ -1,6 +1,6 @@
 # DICE Device Identity — User
 
-> **Status: NORMATIVE** · Feature: `dice-device-identity` · Repo: `go-xkms` · Last verified: 2026-10-15
+> **Status: NORMATIVE** · Feature: `dice-device-identity` · Repo: `go-xkms` · Last verified: 2026-10-17
 
 ## Verifying a device's evidence
 
@@ -64,6 +64,39 @@ Permitting one state does not permit another — a device that reports
 `notSecure` *and* `debug` is still refused. `evidence.Flags` reports what the
 device actually claimed, so the caller can record the tier it admitted.
 
+## Reading the root of trust
+
+`evidence.RootType` says where the device keeps its Unique Device Secret, as
+its chain declares it in DiceTcbInfo:
+
+```go
+switch evidence.RootType {
+case dice.RootTypeHardware: // UDS in a secure element; notSecure is clear
+case dice.RootTypeSoftware: // UDS in device storage; notSecure is set
+case dice.RootTypeUnreported: // the chain declares neither
+}
+```
+
+The same value reaches you as `attestation.Result.RootType` from the
+attestation verifier, as `VerifiedAttestation.RootType` from ACME
+device-attest-01, and as `xkms.DICERootType` through `sdk/go`. A software root
+is refused unless you permit `NotSecure` (above), whichever certificate in the
+chain declared it. Only authenticated certificates are read: with
+`TrustedRoots` set, every certificate you pass must be on the verified path;
+without, only the leaf counts.
+
+A device declares its root by putting one of these in its DiceTcbInfo
+`vendorInfo`, with `notSecure` to match:
+
+```go
+vendorInfo, err := dice.RootTypeVendorInfo(dice.RootTypeSoftware)
+info := &dice.TcbInfo{
+    VendorInfo: vendorInfo,
+    Flags:      &dice.OperationalFlags{NotSecure: true},
+    // ...
+}
+```
+
 ## Pinning a specific device
 
 ```go
@@ -117,7 +150,7 @@ the field, and `0` is a real value it did report. Layer 0 is the DICE core.
 | `ErrNonceClaimLength` | The echoed nonce is shorter than 8 bytes, so it establishes no freshness. |
 | `ErrMalformedClaimsSet` / `ErrDuplicateClaim` | The claims set is not one this verifier can read in full — a duplicate claim key, an indefinite-length or tagged encoding, trailing bytes. |
 | `ErrUnsupportedKeyType` | A device certificate carries something other than ECDSA P-256. The hardware holds P-256 only. |
-| `ErrOperationalStateNotPermitted` | The device declared a state you did not permit. The message names which. |
+| `ErrOperationalStateNotPermitted` | The device declared a state you did not permit. The message names which. A software root on any certificate of the verified path counts as `notSecure` (CA m452). |
 | `ErrUnknownTcbInfoField` / `ErrUnknownOperationalFlag` | The device sent something this verifier cannot read. Refused rather than ignored — an unread claim is not a claim you can rely on. |
 | `ErrUeidMismatch` | The device is not the one `ExpectedUeid` names. |
 | `ErrUeidNotFound` | `RequireUeid` or `ExpectedUeid` was set and the leaf states no identifier in either place. |

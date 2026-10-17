@@ -54,6 +54,44 @@ type DICEFWID = dice.FWID
 // operating state.
 type DICEOperationalFlags = dice.OperationalFlags
 
+// DICERootType is where a DICE device keeps its Unique Device Secret, as its
+// chain declares it in DiceTcbInfo: vendorInfo names it with one of the
+// DICEOIDRootOfTrust values and notSecure agrees with it. DICEEvidence and
+// the attestation Result carry it.
+type DICERootType = dice.RootType
+
+const (
+	// DICERootTypeUnreported is the zero value: the chain declares nothing.
+	DICERootTypeUnreported = dice.RootTypeUnreported
+
+	// DICERootTypeHardware is a UDS held in a secure element.
+	DICERootTypeHardware = dice.RootTypeHardware
+
+	// DICERootTypeSoftware is a UDS held in device storage.
+	DICERootTypeSoftware = dice.RootTypeSoftware
+)
+
+var (
+	// DICEOIDRootOfTrust is the arc of the root-type vendorInfo values.
+	DICEOIDRootOfTrust = dice.OIDRootOfTrust
+
+	// DICEOIDRootOfTrustHardware is the vendorInfo value for a hardware root.
+	DICEOIDRootOfTrustHardware = dice.OIDRootOfTrustHardware
+
+	// DICEOIDRootOfTrustSoftware is the vendorInfo value for a software root.
+	DICEOIDRootOfTrustSoftware = dice.OIDRootOfTrustSoftware
+
+	// DICERootTypeVendorInfo returns the DiceTcbInfo vendorInfo value that
+	// names a root type, for a device minting its chain.
+	DICERootTypeVendorInfo = dice.RootTypeVendorInfo
+
+	// DICERootTypeFromPaths derives the root type from the DiceTcbInfo of the
+	// certificates on the paths x509 verified to a trusted root: unreported
+	// with no path, software when notSecure or a software vendorInfo is on
+	// any layer, and the weakest answer across several paths.
+	DICERootTypeFromPaths = dice.RootTypeFromPaths
+)
+
 // DICEUeid is the decoded tcg-dice-Ueid extension, the device's unique
 // identifier.
 type DICEUeid = dice.Ueid
@@ -239,4 +277,8 @@ var (
 	// ErrDICECriticalEvidenceUnreadable reports a certificate in the chain
 	// marking DICE evidence critical that the verifier cannot decode.
 	ErrDICECriticalEvidenceUnreadable = dice.ErrCriticalEvidenceUnreadable
+
+	// ErrDICEUnknownRootType reports a root type with no vendorInfo value:
+	// DICERootTypeUnreported or an undefined one.
+	ErrDICEUnknownRootType = dice.ErrUnknownRootType
 )

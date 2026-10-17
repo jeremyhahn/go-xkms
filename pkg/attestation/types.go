@@ -33,6 +33,7 @@ import (
 	"crypto/x509"
 	"fmt"
 
+	"github.com/jeremyhahn/go-xkms/pkg/attestation/dice"
 	"github.com/jeremyhahn/go-xkms/pkg/errs"
 )
 
@@ -98,7 +99,7 @@ type AttestationStatement struct {
 
 // Attestation provides operations for verifying key attestation statements.
 type Attestation interface {
-	// Verify validates an attestation statement and returns an error if verification fails.
+	// Verify validates an attestation statement and reports what it found.
 	//
 	// Verification checks:
 	//   1. Signature validity over attestation data
@@ -112,9 +113,10 @@ type Attestation interface {
 	//   - opts: Verification options (trusted roots, nonce checking, etc)
 	//
 	// Returns:
-	//   - An error if verification fails
-	//   - nil if verification succeeds
-	Verify(stmt *AttestationStatement, opts *VerifyOptions) error
+	//   - The Result of every check that ran, including the DICE root type;
+	//     nil only when the statement or options are invalid
+	//   - An error if verification fails, nil if it succeeds
+	Verify(stmt *AttestationStatement, opts *VerifyOptions) (*Result, error)
 
 	// VerifyChain validates the certificate chain in the attestation statement.
 	//
@@ -212,6 +214,13 @@ type Result struct {
 
 	// PCRsValid indicates if TPM PCR values match expected values (TPM2 only)
 	PCRsValid bool
+
+	// RootType is where the device keeps its DICE Unique Device Secret, as
+	// the statement's certificate chain declares it in DiceTcbInfo (TCG DICE
+	// Attestation Architecture r0.23 section 6.1.1; see dice.RootType). It is
+	// dice.RootTypeUnreported for every other format and for a DICE chain that
+	// declares nothing.
+	RootType dice.RootType
 }
 
 // String returns a human-readable representation of the verification result.

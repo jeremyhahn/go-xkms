@@ -226,9 +226,20 @@ func newTPMConfig(device string, useSimulator bool, ekCertHandle uint32) (*xkms.
 			KeyAlgorithm:       "RSA",
 			SignatureAlgorithm: "SHA256-RSA-PSS",
 		},
-		PlatformPCRs:    xkms.DefaultPlatformPCRs(),
+		PlatformPCRs:    configuredPlatformPCRs(),
 		PlatformPCRBank: xkms.PCRBankSHA256,
 	}, nil
+}
+
+// configuredPlatformPCRs is the sealing PCR set every `tpm` command opens the
+// TPM with: tpm.platform-pcrs from the loaded config file, which loading has
+// already validated, else xkms.DefaultPlatformPCRs. --platform-pcrs overrides
+// it on `tpm install` / `tpm provision` (applyPCROverrides).
+func configuredPlatformPCRs() xkms.TPMPCRSet {
+	if cfg := GetConfig(); cfg != nil && cfg.TPM.PlatformPCRs != nil {
+		return cfg.TPM.PlatformPCRs
+	}
+	return xkms.DefaultPlatformPCRs()
 }
 
 // newTPMParams wraps config with the logger the `tpm` commands log through.
@@ -267,7 +278,7 @@ func openTPMForProvisioning() (xkms.TrustedPlatformModule, error) {
 // own --device/--simulator flags (tpmCfg).
 // - pcrBank: override the platform PCR bank (empty string uses default "sha256")
 // - goldenPCRs: override which PCRs to include in golden measurement (nil uses config default)
-// - platformPCRs: override the sealing PCR set (nil uses xkms.DefaultPlatformPCRs)
+// - platformPCRs: override the sealing PCR set (nil keeps configuredPlatformPCRs)
 func openConfiguredTPMForProvisioningWithPCROverrides(pcrBank string, goldenPCRs, platformPCRs []uint) (xkms.TrustedPlatformModule, error) {
 	return openTPMForProvisioningWithDeviceAndPCROverrides(tpmCfg.device, tpmCfg.useSimulator, pcrBank, goldenPCRs, platformPCRs)
 }
@@ -282,15 +293,7 @@ func openTPMForProvisioningWithDeviceAndPCROverrides(device string, useSimulator
 	if err != nil {
 		return nil, err
 	}
-
-	// Apply overrides if provided
-	config.GoldenPCRs = goldenPCRs
-	if pcrBank != "" {
-		config.PlatformPCRBank = strings.ToLower(pcrBank)
-	}
-	if platformPCRs != nil {
-		config.PlatformPCRs = platformPCRs
-	}
+	applyPCROverrides(config, pcrBank, goldenPCRs, platformPCRs)
 
 	// For provisioning, we accept ErrNotInitialized since we're about to initialize
 	tpm, err := xkms.NewTPM2(newTPMParams(config))
@@ -299,6 +302,19 @@ func openTPMForProvisioningWithDeviceAndPCROverrides(device string, useSimulator
 	}
 
 	return tpm, nil
+}
+
+// applyPCROverrides applies the provisioning flags to config: the golden PCRs,
+// a non-empty bank, and a non-nil --platform-pcrs set, which replaces the
+// configured sealing set. NewTPM2 validates the result.
+func applyPCROverrides(config *xkms.TPMConfig, pcrBank string, goldenPCRs, platformPCRs []uint) {
+	config.GoldenPCRs = goldenPCRs
+	if pcrBank != "" {
+		config.PlatformPCRBank = strings.ToLower(pcrBank)
+	}
+	if platformPCRs != nil {
+		config.PlatformPCRs = platformPCRs
+	}
 }
 
 // getLogLevel returns the appropriate log level based on verbosity setting

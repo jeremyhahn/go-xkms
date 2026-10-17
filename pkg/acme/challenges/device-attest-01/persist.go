@@ -43,6 +43,7 @@ func (v *VerifiedAttestation) Record(deviceIdentityType, deviceIdentityValue str
 		Signature:           v.Signature,
 		PubArea:             v.PubArea,
 		AttestedSPKI:        v.AttestedSPKI,
+		RootType:            v.RootType,
 	}
 }
 
@@ -62,5 +63,6 @@ func FromRecord(rec *entities.DeviceAttestation) (*VerifiedAttestation, error) {
 		Signature:        rec.Signature,
 		PubArea:          rec.PubArea,
 		AttestedSPKI:     rec.AttestedSPKI,
+		RootType:         rec.RootType,
 	}, nil
 }

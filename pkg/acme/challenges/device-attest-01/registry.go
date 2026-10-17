@@ -97,9 +97,11 @@ var (
 type RegisteredDeviceVerifier interface {
 	// VerifyRegisteredDevice anchors the alias leaf in its device's
 	// provisioning record and then checks its claims against
-	// keyAuthorization. It returns the attested SPKI: the DER
-	// SubjectPublicKeyInfo of the key the provisioning record vouches for.
-	VerifyRegisteredDevice(ctx context.Context, leaf *x509.Certificate, keyAuthorization string) ([]byte, error)
+	// keyAuthorization. It returns the verified attestation's Leaf,
+	// AttestedSPKI -- the DER SubjectPublicKeyInfo of the key the
+	// provisioning record vouches for -- and RootType, the root of trust the
+	// verified chain's DiceTcbInfo declares.
+	VerifyRegisteredDevice(ctx context.Context, leaf *x509.Certificate, keyAuthorization string) (*VerifiedAttestation, error)
 
 	// ConfirmRegisteredDevice re-queries the registry at finalization and
 	// refuses a device whose record is gone or whose key is no longer
@@ -113,7 +115,7 @@ var _ RegisteredDeviceVerifier = (*TrustAnchorVerifier)(nil)
 // the device by its record is reported under ErrDeviceNotAuthorized; evidence
 // the record vouches for but whose claims fail (a nonce from another
 // challenge, a refused operational state) is ErrCertificateChainInvalid.
-func (v *TrustAnchorVerifier) VerifyRegisteredDevice(ctx context.Context, leaf *x509.Certificate, keyAuthorization string) ([]byte, error) {
+func (v *TrustAnchorVerifier) VerifyRegisteredDevice(ctx context.Context, leaf *x509.Certificate, keyAuthorization string) (*VerifiedAttestation, error) {
 	if leaf == nil {
 		return nil, &errs.Detail{Err: ErrInvalidAttestationObject, Detail: "no dice leaf certificate"}
 	}
@@ -174,7 +176,7 @@ func (v *TrustAnchorVerifier) resolve(ctx context.Context, ueid string) (*Provis
 
 // verifyRawKeyDevice is the raw-key path: the leaf must carry the provisioned
 // key and be signed by it before its claims are checked.
-func (v *TrustAnchorVerifier) verifyRawKeyDevice(leaf *x509.Certificate, deviceIDKey []byte, keyAuthorization string) ([]byte, error) {
+func (v *TrustAnchorVerifier) verifyRawKeyDevice(leaf *x509.Certificate, deviceIDKey []byte, keyAuthorization string) (*VerifiedAttestation, error) {
 	key, err := provisionedKey(deviceIDKey)
 	if err != nil {
 		return nil, notAuthorized(err)
@@ -185,17 +187,20 @@ func (v *TrustAnchorVerifier) verifyRawKeyDevice(leaf *x509.Certificate, deviceI
 	if err := verifyAliasSignature(leaf, key); err != nil {
 		return nil, notAuthorized(err)
 	}
-	// No roots: the signature check above is the anchor.
-	if err := v.verifyDICEClaims([]*x509.Certificate{leaf}, nil, keyAuthorization); err != nil {
+	// No roots: the signature check above is the anchor. It is not a trusted
+	// root, so the root type reads unreported (CA m452); only the endorsed
+	// DeviceID path below reports one.
+	rootType, err := v.verifyDICEClaims([]*x509.Certificate{leaf}, nil, keyAuthorization)
+	if err != nil {
 		return nil, err
 	}
-	return bytes.Clone(deviceIDKey), nil
+	return &VerifiedAttestation{Leaf: leaf, AttestedSPKI: bytes.Clone(deviceIDKey), RootType: rootType}, nil
 }
 
 // verifyEndorsedDevice is the endorsement path: the provisioned DeviceID
 // certificate must name the leaf's UEID, and the two must anchor in the DICE
 // roots together.
-func (v *TrustAnchorVerifier) verifyEndorsedDevice(leaf *x509.Certificate, deviceIDDER []byte, ueid, keyAuthorization string) ([]byte, error) {
+func (v *TrustAnchorVerifier) verifyEndorsedDevice(leaf *x509.Certificate, deviceIDDER []byte, ueid, keyAuthorization string) (*VerifiedAttestation, error) {
 	if v.dicePool == nil {
 		return nil, notAuthorized(&errs.Detail{Err: ErrNoTrustAnchors, Detail: "a DeviceID certificate anchors in the DICE roots, and none is configured"})
 	}
@@ -210,17 +215,19 @@ func (v *TrustAnchorVerifier) verifyEndorsedDevice(leaf *x509.Certificate, devic
 	if endorsed != ueid {
 		return nil, notAuthorized(&errs.Detail{Err: ErrDeviceEndorsementInvalid, Detail: "the DeviceID certificate names ueid " + endorsed + ", not " + ueid})
 	}
-	if err := v.verifyDICEClaims([]*x509.Certificate{leaf, deviceID}, v.dicePool, keyAuthorization); err != nil {
+	rootType, err := v.verifyDICEClaims([]*x509.Certificate{leaf, deviceID}, v.dicePool, keyAuthorization)
+	if err != nil {
 		if errors.Is(err, dice.ErrChainVerificationFailed) {
 			return nil, notAuthorized(&errs.Joined{Lead: ErrDeviceEndorsementInvalid, Cause: err})
 		}
 		return nil, err
 	}
-	return bytes.Clone(deviceID.RawSubjectPublicKeyInfo), nil
+	return &VerifiedAttestation{Leaf: leaf, AttestedSPKI: bytes.Clone(deviceID.RawSubjectPublicKeyInfo), RootType: rootType}, nil
 }
 
 // verifyDICEClaims runs dice.Verify over chain with the configured DICE policy
-// and the nonce derived from keyAuthorization.
+// and the nonce derived from keyAuthorization, and returns the root type the
+// chain's DiceTcbInfo declares.
 //
 // The device echoes SHA-256 of the key authorization, not the string (see
 // DICENonce). EAT bounds eat_nonce at 8-64 bytes, and a key authorization is
@@ -228,8 +235,8 @@ func (v *TrustAnchorVerifier) verifyEndorsedDevice(leaf *x509.Certificate, devic
 // base64url characters -- so the raw form cannot be carried by a conforming
 // UCCS claims set at all. Hashing is what Apple's device-attest-01 profile
 // does, for the same reason.
-func (v *TrustAnchorVerifier) verifyDICEClaims(chain []*x509.Certificate, roots *x509.CertPool, keyAuthorization string) error {
-	_, err := dice.Verify(chain, &dice.VerifyOptions{
+func (v *TrustAnchorVerifier) verifyDICEClaims(chain []*x509.Certificate, roots *x509.CertPool, keyAuthorization string) (dice.RootType, error) {
+	evidence, err := dice.Verify(chain, &dice.VerifyOptions{
 		TrustedRoots: roots,
 		// The identity is read from the Ueid, so it is not optional.
 		RequireUeid:             true,
@@ -240,9 +247,9 @@ func (v *TrustAnchorVerifier) verifyDICEClaims(chain []*x509.Certificate, roots 
 		PermittedFlags:          v.dice.PermittedFlags,
 	})
 	if err != nil {
-		return &errs.Joined{Lead: ErrCertificateChainInvalid, Detail: "the dice evidence does not satisfy the configured DICE policy", Cause: err}
+		return dice.RootTypeUnreported, &errs.Joined{Lead: ErrCertificateChainInvalid, Detail: "the dice evidence does not satisfy the configured DICE policy", Cause: err}
 	}
-	return nil
+	return evidence.RootType, nil
 }
 
 // deviceIDSPKI is the DER SubjectPublicKeyInfo the record vouches for: the

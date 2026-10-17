@@ -1,6 +1,6 @@
 # DICE Device Identity — API
 
-> **Status: NORMATIVE** · Feature: `dice-device-identity` · Repo: `go-xkms` · Last verified: 2026-10-15
+> **Status: NORMATIVE** · Feature: `dice-device-identity` · Repo: `go-xkms` · Last verified: 2026-10-17
 
 ## Transports
 
@@ -80,7 +80,7 @@ Verification is therefore two phases:
 
 | Call | When | Establishes |
 |------|------|-------------|
-| `VerifyAttestation(...) (*VerifiedAttestation, error)` | challenge | Format, registry anchoring, freshness. Returns the **verified leaf** and the **attested SPKI**, the key the provisioning record vouched for. |
+| `VerifyAttestation(...) (*VerifiedAttestation, error)` | challenge | Format, registry anchoring, freshness. Returns the **verified leaf**, the **attested SPKI** (the key the provisioning record vouched for) and the **root type** the chain declares. |
 | `(*VerifiedAttestation).VerifyPossessionCSR(csr, orderIdentifiers)` | finalization, `dice` only | The CSR is the device's possession request: the fixed template, signed by the alias key, over `DICENonce(keyAuthorization)`, naming exactly the order's identifiers (`possession.go:370`). |
 | `(*VerifiedAttestation).BindCSRKey(csr)` | finalization | The record carries an attested SPKI and the CSR's SubjectPublicKeyInfo is byte-equal to it; the CSR self-signature verifies; the alias certificate carries the same key, through `attestation.VerifyInvariants`. |
 | `(*VerifiedAttestation).ConfirmRegistration(ctx, verifier)` | finalization | The device registry still holds the device's record, and its key is still the attested SPKI. A refusal is `unauthorized`. |
@@ -119,6 +119,21 @@ different document, and the device's signature is over the original.
 `AttestedSPKI` is stored beside it (`entities.DeviceAttestation.AttestedSPKI`);
 a `dice` record without one was never anchored in a registry and its finalize is
 `badCSR`.
+
+`VerifiedAttestation.RootType` is the root of trust the alias chain declares in
+DiceTcbInfo — hardware, software, or unreported
+([architecture.md](architecture.md#the-root-of-trust-is-hardware-or-software-and-the-chain-says-which)) —
+and is persisted with it too (`entities.DeviceAttestation.RootType`, stored as
+its number: 0 unreported, 1 hardware, 2 software). Under CA m452 it is read
+only from the certificates on the path that verified to a configured trusted
+root, so a raw DeviceIDKey record, whose leaf no root authenticates, reports
+unreported; only the DeviceIDCertificate path reports hardware or software. A
+software root (`notSecure`, or a software `vendorInfo`) on any layer of that
+path makes it software, which `DICEPolicy.PermittedFlags.NotSecure` must
+permit. Certificates off the verified path are never read.
+`RegisteredDeviceVerifier.VerifyRegisteredDevice` returns the
+same `*VerifiedAttestation`, so an injected verifier reports the root type the
+same way.
 
 `ValidateAttestationFormat` and the verification dispatch table are the same
 map, so a format the server reports as supported is always one it can actually

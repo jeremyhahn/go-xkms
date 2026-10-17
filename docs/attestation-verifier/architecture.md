@@ -31,7 +31,7 @@ expired) and, when trust anchors are configured, against those anchors.
 `VerifyChainAnchored` is the fail-closed form: called with zero anchors it
 returns `ErrNoTrustAnchors` rather than falling back to structural-only
 validation, because a self-consistent chain the caller minted must never
-satisfy an attestation gate (`verifier.go:192`). `Verify` additionally checks
+satisfy an attestation gate (`verifier.go:233`). `Verify` additionally checks
 a cryptographic signature over attestation data and, optionally, freshness
 (timestamp/nonce) and TPM PCR values — the full flow for a self-contained
 `AttestationStatement` produced by `AttestKey`.
@@ -217,7 +217,7 @@ TCG-CSR-IDEVID arrives (packed TPM public areas + TPM2_Certify structure)
 - **A structurally valid chain is not, by itself, provenance.** `VerifyChain`
   says so explicitly in its own doc comment: with no anchors it validates
   structure only, "which proves nothing about hardware provenance because
-  the whole chain is caller-supplied" (`verifier.go:156-160`).
+  the whole chain is caller-supplied" (`verifier.go:190-194`).
   `VerifyChainAnchored` is the form that fails closed.
 - **Binding is the check that matters most.** Anchoring establishes that
   *some* configured-vendor hardware exists; binding establishes that *this*

@@ -94,6 +94,14 @@ type Attestation struct {
 	// said rather than this host's classification of it.
 	CryptoTier aggeneric.CryptoTier
 
+	// RootType is where the device keeps its Unique Device Secret, as the
+	// certificate's DiceTcbInfo declares it (dice.RootType). An alias
+	// certificate that carries only tcg-dice-UCCS-evidence declares nothing
+	// and reports dice.RootTypeUnreported, and so does any certificate when
+	// no roots are configured: CA m452 believes the declaration only from a
+	// chain that verified to one.
+	RootType dice.RootType
+
 	// Anchored reports whether the certificate was verified against configured
 	// roots. False means no roots were configured -- never that anchoring was
 	// attempted and skipped, which refuses.
@@ -235,6 +243,7 @@ func (b *Backend) checkAliasCertificate(der, nonce []byte) (*Attestation, error)
 		Nonce:          echoed,
 		AttestLevel:    level,
 		CryptoTier:     b.caps.CryptoTier,
+		RootType:       evidence.RootType,
 		// Whether anchoring RAN, never conflated with whether it passed: a
 		// chain from an unknown issuer with roots configured is refused above,
 		// not reported here with Anchored false.

@@ -404,7 +404,7 @@ func verifyDICEAttestation(ctx context.Context, attestObj *AttestationObject, ve
 	if !ok {
 		return nil, notAuthorized(ErrNoDeviceResolver)
 	}
-	attestedSPKI, err := registry.VerifyRegisteredDevice(ctx, leaf, expectedKeyAuth)
+	verified, err := registry.VerifyRegisteredDevice(ctx, leaf, expectedKeyAuth)
 	if err != nil {
 		return nil, err
 	}
@@ -415,7 +415,7 @@ func verifyDICEAttestation(ctx context.Context, attestObj *AttestationObject, ve
 	// the CA is about to sign is for. That comparison is
 	// VerifiedAttestation.BindCSRKey, against AttestedSPKI, and it needs the
 	// CSR, which arrives one request later.
-	return &VerifiedAttestation{Leaf: leaf, AttestedSPKI: attestedSPKI}, nil
+	return verified, nil
 }
 
 // DICENonce is the value a DICE attester places in its eat_nonce claim for a

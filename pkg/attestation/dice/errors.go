@@ -84,6 +84,11 @@ var (
 	// ErrEmptyUeid indicates the UEID octet string is empty, which identifies
 	// no device.
 	ErrEmptyUeid = errors.New("dice: empty ueid")
+
+	// ErrUnknownRootType indicates a root type with no vendorInfo value was
+	// asked for: RootTypeUnreported, or a value outside the ones defined.
+	// Unreported is stated by omitting the value, never by encoding one.
+	ErrUnknownRootType = errors.New("dice: root type has no vendorInfo value")
 )
 
 // tcg-dice-UCCS-evidence failures.

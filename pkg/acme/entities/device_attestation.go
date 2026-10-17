@@ -13,6 +13,8 @@
 
 package entities
 
+import "github.com/jeremyhahn/go-xkms/pkg/attestation/dice"
+
 // DeviceAttestation is what a validated device-attest-01 or enroll-01
 // challenge established about the device that answered it: the attested key and the
 // device identity the evidence carried, kept so finalization -- one request,
@@ -71,4 +73,10 @@ type DeviceAttestation struct {
 	// never the payload; finalization requires the certificate request's key
 	// to equal it and refuses a "dice" record without one. Nil for "tpm".
 	AttestedSPKI []byte `yaml:"attested-spki,omitempty" json:"attested_spki,omitempty"`
+
+	// RootType is, for "dice", the root of trust the verified chain's
+	// DiceTcbInfo declares: where the device keeps its Unique Device Secret.
+	// Zero (dice.RootTypeUnreported) when the chain declares nothing and for
+	// "tpm".
+	RootType dice.RootType `yaml:"root-type,omitempty" json:"root_type,omitempty"`
 }

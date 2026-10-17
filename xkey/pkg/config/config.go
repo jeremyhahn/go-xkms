@@ -206,6 +206,12 @@ type TPMConfig struct {
 	Device    string `yaml:"device" json:"device" mapstructure:"device"`
 	SRKHandle uint32 `yaml:"srk_handle" json:"srk_handle" mapstructure:"srk_handle"`
 	EKHandle  uint32 `yaml:"ek_handle" json:"ek_handle" mapstructure:"ek_handle"`
+
+	// PlatformPCRs is the board's sealing PCR set, the SDK TPMConfig's
+	// PlatformPCRs read from the same tpm.platform-pcrs key. Unset means
+	// xkms.DefaultPlatformPCRs; Validate refuses what TPMPCRSet.Validate
+	// refuses.
+	PlatformPCRs xkms.TPMPCRSet `yaml:"platform-pcrs,omitempty" json:"platform_pcrs,omitempty" mapstructure:"platform-pcrs"`
 }
 
 // PasswordProtectionConfig holds barrier/encryption at-rest settings.
@@ -567,6 +573,12 @@ func (c *Config) Validate() error {
 	if c.PIV.Storage != "" {
 		if _, ok := validPIVStorageTypes[c.PIV.Storage]; !ok {
 			return &DetailError{Err: ErrConfigInvalid, Detail: fmt.Sprintf(": piv.storage %q is not one of file, tpm2, pkcs11", c.PIV.Storage)}
+		}
+	}
+
+	if c.TPM.PlatformPCRs != nil {
+		if err := c.TPM.PlatformPCRs.Validate(); err != nil {
+			return err
 		}
 	}
 

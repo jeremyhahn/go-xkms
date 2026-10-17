@@ -94,7 +94,7 @@ func TestRegisterConfigKeys_EveryScalarLeafReadsItsEnvironmentVariable(t *testin
 			continue
 		}
 		scalar++
-		t.Setenv("XKEY_"+strings.ToUpper(strings.ReplaceAll(key, ".", "_")), "probe-"+key)
+		t.Setenv("XKEY_"+strings.ToUpper(strings.NewReplacer(".", "_", "-", "_").Replace(key)), "probe-"+key)
 	}
 	require.Greater(t, scalar, 50, "the walk found too few scalar leaves")
 	require.Equal(t, 5, composite,
