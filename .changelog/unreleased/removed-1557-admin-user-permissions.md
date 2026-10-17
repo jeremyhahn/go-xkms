@@ -1,1 +1,0 @@
-- **`AuthenticatedUser.Permissions` is gone from the ACME admin plane** -- the field copied the token's claimed permissions onto the request principal although nothing may authorize from it. Every ACME admin decision is made by qrdb's RBAC through `PermissionGate`; a permission listed in a bearer token's claims grants nothing (go-xkms#1557).

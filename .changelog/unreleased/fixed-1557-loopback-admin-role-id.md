@@ -1,1 +1,0 @@
-- **The loopback per-launch token identity holds the Admin@system role** -- its role is go-qrdb's deterministic system role ID (`SystemRoleID(SystemTenantID, RoleNameAdmin)`) instead of the bare name `admin`, which resolved to no role because `Identity.Roles` carries role IDs (go-xkms#1557).

@@ -8,7 +8,7 @@ require (
 	github.com/jeremyhahn/go-enclave v0.8.0-alpha
 	github.com/jeremyhahn/go-qrdb/sdk/go v0.48.0-alpha
 	github.com/jeremyhahn/go-truststrap v0.6.0-alpha
-	github.com/jeremyhahn/go-xkms v0.55.0-alpha
+	github.com/jeremyhahn/go-xkms v0.56.0-alpha
 	github.com/mark3labs/mcp-go v0.45.0
 	github.com/quic-go/quic-go v0.63.0
 	github.com/stretchr/testify v1.12.1

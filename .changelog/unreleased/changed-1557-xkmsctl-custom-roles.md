@@ -1,1 +1,0 @@
-- **`xkmsctl user register --role` accepts custom roles** -- the CLI no longer keeps its own role list: it sends the role name as given, and the server refuses a role the tenant does not hold. The `ErrInvalidRole` client-side check is gone (go-xkms#1557).
