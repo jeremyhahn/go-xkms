@@ -53,8 +53,14 @@ func newSimHarness(t *testing.T, mutate func(*Config)) *simHarness {
 // test if it is ever invoked.
 func newSimHarnessWithHTTPClient(t *testing.T, mutate func(*Config), httpClient *http.Client) *simHarness {
 	t.Helper()
+	return newSimHarnessWithLogger(t, mutate, httpClient, slog.New(slog.NewTextHandler(io.Discard, nil)))
+}
 
-	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
+// newSimHarnessWithLogger is newSimHarnessWithHTTPClient with the logger the
+// TPM, its key store and provisioning log to, so a test can capture every
+// record from the first command on.
+func newSimHarnessWithLogger(t *testing.T, mutate func(*Config), httpClient *http.Client, logger *slog.Logger) *simHarness {
+	t.Helper()
 
 	sim, err := OpenSimulator()
 	require.NoError(t, err, "TPM simulator must be available; build with -tags tpm_simulator")
@@ -75,13 +81,12 @@ func newSimHarnessWithHTTPClient(t *testing.T, mutate func(*Config), httpClient 
 	}
 
 	params := &Params{
-		Logger:       logger,
-		DebugSecrets: false,
-		Config:       config,
-		Backend:      storageFactory.KeyBackend(),
-		Transport:    sim.Transport(),
-		FQDN:         "node1.example.com",
-		HTTPClient:   httpClient,
+		Logger:     logger,
+		Config:     config,
+		Backend:    storageFactory.KeyBackend(),
+		Transport:  sim.Transport(),
+		FQDN:       "node1.example.com",
+		HTTPClient: httpClient,
 	}
 
 	tpmIface, err := NewTPM2(params)

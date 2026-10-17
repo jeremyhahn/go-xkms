@@ -118,8 +118,7 @@ func (ca *CA) EnrollDevice(ctx context.Context, packedCSR []byte, request *Certi
 
 	slog.Debug("EnrollDevice: MakeCredential succeeded, signing CSR",
 		slog.Int("credential_blob_size", len(credentialBlob)),
-		slog.Int("encrypted_secret_size", len(encryptedSecret)),
-		slog.Int("secret_size", len(secret)))
+		slog.Int("encrypted_secret_size", len(encryptedSecret)))
 
 	// Sign the TCG-CSR-IDEVID to issue IAK and IDevID certificates
 	iakDER, idevidDER, err := ca.SignTCGCSRIDevID(ctx, tcgCSR, request)

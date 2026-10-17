@@ -155,12 +155,11 @@ func NewTPM2TestSetup(t *testing.T) *TPM2TestSetup {
 
 	// Create TPM2 params with custom transport
 	params := &tpm2ks.Params{
-		Logger:       logger,
-		DebugSecrets: false, // Disable to reduce noise in capture
-		Config:       tpmConfig,
-		Backend:      keyBackend,
-		FQDN:         fmt.Sprintf("capture-test-%d.example.com", time.Now().UnixNano()),
-		Transport:    capture, // Use capture transport
+		Logger:    logger,
+		Config:    tpmConfig,
+		Backend:   keyBackend,
+		FQDN:      fmt.Sprintf("capture-test-%d.example.com", time.Now().UnixNano()),
+		Transport: capture, // Use capture transport
 	}
 
 	// Create TPM2 instance (allow ErrNotInitialized for fresh TPM)

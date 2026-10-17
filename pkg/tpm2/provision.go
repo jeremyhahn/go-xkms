@@ -670,15 +670,6 @@ func (tpm *TPM2) Provision(soPIN types.Password) error {
 		return err
 	}
 
-	if tpm.debugSecrets {
-		var soPinBytes []byte
-		if soPIN != nil {
-			soPinBytes = soPIN.Bytes()
-		}
-		tpm.logger.Debug("tpm: hierarchy authorization set",
-			slog.String("authorization", string(soPinBytes)))
-	}
-
 	// Provision Owner hierarchy with new EK and SRK
 	srkAttrs, err := tpm.ProvisionOwner(soPIN)
 	if err != nil {

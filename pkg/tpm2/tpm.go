@@ -296,11 +296,10 @@ type TrustedPlatformModule interface {
 }
 
 type Params struct {
-	Backend      store.KeyBackend
-	CertStore    store.CertificateStorer
-	Config       *Config
-	DebugSecrets bool
-	FQDN         string
+	Backend   store.KeyBackend
+	CertStore store.CertificateStorer
+	Config    *Config
+	FQDN      string
 	// HTTPClient overrides the client used for the manufacturer EK
 	// certificate service request made when Config.EK.CertDownload is true
 	// (see downloadEKCertFromManufacturer). Optional: tests inject a client
@@ -314,11 +313,10 @@ type Params struct {
 }
 
 type TPM2 struct {
-	algID        tpm2.TPMAlgID
-	backend      store.KeyBackend
-	certStore    store.CertificateStorer
-	config       *Config
-	debugSecrets bool
+	algID     tpm2.TPMAlgID
+	backend   store.KeyBackend
+	certStore store.CertificateStorer
+	config    *Config
 	// deviceCaps caches the algorithm and curve sets this TPM reports. The
 	// answer cannot change while the device is open, and the pointer is
 	// published atomically so concurrent callers share one snapshot without a
@@ -507,16 +505,15 @@ func NewTPM2(params *Params) (TrustedPlatformModule, error) {
 	}
 
 	tpm := &TPM2{
-		algID:        algID,
-		logger:       params.Logger,
-		backend:      params.Backend,
-		certStore:    params.CertStore,
-		debugSecrets: params.DebugSecrets,
-		config:       params.Config,
-		device:       device,
-		conn:         conn,
-		fqdn:         params.FQDN,
-		httpClient:   params.HTTPClient,
+		algID:      algID,
+		logger:     params.Logger,
+		backend:    params.Backend,
+		certStore:  params.CertStore,
+		config:     params.Config,
+		device:     device,
+		conn:       conn,
+		fqdn:       params.FQDN,
+		httpClient: params.HTTPClient,
 		// hash:         hash,
 		simulator: sim,
 		tracker:   tracker,
@@ -1195,11 +1192,6 @@ func (tpm *TPM2) SetHierarchyAuth(oldPasswd, newPasswd types.Password, hierarchy
 	}
 	if newPasswd != nil {
 		newPassword = newPasswd.Bytes()
-	}
-	if tpm.debugSecrets {
-		tpm.logger.Debug("hierarchy passwords",
-			slog.String("old", string(oldPassword)),
-			slog.String("new", string(newPassword)))
 	}
 	var hierarchies []tpm2.TPMHandle
 	if hierarchy != nil {

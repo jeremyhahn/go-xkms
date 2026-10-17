@@ -143,11 +143,6 @@ func (tpm *TPM2) NVWrite(
 		}
 	}
 
-	if tpm.debugSecrets {
-		tpm.logger.Debug("NVWriteSecret: secret written",
-			slog.String("secret", string(secretBytes)))
-	}
-
 	keyAttrs.TPMAttributes.Handle = pub.NVIndex
 	keyAttrs.TPMAttributes.Name = *nvName
 

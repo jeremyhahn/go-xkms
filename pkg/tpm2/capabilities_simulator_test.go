@@ -68,11 +68,10 @@ func createSimNoStore(t *testing.T) TrustedPlatformModule {
 	}
 
 	params := &Params{
-		Logger:       logger,
-		DebugSecrets: true,
-		Config:       config,
-		Backend:      nil, // intentionally nil
-		FQDN:         "node1.example.com",
+		Logger:  logger,
+		Config:  config,
+		Backend: nil, // intentionally nil
+		FQDN:    "node1.example.com",
 	}
 
 	tpm, err := NewTPM2(params)

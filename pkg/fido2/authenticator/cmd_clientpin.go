@@ -795,7 +795,6 @@ func (a *Authenticator) handleGetPinUvAuthTokenUsingPinWithPermissions(req *Clie
 
 	slog.Debug("[CTAP2] getPinUvAuthTokenUsingPinWithPermissions",
 		"protocol", req.PinUvAuthProtocol,
-		"pinHashEnc_len", len(req.PinHashEnc),
 		"permissions", req.Permissions,
 	)
 
@@ -809,7 +808,6 @@ func (a *Authenticator) handleGetPinUvAuthTokenUsingPinWithPermissions(req *Clie
 		slog.Warn("[CTAP2] PIN hash decryption failed",
 			"error", err.Error(),
 			"protocol", req.PinUvAuthProtocol,
-			"pinHashEnc_len", len(req.PinHashEnc),
 		)
 		currentPinHash = nil
 	}

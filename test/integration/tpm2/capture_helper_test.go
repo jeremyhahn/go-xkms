@@ -86,12 +86,11 @@ func setupTPM2WithCapture(t *testing.T) (tpm2lib.TrustedPlatformModule, *TPMCapt
 
 	// Create TPM2 params with custom transport
 	params := &tpm2lib.Params{
-		Logger:       logger,
-		DebugSecrets: false, // Disable to reduce noise in capture
-		Config:       config,
-		Backend:      fileBackend,
-		FQDN:         "capture-test.example.com",
-		Transport:    captureTransport, // Use capture transport
+		Logger:    logger,
+		Config:    config,
+		Backend:   fileBackend,
+		FQDN:      "capture-test.example.com",
+		Transport: captureTransport, // Use capture transport
 	}
 
 	// Create TPM2 instance (allow ErrNotInitialized for fresh TPM)

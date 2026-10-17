@@ -286,9 +286,7 @@ func (b *Bridge) handleActivateCredential(_ context.Context, params json.RawMess
 		return nil, tpmError(err)
 	}
 
-	b.logger.Info("credential activated",
-		"backend", backend,
-		"secretLen", len(secret))
+	b.logger.Info("credential activated", "backend", backend)
 	if auditErr := b.logTPM(audit.OpDeviceAttested, pairingproto.MethodRemoteActivateCredential, true, nil); auditErr != nil {
 		secure.Wipe(secret)
 		return nil, auditErr

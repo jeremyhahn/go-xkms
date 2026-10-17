@@ -90,12 +90,6 @@ func (tpm *TPM2) sealKeyInternal(
 	// once the object is created rather than left in the heap.
 	defer enclave.Wipe(secretBytes)
 
-	if tpm.debugSecrets {
-		tpm.logger.Debug("tpm: sealing HMAC secret",
-			slog.String("cn", keyAttrs.CN),
-			slog.String("secret", string(secretBytes)))
-	}
-
 	session, closer, err = tpm.CreateSession(keyAttrs)
 	if err != nil {
 		tpm.logger.Error("failed to create session for seal", slog.String("error", err.Error()))
@@ -338,12 +332,6 @@ func (tpm *TPM2) unsealKeyInternal(
 
 	secret := unseal.OutData.Buffer
 
-	if tpm.debugSecrets {
-		tpm.logger.Debug("Retrieved sealed HMAC secret",
-			slog.String("cn", keyAttrs.CN),
-			slog.String("secret", string(secret)))
-	}
-
 	return secret, nil
 }
 
@@ -447,12 +435,6 @@ func (tpm *TPM2) unsealFromBlobs(
 	}
 
 	secret := unseal.OutData.Buffer
-
-	if tpm.debugSecrets {
-		tpm.logger.Debug("Retrieved sealed HMAC secret from blobs",
-			slog.String("cn", keyAttrs.CN),
-			slog.String("secret", string(secret)))
-	}
 
 	return secret, nil
 }

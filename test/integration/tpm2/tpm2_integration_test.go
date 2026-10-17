@@ -252,13 +252,12 @@ func createTPM2Instance(t *testing.T) (tpm2lib.TrustedPlatformModule, func()) {
 
 	// Create TPM2 params with custom transport
 	params := &tpm2lib.Params{
-		Logger:       logger,
-		DebugSecrets: true,
-		Config:       config,
-		Backend:      fileBackend,
-		CertStore:    certStore, // Certificate store for EK cert
-		FQDN:         "integration-test.example.com",
-		Transport:    tpmTransport, // Use our TCP transport
+		Logger:    logger,
+		Config:    config,
+		Backend:   fileBackend,
+		CertStore: certStore, // Certificate store for EK cert
+		FQDN:      "integration-test.example.com",
+		Transport: tpmTransport, // Use our TCP transport
 	}
 
 	// Create TPM2 instance

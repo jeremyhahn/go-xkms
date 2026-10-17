@@ -506,7 +506,6 @@ func (tpm *TPM2) KeyAttributes(
 	}
 
 	attrs := &types.KeyAttributes{
-		Debug:        tpm.debugSecrets,
 		KeyAlgorithm: keyAlgo,
 		KeyType:      types.KeyTypeTPM,
 		StoreType:    types.StoreTPM2,
@@ -703,8 +702,8 @@ func (tpm *TPM2) CreateSRK(
 	}
 
 	// Diagnostic summary of what is about to be passed to CreatePrimary.
-	// Lengths and presence flags only -- never the auth bytes themselves, at
-	// any log level. The auth values this key is created with are exactly
+	// Presence flags only -- never the auth bytes nor their lengths, at any
+	// log level. The auth values this key is created with are exactly
 	// the owner-hierarchy and object secrets this package protects
 	// everywhere else (types.SecretValue, go-enclave enclaves); logging them
 	// here would undo that.
@@ -715,9 +714,9 @@ func (tpm *TPM2) CreateSRK(
 	tpm.logger.Debug("CreateSRK",
 		slog.String("hierarchy", hierName),
 		slog.String("hierarchy_handle", fmt.Sprintf("0x%08x", uint32(hierarchy))),
-		slog.Int("hierarchy_auth_len", len(hierarchyAuth)),
+		slog.Bool("hierarchy_auth_set", len(hierarchyAuth) > 0),
 		slog.Bool("hierarchy_auth_nil_field", srkAttrs.TPMAttributes.HierarchyAuth == nil),
-		slog.Int("user_auth_len", len(userAuth)),
+		slog.Bool("user_auth_set", len(userAuth) > 0),
 		slog.Bool("user_auth_nil_field", srkAttrs.Password == nil),
 		slog.String("tpm_policy", srkAttrs.TPMPolicy),
 		slog.String("persistent_handle", fmt.Sprintf("0x%08x", uint32(srkAttrs.TPMAttributes.Handle))),

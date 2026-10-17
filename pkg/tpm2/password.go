@@ -201,10 +201,6 @@ func (p *PlatformPassword) unsealDirect() []byte {
 
 	data, err := p.tpm.UnsealKey(&secretAttrs, p.backend)
 
-	// Always log result for tracing - remove after debugging
-	p.logger.Info(fmt.Sprintf("keystore/tpm2: unseal result - data=%d bytes, err=%v",
-		len(data), err))
-
 	if err != nil {
 		// Log at debug level - this is expected during fresh initialization
 		// when the sealed key doesn't exist yet. The calling code will handle

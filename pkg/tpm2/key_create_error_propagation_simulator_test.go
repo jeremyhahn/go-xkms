@@ -59,12 +59,11 @@ func newUnprovisionedSimHarness(t *testing.T, mutate func(*Config)) *simHarness 
 	}
 
 	params := &Params{
-		Logger:       logger,
-		DebugSecrets: false,
-		Config:       config,
-		Backend:      storageFactory.KeyBackend(),
-		Transport:    sim.Transport(),
-		FQDN:         "node1.example.com",
+		Logger:    logger,
+		Config:    config,
+		Backend:   storageFactory.KeyBackend(),
+		Transport: sim.Transport(),
+		FQDN:      "node1.example.com",
 	}
 
 	tpmIface, err := NewTPM2(params)

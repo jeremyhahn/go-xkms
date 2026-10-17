@@ -247,7 +247,7 @@ func (a *Authenticator) HandleMakeCredential(data []byte) ([]byte, error) {
 	if a.logger != nil {
 		a.logger.Info("MakeCredential PIN check",
 			slog.String("rp", req.RP.ID),
-			slog.Int("pinUvAuthParam_len", len(req.PINUVAuthParam)),
+			slog.Bool("pinUvAuthParam_present", len(req.PINUVAuthParam) > 0),
 			slog.Int("pinUvAuthProtocol", int(req.PINUVAuthProtocol)),
 			slog.Bool("enablePIN", a.config.EnablePIN),
 			slog.Bool("pinSet", a.IsPINSet()),

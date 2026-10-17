@@ -687,11 +687,10 @@ func BenchmarkRandomBytes_Simulator(b *testing.B) {
 	}
 
 	params := &Params{
-		Logger:       logger,
-		DebugSecrets: true,
-		Config:       config,
-		Backend:      fileBackend,
-		FQDN:         "node1.example.com",
+		Logger:  logger,
+		Config:  config,
+		Backend: fileBackend,
+		FQDN:    "node1.example.com",
 	}
 
 	tpm, err := NewTPM2(params)
@@ -2066,10 +2065,9 @@ func TestInstallCreatesIDevID(t *testing.T) {
 		logger := slog.Default()
 		certStore := store.NewMemoryCertStore(logger)
 		params := &Params{
-			Config:       config,
-			Logger:       logger,
-			CertStore:    certStore,
-			DebugSecrets: false,
+			Config:    config,
+			Logger:    logger,
+			CertStore: certStore,
 		}
 
 		// Create TPM instance with simulator

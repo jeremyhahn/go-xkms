@@ -147,13 +147,12 @@ func (s *SwtpmConnection) InitializeTPM() error {
 
 	// Create TPM parameters
 	params := &xkmssdk.TPMParams{
-		Backend:      backend,
-		CertStore:    certStore,
-		Config:       &config,
-		DebugSecrets: true,
-		FQDN:         s.deviceID,
-		Logger:       nil,
-		Transport:    s.transport,
+		Backend:   backend,
+		CertStore: certStore,
+		Config:    &config,
+		FQDN:      s.deviceID,
+		Logger:    nil,
+		Transport: s.transport,
 	}
 
 	// Initialize TPM
@@ -242,13 +241,12 @@ func (s *SwtpmConnection) InitializeTPMWithECDSA() error {
 
 	// Create TPM parameters
 	params := &xkmssdk.TPMParams{
-		Backend:      backend,
-		CertStore:    certStore,
-		Config:       &config,
-		DebugSecrets: true,
-		FQDN:         s.deviceID,
-		Logger:       nil,
-		Transport:    s.transport,
+		Backend:   backend,
+		CertStore: certStore,
+		Config:    &config,
+		FQDN:      s.deviceID,
+		Logger:    nil,
+		Transport: s.transport,
 	}
 
 	// Initialize TPM
