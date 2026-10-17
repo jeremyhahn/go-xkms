@@ -32,6 +32,7 @@ Scope and boundaries: [docs/SPEC.md](docs/SPEC.md).
 - **clustering** — embedded go-qrdb clustered node behind the `raft` tag — [#1393](../../issues/1393) — done
 - **crypto-backends** — one `Backend` contract with every implementation behind `WITH_*` toggles — [#1513](../../issues/1513) — done
 - **datastore** — every subsystem on the deployment's one go-qrdb datastore — [#1345](../../issues/1345) — done
+- **dice-tcbinfo-seam** — the `DiceTcbInfo` root-type `vendorInfo` bytes trusted-firmware emits (owner ruling 76, CA m508) — [v0.56.0-alpha](../../releases/tag/v0.56.0-alpha) — done
 - **escrow** — KMIP and xkms-federation key escrow — [v0.3.0-alpha](../../releases/tag/v0.3.0-alpha) — done
 - **fido2-ctap2** — the stack's single FIDO2 CTAP2 client — [v0.9.0-alpha](../../releases/tag/v0.9.0-alpha) — done
 - **frost-threshold-signing** — RFC 9591 FROST threshold signing under `-tags frost` — [v0.25.0-alpha](../../releases/tag/v0.25.0-alpha) — done
