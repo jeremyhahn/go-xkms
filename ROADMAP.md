@@ -97,8 +97,8 @@ Scope and boundaries: [docs/SPEC.md](docs/SPEC.md).
 
 - **tpm-policies** — unattended unlock across updates, steps 1 and 2 — [#1443](../../issues/1443) — open
 - **attestation-verifier** — event-log replay against signed CoRIM reference values — [#1443](../../issues/1443) — open
-- **acme-issuance** — `sdk/go` `AssemblePossessionCSR` for device-attest-01 finalize, and the server refusing any measurements (273) shape but the fixed one — [trusted-firmware #28](../../../trusted-firmware/issues/28), [SPEC](docs/SPEC.md#features) — open
-- **dice-device-identity** — alias claims in the fixed measurements (273) shape, which closes with acme-issuance's server check above; the root type (hardware or software UDS, from DiceTcbInfo) is in the evidence, the attestation `Result` and device-attest-01, and `dice-idevid` shipped in [#658](../../issues/658), [#1510](../../issues/1510) — [SPEC](docs/SPEC.md#features) — open
+- **acme-issuance** — `sdk/go` `AssemblePossessionCSR` for device-attest-01 finalize — [trusted-firmware #28](../../../trusted-firmware/issues/28), [SPEC](docs/SPEC.md#features) — open; the server refusing any measurements (273) shape but the ruled one is done, matching its 32 bytes against the registered reference is open
+- **dice-device-identity** — alias claims in the ruled measurements (273) shape, the CoSWID's tag-id, software-name and entity the producer's (CA m463; arduino-generic's are accepted), open until the server matches the 32 bytes against the registered reference; the root type (hardware or software UDS, from DiceTcbInfo) is in the evidence, the attestation `Result` and device-attest-01, and `dice-idevid` shipped in [#658](../../issues/658), [#1510](../../issues/1510) — [SPEC](docs/SPEC.md#features) — open
 
 ## Next
 

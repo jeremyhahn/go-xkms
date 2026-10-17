@@ -14,7 +14,9 @@ use, cosign, without a go-xkms-specific format.
 
 `pkg/image` signs with a KMS `crypto.Signer`: a TPM, PKCS#11 or cloud key
 whose private half never leaves the device. `TrustedCA` certifies the key
-under its code-signing profile (`pkg/image/signer.go:221`). The signer:
+under its code-signing profile, in the caller's tenant, which it stamps as
+the certificate's first OU (`RequestCodeSigningCertificate`,
+`pkg/image/signer.go`). The signer:
 
 1. Resolves the reference to its manifest digest (`pkg/image/registry.go:215`).
 2. Writes an in-toto statement with that digest as its subject
@@ -99,7 +101,8 @@ HTTP(S) by `pkg/image`; nothing is persisted locally.
 ## What this feature does not do
 
 - **No transparency-log append.** Appending each signature to the
-  transparency log ships separately; nothing here stubs it.
+  transparency log waits on the transparency-log rows (#1549); nothing here
+  stubs it.
 - **No transport route.** Image signing is an embedded Go and SDK call; it
   has no REST, gRPC, QUIC, MCP or Unix-socket route.
 - **No non-SHA-256 digests.** A `sha512-<hex>.att` tag would exceed the

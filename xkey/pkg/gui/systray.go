@@ -36,6 +36,9 @@ type TrayManager struct {
 	mBridgeStop    *systray.MenuItem
 	mKeyCount      *systray.MenuItem
 	mStorageStatus *systray.MenuItem
+	mSettings      *systray.MenuItem
+	mAuditLog      *systray.MenuItem
+	mQuit          *systray.MenuItem
 }
 
 // NewTrayManager creates a new TrayManager bound to the given App.
@@ -107,22 +110,22 @@ func (t *TrayManager) onReady() {
 	systray.AddSeparator()
 
 	// Settings.
-	mSettings := systray.AddMenuItem("Settings", "Application settings")
+	t.mSettings = systray.AddMenuItem("Settings", "Application settings")
 
 	// Audit Log.
-	mAuditLog := systray.AddMenuItem("Audit Log", "View security audit log")
+	t.mAuditLog = systray.AddMenuItem("Audit Log", "View security audit log")
 
 	systray.AddSeparator()
 
 	// Quit.
-	mQuit := systray.AddMenuItem("Quit", "Exit xKey")
+	t.mQuit = systray.AddMenuItem("Quit", "Exit xKey")
 
 	// Handle menu clicks in a goroutine.
-	go t.handleClicks(mSettings, mAuditLog, mQuit)
+	go t.handleClicks()
 }
 
 // handleClicks listens for menu item clicks and dispatches actions.
-func (t *TrayManager) handleClicks(mSettings, mAuditLog, mQuit *systray.MenuItem) {
+func (t *TrayManager) handleClicks() {
 	for {
 		select {
 		case <-t.mPhoneConn.ClickedCh:
@@ -147,13 +150,13 @@ func (t *TrayManager) handleClicks(mSettings, mAuditLog, mQuit *systray.MenuItem
 				t.mBridgeStop.Disable()
 				t.mBridgeStart.Enable()
 			}
-		case <-mSettings.ClickedCh:
+		case <-t.mSettings.ClickedCh:
 			t.log.Info("tray: settings requested")
 			t.app.ShowWindow()
-		case <-mAuditLog.ClickedCh:
+		case <-t.mAuditLog.ClickedCh:
 			t.log.Info("tray: audit log requested")
 			t.app.ShowWindow()
-		case <-mQuit.ClickedCh:
+		case <-t.mQuit.ClickedCh:
 			t.log.Info("tray: quit requested")
 			// Signal the Wails event loop to exit first. This sets
 			// the trayQuit flag so that beforeClose does not intercept

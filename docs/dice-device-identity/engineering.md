@@ -89,12 +89,24 @@ way it does are in [architecture.md](architecture.md#possession-at-finalize-the-
 | `PossessionNonceSize` | 32: the request carries `DICENonce(keyAuthorization)` (`possession.go:81`). |
 | `PossessionIdentifierType` | `permanent-identifier` (`possession.go:85`). |
 | `OIDExtensionRequest` | PKCS#9 extensionRequest, 1.2.840.113549.1.9.14 (`possession.go:90`). |
-| `PossessionRequest{Claims, DeviceID, PublicKey}` | What a request states: the claims set its UCCS evidence carries, whose `Nonce` is `b`, and that set's ueid (`possession.go:123`). `Identifier()` is `{permanent-identifier, hex(DeviceID)}` (`:138`). |
-| `BuildPossessionCRI(pub, claims, nonce) ([]byte, error)` | The DER CertificationRequestInfo the device signs (`possession.go:179`). `claims` is the alias certificate's claims set; `claims.Nonce` is replaced by `nonce`, and `Other` is carried verbatim. Refuses, with `ErrPossessionCSRMalformed`, a key that is not P-256, a nonce that is not 32 bytes, and a claims set that is not exactly ueid (256) and measurements (273) beside the nonce (`possessionUeid`, `:228-243`). |
+| `PossessionRequest{Claims, DeviceID, ApplicationEvidence, PublicKey}` | What a request states: the claims set its UCCS evidence carries, whose `Nonce` is `b`, that set's ueid, and the 32 bytes of application evidence its measurements (273) carry (`possession.go:132`). `Identifier()` is `{permanent-identifier, hex(DeviceID)}` (`:151`). |
+| `BuildPossessionCRI(pub, claims, nonce) ([]byte, error)` | The DER CertificationRequestInfo the device signs (`possession.go:192`). `claims` is the alias certificate's claims set; `claims.Nonce` is replaced by `nonce`, and `Other` is carried verbatim. Refuses, with `ErrPossessionCSRMalformed`, a key that is not P-256, a nonce that is not 32 bytes, and a claims set that is not exactly ueid (256) and measurements (273) beside the nonce (`possessionSet`, `:243-263`); a 273 that is not the ruled shape is also `ErrPossessionMeasurementsShape` (`applicationEvidence`, `:362`). |
 | `AssemblePossessionCSR(cri, signature) ([]byte, error)` | Wraps a device's DER ECDSA signature with ecdsa-with-SHA256 (`possession.go:268`). Refuses a request info that is not one DER value (`ErrPossessionCSRMalformed`) and a signature that is not one DER ECDSA-Sig-Value (`ErrPossessionSignatureInvalid`). It does not verify the signature; finalize does. |
 | `SignPossessionCSR(signer, claims, nonce) ([]byte, error)` | Builds, signs and assembles in one call for a key behind a `crypto.Signer` (`possession.go:292`). A signer that fails is `ErrPossessionSigningFailed`. |
-| `ParsePossessionCSR(*x509.CertificateRequest) (*PossessionRequest, error)` | Reverses the template exactly (`possession.go:318`): reads the whole claims set out of the UCCS evidence, rebuilds the CertificationRequestInfo from it and refuses the request with `ErrPossessionCSRMalformed` unless the bytes are identical, so no extra attribute, extension, claim, subject, other identifier or criticality survives. Does not check the signature. |
+| `ParsePossessionCSR(*x509.CertificateRequest) (*PossessionRequest, error)` | Reverses the template exactly (`possession.go:663`): reads the whole claims set out of the UCCS evidence, rebuilds the CertificationRequestInfo from it and refuses the request with `ErrPossessionCSRMalformed` unless the bytes are identical, so no extra attribute, extension, claim, subject, other identifier or criticality survives. Holds 273 to the ruled shape through the same parser as `BuildPossessionCRI` and returns its 32 bytes as `ApplicationEvidence`. Does not check the signature. |
 | `(*VerifiedAttestation).VerifyPossessionCSR(csr, orderIdentifiers) error` | The four finalize checks, in order: signature (`:386`), key (`:389`), nonce (`:392`), identifiers (`:395`). Refuses a non-`dice` record with `ErrKeyBindingUnavailable` and a nil record with `ErrNoVerifiedAttestation` (`possession.go:370`). |
+
+The measurements claim (273) has one ruled shape (`possession.go:265-288`):
+one `[258, bstr .cbor CoSWID]` entry whose evidence CoSWID holds one file
+`"app"` with the hash-entry `[1 (sha-256), 32 bytes]`. Those 32 bytes are the
+application evidence, opaque to go-xkms. The CoSWID's tag-id (text or a
+16-byte UUID), tag-version (integer), software-name (text) and entity (one
+entity-entry, text entity-name, a role or role list holding tag-creator) are the
+producer's (RFC 9393 §2.3, CA m463): `producerFields` (`:443`) and `tagCreator`
+(`:479`) check their presence and CBOR type, never their value. Any other
+field (`onlyFields`, used by `evidenceFile` `:531`) and any encoding other than
+RFC 8949 core deterministic (`deterministic`, `:399`) is refused. Nothing
+matches the 32 bytes against a registered reference yet.
 
 The ACME client mints the request for a `dice` device:
 `AttestedKey.Format` selects it (`pkg/acme/client/tpm.go`), and

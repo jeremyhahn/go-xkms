@@ -29,6 +29,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/fxamacker/cbor/v2"
 	"github.com/jeremyhahn/go-xkms/pkg/acme/common"
 	"github.com/jeremyhahn/go-xkms/pkg/acme/entities"
 	"github.com/jeremyhahn/go-xkms/pkg/attestation/dice"
@@ -51,6 +52,15 @@ const (
 	vectorNonce    = "000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f"
 	vectorDeviceID = "01a1b2c3d4e5f60718293a4b5c6d7e8f90"
 	vectorClaims   = "a30a5820000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f1901005101a1b2c3d4e5f60718293a4b5c6d7e8f9019011181821901025854a50050bcc710071a6653c1967ef0d3d5ede421016374667702a2181f6374667718210103a111a20782015820ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad1818636170700c00"
+
+	// vectorApplicationEvidence is the hash-entry value of the vector's one
+	// file: the application evidence, here SHA-256("abc").
+	vectorApplicationEvidence = "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad"
+
+	// arduinoGenericMeasurements is the measurements claim of arduino-generic's
+	// alias certificate (pkg/backend/avr/vectors_test.go:57-60): the shape with
+	// its own tag-id, software-name "ag-fw" and entity "ag".
+	arduinoGenericMeasurements = "81821901025855a500505eec7874aaa557fdaaaef3f9fe0ccfb4016561672d667702a2181f62616718210103a111a20782015820ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad1818636170700c00"
 )
 
 // The signing vector is the possession vector's claims and nonce under a key
@@ -135,6 +145,7 @@ func TestPossessionVector(t *testing.T) {
 		request, err := ParsePossessionCSR(csr)
 		require.NoError(t, err)
 		assert.Equal(t, mustHex(t, vectorDeviceID), request.DeviceID)
+		assert.Equal(t, mustHex(t, vectorApplicationEvidence), request.ApplicationEvidence)
 		assert.Equal(t, mustHex(t, vectorNonce), request.Claims.Nonce)
 		assert.Equal(t, vectorClaimsSet(t), request.Claims)
 		assert.True(t, vectorPublicKey(t).Equal(request.PublicKey))
@@ -434,6 +445,188 @@ func TestParsePossessionCSRRefusesUnparsableEvidence(t *testing.T) {
 	_, err = ParsePossessionCSR(csr)
 	assert.ErrorIs(t, err, ErrPossessionCSRMalformed)
 	assert.ErrorIs(t, err, dice.ErrMalformedUccsEvidence, "the nonce is read by the dice parser, not a second one")
+}
+
+// vectorCoswid returns the vector's evidence CoSWID as a map a case can change
+// one field of. The keys are RFC 9393's: tag-id 0, software-name 1, entity 2
+// (entity-name 31, role 33), evidence 3 and tag-version 12.
+func vectorCoswid(t *testing.T) map[int64]any {
+	t.Helper()
+	return map[int64]any{
+		0:  mustHex(t, "bcc710071a6653c1967ef0d3d5ede421"),
+		1:  "tfw",
+		2:  map[int64]any{31: "tfw", 33: 1},
+		3:  map[int64]any{17: vectorFile(t)},
+		12: 0,
+	}
+}
+
+// vectorFile returns the vector's one file-entry: fs-name 24 and the hash 7
+// hash-entry [sha-256, application evidence].
+func vectorFile(t *testing.T) map[int64]any {
+	t.Helper()
+	return map[int64]any{24: "app", 7: []any{1, mustHex(t, vectorApplicationEvidence)}}
+}
+
+// encodeCBOR writes v in RFC 8949 core deterministic encoding, the encoding
+// the vector is in.
+func encodeCBOR(t *testing.T, v any) []byte {
+	t.Helper()
+	mode, err := cbor.CoreDetEncOptions().EncMode()
+	require.NoError(t, err)
+	encoded, err := mode.Marshal(v)
+	require.NoError(t, err)
+	return encoded
+}
+
+// measurementsOf encodes a measurements claim of one CoSWID entry.
+func measurementsOf(t *testing.T, coswid any) []byte {
+	t.Helper()
+	return encodeCBOR(t, []any{[]any{258, encodeCBOR(t, coswid)}})
+}
+
+func TestPossessionMeasurementsShape(t *testing.T) {
+	vector := vectorClaimsSet(t).Other[dice.ClaimMeasurements]
+	require.Equal(t, vector, measurementsOf(t, vectorCoswid(t)), "the helpers must encode the vector's shape")
+
+	coswid := encodeCBOR(t, vectorCoswid(t))
+	evidence := mustHex(t, vectorApplicationEvidence)
+	withCoswid := func(edit func(coswid map[int64]any)) []byte {
+		changed := vectorCoswid(t)
+		edit(changed)
+		return measurementsOf(t, changed)
+	}
+	withFile := func(edit func(file map[int64]any)) []byte {
+		file := vectorFile(t)
+		edit(file)
+		return withCoswid(func(coswid map[int64]any) { coswid[3] = map[int64]any{17: file} })
+	}
+
+	cases := map[string][]byte{
+		"no entries":                     encodeCBOR(t, []any{}),
+		"two entries":                    encodeCBOR(t, []any{[]any{258, coswid}, []any{258, coswid}}),
+		"a map of entries":               encodeCBOR(t, map[int64]any{258: coswid}),
+		"an entry of three items":        encodeCBOR(t, []any{[]any{258, coswid, 0}}),
+		"content-format 60 (CBOR)":       encodeCBOR(t, []any{[]any{60, coswid}}),
+		"a text payload":                 encodeCBOR(t, []any{[]any{258, "app"}}),
+		"a payload that is not CBOR":     encodeCBOR(t, []any{[]any{258, []byte{0xff}}}),
+		"trailing bytes in the payload":  encodeCBOR(t, []any{[]any{258, append(coswid, 0x00)}}),
+		"a tagged CoSWID":                measurementsOf(t, cbor.Tag{Number: 1398229316, Content: vectorCoswid(t)}),
+		"a non-preferred content-format": append([]byte{0x81, 0x82, 0x1a, 0x00, 0x00, 0x01, 0x02, 0x58, byte(len(coswid))}, coswid...),
+		"a payload CoSWID": withCoswid(func(coswid map[int64]any) {
+			coswid[6] = coswid[3]
+			delete(coswid, 3)
+		}),
+		"an evidence without files":   withCoswid(func(coswid map[int64]any) { coswid[3] = map[int64]any{} }),
+		"an empty file list":          withCoswid(func(coswid map[int64]any) { coswid[3] = map[int64]any{17: []any{}} }),
+		"two files":                   withCoswid(func(coswid map[int64]any) { coswid[3] = map[int64]any{17: []any{vectorFile(t), vectorFile(t)}} }),
+		"one file in a list":          withCoswid(func(coswid map[int64]any) { coswid[3] = map[int64]any{17: []any{vectorFile(t)}} }),
+		"a directory beside the file": withCoswid(func(coswid map[int64]any) { coswid[3] = map[int64]any{17: vectorFile(t), 16: map[int64]any{24: "bin"}} }),
+		"an extra CoSWID field":       withCoswid(func(coswid map[int64]any) { coswid[13] = "1.0" }),
+		"an extra evidence field":     withCoswid(func(coswid map[int64]any) { coswid[3] = map[int64]any{17: vectorFile(t), 30: "device"} }),
+		"no tag-id":                   withCoswid(func(coswid map[int64]any) { delete(coswid, 0) }),
+		"an integer tag-id":           withCoswid(func(coswid map[int64]any) { coswid[0] = 7 }),
+		"a 15-byte tag-id":            withCoswid(func(coswid map[int64]any) { coswid[0] = make([]byte, 15) }),
+		"no tag-version":              withCoswid(func(coswid map[int64]any) { delete(coswid, 12) }),
+		"a text tag-version":          withCoswid(func(coswid map[int64]any) { coswid[12] = "0" }),
+		"no software-name":            withCoswid(func(coswid map[int64]any) { delete(coswid, 1) }),
+		"a byte-string software-name": withCoswid(func(coswid map[int64]any) { coswid[1] = []byte("tfw") }),
+		"no entity":                   withCoswid(func(coswid map[int64]any) { delete(coswid, 2) }),
+		"a text entity":               withCoswid(func(coswid map[int64]any) { coswid[2] = "tfw" }),
+		"two entities":                withCoswid(func(coswid map[int64]any) { coswid[2] = []any{coswid[2], coswid[2]} }),
+		"no entity-name":              withCoswid(func(coswid map[int64]any) { coswid[2] = map[int64]any{33: 1} }),
+		"an integer entity-name":      withCoswid(func(coswid map[int64]any) { coswid[2] = map[int64]any{31: 1, 33: 1} }),
+		"no entity role":              withCoswid(func(coswid map[int64]any) { coswid[2] = map[int64]any{31: "tfw"} }),
+		"a role that is not tag-creator": withCoswid(func(coswid map[int64]any) {
+			coswid[2] = map[int64]any{31: "tfw", 33: 2}
+		}),
+		"roles without tag-creator": withCoswid(func(coswid map[int64]any) {
+			coswid[2] = map[int64]any{31: "tfw", 33: []any{2, "maintainer"}}
+		}),
+		"a byte-string role": withCoswid(func(coswid map[int64]any) {
+			coswid[2] = map[int64]any{31: "tfw", 33: []any{1, []byte{2}}}
+		}),
+		"an extra entity field": withCoswid(func(coswid map[int64]any) {
+			coswid[2] = map[int64]any{31: "tfw", 32: "https://example.com", 33: 1}
+		}),
+		"a byte-string fs-name":       withFile(func(file map[int64]any) { file[24] = []byte("app") }),
+		"a text digest":               withFile(func(file map[int64]any) { file[7] = []any{1, "ba7816bf8f01cfea414140de5dae2223"} }),
+		"an fs-name other than app":   withFile(func(file map[int64]any) { file[24] = "boot" }),
+		"no fs-name":                  withFile(func(file map[int64]any) { delete(file, 24) }),
+		"no hash":                     withFile(func(file map[int64]any) { delete(file, 7) }),
+		"a size beside the hash":      withFile(func(file map[int64]any) { file[20] = 4096 }),
+		"sha-384":                     withFile(func(file map[int64]any) { file[7] = []any{7, evidence} }),
+		"a hash-entry of three items": withFile(func(file map[int64]any) { file[7] = []any{1, evidence, 0} }),
+		"a 31-byte digest":            withFile(func(file map[int64]any) { file[7] = []any{1, evidence[:31]} }),
+		"a 33-byte digest":            withFile(func(file map[int64]any) { file[7] = []any{1, append(evidence, 0x00)} }),
+	}
+	for name, measurements := range cases {
+		claims := vectorClaimsWith(t, func(other map[int64][]byte) { other[dice.ClaimMeasurements] = measurements })
+		t.Run("the device refuses to sign "+name, func(t *testing.T) {
+			cri, err := BuildPossessionCRI(vectorPublicKey(t), claims, mustHex(t, vectorNonce))
+			assert.ErrorIs(t, err, ErrPossessionMeasurementsShape)
+			assert.ErrorIs(t, err, ErrPossessionCSRMalformed)
+			assert.Nil(t, cri)
+		})
+		t.Run("the server refuses "+name, func(t *testing.T) {
+			extensions, err := possessionExtensions(mustHex(t, vectorDeviceID), claims)
+			require.NoError(t, err)
+			request, err := ParsePossessionCSR(x509Request(t, signingKey(t), &x509.CertificateRequest{ExtraExtensions: extensions}))
+			assert.ErrorIs(t, err, ErrPossessionMeasurementsShape)
+			assert.ErrorIs(t, err, ErrPossessionCSRMalformed)
+			assert.Nil(t, request)
+		})
+	}
+
+	t.Run("the device refuses trailing bytes after the claim", func(t *testing.T) {
+		claims := vectorClaimsWith(t, func(other map[int64][]byte) {
+			other[dice.ClaimMeasurements] = append(measurementsOf(t, vectorCoswid(t)), 0x00)
+		})
+		cri, err := BuildPossessionCRI(vectorPublicKey(t), claims, mustHex(t, vectorNonce))
+		assert.ErrorIs(t, err, ErrPossessionMeasurementsShape)
+		assert.Nil(t, cri)
+	})
+
+	t.Run("any 32 bytes are the application evidence", func(t *testing.T) {
+		another := mustHex(t, "000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f")
+		claims := vectorClaimsWith(t, func(other map[int64][]byte) {
+			other[dice.ClaimMeasurements] = withFile(func(file map[int64]any) { file[7] = []any{1, another} })
+		})
+		extensions, err := possessionExtensions(mustHex(t, vectorDeviceID), claims)
+		require.NoError(t, err)
+		request, err := ParsePossessionCSR(x509Request(t, signingKey(t), &x509.CertificateRequest{ExtraExtensions: extensions}))
+		require.NoError(t, err)
+		assert.Equal(t, another, request.ApplicationEvidence)
+	})
+
+	// The tag-id, tag-version, software-name and entity are the producer's
+	// (RFC 9393 section 2.3, CA m463): any value of the right type is the
+	// shape. arduino-generic's names its own (pkg/backend/avr/vectors_test.go:58).
+	arduinoGeneric := vectorCoswid(t)
+	arduinoGeneric[0] = mustHex(t, "5eec7874aaa557fdaaaef3f9fe0ccfb4")
+	arduinoGeneric[1] = "ag-fw"
+	arduinoGeneric[2] = map[int64]any{31: "ag", 33: 1}
+	require.Equal(t, mustHex(t, arduinoGenericMeasurements), measurementsOf(t, arduinoGeneric), "the helpers must encode arduino-generic's claim")
+	producers := map[string][]byte{
+		"arduino-generic's CoSWID": mustHex(t, arduinoGenericMeasurements),
+		"a text tag-id":            withCoswid(func(coswid map[int64]any) { coswid[0] = "tfw-app-1" }),
+		"another tag-version":      withCoswid(func(coswid map[int64]any) { coswid[12] = 3 }),
+		"a tag-creator among roles": withCoswid(func(coswid map[int64]any) {
+			coswid[2] = map[int64]any{31: "tfw", 33: []any{1, 2}}
+		}),
+	}
+	for name, measurements := range producers {
+		t.Run("the device and the server accept "+name, func(t *testing.T) {
+			claims := vectorClaimsWith(t, func(other map[int64][]byte) { other[dice.ClaimMeasurements] = measurements })
+			_, err := BuildPossessionCRI(vectorPublicKey(t), claims, mustHex(t, vectorNonce))
+			require.NoError(t, err)
+			extensions, err := possessionExtensions(mustHex(t, vectorDeviceID), claims)
+			require.NoError(t, err)
+			request, err := ParsePossessionCSR(x509Request(t, signingKey(t), &x509.CertificateRequest{ExtraExtensions: extensions}))
+			require.NoError(t, err)
+			assert.Equal(t, evidence, request.ApplicationEvidence)
+		})
+	}
 }
 
 func mustPermanentIdentifier(t *testing.T, value string) []byte {

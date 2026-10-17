@@ -227,7 +227,7 @@ carries it: `attestation.Result.RootType`, device-attest-01's
 it), the AVR backend's `Attestation.RootType`, and `sdk/go`'s `DICERootType`.
 
 Rejected: a claim inside measurements (273). The possession set
-{10, 256, 273} and the fixed 273 shape belong to the application's evidence,
+{10, 256, 273} and the ruled 273 shape belong to the application's evidence,
 and RFC 9711 has no root-type claim to borrow. DiceTcbInfo is the TCG's place
 for what the device's layer says about itself, and a verifier that does not
 know the go-xkms values still reads `notSecure` correctly.

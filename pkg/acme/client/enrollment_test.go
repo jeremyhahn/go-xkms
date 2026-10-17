@@ -24,6 +24,7 @@ import (
 	"crypto/x509"
 	"crypto/x509/pkix"
 	"encoding/base64"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -6550,15 +6551,23 @@ func TestDeviceAttestCSR_ReportsAKeyThatCannotSign(t *testing.T) {
 // A DICE device finalizes with the possession template over the challenge it
 // answered, naming itself by its DeviceID: the request the server's
 // possession checks accept (go-xkms#1441).
+// aliasMeasurementsHex is a measurements claim in the possession set's one
+// shape (device-attest-01's pinned vector), its application evidence
+// SHA-256("abc").
+const aliasMeasurementsHex = "81821901025854a50050bcc710071a6653c1967ef0d3d5ede421016374667702a2181f6374667718210103a111a20782015820ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad1818636170700c00"
+
 // aliasClaimsFixture is the claims set a DICE alias certificate carries: the
-// ueid 0a0b0c beside a measurement, under a nonce the challenge does not ask
-// for.
-func aliasClaimsFixture() *dice.ClaimsSet {
+// ueid 0a0b0c beside its measurements, under a nonce the challenge does not
+// ask for.
+func aliasClaimsFixture(t *testing.T) *dice.ClaimsSet {
+	t.Helper()
+	measurements, err := hex.DecodeString(aliasMeasurementsHex)
+	require.NoError(t, err)
 	return &dice.ClaimsSet{
 		Nonce: bytes.Repeat([]byte{0x5a}, 32),
 		Other: map[int64][]byte{
 			dice.ClaimUeid:         {0x43, 0x0a, 0x0b, 0x0c}, // CBOR bstr h'0a0b0c'
-			dice.ClaimMeasurements: {0x00},
+			dice.ClaimMeasurements: measurements,
 		},
 	}
 }
@@ -6602,7 +6611,7 @@ func diceAttestedKey(t *testing.T, claims *dice.ClaimsSet) (*ecdsa.PrivateKey, *
 }
 
 func TestAttestedKeyCSR_DICEDeviceSendsThePossessionRequest(t *testing.T) {
-	alias := aliasClaimsFixture()
+	alias := aliasClaimsFixture(t)
 	key, attested := diceAttestedKey(t, alias)
 
 	der, err := attestedKeyCSR("device.example.com", "ffff", "token.thumbprint", attested)
@@ -6659,7 +6668,7 @@ func TestAttestedKeyCSR_RefusesADICEStatementWithoutAliasClaims(t *testing.T) {
 }
 
 func TestAttestedKeyCSR_RefusesAliasClaimsTheTemplateCannotCarry(t *testing.T) {
-	alias := aliasClaimsFixture()
+	alias := aliasClaimsFixture(t)
 	delete(alias.Other, dice.ClaimMeasurements)
 	_, attested := diceAttestedKey(t, alias)
 

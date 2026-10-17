@@ -214,6 +214,7 @@ type testIssuer struct {
 	t       *testing.T
 	pki     *testPKI
 	profile string
+	tenant  string
 	edit    func(template *x509.Certificate)
 	err     error
 }
@@ -236,6 +237,7 @@ func (i *testIssuer) SignCSR(_ context.Context, csrPEM []byte, opts *ca.SignOpti
 	require.True(i.t, ok)
 	require.NoError(i.t, validator.ValidateCSR(csr))
 	i.profile = opts.Profile
+	i.tenant = opts.TenantID
 
 	template := &x509.Certificate{Subject: csr.Subject}
 	require.NoError(i.t, profile.Apply(template, nil))

@@ -228,6 +228,7 @@ an `AttestedKey` whose `Format` is `deviceattest01.FormatDICE`.
 | Finalize refusal (`badCSR`) | What happened |
 |-----------------------------|---------------|
 | `ErrPossessionCSRMalformed` | The request is not exactly what the template writes: an ordinary CSR, a subject, an extra extension, attribute or claim, a non-critical extension, a claims set without its ueid or measurements, an identifier that is not the claims set's ueid, another curve. |
+| `ErrPossessionMeasurementsShape` | The measurements claim (273) is not the ruled shape: not one `[258, CoSWID]` entry, not one file `"app"` with a sha-256 32-byte hash, a required CoSWID field (tag-id, tag-version, software-name, tag-creator entity) missing or of the wrong CBOR type, another field, or not core deterministic CBOR. Their values are the producer's and are not compared. Also `ErrPossessionCSRMalformed`. |
 | `ErrPossessionSignatureInvalid` | The signature does not verify under the request's key. |
 | `ErrPossessionKeyMismatch` | The request is for a key other than the one the device attested. |
 | `ErrPossessionNonceMismatch` | The request was signed for another order's challenge. |

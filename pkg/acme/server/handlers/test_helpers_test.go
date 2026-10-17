@@ -641,9 +641,13 @@ func devicePossessionCSR(t *testing.T, key *ecdsa.PrivateKey, identity, keyAuth 
 	require.NoError(t, err)
 	ueid, err := cbor.Marshal(deviceID)
 	require.NoError(t, err)
+	// The measurements claim in the possession set's one shape
+	// (device-attest-01's pinned vector).
+	measurements, err := hex.DecodeString("81821901025854a50050bcc710071a6653c1967ef0d3d5ede421016374667702a2181f6374667718210103a111a20782015820ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad1818636170700c00")
+	require.NoError(t, err)
 	claims := &dice.ClaimsSet{Other: map[int64][]byte{
 		dice.ClaimUeid:         ueid,
-		dice.ClaimMeasurements: {0x00},
+		dice.ClaimMeasurements: measurements,
 	}}
 	der, err := deviceattest01.SignPossessionCSR(key, claims, deviceattest01.DICENonce(keyAuth))
 	require.NoError(t, err)

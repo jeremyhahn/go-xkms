@@ -231,6 +231,16 @@ type App struct {
 	// shutdownDone is closed when the shutdown sequence completes.
 	shutdownDone chan struct{}
 
+	// ui, runWails and exit are the Wails runtime, the Wails event loop and
+	// process exit. NewApp sets them to the real implementations; tests
+	// substitute recorders so the window lifecycle runs without a display.
+	ui       windowRuntime
+	runWails func(*options.App) error
+	exit     func(code int)
+
+	// newTPM opens the TPM for getTPM; NewApp sets it to xkmssdk.NewTPM2.
+	newTPM func(*xkmssdk.TPMParams) (xkmssdk.TrustedPlatformModule, error)
+
 	// dataDir stores the initialized data directory path for getTPM and shutdown.
 	dataDir string
 
@@ -249,6 +259,36 @@ type App struct {
 	// from config via storageEngineOnce and defaults to "file".
 	storageEngine     string
 	storageEngineOnce sync.Once
+}
+
+// windowRuntime is the part of the Wails runtime the App drives: frontend
+// events and the main window.
+type windowRuntime interface {
+	EventsEmit(ctx context.Context, eventName string, data ...any)
+	WindowShow(ctx context.Context)
+	WindowHide(ctx context.Context)
+	WindowUnminimise(ctx context.Context)
+	WindowCenter(ctx context.Context)
+	WindowSetAlwaysOnTop(ctx context.Context, onTop bool)
+}
+
+// wailsWindowRuntime is the windowRuntime backed by the Wails runtime.
+type wailsWindowRuntime struct{}
+
+func (wailsWindowRuntime) EventsEmit(ctx context.Context, eventName string, data ...any) {
+	wailsruntime.EventsEmit(ctx, eventName, data...)
+}
+
+func (wailsWindowRuntime) WindowShow(ctx context.Context) { wailsruntime.WindowShow(ctx) }
+
+func (wailsWindowRuntime) WindowHide(ctx context.Context) { wailsruntime.WindowHide(ctx) }
+
+func (wailsWindowRuntime) WindowUnminimise(ctx context.Context) { wailsruntime.WindowUnminimise(ctx) }
+
+func (wailsWindowRuntime) WindowCenter(ctx context.Context) { wailsruntime.WindowCenter(ctx) }
+
+func (wailsWindowRuntime) WindowSetAlwaysOnTop(ctx context.Context, onTop bool) {
+	wailsruntime.WindowSetAlwaysOnTop(ctx, onTop)
 }
 
 // configToData converts gui.GUIConfig to services.GUIConfigData to avoid
@@ -1942,6 +1982,10 @@ func NewApp(cfg *GUIConfig) *App {
 		log:                      log,
 		configDirPath:            cfgDir,
 		shutdownDone:             make(chan struct{}),
+		ui:                       wailsWindowRuntime{},
+		runWails:                 wails.Run,
+		exit:                     os.Exit,
+		newTPM:                   xkmssdk.NewTPM2,
 		appService:               appSvc,
 		phoneService:             phoneSvc,
 		sshService:               services.NewSSHService(nil),
@@ -2570,7 +2614,7 @@ func (a *App) getTPM() xkmssdk.TrustedPlatformModule {
 		tpmParams.Backend = factory.KeyBackend()
 	}
 
-	tpm, err := xkmssdk.NewTPM2(tpmParams)
+	tpm, err := a.newTPM(tpmParams)
 	if err != nil {
 		// ErrNotInitialized means the TPM is connected and communicating but
 		// has no persistent EK key yet (e.g. manufacturer EK cert in NV RAM
@@ -2821,7 +2865,7 @@ func (a *App) Run() error {
 		}
 	}
 
-	return wails.Run(appOpts)
+	return a.runWails(appOpts)
 }
 
 // beforeClose is called when the user attempts to close the window.
@@ -2830,7 +2874,7 @@ func (a *App) Run() error {
 // sets trayQuit, the close is allowed through so the app actually exits.
 func (a *App) beforeClose(ctx context.Context) bool {
 	if a.config.AutoTray && !a.trayQuit.Load() {
-		wailsruntime.WindowHide(ctx)
+		a.ui.WindowHide(ctx)
 		return true // prevent quit
 	}
 	return false // allow quit
@@ -2899,12 +2943,12 @@ func (a *App) startup(ctx context.Context) {
 
 	// Wire the FIDO2 device service emit function to the Wails runtime.
 	a.fido2DeviceService.SetEmitFunc(func(eventType string, data any) {
-		wailsruntime.EventsEmit(ctx, eventType, data)
+		a.ui.EventsEmit(ctx, eventType, data)
 	})
 
 	// Wire app lock event emitter.
 	a.appLockService.SetEmitFunc(func(eventType string, data any) {
-		wailsruntime.EventsEmit(ctx, eventType, data)
+		a.ui.EventsEmit(ctx, eventType, data)
 	})
 
 	// Start screen lock monitor (D-Bus logind Lock signal).
@@ -2931,7 +2975,7 @@ func (a *App) startup(ctx context.Context) {
 	// notifications are intentionally omitted for FIDO2 touch — the in-app
 	// TouchButton UI is sufficient and avoids a redundant click.
 	wailsNotifier := notify.NewWailsNotifier(func(eventType string, data any) {
-		wailsruntime.EventsEmit(ctx, eventType, data)
+		a.ui.EventsEmit(ctx, eventType, data)
 	})
 	a.deviceNotifier = notify.NewFocusNotifier(wailsNotifier, func() {
 		a.ShowWindow()
@@ -2994,10 +3038,10 @@ func (a *App) startupReturningUser(ctx context.Context) {
 		result := a.autoUnsealService.TryAutoUnseal()
 		if result.Success {
 			a.log.Info("auto-unseal succeeded", "message", result.Message)
-			wailsruntime.EventsEmit(ctx, "storage:auto_unseal_success", result)
+			a.ui.EventsEmit(ctx, "storage:auto_unseal_success", result)
 		} else {
 			a.log.Warn("auto-unseal failed", "message", result.Message)
-			wailsruntime.EventsEmit(ctx, "storage:auto_unseal_failed", result)
+			a.ui.EventsEmit(ctx, "storage:auto_unseal_failed", result)
 		}
 		// Update tray storage status after auto-unseal attempt.
 		if a.tray != nil {
@@ -3182,7 +3226,7 @@ func (a *App) postDataDirStartup() {
 	if a.staticpwStore != nil {
 		a.expiryChecker = staticpw.NewExpiryChecker(a.staticpwStore, time.Hour, func(pw *staticpw.StaticPassword) {
 			a.log.Info("expired password auto-deleted", "id", pw.ID, "name", pw.Name)
-			wailsruntime.EventsEmit(a.ctx, "password:expired", map[string]string{
+			a.ui.EventsEmit(a.ctx, "password:expired", map[string]string{
 				"id":   pw.ID,
 				"name": pw.Name,
 			})
@@ -3767,7 +3811,7 @@ func (a *App) EmitEvent(event events.Event) {
 		a.log.Warn("cannot emit event: application not initialized")
 		return
 	}
-	wailsruntime.EventsEmit(a.ctx, string(event.Type), event)
+	a.ui.EventsEmit(a.ctx, string(event.Type), event)
 }
 
 // GetStatus returns the current application status.
@@ -3817,18 +3861,18 @@ func (a *App) Quit() {
 	// Show the window and emit a shutting-down event so the frontend
 	// can display a shutdown overlay with progress feedback.
 	a.ShowWindow()
-	wailsruntime.EventsEmit(a.ctx, "app:shutting_down", nil)
+	a.ui.EventsEmit(a.ctx, "app:shutting_down", nil)
 
 	// Safety-net: force exit if shutdown takes too long. Individual
 	// steps have their own timeouts, but this ensures we always exit.
 	go func() {
 		time.Sleep(5 * time.Second)
 		a.log.Warn("shutdown timed out after 5s, forcing exit")
-		os.Exit(1)
+		a.exit(1)
 	}()
 
 	a.shutdown(a.ctx)
-	os.Exit(0)
+	a.exit(0)
 }
 
 // installSignalHandler registers a goroutine that catches SIGTERM,
@@ -3843,7 +3887,7 @@ func (a *App) installSignalHandler() {
 		sig := <-sigCh
 		a.log.Warn("received signal, initiating shutdown", "signal", sig)
 		a.shutdown(a.ctx)
-		os.Exit(0)
+		a.exit(0)
 	}()
 }
 
@@ -3856,16 +3900,16 @@ func (a *App) ShowWindow() {
 	if a.ctx == nil {
 		return
 	}
-	wailsruntime.WindowUnminimise(a.ctx)
-	wailsruntime.WindowShow(a.ctx)
-	wailsruntime.WindowCenter(a.ctx)
-	wailsruntime.WindowSetAlwaysOnTop(a.ctx, true)
+	a.ui.WindowUnminimise(a.ctx)
+	a.ui.WindowShow(a.ctx)
+	a.ui.WindowCenter(a.ctx)
+	a.ui.WindowSetAlwaysOnTop(a.ctx, true)
 	// Clear always-on-top after a delay so the window manager has time
 	// to activate and focus the window before the hint is removed.
 	go func() {
 		time.Sleep(250 * time.Millisecond)
 		if a.ctx != nil {
-			wailsruntime.WindowSetAlwaysOnTop(a.ctx, false)
+			a.ui.WindowSetAlwaysOnTop(a.ctx, false)
 		}
 	}()
 }
@@ -3875,7 +3919,7 @@ func (a *App) HideWindow() {
 	if a.ctx == nil {
 		return
 	}
-	wailsruntime.WindowHide(a.ctx)
+	a.ui.WindowHide(a.ctx)
 }
 
 // detectEKHandle probes the TPM for the Endorsement Key at the two standard

@@ -38,7 +38,7 @@ type CertificateIssuer interface {
 }
 
 func RequestCodeSigningCertificate(ctx context.Context, issuer CertificateIssuer,
-	signer crypto.Signer, commonName string) (*x509.Certificate, error)
+	signer crypto.Signer, tenantID, commonName string) (*x509.Certificate, error)
 ```
 
 `SignerConfig` is at `:34`, `NewSigner` at `:102`, `SignImage` at `:141`,
@@ -133,7 +133,10 @@ through `types.SimpleVerifier`. The SDK name is `xkms.VerifySignature`
 - **The key never leaves the KMS.** `SignerConfig.Signer` is a
   `crypto.Signer`; `pkg/image` takes no key material.
   `RequestCodeSigningCertificate` sends only a CSR, under
-  `ca.ProfileNameCodeSigning`.
+  `ca.ProfileNameCodeSigning` and the caller's tenant, which `TrustedCA`
+  stamps as the certificate's first OU and refuses when empty
+  (`ca.ErrTenantRequired`, also returned before any CSR when `tenantID` is
+  blank).
 - **The certificate is checked before every use.** `NewSigner` refuses a
   certificate that does not match the signer's key, lacks the codeSigning EKU
   or digitalSignature usage, or is outside its validity period
@@ -198,6 +201,7 @@ prefix.
 |---|---|
 | `ErrInvalidReference` (`:21`), `ErrInvalidDigest` (`:25`) | The reference does not parse, or the digest is malformed or not SHA-256 where a tag is derived |
 | `ErrKeyMismatch` (`:51`), `ErrNotCodeSigning` (`:55`), `ErrCertificateNotValid` (`:59`) | The signing certificate fails the code-signing check: `NewSigner` and the verifier both require the codeSigning EKU and digitalSignature usage |
+| `ca.ErrTenantRequired` | `RequestCodeSigningCertificate` is given a blank tenant |
 | `ErrUnsupportedKey` (`:62`) | The key is not RSA, ECDSA or Ed25519 |
 | `ErrRegistryUnavailable` (`:86`) | Retries ran out on 5xx or transport errors |
 | `ErrRedirectRefused` | A registry or realm redirect leads to a destination other than HTTPS, or past 10 redirects |

@@ -27,7 +27,7 @@ func TestApp_GetTPM_DeviceUnopenable_ReturnsNilAndRetries(t *testing.T) {
 	cfg.Device = t.TempDir() // a directory: os.Stat succeeds, opening it read-write fails
 
 	for _, dataDir := range []string{"", t.TempDir()} {
-		app := &App{log: lifecycleTestLogger(), dataDir: dataDir}
+		app := &App{log: lifecycleTestLogger(), newTPM: xkmssdk.NewTPM2, dataDir: dataDir}
 		presetTPMConfig(app, cfg)
 
 		assert.Nil(t, app.getTPM(), "dataDir=%q", dataDir)
@@ -48,7 +48,7 @@ func TestApp_GetTPM_UnprovisionedTPMIsCached(t *testing.T) {
 	cfg.UseSimulator = true
 	cfg.Device = t.TempDir() // present for the existence probe; the simulator serves the commands
 
-	app := &App{log: lifecycleTestLogger(), dataDir: t.TempDir()}
+	app := &App{log: lifecycleTestLogger(), newTPM: xkmssdk.NewTPM2, dataDir: t.TempDir()}
 	presetTPMConfig(app, cfg)
 
 	tpm := app.getTPM()

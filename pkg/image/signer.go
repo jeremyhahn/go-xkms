@@ -216,14 +216,18 @@ func (o *SignOptions) predicate(now time.Time) (string, json.RawMessage, error) 
 }
 
 // RequestCodeSigningCertificate has issuer certify signer's key under
-// TrustedCA's code-signing profile for commonName. The key stays in its
-// KMS: only the CSR it signs leaves it.
-func RequestCodeSigningCertificate(ctx context.Context, issuer CertificateIssuer, signer crypto.Signer, commonName string) (*x509.Certificate, error) {
+// TrustedCA's code-signing profile for commonName, in tenant tenantID, which
+// the CA stamps as the certificate's first organizational unit. The key
+// stays in its KMS: only the CSR it signs leaves it.
+func RequestCodeSigningCertificate(ctx context.Context, issuer CertificateIssuer, signer crypto.Signer, tenantID, commonName string) (*x509.Certificate, error) {
 	if issuer == nil {
 		return nil, ErrIssuerRequired
 	}
 	if signer == nil {
 		return nil, ErrSignerRequired
+	}
+	if strings.TrimSpace(tenantID) == "" {
+		return nil, ca.ErrTenantRequired
 	}
 	if strings.TrimSpace(commonName) == "" {
 		return nil, ErrCommonNameRequired
@@ -237,7 +241,7 @@ func RequestCodeSigningCertificate(ctx context.Context, issuer CertificateIssuer
 	}
 	csrPEM := pem.EncodeToMemory(&pem.Block{Type: encoding.PEMTypeCertificateRequest, Bytes: der})
 
-	certificate, err := issuer.SignCSR(ctx, csrPEM, &ca.SignOptions{Profile: ca.ProfileNameCodeSigning})
+	certificate, err := issuer.SignCSR(ctx, csrPEM, &ca.SignOptions{TenantID: tenantID, Profile: ca.ProfileNameCodeSigning})
 	if err != nil {
 		return nil, &errs.Joined{Lead: ErrCertificateRequestFailed, Cause: err}
 	}

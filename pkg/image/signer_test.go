@@ -350,9 +350,10 @@ func TestRequestCodeSigningCertificate(t *testing.T) {
 	for name, key := range signerKeys(t) {
 		t.Run(name, func(t *testing.T) {
 			issuer := &testIssuer{t: t, pki: f.pki}
-			certificate, err := RequestCodeSigningCertificate(t.Context(), issuer, key, "release signer")
+			certificate, err := RequestCodeSigningCertificate(t.Context(), issuer, key, "tenant-a", "release signer")
 			require.NoError(t, err)
 			assert.Equal(t, ca.ProfileNameCodeSigning, issuer.profile)
+			assert.Equal(t, "tenant-a", issuer.tenant)
 			assert.Equal(t, "release signer", certificate.Subject.CommonName)
 			assert.Equal(t, []x509.ExtKeyUsage{x509.ExtKeyUsageCodeSigning}, certificate.ExtKeyUsage)
 			assert.True(t, key.Public().(interface{ Equal(crypto.PublicKey) bool }).Equal(certificate.PublicKey))
@@ -376,6 +377,7 @@ func TestRequestCodeSigningCertificate_Errors(t *testing.T) {
 	tests := map[string]struct {
 		issuer     func(t *testing.T) CertificateIssuer
 		signer     crypto.Signer
+		tenantID   string
 		commonName string
 		want       error
 		cause      error
@@ -387,6 +389,7 @@ func TestRequestCodeSigningCertificate_Errors(t *testing.T) {
 			want:       ErrIssuerRequired,
 		},
 		"no signer":         {issuer: issuer(nil, nil), signer: nil, commonName: "release signer", want: ErrSignerRequired},
+		"no tenant":         {issuer: issuer(nil, nil), signer: key, tenantID: " ", commonName: "release signer", want: ca.ErrTenantRequired},
 		"blank common name": {issuer: issuer(nil, nil), signer: key, commonName: " \t", want: ErrCommonNameRequired},
 		"request unsigned": {
 			issuer:     issuer(nil, nil),
@@ -413,7 +416,11 @@ func TestRequestCodeSigningCertificate_Errors(t *testing.T) {
 	}
 	for name, tt := range tests {
 		t.Run(name, func(t *testing.T) {
-			certificate, err := RequestCodeSigningCertificate(t.Context(), tt.issuer(t), tt.signer, tt.commonName)
+			tenantID := tt.tenantID
+			if tenantID == "" {
+				tenantID = "tenant-a"
+			}
+			certificate, err := RequestCodeSigningCertificate(t.Context(), tt.issuer(t), tt.signer, tenantID, tt.commonName)
 			require.ErrorIs(t, err, tt.want)
 			if tt.cause != nil {
 				require.ErrorIs(t, err, tt.cause)
