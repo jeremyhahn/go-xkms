@@ -109,7 +109,7 @@
       <caption class="sr-only">Platform users</caption>
       <thead>
         <tr>
-          <th scope="col">Username</th><th scope="col">Display name</th><th scope="col">Roles</th>
+          <th scope="col">Username</th><th scope="col">Display name</th><th scope="col">Role</th>
           <th scope="col">Enabled</th><th scope="col"><span class="sr-only">Actions</span></th>
         </tr>
       </thead>
@@ -118,7 +118,7 @@
           <tr>
             <td>{u.username}</td>
             <td>{u.display_name ?? "—"}</td>
-            <td>{u.roles?.join(", ") || "—"}</td>
+            <td>{u.role ?? "—"}</td>
             <td>{u.enabled ? "yes" : "no"}</td>
             <td class="text-right">
               {#if u.enabled}
