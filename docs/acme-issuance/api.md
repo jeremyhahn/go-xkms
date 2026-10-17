@@ -442,15 +442,22 @@ tenant routes in [`../multi-tenancy/api.md`](../multi-tenancy/api.md): these
 carry the ACME tenant's CA hierarchy, settings and EABs
 ([`engineering.md`](engineering.md#acme-tenant-ca-hierarchy)). Each route is
 `gate.Wrap(resource, action)`, a qrdb permission. The tenant lifecycle rows
-are `gate.WrapPermission(qrdbsdk.PermissionTenants*Cross)`: qrdb's cross-scope
-grants, which only a system-tenant caller (the platform Admin) can exercise, so
-the handlers carry no platform-scope check of their own:
+are gated by the reach of the call (`gate.WrapTenant`, `gate.WrapTenantList`,
+`pkg/acme/admin/authz.go`): within the caller's own tenant the self-scoped
+`tenants:*` grant, beyond it qrdb's cross-scope `qrdbsdk.PermissionTenants*Cross`
+grant, which only a system-tenant caller (the platform Admin) can exercise. A
+tenant-scoped caller lists only its own tenant, and naming any other tenant is
+answered `404 Tenant not found`, exactly as a missing tenant is (go-xkms#1225).
+Creating a tenant always reaches beyond the caller's own
+(`gate.WrapPermission`), so the handler carries no platform-scope check of its
+own:
 
-| Route | Method | Permission |
+| Route | Method | Permission (own tenant / other tenant) |
 |---|---|---|
-| `/api/v1/tenants` | `GET` / `POST` | `tenants:list:cross` / `tenants:create:cross` |
-| `/api/v1/tenants/{id}` | `GET` / `PUT` / `DELETE` | `tenants:read:cross` / `tenants:update:cross` / `tenants:delete:cross` |
-| `/api/v1/tenants/{id}/status` | `PUT` | `tenants:update:cross` |
+| `/api/v1/tenants` | `GET` | `tenants:list` (tenant-scoped caller) / `tenants:list:cross` (system-tenant caller) |
+| `/api/v1/tenants` | `POST` | `tenants:create:cross` |
+| `/api/v1/tenants/{id}` | `GET` / `PUT` / `DELETE` | `tenants:read` / `tenants:update` / `tenants:delete`, or the `:cross` grant |
+| `/api/v1/tenants/{id}/status` | `PUT` | `tenants:update`, or `tenants:update:cross` |
 | `/api/v1/tenants/{id}/root-ca` | `POST` | `ca:create` |
 | `/api/v1/tenants/{id}/intermediate-cas` | `GET` / `POST` | `ca:list` / `ca:create` |
 | `/api/v1/tenants/{id}/intermediate-cas/{caid}` | `GET` | `ca:read` |

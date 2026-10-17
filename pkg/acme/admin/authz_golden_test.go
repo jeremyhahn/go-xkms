@@ -39,6 +39,11 @@ import (
 var authzSeams = []authzscan.Seam{
 	{Method: "Wrap", Args: 3, ResourceArg: 0, ActionArg: 1, LabelArgs: []int{2}},
 	{Method: "WrapPermission", Args: 2, ResourceArg: 0, Permission: true, LabelArgs: []int{1}},
+	// The tenant-reach gates are pinned by their cross-scope grant; the
+	// self-scoped pair they take on the caller's own tenant is pinned by
+	// tenantSelfRouteCases in routes_authz_test.go.
+	{Method: "WrapTenant", Args: 4, ResourceArg: 2, Permission: true, LabelArgs: []int{3}},
+	{Method: "WrapTenantList", Args: 4, ResourceArg: 2, Permission: true, LabelArgs: []int{3}},
 }
 
 // goldenAdminPermissions is the complete, literal resource:action pair every

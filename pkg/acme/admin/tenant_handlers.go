@@ -57,20 +57,22 @@ func (h *TenantHandlers) RegisterRoutes(router *mux.Router, authMiddleware AuthH
 		tenantsRouter.Use(authMiddleware.Authenticate)
 	}
 
-	// Tenant lifecycle. Every route reaches across tenants, so each is gated
-	// on qrdb's cross-scope grant, which only a system-tenant caller holds.
+	// Tenant lifecycle. A call within the caller's own tenant needs the
+	// self-scoped tenants:* grant; a call reaching any other tenant needs
+	// qrdb's cross-scope grant, which only a system-tenant caller holds.
+	// Creating a tenant always reaches beyond the caller's own.
 	tenantsRouter.Handle("",
-		gate.WrapPermission(qrdbsdk.PermissionTenantsListCross, h.ListTenants)).Methods("GET")
+		gate.WrapTenantList(auth.ResourceTenants, auth.ActionList, qrdbsdk.PermissionTenantsListCross, h.ListTenants)).Methods("GET")
 	tenantsRouter.Handle("",
 		gate.WrapPermission(qrdbsdk.PermissionTenantsCreateCross, h.CreateTenant)).Methods("POST")
 	tenantsRouter.Handle("/{id}",
-		gate.WrapPermission(qrdbsdk.PermissionTenantsReadCross, h.GetTenant)).Methods("GET")
+		gate.WrapTenant(auth.ResourceTenants, auth.ActionRead, qrdbsdk.PermissionTenantsReadCross, h.GetTenant)).Methods("GET")
 	tenantsRouter.Handle("/{id}",
-		gate.WrapPermission(qrdbsdk.PermissionTenantsUpdateCross, h.UpdateTenant)).Methods("PUT")
+		gate.WrapTenant(auth.ResourceTenants, auth.ActionUpdate, qrdbsdk.PermissionTenantsUpdateCross, h.UpdateTenant)).Methods("PUT")
 	tenantsRouter.Handle("/{id}",
-		gate.WrapPermission(qrdbsdk.PermissionTenantsDeleteCross, h.DeleteTenant)).Methods("DELETE")
+		gate.WrapTenant(auth.ResourceTenants, auth.ActionDelete, qrdbsdk.PermissionTenantsDeleteCross, h.DeleteTenant)).Methods("DELETE")
 	tenantsRouter.Handle("/{id}/status",
-		gate.WrapPermission(qrdbsdk.PermissionTenantsUpdateCross, h.UpdateTenantStatus)).Methods("PUT")
+		gate.WrapTenant(auth.ResourceTenants, auth.ActionUpdate, qrdbsdk.PermissionTenantsUpdateCross, h.UpdateTenantStatus)).Methods("PUT")
 
 	// Tenant CA hierarchy. Creating or retiring a signing CA is strictly more
 	// privileged than issuing a leaf certificate, so it is gated on ca:* rather

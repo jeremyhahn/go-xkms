@@ -72,6 +72,14 @@ var tenantRouteCases = []routeCase{
 	crossRouteCase("delete tenant", http.MethodDelete, "/api/v1/tenants/t1", qrdbsdk.PermissionTenantsDeleteCross, qrdbsdk.RoleNameOperator),
 	crossRouteCase("update tenant status", http.MethodPut, "/api/v1/tenants/t1/status", qrdbsdk.PermissionTenantsUpdateCross, qrdbsdk.RoleNameOperator),
 
+	// The same lifecycle routes called by a tenant-scoped caller on its own
+	// tenant need only the self-scoped grant (go-xkms#1225).
+	{"list own tenant", http.MethodGet, "/api/v1/tenants", auth.ResourceTenants, auth.ActionList, qrdbsdk.RoleNameAdmin, qrdbsdk.RoleNameUser},
+	{"get own tenant", http.MethodGet, "/api/v1/tenants/t1", auth.ResourceTenants, auth.ActionRead, qrdbsdk.RoleNameAuditor, qrdbsdk.RoleNameUser},
+	{"update own tenant", http.MethodPut, "/api/v1/tenants/t1", auth.ResourceTenants, auth.ActionUpdate, qrdbsdk.RoleNameAdmin, qrdbsdk.RoleNameAuditor},
+	{"delete own tenant", http.MethodDelete, "/api/v1/tenants/t1", auth.ResourceTenants, auth.ActionDelete, qrdbsdk.RoleNameAdmin, qrdbsdk.RoleNameOperator},
+	{"update own tenant status", http.MethodPut, "/api/v1/tenants/t1/status", auth.ResourceTenants, auth.ActionUpdate, qrdbsdk.RoleNameAdmin, qrdbsdk.RoleNameOperator},
+
 	{"create tenant root CA", http.MethodPost, "/api/v1/tenants/t1/root-ca", auth.ResourceCA, auth.ActionCreate, qrdbsdk.RoleNameAdmin, qrdbsdk.RoleNameOperator},
 	{"list intermediate CAs", http.MethodGet, "/api/v1/tenants/t1/intermediate-cas", auth.ResourceCA, auth.ActionList, qrdbsdk.RoleNameOperator, qrdbsdk.RoleNameUser},
 	{"create intermediate CA", http.MethodPost, "/api/v1/tenants/t1/intermediate-cas", auth.ResourceCA, auth.ActionCreate, qrdbsdk.RoleNameSO, qrdbsdk.RoleNameOperator},
@@ -141,10 +149,10 @@ func requestWithRoles(tc routeCase, roles ...string) *http.Request {
 	return req.WithContext(withUser(req.Context(), user))
 }
 
-// platformOnlyRoutes are the routes a tenant-scoped caller is refused whatever
-// it holds: the tenant lifecycle routes, gated on qrdb's cross-scope tenant
-// grants, and reading the audit trail (PlatformScopeError), which records no
-// tenant to confine it by.
+// platformOnlyRoutes are the routes called from the system tenant: creating a
+// tenant and reaching the tenant lifecycle routes across tenants, gated on
+// qrdb's cross-scope tenant grants, and reading the audit trail
+// (PlatformScopeError), which records no tenant to confine it by.
 var platformOnlyRoutes = map[string]bool{
 	"list tenants":         true,
 	"create tenant":        true,
@@ -315,6 +323,34 @@ func TestACMEAdminRoutes_UnknownPathIsNotFound(t *testing.T) {
 
 	assert.Equal(t, http.StatusNotFound, rec.Code)
 	assert.Empty(t, client.requests(), "an unrouted path must never reach the authorizer")
+}
+
+// TestACMEAdminRoutes_TenantCallerForeignTenantIsNotFound verifies that a
+// tenant-scoped caller addressing another tenant's lifecycle routes is asked
+// for the cross-scope grant and, whatever it holds, is answered as for a
+// missing tenant, so it cannot tell a foreign tenant from an absent one
+// (go-xkms#1225).
+func TestACMEAdminRoutes_TenantCallerForeignTenantIsNotFound(t *testing.T) {
+	foreign := []routeCase{
+		crossRouteCase("get foreign tenant", http.MethodGet, "/api/v1/tenants/t2", qrdbsdk.PermissionTenantsReadCross, ""),
+		crossRouteCase("update foreign tenant", http.MethodPut, "/api/v1/tenants/t2", qrdbsdk.PermissionTenantsUpdateCross, ""),
+		crossRouteCase("delete foreign tenant", http.MethodDelete, "/api/v1/tenants/t2", qrdbsdk.PermissionTenantsDeleteCross, ""),
+		crossRouteCase("update foreign tenant status", http.MethodPut, "/api/v1/tenants/t2/status", qrdbsdk.PermissionTenantsUpdateCross, ""),
+	}
+	for _, tc := range foreign {
+		for _, role := range []string{qrdbsdk.RoleNameAdmin, qrdbsdk.RoleNameUser} {
+			t.Run(tc.name+"/"+role, func(t *testing.T) {
+				router, client := newAdminRouter(t)
+
+				rec := httptest.NewRecorder()
+				router.ServeHTTP(rec, requestWithRoles(tc, role))
+
+				assert.Equal(t, http.StatusNotFound, rec.Code, rec.Body.String())
+				assert.Contains(t, rec.Body.String(), "Tenant not found")
+				assert.Equal(t, []string{tc.resource + ":" + tc.action}, client.requests())
+			})
+		}
+	}
 }
 
 // newAuthzMockService returns a Service whose every method succeeds with an

@@ -19,6 +19,7 @@ import (
 	"log/slog"
 	"net/http"
 
+	"github.com/gorilla/mux"
 	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
 
 	"github.com/jeremyhahn/go-xkms/pkg/auth"
@@ -143,18 +144,24 @@ func attrsToArgs(extra []slog.Attr) []any {
 // at its registration site.
 func (g *PermissionGate) Wrap(resource, action string, next http.HandlerFunc) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		err := g.Authorize(r.Context(), resource, action,
-			slog.String("method", r.Method),
-			slog.String("path", r.URL.Path))
-		switch {
-		case err == nil:
-			next.ServeHTTP(w, r)
-		case errors.Is(err, auth.ErrUnauthenticated):
-			writeProblem(w, http.StatusUnauthorized, problemUnauthorized, "Authentication required")
-		default:
-			writePermissionDenied(w)
-		}
+		g.serve(w, r, resource, action, writePermissionDenied, next)
 	})
+}
+
+// serve authorizes r for resource:action and runs next on a grant. A caller
+// with no identity is answered 401; any other refusal is answered by deny.
+func (g *PermissionGate) serve(w http.ResponseWriter, r *http.Request, resource, action string, deny func(http.ResponseWriter), next http.HandlerFunc) {
+	err := g.Authorize(r.Context(), resource, action,
+		slog.String("method", r.Method),
+		slog.String("path", r.URL.Path))
+	switch {
+	case err == nil:
+		next.ServeHTTP(w, r)
+	case errors.Is(err, auth.ErrUnauthenticated):
+		writeProblem(w, http.StatusUnauthorized, problemUnauthorized, "Authentication required")
+	default:
+		deny(w)
+	}
 }
 
 // WrapPermission is Wrap for a grant named by one qrdb permission constant,
@@ -162,6 +169,43 @@ func (g *PermissionGate) Wrap(resource, action string, next http.HandlerFunc) ht
 // resource and action the way qrdb splits it.
 func (g *PermissionGate) WrapPermission(p qrdbsdk.Permission, next http.HandlerFunc) http.Handler {
 	return g.Wrap(qrdbsdk.PermissionResource(p), qrdbsdk.PermissionAction(p), next)
+}
+
+// WrapTenant gates a route that names its target tenant in the {id} path
+// variable by the reach of the call. On the caller's own tenant it needs the
+// self-scoped resource:action grant; on any other tenant, the cross-scope
+// grant, which only a system-tenant caller holds (go-xkms#1557). A
+// tenant-scoped caller can hold no cross-scope grant, so its refusal reads
+// exactly as a missing tenant does: it cannot tell a foreign tenant from one
+// that does not exist (go-xkms#1225).
+func (g *PermissionGate) WrapTenant(resource, action string, cross qrdbsdk.Permission, next http.HandlerFunc) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		identity := auth.GetIdentity(r.Context())
+		if identity != nil && identity.TenantID == mux.Vars(r)["id"] {
+			g.serve(w, r, resource, action, writePermissionDenied, next)
+			return
+		}
+		deny := writePermissionDenied
+		if identity != nil && !auth.IsCrossTenant(identity) {
+			deny = writeTenantNotFound
+		}
+		g.serve(w, r, qrdbsdk.PermissionResource(cross), qrdbsdk.PermissionAction(cross), deny, next)
+	})
+}
+
+// WrapTenantList gates a tenant listing by the reach of the call. A
+// tenant-scoped caller's listing holds only its own tenant, so it needs the
+// self-scoped resource:action grant; a system-tenant caller's listing reaches
+// every tenant, so it needs the cross-scope grant (go-xkms#1557).
+func (g *PermissionGate) WrapTenantList(resource, action string, cross qrdbsdk.Permission, next http.HandlerFunc) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		identity := auth.GetIdentity(r.Context())
+		if identity != nil && !auth.IsCrossTenant(identity) {
+			g.serve(w, r, resource, action, writePermissionDenied, next)
+			return
+		}
+		g.serve(w, r, qrdbsdk.PermissionResource(cross), qrdbsdk.PermissionAction(cross), writePermissionDenied, next)
+	})
 }
 
 // writePermissionDenied writes the single response for a caller that may not
