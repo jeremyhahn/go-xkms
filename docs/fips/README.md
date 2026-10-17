@@ -313,6 +313,15 @@ purpose-scoped the way SP 800-131A Rev. 2 is:
   form works and is left alone. Only in-process `*rsa.PrivateKey` /
   `*rsa.PublicKey` values are governed: a PKCS#11 or TPM signer builds its own
   `DigestInfo` and never reaches `crypto/rsa`.
+- **TPM PCR banks and event-log replay** -- `pkg/tpm2.GetHashFunction` asks the
+  module itself: under `crypto/fips140.Enforced` it writes nothing to the new
+  hasher, and a hash the module refuses (SHA-1) fails that write. The refusal
+  comes back as `*tpm2.HashRefusedError`, wrapping the stdlib's error, so
+  `ExtendPCR`, `TPM2.ExtendPCR`, `PCRCompositeDigest`,
+  `ComputePolicyPCRDigest` and `CalculateName` return it on a SHA-1 bank
+  instead of reaching `crypto/sha1.Sum`. `CalculatePCRs` leaves a refused bank empty, as
+  it already does for SM3_256. Parsing a log still reads its SHA-1 digests,
+  because parsing hashes nothing. There is no allowlist: the module decides.
 - **Key derivation** -- the approved set is per construction. The ANSI X9.63 /
   SP 800-56A concatenation KDFs accept SHA-1, SHA-224 and SHA3-224 in a fully
   compliant deployment, because SP 800-56A Rev. 3 approves them for KDF use and

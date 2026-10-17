@@ -286,3 +286,5 @@ require (
 replace github.com/armon/go-metrics => github.com/armon/go-metrics v0.4.1
 
 replace github.com/jeremyhahn/go-xkms/sdk/go => ./sdk/go
+
+replace github.com/google/go-tpm => github.com/jeremyhahn/go-tpm v0.9.9-0.20261015005355-56ec25c36102

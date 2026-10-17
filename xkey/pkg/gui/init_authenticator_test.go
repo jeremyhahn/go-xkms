@@ -14,6 +14,7 @@
 package gui
 
 import (
+	"context"
 	"os"
 	"path/filepath"
 	"testing"
@@ -41,10 +42,17 @@ func isolateUnifiedConfig(t *testing.T) string {
 func newAuthenticatorApp(t *testing.T) *App {
 	t.Helper()
 	app := newLifecycleApp(t)
-	storage, err := authenticator.NewBackendStorage(xkms.NewStorageMemory(), "xkey/")
-	require.NoError(t, err)
-	app.fido2Storage = storage
+	app.fido2Storage = newMemoryFIDO2Storage(t, xkms.NewStorageMemory())
 	return app
+}
+
+// newMemoryFIDO2Storage returns FIDO2 credential storage over backend under
+// the prefix xkey uses.
+func newMemoryFIDO2Storage(t *testing.T, backend xkms.StorageBackend) authenticator.StatefulCredentialStorage {
+	t.Helper()
+	storage, err := authenticator.NewBackendStorage(backend, "xkey/")
+	require.NoError(t, err)
+	return storage
 }
 
 func TestApp_InitializeAuthenticator_NoStorageBuildsNothing(t *testing.T) {
@@ -112,6 +120,65 @@ func TestApp_InitializeAuthenticator_CreatesPrivateAutofillDir(t *testing.T) {
 	require.NoError(t, err)
 	assert.True(t, info.IsDir())
 	assert.Equal(t, os.FileMode(0700), info.Mode().Perm(), "autofill registrations are private to the user")
+}
+
+// TestApp_InitializeAuthenticator_UnusableDataDirStillServes verifies an
+// autofill registration directory that cannot be created does not stop the
+// authenticator being built.
+func TestApp_InitializeAuthenticator_UnusableDataDirStillServes(t *testing.T) {
+	isolateUnifiedConfig(t)
+	app := newAuthenticatorApp(t)
+	notADir := filepath.Join(t.TempDir(), "data")
+	require.NoError(t, os.WriteFile(notADir, nil, 0o600))
+	app.dataDir = notADir
+
+	app.initializeAuthenticator()
+
+	assert.NotNil(t, app.authenticatorInstance)
+}
+
+// TestApp_InitializeAuthenticator_CorruptStateServesNoAuthenticator verifies
+// persisted authenticator state that cannot be decoded is not replaced with
+// a fresh one: a fresh state would reset the PIN retry counter.
+func TestApp_InitializeAuthenticator_CorruptStateServesNoAuthenticator(t *testing.T) {
+	isolateUnifiedConfig(t)
+	app := newLifecycleApp(t)
+	backend := xkms.NewStorageMemory()
+	require.NoError(t, backend.Put(context.Background(), "xkey/state", []byte("not json")))
+	app.fido2Storage = newMemoryFIDO2Storage(t, backend)
+
+	app.initializeAuthenticator()
+
+	assert.Nil(t, app.authenticatorInstance)
+}
+
+// TestApp_InitializeAuthenticator_OffersTheTPM2BackendToFIDO2 verifies a
+// registered xkms tpm2 backend becomes a FIDO2 key backend, so credentials
+// can be created on the TPM.
+func TestApp_InitializeAuthenticator_OffersTheTPM2BackendToFIDO2(t *testing.T) {
+	app, _ := tpm2SimKeyStoreApp(t)
+	app.fido2Storage = newMemoryFIDO2Storage(t, xkms.NewStorageMemory())
+
+	app.initializeAuthenticator()
+
+	require.NotNil(t, app.authenticatorInstance)
+	assert.Contains(t, app.fido2KeyBackend.Backends(), xkms.BackendTypeTPM2)
+}
+
+// TestApp_InitializeAuthenticator_SealedPolicyKeepsSecureDefaults verifies a
+// sealed enterprise policy imposes its secure defaults before SO login, over
+// a GUI setting that turned user presence off.
+func TestApp_InitializeAuthenticator_SealedPolicyKeepsSecureDefaults(t *testing.T) {
+	dir := useRelaxedConfigDir(t)
+	sealRelaxedPolicy(t, dir, "so-pin-12345")
+	app := newAuthenticatorApp(t)
+	app.config.FIDO2RequireUserPresence = false
+	app.configDirPath = dir
+
+	app.initializeAuthenticator()
+
+	require.NotNil(t, app.authenticatorInstance)
+	assert.True(t, app.authenticatorInstance.Config().RequireUserPresence)
 }
 
 // The GUI login must bind the callback the unified config names, the same

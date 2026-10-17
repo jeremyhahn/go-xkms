@@ -2,6 +2,7 @@ package tpm2
 
 import (
 	"bytes"
+	"crypto/fips140"
 	"crypto/sha1"
 	"crypto/sha256"
 	"crypto/sha512"
@@ -195,6 +196,16 @@ func writeEventLogFixture(t *testing.T, data []byte) string {
 	return path
 }
 
+// sha1Of returns the SHA-1 digest of s for an event log fixture. A log
+// carries a SHA-1 bank as recorded bytes, and parsing it hashes nothing, so
+// the fixture is built outside FIPS 140-only enforcement, which refuses to
+// compute SHA-1.
+func sha1Of(s string) []byte {
+	var sum [sha1.Size]byte
+	fips140.WithoutEnforcement(func() { sum = sha1.Sum([]byte(s)) })
+	return sum[:]
+}
+
 // bootSequenceEventLog builds a synthetic TCG event log shaped like an early
 // UEFI boot: a firmware version measurement into PCR 0, a secure-boot variable
 // measurement into PCR 7, the PCR 0 separator, and a boot application
@@ -204,7 +215,6 @@ func writeEventLogFixture(t *testing.T, data []byte) string {
 // The digests are agile (SHA-1 + SHA-256) for the first event, matching what a
 // real TPM 2.0 platform emits, and single-bank thereafter.
 func bootSequenceEventLog() []byte {
-	sha1Of := func(s string) []byte { sum := sha1.Sum([]byte(s)); return sum[:] }
 	sha256Of := func(s string) []byte { sum := sha256.Sum256([]byte(s)); return sum[:] }
 
 	buf := new(bytes.Buffer)
@@ -316,9 +326,9 @@ func TestParseEventLog_BootSequence(t *testing.T) {
 
 	// The first event's digests must survive the round trip byte for byte;
 	// a parser that mis-sized the SHA-1 digest would shift every later field.
-	wantSHA1 := sha1.Sum([]byte("firmware-v1.2.3"))
-	if got := events[0].Digests[0].Digest; got != hex.EncodeToString(wantSHA1[:]) {
-		t.Errorf("event 0 SHA-1 digest = %s, want %s", got, hex.EncodeToString(wantSHA1[:]))
+	wantSHA1 := sha1Of("firmware-v1.2.3")
+	if got := events[0].Digests[0].Digest; got != hex.EncodeToString(wantSHA1) {
+		t.Errorf("event 0 SHA-1 digest = %s, want %s", got, hex.EncodeToString(wantSHA1))
 	}
 	wantSHA256 := sha256.Sum256([]byte("firmware-v1.2.3"))
 	if got := events[0].Digests[1].Digest; got != hex.EncodeToString(wantSHA256[:]) {
@@ -521,9 +531,9 @@ func TestIsSupportedHashAlgorithm(t *testing.T) {
 		expected    bool
 	}{
 		{
-			name:        "SHA1 is supported",
+			name:        "SHA1 is supported unless FIPS 140-only mode refuses it",
 			algorithmId: "sha1",
-			expected:    true,
+			expected:    !fips140.Enforced(),
 		},
 		{
 			name:        "SHA256 is supported",
@@ -633,10 +643,11 @@ func TestGetHashFunction(t *testing.T) {
 		expectError  bool
 	}{
 		{
-			name:         "SHA1 returns correct hasher",
+			// FIPS 140-only mode refuses SHA-1; otherwise it is a 20-byte hasher.
+			name:         "SHA1 returns correct hasher unless FIPS 140-only mode refuses it",
 			algorithmId:  "sha1",
 			expectedSize: sha1.Size,
-			expectError:  false,
+			expectError:  fips140.Enforced(),
 		},
 		{
 			name:         "SHA256 returns correct hasher",
@@ -713,8 +724,28 @@ func TestGetHashFunction(t *testing.T) {
 		})
 	}
 
+	t.Run("SHA1 under FIPS 140-only mode returns HashRefusedError", func(t *testing.T) {
+		hasher, err := GetHashFunction("sha1")
+		if !fips140.Enforced() {
+			if err != nil || hasher.Size() != sha1.Size {
+				t.Fatalf("GetHashFunction(sha1) = %v, %v; want a %d-byte hasher", hasher, err, sha1.Size)
+			}
+			return
+		}
+		var refused *HashRefusedError
+		if !errors.As(err, &refused) || refused.Algorithm != "sha1" {
+			t.Fatalf("GetHashFunction(sha1) error = %v, want *HashRefusedError for sha1", err)
+		}
+		if hasher != nil {
+			t.Errorf("GetHashFunction(sha1) returned a hasher with the refusal")
+		}
+	})
+
 	t.Run("hashers are functional", func(t *testing.T) {
-		algorithms := []string{"sha1", "sha256", "sha384", "sha512"}
+		algorithms := []string{"sha256", "sha384", "sha512"}
+		if !fips140.Enforced() {
+			algorithms = append(algorithms, "sha1")
+		}
 		testData := []byte("test data for hashing")
 
 		for _, alg := range algorithms {
@@ -802,6 +833,17 @@ func TestExtendPCR(t *testing.T) {
 		}
 
 		result, err := ExtendPCR(currentPCR, digest, "sha1")
+		if fips140.Enforced() {
+			// FIPS 140-only mode refuses SHA-1: the bank cannot be replayed.
+			var refused *HashRefusedError
+			if !errors.As(err, &refused) {
+				t.Fatalf("ExtendPCR(sha1) error = %v, want *HashRefusedError", err)
+			}
+			if result != nil {
+				t.Errorf("ExtendPCR(sha1) returned %x with the refusal", result)
+			}
+			return
+		}
 		if err != nil {
 			t.Fatalf("ExtendPCR() error: %v", err)
 		}
@@ -1073,9 +1115,10 @@ func TestCalculatePCRs(t *testing.T) {
 
 		result := CalculatePCRs(events)
 
-		// Both algorithms should have PCR 7 calculated
-		if _, exists := result["sha1"][7]; !exists {
-			t.Error("CalculatePCRs() missing PCR 7 for sha1")
+		// Both algorithms should have PCR 7 calculated, except that FIPS
+		// 140-only mode refuses SHA-1 and leaves its bank empty.
+		if _, exists := result["sha1"][7]; exists == fips140.Enforced() {
+			t.Errorf("CalculatePCRs() sha1 PCR 7 present = %v under fips140.Enforced() = %v", exists, fips140.Enforced())
 		}
 		if _, exists := result["sha256"][7]; !exists {
 			t.Error("CalculatePCRs() missing PCR 7 for sha256")
@@ -1246,19 +1289,21 @@ func TestCalculatePCRs(t *testing.T) {
 
 		pcrs := CalculatePCRs(events)
 
-		// Verify all algorithms have PCR 0
+		// Verify all algorithms have PCR 0. FIPS 140-only mode refuses
+		// SHA-1, so its bank stays empty.
 		for _, alg := range []string{"sha1", "sha256", "sha384", "sha512"} {
 			if _, exists := pcrs[alg]; !exists {
 				t.Errorf("expected %s in PCR map", alg)
 				continue
 			}
-			if _, exists := pcrs[alg][0]; !exists {
-				t.Errorf("expected PCR 0 in %s map", alg)
+			wantPCR := alg != "sha1" || !fips140.Enforced()
+			if _, exists := pcrs[alg][0]; exists != wantPCR {
+				t.Errorf("PCR 0 in %s map present = %v, want %v", alg, exists, wantPCR)
 			}
 		}
 
 		// Verify correct sizes
-		if len(pcrs["sha1"][0]) != sha1.Size {
+		if !fips140.Enforced() && len(pcrs["sha1"][0]) != sha1.Size {
 			t.Errorf("sha1 PCR size wrong: %d", len(pcrs["sha1"][0]))
 		}
 		if len(pcrs["sha256"][0]) != sha256.Size {

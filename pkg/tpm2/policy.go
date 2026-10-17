@@ -99,14 +99,15 @@ func ComputePolicyPCRDigest(bank string, pcrIndices []int, pcrDigests map[string
 		return nil, err
 	}
 
-	sorted := sortedPCRIndices(pcrIndices)
-	newHash := pcrBankHashFunc(bank)
+	policyHash, err := pcrBankHash(bank)
+	if err != nil {
+		return nil, err
+	}
 
 	// Step 3: Compute the policy digest.
-	pcrSelect := EncodePCRSelection(bank, sorted)
+	pcrSelect := EncodePCRSelection(bank, sortedPCRIndices(pcrIndices))
 	oldDigest := make([]byte, len(pcrDigestHash)) // Initial empty policy digest (zeros).
 
-	policyHash := newHash()
 	policyHash.Write(oldDigest)
 	// TPM_CC_PolicyPCR = 0x0000017F (big-endian).
 	policyHash.Write([]byte{0x00, 0x00, 0x01, 0x7F})
@@ -150,7 +151,10 @@ func PCRCompositeDigest(bank string, pcrIndices []int, pcrDigests map[string]str
 	}
 
 	// Step 2: Hash the composite to form pcrDigestHash.
-	compositeHash := pcrBankHashFunc(bank)()
+	compositeHash, err := pcrBankHash(bank)
+	if err != nil {
+		return nil, err
+	}
 	compositeHash.Write(pcrComposite)
 	return compositeHash.Sum(nil), nil
 }
@@ -163,17 +167,12 @@ func sortedPCRIndices(indices []int) []int {
 	return sorted
 }
 
-// pcrBankHashFunc returns a constructor for the hash function associated
-// with the given PCR bank name.
-func pcrBankHashFunc(bank string) func() hash.Hash {
-	switch bank {
-	case PCRBankSHA1:
-		return sha1.New
-	case PCRBankSHA384:
-		return sha512.New384
-	case PCRBankSHA512:
-		return sha512.New
-	default:
-		return sha256.New
+// pcrBankHash returns a new hasher for the given PCR bank name; an unknown
+// bank uses SHA-256. Under FIPS 140-only mode a bank whose hash the Go
+// Cryptographic Module refuses (SHA-1) returns a *HashRefusedError.
+func pcrBankHash(bank string) (hash.Hash, error) {
+	if _, ok := pcrBankTPMAlgID[bank]; !ok {
+		return sha256.New(), nil
 	}
+	return GetHashFunction(bank)
 }

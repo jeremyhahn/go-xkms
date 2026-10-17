@@ -7,6 +7,7 @@
 package tpm2
 
 import (
+	"crypto/fips140"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -56,8 +57,14 @@ func TestExtendPCR_SHA1_ValidInput(t *testing.T) {
 	tpm2, ok := tpm.(*TPM2)
 	require.True(t, ok)
 
-	// Debug PCR 16 is extendable
+	// Debug PCR 16 is extendable; FIPS 140-only mode refuses to compute the
+	// SHA-1 digest, and the refusal comes back as an error, not a panic.
 	err := tpm2.ExtendPCR(16, "sha1", []byte("test data"))
+	if fips140.Enforced() {
+		var refused *HashRefusedError
+		assert.ErrorAs(t, err, &refused)
+		return
+	}
 	assert.NoError(t, err)
 }
 

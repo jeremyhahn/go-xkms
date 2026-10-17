@@ -5,6 +5,7 @@ package tpm2
 
 import (
 	"crypto"
+	"crypto/fips140"
 	"crypto/rand"
 	"crypto/rsa"
 	"crypto/sha256"
@@ -1481,11 +1482,12 @@ func TestCalculateNameUnit(t *testing.T) {
 		wantErr    bool
 	}{
 		{
+			// FIPS 140-only mode refuses SHA-1 with a *HashRefusedError.
 			name:       "SHA1 algorithm",
 			algID:      tpm2.TPMAlgSHA1,
 			publicArea: []byte("test public area"),
 			wantLen:    2 + 20, // 2 bytes algID + 20 bytes SHA1 hash
-			wantErr:    false,
+			wantErr:    fips140.Enforced(),
 		},
 		{
 			name:       "SHA256 algorithm",
@@ -1552,6 +1554,10 @@ func TestCalculateNameUnit(t *testing.T) {
 			if tt.wantErr {
 				if err == nil {
 					t.Errorf("CalculateName() expected error, got nil")
+				}
+				var refused *HashRefusedError
+				if tt.algID == tpm2.TPMAlgSHA1 && !errors.As(err, &refused) {
+					t.Errorf("CalculateName(SHA1) error = %v, want *HashRefusedError", err)
 				}
 				return
 			}

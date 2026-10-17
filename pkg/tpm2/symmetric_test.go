@@ -19,6 +19,7 @@ package tpm2
 import (
 	"bytes"
 	"crypto"
+	"crypto/fips140"
 	"crypto/rand"
 	"crypto/x509"
 	"encoding/hex"
@@ -31,6 +32,7 @@ import (
 
 	"github.com/google/go-tpm/tpm2"
 	kbackend "github.com/jeremyhahn/go-xkms/pkg/backend"
+	"github.com/jeremyhahn/go-xkms/pkg/crypto/aead"
 	"github.com/jeremyhahn/go-xkms/pkg/tpm2/store"
 	"github.com/jeremyhahn/go-xkms/pkg/types"
 	"github.com/stretchr/testify/assert"
@@ -497,6 +499,14 @@ func TestNonceReuse(t *testing.T) {
 	}
 
 	_, err = encrypter.Encrypt(plaintext, opts)
+	if fips140.Enforced() {
+		// FIPS 140-only mode refuses GCM over a caller-supplied nonce
+		// outright, so the nonce is never recorded for a reuse check.
+		if !errors.Is(err, aead.ErrArbitraryIVGCMUnavailable) {
+			t.Fatalf("Encrypt with a caller nonce under FIPS 140-only mode: got %v, want aead.ErrArbitraryIVGCMUnavailable", err)
+		}
+		return
+	}
 	if err != nil {
 		t.Fatalf("First encryption failed: %v", err)
 	}

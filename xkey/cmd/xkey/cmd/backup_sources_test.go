@@ -356,6 +356,14 @@ func TestEncryptedBackupFile_RoundTrip(t *testing.T) {
 	assert.NotContains(t, envelope, "manifest")
 }
 
+func TestWriteEncryptedBackup_UnwritablePathFails(t *testing.T) {
+	parent := filepath.Join(t.TempDir(), "not-a-directory")
+	require.NoError(t, os.WriteFile(parent, nil, 0o600))
+
+	err := writeEncryptedBackup(filepath.Join(parent, "envelope.xkb"), &backup.EncryptedBackup{Magic: backup.BackupMagic})
+	require.ErrorIs(t, err, ErrBackupCreateFailed)
+}
+
 func TestReadEncryptedBackup_NotJSON(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "garbage.xkb")
 	require.NoError(t, os.WriteFile(path, []byte("definitely { not json"), 0600))

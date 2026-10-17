@@ -561,7 +561,9 @@ func TestPolicyLocality_TPMEnforcesAtUse(t *testing.T) {
 		}.Execute(h.TPM.transport)
 		require.NoError(t, err)
 
-		session, closer, err := tpm2.PolicySession(h.TPM.transport, tpm2.TPMAlgSHA256, sessionNonceSize)
+		// A salted session, as production starts it (#1532): FIPS 140-only
+		// mode refuses an unsalted session with an empty auth value.
+		session, closer, err := h.TPM.startPolicySession(tpm2.TPMAlgSHA256, nil)
 		require.NoError(t, err)
 		require.NoError(t, policyLocality{PolicySession: session.Handle(), Locality: allowed}.Execute(h.TPM.transport))
 		digest, err := tpm2.PolicyGetDigest{PolicySession: session.Handle()}.Execute(h.TPM.transport)

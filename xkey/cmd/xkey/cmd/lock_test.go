@@ -13,7 +13,14 @@
 
 package cmd
 
-import "testing"
+import (
+	"testing"
+
+	"github.com/jeremyhahn/go-xkms/xkey/pkg/luks"
+	"github.com/jeremyhahn/go-xkms/xkey/pkg/xhome"
+	"github.com/spf13/cobra"
+	"github.com/stretchr/testify/require"
+)
 
 func TestCreateLockVolume_FallsBackToXKeyHome(t *testing.T) {
 	assertVolumeFallsBackToXKeyHome(t, createLockVolume)
@@ -21,4 +28,21 @@ func TestCreateLockVolume_FallsBackToXKeyHome(t *testing.T) {
 
 func TestCreateLockVolume_UnresolvableHomeIsError(t *testing.T) {
 	assertVolumeReportsUnresolvableHome(t, createLockVolume)
+}
+
+func TestRunLock_RequiresRoot(t *testing.T) {
+	withEUID(t, 1000)
+
+	err := runLock(&cobra.Command{Use: "lock"}, nil)
+	require.ErrorIs(t, err, luks.ErrPermissionDenied)
+}
+
+func TestRunLock_UnresolvableHomeIsError(t *testing.T) {
+	withEUID(t, 0)
+	useXKeyHomeFallback(t)
+	breakXKeyHome(t)
+
+	err := runLock(&cobra.Command{Use: "lock"}, nil)
+	var resolveErr *xhome.ResolveError
+	require.ErrorAs(t, err, &resolveErr)
 }

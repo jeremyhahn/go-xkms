@@ -304,3 +304,5 @@ require (
 	rsc.io/qr v0.2.0 // indirect
 	software.sslmate.com/src/go-pkcs12 v0.7.3 // indirect
 )
+
+replace github.com/google/go-tpm => github.com/jeremyhahn/go-tpm v0.9.9-0.20261015005355-56ec25c36102

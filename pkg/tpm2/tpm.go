@@ -6,7 +6,6 @@ import (
 	"crypto/ecdsa"
 	"crypto/rand"
 	"crypto/rsa"
-	"crypto/sha1" // #nosec G505 -- SHA-1 required for TPM 2.0 specification compatibility
 
 	"github.com/jeremyhahn/go-xkms/pkg/errs"
 
@@ -2489,8 +2488,11 @@ func CalculateName(algID tpm2.TPMAlgID, publicArea []byte) ([]byte, error) {
 	var hash []byte
 	switch algID {
 	case tpm2.TPMAlgSHA1:
-		// #nosec G401 -- SHA-1 required for TPM 2.0 specification compatibility
-		h := sha1.New()
+		// FIPS 140-only mode refuses SHA-1 with a *HashRefusedError.
+		h, err := GetHashFunction(PCRBankSHA1)
+		if err != nil {
+			return nil, err
+		}
 		h.Write(publicArea)
 		hash = h.Sum(nil)
 	case tpm2.TPMAlgSHA256:

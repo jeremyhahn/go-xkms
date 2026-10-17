@@ -14,6 +14,8 @@
 package cmd
 
 import (
+	"os"
+	"path/filepath"
 	"testing"
 
 	"github.com/spf13/cobra"
@@ -128,6 +130,52 @@ func TestOpenDeviceBarrier_EnvVarPasswordSucceeds(t *testing.T) {
 	require.NoError(t, err)
 	require.NotNil(t, barrier)
 	closeBarrier()
+}
+
+func TestResolveDeviceBarrierPassword_StdinWinsOverEnv(t *testing.T) {
+	t.Setenv("XKEY_BARRIER_PASSWORD", "from-env")
+	stubStdin(t, []byte("from-stdin\r\n"), nil)
+	cmd := deviceBarrierCommand(t)
+	require.NoError(t, cmd.Flags().Set("barrier-password-stdin", "true"))
+
+	password, err := resolveDeviceBarrierPassword(cmd)
+	require.NoError(t, err)
+	assert.Equal(t, "from-stdin", password)
+}
+
+func TestResolveDeviceBarrierPassword_EmptyStdinRefuses(t *testing.T) {
+	stubStdin(t, []byte("\n"), nil)
+	cmd := deviceBarrierCommand(t)
+	require.NoError(t, cmd.Flags().Set("barrier-password-stdin", "true"))
+
+	_, err := resolveDeviceBarrierPassword(cmd)
+	require.ErrorIs(t, err, ErrBarrierPasswordStdinEmpty)
+}
+
+func TestResolveDeviceBarrierPassword_FileUsesTrimmedFirstLine(t *testing.T) {
+	t.Setenv("XKEY_BARRIER_PASSWORD", "from-env")
+	path := filepath.Join(t.TempDir(), "barrier-password")
+	require.NoError(t, os.WriteFile(path, []byte("  from-file  \nsecond line\n"), 0o600))
+	cmd := deviceBarrierCommand(t)
+	require.NoError(t, cmd.Flags().Set("barrier-password-file", path))
+
+	password, err := resolveDeviceBarrierPassword(cmd)
+	require.NoError(t, err)
+	assert.Equal(t, "from-file", password)
+}
+
+func TestResolveDeviceBarrierPassword_MissingFileRefuses(t *testing.T) {
+	cmd := deviceBarrierCommand(t)
+	require.NoError(t, cmd.Flags().Set("barrier-password-file", filepath.Join(t.TempDir(), "absent")))
+
+	_, err := resolveDeviceBarrierPassword(cmd)
+	require.ErrorIs(t, err, ErrDeviceBarrierUnsealFailed)
+	require.ErrorIs(t, err, os.ErrNotExist)
+}
+
+func TestResolveDeviceBarrierPassword_CommandWithoutFlagsRefuses(t *testing.T) {
+	_, err := resolveDeviceBarrierPassword(&cobra.Command{Use: "bare"})
+	require.ErrorIs(t, err, ErrPINInputFlagsMissing)
 }
 
 func TestOpenDeviceBarrierWithPassword_NotInitializedRefuses(t *testing.T) {

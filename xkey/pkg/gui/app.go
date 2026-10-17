@@ -1447,8 +1447,17 @@ func (a *App) initLocalKeyStore(barrierBackend xkmssdk.StorageBackend) {
 				sharedTPM, tpmErr := a.tpmAccessor.Acquire()
 				if tpmErr == nil {
 					a.tpmAccessor.Release()
+					// SetTPM leaves the replaced connection to its caller.
+					// Left open it leaks the device handle, and a simulator
+					// keeps its process-wide lock.
+					replaced := concrete.TPM()
 					concrete.SetTPM(sharedTPM)
 					a.log.Info("xkms TPM2 backend now uses shared GUI TPM instance")
+					if replaced != nil && replaced != sharedTPM {
+						if closeErr := replaced.Close(); closeErr != nil {
+							a.log.Warn("failed to close the xkms TPM2 backend's own TPM connection", "error", closeErr)
+						}
+					}
 				}
 			}
 		}

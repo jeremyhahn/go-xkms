@@ -2,6 +2,7 @@ package tpm2
 
 import (
 	"bytes"
+	"crypto/fips140"
 	"crypto/sha1"
 	"crypto/sha256"
 	"crypto/sha512"
@@ -232,6 +233,13 @@ func TestComputePolicyPCRDigest_AllBanksProduceCorrectLength(t *testing.T) {
 			}
 
 			result, err := ComputePolicyPCRDigest(tc.bank, []int{0}, digests)
+			if tc.bank == PCRBankSHA1 && fips140.Enforced() {
+				// FIPS 140-only mode refuses SHA-1: an error, not a panic.
+				var refused *HashRefusedError
+				require.ErrorAs(t, err, &refused)
+				assert.Nil(t, result)
+				return
+			}
 			require.NoError(t, err)
 			assert.Len(t, result, tc.expectedSize)
 		})

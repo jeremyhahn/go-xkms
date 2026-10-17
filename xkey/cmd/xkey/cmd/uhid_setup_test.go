@@ -72,3 +72,12 @@ func TestUserInGroup_UnknownGroup(t *testing.T) {
 	require.NoError(t, err)
 	require.False(t, userInGroup(me.Username, "xkey-definitely-nonexistent-group"))
 }
+
+func TestUserInGroup_PrimaryGroupIsMembership(t *testing.T) {
+	me, err := user.Current()
+	require.NoError(t, err)
+	primary, err := user.LookupGroupId(me.Gid)
+	require.NoError(t, err)
+
+	require.True(t, userInGroup(me.Username, primary.Name))
+}

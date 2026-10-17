@@ -1,10 +1,6 @@
 package tpm2
 
 import (
-	"crypto/sha1" // #nosec G505 -- SHA-1 required for TPM 2.0 specification compatibility
-	"crypto/sha256"
-	"crypto/sha512"
-	"fmt"
 	"log/slog"
 
 	"github.com/jeremyhahn/go-xkms/pkg/errs"
@@ -33,23 +29,12 @@ func (tpm *TPM2) ExtendPCR(pcrIndex int, hashAlg string, data []byte) error {
 	}
 
 	// Hash the data using the specified algorithm
-	var digest []byte
-	switch hashAlg {
-	case "sha1":
-		h := sha1.Sum(data) // #nosec G401 -- SHA-1 required for TPM 2.0 specification compatibility
-		digest = h[:]
-	case "sha256":
-		h := sha256.Sum256(data)
-		digest = h[:]
-	case "sha384":
-		h := sha512.Sum384(data)
-		digest = h[:]
-	case "sha512":
-		h := sha512.Sum512(data)
-		digest = h[:]
-	default:
-		return &errs.Message{Msg: fmt.Sprintf("unsupported hash algorithm: %s", hashAlg)}
+	hasher, err := GetHashFunction(hashAlg)
+	if err != nil {
+		return err
 	}
+	hasher.Write(data)
+	digest := hasher.Sum(nil)
 
 	tpm.logger.Debug("tpm: ExtendPCR - extending PCR",
 		slog.Int("pcrIndex", pcrIndex),

@@ -1,12 +1,8 @@
 package tpm2
 
 import (
+	"crypto/fips140"
 	"crypto/sha1" // #nosec G505 -- SHA-1 required for TPM event log specification
-	"path/filepath"
-
-	"github.com/jeremyhahn/go-xkms/pkg/errs"
-
-	// #nosec G505 -- SHA-1 required for TPM event log specification compatibility
 	"crypto/sha256"
 	"crypto/sha512"
 	"encoding/binary"
@@ -15,8 +11,11 @@ import (
 	"hash"
 	"io"
 	"os"
+	"path/filepath"
 	"regexp"
 	"sort"
+
+	"github.com/jeremyhahn/go-xkms/pkg/errs"
 )
 
 // TPM Algorithm IDs as defined in TCG specifications
@@ -46,6 +45,21 @@ type EventDataTooLargeError struct {
 
 func (e *EventDataTooLargeError) Error() string {
 	return fmt.Sprintf("tpm: event %d declares %d bytes of event data, more than the %d-byte maximum", e.EventNum, e.Size, MaxEventDataSize)
+}
+
+// HashRefusedError is returned when FIPS 140-only mode is enforced and the
+// Go Cryptographic Module refuses the requested hash algorithm (SHA-1).
+type HashRefusedError struct {
+	Algorithm string
+	Err       error
+}
+
+func (e *HashRefusedError) Error() string {
+	return fmt.Sprintf("tpm: hash algorithm %s is refused in FIPS 140-only mode: %v", e.Algorithm, e.Err)
+}
+
+func (e *HashRefusedError) Unwrap() error {
+	return e.Err
 }
 
 // Event represents a single parsed TPM event.
@@ -350,7 +364,8 @@ func parseEventString(data []byte) string {
 	return ""
 }
 
-// CalculatePCRs calculates PCR values by processing each event and extending a mirror software PCR value
+// CalculatePCRs calculates PCR values by processing each event and extending a mirror software PCR value.
+// A bank whose hash cannot be computed (SM3_256, or SHA-1 under FIPS 140-only mode) is left empty.
 func CalculatePCRs(events []Event) map[string]map[int][]byte {
 	pcrs := InitializePCRs()
 
@@ -388,14 +403,10 @@ func CalculatePCRs(events []Event) map[string]map[int][]byte {
 
 // isSupportedHashAlgorithm checks if the algorithm is supported for PCR calculation
 func isSupportedHashAlgorithm(algorithmId string) bool {
-	switch algorithmId {
-	case "sha1", "sha256", "sha384", "sha512":
-		return true
-	default:
-		// SM3_256 and other algorithms are not supported for PCR calculation
-		// but can still be parsed from event logs
-		return false
-	}
+	// SM3_256 and other algorithms are not supported for PCR calculation but
+	// can still be parsed from event logs; FIPS 140-only mode refuses SHA-1.
+	_, err := GetHashFunction(algorithmId)
+	return err == nil
 }
 
 // InitializePCRs initializes a map to store cumulative PCR values by algorithm and index
@@ -408,21 +419,32 @@ func InitializePCRs() map[string]map[int][]byte {
 	}
 }
 
-// GetHashFunction returns the hash function based on algorithm ID
+// GetHashFunction returns the hash function based on algorithm ID. Under
+// FIPS 140-only mode it returns a *HashRefusedError for an algorithm the Go
+// Cryptographic Module refuses.
 func GetHashFunction(algorithmId string) (hash.Hash, error) {
+	var hasher hash.Hash
 	switch algorithmId {
 	case "sha1":
 		// #nosec G401 -- SHA-1 required for TPM event log specification compatibility
-		return sha1.New(), nil
+		hasher = sha1.New()
 	case "sha256":
-		return sha256.New(), nil
+		hasher = sha256.New()
 	case "sha384":
-		return sha512.New384(), nil
+		hasher = sha512.New384()
 	case "sha512":
-		return sha512.New(), nil
+		hasher = sha512.New()
 	default:
 		return nil, &errs.Message{Msg: fmt.Sprintf("unsupported hash algorithm: %s", algorithmId)}
 	}
+	if fips140.Enforced() {
+		// The Go Cryptographic Module decides what FIPS 140-only mode refuses:
+		// a refused hash (SHA-1) fails every Write, so ask it with an empty one.
+		if _, err := hasher.Write(nil); err != nil {
+			return nil, &HashRefusedError{Algorithm: algorithmId, Err: err}
+		}
+	}
+	return hasher, nil
 }
 
 // ExtendPCR extends the PCR by hashing the current PCR value and the event digest
