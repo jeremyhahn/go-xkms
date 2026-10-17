@@ -436,17 +436,21 @@ XKMS_PKCS11_BACKENDS ?= software
 # Test configuration - include codec build tags for go-codec support
 # Include frost tag for threshold signature scheme unit tests (issue #703)
 TEST_TAGS := codec_cbor codec_json codec_msgpack tpm_simulator frost
-TEST_FLAGS := -v -race -timeout 30m -tags="$(TEST_TAGS)"
+# Per-binary go test bound for the unit lanes CI's Unit Tests job runs through
+# `make coverage` (#1587): above that job's slowest green run, 70m, and below
+# its 140m timeout-minutes, so a hung test fails with a goroutine dump first.
+UNIT_TEST_TIMEOUT ?= 75m
+TEST_FLAGS := -v -race -timeout $(UNIT_TEST_TIMEOUT) -tags="$(TEST_TAGS)"
 # FIPS variant. The `fips` tag has to join the SAME -tags list rather than
 # arrive as a second flag: go test keeps only the last -tags it is given, so
 # appending a flag would silently drop the codec tags above.
-TEST_FLAGS_FIPS := -v -race -timeout 30m -tags="$(TEST_TAGS) fips"
+TEST_FLAGS_FIPS := -v -race -timeout $(UNIT_TEST_TIMEOUT) -tags="$(TEST_TAGS) fips"
 # !frost stub variant: TEST_TAGS minus frost, so the *_frost_stub_test.go
 # files (pkg/api/rest, pkg/api/mcp, pkg/api/grpc, pkg/server) build and run
 # under the "FROST not compiled in" configuration instead of being silently
 # excluded by every other test lane, which always carries frost (go-xkms#1249).
 TEST_TAGS_NOFROST := $(filter-out frost,$(TEST_TAGS))
-TEST_FLAGS_NOFROST := -v -race -timeout 30m -tags="$(TEST_TAGS_NOFROST)"
+TEST_FLAGS_NOFROST := -v -race -timeout $(UNIT_TEST_TIMEOUT) -tags="$(TEST_TAGS_NOFROST)"
 COVERAGE_FILE := $(COVERAGE_DIR)/coverage.out
 # Where `make agsim` puts the arduino-generic host simulators. Exported so every
 # go test the Makefile runs finds them (sdk/go/agsim reads AGSIM_DIR).
@@ -1070,7 +1074,7 @@ test-scripts:
 # with a pr/full tag that matches its `if:`. Pure file parsing, no build tags.
 .PHONY: test-buildgates
 test-buildgates:
-	@$(GO) test ./internal/buildgates/...
+	@$(GO) test -timeout 45m ./internal/buildgates/...
 
 .PHONY: test-go unit-test-pkgs
 ## test-go: Run the Go unit tests with coverage
@@ -1118,7 +1122,7 @@ test-go: check-insecure-tls agsim
 ## pkcs11 (CGO), so without this lane those tests never run.
 test-pkcs11:
 	@echo "$(CYAN)$(BOLD)→ Running PKCS#11 vault key-factor tests...$(RESET)"
-	@$(GOTEST) -v -race -timeout 30m -tags="$(TEST_TAGS) pkcs11" ./pkg/vaulttoken/...
+	@$(GOTEST) -v -race -timeout $(UNIT_TEST_TIMEOUT) -tags="$(TEST_TAGS) pkcs11" ./pkg/vaulttoken/...
 	@echo "$(GREEN)✓ PKCS#11 vault key-factor tests passed$(RESET)"
 
 .PHONY: test-nofrost
@@ -1635,7 +1639,7 @@ test-pkcs11-tagged:
 coverage-pkcs11-tagged:
 	@echo "$(CYAN)→ Generating pkcs11-tagged coverage report...$(RESET)"
 	@mkdir -p $(COVERAGE_DIR)
-	@CGO_ENABLED=1 $(GO) test -timeout 20m -tags="$(PKCS11_TAGGED_TAGS)" \
+	@CGO_ENABLED=1 $(GO) test -timeout $(UNIT_TEST_TIMEOUT) -tags="$(PKCS11_TAGGED_TAGS)" \
 		-coverprofile=$(COVERAGE_DIR)/pkcs11-tagged.raw -covermode=atomic $(PKCS11_TAGGED_PKGS)
 	@grep -v -E "/mocks/|_test\.go" $(COVERAGE_DIR)/pkcs11-tagged.raw > $(COVERAGE_DIR)/pkcs11-tagged.out
 	@$(GO) tool cover -html=$(COVERAGE_DIR)/pkcs11-tagged.out -o $(COVERAGE_DIR)/pkcs11-tagged.html
@@ -3231,8 +3235,8 @@ coverage-aesgcm:
 # for the same nested-path reason as coverage-aesgcm above.
 coverage-fips:
 	@mkdir -p $(COVERAGE_DIR)
-	@$(GO) test $(TAG_FLAGS) -coverprofile=$(COVERAGE_DIR)/fips.out -covermode=atomic ./pkg/crypto/fips/...
-	@GODEBUG=fips140=on $(GO) test $(TAG_FLAGS) -coverprofile=$(COVERAGE_DIR)/fips-fips140on.out -covermode=atomic ./pkg/crypto/fips/...
+	@$(GO) test -timeout $(UNIT_TEST_TIMEOUT) $(TAG_FLAGS) -coverprofile=$(COVERAGE_DIR)/fips.out -covermode=atomic ./pkg/crypto/fips/...
+	@GODEBUG=fips140=on $(GO) test -timeout $(UNIT_TEST_TIMEOUT) $(TAG_FLAGS) -coverprofile=$(COVERAGE_DIR)/fips-fips140on.out -covermode=atomic ./pkg/crypto/fips/...
 	@{ head -1 $(COVERAGE_DIR)/fips.out; tail -n +2 $(COVERAGE_DIR)/fips.out; tail -n +2 $(COVERAGE_DIR)/fips-fips140on.out; } > $(COVERAGE_DIR)/fips-merged.out
 	@mv $(COVERAGE_DIR)/fips-merged.out $(COVERAGE_DIR)/fips.out
 	@$(GO) tool cover -html=$(COVERAGE_DIR)/fips.out -o $(COVERAGE_DIR)/fips.html

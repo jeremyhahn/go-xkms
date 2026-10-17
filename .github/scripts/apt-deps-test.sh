@@ -12,11 +12,17 @@
 #      configured one -- not one, not unbounded.
 #   3. apt's exit status is not the verdict. A package dpkg still does not
 #      have after a "successful" install is a failure.
+#   4. A stalled apt call must not hold the job (#1587). Each call is cut off
+#      at the configured bound, counts as a failed attempt, and the step
+#      still fails naming the packages.
 #
-# apt-get and dpkg-query are FAKES on a replaced PATH: dpkg-query answers from
+# apt-get, dpkg and dpkg-query are FAKES on a replaced PATH (dpkg only logs
+# the dpkg --configure -a that opens each retry): dpkg-query answers from
 # a state file, apt-get appends every invocation to a log, fails the first N
 # install calls per a counter file, and on success marks the packages
-# installed -- except when told to lie, which is what case 3 needs.
+# installed -- except when told to lie, which is what case 3 needs, or to
+# stall, which sleeps far past the bound the way main run 55255's mirror did
+# (case 4).
 #
 # MUTATION: run with --mutate to pin the attempt count to one in a COPY of
 # apt-deps.sh and re-run everything. The transient-failure case must go red;
@@ -41,6 +47,7 @@ export FAKE_STATE="$work/installed"
 export FAKE_LOG="$work/apt.log"
 export FAKE_FAILS="$work/fails"
 export FAKE_LIE="$work/lie"
+export FAKE_STALL="$work/stall"
 
 if [ -n "$mutate" ]; then
 	# shellcheck disable=SC2016  # a sed script: expansion here would be the bug
@@ -68,6 +75,7 @@ FAKE
 cat > "$work/bin/apt-get" <<'FAKE'
 #!/bin/sh
 echo "$*" >> "$FAKE_LOG"
+[ -e "$FAKE_STALL" ] && exec sleep 30
 for a; do
 	case "$a" in
 		update) exit 0 ;;
@@ -90,12 +98,16 @@ for a; do
 done
 exit 0
 FAKE
-chmod +x "$work/bin/dpkg-query" "$work/bin/apt-get"
+cat > "$work/bin/dpkg" <<'FAKE'
+#!/bin/sh
+echo "dpkg $*" >> "$FAKE_LOG"
+FAKE
+chmod +x "$work/bin/dpkg-query" "$work/bin/apt-get" "$work/bin/dpkg"
 
 reset() { # reset <installed pkgs...>
 	: > "$FAKE_STATE"
 	: > "$FAKE_LOG"
-	rm -f "$FAKE_FAILS" "$FAKE_LIE"
+	rm -f "$FAKE_FAILS" "$FAKE_LIE" "$FAKE_STALL"
 	for p in "$@"; do echo "$p" >> "$FAKE_STATE"; done
 }
 installs() { grep -c ' install ' "$FAKE_LOG" 2>/dev/null || true; }
@@ -131,7 +143,10 @@ check "exit 0" [ "$rc" -eq 0 ]
 check "one install call" [ "$(installs)" -eq 1 ]
 check "install names only the missing packages" grep -q ' install -y libusb-1.0-0-dev swtpm$' "$FAKE_LOG"
 check "install does not name the present package" sh -c '! grep -q "install.*libicu-dev" "$FAKE_LOG"'
+check "a first attempt does not run dpkg --configure" sh -c '! grep -q "^dpkg " "$FAKE_LOG"'
 check "IPv6 skipped on the fetch" grep -q 'Acquire::ForceIPv4=true install' "$FAKE_LOG"
+check "apt's own fetch timeout is set" grep -q 'Acquire::http::Timeout=30 ' "$FAKE_LOG"
+check "apt's own fetch retries are set" grep -q 'Acquire::Retries=3 ' "$FAKE_LOG"
 
 echo "== a transient failure is retried =="
 reset
@@ -139,6 +154,7 @@ echo 2 > "$FAKE_FAILS"
 APT_DEPS_ATTEMPTS=5 run swtpm
 check "exit 0 after two failures then success" [ "$rc" -eq 0 ]
 check "three install attempts" [ "$(installs)" -eq 3 ]
+check "each retry first finishes dpkg: two configure calls" [ "$(grep -c '^dpkg --configure -a$' "$FAKE_LOG")" -eq 2 ]
 
 echo "== a persistent failure fails the step, bounded, naming the packages =="
 reset
@@ -156,6 +172,20 @@ reset
 APT_DEPS_ATTEMPTS=1 run swtpm
 check "exit 1 when apt says yes but dpkg says no" [ "$rc" -eq 1 ]
 check "message names the package dpkg lacks" grep -q 'dpkg does not have' "$work/out"
+
+echo "== a stalled apt call is cut off at the bound (#1587) =="
+reset
+: > "$FAKE_STALL"
+started=$(date +%s)
+APT_DEPS_ATTEMPTS=2 APT_DEPS_ATTEMPT_SECONDS=1 run swtpm libtss2-dev
+elapsed=$(($(date +%s) - started))
+check "exit 1" [ "$rc" -eq 1 ]
+check "done in under 10s although each call sleeps 30s" [ "$elapsed" -lt 10 ]
+check "a timed-out call is a failed attempt: two updates" [ "$(grep -c ' update$' "$FAKE_LOG")" -eq 2 ]
+check "message says the attempt timed out" grep -q 'attempt 1 timed out after 1s' "$work/out"
+check "message says it gave up" grep -q 'giving up after 2' "$work/out"
+check "message names swtpm" grep -q 'swtpm' "$work/out"
+check "message names libtss2-dev" grep -q 'libtss2-dev' "$work/out"
 
 echo "== usage =="
 run
