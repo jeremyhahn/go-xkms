@@ -35,9 +35,12 @@ import (
 // call during provisioning.
 func TestNew_DefaultsLoggerWhenNil(t *testing.T) {
 	p, err := New(&Options{
-		RaftAddress: "127.0.0.1:8331",
-		TrustDomain: "test.cluster",
-		DataDir:     t.TempDir(),
+		RaftAddress:     "127.0.0.1:8331",
+		TrustDomain:     "test.cluster",
+		DataDir:         t.TempDir(),
+		Backends:        softwareBackends(t),
+		NodeKeyBackends: softwareBackends(t),
+		CAConfig:        clusterCAConfig(),
 	}, nil)
 	require.NoError(t, err)
 	require.NotNil(t, p.logger)
@@ -53,11 +56,13 @@ func TestNew_DefaultsLoggerWhenNil(t *testing.T) {
 // instead of issuing a certificate for a key that does not exist.
 func TestProvisionHardwareKey_PropagatesNodeKeyFailure(t *testing.T) {
 	p, err := New(&Options{
-		RaftAddress: "127.0.0.1:8332",
-		TrustDomain: "test.cluster",
-		DataDir:     t.TempDir(),
-		KeyBackend:  "software",
-		Backends:    closedBackends(t),
+		RaftAddress:     "127.0.0.1:8332",
+		TrustDomain:     "test.cluster",
+		DataDir:         t.TempDir(),
+		KeyBackend:      "software",
+		Backends:        closedBackends(t),
+		NodeKeyBackends: closedBackends(t),
+		CAConfig:        clusterCAConfig(),
 	}, testLogger())
 	require.NoError(t, err)
 
@@ -66,18 +71,21 @@ func TestProvisionHardwareKey_PropagatesNodeKeyFailure(t *testing.T) {
 	assert.Nil(t, res)
 }
 
-// TestProvisionHardwareKey_PropagatesCAResolutionFailure verifies that failing
-// to resolve the cluster CA aborts hardware-mode provisioning.
-func TestProvisionHardwareKey_PropagatesCAResolutionFailure(t *testing.T) {
+// TestProvisionHardwareKey_PropagatesDataDirFailure verifies that failing to
+// stage the TrustedCA's certificates under the data directory aborts
+// hardware-mode provisioning.
+func TestProvisionHardwareKey_PropagatesDataDirFailure(t *testing.T) {
 	blocker := filepath.Join(t.TempDir(), "not-a-directory")
 	require.NoError(t, os.WriteFile(blocker, []byte("x"), 0o600))
 
 	p, err := New(&Options{
-		RaftAddress: "127.0.0.1:8333",
-		TrustDomain: "test.cluster",
-		DataDir:     blocker,
-		KeyBackend:  "software",
-		Backends:    softwareBackends(t),
+		RaftAddress:     "127.0.0.1:8333",
+		TrustDomain:     "test.cluster",
+		DataDir:         blocker,
+		KeyBackend:      "software",
+		Backends:        softwareBackends(t),
+		NodeKeyBackends: softwareBackends(t),
+		CAConfig:        clusterCAConfig(),
 	}, testLogger())
 	require.NoError(t, err)
 
@@ -95,9 +103,12 @@ func TestNodeSigner_FailsWhenKeyCanNeitherLoadNorGenerate(t *testing.T) {
 	require.NoError(t, err)
 
 	p, err := New(&Options{
-		RaftAddress: "127.0.0.1:8334",
-		TrustDomain: "test.cluster",
-		DataDir:     t.TempDir(),
+		RaftAddress:     "127.0.0.1:8334",
+		TrustDomain:     "test.cluster",
+		DataDir:         t.TempDir(),
+		Backends:        backends,
+		NodeKeyBackends: backends,
+		CAConfig:        clusterCAConfig(),
 	}, testLogger())
 	require.NoError(t, err)
 

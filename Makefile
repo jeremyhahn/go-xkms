@@ -4479,12 +4479,13 @@ help:
 # Protocol Buffer Generation
 # ==============================================================================
 
-# PROTO_QRDB_DIR points at a go-qrdb checkout so xkms.proto can import
-# pkg/api/grpc/proto/qrdbv1/authz.proto (the qrdb.v1.permission method option
-# the unified server's reflection interceptor enforces). Defaults to the
-# sibling checkout, which holds on the host and in the devcontainer; override
-# with PROTO_QRDB_DIR=/path/to/go-qrdb when the layout differs.
-PROTO_QRDB_DIR ?= ../go-qrdb
+# PROTO_QRDB_DIR is the go-qrdb SDK's proto/ directory, so xkms.proto and
+# the ACME admin.proto can
+# import qrdb/v1/permission.proto (the qrdb.v1.permission method option the
+# unified server's reflection interceptor enforces). Defaults to the SDK
+# module at the version go.mod pins; override with
+# PROTO_QRDB_DIR=/path/to/go-qrdb/sdk/go/proto.
+PROTO_QRDB_DIR ?= $(shell GOWORK=off go list -m -f '{{.Dir}}' github.com/jeremyhahn/go-qrdb/sdk/go)/proto
 
 .PHONY: proto
 ## proto: Generate Go code from protocol buffer definitions
@@ -4494,14 +4495,18 @@ proto:
 		echo "$(RED)✗ Proto file not found: pkg/api/grpc/proto/xkmsv1/xkms.proto$(RESET)"; \
 		exit 1; \
 	fi
-	@if [ ! -f "$(PROTO_QRDB_DIR)/pkg/api/grpc/proto/qrdbv1/authz.proto" ]; then \
-		echo "$(RED)✗ qrdb authz.proto not found under PROTO_QRDB_DIR=$(PROTO_QRDB_DIR)$(RESET)"; \
+	@if [ ! -f "$(PROTO_QRDB_DIR)/qrdb/v1/permission.proto" ]; then \
+		echo "$(RED)✗ qrdb permission.proto not found under PROTO_QRDB_DIR=$(PROTO_QRDB_DIR)$(RESET)"; \
 		exit 1; \
 	fi
 	@protoc -I/usr/include -I. -I$(PROTO_QRDB_DIR) \
 		--go_out=. --go_opt=paths=source_relative \
 		--go-grpc_out=. --go-grpc_opt=paths=source_relative \
 		pkg/api/grpc/proto/xkmsv1/xkms.proto
+	@protoc -I/usr/include -I. -I$(PROTO_QRDB_DIR) \
+		--go_out=. --go_opt=module=github.com/jeremyhahn/go-xkms \
+		--go-grpc_out=. --go-grpc_opt=module=github.com/jeremyhahn/go-xkms \
+		api/proto/admin.proto
 	@echo "$(GREEN)✓ Protocol Buffer code generated$(RESET)"
 
 .PHONY: proto-check

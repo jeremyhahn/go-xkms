@@ -35,12 +35,15 @@ import (
 // backed by the provided static map of credential name → plaintext value.
 func buildTestCredentialRegistry(creds map[string]string) *secret.ResolverRegistry {
 	reg := secret.NewResolverRegistry()
-	retrieve := func(_ context.Context, name string) ([]byte, error) {
+	retrieve := func(_ context.Context, name string) (*secure.Buffer, error) {
 		v, ok := creds[name]
 		if !ok {
 			return nil, &errs.Message{Msg: fmt.Sprintf("credential not found: %s", name)}
 		}
-		return []byte(v), nil
+		if v == "" {
+			return secure.NewEmptyBuffer(), nil
+		}
+		return secure.NewBufferFromBytes([]byte(v))
 	}
 	reg.Register(secret.NewCredentialResolver(retrieve))
 	return reg

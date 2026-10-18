@@ -29,7 +29,7 @@ import (
 func (s *Server) buildSecretRegistry() *qrdbsecret.ResolverRegistry {
 	reg := qrdbsecret.NewResolverRegistry()
 	if svc := s.CredentialService(); svc != nil {
-		reg.Register(qrdbsecret.NewCredentialResolver(svc.RetrieveCredential))
+		reg.Register(qrdbsecret.NewCredentialResolver(svc.RetrieveCredentialBuffer))
 	}
 	return reg
 }

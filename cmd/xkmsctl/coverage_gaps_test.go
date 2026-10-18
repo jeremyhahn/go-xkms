@@ -623,6 +623,10 @@ func (m *loginWithExtrasMock) RemoveAuthFactor(ctx context.Context, req *qrdbtra
 	return m.inner.RemoveAuthFactor(ctx, req)
 }
 
+func (m *loginWithExtrasMock) DeleteAuthFactor(ctx context.Context, req *qrdbtransport.AuthFactorDeleteRequest) (*qrdbtransport.AuthFactorDeleteResponse, error) {
+	return m.inner.DeleteAuthFactor(ctx, req)
+}
+
 func (m *loginWithExtrasMock) RotateAuthFactor(ctx context.Context, req *qrdbtransport.AuthFactorRotateRequest) (*qrdbtransport.AuthFactorRotateResponse, error) {
 	return m.inner.RotateAuthFactor(ctx, req)
 }

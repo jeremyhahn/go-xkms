@@ -93,7 +93,7 @@ itself:
   `compose.BuildPlatformStore` builds over a `sealedstorage` view;
   [`../platform-secrets/`](../platform-secrets/architecture.md)) holds the
   platform's own secrets. It has no tenant or user scope: every call is
-  refused to a tenant-scoped caller (`requireSystemTenant`), so only
+  refused to a tenant-scoped caller (`qrdbsdk.IdentityIsSystemTenant`), so only
   system-tenant callers reach it.
 - **Administering the tenant model is not reaching into tenants.** The tenant
   registry (create, read, list, delete) and plan management (entitlements,

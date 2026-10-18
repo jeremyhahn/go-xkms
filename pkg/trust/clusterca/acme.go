@@ -55,10 +55,10 @@ type tpmProvider interface {
 	KeyBackend() store.KeyBackend
 }
 
-// provisionACME resolves the node identity in ACME-attested mode: cached
-// material when still valid, otherwise first-node in-process issuance or
-// joiner enrollment.
-func (p *Provisioner) provisionACME(ctx context.Context) (*Result, error) {
+// provisionTrustedCA resolves the node identity issued by the TrustedCA, in
+// ACME-attested and local-CA mode: cached material when still valid,
+// otherwise first-node in-process issuance or (ACME only) joiner enrollment.
+func (p *Provisioner) provisionTrustedCA(ctx context.Context) (*Result, error) {
 	if leafChainPEM, anchorPEM, ok := p.loadCachedIdentity(); ok {
 		res, err := p.resultFromCache(ctx, leafChainPEM, anchorPEM)
 		if err == nil {
@@ -89,7 +89,7 @@ func (p *Provisioner) resultFromCache(ctx context.Context, leafChainPEM, anchorP
 		return nil, err
 	}
 
-	signer, err := p.acmeNodeSigner(ctx, leaf)
+	signer, err := p.cachedNodeSigner(ctx)
 	if err != nil {
 		return nil, err
 	}
@@ -101,29 +101,28 @@ func (p *Provisioner) resultFromCache(ctx context.Context, leafChainPEM, anchorP
 	if err != nil {
 		return nil, err
 	}
-	return p.finishACME(tlsCert, anchorPEM, false)
+	return p.finishACME(tlsCert, anchorPEM)
 }
 
-// acmeNodeSigner returns the signer for the node's ACME-mode transport key:
-// the TPM-resident IDevID key for tpm2, the backend node key otherwise.
-func (p *Provisioner) acmeNodeSigner(ctx context.Context, leaf *x509.Certificate) (crypto.Signer, error) {
-	backendName := p.keyBackendName()
-	backend, err := p.opts.Backends(backendName)
+// cachedNodeSigner restores the signer for the transport key a cached leaf was
+// issued for, the same key provisioning used: the TPM-resident IDevID key of a
+// node that joined through ACME enroll-01 (enrollJoiner), otherwise the named
+// node key on the configured backend (provisionFirstNode). It only loads the
+// key; a missing key fails rather than generating a new one.
+func (p *Provisioner) cachedNodeSigner(ctx context.Context) (crypto.Signer, error) {
+	backend, err := p.nodeKeyBackend()
 	if err != nil {
 		return nil, err
 	}
-	if backendName == "tpm2" {
-		provider, ok := backend.(tpmProvider)
-		if !ok {
-			return nil, &ErrNoTPM{KeyBackend: backendName}
-		}
-		attrs, err := provider.TPM().IDevIDAttributes()
-		if err != nil {
-			return nil, &errs.Wrapped{Msg: "clusterca: idevid attributes", Err: err}
-		}
-		return &tpmKeySigner{tpm: provider.TPM(), attrs: attrs, public: leaf.PublicKey}, nil
+	if p.opts.Bootstrap.HasFlags() {
+		return idevidSigner(backend, p.keyBackendName())
 	}
-	return p.nodeSigner(ctx, backend.KeyProvider())
+	kp := backend.KeyProvider()
+	signer, err := kp.Signer(ctx, p.nodeKeyAttributes(kp))
+	if err != nil {
+		return nil, &errs.Wrapped{Msg: "clusterca: node signer", Err: err}
+	}
+	return signer, nil
 }
 
 // keyBackendName returns the configured key backend, defaulting to software.
@@ -134,16 +133,46 @@ func (p *Provisioner) keyBackendName() string {
 	return p.opts.KeyBackend
 }
 
-// finishACME assembles the Result and, on the first node of a multi-node
-// cluster, starts the anchor-only Noise advertiser.
-func (p *Provisioner) finishACME(tlsCert *tls.Certificate, anchorPEM []byte, firstNode bool) (*Result, error) {
+// nodeKeyBackend resolves the backend that holds the node transport key.
+func (p *Provisioner) nodeKeyBackend() (xkms.Backend, error) {
+	name := p.keyBackendName()
+	backend, err := p.opts.NodeKeyBackends(name)
+	if err != nil {
+		return nil, &ErrKeyBackendUnavailable{KeyBackend: name, Err: err}
+	}
+	return backend, nil
+}
+
+// resolveBackend resolves a named key backend through the Backends seam,
+// failing with ErrKeyBackendUnavailable when the seam cannot supply it.
+func (p *Provisioner) resolveBackend(name string) (xkms.Backend, error) {
+	backend, err := p.opts.Backends(name)
+	if err != nil {
+		return nil, &ErrKeyBackendUnavailable{KeyBackend: name, Err: err}
+	}
+	return backend, nil
+}
+
+// firstNodeMode names the first-node issuance mode for error reports:
+// ACME-attested, or local-CA when ACME is not configured.
+func (p *Provisioner) firstNodeMode() string {
+	if p.opts.ACME == nil {
+		return localCAMode
+	}
+	return "acme first-node"
+}
+
+// finishACME assembles the Result and, on the founding node of a multi-node
+// cluster, starts the anchor-only Noise advertiser, on first issuance and on a
+// cached restart alike.
+func (p *Provisioner) finishACME(tlsCert *tls.Certificate, anchorPEM []byte) (*Result, error) {
 	res := &Result{
 		MTLS: &qrdbnode.RaftMTLSConfig{
 			CACert:      anchorPEM,
 			Certificate: tlsCert,
 		},
 	}
-	if firstNode && len(p.opts.Members) > 1 {
+	if p.advertisesAnchor() {
 		adv, err := clusterenroll.StartAnchorAdvertiser(anchorPEM, p.opts.Advertise, p.opts.DataDir, p.logger)
 		if err != nil {
 			return nil, err
@@ -151,6 +180,15 @@ func (p *Provisioner) finishACME(tlsCert *tls.Certificate, anchorPEM []byte, fir
 		res.Advertiser = adv
 	}
 	return res, nil
+}
+
+// advertisesAnchor reports whether this node serves the trust anchor to
+// joiners: the founding node (no join-side bootstrap flags) of a multi-member
+// cluster. It follows the node's role, not whether the identity was just
+// issued, so a founding node advertises again when it restarts on its cached
+// identity.
+func (p *Provisioner) advertisesAnchor() bool {
+	return !p.opts.Bootstrap.HasFlags() && len(p.opts.Members) > 1
 }
 
 // ---------------------------------------------------------------------------
@@ -178,7 +216,7 @@ func (p *Provisioner) provisionFirstNode(ctx context.Context) (*Result, error) {
 
 	// Node transport key on the configured backend (any backend; hardware
 	// keys never leave the device).
-	backend, err := p.opts.Backends(p.keyBackendName())
+	backend, err := p.nodeKeyBackend()
 	if err != nil {
 		return nil, err
 	}
@@ -223,7 +261,7 @@ func (p *Provisioner) provisionFirstNode(ctx context.Context) (*Result, error) {
 		"cluster_ca_cn", p.opts.ClusterCACN,
 		"key_backend", p.keyBackendName(),
 		"spiffe", p.expectedNodeURI())
-	return p.finishACME(tlsCert, anchorPEM, true)
+	return p.finishACME(tlsCert, anchorPEM)
 }
 
 // issueNodeLeaf builds a CSR over the node key and signs it — from the named
@@ -263,7 +301,7 @@ func (p *Provisioner) issueNodeLeaf(ctx context.Context, issuer CAIssuer, signer
 	if p.opts.ClusterCACN != "" {
 		identityIssuer, ok := issuer.(ca.IdentityIssuer)
 		if !ok {
-			return nil, nil, &ErrMissingOption{Field: "CA (must support per-identity issuance for ClusterCACN)", Mode: "acme first-node"}
+			return nil, nil, &ErrMissingOption{Field: "CA (must support per-identity issuance for ClusterCACN)", Mode: p.firstNodeMode()}
 		}
 		clusterSigner, clusterCert, err := identityIssuer.IssuerForIdentity(ctx, p.opts.ClusterCACN)
 		if err != nil {
@@ -299,14 +337,14 @@ func (p *Provisioner) issueNodeLeaf(ctx context.Context, issuer CAIssuer, signer
 // a restart while the transient bootstrap CA instance does not.
 func (p *Provisioner) stageBootstrapCA(ctx context.Context) (CAIssuer, error) {
 	if p.opts.CAConfig == nil {
-		return nil, &ErrMissingOption{Field: "CAConfig", Mode: "acme first-node"}
+		return nil, &ErrMissingOption{Field: "CAConfig", Mode: p.firstNodeMode()}
 	}
 	rootIdentity := p.opts.CAConfig.RootIdentity()
 	if rootIdentity == nil {
-		return nil, &ErrMissingOption{Field: "CAConfig.Identity", Mode: "acme first-node"}
+		return nil, &ErrMissingOption{Field: "CAConfig.Identity", Mode: p.firstNodeMode()}
 	}
 
-	keystoreBackend, err := p.opts.Backends(string(rootIdentity.GetStoreType()))
+	keystoreBackend, err := p.resolveBackend(string(rootIdentity.GetStoreType()))
 	if err != nil {
 		return nil, err
 	}
@@ -333,7 +371,7 @@ func (p *Provisioner) stageBootstrapCA(ctx context.Context) (CAIssuer, error) {
 	// line up with those backend names (software, tpm2, ...), so it doubles
 	// as the per-StoreType resolver every CA signing key is routed through.
 	backendForStore := func(cn string, st types.StoreType) (xkms.Backend, error) {
-		return p.opts.Backends(string(st))
+		return p.resolveBackend(string(st))
 	}
 
 	bootstrapCA, err := ca.NewHierarchicalCA(&ca.MultiIdentityParams{
@@ -407,7 +445,7 @@ func (p *Provisioner) enrollJoiner(ctx context.Context) (*Result, error) {
 		return nil, err
 	}
 
-	backend, err := p.opts.Backends(backendName)
+	backend, err := p.nodeKeyBackend()
 	if err != nil {
 		return nil, err
 	}
@@ -445,11 +483,13 @@ func (p *Provisioner) enrollJoiner(ctx context.Context) (*Result, error) {
 		return nil, err
 	}
 
-	attrs, err := tpm.IDevIDAttributes()
+	signer, err := idevidSigner(backend, backendName)
 	if err != nil {
-		return nil, &errs.Wrapped{Msg: "clusterca: idevid attributes", Err: err}
+		return nil, err
 	}
-	signer := &tpmKeySigner{tpm: tpm, attrs: attrs, public: leaf.PublicKey}
+	if !publicKeysEqual(leaf.PublicKey, signer.Public()) {
+		return nil, &ErrAnchorMismatch{Reason: "acme enrollment certificate public key does not match the TPM IDevID key"}
+	}
 
 	if err := p.cacheIdentity(certsToPEM(append([]*x509.Certificate{leaf}, intermediates...)...), anchorPEM); err != nil {
 		return nil, err
@@ -463,7 +503,7 @@ func (p *Provisioner) enrollJoiner(ctx context.Context) (*Result, error) {
 	p.logger.Info("cluster identity enrolled via ACME enroll-01 TPM attestation",
 		"directory_url", p.opts.ACME.DirectoryURL,
 		"spiffe", p.expectedNodeURI())
-	return p.finishACME(tlsCert, anchorPEM, false)
+	return p.finishACME(tlsCert, anchorPEM)
 }
 
 // newACMEClient builds an ACME client that trusts exactly the fetched

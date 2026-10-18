@@ -74,6 +74,23 @@ func (e *UserLookupError) Unwrap() error {
 	return e.Err
 }
 
+// PermissionListError is returned by Authorizer.ListPermissions when qrdb
+// cannot resolve the identity's permissions.
+type PermissionListError struct {
+	// Err is the RBAC client's error.
+	Err error
+}
+
+// Error returns a human-readable description.
+func (e *PermissionListError) Error() string {
+	return "auth: list permissions failed: " + e.Err.Error()
+}
+
+// Unwrap returns the RBAC client's error.
+func (e *PermissionListError) Unwrap() error {
+	return e.Err
+}
+
 // RefreshUserLookupError is returned by QRDBUserResolver when the qrdb user
 // client fails to answer a refresh-time re-check for any reason other than
 // a definite not-found: the store is sealed, unreachable, or otherwise

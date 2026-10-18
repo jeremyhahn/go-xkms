@@ -132,10 +132,10 @@ func (e *ErrSPIFFEMismatch) Error() string {
 // key store. Any of those lets an impostor obtain a valid Raft mTLS
 // certificate and join as a peer.
 //
-// A software or PKCS#11 node joins a cluster today through one of the two
-// modes that do not depend on ACME attestation: hardware-resident node-key
-// mode (set Options.KeyBackend, leave Options.ACME nil) or the default
-// software auto-enrollment mode (leave both unset).
+// A software or PKCS#11 node joins a cluster with operator-supplied
+// certificates (Options.RaftTLSFiles) the cluster CA issued for its key:
+// local-CA mode (Options.ACME nil) issues only on the node holding the
+// TrustedCA and refuses to join (ErrLocalCAJoin).
 type ErrACMEBackendUnsupported struct {
 	// KeyBackend is the configured backend name.
 	KeyBackend string
@@ -149,8 +149,71 @@ func (e *ErrACMEBackendUnsupported) Error() string {
 		"credential-activation capability to satisfy any of them, so the CA cannot verify the joining " +
 		"key is non-exportable and bound to a known device — anyone who can run the joiner with a " +
 		e.KeyBackend + " key could otherwise impersonate a cluster member; join instead with " +
-		"KeyBackend set and ACME unset (hardware-resident node-key mode), or with the default " +
-		"software auto-enrollment mode"
+		"operator-supplied certificates issued by the cluster CA"
+}
+
+// ErrLocalCAJoin is returned when local-CA mode (Options.ACME nil, with any
+// Options.KeyBackend including the software default) is configured on a
+// joining node (bootstrap flags set). That mode issues the node certificate
+// from the local TrustedCA, which a joining node does not hold; a joiner
+// enrolls through ACME (Options.ACME) instead.
+type ErrLocalCAJoin struct {
+	// KeyBackend is the configured backend name; empty is the software
+	// backend.
+	KeyBackend string
+}
+
+// Error returns a human-readable description.
+func (e *ErrLocalCAJoin) Error() string {
+	backend := e.KeyBackend
+	if backend == "" {
+		backend = "software"
+	}
+	return "clusterca: local-CA mode (key backend " + backend + ") issues from the " +
+		"local TrustedCA and cannot join a cluster; enable ACME enrollment to join"
+}
+
+// ErrKeyBackendUnavailable is returned when the Backends seam cannot supply a
+// key backend the TrustedCA path needs: a CA keystore or the node transport
+// key's backend. Provisioning stops: no other backend, and no key written to
+// disk, stands in for it.
+type ErrKeyBackendUnavailable struct {
+	// KeyBackend is the backend name requested from the seam.
+	KeyBackend string
+
+	// Err is the error the Backends seam returned.
+	Err error
+}
+
+// Error implements the error interface.
+func (e *ErrKeyBackendUnavailable) Error() string {
+	return "clusterca: key backend " + e.KeyBackend + " unavailable: " + e.Err.Error()
+}
+
+// Unwrap returns the underlying error.
+func (e *ErrKeyBackendUnavailable) Unwrap() error { return e.Err }
+
+// ErrClusterCAUnbound is returned by KeyProvider before the TrustedCA has
+// been bound to it: the node asked for the cluster CA before the CA, whose
+// stores live in that node, finished initializing.
+type ErrClusterCAUnbound struct{}
+
+// Error returns a human-readable description.
+func (e *ErrClusterCAUnbound) Error() string {
+	return "clusterca: cluster CA not yet bound: the TrustedCA has not initialized"
+}
+
+// ErrClusterCAKeyMismatch is returned by KeyProvider when the TrustedCA's
+// signer does not hold the key certified by its CA certificate, so it cannot
+// sign as the cluster CA.
+type ErrClusterCAKeyMismatch struct {
+	// Subject is the CA certificate's subject common name.
+	Subject string
+}
+
+// Error returns a human-readable description.
+func (e *ErrClusterCAKeyMismatch) Error() string {
+	return "clusterca: cluster CA signer does not match the public key of CA certificate " + e.Subject
 }
 
 // ErrNoTPM is returned when the tpm2 enrollment path cannot obtain a
@@ -163,6 +226,20 @@ type ErrNoTPM struct {
 // Error implements the error interface.
 func (e *ErrNoTPM) Error() string {
 	return "clusterca: backend " + e.KeyBackend + " does not expose a TPM (TrustedPlatformModule required for enroll-01)"
+}
+
+// ErrNodeKeyBackendNotConfigured is returned when the node transport key's
+// backend (Options.KeyBackend) names a backend this node does not have. The
+// node refuses to provision: no other backend, and no software key, stands in
+// for a missing hardware backend.
+type ErrNodeKeyBackendNotConfigured struct {
+	// KeyBackend is the configured backend name.
+	KeyBackend string
+}
+
+// Error implements the error interface.
+func (e *ErrNodeKeyBackendNotConfigured) Error() string {
+	return "clusterca: node key backend " + e.KeyBackend + " is not configured on this node"
 }
 
 // ErrNoSecureCAKeyProtection is returned when no secure protection is available

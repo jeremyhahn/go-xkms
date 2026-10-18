@@ -17,7 +17,9 @@ import (
 	"context"
 	"encoding/base64"
 
+	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
 	"github.com/jeremyhahn/go-xkms/pkg/api/transport"
+	"github.com/jeremyhahn/go-xkms/pkg/auth"
 )
 
 // SubmitCredential submits a credential for manual mode.
@@ -25,13 +27,13 @@ import (
 //
 // Submitted credentials are the platform's backend credentials (a PKCS#11
 // PIN, a cloud KMS secret), sealed into the platform store, so only a
-// system-tenant caller may submit one (requireSystemTenant, go-xkms#1226):
+// system-tenant caller may submit one (qrdbsdk.IdentityIsSystemTenant, go-xkms#1226):
 // a tenant-scoped caller is refused with a *TenantBindingError that reads as
 // not-found.
 func (s *XKMSService) SubmitCredential(ctx context.Context, req *transport.CredentialSubmitRequest) (*transport.CredentialSubmitResponse, error) {
 	credentialService := s.credentialService.load()
-	if err := requireSystemTenant(ctx, "submit credential", ""); err != nil {
-		return nil, err
+	if !qrdbsdk.IdentityIsSystemTenant(auth.GetIdentity(ctx)) {
+		return nil, refuseTenant(ctx, "submit credential", "")
 	}
 	if credentialService == nil {
 		return nil, ErrNotConfigured
@@ -73,8 +75,8 @@ func (s *XKMSService) GetCredentialStrategy(ctx context.Context) (*transport.Cre
 // platform-scoped: the names describe the platform's own backends.
 func (s *XKMSService) ListCredentials(ctx context.Context) ([]string, error) {
 	credentialService := s.credentialService.load()
-	if err := requireSystemTenant(ctx, "list credentials", ""); err != nil {
-		return nil, err
+	if !qrdbsdk.IdentityIsSystemTenant(auth.GetIdentity(ctx)) {
+		return nil, refuseTenant(ctx, "list credentials", "")
 	}
 	if credentialService == nil {
 		return nil, ErrNotConfigured

@@ -58,9 +58,12 @@ func TestCredentialBarrierStrategy_RoundTripsAcrossRestart(t *testing.T) {
 	require.Equal(t, "barrier", first.CredentialService().Strategy())
 
 	require.NoError(t, first.CredentialService().StoreCredential(context.Background(), credName, credValue))
-	got, err := first.CredentialService().RetrieveCredential(context.Background(), credName)
+	got, err := first.CredentialService().RetrieveCredentialBuffer(context.Background(), credName)
 	require.NoError(t, err)
-	require.Equal(t, credValue, got, "credential must read back within the same boot")
+	defer got.Destroy()
+	same, err := got.EqualBytes(credValue)
+	require.NoError(t, err)
+	require.True(t, same, "credential must read back within the same boot")
 
 	require.NoError(t, first.Shutdown())
 
@@ -73,12 +76,15 @@ func TestCredentialBarrierStrategy_RoundTripsAcrossRestart(t *testing.T) {
 	defer func() { _ = second.Shutdown() }()
 
 	require.NotNil(t, second.CredentialService())
-	roundTripped, err := second.CredentialService().RetrieveCredential(context.Background(), credName)
+	roundTripped, err := second.CredentialService().RetrieveCredentialBuffer(context.Background(), credName)
 	require.NoError(t, err, "credential stored under the barrier strategy must survive a restart")
-	require.Equal(t, credValue, roundTripped)
+	defer roundTripped.Destroy()
+	same, err = roundTripped.EqualBytes(credValue)
+	require.NoError(t, err)
+	require.True(t, same, "credential must read back after a restart")
 
 	require.NoError(t, second.CredentialService().DeleteCredential(context.Background(), credName))
-	_, err = second.CredentialService().RetrieveCredential(context.Background(), credName)
+	_, err = second.CredentialService().RetrieveCredentialBuffer(context.Background(), credName)
 	require.ErrorIs(t, err, credentialspkg.ErrCredentialNotFound)
 }
 

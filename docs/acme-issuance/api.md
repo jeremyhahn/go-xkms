@@ -280,21 +280,25 @@ Callers must always authenticate. Permissions are checked only when
 allowed (`server.go:96-106`, `pkg/acme/admin/authz.go:47-57`).
 
 - **gRPC over TCP** chains three interceptors: peer credentials, mTLS
-  identity and authorization (`server.go:807-811`). `MethodPermissions`
-  (`pkg/acme/api/server/interceptor_authz.go:49-91`) maps each `AdminService`
-  RPC to a qrdb permission. A method with no entry is refused with
-  `PermissionDenied` (`ErrOperationUnmapped`, `:110-145`).
+  identity and authorization (`server.go:807-811`). Each `AdminService`
+  RPC declares its qrdb permission with the `(qrdb.v1.permission)` method
+  option in `api/proto/admin.proto`; `adminRPCPermissions`
+  (`pkg/acme/api/server/interceptor_authz.go:43`) reads them from the
+  generated descriptor. A method that declares none is refused with
+  `PermissionDenied` (`ErrOperationUnmapped`, `:95-130`).
 - **gRPC over the Unix socket** has no TLS. The caller is identified by
   `SO_PEERCRED`, and on platforms without it the socket refuses to start
   (`server.go:839-897`). `RoleMapping` turns the peer's credentials into qrdb
   roles (`role_mapper.go:47-65`). `DefaultRoleMapping` grants `admin` to UID 0
   and GID 0, and `operator` to GIDs 10 and 80 (`:73-79`). A peer that matches
   no rule gets no role and is denied (`:42-46`).
-- **MCP** has 28 methods, such as `admin.getStatus` and
-  `admin.listCertificates` (`server.go:207-251`). They are checked against
-  `MCPMethodPermissions` (`mcp_authz.go:35-76`), the same table gRPC uses. A
-  method that can be dispatched but has no entry is denied
-  (`mcp_authz.go:84-96`).
+- **MCP** has 27 methods, such as `admin.getStatus` and
+  `admin.listCertificates` (`server.go:219`). Each names the `AdminService`
+  RPC it mirrors and requires that RPC's permission, so gRPC and MCP need the
+  same grant; `MCPToolPermissions` (`mcp_authz.go:34-42`) reports them in
+  go-qrdb's `ModuleMCPToolPermissioner` contract. A method that can be
+  dispatched but whose RPC declares no permission is denied
+  (`mcp_authz.go:53-67`).
 
 MCP answers with these JSON-RPC error codes (`server.go:1087-1143`):
 
@@ -345,11 +349,13 @@ Authorization is qrdb RBAC, resolved per route by `PermissionGate`. On
 xkmsd's unified mTLS listener the caller is the qrdb user its client
 certificate is bound to (SPKI thumbprint), looked up in the tenant the
 certificate names (its tenant SPIFFE SAN in the deployment's trust domain,
-else its first OU, else the system tenant), with that user's roles. A
-missing certificate, a certificate bound to no user in that tenant, or a
+else its first OU, else the system tenant), with that user's roles. The OU
+names only the tenant and never grants a role. A missing certificate, a
+certificate bound to no user in that tenant, a user of another tenant, or a
 SPIFFE SAN from another trust domain is answered `401`; a user holding no
-role that carries the route's permission is answered `403`
-(`cmd/xkmsd/admin.go:152-157`, `pkg/acme/admin/auth_mtls.go:84-107`; see
+role that carries the route's permission is answered `403`. The admin gRPC
+service resolves the caller the same way, through the same handler
+(`cmd/xkmsd/admin.go:152-157`, `pkg/acme/admin/auth_mtls.go:137-155`; see
 [`engineering.md`](engineering.md#invariants)).
 
 ### Admin API response contract
@@ -369,8 +375,11 @@ tree to drift from it.
 
 ### Admin API routes
 
-`Handlers.RegisterRoutes` (`pkg/acme/admin/handlers.go:108-142`) mounts these
-routes under `/admin`. Each is wrapped in `gate.Wrap(resource, action)`:
+`admin.Routes()` (`pkg/acme/admin/routes.go:97-126`) declares these routes
+under `/admin`, each with its own qrdb permission. The unified server mounts
+each through qrdb's `Handle` (`pkg/apimodule/admin_module.go:147`); a
+standalone host gates each with `PermissionGate` (`Handlers.RegisterRoutes`,
+`pkg/acme/admin/handlers.go:100`):
 
 | Route | Method | Permission |
 |---|---|---|
@@ -421,10 +430,11 @@ reach.
 
 | Request by a tenant-scoped caller | REST | gRPC | Site |
 |---|---|---|---|
-| any `/api/v1/tenants/{id}/...` route naming another tenant | `404`, detail `Tenant not found` — the body a missing tenant gets | `NotFound` | `checkTenantAccess`, `pkg/acme/admin/tenant_handlers.go:139`; service `bindTenantTarget`, `pkg/acme/admin/tenant_binding.go:103` |
+| any `/api/v1/tenants/{id}/...` route naming another tenant | `404`, detail `Tenant not found` — the body a missing tenant gets | `NotFound` | `checkTenantAccess`, `pkg/acme/admin/tenant_handlers.go:72`; service `admitTenant`, `pkg/acme/admin/tenant_binding.go:105` |
 | a role or user of another tenant under its own `{id}` (every caller, the platform included) | `404`, `Role not found` / `User not found` | `NotFound` | `tenantRole` / `tenantUser`, `pkg/acme/admin/tenant_service.go:1598`, `:1705` |
 | `GET /api/v1/tenants` | `200`, its own tenant only | same | `pkg/acme/admin/tenant_service.go:547` |
-| `POST /api/v1/tenants`, `GET /admin/audit` | `403`, the gate's own `Access denied: insufficient permissions` body | `PermissionDenied` | `requirePlatformScope`, `pkg/acme/admin/tenant_binding.go:113` |
+| `POST /api/v1/tenants` | `403`, detail `Creating a tenant requires a platform identity` | `PermissionDenied` | `qrdbsdk.IdentityIsSystemTenant`, `pkg/acme/admin/tenant_service.go:195`; `pkg/acme/admin/tenant_handlers.go:143-144` |
+| `GET /admin/audit` | `403`, the gate's own `Access denied: insufficient permissions` body | `PermissionDenied` | `qrdbsdk.IdentityIsSystemTenant`, `pkg/acme/admin/handlers.go:416` |
 | `/admin/certificates*`, `/admin/accounts*`, `/admin/orders*`, `/admin/stats` | only its tenant's accounts and the certificates their orders were issued; anything else is `404` on get/revoke/disable, absent from lists | `NotFound` / absent | `pkg/acme/admin/service.go:551-694` |
 
 gRPC maps these through `convertAdminErrorToGRPC`
@@ -436,21 +446,23 @@ gRPC maps these through `convertAdminErrorToGRPC`
 
 ### Admin API tenant routes
 
-The ACME admin plane's tenant routes (`TenantHandlers.RegisterRoutes`,
-`pkg/acme/admin/tenant_handlers.go:52-127`) are distinct from the key-management
+The ACME admin plane's tenant routes (`tenantRoutes`,
+`pkg/acme/admin/routes.go:183`, part of `admin.Routes()`) are distinct from the key-management
 tenant routes in [`../multi-tenancy/api.md`](../multi-tenancy/api.md): these
 carry the ACME tenant's CA hierarchy, settings and EABs
 ([`engineering.md`](engineering.md#acme-tenant-ca-hierarchy)). Each route is
-`gate.Wrap(resource, action)`, a qrdb permission. The tenant lifecycle rows
+declared with its own qrdb permission. The tenant lifecycle rows
 are gated by the reach of the call (`gate.WrapTenant`, `gate.WrapTenantList`,
 `pkg/acme/admin/authz.go`): within the caller's own tenant the self-scoped
 `tenants:*` grant, beyond it qrdb's cross-scope `qrdbsdk.PermissionTenants*Cross`
 grant, which only a system-tenant caller (the platform Admin) can exercise. A
 tenant-scoped caller lists only its own tenant, and naming any other tenant is
 answered `404 Tenant not found`, exactly as a missing tenant is (go-xkms#1225).
-Creating a tenant always reaches beyond the caller's own
-(`gate.WrapPermission`), so the handler carries no platform-scope check of its
-own:
+Creating a tenant always reaches beyond the caller's own, so the handler carries
+no platform-scope check of its own. On the unified server the tenant lifecycle
+rows are mounted identity-gated (`Route.SelfPermission`) and the admin router
+applies the reach gate (`RegisterAuthorizedRoutes`); a standalone host applies
+it route by route (`RegisterRoutes`):
 
 | Route | Method | Permission (own tenant / other tenant) |
 |---|---|---|

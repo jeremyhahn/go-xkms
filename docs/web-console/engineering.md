@@ -91,8 +91,11 @@ it in a goroutine. Typed error: `LaunchError{Reason, Err}`.
   `{version, webauthn_enabled, piv_login_enabled, ui_enabled}` only; deliberately
   coarse so an anonymous scanner cannot fingerprint the deployment further.
 - `GET /api/v1/auth/me` (authenticated) — identity, `roles`, a `permissions`
-  map built from `uiPermissionMatrix` (resource:action pairs the console
-  gates on — RBAC-disabled deployments return all of them `true`), and a
+  map of every resource:action the caller holds, from qrdb's
+  `RBACClient.ListPermissions` (`auth.Authorizer.ListPermissions`, which drops
+  cross-tenant permissions for a tenant identity and tenant-only ones for the
+  system tenant; RBAC-disabled deployments return every registered
+  permission), and a
   `capabilities` map from `capabilityFlags()` (`webauthn`, `piv_login`,
   `rbac`, `ca`, `tenants`, `passwords`, `platform`,
   `tpm_policies`, `oidc_credentials`, `cluster`, `ssh`, `frost`, `factors`).

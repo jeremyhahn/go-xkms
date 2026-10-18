@@ -48,28 +48,28 @@ func newTPMPolicyService(t *testing.T) (*XKMSService, *tpmpolicy.Service, *tpmpo
 // A system caller -- or a context with no identity, the in-process path -- is
 // confined the same way to the system scope, "" (#1406).
 func TestTPMPolicyTarget_BindsTheCallersTenant(t *testing.T) {
-	got, err := targetTenant(tenantCtx("acme"), "op", "")
+	got, err := ownTenant(tenantCtx("acme"), "op", "")
 	require.NoError(t, err)
 	assert.Equal(t, "acme", got)
 
-	got, err = targetTenant(tenantCtx("acme"), "op", "acme")
+	got, err = ownTenant(tenantCtx("acme"), "op", "acme")
 	require.NoError(t, err)
 	assert.Equal(t, "acme", got)
 
-	_, err = targetTenant(tenantCtx("acme"), "op", "globex")
+	_, err = ownTenant(tenantCtx("acme"), "op", "globex")
 	requireBindingRefusal(t, err, "tenant naming another tenant")
 
-	_, err = targetTenant(systemCtx(), "op", "globex")
+	_, err = ownTenant(systemCtx(), "op", "globex")
 	requireBindingRefusal(t, err, "system naming another tenant")
 
-	got, err = targetTenant(systemCtx(), "op", "")
+	got, err = ownTenant(systemCtx(), "op", "")
 	require.NoError(t, err)
 	assert.Empty(t, got, "a system caller naming no tenant acts on the system scope")
 
-	_, err = targetTenant(context.Background(), "op", "acme")
+	_, err = ownTenant(context.Background(), "op", "acme")
 	requireBindingRefusal(t, err, "no identity naming a tenant")
 
-	got, err = targetTenant(context.Background(), "op", "")
+	got, err = ownTenant(context.Background(), "op", "")
 	require.NoError(t, err)
 	assert.Empty(t, got, "no identity acts on the system scope")
 }

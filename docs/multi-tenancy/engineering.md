@@ -141,24 +141,22 @@ a code change.
   `XKMSService`, never in a transport** (go-xkms#1112). The RBAC gate binds
   the caller's own tenant as its target (`pkg/auth/authorize.go:61`), so it
   cannot tell whether a *requested* tenant is the caller's.
-  `bindTenantTarget` (`pkg/xkms/tenant_binding.go:88`) admits a caller only
-  for its own tenant — the system tenant included (go-xkms#1406). It guards
-  the SPIFFE tenant of `SignCSR`, `IssueCertificate` and the issuing tenant of
-  `RevokeCertificate` (`pkg/xkms/servicer_ca.go:172,403,474`), the TPM policy
-  and object-policy tenant, and `RotateScopeKeys`. A caller with no identity
-  is the system tenant here (`callerTenant`): in-process SDK callers carry
-  none.
-- **The tenant registry is the system tenant's.** `bindTenantRecord`
-  (`pkg/xkms/tenant_binding.go:99`) lets a system-tenant caller read and
+  `ownTenant` (`pkg/xkms/tenant_binding.go:86`), over `qrdbsdk.OwnTenant`,
+  admits a caller only for its own tenant — the system tenant included
+  (go-xkms#1406). It guards the SPIFFE tenant of `SignCSR`,
+  `IssueCertificate` and the issuing tenant of `RevokeCertificate`
+  (`pkg/xkms/servicer_ca.go:175,406,478`), the TPM policy and object-policy
+  tenant, and `RotateScopeKeys`. A caller with no identity is the system
+  tenant here (`pkg/auth/auth.go:133`): in-process SDK callers carry none.
+- **The tenant registry is the system tenant's.** `admitTenantRecord`
+  (`pkg/xkms/tenant_binding.go:101`) lets a system-tenant caller read and
   delete any tenant record and binds every other caller to its own; it guards
-  `GetTenant` and `DeleteTenant` (`pkg/xkms/servicer_tenant.go:89,138`).
-  `ListTenants` filters with it (`visibleToCaller`,
-  `pkg/xkms/servicer_tenant.go:121`). Administering the record grants no reach
-  into the tenant's objects.
-- **Plan changes are system-only** (go-xkms#1113).
-  `requireSystemTenant` (`pkg/xkms/tenant_binding.go:119`) refuses every
-  tenant-scoped caller, including one naming its own tenant
-  (`pkg/xkms/servicer_tenant.go:163,190`); the transports gate on
+  `GetTenant` and `DeleteTenant` (`pkg/xkms/servicer_tenant.go:91,140`).
+  `ListTenants` filters with it (`pkg/xkms/servicer_tenant.go:123`).
+  Administering the record grants no reach into the tenant's objects.
+- **Plan changes are system-only** (go-xkms#1113). A
+  `qrdbsdk.IdentityIsSystemTenant` check refuses every tenant-scoped caller,
+  including one naming its own tenant (`pkg/xkms/servicer_tenant.go:165,192`); the transports gate on
   `tenants:set_entitlements` / `tenants:set_quotas`
   (`pkg/auth/permissions.go:147-148`), never `tenants:update`.
 - **The tenant gate grants no reach.** `tenantgate.Access` selects the tenant

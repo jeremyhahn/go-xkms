@@ -74,6 +74,17 @@ func TestNewBufferRoundTrip(t *testing.T) {
 	}
 }
 
+func TestNewEmptyBuffer_LiveAndEmpty(t *testing.T) {
+	buf := xkmssecure.NewEmptyBuffer()
+	if !buf.IsAlive() || buf.Size() != 0 {
+		t.Fatalf("NewEmptyBuffer: alive=%v size=%d, want alive and empty", buf.IsAlive(), buf.Size())
+	}
+	buf.Destroy()
+	if buf.IsAlive() {
+		t.Fatal("IsAlive after Destroy: got true, want false")
+	}
+}
+
 // TestNewSecretRoundTrip seals material, opens a working Buffer, reads
 // it, and destroys.
 func TestNewSecretRoundTrip(t *testing.T) {

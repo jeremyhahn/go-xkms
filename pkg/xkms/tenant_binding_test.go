@@ -171,22 +171,23 @@ func TestTenantBinding_ListTenantsFiltersToCaller(t *testing.T) {
 	assert.ElementsMatch(t, []string{"tenant-a", "tenant-b"}, ids)
 }
 
-func TestBindTenantTarget_DecisionTable(t *testing.T) {
+func TestOwnTenant_DecisionTable(t *testing.T) {
 	tests := []struct {
 		name     string
 		identity *auth.Identity
 		target   string
 		allowed  bool
+		want     string
 	}{
-		{"no identity is the system tenant", nil, "", true},
-		{"no identity is confined to the system tenant", nil, "tenant-a", false},
-		{"empty tenant is confined to the system tenant", &auth.Identity{Subject: "so"}, "tenant-a", false},
-		{"system tenant cannot reach another tenant", &auth.Identity{TenantID: qrdbsdk.SystemTenantID}, "tenant-a", false},
-		{"system tenant reaches its own scope", &auth.Identity{TenantID: qrdbsdk.SystemTenantID}, "", true},
-		{"system tenant reaches its own ID", &auth.Identity{TenantID: qrdbsdk.SystemTenantID}, qrdbsdk.SystemTenantID, true},
-		{"own tenant is allowed", &auth.Identity{TenantID: "tenant-a"}, "tenant-a", true},
-		{"another tenant is refused", &auth.Identity{TenantID: "tenant-a"}, "tenant-b", false},
-		{"the system scope is refused to a tenant", &auth.Identity{TenantID: "tenant-a"}, "", false},
+		{"no identity is the system tenant", nil, "", true, ""},
+		{"no identity is confined to the system tenant", nil, "tenant-a", false, ""},
+		{"empty tenant is confined to the system tenant", &auth.Identity{Subject: "so"}, "tenant-a", false, ""},
+		{"system tenant cannot reach another tenant", &auth.Identity{TenantID: qrdbsdk.SystemTenantID}, "tenant-a", false, ""},
+		{"system tenant reaches its own scope", &auth.Identity{TenantID: qrdbsdk.SystemTenantID}, "", true, ""},
+		{"system tenant reaches its own ID", &auth.Identity{TenantID: qrdbsdk.SystemTenantID}, qrdbsdk.SystemTenantID, true, ""},
+		{"own tenant is allowed", &auth.Identity{TenantID: "tenant-a"}, "tenant-a", true, "tenant-a"},
+		{"another tenant is refused", &auth.Identity{TenantID: "tenant-a"}, "tenant-b", false, ""},
+		{"the system scope is refused to a tenant", &auth.Identity{TenantID: "tenant-a"}, "", false, ""},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
@@ -196,64 +197,58 @@ func TestBindTenantTarget_DecisionTable(t *testing.T) {
 				ctx = auth.WithIdentity(ctx, tc.identity)
 				wantCaller = tc.identity.TenantID
 			}
-			err := bindTenantTarget(ctx, "op", tc.target)
+			// "" names the system tenant here, as for a revoked
+			// certificate's issuing tenant.
+			target := qrdbsdk.NormalizeTenantID(tc.target)
+			got, err := ownTenant(ctx, "op", target)
 			if tc.allowed {
-				assert.NoError(t, err)
+				require.NoError(t, err)
+				assert.Equal(t, tc.want, got)
 				return
 			}
 			var bindErr *TenantBindingError
 			require.ErrorAs(t, err, &bindErr)
 			assert.Equal(t, "op", bindErr.Op)
 			assert.Equal(t, wantCaller, bindErr.CallerTenantID)
-			assert.Equal(t, tc.target, bindErr.TargetTenantID)
+			assert.Equal(t, target, bindErr.TargetTenantID)
 		})
 	}
 }
 
-// TestBindTenantRecord_SystemOwnsTheRegistry pins the one place the system
+// TestAdmitTenantRecord_SystemOwnsTheRegistry pins the one place the system
 // tenant reaches past itself: tenant records live in the system tenant's
 // registry, so the system manages them, while a tenant sees only its own.
-func TestBindTenantRecord_SystemOwnsTheRegistry(t *testing.T) {
-	assert.NoError(t, bindTenantRecord(systemCtx(), "op", "tenant-a"))
-	assert.NoError(t, bindTenantRecord(context.Background(), "op", "tenant-a"))
-	assert.NoError(t, bindTenantRecord(tenantCtx("tenant-a"), "op", "tenant-a"))
+func TestAdmitTenantRecord_SystemOwnsTheRegistry(t *testing.T) {
+	assert.NoError(t, admitTenantRecord(systemCtx(), "op", "tenant-a"))
+	assert.NoError(t, admitTenantRecord(context.Background(), "op", "tenant-a"))
+	assert.NoError(t, admitTenantRecord(tenantCtx("tenant-a"), "op", "tenant-a"))
 
-	err := bindTenantRecord(tenantCtx("tenant-a"), "op", "tenant-b")
+	err := admitTenantRecord(tenantCtx("tenant-a"), "op", "tenant-b")
 	var bindErr *TenantBindingError
 	require.ErrorAs(t, err, &bindErr)
 	assert.Equal(t, "tenant-a", bindErr.CallerTenantID)
 	assert.Equal(t, "tenant-b", bindErr.TargetTenantID)
 }
 
-// TestTargetTenant_ConfinesEveryCaller pins #1406: naming no tenant resolves
+// TestOwnTenant_ConfinesEveryCaller pins #1406: naming no tenant resolves
 // to the caller's own, and naming another is refused to every caller, the
 // system tenant's included.
-func TestTargetTenant_ConfinesEveryCaller(t *testing.T) {
-	got, err := targetTenant(tenantCtx("tenant-a"), "op", "")
+func TestOwnTenant_ConfinesEveryCaller(t *testing.T) {
+	got, err := ownTenant(tenantCtx("tenant-a"), "op", "")
 	require.NoError(t, err)
 	assert.Equal(t, "tenant-a", got)
 
-	got, err = targetTenant(systemCtx(), "op", "")
+	got, err = ownTenant(systemCtx(), "op", "")
 	require.NoError(t, err)
 	assert.Empty(t, got, "the system tenant resolves to the unscoped system view")
 
 	for name, ctx := range map[string]context.Context{
 		"system": systemCtx(), "no identity": context.Background(), "tenant": tenantCtx("tenant-b"),
 	} {
-		_, err := targetTenant(ctx, "op", "tenant-a")
+		_, err := ownTenant(ctx, "op", "tenant-a")
 		var bindErr *TenantBindingError
 		require.ErrorAs(t, err, &bindErr, name)
 	}
-}
-
-func TestRequireSystemTenant(t *testing.T) {
-	assert.NoError(t, requireSystemTenant(context.Background(), "op", "tenant-a"))
-	assert.NoError(t, requireSystemTenant(systemCtx(), "op", "tenant-a"))
-
-	err := requireSystemTenant(tenantCtx("tenant-a"), "op", "tenant-a")
-	var bindErr *TenantBindingError
-	require.ErrorAs(t, err, &bindErr)
-	assert.Equal(t, "tenant-a", bindErr.CallerTenantID)
 }
 
 // TestSignCSR_TenantBinding pins the binding on the caller-supplied SPIFFE

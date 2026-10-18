@@ -40,6 +40,7 @@ import (
 	"github.com/jeremyhahn/go-xkms/pkg/acme/entities"
 	caerrors "github.com/jeremyhahn/go-xkms/pkg/acme/errors"
 	"github.com/jeremyhahn/go-xkms/pkg/acme/storage"
+	"github.com/jeremyhahn/go-xkms/pkg/auth"
 	"github.com/jeremyhahn/go-xkms/pkg/ca"
 	xkmssdk "github.com/jeremyhahn/go-xkms/sdk/go"
 )
@@ -185,11 +186,14 @@ func NewTenantAwareAdminService(
 // and existence are delegated to qrdb's TenantServicer, which must be wired
 // via SetTenantService before this is called — there is no local-only path.
 //
-// Creating a tenant is a platform operation: a tenant-scoped caller is refused
-// with a *PlatformScopeError whatever ID it names.
+// Creating a tenant is a platform operation. Every transport gates it with a
+// cross-scoped permission (tenants:create:cross on REST, tenants:create on
+// gRPC); the service still refuses a caller outside the system tenant
+// (qrdbsdk.IdentityIsSystemTenant) with a *PlatformScopeError, so the refusal
+// holds when RBAC is disabled.
 func (s *TenantAwareAdminService) CreateTenant(ctx context.Context, req CreateTenantRequest) (*TenantInfo, error) {
-	if err := requirePlatformScope(ctx, "create tenant"); err != nil {
-		return nil, err
+	if identity := auth.GetIdentity(ctx); !qrdbsdk.IdentityIsSystemTenant(identity) {
+		return nil, &PlatformScopeError{Op: "create tenant", CallerTenantID: identity.TenantID}
 	}
 	if req.ID == "" {
 		return nil, wrapInputError("id", "tenant ID is required")
@@ -257,7 +261,7 @@ func (s *TenantAwareAdminService) GetTenant(ctx context.Context, tenantID string
 	if tenantID == "" {
 		return nil, wrapInputError("tenant_id", "tenant ID is required")
 	}
-	if err := bindTenantTarget(ctx, "get tenant", tenantID); err != nil {
+	if err := admitTenant(ctx, "get tenant", tenantID); err != nil {
 		return nil, err
 	}
 	if s.tenantSvc == nil {
@@ -311,7 +315,7 @@ func (s *TenantAwareAdminService) UpdateTenant(ctx context.Context, tenantID str
 	if tenantID == "" {
 		return nil, wrapInputError("tenant_id", "tenant ID is required")
 	}
-	if err := bindTenantTarget(ctx, "update tenant", tenantID); err != nil {
+	if err := admitTenant(ctx, "update tenant", tenantID); err != nil {
 		return nil, err
 	}
 	if s.tenantSvc == nil {
@@ -373,7 +377,7 @@ func (s *TenantAwareAdminService) UpdateTenantStatus(ctx context.Context, tenant
 	if tenantID == "" {
 		return wrapInputError("tenant_id", "tenant ID is required")
 	}
-	if err := bindTenantTarget(ctx, "update tenant status", tenantID); err != nil {
+	if err := admitTenant(ctx, "update tenant status", tenantID); err != nil {
 		return err
 	}
 	if status == "" {
@@ -418,7 +422,7 @@ func (s *TenantAwareAdminService) DeleteTenant(ctx context.Context, tenantID str
 	if tenantID == "" {
 		return wrapInputError("tenant_id", "tenant ID is required")
 	}
-	if err := bindTenantTarget(ctx, "delete tenant", tenantID); err != nil {
+	if err := admitTenant(ctx, "delete tenant", tenantID); err != nil {
 		return err
 	}
 	if s.tenantSvc == nil {
@@ -648,7 +652,7 @@ func (s *TenantAwareAdminService) CreateTenantRootCA(ctx context.Context, tenant
 	if tenantID == "" {
 		return nil, wrapInputError("tenant_id", "tenant ID is required")
 	}
-	if err := bindTenantTarget(ctx, "create tenant root CA", tenantID); err != nil {
+	if err := admitTenant(ctx, "create tenant root CA", tenantID); err != nil {
 		return nil, err
 	}
 	if req.CommonName == "" {
@@ -778,7 +782,7 @@ func (s *TenantAwareAdminService) CreateTenantIntermediateCA(ctx context.Context
 	if tenantID == "" {
 		return nil, wrapInputError("tenant_id", "tenant ID is required")
 	}
-	if err := bindTenantTarget(ctx, "create tenant intermediate CA", tenantID); err != nil {
+	if err := admitTenant(ctx, "create tenant intermediate CA", tenantID); err != nil {
 		return nil, err
 	}
 	if req.CommonName == "" {
@@ -960,7 +964,7 @@ func (s *TenantAwareAdminService) GetTenantIntermediateCA(ctx context.Context, t
 	if tenantID == "" {
 		return nil, wrapInputError("tenant_id", "tenant ID is required")
 	}
-	if err := bindTenantTarget(ctx, "get tenant intermediate CA", tenantID); err != nil {
+	if err := admitTenant(ctx, "get tenant intermediate CA", tenantID); err != nil {
 		return nil, err
 	}
 	if caID == "" {
@@ -1002,7 +1006,7 @@ func (s *TenantAwareAdminService) ListTenantIntermediateCAs(ctx context.Context,
 	if tenantID == "" {
 		return nil, wrapInputError("tenant_id", "tenant ID is required")
 	}
-	if err := bindTenantTarget(ctx, "list tenant intermediate CAs", tenantID); err != nil {
+	if err := admitTenant(ctx, "list tenant intermediate CAs", tenantID); err != nil {
 		return nil, err
 	}
 
@@ -1044,7 +1048,7 @@ func (s *TenantAwareAdminService) UpdateTenantIntermediateCAStatus(ctx context.C
 	if tenantID == "" {
 		return wrapInputError("tenant_id", "tenant ID is required")
 	}
-	if err := bindTenantTarget(ctx, "update tenant intermediate CA status", tenantID); err != nil {
+	if err := admitTenant(ctx, "update tenant intermediate CA status", tenantID); err != nil {
 		return err
 	}
 	if caID == "" {
@@ -1122,7 +1126,7 @@ func (s *TenantAwareAdminService) SetTenantDefaultIntermediateCA(ctx context.Con
 	if tenantID == "" {
 		return wrapInputError("tenant_id", "tenant ID is required")
 	}
-	if err := bindTenantTarget(ctx, "set tenant default intermediate CA", tenantID); err != nil {
+	if err := admitTenant(ctx, "set tenant default intermediate CA", tenantID); err != nil {
 		return err
 	}
 	if caID == "" {
@@ -1178,7 +1182,7 @@ func (s *TenantAwareAdminService) GetTenantCAStatus(ctx context.Context, tenantI
 	if tenantID == "" {
 		return nil, wrapInputError("tenant_id", "tenant ID is required")
 	}
-	if err := bindTenantTarget(ctx, "get tenant CA status", tenantID); err != nil {
+	if err := admitTenant(ctx, "get tenant CA status", tenantID); err != nil {
 		return nil, err
 	}
 
@@ -1265,7 +1269,7 @@ func (s *TenantAwareAdminService) CreateTenantEAB(ctx context.Context, tenantID 
 	if tenantID == "" {
 		return nil, wrapInputError("tenant_id", "tenant ID is required")
 	}
-	if err := bindTenantTarget(ctx, "create tenant EAB", tenantID); err != nil {
+	if err := admitTenant(ctx, "create tenant EAB", tenantID); err != nil {
 		return nil, err
 	}
 
@@ -1356,7 +1360,7 @@ func (s *TenantAwareAdminService) GetTenantEAB(ctx context.Context, tenantID str
 	if tenantID == "" {
 		return nil, wrapInputError("tenant_id", "tenant ID is required")
 	}
-	if err := bindTenantTarget(ctx, "get tenant EAB", tenantID); err != nil {
+	if err := admitTenant(ctx, "get tenant EAB", tenantID); err != nil {
 		return nil, err
 	}
 	if kid == "" {
@@ -1391,7 +1395,7 @@ func (s *TenantAwareAdminService) DeleteTenantEAB(ctx context.Context, tenantID 
 	if tenantID == "" {
 		return wrapInputError("tenant_id", "tenant ID is required")
 	}
-	if err := bindTenantTarget(ctx, "delete tenant EAB", tenantID); err != nil {
+	if err := admitTenant(ctx, "delete tenant EAB", tenantID); err != nil {
 		return err
 	}
 	if kid == "" {
@@ -1435,7 +1439,7 @@ func (s *TenantAwareAdminService) ListTenantEABs(ctx context.Context, tenantID s
 	if tenantID == "" {
 		return nil, nil, wrapInputError("tenant_id", "tenant ID is required")
 	}
-	if err := bindTenantTarget(ctx, "list tenant EABs", tenantID); err != nil {
+	if err := admitTenant(ctx, "list tenant EABs", tenantID); err != nil {
 		return nil, nil, err
 	}
 

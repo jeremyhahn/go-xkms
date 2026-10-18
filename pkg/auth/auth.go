@@ -119,6 +119,37 @@ func IsCrossTenant(id *Identity) bool {
 	return qrdbsdk.IdentityIsSystemTenant(id)
 }
 
+// OwnTenant resolves the tenant op acts on for the caller on ctx through
+// qrdbsdk.OwnTenant: the tenant of the caller's identity -- the system tenant
+// for a context with no identity, an in-process caller -- which requested
+// may name or leave empty. Naming any other tenant is refused with
+// *qrdbsdk.CrossTenantDeniedError, to a system-tenant caller too.
+//
+// qrdbsdk.OwnTenant reads the context tenant, so the identity's tenant is
+// bound to ctx first: the identity is the authority, never a tenant ctx
+// already carried. requested is compared verbatim; a caller whose "" names
+// the system tenant rather than "my own" passes
+// qrdbsdk.NormalizeTenantID(requested).
+func OwnTenant(ctx context.Context, op, requested string) (string, error) {
+	tenant := qrdbsdk.SystemTenantID
+	if id := GetIdentity(ctx); id != nil {
+		tenant = qrdbsdk.NormalizeTenantID(id.TenantID)
+	}
+	return qrdbsdk.OwnTenant(qrdbsdk.ContextWithTenant(ctx, tenant), requested, op)
+}
+
+// AdmitTenant admits op on target, a tenant a request addressed ("" is the
+// system tenant), for the caller on ctx: a cross-tenant caller
+// (IsCrossTenant) may address any tenant, any other caller only its own
+// (OwnTenant). The refusal is OwnTenant's *qrdbsdk.CrossTenantDeniedError.
+func AdmitTenant(ctx context.Context, op, target string) error {
+	if IsCrossTenant(GetIdentity(ctx)) {
+		return nil
+	}
+	_, err := OwnTenant(ctx, op, qrdbsdk.NormalizeTenantID(target))
+	return err
+}
+
 // FirstRole returns the first role on the identity, or "" if the identity
 // has none. It is the canonical helper for call sites that need a single
 // role string for audit / authorization-request building.

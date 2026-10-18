@@ -1,0 +1,1 @@
+- **`/api/v1/auth/me` reports the permissions RBAC lists** -- the fixed `uiPermissionMatrix` and its one `Authorize` call per pair are gone. The `permissions` map now holds every permission qrdb's `RBACClient.ListPermissions` grants the caller, each `true`; a permission not held is absent instead of `false`, and a listing failure answers 500 (go-xkms#1557).

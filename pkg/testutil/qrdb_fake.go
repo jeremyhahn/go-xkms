@@ -23,8 +23,6 @@ import (
 
 	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
 	qrdbtransport "github.com/jeremyhahn/go-qrdb/sdk/go/transport"
-
-	"github.com/jeremyhahn/go-xkms/pkg/qrdbrole"
 )
 
 // QRDBFakeTransport is a minimal, correct, in-memory implementation of the
@@ -611,16 +609,15 @@ func (f *QRDBFakeTransport) ResolvePermissions(ctx context.Context, req *qrdbtra
 	return &qrdbtransport.ResolvePermissionsResponse{Permissions: perms}, nil
 }
 
-// ReconcileBuiltInRoles implements transport.RoleClient. It converges the
-// tenant's stored built-in roles onto the definitions the linked go-qrdb build
-// publishes: permissions the build now grants are added, permissions it no
-// longer grants are removed, custom roles are left untouched, and a tenant
-// already in agreement performs zero writes.
-//
-// The convergence itself lives in pkg/qrdbrole so every in-memory RoleClient in
-// this repository answers the verb identically.
-func (f *QRDBFakeTransport) ReconcileBuiltInRoles(ctx context.Context, req *qrdbtransport.ReconcileRolesRequest) (*qrdbtransport.ReconcileRolesResponse, error) {
-	return qrdbrole.Reconcile(ctx, f, req)
+// errFakeNoRoleReconcile is the fake's answer to ReconcileBuiltInRoles.
+var errFakeNoRoleReconcile = &qrdbtransport.CapabilityUnsupportedError{Message: "the qrdb fake transport does not reconcile built-in roles; go-qrdb owns that convergence"}
+
+// ReconcileBuiltInRoles implements transport.RoleClient. Converging the
+// built-in roles onto their canonical definitions is go-qrdb's rule, served by
+// its transports, so the fake reports the capability as unsupported rather
+// than re-implementing it.
+func (f *QRDBFakeTransport) ReconcileBuiltInRoles(context.Context, *qrdbtransport.ReconcileRolesRequest) (*qrdbtransport.ReconcileRolesResponse, error) {
+	return nil, errFakeNoRoleReconcile
 }
 
 func idString(v uint64) string {

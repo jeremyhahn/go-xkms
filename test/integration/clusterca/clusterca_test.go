@@ -155,13 +155,14 @@ func startCluster(t *testing.T) *cluster {
 	directoryURL := serveACME(t, tcgCA, members)
 
 	p, err := clusterca.New(&clusterca.Options{
-		RaftAddress: members[1],
-		NodeID:      1,
-		TrustDomain: trustDomain,
-		Members:     members,
-		DataDir:     nodeDataDir(t),
-		ACME:        &clusterca.ACMEOptions{},
-		Backends:    nodeBackends(t, nil),
+		RaftAddress:     members[1],
+		NodeID:          1,
+		TrustDomain:     trustDomain,
+		Members:         members,
+		DataDir:         nodeDataDir(t),
+		ACME:            &clusterca.ACMEOptions{},
+		Backends:        nodeBackends(t, nil),
+		NodeKeyBackends: nodeKeyBackends(t, nil),
 		Advertise: clusterenroll.AdvertiseOptions{
 			NoiseHost: "127.0.0.1",
 			NoisePort: freePort(t),
@@ -184,6 +185,7 @@ func startCluster(t *testing.T) *cluster {
 func provisionJoiner(t *testing.T, c *cluster, nodeID uint64, raftAddr string) (*clusterca.Result, error) {
 	t.Helper()
 
+	joinerTPM := newJoinerTPM(t, c.ekRoot)
 	p, err := clusterca.New(&clusterca.Options{
 		RaftAddress: raftAddr,
 		NodeID:      nodeID,
@@ -195,8 +197,9 @@ func provisionJoiner(t *testing.T, c *cluster, nodeID uint64, raftAddr string) (
 			ChallengePort: challengePort,
 			ChallengeHost: "127.0.0.1",
 		},
-		KeyBackend: "tpm2",
-		Backends:   nodeBackends(t, newJoinerTPM(t, c.ekRoot)),
+		KeyBackend:      "tpm2",
+		Backends:        nodeBackends(t, joinerTPM),
+		NodeKeyBackends: nodeKeyBackends(t, joinerTPM),
 		Bootstrap: clusterenroll.BootstrapOptions{
 			NoiseKey:  hex.EncodeToString(c.advertiser.NoisePublicKey()),
 			NoiseAddr: c.advertiser.Addr(),
@@ -483,6 +486,19 @@ func nodeBackends(t *testing.T, hardware types.Sealer) func(string) (xkms.Backen
 		Protection:  clusterca.KeyProtection{Mode: clusterca.KeyProtectPassphrase, Passphrase: passphrase},
 		HardwareTPM: hardware,
 		Logger:      testLogger(),
+	})
+	require.NoError(t, err)
+	return resolve
+}
+
+// nodeKeyBackends builds a node's transport-key resolver the way a
+// composition root does. hardware, when non-nil, is the TPM "tpm2" resolves to.
+func nodeKeyBackends(t *testing.T, hardware types.Sealer) func(string) (xkms.Backend, error) {
+	t.Helper()
+
+	resolve, err := clusterca.NewNodeKeyBackends(&clusterca.NodeKeyBackendsParams{
+		DataDir:     nodeDataDir(t),
+		HardwareTPM: hardware,
 	})
 	require.NoError(t, err)
 	return resolve

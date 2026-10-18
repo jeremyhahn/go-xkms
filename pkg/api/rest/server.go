@@ -86,7 +86,7 @@ type Server struct {
 	// pivLogin configures the cert-login exchange endpoint.
 	pivLogin *PIVLoginOptions
 
-	// rbacAuthorizer evaluates the /auth/me UI permission matrix. Nil when
+	// rbacAuthorizer lists the caller's permissions for /auth/me. Nil when
 	// RBAC is disabled.
 	rbacAuthorizer *auth.Authorizer
 
@@ -195,7 +195,7 @@ type Config struct {
 	// will use this service directly. The platform-global subsystems -- the
 	// system barrier, the PIN backend, the platform store, the tenants' TPM
 	// modes and the credential service -- are reached only through it,
-	// because its requirePlatformScope is what refuses a tenant-scoped caller
+	// because its system-tenant check is what refuses a tenant-scoped caller
 	// (go-xkms#1226, #1227).
 	XKMSService *xkms.XKMSService
 
@@ -439,7 +439,7 @@ func NewServer(cfg *Config) (*Server, error) {
 	// The platform store, TPM policy, credential and OIDC credential
 	// handlers are enabled whenever the service is present, exactly as the
 	// PKCS#11 remote-state handlers are: they reach their subsystem only
-	// through the service, whose requirePlatformScope refuses a tenant-scoped
+	// through the service, whose system-tenant check refuses a tenant-scoped
 	// caller (go-xkms#1226, #1227) and which answers ErrNotConfigured (503)
 	// for a subsystem this deployment does not compose.
 	if cfg.XKMSService != nil {

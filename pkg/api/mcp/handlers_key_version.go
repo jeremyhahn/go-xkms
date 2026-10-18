@@ -24,7 +24,7 @@ import (
 // The xkms.*KeyVersion* and xkms.rotateScopeKeys handlers are the MCP server
 // side of the key-version API. Each decodes its parameters into the transport
 // request and delegates to XKMSService; they gate on the keys:* pairs in
-// authz.go's methodPermissions. The per-key operations act in the caller's
+// server.go's rpcMethods table. The per-key operations act in the caller's
 // tenant whatever the parameters say; xkms.rotateScopeKeys passes the
 // requested tenant to the service, which binds it to the caller.
 

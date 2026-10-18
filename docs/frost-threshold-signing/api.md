@@ -133,9 +133,10 @@ service injected, every RPC answers `Unavailable`.
 
 ## MCP (`pkg/api/mcp/handlers_frost.go`)
 
-Nine dotted methods, dispatched by a `switch` in `routeFrostMethods`
-(`pkg/api/mcp/handlers_frost.go:575` — unlike the SSH methods, which are
-dispatched through the map in `server.go`): `frost.generateKey`,
+Nine dotted methods, registered in the `rpcMethods` table like every other
+method (`pkg/api/mcp/server.go:247`), each with its `frost` permission; a
+build without `-tags frost` registers the stub handlers of
+`pkg/api/mcp/handlers_frost_stub.go`, which refuse with "not compiled": `frost.generateKey`,
 `frost.importKey`, `frost.listKeys`, `frost.getKey`, `frost.deleteKey`,
 `frost.generateNonces`, `frost.signRound`, `frost.aggregate`,
 `frost.verify`.

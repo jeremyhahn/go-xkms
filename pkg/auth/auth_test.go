@@ -133,6 +133,63 @@ func TestIsCrossTenant_ScopedTenant(t *testing.T) {
 		"a tenant-scoped identity is bound to its own tenant only")
 }
 
+// TestOwnTenant_ResolvesTheIdentityTenant proves an empty or matching request
+// resolves to the identity's tenant, and that a context without an identity is
+// the system tenant.
+func TestOwnTenant_ResolvesTheIdentityTenant(t *testing.T) {
+	ctx := WithIdentity(context.Background(), &Identity{Subject: "u", TenantID: "tenant-a"})
+	for _, requested := range []string{"", "tenant-a"} {
+		got, err := OwnTenant(ctx, "op", requested)
+		require.NoError(t, err)
+		assert.Equal(t, "tenant-a", got)
+	}
+
+	got, err := OwnTenant(context.Background(), "op", "")
+	require.NoError(t, err)
+	assert.Equal(t, qrdbsdk.SystemTenantID, got)
+
+	got, err = OwnTenant(WithIdentity(context.Background(), &Identity{Subject: "so"}), "op", qrdbsdk.SystemTenantID)
+	require.NoError(t, err)
+	assert.Equal(t, qrdbsdk.SystemTenantID, got, "an empty identity tenant is the system tenant")
+}
+
+// TestOwnTenant_RefusesAnotherTenant proves naming another tenant is refused
+// to every caller, the system tenant included, and that a tenant already bound
+// to the context cannot widen the identity's reach.
+func TestOwnTenant_RefusesAnotherTenant(t *testing.T) {
+	tenantCtx := WithIdentity(context.Background(), &Identity{Subject: "u", TenantID: "tenant-a"})
+	systemCtx := WithIdentity(context.Background(), &Identity{Subject: "so", TenantID: qrdbsdk.SystemTenantID})
+	for name, ctx := range map[string]context.Context{
+		"tenant":           tenantCtx,
+		"system":           systemCtx,
+		"no identity":      context.Background(),
+		"foreign ctx bind": qrdbsdk.ContextWithTenant(tenantCtx, "tenant-b"),
+	} {
+		_, err := OwnTenant(ctx, "op", "tenant-b")
+		var denied *qrdbsdk.CrossTenantDeniedError
+		require.ErrorAs(t, err, &denied, name)
+		assert.Equal(t, "op", denied.Op, name)
+		assert.Equal(t, "tenant-b", denied.RequestedTenantID, name)
+	}
+}
+
+// TestAdmitTenant_SystemReachesEveryTenant proves a cross-tenant caller may
+// address any tenant while a tenant-scoped caller is held to its own, and
+// that "" names the system tenant rather than the caller's own.
+func TestAdmitTenant_SystemReachesEveryTenant(t *testing.T) {
+	systemCtx := WithIdentity(context.Background(), &Identity{Subject: "so", TenantID: qrdbsdk.SystemTenantID})
+	assert.NoError(t, AdmitTenant(systemCtx, "op", "tenant-b"))
+	assert.NoError(t, AdmitTenant(context.Background(), "op", "tenant-b"))
+
+	tenantCtx := WithIdentity(context.Background(), &Identity{Subject: "u", TenantID: "tenant-a"})
+	assert.NoError(t, AdmitTenant(tenantCtx, "op", "tenant-a"))
+
+	var denied *qrdbsdk.CrossTenantDeniedError
+	require.ErrorAs(t, AdmitTenant(tenantCtx, "op", "tenant-b"), &denied)
+	require.ErrorAs(t, AdmitTenant(tenantCtx, "op", ""), &denied)
+	assert.Equal(t, qrdbsdk.SystemTenantID, denied.RequestedTenantID)
+}
+
 func TestFirstRole(t *testing.T) {
 	cases := []struct {
 		name string

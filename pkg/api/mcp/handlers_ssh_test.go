@@ -613,10 +613,10 @@ func TestSSH_NotConfigured(t *testing.T) {
 
 	for _, method := range methods {
 		t.Run(method, func(t *testing.T) {
-			handler, ok := rpcMethodHandlers[method]
+			entry, ok := rpcMethods[method]
 			require.True(t, ok, "method %s is not registered", method)
 
-			_, err := handler(server, ctx, &JSONRPCRequest{
+			_, err := entry.handler(server, ctx, &JSONRPCRequest{
 				JSONRPC: "2.0", Method: method, Params: json.RawMessage(`{}`), ID: 1,
 			})
 

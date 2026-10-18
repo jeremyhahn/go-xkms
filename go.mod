@@ -38,8 +38,8 @@ require (
 	github.com/jeremyhahn/go-enclave v0.8.0-alpha
 	github.com/jeremyhahn/go-frost v0.3.0-alpha
 	github.com/jeremyhahn/go-luks2 v1.0.0-rc.4
-	github.com/jeremyhahn/go-qrdb v0.48.0-alpha
-	github.com/jeremyhahn/go-qrdb/sdk/go v0.48.0-alpha
+	github.com/jeremyhahn/go-qrdb v0.50.0-alpha
+	github.com/jeremyhahn/go-qrdb/sdk/go v0.50.0-alpha
 	github.com/jeremyhahn/go-truststrap v0.6.0-alpha
 	github.com/jeremyhahn/go-xkms/sdk/go v0.56.0-alpha
 	github.com/kevinburke/ssh_config v1.6.0
@@ -47,7 +47,7 @@ require (
 	github.com/miekg/dns v1.1.72
 	github.com/miekg/pkcs11 v1.1.2
 	github.com/ovh/kmip-go v0.9.2
-	github.com/prometheus/client_golang v1.24.1
+	github.com/prometheus/client_golang v1.25.0
 	github.com/prometheus/client_model v0.6.3
 	github.com/quic-go/quic-go v0.63.0
 	github.com/spf13/cobra v1.10.2
@@ -61,12 +61,12 @@ require (
 	github.com/wailsapp/wails/v2 v2.12.0
 	github.com/weppos/publicsuffix-go v0.50.3
 	github.com/youmark/pkcs8 v0.0.0-20240726163527-a2c0da244d78
-	golang.org/x/crypto v0.57.0
+	golang.org/x/crypto v0.58.0
 	golang.org/x/net v0.60.0
 	golang.org/x/oauth2 v0.37.0
-	golang.org/x/sys v0.48.0
-	golang.org/x/term v0.46.0
-	golang.org/x/text v0.42.0
+	golang.org/x/sys v0.49.0
+	golang.org/x/term v0.47.0
+	golang.org/x/text v0.43.0
 	golang.org/x/time v0.15.0
 	google.golang.org/api v0.293.0
 	google.golang.org/genproto/googleapis/rpc v0.0.0-20260810153831-ec0a7760b754
@@ -184,11 +184,11 @@ require (
 	github.com/jackc/pgx/v5 v5.11.0 // indirect
 	github.com/jchv/go-winloader v0.0.0-20250406163304-c1995be93bd1 // indirect
 	github.com/jeremyhahn/go-objstore v0.4.0-alpha // indirect
-	github.com/jeremyhahn/go-quicraft v0.20.0 // indirect
+	github.com/jeremyhahn/go-quicraft v0.22.0-alpha // indirect
 	github.com/jeroenrinzema/psql-wire v0.18.0 // indirect
 	github.com/jmespath/go-jmespath v0.4.0 // indirect
 	github.com/json-iterator/go v1.1.12 // indirect
-	github.com/klauspost/compress v1.19.1 // indirect
+	github.com/klauspost/compress v1.20.1 // indirect
 	github.com/klauspost/cpuid/v2 v2.4.0 // indirect
 	github.com/kr/pretty v0.3.1 // indirect
 	github.com/kr/text v0.2.0 // indirect
@@ -274,7 +274,7 @@ require (
 	golang.org/x/arch v0.30.0 // indirect
 	golang.org/x/exp v0.0.0-20260529124908-c761662dc8c9 // indirect
 	golang.org/x/mod v0.41.0 // indirect
-	golang.org/x/sync v0.23.0 // indirect
+	golang.org/x/sync v0.24.0 // indirect
 	golang.org/x/telemetry v0.0.0-20260924152758-ed294f943157 // indirect
 	golang.org/x/tools v0.51.0 // indirect
 	google.golang.org/genproto v0.0.0-20260810153831-ec0a7760b754 // indirect

@@ -176,10 +176,9 @@ func TestTenantAdminMethods_Dispatchable(t *testing.T) {
 		"xkms.createTenant", "xkms.getTenant", "xkms.listTenants", "xkms.deleteTenant",
 		"xkms.updateTenantEntitlements", "xkms.updateTenantQuotas",
 	} {
-		_, ok := rpcMethodHandlers[method]
+		entry, ok := rpcMethods[method]
 		assert.True(t, ok, "method %q must be dispatchable", method)
-		_, mapped := methodPermissions[method]
-		assert.True(t, mapped, "method %q must carry a permission mapping", method)
+		assert.False(t, entry.public(), "method %q must carry a permission mapping", method)
 	}
 }
 

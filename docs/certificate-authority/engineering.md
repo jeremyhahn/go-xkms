@@ -454,7 +454,7 @@ e-mail addresses are valid tenant names and are not SPIFFE path segments.
   `recordIssuedKey` (`pkg/ca/ca_extensions.go`, `cert-tenant/<serial-decimal
   >.json`). `XKMSService.RevokeCertificate` (`pkg/xkms/servicer_ca.go`)
   reads it back with `CertificateTenant` and runs it through the same
-  `bindTenantTarget` (`pkg/xkms/tenant_binding.go:88`) every other
+  `ownTenant` (`pkg/xkms/tenant_binding.go:86`) every other
   tenant-scoped operation uses: every caller may revoke only its own
   tenant's certificates — a system-tenant caller only the system/platform
   scope's own (`""`), never a tenant's (go-xkms#1406). `IssueCertificate` binds `req.TenantID`

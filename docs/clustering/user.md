@@ -129,8 +129,8 @@ bring up the joiners.
 ## Securing the Raft channel
 
 Raft peer traffic is a separate network channel from the client APIs. By
-default it auto-provisions its own mTLS (a dedicated cluster CA, distinct
-from your runtime xkms CA) with no operator action needed. If you would
+default the `ca` block's TrustedCA issues each node's Raft mTLS certificate
+from a dedicated cluster intermediate, with no operator action needed. If you would
 rather supply certificates yourself:
 
 ```yaml
@@ -151,9 +151,15 @@ Supplying `raft_tls.*` files by hand does not scale past a few nodes. The
 `raft_enrollment` block instead provisions inter-node mTLS touch-free: the
 first node stands up a cluster CA and every node obtains its own transport
 certificate automatically, in the precedence order above (operator files →
-ACME-attested → hardware node key → software node key, Noise NK / SPKI /
-DANE / Direct bootstrap). This is the same `pkg/trust/clusterca` toolkit
+ACME-attested → local CA on any key backend; joiners fetch the trust anchor
+via Noise NK / SPKI / DANE / Direct bootstrap). This is the same `pkg/trust/clusterca` toolkit
 every product in the stack consumes through `sdk/go/clusterca`.
+
+In every mode but operator files, the `ca` block's `TrustedCA` is the
+cluster CA: it signs node certificates through its signer, and no CA private
+key is written to disk. Without ACME (local-CA mode, any `key_backend`,
+`software` by default) the node needs `ca` configured and cannot join an
+existing cluster; enable ACME on joiners.
 
 #### ACME-attested cluster enrollment
 
@@ -276,7 +282,7 @@ server-side: your identity is what reaches the leader, not the follower's.
 | "cluster.peers must include this node's own node_id" | the bootstrapper's own `node_id=address` is missing from `peers` | add it |
 | a not-leader error you see directly (not auto-retried) | you're on the Unix socket transport, which never follows redirects | retry against the leader yourself, or use a network transport |
 | `cluster add`/`remove` fails with a conflict | you ran it against a standalone (non-clustered) node | there's no Raft group to modify on a standalone node |
-| raft_tls partially set, server won't start | all three of `ca_cert_file`/`cert_file`/`key_file` must be set together | set all three, or remove all three and let auto-provisioning run |
+| raft_tls partially set, server won't start | all three of `ca_cert_file`/`cert_file`/`key_file` must be set together | set all three, or remove all three and let the TrustedCA issue them |
 
 ## Where to go next
 

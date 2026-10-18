@@ -24,7 +24,7 @@ import (
 // side of the TPM policy API (pkg/tpmpolicy). Each decodes its parameters
 // into the transport request and delegates to XKMSService, which binds the
 // target tenant and enforces system scope; they gate on the tpm_policy:*
-// and tenants:* pairs in authz.go's methodPermissions.
+// and tenants:* pairs in server.go's rpcMethods table.
 
 // tpmPolicyCall decodes a P from req and runs call with it, mapping its
 // error through the TPM policy classification.

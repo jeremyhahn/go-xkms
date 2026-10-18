@@ -18,8 +18,9 @@ import (
 	"strings"
 	"testing"
 
-	qrdbv1 "github.com/jeremyhahn/go-qrdb/pkg/api/grpc/proto/qrdbv1"
+	qrdbgrpcv1 "github.com/jeremyhahn/go-qrdb/pkg/api/grpc/proto/qrdbv1"
 	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
+	qrdbv1 "github.com/jeremyhahn/go-qrdb/sdk/go/proto/qrdb/v1"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"google.golang.org/protobuf/proto"
@@ -70,8 +71,8 @@ func grpcAndMCPPermissionPairs(t *testing.T) map[string]struct{} {
 
 	set := map[string]struct{}{}
 	for _, spec := range xkmsmcp.ModuleMethods() {
-		if spec.Resource != "" && spec.Action != "" {
-			set[spec.Resource+":"+spec.Action] = struct{}{}
+		if !spec.Public {
+			set[string(spec.Permission)] = struct{}{}
 		}
 	}
 
@@ -82,7 +83,7 @@ func grpcAndMCPPermissionPairs(t *testing.T) map[string]struct{} {
 	// its admin:status pair. qrdb declares its admin:* pairs on
 	// qrdb.v1.QRDBService, which also carries the KV surface xkms does not
 	// expose, so only its admin:* pairs are added.
-	qrdbService := qrdbv1.File_pkg_api_grpc_proto_qrdbv1_qrdb_proto.Services().ByName("QRDBService")
+	qrdbService := qrdbgrpcv1.File_pkg_api_grpc_proto_qrdbv1_qrdb_proto.Services().ByName("QRDBService")
 	require.NotNil(t, qrdbService, "qrdb.v1.QRDBService descriptor not found")
 	qrdbPairs := map[string]struct{}{}
 	addMethodPermissions(t, qrdbPairs, qrdbService.Methods())
@@ -207,5 +208,69 @@ func TestNewModule_PeerAttestationRoles(t *testing.T) {
 		for _, role := range []string{qrdbsdk.PermissionRoleSO, qrdbsdk.PermissionRoleAuditor} {
 			assert.False(t, qrdbsdk.HasPermissionRoleGrant(role, perm), "%s must not hold %s", role, perm)
 		}
+	}
+}
+
+// TestNewModule_AuditorHoldsOnlyReads pins the Auditor slice: every read of
+// xkms-owned state, and nothing else xkms owns. An Auditor that can change
+// state is no longer an independent observer (FIPS 140-3 AS10.10).
+func TestNewModule_AuditorHoldsOnlyReads(t *testing.T) {
+	_, err := NewModule(func() *xkms.XKMSService { return nil })
+	require.NoError(t, err)
+
+	reads := map[qrdbsdk.Permission]bool{}
+	for _, p := range auditorPermissions() {
+		reads[p] = true
+		assert.True(t, qrdbsdk.HasPermissionRoleGrant(qrdbsdk.PermissionRoleAuditor, p), "Auditor must hold %s", p)
+	}
+	for _, p := range ownedScopedPermissions() {
+		if !reads[p] {
+			assert.False(t, qrdbsdk.HasPermissionRoleGrant(qrdbsdk.PermissionRoleAuditor, p), "Auditor must not hold %s", p)
+		}
+	}
+}
+
+// TestNewModule_OperatorGrants pins the Operator slice: the reads, service
+// SSH assets and credential use, but no administration of TPM policies,
+// trust roots, tenants or the key store.
+func TestNewModule_OperatorGrants(t *testing.T) {
+	_, err := NewModule(func() *xkms.XKMSService { return nil })
+	require.NoError(t, err)
+
+	for _, p := range []string{"tpm_policy:get", "tpm_policy:verify", "trust_roots:list", "bootstrap:read", "ssh:service", "oidc_credentials:token"} {
+		assert.True(t, qrdbsdk.HasPermissionRoleGrant(qrdbsdk.PermissionRoleOperator, qrdbsdk.Permission(p)), "Operator must hold %s", p)
+	}
+	for _, p := range []string{"tpm_policy:create", "tpm_policy:delete", "trust_roots:import", "tenants:set_tpm_mode", "keys:update", "oidc_credentials:create"} {
+		assert.False(t, qrdbsdk.HasPermissionRoleGrant(qrdbsdk.PermissionRoleOperator, qrdbsdk.Permission(p)), "Operator must not hold %s", p)
+	}
+}
+
+// TestNewModule_DeclaresGovernanceDutyForOwnedPermissions checks that every
+// governance declaration names a permission xkms owns -- qrdb declares the
+// duty of its own, and a conflicting declaration panics at startup -- and
+// that the declarations are in force once the module is built.
+func TestNewModule_DeclaresGovernanceDutyForOwnedPermissions(t *testing.T) {
+	_, err := NewModule(func() *xkms.XKMSService { return nil })
+	require.NoError(t, err)
+
+	owned := map[qrdbsdk.Permission]bool{}
+	for _, p := range ownedScopedPermissions() {
+		owned[p] = true
+	}
+	for _, p := range governancePermissions() {
+		assert.True(t, owned[p], "%s is not an xkms-owned permission; go-qrdb declares its duty", p)
+		assert.Equal(t, qrdbsdk.PermissionDutyGovernance, qrdbsdk.LookupPermissionDuty(p), "duty of %s", p)
+	}
+}
+
+// TestNewModule_DataPlanePermissionsStayUndeclared checks the other side:
+// the xkms-owned data-plane verbs carry no duty, so the Security Officer
+// role can never be granted them.
+func TestNewModule_DataPlanePermissionsStayUndeclared(t *testing.T) {
+	_, err := NewModule(func() *xkms.XKMSService { return nil })
+	require.NoError(t, err)
+
+	for _, p := range []string{"oidc_credentials:token", "peer_attestation:submit", "ssh:service"} {
+		assert.Equal(t, qrdbsdk.PermissionDutyUndeclared, qrdbsdk.LookupPermissionDuty(qrdbsdk.Permission(p)), "duty of %s", p)
 	}
 }

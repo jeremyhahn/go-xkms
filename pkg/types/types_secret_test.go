@@ -21,6 +21,7 @@ import (
 	"github.com/jeremyhahn/go-xkms/pkg/errs"
 
 	"github.com/jeremyhahn/go-qrdb/sdk/go/secret"
+	"github.com/jeremyhahn/go-xkms/sdk/go/secure"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -29,12 +30,15 @@ import (
 // credential map. Keys must be credential names (without the scheme prefix).
 func fakeCredentialRegistry(creds map[string]string) *secret.ResolverRegistry {
 	reg := secret.NewResolverRegistry()
-	retrieve := func(_ context.Context, name string) ([]byte, error) {
+	retrieve := func(_ context.Context, name string) (*secure.Buffer, error) {
 		v, ok := creds[name]
 		if !ok {
 			return nil, &errs.Message{Msg: fmt.Sprintf("credential not found: %s", name)}
 		}
-		return []byte(v), nil
+		if v == "" {
+			return secure.NewEmptyBuffer(), nil
+		}
+		return secure.NewBufferFromBytes([]byte(v))
 	}
 	reg.Register(secret.NewCredentialResolver(retrieve))
 	return reg

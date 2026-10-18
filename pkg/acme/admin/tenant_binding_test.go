@@ -645,19 +645,19 @@ func TestBindTenantTarget(t *testing.T) {
 		"no tenant":     withUser(context.Background(), &AuthenticatedUser{UserID: "u"}),
 		"no identity":   context.Background(),
 	} {
-		assert.NoError(t, bindTenantTarget(ctx, "op", boundTenantB), name)
+		assert.NoError(t, admitTenant(ctx, "op", boundTenantB), name)
 	}
 
 	ctx := callerCtx(boundTenantA)
-	require.NoError(t, bindTenantTarget(ctx, "op", boundTenantA))
-	err := bindTenantTarget(ctx, "delete tenant", boundTenantB)
+	require.NoError(t, admitTenant(ctx, "op", boundTenantA))
+	err := admitTenant(ctx, "delete tenant", boundTenantB)
 	requireTenantRefusal(t, err, "foreign")
 	var bindErr *TenantBindingError
 	require.ErrorAs(t, err, &bindErr)
 	assert.Equal(t, "delete tenant", bindErr.Op)
 	assert.Equal(t, boundTenantA, bindErr.CallerTenantID)
 	assert.Equal(t, boundTenantB, bindErr.TargetTenantID)
-	requireTenantRefusal(t, bindTenantTarget(ctx, "op", ""), "empty target is the system scope")
+	requireTenantRefusal(t, admitTenant(ctx, "op", ""), "empty target is the system scope")
 }
 
 // TestBindTenantIAM proves an admitted IAM call is scoped to the tenant the
@@ -679,16 +679,10 @@ func TestBindTenantIAM_ForeignTenantRefused(t *testing.T) {
 	assert.Nil(t, scoped)
 }
 
-// TestRequirePlatformScope covers the platform-only predicate and its error.
-func TestRequirePlatformScope(t *testing.T) {
-	require.NoError(t, requirePlatformScope(platformCtx(), "op"))
-	require.NoError(t, requirePlatformScope(context.Background(), "op"))
-
-	err := requirePlatformScope(callerCtx(boundTenantA), "list audit logs")
-	var scopeErr *PlatformScopeError
-	require.ErrorAs(t, err, &scopeErr)
-	assert.Equal(t, "list audit logs", scopeErr.Op)
-	assert.Equal(t, boundTenantA, scopeErr.CallerTenantID)
+// TestPlatformScopeError covers the platform-only refusal's shape: it reads
+// exactly as a missing permission, never as a missing resource.
+func TestPlatformScopeError(t *testing.T) {
+	err := error(&PlatformScopeError{Op: "create tenant", CallerTenantID: boundTenantA})
 	assert.ErrorIs(t, err, ErrForbidden)
 	assert.Equal(t, ErrForbidden.Error(), err.Error())
 	assert.False(t, IsNotFoundError(err))

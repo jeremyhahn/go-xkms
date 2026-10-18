@@ -209,15 +209,15 @@ func (g *PermissionGate) WrapTenantList(resource, action string, cross qrdbsdk.P
 }
 
 // writePermissionDenied writes the single response for a caller that may not
-// perform an operation: the gate's denial, and the platform-scope refusal
-// (PlatformScopeError) that must read exactly like it.
+// perform an operation: the gate's denial, and the system-tenant refusal of
+// ListAuditLogs that must read exactly like it.
 func writePermissionDenied(w http.ResponseWriter) {
 	writeProblem(w, http.StatusForbidden, problemForbidden, "Access denied: insufficient permissions")
 }
 
 // RequireTenantScope reports whether the identity on ctx may act on
 // targetTenantID. It applies qrdb's canonical system-tenant rule through the
-// tenant binding (bindTenantTarget): an identity rooted in the reserved system
+// tenant binding (admitTenant): an identity rooted in the reserved system
 // tenant is platform-scoped and reaches every tenant, anything else is
 // confined to its own tenant and refused with a *TenantBindingError, which
 // reads as a missing tenant. A request that carries no identity is
@@ -226,5 +226,5 @@ func RequireTenantScope(ctx context.Context, targetTenantID string) error {
 	if auth.GetIdentity(ctx) == nil {
 		return auth.ErrUnauthenticated
 	}
-	return bindTenantTarget(ctx, "require tenant scope", targetTenantID)
+	return admitTenant(ctx, "require tenant scope", targetTenantID)
 }

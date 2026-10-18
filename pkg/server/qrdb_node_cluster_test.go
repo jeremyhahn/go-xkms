@@ -16,92 +16,38 @@
 package server
 
 import (
-	"path/filepath"
 	"reflect"
 	"testing"
 
-	clusterenroll "github.com/jeremyhahn/go-qrdb/sdk/go/clusterenroll"
-
 	"github.com/jeremyhahn/go-xkms/pkg/config"
+	"github.com/jeremyhahn/go-xkms/pkg/embeddednode"
 )
 
-// TestBuildClusterEnrollOptions_Defaults verifies that an enrollment config with
-// no overrides maps onto clusterenroll.Options with the documented defaults
-// (xkms.cluster trust domain, the default Noise port) and that membership of
-// more than one node yields SingleNode=false.
-func TestBuildClusterEnrollOptions_Defaults(t *testing.T) {
-	dir := t.TempDir()
+// TestNodeClusterOptions checks that the cluster topology maps onto the
+// embedded node options unchanged; enrollment settings stay with the
+// TrustedCA resolver and never reach node construction (go-xkms#1381).
+func TestNodeClusterOptions(t *testing.T) {
 	s := &Server{config: &config.Config{
-		Datastore: config.DatastoreConfig{Path: dir},
 		Cluster: config.ClusterConfig{
-			RaftAddress: "10.0.0.1:63001",
+			Enabled:     true,
+			NodeID:      2,
+			RaftAddress: "10.0.0.2:63001",
 			Peers:       "1=10.0.0.1:63001,2=10.0.0.2:63001",
+			Join:        true,
 		},
 	}}
-	members := map[uint64]string{1: "10.0.0.1:63001", 2: "10.0.0.2:63001"}
 
-	opts := s.buildClusterEnrollOptions(members)
+	got := s.nodeClusterOptions()
 
-	if opts.TrustDomain != defaultRaftTrustDomain {
-		t.Errorf("TrustDomain = %q, want %q", opts.TrustDomain, defaultRaftTrustDomain)
+	want := embeddednode.ClusterOptions{
+		Enabled:     true,
+		NodeID:      2,
+		RaftAddress: "10.0.0.2:63001",
+		Peers:       "1=10.0.0.1:63001,2=10.0.0.2:63001",
+		Join:        true,
 	}
-	if opts.Advertise.NoisePort != clusterenroll.DefaultNoisePort {
-		t.Errorf("Advertise.NoisePort = %d, want %d", opts.Advertise.NoisePort, clusterenroll.DefaultNoisePort)
-	}
-	if opts.RaftAddress != "10.0.0.1:63001" {
-		t.Errorf("RaftAddress = %q, want 10.0.0.1:63001", opts.RaftAddress)
-	}
-	if want := filepath.Join(dir, raftTLSCacheSubdir); opts.DataDir != want {
-		t.Errorf("DataDir = %q, want %q", opts.DataDir, want)
-	}
-	if opts.SingleNode {
-		t.Error("SingleNode = true, want false for a 2-member cluster")
-	}
-	if opts.Bootstrap.DiscoveryMethod != "static" {
-		t.Errorf("Bootstrap.DiscoveryMethod = %q, want static", opts.Bootstrap.DiscoveryMethod)
-	}
-	if len(opts.Bootstrap.Peers) != 2 {
-		t.Errorf("Bootstrap.Peers = %v, want 2 entries", opts.Bootstrap.Peers)
-	}
-}
-
-// TestBuildClusterEnrollOptions_ExplicitAndSingleNode verifies that explicit
-// enrollment values (trust domain, advertise port, join bootstrap source) pass
-// through unchanged, and that a single-member cluster yields SingleNode=true.
-func TestBuildClusterEnrollOptions_ExplicitAndSingleNode(t *testing.T) {
-	dir := t.TempDir()
-	s := &Server{config: &config.Config{
-		Datastore: config.DatastoreConfig{Path: dir},
-		Cluster: config.ClusterConfig{
-			RaftAddress: "10.0.0.1:63001",
-			RaftEnrollment: config.RaftEnrollmentConfig{
-				TrustDomain:        "corp.cluster",
-				AdvertiseNoisePort: 7777,
-				Bootstrap: config.RaftBootstrapConfig{
-					NoiseKey:  "deadbeef",
-					NoiseAddr: "10.0.0.2:63006",
-				},
-			},
-		},
-	}}
-	members := map[uint64]string{1: "10.0.0.1:63001"}
-
-	opts := s.buildClusterEnrollOptions(members)
-
-	if opts.TrustDomain != "corp.cluster" {
-		t.Errorf("TrustDomain = %q, want corp.cluster", opts.TrustDomain)
-	}
-	if opts.Advertise.NoisePort != 7777 {
-		t.Errorf("Advertise.NoisePort = %d, want 7777", opts.Advertise.NoisePort)
-	}
-	if !opts.SingleNode {
-		t.Error("SingleNode = false, want true for a 1-member cluster")
-	}
-	if opts.Bootstrap.NoiseKey != "deadbeef" {
-		t.Errorf("Bootstrap.NoiseKey = %q, want deadbeef", opts.Bootstrap.NoiseKey)
-	}
-	if opts.Bootstrap.NoiseAddr != "10.0.0.2:63006" {
-		t.Errorf("Bootstrap.NoiseAddr = %q, want 10.0.0.2:63006", opts.Bootstrap.NoiseAddr)
+	if got != want {
+		t.Errorf("nodeClusterOptions() = %+v, want %+v", got, want)
 	}
 }
 

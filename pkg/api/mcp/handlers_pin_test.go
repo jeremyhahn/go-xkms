@@ -148,10 +148,9 @@ func TestPINMethods_Dispatchable(t *testing.T) {
 		"xkms.setSOPIN", "xkms.setUserPIN", "xkms.changeSOPIN", "xkms.changeUserPIN",
 		"xkms.verifySOPIN", "xkms.verifyUserPIN", "xkms.getLockoutStatus", "xkms.resetLockout",
 	} {
-		_, ok := rpcMethodHandlers[method]
+		entry, ok := rpcMethods[method]
 		assert.True(t, ok, "method %q must be dispatchable", method)
-		_, mapped := methodPermissions[method]
-		assert.True(t, mapped, "method %q must carry a permission mapping", method)
+		assert.False(t, entry.public(), "method %q must carry a permission mapping", method)
 	}
 }
 

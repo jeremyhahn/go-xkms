@@ -20,7 +20,7 @@ import (
 )
 
 // The PIV methods delegate to the XKMSService's PIV methods: the PIV card is
-// the server's own hardware, and the service's requirePlatformScope is what
+// the server's own hardware, and the service's system-tenant check is what
 // refuses a tenant-scoped caller (go-xkms#1227).
 
 // handleListPIVSlots handles the listPIVSlots method.

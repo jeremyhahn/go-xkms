@@ -17,10 +17,8 @@ package embeddednode
 
 import (
 	"context"
-	"path/filepath"
 	"slices"
 
-	clusterenroll "github.com/jeremyhahn/go-qrdb/sdk/go/clusterenroll"
 	qrdbnode "github.com/jeremyhahn/go-qrdb/sdk/go/node"
 
 	"github.com/jeremyhahn/go-xkms/pkg/embeddednode/serviceprincipal"
@@ -34,9 +32,10 @@ import (
 //
 // Raft mTLS is consulted only for multi-node clusters: a single-node cluster
 // uses an in-process transport that needs no peer certificates. For multi-node
-// the material comes from [NodeOptions.RaftMTLSResolver], or — when that is nil —
-// from the built-in software auto-provisioning path. It is never nothing; the
-// Raft QUIC transport mandates mTLS between peers.
+// the material comes from [NodeOptions.RaftMTLSResolver], which is required
+// ([ErrNilRaftMTLSResolver]): the Raft QUIC transport mandates mTLS between
+// peers, and there is no built-in path that would generate a cluster CA key
+// on disk.
 func NewNode(ctx context.Context, opts *NodeOptions) (*NodeResult, error) {
 	if err := opts.validate(); err != nil {
 		return nil, err
@@ -61,11 +60,10 @@ func NewNode(ctx context.Context, opts *NodeOptions) (*NodeResult, error) {
 	result := &NodeResult{}
 
 	if len(members) > 1 {
-		resolve := opts.RaftMTLSResolver
-		if resolve == nil {
-			resolve = opts.resolveSoftwareRaftMTLS
+		if opts.RaftMTLSResolver == nil {
+			return nil, ErrNilRaftMTLSResolver
 		}
-		mtls, adv, resolveErr := resolve(ctx, members)
+		mtls, adv, resolveErr := opts.RaftMTLSResolver(ctx, members)
 		if resolveErr != nil {
 			return nil, resolveErr
 		}
@@ -86,36 +84,4 @@ func NewNode(ctx context.Context, opts *NodeOptions) (*NodeResult, error) {
 	}
 	result.Node = node
 	return result, nil
-}
-
-// resolveSoftwareRaftMTLS auto-provisions inter-node Raft mTLS material by
-// delegating to go-qrdb's shared cluster-TLS enrollment. The first node
-// generates a dedicated self-signed cluster CA and returns a running Noise
-// advertiser for peer enrollment; joining nodes fetch that CA and issue their
-// own leaf. Generated material is cached under {StoragePath}/raft-tls so
-// restarts reuse it.
-//
-// This is the default when no [RaftMTLSResolver] is supplied. Hardware-backed
-// strategies (TPM-attested ACME, PKCS#11 / TPM2-resident node keys) are
-// injected by the caller instead, since they need a certificate authority
-// that belongs to the daemon rather than to node construction.
-func (o *NodeOptions) resolveSoftwareRaftMTLS(ctx context.Context, members map[uint64]string) (*qrdbnode.RaftMTLSConfig, *clusterenroll.Advertiser, error) {
-	mat, adv, err := clusterenroll.Resolve(ctx, o.ClusterEnrollOptions(members), o.Logger)
-	if err != nil {
-		return nil, nil, err
-	}
-	o.Logger.Info("Raft inter-node mTLS auto-provisioned via cluster enrollment",
-		"data_dir", o.raftTLSCacheDir(),
-		"advertising", adv != nil)
-	return &qrdbnode.RaftMTLSConfig{
-		CACert: mat.CACertPEM,
-		Cert:   mat.CertPEM,
-		Key:    mat.KeyPEM,
-	}, adv, nil
-}
-
-// raftTLSCacheDir returns the directory auto-provisioned cluster TLS material
-// is cached in.
-func (o *NodeOptions) raftTLSCacheDir() string {
-	return filepath.Join(o.StoragePath, RaftTLSCacheSubdir)
 }

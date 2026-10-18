@@ -16,6 +16,7 @@ package apimodule
 import (
 	"io/fs"
 	"net/http"
+	"slices"
 
 	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
 )
@@ -27,12 +28,32 @@ import (
 // and the ACME admin plane.
 const AdminModuleName = "xkms-admin"
 
-// adminAPIMethods are the HTTP methods AdminModule forwards to the resolved
-// router for each configured prefix. A method the inner router has no route
-// for answers 404/405 from that router, exactly as it would if it were
-// mounted directly on a top-level net/http server.
-var adminAPIMethods = []string{
-	http.MethodGet, http.MethodPost, http.MethodPut, http.MethodDelete, http.MethodPatch,
+// AdminRoute is one ACME admin API route AdminModule mounts: the HTTP
+// method, the full path pattern ({name} segments), and the qrdb permission
+// the unified server authorizes before the request reaches the resolved
+// router. cmd/xkmsd supplies pkg/acme/admin's Routes table, converted
+// field for field.
+//
+// SelfPermission is set on a route whose permission depends on the tenant
+// the call reaches: SelfPermission within the caller's own tenant,
+// Permission beyond it. The unified server cannot see that tenant, so
+// AdminModule mounts such a route identity-gated and the resolved router
+// authorizes it.
+type AdminRoute struct {
+	Method         string
+	Path           string
+	Permission     qrdbsdk.Permission
+	SelfPermission qrdbsdk.Permission
+}
+
+// mountPermission is the permission the unified server authorizes rt
+// against: its own, or go-qrdb's identity-gated sentinel for a route the
+// resolved router authorizes by the tenant it reaches.
+func (rt AdminRoute) mountPermission() qrdbsdk.Permission {
+	if rt.SelfPermission != "" {
+		return identityGatedPermission
+	}
+	return rt.Permission
 }
 
 // NilAdminRouterResolverError is returned by NewAdminModule when constructed
@@ -47,23 +68,20 @@ func (e *NilAdminRouterResolverError) Error() string {
 
 // AdminRouterResolver returns the ACME admin surface's fully-assembled
 // http.Handler, or nil while the host is still composing it. The returned
-// handler is expected to authenticate and authorize every request itself
-// (pkg/acme/admin's Handlers/TenantHandlers, wired with admin.AuthHandler and
-// admin.PermissionGate — both backed by the same qrdb RBAC service every
-// other transport uses): AdminModule deliberately does not import
-// pkg/acme/admin. Doing so would cycle back through sdk/go, which already
-// imports this package to re-export the crypto-plane Module; keeping
-// AdminModule transport-generic (an http.Handler resolver, exactly like
-// Module's own RESTResolver/MCPResolver seams) avoids that cycle and keeps
-// the admin package's authn/authz composition entirely in the composing
-// binary (cmd/xkmsd), where it already lives.
+// handler routes and authenticates each request but does not authorize it:
+// AdminModule mounts every AdminRoute through qrdb's HTTPRegistrar.Handle
+// with the route's own permission, so the unified server's authentication
+// chain (mTLS, then the xkms session JWT) and its RBAC decision have both
+// run before the handler does. cmd/xkmsd builds it with pkg/acme/admin's
+// RegisterAuthorizedRoutes.
 //
-// AdminModule registers the admin API under qrdb's identity-gated sentinel,
-// exactly as the crypto-plane Module registers its authenticated-session
-// routes (module_http.go): the qrdb node's authentication chain (mTLS, then
-// the xkms session JWT) refuses an anonymous caller before the handler runs,
-// and the resolved handler's PermissionGate still decides each route's
-// resource:action grant.
+// AdminModule deliberately does not import pkg/acme/admin. Doing so would
+// cycle back through sdk/go, which already imports this package to
+// re-export the crypto-plane Module; keeping AdminModule transport-generic
+// (an http.Handler resolver plus a route table, exactly like Module's own
+// RESTResolver/MCPResolver seams) avoids that cycle and keeps the admin
+// package's composition entirely in the composing binary (cmd/xkmsd), where
+// it already lives.
 type AdminRouterResolver func() http.Handler
 
 // AdminModuleOption configures optional AdminModule behavior at construction
@@ -94,7 +112,7 @@ type AdminModule struct {
 	qrdbsdk.BaseModule
 
 	resolveRouter AdminRouterResolver
-	apiPrefixes   []string
+	routes        []AdminRoute
 
 	uiPrefix       string
 	uiAssets       fs.FS
@@ -103,23 +121,20 @@ type AdminModule struct {
 
 // NewAdminModule constructs the ACME admin ServiceModule. resolveRouter
 // late-binds because module registration happens during embedded qrdb node
-// construction, before cmd/xkmsd has finished composing the admin service,
-// its auth middleware, and its RBAC gate. apiPrefixes are the top-level path
-// prefixes the resolved router answers under (the admin package's own route
-// tables mount at "/admin" and "/api/v1/tenants" — see
-// pkg/acme/admin/handlers.go and tenant_handlers.go); construction fails
-// without at least one, since a module registering no routes is a dead
-// surface.
-func NewAdminModule(resolveRouter AdminRouterResolver, apiPrefixes []string, opts ...AdminModuleOption) (*AdminModule, error) {
+// construction, before cmd/xkmsd has finished composing the admin service
+// and its auth middleware. routes are the admin API routes the resolved
+// router answers (pkg/acme/admin's Routes); construction fails without at
+// least one, since a module registering no routes is a dead surface.
+func NewAdminModule(resolveRouter AdminRouterResolver, routes []AdminRoute, opts ...AdminModuleOption) (*AdminModule, error) {
 	if resolveRouter == nil {
 		return nil, &NilAdminRouterResolverError{}
 	}
-	if len(apiPrefixes) == 0 {
-		return nil, &NilAdminAPIPrefixesError{}
+	if len(routes) == 0 {
+		return nil, &NoAdminRoutesError{}
 	}
 	m := &AdminModule{
 		resolveRouter: resolveRouter,
-		apiPrefixes:   apiPrefixes,
+		routes:        slices.Clone(routes),
 	}
 	for _, opt := range opts {
 		opt(m)
@@ -127,29 +142,26 @@ func NewAdminModule(resolveRouter AdminRouterResolver, apiPrefixes []string, opt
 	return m, nil
 }
 
-// NilAdminAPIPrefixesError is returned by NewAdminModule when constructed
-// without any API path prefixes to mount the resolved router under.
-type NilAdminAPIPrefixesError struct{}
+// NoAdminRoutesError is returned by NewAdminModule when constructed without
+// any admin API route to mount.
+type NoAdminRoutesError struct{}
 
 // Error implements the error interface.
-func (e *NilAdminAPIPrefixesError) Error() string {
-	return "apimodule: NewAdminModule requires at least one admin API path prefix"
+func (e *NoAdminRoutesError) Error() string {
+	return "apimodule: NewAdminModule requires at least one admin API route"
 }
 
 // Name uniquely identifies the module.
 func (m *AdminModule) Name() string { return AdminModuleName }
 
-// RegisterHTTP registers the admin API's route prefixes (identity-gated at
-// the qrdb layer, authorized per route underneath; see AdminRouterResolver's
-// doc comment) and, when WithAdminWebUI configured one, the public admin SPA
-// under its own prefix.
+// RegisterHTTP mounts each admin API route with its own permission, so the
+// unified server authorizes every request before the resolved router serves
+// it, and, when WithAdminWebUI configured one, the public admin SPA under its
+// own prefix.
 func (m *AdminModule) RegisterHTTP(r *qrdbsdk.ModuleHTTPRegistrar) {
 	h := m.lazyAPIHandler()
-	for _, prefix := range m.apiPrefixes {
-		for _, method := range adminAPIMethods {
-			r.Handle(method, prefix, identityGatedPermission, h)
-			r.Handle(method, prefix+"/*", identityGatedPermission, h)
-		}
+	for _, rt := range m.routes {
+		r.Handle(rt.Method, rt.Path, rt.mountPermission(), h)
 	}
 
 	if m.uiPrefix != "" && m.uiAssets != nil {

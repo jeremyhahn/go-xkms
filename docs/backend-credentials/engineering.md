@@ -6,27 +6,27 @@
 
 | Symbol | Contract | Source |
 |---|---|---|
-| `StrategyManual`, `StrategyBarrier` | go-qrdb's strategy IDs, re-used | `service.go:35-41` |
-| `Config{Strategy string}` | `""` selects `manual` | `service.go:74-81` |
-| `New(cfg, platformStore, barrier, logger)` | Validates the strategy, then picks the store: platform strategies → `platformCredentials`; `manual`/`barrier` → `qrdbsdk.NewVersionedCredentialService` | `service.go:103-136` |
-| `(*Service).StoreCredential` | Seals a value; name and value must be non-empty | `service.go:139-144` |
-| `(*Service).RetrieveCredential` | Unseals a value. Under `manual` it blocks until the value is submitted or `ctx` is cancelled | `service.go:146-153` |
-| `(*Service).SubmitCredential` | Operator entry point. Under `manual` a name can be submitted once, and a repeat returns `ErrCredentialAlreadySubmitted`. The other strategies overwrite | `service.go:155-172` |
-| `(*Service).DeleteCredential` | Removes a value | `service.go:174-180` |
-| `(*Service).ListCredentials` | Sorted names only | `service.go:182-196` |
-| `(*Service).AutoUnsealAvailable` | `true` for every strategy except `manual` | `service.go:198-202` |
-| `(*Service).Strategy` | The configured name | `service.go:204-207` |
+| `StrategyManual`, `StrategyBarrier` | go-qrdb's strategy IDs, re-used | `service.go:36-42` |
+| `Config{Strategy string}` | `""` selects `manual` | `service.go:75-82` |
+| `New(cfg, platformStore, barrier, logger)` | Validates the strategy, then picks the store: platform strategies → `platformCredentials`; `manual`/`barrier` → `qrdbsdk.NewVersionedCredentialService` | `service.go:104-137` |
+| `(*Service).StoreCredential` | Seals a value; name and value must be non-empty | `service.go:140-145` |
+| `(*Service).RetrieveCredentialBuffer` | Unseals a value into a `*secure.Buffer` the caller destroys. Under `manual` it blocks until the value is submitted or `ctx` is cancelled | `service.go:147-155` |
+| `(*Service).SubmitCredential` | Operator entry point. Under `manual` a name can be submitted once, and a repeat returns `ErrCredentialAlreadySubmitted`. The other strategies overwrite | `service.go:157-174` |
+| `(*Service).DeleteCredential` | Removes a value | `service.go:176-182` |
+| `(*Service).ListCredentials` | Sorted names only | `service.go:184-198` |
+| `(*Service).AutoUnsealAvailable` | `true` for every strategy except `manual` | `service.go:200-204` |
+| `(*Service).Strategy` | The configured name | `service.go:206-209` |
 
 ## Errors
 
 | Sentinel | When | Source |
 |---|---|---|
-| `ErrInvalidStrategy` | Name not in `validStrategies` | `errors.go:29`, `service.go:109-111` |
-| `ErrNilPlatformStore` | Platform strategy without a store | `errors.go:23`, `service.go:119-121` |
-| `ErrNilBarrier` | `barrier` without a barrier | `errors.go:26`, `service.go:128-130` |
-| `ErrCredentialAlreadySubmitted` | Second `manual` submit of a name | `errors.go:33`, `service.go:167-169` |
-| `ErrCredentialNotFound` | go-qrdb's sentinel; also mapped from `seal.ErrSecretNotFound` for platform strategies | `errors.go:37`, `service.go:229-231`, `:244-246` |
-| `ErrEmptyCredentialName`, `ErrEmptyCredentialValue` | go-qrdb's sentinels, from `validateInput` | `errors.go:40-43`, `service.go:278-286` |
+| `ErrInvalidStrategy` | Name not in `validStrategies` | `errors.go:29`, `service.go:110-112` |
+| `ErrNilPlatformStore` | Platform strategy without a store | `errors.go:23`, `service.go:120-122` |
+| `ErrNilBarrier` | `barrier` without a barrier | `errors.go:26`, `service.go:129-131` |
+| `ErrCredentialAlreadySubmitted` | Second `manual` submit of a name | `errors.go:33`, `service.go:169-171` |
+| `ErrCredentialNotFound` | go-qrdb's sentinel; also mapped from `seal.ErrSecretNotFound` for platform strategies | `errors.go:37`, `service.go:232-234`, `:244-246` |
+| `ErrEmptyCredentialName`, `ErrEmptyCredentialValue` | go-qrdb's sentinels, from `validateInput` | `errors.go:40-43`, `service.go:284-292` |
 
 The service layer adds `xkms.ErrNotConfigured` (no credential service is
 wired) and `xkms.ErrInvalidEncoding` (the submitted value is not standard
@@ -53,9 +53,9 @@ The service is installed with `XKMSService.SetCredentialService`
 - One strategy per `Service`. It never changes after `New`.
 - Platform-strategy entries are namespaced `credentials/` in the platform
   store. `ListCredentials` skips keys outside that prefix
-  (`service.go:254-269`).
+  (`service.go:260-275`).
 - Values never leave the service through `ListCredentials`, and no transport
-  exposes `RetrieveCredential`. Platform secrets refuse and hide the
+  exposes `RetrieveCredentialBuffer`. Platform secrets refuse and hide the
   `credentials/` namespace, so the credentials service is its only reader
   ([`architecture.md`](architecture.md) §"Read boundary").
 

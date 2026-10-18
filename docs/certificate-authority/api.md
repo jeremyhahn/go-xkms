@@ -53,7 +53,7 @@ revoke *some* certificate, not *which one*. `XKMSService.RevokeCertificate`
 (`pkg/xkms/servicer_ca.go`) makes that second decision by reading the
 certificate's issuing tenant back with `CertificateTenant` (`pkg/ca`,
 recorded at issuance by `signCSR` into `cert-tenant/<serial>.json`) and
-running it through the same tenant-binding check (`bindTenantTarget`) every
+running it through the same tenant-binding check (`ownTenant`) every
 other tenant-scoped operation in this service uses:
 
 - A tenant-scoped caller may revoke only a certificate whose recorded

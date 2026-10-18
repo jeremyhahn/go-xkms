@@ -17,7 +17,8 @@ import (
 	"context"
 	"errors"
 	"log/slog"
-	"strings"
+
+	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
 
 	"github.com/jeremyhahn/go-xkms/pkg/auth"
 )
@@ -37,387 +38,39 @@ var (
 	// The qrdb decision detail is logged, never returned, mirroring the REST
 	// RBAC middleware's "Access denied: insufficient permissions" response.
 	ErrPermissionDenied = errors.New("access denied: insufficient permissions")
-
-	// ErrMethodPermissionUnmapped is returned when a dispatchable JSON-RPC
-	// method carries no entry in methodPermissions and is not declared public.
-	// The gate fails closed so a method added without a permission mapping is
-	// denied rather than silently exposed.
-	ErrMethodPermissionUnmapped = errors.New("access denied: method has no permission mapping")
 )
 
-// permission is the canonical go-qrdb resource:action pair required to invoke
-// a JSON-RPC method. xkms defines no permission vocabulary of its own; every
-// pair below is taken verbatim from the transport that already gates the
-// equivalent operation (pkg/api/grpc/service.go, pkg/api/quic/handlers*.go,
-// pkg/api/rest/server.go).
-type permission struct {
-	resource string
-	action   string
-}
-
-// publicMethods are the JSON-RPC methods that carry no authorization
-// requirement. Only liveness is public, matching the REST RBAC middleware's
-// SkipPaths ("/health", "/health/live", "/health/ready", "/health/startup").
-var publicMethods = map[string]struct{}{
-	"health": {},
-
-	// Algorithm discovery reports compiled-in capability and reads no state.
-	// REST serves it unauthenticated (pkg/api/rest/server.go, outside the
-	// authenticated /api/v1 group), so gating it here would make the same
-	// question answerable on one transport and not another.
-	"xkms.algorithms": {},
-
-	// Invitation redemption (go-xkms#1294 part B): there is no credential
-	// yet to authenticate a request with. REST serves the same two methods
-	// (GetInvite, ActivateInvitePIV) unauthenticated
-	// (pkg/api/rest/handlers_invite.go, GroupInvite), so the transports
-	// agree.
-	"invite.get":         {},
-	"invite.pivActivate": {},
-}
-
-// methodPermissions maps every privileged JSON-RPC method to the qrdb
-// resource:action grant the caller must hold. Sources, per namespace: every
-// pair below is taken verbatim from pkg/api/grpc's own s.authorize calls
-// and/or pkg/api/rest/routes.go's route decorators for the identical
-// operation, cross-checked by pkg/api/rest's, pkg/api/grpc's, and this
-// package's own authz_golden_test.go goldens so the three tables cannot
-// drift apart silently (go-xkms#1232). There is no separate QUIC transport:
-// the legacy per-transport listeners (including pkg/api/quic) were removed
-// wholesale in favor of HTTP/3 on the REST port.
+// rpcMethod is one JSON-RPC method's registration: its handler and the
+// qrdbsdk.Permission a caller must hold to invoke it, declared together at
+// the registration site the way go-qrdb's HTTPRegistrar.Handle declares a
+// module route's permission. A method without a permission is public;
+// handlePublic is the only way to register one.
 //
-//   - xkms.* key/backend/cert methods — pkg/api/grpc/service.go's
-//     s.authorize(ctx, "keys"|"certs"|"backends", ...) calls.
-//   - xkms.attestKey / deriveKeyECDH / exportKeyMaterial / wrapKeyByID /
-//     unwrapKeyByID — pkg/api/grpc/service.go and the matching
-//     pkg/api/rest/routes.go route decorators (keys:get, keys:derive,
-//     keys:export, keys:wrap, keys:unwrap).
-//   - xkms.seal / unseal / canSeal — pkg/api/grpc/service.go's Seal/Unseal/
-//     CanSeal RPCs (keys:encrypt, keys:decrypt, keys:get), identical to the
-//     REST /seal, /unseal, /seal/capability decorators.
-//   - xkms.*PIV* — pkg/api/grpc/service_piv.go (piv:read/write/delete/use).
-//   - xkms.ca.* and xkms.ca.tcg.* — pkg/api/grpc/service_ca.go and
-//     service_ca_tcg.go (certs:read/generate/revoke).
-//   - barrier.* — pkg/api/grpc/service_pin.go and
-//     service_barrier_shamir.go (seal:* plus barrier:unseal-share).
-//   - init.* and credentials.* — pkg/api/rest/routes.go's /init and
-//     /credentials route decorators (ceremony:*, credentials:*).
-//   - password.* — pkg/api/grpc/service_password.go and the matching
-//     pkg/api/rest/routes.go /passwords decorators (passwords:*).
-//   - ssh.* — pkg/api/grpc/service_ssh.go and pkg/api/rest/routes.go's
-//     /xkms/v1/ssh decorators (ssh:read/write/delete).
-//   - frost.* — pkg/api/grpc/service_frost.go, which gates the FROST
-//     surface with the ordinary keys:* actions. The entries live here rather
-//     than in the frost-tagged handlers so a `frost` build cannot ship an
-//     unenforced FROST surface.
-//   - xkms.*SOPIN / *UserPIN / getLockoutStatus / resetLockout,
-//     xkms.*CustodianGroup* / addCustodianMember / removeCustodianMember /
-//     distributeShares, xkms.*Tenant* / tenantBarrier*, and xkms.deriveKey —
-//     pkg/api/grpc/service_pin.go and
-//     service_tenant.go's s.authorize calls (pin:*,
-//     ceremony:*, tenants:*, tenant_barrier:*), and service.go's DeriveKey
-//     (keys:derive). pkg/api/rest/routes.go's PIN, custodian, and tenant
-//     routes carry the identical pin:*/ceremony:*/tenants:*/tenant_barrier:*
-//     pairs (go-xkms#773 added the gRPC gates; REST already carried its own
-//     and the two were verified to agree, go-xkms#1232).
-var methodPermissions = map[string]permission{
-	// Backends.
-	"xkms.listBackends": {auth.ResourceBackends, auth.ActionList},
-	"xkms.getBackend":   {auth.ResourceBackends, auth.ActionRead},
-
-	// Key lifecycle and crypto operations.
-	"xkms.generateKey": {auth.ResourceKeys, auth.ActionCreate},
-	"xkms.getKey":      {auth.ResourceKeys, auth.ActionGet},
-	"xkms.deleteKey":   {auth.ResourceKeys, auth.ActionDelete},
-	"xkms.listKeys":    {auth.ResourceKeys, auth.ActionList},
-	"xkms.rotateKey":   {auth.ResourceKeys, auth.ActionRotate},
-
-	// Key versions: listing reads like listing keys; enabling and disabling
-	// versions is rotation lifecycle management; retiring destroys a
-	// version's key material, as deleting a key does.
-	"xkms.listKeyVersions":       {auth.ResourceKeys, auth.ActionList},
-	"xkms.enableKeyVersion":      {auth.ResourceKeys, auth.ActionRotate},
-	"xkms.disableKeyVersion":     {auth.ResourceKeys, auth.ActionRotate},
-	"xkms.retireKeyVersion":      {auth.ResourceKeys, auth.ActionDelete},
-	"xkms.enableAllKeyVersions":  {auth.ResourceKeys, auth.ActionRotate},
-	"xkms.disableAllKeyVersions": {auth.ResourceKeys, auth.ActionRotate},
-	"xkms.rotateScopeKeys":       {auth.ResourceKeys, auth.ActionRotate},
-
-	"xkms.sign":                {auth.ResourceKeys, auth.ActionSign},
-	"xkms.verify":              {auth.ResourceKeys, auth.ActionVerify},
-	"xkms.encrypt":             {auth.ResourceKeys, auth.ActionEncrypt},
-	"xkms.decrypt":             {auth.ResourceKeys, auth.ActionDecrypt},
-	"xkms.asymmetricEncrypt":   {auth.ResourceKeys, auth.ActionEncrypt},
-	"xkms.asymmetricDecrypt":   {auth.ResourceKeys, auth.ActionDecrypt},
-	"xkms.getImportParameters": {auth.ResourceKeys, auth.ActionImport},
-	"xkms.wrapKey":             {auth.ResourceKeys, auth.ActionWrap},
-	"xkms.unwrapKey":           {auth.ResourceKeys, auth.ActionUnwrap},
-	"xkms.importKey":           {auth.ResourceKeys, auth.ActionImport},
-	"xkms.exportKey":           {auth.ResourceKeys, auth.ActionExport},
-	"xkms.copyKey":             {auth.ResourceKeys, auth.ActionCreate},
-
-	// Hardware-capability key operations.
-	"xkms.attestKey":         {auth.ResourceKeys, auth.ActionGet},
-	"xkms.deriveKeyECDH":     {auth.ResourceKeys, auth.ActionDerive},
-	"xkms.exportKeyMaterial": {auth.ResourceKeys, auth.ActionExport},
-	"xkms.wrapKeyByID":       {auth.ResourceKeys, auth.ActionWrap},
-	"xkms.unwrapKeyByID":     {auth.ResourceKeys, auth.ActionUnwrap},
-
-	// Certificate storage.
-	"xkms.saveCert":          {auth.ResourceCerts, auth.ActionEnroll},
-	"xkms.getCert":           {auth.ResourceCerts, auth.ActionRead},
-	"xkms.deleteCert":        {auth.ResourceCerts, auth.ActionRevoke},
-	"xkms.listCerts":         {auth.ResourceCerts, auth.ActionList},
-	"xkms.certExists":        {auth.ResourceCerts, auth.ActionRead},
-	"xkms.saveCertChain":     {auth.ResourceCerts, auth.ActionEnroll},
-	"xkms.getCertChain":      {auth.ResourceCerts, auth.ActionRead},
-	"xkms.getTLSCertificate": {auth.ResourceCerts, auth.ActionRead},
-
-	// Hardware sealing.
-	"xkms.seal":    {auth.ResourceKeys, auth.ActionEncrypt},
-	"xkms.unseal":  {auth.ResourceKeys, auth.ActionDecrypt},
-	"xkms.canSeal": {auth.ResourceKeys, auth.ActionGet},
-
-	// PIV slots.
-	"xkms.listPIVSlots":         {auth.ResourcePIV, auth.ActionRead},
-	"xkms.getPIVCertificate":    {auth.ResourcePIV, auth.ActionRead},
-	"xkms.storePIVCertificate":  {auth.ResourcePIV, auth.ActionWrite},
-	"xkms.deletePIVCertificate": {auth.ResourcePIV, auth.ActionDelete},
-	"xkms.generatePIVKey":       {auth.ResourcePIV, auth.ActionWrite},
-	"xkms.importPIVCertificate": {auth.ResourcePIV, auth.ActionWrite},
-	"xkms.exportPIVCertificate": {auth.ResourcePIV, auth.ActionRead},
-	"xkms.generatePIVCSR":       {auth.ResourcePIV, auth.ActionUse},
-
-	// Certificate authority.
-	"xkms.ca.bundle":      {auth.ResourceCerts, auth.ActionRead},
-	"xkms.ca.certificate": {auth.ResourceCerts, auth.ActionRead},
-	"xkms.ca.sign-csr":    {auth.ResourceCerts, auth.ActionIssue},
-	"xkms.ca.issue":       {auth.ResourceCerts, auth.ActionIssue},
-	"xkms.ca.revoke":      {auth.ResourceCerts, auth.ActionRevoke},
-	"xkms.ca.crl":         {auth.ResourceCerts, auth.ActionRead},
-	"xkms.ca.is-revoked":  {auth.ResourceCerts, auth.ActionRead},
-
-	// TCG certificate authority.
-	"xkms.ca.tcg.issue-ek":  {auth.ResourceCerts, auth.ActionIssue},
-	"xkms.ca.tcg.issue-ak":  {auth.ResourceCerts, auth.ActionIssue},
-	"xkms.ca.tcg.sign-csr":  {auth.ResourceCerts, auth.ActionIssue},
-	"xkms.ca.tcg.enroll":    {auth.ResourceCerts, auth.ActionIssue},
-	"xkms.ca.tcg.issue-lak": {auth.ResourceCerts, auth.ActionIssue},
-
-	// Barrier lifecycle.
-
-	// Trust bootstrap listener (go-xkms#632).
-	"bootstrap.showKeys": {auth.ResourceBootstrap, auth.ActionRead},
-
-	// PIN management -- pkg/api/grpc/service_pin.go's
-	// s.authorize(ctx, auth.ResourcePIN, ...) calls (go-xkms#773).
-	"xkms.setSOPIN":         {auth.ResourcePIN, auth.ActionWrite},
-	"xkms.setUserPIN":       {auth.ResourcePIN, auth.ActionWrite},
-	"xkms.changeSOPIN":      {auth.ResourcePIN, auth.ActionWrite},
-	"xkms.changeUserPIN":    {auth.ResourcePIN, auth.ActionWrite},
-	"xkms.verifySOPIN":      {auth.ResourcePIN, auth.ActionRead},
-	"xkms.verifyUserPIN":    {auth.ResourcePIN, auth.ActionRead},
-	"xkms.getLockoutStatus": {auth.ResourcePIN, auth.ActionRead},
-	"xkms.resetLockout":     {auth.ResourcePIN, auth.ActionWrite},
-
-	// Whole-node backup/restore -- mirrors go-qrdb's own backup:* permission
-	// family verbatim (owner ruling 2026-09-30, go-xkms#728). Restore is
-	// gated separately from create/read because it overwrites live shard
-	// state.
-
-	// Custodian groups -- pkg/api/grpc/service_tenant.go's
-	// s.authorize(ctx, auth.ResourceCeremony, ...) calls (go-xkms#773). Group
-	// reads carry the ceremony status action; enrolling or revoking a
-	// custodian changes who can contribute an unseal share, so those carry
-	// the dedicated enroll/revoke_custodian actions, exactly as the init
-	// ceremony's own custodian roster does.
-
-	// Tenant administration -- pkg/api/grpc/service_tenant.go's
-	// s.authorize(ctx, auth.ResourceTenants|auth.ResourceTenantBarrier, ...)
-	// calls (go-xkms#773). Tenant metadata CRUD carries tenants:*; the
-	// per-tenant barrier lifecycle is its own resource family, distinct from
-	// the system barrier's seal:*. Entitlements and quotas are plan
-	// management and carry their own qrdb permissions, never tenants:update.
-	"xkms.createTenant":             {auth.ResourceTenants, auth.ActionCreate},
-	"xkms.getTenant":                {auth.ResourceTenants, auth.ActionRead},
-	"xkms.listTenants":              {auth.ResourceTenants, auth.ActionList},
-	"xkms.deleteTenant":             {auth.ResourceTenants, auth.ActionDelete},
-	"xkms.updateTenantEntitlements": {auth.ResourceTenants, auth.ActionSetEntitlements},
-	"xkms.updateTenantQuotas":       {auth.ResourceTenants, auth.ActionSetQuotas},
-
-	// Non-ECDH key derivation -- pkg/api/grpc/service.go's DeriveKey
-	// s.authorize(ctx, auth.ResourceKeys, auth.ActionDerive, ...) call,
-	// identical to xkms.deriveKeyECDH's mapping above (go-xkms#773). REST
-	// carries no route for this method; gRPC is its only other transport.
-	"xkms.deriveKey": {auth.ResourceKeys, auth.ActionDerive},
-
-	// Shamir shares. Reads are ceremony status; writes (submit, delete)
-	// move quorum material and carry the barrier's unseal-share action.
-
-	// Audit read plane. Emission is a side effect of the audited operation;
-	// this is the only reader, gated on the audit resource with a read action.
-
-	// Init ceremony.
-
-	// Credential submission.
-	"credentials.submit":   {auth.ResourceCredentials, auth.ActionSubmit},
-	"credentials.strategy": {auth.ResourceCredentials, auth.ActionStrategy},
-
-	// User management. Mirrors pkg/api/rest/routes.go's /api/v1/users
-	// decorators: create/list/read/delete carry their ordinary CRUD actions,
-	// bindCert carries update since it mutates an existing user's state
-	// rather than replacing it. enable/disable carry qrdb's own
-	// users:enable/users:disable (permission.UsersEnable/UsersDisable,
-	// go-xkms#1249) rather than the coarser update, matching gRPC's
-	// EnableUser/DisableUser RPCs and REST's own
-	// POST /api/v1/users/{username}/enable and .../disable routes.
-	"user.create":          {auth.ResourceUsers, auth.ActionCreate},
-	"user.list":            {auth.ResourceUsers, auth.ActionList},
-	"user.get":             {auth.ResourceUsers, auth.ActionRead},
-	"user.delete":          {auth.ResourceUsers, auth.ActionDelete},
-	"user.enable":          {auth.ResourceUsers, auth.ActionEnable},
-	"user.disable":         {auth.ResourceUsers, auth.ActionDisable},
-	"user.bindCert":        {auth.ResourceUsers, auth.ActionUpdate},
-	"user.listCredentials": {auth.ResourceUsers, auth.ActionRead},
-
-	// Password store.
-	"password.add":           {auth.ResourcePasswords, auth.ActionWrite},
-	"password.get":           {auth.ResourcePasswords, auth.ActionRead},
-	"password.list":          {auth.ResourcePasswords, auth.ActionRead},
-	"password.update":        {auth.ResourcePasswords, auth.ActionWrite},
-	"password.delete":        {auth.ResourcePasswords, auth.ActionDelete},
-	"password.unlock":        {auth.ResourcePasswords, auth.ActionUnlock},
-	"password.lock":          {auth.ResourcePasswords, auth.ActionLock},
-	"password.status":        {auth.ResourcePasswords, auth.ActionRead},
-	"password.generate":      {auth.ResourcePasswords, auth.ActionGenerate},
-	"password.setAccessMode": {auth.ResourcePasswords, auth.ActionWrite},
-	// The caller's personal vault: reading it is passwords:read, managing
-	// one's own factors is gated with the session verb, passwords:unlock.
-	"password.vault.status":       {auth.ResourcePasswords, auth.ActionRead},
-	"password.vault.enroll":       {auth.ResourcePasswords, auth.ActionUnlock},
-	"password.vault.rotate":       {auth.ResourcePasswords, auth.ActionUnlock},
-	"password.vault.removeFactor": {auth.ResourcePasswords, auth.ActionUnlock},
-	"password.vault.recover":      {auth.ResourcePasswords, auth.ActionUnlock},
-
-	// Platform-sealed store. Secrets sealed here are key-protection
-	// material, so the actions mirror the per-verb keys:* pairs used by
-	// every other transport's SealStore* handlers (go-xkms#1249): put
-	// stores a new value under a name (create), reseal re-wraps an existing
-	// value in place without changing it (update), and status reports
-	// store-wide state the same way get reports one secret's.
-	"sealStore.put":    {auth.ResourceKeys, auth.ActionCreate},
-	"sealStore.get":    {auth.ResourceKeys, auth.ActionGet},
-	"sealStore.delete": {auth.ResourceKeys, auth.ActionDelete},
-	"sealStore.list":   {auth.ResourceKeys, auth.ActionList},
-	"sealStore.reseal": {auth.ResourceKeys, auth.ActionUpdate},
-	"sealStore.status": {auth.ResourceKeys, auth.ActionGet},
-
-	// TPM policy management (pkg/tpmpolicy) -- pkg/auth.ResourceTPMPolicy,
-	// a resource family go-qrdb's canonical registry does not declare
-	// upstream; xkms owns it and scopes it in
-	// pkg/apimodule/module_scopes.go. Mirrors the gRPC TPMPolicy* RPCs'
-	// (qrdb.v1.permission) options one-for-one.
-	"tpm.policy.create":         {auth.ResourceTPMPolicy, auth.ActionCreate},
-	"tpm.policy.get":            {auth.ResourceTPMPolicy, auth.ActionGet},
-	"tpm.policy.list":           {auth.ResourceTPMPolicy, auth.ActionList},
-	"tpm.policy.update":         {auth.ResourceTPMPolicy, auth.ActionUpdate},
-	"tpm.policy.revoke":         {auth.ResourceTPMPolicy, auth.ActionRevoke},
-	"tpm.policy.verify":         {auth.ResourceTPMPolicy, auth.ActionVerify},
-	"tpm.policy.delete":         {auth.ResourceTPMPolicy, auth.ActionDelete},
-	"tpm.policy.objects":        {auth.ResourceTPMPolicy, auth.ActionGet},
-	"tpm.policy.autoUnseal":     {auth.ResourceTPMPolicy, auth.ActionUpdate},
-	"tpm.policy.setDescription": {auth.ResourceTPMPolicy, auth.ActionUpdate},
-	"tpm.object.policy":         {auth.ResourceTPMPolicy, auth.ActionGet},
-	"tpm.authority.rotate":      {auth.ResourceTPMPolicy, auth.ActionRotate},
-
-	// A tenant's TPM mode and vTPM (system scope only).
-	"xkms.getTenantTPMMode": {auth.ResourceTenants, auth.ActionRead},
-	"xkms.setTenantTPMMode": {auth.ResourceTenants, auth.ActionSetTPMMode},
-	"xkms.tenantVTPMStatus": {auth.ResourceTenants, auth.ActionRead},
-	"xkms.tenantVTPMStart":  {auth.ResourceTenants, auth.ActionSetTPMMode},
-	"xkms.tenantVTPMStop":   {auth.ResourceTenants, auth.ActionSetTPMMode},
-
-	// Platform trust roots (pkg/attestation/truststore) --
-	// pkg/auth.ResourceTrustRoots, matching the gRPC/REST/Unix TrustRoot*
-	// handlers.
-	"trust.root.list":       {auth.ResourceTrustRoots, auth.ActionList},
-	"trust.root.get":        {auth.ResourceTrustRoots, auth.ActionGet},
-	"trust.root.import":     {auth.ResourceTrustRoots, auth.ActionImport},
-	"trust.root.quarantine": {auth.ResourceTrustRoots, auth.ActionUpdate},
-	"trust.root.remove":     {auth.ResourceTrustRoots, auth.ActionDelete},
-
-	// Server-side OIDC credentials (pkg/oidc/credential) --
-	// pkg/auth.ResourceOIDCCredentials, an xkms-owned resource family scoped
-	// in pkg/apimodule/module_scopes.go. Mirrors the gRPC OIDCCredential*
-	// RPCs' (qrdb.v1.permission) options one-for-one: importing tokens,
-	// refreshing and a device login all change the login (update), and
-	// reading a current access token is its own action, token.
-	"oidc.credential.create":       {auth.ResourceOIDCCredentials, auth.ActionCreate},
-	"oidc.credential.import":       {auth.ResourceOIDCCredentials, auth.ActionUpdate},
-	"oidc.credential.get":          {auth.ResourceOIDCCredentials, auth.ActionGet},
-	"oidc.credential.list":         {auth.ResourceOIDCCredentials, auth.ActionList},
-	"oidc.credential.delete":       {auth.ResourceOIDCCredentials, auth.ActionDelete},
-	"oidc.credential.refresh":      {auth.ResourceOIDCCredentials, auth.ActionUpdate},
-	"oidc.credential.token":        {auth.ResourceOIDCCredentials, auth.ActionToken},
-	"oidc.credential.device.start": {auth.ResourceOIDCCredentials, auth.ActionUpdate},
-	"oidc.credential.device.poll":  {auth.ResourceOIDCCredentials, auth.ActionUpdate},
-
-	// Attested-caller evidence (pkg/attestation/peergate) --
-	// pkg/auth.ResourcePeerAttestation, an xkms-owned resource family scoped
-	// in pkg/apimodule/module_scopes.go and exempt from the gate itself.
-	// Mirrors the gRPC PeerAttestationChallenge / SubmitPeerAttestation RPCs.
-	"peer.attestation.challenge": {auth.ResourcePeerAttestation, auth.ActionChallenge},
-	"peer.attestation.submit":    {auth.ResourcePeerAttestation, auth.ActionSubmit},
-
-	// SSH keys.
-	"ssh.keys.generate": {auth.ResourceSSH, auth.ActionWrite},
-	"ssh.keys.import":   {auth.ResourceSSH, auth.ActionWrite},
-	"ssh.keys.list":     {auth.ResourceSSH, auth.ActionRead},
-	"ssh.keys.get":      {auth.ResourceSSH, auth.ActionRead},
-	"ssh.keys.delete":   {auth.ResourceSSH, auth.ActionDelete},
-	"ssh.keys.export":   {auth.ResourceSSH, auth.ActionRead},
-	"ssh.keys.sign":     {auth.ResourceSSH, auth.ActionWrite},
-
-	// SSH known hosts.
-	"ssh.knownHosts.add":    {auth.ResourceSSH, auth.ActionWrite},
-	"ssh.knownHosts.list":   {auth.ResourceSSH, auth.ActionRead},
-	"ssh.knownHosts.remove": {auth.ResourceSSH, auth.ActionDelete},
-	"ssh.knownHosts.verify": {auth.ResourceSSH, auth.ActionRead},
-
-	// SSH authorized keys.
-	"ssh.authorizedKeys.add":    {auth.ResourceSSH, auth.ActionWrite},
-	"ssh.authorizedKeys.get":    {auth.ResourceSSH, auth.ActionRead},
-	"ssh.authorizedKeys.list":   {auth.ResourceSSH, auth.ActionRead},
-	"ssh.authorizedKeys.remove": {auth.ResourceSSH, auth.ActionDelete},
-	"ssh.authorizedKeys.emit":   {auth.ResourceSSH, auth.ActionRead},
-	"ssh.authorizedKeys.verify": {auth.ResourceSSH, auth.ActionRead},
-
-	// FROST threshold signatures.
-	"frost.generateKey":    {auth.ResourceKeys, auth.ActionCreate},
-	"frost.importKey":      {auth.ResourceKeys, auth.ActionImport},
-	"frost.listKeys":       {auth.ResourceKeys, auth.ActionList},
-	"frost.getKey":         {auth.ResourceKeys, auth.ActionGet},
-	"frost.deleteKey":      {auth.ResourceKeys, auth.ActionDelete},
-	"frost.generateNonces": {auth.ResourceKeys, auth.ActionSign},
-	"frost.signRound":      {auth.ResourceKeys, auth.ActionSign},
-	"frost.aggregate":      {auth.ResourceKeys, auth.ActionSign},
-	"frost.verify":         {auth.ResourceKeys, auth.ActionVerify},
+// xkms defines no permission vocabulary of its own: every permission is a
+// go-qrdb resource:action pair built from pkg/auth constants, taken verbatim
+// from the transport that already gates the equivalent operation
+// (pkg/api/grpc's (qrdb.v1.permission) options and s.authorize calls,
+// pkg/api/rest/routes.go's route decorators). This package's
+// authz_golden_test.go pins every pair to the checked-in wire contract so the
+// transports cannot drift apart silently (go-xkms#1232).
+type rpcMethod struct {
+	perm    qrdbsdk.Permission
+	handler rpcHandler
 }
 
-// frostMethodPrefix identifies the FROST namespace. Its handlers live behind
-// the `frost` build tag, so dispatchability is decided by prefix here: a
-// frost.* method that is missing from methodPermissions is denied rather than
-// treated as an unknown method.
-const frostMethodPrefix = "frost."
+// public reports whether the method is served without authorization.
+func (m rpcMethod) public() bool { return m.perm == "" }
 
-// isDispatchable reports whether the server has a handler for the method. It
-// covers the two dispatch paths InvokeMethod uses: the rpcMethodHandlers
-// table and the build-tagged FROST namespace.
-func isDispatchable(method string) bool {
-	if _, ok := rpcMethodHandlers[method]; ok {
-		return true
-	}
-	return strings.HasPrefix(method, frostMethodPrefix)
+// handle registers a method gated on the resource:action permission.
+func handle(resource, action string, handler rpcHandler) rpcMethod {
+	return rpcMethod{perm: qrdbsdk.Permission(resource + ":" + action), handler: handler}
+}
+
+// handlePublic registers a method that carries no authorization requirement.
+// Reserve it for methods that reach no caller data and that every other
+// transport also serves unauthenticated.
+func handlePublic(handler rpcHandler) rpcMethod {
+	return rpcMethod{handler: handler}
 }
 
 // authorizeMethod gates a JSON-RPC method against the qrdb-backed authorizer.
@@ -428,9 +81,12 @@ func isDispatchable(method string) bool {
 // server (whose default authorizer has no RBAC client and therefore allows
 // all). Authentication is still mandatory on every transport, RBAC or not.
 //
-// When RBAC is enabled the method must resolve to a permission: a missing
-// identity is reported as ErrCodeUnauthorized, a denied grant and an unmapped
-// dispatchable method as ErrCodeForbidden. Failures are returned as
+// When RBAC is enabled the method's registered permission is enforced through
+// the qrdbsdk.Authorizer contract: a missing identity is reported as
+// ErrCodeUnauthorized and a denied grant as ErrCodeForbidden. A public or
+// unknown method passes, the latter so the dispatcher answers it with "Method
+// not found"; a dispatchable method without a permission cannot exist, since
+// rpcMethods is built only from handle and handlePublic. Failures are returned as
 // *KeyOpError so InvokeMethod's existing errors.As unwrapping selects the
 // wire-level code.
 func (s *Server) authorizeMethod(ctx context.Context, method string) error {
@@ -438,41 +94,31 @@ func (s *Server) authorizeMethod(ctx context.Context, method string) error {
 		return nil
 	}
 
-	if _, public := publicMethods[method]; public {
+	entry, dispatchable := rpcMethods[method]
+	if !dispatchable || entry.public() {
 		return nil
 	}
-
-	perm, mapped := methodPermissions[method]
-	if !mapped {
-		// An unknown method falls through to the dispatcher, which answers
-		// with "Method not found". A dispatchable one without a mapping is a
-		// registration bug: deny it.
-		if !isDispatchable(method) {
-			return nil
-		}
-		s.logger.ErrorContext(ctx, "MCP method has no permission mapping; denying",
-			slog.String("method", method))
-		return &KeyOpError{Code: ErrCodeForbidden, Err: ErrMethodPermissionUnmapped}
-	}
+	resource := qrdbsdk.PermissionResource(entry.perm)
+	action := qrdbsdk.PermissionAction(entry.perm)
 
 	identity := auth.GetIdentity(ctx)
 	if identity == nil {
 		s.logger.WarnContext(ctx, "MCP authorization failed: no identity on request",
 			slog.String("method", method),
-			slog.String("resource", perm.resource),
-			slog.String("action", perm.action))
+			slog.String("resource", resource),
+			slog.String("action", action))
 		return &KeyOpError{Code: ErrCodeUnauthorized, Err: auth.ErrUnauthenticated}
 	}
 
-	if err := s.authorizer.Authorize(ctx, identity, perm.resource, perm.action); err != nil {
+	if err := s.authorizer.Authorize(ctx, identity, resource, action); err != nil {
 		if errors.Is(err, auth.ErrUnauthenticated) {
 			return &KeyOpError{Code: ErrCodeUnauthorized, Err: err}
 		}
 		s.logger.WarnContext(ctx, "MCP authorization denied",
 			slog.String("method", method),
 			slog.String("subject", identity.Subject),
-			slog.String("resource", perm.resource),
-			slog.String("action", perm.action),
+			slog.String("resource", resource),
+			slog.String("action", action),
 			slog.String("error", err.Error()))
 		return &KeyOpError{Code: ErrCodeForbidden, Err: ErrPermissionDenied}
 	}
@@ -480,8 +126,8 @@ func (s *Server) authorizeMethod(ctx context.Context, method string) error {
 	s.logger.DebugContext(ctx, "MCP authorization granted",
 		slog.String("method", method),
 		slog.String("subject", identity.Subject),
-		slog.String("resource", perm.resource),
-		slog.String("action", perm.action))
+		slog.String("resource", resource),
+		slog.String("action", action))
 
 	return nil
 }

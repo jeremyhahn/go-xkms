@@ -151,6 +151,10 @@ func NewBufferFromBytes(src []byte) (*Buffer, error) {
 	return qrdbsecure.NewBufferFromBytes(src)
 }
 
+// NewEmptyBuffer returns a live Buffer holding zero bytes, distinct from a
+// destroyed one: a legitimately empty secret.
+func NewEmptyBuffer() *Buffer { return qrdbsecure.NewEmptyBuffer() }
+
 // Wipe clears a caller-owned []byte using go-enclave's
 // compiler-optimization-resistant wipe. No-op on empty slices.
 func Wipe(b []byte) { qrdbsecure.Wipe(b) }

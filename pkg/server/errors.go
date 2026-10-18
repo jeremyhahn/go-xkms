@@ -128,6 +128,10 @@ var (
 	// ErrNoBackendsInitialized indicates no backends were initialized.
 	ErrNoBackendsInitialized = errors.New("server: no backends initialized")
 
+	// ErrSharedStorageUnbound indicates a storage call reached the shared
+	// datastore before the qrdb node opened it.
+	ErrSharedStorageUnbound = errors.New("server: shared datastore is not open yet")
+
 	// ErrNoKeystoresInitialized indicates no keystores were initialized.
 	ErrNoKeystoresInitialized = errors.New("server: no keystores initialized")
 

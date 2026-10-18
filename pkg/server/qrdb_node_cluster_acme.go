@@ -20,6 +20,7 @@ import (
 	"crypto/tls"
 	"crypto/x509"
 	"encoding/pem"
+	"maps"
 	"net/http"
 	"net/url"
 	"path/filepath"
@@ -33,15 +34,17 @@ import (
 	"github.com/jeremyhahn/go-xkms/pkg/xkms"
 )
 
-// provisionRaftClusterACME provisions inter-node Raft mTLS material via
-// TPM-attested ACME enroll-01, with the runtime TrustedCA as the single cluster
-// trust anchor. The first node pre-stages the CA hierarchy from CAConfig (the
-// datastore does not exist yet) and issues its own transport leaf; joining nodes
-// fetch the trust anchor via truststrap and enroll their attested node key
-// through the existing node's ACME directory. It returns the qrdb WithRaftMTLS
+// provisionRaftClusterTrustedCA provisions inter-node Raft mTLS material issued
+// by the runtime TrustedCA through its crypto.Signer, the single cluster trust
+// anchor (go-xkms#1381). It serves TPM-attested ACME enroll-01 and local-CA
+// mode (no ACME; the node key is software- or TPM/HSM-held). The first node pre-stages the CA
+// hierarchy from CAConfig (the datastore does not exist yet) and issues its own
+// transport leaf; joining nodes, ACME only, fetch the trust anchor via
+// truststrap and enroll their attested node key through the existing node's
+// ACME directory. It returns the qrdb WithRaftMTLS
 // material and, on the first node, the running Noise advertiser to stop at
 // shutdown.
-func (s *Server) provisionRaftClusterACME(members map[uint64]string) (*qrdbnode.RaftMTLSConfig, *clusterenroll.Advertiser, error) {
+func (s *Server) provisionRaftClusterTrustedCA(members map[uint64]string) (*qrdbnode.RaftMTLSConfig, *clusterenroll.Advertiser, error) {
 	// Build the cluster CA key custody strategy and retain it: it is stateful
 	// (the barrier strategy holds its bootstrap key-storage handle for
 	// promotion), so initializeCA uses this SAME instance for RuntimeBackend so
@@ -52,9 +55,9 @@ func (s *Server) provisionRaftClusterACME(members map[uint64]string) (*qrdbnode.
 	}
 	s.clusterCAKeyStrategy = strategy
 
-	// The pre-node Backends seam the provisioner uses to pre-stage the CA and
-	// issue this node's transport leaf comes from the strategy's bootstrap
-	// backends (node-local for barrier/tpm-kek, the shared HSM for hsm).
+	// The pre-node Backends seam the provisioner uses to pre-stage the CA
+	// comes from the strategy's bootstrap backends (node-local for
+	// barrier/tpm-kek, the shared HSM for hsm). It holds CA keys only.
 	deps, err := s.clusterStrategyDeps(nil, nil)
 	if err != nil {
 		return nil, nil, err
@@ -64,7 +67,7 @@ func (s *Server) provisionRaftClusterACME(members map[uint64]string) (*qrdbnode.
 		return nil, nil, err
 	}
 
-	opts, err := s.buildClusterACMEOptions(members, backends)
+	opts, err := s.buildClusterCAOptions(members, backends)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -161,11 +164,13 @@ func clusterSecretHTTPClient(caPEM []byte) *http.Client {
 	}
 }
 
-// buildClusterACMEOptions maps the xkms cluster configuration onto the clusterca
+// buildClusterCAOptions maps the xkms cluster configuration onto the clusterca
 // Options. The first node (no bootstrap directory) pre-stages the CA from
-// CAConfig; joining nodes (DirectoryURL set) enroll against it. The mapping is
-// pure so it can be unit-tested without provisioning.
-func (s *Server) buildClusterACMEOptions(members map[uint64]string, backends func(string) (xkms.Backend, error)) (*clusterca.Options, error) {
+// CAConfig; joining nodes (DirectoryURL set) enroll against it. ACME is left
+// nil, selecting local-CA mode, unless ACME enrollment is enabled. backends is
+// the CA key custody resolver; the node's transport key resolves separately
+// from KeyBackend. Nothing is provisioned, so it can be unit-tested.
+func (s *Server) buildClusterCAOptions(members map[uint64]string, backends func(string) (xkms.Backend, error)) (*clusterca.Options, error) {
 	enr := s.config.Cluster.RaftEnrollment
 
 	trustDomain := enr.TrustDomain
@@ -181,20 +186,27 @@ func (s *Server) buildClusterACMEOptions(members map[uint64]string, backends fun
 		challengePort = defaultClusterACMEChallengePort
 	}
 
+	dataDir := filepath.Join(s.config.Datastore.Path, clusterCACacheSubdir)
+	// The transport key resolves from the backend KeyBackend names, never
+	// through CA custody: a hardware backend this node lacks is refused.
+	// Raft mTLS is provisioned before initializeBackends, so the hardware
+	// providers are the ones opened pre-node (openPreNodePKCS11Backend).
+	nodeKeyBackends, err := clusterca.NewNodeKeyBackends(&clusterca.NodeKeyBackendsParams{
+		DataDir:     dataDir,
+		HardwareTPM: s.nodeSealTPM,
+		Hardware:    maps.Clone(s.keyProviders),
+	})
+	if err != nil {
+		return nil, err
+	}
+
 	opts := &clusterca.Options{
 		RaftAddress: s.config.Cluster.RaftAddress,
 		NodeID:      s.config.Cluster.NodeID,
 		TrustDomain: trustDomain,
 		Members:     members,
-		DataDir:     filepath.Join(s.config.Datastore.Path, clusterCACacheSubdir),
-		ACME: &clusterca.ACMEOptions{
-			DirectoryURL:  enr.ACME.DirectoryURL,
-			ChallengePort: challengePort,
-			// The enroll-01 exchange is a daemon listener: it binds
-			// server.host like every other one (#140).
-			ChallengeHost: s.config.Server.Host,
-		},
-		KeyBackend: enr.KeyBackend,
+		DataDir:     dataDir,
+		KeyBackend:  enr.KeyBackend,
 		Bootstrap: clusterenroll.BootstrapOptions{
 			NoiseKey:        enr.Bootstrap.NoiseKey,
 			NoiseAddr:       enr.Bootstrap.NoiseAddr,
@@ -210,9 +222,21 @@ func (s *Server) buildClusterACMEOptions(members map[uint64]string, backends fun
 			NoisePort: advPort,
 			NoiseHost: s.raftNoiseBindHost(),
 		},
-		Backends:    backends,
-		CAConfig:    s.config.CA,
-		ClusterCACN: enr.ClusterCACN,
+		Backends:        backends,
+		NodeKeyBackends: nodeKeyBackends,
+		CAConfig:        s.config.CA,
+		ClusterCACN:     enr.ClusterCACN,
+	}
+	// Without ACME enrollment the node runs local-CA mode: the
+	// TrustedCA issues its leaf in-process and it cannot join.
+	if enr.ACME.Enabled {
+		opts.ACME = &clusterca.ACMEOptions{
+			DirectoryURL:  enr.ACME.DirectoryURL,
+			ChallengePort: challengePort,
+			// The enroll-01 exchange is a daemon listener: it binds
+			// server.host like every other one (#140).
+			ChallengeHost: s.config.Server.Host,
+		}
 	}
 	return opts, nil
 }

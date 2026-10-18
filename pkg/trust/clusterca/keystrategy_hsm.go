@@ -35,8 +35,8 @@ type hsmStrategy struct{}
 func (s *hsmStrategy) Name() KeyStrategyName { return KeyStrategyHSM }
 
 // BootstrapBackends returns a resolver that resolves every keystore lookup to
-// the shared HSM backend, so the pre-stage generates the CA hierarchy (and this
-// node's transport key) inside the HSM.
+// the shared HSM backend, so the pre-stage generates the CA hierarchy inside
+// the HSM. The node's transport key resolves separately, from KeyBackend.
 func (s *hsmStrategy) BootstrapBackends(ctx context.Context, deps *StrategyDeps) (func(string) (xkms.Backend, error), error) {
 	if deps.HSMBackend == nil {
 		return nil, ErrStrategyMisconfigured

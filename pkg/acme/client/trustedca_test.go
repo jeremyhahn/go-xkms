@@ -1855,8 +1855,8 @@ func TestTrustedCA_Serve_DerivesExternalURLFromListenAddress(t *testing.T) {
 // TestTrustedCA_AdminAuthMiddleware_SelectsBackendByAuthClient verifies
 // adminAuthMiddleware picks the JWT-backed admin.AuthMiddleware when an
 // auth.Client is configured (multi-tenant mode), and falls back to
-// admin.NewMTLSAuthMiddleware(nil) -- client-certificate authentication --
-// when none is set, matching single-tenant mode's historical behavior.
+// admin.MTLSAuthHandler -- client-certificate authentication, roles from the
+// bound go-qrdb user and never from the OU -- when none is set.
 func TestTrustedCA_AdminAuthMiddleware_SelectsBackendByAuthClient(t *testing.T) {
 	t.Run("with auth client uses JWT middleware", func(t *testing.T) {
 		tca, err := New(
@@ -1881,8 +1881,8 @@ func TestTrustedCA_AdminAuthMiddleware_SelectsBackendByAuthClient(t *testing.T) 
 		require.NoError(t, err)
 
 		h := tca.adminAuthMiddleware()
-		_, ok := h.(*admin.MTLSAuthMiddleware)
-		assert.True(t, ok, "expected *admin.MTLSAuthMiddleware, got %T", h)
+		_, ok := h.(*admin.MTLSAuthHandler)
+		assert.True(t, ok, "expected *admin.MTLSAuthHandler, got %T", h)
 	})
 }
 

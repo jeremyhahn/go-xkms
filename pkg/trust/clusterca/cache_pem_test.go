@@ -221,6 +221,7 @@ func TestCacheIdentity_RoundTrip(t *testing.T) {
 		RaftAddress: "10.0.0.1:8300",
 		TrustDomain: "test.cluster",
 		DataDir:     dataDir,
+		Backends:    softwareBackends(t), NodeKeyBackends: softwareBackends(t), CAConfig: clusterCAConfig(),
 	}, testLogger())
 	require.NoError(t, err)
 
@@ -243,6 +244,7 @@ func TestCacheIdentity_WritesPrivateFilePermissions(t *testing.T) {
 	dataDir := filepath.Join(t.TempDir(), "cluster-ca")
 	p, err := New(&Options{
 		RaftAddress: "10.0.0.1:8300", TrustDomain: "test.cluster", DataDir: dataDir,
+		Backends: softwareBackends(t), NodeKeyBackends: softwareBackends(t), CAConfig: clusterCAConfig(),
 	}, testLogger())
 	require.NoError(t, err)
 
@@ -265,6 +267,7 @@ func TestCacheIdentity_FailsWhenDataDirUnusable(t *testing.T) {
 
 	p, err := New(&Options{
 		RaftAddress: "10.0.0.1:8300", TrustDomain: "test.cluster", DataDir: blocker,
+		Backends: softwareBackends(t), NodeKeyBackends: softwareBackends(t), CAConfig: clusterCAConfig(),
 	}, testLogger())
 	require.NoError(t, err)
 
@@ -283,6 +286,7 @@ func TestCacheIdentity_FailsWhenNodeCertPathIsADirectory(t *testing.T) {
 
 	p, err := New(&Options{
 		RaftAddress: "10.0.0.1:8300", TrustDomain: "test.cluster", DataDir: dataDir,
+		Backends: softwareBackends(t), NodeKeyBackends: softwareBackends(t), CAConfig: clusterCAConfig(),
 	}, testLogger())
 	require.NoError(t, err)
 
@@ -301,6 +305,7 @@ func TestLoadCachedIdentity_MissingFiles(t *testing.T) {
 	dataDir := t.TempDir()
 	p, err := New(&Options{
 		RaftAddress: "10.0.0.1:8300", TrustDomain: "test.cluster", DataDir: dataDir,
+		Backends: softwareBackends(t), NodeKeyBackends: softwareBackends(t), CAConfig: clusterCAConfig(),
 	}, testLogger())
 	require.NoError(t, err)
 

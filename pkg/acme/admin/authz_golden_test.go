@@ -22,28 +22,32 @@ import (
 	"github.com/jeremyhahn/go-xkms/internal/authzscan"
 )
 
-// authzSeams are the authorization gates this package exposes.
+// authzSeams are the authorization gates this package exposes: the route
+// constructors of routes.go, which bind every ACME admin route to the one
+// permission both hosts enforce — the PermissionGate on a standalone host,
+// qrdb's chain on the unified server.
 //
-//   - (*PermissionGate).Wrap(resource, action, handler) — every privileged
-//     ACME admin route is registered through this one decorator
-//     (handlers.go, tenant_handlers.go's RegisterRoutes
-//     methods), so it is this package's only seam.
+//   - adminRoute(method, path, resource, action, serve)
+//   - tenantRoute(method, path, resource, action, serve)
+//   - tenantCrossRoute(method, path, permission, serve)
+//   - tenantReachRoute(method, path, resource, action, cross, serve)
+//   - tenantListRoute(method, path, resource, action, cross, serve)
 //
-// Both RegisterRoutes methods share the same name (different receiver
-// types, one per file), so keying by enclosing function name would collapse
-// every gate in the package into one "RegisterRoutes#N" series and make the
-// golden table unreadable and fragile to reordering. The third argument to
-// Wrap is always the handler method value being registered (e.g.
-// h.ListCertificates), which is already the stable, human-readable identity
-// grpc's own golden keys by, so it is this seam's label argument instead.
+// The tenant-reach routes are pinned by their cross-scope grant; the
+// self-scoped pair they take on the caller's own tenant is pinned by the
+// "own tenant" cases of tenantRouteCases in routes_authz_test.go.
+//
+// The last argument is always the handler method expression being
+// registered (e.g. (*Handlers).ListCertificates), which is the stable,
+// human-readable identity grpc's own golden keys by, so it is each seam's
+// label argument; keying by enclosing function would collapse every route
+// into one "adminRoutes#N" series.
 var authzSeams = []authzscan.Seam{
-	{Method: "Wrap", Args: 3, ResourceArg: 0, ActionArg: 1, LabelArgs: []int{2}},
-	{Method: "WrapPermission", Args: 2, ResourceArg: 0, Permission: true, LabelArgs: []int{1}},
-	// The tenant-reach gates are pinned by their cross-scope grant; the
-	// self-scoped pair they take on the caller's own tenant is pinned by
-	// tenantSelfRouteCases in routes_authz_test.go.
-	{Method: "WrapTenant", Args: 4, ResourceArg: 2, Permission: true, LabelArgs: []int{3}},
-	{Method: "WrapTenantList", Args: 4, ResourceArg: 2, Permission: true, LabelArgs: []int{3}},
+	{Method: "adminRoute", Args: 5, ResourceArg: 2, ActionArg: 3, Bare: true, LabelArgs: []int{4}},
+	{Method: "tenantRoute", Args: 5, ResourceArg: 2, ActionArg: 3, Bare: true, LabelArgs: []int{4}},
+	{Method: "tenantCrossRoute", Args: 4, ResourceArg: 2, Permission: true, Bare: true, LabelArgs: []int{3}},
+	{Method: "tenantReachRoute", Args: 6, ResourceArg: 4, Permission: true, Bare: true, LabelArgs: []int{5}},
+	{Method: "tenantListRoute", Args: 6, ResourceArg: 4, Permission: true, Bare: true, LabelArgs: []int{5}},
 }
 
 // goldenAdminPermissions is the complete, literal resource:action pair every

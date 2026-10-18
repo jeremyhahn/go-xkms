@@ -267,6 +267,10 @@ func (f *fakeUserAuthFactorClient) GetAuthFactor(context.Context, *qrdbtransport
 func (f *fakeUserAuthFactorClient) RemoveAuthFactor(context.Context, *qrdbtransport.AuthFactorRemoveRequest) (*qrdbtransport.AuthFactorRemoveResponse, error) {
 	panic("not implemented")
 }
+
+func (f *fakeUserAuthFactorClient) DeleteAuthFactor(context.Context, *qrdbtransport.AuthFactorDeleteRequest) (*qrdbtransport.AuthFactorDeleteResponse, error) {
+	panic("not implemented")
+}
 func (f *fakeUserAuthFactorClient) RotateAuthFactor(context.Context, *qrdbtransport.AuthFactorRotateRequest) (*qrdbtransport.AuthFactorRotateResponse, error) {
 	panic("not implemented")
 }

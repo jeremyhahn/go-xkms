@@ -22,9 +22,11 @@ import (
 	"crypto/rand"
 	"crypto/tls"
 	"crypto/x509"
+	"encoding/hex"
 	"encoding/json"
 	"encoding/pem"
 	"errors"
+	"io/fs"
 	"net"
 	"net/http"
 	"net/http/httptest"
@@ -32,7 +34,9 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
+	clusterenroll "github.com/jeremyhahn/go-qrdb/sdk/go/clusterenroll"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
@@ -43,21 +47,40 @@ import (
 // Hardware-key provisioning (precedence 3)
 // ---------------------------------------------------------------------------
 
-// TestProvision_HardwareKeyMode verifies the hardware-key precedence: with a
-// named key backend and no ACME options the node issues its leaf from the
-// dedicated cluster CA over a backend-held key. The certificate must carry the
-// node's SPIFFE identity and chain to the returned CA bundle, and the private
-// key must be exposed only as a crypto.Signer so a hardware-resident key never
-// has to be exported.
-func TestProvision_HardwareKeyMode(t *testing.T) {
+// TestProvision_LocalCAMode verifies the local-CA precedence: with no ACME
+// options, whatever the key backend, the TrustedCA issues the node leaf
+// over a backend-held key through its crypto.Signer (go-xkms#1381). The
+// certificate must carry the node's SPIFFE identity and chain to the returned
+// CA bundle, the private key must be exposed only as a crypto.Signer so a
+// hardware-resident key never has to be exported, and no CA private key may
+// be written to disk.
+func TestProvision_LocalCAMode(t *testing.T) {
+	// The default (empty) key backend is software mode; it takes the same
+	// TrustedCA signer path as any other backend (go-xkms#1381).
+	for _, keyBackend := range []string{"", "software"} {
+		t.Run("backend="+keyBackend, func(t *testing.T) {
+			provisionLocalCAFirstNode(t, keyBackend)
+		})
+	}
+}
+
+// provisionLocalCAFirstNode provisions a local-CA first node on keyBackend and
+// checks the leaf is TrustedCA-issued, signer-backed, and leaves no CA key on
+// disk.
+func provisionLocalCAFirstNode(t *testing.T, keyBackend string) {
+	t.Helper()
+	dataDir := t.TempDir()
 	opts := &Options{
-		RaftAddress: "127.0.0.1:8311",
-		NodeID:      7,
-		TrustDomain: "test.cluster",
-		DataDir:     t.TempDir(),
-		Members:     map[uint64]string{7: "127.0.0.1:8311"},
-		KeyBackend:  "software",
-		Backends:    softwareBackends(t),
+		RaftAddress:     "127.0.0.1:8311",
+		NodeID:          7,
+		TrustDomain:     "test.cluster",
+		DataDir:         dataDir,
+		Members:         map[uint64]string{7: "127.0.0.1:8311"},
+		KeyBackend:      keyBackend,
+		Backends:        softwareBackends(t),
+		NodeKeyBackends: softwareBackends(t),
+		CAConfig:        clusterCAConfig(),
+		ClusterCACN:     "Cluster Test Cluster CA",
 	}
 
 	p, err := New(opts, testLogger())
@@ -66,7 +89,7 @@ func TestProvision_HardwareKeyMode(t *testing.T) {
 	res, err := p.Provision(context.Background())
 	require.NoError(t, err)
 	require.NotNil(t, res.MTLS)
-	require.NotNil(t, res.MTLS.Certificate, "hardware mode must return a signer-backed certificate")
+	require.NotNil(t, res.MTLS.Certificate, "local-CA mode must return a signer-backed certificate")
 
 	leaf := res.MTLS.Certificate.Leaf
 	require.NotNil(t, leaf)
@@ -77,16 +100,47 @@ func TestProvision_HardwareKeyMode(t *testing.T) {
 	// hardware-resident key never has to be exported to serve TLS.
 	_, isSigner := res.MTLS.Certificate.PrivateKey.(crypto.Signer)
 	assert.True(t, isSigner, "the TLS private key must be a crypto.Signer, not raw key material")
-	assert.Empty(t, res.MTLS.Key, "hardware mode must not emit exportable key PEM")
+	assert.Empty(t, res.MTLS.Key, "local-CA mode must not emit exportable key PEM")
 
-	// The leaf verifies against the CA bundle the provisioner returned.
+	// The leaf verifies against the CA bundle the provisioner returned,
+	// through the intermediates the TLS chain carries.
 	roots := x509.NewCertPool()
 	require.True(t, roots.AppendCertsFromPEM(res.MTLS.CACert))
+	intermediates := x509.NewCertPool()
+	for _, der := range res.MTLS.Certificate.Certificate[1:] {
+		cert, parseErr := x509.ParseCertificate(der)
+		require.NoError(t, parseErr)
+		intermediates.AddCert(cert)
+	}
 	_, err = leaf.Verify(x509.VerifyOptions{
-		Roots:     roots,
-		KeyUsages: []x509.ExtKeyUsage{x509.ExtKeyUsageAny},
+		Roots:         roots,
+		Intermediates: intermediates,
+		KeyUsages:     []x509.ExtKeyUsage{x509.ExtKeyUsageAny},
 	})
 	require.NoError(t, err, "the node leaf must chain to the advertised cluster CA")
+	assert.Equal(t, "Cluster Test Cluster CA", leaf.Issuer.CommonName,
+		"the leaf must be issued by the TrustedCA's cluster CA identity")
+
+	assertNoCAKeyOnDisk(t, dataDir)
+}
+
+// assertNoCAKeyOnDisk fails if any file under dir is a ca-key.pem or holds a
+// PEM private key: the cluster CA signs through its crypto.Signer only.
+func assertNoCAKeyOnDisk(t *testing.T, dir string) {
+	t.Helper()
+	err := filepath.WalkDir(dir, func(path string, d fs.DirEntry, err error) error {
+		if err != nil || d.IsDir() {
+			return err
+		}
+		assert.NotEqual(t, "ca-key.pem", d.Name(), "CA key file written at %s", path)
+		data, err := os.ReadFile(path)
+		if err != nil {
+			return err
+		}
+		assert.NotContains(t, string(data), "PRIVATE KEY-----", "private key PEM written at %s", path)
+		return nil
+	})
+	require.NoError(t, err)
 }
 
 // TestProvision_HardwareKeyReusesKeyAcrossRestarts verifies a restart reuses
@@ -98,13 +152,15 @@ func TestProvision_HardwareKeyReusesKeyAcrossRestarts(t *testing.T) {
 
 	newProvisioner := func() *Provisioner {
 		p, err := New(&Options{
-			RaftAddress: "127.0.0.1:8312",
-			NodeID:      8,
-			TrustDomain: "test.cluster",
-			DataDir:     dataDir,
-			Members:     map[uint64]string{8: "127.0.0.1:8312"},
-			KeyBackend:  "software",
-			Backends:    backends,
+			RaftAddress:     "127.0.0.1:8312",
+			NodeID:          8,
+			TrustDomain:     "test.cluster",
+			DataDir:         dataDir,
+			Members:         map[uint64]string{8: "127.0.0.1:8312"},
+			KeyBackend:      "software",
+			Backends:        backends,
+			NodeKeyBackends: backends,
+			CAConfig:        clusterCAConfig(),
 		}, testLogger())
 		require.NoError(t, err)
 		return p
@@ -120,23 +176,35 @@ func TestProvision_HardwareKeyReusesKeyAcrossRestarts(t *testing.T) {
 		"the node key must be reused across restarts, not regenerated")
 }
 
-// TestProvision_HardwareKeyPropagatesBackendFailure verifies a backend that
-// cannot be resolved aborts provisioning instead of silently falling back to a
-// software key.
-func TestProvision_HardwareKeyPropagatesBackendFailure(t *testing.T) {
-	wantErr := errors.New("tpm2 backend unavailable")
-	p, err := New(&Options{
-		RaftAddress: "127.0.0.1:8313",
-		TrustDomain: "test.cluster",
-		DataDir:     t.TempDir(),
-		KeyBackend:  "tpm2",
-		Backends:    func(string) (xkms.Backend, error) { return nil, wantErr },
-	}, testLogger())
-	require.NoError(t, err)
+// TestProvision_LocalCAPropagatesBackendFailure verifies a key backend the
+// Backends seam cannot supply aborts provisioning with ErrKeyBackendUnavailable
+// instead of falling back to another backend or a key on disk. The software
+// default fails the same way as a hardware backend.
+func TestProvision_LocalCAPropagatesBackendFailure(t *testing.T) {
+	for _, keyBackend := range []string{"tpm2", ""} {
+		t.Run("backend="+keyBackend, func(t *testing.T) {
+			wantErr := errors.New("backend unavailable")
+			dataDir := t.TempDir()
+			p, err := New(&Options{
+				RaftAddress:     "127.0.0.1:8313",
+				TrustDomain:     "test.cluster",
+				DataDir:         dataDir,
+				KeyBackend:      keyBackend,
+				Backends:        func(string) (xkms.Backend, error) { return nil, wantErr },
+				NodeKeyBackends: func(string) (xkms.Backend, error) { return nil, wantErr },
+				CAConfig:        clusterCAConfig(),
+			}, testLogger())
+			require.NoError(t, err)
 
-	res, err := p.Provision(context.Background())
-	require.ErrorIs(t, err, wantErr)
-	assert.Nil(t, res)
+			res, err := p.Provision(context.Background())
+			var unavailable *ErrKeyBackendUnavailable
+			require.ErrorAs(t, err, &unavailable)
+			assert.NotEmpty(t, unavailable.KeyBackend, "the error names the backend it could not resolve")
+			require.ErrorIs(t, err, wantErr)
+			assert.Nil(t, res)
+			assertNoCAKeyOnDisk(t, dataDir)
+		})
+	}
 }
 
 // ---------------------------------------------------------------------------
@@ -229,7 +297,7 @@ func TestFinishACME_AdvertiserOnlyForFirstNodeOfMultiNodeCluster(t *testing.T) {
 		p, err := New(opts, testLogger())
 		require.NoError(t, err)
 
-		res, err := p.finishACME(tlsCert, anchorPEM, true)
+		res, err := p.finishACME(tlsCert, anchorPEM)
 		require.NoError(t, err)
 		assert.Nil(t, res.Advertiser)
 		assert.Equal(t, anchorPEM, res.MTLS.CACert)
@@ -238,10 +306,11 @@ func TestFinishACME_AdvertiserOnlyForFirstNodeOfMultiNodeCluster(t *testing.T) {
 	t.Run("joiner starts no advertiser", func(t *testing.T) {
 		opts := firstNodeOptions(t, t.TempDir(), softwareBackends(t))
 		opts.Members = map[uint64]string{1: "127.0.0.1:8301", 2: "127.0.0.1:8302"}
+		opts.Bootstrap = clusterenrollBootstrap()
 		p, err := New(opts, testLogger())
 		require.NoError(t, err)
 
-		res, err := p.finishACME(tlsCert, anchorPEM, false)
+		res, err := p.finishACME(tlsCert, anchorPEM)
 		require.NoError(t, err)
 		assert.Nil(t, res.Advertiser, "only the first node advertises the anchor")
 	})
@@ -257,7 +326,7 @@ func TestFinishACME_AdvertiserOnlyForFirstNodeOfMultiNodeCluster(t *testing.T) {
 		p, err := New(opts, testLogger())
 		require.NoError(t, err)
 
-		res, err := p.finishACME(tlsCert, anchorPEM, true)
+		res, err := p.finishACME(tlsCert, anchorPEM)
 		require.NoError(t, err)
 		require.NotNil(t, res.Advertiser, "peers need the anchor advertised to join")
 		t.Cleanup(res.Advertiser.Stop)
@@ -286,9 +355,56 @@ func TestFinishACME_RefusesToAdvertiseKeyBearingBundle(t *testing.T) {
 	p, err := New(opts, testLogger())
 	require.NoError(t, err)
 
-	res, err := p.finishACME(tlsCert, poisoned, true)
+	res, err := p.finishACME(tlsCert, poisoned)
 	require.Error(t, err, "an anchor bundle carrying a private key must never be advertised")
 	assert.Nil(t, res)
+}
+
+// TestProvision_FoundingNodeAdvertisesAfterCachedRestart verifies the founding
+// node of a multi-node local-CA cluster resumes its Noise anchor advertiser
+// when a restart restores the cached identity, so a joiner configured with the
+// founding node's Noise key and address still bootstraps after the reboot.
+func TestProvision_FoundingNodeAdvertisesAfterCachedRestart(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	dataDir := t.TempDir()
+	backends := softwareBackends(t)
+	noisePort := freePort(t)
+	foundingOptions := func() *Options {
+		opts := firstNodeOptions(t, dataDir, backends)
+		opts.ACME = nil
+		opts.Members = map[uint64]string{1: "127.0.0.1:8301", 2: "127.0.0.1:8302"}
+		opts.Advertise.NoiseHost = "127.0.0.1"
+		opts.Advertise.NoisePort = noisePort
+		return opts
+	}
+
+	first, err := New(foundingOptions(), testLogger())
+	require.NoError(t, err)
+	issued, err := first.Provision(ctx)
+	require.NoError(t, err)
+	require.NotNil(t, issued.Advertiser, "the founding node advertises on first issuance")
+	noiseKey := hex.EncodeToString(issued.Advertiser.NoisePublicKey())
+	noiseAddr := issued.Advertiser.Addr()
+	issued.Advertiser.Stop()
+
+	restarted, err := New(foundingOptions(), testLogger())
+	require.NoError(t, err)
+	res, err := restarted.Provision(ctx)
+	require.NoError(t, err)
+	assert.Equal(t, issued.MTLS.Certificate.Leaf.SerialNumber, res.MTLS.Certificate.Leaf.SerialNumber,
+		"the restart restores the cached identity, not a re-issued one")
+	require.NotNil(t, res.Advertiser, "the founding node must resume advertising on a cached restart")
+	t.Cleanup(res.Advertiser.Stop)
+
+	anchorPEM, err := clusterenroll.FetchAnchor(ctx, &clusterenroll.Options{
+		RaftAddress: "127.0.0.1:8302",
+		TrustDomain: "test.cluster",
+		DataDir:     t.TempDir(),
+		Bootstrap:   clusterenroll.BootstrapOptions{NoiseKey: noiseKey, NoiseAddr: noiseAddr},
+	}, testLogger())
+	require.NoError(t, err, "a joiner bootstraps over Noise from the restarted founding node")
+	assert.Equal(t, res.MTLS.CACert, anchorPEM)
 }
 
 // ---------------------------------------------------------------------------
@@ -300,13 +416,14 @@ func TestFinishACME_RefusesToAdvertiseKeyBearingBundle(t *testing.T) {
 // hanging or proceeding without a trust anchor.
 func TestEnrollJoiner_UnreachableSeedNodeFailsFast(t *testing.T) {
 	opts := &Options{
-		RaftAddress: "127.0.0.1:8302",
-		TrustDomain: "test.cluster",
-		DataDir:     t.TempDir(),
-		ACME:        &ACMEOptions{DirectoryURL: "https://node1:8443/api/v1/acme/directory"},
-		KeyBackend:  "tpm2",
-		Backends:    softwareBackends(t),
-		Bootstrap:   clusterenrollBootstrap(),
+		RaftAddress:     "127.0.0.1:8302",
+		TrustDomain:     "test.cluster",
+		DataDir:         t.TempDir(),
+		ACME:            &ACMEOptions{DirectoryURL: "https://node1:8443/api/v1/acme/directory"},
+		KeyBackend:      "tpm2",
+		Backends:        softwareBackends(t),
+		NodeKeyBackends: softwareBackends(t),
+		Bootstrap:       clusterenrollBootstrap(),
 	}
 
 	p, err := New(opts, testLogger())
@@ -686,11 +803,10 @@ func TestParseEKCertPEM(t *testing.T) {
 // TPM-resident node signer
 // ---------------------------------------------------------------------------
 
-// TestTPMKeySigner_PublicReportsCertificateKey verifies the signer advertises
-// the public key taken from the issued certificate. TLS uses this to select a
-// signature algorithm, so reporting a different key would break every
-// handshake even though the TPM could sign correctly.
-func TestTPMKeySigner_PublicReportsCertificateKey(t *testing.T) {
+// TestTPMKeySigner_PublicReportsTPMKey verifies the signer advertises the
+// public key read from the TPM. TLS uses this to select a signature algorithm,
+// and the enrollment check compares it with the certificate's key.
+func TestTPMKeySigner_PublicReportsTPMKey(t *testing.T) {
 	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
 	require.NoError(t, err)
 

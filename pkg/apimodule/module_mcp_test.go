@@ -106,8 +106,8 @@ func TestModule_MCPToolPermissions_MatchesMethodSpecs(t *testing.T) {
 		got, ok := perms[spec.Tool]
 		require.True(t, ok, "tool %q missing a permission entry", spec.Tool)
 
-		if spec.Resource != "" && spec.Action != "" {
-			assert.Equal(t, qrdbsdk.Permission(spec.Resource+":"+spec.Action), got,
+		if !spec.Public {
+			assert.Equal(t, spec.Permission, got,
 				"tool %q must carry its resource:action permission", spec.Tool)
 			sawResourceMapped = true
 		} else {

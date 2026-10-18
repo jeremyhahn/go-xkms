@@ -159,48 +159,27 @@ func TestStageBootstrapCA_PropagatesBackendFailure(t *testing.T) {
 	assert.Nil(t, bootstrapCA)
 }
 
-// TestProvisionSoftware_FailsOnUnusableDataDir verifies the software enrollment
-// path reports a failure when it cannot persist its cluster CA material.
-func TestProvisionSoftware_FailsOnUnusableDataDir(t *testing.T) {
+// TestProvisionLocalCA_FailsOnUnusableDataDir verifies the local-CA path on
+// the default software key backend reports a failure when it cannot cache the
+// node identity it was issued.
+func TestProvisionLocalCA_FailsOnUnusableDataDir(t *testing.T) {
 	blocker := filepath.Join(t.TempDir(), "not-a-directory")
 	require.NoError(t, os.WriteFile(blocker, []byte("x"), 0o600))
 
 	p, err := New(&Options{
-		RaftAddress: "127.0.0.1:8321",
-		TrustDomain: "test.cluster",
-		DataDir:     blocker,
-		Members:     map[uint64]string{1: "127.0.0.1:8321"},
+		RaftAddress:     "127.0.0.1:8321",
+		TrustDomain:     "test.cluster",
+		DataDir:         blocker,
+		Members:         map[uint64]string{1: "127.0.0.1:8321"},
+		Backends:        softwareBackends(t),
+		NodeKeyBackends: softwareBackends(t),
+		CAConfig:        clusterCAConfig(),
 	}, testLogger())
 	require.NoError(t, err)
 
 	res, err := p.Provision(context.Background())
 	require.Error(t, err)
 	assert.Nil(t, res)
-}
-
-// TestProvisionSoftware_SingleNodeProducesUsableMaterial verifies the default
-// path yields a self-consistent CA/cert/key triple with no advertiser for a
-// single-node cluster.
-func TestProvisionSoftware_SingleNodeProducesUsableMaterial(t *testing.T) {
-	p, err := New(&Options{
-		RaftAddress: "127.0.0.1:8322",
-		TrustDomain: "test.cluster",
-		DataDir:     t.TempDir(),
-		Members:     map[uint64]string{1: "127.0.0.1:8322"},
-	}, testLogger())
-	require.NoError(t, err)
-
-	res, err := p.Provision(context.Background())
-	require.NoError(t, err)
-
-	require.NotEmpty(t, res.MTLS.CACert)
-	require.NotEmpty(t, res.MTLS.Cert)
-	require.NotEmpty(t, res.MTLS.Key)
-	assert.Nil(t, res.Advertiser, "a single-node cluster advertises nothing")
-
-	// The issued material must actually form a valid keypair.
-	roots := x509.NewCertPool()
-	require.True(t, roots.AppendCertsFromPEM(res.MTLS.CACert))
 }
 
 // TestProvisionFromFiles_ReportsWhichFileIsMissing verifies each missing file is

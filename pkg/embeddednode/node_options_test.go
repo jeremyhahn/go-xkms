@@ -15,10 +15,8 @@ package embeddednode
 
 import (
 	"errors"
-	"path/filepath"
 	"testing"
 
-	clusterenroll "github.com/jeremyhahn/go-qrdb/sdk/go/clusterenroll"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -88,48 +86,6 @@ func TestClusterOptions_PeerList(t *testing.T) {
 		assert.Nil(t, ClusterOptions{}.PeerList())
 		assert.Nil(t, ClusterOptions{Peers: "   "}.PeerList())
 	})
-}
-
-// TestOptions_ClusterEnrollOptions_AppliesDefaults verifies the pure mapping
-// onto go-qrdb's clusterenroll options fills in the trust domain and Noise
-// port defaults and roots the TLS cache under the storage path.
-func TestOptions_ClusterEnrollOptions_AppliesDefaults(t *testing.T) {
-	opts := &NodeOptions{
-		StoragePath: "/var/lib/xkms",
-		Cluster: ClusterOptions{
-			RaftAddress: "10.0.0.1:9001",
-			Peers:       "1=10.0.0.1:9001,2=10.0.0.2:9001",
-		},
-	}
-
-	got := opts.ClusterEnrollOptions(map[uint64]string{1: "a", 2: "b"})
-
-	assert.Equal(t, DefaultTrustDomain, got.TrustDomain)
-	assert.Equal(t, clusterenroll.DefaultNoisePort, got.Advertise.NoisePort)
-	assert.Equal(t, filepath.Join("/var/lib/xkms", RaftTLSCacheSubdir), got.DataDir)
-	assert.Equal(t, "10.0.0.1:9001", got.RaftAddress)
-	assert.False(t, got.SingleNode, "two members is not a single-node cluster")
-	assert.Equal(t, "static", got.Bootstrap.DiscoveryMethod)
-	assert.Equal(t, []string{"1=10.0.0.1:9001", "2=10.0.0.2:9001"}, got.Bootstrap.Peers)
-}
-
-// TestOptions_ClusterEnrollOptions_HonoursExplicitValues verifies operator
-// values are not overwritten by the defaults, and that a lone member marks the
-// enrollment single-node (which skips peer certificate provisioning).
-func TestOptions_ClusterEnrollOptions_HonoursExplicitValues(t *testing.T) {
-	opts := &NodeOptions{
-		StoragePath: "/data",
-		Cluster: ClusterOptions{
-			TrustDomain:        "prod.example.test",
-			AdvertiseNoisePort: 15000,
-		},
-	}
-
-	got := opts.ClusterEnrollOptions(map[uint64]string{1: "a"})
-
-	assert.Equal(t, "prod.example.test", got.TrustDomain)
-	assert.Equal(t, 15000, got.Advertise.NoisePort)
-	assert.True(t, got.SingleNode, "one member is a single-node cluster")
 }
 
 // TestOptions_Validate_RejectsIncompleteOptions verifies each required field

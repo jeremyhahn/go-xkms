@@ -15,7 +15,7 @@ config carries an SSH client (`cfg.SSHClient != nil`,
 Permission: each route gates on its own `auth.ResourceSSH` action
 (`pkg/api/rest/routes.go:476-503`) — `ssh:read` to read, `ssh:write` to
 create, `ssh:delete` to remove, the same pairs the MCP `ssh.*` methods
-(`pkg/api/mcp/authz.go:321-341`) and the gRPC `qrdb.v1.permission` options
+(`pkg/api/mcp/server.go:499-517`) and the gRPC `qrdb.v1.permission` options
 (`pkg/api/grpc/proto/xkmsv1/xkms.proto:853-915`) carry. Signing is `ssh:write` on
 every transport: REST (`pkg/api/rest/routes.go:493`), MCP `ssh.keys.sign`
 and gRPC `SSHSign`. Before go-xkms#1230 every REST route, delete and import

@@ -106,7 +106,7 @@ func (c *bootstrapRecordingRBACClient) ListPermissions(_ context.Context, _ *qrd
 }
 
 // TestBootstrapKeysRoute_RequiresBootstrapRead proves the route demands
-// exactly bootstrap:read — the same pair pkg/api/mcp's methodPermissions and
+// exactly bootstrap:read — the same pair pkg/api/mcp's rpcMethods and
 // pkg/api/grpc's proto option declare for the equivalent call — and that a
 // caller holding that grant passes the gate.
 func TestBootstrapKeysRoute_RequiresBootstrapRead(t *testing.T) {

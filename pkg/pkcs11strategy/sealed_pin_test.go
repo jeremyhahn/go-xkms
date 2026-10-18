@@ -21,6 +21,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/jeremyhahn/go-xkms/pkg/seal"
+	"github.com/jeremyhahn/go-xkms/pkg/types"
 )
 
 // pinSource releases the secrets it holds, or err.
@@ -61,4 +62,25 @@ func TestBuildWithSealedPIN_WipesTheReleasedPIN(t *testing.T) {
 	_, _, err := BuildWithSealedPIN(context.Background(), source, "test", "", "token")
 	require.ErrorIs(t, err, ErrLibraryRequired)
 	require.Equal(t, []byte{0, 0, 0, 0}, source.released)
+}
+
+func TestReleaseSealedPIN_HoldsTheSealedPINAndWipesTheCopy(t *testing.T) {
+	source := &pinSource{secrets: map[string][]byte{seal.SecretPKCS11PIN: []byte("1234")}}
+	pin, err := ReleaseSealedPIN(context.Background(), source)
+	require.NoError(t, err)
+	held, err := types.SecretValueBytes(context.Background(), pin)
+	require.NoError(t, err)
+	require.Equal(t, []byte("1234"), held)
+	require.Equal(t, []byte{0, 0, 0, 0}, source.released)
+}
+
+func TestReleaseSealedPIN_RefusesWithoutASourceOrARelease(t *testing.T) {
+	_, err := ReleaseSealedPIN(context.Background(), nil)
+	require.ErrorIs(t, err, ErrPINSourceRequired)
+
+	refused := errors.New("pcr policy mismatch")
+	_, err = ReleaseSealedPIN(context.Background(), &pinSource{err: refused})
+	var buildErr *BuildError
+	require.ErrorAs(t, err, &buildErr)
+	require.ErrorIs(t, err, refused)
 }

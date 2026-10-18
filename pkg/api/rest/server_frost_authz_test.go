@@ -33,7 +33,7 @@ import (
 // threshold key material.
 //
 // The pairs are the QUIC FROST handlers (pkg/api/quic/handlers_frost.go) and
-// the MCP frost.* methodPermissions map (pkg/api/mcp/authz.go) verbatim; a
+// the MCP frost.* rpcMethods registrations (pkg/api/mcp/server.go) verbatim; a
 // divergence here is a cross-transport authorization bug, not a test detail.
 // They are spelled out literally rather than built from the
 // auth.Resource*/auth.Action* constants because this table is the wire

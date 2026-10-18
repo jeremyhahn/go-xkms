@@ -23,6 +23,8 @@ import (
 	"google.golang.org/grpc/metadata"
 	"google.golang.org/grpc/peer"
 
+	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
+	"github.com/jeremyhahn/go-xkms/pkg/acme/admin"
 	"github.com/jeremyhahn/go-xkms/pkg/auth"
 )
 
@@ -33,22 +35,20 @@ import (
 // authorization interceptor assumed such a layer existed and passed every
 // credential-less call straight to the handler.
 //
-// Authentication itself is delegated to the canonical xkms mTLS authenticator
-// (auth.MTLSAuthenticator), so certificate-to-identity resolution — including
-// SPKI-thumbprint user lookup when a UserStore is configured — is identical to
-// the main xkms transports.
+// Authentication is delegated to certAuth, the ACME admin surface's one
+// certificate-to-identity rule (admin.MTLSAuthHandler) the REST admin listener
+// applies too: the caller's tenant is the one qrdbsdk.TenantFromClientCert
+// names, and its roles are those of the go-qrdb user the certificate binds to
+// in that tenant. Nothing in the certificate, its OU least of all, grants a
+// role. The resolved tenant is bound on the request context as well as on the
+// identity.
 //
 // The interceptor never denies on its own: a call with no usable client
-// certificate simply carries no identity, and the authorization interceptor
-// that runs after it denies with Unauthenticated. Keeping the denial in one
-// place means there is exactly one gate to reason about.
-func UnaryMTLSIdentityInterceptor(authenticator *auth.MTLSAuthenticator, roleExtractor func(*x509.Certificate) []string, logger *slog.Logger) grpc.UnaryServerInterceptor {
-	if authenticator == nil {
-		authenticator = auth.NewMTLSAuthenticator(nil)
-	}
-	if roleExtractor == nil {
-		roleExtractor = certificateRoles
-	}
+// certificate, or one certAuth cannot resolve (including a nil certAuth),
+// simply carries no identity, and the authorization interceptor that runs
+// after it denies with Unauthenticated. Keeping the denial in one place means
+// there is exactly one gate to reason about.
+func UnaryMTLSIdentityInterceptor(certAuth *admin.MTLSAuthHandler, logger *slog.Logger) grpc.UnaryServerInterceptor {
 	if logger == nil {
 		logger = slog.Default()
 	}
@@ -71,7 +71,7 @@ func UnaryMTLSIdentityInterceptor(authenticator *auth.MTLSAuthenticator, roleExt
 		}
 
 		md, _ := metadata.FromIncomingContext(ctx)
-		identity, err := authenticator.AuthenticateGRPC(ctx, md)
+		identity, err := certAuth.AuthenticateGRPC(ctx, cert, md)
 		if err != nil {
 			logger.DebugContext(ctx, "ACME admin gRPC mTLS authentication produced no identity",
 				slog.String("method", info.FullMethod),
@@ -79,35 +79,9 @@ func UnaryMTLSIdentityInterceptor(authenticator *auth.MTLSAuthenticator, roleExt
 			return handler(ctx, req)
 		}
 
-		// The authenticator resolves roles only when a UserStore matched the
-		// certificate. Otherwise fall back to the certificate's own role
-		// claim, mirroring the ACME admin REST mTLS middleware.
-		if len(identity.Roles) == 0 {
-			identity.Roles = roleExtractor(cert)
-		}
-
+		ctx = qrdbsdk.ContextWithTenant(ctx, identity.TenantID)
 		return handler(auth.WithIdentity(ctx, identity), req)
 	}
-}
-
-// certificateRoles reads role names from the certificate's Organizational Unit
-// values. It mints no fallback role: a certificate naming no role yields no
-// grants and every privileged method is denied.
-func certificateRoles(cert *x509.Certificate) []string {
-	if cert == nil || len(cert.Subject.OrganizationalUnit) == 0 {
-		return nil
-	}
-	roles := make([]string, 0, len(cert.Subject.OrganizationalUnit))
-	for _, ou := range cert.Subject.OrganizationalUnit {
-		if ou == "" {
-			continue
-		}
-		roles = append(roles, ou)
-	}
-	if len(roles) == 0 {
-		return nil
-	}
-	return roles
 }
 
 // peerCertificate returns the verified TLS client certificate on the gRPC

@@ -36,7 +36,7 @@ import (
 // credential submission, the token PINs, the server's PIV
 // card and the tenants' TPM modes are platform-global state: the RBAC gate admits a
 // tenant-local Admin to all of them (its ScopeSelf grants resolve against its
-// own tenant), so the service's requireSystemTenant is what confines them to
+// own tenant), so the service's qrdbsdk.IdentityIsSystemTenant is what confines them to
 // a cross-tenant identity. These tests drive the service directly so no
 // transport check can mask a missing service-layer one.
 

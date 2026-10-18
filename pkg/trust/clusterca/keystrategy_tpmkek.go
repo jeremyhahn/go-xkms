@@ -181,9 +181,8 @@ func (s *tpmKEKStrategy) loadSealedSeed(ctx context.Context, deps *StrategyDeps)
 
 // BootstrapBackends generates/loads the seed (bootstrap node) and builds the
 // node-local software keystore whose password is the seed-derived KEK, so the
-// CA keys are KEK-wrapped at rest. Joiners have no seed yet at bootstrap and only
-// need a local keystore for their transport key, so a joiner (non-bootstrapping)
-// falls back to an unkeyed node-local keystore for that purpose.
+// CA keys are KEK-wrapped at rest. Joiners have no seed yet at bootstrap and hold
+// no CA key, so a joiner (non-bootstrapping) gets an unkeyed node-local keystore.
 func (s *tpmKEKStrategy) BootstrapBackends(ctx context.Context, deps *StrategyDeps) (func(string) (xkms.Backend, error), error) {
 	if deps.TPMSealer == nil || deps.Credentials == nil {
 		return nil, ErrNoTPMCredentials

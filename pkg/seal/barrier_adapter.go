@@ -286,7 +286,7 @@ func NewHardwareTenantService(
 	if err != nil {
 		return nil, err
 	}
-	allOpts := append([]TenantServiceOption{qrdbsdk.WithTenantStrategyRegistry(hwRegistry)}, opts...)
+	allOpts := append([]TenantServiceOption{qrdbsdk.WithTenantBarrierKeyProvider(qrdbsdk.NewBarrierKeyProvider(hwRegistry))}, opts...)
 	// Wrap the store so a missing tenant record surfaces go-qrdb's
 	// ErrSecretNotFound rather than xkms's storage.ErrNotFound.
 	return qrdbsdk.NewServiceTenantService(tenantMetadataStore{store}, registry, logger, allOpts...)
@@ -296,9 +296,10 @@ func NewHardwareTenantService(
 // built-in software strategies (passphrase, none) and the hardware-backed
 // strategies supplied by the caller. This is the composition seam that lets a
 // per-tenant barrier be sealed by a TPM, PKCS#11 token, or cloud KMS: the
-// returned registry is injected into go-qrdb's TenantService via
-// WithTenantStrategyRegistry so TenantBarrierInitWithStrategy("tpm2"/"pkcs11"/
-// "awskms"/…) resolves the matching xkms strategy by ID.
+// returned registry is injected into go-qrdb's TenantService through its
+// barrier key seam (WithTenantBarrierKeyProvider over NewBarrierKeyProvider)
+// so TenantBarrierInitWithStrategy("tpm2"/"pkcs11"/"awskms"/…) resolves the
+// matching xkms strategy by ID.
 //
 // Only hardware-backed strategies are registered; software/none strategies are
 // already provided by the default registry, and registering a duplicate ID

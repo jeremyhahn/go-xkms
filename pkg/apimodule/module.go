@@ -439,7 +439,7 @@ func (m *Module) RegisterGRPC(reg grpc.ServiceRegistrar) {
 // and Algorithms are unannotated in xkms.proto (no (qrdb.v1.permission)
 // option), so without this declaration qrdb's reflection interceptor
 // DEFAULT-DENYs them before the handler ever runs (see the interceptor's
-// doc comment in go-qrdb/pkg/api/grpc/proto/qrdbv1/authz.proto) — the
+// doc comment in go-qrdb/sdk/go/proto/qrdb/v1/permission.proto) — the
 // Unix-socket transport never hit this because it grants local callers
 // WithLocalTrust() instead of going through the reflection interceptor.
 func (m *Module) PublicGRPCMethods() []string {

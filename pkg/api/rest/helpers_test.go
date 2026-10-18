@@ -40,6 +40,9 @@ type recordingRBACClient struct {
 	allowResource string
 	allowAction   string
 
+	// listErr, when set, fails ListPermissions.
+	listErr error
+
 	gotResource string
 	gotAction   string
 }
@@ -53,8 +56,20 @@ func (c *recordingRBACClient) Authorize(_ context.Context, _ *qrdbtransport.Iden
 	return errors.New("permission denied")
 }
 
+// ListPermissions lists the one granted pair, or nothing when none is set.
 func (c *recordingRBACClient) ListPermissions(_ context.Context, _ *qrdbtransport.Identity) ([]qrdbtransport.PermissionInfo, error) {
-	return nil, errors.New("not implemented")
+	if c.listErr != nil {
+		return nil, c.listErr
+	}
+	if c.allowResource == "" {
+		return nil, nil
+	}
+	return []qrdbtransport.PermissionInfo{{
+		Name:     c.allowResource + ":" + c.allowAction,
+		Resource: c.allowResource,
+		Action:   c.allowAction,
+		Scope:    qrdbtransport.PermissionScopeSelf,
+	}}, nil
 }
 
 func initTestBarrier(t *testing.T) *seal.Barrier {

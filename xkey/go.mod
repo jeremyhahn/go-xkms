@@ -30,7 +30,7 @@ require (
 	github.com/gorilla/websocket v1.5.4-0.20250319132907-e064f32e3674
 	github.com/jeremyhahn/go-enclave v0.8.0-alpha
 	github.com/jeremyhahn/go-luks2 v1.0.0-rc.4
-	github.com/jeremyhahn/go-qrdb/sdk/go v0.48.0-alpha
+	github.com/jeremyhahn/go-qrdb/sdk/go v0.50.0-alpha
 	github.com/jeremyhahn/go-xkms v0.56.0-alpha
 	github.com/jeremyhahn/go-xkms/sdk/go v0.56.0-alpha
 	github.com/kbinani/screenshot v0.0.0-20250624051815-089614a94018
@@ -45,9 +45,9 @@ require (
 	github.com/stretchr/testify v1.12.1
 	github.com/tobischo/gokeepasslib/v3 v3.6.2
 	github.com/wailsapp/wails/v2 v2.12.0
-	golang.org/x/crypto v0.57.0
-	golang.org/x/sys v0.48.0
-	golang.org/x/term v0.46.0
+	golang.org/x/crypto v0.58.0
+	golang.org/x/sys v0.49.0
+	golang.org/x/term v0.47.0
 	google.golang.org/grpc v1.83.2
 	gopkg.in/yaml.v3 v3.0.1
 	modernc.org/sqlite v1.51.0
@@ -119,6 +119,7 @@ require (
 	github.com/cockroachdb/redact v1.1.8 // indirect
 	github.com/cockroachdb/swiss v0.0.0-20260820225851-333444432258 // indirect
 	github.com/cockroachdb/tokenbucket v0.0.0-20250429170803-42689b6311bb // indirect
+	github.com/decred/dcrd/dcrec/secp256k1/v4 v4.4.1 // indirect
 	github.com/dolthub/flatbuffers/v23 v23.3.3-dh.2 // indirect
 	github.com/dolthub/go-icu-regex v0.0.0-20260610153742-72563bc7ca83 // indirect
 	github.com/dolthub/go-mysql-server v0.20.1-0.20260812191550-bda99d66b4bf // indirect
@@ -175,15 +176,15 @@ require (
 	github.com/jeremyhahn/go-codec v1.4.0 // indirect
 	github.com/jeremyhahn/go-frost v0.3.0-alpha // indirect
 	github.com/jeremyhahn/go-objstore v0.4.0-alpha // indirect
-	github.com/jeremyhahn/go-qrdb v0.48.0-alpha // indirect
-	github.com/jeremyhahn/go-quicraft v0.20.0 // indirect
+	github.com/jeremyhahn/go-qrdb v0.50.0-alpha // indirect
+	github.com/jeremyhahn/go-quicraft v0.22.0-alpha // indirect
 	github.com/jeremyhahn/go-truststrap v0.6.0-alpha // indirect
 	github.com/jeroenrinzema/psql-wire v0.18.0 // indirect
 	github.com/jezek/xgb v1.1.1 // indirect
 	github.com/jmespath/go-jmespath v0.4.0 // indirect
 	github.com/json-iterator/go v1.1.12 // indirect
 	github.com/kevinburke/ssh_config v1.6.0 // indirect
-	github.com/klauspost/compress v1.19.1 // indirect
+	github.com/klauspost/compress v1.20.1 // indirect
 	github.com/klauspost/cpuid/v2 v2.4.0 // indirect
 	github.com/kr/pretty v0.3.1 // indirect
 	github.com/kr/text v0.2.0 // indirect
@@ -221,7 +222,7 @@ require (
 	github.com/pkg/errors v0.9.1 // indirect
 	github.com/planetscale/vtprotobuf v0.6.1-0.20250313105119-ba97887b0a25 // indirect
 	github.com/pmezard/go-difflib v1.0.1-0.20181226105442-5d4384ee4fb2 // indirect
-	github.com/prometheus/client_golang v1.24.1 // indirect
+	github.com/prometheus/client_golang v1.25.0 // indirect
 	github.com/prometheus/client_model v0.6.3 // indirect
 	github.com/prometheus/common v0.72.0 // indirect
 	github.com/prometheus/procfs v0.22.0 // indirect
@@ -233,6 +234,7 @@ require (
 	github.com/sagikazarmark/locafero v0.12.0 // indirect
 	github.com/saltosystems/winrt-go v0.0.0-20260513072510-45f10383b2b8 // indirect
 	github.com/samber/lo v1.53.0 // indirect
+	github.com/segmentio/asm v1.2.1 // indirect
 	github.com/sirupsen/logrus v1.9.4 // indirect
 	github.com/soypat/cyw43439 v0.1.1 // indirect
 	github.com/soypat/lneto v0.1.0 // indirect
@@ -285,9 +287,9 @@ require (
 	golang.org/x/mod v0.41.0 // indirect
 	golang.org/x/net v0.60.0 // indirect
 	golang.org/x/oauth2 v0.37.0 // indirect
-	golang.org/x/sync v0.23.0 // indirect
+	golang.org/x/sync v0.24.0 // indirect
 	golang.org/x/telemetry v0.0.0-20260924152758-ed294f943157 // indirect
-	golang.org/x/text v0.42.0 // indirect
+	golang.org/x/text v0.43.0 // indirect
 	golang.org/x/time v0.15.0 // indirect
 	golang.org/x/tools v0.51.0 // indirect
 	golang.org/x/xerrors v0.0.0-20200804184101-5ec99f83aff1 // indirect

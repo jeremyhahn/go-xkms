@@ -31,14 +31,10 @@ import (
 
 // ErrAdminQRDBClientRequired is returned by finalizeAdminModule when the
 // embedded qrdb node has not published its SDK client
-// (server.Server.QRDBClient returns nil). The ACME admin surface has no
-// "authorization is optional" mode — pkg/acme/admin/authz.go's
-// ErrGateNotConfigured refuses an unwired PermissionGate for the same
-// reason — so construction is refused here rather than falling back to
-// auth.NewAuthorizer(nil), which would build a disabled authorizer that
-// allows every request (the documented, and here wrong, behavior for a
-// deployment that deliberately has RBAC disabled).
-var ErrAdminQRDBClientRequired = errors.New("admin: qrdb client is required to build the ACME admin authorizer")
+// (server.Server.QRDBClient returns nil). The ACME admin service delegates
+// tenant identity, roles and users to that node, so construction is refused
+// rather than publishing a surface that cannot serve them.
+var ErrAdminQRDBClientRequired = errors.New("admin: qrdb client is required to build the ACME admin service")
 
 // ErrAdminXKMSServiceRequired is returned by finalizeAdminModule when the
 // server has not composed its XKMSService (server.Server.XKMSService returns
@@ -54,22 +50,26 @@ var ErrAdminXKMSServiceRequired = errors.New("admin: xkms service is required to
 // independent asset bundles.
 const adminUIPrefix = "/admin-ui"
 
-// adminAPIPrefixes are the ACME admin API's route table prefixes: Handlers
-// (pkg/acme/admin/handlers.go) mounts at "/admin", TenantHandlers
-// (pkg/acme/admin/tenant_handlers.go) mounts at "/api/v1/tenants". Both are
-// registered identity-gated on the unified server's qrdb module boundary
-// (apimodule.AdminModule): qrdb's authentication chain refuses an anonymous
-// caller, and the admin package authorizes every route itself — see
-// admin_router_state below.
+// adminRoutes converts the ACME admin API's route table
+// (pkg/acme/admin's Routes) into the routes apimodule.AdminModule mounts on
+// the unified server, each with its own qrdb permission: qrdb's
+// authentication chain refuses an anonymous caller and its RBAC decision
+// refuses a caller without the route's grant before the admin router runs.
 //
-// The admin package also binds the caller's tenant itself: its
-// authentication boundary binds the caller's tenant as the context's qrdb
-// tenant (pkg/acme/admin withUser), which confines every
-// identity-plane call the admin service makes through the embedded client,
-// and its service binds every tenant, role, user, account and certificate the
-// request names to that tenant (pkg/acme/admin tenant_binding.go,
-// go-xkms#1225).
-var adminAPIPrefixes = []string{"/admin", "/api/v1/tenants"}
+// The admin package binds the caller's tenant itself: its authentication
+// boundary binds the caller's tenant as the context's qrdb tenant
+// (pkg/acme/admin withUser), which confines every identity-plane call the
+// admin service makes through the embedded client, and its service binds
+// every tenant, role, user, account and certificate the request names to
+// that tenant (pkg/acme/admin tenant_binding.go, go-xkms#1225).
+func adminRoutes() []apimodule.AdminRoute {
+	routes := admin.Routes()
+	out := make([]apimodule.AdminRoute, len(routes))
+	for i, rt := range routes {
+		out[i] = apimodule.AdminRoute(rt)
+	}
+	return out
+}
 
 // adminRouterState holds the ACME admin surface's fully-assembled,
 // self-authenticating http.Handler. It starts nil (every admin route answers
@@ -101,14 +101,13 @@ func newAdminModule() (*apimodule.AdminModule, error) {
 			}
 			return nil
 		},
-		adminAPIPrefixes,
+		adminRoutes(),
 		apimodule.WithAdminWebUI(adminUIPrefix, uiFS, false),
 	)
 }
 
 // finalizeAdminModule builds the ACME admin surface's service, HTTP
-// handlers, mTLS authentication, and qrdb-backed RBAC gate, then publishes
-// the resulting router so the AdminModule registered in newAdminModule
+// handlers and mTLS authentication, then publishes the resulting router so the AdminModule registered in newAdminModule
 // starts serving it. Call once, after both srv (server.New) and acme
 // (startACMEServer) have succeeded: the admin service administers the same
 // TCG CA and ACME storage factory the ACME listener uses (acme.CA(),
@@ -146,27 +145,29 @@ func finalizeAdminModule(srv *server.Server, acme *acmeServer, logger *slog.Logg
 
 	// The client certificate is resolved to its qrdb user through the same
 	// SPKI-thumbprint store the crypto plane's mTLS authenticator uses, so the
-	// identity reaching the gate carries the user's tenant and qrdb role IDs.
-	// Without the store the authenticator can only read certificate fields: no
-	// roles, no tenant, and qrdb's authorizer denies every route — even for
-	// the first-boot administrator (go-xkms#1069).
+	// identity the handlers bind their tenant checks to carries the user's
+	// tenant and qrdb role IDs (go-xkms#1069). The certificate's tenant is
+	// read under the deployment's own trust domain, and its thumbprint is
+	// looked up in that tenant only, so a tenant user authenticates in its
+	// own tenant (go-xkms#1240).
 	mtlsConfig := &auth.MTLSConfig{UserStore: srv.QRDBUserStore()}
-	authorizer := auth.NewAuthorizer(qrdbClient.RBAC())
-	// The certificate's tenant is read under the deployment's own trust
-	// domain, and its thumbprint is looked up in that tenant only, so a
-	// tenant user authenticates in its own tenant (go-xkms#1240).
 	authHandler := admin.NewMTLSAuthHandler(auth.NewMTLSAuthenticator(mtlsConfig), srv.TrustDomain())
-	gate := admin.NewPermissionGate(authorizer, logger)
 
+	// The unified server authorizes every route against its own permission
+	// before this router runs (apimodule.AdminModule mounts adminRoutes), so
+	// the routes are registered without a second, per-route gate. The tenant
+	// lifecycle routes, gated by the tenant they reach, are mounted there
+	// identity-gated and authorized here by gate.
+	gate := admin.NewPermissionGate(auth.NewAuthorizer(qrdbClient.RBAC()), logger)
 	router := mux.NewRouter()
-	handlers.RegisterRoutes(router, authHandler, gate)
-	tenantHandlers.RegisterRoutes(router, authHandler, gate)
+	handlers.RegisterAuthorizedRoutes(router, authHandler, gate)
+	tenantHandlers.RegisterAuthorizedRoutes(router, authHandler, gate)
 
 	var h http.Handler = router
 	adminRouterState.Store(&h)
 
 	logger.Info("ACME admin surface mounted on the unified mTLS listener",
-		slog.String("api_prefixes", "/admin, /api/v1/tenants"),
+		slog.Int("routes", len(admin.Routes())),
 		slog.String("ui_prefix", adminUIPrefix))
 	return nil
 }

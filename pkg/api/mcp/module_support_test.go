@@ -20,6 +20,7 @@ import (
 	"sort"
 	"testing"
 
+	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
@@ -42,7 +43,7 @@ func TestModuleMethods_Surface(t *testing.T) {
 		byMethod[spec.Method] = spec
 	}
 	assert.True(t, sort.StringsAreSorted(names))
-	for method := range rpcMethodHandlers {
+	for method := range rpcMethods {
 		_, ok := byMethod[method]
 		assert.True(t, ok, "dispatchable method %s missing from ModuleMethods", method)
 	}
@@ -65,8 +66,8 @@ func TestModuleMethods_Surface(t *testing.T) {
 	assert.True(t, byMethod["health"].Public)
 	assert.True(t, byMethod["xkms.algorithms"].Public)
 	gen := byMethod["xkms.generateKey"]
-	assert.Equal(t, auth.ResourceKeys, gen.Resource)
-	assert.Equal(t, auth.ActionCreate, gen.Action)
+	assert.False(t, gen.Public)
+	assert.Equal(t, qrdbsdk.Permission(auth.ResourceKeys+":"+auth.ActionCreate), gen.Permission)
 	assert.Equal(t, "xkms_generateKey", gen.Tool)
 	frost, ok := byMethod["frost.signRound"]
 	require.True(t, ok, "frost namespace must be enumerated regardless of build tags")
@@ -106,7 +107,7 @@ func TestModuleMethods_ExcludesWebAuthn(t *testing.T) {
 		"webauthn.beginAuthentication",
 		"webauthn.finishAuthentication",
 	} {
-		_, dispatchable := rpcMethodHandlers[method]
+		_, dispatchable := rpcMethods[method]
 		assert.False(t, dispatchable, "WebAuthn method %s must not be dispatchable over MCP", method)
 	}
 }

@@ -251,8 +251,8 @@ MCP is served by the embedded qrdb node on `server.mcp_port`
 (`pkg/server/qrdb_node.go:85-86`). Each xkms method is one MCP tool. The
 tool is named `xkms_<method>`, with dots turned into underscores, and takes
 one optional `params_json` string argument (`pkg/mcptool/client.go:82-89`,
-`:405-422`). Methods dispatch through `rpcMethodHandlers`
-(`pkg/api/mcp/server.go:245`):
+`:405-422`). Methods dispatch through `rpcMethods`
+(`pkg/api/mcp/server.go:247`), which also declares each method's permission:
 
 | Area | Methods |
 |---|---|

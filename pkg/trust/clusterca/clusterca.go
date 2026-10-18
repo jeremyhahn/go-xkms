@@ -22,10 +22,13 @@
 //     via truststrap (Noise NK / SPKI / DANE / Direct) and enroll through
 //     ACME enroll-01 TPM attestation. Node certificates carry a SPIFFE node
 //     SAN and key-provenance OIDs.
-//  3. Hardware-resident node key (Options.KeyBackend without ACME): the
-//     dedicated cluster CA issues a leaf for a TPM/HSM-held key.
-//  4. Software auto-enrollment (default): go-qrdb's shared cluster-TLS
-//     toolkit generates and caches the material.
+//  3. Local-CA mode (default, ACME unset): the TrustedCA issues a leaf for
+//     the node key on Options.KeyBackend (a TPM/HSM-held key, or the
+//     software backend when unset) through its crypto.Signer, on the first
+//     node only.
+//
+// The TrustedCA is the cluster CA in modes 2 and 3, and no mode writes a
+// cluster CA private key (ca-key.pem) to disk.
 //
 // Every consumer (xkms pkg/server, go-quicbaas) routes through this one
 // package — mirroring pkg/trust/bootstrap — so cluster identity logic is
@@ -41,7 +44,6 @@ import (
 	"os"
 
 	clusterenroll "github.com/jeremyhahn/go-qrdb/sdk/go/clusterenroll"
-	clustertls "github.com/jeremyhahn/go-qrdb/sdk/go/clustertls"
 	qrdbnode "github.com/jeremyhahn/go-qrdb/sdk/go/node"
 
 	"github.com/jeremyhahn/go-xkms/pkg/ca"
@@ -120,7 +122,8 @@ type Options struct {
 	// RaftTLSFiles engages precedence 1 when fully set.
 	RaftTLSFiles *ExplicitFiles
 
-	// ACME engages attested mode (precedence 2) when non-nil.
+	// ACME engages attested mode (precedence 2) when non-nil; nil selects
+	// local-CA mode (precedence 3).
 	ACME *ACMEOptions
 
 	// KeyBackend names the backend holding this node's transport key
@@ -131,14 +134,20 @@ type Options struct {
 	// to fetch the trust anchor (Noise NK / SPKI / DANE / Direct).
 	Bootstrap clusterenroll.BootstrapOptions
 
-	// Advertise configures the Noise NK bootstrap server the FIRST node
-	// starts for peer enrollment.
+	// Advertise configures the Noise NK bootstrap server the founding node
+	// starts for peer enrollment, on first issuance and on cached restarts.
 	Advertise clusterenroll.AdvertiseOptions
 
-	// Backends resolves a named key backend. The composition root supplies a
-	// resolver that is safe to call BEFORE its full service registry exists
-	// (constructed directly from configuration).
+	// Backends resolves the cluster CA's key backends by store type (the CA
+	// key custody). The composition root supplies a resolver that is safe to
+	// call BEFORE its full service registry exists (constructed directly from
+	// configuration).
 	Backends func(name string) (xkms.Backend, error)
+
+	// NodeKeyBackends resolves the backend named by KeyBackend that holds
+	// this node's transport key, independent of the CA key custody (see
+	// NewNodeKeyBackends). It must refuse a name it has no backend for.
+	NodeKeyBackends func(name string) (xkms.Backend, error)
 
 	// CA is the running TrustedCA instance, when one is already initialized
 	// at provisioning time (e.g. a composition root without the embedded-
@@ -163,12 +172,16 @@ type Result struct {
 	// certificate chain.
 	MTLS *qrdbnode.RaftMTLSConfig
 
-	// Advertiser is the running Noise NK bootstrap server on the first node
-	// (nil otherwise). The caller must Stop() it during shutdown.
+	// Advertiser is the running Noise NK bootstrap server on the founding
+	// node of a multi-node cluster, on every boot (nil otherwise). The caller must Stop() it during shutdown.
 	Advertiser *clusterenroll.Advertiser
 }
 
 // Provisioner resolves cluster-node mTLS material per the package precedence.
+// localCAMode names precedence 3 in errors and logs: the local TrustedCA
+// issues this node's leaf, whatever backend holds the node key.
+const localCAMode = "local-ca"
+
 type Provisioner struct {
 	opts   *Options
 	logger *slog.Logger
@@ -203,24 +216,34 @@ func New(opts *Options, logger *slog.Logger) (*Provisioner, error) {
 			opts.ACME.ChallengePort = "8080"
 		}
 	}
-	if opts.ACME == nil && opts.KeyBackend != "" && opts.Backends == nil {
-		return nil, &ErrMissingOption{Field: "Backends", Mode: "hardware-key"}
+	if opts.ACME == nil {
+		if opts.Backends == nil {
+			return nil, &ErrMissingOption{Field: "Backends", Mode: localCAMode}
+		}
+		// Local-CA mode issues from the local TrustedCA, which a joining
+		// node does not hold; it enrolls through ACME instead.
+		if opts.Bootstrap.HasFlags() {
+			return nil, &ErrLocalCAJoin{KeyBackend: opts.KeyBackend}
+		}
+		if opts.CA == nil && opts.CAConfig == nil {
+			return nil, &ErrMissingOption{Field: "CA or CAConfig", Mode: localCAMode}
+		}
+	}
+	if opts.NodeKeyBackends == nil {
+		return nil, &ErrMissingOption{Field: "NodeKeyBackends", Mode: "auto-enrollment"}
 	}
 	return &Provisioner{opts: opts, logger: logger}, nil
 }
 
 // Provision resolves the node's mTLS material per the package precedence.
 func (p *Provisioner) Provision(ctx context.Context) (*Result, error) {
-	switch {
-	case p.opts.RaftTLSFiles.Enabled():
+	if p.opts.RaftTLSFiles.Enabled() {
 		return p.provisionFromFiles()
-	case p.opts.ACME != nil:
-		return p.provisionACME(ctx)
-	case p.opts.KeyBackend != "":
-		return p.provisionHardwareKey(ctx)
-	default:
-		return p.provisionSoftware(ctx)
 	}
+	// Every auto-enrolled mode (software, hardware-key, ACME-attested)
+	// issues from the TrustedCA through its crypto.Signer; no mode writes
+	// a cluster CA private key to disk (go-xkms#1381).
+	return p.provisionTrustedCA(ctx)
 }
 
 // provisionFromFiles loads operator-supplied PEM material (precedence 1).
@@ -241,63 +264,6 @@ func (p *Provisioner) provisionFromFiles() (*Result, error) {
 	p.logger.Info("cluster mTLS from operator-supplied files",
 		"ca_cert_file", f.CACertFile, "cert_file", f.CertFile)
 	return &Result{MTLS: &qrdbnode.RaftMTLSConfig{CACert: caCert, Cert: cert, Key: key}}, nil
-}
-
-// provisionSoftware delegates to go-qrdb's shared cluster-TLS enrollment
-// (software node key, dedicated cluster CA) — the historical default.
-func (p *Provisioner) provisionSoftware(ctx context.Context) (*Result, error) {
-	mat, adv, err := clusterenroll.Resolve(ctx, p.buildEnrollOptions(), p.logger)
-	if err != nil {
-		return nil, err
-	}
-	p.logger.Info("cluster mTLS auto-provisioned via software enrollment",
-		"data_dir", p.opts.DataDir, "advertising", adv != nil)
-	return &Result{
-		MTLS: &qrdbnode.RaftMTLSConfig{
-			CACert: mat.CACertPEM,
-			Cert:   mat.CertPEM,
-			Key:    mat.KeyPEM,
-		},
-		Advertiser: adv,
-	}, nil
-}
-
-// provisionHardwareKey issues the node leaf from the dedicated cluster CA for
-// a backend-held key that never leaves the device (historical hardware mode).
-func (p *Provisioner) provisionHardwareKey(ctx context.Context) (*Result, error) {
-	backend, err := p.opts.Backends(p.opts.KeyBackend)
-	if err != nil {
-		return nil, err
-	}
-	signer, err := p.nodeSigner(ctx, backend.KeyProvider())
-	if err != nil {
-		return nil, err
-	}
-
-	caCertPEM, caKeyPEM, adv, err := clusterenroll.ResolveCA(ctx, p.buildEnrollOptions(), p.logger)
-	if err != nil {
-		return nil, err
-	}
-
-	nodeURI := clusterenroll.NodeURI(p.opts.TrustDomain, p.opts.RaftAddress)
-	leafPEM, err := clustertls.IssueLeafForKey(caCertPEM, caKeyPEM, signer.Public(), nodeURI)
-	if err != nil {
-		return nil, err
-	}
-	cert, err := signerCertificate(leafPEM, nil, signer)
-	if err != nil {
-		return nil, err
-	}
-
-	p.logger.Info("cluster mTLS provisioned with hardware-resident node key",
-		"key_backend", p.opts.KeyBackend, "advertising", adv != nil)
-	return &Result{
-		MTLS: &qrdbnode.RaftMTLSConfig{
-			CACert:      caCertPEM,
-			Certificate: cert,
-		},
-		Advertiser: adv,
-	}, nil
 }
 
 // buildEnrollOptions maps Options onto go-qrdb's clusterenroll Options.

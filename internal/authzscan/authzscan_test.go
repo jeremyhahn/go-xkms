@@ -452,20 +452,21 @@ func Routes() {
 	assert.Equal(t, 0, labelErr.Index)
 }
 
-func TestScanMap_ResolvesPositionalMapLiteral(t *testing.T) {
+func TestScanMap_ResolvesRegistrationCallsAndSkipsPublicEntries(t *testing.T) {
 	dir := writePkg(t, map[string]string{
-		"authz.go": `package mcp
+		"server.go": `package mcp
 
-var methodPermissions = map[string]permission{
-	"xkms.sign": {auth.ResourceKeys, auth.ActionSign},
-	"xkms.get":  {auth.ResourceKeys, auth.ActionGet},
+var rpcMethods = map[string]rpcMethod{
+	"health":    handlePublic((*Server).handleHealth),
+	"xkms.sign": handle(auth.ResourceKeys, auth.ActionSign, (*Server).handleSign),
+	"xkms.get":  handle(auth.ResourceKeys, auth.ActionGet, (*Server).handleGet),
 }
 `,
 	})
 
-	sites, err := ScanMap(dir, "methodPermissions")
+	sites, err := ScanMap(dir, "rpcMethods", "handle")
 	require.NoError(t, err)
-	require.Len(t, sites, 2)
+	require.Len(t, sites, 2, "the handlePublic entry registers no permission")
 
 	got := map[string]string{}
 	for _, s := range sites {
@@ -478,39 +479,61 @@ var methodPermissions = map[string]permission{
 	}, got)
 }
 
-func TestScanMap_RejectsRawLiteralValue(t *testing.T) {
+func TestScanMap_RejectsRawLiteralArgument(t *testing.T) {
 	dir := writePkg(t, map[string]string{
-		"authz.go": `package mcp
+		"server.go": `package mcp
 
-var methodPermissions = map[string]permission{
-	"xkms.sign": {auth.ResourceKeys, "sign"},
+var rpcMethods = map[string]rpcMethod{
+	"xkms.sign": handle(auth.ResourceKeys, "sign", (*Server).handleSign),
 }
 `,
 	})
 
-	sites, err := ScanMap(dir, "methodPermissions")
-	require.Error(t, err, "a raw literal action in the map must be rejected, not scanned")
+	sites, err := ScanMap(dir, "rpcMethods", "handle")
+	require.Error(t, err, "a raw literal action in the table must be rejected, not scanned")
 	assert.Nil(t, sites)
 
 	var rawErr *RawLiteralError
 	require.True(t, errors.As(err, &rawErr), "want *RawLiteralError, got %T", err)
 }
 
+func TestScanMap_RejectsEntriesThatAreNotRegistrationCalls(t *testing.T) {
+	tests := map[string]string{
+		"composite literal value": `"xkms.sign": {auth.ResourceKeys, auth.ActionSign},`,
+		"call without an action":  `"xkms.sign": handle(auth.ResourceKeys),`,
+	}
+	for name, entry := range tests {
+		t.Run(name, func(t *testing.T) {
+			dir := writePkg(t, map[string]string{
+				"server.go": "package mcp\n\nvar rpcMethods = map[string]rpcMethod{\n\t" + entry + "\n}\n",
+			})
+
+			sites, err := ScanMap(dir, "rpcMethods", "handle")
+			require.Error(t, err)
+			assert.Nil(t, sites)
+
+			var entryErr *MapEntryError
+			require.True(t, errors.As(err, &entryErr), "want *MapEntryError, got %T", err)
+			assert.NotEmpty(t, entryErr.Pos)
+		})
+	}
+}
+
 func TestScanMap_ReturnsVarNotFoundErrorWhenVariableIsAbsent(t *testing.T) {
 	dir := writePkg(t, map[string]string{
-		"authz.go": `package mcp
+		"server.go": `package mcp
 
 var somethingElse = 1
 `,
 	})
 
-	sites, err := ScanMap(dir, "methodPermissions")
+	sites, err := ScanMap(dir, "rpcMethods", "handle")
 	require.Error(t, err)
 	assert.Nil(t, sites)
 
 	var notFound *VarNotFoundError
 	require.True(t, errors.As(err, &notFound), "want *VarNotFoundError, got %T", err)
-	assert.Equal(t, "methodPermissions", notFound.Name)
+	assert.Equal(t, "rpcMethods", notFound.Name)
 }
 
 func TestMapSite_Pair(t *testing.T) {

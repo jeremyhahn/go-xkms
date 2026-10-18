@@ -58,7 +58,7 @@ Rejected alternatives:
 ```
 transport (REST / gRPC / QUIC / Unix / MCP / embedded)
   → permission gate: trust_roots:<action>, ScopeCross
-  → XKMSService.TrustRoot*  → requireSystemTenant
+  → XKMSService.TrustRoot*  → qrdbsdk.IdentityIsSystemTenant
   → DAOStore → qrdbsdk GenericDAO → database "trust_roots"
 ```
 

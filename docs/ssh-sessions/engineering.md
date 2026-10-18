@@ -231,8 +231,8 @@ capability in this folder:
 - gRPC: `pkg/api/grpc/service_ssh.go` defines no `Console`/`Connect`/
   `Dial` RPC; `grpcClient.Console` is the two-line refusal at
   `grpc.go:111`.
-- MCP: `pkg/api/mcp/authz.go`'s permission table
-  (`authz.go:250-266`, mirrored by `authz_test.go:699-715`) lists only
+- MCP: `pkg/api/mcp/server.go`'s `rpcMethods` table
+  (`server.go:499-517`, mirrored by `authz_test.go:720-736`) lists only
   `ssh.keys.*`, `ssh.knownHosts.*`, `ssh.authorizedKeys.*` tools.
 
 See [`architecture.md`](architecture.md) for why `SessionClient.Dial`

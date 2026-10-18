@@ -162,12 +162,22 @@ func TestResultFromCache_RejectsCertificateForAnotherKey(t *testing.T) {
 	require.True(t, ok)
 
 	// A second provisioner over the SAME cache but a FRESH (empty) backend
-	// generates a different node key, so the cached certificate no longer
-	// matches it.
+	// holds no node key: reload refuses rather than generating one.
 	p2, err := New(firstNodeOptions(t, dataDir, softwareBackends(t)), testLogger())
 	require.NoError(t, err)
 
 	res, err := p2.resultFromCache(ctx, leafChainPEM, anchorPEM)
+	require.Error(t, err)
+	assert.Nil(t, res)
+
+	// Once that backend holds a different node key, the cached certificate
+	// no longer matches it.
+	backend, err := p2.nodeKeyBackend()
+	require.NoError(t, err)
+	_, err = p2.nodeSigner(ctx, backend.KeyProvider())
+	require.NoError(t, err)
+
+	res, err = p2.resultFromCache(ctx, leafChainPEM, anchorPEM)
 
 	var anchorErr *ErrAnchorMismatch
 	require.ErrorAs(t, err, &anchorErr)
@@ -207,21 +217,16 @@ func TestProvisionACME_ReprovisionsWhenCacheIsUnusable(t *testing.T) {
 	assert.True(t, ok)
 }
 
-// TestAcmeNodeSigner_TPMBackendWithoutTPMFailsClosed verifies that selecting the
+// TestIdevidSigner_BackendWithoutTPMFailsClosed verifies that selecting the
 // tpm2 key backend while the resolved backend cannot expose a TPM is refused.
 // Falling back to a software key here would silently downgrade the node from
 // hardware-attested to software identity — exactly the substitution the
 // attested mode exists to prevent.
-func TestAcmeNodeSigner_TPMBackendWithoutTPMFailsClosed(t *testing.T) {
-	opts := firstNodeOptions(t, t.TempDir(), softwareBackends(t))
-	opts.KeyBackend = "tpm2"
-
-	p, err := New(opts, testLogger())
+func TestIdevidSigner_BackendWithoutTPMFailsClosed(t *testing.T) {
+	backend, err := softwareBackends(t)("tpm2")
 	require.NoError(t, err)
 
-	_, _, leaf := miniChain(t, p.expectedNodeURI())
-
-	signer, err := p.acmeNodeSigner(context.Background(), leaf)
+	signer, err := idevidSigner(backend, "tpm2")
 
 	var noTPM *ErrNoTPM
 	require.ErrorAs(t, err, &noTPM)
@@ -229,19 +234,19 @@ func TestAcmeNodeSigner_TPMBackendWithoutTPMFailsClosed(t *testing.T) {
 	assert.Nil(t, signer)
 }
 
-// TestAcmeNodeSigner_PropagatesBackendResolutionFailure verifies a backend
-// resolver error surfaces instead of being masked by a fallback.
-func TestAcmeNodeSigner_PropagatesBackendResolutionFailure(t *testing.T) {
+// TestCachedNodeSigner_PropagatesBackendResolutionFailure verifies a node key
+// resolver error surfaces on reload instead of being masked by a fallback.
+func TestCachedNodeSigner_PropagatesBackendResolutionFailure(t *testing.T) {
 	opts := firstNodeOptions(t, t.TempDir(), softwareBackends(t))
-	wantErr := &ErrMissingOption{Field: "Backends", Mode: "test"}
-	opts.Backends = func(string) (xkms.Backend, error) { return nil, wantErr }
+	wantErr := &ErrMissingOption{Field: "NodeKeyBackends", Mode: "test"}
+	opts.NodeKeyBackends = func(string) (xkms.Backend, error) { return nil, wantErr }
 
 	p, err := New(opts, testLogger())
 	require.NoError(t, err)
 
-	_, _, leaf := miniChain(t, p.expectedNodeURI())
-
-	signer, err := p.acmeNodeSigner(context.Background(), leaf)
+	signer, err := p.cachedNodeSigner(context.Background())
+	var unavailable *ErrKeyBackendUnavailable
+	require.ErrorAs(t, err, &unavailable)
 	require.ErrorIs(t, err, error(wantErr))
 	assert.Nil(t, signer)
 }
@@ -373,7 +378,10 @@ func (i *plainIssuer) CACertificate() (*x509.Certificate, error) {
 // rather than returning a certificate it cannot sign with.
 func TestResultFromCache_PropagatesSignerResolutionFailure(t *testing.T) {
 	opts := firstNodeOptions(t, t.TempDir(), softwareBackends(t))
-	opts.KeyBackend = "tpm2" // resolved backend cannot expose a TPM
+	opts.KeyBackend = "tpm2" // the node key resolver has no TPM
+	nodeKeys, err := NewNodeKeyBackends(&NodeKeyBackendsParams{DataDir: nodeLocalDataDir(t)})
+	require.NoError(t, err)
+	opts.NodeKeyBackends = nodeKeys
 
 	p, err := New(opts, testLogger())
 	require.NoError(t, err)

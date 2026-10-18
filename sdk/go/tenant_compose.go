@@ -36,9 +36,9 @@ type StrategyRegistry = seal.StrategyRegistry
 
 // NewHardwareStrategyRegistry builds a StrategyRegistry seeded with go-qrdb's
 // built-in software strategies plus the hardware-backed strategies supplied by
-// the caller. Inject it into go-qrdb's TenantService (WithTenantStrategyRegistry)
-// or embedded node (WithStrategyRegistry) so a per-tenant barrier can be sealed
-// by a TPM, PKCS#11 token, or cloud KMS.
+// the caller. Inject it into go-qrdb's TenantService (WithTenantBarrierKeyProvider
+// over NewBarrierKeyProvider) or embedded node (WithStrategyRegistry) so a
+// per-tenant barrier can be sealed by a TPM, PKCS#11 token, or cloud KMS.
 var NewHardwareStrategyRegistry = seal.NewHardwareStrategyRegistry
 
 // --- Barrier registry ---
@@ -74,9 +74,16 @@ var WithTenantDefaultEntitlements = qrdbsdk.WithTenantDefaultEntitlements
 // whose own quotas are nil.
 var WithTenantDefaultQuotas = qrdbsdk.WithTenantDefaultQuotas
 
-// WithTenantStrategyRegistry injects a StrategyRegistry directly (when not using
-// NewHardwareTenantService, which wires one for you).
-var WithTenantStrategyRegistry = qrdbsdk.WithTenantStrategyRegistry
+// BarrierKeyProvider resolves the strategy that seals each node's key for a
+// tenant barrier (go-qrdb's barrier key seam).
+type BarrierKeyProvider = qrdbsdk.BarrierKeyProvider
+
+// NewBarrierKeyProvider maps a StrategyRegistry onto the barrier key seam.
+var NewBarrierKeyProvider = qrdbsdk.NewBarrierKeyProvider
+
+// WithTenantBarrierKeyProvider injects a BarrierKeyProvider directly (when not
+// using NewHardwareTenantService, which wires one for you).
+var WithTenantBarrierKeyProvider = qrdbsdk.WithTenantBarrierKeyProvider
 
 // --- Tenant isolation + entitlement types ---
 

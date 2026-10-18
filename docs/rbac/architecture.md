@@ -178,7 +178,7 @@ ownership scope (`pkg/scope`): `passwords:read` reaches the tenant's shared
 entries and the caller's own personal ones, never another user's; `ssh:read`
 likewise. Platform-global state (the sealed platform store, the system
 barrier, the backend credential strategy) is additionally refused to
-tenant-scoped callers by `requireSystemTenant`, whatever permission they
+tenant-scoped callers by `qrdbsdk.IdentityIsSystemTenant`, whatever permission they
 hold.
 
 The `ScopeSelf` lift is go-qrdb's permission rule and stops at the
@@ -209,9 +209,9 @@ places once did (go-xkms#1074), each with a different effect:
 
 Each was replaced by the model the operation already declared:
 
-- **CSR signing** is a `certs:generate` operation, enforced by every
+- **CSR signing** is a `certs:issue` operation, enforced by every
   transport before dispatch (`pkg/api/rest/routes.go:237`,
-  `pkg/api/mcp/authz.go:170`, `pkg/api/grpc/service_ca.go:136`). The
+  `pkg/api/mcp/server.go:337`, `pkg/api/grpc/service_ca.go:135`). The
   servicer no longer makes a second decision (`pkg/xkms/servicer_ca.go:139`).
 - **The shared-password override** is genuinely role membership: Admin and
   Operator hold the same `passwords:*` grants, so no permission separates

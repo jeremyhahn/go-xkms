@@ -29,6 +29,7 @@ import (
 	"github.com/stretchr/testify/require"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
+	healthpb "google.golang.org/grpc/health/grpc_health_v1"
 	"google.golang.org/grpc/status"
 
 	adminv1 "github.com/jeremyhahn/go-xkms/api/proto/admin/v1"
@@ -103,60 +104,60 @@ func okHandler(ran *bool) grpc.UnaryHandler {
 	}
 }
 
-// TestMethodPermissions_CoversEveryAdminServiceMethod verifies the permission
-// table names every method the AdminService gRPC surface exposes. A method
-// added without a mapping is denied at runtime; this test makes that visible at
-// build time.
-func TestMethodPermissions_CoversEveryAdminServiceMethod(t *testing.T) {
-	expected := []string{
-		adminv1.AdminService_CreateTenant_FullMethodName,
-		adminv1.AdminService_UpdateTenant_FullMethodName,
-		adminv1.AdminService_DeleteTenant_FullMethodName,
-		adminv1.AdminService_GetTenant_FullMethodName,
-		adminv1.AdminService_ListTenants_FullMethodName,
-		adminv1.AdminService_CreateEAB_FullMethodName,
-		adminv1.AdminService_DeleteEAB_FullMethodName,
-		adminv1.AdminService_GetEAB_FullMethodName,
-		adminv1.AdminService_ListEABs_FullMethodName,
-		adminv1.AdminService_CreateTenantRole_FullMethodName,
-		adminv1.AdminService_UpdateTenantRole_FullMethodName,
-		adminv1.AdminService_DeleteTenantRole_FullMethodName,
-		adminv1.AdminService_GetTenantRole_FullMethodName,
-		adminv1.AdminService_ListTenantRoles_FullMethodName,
-		adminv1.AdminService_CreateTenantUser_FullMethodName,
-		adminv1.AdminService_UpdateTenantUser_FullMethodName,
-		adminv1.AdminService_DeleteTenantUser_FullMethodName,
-		adminv1.AdminService_GetTenantUser_FullMethodName,
-		adminv1.AdminService_ListTenantUsers_FullMethodName,
-		adminv1.AdminService_RevokeCertificate_FullMethodName,
-		adminv1.AdminService_GetCertificate_FullMethodName,
-		adminv1.AdminService_ListCertificates_FullMethodName,
-		adminv1.AdminService_ListAccounts_FullMethodName,
-		adminv1.AdminService_GetAccount_FullMethodName,
-		adminv1.AdminService_DisableAccount_FullMethodName,
-		adminv1.AdminService_GetStatus_FullMethodName,
-		adminv1.AdminService_GetStats_FullMethodName,
+// TestAdminRPCPermissions_EveryRPCDeclaresItsPermission is the table test over
+// the AdminService descriptor: every RPC carries a well-formed
+// (qrdb.v1.permission) option with exactly the grant it should require. An RPC
+// added without the option is denied at runtime; this test makes that visible
+// at build time.
+func TestAdminRPCPermissions_EveryRPCDeclaresItsPermission(t *testing.T) {
+	expected := map[string]qrdbsdk.Permission{
+		adminv1.AdminService_CreateTenant_FullMethodName:      "tenants:create",
+		adminv1.AdminService_UpdateTenant_FullMethodName:      "tenants:update",
+		adminv1.AdminService_DeleteTenant_FullMethodName:      "tenants:delete",
+		adminv1.AdminService_GetTenant_FullMethodName:         "tenants:read",
+		adminv1.AdminService_ListTenants_FullMethodName:       "tenants:list",
+		adminv1.AdminService_CreateEAB_FullMethodName:         "acme_eab:create",
+		adminv1.AdminService_DeleteEAB_FullMethodName:         "acme_eab:delete",
+		adminv1.AdminService_GetEAB_FullMethodName:            "acme_eab:read",
+		adminv1.AdminService_ListEABs_FullMethodName:          "acme_eab:list",
+		adminv1.AdminService_CreateTenantRole_FullMethodName:  "roles:create",
+		adminv1.AdminService_UpdateTenantRole_FullMethodName:  "roles:update",
+		adminv1.AdminService_DeleteTenantRole_FullMethodName:  "roles:delete",
+		adminv1.AdminService_GetTenantRole_FullMethodName:     "roles:read",
+		adminv1.AdminService_ListTenantRoles_FullMethodName:   "roles:list",
+		adminv1.AdminService_CreateTenantUser_FullMethodName:  "users:create",
+		adminv1.AdminService_UpdateTenantUser_FullMethodName:  "users:update",
+		adminv1.AdminService_DeleteTenantUser_FullMethodName:  "users:delete",
+		adminv1.AdminService_GetTenantUser_FullMethodName:     "users:read",
+		adminv1.AdminService_ListTenantUsers_FullMethodName:   "users:list",
+		adminv1.AdminService_RevokeCertificate_FullMethodName: "certs:revoke",
+		adminv1.AdminService_GetCertificate_FullMethodName:    "certs:read",
+		adminv1.AdminService_ListCertificates_FullMethodName:  "certs:list",
+		adminv1.AdminService_ListAccounts_FullMethodName:      "acme_accounts:list",
+		adminv1.AdminService_GetAccount_FullMethodName:        "acme_accounts:read",
+		adminv1.AdminService_DisableAccount_FullMethodName:    "acme_accounts:disable",
+		adminv1.AdminService_GetStatus_FullMethodName:         "admin:status",
+		adminv1.AdminService_GetStats_FullMethodName:          "admin:status",
 	}
 
-	for _, full := range expected {
-		perm, ok := MethodPermissions[full]
-		require.True(t, ok, "method %s has no permission mapping", full)
-		assert.NotEmpty(t, perm.Resource, "method %s has an empty resource", full)
-		assert.NotEmpty(t, perm.Action, "method %s has an empty action", full)
+	for full, want := range expected {
+		t.Run(full, func(t *testing.T) {
+			got, ok := adminRPCPermissions[full]
+			require.True(t, ok, "method %s declares no (qrdb.v1.permission)", full)
+			assert.Equal(t, want, got)
+			_, err := qrdbsdk.ParsePermission(string(got))
+			assert.NoError(t, err, "method %s declares a malformed permission", full)
+		})
 	}
-
-	assert.Len(t, MethodPermissions, len(expected))
+	assert.Len(t, adminRPCPermissions, len(expected))
 }
 
-// TestMethodPermissions_MatchesServiceDescriptorExactly verifies
-// MethodPermissions has an entry for every method and stream the generated
-// AdminService_ServiceDesc actually dispatches, and no entry for anything
-// else. This is the completeness guarantee TestMethodPermissions_
-// CoversEveryAdminServiceMethod cannot give on its own: that test only checks
-// a hand-maintained list is present, so a new proto RPC added to the service
-// without a corresponding permission entry — the ListAccounts / GetAccount /
-// DisableAccount gap this test caught — would pass it silently.
-func TestMethodPermissions_MatchesServiceDescriptorExactly(t *testing.T) {
+// TestAdminRPCPermissions_MatchesServiceDescriptorExactly verifies the
+// permissions derived from the descriptor cover every method and stream the
+// generated AdminService_ServiceDesc actually dispatches, and nothing else, so
+// the dispatch table and the descriptor the permissions are read from cannot
+// drift apart.
+func TestAdminRPCPermissions_MatchesServiceDescriptorExactly(t *testing.T) {
 	serviceName := adminv1.AdminService_ServiceDesc.ServiceName
 
 	declared := make(map[string]struct{})
@@ -169,15 +170,24 @@ func TestMethodPermissions_MatchesServiceDescriptorExactly(t *testing.T) {
 	require.NotEmpty(t, declared, "service descriptor must declare at least one method")
 
 	for full := range declared {
-		perm, ok := MethodPermissions[full]
-		assert.True(t, ok, "service method %s has no entry in MethodPermissions", full)
-		assert.NotEmpty(t, perm.Resource, "method %s has an empty resource", full)
-		assert.NotEmpty(t, perm.Action, "method %s has an empty action", full)
+		perm, ok := adminRPCPermissions[full]
+		assert.True(t, ok, "service method %s declares no (qrdb.v1.permission)", full)
+		assert.NotEmpty(t, qrdbsdk.PermissionResource(perm), "method %s has an empty resource", full)
+		assert.NotEmpty(t, qrdbsdk.PermissionAction(perm), "method %s has an empty action", full)
 	}
 
-	for full := range MethodPermissions {
-		assert.Contains(t, declared, full, "MethodPermissions has an entry for %s, which the service descriptor does not declare", full)
+	for full := range adminRPCPermissions {
+		assert.Contains(t, declared, full, "adminRPCPermissions has an entry for %s, which the service descriptor does not declare", full)
 	}
+}
+
+// TestDescriptorPermissions_SkipsMethodsWithoutTheOption verifies a method
+// that declares no (qrdb.v1.permission) is left out of the derived table, so
+// the interceptor denies it rather than admitting it with an empty grant. The
+// gRPC health service declares Check and Watch without the option.
+func TestDescriptorPermissions_SkipsMethodsWithoutTheOption(t *testing.T) {
+	require.Equal(t, 1, healthpb.File_grpc_health_v1_health_proto.Services().Len())
+	assert.Empty(t, descriptorPermissions(healthpb.File_grpc_health_v1_health_proto))
 }
 
 // grpcAuthzCase pairs a gRPC method with the grant it must request and with a
@@ -359,8 +369,8 @@ func TestUnaryAuthorizationInterceptor_UnmappedMethodIsDenied(t *testing.T) {
 }
 
 // TestUnaryAuthorizationInterceptor_RealFullMethodIsAuthorized is the go-xkms#743
-// regression: MethodPermissions used to be keyed by "/admin.v1.AdminService/..."
-// literals, but the FullMethod a real gRPC call carries is
+// regression: the hand-kept method table used to be keyed by
+// "/admin.v1.AdminService/..." literals, but the FullMethod a real gRPC call carries is
 // "/trustedca.admin.v1.AdminService/..." (the generated
 // adminv1.AdminService_RevokeCertificate_FullMethodName). With the stale
 // literal keys every admin gRPC call was denied regardless of the caller's
@@ -477,7 +487,7 @@ func TestUnaryAuthorizationInterceptor_QRDBAdminReachesGRPCSurface(t *testing.T)
 		adminv1.AdminService_DeleteTenantRole_FullMethodName: true,
 	}
 
-	for method := range MethodPermissions {
+	for method := range adminRPCPermissions {
 		if soOnly[method] {
 			continue
 		}

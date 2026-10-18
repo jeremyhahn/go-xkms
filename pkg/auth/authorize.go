@@ -34,6 +34,10 @@ type Authorizer struct {
 	rbac qrdbtransport.RBACClient
 }
 
+// Authorizer satisfies go-qrdb's authorization contract, qrdbsdk.Authorizer.
+// Every xkms surface enforces the permission a method declares through it.
+var _ qrdbsdk.Authorizer = (*Authorizer)(nil)
+
 // NewAuthorizer returns an Authorizer backed by the given qrdb RBAC client.
 // Pass nil to disable authorization (allow all) — used when RBAC is not
 // enabled or no qrdb node is hosted.
@@ -66,6 +70,56 @@ func (a *Authorizer) Authorize(ctx context.Context, identity *Identity, resource
 		return ErrUnauthenticated
 	}
 
+	authzCtx, qid := bindIdentity(ctx, identity)
+	return a.rbac.Authorize(authzCtx, qid, resource, action)
+}
+
+// ListPermissions returns the "resource:action" name of every permission
+// identity can exercise in its own tenant, as qrdb resolves them from its
+// roles. qrdb surfaces every granted permission whatever its scope, so the
+// ones the identity's tenant cannot exercise are dropped: cross-tenant
+// permissions outside the system tenant, and tenant-only permissions inside
+// it.
+//
+// When authorization is not enforced every registered permission is
+// returned, because Authorize then admits every request.
+func (a *Authorizer) ListPermissions(ctx context.Context, identity *Identity) ([]string, error) {
+	if !a.Enabled() {
+		all := qrdbsdk.AllPermissions()
+		names := make([]string, 0, len(all))
+		for _, p := range all {
+			names = append(names, p.String())
+		}
+		return names, nil
+	}
+	if identity == nil {
+		return nil, ErrUnauthenticated
+	}
+
+	authzCtx, qid := bindIdentity(ctx, identity)
+	perms, err := a.rbac.ListPermissions(authzCtx, qid)
+	if err != nil {
+		return nil, &PermissionListError{Err: err}
+	}
+
+	system := qid.TenantID == qrdbsdk.SystemTenantID
+	names := make([]string, 0, len(perms))
+	for _, p := range perms {
+		if p.Scope == qrdbtransport.PermissionScopeCross && !system {
+			continue
+		}
+		if p.Scope == qrdbtransport.PermissionScopeTenantOnly && system {
+			continue
+		}
+		names = append(names, p.Name)
+	}
+	return names, nil
+}
+
+// bindIdentity projects identity onto the qrdb identity and binds its tenant
+// as the request's target tenant. An empty tenant is normalized to the system
+// tenant.
+func bindIdentity(ctx context.Context, identity *Identity) (context.Context, *qrdbtransport.Identity) {
 	tenantID := identity.TenantID
 	if tenantID == "" {
 		tenantID = qrdbsdk.SystemTenantID
@@ -77,6 +131,5 @@ func (a *Authorizer) Authorize(ctx context.Context, identity *Identity, resource
 		Roles:    identity.Roles,
 		Metadata: identity.Metadata,
 	}
-	authzCtx := qrdbsdk.ContextWithTenant(ctx, tenantID)
-	return a.rbac.Authorize(authzCtx, qid, resource, action)
+	return qrdbsdk.ContextWithTenant(ctx, tenantID), qid
 }

@@ -17,7 +17,6 @@ package embeddednode
 
 import (
 	"context"
-	"path/filepath"
 	"slices"
 
 	qrdbnode "github.com/jeremyhahn/go-qrdb/sdk/go/node"
@@ -46,11 +45,4 @@ func NewNode(ctx context.Context, opts *NodeOptions) (*NodeResult, error) {
 		return nil, err
 	}
 	return &NodeResult{Node: node}, nil
-}
-
-// raftTLSCacheDir returns the directory auto-provisioned cluster TLS material
-// is cached in. Unused on the standalone path but kept on both builds so the
-// options mapping is tag-independent.
-func (o *NodeOptions) raftTLSCacheDir() string {
-	return filepath.Join(o.StoragePath, RaftTLSCacheSubdir)
 }

@@ -16,7 +16,9 @@ package xkms
 import (
 	"context"
 
+	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
 	"github.com/jeremyhahn/go-xkms/pkg/api/transport"
+	"github.com/jeremyhahn/go-xkms/pkg/auth"
 	tpmpolicy "github.com/jeremyhahn/go-xkms/pkg/tpm2/policy"
 	"github.com/jeremyhahn/go-xkms/pkg/tpm2/vtpm"
 )
@@ -35,7 +37,7 @@ func (s *XKMSService) TPMPolicyService() *tpmpolicy.Service { return s.tpmPolici
 // policy operations. The binding is checked first, so a refused caller
 // learns nothing about the node's configuration.
 func (s *XKMSService) tenantPolicies(ctx context.Context, op, requested string) (*TenantTPMPolicies, error) {
-	tenant, err := targetTenant(ctx, op, requested)
+	tenant, err := ownTenant(ctx, op, requested)
 	if err != nil {
 		return nil, err
 	}
@@ -48,8 +50,8 @@ func (s *XKMSService) tenantTPMService(ctx context.Context, op, tenantID string)
 	if tenantID == "" {
 		return nil, ErrTenantIDRequired
 	}
-	if err := requireSystemTenant(ctx, op, tenantID); err != nil {
-		return nil, err
+	if !qrdbsdk.IdentityIsSystemTenant(auth.GetIdentity(ctx)) {
+		return nil, refuseTenant(ctx, op, tenantID)
 	}
 	svc := s.tpmPolicies.load()
 	if svc == nil {

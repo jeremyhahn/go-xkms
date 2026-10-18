@@ -204,7 +204,7 @@ func (s *XKMSService) RotateScopeKeys(ctx context.Context, req *transport.Rotate
 	if req == nil {
 		return nil, ErrNilRequest
 	}
-	tenant, err := targetTenant(ctx, "rotate scope keys", req.TenantID)
+	tenant, err := ownTenant(ctx, "rotate scope keys", req.TenantID)
 	if err != nil {
 		return nil, err
 	}

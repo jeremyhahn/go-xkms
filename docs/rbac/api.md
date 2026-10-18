@@ -94,7 +94,7 @@ Same routes as REST — QUIC is HTTP/3 on the unified REST listener.
 
 ## User lifecycle — MCP
 
-`pkg/api/mcp/authz.go` `methodPermissions`:
+The `rpcMethods` registrations in `pkg/api/mcp/server.go`:
 
 | Method | Permission |
 |---|---|

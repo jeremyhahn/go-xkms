@@ -286,7 +286,7 @@ single targeted lookup, and that `Callback` (`grpc.go:301`, the
 
 Each REST route gates on its own `ssh:*` action
 (`pkg/api/rest/routes.go:476-503`): `ssh:read`, `ssh:write`, `ssh:delete`,
-matching the MCP `ssh.*` methods (`pkg/api/mcp/authz.go:321-341`) and the
+matching the MCP `ssh.*` methods (`pkg/api/mcp/server.go:499-517`) and the
 gRPC `qrdb.v1.permission` options. Signing is `ssh:write` on every
 transport (`pkg/api/rest/routes.go:493`). Until go-xkms#1230 every REST route
 carried the blanket `ssh:use`, so a grant meant for signing also deleted keys

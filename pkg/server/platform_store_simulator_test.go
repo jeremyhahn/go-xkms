@@ -191,9 +191,12 @@ func TestCredentialService_TPM2Strategy_StoresAndLoadsThroughPlatformStore(t *te
 	ctx := context.Background()
 	require.NoError(t, s.credentialService.StoreCredential(ctx, "pkcs11-user-pin", []byte("1234")))
 
-	got, err := s.credentialService.RetrieveCredential(ctx, "pkcs11-user-pin")
+	got, err := s.credentialService.RetrieveCredentialBuffer(ctx, "pkcs11-user-pin")
 	require.NoError(t, err)
-	assert.Equal(t, []byte("1234"), got)
+	defer got.Destroy()
+	same, err := got.EqualBytes([]byte("1234"))
+	require.NoError(t, err)
+	assert.True(t, same)
 
 	names, err := s.credentialService.ListCredentials(ctx)
 	require.NoError(t, err)

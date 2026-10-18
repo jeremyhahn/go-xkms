@@ -80,8 +80,8 @@ func (m *Module) MCPToolPermissions() map[string]qrdbsdk.Permission {
 	specs := xkmsmcp.ModuleMethods()
 	perms := make(map[string]qrdbsdk.Permission, len(specs))
 	for _, spec := range specs {
-		if spec.Resource != "" && spec.Action != "" {
-			perms[spec.Tool] = qrdbsdk.Permission(spec.Resource + ":" + spec.Action)
+		if !spec.Public {
+			perms[spec.Tool] = spec.Permission
 			continue
 		}
 		perms[spec.Tool] = qrdbsdk.PermissionIdentityGated

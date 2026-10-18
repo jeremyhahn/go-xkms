@@ -140,7 +140,8 @@ func TestNew_Validation(t *testing.T) {
 	// ACME first node requires a CA source.
 	_, err = New(&Options{
 		RaftAddress: "10.0.0.1:8300", DataDir: t.TempDir(), ACME: &ACMEOptions{},
-		Backends: softwareBackends(t),
+		Backends:        softwareBackends(t),
+		NodeKeyBackends: softwareBackends(t),
 	}, logger)
 	require.ErrorAs(t, err, &missing)
 	assert.Contains(t, missing.Field, "CA or CAConfig")
@@ -148,19 +149,57 @@ func TestNew_Validation(t *testing.T) {
 	// Valid ACME first-node options default the challenge port.
 	opts := &Options{
 		RaftAddress: "10.0.0.1:8300", DataDir: t.TempDir(), ACME: &ACMEOptions{},
-		Backends: softwareBackends(t), CAConfig: clusterCAConfig(),
+		Backends: softwareBackends(t), NodeKeyBackends: softwareBackends(t), CAConfig: clusterCAConfig(),
 	}
 	_, err = New(opts, logger)
 	require.NoError(t, err)
 	assert.Equal(t, "8080", opts.ACME.ChallengePort)
 	assert.Empty(t, opts.ACME.ChallengeHost, "the default bind host is every interface; the composition root supplies the daemon's")
 
-	// Hardware mode requires the Backends seam.
+	// Local-CA mode requires the Backends seam, for the software key
+	// backend as much as for a hardware one: there is no key-PEM path.
+	for _, keyBackend := range []string{"", "tpm2"} {
+		_, err = New(&Options{
+			RaftAddress: "10.0.0.1:8300", DataDir: t.TempDir(), KeyBackend: keyBackend,
+		}, logger)
+		require.ErrorAs(t, err, &missing, "key backend %q", keyBackend)
+		assert.Equal(t, "Backends", missing.Field)
+		assert.Equal(t, "local-ca", missing.Mode)
+	}
+
+	// Every auto-enrollment mode needs the node transport key resolver;
+	// CA custody never stands in for it.
 	_, err = New(&Options{
-		RaftAddress: "10.0.0.1:8300", DataDir: t.TempDir(), KeyBackend: "tpm2",
+		RaftAddress: "10.0.0.1:8300", DataDir: t.TempDir(),
+		Backends: softwareBackends(t), CAConfig: clusterCAConfig(),
 	}, logger)
 	require.ErrorAs(t, err, &missing)
-	assert.Equal(t, "Backends", missing.Field)
+	assert.Equal(t, "NodeKeyBackends", missing.Field)
+
+	// Local-CA mode issues from the TrustedCA, so it needs a CA source.
+	_, err = New(&Options{
+		RaftAddress: "10.0.0.1:8300", DataDir: t.TempDir(), KeyBackend: "tpm2",
+		Backends:        softwareBackends(t),
+		NodeKeyBackends: softwareBackends(t),
+	}, logger)
+	require.ErrorAs(t, err, &missing)
+	assert.Contains(t, missing.Field, "CA or CAConfig")
+	assert.Equal(t, "local-ca", missing.Mode)
+
+	// A joining node does not hold the TrustedCA: local-CA mode refuses to
+	// join rather than issuing from a CA of its own, whatever the key backend.
+	for keyBackend, shown := range map[string]string{"tpm2": "tpm2", "": "software"} {
+		_, err = New(&Options{
+			RaftAddress: "10.0.0.1:8300", DataDir: t.TempDir(), KeyBackend: keyBackend,
+			Backends: softwareBackends(t), NodeKeyBackends: softwareBackends(t), CAConfig: clusterCAConfig(),
+			Bootstrap: clusterenrollBootstrap(),
+		}, logger)
+		var join *ErrLocalCAJoin
+		require.ErrorAs(t, err, &join, "key backend %q", keyBackend)
+		assert.Equal(t, keyBackend, join.KeyBackend)
+		assert.Contains(t, join.Error(), "key backend "+shown)
+		assert.Contains(t, join.Error(), "enable ACME enrollment")
+	}
 }
 
 // ---------------------------------------------------------------------------
@@ -204,24 +243,6 @@ func TestProvision_ExplicitFiles_ReadError(t *testing.T) {
 // ---------------------------------------------------------------------------
 // Software mode (precedence 4) — delegates to qrdb clusterenroll
 // ---------------------------------------------------------------------------
-
-func TestProvision_SoftwareSingleNode(t *testing.T) {
-	p, err := New(&Options{
-		RaftAddress: "127.0.0.1:8300",
-		TrustDomain: "test.cluster",
-		DataDir:     t.TempDir(),
-		Members:     map[uint64]string{1: "127.0.0.1:8300"},
-	}, testLogger())
-	require.NoError(t, err)
-
-	res, err := p.Provision(context.Background())
-	require.NoError(t, err)
-	require.NotNil(t, res.MTLS)
-	assert.NotEmpty(t, res.MTLS.CACert)
-	assert.NotEmpty(t, res.MTLS.Cert)
-	assert.NotEmpty(t, res.MTLS.Key)
-	assert.Nil(t, res.Advertiser)
-}
 
 // ---------------------------------------------------------------------------
 // Chain / SAN verification helpers
@@ -276,6 +297,7 @@ func miniChain(t *testing.T, uri string) (rootPEM []byte, intermediate, leaf *x5
 func TestVerifyLeafAgainstAnchor(t *testing.T) {
 	p, err := New(&Options{
 		RaftAddress: "10.0.0.1:8300", TrustDomain: "test.cluster", DataDir: t.TempDir(),
+		Backends: softwareBackends(t), NodeKeyBackends: softwareBackends(t), CAConfig: clusterCAConfig(),
 	}, testLogger())
 	require.NoError(t, err)
 
@@ -319,15 +341,16 @@ func TestNeedsRenewal(t *testing.T) {
 
 func firstNodeOptions(t *testing.T, dataDir string, backends func(string) (xkms.Backend, error)) *Options {
 	return &Options{
-		RaftAddress: "127.0.0.1:8301",
-		NodeID:      1,
-		TrustDomain: "test.cluster",
-		DataDir:     dataDir,
-		Members:     map[uint64]string{1: "127.0.0.1:8301"},
-		ACME:        &ACMEOptions{},
-		Backends:    backends,
-		CAConfig:    clusterCAConfig(),
-		ClusterCACN: "Cluster Test Cluster CA",
+		RaftAddress:     "127.0.0.1:8301",
+		NodeID:          1,
+		TrustDomain:     "test.cluster",
+		DataDir:         dataDir,
+		Members:         map[uint64]string{1: "127.0.0.1:8301"},
+		ACME:            &ACMEOptions{},
+		Backends:        backends,
+		NodeKeyBackends: backends,
+		CAConfig:        clusterCAConfig(),
+		ClusterCACN:     "Cluster Test Cluster CA",
 	}
 }
 
@@ -448,12 +471,13 @@ func TestProvisionACME_FirstNode_GrowthGuard(t *testing.T) {
 func TestEnrollJoiner_RequiresDirectoryURLAndTPM(t *testing.T) {
 	base := func() *Options {
 		return &Options{
-			RaftAddress: "127.0.0.1:8302",
-			TrustDomain: "test.cluster",
-			DataDir:     t.TempDir(),
-			ACME:        &ACMEOptions{},
-			Backends:    softwareBackends(t),
-			Bootstrap:   clusterenrollBootstrap(),
+			RaftAddress:     "127.0.0.1:8302",
+			TrustDomain:     "test.cluster",
+			DataDir:         t.TempDir(),
+			ACME:            &ACMEOptions{},
+			Backends:        softwareBackends(t),
+			NodeKeyBackends: softwareBackends(t),
+			Bootstrap:       clusterenrollBootstrap(),
 		}
 	}
 
@@ -491,9 +515,10 @@ func TestEnrollJoiner_PKCS11BackendUnsupported(t *testing.T) {
 		ACME: &ACMEOptions{
 			DirectoryURL: "https://node1:8443/api/v1/acme/directory",
 		},
-		KeyBackend: "pkcs11",
-		Backends:   softwareBackends(t),
-		Bootstrap:  clusterenrollBootstrap(),
+		KeyBackend:      "pkcs11",
+		Backends:        softwareBackends(t),
+		NodeKeyBackends: softwareBackends(t),
+		Bootstrap:       clusterenrollBootstrap(),
 	}
 
 	p, err := New(opts, testLogger())

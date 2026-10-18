@@ -107,7 +107,9 @@ func TestShutdown_DrainsInFlightRequestBeforeClosingStorage(t *testing.T) {
 			_, res.err = server.daoFactory(sshrecords.DatabaseName)
 			w.WriteHeader(http.StatusOK)
 		})
-	}, []string{"/admin"})
+	}, []apimodule.AdminRoute{
+		{Method: http.MethodGet, Path: "/admin/inflight", Permission: "acme_accounts:list"},
+	})
 	require.NoError(t, err)
 
 	ports.Release(t)

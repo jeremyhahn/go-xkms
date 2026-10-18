@@ -570,37 +570,3 @@ func (s *Server) handleFrostVerify(ctx context.Context, req *JSONRPCRequest) (in
 	}
 	return FrostVerifyResult{Valid: true, Message: "signature is valid"}, nil
 }
-
-// routeFrostMethods routes FROST-related MCP methods
-func (s *Server) routeFrostMethods(ctx context.Context, req *JSONRPCRequest) (interface{}, error, bool) {
-	switch req.Method {
-	case "frost.generateKey":
-		result, err := s.handleFrostGenerateKey(ctx, req)
-		return result, err, true
-	case "frost.importKey":
-		result, err := s.handleFrostImportKey(ctx, req)
-		return result, err, true
-	case "frost.listKeys":
-		result, err := s.handleFrostListKeys(ctx, req)
-		return result, err, true
-	case "frost.getKey":
-		result, err := s.handleFrostGetKey(ctx, req)
-		return result, err, true
-	case "frost.deleteKey":
-		result, err := s.handleFrostDeleteKey(ctx, req)
-		return result, err, true
-	case "frost.generateNonces":
-		result, err := s.handleFrostGenerateNonces(ctx, req)
-		return result, err, true
-	case "frost.signRound":
-		result, err := s.handleFrostSignRound(ctx, req)
-		return result, err, true
-	case "frost.aggregate":
-		result, err := s.handleFrostAggregate(ctx, req)
-		return result, err, true
-	case "frost.verify":
-		result, err := s.handleFrostVerify(ctx, req)
-		return result, err, true
-	}
-	return nil, nil, false
-}

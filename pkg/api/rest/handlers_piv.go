@@ -35,7 +35,7 @@ var (
 
 // The PIV handlers delegate to the XKMSService's PIV methods and never to the
 // package-level PIV operations: the PIV card is the server's own hardware,
-// and the service's requirePlatformScope is what refuses a tenant-scoped
+// and the service's system-tenant check is what refuses a tenant-scoped
 // caller (go-xkms#1227). The refusal is xkms.TenantBindingError, which
 // handleError answers 404 exactly as a genuine miss.
 

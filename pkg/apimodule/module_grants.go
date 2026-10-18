@@ -17,8 +17,8 @@ import (
 	"sort"
 	"sync"
 
-	qrdbv1 "github.com/jeremyhahn/go-qrdb/pkg/api/grpc/proto/qrdbv1"
 	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
+	qrdbv1 "github.com/jeremyhahn/go-qrdb/sdk/go/proto/qrdb/v1"
 	xkmsmcp "github.com/jeremyhahn/go-xkms/pkg/api/mcp"
 	xkmsrest "github.com/jeremyhahn/go-xkms/pkg/api/rest"
 	"google.golang.org/protobuf/proto"
@@ -34,11 +34,14 @@ var roleGrantOnce sync.Once
 
 // registerRoleGrants contributes every permission the xkms module declares —
 // across its gRPC proto options, its REST route table, and its MCP method
-// specs — into go-qrdb's built-in role-grant registry, granting the full set
-// to the Admin and Owner roles. qrdb materializes built-in role grants live
+// specs — into go-qrdb's built-in role-grant registry. Admin holds the full
+// set and Owner holds it as every registered permission; Operator, User and
+// Auditor each hold their slice of the permissions xkms owns
+// (operatorPermissions, userPermissions, auditorPermissions). qrdb materializes built-in role grants live
 // at role-seed time (permission.RolePermissions), so this must run before
-// the embedded node seeds roles; NewModule is constructed before the node,
-// which satisfies that ordering.
+// the embedded node seeds roles or go-qrdb's ReconcileBuiltInRoles converges
+// them; NewModule is constructed before the node, which satisfies that
+// ordering.
 //
 // Without this contribution, qrdb's authorizer — which enforces every module
 // route on the unified server — would deny ALL xkms operations to every
@@ -47,7 +50,8 @@ var roleGrantOnce sync.Once
 //
 // The set is DERIVED from the three declaration surfaces (modulePermissions)
 // rather than hand-copied so a new RPC/route/tool is granted the moment it is
-// declared. It also declares the tenancy scope of the permissions xkms owns;
+// declared. It also declares the tenancy scope and the duty of the
+// permissions xkms owns;
 // since go-qrdb#504 a permission with no scope is refused rather than
 // admitted as ScopeSelf, so an undeclared one fails token issuance for every
 // identity holding it.
@@ -78,26 +82,25 @@ func registerRoleGrants() {
 		qrdbsdk.RegisterPermissionScope(qrdbsdk.PermissionScopeSelf, selfScopedPermissions()...)
 		qrdbsdk.RegisterPermissionScope(qrdbsdk.PermissionScopeCross, crossScopedPermissions()...)
 
+		// Duty, like scope, is declared only for the permissions xkms owns:
+		// qrdb has declared its own, and declaring a different duty for one
+		// of them panics. See governancePermissions.
+		qrdbsdk.RegisterPermissionDuty(qrdbsdk.PermissionDutyGovernance, governancePermissions()...)
+
 		// Owner is not granted here: go-qrdb gives Owner every registered
 		// permission, so registering the permissions above is its grant.
 		qrdbsdk.RegisterPermissionRoleGrant(qrdbsdk.PermissionRoleAdmin, perms...)
-
-		// A tenant's shared OIDC credentials are visible to every user of
-		// the tenant, so the User role consumes them: it reads their
-		// metadata and current access tokens. Creating, changing and
-		// deleting credentials stays with Admin and Owner. The password
-		// vault is a store for users, so the User role writes entries.
+		qrdbsdk.RegisterPermissionRoleGrant(qrdbsdk.PermissionRoleOperator, operatorPermissions()...)
 		qrdbsdk.RegisterPermissionRoleGrant(qrdbsdk.PermissionRoleUser, userPermissions()...)
-
-		// The attested-caller gate may require evidence from any caller, so
-		// the roles workloads and end users run as -- Operator and User --
-		// answer the challenge for their own connection.
-		qrdbsdk.RegisterPermissionRoleGrant(qrdbsdk.PermissionRoleOperator, peerAttestationPermissions()...)
+		qrdbsdk.RegisterPermissionRoleGrant(qrdbsdk.PermissionRoleAuditor, auditorPermissions()...)
 	})
 }
 
 // userPermissions returns the xkms-owned permissions the built-in User role
-// holds: the consuming slice of oidc_credentials, and passwords:write and
+// holds: the consuming slice of oidc_credentials -- a tenant's shared
+// credentials are visible to every user of the tenant, who reads their
+// metadata and current access tokens, while creating, changing and deleting
+// them stays with Admin and Owner -- and passwords:write and
 // passwords:delete -- the password manager is a store for users, who create,
 // change and delete their personal entries and share entries with the
 // tenant. Changing or deleting a shared entry stays with its owner or an
@@ -123,6 +126,71 @@ func peerAttestationPermissions() []qrdbsdk.Permission {
 	return []qrdbsdk.Permission{
 		qrdbsdk.Permission(auth.ResourcePeerAttestation + ":" + auth.ActionChallenge),
 		qrdbsdk.Permission(auth.ResourcePeerAttestation + ":" + auth.ActionSubmit),
+	}
+}
+
+// operatorPermissions returns the xkms-owned permissions the built-in
+// Operator role holds. qrdb's Operator performs routine crypto and
+// maintenance without creating keys or managing tenants, so it gets the
+// reads Auditor has, the User's consuming slice of oidc_credentials, and
+// ssh:service: Operators hold qrdb's ssh:read/write/delete to administer
+// hosts, and the host keys they administer are service-scoped assets. It
+// also holds the peer_attestation pair, since a workload running as
+// Operator may be asked for evidence.
+func operatorPermissions() []qrdbsdk.Permission {
+	perms := []qrdbsdk.Permission{
+		qrdbsdk.Permission(auth.ResourceOIDCCredentials + ":" + auth.ActionGet),
+		qrdbsdk.Permission(auth.ResourceOIDCCredentials + ":" + auth.ActionList),
+		qrdbsdk.Permission(auth.ResourceOIDCCredentials + ":" + auth.ActionToken),
+		qrdbsdk.Permission(auth.ResourceSSH + ":" + auth.ActionService),
+	}
+	perms = append(perms, auditorPermissions()...)
+	return append(perms, peerAttestationPermissions()...)
+}
+
+// auditorPermissions returns the xkms-owned permissions the built-in Auditor
+// role holds: the read-only views of state xkms owns -- the trust-bootstrap
+// listener's public keys, TPM policies (including comparing one with the
+// live PCRs, which changes nothing) and the platform trust roots. They are
+// state visibility, which qrdb also gives Auditor for its own resources
+// (seal:status, ca:read, keys:get). oidc_credentials:get stays off Auditor:
+// it returns an in-flight device login's user code, which completes that
+// login.
+func auditorPermissions() []qrdbsdk.Permission {
+	return []qrdbsdk.Permission{
+		qrdbsdk.Permission(auth.ResourceBootstrap + ":" + auth.ActionRead),
+		qrdbsdk.Permission(auth.ResourceTPMPolicy + ":" + auth.ActionGet),
+		qrdbsdk.Permission(auth.ResourceTPMPolicy + ":" + auth.ActionList),
+		qrdbsdk.Permission(auth.ResourceTPMPolicy + ":" + auth.ActionVerify),
+		qrdbsdk.Permission(auth.ResourceTrustRoots + ":" + auth.ActionList),
+		qrdbsdk.Permission(auth.ResourceTrustRoots + ":" + auth.ActionGet),
+	}
+}
+
+// governancePermissions returns the xkms-owned permissions of the governance
+// duty: key-store state, TPM policy and trust-root administration, the
+// tenant TPM mode, and the reads of that state, which qrdb also files under
+// governance (seal:status, ca:read, keys:get). None of them uses a key. The
+// rest xkms owns -- oidc_credentials, peer_attestation and ssh:service --
+// stay undeclared, like qrdb's own password, SSH and credential verbs.
+func governancePermissions() []qrdbsdk.Permission {
+	return []qrdbsdk.Permission{
+		qrdbsdk.Permission(auth.ResourceKeys + ":" + auth.ActionUpdate),
+		qrdbsdk.Permission(auth.ResourceBootstrap + ":" + auth.ActionRead),
+		qrdbsdk.Permission(auth.ResourceTPMPolicy + ":" + auth.ActionCreate),
+		qrdbsdk.Permission(auth.ResourceTPMPolicy + ":" + auth.ActionGet),
+		qrdbsdk.Permission(auth.ResourceTPMPolicy + ":" + auth.ActionList),
+		qrdbsdk.Permission(auth.ResourceTPMPolicy + ":" + auth.ActionUpdate),
+		qrdbsdk.Permission(auth.ResourceTPMPolicy + ":" + auth.ActionRevoke),
+		qrdbsdk.Permission(auth.ResourceTPMPolicy + ":" + auth.ActionVerify),
+		qrdbsdk.Permission(auth.ResourceTPMPolicy + ":" + auth.ActionDelete),
+		qrdbsdk.Permission(auth.ResourceTPMPolicy + ":" + auth.ActionRotate),
+		qrdbsdk.Permission(auth.ResourceTenants + ":" + auth.ActionSetTPMMode),
+		qrdbsdk.Permission(auth.ResourceTrustRoots + ":" + auth.ActionList),
+		qrdbsdk.Permission(auth.ResourceTrustRoots + ":" + auth.ActionGet),
+		qrdbsdk.Permission(auth.ResourceTrustRoots + ":" + auth.ActionImport),
+		qrdbsdk.Permission(auth.ResourceTrustRoots + ":" + auth.ActionUpdate),
+		qrdbsdk.Permission(auth.ResourceTrustRoots + ":" + auth.ActionDelete),
 	}
 }
 
@@ -155,8 +223,8 @@ func modulePermissions() []qrdbsdk.Permission {
 	}
 
 	for _, spec := range xkmsmcp.ModuleMethods() {
-		if spec.Resource != "" && spec.Action != "" {
-			set[spec.Resource+":"+spec.Action] = struct{}{}
+		if !spec.Public {
+			set[string(spec.Permission)] = struct{}{}
 		}
 	}
 

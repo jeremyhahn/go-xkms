@@ -24,7 +24,7 @@ note below).
 | Update quotas | `PUT /api/v1/tenants/{tenantID}/quotas` | `UpdateTenantQuotas` | same as REST | `xkms.updateTenantQuotas` | `UpdateTenantQuotas` | `tenants:set_quotas` |
 
 **MCP carries the full tenant administration surface** (go-xkms#773), with
-the same permissions as gRPC and REST (`pkg/api/mcp/authz.go:232-240`).
+the same permissions as gRPC and REST (`pkg/api/mcp/server.go:371-376`).
 
 **The tenant a request names is bound to the caller in `XKMSService`, once,
 for every transport** (go-xkms#1112; `pkg/xkms/tenant_binding.go`). The RBAC

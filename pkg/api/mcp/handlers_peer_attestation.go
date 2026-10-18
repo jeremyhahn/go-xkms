@@ -24,7 +24,7 @@ import (
 // attested-caller verbs (pkg/attestation/peergate). Both delegate to
 // XKMSService, which identifies the caller by the verified client
 // certificate on the TLS state go-qrdb's MCP transport puts on the context;
-// they gate on the peer_attestation:* pairs in authz.go's methodPermissions.
+// they gate on the peer_attestation:* pairs in server.go's rpcMethods table.
 
 // handlePeerAttestationChallenge handles peer.attestation.challenge. It
 // takes no parameters.

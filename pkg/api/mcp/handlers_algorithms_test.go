@@ -18,15 +18,15 @@ import (
 	"testing"
 
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 // TestAlgorithms_IsPublicMethod pins discovery as unauthenticated, matching
 // the REST route it mirrors. It must be declared public rather than
 // permission-mapped — being both is a contradiction the authz tests reject.
 func TestAlgorithms_IsPublicMethod(t *testing.T) {
-	_, public := publicMethods["xkms.algorithms"]
-	assert.True(t, public, "xkms.algorithms must be declared public")
-
-	_, mapped := methodPermissions["xkms.algorithms"]
-	assert.False(t, mapped, "a public method must not also carry a permission")
+	entry, ok := rpcMethods["xkms.algorithms"]
+	require.True(t, ok, "xkms.algorithms must be registered")
+	assert.True(t, entry.public(), "xkms.algorithms must be registered with handlePublic")
+	assert.Empty(t, entry.perm, "a public method must not also carry a permission")
 }

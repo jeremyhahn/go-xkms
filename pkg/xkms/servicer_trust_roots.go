@@ -18,13 +18,15 @@ import (
 	"encoding/pem"
 	"time"
 
+	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
 	"github.com/jeremyhahn/go-xkms/pkg/api/transport"
 	"github.com/jeremyhahn/go-xkms/pkg/attestation/truststore"
+	"github.com/jeremyhahn/go-xkms/pkg/auth"
 )
 
 // The TrustRoot* methods serve the platform trust-root store
 // (pkg/attestation/truststore). The store is process-wide, so every method is
-// platform-scoped (requireSystemTenant): a tenant-scoped caller is refused
+// platform-scoped (qrdbsdk.IdentityIsSystemTenant): a tenant-scoped caller is refused
 // with a *TenantBindingError that reads as not-found, before the store is
 // touched.
 
@@ -37,8 +39,8 @@ func (s *XKMSService) TrustRootStore() *truststore.DAOStore { return s.trustRoot
 // trustRootStore returns the store for op once the caller is platform-scoped.
 func (s *XKMSService) trustRootStore(ctx context.Context, op string) (*truststore.DAOStore, error) {
 	store := s.trustRoots.load()
-	if err := requireSystemTenant(ctx, op, ""); err != nil {
-		return nil, err
+	if !qrdbsdk.IdentityIsSystemTenant(auth.GetIdentity(ctx)) {
+		return nil, refuseTenant(ctx, op, "")
 	}
 	if store == nil {
 		return nil, ErrNotConfigured

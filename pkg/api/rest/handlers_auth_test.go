@@ -23,10 +23,12 @@ import (
 	"crypto/tls"
 	"crypto/x509"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"testing"
 
+	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
@@ -363,8 +365,8 @@ func TestAuthMe_ReturnsIdentityPermissionsCapabilities(t *testing.T) {
 	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))
 	assert.NotEmpty(t, resp.Subject)
 
-	// RBAC disabled: every UI permission reads true.
-	require.NotEmpty(t, resp.Permissions)
+	// RBAC disabled: every registered permission reads true.
+	require.Len(t, resp.Permissions, len(qrdbsdk.AllPermissions()))
 	for key, allowed := range resp.Permissions {
 		assert.True(t, allowed, "permission %s should be true without RBAC", key)
 	}
@@ -378,10 +380,8 @@ func TestAuthMe_ReturnsIdentityPermissionsCapabilities(t *testing.T) {
 	assert.False(t, resp.Capabilities["ssh"])
 }
 
-// TestAuthMe_PermissionsReflectRBACGrant proves /auth/me reports users:list
-// as true when the identity's RBAC grant covers it. This is the regression
-// case for go-xkms#846: uiPermissionMatrix must carry every pair nav.ts
-// gates on, or the key never reaches the response at all.
+// TestAuthMe_PermissionsReflectRBACGrant proves /auth/me reports exactly the
+// permissions qrdb's RBAC lists for the identity (go-xkms#846, #1557).
 func TestAuthMe_PermissionsReflectRBACGrant(t *testing.T) {
 	rbac := &recordingRBACClient{allowResource: auth.ResourceUsers, allowAction: auth.ActionList}
 
@@ -402,17 +402,16 @@ func TestAuthMe_PermissionsReflectRBACGrant(t *testing.T) {
 	var resp authMeResponse
 	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))
 
-	allowed, ok := resp.Permissions["users:list"]
-	require.True(t, ok, "uiPermissionMatrix must report users:list")
-	assert.True(t, allowed, "identity holding users:list must see it as true")
+	assert.Equal(t, map[string]bool{"users:list": true}, resp.Permissions,
+		"/auth/me must report exactly the permissions RBAC lists")
 }
 
 // TestAuthMe_PermissionsDenyWithoutRBACGrant is the error-path counterpart:
 // an identity whose RBAC grant does not cover users:list must see it as
 // false rather than absent or true.
 func TestAuthMe_PermissionsDenyWithoutRBACGrant(t *testing.T) {
-	// allowResource/allowAction left zero-valued: every Authorize call is
-	// denied regardless of the resource:action pair asked for.
+	// allowResource/allowAction left zero-valued: the identity holds no
+	// permission at all.
 	rbac := &recordingRBACClient{}
 
 	server, err := NewServer(&Config{
@@ -432,9 +431,28 @@ func TestAuthMe_PermissionsDenyWithoutRBACGrant(t *testing.T) {
 	var resp authMeResponse
 	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))
 
-	allowed, ok := resp.Permissions["users:list"]
-	require.True(t, ok, "uiPermissionMatrix must report users:list")
-	assert.False(t, allowed, "identity without users:list must see it as false")
+	assert.Empty(t, resp.Permissions, "identity without grants must see no permission")
+}
+
+// TestAuthMe_PermissionListErrorFails proves /auth/me fails rather than
+// reporting an empty permission set when RBAC cannot list the caller's
+// permissions: an empty map would silently hide the whole UI.
+func TestAuthMe_PermissionListErrorFails(t *testing.T) {
+	rbac := &recordingRBACClient{listErr: errors.New("rbac unavailable")}
+
+	server, err := NewServer(&Config{
+		Authenticator:  auth.NewNoOpAuthenticator(),
+		Backends:       map[string]xkms.Backend{"test": newMockKeyStore()},
+		Logger:         testLogger(),
+		TokenIssuer:    newTestTokenIssuer(t),
+		EnableRBAC:     true,
+		RBACAuthorizer: auth.NewAuthorizer(rbac),
+	})
+	require.NoError(t, err)
+
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/auth/me", nil)
+	w := doAuthRequest(t, server, req)
+	assert.Equal(t, http.StatusInternalServerError, w.Code, w.Body.String())
 }
 
 func TestAuthValidate_ReturnsSubject(t *testing.T) {

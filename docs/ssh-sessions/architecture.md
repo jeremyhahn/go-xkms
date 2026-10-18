@@ -79,7 +79,7 @@ the signer and the pin are in hand, dialing the target is a pure
 client-side operation — the same reasoning applies unchanged to the gRPC
 and MCP clients, so all three implement it, and grepping
 `pkg/api/rest/routes.go`, `pkg/api/grpc/service_ssh.go`, and
-`pkg/api/mcp/authz.go`'s `ssh.*` tool table confirms none of them carry a
+`pkg/api/mcp/server.go`'s `ssh.*` entries in `rpcMethods` confirms none of them carry a
 `connect`/`console`/`session`/`dial` route, RPC, or tool — only
 `keys`/`knownHosts`/`authorizedKeys`.
 

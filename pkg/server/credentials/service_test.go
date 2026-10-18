@@ -79,6 +79,22 @@ func testLogger() *slog.Logger {
 	return slog.Default()
 }
 
+// retrieveString retrieves a credential and copies it out of its protected
+// buffer for comparison, destroying the buffer before it returns.
+func retrieveString(ctx context.Context, svc *Service, name string) (string, error) {
+	buf, err := svc.RetrieveCredentialBuffer(ctx, name)
+	if err != nil {
+		return "", err
+	}
+	defer buf.Destroy()
+	var value string
+	err = buf.WithBytes(func(b []byte) error {
+		value = string(b)
+		return nil
+	})
+	return value, err
+}
+
 // newTestBarrier creates a Barrier backed by in-memory storage with a
 // SoftwareStrategy, initializes it, and returns it ready for use.
 func newTestBarrier(t *testing.T) *seal.Barrier {
@@ -204,9 +220,9 @@ func TestStoreCredential_Manual(t *testing.T) {
 		t.Fatalf("StoreCredential: %v", err)
 	}
 
-	val, err := svc.RetrieveCredential(ctx, "pkcs11-pin")
+	val, err := retrieveString(ctx, svc, "pkcs11-pin")
 	if err != nil {
-		t.Fatalf("RetrieveCredential: %v", err)
+		t.Fatalf("RetrieveCredentialBuffer: %v", err)
 	}
 	if string(val) != "1234" {
 		t.Errorf("stored value = %q, want %q", string(val), "1234")
@@ -261,7 +277,7 @@ func TestStoreCredential_NilValue(t *testing.T) {
 	}
 }
 
-// --- RetrieveCredential tests ---
+// --- RetrieveCredentialBuffer tests ---
 
 func TestRetrieveCredential_Manual_AlreadySubmitted(t *testing.T) {
 	svc, err := New(&Config{Strategy: StrategyManual}, nil, nil, testLogger())
@@ -274,12 +290,12 @@ func TestRetrieveCredential_Manual_AlreadySubmitted(t *testing.T) {
 		t.Fatalf("StoreCredential: %v", err)
 	}
 
-	val, err := svc.RetrieveCredential(ctx, "my-pin")
+	val, err := retrieveString(ctx, svc, "my-pin")
 	if err != nil {
-		t.Fatalf("RetrieveCredential: %v", err)
+		t.Fatalf("RetrieveCredentialBuffer: %v", err)
 	}
 	if string(val) != "secret" {
-		t.Errorf("RetrieveCredential = %q, want %q", string(val), "secret")
+		t.Errorf("RetrieveCredentialBuffer = %q, want %q", string(val), "secret")
 	}
 }
 
@@ -292,12 +308,12 @@ func TestRetrieveCredential_Manual_NotSubmitted_ContextCancelled(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 50*time.Millisecond)
 	defer cancel()
 
-	_, err = svc.RetrieveCredential(ctx, "nonexistent")
+	_, err = retrieveString(ctx, svc, "nonexistent")
 	if err == nil {
-		t.Fatal("RetrieveCredential: expected error, got nil")
+		t.Fatal("RetrieveCredentialBuffer: expected error, got nil")
 	}
 	if !errors.Is(err, context.DeadlineExceeded) {
-		t.Errorf("RetrieveCredential: got %v, want %v", err, context.DeadlineExceeded)
+		t.Errorf("RetrieveCredentialBuffer: got %v, want %v", err, context.DeadlineExceeded)
 	}
 }
 
@@ -307,9 +323,9 @@ func TestRetrieveCredential_EmptyName(t *testing.T) {
 		t.Fatalf("New: %v", err)
 	}
 
-	_, err = svc.RetrieveCredential(context.Background(), "")
+	_, err = retrieveString(context.Background(), svc, "")
 	if !errors.Is(err, ErrEmptyCredentialName) {
-		t.Errorf("RetrieveCredential: got %v, want %v", err, ErrEmptyCredentialName)
+		t.Errorf("RetrieveCredentialBuffer: got %v, want %v", err, ErrEmptyCredentialName)
 	}
 }
 
@@ -327,12 +343,12 @@ func TestSubmitCredential_Manual(t *testing.T) {
 	}
 
 	// Verify retrievable.
-	val, err := svc.RetrieveCredential(ctx, "tpm2-auth")
+	val, err := retrieveString(ctx, svc, "tpm2-auth")
 	if err != nil {
-		t.Fatalf("RetrieveCredential: %v", err)
+		t.Fatalf("RetrieveCredentialBuffer: %v", err)
 	}
 	if string(val) != "auth-value" {
-		t.Errorf("RetrieveCredential = %q, want %q", string(val), "auth-value")
+		t.Errorf("RetrieveCredentialBuffer = %q, want %q", string(val), "auth-value")
 	}
 }
 
@@ -390,12 +406,12 @@ func TestSubmitCredential_NonManual_DelegatesToStore(t *testing.T) {
 	}
 
 	// Verify it was stored in barrier.
-	val, err := svc.RetrieveCredential(ctx, "my-cred")
+	val, err := retrieveString(ctx, svc, "my-cred")
 	if err != nil {
-		t.Fatalf("RetrieveCredential: %v", err)
+		t.Fatalf("RetrieveCredentialBuffer: %v", err)
 	}
 	if string(val) != "my-value" {
-		t.Errorf("RetrieveCredential = %q, want %q", string(val), "my-value")
+		t.Errorf("RetrieveCredentialBuffer = %q, want %q", string(val), "my-value")
 	}
 }
 
@@ -542,12 +558,12 @@ func TestStoreRetrieveCredential_Barrier(t *testing.T) {
 		t.Fatalf("StoreCredential: %v", err)
 	}
 
-	retrieved, err := svc.RetrieveCredential(ctx, "pkcs11-user-pin")
+	retrieved, err := retrieveString(ctx, svc, "pkcs11-user-pin")
 	if err != nil {
-		t.Fatalf("RetrieveCredential: %v", err)
+		t.Fatalf("RetrieveCredentialBuffer: %v", err)
 	}
 	if string(retrieved) != string(cred) {
-		t.Errorf("RetrieveCredential = %q, want %q", string(retrieved), string(cred))
+		t.Errorf("RetrieveCredentialBuffer = %q, want %q", string(retrieved), string(cred))
 	}
 }
 
@@ -558,9 +574,9 @@ func TestRetrieveCredential_Barrier_NotFound(t *testing.T) {
 		t.Fatalf("New: %v", err)
 	}
 
-	_, err = svc.RetrieveCredential(context.Background(), "nonexistent")
+	_, err = retrieveString(context.Background(), svc, "nonexistent")
 	if !errors.Is(err, ErrCredentialNotFound) {
-		t.Errorf("RetrieveCredential: got %v, want %v", err, ErrCredentialNotFound)
+		t.Errorf("RetrieveCredentialBuffer: got %v, want %v", err, ErrCredentialNotFound)
 	}
 }
 
@@ -581,12 +597,12 @@ func TestStoreRetrieveCredential_PlatformStore(t *testing.T) {
 		t.Fatalf("StoreCredential: %v", err)
 	}
 
-	retrieved, err := svc.RetrieveCredential(ctx, "test-platform-cred")
+	retrieved, err := retrieveString(ctx, svc, "test-platform-cred")
 	if err != nil {
-		t.Fatalf("RetrieveCredential: %v", err)
+		t.Fatalf("RetrieveCredentialBuffer: %v", err)
 	}
 	if string(retrieved) != string(cred) {
-		t.Errorf("RetrieveCredential = %q, want %q", string(retrieved), string(cred))
+		t.Errorf("RetrieveCredentialBuffer = %q, want %q", string(retrieved), string(cred))
 	}
 }
 
@@ -607,9 +623,9 @@ func TestDeleteCredential_PlatformStore(t *testing.T) {
 		t.Fatalf("DeleteCredential: %v", err)
 	}
 
-	_, err = svc.RetrieveCredential(ctx, "to-delete")
+	_, err = retrieveString(ctx, svc, "to-delete")
 	if !errors.Is(err, ErrCredentialNotFound) {
-		t.Errorf("RetrieveCredential after delete: got %v, want %v", err, ErrCredentialNotFound)
+		t.Errorf("RetrieveCredentialBuffer after delete: got %v, want %v", err, ErrCredentialNotFound)
 	}
 }
 
@@ -635,9 +651,9 @@ func TestRetrieveCredential_PlatformStore_NotFound(t *testing.T) {
 		t.Fatalf("New: %v", err)
 	}
 
-	_, err = svc.RetrieveCredential(context.Background(), "nonexistent")
+	_, err = retrieveString(context.Background(), svc, "nonexistent")
 	if !errors.Is(err, ErrCredentialNotFound) {
-		t.Errorf("RetrieveCredential: got %v, want %v", err, ErrCredentialNotFound)
+		t.Errorf("RetrieveCredentialBuffer: got %v, want %v", err, ErrCredentialNotFound)
 	}
 }
 
@@ -657,9 +673,9 @@ func TestStoreCredential_Manual_Overwrite(t *testing.T) {
 		t.Fatalf("StoreCredential (2): %v", err)
 	}
 
-	val, err := svc.RetrieveCredential(ctx, "cred")
+	val, err := retrieveString(ctx, svc, "cred")
 	if err != nil {
-		t.Fatalf("RetrieveCredential: %v", err)
+		t.Fatalf("RetrieveCredentialBuffer: %v", err)
 	}
 	if string(val) != "new" {
 		t.Errorf("value = %q, want %q", string(val), "new")
@@ -681,9 +697,9 @@ func TestStoreCredential_Barrier_Overwrite(t *testing.T) {
 		t.Fatalf("StoreCredential (2): %v", err)
 	}
 
-	val, err := svc.RetrieveCredential(ctx, "cred")
+	val, err := retrieveString(ctx, svc, "cred")
 	if err != nil {
-		t.Fatalf("RetrieveCredential: %v", err)
+		t.Fatalf("RetrieveCredentialBuffer: %v", err)
 	}
 	if string(val) != "new" {
 		t.Errorf("value = %q, want %q", string(val), "new")
@@ -760,9 +776,9 @@ func TestStoreCredential_Manual_ValueIsolation(t *testing.T) {
 	// Mutate the original slice -- should not affect stored value.
 	original[0] = 'X'
 
-	val, err := svc.RetrieveCredential(ctx, "iso-test")
+	val, err := retrieveString(ctx, svc, "iso-test")
 	if err != nil {
-		t.Fatalf("RetrieveCredential: %v", err)
+		t.Fatalf("RetrieveCredentialBuffer: %v", err)
 	}
 	if string(val) != "sensitive" {
 		t.Errorf("stored value was mutated: got %q, want %q", string(val), "sensitive")
@@ -780,20 +796,26 @@ func TestRetrieveCredential_Manual_ReturnIsolation(t *testing.T) {
 		t.Fatalf("StoreCredential: %v", err)
 	}
 
-	val1, err := svc.RetrieveCredential(ctx, "iso-test2")
+	buf, err := svc.RetrieveCredentialBuffer(ctx, "iso-test2")
 	if err != nil {
-		t.Fatalf("RetrieveCredential (1): %v", err)
+		t.Fatalf("RetrieveCredentialBuffer (1): %v", err)
+	}
+	defer buf.Destroy()
+
+	// Mutate the returned buffer.
+	if err := buf.WithBytes(func(b []byte) error {
+		b[0] = 'X'
+		return nil
+	}); err != nil {
+		t.Fatalf("WithBytes: %v", err)
 	}
 
-	// Mutate returned value.
-	val1[0] = 'X'
-
-	val2, err := svc.RetrieveCredential(ctx, "iso-test2")
+	val2, err := retrieveString(ctx, svc, "iso-test2")
 	if err != nil {
-		t.Fatalf("RetrieveCredential (2): %v", err)
+		t.Fatalf("RetrieveCredentialBuffer (2): %v", err)
 	}
-	if string(val2) != "original" {
-		t.Errorf("stored value was mutated via return: got %q, want %q", string(val2), "original")
+	if val2 != "original" {
+		t.Errorf("stored value was mutated via return: got %q, want %q", val2, "original")
 	}
 }
 
@@ -868,12 +890,12 @@ func TestRetrieveCredential_PlatformStore_BackendError(t *testing.T) {
 		t.Fatalf("New: %v", err)
 	}
 
-	_, err = svc.RetrieveCredential(context.Background(), "cred")
+	_, err = retrieveString(context.Background(), svc, "cred")
 	if err == nil {
-		t.Fatal("RetrieveCredential: expected error, got nil")
+		t.Fatal("RetrieveCredentialBuffer: expected error, got nil")
 	}
 	if !errors.Is(err, errGeneric) {
-		t.Errorf("RetrieveCredential: got %v, want errGeneric", err)
+		t.Errorf("RetrieveCredentialBuffer: got %v, want errGeneric", err)
 	}
 }
 

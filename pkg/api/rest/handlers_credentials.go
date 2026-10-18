@@ -30,7 +30,7 @@ import (
 // credentialServicer is the slice of the XKMSService the credential
 // management handlers need. The handlers never reach the credential service
 // directly: submitted credentials are the platform's backend credentials, and
-// the service's requirePlatformScope is what refuses a tenant-scoped caller
+// the service's system-tenant check is what refuses a tenant-scoped caller
 // (go-xkms#1226).
 type credentialServicer interface {
 	// SubmitCredential submits a base64-encoded credential value for the

@@ -221,7 +221,7 @@ func TestMCPToolHandler_ErrorCodesReachCaller(t *testing.T) {
 		assert.Equal(t, qrdbsdk.MCPCodePermissionDenied, payload.Code)
 	})
 
-	// The untagged build's routeFrostMethods "not compiled in" refusal --
+	// The untagged build's FROST stub handlers' "not compiled in" refusal --
 	// before go-xkms#930 a bare *errs.Message that mcpToolHandler could only
 	// report as the generic internal-fault floor below -- is now a
 	// *KeyOpError carrying ErrCodeMethodNotFound and reaches the caller as

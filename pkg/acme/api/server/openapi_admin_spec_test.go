@@ -66,7 +66,7 @@ func normalizeRoutePath(path string) string {
 //
 //   - /health is an unauthenticated liveness probe, not an admin operation.
 //   - /mcp is a single JSON-RPC 2.0 endpoint that dispatches to many methods
-//     by request body, not by path or HTTP method; MCPMethodPermissions
+//     by request body, not by path or HTTP method; MCPToolPermissions
 //     (pkg/acme/api/server/mcp_permissions.go) is that surface's own
 //     contract, not something OpenAPI's path/method model can express.
 //   - /docs and /openapi/ serve and describe this very spec; documenting

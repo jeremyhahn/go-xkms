@@ -424,7 +424,7 @@ func TestResolveConfigSecrets_UnresolvableCredentialReference(t *testing.T) {
 	phoneCfg.NoiseStaticKey = &types.SecretValue{Raw: "credential://does-not-exist"}
 
 	srv := newTestServerForPhoneWithCredentials(t, phoneCfg, svc)
-	// The "manual" strategy's RetrieveCredential blocks waiting for an
+	// The "manual" strategy's RetrieveCredentialBuffer blocks waiting for an
 	// operator to submit the named credential rather than failing fast on a
 	// miss (go-qrdb's manual credential strategy) -- exactly right for its
 	// real interactive use, but this test wants "no such credential exists

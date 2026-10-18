@@ -31,11 +31,11 @@ import (
 // clustered configuration fails with ErrClusterRequiresRaftBuild instead of
 // silently degrading to a single node.
 //
-// Hardware-backed provisioning (TPM-attested ACME enrollment, PKCS#11 / TPM2
-// resident node keys) is injected through DaemonOptions.RaftMTLSResolver,
-// because those strategies depend on a certificate authority owned by the
-// daemon rather than by node construction. A nil resolver selects the built-in
-// software auto-provisioning path.
+// Inter-node mTLS for a multi-node cluster (TrustedCA-issued node
+// certificates, TPM-attested ACME enrollment) is injected through
+// DaemonOptions.RaftMTLSResolver, because those strategies depend on a
+// certificate authority owned by the daemon rather than by node construction.
+// The resolver is required for a multi-node cluster (ErrNilRaftMTLSResolver).
 // ---------------------------------------------------------------------------
 
 // DaemonOptions configures embedded node construction.
@@ -59,12 +59,8 @@ var NewDaemonNode = embeddednode.NewNode
 // Defaults applied when the corresponding option is unset.
 const (
 	// DefaultClusterTrustDomain is the SPIFFE trust domain stamped into
-	// auto-provisioned Raft node certificates.
+	// Raft node certificates when the deployment configures none.
 	DefaultClusterTrustDomain = embeddednode.DefaultTrustDomain
-
-	// RaftTLSCacheSubdir is the subdirectory of the storage path where
-	// auto-provisioned cluster TLS material is cached across restarts.
-	RaftTLSCacheSubdir = embeddednode.RaftTLSCacheSubdir
 )
 
 // Node-construction errors.
@@ -82,6 +78,10 @@ var (
 	// ErrClusterRequiresRaftBuild is returned when a clustered configuration
 	// is supplied to a binary built without the `raft` build tag.
 	ErrClusterRequiresRaftBuild = embeddednode.ErrClusterRequiresRaftBuild
+
+	// ErrNilRaftMTLSResolver is returned when a multi-node cluster is built
+	// without DaemonOptions.RaftMTLSResolver.
+	ErrNilRaftMTLSResolver = embeddednode.ErrNilRaftMTLSResolver
 )
 
 // Typed membership-parsing errors, returned by DaemonClusterOptions.Members

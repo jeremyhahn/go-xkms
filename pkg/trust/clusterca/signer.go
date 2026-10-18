@@ -28,6 +28,7 @@ import (
 	pkgtpm2 "github.com/jeremyhahn/go-xkms/pkg/tpm2"
 	tpmstore "github.com/jeremyhahn/go-xkms/pkg/tpm2/store"
 	"github.com/jeremyhahn/go-xkms/pkg/types"
+	"github.com/jeremyhahn/go-xkms/pkg/xkms"
 )
 
 // nodeSigner returns the crypto.Signer for this node's transport key on the
@@ -35,13 +36,7 @@ import (
 // ECDSA P-256 signing key on first boot. For hardware backends the private
 // key is generated inside and never leaves the device.
 func (p *Provisioner) nodeSigner(ctx context.Context, kp types.KeyProvider) (crypto.Signer, error) {
-	attrs := &types.KeyAttributes{
-		CN:            fmt.Sprintf("raft-node-%d", p.opts.NodeID),
-		StoreType:     types.ParseStoreType(string(kp.Type())),
-		KeyType:       types.KeyTypeSigning,
-		KeyAlgorithm:  x509.ECDSA,
-		ECCAttributes: &types.ECCAttributes{Curve: elliptic.P256()},
-	}
+	attrs := p.nodeKeyAttributes(kp)
 	// Reuse the key if it already exists (restart); otherwise generate it.
 	if signer, err := kp.Signer(ctx, attrs); err == nil {
 		return signer, nil
@@ -54,6 +49,38 @@ func (p *Provisioner) nodeSigner(ctx context.Context, kp types.KeyProvider) (cry
 		return nil, &errs.Wrapped{Msg: "clusterca: node signer", Err: err}
 	}
 	return signer, nil
+}
+
+// nodeKeyAttributes names this node's transport key on the key provider.
+func (p *Provisioner) nodeKeyAttributes(kp types.KeyProvider) *types.KeyAttributes {
+	return &types.KeyAttributes{
+		CN:            fmt.Sprintf("raft-node-%d", p.opts.NodeID),
+		StoreType:     types.ParseStoreType(string(kp.Type())),
+		KeyType:       types.KeyTypeSigning,
+		KeyAlgorithm:  x509.ECDSA,
+		ECCAttributes: &types.ECCAttributes{Curve: elliptic.P256()},
+	}
+}
+
+// idevidSigner returns the signer for the TPM-resident IDevID key, the
+// transport key of a node that joined through ACME enroll-01. Its public key
+// is read from the TPM, so a comparison against a certificate checks the key
+// TLS signs with.
+func idevidSigner(backend xkms.Backend, keyBackend string) (crypto.Signer, error) {
+	provider, ok := backend.(tpmProvider)
+	if !ok {
+		return nil, &ErrNoTPM{KeyBackend: keyBackend}
+	}
+	tpm := provider.TPM()
+	attrs, err := tpm.IDevIDAttributes()
+	if err != nil {
+		return nil, &errs.Wrapped{Msg: "clusterca: idevid attributes", Err: err}
+	}
+	public, err := tpm.IDevID()
+	if err != nil {
+		return nil, &errs.Wrapped{Msg: "clusterca: idevid public key", Err: err}
+	}
+	return &tpmKeySigner{tpm: tpm, attrs: attrs, public: public}, nil
 }
 
 // signerCertificate assembles a tls.Certificate from the node leaf PEM (plus

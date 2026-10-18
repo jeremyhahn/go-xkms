@@ -43,7 +43,8 @@ func assertKeyOpCode(t *testing.T, err error, want int) {
 // from that type -- anything else reaches the caller as an
 // indistinguishable "xkms: internal error".
 //
-// Mechanism: a runtime sweep over rpcMethodHandlers -- the same table
+// Mechanism: a runtime sweep over rpcMethods (frost.* included, in its
+// frost-tagged or !frost stub form) -- the same table
 // InvokeMethod dispatches through and ModuleMethods() advertises as MCP
 // tools, and the same table TestEveryHandler_MalformedParamsAreInvalidParams
 // already sweeps for the decode-failure gate -- driving each handler with a
@@ -88,15 +89,15 @@ func TestEveryRegisteredHandler_ReturnsKeyOpErrorOrNil(t *testing.T) {
 	// validation and service-layer calls uniformly.
 	empty := json.RawMessage(`{}`)
 
-	methods := make([]string, 0, len(rpcMethodHandlers))
-	for method := range rpcMethodHandlers {
+	methods := make([]string, 0, len(rpcMethods))
+	for method := range rpcMethods {
 		methods = append(methods, method)
 	}
 	sort.Strings(methods)
 
 	for _, method := range methods {
 		method := method
-		handler := rpcMethodHandlers[method]
+		handler := rpcMethods[method].handler
 
 		t.Run(method, func(t *testing.T) {
 			ctx := context.Background()
@@ -116,58 +117,6 @@ func TestEveryRegisteredHandler_ReturnsKeyOpErrorOrNil(t *testing.T) {
 			var keyErr *KeyOpError
 			require.ErrorAsf(t, err, &keyErr,
 				"%s: every handler failure must be a *KeyOpError so InvokeMethod/mcpToolHandler can classify it (got %T: %v)",
-				method, err, err)
-		})
-	}
-}
-
-// frostMethods is the exact method set routeFrostMethods dispatches, in both
-// its frost-tagged form (handlers_frost.go) and its !frost stub
-// (handlers_frost_stub.go). These never appear in rpcMethodHandlers --
-// InvokeMethod (module_support.go) tries routeFrostMethods before the map
-// lookup -- so TestEveryRegisteredHandler_ReturnsKeyOpErrorOrNil's sweep
-// over that map does not reach them; TestEveryFrostMethod_ReturnsKeyOpErrorOrNil
-// below is their equivalent.
-var frostMethods = []string{
-	"frost.generateKey",
-	"frost.importKey",
-	"frost.listKeys",
-	"frost.getKey",
-	"frost.deleteKey",
-	"frost.generateNonces",
-	"frost.signRound",
-	"frost.aggregate",
-	"frost.verify",
-}
-
-// TestEveryFrostMethod_ReturnsKeyOpErrorOrNil is
-// TestEveryRegisteredHandler_ReturnsKeyOpErrorOrNil's counterpart for the
-// frost.* namespace, which routeFrostMethods dispatches before
-// rpcMethodHandlers is ever consulted, so the sweep above cannot reach it.
-// It runs unmodified under both the frost tag (against the real handlers in
-// handlers_frost.go) and without it (against the stub in
-// handlers_frost_stub.go), and is the test that pins go-xkms#930's fix to
-// handlers_frost.go itself: every FROST hex-decode failure, threshold
-// validation and backend-lookup refusal must be a *KeyOpError too.
-func TestEveryFrostMethod_ReturnsKeyOpErrorOrNil(t *testing.T) {
-	server := newMalformedParamsTestServer(t)
-	defer cleanupXKMS()
-
-	empty := json.RawMessage(`{}`)
-
-	for _, method := range frostMethods {
-		method := method
-		t.Run(method, func(t *testing.T) {
-			req := &JSONRPCRequest{JSONRPC: "2.0", Method: method, Params: empty, ID: 1}
-			_, err, handled := server.routeFrostMethods(context.Background(), req)
-			require.True(t, handled, "%s: routeFrostMethods must recognize its own dispatch table", method)
-			if err == nil {
-				return
-			}
-
-			var keyErr *KeyOpError
-			require.ErrorAsf(t, err, &keyErr,
-				"%s: every FROST handler failure must be a *KeyOpError (got %T: %v)",
 				method, err, err)
 		})
 	}

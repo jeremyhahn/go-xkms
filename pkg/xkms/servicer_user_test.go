@@ -166,8 +166,8 @@ func (m *mockRoleClient) ListPermissions(ctx context.Context) (*qrdbtransport.Li
 
 // ReconcileBuiltInRoles is not exercised by the servicer under test: nothing in
 // pkg/xkms reconciles built-in roles, so this mock reports the verb as unused
-// exactly as its other unexercised methods do. The real convergence lives in
-// pkg/qrdbrole and is covered there and through the in-memory fakes that use it.
+// exactly as its other unexercised methods do. The convergence itself is
+// go-qrdb's, served by its transports.
 func (m *mockRoleClient) ReconcileBuiltInRoles(ctx context.Context, req *qrdbtransport.ReconcileRolesRequest) (*qrdbtransport.ReconcileRolesResponse, error) {
 	return nil, errors.New("not used")
 }

@@ -293,8 +293,8 @@ func scan(t *testing.T) (grpcPerm, restPerm, mcpPerm map[string]string) {
 		restPerm[s.Key] = s.Pair()
 	}
 
-	mcpSites, err := authzscan.ScanMap(mcpDir, "methodPermissions")
-	require.NoError(t, err, "scanning pkg/api/mcp's methodPermissions map must succeed")
+	mcpSites, err := authzscan.ScanMap(mcpDir, "rpcMethods", "handle")
+	require.NoError(t, err, "scanning pkg/api/mcp's rpcMethods table must succeed")
 	mcpPerm = make(map[string]string, len(mcpSites))
 	for _, s := range mcpSites {
 		mcpPerm[s.Key] = s.Pair()
@@ -325,7 +325,7 @@ func TestCapabilities_RequireSamePermissionOnEveryTransport(t *testing.T) {
 		}
 		if cap.MCP != "" {
 			v, ok := mcpPerm[cap.MCP]
-			require.True(t, ok, "capability %q: MCP method %q has no methodPermissions entry", name, cap.MCP)
+			require.True(t, ok, "capability %q: MCP method %q has no rpcMethods handle(...) entry", name, cap.MCP)
 			entries = append(entries, entry{"MCP", cap.MCP, v})
 		}
 		if cap.REST != "" {

@@ -23,6 +23,8 @@ import (
 	"github.com/stretchr/testify/require"
 
 	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
+
+	"github.com/jeremyhahn/go-xkms/pkg/acme/admin"
 )
 
 // capturedModuleRoute records one qrdbsdk.ModuleHTTPRegistrar registration,
@@ -30,6 +32,7 @@ import (
 // keeps a small copy rather than reaching into another package's test file).
 type capturedModuleRoute struct {
 	method, pattern string
+	perm            qrdbsdk.Permission
 	public          bool
 	handler         http.HandlerFunc
 }
@@ -38,7 +41,7 @@ func newCaptureModuleRegistrar() (*qrdbsdk.ModuleHTTPRegistrar, *[]capturedModul
 	var recs []capturedModuleRoute
 	r := qrdbsdk.NewModuleHTTPRegistrar(chi.NewRouter(),
 		func(method, pattern string, perm qrdbsdk.Permission, h http.HandlerFunc) {
-			recs = append(recs, capturedModuleRoute{method: method, pattern: pattern, handler: h})
+			recs = append(recs, capturedModuleRoute{method: method, pattern: pattern, perm: perm, handler: h})
 		},
 		func(method, pattern string, h http.HandlerFunc) {
 			recs = append(recs, capturedModuleRoute{method: method, pattern: pattern, public: true, handler: h})
@@ -65,15 +68,15 @@ func TestAdminModule_LazyResolverBranches(t *testing.T) {
 
 	var adminHandler http.HandlerFunc
 	for _, r := range *recs {
-		if r.method == http.MethodGet && r.pattern == "/admin" {
+		if r.method == http.MethodGet && r.pattern == "/admin/status" {
 			adminHandler = r.handler
 			break
 		}
 	}
-	require.NotNil(t, adminHandler, "expected a captured handler for GET /admin")
+	require.NotNil(t, adminHandler, "expected a captured handler for GET /admin/status")
 
 	rec := httptest.NewRecorder()
-	adminHandler(rec, httptest.NewRequest(http.MethodGet, "/admin", nil))
+	adminHandler(rec, httptest.NewRequest(http.MethodGet, "/admin/status", nil))
 	assert.Equal(t, http.StatusServiceUnavailable, rec.Code,
 		"unpublished adminRouterState must answer 503, not panic or 200")
 
@@ -83,17 +86,18 @@ func TestAdminModule_LazyResolverBranches(t *testing.T) {
 	adminRouterState.Store(&published)
 
 	rec2 := httptest.NewRecorder()
-	adminHandler(rec2, httptest.NewRequest(http.MethodGet, "/admin", nil))
+	adminHandler(rec2, httptest.NewRequest(http.MethodGet, "/admin/status", nil))
 	assert.Equal(t, http.StatusTeapot, rec2.Code,
 		"once published, the resolver must reach the stored router")
 }
 
 // TestAdminModule_ReachableOnUnifiedListener proves the ACME admin
-// ServiceModule constructed by newAdminModule registers its API prefixes
-// ("/admin", "/api/v1/tenants") and SPA prefix (adminUIPrefix) when mounted
-// on the unified server's module registrar — the same registrar
-// pkg/server/qrdb_node.go feeds every registered qrdbsdk.WithModule module,
-// including this one via server.WithExtraModules.
+// ServiceModule constructed by newAdminModule registers every ACME admin
+// route, under that route's own permission and never public, plus the SPA
+// prefix (adminUIPrefix), when mounted on the unified server's module
+// registrar — the same registrar pkg/server/qrdb_node.go feeds every
+// registered qrdbsdk.WithModule module, including this one via
+// server.WithExtraModules.
 func TestAdminModule_ReachableOnUnifiedListener(t *testing.T) {
 	m, err := newAdminModule()
 	require.NoError(t, err)
@@ -101,15 +105,29 @@ func TestAdminModule_ReachableOnUnifiedListener(t *testing.T) {
 	reg, recs := newCaptureModuleRegistrar()
 	m.RegisterHTTP(reg)
 
-	patterns := map[string]bool{}
+	got := map[string]capturedModuleRoute{} // "method pattern" -> registration
 	for _, r := range *recs {
-		patterns[r.pattern] = true
+		got[r.method+" "+r.pattern] = r
 	}
 
-	for _, prefix := range adminAPIPrefixes {
-		assert.True(t, patterns[prefix+"/*"], "expected %s/* registered on the unified listener", prefix)
+	routes := admin.Routes()
+	require.NotEmpty(t, routes)
+	for _, rt := range routes {
+		rec, ok := got[rt.Method+" "+rt.Path]
+		if assert.True(t, ok, "expected %s %s registered on the unified listener", rt.Method, rt.Path) {
+			assert.False(t, rec.public, "%s %s must not be registered public", rt.Method, rt.Path)
+			// A tenant lifecycle route's permission depends on the tenant it
+			// reaches, so the listener only authenticates it and the admin
+			// router's gate authorizes it.
+			want := rt.Permission
+			if rt.SelfPermission != "" {
+				want = qrdbsdk.PermissionIdentityGated
+			}
+			assert.Equal(t, want, rec.perm, "%s %s must carry its own permission", rt.Method, rt.Path)
+		}
 	}
-	assert.True(t, patterns[adminUIPrefix+"/*"], "expected admin SPA prefix %s/* registered on the unified listener", adminUIPrefix)
+	assert.True(t, got[http.MethodGet+" "+adminUIPrefix+"/*"].handler != nil,
+		"expected admin SPA prefix %s/* registered on the unified listener", adminUIPrefix)
 	assert.NotEqual(t, "/ui", adminUIPrefix, "admin SPA must not share the crypto module's /ui prefix")
 }
 
@@ -124,7 +142,10 @@ func TestAdminModule_AbsentFromACMEListener(t *testing.T) {
 	ts := httptest.NewServer(acmeRouter)
 	t.Cleanup(ts.Close)
 
-	paths := append([]string{adminUIPrefix, adminUIPrefix + "/index.html"}, adminAPIPrefixes...)
+	paths := []string{adminUIPrefix, adminUIPrefix + "/index.html"}
+	for _, rt := range admin.Routes() {
+		paths = append(paths, pathVariable.ReplaceAllString(rt.Path, "absent"))
+	}
 	for _, p := range paths {
 		resp, err := http.Get(ts.URL + p)
 		require.NoError(t, err)

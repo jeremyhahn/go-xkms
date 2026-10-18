@@ -17,28 +17,33 @@ package server
 
 import (
 	"context"
+	"crypto/ecdsa"
+	"crypto/elliptic"
+	"crypto/rand"
 	"crypto/tls"
 	"crypto/x509"
 	"crypto/x509/pkix"
 	"math/big"
 	"net"
+	"net/url"
 	"testing"
+	"time"
 
+	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials"
 	"google.golang.org/grpc/peer"
 
+	"github.com/jeremyhahn/go-xkms/pkg/acme/admin"
 	"github.com/jeremyhahn/go-xkms/pkg/auth"
 )
 
 // certWithSubject builds an unsigned *x509.Certificate carrying only the
-// Subject fields the functions under test read (CommonName,
-// OrganizationalUnit). It is never parsed from DER or verified, which is
-// fine here: peerCertificate, certificateRoles and the authenticator's
-// default subject/metadata extraction only read struct fields, never
-// signatures.
+// Subject fields peerCertificate's tests compare. It is never parsed from
+// DER or verified, which is fine here: peerCertificate only reads struct
+// fields, never signatures.
 func certWithSubject(commonName string, organizationalUnit ...string) *x509.Certificate {
 	return &x509.Certificate{
 		SerialNumber: big.NewInt(1),
@@ -60,35 +65,6 @@ func peerContextWithCert(cert *x509.Certificate) context.Context {
 		},
 	}
 	return peer.NewContext(context.Background(), p)
-}
-
-func TestCertificateRoles_NilCertificate(t *testing.T) {
-	assert.Nil(t, certificateRoles(nil))
-}
-
-func TestCertificateRoles_NoOrganizationalUnit(t *testing.T) {
-	cert := certWithSubject("no-ou-client")
-	assert.Nil(t, certificateRoles(cert))
-}
-
-func TestCertificateRoles_ReturnsOrganizationalUnits(t *testing.T) {
-	cert := certWithSubject("client", "admin", "operator")
-	assert.Equal(t, []string{"admin", "operator"}, certificateRoles(cert))
-}
-
-// TestCertificateRoles_SkipsEmptyEntries proves a blank OU value (which a
-// misconfigured issuer could produce) never becomes a blank role that would
-// otherwise match an unintended RBAC grant.
-func TestCertificateRoles_SkipsEmptyEntries(t *testing.T) {
-	cert := certWithSubject("client", "admin", "", "operator")
-	assert.Equal(t, []string{"admin", "operator"}, certificateRoles(cert))
-}
-
-// TestCertificateRoles_AllEmptyEntriesYieldsNil proves an OU slice made up
-// entirely of blank values mints no role, not a slice of empty strings.
-func TestCertificateRoles_AllEmptyEntriesYieldsNil(t *testing.T) {
-	cert := certWithSubject("client", "", "")
-	assert.Nil(t, certificateRoles(cert))
 }
 
 func TestPeerCertificate_NoPeerInContext(t *testing.T) {
@@ -120,7 +96,7 @@ func TestPeerCertificate_ReturnsLeafCertificate(t *testing.T) {
 // interceptor does not re-authenticate or override an identity a preceding
 // interceptor already published (e.g. the Unix peer-credential path).
 func TestUnaryMTLSIdentityInterceptor_ExistingIdentityPassesThrough(t *testing.T) {
-	interceptor := UnaryMTLSIdentityInterceptor(nil, nil, testLogger())
+	interceptor := UnaryMTLSIdentityInterceptor(nil, testLogger())
 
 	existing := &auth.Identity{Subject: "uid:1000"}
 	ctx := auth.WithIdentity(context.Background(), existing)
@@ -141,7 +117,7 @@ func TestUnaryMTLSIdentityInterceptor_ExistingIdentityPassesThrough(t *testing.T
 // reaches the handler with no identity attached, leaving the denial to the
 // authorization interceptor that runs after it.
 func TestUnaryMTLSIdentityInterceptor_NoClientCertificate(t *testing.T) {
-	interceptor := UnaryMTLSIdentityInterceptor(nil, nil, testLogger())
+	interceptor := UnaryMTLSIdentityInterceptor(nil, testLogger())
 
 	var ran bool
 	_, err := interceptor(context.Background(), nil, &grpc.UnaryServerInfo{FullMethod: "/x/Y"}, func(ctx context.Context, req interface{}) (interface{}, error) {
@@ -154,76 +130,150 @@ func TestUnaryMTLSIdentityInterceptor_NoClientCertificate(t *testing.T) {
 	assert.True(t, ran)
 }
 
-// TestUnaryMTLSIdentityInterceptor_AuthenticatesFromCertificate proves a call
-// carrying a verified client certificate is authenticated and the resulting
-// identity, with roles filled in from the certificate's OrganizationalUnit
-// (the authenticator resolves no roles with a nil UserStore), is published
-// on the context the handler sees.
-func TestUnaryMTLSIdentityInterceptor_AuthenticatesFromCertificate(t *testing.T) {
-	authenticator := auth.NewMTLSAuthenticator(nil)
-	interceptor := UnaryMTLSIdentityInterceptor(authenticator, nil, testLogger())
+// testTrustDomain is the SPIFFE trust domain the interceptor tests pin.
+const testTrustDomain = "kms.example.com"
 
-	cert := certWithSubject("grpc-admin", "admin")
-	ctx := peerContextWithCert(cert)
-
-	var ran bool
-	_, err := interceptor(ctx, nil, &grpc.UnaryServerInfo{FullMethod: "/x/Y"}, func(ctx context.Context, req interface{}) (interface{}, error) {
-		ran = true
-		id := auth.GetIdentity(ctx)
-		require.NotNil(t, id)
-		assert.Equal(t, "grpc-admin", id.Subject)
-		assert.Equal(t, []string{"admin"}, id.Roles)
-		return "ok", nil
-	})
-
-	require.NoError(t, err)
-	assert.True(t, ran)
+// tenantUserStore is an auth.UserStore that, like go-qrdb's, resolves a
+// certificate's user only within the tenant bound on the context.
+type tenantUserStore struct {
+	byTenant map[string]map[string]auth.MTLSUser
 }
 
-// TestUnaryMTLSIdentityInterceptor_CustomRoleExtractor proves a caller-supplied
-// roleExtractor, not just the package default certificateRoles, is honored
-// when the authenticator resolves no roles of its own.
-func TestUnaryMTLSIdentityInterceptor_CustomRoleExtractor(t *testing.T) {
-	authenticator := auth.NewMTLSAuthenticator(nil)
-	custom := func(cert *x509.Certificate) []string { return []string{"custom-role"} }
-	interceptor := UnaryMTLSIdentityInterceptor(authenticator, custom, testLogger())
-
-	cert := certWithSubject("grpc-client")
-	ctx := peerContextWithCert(cert)
-
-	var ran bool
-	_, err := interceptor(ctx, nil, &grpc.UnaryServerInfo{FullMethod: "/x/Y"}, func(ctx context.Context, req interface{}) (interface{}, error) {
-		ran = true
-		id := auth.GetIdentity(ctx)
-		require.NotNil(t, id)
-		assert.Equal(t, []string{"custom-role"}, id.Roles)
-		return "ok", nil
-	})
-
-	require.NoError(t, err)
-	assert.True(t, ran)
+func (s *tenantUserStore) bind(tenantID string, cert *x509.Certificate, u auth.MTLSUser) {
+	if s.byTenant == nil {
+		s.byTenant = map[string]map[string]auth.MTLSUser{}
+	}
+	if s.byTenant[tenantID] == nil {
+		s.byTenant[tenantID] = map[string]auth.MTLSUser{}
+	}
+	s.byTenant[tenantID][qrdbsdk.ComputeSPKIThumbprint(cert)] = u
 }
 
-// TestUnaryMTLSIdentityInterceptor_DefaultsWhenNilArgsGiven proves the
-// constructor's nil-fallback wiring (default authenticator, default role
-// extractor, default logger) produces a working interceptor rather than a
-// nil-pointer panic.
-func TestUnaryMTLSIdentityInterceptor_DefaultsWhenNilArgsGiven(t *testing.T) {
-	interceptor := UnaryMTLSIdentityInterceptor(nil, nil, nil)
-	require.NotNil(t, interceptor)
+func (s *tenantUserStore) GetByCertFingerprint(ctx context.Context, fingerprint string) (auth.MTLSUser, error) {
+	tenantID, ok := qrdbsdk.TenantFromContext(ctx)
+	if !ok {
+		return auth.MTLSUser{}, qrdbsdk.NewMissingTenantContextError("cert thumbprint lookup")
+	}
+	u, ok := s.byTenant[tenantID][fingerprint]
+	if !ok {
+		return auth.MTLSUser{}, &qrdbsdk.UserNotFoundError{Lookup: "cert_spki/" + fingerprint}
+	}
+	return u, nil
+}
 
-	cert := certWithSubject("default-wiring-client", "operator")
-	ctx := peerContextWithCert(cert)
+// signedClientCert issues a self-signed client certificate with a real public
+// key, so its SPKI thumbprint can bind it to a user.
+func signedClientCert(t *testing.T, commonName string, organizationalUnit []string, uris ...string) *x509.Certificate {
+	t.Helper()
+	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	require.NoError(t, err)
+	template := &x509.Certificate{
+		SerialNumber: big.NewInt(time.Now().UnixNano()),
+		Subject:      pkix.Name{CommonName: commonName, OrganizationalUnit: organizationalUnit},
+		NotBefore:    time.Now().Add(-time.Hour),
+		NotAfter:     time.Now().Add(time.Hour),
+		ExtKeyUsage:  []x509.ExtKeyUsage{x509.ExtKeyUsageClientAuth},
+	}
+	for _, raw := range uris {
+		u, err := url.Parse(raw)
+		require.NoError(t, err)
+		template.URIs = append(template.URIs, u)
+	}
+	der, err := x509.CreateCertificate(rand.Reader, template, template, &key.PublicKey, key)
+	require.NoError(t, err)
+	cert, err := x509.ParseCertificate(der)
+	require.NoError(t, err)
+	return cert
+}
 
-	var ran bool
+func newTestCertAuth(store auth.UserStore) *admin.MTLSAuthHandler {
+	return admin.NewMTLSAuthHandler(auth.NewMTLSAuthenticator(&auth.MTLSConfig{UserStore: store}), testTrustDomain)
+}
+
+// runInterceptor runs interceptor over ctx and returns the identity and
+// tenant the handler saw.
+func runInterceptor(t *testing.T, interceptor grpc.UnaryServerInterceptor, ctx context.Context) (*auth.Identity, string) {
+	t.Helper()
+	var (
+		ran      bool
+		identity *auth.Identity
+		tenantID string
+	)
 	_, err := interceptor(ctx, nil, &grpc.UnaryServerInfo{FullMethod: "/x/Y"}, func(ctx context.Context, req interface{}) (interface{}, error) {
 		ran = true
-		id := auth.GetIdentity(ctx)
-		require.NotNil(t, id)
-		assert.Equal(t, []string{"operator"}, id.Roles)
+		identity = auth.GetIdentity(ctx)
+		tenantID, _ = qrdbsdk.TenantFromContext(ctx)
 		return "ok", nil
 	})
-
 	require.NoError(t, err)
-	assert.True(t, ran)
+	require.True(t, ran)
+	return identity, tenantID
+}
+
+// TestUnaryMTLSIdentityInterceptor_RolesComeFromTheBoundUser proves a call
+// carrying a client certificate gets the roles of the go-qrdb user the
+// certificate binds to, and the tenant qrdbsdk.TenantFromClientCert names,
+// bound on the context the handler sees.
+func TestUnaryMTLSIdentityInterceptor_RolesComeFromTheBoundUser(t *testing.T) {
+	store := &tenantUserStore{}
+	cert := signedClientCert(t, "grpc-client", []string{"tenant-a"})
+	store.bind("tenant-a", cert, auth.MTLSUser{
+		Username: "carol", TenantID: "tenant-a", Enabled: true, Roles: []string{"role-id-operator"},
+	})
+
+	identity, tenantID := runInterceptor(t, UnaryMTLSIdentityInterceptor(newTestCertAuth(store), testLogger()), peerContextWithCert(cert))
+
+	require.NotNil(t, identity)
+	assert.Equal(t, "carol", identity.Subject)
+	assert.Equal(t, []string{"role-id-operator"}, identity.Roles)
+	assert.Equal(t, "tenant-a", identity.TenantID)
+	assert.Equal(t, "tenant-a", tenantID)
+}
+
+// TestUnaryMTLSIdentityInterceptor_OUNamingARoleGrantsNoRole proves an OU that
+// names a role grants nothing: the SPIFFE SAN names the tenant, and the
+// caller's roles are only those of its bound user, here none.
+func TestUnaryMTLSIdentityInterceptor_OUNamingARoleGrantsNoRole(t *testing.T) {
+	store := &tenantUserStore{}
+	cert := signedClientCert(t, "grpc-client", []string{"tenant-a", "Admin"},
+		"spiffe://"+testTrustDomain+"/tenant/tenant-a/user/grpc-client")
+	store.bind("tenant-a", cert, auth.MTLSUser{Username: "erin", TenantID: "tenant-a", Enabled: true})
+
+	identity, tenantID := runInterceptor(t, UnaryMTLSIdentityInterceptor(newTestCertAuth(store), testLogger()), peerContextWithCert(cert))
+
+	require.NotNil(t, identity)
+	assert.Empty(t, identity.Roles)
+	assert.Equal(t, "tenant-a", tenantID)
+}
+
+// TestUnaryMTLSIdentityInterceptor_RefusedCertificateGetsNoIdentity proves a
+// certificate that binds to no user, or to a user of another tenant, reaches
+// the handler with no identity and no tenant, leaving the denial to the
+// authorization interceptor.
+func TestUnaryMTLSIdentityInterceptor_RefusedCertificateGetsNoIdentity(t *testing.T) {
+	store := &tenantUserStore{}
+	unbound := signedClientCert(t, "stranger", []string{"tenant-a"})
+	crossTenant := signedClientCert(t, "mallory", []string{"tenant-a"})
+	store.bind("tenant-a", crossTenant, auth.MTLSUser{Username: "mallory", TenantID: "tenant-b", Enabled: true})
+	interceptor := UnaryMTLSIdentityInterceptor(newTestCertAuth(store), testLogger())
+
+	for name, cert := range map[string]*x509.Certificate{"unbound": unbound, "cross-tenant": crossTenant} {
+		t.Run(name, func(t *testing.T) {
+			identity, tenantID := runInterceptor(t, interceptor, peerContextWithCert(cert))
+			assert.Nil(t, identity)
+			assert.Empty(t, tenantID)
+		})
+	}
+}
+
+// TestUnaryMTLSIdentityInterceptor_NilCertAuthGetsNoIdentity proves an
+// interceptor built without a certificate authenticator (and with a nil
+// logger) attaches no identity rather than panicking.
+func TestUnaryMTLSIdentityInterceptor_NilCertAuthGetsNoIdentity(t *testing.T) {
+	cert := signedClientCert(t, "grpc-client", []string{"Admin"})
+
+	identity, tenantID := runInterceptor(t, UnaryMTLSIdentityInterceptor(nil, nil), peerContextWithCert(cert))
+
+	assert.Nil(t, identity)
+	assert.Empty(t, tenantID)
 }

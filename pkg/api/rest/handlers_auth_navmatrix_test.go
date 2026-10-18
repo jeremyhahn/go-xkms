@@ -23,6 +23,7 @@ import (
 	"strings"
 	"testing"
 
+	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
 	"github.com/stretchr/testify/require"
 )
 
@@ -132,37 +133,49 @@ func canCallPairs(t *testing.T) []canCallSite {
 	return sites
 }
 
-// TestUIPermissionMatrix_CoversNavRequires proves every RBAC gate the sidebar
-// declares in nav.ts has a matching entry in uiPermissionMatrix. A pair
-// present in nav.ts but absent here means /api/v1/auth/me never reports the
-// key, so session.svelte.ts's can() is permanently false and the nav entry
-// stays hidden even for an identity that holds the grant (go-xkms#846).
-func TestUIPermissionMatrix_CoversNavRequires(t *testing.T) {
-	matrixSet := make(map[[2]string]bool, len(uiPermissionMatrix))
-	for _, pair := range uiPermissionMatrix {
-		matrixSet[pair] = true
+// registeredPermissions returns, as resource:action pairs, every permission
+// qrdb registers itself plus every permission the REST route table declares
+// (pkg/apimodule registers those with qrdb at startup). /api/v1/auth/me
+// reports only permissions RBAC lists, and RBAC lists only registered ones, so
+// a UI gate outside this set can never be true.
+func registeredPermissions() map[[2]string]bool {
+	registered := make(map[[2]string]bool)
+	for _, p := range qrdbsdk.AllPermissions() {
+		resource, action, ok := strings.Cut(p.String(), ":")
+		if ok {
+			registered[[2]string{resource, action}] = true
+		}
 	}
+	for _, spec := range Routes() {
+		if spec.Auth == RouteAuthPermission {
+			registered[[2]string{spec.Resource, spec.Action}] = true
+		}
+	}
+	return registered
+}
 
+// TestUIPermissions_NavRequiresAreRegistered proves every RBAC gate the
+// sidebar declares in nav.ts names a registered permission. A pair that is not
+// registered is never reported by /api/v1/auth/me, so session.svelte.ts's can()
+// is permanently false and the nav entry stays hidden even for an identity
+// that holds every grant (go-xkms#846).
+func TestUIPermissions_NavRequiresAreRegistered(t *testing.T) {
+	registered := registeredPermissions()
 	for _, pair := range navRequiresPairs(t) {
 		t.Run(fmt.Sprintf("%s:%s", pair[0], pair[1]), func(t *testing.T) {
-			require.True(t, matrixSet[pair],
-				"nav.ts gates on %s:%s but uiPermissionMatrix has no matching entry", pair[0], pair[1])
+			require.True(t, registered[pair],
+				"nav.ts gates on %s:%s but no such permission is registered", pair[0], pair[1])
 		})
 	}
 }
 
-// TestUIPermissionMatrix_CoversCanCalls proves every literal can("resource",
-// "action") gate anywhere under web/app/src (button visibility, route
-// guards, etc., not just the sidebar) has a matching entry in
-// uiPermissionMatrix. A gate present in the UI but absent here means
-// /api/v1/auth/me never reports the key, so the control stays hidden even
-// for an identity that holds the grant (go-xkms#846).
-func TestUIPermissionMatrix_CoversCanCalls(t *testing.T) {
-	matrixSet := make(map[[2]string]bool, len(uiPermissionMatrix))
-	for _, pair := range uiPermissionMatrix {
-		matrixSet[pair] = true
-	}
-
+// TestUIPermissions_CanCallsAreRegistered proves every literal can("resource",
+// "action") gate anywhere under web/app/src (button visibility, route guards,
+// etc., not just the sidebar) names a registered permission. A gate that is
+// not registered is never reported by /api/v1/auth/me, so the control stays
+// hidden even for an identity that holds every grant (go-xkms#846).
+func TestUIPermissions_CanCallsAreRegistered(t *testing.T) {
+	registered := registeredPermissions()
 	seen := make(map[[2]string]bool)
 	for _, site := range canCallPairs(t) {
 		if seen[site.pair] {
@@ -171,8 +184,8 @@ func TestUIPermissionMatrix_CoversCanCalls(t *testing.T) {
 		seen[site.pair] = true
 
 		t.Run(fmt.Sprintf("%s:%s", site.pair[0], site.pair[1]), func(t *testing.T) {
-			require.True(t, matrixSet[site.pair],
-				"%s calls can(%q, %q) but uiPermissionMatrix has no matching entry",
+			require.True(t, registered[site.pair],
+				"%s calls can(%q, %q) but no such permission is registered",
 				site.file, site.pair[0], site.pair[1])
 		})
 	}

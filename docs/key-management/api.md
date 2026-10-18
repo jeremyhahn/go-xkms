@@ -792,7 +792,7 @@ condition.
   never decodes a hex string at all) have no gRPC line to mirror; they are
   `ErrCodeInvalidParams`, the same classification this package already gives
   every other malformed-request-field refusal.
-- **`pkg/api/mcp/handlers_frost_stub.go`**'s `routeFrostMethods` (built
+- **`pkg/api/mcp/handlers_frost_stub.go`**'s stub handlers (built
   under `!frost`, answering every `frost.*` method with "not compiled in")
   changed from a bare `*errs.Message` to `ErrCodeMethodNotFound`, matching
   `pkg/api/grpc/service_frost_stub.go`'s `errFrostNotCompiled`
@@ -827,7 +827,7 @@ condition.
 **The guard: two tests that fail if any registered handler regresses.**
 `pkg/api/mcp/guard_keyoperror_test.go` adds
 `TestEveryRegisteredHandler_ReturnsKeyOpErrorOrNil`, a runtime sweep over
-`rpcMethodHandlers` — the same table `InvokeMethod` dispatches through and
+`rpcMethods` — the same table `InvokeMethod` dispatches through and
 `ModuleMethods()` advertises as MCP tools, and the same table
 `TestEveryHandler_MalformedParamsAreInvalidParams` (#774) already sweeps for
 the decode-failure gate — driving each handler with a valid, empty JSON
@@ -839,13 +839,9 @@ barrier, SSH) so a handler that depends on one of those does not panic on a
 nil dereference; every other subsystem (shares, audit, custodian groups, CA,
 WebAuthn, PIV, FROST backends, the tenant service) is deliberately left nil,
 so a handler that reaches its own subsystem's "not configured" guard
-exercises exactly the path this issue's bug class lived in. Because
-`frost.*` methods are dispatched by `routeFrostMethods` *before*
-`rpcMethodHandlers` is ever consulted (`InvokeMethod`, `module_support.go`),
-they are outside that sweep's reach; `TestEveryFrostMethod_ReturnsKeyOpErrorOrNil`
-is their identical counterpart, run against the fixed `frostMethods` list
-and passing under both the `frost` tag (the real handlers) and without it
-(the stub).
+exercises exactly the path this issue's bug class lived in. The `frost.*`
+methods are entries of the same table, so the sweep covers them under both
+the `frost` tag (the real handlers) and without it (the stubs).
 
 This runtime-sweep mechanism was chosen over a `go/ast` static check for two
 reasons. First, it proves exactly what `module_mcp.go` itself observes: it

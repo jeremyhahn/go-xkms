@@ -26,6 +26,7 @@ import (
 	"sync"
 	"testing"
 
+	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
 	qrdbtransport "github.com/jeremyhahn/go-qrdb/sdk/go/transport"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -200,45 +201,38 @@ func TestNewServer_RBACDisabled_DefaultsToDisabledAuthorizer(t *testing.T) {
 	assert.False(t, server.rbacEnabled)
 }
 
-// TestMethodPermissions_CoverEveryDispatchableMethod is the anti-gap test: it
-// fails if a JSON-RPC method can be dispatched without being either declared
-// public or bound to a permission. A new method added to rpcMethodHandlers
-// without a permission entry breaks this test rather than shipping ungated.
+// TestMethodPermissions_CoverEveryDispatchableMethod is the anti-gap test:
+// every rpcMethods entry either registers a parseable qrdbsdk.Permission or
+// is one of the named public methods, so a method registered with
+// handlePublic by mistake breaks this test rather than shipping ungated.
 func TestMethodPermissions_CoverEveryDispatchableMethod(t *testing.T) {
-	var unmapped []string
+	// The only methods registered with handlePublic. A new public method must
+	// be added here on purpose; every other registration carries a permission.
+	wantPublic := []string{"health", "invite.get", "invite.pivActivate", "xkms.algorithms"}
 
-	dispatchable := make([]string, 0, len(rpcMethodHandlers))
-	for method := range rpcMethodHandlers {
-		dispatchable = append(dispatchable, method)
-	}
-
-	for _, method := range dispatchable {
-		_, public := publicMethods[method]
-		_, mapped := methodPermissions[method]
-		if !public && !mapped {
-			unmapped = append(unmapped, method)
+	var public []string
+	for method, entry := range rpcMethods {
+		if entry.public() {
+			public = append(public, method)
+			continue
 		}
-		assert.False(t, public && mapped, "method %q is both public and permission-mapped", method)
+		parsed, err := qrdbsdk.ParsePermission(string(entry.perm))
+		require.NoError(t, err, "method %q registers an unparseable permission %q", method, entry.perm)
+		assert.Equal(t, entry.perm, parsed, "method %q", method)
 	}
+	sort.Strings(public)
+	assert.Equal(t, wantPublic, public, "methods registered without a permission")
 
-	sort.Strings(unmapped)
-	assert.Empty(t, unmapped, "dispatchable MCP methods without a permission mapping")
-
-	// Every mapping must name a real resource and action.
-	for method, perm := range methodPermissions {
-		assert.NotEmpty(t, perm.resource, "method %q has an empty resource", method)
-		assert.NotEmpty(t, perm.action, "method %q has an empty action", method)
-	}
-
-	// The FROST namespace is build-tagged; its permissions live in the table
+	// The FROST namespace is build-tagged; its permissions are registered
 	// unconditionally so a `-tags frost` build cannot ship unenforced.
 	for _, method := range []string{
 		"frost.generateKey", "frost.importKey", "frost.listKeys", "frost.getKey",
 		"frost.deleteKey", "frost.generateNonces", "frost.signRound",
 		"frost.aggregate", "frost.verify",
 	} {
-		_, mapped := methodPermissions[method]
-		assert.True(t, mapped, "FROST method %q has no permission mapping", method)
+		entry, ok := rpcMethods[method]
+		require.True(t, ok, "FROST method %q is not registered", method)
+		assert.False(t, entry.public(), "FROST method %q has no permission", method)
 	}
 }
 
@@ -250,17 +244,18 @@ func TestAuthorizeMethod_EveryPrivilegedMethod(t *testing.T) {
 	svc := setupTestXKMS(t)
 	defer cleanupXKMS()
 
-	methods := make([]string, 0, len(methodPermissions))
-	for method := range methodPermissions {
-		methods = append(methods, method)
+	methods := make([]string, 0, len(rpcMethods))
+	for method, entry := range rpcMethods {
+		if !entry.public() {
+			methods = append(methods, method)
+		}
 	}
 	sort.Strings(methods)
 
 	require.NotEmpty(t, methods)
 
 	for _, method := range methods {
-		perm := methodPermissions[method]
-		grant := perm.resource + ":" + perm.action
+		grant := string(rpcMethods[method].perm)
 
 		t.Run(method+"/denied_without_permission", func(t *testing.T) {
 			rbac := newFakeRBAC() // no grants
@@ -375,30 +370,26 @@ func TestAuthorizeMethod_AuthorizerReportsUnauthenticated(t *testing.T) {
 	assert.Equal(t, ErrCodeUnauthorized, resp.Error.Code)
 }
 
-// TestAuthorizeMethod_UnmappedDispatchableMethod_Denied proves the gate fails
-// closed for a dispatchable method with no permission entry. The FROST
-// namespace is dispatched by prefix, so a future frost.* method that nobody
-// mapped is denied instead of silently exposed.
-func TestAuthorizeMethod_UnmappedDispatchableMethod_Denied(t *testing.T) {
+// TestAuthorizeMethod_UnregisteredMethodInKnownNamespace_NotFound proves a
+// method name with no rpcMethods registration, even in a registered
+// namespace, reaches no handler: it is reported as method-not-found and
+// never asks qrdb for a grant.
+func TestAuthorizeMethod_UnregisteredMethodInKnownNamespace_NotFound(t *testing.T) {
 	svc := setupTestXKMS(t)
 	defer cleanupXKMS()
 
 	rbac := newFakeRBAC("keys:sign", "keys:create", "keys:list")
 	server := newRBACServer(t, svc, rbac)
 
-	err := server.authorizeMethod(authedCtx(), "frost.futureOperation")
-	require.Error(t, err)
-	assert.ErrorIs(t, err, ErrMethodPermissionUnmapped)
-
-	var keyOpErr *KeyOpError
-	require.True(t, errors.As(err, &keyOpErr))
-	assert.Equal(t, ErrCodeForbidden, keyOpErr.Code)
+	// A method is dispatchable only through its rpcMethods registration, so
+	// a name with no registration has no handler to protect.
+	require.NoError(t, server.authorizeMethod(authedCtx(), "frost.futureOperation"))
 
 	resp := call(server, authedCtx(), "frost.futureOperation")
 	require.NotNil(t, resp)
 	require.NotNil(t, resp.Error)
-	assert.Equal(t, ErrCodeForbidden, resp.Error.Code)
-	assert.Zero(t, rbac.callCount(), "an unmapped method is denied without consulting qrdb")
+	assert.Equal(t, ErrCodeMethodNotFound, resp.Error.Code)
+	assert.Zero(t, rbac.callCount(), "an unregistered method is rejected without consulting qrdb")
 }
 
 // TestAuthorizeMethod_UnknownMethod_StillMethodNotFound proves the gate does
@@ -539,12 +530,24 @@ func TestRBACDisabled_ParityWithRESTAndQUIC(t *testing.T) {
 		"MCP admits the request when authorization is disabled, exactly as REST and QUIC do")
 }
 
-// TestIsDispatchable classifies the two dispatch paths InvokeMethod uses.
-func TestIsDispatchable(t *testing.T) {
-	assert.True(t, isDispatchable("xkms.sign"), "table-dispatched method")
-	assert.True(t, isDispatchable("frost.signRound"), "build-tagged namespace")
-	assert.True(t, isDispatchable("frost.somethingNew"), "unknown method in a dispatched namespace")
-	assert.False(t, isDispatchable("totally.unknown"))
+// TestHandle_RegistersResourceActionPermission proves handle binds the
+// resource:action pair to the registration.
+func TestHandle_RegistersResourceActionPermission(t *testing.T) {
+	entry := handle(auth.ResourceKeys, auth.ActionSign, (*Server).handleHealth)
+
+	assert.Equal(t, qrdbsdk.Permission(auth.ResourceKeys+":"+auth.ActionSign), entry.perm)
+	assert.False(t, entry.public())
+	assert.NotNil(t, entry.handler)
+}
+
+// TestHandlePublic_RegistersNoPermission proves a handlePublic registration
+// carries no permission and so is never gated.
+func TestHandlePublic_RegistersNoPermission(t *testing.T) {
+	entry := handlePublic((*Server).handleHealth)
+
+	assert.Empty(t, entry.perm)
+	assert.True(t, entry.public())
+	assert.NotNil(t, entry.handler)
 }
 
 // goldenMethodPermissions is the complete, literal resource:action pair every
@@ -773,20 +776,33 @@ var goldenMethodPermissions = map[string]string{
 // different string — fails here. The check runs in both directions so neither a
 // changed pair nor an added or removed method can slip through.
 func TestMethodPermissions_MatchOtherTransports(t *testing.T) {
-	require.Len(t, methodPermissions, len(goldenMethodPermissions),
+	registered := registeredPermissions()
+	require.Len(t, registered, len(goldenMethodPermissions),
 		"a method was added to or removed from the permission table without updating the wire contract")
 
 	for method, want := range goldenMethodPermissions {
-		perm, ok := methodPermissions[method]
+		got, ok := registered[method]
 		require.True(t, ok, "method %q lost its permission mapping", method)
-		assert.Equal(t, want, perm.resource+":"+perm.action, "method %q", method)
+		assert.Equal(t, want, got, "method %q", method)
 	}
 
-	for method, perm := range methodPermissions {
+	for method, got := range registered {
 		want, ok := goldenMethodPermissions[method]
 		require.True(t, ok, "method %q was added without a wire-contract entry", method)
-		assert.Equal(t, want, perm.resource+":"+perm.action, "method %q", method)
+		assert.Equal(t, want, got, "method %q", method)
 	}
+}
+
+// registeredPermissions returns the resource:action pair every non-public
+// rpcMethods entry registers, keyed by method.
+func registeredPermissions() map[string]string {
+	perms := make(map[string]string, len(rpcMethods))
+	for method, entry := range rpcMethods {
+		if !entry.public() {
+			perms[method] = string(entry.perm)
+		}
+	}
+	return perms
 }
 
 // TestMethodPermissions_NoInventedVocabulary proves the table only uses
@@ -807,9 +823,11 @@ func TestMethodPermissions_NoInventedVocabulary(t *testing.T) {
 		auth.ResourceUsers: {}, auth.ResourceBackup: {},
 	}
 
-	for method, perm := range methodPermissions {
-		_, ok := resources[perm.resource]
-		assert.True(t, ok, "method %q uses unknown resource %q", method, perm.resource)
-		assert.False(t, strings.ContainsAny(perm.action, " \t"), "method %q action %q is malformed", method, perm.action)
+	for method, perm := range registeredPermissions() {
+		resource := qrdbsdk.PermissionResource(qrdbsdk.Permission(perm))
+		action := qrdbsdk.PermissionAction(qrdbsdk.Permission(perm))
+		_, ok := resources[resource]
+		assert.True(t, ok, "method %q uses unknown resource %q", method, resource)
+		assert.False(t, strings.ContainsAny(action, " \t"), "method %q action %q is malformed", method, action)
 	}
 }

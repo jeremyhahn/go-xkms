@@ -63,7 +63,7 @@ func (s *Server) clusterCAKeyProtection() (clustercapkg.KeyProtection, error) {
 // the same way whether or not that walk has run yet, since it is never
 // reference-shaped. The one case genuinely unresolved here is a
 // credential:// reference on the PRE-node cluster-ACME bootstrap path (this
-// function's other caller, provisionRaftClusterACME, runs before the
+// function's other caller, provisionRaftClusterTrustedCA, runs before the
 // credential service — and so resolveConfigSecrets — exist): that now fails
 // closed with *types.SecretReferenceUnresolvedError instead of the previous
 // direct buildSecretRegistry().Resolve call's registry fallback, which would

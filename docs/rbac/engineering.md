@@ -39,23 +39,23 @@ func (e *TenantBindingError) Error() string // qrdbsdk.ErrTenantMissing's messag
 func (e *TenantBindingError) Unwrap() error // qrdbsdk.ErrTenantMissing
 ```
 
-`bindTenantTarget(ctx, op, target)` (`pkg/xkms/tenant_binding.go:88`) admits
-a caller only when `target` is its own tenant (`scope.TenantName` of each
-side, so the empty tenant and `system` are the same). The system tenant gets
-no exception: a system-tenant identity naming another tenant is refused like
-any other (go-xkms#1406). A caller with no identity is the system tenant here
-(`callerTenant`) — in-process SDK callers carry none — and is confined to it
-the same way. `bindTenantRecord(ctx, op, target)` (`:99`) guards the tenant
-registry, which is the system tenant's: a system-tenant caller passes for
-any record, every other caller only for its own. `requireSystemTenant(ctx,
-op, target)` (`:119`) admits only a system-tenant caller; it guards plan
-management and every operation on platform-global state, which passes an
-empty target. `targetTenant(ctx, op, requested)` (`:137`) resolves the tenant
-an operation acts in: a named tenant must pass `bindTenantTarget`, and an
-unnamed one is the caller's own. All of them refuse with a
-`*TenantBindingError` (`:34`), which is exactly what the composed go-qrdb
+`ownTenant(ctx, op, requested)` (`pkg/xkms/tenant_binding.go:86`) resolves
+the tenant an operation acts in through `auth.OwnTenant`
+(`pkg/auth/auth.go:133`), which delegates to `qrdbsdk.OwnTenant`: the
+caller's own tenant, which `requested` may name or leave empty. Naming any
+other tenant is refused, and the system tenant gets no exception: a
+system-tenant identity naming another tenant is refused like any other
+(go-xkms#1406). A caller with no identity is the system tenant — in-process
+SDK callers carry none — and is confined to it the same way.
+`admitTenantRecord(ctx, op, target)` (`:101`) guards the tenant registry,
+which is the system tenant's: through `auth.AdmitTenant` (`pkg/auth/auth.go:145`)
+a system-tenant caller passes for any record, every other caller only for its
+own. Plan management and every operation on platform-global state admit only
+a system-tenant caller, checked with `qrdbsdk.IdentityIsSystemTenant` at the
+call site and refused through `refuseTenant` (`:59`). Every refusal is a
+`*TenantBindingError` (`:35`), which is exactly what the composed go-qrdb
 TenantService returns for an unknown tenant: same sentinel, same message
-(`:46`, `:52`). Every transport already answers that sentinel with its
+(`:47`, `:53`). Every transport already answers that sentinel with its
 not-found status, so a foreign tenant ID is indistinguishable from an unused
 one. The fields exist for server-side diagnostics (`errors.As`) and are never
 rendered.
@@ -64,26 +64,22 @@ The binding is applied once, in `XKMSService`, and no transport repeats it:
 
 | Method | Check | Site |
 |---|---|---|
-| `GetTenant` | `bindTenantRecord` | `pkg/xkms/servicer_tenant.go:89` |
-| `ListTenants` | filters with `bindTenantRecord` (`visibleToCaller`) | `pkg/xkms/servicer_tenant.go:121` |
-| `DeleteTenant` | `bindTenantRecord` | `pkg/xkms/servicer_tenant.go:138` |
-| `TenantBarrierInit` | `bindTenantTarget` | `pkg/xkms/servicer_tenant.go:191` |
-| `TenantBarrierUnseal` | `bindTenantTarget` | `pkg/xkms/servicer_tenant.go:246` |
-| `TenantBarrierStatus` | `bindTenantTarget` | `pkg/xkms/servicer_tenant.go:283` |
-| `UpdateTenantEntitlements` | `requireSystemTenant` | `pkg/xkms/servicer_tenant.go:163` |
-| `UpdateTenantQuotas` | `requireSystemTenant` | `pkg/xkms/servicer_tenant.go:190` |
-| `BarrierEnableEncryption` | `bindTenantTarget` (empty `TenantID` = system barrier) | `pkg/xkms/servicer_barrier.go:377` |
-| `SignCSR` | `bindTenantTarget` when `TenantID` is set (the SPIFFE tenant SAN) | `pkg/xkms/servicer_ca.go:172` |
-| `IssueCertificate` | `bindTenantTarget` when `TenantID` is set | `pkg/xkms/servicer_ca.go:403` |
-| `RevokeCertificate` | `bindTenantTarget` on the certificate's issuing tenant | `pkg/xkms/servicer_ca.go:474` |
-| `RotateScopeKeys` | `targetTenant` (every caller rotates its own tenant) | `pkg/xkms/servicer_keyversion.go:206` |
-| `SealStorePut` / `Get` / `Delete` / `List` / `Reseal` / `Status` | `requireSystemTenant` (#1226) | `pkg/xkms/servicer_seal_store.go:47,65,90,109,127,146` |
-| `SubmitCredential`, `ListCredentials` | `requireSystemTenant` (#1226) | `pkg/xkms/servicer_credentials.go:32,73` |
-| system barrier: `BarrierInitialize[WithCredentials]`, `BarrierUnseal[WithCredentials]`, `BarrierSeal`, `BarrierStatus`, `BarrierInitializeShamir`, `BarrierUnsealWithShare(s)`, `BarrierRekey`, `BarrierGenerateRecoveryKeys`, `BarrierRecoverWithKeys`, `BarrierDeleteRecoveryKeys`, `BarrierHasRecoveryKeys`, `BarrierGenerateRootToken` | `requireSystemTenant` (#1227) | `pkg/xkms/servicer_barrier.go:89,117,128,139,170,205,236,253,278,300,314,325,342` |
-| `SetSOPIN`, `SetUserPIN`, `ChangeSOPIN`, `ChangeUserPIN`, `VerifySOPIN`, `VerifyUserPIN`, `GetLockoutStatus`, `ResetLockout` | `requireSystemTenant` (#1227) | `pkg/xkms/servicer_pin.go:43,54,65,76,87,98,109,136` |
-| `ListPIVSlots`, `GetPIVCertificate`, `StorePIVCertificate`, `DeletePIVCertificate`, `GeneratePIVKey`, `ImportPIVCertificate`, `ExportPIVCertificate`, `GeneratePIVCSR` | `requireSystemTenant` (#1227) | `pkg/xkms/servicer_piv.go:31,40,49,58,67,76,85,94` |
-| `GetTenantTPMMode`, `SetTenantTPMMode`, `TenantVTPMStatus` / `Start` / `Stop` | `requireSystemTenant` | `pkg/xkms/servicer_tpm_policy.go` (`tenantTPMService`) |
-| `TPMPolicy*`, `TPMObjectPolicy` | `targetTenant` (every caller, the system tenant included, acts on its own tenant) | `pkg/xkms/servicer_tpm_policy.go:37` |
+| `GetTenant` | `admitTenantRecord` | `pkg/xkms/servicer_tenant.go:91` |
+| `ListTenants` | filters with `admitTenantRecord` | `pkg/xkms/servicer_tenant.go:123` |
+| `DeleteTenant` | `admitTenantRecord` | `pkg/xkms/servicer_tenant.go:140` |
+| `UpdateTenantEntitlements` | `qrdbsdk.IdentityIsSystemTenant` | `pkg/xkms/servicer_tenant.go:165` |
+| `UpdateTenantQuotas` | `qrdbsdk.IdentityIsSystemTenant` | `pkg/xkms/servicer_tenant.go:192` |
+| `SignCSR` | `ownTenant` when `TenantID` is set (the SPIFFE tenant SAN) | `pkg/xkms/servicer_ca.go:175` |
+| `IssueCertificate` | `ownTenant` when `TenantID` is set | `pkg/xkms/servicer_ca.go:406` |
+| `RevokeCertificate` | `ownTenant` on the certificate's issuing tenant | `pkg/xkms/servicer_ca.go:478` |
+| `RotateScopeKeys` | `ownTenant` (every caller rotates its own tenant) | `pkg/xkms/servicer_keyversion.go:207` |
+| `SealStorePut` / `Get` / `Delete` / `List` / `Reseal` / `Status` | `qrdbsdk.IdentityIsSystemTenant` (#1226) | `pkg/xkms/servicer_seal_store.go:50,68,93,112,130,149` |
+| `SubmitCredential`, `ListCredentials` | `qrdbsdk.IdentityIsSystemTenant` (#1226) | `pkg/xkms/servicer_credentials.go:35,78` |
+| `SetSOPIN`, `SetUserPIN`, `ChangeSOPIN`, `ChangeUserPIN`, `VerifySOPIN`, `VerifyUserPIN`, `GetLockoutStatus`, `ResetLockout` | `qrdbsdk.IdentityIsSystemTenant` (#1227) | `pkg/xkms/servicer_pin.go:46,58,70,82,94,106,118,146` |
+| `ListPIVSlots`, `GetPIVCertificate`, `StorePIVCertificate`, `DeletePIVCertificate`, `GeneratePIVKey`, `ImportPIVCertificate`, `ExportPIVCertificate`, `GeneratePIVCSR` | `qrdbsdk.IdentityIsSystemTenant` (#1227) | `pkg/xkms/servicer_piv.go:33,42,51,60,69,78,87,96` |
+| `TrustRoot*` | `qrdbsdk.IdentityIsSystemTenant` | `pkg/xkms/servicer_trust_roots.go:42` |
+| `GetTenantTPMMode`, `SetTenantTPMMode`, `TenantVTPMStatus` / `Start` / `Stop` | `qrdbsdk.IdentityIsSystemTenant` | `pkg/xkms/servicer_tpm_policy.go:53` |
+| `TPMPolicy*`, `TPMObjectPolicy` | `ownTenant` (every caller, the system tenant included, acts on its own tenant) | `pkg/xkms/servicer_tpm_policy.go:40` |
 
 The platform-scoped rows are reached on every transport only through the
 service: the REST handlers (`pkg/api/rest/seal_store_handlers.go`,
@@ -114,8 +110,9 @@ none repeats the check. See
 and tenant partitions".
 The ACME admin plane (`pkg/acme/admin`) is served by its own service, not
 `XKMSService`, and carries its own binding with the same convention
-(go-xkms#1225): `bindTenantTarget` and `requirePlatformScope`
-(`pkg/acme/admin/tenant_binding.go:103`, `:113`), whose
+(go-xkms#1225): `admitTenant` (`pkg/acme/admin/tenant_binding.go:105`), over
+`auth.AdmitTenant`, and a `qrdbsdk.IdentityIsSystemTenant` check that refuses
+with `*PlatformScopeError` (`:63`) for platform-only operations. Its
 `*TenantBindingError` unwraps to that package's `ErrTenantNotFound` and reads
 as a missing tenant. It also checks that a role or user belongs to the tenant
 the path names before touching it, scopes ACME certificates, accounts and
@@ -201,9 +198,10 @@ legacy per-transport listeners, including `pkg/api/quic`, were removed
 wholesale) and rejecting a raw string literal or an unknown constant name
 (see Test strategy). `internal/authzscan.Scan` covers the per-call-site
 transports — gRPC's `s.authorize(...)` calls, REST's `routes.go` route-table
-helper calls, and `pkg/acme/admin`'s `gate.Wrap(...)` calls —
-`internal/authzscan.ScanMap` covers MCP's `methodPermissions` map literal
-directly, and `pkg/api/authz_consistency_test` cross-checks all three
+helper calls, and `pkg/acme/admin`'s `adminRoute`/`tenantRoute`/`tenantCrossRoute`
+route-table entries (`pkg/acme/admin/routes.go:97-174`) —
+`internal/authzscan.ScanMap` covers the `handle(...)` registrations in MCP's
+`rpcMethods` table directly, and `pkg/api/authz_consistency_test` cross-checks all three
 against a hand-built capability table so the same capability cannot require
 different permissions on different transports (go-xkms#1232).
 
@@ -301,8 +299,8 @@ specific permission before assuming a non-Admin role holds it.
 - **A route/RPC/tool's resource and action must be `pkg/auth` constants,
   never string literals**, on every transport — enforced by
   `internal/authzscan`, which scans gRPC's, REST's, and `pkg/acme/admin`'s
-  call sites (`authzscan.Scan`) and MCP's `methodPermissions` map literal
-  directly (`authzscan.ScanMap`). REST's `routes.go` briefly carried three
+  call sites (`authzscan.Scan`) and the `handle(...)` registrations in MCP's
+  `rpcMethods` table directly (`authzscan.ScanMap`). REST's `routes.go` briefly carried three
   raw literals (`"derive"`, `"wrap"`, `"unwrap"`) with no test to catch them
   until go-xkms#1232 added `pkg/api/rest/authz_golden_test.go`.
 - **The same capability requires the same permission on every transport
@@ -360,17 +358,17 @@ specific permission before assuming a non-Admin role holds it.
 - **A tenant ID taken from a request is bound in `XKMSService`, never in a
   transport.** The RBAC gate cannot do it (see `Authorize` above); a
   transport-level copy is a second owner that drifts. A new service method
-  that targets a caller-supplied tenant calls `bindTenantTarget` (or
-  `requireSystemTenant`) and gets a row in the table above.
+  that targets a caller-supplied tenant calls `ownTenant` (or checks
+  `qrdbsdk.IdentityIsSystemTenant`) and gets a row in the table above.
 - **Plan management is platform-only.** Entitlements and quotas are gated on
   qrdb's dedicated `tenants:set_entitlements` / `tenants:set_quotas`
   (`pkg/auth/permissions.go:154-155`), never `tenants:update`, on every
-  transport: `pkg/api/rest/routes.go:300-301`, `pkg/api/mcp/authz.go:239-240`,
+  transport: `pkg/api/rest/routes.go:300-301`, `pkg/api/mcp/server.go:375-376`,
   `pkg/api/grpc/service_tenant.go:896,922`, and the
   `qrdb.v1.permission` options at `pkg/api/grpc/proto/xkmsv1/xkms.proto:647,654`.
   Because both permissions are self-scoped in qrdb and qrdb's built-in Admin
   role grants `tenants:set_entitlements`, the RBAC gate alone would still
-  let a Tenant Admin change its own plan; `requireSystemTenant` is what
+  let a Tenant Admin change its own plan; `qrdbsdk.IdentityIsSystemTenant` is what
   refuses it.
 - **Platform-global state is platform-only.** The sealed platform store and
   the backend credentials in it, the system barrier, the token PINs, the
@@ -378,7 +376,7 @@ specific permission before assuming a non-Admin role holds it.
   permissions (`keys:*`, `credentials:submit`, `seal:*`, `barrier:*`,
   `pin:*`, `piv:*`, `policy:*`) are self-scoped, so a tenant-local Admin
   passes the gate for all of them (go-xkms#1226, #1227). Each service method
-  calls `requireSystemTenant` before it touches the subsystem, and each
+  checks `qrdbsdk.IdentityIsSystemTenant` before it touches the subsystem, and each
   transport reaches the subsystem only through that method. A new operation
   on one of these subsystems adds a row to the table above and an entry to
   `platformScopedOps` (`pkg/xkms/platform_scope_test.go`).
@@ -509,7 +507,7 @@ constructs `pkg/server` directly with a non-`qrdb` backend and
 | REST | `RBACMiddleware.RequirePermission(resource, action)` (`pkg/api/rest/rbac_middleware.go`), applied per `RouteSpec` in `pkg/api/rest/routes.go` where `Auth == RouteAuthPermission`, ahead of the route's body bound (`pkg/api/rest/server.go:563-565`), so a denied caller gets 403 before its body is read | table-driven; a route's `Enabled` guard can also remove it entirely when its subsystem is unconfigured |
 | gRPC | `Service.authorize(ctx, resource, action, resourceID)` (`pkg/api/grpc/service.go`) | emits an `audit.Event` (`Outcome: OutcomeAllow`/`OutcomeDeny`) on every call — see Observability |
 | QUIC | Same as REST — HTTP/3 on the unified REST listener, no separate package | |
-| MCP | `Server.authorizeMethod` / the `methodPermissions` table (`pkg/api/mcp/authz.go`) | fails closed at `NewServer` if RBAC is enabled without a usable authorizer |
+| MCP | `Server.authorizeMethod` (`pkg/api/mcp/authz.go`), reading the permission each `rpcMethods` entry registers with `handle` (`pkg/api/mcp/server.go`) | fails closed at `NewServer` if RBAC is enabled without a usable authorizer |
 
 Authentication is mandatory on every transport whether or not RBAC is
 enabled; RBAC only governs authorization once an identity is established.
@@ -518,7 +516,11 @@ MCP reports a missing identity as JSON-RPC `-32002` and a missing grant as
 `-32003` (`ErrCodeUnauthorized`, `ErrCodeForbidden`,
 `pkg/api/mcp/types.go:65`, `:72`). The only public methods are `health`,
 `xkms.algorithms`, `invite.get` and `invite.pivActivate`, the same ones REST
-serves unauthenticated (`publicMethods`, `pkg/api/mcp/authz.go:61-77`).
+serves unauthenticated; they are the only entries registered with
+`handlePublic` (`pkg/api/mcp/server.go:250`, `:256`, `:407-408`). A method
+missing from `rpcMethods` has no handler, so it is refused as
+`ErrCodeMethodNotFound`; there is no dispatchable method without a
+permission.
 
 ## Role assignment mechanism
 
@@ -569,9 +571,9 @@ re-exported verbatim so a downstream consumer needs a single import.
   string literal or an unrecognized `pkg/auth` constant name:
   `pkg/api/grpc/authz_golden_test.go` (gRPC's `authorize` call sites),
   `pkg/api/rest/authz_golden_test.go` (REST's `routes.go` route-table helper
-  calls), `pkg/acme/admin/authz_golden_test.go` (`gate.Wrap` call sites), and
-  `pkg/api/mcp/authz_golden_test.go` (the `methodPermissions` map literal,
-  via `authzscan.ScanMap`). `internal/authzscan_test.go` covers the scanner
+  calls), `pkg/acme/admin/authz_golden_test.go` (the route-table entries), and
+  `pkg/api/mcp/authz_golden_test.go` (the `handle(...)` registrations in
+  `rpcMethods`, via `authzscan.ScanMap`). `internal/authzscan_test.go` covers the scanner
   itself, including the raw-literal and unknown-constant rejection paths.
 - **Cross-transport consistency** — `pkg/api/authz_consistency_test`
   (`TestCapabilities_RequireSamePermissionOnEveryTransport`) re-derives the

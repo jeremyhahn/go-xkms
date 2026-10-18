@@ -59,6 +59,14 @@ const (
 // mcpHandler is the function signature for MCP method dispatch handlers.
 type mcpHandler func(ctx context.Context, params json.RawMessage) (interface{}, error)
 
+// mcpMethod is one ACME admin MCP method: the full name of the AdminService
+// RPC it mirrors, whose qrdb.v1.permission option is the permission the
+// method requires, and its handler.
+type mcpMethod struct {
+	rpc    string
+	handle mcpHandler
+}
+
 // ErrMethodNotFound is returned when an MCP method is not found in the dispatch map.
 var ErrMethodNotFound = errors.New("method not found")
 
@@ -92,6 +100,12 @@ type ServerConfig struct {
 	IdleTimeout time.Duration
 	// Role mapping for gRPC Unix socket authentication
 	GRPCRoleMapping *RoleMapping
+
+	// MTLSAuth authenticates gRPC TCP callers from their client certificate:
+	// the tenant qrdbsdk.TenantFromClientCert names under its trust domain,
+	// the roles of the go-qrdb user the certificate binds to. A nil MTLSAuth
+	// leaves every TCP caller without an identity, so authorization denies it.
+	MTLSAuth *admin.MTLSAuthHandler
 
 	// Authorizer is the qrdb-backed authorization seam every ACME admin
 	// protocol surface (REST, gRPC, MCP) delegates its decisions to. It is
@@ -142,7 +156,7 @@ type MultiProtocolServer struct {
 	router         *mux.Router
 
 	// MCP method dispatch map for O(1) routing
-	mcpHandlers map[string]mcpHandler
+	mcpHandlers map[string]mcpMethod
 
 	// Protocol servers
 	restServer       *http.Server
@@ -205,48 +219,51 @@ func NewMultiProtocolServer(
 }
 
 // initMCPHandlers initializes the MCP method dispatch map for O(1) routing.
+// Each method names the AdminService RPC it mirrors; that RPC's
+// qrdb.v1.permission option (api/proto/admin.proto) is the permission the
+// method requires, so MCP and gRPC callers need the same grant.
 func (s *MultiProtocolServer) initMCPHandlers() {
-	s.mcpHandlers = map[string]mcpHandler{
+	s.mcpHandlers = map[string]mcpMethod{
 		// Status operations
-		"admin.getStatus": s.mcpGetStatus,
-		"admin.getStats":  s.mcpGetStats,
+		"admin.getStatus": {adminv1.AdminService_GetStatus_FullMethodName, s.mcpGetStatus},
+		"admin.getStats":  {adminv1.AdminService_GetStats_FullMethodName, s.mcpGetStats},
 
 		// Certificate operations
-		"admin.listCertificates":  s.mcpListCertificates,
-		"admin.getCertificate":    s.mcpGetCertificate,
-		"admin.revokeCertificate": s.mcpRevokeCertificate,
+		"admin.listCertificates":  {adminv1.AdminService_ListCertificates_FullMethodName, s.mcpListCertificates},
+		"admin.getCertificate":    {adminv1.AdminService_GetCertificate_FullMethodName, s.mcpGetCertificate},
+		"admin.revokeCertificate": {adminv1.AdminService_RevokeCertificate_FullMethodName, s.mcpRevokeCertificate},
 
 		// Account operations
-		"admin.listAccounts":   s.mcpListAccounts,
-		"admin.getAccount":     s.mcpGetAccount,
-		"admin.disableAccount": s.mcpDisableAccount,
+		"admin.listAccounts":   {adminv1.AdminService_ListAccounts_FullMethodName, s.mcpListAccounts},
+		"admin.getAccount":     {adminv1.AdminService_GetAccount_FullMethodName, s.mcpGetAccount},
+		"admin.disableAccount": {adminv1.AdminService_DisableAccount_FullMethodName, s.mcpDisableAccount},
 
 		// Tenant operations
-		"admin.createTenant": s.mcpCreateTenant,
-		"admin.getTenant":    s.mcpGetTenant,
-		"admin.updateTenant": s.mcpUpdateTenant,
-		"admin.deleteTenant": s.mcpDeleteTenant,
-		"admin.listTenants":  s.mcpListTenants,
+		"admin.createTenant": {adminv1.AdminService_CreateTenant_FullMethodName, s.mcpCreateTenant},
+		"admin.getTenant":    {adminv1.AdminService_GetTenant_FullMethodName, s.mcpGetTenant},
+		"admin.updateTenant": {adminv1.AdminService_UpdateTenant_FullMethodName, s.mcpUpdateTenant},
+		"admin.deleteTenant": {adminv1.AdminService_DeleteTenant_FullMethodName, s.mcpDeleteTenant},
+		"admin.listTenants":  {adminv1.AdminService_ListTenants_FullMethodName, s.mcpListTenants},
 
 		// EAB operations
-		"admin.createEAB": s.mcpCreateEAB,
-		"admin.getEAB":    s.mcpGetEAB,
-		"admin.deleteEAB": s.mcpDeleteEAB,
-		"admin.listEABs":  s.mcpListEABs,
+		"admin.createEAB": {adminv1.AdminService_CreateEAB_FullMethodName, s.mcpCreateEAB},
+		"admin.getEAB":    {adminv1.AdminService_GetEAB_FullMethodName, s.mcpGetEAB},
+		"admin.deleteEAB": {adminv1.AdminService_DeleteEAB_FullMethodName, s.mcpDeleteEAB},
+		"admin.listEABs":  {adminv1.AdminService_ListEABs_FullMethodName, s.mcpListEABs},
 
 		// Role operations (RBAC)
-		"admin.createRole": s.mcpCreateRole,
-		"admin.getRole":    s.mcpGetRole,
-		"admin.updateRole": s.mcpUpdateRole,
-		"admin.deleteRole": s.mcpDeleteRole,
-		"admin.listRoles":  s.mcpListRoles,
+		"admin.createRole": {adminv1.AdminService_CreateTenantRole_FullMethodName, s.mcpCreateRole},
+		"admin.getRole":    {adminv1.AdminService_GetTenantRole_FullMethodName, s.mcpGetRole},
+		"admin.updateRole": {adminv1.AdminService_UpdateTenantRole_FullMethodName, s.mcpUpdateRole},
+		"admin.deleteRole": {adminv1.AdminService_DeleteTenantRole_FullMethodName, s.mcpDeleteRole},
+		"admin.listRoles":  {adminv1.AdminService_ListTenantRoles_FullMethodName, s.mcpListRoles},
 
 		// User operations (RBAC)
-		"admin.createUser": s.mcpCreateUser,
-		"admin.getUser":    s.mcpGetUser,
-		"admin.updateUser": s.mcpUpdateUser,
-		"admin.deleteUser": s.mcpDeleteUser,
-		"admin.listUsers":  s.mcpListUsers,
+		"admin.createUser": {adminv1.AdminService_CreateTenantUser_FullMethodName, s.mcpCreateUser},
+		"admin.getUser":    {adminv1.AdminService_GetTenantUser_FullMethodName, s.mcpGetUser},
+		"admin.updateUser": {adminv1.AdminService_UpdateTenantUser_FullMethodName, s.mcpUpdateUser},
+		"admin.deleteUser": {adminv1.AdminService_DeleteTenantUser_FullMethodName, s.mcpDeleteUser},
+		"admin.listUsers":  {adminv1.AdminService_ListTenantUsers_FullMethodName, s.mcpListUsers},
 	}
 }
 
@@ -647,7 +664,7 @@ func (s *MultiProtocolServer) buildRouter() {
 
 	// MCP endpoint for JSON-RPC over HTTP. It carries the same authentication
 	// middleware as the REST admin routes; per-method authorization happens in
-	// handleMCP against MCPMethodPermissions.
+	// handleMCP against the permission of the RPC each method mirrors.
 	mcpRouter := s.router.PathPrefix("/mcp").Subrouter()
 	if s.authMiddleware != nil {
 		mcpRouter.Use(s.authMiddleware.Authenticate)
@@ -806,7 +823,7 @@ func (s *MultiProtocolServer) startGRPC(_ context.Context) error {
 		// interceptor would have no identity to evaluate and would deny.
 		tcpOpts = append(tcpOpts, grpc.ChainUnaryInterceptor(
 			UnaryPeerCredentialsInterceptor(),
-			UnaryMTLSIdentityInterceptor(nil, nil, s.logger),
+			UnaryMTLSIdentityInterceptor(s.config.MTLSAuth, s.logger),
 			UnaryAuthorizationInterceptor(roleMapping, s.gate, s.logger),
 		))
 
@@ -1160,11 +1177,11 @@ func (s *MultiProtocolServer) logMCPError(r *http.Request, method, msg string, e
 // routeMCPMethod routes MCP method calls to the appropriate service method
 // using O(1) map-based dispatch.
 func (s *MultiProtocolServer) routeMCPMethod(ctx context.Context, method string, params json.RawMessage) (interface{}, error) {
-	handler, ok := s.mcpHandlers[method]
+	entry, ok := s.mcpHandlers[method]
 	if !ok {
 		return nil, caerrors.NotFoundError("method not found: %s", method)
 	}
-	return handler(ctx, params)
+	return entry.handle(ctx, params)
 }
 
 // writeMCPResponse writes a successful MCP response.

@@ -97,7 +97,7 @@ signatures, over `svc` for a fixed tenant (`""` is the system scope). It
 ignores every request's `TenantID`: authorizing the tenant is the caller's
 job. A nil `svc` is `ErrNotConfigured`.
 
-- `XKMSService` binds the caller's tenant (`targetTenant`, `pkg/xkms/tenant_binding.go`) and delegates.
+- `XKMSService` binds the caller's tenant (`ownTenant`, `pkg/xkms/tenant_binding.go:86`) and delegates.
 - A client's local mode (`pkg/localtpm`, re-exported as `sdk/go/localtpm`)
   delegates every `TPMPolicy*` method for the system scope, holding the
   caller's TPM lock around each call, so local and connected answers are the

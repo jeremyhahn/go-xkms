@@ -29,6 +29,12 @@ var (
 	// ErrNilLogger is returned when Options.Logger is unset.
 	ErrNilLogger = errors.New("embeddednode: options.Logger is required")
 
+	// ErrNilRaftMTLSResolver is returned when a multi-node cluster is built
+	// without Options.RaftMTLSResolver. There is no built-in fallback: the
+	// cluster CA is the composer's TrustedCA (or operator-supplied files),
+	// never a CA key generated and cached on disk (go-xkms#1381).
+	ErrNilRaftMTLSResolver = errors.New("embeddednode: options.RaftMTLSResolver is required for a multi-node cluster")
+
 	// ErrClusterRequiresRaftBuild is returned when a clustered configuration
 	// is supplied to a binary built without the `raft` build tag. Clustering
 	// pulls in the Raft transport and is compiled in only with `-tags raft`.

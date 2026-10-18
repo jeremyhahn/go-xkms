@@ -41,7 +41,7 @@ var (
 
 // The system-barrier and PIN RPCs delegate to the XKMSService: the barrier
 // and the PIN backend are platform-global, and the service's
-// requirePlatformScope is what refuses a tenant-scoped caller (go-xkms#1227).
+// system-tenant check is what refuses a tenant-scoped caller (go-xkms#1227).
 // The RBAC gate cannot: a tenant-local Admin's self-scoped seal:* and pin:*
 // grants resolve against its own tenant. No RPC here reaches the barrier or
 // the PIN backend any other way.

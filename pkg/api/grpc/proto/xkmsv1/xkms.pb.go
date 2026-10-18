@@ -10,7 +10,7 @@
 package xkmsv1
 
 import (
-	_ "github.com/jeremyhahn/go-qrdb/pkg/api/grpc/proto/qrdbv1"
+	_ "github.com/jeremyhahn/go-qrdb/sdk/go/proto/qrdb/v1"
 	protoreflect "google.golang.org/protobuf/reflect/protoreflect"
 	protoimpl "google.golang.org/protobuf/runtime/protoimpl"
 	emptypb "google.golang.org/protobuf/types/known/emptypb"
@@ -22441,7 +22441,7 @@ var File_pkg_api_grpc_proto_xkmsv1_xkms_proto protoreflect.FileDescriptor
 
 const file_pkg_api_grpc_proto_xkmsv1_xkms_proto_rawDesc = "" +
 	"\n" +
-	"$pkg/api/grpc/proto/xkmsv1/xkms.proto\x12\axkms.v1\x1a\x1bgoogle/protobuf/empty.proto\x1a\x1fgoogle/protobuf/timestamp.proto\x1a%pkg/api/grpc/proto/qrdbv1/authz.proto\"\xab\x01\n" +
+	"$pkg/api/grpc/proto/xkmsv1/xkms.proto\x12\axkms.v1\x1a\x1bgoogle/protobuf/empty.proto\x1a\x1fgoogle/protobuf/timestamp.proto\x1a\x18qrdb/v1/permission.proto\"\xab\x01\n" +
 	"\bUserInfo\x12\x1a\n" +
 	"\busername\x18\x01 \x01(\tR\busername\x12!\n" +
 	"\fdisplay_name\x18\x02 \x01(\tR\vdisplayName\x12\x18\n" +

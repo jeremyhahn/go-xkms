@@ -53,8 +53,8 @@ func TestModule_MCPToolPermissions(t *testing.T) {
 		require.True(t, ok, "tool %q missing from MCPToolPermissions", spec.Tool)
 		assert.NotEmpty(t, string(perm), "tool %q must never carry an empty permission", spec.Tool)
 
-		if spec.Resource != "" && spec.Action != "" {
-			assert.Equal(t, qrdbsdk.Permission(spec.Resource+":"+spec.Action), perm,
+		if !spec.Public {
+			assert.Equal(t, spec.Permission, perm,
 				"tool %q must carry its exact resource:action pair", spec.Tool)
 			sawPermissionMapped = true
 			continue
@@ -212,7 +212,7 @@ func TestAdminModule_RegisterHTTP_RootRedirect(t *testing.T) {
 	fsys := fstest.MapFS{
 		"index.html": &fstest.MapFile{Data: []byte("<html>admin ui</html>")},
 	}
-	m, err := NewAdminModule(func() http.Handler { return nil }, []string{"/admin"},
+	m, err := NewAdminModule(func() http.Handler { return nil }, testAdminRoutes,
 		WithAdminWebUI("/admin-ui", fsys, true))
 	require.NoError(t, err)
 

@@ -151,8 +151,8 @@ func requestWithRoles(tc routeCase, roles ...string) *http.Request {
 
 // platformOnlyRoutes are the routes called from the system tenant: creating a
 // tenant and reaching the tenant lifecycle routes across tenants, gated on
-// qrdb's cross-scope tenant grants, and reading the audit trail
-// (PlatformScopeError), which records no tenant to confine it by.
+// qrdb's cross-scope tenant grants, and reading the audit trail (refused
+// outside the system tenant), which records no tenant to confine it by.
 var platformOnlyRoutes = map[string]bool{
 	"list tenants":         true,
 	"create tenant":        true,

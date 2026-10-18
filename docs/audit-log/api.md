@@ -13,10 +13,10 @@ The ACME server keeps its own trail (`pkg/acme/audit`, configured under
 one read route on the ACME admin plane:
 
 `GET /admin/audit`, permission `audit:read`
-(`pkg/acme/admin/handlers.go:132`), handled by `ListAuditLogs`
-(`handlers.go:446-488`). The caller must be a platform (system-tenant)
-principal; a tenant-scoped caller gets `403` (`requirePlatformScope`,
-`pkg/acme/admin/tenant_binding.go:113`).
+(`pkg/acme/admin/routes.go:117`), handled by `ListAuditLogs`
+(`pkg/acme/admin/handlers.go:414`). The caller must be a platform
+(system-tenant) principal; a tenant-scoped caller gets `403`
+(`qrdbsdk.IdentityIsSystemTenant`, `handlers.go:416`).
 
 | Parameter | Meaning |
 |---|---|

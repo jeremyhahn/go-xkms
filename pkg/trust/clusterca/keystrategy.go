@@ -121,7 +121,7 @@ type ClusterCAKeyStrategy interface {
 	Name() KeyStrategyName
 
 	// BootstrapBackends returns the PRE-NODE key-backend resolver the cluster
-	// provisioner uses (CA keystore + node transport key) before the replicated
+	// provisioner uses for the CA keystore before the replicated
 	// datastore exists — needed so the first node can pre-stage the CA and issue
 	// its own transport certificate. The strategy retains any handles it needs
 	// for runtime promotion. For a strategy whose key lives externally (hsm) the

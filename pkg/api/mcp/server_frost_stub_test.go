@@ -18,40 +18,58 @@ package mcp
 import (
 	"context"
 	"github.com/jeremyhahn/go-xkms/pkg/auth"
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
 
-func TestServer_RouteFrostMethods_StubBehavior(t *testing.T) {
+// init exempts the frost.* stubs from the malformed-params sweep: built
+// without -tags frost they refuse before reading params, and
+// TestServer_FrostStubHandlers_ReportNotCompiled pins that refusal instead.
+func init() {
+	for method := range rpcMethods {
+		if strings.HasPrefix(method, "frost.") {
+			paramsOptionalMethods[method] = "built without -tags frost: the stub refuses before reading params"
+		}
+	}
+}
+
+// TestServer_FrostStubHandlers_ReportNotCompiled proves every frost.*
+// registration answers "not compiled" as a *KeyOpError in the !frost build.
+
+func TestServer_FrostStubHandlers_ReportNotCompiled(t *testing.T) {
 	svc := setupTestXKMS(t)
 	defer cleanupXKMS()
 
 	server, err := NewServer(&Config{XKMSService: svc, Authenticator: auth.NewNoOpAuthenticator()})
 	require.NoError(t, err)
 
-	req := &JSONRPCRequest{
-		JSONRPC: "2.0",
-		Method:  "frost.generateNonces",
-		ID:      1,
+	methods := 0
+	for method, entry := range rpcMethods {
+		if !strings.HasPrefix(method, "frost.") {
+			continue
+		}
+		methods++
+		req := &JSONRPCRequest{JSONRPC: "2.0", Method: method, ID: 1}
+
+		result, frostErr := entry.handler(server, context.Background(), req)
+
+		// When built without frost tag, FROST methods return an error.
+		assert.Nil(t, result, method)
+		require.Error(t, frostErr, method)
+		assert.Contains(t, frostErr.Error(), "FROST support not compiled", method)
+
+		// go-xkms#930: the stub's refusal must reach dispatch as a *KeyOpError
+		// carrying ErrCodeMethodNotFound (matching pkg/api/grpc/service_frost_stub.go's
+		// codes.Unimplemented), not a bare error that module_mcp.go can only
+		// report as wire.CodeInternal.
+		var keyErr *KeyOpError
+		require.ErrorAs(t, frostErr, &keyErr, method)
+		assert.Equal(t, ErrCodeMethodNotFound, keyErr.Code, method)
 	}
-
-	result, frostErr, handled := server.routeFrostMethods(context.Background(), req)
-
-	// When built without frost tag, FROST methods return an error
-	assert.True(t, handled)
-	assert.Nil(t, result)
-	require.Error(t, frostErr)
-	assert.Contains(t, frostErr.Error(), "FROST support not compiled")
-
-	// go-xkms#930: the stub's refusal must reach dispatch as a *KeyOpError
-	// carrying ErrCodeMethodNotFound (matching pkg/api/grpc/service_frost_stub.go's
-	// codes.Unimplemented), not a bare error that module_mcp.go can only
-	// report as wire.CodeInternal.
-	var keyErr *KeyOpError
-	require.ErrorAs(t, frostErr, &keyErr)
-	assert.Equal(t, ErrCodeMethodNotFound, keyErr.Code)
+	assert.Equal(t, 9, methods, "the nine FROST methods are registered without the frost tag too")
 }
 
 // TestServer_HandleRequest_FrostMethodAsNotification tests FROST method as notification (no ID)

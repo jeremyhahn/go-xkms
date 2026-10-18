@@ -17,7 +17,7 @@
 //
 // The transports that gate per call site rather than per table — pkg/api/grpc
 // and pkg/acme/admin — have no in-process table a golden test can compare
-// against, the way pkg/api/mcp compares against its methodPermissions map. This
+// against, the way pkg/api/mcp compares against its rpcMethods table. This
 // package builds that table from the source, so those transports can be pinned
 // to a checked-in wire contract with the same strength. pkg/api/rest carries
 // its own in-process table (routes.go's RouteSpec slice), but its permission
@@ -561,9 +561,9 @@ func (e *VarNotFoundError) Error() string {
 	return fmt.Sprintf("authzscan: %s: variable %q not found", e.Dir, e.Name)
 }
 
-// MapEntryError reports a map entry that is not shaped like a permission
-// entry: a non-literal key, or a value that is not a two-element positional
-// composite literal.
+// MapEntryError reports a map entry that is not shaped like a registration:
+// a non-literal key, a value that is not a call, or a call to the register
+// function without its resource and action arguments.
 type MapEntryError struct {
 	Pos string
 	Msg string
@@ -575,17 +575,21 @@ func (e *MapEntryError) Error() string {
 
 // ScanMap reads every non-test Go file in dir, finds the package-level
 // variable named varName, and resolves every entry of its
-// map[string]T{"key": {resource, action}, ...} literal to the wire-level
-// resource:action pair it names. T must fill its two fields positionally,
-// which is how pkg/api/mcp's methodPermissions is written.
+// map[string]T{"key": register(resource, action, ...), ...} literal to the
+// wire-level resource:action pair it registers. This is how pkg/api/mcp's
+// rpcMethods table declares each JSON-RPC method's permission at its
+// registration site, with register = "handle".
 //
-// Every entry's resource and action are resolved exactly as Scan resolves a
-// call argument: a pkg/auth constant becomes the constant's value, and a raw
-// string literal is rejected with *RawLiteralError. This is the map-literal
-// counterpart of Scan's call-site scanning, for the one transport (MCP) that
-// declares its whole permission table as data rather than a sequence of gate
-// calls.
-func ScanMap(dir, varName string) ([]MapSite, error) {
+// An entry whose value calls any other function (pkg/api/mcp's
+// handlePublic) registers no permission and yields no site. Every other
+// value shape is rejected with *MapEntryError, so an entry cannot slip past
+// the golden table by being written some third way. The resource and action
+// are resolved exactly as Scan resolves a call argument: a pkg/auth constant
+// becomes the constant's value, and a raw string literal is rejected with
+// *RawLiteralError. This is the table counterpart of Scan's call-site
+// scanning, for the one transport (MCP) that declares its whole permission
+// table as data rather than a sequence of gate calls.
+func ScanMap(dir, varName, register string) ([]MapSite, error) {
 	entries, err := os.ReadDir(dir)
 	if err != nil {
 		return nil, &ParseError{File: dir, Err: err}
@@ -651,16 +655,22 @@ func ScanMap(dir, varName string) ([]MapSite, error) {
 		if err != nil {
 			return nil, &MapEntryError{Pos: position(fset, kv.Key.Pos()), Msg: "map key is not a valid string literal"}
 		}
-		val, ok := kv.Value.(*ast.CompositeLit)
-		if !ok || len(val.Elts) != 2 {
-			return nil, &MapEntryError{Pos: position(fset, kv.Value.Pos()), Msg: fmt.Sprintf("value for key %q is not a two-field positional literal", key)}
+		call, ok := kv.Value.(*ast.CallExpr)
+		if !ok {
+			return nil, &MapEntryError{Pos: position(fset, kv.Value.Pos()), Msg: fmt.Sprintf("value for key %q is not a registration call", key)}
+		}
+		if fun, ok := call.Fun.(*ast.Ident); !ok || fun.Name != register {
+			continue
+		}
+		if len(call.Args) < 2 {
+			return nil, &MapEntryError{Pos: position(fset, kv.Value.Pos()), Msg: fmt.Sprintf("value for key %q does not pass %s a resource and an action", key, register)}
 		}
 		pos := position(fset, kv.Value.Pos())
-		resource, err := resolve(fset, val.Elts[0], constants)
+		resource, err := resolve(fset, call.Args[0], constants)
 		if err != nil {
 			return nil, err
 		}
-		action, err := resolve(fset, val.Elts[1], constants)
+		action, err := resolve(fset, call.Args[1], constants)
 		if err != nil {
 			return nil, err
 		}

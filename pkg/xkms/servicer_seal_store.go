@@ -16,14 +16,16 @@ package xkms
 import (
 	"context"
 
+	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
 	"github.com/jeremyhahn/go-xkms/pkg/api/transport"
+	"github.com/jeremyhahn/go-xkms/pkg/auth"
 	credentialspkg "github.com/jeremyhahn/go-xkms/pkg/server/credentials"
 )
 
 // SealStoreServicer defines operations for the platform-sealed secret store.
 //
 // The platform store holds platform-global secrets sealed by the system
-// barrier, so every method is platform-scoped (requireSystemTenant,
+// barrier, so every method is platform-scoped (qrdbsdk.IdentityIsSystemTenant,
 // go-xkms#1226): a tenant-scoped caller is refused with a *TenantBindingError
 // that reads as not-found, before the store is touched.
 //
@@ -45,8 +47,8 @@ type SealStoreServicer interface {
 // SealStorePut stores a secret in the platform-sealed store.
 func (s *XKMSService) SealStorePut(ctx context.Context, req *transport.SealStorePutRequest) error {
 	platformStore := s.platformStore.load()
-	if err := requireSystemTenant(ctx, "seal store put", ""); err != nil {
-		return err
+	if !qrdbsdk.IdentityIsSystemTenant(auth.GetIdentity(ctx)) {
+		return refuseTenant(ctx, "seal store put", "")
 	}
 	if platformStore == nil {
 		return ErrNotConfigured
@@ -63,8 +65,8 @@ func (s *XKMSService) SealStorePut(ctx context.Context, req *transport.SealStore
 // SealStoreGet retrieves a secret from the platform-sealed store.
 func (s *XKMSService) SealStoreGet(ctx context.Context, req *transport.SealStoreGetRequest) (*transport.SealStoreGetResponse, error) {
 	platformStore := s.platformStore.load()
-	if err := requireSystemTenant(ctx, "seal store get", ""); err != nil {
-		return nil, err
+	if !qrdbsdk.IdentityIsSystemTenant(auth.GetIdentity(ctx)) {
+		return nil, refuseTenant(ctx, "seal store get", "")
 	}
 	if platformStore == nil {
 		return nil, ErrNotConfigured
@@ -88,8 +90,8 @@ func (s *XKMSService) SealStoreGet(ctx context.Context, req *transport.SealStore
 // SealStoreDelete deletes a secret from the platform-sealed store.
 func (s *XKMSService) SealStoreDelete(ctx context.Context, req *transport.SealStoreDeleteRequest) error {
 	platformStore := s.platformStore.load()
-	if err := requireSystemTenant(ctx, "seal store delete", ""); err != nil {
-		return err
+	if !qrdbsdk.IdentityIsSystemTenant(auth.GetIdentity(ctx)) {
+		return refuseTenant(ctx, "seal store delete", "")
 	}
 	if platformStore == nil {
 		return ErrNotConfigured
@@ -107,8 +109,8 @@ func (s *XKMSService) SealStoreDelete(ctx context.Context, req *transport.SealSt
 // platform-sealed store, without the backend-credential namespace.
 func (s *XKMSService) SealStoreList(ctx context.Context) (*transport.SealStoreListResponse, error) {
 	platformStore := s.platformStore.load()
-	if err := requireSystemTenant(ctx, "seal store list", ""); err != nil {
-		return nil, err
+	if !qrdbsdk.IdentityIsSystemTenant(auth.GetIdentity(ctx)) {
+		return nil, refuseTenant(ctx, "seal store list", "")
 	}
 	if platformStore == nil {
 		return nil, ErrNotConfigured
@@ -125,8 +127,8 @@ func (s *XKMSService) SealStoreList(ctx context.Context) (*transport.SealStoreLi
 // SealStoreReseal re-seals a secret with updated platform state.
 func (s *XKMSService) SealStoreReseal(ctx context.Context, req *transport.SealStoreResealRequest) error {
 	platformStore := s.platformStore.load()
-	if err := requireSystemTenant(ctx, "seal store reseal", ""); err != nil {
-		return err
+	if !qrdbsdk.IdentityIsSystemTenant(auth.GetIdentity(ctx)) {
+		return refuseTenant(ctx, "seal store reseal", "")
 	}
 	if platformStore == nil {
 		return ErrNotConfigured
@@ -144,8 +146,8 @@ func (s *XKMSService) SealStoreReseal(ctx context.Context, req *transport.SealSt
 // the platform secrets only.
 func (s *XKMSService) SealStoreStatus(ctx context.Context) (*transport.SealStoreStatusResponse, error) {
 	platformStore := s.platformStore.load()
-	if err := requireSystemTenant(ctx, "seal store status", ""); err != nil {
-		return nil, err
+	if !qrdbsdk.IdentityIsSystemTenant(auth.GetIdentity(ctx)) {
+		return nil, refuseTenant(ctx, "seal store status", "")
 	}
 	if platformStore == nil {
 		return nil, ErrNotConfigured

@@ -110,9 +110,10 @@ boot (raft build, cluster.enabled=true):
   config.Cluster → buildXKMSQRDBConfig → qcfg.Raft{ReplicaID, ShardID,
     DeploymentID, RaftAddress, ListenAddress, Peers, Join}
   → resolveRaftMTLS (only for >1 member): operator PEM files, else
-    TPM-attested ACME enroll-01, else hardware node key, else
-    software auto-provisioned cluster CA (clusterenroll)
-  → qrdbnode.NewClusteredNode(...)
+    TrustedCA-issued (TPM-attested ACME enroll-01, or local-CA mode on
+    any key backend, software included); no mode writes ca-key.pem
+  → qrdbnode.NewClusteredNode(..., WithClusterCAKeyProvider(TrustedCA)
+    unless operator PEM files are configured; bound in initializeCA)
   → waitForClusterLeader (30s, 250ms poll) before the server reports ready
   → startClusterAdvertiser publishes this node's API endpoints
 
@@ -200,11 +201,11 @@ certificates is a separate design surface from Raft membership itself. See
   node could then forge any identity cluster-wide) or building a full
   delegation protocol. Redirecting the *client* to retry against the leader
   with its own credentials avoids both.
-- **The runtime xkms CA must never back Raft mTLS directly** — it is hosted
-  by the very node the Raft transport replicates, so the two would be
-  circular. Operator-supplied PEM files or the dedicated auto-provisioned
-  cluster CA are used instead (`ClusterConfig.RaftTLS` doc comment,
-  `pkg/config/config.go`).
+- **Raft mTLS chains to a dedicated cluster intermediate**, not to the
+  runtime CA's issuing certificate. The TrustedCA signs it through its
+  `crypto.Signer`, so no CA private key is written to disk; operator-supplied
+  PEM files replace it entirely (`ClusterConfig.RaftTLS` /
+  `RaftEnrollment` doc comments, `pkg/config/config.go`).
 - **The qrdb control plane authenticates every caller.** Its RPCs are
   served by the embedded node behind go-qrdb's authentication chain, which
   carries xkms's session-JWT authenticator; an anonymous call answers

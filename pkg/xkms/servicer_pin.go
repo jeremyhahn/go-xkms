@@ -17,13 +17,15 @@ import (
 	"context"
 	"time"
 
+	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
 	"github.com/jeremyhahn/go-xkms/pkg/api/transport"
+	"github.com/jeremyhahn/go-xkms/pkg/auth"
 )
 
 // PINServicer defines operations for managing Security Officer and User PINs.
 //
 // The PINs guard the platform's own token, so every method is
-// platform-scoped (requireSystemTenant, go-xkms#1227): a tenant-scoped caller
+// platform-scoped (qrdbsdk.IdentityIsSystemTenant, go-xkms#1227): a tenant-scoped caller
 // is refused with a *TenantBindingError that reads as not-found, before the
 // PIN backend is touched -- a refused attempt does not even count toward the
 // lockout.
@@ -41,8 +43,8 @@ type PINServicer interface {
 // SetSOPIN sets the Security Officer PIN.
 func (s *XKMSService) SetSOPIN(ctx context.Context, req *transport.SetSOPINRequest) error {
 	pinManager := s.pinManager.load()
-	if err := requireSystemTenant(ctx, "set SO PIN", ""); err != nil {
-		return err
+	if !qrdbsdk.IdentityIsSystemTenant(auth.GetIdentity(ctx)) {
+		return refuseTenant(ctx, "set SO PIN", "")
 	}
 	if pinManager == nil {
 		return ErrNotConfigured
@@ -53,8 +55,8 @@ func (s *XKMSService) SetSOPIN(ctx context.Context, req *transport.SetSOPINReque
 // SetUserPIN sets the User PIN using the Security Officer PIN for authorization.
 func (s *XKMSService) SetUserPIN(ctx context.Context, req *transport.SetUserPINRequest) error {
 	pinManager := s.pinManager.load()
-	if err := requireSystemTenant(ctx, "set user PIN", ""); err != nil {
-		return err
+	if !qrdbsdk.IdentityIsSystemTenant(auth.GetIdentity(ctx)) {
+		return refuseTenant(ctx, "set user PIN", "")
 	}
 	if pinManager == nil {
 		return ErrNotConfigured
@@ -65,8 +67,8 @@ func (s *XKMSService) SetUserPIN(ctx context.Context, req *transport.SetUserPINR
 // ChangeSOPIN changes the Security Officer PIN.
 func (s *XKMSService) ChangeSOPIN(ctx context.Context, req *transport.ChangeSOPINRequest) error {
 	pinManager := s.pinManager.load()
-	if err := requireSystemTenant(ctx, "change SO PIN", ""); err != nil {
-		return err
+	if !qrdbsdk.IdentityIsSystemTenant(auth.GetIdentity(ctx)) {
+		return refuseTenant(ctx, "change SO PIN", "")
 	}
 	if pinManager == nil {
 		return ErrNotConfigured
@@ -77,8 +79,8 @@ func (s *XKMSService) ChangeSOPIN(ctx context.Context, req *transport.ChangeSOPI
 // ChangeUserPIN changes the User PIN.
 func (s *XKMSService) ChangeUserPIN(ctx context.Context, req *transport.ChangeUserPINRequest) error {
 	pinManager := s.pinManager.load()
-	if err := requireSystemTenant(ctx, "change user PIN", ""); err != nil {
-		return err
+	if !qrdbsdk.IdentityIsSystemTenant(auth.GetIdentity(ctx)) {
+		return refuseTenant(ctx, "change user PIN", "")
 	}
 	if pinManager == nil {
 		return ErrNotConfigured
@@ -89,8 +91,8 @@ func (s *XKMSService) ChangeUserPIN(ctx context.Context, req *transport.ChangeUs
 // VerifySOPIN verifies the Security Officer PIN.
 func (s *XKMSService) VerifySOPIN(ctx context.Context, req *transport.VerifySOPINRequest) error {
 	pinManager := s.pinManager.load()
-	if err := requireSystemTenant(ctx, "verify SO PIN", ""); err != nil {
-		return err
+	if !qrdbsdk.IdentityIsSystemTenant(auth.GetIdentity(ctx)) {
+		return refuseTenant(ctx, "verify SO PIN", "")
 	}
 	if pinManager == nil {
 		return ErrNotConfigured
@@ -101,8 +103,8 @@ func (s *XKMSService) VerifySOPIN(ctx context.Context, req *transport.VerifySOPI
 // VerifyUserPIN verifies the User PIN.
 func (s *XKMSService) VerifyUserPIN(ctx context.Context, req *transport.VerifyUserPINRequest) error {
 	pinManager := s.pinManager.load()
-	if err := requireSystemTenant(ctx, "verify user PIN", ""); err != nil {
-		return err
+	if !qrdbsdk.IdentityIsSystemTenant(auth.GetIdentity(ctx)) {
+		return refuseTenant(ctx, "verify user PIN", "")
 	}
 	if pinManager == nil {
 		return ErrNotConfigured
@@ -113,8 +115,8 @@ func (s *XKMSService) VerifyUserPIN(ctx context.Context, req *transport.VerifyUs
 // GetLockoutStatus returns the current PIN lockout status.
 func (s *XKMSService) GetLockoutStatus(ctx context.Context) (*transport.LockoutStatusResponse, error) {
 	pinManager := s.pinManager.load()
-	if err := requireSystemTenant(ctx, "PIN lockout status", ""); err != nil {
-		return nil, err
+	if !qrdbsdk.IdentityIsSystemTenant(auth.GetIdentity(ctx)) {
+		return nil, refuseTenant(ctx, "PIN lockout status", "")
 	}
 	if pinManager == nil {
 		return nil, ErrNotConfigured
@@ -141,8 +143,8 @@ func (s *XKMSService) GetLockoutStatus(ctx context.Context) (*transport.LockoutS
 // ResetLockout resets the PIN lockout counter using the Security Officer PIN.
 func (s *XKMSService) ResetLockout(ctx context.Context, req *transport.ResetLockoutRequest) error {
 	pinManager := s.pinManager.load()
-	if err := requireSystemTenant(ctx, "reset PIN lockout", ""); err != nil {
-		return err
+	if !qrdbsdk.IdentityIsSystemTenant(auth.GetIdentity(ctx)) {
+		return refuseTenant(ctx, "reset PIN lockout", "")
 	}
 	if pinManager == nil {
 		return ErrNotConfigured

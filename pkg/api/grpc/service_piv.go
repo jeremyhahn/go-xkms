@@ -47,7 +47,7 @@ var (
 )
 
 // The PIV RPCs delegate to the XKMSService's PIV methods: the PIV card is the
-// server's own hardware, and the service's requirePlatformScope is what
+// server's own hardware, and the service's system-tenant check is what
 // refuses a tenant-scoped caller (go-xkms#1227).
 
 // mapPIVError converts a PIV domain error to the appropriate gRPC status

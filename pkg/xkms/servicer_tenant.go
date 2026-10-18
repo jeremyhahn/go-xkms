@@ -19,6 +19,7 @@ import (
 	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
 
 	"github.com/jeremyhahn/go-xkms/pkg/api/transport"
+	"github.com/jeremyhahn/go-xkms/pkg/auth"
 )
 
 // TenantServicer defines operations for managing tenants and their barriers.
@@ -79,7 +80,7 @@ func (s *XKMSService) CreateTenant(ctx context.Context, req *transport.CreateTen
 // GetTenant retrieves a tenant by its ID. The tenant registry is the system
 // tenant's, so a system caller may read any tenant; any other caller only its
 // own, and any other tenant ID is refused with a *TenantBindingError that
-// reads as not-found (bindTenantRecord).
+// reads as not-found (admitTenantRecord).
 //
 // Requires the composed TenantService; returns ErrTenantServiceNotConfigured
 // otherwise.
@@ -87,7 +88,7 @@ func (s *XKMSService) GetTenant(ctx context.Context, tenantID string) (*transpor
 	if tenantID == "" {
 		return nil, ErrTenantIDRequired
 	}
-	if err := bindTenantRecord(ctx, "get tenant", tenantID); err != nil {
+	if err := admitTenantRecord(ctx, "get tenant", tenantID); err != nil {
 		return nil, err
 	}
 	if s.tenantService == nil {
@@ -119,7 +120,7 @@ func (s *XKMSService) ListTenants(ctx context.Context) (*transport.ListTenantsRe
 	}
 	tenants := make([]transport.TenantInfo, 0, len(infos))
 	for i := range infos {
-		if visibleToCaller(ctx, infos[i].ID) {
+		if admitTenantRecord(ctx, "list tenants", infos[i].ID) == nil {
 			tenants = append(tenants, tenantInfoToTransport(&infos[i]))
 		}
 	}
@@ -128,7 +129,7 @@ func (s *XKMSService) ListTenants(ctx context.Context) (*transport.ListTenantsRe
 
 // DeleteTenant deletes a tenant by its ID. A system caller may delete any
 // tenant; any other caller only its own, and any other tenant ID is refused
-// with a *TenantBindingError that reads as not-found (bindTenantRecord).
+// with a *TenantBindingError that reads as not-found (admitTenantRecord).
 //
 // Requires the composed TenantService; returns ErrTenantServiceNotConfigured
 // otherwise.
@@ -136,7 +137,7 @@ func (s *XKMSService) DeleteTenant(ctx context.Context, tenantID string) error {
 	if tenantID == "" {
 		return ErrTenantIDRequired
 	}
-	if err := bindTenantRecord(ctx, "delete tenant", tenantID); err != nil {
+	if err := admitTenantRecord(ctx, "delete tenant", tenantID); err != nil {
 		return err
 	}
 	if s.tenantService == nil {
@@ -150,7 +151,7 @@ func (s *XKMSService) DeleteTenant(ctx context.Context, tenantID string) error {
 // management is a platform operation: only a system-tenant caller may change
 // any tenant's entitlements, and a tenant-scoped caller is refused with a
 // *TenantBindingError that reads as not-found even for its own tenant
-// (requireSystemTenant).
+// (qrdbsdk.IdentityIsSystemTenant).
 //
 // Requires the composed TenantService; returns ErrTenantServiceNotConfigured
 // otherwise.
@@ -161,8 +162,8 @@ func (s *XKMSService) UpdateTenantEntitlements(ctx context.Context, req *transpo
 	if req.TenantID == "" {
 		return nil, ErrTenantIDRequired
 	}
-	if err := requireSystemTenant(ctx, "update tenant entitlements", req.TenantID); err != nil {
-		return nil, err
+	if !qrdbsdk.IdentityIsSystemTenant(auth.GetIdentity(ctx)) {
+		return nil, refuseTenant(ctx, "update tenant entitlements", req.TenantID)
 	}
 	if s.tenantService == nil {
 		return nil, ErrTenantServiceNotConfigured
@@ -177,7 +178,7 @@ func (s *XKMSService) UpdateTenantEntitlements(ctx context.Context, req *transpo
 // UpdateTenantQuotas updates a tenant's resource quotas. Like entitlements,
 // quotas are plan management: only a system-tenant caller may change them,
 // and a tenant-scoped caller is refused with a *TenantBindingError that reads
-// as not-found even for its own tenant (requireSystemTenant).
+// as not-found even for its own tenant (qrdbsdk.IdentityIsSystemTenant).
 //
 // Requires the composed TenantService; returns ErrTenantServiceNotConfigured
 // otherwise.
@@ -188,8 +189,8 @@ func (s *XKMSService) UpdateTenantQuotas(ctx context.Context, req *transport.Upd
 	if req.TenantID == "" {
 		return nil, ErrTenantIDRequired
 	}
-	if err := requireSystemTenant(ctx, "update tenant quotas", req.TenantID); err != nil {
-		return nil, err
+	if !qrdbsdk.IdentityIsSystemTenant(auth.GetIdentity(ctx)) {
+		return nil, refuseTenant(ctx, "update tenant quotas", req.TenantID)
 	}
 	if s.tenantService == nil {
 		return nil, ErrTenantServiceNotConfigured

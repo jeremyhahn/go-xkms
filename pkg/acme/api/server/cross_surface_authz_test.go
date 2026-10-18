@@ -21,6 +21,8 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
+
 	adminv1 "github.com/jeremyhahn/go-xkms/api/proto/admin/v1"
 	"github.com/jeremyhahn/go-xkms/pkg/auth"
 )
@@ -71,17 +73,19 @@ var crossSurfaceOperations = []struct {
 // TestCrossSurface_SameOperationSamePermission verifies the gRPC and MCP tables
 // agree on the grant every shared ACME admin operation requires.
 func TestCrossSurface_SameOperationSamePermission(t *testing.T) {
+	s, _ := newAuthzTestServer(t)
+	mcpPerms := s.MCPToolPermissions()
 	for _, tc := range crossSurfaceOperations {
 		t.Run(tc.operation, func(t *testing.T) {
-			grpcPerm, ok := MethodPermissions[tc.grpcMethod]
-			require.True(t, ok, "gRPC method %s has no mapping", tc.grpcMethod)
+			grpcPerm, ok := adminRPCPermissions[tc.grpcMethod]
+			require.True(t, ok, "gRPC method %s declares no permission", tc.grpcMethod)
 
-			mcpPerm, ok := MCPMethodPermissions[tc.mcpMethod]
-			require.True(t, ok, "MCP method %s has no mapping", tc.mcpMethod)
+			mcpPerm, ok := mcpPerms[tc.mcpMethod]
+			require.True(t, ok, "MCP method %s has no permission", tc.mcpMethod)
 
 			assert.Equal(t, grpcPerm, mcpPerm,
-				"%s must require the same permission on gRPC (%s:%s) and MCP (%s:%s)",
-				tc.operation, grpcPerm.Resource, grpcPerm.Action, mcpPerm.Resource, mcpPerm.Action)
+				"%s must require the same permission on gRPC (%s) and MCP (%s)",
+				tc.operation, grpcPerm, mcpPerm)
 		})
 	}
 }
@@ -111,16 +115,20 @@ func TestCrossSurface_UsesCanonicalVocabulary(t *testing.T) {
 		auth.ActionDisable: true, auth.ActionStatus: true, auth.ActionCapabilities: true,
 	}
 
-	for method, perm := range MethodPermissions {
-		assert.True(t, canonicalResources[perm.Resource],
-			"gRPC method %s requests non-canonical resource %q", method, perm.Resource)
-		assert.True(t, canonicalActions[perm.Action],
-			"gRPC method %s requests non-canonical action %q", method, perm.Action)
+	assertCanonical := func(surface, method string, perm qrdbsdk.Permission) {
+		t.Helper()
+		resource, action := qrdbsdk.PermissionResource(perm), qrdbsdk.PermissionAction(perm)
+		assert.True(t, canonicalResources[resource],
+			"%s method %s requests non-canonical resource %q", surface, method, resource)
+		assert.True(t, canonicalActions[action],
+			"%s method %s requests non-canonical action %q", surface, method, action)
 	}
-	for method, perm := range MCPMethodPermissions {
-		assert.True(t, canonicalResources[perm.Resource],
-			"MCP method %s requests non-canonical resource %q", method, perm.Resource)
-		assert.True(t, canonicalActions[perm.Action],
-			"MCP method %s requests non-canonical action %q", method, perm.Action)
+
+	for method, perm := range adminRPCPermissions {
+		assertCanonical("gRPC", method, perm)
+	}
+	s, _ := newAuthzTestServer(t)
+	for method, perm := range s.MCPToolPermissions() {
+		assertCanonical("MCP", method, perm)
 	}
 }

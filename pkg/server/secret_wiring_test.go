@@ -55,7 +55,7 @@ func TestBuildSecretRegistry_WithCredentialService(t *testing.T) {
 	)
 	require.NoError(t, err)
 
-	// Pre-load a credential so RetrieveCredential can return it synchronously.
+	// Pre-load a credential so RetrieveCredentialBuffer can return it synchronously.
 	const credName = "test-cred"
 	const credValue = "hunter2"
 	require.NoError(t, svc.StoreCredential(context.Background(), credName, []byte(credValue)))
@@ -282,7 +282,7 @@ func TestResolveConfigSecrets_UnresolvableReferenceFailsClosed(t *testing.T) {
 	cfg := newSecretWiringTestConfig()
 	cfg.Backends.Vault.Token = &types.SecretValue{Raw: "credential://does-not-exist"}
 
-	// The "manual" strategy blocks RetrieveCredential until the operator
+	// The "manual" strategy blocks RetrieveCredentialBuffer until the operator
 	// submits the named credential or the context is cancelled; bound it so
 	// this test proves the failure instead of hanging on one that never
 	// arrives.

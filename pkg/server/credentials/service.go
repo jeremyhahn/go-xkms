@@ -30,6 +30,7 @@ import (
 
 	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
 	"github.com/jeremyhahn/go-xkms/pkg/seal"
+	"github.com/jeremyhahn/go-xkms/sdk/go/secure"
 )
 
 const (
@@ -85,7 +86,7 @@ type Config struct {
 // platformCredentials satisfies it for the hardware strategies.
 type credentialStore interface {
 	StoreCredential(ctx context.Context, name string, value []byte) error
-	RetrieveCredential(ctx context.Context, name string) ([]byte, error)
+	RetrieveCredentialBuffer(ctx context.Context, name string) (*secure.Buffer, error)
 	SubmitCredential(ctx context.Context, name string, value []byte) error
 	DeleteCredential(ctx context.Context, name string) error
 	ListCredentials(ctx context.Context) ([]string, error)
@@ -143,13 +144,14 @@ func (s *Service) StoreCredential(ctx context.Context, name string, value []byte
 	return s.store.StoreCredential(ctx, name, value)
 }
 
-// RetrieveCredential unseals a named credential. Under the manual strategy it
-// blocks until the credential is submitted or ctx is cancelled.
-func (s *Service) RetrieveCredential(ctx context.Context, name string) ([]byte, error) {
+// RetrieveCredentialBuffer unseals a named credential into protected memory.
+// Under the manual strategy it blocks until the credential is submitted or ctx
+// is cancelled. The caller owns the returned buffer and must Destroy it.
+func (s *Service) RetrieveCredentialBuffer(ctx context.Context, name string) (*secure.Buffer, error) {
 	if strings.TrimSpace(name) == "" {
 		return nil, ErrEmptyCredentialName
 	}
-	return s.store.RetrieveCredential(ctx, name)
+	return s.store.RetrieveCredentialBuffer(ctx, name)
 }
 
 // SubmitCredential is used by operators to submit a credential. Under the
@@ -223,13 +225,17 @@ func (p *platformCredentials) StoreCredential(ctx context.Context, name string, 
 	return nil
 }
 
-// RetrieveCredential unseals a credential from the platform store.
-func (p *platformCredentials) RetrieveCredential(ctx context.Context, name string) ([]byte, error) {
+// RetrieveCredentialBuffer unseals a credential from the platform store and
+// moves it into protected memory; the plaintext slice is wiped on every path.
+func (p *platformCredentials) RetrieveCredentialBuffer(ctx context.Context, name string) (*secure.Buffer, error) {
 	value, err := p.store.Get(ctx, credentialPrefix+name)
 	if errors.Is(err, seal.ErrSecretNotFound) {
 		return nil, ErrCredentialNotFound
 	}
-	return value, err
+	if err != nil {
+		return nil, err
+	}
+	return secure.NewBufferFromBytes(value)
 }
 
 // SubmitCredential stores the credential; only the manual strategy

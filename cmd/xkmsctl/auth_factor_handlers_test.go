@@ -108,6 +108,16 @@ func (m *mockXKMSUserAuthFactorClient) RemoveAuthFactor(_ context.Context, req *
 	return &qrdbtransport.AuthFactorRemoveResponse{Status: "revoked"}, nil
 }
 
+func (m *mockXKMSUserAuthFactorClient) DeleteAuthFactor(_ context.Context, req *qrdbtransport.AuthFactorDeleteRequest) (*qrdbtransport.AuthFactorDeleteResponse, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if _, ok := m.factors[req.FactorID]; !ok {
+		return nil, errors.New("factor not found: " + req.FactorID)
+	}
+	delete(m.factors, req.FactorID)
+	return &qrdbtransport.AuthFactorDeleteResponse{Status: "deleted"}, nil
+}
+
 // RotateAuthFactor revokes the old factor and adds a new one.
 func (m *mockXKMSUserAuthFactorClient) RotateAuthFactor(_ context.Context, req *qrdbtransport.AuthFactorRotateRequest) (*qrdbtransport.AuthFactorRotateResponse, error) {
 	m.mu.Lock()

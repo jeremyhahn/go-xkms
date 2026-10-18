@@ -27,6 +27,7 @@ import (
 	"testing"
 	"time"
 
+	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
 	"github.com/quic-go/quic-go/http3"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -194,13 +195,17 @@ func TestUnifiedAPIServer_E2E_RESTThroughEmbeddedNode(t *testing.T) {
 
 	// Hand the ports over. Nothing may run between here and New: every
 	// statement in between is window in which another process can take one.
-	// The admin plane as xkmsd mounts it: identity-gated routes over a
-	// resolved router that answers once the node has authenticated a caller.
+	// The admin plane as xkmsd mounts it: each route under its own
+	// permission over a resolved router that answers once the node has
+	// authenticated and authorized a caller.
 	adminModule, err := apimodule.NewAdminModule(func() http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 			w.WriteHeader(http.StatusOK)
 		})
-	}, []string{"/admin", "/api/v1/tenants"})
+	}, []apimodule.AdminRoute{
+		{Method: http.MethodGet, Path: "/admin/accounts", Permission: "acme_accounts:list"},
+		{Method: http.MethodGet, Path: "/api/v1/tenants", Permission: qrdbsdk.PermissionTenantsListCross, SelfPermission: "tenants:list"},
+	})
 	require.NoError(t, err)
 
 	ports.Release(t)
@@ -264,7 +269,7 @@ func TestUnifiedAPIServer_E2E_RESTThroughEmbeddedNode(t *testing.T) {
 		"HTTP/3": {Timeout: 2 * time.Second, Transport: h3},
 	}
 	for name, c := range adminClients {
-		for _, path := range []string{"/admin/api/v1/accounts", "/api/v1/tenants"} {
+		for _, path := range []string{"/admin/accounts", "/api/v1/tenants"} {
 			assert.Equal(t, http.StatusUnauthorized, adminStatus(t, c, base+path, ""),
 				"%s %s: an anonymous admin-plane call must be refused", name, path)
 			assert.Equal(t, http.StatusOK, adminStatus(t, c, base+path, session),

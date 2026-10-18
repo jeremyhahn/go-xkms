@@ -32,7 +32,7 @@ import (
 // Every handler delegates to the XKMSService's SealStore* methods and never
 // to the store itself: the platform store holds platform-global secrets (the
 // backend credentials under credentials/<name>), and the service's
-// requirePlatformScope is what refuses a tenant-scoped caller (go-xkms#1226).
+// system-tenant check is what refuses a tenant-scoped caller (go-xkms#1226).
 // The routes' keys:* grants cannot, because a tenant-local Admin's
 // self-scoped grants resolve against its own tenant.
 type SealStoreHandlers struct {

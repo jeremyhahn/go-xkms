@@ -24,12 +24,13 @@
 // [NewNode] serves standalone topologies and fails loudly on a clustered
 // configuration rather than silently degrading to a single node.
 //
-// Hardware-backed provisioning (TPM-attested ACME enrollment, PKCS#11 /
-// TPM2-resident node keys) is supplied by the caller through
-// [NodeOptions.RaftMTLSResolver]. Those strategies need a certificate
+// Inter-node mTLS for a multi-node cluster (TrustedCA-issued node
+// certificates, TPM-attested ACME enrollment) is supplied by the caller
+// through [NodeOptions.RaftMTLSResolver]. Those strategies need a certificate
 // authority and key-strategy dependencies that belong to the daemon, not to
-// node construction, so they are injected instead of imported. A nil resolver
-// selects the built-in software auto-provisioning path.
+// node construction, so they are injected instead of imported. The resolver
+// is required for a multi-node cluster ([ErrNilRaftMTLSResolver]); there is no
+// built-in path that writes a cluster CA key to disk.
 //
 // [OpenEmbeddedNode] layers a deployment's configuration over [NewNode]:
 // it resolves the node-barrier seal posture (config.BarrierConfig) and derives
@@ -471,7 +472,6 @@ func openEmbeddedNodeWithSeal(ctx context.Context, opts EmbeddedNodeOptions, sea
 	res, err := NewNode(ctx, &NodeOptions{
 		QRDB:             qcfg,
 		Cluster:          opts.Cluster,
-		StoragePath:      opts.Config.Datastore.Path,
 		Logger:           opts.Logger,
 		ServerOptions:    serverOpts,
 		NodeOptions:      nodeOpts,

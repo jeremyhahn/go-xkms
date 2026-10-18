@@ -32,7 +32,7 @@ import (
 // RequirePermission decorator must demand (go-xkms#1230). Before, every route
 // -- delete and import included -- demanded the single blanket ssh:use, so a
 // grant meant for signing also deleted keys and planted authorized_keys
-// entries. The read/write/delete pairs are the MCP ssh.* methodPermissions
+// entries. The read/write/delete pairs are the MCP ssh.* rpcMethods
 // (pkg/api/mcp/authz.go) and the gRPC qrdb.v1.permission options verbatim;
 // signing is ssh:write, as on gRPC and MCP. The pairs are spelled out literally rather than built
 // from the auth constants because this table is the wire contract.

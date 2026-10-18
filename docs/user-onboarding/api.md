@@ -145,7 +145,7 @@ listener, so it gets these RPCs and this error mapping for free.
 ## MCP
 
 `invite.get` and `invite.pivActivate` are ordinary public JSON-RPC methods
-(`publicMethods` in `pkg/api/mcp/authz.go`), taking and returning the same
+(registered with `handlePublic` in `pkg/api/mcp/server.go:407-408`), taking and returning the same
 `transport.GetInviteRequest`/`Response` and
 `transport.ActivateInvitePIVRequest`/`Response` shapes as every other
 transport. Errors map to JSON-RPC codes the same way: `ErrInviteUnusable` →

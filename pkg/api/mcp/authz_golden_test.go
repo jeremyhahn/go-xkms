@@ -24,22 +24,22 @@ import (
 
 // TestMethodPermissions_ScanMatchesWireContract is the authzscan counterpart
 // of TestMethodPermissions_MatchOtherTransports (authz_test.go): that test
-// compares the runtime methodPermissions map's *values* against
+// compares the runtime rpcMethods table's *values* against
 // goldenMethodPermissions, which catches a repointed or widened permission
 // but not a raw string literal that happens to carry the same value as the
 // constant it replaced — Go evaluates "sign" and auth.ActionSign to the same
 // string, so a value comparison cannot tell them apart. authzscan.ScanMap
-// reads methodPermissions out of this package's own source instead, so it
+// reads rpcMethods out of this package's own source instead, so it
 // rejects a literal the moment it sees one (*authzscan.RawLiteralError),
 // exactly as pkg/api/grpc's and pkg/api/rest's call-site goldens do for
 // their own gates. Reusing goldenMethodPermissions here, rather than a
 // second hand-maintained table, keeps the two tests from drifting apart.
 func TestMethodPermissions_ScanMatchesWireContract(t *testing.T) {
-	sites, err := authzscan.ScanMap(".", "methodPermissions")
-	require.NoError(t, err, "scanning this package's methodPermissions map must succeed")
+	sites, err := authzscan.ScanMap(".", "rpcMethods", "handle")
+	require.NoError(t, err, "scanning this package's rpcMethods map must succeed")
 
 	require.Len(t, sites, len(goldenMethodPermissions),
-		"an entry was added to or removed from methodPermissions without updating the wire contract")
+		"an entry was added to or removed from rpcMethods without updating the wire contract")
 
 	found := make(map[string]string, len(sites))
 	for _, site := range sites {
@@ -50,25 +50,25 @@ func TestMethodPermissions_ScanMatchesWireContract(t *testing.T) {
 
 	for method, want := range goldenMethodPermissions {
 		got, ok := found[method]
-		require.True(t, ok, "method %q lost its methodPermissions entry", method)
+		require.True(t, ok, "method %q lost its rpcMethods entry", method)
 		assert.Equal(t, want, got, "method %q", method)
 	}
 
 	for method, got := range found {
 		want, ok := goldenMethodPermissions[method]
-		require.True(t, ok, "method %q gained a methodPermissions entry without a wire-contract entry", method)
+		require.True(t, ok, "method %q gained a rpcMethods entry without a wire-contract entry", method)
 		assert.Equal(t, want, got, "method %q", method)
 	}
 }
 
-// TestMethodPermissions_NoRawLiterals proves no entry in methodPermissions
-// spells its resource or action as a string literal. authzscan.ScanMap
+// TestMethodPermissions_NoRawLiterals proves no handle(...) entry in
+// rpcMethods spells its resource or action as a string literal. authzscan.ScanMap
 // returns a *authzscan.RawLiteralError the moment it sees one, so a
 // successful scan is the proof. This is the regression guard go-xkms#1232
 // added: pkg/api/rest/routes.go carried this exact defect (raw "derive",
 // "wrap", "unwrap" literals) with no test that would have caught it here.
 func TestMethodPermissions_NoRawLiterals(t *testing.T) {
-	sites, err := authzscan.ScanMap(".", "methodPermissions")
-	require.NoError(t, err, "every methodPermissions entry must name a pkg/auth constant, never a string literal")
+	sites, err := authzscan.ScanMap(".", "rpcMethods", "handle")
+	require.NoError(t, err, "every rpcMethods entry must name a pkg/auth constant, never a string literal")
 	require.NotEmpty(t, sites)
 }

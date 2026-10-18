@@ -14,9 +14,12 @@ This is the internal design companion to the operator-facing
 ## Problem
 
 ACME-attested cluster enrollment (see [Clustering user guide → ACME-attested
-cluster enrollment](user.md#acme-attested-cluster-enrollment)) makes the runtime
-TrustedCA the single cluster trust anchor and issues each Raft node's transport
-certificate from a dedicated cluster intermediate. That raises a custody
+cluster enrollment](user.md#acme-attested-cluster-enrollment)) and local-CA
+mode (any key backend, software included) make the runtime TrustedCA the single cluster trust anchor and issue each
+Raft node's transport certificate from a dedicated cluster intermediate. The
+same TrustedCA is go-qrdb's Key A through `clusterca.KeyProvider`, so every
+signature goes through the keystore's `crypto.Signer` and no CA key bytes leave
+the keystore (go-xkms#1381). That raises a custody
 question: **where does the cluster intermediate's signing key live, and which
 nodes can use it to issue?**
 

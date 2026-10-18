@@ -43,14 +43,14 @@ request itself (`cmd/xkmsctl/credential.go:239`).
 
 | Operation | REST | MCP | Scope |
 |---|---|---|---|
-| Submit | `credentials:submit` (`routes.go:415`) | `credentials:submit` (`pkg/api/mcp/authz.go:263`) | platform only |
+| Submit | `credentials:submit` (`routes.go:415`) | `credentials:submit` (`pkg/api/mcp/server.go:380`) | platform only |
 | Strategy | `credentials:strategy` (`routes.go:416`) | `credentials:strategy` (`authz.go:264`) | any |
 | List | authenticated session, no permission pair (`routes.go:407-417`) | — | platform only |
 
 The constants are `auth.ResourceCredentials`, `auth.ActionSubmit` and
 `auth.ActionStrategy` (`pkg/auth/permissions.go:93`, `:247-248`). The
-platform-only check is `requirePlatformScope`
-(`pkg/xkms/servicer_credentials.go:33`, `:76`). A tenant-scoped caller is
+platform-only check is `qrdbsdk.IdentityIsSystemTenant`
+(`pkg/xkms/servicer_credentials.go:35`, `:78`). A tenant-scoped caller is
 refused with an answer that reads as not-found. For which roles hold these
 pairs, see [`../rbac/`](../rbac/).
 

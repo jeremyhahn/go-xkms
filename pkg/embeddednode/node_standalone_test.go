@@ -44,10 +44,3 @@ func TestNewNode_ClusterWithoutRaftBuildFailsLoudly(t *testing.T) {
 	assert.Nil(t, res, "no node may be returned when clustering is unavailable")
 	assert.ErrorIs(t, err, ErrClusterRequiresRaftBuild)
 }
-
-// TestOptions_RaftTLSCacheDir verifies the cache directory is rooted under the
-// storage path on this build too, so the options mapping stays tag-independent.
-func TestOptions_RaftTLSCacheDir(t *testing.T) {
-	opts := &NodeOptions{StoragePath: "/var/lib/xkms"}
-	assert.Equal(t, "/var/lib/xkms/"+RaftTLSCacheSubdir, opts.raftTLSCacheDir())
-}

@@ -37,17 +37,28 @@ type PINSource interface {
 // tokenLabel name, as Build does. The released PIN is wiped once the
 // strategy's backend holds it.
 func BuildWithSealedPIN(ctx context.Context, pins PINSource, cn, library, tokenLabel string) (seal.SealingStrategy, io.Closer, error) {
+	sealedPIN, err := ReleaseSealedPIN(ctx, pins)
+	if err != nil {
+		return nil, nil, err
+	}
+	return Build(ctx, Params{CN: cn, Library: library, TokenLabel: tokenLabel, PIN: sealedPIN})
+}
+
+// ReleaseSealedPIN releases the token PIN sealed in the pre-barrier store
+// and holds it in a sealed SecretValue, for a token that must open before
+// the barrier (and so the credential service) exists.
+func ReleaseSealedPIN(ctx context.Context, pins PINSource) (*types.SecretValue, error) {
 	if pins == nil {
-		return nil, nil, ErrPINSourceRequired
+		return nil, ErrPINSourceRequired
 	}
 	pin, err := pins.Get(ctx, seal.SecretPKCS11PIN)
 	if err != nil {
-		return nil, nil, &BuildError{Step: "releasing the sealed token PIN", Err: err}
+		return nil, &BuildError{Step: "releasing the sealed token PIN", Err: err}
 	}
 	sealedPIN, err := types.NewLiteralSecretValue(ctx, pin)
 	clear(pin)
 	if err != nil {
-		return nil, nil, &BuildError{Step: "holding the released token PIN", Err: err}
+		return nil, &BuildError{Step: "holding the released token PIN", Err: err}
 	}
-	return Build(ctx, Params{CN: cn, Library: library, TokenLabel: tokenLabel, PIN: sealedPIN})
+	return sealedPIN, nil
 }

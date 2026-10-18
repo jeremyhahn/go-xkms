@@ -25,7 +25,7 @@ import (
 
 // The system-barrier and PIN handlers delegate to the XKMSService and never
 // to the barrier or PIN backend directly: both are platform-global, and the
-// service's requirePlatformScope is what refuses a tenant-scoped caller
+// service's system-tenant check is what refuses a tenant-scoped caller
 // (go-xkms#1227). The routes' seal:*, barrier:* and pin:* grants cannot,
 // because a tenant-local Admin's self-scoped grants resolve against its own
 // tenant. The refusal is xkms.TenantBindingError, which unwraps to

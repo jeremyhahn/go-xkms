@@ -346,8 +346,10 @@ type authMeResponse struct {
 	AuthMethod  string   `json:"auth_method,omitempty"`
 	Roles       []string `json:"roles,omitempty"`
 
-	// Permissions maps "resource:action" to whether the caller holds it.
-	// All-true when RBAC is disabled (the server enforces nothing more).
+	// Permissions maps every "resource:action" the caller holds, as qrdb's
+	// RBAC lists it, to true; a permission not held is absent. With RBAC
+	// disabled it carries every registered permission (the server enforces
+	// nothing more).
 	Permissions map[string]bool `json:"permissions"`
 
 	// Capabilities flags which optional server subsystems are wired, so the
@@ -359,42 +361,6 @@ type authMeResponse struct {
 type authValidateResponse struct {
 	Subject  string `json:"subject"`
 	TenantID string `json:"tenant_id,omitempty"`
-}
-
-// uiPermissionMatrix lists the resource:action pairs the web UI gates its
-// navigation and controls on. It mirrors the RBAC decorators in setupRouter;
-// the server-side decorators remain the enforcement authority.
-var uiPermissionMatrix = [][2]string{
-	{auth.ResourceKeys, auth.ActionList},
-	{auth.ResourceKeys, auth.ActionCreate},
-	{auth.ResourceKeys, auth.ActionSign},
-	{auth.ResourceKeys, auth.ActionVerify},
-	{auth.ResourceKeys, auth.ActionEncrypt},
-	{auth.ResourceKeys, auth.ActionDecrypt},
-	{auth.ResourceKeys, auth.ActionWrap},
-	{auth.ResourceKeys, auth.ActionDerive},
-	{auth.ResourceKeys, auth.ActionRotate},
-	{auth.ResourceKeys, auth.ActionDelete},
-	{auth.ResourceKeys, auth.ActionImport},
-	{auth.ResourceKeys, auth.ActionExport},
-	{auth.ResourceCerts, auth.ActionList},
-	{auth.ResourceCerts, auth.ActionIssue},
-	{auth.ResourceCerts, auth.ActionRevoke},
-	{auth.ResourceBackends, auth.ActionList},
-	{auth.ResourceUsers, auth.ActionList},
-	{auth.ResourceUsers, auth.ActionRead},
-	{auth.ResourceUsers, auth.ActionCreate},
-	{auth.ResourceUsers, auth.ActionUpdate},
-	{auth.ResourceUsers, auth.ActionEnable},
-	{auth.ResourceUsers, auth.ActionDisable},
-	{auth.ResourceUsers, auth.ActionDelete},
-	{auth.ResourceTenants, auth.ActionList},
-	{auth.ResourcePIN, auth.ActionRead},
-	{auth.ResourcePIV, auth.ActionRead},
-	{auth.ResourceSSH, auth.ActionRead},
-	{auth.ResourcePasswords, auth.ActionRead},
-	{auth.ResourceCA, auth.ActionRead},
-	{auth.ResourceOIDCCredentials, auth.ActionList},
 }
 
 // handlePIVLogin exchanges a TLS-verified client certificate (PIV smart card
@@ -579,16 +545,21 @@ func (s *Server) handleAuthMe(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	permissions := make(map[string]bool, len(uiPermissionMatrix))
-	for _, pair := range uiPermissionMatrix {
-		key := pair[0] + ":" + pair[1]
-		if s.rbacMiddleware == nil || s.rbacAuthorizer == nil {
-			// RBAC disabled: the server enforces nothing beyond
-			// authentication, so the UI should not hide anything either.
-			permissions[key] = true
-			continue
-		}
-		permissions[key] = s.rbacAuthorizer.Authorize(r.Context(), identity, pair[0], pair[1]) == nil
+	authorizer := s.rbacAuthorizer
+	if s.rbacMiddleware == nil {
+		// RBAC disabled: the server enforces nothing beyond authentication,
+		// so a disabled authorizer reports every permission and the UI hides
+		// nothing either.
+		authorizer = nil
+	}
+	held, err := authorizer.ListPermissions(r.Context(), identity)
+	if err != nil {
+		writeError(w, err, http.StatusInternalServerError)
+		return
+	}
+	permissions := make(map[string]bool, len(held))
+	for _, name := range held {
+		permissions[name] = true
 	}
 
 	resp := authMeResponse{

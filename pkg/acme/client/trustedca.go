@@ -679,5 +679,13 @@ func (tca *TrustedCA) adminAuthMiddleware() admin.AuthHandler {
 	if tca.authClient != nil {
 		return admin.NewAuthMiddleware(tca.authClient)
 	}
-	return admin.NewMTLSAuthMiddleware(nil)
+	// The caller's tenant is the one qrdbsdk.TenantFromClientCert names and its
+	// roles are those of the go-qrdb user the certificate binds to (with
+	// WithQRDB); the certificate's OU never grants a role. TrustedCA configures
+	// no SPIFFE trust domain, so none is pinned here.
+	mtlsConfig := &xkmsauth.MTLSConfig{}
+	if tca.qrdbClient != nil {
+		mtlsConfig.UserStore = xkmsauth.NewQRDBUserStore(tca.qrdbClient.Users())
+	}
+	return admin.NewMTLSAuthHandler(xkmsauth.NewMTLSAuthenticator(mtlsConfig), "")
 }

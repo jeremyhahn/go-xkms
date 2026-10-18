@@ -71,6 +71,7 @@ Rejected alternatives:
 | Signing keys | `pkg/xkms` keystore — see [`../crypto-backends/`](../crypto-backends/architecture.md) | go-xkms |
 | Certificate records (DAO, database, node) | `go-qrdb/sdk/go` | **go-qrdb** |
 | Ceremony that drives first CA creation | go-qrdb's ceremony; `pkg/init` `CAAdapter` bridges `TrustedCA` → qrdb's `CeremonyCA` | **go-qrdb** owns the seam |
+| `TrustedCA` as go-qrdb's cluster CA (Key A), signing through its `crypto.Signer` with no CA key bytes (go-xkms#1381) | `clusterca.KeyProvider` (`pkg/trust/clusterca/keyprovider.go`), passed via `qrdbnode.WithClusterCAKeyProvider` — see [`../clustering/engineering.md`](../clustering/engineering.md) | **go-qrdb** owns the seam; go-xkms supplies the CA |
 | ACME RFC 8555 on top of this CA | `pkg/acme` — see [`../acme-issuance/`](../acme-issuance/architecture.md) | go-xkms |
 
 This is capability row **"`TrustedCA`, ACME RFC-8555, DANE, AIA, cross-sign"

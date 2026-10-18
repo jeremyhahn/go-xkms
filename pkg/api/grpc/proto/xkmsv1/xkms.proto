@@ -9,7 +9,7 @@ option go_package = "github.com/jeremyhahn/go-xkms/pkg/api/grpc/proto/xkmsv1";
 
 import "google/protobuf/empty.proto";
 import "google/protobuf/timestamp.proto";
-import "pkg/api/grpc/proto/qrdbv1/authz.proto";
+import "qrdb/v1/permission.proto";
 
 // KeystoreService provides key management and cryptographic operations
 service KeystoreService {

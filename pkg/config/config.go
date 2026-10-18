@@ -796,10 +796,11 @@ type ClusterConfig struct {
 	// RaftEnrollment auto-provisions the inter-node Raft mTLS material when
 	// RaftTLS files are not supplied. A multi-node Raft transport always
 	// requires mTLS (it is mandatory in the transport layer), so without either
-	// RaftTLS or RaftEnrollment a multi-node node fails to start. Enrollment is
-	// delegated to go-qrdb's shared cluster-TLS toolkit (a dedicated self-signed
-	// cluster CA, distinct from the runtime xkms CA): the first node generates
-	// the CA and advertises it; joining nodes fetch it.
+	// RaftTLS or RaftEnrollment a multi-node node fails to start. The TrustedCA
+	// issues every Raft leaf from a dedicated cluster intermediate through its
+	// crypto.Signer, so no CA private key is written to disk: the first node
+	// issues its own leaf; joining nodes fetch the trust anchor and enroll over
+	// ACME (pkg/trust/clusterca).
 	RaftEnrollment RaftEnrollmentConfig `yaml:"raft_enrollment"`
 }
 
@@ -858,7 +859,8 @@ type RaftEnrollmentConfig struct {
 	// node's Raft TLS signing key. When set to a hardware backend ("tpm2" /
 	// "pkcs11"), the private key is generated inside and never leaves the
 	// device, and the Raft transport uses a signer-backed certificate (the node
-	// leaf is issued from the cluster CA for the hardware key's public part).
+	// leaf is issued by the TrustedCA, through its crypto.Signer, for the
+	// hardware key's public part; without ACME this needs CA and cannot join).
 	// When empty, the node key is a software key managed by the cluster-TLS
 	// toolkit (the default).
 	KeyBackend string `yaml:"key_backend"`

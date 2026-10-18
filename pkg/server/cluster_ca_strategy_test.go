@@ -109,7 +109,7 @@ func TestResolveClusterCAKeyPassphrase_CredentialReference(t *testing.T) {
 // an error from resolveConfigSecrets — the boot-time pass now performs this
 // resolution — rather than silently falling back to an empty passphrase.
 //
-// The "manual" strategy's RetrieveCredential blocks until SubmitCredential is
+// The "manual" strategy's RetrieveCredentialBuffer blocks until SubmitCredential is
 // called or ctx is cancelled — it has no "not found" answer of its own — so a
 // never-submitted name is proven "cannot be satisfied" the same way any
 // caller would see it: resolveConfigSecrets is bounded by a short-lived

@@ -24,6 +24,8 @@ import (
 	"strings"
 	"time"
 
+	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
+
 	"github.com/jeremyhahn/go-xkms/pkg/errs"
 
 	"github.com/jeremyhahn/go-xkms/pkg/api/transport"
@@ -170,7 +172,7 @@ func (s *XKMSService) SignCSR(ctx context.Context, req *transport.SignCSRRequest
 	// credential for that tenant and is refused with a *TenantBindingError
 	// that reads as not-found.
 	if req.TenantID != "" {
-		if err := bindTenantTarget(ctx, "sign csr", req.TenantID); err != nil {
+		if _, err := ownTenant(ctx, "sign csr", req.TenantID); err != nil {
 			return nil, err
 		}
 	}
@@ -407,7 +409,7 @@ func (s *XKMSService) IssueCertificate(ctx context.Context, req *transport.Issue
 	}
 
 	if req.TenantID != "" {
-		if err := bindTenantTarget(ctx, "issue certificate", req.TenantID); err != nil {
+		if _, err := ownTenant(ctx, "issue certificate", req.TenantID); err != nil {
 			return nil, err
 		}
 	}
@@ -447,8 +449,8 @@ func (s *XKMSService) IssueCertificate(ctx context.Context, req *transport.Issue
 // servicer method (see SignCSR's doc comment for the full list). What IS
 // decided here is ownership: the certificate's issuing tenant, recorded at
 // issuance by IssueCertificateRaw/SignCSRWithSPIFFE, is looked up and
-// checked against the caller's own tenant with the same bindTenantTarget
-// every other tenant-scoped operation uses. Every caller may revoke only its
+// checked against the caller's own tenant with the same ownTenant binding
+// (qrdbsdk.OwnTenant) every other tenant-scoped operation uses. Every caller may revoke only its
 // own tenant's certificates; a system-tenant caller revokes the system
 // tenant's own, never another tenant's. This closes go-xkms#1229: previously
 // any authenticated caller holding certs:revoke could revoke any certificate
@@ -478,7 +480,8 @@ func (s *XKMSService) RevokeCertificate(ctx context.Context, req *transport.Revo
 	if err != nil {
 		return nil, &ErrCAOperation{Operation: "revoke", Err: err}
 	}
-	if err := bindTenantTarget(ctx, "revoke certificate", issuingTenant); err != nil {
+	// issuingTenant "" is the system tenant, never "the caller's own".
+	if _, err := ownTenant(ctx, "revoke certificate", qrdbsdk.NormalizeTenantID(issuingTenant)); err != nil {
 		return nil, err
 	}
 

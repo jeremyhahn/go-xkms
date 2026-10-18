@@ -376,8 +376,8 @@ whether there is any evidence to check.
 - **Export returns certificates, never private keys.**
 - **The network slot operations are platform-scoped and reach the card only
   through the service** (go-xkms#1227). Each `XKMSService` PIV method calls
-  `requireSystemTenant` before delegating to the package-level operation
-  (`pkg/xkms/servicer_piv.go:31,40,49,58,67,76,85,94`); REST
+  checks `qrdbsdk.IdentityIsSystemTenant` before delegating to the package-level operation
+  (`pkg/xkms/servicer_piv.go:33,42,51,60,69,78,87,96`); REST
   (`pkg/api/rest/handlers_piv.go`), gRPC/Unix (`pkg/api/grpc/service_piv.go`)
   and MCP (`pkg/api/mcp/handlers_piv.go`) call the service methods, never
   `xkms.ListPIVSlots` and its siblings directly. A new network PIV verb adds

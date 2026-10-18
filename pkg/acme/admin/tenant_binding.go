@@ -25,7 +25,7 @@ import (
 
 // TenantBindingError reports that a tenant-scoped caller addressed a tenant
 // it is not bound to. It is the single refusal of the ACME admin tenant
-// binding (bindTenantTarget) and deliberately looks exactly like a missing
+// binding (admitTenant) and deliberately looks exactly like a missing
 // tenant: it unwraps to ErrTenantNotFound -- the error every tenant operation
 // returns for an unknown tenant -- and renders the same message, so every
 // transport answers its not-found status with the same body and a probe for
@@ -91,21 +91,24 @@ func callerTenant(ctx context.Context) (string, bool) {
 	return identity.TenantID, true
 }
 
-// bindTenantTarget enforces the tenant binding for an operation that
-// addresses target, a tenant ID the caller supplied in the request. The
-// permission gate cannot do this: auth.Authorizer.Authorize binds the
-// caller's OWN tenant as the request's target tenant, so a self-scoped grant
-// such as tenants:delete or users:update admits a tenant-scoped caller no
-// matter which tenant the request names.
+// admitTenant enforces the tenant binding for an operation that addresses
+// target, a tenant ID the caller supplied in the request. The permission gate
+// cannot do this: auth.Authorizer.Authorize binds the caller's OWN tenant as
+// the request's target tenant, so a self-scoped grant such as tenants:delete
+// or users:update admits a tenant-scoped caller no matter which tenant the
+// request names.
 //
-// A cross-tenant caller may address any tenant; a tenant-scoped caller only
-// its own. The refusal is a *TenantBindingError, which reads as not-found.
-func bindTenantTarget(ctx context.Context, op, target string) error {
-	caller, confined := callerTenant(ctx)
-	if !confined || caller == target {
-		return nil
+// The rule is auth.AdmitTenant's: a cross-tenant caller may address any
+// tenant, a tenant-scoped caller only its own (qrdbsdk.OwnTenant). Its
+// *qrdbsdk.CrossTenantDeniedError is answered with a *TenantBindingError,
+// which reads as not-found.
+func admitTenant(ctx context.Context, op, target string) error {
+	err := auth.AdmitTenant(ctx, op, target)
+	var denied *qrdbsdk.CrossTenantDeniedError
+	if errors.As(err, &denied) {
+		return &TenantBindingError{Op: op, CallerTenantID: denied.IdentityTenantID, TargetTenantID: target}
 	}
-	return &TenantBindingError{Op: op, CallerTenantID: caller, TargetTenantID: target}
+	return err
 }
 
 // bindTenantIAM enforces the tenant binding for a user or role operation on
@@ -113,20 +116,10 @@ func bindTenantTarget(ctx context.Context, op, target string) error {
 // within the context's tenant, so a cross-tenant caller's IAM call is scoped
 // to the tenant the request addressed once the binding has admitted it.
 func bindTenantIAM(ctx context.Context, op, target string) (context.Context, error) {
-	if err := bindTenantTarget(ctx, op, target); err != nil {
+	if err := admitTenant(ctx, op, target); err != nil {
 		return nil, err
 	}
 	return qrdbsdk.ContextWithTenant(ctx, target), nil
-}
-
-// requirePlatformScope admits only a cross-tenant caller to op. The refusal
-// is a *PlatformScopeError, which reads as a missing permission.
-func requirePlatformScope(ctx context.Context, op string) error {
-	caller, confined := callerTenant(ctx)
-	if !confined {
-		return nil
-	}
-	return &PlatformScopeError{Op: op, CallerTenantID: caller}
 }
 
 // sameTenant reports whether two tenant IDs name the same tenant, folding the

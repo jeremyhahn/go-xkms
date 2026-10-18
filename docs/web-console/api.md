@@ -38,8 +38,9 @@ wired.
 | `GET /api/v1/auth/validate` | session | Lightweight boot-time session probe |
 | `POST /api/v1/auth/logout` | session | Revoke the refresh token family |
 
-`GET /api/v1/auth/me`'s `permissions` map is built from a fixed
-`uiPermissionMatrix` of resource:action pairs, the pairs the console gates on.
+`GET /api/v1/auth/me`'s `permissions` map holds every resource:action the
+caller's roles grant, as qrdb's RBAC lists them, each mapped to `true`; a
+permission not held is absent.
 
 ## Navigation gates
 

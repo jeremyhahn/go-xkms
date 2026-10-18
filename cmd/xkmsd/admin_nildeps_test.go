@@ -15,10 +15,10 @@ package main
 
 // Tests for go-xkms#1075:
 //
-//  1. finalizeAdminModule refuses to build the ACME admin surface's
-//     authorizer against a nil qrdb client (ErrAdminQRDBClientRequired)
-//     instead of falling back to auth.NewAuthorizer(nil), which would allow
-//     every request.
+//  1. finalizeAdminModule refuses to build the ACME admin service against a
+//     nil qrdb client (ErrAdminQRDBClientRequired) instead of publishing a
+//     router whose tenant admission and user lookups have nothing behind
+//     them.
 //  2. With ACME disabled, every published admin route answers without
 //     panicking — walking the router exactly as admin_authz_test.go does,
 //     but asserting the absence of a panic directly (a failure here reports
@@ -39,8 +39,8 @@ import (
 )
 
 // TestFinalizeAdminModule_NilQRDBClientRefused proves finalizeAdminModule
-// fails closed (refuses to build the admin surface) rather than falling back
-// to a disabled, allow-all authorizer when no qrdb client is available.
+// fails closed (refuses to build the admin surface) when no qrdb client is
+// available.
 //
 // finalizeAdminModule reads srv.QRDBClient() as its very first operation and
 // returns immediately if it is nil, before touching anything else on srv --

@@ -175,7 +175,7 @@ func TestRegisterRoutes_WithAuth(t *testing.T) {
 	// Register with mTLS auth middleware. The development-mode bypass that
 	// granted super-admin with a wildcard permission set to every request was
 	// deleted along with the parallel role model.
-	authMiddleware := NewMTLSAuthMiddleware(nil)
+	authMiddleware := NewMTLSAuthHandler(nil, testTrustDomain)
 	handlers.RegisterRoutes(router, authMiddleware, newPermissiveGate())
 
 	req := httptest.NewRequest("GET", "/admin/status", nil)

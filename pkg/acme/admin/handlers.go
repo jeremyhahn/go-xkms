@@ -22,6 +22,7 @@ import (
 	"time"
 
 	"github.com/gorilla/mux"
+	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
 
 	"github.com/jeremyhahn/go-xkms/pkg/acme/audit"
 	caerrors "github.com/jeremyhahn/go-xkms/pkg/acme/errors"
@@ -88,59 +89,27 @@ func NewHandlers(service Service, logger *slog.Logger, opts ...HandlerOption) *H
 	return h
 }
 
-// RegisterRoutes registers all admin API routes with the router.
+// RegisterRoutes registers the /admin routes (see Routes) on router for a
+// standalone host.
 //
-// Every route is decorated with the exact go-qrdb resource:action grant it
-// requires; gate resolves each one through the hosted qrdb node's RBAC service
-// (see PermissionGate). Registration is fail-closed by construction: a route
-// without a decorator is unreachable because there is no undecorated
-// registration path, and a nil gate denies every request.
+// Every route is gated on its own go-qrdb permission, which gate resolves
+// through the hosted qrdb node's RBAC service (see PermissionGate).
+// Registration is fail-closed by construction: every route comes from the
+// one route table, each entry carries its permission, and a nil gate denies
+// every request.
 func (h *Handlers) RegisterRoutes(router *mux.Router, authMiddleware AuthHandler, gate *PermissionGate) {
-	// Apply auth middleware to all routes
-	adminRouter := router.PathPrefix("/admin").Subrouter()
-	if authMiddleware != nil {
-		adminRouter.Use(authMiddleware.Authenticate)
-	}
+	mountRoutes(router, adminPathPrefix, authMiddleware, h, adminRoutes(), gate.guardRoute)
+}
 
-	// Certificate management.
-	// Note: /certificates/expiring must be registered BEFORE /certificates/{serial}
-	// to avoid gorilla/mux matching "expiring" as a serial number
-	adminRouter.Handle("/certificates",
-		gate.Wrap(auth.ResourceCerts, auth.ActionList, h.ListCertificates)).Methods("GET")
-	adminRouter.Handle("/certificates/expiring",
-		gate.Wrap(auth.ResourceCerts, auth.ActionList, h.ListExpiringCertificates)).Methods("GET")
-	adminRouter.Handle("/certificates/{serial}",
-		gate.Wrap(auth.ResourceCerts, auth.ActionRead, h.GetCertificate)).Methods("GET")
-	adminRouter.Handle("/certificates/{serial}/revoke",
-		gate.Wrap(auth.ResourceCerts, auth.ActionRevoke, h.RevokeCertificate)).Methods("POST")
-
-	// ACME account management.
-	adminRouter.Handle("/accounts",
-		gate.Wrap(auth.ResourceACMEAccounts, auth.ActionList, h.ListAccounts)).Methods("GET")
-	adminRouter.Handle("/accounts/{id}",
-		gate.Wrap(auth.ResourceACMEAccounts, auth.ActionRead, h.GetAccount)).Methods("GET")
-	adminRouter.Handle("/accounts/{id}",
-		gate.Wrap(auth.ResourceACMEAccounts, auth.ActionDisable, h.DisableAccount)).Methods("DELETE")
-
-	// ACME order management.
-	adminRouter.Handle("/orders",
-		gate.Wrap(auth.ResourceACMEOrders, auth.ActionList, h.ListOrders)).Methods("GET")
-	adminRouter.Handle("/orders/{id}",
-		gate.Wrap(auth.ResourceACMEOrders, auth.ActionRead, h.GetOrder)).Methods("GET")
-
-	// Audit trail.
-	adminRouter.Handle("/audit",
-		gate.Wrap(auth.ResourceAudit, auth.ActionRead, h.ListAuditLogs)).Methods("GET")
-
-	// CA status and statistics.
-	adminRouter.Handle("/status",
-		gate.Wrap(auth.ResourceAdmin, auth.ActionStatus, h.GetStatus)).Methods("GET")
-	adminRouter.Handle("/stats",
-		gate.Wrap(auth.ResourceAdmin, auth.ActionStatus, h.GetStats)).Methods("GET")
-
-	// Algorithm capability discovery.
-	adminRouter.Handle("/algorithms",
-		gate.Wrap(auth.ResourceAdmin, auth.ActionCapabilities, h.GetAlgorithms)).Methods("GET")
+// RegisterAuthorizedRoutes registers the /admin routes on router for a host
+// that has already authorized every request against the route's permission
+// before dispatching to router: the unified server, whose admin module
+// mounts each entry of Routes through qrdb's HTTPRegistrar.Handle. Only a
+// route the host mounts identity-gated (Route.SelfPermission) is authorized
+// here, by gate. Mounted anywhere else, the other routes are served
+// unauthorized; a standalone host uses RegisterRoutes.
+func (h *Handlers) RegisterAuthorizedRoutes(router *mux.Router, authMiddleware AuthHandler, gate *PermissionGate) {
+	mountRoutes(router, adminPathPrefix, authMiddleware, h, adminRoutes(), gate.guardReachRoute)
 }
 
 // ListCertificates handles GET /admin/certificates
@@ -441,10 +410,11 @@ func (h *Handlers) GetStats(w http.ResponseWriter, r *http.Request) {
 // server whose audit trail it cannot read.
 //
 // The trail records no tenant for its events, so it cannot be confined to one:
-// reading it is a platform operation, and a tenant-scoped caller is answered
-// exactly as a caller lacking audit:read is (PlatformScopeError).
+// reading it is a platform operation, and a caller outside the system tenant
+// (qrdbsdk.IdentityIsSystemTenant) is answered exactly as a caller lacking
+// audit:read is.
 func (h *Handlers) ListAuditLogs(w http.ResponseWriter, r *http.Request) {
-	if err := requirePlatformScope(r.Context(), "list audit logs"); err != nil {
+	if !qrdbsdk.IdentityIsSystemTenant(auth.GetIdentity(r.Context())) {
 		writePermissionDenied(w)
 		return
 	}

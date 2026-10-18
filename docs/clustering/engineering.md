@@ -73,9 +73,10 @@ func NewNode(ctx context.Context, opts *NodeOptions) (*NodeResult, error) // sta
 ```
 
 A multi-member cluster resolves its Raft mTLS material through
-`NodeOptions.RaftMTLSResolver` (nil selects `clusterenroll.Resolve`, the
-software auto-provisioning path that starts the enrollment advertiser) and
-passes it to go-qrdb with `qrdbnode.WithRaftMTLS`; `NodeResult.Advertiser`
+`NodeOptions.RaftMTLSResolver`, which is required: a nil resolver fails with
+`ErrNilRaftMTLSResolver` (`pkg/embeddednode/node_errors.go`), because there is
+no built-in path that would write a cluster CA key to disk. NewNode passes
+the material to go-qrdb with `qrdbnode.WithRaftMTLS`; `NodeResult.Advertiser`
 hands that advertiser's lifecycle to the caller. `OpenEmbeddedNode` layers the
 deployment's seal posture and storage config over `NewNode`. The SDK
 re-exports the builder as `NewDaemonNode` / `DaemonOptions` /
@@ -233,13 +234,22 @@ Raft mTLS provisioning precedence, highest first (`Server.resolveRaftMTLS`,
    the single cluster trust anchor; joining nodes prove identity via TPM
    attestation instead of receiving a shared CA key. See "Node identity
    from enroll-01" below for which joiners are named cluster members.
-3. **Hardware node key** — `cluster.raft_enrollment.key_backend: tpm2` or
-   `pkcs11` without ACME; the node key never leaves the device.
-4. **Software auto-provisioned** (default) — the first node generates a
-   dedicated self-signed cluster CA and serves a Noise NK bootstrap endpoint;
-   joining nodes fetch it via `raft_enrollment.bootstrap` (Noise / SPKI /
-   DANE / Direct — the same dispatch as
-   [`../trust-bootstrap/`](../trust-bootstrap/architecture.md)).
+3. **Local CA** (default) — no ACME. The node key lives on
+   `cluster.raft_enrollment.key_backend` (empty selects the `software`
+   backend; `tpm2` / `pkcs11` keep it on the device). The `TrustedCA` issues
+   the leaf through its `crypto.Signer` (`provisionTrustedCA`,
+   `pkg/trust/clusterca/acme.go`), the same first-node path as ACME, so no
+   mode writes a `ca-key.pem`. It needs `ca` configured
+   (`*clusterca.ErrMissingOption`) and cannot join:
+   `*clusterca.ErrLocalCAJoin` (join with ACME instead). The node key
+   resolves through `Options.NodeKeyBackends` (`clusterca.NewNodeKeyBackends`,
+   `pkg/trust/clusterca/backends.go`), independent of the CA-custody
+   `Backends` seam: `software` is a store under `cluster-ca/node-key`, `tpm2`
+   the node's TPM, any other name the daemon's backend of that name. A
+   backend the node lacks fails with `*clusterca.ErrKeyBackendUnavailable`
+   wrapping `*clusterca.ErrNodeKeyBackendNotConfigured` (or
+   `*clusterca.ErrNoTPM`); nothing falls back to software. A restart reloads
+   the same named key; only an ACME joiner signs with its TPM IDevID.
 
 ### Node identity from enroll-01
 
@@ -278,6 +288,26 @@ enroll-01 installs the issued IAK certificate on the TPM. The TPM
 configuration must name an IAK certificate NV handle (`iak.cert-handle`) or
 the TPM must have a certificate store; otherwise the install fails.
 
+### TrustedCA as go-qrdb's cluster CA (Key A)
+
+go-qrdb signs node leaves, `ceremony-sign-csr` and the client trust pool with
+its cluster CA, Key A. Wherever the `TrustedCA` is the cluster CA, xkmsd hands
+it to the node with `qrdbnode.WithClusterCAKeyProvider` (go-xkms#1381):
+`clusterca.KeyProvider` (`pkg/trust/clusterca/keyprovider.go`) has go-qrdb's
+`cakey.Provider` method set and signs through the `TrustedCA`'s
+`crypto.Signer`. No CA key bytes are read, returned or written.
+
+`Server.trustedCAIsClusterCA` (`pkg/server/cluster_ca_keyprovider.go`) selects
+it when `ca` is configured and the node is standalone, or clustered with
+TrustedCA-issued Raft mTLS (ACME or local CA, any key backend). Operator files
+(BYO-TLS, no Key A) keep go-qrdb's behaviour.
+
+The node starts before the `TrustedCA`, whose stores live in it.
+`initializeCA` binds the CA to the provider. Before that, Key A calls return
+`*clusterca.ErrClusterCAUnbound`, and go-qrdb logs one "Key A is not yet
+available" warning at boot. A signer that does not match its CA certificate
+returns `*clusterca.ErrClusterCAKeyMismatch`.
+
 Cluster CA key custody, at steady state (`raft_enrollment.ca_key_strategy`,
 doc comment on `RaftEnrollmentConfig.CAKeyStrategy`, `pkg/config/config.go`;
 full detail in [`ca-key-custody.md`](ca-key-custody.md)):
@@ -306,9 +336,11 @@ Every node's data is the same replicated `qrdb` datastore described in
 clustering does not add a second store. The cluster CA's own bootstrap
 keystore is the one exception — it must exist **before** the replicated
 datastore does, so it lives node-local under
-`<Storage.Path>/raft-tls` (software auto-provisioning) or
-`<Storage.Path>/<clusterCACacheSubdir>` (ACME-attested mode), protected by
-the seal strategies above rather than the barrier.
+`<Storage.Path>/cluster-ca` (`clusterCACacheSubdir`,
+`pkg/server/cluster_ca_adopt.go`) in every TrustedCA mode, protected by the
+seal strategies above rather than the barrier. The CA keys stay in that
+sealed keystore and are used only through the TrustedCA's `crypto.Signer`; no
+mode writes a `ca-key.pem`.
 
 ## Test strategy
 

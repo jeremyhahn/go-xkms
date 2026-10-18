@@ -25,8 +25,6 @@ import (
 	"github.com/gorilla/mux"
 	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
 	db "github.com/jeremyhahn/go-qrdb/sdk/go/transport"
-
-	"github.com/jeremyhahn/go-xkms/pkg/auth"
 )
 
 // TenantHandlers provides HTTP handlers for tenant management API endpoints
@@ -43,91 +41,24 @@ func NewTenantHandlers(service TenantService, logger *slog.Logger) *TenantHandle
 	}
 }
 
-// RegisterRoutes registers all tenant API routes with the router.
-//
-// Every route declares the exact go-qrdb resource:action grant it requires and
-// gate resolves it through the hosted qrdb node's RBAC service. The role and
-// user sub-trees, which previously carried no authorization at all, are gated
-// on qrdb's canonical roles:* and users:* permissions — the same grants the
-// main REST/gRPC/QUIC/MCP transports require for identity administration.
+// RegisterRoutes registers the /api/v1/tenants routes (see Routes) on router
+// for a standalone host, each gated on its own go-qrdb permission, which
+// gate resolves through the hosted qrdb node's RBAC service. The role and
+// user sub-trees are gated on qrdb's canonical roles:* and users:*
+// permissions — the same grants the main REST/gRPC/QUIC/MCP transports
+// require for identity administration. The tenant lifecycle routes are gated
+// by the tenant they reach (PermissionGate.WrapTenant, WrapTenantList).
 func (h *TenantHandlers) RegisterRoutes(router *mux.Router, authMiddleware AuthHandler, gate *PermissionGate) {
-	// Apply auth middleware to all routes
-	tenantsRouter := router.PathPrefix("/api/v1/tenants").Subrouter()
-	if authMiddleware != nil {
-		tenantsRouter.Use(authMiddleware.Authenticate)
-	}
+	mountRoutes(router, tenantsPathPrefix, authMiddleware, h, tenantRoutes(), gate.guardRoute)
+}
 
-	// Tenant lifecycle. A call within the caller's own tenant needs the
-	// self-scoped tenants:* grant; a call reaching any other tenant needs
-	// qrdb's cross-scope grant, which only a system-tenant caller holds.
-	// Creating a tenant always reaches beyond the caller's own.
-	tenantsRouter.Handle("",
-		gate.WrapTenantList(auth.ResourceTenants, auth.ActionList, qrdbsdk.PermissionTenantsListCross, h.ListTenants)).Methods("GET")
-	tenantsRouter.Handle("",
-		gate.WrapPermission(qrdbsdk.PermissionTenantsCreateCross, h.CreateTenant)).Methods("POST")
-	tenantsRouter.Handle("/{id}",
-		gate.WrapTenant(auth.ResourceTenants, auth.ActionRead, qrdbsdk.PermissionTenantsReadCross, h.GetTenant)).Methods("GET")
-	tenantsRouter.Handle("/{id}",
-		gate.WrapTenant(auth.ResourceTenants, auth.ActionUpdate, qrdbsdk.PermissionTenantsUpdateCross, h.UpdateTenant)).Methods("PUT")
-	tenantsRouter.Handle("/{id}",
-		gate.WrapTenant(auth.ResourceTenants, auth.ActionDelete, qrdbsdk.PermissionTenantsDeleteCross, h.DeleteTenant)).Methods("DELETE")
-	tenantsRouter.Handle("/{id}/status",
-		gate.WrapTenant(auth.ResourceTenants, auth.ActionUpdate, qrdbsdk.PermissionTenantsUpdateCross, h.UpdateTenantStatus)).Methods("PUT")
-
-	// Tenant CA hierarchy. Creating or retiring a signing CA is strictly more
-	// privileged than issuing a leaf certificate, so it is gated on ca:* rather
-	// than certs:*.
-	tenantsRouter.Handle("/{id}/root-ca",
-		gate.Wrap(auth.ResourceCA, auth.ActionCreate, h.CreateTenantRootCA)).Methods("POST")
-	tenantsRouter.Handle("/{id}/intermediate-cas",
-		gate.Wrap(auth.ResourceCA, auth.ActionList, h.ListTenantIntermediateCAs)).Methods("GET")
-	tenantsRouter.Handle("/{id}/intermediate-cas",
-		gate.Wrap(auth.ResourceCA, auth.ActionCreate, h.CreateTenantIntermediateCA)).Methods("POST")
-	tenantsRouter.Handle("/{id}/intermediate-cas/{caid}",
-		gate.Wrap(auth.ResourceCA, auth.ActionRead, h.GetTenantIntermediateCA)).Methods("GET")
-	tenantsRouter.Handle("/{id}/intermediate-cas/{caid}/status",
-		gate.Wrap(auth.ResourceCA, auth.ActionUpdate, h.UpdateTenantIntermediateCAStatus)).Methods("PUT")
-	tenantsRouter.Handle("/{id}/default-intermediate-ca",
-		gate.Wrap(auth.ResourceCA, auth.ActionUpdate, h.SetTenantDefaultIntermediateCA)).Methods("PUT")
-	tenantsRouter.Handle("/{id}/ca-status",
-		gate.Wrap(auth.ResourceCA, auth.ActionRead, h.GetTenantCAStatus)).Methods("GET")
-
-	// External Account Bindings. acme_eab:create is the "endorser" authority
-	// that the deleted local RoleEndorser used to express; a deployment that
-	// needs an endorse-only principal creates a qrdb role holding exactly that
-	// permission.
-	tenantsRouter.Handle("/{id}/eab",
-		gate.Wrap(auth.ResourceACMEEAB, auth.ActionList, h.ListTenantEABs)).Methods("GET")
-	tenantsRouter.Handle("/{id}/eab",
-		gate.Wrap(auth.ResourceACMEEAB, auth.ActionCreate, h.CreateTenantEAB)).Methods("POST")
-	tenantsRouter.Handle("/{id}/eab/{kid}",
-		gate.Wrap(auth.ResourceACMEEAB, auth.ActionRead, h.GetTenantEAB)).Methods("GET")
-	tenantsRouter.Handle("/{id}/eab/{kid}",
-		gate.Wrap(auth.ResourceACMEEAB, auth.ActionDelete, h.DeleteTenantEAB)).Methods("DELETE")
-
-	// Tenant role management.
-	tenantsRouter.Handle("/{id}/roles",
-		gate.Wrap(auth.ResourceRoles, auth.ActionList, h.ListTenantRoles)).Methods("GET")
-	tenantsRouter.Handle("/{id}/roles",
-		gate.Wrap(auth.ResourceRoles, auth.ActionCreate, h.CreateTenantRole)).Methods("POST")
-	tenantsRouter.Handle("/{id}/roles/{roleID}",
-		gate.Wrap(auth.ResourceRoles, auth.ActionRead, h.GetTenantRole)).Methods("GET")
-	tenantsRouter.Handle("/{id}/roles/{roleID}",
-		gate.Wrap(auth.ResourceRoles, auth.ActionUpdate, h.UpdateTenantRole)).Methods("PUT")
-	tenantsRouter.Handle("/{id}/roles/{roleID}",
-		gate.Wrap(auth.ResourceRoles, auth.ActionDelete, h.DeleteTenantRole)).Methods("DELETE")
-
-	// Tenant user management.
-	tenantsRouter.Handle("/{id}/users",
-		gate.Wrap(auth.ResourceUsers, auth.ActionList, h.ListTenantUsers)).Methods("GET")
-	tenantsRouter.Handle("/{id}/users",
-		gate.Wrap(auth.ResourceUsers, auth.ActionCreate, h.CreateTenantUser)).Methods("POST")
-	tenantsRouter.Handle("/{id}/users/{userID}",
-		gate.Wrap(auth.ResourceUsers, auth.ActionRead, h.GetTenantUser)).Methods("GET")
-	tenantsRouter.Handle("/{id}/users/{userID}",
-		gate.Wrap(auth.ResourceUsers, auth.ActionUpdate, h.UpdateTenantUser)).Methods("PUT")
-	tenantsRouter.Handle("/{id}/users/{userID}",
-		gate.Wrap(auth.ResourceUsers, auth.ActionDelete, h.DeleteTenantUser)).Methods("DELETE")
+// RegisterAuthorizedRoutes registers the /api/v1/tenants routes on router
+// for a host that has already authorized every request against the route's
+// permission; see Handlers.RegisterAuthorizedRoutes. The tenant lifecycle
+// routes, which such a host mounts identity-gated (Route.SelfPermission),
+// are still authorized here, by gate.
+func (h *TenantHandlers) RegisterAuthorizedRoutes(router *mux.Router, authMiddleware AuthHandler, gate *PermissionGate) {
+	mountRoutes(router, tenantsPathPrefix, authMiddleware, h, tenantRoutes(), gate.guardReachRoute)
 }
 
 // checkTenantAccess enforces the tenant binding for a request addressing
@@ -136,7 +67,7 @@ func (h *TenantHandlers) RegisterRoutes(router *mux.Router, authMiddleware AuthH
 // response a missing tenant gets (writeTenantNotFound, the go-xkms#1112
 // convention). It reports whether the handler may proceed.
 //
-// The service applies the same binding (bindTenantTarget) for every
+// The service applies the same binding (admitTenant) for every
 // transport. Checking here as well answers a refused request before body
 // parsing and validation run, whose answers would otherwise set a foreign
 // tenant apart from a missing one.
@@ -146,7 +77,7 @@ func (h *TenantHandlers) checkTenantAccess(w http.ResponseWriter, r *http.Reques
 		writeProblem(w, http.StatusUnauthorized, problemUnauthorized, "Authentication required")
 		return false
 	}
-	if err := bindTenantTarget(r.Context(), op, tenantID); err != nil {
+	if err := admitTenant(r.Context(), op, tenantID); err != nil {
 		h.logger.Warn("cross-tenant access refused",
 			slog.String("op", op),
 			slog.String("user_id", user.UserID),
@@ -209,6 +140,10 @@ func (h *TenantHandlers) CreateTenant(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		if errors.Is(err, ErrTenantAlreadyExists) {
 			writeProblem(w, http.StatusConflict, "urn:trusted-ca:error:conflict", "Tenant already exists")
+			return
+		}
+		if errors.Is(err, ErrForbidden) {
+			writeProblem(w, http.StatusForbidden, problemForbidden, "Creating a tenant requires a platform identity")
 			return
 		}
 		h.logger.Error("failed to create tenant", slog.String("id", req.ID), slog.String("error", err.Error()))

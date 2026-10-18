@@ -146,23 +146,6 @@ func TestServer_HandleRequest_MethodNotFound(t *testing.T) {
 	assert.Equal(t, ErrCodeMethodNotFound, resp.Error.Code)
 }
 
-func TestServer_RouteFrostMethods_NonFrostMethod(t *testing.T) {
-	svc := setupTestXKMS(t)
-	defer cleanupXKMS()
-
-	server, err := NewServer(&Config{XKMSService: svc, Authenticator: auth.NewNoOpAuthenticator()})
-	require.NoError(t, err)
-
-	req := &JSONRPCRequest{
-		JSONRPC: "2.0",
-		Method:  "xkms.health",
-		ID:      1,
-	}
-
-	_, _, handled := server.routeFrostMethods(context.Background(), req)
-	assert.False(t, handled) // Non-frost method should not be handled by frost router
-}
-
 // TestServer_HandleRequest_AllMethods tests that InvokeMethod routes to various handlers
 func TestServer_HandleRequest_AllMethods(t *testing.T) {
 	svc := setupTestXKMS(t)

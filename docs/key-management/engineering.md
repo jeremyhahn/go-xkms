@@ -645,7 +645,7 @@ through `decodeParams` too). `pkg/api/mcp/handlers_user.go`'s
 the caller as an internal fault regardless of the request. It is deleted;
 `user.*` handlers call `decodeParams` like every other handler.
 `TestEveryHandler_MalformedParamsAreInvalidParams`
-(`malformed_params_sweep_test.go`) drives every entry of `rpcMethodHandlers`
+(`malformed_params_sweep_test.go`) drives every entry of `rpcMethods`
 with unparsable JSON and asserts `-32602`, so a future handler that starts
 decoding params without going through `decodeParams` fails that test by
 name instead of silently reaching the caller as `-32603`.

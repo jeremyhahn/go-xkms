@@ -22,3 +22,9 @@ func (s *Server) initPKCS11Backend() error {
 	}
 	return nil
 }
+
+// openPreNodePKCS11Backend opens nothing without PKCS#11 support: a node key
+// on key_backend pkcs11 is then refused (clusterca.ErrNodeKeyBackendNotConfigured).
+func (s *Server) openPreNodePKCS11Backend() error {
+	return nil
+}

@@ -33,11 +33,6 @@ import (
 // Raft node certificates when RaftEnrollment.TrustDomain is unset.
 const defaultRaftTrustDomain = embeddednode.DefaultTrustDomain
 
-// raftTLSCacheSubdir is the subdirectory of Datastore.Path where auto-provisioned
-// cluster TLS material (CA + node cert/key + Noise key) is cached so restarts
-// reuse it.
-const raftTLSCacheSubdir = embeddednode.RaftTLSCacheSubdir
-
 // ErrRaftTLSRead is returned when one of the operator-supplied Raft mTLS PEM
 // files cannot be read at node boot. It carries the offending field name and
 // file path so the operator can correct the deployment.
@@ -65,7 +60,6 @@ func (s *Server) newQRDBNode(qcfg *qrdbsdk.DaemonConfig, serverOpts []qrdbsdk.Se
 	res, err := embeddednode.NewNode(s.ctx, &embeddednode.NodeOptions{
 		QRDB:             qcfg,
 		Cluster:          s.nodeClusterOptions(),
-		StoragePath:      s.config.Datastore.Path,
 		Logger:           s.logger,
 		ServerOptions:    serverOpts,
 		NodeOptions:      nodeOpts,
@@ -83,25 +77,12 @@ func (s *Server) newQRDBNode(qcfg *qrdbsdk.DaemonConfig, serverOpts []qrdbsdk.Se
 // nodeClusterOptions maps the xkms cluster configuration onto the shared
 // pkg/embeddednode topology options.
 func (s *Server) nodeClusterOptions() embeddednode.ClusterOptions {
-	enr := s.config.Cluster.RaftEnrollment
 	return embeddednode.ClusterOptions{
-		Enabled:            s.config.Cluster.Enabled,
-		NodeID:             s.config.Cluster.NodeID,
-		RaftAddress:        s.config.Cluster.RaftAddress,
-		Peers:              s.config.Cluster.Peers,
-		Join:               s.config.Cluster.Join,
-		TrustDomain:        enr.TrustDomain,
-		AdvertiseNoisePort: enr.AdvertiseNoisePort,
-		AdvertiseNoiseHost: s.raftNoiseBindHost(),
-		Bootstrap: clusterenroll.BootstrapOptions{
-			NoiseKey:   enr.Bootstrap.NoiseKey,
-			NoiseAddr:  enr.Bootstrap.NoiseAddr,
-			SPKIPin:    enr.Bootstrap.SPKIPin,
-			ServerAddr: enr.Bootstrap.ServerAddr,
-			DANEDNS:    enr.Bootstrap.DANEDNS,
-			DANEDoT:    enr.Bootstrap.DANEDoT,
-			DirectURL:  enr.Bootstrap.DirectURL,
-		},
+		Enabled:     s.config.Cluster.Enabled,
+		NodeID:      s.config.Cluster.NodeID,
+		RaftAddress: s.config.Cluster.RaftAddress,
+		Peers:       s.config.Cluster.Peers,
+		Join:        s.config.Cluster.Join,
 	}
 }
 
@@ -128,12 +109,11 @@ func (s *Server) raftNoiseBindHost() string {
 // TrustedCA and key-strategy dependencies the daemon owns.
 //
 //  1. operator-supplied explicit PEM files (RaftTLS)
-//  2. TPM-attested ACME enroll-01 against the runtime TrustedCA
-//  2. hardware-resident node key (tpm2/pkcs11), key never leaves the device
-//  3. software node key auto-provisioned via the shared enrollment toolkit
+//  2. the TrustedCA as the cluster CA: TPM-attested ACME enroll-01, or a
+//     leaf issued in-process for the node key on RaftEnrollment.KeyBackend
+//     (tpm2/pkcs11, or the software backend when unset)
 func (s *Server) resolveRaftMTLS(_ context.Context, members map[uint64]string) (*qrdbnode.RaftMTLSConfig, *clusterenroll.Advertiser, error) {
-	switch {
-	case s.config.Cluster.RaftTLS.Enabled():
+	if s.config.Cluster.RaftTLS.Enabled() {
 		mtls, err := loadRaftMTLS(s.config.Cluster.RaftTLS)
 		if err != nil {
 			return nil, nil, err
@@ -142,31 +122,21 @@ func (s *Server) resolveRaftMTLS(_ context.Context, members map[uint64]string) (
 			"ca_cert_file", s.config.Cluster.RaftTLS.CACertFile,
 			"cert_file", s.config.Cluster.RaftTLS.CertFile)
 		return mtls, nil, nil
-
-	case s.config.Cluster.RaftEnrollment.ACME.Enabled:
-		mtls, adv, err := s.provisionRaftClusterACME(members)
-		if err != nil {
-			return nil, nil, err
-		}
-		s.logger.Info("Raft inter-node mTLS via TPM-attested ACME cluster enrollment",
-			"data_dir", filepath.Join(s.config.Datastore.Path, clusterCACacheSubdir),
-			"cluster_ca_cn", s.config.Cluster.RaftEnrollment.ClusterCACN,
-			"advertising", adv != nil)
-		return mtls, adv, nil
-
-	case s.config.Cluster.RaftEnrollment.KeyBackend != "":
-		return s.provisionRaftClusterTLSHardware(members)
-
-	default:
-		mtls, adv, err := s.provisionRaftClusterTLS(members)
-		if err != nil {
-			return nil, nil, err
-		}
-		s.logger.Info("Raft inter-node mTLS auto-provisioned via cluster enrollment",
-			"data_dir", filepath.Join(s.config.Datastore.Path, raftTLSCacheSubdir),
-			"advertising", adv != nil)
-		return mtls, adv, nil
 	}
+
+	// Every auto-enrolled mode issues from the TrustedCA through its
+	// crypto.Signer; no cluster CA key is written to disk (go-xkms#1381).
+	mtls, adv, err := s.provisionRaftClusterTrustedCA(members)
+	if err != nil {
+		return nil, nil, err
+	}
+	s.logger.Info("Raft inter-node mTLS issued by the TrustedCA",
+		"acme", s.config.Cluster.RaftEnrollment.ACME.Enabled,
+		"key_backend", s.config.Cluster.RaftEnrollment.KeyBackend,
+		"data_dir", filepath.Join(s.config.Datastore.Path, clusterCACacheSubdir),
+		"cluster_ca_cn", s.config.Cluster.RaftEnrollment.ClusterCACN,
+		"advertising", adv != nil)
+	return mtls, adv, nil
 }
 
 // loadRaftMTLS reads the operator-supplied PEM files referenced by cfg and
@@ -191,38 +161,6 @@ func loadRaftMTLS(cfg config.RaftTLSConfig) (*qrdbnode.RaftMTLSConfig, error) {
 		Cert:   cert,
 		Key:    key,
 	}, nil
-}
-
-// provisionRaftClusterTLS auto-provisions the inter-node Raft mTLS material by
-// delegating to go-qrdb's shared cluster-TLS enrollment (clusterenroll.Resolve).
-// The first node generates a dedicated self-signed cluster CA and returns a
-// running Noise advertiser for peer enrollment; joining nodes (RaftEnrollment.
-// Bootstrap configured) fetch the CA and issue their own leaf. Generated material
-// is cached under {Datastore.Path}/raft-tls so restarts reuse it. The returned
-// Advertiser is nil except on the first (bootstrapping) node.
-func (s *Server) provisionRaftClusterTLS(members map[uint64]string) (*qrdbnode.RaftMTLSConfig, *clusterenroll.Advertiser, error) {
-	mat, adv, err := clusterenroll.Resolve(s.ctx, s.buildClusterEnrollOptions(members), s.logger)
-	if err != nil {
-		return nil, nil, err
-	}
-	return &qrdbnode.RaftMTLSConfig{
-		CACert: mat.CACertPEM,
-		Cert:   mat.CertPEM,
-		Key:    mat.KeyPEM,
-	}, adv, nil
-}
-
-// buildClusterEnrollOptions maps the xkms cluster configuration onto the qrdb
-// clusterenroll Options by delegating to the shared pkg/embeddednode mapping, which
-// applies the trust-domain and advertise-port defaults and computes SingleNode
-// from the membership. It is pure (no side effects) so the mapping can be
-// unit-tested without starting the Noise advertiser.
-func (s *Server) buildClusterEnrollOptions(members map[uint64]string) *clusterenroll.Options {
-	opts := &embeddednode.NodeOptions{
-		Cluster:     s.nodeClusterOptions(),
-		StoragePath: s.config.Datastore.Path,
-	}
-	return opts.ClusterEnrollOptions(members)
 }
 
 // splitClusterPeers splits the comma-separated "id=addr" peer list into the

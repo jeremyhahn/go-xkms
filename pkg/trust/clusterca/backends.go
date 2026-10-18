@@ -39,8 +39,8 @@ type NodeLocalBackendsParams struct {
 
 	// CAConfig is the CA identity hierarchy whose signing keys the software
 	// backend holds. The resolved keystore password (below) is injected into
-	// its identities so the keys are encrypted at rest. May be nil when only a
-	// node transport key (no pre-staged CA) is needed.
+	// its identities so the keys are encrypted at rest. May be nil when no CA
+	// is pre-staged.
 	CAConfig *ca.MultiIdentityCAConfig
 
 	// Protection selects how the node-local CA signing keystore is protected at
@@ -48,9 +48,9 @@ type NodeLocalBackendsParams struct {
 	// is defaulted to this params' DataDir when unset.
 	Protection KeyProtection
 
-	// HardwareTPM, when a *tpm2 backend, is reused as the "tpm2" node key
+	// HardwareTPM, when a *tpm2 backend, is reused as the "tpm2" CA key
 	// backend so the TPM is never opened twice (a shared open from the seal
-	// autodetect). Nil disables hardware node keys (software only).
+	// autodetect). Nil disables hardware CA keys (software only).
 	HardwareTPM types.Sealer
 
 	// Logger receives diagnostics. Defaults to slog.Default when nil.
@@ -140,8 +140,8 @@ func newNodeLocalBackendSet(ctx context.Context, params *NodeLocalBackendsParams
 		return nil, err
 	}
 
-	// Build the node-local software backend (CA signing keys + node transport
-	// key) over persistent storage so material survives restarts.
+	// Build the node-local software backend for CA signing keys over
+	// persistent storage so material survives restarts.
 	keyStorage, err := storage.NewFile(filepath.Join(params.DataDir, "keys"))
 	if err != nil {
 		return nil, err
@@ -158,28 +158,13 @@ func newNodeLocalBackendSet(ctx context.Context, params *NodeLocalBackendsParams
 	hardwareTPM := params.HardwareTPM
 
 	resolve := func(name string) (xkms.Backend, error) {
-		// Reuse the single TPM opened by the seal autodetect for a hardware node
-		// key so the device is never opened twice (swtpm hangs on a second open).
-		// The TPM backend is both a types.Sealer and a types.KeyProvider.
-		if name == "tpm2" && hardwareTPM != nil {
-			if provider, ok := hardwareTPM.(types.KeyProvider); ok {
-				backend, err := xkms.New(&xkms.BackendConfig{
-					Backend:     provider,
-					CertStorage: certStorage,
-				})
-				if err != nil {
-					return nil, err
-				}
-				// enroll-01 needs the TPM itself, not only its key provider:
-				// keep it reachable through the composed backend.
-				if tpm, ok := hardwareTPM.(tpmProvider); ok {
-					return &tpmNodeBackend{Backend: backend, tpmProvider: tpm}, nil
-				}
-				return backend, nil
+		if name == "tpm2" {
+			backend, ok, err := tpmKeyBackend(hardwareTPM, certStorage)
+			if err != nil || ok {
+				return backend, err
 			}
 		}
-		// Software keys (CA signing key and, by default, the node transport key)
-		// resolve to the node-local software backend.
+		// CA signing keys resolve to the node-local software backend.
 		return softwareBackend, nil
 	}
 
@@ -187,6 +172,103 @@ func newNodeLocalBackendSet(ctx context.Context, params *NodeLocalBackendsParams
 		resolve:     resolve,
 		keyStorage:  keyStorage,
 		certStorage: certStorage,
+	}, nil
+}
+
+// tpmKeyBackend composes the single TPM opened by the seal autodetect into a
+// key backend, so the device is never opened twice (swtpm hangs on a second
+// open). ok is false when hardwareTPM is not a TPM key provider.
+func tpmKeyBackend(hardwareTPM types.Sealer, certStorage storage.Backend) (xkms.Backend, bool, error) {
+	provider, ok := hardwareTPM.(types.KeyProvider)
+	if !ok {
+		return nil, false, nil
+	}
+	backend, err := nodeKeyBackend(provider, certStorage)
+	if err != nil {
+		return nil, false, err
+	}
+	// enroll-01 needs the TPM itself, not only its key provider: keep it
+	// reachable through the composed backend.
+	if tpm, ok := hardwareTPM.(tpmProvider); ok {
+		return &tpmNodeBackend{Backend: backend, tpmProvider: tpm}, true, nil
+	}
+	return backend, true, nil
+}
+
+// nodeKeyBackend composes a hardware key provider over the node-local
+// certificate store, so the transport key's backend is usable before the
+// shared datastore exists.
+func nodeKeyBackend(provider types.KeyProvider, certStorage storage.Backend) (xkms.Backend, error) {
+	return xkms.New(&xkms.BackendConfig{
+		Backend:     provider,
+		CertStorage: certStorage,
+	})
+}
+
+// nodeKeySubdir is the subdirectory of the node-local cluster identity
+// directory holding the software node transport key, apart from the CA
+// keystore so CA key promotion never copies it off the node.
+const nodeKeySubdir = "node-key"
+
+// NodeKeyBackendsParams configures NewNodeKeyBackends.
+type NodeKeyBackendsParams struct {
+	// DataDir is the node-local cluster identity directory (e.g.
+	// {Storage.Path}/cluster-ca). The software node key lives under
+	// DataDir/node-key.
+	DataDir string
+
+	// HardwareTPM, when a *tpm2 backend, is the "tpm2" node key backend: the
+	// shared open from the seal autodetect. Nil means this node has no TPM.
+	HardwareTPM types.Sealer
+
+	// Hardware holds this node's configured hardware key providers by name
+	// (e.g. "pkcs11"), opened before the node starts. Each is composed over
+	// the node-local certificate store, as the TPM is.
+	Hardware map[string]types.KeyProvider
+}
+
+// NewNodeKeyBackends returns the resolver for this node's transport key
+// backend, independent of the cluster CA key custody: "software" is a
+// node-local software keystore, "tpm2" the shared TPM, and any other name the
+// configured hardware backend of that name. A name this node has no backend
+// for fails with ErrNoTPM or ErrNodeKeyBackendNotConfigured; software never
+// stands in for missing hardware.
+func NewNodeKeyBackends(params *NodeKeyBackendsParams) (func(string) (xkms.Backend, error), error) {
+	if params == nil || params.DataDir == "" {
+		return nil, &ErrMissingOption{Field: "DataDir", Mode: "node key"}
+	}
+	dir := filepath.Join(params.DataDir, nodeKeySubdir)
+	keyStorage, err := storage.NewFile(filepath.Join(dir, "keys"))
+	if err != nil {
+		return nil, err
+	}
+	certStorage, err := storage.NewFile(filepath.Join(dir, "certs"))
+	if err != nil {
+		return nil, err
+	}
+	softwareBackend, err := newSoftwareBackend(keyStorage, certStorage)
+	if err != nil {
+		return nil, err
+	}
+
+	return func(name string) (xkms.Backend, error) {
+		if name == string(types.StoreSoftware) {
+			return softwareBackend, nil
+		}
+		if name == "tpm2" {
+			backend, ok, err := tpmKeyBackend(params.HardwareTPM, certStorage)
+			if err != nil {
+				return nil, err
+			}
+			if !ok {
+				return nil, &ErrNoTPM{KeyBackend: name}
+			}
+			return backend, nil
+		}
+		if provider, ok := params.Hardware[name]; ok {
+			return nodeKeyBackend(provider, certStorage)
+		}
+		return nil, &ErrNodeKeyBackendNotConfigured{KeyBackend: name}
 	}, nil
 }
 

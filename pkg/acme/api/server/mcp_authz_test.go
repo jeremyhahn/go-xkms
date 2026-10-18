@@ -102,21 +102,21 @@ var mcpAuthzCases = []mcpAuthzCase{
 	{"admin.listUsers", auth.ResourceUsers, auth.ActionList, qrdbsdk.RoleNameAuditor, qrdbsdk.RoleNameUser},
 }
 
-// TestMCPMethodPermissions_CoversEveryDispatchableMethod verifies every method
-// in the MCP dispatch table carries a permission mapping, and that the table
-// names no method the dispatcher cannot serve.
-func TestMCPMethodPermissions_CoversEveryDispatchableMethod(t *testing.T) {
+// TestMCPToolPermissions_CoversEveryDispatchableMethod verifies every method
+// in the MCP dispatch table carries the permission its mirrored RPC declares,
+// and that each is the exact grant the case table expects.
+func TestMCPToolPermissions_CoversEveryDispatchableMethod(t *testing.T) {
 	s, _ := newAuthzTestServer(t)
+	perms := s.MCPToolPermissions()
 
 	for method := range s.mcpHandlers {
-		_, ok := MCPMethodPermissions[method]
-		assert.True(t, ok, "dispatchable MCP method %q has no permission mapping", method)
+		_, ok := perms[method]
+		assert.True(t, ok, "dispatchable MCP method %q has no permission", method)
 	}
-	for method := range MCPMethodPermissions {
-		_, ok := s.mcpHandlers[method]
-		assert.True(t, ok, "MCP permission table names undispatchable method %q", method)
+	require.Len(t, perms, len(mcpAuthzCases))
+	for _, tc := range mcpAuthzCases {
+		assert.Equal(t, qrdbsdk.Permission(tc.resource+":"+tc.action), perms[tc.method], tc.method)
 	}
-	assert.Len(t, mcpAuthzCases, len(MCPMethodPermissions))
 }
 
 // TestAuthorizeMCPMethod_RequestsExactPermission verifies each MCP method asks
@@ -180,11 +180,15 @@ func TestAuthorizeMCPMethod_UnknownMethodFallsThrough(t *testing.T) {
 
 // TestAuthorizeMCPMethod_DispatchableButUnmappedIsDenied verifies the
 // fail-closed path for a registration bug: a method the dispatcher can serve
-// but that carries no permission mapping is denied.
+// but whose mirrored RPC declares no permission is denied and is left out of
+// MCPToolPermissions.
 func TestAuthorizeMCPMethod_DispatchableButUnmappedIsDenied(t *testing.T) {
 	s, client := newAuthzTestServer(t)
-	s.mcpHandlers["admin.unmappedFuture"] = func(ctx context.Context, params json.RawMessage) (interface{}, error) {
-		return nil, nil
+	s.mcpHandlers["admin.unmappedFuture"] = mcpMethod{
+		rpc: "/trustedca.admin.v1.AdminService/UnmappedFuture",
+		handle: func(ctx context.Context, params json.RawMessage) (interface{}, error) {
+			return nil, nil
+		},
 	}
 
 	ctx := auth.WithIdentity(context.Background(), &auth.Identity{
@@ -194,6 +198,7 @@ func TestAuthorizeMCPMethod_DispatchableButUnmappedIsDenied(t *testing.T) {
 	err := s.authorizeMCPMethod(ctx, "admin.unmappedFuture")
 	require.ErrorIs(t, err, admin.ErrOperationUnmapped)
 	assert.Empty(t, client.requested)
+	assert.NotContains(t, s.MCPToolPermissions(), "admin.unmappedFuture")
 }
 
 // TestAuthorizeMCPMethod_NilGateDenies verifies an unwired gate fails closed.
@@ -216,7 +221,8 @@ func TestAuthorizeMCPMethod_QRDBAdminReachesMCPSurface(t *testing.T) {
 		"admin.createRole": true, "admin.updateRole": true, "admin.deleteRole": true,
 	}
 
-	for method := range MCPMethodPermissions {
+	server, _ := newAuthzTestServer(t)
+	for method := range server.MCPToolPermissions() {
 		if soOnly[method] {
 			continue
 		}

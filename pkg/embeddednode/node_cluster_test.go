@@ -163,55 +163,24 @@ func TestNewNode_StandaloneStillServedByRaftBuild(t *testing.T) {
 	assert.Equal(t, "raft.data_dir", configErr.Field)
 }
 
-// TestNewNode_DefaultResolverAppliesWhenNil verifies a nil RaftMTLSResolver
-// selects the built-in software auto-provisioning path
-// (Options.resolveSoftwareRaftMTLS) instead of leaving a multi-node cluster
-// without inter-node mTLS. AdvertiseNoiseHost is left empty so
-// clusterenroll's own validation fails immediately, without starting a
-// listener or touching disk.
-func TestNewNode_DefaultResolverAppliesWhenNil(t *testing.T) {
+// TestNewNode_MultiNodeRequiresResolver verifies a multi-node membership with
+// no RaftMTLSResolver fails with ErrNilRaftMTLSResolver: there is no built-in
+// path that would write a cluster CA key to disk (go-xkms#1381).
+func TestNewNode_MultiNodeRequiresResolver(t *testing.T) {
 	opts := &NodeOptions{
-		QRDB:        newTestQRDBConfig(),
-		Logger:      testLogger(),
-		StoragePath: t.TempDir(),
+		QRDB:   newTestQRDBConfig(),
+		Logger: testLogger(),
 		Cluster: ClusterOptions{
 			Enabled: true,
 			NodeID:  1,
 			Peers:   "1=10.0.0.1:9001,2=10.0.0.2:9001",
 		},
-		// RaftMTLSResolver intentionally left nil.
 	}
 
 	res, err := NewNode(t.Context(), opts)
 
-	require.Error(t, err)
 	assert.Nil(t, res)
-	var bindErr *clusterenroll.MissingBindHostError
-	assert.True(t, errors.As(err, &bindErr), "expected MissingBindHostError from the default resolver, got %T", err)
-}
-
-// TestOptions_ResolveSoftwareRaftMTLS_SurfacesClusterenrollError verifies the
-// default resolver method propagates a clusterenroll failure unwrapped, so
-// NewNode's error-type assertions above hold for direct callers too.
-func TestOptions_ResolveSoftwareRaftMTLS_SurfacesClusterenrollError(t *testing.T) {
-	opts := &NodeOptions{
-		QRDB:        newTestQRDBConfig(),
-		Logger:      testLogger(),
-		StoragePath: t.TempDir(),
-		Cluster: ClusterOptions{
-			RaftAddress: "127.0.0.1:63011",
-			// AdvertiseNoiseHost intentionally left empty.
-		},
-	}
-	members := map[uint64]string{1: "10.0.0.1:9001", 2: "10.0.0.2:9001"}
-
-	mtls, adv, err := opts.resolveSoftwareRaftMTLS(t.Context(), members)
-
-	require.Error(t, err)
-	assert.Nil(t, mtls)
-	assert.Nil(t, adv)
-	var bindErr *clusterenroll.MissingBindHostError
-	assert.True(t, errors.As(err, &bindErr), "expected MissingBindHostError, got %T", err)
+	require.ErrorIs(t, err, ErrNilRaftMTLSResolver)
 }
 
 // clusterFormationBudget bounds how long the three-replica cluster below may

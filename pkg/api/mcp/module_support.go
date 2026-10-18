@@ -18,7 +18,8 @@ import (
 	"encoding/json"
 	"log/slog"
 	"sort"
-	"strings"
+
+	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
 
 	"github.com/jeremyhahn/go-xkms/pkg/correlation"
 	"github.com/jeremyhahn/go-xkms/pkg/mcptool"
@@ -27,7 +28,7 @@ import (
 // MethodSpec describes one JSON-RPC method of the xkms MCP surface for the
 // unified-API-server module (pkg/apimodule): the wire method name, the tool
 // name it registers under on the real MCP server, and its authorization
-// contract from the methodPermissions table.
+// contract from its rpcMethods registration.
 type MethodSpec struct {
 	// Method is the JSON-RPC method name (e.g. "xkms.generateKey").
 	Method string
@@ -35,49 +36,29 @@ type MethodSpec struct {
 	// (e.g. "xkms_generateKey", "xkms_barrier_unseal") — MCP tool names
 	// do not admit dots.
 	Tool string
-	// Resource and Action carry the method's RBAC permission; empty for
+	// Permission is the qrdb permission the method requires; empty for
 	// public methods.
-	Resource string
-	Action   string
+	Permission qrdbsdk.Permission
 	// Public marks the unauthenticated discovery/health methods.
 	Public bool
 }
 
 // ModuleMethods returns the full xkms JSON-RPC method surface, sorted by
-// method name: every entry of the dispatch table plus the build-tagged
-// frost.* namespace (enumerated from the permission table so a frost-tagged
-// build and an untagged build expose the identical tool list; on an
-// untagged build the frost tools answer "method not found", exactly as the
-// wire path does). The connection-bound xkms.subscribe is excluded: MCP
-// tools are request/response.
+// method name: every entry of the rpcMethods table. The frost.* namespace is
+// registered untagged, so a frost-tagged build and an untagged build expose
+// the identical tool list; on an untagged build the frost tools answer
+// "method not found", exactly as the wire path does. The connection-bound
+// xkms.subscribe is excluded: MCP tools are request/response.
 func ModuleMethods() []MethodSpec {
-	seen := map[string]struct{}{}
-	var specs []MethodSpec
-
-	add := func(method string) {
-		if _, dup := seen[method]; dup {
-			return
-		}
-		seen[method] = struct{}{}
-		spec := MethodSpec{Method: method, Tool: ToolName(method)}
-		if _, public := publicMethods[method]; public {
-			spec.Public = true
-		} else if perm, ok := methodPermissions[method]; ok {
-			spec.Resource = perm.resource
-			spec.Action = perm.action
-		}
-		specs = append(specs, spec)
+	specs := make([]MethodSpec, 0, len(rpcMethods))
+	for method, entry := range rpcMethods {
+		specs = append(specs, MethodSpec{
+			Method:     method,
+			Tool:       ToolName(method),
+			Permission: entry.perm,
+			Public:     entry.public(),
+		})
 	}
-
-	for method := range rpcMethodHandlers {
-		add(method)
-	}
-	for method := range methodPermissions {
-		if strings.HasPrefix(method, "frost.") {
-			add(method)
-		}
-	}
-
 	sort.Slice(specs, func(i, j int) bool { return specs[i].Method < specs[j].Method })
 	return specs
 }
@@ -130,14 +111,11 @@ func (s *Server) invokeMethod(ctx context.Context, method string, params json.Ra
 	}
 
 	req := &JSONRPCRequest{JSONRPC: "2.0", Method: method, Params: params}
-	if result, ferr, handled := s.routeFrostMethods(ctx, req); handled {
-		return result, ferr
-	}
-	handler, ok := rpcMethodHandlers[method]
+	entry, ok := rpcMethods[method]
 	if !ok {
 		return nil, &KeyOpError{Code: ErrCodeMethodNotFound, Err: &UnknownMethodError{Method: method}}
 	}
-	return handler(s, ctx, req)
+	return entry.handler(s, ctx, req)
 }
 
 // withheldErrorLogMessage is the log message recorded for an internal error

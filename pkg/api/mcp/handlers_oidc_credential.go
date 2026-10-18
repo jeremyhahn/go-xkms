@@ -24,7 +24,7 @@ import (
 // the fields of the transport request -- and delegates to XKMSService, whose
 // credential service binds the caller's tenant and keeps a personal
 // credential to its owner; they gate on the oidc_credentials:* pairs in
-// authz.go's methodPermissions.
+// server.go's rpcMethods table.
 
 // oidcCredentialCall decodes a P from req and runs call with it, mapping its
 // error through the OIDC credential classification.

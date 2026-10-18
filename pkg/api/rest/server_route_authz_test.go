@@ -50,7 +50,7 @@ type gatedRoute struct {
 // gatedRoutePermissions is the wire contract for the go-xkms#780 routes. Each
 // pair is the one pkg/api/grpc authorizes (and the xkms.proto
 // qrdb.v1.permission option declares) for the same operation, which is also
-// the MCP methodPermissions entry; a divergence here is a cross-transport
+// the MCP rpcMethods entry; a divergence here is a cross-transport
 // authorization bug, not a test detail. Pairs are spelled out literally rather
 // than built from the auth constants so the table fails if a constant is
 // retyped or repointed.

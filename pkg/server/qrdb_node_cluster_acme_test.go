@@ -49,9 +49,9 @@ func TestBuildClusterACMEOptions_Defaults(t *testing.T) {
 	members := map[uint64]string{1: "10.0.0.1:63001", 2: "10.0.0.2:63001"}
 	backends := func(string) (xkms.Backend, error) { return nil, nil }
 
-	opts, err := s.buildClusterACMEOptions(members, backends)
+	opts, err := s.buildClusterCAOptions(members, backends)
 	if err != nil {
-		t.Fatalf("buildClusterACMEOptions: %v", err)
+		t.Fatalf("buildClusterCAOptions: %v", err)
 	}
 
 	if opts.TrustDomain != defaultRaftTrustDomain {
@@ -86,6 +86,39 @@ func TestBuildClusterACMEOptions_Defaults(t *testing.T) {
 	}
 }
 
+// TestBuildClusterCAOptions_HardwareKey checks that a key backend without ACME
+// enrollment maps to local-CA mode: no ACME options, the key backend and
+// the CA configuration carried through for TrustedCA issuance (go-xkms#1381).
+func TestBuildClusterCAOptions_HardwareKey(t *testing.T) {
+	caCfg := ca.DefaultMultiIdentityCAConfigWithIntermediate()
+	s := &Server{config: &config.Config{
+		Datastore: config.DatastoreConfig{Path: t.TempDir()},
+		CA:        caCfg,
+		Cluster: config.ClusterConfig{
+			NodeID:      1,
+			RaftAddress: "10.0.0.1:63001",
+			RaftEnrollment: config.RaftEnrollmentConfig{
+				KeyBackend: "tpm2",
+			},
+		},
+	}}
+	backends := func(string) (xkms.Backend, error) { return nil, nil }
+
+	opts, err := s.buildClusterCAOptions(map[uint64]string{1: "10.0.0.1:63001"}, backends)
+	if err != nil {
+		t.Fatalf("buildClusterCAOptions: %v", err)
+	}
+	if opts.ACME != nil {
+		t.Errorf("ACME = %+v, want nil for local-CA mode", opts.ACME)
+	}
+	if opts.KeyBackend != "tpm2" {
+		t.Errorf("KeyBackend = %q, want tpm2", opts.KeyBackend)
+	}
+	if opts.CAConfig != caCfg {
+		t.Error("CAConfig was not carried through for TrustedCA issuance")
+	}
+}
+
 // TestBuildClusterACMEOptions_ExplicitOverrides verifies that explicit trust
 // domain, challenge port, and joiner directory URL survive the mapping.
 func TestBuildClusterACMEOptions_ExplicitOverrides(t *testing.T) {
@@ -110,9 +143,9 @@ func TestBuildClusterACMEOptions_ExplicitOverrides(t *testing.T) {
 	members := map[uint64]string{1: "10.0.0.1:63001", 2: "10.0.0.2:63001"}
 	backends := func(string) (xkms.Backend, error) { return nil, nil }
 
-	opts, err := s.buildClusterACMEOptions(members, backends)
+	opts, err := s.buildClusterCAOptions(members, backends)
 	if err != nil {
-		t.Fatalf("buildClusterACMEOptions: %v", err)
+		t.Fatalf("buildClusterCAOptions: %v", err)
 	}
 
 	if opts.TrustDomain != "prod.cluster" {

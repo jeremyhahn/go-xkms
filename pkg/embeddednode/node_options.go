@@ -24,14 +24,9 @@ import (
 	qrdbnode "github.com/jeremyhahn/go-qrdb/sdk/go/node"
 )
 
-// DefaultTrustDomain is the SPIFFE trust domain stamped into auto-provisioned
-// Raft node certificates when [ClusterOptions.TrustDomain] is unset.
+// DefaultTrustDomain is the SPIFFE trust domain stamped into Raft node
+// certificates when the deployment configures none.
 const DefaultTrustDomain = "xkms.cluster"
-
-// RaftTLSCacheSubdir is the subdirectory of [NodeOptions.StoragePath] where
-// auto-provisioned cluster TLS material (CA + node cert/key + Noise key) is
-// cached so restarts reuse it.
-const RaftTLSCacheSubdir = "raft-tls"
 
 // RaftMTLSResolver resolves the inter-node mTLS material for a multi-node
 // cluster. It is consulted once, at node construction, and only when the
@@ -63,25 +58,6 @@ type ClusterOptions struct {
 	// Join marks this node as joining an existing cluster rather than
 	// forming a new one.
 	Join bool
-
-	// TrustDomain is the SPIFFE trust domain for auto-provisioned node
-	// certificates. Empty selects [DefaultTrustDomain].
-	TrustDomain string
-
-	// AdvertiseNoisePort is the TCP port the Noise NK bootstrap advertiser
-	// listens on. Zero selects clusterenroll.DefaultNoisePort.
-	AdvertiseNoisePort int
-
-	// AdvertiseNoiseHost is the bind host for that advertiser. It is REQUIRED
-	// on the first node of a multi-node cluster and is passed through
-	// unchanged: go-qrdb's clusterenroll refuses to pick one (go-qrdb#167),
-	// because only the composition root knows which interface the operator
-	// contained this node to, and this package is not it.
-	AdvertiseNoiseHost string
-
-	// Bootstrap carries the join-side discovery sources used to fetch the
-	// cluster CA when this node is not the one generating it.
-	Bootstrap clusterenroll.BootstrapOptions
 }
 
 // Members parses Peers into the replicaID→address map go-qrdb's clustered
@@ -136,10 +112,6 @@ type NodeOptions struct {
 	// Cluster describes the topology. The zero value builds a standalone node.
 	Cluster ClusterOptions
 
-	// StoragePath roots the node's on-disk state. Auto-provisioned cluster
-	// TLS material is cached beneath it in [RaftTLSCacheSubdir].
-	StoragePath string
-
 	// Logger receives node construction events. Required.
 	Logger *slog.Logger
 
@@ -149,8 +121,8 @@ type NodeOptions struct {
 	NodeOptions   []qrdbnode.NodeOption
 
 	// RaftMTLSResolver supplies inter-node mTLS material for multi-node
-	// clusters. Nil selects the built-in software auto-provisioning path
-	// ([ResolveSoftwareRaftMTLS]).
+	// clusters. Required when the membership holds more than one node
+	// ([ErrNilRaftMTLSResolver]); unused for a standalone node.
 	RaftMTLSResolver RaftMTLSResolver
 }
 
@@ -177,34 +149,4 @@ func (o *NodeOptions) validate() error {
 		return ErrNilLogger
 	}
 	return nil
-}
-
-// ClusterEnrollOptions maps the cluster options onto go-qrdb's clusterenroll
-// Options, applying defaults and computing SingleNode from the membership. It
-// is pure, so the mapping is unit-testable without starting the advertiser.
-func (o *NodeOptions) ClusterEnrollOptions(members map[uint64]string) *clusterenroll.Options {
-	trustDomain := o.Cluster.TrustDomain
-	if trustDomain == "" {
-		trustDomain = DefaultTrustDomain
-	}
-	advPort := o.Cluster.AdvertiseNoisePort
-	if advPort == 0 {
-		advPort = clusterenroll.DefaultNoisePort
-	}
-
-	bootstrap := o.Cluster.Bootstrap
-	bootstrap.DiscoveryMethod = "static"
-	bootstrap.Peers = o.Cluster.PeerList()
-
-	return &clusterenroll.Options{
-		RaftAddress: o.Cluster.RaftAddress,
-		TrustDomain: trustDomain,
-		DataDir:     o.raftTLSCacheDir(),
-		SingleNode:  len(members) <= 1,
-		Bootstrap:   bootstrap,
-		Advertise: clusterenroll.AdvertiseOptions{
-			NoisePort: advPort,
-			NoiseHost: o.Cluster.AdvertiseNoiseHost,
-		},
-	}
 }

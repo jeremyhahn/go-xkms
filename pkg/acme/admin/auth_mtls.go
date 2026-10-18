@@ -15,8 +15,11 @@ package admin
 
 import (
 	"context"
+	"crypto/x509"
 	"errors"
 	"net/http"
+
+	"google.golang.org/grpc/metadata"
 
 	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
 	"github.com/jeremyhahn/go-xkms/pkg/auth"
@@ -25,6 +28,27 @@ import (
 // ErrAuthenticatorNotConfigured is returned when an MTLSAuthHandler was
 // built without an authenticator. The request is refused, never admitted.
 var ErrAuthenticatorNotConfigured = errors.New("admin: mTLS authenticator not configured")
+
+// CertificateTenantMismatchError reports that the user a client certificate
+// resolved to belongs to a tenant other than the one the certificate names.
+// The caller is refused rather than admitted with that user's roles. It
+// unwraps to auth.ErrUnauthenticated.
+type CertificateTenantMismatchError struct {
+	// CertificateTenantID is the normalized tenant the certificate names.
+	CertificateTenantID string
+	// UserTenantID is the tenant of the user the certificate resolved to.
+	UserTenantID string
+}
+
+// Error describes the mismatch.
+func (e *CertificateTenantMismatchError) Error() string {
+	return "admin: certificate names tenant " + e.CertificateTenantID + " but its user belongs to tenant " + e.UserTenantID
+}
+
+// Unwrap returns auth.ErrUnauthenticated: no identity was established.
+func (e *CertificateTenantMismatchError) Unwrap() error {
+	return auth.ErrUnauthenticated
+}
 
 // MTLSAuthHandler is the production AuthHandler for the ACME admin surface.
 // It authenticates each request from its mTLS client certificate using
@@ -77,34 +101,58 @@ func (h *MTLSAuthHandler) Authenticate(next http.Handler) http.Handler {
 }
 
 // authenticate resolves the request's identity. It returns
-// ErrAuthenticatorNotConfigured without an authenticator,
-// auth.ErrNoPeerCertificate without a client certificate, the
-// *qrdbsdk.ClientCertificateTenantError of a certificate that names no usable
-// tenant, and otherwise whatever the authenticator refuses with (for example
-// auth.ErrCertNotBound for a certificate bound to no user in its tenant).
+// auth.ErrNoPeerCertificate without a client certificate and otherwise
+// whatever authenticateCertificate refuses with.
 func (h *MTLSAuthHandler) authenticate(r *http.Request) (*auth.Identity, error) {
-	if h.authenticator == nil {
-		return nil, ErrAuthenticatorNotConfigured
-	}
-	ctx, err := h.bindCertificateTenant(r)
-	if err != nil {
-		return nil, err
-	}
-	return h.authenticator.AuthenticateHTTP(r.WithContext(ctx))
-}
-
-// bindCertificateTenant returns the request context bound to the tenant the
-// client certificate names, normalized exactly as qrdb's middleware does (a
-// certificate naming no tenant is the system tenant's).
-func (h *MTLSAuthHandler) bindCertificateTenant(r *http.Request) (context.Context, error) {
 	if r.TLS == nil || len(r.TLS.PeerCertificates) == 0 {
 		return nil, auth.ErrNoPeerCertificate
 	}
-	tenantID, _, err := qrdbsdk.TenantFromClientCert(r.TLS.PeerCertificates[0], h.trustDomain)
+	return h.authenticateCertificate(r.Context(), r.TLS.PeerCertificates[0], func(ctx context.Context) (*auth.Identity, error) {
+		return h.authenticator.AuthenticateHTTP(r.WithContext(ctx))
+	})
+}
+
+// AuthenticateGRPC resolves the identity of a gRPC caller that presented cert,
+// the leaf certificate of ctx's TLS peer, by the same rule Authenticate
+// applies to a REST caller.
+func (h *MTLSAuthHandler) AuthenticateGRPC(ctx context.Context, cert *x509.Certificate, md metadata.MD) (*auth.Identity, error) {
+	return h.authenticateCertificate(ctx, cert, func(ctx context.Context) (*auth.Identity, error) {
+		return h.authenticator.AuthenticateGRPC(ctx, md)
+	})
+}
+
+// authenticateCertificate is the admin surface's one certificate-to-identity
+// rule. The tenant is the one qrdbsdk.TenantFromClientCert names under the
+// deployment's trust domain, normalized as qrdb's middleware does (a
+// certificate naming no tenant is the system tenant's). lookup then resolves
+// the go-qrdb user the certificate binds to within that tenant alone, and the
+// caller's roles are that user's roles: nothing in the certificate, its OU
+// least of all, is ever read as a role.
+//
+// It returns ErrAuthenticatorNotConfigured without an authenticator, the
+// *qrdbsdk.ClientCertificateTenantError of a certificate that names no usable
+// tenant, whatever lookup refuses with (for example auth.ErrCertNotBound for a
+// certificate bound to no user in its tenant), and a
+// *CertificateTenantMismatchError when the resolved user belongs to another
+// tenant.
+func (h *MTLSAuthHandler) authenticateCertificate(ctx context.Context, cert *x509.Certificate, lookup func(context.Context) (*auth.Identity, error)) (*auth.Identity, error) {
+	if h == nil || h.authenticator == nil {
+		return nil, ErrAuthenticatorNotConfigured
+	}
+	tenantID, _, err := qrdbsdk.TenantFromClientCert(cert, h.trustDomain)
 	if err != nil {
 		return nil, err
 	}
-	return qrdbsdk.ContextWithTenant(r.Context(), qrdbsdk.NormalizeTenantID(tenantID)), nil
+	tenantID = qrdbsdk.NormalizeTenantID(tenantID)
+	identity, err := lookup(qrdbsdk.ContextWithTenant(ctx, tenantID))
+	if err != nil {
+		return nil, err
+	}
+	if qrdbsdk.NormalizeTenantID(identity.TenantID) != tenantID {
+		return nil, &CertificateTenantMismatchError{CertificateTenantID: tenantID, UserTenantID: identity.TenantID}
+	}
+	identity.TenantID = tenantID
+	return identity, nil
 }
 
 // Compile-time interface check.

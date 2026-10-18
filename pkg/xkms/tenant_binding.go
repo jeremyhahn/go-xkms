@@ -15,6 +15,7 @@ package xkms
 
 import (
 	"context"
+	"errors"
 
 	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
 
@@ -23,8 +24,8 @@ import (
 )
 
 // TenantBindingError reports that a caller addressed a tenant it is not bound
-// to. It is the single refusal of the tenant binding (bindTenantTarget,
-// bindTenantRecord, requireSystemTenant) and deliberately looks exactly like
+// to. It is the single refusal of the tenant binding (ownTenant,
+// admitTenantRecord, the system-tenant checks) and deliberately looks exactly like
 // a missing tenant: it unwraps to qrdbsdk.ErrTenantMissing -- the error the
 // composed go-qrdb TenantService returns, unwrapped, for every operation on an
 // unknown tenant -- and renders the same message, so every transport answers
@@ -54,6 +55,8 @@ func (e *TenantBindingError) Unwrap() error {
 	return qrdbsdk.ErrTenantMissing
 }
 
+// refuseTenant returns the binding refusal of op on target for the caller on
+// ctx.
 // callerTenant returns the scope name of the tenant the caller on ctx is bound
 // to. A context with no identity is an in-process caller holding the service
 // directly; like go-qrdb (qrdbsdk.IdentityIsSystemTenant) it is the system
@@ -67,8 +70,6 @@ func callerTenant(ctx context.Context) string {
 	return scope.TenantName(identity.TenantID)
 }
 
-// refuseTenant returns the binding refusal of op on target for the caller on
-// ctx.
 func refuseTenant(ctx context.Context, op, target string) error {
 	refusal := &TenantBindingError{Op: op, TargetTenantID: target}
 	if identity := auth.GetIdentity(ctx); identity != nil {
@@ -77,73 +78,43 @@ func refuseTenant(ctx context.Context, op, target string) error {
 	return refusal
 }
 
-// bindTenantTarget enforces the tenant binding for an operation that
-// addresses target, a tenant ID the caller supplied in the request ("" is the
-// system tenant). The transports' RBAC gate cannot do this:
-// auth.Authorizer.Authorize binds the caller's OWN tenant as the request's
-// target tenant, so a self-scoped grant such as tenants:* or tenant_barrier:*
-// admits a caller no matter which tenant the request names.
-//
-// Every caller may address only its own tenant. The system tenant is no
-// exception: as in go-qrdb, it does not reach another tenant's objects.
-func bindTenantTarget(ctx context.Context, op, target string) error {
-	if callerTenant(ctx) == scope.TenantName(target) {
-		return nil
+// tenantRefusal maps auth's tenant refusal, a *qrdbsdk.CrossTenantDeniedError,
+// onto the binding's not-found refusal of op on target. Any other error is
+// returned as it is.
+func tenantRefusal(ctx context.Context, op, target string, err error) error {
+	var denied *qrdbsdk.CrossTenantDeniedError
+	if errors.As(err, &denied) {
+		return refuseTenant(ctx, op, target)
 	}
-	return refuseTenant(ctx, op, target)
+	return err
 }
 
-// bindTenantRecord admits an operation on target's tenant-registry record --
-// reading or deleting the tenant itself. The registry is the system tenant's,
-// so a system caller may address any tenant's record; any other caller only
-// its own.
-func bindTenantRecord(ctx context.Context, op, target string) error {
-	if scope.IsSystem(callerTenant(ctx)) {
-		return nil
+// ownTenant resolves the tenant op acts on through auth.OwnTenant -- the
+// caller's own, which requested may name or leave empty -- and returns it in
+// the store's form, "" for the system tenant. The transports' RBAC gate cannot
+// do this: auth.Authorizer.Authorize binds the caller's OWN tenant as the
+// request's target tenant, so a self-scoped grant admits a caller no matter
+// which tenant the request names. Naming another tenant is refused to every
+// caller, the system tenant's included, with *TenantBindingError; a caller
+// whose "" names the system tenant passes qrdbsdk.NormalizeTenantID(target).
+func ownTenant(ctx context.Context, op, requested string) (string, error) {
+	tenant, err := auth.OwnTenant(ctx, op, requested)
+	if err != nil {
+		return "", tenantRefusal(ctx, op, requested, err)
 	}
-	return bindTenantTarget(ctx, op, target)
-}
-
-// requireSystemTenant admits only a system-tenant caller to an operation on
-// target. It guards two kinds of operation:
-//
-//   - plan management (entitlements and quotas) and the tenant TPM mode,
-//     which decide what a tenant is allowed to consume, so a tenant's own
-//     caller may not change even its own tenant's plan (go-xkms#1113);
-//   - platform-global state that belongs to no tenant -- the sealed platform
-//     store and credential submission (go-xkms#1226), the system barrier, the
-//     token PINs, the server's PIV card and the PCR policies (go-xkms#1227).
-//     These pass an empty target, the system tenant.
-//
-// The refusal is the same TenantBindingError the binding raises, so it adds
-// nothing a probe could enumerate.
-func requireSystemTenant(ctx context.Context, op, target string) error {
-	if scope.IsSystem(callerTenant(ctx)) {
-		return nil
-	}
-	return refuseTenant(ctx, op, target)
-}
-
-// visibleToCaller reports whether a tenant-list entry for tenantID may be
-// shown to the caller on ctx: every tenant of the registry for a system-tenant
-// caller, only its own tenant for any other.
-func visibleToCaller(ctx context.Context, tenantID string) bool {
-	return bindTenantRecord(ctx, "list tenants", tenantID) == nil
-}
-
-// targetTenant resolves the tenant an operation that addresses a tenant acts
-// on -- TPM policy management, RotateScopeKeys. Every caller acts on its own
-// tenant ("" for the system tenant): requested may be empty or name that
-// tenant, and naming another is refused with *TenantBindingError.
-func targetTenant(ctx context.Context, op, requested string) (string, error) {
-	if requested != "" {
-		if err := bindTenantTarget(ctx, op, requested); err != nil {
-			return "", err
-		}
-	}
-	tenant := callerTenant(ctx)
-	if scope.IsSystem(tenant) {
+	if qrdbsdk.IsSystemTenant(tenant) {
 		return "", nil
 	}
 	return tenant, nil
+}
+
+// admitTenantRecord admits op on target's tenant-registry record -- reading,
+// listing or deleting the tenant itself -- through auth.AdmitTenant. The
+// registry is the system tenant's, so a system caller may address any
+// tenant's record; any other caller only its own.
+func admitTenantRecord(ctx context.Context, op, target string) error {
+	if err := auth.AdmitTenant(ctx, op, target); err != nil {
+		return tenantRefusal(ctx, op, target, err)
+	}
+	return nil
 }

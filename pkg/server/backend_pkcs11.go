@@ -16,7 +16,16 @@
 package server
 
 import (
+	"errors"
+
 	"github.com/jeremyhahn/go-xkms/pkg/backend/pkcs11"
+	tpm2backend "github.com/jeremyhahn/go-xkms/pkg/backend/tpm2"
+	"github.com/jeremyhahn/go-xkms/pkg/embeddednode"
+	"github.com/jeremyhahn/go-xkms/pkg/pkcs11strategy"
+	"github.com/jeremyhahn/go-xkms/pkg/preseal"
+	"github.com/jeremyhahn/go-xkms/pkg/storage"
+	"github.com/jeremyhahn/go-xkms/pkg/types"
+	"github.com/jeremyhahn/go-xkms/pkg/xkms"
 )
 
 // initPKCS11Backend initializes the PKCS#11 backend if enabled in configuration
@@ -25,28 +34,48 @@ func (s *Server) initPKCS11Backend() error {
 		return nil
 	}
 
-	// Create key storage for PKCS#11 metadata
-	keyStorage, err := s.createStorage("pkcs11/keys")
-	if err != nil {
-		return &ErrStorageCreate{Resource: "PKCS#11 key storage", Err: err}
+	// The node transport key opened the token before the qrdb node
+	// (openPreNodePKCS11Backend): register that one instance rather than
+	// opening the token a second time.
+	if _, ok := s.keyProviders["pkcs11"]; ok {
+		s.logger.Info("PKCS#11 backend reuses the pre-node token open", "backend", "pkcs11")
+		return nil
 	}
 
-	// Create cert storage for PKCS#11 certificates
-	certStorage, err := s.createStorage("pkcs11/certs")
+	pkcs11Backend, err := s.openPKCS11Backend(s.config.Backends.PKCS11.Pin)
 	if err != nil {
-		return &ErrStorageCreate{Resource: "PKCS#11 cert storage", Err: err}
+		return err
+	}
+	s.keyProviders["pkcs11"] = pkcs11Backend
+	s.logger.Info("PKCS#11 backend initialized", "backend", "pkcs11", "library", s.config.Backends.PKCS11.Library, "token", s.config.Backends.PKCS11.Token)
+	return nil
+}
+
+// openPKCS11Backend is the one construction of the configured PKCS#11
+// backend, from backends.pkcs11 and the given token PIN. Its key and
+// certificate metadata live in the shared datastore through
+// sharedStorageView, so a token opened before the qrdb node stores behind
+// the barrier like one opened after it.
+func (s *Server) openPKCS11Backend(pin *types.SecretValue) (*pkcs11.Backend, error) {
+	keyStorage, err := storage.NewPrefixBackend(sharedStorageView{s: s}, "pkcs11/keys/")
+	if err != nil {
+		return nil, &ErrStorageCreate{Resource: "PKCS#11 key storage", Err: err}
+	}
+	certStorage, err := storage.NewPrefixBackend(sharedStorageView{s: s}, "pkcs11/certs/")
+	if err != nil {
+		return nil, &ErrStorageCreate{Resource: "PKCS#11 cert storage", Err: err}
 	}
 
 	pkcs11Backend, err := pkcs11.NewBackend(&pkcs11.Config{
 		CN:          "pkcs11-backend",
 		Library:     s.config.Backends.PKCS11.Library,
 		TokenLabel:  s.config.Backends.PKCS11.Token,
-		PIN:         s.config.Backends.PKCS11.Pin,
+		PIN:         pin,
 		KeyStorage:  keyStorage,
 		CertStorage: certStorage,
 	})
 	if err != nil {
-		return &ErrBackendCreate{Backend: "PKCS#11", Err: err}
+		return nil, &ErrBackendCreate{Backend: "PKCS#11", Err: err}
 	}
 
 	// Establish the session pool against the (pre-initialized) token. Without
@@ -55,10 +84,82 @@ func (s *Server) initPKCS11Backend() error {
 	// (softhsm2-util / HSM tooling), NOT a boot action — Login only
 	// authenticates with the configured user PIN.
 	if err := pkcs11Backend.Login(); err != nil {
-		return &ErrBackendCreate{Backend: "PKCS#11", Err: err}
+		return nil, &ErrBackendCreate{Backend: "PKCS#11", Err: errors.Join(err, pkcs11Backend.Close())}
 	}
+	return pkcs11Backend, nil
+}
 
+// openPreNodePKCS11Backend opens the configured PKCS#11 token before the qrdb
+// node when the node transport key lives on it
+// (cluster.raft_enrollment.key_backend: pkcs11): Raft mTLS is provisioned
+// before the node starts, so the key's backend must exist first. The
+// configured PIN is a credential reference behind the barrier this node has
+// not opened yet, so the token unlocks with the PIN sealed to the TPM in
+// the pre-barrier store (`xkmsd seal-pkcs11-pin`), as the PKCS#11 node seal
+// does. initPKCS11Backend then registers this instance. Without
+// backends.pkcs11 nothing opens and the node key is refused
+// (clusterca.ErrNodeKeyBackendNotConfigured), never substituted.
+func (s *Server) openPreNodePKCS11Backend() error {
+	if !s.nodeKeyOnPKCS11() || s.config.Backends.PKCS11 == nil || !s.config.Backends.PKCS11.Enabled {
+		return nil
+	}
+	pin, err := s.releasePreNodePKCS11PIN()
+	if err != nil {
+		return &ErrBackendInit{Backend: "PKCS#11 node key", Err: err}
+	}
+	return s.registerPreNodePKCS11Backend(pin)
+}
+
+// registerPreNodePKCS11Backend opens the token with the released PIN and
+// registers it as this node's one PKCS#11 key provider.
+func (s *Server) registerPreNodePKCS11Backend(pin *types.SecretValue) error {
+	pkcs11Backend, err := s.openPKCS11Backend(pin)
+	if err != nil {
+		return &ErrBackendInit{Backend: "PKCS#11 node key", Err: err}
+	}
 	s.keyProviders["pkcs11"] = pkcs11Backend
-	s.logger.Info("PKCS#11 backend initialized", "backend", "pkcs11", "library", s.config.Backends.PKCS11.Library, "token", s.config.Backends.PKCS11.Token)
+	s.logger.Info("PKCS#11 backend opened before the node for the transport key",
+		"backend", "pkcs11", "library", s.config.Backends.PKCS11.Library, "token", s.config.Backends.PKCS11.Token)
 	return nil
+}
+
+// releasePreNodePKCS11PIN releases the sealed token PIN from the pre-barrier
+// store, over the seal autodetect's TPM open when there is one (a second
+// open hangs a simulator), else over its own.
+func (s *Server) releasePreNodePKCS11PIN() (*types.SecretValue, error) {
+	var (
+		store      *preseal.Store
+		closeStore func() error
+		err        error
+	)
+	if shared, ok := s.nodeSealTPM.(*tpm2backend.Backend); ok {
+		dir, dirErr := embeddednode.ResolvePresealDir(s.config)
+		if dirErr != nil {
+			return nil, dirErr
+		}
+		store, err = preseal.Open(shared.TPM(), dir, s.logger)
+		if err != nil {
+			return nil, err
+		}
+		closeStore = store.Close
+	} else {
+		store, closeStore, err = embeddednode.OpenPreseal(s.config, s.logger)
+		if err != nil {
+			return nil, err
+		}
+	}
+	pin, err := pkcs11strategy.ReleaseSealedPIN(s.ctx, store)
+	if closeErr := closeStore(); closeErr != nil {
+		s.logger.Warn("PKCS#11 node key: closing the pre-barrier secret store failed", "error", closeErr)
+	}
+	return pin, err
+}
+
+// nodeKeyOnPKCS11 reports whether this node provisions its Raft transport
+// key on the PKCS#11 token: a multi-node cluster, auto-enrolled (no
+// operator-supplied Raft TLS files), with key_backend pkcs11.
+func (s *Server) nodeKeyOnPKCS11() bool {
+	cluster := s.config.Cluster
+	return cluster.Enabled && !cluster.RaftTLS.Enabled() &&
+		cluster.RaftEnrollment.KeyBackend == string(xkms.BackendPKCS11)
 }

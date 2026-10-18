@@ -34,7 +34,7 @@ import (
 // failure for them.
 //
 // TestEveryHandler_MalformedParamsAreInvalidParams below iterates every
-// entry of rpcMethodHandlers; a handler that starts decoding params without
+// entry of rpcMethods; a handler that starts decoding params without
 // removing itself from this table is expected to reject malformed JSON with
 // ErrCodeInvalidParams, and the test fails loudly if it does not. This
 // mirrors method_parity_test.go's knownServerGaps: a table a reviewer can
@@ -43,6 +43,7 @@ import (
 var paramsOptionalMethods = map[string]string{
 	"health":                     "no parameters",
 	"xkms.algorithms":            "no parameters",
+	"frost.listKeys":             "no parameters",
 	"user.list":                  "no parameters",
 	"xkms.listShares":            "no parameters",
 	"init.getStatus":             "no parameters",
@@ -113,7 +114,7 @@ func newMalformedParamsTestServer(t *testing.T) *Server {
 }
 
 // TestEveryHandler_MalformedParamsAreInvalidParams drives every entry of
-// rpcMethodHandlers -- the package's full JSON-RPC method surface, the same
+// rpcMethods -- the package's full JSON-RPC method surface, the same
 // table InvokeMethod dispatches through and ModuleMethods() advertises as
 // MCP tools -- with unparsable JSON params, and asserts each one rejects it
 // as a *KeyOpError carrying ErrCodeInvalidParams (-32602), the code
@@ -130,15 +131,15 @@ func TestEveryHandler_MalformedParamsAreInvalidParams(t *testing.T) {
 	// type uniformly.
 	malformed := json.RawMessage(`{"not": "valid json"`)
 
-	methods := make([]string, 0, len(rpcMethodHandlers))
-	for method := range rpcMethodHandlers {
+	methods := make([]string, 0, len(rpcMethods))
+	for method := range rpcMethods {
 		methods = append(methods, method)
 	}
 	sort.Strings(methods)
 
 	for _, method := range methods {
 		method := method
-		handler := rpcMethodHandlers[method]
+		handler := rpcMethods[method].handler
 
 		t.Run(method, func(t *testing.T) {
 			if reason, skip := paramsOptionalMethods[method]; skip {

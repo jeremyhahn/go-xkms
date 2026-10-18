@@ -14,7 +14,7 @@
 // Package mcp implements the JSON-RPC 2.0 method surface backing xkms's
 // Model Context Protocol integration.
 //
-// The package owns the dispatch core -- the rpcMethodHandlers table, the
+// The package owns the dispatch core -- the rpcMethods table, the
 // per-method handlers, tenant scoping (tenant.go), and authorization
 // (authz.go) -- consumed through Server.InvokeMethod (module_support.go),
 // which is the sole production entry point. It backs the unified-API-
@@ -230,8 +230,11 @@ func (s *Server) SetBarrierRegistry(registry *seal.BarrierRegistry) {
 // method expressions, mirroring the qrdb kvMethodHandlers pattern.
 type rpcHandler func(s *Server, ctx context.Context, req *JSONRPCRequest) (interface{}, error)
 
-// rpcMethodHandlers maps every supported JSON-RPC method to its handler for
-// O(1) dispatch. It is built once at package initialization.
+// rpcMethods registers every supported JSON-RPC method for O(1) dispatch:
+// its handler and, through handle, the permission authorizeMethod enforces,
+// or, through handlePublic, that it is public. It is built once at package
+// initialization and is the only place a method's permission is declared;
+// MCPToolPermissions and the module's role grants are derived from it.
 //
 // WebAuthn/FIDO2 registration and authentication (transport.FIDO2Servicer:
 // BeginRegistration, FinishRegistration, BeginAuthentication,
@@ -242,249 +245,292 @@ type rpcHandler func(s *Server, ctx context.Context, req *JSONRPCRequest) (inter
 // absence here is what keeps those ceremonies off the advertised tool list
 // as well as off the dispatcher. See
 // pkg/api/transport/mcp.ErrIdentityCeremonyExcluded and docs/webauthn/api.md.
-var rpcMethodHandlers = map[string]rpcHandler{
-	// Health
-	"health": (*Server).handleHealth,
+var rpcMethods = map[string]rpcMethod{
+	// Liveness is public, matching the REST RBAC middleware's SkipPaths
+	// ("/health", "/health/live", "/health/ready", "/health/startup").
+	"health": handlePublic((*Server).handleHealth),
 
-	// Public algorithm discovery, mirroring the unauthenticated REST route.
-	"xkms.algorithms": (*Server).handleAlgorithms,
+	// Algorithm discovery reports compiled-in capability and reads no state.
+	// REST serves it unauthenticated (pkg/api/rest/server.go, outside the
+	// authenticated /api/v1 group), so gating it here would make the same
+	// question answerable on one transport and not another.
+	"xkms.algorithms": handlePublic((*Server).handleAlgorithms),
 
-	// XKMS key operations
-	"xkms.listBackends": (*Server).handleListBackends,
-	"xkms.getBackend":   (*Server).handleGetBackend,
-	"xkms.generateKey":  (*Server).handleGenerateKey,
-	"xkms.getKey":       (*Server).handleGetKey,
-	"xkms.deleteKey":    (*Server).handleDeleteKey,
-	"xkms.listKeys":     (*Server).handleListKeys,
-	"xkms.rotateKey":    (*Server).handleRotateKey,
+	// Backends.
+	"xkms.listBackends": handle(auth.ResourceBackends, auth.ActionList, (*Server).handleListBackends),
+	"xkms.getBackend":   handle(auth.ResourceBackends, auth.ActionRead, (*Server).handleGetBackend),
 
-	// Key versions
-	"xkms.listKeyVersions":       (*Server).handleListKeyVersions,
-	"xkms.enableKeyVersion":      (*Server).handleEnableKeyVersion,
-	"xkms.disableKeyVersion":     (*Server).handleDisableKeyVersion,
-	"xkms.retireKeyVersion":      (*Server).handleRetireKeyVersion,
-	"xkms.enableAllKeyVersions":  (*Server).handleEnableAllKeyVersions,
-	"xkms.disableAllKeyVersions": (*Server).handleDisableAllKeyVersions,
-	"xkms.rotateScopeKeys":       (*Server).handleRotateScopeKeys,
+	// Key lifecycle and crypto operations -- pkg/api/grpc/service.go's
+	// s.authorize(ctx, "keys", ...) calls.
+	"xkms.generateKey": handle(auth.ResourceKeys, auth.ActionCreate, (*Server).handleGenerateKey),
+	"xkms.getKey":      handle(auth.ResourceKeys, auth.ActionGet, (*Server).handleGetKey),
+	"xkms.deleteKey":   handle(auth.ResourceKeys, auth.ActionDelete, (*Server).handleDeleteKey),
+	"xkms.listKeys":    handle(auth.ResourceKeys, auth.ActionList, (*Server).handleListKeys),
+	"xkms.rotateKey":   handle(auth.ResourceKeys, auth.ActionRotate, (*Server).handleRotateKey),
 
-	"xkms.sign":                (*Server).handleSign,
-	"xkms.verify":              (*Server).handleVerify,
-	"xkms.encrypt":             (*Server).handleEncrypt,
-	"xkms.decrypt":             (*Server).handleDecrypt,
-	"xkms.asymmetricEncrypt":   (*Server).handleAsymmetricEncrypt,
-	"xkms.asymmetricDecrypt":   (*Server).handleAsymmetricDecrypt,
-	"xkms.getImportParameters": (*Server).handleGetImportParameters,
-	"xkms.wrapKey":             (*Server).handleWrapKey,
-	"xkms.unwrapKey":           (*Server).handleUnwrapKey,
-	"xkms.importKey":           (*Server).handleImportKeyMaterial,
-	"xkms.exportKey":           (*Server).handleExportKey,
-	"xkms.copyKey":             (*Server).handleCopyKey,
+	// Key versions: listing reads like listing keys; enabling and disabling
+	// versions is rotation lifecycle management; retiring destroys a
+	// version's key material, as deleting a key does.
+	"xkms.listKeyVersions":       handle(auth.ResourceKeys, auth.ActionList, (*Server).handleListKeyVersions),
+	"xkms.enableKeyVersion":      handle(auth.ResourceKeys, auth.ActionRotate, (*Server).handleEnableKeyVersion),
+	"xkms.disableKeyVersion":     handle(auth.ResourceKeys, auth.ActionRotate, (*Server).handleDisableKeyVersion),
+	"xkms.retireKeyVersion":      handle(auth.ResourceKeys, auth.ActionDelete, (*Server).handleRetireKeyVersion),
+	"xkms.enableAllKeyVersions":  handle(auth.ResourceKeys, auth.ActionRotate, (*Server).handleEnableAllKeyVersions),
+	"xkms.disableAllKeyVersions": handle(auth.ResourceKeys, auth.ActionRotate, (*Server).handleDisableAllKeyVersions),
+	"xkms.rotateScopeKeys":       handle(auth.ResourceKeys, auth.ActionRotate, (*Server).handleRotateScopeKeys),
+
+	"xkms.sign":                handle(auth.ResourceKeys, auth.ActionSign, (*Server).handleSign),
+	"xkms.verify":              handle(auth.ResourceKeys, auth.ActionVerify, (*Server).handleVerify),
+	"xkms.encrypt":             handle(auth.ResourceKeys, auth.ActionEncrypt, (*Server).handleEncrypt),
+	"xkms.decrypt":             handle(auth.ResourceKeys, auth.ActionDecrypt, (*Server).handleDecrypt),
+	"xkms.asymmetricEncrypt":   handle(auth.ResourceKeys, auth.ActionEncrypt, (*Server).handleAsymmetricEncrypt),
+	"xkms.asymmetricDecrypt":   handle(auth.ResourceKeys, auth.ActionDecrypt, (*Server).handleAsymmetricDecrypt),
+	"xkms.getImportParameters": handle(auth.ResourceKeys, auth.ActionImport, (*Server).handleGetImportParameters),
+	"xkms.wrapKey":             handle(auth.ResourceKeys, auth.ActionWrap, (*Server).handleWrapKey),
+	"xkms.unwrapKey":           handle(auth.ResourceKeys, auth.ActionUnwrap, (*Server).handleUnwrapKey),
+	"xkms.importKey":           handle(auth.ResourceKeys, auth.ActionImport, (*Server).handleImportKeyMaterial),
+	"xkms.exportKey":           handle(auth.ResourceKeys, auth.ActionExport, (*Server).handleExportKey),
+	"xkms.copyKey":             handle(auth.ResourceKeys, auth.ActionCreate, (*Server).handleCopyKey),
 
 	// Hardware-capability key operations (attestation, ECDH, server-side
-	// wrap/unwrap by key ID, raw symmetric key material export). These
-	// delegate entirely to the xkms service layer; see errors_keyops.go for
-	// how capability-boundary errors (ErrOperationNotSupported) map onto
-	// JSON-RPC error codes.
-	"xkms.attestKey":         (*Server).handleAttestKey,
-	"xkms.deriveKeyECDH":     (*Server).handleDeriveKeyECDH,
-	"xkms.deriveKey":         (*Server).handleDeriveKey,
-	"xkms.exportKeyMaterial": (*Server).handleExportKeyMaterial,
-	"xkms.wrapKeyByID":       (*Server).handleWrapKeyByID,
-	"xkms.unwrapKeyByID":     (*Server).handleUnwrapKeyByID,
+	// wrap/unwrap by key ID, raw symmetric key material export), matching
+	// pkg/api/rest/routes.go's decorators. These delegate entirely to the
+	// xkms service layer; see errors_keyops.go for how capability-boundary
+	// errors (ErrOperationNotSupported) map onto JSON-RPC error codes.
+	// xkms.deriveKey is gRPC's DeriveKey (go-xkms#773); REST carries no route
+	// for it.
+	"xkms.attestKey":         handle(auth.ResourceKeys, auth.ActionGet, (*Server).handleAttestKey),
+	"xkms.deriveKeyECDH":     handle(auth.ResourceKeys, auth.ActionDerive, (*Server).handleDeriveKeyECDH),
+	"xkms.deriveKey":         handle(auth.ResourceKeys, auth.ActionDerive, (*Server).handleDeriveKey),
+	"xkms.exportKeyMaterial": handle(auth.ResourceKeys, auth.ActionExport, (*Server).handleExportKeyMaterial),
+	"xkms.wrapKeyByID":       handle(auth.ResourceKeys, auth.ActionWrap, (*Server).handleWrapKeyByID),
+	"xkms.unwrapKeyByID":     handle(auth.ResourceKeys, auth.ActionUnwrap, (*Server).handleUnwrapKeyByID),
 
-	// XKMS certificate operations
-	"xkms.saveCert":          (*Server).handleSaveCert,
-	"xkms.getCert":           (*Server).handleGetCert,
-	"xkms.deleteCert":        (*Server).handleDeleteCert,
-	"xkms.listCerts":         (*Server).handleListCerts,
-	"xkms.certExists":        (*Server).handleCertExists,
-	"xkms.saveCertChain":     (*Server).handleSaveCertChain,
-	"xkms.getCertChain":      (*Server).handleGetCertChain,
-	"xkms.getTLSCertificate": (*Server).handleGetTLSCertificate,
+	// Certificate storage.
+	"xkms.saveCert":          handle(auth.ResourceCerts, auth.ActionEnroll, (*Server).handleSaveCert),
+	"xkms.getCert":           handle(auth.ResourceCerts, auth.ActionRead, (*Server).handleGetCert),
+	"xkms.deleteCert":        handle(auth.ResourceCerts, auth.ActionRevoke, (*Server).handleDeleteCert),
+	"xkms.listCerts":         handle(auth.ResourceCerts, auth.ActionList, (*Server).handleListCerts),
+	"xkms.certExists":        handle(auth.ResourceCerts, auth.ActionRead, (*Server).handleCertExists),
+	"xkms.saveCertChain":     handle(auth.ResourceCerts, auth.ActionEnroll, (*Server).handleSaveCertChain),
+	"xkms.getCertChain":      handle(auth.ResourceCerts, auth.ActionRead, (*Server).handleGetCertChain),
+	"xkms.getTLSCertificate": handle(auth.ResourceCerts, auth.ActionRead, (*Server).handleGetTLSCertificate),
 
-	// XKMS seal operations
-	"xkms.seal":    (*Server).handleSeal,
-	"xkms.unseal":  (*Server).handleUnseal,
-	"xkms.canSeal": (*Server).handleCanSeal,
+	// Hardware sealing -- gRPC's Seal/Unseal/CanSeal RPCs, identical to the
+	// REST /seal, /unseal, /seal/capability decorators.
+	"xkms.seal":    handle(auth.ResourceKeys, auth.ActionEncrypt, (*Server).handleSeal),
+	"xkms.unseal":  handle(auth.ResourceKeys, auth.ActionDecrypt, (*Server).handleUnseal),
+	"xkms.canSeal": handle(auth.ResourceKeys, auth.ActionGet, (*Server).handleCanSeal),
 
-	// XKMS PIV operations
-	"xkms.listPIVSlots":         (*Server).handleListPIVSlots,
-	"xkms.getPIVCertificate":    (*Server).handleGetPIVCertificate,
-	"xkms.storePIVCertificate":  (*Server).handleStorePIVCertificate,
-	"xkms.deletePIVCertificate": (*Server).handleDeletePIVCertificate,
-	"xkms.generatePIVKey":       (*Server).handleGeneratePIVKey,
-	"xkms.importPIVCertificate": (*Server).handleImportPIVCertificate,
-	"xkms.exportPIVCertificate": (*Server).handleExportPIVCertificate,
-	"xkms.generatePIVCSR":       (*Server).handleGeneratePIVCSR,
+	// PIV slots -- pkg/api/grpc/service_piv.go.
+	"xkms.listPIVSlots":         handle(auth.ResourcePIV, auth.ActionRead, (*Server).handleListPIVSlots),
+	"xkms.getPIVCertificate":    handle(auth.ResourcePIV, auth.ActionRead, (*Server).handleGetPIVCertificate),
+	"xkms.storePIVCertificate":  handle(auth.ResourcePIV, auth.ActionWrite, (*Server).handleStorePIVCertificate),
+	"xkms.deletePIVCertificate": handle(auth.ResourcePIV, auth.ActionDelete, (*Server).handleDeletePIVCertificate),
+	"xkms.generatePIVKey":       handle(auth.ResourcePIV, auth.ActionWrite, (*Server).handleGeneratePIVKey),
+	"xkms.importPIVCertificate": handle(auth.ResourcePIV, auth.ActionWrite, (*Server).handleImportPIVCertificate),
+	"xkms.exportPIVCertificate": handle(auth.ResourcePIV, auth.ActionRead, (*Server).handleExportPIVCertificate),
+	"xkms.generatePIVCSR":       handle(auth.ResourcePIV, auth.ActionUse, (*Server).handleGeneratePIVCSR),
 
-	// CA operations
-	"xkms.ca.bundle":      (*Server).handleGetCABundle,
-	"xkms.ca.certificate": (*Server).handleGetCACertificate,
-	"xkms.ca.sign-csr":    (*Server).handleSignCSR,
-	"xkms.ca.issue":       (*Server).handleIssueCertificate,
-	"xkms.ca.revoke":      (*Server).handleRevokeCertificate,
-	"xkms.ca.crl":         (*Server).handleGenerateCRL,
-	"xkms.ca.is-revoked":  (*Server).handleIsRevoked,
+	// Certificate authority -- pkg/api/grpc/service_ca.go.
+	"xkms.ca.bundle":      handle(auth.ResourceCerts, auth.ActionRead, (*Server).handleGetCABundle),
+	"xkms.ca.certificate": handle(auth.ResourceCerts, auth.ActionRead, (*Server).handleGetCACertificate),
+	"xkms.ca.sign-csr":    handle(auth.ResourceCerts, auth.ActionIssue, (*Server).handleSignCSR),
+	"xkms.ca.issue":       handle(auth.ResourceCerts, auth.ActionIssue, (*Server).handleIssueCertificate),
+	"xkms.ca.revoke":      handle(auth.ResourceCerts, auth.ActionRevoke, (*Server).handleRevokeCertificate),
+	"xkms.ca.crl":         handle(auth.ResourceCerts, auth.ActionRead, (*Server).handleGenerateCRL),
+	"xkms.ca.is-revoked":  handle(auth.ResourceCerts, auth.ActionRead, (*Server).handleIsRevoked),
 
-	// TCG CA operations
-	"xkms.ca.tcg.issue-ek":  (*Server).handleIssueEKCertificate,
-	"xkms.ca.tcg.issue-ak":  (*Server).handleIssueAKCertificate,
-	"xkms.ca.tcg.sign-csr":  (*Server).handleSignTCGCSR,
-	"xkms.ca.tcg.enroll":    (*Server).handleEnrollDevice,
-	"xkms.ca.tcg.issue-lak": (*Server).handleIssueLAKCertificate,
-
-	// Barrier and Shamir operations
+	// TCG certificate authority -- pkg/api/grpc/service_ca_tcg.go.
+	"xkms.ca.tcg.issue-ek":  handle(auth.ResourceCerts, auth.ActionIssue, (*Server).handleIssueEKCertificate),
+	"xkms.ca.tcg.issue-ak":  handle(auth.ResourceCerts, auth.ActionIssue, (*Server).handleIssueAKCertificate),
+	"xkms.ca.tcg.sign-csr":  handle(auth.ResourceCerts, auth.ActionIssue, (*Server).handleSignTCGCSR),
+	"xkms.ca.tcg.enroll":    handle(auth.ResourceCerts, auth.ActionIssue, (*Server).handleEnrollDevice),
+	"xkms.ca.tcg.issue-lak": handle(auth.ResourceCerts, auth.ActionIssue, (*Server).handleIssueLAKCertificate),
 
 	// Trust bootstrap listener (go-xkms#632).
-	"bootstrap.showKeys": (*Server).handleBootstrapShowKeys,
+	"bootstrap.showKeys": handle(auth.ResourceBootstrap, auth.ActionRead, (*Server).handleBootstrapShowKeys),
 
-	// PIN management (SO PIN / user PIN / lockout). Delegate entirely to the
-	// xkms service layer's composed qrdbsdk.PINBackend (go-xkms#773).
-	"xkms.setSOPIN":         (*Server).handleSetSOPIN,
-	"xkms.setUserPIN":       (*Server).handleSetUserPIN,
-	"xkms.changeSOPIN":      (*Server).handleChangeSOPIN,
-	"xkms.changeUserPIN":    (*Server).handleChangeUserPIN,
-	"xkms.verifySOPIN":      (*Server).handleVerifySOPIN,
-	"xkms.verifyUserPIN":    (*Server).handleVerifyUserPIN,
-	"xkms.getLockoutStatus": (*Server).handleGetLockoutStatus,
-	"xkms.resetLockout":     (*Server).handleResetLockout,
-
-	// Whole-node backup/restore (owner ruling 2026-09-30, go-xkms#728).
-	// Delegates entirely to the embedded go-qrdb node's BackupClient through
-	// the XKMS service.
-
-	// Custodian groups (Shamir share custody roster). Custodian state lives
-	// in the embedded go-qrdb node, reached through the XKMS service
+	// PIN management (SO PIN / user PIN / lockout) -- pkg/api/grpc/
+	// service_pin.go's s.authorize(ctx, auth.ResourcePIN, ...) calls. Delegates
+	// entirely to the xkms service layer's composed qrdbsdk.PINBackend
 	// (go-xkms#773).
+	"xkms.setSOPIN":         handle(auth.ResourcePIN, auth.ActionWrite, (*Server).handleSetSOPIN),
+	"xkms.setUserPIN":       handle(auth.ResourcePIN, auth.ActionWrite, (*Server).handleSetUserPIN),
+	"xkms.changeSOPIN":      handle(auth.ResourcePIN, auth.ActionWrite, (*Server).handleChangeSOPIN),
+	"xkms.changeUserPIN":    handle(auth.ResourcePIN, auth.ActionWrite, (*Server).handleChangeUserPIN),
+	"xkms.verifySOPIN":      handle(auth.ResourcePIN, auth.ActionRead, (*Server).handleVerifySOPIN),
+	"xkms.verifyUserPIN":    handle(auth.ResourcePIN, auth.ActionRead, (*Server).handleVerifyUserPIN),
+	"xkms.getLockoutStatus": handle(auth.ResourcePIN, auth.ActionRead, (*Server).handleGetLockoutStatus),
+	"xkms.resetLockout":     handle(auth.ResourcePIN, auth.ActionWrite, (*Server).handleResetLockout),
 
-	// Tenant administration (multi-tenant lifecycle plus per-tenant
-	// barrier). Delegates to the xkms service layer's composed go-qrdb
-	// TenantService (go-xkms#773).
-	"xkms.createTenant":             (*Server).handleCreateTenant,
-	"xkms.getTenant":                (*Server).handleGetTenant,
-	"xkms.listTenants":              (*Server).handleListTenants,
-	"xkms.deleteTenant":             (*Server).handleDeleteTenant,
-	"xkms.updateTenantEntitlements": (*Server).handleUpdateTenantEntitlements,
-	"xkms.updateTenantQuotas":       (*Server).handleUpdateTenantQuotas,
+	// Tenant administration -- pkg/api/grpc/service_tenant.go's s.authorize
+	// calls (go-xkms#773), delegating to the xkms service layer's composed
+	// go-qrdb TenantService. Tenant metadata CRUD carries tenants:*;
+	// entitlements and quotas are plan management and carry their own qrdb
+	// permissions, never tenants:update.
+	"xkms.createTenant":             handle(auth.ResourceTenants, auth.ActionCreate, (*Server).handleCreateTenant),
+	"xkms.getTenant":                handle(auth.ResourceTenants, auth.ActionRead, (*Server).handleGetTenant),
+	"xkms.listTenants":              handle(auth.ResourceTenants, auth.ActionList, (*Server).handleListTenants),
+	"xkms.deleteTenant":             handle(auth.ResourceTenants, auth.ActionDelete, (*Server).handleDeleteTenant),
+	"xkms.updateTenantEntitlements": handle(auth.ResourceTenants, auth.ActionSetEntitlements, (*Server).handleUpdateTenantEntitlements),
+	"xkms.updateTenantQuotas":       handle(auth.ResourceTenants, auth.ActionSetQuotas, (*Server).handleUpdateTenantQuotas),
 
-	// Shamir share operations. Share state lives in the embedded go-qrdb
-	// node, reached through the XKMS service.
+	// Credential submission -- pkg/api/rest/routes.go's /credentials
+	// decorators.
+	"credentials.submit":   handle(auth.ResourceCredentials, auth.ActionSubmit, (*Server).handleCredentialSubmit),
+	"credentials.strategy": handle(auth.ResourceCredentials, auth.ActionStrategy, (*Server).handleCredentialStrategy),
 
-	// Audit read endpoint. Audit state lives in the embedded go-qrdb node,
-	// reached through the XKMS service.
+	// User management. xkms presents its own user model; the backing store is
+	// the embedded qrdb node (see pkg/xkms/servicer_user.go). Mirrors
+	// pkg/api/rest/routes.go's /api/v1/users decorators: create/list/read/
+	// delete carry their ordinary CRUD actions, bindCert carries update since
+	// it mutates an existing user's state rather than replacing it.
+	// enable/disable carry qrdb's own users:enable/users:disable
+	// (go-xkms#1249), matching gRPC's EnableUser/DisableUser RPCs and REST's
+	// .../enable and .../disable routes.
+	"user.create":          handle(auth.ResourceUsers, auth.ActionCreate, (*Server).handleCreateUser),
+	"user.list":            handle(auth.ResourceUsers, auth.ActionList, (*Server).handleListUsers),
+	"user.get":             handle(auth.ResourceUsers, auth.ActionRead, (*Server).handleGetUser),
+	"user.delete":          handle(auth.ResourceUsers, auth.ActionDelete, (*Server).handleDeleteUser),
+	"user.enable":          handle(auth.ResourceUsers, auth.ActionEnable, (*Server).handleEnableUser),
+	"user.disable":         handle(auth.ResourceUsers, auth.ActionDisable, (*Server).handleDisableUser),
+	"user.bindCert":        handle(auth.ResourceUsers, auth.ActionUpdate, (*Server).handleBindUserCert),
+	"user.listCredentials": handle(auth.ResourceUsers, auth.ActionRead, (*Server).handleListUserCredentials),
 
-	// Init ceremony operations
-
-	// Credential management operations
-	"credentials.submit":   (*Server).handleCredentialSubmit,
-	"credentials.strategy": (*Server).handleCredentialStrategy,
-
-	// User management operations. xkms presents its own user model; the
-	// backing store is the embedded qrdb node (see pkg/xkms/servicer_user.go).
-	"user.create":          (*Server).handleCreateUser,
-	"user.list":            (*Server).handleListUsers,
-	"user.get":             (*Server).handleGetUser,
-	"user.delete":          (*Server).handleDeleteUser,
-	"user.enable":          (*Server).handleEnableUser,
-	"user.disable":         (*Server).handleDisableUser,
-	"user.bindCert":        (*Server).handleBindUserCert,
-	"user.listCredentials": (*Server).handleListUserCredentials,
-
-	// Invitation redemption (go-xkms#1294 part B). The FIDO2 half
-	// (Begin/FinishInviteRegistration) is a named exclusion — see
-	// handlers_invite.go's package comment — matching the existing
+	// Invitation redemption (go-xkms#1294 part B) is public: there is no
+	// credential yet to authenticate a request with. REST serves the same two
+	// methods (GetInvite, ActivateInvitePIV) unauthenticated
+	// (pkg/api/rest/handlers_invite.go, GroupInvite), so the transports
+	// agree. The FIDO2 half (Begin/FinishInviteRegistration) is a named
+	// exclusion -- see handlers_invite.go's package comment -- matching the
 	// WebAuthn registration/authentication exclusion.
-	"invite.get":         (*Server).handleGetInvite,
-	"invite.pivActivate": (*Server).handleActivateInvitePIV,
+	"invite.get":         handlePublic((*Server).handleGetInvite),
+	"invite.pivActivate": handlePublic((*Server).handleActivateInvitePIV),
 
-	// Password store operations
-	"password.add":                (*Server).handlePasswordAdd,
-	"password.get":                (*Server).handlePasswordGet,
-	"password.list":               (*Server).handlePasswordList,
-	"password.update":             (*Server).handlePasswordUpdate,
-	"password.delete":             (*Server).handlePasswordDelete,
-	"password.unlock":             (*Server).handlePasswordUnlock,
-	"password.lock":               (*Server).handlePasswordLock,
-	"password.status":             (*Server).handlePasswordStatus,
-	"password.generate":           (*Server).handlePasswordGenerate,
-	"password.setAccessMode":      (*Server).handlePasswordSetAccessMode,
-	"password.vault.status":       (*Server).handlePasswordVaultStatus,
-	"password.vault.enroll":       (*Server).handlePasswordVaultEnroll,
-	"password.vault.rotate":       (*Server).handlePasswordVaultRotate,
-	"password.vault.removeFactor": (*Server).handlePasswordVaultRemoveFactor,
-	"password.vault.recover":      (*Server).handlePasswordVaultRecover,
+	// Password store -- pkg/api/grpc/service_password.go and the matching
+	// pkg/api/rest/routes.go /passwords decorators. The caller's personal
+	// vault: reading it is passwords:read, managing one's own factors is
+	// gated with the session verb, passwords:unlock.
+	"password.add":                handle(auth.ResourcePasswords, auth.ActionWrite, (*Server).handlePasswordAdd),
+	"password.get":                handle(auth.ResourcePasswords, auth.ActionRead, (*Server).handlePasswordGet),
+	"password.list":               handle(auth.ResourcePasswords, auth.ActionRead, (*Server).handlePasswordList),
+	"password.update":             handle(auth.ResourcePasswords, auth.ActionWrite, (*Server).handlePasswordUpdate),
+	"password.delete":             handle(auth.ResourcePasswords, auth.ActionDelete, (*Server).handlePasswordDelete),
+	"password.unlock":             handle(auth.ResourcePasswords, auth.ActionUnlock, (*Server).handlePasswordUnlock),
+	"password.lock":               handle(auth.ResourcePasswords, auth.ActionLock, (*Server).handlePasswordLock),
+	"password.status":             handle(auth.ResourcePasswords, auth.ActionRead, (*Server).handlePasswordStatus),
+	"password.generate":           handle(auth.ResourcePasswords, auth.ActionGenerate, (*Server).handlePasswordGenerate),
+	"password.setAccessMode":      handle(auth.ResourcePasswords, auth.ActionWrite, (*Server).handlePasswordSetAccessMode),
+	"password.vault.status":       handle(auth.ResourcePasswords, auth.ActionRead, (*Server).handlePasswordVaultStatus),
+	"password.vault.enroll":       handle(auth.ResourcePasswords, auth.ActionUnlock, (*Server).handlePasswordVaultEnroll),
+	"password.vault.rotate":       handle(auth.ResourcePasswords, auth.ActionUnlock, (*Server).handlePasswordVaultRotate),
+	"password.vault.removeFactor": handle(auth.ResourcePasswords, auth.ActionUnlock, (*Server).handlePasswordVaultRemoveFactor),
+	"password.vault.recover":      handle(auth.ResourcePasswords, auth.ActionUnlock, (*Server).handlePasswordVaultRecover),
 
-	// Platform-sealed store (machine-local sealed credential store)
-	"sealStore.put":    (*Server).handleSealStorePut,
-	"sealStore.get":    (*Server).handleSealStoreGet,
-	"sealStore.delete": (*Server).handleSealStoreDelete,
-	"sealStore.list":   (*Server).handleSealStoreList,
-	"sealStore.reseal": (*Server).handleSealStoreReseal,
-	"sealStore.status": (*Server).handleSealStoreStatus,
+	// Platform-sealed store (machine-local sealed credential store). Secrets
+	// sealed here are key-protection material, so the actions mirror the
+	// per-verb keys:* pairs every other transport's SealStore* handlers use
+	// (go-xkms#1249): put stores a new value under a name (create), reseal
+	// re-wraps an existing value in place without changing it (update), and
+	// status reports store-wide state the same way get reports one secret's.
+	"sealStore.put":    handle(auth.ResourceKeys, auth.ActionCreate, (*Server).handleSealStorePut),
+	"sealStore.get":    handle(auth.ResourceKeys, auth.ActionGet, (*Server).handleSealStoreGet),
+	"sealStore.delete": handle(auth.ResourceKeys, auth.ActionDelete, (*Server).handleSealStoreDelete),
+	"sealStore.list":   handle(auth.ResourceKeys, auth.ActionList, (*Server).handleSealStoreList),
+	"sealStore.reseal": handle(auth.ResourceKeys, auth.ActionUpdate, (*Server).handleSealStoreReseal),
+	"sealStore.status": handle(auth.ResourceKeys, auth.ActionGet, (*Server).handleSealStoreStatus),
 
-	// TPM policy management (pkg/tpmpolicy)
-	"tpm.policy.create":         (*Server).handleTPMPolicyCreate,
-	"tpm.policy.get":            (*Server).handleTPMPolicyGet,
-	"tpm.policy.list":           (*Server).handleTPMPolicyList,
-	"tpm.policy.update":         (*Server).handleTPMPolicyUpdate,
-	"tpm.policy.revoke":         (*Server).handleTPMPolicyRevoke,
-	"tpm.policy.verify":         (*Server).handleTPMPolicyVerify,
-	"tpm.policy.delete":         (*Server).handleTPMPolicyDelete,
-	"tpm.policy.objects":        (*Server).handleTPMPolicyObjects,
-	"tpm.policy.autoUnseal":     (*Server).handleTPMPolicyAutoUnseal,
-	"tpm.policy.setDescription": (*Server).handleTPMPolicySetDescription,
-	"tpm.object.policy":         (*Server).handleTPMObjectPolicy,
-	"tpm.authority.rotate":      (*Server).handleTPMAuthorityRotate,
-	"xkms.getTenantTPMMode":     (*Server).handleGetTenantTPMMode,
-	"xkms.setTenantTPMMode":     (*Server).handleSetTenantTPMMode,
-	"xkms.tenantVTPMStatus":     (*Server).handleTenantVTPMStatus,
-	"xkms.tenantVTPMStart":      (*Server).handleTenantVTPMStart,
-	"xkms.tenantVTPMStop":       (*Server).handleTenantVTPMStop,
+	// TPM policy management (pkg/tpmpolicy) -- pkg/auth.ResourceTPMPolicy, a
+	// resource family go-qrdb's canonical registry does not declare upstream;
+	// xkms owns it and scopes it in pkg/apimodule/module_scopes.go. Mirrors
+	// the gRPC TPMPolicy* RPCs' (qrdb.v1.permission) options one-for-one. A
+	// tenant's TPM mode and vTPM are system-scope only.
+	"tpm.policy.create":         handle(auth.ResourceTPMPolicy, auth.ActionCreate, (*Server).handleTPMPolicyCreate),
+	"tpm.policy.get":            handle(auth.ResourceTPMPolicy, auth.ActionGet, (*Server).handleTPMPolicyGet),
+	"tpm.policy.list":           handle(auth.ResourceTPMPolicy, auth.ActionList, (*Server).handleTPMPolicyList),
+	"tpm.policy.update":         handle(auth.ResourceTPMPolicy, auth.ActionUpdate, (*Server).handleTPMPolicyUpdate),
+	"tpm.policy.revoke":         handle(auth.ResourceTPMPolicy, auth.ActionRevoke, (*Server).handleTPMPolicyRevoke),
+	"tpm.policy.verify":         handle(auth.ResourceTPMPolicy, auth.ActionVerify, (*Server).handleTPMPolicyVerify),
+	"tpm.policy.delete":         handle(auth.ResourceTPMPolicy, auth.ActionDelete, (*Server).handleTPMPolicyDelete),
+	"tpm.policy.objects":        handle(auth.ResourceTPMPolicy, auth.ActionGet, (*Server).handleTPMPolicyObjects),
+	"tpm.policy.autoUnseal":     handle(auth.ResourceTPMPolicy, auth.ActionUpdate, (*Server).handleTPMPolicyAutoUnseal),
+	"tpm.policy.setDescription": handle(auth.ResourceTPMPolicy, auth.ActionUpdate, (*Server).handleTPMPolicySetDescription),
+	"tpm.object.policy":         handle(auth.ResourceTPMPolicy, auth.ActionGet, (*Server).handleTPMObjectPolicy),
+	"tpm.authority.rotate":      handle(auth.ResourceTPMPolicy, auth.ActionRotate, (*Server).handleTPMAuthorityRotate),
+	"xkms.getTenantTPMMode":     handle(auth.ResourceTenants, auth.ActionRead, (*Server).handleGetTenantTPMMode),
+	"xkms.setTenantTPMMode":     handle(auth.ResourceTenants, auth.ActionSetTPMMode, (*Server).handleSetTenantTPMMode),
+	"xkms.tenantVTPMStatus":     handle(auth.ResourceTenants, auth.ActionRead, (*Server).handleTenantVTPMStatus),
+	"xkms.tenantVTPMStart":      handle(auth.ResourceTenants, auth.ActionSetTPMMode, (*Server).handleTenantVTPMStart),
+	"xkms.tenantVTPMStop":       handle(auth.ResourceTenants, auth.ActionSetTPMMode, (*Server).handleTenantVTPMStop),
 
-	// Platform trust roots (pkg/attestation/truststore)
-	"trust.root.list":       (*Server).handleTrustRootList,
-	"trust.root.get":        (*Server).handleTrustRootGet,
-	"trust.root.import":     (*Server).handleTrustRootImport,
-	"trust.root.quarantine": (*Server).handleTrustRootQuarantine,
-	"trust.root.remove":     (*Server).handleTrustRootRemove,
+	// Platform trust roots (pkg/attestation/truststore), matching the
+	// gRPC/REST/Unix TrustRoot* handlers.
+	"trust.root.list":       handle(auth.ResourceTrustRoots, auth.ActionList, (*Server).handleTrustRootList),
+	"trust.root.get":        handle(auth.ResourceTrustRoots, auth.ActionGet, (*Server).handleTrustRootGet),
+	"trust.root.import":     handle(auth.ResourceTrustRoots, auth.ActionImport, (*Server).handleTrustRootImport),
+	"trust.root.quarantine": handle(auth.ResourceTrustRoots, auth.ActionUpdate, (*Server).handleTrustRootQuarantine),
+	"trust.root.remove":     handle(auth.ResourceTrustRoots, auth.ActionDelete, (*Server).handleTrustRootRemove),
 
-	// Server-side OIDC credentials (pkg/oidc/credential)
-	"oidc.credential.create":       (*Server).handleOIDCCredentialCreate,
-	"oidc.credential.import":       (*Server).handleOIDCCredentialImport,
-	"oidc.credential.get":          (*Server).handleOIDCCredentialGet,
-	"oidc.credential.list":         (*Server).handleOIDCCredentialList,
-	"oidc.credential.delete":       (*Server).handleOIDCCredentialDelete,
-	"oidc.credential.refresh":      (*Server).handleOIDCCredentialRefresh,
-	"oidc.credential.token":        (*Server).handleOIDCCredentialToken,
-	"oidc.credential.device.start": (*Server).handleOIDCCredentialDeviceStart,
-	"oidc.credential.device.poll":  (*Server).handleOIDCCredentialDevicePoll,
+	// Server-side OIDC credentials (pkg/oidc/credential) --
+	// pkg/auth.ResourceOIDCCredentials, an xkms-owned resource family scoped
+	// in pkg/apimodule/module_scopes.go. Mirrors the gRPC OIDCCredential*
+	// RPCs' (qrdb.v1.permission) options one-for-one: importing tokens,
+	// refreshing and a device login all change the login (update), and
+	// reading a current access token is its own action, token.
+	"oidc.credential.create":       handle(auth.ResourceOIDCCredentials, auth.ActionCreate, (*Server).handleOIDCCredentialCreate),
+	"oidc.credential.import":       handle(auth.ResourceOIDCCredentials, auth.ActionUpdate, (*Server).handleOIDCCredentialImport),
+	"oidc.credential.get":          handle(auth.ResourceOIDCCredentials, auth.ActionGet, (*Server).handleOIDCCredentialGet),
+	"oidc.credential.list":         handle(auth.ResourceOIDCCredentials, auth.ActionList, (*Server).handleOIDCCredentialList),
+	"oidc.credential.delete":       handle(auth.ResourceOIDCCredentials, auth.ActionDelete, (*Server).handleOIDCCredentialDelete),
+	"oidc.credential.refresh":      handle(auth.ResourceOIDCCredentials, auth.ActionUpdate, (*Server).handleOIDCCredentialRefresh),
+	"oidc.credential.token":        handle(auth.ResourceOIDCCredentials, auth.ActionToken, (*Server).handleOIDCCredentialToken),
+	"oidc.credential.device.start": handle(auth.ResourceOIDCCredentials, auth.ActionUpdate, (*Server).handleOIDCCredentialDeviceStart),
+	"oidc.credential.device.poll":  handle(auth.ResourceOIDCCredentials, auth.ActionUpdate, (*Server).handleOIDCCredentialDevicePoll),
 
-	// Attested-caller evidence
-	"peer.attestation.challenge": (*Server).handlePeerAttestationChallenge,
-	"peer.attestation.submit":    (*Server).handlePeerAttestationSubmit,
+	// Attested-caller evidence (pkg/attestation/peergate) --
+	// pkg/auth.ResourcePeerAttestation, an xkms-owned resource family scoped
+	// in pkg/apimodule/module_scopes.go and exempt from the gate itself.
+	// Mirrors the gRPC PeerAttestationChallenge / SubmitPeerAttestation RPCs.
+	"peer.attestation.challenge": handle(auth.ResourcePeerAttestation, auth.ActionChallenge, (*Server).handlePeerAttestationChallenge),
+	"peer.attestation.submit":    handle(auth.ResourcePeerAttestation, auth.ActionSubmit, (*Server).handlePeerAttestationSubmit),
 
-	// SSH key operations
-	"ssh.keys.generate": (*Server).handleSSHKeysGenerate,
-	"ssh.keys.import":   (*Server).handleSSHKeysImport,
-	"ssh.keys.list":     (*Server).handleSSHKeysList,
-	"ssh.keys.get":      (*Server).handleSSHKeysGet,
-	"ssh.keys.delete":   (*Server).handleSSHKeysDelete,
-	"ssh.keys.export":   (*Server).handleSSHKeysExport,
-	"ssh.keys.sign":     (*Server).handleSSHKeysSign,
+	// SSH keys, known hosts and authorized keys -- pkg/api/grpc/
+	// service_ssh.go and pkg/api/rest/routes.go's /xkms/v1/ssh decorators.
+	"ssh.keys.generate": handle(auth.ResourceSSH, auth.ActionWrite, (*Server).handleSSHKeysGenerate),
+	"ssh.keys.import":   handle(auth.ResourceSSH, auth.ActionWrite, (*Server).handleSSHKeysImport),
+	"ssh.keys.list":     handle(auth.ResourceSSH, auth.ActionRead, (*Server).handleSSHKeysList),
+	"ssh.keys.get":      handle(auth.ResourceSSH, auth.ActionRead, (*Server).handleSSHKeysGet),
+	"ssh.keys.delete":   handle(auth.ResourceSSH, auth.ActionDelete, (*Server).handleSSHKeysDelete),
+	"ssh.keys.export":   handle(auth.ResourceSSH, auth.ActionRead, (*Server).handleSSHKeysExport),
+	"ssh.keys.sign":     handle(auth.ResourceSSH, auth.ActionWrite, (*Server).handleSSHKeysSign),
 
-	// SSH known-hosts operations
-	"ssh.knownHosts.add":    (*Server).handleSSHKnownHostsAdd,
-	"ssh.knownHosts.list":   (*Server).handleSSHKnownHostsList,
-	"ssh.knownHosts.remove": (*Server).handleSSHKnownHostsRemove,
-	"ssh.knownHosts.verify": (*Server).handleSSHKnownHostsVerify,
+	"ssh.knownHosts.add":    handle(auth.ResourceSSH, auth.ActionWrite, (*Server).handleSSHKnownHostsAdd),
+	"ssh.knownHosts.list":   handle(auth.ResourceSSH, auth.ActionRead, (*Server).handleSSHKnownHostsList),
+	"ssh.knownHosts.remove": handle(auth.ResourceSSH, auth.ActionDelete, (*Server).handleSSHKnownHostsRemove),
+	"ssh.knownHosts.verify": handle(auth.ResourceSSH, auth.ActionRead, (*Server).handleSSHKnownHostsVerify),
 
-	// SSH authorized-keys operations
-	"ssh.authorizedKeys.add":    (*Server).handleSSHAuthorizedKeysAdd,
-	"ssh.authorizedKeys.get":    (*Server).handleSSHAuthorizedKeysGet,
-	"ssh.authorizedKeys.list":   (*Server).handleSSHAuthorizedKeysList,
-	"ssh.authorizedKeys.remove": (*Server).handleSSHAuthorizedKeysRemove,
-	"ssh.authorizedKeys.emit":   (*Server).handleSSHAuthorizedKeysEmit,
-	"ssh.authorizedKeys.verify": (*Server).handleSSHAuthorizedKeysVerify,
+	"ssh.authorizedKeys.add":    handle(auth.ResourceSSH, auth.ActionWrite, (*Server).handleSSHAuthorizedKeysAdd),
+	"ssh.authorizedKeys.get":    handle(auth.ResourceSSH, auth.ActionRead, (*Server).handleSSHAuthorizedKeysGet),
+	"ssh.authorizedKeys.list":   handle(auth.ResourceSSH, auth.ActionRead, (*Server).handleSSHAuthorizedKeysList),
+	"ssh.authorizedKeys.remove": handle(auth.ResourceSSH, auth.ActionDelete, (*Server).handleSSHAuthorizedKeysRemove),
+	"ssh.authorizedKeys.emit":   handle(auth.ResourceSSH, auth.ActionRead, (*Server).handleSSHAuthorizedKeysEmit),
+	"ssh.authorizedKeys.verify": handle(auth.ResourceSSH, auth.ActionRead, (*Server).handleSSHAuthorizedKeysVerify),
+
+	// FROST threshold signatures -- pkg/api/grpc/service_frost.go gates the
+	// FROST surface with the ordinary keys:* actions. The handlers live
+	// behind the `frost` build tag (handlers_frost.go); without it they
+	// answer "not compiled" (handlers_frost_stub.go). Registering them here,
+	// untagged, means no build can ship an unenforced FROST surface.
+	"frost.generateKey":    handle(auth.ResourceKeys, auth.ActionCreate, (*Server).handleFrostGenerateKey),
+	"frost.importKey":      handle(auth.ResourceKeys, auth.ActionImport, (*Server).handleFrostImportKey),
+	"frost.listKeys":       handle(auth.ResourceKeys, auth.ActionList, (*Server).handleFrostListKeys),
+	"frost.getKey":         handle(auth.ResourceKeys, auth.ActionGet, (*Server).handleFrostGetKey),
+	"frost.deleteKey":      handle(auth.ResourceKeys, auth.ActionDelete, (*Server).handleFrostDeleteKey),
+	"frost.generateNonces": handle(auth.ResourceKeys, auth.ActionSign, (*Server).handleFrostGenerateNonces),
+	"frost.signRound":      handle(auth.ResourceKeys, auth.ActionSign, (*Server).handleFrostSignRound),
+	"frost.aggregate":      handle(auth.ResourceKeys, auth.ActionSign, (*Server).handleFrostAggregate),
+	"frost.verify":         handle(auth.ResourceKeys, auth.ActionVerify, (*Server).handleFrostVerify),
 }
 
 // Stop releases whatever server-held resources remain. It is safe to call on

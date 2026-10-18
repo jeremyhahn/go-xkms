@@ -292,8 +292,14 @@ type Server struct {
 	// barrier strategy retains its bootstrap key-storage handle for promotion),
 	// so the SAME instance is used for the pre-node BootstrapBackends and the
 	// post-node RuntimeBackend that initializeCA signs from. nil except when
-	// cluster ACME enrollment provisioned the cluster mTLS.
+	// the TrustedCA (ACME or local-CA mode) provisioned the cluster mTLS.
 	clusterCAKeyStrategy clustercapkg.ClusterCAKeyStrategy
+
+	// clusterCAKeyProvider is the TrustedCA as go-qrdb's cluster CA (Key A),
+	// handed to the node through WithClusterCAKeyProvider and bound in
+	// initializeCA once the TrustedCA exists (go-xkms#1381). nil when the
+	// TrustedCA is not the cluster CA (see trustedCAIsClusterCA).
+	clusterCAKeyProvider *clustercapkg.KeyProvider
 
 	// tenantService is the node's go-qrdb TenantService, built over the
 	// node's barrier registry with the node seal strategy injected. It owns the
@@ -667,6 +673,14 @@ func New(cfg *config.Config, opts ...Option) (*Server, error) {
 	if err := s.resolveNodeSeal(); err != nil {
 		cancel()
 		return nil, &ErrServiceInit{Service: "node seal", Err: err}
+	}
+
+	// A Raft transport key on the PKCS#11 token needs the token open before
+	// initializeQRDBStorage provisions Raft mTLS; initializeBackends later
+	// registers this same open.
+	if err := s.openPreNodePKCS11Backend(); err != nil {
+		cancel()
+		return nil, err
 	}
 
 	// Initialize the shared qrdb storage backend (when configured). This must
@@ -2141,6 +2155,14 @@ func (s *Server) initializeCA() error {
 	}
 
 	s.ca = trustedCA
+
+	// The node was built before the CA, whose stores live in it: bind the
+	// TrustedCA as go-qrdb's cluster CA (Key A) now.
+	if s.clusterCAKeyProvider != nil {
+		if err := s.clusterCAKeyProvider.Bind(trustedCA); err != nil {
+			return &ErrCAInit{Operation: "bind cluster CA", Err: err}
+		}
+	}
 
 	cn := s.config.CA.Identity[0].Subject.CommonName
 	s.logger.Info("CA initialized", "identity", cn)

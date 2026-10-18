@@ -8,7 +8,7 @@ Design: [`architecture.md`](architecture.md). Service: `XKMSService`
 ## Tenancy
 
 The store is platform state. Every operation is system-scope only
-(`requireSystemTenant`): a tenant-scoped caller is refused with the
+(`qrdbsdk.IdentityIsSystemTenant`, `pkg/xkms/servicer_trust_roots.go:42`): a tenant-scoped caller is refused with the
 unknown-tenant not-found (`xkms.TenantBindingError`) before the store is read.
 
 ## Operations
@@ -23,7 +23,7 @@ unknown-tenant not-found (`xkms.TenantBindingError`) before the store is read.
 
 - Routes: `pkg/api/rest/routes.go:393-397`. RPCs:
   `pkg/api/grpc/proto/xkmsv1/xkms.proto:717-738`. MCP methods:
-  `pkg/api/mcp/server.go:445-449`, permissions `pkg/api/mcp/authz.go:343-347`.
+  `pkg/api/mcp/server.go:468-472`, each registered with its permission.
 - QUIC serves the REST routes over HTTP/3; the embedded transport calls
   `XKMSService` directly. The USB transport (the xkey Android companion)
   answers `usb.ErrNotSupported` for the whole family.

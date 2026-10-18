@@ -147,8 +147,9 @@ type frostWireOutcome struct {
 // the way the wire does.
 func (m frostKeyMethod) call(t *testing.T, server *Server, tenantID, keyID string) frostWireOutcome {
 	t.Helper()
-	result, err, handled := server.routeFrostMethods(frostTenantCtx(tenantID), frostReq(t, m.method, m.params(keyID)))
-	require.True(t, handled, "%s must be routed", m.method)
+	entry, registered := rpcMethods[m.method]
+	require.True(t, registered, "%s must be registered", m.method)
+	result, err := entry.handler(server, frostTenantCtx(tenantID), frostReq(t, m.method, m.params(keyID)))
 	if err != nil {
 		code, message := ClientError(err)
 		return frostWireOutcome{Code: code, Message: message}

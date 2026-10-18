@@ -361,7 +361,7 @@ once, to the externally visible base.
   domain, malformed, or naming two tenants — never a fallback to the OU or
   the system tenant), and `auth.ErrCertNotBound` (no user bound in that
   tenant). `withUser` then binds the user's tenant, so go-xkms#1225's
-  `bindTenantTarget` (`pkg/acme/admin/tenant_binding.go:103`) confines a
+  `admitTenant` (`pkg/acme/admin/tenant_binding.go:105`) confines a
   tenant user to its own tenant's routes.
 - **The admin plane resolves every mTLS caller to its qrdb user before the
   permission gate runs.** xkmsd builds the admin plane's authenticator with
@@ -375,8 +375,8 @@ once, to the externally visible base.
   answers 403, which is what go-xkms#1069 was. A certificate bound to no user
   is refused with `401` and never authenticates from its fields
   (go-xkms#1096). The admin plane declares no permission of its own: each
-  `gate.Wrap` resource:action (`pkg/acme/admin/handlers.go:108-143`,
-  `tenant_handlers.go:61-127`) is a qrdb-registered permission that qrdb
+  route permission in `admin.Routes()` (`pkg/acme/admin/routes.go:97-174`) is
+  a qrdb-registered permission that qrdb
   places on its built-in roles — Owner holds all of them; Admin holds all but
   `roles:create`/`roles:update`/`roles:delete`; Operator and Auditor each hold
   a subset of the read/list permissions (qrdb's placement, not restated by
@@ -413,7 +413,7 @@ once, to the externally visible base.
   pass it for a request naming any tenant; the confinement is the admin
   service's, applied for every transport (REST handlers, the gRPC admin
   server, MCP), in `pkg/acme/admin/tenant_binding.go`:
-  - `bindTenantTarget` (`tenant_binding.go:103`) admits a cross-tenant
+  - `admitTenant` (`tenant_binding.go:105`), over `auth.AdmitTenant`, admits a cross-tenant
     caller (`auth.IsCrossTenant`: no identity, empty or system tenant) to
     any tenant and a tenant-scoped caller to its own only. Its refusal,
     `*TenantBindingError` (`:36`), unwraps to `ErrTenantNotFound` and renders
@@ -422,14 +422,15 @@ once, to the externally visible base.
     `{id}`-scoped `TenantAwareAdminService` method calls it after the
     empty-ID check (lifecycle, CA hierarchy, EAB, roles, users;
     `tenant_service.go`), and every `{id}` handler repeats it through
-    `checkTenantAccess` (`tenant_handlers.go:139`) before the body is read,
-    answering `writeTenantNotFound` (`:159`).
-  - `requirePlatformScope` (`tenant_binding.go:113`) reserves tenant
-    creation (`tenant_service.go:192`, `tenant_handlers.go:185`) and the
-    audit trail (`handlers.go:447`) — whose events carry no tenant to
-    filter by — to a cross-tenant caller. Its refusal, `*PlatformScopeError`
-    (`tenant_binding.go:63`), unwraps to `ErrForbidden` and is answered with
-    the gate's own denial body (`writePermissionDenied`, `authz.go:161`).
+    `checkTenantAccess` (`tenant_handlers.go:72`) before the body is read,
+    answering `writeTenantNotFound` (`:92`).
+  - A `qrdbsdk.IdentityIsSystemTenant` check reserves tenant creation
+    (`tenant_service.go:195`) and the audit trail (`handlers.go:416`) — whose
+    events carry no tenant to filter by — to a cross-tenant caller. Tenant
+    creation refuses with `*PlatformScopeError` (`tenant_binding.go:63`),
+    which unwraps to `ErrForbidden` and is answered `403`
+    (`tenant_handlers.go:143-144`); the audit trail answers with the gate's own
+    denial body (`writePermissionDenied`, `authz.go:170`).
   - The admin plane carries no `/admin/barrier/*` routes: the barrier is
     go-qrdb's and the ACME admin API does not re-expose it.
   - `ListTenants` returns only the caller's tenant, and counts only it
@@ -461,8 +462,8 @@ once, to the externally visible base.
 - **`PermissionGate.Authorize` (`pkg/acme/admin/authz.go:93`) is the one place
   that logs an admin authorization denial, for every transport.** REST
   (`Wrap`, `authz.go:142-156`), gRPC (`UnaryAuthorizationInterceptor`,
-  `pkg/acme/api/server/interceptor_authz.go:133-140`) and MCP
-  (`authorizeMCPMethod`, `pkg/acme/api/server/mcp_authz.go:95`) all resolve
+  `pkg/acme/api/server/interceptor_authz.go:118-126`) and MCP
+  (`authorizeMCPMethod`, `pkg/acme/api/server/mcp_authz.go:65`) all resolve
   their decision through this one gate, so a `slog.Warn` there — subject,
   tenant, resource, action, the transport's method/route (an `extra
   ...slog.Attr` each caller passes: HTTP method+path, gRPC full method, or the

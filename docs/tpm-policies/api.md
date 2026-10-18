@@ -9,13 +9,13 @@ every transport calls.
 ## Tenancy
 
 - Every policy operation acts on the caller's own tenant's TPM scope
-  (`targetTenant`, `pkg/xkms/tenant_binding.go:137`): a caller may leave
+  (`ownTenant`, `pkg/xkms/tenant_binding.go:86`): a caller may leave
   `tenant_id` empty or name its own tenant, and naming another is refused
   with the unknown-tenant not-found (`xkms.TenantBindingError`). That holds
   for a system-tenant caller too, whose own scope is the system scope
   (go-xkms#1406).
 - A tenant's TPM mode and its vTPM are system-scope only
-  (`requireSystemTenant`): a tenant-scoped caller is refused even for its own
+  (`qrdbsdk.IdentityIsSystemTenant`, `pkg/xkms/servicer_tpm_policy.go:53`): a tenant-scoped caller is refused even for its own
   tenant.
 
 ## Operations
