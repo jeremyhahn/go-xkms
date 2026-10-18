@@ -2189,6 +2189,11 @@ type TPMPolicyCondition struct {
 // TPMPolicyBranch is one branch of a TPM policy: the AND of its conditions,
 // at most one of each type.
 type TPMPolicyBranch struct {
+	// Name identifies the branch within its policy. A create request may
+	// leave it empty; the branch is then named branch-N, N its position
+	// counted from 1.
+	Name string `json:"name,omitempty"`
+
 	Conditions []TPMPolicyCondition `json:"conditions"`
 
 	// Approved reports whether the branch holds an approval. It is reported
@@ -2265,14 +2270,14 @@ type TPMPolicyRequest struct {
 
 // TPMPolicyUpdateRequest updates a TPM policy to its next epoch. Without a
 // Branch it re-captures every branch's PCR values from the live PCRs. With
-// a Branch, counted from 0, it updates only that branch, to the values
+// a Branch, a branch name such as "next", it updates only that branch, to the values
 // ReferenceValues, a COSE_Sign1 signed CoRIM, predicts; the CoRIM must
 // verify under the server's configured reference signer. ReferenceValues
 // is set exactly when Branch is.
 type TPMPolicyUpdateRequest struct {
 	TenantID        string `json:"tenant_id,omitempty"`
 	Name            string `json:"name"`
-	Branch          *int   `json:"branch,omitempty"`
+	Branch          string `json:"branch,omitempty"`
 	ReferenceValues []byte `json:"reference_values,omitempty"`
 }
 
@@ -2310,6 +2315,9 @@ type TPMPolicyDeleteRequest struct {
 // TPMPolicyBranchVerification compares one branch's captured PCR values
 // with the live ones.
 type TPMPolicyBranchVerification struct {
+	// Name is the branch's name.
+	Name string `json:"name"`
+
 	// Match reports whether the branch's pcr condition, if it has one,
 	// still holds its captured values; Mismatched lists the PCRs that do
 	// not, ascending.

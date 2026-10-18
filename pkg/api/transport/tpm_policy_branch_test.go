@@ -36,6 +36,8 @@ func TestParseTPMPolicyBranch(t *testing.T) {
 		{" PCR = SHA384:7 ; ", TPMPolicyPCRBranch("sha384", []uint{7})},
 		{"auth_value", TPMPolicyBranch{Conditions: []TPMPolicyCondition{{Type: TPMPolicyConditionAuthValue}}}},
 		{"locality=0,3-4", TPMPolicyBranch{Conditions: []TPMPolicyCondition{{Type: TPMPolicyConditionLocality, Localities: []uint{0, 3, 4}}}}},
+		{"name=next;pcr=0,7", TPMPolicyBranch{Name: "next", Conditions: TPMPolicyPCRBranch(DefaultTPMPolicyBank, []uint{0, 7}).Conditions}},
+		{"auth_value; Name = current ", TPMPolicyBranch{Name: "current", Conditions: []TPMPolicyCondition{{Type: TPMPolicyConditionAuthValue}}}},
 	}
 	for _, tt := range tests {
 		t.Run(tt.spec, func(t *testing.T) {
@@ -63,6 +65,9 @@ func TestParseTPMPolicyBranch_Errors(t *testing.T) {
 		{"auth_value=", ErrTPMPolicyConditionValue, "auth_value="},
 		{"locality", ErrTPMPolicyConditionValue, "locality"},
 		{"locality=-1", ErrTPMPolicyConditionValue, "locality=-1"},
+		{"name;pcr=7", ErrTPMPolicyBranchName, "name"},
+		{"name=;pcr=7", ErrTPMPolicyBranchName, "name="},
+		{"name=a;name=b;pcr=7", ErrTPMPolicyBranchName, "name=b"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.spec, func(t *testing.T) {
@@ -75,7 +80,7 @@ func TestParseTPMPolicyBranch_Errors(t *testing.T) {
 		})
 	}
 
-	for _, spec := range []string{"", " ; ;"} {
+	for _, spec := range []string{"", " ; ;", "name=next"} {
 		_, err := ParseTPMPolicyBranch(spec)
 		require.ErrorIs(t, err, ErrTPMPolicyBranchEmpty)
 	}
@@ -94,6 +99,12 @@ func TestTPMPolicyBranch_String(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, b, parsed)
 	assert.Empty(t, TPMPolicyBranch{}.String())
+
+	b.Name = "next"
+	assert.Equal(t, "name=next;pcr=sha256:0,7;auth_value;locality=0,3", b.String())
+	parsed, err = ParseTPMPolicyBranch(b.String())
+	require.NoError(t, err)
+	assert.Equal(t, b, parsed)
 }
 
 // TestTPMPolicyReference_String proves a reference names its CoRIM, the

@@ -144,7 +144,7 @@ func TestSyncTrustStore_ForgedGoogleRootAnchorsNothing(t *testing.T) {
 	trust, err := attestation.LoadTrust(store, quarantineTestApplications())
 	require.NoError(t, err)
 	_, err = forged.issueLeaf(t, "attested.example.com").Verify(x509.VerifyOptions{
-		Roots:     trust.Pool,
+		Roots:     trust.Roots,
 		KeyUsages: []x509.ExtKeyUsage{x509.ExtKeyUsageAny},
 	})
 	var unknownAuthority x509.UnknownAuthorityError

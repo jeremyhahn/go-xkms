@@ -1,6 +1,6 @@
 # TPM Policies — CLI
 
-> **Status: NORMATIVE** · Feature: `tpm-policies` · Repo: `go-xkms` · Last verified: 2026-09-30
+> **Status: NORMATIVE** · Feature: `tpm-policies` · Repo: `go-xkms` · Last verified: 2026-10-17
 
 `xkmsctl` calls the API in [`api.md`](api.md) over any configured transport.
 `--tenant <id>` addresses another tenant's scope (system callers only; the
@@ -14,7 +14,7 @@ owner-hierarchy authorization, needed only when the owner hierarchy has one;
 | `tpm policy describe <name> <text>` | `--tenant` | Replace the policy's description (`""` clears it) |
 | `tpm policy list` | `--tenant` | List policies |
 | `tpm policy get <name>` | `--tenant` | Show a policy, its branches with their PCR values, and approval |
-| `tpm policy update <name>` | `--tenant` | Re-capture and re-approve after an expected platform change |
+| `tpm policy update <name>` | `--branch <name>` with `--reference-values <corim>`, `--tenant` | Re-capture and re-approve after an expected platform change; with `--branch`, approve only that branch for the PCR values a signed CoRIM predicts, before the change |
 | `tpm policy revoke <name>` | `--tenant` | Withdraw the approval |
 | `tpm policy verify <name>` | `--tenant` | Compare each branch with the live PCRs; exits non-zero on a mismatch or no approval |
 | `tpm policy delete <name>` | `--owner-auth`, `--tenant` | Delete a policy; refused while objects use it |
@@ -33,10 +33,11 @@ owner-hierarchy authorization, needed only when the owner hierarchy has one;
 `--pcrs 0,7 [--bank sha384]` creates the common policy: one branch holding
 one pcr condition. `--branch` gives a branch explicitly, once per branch,
 branches tried in order; it cannot be combined with `--pcrs` or `--bank`. A
-branch is conditions joined by `;`:
+branch is an optional `name=NAME` and conditions, joined by `;`:
 
-| Condition | Meaning |
+| Element | Meaning |
 |---|---|
+| `name=NAME` | The branch's name: 1-64 letters, digits, `.`, `_` or `-`, unique within the policy; `branch-N` (N counted from 1) when omitted. `update --branch` and `verify` name branches this way |
 | `pcr=[BANK:]LIST` | The PCRs in `LIST` of `BANK` (`sha256` when omitted) hold the values captured at create or update |
 | `auth_value` | The object's password is presented |
 | `locality=LIST` | The command comes from one of the TPM localities (0-4) in `LIST` |
@@ -55,6 +56,16 @@ xkmsctl tpm policy objects boot
 xkmsctl key policy signer
 xkmsctl tpm policy update boot          # after a firmware or kernel update
 xkmsctl tenant tpm-mode acme vtpm
+```
+
+A platform update without a window where nothing unseals uses two branches,
+`current` and `next`: approve `next` for the new image's signed reference
+values before the update, then `current` after it.
+
+```
+xkmsctl tpm policy create unlock --branch 'name=current;pcr=0,7' --branch 'name=next;pcr=0,7'
+xkmsctl tpm policy update unlock --branch next --reference-values image-v2.corim
+xkmsctl tpm policy verify unlock       # each branch by name, with the reference values it is approved for
 ```
 
 `xkmsctl policy` (the PCR snapshot store) was removed with `pkg/seal/policy`;
@@ -105,7 +116,7 @@ and `-o json` apply.
 | `xkey tpm policy describe <name> <text>` | | Replace the policy's description |
 | `xkey tpm policy list` | | Policies with their object counts; the built-in `platform` first |
 | `xkey tpm policy get <name>` | | A policy, its branches with their captured PCR values, and approval |
-| `xkey tpm policy update <name>` | | Re-capture and re-approve (no re-key) |
+| `xkey tpm policy update <name>` | `--branch <name>` with `--reference-values <corim>` | Re-capture and re-approve (no re-key); with `--branch`, approve only that branch from a signed CoRIM (server mode; local mode configures no reference signer) |
 | `xkey tpm policy revoke <name>` | | Withdraw the approval |
 | `xkey tpm policy verify <name>` | | Compare with the live PCRs; exits non-zero when not satisfied |
 | `xkey tpm policy delete <name>` | | Refused, listing them, while objects are bound |

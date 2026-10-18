@@ -396,17 +396,20 @@ defect and the shape of the fix is what the current design is for.
    whatsoever about its boot chain. For a phone-as-HSM pairing that claim *is*
    the product.
 
-   `requireAttestedBootState` enforces the missing half at the **point of
-   consumption**, and refuses unless the extension carries a `RootOfTrust`, the
-   bootloader is **locked**, and the state is **verified**. It lives in the CLI
-   rather than in `pkg/attestation/android` because absence-versus-refusal is
-   the consumer's policy: the SDK's "verify what is claimed" contract is
-   deliberate and other callers depend on it. `device attest-device` inherits
+   `android.RequireAttestedBootState` enforces the missing half, and refuses
+   unless the extension carries a `RootOfTrust`, the bootloader is **locked**,
+   and the state is **verified**. It is a separate function in
+   `pkg/attestation/android/device.go`, not part of `VerifyKeyAttestation`,
+   because absence-versus-refusal is a device-key policy: the "verify what is
+   claimed" contract of `VerifyKeyAttestation` is deliberate and other callers
+   depend on it. `attestation.VerifyAndroidDeviceKey`
+   (`pkg/attestation/android_device.go`, SDK `xkms.VerifyAndroidDeviceKey`)
+   applies it with the rest of the hardware bar (#1548). `device attest-device` inherits
    the SDK's looser reading and is **not** changed here — pairing being the
    stricter of the two is the safe direction, since anything that pairs also
    passes re-attestation.
 
-   **`requireAttestedKeyOrigin` requires the TEE's own claim that the key was
+   **`RequireAttestedKeyOrigin` requires the TEE's own claim that the key was
    generated in place, not merely held there (#132).** Everything above this
    point — the chain, the security level, the boot state, and (below) the live
    challenge signature — is equally consistent with a device attestation key
@@ -415,12 +418,12 @@ defect and the shape of the fix is what the current design is for.
    signature still verifies. Only the TEE-enforced `Origin` claim inside the
    attestation extension rules that out.
 
-   `RequireAttestedKeyOrigin` (`xkey/pkg/attestation/device.go`) refuses
+   `android.RequireAttestedKeyOrigin` (`pkg/attestation/android/device.go`) refuses
    unless the leaf's `TeeEnforced` authorization list claims `Origin ==
    GENERATED` **and** its `Purpose` set includes `SIGN` — the one operation
    this protocol performs with the key. It reads `TeeEnforced` exclusively,
    never `SoftwareEnforced`: a software-enforced claim is the calling
-   application's word, the same reason `requireAttestedBootState` above does
+   application's word, the same reason `RequireAttestedBootState` above does
    not trust a software-enforced boot claim either. `pkg/attestation/android`
    parses both fields out of the extension's ASN.1 (`Origin` tag 702,
    `Purpose` tag 1) and defaults an **unclaimed** origin to `OriginUnknown`
@@ -440,16 +443,19 @@ defect and the shape of the fix is what the current design is for.
    Keystore daemon, not by the calling app, and carries the package name and
    the SHA-256 digest of each signing certificate.
 
-   `RequireAttestedApplication` (`xkey/pkg/attestation/device.go`) matches it
-   with `pairing.ApplicationPolicy.Match` (`xkey/pkg/pairing/application_policy.go`)
+   `android.RequireAttestedApplication` (`pkg/attestation/android/device.go`)
+   matches it through the `android.ApplicationMatcher` interface, which
+   `pairing.ApplicationPolicy.Match` (`xkey/pkg/pairing/application_policy.go`)
+   implements
    — the one implementation, also used by `EnrollmentPolicy.Evaluate` for LDevID
    enrollment. A package matches only by exact name **and** one of the
    entry's signing digests; an entry with no digests is honoured only when
    `allow_unpinned_signatures` is set. Refusals wrap
    `pairing.ErrApplicationDenied` (wrong package, wrong signer, or no
-   application named) under `ErrDeviceAttestVerifyFailed`.
+   application named) under `android.ErrApplicationRefused` and
+   `ErrDeviceAttestVerifyFailed`.
 
-   The allow-list travels in `attestation.Trust.Applications`, so every path
+   The allow-list travels in `xkms.AndroidDeviceTrust.Applications`, so every path
    that judges a device — `device pair`, `device attest-device`, the reconnect
    proof in `device_session.go`, the backend's `NewLiveAttestor`, and the GUI's
    Pair, Connect and Attest — applies it through `VerifyDeviceAttestation`.

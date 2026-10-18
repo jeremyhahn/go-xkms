@@ -259,7 +259,7 @@ func (p *EnrollmentPolicy) Evaluate(
 		}
 	}
 
-	pkg, digest, err := p.Match(AttestedApplication(desc))
+	pkg, digest, err := p.Match(desc.AttestedApplication())
 	if err != nil {
 		return nil, err
 	}

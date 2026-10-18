@@ -21,6 +21,7 @@ import (
 
 	"github.com/spf13/cobra"
 
+	xkms "github.com/jeremyhahn/go-xkms/sdk/go"
 	"github.com/jeremyhahn/go-xkms/xkey/pkg/attestation"
 	xkeyconfig "github.com/jeremyhahn/go-xkms/xkey/pkg/config"
 )
@@ -119,7 +120,7 @@ func resolveEnterpriseApplicationPolicy(unified *xkeyconfig.Config) (*xkeyconfig
 // devices.yaml allow-lists nothing, so LoadTrust refuses with
 // pairing.ErrApplicationPolicyUnconfigured; one that cannot be read refuses
 // outright rather than being mistaken for an absent policy.
-func loadPairingAttestationTrust() (_ *attestation.Trust, err error) {
+func loadPairingAttestationTrust() (_ *xkms.AndroidDeviceTrust, err error) {
 	devices, err := loadDevicesConfig()
 	if err != nil && !errors.Is(err, os.ErrNotExist) {
 		return nil, &SentinelCauseError{Sentinel: ErrDeviceConfigLoadFailed, Cause: err}

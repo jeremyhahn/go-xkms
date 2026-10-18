@@ -41,8 +41,7 @@ func wireCases() []wireCase {
 	keyVersion := &transport.KeyVersionRequest{Backend: "software", KeyID: "signer", Version: 2}
 	allVersions := &transport.AllKeyVersionsRequest{Backend: "software", KeyID: "signer"}
 	policy := &transport.TPMPolicyRequest{Name: "boot", TenantID: "acme"}
-	branch := 1
-	update := &transport.TPMPolicyUpdateRequest{Name: "boot", TenantID: "acme", Branch: &branch, ReferenceValues: []byte{0xd2, 0x84}}
+	update := &transport.TPMPolicyUpdateRequest{Name: "boot", TenantID: "acme", Branch: "next", ReferenceValues: []byte{0xd2, 0x84}}
 	oidcRef := &transport.OIDCCredentialRef{Owner: "alice"}
 	return []wireCase{
 		{"Algorithms", "xkms.algorithms", nil, func(ctx context.Context, tr *Transport) error {

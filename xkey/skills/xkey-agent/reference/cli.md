@@ -2719,7 +2719,7 @@ Usage: `xkey tpm policy create <name> [flags]`
 |---|---|---|---|
 | `--auto-unseal` | bool | false | Also make it the barrier auto-unseal policy (see 'tpm policy auto-unseal') |
 | `--bank` | string |  | PCR bank of --pcrs: sha1, sha256, sha384 or sha512 (default sha256) |
-| `--branch` | stringArray | [] | A policy branch, e.g. 'pcr=sha256:0,7;auth_value;locality=0' (repeatable) |
+| `--branch` | stringArray | [] | A policy branch, e.g. 'name=current;pcr=sha256:0,7;auth_value;locality=0' (repeatable) |
 | `--description` | string |  | Free-text description of the policy |
 | `--pcrs` | string |  | PCR indices of a one-branch policy, e.g. 0,7 or 0-7 |
 
@@ -2777,7 +2777,7 @@ Usage: `xkey tpm policy update <name> [flags]`
 
 | Flag | Type | Default | Description |
 |---|---|---|---|
-| `--branch` | int | 0 | Update only this branch, counted from 0 (needs --reference-values) |
+| `--branch` | string |  | Update only the named branch, e.g. next (needs --reference-values) |
 | `--reference-values` | string |  | Signed CoRIM file the branch's PCR values are predicted from (needs --branch) |
 
 ## xkey tpm policy verify

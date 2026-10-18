@@ -178,6 +178,8 @@ var TPMPolicySentinelClasses = []SentinelClass{
 	{tpmpolicy.ErrEmptyBranch, ClassInvalidArgument},
 	{tpmpolicy.ErrPCRValuesSupplied, ClassInvalidArgument},
 	{tpmpolicy.ErrNoSuchBranch, ClassInvalidArgument},
+	{tpmpolicy.ErrInvalidBranchName, ClassInvalidArgument},
+	{tpmpolicy.ErrDuplicateBranch, ClassInvalidArgument},
 	{tpmpolicy.ErrNoPCRCondition, ClassInvalidArgument},
 	// A branch update from reference values needs a configured signer.
 	{tpmpolicy.ErrNoReferenceSigner, ClassFailedPrecondition},

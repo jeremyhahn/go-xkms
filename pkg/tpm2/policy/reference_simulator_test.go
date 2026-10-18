@@ -128,37 +128,37 @@ func signedReference(t *testing.T, key *ecdsa.PrivateKey, image []byte) []byte {
 func TestService_UpdateBranchFromReferenceValues(t *testing.T) {
 	signer := newSigner(t)
 	f := referenceFixture(t, signer)
-	f.createPolicy("acme", "boot")
+	f.createComposite("acme", "boot", named(pcrBranch(), "current"), named(pcrBranch(), "next"))
 	sealed := f.sealObject("acme", "disk-key", "boot", []byte("secret"))
 	_, err := f.unseal("acme", sealed)
 	require.NoError(t, err)
 
 	corim := signedReference(t, signer, registeredImage[:])
-	updated, err := f.svc.UpdateBranch(f.ctx, "acme", "boot", 0, corim)
+	updated, err := f.svc.UpdateBranch(f.ctx, "acme", "boot", "next", corim)
 	require.NoError(t, err)
 	predicted := sha256.Sum256(append(make([]byte, sha256.Size), registeredImage[:]...))
-	assert.Equal(t, predicted[:], updated.Branches[0].Conditions[0].PCRValues[testPCR])
+	assert.Equal(t, predicted[:], updated.Branches[1].Conditions[0].PCRValues[testPCR])
+	assert.NotEqual(t, predicted[:], updated.Branches[0].Conditions[0].PCRValues[testPCR], "only the named branch is updated")
+	assert.Nil(t, updated.Branches[0].Reference)
 	digest := sha256.Sum256(corim)
 	assert.Equal(t, &Reference{
 		ID:     "boot-image-v2",
 		Signer: "Example Reference Value Provider",
 		Digest: digest[:],
-	}, updated.Branches[0].Reference)
+	}, updated.Branches[1].Reference)
 
 	_, err = f.unseal("acme", sealed)
-	require.Error(t, err, "the booted image no longer satisfies the updated branch")
+	require.NoError(t, err, "the booted image still satisfies the current branch")
 	v, err := f.svc.VerifyPolicy(f.ctx, "acme", "boot")
 	require.NoError(t, err)
-	assert.Equal(t, []BranchVerification{{
-		Match:      false,
-		Mismatched: []uint{testPCR},
-		Approved:   true,
-		Reference:  updated.Branches[0].Reference,
-	}}, v.Branches, "verify reports the branch approved for the registered image")
+	assert.Equal(t, []BranchVerification{
+		{Name: "current", Match: true, Approved: true},
+		{Name: "next", Match: false, Mismatched: []uint{testPCR}, Approved: true, Reference: updated.Branches[1].Reference},
+	}, v.Branches, "verify reports the next branch approved for the registered image")
 
 	boot(t, f.tpm.Transport(), registeredImage[:])
 	secret, err := f.unseal("acme", sealed)
-	require.NoError(t, err, "the registered image unseals in the predicted state")
+	require.NoError(t, err, "the registered image unseals through the next branch")
 	assert.Equal(t, []byte("secret"), secret)
 
 	boot(t, f.tpm.Transport(), unknownImage[:])
@@ -168,7 +168,7 @@ func TestService_UpdateBranchFromReferenceValues(t *testing.T) {
 	boot(t, f.tpm.Transport(), registeredImage[:])
 	captured, err := f.svc.UpdatePolicy(f.ctx, "acme", "boot")
 	require.NoError(t, err)
-	assert.Nil(t, captured.Branches[0].Reference, "a live capture drops the reference")
+	assert.Nil(t, captured.Branches[1].Reference, "a live capture drops the reference")
 }
 
 func TestService_UpdateBranchRefusals(t *testing.T) {
@@ -181,16 +181,16 @@ func TestService_UpdateBranchRefusals(t *testing.T) {
 
 	tests := []struct {
 		name   string
-		branch int
+		branch string
 		corim  []byte
 		want   error
 	}{
-		{"unsigned", 0, unsignedReference(t, registeredImage[:]), refvalue.ErrMalformed},
-		{"wrong signer", 0, signedReference(t, newSigner(t), registeredImage[:]), refvalue.ErrSignature},
-		{"tampered", 0, tampered, refvalue.ErrSignature},
-		{"no such branch", 2, valid, ErrNoSuchBranch},
-		{"negative branch", -1, valid, ErrNoSuchBranch},
-		{"branch without a pcr condition", 1, valid, ErrNoPCRCondition},
+		{"unsigned", "branch-1", unsignedReference(t, registeredImage[:]), refvalue.ErrMalformed},
+		{"wrong signer", "branch-1", signedReference(t, newSigner(t), registeredImage[:]), refvalue.ErrSignature},
+		{"tampered", "branch-1", tampered, refvalue.ErrSignature},
+		{"no such branch", "next", valid, ErrNoSuchBranch},
+		{"no branch name", "", valid, ErrNoSuchBranch},
+		{"branch without a pcr condition", "branch-2", valid, ErrNoPCRCondition},
 	}
 	before, err := f.svc.Approvals("acme", "boot")
 	require.NoError(t, err)
@@ -204,10 +204,14 @@ func TestService_UpdateBranchRefusals(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, before, after, "a refused update leaves the approvals at their epoch")
 
+	var branchErr *InvalidBranchError
+	_, err = f.svc.UpdateBranch(f.ctx, "acme", "boot", "next", valid)
+	require.ErrorAs(t, err, &branchErr)
+	assert.Equal(t, "next", branchErr.Branch)
 	var refErr *ReferenceValuesError
-	_, err = f.svc.UpdateBranch(f.ctx, "acme", "boot", 0, tampered)
+	_, err = f.svc.UpdateBranch(f.ctx, "acme", "boot", "branch-1", tampered)
 	require.ErrorAs(t, err, &refErr)
-	_, err = f.svc.UpdateBranch(f.ctx, "acme", "missing", 0, valid)
+	_, err = f.svc.UpdateBranch(f.ctx, "acme", "missing", "branch-1", valid)
 	require.ErrorIs(t, err, ErrPolicyNotFound)
 }
 
@@ -221,7 +225,7 @@ func TestService_UpdateBranchPredictionFailures(t *testing.T) {
 	boot(t, f.tpm.Transport(), bootedImage[:])
 	f.createPolicy("acme", "boot")
 
-	_, err := f.svc.UpdateBranch(f.ctx, "acme", "boot", 0, signedReference(t, signer, registeredImage[:]))
+	_, err := f.svc.UpdateBranch(f.ctx, "acme", "boot", "branch-1", signedReference(t, signer, registeredImage[:]))
 	var refErr *ReferenceValuesError
 	require.ErrorAs(t, err, &refErr)
 	require.ErrorIs(t, err, logErr, "the log read failure explains the absent log")
@@ -240,7 +244,7 @@ func TestService_UpdateBranchKernelEventLog(t *testing.T) {
 	boot(t, f.tpm.Transport(), bootedImage[:])
 	f.createPolicy("acme", "boot")
 
-	_, err := f.svc.UpdateBranch(f.ctx, "acme", "boot", 0, signedReference(t, signer, registeredImage[:]))
+	_, err := f.svc.UpdateBranch(f.ctx, "acme", "boot", "branch-1", signedReference(t, signer, registeredImage[:]))
 	var refErr *ReferenceValuesError
 	require.ErrorAs(t, err, &refErr)
 }

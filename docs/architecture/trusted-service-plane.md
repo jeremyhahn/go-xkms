@@ -117,6 +117,7 @@ Each move is made with history and tests, wired at the destination, and the copy
 | Source | Destination | Kept | Already at the destination |
 |---|---|---|---|
 | xkey/pkg/attestation `verifier.go` | pkg/attestation `purpose.go` (moved, #1548) | purpose-pooled checks on the one `Verifier` (`WithTrustStore`), `VerifyPurposeChain`, `BuildTrustPool` | EK `evidence/ekcert.go:87`, Android `android/extension.go:648`, IDevID `peer/devid.go:150` |
+| xkey/pkg/attestation `device.go` | pkg/attestation `android_device.go`, pkg/attestation/android `device.go` (moved, #1548) | `VerifyAndroidDeviceKey`, `AndroidDeviceTrust`, `ParseDERChain`, `VerifiedTrustAnchor`, `FormatTrustAnchor`; boot-state, key-origin and application checks | `android.VerifyKeyAttestation` (`android/extension.go:648`) |
 | xkey/pkg/truststore | pkg/attestation/truststore (`trust-roots`) | `TrustStore`, `CertPurpose` taxonomy and quarantine, `ClassifyCertificate`, import, `DAOStore` | embedded Google root (`config.go:30`) |
 | xkey/pkg/pairing `noise.go` | pkg/trust/bootstrap: interactive Noise XX session over go-truststrap | session and key helpers | static-key helpers (`noise_server.go:57-91`) |
 | xkey/pkg/pairing wire protocol | root (ruling below) | the protocol `pkg/backend/phone` and `pkg/api/transport/usb` use | nothing |

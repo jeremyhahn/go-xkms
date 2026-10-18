@@ -17208,6 +17208,8 @@ func (x *TPMPolicyCondition) GetLocalities() []uint32 {
 }
 
 // TPMPolicyBranch is one branch of a TPM policy: the AND of its conditions.
+// name is unique within the policy; a create request may leave it empty, and
+// the branch is then named branch-N, N its position counted from 1.
 // approved and reference are reported on a policy and have no meaning in a
 // create request.
 type TPMPolicyBranch struct {
@@ -17215,6 +17217,7 @@ type TPMPolicyBranch struct {
 	Conditions    []*TPMPolicyCondition  `protobuf:"bytes,1,rep,name=conditions,proto3" json:"conditions,omitempty"`
 	Approved      bool                   `protobuf:"varint,2,opt,name=approved,proto3" json:"approved,omitempty"`
 	Reference     *TPMPolicyReference    `protobuf:"bytes,3,opt,name=reference,proto3" json:"reference,omitempty"`
+	Name          string                 `protobuf:"bytes,4,opt,name=name,proto3" json:"name,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -17268,6 +17271,13 @@ func (x *TPMPolicyBranch) GetReference() *TPMPolicyReference {
 		return x.Reference
 	}
 	return nil
+}
+
+func (x *TPMPolicyBranch) GetName() string {
+	if x != nil {
+		return x.Name
+	}
+	return ""
 }
 
 // TPMPolicyReference identifies the signed reference values a branch was
@@ -17669,14 +17679,14 @@ func (x *TPMPolicyRequest) GetName() string {
 }
 
 // TPMPolicyUpdateRequest updates a policy to its next epoch: every branch
-// from the live PCRs without a branch, or only the branch, counted from 0,
-// from reference_values, a COSE_Sign1 signed CoRIM, when one is set.
+// from the live PCRs without a branch, or only the named branch from
+// reference_values, a COSE_Sign1 signed CoRIM, when one is set.
 type TPMPolicyUpdateRequest struct {
 	state           protoimpl.MessageState `protogen:"open.v1"`
 	TenantId        string                 `protobuf:"bytes,1,opt,name=tenant_id,json=tenantId,proto3" json:"tenant_id,omitempty"`
 	Name            string                 `protobuf:"bytes,2,opt,name=name,proto3" json:"name,omitempty"`
-	Branch          *int32                 `protobuf:"varint,3,opt,name=branch,proto3,oneof" json:"branch,omitempty"`
 	ReferenceValues []byte                 `protobuf:"bytes,4,opt,name=reference_values,json=referenceValues,proto3" json:"reference_values,omitempty"`
+	Branch          string                 `protobuf:"bytes,5,opt,name=branch,proto3" json:"branch,omitempty"`
 	unknownFields   protoimpl.UnknownFields
 	sizeCache       protoimpl.SizeCache
 }
@@ -17725,18 +17735,18 @@ func (x *TPMPolicyUpdateRequest) GetName() string {
 	return ""
 }
 
-func (x *TPMPolicyUpdateRequest) GetBranch() int32 {
-	if x != nil && x.Branch != nil {
-		return *x.Branch
-	}
-	return 0
-}
-
 func (x *TPMPolicyUpdateRequest) GetReferenceValues() []byte {
 	if x != nil {
 		return x.ReferenceValues
 	}
 	return nil
+}
+
+func (x *TPMPolicyUpdateRequest) GetBranch() string {
+	if x != nil {
+		return x.Branch
+	}
+	return ""
 }
 
 // TPMPolicyListRequest lists a tenant's policies.
@@ -18333,13 +18343,15 @@ func (*TrustRootRemoveResponse) Descriptor() ([]byte, []int) {
 }
 
 // TPMPolicyBranchVerification compares one branch's captured PCR values
-// with the live ones and reports whether its approval is current.
+// with the live ones and reports whether its approval is current. A branch
+// approved with a reference is approved for the image that CoRIM registers.
 type TPMPolicyBranchVerification struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
 	Match         bool                   `protobuf:"varint,1,opt,name=match,proto3" json:"match,omitempty"`
 	Mismatched    []uint32               `protobuf:"varint,2,rep,packed,name=mismatched,proto3" json:"mismatched,omitempty"`
 	Approved      bool                   `protobuf:"varint,3,opt,name=approved,proto3" json:"approved,omitempty"`
 	Reference     *TPMPolicyReference    `protobuf:"bytes,4,opt,name=reference,proto3" json:"reference,omitempty"`
+	Name          string                 `protobuf:"bytes,5,opt,name=name,proto3" json:"name,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -18400,6 +18412,13 @@ func (x *TPMPolicyBranchVerification) GetReference() *TPMPolicyReference {
 		return x.Reference
 	}
 	return nil
+}
+
+func (x *TPMPolicyBranchVerification) GetName() string {
+	if x != nil {
+		return x.Name
+	}
+	return ""
 }
 
 // TPMPolicyVerifyResponse compares a policy's captured PCR values with the
@@ -23749,13 +23768,14 @@ const file_pkg_api_grpc_proto_xkmsv1_xkms_proto_rawDesc = "" +
 	"localities\x1a<\n" +
 	"\x0ePcrValuesEntry\x12\x10\n" +
 	"\x03key\x18\x01 \x01(\rR\x03key\x12\x14\n" +
-	"\x05value\x18\x02 \x01(\tR\x05value:\x028\x01\"\xa5\x01\n" +
+	"\x05value\x18\x02 \x01(\tR\x05value:\x028\x01\"\xb9\x01\n" +
 	"\x0fTPMPolicyBranch\x12;\n" +
 	"\n" +
 	"conditions\x18\x01 \x03(\v2\x1b.xkms.v1.TPMPolicyConditionR\n" +
 	"conditions\x12\x1a\n" +
 	"\bapproved\x18\x02 \x01(\bR\bapproved\x129\n" +
-	"\treference\x18\x03 \x01(\v2\x1b.xkms.v1.TPMPolicyReferenceR\treference\"n\n" +
+	"\treference\x18\x03 \x01(\v2\x1b.xkms.v1.TPMPolicyReferenceR\treference\x12\x12\n" +
+	"\x04name\x18\x04 \x01(\tR\x04name\"n\n" +
 	"\x12TPMPolicyReference\x12\x0e\n" +
 	"\x02id\x18\x01 \x01(\tR\x02id\x12\x18\n" +
 	"\aprofile\x18\x02 \x01(\tR\aprofile\x12\x16\n" +
@@ -23794,13 +23814,12 @@ const file_pkg_api_grpc_proto_xkmsv1_xkms_proto_rawDesc = "" +
 	"\vdescription\x18\x03 \x01(\tR\vdescription\"C\n" +
 	"\x10TPMPolicyRequest\x12\x1b\n" +
 	"\ttenant_id\x18\x01 \x01(\tR\btenantId\x12\x12\n" +
-	"\x04name\x18\x02 \x01(\tR\x04name\"\x9c\x01\n" +
+	"\x04name\x18\x02 \x01(\tR\x04name\"\x92\x01\n" +
 	"\x16TPMPolicyUpdateRequest\x12\x1b\n" +
 	"\ttenant_id\x18\x01 \x01(\tR\btenantId\x12\x12\n" +
-	"\x04name\x18\x02 \x01(\tR\x04name\x12\x1b\n" +
-	"\x06branch\x18\x03 \x01(\x05H\x00R\x06branch\x88\x01\x01\x12)\n" +
-	"\x10reference_values\x18\x04 \x01(\fR\x0freferenceValuesB\t\n" +
-	"\a_branch\"3\n" +
+	"\x04name\x18\x02 \x01(\tR\x04name\x12)\n" +
+	"\x10reference_values\x18\x04 \x01(\fR\x0freferenceValues\x12\x16\n" +
+	"\x06branch\x18\x05 \x01(\tR\x06branchJ\x04\b\x03\x10\x04\"3\n" +
 	"\x14TPMPolicyListRequest\x12\x1b\n" +
 	"\ttenant_id\x18\x01 \x01(\tR\btenantId\"G\n" +
 	"\x15TPMPolicyListResponse\x12.\n" +
@@ -23837,14 +23856,15 @@ const file_pkg_api_grpc_proto_xkmsv1_xkms_proto_rawDesc = "" +
 	"\x17TrustRootImportResponse\x12\x14\n" +
 	"\x05added\x18\x01 \x01(\x05R\x05added\x12\x18\n" +
 	"\askipped\x18\x02 \x01(\x05R\askipped\"\x19\n" +
-	"\x17TrustRootRemoveResponse\"\xaa\x01\n" +
+	"\x17TrustRootRemoveResponse\"\xbe\x01\n" +
 	"\x1bTPMPolicyBranchVerification\x12\x14\n" +
 	"\x05match\x18\x01 \x01(\bR\x05match\x12\x1e\n" +
 	"\n" +
 	"mismatched\x18\x02 \x03(\rR\n" +
 	"mismatched\x12\x1a\n" +
 	"\bapproved\x18\x03 \x01(\bR\bapproved\x129\n" +
-	"\treference\x18\x04 \x01(\v2\x1b.xkms.v1.TPMPolicyReferenceR\treference\"\xb3\x01\n" +
+	"\treference\x18\x04 \x01(\v2\x1b.xkms.v1.TPMPolicyReferenceR\treference\x12\x12\n" +
+	"\x04name\x18\x05 \x01(\tR\x04name\"\xb3\x01\n" +
 	"\x17TPMPolicyVerifyResponse\x12\x12\n" +
 	"\x04name\x18\x01 \x01(\tR\x04name\x12\x14\n" +
 	"\x05match\x18\x02 \x01(\bR\x05match\x12\x1a\n" +
@@ -25221,7 +25241,6 @@ func file_pkg_api_grpc_proto_xkmsv1_xkms_proto_init() {
 	}
 	file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[101].OneofWrappers = []any{}
 	file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[207].OneofWrappers = []any{}
-	file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[263].OneofWrappers = []any{}
 	type x struct{}
 	out := protoimpl.TypeBuilder{
 		File: protoimpl.DescBuilder{

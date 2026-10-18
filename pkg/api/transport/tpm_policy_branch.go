@@ -38,6 +38,10 @@ var (
 	// missing, unexpected or not a list of indices.
 	ErrTPMPolicyConditionValue = errors.New("transport: malformed TPM policy condition value")
 
+	// ErrTPMPolicyBranchName is returned for a branch spec whose name= has
+	// no value or that names the branch twice.
+	ErrTPMPolicyBranchName = errors.New("transport: a TPM policy branch spec takes one name=NAME")
+
 	// ErrTPMPolicyNoSelection is returned by TPMPolicyBranches given
 	// neither PCRs nor branch specs.
 	ErrTPMPolicyNoSelection = errors.New("transport: a TPM policy needs a PCR selection or at least one branch")
@@ -70,11 +74,15 @@ func TPMPolicyPCRBranch(bank string, pcrs []uint) TPMPolicyBranch {
 }
 
 // String returns the branch in branch-spec form, the form
-// ParseTPMPolicyBranch reads: "pcr=sha256:0,7;auth_value;locality=0".
+// ParseTPMPolicyBranch reads: "name=next;pcr=sha256:0,7;auth_value;locality=0".
+// An unnamed branch has no name= element.
 func (b TPMPolicyBranch) String() string {
-	parts := make([]string, len(b.Conditions))
-	for i, c := range b.Conditions {
-		parts[i] = c.String()
+	parts := make([]string, 0, len(b.Conditions)+1)
+	if b.Name != "" {
+		parts = append(parts, tpmPolicyBranchNameKey+"="+b.Name)
+	}
+	for _, c := range b.Conditions {
+		parts = append(parts, c.String())
 	}
 	return strings.Join(parts, ";")
 }
@@ -142,6 +150,10 @@ func TPMPolicyBranches(bank string, pcrs []uint, specs []string) ([]TPMPolicyBra
 	return branches, nil
 }
 
+// tpmPolicyBranchNameKey is the branch-spec element that names the branch
+// rather than adding a condition.
+const tpmPolicyBranchNameKey = "name"
+
 // conditionParsers parses the value of each condition of a branch spec;
 // present reports whether the condition was written with "=".
 var conditionParsers = map[string]func(value string, present bool) (TPMPolicyCondition, error){
@@ -157,8 +169,9 @@ var conditionParsers = map[string]func(value string, present bool) (TPMPolicyCon
 //	auth_value        the object's password
 //	locality=LIST     the TPM localities in LIST
 //
-// where LIST is comma-separated indices or ranges ("0,7" or "0-7"). For
-// example "pcr=sha256:0,7;auth_value;locality=0". Only the syntax is checked
+// where LIST is comma-separated indices or ranges ("0,7" or "0-7"), and at
+// most one "name=NAME" naming the branch (the server names an unnamed
+// branch "branch-N"). For example "name=next;pcr=sha256:0,7;auth_value;locality=0". Only the syntax is checked
 // here: the server validates banks, indices and duplicate conditions.
 func ParseTPMPolicyBranch(spec string) (TPMPolicyBranch, error) {
 	var branch TPMPolicyBranch
@@ -167,12 +180,21 @@ func ParseTPMPolicyBranch(spec string) (TPMPolicyBranch, error) {
 		if part == "" {
 			continue
 		}
-		name, value, present := strings.Cut(part, "=")
-		parse, ok := conditionParsers[strings.ToLower(strings.TrimSpace(name))]
+		key, value, present := strings.Cut(part, "=")
+		key = strings.ToLower(strings.TrimSpace(key))
+		value = strings.TrimSpace(value)
+		if key == tpmPolicyBranchNameKey {
+			if value == "" || branch.Name != "" {
+				return TPMPolicyBranch{}, &TPMPolicyBranchSpecError{Condition: part, Err: ErrTPMPolicyBranchName}
+			}
+			branch.Name = value
+			continue
+		}
+		parse, ok := conditionParsers[key]
 		if !ok {
 			return TPMPolicyBranch{}, &TPMPolicyBranchSpecError{Condition: part, Err: ErrTPMPolicyConditionUnknown}
 		}
-		condition, err := parse(strings.TrimSpace(value), present)
+		condition, err := parse(value, present)
 		if err != nil {
 			return TPMPolicyBranch{}, &TPMPolicyBranchSpecError{Condition: part, Err: err}
 		}

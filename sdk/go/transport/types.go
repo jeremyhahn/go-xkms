@@ -318,10 +318,11 @@ var (
 	TPMPolicyPCRBranch = pkgtransport.TPMPolicyPCRBranch
 
 	// ParseTPMPolicyBranch parses a branch spec such as
-	// "pcr=sha256:0,7;auth_value;locality=0".
+	// "name=next;pcr=sha256:0,7;auth_value;locality=0".
 	ParseTPMPolicyBranch = pkgtransport.ParseTPMPolicyBranch
 
 	ErrTPMPolicyBranchEmpty      = pkgtransport.ErrTPMPolicyBranchEmpty
+	ErrTPMPolicyBranchName       = pkgtransport.ErrTPMPolicyBranchName
 	ErrTPMPolicyConditionUnknown = pkgtransport.ErrTPMPolicyConditionUnknown
 	ErrTPMPolicyConditionValue   = pkgtransport.ErrTPMPolicyConditionValue
 	ErrTPMPolicyNoSelection      = pkgtransport.ErrTPMPolicyNoSelection

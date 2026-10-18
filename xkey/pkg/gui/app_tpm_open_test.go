@@ -25,6 +25,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	xkmssdk "github.com/jeremyhahn/go-xkms/sdk/go"
+	"github.com/jeremyhahn/go-xkms/sdk/go/xkmstest"
 )
 
 var errFakeTPMClose = errors.New("tpm: close failed")
@@ -145,4 +146,47 @@ func TestApp_EnsureLocalTPMPolicies_RegistryStoreFailureLeavesNoService(t *testi
 	assert.Nil(t, app.tpmPolicyService.Local(), "a policy registry that cannot open must leave no service")
 	assert.True(t, logs.Contains("TPM policies: local service unavailable"))
 	assert.True(t, logs.Contains(registry), "the SRK resolves; the registry is what fails")
+}
+
+// provisionedSimulatorTPM opens the in-process TPM simulator through the
+// constructor getTPM uses, then provisions it with the default key templates
+// and enrolls the Platform SRK.
+func provisionedSimulatorTPM(params *xkmssdk.TPMParams) (xkmssdk.TrustedPlatformModule, error) {
+	cfg := xkmssdk.DefaultTPMConfig
+	cfg.UseSimulator = true
+	params.Config = &cfg
+	tpm, err := xkmssdk.NewTPM2(params)
+	if err != nil && !errors.Is(err, xkmssdk.ErrTPMNotInitialized) {
+		return nil, err
+	}
+	if err := tpm.Provision(nil); err != nil {
+		return nil, errors.Join(err, tpm.Close())
+	}
+	if err := xkmstest.EnrollPlatformSRK(tpm, &cfg); err != nil {
+		return nil, errors.Join(err, tpm.Close())
+	}
+	return tpm, nil
+}
+
+func TestApp_EnsureLocalTPMPolicies_OpensServiceAndShutdownDetachesIt(t *testing.T) {
+	app := fakeTPMApp(t, nil)
+	app.newTPM = provisionedSimulatorTPM
+
+	app.ensureLocalTPMPolicies()
+
+	local := app.tpmPolicyService.Local()
+	require.NotNil(t, local, "a TPM with a Platform SRK and an open data directory must hold TPM policies")
+	status, err := app.barrierAutoUnsealService.GetAutoUnsealStatus()
+	require.NoError(t, err)
+	assert.True(t, status.Available, "barrier auto-unseal must reach the same local policy service")
+
+	app.ensureLocalTPMPolicies()
+	assert.Same(t, local, app.tpmPolicyService.Local(), "an open service must not be reopened")
+
+	app.shutdown(app.ctx)
+
+	assert.Nil(t, app.tpmPolicyService.Local(), "shutdown must detach the local policy service before closing its TPM")
+	status, err = app.barrierAutoUnsealService.GetAutoUnsealStatus()
+	require.NoError(t, err)
+	assert.False(t, status.Available, "auto-unseal must not keep a closed policy service")
 }

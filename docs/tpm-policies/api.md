@@ -164,34 +164,52 @@ undefine NV indices; it is never logged or echoed. REST `DELETE` takes
 A policy is an OR of branches, each an AND of conditions. A create request
 carries branches only; `pcr_values` and `pcr_digest` are captured from the
 TPM, and a request carrying them is refused (`tpmpolicy.ErrPCRValuesSupplied`).
+Each branch has a `name`: 1-64 letters, digits, `.`, `_` or `-`, unique within
+the policy (`ErrInvalidBranchName`, `ErrDuplicateBranch`, both as
+`*tpmpolicy.InvalidBranchError`). A branch created without one is named
+`branch-N`, N its position counted from 1.
 
 ```json
 POST /api/v1/tpm/policies
 {"name": "boot-or-pin", "description": "firmware, or the password",
  "branches": [
-   {"conditions": [{"type": "pcr", "bank": "sha256", "pcrs": [0, 7]},
+   {"name": "current",
+    "conditions": [{"type": "pcr", "bank": "sha256", "pcrs": [0, 7]},
                    {"type": "locality", "localities": [0]}]},
-   {"conditions": [{"type": "auth_value"}]}]}
+   {"name": "recovery", "conditions": [{"type": "auth_value"}]}]}
 
 POST /api/v1/tpm/policies/boot-or-pin/description
 {"description": "firmware and Secure Boot, or the password"}
 ```
 
-A policy reports `description`, `branches` (each with its conditions,
-captured `pcr_values`/`pcr_digest` and `approved`) and `approved` (every
-branch approved). Verify reports `match` and `approved` for the policy and,
-per branch, `branches[i].match`, `.mismatched` and `.approved`.
+An update with `branch` and `reference_values` (a COSE_Sign1-signed CoRIM,
+base64 in JSON) approves only the named branch for the PCR values the CoRIM
+predicts; the two come together (`xkms.ErrTPMPolicyBranchUpdate`). A branch is
+named, never indexed: a numeric `branch` is a malformed request.
+
+```json
+POST /api/v1/tpm/policies/unlock/update
+{"branch": "next", "reference_values": "0oRDoQEm..."}
+```
+
+A policy reports `description`, `branches` (each with its `name`, conditions,
+captured `pcr_values`/`pcr_digest`, `approved` and the `reference` it was
+updated from) and `approved` (every branch approved). Verify reports `match`
+and `approved` for the policy and, per branch, `branches[i].name`, `.match`,
+`.mismatched`, `.approved` and `.reference`, so a branch approved for a
+registered image names the branch and the image.
 
 gRPC (`xkms.v1`, pre-v1, one wire format; removed numbers are reserved):
 
 | Message | Fields |
 |---|---|
 | `TPMPolicyCondition` (new) | `type` = 1, `bank` = 2, `pcrs` = 3, `pcr_values` = 4, `pcr_digest` = 5, `localities` = 6 |
-| `TPMPolicyBranch` (new) | `conditions` = 1, `approved` = 2 |
+| `TPMPolicyBranch` (new) | `conditions` = 1, `approved` = 2, `reference` = 3, `name` = 4 |
 | `TPMPolicy` | `description` = 14, `branches` = 15; `bank`, `pcrs`, `pcr_values`, `pcr_digest` (3-6) removed |
 | `TPMPolicyCreateRequest` | `description` = 7, `branches` = 8; `bank`, `pcrs` (3-4) removed |
 | `TPMPolicyDescriptionRequest` (new) | `tenant_id` = 1, `name` = 2, `description` = 3 |
-| `TPMPolicyBranchVerification` (new) | `match` = 1, `mismatched` = 2, `approved` = 3 |
+| `TPMPolicyUpdateRequest` | `reference_values` = 4, `branch` = 5 (the branch name); the integer branch index (3) removed |
+| `TPMPolicyBranchVerification` (new) | `match` = 1, `mismatched` = 2, `approved` = 3, `reference` = 4, `name` = 5 |
 | `TPMPolicyVerifyResponse` | `branches` = 5; `mismatched` (3) removed |
 
 ## Go SDK: offline authorization
@@ -223,8 +241,8 @@ each transport's key-operation mapper:
 |---|---|---|---|---|
 | `tpmpolicy.ErrPolicyNotFound`, `ErrScopeNotFound`, `ErrNotAssigned`, tenant binding | NotFound | `NotFound` | 404 | not found |
 | `tpmpolicy.ErrPolicyExists` | AlreadyExists | `AlreadyExists` | 409 | duplicate |
-| `*tpmpolicy.PolicyInUseError` (lists the objects), `*ScopeInUseError`, `*PCRBankUnavailableError`, `ErrTPMModeNone`, `ErrVTPMUnavailable`, `ErrNotVTPMMode`, `ErrPolicyRevoked` | FailedPrecondition | `FailedPrecondition` | 409 | internal error code (message kept) |
-| `*InvalidNameError`, `*InvalidModeError`, `*InvalidTenantError`, `*InvalidPCRBankError`, `*InvalidPCRError`, `*InvalidLocalityError`, `*UnknownConditionTypeError`, `*DuplicateConditionError`, `*ConditionOperandError`, `*DescriptionTooLongError`, `ErrReservedPolicy`, `ErrEmptyPCRSelection`, `ErrEmptyLocalitySelection`, `ErrNoBranches`, `ErrEmptyBranch`, `ErrPCRValuesSupplied`, `ErrSystemScopeMode`, `pkg/tpm2.ErrPolicyAuthValueRequired` (a key or sealed object without a password bound to a policy with an `auth_value` condition), `*xkms.InvalidTPMObjectKindError`, `*xkms.ErrKeyIDParse`, `xkms.ErrTPMPolicyNotSupported`, `tpm2.ErrReservedObject` | InvalidArgument | `InvalidArgument` | 400 | invalid params |
+| `*tpmpolicy.PolicyInUseError` (lists the objects), `*ScopeInUseError`, `*PCRBankUnavailableError`, `ErrTPMModeNone`, `ErrVTPMUnavailable`, `ErrNotVTPMMode`, `ErrPolicyRevoked`, `ErrNoReferenceSigner` | FailedPrecondition | `FailedPrecondition` | 409 | internal error code (message kept) |
+| `*InvalidNameError`, `*InvalidModeError`, `*InvalidTenantError`, `*InvalidPCRBankError`, `*InvalidPCRError`, `*InvalidLocalityError`, `*UnknownConditionTypeError`, `*DuplicateConditionError`, `*ConditionOperandError`, `*DescriptionTooLongError`, `ErrReservedPolicy`, `ErrEmptyPCRSelection`, `ErrEmptyLocalitySelection`, `ErrNoBranches`, `ErrEmptyBranch`, `ErrPCRValuesSupplied`, `*InvalidBranchError` (`ErrInvalidBranchName`, `ErrDuplicateBranch`, `ErrNoSuchBranch`), `ErrNoPCRCondition`, `*ReferenceValuesError`, `xkms.ErrTPMPolicyBranchUpdate`, `ErrSystemScopeMode`, `pkg/tpm2.ErrPolicyAuthValueRequired` (a key or sealed object without a password bound to a policy with an `auth_value` condition), `*xkms.InvalidTPMObjectKindError`, `*xkms.ErrKeyIDParse`, `xkms.ErrTPMPolicyNotSupported`, `tpm2.ErrReservedObject` | InvalidArgument | `InvalidArgument` | 400 | invalid params |
 | `tpm2.ErrSymmetricKeysUnsupported`, `tpm2.ErrTenantImportUnsupported` | Unimplemented | `Unimplemented` | 501 | method not found |
 | `xkms.ErrNotConfigured` (no TPM2 backend) | Unavailable | `Unavailable` | 503 | service unavailable |
 

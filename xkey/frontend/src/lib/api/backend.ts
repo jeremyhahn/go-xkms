@@ -791,6 +791,8 @@ export interface TPMPolicyCondition {
 
 /** One branch of a policy: the AND of its conditions (transport.TPMPolicyBranch). */
 export interface TPMPolicyBranch {
+  /** The branch's name, e.g. current or next; a create may leave it out and the server names it branch-N. */
+  name?: string;
   conditions: TPMPolicyCondition[];
   /** Whether the branch holds an approval; reported only. */
   approved?: boolean;
@@ -827,6 +829,8 @@ export interface TPMPolicyInfo {
 
 /** One branch's verification (transport.TPMPolicyBranchVerification). */
 export interface TPMPolicyBranchVerification {
+  /** The branch's name. */
+  name: string;
   match: boolean;
   mismatched?: number[];
   approved: boolean;

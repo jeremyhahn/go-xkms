@@ -26,7 +26,6 @@ import (
 
 	"github.com/jeremyhahn/go-xkms/pkg/pairingproto"
 	xkms "github.com/jeremyhahn/go-xkms/sdk/go"
-	pairing "github.com/jeremyhahn/go-xkms/xkey/pkg/pairing"
 )
 
 // The fixtures stand in for an Android Keystore attestation that the
@@ -50,7 +49,7 @@ func TestAttestedLeafDER_ChainsToTheCAAndCarriesTheClaims(t *testing.T) {
 	require.Equal(t, []byte("the challenge"), desc.AttestationChallenge)
 	require.Equal(t, xkms.AndroidSecurityLevelStrongBox, desc.AttestationSecurityLevel)
 
-	pkg, digest, err := Applications().Match(pairing.AttestedApplication(desc))
+	pkg, digest, err := Applications().Match(desc.AttestedApplication())
 	require.NoError(t, err, "the fixture's own allow-list refuses the application it attests")
 	require.Equal(t, AppPackage, pkg)
 	require.Equal(t, hex.EncodeToString(AppSigningDigest()), digest)

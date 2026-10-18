@@ -5841,6 +5841,7 @@ export namespace transport {
 	    }
 	}
 	export class TPMPolicyBranch {
+	    name?: string;
 	    conditions: TPMPolicyCondition[];
 	    approved: boolean;
 	    reference?: TPMPolicyReference;
@@ -5851,6 +5852,7 @@ export namespace transport {
 	
 	    constructor(source: any = {}) {
 	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.name = source["name"];
 	        this.conditions = this.convertValues(source["conditions"], TPMPolicyCondition);
 	        this.approved = source["approved"];
 	        this.reference = this.convertValues(source["reference"], TPMPolicyReference);
@@ -5875,6 +5877,7 @@ export namespace transport {
 		}
 	}
 	export class TPMPolicyBranchVerification {
+	    name: string;
 	    match: boolean;
 	    mismatched?: number[];
 	    approved: boolean;
@@ -5886,6 +5889,7 @@ export namespace transport {
 	
 	    constructor(source: any = {}) {
 	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.name = source["name"];
 	        this.match = source["match"];
 	        this.mismatched = source["mismatched"];
 	        this.approved = source["approved"];

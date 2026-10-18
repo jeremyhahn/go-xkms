@@ -3445,12 +3445,15 @@ message TPMPolicyCondition {
 }
 
 // TPMPolicyBranch is one branch of a TPM policy: the AND of its conditions.
+// name is unique within the policy; a create request may leave it empty, and
+// the branch is then named branch-N, N its position counted from 1.
 // approved and reference are reported on a policy and have no meaning in a
 // create request.
 message TPMPolicyBranch {
   repeated TPMPolicyCondition conditions = 1;
   bool approved = 2;
   TPMPolicyReference reference = 3;
+  string name = 4;
 }
 
 // TPMPolicyReference identifies the signed reference values a branch was
@@ -3509,13 +3512,14 @@ message TPMPolicyRequest {
 }
 
 // TPMPolicyUpdateRequest updates a policy to its next epoch: every branch
-// from the live PCRs without a branch, or only the branch, counted from 0,
-// from reference_values, a COSE_Sign1 signed CoRIM, when one is set.
+// from the live PCRs without a branch, or only the named branch from
+// reference_values, a COSE_Sign1 signed CoRIM, when one is set.
 message TPMPolicyUpdateRequest {
+  reserved 3;
   string tenant_id = 1;
   string name = 2;
-  optional int32 branch = 3;
   bytes reference_values = 4;
+  string branch = 5;
 }
 
 // TPMPolicyListRequest lists a tenant's policies.
@@ -3586,12 +3590,14 @@ message TrustRootImportResponse {
 message TrustRootRemoveResponse {}
 
 // TPMPolicyBranchVerification compares one branch's captured PCR values
-// with the live ones and reports whether its approval is current.
+// with the live ones and reports whether its approval is current. A branch
+// approved with a reference is approved for the image that CoRIM registers.
 message TPMPolicyBranchVerification {
   bool match = 1;
   repeated uint32 mismatched = 2;
   bool approved = 3;
   TPMPolicyReference reference = 4;
+  string name = 5;
 }
 
 // TPMPolicyVerifyResponse compares a policy's captured PCR values with the

@@ -146,7 +146,7 @@ func honestResponder(t *testing.T, server *bootstrap.NoiseSession, dak *attestte
 func TestAttestOverSession_Success(t *testing.T) {
 	ca := attesttest.NewCA(t, "Trusted Attestation Root")
 	dak := attesttest.NewDAK(t, ca, attesttest.GenesisChallenge(), xkms.AndroidSecurityLevelStrongBox, attesttest.AttestedBootState())
-	trust := &attestation.Trust{Pool: ca.Pool(), Applications: attesttest.Applications()}
+	trust := &xkms.AndroidDeviceTrust{Roots: ca.Pool(), Applications: attesttest.Applications()}
 
 	client, server := establishedSessionPair(t)
 	transport := honestResponder(t, server, dak)
@@ -170,7 +170,7 @@ func TestAttestOverSession_ChannelBindingUnavailable(t *testing.T) {
 		return nil, nil
 	}}
 
-	verified, err := attestation.AttestOverSession(context.Background(), transport, session, &attestation.Trust{}, pairingproto.AttestPurposePair, discardLogger())
+	verified, err := attestation.AttestOverSession(context.Background(), transport, session, &xkms.AndroidDeviceTrust{}, pairingproto.AttestPurposePair, discardLogger())
 
 	require.Error(t, err)
 	assert.ErrorIs(t, err, attestation.ErrDeviceAttestFailed)
@@ -186,7 +186,7 @@ func TestAttestOverSession_TransportError(t *testing.T) {
 		return nil, transportErr
 	}}
 
-	verified, err := attestation.AttestOverSession(context.Background(), transport, client, &attestation.Trust{}, pairingproto.AttestPurposePair, discardLogger())
+	verified, err := attestation.AttestOverSession(context.Background(), transport, client, &xkms.AndroidDeviceTrust{}, pairingproto.AttestPurposePair, discardLogger())
 
 	require.Error(t, err)
 	assert.ErrorIs(t, err, attestation.ErrDeviceAttestFailed)
@@ -203,7 +203,7 @@ func TestAttestOverSession_UndecryptableResponse(t *testing.T) {
 		return []byte("not a noise ciphertext"), nil
 	}}
 
-	verified, err := attestation.AttestOverSession(context.Background(), transport, client, &attestation.Trust{}, pairingproto.AttestPurposePair, discardLogger())
+	verified, err := attestation.AttestOverSession(context.Background(), transport, client, &xkms.AndroidDeviceTrust{}, pairingproto.AttestPurposePair, discardLogger())
 
 	require.Error(t, err)
 	assert.ErrorIs(t, err, attestation.ErrDeviceAttestFailed)
@@ -218,7 +218,7 @@ func TestAttestOverSession_MalformedResponseJSON(t *testing.T) {
 		return server.Encrypt([]byte("not json at all"))
 	}}
 
-	verified, err := attestation.AttestOverSession(context.Background(), transport, client, &attestation.Trust{}, pairingproto.AttestPurposePair, discardLogger())
+	verified, err := attestation.AttestOverSession(context.Background(), transport, client, &xkms.AndroidDeviceTrust{}, pairingproto.AttestPurposePair, discardLogger())
 
 	require.Error(t, err)
 	assert.ErrorIs(t, err, attestation.ErrDeviceAttestFailed)
@@ -235,7 +235,7 @@ func TestAttestOverSession_RPCError(t *testing.T) {
 		return server.Encrypt(raw)
 	}}
 
-	verified, err := attestation.AttestOverSession(context.Background(), transport, client, &attestation.Trust{}, pairingproto.AttestPurposePair, discardLogger())
+	verified, err := attestation.AttestOverSession(context.Background(), transport, client, &xkms.AndroidDeviceTrust{}, pairingproto.AttestPurposePair, discardLogger())
 
 	require.Error(t, err)
 	assert.ErrorIs(t, err, attestation.ErrDeviceAttestFailed)
@@ -255,7 +255,7 @@ func TestAttestOverSession_MalformedResult(t *testing.T) {
 		return server.Encrypt(raw)
 	}}
 
-	verified, err := attestation.AttestOverSession(context.Background(), transport, client, &attestation.Trust{}, pairingproto.AttestPurposePair, discardLogger())
+	verified, err := attestation.AttestOverSession(context.Background(), transport, client, &xkms.AndroidDeviceTrust{}, pairingproto.AttestPurposePair, discardLogger())
 
 	require.Error(t, err)
 	assert.ErrorIs(t, err, attestation.ErrDeviceAttestFailed)
@@ -284,7 +284,7 @@ func hexFingerprint(dak *attesttest.DAK) string {
 func TestVerifyReattestation_Success(t *testing.T) {
 	ca := attesttest.NewCA(t, "Trusted Attestation Root")
 	dak := attesttest.NewDAK(t, ca, attesttest.GenesisChallenge(), xkms.AndroidSecurityLevelStrongBox, attesttest.AttestedBootState())
-	trust := &attestation.Trust{Pool: ca.Pool(), Applications: attesttest.Applications()}
+	trust := &xkms.AndroidDeviceTrust{Roots: ca.Pool(), Applications: attesttest.Applications()}
 	binding := attestation.DeviceBinding{Fingerprint: hexFingerprint(dak), ProtocolVersion: pairingproto.AttestProtocolV2}
 
 	client, server := establishedSessionPair(t)
@@ -302,7 +302,7 @@ func TestVerifyReattestation_IdentityChangedRefusesAfterAValidProof(t *testing.T
 	ca := attesttest.NewCA(t, "Trusted Attestation Root")
 	dak := attesttest.NewDAK(t, ca, attesttest.GenesisChallenge(), xkms.AndroidSecurityLevelStrongBox, attesttest.AttestedBootState())
 	other := attesttest.NewDAK(t, ca, attesttest.GenesisChallenge(), xkms.AndroidSecurityLevelStrongBox, attesttest.AttestedBootState())
-	trust := &attestation.Trust{Pool: ca.Pool(), Applications: attesttest.Applications()}
+	trust := &xkms.AndroidDeviceTrust{Roots: ca.Pool(), Applications: attesttest.Applications()}
 	binding := attestation.DeviceBinding{Fingerprint: hexFingerprint(dak), ProtocolVersion: pairingproto.AttestProtocolV2}
 
 	client, server := establishedSessionPair(t)
@@ -323,7 +323,7 @@ func TestVerifyReattestation_RefusesAnotherApplication(t *testing.T) {
 	claims.RootOfTrust = attesttest.AttestedBootState()
 	claims.ApplicationID.Packages[0].Name = "com.example.malicious"
 	dak := attesttest.NewDAKWithClaims(t, ca, attesttest.GenesisChallenge(), xkms.AndroidSecurityLevelStrongBox, claims)
-	trust := &attestation.Trust{Pool: ca.Pool(), Applications: attesttest.Applications()}
+	trust := &xkms.AndroidDeviceTrust{Roots: ca.Pool(), Applications: attesttest.Applications()}
 	binding := attestation.DeviceBinding{Fingerprint: hexFingerprint(dak), ProtocolVersion: pairingproto.AttestProtocolV2}
 
 	client, server := establishedSessionPair(t)
@@ -368,8 +368,8 @@ func TestNewLiveAttestor_Success(t *testing.T) {
 	binding := attestation.DeviceBinding{Fingerprint: hexFingerprint(dak), ProtocolVersion: pairingproto.AttestProtocolV2}
 	channelBinding := attesttest.FixedBytes(0x77, pairingproto.AttestChannelBindingSize)
 
-	attest := attestation.NewLiveAttestor(binding, func() (*attestation.Trust, error) {
-		return &attestation.Trust{Pool: ca.Pool(), Applications: attesttest.Applications()}, nil
+	attest := attestation.NewLiveAttestor(binding, func() (*xkms.AndroidDeviceTrust, error) {
+		return &xkms.AndroidDeviceTrust{Roots: ca.Pool(), Applications: attesttest.Applications()}, nil
 	}, discardLogger())
 
 	err := attest(context.Background(), signedExchange(t, dak, channelBinding), channelBinding)
@@ -389,8 +389,8 @@ func TestNewLiveAttestor_RefusesAnotherSigner(t *testing.T) {
 	binding := attestation.DeviceBinding{Fingerprint: hexFingerprint(dak), ProtocolVersion: pairingproto.AttestProtocolV2}
 	channelBinding := attesttest.FixedBytes(0x78, pairingproto.AttestChannelBindingSize)
 
-	attest := attestation.NewLiveAttestor(binding, func() (*attestation.Trust, error) {
-		return &attestation.Trust{Pool: ca.Pool(), Applications: attesttest.Applications()}, nil
+	attest := attestation.NewLiveAttestor(binding, func() (*xkms.AndroidDeviceTrust, error) {
+		return &xkms.AndroidDeviceTrust{Roots: ca.Pool(), Applications: attesttest.Applications()}, nil
 	}, discardLogger())
 
 	err := attest(context.Background(), signedExchange(t, dak, channelBinding), channelBinding)
@@ -405,7 +405,7 @@ func TestNewLiveAttestor_RefusesAnotherSigner(t *testing.T) {
 func TestNewLiveAttestor_InvalidBindingRefusesBeforeExchanging(t *testing.T) {
 	binding := attestation.DeviceBinding{ProtocolVersion: pairingproto.AttestProtocolV2} // empty fingerprint
 
-	attest := attestation.NewLiveAttestor(binding, func() (*attestation.Trust, error) {
+	attest := attestation.NewLiveAttestor(binding, func() (*xkms.AndroidDeviceTrust, error) {
 		t.Fatal("loadTrust must not run before the binding is validated")
 		return nil, nil
 	}, discardLogger())
@@ -427,7 +427,7 @@ func TestNewLiveAttestor_LoadTrustFailureRefusesBeforeExchanging(t *testing.T) {
 	binding := attestation.DeviceBinding{Fingerprint: attesttest2HexFingerprint(), ProtocolVersion: pairingproto.AttestProtocolV2}
 	loadErr := errors.New("trust store unavailable")
 
-	attest := attestation.NewLiveAttestor(binding, func() (*attestation.Trust, error) {
+	attest := attestation.NewLiveAttestor(binding, func() (*xkms.AndroidDeviceTrust, error) {
 		return nil, loadErr
 	}, discardLogger())
 
@@ -450,8 +450,8 @@ func TestNewLiveAttestor_ExchangeFailure(t *testing.T) {
 	}
 	exchangeErr := errors.New("session closed")
 
-	attest := attestation.NewLiveAttestor(binding, func() (*attestation.Trust, error) {
-		return &attestation.Trust{Pool: ca.Pool(), Applications: attesttest.Applications()}, nil
+	attest := attestation.NewLiveAttestor(binding, func() (*xkms.AndroidDeviceTrust, error) {
+		return &xkms.AndroidDeviceTrust{Roots: ca.Pool(), Applications: attesttest.Applications()}, nil
 	}, discardLogger())
 
 	err := attest(context.Background(), func(context.Context, *pairingproto.Request) (*pairingproto.Response, error) {
@@ -472,8 +472,8 @@ func TestNewLiveAttestor_RPCError(t *testing.T) {
 		ProtocolVersion: pairingproto.AttestProtocolV2,
 	}
 
-	attest := attestation.NewLiveAttestor(binding, func() (*attestation.Trust, error) {
-		return &attestation.Trust{Pool: ca.Pool(), Applications: attesttest.Applications()}, nil
+	attest := attestation.NewLiveAttestor(binding, func() (*xkms.AndroidDeviceTrust, error) {
+		return &xkms.AndroidDeviceTrust{Roots: ca.Pool(), Applications: attesttest.Applications()}, nil
 	}, discardLogger())
 
 	err := attest(context.Background(), func(_ context.Context, req *pairingproto.Request) (*pairingproto.Response, error) {
@@ -497,8 +497,8 @@ func TestNewLiveAttestor_MalformedResult(t *testing.T) {
 		ProtocolVersion: pairingproto.AttestProtocolV2,
 	}
 
-	attest := attestation.NewLiveAttestor(binding, func() (*attestation.Trust, error) {
-		return &attestation.Trust{Pool: ca.Pool(), Applications: attesttest.Applications()}, nil
+	attest := attestation.NewLiveAttestor(binding, func() (*xkms.AndroidDeviceTrust, error) {
+		return &xkms.AndroidDeviceTrust{Roots: ca.Pool(), Applications: attesttest.Applications()}, nil
 	}, discardLogger())
 
 	err := attest(context.Background(), func(_ context.Context, req *pairingproto.Request) (*pairingproto.Response, error) {
@@ -519,8 +519,8 @@ func TestNewLiveAttestor_VerificationFailure(t *testing.T) {
 		ProtocolVersion: pairingproto.AttestProtocolV2,
 	}
 
-	attest := attestation.NewLiveAttestor(binding, func() (*attestation.Trust, error) {
-		return &attestation.Trust{Pool: ca.Pool(), Applications: attesttest.Applications()}, nil
+	attest := attestation.NewLiveAttestor(binding, func() (*xkms.AndroidDeviceTrust, error) {
+		return &xkms.AndroidDeviceTrust{Roots: ca.Pool(), Applications: attesttest.Applications()}, nil
 	}, discardLogger())
 
 	err := attest(context.Background(), func(_ context.Context, req *pairingproto.Request) (*pairingproto.Response, error) {
@@ -545,8 +545,8 @@ func TestNewLiveAttestor_IdentityChanged(t *testing.T) {
 	}
 	channelBinding := attesttest.FixedBytes(0x88, pairingproto.AttestChannelBindingSize)
 
-	attest := attestation.NewLiveAttestor(binding, func() (*attestation.Trust, error) {
-		return &attestation.Trust{Pool: ca.Pool(), Applications: attesttest.Applications()}, nil
+	attest := attestation.NewLiveAttestor(binding, func() (*xkms.AndroidDeviceTrust, error) {
+		return &xkms.AndroidDeviceTrust{Roots: ca.Pool(), Applications: attesttest.Applications()}, nil
 	}, discardLogger())
 
 	err := attest(context.Background(), signedExchange(t, dak, channelBinding), channelBinding)

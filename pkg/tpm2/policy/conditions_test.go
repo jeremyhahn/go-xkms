@@ -30,7 +30,7 @@ import (
 // password-only branch allowed.
 func TestValidateBranches_Normalizes(t *testing.T) {
 	got, err := validateBranches([]Branch{
-		{Conditions: []Condition{
+		{Name: "current", Conditions: []Condition{
 			{Type: ConditionAuthValue},
 			{Type: ConditionPCR, Bank: "SHA256", PCRs: []uint{23, 7}},
 			{Type: ConditionLocality, Localities: []uint{3, 0}},
@@ -39,13 +39,42 @@ func TestValidateBranches_Normalizes(t *testing.T) {
 	})
 	require.NoError(t, err)
 	assert.Equal(t, []Branch{
-		{Conditions: []Condition{
+		{Name: "current", Conditions: []Condition{
 			{Type: ConditionAuthValue},
 			{Type: ConditionPCR, Bank: "sha256", PCRs: []uint{7, 23}},
 			{Type: ConditionLocality, Localities: []uint{0, 3}},
 		}},
-		authValueBranch(),
-	}, got)
+		{Name: "branch-2", Conditions: authValueBranch().Conditions},
+	}, got, "an unnamed branch is named after its position, counted from 1")
+}
+
+// TestValidateBranches_Names proves branch names are checked: unique within
+// the policy, and only letters, digits, '.', '_' and '-'.
+func TestValidateBranches_Names(t *testing.T) {
+	for _, tc := range []struct {
+		name     string
+		branches []Branch
+		branch   string
+		want     error
+	}{
+		{"duplicate", []Branch{named(pcrBranch(), "next"), named(authValueBranch(), "next")}, "next", ErrDuplicateBranch},
+		{"duplicate of a default", []Branch{pcrBranch(), named(authValueBranch(), "branch-1")}, "branch-1", ErrDuplicateBranch},
+		{"separator", []Branch{named(pcrBranch(), "a;b")}, "a;b", ErrInvalidBranchName},
+		{"slash", []Branch{named(pcrBranch(), "a/b")}, "a/b", ErrInvalidBranchName},
+		{"too long", []Branch{named(pcrBranch(), strings.Repeat("n", maxBranchName+1))}, strings.Repeat("n", maxBranchName+1), ErrInvalidBranchName},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			_, err := validateBranches(tc.branches)
+			var branchErr *InvalidBranchError
+			require.ErrorAs(t, err, &branchErr)
+			assert.Equal(t, tc.branch, branchErr.Branch)
+			require.ErrorIs(t, err, tc.want)
+		})
+	}
+
+	got, err := validateBranches([]Branch{named(pcrBranch(), strings.Repeat("n", maxBranchName)), named(authValueBranch(), "next_2.v-1")})
+	require.NoError(t, err)
+	assert.Equal(t, "next_2.v-1", got[1].Name)
 }
 
 // TestValidateBranches_Refusals proves every invalid structure is refused
@@ -99,7 +128,7 @@ func TestValidateBranches_Refusals(t *testing.T) {
 			_, err := validateBranches([]Branch{pcrBranch(), {Conditions: conditions}})
 			var branchErr *InvalidBranchError
 			require.ErrorAs(t, err, &branchErr)
-			assert.Equal(t, 1, branchErr.Branch)
+			assert.Equal(t, "branch-2", branchErr.Branch)
 			assert.True(t, tc.check(err), "got %v", err)
 		})
 	}
@@ -153,7 +182,7 @@ func TestPCRBranch(t *testing.T) {
 	assert.Equal(t, Branch{Conditions: []Condition{{Type: ConditionPCR, Bank: "SHA256", PCRs: []uint{7, 0}}}}, b)
 	got, err := validateBranches([]Branch{b})
 	require.NoError(t, err)
-	assert.Equal(t, []Branch{PCRBranch("sha256", 0, 7)}, got)
+	assert.Equal(t, []Branch{named(PCRBranch("sha256", 0, 7), "branch-1")}, got)
 
 	_, err = validateBranches([]Branch{PCRBranch("sha256")})
 	require.ErrorIs(t, err, ErrEmptyPCRSelection)

@@ -26,6 +26,7 @@ import (
 	"encoding/hex"
 	"errors"
 	"sort"
+	"strconv"
 	"strings"
 	"sync"
 
@@ -147,19 +148,22 @@ func (f *Fake) captureBranch(b *transport.TPMPolicyBranch) bool {
 	return captured
 }
 
-// updateBranch gives p's branch, counted from 0, the live values of its pcr
+// updateBranch gives p's branch named branch the live values of its pcr
 // condition and records referenceValues' SHA-256 as its reference.
-func (f *Fake) updateBranch(p *transport.TPMPolicy, branch int, referenceValues []byte) error {
-	if branch < 0 || branch >= len(p.Branches) {
-		return xkms.ErrTPMPolicyNoSuchBranch
+func (f *Fake) updateBranch(p *transport.TPMPolicy, branch string, referenceValues []byte) error {
+	for i := range p.Branches {
+		b := &p.Branches[i]
+		if b.Name != branch {
+			continue
+		}
+		if !f.captureBranch(b) {
+			return xkms.ErrTPMPolicyNoPCRCondition
+		}
+		digest := sha256.Sum256(referenceValues)
+		b.Reference = &transport.TPMPolicyReference{Digest: digest[:]}
+		return nil
 	}
-	b := &p.Branches[branch]
-	if !f.captureBranch(b) {
-		return xkms.ErrTPMPolicyNoPCRCondition
-	}
-	digest := sha256.Sum256(referenceValues)
-	b.Reference = &transport.TPMPolicyReference{Digest: digest[:]}
-	return nil
+	return xkms.ErrTPMPolicyNoSuchBranch
 }
 
 // approve sets the approval of p and of every branch of it.
@@ -192,7 +196,7 @@ func copyOf(p *transport.TPMPolicy) *transport.TPMPolicy {
 func copyBranches(branches []transport.TPMPolicyBranch) []transport.TPMPolicyBranch {
 	out := make([]transport.TPMPolicyBranch, len(branches))
 	for i, b := range branches {
-		out[i] = transport.TPMPolicyBranch{Conditions: make([]transport.TPMPolicyCondition, len(b.Conditions)), Approved: b.Approved}
+		out[i] = transport.TPMPolicyBranch{Name: b.Name, Conditions: make([]transport.TPMPolicyCondition, len(b.Conditions)), Approved: b.Approved}
 		if b.Reference != nil {
 			ref := *b.Reference
 			ref.Digest = append([]byte(nil), b.Reference.Digest...)
@@ -212,6 +216,17 @@ func copyBranches(branches []transport.TPMPolicyBranch) []transport.TPMPolicyBra
 		}
 	}
 	return out
+}
+
+// nameBranches names each unnamed branch "branch-N", N counting from 1, as
+// the policy service does, and returns branches.
+func nameBranches(branches []transport.TPMPolicyBranch) []transport.TPMPolicyBranch {
+	for i := range branches {
+		if branches[i].Name == "" {
+			branches[i].Name = "branch-" + strconv.Itoa(i+1)
+		}
+	}
+	return branches
 }
 
 // validateBranches refuses a request without a branch, or with a pcr
@@ -256,7 +271,7 @@ func (f *Fake) TPMPolicyCreate(_ context.Context, req *transport.TPMPolicyCreate
 		Name:                req.Name,
 		TenantID:            req.TenantID,
 		Description:         req.Description,
-		Branches:            copyBranches(req.Branches),
+		Branches:            nameBranches(copyBranches(req.Branches)),
 		Index:               uint32(0x01500000 + len(f.policies[sc])),
 		Epoch:               f.epoch,
 		AuthorityGeneration: f.generation,
@@ -301,7 +316,7 @@ func (f *Fake) TPMPolicyList(_ context.Context, req *transport.TPMPolicyListRequ
 // the reference values' SHA-256 as the branch's reference; it does not
 // parse or verify them, and the branch takes the live values.
 func (f *Fake) TPMPolicyUpdate(_ context.Context, req *transport.TPMPolicyUpdateRequest) (*transport.TPMPolicy, error) {
-	if (req.Branch == nil) != (len(req.ReferenceValues) == 0) {
+	if (req.Branch == "") != (len(req.ReferenceValues) == 0) {
 		return nil, xkms.ErrTPMPolicyBranchUpdate
 	}
 	f.mu.Lock()
@@ -311,9 +326,9 @@ func (f *Fake) TPMPolicyUpdate(_ context.Context, req *transport.TPMPolicyUpdate
 	if err != nil {
 		return nil, err
 	}
-	if req.Branch == nil {
+	if req.Branch == "" {
 		f.capture(p)
-	} else if err := f.updateBranch(p, *req.Branch, req.ReferenceValues); err != nil {
+	} else if err := f.updateBranch(p, req.Branch, req.ReferenceValues); err != nil {
 		return nil, err
 	}
 	approve(p, true)
@@ -353,7 +368,7 @@ func (f *Fake) TPMPolicyVerify(_ context.Context, req *transport.TPMPolicyReques
 	approved := p.Approved && p.Epoch == f.epoch
 	resp := &transport.TPMPolicyVerifyResponse{Name: p.Name, Match: true, Approved: approved}
 	for _, b := range p.Branches {
-		v := transport.TPMPolicyBranchVerification{Approved: approved}
+		v := transport.TPMPolicyBranchVerification{Name: b.Name, Approved: approved}
 		for _, c := range b.Conditions {
 			for _, pcr := range c.PCRs {
 				if c.PCRValues[pcr] != f.pcrs[pcr] {

@@ -29,8 +29,12 @@ export const PCR_INDICES = Array.from({ length: 24 }, (_, i) => i);
 /** TPM localities a locality condition may allow. */
 export const LOCALITIES = [0, 1, 2, 3, 4];
 
-/** The editable form of one branch: each condition switched on or off. */
+/**
+ * The editable form of one branch: its name (empty for the server's
+ * branch-N) and each condition switched on or off.
+ */
 export interface BranchDraft {
+  name: string;
   pcr: boolean;
   bank: string;
   pcrs: number[];
@@ -41,7 +45,7 @@ export interface BranchDraft {
 
 /** Returns a new draft: a pcr condition over PCRs 0 and 7 of sha256. */
 export function newBranchDraft(): BranchDraft {
-  return { pcr: true, bank: 'sha256', pcrs: [0, 7], authValue: false, locality: false, localities: [0] };
+  return { name: '', pcr: true, bank: 'sha256', pcrs: [0, 7], authValue: false, locality: false, localities: [0] };
 }
 
 /** Returns values with value added or removed, ascending. */
@@ -67,13 +71,14 @@ export function draftError(draft: BranchDraft): string {
   return '';
 }
 
-/** Converts a draft to the API form, its conditions in the order shown. */
+/** Converts a draft to the API form, its conditions in the order shown; an empty name is left out. */
 export function draftToBranch(draft: BranchDraft): TPMPolicyBranch {
   const conditions: TPMPolicyCondition[] = [];
   if (draft.pcr) conditions.push({ type: 'pcr', bank: draft.bank, pcrs: draft.pcrs });
   if (draft.authValue) conditions.push({ type: 'auth_value' });
   if (draft.locality) conditions.push({ type: 'locality', localities: draft.localities });
-  return { conditions };
+  const name = draft.name.trim();
+  return name ? { name, conditions } : { conditions };
 }
 
 /** Returns the one branch approving the PCRs of bank. */

@@ -23,7 +23,7 @@ import (
 
 func TestService_UpdateBranchNeedsAReferenceSigner(t *testing.T) {
 	svc, _ := newOfflineService(t)
-	_, err := svc.UpdateBranch(context.Background(), "acme", "boot", 0, []byte("corim"))
+	_, err := svc.UpdateBranch(context.Background(), "acme", "boot", "next", []byte("corim"))
 	require.ErrorIs(t, err, ErrNoReferenceSigner)
 }
 

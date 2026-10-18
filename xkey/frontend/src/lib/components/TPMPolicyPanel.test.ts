@@ -12,7 +12,7 @@ import TPMPolicyPanel from './TPMPolicyPanel.svelte';
 const platform = { name: 'platform', builtin: true, approved: true, auto_unseal: false, object_count: 3 };
 const boot = {
   name: 'boot', builtin: false, description: 'firmware and Secure Boot', approved: true,
-  branches: [{ conditions: [{ type: 'pcr', bank: 'sha256', pcrs: [0, 7] }], approved: true }],
+  branches: [{ name: 'current', conditions: [{ type: 'pcr', bank: 'sha256', pcrs: [0, 7] }], approved: true }],
   auto_unseal: false, object_count: 2, index: 0x01500000,
 };
 
@@ -26,7 +26,10 @@ function installMock(mode: 'local' | 'server', policies = [platform, boot]) {
     RevokePolicy: vi.fn().mockResolvedValue({ ...boot, approved: false }),
     VerifyPolicy: vi.fn().mockResolvedValue({
       name: 'boot', match: false, approved: true,
-      branches: [{ match: false, mismatched: [7], approved: true }, { match: true, approved: false }],
+      branches: [
+        { name: 'current', match: false, mismatched: [7], approved: true },
+        { name: 'next', match: true, approved: false },
+      ],
     }),
     SetDescription: vi.fn().mockResolvedValue({ ...boot, description: 'kernel' }),
     DeletePolicy: vi.fn().mockResolvedValue(undefined),
@@ -36,8 +39,8 @@ function installMock(mode: 'local' | 'server', policies = [platform, boot]) {
     GetPolicy: vi.fn().mockResolvedValue({
       ...boot, epoch: 3, authority_generation: 1,
       branches: [
-        { conditions: [{ type: 'pcr', bank: 'sha256', pcrs: [0, 7], pcr_values: { 7: 'bb', 0: 'aa' } }], approved: true },
-        { conditions: [{ type: 'auth_value' }], approved: true },
+        { name: 'current', conditions: [{ type: 'pcr', bank: 'sha256', pcrs: [0, 7], pcr_values: { 7: 'bb', 0: 'aa' } }], approved: true },
+        { name: 'recovery', conditions: [{ type: 'auth_value' }], approved: true },
       ],
     }),
   };
@@ -115,6 +118,21 @@ describe('TPMPolicyPanel', () => {
     ], false, ''));
   });
 
+  it('creates named current and next branches', async () => {
+    const { tpm, view } = await renderLoaded();
+    await fireEvent.click(view.getByText('Create Policy'));
+    await fireEvent.input(document.getElementById('policy-name') as HTMLInputElement, { target: { value: 'unlock' } });
+    await fireEvent.click(view.getByRole('tab', { name: 'Advanced' }));
+    await fireEvent.click(view.getByText('Add branch'));
+    await fireEvent.input(document.getElementById('policy-branch-1-name') as HTMLInputElement, { target: { value: 'current' } });
+    await fireEvent.input(document.getElementById('policy-branch-2-name') as HTMLInputElement, { target: { value: 'next' } });
+    await fireEvent.click(view.getByText('Create'));
+    await waitFor(() => expect(tpm.CreatePolicy).toHaveBeenCalledWith('unlock', '', [
+      { name: 'current', conditions: [{ type: 'pcr', bank: 'sha256', pcrs: [0, 7] }] },
+      { name: 'next', conditions: [{ type: 'pcr', bank: 'sha256', pcrs: [0, 7] }] },
+    ], false, ''));
+  });
+
   it('refuses an advanced branch without conditions, and removes a branch', async () => {
     const { tpm, view } = await renderLoaded();
     await fireEvent.click(view.getByText('Create Policy'));
@@ -172,8 +190,8 @@ describe('TPMPolicyPanel', () => {
   it('shows the verification result of each branch', async () => {
     const { tpm, view } = await renderLoaded();
     await fireEvent.click(within(view.getByTestId('policy-row-boot')).getByText('Verify'));
-    await waitFor(() => expect(view.getByTestId('verify-result')).toHaveTextContent('Branch 1: PCRs changed: 7; approval current'));
-    expect(view.getByTestId('verify-result')).toHaveTextContent('Branch 2: PCRs match; approval not current');
+    await waitFor(() => expect(view.getByTestId('verify-result')).toHaveTextContent('Branch current: PCRs changed: 7; approval current'));
+    expect(view.getByTestId('verify-result')).toHaveTextContent('Branch next: PCRs match; approval not current');
     expect(tpm.VerifyPolicy).toHaveBeenCalledWith('boot');
   });
 
@@ -225,31 +243,38 @@ describe('TPMPolicyPanel details', () => {
     const detailsView = await waitFor(() => view.getByTestId('policy-details'));
     expect(tpm.GetPolicy).toHaveBeenCalledWith('boot');
     expect(detailsView).toHaveTextContent('approved at epoch 3');
-    expect(detailsView).toHaveTextContent('Branch 1: sha256 PCR 0, 7');
-    expect(detailsView).toHaveTextContent('Branch 2: password');
+    expect(detailsView).toHaveTextContent('Branch current: sha256 PCR 0, 7');
+    expect(detailsView).toHaveTextContent('Branch recovery: password');
     const rows = detailsView.querySelectorAll('tbody tr');
     expect(rows[0]).toHaveTextContent('0aa');
     expect(rows[1]).toHaveTextContent('7bb');
-    expect(view.queryByTestId('branch-1-reference')).toBeNull();
-    expect(view.queryByLabelText('Reference values for branch 2')).toBeNull();
+    expect(view.queryByTestId('branch-current-reference')).toBeNull();
+    expect(view.queryByLabelText('Reference values for branch recovery')).toBeNull();
   });
 
-  it('updates one branch from a signed CoRIM and shows its reference', async () => {
+  it('updates the named branch from a signed CoRIM and shows its reference', async () => {
     const { tpm, view } = await renderLoaded();
+    const current = { name: 'current', conditions: [{ type: 'pcr', bank: 'sha256', pcrs: [0, 7], pcr_values: { 0: 'aa', 7: 'bb' } }], approved: true };
+    tpm.GetPolicy.mockResolvedValue({
+      ...boot, epoch: 3,
+      branches: [current, { ...current, name: 'next' }],
+    });
     tpm.UpdateBranch.mockResolvedValue({
       ...boot, epoch: 4,
-      branches: [{
+      branches: [current, {
+        name: 'next',
         conditions: [{ type: 'pcr', bank: 'sha256', pcrs: [0, 7], pcr_values: { 0: 'aa', 7: 'cc' } }],
         approved: true,
         reference: { id: 'boot-image-v2', signer: 'Example Provider', digest: 'q80=' },
       }],
     });
     await fireEvent.click(view.getByLabelText('Details of boot'));
-    const input = await waitFor(() => view.getByLabelText('Reference values for branch 1') as HTMLInputElement);
+    const input = await waitFor(() => view.getByLabelText('Reference values for branch next') as HTMLInputElement);
     await fireEvent.change(input, { target: { files: [corimFile([0xd2, 0x84])] } });
 
-    await waitFor(() => expect(tpm.UpdateBranch).toHaveBeenCalledWith('boot', 0, [0xd2, 0x84]));
-    await waitFor(() => expect(view.getByTestId('branch-1-reference'))
+    await waitFor(() => expect(tpm.UpdateBranch).toHaveBeenCalledWith('boot', 'next', [0xd2, 0x84]));
+    expect(view.queryByTestId('branch-current-reference')).toBeNull();
+    await waitFor(() => expect(view.getByTestId('branch-next-reference'))
       .toHaveTextContent('Reference values: boot-image-v2 signed by Example Provider, sha256 abcd'));
     expect(view.getByTestId('policy-details')).toHaveTextContent('approved at epoch 4');
   });
@@ -258,23 +283,23 @@ describe('TPMPolicyPanel details', () => {
     const { tpm, view } = await renderLoaded();
     tpm.UpdateBranch.mockRejectedValue(new Error('tpmpolicy: invalid reference values: verify the signed CoRIM'));
     await fireEvent.click(view.getByLabelText('Details of boot'));
-    const input = await waitFor(() => view.getByLabelText('Reference values for branch 1') as HTMLInputElement);
+    const input = await waitFor(() => view.getByLabelText('Reference values for branch current') as HTMLInputElement);
     await fireEvent.change(input, { target: { files: [corimFile([0x00])] } });
 
     await waitFor(() => expect(tpm.UpdateBranch).toHaveBeenCalledOnce());
     expect(view.getByTestId('policy-details')).toHaveTextContent('approved at epoch 3');
-    expect(view.queryByTestId('branch-1-reference')).toBeNull();
+    expect(view.queryByTestId('branch-current-reference')).toBeNull();
   });
 
   it('shows the reference values a verified branch is approved for', async () => {
     const { tpm, view } = await renderLoaded();
     tpm.VerifyPolicy.mockResolvedValue({
       name: 'boot', match: false, approved: true,
-      branches: [{ match: false, mismatched: [7], approved: true, reference: { id: 'boot-image-v2', digest: 'q80=' } }],
+      branches: [{ name: 'next', match: false, mismatched: [7], approved: true, reference: { id: 'boot-image-v2', digest: 'q80=' } }],
     });
     await fireEvent.click(within(view.getByTestId('policy-row-boot')).getByText('Verify'));
     await waitFor(() => expect(view.getByTestId('verify-result'))
-      .toHaveTextContent('approval current; approved for reference values boot-image-v2, sha256 abcd'));
+      .toHaveTextContent('Branch next: PCRs changed: 7; approval current; approved for reference values boot-image-v2, sha256 abcd'));
   });
 });
 

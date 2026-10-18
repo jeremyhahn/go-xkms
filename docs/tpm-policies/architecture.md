@@ -459,7 +459,7 @@ and every transport calls it through `XKMSService`.
 | Create a policy (captures live PCRs) | `POST /api/v1/tpm/policies` | `TPMPolicyCreate` | `tpm.policy.create` | `tpm policy create <name> --pcrs 0,7 --bank sha256 [--auto-unseal]` |
 | List or get | `GET /api/v1/tpm/policies[/{name}]` | `TPMPolicyList/Get` | `tpm.policy.list/get` | `tpm policy list/get` |
 | Update (re-capture, re-approve) | `POST …/{name}/update` | `TPMPolicyUpdate` | `tpm.policy.update` | `tpm policy update <name>` |
-| Update one branch from signed reference values | `POST …/{name}/update` `{branch, reference_values}` | `TPMPolicyUpdate{branch, reference_values}` | `tpm.policy.update{branch, reference_values}` | `tpm policy update <name> --branch <n> --reference-values <corim>` |
+| Update one branch from signed reference values | `POST …/{name}/update` `{branch, reference_values}` | `TPMPolicyUpdate{branch, reference_values}` | `tpm.policy.update{branch, reference_values}` | `tpm policy update <name> --branch <name> --reference-values <corim>` |
 | Revoke the current approval | `POST …/{name}/revoke` | `TPMPolicyRevoke` | `tpm.policy.revoke` | `tpm policy revoke <name>` |
 | Verify live PCRs against a policy | `POST …/{name}/verify` | `TPMPolicyVerify` | `tpm.policy.verify` | `tpm policy verify <name>` |
 | Delete (refused while assigned) | `DELETE …/{name}` | `TPMPolicyDelete` | `tpm.policy.delete` | `tpm policy delete <name>` |
@@ -520,7 +520,7 @@ unseal at boot) before its database is reachable.
 
 A platform update changes PCR values, so a policy captured before the update
 refuses the updated platform. `Service.UpdateBranch`
-(`pkg/tpm2/policy/reference.go:36`) approves one branch for the values the
+(`pkg/tpm2/policy/reference.go:35`) approves one named branch for the values the
 updated platform will measure, before it boots, from a CoRIM its reference
 value provider signed. Nobody supplies raw PCR values: `ErrPCRValuesSupplied`
 (`pkg/tpm2/policy/errors.go:96`) keeps its meaning.
@@ -532,10 +532,23 @@ value provider signed. Nobody supplies raw PCR values: `ErrPCRValuesSupplied`
   `public_key` or a `roots` certificate bundle (`Server.referenceSigner`,
   `pkg/server/backend_tpm2.go:200`). With no signer configured every branch
   update is refused with `ErrNoReferenceSigner`
-  (`pkg/tpm2/policy/errors.go:108`); xKey's local mode configures none.
-- **Branch.** Branches count from 0. The branch must exist (`ErrNoSuchBranch`,
-  `errors.go:112`) and carry a pcr condition (`ErrNoPCRCondition`,
-  `errors.go:116`; `branchPCRCondition`, `reference.go:79`).
+  (`pkg/tpm2/policy/errors.go:107`); xKey's local mode configures none.
+- **Branch.** A branch is updated by name (`Policy.branch`,
+  `pkg/tpm2/policy/types.go:254`). Every branch has one: a create names it in
+  its spec (`name=current`) or gets `branch-N`, N its position counted from 1;
+  a name is 1-64 letters, digits, `.`, `_` or `-` (`ErrInvalidBranchName`,
+  `errors.go:116`) and unique within the policy (`ErrDuplicateBranch`,
+  `errors.go:120`), both as `*InvalidBranchError` (`errors.go:278`;
+  `validateBranches`, `conditions.go:83`). The branch must exist
+  (`ErrNoSuchBranch`, `errors.go:111`; `reference.go:44-46`) and carry a pcr
+  condition (`ErrNoPCRCondition`, `errors.go:124`; `branchPCRCondition`,
+  `reference.go:79`).
+- **Unlock.** A policy with branches `current` and `next` lets a platform
+  update proceed without a window where nothing unseals: before the update,
+  `next` is updated from the new image's CoRIM while `current` still holds for
+  the running image, so either image satisfies the policy; after it,
+  `current` is updated the same way (`TestService_UpdateBranchFromReferenceValues`,
+  `pkg/tpm2/policy/reference_simulator_test.go:127`).
 - **Prediction.** `predictPCRs` (`reference.go:91`) reads the branch's live
   PCRs and calls `attestation.PredictPCRs` (`pkg/attestation/predict.go:48`):
   a final value in the CoRIM replaces the PCR, a component digest is replayed
@@ -545,33 +558,34 @@ value provider signed. Nobody supplies raw PCR values: `ErrPCRValuesSupplied`
   Only the scope on the node's own TPM reads the event log; a vTPM has none,
   so a vTPM branch takes final values only.
 - **Approval.** The branch's values and digest are replaced and it records a
-  `Reference` (`pkg/tpm2/policy/types.go:193`): the CoRIM's id, profile, signer
+  `Reference` (`pkg/tpm2/policy/types.go:199`): the CoRIM's id, profile, signer
   and SHA-256 digest. The scope's counter is incremented and every policy
   re-signed at the new epoch, as for a re-capture (`reference.go:71-75`).
-  A live re-capture (`UpdatePolicy`, `service.go:432`) drops every reference
-  (`pkg/tpm2/policy/conditions.go:136`).
-- **Verify.** `verify` reports the reference of each branch
-  (`conditions.go:316`), so a branch that does not match the running platform
-  but is approved for a registered image says which one.
+  A live re-capture (`UpdatePolicy`, `service.go:431`) drops every reference
+  (`pkg/tpm2/policy/conditions.go:167`).
+- **Verify.** `verify` reports each branch by name with its reference
+  (`verifyBranch`, `conditions.go:347`), so a branch that does not match the
+  running platform but is approved for a registered image says which branch
+  and which image.
 - **Refusals.** A CoRIM that is unsigned, signed by another key or tampered
   with, or whose values cannot be predicted, is refused with
-  `*ReferenceValuesError` (`errors.go:382`), classed as an invalid argument.
+  `*ReferenceValuesError` (`errors.go:390`), classed as an invalid argument.
   A refused update leaves the approvals at their epoch
   (`TestService_UpdateBranchRefusals`,
-  `pkg/tpm2/policy/reference_simulator_test.go:174`).
-- **Surface.** `TPMPolicyUpdateRequest` (`pkg/api/transport/types.go:2271`)
-  gains `branch` and `reference_values`; they come together or the request is
-  refused with `ErrTPMPolicyBranchUpdate` (`pkg/xkms/errors.go:335`;
-  `TenantTPMPolicies.TPMPolicyUpdate`, `pkg/xkms/tenant_tpm_policies.go:108`).
-  gRPC carries `optional int32 branch` (`xkms.proto:3461`); a branch index
-  int32 cannot carry is sent as -1, which names no branch
-  (`pkg/api/grpc/pbconv/tpm_policy.go:203`). The permission is
-  `tpm_policy:update`, unchanged. xkmsctl and xkey take
-  `tpm policy update <name> --branch <n> --reference-values <corim>`
-  (`cmd/xkmsctl/tpm_policy.go:737-738`,
-  `xkey/cmd/xkey/cmd/tpm_policy.go:338-340`); the xKey GUI updates a branch
-  from a CoRIM file in the policy details (`TPMPolicyService.UpdateBranch`,
-  `xkey/pkg/gui/services/tpm_policy_service.go:364`).
+  `pkg/tpm2/policy/reference_simulator_test.go:173`).
+- **Surface.** `TPMPolicyUpdateRequest` (`pkg/api/transport/types.go:2276`)
+  carries the branch name in `branch` with `reference_values`; they come
+  together or the request is refused with `ErrTPMPolicyBranchUpdate`
+  (`pkg/xkms/errors.go:334`; `TenantTPMPolicies.TPMPolicyUpdate`,
+  `pkg/xkms/tenant_tpm_policies.go:111`). gRPC carries `string branch = 5`
+  (`xkms.proto:3521`, field 3 reserved) and a branch's `name`
+  (`xkms.proto:3455`, `3599`). There is no branch index form. The permission
+  is `tpm_policy:update`, unchanged. xkmsctl and xkey take
+  `tpm policy update <name> --branch <name> --reference-values <corim>`
+  (`cmd/xkmsctl/tpm_policy.go:738`, `xkey/cmd/xkey/cmd/tpm_policy.go:342`);
+  the xKey GUI updates a branch from a CoRIM file in the policy details
+  (`TPMPolicyService.UpdateBranch`,
+  `xkey/pkg/gui/services/tpm_policy_service.go:363`).
 - **Consumer.** go-quicbaas consumes this surface by SDK re-export
   (`Security().TPMPolicy()` and the initrd static-resolver re-exports).
   go-trusted-platform reaches it only through go-quicbaas.

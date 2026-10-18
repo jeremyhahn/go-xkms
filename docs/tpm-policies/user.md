@@ -1,6 +1,6 @@
 # TPM Policies — User Guide
 
-> **Status: NORMATIVE** · Feature: `tpm-policies` · Repo: `go-xkms` · Last verified: 2026-09-30
+> **Status: NORMATIVE** · Feature: `tpm-policies` · Repo: `go-xkms` · Last verified: 2026-10-17
 
 A TPM policy names the conditions under which many TPM keys and sealed objects
 may be used. The common one is a platform state — a set of PCRs and their
@@ -42,10 +42,32 @@ xkmsctl tpm policy create strict --branch 'pcr=sha256:0,7;auth_value;locality=0'
 - A key or sealed object bound to a policy with a password condition must
   have a password. That password then counts only inside the policy: it
   cannot bypass a "PCRs **and** password" branch on its own.
+- Every branch has a name: give one with `name=` in the branch
+  (`--branch 'name=current;pcr=0,7'`), or it is named `branch-1`,
+  `branch-2`, ... in order.
 - The branches are fixed at creation. `update` re-captures the PCR values of
   every branch; a different structure is a new policy.
-- `verify` reports every branch: whether its PCRs still match and whether it
-  is approved.
+- `verify` reports every branch by name: whether its PCRs still match,
+  whether it is approved, and the signed reference values it was approved for.
+
+## Updating without a lockout
+
+A platform update changes the PCR values, so a policy over the old values
+would refuse the updated platform until someone re-approves it. With a branch
+for the running image and one for the next, the update never locks objects
+out:
+
+1. Create the policy with two branches:
+   `xkmsctl tpm policy create unlock --branch 'name=current;pcr=0,7' --branch 'name=next;pcr=0,7'`.
+2. Before the update, approve `next` for the new image from the signed
+   reference values (a CoRIM) its provider publishes:
+   `xkmsctl tpm policy update unlock --branch next --reference-values image-v2.corim`.
+   The server accepts only a CoRIM signed by its configured reference signer
+   (`backends.tpm2.reference_signer`). Both the old and the new image now
+   satisfy the policy.
+3. `xkmsctl tpm policy verify unlock` shows `next` approved for `image-v2`.
+4. After the update, approve `current` the same way; the next update reuses
+   `next`.
 - Every policy can carry a description:
   `xkmsctl tpm policy create boot --pcrs 0,7 --description "..."`, and
   `xkmsctl tpm policy describe boot "..."` to change it.
@@ -95,8 +117,11 @@ without one, on the machine's own TPM.
    or the connected server.
 2. **Create Policy**: give it a name and, optionally, a description. In
    **Simple** mode choose the PCR bank and tick the PCRs. In **Advanced** mode
-   add branches, each with any of PCR values, the object password and TPM
-   localities (0-4). The PCR values are read from the TPM.
+   add branches, each with an optional name (such as `current` and `next`)
+   and any of PCR values, the object password and TPM localities (0-4). The
+   PCR values are read from the TPM. A policy's details list its branches by
+   name; picking a CoRIM file under a branch updates that branch from signed
+   reference values, like `--branch <name> --reference-values`.
    `xkey tpm policy create boot --pcrs 0,7` (or `--branch ...`) does the same
    from the CLI. **Describe** changes a policy's description.
 3. **Sealed Data → Seal New Data**: choose the TPM policy (the built-in

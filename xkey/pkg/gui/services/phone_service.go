@@ -1690,7 +1690,7 @@ func (s *PhoneService) attestOverTransport(
 		result.TrustAnchorFingerprint = certFP(matchedRoot)
 	}
 
-	desc, descErr := xkms.VerifyAndroidKeyAttestation(chain, xkeyAttestation.VerifyOptions(trust.Pool))
+	desc, descErr := xkms.VerifyAndroidKeyAttestation(chain, xkms.AndroidDeviceVerifyOptions(trust.Roots))
 	if descErr != nil || desc == nil {
 		return result, nil
 	}
@@ -2282,7 +2282,7 @@ var noticeDeliveryTimeout = 30 * time.Second
 // deployment whose policy has not yet verified in this run refuses with
 // xkeyAttestation.ErrApplicationPolicyUnverifiable -- see
 // ResolvedApplicationPolicy.
-func (s *PhoneService) loadAttestationTrust() (*xkeyAttestation.Trust, error) {
+func (s *PhoneService) loadAttestationTrust() (*xkms.AndroidDeviceTrust, error) {
 	cfg, err := s.loadConfig()
 	if err != nil && !errors.Is(err, os.ErrNotExist) {
 		return nil, &SentinelCauseError{Sentinel: ErrPhoneAttestFailed, Cause: err}

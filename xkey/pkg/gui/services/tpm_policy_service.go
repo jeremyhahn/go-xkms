@@ -356,15 +356,15 @@ func (s *TPMPolicyService) UpdatePolicy(name string) (retVal *TPMPolicyInfo, ret
 	})
 }
 
-// UpdateBranch updates one branch of the policy, counted from 0, to the PCR
-// values referenceValues, a signed CoRIM, predicts the platform will hold
-// once the images it describes are booted, and re-approves the policy. The
-// CoRIM must verify under the reference signer the TPM policy service is
+// UpdateBranch updates the policy's branch named branch, such as "next", to
+// the PCR values referenceValues, a signed CoRIM, predicts the platform will
+// hold once the images it describes are booted, and re-approves the policy.
+// The CoRIM must verify under the reference signer the TPM policy service is
 // configured with.
-func (s *TPMPolicyService) UpdateBranch(name string, branch int, referenceValues []byte) (retVal *TPMPolicyInfo, retErr error) {
+func (s *TPMPolicyService) UpdateBranch(name, branch string, referenceValues []byte) (retVal *TPMPolicyInfo, retErr error) {
 	defer s.recoverPanic("UpdateBranch", &retErr)
 	return s.changePolicy(name, func(b tpmPolicyBackend, ctx context.Context, req *transport.TPMPolicyRequest) (*transport.TPMPolicy, error) {
-		return b.TPMPolicyUpdate(ctx, &transport.TPMPolicyUpdateRequest{Name: req.Name, Branch: &branch, ReferenceValues: referenceValues})
+		return b.TPMPolicyUpdate(ctx, &transport.TPMPolicyUpdateRequest{Name: req.Name, Branch: branch, ReferenceValues: referenceValues})
 	})
 }
 

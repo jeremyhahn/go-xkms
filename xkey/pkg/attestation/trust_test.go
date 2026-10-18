@@ -57,7 +57,7 @@ func TestLoadTrust_CarriesTheApplicationPolicy(t *testing.T) {
 	trust, err := attestation.LoadTrust(newFileStore(t), apps)
 
 	require.NoError(t, err)
-	assert.NotNil(t, trust.Pool)
+	assert.NotNil(t, trust.Roots)
 	assert.Equal(t, apps, trust.Applications)
 }
 
@@ -117,7 +117,7 @@ func TestLoadTrust_ExcludesSyncedForgedGoogleRoot(t *testing.T) {
 			require.NoError(t, err)
 
 			_, err = forged.Cert.Verify(x509.VerifyOptions{
-				Roots:     trust.Pool,
+				Roots:     trust.Roots,
 				KeyUsages: []x509.ExtKeyUsage{x509.ExtKeyUsageAny},
 			})
 			if tt.trusted {

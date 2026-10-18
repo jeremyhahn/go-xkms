@@ -82,21 +82,6 @@ func (p ApplicationPolicy) Configured() bool {
 	return len(p.AllowedApplications) > 0
 }
 
-// AttestedApplication returns the attestationApplicationId a verified key
-// description carries, or nil when it names none.
-//
-// The Keystore daemon writes it into softwareEnforced; a TEE-enforced copy is
-// read only when that is absent.
-func AttestedApplication(desc *xkms.AndroidKeyDescription) *xkms.AndroidAttestationApplicationID {
-	if desc == nil {
-		return nil
-	}
-	if appID := desc.SoftwareEnforced.AttestationApplicationID; appID != nil {
-		return appID
-	}
-	return desc.TeeEnforced.AttestationApplicationID
-}
-
 // Match checks the attested application against the allow-list and returns
 // the package name and hex signing digest that matched.
 //

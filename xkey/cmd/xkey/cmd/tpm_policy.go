@@ -60,7 +60,7 @@ var (
 	tpmPolicyDescription     string
 	tpmPolicyAutoUnseal      bool
 	tpmPolicyOff             bool
-	tpmPolicyUpdateBranch    int
+	tpmPolicyUpdateBranch    string
 	tpmPolicyReferenceValues string
 )
 
@@ -177,6 +177,8 @@ by ";":
   pcr=[BANK:]LIST   the PCRs in LIST of BANK (sha256 when omitted)
   auth_value        the object's password
   locality=LIST     the TPM localities (0-4) in LIST
+  name=NAME         the branch's name, used by update --branch
+                    (default branch-N, N counting from 1)
 
 LIST is comma-separated indices or ranges ("0,7" or "0-7"). Branches are
 tried in order when an object is used. --pcrs and --branch are mutually
@@ -186,7 +188,8 @@ exclusive.
 (it authorizes the policy's NV index).`,
 	Example: `  xkey tpm policy create boot --pcrs 0,7 --description "firmware and Secure Boot"
   xkey tpm policy create kernel --pcrs 0-9 --bank sha384
-  xkey tpm policy create strict --branch 'pcr=sha256:0,7;auth_value;locality=0'`,
+  xkey tpm policy create strict --branch 'pcr=sha256:0,7;auth_value;locality=0'
+  xkey tpm policy create boot --branch 'name=current;pcr=0,7' --branch 'name=next;pcr=0,7'`,
 	Args: cobra.ExactArgs(1),
 	RunE: runTPMPolicyCreate,
 }
@@ -229,13 +232,15 @@ is re-keyed; a revoked policy is approved again.
 Without --branch, every branch's PCR values are re-captured from the TPM,
 so the update runs after the change.
 
-With --branch (counted from 0) and --reference-values, only that branch is
+With --branch <name> and --reference-values, only the named branch is
 updated, to the PCR values the signed CoRIM predicts the platform will hold
 once the images it describes are booted, so the update runs before the
 change and the objects unseal unattended after it. The CoRIM must verify
-under the reference signer xkmsd is configured with.`,
+under the reference signer xkmsd is configured with. A policy with a
+"current" and a "next" branch approves the running image and the registered
+one at once: update "next" before the change, and both images unseal.`,
 	Example: `  xkey tpm policy update boot
-  xkey tpm policy update boot --branch 0 --reference-values bootloader-v2.corim`,
+  xkey tpm policy update boot --branch next --reference-values bootloader-v2.corim`,
 	Args: cobra.ExactArgs(1),
 	RunE: runTPMPolicyUpdate,
 }
@@ -330,13 +335,13 @@ func init() {
 	tpmPolicyCreateCmd.Flags().StringVar(&tpmPolicyPCRs, "pcrs", "", "PCR indices of a one-branch policy, e.g. 0,7 or 0-7")
 	tpmPolicyCreateCmd.Flags().StringVar(&tpmPolicyBank, "bank", "", "PCR bank of --pcrs: sha1, sha256, sha384 or sha512 (default sha256)")
 	tpmPolicyCreateCmd.Flags().StringArrayVar(&tpmPolicyBranchSpecs, "branch", nil,
-		"A policy branch, e.g. 'pcr=sha256:0,7;auth_value;locality=0' (repeatable)")
+		"A policy branch, e.g. 'name=current;pcr=sha256:0,7;auth_value;locality=0' (repeatable)")
 	tpmPolicyCreateCmd.Flags().StringVar(&tpmPolicyDescription, "description", "", "Free-text description of the policy")
 	tpmPolicyCreateCmd.Flags().BoolVar(&tpmPolicyAutoUnseal, "auto-unseal", false,
 		"Also make it the barrier auto-unseal policy (see 'tpm policy auto-unseal')")
 	tpmPolicyAutoUnsealCmd.Flags().BoolVar(&tpmPolicyOff, "off", false, "Clear the auto-unseal policy")
-	tpmPolicyUpdateCmd.Flags().IntVar(&tpmPolicyUpdateBranch, "branch", 0,
-		"Update only this branch, counted from 0 (needs --reference-values)")
+	tpmPolicyUpdateCmd.Flags().StringVar(&tpmPolicyUpdateBranch, "branch", "",
+		"Update only the named branch, e.g. next (needs --reference-values)")
 	tpmPolicyUpdateCmd.Flags().StringVar(&tpmPolicyReferenceValues, "reference-values", "",
 		"Signed CoRIM file the branch's PCR values are predicted from (needs --branch)")
 
@@ -413,7 +418,7 @@ func runTPMPolicyGet(cmd *cobra.Command, args []string) error {
 }
 
 func runTPMPolicyUpdate(cmd *cobra.Command, args []string) error {
-	if cmd.Flags().Changed("branch") != (tpmPolicyReferenceValues != "") {
+	if (tpmPolicyUpdateBranch != "") != (tpmPolicyReferenceValues != "") {
 		return xkms.ErrTPMPolicyBranchUpdate
 	}
 	if tpmPolicyReferenceValues == "" {
@@ -635,8 +640,8 @@ func renderTPMPolicy(out io.Writer, p *services.TPMPolicyInfo) error {
 	}
 	fmt.Fprintf(&b, "Auto-unseal:  %s\n", yesNo(p.AutoUnseal))
 	fmt.Fprintf(&b, "Objects:      %d\n", p.ObjectCount)
-	for i, branch := range p.Branches {
-		fmt.Fprintf(&b, "Branch %d:     %s (approved: %s)\n", i, branch.String(), yesNo(branch.Approved))
+	for _, branch := range p.Branches {
+		fmt.Fprintf(&b, "Branch:       %s (approved: %s)\n", branch.String(), yesNo(branch.Approved))
 		if branch.Reference != nil {
 			fmt.Fprintf(&b, "  Reference   %s\n", branch.Reference)
 		}
@@ -664,7 +669,7 @@ func renderTPMPolicy(out io.Writer, p *services.TPMPolicyInfo) error {
 func renderTPMPolicyVerification(out io.Writer, v *services.TPMPolicyVerification) error {
 	var b strings.Builder
 	fmt.Fprintf(&b, "Policy:    %s\n", v.Name)
-	for i, branch := range v.Branches {
+	for _, branch := range v.Branches {
 		state := "PCRs match the captured values"
 		if !branch.Match {
 			state = "PCRs changed: " + formatPCRList(branch.Mismatched)
@@ -673,7 +678,7 @@ func renderTPMPolicyVerification(out io.Writer, v *services.TPMPolicyVerificatio
 		if !branch.Approved {
 			approval = "not current (revoked or out of date)"
 		}
-		fmt.Fprintf(&b, "Branch %d:  %s; approval %s\n", i, state, approval)
+		fmt.Fprintf(&b, "Branch %s:  %s; approval %s\n", branch.Name, state, approval)
 		if branch.Reference != nil {
 			fmt.Fprintf(&b, "  Reference: %s\n", branch.Reference)
 		}

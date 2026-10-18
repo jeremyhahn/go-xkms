@@ -10,6 +10,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	xkmssdk "github.com/jeremyhahn/go-xkms/sdk/go"
+	"github.com/jeremyhahn/go-xkms/xkey/pkg/gui/services"
 )
 
 // Tests for the callbacks NewApp wires between services. Each test drives a
@@ -89,6 +90,22 @@ func TestNewApp_RemoteBackendFailureFallsBackToLocal(t *testing.T) {
 	require.NoError(t, err)
 	assert.True(t, status.Running, "the server is still connected")
 	assert.Zero(t, status.BackendCount, "no backend count when the listing failed")
+}
+
+func TestApp_Shutdown_DisconnectsTheServer(t *testing.T) {
+	app := newWiredApp(t)
+	srv := newBackendsServer(t, http.StatusOK, `{"backends":[]}`)
+	app.connectionService.SetContext(context.Background())
+	_, err := app.connectionService.Connect("rest", srv.Listener.Addr().String(), false, "", "")
+	require.NoError(t, err)
+	require.True(t, app.connectionService.IsConnected())
+
+	app.shutdown(context.Background())
+
+	assert.False(t, app.connectionService.IsConnected(), "shutdown must close the server connection")
+	assert.Equal(t, "disconnected", app.connectionService.GetConnectionInfo().State)
+	assert.ErrorIs(t, app.connectionService.Disconnect(), services.ErrServerNotConnected,
+		"nothing is left connected after shutdown")
 }
 
 func TestNewApp_FIDO2ToggleWithoutStorageFails(t *testing.T) {

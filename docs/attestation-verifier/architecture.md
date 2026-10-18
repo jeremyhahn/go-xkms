@@ -129,11 +129,41 @@ xkey reaches these only through the SDK aliases in
 `WithAttestationTrustStore`, `AttestationVerificationResult` and the
 `AttestationTrustLevel*` constants. The callers are:
 
-- `xkey/pkg/attestation/device.go:286` (`LoadTrust`, the pairing attestation
+- `xkey/pkg/attestation/device.go:260` (`LoadTrust`, the pairing attestation
   pool);
 - `xkey/cmd/xkey/cmd/device_attest.go:260`;
 - `xkey/cmd/xkey/cmd/device_enroll_phone_ca.go:73`;
 - `xkey/cmd/xkey/cmd/tpm_ek.go:401`.
+
+## Android device keys: the hardware bar
+
+`VerifyAndroidDeviceKey` (`android_device.go:67`) verifies a DER chain as a
+hardware-held device key against an `AndroidDeviceTrust`, which holds the
+roots and an `android.ApplicationMatcher`. It also moved out of xkey in
+go-xkms#1548. In order it calls:
+
+- `ParseDERChain` (`android_device.go:104`);
+- `android.VerifyKeyAttestation` with `android.DeviceVerifyOptions`
+  (`android/device.go:84`): the chain anchors in the roots, the key is at
+  least TEE-held, and boot is not reported unverified. No nonce is checked,
+  because the leaf carries the key's genesis challenge (#129);
+- `VerifiedTrustAnchor` (`android_device.go:122`): the anchor is read off the
+  verified path, so a certificate the peer appended can never be named as it;
+- `android.RequireAttestedBootState` (`android/device.go:95`): a
+  hardware-enforced `RootOfTrust` must be present, locked and VERIFIED;
+- `android.RequireAttestedKeyOrigin` (`android/device.go:115`): the
+  hardware-enforced claims must be `Origin` GENERATED and `Purpose` including
+  SIGN (#132);
+- `android.RequireAttestedApplication` (`android/device.go:131`): the
+  `attestationApplicationId` must satisfy the matcher (#1305).
+
+It returns an `AndroidDeviceKey` holding the chain, the description, the root
+of trust and the anchor. It makes no freshness claim; the caller proves
+liveness by having the key sign a live nonce. xkey's `VerifyDeviceAttestation`
+reaches it through `xkms.VerifyAndroidDeviceKey` and adds only the pairing
+protocol's checks: the protocol version, the genesis challenge, the key
+fingerprint and the transcript signature. Those stay in xkey because
+`pairingproto` imports the SDK.
 
 ## Component boundaries
 

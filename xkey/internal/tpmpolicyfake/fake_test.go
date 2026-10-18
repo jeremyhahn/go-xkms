@@ -96,7 +96,7 @@ func TestFake_VerifyDetectsDriftAndUpdateRecaptures(t *testing.T) {
 	v, err := f.TPMPolicyVerify(ctx, &transport.TPMPolicyRequest{Name: "boot"})
 	require.NoError(t, err)
 	assert.False(t, v.Match)
-	assert.Equal(t, []transport.TPMPolicyBranchVerification{{Mismatched: []uint{7}, Approved: true}}, v.Branches)
+	assert.Equal(t, []transport.TPMPolicyBranchVerification{{Name: "branch-1", Mismatched: []uint{7}, Approved: true}}, v.Branches)
 
 	_, err = f.TPMPolicyUpdate(ctx, &transport.TPMPolicyUpdateRequest{Name: "boot"})
 	require.NoError(t, err)
@@ -112,24 +112,28 @@ func TestFake_VerifyDetectsDriftAndUpdateRecaptures(t *testing.T) {
 func TestFake_UpdateBranchRecordsTheReference(t *testing.T) {
 	f := &Fake{}
 	ctx := context.Background()
-	create(t, f, "boot", 0, 7)
-	branch := 0
+	current := pcrBranch(0, 7)
+	current.Name = "current"
+	next := pcrBranch(0, 7)
+	next.Name = "next"
+	_, err := f.TPMPolicyCreate(ctx, &transport.TPMPolicyCreateRequest{Name: "boot", Branches: []transport.TPMPolicyBranch{current, next}})
+	require.NoError(t, err)
 	corim := []byte{0xd2, 0x84}
 
-	p, err := f.TPMPolicyUpdate(ctx, &transport.TPMPolicyUpdateRequest{Name: "boot", Branch: &branch, ReferenceValues: corim})
+	p, err := f.TPMPolicyUpdate(ctx, &transport.TPMPolicyUpdateRequest{Name: "boot", Branch: "next", ReferenceValues: corim})
 	require.NoError(t, err)
 	digest := sha256.Sum256(corim)
-	assert.Equal(t, &transport.TPMPolicyReference{Digest: digest[:]}, p.Branches[0].Reference)
+	assert.Nil(t, p.Branches[0].Reference, "only the named branch is updated")
+	assert.Equal(t, &transport.TPMPolicyReference{Digest: digest[:]}, p.Branches[1].Reference)
 
 	p, err = f.TPMPolicyUpdate(ctx, &transport.TPMPolicyUpdateRequest{Name: "boot"})
 	require.NoError(t, err)
-	assert.Nil(t, p.Branches[0].Reference, "a live capture drops the reference")
+	assert.Nil(t, p.Branches[1].Reference, "a live capture drops the reference")
 
-	_, err = f.TPMPolicyUpdate(ctx, &transport.TPMPolicyUpdateRequest{Name: "boot", Branch: &branch})
+	_, err = f.TPMPolicyUpdate(ctx, &transport.TPMPolicyUpdateRequest{Name: "boot", Branch: "next"})
 	assert.ErrorIs(t, err, xkms.ErrTPMPolicyBranchUpdate)
-	missing := 1
-	_, err = f.TPMPolicyUpdate(ctx, &transport.TPMPolicyUpdateRequest{Name: "boot", Branch: &missing, ReferenceValues: corim})
-	assert.ErrorIs(t, err, xkms.ErrTPMPolicyNoSuchBranch)
+	_, err = f.TPMPolicyUpdate(ctx, &transport.TPMPolicyUpdateRequest{Name: "boot", Branch: "branch-1", ReferenceValues: corim})
+	assert.ErrorIs(t, err, xkms.ErrTPMPolicyNoSuchBranch, "a named branch keeps its name")
 }
 
 func TestFake_RevokeWithdrawsApprovalAndUnknownPolicyFails(t *testing.T) {

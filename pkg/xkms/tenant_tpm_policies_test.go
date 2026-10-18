@@ -86,14 +86,14 @@ func TestTenantTPMPolicies_BranchUpdate(t *testing.T) {
 	p, err := NewTenantTPMPolicies(policies, "")
 	require.NoError(t, err)
 	ctx := context.Background()
-	branch := 0
+	branch := "next"
 
-	_, err = p.TPMPolicyUpdate(ctx, &transport.TPMPolicyUpdateRequest{Name: "boot", Branch: &branch})
+	_, err = p.TPMPolicyUpdate(ctx, &transport.TPMPolicyUpdateRequest{Name: "boot", Branch: branch})
 	require.ErrorIs(t, err, ErrTPMPolicyBranchUpdate, "a branch without reference values")
 	_, err = p.TPMPolicyUpdate(ctx, &transport.TPMPolicyUpdateRequest{Name: "boot", ReferenceValues: []byte{0xd2}})
 	require.ErrorIs(t, err, ErrTPMPolicyBranchUpdate, "reference values without a branch")
 
-	_, err = p.TPMPolicyUpdate(ctx, &transport.TPMPolicyUpdateRequest{Name: "boot", Branch: &branch, ReferenceValues: []byte{0xd2}})
+	_, err = p.TPMPolicyUpdate(ctx, &transport.TPMPolicyUpdateRequest{Name: "boot", Branch: branch, ReferenceValues: []byte{0xd2}})
 	require.ErrorIs(t, err, tpmpolicy.ErrNoReferenceSigner, "the branch update is the service's, which trusts no signer here")
 }
 

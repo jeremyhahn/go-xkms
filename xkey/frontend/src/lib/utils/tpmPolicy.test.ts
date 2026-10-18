@@ -14,6 +14,10 @@ describe('tpmPolicy helpers', () => {
       ],
     });
     expect(draftToBranch({ ...draft, pcr: false, locality: false })).toEqual({ conditions: [{ type: 'auth_value' }] });
+    expect(draftToBranch({ ...draft, name: ' next ', authValue: false, locality: false })).toEqual({
+      name: 'next',
+      conditions: [{ type: 'pcr', bank: 'sha256', pcrs: [0, 7] }],
+    });
   });
 
   it('reports why a draft cannot be sent', () => {

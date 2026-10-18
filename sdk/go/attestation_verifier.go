@@ -72,4 +72,34 @@ var (
 	ErrAttestationTrustStoreQuery = attestation.ErrTrustStoreQuery
 	// ErrAttestationEmptyCertificateChain means an empty chain was supplied.
 	ErrAttestationEmptyCertificateChain = attestation.ErrEmptyCertificateChain
+	// ErrAttestationCertificateParseFailed means a certificate in a DER chain
+	// could not be parsed.
+	ErrAttestationCertificateParseFailed = attestation.ErrCertificateParseFailed
+	// ErrAttestationNoTrustAnchors means no trust anchors were supplied.
+	ErrAttestationNoTrustAnchors = attestation.ErrNoTrustAnchors
+	// ErrAttestationChainNotAnchored means the chain does not reach a
+	// trusted anchor.
+	ErrAttestationChainNotAnchored = attestation.ErrChainNotAnchored
 )
+
+// AndroidDeviceTrust is the trust a hardware-held Android device key is
+// verified against: the attestation roots and the application policy.
+type AndroidDeviceTrust = attestation.AndroidDeviceTrust
+
+// AndroidDeviceKey is a verified Android device-key attestation.
+type AndroidDeviceKey = attestation.AndroidDeviceKey
+
+// VerifyAndroidDeviceKey verifies a DER Android key-attestation chain as a
+// hardware-held device key: anchored, TEE or StrongBox, generated, able to
+// sign, locked and verified boot, and an allowed application.
+var VerifyAndroidDeviceKey = attestation.VerifyAndroidDeviceKey
+
+// ParseAttestationDERChain parses a DER certificate chain, leaf first.
+var ParseAttestationDERChain = attestation.ParseDERChain
+
+// VerifiedAttestationTrustAnchor verifies a chain against roots and
+// returns the root the verified path ends in.
+var VerifiedAttestationTrustAnchor = attestation.VerifiedTrustAnchor
+
+// FormatAttestationTrustAnchor names a trust anchor for display.
+var FormatAttestationTrustAnchor = attestation.FormatTrustAnchor

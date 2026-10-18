@@ -271,6 +271,12 @@ func pcrBranch() Branch {
 	return PCRBranch("sha256", testPCR)
 }
 
+// named returns b named name.
+func named(b Branch, name string) Branch {
+	b.Name = name
+	return b
+}
+
 // authValueBranch is a branch of one auth_value condition.
 func authValueBranch() Branch {
 	return Branch{Conditions: []Condition{{Type: ConditionAuthValue}}}

@@ -181,6 +181,13 @@ type Condition struct {
 // Branch is one branch of a policy: the AND of its conditions. It has at most
 // one condition of each type.
 type Branch struct {
+	// Name identifies the branch within its policy, so one branch can be
+	// updated on its own (for example "next", approved for the image an
+	// update installs while "current" still holds the booted one). A
+	// branch created without a name is named branch-N, N its position
+	// counted from 1.
+	Name string `json:"name"`
+
 	Conditions []Condition `json:"conditions"`
 
 	// Reference names the signed reference values the branch's pcr
@@ -242,6 +249,16 @@ type Policy struct {
 
 	CreatedAt time.Time `json:"created_at"`
 	UpdatedAt time.Time `json:"updated_at"`
+}
+
+// branch returns the branch of p named name, or nil when p has none.
+func (p *Policy) branch(name string) *Branch {
+	for i := range p.Branches {
+		if p.Branches[i].Name == name {
+			return &p.Branches[i]
+		}
+	}
+	return nil
 }
 
 // approved reports whether every branch holds an approval. Approvals are
@@ -318,6 +335,9 @@ type CreatePolicyRequest struct {
 // BranchVerification compares one branch's captured PCR values with the
 // live ones.
 type BranchVerification struct {
+	// Name is the branch's name.
+	Name string
+
 	// Match reports whether the branch's pcr condition, if it has one,
 	// still holds its captured values, and Mismatched lists the PCRs that do
 	// not, ascending.

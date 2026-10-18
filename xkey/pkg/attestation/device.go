@@ -16,7 +16,6 @@ package attestation
 import (
 	"context"
 	"crypto/rand"
-	"crypto/x509"
 	"encoding/hex"
 	"errors"
 	"fmt"
@@ -242,32 +241,11 @@ type Verified struct {
 	BootState   string
 }
 
-// Trust is the Android hardware-attestation material a decision is made
-// against.
-//
-// It is a single pool, deliberately. An earlier version carried a flat list of
-// roots beside the pool so the anchor could be looked up by fingerprint; the
-// list was built from the store's certificates for EVERY purpose while the
-// pool held the Android-hardware ones alone, so a peer could append a
-// certificate stored under an unrelated purpose and have it named as the
-// anchor. Verification succeeded through the genuine root and the lookup
-// selected the appended certificate. Two sets that must agree are two sets
-// that can disagree, so there is now only one, and the anchor is read back out
-// of the verification instead of being inferred — see VerifiedTrustAnchor.
-//
-// Applications is the other half of what a device is judged against: which
-// application builds may hold a device key at all (#1305). The pool alone says
-// the key lives in some locked handset's secure hardware; it says nothing about
-// WHICH application on that handset generated it, so without the allow-list
-// any app on any genuine handset passes. The zero value allow-lists nothing,
-// and every attestation is refused.
-type Trust struct {
-	Pool         *x509.CertPool
-	Applications pairing.ApplicationPolicy
-}
-
 // LoadTrust builds the Android hardware-attestation trust material from a
-// trust store merged with the embedded roots.
+// trust store merged with the embedded roots, and the application
+// allow-list (#1305): the pool alone says the key lives in some locked
+// handset's secure hardware, the allow-list says which application builds
+// on that handset may hold it.
 //
 // Load it BEFORE asking a phone for an attestation, and treat failure as
 // fatal. Discovering that no anchor is available only after the challenge has
@@ -279,7 +257,7 @@ type Trust struct {
 // The same holds for apps, the application allow-list: an empty one refuses
 // here with pairing.ErrApplicationPolicyUnconfigured, before any phone is
 // asked for evidence that could only be refused (#1305).
-func LoadTrust(store truststore.TrustStore, apps pairing.ApplicationPolicy) (*Trust, error) {
+func LoadTrust(store truststore.TrustStore, apps pairing.ApplicationPolicy) (*xkms.AndroidDeviceTrust, error) {
 	if !apps.Configured() {
 		return nil, &SentinelCauseError{Sentinel: ErrDeviceAttestVerifyFailed, Cause: pairing.ErrApplicationPolicyUnconfigured}
 	}
@@ -291,7 +269,7 @@ func LoadTrust(store truststore.TrustStore, apps pairing.ApplicationPolicy) (*Tr
 		return nil, fmt.Errorf("%w: %w", ErrDeviceAttestVerifyFailed, err)
 	}
 
-	return &Trust{Pool: pool, Applications: apps}, nil
+	return &xkms.AndroidDeviceTrust{Roots: pool, Applications: apps}, nil
 }
 
 // Challenge is what the verifier committed to when it issued a challenge: the
@@ -338,58 +316,6 @@ func (c *Challenge) Params() *pairingproto.LocalAttestDeviceParams {
 	}
 }
 
-// VerifyOptions is the policy every device attestation is judged against.
-//
-// It exists as a function because two of these fields are enforced inside the
-// SDK against material a caller's fixtures cannot easily construct, so a test
-// can pin WHICH policy is requested even where it cannot exercise the refusal.
-// The refusals themselves are covered by pkg/attestation/android's own suite
-// (ErrInsufficientSecurityLevel, ErrUnverifiedBoot).
-func VerifyOptions(pool *x509.CertPool) *xkms.AndroidVerifyOptions {
-	return &xkms.AndroidVerifyOptions{
-		TrustedRoots: pool,
-
-		// ExpectedNonce is deliberately UNSET, and this is the whole of the
-		// #129 change to this call.
-		//
-		// It compares the live challenge against the attestationChallenge
-		// baked into the leaf. That worked only while the device generated a
-		// NEW key per pairing, because Android fixes the challenge at key
-		// generation. Under the persistent-key model the leaf carries the
-		// key's GENESIS challenge, which is fixed for the life of the key, so
-		// comparing it against this exchange's nonce could only ever fail.
-		//
-		// Freshness has not been dropped, it has moved: the device proves it
-		// by SIGNING this exchange's nonce with the very key this chain
-		// certifies. That proof is strictly stronger than the old one — the
-		// old comparison showed a certificate had been minted for this nonce
-		// at some point, the new one shows the key's holder is on this
-		// connection now — and unlike the old one it can be repeated without
-		// rotating the device identity.
-		//
-		// The genesis challenge is still checked, for what it can still say:
-		// that the key was generated to be an xkey device key at all.
-		// TrustedRoots must stay non-nil; a nil there skips chain verification
-		// outright, which is a different and much larger hole, and the caller
-		// guards it.
-
-		// The same bar `device attest-device` enforces, and that alignment is
-		// the point rather than a new policy: without it pairing ADMITTED a
-		// device that its own first re-attestation would refuse, so the weaker
-		// gate was the one establishing the binding. A software-protected key
-		// is not a phone acting as an HSM.
-		MinSecurityLevel: xkms.AndroidSecurityLevelTrustedEnvironment,
-
-		// Refuses an explicitly unverified boot state. Note what it does NOT
-		// do: a chain whose extension carries no RootOfTrust at all passes it,
-		// because the SDK's check is "if present, it must be verified". That
-		// is the SDK's documented contract, so the requirement that the claim
-		// be PRESENT is enforced at the point of consumption instead, in
-		// RequireAttestedBootState below.
-		VerifyBootState: true,
-	}
-}
-
 // VerifyDeviceAttestation is the security decision, separated from the RPC
 // that fetches the evidence so it can be exercised directly.
 //
@@ -404,12 +330,14 @@ func VerifyOptions(pool *x509.CertPool) *xkms.AndroidVerifyOptions {
 //  3. the attested key's genesis challenge marks it as generated for this
 //     protocol (see VerifyGenesisChallenge below);
 //  4. the attested key's TEE-enforced authorization list says the key was
-//     GENERATED inside secure hardware and is authorized to SIGN (#132) —
-//     see RequireAttestedKeyOrigin;
+//     GENERATED inside secure hardware and is authorized to SIGN (#132);
 //  5. the attestationApplicationId names an allow-listed package signed by an
-//     allow-listed key (#1305) — see RequireAttestedApplication;
+//     allow-listed key (#1305);
 //  6. the device produced a live signature, by that same attested key, over a
 //     transcript carrying this exchange's nonce, purpose and channel binding.
+//
+// (2), (4) and (5) are the SDK's VerifyAndroidDeviceKey; (1), (3) and (6)
+// belong to the pairing protocol and are checked here.
 //
 // (2), (3) and (4) together say the key lives in that handset's secure
 // hardware and was made to be an xkey device key there, never imported into
@@ -424,9 +352,9 @@ func VerifyOptions(pool *x509.CertPool) *xkms.AndroidVerifyOptions {
 func VerifyDeviceAttestation(
 	result *pairingproto.LocalAttestDeviceResult,
 	challenge *Challenge,
-	trust *Trust,
+	trust *xkms.AndroidDeviceTrust,
 ) (*Verified, error) {
-	if trust == nil || trust.Pool == nil {
+	if trust == nil || trust.Roots == nil {
 		return nil, fmt.Errorf("%w: no attestation trust material", ErrDeviceAttestVerifyFailed)
 	}
 	if result == nil {
@@ -435,7 +363,7 @@ func VerifyDeviceAttestation(
 	if challenge == nil || len(challenge.Nonce) == 0 {
 		return nil, fmt.Errorf("%w: no challenge to verify freshness against", ErrDeviceAttestVerifyFailed)
 	}
-	if !trust.Applications.Configured() {
+	if trust.Applications == nil {
 		return nil, &SentinelCauseError{Sentinel: ErrDeviceAttestVerifyFailed, Cause: pairing.ErrApplicationPolicyUnconfigured}
 	}
 
@@ -448,45 +376,23 @@ func VerifyDeviceAttestation(
 			ErrDeviceAttestVerifyFailed, pairingproto.ErrAttestProtocolDowngrade, result.ProtocolVersion)
 	}
 
-	chain, err := ParseDERChain(result.CertificateChain)
+	// The hardware policy: anchored, TEE or StrongBox, generated, able to
+	// sign, locked and verified boot, an allowed application. The anchor it
+	// reports is the one the chain verified UNDER, never chain[len-1], which
+	// the peer chooses (#95); it is for DISPLAY only, because an anchor is a
+	// vendor CA shared by every handset attesting under it.
+	key, err := xkms.VerifyAndroidDeviceKey(result.CertificateChain, trust)
 	if err != nil {
 		return nil, fmt.Errorf("%w: %w", ErrDeviceAttestVerifyFailed, err)
 	}
-
-	desc, err := xkms.VerifyAndroidKeyAttestation(chain, VerifyOptions(trust.Pool))
-	if err != nil {
-		return nil, fmt.Errorf("%w: %w", ErrDeviceAttestVerifyFailed, err)
-	}
+	chain, desc, rot := key.Chain, key.Description, key.RootOfTrust
 
 	// The genesis challenge, read from the SIGNED extension. Not a freshness
-	// value — see VerifyOptions — but it does establish that the key was
-	// created for this protocol, so a chain minted for some unrelated Android
-	// attestation cannot be presented here.
+	// value — see xkms.AndroidDeviceVerifyOptions — but it does establish
+	// that the key was created for this protocol, so a chain minted for some
+	// unrelated Android attestation cannot be presented here.
 	if err := pairingproto.VerifyGenesisChallenge(desc.AttestationChallenge); err != nil {
 		return nil, fmt.Errorf("%w: %w", ErrDeviceAttestVerifyFailed, err)
-	}
-
-	// Which anchor the chain verified UNDER, taken from the verification
-	// itself. Never chain[len-1] — that is the value #95 found being
-	// persisted, and it is chosen by the peer. It is used for DISPLAY only:
-	// the persisted identity is the attested key below, because an anchor is a
-	// vendor CA shared by every handset attesting under it.
-	matchedRoot, err := VerifiedTrustAnchor(chain, trust.Pool)
-	if err != nil {
-		return nil, err
-	}
-
-	rot, err := RequireAttestedBootState(desc)
-	if err != nil {
-		return nil, err
-	}
-
-	if err := RequireAttestedKeyOrigin(desc); err != nil {
-		return nil, err
-	}
-
-	if err := RequireAttestedApplication(desc, trust.Applications); err != nil {
-		return nil, err
 	}
 
 	// The device identity: the SHA-256 of the verified leaf's
@@ -512,7 +418,7 @@ func VerifyDeviceAttestation(
 
 	// Claims taken from the verified extension, not from the peer's JSON.
 	return &Verified{
-		TrustAnchor: FormatTrustAnchor(matchedRoot),
+		TrustAnchor: xkms.FormatAttestationTrustAnchor(key.TrustAnchor),
 		BootState:   rot.VerifiedBootState.String(),
 		Result: &Result{
 			AttestationTime:   time.Now().UTC(),
@@ -542,7 +448,7 @@ func AttestOverSession(
 	ctx context.Context,
 	transport pairingproto.Transport,
 	session *bootstrap.NoiseSession,
-	trust *Trust,
+	trust *xkms.AndroidDeviceTrust,
 	purpose string,
 	logger *slog.Logger,
 ) (*Verified, error) {
@@ -642,7 +548,7 @@ func VerifyReattestation(
 	transport pairingproto.Transport,
 	session *bootstrap.NoiseSession,
 	binding DeviceBinding,
-	trust *Trust,
+	trust *xkms.AndroidDeviceTrust,
 	logger *slog.Logger,
 ) error {
 	// Before the proof is requested, not after it is judged: a record with
@@ -676,7 +582,7 @@ func VerifyReattestation(
 // holding a stale pool would keep refusing a device the machine now trusts.
 func NewLiveAttestor(
 	binding DeviceBinding,
-	loadTrust func() (*Trust, error),
+	loadTrust func() (*xkms.AndroidDeviceTrust, error),
 	logger *slog.Logger,
 ) pairingproto.LiveAttestFunc {
 	if logger == nil {
@@ -720,186 +626,4 @@ func NewLiveAttestor(
 
 		return binding.ValidateAttestedKeyMatch(verified.Result.DeviceFingerprint)
 	}
-}
-
-// RequireAttestedBootState refuses an attestation that does not actually make a
-// boot-state claim, or makes an unacceptable one.
-//
-// AndroidVerifyOptions.VerifyBootState is "if a RootOfTrust is present, it must
-// say verified". Absence therefore PASSES it, and an earlier version of this
-// check turned that into a successful pairing: the CLI printed
-// "Chain Status: VERIFIED", the record stored a security level and an
-// attestation timestamp, and the device was admitted having claimed nothing
-// whatsoever about its boot chain. A phone-as-HSM pairing is exactly the case
-// where that claim is the product.
-//
-// The check lives at the point of CONSUMPTION rather than in
-// pkg/attestation/android because absence versus refusal is the consumer's
-// policy: the SDK's contract is deliberately "verify what is claimed", other
-// callers depend on it, and widening it would change every one of them.
-//
-// DeviceLocked is required for the same reason. An unlocked bootloader can run
-// an arbitrary image, so "verified boot" from one is a statement about a chain
-// that can be replaced at will.
-func RequireAttestedBootState(desc *xkms.AndroidKeyDescription) (*xkms.AndroidRootOfTrust, error) {
-	rot := desc.TeeEnforced.RootOfTrust
-	if rot == nil {
-		return nil, fmt.Errorf(
-			"%w: the attestation carries no root of trust, so it makes no claim about the device's boot chain",
-			ErrDeviceAttestVerifyFailed)
-	}
-	if !rot.DeviceLocked {
-		return nil, fmt.Errorf(
-			"%w: the device's bootloader is unlocked, so its boot chain can be replaced at will",
-			ErrDeviceAttestVerifyFailed)
-	}
-	if rot.VerifiedBootState != xkms.AndroidVerifiedBootVerified {
-		return nil, fmt.Errorf("%w: the device reports boot state %q, not verified",
-			ErrDeviceAttestVerifyFailed, rot.VerifiedBootState.String())
-	}
-	return rot, nil
-}
-
-// RequireAttestedKeyOrigin refuses an attestation whose TEE-enforced claims
-// do not establish that the attested key was generated inside secure
-// hardware and is authorized to sign (#132).
-//
-// TEE-enforced only, never SoftwareEnforced. A SoftwareEnforced claim is
-// written by the calling application -- the same reason
-// RequireAttestedBootState reads RootOfTrust from TeeEnforced rather than
-// trusting the app's word about boot state.
-//
-// Origin must be GENERATED. Everything else this file verifies -- the chain,
-// the security level, the genesis challenge, the live signature -- is
-// equally consistent with a key generated elsewhere and imported into the
-// TEE; only this claim rules that out. Purpose must include SIGN, or the
-// key's own enforcement domain never authorized the one operation this
-// protocol performs with it.
-//
-// A TEE-enforced authorization list making neither claim -- an absent
-// extension, or a fixture built before #132 -- fails closed:
-// android.parseAuthorizationList's default for an unclaimed Origin is
-// OriginUnknown, never OriginGenerated's zero value by coincidence, and an
-// empty Purpose set contains SIGN no more than any other value.
-func RequireAttestedKeyOrigin(desc *xkms.AndroidKeyDescription) error {
-	tee := desc.TeeEnforced
-
-	if tee.Origin != xkms.AndroidOriginGenerated {
-		return fmt.Errorf("%w: %w (got %d, want %d)",
-			ErrDeviceAttestVerifyFailed, ErrAttestationKeyOriginNotGenerated,
-			tee.Origin, xkms.AndroidOriginGenerated)
-	}
-
-	if !purposesIncludeSign(tee.Purpose) {
-		return fmt.Errorf("%w: %w (got %v)",
-			ErrDeviceAttestVerifyFailed, ErrAttestationKeyPurposeNotSign, tee.Purpose)
-	}
-
-	return nil
-}
-
-// RequireAttestedApplication refuses an attestation whose
-// attestationApplicationId does not name an allow-listed package signed by an
-// allow-listed key (#1305).
-//
-// Every other check in VerifyDeviceAttestation is about the handset: its
-// secure hardware, its boot chain, where its key was made. None of them says
-// which application asked for the key, so without this check any app on any
-// locked Android handset -- a stranger's app, or a repackaged xkey signed with
-// someone else's key -- produces evidence that passes. The identity is written
-// by the Keystore daemon, not by the calling app, and the signing digest is
-// what makes a package name more than a claim.
-//
-// The match is pairing.ApplicationPolicy.Match, the one implementation LDevID
-// enrollment applies as well.
-func RequireAttestedApplication(desc *xkms.AndroidKeyDescription, apps pairing.ApplicationPolicy) error {
-	if _, _, err := apps.Match(pairing.AttestedApplication(desc)); err != nil {
-		return &SentinelCauseError{Sentinel: ErrDeviceAttestVerifyFailed, Cause: err}
-	}
-	return nil
-}
-
-// purposesIncludeSign reports whether purposes contains
-// xkms.AndroidPurposeSign.
-func purposesIncludeSign(purposes []int) bool {
-	for _, p := range purposes {
-		if p == xkms.AndroidPurposeSign {
-			return true
-		}
-	}
-	return false
-}
-
-// VerifiedTrustAnchor returns the trust anchor x509 ACTUALLY used to verify the
-// chain, read out of the chain it built, rather than inferred from the last
-// certificate the peer sent.
-//
-// The distinction is the whole point. x509 verification proves the leaf chains
-// to some certificate in the pool; it constrains nothing about what follows
-// that anchor in the presented slice, so a valid chain with anything appended
-// still verifies. Asking the verifier which anchor it used cannot be fooled by
-// an appended certificate and cannot drift from the pool, because there is no
-// second list to keep in step with it.
-//
-// The options MUST mirror the ones android.VerifyKeyAttestation verifies with
-// — same roots, same intermediates, ExtKeyUsageAny — or this would report the
-// anchor of a different verification than the one that was accepted.
-func VerifiedTrustAnchor(chain []*x509.Certificate, pool *x509.CertPool) (*x509.Certificate, error) {
-	if len(chain) == 0 {
-		return nil, fmt.Errorf("%w: empty certificate chain", ErrDeviceAttestVerifyFailed)
-	}
-
-	intermediates := x509.NewCertPool()
-	for _, cert := range chain[1:] {
-		intermediates.AddCert(cert)
-	}
-
-	built, err := chain[0].Verify(x509.VerifyOptions{
-		Roots:         pool,
-		Intermediates: intermediates,
-		KeyUsages:     []x509.ExtKeyUsage{x509.ExtKeyUsageAny},
-	})
-	if err != nil {
-		return nil, fmt.Errorf("%w: %w", ErrDeviceAttestVerifyFailed, err)
-	}
-	if len(built) == 0 || len(built[0]) == 0 {
-		return nil, fmt.Errorf("%w: verification returned no chain", ErrDeviceAttestVerifyFailed)
-	}
-
-	verified := built[0]
-	return verified[len(verified)-1], nil
-}
-
-// ParseDERChain parses a DER certificate chain as it arrives on the wire.
-//
-// It was written out separately in the CLI and the GUI, which is the same
-// duplication this file exists to end.
-func ParseDERChain(derChain [][]byte) ([]*x509.Certificate, error) {
-	if len(derChain) == 0 {
-		return nil, xkms.ErrAttestationEmptyCertificateChain
-	}
-
-	chain := make([]*x509.Certificate, 0, len(derChain))
-	for i, der := range derChain {
-		cert, err := x509.ParseCertificate(der)
-		if err != nil {
-			return nil, fmt.Errorf("%w: certificate %d: %w", ErrDeviceAttestVerifyFailed, i, err)
-		}
-		chain = append(chain, cert)
-	}
-	return chain, nil
-}
-
-// FormatTrustAnchor renders a trust anchor for display.
-func FormatTrustAnchor(cert *x509.Certificate) string {
-	if cert == nil {
-		return "unknown"
-	}
-	if cert.Subject.CommonName != "" {
-		return cert.Subject.CommonName
-	}
-	if len(cert.Subject.Organization) > 0 {
-		return cert.Subject.Organization[0]
-	}
-	return cert.Subject.String()
 }

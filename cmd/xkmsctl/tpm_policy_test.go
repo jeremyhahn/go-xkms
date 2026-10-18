@@ -293,13 +293,14 @@ func TestTPMPolicyUpdateCmd_FromReferenceValues(t *testing.T) {
 	corim := filepath.Join(t.TempDir(), "boot.corim")
 	require.NoError(t, os.WriteFile(corim, []byte{0xd2, 0x84}, 0o600))
 	mock := &mockTPMClient{policy: &client.TPMPolicy{Name: "boot", Branches: []client.TPMPolicyBranch{{
+		Name: "next", Conditions: client.TPMPolicyPCRBranch("sha256", []uint{7}).Conditions,
 		Reference: &client.TPMPolicyReference{ID: "boot-image-v2", Signer: "Example Provider", Digest: []byte{0xab, 0xcd}},
 	}}}}
 
-	out, code := runTPMCmd(t, mock, tpmPolicyUpdateCmd, []string{"boot"}, map[string]string{"branch": "1", "reference-values": corim})
+	out, code := runTPMCmd(t, mock, tpmPolicyUpdateCmd, []string{"boot"}, map[string]string{"branch": "next", "reference-values": corim})
 	assert.Equal(t, -1, code)
-	branch := 1
-	assert.Equal(t, &client.TPMPolicyUpdateRequest{Name: "boot", Branch: &branch, ReferenceValues: []byte{0xd2, 0x84}}, mock.requests["update"])
+	assert.Equal(t, &client.TPMPolicyUpdateRequest{Name: "boot", Branch: "next", ReferenceValues: []byte{0xd2, 0x84}}, mock.requests["update"])
+	assert.Contains(t, out, "Branch:      name=next;pcr=sha256:7")
 	assert.Contains(t, out, "Reference: boot-image-v2 signed by Example Provider, sha256 abcd")
 }
 
@@ -308,7 +309,7 @@ func TestTPMPolicyUpdateCmd_FromReferenceValues(t *testing.T) {
 func TestTPMPolicyUpdateCmd_UnreadableReferenceValues(t *testing.T) {
 	mock := &mockTPMClient{policy: &client.TPMPolicy{Name: "boot"}}
 	missing := filepath.Join(t.TempDir(), "missing.corim")
-	_, code := runTPMCmd(t, mock, tpmPolicyUpdateCmd, []string{"boot"}, map[string]string{"branch": "0", "reference-values": missing})
+	_, code := runTPMCmd(t, mock, tpmPolicyUpdateCmd, []string{"boot"}, map[string]string{"branch": "next", "reference-values": missing})
 	assert.Equal(t, 1, code)
 	assert.Empty(t, mock.requests)
 }
@@ -317,10 +318,10 @@ func TestTPMPolicyUpdateCmd_UnreadableReferenceValues(t *testing.T) {
 // branch's live PCRs match and it is approved.
 func TestTPMPolicyVerifyCmd(t *testing.T) {
 	out, code := runTPMCmd(t, &mockTPMClient{verification: &client.TPMPolicyVerifyResponse{
-		Name: "boot", Match: true, Approved: true, Branches: []client.TPMPolicyBranchVerification{{Match: true, Approved: true}},
+		Name: "boot", Match: true, Approved: true, Branches: []client.TPMPolicyBranchVerification{{Name: "current", Match: true, Approved: true}},
 	}}, tpmPolicyVerifyCmd, []string{"boot"}, nil)
 	assert.Equal(t, -1, code)
-	assert.Contains(t, out, "Branch 0: PCRs match, approved: true")
+	assert.Contains(t, out, "Branch current: PCRs match, approved: true")
 	assert.Contains(t, out, "matches the live PCR values")
 
 	out, code = runTPMCmd(t, &mockTPMClient{verification: &client.TPMPolicyVerifyResponse{

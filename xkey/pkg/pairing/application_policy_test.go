@@ -129,23 +129,6 @@ func TestApplicationPolicy_ConsidersEveryEntryForAPackage(t *testing.T) {
 	assert.Equal(t, appPolicyDigest, digest)
 }
 
-func TestAttestedApplication_PrefersSoftwareEnforced(t *testing.T) {
-	sw := attestedApp(t, testPackage, appPolicyDigest)
-	tee := attestedApp(t, "com.example.tee", appPolicyDigest)
-
-	desc := &xkms.AndroidKeyDescription{}
-	desc.SoftwareEnforced.AttestationApplicationID = sw
-	desc.TeeEnforced.AttestationApplicationID = tee
-	assert.Same(t, sw, AttestedApplication(desc))
-
-	desc.SoftwareEnforced.AttestationApplicationID = nil
-	assert.Same(t, tee, AttestedApplication(desc))
-
-	desc.TeeEnforced.AttestationApplicationID = nil
-	assert.Nil(t, AttestedApplication(desc))
-	assert.Nil(t, AttestedApplication(nil))
-}
-
 func TestApplicationPolicy_YAMLShape(t *testing.T) {
 	const doc = `
 allowed_applications:

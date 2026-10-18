@@ -17,6 +17,7 @@ import (
 	"bytes"
 	"crypto/sha256"
 	"slices"
+	"strconv"
 	"strings"
 
 	"github.com/google/go-tpm/tpm2"
@@ -29,6 +30,9 @@ const (
 
 	// maxDescription bounds a policy description, in bytes.
 	maxDescription = 4096
+
+	// maxBranchName bounds a branch name, in bytes.
+	maxBranchName = 64
 )
 
 // conditionSpec is what the service does with one condition type: normalize
@@ -76,20 +80,48 @@ func refuseOperands(c Condition, allowed ...string) error {
 }
 
 // validateBranches validates requested branches and returns them in stored
-// form: every condition normalized, nothing captured yet.
+// form: every branch named, every condition normalized, nothing captured yet.
 func validateBranches(branches []Branch) ([]Branch, error) {
 	if len(branches) == 0 {
 		return nil, ErrNoBranches
 	}
 	out := make([]Branch, len(branches))
+	seen := make(map[string]bool, len(branches))
 	for i, b := range branches {
+		name := b.Name
+		if name == "" {
+			name = "branch-" + strconv.Itoa(i+1)
+		}
+		if !validBranchName(name) {
+			return nil, &InvalidBranchError{Branch: name, Err: ErrInvalidBranchName}
+		}
+		if seen[name] {
+			return nil, &InvalidBranchError{Branch: name, Err: ErrDuplicateBranch}
+		}
+		seen[name] = true
 		conditions, err := validateConditions(b.Conditions)
 		if err != nil {
-			return nil, &InvalidBranchError{Branch: i, Err: err}
+			return nil, &InvalidBranchError{Branch: name, Err: err}
 		}
-		out[i] = Branch{Conditions: conditions}
+		out[i] = Branch{Name: name, Conditions: conditions}
 	}
 	return out, nil
+}
+
+// validBranchName reports whether name is 1 to maxBranchName letters,
+// digits, '.', '_' or '-': nothing a CLI branch spec or a URL needs escaped.
+func validBranchName(name string) bool {
+	if name == "" || len(name) > maxBranchName {
+		return false
+	}
+	for _, r := range name {
+		switch {
+		case r >= 'a' && r <= 'z', r >= 'A' && r <= 'Z', r >= '0' && r <= '9', r == '.', r == '_', r == '-':
+		default:
+			return false
+		}
+	}
+	return true
 }
 
 // validateConditions validates one branch's conditions: at least one, at
@@ -313,7 +345,7 @@ func pcrDigest(pcrs []uint, values map[uint][]byte) []byte {
 // verifyBranch compares b's pcr condition, if it has one, with the live PCRs
 // of t.
 func verifyBranch(t *pkgtpm2.TPM2, scope string, b Branch) (BranchVerification, error) {
-	v := BranchVerification{Match: true, Reference: b.Reference}
+	v := BranchVerification{Name: b.Name, Match: true, Reference: b.Reference}
 	for _, c := range b.Conditions {
 		if c.Type != ConditionPCR {
 			continue

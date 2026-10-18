@@ -87,10 +87,9 @@ func TestTPMPolicyClient_Routes(t *testing.T) {
 		},
 			http.MethodPost, "/api/v1/tpm/policies/boot/update", map[string]any{"name": "boot"}},
 		{"branch update", func() error {
-			branch := 1
-			_, err := c.TPMPolicyUpdate(ctx, &transport.TPMPolicyUpdateRequest{Name: "boot", Branch: &branch, ReferenceValues: []byte{0xd2, 0x84}})
+			_, err := c.TPMPolicyUpdate(ctx, &transport.TPMPolicyUpdateRequest{Name: "boot", Branch: "next", ReferenceValues: []byte{0xd2, 0x84}})
 			return err
-		}, http.MethodPost, "/api/v1/tpm/policies/boot/update", map[string]any{"name": "boot", "branch": 1.0, "reference_values": "0oQ="}},
+		}, http.MethodPost, "/api/v1/tpm/policies/boot/update", map[string]any{"name": "boot", "branch": "next", "reference_values": "0oQ="}},
 		{"revoke", func() error { _, err := c.TPMPolicyRevoke(ctx, &transport.TPMPolicyRequest{Name: "boot"}); return err },
 			http.MethodPost, "/api/v1/tpm/policies/boot/revoke", map[string]any{"name": "boot"}},
 		{"verify", func() error { _, err := c.TPMPolicyVerify(ctx, &transport.TPMPolicyRequest{Name: "boot"}); return err },

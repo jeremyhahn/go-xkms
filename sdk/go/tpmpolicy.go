@@ -131,6 +131,10 @@ type TPMScopeInUseError = tpmpolicy.ScopeInUseError
 // do not verify or do not predict a branch's PCR values.
 type TPMPolicyReferenceValuesError = tpmpolicy.ReferenceValuesError
 
+// TPMPolicyInvalidBranchError reports a branch name a create refused: not
+// 1-64 letters, digits, '.', '_' or '-', or the name of another branch.
+type TPMPolicyInvalidBranchError = tpmpolicy.InvalidBranchError
+
 // TPM modes and object kinds.
 const (
 	TPMModeNone    = tpmpolicy.ModeNone
@@ -197,8 +201,8 @@ var (
 	TPMPolicyPCRBranch = transport.TPMPolicyPCRBranch
 
 	// ParseTPMPolicyBranch parses a branch spec, the command-line form of
-	// one policy branch: "pcr=[BANK:]LIST", "auth_value" and
-	// "locality=LIST" joined by ";".
+	// one policy branch: an optional "name=NAME" and the conditions
+	// "pcr=[BANK:]LIST", "auth_value" and "locality=LIST", joined by ";".
 	ParseTPMPolicyBranch = transport.ParseTPMPolicyBranch
 
 	// TPMPolicyBranches returns the branches a command line describes: the
@@ -240,8 +244,13 @@ var (
 	ErrTPMPolicyNoPCRCondition    = tpmpolicy.ErrNoPCRCondition
 	ErrTPMPolicyBranchUpdate      = pkgxkms.ErrTPMPolicyBranchUpdate
 
+	// Branch name errors (TPMPolicyInvalidBranchError).
+	ErrTPMPolicyInvalidBranchName = tpmpolicy.ErrInvalidBranchName
+	ErrTPMPolicyDuplicateBranch   = tpmpolicy.ErrDuplicateBranch
+
 	// Branch spec errors (ParseTPMPolicyBranch).
 	ErrTPMPolicyBranchEmpty      = transport.ErrTPMPolicyBranchEmpty
+	ErrTPMPolicyBranchName       = transport.ErrTPMPolicyBranchName
 	ErrTPMPolicyConditionUnknown = transport.ErrTPMPolicyConditionUnknown
 	ErrTPMPolicyConditionValue   = transport.ErrTPMPolicyConditionValue
 	ErrTPMPolicyNoSelection      = transport.ErrTPMPolicyNoSelection

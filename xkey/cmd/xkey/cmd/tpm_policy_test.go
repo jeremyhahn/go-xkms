@@ -90,7 +90,7 @@ func TestTPMPolicyCreate_ServerModeCapturesAndRenders(t *testing.T) {
 	out, err := runTPMPolicyCommand(t, runTPMPolicyCreate, "boot")
 	require.NoError(t, err)
 	assert.Contains(t, out, "Name:         boot")
-	assert.Contains(t, out, "Branch 0:     pcr=sha256:7 (approved: yes)")
+	assert.Contains(t, out, "Branch:       name=branch-1;pcr=sha256:7 (approved: yes)")
 	assert.Contains(t, out, "aa")
 }
 
@@ -101,8 +101,8 @@ func TestTPMPolicyCreate_CompositeBranchesAndDescription(t *testing.T) {
 	out, err := runTPMPolicyCommand(t, runTPMPolicyCreate, "boot-or-pin")
 	require.NoError(t, err)
 	assert.Contains(t, out, "Description:  firmware or PIN")
-	assert.Contains(t, out, "Branch 0:     pcr=sha256:7;locality=0")
-	assert.Contains(t, out, "Branch 1:     auth_value")
+	assert.Contains(t, out, "Branch:       name=branch-1;pcr=sha256:7;locality=0")
+	assert.Contains(t, out, "Branch:       name=branch-2;auth_value")
 
 	out, err = runTPMPolicyCommand(t, runTPMPolicyDescribe, "boot-or-pin", "changed")
 	require.NoError(t, err)
@@ -158,7 +158,7 @@ func TestTPMPolicyList_ShowsPlatformAndObjectCounts(t *testing.T) {
 	require.NoError(t, err)
 	assert.Contains(t, out, "Source: xkmsd")
 	assert.Contains(t, out, "platform PCR or password")
-	assert.Regexp(t, `boot\s+pcr=sha256:7\s+yes\s+no\s+1`, out)
+	assert.Regexp(t, `boot\s+name=branch-1;pcr=sha256:7\s+yes\s+no\s+1`, out)
 
 	withTPMOutputFormat(t, "json")
 	out, err = runTPMPolicyCommand(t, runTPMPolicyList)
@@ -199,7 +199,7 @@ func runTPMPolicyBranchUpdate(t *testing.T, branch, corim string) (string, error
 	prevBranch, prevCorim := tpmPolicyUpdateBranch, tpmPolicyReferenceValues
 	t.Cleanup(func() { tpmPolicyUpdateBranch, tpmPolicyReferenceValues = prevBranch, prevCorim })
 	cmd := &cobra.Command{}
-	cmd.Flags().IntVar(&tpmPolicyUpdateBranch, "branch", 0, "")
+	cmd.Flags().StringVar(&tpmPolicyUpdateBranch, "branch", "", "")
 	if branch != "" {
 		require.NoError(t, cmd.Flags().Set("branch", branch))
 	}
@@ -217,21 +217,25 @@ func runTPMPolicyBranchUpdate(t *testing.T, branch, corim string) (string, error
 // flags come together and the file must be readable.
 func TestTPMPolicyUpdate_FromReferenceValues(t *testing.T) {
 	serverTPMPolicies(t)
-	withTPMPolicyFlags(t, "7", "sha256", false, false)
+	withTPMPolicyFlags(t, "", "", false, false)
+	withTPMPolicyBranches(t, []string{"name=current;pcr=7", "name=next;pcr=7"}, "")
 	_, err := runTPMPolicyCommand(t, runTPMPolicyCreate, "boot")
 	require.NoError(t, err)
 
 	corim := []byte{0xd2, 0x84}
 	path := filepath.Join(t.TempDir(), "boot.corim")
 	require.NoError(t, os.WriteFile(path, corim, 0o600))
-	out, err := runTPMPolicyBranchUpdate(t, "0", path)
+	out, err := runTPMPolicyBranchUpdate(t, "next", path)
 	require.NoError(t, err)
 	digest := sha256.Sum256(corim)
+	assert.Contains(t, out, "Branch:       name=next;pcr=sha256:7")
 	assert.Contains(t, out, fmt.Sprintf("(no id), sha256 %x", digest))
 
 	_, err = runTPMPolicyBranchUpdate(t, "", path)
 	assert.ErrorIs(t, err, xkms.ErrTPMPolicyBranchUpdate, "reference values without a branch")
-	_, err = runTPMPolicyBranchUpdate(t, "0", filepath.Join(t.TempDir(), "missing.corim"))
+	_, err = runTPMPolicyBranchUpdate(t, "branch-1", path)
+	assert.ErrorIs(t, err, xkms.ErrTPMPolicyNoSuchBranch, "a named branch keeps its name")
+	_, err = runTPMPolicyBranchUpdate(t, "next", filepath.Join(t.TempDir(), "missing.corim"))
 	assert.ErrorIs(t, err, ErrTPMPolicyReferenceValuesRead)
 }
 

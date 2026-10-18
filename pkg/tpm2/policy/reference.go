@@ -24,7 +24,7 @@ import (
 	pkgtpm2 "github.com/jeremyhahn/go-xkms/pkg/tpm2"
 )
 
-// UpdateBranch updates one branch of a policy, counted from 0, from signed
+// UpdateBranch updates the policy's branch named branch from signed
 // reference values rather than the live PCRs. corim is a COSE_Sign1 signed
 // CoRIM that must verify under the configured reference signer at the
 // service clock's time. The values of the branch's pcr condition become those
@@ -33,7 +33,7 @@ import (
 // Reference. Like UpdatePolicy, it then moves the scope's counter to its next
 // epoch and re-signs every approved policy of the scope at it; the policy's
 // other branches keep their values.
-func (s *Service) UpdateBranch(ctx context.Context, tenant, name string, branch int, corim []byte) (*Policy, error) {
+func (s *Service) UpdateBranch(ctx context.Context, tenant, name, branch string, corim []byte) (*Policy, error) {
 	if s.referenceSigner == nil {
 		return nil, ErrNoReferenceSigner
 	}
@@ -42,10 +42,11 @@ func (s *Service) UpdateBranch(ctx context.Context, tenant, name string, branch 
 		return nil, err
 	}
 	defer unlock()
-	if branch < 0 || branch >= len(p.Branches) {
+	b := p.branch(branch)
+	if b == nil {
 		return nil, &InvalidBranchError{Branch: branch, Err: ErrNoSuchBranch}
 	}
-	c := branchPCRCondition(&p.Branches[branch])
+	c := branchPCRCondition(b)
 	if c == nil {
 		return nil, &InvalidBranchError{Branch: branch, Err: ErrNoPCRCondition}
 	}
@@ -62,7 +63,7 @@ func (s *Service) UpdateBranch(ctx context.Context, tenant, name string, branch 
 	c.PCRValues = values
 	c.PCRDigest = pcrDigest(c.PCRs, values)
 	digest := sha256.Sum256(corim)
-	p.Branches[branch].Reference = &Reference{
+	b.Reference = &Reference{
 		ID:      manifest.ID,
 		Profile: manifest.Profile,
 		Signer:  manifest.Signer,

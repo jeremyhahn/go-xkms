@@ -109,15 +109,15 @@ func (t *TenantTPMPolicies) TPMPolicyUpdate(ctx context.Context, req *transport.
 	if req == nil {
 		return nil, ErrNilRequest
 	}
-	if (req.Branch == nil) != (len(req.ReferenceValues) == 0) {
+	if (req.Branch == "") != (len(req.ReferenceValues) == 0) {
 		return nil, ErrTPMPolicyBranchUpdate
 	}
 	var p *tpmpolicy.Policy
 	var err error
-	if req.Branch == nil {
+	if req.Branch == "" {
 		p, err = t.svc.UpdatePolicy(ctx, t.tenant, req.Name)
 	} else {
-		p, err = t.svc.UpdateBranch(ctx, t.tenant, req.Name, *req.Branch, req.ReferenceValues)
+		p, err = t.svc.UpdateBranch(ctx, t.tenant, req.Name, req.Branch, req.ReferenceValues)
 	}
 	if err != nil {
 		return nil, err
@@ -181,6 +181,7 @@ func (t *TenantTPMPolicies) TPMPolicyVerify(ctx context.Context, req *transport.
 	}
 	for i, b := range v.Branches {
 		resp.Branches[i] = transport.TPMPolicyBranchVerification{
+			Name:       b.Name,
 			Match:      b.Match,
 			Mismatched: b.Mismatched,
 			Approved:   b.Approved,
@@ -321,6 +322,7 @@ func tpmPolicyToTransport(tenant string, p *tpmpolicy.Policy) *transport.TPMPoli
 // tpmBranchToTransport converts a stored branch to its API form.
 func tpmBranchToTransport(b tpmpolicy.Branch, approved bool) transport.TPMPolicyBranch {
 	out := transport.TPMPolicyBranch{
+		Name:       b.Name,
 		Conditions: make([]transport.TPMPolicyCondition, len(b.Conditions)),
 		Approved:   approved,
 		Reference:  tpmReferenceToTransport(b.Reference),
@@ -372,7 +374,7 @@ func tpmBranchesFromTransport(branches []transport.TPMPolicyBranch) ([]tpmpolicy
 				Localities: c.Localities,
 			}
 		}
-		out[i] = tpmpolicy.Branch{Conditions: conditions}
+		out[i] = tpmpolicy.Branch{Name: b.Name, Conditions: conditions}
 	}
 	return out, nil
 }

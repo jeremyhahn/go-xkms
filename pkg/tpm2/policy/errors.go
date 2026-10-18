@@ -108,8 +108,17 @@ var (
 	ErrNoReferenceSigner = errors.New("tpmpolicy: no reference-value signer is configured")
 
 	// ErrNoSuchBranch is returned (in an InvalidBranchError) for a branch
-	// index the policy does not have.
+	// name the policy does not have.
 	ErrNoSuchBranch = errors.New("tpmpolicy: the policy has no such branch")
+
+	// ErrInvalidBranchName is returned (in an InvalidBranchError) for a
+	// branch name that is longer than 64 characters or holds a character
+	// other than a letter, a digit, '.', '_' or '-'.
+	ErrInvalidBranchName = errors.New("tpmpolicy: a branch name is 1-64 letters, digits, '.', '_' or '-'")
+
+	// ErrDuplicateBranch is returned (in an InvalidBranchError) for a
+	// branch whose name another branch of the policy already has.
+	ErrDuplicateBranch = errors.New("tpmpolicy: another branch of the policy has this name")
 
 	// ErrNoPCRCondition is returned (in an InvalidBranchError) for a
 	// reference-value update of a branch without a pcr condition.
@@ -265,16 +274,16 @@ func (e *ConditionOperandError) Error() string {
 	return fmt.Sprintf("tpmpolicy: a %s condition takes no %s", e.Type, e.Operand)
 }
 
-// InvalidBranchError reports why branch Branch (counted from 0) of a policy
-// request is invalid.
+// InvalidBranchError reports why the branch named Branch of a policy, or of
+// a policy request, is invalid.
 type InvalidBranchError struct {
-	Branch int
+	Branch string
 	Err    error
 }
 
 // Error implements the error interface.
 func (e *InvalidBranchError) Error() string {
-	return fmt.Sprintf("tpmpolicy: branch %d: %v", e.Branch, e.Err)
+	return fmt.Sprintf("tpmpolicy: branch %q: %v", e.Branch, e.Err)
 }
 
 // Unwrap returns the reason.

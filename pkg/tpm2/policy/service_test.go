@@ -368,7 +368,7 @@ func TestErrorMessages(t *testing.T) {
 		&UnknownConditionTypeError{Type: "time"},
 		&DuplicateConditionError{Type: ConditionPCR},
 		&ConditionOperandError{Type: ConditionAuthValue, Operand: "bank"},
-		&InvalidBranchError{Branch: 1, Err: ErrEmptyBranch},
+		&InvalidBranchError{Branch: "branch-2", Err: ErrEmptyBranch},
 		&DescriptionTooLongError{Length: 5000, Max: maxDescription},
 	} {
 		assert.Contains(t, err.Error(), "tpmpolicy:")

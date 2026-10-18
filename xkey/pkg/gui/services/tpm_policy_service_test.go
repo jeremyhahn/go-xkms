@@ -81,7 +81,7 @@ func TestTPMPolicyService_CreateReturnsBranchesDescriptionAndCapturedValues(t *t
 	assert.Equal(t, "firmware or PIN", p.Description)
 	require.Len(t, p.Branches, 2)
 	assert.Equal(t, "aa", p.Branches[0].Conditions[0].PCRValues[7])
-	assert.Equal(t, "auth_value", p.Branches[1].String())
+	assert.Equal(t, "name=branch-2;auth_value", p.Branches[1].String())
 	assert.True(t, p.Approved)
 	assert.False(t, p.Builtin)
 }
@@ -111,7 +111,7 @@ func TestTPMPolicyService_RejectsMissingAndBuiltinNames(t *testing.T) {
 	assert.ErrorIs(t, err, ErrTPMPolicyBuiltin)
 	_, err = svc.UpdatePolicy(xkms.TPMPolicyPlatform)
 	assert.ErrorIs(t, err, ErrTPMPolicyBuiltin)
-	_, err = svc.UpdateBranch(xkms.TPMPolicyPlatform, 0, []byte{0xd2})
+	_, err = svc.UpdateBranch(xkms.TPMPolicyPlatform, "next", []byte{0xd2})
 	assert.ErrorIs(t, err, ErrTPMPolicyBuiltin)
 	_, err = svc.RevokePolicy("")
 	assert.ErrorIs(t, err, ErrTPMPolicyNameRequired)
@@ -186,7 +186,7 @@ func TestTPMPolicyService_VerifyUpdateAndRevoke(t *testing.T) {
 	v, err := svc.VerifyPolicy("boot")
 	require.NoError(t, err)
 	assert.False(t, v.Match)
-	assert.Equal(t, []transport.TPMPolicyBranchVerification{{Mismatched: []uint{7}, Approved: true}}, v.Branches)
+	assert.Equal(t, []transport.TPMPolicyBranchVerification{{Name: "branch-1", Mismatched: []uint{7}, Approved: true}}, v.Branches)
 
 	p, err := svc.UpdatePolicy("boot")
 	require.NoError(t, err)
@@ -214,13 +214,13 @@ func TestTPMPolicyService_UpdateBranch(t *testing.T) {
 	require.NoError(t, err)
 
 	corim := []byte{0xd2, 0x84}
-	p, err := svc.UpdateBranch("boot", 0, corim)
+	p, err := svc.UpdateBranch("boot", "branch-1", corim)
 	require.NoError(t, err)
 	require.NotNil(t, p.Branches[0].Reference)
 	digest := sha256.Sum256(corim)
 	assert.Equal(t, digest[:], p.Branches[0].Reference.Digest)
 
-	_, err = svc.UpdateBranch("boot", 1, corim)
+	_, err = svc.UpdateBranch("boot", "next", corim)
 	assert.ErrorIs(t, err, xkms.ErrTPMPolicyNoSuchBranch)
 }
 
@@ -356,7 +356,7 @@ func TestTPMPolicyService_ServerErrorsPropagate(t *testing.T) {
 		"ListPolicies": func() error { _, err := svc.ListPolicies(); return err },
 		"GetPolicy":    func() error { _, err := svc.GetPolicy("boot"); return err },
 		"UpdatePolicy": func() error { _, err := svc.UpdatePolicy("boot"); return err },
-		"UpdateBranch": func() error { _, err := svc.UpdateBranch("boot", 0, []byte{0xd2}); return err },
+		"UpdateBranch": func() error { _, err := svc.UpdateBranch("boot", "next", []byte{0xd2}); return err },
 		"RevokePolicy": func() error { _, err := svc.RevokePolicy("boot"); return err },
 		"VerifyPolicy": func() error { _, err := svc.VerifyPolicy("boot"); return err },
 		"DeletePolicy": func() error { return svc.DeletePolicy("boot", "owner") },

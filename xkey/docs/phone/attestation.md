@@ -18,9 +18,11 @@ Uses Android Key Attestation as defined in the Android Keystore specification.
 
 The desktop attests a phone with `local.attestDevice` everywhere: pairing,
 reconnect, and the manual "Attest Device" action all go through the single
-decision in `xkey/pkg/attestation` — `AttestOverSession`
-(`xkey/pkg/attestation/device.go:542`) and `VerifyDeviceAttestation`
-(`device.go:425`). A certificate's attestation challenge is fixed for the
+decision in `xkey/pkg/attestation` — `AttestOverSession` and
+`VerifyDeviceAttestation` (`xkey/pkg/attestation/device.go`). The hardware
+bar — chain, security level, boot state, key origin and application — is the
+SDK's `xkms.VerifyAndroidDeviceKey` (`pkg/attestation/android_device.go`);
+xkey adds only the pairing protocol's checks. A certificate's attestation challenge is fixed for the
 life of a persistent key, so comparing it with a nonce proves nothing after
 first use; the phone therefore also signs a live transcript covering the
 nonce, a purpose string (`"pair"` or `"reattest"`) and a channel binding

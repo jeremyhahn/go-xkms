@@ -28,6 +28,10 @@ var (
 	// ErrEmptyCertificateChain indicates no certificates were provided in the chain.
 	ErrEmptyCertificateChain = errors.New("attestation: empty certificate chain")
 
+	// ErrCertificateParseFailed indicates a certificate in a DER chain could
+	// not be parsed.
+	ErrCertificateParseFailed = errors.New("attestation: failed to parse certificate")
+
 	// ErrCertificateExpired indicates a certificate in the chain has expired.
 	ErrCertificateExpired = errors.New("attestation: certificate expired")
 

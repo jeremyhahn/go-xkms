@@ -493,7 +493,7 @@ func TestService_VerifyPolicy(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, &Verification{
 		Policy:   "boot",
-		Branches: []BranchVerification{{Match: true, Approved: true}},
+		Branches: []BranchVerification{{Name: "branch-1", Match: true, Approved: true}},
 		Match:    true,
 		Approved: true,
 	}, v)
@@ -833,9 +833,9 @@ func TestService_VerifyPolicyPerBranch(t *testing.T) {
 	v, err := f.svc.VerifyPolicy(f.ctx, "acme", "boot")
 	require.NoError(t, err)
 	assert.Equal(t, []BranchVerification{
-		{Match: false, Mismatched: []uint{testPCR}, Approved: true},
-		{Match: true, Approved: true},
-		{Match: true, Approved: true},
+		{Name: "branch-1", Match: false, Mismatched: []uint{testPCR}, Approved: true},
+		{Name: "branch-2", Match: true, Approved: true},
+		{Name: "branch-3", Match: true, Approved: true},
 	}, v.Branches)
 	assert.False(t, v.Match)
 	assert.True(t, v.Approved)

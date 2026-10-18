@@ -30,7 +30,6 @@ import (
 
 	"github.com/jeremyhahn/go-xkms/pkg/pairingproto"
 	xkms "github.com/jeremyhahn/go-xkms/sdk/go"
-	"github.com/jeremyhahn/go-xkms/xkey/pkg/attestation"
 	"github.com/jeremyhahn/go-xkms/xkey/pkg/attestation/attesttest"
 	xkeyconfig "github.com/jeremyhahn/go-xkms/xkey/pkg/config"
 	"github.com/jeremyhahn/go-xkms/xkey/pkg/pairing"
@@ -142,8 +141,8 @@ func newPairFlow(t *testing.T, phoneCA, trustCA *attesttest.CA, existing *Device
 			flow.saved = &copied
 			return nil
 		},
-		loadTrust: func() (*attestation.Trust, error) {
-			return &attestation.Trust{Pool: trustCA.Pool(), Applications: attesttest.Applications()}, nil
+		loadTrust: func() (*xkms.AndroidDeviceTrust, error) {
+			return &xkms.AndroidDeviceTrust{Roots: trustCA.Pool(), Applications: attesttest.Applications()}, nil
 		},
 		openBarrier: func(*cobra.Command) (pairing.NoiseKeyBarrier, func(), error) {
 			return xorTestBarrier{key: 0x5A}, func() {}, nil

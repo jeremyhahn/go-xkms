@@ -125,6 +125,49 @@ const (
 // chain against the given options.
 var VerifyAndroidKeyAttestation = android.VerifyKeyAttestation
 
+// AndroidApplicationMatcher decides whether an attested application is
+// allowed.
+type AndroidApplicationMatcher = android.ApplicationMatcher
+
+// AndroidDeviceVerifyOptions returns the verification bar for a
+// hardware-held device key: anchored in roots, at least TEE, and no
+// explicitly unverified boot state. It sets no ExpectedNonce.
+var AndroidDeviceVerifyOptions = android.DeviceVerifyOptions
+
+// RequireAndroidAttestedBootState requires a present hardware-enforced
+// RootOfTrust with a locked bootloader and verified boot, and returns it.
+var RequireAndroidAttestedBootState = android.RequireAttestedBootState
+
+// RequireAndroidAttestedKeyOrigin requires the hardware-enforced list to
+// claim the key was generated in secure hardware and may sign.
+var RequireAndroidAttestedKeyOrigin = android.RequireAttestedKeyOrigin
+
+// RequireAndroidAttestedApplication requires the attesting application to
+// satisfy an AndroidApplicationMatcher.
+var RequireAndroidAttestedApplication = android.RequireAttestedApplication
+
+// Android device-key policy errors.
+var (
+	// ErrAndroidNilKeyDescription means a policy check got no key description.
+	ErrAndroidNilKeyDescription = android.ErrNilKeyDescription
+	// ErrAndroidNoRootOfTrust means the attestation makes no boot-chain claim.
+	ErrAndroidNoRootOfTrust = android.ErrNoRootOfTrust
+	// ErrAndroidBootloaderUnlocked means the device bootloader is unlocked.
+	ErrAndroidBootloaderUnlocked = android.ErrBootloaderUnlocked
+	// ErrAndroidUnverifiedBoot means the device boot state is not verified.
+	ErrAndroidUnverifiedBoot = android.ErrUnverifiedBoot
+	// ErrAndroidKeyOriginNotGenerated means the key was not generated in
+	// secure hardware.
+	ErrAndroidKeyOriginNotGenerated = android.ErrKeyOriginNotGenerated
+	// ErrAndroidKeyPurposeNotSign means the key may not sign.
+	ErrAndroidKeyPurposeNotSign = android.ErrKeyPurposeNotSign
+	// ErrAndroidNilApplicationMatcher means no application policy was given.
+	ErrAndroidNilApplicationMatcher = android.ErrNilApplicationMatcher
+	// ErrAndroidApplicationRefused means the attesting application was
+	// refused; the policy's own error is joined to it.
+	ErrAndroidApplicationRefused = android.ErrApplicationRefused
+)
+
 // ParseAndroidKeyAttestation parses the Android key-attestation extension
 // out of a leaf certificate without verifying the certificate chain.
 var ParseAndroidKeyAttestation = android.ParseKeyAttestation

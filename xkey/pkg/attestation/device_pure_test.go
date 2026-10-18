@@ -14,8 +14,6 @@
 package attestation_test
 
 import (
-	"crypto/x509"
-	"crypto/x509/pkix"
 	"encoding/hex"
 	"testing"
 	"time"
@@ -95,32 +93,6 @@ func TestChallenge_Params(t *testing.T) {
 	assert.Equal(t, pairingproto.AttestProtocolV2, params.ProtocolVersion)
 	assert.Equal(t, challenge.Nonce, params.Nonce)
 	assert.Equal(t, pairingproto.AttestPurposePair, params.Purpose)
-}
-
-// TestFormatTrustAnchor covers every branch of the display fallback: nil,
-// common name present, organization present with no common name, and
-// neither present.
-func TestFormatTrustAnchor(t *testing.T) {
-	assert.Equal(t, "unknown", attestation.FormatTrustAnchor(nil))
-
-	withCN := &x509.Certificate{Subject: pkix.Name{CommonName: "Google Hardware Attestation Root"}}
-	assert.Equal(t, "Google Hardware Attestation Root", attestation.FormatTrustAnchor(withCN))
-
-	withOrgOnly := &x509.Certificate{Subject: pkix.Name{Organization: []string{"Example Corp"}}}
-	assert.Equal(t, "Example Corp", attestation.FormatTrustAnchor(withOrgOnly))
-
-	withNeither := &x509.Certificate{Subject: pkix.Name{Country: []string{"US"}}}
-	assert.Equal(t, withNeither.Subject.String(), attestation.FormatTrustAnchor(withNeither))
-}
-
-// TestVerifiedTrustAnchor_EmptyChain pins the guard against a chain with
-// nothing in it, before any verification is attempted.
-func TestVerifiedTrustAnchor_EmptyChain(t *testing.T) {
-	anchor, err := attestation.VerifiedTrustAnchor(nil, x509.NewCertPool())
-
-	require.Error(t, err)
-	assert.ErrorIs(t, err, attestation.ErrDeviceAttestVerifyFailed)
-	assert.Nil(t, anchor)
 }
 
 // TestValidateAttestedKeyMatch_IdentityChanged pins the comparison branch

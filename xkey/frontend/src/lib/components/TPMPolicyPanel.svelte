@@ -185,11 +185,11 @@
   }
 
   /**
-   * updateBranchFromReference updates branch (counted from 0) of the policy
-   * shown in details to the PCR values the signed CoRIM picked in input
-   * predicts, like `xkey tpm policy update --branch --reference-values`.
+   * updateBranchFromReference updates the named branch (e.g. next) of the
+   * policy shown in details to the PCR values the signed CoRIM picked in
+   * input predicts, like `xkey tpm policy update --branch --reference-values`.
    */
-  async function updateBranchFromReference(branch: number, input: HTMLInputElement): Promise<void> {
+  async function updateBranchFromReference(branch: string, input: HTMLInputElement): Promise<void> {
     const file = input.files?.[0];
     input.value = '';
     if (!details || !file) {
@@ -201,11 +201,11 @@
     const { result, error } = await callBackendWithError<TPMPolicyInfo>('TPMPolicyService', 'UpdateBranch', name, branch, corim);
     busy = '';
     if (error || !result) {
-      addNotification('error', error || `Failed to update branch ${branch + 1} of "${name}"`);
+      addNotification('error', error || `Failed to update branch "${branch}" of "${name}"`);
       return;
     }
     details = result;
-    addNotification('success', `Branch ${branch + 1} of "${name}" updated from signed reference values and re-approved`);
+    addNotification('success', `Branch "${branch}" of "${name}" updated from signed reference values and re-approved`);
     await load();
   }
 
@@ -448,6 +448,8 @@
       {#each createBranches as branch, i}
         <fieldset class="branch" data-testid="branch-{i + 1}">
           <legend class="text-label-large">Branch {i + 1}</legend>
+          <Input id="policy-branch-{i + 1}-name" label="Name, e.g. current or next" placeholder="branch-{i + 1}"
+            bind:value={branch.name} />
           <label class="condition text-body-medium">
             <input type="checkbox" checked={branch.pcr} aria-label="Branch {i + 1} PCR condition"
               on:change={() => updateBranch(i, { pcr: !branch.pcr })} />
@@ -517,9 +519,9 @@
           : 'The live PCRs differ from the captured values.'}
       </p>
       <ul class="object-list">
-        {#each verification.branches as branch, i}
+        {#each verification.branches as branch}
           <li class="text-body-small">
-            Branch {i + 1}: {branch.match ? 'PCRs match' : `PCRs changed: ${(branch.mismatched ?? []).join(', ')}`};
+            Branch {branch.name}: {branch.match ? 'PCRs match' : `PCRs changed: ${(branch.mismatched ?? []).join(', ')}`};
             {branch.approved ? 'approval current' : 'approval not current (revoked or out of date)'}{#if branch.reference}; approved for reference values {describeReference(branch.reference)}{/if}
           </li>
         {/each}
@@ -540,15 +542,15 @@
         NV index 0x{(details.index ?? 0).toString(16).padStart(8, '0')}
         · {details.approved ? `approved at epoch ${details.epoch ?? 0} (authority generation ${details.authority_generation ?? 0})` : 'revoked'}
       </p>
-      {#each details.branches ?? [] as branch, i}
-        <p class="text-label-large">Branch {i + 1}: {describeBranch(branch)}</p>
+      {#each details.branches ?? [] as branch}
+        <p class="text-label-large">Branch {branch.name}: {describeBranch(branch)}</p>
         {#if branch.reference}
-          <p class="text-body-small value-cell" data-testid="branch-{i + 1}-reference">
+          <p class="text-body-small value-cell" data-testid="branch-{branch.name}-reference">
             Reference values: {describeReference(branch.reference)}
           </p>
         {/if}
         {#each branch.conditions.filter((c) => c.type === 'pcr') as condition}
-          <table class="policy-table" aria-label="Captured PCR values of branch {i + 1}">
+          <table class="policy-table" aria-label="Captured PCR values of branch {branch.name}">
             <thead><tr><th class="text-label-small" scope="col">PCR</th><th class="text-label-small" scope="col">Captured value</th></tr></thead>
             <tbody>
               {#each sortedValues(condition.pcr_values) as [pcr, value] (pcr)}
@@ -557,9 +559,9 @@
             </tbody>
           </table>
           <label class="form-field text-label-medium">
-            Update branch {i + 1} from signed reference values (CoRIM)
-            <input type="file" aria-label="Reference values for branch {i + 1}" disabled={busy !== ''}
-              on:change={(e) => updateBranchFromReference(i, e.currentTarget)} />
+            Update branch {branch.name} from signed reference values (CoRIM)
+            <input type="file" aria-label="Reference values for branch {branch.name}" disabled={busy !== ''}
+              on:change={(e) => updateBranchFromReference(branch.name ?? '', e.currentTarget)} />
           </label>
         {/each}
       {/each}

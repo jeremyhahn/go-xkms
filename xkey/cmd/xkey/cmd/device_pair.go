@@ -27,6 +27,7 @@ import (
 
 	"github.com/spf13/cobra"
 
+	xkms "github.com/jeremyhahn/go-xkms/sdk/go"
 	"github.com/jeremyhahn/go-xkms/sdk/go/bootstrap"
 	"github.com/jeremyhahn/go-xkms/sdk/go/pairingproto"
 	"github.com/jeremyhahn/go-xkms/xkey/pkg/attestation"
@@ -126,7 +127,7 @@ type pairingSeams struct {
 	newTransport func(cfg *phone.BLETransportConfig) (pairingTransport, error)
 	loadDevices  func() (*DevicesConfig, error)
 	saveDevices  func(cfg *DevicesConfig) error
-	loadTrust    func() (*attestation.Trust, error)
+	loadTrust    func() (*xkms.AndroidDeviceTrust, error)
 	openBarrier  func(cmd *cobra.Command) (pairing.NoiseKeyBarrier, func(), error)
 }
 
