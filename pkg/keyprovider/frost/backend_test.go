@@ -15,6 +15,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	xkmsbackend "github.com/jeremyhahn/go-xkms/pkg/backend"
 	"github.com/jeremyhahn/go-xkms/pkg/testutil"
 	"github.com/jeremyhahn/go-xkms/pkg/types"
 )
@@ -136,6 +137,7 @@ func TestFrostBackend_GenerateKey_Duplicate(t *testing.T) {
 	_, err = backend.GenerateKey(context.Background(), attrs)
 	require.Error(t, err)
 	assert.True(t, errors.Is(err, ErrKeyAlreadyExists))
+	assert.ErrorIs(t, err, xkmsbackend.ErrKeyAlreadyExists, "a get-or-generate caller must recognize the collision (go-xkms#1599)")
 }
 
 func TestFrostBackend_GenerateKey_UsesConfigDefaults(t *testing.T) {

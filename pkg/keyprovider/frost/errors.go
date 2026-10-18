@@ -18,6 +18,8 @@ package frost
 import (
 	"errors"
 	"fmt"
+
+	"github.com/jeremyhahn/go-xkms/pkg/backend"
 )
 
 // Sentinel errors for the FROST backend.
@@ -29,8 +31,11 @@ var (
 	// ErrKeyNotFound indicates the requested key does not exist.
 	ErrKeyNotFound = errors.New("frost: key not found")
 
-	// ErrKeyAlreadyExists indicates the key already exists.
-	ErrKeyAlreadyExists = errors.New("frost: key already exists")
+	// ErrKeyAlreadyExists indicates the key already exists. It is an alias of
+	// backend.ErrKeyAlreadyExists so a get-or-generate caller recognizes a
+	// lost generate race with errors.Is(err, backend.ErrKeyAlreadyExists)
+	// (go-xkms#1599).
+	ErrKeyAlreadyExists = backend.ErrKeyAlreadyExists
 
 	// ErrInsufficientShares indicates not enough shares for threshold.
 	ErrInsufficientShares = errors.New("frost: insufficient signature shares")

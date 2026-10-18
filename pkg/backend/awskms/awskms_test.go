@@ -152,6 +152,7 @@ func TestSave(t *testing.T) {
 		extension types.FSExtension
 		overwrite bool
 		wantErr   bool
+		wantErrIs error
 	}{
 		{
 			name:      "save new metadata",
@@ -168,6 +169,7 @@ func TestSave(t *testing.T) {
 			extension: backend.FSEXT_PRIVATE_BLOB,
 			overwrite: false,
 			wantErr:   true,
+			wantErrIs: backend.ErrKeyAlreadyExists,
 		},
 		{
 			name:      "save existing with overwrite",
@@ -192,6 +194,9 @@ func TestSave(t *testing.T) {
 			err := b.Save(tt.attrs, tt.data, tt.extension, tt.overwrite)
 			if (err != nil) != tt.wantErr {
 				t.Errorf("Save() error = %v, wantErr %v", err, tt.wantErr)
+			}
+			if tt.wantErrIs != nil && !errors.Is(err, tt.wantErrIs) {
+				t.Errorf("Save() error = %v, want errors.Is %v (go-xkms#1599)", err, tt.wantErrIs)
 			}
 		})
 	}

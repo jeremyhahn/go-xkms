@@ -1,4 +1,9 @@
+//go:build tpm_simulator
+
 package gui
+
+// These tests bring up an xkms tpm2 backend over the in-process TPM 2.0
+// simulator, which is linked in only by the tpm_simulator build tag.
 
 import (
 	"testing"

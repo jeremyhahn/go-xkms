@@ -159,6 +159,24 @@ func TestApp_PostUnlockInitialize_PropagatesError(t *testing.T) {
 	assert.Nil(t, app.ipcServer, "IPC server must not start when data dir init fails")
 }
 
+// TestApp_SkipSetup_LockedLUKSVolumeFails verifies the setup wizard's data
+// directory hook that NewApp wires: skipping setup while a LUKS volume exists
+// but is not unlocked must fail closed, reporting the locked volume, and open
+// no store.
+func TestApp_SkipSetup_LockedLUKSVolumeFails(t *testing.T) {
+	app := newWiredApp(t)
+
+	vol, err := luks.NewVolume()
+	require.NoError(t, err)
+	require.NoError(t, writeFakeLUKSContainer(vol.LUKSPath))
+
+	err = app.setupWizardService.SkipSetup()
+	require.Error(t, err)
+	assert.ErrorIs(t, err, services.ErrSetupStorageFailed)
+	assert.ErrorIs(t, err, xkms.ErrLUKSVolumeLocked)
+	assert.False(t, app.dataDirInit, "a locked volume must leave the data directory uninitialized")
+}
+
 // TestApp_PostBarrierUnseal_StillSealed verifies the guard that refuses to
 // run the post-unseal sequence while the barrier reports itself sealed.
 func TestApp_PostBarrierUnseal_StillSealed(t *testing.T) {

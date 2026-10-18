@@ -28,6 +28,7 @@ import (
 	"github.com/wailsapp/wails/v2/pkg/options"
 
 	"github.com/jeremyhahn/go-xkms/xkey/pkg/gui/events"
+	"github.com/jeremyhahn/go-xkms/xkey/pkg/staticpw"
 )
 
 var errWails = errors.New("wails: no display")
@@ -148,6 +149,36 @@ func TestApp_RequestPairing_EmitsPairingRequestEvent(t *testing.T) {
 	require.NotEmpty(t, code)
 
 	assert.Contains(t, window.Events(), string(events.EventExtensionPairingRequest))
+}
+
+// A static password past its expiry is deleted by the expiry checker that
+// postDataDirStartup starts, and the deletion reaches the frontend as a
+// password:expired event.
+func TestApp_PostDataDirStartup_ExpiredPasswordEmitsPasswordExpired(t *testing.T) {
+	app, window, _ := windowedApp(t)
+	require.NoError(t, app.initializeDataDir())
+	require.NotNil(t, app.staticpwStore, "precondition: initializeDataDir must wire a static password store")
+	require.NoError(t, app.staticpwStore.Add(&staticpw.StaticPassword{
+		Name:      "expired-entry",
+		Password:  "pw",
+		ExpiresAt: time.Now().Add(-time.Hour),
+	}))
+
+	app.postDataDirStartup()
+	t.Cleanup(func() {
+		if app.expiryChecker != nil {
+			app.expiryChecker.Stop()
+		}
+	})
+	require.NotNil(t, app.expiryChecker, "postDataDirStartup must start the expiry checker")
+
+	expired, err := app.expiryChecker.CheckExpired()
+	require.NoError(t, err)
+	require.Len(t, expired, 1)
+	assert.Equal(t, "expired-entry", expired[0].Name)
+	assert.Contains(t, window.Events(), "password:expired")
+	_, err = app.staticpwStore.Get("expired-entry")
+	assert.Error(t, err, "the expired entry must be deleted from the store")
 }
 
 // Deleting a tenant on the connected server reaches the frontend as a

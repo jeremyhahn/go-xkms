@@ -133,8 +133,8 @@ func TestErrors_PrefixConvention(t *testing.T) {
 		{"ErrBackendClosed", ErrBackendClosed},
 		{"ErrConnectionLost", ErrConnectionLost},
 		// ErrKeyNotFound is the shared backend.ErrKeyNotFound sentinel (#801), so
-		// it carries the "backend:" prefix, not this package's.
-		{"ErrKeyExists", ErrKeyExists},
+		// it carries the "backend:" prefix, not this package's. ErrKeyExists
+		// is backend.ErrKeyAlreadyExists (#1599) for the same reason.
 		{"ErrUnsupportedAlgorithm", ErrUnsupportedAlgorithm},
 		{"ErrOperationTimeout", ErrOperationTimeout},
 		{"ErrUserCancelled", ErrUserCancelled},
@@ -196,5 +196,17 @@ func TestErrKeyNotFound_IsBackendSentinel(t *testing.T) {
 	}
 	if errors.Is(ErrConnectionLost, backend.ErrKeyNotFound) {
 		t.Fatal("a lost connection must not be classified as not-found")
+	}
+}
+
+// TestErrKeyExists_IsBackendSentinel pins the #1599 get-or-generate contract:
+// the phone backend's key-exists result must satisfy errors.Is against the
+// shared backend sentinel, so a caller that lost a generate race recovers.
+func TestErrKeyExists_IsBackendSentinel(t *testing.T) {
+	if !errors.Is(ErrKeyExists, backend.ErrKeyAlreadyExists) {
+		t.Fatal("phone.ErrKeyExists must be backend.ErrKeyAlreadyExists")
+	}
+	if errors.Is(ErrConnectionLost, backend.ErrKeyAlreadyExists) {
+		t.Fatal("a lost connection must not be classified as key-exists")
 	}
 }

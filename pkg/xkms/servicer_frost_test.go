@@ -23,6 +23,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	"github.com/jeremyhahn/go-xkms/pkg/backend"
 	"github.com/jeremyhahn/go-xkms/pkg/keyprovider/frost"
 	"github.com/jeremyhahn/go-xkms/pkg/keyprovider/pkcs8"
 	"github.com/jeremyhahn/go-xkms/pkg/seal"
@@ -379,6 +380,7 @@ func TestFrostKeyError(t *testing.T) {
 	assert.Equal(t, ErrKeyNotFound, frostKeyError(&frost.KeyNotFoundError{KeyID: "tenant-a:k"}),
 		"a miss is the bare sentinel, carrying no storage key ID")
 	assert.ErrorIs(t, frostKeyError(frost.ErrKeyAlreadyExists), ErrKeyAlreadyExists)
+	assert.ErrorIs(t, frostKeyError(frost.ErrKeyAlreadyExists), backend.ErrKeyAlreadyExists)
 	var validation *ErrValidation
 	assert.ErrorAs(t, frostKeyError(&frost.KeyIDError{KeyID: "x", Err: frost.ErrInvalidAttributes}), &validation)
 	assert.ErrorIs(t, frostKeyError(frost.ErrInvalidSignature), ErrOperationFailed)

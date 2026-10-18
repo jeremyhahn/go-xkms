@@ -19,6 +19,7 @@ import (
 
 	qrdbtransport "github.com/jeremyhahn/go-qrdb/sdk/go/transport"
 
+	"github.com/jeremyhahn/go-xkms/pkg/backend"
 	"github.com/jeremyhahn/go-xkms/pkg/types"
 )
 
@@ -151,8 +152,11 @@ var (
 	// longer doubles as one when Algorithm is empty.
 	ErrMissingAlgorithm = errors.New("keystore: algorithm is required")
 
-	// ErrKeyAlreadyExists indicates a key with the same identifier already exists.
-	ErrKeyAlreadyExists = errors.New("keystore: key already exists")
+	// ErrKeyAlreadyExists indicates a key with the same identifier already
+	// exists. It is an alias of backend.ErrKeyAlreadyExists so a
+	// get-or-generate caller recognizes a lost generate race with
+	// errors.Is(err, backend.ErrKeyAlreadyExists) (go-xkms#1599).
+	ErrKeyAlreadyExists = backend.ErrKeyAlreadyExists
 
 	// ErrKeyNotFound indicates the requested key was not found.
 	ErrKeyNotFound = errors.New("keystore: key not found")

@@ -101,6 +101,32 @@ func TestRebuildDoesNotRecordHashForFailedSyncs(t *testing.T) {
 	}
 }
 
+func TestRebuildReportsUnreadableTrustStore(t *testing.T) {
+	svc, baseDir := newTestSecureBrowserService(t, nil)
+	svc.trustService = NewTrustService(nil)
+
+	err := svc.Rebuild()
+
+	assert.ErrorIs(t, err, ErrSecureBrowserCertSync)
+	assert.ErrorIs(t, err, ErrNilTrustStore)
+	assert.NoDirExists(t, filepath.Join(baseDir, "chrome"), "nothing is synced without the certificates")
+}
+
+func TestRebuildReportsUnwritableTrustHash(t *testing.T) {
+	svc, _ := newTestSecureBrowserService(t, []*x509.Certificate{testSecureBrowserCA(t, "Rebuild CA")})
+	// A non-empty directory where Chrome's hash file goes: the sync
+	// succeeds, but recording it does not.
+	hashPath := svc.trustHashPath(nativemsg.BrowserChrome)
+	require.NoError(t, os.MkdirAll(hashPath, 0o700))
+	blockPath(t, filepath.Join(hashPath, "occupied"))
+
+	err := svc.Rebuild()
+
+	assert.ErrorIs(t, err, ErrSecureBrowserHashWrite)
+	_, readErr := svc.readTrustHash(nativemsg.BrowserFirefox)
+	assert.ErrorIs(t, readErr, ErrSecureBrowserHashRead, "the rebuild stops at the first unrecorded hash")
+}
+
 func TestBuildLaunchArgsIsolatedProfileUncreatable(t *testing.T) {
 	for _, family := range []nativemsg.Browser{nativemsg.BrowserChrome, nativemsg.BrowserFirefox} {
 		t.Run(string(family), func(t *testing.T) {

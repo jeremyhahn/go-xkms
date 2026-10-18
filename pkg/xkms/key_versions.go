@@ -29,6 +29,7 @@ import (
 	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
 
 	"github.com/jeremyhahn/go-xkms/pkg/auth"
+	"github.com/jeremyhahn/go-xkms/pkg/backend"
 	"github.com/jeremyhahn/go-xkms/pkg/keyversion"
 	tpmpolicy "github.com/jeremyhahn/go-xkms/pkg/tpm2/policy"
 	"github.com/jeremyhahn/go-xkms/pkg/types"
@@ -79,6 +80,12 @@ type KeyExistsError struct {
 // Error implements the error interface.
 func (e *KeyExistsError) Error() string {
 	return fmt.Sprintf("keystore: key %q already exists with rotated versions", e.KeyID)
+}
+
+// Unwrap reports backend.ErrKeyAlreadyExists, so a get-or-generate caller
+// recognizes a lost generate race on a rotated key (go-xkms#1599).
+func (e *KeyExistsError) Unwrap() error {
+	return backend.ErrKeyAlreadyExists
 }
 
 // KeyRotationUnsupportedError reports a key whose algorithm the service

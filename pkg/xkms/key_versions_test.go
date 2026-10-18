@@ -31,6 +31,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/jeremyhahn/go-xkms/pkg/api/transport"
+	"github.com/jeremyhahn/go-xkms/pkg/backend"
 	"github.com/jeremyhahn/go-xkms/pkg/keyversion"
 	"github.com/jeremyhahn/go-xkms/pkg/seal"
 	"github.com/jeremyhahn/go-xkms/pkg/types"
@@ -337,6 +338,7 @@ func TestKeyVersion_Retire(t *testing.T) {
 	// The retired key's name cannot be taken over by a new key.
 	_, err = svc.GenerateKey(ctx, &transport.GenerateKeyRequest{Backend: "software", KeyID: "k", Algorithm: "ecdsa"})
 	assert.ErrorAs(t, err, new(*KeyExistsError))
+	assert.ErrorIs(t, err, backend.ErrKeyAlreadyExists, "a get-or-generate caller must recognize the collision (go-xkms#1599)")
 }
 
 // TestKeyVersion_EnableAllDisableAll proves bulk changes never touch the

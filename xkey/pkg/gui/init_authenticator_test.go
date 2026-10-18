@@ -165,40 +165,6 @@ func TestApp_InitializeAuthenticator_CorruptStateServesNoAuthenticator(t *testin
 	assert.Nil(t, app.authenticatorInstance)
 }
 
-// TestApp_InitializeAuthenticator_OffersTheTPM2BackendToFIDO2 verifies a
-// registered xkms tpm2 backend becomes a FIDO2 key backend, so credentials
-// can be created on the TPM.
-func TestApp_InitializeAuthenticator_OffersTheTPM2BackendToFIDO2(t *testing.T) {
-	app, _ := tpm2SimKeyStoreApp(t)
-	app.fido2Storage = newMemoryFIDO2Storage(t, xkms.NewStorageMemory())
-
-	app.initializeAuthenticator()
-
-	require.NotNil(t, app.authenticatorInstance)
-	assert.Contains(t, app.fido2KeyBackend.Backends(), xkms.BackendTypeTPM2)
-}
-
-// A cloud KMS backend that is configured (registered under its xkms name) is
-// offered to FIDO2 under its own backend type; one that is not configured is
-// skipped.
-func TestApp_InitializeAuthenticator_OffersConfiguredCloudBackendsToFIDO2(t *testing.T) {
-	app, _ := tpm2SimKeyStoreApp(t)
-	app.fido2Storage = newMemoryFIDO2Storage(t, xkms.NewStorageMemory())
-
-	tpm2Backend, err := xkms.GetBackend("tpm2")
-	require.NoError(t, err)
-	require.NoError(t, xkms.RegisterServiceBackend("gcpkms", tpm2Backend))
-	t.Cleanup(func() { xkms.UnregisterBackend("gcpkms") })
-
-	app.initializeAuthenticator()
-
-	require.NotNil(t, app.authenticatorInstance)
-	backends := app.fido2KeyBackend.Backends()
-	assert.Contains(t, backends, xkms.BackendTypeGCPKMS)
-	assert.NotContains(t, backends, xkms.BackendTypeAWSKMS, "an unconfigured cloud backend must not be offered")
-	assert.NotContains(t, backends, xkms.BackendTypeAzureKV, "an unconfigured cloud backend must not be offered")
-}
-
 // TestApp_InitializeAuthenticator_SealedPolicyKeepsSecureDefaults verifies a
 // sealed enterprise policy imposes its secure defaults before SO login, over
 // a GUI setting that turned user presence off.

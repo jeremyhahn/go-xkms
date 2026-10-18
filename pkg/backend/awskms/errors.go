@@ -54,8 +54,12 @@ var (
 	// ErrInvalidKeySpec is returned when an invalid key spec is provided.
 	ErrInvalidKeySpec = errors.New("awskms: invalid key spec")
 
-	// ErrKeyAlreadyExists is returned when attempting to create a key that already exists.
-	ErrKeyAlreadyExists = errors.New("awskms: key already exists")
+	// ErrKeyAlreadyExists is returned when attempting to create a key that
+	// already exists. It is an alias of backend.ErrKeyAlreadyExists so a
+	// get-or-generate caller recognizes a lost generate race with
+	// errors.Is(err, backend.ErrKeyAlreadyExists), matching every other
+	// backend (go-xkms#1599).
+	ErrKeyAlreadyExists = backend.ErrKeyAlreadyExists
 
 	// ErrInvalidAlgorithm is returned when an invalid algorithm is specified.
 	ErrInvalidAlgorithm = errors.New("awskms: invalid algorithm")

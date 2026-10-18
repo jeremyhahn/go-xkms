@@ -33,7 +33,8 @@ func TestErrorConstants(t *testing.T) {
 		{"ErrUnsupportedKeyType", ErrUnsupportedKeyType, "awskms: unsupported key type"},
 		{"ErrInvalidRegion", ErrInvalidRegion, "awskms: invalid region"},
 		{"ErrInvalidKeySpec", ErrInvalidKeySpec, "awskms: invalid key spec"},
-		{"ErrKeyAlreadyExists", ErrKeyAlreadyExists, "awskms: key already exists"},
+		// ErrKeyAlreadyExists is backend.ErrKeyAlreadyExists (#1599).
+		{"ErrKeyAlreadyExists", ErrKeyAlreadyExists, "backend: key already exists"},
 		{"ErrInvalidAlgorithm", ErrInvalidAlgorithm, "awskms: invalid algorithm"},
 		{"ErrSignatureFailed", ErrSignatureFailed, "awskms: signature verification failed"},
 		{"ErrMetadataStorage", ErrMetadataStorage, "awskms: metadata storage failed"},

@@ -28,6 +28,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	"github.com/jeremyhahn/go-xkms/pkg/backend"
 	"github.com/jeremyhahn/go-xkms/pkg/pairingproto"
 	"github.com/jeremyhahn/go-xkms/pkg/types"
 )
@@ -344,6 +345,9 @@ func TestBackend_GenerateKey_RPCError(t *testing.T) {
 	_, err := b.GenerateKey(context.Background(), attrs)
 	if err != ErrKeyExists {
 		t.Errorf("expected ErrKeyExists, got %v", err)
+	}
+	if !errors.Is(err, backend.ErrKeyAlreadyExists) {
+		t.Errorf("phone key-exists %v must satisfy errors.Is backend.ErrKeyAlreadyExists (go-xkms#1599)", err)
 	}
 }
 

@@ -197,6 +197,41 @@ func TestInitializeDataDir_PreSetDataDirSucceeds(t *testing.T) {
 		"dataDirInit must be true after successful initialization")
 }
 
+// TestInitializeDataDir_UnopenableStoresDegrade verifies that, with no
+// barrier, a store whose path cannot be opened is left unset and logged
+// rather than failing the data directory: the remaining stores still open
+// and the directory is marked initialized.
+func TestInitializeDataDir_UnopenableStoresDegrade(t *testing.T) {
+	app := newMinimalApp(t)
+	logs := captureLog(app)
+	dir := filepath.Join(t.TempDir(), "data")
+	require.NoError(t, os.MkdirAll(filepath.Join(dir, "oath.json"), 0o700))
+	for _, name := range []string{"fido2", "passwords", "teams", "trust", "oidc", "extension"} {
+		require.NoError(t, os.WriteFile(filepath.Join(dir, name), nil, 0o600))
+	}
+	app.dataDir = dir
+
+	require.NoError(t, app.initializeDataDir())
+
+	assert.True(t, app.dataDirInit)
+	assert.Nil(t, app.oathStore, "an OATH file that cannot be read leaves no OATH store")
+	assert.Nil(t, app.fido2Storage, "a FIDO2 path that is a file leaves no credential storage")
+	assert.Nil(t, app.staticpwStore, "a password path that is a file leaves no password store")
+	assert.Nil(t, app.trustStore, "a trust path that is a file leaves no trust store")
+	for _, msg := range []string{
+		"failed to open OATH store",
+		"failed to create FIDO2 storage backend",
+		"failed to create FIDO2 RP policy backend",
+		"failed to create password file store",
+		"failed to create team file store",
+		"failed to open trust store",
+		"failed to create OIDC data directory",
+		"failed to create extension pairing directory",
+	} {
+		assert.True(t, logs.Contains(msg), "missing warning %q", msg)
+	}
+}
+
 // TestInitializeDataDir_IdempotentGuard verifies the guard still works:
 // calling initializeDataDir() a second time returns ErrDataDirAlreadyInit.
 func TestInitializeDataDir_IdempotentGuard(t *testing.T) {

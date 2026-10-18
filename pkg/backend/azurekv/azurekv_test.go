@@ -472,8 +472,8 @@ func TestSave(t *testing.T) {
 
 	// Test overwrite protection
 	err = b.Save(attrs, testData, backend.FSEXT_PRIVATE_BLOB, false)
-	if err == nil {
-		t.Error("Save() should fail when overwrite=false and data exists")
+	if !errors.Is(err, backend.ErrKeyAlreadyExists) {
+		t.Errorf("Save() with overwrite=false over an existing key error = %v, want backend.ErrKeyAlreadyExists (go-xkms#1599)", err)
 	}
 
 	// Test overwrite allowed

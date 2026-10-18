@@ -383,7 +383,7 @@ func (b *Backend) Save(attrs *types.KeyAttributes, data []byte, extension types.
 			return &errs.Wrapped{Msg: "failed to check key existence", Err: err}
 		}
 		if exists {
-			return &errs.Detail{Err: backend.ErrFileAlreadyExists, Detail: attrs.CN}
+			return &errs.Detail{Err: ErrKeyAlreadyExists, Detail: attrs.CN}
 		}
 	}
 

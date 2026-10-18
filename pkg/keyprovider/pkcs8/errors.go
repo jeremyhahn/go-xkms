@@ -13,14 +13,21 @@
 
 package pkcs8
 
-import "errors"
+import (
+	"errors"
+
+	"github.com/jeremyhahn/go-xkms/pkg/backend"
+)
 
 var (
 	// ErrKeyNotFound is returned when a key does not exist in storage.
 	ErrKeyNotFound = errors.New("pkcs8: key not found")
 
-	// ErrKeyAlreadyExists is returned when attempting to generate a key that already exists.
-	ErrKeyAlreadyExists = errors.New("pkcs8: key already exists")
+	// ErrKeyAlreadyExists is returned when attempting to generate a key that
+	// already exists. It is an alias of backend.ErrKeyAlreadyExists so a
+	// get-or-generate caller recognizes a lost generate race with
+	// errors.Is(err, backend.ErrKeyAlreadyExists) (go-xkms#1599).
+	ErrKeyAlreadyExists = backend.ErrKeyAlreadyExists
 
 	// ErrInvalidKeyType is returned when an unsupported key type is requested.
 	ErrInvalidKeyType = errors.New("pkcs8: invalid or unsupported key type")

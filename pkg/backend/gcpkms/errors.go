@@ -60,8 +60,12 @@ var (
 	// ErrInvalidCredentials is returned when credentials are invalid or cannot be loaded.
 	ErrInvalidCredentials = errors.New("gcpkms: invalid credentials")
 
-	// ErrKeyAlreadyExists is returned when attempting to create a key that already exists.
-	ErrKeyAlreadyExists = errors.New("gcpkms: key already exists")
+	// ErrKeyAlreadyExists is returned when attempting to create a key that
+	// already exists. It is an alias of backend.ErrKeyAlreadyExists so a
+	// get-or-generate caller recognizes a lost generate race with
+	// errors.Is(err, backend.ErrKeyAlreadyExists), matching every other
+	// backend (go-xkms#1599).
+	ErrKeyAlreadyExists = backend.ErrKeyAlreadyExists
 
 	// ErrInvalidKeyAttributes is returned when key attributes are invalid.
 	ErrInvalidKeyAttributes = errors.New("gcpkms: invalid key attributes")

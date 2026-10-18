@@ -450,6 +450,9 @@ func (b *Backend) GenerateRSA(ctx context.Context, attrs *types.KeyAttributes) (
 	cryptoKey, err := b.client.CreateCryptoKey(ctx, req)
 	if err != nil {
 		b.mu.Unlock()
+		if status.Code(err) == codes.AlreadyExists {
+			return nil, &errs.Detail{Err: ErrKeyAlreadyExists, Detail: attrs.CN}
+		}
 		return nil, &errs.Wrapped{Msg: "failed to create RSA key", Err: err}
 	}
 
@@ -541,6 +544,9 @@ func (b *Backend) GenerateECDSA(ctx context.Context, attrs *types.KeyAttributes)
 	cryptoKey, err := b.client.CreateCryptoKey(ctx, req)
 	if err != nil {
 		b.mu.Unlock()
+		if status.Code(err) == codes.AlreadyExists {
+			return nil, &errs.Detail{Err: ErrKeyAlreadyExists, Detail: attrs.CN}
+		}
 		return nil, &errs.Wrapped{Msg: "failed to create ECDSA key", Err: err}
 	}
 
@@ -641,6 +647,9 @@ func (b *Backend) GenerateSymmetricKey(ctx context.Context, attrs *types.KeyAttr
 
 	cryptoKey, err := b.client.CreateCryptoKey(ctx, req)
 	if err != nil {
+		if status.Code(err) == codes.AlreadyExists {
+			return nil, &errs.Detail{Err: ErrKeyAlreadyExists, Detail: attrs.CN}
+		}
 		return nil, &errs.Wrapped{Msg: "failed to create symmetric key", Err: err}
 	}
 

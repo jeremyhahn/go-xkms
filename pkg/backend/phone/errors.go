@@ -54,7 +54,10 @@ var (
 	ErrKeyNotFound = backend.ErrKeyNotFound
 
 	// ErrKeyExists indicates a key with the given identifier already exists.
-	ErrKeyExists = errors.New("phone backend: key already exists")
+	// It is backend.ErrKeyAlreadyExists itself, so a get-or-generate caller
+	// recognizes a lost generate race with errors.Is(err,
+	// backend.ErrKeyAlreadyExists) (go-xkms#1599).
+	ErrKeyExists = backend.ErrKeyAlreadyExists
 
 	// ErrUnsupportedAlgorithm indicates the requested algorithm is not supported by the phone.
 	ErrUnsupportedAlgorithm = errors.New("phone backend: unsupported algorithm")
