@@ -18,6 +18,7 @@ import (
 	"testing"
 
 	"github.com/jeremyhahn/go-xkms/pkg/ca"
+	"github.com/jeremyhahn/go-xkms/xkey/pkg/agent"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -81,7 +82,7 @@ func TestCAIssueHelpProfilesAreRegistered(t *testing.T) {
 func TestCertProfileDefaultsAreRegistered(t *testing.T) {
 	registry := ca.NewDefaultProfileRegistry()
 
-	for _, name := range []string{agentCertProfileDefault, defaultCertProfile} {
+	for _, name := range []string{agent.CertProfileDefault, defaultCertProfile} {
 		profile, err := registry.Get(name)
 		require.NoError(t, err, "default profile %q is not registered", name)
 		assert.Equal(t, name, profile.Name())

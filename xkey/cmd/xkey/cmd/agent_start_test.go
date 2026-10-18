@@ -53,7 +53,7 @@ func newAgentStartTestCmd(t *testing.T, listen string) *cobra.Command {
 	cmd.Flags().String("tls-cert", "", "")
 	cmd.Flags().String("tls-key", "", "")
 	cmd.Flags().String("tls-ca", "", "")
-	cmd.Flags().String("cert-profile", agentCertProfileDefault, "")
+	cmd.Flags().String("cert-profile", agent.CertProfileDefault, "")
 	cmd.Flags().Int("cert-validity-days", 0, "")
 	require.NoError(t, setFlagForTest(t, cmd.Flags(), "listen", listen))
 	cmd.SetOut(&bytes.Buffer{})

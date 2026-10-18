@@ -504,3 +504,51 @@ func TestRsaKeySchemeHash(t *testing.T) {
 		assert.ErrorIs(t, err, ErrSignSchemeMismatch)
 	})
 }
+
+func rsaPublicWithScheme(scheme tpm2.TPMTRSAScheme) *tpm2.TPMTPublic {
+	return &tpm2.TPMTPublic{
+		Type:       tpm2.TPMAlgRSA,
+		Parameters: tpm2.NewTPMUPublicParms(tpm2.TPMAlgRSA, &tpm2.TPMSRSAParms{Scheme: scheme, KeyBits: 2048}),
+	}
+}
+
+func eccPublicWithScheme(scheme tpm2.TPMTECCScheme) *tpm2.TPMTPublic {
+	return &tpm2.TPMTPublic{
+		Type:       tpm2.TPMAlgECC,
+		Parameters: tpm2.NewTPMUPublicParms(tpm2.TPMAlgECC, &tpm2.TPMSECCParms{Scheme: scheme, CurveID: tpm2.TPMECCNistP256}),
+	}
+}
+
+func TestKeySignatureAlgorithm_NamesTheFixedScheme(t *testing.T) {
+	tests := []struct {
+		name string
+		pub  *tpm2.TPMTPublic
+		want x509.SignatureAlgorithm
+	}{
+		{"RSASSA SHA-256 (H-1)", rsaPublicWithScheme(rsassaScheme(tpm2.TPMAlgSHA256)), x509.SHA256WithRSA},
+		{"RSA-PSS SHA-384", rsaPublicWithScheme(rsapssScheme(tpm2.TPMAlgSHA384)), x509.SHA384WithRSAPSS},
+		{"ECDSA SHA-512", eccPublicWithScheme(ecdsaScheme(tpm2.TPMAlgSHA512)), x509.ECDSAWithSHA512},
+		{"RSA TPM_ALG_NULL", rsaPublicWithScheme(nullRSAScheme()), x509.UnknownSignatureAlgorithm},
+		{"ECC TPM_ALG_NULL", eccPublicWithScheme(nullECCScheme()), x509.UnknownSignatureAlgorithm},
+		{"RSA OAEP decryption key", rsaPublicWithScheme(tpm2.TPMTRSAScheme{
+			Scheme:  tpm2.TPMAlgOAEP,
+			Details: tpm2.NewTPMUAsymScheme(tpm2.TPMAlgOAEP, &tpm2.TPMSEncSchemeOAEP{HashAlg: tpm2.TPMAlgSHA256}),
+		}), x509.UnknownSignatureAlgorithm},
+		{"keyed hash", &tpm2.TPMTPublic{Type: tpm2.TPMAlgKeyedHash}, x509.UnknownSignatureAlgorithm},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got, err := keySignatureAlgorithm(tt.pub)
+			require.NoError(t, err)
+			assert.Equal(t, tt.want, got)
+		})
+	}
+}
+
+func TestKeySignatureAlgorithm_RefusesAnUnnamedOrMissingHash(t *testing.T) {
+	_, err := keySignatureAlgorithm(rsaPublicWithScheme(rsassaScheme(tpm2.TPMAlgSHA3256)))
+	assert.ErrorIs(t, err, ErrKeySchemeHashUnnamed, "x509 names no RSASSA over SHA3-256")
+
+	_, err = keySignatureAlgorithm(eccPublicWithScheme(ecdsaScheme(tpm2.TPMAlgNull)))
+	assert.ErrorIs(t, err, ErrSchemeHashUnresolved, "a fixed scheme with no hash is a malformed public area")
+}

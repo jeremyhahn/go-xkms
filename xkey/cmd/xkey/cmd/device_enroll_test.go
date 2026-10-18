@@ -33,6 +33,8 @@ import (
 	"github.com/spf13/cobra"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+
+	"github.com/jeremyhahn/go-xkms/xkey/pkg/agent"
 )
 
 // --- in-process certificate authority ---
@@ -200,7 +202,7 @@ func newDeviceEnrollCmd(t *testing.T, out *bytes.Buffer) *cobra.Command {
 	cmd.Flags().String("server", "", "")
 	cmd.Flags().String("code", "", "")
 	cmd.Flags().String("name", "", "")
-	cmd.Flags().String("cert-profile", agentCertProfileDefault, "")
+	cmd.Flags().String("cert-profile", agent.CertProfileDefault, "")
 	cmd.Flags().Int("validity-days", 0, "")
 	cmd.SetOut(out)
 	return cmd
@@ -261,7 +263,7 @@ func TestRunDeviceEnroll_IssuesAndPersistsCertificate(t *testing.T) {
 
 	// The authority received the generated CSR under the requested profile.
 	require.NotEmpty(t, ca.lastCSR)
-	assert.Equal(t, agentCertProfileDefault, ca.profile)
+	assert.Equal(t, agent.CertProfileDefault, ca.profile)
 	assert.Equal(t, 90, ca.validity)
 	assert.True(t, ca.closed, "the authority client must be released")
 
@@ -401,7 +403,7 @@ func TestRunDeviceEnroll_SignFailure(t *testing.T) {
 	t.Setenv("HOME", t.TempDir())
 
 	ca := newTestCA(t)
-	ca.signErr = ErrAgentCASignFailed
+	ca.signErr = agent.ErrCASignFailed
 	installDeviceEnrollDoubles(t, ca, nil, nil)
 
 	cmd := newDeviceEnrollCmd(t, &bytes.Buffer{})
@@ -409,7 +411,7 @@ func TestRunDeviceEnroll_SignFailure(t *testing.T) {
 
 	err := runDeviceEnroll(cmd, nil)
 	require.Error(t, err)
-	assert.ErrorIs(t, err, ErrAgentCASignFailed)
+	assert.ErrorIs(t, err, agent.ErrCASignFailed)
 }
 
 // TestRunDeviceEnroll_CACertificateFailure verifies a missing trust anchor is
@@ -418,7 +420,7 @@ func TestRunDeviceEnroll_CACertificateFailure(t *testing.T) {
 	t.Setenv("HOME", t.TempDir())
 
 	ca := newTestCA(t)
-	ca.caErr = ErrAgentCACertFailed
+	ca.caErr = agent.ErrCACertFailed
 	installDeviceEnrollDoubles(t, ca, nil, nil)
 
 	cmd := newDeviceEnrollCmd(t, &bytes.Buffer{})
@@ -426,7 +428,7 @@ func TestRunDeviceEnroll_CACertificateFailure(t *testing.T) {
 
 	err := runDeviceEnroll(cmd, nil)
 	require.Error(t, err)
-	assert.ErrorIs(t, err, ErrAgentCACertFailed)
+	assert.ErrorIs(t, err, agent.ErrCACertFailed)
 }
 
 // TestRunDeviceEnroll_UnusableTrustAnchor verifies a CA response that is not
@@ -587,7 +589,7 @@ func TestDeviceEnrollCmd_Flags(t *testing.T) {
 	for _, name := range []string{"server", "code", "name", "cert-profile", "validity-days"} {
 		assert.NotNil(t, deviceEnrollCmd.Flags().Lookup(name), "missing flag %q", name)
 	}
-	assert.Equal(t, agentCertProfileDefault, deviceEnrollCmd.Flags().Lookup("cert-profile").DefValue)
+	assert.Equal(t, agent.CertProfileDefault, deviceEnrollCmd.Flags().Lookup("cert-profile").DefValue)
 }
 
 // TestDeviceEnrollCmd_HelpDescribesRealBehavior verifies the help text

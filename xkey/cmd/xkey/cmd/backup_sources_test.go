@@ -1107,6 +1107,33 @@ func TestBackupLifecycle_CreateContentsRestore(t *testing.T) {
 	assert.Equal(t, want.Tags, meta.Tags)
 }
 
+// TestBackupRestore_ExistingItemsAreReportedSkipped restores a backup into
+// the home it was taken from: items that already exist cannot be added
+// again, and the restore must name each one and report the skipped total
+// instead of claiming success.
+func TestBackupRestore_ExistingItemsAreReportedSkipped(t *testing.T) {
+	home := isolatedBackupHome(t)
+	seedBackupStores(t, home)
+
+	output := filepath.Join(home, "existing.xkb")
+	const passphrase = "correct-horse-battery-staple"
+	setBackupFlags(t, backupCreateCmd, map[string]string{"output": output, "password": passphrase})
+	backupCreateCmd.SetOut(&bytes.Buffer{})
+	require.NoError(t, runBackupCreate(backupCreateCmd, nil))
+
+	setBackupFlags(t, backupRestoreCmd, map[string]string{"password": passphrase, "key": ""})
+	var restoreOut bytes.Buffer
+	backupRestoreCmd.SetOut(&restoreOut)
+	require.NoError(t, runBackupRestore(backupRestoreCmd, []string{output}))
+
+	out := restoreOut.String()
+	assert.Contains(t, out, "oath-credentials:  restored 0, skipped 1")
+	assert.Contains(t, out, "skipped: oath oath-unit-test: oath: credential already exists")
+	assert.Contains(t, out, "static-passwords:  restored 0, skipped 1")
+	assert.Contains(t, out, "Restore completed with 2 skipped item(s).")
+	assert.NotContains(t, out, "Restore completed successfully.")
+}
+
 func TestBackupRestore_WrongPasswordFails(t *testing.T) {
 	home := isolatedBackupHome(t)
 	seedBackupStores(t, home)

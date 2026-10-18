@@ -126,6 +126,7 @@ func newMinimalApp(t *testing.T) *App {
 		sshConsoleService:  services.NewSSHConsoleService(),
 		sshLocalService:    services.NewSSHLocalService(),
 		storageService:     services.NewStorageService(),
+		agentService:       services.NewAgentService(),
 		shutdownDone:       make(chan struct{}),
 	}
 }

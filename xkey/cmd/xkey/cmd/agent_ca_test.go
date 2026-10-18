@@ -32,6 +32,7 @@ import (
 	"time"
 
 	"github.com/jeremyhahn/go-xkms/sdk/go/transport"
+	"github.com/jeremyhahn/go-xkms/xkey/pkg/agent"
 )
 
 // caTestFixture is a real, self-signed certificate authority used to give
@@ -219,12 +220,12 @@ func useTestXKMSdEndpoint(t *testing.T, url string) {
 }
 
 // connectTestCA builds an xkmsdCA against the fake endpoint.
-func connectTestCA(t *testing.T, fake *fakeXKMSd) *xkmsdCA {
+func connectTestCA(t *testing.T, fake *fakeXKMSd) *agent.XKMSdCA {
 	t.Helper()
 
 	useTestXKMSdEndpoint(t, fake.server.URL)
 
-	ca, err := newAgentCA(agentCertProfileDefault, 30)
+	ca, err := newAgentCA(agent.CertProfileDefault, 30)
 	if err != nil {
 		t.Fatalf("newAgentCA: %v", err)
 	}
@@ -239,7 +240,7 @@ func connectTestCA(t *testing.T, fake *fakeXKMSd) *xkmsdCA {
 func TestNewAgentCA_NoAuthorityConfigured(t *testing.T) {
 	useTestXKMSdEndpoint(t, "")
 
-	ca, err := newAgentCA(agentCertProfileDefault, 0)
+	ca, err := newAgentCA(agent.CertProfileDefault, 0)
 	if !errors.Is(err, ErrAgentCAUnavailable) {
 		t.Fatalf("newAgentCA = %v, want ErrAgentCAUnavailable", err)
 	}
@@ -255,7 +256,7 @@ func TestNewAgentCA_UnreachableAuthority(t *testing.T) {
 	// Port 9 (discard) refuses connections, so the transport handshake fails.
 	useTestXKMSdEndpoint(t, "http://127.0.0.1:9")
 
-	if _, err := newAgentCA(agentCertProfileDefault, 0); !errors.Is(err, ErrAgentCAUnavailable) {
+	if _, err := newAgentCA(agent.CertProfileDefault, 0); !errors.Is(err, ErrAgentCAUnavailable) {
 		t.Fatalf("newAgentCA = %v, want ErrAgentCAUnavailable", err)
 	}
 }
@@ -265,7 +266,7 @@ func TestNewAgentCA_AuthorityWithoutCertificate(t *testing.T) {
 	fake.caPEM = nil
 	useTestXKMSdEndpoint(t, fake.server.URL)
 
-	if _, err := newAgentCA(agentCertProfileDefault, 0); !errors.Is(err, ErrAgentCAUnavailable) {
+	if _, err := newAgentCA(agent.CertProfileDefault, 0); !errors.Is(err, ErrAgentCAUnavailable) {
 		t.Fatalf("newAgentCA = %v, want ErrAgentCAUnavailable", err)
 	}
 }
@@ -300,8 +301,8 @@ func TestXKMSdCA_GetCACertificate_EmptyResponse(t *testing.T) {
 	ca := connectTestCA(t, fake)
 
 	fake.caPEM = nil
-	if _, err := ca.GetCACertificate(); !errors.Is(err, ErrAgentCAEmptyResponse) {
-		t.Fatalf("GetCACertificate = %v, want ErrAgentCAEmptyResponse", err)
+	if _, err := ca.GetCACertificate(); !errors.Is(err, agent.ErrCAEmptyResponse) {
+		t.Fatalf("GetCACertificate = %v, want agent.ErrCAEmptyResponse", err)
 	}
 }
 
@@ -336,8 +337,8 @@ func TestXKMSdCA_SignCSR(t *testing.T) {
 	if string(fake.lastSignRequest.CSRPEM) != string(csrPEM) {
 		t.Errorf("CSR forwarded to the CA = %q, want %q", fake.lastSignRequest.CSRPEM, csrPEM)
 	}
-	if fake.lastSignRequest.Profile != agentCertProfileDefault {
-		t.Errorf("profile = %q, want %q", fake.lastSignRequest.Profile, agentCertProfileDefault)
+	if fake.lastSignRequest.Profile != agent.CertProfileDefault {
+		t.Errorf("profile = %q, want %q", fake.lastSignRequest.Profile, agent.CertProfileDefault)
 	}
 	if fake.lastSignRequest.ValidityDays != 30 {
 		t.Errorf("validity days = %d, want 30", fake.lastSignRequest.ValidityDays)
@@ -349,8 +350,8 @@ func TestXKMSdCA_SignCSR_AuthorityRejects(t *testing.T) {
 	ca := connectTestCA(t, fake)
 
 	fake.signStatus = http.StatusForbidden
-	if _, err := ca.SignCSR([]byte("csr")); !errors.Is(err, ErrAgentCASignFailed) {
-		t.Fatalf("SignCSR = %v, want ErrAgentCASignFailed", err)
+	if _, err := ca.SignCSR([]byte("csr")); !errors.Is(err, agent.ErrCASignFailed) {
+		t.Fatalf("SignCSR = %v, want agent.ErrCASignFailed", err)
 	}
 }
 
@@ -359,8 +360,8 @@ func TestXKMSdCA_SignCSR_EmptyCertificate(t *testing.T) {
 	ca := connectTestCA(t, fake)
 
 	fake.signResponse = transport.SignCSRResponse{SerialNumber: "01"}
-	if _, err := ca.SignCSR([]byte("csr")); !errors.Is(err, ErrAgentCAEmptyResponse) {
-		t.Fatalf("SignCSR = %v, want ErrAgentCAEmptyResponse", err)
+	if _, err := ca.SignCSR([]byte("csr")); !errors.Is(err, agent.ErrCAEmptyResponse) {
+		t.Fatalf("SignCSR = %v, want agent.ErrCAEmptyResponse", err)
 	}
 }
 
@@ -374,8 +375,8 @@ func TestXKMSdCA_RevokeCertificate(t *testing.T) {
 	if fake.lastRevokeRequest.SerialNumber != "0A0B0C" {
 		t.Errorf("serial = %q, want 0A0B0C", fake.lastRevokeRequest.SerialNumber)
 	}
-	if fake.lastRevokeRequest.Reason != agentRevocationReason {
-		t.Errorf("reason = %d, want %d", fake.lastRevokeRequest.Reason, agentRevocationReason)
+	if fake.lastRevokeRequest.Reason != agent.RevocationReasonCessationOfOperation {
+		t.Errorf("reason = %d, want %d", fake.lastRevokeRequest.Reason, agent.RevocationReasonCessationOfOperation)
 	}
 }
 
@@ -388,8 +389,8 @@ func TestXKMSdCA_RevokeCertificate_AuthorityRefuses(t *testing.T) {
 		Message: "unknown serial number",
 	}
 	err := ca.RevokeCertificate("DEADBEEF")
-	if !errors.Is(err, ErrAgentCARevokeFailed) {
-		t.Fatalf("RevokeCertificate = %v, want ErrAgentCARevokeFailed", err)
+	if !errors.Is(err, agent.ErrCARevokeFailed) {
+		t.Fatalf("RevokeCertificate = %v, want agent.ErrCARevokeFailed", err)
 	}
 	if !strings.Contains(err.Error(), "unknown serial number") {
 		t.Errorf("error does not carry the CA message: %v", err)
@@ -417,7 +418,7 @@ func TestXKMSdCA_IsRevoked_Revoked(t *testing.T) {
 	fake := newFakeXKMSd(t, newCATestFixture(t))
 	ca := connectTestCA(t, fake)
 
-	fake.isRevokedResponse = transport.IsRevokedResponse{Revoked: true, Reason: agentRevocationReason}
+	fake.isRevokedResponse = transport.IsRevokedResponse{Revoked: true, Reason: agent.RevocationReasonCessationOfOperation}
 	revoked, err := ca.IsRevoked("DEADBEEF")
 	if err != nil {
 		t.Fatalf("IsRevoked: %v", err)
@@ -432,21 +433,21 @@ func TestXKMSdCA_IsRevoked_AuthorityFailure(t *testing.T) {
 	ca := connectTestCA(t, fake)
 
 	fake.isRevokedStatus = http.StatusInternalServerError
-	if _, err := ca.IsRevoked("0A0B0C"); !errors.Is(err, ErrAgentCARevocationCheckFailed) {
-		t.Fatalf("IsRevoked = %v, want ErrAgentCARevocationCheckFailed", err)
+	if _, err := ca.IsRevoked("0A0B0C"); !errors.Is(err, agent.ErrCARevocationCheckFailed) {
+		t.Fatalf("IsRevoked = %v, want agent.ErrCARevocationCheckFailed", err)
 	}
 }
 
 func TestAgentCertProfile(t *testing.T) {
-	if got := agentCertProfile(agentStartCmd); got != agentCertProfileDefault {
-		t.Errorf("agentCertProfile default = %q, want %q", got, agentCertProfileDefault)
+	if got := agentCertProfile(agentStartCmd); got != agent.CertProfileDefault {
+		t.Errorf("agentCertProfile default = %q, want %q", got, agent.CertProfileDefault)
 	}
 
 	if err := setFlagForTest(t, agentStartCmd.Flags(), "cert-profile", "idevid"); err != nil {
 		t.Fatalf("set cert-profile: %v", err)
 	}
 	t.Cleanup(func() {
-		if err := setFlagForTest(t, agentStartCmd.Flags(), "cert-profile", agentCertProfileDefault); err != nil {
+		if err := setFlagForTest(t, agentStartCmd.Flags(), "cert-profile", agent.CertProfileDefault); err != nil {
 			t.Errorf("restore cert-profile: %v", err)
 		}
 	})

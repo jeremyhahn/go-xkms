@@ -166,7 +166,7 @@ func init() {
 	AgentCmd.AddCommand(agentRemoveCmd)
 
 	for _, cmd := range []*cobra.Command{agentCodeCmd, agentPendingCmd, agentApproveCmd, agentRejectCmd, agentRemoveCmd} {
-		cmd.Flags().String("cert-profile", agentCertProfileDefault,
+		cmd.Flags().String("cert-profile", agent.CertProfileDefault,
 			"xkmsd CA profile used to sign or revoke agent certificates")
 		cmd.Flags().Int("cert-validity-days", 0,
 			"validity period for issued agent certificates (0 uses the CA default)")

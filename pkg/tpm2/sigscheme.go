@@ -2,6 +2,7 @@ package tpm2
 
 import (
 	"crypto"
+	"crypto/x509"
 
 	"github.com/google/go-tpm/tpm2"
 	"github.com/jeremyhahn/go-xkms/pkg/tpm2/store"
@@ -325,5 +326,85 @@ func rsaSignScheme(
 
 	default:
 		return 0, ErrSignSchemeMismatch
+	}
+}
+
+// signatureAlgorithms names the x509.SignatureAlgorithm of each signature
+// scheme a key's public area can fix, by the scheme's hash algorithm: the
+// TPMS_SIG_SCHEME_RSASSA, TPMS_SIG_SCHEME_RSAPSS and TPMS_SIG_SCHEME_ECDSA
+// members of TPMU_ASYM_SCHEME (TCG TPM 2.0 Library Part 2, section 11.2.3.5).
+var signatureAlgorithms = map[tpm2.TPMAlgID]map[tpm2.TPMIAlgHash]x509.SignatureAlgorithm{
+	tpm2.TPMAlgRSASSA: {
+		tpm2.TPMAlgSHA256: x509.SHA256WithRSA,
+		tpm2.TPMAlgSHA384: x509.SHA384WithRSA,
+		tpm2.TPMAlgSHA512: x509.SHA512WithRSA,
+	},
+	tpm2.TPMAlgRSAPSS: {
+		tpm2.TPMAlgSHA256: x509.SHA256WithRSAPSS,
+		tpm2.TPMAlgSHA384: x509.SHA384WithRSAPSS,
+		tpm2.TPMAlgSHA512: x509.SHA512WithRSAPSS,
+	},
+	tpm2.TPMAlgECDSA: {
+		tpm2.TPMAlgSHA256: x509.ECDSAWithSHA256,
+		tpm2.TPMAlgSHA384: x509.ECDSAWithSHA384,
+		tpm2.TPMAlgSHA512: x509.ECDSAWithSHA512,
+	},
+}
+
+// keySignatureAlgorithm returns the signature algorithm a key's public area
+// fixes in the scheme of its TPMS_RSA_PARMS or TPMS_ECC_PARMS (TCG TPM 2.0
+// Library Part 2, sections 12.2.3.5 and 12.2.3.6). A Restricted signing key
+// always fixes one, and signs only under it: an IAK's RSA template is H-1
+// with either TPM_ALG_RSASSA or TPM_ALG_RSAPSS, its ECC templates H-2 to H-4
+// TPM_ALG_ECDSA, each over the template's nameAlg (TCG "TPM 2.0 Keys for
+// Device Identity and Attestation" v1.00 r12, section 7.3.4).
+//
+// A key whose scheme is TPM_ALG_NULL, as an RSA IDevID's is (Template H-1
+// for an unrestricted key), or is no signature scheme, as a decryption key's
+// is, fixes none: x509.UnknownSignatureAlgorithm is returned with no error.
+func keySignatureAlgorithm(pub *tpm2.TPMTPublic) (x509.SignatureAlgorithm, error) {
+	scheme, hash, err := keySignatureScheme(pub)
+	if err != nil {
+		return x509.UnknownSignatureAlgorithm, err
+	}
+	if scheme == tpm2.TPMAlgNull {
+		return x509.UnknownSignatureAlgorithm, nil
+	}
+	sigAlgo, ok := signatureAlgorithms[scheme][hash]
+	if !ok {
+		return x509.UnknownSignatureAlgorithm, ErrKeySchemeHashUnnamed
+	}
+	return sigAlgo, nil
+}
+
+// keySignatureScheme returns the signature scheme and scheme hash a key's
+// public area fixes, or TPM_ALG_NULL when it fixes no signature scheme.
+func keySignatureScheme(pub *tpm2.TPMTPublic) (tpm2.TPMAlgID, tpm2.TPMIAlgHash, error) {
+	switch pub.Type {
+	case tpm2.TPMAlgRSA:
+		rsaDetail, err := pub.Parameters.RSADetail()
+		if err != nil {
+			return tpm2.TPMAlgNull, 0, err
+		}
+		scheme := rsaDetail.Scheme.Scheme
+		if scheme != tpm2.TPMAlgRSASSA && scheme != tpm2.TPMAlgRSAPSS {
+			return tpm2.TPMAlgNull, 0, nil
+		}
+		hash, _, err := rsaKeySchemeHash(rsaDetail.Scheme)
+		return scheme, hash, err
+
+	case tpm2.TPMAlgECC:
+		eccDetail, err := pub.Parameters.ECCDetail()
+		if err != nil {
+			return tpm2.TPMAlgNull, 0, err
+		}
+		if eccDetail.Scheme.Scheme != tpm2.TPMAlgECDSA {
+			return tpm2.TPMAlgNull, 0, nil
+		}
+		hash, _, err := eccKeySchemeHash(eccDetail.Scheme)
+		return tpm2.TPMAlgECDSA, hash, err
+
+	default:
+		return tpm2.TPMAlgNull, 0, nil
 	}
 }

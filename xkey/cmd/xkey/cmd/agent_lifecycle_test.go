@@ -825,3 +825,76 @@ func TestRunAgentStop_ReportsGracefulTermination(t *testing.T) {
 		t.Errorf("state file was not removed: %v", statErr)
 	}
 }
+
+func TestRunAgentStatus_ReportsRunningServer(t *testing.T) {
+	withIsolatedAgentHome(t)
+
+	executable := fakeAgentExecutable(t)
+	pid := startFakeAgentServer(t, executable, false)
+	for _, tls := range []bool{true, false} {
+		state := &agentServerState{
+			PID:        pid,
+			ListenAddr: "127.0.0.1:19443",
+			Executable: executable,
+			TLS:        tls,
+			StartedAt:  time.Date(2026, 10, 17, 12, 0, 0, 0, time.UTC),
+		}
+		if err := claimAgentServerState(state); err != nil {
+			t.Fatalf("claim agent server state: %v", err)
+		}
+
+		out, err := runDetached(t, runAgentStatus)
+		if err != nil {
+			t.Fatalf("runAgentStatus (tls=%v): %v", tls, err)
+		}
+		want := []string{
+			"Agent server: running",
+			"Listen:  127.0.0.1:19443",
+			"Started: 2026-10-17T12:00:00Z",
+			"No enrolled agents",
+		}
+		if tls {
+			want = append(want, "TLS:     enabled (mTLS)")
+		} else {
+			want = append(want, "TLS:     disabled (development mode)")
+		}
+		for _, line := range want {
+			if !strings.Contains(out, line) {
+				t.Errorf("output (tls=%v) = %q, want it to contain %q", tls, out, line)
+			}
+		}
+		if err := removeAgentServerState(); err != nil {
+			t.Fatalf("remove agent server state: %v", err)
+		}
+	}
+}
+
+func TestRunAgentStatus_UnreadableStateIsAnError(t *testing.T) {
+	withIsolatedAgentHome(t)
+
+	if err := os.MkdirAll(mustAgentStateFile(t), 0o700); err != nil {
+		t.Fatalf("create blocking directory: %v", err)
+	}
+
+	if _, err := runDetached(t, runAgentStatus); !errors.Is(err, ErrAgentStateRead) {
+		t.Fatalf("runAgentStatus = %v, want ErrAgentStateRead", err)
+	}
+}
+
+func TestRunAgentStatus_UnusableEnrollmentStoreIsAnError(t *testing.T) {
+	withIsolatedAgentHome(t)
+
+	storeDir := mustAgentStoreDir(t)
+	if err := os.MkdirAll(filepath.Dir(storeDir), 0o700); err != nil {
+		t.Fatalf("create agent data directory: %v", err)
+	}
+	// A regular file where the enrollment directory belongs stops the
+	// store from creating its subdirectories.
+	if err := os.WriteFile(storeDir, []byte("not a directory"), 0o600); err != nil {
+		t.Fatalf("create blocking file: %v", err)
+	}
+
+	if _, err := runDetached(t, runAgentStatus); !errors.Is(err, ErrAgentStatusFailed) {
+		t.Fatalf("runAgentStatus = %v, want ErrAgentStatusFailed", err)
+	}
+}

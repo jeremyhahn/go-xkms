@@ -34,7 +34,7 @@ stays atomic across processes sharing the store.
 
 `EnrollmentService` and the connection-time verifier reach the certificate
 authority through `agent.CAService`, implemented by
-`cmd/xkey/cmd.xkmsdCA` over the go-xkms SDK transport
+`pkg/agent.XKMSdCA` over the go-xkms SDK transport
 (`sdk/go/transport.Client`). The two calls this feature added or now
 exercises for the first time:
 

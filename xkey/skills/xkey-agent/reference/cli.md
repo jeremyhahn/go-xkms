@@ -2504,7 +2504,7 @@ Usage: `xkey tpm iak create [flags]`
 | Flag | Type | Default | Description |
 |---|---|---|---|
 | `--force` | bool | false | Force recreation even if IAK already exists |
-| `--template` | string | rsa2048 | Key template (rsa2048, rsa-pss, ecc256) |
+| `--template` | string | rsa2048 | Key template (rsa2048, rsa-pss, ecc256); when set, overrides the configured key algorithm, when unset the configured key is used |
 
 ## xkey tpm iak csr
 
@@ -2567,7 +2567,7 @@ Usage: `xkey tpm idevid create [flags]`
 | `--force` | bool | false | Force recreation even if IDevID already exists |
 | `--model` | string |  | Device model name |
 | `--serial` | string |  | Device serial number |
-| `--template` | string | rsa2048 | Key template (rsa2048, rsa-pss, ecc256) |
+| `--template` | string | rsa2048 | Key template (rsa2048, rsa-pss, ecc256); when set, overrides the configured key algorithm, when unset the configured key is used |
 
 ## xkey tpm idevid csr
 

@@ -167,7 +167,7 @@ func init() {
 	tpmIAKCreateCmd.Flags().BoolVar(&iakCreateForce, "force", false,
 		"Force recreation even if IAK already exists")
 	tpmIAKCreateCmd.Flags().StringVar(&iakCreateTemplate, "template", "rsa2048",
-		"Key template (rsa2048, rsa-pss, ecc256)")
+		"Key template (rsa2048, rsa-pss, ecc256); when set, overrides the configured key algorithm, when unset the configured key is used")
 
 	// Export flags
 	tpmIAKExportCmd.Flags().StringVar(&iakExportOutput, "output", "",
@@ -272,11 +272,7 @@ func outputIAKText(out io.Writer, info *IAKInfo) error {
 
 func runIAKCreate(cmd *cobra.Command, args []string) (err error) {
 	out := cmd.OutOrStdout()
-	// Validate template
-	switch iakCreateTemplate {
-	case "rsa2048", "rsa-pss", "ecc256":
-		// Valid
-	default:
+	if _, ok := devidTemplates[iakCreateTemplate]; !ok {
 		return &DetailError{Err: ErrInvalidIAKTemplate, Detail: fmt.Sprintf(": %s", iakCreateTemplate)}
 	}
 
@@ -309,6 +305,11 @@ func runIAKCreate(cmd *cobra.Command, args []string) (err error) {
 		if err := tpm.DeleteIAK(ekAttrs); err != nil {
 			return &WrappedError{Msg: "failed to remove the existing IAK", Err: err}
 		}
+	}
+
+	// An explicit --template overrides the configured IAK suite.
+	if template := explicitDevIDTemplate(cmd, iakCreateTemplate); template != nil {
+		template.applyIAK(tpm.Config().IAK)
 	}
 
 	// Create IAK

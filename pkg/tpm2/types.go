@@ -252,6 +252,12 @@ var (
 	// bare TPM response code reach the caller.
 	ErrSignSchemeMismatch = errors.New("tpm: the key's public area fixes a signature scheme that does not match the requested one; a key created with a fixed scheme can only sign under that scheme")
 
+	// ErrKeySchemeHashUnnamed reports a key whose public area fixes a
+	// signature scheme over a hash algorithm that has no
+	// x509.SignatureAlgorithm, so the key's signatures cannot be described
+	// to an X.509 consumer.
+	ErrKeySchemeHashUnnamed = errors.New("tpm: the key's public area fixes a signature scheme over a hash algorithm that has no x509 signature algorithm")
+
 	// ErrDigestLengthMismatch reports that the digest handed to TPM2_Sign is not
 	// the length the signature scheme's hash algorithm produces.
 	//

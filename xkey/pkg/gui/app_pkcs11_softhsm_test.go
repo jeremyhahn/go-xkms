@@ -3,6 +3,7 @@
 package gui
 
 import (
+	"context"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -112,6 +113,27 @@ func TestApp_PKCS11Connect_RegistersXKMSBackend(t *testing.T) {
 	assert.NotSame(t, first, second, "a reconnect must replace the stale backend")
 
 	require.NoError(t, app.pkcs11Service.Disconnect(moduleID, slotID))
+}
+
+// With the barrier unsealed, a connected token's certificates are stored in
+// the barrier datastore under keys/certs/, never in session-only memory.
+func TestApp_PKCS11Connect_BarrierActiveStoresCertsInBarrier(t *testing.T) {
+	app, _, moduleID, slotID := newSoftHSMApp(t)
+	require.NoError(t, app.barrierService.Initialize("test-password", "passphrase"))
+	barrier := app.barrierService.GetBackend()
+	require.NotNil(t, barrier, "precondition: the barrier must be unsealed")
+
+	require.NoError(t, app.pkcs11Service.Connect(moduleID, slotID, softHSMUserPIN, softHSMSOPIN))
+	t.Cleanup(func() { assert.NoError(t, app.pkcs11Service.Disconnect(moduleID, slotID)) })
+
+	backend, err := xkmssdk.GetBackend("pkcs11")
+	require.NoError(t, err)
+	ctx := context.Background()
+	require.NoError(t, backend.CertStorage().SaveCert(ctx, "routed", newPIVTestCert(t)))
+
+	stored, err := barrier.List(ctx, "keys/certs/")
+	require.NoError(t, err)
+	assert.NotEmpty(t, stored, "the certificate must land in the barrier datastore")
 }
 
 // TestApp_RegisterPKCS11XKMSBackend_WrongPINRegistersNothing verifies that

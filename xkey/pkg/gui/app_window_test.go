@@ -15,7 +15,9 @@ package gui
 
 import (
 	"context"
+	"encoding/base64"
 	"errors"
+	"net/http"
 	"slices"
 	"sync"
 	"testing"
@@ -123,6 +125,41 @@ func TestApp_HideWindow_HidesWindow(t *testing.T) {
 	app.HideWindow()
 
 	assert.Equal(t, []string{"hide"}, window.Calls())
+}
+
+// The frontend's minimise-to-tray verb reaches the App's window and hides it.
+func TestApp_MinimizeToTray_HidesTheWindow(t *testing.T) {
+	app, window, _ := windowedApp(t)
+
+	app.appService.MinimizeToTray()
+
+	assert.Equal(t, []string{"hide"}, window.Calls())
+}
+
+// A browser extension's pairing request reaches the frontend as an
+// extension-pairing-request event once the data directory is initialised.
+func TestApp_RequestPairing_EmitsPairingRequestEvent(t *testing.T) {
+	app, window, _ := windowedApp(t)
+	require.NoError(t, app.initializeDataDir())
+
+	identityKey := base64.StdEncoding.EncodeToString(make([]byte, 32))
+	code, err := app.pairingService.RequestPairing(identityKey, "chrome-extension://pairing-test")
+	require.NoError(t, err)
+	require.NotEmpty(t, code)
+
+	assert.Contains(t, window.Events(), string(events.EventExtensionPairingRequest))
+}
+
+// Deleting a tenant on the connected server reaches the frontend as a
+// tenant-deleted event.
+func TestApp_DeleteTenant_EmitsTenantDeletedEvent(t *testing.T) {
+	app, window, _ := windowedApp(t)
+	connectWiredApp(t, app, newBackendsServer(t, http.StatusOK, `{"backends":[]}`))
+	app.tenantService.SetContext(context.Background())
+
+	require.NoError(t, app.tenantService.DeleteTenant("tenant-a"))
+
+	assert.Contains(t, window.Events(), string(events.EventTenantDeleted))
 }
 
 func TestApp_EmitEvent_ForwardsEventType(t *testing.T) {

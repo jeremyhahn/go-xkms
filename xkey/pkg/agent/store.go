@@ -44,6 +44,23 @@ type FileStore struct {
 // under its base directory.
 var fileStoreSubdirs = []string{"agents", "codes", "pending"}
 
+const (
+	// DataSubdir is the agent state directory beneath the xKey data
+	// directory.
+	DataSubdir = "agent"
+
+	// enrollmentStoreSubdir holds the enrollment FileStore beneath
+	// DataSubdir.
+	enrollmentStoreSubdir = "enrollments"
+)
+
+// EnrollmentStoreDir returns the enrollment FileStore directory beneath the
+// xKey data directory dataDir. The CLI and the GUI both open the store
+// here, so each sees the agents the other enrolled.
+func EnrollmentStoreDir(dataDir string) string {
+	return filepath.Join(dataDir, DataSubdir, enrollmentStoreSubdir)
+}
+
 // NewFileStore creates a new FileStore at the given directory. The
 // directory and its agents/, codes/, and pending/ subdirectories are
 // created with 0700 permissions if they do not exist.

@@ -14,9 +14,11 @@ Package `xkey/pkg/agent`:
   revocation-gated connection verification, and removal.
   `NewEnrollmentService(cfg, ca, store, logger)`.
 - `CAService` — the certificate authority contract `EnrollmentService`
-  drives. Implemented in this codebase by `cmd/xkey/cmd.xkmsdCA`, which
+  drives. Implemented in this codebase by `XKMSdCA` (`xkmsd_ca.go`), which
   reaches the real xkmsd CA over the SDK transport; `xkey` holds no CA key
-  of its own.
+  of its own. The CLI connects a client for it per command; the GUI's
+  `AgentService` binds one to the connected server client on
+  `EventServerConnected` and drops it on disconnect.
 - `EnrollmentStore` — persistence for enrolled agent records, one-time
   enrollment codes, and pending admin-approval requests.
   `FileStore` (JSON files under `agents/`, `codes/`, `pending/`
@@ -169,9 +171,9 @@ convention:
 | `ErrCertificateRevoked` | (pre-existing, now actually reachable) `VerifyAgentCertificate` when the CA reports the certificate revoked. |
 | `ErrCertificateInvalid` | (pre-existing) malformed certificate, or an empty verified chain reaching `Server.verifyPeerCertificate`. |
 
-`xkey/cmd/xkey/cmd/agent_ca.go` adds `ErrAgentCARevocationCheckFailed` for
-the CLI-side `xkmsdCA.IsRevoked` transport call, following the same
-`SentinelCauseError` pattern as `ErrAgentCARevokeFailed`.
+`xkey/pkg/agent/xkmsd_ca.go` adds `ErrCARevocationCheckFailed` for the
+`XKMSdCA.IsRevoked` transport call, wrapped in an `AgentError` like
+`ErrCARevokeFailed`.
 
 `xkey/pkg/gui/services/agent_service.go` adds no new sentinels:
 `RemoveAgent` maps `agent.ErrAgentNotFound` to the existing
@@ -259,8 +261,11 @@ Neither limit is configurable.
   an unverified certificate is not used as an identity; the 1024-entry cap;
   idle eviction when full; a stale connection end never removes a newer
   entry.
-- `xkey/cmd/xkey/cmd/agent_ca_test.go` — `xkmsdCA.IsRevoked` against a fake
-  xkmsd endpoint (not revoked, revoked, authority failure).
+- `xkey/pkg/agent/xkmsd_ca_test.go` — `XKMSdCA` sign, CA certificate,
+  revoke and `IsRevoked` (not revoked, revoked, fails closed) against a fake
+  transport client.
+- `xkey/cmd/xkey/cmd/agent_ca_test.go` — the CLI's `newAgentCA` against a
+  fake xkmsd endpoint.
 - `xkey/pkg/gui/services/agent_service_test.go` — `RemoveAgent` revokes the
   certificate before deleting, and a revocation failure keeps the record.
 - `xkey/cmd/xkey/cmd/agent_verbs_test.go` — one success and one error case

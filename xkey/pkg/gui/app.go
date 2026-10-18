@@ -45,6 +45,7 @@ import (
 	"github.com/jeremyhahn/go-xkms/sdk/go/fido2/authenticator"
 	"github.com/jeremyhahn/go-xkms/sdk/go/fido2/keybackend"
 	"github.com/jeremyhahn/go-xkms/sdk/go/truststore"
+	"github.com/jeremyhahn/go-xkms/xkey/pkg/agent"
 	"github.com/jeremyhahn/go-xkms/xkey/pkg/audit"
 	"github.com/jeremyhahn/go-xkms/xkey/pkg/backendregistry"
 	"github.com/jeremyhahn/go-xkms/xkey/pkg/config"
@@ -1123,6 +1124,14 @@ func (a *App) initializeDataDir() error {
 		}
 	}
 
+	// Agent enrollment records live in the CLI's FileStore, so agents
+	// enrolled from either entry point are listed and managed by both.
+	if agentStore, agErr := agent.NewFileStore(agent.EnrollmentStoreDir(dir), a.log); agErr != nil {
+		a.log.Warn("agent enrollment disabled: failed to open the enrollment store", "error", agErr)
+	} else {
+		a.agentService.SetEnrollmentStore(agentStore)
+	}
+
 	a.dataDirInit = true
 	a.log.Info("data directory initialized", "dir", dir,
 		"barrier_active", barrierBackend != nil)
@@ -1337,6 +1346,10 @@ func (a *App) initializeAuthenticator() {
 	}
 
 	a.authenticatorInstance = auth
+
+	// Credential creation and PIN establishment are security audit events:
+	// the authenticator refuses either one whose record cannot be written.
+	auth.SetAuditLogger(audit.NewFIDO2Logger(a.auditStore))
 
 	// Wire the composite key backend to the FIDO2 service so the frontend
 	// can switch the default backend for new credential creation.
@@ -2187,10 +2200,6 @@ func NewApp(cfg *GUIConfig) *App {
 	if apiExplorerSvc != nil {
 		apiExplorerSvc.SetAuditLogger(auditStore)
 	}
-	if a.authenticatorInstance != nil {
-		a.authenticatorInstance.SetAuditLogger(audit.NewFIDO2Logger(auditStore))
-	}
-
 	// SSH services are wired in initializeDataDir() (via
 	// initializeSSHServices) once the data directory and barrier decision
 	// are known — wiring them here would race the barrier unseal and root
@@ -2688,6 +2697,7 @@ func (a *App) applyConnectionEvent(eventType events.EventType, client xkmssdk.Cl
 		a.tpmPolicyService.SetClient(client)
 		a.staticPWService.SetClient(client)
 		a.oidcServerService.SetClient(client)
+		a.bindAgentClient(client)
 		a.useServerSSH()
 	case events.EventServerDisconnected, events.EventServerError:
 		a.pivService.SetClient(nil)
@@ -2695,9 +2705,18 @@ func (a *App) applyConnectionEvent(eventType events.EventType, client xkmssdk.Cl
 		a.tpmPolicyService.SetClient(nil)
 		a.staticPWService.SetClient(nil)
 		a.oidcServerService.SetClient(nil)
+		a.bindAgentClient(nil)
 		if err := a.sshService.SetServerClient(nil); err != nil {
 			a.log.Warn("ssh: closing the server client failed", "error", err)
 		}
+	}
+}
+
+// bindAgentClient hands the agent service the xkmsd client whose
+// certificate authority enrolls agents, or nil when the server goes away.
+func (a *App) bindAgentClient(client xkmssdk.Client) {
+	if err := a.agentService.SetClient(client); err != nil {
+		a.log.Warn("agent: binding enrollment to the server client failed", "error", err)
 	}
 }
 

@@ -168,7 +168,7 @@ func init() {
 	tpmIDevIDCreateCmd.Flags().BoolVar(&idevidCreateForce, "force", false,
 		"Force recreation even if IDevID already exists")
 	tpmIDevIDCreateCmd.Flags().StringVar(&idevidCreateTemplate, "template", "rsa2048",
-		"Key template (rsa2048, rsa-pss, ecc256)")
+		"Key template (rsa2048, rsa-pss, ecc256); when set, overrides the configured key algorithm, when unset the configured key is used")
 	tpmIDevIDCreateCmd.Flags().StringVar(&idevidModel, "model", "",
 		"Device model name")
 	tpmIDevIDCreateCmd.Flags().StringVar(&idevidSerial, "serial", "",
@@ -279,11 +279,7 @@ func outputIDevIDText(out io.Writer, info *IDevIDInfo) error {
 
 func runIDevIDCreate(cmd *cobra.Command, args []string) (err error) {
 	out := cmd.OutOrStdout()
-	// Validate template
-	switch idevidCreateTemplate {
-	case "rsa2048", "rsa-pss", "ecc256":
-		// Valid
-	default:
+	if _, ok := devidTemplates[idevidCreateTemplate]; !ok {
 		return &DetailError{Err: ErrInvalidIDevIDTemplate, Detail: fmt.Sprintf(": %s", idevidCreateTemplate)}
 	}
 
@@ -326,6 +322,11 @@ func runIDevIDCreate(cmd *cobra.Command, args []string) (err error) {
 				return &SentinelCauseError{Sentinel: ErrIDevIDCertRemove, Cause: err}
 			}
 		}
+	}
+
+	// An explicit --template overrides the configured IDevID suite.
+	if template := explicitDevIDTemplate(cmd, idevidCreateTemplate); template != nil {
+		template.applyIDevID(tpm.Config().IDevID)
 	}
 
 	// Create IDevID

@@ -168,3 +168,29 @@ func TestInitLocalPIV_BarrierBackendIsolatesBackends(t *testing.T) {
 	assert.False(t, slotHasCert(t, "pkcs11-added-later", xkmssdk.PIVSlotAuthentication),
 		"a backend created on demand gets its own namespace")
 }
+
+// A software-category backend registered under its own id shares the root
+// store with the plain "software" name, so both list the same certificates.
+func TestInitLocalPIV_SoftwareCategoryBackendSharesRootStore(t *testing.T) {
+	resetPIVManager(t)
+
+	registry := backendregistry.NewMemoryRegistry()
+	require.NoError(t, registry.Register(&backendregistry.RegisteredBackend{
+		ID:          "software-local",
+		Location:    backendregistry.LocationLocal,
+		Category:    backendregistry.CategorySoftware,
+		DisplayName: "Software",
+	}))
+
+	store, _, ok := initLocalPIV(lifecycleTestLogger(), t.TempDir(), xkmssdk.NewStorageMemory(),
+		[]string{"software-local"}, registry,
+		func(string) (xkmssdk.StorageBackend, error) { return xkmssdk.NewStorageMemory(), nil })
+	require.True(t, ok)
+
+	require.NoError(t, store.Store(xkmssdk.PIVSlotAuthentication, newPIVTestCert(t)))
+
+	assert.True(t, slotHasCert(t, "software-local", xkmssdk.PIVSlotAuthentication),
+		"the registered id reads the root store")
+	assert.True(t, slotHasCert(t, "software", xkmssdk.PIVSlotAuthentication),
+		"the software category alias reads the same root store")
+}

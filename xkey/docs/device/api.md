@@ -32,9 +32,9 @@ QR rendering, screen scanning) — there is no separate SDK facade for them,
 and none is needed since they have no network or IPC surface of their own.
 
 `device enroll`'s only outbound call is to the xkmsd certificate authority,
-through the same `agent.CAService` / `*xkmsdCA` client
+through the same `agent.CAService` / `*agent.XKMSdCA` client
 [agent/api.md](../agent/api.md) documents for the master side
-(`cmd/xkey/cmd/agent_ca.go`). It reuses that client rather than defining a
+(`pkg/agent/xkmsd_ca.go`). It reuses that client rather than defining a
 second one.
 
 ## Capabilities exercised by other surfaces

@@ -15,10 +15,12 @@ package services
 
 import (
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"sync"
 	"testing"
 	"time"
 
@@ -30,15 +32,26 @@ import (
 )
 
 // newFakeAWSTokenClient returns an AWS sign-in client whose token endpoint is
-// an httptest server. A refresh succeeds only for wantRefreshToken; the
-// server answers with fresh credentials and a rotated refresh token.
+// an httptest server. Like the real endpoint it rotates the refresh token: the
+// first refresh succeeds only for wantRefreshToken, each later one only for
+// the token the previous response issued, so a loop that ticks more than once
+// keeps succeeding as long as it presents the rotated token.
 func newFakeAWSTokenClient(t *testing.T, wantRefreshToken string) *oidcaws.Client {
 	t.Helper()
+	var (
+		mu        sync.Mutex
+		current   = wantRefreshToken
+		rotations int
+	)
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if err := r.ParseForm(); err != nil || r.Form.Get("refresh_token") != wantRefreshToken {
+		mu.Lock()
+		defer mu.Unlock()
+		if err := r.ParseForm(); err != nil || r.Form.Get("refresh_token") != current {
 			w.WriteHeader(http.StatusBadRequest)
 			return
 		}
+		rotations++
+		current = fmt.Sprintf("rotated-refresh-token-%d", rotations)
 		w.Header().Set("Content-Type", "application/json")
 		if err := json.NewEncoder(w).Encode(map[string]any{
 			"access_token": map[string]any{
@@ -49,7 +62,7 @@ func newFakeAWSTokenClient(t *testing.T, wantRefreshToken string) *oidcaws.Clien
 			},
 			"token_type":    "urn:aws:params:oauth:token-type:access_token_sigv4",
 			"expires_in":    900,
-			"refresh_token": "rotated-refresh-token",
+			"refresh_token": current,
 		}); err != nil {
 			t.Errorf("encode token response: %v", err)
 		}

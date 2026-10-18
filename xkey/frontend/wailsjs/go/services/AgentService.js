@@ -38,6 +38,10 @@ export function RemoveAgent(arg1) {
   return window['go']['services']['AgentService']['RemoveAgent'](arg1);
 }
 
+export function SetClient(arg1) {
+  return window['go']['services']['AgentService']['SetClient'](arg1);
+}
+
 export function SetContext(arg1) {
   return window['go']['services']['AgentService']['SetContext'](arg1);
 }

@@ -46,6 +46,7 @@ func newConnectionWiringApp() *App {
 		oidcServerService:  services.NewOIDCServerService(nil),
 		connectionService:  services.NewConnectionService(),
 		sshService:         services.NewSSHService(nil),
+		agentService:       services.NewAgentService(),
 		log:                slog.Default(),
 	}
 }

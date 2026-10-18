@@ -318,26 +318,22 @@ func runAgentStatus(cmd *cobra.Command, args []string) error {
 	return nil
 }
 
-// agentDataSubdir is the agent state directory beneath the xKey data
-// directory.
-const agentDataSubdir = "agent"
-
 // agentDataDir returns the base directory holding all agent state,
 // <dataDir>/agent, with the data directory resolved through the CLI's
 // single chain (featureDataDir) — the same resolution the root command
 // performs, with no private $HOME fallback and no silent temporary
 // directory when the home cannot be resolved.
 func agentDataDir() (string, error) {
-	return featureDataDir(agentDataSubdir)
+	return featureDataDir(agent.DataSubdir)
 }
 
 // agentStoreDir returns the directory for agent enrollment data.
 func agentStoreDir() (string, error) {
-	dataDir, err := agentDataDir()
+	dataDir, err := resolveDataDir("")
 	if err != nil {
 		return "", err
 	}
-	return filepath.Join(dataDir, "enrollments"), nil
+	return agent.EnrollmentStoreDir(dataDir), nil
 }
 
 // agentCertDir returns the directory for agent certificates.
@@ -363,7 +359,7 @@ func init() {
 	agentStartCmd.Flags().String("tls-key", "", "TLS private key file")
 	agentStartCmd.Flags().String("tls-ca", "",
 		"TLS CA certificate file used to verify connecting agents (the xkmsd trust bundle comes from XKMSD_TLS_CA)")
-	agentStartCmd.Flags().String("cert-profile", agentCertProfileDefault,
+	agentStartCmd.Flags().String("cert-profile", agent.CertProfileDefault,
 		"xkmsd CA profile used to sign enrolling agent CSRs")
 	agentStartCmd.Flags().Int("cert-validity-days", 0,
 		"validity period for issued agent certificates (0 uses the CA default)")

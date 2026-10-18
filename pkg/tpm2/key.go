@@ -204,7 +204,12 @@ func applyDevIDConfig(
 	// with it clear, a key that has no authValue is used with the empty
 	// password regardless of platform state.
 	attrs.TPMPolicy = platformPolicyName(platformPolicy)
-	attrs.SignatureAlgorithm = sigAlgo
+	// A key that fixes its signature scheme keeps it (see KeyAttributes): the
+	// configured algorithm names the scheme of a key yet to be created, or of
+	// one whose public area leaves the scheme to the signer.
+	if attrs.SignatureAlgorithm == x509.UnknownSignatureAlgorithm {
+		attrs.SignatureAlgorithm = sigAlgo
+	}
 	if attrs.Password != nil {
 		attrs.Password.Clear()
 	}
@@ -485,9 +490,44 @@ func (tpm *TPM2) KeyAttributes(
 		return nil, err
 	}
 
-	keyAlgo := x509.RSA
-	if keyPub.Type == tpm2.TPMAlgECC {
-		keyAlgo = x509.ECDSA
+	attrs := &types.KeyAttributes{
+		KeyType:   types.KeyTypeTPM,
+		StoreType: types.StoreTPM2,
+	}
+
+	// The key details come from the public area's parameters (TPM 2.0
+	// Library Part 2, TPMU_PUBLIC_PARMS): keyBits of TPMS_RSA_PARMS and
+	// curveID of TPMS_ECC_PARMS.
+	switch keyPub.Type {
+	case tpm2.TPMAlgRSA:
+		rsaDetail, err := keyPub.Parameters.RSADetail()
+		if err != nil {
+			return nil, err
+		}
+		attrs.KeyAlgorithm = x509.RSA
+		attrs.RSAAttributes = &types.RSAAttributes{KeySize: int(rsaDetail.KeyBits)}
+	case tpm2.TPMAlgECC:
+		eccDetail, err := keyPub.Parameters.ECCDetail()
+		if err != nil {
+			return nil, err
+		}
+		curve, err := eccDetail.CurveID.Curve()
+		if err != nil {
+			return nil, err
+		}
+		attrs.KeyAlgorithm = x509.ECDSA
+		attrs.ECCAttributes = &types.ECCAttributes{Curve: curve}
+	default:
+		return nil, store.ErrInvalidKeyAlgorithm
+	}
+
+	// So does the signature scheme a key fixes, which is the only scheme a
+	// Restricted signing key such as the IAK can sign under: the object, not
+	// the configuration of whichever process reads it, decides how its
+	// signatures are unpacked.
+	attrs.SignatureAlgorithm, err = keySignatureAlgorithm(keyPub)
+	if err != nil {
+		return nil, err
 	}
 
 	pubKey, err := tpm.ParsePublicKey(pub.OutPublic.Bytes())
@@ -505,30 +545,16 @@ func (tpm *TPM2) KeyAttributes(
 		return nil, err
 	}
 
-	attrs := &types.KeyAttributes{
-		KeyAlgorithm: keyAlgo,
-		KeyType:      types.KeyTypeTPM,
-		StoreType:    types.StoreTPM2,
-		Hash:         hash,
-		TPMAttributes: &types.TPMAttributes{
-			BPublic:        pub.OutPublic,
-			Handle:         handle,
-			HandleType:     tpm2.TPMHTTransient,
-			HashAlg:        tpm.algID,
-			Hierarchy:      tpm2.TPMRHOwner,
-			Name:           pub.Name,
-			Public:         *keyPub,
-			PublicKeyBytes: publicDER,
-		},
-	}
-
-	switch keyPub.Type {
-	case tpm2.TPMAlgRSA:
-		attrs.KeyAlgorithm = x509.RSA
-	case tpm2.TPMAlgECC:
-		attrs.KeyAlgorithm = x509.ECDSA
-	default:
-		return nil, store.ErrInvalidKeyAlgorithm
+	attrs.Hash = hash
+	attrs.TPMAttributes = &types.TPMAttributes{
+		BPublic:        pub.OutPublic,
+		Handle:         handle,
+		HandleType:     tpm2.TPMHTTransient,
+		HashAlg:        tpm.algID,
+		Hierarchy:      tpm2.TPMRHOwner,
+		Name:           pub.Name,
+		Public:         *keyPub,
+		PublicKeyBytes: publicDER,
 	}
 
 	return attrs, nil
@@ -1518,16 +1544,13 @@ func (tpm *TPM2) CreateIDevID(
 	// are built from, which is what carries the required 'IDEVID' unique
 	// string of section 7.3.1 and the device string that may follow it.
 	//
-	// The RSA branch keys off the EK's algorithm rather than the IDevID's
-	// because the enrollment ceremony unpacks the AK's certification signature
-	// under this key's configured padding; the selection is left as it was.
+	// The suite is the IDevID's own configured algorithm, independent of the
+	// EK's: the AK certification signature below is unpacked under the AK's
+	// scheme, read from its public area, not this key's.
 	idevidSpec := DevIDTemplateSpec{
 		Kind:         DevIDKeySigning,
 		Algorithm:    idevidAttrs.KeyAlgorithm,
 		DeviceString: tpm.config.DeviceString,
-	}
-	if ekAttrs.KeyAlgorithm == x509.RSA {
-		idevidSpec.Algorithm = x509.RSA
 	}
 	if idevidAttrs.RSAAttributes != nil && idevidAttrs.RSAAttributes.KeySize > 0 {
 		if idevidAttrs.RSAAttributes.KeySize > math.MaxUint16 {

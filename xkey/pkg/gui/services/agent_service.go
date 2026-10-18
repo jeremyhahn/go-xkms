@@ -20,6 +20,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/jeremyhahn/go-xkms/sdk/go/transport"
 	"github.com/jeremyhahn/go-xkms/xkey/pkg/agent"
 	"github.com/jeremyhahn/go-xkms/xkey/pkg/gui/events"
 )
@@ -84,6 +85,7 @@ type AgentService struct {
 	server     *agent.Server
 	enrollment *agent.EnrollmentService
 	store      agent.EnrollmentStore
+	client     transport.Client
 	emitter    func(events.Event)
 }
 
@@ -113,10 +115,73 @@ func (s *AgentService) SetEnrollmentService(svc *agent.EnrollmentService) {
 }
 
 // SetEnrollmentStore sets the backing enrollment store for agent persistence.
+// With a client bound (see SetClient) it also rebuilds the enrollment
+// service over the new store.
 func (s *AgentService) SetEnrollmentStore(store agent.EnrollmentStore) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.store = store
+	if s.client == nil {
+		return
+	}
+	if err := s.bindEnrollmentLocked(); err != nil {
+		s.log.Warn("agent enrollment could not be bound to the new store", "error", err)
+	}
+}
+
+// SetClient binds agent enrollment to the connected xkmsd server: agents
+// enrolled from the GUI are signed, revoked and revocation-checked by its
+// certificate authority through agent.XKMSdCA, the CAService the CLI uses.
+// A nil client drops the binding. A running agent server is stopped first
+// either way, because its enrollment service holds the previous client.
+// The binding completes once the enrollment store is also set, whichever
+// arrives second.
+func (s *AgentService) SetClient(client transport.Client) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	if s.server != nil && s.server.IsRunning() {
+		if err := s.stopServerLocked(); err != nil {
+			return err
+		}
+	}
+	s.client = client
+	return s.bindEnrollmentLocked()
+}
+
+// bindEnrollmentLocked rebuilds the enrollment service over the bound
+// client's certificate authority and the enrollment store, or clears it
+// when either is missing. The caller holds s.mu. The CA is never closed
+// here: ConnectionService owns the client.
+func (s *AgentService) bindEnrollmentLocked() error {
+	s.enrollment = nil
+	if s.client == nil || s.store == nil {
+		return nil
+	}
+
+	ca, err := agent.NewXKMSdCA(s.client, agent.CertProfileDefault, 0)
+	if err != nil {
+		s.log.Error("failed to create the agent certificate authority", "error", err)
+		return ErrAgentNilCAService
+	}
+	cfg := agent.DefaultConfig()
+	cfg.EnrollmentMethods = agentEnrollmentMethods()
+	enrollment, err := agent.NewEnrollmentService(cfg, ca, s.store, s.log)
+	if err != nil {
+		s.log.Error("failed to create the agent enrollment service", "error", err)
+		return ErrAgentEnrollmentFailed
+	}
+	s.enrollment = enrollment
+	return nil
+}
+
+// agentEnrollmentMethods are the enrollment methods the GUI's agent server
+// offers: a one-time code handed out by the admin, or admin approval.
+func agentEnrollmentMethods() []agent.EnrollmentMethod {
+	return []agent.EnrollmentMethod{
+		agent.EnrollOneTimeCode,
+		agent.EnrollAdminApproval,
+	}
 }
 
 // StartServer creates and starts the agent server on the given listen address.
@@ -140,10 +205,7 @@ func (s *AgentService) StartServer(listenAddress string) error {
 
 	cfg := agent.DefaultConfig()
 	cfg.ListenAddress = listenAddress
-	cfg.EnrollmentMethods = []agent.EnrollmentMethod{
-		agent.EnrollOneTimeCode,
-		agent.EnrollAdminApproval,
-	}
+	cfg.EnrollmentMethods = agentEnrollmentMethods()
 
 	server, err := agent.NewServer(cfg, s.enrollment, s.log)
 	if err != nil {
@@ -171,7 +233,11 @@ func (s *AgentService) StartServer(listenAddress string) error {
 func (s *AgentService) StopServer() error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	return s.stopServerLocked()
+}
 
+// stopServerLocked stops the running agent server. The caller holds s.mu.
+func (s *AgentService) stopServerLocked() error {
 	if s.server == nil || !s.server.IsRunning() {
 		return ErrAgentServerNotStarted
 	}

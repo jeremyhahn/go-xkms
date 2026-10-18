@@ -100,6 +100,7 @@ func newLifecycleApp(t *testing.T) *App {
 		sshConsoleService:  services.NewSSHConsoleService(),
 		sshLocalService:    services.NewSSHLocalService(),
 		storageService:     services.NewStorageService(),
+		agentService:       services.NewAgentService(),
 		appService:         services.NewAppService(nil),
 		shutdownDone:       make(chan struct{}),
 	}

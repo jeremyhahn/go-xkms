@@ -15,8 +15,7 @@ import (
 )
 
 // newECCIdentityHarness provisions a device whose EK, IAK and IDevID are
-// all P-256. The IDevID follows the EK's algorithm, so only an ECC EK
-// yields an ECC IDevID.
+// all P-256.
 func newECCIdentityHarness(t *testing.T) *identityHarness {
 	t.Helper()
 	h := newSimHarness(t, func(c *Config) {
@@ -66,6 +65,40 @@ func TestCreateIDevID_ECC_RecordsP256Key(t *testing.T) {
 	attrs, _, err := h.TPM.VerifyTCG_CSR_IAK(h.csr(t), x509.ECDSAWithSHA256)
 	require.NoError(t, err, "the CSR must verify under the ECC IAK")
 	assert.Equal(t, x509.ECDSA, attrs.KeyAlgorithm)
+}
+
+// TestCreateIDevID_ECCUnderAnRSAEK proves the IDevID's suite is its own
+// configured algorithm: a P-256 IDevID configured on a device whose EK is
+// RSA is a P-256 key, not an RSA key chosen because of the EK.
+func TestCreateIDevID_ECCUnderAnRSAEK(t *testing.T) {
+	h := newSimHarness(t, func(c *Config) {
+		c.IDevID = &IDevIDConfig{
+			CN:                 "device-id-ecc",
+			Hash:               crypto.SHA256.String(),
+			Handle:             0x81020000,
+			KeyAlgorithm:       x509.ECDSA.String(),
+			ECCConfig:          &store.ECCConfig{Curve: "P-256"},
+			Manufacturer:       "ATT",
+			Model:              "xkms-test-device",
+			Serial:             "SN-ECC-0002",
+			SignatureAlgorithm: x509.ECDSAWithSHA256.String(),
+		}
+	})
+
+	iakAttrs, err := h.TPM.IAKAttributes()
+	require.NoError(t, err)
+	ekPub, err := h.TPM.EKRSA()
+	require.NoError(t, err)
+	ekCert := selfSignedCertForKey(t, ekPub)
+
+	idevidAttrs, _, err := h.TPM.CreateIDevID(iakAttrs, ekCert, nil)
+	require.NoError(t, err)
+
+	pub, err := x509.ParsePKIXPublicKey(idevidAttrs.TPMAttributes.PublicKeyBytes)
+	require.NoError(t, err)
+	eccPub, ok := pub.(*ecdsa.PublicKey)
+	require.True(t, ok, "the IDevID public key must be ECDSA, got %T", pub)
+	assert.Equal(t, elliptic.P256(), eccPub.Curve)
 }
 
 // TestCreateIDevID_RecreateReplacesPersistedKey proves a second CreateIDevID

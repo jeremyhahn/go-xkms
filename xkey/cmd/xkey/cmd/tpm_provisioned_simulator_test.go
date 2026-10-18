@@ -209,14 +209,6 @@ func foreignRSAKey(t *testing.T) *rsa.PublicKey {
 	return &key.PublicKey
 }
 
-// setVar sets a package-level flag variable for the duration of the test.
-func setVar[T any](t *testing.T, p *T, v T) {
-	t.Helper()
-	saved := *p
-	*p = v
-	t.Cleanup(func() { *p = saved })
-}
-
 // runTPMSubcommand runs a `tpm` subcommand's RunE and returns what it wrote
 // to stdout and stderr.
 func runTPMSubcommand(run func(*cobra.Command, []string) error) (string, string, error) {
@@ -1118,6 +1110,38 @@ func TestRunLAKCreate_ProvisionedSimulator(t *testing.T) {
 		stdout, _, err := runTPMSubcommand(runLAKShow)
 		require.NoError(t, err)
 		assert.Contains(t, stdout, "0x81010003")
+		assert.Contains(t, stdout, "Certificate: Not available")
+	})
+
+	t.Run("show reports an imported certificate", func(t *testing.T) {
+		lakPub, err := sim.tpm.LAK()
+		require.NoError(t, err)
+		cert := issueTestCert(t, sim.caCert, sim.caKey, "xkey-lak", lakPub)
+		setVar(t, &lakCertImportPath, writeCertPEM(t, cert))
+		setVar(t, &lakCertImportForce, false)
+		stdout, _, err := runTPMSubcommand(runLAKCertImport)
+		require.NoError(t, err)
+		assert.Contains(t, stdout, "Public key verification: PASSED")
+
+		stdout, _, err = runTPMSubcommand(runLAKShow)
+		require.NoError(t, err)
+		assert.Contains(t, stdout, "Certificate Details:")
+		assert.Contains(t, stdout, "Subject:    CN=xkey-lak")
+		assert.Contains(t, stdout, "Serial:     "+cert.SerialNumber.String())
+		assert.NotContains(t, stdout, "Certificate: Not available")
+	})
+
+	t.Run("show as JSON", func(t *testing.T) {
+		withTPMCfg(t, func(c *tpmConfig) { c.outputFormat = "json" })
+		stdout, _, err := runTPMSubcommand(runLAKShow)
+		require.NoError(t, err)
+
+		var info LAKInfo
+		require.NoError(t, json.Unmarshal([]byte(stdout), &info))
+		assert.Equal(t, "0x81010003", info.Handle)
+		assert.Equal(t, "RSA", info.Algorithm)
+		assert.True(t, info.HasCert)
+		assert.Equal(t, "CN=xkey-lak", info.CertSubject)
 	})
 
 	t.Run("create refuses to replace without force", func(t *testing.T) {

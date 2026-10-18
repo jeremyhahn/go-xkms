@@ -406,7 +406,7 @@ func init() {
 	deviceEnrollCmd.Flags().String("server", "", "Master server address as host:port (required)")
 	deviceEnrollCmd.Flags().String("code", "", "One-time enrollment code (redeemed by the master; not supported remotely)")
 	deviceEnrollCmd.Flags().String("name", "", "Agent name (default: hostname)")
-	deviceEnrollCmd.Flags().String("cert-profile", agentCertProfileDefault, "CA certificate profile for the agent certificate")
+	deviceEnrollCmd.Flags().String("cert-profile", agent.CertProfileDefault, "CA certificate profile for the agent certificate")
 	deviceEnrollCmd.Flags().Int("validity-days", 0, "Certificate validity in days (0 uses the CA default)")
 
 	// Device connect flags.

@@ -62,7 +62,7 @@ Agent-enrollment surface (`cmd/xkey/cmd/device_enroll.go`):
 
 - `deviceEnrollCA` — the CA contract `device enroll` needs: `SignCSR([]byte)
   ([]byte, error)`, `GetCACertificate() ([]byte, error)`, `Close() error`.
-  `*xkmsdCA` (`cmd/xkey/cmd/agent_ca.go`) is the production implementation,
+  `*agent.XKMSdCA` (`pkg/agent/xkmsd_ca.go`) is the production implementation,
   shared with `agent code`/`agent approve`.
 - `deviceEnrollCAFactory` — package-level `var`, swappable in tests, that
   builds the production CA client.
