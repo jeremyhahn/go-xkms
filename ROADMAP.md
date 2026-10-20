@@ -118,6 +118,8 @@ Scope and boundaries: [docs/SPEC.md](docs/SPEC.md).
 
 ## Later
 
+- **acme-issuance** — one ACME client library, `pkg/acme/client`, behind two front ends: xkey `acme` and `cmd/acme-client` (GUI under the `gui` tag, headless without it) — [SPEC](docs/SPEC.md#features) — open
+- **acme** — the `xkey acme` namespace (account, enroll, endorse, renew, revoke) over `pkg/acme/client` through `sdk/go` — [SPEC](docs/SPEC.md#xkey) — open
 - **ca** — standalone xkey CA, local or remote-only — [#729](../../issues/729) — blocked: decision pending
 - **ota-image-keys** — one OTA image-signing key per trusted-firmware board id — [SPEC](docs/SPEC.md#features) — open
 - **device-configuration** — pre-defined device configurations downloaded over enroll-01 — [SPEC](docs/SPEC.md#features) — open
