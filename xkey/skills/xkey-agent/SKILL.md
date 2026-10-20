@@ -326,6 +326,16 @@ xkey ca check-revocation <serial>
 xkey ca crl --output crl.pem
 ```
 
+## OTA image keys (xkmsd)
+
+Each trusted-firmware board has one ES256 key, `ota-image-<board-id>`, that signs its OTA images. xkmsd refuses a malformed board id.
+
+```bash
+xkey key ota-image create cm4 --backend tpm2
+xkey key ota-image rotate cm4 --backend tpm2         # older images still verify
+xkey key ota-image sign cm4 firmware.bin --backend tpm2   # base64 signature; --digest when the file is a SHA-256 digest
+```
+
 ## Trust store
 
 ```bash

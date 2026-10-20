@@ -323,6 +323,18 @@ func (m *mockBackendsClient) RotateKey(ctx context.Context, req *client.RotateKe
 	return nil, nil
 }
 
+func (m *mockBackendsClient) CreateOTAImageKey(ctx context.Context, req *client.OTAImageKeyRequest) (*client.GenerateKeyResponse, error) {
+	return nil, nil
+}
+
+func (m *mockBackendsClient) RotateOTAImageKey(ctx context.Context, req *client.OTAImageKeyRequest) (*client.RotateKeyResponse, error) {
+	return nil, nil
+}
+
+func (m *mockBackendsClient) SignOTAImage(ctx context.Context, req *client.OTAImageSignRequest) (*client.SignResponse, error) {
+	return nil, nil
+}
+
 func (m *mockBackendsClient) GetImportParameters(ctx context.Context, req *client.GetImportParametersRequest) (*client.GetImportParametersResponse, error) {
 	return nil, nil
 }

@@ -470,6 +470,79 @@ func (t *Transport) RotateKey(ctx context.Context, req *transport.RotateKeyReque
 	}, nil
 }
 
+// CreateOTAImageKey creates the ES256 OTA image-signing key of one
+// trusted-firmware board.
+func (t *Transport) CreateOTAImageKey(ctx context.Context, req *transport.OTAImageKeyRequest) (*transport.GenerateKeyResponse, error) {
+	if t.client == nil {
+		return nil, ErrNotConnected
+	}
+
+	resp, err := t.client.CreateOTAImageKey(ctx, &pb.OTAImageKeyRequest{
+		BoardId:   req.BoardID,
+		Backend:   req.Backend,
+		Algorithm: req.Algorithm,
+	})
+	if err != nil {
+		return nil, err
+	}
+
+	return &transport.GenerateKeyResponse{
+		KeyID:        resp.KeyId,
+		KeyType:      resp.KeyType,
+		PublicKeyPEM: resp.PublicKeyPem,
+	}, nil
+}
+
+// RotateOTAImageKey creates the next version of a board's OTA image-signing
+// key and makes it current.
+func (t *Transport) RotateOTAImageKey(ctx context.Context, req *transport.OTAImageKeyRequest) (*transport.RotateKeyResponse, error) {
+	if t.client == nil {
+		return nil, ErrNotConnected
+	}
+
+	resp, err := t.client.RotateOTAImageKey(ctx, &pb.OTAImageKeyRequest{
+		BoardId:   req.BoardID,
+		Backend:   req.Backend,
+		Algorithm: req.Algorithm,
+	})
+	if err != nil {
+		return nil, err
+	}
+
+	return &transport.RotateKeyResponse{
+		Success:                    true,
+		KeyID:                      resp.KeyId,
+		Message:                    "Key rotated successfully",
+		PublicKeyPEM:               resp.PublicKeyPem,
+		KeyType:                    resp.KeyType,
+		KeyVersion:                 resp.KeyVersion,
+		CertificateReissueRequired: resp.CertificateReissueRequired,
+	}, nil
+}
+
+// SignOTAImage signs an OTA image with the current version of its board's
+// key, which the response's KeyVersion names.
+func (t *Transport) SignOTAImage(ctx context.Context, req *transport.OTAImageSignRequest) (*transport.SignResponse, error) {
+	if t.client == nil {
+		return nil, ErrNotConnected
+	}
+
+	resp, err := t.client.SignOTAImage(ctx, &pb.SignOTAImageRequest{
+		BoardId:      req.BoardID,
+		Backend:      req.Backend,
+		Data:         req.Data,
+		DataIsDigest: req.DataIsDigest,
+	})
+	if err != nil {
+		return nil, err
+	}
+
+	return &transport.SignResponse{
+		Signature:  resp.Signature,
+		KeyVersion: resp.KeyVersion,
+	}, nil
+}
+
 // GetImportParameters gets the parameters needed to import a key.
 func (t *Transport) GetImportParameters(ctx context.Context, req *transport.GetImportParametersRequest) (*transport.GetImportParametersResponse, error) {
 	if t.client == nil {

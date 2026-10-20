@@ -66,6 +66,18 @@ type KeyService interface {
 	// RotateKey rotates a key by generating a new version.
 	RotateKey(ctx context.Context, req *RotateKeyRequest) (*RotateKeyResponse, error)
 
+	// CreateOTAImageKey creates the ES256 OTA image-signing key of one
+	// trusted-firmware board.
+	CreateOTAImageKey(ctx context.Context, req *OTAImageKeyRequest) (*GenerateKeyResponse, error)
+
+	// RotateOTAImageKey creates the next version of a board's OTA
+	// image-signing key and makes it current.
+	RotateOTAImageKey(ctx context.Context, req *OTAImageKeyRequest) (*RotateKeyResponse, error)
+
+	// SignOTAImage signs an OTA image with the current version of its
+	// board's key.
+	SignOTAImage(ctx context.Context, req *OTAImageSignRequest) (*SignResponse, error)
+
 	// GetImportParameters gets the parameters needed to import a key.
 	GetImportParameters(ctx context.Context, req *GetImportParametersRequest) (*GetImportParametersResponse, error)
 

@@ -996,6 +996,73 @@ func (t *Transport) RotateKey(ctx context.Context, req *transport.RotateKeyReque
 	return &resp, nil
 }
 
+// CreateOTAImageKey creates the ES256 OTA image-signing key of one
+// trusted-firmware board.
+func (t *Transport) CreateOTAImageKey(ctx context.Context, req *transport.OTAImageKeyRequest) (*transport.GenerateKeyResponse, error) {
+	path := fmt.Sprintf("/api/v1/ota-image-keys/%s", url.PathEscape(req.BoardID))
+	body := map[string]interface{}{
+		"backend":   req.Backend,
+		"algorithm": req.Algorithm,
+	}
+
+	data, err := t.DoRawRequest(ctx, http.MethodPost, path, body)
+	if err != nil {
+		return nil, err
+	}
+
+	var resp transport.GenerateKeyResponse
+	if err := json.Unmarshal(data, &resp); err != nil {
+		return nil, &errs.Wrapped{Msg: "failed to parse response", Err: err}
+	}
+
+	return &resp, nil
+}
+
+// RotateOTAImageKey creates the next version of a board's OTA image-signing
+// key and makes it current.
+func (t *Transport) RotateOTAImageKey(ctx context.Context, req *transport.OTAImageKeyRequest) (*transport.RotateKeyResponse, error) {
+	path := fmt.Sprintf("/api/v1/ota-image-keys/%s/rotate", url.PathEscape(req.BoardID))
+	body := map[string]interface{}{
+		"backend":   req.Backend,
+		"algorithm": req.Algorithm,
+	}
+
+	data, err := t.DoRawRequest(ctx, http.MethodPost, path, body)
+	if err != nil {
+		return nil, err
+	}
+
+	var resp transport.RotateKeyResponse
+	if err := json.Unmarshal(data, &resp); err != nil {
+		return nil, &errs.Wrapped{Msg: "failed to parse response", Err: err}
+	}
+
+	return &resp, nil
+}
+
+// SignOTAImage signs an OTA image with the current version of its board's
+// key, which the response's KeyVersion names.
+func (t *Transport) SignOTAImage(ctx context.Context, req *transport.OTAImageSignRequest) (*transport.SignResponse, error) {
+	path := fmt.Sprintf("/api/v1/ota-image-keys/%s/sign", url.PathEscape(req.BoardID))
+	body := map[string]interface{}{
+		"backend":        req.Backend,
+		"data":           req.Data,
+		"data_is_digest": req.DataIsDigest,
+	}
+
+	data, err := t.DoRawRequest(ctx, http.MethodPost, path, body)
+	if err != nil {
+		return nil, err
+	}
+
+	var resp transport.SignResponse
+	if err := json.Unmarshal(data, &resp); err != nil {
+		return nil, &errs.Wrapped{Msg: "failed to parse response", Err: err}
+	}
+
+	return &resp, nil
+}
+
 // GetImportParameters gets the parameters needed to import a key.
 func (t *Transport) GetImportParameters(ctx context.Context, req *transport.GetImportParametersRequest) (*transport.GetImportParametersResponse, error) {
 	// The REST body and its response spell the ceremony's fields differently

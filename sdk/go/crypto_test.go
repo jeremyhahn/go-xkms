@@ -508,6 +508,18 @@ func (n *noopClient) ExportKey(context.Context, *transport.ExportKeyRequest) (*t
 func (n *noopClient) RotateKey(context.Context, *transport.RotateKeyRequest) (*transport.RotateKeyResponse, error) {
 	return nil, nil
 }
+
+func (n *noopClient) CreateOTAImageKey(context.Context, *transport.OTAImageKeyRequest) (*transport.GenerateKeyResponse, error) {
+	return nil, nil
+}
+
+func (n *noopClient) RotateOTAImageKey(context.Context, *transport.OTAImageKeyRequest) (*transport.RotateKeyResponse, error) {
+	return nil, nil
+}
+
+func (n *noopClient) SignOTAImage(context.Context, *transport.OTAImageSignRequest) (*transport.SignResponse, error) {
+	return nil, nil
+}
 func (n *noopClient) GetImportParameters(context.Context, *transport.GetImportParametersRequest) (*transport.GetImportParametersResponse, error) {
 	return nil, nil
 }

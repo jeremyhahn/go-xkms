@@ -161,6 +161,11 @@ func Routes() []RouteSpec {
 	permBulk("POST", "/keys/{id}/sign", auth.ResourceKeys, auth.ActionSign, func(s *Server) http.HandlerFunc { return s.handlers.SignHandler })
 	permBulk("POST", "/keys/{id}/verify", auth.ResourceKeys, auth.ActionVerify, func(s *Server) http.HandlerFunc { return s.handlers.VerifyHandler })
 	perm("POST", "/keys/{id}/rotate", auth.ResourceKeys, auth.ActionRotate, func(s *Server) http.HandlerFunc { return s.handlers.RotateKeyHandler })
+	// OTA image-signing keys, one per trusted-firmware board: the key
+	// operations under the board's key ID, so the key permissions apply.
+	perm("POST", "/ota-image-keys/{board}", auth.ResourceKeys, auth.ActionCreate, func(s *Server) http.HandlerFunc { return s.handlers.CreateOTAImageKeyHandler })
+	perm("POST", "/ota-image-keys/{board}/rotate", auth.ResourceKeys, auth.ActionRotate, func(s *Server) http.HandlerFunc { return s.handlers.RotateOTAImageKeyHandler })
+	permBulk("POST", "/ota-image-keys/{board}/sign", auth.ResourceKeys, auth.ActionSign, func(s *Server) http.HandlerFunc { return s.handlers.SignOTAImageHandler })
 	// Key versions: listing reads like listing keys; enabling and disabling
 	// versions is rotation lifecycle management; retiring destroys a
 	// version's key material, as deleting a key does.

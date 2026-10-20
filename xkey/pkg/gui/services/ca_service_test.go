@@ -160,6 +160,18 @@ func (m *mockCAClient) RotateScopeKeys(context.Context, *transport.RotateScopeKe
 func (m *mockCAClient) RotateKey(_ context.Context, _ *transport.RotateKeyRequest) (*transport.RotateKeyResponse, error) {
 	return nil, nil
 }
+
+func (m *mockCAClient) CreateOTAImageKey(_ context.Context, _ *transport.OTAImageKeyRequest) (*transport.GenerateKeyResponse, error) {
+	return nil, nil
+}
+
+func (m *mockCAClient) RotateOTAImageKey(_ context.Context, _ *transport.OTAImageKeyRequest) (*transport.RotateKeyResponse, error) {
+	return nil, nil
+}
+
+func (m *mockCAClient) SignOTAImage(_ context.Context, _ *transport.OTAImageSignRequest) (*transport.SignResponse, error) {
+	return nil, nil
+}
 func (m *mockCAClient) GetImportParameters(_ context.Context, _ *transport.GetImportParametersRequest) (*transport.GetImportParametersResponse, error) {
 	return nil, nil
 }

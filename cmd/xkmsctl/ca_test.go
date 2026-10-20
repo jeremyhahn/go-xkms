@@ -131,6 +131,18 @@ func (m *mockCAClient) ExportKey(_ context.Context, req *client.ExportKeyRequest
 func (m *mockCAClient) RotateKey(_ context.Context, req *client.RotateKeyRequest) (*client.RotateKeyResponse, error) {
 	return &client.RotateKeyResponse{Success: true, KeyID: req.KeyID}, nil
 }
+
+func (m *mockCAClient) CreateOTAImageKey(_ context.Context, req *client.OTAImageKeyRequest) (*client.GenerateKeyResponse, error) {
+	return nil, nil
+}
+
+func (m *mockCAClient) RotateOTAImageKey(_ context.Context, req *client.OTAImageKeyRequest) (*client.RotateKeyResponse, error) {
+	return nil, nil
+}
+
+func (m *mockCAClient) SignOTAImage(_ context.Context, req *client.OTAImageSignRequest) (*client.SignResponse, error) {
+	return nil, nil
+}
 func (m *mockCAClient) GetImportParameters(_ context.Context, req *client.GetImportParametersRequest) (*client.GetImportParametersResponse, error) {
 	return &client.GetImportParametersResponse{Algorithm: req.Algorithm}, nil
 }

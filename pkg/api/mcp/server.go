@@ -268,6 +268,12 @@ var rpcMethods = map[string]rpcMethod{
 	"xkms.listKeys":    handle(auth.ResourceKeys, auth.ActionList, (*Server).handleListKeys),
 	"xkms.rotateKey":   handle(auth.ResourceKeys, auth.ActionRotate, (*Server).handleRotateKey),
 
+	// OTA image keys: one ES256 signing key per trusted-firmware board id,
+	// under the same permissions as any other key.
+	"xkms.createOTAImageKey": handle(auth.ResourceKeys, auth.ActionCreate, (*Server).handleCreateOTAImageKey),
+	"xkms.rotateOTAImageKey": handle(auth.ResourceKeys, auth.ActionRotate, (*Server).handleRotateOTAImageKey),
+	"xkms.signOTAImage":      handle(auth.ResourceKeys, auth.ActionSign, (*Server).handleSignOTAImage),
+
 	// Key versions: listing reads like listing keys; enabling and disabling
 	// versions is rotation lifecycle management; retiring destroys a
 	// version's key material, as deleting a key does.

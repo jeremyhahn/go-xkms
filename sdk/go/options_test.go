@@ -104,6 +104,18 @@ func (m *mockService) RotateKey(ctx context.Context, req *RotateKeyRequest) (*Ro
 	return nil, nil
 }
 
+func (m *mockService) CreateOTAImageKey(ctx context.Context, req *OTAImageKeyRequest) (*GenerateKeyResponse, error) {
+	return nil, nil
+}
+
+func (m *mockService) RotateOTAImageKey(ctx context.Context, req *OTAImageKeyRequest) (*RotateKeyResponse, error) {
+	return nil, nil
+}
+
+func (m *mockService) SignOTAImage(ctx context.Context, req *OTAImageSignRequest) (*SignResponse, error) {
+	return nil, nil
+}
+
 func (m *mockService) GetImportParameters(ctx context.Context, req *GetImportParametersRequest) (*GetImportParametersResponse, error) {
 	return nil, nil
 }

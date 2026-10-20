@@ -403,6 +403,40 @@ func (s *TestXKMSService) RotateKey(ctx context.Context, req *xkms.RotateKeyRequ
 	return &xkms.RotateKeyResponse{Success: true, KeyID: req.KeyID}, nil
 }
 
+// otaImageKeyID returns the key ID of the board's OTA image-signing key,
+// refusing a malformed board id or an algorithm other than ES256 the way the
+// key service does.
+func otaImageKeyID(boardID, algorithm string) (string, error) {
+	if algorithm != "" && algorithm != xkmssvc.OTAImageAlgorithmES256 {
+		return "", &xkmssvc.ErrValidation{Sentinel: xkmssvc.ErrOTAImageAlgorithm, Detail: algorithm}
+	}
+	return xkmssvc.OTAImageKeyID(boardID)
+}
+
+func (s *TestXKMSService) CreateOTAImageKey(ctx context.Context, req *xkms.OTAImageKeyRequest) (*xkms.GenerateKeyResponse, error) {
+	keyID, err := otaImageKeyID(req.BoardID, req.Algorithm)
+	if err != nil {
+		return nil, err
+	}
+	return s.GenerateKey(ctx, &xkms.GenerateKeyRequest{KeyID: keyID, Backend: req.Backend, KeyType: "ecdsa", Curve: "P-256"})
+}
+
+func (s *TestXKMSService) RotateOTAImageKey(ctx context.Context, req *xkms.OTAImageKeyRequest) (*xkms.RotateKeyResponse, error) {
+	keyID, err := otaImageKeyID(req.BoardID, req.Algorithm)
+	if err != nil {
+		return nil, err
+	}
+	return s.RotateKey(ctx, &xkms.RotateKeyRequest{KeyID: keyID, Backend: req.Backend})
+}
+
+func (s *TestXKMSService) SignOTAImage(ctx context.Context, req *xkms.OTAImageSignRequest) (*xkms.SignResponse, error) {
+	keyID, err := otaImageKeyID(req.BoardID, "")
+	if err != nil {
+		return nil, err
+	}
+	return s.Sign(ctx, &xkms.SignRequest{KeyID: keyID, Backend: req.Backend, Data: req.Data, DataIsDigest: req.DataIsDigest})
+}
+
 func (s *TestXKMSService) GetImportParameters(ctx context.Context, req *xkms.GetImportParametersRequest) (*xkms.GetImportParametersResponse, error) {
 	return &xkms.GetImportParametersResponse{}, nil
 }

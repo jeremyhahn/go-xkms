@@ -344,6 +344,8 @@ type (
 	ExportKeyResponse      = transport.ExportKeyResponse
 	RotateKeyRequest       = transport.RotateKeyRequest
 	RotateKeyResponse      = transport.RotateKeyResponse
+	OTAImageKeyRequest     = transport.OTAImageKeyRequest
+	OTAImageSignRequest    = transport.OTAImageSignRequest
 	SignRequest            = transport.SignRequest
 	SignResponse           = transport.SignResponse
 	VerifyRequest          = transport.VerifyRequest

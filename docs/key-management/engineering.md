@@ -1,6 +1,6 @@
 # Key Management — Engineering Contract
 
-> **Status: NORMATIVE** · Feature: `key-management` · Repo: `go-xkms` · Last verified: 2026-10-12
+> **Status: NORMATIVE** · Feature: `key-management` · Repo: `go-xkms` · Last verified: 2026-10-18
 
 This is the file an implementing agent works from. Every identifier below was
 grepped in this repository.
@@ -588,6 +588,92 @@ The raw shared secret is not a key. Derive keys from it with a KDF:
 
 A runnable X25519 example — generation, agreement, HKDF derivation — is in
 `examples/advanced/x25519-ecdh/main.go`.
+
+## Per-board OTA image keys
+
+go-xkms holds one ES256 key per trusted-firmware board, which signs that
+board's OTA images. The service is `pkg/xkms/ota_image_keys.go`. Every
+transport reaches it through the three `transport.Client` methods
+`CreateOTAImageKey`, `RotateOTAImageKey` and `SignOTAImage`
+(`pkg/api/transport/client.go:71`, `:75`, `:79`). The calls on each
+transport are in [api.md](api.md#per-board-ota-image-keys), and the xkmsctl
+verbs are in [cli.md](cli.md#key-ota-image-create--rotate--sign).
+
+**Board id and key ID.** `OTAImageKeyID(boardID)` returns the board's key
+ID, `ota-image-<board-id>` (`ota_image_keys.go:32`, `:44-49`). A board id
+is 1-63 characters (`:35`) matching `^[a-z0-9]+(-[a-z0-9]+)*$` (`:40`):
+lowercase alphanumeric words joined by single hyphens. A doubled hyphen is
+refused, so a board key ID can never take the shape of a key version's
+backend name, `K--v2` (`:37-39`). Any other id returns `ErrInvalidBoardID`
+(`:46`).
+
+**ES256 only.** `OTAImageAlgorithmES256` is `"ES256"`: ECDSA on P-256 with
+SHA-256, per RFC 7518 §3.4 (`ota_image_keys.go:26-29`). The request's
+`Algorithm` may be empty, which selects ES256, or `"ES256"`. Anything else
+returns `ErrOTAImageAlgorithm` (`:56-57`).
+
+- `CreateOTAImageKey` generates a `signing` key, `ecdsa` on `P-256`, under
+  the board's key ID (`:64-77`).
+- Before a rotate or a sign, `requireES256Key` checks that the current
+  version is an ECDSA P-256 key (`:122-141`). A key created under the
+  board's key ID by another path is therefore never rotated or used as an
+  OTA image key (`:119-121`, `ota_image_keys_test.go:166`).
+
+**One key per board.** A second create for the same board returns
+`ErrKeyAlreadyExists`. That holds after a rotate too
+(`ota_image_keys.go:63`, `ota_image_keys_test.go:79-92`).
+
+**Rotate.** `RotateOTAImageKey` creates the key's next version through
+`RotateKey` and makes it current (`ota_image_keys.go:79-94`). The response
+carries the new `KeyVersion` and `CertificateReissueRequired`
+(`pkg/api/transport/types.go:674-679`). Earlier versions stay, and an image
+signed with one still verifies:
+`TestRotateOTAImageKey_OldVersionStillVerifies`
+(`ota_image_keys_test.go:116-147`) signs under version 1, rotates, signs
+under version 2, and both signatures verify against their own version.
+
+**Sign.** `SignOTAImage` signs with the current version. The hash is
+SHA-256, and with `DataIsDigest` the data is already the image's SHA-256
+digest (`ota_image_keys.go:109-116`). The response's `KeyVersion` names the
+version that signed (`:96-97`).
+
+**Tenancy.** Each request's `TenantID` scopes the key
+(`pkg/api/transport/types.go:649-650`, `:661-662`). REST fills it from the
+caller (`pkg/api/rest/handlers_ota_image.go:114`, `:146`).
+
+**Errors.** Both sentinels are in `pkg/xkms/errors.go`, and both are
+wrapped in `ErrValidation`, so `errors.Is` reaches the sentinel:
+
+| Error | Returned when | REST | gRPC / Unix | MCP |
+|---|---|---|---|---|
+| `ErrInvalidBoardID` (`errors.go:185`) | malformed board id (`ota_image_keys.go:46`) | 400 | `InvalidArgument` | `-32602` |
+| `ErrOTAImageAlgorithm` (`errors.go:189`) | algorithm other than ES256 (`:57`), or the board key is not P-256 (`:140`) | 400 | `InvalidArgument` | `-32602` |
+| unknown board key | rotate or sign for a board with no key | 404 (`pkg/api/rest/handlers_ota_image_test.go:153-159`) | `NotFound` (`pkg/api/grpc/service_ota_image_test.go:142-148`) | not `-32602` (`pkg/api/mcp/handlers_ota_image_test.go:166-173`) |
+| `ErrKeyAlreadyExists` | create for a board that has a key | 409 | `AlreadyExists` | error object |
+
+- The `ErrValidation` rows map in each transport's `mapKeyOpError`
+  (`pkg/api/rest/errors_keyops.go:137-140`,
+  `pkg/api/grpc/errors_keyops.go:147-149`,
+  `pkg/api/mcp/errors_keyops.go:187-197`).
+- The `ErrKeyAlreadyExists` row follows the
+  [status and error mapping](api.md#status-and-error-mapping).
+- Over gRPC, a missing backend is `InvalidArgument`
+  (`pkg/api/grpc/service_ota_image.go:36-37`). A key service that is not
+  initialized is `Unavailable` (`:44-45`).
+- xkmsctl does not repeat the validation. It wraps the server's error in
+  `ErrCreateOTAImageKeyFailed`, `ErrRotateOTAImageKeyFailed` or
+  `ErrSignOTAImageFailed` (`cmd/xkmsctl/errors.go:838`, `:842`, `:846`)
+  and exits 1.
+
+**Tests.**
+
+| Layer | Tests |
+|---|---|
+| Service | `pkg/xkms/ota_image_keys_test.go:35-200` |
+| REST | `pkg/api/rest/handlers_ota_image_test.go:67-159`: 201/400/404 |
+| gRPC | `pkg/api/grpc/service_ota_image_test.go:48-160`: `InvalidArgument`, `NotFound`, `Unavailable` |
+| MCP | `pkg/api/mcp/handlers_ota_image_test.go:71-173` |
+| xkmsctl | `cmd/xkmsctl/key_ota_image_test.go:114-211`: a refused board id or algorithm exits 1 with the typed sentinel |
 
 ## Error semantics
 

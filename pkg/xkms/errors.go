@@ -180,6 +180,14 @@ var (
 	// ErrUnsupportedKeyAlgorithm indicates an unsupported key algorithm.
 	ErrUnsupportedKeyAlgorithm = errors.New("keystore: unsupported key algorithm")
 
+	// ErrInvalidBoardID indicates a trusted-firmware board id that is empty
+	// or malformed.
+	ErrInvalidBoardID = errors.New("keystore: invalid board id")
+
+	// ErrOTAImageAlgorithm indicates an OTA image-signing key algorithm
+	// other than ES256.
+	ErrOTAImageAlgorithm = errors.New("keystore: OTA image keys are ES256 only")
+
 	// ErrInvalidSignerOpts indicates invalid signer options.
 	ErrInvalidSignerOpts = errors.New("keystore: invalid signer opts")
 

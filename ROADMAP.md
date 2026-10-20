@@ -115,13 +115,13 @@ Scope and boundaries: [docs/SPEC.md](docs/SPEC.md).
 - **image-signing** — DSSE/in-toto image signatures as OCI referrers with `VerifyImage` — [Dev complete](../../milestone/14) — open
 - **transparency-log** — CA transparency log on go-qrdb's verifiable-log type — [Dev complete](../../milestone/14) — blocked: go-qrdb #721/#722
 - **workload-identity** — tenant as SPIFFE trust domain, SVIDs through ACME — [Dev complete](../../milestone/14) — blocked: go-qrdb `spiffe://<tenant>/...` support
+- **ota-image-keys** — one OTA image-signing key per trusted-firmware board id — [Dev complete](../../milestone/14) — blocked: go-qrdb #737 (OTA activate/confirm permissions)
 
 ## Later
 
 - **acme-issuance** — one ACME client library, `pkg/acme/client`, behind two front ends: xkey `acme` and `cmd/acme-client` (GUI under the `gui` tag, headless without it) — [SPEC](docs/SPEC.md#features) — open
 - **acme** — the `xkey acme` namespace (account, enroll, endorse, renew, revoke) over `pkg/acme/client` through `sdk/go` — [SPEC](docs/SPEC.md#xkey) — open
 - **ca** — standalone xkey CA, local or remote-only — [#729](../../issues/729) — blocked: decision pending
-- **ota-image-keys** — one OTA image-signing key per trusted-firmware board id — [SPEC](docs/SPEC.md#features) — open
 - **device-configuration** — pre-defined device configurations downloaded over enroll-01 — [SPEC](docs/SPEC.md#features) — open
 - **device-endorsement** — endorse-01 by an admin's QR-code approval, TOFU for bootstrapped nodes — [SPEC](docs/SPEC.md#features) — open
 - **enrollment-ek-required** — the inherited go-qrdb setting that enroll-01 and endorse-01 require a TPM EK — [SPEC](docs/SPEC.md#features) — open

@@ -189,6 +189,18 @@ func (b *baseSDKClient) RotateKey(ctx context.Context, req *transport.RotateKeyR
 	return nil, errNotImplemented
 }
 
+func (b *baseSDKClient) CreateOTAImageKey(ctx context.Context, req *transport.OTAImageKeyRequest) (*transport.GenerateKeyResponse, error) {
+	return nil, nil
+}
+
+func (b *baseSDKClient) RotateOTAImageKey(ctx context.Context, req *transport.OTAImageKeyRequest) (*transport.RotateKeyResponse, error) {
+	return nil, nil
+}
+
+func (b *baseSDKClient) SignOTAImage(ctx context.Context, req *transport.OTAImageSignRequest) (*transport.SignResponse, error) {
+	return nil, nil
+}
+
 func (b *baseSDKClient) GetImportParameters(ctx context.Context, req *transport.GetImportParametersRequest) (*transport.GetImportParametersResponse, error) {
 	return nil, errNotImplemented
 }

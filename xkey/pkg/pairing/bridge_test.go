@@ -197,6 +197,18 @@ func (m *mockTransportClient) RotateKey(_ context.Context, _ *transport.RotateKe
 	return nil, errNotImplemented
 }
 
+func (m *mockTransportClient) CreateOTAImageKey(_ context.Context, _ *transport.OTAImageKeyRequest) (*transport.GenerateKeyResponse, error) {
+	return nil, nil
+}
+
+func (m *mockTransportClient) RotateOTAImageKey(_ context.Context, _ *transport.OTAImageKeyRequest) (*transport.RotateKeyResponse, error) {
+	return nil, nil
+}
+
+func (m *mockTransportClient) SignOTAImage(_ context.Context, _ *transport.OTAImageSignRequest) (*transport.SignResponse, error) {
+	return nil, nil
+}
+
 func (m *mockTransportClient) GetImportParameters(_ context.Context, _ *transport.GetImportParametersRequest) (*transport.GetImportParametersResponse, error) {
 	return nil, errNotImplemented
 }

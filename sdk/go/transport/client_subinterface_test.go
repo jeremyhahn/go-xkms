@@ -61,6 +61,18 @@ func (s *stubClient) ExportKey(context.Context, *ExportKeyRequest) (*ExportKeyRe
 func (s *stubClient) RotateKey(context.Context, *RotateKeyRequest) (*RotateKeyResponse, error) {
 	panic("stub")
 }
+
+func (s *stubClient) CreateOTAImageKey(context.Context, *OTAImageKeyRequest) (*GenerateKeyResponse, error) {
+	panic("stub")
+}
+
+func (s *stubClient) RotateOTAImageKey(context.Context, *OTAImageKeyRequest) (*RotateKeyResponse, error) {
+	panic("stub")
+}
+
+func (s *stubClient) SignOTAImage(context.Context, *OTAImageSignRequest) (*SignResponse, error) {
+	panic("stub")
+}
 func (s *stubClient) GetImportParameters(context.Context, *GetImportParametersRequest) (*GetImportParametersResponse, error) {
 	panic("stub")
 }

@@ -171,6 +171,8 @@ func TestRoutes_BodyLimits(t *testing.T) {
 		"POST /api/v1/keys/{id}/decrypt": true,
 		"POST /api/v1/seal":              true,
 		"POST /api/v1/unseal":            true,
+		// An OTA image is signed whole unless the caller sends its digest.
+		"POST /api/v1/ota-image-keys/{board}/sign": true,
 	}
 	for _, spec := range Routes() {
 		want := DefaultMaxBodyBytes

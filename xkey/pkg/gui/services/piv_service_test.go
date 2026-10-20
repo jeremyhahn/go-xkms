@@ -189,6 +189,18 @@ func (m *mockPIVClient) RotateScopeKeys(context.Context, *transport.RotateScopeK
 func (m *mockPIVClient) RotateKey(_ context.Context, _ *transport.RotateKeyRequest) (*transport.RotateKeyResponse, error) {
 	return nil, errMockNotImplemented
 }
+
+func (m *mockPIVClient) CreateOTAImageKey(_ context.Context, _ *transport.OTAImageKeyRequest) (*transport.GenerateKeyResponse, error) {
+	return nil, nil
+}
+
+func (m *mockPIVClient) RotateOTAImageKey(_ context.Context, _ *transport.OTAImageKeyRequest) (*transport.RotateKeyResponse, error) {
+	return nil, nil
+}
+
+func (m *mockPIVClient) SignOTAImage(_ context.Context, _ *transport.OTAImageSignRequest) (*transport.SignResponse, error) {
+	return nil, nil
+}
 func (m *mockPIVClient) GetImportParameters(_ context.Context, _ *transport.GetImportParametersRequest) (*transport.GetImportParametersResponse, error) {
 	return nil, errMockNotImplemented
 }

@@ -95,6 +95,27 @@ func (m *mockService) RotateKey(_ context.Context, _ *transport.RotateKeyRequest
 	return &transport.RotateKeyResponse{Success: true}, nil
 }
 
+func (m *mockService) CreateOTAImageKey(_ context.Context, req *transport.OTAImageKeyRequest) (*transport.GenerateKeyResponse, error) {
+	if m.shouldFail {
+		return nil, errMock
+	}
+	return &transport.GenerateKeyResponse{KeyID: "ota-image-" + req.BoardID}, nil
+}
+
+func (m *mockService) RotateOTAImageKey(_ context.Context, req *transport.OTAImageKeyRequest) (*transport.RotateKeyResponse, error) {
+	if m.shouldFail {
+		return nil, errMock
+	}
+	return &transport.RotateKeyResponse{Success: true, KeyID: "ota-image-" + req.BoardID, KeyVersion: 2}, nil
+}
+
+func (m *mockService) SignOTAImage(_ context.Context, _ *transport.OTAImageSignRequest) (*transport.SignResponse, error) {
+	if m.shouldFail {
+		return nil, errMock
+	}
+	return &transport.SignResponse{Signature: []byte("sig"), KeyVersion: 2}, nil
+}
+
 func (m *mockService) GetImportParameters(_ context.Context, _ *transport.GetImportParametersRequest) (*transport.GetImportParametersResponse, error) {
 	if m.shouldFail {
 		return nil, errMock

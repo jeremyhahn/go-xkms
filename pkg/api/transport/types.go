@@ -639,6 +639,29 @@ type RotateKeyRequest struct {
 	TenantID string `json:"tenant_id,omitempty"`
 }
 
+// OTAImageKeyRequest names the OTA image-signing key of one trusted-firmware
+// board, to create or rotate.
+type OTAImageKeyRequest struct {
+	Backend string `json:"backend"`
+	BoardID string `json:"board_id"`
+	// Algorithm must be ES256; empty selects it.
+	Algorithm string `json:"algorithm,omitempty"`
+	// TenantID optionally scopes the key to a tenant.
+	TenantID string `json:"tenant_id,omitempty"`
+}
+
+// OTAImageSignRequest signs an OTA image, or its SHA-256 digest, with the
+// current version of a board's OTA image-signing key.
+type OTAImageSignRequest struct {
+	Backend string `json:"backend"`
+	BoardID string `json:"board_id"`
+	Data    []byte `json:"data"`
+	// DataIsDigest states that Data is already the image's SHA-256 digest.
+	DataIsDigest bool `json:"data_is_digest,omitempty"`
+	// TenantID optionally scopes the key to a tenant.
+	TenantID string `json:"tenant_id,omitempty"`
+}
+
 // RotateKeyResponse contains the result of key rotation.
 type RotateKeyResponse struct {
 	Success bool   `json:"success"`

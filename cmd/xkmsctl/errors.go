@@ -833,6 +833,18 @@ var (
 	// versions".
 	ErrListKeyVersionsFailed = errors.New("failed to list key versions")
 
+	// ErrCreateOTAImageKeyFailed is the sentinel error "failed to create the
+	// OTA image key".
+	ErrCreateOTAImageKeyFailed = errors.New("failed to create the OTA image key")
+
+	// ErrRotateOTAImageKeyFailed is the sentinel error "failed to rotate the
+	// OTA image key".
+	ErrRotateOTAImageKeyFailed = errors.New("failed to rotate the OTA image key")
+
+	// ErrSignOTAImageFailed is the sentinel error "failed to sign the OTA
+	// image".
+	ErrSignOTAImageFailed = errors.New("failed to sign the OTA image")
+
 	// ErrChangeKeyVersionFailed is the sentinel error "failed to change the
 	// key version".
 	ErrChangeKeyVersionFailed = errors.New("failed to change the key version")

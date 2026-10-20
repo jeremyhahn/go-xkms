@@ -1,6 +1,6 @@
 # Key Management — API
 
-> **Status: NORMATIVE** · Feature: `key-management` · Repo: `go-xkms` · Last verified: 2026-09-29
+> **Status: NORMATIVE** · Feature: `key-management` · Repo: `go-xkms` · Last verified: 2026-10-18
 
 ## How the six transports are shaped
 
@@ -108,6 +108,58 @@ Sign, encrypt and encrypt-asym report the key version they used as
 names a key resolves it through its versions. The fields, the version each
 operation chooses and the errors are in
 [`../tpm-policies/api.md`](../tpm-policies/api.md), "Key versions".
+
+### Per-board OTA image keys
+
+Each trusted-firmware board has one ES256 key, which signs its OTA images.
+The contract (board-id format, ES256 only, rotation and errors) is in
+[engineering.md](engineering.md#per-board-ota-image-keys).
+
+| Capability | REST | gRPC / Unix (`KeystoreService.`) | QUIC (HTTP/3) | MCP | Embedded / SDK | Permission |
+|---|---|---|---|---|---|---|
+| Create a board key | `POST /api/v1/ota-image-keys/{board}` | `CreateOTAImageKey` | same as REST | `xkms.createOTAImageKey` | `CreateOTAImageKey` | `keys:create` |
+| Rotate a board key | `POST /api/v1/ota-image-keys/{board}/rotate` | `RotateOTAImageKey` | same as REST | `xkms.rotateOTAImageKey` | `RotateOTAImageKey` | `keys:rotate` |
+| Sign an OTA image | `POST /api/v1/ota-image-keys/{board}/sign` | `SignOTAImage` | same as REST | `xkms.signOTAImage` | `SignOTAImage` | `keys:sign` |
+
+Where each call is defined:
+
+- REST: the routes are at `pkg/api/rest/routes.go:166-168`. Sign uses the
+  bulk body limit (`permBulk`, `:168`).
+- gRPC: the RPCs and their permissions are at
+  `pkg/api/grpc/proto/xkmsv1/xkms.proto:66-80`. Unix carries the same RPCs
+  over its socket (`pkg/api/transport/unix/transport.go:475`, `:498`,
+  `:525`).
+- QUIC: the client sends the REST paths over HTTP/3
+  (`pkg/api/transport/quic/transport.go:949`, `:971`, `:993`).
+- MCP: the tools are registered at `pkg/api/mcp/server.go:273-275`.
+- SDK: the methods are on `transport.Client`
+  (`pkg/api/transport/client.go:71-79`). `sdk/go` re-exports the request
+  types (`sdk/go/xkms.go:347-348`).
+
+Every call names the key by the board id, and the permission is checked on
+the board's key ID, `ota-image-<board-id>`.
+
+**Requests.**
+
+| Transport | Create / rotate | Sign |
+|---|---|---|
+| REST | board in `{board}`; body `{"backend", "algorithm"}` (`pkg/api/rest/handlers_ota_image.go:29-33`) | body `{"backend", "data", "data_is_digest"}` (`:37-42`) |
+| gRPC | `OTAImageKeyRequest {board_id, backend, algorithm}` (`xkms.proto:1327-1333`) | `SignOTAImageRequest {board_id, backend, data, data_is_digest}` (`:1336-1342`) |
+| MCP | `{board_id, backend, algorithm}` (`pkg/api/mcp/handlers_ota_image.go:24-29`) | `{board_id, backend, data, data_is_digest}` (`:32-38`) |
+
+`algorithm` is optional. It must be `ES256`, and empty selects it.
+
+**Responses.**
+
+- Create returns the generate-key response. Over REST it is `201 Created`
+  (`handlers_ota_image.go:93-98`).
+- Rotate returns the rotate-key response, with the new `key_version` and
+  `certificate_reissue_required` (`:121-129`).
+- Sign returns `signature`, `algorithm` and the `key_version` that signed
+  (`:153-157`).
+
+The errors are in
+[engineering.md](engineering.md#per-board-ota-image-keys).
 
 ### Encrypt's RSA fallback is PKCS#1 v1.5, and is refused by default
 

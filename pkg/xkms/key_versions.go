@@ -525,15 +525,11 @@ func (s *XKMSService) nextVersionAttributes(ctx context.Context, b Backend, back
 // applyPublicKeyAlgorithm sets attrs' algorithm and its parameters from the
 // public key of cur.
 func applyPublicKeyAlgorithm(ctx context.Context, b Backend, cur, attrs *types.KeyAttributes) error {
-	priv, err := b.GetKey(ctx, cur)
+	pub, err := backendPublicKey(ctx, b, cur)
 	if err != nil {
 		return &ErrKeyOperation{Operation: "read current version", KeyID: cur.CN, Err: err}
 	}
-	signer, ok := priv.(crypto.Signer)
-	if !ok {
-		return &KeyRotationUnsupportedError{KeyID: keyversion.BaseKeyID(cur.CN), Reason: fmt.Sprintf("its key (%T) exposes no public key", priv)}
-	}
-	switch pub := signer.Public().(type) {
+	switch pub := pub.(type) {
 	case *rsa.PublicKey:
 		attrs.KeyAlgorithm = x509.RSA
 		attrs.RSAAttributes = &types.RSAAttributes{KeySize: pub.N.BitLen()}
@@ -546,6 +542,22 @@ func applyPublicKeyAlgorithm(ctx context.Context, b Backend, cur, attrs *types.K
 		return &KeyRotationUnsupportedError{KeyID: keyversion.BaseKeyID(cur.CN), Reason: fmt.Sprintf("unsupported public key type %T", pub)}
 	}
 	return nil
+}
+
+// backendPublicKey returns the public key of attrs through the backend's
+// signer, or its decrypter for a key that cannot sign. GetKey is not used:
+// the cloud KMS backends return no private key for a non-extractable key and
+// reach it only through Signer and Decrypter.
+func backendPublicKey(ctx context.Context, b Backend, attrs *types.KeyAttributes) (crypto.PublicKey, error) {
+	signer, err := b.Signer(ctx, attrs)
+	if err == nil {
+		return signer.Public(), nil
+	}
+	decrypter, decErr := b.Decrypter(ctx, attrs)
+	if decErr != nil {
+		return nil, err
+	}
+	return decrypter.Public(), nil
 }
 
 // tpmPolicyOf returns the TPM policy the policy registry records for the

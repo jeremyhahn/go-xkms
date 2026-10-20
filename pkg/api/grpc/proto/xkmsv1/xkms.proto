@@ -61,6 +61,24 @@ service KeystoreService {
     option (qrdb.v1.permission) = "keys:rotate";
   }
 
+  // CreateOTAImageKey creates the ES256 OTA image-signing key of one
+  // trusted-firmware board.
+  rpc CreateOTAImageKey(OTAImageKeyRequest) returns (GenerateKeyResponse) {
+    option (qrdb.v1.permission) = "keys:create";
+  }
+
+  // RotateOTAImageKey creates the next version of a board's OTA
+  // image-signing key; earlier versions keep verifying.
+  rpc RotateOTAImageKey(OTAImageKeyRequest) returns (RotateKeyResponse) {
+    option (qrdb.v1.permission) = "keys:rotate";
+  }
+
+  // SignOTAImage signs an OTA image with the current version of its board's
+  // key.
+  rpc SignOTAImage(SignOTAImageRequest) returns (SignResponse) {
+    option (qrdb.v1.permission) = "keys:sign";
+  }
+
   // ListKeyVersions lists every version of a key and marks the current one.
   // A key that was never rotated lists version 1 alone.
   rpc ListKeyVersions(ListKeyVersionsRequest) returns (ListKeyVersionsResponse) {
@@ -1302,6 +1320,25 @@ message RotateKeyResponse {
   // certificate_reissue_required reports that the key has a certificate,
   // which still certifies the previous version.
   bool certificate_reissue_required = 7;
+}
+
+// OTAImageKeyRequest names the OTA image-signing key of one trusted-firmware
+// board, to create or rotate.
+message OTAImageKeyRequest {
+  // board_id is 1-63 of a-z, 0-9 and single inner hyphens.
+  string board_id = 1;
+  string backend = 2;
+  // algorithm must be "ES256"; empty selects it.
+  string algorithm = 3;
+}
+
+// SignOTAImageRequest signs an OTA image, or its SHA-256 digest.
+message SignOTAImageRequest {
+  string board_id = 1;
+  string backend = 2;
+  bytes data = 3;
+  // data_is_digest states that data is already the image's SHA-256 digest.
+  bool data_is_digest = 4;
 }
 
 // KeyVersionInfo contains information about a key version

@@ -1083,6 +1083,57 @@ Report whether the FIDO2 virtual device daemon is running
 
 Usage: `xkey fido2 status`
 
+## xkey key
+
+Key operations on xkmsd
+
+Usage: `xkey key`
+
+Inherited by subcommands:
+
+| Flag | Type | Default | Description |
+|---|---|---|---|
+| `--tls-ca` | string |  | TLS CA certificate file used to verify the xkmsd server |
+
+## xkey key ota-image
+
+Manage per-board OTA image-signing keys
+
+Usage: `xkey key ota-image`
+
+## xkey key ota-image create
+
+Create a board's OTA image-signing key
+
+Usage: `xkey key ota-image create <board-id> [flags]`
+
+| Flag | Type | Default | Description |
+|---|---|---|---|
+| `--algorithm` | string | ES256 | Key algorithm (ES256 is the only one accepted) |
+| `--json` | bool | false | output the result as JSON |
+
+## xkey key ota-image rotate
+
+Rotate a board's OTA image-signing key
+
+Usage: `xkey key ota-image rotate <board-id> [flags]`
+
+| Flag | Type | Default | Description |
+|---|---|---|---|
+| `--algorithm` | string | ES256 | Key algorithm (ES256 is the only one accepted) |
+| `--json` | bool | false | output the result as JSON |
+
+## xkey key ota-image sign
+
+Sign an OTA image with a board's key
+
+Usage: `xkey key ota-image sign <board-id> <image-file> [flags]`
+
+| Flag | Type | Default | Description |
+|---|---|---|---|
+| `--digest` | bool | false | The file holds the image's SHA-256 digest, not the image |
+| `--json` | bool | false | output the result as JSON |
+
 ## xkey luks2
 
 LUKS2 encrypted storage management

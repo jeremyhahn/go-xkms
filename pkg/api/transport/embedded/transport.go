@@ -313,6 +313,33 @@ func (t *Transport) RotateKey(ctx context.Context, req *transport.RotateKeyReque
 	return t.service.RotateKey(ctx, req)
 }
 
+// CreateOTAImageKey creates the ES256 OTA image-signing key of one
+// trusted-firmware board.
+func (t *Transport) CreateOTAImageKey(ctx context.Context, req *transport.OTAImageKeyRequest) (*transport.GenerateKeyResponse, error) {
+	if !t.connected {
+		return nil, ErrNotConnected
+	}
+	return t.service.CreateOTAImageKey(ctx, req)
+}
+
+// RotateOTAImageKey creates the next version of a board's OTA image-signing
+// key and makes it current.
+func (t *Transport) RotateOTAImageKey(ctx context.Context, req *transport.OTAImageKeyRequest) (*transport.RotateKeyResponse, error) {
+	if !t.connected {
+		return nil, ErrNotConnected
+	}
+	return t.service.RotateOTAImageKey(ctx, req)
+}
+
+// SignOTAImage signs an OTA image with the current version of its board's
+// key, which the response's KeyVersion names.
+func (t *Transport) SignOTAImage(ctx context.Context, req *transport.OTAImageSignRequest) (*transport.SignResponse, error) {
+	if !t.connected {
+		return nil, ErrNotConnected
+	}
+	return t.service.SignOTAImage(ctx, req)
+}
+
 // GetImportParameters gets the parameters needed to import a key.
 func (t *Transport) GetImportParameters(ctx context.Context, req *transport.GetImportParametersRequest) (*transport.GetImportParametersResponse, error) {
 	if !t.connected {
