@@ -126,6 +126,9 @@ Scope and boundaries: [docs/SPEC.md](docs/SPEC.md).
 - **device-endorsement** — endorse-01 by an admin's QR-code approval, TOFU for bootstrapped nodes — [SPEC](docs/SPEC.md#features) — open
 - **enrollment-ek-required** — the inherited go-qrdb setting that enroll-01 and endorse-01 require a TPM EK — [SPEC](docs/SPEC.md#features) — open
 - **continuous-attestation** — scheduled and on-demand re-attestation of enrolled devices with a published verdict — [SPEC](docs/SPEC.md#features) — open
+- **device-registry** — paired-device registry, tenant-scoped with go-xkms the verifier in backend mode — [SPEC](docs/SPEC.md#features) — open
+- **device-share-policy** — device sharing under the `device:*` permissions of tenant Admin and Owner — [SPEC](docs/SPEC.md#features) — blocked: go-qrdb gap
+- **device-policy-source** — xkey applies the stricter of its SO-sealed and the go-xkms device policy — [SPEC](docs/SPEC.md#features) — open
 - **authz-claim-roles** — roles from go-qrdb, not IdP or token claims — [Dev complete](../../milestone/14) — blocked: go-qrdb gap
 - **authz-device-onboarding** — onboarding as users:invite and device-onboarding permissions — [Dev complete](../../milestone/14) — blocked: go-qrdb gap
 - **authz-holds-role** — role membership from go-qrdb — [Dev complete](../../milestone/14) — blocked: go-qrdb gap
