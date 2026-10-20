@@ -120,6 +120,10 @@ Scope and boundaries: [docs/SPEC.md](docs/SPEC.md).
 
 - **ca** — standalone xkey CA, local or remote-only — [#729](../../issues/729) — blocked: decision pending
 - **ota-image-keys** — one OTA image-signing key per trusted-firmware board id — [SPEC](docs/SPEC.md#features) — open
+- **device-configuration** — pre-defined device configurations downloaded over enroll-01 — [SPEC](docs/SPEC.md#features) — open
+- **device-endorsement** — endorse-01 by an admin's QR-code approval, TOFU for bootstrapped nodes — [SPEC](docs/SPEC.md#features) — open
+- **enrollment-ek-required** — the inherited go-qrdb setting that enroll-01 and endorse-01 require a TPM EK — [SPEC](docs/SPEC.md#features) — open
+- **continuous-attestation** — scheduled and on-demand re-attestation of enrolled devices with a published verdict — [SPEC](docs/SPEC.md#features) — open
 - **authz-claim-roles** — roles from go-qrdb, not IdP or token claims — [Dev complete](../../milestone/14) — blocked: go-qrdb gap
 - **authz-device-onboarding** — onboarding as users:invite and device-onboarding permissions — [Dev complete](../../milestone/14) — blocked: go-qrdb gap
 - **authz-holds-role** — role membership from go-qrdb — [Dev complete](../../milestone/14) — blocked: go-qrdb gap
@@ -142,7 +146,7 @@ Scope and boundaries: [docs/SPEC.md](docs/SPEC.md).
 ## Dependencies
 
 - Up: go-qrdb v0.47.0-alpha (re-exported through `sdk/go`), go-enclave v0.8.0-alpha, go-luks2 v1.0.0-rc.4, go-quicraft v0.20.0, go-objstore v0.4.0-alpha, go-truststrap v0.6.0-alpha, go-frost v0.3.0-alpha, go-codec v1.4.0.
-- Up, needed: go-qrdb verifiable log (#721/#722), `node.WithPeerAttestationGate`, per-tenant `spiffe://` verification.
+- Up, needed: go-qrdb verifiable log (#721/#722), `node.WithPeerAttestationGate`, per-tenant `spiffe://` verification, the configure-devices and endorse permissions and the endorse-01-enabled and EK-required settings.
 - Down: go-quicbaas (SDK re-exports: [#1442](../../issues/1442), [#1480](../../issues/1480), [#1443](../../issues/1443)), trusted-firmware's xkms adapter ([#28](../../../trusted-firmware/issues/28)), xkey ([#1440](../../issues/1440)), xkey-android by wire; go-trusted-platform only through go-quicbaas.
 
 ### Standards watch
