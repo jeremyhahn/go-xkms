@@ -7,6 +7,95 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.57.0-alpha] - 2026-10-19
+
+### Security
+
+- **A cluster node's transport key now lives in the backend `KeyBackend` names, or the node refuses to provision.** The key used to resolve through CA key custody, which falls back to software. That let a node configured for `pkcs11` mint a disk-backed software key under a certificate that claimed PKCS#11 provenance. `clusterca.Options.NodeKeyBackends` (built by `clusterca.NewNodeKeyBackends`) is now required. It resolves `software` to the node-local store, `tpm2` to the TPM, and any other name to the daemon backend of that name. A backend the node lacks fails with `*clusterca.ErrKeyBackendUnavailable` wrapping `*clusterca.ErrNodeKeyBackendNotConfigured` or `*clusterca.ErrNoTPM`. A restarted local-CA `tpm2` node now reloads its own named transport key instead of the IDevID. Only an ACME joiner signs with the IDevID, and its certificate must match `IDevID()` (go-xkms#1381).
+- **A `pkcs11` transport key opens its token before the qrdb node starts.** Raft mTLS is provisioned before the backend registry exists, so `raft_enrollment.key_backend: pkcs11` was always refused. xkmsd now opens `backends.pkcs11` before the node with the TPM-sealed PIN (`xkmsd seal-pkcs11-pin`). The barrier-held configured PIN is not open yet at that point. The backend registry reuses that one login. `clusterca.NodeKeyBackendsParams.Hardware` is now a `map[string]types.KeyProvider`. A token that cannot be opened, or a missing sealed PIN, is a startup error. Software never stands in.
+- **A client certificate's OU no longer grants roles; it names only the tenant.** The ACME admin plane's REST and gRPC mTLS paths now share one resolver, `admin.MTLSAuthHandler`: the tenant is the one `qrdbsdk.TenantFromClientCert` names, and the roles are those of the go-qrdb user the certificate binds to. A user of another tenant is refused with `*admin.CertificateTenantMismatchError`. Breaking: `admin.MTLSAuthMiddleware`, `MTLSAuthConfig` and `NewMTLSAuthMiddleware` are removed. `server.UnaryMTLSIdentityInterceptor` now takes an `*admin.MTLSAuthHandler` (set through `ServerConfig.MTLSAuth`) in place of an authenticator and a role extractor. A certificate whose OU named a role such as `Admin` now gets only its bound user's roles (go-xkms#1557). SPEC: authz-cert-ou-roles.
+- **TPM 2.0 device enrollment no longer panics under `GODEBUG=fips140=only` (#1591).** go-tpm v0.9.8 encrypts session parameters with AES-CFB, which `crypto/cipher` refuses in FIPS 140-only mode, so provisioning, `CreateIDevID` and every other parameter-encrypted TPM command panicked (`tpm2/sessions.go:634`). go-tpm is now pinned to the `jeremyhahn/go-tpm` fork at `v0.9.9-0.20261015005355-56ec25c36102` (go-tpm#2, FIPS-approved parameter encryption) by a `replace` in `go.mod`, `sdk/go`, `xkey` and `web/desktop`, per the owner ruling of 2026-10-14; the pin is dropped once the fix lands upstream. A `replace` does not reach consumers: go-quicbaas, go-trusted-platform and any other module that builds go-xkms needs the same `replace`. `TestFIPS140Only_IDevIDSignerSignsWithTheTPMKey` (`pkg/tpm2`, `tpm_simulator`) re-runs provisioning, `CreateIDevID` and an IDevID and IAK signature in a `fips140=only` child process on every simulator run.
+- **A SHA-1 PCR bank returns an error under `GODEBUG=fips140=only` instead of panicking (#1591).** `pkg/tpm2.GetHashFunction` asks the Go Cryptographic Module whether it refuses the algorithm and returns `*tpm2.HashRefusedError` for SHA-1, so `ExtendPCR` (which used to ignore the refused write and return the digest of nothing) and `TPM2.ExtendPCR` (which panicked in `crypto/sha1.Sum`) now both return it, as do `PCRCompositeDigest`, `ComputePolicyPCRDigest` and `CalculateName`. `CalculatePCRs` leaves a refused bank empty, as it does for SM3_256.
+
+### Changed
+
+- **The TrustedCA is go-qrdb's cluster CA, signing through its `crypto.Signer`.** When `ca` is configured, xkmsd hands the TrustedCA to the qrdb node as Key A through `WithClusterCAKeyProvider` on standalone nodes and on every cluster whose Raft mTLS is not operator-supplied. Node leaves, `ceremony-sign-csr` and the client trust pool are then signed through the TrustedCA's keystore signer, and no CA key bytes are read, returned or written (go-xkms#1381).
+- **No mode writes `ca-key.pem`.** Local-CA mode (`raft_enrollment` without ACME, any `key_backend`, `software` by default) issues its Raft leaf from the TrustedCA; the software self-signed cluster CA and its key-PEM path are deleted with no fallback. Local-CA mode needs `ca` configured and refuses to join with `ErrLocalCAJoin` (was `ErrHardwareKeyJoin`); joiners use ACME. A key backend the `Backends` seam cannot supply fails with `ErrKeyBackendUnavailable` (go-xkms#1381).
+- **Embedders must supply `RaftMTLSResolver` for multi-node nodes.** `embeddednode` (and `sdk/go`) has no built-in software resolver; a multi-node node without one fails with `ErrNilRaftMTLSResolver`. Removed with it: `RaftTLSCacheSubdir`, `NodeOptions.StoragePath`, the `ClusterOptions` fields `TrustDomain`, `AdvertiseNoisePort`, `AdvertiseNoiseHost` and `Bootstrap`, and `ClusterOptions.ClusterEnrollOptions` (go-xkms#1381).
+- **TPM policy branches are named, and a branch update names its branch** -- every branch of a TPM policy carries a `name` (1-64 letters, digits, `.`, `_` or `-`, unique within the policy; `branch-N` when a create leaves it out, N counted from 1), set in a branch spec with `name=NAME` (`--branch 'name=next;pcr=0,7'`). `tpm policy update <name> --branch <name> --reference-values <corim>` (xkmsctl, xkey, the xKey GUI, REST `{"branch":"next"}`, gRPC `TPMPolicyUpdateRequest.branch` = 5, MCP `tpm.policy.update`, SDK) approves only the named branch from a signed CoRIM, so a policy with `current` and `next` branches lets a platform update proceed with both images unsealing; `verify` reports each branch by name with the reference values it is approved for. The integer branch index is removed (gRPC field 3 reserved; a numeric REST `branch` is a malformed request). Invalid or duplicate names are refused as invalid arguments (`tpmpolicy.ErrInvalidBranchName`, `ErrDuplicateBranch`, `*InvalidBranchError`; SDK `ErrTPMPolicyInvalidBranchName`, `ErrTPMPolicyDuplicateBranch`, `TPMPolicyInvalidBranchError`, `ErrTPMPolicyBranchName` for a branch spec with more than one name) (go-xkms#1443).
+- **The Android device-key verifier moved from xkey into `pkg/attestation` (#1548).** The hardware policy a paired handset's key must meet now lives in the library, so any caller can apply it, not just xkey. `attestation.VerifyAndroidDeviceKey` checks that the chain anchors in the trusted roots, that the key is in at least a TEE, was generated there and may sign, that the bootloader is locked with a verified boot state, and that an allow-listed application holds it. The SDK exposes it as `xkms.VerifyAndroidDeviceKey`, with `xkms.AndroidDeviceTrust` and `xkms.AndroidDeviceKey`. Its parts are `android.DeviceVerifyOptions`, `android.RequireAttestedBootState`, `RequireAttestedKeyOrigin`, `RequireAttestedApplication` (through the new `android.ApplicationMatcher`), `KeyDescription.AttestedApplication`, `attestation.ParseDERChain`, `VerifiedTrustAnchor` and `FormatTrustAnchor`. Each has its own typed error: `android.ErrNoRootOfTrust`, `ErrBootloaderUnlocked`, `ErrKeyOriginNotGenerated`, `ErrKeyPurposeNotSign`, `ErrApplicationRefused` and `attestation.ErrCertificateParseFailed`. `xkey/pkg/attestation` drops `Trust`, `VerifyOptions`, `RequireAttested*`, `VerifiedTrustAnchor`, `ParseDERChain`, `FormatTrustAnchor` and its `ErrAttestationKey*` errors, and `pairing.AttestedApplication` is gone. `VerifyDeviceAttestation` keeps only the pairing protocol's checks (version, genesis challenge, fingerprint, live transcript signature) on top of the SDK call. Tests: `pkg/attestation/android_device_test.go`, which verifies a real Galaxy S23 Ultra StrongBox chain, and `pkg/attestation/android/device_test.go`.
+- **`/api/v1/auth/me` reports the permissions RBAC lists** -- the fixed `uiPermissionMatrix` and its one `Authorize` call per pair are gone. The `permissions` map now holds every permission qrdb's `RBACClient.ListPermissions` grants the caller, each `true`; a permission not held is absent instead of `false`, and a listing failure answers 500 (go-xkms#1557).
+- **Authorization follows go-qrdb's tenant and grant rules** -- system-tenant checks use `qrdbsdk.IdentityIsSystemTenant` and target tenants resolve through `qrdbsdk.OwnTenant`, refusing with `*qrdbsdk.CrossTenantDeniedError`; xkms module permissions are granted per role with declared duties; each ACME admin route in `admin.Routes()` is mounted under its own permission, by the unified server through qrdb `Handle` and by a standalone host through `RegisterRoutes`. The tenant lifecycle routes, whose permission depends on the tenant they reach, are mounted identity-gated on the unified server and authorized by the admin router (`RegisterAuthorizedRoutes` now takes the `PermissionGate`); `apimodule.AdminRoute` gains `SelfPermission` for them. Creating a tenant from a tenant-scoped identity is refused with `403` (go-xkms#1557).
+- **Method permissions are declared where each method is defined, not in hand-kept maps** -- every ACME `AdminService` RPC carries the go-qrdb `(qrdb.v1.permission)` option in `api/proto/admin.proto`, and the ACME admin gRPC interceptor and MCP surface read it from the generated descriptor; the ACME `MethodPermissions` map and its own `Permission` type are gone. The xkms JSON-RPC/MCP methods register their permission with `handle(resource, action, handler)` (or `handlePublic`) in the `rpcMethods` dispatch table, so a dispatchable method without a permission cannot exist; `methodPermissions`, `publicMethods`, `ErrMethodPermissionUnmapped` and the separate `frost.*` switch are deleted. A build without `-tags frost` still registers the `frost.*` methods, with stubs that refuse as "FROST support not compiled". Permissions are `qrdbsdk.Permission` values, reported through `qrdbsdk.ModuleMCPToolPermissioner` and enforced by `qrdbsdk.Authorizer` (go-xkms#1557).
+- **`pkg/qrdbrole` removed; built-in role reconciliation is go-qrdb's alone** -- go-xkms no longer carries its own copy of go-qrdb's built-in role convergence. Callers that imported `pkg/qrdbrole.Reconcile` call `ReconcileBuiltInRoles` on a go-qrdb `sdk/go/transport` client instead, which go-qrdb's transports serve. The in-memory `testutil.QRDBFakeTransport` now answers `ReconcileBuiltInRoles` with `transport.CapabilityUnsupportedError` rather than converging roles itself (go-xkms#1557).
+- **go-qrdb v0.50.0-alpha** -- `github.com/jeremyhahn/go-qrdb` and `github.com/jeremyhahn/go-qrdb/sdk/go` move from v0.48.0-alpha to v0.50.0-alpha in every module (root, `sdk/go`, `xkey`, `web/desktop`); minimum version selection also raises go-quicraft to v0.22.0-alpha, prometheus/client_golang to v1.25.0, klauspost/compress to v1.20.1 and golang.org/x/{crypto,sync,sys,term,text}. What changes for go-xkms users:
+  - The platform credential store hands secrets out in protected memory: `credentials.Service.RetrieveCredential` is replaced by `RetrieveCredentialBuffer`, which returns a `*secure.Buffer` the caller must `Destroy`, matching go-qrdb's `secret.CredentialRetrieveFunc`.
+  - The `sdk/go` re-export `WithTenantStrategyRegistry` is removed with go-qrdb's `tenant.WithStrategyRegistry`. Hardware tenant barriers take their keys through go-qrdb's barrier key seam: `sdk/go` re-exports `BarrierKeyProvider`, `NewBarrierKeyProvider` and `WithTenantBarrierKeyProvider`, and `seal.NewHardwareTenantService` installs the provider over the hardware strategy registry.
+  - `xkms.proto` takes the `(qrdb.v1.permission)` method option from go-qrdb's SDK (`qrdb/v1/permission.proto`, Go package `github.com/jeremyhahn/go-qrdb/sdk/go/proto/qrdb/v1`); `make proto` includes the `sdk/go` module's `proto/` directory. The option's name and field number are unchanged.
+  - Tenant barrier init over a go-qrdb transport is two calls, `init/begin` and `init/complete`, proving possession of the first admin's key (`TenantBarrierInitRequest.Signer`); the single-call init route, RPC, QUIC method and MCP tool are gone.
+  - A caller go-qrdb resolves to an account carries that account's immutable user id as its Subject, so every go-xkms reader of that Subject (the audit actor, shared-password ownership, the key-version actor) names the id, not the username. ABAC `subject.id` is the id and `subject.name` the account name.
+  - A sealed node refuses everything but unseal; deleting a role removes it from every holder; the built-in User role also holds `passwords:write` and `passwords:delete`.
+  - `UserAuthFactorClient` gains go-qrdb's hard `DeleteAuthFactor`, so an implementation of that interface must provide it.
+
+### Fixed
+
+- **A CA that loses a concurrent key-generate race now gets the winner's key on
+  every backend.** `getOrGenerateKey` (`pkg/ca/csr.go`) recovers only on
+  `errors.Is(err, backend.ErrKeyAlreadyExists)`, but most backends reported
+  "already exists" with their own sentinel, so the losing caller failed. The
+  awskms, azurekv, gcpkms, pkcs8 and frost `ErrKeyAlreadyExists`, phone's
+  `ErrKeyExists` and the keystore's `xkms.ErrKeyAlreadyExists` are now
+  `backend.ErrKeyAlreadyExists` itself. `xkms.KeyExistsError` unwraps to it.
+  The awskms and azurekv `Save` report an existing key with it, not
+  `backend.ErrFileAlreadyExists`. gcpkms maps Cloud KMS's gRPC `AlreadyExists`
+  from `CreateCryptoKey` to it (#1599).
+- **A reopened TPM signs with the IAK's own signature scheme.** The IAK is
+  Restricted, so its public area fixes RSASSA or RSA-PSS (Template H-1, TCG
+  "TPM 2.0 Keys for Device Identity and Attestation" section 7.3.4), but a
+  restarted process described it by the configured algorithm instead. After
+  `xkey tpm iak create --template rsa2048` on an RSA-PSS configuration the next
+  `Quote` failed unpacking an RSASSA signature as RSA-PSS. `KeyAttributes` now
+  reads the signature algorithm from the key's public area, and the
+  configuration only names it for a key that fixes none, such as an RSA IDevID
+  (`pkg/tpm2/key.go`, `pkg/tpm2/sigscheme.go`, #704).
+- **TPM key attributes carry the key size and curve.** `KeyAttributes` read
+  a key's public area but left `RSAAttributes` and `ECCAttributes` empty, so
+  `xkey tpm lak show` (and every other reader of the generic attributes) never
+  printed an RSA size or ECC curve. They are now filled from the public area's
+  `TPMS_RSA_PARMS.keyBits` and `TPMS_ECC_PARMS.curveID`, and an object of any
+  other type is refused with `ErrInvalidKeyAlgorithm` before it is parsed
+  (`pkg/tpm2/key.go`, #704).
+- **The xkey GUI can start the agent server.** The GUI's agent service was never
+  given an enrollment service, so starting the agent server always failed. When
+  the GUI connects to xkmsd it now enrolls agents through the xkmsd certificate
+  authority (`agent.XKMSdCA`, the same adapter the CLI uses). Enrollment records
+  live in the CLI's store under the xKey data directory, so agents enrolled from
+  either the CLI or the GUI show up in both. A disconnect or shutdown stops the
+  running agent server. Without a connection, starting it fails with
+  `ErrAgentServiceNotReady` (#704).
+- **The xkey GUI's FIDO2 authenticator writes its audit records.** The audit
+  logger was attached in `NewApp`, but there the authenticator does not exist
+  yet, so it never got one. The logger is now attached where the authenticator
+  is built, and PIN establishment and credential creation are recorded in the
+  GUI's audit store (#704).
+- **`xkey tpm iak create` and `xkey tpm idevid create` honour `--template`.**
+  The flag was validated and then ignored, so every key came from the
+  configuration. An explicitly set `--template` now selects the key's suite,
+  mapped in one place onto the TCG "TPM 2.0 Keys for Device Identity and
+  Attestation" section 7.3.4 templates: `rsa2048` (H-1, RSASSA-PKCS1-v1_5),
+  `rsa-pss` (H-1, RSASSA-PSS) and `ecc256` (H-2, P-256); left unset, the
+  configuration decides as before (`xkey/cmd/xkey/cmd/tpm_devid_template.go`).
+  `CreateIDevID` no longer forces an RSA IDevID on a device whose EK is RSA:
+  the IDevID is its own configured algorithm (`pkg/tpm2/key.go`, #704).
+- **xkey no longer leaks the xkms TPM2 backend's own TPM connection.** When the
+  local key store hands the tpm2 backend the GUI's shared TPM, the connection
+  `AutoInitialize` opened was dropped without being closed. `SetTPM` leaves that
+  connection to its caller. The leak held a TPM device handle for the life of the
+  process, and with the simulator it held go-tpm-tools' process-wide lock, so the
+  next simulator open hung. `initLocalKeyStore` now closes the replaced
+  connection (`xkey/pkg/gui/app.go`). Verified by the gui tests that bring up a
+  simulated tpm2 backend twice in one run (#704).
+
 ## [0.56.0-alpha] - 2026-10-17
 
 ### Security
