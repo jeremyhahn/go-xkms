@@ -41,6 +41,10 @@ func TestNoiseGenerateKeyCmd_Run(t *testing.T) {
 	keyPath := filepath.Join(t.TempDir(), "noise.key")
 	_ = cmd.Flags().Set("output", keyPath)
 
+	if !noiseKeygenOutsideFIPS(t, keyPath, func() { cmd.Run(cmd, nil) }) {
+		return
+	}
+
 	// Captured into protected memory, not the usual captureStdout: the case
 	// this test exists to catch is the one where the command prints the
 	// private key, and captureStdout would put it in a Go string, where it is
