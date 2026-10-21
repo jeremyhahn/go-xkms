@@ -1,6 +1,6 @@
 # go-xkms roadmap
 
-> **Status: REFERENCE** · Owner: Software Department · Last verified: 2026-10-17
+> **Status: REFERENCE** · Owner: Software Department · Last verified: 2026-10-18
 
 ## Mission
 
@@ -129,6 +129,7 @@ Scope and boundaries: [docs/SPEC.md](docs/SPEC.md).
 - **device-registry** — paired-device registry, tenant-scoped with go-xkms the verifier in backend mode — [SPEC](docs/SPEC.md#features) — open
 - **device-share-policy** — device sharing under the `device:*` permissions of tenant Admin and Owner — [SPEC](docs/SPEC.md#features) — blocked: go-qrdb gap
 - **device-policy-source** — xkey applies the stricter of its SO-sealed and the go-xkms device policy — [SPEC](docs/SPEC.md#features) — open
+- **verifier-appraisal-seam** — the go-quicbaas appraisal code and reference-values store moved into go-xkms `pkg/attestation` with history, re-exported by go-quicbaas — [SPEC](docs/SPEC.md#features) — open
 - **authz-claim-roles** — roles from go-qrdb, not IdP or token claims — [Dev complete](../../milestone/14) — blocked: go-qrdb gap
 - **authz-device-onboarding** — onboarding as users:invite and device-onboarding permissions — [Dev complete](../../milestone/14) — blocked: go-qrdb gap
 - **authz-holds-role** — role membership from go-qrdb — [Dev complete](../../milestone/14) — blocked: go-qrdb gap
@@ -143,6 +144,9 @@ Scope and boundaries: [docs/SPEC.md](docs/SPEC.md).
 - **authz-token-perms** — permissions dropped from ACME admin token claims — [Dev complete](../../milestone/14) — open
 - **authz-ui-matrix** — UI permissions from a go-qrdb listing resolved for the caller — [Dev complete](../../milestone/14) — blocked: go-qrdb gap
 - **authz-xkey-uid0** — xkey audit access by `audit:read` — [Dev complete](../../milestone/14) — open
+- **xkey-sdk-only** — xkey on `sdk/go` only, every feature kept in both modes and nothing removed: standalone on the embedded transport, against a server on the remote transport. 176 xkey `.go` files, all `_test.go`, import 34 root `pkg/` packages, most `pkg/pairingproto` (70), `pkg/attestation/truststore` (35), `pkg/trust/bootstrap` (31), `pkg/oidc` (27) and `pkg/fido2/authenticator` (24). One PR per package set, in order: pairing and trust (`pairingproto`, `trust/bootstrap`, `attestation/*`), FIDO2 (`fido2/*`), OIDC (`oidc/*`), storage and keys (`storage`, `types`, `xkms`, `backend/software`, `auth`, `autofill`), CA and API (`ca/*`, `certstore`, `crypto/spki`, `api/*`), TPM (`tpm2/*`, `localtpm`), test helpers (`testutil/*`, `testing/enclavetest`) — [Dev complete](../../milestone/14) — open
+- **xkey-ci-coverage** — Nested Module Tests runs xkey with `-cover` against its `COVERAGE_THRESHOLD` of 90; today no CI workflow measures xkey coverage, and the root `make coverage` gate cannot reach the nested module — [Dev complete](../../milestone/14) — open
+- **xkey-sdk-only** — after RC, xkey moves to its own repository, pinned on a released go-xkms; xkey-android is already separate — [SPEC](docs/SPEC.md#features) — blocked: after RC
 
 ## Future
 

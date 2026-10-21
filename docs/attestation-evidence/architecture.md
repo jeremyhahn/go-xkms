@@ -19,7 +19,7 @@ every product that consumes TPM evidence, so they live once, here.
 | Role | Owner | What it does |
 |---|---|---|
 | Evidence primitives | go-xkms (this feature) | quote, AK/EK chain, event log, TPM2_Certify and signed reference-value verification |
-| Verifier (appraisal) | go-quicbaas | compares proven state with reference values and endorsements, produces attestation results |
+| Verifier (appraisal) | go-xkms (attestation-verifier); go-quicbaas re-exports it | compares proven state with reference values and endorsements, produces attestation results |
 | Attester | go-trusted-platform | selects PCRs per boot path and collects evidence |
 | Relying party | go-trusted-platform | admits, evicts, issues credentials on an attestation result |
 
@@ -74,7 +74,7 @@ go-xkms owns only their verification, as an evidence-level primitive.
 `pkg/attestation/refvalue` accepts a CoRIM wrapped in COSE_Sign1 (RFC 9052). It
 proves who signed it and returns its reference-value triples; it makes no
 appraisal decision. Comparing evidence against those values is the Verifier's
-job, in go-quicbaas.
+job, in go-xkms's attestation-verifier.
 
 Decoding, CoRIM validation and the COSE signature check are delegated to the
 Veraison reference implementation (`veraison/corim`, `veraison/go-cose`) rather

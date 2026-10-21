@@ -81,7 +81,7 @@ transport (REST / gRPC / QUIC / Unix / MCP / embedded)
 
 ## Readers
 
-SPEC names peergate, image verification, VM attestation and go-quicbaas
+SPEC names peergate, image verification, VM attestation and go-xkms
 appraisal as readers of this store. They read it through `DAOStore.Anchors`
 or `GetByPurpose`; each is wired by its own row's work and is not part of this
 feature.
