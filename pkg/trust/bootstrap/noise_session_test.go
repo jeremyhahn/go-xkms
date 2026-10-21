@@ -23,6 +23,7 @@ import (
 
 	"github.com/jeremyhahn/go-enclave"
 	"github.com/jeremyhahn/go-truststrap/pkg/noiseproto"
+	"github.com/jeremyhahn/go-xkms/pkg/testing/fipstest"
 	secure "github.com/jeremyhahn/go-xkms/sdk/go/secure"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -45,6 +46,9 @@ func privateCopy(t *testing.T, key *NoiseStaticKey) []byte {
 
 func TestWithPrivateKey(t *testing.T) {
 	key, err := GenerateNoiseStaticKey()
+	if !fipstest.OutsideFIPSAfterRefusal(t, err, ErrNoiseFIPSUnsupported) {
+		return
+	}
 	require.NoError(t, err)
 	defer key.Destroy()
 
@@ -62,6 +66,9 @@ func TestWithPrivateKey(t *testing.T) {
 
 func TestWithPrivateKey_DestroyedKey(t *testing.T) {
 	key, err := GenerateNoiseStaticKey()
+	if !fipstest.OutsideFIPSAfterRefusal(t, err, ErrNoiseFIPSUnsupported) {
+		return
+	}
 	require.NoError(t, err)
 	key.Destroy()
 
@@ -76,6 +83,9 @@ func TestWithPrivateKey_DestroyedKey(t *testing.T) {
 
 func TestCloneStaticKey(t *testing.T) {
 	original, err := GenerateNoiseStaticKey()
+	if !fipstest.OutsideFIPSAfterRefusal(t, err, ErrNoiseFIPSUnsupported) {
+		return
+	}
 	require.NoError(t, err)
 	defer original.Destroy()
 
@@ -92,6 +102,9 @@ func TestCloneStaticKey(t *testing.T) {
 
 func TestCloneStaticKey_DestroyedKey(t *testing.T) {
 	key, err := GenerateNoiseStaticKey()
+	if !fipstest.OutsideFIPSAfterRefusal(t, err, ErrNoiseFIPSUnsupported) {
+		return
+	}
 	require.NoError(t, err)
 	key.Destroy()
 
@@ -108,6 +121,9 @@ func TestNoiseConstants(t *testing.T) {
 
 func TestGenerateStaticKey(t *testing.T) {
 	key, err := GenerateNoiseStaticKey()
+	if !fipstest.OutsideFIPSAfterRefusal(t, err, ErrNoiseFIPSUnsupported) {
+		return
+	}
 	require.NoError(t, err)
 	require.NotNil(t, key)
 
@@ -119,6 +135,9 @@ func TestGenerateStaticKey(t *testing.T) {
 
 func TestGenerateStaticKey_Uniqueness(t *testing.T) {
 	key1, err := GenerateNoiseStaticKey()
+	if !fipstest.OutsideFIPSAfterRefusal(t, err, ErrNoiseFIPSUnsupported) {
+		return
+	}
 	require.NoError(t, err)
 
 	key2, err := GenerateNoiseStaticKey()
@@ -130,6 +149,9 @@ func TestGenerateStaticKey_Uniqueness(t *testing.T) {
 
 func TestLoadStaticKey(t *testing.T) {
 	original, err := GenerateNoiseStaticKey()
+	if !fipstest.OutsideFIPSAfterRefusal(t, err, ErrNoiseFIPSUnsupported) {
+		return
+	}
 	require.NoError(t, err)
 
 	loaded, err := LoadNoiseStaticKey(privateCopy(t, original))
@@ -160,6 +182,9 @@ func TestLoadStaticKey_InvalidLength(t *testing.T) {
 
 func TestLoadStaticKeyFromBuffer(t *testing.T) {
 	original, err := GenerateNoiseStaticKey()
+	if !fipstest.OutsideFIPSAfterRefusal(t, err, ErrNoiseFIPSUnsupported) {
+		return
+	}
 	require.NoError(t, err)
 	defer original.Destroy()
 
@@ -203,6 +228,9 @@ func TestLoadStaticKeyFromBuffer_Invalid(t *testing.T) {
 
 func TestEncodeDecodeStaticKey(t *testing.T) {
 	key, err := GenerateNoiseStaticKey()
+	if !fipstest.OutsideFIPSAfterRefusal(t, err, ErrNoiseFIPSUnsupported) {
+		return
+	}
 	require.NoError(t, err)
 	defer key.Destroy()
 
@@ -223,6 +251,9 @@ func TestEncodeDecodeStaticKey(t *testing.T) {
 // must be reported rather than silently truncated.
 func TestEncodeStaticKey_ShortBuffer(t *testing.T) {
 	key, err := GenerateNoiseStaticKey()
+	if !fipstest.OutsideFIPSAfterRefusal(t, err, ErrNoiseFIPSUnsupported) {
+		return
+	}
 	require.NoError(t, err)
 	defer key.Destroy()
 
@@ -251,6 +282,9 @@ func TestNewNoiseSession(t *testing.T) {
 	session, err := NewNoiseSession(&NoiseSessionConfig{
 		IsInitiator: true,
 	})
+	if !fipstest.OutsideFIPSAfterRefusal(t, err, ErrNoiseFIPSUnsupported) {
+		return
+	}
 	require.NoError(t, err)
 	require.NotNil(t, session)
 
@@ -260,6 +294,9 @@ func TestNewNoiseSession(t *testing.T) {
 
 func TestNewNoiseSession_WithProvidedKey(t *testing.T) {
 	key, err := GenerateNoiseStaticKey()
+	if !fipstest.OutsideFIPSAfterRefusal(t, err, ErrNoiseFIPSUnsupported) {
+		return
+	}
 	require.NoError(t, err)
 
 	session, err := NewNoiseSession(&NoiseSessionConfig{
@@ -278,6 +315,9 @@ func TestNoiseSession_InitHandshake(t *testing.T) {
 	session, err := NewNoiseSession(&NoiseSessionConfig{
 		IsInitiator: true,
 	})
+	if !fipstest.OutsideFIPSAfterRefusal(t, err, ErrNoiseFIPSUnsupported) {
+		return
+	}
 	require.NoError(t, err)
 
 	err = session.InitHandshake()
@@ -288,6 +328,9 @@ func TestNoiseSession_HandshakeMessage_NoInit(t *testing.T) {
 	session, err := NewNoiseSession(&NoiseSessionConfig{
 		IsInitiator: true,
 	})
+	if !fipstest.OutsideFIPSAfterRefusal(t, err, ErrNoiseFIPSUnsupported) {
+		return
+	}
 	require.NoError(t, err)
 
 	_, _, err = session.HandshakeMessage(nil)
@@ -298,6 +341,9 @@ func TestNoiseSession_EncryptDecrypt_NotComplete(t *testing.T) {
 	session, err := NewNoiseSession(&NoiseSessionConfig{
 		IsInitiator: true,
 	})
+	if !fipstest.OutsideFIPSAfterRefusal(t, err, ErrNoiseFIPSUnsupported) {
+		return
+	}
 	require.NoError(t, err)
 
 	_, err = session.Encrypt([]byte("test"))
@@ -311,6 +357,9 @@ func TestNoiseSession_FullHandshake(t *testing.T) {
 	initiator, err := NewNoiseSession(&NoiseSessionConfig{
 		IsInitiator: true,
 	})
+	if !fipstest.OutsideFIPSAfterRefusal(t, err, ErrNoiseFIPSUnsupported) {
+		return
+	}
 	require.NoError(t, err)
 
 	responder, err := NewNoiseSession(&NoiseSessionConfig{
@@ -355,7 +404,10 @@ func TestNoiseSession_FullHandshake(t *testing.T) {
 }
 
 func TestNoiseSession_EncryptDecrypt(t *testing.T) {
-	initiator, responder := setupCompletedHandshake(t)
+	initiator, responder, ok := setupCompletedHandshake(t)
+	if !ok {
+		return
+	}
 
 	testCases := []struct {
 		name      string
@@ -384,7 +436,10 @@ func TestNoiseSession_EncryptDecrypt(t *testing.T) {
 }
 
 func TestNoiseSession_BidirectionalEncryption(t *testing.T) {
-	initiator, responder := setupCompletedHandshake(t)
+	initiator, responder, ok := setupCompletedHandshake(t)
+	if !ok {
+		return
+	}
 
 	// Initiator to responder
 	msg1 := []byte("hello from initiator")
@@ -406,7 +461,10 @@ func TestNoiseSession_BidirectionalEncryption(t *testing.T) {
 }
 
 func TestNoiseSession_Encrypt_MessageTooLarge(t *testing.T) {
-	initiator, _ := setupCompletedHandshake(t)
+	initiator, _, ok := setupCompletedHandshake(t)
+	if !ok {
+		return
+	}
 
 	largeMessage := make([]byte, NoiseMaxMessageSize+1)
 
@@ -415,7 +473,10 @@ func TestNoiseSession_Encrypt_MessageTooLarge(t *testing.T) {
 }
 
 func TestNoiseSession_Decrypt_InvalidCiphertext(t *testing.T) {
-	_, responder := setupCompletedHandshake(t)
+	_, responder, ok := setupCompletedHandshake(t)
+	if !ok {
+		return
+	}
 
 	_, err := responder.Decrypt([]byte("not valid"))
 	assert.ErrorIs(t, err, ErrNoiseDecryptionFailed)
@@ -423,6 +484,9 @@ func TestNoiseSession_Decrypt_InvalidCiphertext(t *testing.T) {
 
 func TestNoiseSession_StaticKeyMismatch(t *testing.T) {
 	expectedKey, err := GenerateNoiseStaticKey()
+	if !fipstest.OutsideFIPSAfterRefusal(t, err, ErrNoiseFIPSUnsupported) {
+		return
+	}
 	require.NoError(t, err)
 
 	initiator, err := NewNoiseSession(&NoiseSessionConfig{
@@ -451,10 +515,13 @@ func TestNoiseSession_StaticKeyMismatch(t *testing.T) {
 	assert.ErrorIs(t, err, ErrNoiseStaticKeyMismatch)
 }
 
-func setupCompletedHandshake(t *testing.T) (*NoiseSession, *NoiseSession) {
+func setupCompletedHandshake(t *testing.T) (*NoiseSession, *NoiseSession, bool) {
 	t.Helper()
 
 	initiator, err := NewNoiseSession(&NoiseSessionConfig{IsInitiator: true})
+	if !fipstest.OutsideFIPSAfterRefusal(t, err, ErrNoiseFIPSUnsupported) {
+		return nil, nil, false
+	}
 	require.NoError(t, err)
 
 	responder, err := NewNoiseSession(&NoiseSessionConfig{IsInitiator: false})
@@ -477,7 +544,7 @@ func setupCompletedHandshake(t *testing.T) (*NoiseSession, *NoiseSession) {
 	_, _, err = responder.HandshakeMessage(msg3)
 	require.NoError(t, err)
 
-	return initiator, responder
+	return initiator, responder, true
 }
 
 func BenchmarkNoiseHandshake(b *testing.B) {
@@ -610,6 +677,9 @@ func TestManualNoiseDecrypt(t *testing.T) {
 
 	// Step 5: DH(Go_e_priv, Android_e_pub) -> ee
 	ee, err := curve25519.X25519(goEphPriv, androidEphPub)
+	if !fipstest.OutsideFIPSAfterRefusal(t, err, nil) {
+		return
+	}
 	require.NoError(t, err)
 	t.Logf("ee: %x", ee)
 
@@ -665,6 +735,9 @@ func TestVerifyGoEphemeralKey(t *testing.T) {
 
 	// Derive public from private
 	derivedPub, err := curve25519.X25519(goEphPriv, curve25519.Basepoint)
+	if !fipstest.OutsideFIPSAfterRefusal(t, err, nil) {
+		return
+	}
 	require.NoError(t, err)
 
 	t.Logf("Go ephemeral priv: %x", goEphPriv)
@@ -698,6 +771,9 @@ func TestX25519DHVerification(t *testing.T) {
 
 	// Derive public keys
 	alicePub, err := curve25519.X25519(alicePriv, curve25519.Basepoint)
+	if !fipstest.OutsideFIPSAfterRefusal(t, err, nil) {
+		return
+	}
 	require.NoError(t, err)
 	t.Logf("Alice pub: %x", alicePub)
 
@@ -742,6 +818,9 @@ func TestNoiseDecryptWithAndroidValues(t *testing.T) {
 	nonce := make([]byte, 12)
 
 	aead, err := chacha20poly1305.New(k)
+	if !fipstest.OutsideFIPSAfterRefusal(t, err, nil) {
+		return
+	}
 	require.NoError(t, err)
 
 	plaintext, err := aead.Open(nil, nonce, encryptedS, h)
@@ -816,6 +895,9 @@ func TestNoiseSession_SetPrologue(t *testing.T) {
 	prologue := []byte("xkey-test-prologue-v1")
 
 	session, err := NewNoiseSession(&NoiseSessionConfig{IsInitiator: true})
+	if !fipstest.OutsideFIPSAfterRefusal(t, err, ErrNoiseFIPSUnsupported) {
+		return
+	}
 	require.NoError(t, err)
 
 	// Set prologue before initializing handshake
@@ -828,6 +910,9 @@ func TestNoiseSession_SetPrologue(t *testing.T) {
 
 func TestNoiseSession_SetPrologue_EmptyPrologue(t *testing.T) {
 	session, err := NewNoiseSession(&NoiseSessionConfig{IsInitiator: true})
+	if !fipstest.OutsideFIPSAfterRefusal(t, err, ErrNoiseFIPSUnsupported) {
+		return
+	}
 	require.NoError(t, err)
 
 	// Empty prologue should be valid
@@ -839,6 +924,9 @@ func TestNoiseSession_SetPrologue_EmptyPrologue(t *testing.T) {
 
 func TestNoiseSession_SetPrologue_NilPrologue(t *testing.T) {
 	session, err := NewNoiseSession(&NoiseSessionConfig{IsInitiator: true})
+	if !fipstest.OutsideFIPSAfterRefusal(t, err, ErrNoiseFIPSUnsupported) {
+		return
+	}
 	require.NoError(t, err)
 
 	// Nil prologue should be valid
@@ -853,6 +941,9 @@ func TestNoiseSession_SetPrologue_MatchingPrologues(t *testing.T) {
 
 	// Create initiator and responder with same prologue
 	initiator, err := NewNoiseSession(&NoiseSessionConfig{IsInitiator: true})
+	if !fipstest.OutsideFIPSAfterRefusal(t, err, ErrNoiseFIPSUnsupported) {
+		return
+	}
 	require.NoError(t, err)
 	initiator.SetPrologue(prologue)
 
