@@ -7,6 +7,37 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.58.0-alpha] - 2026-10-21
+
+### Security
+
+Go toolchain 1.27.3 for GO-2026-6809, crypto/x509 intermediate distrust.
+
+### Added
+
+- **One ES256 OTA image-signing key per trusted-firmware board id.**
+  `XKMSService.CreateOTAImageKey`, `RotateOTAImageKey` and `SignOTAImage`
+  (`pkg/xkms/ota_image_keys.go`) map a board id to the key `ota-image-<board>`
+  and create, rotate and sign through the existing key-management path, so a
+  rotated board key keeps verifying the images its earlier versions signed. A
+  malformed board id is refused with `ErrInvalidBoardID` and any algorithm or
+  key other than ECDSA P-256 with `ErrOTAImageAlgorithm` (#1606). REST serves
+  them at `POST /api/v1/ota-image-keys/{board}`, `.../rotate` and `.../sign`,
+  gRPC as the `CreateOTAImageKey`, `RotateOTAImageKey` and `SignOTAImage`
+  RPCs, and MCP as `xkms.createOTAImageKey`, `xkms.rotateOTAImageKey` and
+  `xkms.signOTAImage`, under the `keys:create`, `keys:rotate` and `keys:sign`
+  permissions; both refusals are a 400, `InvalidArgument` or JSON-RPC -32602.
+  xkey reaches them through the SDK as `xkey key ota-image create`, `rotate`
+  and `sign`, with the same flags and output as xkmsctl.
+
+### Changed
+
+- **xkey backups are sealed with AES-256-GCM, so they work under FIPS 140-3 (#23).** The backup envelope moves to version 3: the archive is sealed with AES-256-GCM under a fresh random 96-bit nonce (`cipher.NewGCMWithRandomNonce`, NIST SP 800-38D §8.2.2) instead of XChaCha20-Poly1305, which `GODEBUG=fips140=only` refuses. The header stays the AEAD additional data and the password KDF is unchanged (Argon2id, or PBKDF2-SHA256 in FIPS mode). Version 2 (XChaCha20-Poly1305) files are refused with `backup.ErrVersionMismatch` and are not migrated; re-create them. `xkey/pkg/backup/service.go`, golden fixture `xkey/pkg/backup/testdata/backup-v3.golden.json`.
+
+### Fixed
+
+PIV login resolves a tenant user's certificate in the tenant the certificate names, not the system tenant (#1628).
+
 ## [0.57.0-alpha] - 2026-10-19
 
 ### Security
