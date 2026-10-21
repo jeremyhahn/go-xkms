@@ -52,8 +52,8 @@ permissions:
   contents: read
 
 env:
-  # In lockstep with ci.yml's GO_VERSION (go.mod declares go 1.27.2).
-  GO_VERSION: '1.27.2'
+  # In lockstep with ci.yml's GO_VERSION (go.mod declares go 1.27.3).
+  GO_VERSION: '1.27.3'
   # The Fuzz* targets (pkg/oidc, pkg/ssh/keys, pkg/tpm2) carry no build tags.
   FUZZ_TAGS: ''
   # The Makefile's TEST_TAGS, which test-go (ci.yml's Unit Tests) runs under.

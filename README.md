@@ -1,6 +1,6 @@
 # go-xkms
 
-[![Go Version](https://img.shields.io/badge/Go-1.27.2-blue.svg)](https://golang.org)
+[![Go Version](https://img.shields.io/badge/Go-1.27.3-blue.svg)](https://golang.org)
 [![AGPL-3.0 License](https://img.shields.io/badge/license-AGPL--3.0-blue.svg)](LICENSE)
 [![Commercial License](https://img.shields.io/badge/license-Commercial-green.svg)](LICENSE-COMMERCIAL.md)
 

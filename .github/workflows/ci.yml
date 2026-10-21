@@ -211,10 +211,11 @@ env:
   #
   # Go 1.27.0 was adopted repo-wide in #560 (module toolchains, CI, and this
   # pin all moved together; the Dockerfiles followed to close out #36), and
-  # moved to 1.27.1 with go-qrdb v0.46.0-alpha, whose go.mod declares it. Bump
+  # moved to 1.27.1 with go-qrdb v0.46.0-alpha, whose go.mod declares it, and
+  # to 1.27.3 for GO-2026-6809 (crypto/x509 intermediate distrust). Bump
   # the patch version here as 1.27.x releases ship; re-run the swiss/pebble
   # compatibility check above before ever bumping the minor version again.
-  GO_VERSION: '1.27.2'
+  GO_VERSION: '1.27.3'
   # ANALYSIS TOOL PINS (#189). These are the versions BAKED INTO the
   # self-hosted runner image; .github/scripts/require-tool.sh asserts the
   # binary on PATH self-reports exactly this and fails the job otherwise.

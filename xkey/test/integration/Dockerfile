@@ -11,7 +11,7 @@
 # 2. Commercial License
 #    Contact licensing@automatethethings.com for commercial licensing options.
 
-FROM golang:1.27.2-bookworm AS libfido2-builder
+FROM golang:1.27.3-bookworm AS libfido2-builder
 
 # Build libfido2 v1.17.0 from source for HID_NAME fallback support
 RUN apt-get update && apt-get install -y --no-install-recommends \
@@ -27,7 +27,7 @@ RUN git clone --depth 1 --branch main https://github.com/Yubico/libfido2.git && 
     make -j$(nproc) && \
     make install DESTDIR=/build/libfido2-install
 
-FROM golang:1.27.2-bookworm
+FROM golang:1.27.3-bookworm
 
 # Allow Go to automatically download the required toolchain version
 ENV GOTOOLCHAIN=auto
