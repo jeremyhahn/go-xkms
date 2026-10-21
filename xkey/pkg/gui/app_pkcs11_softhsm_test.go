@@ -115,6 +115,21 @@ func TestApp_PKCS11Connect_RegistersXKMSBackend(t *testing.T) {
 	require.NoError(t, app.pkcs11Service.Disconnect(moduleID, slotID))
 }
 
+// A connected token is offered to FIDO2 as a key backend under its module ID,
+// and its disconnect withdraws it again.
+func TestApp_PKCS11Connect_OffersTokenToFIDO2UntilDisconnect(t *testing.T) {
+	app, _, moduleID, slotID := newSoftHSMApp(t)
+	require.NotNil(t, app.fido2KeyBackend, "precondition: initializeDataDir builds the FIDO2 key backend")
+
+	require.NoError(t, app.pkcs11Service.Connect(moduleID, slotID, softHSMUserPIN, softHSMSOPIN))
+	assert.Contains(t, app.fido2KeyBackend.Backends(), xkmssdk.BackendType(moduleID),
+		"a connected token must be offered to FIDO2 under its module ID")
+
+	require.NoError(t, app.pkcs11Service.Disconnect(moduleID, slotID))
+	assert.NotContains(t, app.fido2KeyBackend.Backends(), xkmssdk.BackendType(moduleID),
+		"a disconnected token must no longer be offered to FIDO2")
+}
+
 // With the barrier unsealed, a connected token's certificates are stored in
 // the barrier datastore under keys/certs/, never in session-only memory.
 func TestApp_PKCS11Connect_BarrierActiveStoresCertsInBarrier(t *testing.T) {
