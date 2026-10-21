@@ -125,11 +125,11 @@ func seedBackupStores(t *testing.T, home string) {
 		Issuer:      "Example",
 		AccountName: "user@example.com",
 		Type:        oath.TypeTOTP,
-		Algorithm:   oath.AlgorithmSHA1,
+		Algorithm:   oath.AlgorithmSHA256,
 		Digits:      6,
 		Period:      30,
 		CreatedAt:   time.Now().UTC(),
-	}, "JBSWY3DPEHPK3PXP")))
+	}, "GEZDGNBVGY3TQOJQGEZDGNBVGY3TQOJQ")))
 	require.NoError(t, oathStore.Close())
 
 	// The static password store lives at passwordStoreFeature ("staticpw"),
@@ -716,12 +716,12 @@ func TestOATHStoreAdapter_ListAndAdd(t *testing.T) {
 		Issuer:      "Example",
 		AccountName: "user@example.com",
 		Type:        oath.TypeTOTP,
-		Algorithm:   oath.AlgorithmSHA1,
+		Algorithm:   oath.AlgorithmSHA256,
 		Digits:      6,
 		Period:      30,
 		Counter:     7,
 	}
-	require.NoError(t, restoredCred.SetSecret([]byte("JBSWY3DPEHPK3PXP")))
+	require.NoError(t, restoredCred.SetSecret([]byte("GEZDGNBVGY3TQOJQGEZDGNBVGY3TQOJQ")))
 	require.NoError(t, adapter.Add(restoredCred))
 
 	creds, err := adapter.List()
@@ -729,7 +729,7 @@ func TestOATHStoreAdapter_ListAndAdd(t *testing.T) {
 	require.Len(t, creds, 1)
 	assert.Equal(t, "restored-id", creds[0].ID)
 	assert.Equal(t, "Restored", creds[0].Name)
-	assert.Equal(t, "JBSWY3DPEHPK3PXP", secretText(creds[0]))
+	assert.Equal(t, "GEZDGNBVGY3TQOJQGEZDGNBVGY3TQOJQ", secretText(creds[0]))
 	assert.Equal(t, int64(7), creds[0].Counter)
 }
 
@@ -823,11 +823,11 @@ func TestOATHStoreAdapter_GetAndUpdate(t *testing.T) {
 		ID:        "get-and-update",
 		Name:      "Original",
 		Type:      oath.TypeTOTP,
-		Algorithm: oath.AlgorithmSHA1,
+		Algorithm: oath.AlgorithmSHA256,
 		Digits:    6,
 		Period:    30,
 	}
-	require.NoError(t, seed.SetSecret([]byte("JBSWY3DPEHPK3PXP")))
+	require.NoError(t, seed.SetSecret([]byte("GEZDGNBVGY3TQOJQGEZDGNBVGY3TQOJQ")))
 	require.NoError(t, adapter.Add(seed))
 
 	got, err := adapter.Get("get-and-update")

@@ -207,12 +207,12 @@ func TestCredentialToPhoneInfo(t *testing.T) {
 		Issuer:      "GitHub",
 		AccountName: "user@example.com",
 		Type:        oath.TypeTOTP,
-		Algorithm:   oath.AlgorithmSHA1,
+		Algorithm:   oath.AlgorithmSHA256,
 		Digits:      6,
 		Period:      30,
 		Counter:     0,
 		CreatedAt:   time.Now(),
-	}, "JBSWY3DPEHPK3PXP")
+	}, "GEZDGNBVGY3TQOJQGEZDGNBVGY3TQOJQ")
 
 	info, infoErr := credentialToPhoneInfo(cred)
 	require.NoError(t, infoErr)
@@ -236,7 +236,7 @@ func TestCredentialToPhoneInfo_HOTP(t *testing.T) {
 		Type:    oath.TypeHOTP,
 		Digits:  8,
 		Counter: 42,
-	}, "JBSWY3DPEHPK3PXP")
+	}, "GEZDGNBVGY3TQOJQGEZDGNBVGY3TQOJQ")
 
 	info, infoErr := credentialToPhoneInfo(cred)
 	require.NoError(t, infoErr)
@@ -252,7 +252,7 @@ func TestPhoneInfoToCredential(t *testing.T) {
 		Name:        "AWS",
 		Issuer:      "Amazon",
 		AccountName: "admin@example.com",
-		Secret:      mustSecretText("JBSWY3DPEHPK3PXP"),
+		Secret:      mustSecretText("GEZDGNBVGY3TQOJQGEZDGNBVGY3TQOJQ"),
 		Type:        "totp",
 		Algorithm:   "SHA256",
 		Digits:      8,
@@ -277,7 +277,7 @@ func TestPhoneInfoToCredential(t *testing.T) {
 func TestPhoneInfoToCredential_Defaults(t *testing.T) {
 	info := pairingproto.OATHCredentialInfo{
 		Name:   "Simple",
-		Secret: mustSecretText("JBSWY3DPEHPK3PXP"),
+		Secret: mustSecretText("GEZDGNBVGY3TQOJQGEZDGNBVGY3TQOJQ"),
 	}
 
 	cred, convErr := deviceInfoToCredential(info)
@@ -294,7 +294,7 @@ func TestPhoneInfoToCredential_Defaults(t *testing.T) {
 func TestPhoneInfoToCredential_EmptyNameWithIssuer(t *testing.T) {
 	info := pairingproto.OATHCredentialInfo{
 		Issuer: "TestIssuer",
-		Secret: mustSecretText("JBSWY3DPEHPK3PXP"),
+		Secret: mustSecretText("GEZDGNBVGY3TQOJQGEZDGNBVGY3TQOJQ"),
 	}
 
 	cred, convErr := deviceInfoToCredential(info)
@@ -309,7 +309,7 @@ func TestPhoneInfoToCredential_WithIssuerAndAccount(t *testing.T) {
 		Name:        "GitHub",
 		Issuer:      "GitHub",
 		AccountName: "user@test.com",
-		Secret:      mustSecretText("JBSWY3DPEHPK3PXP"),
+		Secret:      mustSecretText("GEZDGNBVGY3TQOJQGEZDGNBVGY3TQOJQ"),
 		Type:        "totp",
 	}
 
@@ -323,7 +323,7 @@ func TestPhoneInfoToCredential_WithIssuerAndAccount(t *testing.T) {
 func TestPhoneInfoToCredential_HOTP(t *testing.T) {
 	info := pairingproto.OATHCredentialInfo{
 		Name:    "HotpService",
-		Secret:  mustSecretText("JBSWY3DPEHPK3PXP"),
+		Secret:  mustSecretText("GEZDGNBVGY3TQOJQGEZDGNBVGY3TQOJQ"),
 		Type:    "hotp",
 		Counter: 100,
 	}
@@ -349,7 +349,7 @@ func TestCredentialConversion_Roundtrip(t *testing.T) {
 		Period:      60,
 		Counter:     0,
 		CreatedAt:   time.Now(),
-	}, "JBSWY3DPEHPK3PXP")
+	}, "GEZDGNBVGY3TQOJQGEZDGNBVGY3TQOJQ")
 
 	// Convert to phone info and back
 	info, infoErr := credentialToPhoneInfo(original)

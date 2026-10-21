@@ -23,6 +23,7 @@ import (
 	"github.com/jeremyhahn/go-xkms/pkg/backend"
 	"github.com/jeremyhahn/go-xkms/pkg/keyprovider/symmetric"
 	"github.com/jeremyhahn/go-xkms/pkg/storage"
+	"github.com/jeremyhahn/go-xkms/pkg/testing/fipstest"
 	"github.com/jeremyhahn/go-xkms/pkg/types"
 )
 
@@ -339,6 +340,11 @@ func TestSymmetric_ImportExport_RSA_OAEP(t *testing.T) {
 
 	for _, algorithm := range algorithms {
 		t.Run(string(algorithm), func(t *testing.T) {
+			// The SHA-1 wraps are the AWS KMS import wrapping algorithms,
+			// which the FIPS 140-3 module refuses: prove them outside it.
+			if sha1WrappingAlgorithm(algorithm) && !fipstest.OutsideFIPS(t) {
+				return
+			}
 			be, _ := createSymmetricBackend(t)
 			defer func() { _ = be.Close() }()
 
@@ -391,6 +397,12 @@ func TestSymmetric_ImportExport_RSA_OAEP(t *testing.T) {
 	}
 }
 
+// sha1WrappingAlgorithm reports whether algorithm's OAEP hash is SHA-1.
+func sha1WrappingAlgorithm(algorithm backend.WrappingAlgorithm) bool {
+	return algorithm == backend.WrappingAlgorithmRSAES_OAEP_SHA_1 ||
+		algorithm == backend.WrappingAlgorithmRSA_AES_KEY_WRAP_SHA_1
+}
+
 // TestSymmetric_ImportExport_RSA_AES_KeyWrap tests import/export with RSA-AES key wrapping
 func TestSymmetric_ImportExport_RSA_AES_KeyWrap(t *testing.T) {
 	algorithms := []backend.WrappingAlgorithm{
@@ -400,6 +412,11 @@ func TestSymmetric_ImportExport_RSA_AES_KeyWrap(t *testing.T) {
 
 	for _, algorithm := range algorithms {
 		t.Run(string(algorithm), func(t *testing.T) {
+			// The SHA-1 wraps are the AWS KMS import wrapping algorithms,
+			// which the FIPS 140-3 module refuses: prove them outside it.
+			if sha1WrappingAlgorithm(algorithm) && !fipstest.OutsideFIPS(t) {
+				return
+			}
 			be, _ := createSymmetricBackend(t)
 			defer func() { _ = be.Close() }()
 

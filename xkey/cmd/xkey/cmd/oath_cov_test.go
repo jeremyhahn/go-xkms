@@ -14,8 +14,8 @@ import (
 )
 
 const (
-	scanTOTPURI = "otpauth://totp/Example:alice@example.com?secret=JBSWY3DPEHPK3PXP&issuer=Example"
-	scanHOTPURI = "otpauth://hotp/Bank?secret=JBSWY3DPEHPK3PXP&counter=3"
+	scanTOTPURI = "otpauth://totp/Example:alice@example.com?secret=GEZDGNBVGY3TQOJQGEZDGNBVGY3TQOJQ&algorithm=SHA256&issuer=Example"
+	scanHOTPURI = "otpauth://hotp/Bank?secret=GEZDGNBVGY3TQOJQGEZDGNBVGY3TQOJQ&algorithm=SHA256&counter=3"
 )
 
 // withScreen replaces the host display capture with displays screens

@@ -25,6 +25,7 @@ import (
 	"github.com/jeremyhahn/go-xkms/pkg/crypto/kdf"
 	"github.com/jeremyhahn/go-xkms/pkg/keyprovider/symmetric"
 	"github.com/jeremyhahn/go-xkms/pkg/storage"
+	"github.com/jeremyhahn/go-xkms/pkg/testing/fipstest"
 	"github.com/jeremyhahn/go-xkms/pkg/types"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -1551,6 +1552,11 @@ func TestEncrypt_RSA_PKCS1v15_RoundTrip(t *testing.T) {
 // PKCS#1 v1.5 unconditionally, which was the one construction of its kind in
 // the service not gated by this policy.
 func TestDecrypt_RSA_PKCS1v15_Refused_Default(t *testing.T) {
+	// The fixture is a genuine PKCS#1 v1.5 ciphertext (RFC 8017 section
+	// 7.2.1), which the FIPS 140-3 module refuses to produce.
+	if !fipstest.OutsideFIPS(t) {
+		return
+	}
 	previous := types.AllowLegacyKeyWrap()
 	types.SetAllowLegacyKeyWrap(false)
 	t.Cleanup(func() { types.SetAllowLegacyKeyWrap(previous) })

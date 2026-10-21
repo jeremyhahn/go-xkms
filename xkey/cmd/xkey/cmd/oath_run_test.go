@@ -15,6 +15,7 @@ package cmd
 
 import (
 	"bytes"
+	"crypto/fips140"
 	"fmt"
 	"path/filepath"
 	"regexp"
@@ -95,10 +96,10 @@ func totpCredential(name string) *oath.Credential {
 		Name:      name,
 		Issuer:    "Example",
 		Type:      oath.TypeTOTP,
-		Algorithm: "SHA1",
+		Algorithm: "SHA256",
 		Digits:    6,
 		Period:    30,
-	}, "JBSWY3DPEHPK3PXP")
+	}, "GEZDGNBVGY3TQOJQGEZDGNBVGY3TQOJQ")
 }
 
 var sixDigits = regexp.MustCompile(`\b\d{6}\b`)
@@ -110,8 +111,13 @@ func TestRunOATHAdd_FromIndividualFlags(t *testing.T) {
 	cmd, buf := newOATHCmd(t, oathAddCmd, store)
 	require.NoError(t, setFlagForTest(t, cmd.Flags(), "name", "GitHub"))
 	require.NoError(t, setFlagForTest(t, cmd.Flags(), "issuer", "GitHub Inc"))
-	t.Setenv("XKEY_OATH_SECRET", "jbswy3dpehpk3pxp")
+	t.Setenv("XKEY_OATH_SECRET", "gezdgnbvgy3tqojqgezdgnbvgy3tqojq")
 
+	// The --algorithm default is SHA1, which FIPS 140-3 mode refuses.
+	if fips140.Enabled() {
+		require.ErrorIs(t, runOATHAdd(cmd, nil), oath.ErrAlgorithmNotFIPSApproved)
+		return
+	}
 	require.NoError(t, runOATHAdd(cmd, nil))
 	assert.Contains(t, buf.String(), "Added OATH credential: GitHub")
 
@@ -122,7 +128,7 @@ func TestRunOATHAdd_FromIndividualFlags(t *testing.T) {
 	cred, err := fs.Get("github")
 	require.NoError(t, err)
 	assert.Equal(t, "GitHub", cred.Name)
-	assert.Equal(t, "JBSWY3DPEHPK3PXP", secretText(cred), "the secret must be normalised to upper case")
+	assert.Equal(t, "GEZDGNBVGY3TQOJQGEZDGNBVGY3TQOJQ", secretText(cred), "the secret must be normalised to upper case")
 	assert.Equal(t, oath.TypeTOTP, cred.Type)
 	assert.Equal(t, 6, cred.Digits)
 }
@@ -131,7 +137,7 @@ func TestRunOATHAdd_FromURI(t *testing.T) {
 	store := oathStorePath(t)
 	cmd, buf := newOATHCmd(t, oathAddCmd, store)
 	require.NoError(t, setFlagForTest(t, cmd.Flags(), "uri",
-		"otpauth://totp/Example:alice@example.com?secret=JBSWY3DPEHPK3PXP&issuer=Example&digits=8&period=60"))
+		"otpauth://totp/Example:alice@example.com?secret=GEZDGNBVGY3TQOJQGEZDGNBVGY3TQOJQ&algorithm=SHA256&issuer=Example&digits=8&period=60"))
 
 	require.NoError(t, runOATHAdd(cmd, nil))
 	assert.Contains(t, buf.String(), "Added OATH credential:")
@@ -152,7 +158,7 @@ func TestRunOATHAdd_URINameOverride(t *testing.T) {
 	store := oathStorePath(t)
 	cmd, _ := newOATHCmd(t, oathAddCmd, store)
 	require.NoError(t, setFlagForTest(t, cmd.Flags(), "uri",
-		"otpauth://totp/Example:alice@example.com?secret=JBSWY3DPEHPK3PXP&issuer=Example"))
+		"otpauth://totp/Example:alice@example.com?secret=GEZDGNBVGY3TQOJQGEZDGNBVGY3TQOJQ&algorithm=SHA256&issuer=Example"))
 	require.NoError(t, setFlagForTest(t, cmd.Flags(), "name", "Renamed"))
 
 	require.NoError(t, runOATHAdd(cmd, nil))
@@ -191,7 +197,8 @@ func TestRunOATHAdd_SecretFromStdin(t *testing.T) {
 	store := oathStorePath(t)
 	cmd, buf := newOATHCmd(t, oathAddCmd, store)
 	require.NoError(t, setFlagForTest(t, cmd.Flags(), "name", "Stdin"))
-	stubStdin(t, []byte("jbswy3dpehpk3pxp\n"), nil)
+	require.NoError(t, setFlagForTest(t, cmd.Flags(), "algorithm", "SHA256"))
+	stubStdin(t, []byte("gezdgnbvgy3tqojqgezdgnbvgy3tqojq\n"), nil)
 	require.NoError(t, cmd.Flags().Set("secret-stdin", "true"))
 
 	require.NoError(t, runOATHAdd(cmd, nil))
@@ -202,7 +209,7 @@ func TestRunOATHAdd_SecretFromStdin(t *testing.T) {
 	defer func() { _ = fs.Close() }()
 	cred, err := fs.Get("stdin")
 	require.NoError(t, err)
-	assert.Equal(t, "JBSWY3DPEHPK3PXP", secretText(cred))
+	assert.Equal(t, "GEZDGNBVGY3TQOJQGEZDGNBVGY3TQOJQ", secretText(cred))
 }
 
 // TestOATHAddCmd_NoSecretValueFlag pins go-xkms#1209: "xkey oath add" does
@@ -216,7 +223,7 @@ func TestOATHAddCmd_NoSecretValueFlag(t *testing.T) {
 func TestRunOATHAdd_RejectsInvalidCredential(t *testing.T) {
 	cmd, _ := newOATHCmd(t, oathAddCmd, oathStorePath(t))
 	require.NoError(t, setFlagForTest(t, cmd.Flags(), "name", "Bad"))
-	t.Setenv("XKEY_OATH_SECRET", "JBSWY3DPEHPK3PXP")
+	t.Setenv("XKEY_OATH_SECRET", "GEZDGNBVGY3TQOJQGEZDGNBVGY3TQOJQ")
 	require.NoError(t, setFlagForTest(t, cmd.Flags(), "digits", "9"))
 
 	err := runOATHAdd(cmd, nil)
@@ -257,7 +264,7 @@ func TestRunOATHList_ShowsCredentialDetails(t *testing.T) {
 	assert.Contains(t, out, "Counter:   7")
 
 	// Secrets are sensitive: they must stay hidden unless asked for.
-	assert.NotContains(t, out, "JBSWY3DPEHPK3PXP")
+	assert.NotContains(t, out, "GEZDGNBVGY3TQOJQGEZDGNBVGY3TQOJQ")
 	assert.NotContains(t, out, "URI:")
 }
 
@@ -271,7 +278,7 @@ func TestRunOATHList_SecretsAndURIsOnDemand(t *testing.T) {
 
 	require.NoError(t, runOATHList(cmd, nil))
 	out := buf.String()
-	assert.Contains(t, out, "Secret:    JBSWY3DPEHPK3PXP")
+	assert.Contains(t, out, "Secret:    GEZDGNBVGY3TQOJQGEZDGNBVGY3TQOJQ")
 	assert.Contains(t, out, "URI:       otpauth://totp/")
 }
 

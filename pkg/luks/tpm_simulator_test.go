@@ -234,7 +234,7 @@ func TestTPMSealer_SSRK_SealedObjectEnforcesPCRPolicy(t *testing.T) {
 
 	ssrkAttrs, err := tpm.SSRKAttributes()
 	require.NoError(t, err)
-	ssrkName, _, err := tpm.ReadHandle(libtpm2.TPMHandle(ssrkAttrs.TPMAttributes.Handle))
+	ssrkName, ssrkPub, err := tpm.ReadHandle(libtpm2.TPMHandle(ssrkAttrs.TPMAttributes.Handle))
 	require.NoError(t, err)
 
 	pub := libtpm2.BytesAs2B[libtpm2.TPMTPublic](publicBlob)
@@ -269,8 +269,12 @@ func TestTPMSealer_SSRK_SealedObjectEnforcesPCRPolicy(t *testing.T) {
 		"an empty-password TPM2_Unseal must not satisfy a PCR-gated object")
 
 	// The unseal systemd-cryptsetup performs: a PolicyPCR session over the
-	// PCRs the token records.
-	session, closeSession, err := libtpm2.PolicySession(tpm.Transport(), libtpm2.TPMAlgSHA256, 16)
+	// PCRs the token records, salted to the SSRK as systemd-cryptsetup salts
+	// to the SRK. Unsalted and unbound, the session key is the Empty Buffer
+	// (TPM 2.0 Part 1, section 19.6.8) and the command HMAC a zero-length
+	// key FIPS 140-only mode refuses.
+	session, closeSession, err := libtpm2.PolicySession(tpm.Transport(), libtpm2.TPMAlgSHA256, 16,
+		libtpm2.Salted(libtpm2.TPMHandle(ssrkAttrs.TPMAttributes.Handle), ssrkPub))
 	require.NoError(t, err)
 	defer func() { _ = closeSession() }()
 	_, err = (libtpm2.PolicyPCR{

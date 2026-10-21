@@ -66,7 +66,7 @@ func remoteSyncResults() map[string]any {
 				Issuer:    "Example",
 				Secret:    mustSecretText("GEZDGNBVGY3TQOJQ"),
 				Type:      "totp",
-				Algorithm: "SHA1",
+				Algorithm: "SHA256",
 				Digits:    6,
 				Period:    30,
 				UpdatedAt: "2026-01-02T03:04:05Z",

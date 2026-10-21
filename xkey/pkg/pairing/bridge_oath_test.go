@@ -66,9 +66,9 @@ func TestBridge_HandleOATHAdd_NotConfigured(t *testing.T) {
 		Credential: pairingproto.OATHCredentialInfo{
 			Name:      "GitHub",
 			Issuer:    "GitHub",
-			Secret:    mustSecretText("JBSWY3DPEHPK3PXP"),
+			Secret:    mustSecretText("GEZDGNBVGY3TQOJQGEZDGNBVGY3TQOJQ"),
 			Type:      "totp",
-			Algorithm: "SHA1",
+			Algorithm: "SHA256",
 			Digits:    6,
 			Period:    30,
 		},
@@ -91,9 +91,9 @@ func TestBridge_HandleOATHAdd_Success(t *testing.T) {
 			Name:        "GitHub",
 			Issuer:      "GitHub",
 			AccountName: "alice@example.com",
-			Secret:      mustSecretText("JBSWY3DPEHPK3PXP"),
+			Secret:      mustSecretText("GEZDGNBVGY3TQOJQGEZDGNBVGY3TQOJQ"),
 			Type:        "totp",
-			Algorithm:   "SHA1",
+			Algorithm:   "SHA256",
 			Digits:      6,
 			Period:      30,
 		},
@@ -108,7 +108,7 @@ func TestBridge_HandleOATHAdd_Success(t *testing.T) {
 	stored, err := store.Get(result.CredentialID)
 	require.NoError(t, err)
 	assert.Equal(t, "GitHub", stored.Name)
-	assert.Equal(t, "JBSWY3DPEHPK3PXP", secretText(stored))
+	assert.Equal(t, "GEZDGNBVGY3TQOJQGEZDGNBVGY3TQOJQ", secretText(stored))
 }
 
 // TestBridge_HandleOATHAdd_Duplicate verifies that adding the same credential
@@ -122,10 +122,11 @@ func TestBridge_HandleOATHAdd_Duplicate(t *testing.T) {
 
 	params := pairingproto.RemoteOATHAddParams{
 		Credential: pairingproto.OATHCredentialInfo{
-			Name:   "GitHub",
-			Issuer: "GitHub",
-			Secret: mustSecretText("JBSWY3DPEHPK3PXP"),
-			Type:   "totp",
+			Name:      "GitHub",
+			Issuer:    "GitHub",
+			Secret:    mustSecretText("GEZDGNBVGY3TQOJQGEZDGNBVGY3TQOJQ"),
+			Type:      "totp",
+			Algorithm: "SHA256",
 		},
 	}
 
@@ -155,7 +156,7 @@ func TestBridge_HandleOATHAdd_EmptyName(t *testing.T) {
 	req := newRemoteRequest(pairingproto.MethodRemoteOATHAdd, pairingproto.RemoteOATHAddParams{
 		Credential: pairingproto.OATHCredentialInfo{
 			Name:   "",
-			Secret: mustSecretText("JBSWY3DPEHPK3PXP"),
+			Secret: mustSecretText("GEZDGNBVGY3TQOJQGEZDGNBVGY3TQOJQ"),
 			Type:   "totp",
 		},
 	})
@@ -217,8 +218,9 @@ func TestBridge_HandleOATHGenerate_NotFound(t *testing.T) {
 // 6-digit TOTP code with a sane expiry window.
 func TestBridge_HandleOATHGenerate_Success(t *testing.T) {
 	store := oath.NewMemoryStore()
-	cred, err := oath.NewCredentialFromManualEntry("alice@example.com", "GitHub", "JBSWY3DPEHPK3PXP")
+	cred, err := oath.NewCredentialFromManualEntry("alice@example.com", "GitHub", "GEZDGNBVGY3TQOJQGEZDGNBVGY3TQOJQ")
 	require.NoError(t, err)
+	cred.Algorithm = oath.AlgorithmSHA256
 	require.NoError(t, store.Add(cred))
 
 	client := &mockTransportClient{}

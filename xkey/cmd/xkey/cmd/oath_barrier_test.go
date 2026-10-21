@@ -94,7 +94,8 @@ func TestRunOATHAdd_NoBarrier_WarnsAndUsesFileStore(t *testing.T) {
 
 	cmd, out := newDetachedOATHCmd(t, oathAddCmd)
 	require.NoError(t, setFlagForTest(t, cmd.Flags(), "name", "Slack"))
-	t.Setenv("XKEY_OATH_SECRET", "JBSWY3DPEHPK3PXP")
+	require.NoError(t, setFlagForTest(t, cmd.Flags(), "algorithm", "SHA256"))
+	t.Setenv("XKEY_OATH_SECRET", "GEZDGNBVGY3TQOJQGEZDGNBVGY3TQOJQ")
 	require.NoError(t, setFlagForTest(t, cmd.Flags(), "issuer", "Slack"))
 
 	require.NoError(t, runOATHAdd(cmd, nil))
@@ -114,7 +115,7 @@ func TestRunOATHAdd_NoBarrier_WarnsAndUsesFileStore(t *testing.T) {
 	defer func() { _ = fs.Close() }()
 	cred, err := fs.Get("slack")
 	require.NoError(t, err)
-	assert.Equal(t, "JBSWY3DPEHPK3PXP", secretText(cred))
+	assert.Equal(t, "GEZDGNBVGY3TQOJQGEZDGNBVGY3TQOJQ", secretText(cred))
 }
 
 func TestRunOATHAdd_BarrierInitialized_WritesCiphertextNotPlaintext(t *testing.T) {
@@ -125,7 +126,8 @@ func TestRunOATHAdd_BarrierInitialized_WritesCiphertextNotPlaintext(t *testing.T
 
 	addCmd, addOut := newDetachedOATHCmd(t, oathAddCmd)
 	require.NoError(t, setFlagForTest(t, addCmd.Flags(), "name", "GitHub"))
-	t.Setenv("XKEY_OATH_SECRET", "JBSWY3DPEHPK3PXP")
+	require.NoError(t, setFlagForTest(t, addCmd.Flags(), "algorithm", "SHA256"))
+	t.Setenv("XKEY_OATH_SECRET", "GEZDGNBVGY3TQOJQGEZDGNBVGY3TQOJQ")
 	require.NoError(t, setFlagForTest(t, addCmd.Flags(), "issuer", "GitHub"))
 	t.Setenv("XKEY_BARRIER_PASSWORD", password)
 
@@ -135,7 +137,7 @@ func TestRunOATHAdd_BarrierInitialized_WritesCiphertextNotPlaintext(t *testing.T
 	// The raw bytes barrier storage wrote to disk must never contain the
 	// plaintext secret or the plaintext name.
 	raw := readStorageEntry(t, dataDir, "oath/github.json")
-	assert.NotContains(t, string(raw), "JBSWY3DPEHPK3PXP",
+	assert.NotContains(t, string(raw), "GEZDGNBVGY3TQOJQGEZDGNBVGY3TQOJQ",
 		"the on-disk file must never hold the plaintext secret")
 	assert.NotContains(t, string(raw), "GitHub",
 		"the on-disk file must not leak the plaintext name either")
@@ -148,7 +150,7 @@ func TestRunOATHAdd_BarrierInitialized_WritesCiphertextNotPlaintext(t *testing.T
 
 	require.NoError(t, runOATHList(listCmd, nil))
 	assert.Contains(t, listOut.String(), "Name:      GitHub")
-	assert.Contains(t, listOut.String(), "Secret:    JBSWY3DPEHPK3PXP")
+	assert.Contains(t, listOut.String(), "Secret:    GEZDGNBVGY3TQOJQGEZDGNBVGY3TQOJQ")
 }
 
 func TestRunOATHAdd_BarrierWrongPassword_TypedRefusal(t *testing.T) {
@@ -158,7 +160,7 @@ func TestRunOATHAdd_BarrierWrongPassword_TypedRefusal(t *testing.T) {
 
 	cmd, _ := newDetachedOATHCmd(t, oathAddCmd)
 	require.NoError(t, setFlagForTest(t, cmd.Flags(), "name", "GitHub"))
-	t.Setenv("XKEY_OATH_SECRET", "JBSWY3DPEHPK3PXP")
+	t.Setenv("XKEY_OATH_SECRET", "GEZDGNBVGY3TQOJQGEZDGNBVGY3TQOJQ")
 	t.Setenv("XKEY_BARRIER_PASSWORD", "wrong-password")
 
 	err := runOATHAdd(cmd, nil)
@@ -182,7 +184,7 @@ func TestRunOATHAdd_BarrierNoPasswordSupplied_TypedRefusal(t *testing.T) {
 	// has nothing left to try.
 	cmd, _ := newDetachedOATHCmd(t, oathAddCmd)
 	require.NoError(t, setFlagForTest(t, cmd.Flags(), "name", "GitHub"))
-	t.Setenv("XKEY_OATH_SECRET", "JBSWY3DPEHPK3PXP")
+	t.Setenv("XKEY_OATH_SECRET", "GEZDGNBVGY3TQOJQGEZDGNBVGY3TQOJQ")
 
 	err := runOATHAdd(cmd, nil)
 	require.Error(t, err)
@@ -197,7 +199,8 @@ func TestRunOATHAdd_ExplicitStoreFlagBypassesBarrier(t *testing.T) {
 	store := oathStorePath(t)
 	cmd, out := newOATHCmd(t, oathAddCmd, store)
 	require.NoError(t, setFlagForTest(t, cmd.Flags(), "name", "Explicit"))
-	t.Setenv("XKEY_OATH_SECRET", "JBSWY3DPEHPK3PXP")
+	require.NoError(t, setFlagForTest(t, cmd.Flags(), "algorithm", "SHA256"))
+	t.Setenv("XKEY_OATH_SECRET", "GEZDGNBVGY3TQOJQGEZDGNBVGY3TQOJQ")
 
 	// No --barrier-password is supplied; this must still succeed because an
 	// explicit --store bypasses barrier auto-detection entirely.
@@ -209,7 +212,7 @@ func TestRunOATHAdd_ExplicitStoreFlagBypassesBarrier(t *testing.T) {
 	defer func() { _ = fs.Close() }()
 	cred, err := fs.Get("explicit")
 	require.NoError(t, err)
-	assert.Equal(t, "JBSWY3DPEHPK3PXP", secretText(cred))
+	assert.Equal(t, "GEZDGNBVGY3TQOJQGEZDGNBVGY3TQOJQ", secretText(cred))
 }
 
 // --- openOATHStore default resolution (go-xkms#929) ---
@@ -236,8 +239,8 @@ func TestOpenOATHStore_DefaultsUnderXKEYHome(t *testing.T) {
 
 	// The store file itself is created lazily on first write (oath.FileStore);
 	// prove the resolved path really is where writes land.
-	cred := &oath.Credential{ID: "github", Name: "GitHub", Type: oath.TypeTOTP, Algorithm: "SHA1", Digits: 6, Period: 30}
-	require.NoError(t, cred.SetSecret([]byte("JBSWY3DPEHPK3PXP")))
+	cred := &oath.Credential{ID: "github", Name: "GitHub", Type: oath.TypeTOTP, Algorithm: "SHA256", Digits: 6, Period: 30}
+	require.NoError(t, cred.SetSecret([]byte("GEZDGNBVGY3TQOJQGEZDGNBVGY3TQOJQ")))
 	require.NoError(t, store.Add(cred))
 
 	_, statErr := os.Stat(want)

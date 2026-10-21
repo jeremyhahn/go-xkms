@@ -41,7 +41,8 @@ func TestBackupLifecycle_BarrierBackedOATHStore(t *testing.T) {
 	// barrier-backed CLI store, not by writing the fixture file directly.
 	addCmd, _ := newDetachedOATHCmd(t, oathAddCmd)
 	require.NoError(t, setFlagForTest(t, addCmd.Flags(), "name", "BarrierOATH"))
-	t.Setenv("XKEY_OATH_SECRET", "JBSWY3DPEHPK3PXP")
+	require.NoError(t, setFlagForTest(t, addCmd.Flags(), "algorithm", "SHA256"))
+	t.Setenv("XKEY_OATH_SECRET", "GEZDGNBVGY3TQOJQGEZDGNBVGY3TQOJQ")
 	require.NoError(t, setFlagForTest(t, addCmd.Flags(), "issuer", "Example"))
 	t.Setenv("XKEY_BARRIER_PASSWORD", barrierPassword)
 	require.NoError(t, runOATHAdd(addCmd, nil))
@@ -73,7 +74,7 @@ func TestBackupLifecycle_BarrierBackedOATHStore(t *testing.T) {
 	// The sealed backup file must never carry the plaintext secret.
 	raw, err := os.ReadFile(output)
 	require.NoError(t, err)
-	assert.NotContains(t, string(raw), "JBSWY3DPEHPK3PXP")
+	assert.NotContains(t, string(raw), "GEZDGNBVGY3TQOJQGEZDGNBVGY3TQOJQ")
 	assert.NotContains(t, string(raw), "BarrierOATH")
 
 	// Restore into a second, barrier-free home.
@@ -94,7 +95,7 @@ func TestBackupLifecycle_BarrierBackedOATHStore(t *testing.T) {
 	require.NoError(t, err)
 	require.Len(t, creds, 1)
 	assert.Equal(t, "BarrierOATH", creds[0].Name)
-	assert.Equal(t, "JBSWY3DPEHPK3PXP", secretText(creds[0]))
+	assert.Equal(t, "GEZDGNBVGY3TQOJQGEZDGNBVGY3TQOJQ", secretText(creds[0]))
 }
 
 func TestResolveOATHBackupStore_BarrierInitialized_UsesBackendStore(t *testing.T) {
@@ -115,13 +116,13 @@ func TestResolveOATHBackupStore_BarrierInitialized_UsesBackendStore(t *testing.T
 		ID:        "resolve-test",
 		Name:      "ResolveTest",
 		Type:      oath.TypeTOTP,
-		Algorithm: oath.AlgorithmSHA1,
+		Algorithm: oath.AlgorithmSHA256,
 		Digits:    6,
 		Period:    30,
-	}, "JBSWY3DPEHPK3PXP")))
+	}, "GEZDGNBVGY3TQOJQGEZDGNBVGY3TQOJQ")))
 
 	raw := readStorageEntry(t, dataDir, "oath/resolve-test.json")
-	assert.NotContains(t, string(raw), "JBSWY3DPEHPK3PXP")
+	assert.NotContains(t, string(raw), "GEZDGNBVGY3TQOJQGEZDGNBVGY3TQOJQ")
 }
 
 func TestResolveOATHBackupStore_ExplicitPathBypassesBarrier(t *testing.T) {
@@ -146,14 +147,14 @@ func TestResolveOATHBackupStore_ExplicitPathBypassesBarrier(t *testing.T) {
 		ID:        "explicit-test",
 		Name:      "ExplicitTest",
 		Type:      oath.TypeTOTP,
-		Algorithm: oath.AlgorithmSHA1,
+		Algorithm: oath.AlgorithmSHA256,
 		Digits:    6,
 		Period:    30,
-	}, "JBSWY3DPEHPK3PXP")))
+	}, "GEZDGNBVGY3TQOJQGEZDGNBVGY3TQOJQ")))
 
 	raw, err := os.ReadFile(explicitPath)
 	require.NoError(t, err)
-	assert.Contains(t, string(raw), "JBSWY3DPEHPK3PXP",
+	assert.Contains(t, string(raw), "GEZDGNBVGY3TQOJQGEZDGNBVGY3TQOJQ",
 		"the plain file store must hold the secret in the historical format")
 }
 

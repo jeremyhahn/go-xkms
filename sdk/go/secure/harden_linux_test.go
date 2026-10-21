@@ -16,6 +16,7 @@
 package secure
 
 import (
+	"crypto/fips140"
 	"errors"
 	"os"
 	"os/exec"
@@ -87,6 +88,17 @@ func runHardenChild(t *testing.T, optOut string) string {
 	return ""
 }
 
+// stackFIPSMode mirrors the stack's single FIPS predicate, go-quicraft's
+// seal.FIPSEnabled, which go-qrdb's HardenProcess consults: the FIPS 140-3
+// module is enabled, or GOFIPS140 names a module version.
+func stackFIPSMode() bool {
+	if fips140.Enabled() {
+		return true
+	}
+	version := os.Getenv("GOFIPS140")
+	return version != "" && version != "off"
+}
+
 // TestHardenProcess_MarksTheProcessNonDumpable verifies the re-export reaches
 // go-qrdb's Linux mechanism: after hardening the process is non-dumpable, so
 // ptrace attach and /proc/<pid>/mem need CAP_SYS_PTRACE.
@@ -99,8 +111,20 @@ func TestHardenProcess_MarksTheProcessNonDumpable(t *testing.T) {
 
 // TestHardenProcess_OptOutLeavesTheProcessDumpable verifies the debugger
 // opt-out: the process stays dumpable and the outcome says so, so a caller
-// with an audit trail can record it.
+// with an audit trail can record it. In FIPS 140-3 mode it verifies the
+// opt-out is refused with a typed error that survives the re-export.
 func TestHardenProcess_OptOutLeavesTheProcessDumpable(t *testing.T) {
+	if stackFIPSMode() {
+		// FIPS 140-3 mode refuses the opt-out before hardening anything: a
+		// process in that mode must not be inspectable.
+		t.Setenv(AllowProcessInspectionEnv, "true")
+		_, err := HardenProcess(nil)
+		var refused *ProcessInspectionOptOutRefusedError
+		if !errors.As(err, &refused) {
+			t.Fatalf("HardenProcess = %v, want *ProcessInspectionOptOutRefusedError", err)
+		}
+		return
+	}
 	want := "dumpable=1 outcome=" + ProcessInspectionAllowed.String()
 	if got := runHardenChild(t, "true"); got != want {
 		t.Fatalf("child reported %q, want %q", got, want)

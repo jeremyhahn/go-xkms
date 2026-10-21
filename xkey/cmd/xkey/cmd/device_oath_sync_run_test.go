@@ -116,9 +116,9 @@ func TestRunOATHPush_ConnectFailure(t *testing.T) {
 	store, err := openOATHStore(cmd, storePath)
 	require.NoError(t, err)
 	cred := withOATHSecret(&oath.Credential{
-		ID: "gh", Name: "GitHub", Type: oath.TypeTOTP, Algorithm: oath.AlgorithmSHA1,
+		ID: "gh", Name: "GitHub", Type: oath.TypeTOTP, Algorithm: oath.AlgorithmSHA256,
 		Digits: 6, Period: 30, CreatedAt: time.Now(),
-	}, "JBSWY3DPEHPK3PXP")
+	}, "GEZDGNBVGY3TQOJQGEZDGNBVGY3TQOJQ")
 	require.NoError(t, store.Add(cred))
 	require.NoError(t, store.Close())
 
@@ -153,9 +153,9 @@ func seedOATHStore(t *testing.T, names ...string) string {
 	require.NoError(t, err)
 	for _, name := range names {
 		require.NoError(t, store.Add(withOATHSecret(&oath.Credential{
-			ID: name, Name: name, Type: oath.TypeTOTP, Algorithm: oath.AlgorithmSHA1,
+			ID: name, Name: name, Type: oath.TypeTOTP, Algorithm: oath.AlgorithmSHA256,
 			Digits: 6, Period: 30, CreatedAt: time.Now(),
-		}, "JBSWY3DPEHPK3PXP")))
+		}, "GEZDGNBVGY3TQOJQGEZDGNBVGY3TQOJQ")))
 	}
 	require.NoError(t, store.Close())
 	return storePath
@@ -336,7 +336,7 @@ func TestRunOATHPush_SendsTheCredential(t *testing.T) {
 	require.Equal(t, []string{"GitHub"}, pushedOATHNames(t, transport))
 	var sent pairingproto.LocalOATHAddParams
 	require.NoError(t, json.Unmarshal(transport.wire[0], &sent))
-	assert.Equal(t, "JBSWY3DPEHPK3PXP", textOf(sent.Credential.Secret))
+	assert.Equal(t, "GEZDGNBVGY3TQOJQGEZDGNBVGY3TQOJQ", textOf(sent.Credential.Secret))
 
 	output := cmd.OutOrStdout().(*bytes.Buffer).String()
 	assert.Contains(t, output, `Pushing "GitHub" to device "Test Phone"`)

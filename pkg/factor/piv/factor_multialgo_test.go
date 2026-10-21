@@ -21,10 +21,10 @@ import (
 	"crypto/elliptic"
 	"crypto/rand"
 	"crypto/rsa"
-	"crypto/sha256"
 	"crypto/x509"
 	"encoding/pem"
 	"errors"
+	"math/big"
 	"strings"
 	"testing"
 
@@ -135,11 +135,13 @@ func TestPIVFactor_Verify_MultiAlgorithm(t *testing.T) {
 // through Enroll so the floor is exercised even for a key Enroll itself
 // could never have produced.
 func TestPIVFactor_Verify_RejectsUndersizedRSAKey(t *testing.T) {
-	weakKey, err := rsa.GenerateKey(rand.Reader, 1024)
-	if err != nil {
-		t.Fatalf("rsa.GenerateKey: %v", err)
-	}
-	der, err := x509.MarshalPKIXPublicKey(&weakKey.PublicKey)
+	// The FIPS 140-3 module refuses to generate or use an RSA key below 2048
+	// bits, so the undersized key is built, not generated: Verify must refuse
+	// it on the size floor before any RSA operation.
+	n := new(big.Int).Lsh(big.NewInt(1), 1023)
+	n.Add(n, big.NewInt(1))
+	weakKey := &rsa.PublicKey{N: n, E: 65537}
+	der, err := x509.MarshalPKIXPublicKey(weakKey)
 	if err != nil {
 		t.Fatalf("MarshalPKIXPublicKey: %v", err)
 	}
@@ -155,10 +157,9 @@ func TestPIVFactor_Verify_RejectsUndersizedRSAKey(t *testing.T) {
 		t.Fatalf("Challenge: %v", err)
 	}
 
-	digest := sha256.Sum256(challenge.Nonce)
-	sig, err := rsa.SignPKCS1v15(rand.Reader, weakKey, crypto.SHA256, digest[:])
-	if err != nil {
-		t.Fatalf("rsa.SignPKCS1v15: %v", err)
+	sig := make([]byte, weakKey.Size())
+	if _, err := rand.Read(sig); err != nil {
+		t.Fatalf("rand.Read: %v", err)
 	}
 
 	// Simulate an enrollment whose key is below the RSA floor (Enroll's own

@@ -106,10 +106,11 @@ func TestPhoneBackendWithBridge_Close_ClosesCollaborators(t *testing.T) {
 
 	req := pairingproto.NewRequest(pairingproto.MethodRemoteOATHAdd, pairingproto.RemoteOATHAddParams{
 		Credential: pairingproto.OATHCredentialInfo{
-			Name:   "GitHub",
-			Issuer: "GitHub",
-			Secret: mustSecretText("JBSWY3DPEHPK3PXP"),
-			Type:   "totp",
+			Name:      "GitHub",
+			Issuer:    "GitHub",
+			Secret:    mustSecretText("GEZDGNBVGY3TQOJQGEZDGNBVGY3TQOJQ"),
+			Type:      "totp",
+			Algorithm: "SHA256",
 		},
 	})
 	resp := bridge.HandleRequest(context.Background(), req)
@@ -141,7 +142,7 @@ func TestPhoneBackendWithBridge_Close_ClosesCollaborators(t *testing.T) {
 	cred, err := reopened.Get(result.CredentialID)
 	require.NoError(t, err)
 	assert.Equal(t, "GitHub", cred.Name)
-	assert.Equal(t, "JBSWY3DPEHPK3PXP", secretText(cred))
+	assert.Equal(t, "GEZDGNBVGY3TQOJQGEZDGNBVGY3TQOJQ", secretText(cred))
 }
 
 // TestPhoneBackendWithBridge_Close_NilCollaborators proves Close() does not

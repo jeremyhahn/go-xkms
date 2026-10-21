@@ -24,6 +24,7 @@ import (
 
 	"github.com/jeremyhahn/go-xkms/pkg/backend"
 	"github.com/jeremyhahn/go-xkms/pkg/crypto/wrapping"
+	"github.com/jeremyhahn/go-xkms/pkg/testing/fipstest"
 	secure "github.com/jeremyhahn/go-xkms/sdk/go/secure"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -34,6 +35,13 @@ var allWrappingAlgorithms = []backend.WrappingAlgorithm{
 	backend.WrappingAlgorithmRSAES_OAEP_SHA_256,
 	backend.WrappingAlgorithmRSA_AES_KEY_WRAP_SHA_1,
 	backend.WrappingAlgorithmRSA_AES_KEY_WRAP_SHA_256,
+}
+
+// sha1WrappingAlgorithms are the members of allWrappingAlgorithms whose OAEP
+// hash is SHA-1.
+var sha1WrappingAlgorithms = map[backend.WrappingAlgorithm]bool{
+	backend.WrappingAlgorithmRSAES_OAEP_SHA_1:       true,
+	backend.WrappingAlgorithmRSA_AES_KEY_WRAP_SHA_1: true,
 }
 
 // wrapForAlgorithm wraps keyMaterial with the wrapping library function that
@@ -62,6 +70,13 @@ func wrapForAlgorithm(t *testing.T, algorithm backend.WrappingAlgorithm, pub *rs
 func TestUnwrap_RoundTrip(t *testing.T) {
 	for _, algorithm := range allWrappingAlgorithms {
 		t.Run(string(algorithm), func(t *testing.T) {
+			// The SHA-1 wraps are the AWS KMS import wrapping algorithms
+			// (KMS API GetParametersForImport, WrappingAlgorithm); the
+			// FIPS 140-3 module refuses SHA-1 in OAEP, so they are proved
+			// outside it.
+			if sha1WrappingAlgorithms[algorithm] && !fipstest.OutsideFIPS(t) {
+				return
+			}
 			priv := generateTestRSAKey(t)
 			sealed, err := NewSealedRSAKey(t.Context(), priv)
 			require.NoError(t, err)

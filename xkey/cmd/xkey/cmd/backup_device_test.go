@@ -246,7 +246,7 @@ func TestBackupToDevice_SendsSealedPayload(t *testing.T) {
 
 	// The sealed bytes must not leak any plaintext value.
 	assert.NotContains(t, string(params.BackupData), "s3cret-value")
-	assert.NotContains(t, string(params.BackupData), "JBSWY3DPEHPK3PXP")
+	assert.NotContains(t, string(params.BackupData), "GEZDGNBVGY3TQOJQGEZDGNBVGY3TQOJQ")
 
 	assert.Contains(t, output, "Backup ID:")
 	assert.True(t, transport.connected)

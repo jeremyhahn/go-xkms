@@ -34,6 +34,7 @@ import (
 	"github.com/jeremyhahn/go-xkms/pkg/backend"
 	"github.com/jeremyhahn/go-xkms/pkg/keyversion"
 	"github.com/jeremyhahn/go-xkms/pkg/seal"
+	"github.com/jeremyhahn/go-xkms/pkg/testing/fipstest"
 	"github.com/jeremyhahn/go-xkms/pkg/types"
 )
 
@@ -234,6 +235,11 @@ func TestDecrypt_ExternalOAEPAcrossVersions(t *testing.T) {
 // TestDecrypt_PKCS1v15RequiresKeyVersion proves RSA PKCS#1 v1.5 ciphertext
 // is treated like AES-CBC: never tried against several versions.
 func TestDecrypt_PKCS1v15RequiresKeyVersion(t *testing.T) {
+	// PKCS#1 v1.5 encryption (RFC 8017 section 7.2) is outside the FIPS
+	// 140-3 module, which ignores allow_legacy_key_wrap.
+	if !fipstest.OutsideFIPS(t) {
+		return
+	}
 	types.SetAllowLegacyKeyWrap(true)
 	t.Cleanup(func() { types.SetAllowLegacyKeyWrap(false) })
 

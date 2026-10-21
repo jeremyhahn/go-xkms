@@ -29,6 +29,7 @@ import (
 
 	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
 	pb "github.com/jeremyhahn/go-xkms/pkg/api/grpc/proto/xkmsv1"
+	"github.com/jeremyhahn/go-xkms/pkg/testing/fipstest"
 	"github.com/jeremyhahn/go-xkms/pkg/types"
 	"github.com/jeremyhahn/go-xkms/pkg/xkms"
 	"github.com/stretchr/testify/assert"
@@ -525,7 +526,11 @@ func TestDecrypt_AsymmetricRSA_ErrorPath(t *testing.T) {
 	// The RPC's asymmetric fallback defaults to PKCS#1 v1.5 and is refused
 	// unless crypto.allow_legacy_key_wrap is set (go-xkms#1283); this test's
 	// premise is exercising that construction's failure path, so it must opt
-	// in explicitly.
+	// in explicitly. The FIPS 140-3 module ignores that opt-in, so the
+	// construction is exercised outside it.
+	if !fipstest.OutsideFIPS(t) {
+		return
+	}
 	previous := types.AllowLegacyKeyWrap()
 	types.SetAllowLegacyKeyWrap(true)
 	t.Cleanup(func() { types.SetAllowLegacyKeyWrap(previous) })

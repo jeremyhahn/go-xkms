@@ -540,9 +540,15 @@ type nonceEpochRecord struct {
 // NonceLifetime exists to prevent. Deriving the prefix from the epoch's own
 // start time closes that: decrypt()'s prefix check alone rejects a
 // retired-epoch nonce once nonceService.SetLocal has moved the registry on.
-func newNonceEpoch(key []byte, prefix string, maxUsed int) (*acmenonce.Service, error) {
-	opts := []acmenonce.Option{acmenonce.WithKey(key), acmenonce.WithMaxUsed(maxUsed), acmenonce.WithPrefix(prefix)}
-	return acmenonce.NewService(opts...)
+func newNonceEpoch(key []byte, node string, epochStartNano int64, maxUsed int) (*acmenonce.Service, error) {
+	// NewService applies options in order, so WithKey rejects a key of the
+	// wrong size before the prefix is derived from it: FIPS 140-only mode
+	// panics on an HMAC key shorter than 112 bits instead of returning an
+	// error.
+	epochPrefix := func(s *acmenonce.Service) error {
+		return acmenonce.WithPrefix(nonceEpochPrefix(node, key, epochStartNano))(s)
+	}
+	return acmenonce.NewService(acmenonce.WithKey(key), acmenonce.WithMaxUsed(maxUsed), epochPrefix)
 }
 
 // nonceEpochPrefix derives the per-epoch prefix newNonceEpoch requires:
@@ -689,7 +695,7 @@ func NewRestService(params *Params) (RestServicer, error) {
 	}
 
 	epochAt := nonceClock()
-	epoch, err := newNonceEpoch(nonceKey, nonceEpochPrefix(params.NoncePrefix, nonceKey, epochAt.UnixNano()), nonceMaxUsed)
+	epoch, err := newNonceEpoch(nonceKey, params.NoncePrefix, epochAt.UnixNano(), nonceMaxUsed)
 	if err != nil {
 		return nil, &ErrNonceServiceInit{Sentinel: ErrNonceServiceCreate, Cause: err}
 	}
@@ -953,7 +959,7 @@ func (s *RestService) rotateNonceEpoch(stale *nonceEpochRecord) *acmenonce.Servi
 	}
 
 	epochAt := nonceClock()
-	fresh, err := newNonceEpoch(s.nonceKey, nonceEpochPrefix(s.noncePrefix, s.nonceKey, epochAt.UnixNano()), s.nonceMaxUsed)
+	fresh, err := newNonceEpoch(s.nonceKey, s.noncePrefix, epochAt.UnixNano(), s.nonceMaxUsed)
 	if err != nil {
 		s.logger.Error("acme: failed to rotate nonce epoch, continuing on the previous epoch",
 			slog.String("error", err.Error()))

@@ -36,6 +36,7 @@ import (
 	"time"
 
 	"github.com/jeremyhahn/go-xkms/pkg/pairingproto"
+	"github.com/jeremyhahn/go-xkms/pkg/testing/fipstest"
 	xkms "github.com/jeremyhahn/go-xkms/sdk/go"
 	"github.com/jeremyhahn/go-xkms/xkey/pkg/attestation/attesttest"
 )
@@ -106,6 +107,11 @@ func TestTOTP_MatchesRFC6238Vectors(t *testing.T) {
 
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
+			// RFC 6238 section 1.2 and Appendix B pin HMAC-SHA-1, which the
+			// FIPS 140-3 module refuses, so that vector runs outside it.
+			if tc.name == "SHA1" && !fipstest.OutsideFIPS(t) {
+				return
+			}
 			if got := totp(b32(tc.seed), 1, tc.digest); got != tc.want {
 				t.Fatalf("totp(%s) = %q, want %q", tc.name, got, tc.want)
 			}
@@ -306,7 +312,9 @@ func (ph *phone) gcm(keyID string) (cipher.AEAD, error) {
 	}
 	block, err := aes.NewCipher(secret)
 	ph.must(err)
-	return cipher.NewGCM(block)
+	// The random-nonce AEAD seals to nonce || ciphertext || tag, the layout
+	// the phone returns, and is the GCM mode FIPS 140-3 approves.
+	return cipher.NewGCMWithRandomNonce(block)
 }
 
 func (ph *phone) symmetricEncrypt(params map[string]interface{}) (interface{}, error) {
@@ -318,10 +326,7 @@ func (ph *phone) symmetricEncrypt(params map[string]interface{}) (interface{}, e
 	if err != nil {
 		return nil, rpcError(-32602, "data is not base64")
 	}
-	nonce := make([]byte, aead.NonceSize())
-	_, err = rand.Read(nonce)
-	ph.must(err)
-	return map[string]interface{}{"data": b64(aead.Seal(nonce, nonce, plaintext, nil))}, nil
+	return map[string]interface{}{"data": b64(aead.Seal(nil, nil, plaintext, nil))}, nil
 }
 
 func (ph *phone) symmetricDecrypt(params map[string]interface{}) (interface{}, error) {
@@ -330,10 +335,10 @@ func (ph *phone) symmetricDecrypt(params map[string]interface{}) (interface{}, e
 		return nil, err
 	}
 	sealed, err := paramBytes(params, "data")
-	if err != nil || len(sealed) < aead.NonceSize() {
+	if err != nil || len(sealed) < aead.Overhead() {
 		return nil, rpcError(-32602, "data is not a ciphertext")
 	}
-	plaintext, err := aead.Open(nil, sealed[:aead.NonceSize()], sealed[aead.NonceSize():], nil)
+	plaintext, err := aead.Open(nil, nil, sealed, nil)
 	if err != nil {
 		return nil, rpcError(-32005, "decryption failed")
 	}
