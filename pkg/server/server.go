@@ -2684,6 +2684,7 @@ func (s *Server) buildRESTConfig() (*rest.Config, error) {
 				Enabled:         s.config.Auth.PIVLogin.Enabled,
 				TrustedIssuers:  s.config.Auth.PIVLogin.TrustedIssuers,
 				AllowUnattested: s.config.Auth.PIVLogin.AllowUnattested,
+				TrustDomain:     s.TrustDomain(),
 			}
 			// The attestation anchors load here, at composition, and only for
 			// an enabled exchange: a bundle that does not load fails the daemon

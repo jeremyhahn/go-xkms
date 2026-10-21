@@ -73,6 +73,36 @@ When `RecordedLevel` is nil (no PIV manager was initialized at server
 composition) or reports not-found, the decision rests on the attestation, or
 on `allow_unattested` when there is no anchor.
 
+**The certificate names the tenant the user is looked up in** (go-xkms#1628).
+The route is public, so no middleware has bound a tenant. `handlePIVLogin`
+(`pkg/api/rest/handlers_auth.go:378`) reads it from the verified login
+certificate with qrdb's `qrdbsdk.TenantFromClientCert`
+(`pkg/api/rest/handlers_auth.go:444`), pinned to
+`PIVLoginOptions.TrustDomain` (`pkg/api/rest/handlers_auth.go:100`). It then
+normalises the tenant, binds it with `qrdbsdk.ContextWithTenant`, and resolves
+the SPKI thumbprint within that tenant only. These are the same steps the ACME
+admin plane takes (`pkg/acme/admin/auth_mtls.go:138`, go-xkms#1240):
+
+- A SPIFFE tenant SAN (`spiffe://<trust-domain>/tenant/<id>/...`) names the
+  tenant. Failing that, the first Subject OU names it. A certificate that names
+  neither resolves to the system tenant, so the system admin's first-boot login
+  is unchanged.
+- A SPIFFE SAN from another trust domain, or a malformed or ambiguous one, is
+  refused before the user store is read (audit reason
+  `certificate tenant refused`).
+- A thumbprint with no binding in the named tenant is refused (`no user
+  binding`). A resolved user whose tenant is not the certificate's is also
+  refused (`certificate tenant mismatch`, `pkg/api/rest/handlers_auth.go:463`).
+  Every refusal answers the same generic 401 `authentication failed`.
+- A tenant named in a header or the request body is never read.
+
+`pkg/server` pins `TrustDomain` to the daemon's own trust domain,
+`Server.TrustDomain()` (`pkg/server/server.go:2687`, `pkg/server/firstboot.go:376`).
+A host that composes the REST server itself (`apimodule.WithPIVLogin`) sets
+the field on the `PIVLoginOptions` it passes. If it is left empty, a SPIFFE SAN
+from any trust domain is accepted, which qrdb reserves for tests and
+single-domain labs.
+
 ## `{slot}` is a closed set
 
 The path parameter accepts only defined PIV slots: `9a`, `9c`, `9d`, `9e`, `f9`,

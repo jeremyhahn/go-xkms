@@ -18,6 +18,7 @@ import (
 	"testing"
 
 	"github.com/jeremyhahn/go-xkms/pkg/config"
+	"github.com/jeremyhahn/go-xkms/pkg/embeddednode"
 )
 
 // newTestServerForRESTConfig builds the minimal Server state buildRESTConfig
@@ -97,5 +98,34 @@ func TestBuildRESTConfig_DisabledPIVLoginLeavesItsAnchorsUnloaded(t *testing.T) 
 
 	if _, err := newServer(true).buildRESTConfig(); err == nil {
 		t.Fatal("buildRESTConfig() with piv_login enabled and an unloadable bundle must fail")
+	}
+}
+
+// TestBuildRESTConfig_PIVLoginPinsTheServerTrustDomain proves the cert-login
+// exchange reads a certificate's tenant under the same SPIFFE trust domain
+// the daemon issues under (go-xkms#1628), not an unpinned one.
+func TestBuildRESTConfig_PIVLoginPinsTheServerTrustDomain(t *testing.T) {
+	for _, tc := range []struct {
+		name        string
+		trustDomain string
+		want        string
+	}{
+		{name: "configured", trustDomain: "corp.example", want: "corp.example"},
+		{name: "default", trustDomain: "", want: embeddednode.DefaultTrustDomain},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			srv := newTestServerForRESTConfig(t, config.ServerConfig{Host: "127.0.0.1", RESTPort: 8443})
+			srv.tokenIssuer = newTestTokenIssuer(t)
+			srv.config.Cluster.RaftEnrollment.TrustDomain = tc.trustDomain
+			srv.config.Auth.PIVLogin = &config.PIVLoginConfig{}
+
+			restCfg, err := srv.buildRESTConfig()
+			if err != nil {
+				t.Fatalf("buildRESTConfig(): %v", err)
+			}
+			if restCfg.PIVLogin == nil || restCfg.PIVLogin.TrustDomain != tc.want {
+				t.Fatalf("PIVLogin.TrustDomain = %+v, want %q", restCfg.PIVLogin, tc.want)
+			}
+		})
 	}
 }

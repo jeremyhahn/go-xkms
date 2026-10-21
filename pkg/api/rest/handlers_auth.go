@@ -91,6 +91,13 @@ type PIVLoginOptions struct {
 	// Nil means no enrollment lookup is wired, and every login is decided
 	// from the certificate chain exactly as before RecordedLevel existed.
 	RecordedLevel func(cert *x509.Certificate) (level types.AttestLevel, found bool)
+
+	// TrustDomain is the SPIFFE trust domain the server pins; production
+	// hosts must set it. The exchange reads the login certificate's tenant
+	// with qrdb's TenantFromClientCert under this pin and looks the user up
+	// within that tenant only. Empty accepts a SPIFFE SAN from any trust
+	// domain, which qrdb reserves for tests and single-domain labs.
+	TrustDomain string
 }
 
 // Attestation levels recorded on the token minted by the PIV login exchange,
@@ -426,7 +433,25 @@ func (s *Server) handlePIVLogin(w http.ResponseWriter, r *http.Request) {
 	// Canonical cert binding: qrdb's SPKI SHA-256 thumbprint — the single
 	// algorithm shared across the stack.
 	thumbprint := qrdbsdk.ComputeSPKIThumbprint(cert)
-	user, err := s.authUsers.GetByCertFingerprint(r.Context(), thumbprint)
+
+	// This is a public route, so no middleware has bound a tenant: the
+	// certificate names it, and the thumbprint is looked up within that
+	// tenant only, as go-qrdb's pkg/auth/mtls.go TenantFromClientCert
+	// requires of a composing host. These are the four steps of
+	// pkg/acme/admin/auth_mtls.go authenticateCertificate (go-xkms#1240).
+	// A certificate that names no tenant resolves to the system tenant; a
+	// tenant in a header or the body is never read.
+	tenantID, _, err := qrdbsdk.TenantFromClientCert(cert, s.pivLogin.TrustDomain)
+	if err != nil {
+		s.logger.Info("piv login refused on certificate tenant", "subject", cert.Subject.CommonName, "error", err)
+		if s.auditAuthDenyOrFail(w, r, cert.Subject.CommonName, "auth.login.piv", "certificate tenant refused") {
+			return
+		}
+		writeErrorWithMessage(w, ErrUnauthorized, "authentication failed", http.StatusUnauthorized)
+		return
+	}
+	tenantID = qrdbsdk.NormalizeTenantID(tenantID)
+	user, err := s.authUsers.GetByCertFingerprint(qrdbsdk.ContextWithTenant(r.Context(), tenantID), thumbprint)
 	if err != nil {
 		if s.auditAuthDenyOrFail(w, r, cert.Subject.CommonName, "auth.login.piv", "no user binding") {
 			return
@@ -434,6 +459,14 @@ func (s *Server) handlePIVLogin(w http.ResponseWriter, r *http.Request) {
 		writeErrorWithMessage(w, ErrUnauthorized, "authentication failed", http.StatusUnauthorized)
 		return
 	}
+	if qrdbsdk.NormalizeTenantID(user.TenantID) != tenantID {
+		if s.auditAuthDenyOrFail(w, r, user.Username, "auth.login.piv", "certificate tenant mismatch") {
+			return
+		}
+		writeErrorWithMessage(w, ErrUnauthorized, "authentication failed", http.StatusUnauthorized)
+		return
+	}
+	user.TenantID = tenantID
 	if !user.Enabled {
 		if s.auditAuthDenyOrFail(w, r, user.Username, "auth.login.piv", "user disabled") {
 			return
