@@ -116,7 +116,7 @@ toggle without change.
 
 - [`../seal/architecture.md`](../seal/architecture.md) — the barrier this
   feature locks and unlocks.
-- [`../password/README.md`](../password/README.md) — the password-manager
+- [`../password/architecture.md`](../password/architecture.md) — the password-manager
   GUI/CLI surface over the same `pkg/staticpw` store (not yet converted to
   the five-file convention).
 - [Secret Service API specification](https://specifications.freedesktop.org/secret-service/) —

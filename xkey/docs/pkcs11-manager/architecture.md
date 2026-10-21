@@ -104,7 +104,7 @@ boundary already, so the synchronization logic belongs there.
 
 - [PKCS#11 module/token manager](../../../docs/pkcs11-provider-module/engineering.md#pkgpkcs11manager) -- the
   manager this feature is built on
-- [PKCS#11 IPC transport](../pkcs11/ipc.md) -- a different PKCS#11-adjacent
+- [PKCS#11 IPC transport](../pkcs11/architecture.md) -- a different PKCS#11-adjacent
   concern in xkey (external processes talking to a running xkey instance),
   not converted to the feature-folder convention yet
 - `00-ownership-and-sdk-boundary.md` -- the ownership-and-SDK-boundary

@@ -57,7 +57,7 @@ The daemon's Unix socket protocol (`socket.go`, `protocol.go`, `server.go`,
 `MessageTypeAutofill`, `MessageTypePKCS11`, `MessageTypePairing` and
 `MessageTypeState` share the same socket and server but belong to other
 features — autofill to the password vault, `pkcs11` to
-[`pkcs11/ipc.md`](../pkcs11/ipc.md), `pairing` to device pairing, `state` to
+[`pkcs11/architecture.md`](../pkcs11/architecture.md), `pairing` to device pairing, `state` to
 whichever subsystem (`StatePIN`, `StateBarrier`, `StatePasswordStore`,
 `StatePasswordList`) the query names.
 

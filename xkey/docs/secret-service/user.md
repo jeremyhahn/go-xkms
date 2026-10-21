@@ -72,7 +72,7 @@ secret-tool clear service myservice username me
 ## What "collections" mean here
 
 Every folder in xkey's password manager (see
-[`../password/README.md`](../password/README.md)) is a Secret Service
+[`../password/user.md`](../password/user.md)) is a Secret Service
 "collection". The default collection (what most tools use when they do not
 ask for one by name) is the root folder. Passwords you already stored
 through the `xkey` password-manager CLI or GUI are visible to Secret

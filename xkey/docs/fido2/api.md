@@ -24,7 +24,7 @@ authentication on top. Message types relevant here (`xkey/pkg/ipc/protocol.go`):
 
 `autofill`, `pkcs11`, `pairing` and `state` share the same socket and server
 but belong to other features: autofill to the password vault, `pkcs11` to
-[`pkcs11/ipc.md`](../pkcs11/ipc.md), `pairing` to device pairing, `state` to
+[`pkcs11/architecture.md`](../pkcs11/architecture.md), `pairing` to device pairing, `state` to
 whichever subsystem a query names.
 
 ## Outbound: the attestation CA
