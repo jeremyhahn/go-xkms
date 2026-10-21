@@ -316,7 +316,9 @@ func TestWrapKeyByID_Success(t *testing.T) {
 	targetMaterial := []byte("target-key-material")
 	target := newMaterialProvider(targetMaterial)
 	stores := setupKeyOpsService(t, map[string]types.KeyProvider{"target-be": target, "kek-be": nil})
-	addKeyOpsKey(t, stores["target-be"], &types.KeyAttributes{CN: "target-key", Exportable: true})
+	addKeyOpsKey(t, stores["target-be"], &types.KeyAttributes{
+		CN: "target-key", KeyType: types.KeyTypeSecret, SymmetricAlgorithm: types.SymmetricAES256GCM, Exportable: true,
+	})
 	kekKey := addKeyOpsRSAKey(t, stores["kek-be"], &types.KeyAttributes{CN: "kek"})
 
 	resp, err := keyOpsService(t).WrapKeyByID(context.Background(), &transport.WrapKeyByIDRequest{
@@ -379,7 +381,9 @@ func TestWrapKeyByID_RoleQualifiedLookupFailures(t *testing.T) {
 	target := newMaterialProvider([]byte("target-key-material"))
 	kek := newMaterialProvider([]byte("kek-material"))
 	stores := setupKeyOpsService(t, map[string]types.KeyProvider{"target-be": target, "kek-be": kek})
-	addKeyOpsKey(t, stores["target-be"], &types.KeyAttributes{CN: "target-key", Exportable: true})
+	addKeyOpsKey(t, stores["target-be"], &types.KeyAttributes{
+		CN: "target-key", KeyType: types.KeyTypeSecret, SymmetricAlgorithm: types.SymmetricAES256GCM, Exportable: true,
+	})
 	svc := keyOpsService(t)
 	ctx := context.Background()
 
@@ -432,7 +436,9 @@ func TestWrapKeyByID_RoleQualifiedLookupFailures(t *testing.T) {
 func TestWrapKeyByID_BackendCapabilityBoundaries(t *testing.T) {
 	target := newMaterialProvider([]byte("target-key-material"))
 	stores := setupKeyOpsService(t, map[string]types.KeyProvider{"target-be": target})
-	addKeyOpsKey(t, stores["target-be"], &types.KeyAttributes{CN: "target-key", Exportable: true})
+	addKeyOpsKey(t, stores["target-be"], &types.KeyAttributes{
+		CN: "target-key", KeyType: types.KeyTypeSecret, SymmetricAlgorithm: types.SymmetricAES256GCM, Exportable: true,
+	})
 	svc := keyOpsService(t)
 	ctx := context.Background()
 
@@ -473,7 +479,9 @@ func TestWrapKeyByID_TargetKeyNotExportable(t *testing.T) {
 	target.materialErr = errors.New("CKA_EXTRACTABLE is false")
 	kek := newMaterialProvider([]byte("kek-material"))
 	stores := setupKeyOpsService(t, map[string]types.KeyProvider{"target-be": target, "kek-be": kek})
-	addKeyOpsKey(t, stores["target-be"], &types.KeyAttributes{CN: "target-key"})
+	addKeyOpsKey(t, stores["target-be"], &types.KeyAttributes{
+		CN: "target-key", KeyType: types.KeyTypeSecret, SymmetricAlgorithm: types.SymmetricAES256GCM,
+	})
 	addKeyOpsKey(t, stores["kek-be"], &types.KeyAttributes{CN: "kek"})
 
 	_, err := keyOpsService(t).WrapKeyByID(context.Background(), &transport.WrapKeyByIDRequest{

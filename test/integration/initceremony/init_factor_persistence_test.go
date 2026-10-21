@@ -351,7 +351,11 @@ func waitForPort(port int, timeout time.Duration) bool {
 //
 // Why TOFU, not a loaded CA bundle: `xkmsd init`'s admin certificate is
 // issued by init's own one-shot ceremony CA (ephemeral, in-memory, thrown
-// away when init exits -- see cmd/xkmsd/init_ceremony.go's newCeremonyCA).
+// away when init exits -- see cmd/xkmsd/init_ceremony.go's newBootstrapCA),
+// whose root init writes to `<data dir>/ca-bundle.pem`; `xkmsd run` adds
+// that root to the client CAs it advertises (pkg/server/tls_pool.go's
+// configuredClientCAs) so a static client certificate list offers the admin
+// certificate.
 // `xkmsd run`, by contrast, builds a SEPARATE, PERSISTENT CA from the
 // config's `ca:` block the first time it starts (pkg/server/server.go's
 // initializeCA: trustedCA.Load falls back to trustedCA.Init on a fresh data
@@ -401,19 +405,11 @@ func mtlsClient(t *testing.T, certPath, keyPath string, restPort int) *http.Clie
 	if err != nil {
 		t.Fatalf("build TOFU TLS config for %s: %v", endpoint, err)
 	}
-	// GetClientCertificate, not the static Certificates field: the server's
-	// ClientAuth "request" still advertises its ClientCAs pool (the
-	// persistent run CA's bundle, an issuer the ceremony-CA-issued admin
-	// cert does not chain to -- see this function's doc comment above), and
-	// crypto/tls's client silently withholds a Certificates-list entry
-	// whose issuer is not among the server's advertised acceptable CAs,
-	// sending no certificate at all. A GetClientCertificate callback is
-	// unconditional: xkms's mTLS identity is the SPKI thumbprint, not
-	// chain membership, so this admin cert is exactly the one to send
-	// regardless of what the server's CertificateRequest lists.
-	tlsConfig.GetClientCertificate = func(*tls.CertificateRequestInfo) (*tls.Certificate, error) {
-		return &cert, nil
-	}
+	// The static Certificates list every SDK transport and xkmsctl use:
+	// crypto/tls's client sends an entry only when its issuer is among the
+	// server's advertised acceptable CAs, and the server advertises the
+	// ceremony root init wrote to ca-bundle.pem (#794).
+	tlsConfig.Certificates = []tls.Certificate{cert}
 
 	return &http.Client{
 		Timeout:   15 * time.Second,

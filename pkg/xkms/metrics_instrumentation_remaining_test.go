@@ -256,7 +256,9 @@ func TestServiceBoundary_UnwrapKey_RecordsError(t *testing.T) {
 func TestServiceBoundary_WrapKeyByID_RecordsOperation(t *testing.T) {
 	target := newMaterialProvider([]byte("target-key-material"))
 	stores := setupKeyOpsService(t, map[string]types.KeyProvider{"target-be": target, "kek-be": nil})
-	addKeyOpsKey(t, stores["target-be"], &types.KeyAttributes{CN: "target-key", Exportable: true})
+	addKeyOpsKey(t, stores["target-be"], &types.KeyAttributes{
+		CN: "target-key", KeyType: types.KeyTypeSecret, SymmetricAlgorithm: types.SymmetricAES256GCM, Exportable: true,
+	})
 	addKeyOpsRSAKey(t, stores["kek-be"], &types.KeyAttributes{CN: "kek"})
 	svc := keyOpsService(t)
 	metrics.Enable()

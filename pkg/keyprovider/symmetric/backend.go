@@ -239,40 +239,24 @@ func (b *Backend) ListKeys(ctx context.Context) ([]*types.KeyAttributes, error) 
 		return nil, &errs.Wrapped{Msg: "failed to list keys", Err: err}
 	}
 
-	// Parse key ID format: [partition:]sw:secret:cn:algorithm
+	// A key ID is [tenant:][partition:]storetype:keytype:cn:algorithm
+	// (types.KeyAttributes.ID). The four fields every ID carries are read
+	// from its end, because the optional prefixes in front of them cannot be
+	// told apart by counting segments: a key that has both a tenant and a
+	// partition has six. Reading from the front dropped such a key from the
+	// listing, so it could be generated but never found again (go-xkms#1634).
+	// The tenant and the partition come from the metadata record below.
 	attrs := make([]*types.KeyAttributes, 0, len(keyIDs))
 	for _, id := range keyIDs {
 		parts := strings.Split(id, ":")
-		var cn string
-		var keyTypeStr string
-		var algorithmStr string
-		var storeType string
-		var partition string
-
-		if len(parts) >= 4 {
-			// Has all required parts
-			// For format without partition: sw:secret:my-key:aes256-gcm (4 parts)
-			// For format with partition: partition:sw:secret:my-key:aes256-gcm (5 parts)
-			if len(parts) == 4 {
-				// storetype:keytype:cn:algorithm
-				storeType = parts[0]
-				keyTypeStr = parts[1]
-				cn = parts[2]
-				algorithmStr = parts[3]
-			} else {
-				// partition:storetype:keytype:cn:algorithm
-				partition = parts[0]
-				storeType = parts[1]
-				keyTypeStr = parts[2]
-				cn = parts[3]
-				algorithmStr = parts[4]
-			}
-		} else {
-			// Fallback to using the whole ID as CN
-			cn = id
-			keyTypeStr = "secret" // Default to SECRET for symmetric keys
-			storeType = "sw"
+		// Every key this package stores has an ID of at least four segments.
+		// Anything shorter names no algorithm, and a key listed without one
+		// cannot be addressed by any operation.
+		if len(parts) < 4 {
+			continue
 		}
+		fields := parts[len(parts)-4:]
+		storeType, keyTypeStr, cn, algorithmStr := fields[0], fields[1], fields[2], fields[3]
 
 		// Skip asymmetric keys - they are handled by the PKCS8 backend
 		// Only process keys with keyType "secret" (symmetric keys)
@@ -282,14 +266,9 @@ func (b *Backend) ListKeys(ctx context.Context) ([]*types.KeyAttributes, error) 
 
 		attr := &types.KeyAttributes{
 			CN:                 cn,
-			KeyType:            types.ParseKeyType(keyTypeStr),
+			KeyType:            types.KeyTypeSecret,
 			StoreType:          backend.StoreType(storeType),
-			Partition:          types.Partition(partition),
 			SymmetricAlgorithm: types.SymmetricAlgorithm(algorithmStr),
-		}
-		// Ensure we have a valid key type for symmetric keys
-		if attr.KeyType == 0 {
-			attr.KeyType = types.KeyTypeSecret // Default to Secret if parsing fails
 		}
 
 		// Reload the metadata record to recover attributes the key ID string
@@ -302,10 +281,9 @@ func (b *Backend) ListKeys(ctx context.Context) ([]*types.KeyAttributes, error) 
 		}
 		attr.Exportable = metadata.Exportable
 		attr.Sensitive = metadata.Sensitive
-		// TenantID and Partition are trusted from the record, not the
-		// segment-count parse above: that parse cannot tell a tenant from a
-		// partition -- both produce five segments -- so the record's
-		// explicit values always replace the guess.
+		// TenantID and Partition come from the record: the ID's prefix
+		// cannot tell a tenant from a partition, since either alone produces
+		// five segments.
 		attr.TenantID = metadata.TenantID
 		attr.Partition = types.Partition(metadata.Partition)
 

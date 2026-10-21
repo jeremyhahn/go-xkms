@@ -92,9 +92,20 @@ On xkmsd the unified server's TLS certificate is the operator's
 `cert_file`/`key_file` or, without them, a bootstrap certificate that
 `upgradeUnifiedTLSCert` replaces once the CA composes
 (`pkg/server/unified_tls.go:159`). The upgrade also widens the mTLS client-CA
-pool to the configured `tls.ca_file`/`tls.client_cas` plus the CA's own bundle
-(`unifiedClientCAPool`, `unified_tls.go:198`), so a client anchored by either
-stays accepted (go-xkms#794).
+pool to the configured `tls.ca_file`/`tls.client_cas` and the `xkmsd init`
+ceremony root (`configuredClientCAs`, `pkg/server/tls_pool.go:86`) plus the
+CA's own bundle (`unifiedClientCAPool`, `unified_tls.go:198`), so a client
+anchored by either stays accepted (go-xkms#794).
+
+### Self-built REST surface audit (`pkg/api/rest`)
+
+`HostConfig.AuditLogger` (`qrdbsdk.NodeAuditLogger`, `host.go:675`) is the
+audit sink of the surface `NewHostServer` builds. It goes into the server's
+`Config.AuditLogger` (`host.go:723`) and the WebAuthn relying party
+(`host.go:810`), as xkmsd wires its own. Each login, allowed or refused, then
+records one `audit.Event`: a refused PIV login carries action
+`auth.login.piv`, outcome `deny` and `Details["reason"]`, for example
+`method not permitted`. Nil records nothing, as before (go-xkms#1618).
 
 ### Feature → dependency
 
@@ -150,6 +161,7 @@ stays accepted (go-xkms#794).
 | `pkg/compose/compose_test.go` | Every builder, its nil-input and storage-failure errors, CA reload, SSH backend resolution |
 | `pkg/compose/compose_tpm_sim_test.go` | The TPM policy service composes over a simulator TPM2 backend and answers through the service |
 | `pkg/api/rest/host_stores_test.go` | `NewHostServer` mounts store surfaces exactly from `HostConfig` |
+| `pkg/api/rest/host_audit_test.go` | A host's `AuditLogger` records one deny event with the refusal reason for a PIV login its method policy refuses; a nil logger still answers that route |
 | `sdk/go/apimodule_host_test.go` | The SDK re-exports configure the same composition |
 | `pkg/auth/qrdb_bearer_test.go` | The bearer bridge admits a token its source verifies, follows a reload, declines a request with no bearer token, and admits nothing through the no-op authenticator, no authenticator or no source |
 | `pkg/correlation/middleware_test.go`, `pkg/ratelimit/*_test.go` (`TestInterceptors_IPv6PeersShareTheirSlash64`) | The correlation middleware and interceptors; the limiter's /64 bucketing on gRPC and raw connections |

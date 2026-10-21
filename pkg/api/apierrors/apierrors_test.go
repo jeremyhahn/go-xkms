@@ -21,6 +21,7 @@ import (
 	"github.com/stretchr/testify/assert"
 
 	"github.com/jeremyhahn/go-xkms/pkg/backend"
+	"github.com/jeremyhahn/go-xkms/pkg/xkms"
 )
 
 // TestClassOf_MatchesSentinel proves ClassOf resolves a matching error
@@ -59,6 +60,18 @@ func TestClassOf_MatchesSentinel(t *testing.T) {
 		assert.True(t, ok)
 		assert.Equal(t, ClassInvalidArgument, class)
 	})
+}
+
+// TestImportExportSentinelClasses_WrapTargetNotSymmetric proves a WrapKeyByID
+// refusal of a non-symmetric target is an invalid argument (go-xkms#1634).
+func TestImportExportSentinelClasses_WrapTargetNotSymmetric(t *testing.T) {
+	err := &xkms.ErrWrapTarget{KeyID: "ecdsa-key", Err: xkms.ErrWrapTargetNotSymmetric}
+	class, ok := ClassOf(ImportExportSentinelClasses, err)
+	assert.True(t, ok)
+	assert.Equal(t, ClassInvalidArgument, class)
+
+	_, ok = ClassOf(ImportExportSentinelClasses, errors.New("unrelated"))
+	assert.False(t, ok, "an unlisted error must not be classified")
 }
 
 // TestClassOf_NoMatch proves ClassOf reports false, not a zero-value

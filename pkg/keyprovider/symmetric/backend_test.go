@@ -4706,6 +4706,47 @@ func TestListKeys_WithPartitionedKeys(t *testing.T) {
 	}
 }
 
+// TestListKeys_TenantAndPartition proves a key with both a tenant and a
+// partition, whose ID has six segments, is listed with its CN, algorithm,
+// tenant and partition. Parsing the ID from the front dropped it, so the key
+// could be generated but never found again (go-xkms#1634).
+func TestListKeys_TenantAndPartition(t *testing.T) {
+	b, err := NewBackend(&Config{KeyStorage: storage.New()})
+	if err != nil {
+		t.Fatalf("Failed to create backend: %v", err)
+	}
+	defer func() { _ = b.Close() }()
+
+	attrs := &types.KeyAttributes{
+		CN:                 "tenant-partitioned-key",
+		KeyType:            backend.KEY_TYPE_SECRET,
+		StoreType:          backend.STORE_SW,
+		SymmetricAlgorithm: types.SymmetricAES256GCM,
+		TenantID:           "acme",
+		Partition:          "p1",
+	}
+	if _, err := b.GenerateSymmetricKey(context.Background(), attrs); err != nil {
+		t.Fatalf("Failed to generate key: %v", err)
+	}
+
+	keys, err := b.ListKeys(context.Background())
+	if err != nil {
+		t.Fatalf("ListKeys failed: %v", err)
+	}
+	if len(keys) != 1 {
+		t.Fatalf("Expected 1 key, got %d", len(keys))
+	}
+	got := keys[0]
+	if got.CN != attrs.CN || got.SymmetricAlgorithm != attrs.SymmetricAlgorithm ||
+		got.TenantID != attrs.TenantID || got.Partition != attrs.Partition {
+		t.Errorf("listed %+v, want CN %q, algorithm %q, tenant %q, partition %q",
+			got, attrs.CN, attrs.SymmetricAlgorithm, attrs.TenantID, attrs.Partition)
+	}
+	if got.ID() != attrs.ID() {
+		t.Errorf("listed ID %q, want %q", got.ID(), attrs.ID())
+	}
+}
+
 // TestListKeys_WithMalformedKeyIDs tests ListKeys with various key ID formats
 func TestListKeys_WithMalformedKeyIDs(t *testing.T) {
 	s := storage.New()
@@ -4716,12 +4757,11 @@ func TestListKeys_WithMalformedKeyIDs(t *testing.T) {
 	}
 	defer func() { _ = b.Close() }()
 
-	// Manually insert a key with < 4 parts (malformed). ListKeys still
-	// resolves it through the fallback CN=full-ID parse and calls
-	// loadKeyMetadata for it -- every key it lists needs a record -- so this
-	// key is given one directly, exercising the parse path in isolation
-	// from metadata enforcement (see TestListKeys_KeyWithNoMetadataRecord_FailsWithTypedError
-	// for the no-record case).
+	// Manually insert a key with < 4 parts (malformed). Its ID names no
+	// algorithm, so ListKeys skips it rather than listing a secret key no
+	// operation could address (go-xkms#1634). It is given a metadata record
+	// so the skip is proven to come from the parse, not from a missing
+	// record (see TestListKeys_KeyWithNoMetadataRecord_FailsWithTypedError).
 	malformedKeyID := "malformed:key"
 	keyData := make([]byte, 32)
 	if _, err := rand.Read(keyData); err != nil {
@@ -4760,23 +4800,17 @@ func TestListKeys_WithMalformedKeyIDs(t *testing.T) {
 		t.Fatalf("ListKeys failed: %v", err)
 	}
 
-	// Should only return the normal symmetric key
-	// Malformed ID should be treated as fallback with CN=full ID
-	// Asymmetric key should be filtered out
+	// Only the normal symmetric key is listed: the malformed ID is skipped
+	// and the asymmetric key is filtered out.
+	if len(keys) != 1 {
+		t.Fatalf("Expected 1 key, got %d", len(keys))
+	}
 	foundNormal := false
-	foundMalformed := false
 	foundAsymmetric := false
 
 	for _, key := range keys {
 		if key.CN == "normal-key" {
 			foundNormal = true
-		}
-		if key.CN == malformedKeyID {
-			foundMalformed = true
-			// Should use default values for malformed keys
-			if key.KeyType != types.KeyTypeSecret {
-				t.Errorf("Expected KeyTypeSecret for malformed key, got %v", key.KeyType)
-			}
 		}
 		if key.CN == "test-rsa" {
 			foundAsymmetric = true
@@ -4785,9 +4819,6 @@ func TestListKeys_WithMalformedKeyIDs(t *testing.T) {
 
 	if !foundNormal {
 		t.Error("Normal key not found")
-	}
-	if !foundMalformed {
-		t.Error("Malformed key should be included with fallback handling")
 	}
 	if foundAsymmetric {
 		t.Error("Asymmetric key should be filtered out")

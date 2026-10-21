@@ -413,7 +413,9 @@ func TestGRPCExportKeyMaterial_NonExportableKeyIsFailedPrecondition(t *testing.T
 
 func TestGRPCWrapKeyByID_DelegatesToServiceLayer(t *testing.T) {
 	svc, provider := setupCapableService(t)
-	provider.addKey(&types.KeyAttributes{CN: "target-key", Exportable: true})
+	provider.addKey(&types.KeyAttributes{
+		CN: "target-key", KeyType: types.KeyTypeSecret, SymmetricAlgorithm: types.SymmetricAES256GCM, Exportable: true,
+	})
 	provider.addKey(&types.KeyAttributes{CN: "kek"})
 
 	resp, err := svc.WrapKeyByID(context.Background(), &pb.WrapKeyByIDRequest{

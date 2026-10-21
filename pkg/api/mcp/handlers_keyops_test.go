@@ -508,7 +508,9 @@ func TestHandler_ExportKey_And_ExportKeyMaterial_AreDistinct(t *testing.T) {
 // ===========================================================================
 
 func TestHandler_WrapKeyByID_Success(t *testing.T) {
-	target := newFakeIEProvider(&types.KeyAttributes{CN: "target-key"})
+	target := newFakeIEProvider(&types.KeyAttributes{
+		CN: "target-key", KeyType: types.KeyTypeSecret, SymmetricAlgorithm: types.SymmetricAES256GCM,
+	})
 	target.material["target-key"] = []byte("target-key-material")
 	kek := newFakeIEProvider(&types.KeyAttributes{CN: "kek"})
 	server := newKeyOpsServer(t, map[string]types.KeyProvider{"target-be": target, "kek-be": kek})

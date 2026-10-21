@@ -51,7 +51,31 @@ import (
 // The cost is diagnostic: an operator debugging a genuine unwrap failure sees
 // only that the blob was rejected. That is the same trade TLS made when it
 // stopped distinguishing decrypt_error from bad_record_mac.
+//
+// The authenticated mechanisms report it too, through
+// ErrUnwrapAuthenticationFailed, so a caller matches one error for every
+// mechanism (go-xkms#1634).
 var ErrUnwrapCiphertextRejected = errors.New("keystore: unwrap failed: ciphertext rejected")
+
+// ErrUnwrapAuthenticationFailed is an authenticated mechanism's refusal of a
+// blob: the AES-KW and AES-KWP integrity check (RFC 3394 section 2.2.3, RFC
+// 5649 section 3) or the AES-GCM tag (NIST SP 800-38D section 7.2), as when
+// the blob was wrapped under another key. It matches
+// ErrUnwrapCiphertextRejected and keeps the mechanism's own cause: a forger
+// cannot make a blob pass these checks, so why it failed is not an oracle
+// answer, and it is what an operator needs to debug a genuine failure.
+type ErrUnwrapAuthenticationFailed struct {
+	Err error
+}
+
+func (e *ErrUnwrapAuthenticationFailed) Error() string {
+	return ErrUnwrapCiphertextRejected.Error() + ": " + e.Err.Error()
+}
+
+// Unwrap returns ErrUnwrapCiphertextRejected and the mechanism's cause.
+func (e *ErrUnwrapAuthenticationFailed) Unwrap() []error {
+	return []error{ErrUnwrapCiphertextRejected, e.Err}
+}
 
 // Wrap/unwrap algorithms accepted on WrapKeyByIDRequest.Algorithm and
 // UnwrapKeyByIDRequest.Algorithm.
@@ -483,7 +507,7 @@ func unwrapAESKeyWrap(ctx context.Context, b Backend, attrs *types.KeyAttributes
 	defer secure.Wipe(kek)
 	plaintext, err := wrapping.UnwrapAESKW(wrapped, kek)
 	if err != nil {
-		return nil, &ErrKeyOperation{Operation: unwrapOperationNames[kindAESKW], KeyID: attrs.CN, Err: err}
+		return nil, &ErrKeyOperation{Operation: unwrapOperationNames[kindAESKW], KeyID: attrs.CN, Err: &ErrUnwrapAuthenticationFailed{Err: err}}
 	}
 	return plaintext, nil
 }
@@ -515,7 +539,7 @@ func unwrapAESKeyWrapPad(ctx context.Context, b Backend, attrs *types.KeyAttribu
 	defer secure.Wipe(kek)
 	plaintext, err := wrapping.UnwrapAESKWP(wrapped, kek)
 	if err != nil {
-		return nil, &ErrKeyOperation{Operation: unwrapOperationNames[kindAESKWP], KeyID: attrs.CN, Err: err}
+		return nil, &ErrKeyOperation{Operation: unwrapOperationNames[kindAESKWP], KeyID: attrs.CN, Err: &ErrUnwrapAuthenticationFailed{Err: err}}
 	}
 	return plaintext, nil
 }
@@ -636,7 +660,7 @@ func unwrapAESGCM(ctx context.Context, b Backend, attrs *types.KeyAttributes, pa
 		GCMNonceMode: nonceMode,
 	}, decryptOpts)
 	if err != nil {
-		return nil, &ErrKeyOperation{Operation: unwrapOperationNames[kindAESGCM], KeyID: attrs.CN, Err: err}
+		return nil, &ErrKeyOperation{Operation: unwrapOperationNames[kindAESGCM], KeyID: attrs.CN, Err: &ErrUnwrapAuthenticationFailed{Err: err}}
 	}
 	return plaintext, nil
 }

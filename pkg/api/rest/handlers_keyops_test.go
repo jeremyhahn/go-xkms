@@ -573,7 +573,9 @@ func TestExportKeyMaterialHandler_RBACDenied(t *testing.T) {
 
 func TestWrapKeyByIDHandler_Success(t *testing.T) {
 	h, provider := setupKeyOpsHandlerContext(t)
-	provider.addKey(&types.KeyAttributes{CN: "target-key", Exportable: true})
+	provider.addKey(&types.KeyAttributes{
+		CN: "target-key", KeyType: types.KeyTypeSecret, SymmetricAlgorithm: types.SymmetricAES256GCM, Exportable: true,
+	})
 	provider.addKey(&types.KeyAttributes{CN: "kek"})
 
 	w := doJSONRequest(t, h.WrapKeyByIDHandler, http.MethodPost, "/api/v1/keys/wrap-by-id", &transport.WrapKeyByIDRequest{

@@ -669,6 +669,11 @@ type HostConfig struct {
 	// slog.Default().
 	Logger *slog.Logger
 
+	// AuditLogger receives the surface's security audit events: every
+	// login allowed or refused, with the refusal reason. Nil records none,
+	// as before (go-xkms#1618).
+	AuditLogger qrdbsdk.NodeAuditLogger
+
 	// Version is the API version string reported by discovery endpoints.
 	Version string
 
@@ -715,6 +720,7 @@ func NewHostServer(ctx context.Context, hc *HostConfig) (*Server, error) {
 		Logger:      logger,
 		XKMSService: hc.XKMSService,
 		CORS:        hc.CORS,
+		AuditLogger: hc.AuditLogger,
 	}
 
 	if names := hc.XKMSService.BackendNames(); len(names) > 0 {
@@ -801,6 +807,7 @@ func NewHostServer(ctx context.Context, hc *HostConfig) (*Server, error) {
 				TokenIssuer:              cfg.TokenIssuer,
 				CredentialStoreDecorator: hc.WebAuthnCredentialStoreDecorator,
 				Logger:                   logger,
+				AuditLogger:              hc.AuditLogger,
 			})
 			if waErr != nil {
 				logger.Error("host REST surface: WebAuthn service construction failed; webauthn routes stay unmounted", "error", waErr)

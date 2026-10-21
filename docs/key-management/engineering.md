@@ -169,6 +169,22 @@ and `GetDecrypterByID`, each taking `(ctx, keyID)` (`pkg/xkms/keystore.go:139,
 - **Wrap/unwrap by ID never materialises plaintext outside the service.**
   `WrapKeyByID` reads the KEK and the target inside the process and returns
   only ciphertext.
+- **`WrapKeyByID` wraps two kinds of target** (`pkg/xkms/servicer_key.go:1067`):
+  a stored exportable symmetric key (`KeyTypeSecret` with a
+  `SymmetricAlgorithm`, created `Exportable`), or caller-supplied
+  `TargetKeyMaterial`. Any other stored key is refused before the backend is
+  asked to export (`pkg/xkms/servicer_key.go:1198`) with `*ErrWrapTarget`,
+  which matches `ErrWrapTargetNotSymmetric`
+  (`pkg/xkms/errors_keyops.go:55-61`): invalid-argument on gRPC and MCP, 400
+  on REST. Every symmetric create path (`GenerateKey`, `ImportKey`,
+  `RotateKey`), with or without a tenant and a partition, stores keys it
+  accepts; the symmetric backend lists a key ID from its last four segments
+  (`pkg/keyprovider/symmetric/backend.go:257`) (go-xkms#1634).
+- **An unwrap under the wrong key matches `ErrUnwrapCiphertextRejected` for
+  every mechanism.** The authenticated ones (AES-KW, AES-KWP, AES-GCM) return
+  `*ErrUnwrapAuthenticationFailed` (`pkg/xkms/servicer_wrapkey.go:66`), which
+  matches it and keeps the mechanism's cause. The unauthenticated ones
+  discard the cause (go-xkms#1634).
 - **`KeyAttributes.String()` never renders `Password` or `SealData`,
   regardless of `Debug`.** (`pkg/types/types.go:1223-1256`). Before the
   2026-09-28 crypto audit a `Debug`-gated "Secrets" block printed both
