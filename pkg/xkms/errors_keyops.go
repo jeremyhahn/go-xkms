@@ -48,7 +48,29 @@ var (
 	// ErrKeyAgreementFailed indicates ECDH key agreement or the subsequent key
 	// derivation failed inside the backend.
 	ErrKeyAgreementFailed = errors.New("keystore: ECDH key derivation failed")
+
+	// ErrWrapTargetNotSymmetric indicates WrapKeyByID was asked to wrap a
+	// stored key that is not symmetric. WrapKeyByID releases the raw material
+	// of an exportable symmetric key only: a KeyTypeSecret key whose
+	// attributes carry a SymmetricAlgorithm.
+	ErrWrapTargetNotSymmetric = errors.New("keystore: wrap target must be an exportable symmetric key (KeyTypeSecret with a SymmetricAlgorithm)")
 )
+
+// ErrWrapTarget reports that the stored key WrapKeyByID was asked to wrap is
+// not a key it wraps. KeyID is the target key's ID; Err is the sentinel
+// (ErrWrapTargetNotSymmetric) the transports classify.
+type ErrWrapTarget struct {
+	KeyID string
+	Err   error
+}
+
+// Error returns the error message.
+func (e *ErrWrapTarget) Error() string {
+	return fmt.Sprintf("%v: %s", e.Err, e.KeyID)
+}
+
+// Unwrap returns the sentinel.
+func (e *ErrWrapTarget) Unwrap() error { return e.Err }
 
 // ErrRoleLookup reports that a named participant of a multi-key or
 // multi-backend operation could not be resolved. Role names the participant and

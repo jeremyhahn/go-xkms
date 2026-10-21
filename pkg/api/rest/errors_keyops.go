@@ -71,6 +71,7 @@ var keyOpSentinelStatus = []struct {
 	{backend.ErrExportNotSupported, http.StatusNotImplemented},
 	{backend.ErrImportNotSupported, http.StatusNotImplemented},
 	{backend.ErrAsymmetricKeyExportNotAllowed, http.StatusBadRequest},
+	{xkms.ErrWrapTargetNotSymmetric, http.StatusBadRequest},
 	{backend.ErrKeyNotExportable, http.StatusForbidden},
 
 	// A caller-supplied nonce against a backend whose remote encryption

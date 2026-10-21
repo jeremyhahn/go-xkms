@@ -1041,9 +1041,17 @@ func (s *XKMSService) UnwrapKey(ctx context.Context, req *transport.UnwrapKeyReq
 // both identified by key ID and backend. This is the service-layer primitive
 // behind PKCS#11 C_WrapKey.
 //
-// The target is named either by req.TargetKeyID -- a backend-resident key,
-// which must be extractable and whose raw material is exported here -- or by
-// req.TargetKeyMaterial, plaintext the caller already holds. See
+// It wraps two kinds of target, and only these:
+//
+//   - req.TargetKeyID: a stored exportable symmetric key -- KeyTypeSecret
+//     with a SymmetricAlgorithm, created with Exportable=true -- whose current
+//     version's raw material is exported here. Any other stored key, an
+//     asymmetric key pair included, is refused with *ErrWrapTarget, which
+//     matches ErrWrapTargetNotSymmetric, before the backend is asked to export.
+//   - req.TargetKeyMaterial: plaintext the caller already holds, wrapped as
+//     given.
+//
+// See
 // wrapTargetKeyMaterial for why both forms exist and why they must converge
 // here rather than in the caller. Either way the material is encrypted
 // directly under the wrapping key named by req.WrappingKeyID via
@@ -1184,7 +1192,13 @@ func (s *XKMSService) wrapTargetKeyMaterial(ctx context.Context, req *transport.
 	}
 
 	// Only symmetric keys created with Exportable=true can be released here.
-	// The target's current version is the material wrapped.
+	// The target's current version is the material wrapped. The kind is
+	// checked here, before the backend is asked, so every backend refuses a
+	// target that is not symmetric with the same error, and that error names
+	// the keys this call does wrap.
+	if !targetVersion.attrs.IsSymmetric() {
+		return nil, &ErrWrapTarget{KeyID: req.TargetKeyID, Err: ErrWrapTargetNotSymmetric}
+	}
 	keyMaterial, err := targetExporter.ExportKeyMaterial(ctx, targetVersion.attrs)
 	if err != nil {
 		return nil, &ErrOperationWrap{Sentinel: ErrExportKeyMaterialFailed, Detail: "target key", Err: err}

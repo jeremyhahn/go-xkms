@@ -67,3 +67,21 @@ func TestMapKeyOpError_CallerNonceNotSupported(t *testing.T) {
 		t.Errorf("status = %d, want %d", w.Code, http.StatusBadRequest)
 	}
 }
+
+// TestMapKeyOpError_WrapTargetNotSymmetric proves a WrapKeyByID refusal of a
+// non-symmetric target maps to 400, beside an asymmetric export refusal
+// (go-xkms#1634).
+func TestMapKeyOpError_WrapTargetNotSymmetric(t *testing.T) {
+	for name, err := range map[string]error{
+		"typed":   &xkms.ErrWrapTarget{KeyID: "ecdsa-key", Err: xkms.ErrWrapTargetNotSymmetric},
+		"backend": backend.ErrAsymmetricKeyExportNotAllowed,
+	} {
+		t.Run(name, func(t *testing.T) {
+			w := httptest.NewRecorder()
+			mapKeyOpError(w, err)
+			if w.Code != http.StatusBadRequest {
+				t.Errorf("status = %d, want %d", w.Code, http.StatusBadRequest)
+			}
+		})
+	}
+}

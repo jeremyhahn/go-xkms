@@ -379,14 +379,18 @@ func TestUnwrapKeyMaterial_RejectsEmptyResultForAEAD(t *testing.T) {
 	// AES-GCM's own decryption failure deliberately keeps its diagnostic. It is
 	// an AEAD: a forger cannot produce a blob that authenticates, so "why did
 	// this fail" is not an oracle answer, and collapsing it would cost an
-	// operator the one useful thing the error says. Only the unauthenticated
-	// mechanisms -- CKM_RSA_PKCS, CKM_RSA_PKCS_OAEP, CKM_AES_CBC(_PAD) -- are
-	// made opaque.
+	// operator the one useful thing the error says. It still matches
+	// ErrUnwrapCiphertextRejected, through ErrUnwrapAuthenticationFailed. Only
+	// the unauthenticated mechanisms -- CKM_RSA_PKCS, CKM_RSA_PKCS_OAEP,
+	// CKM_AES_CBC(_PAD) -- are made opaque.
 	forged := append([]byte{}, blob...)
 	forged[len(forged)-1] ^= 0x01
 	_, forgedErr := unwrapKeyMaterial(ctx, store, attrs, string(types.WrapAESGCM), wrapParams{}, forged)
 	require.Error(t, forgedErr)
-	assert.NotErrorIs(t, forgedErr, ErrUnwrapCiphertextRejected)
+	assert.ErrorIs(t, forgedErr, ErrUnwrapCiphertextRejected)
+	var authErr *ErrUnwrapAuthenticationFailed
+	require.ErrorAs(t, forgedErr, &authErr)
+	assert.Error(t, authErr.Err, "the AEAD's own cause is kept")
 
 	// Success counterpart: a non-empty AEAD wrap still round-trips.
 	target := []byte("aead-target-key-material")

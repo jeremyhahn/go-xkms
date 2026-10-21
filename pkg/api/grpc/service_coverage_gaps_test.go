@@ -433,7 +433,9 @@ func TestWrapKeyByID_TargetBackendNoImportExport(t *testing.T) {
 	require.Error(t, err)
 	st, ok := status.FromError(err)
 	require.True(t, ok)
-	assert.True(t, st.Code() == codes.Unimplemented || st.Code() == codes.Internal || st.Code() == codes.NotFound || st.Code() == codes.FailedPrecondition)
+	// An ECDSA target is not a key WrapKeyByID wraps (go-xkms#1634).
+	assert.Equal(t, codes.InvalidArgument, st.Code())
+	assert.Contains(t, st.Message(), xkms.ErrWrapTargetNotSymmetric.Error())
 }
 
 // ===================== UnwrapKeyByID deeper path tests =====================
