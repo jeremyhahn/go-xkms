@@ -18,12 +18,14 @@ package azurekv
 import (
 	"bytes"
 	"context"
+	"crypto/fips140"
 	"crypto/rand"
 	"crypto/x509"
 	"errors"
 	"testing"
 
 	"github.com/jeremyhahn/go-xkms/pkg/backend"
+	"github.com/jeremyhahn/go-xkms/pkg/crypto/aead"
 	"github.com/jeremyhahn/go-xkms/pkg/storage"
 	"github.com/jeremyhahn/go-xkms/pkg/types"
 )
@@ -675,6 +677,14 @@ func TestAzureKVBackend_NonceReuse(t *testing.T) {
 
 	// First encryption with fixed nonce - should succeed
 	_, err := encrypter.Encrypt(plaintext, opts)
+	if fips140.Enforced() {
+		// A caller-supplied nonce is arbitrary-IV GCM, which
+		// GODEBUG=fips140=only refuses before any nonce is tracked.
+		if !errors.Is(err, aead.ErrArbitraryIVGCMUnavailable) {
+			t.Fatalf("Encrypt with a caller nonce under fips140=only: got %v, want ErrArbitraryIVGCMUnavailable", err)
+		}
+		return
+	}
 	if err != nil {
 		t.Fatalf("First encryption with fixed nonce failed: %v", err)
 	}
