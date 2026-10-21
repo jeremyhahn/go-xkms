@@ -132,12 +132,16 @@ Scope and boundaries: [docs/SPEC.md](docs/SPEC.md).
 - **authz-claim-roles** — roles from go-qrdb, not IdP or token claims — [Dev complete](../../milestone/14) — blocked: go-qrdb gap
 - **authz-device-onboarding** — onboarding as users:invite and device-onboarding permissions — [Dev complete](../../milestone/14) — blocked: go-qrdb gap
 - **authz-holds-role** — role membership from go-qrdb — [Dev complete](../../milestone/14) — blocked: go-qrdb gap
+- **authz-mtls-tenant** — xkmsd mTLS tenant by `qrdbsdk.TenantFromClientCert` — [Dev complete](../../milestone/14) — open
 - **authz-object-owner** — object tenancy on go-qrdb's tenant rule — [Dev complete](../../milestone/14) — blocked: go-qrdb gap
+- **authz-peercred-admission** — unix-socket peer admission through go-qrdb — [Dev complete](../../milestone/14) — blocked: go-qrdb gap
 - **authz-peercred-roles** — peer-credential roles by go-qrdb role ID — [Dev complete](../../milestone/14) — blocked: go-qrdb gap
 - **authz-permission-vocabulary** — go-qrdb's permission constants, xkms-only ones registered — [Dev complete](../../milestone/14) — blocked: go-qrdb gap
 - **authz-shared-password** — shared-password override as a go-qrdb permission — [Dev complete](../../milestone/14) — blocked: go-qrdb gap
 - **authz-tenant-iam** — cross-tenant user and role administration — [Dev complete](../../milestone/14) — blocked: go-qrdb #683
-- **authz-ui-matrix** — UI permissions from go-qrdb's caller-self permission listing — [Dev complete](../../milestone/14) — open
+- **authz-tenant-ou** — the tenant as subject OU on every issuance path — [Dev complete](../../milestone/14) — open
+- **authz-token-perms** — permissions dropped from ACME admin token claims — [Dev complete](../../milestone/14) — open
+- **authz-ui-matrix** — UI permissions from a go-qrdb listing resolved for the caller — [Dev complete](../../milestone/14) — blocked: go-qrdb gap
 - **authz-xkey-uid0** — xkey audit access by `audit:read` — [Dev complete](../../milestone/14) — open
 
 ## Future
