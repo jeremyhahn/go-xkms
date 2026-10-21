@@ -1,1 +1,0 @@
-- **`rest.HostConfig.AuditLogger` (go-xkms#1618).** A module hosted through `rest.NewHostServer` records its login audit events, refusal reasons included, to the host's `qrdbsdk.NodeAuditLogger`; nil records none, as before. Docs: `docs/host-embedding/engineering.md`.

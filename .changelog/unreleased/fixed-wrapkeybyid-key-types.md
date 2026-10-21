@@ -1,1 +1,0 @@
-WrapKeyByID refuses a stored target that is not an exportable symmetric key with `ErrWrapTarget` (`ErrWrapTargetNotSymmetric`, invalid-argument / 400); AES-KW, AES-KWP and AES-GCM unwrap failures match `ErrUnwrapCiphertextRejected`; the symmetric backend lists keys that have both a tenant and a partition (#1634).

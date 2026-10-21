@@ -7,6 +7,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.59.0-alpha] - 2026-10-21
+
+### Added
+
+- **`rest.HostConfig.AuditLogger` (go-xkms#1618).** A module hosted through `rest.NewHostServer` records its login audit events, refusal reasons included, to the host's `qrdbsdk.NodeAuditLogger`; nil records none, as before. Docs: `docs/host-embedding/engineering.md`.
+
+### Fixed
+
+WrapKeyByID refuses a stored target that is not an exportable symmetric key with `ErrWrapTarget` (`ErrWrapTargetNotSymmetric`, invalid-argument / 400); AES-KW, AES-KWP and AES-GCM unwrap failures match `ErrUnwrapCiphertextRejected`; the symmetric backend lists keys that have both a tenant and a partition (#1634).
+
 ## [0.58.0-alpha] - 2026-10-21
 
 ### Security
