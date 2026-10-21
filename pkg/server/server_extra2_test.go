@@ -3256,17 +3256,17 @@ func TestStart_TLSBundlerFileNotFound(t *testing.T) {
 	cfg.Protocols.QUIC = false
 	cfg.Protocols.MCP = false
 	cfg.Metrics.Enabled = false
-	// TLS.CAFile points to a non-existent file so newTLSCABundler fails with
-	// a warn-only log, not a fatal error. Start() must continue normally.
+	// The node's Unix socket loads the cert/key and client CA files at New,
+	// so they exist then.
 	cfg.TLS.Enabled = true
-	cfg.TLS.CAFile = "/nonexistent/path/ca.pem"
-	// The node's Unix socket loads the cert/key files at New, so they exist.
-	cfg.TLS.CertFile, cfg.TLS.KeyFile, _ = createTestTLSFiles(t)
+	cfg.TLS.CertFile, cfg.TLS.KeyFile, cfg.TLS.CAFile = createTestTLSFiles(t)
 
 	server, err := New(cfg)
 	require.NoError(t, err)
 
-	// Start() must not panic even when the bundler init fails silently.
+	// TLS.CAFile disappears after New, so newTLSCABundler fails with a
+	// warn-only log, not a fatal error. Start() must not panic.
+	server.config.TLS.CAFile = "/nonexistent/path/ca.pem"
 	startErr := server.Start()
 	_ = startErr
 	_ = server.Shutdown()

@@ -291,10 +291,12 @@ Both listeners map `tls.client_auth` the same way (`server.go:3442-3451`,
 | `request` | `RequestClientCert` |
 | `none`, empty, anything else | `NoClientCert` |
 
-After the embedded CA composes, the unified listener verifies client
-certificates against the union of `tls.ca_file`, `tls.client_cas` and the
-CA's own bundle, not the bundle alone (`unifiedClientCAPool`,
-`unified_tls.go:198`, called at `:174`). `auth.piv_login.enabled` refuses an
+The client-CA pool is the union of `tls.ca_file`, `tls.client_cas` and the
+`xkmsd init` ceremony root at `<datastore.path>/ca-bundle.pem` when it exists
+(`configuredClientCAs`, `pkg/server/tls_pool.go:86`; a bundle that does not
+parse fails start-up). After the embedded CA composes, the unified listener
+adds the CA's own bundle to that union, not in place of it
+(`unifiedClientCAPool`, `unified_tls.go:198`, called at `:174`). `auth.piv_login.enabled` refuses an
 empty or `none` `tls.client_auth` (`pkg/config/config.go:1634-1638`).
 `tls.prefer_server_ciphers` and `tls.watch_cert_files` are parsed
 (`config.go:413`, `:416`) but read by nothing: certificates are not reloaded

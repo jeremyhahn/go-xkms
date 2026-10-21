@@ -16,8 +16,10 @@ package server
 import (
 	"crypto/x509"
 	"errors"
+	"io/fs"
 	"os"
 	"path/filepath"
+	"syscall"
 )
 
 // loadClientCAsUnion builds the union of CA PEM files referenced by
@@ -64,6 +66,51 @@ func loadClientCAsUnion(pathSlices ...[]string) (*x509.CertPool, error) {
 		return nil, nil
 	}
 	return pool, nil
+}
+
+// ceremonyRootBundleName is the file `xkmsd init` writes the ceremony CA's
+// root to in the node's data directory (cmd/xkmsd/init_ceremony.go
+// persistCABundle). Init issues the admin client certificate from that root.
+const ceremonyRootBundleName = "ca-bundle.pem"
+
+// configuredClientCAs builds the client-CA pool the server advertises from
+// configuration: the primary TLS.CAFile, every TLS.ClientCAs entry, and the
+// init ceremony root when `xkmsd init` wrote one into Datastore.Path. It
+// returns a nil pool with no error when none of them is present.
+//
+// Advertising the ceremony root grants nothing: client identity binds by
+// go-qrdb's SPKI thumbprint (pkg/auth/mtls.go userIdentity), never by chain.
+// The pool only decides which certificate a crypto/tls client with a static
+// Certificates list offers, since such a client withholds any certificate
+// whose issuer the server does not list (#794).
+func (s *Server) configuredClientCAs() (*x509.CertPool, error) {
+	primary := []string{}
+	if s.config.TLS.CAFile != "" {
+		primary = append(primary, s.config.TLS.CAFile)
+	}
+	ceremony, err := s.ceremonyRootBundle()
+	if err != nil {
+		return nil, err
+	}
+	return loadClientCAsUnion(primary, s.config.TLS.ClientCAs, ceremony)
+}
+
+// ceremonyRootBundle returns the path of the init ceremony root bundle when
+// it exists. A node `xkmsd init` did not initialise has none, which is not an
+// error, and neither is a Datastore.Path that is not a directory (an
+// ephemeral node); any other failure to inspect the path is a *ErrFileRead.
+func (s *Server) ceremonyRootBundle() ([]string, error) {
+	if s.config.Datastore.Path == "" {
+		return nil, nil
+	}
+	path := filepath.Join(s.config.Datastore.Path, ceremonyRootBundleName)
+	if _, err := os.Stat(path); err != nil {
+		if errors.Is(err, fs.ErrNotExist) || errors.Is(err, syscall.ENOTDIR) {
+			return nil, nil
+		}
+		return nil, &ErrFileRead{Path: path, Err: err}
+	}
+	return []string{path}, nil
 }
 
 // canonicalizeCAPath produces a stable identifier for a CA file path
