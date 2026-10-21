@@ -111,6 +111,10 @@ func digestFinalViaC(t *testing.T, session module.SessionHandle) ([]byte, module
 // crypto/sha256 oracle, and the ciphertext recovered through C_EncryptFinal
 // decrypts back to the original plaintext.
 func TestDigestEncryptUpdate_RoundTrip(t *testing.T) {
+	// Drives a construction FIPS mode refuses; see exports_fips_test.go.
+	if !runsOutsideFIPSMode(t) {
+		return
+	}
 	_, session := newCryptoFixture(t)
 	key := generateAESKeyViaC(t, session, "dualfunction-digestencrypt-aes")
 
@@ -179,6 +183,10 @@ func startDigestViaC(t *testing.T, session module.SessionHandle) module.CK_RV {
 // buffers its input for the active decrypt operation: the plaintext
 // recovered through C_DecryptFinal matches what was actually encrypted.
 func TestDecryptDigestUpdate_RoundTrip(t *testing.T) {
+	// Drives a construction FIPS mode refuses; see exports_fips_test.go.
+	if !runsOutsideFIPSMode(t) {
+		return
+	}
 	_, session := newCryptoFixture(t)
 	key := generateAESKeyViaC(t, session, "dualfunction-decryptdigest-aes")
 
@@ -216,6 +224,10 @@ func TestDecryptDigestUpdate_RoundTrip(t *testing.T) {
 // independent RSA public-key check, and the ciphertext decrypts back to the
 // same plaintext.
 func TestSignEncryptUpdate_RoundTrip(t *testing.T) {
+	// Drives a construction FIPS mode refuses; see exports_fips_test.go.
+	if !runsOutsideFIPSMode(t) {
+		return
+	}
 	_, session := newCryptoFixture(t)
 	pub, priv := generateRSAKeyPairViaC(t, session)
 	key := generateAESKeyViaC(t, session, "dualfunction-signencrypt-aes")
@@ -273,6 +285,10 @@ func TestSignEncryptUpdate_RoundTrip(t *testing.T) {
 // half activated alongside it accepts a genuine signature over the recovered
 // plaintext and rejects a tampered one.
 func TestDecryptVerifyUpdate_RoundTrip(t *testing.T) {
+	// Drives a construction FIPS mode refuses; see exports_fips_test.go.
+	if !runsOutsideFIPSMode(t) {
+		return
+	}
 	_, session := newCryptoFixture(t)
 	pub, priv := generateRSAKeyPairViaC(t, session)
 	key := generateAESKeyViaC(t, session, "dualfunction-decryptverify-aes")

@@ -23,7 +23,6 @@ import (
 	xkms "github.com/jeremyhahn/go-xkms/sdk/go"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
-	"golang.org/x/crypto/chacha20poly1305"
 )
 
 // passwordBackupService returns a service with one trust-store certificate,
@@ -113,13 +112,16 @@ func TestPasswordBackup_HeaderCarriesSaltAndParams(t *testing.T) {
 
 	require.NotNil(t, eb.KDF)
 	assert.Equal(t, BackupVersion, eb.Version)
-	assert.Equal(t, xkms.PasswordHashVersion(1), eb.KDF.Version)
-	assert.EqualValues(t, "Argon2id", eb.KDF.Algorithm)
-	assert.EqualValues(t, 3, eb.KDF.Time)
-	assert.EqualValues(t, 64*1024, eb.KDF.MemoryKiB)
-	assert.EqualValues(t, 4, eb.KDF.Threads)
 	assert.Equal(t, KeySize, eb.KDF.KeyLength)
 	assert.GreaterOrEqual(t, len(eb.KDF.Salt), 16)
+
+	// The header records exactly the FIPS-aware hasher's parameters:
+	// Argon2id normally, PBKDF2-SHA256 when the FIPS 140 module is on.
+	want, err := xkms.NewFIPSAwareHasher().NewKeyParams()
+	require.NoError(t, err)
+	got := *eb.KDF
+	got.Salt, want.Salt = nil, nil
+	assert.Equal(t, *want, got)
 
 	data, err := json.Marshal(eb)
 	require.NoError(t, err)
@@ -127,7 +129,12 @@ func TestPasswordBackup_HeaderCarriesSaltAndParams(t *testing.T) {
 	require.NoError(t, json.Unmarshal(data, &raw))
 	var kdf map[string]any
 	require.NoError(t, json.Unmarshal(raw["kdf"], &kdf))
-	for _, field := range []string{"version", "algorithm", "salt", "time", "memory_kib", "threads", "key_length"} {
+	want.Salt = eb.KDF.Salt
+	wantData, err := json.Marshal(want)
+	require.NoError(t, err)
+	var wantKDF map[string]any
+	require.NoError(t, json.Unmarshal(wantData, &wantKDF))
+	for field := range wantKDF {
 		assert.Contains(t, kdf, field)
 	}
 }
@@ -166,20 +173,19 @@ func TestPasswordBackup_WrongPassword(t *testing.T) {
 	assert.ErrorIs(t, err, ErrDecryptionFailed)
 }
 
-// TestPasswordBackup_LegacyFormatRefused builds a genuine version 1 file --
-// the key an unsalted SHA-256 of the password, no KDF record, no AAD -- and
-// checks it is refused with the dedicated error even given the password.
+// TestPasswordBackup_LegacyFormatRefused builds a version 1 envelope -- the
+// key an unsalted SHA-256 of the password, no KDF record -- and checks it is
+// refused with the dedicated error even given the password. The refusal is
+// decided by the version field before any decryption, so the sealed bytes
+// are opaque.
 func TestPasswordBackup_LegacyFormatRefused(t *testing.T) {
 	password := []byte("legacy")
 	legacyKey := sha256.Sum256(password)
-	aead, err := chacha20poly1305.NewX(legacyKey[:])
-	require.NoError(t, err)
-	nonce := make([]byte, aead.NonceSize())
 	legacy := &EncryptedBackup{
 		Magic:      BackupMagic,
 		Version:    1,
-		Nonce:      nonce,
-		Ciphertext: aead.Seal(nil, nonce, []byte(`{"manifest":{}}`), nil),
+		Nonce:      make([]byte, 24),
+		Ciphertext: []byte("opaque version 1 ciphertext"),
 	}
 
 	svc := passwordBackupService(t)
@@ -204,10 +210,18 @@ func TestPasswordBackup_HeaderAuthenticated(t *testing.T) {
 	require.NoError(t, err)
 
 	tamper := map[string]func(p *xkms.PasswordKeyParams){
-		"salt":      func(p *xkms.PasswordKeyParams) { p.Salt[0] ^= 0xFF },
-		"memory":    func(p *xkms.PasswordKeyParams) { p.MemoryKiB = 8 * 1024 },
-		"time":      func(p *xkms.PasswordKeyParams) { p.Time = 1 },
-		"algorithm": func(p *xkms.PasswordKeyParams) { p.Algorithm = "PBKDF2" },
+		"salt":   func(p *xkms.PasswordKeyParams) { p.Salt[0] ^= 0xFF },
+		"memory": func(p *xkms.PasswordKeyParams) { p.MemoryKiB = 8 * 1024 },
+		"time":   func(p *xkms.PasswordKeyParams) { p.Time = 1 },
+		// Swap to the other KDF: the hasher picks PBKDF2 under FIPS mode
+		// and Argon2id otherwise.
+		"algorithm": func(p *xkms.PasswordKeyParams) {
+			if p.Algorithm == "PBKDF2" {
+				p.Algorithm = "Argon2id"
+				return
+			}
+			p.Algorithm = "PBKDF2"
+		},
 	}
 	for name, mutate := range tamper {
 		t.Run(name, func(t *testing.T) {

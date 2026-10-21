@@ -56,63 +56,43 @@ func newGCMTransport(t *testing.T) *gcmTransport {
 	return &gcmTransport{mockClient: newMockClient(), key: key}
 }
 
-// aead builds the AEAD for a request's tag length. Shared by both directions
-// on purpose: the encrypt and decrypt halves have to resolve identically or a
-// truncated tag never authenticates.
-func (g *gcmTransport) aead(tagSize int) (cipher.AEAD, error) {
-	block, err := aes.NewCipher(g.key)
-	if err != nil {
-		return nil, err
-	}
+// resolveTagSize maps a request's tag length to bytes. Shared by both
+// directions on purpose: the encrypt and decrypt halves have to resolve
+// identically or a truncated tag never authenticates.
+func (g *gcmTransport) resolveTagSize(tagSize int) (int, error) {
 	if tagSize == 0 {
-		return cipher.NewGCM(block)
+		return GCMTagSize, nil
 	}
 	if tagSize < 12 || tagSize > 16 {
-		return nil, errTestTagSize
+		return 0, errTestTagSize
 	}
-	return cipher.NewGCMWithTagSize(block, tagSize)
+	return tagSize, nil
 }
 
 func (g *gcmTransport) Encrypt(ctx context.Context, req *transport.EncryptRequest) (*transport.EncryptResponse, error) {
 	g.encryptCalled = true
 	g.lastEncryptReq = req
 
-	gcm, err := g.aead(req.TagSize)
+	tagSize, err := g.resolveTagSize(req.TagSize)
 	if err != nil {
 		return nil, err
 	}
-
-	nonce := req.Nonce
-	if len(nonce) == 0 {
-		nonce = make([]byte, gcm.NonceSize())
-	}
-
-	sealed := gcm.Seal(nil, nonce, req.Plaintext, req.AdditionalData)
-	split := len(sealed) - gcm.Overhead()
-	return &transport.EncryptResponse{
-		Ciphertext: sealed[:split],
-		Nonce:      nonce,
-		Tag:        sealed[split:],
-	}, nil
+	return fakeServiceGCMSeal(g.key, tagSize, req.Nonce, req.Plaintext, req.AdditionalData)
 }
 
 func (g *gcmTransport) Decrypt(ctx context.Context, req *transport.DecryptRequest) (*transport.DecryptResponse, error) {
 	g.decryptCalled = true
 	g.lastDecryptReq = req
 
-	gcm, err := g.aead(req.TagSize)
+	tagSize, err := g.resolveTagSize(req.TagSize)
 	if err != nil {
 		return nil, err
 	}
-	if len(req.Tag) != gcm.Overhead() {
+	if len(req.Tag) != tagSize {
 		return nil, errTestTagSize
 	}
 
-	sealed := make([]byte, 0, len(req.Ciphertext)+len(req.Tag))
-	sealed = append(sealed, req.Ciphertext...)
-	sealed = append(sealed, req.Tag...)
-
-	plaintext, err := gcm.Open(nil, req.Nonce, sealed, req.AdditionalData)
+	plaintext, err := fakeServiceGCMOpen(g.key, tagSize, req)
 	if err != nil {
 		return nil, err
 	}
@@ -149,6 +129,12 @@ func TestGCMTagBits_EncryptProducesTheRequestedTagLength(t *testing.T) {
 			op, err := cm.EncryptInit(gcmMechanism(iv, aad, tagBits), 1, "aes-key", "test-backend")
 			if err != nil {
 				t.Fatalf("EncryptInit: %v", err)
+			}
+			if callerIVSealRefusedUnderFIPS(t, func() error {
+				_, err := cm.Encrypt(context.Background(), op, plaintext)
+				return err
+			}) {
+				return
 			}
 
 			got, err := cm.Encrypt(context.Background(), op, plaintext)
@@ -203,6 +189,12 @@ func TestGCMTagBits_RoundTrip(t *testing.T) {
 			if err != nil {
 				t.Fatalf("EncryptInit: %v", err)
 			}
+			if callerIVSealRefusedUnderFIPS(t, func() error {
+				_, err := cm.Encrypt(context.Background(), encOp, plaintext)
+				return err
+			}) {
+				return
+			}
 			ciphertext, err := cm.Encrypt(context.Background(), encOp, plaintext)
 			if err != nil {
 				t.Fatalf("Encrypt: %v", err)
@@ -249,6 +241,12 @@ func TestGCMTagBits_TruncatedToTheWrongLengthFailsAuthentication(t *testing.T) {
 	encOp, err := cm.EncryptInit(gcmMechanism(iv, aad, 128), 1, "aes-key", "test-backend")
 	if err != nil {
 		t.Fatalf("EncryptInit: %v", err)
+	}
+	if callerIVSealRefusedUnderFIPS(t, func() error {
+		_, err := cm.Encrypt(context.Background(), encOp, plaintext)
+		return err
+	}) {
+		return
 	}
 	full, err := cm.Encrypt(context.Background(), encOp, plaintext)
 	if err != nil {

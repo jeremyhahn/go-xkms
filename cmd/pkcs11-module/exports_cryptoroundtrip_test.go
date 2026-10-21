@@ -437,6 +437,10 @@ var gcmRoundTripIV = []byte("roundtrip-iv")
 // rejected with CKR_ENCRYPTED_DATA_INVALID (PKCS#11 v3.2 §3.2/§5.10.2) rather
 // than decrypting to corrupt plaintext under CKR_OK.
 func TestAESGenerateEncryptDecrypt_RoundTrip(t *testing.T) {
+	// Drives a construction FIPS mode refuses; see exports_fips_test.go.
+	if !runsOutsideFIPSMode(t) {
+		return
+	}
 	_, session := newCryptoFixture(t)
 	key := generateAESKeyViaC(t, session, "roundtrip-aes-encrypt")
 
@@ -516,6 +520,10 @@ func encryptOnceViaC(t *testing.T, session module.SessionHandle, key module.Obje
 // check; this would not, because CryptoMockClient.WrapKeyByID/UnwrapKeyByID
 // perform genuine AES-GCM wrap/unwrap keyed by backend key id.
 func TestAESWrapUnwrapKey_RoundTrip(t *testing.T) {
+	// Drives a construction FIPS mode refuses; see exports_fips_test.go.
+	if !runsOutsideFIPSMode(t) {
+		return
+	}
 	_, session := newCryptoFixture(t)
 	wrappingKey := generateAESKeyViaC(t, session, "roundtrip-wrapping-key")
 	targetKey := generateAESKeyViaC(t, session, "roundtrip-target-key")
@@ -636,6 +644,10 @@ func createSecretKeyObjectViaC(t *testing.T, session module.SessionHandle, value
 // checked against an independent golang.org/x/crypto/hkdf computation, not
 // merely against a non-zero object handle.
 func TestDeriveKeyHKDF_RoundTrip(t *testing.T) {
+	// Drives a construction FIPS mode refuses; see exports_fips_test.go.
+	if !runsOutsideFIPSMode(t) {
+		return
+	}
 	m, session := newCryptoFixture(t)
 
 	ikm := []byte("0123456789ABCDEF0123456789ABCDEF")
@@ -704,6 +716,10 @@ func TestDeriveKeyHKDF_RoundTrip(t *testing.T) {
 // (module_authwrap.go's UnwrapKeyAuthenticated) rather than unwrapping to
 // corrupt key material under CKR_OK.
 func TestWrapUnwrapKeyAuthenticated_RoundTrip(t *testing.T) {
+	// Drives a construction FIPS mode refuses; see exports_fips_test.go.
+	if !runsOutsideFIPSMode(t) {
+		return
+	}
 	_, session := newCryptoFixture(t)
 
 	// A fresh AES-256 key and IV per run: the module's GCM nonce guard is

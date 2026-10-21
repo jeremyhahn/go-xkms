@@ -370,7 +370,7 @@ func TestCreateBackup_TrustStoreOnly(t *testing.T) {
 
 	assert.Equal(t, BackupMagic, eb.Magic)
 	assert.Equal(t, BackupVersion, eb.Version)
-	assert.Len(t, eb.Nonce, 24)
+	assert.Len(t, eb.Nonce, gcmNonceSize)
 	assert.NotEmpty(t, eb.Ciphertext)
 
 	// Decrypt and verify.
@@ -462,6 +462,24 @@ func TestDecryptBackup_VersionMismatch(t *testing.T) {
 	assert.ErrorIs(t, err, ErrVersionMismatch)
 }
 
+// TestDecryptBackup_XChaChaVersion2Refused checks that a version 2 file, the
+// retired XChaCha20-Poly1305 format, is refused by version with no attempt
+// to read it.
+func TestDecryptBackup_XChaChaVersion2Refused(t *testing.T) {
+	svc, err := NewService(testConfig())
+	require.NoError(t, err)
+
+	eb := &EncryptedBackup{
+		Magic:      BackupMagic,
+		Version:    2,
+		Nonce:      make([]byte, 24),
+		Ciphertext: []byte("opaque version 2 ciphertext"),
+	}
+	archive, err := svc.DecryptBackup(eb, testKey())
+	assert.Nil(t, archive)
+	assert.ErrorIs(t, err, ErrVersionMismatch)
+}
+
 func TestDecryptBackup_WrongKey(t *testing.T) {
 	cert := testCert(t)
 	svc, err := NewService(testConfig(),
@@ -505,10 +523,9 @@ func TestDecryptBackup_CorruptedCiphertext(t *testing.T) {
 
 // TestDecryptBackup_WrongNonceLength verifies that DecryptBackup returns an
 // error instead of panicking when the backup file carries a nonce that is
-// not exactly the XChaCha20-Poly1305 nonce size (24 bytes).
-// chacha20poly1305.AEAD.Open panics on a mismatched nonce length, so a
-// corrupted or maliciously crafted import file must not be able to crash
-// the process.
+// not exactly the AES-GCM nonce size (12 bytes). A corrupted or maliciously
+// crafted import file must not be able to crash the process or shift nonce
+// bytes into the ciphertext.
 func TestDecryptBackup_WrongNonceLength(t *testing.T) {
 	cert := testCert(t)
 	svc, err := NewService(testConfig(),
@@ -526,7 +543,7 @@ func TestDecryptBackup_WrongNonceLength(t *testing.T) {
 		name      string
 		nonceSize int
 	}{
-		{name: "12-byte AES-GCM-style nonce", nonceSize: 12},
+		{name: "24-byte XChaCha20-Poly1305 nonce", nonceSize: 24},
 		{name: "empty nonce", nonceSize: 0},
 		{name: "single byte nonce", nonceSize: 1},
 		{name: "oversized nonce", nonceSize: 48},

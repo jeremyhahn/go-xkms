@@ -29,11 +29,11 @@ func createTestCredential(id, name string) *Credential {
 		Issuer:      "TestIssuer",
 		AccountName: name + "@example.com",
 		Type:        TypeTOTP,
-		Algorithm:   AlgorithmSHA1,
+		Algorithm:   AlgorithmSHA256,
 		Digits:      6,
 		Period:      30,
 		CreatedAt:   time.Now(),
-	}, "JBSWY3DPEHPK3PXP")
+	}, rfcTestSecret)
 }
 
 // MemoryStore Tests
@@ -173,16 +173,22 @@ func TestMemoryStore_List_Success(t *testing.T) {
 	}
 
 	// Add credentials
-	store.Add(createTestCredential("test1", "Zebra"))
-	store.Add(createTestCredential("test2", "Apple"))
-	store.Add(createTestCredential("test3", "Mango"))
+	for _, c := range []*Credential{
+		createTestCredential("test1", "Zebra"),
+		createTestCredential("test2", "Apple"),
+		createTestCredential("test3", "Mango"),
+	} {
+		if err := store.Add(c); err != nil {
+			t.Fatalf("Add(%s): %v", c.Name, err)
+		}
+	}
 
 	list, err = store.List()
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
 	if len(list) != 3 {
-		t.Errorf("expected 3 items, got %d", len(list))
+		t.Fatalf("expected 3 items, got %d", len(list))
 	}
 
 	// Verify sorted by name

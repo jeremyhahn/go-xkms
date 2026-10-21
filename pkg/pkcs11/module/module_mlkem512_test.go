@@ -14,6 +14,7 @@
 package module
 
 import (
+	"crypto/fips140"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -76,6 +77,9 @@ func TestMLKEMGeneratesEveryFIPS203ParameterSet(t *testing.T) {
 				NewMechanism(CKM_ML_KEM_KEY_PAIR_GEN),
 				mlkemKeyGenTemplate(tc.parameterSet, CKO_PUBLIC_KEY, tc.name+"-pub"),
 				mlkemKeyGenTemplate(tc.parameterSet, CKO_PRIVATE_KEY, tc.name+"-priv"))
+			if tc.parameterSet == CKP_ML_KEM_512 && mlkem512RefusedUnderFIPS(t, rv) {
+				return
+			}
 			require.Equal(t, CKR_OK, rv, "%s must generate", tc.name)
 			require.NotEqual(t, ObjectHandle(InvalidHandle), publicHandle)
 			require.NotEqual(t, ObjectHandle(InvalidHandle), privateHandle)
@@ -117,6 +121,9 @@ func TestMLKEM512EncapsulateDecapsulateRoundTrip(t *testing.T) {
 		NewMechanism(CKM_ML_KEM_KEY_PAIR_GEN),
 		mlkemKeyGenTemplate(CKP_ML_KEM_512, CKO_PUBLIC_KEY, "mlkem512-roundtrip-pub"),
 		mlkemKeyGenTemplate(CKP_ML_KEM_512, CKO_PRIVATE_KEY, "mlkem512-roundtrip-priv"))
+	if mlkem512RefusedUnderFIPS(t, rv) {
+		return
+	}
 	require.Equal(t, CKR_OK, rv)
 
 	sharedTemplate := []Attribute{
@@ -186,6 +193,9 @@ func TestMLKEM512IsNotKyber512(t *testing.T) {
 		NewMechanism(CKM_ML_KEM_KEY_PAIR_GEN),
 		mlkemKeyGenTemplate(CKP_ML_KEM_512, CKO_PUBLIC_KEY, "mlkem512-crosscheck-pub"),
 		mlkemKeyGenTemplate(CKP_ML_KEM_512, CKO_PRIVATE_KEY, "mlkem512-crosscheck-priv"))
+	if mlkem512RefusedUnderFIPS(t, rv) {
+		return
+	}
 	require.Equal(t, CKR_OK, rv)
 
 	publicKey := secretValueOf(t, m, session, publicHandle)
@@ -221,4 +231,17 @@ func TestMLKEM512IsNotKyber512(t *testing.T) {
 // obvious to a reader checking it is not the Kyber round-3 one.
 func newMLKEM512ForTest() (*mlkem512.MLKEM512, error) {
 	return mlkem512.New()
+}
+
+// mlkem512RefusedUnderFIPS reports whether FIPS mode is active, after
+// asserting the module's refusal of ML-KEM-512 there: its only implementation
+// is CIRCL, outside the Go Cryptographic Module, so mlkem512.New refuses it
+// with ErrFIPSMode and C_GenerateKeyPair answers CKR_FUNCTION_FAILED.
+func mlkem512RefusedUnderFIPS(t *testing.T, rv CK_RV) bool {
+	t.Helper()
+	if !fips140.Enabled() {
+		return false
+	}
+	assert.Equal(t, CKR_FUNCTION_FAILED, rv, "FIPS mode refuses ML-KEM-512")
+	return true
 }

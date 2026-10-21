@@ -385,7 +385,7 @@ func TestWrapAESGCMClaimsAProviderGeneratedNonce(t *testing.T) {
 	generated := blob[1 : 1+aesGCMNonceSize]
 	_, err = wrapKeyMaterial(ctx, store, attrs, string(types.WrapAESGCM), gcmParams(generated), target)
 	require.Error(t, err, "the nonce the provider generated is consumed exactly like one the caller supplied")
-	assert.True(t, errors.Is(err, aead.ErrNonceReuse), "got %v", err)
+	assert.True(t, errors.Is(err, generatedNonceReplayErr()), "got %v", err)
 }
 
 // A wrapping key that cannot release its material -- PKCS#11, whose key

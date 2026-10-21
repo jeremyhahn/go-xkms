@@ -82,6 +82,7 @@ package module
 
 import (
 	"crypto/aes"
+	"crypto/cipher"
 	"crypto/rand"
 	"errors"
 	"io"
@@ -224,6 +225,114 @@ func guardGCMNonce(keyMaterial, nonce []byte) error {
 	}
 }
 
+// authWrapFIPSRefusal returns the refusal for an authenticated wrap or unwrap
+// this process cannot perform, or nil.
+//
+// Under GODEBUG=fips140=only crypto/cipher seals GCM only through
+// cipher.NewGCMWithRandomNonce: the module's approved DRBG draws the 96-bit IV
+// (the RBG-based construction of NIST SP 800-38D section 8.2.2) and the tag is
+// the full 128 bits. A token-generated IV is that construction, so it is still
+// sealed; a caller-supplied IV and a truncated tag are not available to seal
+// with, and are refused here as the parameters this token cannot honour. An
+// unwrap opens any 12-byte IV, but only under the full tag. Outside
+// fips140=only every form stays available.
+//
+// The gate is a runtime probe rather than a FIPS predicate because no exported
+// predicate distinguishes fips140=only from fips140=on, where an arbitrary IV
+// still works; see aead.ArbitraryIVGCMUsable. A tag length that does not
+// resolve is left for authWrapTagSize to report in its own position.
+func authWrapFIPSRefusal(mechanism *Mechanism, sealing bool) error {
+	if aead.ArbitraryIVGCMUsable() {
+		return nil
+	}
+	tagSize, err := authWrapTagSize(mechanism)
+	if err != nil {
+		return nil
+	}
+	if tagSize != aead.GCMFullTagSize {
+		return NewPKCS11ErrorWithMessage(CKR_MECHANISM_PARAM_INVALID,
+			"this FIPS 140-only process authenticates CKM_AES_GCM wrapping with the full 128-bit tag only")
+	}
+	if sealing && authWrapCallerIV(mechanism) {
+		return NewPKCS11ErrorWithMessage(CKR_MECHANISM_PARAM_INVALID,
+			"this FIPS 140-only process seals CKM_AES_GCM wrapping only under a token-generated IV")
+	}
+	return nil
+}
+
+// authWrapCallerIV reports whether the mechanism asks a wrap to seal under an
+// IV the caller supplies rather than one the token generates.
+func authWrapCallerIV(mechanism *Mechanism) bool {
+	if msgParams, ok := mechanism.GetAESGCMMessageParams(); ok {
+		return msgParams.IVGenerator == CKG_NO_GENERATE
+	}
+	if gcmParams, ok := mechanism.GetAESGCMParams(); ok {
+		return len(gcmParams.IV) > 0
+	}
+	return false
+}
+
+// sealAuthWrap seals plaintext under block and returns the nonce it sealed
+// under and ciphertext||tag. A nil nonce asks the token to generate one:
+// through cipher.NewGCMWithRandomNonce in a FIPS 140-only process, and from
+// crypto/rand otherwise.
+//
+// The (key, nonce) pair is claimed before it is released: sealing twice under
+// one pair leaks the XOR of the two plaintexts, and here both plaintexts are
+// key material. Where the token draws the nonce itself it is claimed before
+// sealing, so a wrap refused for reuse burns nothing; where the stdlib draws
+// it the claim follows the seal and a refused output is wiped unreleased.
+func sealAuthWrap(block cipher.Block, tagSize int, keyMaterial, nonce, plaintext, aad []byte) (usedNonce, sealed []byte, err error) {
+	gcm, randomNonce, err := aead.NewGCMForFreshEncrypt(block, tagSize, nonce != nil)
+	if err != nil {
+		return nil, nil, NewPKCS11ErrorFull(CKR_FUNCTION_FAILED, "failed to create GCM", err)
+	}
+
+	if randomNonce {
+		out := gcm.Seal(nil, nil, plaintext, aad)
+		usedNonce = out[:aead.GCMRandomNonceSize]
+		if err := guardGCMNonce(keyMaterial, usedNonce); err != nil {
+			enclave.Wipe(out)
+			return nil, nil, err
+		}
+		return usedNonce, out[aead.GCMRandomNonceSize:], nil
+	}
+
+	if nonce == nil {
+		nonce, err = generateGCMNonce()
+		if err != nil {
+			return nil, nil, err
+		}
+	}
+	if err := guardGCMNonce(keyMaterial, nonce); err != nil {
+		return nil, nil, err
+	}
+	return nonce, gcm.Seal(nil, nonce, plaintext, aad), nil
+}
+
+// openAuthWrap opens ciphertext||tag sealed under nonce. A FIPS 140-only
+// process opens it through cipher.NewGCMWithRandomNonce, which verifies any
+// 12-byte nonce carried at the head of its input; authWrapFIPSRefusal has
+// already limited that case to the full tag.
+func openAuthWrap(block cipher.Block, tagSize int, nonce, ciphertextWithTag, aad []byte) ([]byte, error) {
+	randomNonce := !aead.ArbitraryIVGCMUsable()
+	gcm, err := aead.NewGCMForDecrypt(block, tagSize, randomNonce)
+	if err != nil {
+		return nil, NewPKCS11ErrorFull(CKR_FUNCTION_FAILED, "failed to create GCM", err)
+	}
+
+	var plaintext []byte
+	if randomNonce {
+		plaintext, err = gcm.Open(nil, nil, aead.JoinGCMWithRandomNonce(nonce, ciphertextWithTag, nil), aad)
+	} else {
+		plaintext, err = gcm.Open(nil, nonce, ciphertextWithTag, aad)
+	}
+	if err != nil {
+		return nil, NewPKCS11Error(CKR_AEAD_DECRYPT_FAILED)
+	}
+	return plaintext, nil
+}
+
 // authWrapNonce resolves the AES-GCM nonce a wrap seals with, the AAD it
 // authenticates, and whether the nonce has to be carried in the wrapped blob.
 //
@@ -234,9 +343,9 @@ func guardGCMNonce(keyMaterial, nonce []byte) error {
 // makes pIv an output of the call whenever ivGenerator asks the token to
 // generate one.
 //
-// When the token generates the IV for CK_GCM_MESSAGE_PARAMS the generated
-// value is written back into params.IV here, which is what the C ABI copies
-// into the caller's pIv buffer after a successful wrap.
+// nonce is nil when the token generates the IV: sealAuthWrap draws it, and
+// WrapKeyAuthenticated writes it back into CK_GCM_MESSAGE_PARAMS.pIv, which is
+// what the C ABI copies into the caller's buffer after a successful wrap.
 func authWrapNonce(mechanism *Mechanism, associatedData []byte) (nonce, aad []byte, prefixNonce bool, err error) {
 	aad = associatedData
 
@@ -267,17 +376,14 @@ func authWrapNonce(mechanism *Mechanism, associatedData []byte) (nonce, aad []by
 		}
 	}
 
-	nonce, err = generateGCMNonce()
-	if err != nil {
-		return nil, nil, false, err
-	}
-	return nonce, aad, true, nil
+	return nil, aad, true, nil
 }
 
-// messageParamsWrapNonce resolves the nonce for a CK_GCM_MESSAGE_PARAMS wrap
-// and, when the token is the one generating it, writes it back into the
-// parameter so the caller can learn it (PKCS#11 v3.2 section 6.13.5 makes pIv
-// an output whenever ivGenerator is not CKG_NO_GENERATE).
+// messageParamsWrapNonce resolves the nonce for a CK_GCM_MESSAGE_PARAMS wrap.
+// It returns nil when the token is the one generating it; the generated IV is
+// written back into the parameter after sealing so the caller can learn it
+// (PKCS#11 v3.2 section 6.13.5 makes pIv an output whenever ivGenerator is not
+// CKG_NO_GENERATE).
 //
 // A token-generated IV is refused when the caller left no buffer for it: the
 // wrap would otherwise succeed and produce a blob whose IV nobody can ever
@@ -314,12 +420,7 @@ func messageParamsWrapNonce(params *AESGCMMessageParams) ([]byte, error) {
 			"CK_GCM_MESSAGE_PARAMS.pIv must supply a buffer of at least 12 bytes for a token-generated IV")
 	}
 
-	nonce, err := generateGCMNonce()
-	if err != nil {
-		return nil, err
-	}
-	params.IV = nonce
-	return nonce, nil
+	return nil, nil
 }
 
 // authUnwrapNonce resolves the nonce an unwrap verifies with and splits the
@@ -471,25 +572,13 @@ func (m *Module) WrapKeyAuthenticated(sessionHandle SessionHandle, mechanism *Me
 			"authenticated wrapping requires CKM_AES_GCM mechanism")
 	}
 
-	// CKM_AES_GCM is FIPS-approved (SP 800-38D), but under GODEBUG=fips140=only
-	// Go's crypto/cipher refuses to construct GCM over an externally supplied
-	// IV — and every parameter form of this verb supplies one, including the
-	// token-generated form, which hands cipher.NewGCM an IV from the module's
-	// own RNG. When the runtime withholds that construction the verb cannot be
-	// performed at all, so it is refused here, at the mechanism check, with the
-	// code that says the mechanism is unavailable — not deep in the wrap as
-	// CKR_FUNCTION_FAILED, which reported the regime restriction as an internal
-	// fault (#292). The gate is a runtime probe rather than a FIPS predicate
-	// because no exported predicate distinguishes fips140=only from
-	// fips140=on, where this construction works; see aead.ArbitraryIVGCMUsable.
-	//
-	// The mechanism descriptor is deliberately NOT withheld: CKM_AES_GCM's
-	// C_Encrypt/C_Decrypt/C_WrapKey surface performs its GCM in the service
-	// process, whose own FIPS posture governs it, so only the verbs that build
-	// GCM locally refuse.
-	if !aead.ArbitraryIVGCMUsable() {
-		return nil, NewPKCS11ErrorWithMessage(CKR_MECHANISM_INVALID,
-			"CKM_AES_GCM authenticated wrapping is unavailable: this FIPS 140-only process cannot construct GCM over a caller- or token-supplied IV")
+	// Under GODEBUG=fips140=only the token seals only the wrap forms the
+	// stdlib can build; see authWrapFIPSRefusal. The mechanism descriptor is
+	// deliberately NOT withheld: CKM_AES_GCM's C_Encrypt/C_Decrypt/C_WrapKey
+	// surface performs its GCM in the service process, whose own FIPS posture
+	// governs it.
+	if err := authWrapFIPSRefusal(mechanism, true); err != nil {
+		return nil, err
 	}
 
 	// Validate session is read-write
@@ -608,11 +697,6 @@ func (m *Module) WrapKeyAuthenticated(sessionHandle SessionHandle, mechanism *Me
 		return nil, NewPKCS11ErrorFull(CKR_FUNCTION_FAILED, "failed to create AES cipher", err)
 	}
 
-	gcm, err := aead.NewGCM(block, tagSize)
-	if err != nil {
-		return nil, NewPKCS11ErrorFull(CKR_FUNCTION_FAILED, "failed to create GCM", err)
-	}
-
 	// Resolve the nonce, the AAD and the output framing from whichever GCM
 	// parameter structure the mechanism carries.
 	nonce, aad, prefixNonce, err := authWrapNonce(mechanism, associatedData)
@@ -620,18 +704,17 @@ func (m *Module) WrapKeyAuthenticated(sessionHandle SessionHandle, mechanism *Me
 		return nil, err
 	}
 
-	// The (key, nonce) pair is claimed immediately before it is sealed under,
-	// and after every policy check above: a wrap the token was going to refuse
-	// anyway must not burn an IV the caller would then be unable to retry with.
-	// Sealing twice under one pair leaks the XOR of the two plaintexts, and
-	// here both plaintexts are key material.
-	if err := guardGCMNonce(wrappingKeyValue, nonce); err != nil {
+	nonce, sealed, err := sealAuthWrap(block, tagSize, wrappingKeyValue, nonce, targetKeyValue, aad)
+	if err != nil {
 		return nil, err
 	}
 
-	// Seal encrypts and authenticates the plaintext, appending the result to dst.
-	// gcm.Seal returns ciphertext+tag when dst is nil.
-	sealed := gcm.Seal(nil, nonce, targetKeyValue, aad)
+	// A token-generated IV is handed back through CK_GCM_MESSAGE_PARAMS.pIv
+	// (v3.2 section 5.18.6); the other forms carry it in the blob or already
+	// hold it.
+	if msgParams, ok := mechanism.GetAESGCMMessageParams(); ok && msgParams.IVGenerator != CKG_NO_GENERATE {
+		msgParams.IV = nonce
+	}
 
 	// The nonce is carried in the blob only for the parameter forms that give
 	// the token no way to hand it back out of band; see the framing table in
@@ -691,12 +774,10 @@ func (m *Module) WrapKeyAuthenticatedSize(sessionHandle SessionHandle, mechanism
 	}
 
 	// A size query must answer with the same code the wrap itself would, so
-	// the fips140=only arbitrary-IV GCM gate fires here in the same position
-	// it holds in WrapKeyAuthenticated — see the comment there for why this is
-	// a runtime probe and why the mechanism descriptor is not withheld.
-	if !aead.ArbitraryIVGCMUsable() {
-		return 0, NewPKCS11ErrorWithMessage(CKR_MECHANISM_INVALID,
-			"CKM_AES_GCM authenticated wrapping is unavailable: this FIPS 140-only process cannot construct GCM over a caller- or token-supplied IV")
+	// the fips140=only gate fires here in the same position it holds in
+	// WrapKeyAuthenticated.
+	if err := authWrapFIPSRefusal(mechanism, true); err != nil {
+		return 0, err
 	}
 
 	// The read-write requirement is checked here for the same reason the
@@ -891,15 +972,10 @@ func (m *Module) UnwrapKeyAuthenticated(sessionHandle SessionHandle, mechanism *
 			"authenticated unwrapping requires CKM_AES_GCM mechanism")
 	}
 
-	// The unwrap side always opens the blob with an externally supplied IV —
-	// whichever parameter form carried it, the IV arrives from outside the
-	// FIPS module boundary — so under GODEBUG=fips140=only the construction is
-	// as unavailable here as it is on the wrap side. Refused at the mechanism
-	// check with the same code and for the reasons given in
-	// WrapKeyAuthenticated (#292).
-	if !aead.ArbitraryIVGCMUsable() {
-		return ObjectHandle(InvalidHandle), NewPKCS11ErrorWithMessage(CKR_MECHANISM_INVALID,
-			"CKM_AES_GCM authenticated unwrapping is unavailable: this FIPS 140-only process cannot construct GCM over a caller-supplied IV")
+	// Opening is gated for the same reason sealing is; see
+	// authWrapFIPSRefusal for what fips140=only leaves available.
+	if err := authWrapFIPSRefusal(mechanism, false); err != nil {
+		return ObjectHandle(InvalidHandle), err
 	}
 
 	// Validate unwrapping key handle exists and is visible to this session.
@@ -1010,17 +1086,11 @@ func (m *Module) UnwrapKeyAuthenticated(sessionHandle SessionHandle, mechanism *
 			"failed to create AES cipher", err)
 	}
 
-	gcm, err := aead.NewGCM(block, tagSize)
+	// Open decrypts and verifies the ciphertext+tag; a tag mismatch is
+	// CKR_AEAD_DECRYPT_FAILED.
+	plaintext, err := openAuthWrap(block, tagSize, nonce, ciphertextWithTag, aad)
 	if err != nil {
-		return ObjectHandle(InvalidHandle), NewPKCS11ErrorFull(CKR_FUNCTION_FAILED,
-			"failed to create GCM", err)
-	}
-
-	// Open decrypts and verifies the ciphertext+tag
-	plaintext, err := gcm.Open(nil, nonce, ciphertextWithTag, aad)
-	if err != nil {
-		// Authentication tag mismatch or decryption failure
-		return ObjectHandle(InvalidHandle), NewPKCS11Error(CKR_AEAD_DECRYPT_FAILED)
+		return ObjectHandle(InvalidHandle), err
 	}
 	defer enclave.Wipe(plaintext)
 

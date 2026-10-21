@@ -106,11 +106,12 @@ func TestEncryptGeneratedNonceRoundTripsThroughDecryptWithPersistence(t *testing
 	require.NotEmpty(t, enc.Nonce, "the provider must generate and return a nonce")
 
 	dec, err := svc.Decrypt(context.Background(), &transport.DecryptRequest{
-		Backend:    store.name,
-		KeyID:      attrs.CN,
-		Ciphertext: enc.Ciphertext,
-		Nonce:      enc.Nonce,
-		Tag:        enc.Tag,
+		Backend:      store.name,
+		KeyID:        attrs.CN,
+		Ciphertext:   enc.Ciphertext,
+		Nonce:        enc.Nonce,
+		Tag:          enc.Tag,
+		GCMNonceMode: enc.GCMNonceMode,
 	})
 	require.NoError(t, err, "decrypt must accept the nonce Encrypt returned")
 	assert.Equal(t, plaintext, dec.Plaintext)

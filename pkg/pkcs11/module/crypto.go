@@ -47,6 +47,7 @@ import (
 
 	"github.com/jeremyhahn/go-xkms/pkg/api/transport"
 	"github.com/jeremyhahn/go-xkms/pkg/backend"
+	"github.com/jeremyhahn/go-xkms/pkg/crypto/aead"
 	"github.com/jeremyhahn/go-xkms/pkg/crypto/wrapping"
 	"github.com/jeremyhahn/go-xkms/pkg/types"
 	secure "github.com/jeremyhahn/go-xkms/sdk/go/secure"
@@ -1752,6 +1753,16 @@ func (cm *CryptoManager) Decrypt(ctx context.Context, op *DecryptOperation, ciph
 	}
 	if len(iv) > 0 {
 		req.IV = iv
+	}
+
+	// A 12-byte IV under the full tag is opened through the random-nonce
+	// construction. It verifies any such IV, so it opens exactly what the
+	// explicit construction does, and it is the only one a FIPS 140-only
+	// service can build: without it that service could not decrypt the
+	// ciphertext it sealed under its own generated IV.
+	if op.mechanism.Type == CKM_AES_GCM && len(req.Nonce) == aead.GCMRandomNonceSize &&
+		gcmTagSize(op.tagSize) == aead.GCMFullTagSize {
+		req.GCMNonceMode = string(types.GCMNonceModeRandom)
 	}
 
 	resp, err := cm.client.Decrypt(ctx, req)

@@ -157,6 +157,12 @@ func TestDaemon_OpenSession_DH(t *testing.T) {
 
 	d := newBusDaemon(t, store)
 
+	// Pin the gate open: this test covers the DH session itself, and
+	// TestOpenSession_FIPSRefusesDH covers its refusal under FIPS.
+	original := fipsMode
+	fipsMode = func() bool { return false }
+	t.Cleanup(func() { fipsMode = original })
+
 	clientKeys, err := GenerateDHKeyPair()
 	require.NoError(t, err)
 

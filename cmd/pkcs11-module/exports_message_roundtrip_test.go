@@ -165,6 +165,10 @@ func decryptMessageViaC(t *testing.T, session module.SessionHandle, aad, ciphert
 // pkcs11test.CryptoMockClient encrypts a message, and the exact plaintext
 // comes back through the independent decrypt lifecycle.
 func TestMessageEncryptDecrypt_RoundTrip(t *testing.T) {
+	// Drives a construction FIPS mode refuses; see exports_fips_test.go.
+	if !runsOutsideFIPSMode(t) {
+		return
+	}
 	_, session := newCryptoFixture(t)
 	key := generateAESKeyViaC(t, session, "message-roundtrip-aes")
 
@@ -313,6 +317,10 @@ func decryptMessageBeginNextViaC(t *testing.T, session module.SessionHandle, aad
 // TestMessageEncryptDecrypt_RoundTrip for the multi-part entry points
 // exports_streaming_test.go's fixture cannot reach.
 func TestMultiPartMessageEncryptDecrypt_RoundTrip(t *testing.T) {
+	// Drives a construction FIPS mode refuses; see exports_fips_test.go.
+	if !runsOutsideFIPSMode(t) {
+		return
+	}
 	_, session := newCryptoFixture(t)
 	key := generateAESKeyViaC(t, session, "message-multipart-aes")
 
@@ -621,6 +629,10 @@ func TestMessageSignInit_NotLoggedInIsRefused(t *testing.T) {
 // message-based process's single encryption slot must still be usable for
 // that retry.
 func TestCEncryptMessage_BufferTooSmall(t *testing.T) {
+	// Drives a construction FIPS mode refuses; see exports_fips_test.go.
+	if !runsOutsideFIPSMode(t) {
+		return
+	}
 	_, session := newCryptoFixture(t)
 	key := generateAESKeyViaC(t, session, "message-buffertoosmall-aes")
 
@@ -780,6 +792,10 @@ func TestCDecryptMessageNext_NonFinalQueryModeReportsZero(t *testing.T) {
 // does not reach: a NULL pCiphertextPart length query on the final part, and
 // an undersized real buffer.
 func TestCEncryptMessageNext_FinalQueryModeAndBufferTooSmall(t *testing.T) {
+	// Drives a construction FIPS mode refuses; see exports_fips_test.go.
+	if !runsOutsideFIPSMode(t) {
+		return
+	}
 	_, session := newCryptoFixture(t)
 	plaintext := []byte("the final and only part of this message")
 
@@ -859,6 +875,10 @@ func TestCEncryptMessageNext_FinalQueryModeAndBufferTooSmall(t *testing.T) {
 // ciphertext twice needs no fresh key or IV per subtest: decryption is not
 // an entropy-consuming operation the module's nonce-reuse guard tracks.
 func TestCDecryptMessageNext_FinalQueryModeAndBufferTooSmall(t *testing.T) {
+	// Drives a construction FIPS mode refuses; see exports_fips_test.go.
+	if !runsOutsideFIPSMode(t) {
+		return
+	}
 	_, session := newCryptoFixture(t)
 	key := generateAESKeyViaC(t, session, "message-decryptnext-final-aes")
 	plaintext := []byte("the final and only ciphertext part")
@@ -930,6 +950,10 @@ func TestCDecryptMessageNext_FinalQueryModeAndBufferTooSmall(t *testing.T) {
 
 // TestCEncryptMessage_BufferTooSmall for C_DecryptMessage.
 func TestCDecryptMessage_BufferTooSmall(t *testing.T) {
+	// Drives a construction FIPS mode refuses; see exports_fips_test.go.
+	if !runsOutsideFIPSMode(t) {
+		return
+	}
 	_, session := newCryptoFixture(t)
 	key := generateAESKeyViaC(t, session, "message-decrypt-buffertoosmall-aes")
 
@@ -1186,6 +1210,10 @@ func TestCVerifyMessageFamily_NonNilParamIsRefused(t *testing.T) {
 // neither of which TestCEncryptMessage_BufferTooSmall's real-buffer call
 // reaches.
 func TestCEncryptMessage_QueryModeAndMalformedParam(t *testing.T) {
+	// Drives a construction FIPS mode refuses; see exports_fips_test.go.
+	if !runsOutsideFIPSMode(t) {
+		return
+	}
 	_, session := newCryptoFixture(t)
 	key := generateAESKeyViaC(t, session, "message-encrypt-querymode-aes")
 
@@ -1255,6 +1283,10 @@ func TestCEncryptMessage_QueryModeAndMalformedParam(t *testing.T) {
 // TestCDecryptMessage_QueryModeAndMalformedParam mirrors
 // TestCEncryptMessage_QueryModeAndMalformedParam for C_DecryptMessage.
 func TestCDecryptMessage_QueryModeAndMalformedParam(t *testing.T) {
+	// Drives a construction FIPS mode refuses; see exports_fips_test.go.
+	if !runsOutsideFIPSMode(t) {
+		return
+	}
 	_, session := newCryptoFixture(t)
 	key := generateAESKeyViaC(t, session, "message-decrypt-querymode-aes")
 	plaintext := []byte("plaintext for the decrypt query-mode probe")

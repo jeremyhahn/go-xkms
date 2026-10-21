@@ -15,10 +15,13 @@ package module
 
 import (
 	"bytes"
+	"crypto/fips140"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+
+	"github.com/jeremyhahn/go-xkms/pkg/quantum/mlkem512"
 )
 
 func TestNewQuantumCryptoManager(t *testing.T) {
@@ -525,6 +528,12 @@ func TestGenerateMLKEM768KeyPair(t *testing.T) {
 			{1024, MLKEM1024PublicKeySize},
 		} {
 			pair, err := qcm.GenerateMLKEMKeyPair(tc.level)
+			if tc.level == 512 && fips140.Enabled() {
+				// CIRCL is outside the Go Cryptographic Module (see
+				// mlkem512RefusedUnderFIPS).
+				require.ErrorIs(t, err, mlkem512.ErrFIPSMode)
+				continue
+			}
 			require.NoError(t, err, "ML-KEM-%d must generate", tc.level)
 			assert.Len(t, pair.PublicKey, tc.publicKeyLength,
 				"ML-KEM-%d encapsulation key length", tc.level)

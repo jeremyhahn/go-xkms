@@ -18,6 +18,7 @@ package cdp
 
 import (
 	"context"
+	"crypto/fips140"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -133,6 +134,10 @@ type addAuthenticatorResult struct {
 // NewClient connects to Chrome's debugging port, discovers the WebSocket
 // URL via /json/version, and establishes a persistent WebSocket connection.
 func NewClient(host string, port int, logger *slog.Logger) (*Client, error) {
+	if fips140.Enforced() {
+		return nil, ErrCDPFIPSUnsupported
+	}
+
 	wsURL, err := discoverWebSocketURL(host, port)
 	if err != nil {
 		return nil, err

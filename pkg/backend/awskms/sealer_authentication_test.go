@@ -59,6 +59,9 @@ func newKMSDouble(keyIDs ...string) *kmsDouble {
 	return d
 }
 
+// aead returns an AES-GCM AEAD that generates its own nonce and carries it
+// in the ciphertext (NewGCMWithRandomNonce), the only GCM construction a
+// fips140=only process may build.
 func (d *kmsDouble) aead(keyID string) (cipher.AEAD, error) {
 	d.mu.Lock()
 	material, ok := d.keys[keyID]
@@ -70,7 +73,7 @@ func (d *kmsDouble) aead(keyID string) (cipher.AEAD, error) {
 	if err != nil {
 		return nil, err
 	}
-	return cipher.NewGCM(block)
+	return cipher.NewGCMWithRandomNonce(block)
 }
 
 // contextAAD canonicalizes an encryption context into AEAD associated data.
@@ -92,13 +95,8 @@ func (d *kmsDouble) encrypt(_ context.Context, in *kms.EncryptInput, _ ...func(*
 	if err != nil {
 		return nil, err
 	}
-	nonce := make([]byte, gcm.NonceSize())
-	if _, err := rand.Read(nonce); err != nil {
-		return nil, err
-	}
 	blob := append([]byte{byte(len(keyID))}, keyID...)
-	blob = append(blob, nonce...)
-	blob = gcm.Seal(blob, nonce, in.Plaintext, contextAAD(in.EncryptionContext))
+	blob = gcm.Seal(blob, nil, in.Plaintext, contextAAD(in.EncryptionContext))
 	return &kms.EncryptOutput{CiphertextBlob: blob, KeyId: aws.String(keyID)}, nil
 }
 
@@ -119,11 +117,7 @@ func (d *kmsDouble) decrypt(_ context.Context, in *kms.DecryptInput, _ ...func(*
 	if err != nil {
 		return nil, invalid
 	}
-	rest := blob[1+int(blob[0]):]
-	if len(rest) < gcm.NonceSize() {
-		return nil, invalid
-	}
-	plaintext, err := gcm.Open(nil, rest[:gcm.NonceSize()], rest[gcm.NonceSize():], contextAAD(in.EncryptionContext))
+	plaintext, err := gcm.Open(nil, nil, blob[1+int(blob[0]):], contextAAD(in.EncryptionContext))
 	if err != nil {
 		return nil, invalid
 	}

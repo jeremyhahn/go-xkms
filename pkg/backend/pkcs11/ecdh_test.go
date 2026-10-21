@@ -457,7 +457,9 @@ func TestApplyKDF_ConcatKDFsDiffer(t *testing.T) {
 // algorithm the canonical KDF implements, including the SP 800-108 modes that
 // this backend used to reject.
 func TestApplyKDF_SupportedAlgorithms(t *testing.T) {
-	secret := []byte("shared-secret")
+	// 32 bytes, the size of a P-256 ECDH shared secret; HKDF and HMAC
+	// refuse keys under 112 bits under GODEBUG=fips140=only.
+	secret := []byte("shared-secret-from-p256-ecdh-32b")
 
 	supported := []types.KDFAlgorithm{
 		types.KDFAlgorithmHKDF,
@@ -520,7 +522,9 @@ func TestApplyKDF_NilParams(t *testing.T) {
 
 // TestApplyKDF_HashAlgorithms covers the approved and unapproved hash names.
 func TestApplyKDF_HashAlgorithms(t *testing.T) {
-	secret := []byte("shared-secret")
+	// 32 bytes, the size of a P-256 ECDH shared secret; HKDF and HMAC
+	// refuse keys under 112 bits under GODEBUG=fips140=only.
+	secret := []byte("shared-secret-from-p256-ecdh-32b")
 
 	for _, tt := range []struct {
 		hash        string

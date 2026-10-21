@@ -135,7 +135,7 @@ func TestDeriveKeyTokenKeySurvivesFinalize(t *testing.T) {
 	require.Equal(t, CKR_OK, rv)
 
 	derived, rv := first.DeriveKey(session,
-		hkdfMechanism([]byte("salt"), []byte("info")), base, storableTokenDerivedTemplate(label))
+		availableDeriveMechanism(), base, storableTokenDerivedTemplate(label))
 	require.Equal(t, CKR_OK, rv)
 
 	// The control that makes the point of the restart: in memory the material is
@@ -171,7 +171,7 @@ func TestDeriveKeyTokenKeySurvivesFinalize(t *testing.T) {
 	// it sends its material to the backend, which is something only a key with
 	// real CKA_VALUE can do.
 	_, rv = second.DeriveKey(restored,
-		hkdfMechanism([]byte("salt"), []byte("info")), handles[0], derivedKeyTemplate(32))
+		availableDeriveMechanism(), handles[0], derivedKeyTemplate(32))
 	require.Equal(t, CKR_OK, rv)
 	require.NotNil(t, client.lastDerive)
 	assert.Equal(t, derivedMaterial, client.lastDerive.InputKeyMaterial,
@@ -194,7 +194,7 @@ func TestDeriveKeyRefusesATokenKeyItCannotPersist(t *testing.T) {
 		require.Equal(t, CKR_OK, rv)
 
 		handle, rv := m.DeriveKey(session,
-			hkdfMechanism([]byte("salt"), []byte("info")), base, protectedTokenDerivedTemplate("kdf-refused"))
+			availableDeriveMechanism(), base, protectedTokenDerivedTemplate("kdf-refused"))
 		assert.Equal(t, CKR_TEMPLATE_INCONSISTENT, rv)
 		assert.Equal(t, ObjectHandle(InvalidHandle), handle)
 		assert.Nil(t, client.lastDerive,

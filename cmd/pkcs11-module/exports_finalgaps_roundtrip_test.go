@@ -32,6 +32,10 @@ import (
 // real buffer is refused with CKR_BUFFER_TOO_SMALL rather than a partial
 // copy.
 func TestCDecrypt_QueryModeAndBufferTooSmall(t *testing.T) {
+	// Drives a construction FIPS mode refuses; see exports_fips_test.go.
+	if !runsOutsideFIPSMode(t) {
+		return
+	}
 	_, session := newCryptoFixture(t)
 	key := generateAESKeyViaC(t, session, "decrypt-querymode-aes")
 
@@ -89,6 +93,10 @@ func TestCDecrypt_QueryModeAndBufferTooSmall(t *testing.T) {
 // TestCWrapKey_QueryModeAndBufferTooSmall proves C_WrapKey's two-call
 // idiom, mirroring TestCDecrypt_QueryModeAndBufferTooSmall.
 func TestCWrapKey_QueryModeAndBufferTooSmall(t *testing.T) {
+	// Drives a construction FIPS mode refuses; see exports_fips_test.go.
+	if !runsOutsideFIPSMode(t) {
+		return
+	}
 	_, session := newCryptoFixture(t)
 	wrappingKey := generateAESKeyViaC(t, session, "wrapkey-querymode-wrapping")
 	targetKey := generateAESKeyViaC(t, session, "wrapkey-querymode-target")

@@ -20,7 +20,11 @@ import (
 	"encoding/binary"
 	"encoding/hex"
 	"errors"
+	"hash"
 	"io"
+	"os"
+	"os/exec"
+	"strings"
 	"testing"
 
 	"golang.org/x/crypto/hkdf"
@@ -725,6 +729,91 @@ func TestSP800108_EmptyIKM(t *testing.T) {
 	if _, err := adapter.DeriveKey([]byte{}, params); !errors.Is(err, ErrInvalidIKM) {
 		t.Errorf("empty IKM: got %v, want ErrInvalidIKM", err)
 	}
+}
+
+// inFIPSChild reports whether the caller is the re-executed child running
+// under godebug, in which case the caller performs its assertions. Otherwise
+// it re-execs testName under GODEBUG=godebug, asserts the child passed, and
+// returns false. crypto/fips140.Enforced is fixed when the process starts,
+// so only a child can observe a mode other than the parent's.
+func inFIPSChild(t *testing.T, godebug, testName string) bool {
+	t.Helper()
+	if os.Getenv("XKMS_FIPS_SUBPROCESS") == godebug {
+		return true
+	}
+	env := make([]string, 0, len(os.Environ()))
+	for _, kv := range os.Environ() {
+		if strings.HasPrefix(kv, "GODEBUG=") {
+			continue
+		}
+		env = append(env, kv)
+	}
+	cmd := exec.Command(os.Args[0], "-test.run=^"+testName+"$", "-test.v")
+	cmd.Env = append(env, "XKMS_FIPS_SUBPROCESS="+godebug, "GODEBUG="+godebug)
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		t.Fatalf("%s subprocess failed: %v\n%s", godebug, err, out)
+	}
+	if !strings.Contains(string(out), "PASS") {
+		t.Errorf("%s subprocess did not pass:\n%s", godebug, out)
+	}
+	return false
+}
+
+// sp800108Adapters returns one adapter per SP 800-108 mode.
+func sp800108Adapters() []*SP800108Adapter {
+	return []*SP800108Adapter{
+		NewSP800108CounterAdapter(),
+		NewSP800108FeedbackAdapter(),
+		NewSP800108DoublePipelineAdapter(),
+	}
+}
+
+// TestSP800108_KDKRefusedUnderFIPS140Only proves a KDK the enforcing module
+// refuses as an HMAC key (under 112 bits) returns ErrKDKRefused in every
+// mode instead of panicking, and that a 112-bit KDK still derives.
+func TestSP800108_KDKRefusedUnderFIPS140Only(t *testing.T) {
+	if !inFIPSChild(t, "fips140=only", "TestSP800108_KDKRefusedUnderFIPS140Only") {
+		return
+	}
+	params := &KDFParams{Hash: crypto.SHA256, KeyLength: 32, Label: []byte("test")}
+	for _, adapter := range sp800108Adapters() {
+		t.Run(string(adapter.Algorithm()), func(t *testing.T) {
+			if _, err := adapter.DeriveKey(make([]byte, 13), params); !errors.Is(err, ErrKDKRefused) {
+				t.Errorf("13-byte KDK: got %v, want ErrKDKRefused", err)
+			}
+			key, err := adapter.DeriveKey(make([]byte, 14), params)
+			if err != nil {
+				t.Fatalf("14-byte KDK: %v", err)
+			}
+			if len(key) != 32 {
+				t.Errorf("14-byte KDK: got %d bytes, want 32", len(key))
+			}
+		})
+	}
+}
+
+// TestSP800108_ShortKDKDerivesOutsideFIPS140Only proves the refusal is the
+// module's, not ours: with enforcement off the same short KDK derives, and a
+// panic that is not a module refusal propagates from newPRF unchanged.
+func TestSP800108_ShortKDKDerivesOutsideFIPS140Only(t *testing.T) {
+	if !inFIPSChild(t, "fips140=off", "TestSP800108_ShortKDKDerivesOutsideFIPS140Only") {
+		return
+	}
+	params := &KDFParams{Hash: crypto.SHA256, KeyLength: 32, Label: []byte("test")}
+	for _, adapter := range sp800108Adapters() {
+		if _, err := adapter.DeriveKey(make([]byte, 13), params); err != nil {
+			t.Errorf("%s: 13-byte KDK: %v", adapter.Algorithm(), err)
+		}
+	}
+
+	defer func() {
+		if recover() == nil {
+			t.Error("newPRF swallowed a panic that was not a module refusal")
+		}
+	}()
+	_, err := newPRF(func() hash.Hash { panic("hash constructor failed") }, make([]byte, 32))
+	t.Errorf("newPRF returned %v, want a propagated panic", err)
 }
 
 // TestSP800108_UnsupportedMode rejects an adapter constructed with an

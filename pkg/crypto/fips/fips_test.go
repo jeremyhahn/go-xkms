@@ -48,10 +48,10 @@ func boolString(b bool) string {
 	return "false"
 }
 
-// runOutsideFIPS reports whether the caller is already running with no
-// GODEBUG selector, in which case it returns true so the caller performs
+// runOutsideFIPS reports whether the caller is already running in the
+// fips140=off child, in which case it returns true so the caller performs
 // its real assertion. Otherwise it re-execs the current test binary with
-// GODEBUG stripped from the environment, asserts the child exits zero and
+// GODEBUG=fips140=off, asserts the child exits zero and
 // prints PASS, and returns false so the caller performs no assertion of its
 // own -- the parent's own environment may still have a FIPS selector (as
 // go-xkms#23 requires when running this whole suite under
@@ -70,14 +70,16 @@ func runOutsideFIPS(t *testing.T, testName string) bool {
 		}
 		env = append(env, kv)
 	}
+	// A binary built with GOFIPS140 defaults to fips140=on, so stripping
+	// GODEBUG is not enough: the child must turn the module off explicitly.
 	cmd := exec.Command(os.Args[0], "-test.run=^"+testName+"$", "-test.v")
-	cmd.Env = append(env, "XKMS_FIPS_SUBPROCESS=1")
+	cmd.Env = append(env, "XKMS_FIPS_SUBPROCESS=1", "GODEBUG=fips140=off")
 	out, err := cmd.CombinedOutput()
 	if err != nil {
-		t.Fatalf("no-GODEBUG subprocess failed: %v\n%s", err, out)
+		t.Fatalf("fips140=off subprocess failed: %v\n%s", err, out)
 	}
 	if !strings.Contains(string(out), "PASS") {
-		t.Errorf("no-GODEBUG subprocess did not pass:\n%s", out)
+		t.Errorf("fips140=off subprocess did not pass:\n%s", out)
 	}
 	return false
 }

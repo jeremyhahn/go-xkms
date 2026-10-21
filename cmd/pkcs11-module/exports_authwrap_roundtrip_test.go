@@ -66,6 +66,10 @@ func TestCWrapKeyAuthenticated_MalformedMechanismParamIsRefused(t *testing.T) {
 // answer through separate WrapKeyAuthenticatedSize call sites in
 // exports_v32.go.
 func TestCWrapKeyAuthenticated_InvalidWrappingKeyIsRefused(t *testing.T) {
+	// Drives a construction FIPS mode refuses; see exports_fips_test.go.
+	if !runsOutsideFIPSMode(t) {
+		return
+	}
 	f := newTestFixture(t)
 	mechBuf := buildCMechanismWithParam(t, module.CKM_AES_GCM, buildGCMMessageParams(t, nil, 0, module.CKG_NO_GENERATE, nil, 0))
 
@@ -114,6 +118,10 @@ func TestCWrapKeyAuthenticated_InvalidWrappingKeyIsRefused(t *testing.T) {
 // invalid unwrapping key handle is refused with
 // CKR_UNWRAPPING_KEY_HANDLE_INVALID.
 func TestCUnwrapKeyAuthenticated_InvalidUnwrappingKeyIsRefused(t *testing.T) {
+	// Drives a construction FIPS mode refuses; see exports_fips_test.go.
+	if !runsOutsideFIPSMode(t) {
+		return
+	}
 	f := newTestFixture(t)
 	mechBuf := buildCMechanismWithParam(t, module.CKM_AES_GCM, buildGCMMessageParams(t, []byte("authwrap-iv1"), 0, module.CKG_NO_GENERATE, nil, 0))
 	wrappedKey := make([]byte, 32)

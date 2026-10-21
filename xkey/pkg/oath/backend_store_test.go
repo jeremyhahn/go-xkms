@@ -432,13 +432,15 @@ func TestBackendStore_Update_Counter(t *testing.T) {
 		Name:      "HOTP Credential",
 		Issuer:    "TestIssuer",
 		Type:      TypeHOTP,
-		Algorithm: AlgorithmSHA1,
+		Algorithm: AlgorithmSHA256,
 		Digits:    6,
 		Period:    30,
 		Counter:   0,
 		CreatedAt: time.Now(),
-	}, "JBSWY3DPEHPK3PXP")
-	store.Add(cred)
+	}, rfcTestSecret)
+	if err := store.Add(cred); err != nil {
+		t.Fatalf("Add: %v", err)
+	}
 
 	// Simulate counter increment
 	cred.Counter = 5

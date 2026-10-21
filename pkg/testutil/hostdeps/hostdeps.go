@@ -128,25 +128,22 @@ func NewSealer(t *testing.T) *Sealer {
 	require.NoError(t, err)
 	block, err := aes.NewCipher(key)
 	require.NoError(t, err)
-	aead, err := cipher.NewGCM(block)
+	// NewGCMWithRandomNonce generates the nonce and carries it in the
+	// ciphertext: the only GCM a fips140=only process may build.
+	aead, err := cipher.NewGCMWithRandomNonce(block)
 	require.NoError(t, err)
 	return &Sealer{aead: aead}
 }
 
 // Seal encrypts data under the sealer's key, binding opts.AAD when given.
 func (s *Sealer) Seal(_ context.Context, data []byte, opts *types.SealOptions) (*types.SealedData, error) {
-	nonce := make([]byte, s.aead.NonceSize())
-	if _, err := rand.Read(nonce); err != nil {
-		return nil, err
-	}
 	var aad []byte
 	if opts != nil {
 		aad = opts.AAD
 	}
 	return &types.SealedData{
 		Backend:    types.BackendTypeSoftware,
-		Ciphertext: s.aead.Seal(nil, nonce, data, aad),
-		Nonce:      nonce,
+		Ciphertext: s.aead.Seal(nil, nil, data, aad),
 	}, nil
 }
 
@@ -160,14 +157,15 @@ func (s *Sealer) Unseal(ctx context.Context, sealed *types.SealedData, opts *typ
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
-	if sealed.Backend != types.BackendTypeSoftware || len(sealed.Nonce) != s.aead.NonceSize() {
+	// The nonce travels inside the ciphertext, so a separate one is foreign.
+	if sealed.Backend != types.BackendTypeSoftware || len(sealed.Nonce) != 0 {
 		return nil, types.SealedDataAuthenticationError("hostdeps: not a sealed value of this sealer", nil)
 	}
 	var aad []byte
 	if opts != nil {
 		aad = opts.AAD
 	}
-	plaintext, err := s.aead.Open(nil, sealed.Nonce, sealed.Ciphertext, aad)
+	plaintext, err := s.aead.Open(nil, nil, sealed.Ciphertext, aad)
 	if err != nil {
 		return nil, types.SealedDataAuthenticationError("hostdeps: AES-GCM open", err)
 	}

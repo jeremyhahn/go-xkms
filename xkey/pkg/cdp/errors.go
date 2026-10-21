@@ -22,6 +22,11 @@ var (
 	ErrCDPWebSocketURLNotFound = errors.New("cdp: WebSocket URL not found in version response")
 	ErrCDPWriteFailed          = errors.New("cdp: WebSocket write failed")
 	ErrCDPReadFailed           = errors.New("cdp: WebSocket read failed")
+
+	// ErrCDPFIPSUnsupported is returned when FIPS 140-only mode is
+	// enforced: the RFC 6455 WebSocket handshake requires SHA-1, which
+	// that mode refuses.
+	ErrCDPFIPSUnsupported = errors.New("cdp: the WebSocket handshake requires SHA-1, which FIPS 140-only mode refuses")
 )
 
 // Protocol-level errors.

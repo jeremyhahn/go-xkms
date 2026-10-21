@@ -281,9 +281,7 @@ func TestKeyToken_Refusals(t *testing.T) {
 	ctx := context.Background()
 	_, err := NewKeyToken("not a key")
 	assert.ErrorIs(t, err, ErrUnsupportedKey)
-	small, err := rsa.GenerateKey(rand.Reader, 1024)
-	require.NoError(t, err)
-	_, err = NewKeyToken(small)
+	_, err = NewKeyToken(undersizedRSAKey())
 	assert.ErrorIs(t, err, ErrUnsupportedKey)
 
 	ec, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)

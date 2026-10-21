@@ -68,7 +68,8 @@ over a secure BLE Noise protocol channel.
 
 The backup holds the same data as "xkey backup create" -- trust store
 certificates, OATH credentials, and static passwords read from the xkey data
-directory -- sealed with XChaCha20-Poly1305 before it leaves this machine. The
+directory -- sealed with AES-256-GCM under a random nonce (format version 3)
+before it leaves this machine. The
 phone stores the sealed envelope and can return it later for restore; it never
 sees the plaintext.
 
@@ -215,7 +216,7 @@ func runBackupToDevice(cmd *cobra.Command, args []string) (err error) {
 	_, _ = fmt.Fprintln(out)
 	_, _ = fmt.Fprintf(out, "  Backup ID:    %s\n", result.BackupID)
 	writeManifestSummary(out, newBackupManifest(manifest))
-	_, _ = fmt.Fprintf(out, "  Format:       %s v%d (XChaCha20-Poly1305)\n", encrypted.Magic, encrypted.Version)
+	_, _ = fmt.Fprintf(out, "  Format:       %s v%d (AES-256-GCM)\n", encrypted.Magic, encrypted.Version)
 	_, _ = fmt.Fprintf(out, "  Size:         %s\n", formatSize(int64(len(payload))))
 	writeSkippedSources(out, sources.skipped)
 

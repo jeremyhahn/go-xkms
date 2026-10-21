@@ -130,7 +130,8 @@ var backupCmd = &cobra.Command{
 	Long: `Create, restore, and manage encrypted backups of xkey data including
 trust store certificates, OATH credentials, and static passwords.
 
-Backups are sealed with XChaCha20-Poly1305. The file is the JSON encoding of
+Backups use format version 3: sealed with AES-256-GCM under a fresh random
+96-bit nonce per backup. The file is the JSON encoding of
 the backup envelope -- magic, format version, KDF record, nonce, and
 ciphertext -- so no backed-up value is readable without the password or key
 used to create it.
@@ -139,7 +140,8 @@ A password is stretched with Argon2id (t=3, m=64 MiB, p=4; PBKDF2-SHA256 when
 the Go FIPS 140 module is enabled) under a random salt. The salt and the KDF
 parameters are recorded in the envelope header, which is authenticated with
 the ciphertext. Version 1 backups, keyed with an unsalted SHA-256 of the
-password, are refused: re-create them with this release.
+password, and version 2 backups, sealed with XChaCha20-Poly1305, are refused
+and never migrated: re-create them with this release.
 
 ` + backupPasswordUsage,
 }
@@ -382,7 +384,7 @@ func runBackupCreate(cmd *cobra.Command, args []string) error {
 	out := cmd.OutOrStdout()
 	_, _ = fmt.Fprintf(out, "Backup created: %s\n", output)
 	writeManifestSummary(out, newBackupManifest(manifest))
-	_, _ = fmt.Fprintf(out, "  Format:       %s v%d (XChaCha20-Poly1305)\n", encrypted.Magic, encrypted.Version)
+	_, _ = fmt.Fprintf(out, "  Format:       %s v%d (AES-256-GCM)\n", encrypted.Magic, encrypted.Version)
 	_, _ = fmt.Fprintf(out, "  Size:         %s\n", formatSize(size))
 	writeSkippedSources(out, sources.skipped)
 
@@ -554,7 +556,7 @@ func runBackupContents(cmd *cobra.Command, args []string) error {
 	out := cmd.OutOrStdout()
 	_, _ = fmt.Fprintf(out, "Backup Contents: %s\n\n", filepath.Base(filePath))
 	writeManifestSummary(out, newBackupManifest(manifest))
-	_, _ = fmt.Fprintf(out, "  Format:       %s v%d (XChaCha20-Poly1305)\n", encrypted.Magic, encrypted.Version)
+	_, _ = fmt.Fprintf(out, "  Format:       %s v%d (AES-256-GCM)\n", encrypted.Magic, encrypted.Version)
 	_, _ = fmt.Fprintf(out, "  Checksum:     %s\n", manifest.Checksum)
 
 	return nil

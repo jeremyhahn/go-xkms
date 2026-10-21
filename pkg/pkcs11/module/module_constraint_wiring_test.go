@@ -453,6 +453,7 @@ func TestUnwrapKeyEnforcesAllowedMechanisms(t *testing.T) {
 // key's CKA_ALLOWED_MECHANISMS.
 func TestDeriveKeyEnforcesAllowedMechanisms(t *testing.T) {
 	m, _, session := deriveFixture(t)
+	listed := availableDeriveMechanism()
 
 	base, rv := m.CreateObject(session, []Attribute{
 		NewUint32Attribute(CKA_CLASS, uint32(CKO_SECRET_KEY)),
@@ -461,15 +462,15 @@ func TestDeriveKeyEnforcesAllowedMechanisms(t *testing.T) {
 		NewBoolAttribute(CKA_TOKEN, false),
 		NewBoolAttribute(CKA_DERIVE, true),
 		NewAttribute(CKA_VALUE, make([]byte, 32)),
-		allowedMechanismsAttribute(CKM_HKDF_DERIVE),
+		allowedMechanismsAttribute(listed.Type),
 	})
 	require.Equal(t, CKR_OK, rv)
 
-	_, rv = m.DeriveKey(session, &Mechanism{Type: CKM_SP800_108_COUNTER_KDF}, base, derivedKeyTemplate(32))
+	_, rv = m.DeriveKey(session, &Mechanism{Type: CKM_SP800_108_FEEDBACK_KDF}, base, derivedKeyTemplate(32))
 	assert.Equal(t, CKR_MECHANISM_INVALID, rv,
-		"CKM_SP800_108_COUNTER_KDF is absent from the base key's CKA_ALLOWED_MECHANISMS")
+		"CKM_SP800_108_FEEDBACK_KDF is absent from the base key's CKA_ALLOWED_MECHANISMS")
 
-	_, rv = m.DeriveKey(session, hkdfMechanism([]byte("salt"), []byte("info")), base, derivedKeyTemplate(32))
+	_, rv = m.DeriveKey(session, listed, base, derivedKeyTemplate(32))
 	assert.Equal(t, CKR_OK, rv, "the listed mechanism must still derive")
 }
 
@@ -490,7 +491,7 @@ func TestDeriveKeyAppliesDeriveTemplate(t *testing.T) {
 	})
 	require.Equal(t, CKR_OK, rv)
 
-	handle, rv := m.DeriveKey(session, hkdfMechanism([]byte("salt"), []byte("info")), base, derivedKeyTemplate(32))
+	handle, rv := m.DeriveKey(session, availableDeriveMechanism(), base, derivedKeyTemplate(32))
 	require.Equal(t, CKR_OK, rv)
 
 	attrs, rv := m.GetAttributeValue(session, handle, []Attribute{{Type: CKA_LABEL}})
@@ -500,7 +501,7 @@ func TestDeriveKeyAppliesDeriveTemplate(t *testing.T) {
 		"CKA_DERIVE_TEMPLATE must have added its CKA_LABEL to the derived key")
 
 	conflicting := append(derivedKeyTemplate(32), NewStringAttribute(CKA_LABEL, "caller-chosen"))
-	_, rv = m.DeriveKey(session, hkdfMechanism([]byte("salt"), []byte("info")), base, conflicting)
+	_, rv = m.DeriveKey(session, availableDeriveMechanism(), base, conflicting)
 	assert.Equal(t, CKR_TEMPLATE_INCONSISTENT, rv,
 		"a caller label contradicting CKA_DERIVE_TEMPLATE is a conflict")
 }

@@ -178,8 +178,16 @@ func TestGenerator_ApprovedAlgorithmsUnaffectedByFIPS(t *testing.T) {
 
 	for _, alg := range []string{AlgorithmSHA256, AlgorithmSHA512} {
 		t.Run(alg, func(t *testing.T) {
-			cred := sha1Credential(t)
-			cred.Algorithm = alg
+			// The RFC 4226 secret is 160 bits; the 80-bit sha1Credential
+			// secret is under the 112-bit HMAC key floor that strict FIPS
+			// mode enforces on every hash, approved or not.
+			cred := withSecret(&Credential{
+				Name:      "acme",
+				Type:      TypeTOTP,
+				Algorithm: alg,
+				Digits:    DefaultDigits,
+				Period:    DefaultPeriod,
+			}, rfcTestSecret)
 
 			g, err := NewGenerator(cred)
 			if err != nil {

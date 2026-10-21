@@ -445,6 +445,16 @@ func TestCallback_WithinSSHServerHandshake(t *testing.T) {
 		Auth:            []ssh.AuthMethod{ssh.Password("")}, // NoClientAuth accepts any
 		HostKeyCallback: known_hosts.Callback(ctx, store, scope.User, "alice"),
 		Timeout:         2 * time.Second,
+		// The handshake only carries the host key to the callback under
+		// test, so it negotiates algorithms the FIPS 140-3 module permits
+		// under GODEBUG=fips140=only: the P-256 KEX, and AES-CTR with
+		// HMAC-SHA-256 (x/crypto/ssh builds AES-GCM over caller IVs, which
+		// the module refuses).
+		Config: ssh.Config{
+			KeyExchanges: []string{ssh.KeyExchangeECDHP256},
+			Ciphers:      []string{ssh.CipherAES128CTR},
+			MACs:         []string{ssh.HMACSHA256},
+		},
 	}
 	client, err := ssh.Dial("tcp", listener.Addr().String(), clientCfg)
 	if err != nil {

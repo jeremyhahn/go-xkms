@@ -14,6 +14,7 @@
 package kdf
 
 import (
+	"crypto/fips140"
 	"crypto/hmac"
 	"encoding/binary"
 	"hash"
@@ -118,7 +119,8 @@ func (a *SP800108Adapter) ValidateParams(params *KDFParams) error {
 }
 
 // DeriveKey derives keying material using the SP 800-108 KDF. The ikm is the
-// key derivation key (KDK) that keys the HMAC PRF.
+// key derivation key (KDK) that keys the HMAC PRF; a KDK the FIPS 140-3
+// module refuses under GODEBUG=fips140=only returns ErrKDKRefused.
 func (a *SP800108Adapter) DeriveKey(ikm []byte, params *KDFParams) ([]byte, error) {
 	if len(ikm) == 0 {
 		return nil, ErrInvalidIKM
@@ -129,16 +131,42 @@ func (a *SP800108Adapter) DeriveKey(ikm []byte, params *KDFParams) ([]byte, erro
 		return nil, err
 	}
 
+	mac, err := newPRF(p.newHash, ikm)
+	if err != nil {
+		return nil, err
+	}
+
 	switch a.mode {
 	case AlgorithmSP800108Counter:
-		return a.deriveCounterMode(ikm, p), nil
+		return a.deriveCounterMode(mac, p), nil
 	case AlgorithmSP800108Feedback:
-		return a.deriveFeedbackMode(ikm, p), nil
+		return a.deriveFeedbackMode(mac, p), nil
 	case AlgorithmSP800108DoublePipeline:
-		return a.deriveDoublePipelineMode(ikm, p), nil
+		return a.deriveDoublePipelineMode(mac, p), nil
 	default:
 		return nil, ErrUnsupportedAlgorithm
 	}
+}
+
+// newPRF returns the HMAC PRF keyed with the key derivation key. Under
+// GODEBUG=fips140=only crypto/hmac panics, rather than returning an error,
+// when the module refuses the key (SP 800-131A Rev. 2 §8 sets a 112-bit
+// floor on HMAC keys); newPRF turns that refusal into ErrKDKRefused so a
+// caller-supplied key cannot crash the process. The stdlib stays the only
+// judge of what is refused: a panic outside an enforcing module is not a
+// refusal and propagates unchanged.
+func newPRF(newHash func() hash.Hash, kdk []byte) (mac hash.Hash, err error) {
+	defer func() {
+		r := recover()
+		if r == nil {
+			return
+		}
+		if !fips140.Enforced() {
+			panic(r)
+		}
+		mac, err = nil, ErrKDKRefused
+	}()
+	return hmac.New(newHash, kdk), nil
 }
 
 // derivationPlan holds the validated, fully resolved inputs for one
@@ -291,10 +319,9 @@ func (p *derivationPlan) counterEncoding(buf []byte, i int) []byte {
 //
 //	K(i) = PRF(KDK, [i]_r || Label || 0x00 || Context || [L]_2)
 //	KM   = K(1) || K(2) || ... || K(n), truncated to L bits
-func (a *SP800108Adapter) deriveCounterMode(kdk []byte, p *derivationPlan) []byte {
+func (a *SP800108Adapter) deriveCounterMode(mac hash.Hash, p *derivationPlan) []byte {
 	result := make([]byte, 0, p.blocks*p.prfLen)
 	counterBuf := make([]byte, counterBufferBytes)
-	mac := hmac.New(p.newHash, kdk)
 
 	for i := 1; i <= p.blocks; i++ {
 		mac.Reset()
@@ -313,10 +340,9 @@ func (a *SP800108Adapter) deriveCounterMode(kdk []byte, p *derivationPlan) []byt
 //
 // The chaining value K(i-1) always precedes the fixed input data; the counter
 // placement applies within the fixed input data.
-func (a *SP800108Adapter) deriveFeedbackMode(kdk []byte, p *derivationPlan) []byte {
+func (a *SP800108Adapter) deriveFeedbackMode(mac hash.Hash, p *derivationPlan) []byte {
 	result := make([]byte, 0, p.blocks*p.prfLen)
 	counterBuf := make([]byte, counterBufferBytes)
-	mac := hmac.New(p.newHash, kdk)
 
 	feedback := p.iv
 	for i := 1; i <= p.blocks; i++ {
@@ -338,10 +364,9 @@ func (a *SP800108Adapter) deriveFeedbackMode(kdk []byte, p *derivationPlan) []by
 //	A(0) = Label || 0x00 || Context || [L]_2
 //	A(i) = PRF(KDK, A(i-1))
 //	K(i) = PRF(KDK, A(i) || [i]_r || Label || 0x00 || Context || [L]_2)
-func (a *SP800108Adapter) deriveDoublePipelineMode(kdk []byte, p *derivationPlan) []byte {
+func (a *SP800108Adapter) deriveDoublePipelineMode(mac hash.Hash, p *derivationPlan) []byte {
 	result := make([]byte, 0, p.blocks*p.prfLen)
 	counterBuf := make([]byte, counterBufferBytes)
-	mac := hmac.New(p.newHash, kdk)
 
 	// A(0) is the fixed input data with no counter.
 	pipeline := make([]byte, 0, len(p.prefix)+len(p.suffix))

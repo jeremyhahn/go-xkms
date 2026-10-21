@@ -15,8 +15,7 @@ package module
 
 import (
 	"context"
-	"crypto/aes"
-	"crypto/cipher"
+	"slices"
 	"testing"
 
 	"github.com/jeremyhahn/go-xkms/pkg/api/transport"
@@ -64,43 +63,19 @@ func (w *wrapTransport) WrapKeyByID(ctx context.Context, req *transport.WrapKeyB
 		return nil, ErrKeyHandleInvalid
 	}
 
-	nonce := req.IV
-	if len(nonce) == 0 {
-		nonce = make([]byte, GCMNonceSize)
+	// Only AES-GCM consumes the request's IV. AES-KW consumes none, so the fake
+	// answers any other algorithm under a nonce of its own choosing.
+	iv := req.IV
+	if req.Algorithm != string(types.WrapAESGCM) {
+		iv = nil
 	}
-
-	sealed, err := gcmSealOracleBytes(kek, nonce, req.TargetKeyMaterial, req.AAD)
+	sealed, err := fakeServiceGCMSeal(kek, GCMTagSize, iv, req.TargetKeyMaterial, req.AAD)
 	if err != nil {
 		return nil, err
 	}
-	blob := make([]byte, 0, len(nonce)+len(sealed))
-	blob = append(blob, nonce...)
-	blob = append(blob, sealed...)
+	blob := slices.Concat(sealed.Nonce, sealed.Ciphertext, sealed.Tag)
 
 	return &transport.WrapKeyByIDResponse{WrappedKey: blob, Algorithm: req.Algorithm}, nil
-}
-
-// gcmSealOracleBytes is gcmSealOracle without a *testing.T, for use inside the
-// transport above. Both seal with crypto/cipher for the same reason: the
-// module's output has to be measured against an implementation that is not the
-// module.
-//
-// A construction failure is returned, not panicked: under GODEBUG=fips140=only
-// crypto/cipher refuses arbitrary-IV GCM, and a panic here aborted the whole
-// test binary before every test after this file ran -- which is how a
-// cipher-mode restriction masqueraded as the package's one remaining panic
-// under activation (#292). Returned, the refusal reaches the test as an
-// ordinary failed assertion and the rest of the suite still runs.
-func gcmSealOracleBytes(key, nonce, plaintext, aad []byte) ([]byte, error) {
-	block, err := aes.NewCipher(key)
-	if err != nil {
-		return nil, err
-	}
-	gcm, err := cipher.NewGCM(block)
-	if err != nil {
-		return nil, err
-	}
-	return gcm.Seal(nil, nonce, plaintext, aad), nil
 }
 
 // gcmWrapRequest builds the C_WrapKey request the module's WrapKey verb builds
@@ -139,15 +114,21 @@ func TestWrapKeyByIDRefusesAReusedIVUnderOneKey(t *testing.T) {
 	targetB := []byte("target-key-BBBBB")
 	iv := uniqueTestIV(t)
 
+	client := newWrapTransport(map[string][]byte{"reuse-kek": kek})
+	cm := NewCryptoManager(client, &CryptoManagerConfig{DefaultBackend: "wrapnonce-be"})
+	if callerIVSealRefusedUnderFIPS(t, func() error {
+		_, err := cm.WrapKeyByID(context.Background(), gcmWrapRequest("wrapnonce-be", "reuse-kek", iv, targetA))
+		return err
+	}) {
+		return
+	}
+
 	// The attack, outside the module, against the standard library.
 	oracleA := gcmSealOracle(t, kek, iv, targetA, nil)
 	oracleB := gcmSealOracle(t, kek, iv, targetB, nil)
 	recovered := xorBytes(xorBytes(oracleA[:len(targetA)], oracleB[:len(targetB)]), targetA)
 	require.Equal(t, targetB, recovered,
 		"the premise of this test: two GCM seals under one (key, IV) leak the XOR of their plaintexts")
-
-	client := newWrapTransport(map[string][]byte{"reuse-kek": kek})
-	cm := NewCryptoManager(client, &CryptoManagerConfig{DefaultBackend: "wrapnonce-be"})
 
 	blobA, err := cm.WrapKeyByID(context.Background(),
 		gcmWrapRequest("wrapnonce-be", "reuse-kek", iv, targetA))
@@ -178,6 +159,12 @@ func TestWrapKeyByIDAcceptsAFreshIVUnderTheSameKey(t *testing.T) {
 
 	first := uniqueTestIV(t)
 	second := uniqueTestIV(t)
+	if callerIVSealRefusedUnderFIPS(t, func() error {
+		_, err := cm.WrapKeyByID(context.Background(), gcmWrapRequest("wrapnonce-be", "fresh-kek", first, target))
+		return err
+	}) {
+		return
+	}
 
 	blobFirst, err := cm.WrapKeyByID(context.Background(),
 		gcmWrapRequest("wrapnonce-be", "fresh-kek", first, target))
@@ -213,6 +200,12 @@ func TestWrapKeyByIDAcceptsOneIVUnderTwoDifferentKeys(t *testing.T) {
 		"two-kek-two": []byte("two-kek-TWO-5678"),
 	})
 	cm := NewCryptoManager(client, &CryptoManagerConfig{DefaultBackend: "wrapnonce-be"})
+	if callerIVSealRefusedUnderFIPS(t, func() error {
+		_, err := cm.WrapKeyByID(context.Background(), gcmWrapRequest("wrapnonce-be", "two-kek-one", iv, target))
+		return err
+	}) {
+		return
+	}
 
 	_, err := cm.WrapKeyByID(context.Background(),
 		gcmWrapRequest("wrapnonce-be", "two-kek-one", iv, target))
@@ -262,6 +255,16 @@ func TestWrapKeyByIDDoesNotConsumeTheIVOfARefusedWrap(t *testing.T) {
 		"the premise of this test is a refusal on the request, not on the mechanism: got %v", err)
 	require.Equal(t, 0, client.wraps, "a malformed request must not reach the service")
 
+	retry := func() error {
+		_, err := cm.WrapKeyByID(context.Background(), gcmWrapRequest("wrapnonce-be", "refused-kek", iv, target))
+		return err
+	}
+	if callerIVSealRefusedUnderFIPS(t, retry) {
+		assert.Equal(t, 1, client.wraps,
+			"the retry must reach the service, which refuses the caller IV: the refused wrap claimed nothing")
+		return
+	}
+
 	blob, err := cm.WrapKeyByID(context.Background(),
 		gcmWrapRequest("wrapnonce-be", "refused-kek", iv, target))
 	require.NoError(t, err,
@@ -290,8 +293,14 @@ func TestWrapKeyByIDDoesNotClaimTheIVOfANonAEADMechanism(t *testing.T) {
 	_, err := cm.WrapKeyByID(context.Background(), kw)
 	require.NoError(t, err)
 
-	_, err = cm.WrapKeyByID(context.Background(),
-		gcmWrapRequest("wrapnonce-be", "kw-kek", iv, target))
+	gcm := gcmWrapRequest("wrapnonce-be", "kw-kek", iv, target)
+	if callerIVSealRefusedUnderFIPS(t, func() error {
+		_, err := cm.WrapKeyByID(context.Background(), gcm)
+		return err
+	}) {
+		return
+	}
+	_, err = cm.WrapKeyByID(context.Background(), gcm)
 	require.NoError(t, err,
 		"AES-KW consumes no IV, so the same value must still be available to AES-GCM")
 }
@@ -340,6 +349,12 @@ func TestEncryptRefusesAReusedIVAcrossTwoCryptoManagers(t *testing.T) {
 
 	op, err := firstCM.EncryptInit(gcmMechanism(iv, nil, 128), 1, "twocm-key", "twocm-be")
 	require.NoError(t, err)
+	if callerIVSealRefusedUnderFIPS(t, func() error {
+		_, err := firstCM.Encrypt(context.Background(), op, plaintext)
+		return err
+	}) {
+		return
+	}
 	_, err = firstCM.Encrypt(context.Background(), op, plaintext)
 	require.NoError(t, err)
 

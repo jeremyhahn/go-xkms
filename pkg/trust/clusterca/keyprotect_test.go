@@ -74,32 +74,31 @@ func newFakeSealer() *fakeSealer {
 func (f *fakeSealer) CanSeal() bool { return f.canSeal }
 
 func (f *fakeSealer) Seal(_ context.Context, data []byte, _ *types.SealOptions) (*types.SealedData, error) {
-	block, err := aes.NewCipher(f.key)
+	gcm, err := f.aead()
 	if err != nil {
 		return nil, err
 	}
-	gcm, err := cipher.NewGCM(block)
-	if err != nil {
-		return nil, err
-	}
-	nonce := make([]byte, gcm.NonceSize())
-	if _, err := rand.Read(nonce); err != nil {
-		return nil, err
-	}
-	ct := gcm.Seal(nil, nonce, data, nil)
-	return &types.SealedData{Backend: types.BackendTypeTPM2, Ciphertext: ct, Nonce: nonce}, nil
+	ct := gcm.Seal(nil, nil, data, nil)
+	return &types.SealedData{Backend: types.BackendTypeTPM2, Ciphertext: ct}, nil
 }
 
 func (f *fakeSealer) Unseal(_ context.Context, sealed *types.SealedData, _ *types.UnsealOptions) ([]byte, error) {
+	gcm, err := f.aead()
+	if err != nil {
+		return nil, err
+	}
+	return gcm.Open(nil, nil, sealed.Ciphertext, nil)
+}
+
+// aead returns an AES-GCM AEAD that generates its own nonce and carries it
+// in the ciphertext (NewGCMWithRandomNonce), the only GCM construction a
+// fips140=only process may build.
+func (f *fakeSealer) aead() (cipher.AEAD, error) {
 	block, err := aes.NewCipher(f.key)
 	if err != nil {
 		return nil, err
 	}
-	gcm, err := cipher.NewGCM(block)
-	if err != nil {
-		return nil, err
-	}
-	return gcm.Open(nil, sealed.Nonce, sealed.Ciphertext, nil)
+	return cipher.NewGCMWithRandomNonce(block)
 }
 
 // ---------------------------------------------------------------------------

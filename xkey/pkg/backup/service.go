@@ -15,7 +15,8 @@ package backup
 
 import (
 	"bytes"
-	"crypto/rand"
+	"crypto/aes"
+	"crypto/cipher"
 	"crypto/sha256"
 	"crypto/x509"
 	"encoding/hex"
@@ -26,7 +27,6 @@ import (
 
 	xkms "github.com/jeremyhahn/go-xkms/sdk/go"
 	secure "github.com/jeremyhahn/go-xkms/sdk/go/secure"
-	"golang.org/x/crypto/chacha20poly1305"
 
 	"github.com/jeremyhahn/go-xkms/sdk/go/truststore"
 )
@@ -36,10 +36,14 @@ import (
 // ---------------------------------------------------------------------------
 
 const (
-	// BackupVersion is the current backup format version. Version 2 added
-	// the salted password KDF record and authenticates the envelope header
-	// as AEAD additional data (go-xkms#1202).
-	BackupVersion = 2
+	// BackupVersion is the current backup format version: AES-256-GCM with
+	// a random 96-bit nonce, a salted password KDF record, and the envelope
+	// header authenticated as AEAD additional data. Version 2 files
+	// (XChaCha20-Poly1305) are refused with ErrVersionMismatch.
+	BackupVersion = 3
+
+	// gcmNonceSize is the AES-GCM random nonce length in bytes.
+	gcmNonceSize = 12
 
 	// legacyUnsaltedVersion is the refused version 1 format, whose password
 	// key was an unsalted SHA-256 of the password.
@@ -664,7 +668,7 @@ func NewService(config *Config, opts ...Option) (*Service, error) {
 // ---------------------------------------------------------------------------
 
 // CreateBackup collects data from all non-nil sources, serializes the
-// archive to JSON, and encrypts it with XChaCha20-Poly1305 under key. A
+// archive to JSON, and encrypts it with AES-256-GCM under key. A
 // password-derived key's KDF record is written into the header, which is
 // authenticated with the ciphertext.
 func (s *Service) CreateBackup(key *Key) (*EncryptedBackup, error) {
@@ -1129,41 +1133,53 @@ func (s *Service) collectPasswords(a *Archive) (bool, error) {
 // Internal: encryption helpers
 // ---------------------------------------------------------------------------
 
-// encrypt uses XChaCha20-Poly1305 to encrypt plaintext with a 32-byte key,
-// authenticating aad alongside it.
+// newAEAD returns AES-256-GCM with a random 96-bit nonce, the only GCM
+// construction FIPS 140-only mode permits (NIST SP 800-38D §8.2.2).
+func newAEAD(key []byte) (cipher.AEAD, error) {
+	if len(key) != KeySize {
+		return nil, &DetailError{Err: ErrInvalidKey, Detail: fmt.Sprintf(": key is %d bytes, want %d", len(key), KeySize)}
+	}
+	block, err := aes.NewCipher(key)
+	if err != nil {
+		return nil, err
+	}
+	return cipher.NewGCMWithRandomNonce(block)
+}
+
+// encrypt seals plaintext with AES-256-GCM under a 32-byte key,
+// authenticating aad alongside it. The random nonce is returned
+// separately from the ciphertext and tag.
 func encrypt(plaintext, key, aad []byte) (ciphertext, nonce []byte, err error) {
-	aead, err := chacha20poly1305.NewX(key)
+	aead, err := newAEAD(key)
 	if err != nil {
 		return nil, nil, &SentinelCauseError{Sentinel: ErrEncryptionFailed, Cause: err}
 	}
 
-	nonce = make([]byte, aead.NonceSize())
-	if _, err := rand.Read(nonce); err != nil {
-		return nil, nil, &DetailError{Err: ErrEncryptionFailed, Detail: fmt.Sprintf(": nonce generation: %v", err)}
-	}
-
-	ciphertext = aead.Seal(nil, nonce, plaintext, aad)
-	return ciphertext, nonce, nil
+	// NewGCMWithRandomNonce draws the nonce itself and prefixes it to
+	// the sealed output.
+	sealed := aead.Seal(nil, nil, plaintext, aad)
+	return sealed[gcmNonceSize:], sealed[:gcmNonceSize], nil
 }
 
-// decrypt uses XChaCha20-Poly1305 to decrypt ciphertext with a 32-byte key,
-// verifying aad alongside it.
+// decrypt opens AES-256-GCM ciphertext with a 32-byte key, verifying aad
+// alongside it.
 func decrypt(ciphertext, nonce, key, aad []byte) ([]byte, error) {
-	aead, err := chacha20poly1305.NewX(key)
+	aead, err := newAEAD(key)
 	if err != nil {
 		return nil, &SentinelCauseError{Sentinel: ErrDecryptionFailed, Cause: err}
 	}
 
-	// chacha20poly1305.AEAD.Open panics rather than returning an error when
-	// the nonce is not exactly NonceSize bytes (24 for XChaCha20-Poly1305).
-	// The nonce is read back from an imported backup file, so a corrupted
-	// or maliciously crafted file must not be able to crash the process.
-	if len(nonce) != aead.NonceSize() {
+	// The nonce is read back from an imported backup file. Reject a wrong
+	// length here so a corrupted file fails with a clear error instead of
+	// shifting nonce bytes into the ciphertext.
+	if len(nonce) != gcmNonceSize {
 		return nil, &DetailError{Err: ErrDecryptionFailed, Detail: fmt.Sprintf(
-			": nonce is %d bytes, want %d", len(nonce), aead.NonceSize())}
+			": nonce is %d bytes, want %d", len(nonce), gcmNonceSize)}
 	}
 
-	plaintext, err := aead.Open(nil, nonce, ciphertext, aad)
+	sealed := make([]byte, 0, len(nonce)+len(ciphertext))
+	sealed = append(append(sealed, nonce...), ciphertext...)
+	plaintext, err := aead.Open(nil, nil, sealed, aad)
 	if err != nil {
 		return nil, &SentinelCauseError{Sentinel: ErrDecryptionFailed, Cause: err}
 	}

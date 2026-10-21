@@ -1217,6 +1217,12 @@ func TestAuthWrapWithGCMParams(t *testing.T) {
 
 		gcmParams := NewAESGCMParams(callerIV, 128)
 		mechanism := NewMechanismWithTypedParams(CKM_AES_GCM, gcmParams)
+		if authWrapRefusedUnderFIPS(t, GCMTagSize, true, func() error {
+			_, err := m.WrapKeyAuthenticated(sessionHandle, mechanism, wrappingKeyHandle, targetKeyHandle, nil)
+			return err
+		}) {
+			return
+		}
 
 		wrappedKey, err := m.WrapKeyAuthenticated(sessionHandle, mechanism, wrappingKeyHandle, targetKeyHandle, nil)
 		require.NoError(t, err)
@@ -1282,6 +1288,12 @@ func TestAuthWrapWithGCMParams(t *testing.T) {
 
 		gcmParams := NewAESGCMParamsWithAAD(callerIV, aad, 128)
 		wrapMech := NewMechanismWithTypedParams(CKM_AES_GCM, gcmParams)
+		if authWrapRefusedUnderFIPS(t, GCMTagSize, true, func() error {
+			_, err := m.WrapKeyAuthenticated(sessionHandle, wrapMech, wkHandle, tkHandle, nil)
+			return err
+		}) {
+			return
+		}
 
 		// Wrap
 		wrappedKey, err := m.WrapKeyAuthenticated(sessionHandle, wrapMech, wkHandle, tkHandle, nil)
@@ -1318,6 +1330,7 @@ func TestAuthWrapWithGCMParams(t *testing.T) {
 
 		// Wrap with AAD in the mechanism params
 		paramsAAD := []byte("params-aad")
+		callerIV = callerIVOutsideFIPS(callerIV)
 		gcmParams := NewAESGCMParamsWithAAD(callerIV, paramsAAD, 128)
 		mechanism := NewMechanismWithTypedParams(CKM_AES_GCM, gcmParams)
 
@@ -1390,6 +1403,12 @@ func TestAuthWrapWithGCMParams(t *testing.T) {
 
 		wrapParams := NewAESGCMParams(wrapIV, 128)
 		wrapMech := NewMechanismWithTypedParams(CKM_AES_GCM, wrapParams)
+		if authWrapRefusedUnderFIPS(t, GCMTagSize, true, func() error {
+			_, err := m.WrapKeyAuthenticated(sessionHandle, wrapMech, wrappingKeyHandle, targetKeyHandle, nil)
+			return err
+		}) {
+			return
+		}
 
 		wrappedKey, err := m.WrapKeyAuthenticated(sessionHandle, wrapMech, wrappingKeyHandle, targetKeyHandle, nil)
 		require.NoError(t, err)
@@ -1449,6 +1468,12 @@ func TestAuthWrapSizeWithGCMParams(t *testing.T) {
 		callerIV := make([]byte, GCMNonceSize)
 		gcmParams := NewAESGCMParams(callerIV, 128)
 		mechanism := NewMechanismWithTypedParams(CKM_AES_GCM, gcmParams)
+		if authWrapRefusedUnderFIPS(t, GCMTagSize, true, func() error {
+			_, err := m.WrapKeyAuthenticatedSize(sessionHandle, mechanism, wkHandle, targetHandle)
+			return err
+		}) {
+			return
+		}
 
 		size, err := m.WrapKeyAuthenticatedSize(sessionHandle, mechanism, wkHandle, targetHandle)
 		require.NoError(t, err)
@@ -1482,6 +1507,12 @@ func TestAuthWrapSizeWithGCMParams(t *testing.T) {
 
 		gcmParams := NewAESGCMParams(callerIV, 128)
 		mechanism := NewMechanismWithTypedParams(CKM_AES_GCM, gcmParams)
+		if authWrapRefusedUnderFIPS(t, GCMTagSize, true, func() error {
+			_, err := m.WrapKeyAuthenticated(sessionHandle, mechanism, wkHandle, targetHandle, nil)
+			return err
+		}) {
+			return
+		}
 
 		// Query size
 		size, err := m.WrapKeyAuthenticatedSize(sessionHandle, mechanism, wkHandle, targetHandle)

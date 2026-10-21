@@ -10,6 +10,7 @@
 package module
 
 import (
+	"crypto/fips140"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -25,6 +26,10 @@ import (
 func TestSHA1SignatureMechanism_WithholdsSignFlagByDefault(t *testing.T) {
 	// Default policy (env unset): weak-hash signing is refused.
 	t.Setenv(weakHashSigningEnvVar, "")
+	if fips140.Enabled() {
+		assertSHA1SignatureMechanismsWithheld(t)
+		return
+	}
 
 	for _, mech := range []MechanismType{CKM_SHA1_RSA_PKCS, CKM_ECDSA_SHA1} {
 		desc := GetMechanismDescriptor(mech)
@@ -45,12 +50,30 @@ func TestSHA1SignatureMechanism_WithholdsSignFlagByDefault(t *testing.T) {
 
 func TestSHA1SignatureMechanism_AdvertisesSignWhenWeakHashAllowed(t *testing.T) {
 	t.Setenv(weakHashSigningEnvVar, "true")
+	if fips140.Enabled() {
+		// The operator's opt-in does not reach past FIPS mode.
+		assertSHA1SignatureMechanismsWithheld(t)
+		return
+	}
 
 	for _, mech := range []MechanismType{CKM_SHA1_RSA_PKCS, CKM_ECDSA_SHA1} {
 		desc := GetMechanismDescriptor(mech)
 		require.NotNil(t, desc)
 		assert.NotZero(t, desc.Flags&CKF_SIGN,
 			"%s must advertise CKF_SIGN once the operator opts into weak-hash signing", desc.Name)
+	}
+}
+
+// assertSHA1SignatureMechanismsWithheld checks that FIPS mode withholds the
+// SHA-1 signature mechanisms outright: SP 800-131A Rev. 2 disallows SHA-1 for
+// signature generation.
+func assertSHA1SignatureMechanismsWithheld(t *testing.T) {
+	t.Helper()
+	info := defaultMechanismInfo()
+	for _, mech := range []MechanismType{CKM_SHA1_RSA_PKCS, CKM_ECDSA_SHA1} {
+		assert.Nil(t, GetMechanismDescriptor(mech), "FIPS mode must withhold %v", mech)
+		_, advertised := info[mech]
+		assert.False(t, advertised, "FIPS mode must not advertise %v", mech)
 	}
 }
 

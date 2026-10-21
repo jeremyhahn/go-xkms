@@ -14,6 +14,7 @@
 package module
 
 import (
+	"crypto/fips140"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"strings"
@@ -258,9 +259,10 @@ func TestIsMechanismSupported(t *testing.T) {
 			want:     true,
 		},
 		{
-			name:     "HKDF derive supported",
+			// FIPS mode withholds HKDF over an arbitrary base key (see TestFIPSMode).
+			name:     "HKDF derive supported outside FIPS mode",
 			mechType: CKM_HKDF_DERIVE,
-			want:     true,
+			want:     !fips140.Enabled(),
 		},
 		{
 			name:     "unknown mechanism not supported",
@@ -353,8 +355,9 @@ func TestMechanismGetMechanismInfo(t *testing.T) {
 			wantMinKey: rsaModulusBitsMin,
 			// The ceiling is a size the module actually generates. It read
 			// 16384 until generating a key at that advertised maximum
-			// exhausted the daemon's memory; see rsaModulusBitsMax.
-			wantMaxKey: rsaModulusBitsMax,
+			// exhausted the daemon's memory; see rsaModulusBitsMax. FIPS mode
+			// narrows it to 3072 (TestRSAModulusCeilingNarrowsUnderFIPS).
+			wantMaxKey: rsaModulusCeilingForProcess(),
 		},
 		{
 			// CKM_AES_GCM's MinKeySize/MaxKeySize are in bytes (PKCS#11
@@ -842,9 +845,10 @@ func TestCanDerive(t *testing.T) {
 		want     bool
 	}{
 		{
-			name:     "HKDF derive",
+			// FIPS mode withholds HKDF over an arbitrary base key (see TestFIPSMode).
+			name:     "HKDF derive outside FIPS mode",
 			mechType: CKM_HKDF_DERIVE,
-			want:     true,
+			want:     !fips140.Enabled(),
 		},
 		{
 			name:     "ECDH derive",
@@ -1006,10 +1010,11 @@ func TestIsValidKeySize(t *testing.T) {
 			want:     true,
 		},
 		{
-			name:     "RSA 4096 valid",
+			// PKCS#11 v3.2 §6.1.21 caps the modulus at 3072 bits in FIPS mode.
+			name:     "RSA 4096 valid outside FIPS mode",
 			mechType: CKM_RSA_PKCS_KEY_PAIR_GEN,
 			keySize:  4096,
-			want:     true,
+			want:     !fips140.Enabled(),
 		},
 		{
 			name:     "RSA 256 too small",
@@ -2818,6 +2823,11 @@ func TestMechanismDescriptor_Flags(t *testing.T) {
 
 // TestMechanismInfo_Consistency tests MechanismInfo is consistent with descriptors.
 func TestMechanismInfo_Consistency(t *testing.T) {
+	// The descriptor carries the default-regime range; FIPS mode narrows the
+	// advertised RSA ceiling on purpose, which
+	// TestRSAModulusCeilingNarrowsUnderFIPS covers.
+	withFIPSMode(t, false)
+
 	mechanisms := ListSupportedMechanisms()
 	for _, mech := range mechanisms {
 		info, err := GetMechanismInfo(mech)
@@ -2991,12 +3001,16 @@ func TestMechanismAESKeySizeRegression(t *testing.T) {
 // which makes disagreement unrepresentable — but nothing stops a stray
 // Advertised: true from silently widening the promise, and this catches that.
 func TestAdvertisedMechanismsAreDeliberate(t *testing.T) {
+	// FIPS mode withholds SHA-1 signature generation and HKDF over an
+	// arbitrary base key; TestFIPSMode gives the reasons.
+	outsideFIPS := !fips140.Enabled()
+
 	want := map[MechanismType]bool{
 		CKM_RSA_PKCS_KEY_PAIR_GEN: true,
 		CKM_RSA_PKCS:              true,
 		CKM_RSA_PKCS_OAEP:         true,
 		CKM_RSA_PKCS_PSS:          true,
-		CKM_SHA1_RSA_PKCS:         true,
+		CKM_SHA1_RSA_PKCS:         outsideFIPS,
 		CKM_SHA256_RSA_PKCS:       true,
 		CKM_SHA384_RSA_PKCS:       true,
 		CKM_SHA512_RSA_PKCS:       true,
@@ -3009,7 +3023,7 @@ func TestAdvertisedMechanismsAreDeliberate(t *testing.T) {
 		// CKM_ECDSA_SHA1 and CKM_ECDSA_SHA224 were registered but unadvertised.
 		// Both sign and verify end to end against a P-256 key, and C_Verify
 		// rejects an altered message, so they are promises the module keeps.
-		CKM_ECDSA_SHA1:              true,
+		CKM_ECDSA_SHA1:              outsideFIPS,
 		CKM_ECDSA_SHA224:            true,
 		CKM_ECDSA_SHA256:            true,
 		CKM_ECDSA_SHA384:            true,
@@ -3050,8 +3064,8 @@ func TestAdvertisedMechanismsAreDeliberate(t *testing.T) {
 		// material; the derivation now runs over the base key's own material,
 		// either bytes the application supplied through C_CreateObject or, for
 		// a backend-held key, inside the backend that holds it.
-		CKM_HKDF_DERIVE:                   true,
-		CKM_HKDF_DATA:                     true,
+		CKM_HKDF_DERIVE:                   outsideFIPS,
+		CKM_HKDF_DATA:                     outsideFIPS,
 		CKM_SP800_108_COUNTER_KDF:         true,
 		CKM_SP800_108_FEEDBACK_KDF:        true,
 		CKM_SP800_108_DOUBLE_PIPELINE_KDF: true,
@@ -3078,14 +3092,18 @@ func TestAdvertisedMechanismsAreDeliberate(t *testing.T) {
 
 	got := defaultMechanismInfo()
 
-	for mechType := range want {
-		if _, ok := got[mechType]; !ok {
+	for mechType, advertised := range want {
+		_, ok := got[mechType]
+		if advertised && !ok {
 			t.Errorf("%v is expected to be advertised but is not; applications can no "+
 				"longer discover it through C_GetMechanismList", mechType)
 		}
+		if !advertised && ok {
+			t.Errorf("%v is advertised in FIPS mode, which withholds it", mechType)
+		}
 	}
 	for mechType := range got {
-		if !want[mechType] {
+		if _, listed := want[mechType]; !listed {
 			t.Errorf("%v is advertised but is not in the deliberate set. Advertising a "+
 				"mechanism promises applications they may rely on it -- add it to this "+
 				"test only once its implementation is proven end to end", mechType)

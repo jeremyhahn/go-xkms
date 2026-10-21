@@ -607,7 +607,7 @@ func TestCredential_Validate_Success(t *testing.T) {
 				Algorithm: AlgorithmSHA256,
 				Digits:    8,
 				Counter:   0,
-			}, "JBSWY3DPEHPK3PXP"),
+			}, rfcTestSecret),
 		},
 		{
 			name: "valid with SHA512",
@@ -617,7 +617,7 @@ func TestCredential_Validate_Success(t *testing.T) {
 				Algorithm: AlgorithmSHA512,
 				Digits:    7,
 				Period:    60,
-			}, "JBSWY3DPEHPK3PXP"),
+			}, rfcTestSecret),
 		},
 	}
 

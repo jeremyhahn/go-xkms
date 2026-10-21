@@ -839,6 +839,14 @@ func TestModule_WrapKey_Success(t *testing.T) {
 	defer m.Finalize()
 
 	mechanism := NewMechanismWithTypedParams(CKM_AES_GCM, NewAESGCMParams(testGCMIV(), 128))
+	if callerIVSealRefusedUnderFIPS(t, func() error {
+		if _, rv := m.WrapKey(sessionHandle, mechanism, wrapKeyHandle, targetKeyHandle); rv != CKR_OK {
+			return NewPKCS11Error(rv)
+		}
+		return nil
+	}) {
+		return
+	}
 
 	wrappedKey, rv := m.WrapKey(sessionHandle, mechanism, wrapKeyHandle, targetKeyHandle)
 	require.Equal(t, CKR_OK, rv, "WrapKey should succeed")

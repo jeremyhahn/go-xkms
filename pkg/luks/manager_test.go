@@ -15,11 +15,7 @@ package luks
 
 import (
 	"context"
-	"crypto/fips140"
 	"errors"
-	"os"
-	"os/exec"
-	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -94,7 +90,7 @@ func TestNewManager_Success(t *testing.T) {
 	mgr, err := NewManager(validConfig(), &mockExecutor{})
 	require.NoError(t, err)
 	require.NotNil(t, mgr)
-	assert.Equal(t, KDFArgon2id, mgr.Config().KDF)
+	assert.Equal(t, DefaultKDF(), mgr.Config().KDF)
 	assert.Equal(t, 2000, mgr.Config().PBKDFIterTime)
 }
 
@@ -125,6 +121,9 @@ func TestNewManager_InvalidKDFInConfig(t *testing.T) {
 // --- NewFIPSAwareManager ---
 
 func TestNewFIPSAwareManager_Standard(t *testing.T) {
+	if !runUnderFIPS140(t, "off") {
+		return
+	}
 	mgr, err := NewFIPSAwareManager("/tmp/vol.luks", "/mnt/vol", "xkms-vol", &mockExecutor{})
 	require.NoError(t, err)
 	require.NotNil(t, mgr)
@@ -135,29 +134,12 @@ func TestNewFIPSAwareManager_Standard(t *testing.T) {
 // reason TestDefaultKDF_FIPS in config_test.go does (go-xkms #21):
 // crypto/fips140.Enabled is fixed when the process starts.
 func TestNewFIPSAwareManager_FIPS(t *testing.T) {
-	if os.Getenv("XKMS_FIPS_SUBPROCESS") == "1" {
-		if !fips140.Enabled() {
-			t.Fatal("child process is not FIPS-active; GODEBUG=fips140=on was not honored")
-		}
-		mgr, err := NewFIPSAwareManager("/tmp/vol.luks", "/mnt/vol", "xkms-vol", &mockExecutor{})
-		if err != nil {
-			t.Fatalf("NewFIPSAwareManager() error = %v, want nil", err)
-		}
-		if mgr.Config().KDF != KDFPBKDF2 {
-			t.Fatalf("Config().KDF = %q under GODEBUG=fips140=on, want %q", mgr.Config().KDF, KDFPBKDF2)
-		}
+	if !runUnderFIPS140(t, "on") {
 		return
 	}
-
-	cmd := exec.Command(os.Args[0], "-test.run=TestNewFIPSAwareManager_FIPS", "-test.v")
-	cmd.Env = append(os.Environ(), "XKMS_FIPS_SUBPROCESS=1", "GODEBUG=fips140=on")
-	out, err := cmd.CombinedOutput()
-	if err != nil {
-		t.Fatalf("fips140=on subprocess failed: %v\n%s", err, out)
-	}
-	if !strings.Contains(string(out), "PASS") {
-		t.Errorf("fips140=on subprocess did not pass:\n%s", out)
-	}
+	mgr, err := NewFIPSAwareManager("/tmp/vol.luks", "/mnt/vol", "xkms-vol", &mockExecutor{})
+	require.NoError(t, err)
+	assert.Equal(t, KDFPBKDF2, mgr.Config().KDF)
 }
 
 func TestNewFIPSAwareManager_NilExecutor(t *testing.T) {
@@ -487,7 +469,7 @@ func TestConfig_ReturnsCopy(t *testing.T) {
 	assert.Equal(t, cfg.LUKSPath, returned.LUKSPath)
 	assert.Equal(t, cfg.MountPoint, returned.MountPoint)
 	assert.Equal(t, cfg.MapperName, returned.MapperName)
-	assert.Equal(t, KDFArgon2id, returned.KDF)
+	assert.Equal(t, DefaultKDF(), returned.KDF)
 	assert.Equal(t, 2000, returned.PBKDFIterTime)
 
 	// Mutating the returned copy must not affect the manager.

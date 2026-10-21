@@ -174,6 +174,12 @@ func TestAuthWrapMessageParamsHonoursTruncatedTagBits(t *testing.T) {
 		TagBits:     96,
 	}
 	mech := NewMechanismWithTypedParams(CKM_AES_GCM, params)
+	if authWrapRefusedUnderFIPS(t, 12, false, func() error {
+		_, err := m.WrapKeyAuthenticatedSize(session, mech, wrappingKey, targetKey)
+		return err
+	}) {
+		return
+	}
 
 	size, err := m.WrapKeyAuthenticatedSize(session, mech, wrappingKey, targetKey)
 	require.NoError(t, err)
@@ -199,6 +205,12 @@ func TestAuthWrapMessageParamsGuardsAgainstIVReuse(t *testing.T) {
 		TagBits:     128,
 	}
 	mech := NewMechanismWithTypedParams(CKM_AES_GCM, params)
+	if authWrapRefusedUnderFIPS(t, GCMTagSize, true, func() error {
+		_, err := m.WrapKeyAuthenticated(session, mech, wrappingKey, targetKey, nil)
+		return err
+	}) {
+		return
+	}
 
 	_, err := m.WrapKeyAuthenticated(session, mech, wrappingKey, targetKey, nil)
 	require.NoError(t, err)

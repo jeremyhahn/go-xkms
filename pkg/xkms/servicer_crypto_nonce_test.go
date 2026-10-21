@@ -111,6 +111,16 @@ func requireCallerNonceEncryptRefusedUnderFIPS(t *testing.T) {
 	require.Error(t, err, "a caller-supplied AES-GCM nonce needs the arbitrary-IV construction fips140=only refuses")
 }
 
+// generatedNonceReplayErr is the refusal a replayed provider-generated nonce
+// meets: the reuse guard's ErrNonceReuse, or, under fips140=only, the
+// refusal of every caller-supplied AES-GCM nonce, which comes first.
+func generatedNonceReplayErr() error {
+	if fips140.Enforced() {
+		return symmetric.ErrArbitraryIVGCMUnavailable
+	}
+	return aead.ErrNonceReuse
+}
+
 // TestEncryptRefusesAReusedCallerNonce is the probe for the flaw: one key, one
 // caller-chosen nonce, two plaintexts. The first seal is compared with the
 // standard library so the guard cannot pass by emitting something nobody can
@@ -142,6 +152,9 @@ func TestEncryptRefusesAReusedCallerNonce(t *testing.T) {
 // the Encrypt RPC serves. ChaCha20-Poly1305 fails exactly as GCM does under a
 // repeated pair: the keystream repeats, and so does the one-time Poly1305 key.
 func TestEncryptRefusesAReusedNonceUnderChaCha20Poly1305(t *testing.T) {
+	if !runUnderFIPS140(t, "off") {
+		return
+	}
 	store, attrs := newSymmetricStore(t, "chacha-be", "chacha-key", types.SymmetricChaCha20Poly1305,
 		storage.New(), permissiveTracker{}, true)
 	svc := serviceWith(t, store)
@@ -158,6 +171,9 @@ func TestEncryptRefusesAReusedNonceUnderChaCha20Poly1305(t *testing.T) {
 // TestEncryptAcceptsDistinctNonces is the other half of the guard: a fresh
 // nonce under the same key is an ordinary encryption.
 func TestEncryptAcceptsDistinctNonces(t *testing.T) {
+	if !runUnderFIPS140(t, "off") {
+		return
+	}
 	store, attrs := newSymmetricStore(t, "distinct-be", "distinct-key", types.SymmetricChaCha20Poly1305,
 		storage.New(), permissiveTracker{}, true)
 	svc := serviceWith(t, store)
@@ -173,6 +189,9 @@ func TestEncryptAcceptsDistinctNonces(t *testing.T) {
 // callers presenting one nonce at once could both pass. The guard claims in
 // one atomic step, so exactly one wins.
 func TestEncryptAdmitsExactlyOneOfConcurrentSameNonceCalls(t *testing.T) {
+	if !runUnderFIPS140(t, "off") {
+		return
+	}
 	store, attrs := newSymmetricStore(t, "race-be", "race-key", types.SymmetricChaCha20Poly1305,
 		storage.New(), permissiveTracker{}, true)
 	svc := serviceWith(t, store)
@@ -218,6 +237,9 @@ func TestEncryptAdmitsExactlyOneOfConcurrentSameNonceCalls(t *testing.T) {
 // encrypter refuses the repeat with no service in the loop, and the service
 // refuses it too.
 func TestEncryptGuardsAKeyCreatedBeforeTheProcessStarted(t *testing.T) {
+	if !runUnderFIPS140(t, "off") {
+		return
+	}
 	keyStorage := storage.New()
 	_, attrs := newSymmetricStore(t, "restart-be", "restart-key", types.SymmetricChaCha20Poly1305,
 		keyStorage, nil, true)
@@ -283,7 +305,7 @@ func TestEncryptRecordsAGeneratedNonce(t *testing.T) {
 	replay, err := encryptWithNonce(svc, store.name, attrs.CN, []byte("attacker"), victim.Nonce)
 	require.Error(t, err, "a generated nonce is consumed exactly like one the caller supplied")
 	assert.Nil(t, replay)
-	assert.True(t, errors.Is(err, aead.ErrNonceReuse), "got %v", err)
+	assert.True(t, errors.Is(err, generatedNonceReplayErr()), "got %v", err)
 }
 
 // TestEncryptAndWrapShareOneGuard proves the two service-layer AEAD paths claim

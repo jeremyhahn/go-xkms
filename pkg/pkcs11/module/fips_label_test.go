@@ -33,6 +33,16 @@ func withFIPSMode(t *testing.T, on bool) {
 	t.Cleanup(func() { fipsModeEnabled = original })
 }
 
+// rsaModulusCeilingForProcess is the RSA ceiling the module must advertise in
+// the regime this test process runs in: PKCS#11 v3.2 §6.1.21 caps it at 3072
+// bits under FIPS 140-3, and rsaModulusBitsMax applies outside it.
+func rsaModulusCeilingForProcess() uint32 {
+	if fips140.Enabled() {
+		return rsaModulusBitsFIPSMax
+	}
+	return rsaModulusBitsMax
+}
+
 const (
 	fipsLibraryDescription  = "go-xkms PKCS#11 FIPS 140-3"
 	plainLibraryDescription = "go-xkms PKCS#11"

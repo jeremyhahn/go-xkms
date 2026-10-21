@@ -17,6 +17,7 @@ import (
 	"crypto/aes"
 	"crypto/cipher"
 	"crypto/rand"
+	"slices"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -88,9 +89,13 @@ func gcmOpenOracle(t *testing.T, key, nonce, ciphertext, aad []byte) ([]byte, er
 	t.Helper()
 	block, err := aes.NewCipher(key)
 	require.NoError(t, err)
-	gcm, err := cipher.NewGCM(block)
+	// The random-nonce construction opens any 96-bit nonce carried at the
+	// head of its input, and is the one crypto/cipher allows under
+	// fips140=only, so this oracle answers the same in both regimes.
+	gcm, err := cipher.NewGCMWithRandomNonce(block)
 	require.NoError(t, err)
-	return gcm.Open(nil, nonce, ciphertext, aad)
+	require.Len(t, nonce, GCMNonceSize)
+	return gcm.Open(nil, nil, append(slices.Clone(nonce), ciphertext...), aad)
 }
 
 // xorBytes returns the byte-wise XOR of a and b, which must be the same
@@ -129,6 +134,14 @@ func TestWrapKeyAuthenticatedRefusesAReusedIVUnderOneKey(t *testing.T) {
 	targetB := []byte("target-key-BBBB")
 	targetB = append(targetB, 'B')
 	iv := uniqueTestIV(t)
+	if authWrapRefusedUnderFIPS(t, GCMTagSize, true, func() error {
+		wrappingKey, keyA := authWrapKeyPair(t, m, session, "reuse-a", kek, targetA)
+		_, err := m.WrapKeyAuthenticated(session,
+			NewMechanismWithTypedParams(CKM_AES_GCM, NewAESGCMParams(iv, 128)), wrappingKey, keyA, nil)
+		return err
+	}) {
+		return
+	}
 
 	// The attack, performed outside the module, against the standard library.
 	// This is what the module must not make possible.
@@ -178,6 +191,13 @@ func TestWrapKeyAuthenticatedAcceptsAFreshIVUnderTheSameKey(t *testing.T) {
 
 	first := uniqueTestIV(t)
 	second := uniqueTestIV(t)
+	if authWrapRefusedUnderFIPS(t, GCMTagSize, true, func() error {
+		_, err := m.WrapKeyAuthenticated(session,
+			NewMechanismWithTypedParams(CKM_AES_GCM, NewAESGCMParams(first, 128)), wrappingKey, targetKey, nil)
+		return err
+	}) {
+		return
+	}
 
 	blobFirst, err := m.WrapKeyAuthenticated(session,
 		NewMechanismWithTypedParams(CKM_AES_GCM, NewAESGCMParams(first, 128)),
@@ -217,6 +237,12 @@ func TestWrapKeyAuthenticatedAcceptsOneIVUnderTwoDifferentKeys(t *testing.T) {
 	kekTwo, _ := authWrapKeyPair(t, m, session, "two-kek-two", []byte("two-kek-TWO-1234"), target)
 
 	mech := NewMechanismWithTypedParams(CKM_AES_GCM, NewAESGCMParams(iv, 128))
+	if authWrapRefusedUnderFIPS(t, GCMTagSize, true, func() error {
+		_, err := m.WrapKeyAuthenticated(session, mech, kekOne, targetKey, nil)
+		return err
+	}) {
+		return
+	}
 
 	_, err := m.WrapKeyAuthenticated(session, mech, kekOne, targetKey, nil)
 	require.NoError(t, err)
@@ -250,6 +276,12 @@ func TestWrapKeyAuthenticatedRefusesAReusedIVAcrossHandlesAndSessions(t *testing
 	wrappingTwo, targetTwo := authWrapKeyPair(t, m, sessionTwo, "alias-two", kek, target)
 
 	mech := NewMechanismWithTypedParams(CKM_AES_GCM, NewAESGCMParams(iv, 128))
+	if authWrapRefusedUnderFIPS(t, GCMTagSize, true, func() error {
+		_, err := m.WrapKeyAuthenticated(sessionOne, mech, wrappingOne, targetOne, nil)
+		return err
+	}) {
+		return
+	}
 
 	_, err := m.WrapKeyAuthenticated(sessionOne, mech, wrappingOne, targetOne, nil)
 	require.NoError(t, err)
@@ -275,6 +307,12 @@ func TestWrapKeyAuthenticatedSizeQueryDoesNotConsumeTheIV(t *testing.T) {
 	wrappingKey, targetKey := authWrapKeyPair(t, m, session, "probe", kek, target)
 
 	mech := NewMechanismWithTypedParams(CKM_AES_GCM, NewAESGCMParams(iv, 128))
+	if authWrapRefusedUnderFIPS(t, GCMTagSize, true, func() error {
+		_, err := m.WrapKeyAuthenticatedSize(session, mech, wrappingKey, targetKey)
+		return err
+	}) {
+		return
+	}
 
 	size, err := m.WrapKeyAuthenticatedSize(session, mech, wrappingKey, targetKey)
 	require.NoError(t, err)
@@ -360,6 +398,12 @@ func TestWrapKeyAuthenticatedDoesNotConsumeTheIVOfARefusedWrap(t *testing.T) {
 	require.Equal(t, CKR_OK, rv)
 
 	mech := NewMechanismWithTypedParams(CKM_AES_GCM, NewAESGCMParams(iv, 128))
+	if authWrapRefusedUnderFIPS(t, GCMTagSize, true, func() error {
+		_, err := m.WrapKeyAuthenticated(session, mech, wrappingKey, extractable, nil)
+		return err
+	}) {
+		return
+	}
 
 	_, err := m.WrapKeyAuthenticated(session, mech, wrappingKey, unextractable, nil)
 	require.Error(t, err)

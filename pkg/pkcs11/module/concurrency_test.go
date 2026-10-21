@@ -1466,7 +1466,7 @@ func TestConcurrentAEADParameterGuardsNeverPanic(t *testing.T) {
 					goodIV[1] = byte(round)
 					good := &Mechanism{
 						Type:           CKM_AES_GCM,
-						TypedParameter: &AESGCMParams{IV: goodIV, TagBits: 128},
+						TypedParameter: &AESGCMParams{IV: callerIVOutsideFIPS(goodIV), TagBits: 128},
 					}
 					wrapped, wrapErr := m.WrapKeyAuthenticated(session, good, wrappingKey, targetKey, nil)
 					if wrapErr != nil {

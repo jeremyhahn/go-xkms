@@ -87,6 +87,11 @@ var (
 
 	// ErrWritePKCS11Txt is returned when writing pkcs11.txt fails.
 	ErrWritePKCS11Txt = errors.New("nssdb: failed to write pkcs11.txt")
+
+	// ErrFIPSUnsupported is returned when FIPS 140-only mode is enforced:
+	// the NSS database format requires SHA-1 and MD5, which that mode
+	// refuses.
+	ErrFIPSUnsupported = errors.New("nssdb: the NSS database format requires SHA-1, which FIPS 140-only mode refuses")
 )
 
 // DetailError appends detail text directly after a wrapped error while

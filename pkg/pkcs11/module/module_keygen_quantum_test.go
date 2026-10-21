@@ -411,6 +411,9 @@ func TestGenerateKeyPairGeneratesEveryMLKEMParameterSet(t *testing.T) {
 			// The vendor mechanism names the parameter set by itself.
 			publicHandle, _, rv := m.GenerateKeyPair(session,
 				&Mechanism{Type: tc.vendorMechanism}, base, base)
+			if tc.parameterSet == CKP_ML_KEM_512 && mlkem512RefusedUnderFIPS(t, rv) {
+				return
+			}
 			require.Equal(t, CKR_OK, rv, "the vendor mechanism must generate %s", tc.name)
 			assertMLKEMPublicKeyLength(t, m, session, publicHandle, tc.publicKeyLength, tc.name)
 

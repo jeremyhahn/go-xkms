@@ -2000,28 +2000,31 @@ var mechanismRegistry = map[MechanismType]*MechanismDescriptor{
 	// registry, so the advertised KDFs neither depend on nor are affected by
 	// these descriptors.
 	CKM_SHA256_HMAC: {
-		Type:       CKM_SHA256_HMAC,
-		Name:       "CKM_SHA256_HMAC",
-		Categories: []MechanismCategory{CategorySign, CategoryVerify},
-		MinKeySize: 1,
-		MaxKeySize: 0, // No maximum
-		Flags:      CKF_SIGN | CKF_VERIFY,
+		Type:         CKM_SHA256_HMAC,
+		Name:         "CKM_SHA256_HMAC",
+		Categories:   []MechanismCategory{CategorySign, CategoryVerify},
+		MinKeySize:   1,
+		MaxKeySize:   0, // No maximum
+		Flags:        CKF_SIGN | CKF_VERIFY,
+		FIPSApproved: true, // FIPS 198-1 HMAC over an approved SHA-2 hash
 	},
 	CKM_SHA384_HMAC: {
-		Type:       CKM_SHA384_HMAC,
-		Name:       "CKM_SHA384_HMAC",
-		Categories: []MechanismCategory{CategorySign, CategoryVerify},
-		MinKeySize: 1,
-		MaxKeySize: 0,
-		Flags:      CKF_SIGN | CKF_VERIFY,
+		Type:         CKM_SHA384_HMAC,
+		Name:         "CKM_SHA384_HMAC",
+		Categories:   []MechanismCategory{CategorySign, CategoryVerify},
+		MinKeySize:   1,
+		MaxKeySize:   0,
+		Flags:        CKF_SIGN | CKF_VERIFY,
+		FIPSApproved: true, // FIPS 198-1 HMAC over an approved SHA-2 hash
 	},
 	CKM_SHA512_HMAC: {
-		Type:       CKM_SHA512_HMAC,
-		Name:       "CKM_SHA512_HMAC",
-		Categories: []MechanismCategory{CategorySign, CategoryVerify},
-		MinKeySize: 1,
-		MaxKeySize: 0,
-		Flags:      CKF_SIGN | CKF_VERIFY,
+		Type:         CKM_SHA512_HMAC,
+		Name:         "CKM_SHA512_HMAC",
+		Categories:   []MechanismCategory{CategorySign, CategoryVerify},
+		MinKeySize:   1,
+		MaxKeySize:   0,
+		Flags:        CKF_SIGN | CKF_VERIFY,
+		FIPSApproved: true, // FIPS 198-1 HMAC over an approved SHA-2 hash
 	},
 
 	// Key Derivation Mechanisms
@@ -2158,6 +2161,9 @@ var mechanismRegistry = map[MechanismType]*MechanismDescriptor{
 		MinKeySize: 1,
 		MaxKeySize: 0, // No maximum
 		Flags:      CKF_GENERATE,
+		// The key is DRBG output, an approved generation method
+		// (SP 800-133r2 section 4).
+		FIPSApproved: true,
 	},
 }
 

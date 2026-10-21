@@ -19,6 +19,7 @@ import (
 	"crypto/ecdsa"
 	"crypto/ed25519"
 	"crypto/elliptic"
+	"crypto/fips140"
 	"crypto/rand"
 	"crypto/rsa"
 	"crypto/x509"
@@ -243,7 +244,8 @@ func TestGetInfo(t *testing.T) {
 		assert.Equal(t, byte(3), info.CryptokiVersion.Major)
 		assert.Equal(t, byte(2), info.CryptokiVersion.Minor)
 		assert.Equal(t, "go-xkms", info.GetManufacturerID())
-		assert.Equal(t, "go-xkms PKCS#11", info.GetLibraryDescription())
+		description, _ := wantLabels(t)
+		assert.Equal(t, description, info.GetLibraryDescription())
 	})
 
 	t.Run("returns info after initialization", func(t *testing.T) {
@@ -4027,6 +4029,11 @@ func TestDeriveKeyExtended(t *testing.T) {
 		// be refused rather than silently derived under fabricated
 		// salt/info/hash defaults.
 		_, rv := m.DeriveKey(handle, &Mechanism{Type: CKM_HKDF_DERIVE}, keyHandle, template)
+		if fipsModeEnabled() {
+			assert.Equal(t, CKR_MECHANISM_INVALID, rv,
+				"FIPS mode withholds HKDF over an arbitrary base key before reading its parameters")
+			return
+		}
 		assert.Equal(t, CKR_MECHANISM_PARAM_INVALID, rv)
 	})
 
@@ -4053,6 +4060,10 @@ func TestDeriveKeyExtended(t *testing.T) {
 		}
 
 		derivedHandle, rv := m.DeriveKey(handle, mech, keyHandle, template)
+		if fipsModeEnabled() {
+			assert.Equal(t, CKR_MECHANISM_INVALID, rv, "FIPS mode withholds HKDF over an arbitrary base key")
+			return
+		}
 		assert.Equal(t, CKR_OK, rv)
 		assert.NotEqual(t, ObjectHandle(InvalidHandle), derivedHandle)
 	})
@@ -5389,6 +5400,10 @@ func TestExtractPublicKeyComponentsFromPEM(t *testing.T) {
 	t.Run("extracts a Montgomery public point DER-wrapped", func(t *testing.T) {
 		// §6.3.7 Table 68 gives X25519 the same raw treatment, per RFC 7748.
 		priv, err := ecdh.X25519().GenerateKey(rand.Reader)
+		if fips140.Enforced() {
+			require.Error(t, err, "fips140=only refuses X25519, which FIPS 140-3 does not approve")
+			return
+		}
 		require.NoError(t, err)
 		pub := priv.PublicKey()
 

@@ -16,6 +16,7 @@ package nssdb
 import (
 	"crypto/aes"
 	"crypto/cipher"
+	"crypto/fips140"
 	"crypto/hmac"
 	"crypto/md5" //nolint:gosec // NSS requires MD5 hash for cert fingerprint
 	"crypto/rand"
@@ -161,6 +162,10 @@ type Writer struct {
 // NewWriter opens (or creates) the cert9.db and key4.db databases in the
 // given directory. The directory must already exist. Call Close when finished.
 func NewWriter(nssdbDir string) (*Writer, error) {
+	if fips140.Enforced() {
+		return nil, ErrFIPSUnsupported
+	}
+
 	info, err := os.Stat(nssdbDir)
 	if err != nil {
 		return nil, &DetailError{Err: ErrDirNotExist, Detail: fmt.Sprintf(": %s", nssdbDir)}
@@ -401,6 +406,10 @@ func (w *Writer) Close() error {
 // cert9.db, key4.db, and pkcs11.txt. It is safe to call on an existing
 // directory; the schema uses IF NOT EXISTS.
 func InitDir(nssdbDir string) error {
+	if fips140.Enforced() {
+		return ErrFIPSUnsupported
+	}
+
 	if err := os.MkdirAll(nssdbDir, dirPerm); err != nil {
 		return &DetailError{Err: ErrInitDir, Detail: fmt.Sprintf(": %s", err)}
 	}

@@ -14,17 +14,19 @@
 package luks
 
 import (
-	"crypto/fips140"
-	"os"
-	"os/exec"
-	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
 
+// TestDefaultKDF_Standard runs under GODEBUG=fips140=off: the suite itself
+// may run under fips140=only (go-xkms#23), where pbkdf2 is the right answer.
+
 func TestDefaultKDF_Standard(t *testing.T) {
+	if !runUnderFIPS140(t, "off") {
+		return
+	}
 	assert.Equal(t, KDFArgon2id, DefaultKDF(),
 		"DefaultKDF must return argon2id when FIPS mode is not active")
 }
@@ -36,25 +38,11 @@ func TestDefaultKDF_Standard(t *testing.T) {
 // under GODEBUG=fips140=on, mirroring
 // pkg/quantum/mlkem512.TestNewAndCreate_RefuseUnderFIPS.
 func TestDefaultKDF_FIPS(t *testing.T) {
-	if os.Getenv("XKMS_FIPS_SUBPROCESS") == "1" {
-		if !fips140.Enabled() {
-			t.Fatal("child process is not FIPS-active; GODEBUG=fips140=on was not honored")
-		}
-		if got := DefaultKDF(); got != KDFPBKDF2 {
-			t.Fatalf("DefaultKDF() = %q, want %q under GODEBUG=fips140=on", got, KDFPBKDF2)
-		}
+	if !runUnderFIPS140(t, "on") {
 		return
 	}
-
-	cmd := exec.Command(os.Args[0], "-test.run=TestDefaultKDF_FIPS", "-test.v")
-	cmd.Env = append(os.Environ(), "XKMS_FIPS_SUBPROCESS=1", "GODEBUG=fips140=on")
-	out, err := cmd.CombinedOutput()
-	if err != nil {
-		t.Fatalf("fips140=on subprocess failed: %v\n%s", err, out)
-	}
-	if !strings.Contains(string(out), "PASS") {
-		t.Errorf("fips140=on subprocess did not pass:\n%s", out)
-	}
+	assert.Equal(t, KDFPBKDF2, DefaultKDF(),
+		"DefaultKDF must return pbkdf2 under GODEBUG=fips140=on")
 }
 
 func TestVolumeConfig_Validate_Valid(t *testing.T) {
@@ -130,6 +118,9 @@ func TestVolumeConfig_Validate_ValidPBKDF2(t *testing.T) {
 }
 
 func TestVolumeConfig_SetDefaults_FillsKDF(t *testing.T) {
+	if !runUnderFIPS140(t, "off") {
+		return
+	}
 	cfg := &VolumeConfig{
 		LUKSPath:   "/tmp/test.luks",
 		MountPoint: "/mnt/test",
@@ -143,31 +134,17 @@ func TestVolumeConfig_SetDefaults_FillsKDF(t *testing.T) {
 // TestVolumeConfig_SetDefaults_FillsKDF_FIPS re-execs under GODEBUG=
 // fips140=on for the same reason TestDefaultKDF_FIPS does (go-xkms #21).
 func TestVolumeConfig_SetDefaults_FillsKDF_FIPS(t *testing.T) {
-	if os.Getenv("XKMS_FIPS_SUBPROCESS") == "1" {
-		if !fips140.Enabled() {
-			t.Fatal("child process is not FIPS-active; GODEBUG=fips140=on was not honored")
-		}
-		cfg := &VolumeConfig{
-			LUKSPath:   "/tmp/test.luks",
-			MountPoint: "/mnt/test",
-			MapperName: "xkms-test",
-		}
-		cfg.SetDefaults()
-		if cfg.KDF != KDFPBKDF2 {
-			t.Fatalf("SetDefaults() filled KDF=%q under GODEBUG=fips140=on, want %q", cfg.KDF, KDFPBKDF2)
-		}
+	if !runUnderFIPS140(t, "on") {
 		return
 	}
-
-	cmd := exec.Command(os.Args[0], "-test.run=TestVolumeConfig_SetDefaults_FillsKDF_FIPS", "-test.v")
-	cmd.Env = append(os.Environ(), "XKMS_FIPS_SUBPROCESS=1", "GODEBUG=fips140=on")
-	out, err := cmd.CombinedOutput()
-	if err != nil {
-		t.Fatalf("fips140=on subprocess failed: %v\n%s", err, out)
+	cfg := &VolumeConfig{
+		LUKSPath:   "/tmp/test.luks",
+		MountPoint: "/mnt/test",
+		MapperName: "xkms-test",
 	}
-	if !strings.Contains(string(out), "PASS") {
-		t.Errorf("fips140=on subprocess did not pass:\n%s", out)
-	}
+	cfg.SetDefaults()
+	assert.Equal(t, KDFPBKDF2, cfg.KDF,
+		"SetDefaults must fill KDF with pbkdf2 under GODEBUG=fips140=on")
 }
 
 func TestVolumeConfig_SetDefaults_FillsIterTime(t *testing.T) {

@@ -56,10 +56,11 @@ func TestSignEnvelope(t *testing.T) {
 }
 
 func TestSignEnvelope_Errors(t *testing.T) {
-	x25519, err := ecdh.X25519().GenerateKey(rand.Reader)
+	// An ECDH key agreement key: no signature algorithm accepts it.
+	exchange, err := ecdh.P256().GenerateKey(rand.Reader)
 	require.NoError(t, err)
 
-	env, err := signEnvelope(failingSigner{public: x25519.PublicKey()}, PayloadTypeInToto, []byte("{}"))
+	env, err := signEnvelope(failingSigner{public: exchange.PublicKey()}, PayloadTypeInToto, []byte("{}"))
 	require.ErrorIs(t, err, ErrUnsupportedKey)
 	assert.Nil(t, env)
 

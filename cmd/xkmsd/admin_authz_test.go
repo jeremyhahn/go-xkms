@@ -44,6 +44,7 @@ import (
 	"context"
 	"crypto/ecdsa"
 	"crypto/elliptic"
+	"crypto/fips140"
 	"crypto/rand"
 	"crypto/tls"
 	"crypto/x509"
@@ -158,6 +159,12 @@ func walkAdminRoutes(t *testing.T, router *mux.Router) []adminRoute {
 	require.NoError(t, err)
 	require.NotEmpty(t, routes, "the admin router registered no routes")
 	return routes
+}
+
+// mountedRoute is the published router entry walkAdminRoutes reports for an
+// admin.Routes entry.
+func mountedRoute(route admin.Route) adminRoute {
+	return adminRoute{method: route.Method, path: pathVariable.ReplaceAllString(route.Path, "authz-1069")}
 }
 
 // oracleContext is the context the fixtures' own qrdb calls run under. The
@@ -287,21 +294,42 @@ func (f *adminAuthzFixture) authorizeRoute(identity *auth.Identity, route admin.
 // regression: qrdb grants the first-boot administrator every admin route's
 // permission, and the published router, given the administrator's bound
 // client certificate, authenticates it and lets it through on every route.
+// Under the strict FIPS posture the grant is exactly the Admin role's.
 func TestAdminPlane_FirstBootAdminAuthorizedOnEveryRoute(t *testing.T) {
 	f := newAdminAuthzFixture(t)
 	administrator := userIdentity(firstBootAdmin(t, f.client))
 
+	// In FIPS mode pkg/server boots qrdb under the strict separation-of-duties
+	// posture: the administrator holds only the Admin role, so a route outside
+	// that role's grants is withheld from it rather than allowed.
+	var withheld []string
+	if fips140.Enabled() {
+		adminRole := systemRole(t, f.client, qrdbsdk.RoleNameAdmin)
+		for _, route := range admin.Routes() {
+			if !slices.Contains(adminRole.Permissions, string(route.Permission)) {
+				withheld = append(withheld, mountedRoute(route).String())
+			}
+		}
+	}
+
 	for _, route := range admin.Routes() {
-		assert.NoError(t, f.authorizeRoute(administrator, route),
+		err := f.authorizeRoute(administrator, route)
+		if slices.Contains(withheld, mountedRoute(route).String()) {
+			assert.Error(t, err, "%s %s: the strict posture must withhold %s from the Admin role",
+				route.Method, route.Path, route.Permission)
+			continue
+		}
+		assert.NoError(t, err,
 			"%s %s: qrdb denied %s to the first-boot administrator", route.Method, route.Path, route.Permission)
 	}
 
 	for _, route := range f.routes {
 		status := serveAdminRoute(t, f.router, route, f.adminCert)
 		assert.NotEqual(t, http.StatusUnauthorized, status, "%s", route)
-		if route.insideTenant() {
-			// qrdb refuses the platform a tenant's own roles and users; the
-			// grant above is what this test proves.
+		if route.insideTenant() || slices.Contains(withheld, route.String()) {
+			// qrdb refuses the platform a tenant's own roles and users, and
+			// the strict posture withholds what Admin does not hold; the
+			// grants above are what this test proves.
 			continue
 		}
 		assert.NotEqual(t, http.StatusForbidden, status, "%s", route)
@@ -339,10 +367,7 @@ func TestAdminPlane_PublishedRoutesAreTheMountedRoutes(t *testing.T) {
 
 	var mounted []string
 	for _, route := range admin.Routes() {
-		mounted = append(mounted, adminRoute{
-			method: route.Method,
-			path:   pathVariable.ReplaceAllString(route.Path, "authz-1069"),
-		}.String())
+		mounted = append(mounted, mountedRoute(route).String())
 	}
 	var published []string
 	for _, route := range f.routes {
@@ -369,18 +394,34 @@ func TestAdminPlane_UnboundCertificateRefusedAtAuthentication(t *testing.T) {
 // TestAdminPlane_RoutePermissionsRegisteredAndGranted proves every
 // permission an admin route is mounted under is registered in qrdb's
 // permission registry and materialized into the seeded Owner role, which
-// holds every permission by default. A route mounted under a permission qrdb
+// holds every permission by default, or under the strict FIPS posture into
+// one of the five built-in roles. A route mounted under a permission qrdb
 // does not know fails here rather than as a production 403. Placement on the
 // other built-in roles is qrdb's decision and xkms's role grants, deliberately
 // not restated here.
 func TestAdminPlane_RoutePermissionsRegisteredAndGranted(t *testing.T) {
 	f := newAdminAuthzFixture(t)
 
-	owner := systemRole(t, f.client, qrdbsdk.RoleNameOwner)
+	// In FIPS mode pkg/server boots qrdb under the strict separation-of-duties
+	// posture, which seeds no Owner role, so there the grant is proved across
+	// the five built-in roles first boot does seed.
+	var granted []string
+	if fips140.Enabled() {
+		_, err := f.client.Roles().GetRoleByName(oracleContext(qrdbsdk.SystemTenantID),
+			&qrdbtransport.GetRoleByNameRequest{TenantID: qrdbsdk.SystemTenantID, Name: qrdbsdk.RoleNameOwner})
+		assert.Error(t, err, "the strict posture must not seed the Owner role")
+		for _, name := range []string{qrdbsdk.RoleNameSO, qrdbsdk.RoleNameAdmin, qrdbsdk.RoleNameOperator,
+			qrdbsdk.RoleNameUser, qrdbsdk.RoleNameAuditor} {
+			granted = append(granted, systemRole(t, f.client, name).Permissions...)
+		}
+	} else {
+		granted = systemRole(t, f.client, qrdbsdk.RoleNameOwner).Permissions
+	}
+
 	for _, route := range admin.Routes() {
 		assert.True(t, qrdbsdk.IsPermissionRegistered(route.Permission),
 			"admin route permission %s is not registered with qrdb", route.Permission)
-		assert.True(t, slices.Contains(owner.Permissions, string(route.Permission)),
-			"seeded Owner role does not hold admin route permission %s", route.Permission)
+		assert.True(t, slices.Contains(granted, string(route.Permission)),
+			"no seeded built-in role holds admin route permission %s", route.Permission)
 	}
 }

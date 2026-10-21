@@ -111,55 +111,43 @@ func TestSelectAESGCM_FIPSNeverSelectsChaCha(t *testing.T) {
 // starts, so the on/only cases re-exec, mirroring
 // pkg/quantum/mlkem512.TestNewAndCreate_RefuseUnderFIPS.
 func TestFIPSRequiresAES(t *testing.T) {
-	t.Run("no GODEBUG", func(t *testing.T) {
-		// crypto/fips140.Enabled is fixed when the process starts, so this
-		// cannot simply check the parent's state inline: the whole suite
-		// may itself have been invoked under GODEBUG=fips140=only (as
-		// go-xkms#23 requires), which would make this assertion fail for a
-		// reason that has nothing to do with fipsRequiresAES. Re-exec with
-		// GODEBUG explicitly cleared, mirroring the on/only cases below.
-		if os.Getenv("XKMS_FIPS_SUBPROCESS") == "1" {
-			if fipsRequiresAES() {
-				t.Fatal("fipsRequiresAES() = true with no GODEBUG set, want false")
-			}
-			return
-		}
-
-		env := make([]string, 0, len(os.Environ()))
-		for _, kv := range os.Environ() {
-			if strings.HasPrefix(kv, "GODEBUG=") {
-				continue
-			}
-			env = append(env, kv)
-		}
-		cmd := exec.Command(os.Args[0], "-test.run=TestFIPSRequiresAES/no_GODEBUG", "-test.v")
-		cmd.Env = append(env, "XKMS_FIPS_SUBPROCESS=1")
-		out, err := cmd.CombinedOutput()
-		if err != nil {
-			t.Fatalf("no-GODEBUG subprocess failed: %v\n%s", err, out)
-		}
-		if !strings.Contains(string(out), "PASS") {
-			t.Errorf("no-GODEBUG subprocess did not pass:\n%s", out)
-		}
-	})
-
-	for _, godebug := range []string{"fips140=on", "fips140=only"} {
-		t.Run(godebug, func(t *testing.T) {
+	// crypto/fips140.Enabled is fixed when the process starts, so each case
+	// re-execs the test binary under its own GODEBUG: the suite itself may
+	// run under GODEBUG=fips140=only (as go-xkms#23 requires), and a binary
+	// built with GOFIPS140 defaults to fips140=on, so the "off" case must
+	// set fips140=off explicitly rather than merely clearing GODEBUG.
+	cases := []struct {
+		godebug string
+		want    bool
+	}{
+		{godebug: "fips140=off", want: false},
+		{godebug: "fips140=on", want: true},
+		{godebug: "fips140=only", want: true},
+	}
+	for _, tc := range cases {
+		t.Run(tc.godebug, func(t *testing.T) {
 			if os.Getenv("XKMS_FIPS_SUBPROCESS") == "1" {
-				if !fipsRequiresAES() {
-					t.Fatal("fipsRequiresAES() = false, want true")
+				if got := fipsRequiresAES(); got != tc.want {
+					t.Fatalf("fipsRequiresAES() = %v under %s, want %v", got, tc.godebug, tc.want)
 				}
 				return
 			}
 
-			cmd := exec.Command(os.Args[0], "-test.run=TestFIPSRequiresAES/"+godebug, "-test.v")
-			cmd.Env = append(os.Environ(), "XKMS_FIPS_SUBPROCESS=1", "GODEBUG="+godebug)
+			env := make([]string, 0, len(os.Environ()))
+			for _, kv := range os.Environ() {
+				if strings.HasPrefix(kv, "GODEBUG=") {
+					continue
+				}
+				env = append(env, kv)
+			}
+			cmd := exec.Command(os.Args[0], "-test.run=TestFIPSRequiresAES/"+tc.godebug+"$", "-test.v")
+			cmd.Env = append(env, "XKMS_FIPS_SUBPROCESS=1", "GODEBUG="+tc.godebug)
 			out, err := cmd.CombinedOutput()
 			if err != nil {
-				t.Fatalf("%s subprocess failed: %v\n%s", godebug, err, out)
+				t.Fatalf("%s subprocess failed: %v\n%s", tc.godebug, err, out)
 			}
 			if !strings.Contains(string(out), "PASS") {
-				t.Errorf("%s subprocess did not pass:\n%s", godebug, out)
+				t.Errorf("%s subprocess did not pass:\n%s", tc.godebug, out)
 			}
 		})
 	}

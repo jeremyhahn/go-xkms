@@ -19,11 +19,10 @@ import (
 
 	"github.com/jeremyhahn/go-enclave"
 	xkms "github.com/jeremyhahn/go-xkms/sdk/go"
-	"golang.org/x/crypto/chacha20poly1305"
 )
 
-// KeySize is the length in bytes of a backup sealing key.
-const KeySize = chacha20poly1305.KeySize
+// KeySize is the length in bytes of a backup sealing key (AES-256).
+const KeySize = 32
 
 // Key is a backup sealing key. A password-derived key carries the KDF record
 // that re-derives it from the password; the record is written into the

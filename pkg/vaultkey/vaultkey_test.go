@@ -205,9 +205,7 @@ func TestProtectError(t *testing.T) {
 }
 
 func TestSeal_UnsupportedKeys(t *testing.T) {
-	small, err := rsa.GenerateKey(rand.Reader, 1024)
-	require.NoError(t, err)
-	_, err = Seal(&small.PublicKey)
+	_, err := Seal(&undersizedRSAKey().PublicKey)
 	assert.ErrorIs(t, err, ErrUnsupportedKey)
 
 	edPub, _, err := ed25519.GenerateKey(rand.Reader)
@@ -219,6 +217,16 @@ func TestSeal_UnsupportedKeys(t *testing.T) {
 	require.NoError(t, err)
 	_, err = Seal(&p224.PublicKey)
 	assert.ErrorIs(t, err, ErrUnsupportedKey)
+}
+
+// undersizedRSAKey returns an RSA key whose 1024-bit modulus is below
+// MinRSABits. Only the modulus size matters to the refusal, so the key is
+// built directly: the FIPS 140-3 module refuses to generate a key that small
+// under GODEBUG=fips140=only.
+func undersizedRSAKey() *rsa.PrivateKey {
+	n := new(big.Int).Lsh(big.NewInt(1), 1023)
+	n.Add(n, big.NewInt(1))
+	return &rsa.PrivateKey{PublicKey: rsa.PublicKey{N: n, E: 65537}}
 }
 
 func TestOpen_UnknownAlgorithmAndMismatchedToken(t *testing.T) {

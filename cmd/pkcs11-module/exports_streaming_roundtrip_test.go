@@ -150,6 +150,10 @@ func decryptUpdateFinalViaC(t *testing.T, session module.SessionHandle, parts []
 // recover the exact concatenation, whatever parts it is split into on the way
 // back in.
 func TestStreamingEncryptDecrypt_RoundTrip(t *testing.T) {
+	// Drives a construction FIPS mode refuses; see exports_fips_test.go.
+	if !runsOutsideFIPSMode(t) {
+		return
+	}
 	_, session := newCryptoFixture(t)
 	key := generateAESKeyViaC(t, session, "streaming-roundtrip-aes")
 
@@ -192,6 +196,10 @@ func TestStreamingEncryptDecrypt_RoundTrip(t *testing.T) {
 // reports the real buffered ciphertext size and leaves the operation usable
 // for the retry PKCS#11 v3.2 §5.2 promises.
 func TestCEncryptFinal_BufferTooSmall(t *testing.T) {
+	// Drives a construction FIPS mode refuses; see exports_fips_test.go.
+	if !runsOutsideFIPSMode(t) {
+		return
+	}
 	_, session := newCryptoFixture(t)
 	key := generateAESKeyViaC(t, session, "streaming-buffertoosmall-aes")
 

@@ -40,6 +40,9 @@ import (
 // the exact hex the listener's live key holds once Start succeeds, and not
 // enabled again once Shutdown has claimed the listener.
 func TestStartNoiseBootstrap_PublishesAndWithdrawsListenerKeys(t *testing.T) {
+	if !runUnderFIPS140(t, "off") {
+		return
+	}
 	xkms.Reset()
 	defer xkms.Reset()
 

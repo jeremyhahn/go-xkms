@@ -297,9 +297,11 @@ func TestNewToken(t *testing.T) {
 		t.Errorf("NewToken().Info.GetManufacturerID() = %q, want %q", mfr, "go-xkms")
 	}
 
+	// A GOFIPS140 build labels the token FIPS 140-3 (TestModuleLabels_*).
+	_, wantModel := wantLabels(t)
 	model := token.Info.GetModel()
-	if model != "Virtual Token" {
-		t.Errorf("NewToken().Info.GetModel() = %q, want %q", model, "Virtual Token")
+	if model != wantModel {
+		t.Errorf("NewToken().Info.GetModel() = %q, want %q", model, wantModel)
 	}
 }
 
@@ -711,8 +713,8 @@ func TestSlotManager_GetMechanismInfo(t *testing.T) {
 	if info.MinKeySize != rsaModulusBitsMin {
 		t.Errorf("RSA MinKeySize = %d, want %d", info.MinKeySize, rsaModulusBitsMin)
 	}
-	if info.MaxKeySize != rsaModulusBitsMax {
-		t.Errorf("RSA MaxKeySize = %d, want %d", info.MaxKeySize, rsaModulusBitsMax)
+	if want := rsaModulusCeilingForProcess(); info.MaxKeySize != want {
+		t.Errorf("RSA MaxKeySize = %d, want %d", info.MaxKeySize, want)
 	}
 	if info.Flags&CKF_GENERATE_KEY_PAIR == 0 {
 		t.Error("RSA key gen missing CKF_GENERATE_KEY_PAIR flag")

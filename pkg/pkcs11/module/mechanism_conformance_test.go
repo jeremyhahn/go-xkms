@@ -15,6 +15,7 @@ package module
 
 import (
 	"bytes"
+	"crypto/fips140"
 	"crypto/sha1"
 	"crypto/sha256"
 	"crypto/sha512"
@@ -96,16 +97,26 @@ func TestEveryDigestMechanismIsBothRegisteredAndImplemented(t *testing.T) {
 			continue
 		}
 
-		if _, err := op.hasher.Write([]byte(message)); err != nil {
-			t.Errorf("%s: writing to the hasher failed: %v", desc.Name, err)
+		want := reference()
+		_, wantErr := want.Write([]byte(message))
+		_, gotErr := op.hasher.Write([]byte(message))
+		if wantErr != nil && fips140.Enforced() {
+			// fips140=only refuses this hash in the standard library (SHA-1),
+			// and the module's hasher must refuse it the same way.
+			if gotErr == nil {
+				t.Errorf("%s digested under fips140=only, which refuses the algorithm", desc.Name)
+			}
+			continue
+		}
+		if wantErr != nil {
+			t.Fatalf("%s: writing to the reference hasher failed: %v", desc.Name, wantErr)
+		}
+		if gotErr != nil {
+			t.Errorf("%s: writing to the hasher failed: %v", desc.Name, gotErr)
 			continue
 		}
 		got := op.hasher.Sum(nil)
 
-		want := reference()
-		if _, err := want.Write([]byte(message)); err != nil {
-			t.Fatalf("%s: writing to the reference hasher failed: %v", desc.Name, err)
-		}
 		if !bytes.Equal(got, want.Sum(nil)) {
 			t.Errorf("%s digests to a different value than the algorithm it names; the "+
 				"mechanism is wired to the wrong hasher", desc.Name)
@@ -552,9 +563,18 @@ func TestRSAX509RefusesTheOperationsItCannotPerform(t *testing.T) {
 	}
 
 	// The capability that IS real must still be reachable, or the refusals above
-	// would be satisfied by deleting the mechanism outright.
+	// would be satisfied by deleting the mechanism outright. FIPS mode withholds
+	// raw RSA altogether, so there verify-recover is refused as well.
 	t.Run("C_VerifyRecoverInit is still accepted", func(t *testing.T) {
-		if rv := m.VerifyRecoverInit(session, &Mechanism{Type: CKM_RSA_X_509}, keyHandle); rv != CKR_OK {
+		rv := m.VerifyRecoverInit(session, &Mechanism{Type: CKM_RSA_X_509}, keyHandle)
+		if fipsModeEnabled() {
+			if rv != CKR_MECHANISM_INVALID {
+				t.Fatalf("C_VerifyRecoverInit answered %s for CKM_RSA_X_509 in FIPS mode, "+
+					"want CKR_MECHANISM_INVALID; FIPS mode withholds raw RSA", rv)
+			}
+			return
+		}
+		if rv != CKR_OK {
 			t.Fatalf("C_VerifyRecoverInit answered %s for CKM_RSA_X_509, want CKR_OK; "+
 				"verify-recover is the one direction this token performs correctly", rv)
 		}

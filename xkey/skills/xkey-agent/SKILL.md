@@ -431,7 +431,7 @@ xkey device connect <address>
 
 ## Backup and restore
 
-A backup holds the trust store, OATH credentials and passwords, sealed with XChaCha20-Poly1305. A backup password (Argon2id, salted) comes from `--password-stdin` or `XKEY_BACKUP_PASSWORD`; there is no `--password` flag. Version 1 (unsalted) backups are refused.
+A backup holds the trust store, OATH credentials and passwords, sealed with AES-256-GCM under a random nonce. A backup password (Argon2id, salted; PBKDF2-SHA256 in FIPS mode) comes from `--password-stdin` or `XKEY_BACKUP_PASSWORD`; there is no `--password` flag. Version 1 (unsalted) and version 2 (XChaCha20-Poly1305) backups are refused.
 
 ```bash
 xkey backup create --barrier-password-file <file> --output ~/xkey.xkb   # no password: prints a random hex key

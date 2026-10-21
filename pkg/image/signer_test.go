@@ -128,7 +128,8 @@ func TestNewSigner_Errors(t *testing.T) {
 	f := newSignerFixture(t, registryConfig{})
 	key := newECDSAKey(t)
 	certificate := f.pki.codeSigning(t, key.Public())
-	x25519, err := ecdh.X25519().GenerateKey(rand.Reader)
+	// An ECDH key agreement key: no signature algorithm accepts it.
+	exchange, err := ecdh.P256().GenerateKey(rand.Reader)
 	require.NoError(t, err)
 	now := time.Now()
 
@@ -144,7 +145,7 @@ func TestNewSigner_Errors(t *testing.T) {
 		"no certificate": {cfg: &SignerConfig{Signer: key, Registry: f.client}, want: ErrCertificateRequired},
 		"no registry":    {cfg: &SignerConfig{Signer: key, Certificate: certificate}, want: ErrRegistryRequired},
 		"unsupported key": {
-			cfg:  &SignerConfig{Signer: failingSigner{public: x25519.PublicKey()}, Certificate: certificate, Registry: f.client},
+			cfg:  &SignerConfig{Signer: failingSigner{public: exchange.PublicKey()}, Certificate: certificate, Registry: f.client},
 			want: ErrUnsupportedKey,
 		},
 		"another key's certificate": {cfg: config(f.pki.codeSigning(t, newECDSAKey(t).Public())), want: ErrKeyMismatch},

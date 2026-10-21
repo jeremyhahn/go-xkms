@@ -60,7 +60,9 @@ func (d *cloudKMSDouble) aead(name string) (cipher.AEAD, error) {
 	if err != nil {
 		return nil, err
 	}
-	return cipher.NewGCM(block)
+	// NewGCMWithRandomNonce generates the nonce and prefixes it to the
+	// ciphertext: the only GCM construction a fips140=only process may build.
+	return cipher.NewGCMWithRandomNonce(block)
 }
 
 func (d *cloudKMSDouble) encrypt(_ context.Context, req *kmspb.EncryptRequest, _ ...interface{}) (*kmspb.EncryptResponse, error) {
@@ -68,11 +70,7 @@ func (d *cloudKMSDouble) encrypt(_ context.Context, req *kmspb.EncryptRequest, _
 	if err != nil {
 		return nil, err
 	}
-	nonce := make([]byte, gcm.NonceSize())
-	if _, err := rand.Read(nonce); err != nil {
-		return nil, err
-	}
-	ciphertext := gcm.Seal(bytes.Clone(nonce), nonce, req.Plaintext, req.AdditionalAuthenticatedData)
+	ciphertext := gcm.Seal(nil, nil, req.Plaintext, req.AdditionalAuthenticatedData)
 	return &kmspb.EncryptResponse{
 		Name:             req.Name,
 		Ciphertext:       ciphertext,
@@ -89,11 +87,7 @@ func (d *cloudKMSDouble) decrypt(_ context.Context, req *kmspb.DecryptRequest, _
 	if err != nil {
 		return nil, err
 	}
-	if len(req.Ciphertext) < gcm.NonceSize() {
-		return nil, invalid
-	}
-	nonce := req.Ciphertext[:gcm.NonceSize()]
-	plaintext, err := gcm.Open(nil, nonce, req.Ciphertext[gcm.NonceSize():], req.AdditionalAuthenticatedData)
+	plaintext, err := gcm.Open(nil, nil, req.Ciphertext, req.AdditionalAuthenticatedData)
 	if err != nil {
 		return nil, invalid
 	}

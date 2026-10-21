@@ -31,6 +31,9 @@ import (
 // TestEncodeNoiseStaticKeyHex_RoundTrips proves the hex form decodes back to
 // the same key and has the length the barrier expects.
 func TestEncodeNoiseStaticKeyHex_RoundTrips(t *testing.T) {
+	if !runUnderFIPS140(t, "off") {
+		return
+	}
 	key, err := noiseproto.GenerateStaticKey()
 	require.NoError(t, err)
 	defer key.Destroy()
@@ -48,6 +51,9 @@ func TestEncodeNoiseStaticKeyHex_RoundTrips(t *testing.T) {
 // TestRetainNoiseKey_AppendsKey proves a non-nil key is parked on the
 // retention set.
 func TestRetainNoiseKey_AppendsKey(t *testing.T) {
+	if !runUnderFIPS140(t, "off") {
+		return
+	}
 	s := &Server{}
 	key, err := noiseproto.GenerateStaticKey()
 	require.NoError(t, err)
@@ -60,6 +66,9 @@ func TestRetainNoiseKey_AppendsKey(t *testing.T) {
 // TestRetainBootstrapKeys_RetainsBothSuites proves both keys of a listener
 // that offered both handshake suites are retained.
 func TestRetainBootstrapKeys_RetainsBothSuites(t *testing.T) {
+	if !runUnderFIPS140(t, "off") {
+		return
+	}
 	s := &Server{}
 	noiseKey, err := noiseproto.GenerateStaticKey()
 	require.NoError(t, err)
@@ -76,6 +85,9 @@ func TestRetainBootstrapKeys_RetainsBothSuites(t *testing.T) {
 // matching the doc comment's "a build that offered only one suite retains
 // only that suite's key".
 func TestRetainBootstrapKeys_NilP256SkipsP256Retention(t *testing.T) {
+	if !runUnderFIPS140(t, "off") {
+		return
+	}
 	s := &Server{}
 	noiseKey, err := noiseproto.GenerateStaticKey()
 	require.NoError(t, err)

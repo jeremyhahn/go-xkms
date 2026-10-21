@@ -42,6 +42,8 @@ var cloudSealStores = map[seal.StrategyID]types.StoreType{
 
 // kmsSealer stands in for a cloud KMS: it seals under one AES-256-GCM key
 // that never leaves it, so only the same instance can unseal what it sealed.
+// The AEAD generates its own nonce and carries it in the ciphertext
+// (NewGCMWithRandomNonce), the only GCM a fips140=only process may build.
 type kmsSealer struct {
 	aead cipher.AEAD
 }
@@ -53,25 +55,20 @@ func newKMSSealer(t *testing.T) *kmsSealer {
 	require.NoError(t, err)
 	block, err := aes.NewCipher(key)
 	require.NoError(t, err)
-	aead, err := cipher.NewGCM(block)
+	aead, err := cipher.NewGCMWithRandomNonce(block)
 	require.NoError(t, err)
 	return &kmsSealer{aead: aead}
 }
 
 func (k *kmsSealer) Seal(_ context.Context, data []byte, opts *types.SealOptions) (*types.SealedData, error) {
-	nonce := make([]byte, k.aead.NonceSize())
-	if _, err := rand.Read(nonce); err != nil {
-		return nil, err
-	}
 	return &types.SealedData{
-		Ciphertext: k.aead.Seal(nil, nonce, data, nil),
-		Nonce:      nonce,
+		Ciphertext: k.aead.Seal(nil, nil, data, nil),
 		KeyID:      opts.KeyAttributes.CN,
 	}, nil
 }
 
 func (k *kmsSealer) Unseal(_ context.Context, sealed *types.SealedData, _ *types.UnsealOptions) ([]byte, error) {
-	return k.aead.Open(nil, sealed.Nonce, sealed.Ciphertext, nil)
+	return k.aead.Open(nil, nil, sealed.Ciphertext, nil)
 }
 
 func (k *kmsSealer) CanSeal() bool { return true }

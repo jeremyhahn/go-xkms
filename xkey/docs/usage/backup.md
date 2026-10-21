@@ -118,7 +118,7 @@ A `.xkb` file is the JSON encoding of the backup envelope:
 ```json
 {
   "magic": "XKBK",
-  "version": 2,
+  "version": 3,
   "kdf": {
     "version": 1,
     "algorithm": "Argon2id",
@@ -128,15 +128,17 @@ A `.xkb` file is the JSON encoding of the backup envelope:
     "threads": 4,
     "key_length": 32
   },
-  "nonce": "<base64, 24 bytes>",
+  "nonce": "<base64, 12 bytes>",
   "ciphertext": "<base64>"
 }
 ```
 
 `kdf` is absent for a backup sealed with a random or `--key-stdin`/`XKEY_BACKUP_KEY` key. The
 ciphertext is the archive — manifest, certificates, credentials, and
-passwords — serialized to JSON and sealed with XChaCha20-Poly1305 under the
-password-derived or supplied key (`xkey/pkg/backup/service.go:1132`). The
+passwords — serialized to JSON and sealed with AES-256-GCM under the
+password-derived or supplied key, with a fresh random 96-bit nonce per backup
+(`cipher.NewGCMWithRandomNonce`, NIST SP 800-38D §8.2.2;
+`xkey/pkg/backup/service.go:1151`), so the format is FIPS 140-3 approved. The
 header (`magic`, `version`, `kdf`) is the AEAD additional data, so editing
 any of it makes decryption fail. A `kdf` record whose costs differ from the
 ones its version pins is refused before derivation, so a crafted file cannot
@@ -145,7 +147,9 @@ checksum of its own payload, verified on decrypt. Only the header and nonce
 are readable without the key.
 
 Version 1 files, keyed with an unsalted SHA-256 of the password, are refused
-(`xkey/pkg/backup/service.go:1177`).
+(`xkey/pkg/backup/service.go:1196`). Version 2 files, sealed with
+XChaCha20-Poly1305, are refused with `backup.ErrVersionMismatch`
+(`xkey/pkg/backup/service.go:1199`); neither is migrated.
 
 ## Example
 

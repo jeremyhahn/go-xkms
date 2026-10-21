@@ -15,8 +15,10 @@ package module
 
 import (
 	"bytes"
+	"crypto"
 	"crypto/ecdh"
 	"crypto/rand"
+	"errors"
 	"testing"
 
 	"github.com/jeremyhahn/go-xkms/pkg/types"
@@ -73,7 +75,17 @@ func TestSupportedECDHKDFs_EveryAdvertisedKDFDerives(t *testing.T) {
 				Hash:      hash,
 				KeyLength: 32,
 			}
-			if err := params.Validate(); err != nil {
+			err := params.Validate()
+			if hash == "SHA-1" && !types.HashUsable(crypto.SHA1) {
+				// fips140=only refuses crypto/sha1 for every use, so the KDF
+				// must refuse it with a typed error (go-xkms#292).
+				if !errors.Is(err, types.ErrUnsupportedKDFHash) {
+					t.Fatalf("%s under fips140=only: Validate returned %v, want ErrUnsupportedKDFHash",
+						kdfType, err)
+				}
+				return
+			}
+			if err != nil {
 				t.Fatalf("%s resolves to (%s, %s), which types.KDFParams.Validate rejects: %v",
 					kdfType, algorithm, hash, err)
 			}

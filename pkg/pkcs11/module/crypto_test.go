@@ -39,6 +39,8 @@ import (
 	"testing"
 
 	"github.com/jeremyhahn/go-xkms/pkg/api/transport"
+	"github.com/jeremyhahn/go-xkms/pkg/crypto/aead"
+	"github.com/jeremyhahn/go-xkms/pkg/types"
 	secure "github.com/jeremyhahn/go-xkms/sdk/go/secure"
 )
 
@@ -388,6 +390,22 @@ func newTestCryptoManager() (*CryptoManager, *mockClient) {
 		DefaultBackend: "test-backend",
 	}
 	return NewCryptoManager(client, config), client
+}
+
+// rsaX509VerifyInit starts a CKM_RSA_X_509 verify operation. FIPS mode
+// withholds raw RSA, so there it asserts VerifyInit refuses the mechanism and
+// returns nil, and the caller ends the test.
+func rsaX509VerifyInit(t *testing.T, cm *CryptoManager) *VerifyOperation {
+	t.Helper()
+	op, err := cm.VerifyInit(&Mechanism{Type: CKM_RSA_X_509}, 1, "rsa-key", "backend1")
+	if fipsModeEnabled() {
+		requireCode(t, err, CKR_MECHANISM_INVALID, "FIPS mode withholds CKM_RSA_X_509")
+		return nil
+	}
+	if err != nil {
+		t.Fatalf("VerifyInit failed: %v", err)
+	}
+	return op
 }
 
 // freshGuardKeyID returns a backend key id no earlier run has used. The AES-GCM
@@ -1054,23 +1072,14 @@ func TestCryptoManager_Encrypt_WithAAD(t *testing.T) {
 	if err != nil {
 		t.Fatalf("aesKey failed: %v", err)
 	}
-	block, err := aes.NewCipher(key)
-	if err != nil {
-		t.Fatalf("aes.NewCipher failed: %v", err)
-	}
-	gcm, err := cipher.NewGCM(block)
-	if err != nil {
-		t.Fatalf("cipher.NewGCM failed: %v", err)
-	}
-
-	recovered, err := gcm.Open(nil, op.IV(), wire, aad)
+	recovered, err := gcmOpenOracle(t, key, op.IV(), wire, aad)
 	if err != nil {
 		t.Fatalf("the ciphertext does not open under the AAD the caller set: %v", err)
 	}
 	if !bytes.Equal(recovered, plaintext) {
 		t.Fatalf("recovered %q, want %q", recovered, plaintext)
 	}
-	if _, err := gcm.Open(nil, op.IV(), wire, []byte("different data")); err == nil {
+	if _, err := gcmOpenOracle(t, key, op.IV(), wire, []byte("different data")); err == nil {
 		t.Fatal("the ciphertext opened under AAD it was not authenticated with")
 	}
 }
@@ -1201,15 +1210,7 @@ func TestCryptoManager_Decrypt_Success(t *testing.T) {
 	if err != nil {
 		t.Fatalf("aesKey failed: %v", err)
 	}
-	block, err := aes.NewCipher(key)
-	if err != nil {
-		t.Fatalf("aes.NewCipher failed: %v", err)
-	}
-	gcm, err := cipher.NewGCM(block)
-	if err != nil {
-		t.Fatalf("cipher.NewGCM failed: %v", err)
-	}
-	direct, err := gcm.Open(nil, iv, wire, nil)
+	direct, err := gcmOpenOracle(t, key, iv, wire, nil)
 	if err != nil {
 		t.Fatalf("crypto/cipher could not open the module's ciphertext: %v", err)
 	}
@@ -2185,11 +2186,9 @@ func TestEdDSA_VerifyUpdateAndFinal(t *testing.T) {
 
 func TestCryptoManager_VerifyRecover_CKM_RSA_X509_Success(t *testing.T) {
 	cm, _ := newTestCryptoManager()
-	mech := &Mechanism{Type: CKM_RSA_X_509}
-
-	op, err := cm.VerifyInit(mech, 1, "rsa-key", "backend1")
-	if err != nil {
-		t.Fatalf("VerifyInit failed: %v", err)
+	op := rsaX509VerifyInit(t, cm)
+	if op == nil {
+		return
 	}
 
 	op.IsRecover = true
@@ -2289,11 +2288,9 @@ func TestCryptoManager_VerifyRecover_NilOperation(t *testing.T) {
 
 func TestCryptoManager_VerifyRecover_AlreadyFinalized(t *testing.T) {
 	cm, _ := newTestCryptoManager()
-	mech := &Mechanism{Type: CKM_RSA_X_509}
-
-	op, err := cm.VerifyInit(mech, 1, "rsa-key", "backend1")
-	if err != nil {
-		t.Fatalf("VerifyInit failed: %v", err)
+	op := rsaX509VerifyInit(t, cm)
+	if op == nil {
+		return
 	}
 	op.IsRecover = true
 
@@ -2304,7 +2301,7 @@ func TestCryptoManager_VerifyRecover_AlreadyFinalized(t *testing.T) {
 	signature := []byte{0x00, 0x2A} // 42 (must be 2 bytes to match key size)
 
 	// First call should succeed
-	_, err = cm.VerifyRecover(context.Background(), op, signature)
+	_, err := cm.VerifyRecover(context.Background(), op, signature)
 	if err != nil {
 		t.Fatalf("first VerifyRecover failed: %v", err)
 	}
@@ -2326,16 +2323,14 @@ func TestCryptoManager_VerifyRecover_AlreadyFinalized(t *testing.T) {
 
 func TestCryptoManager_VerifyRecover_EmptySignature(t *testing.T) {
 	cm, _ := newTestCryptoManager()
-	mech := &Mechanism{Type: CKM_RSA_X_509}
-
-	op, err := cm.VerifyInit(mech, 1, "rsa-key", "backend1")
-	if err != nil {
-		t.Fatalf("VerifyInit failed: %v", err)
+	op := rsaX509VerifyInit(t, cm)
+	if op == nil {
+		return
 	}
 	op.IsRecover = true
 	op.SetRSAPublicKey([]byte{0x00, 0x8F}, []byte{0x07})
 
-	_, err = cm.VerifyRecover(context.Background(), op, []byte{})
+	_, err := cm.VerifyRecover(context.Background(), op, []byte{})
 	if err == nil {
 		t.Fatal("expected error for empty signature")
 	}
@@ -2351,16 +2346,14 @@ func TestCryptoManager_VerifyRecover_EmptySignature(t *testing.T) {
 
 func TestCryptoManager_VerifyRecover_NoPublicKey(t *testing.T) {
 	cm, _ := newTestCryptoManager()
-	mech := &Mechanism{Type: CKM_RSA_X_509}
-
-	op, err := cm.VerifyInit(mech, 1, "rsa-key", "backend1")
-	if err != nil {
-		t.Fatalf("VerifyInit failed: %v", err)
+	op := rsaX509VerifyInit(t, cm)
+	if op == nil {
+		return
 	}
 	op.IsRecover = true
 	// Don't set RSA public key
 
-	_, err = cm.VerifyRecover(context.Background(), op, []byte{0x00, 0x2A})
+	_, err := cm.VerifyRecover(context.Background(), op, []byte{0x00, 0x2A})
 	if err == nil {
 		t.Fatal("expected error for missing public key")
 	}
@@ -2376,11 +2369,9 @@ func TestCryptoManager_VerifyRecover_NoPublicKey(t *testing.T) {
 
 func TestCryptoManager_VerifyRecover_WrongSignatureLength(t *testing.T) {
 	cm, _ := newTestCryptoManager()
-	mech := &Mechanism{Type: CKM_RSA_X_509}
-
-	op, err := cm.VerifyInit(mech, 1, "rsa-key", "backend1")
-	if err != nil {
-		t.Fatalf("VerifyInit failed: %v", err)
+	op := rsaX509VerifyInit(t, cm)
+	if op == nil {
+		return
 	}
 	op.IsRecover = true
 
@@ -2391,7 +2382,7 @@ func TestCryptoManager_VerifyRecover_WrongSignatureLength(t *testing.T) {
 	// Wrong length signature (should be 2 bytes to match key size)
 	signature := []byte{0x2A} // Only 1 byte
 
-	_, err = cm.VerifyRecover(context.Background(), op, signature)
+	_, err := cm.VerifyRecover(context.Background(), op, signature)
 	if err == nil {
 		t.Fatal("expected error for wrong signature length")
 	}
@@ -2407,11 +2398,9 @@ func TestCryptoManager_VerifyRecover_WrongSignatureLength(t *testing.T) {
 
 func TestCryptoManager_VerifyRecover_SignatureOutOfRange(t *testing.T) {
 	cm, _ := newTestCryptoManager()
-	mech := &Mechanism{Type: CKM_RSA_X_509}
-
-	op, err := cm.VerifyInit(mech, 1, "rsa-key", "backend1")
-	if err != nil {
-		t.Fatalf("VerifyInit failed: %v", err)
+	op := rsaX509VerifyInit(t, cm)
+	if op == nil {
+		return
 	}
 	op.IsRecover = true
 
@@ -2422,7 +2411,7 @@ func TestCryptoManager_VerifyRecover_SignatureOutOfRange(t *testing.T) {
 	// Signature >= n (should fail): 400 >= 399
 	signature := []byte{0x01, 0x90} // 400 >= 399
 
-	_, err = cm.VerifyRecover(context.Background(), op, signature)
+	_, err := cm.VerifyRecover(context.Background(), op, signature)
 	if err == nil {
 		t.Fatal("expected error for signature >= modulus")
 	}
@@ -4596,11 +4585,9 @@ func TestCryptoManager_Digest_AlreadyFinalized(t *testing.T) {
 
 func TestCryptoManager_VerifyRecover_LargeExponent(t *testing.T) {
 	cm, _ := newTestCryptoManager()
-	mech := &Mechanism{Type: CKM_RSA_X_509}
-
-	op, err := cm.VerifyInit(mech, 1, "rsa-key", "backend1")
-	if err != nil {
-		t.Fatalf("VerifyInit failed: %v", err)
+	op := rsaX509VerifyInit(t, cm)
+	if op == nil {
+		return
 	}
 	op.IsRecover = true
 
@@ -4612,7 +4599,7 @@ func TestCryptoManager_VerifyRecover_LargeExponent(t *testing.T) {
 
 	signature := []byte{0x00, 0x2A}
 
-	_, err = cm.VerifyRecover(context.Background(), op, signature)
+	_, err := cm.VerifyRecover(context.Background(), op, signature)
 	if err == nil {
 		t.Fatal("expected error for large exponent")
 	}
@@ -4646,6 +4633,10 @@ func TestCryptoManager_GenerateKeyPair_X25519(t *testing.T) {
 	}
 
 	resp, err := cm.GenerateKeyPair(context.Background(), req)
+	if fipsModeEnabled() {
+		requireCode(t, err, CKR_MECHANISM_INVALID, "FIPS mode withholds CKM_EC_MONTGOMERY_KEY_PAIR_GEN")
+		return
+	}
 	if err != nil {
 		t.Fatalf("GenerateKeyPair for X25519 failed: %v", err)
 	}
@@ -5813,22 +5804,9 @@ func TestCryptoManager_Encrypt_GCM_AssemblesRealTag(t *testing.T) {
 	if err != nil {
 		t.Fatalf("aesKey failed: %v", err)
 	}
-	block, err := aes.NewCipher(key)
-	if err != nil {
-		t.Fatalf("aes.NewCipher failed: %v", err)
-	}
-	gcm, err := cipher.NewGCM(block)
-	if err != nil {
-		t.Fatalf("cipher.NewGCM failed: %v", err)
-	}
-
-	// crypto/cipher's Seal emits ciphertext || tag; the module must have
-	// assembled exactly that from the separate response fields.
-	if want := gcm.Seal(nil, op.IV(), plaintext, nil); !bytes.Equal(wire, want) {
-		t.Fatalf("assembled blob %x, crypto/cipher gives %x", wire, want)
-	}
-
-	recovered, err := gcm.Open(nil, op.IV(), wire, nil)
+	// crypto/cipher opens ciphertext || tag; the module must have assembled
+	// exactly that from the separate response fields.
+	recovered, err := gcmOpenOracle(t, key, op.IV(), wire, nil)
 	if err != nil {
 		t.Fatalf("the assembled blob does not authenticate: %v", err)
 	}
@@ -5839,7 +5817,7 @@ func TestCryptoManager_Encrypt_GCM_AssemblesRealTag(t *testing.T) {
 	for _, offset := range []int{0, len(plaintext) - 1, len(wire) - 1} {
 		tampered := append([]byte{}, wire...)
 		tampered[offset] ^= 0x01
-		if _, err := gcm.Open(nil, op.IV(), tampered, nil); err == nil {
+		if _, err := gcmOpenOracle(t, key, op.IV(), tampered, nil); err == nil {
 			t.Fatalf("a blob with octet %d flipped still authenticated", offset)
 		}
 	}
@@ -5861,6 +5839,13 @@ func TestCryptoManager_Encrypt_GCM_AssemblesTruncatedTag(t *testing.T) {
 		t.Fatalf("EncryptInit failed: %v", err)
 	}
 	wire, err := cm.Encrypt(context.Background(), op, plaintext)
+	if !aead.ArbitraryIVGCMUsable() {
+		// crypto/cipher seals only the full 128-bit tag under fips140=only.
+		if err == nil {
+			t.Fatal("a FIPS 140-only service sealed under a 96-bit tag")
+		}
+		return
+	}
 	if err != nil {
 		t.Fatalf("Encrypt failed: %v", err)
 	}
@@ -6037,11 +6022,14 @@ func TestMockCryptoEngine_RefusesUnsupportedInputs(t *testing.T) {
 	if _, err := engine.encrypt(&transport.EncryptRequest{KeyID: "k", Mode: "ecb", Plaintext: []byte("short")}); !errors.Is(err, errMockNotBlockAligned) {
 		t.Fatalf("expected errMockNotBlockAligned, got %v", err)
 	}
+	// The random-nonce construction opens in every FIPS posture, so this
+	// reaches authentication rather than a construction the process refuses.
 	if _, err := engine.decrypt(&transport.DecryptRequest{
-		KeyID:      "k",
-		Ciphertext: []byte("not a ciphertext"),
-		Tag:        bytes.Repeat([]byte{0x00}, GCMTagSize),
-		Nonce:      bytes.Repeat([]byte{0x00}, mockGCMNonceSize),
+		KeyID:        "k",
+		Ciphertext:   []byte("not a ciphertext"),
+		Tag:          bytes.Repeat([]byte{0x00}, GCMTagSize),
+		Nonce:        bytes.Repeat([]byte{0x00}, mockGCMNonceSize),
+		GCMNonceMode: string(types.GCMNonceModeRandom),
 	}); !errors.Is(err, errMockCiphertextRejected) {
 		t.Fatalf("expected errMockCiphertextRejected, got %v", err)
 	}
@@ -6413,22 +6401,14 @@ func (e *mockCryptoEngine) verify(req *transport.VerifyRequest) (*transport.Veri
 	}
 }
 
-// mockAEAD builds the AES-GCM instance for a request, honouring the tag length
-// the module asked for. PKCS#11 v3.2 section 6.13.3 and NIST SP 800-38D section
-// 5.2.1.2 admit 96 to 128 bits; zero means the full-length tag.
-func mockAEAD(key []byte, tagSize int) (cipher.AEAD, int, error) {
-	block, err := aes.NewCipher(key)
-	if err != nil {
-		return nil, 0, err
-	}
+// mockTagSize resolves the tag length the module asked for. PKCS#11 v3.2
+// section 6.13.3 and NIST SP 800-38D section 5.2.1.2 admit 96 to 128 bits;
+// zero means the full-length tag.
+func mockTagSize(tagSize int) int {
 	if tagSize == 0 {
-		tagSize = GCMTagSize
+		return GCMTagSize
 	}
-	aead, err := cipher.NewGCMWithTagSize(block, tagSize)
-	if err != nil {
-		return nil, 0, err
-	}
-	return aead, tagSize, nil
+	return tagSize
 }
 
 // encrypt performs the symmetric encryption the request describes.
@@ -6444,24 +6424,9 @@ func (e *mockCryptoEngine) encrypt(req *transport.EncryptRequest) (*transport.En
 
 	switch req.Mode {
 	case "":
-		aead, tagSize, aeadErr := mockAEAD(key, req.TagSize)
-		if aeadErr != nil {
-			return nil, aeadErr
-		}
-		nonce := req.Nonce
-		if len(nonce) == 0 {
-			nonce = make([]byte, mockGCMNonceSize)
-			if _, randErr := rand.Read(nonce); randErr != nil {
-				return nil, randErr
-			}
-		}
-		sealed := aead.Seal(nil, nonce, req.Plaintext, req.AdditionalData)
-		split := len(sealed) - tagSize
-		return &transport.EncryptResponse{
-			Ciphertext: sealed[:split],
-			Nonce:      nonce,
-			Tag:        sealed[split:],
-		}, nil
+		// The GCM constructions the service picks: an explicit nonce outside
+		// fips140=only, the stdlib's random-nonce construction inside it.
+		return fakeServiceGCMSeal(key, mockTagSize(req.TagSize), req.Nonce, req.Plaintext, req.AdditionalData)
 
 	case "ecb":
 		block, blockErr := aes.NewCipher(key)
@@ -6518,10 +6483,7 @@ func (e *mockCryptoEngine) decrypt(req *transport.DecryptRequest) (*transport.De
 
 	switch req.Mode {
 	case "":
-		aead, tagSize, aeadErr := mockAEAD(key, req.TagSize)
-		if aeadErr != nil {
-			return nil, aeadErr
-		}
+		tagSize := mockTagSize(req.TagSize)
 		// NIST SP 800-38D section 5.2.2 step 5: the tag is recomputed and
 		// compared at the requested length, so a backend handed a tag of a
 		// different length must refuse rather than authenticate at whatever
@@ -6532,12 +6494,12 @@ func (e *mockCryptoEngine) decrypt(req *transport.DecryptRequest) (*transport.De
 		if len(req.Tag) != tagSize {
 			return nil, errMockCiphertextRejected
 		}
-		sealed := make([]byte, 0, len(req.Ciphertext)+len(req.Tag))
-		sealed = append(sealed, req.Ciphertext...)
-		sealed = append(sealed, req.Tag...)
-		plaintext, openErr := aead.Open(nil, req.Nonce, sealed, req.AdditionalData)
-		if openErr != nil {
+		plaintext, err := fakeServiceGCMOpen(key, tagSize, req)
+		if errors.Is(err, errFakeServiceGCMAuth) {
 			return nil, errMockCiphertextRejected
+		}
+		if err != nil {
+			return nil, err
 		}
 		return &transport.DecryptResponse{Plaintext: plaintext}, nil
 

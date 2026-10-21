@@ -209,6 +209,11 @@ var (
 
 	// ErrOutputTooLong indicates the requested output exceeds maximum allowed
 	ErrOutputTooLong = errors.New("kdf: requested output length exceeds maximum")
+
+	// ErrKDKRefused indicates the FIPS 140-3 module, enforcing under
+	// GODEBUG=fips140=only, refused the key derivation key as the HMAC key
+	// of an SP 800-108 PRF.
+	ErrKDKRefused = errors.New("kdf: key derivation key refused by the FIPS 140-3 module")
 )
 
 // DefaultParams returns recommended default parameters for each KDF algorithm

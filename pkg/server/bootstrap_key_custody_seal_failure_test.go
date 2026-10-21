@@ -51,7 +51,14 @@ func newPutRefusingCustodyServer(t *testing.T) *Server {
 }
 
 func TestNoiseKeyCustody_BarrierPutErrorWraps(t *testing.T) {
+	if !runUnderFIPS140(t, "off") {
+		return
+	}
 	s := newPutRefusingCustodyServer(t)
+	if !noiseRunnable() {
+		requireNoiseRefused(t, s)
+		return
+	}
 
 	key, err := s.loadNoiseStaticKey()
 	require.Nil(t, key)

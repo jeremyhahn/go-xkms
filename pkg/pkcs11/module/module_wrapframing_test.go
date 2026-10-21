@@ -18,12 +18,15 @@ import (
 	"context"
 	"crypto/aes"
 	"crypto/cipher"
+	"crypto/fips140"
 	"crypto/rand"
 	"crypto/rsa"
 	"crypto/sha256"
+	"slices"
 	"testing"
 
 	"github.com/jeremyhahn/go-xkms/pkg/api/transport"
+	"github.com/jeremyhahn/go-xkms/pkg/crypto/aead"
 	"github.com/jeremyhahn/go-xkms/pkg/crypto/wrapping"
 	"github.com/jeremyhahn/go-xkms/pkg/types"
 	"github.com/stretchr/testify/assert"
@@ -162,22 +165,11 @@ func (o *wrapOracleTransport) wrap(req *transport.WrapKeyByIDRequest, material [
 		return wrapping.WrapAESKWP(material, kek)
 
 	case types.WrapAESGCM:
-		block, err := aes.NewCipher(kek)
+		sealed, err := fakeServiceGCMSeal(kek, o.gcmTagSize(req.TagBits), req.IV, material, req.AAD)
 		if err != nil {
 			return nil, err
 		}
-		gcm, err := cipher.NewGCMWithTagSize(block, o.gcmTagSize(req.TagBits))
-		if err != nil {
-			return nil, err
-		}
-		nonce := req.IV
-		if len(nonce) == 0 {
-			nonce = make([]byte, oracleGCMNonceSize)
-			if _, err := rand.Read(nonce); err != nil {
-				return nil, err
-			}
-		}
-		return append(append([]byte{}, nonce...), gcm.Seal(nil, nonce, material, req.AAD)...), nil
+		return slices.Concat(sealed.Nonce, sealed.Ciphertext, sealed.Tag), nil
 
 	case types.WrapAESCBC, types.WrapAESCBCPad:
 		block, err := aes.NewCipher(kek)
@@ -245,15 +237,19 @@ func (o *wrapOracleTransport) unwrap(req *transport.UnwrapKeyByIDRequest) ([]byt
 		if len(req.WrappedKey) < oracleGCMNonceSize+tagSize {
 			return nil, NewPKCS11ErrorWithMessage(CKR_WRAPPED_KEY_LEN_RANGE, "gcm blob is too short")
 		}
-		block, err := aes.NewCipher(kek)
-		if err != nil {
-			return nil, err
+		// The blob does not record how it was sealed. A full tag opens
+		// through the random-nonce construction, which accepts any 96-bit
+		// nonce in every FIPS posture; a truncated tag needs arbitrary-IV GCM.
+		gcmReq := &transport.DecryptRequest{
+			Nonce:          req.WrappedKey[:oracleGCMNonceSize],
+			Ciphertext:     req.WrappedKey[oracleGCMNonceSize : len(req.WrappedKey)-tagSize],
+			Tag:            req.WrappedKey[len(req.WrappedKey)-tagSize:],
+			AdditionalData: req.AAD,
 		}
-		gcm, err := cipher.NewGCMWithTagSize(block, tagSize)
-		if err != nil {
-			return nil, err
+		if tagSize == aead.GCMFullTagSize {
+			gcmReq.GCMNonceMode = string(types.GCMNonceModeRandom)
 		}
-		return gcm.Open(nil, req.WrappedKey[:oracleGCMNonceSize], req.WrappedKey[oracleGCMNonceSize:], req.AAD)
+		return fakeServiceGCMOpen(kek, tagSize, gcmReq)
 
 	case types.WrapAESCBC, types.WrapAESCBCPad:
 		if len(req.WrappedKey) <= oracleCBCIVSize {
@@ -365,6 +361,11 @@ func TestWrapUnwrapRoundTripRecoversOriginalKeyBytes(t *testing.T) {
 			defer m.Finalize()
 
 			wrapped, rv := m.WrapKey(session, tc.mechanism(), wrappingKey, targetKey)
+			if tc.pkcs1v15Encryption && fips140.Enforced() {
+				assert.NotEqual(t, CKR_OK, rv, "a fips140=only service wrapped with RSAES-PKCS1-v1_5")
+				assert.Empty(t, wrapped)
+				return
+			}
 			require.Equal(t, CKR_OK, rv)
 			require.NotEmpty(t, wrapped)
 
@@ -388,6 +389,11 @@ type wrapRoundTripCase struct {
 	mechType  MechanismType
 	value     []byte
 	mechanism func() *Mechanism
+
+	// pkcs1v15Encryption marks the RSAES-PKCS1-v1_5 wrap, which NIST SP
+	// 800-131A Rev. 2 section 6 no longer approves for key transport and
+	// crypto/rsa refuses under fips140=only.
+	pkcs1v15Encryption bool
 }
 
 func wrapRoundTripCases() []wrapRoundTripCase {
@@ -397,22 +403,27 @@ func wrapRoundTripCases() []wrapRoundTripCase {
 	cbcIV := []byte("wrap-cbc-iv-0123")
 
 	return []wrapRoundTripCase{
-		{CKM_AES_KEY_WRAP, aligned, func() *Mechanism { return &Mechanism{Type: CKM_AES_KEY_WRAP} }},
-		{CKM_AES_KEY_WRAP_KWP, []byte("odd length key"), func() *Mechanism { return &Mechanism{Type: CKM_AES_KEY_WRAP_KWP} }},
-		{CKM_AES_KEY_WRAP_PAD, []byte("odd length key"), func() *Mechanism { return &Mechanism{Type: CKM_AES_KEY_WRAP_PAD} }},
+		{CKM_AES_KEY_WRAP, aligned, func() *Mechanism { return &Mechanism{Type: CKM_AES_KEY_WRAP} }, false},
+		{CKM_AES_KEY_WRAP_KWP, []byte("odd length key"), func() *Mechanism { return &Mechanism{Type: CKM_AES_KEY_WRAP_KWP} }, false},
+		{CKM_AES_KEY_WRAP_PAD, []byte("odd length key"), func() *Mechanism { return &Mechanism{Type: CKM_AES_KEY_WRAP_PAD} }, false},
 		{CKM_AES_GCM, aligned, func() *Mechanism {
 			return NewMechanismWithTypedParams(CKM_AES_GCM, NewAESGCMParams(nil, 128))
-		}},
+		}, false},
 		{CKM_AES_CBC, aligned, func() *Mechanism {
 			return NewMechanismWithTypedParams(CKM_AES_CBC, newAESCBCParams(cbcIV))
-		}},
+		}, false},
 		{CKM_AES_CBC_PAD, []byte("odd length key"), func() *Mechanism {
 			return NewMechanismWithTypedParams(CKM_AES_CBC_PAD, newAESCBCParams(cbcIV))
-		}},
+		}, false},
 		{CKM_RSA_PKCS_OAEP, aligned, func() *Mechanism {
 			return NewMechanismWithTypedParams(CKM_RSA_PKCS_OAEP, NewRSAOAEPParams(CKM_SHA256))
-		}},
-		{CKM_RSA_PKCS, aligned, func() *Mechanism { return &Mechanism{Type: CKM_RSA_PKCS} }},
+		}, false},
+		{
+			mechType:           CKM_RSA_PKCS,
+			value:              aligned,
+			mechanism:          func() *Mechanism { return &Mechanism{Type: CKM_RSA_PKCS} },
+			pkcs1v15Encryption: true,
+		},
 	}
 }
 
@@ -541,6 +552,15 @@ func TestWrapKeyThreadsGCMParameters(t *testing.T) {
 		params := NewAESGCMParams(nonce, 96)
 		params.AAD = aad
 		return NewMechanismWithTypedParams(CKM_AES_GCM, params)
+	}
+
+	if callerIVSealRefusedUnderFIPS(t, func() error {
+		if _, rv := m.WrapKey(session, mech(), wrappingKey, targetKey); rv != CKR_OK {
+			return NewPKCS11Error(rv)
+		}
+		return nil
+	}) {
+		return
 	}
 
 	wrapped, rv := m.WrapKey(session, mech(), wrappingKey, targetKey)

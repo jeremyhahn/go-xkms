@@ -18,7 +18,8 @@
 // CLI binary with an isolated HOME so the host user's real backups are
 // never touched.
 //
-// The backup file is sealed with XChaCha20-Poly1305 and stored as the JSON
+// The backup file (format version 3) is sealed with AES-256-GCM under a
+// random nonce and stored as the JSON
 // encoding of the backup envelope, so these tests assert both halves of the
 // contract: the right credential reads real data back, and a wrong
 // credential fails without writing anything.

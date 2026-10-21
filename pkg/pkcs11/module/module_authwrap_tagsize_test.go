@@ -16,9 +16,9 @@ package module
 import (
 	"bytes"
 	"crypto/aes"
-	"crypto/cipher"
 	"testing"
 
+	"github.com/jeremyhahn/go-xkms/pkg/crypto/aead"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -86,11 +86,27 @@ func openWithOracle(t *testing.T, key, blob, aad []byte, tagSize int) ([]byte, e
 
 	block, err := aes.NewCipher(key)
 	require.NoError(t, err)
-	gcm, err := cipher.NewGCMWithTagSize(block, tagSize)
-	require.NoError(t, err)
-
 	require.Greater(t, len(blob), GCMNonceSize, "blob is too short to carry a nonce prefix")
+
+	// The full tag opens through cipher.NewGCMWithRandomNonce, which takes
+	// the blob's nonce || ciphertext || tag as it stands and is the one
+	// construction fips140=only permits.
+	randomNonce := tagSize == aead.GCMFullTagSize
+	gcm, err := aead.NewGCMForDecrypt(block, tagSize, randomNonce)
+	require.NoError(t, err)
+	if randomNonce {
+		return gcm.Open(nil, nil, blob, aad)
+	}
 	return gcm.Open(nil, blob[:GCMNonceSize], blob[GCMNonceSize:], aad)
+}
+
+// authWrapTestTagSize is the tag length in bytes that ulTagBits asks for, an
+// unspecified length meaning the full tag.
+func authWrapTestTagSize(tagBits uint32) int {
+	if tagBits == 0 {
+		return GCMTagSize
+	}
+	return int(tagBits / 8)
 }
 
 // TestWrapKeyAuthenticated_HonoursTagBits proves C_WrapKeyAuthenticated seals
@@ -118,6 +134,12 @@ func TestWrapKeyAuthenticated_HonoursTagBits(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			fx := newAuthWrapFixture(t)
 			mech := gcmMechanism(nil, nil, tc.tagBits)
+			if authWrapRefusedUnderFIPS(t, tc.tagSize, false, func() error {
+				_, err := fx.module.WrapKeyAuthenticated(fx.session, mech, fx.wrappingKey, fx.targetKey, nil)
+				return err
+			}) {
+				return
+			}
 
 			blob, err := fx.module.WrapKeyAuthenticated(
 				fx.session, mech, fx.wrappingKey, fx.targetKey, nil)
@@ -145,6 +167,12 @@ func TestWrapKeyAuthenticatedSize_HonoursTagBits(t *testing.T) {
 	for _, tagBits := range []uint32{96, 104, 112, 120, 128, 0} {
 		fx := newAuthWrapFixture(t)
 		mech := gcmMechanism(nil, nil, tagBits)
+		if authWrapRefusedUnderFIPS(t, authWrapTestTagSize(tagBits), false, func() error {
+			_, err := fx.module.WrapKeyAuthenticatedSize(fx.session, mech, fx.wrappingKey, fx.targetKey)
+			return err
+		}) {
+			continue
+		}
 
 		size, err := fx.module.WrapKeyAuthenticatedSize(
 			fx.session, mech, fx.wrappingKey, fx.targetKey)
@@ -177,6 +205,12 @@ func TestAuthWrapRoundTrip_HonoursTagBits(t *testing.T) {
 		} {
 			fx := newAuthWrapFixture(t)
 			mech := gcmMechanism(ivCase.iv, aad, tagBits)
+			if authWrapRefusedUnderFIPS(t, authWrapTestTagSize(tagBits), ivCase.iv != nil, func() error {
+				_, err := fx.module.WrapKeyAuthenticated(fx.session, mech, fx.wrappingKey, fx.targetKey, nil)
+				return err
+			}) {
+				continue
+			}
 
 			blob, err := fx.module.WrapKeyAuthenticated(
 				fx.session, mech, fx.wrappingKey, fx.targetKey, nil)
@@ -282,6 +316,20 @@ func TestUnwrapKeyAuthenticated_WrongAADFails(t *testing.T) {
 func TestUnwrapKeyAuthenticated_TagLengthComesFromRequest(t *testing.T) {
 	fx := newAuthWrapFixture(t)
 	iv := bytes.Repeat([]byte{0x5c}, GCMNonceSize)
+	if authWrapRefusedUnderFIPS(t, 12, false, func() error {
+		blob, err := fx.module.WrapKeyAuthenticated(
+			fx.session, gcmMechanism(nil, nil, 128), fx.wrappingKey, fx.targetKey, nil)
+		require.NoError(t, err)
+		_, err = fx.module.UnwrapKeyAuthenticated(
+			fx.session, gcmMechanism(nil, nil, 96), fx.wrappingKey, blob,
+			[]Attribute{
+				NewUint32Attribute(CKA_CLASS, uint32(CKO_SECRET_KEY)),
+				NewUint32Attribute(CKA_KEY_TYPE, uint32(CKK_AES)),
+			}, nil)
+		return err
+	}) {
+		return
+	}
 
 	blob, err := fx.module.WrapKeyAuthenticated(
 		fx.session, gcmMechanism(iv, nil, 128), fx.wrappingKey, fx.targetKey, nil)
@@ -339,6 +387,12 @@ func TestUnwrapKeyAuthenticated_ShortTagBlobNotRejectedByLength(t *testing.T) {
 			require.Equal(t, CKR_OK, rv)
 
 			mech := gcmMechanism(tc.iv, nil, 96)
+			if authWrapRefusedUnderFIPS(t, 12, tc.iv != nil, func() error {
+				_, err := fx.module.WrapKeyAuthenticated(fx.session, mech, fx.wrappingKey, oneByteKey, nil)
+				return err
+			}) {
+				return
+			}
 			blob, err := fx.module.WrapKeyAuthenticated(fx.session, mech, fx.wrappingKey, oneByteKey, nil)
 			require.NoError(t, err)
 			require.Less(t, len(blob), tc.floor,

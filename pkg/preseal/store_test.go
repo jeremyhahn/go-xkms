@@ -43,6 +43,13 @@ func (s *secretTPM) PlatformSRKAttributes() (*types.KeyAttributes, error) {
 	return &types.KeyAttributes{CN: "psrk"}, nil
 }
 
+// The test TPMs' sealing secrets are 32 bytes: HKDF refuses a key under 112
+// bits under GODEBUG=fips140=only (SP 800-131A).
+const (
+	tpmSecret      = "preseal test platform srk secret"
+	otherTPMSecret = "preseal test another srk secret!"
+)
+
 func newSecretTPM(t *testing.T, secret string) *secretTPM {
 	t.Helper()
 	sealer, err := seal.NewSecretSealer([]byte(secret))
@@ -54,10 +61,10 @@ func TestNew_RejectsMissingDependencies(t *testing.T) {
 	_, err := New(nil, storage.NewMemory(), nil)
 	require.ErrorIs(t, err, ErrTPMRequired)
 
-	_, err = New(newSecretTPM(t, "tpm"), nil, nil)
+	_, err = New(newSecretTPM(t, tpmSecret), nil, nil)
 	require.ErrorIs(t, err, ErrRecordsRequired)
 
-	tpm := newSecretTPM(t, "tpm")
+	tpm := newSecretTPM(t, tpmSecret)
 	tpm.psrkErr = errNoPlatformSRK
 	_, err = New(tpm, storage.NewMemory(), nil)
 	var srkErr *PlatformSRKError
@@ -66,12 +73,12 @@ func TestNew_RejectsMissingDependencies(t *testing.T) {
 }
 
 func TestOpen_RequiresDirectory(t *testing.T) {
-	_, err := Open(newSecretTPM(t, "tpm"), "", nil)
+	_, err := Open(newSecretTPM(t, tpmSecret), "", nil)
 	require.ErrorIs(t, err, ErrDirRequired)
 }
 
 func TestOpen_ClosesRecordsWhenTheTPMIsUnusable(t *testing.T) {
-	tpm := newSecretTPM(t, "tpm")
+	tpm := newSecretTPM(t, tpmSecret)
 	tpm.psrkErr = errNoPlatformSRK
 	_, err := Open(tpm, t.TempDir(), nil)
 	var srkErr *PlatformSRKError
@@ -81,7 +88,7 @@ func TestOpen_ClosesRecordsWhenTheTPMIsUnusable(t *testing.T) {
 func TestStore_PutGetRoundTripsAndPersists(t *testing.T) {
 	ctx := context.Background()
 	dir := t.TempDir()
-	tpm := newSecretTPM(t, "tpm")
+	tpm := newSecretTPM(t, tpmSecret)
 
 	store, err := Open(tpm, dir, nil)
 	require.NoError(t, err)
@@ -100,7 +107,7 @@ func TestStore_PutGetRoundTripsAndPersists(t *testing.T) {
 func TestStore_GetReportsTypedFailures(t *testing.T) {
 	ctx := context.Background()
 	records := storage.NewMemory()
-	store, err := New(newSecretTPM(t, "tpm"), records, nil)
+	store, err := New(newSecretTPM(t, tpmSecret), records, nil)
 	require.NoError(t, err)
 
 	var notFound *NotFoundError
@@ -109,7 +116,7 @@ func TestStore_GetReportsTypedFailures(t *testing.T) {
 	require.Equal(t, PKCS11PIN, notFound.Name)
 
 	require.NoError(t, store.Put(ctx, PKCS11PIN, []byte("1234")))
-	other, err := New(newSecretTPM(t, "another tpm"), records, nil)
+	other, err := New(newSecretTPM(t, otherTPMSecret), records, nil)
 	require.NoError(t, err)
 	var refused *RefusedError
 	_, err = other.Get(ctx, PKCS11PIN)
@@ -123,7 +130,7 @@ func TestStore_GetReportsTypedFailures(t *testing.T) {
 
 func TestStore_PutReportsTypedFailures(t *testing.T) {
 	ctx := context.Background()
-	store, err := New(newSecretTPM(t, "tpm"), storage.NewMemory(), nil)
+	store, err := New(newSecretTPM(t, tpmSecret), storage.NewMemory(), nil)
 	require.NoError(t, err)
 
 	var empty *EmptySecretError

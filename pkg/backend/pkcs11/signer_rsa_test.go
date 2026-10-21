@@ -324,7 +324,10 @@ func TestRSASigner_SignPSS_SaltLengthReachesToken(t *testing.T) {
 
 	digest := digestFor(t, crypto.SHA256, []byte("salt length payload"))
 
-	for _, saltLen := range []int{0 + 20, 32, 64} {
+	// FIPS 186-5 section 5.4 caps the PSS salt at the hash length, and
+	// GODEBUG=fips140=only refuses a longer one, so every length here and its
+	// wrong counterpart stays within 32 bytes.
+	for _, saltLen := range []int{20, 28, 32} {
 		sig, err := signer.Sign(rand.Reader, digest, &rsa.PSSOptions{Hash: crypto.SHA256, SaltLength: saltLen})
 		require.NoError(t, err)
 
@@ -332,7 +335,7 @@ func TestRSASigner_SignPSS_SaltLengthReachesToken(t *testing.T) {
 			rsa.VerifyPSS(pub, crypto.SHA256, digest, sig, &rsa.PSSOptions{Hash: crypto.SHA256, SaltLength: saltLen}),
 			"signature must verify with the exact salt length requested (%d)", saltLen)
 
-		wrongSalt := saltLen + 8
+		wrongSalt := saltLen - 8
 		require.ErrorIs(t,
 			rsa.VerifyPSS(pub, crypto.SHA256, digest, sig, &rsa.PSSOptions{Hash: crypto.SHA256, SaltLength: wrongSalt}),
 			rsa.ErrVerification,
@@ -582,7 +585,9 @@ func TestRSASigner_DecryptOAEP_ZeroHashDefaultsToSHA256(t *testing.T) {
 	signer := newRSATestSigner(t, b, "rsa-dec-oaep-zero")
 	pub := signer.Public().(*rsa.PublicKey)
 
-	ciphertext, err := rsa.EncryptOAEP(sha1.New(), rand.Reader, pub, []byte("default oaep hash"), nil)
+	// Both decrypts below must fail identically, so the ciphertext only has
+	// to be well formed; OAEP-SHA-256 is one a fips140=only process may build.
+	ciphertext, err := rsa.EncryptOAEP(sha256.New(), rand.Reader, pub, []byte("default oaep hash"), nil)
 	require.NoError(t, err)
 
 	_, errZero := signer.Decrypt(rand.Reader, ciphertext, &rsa.OAEPOptions{})
@@ -844,8 +849,9 @@ func TestRSASigner_SignPSS_DigestLengthMustMatchHash(t *testing.T) {
 	b := newProvisionedBackend(t, "rsa-sign-pss-mismatch")
 	signer := newRSATestSigner(t, b, "rsa-pss-mismatch")
 
-	shortDigest := digestFor(t, crypto.SHA1, []byte("mismatched digest"))
-	require.Len(t, shortDigest, 20)
+	// SHA-224: a digest shorter than the declared SHA-256 from an approved hash.
+	shortDigest := digestFor(t, crypto.SHA224, []byte("mismatched digest"))
+	require.Len(t, shortDigest, 28)
 
 	sig, err := signer.Sign(rand.Reader, shortDigest, &rsa.PSSOptions{Hash: crypto.SHA256, SaltLength: 32})
 	require.Nil(t, sig)

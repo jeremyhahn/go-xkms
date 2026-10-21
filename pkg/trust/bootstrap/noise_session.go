@@ -42,6 +42,13 @@ var (
 	ErrNoiseEncryptionFailed  = noiseproto.ErrEncryptionFailed
 	ErrNoiseDecryptionFailed  = noiseproto.ErrDecryptionFailed
 	ErrNoiseInvalidMessage    = noiseproto.ErrInvalidMessage
+
+	// ErrNoiseFIPSUnsupported reports that the Noise suite was refused
+	// because FIPS is enforced: X25519 (SP 800-56A Rev. 3) and
+	// ChaCha20-Poly1305 are not approved, so a `fips` build compiles them
+	// out and GODEBUG=fips140=only makes the Go Cryptographic Module refuse
+	// them at run time. The approved suite is SuiteP256AESGCM.
+	ErrNoiseFIPSUnsupported = noiseproto.ErrFIPSUnsupported
 )
 
 // NoiseSession is an interactive Noise_XX session between two peers that
@@ -101,6 +108,12 @@ func NewNoiseSession(cfg *NoiseSessionConfig) (*NoiseSession, error) {
 		Prologue:       cfg.Prologue,
 	})
 	if err != nil {
+		// A FIPS refusal keeps go-truststrap's error, which wraps
+		// ErrNoiseFIPSUnsupported and the module's own reason, so the
+		// caller learns the suite is unavailable rather than broken.
+		if errors.Is(err, ErrNoiseFIPSUnsupported) {
+			return nil, err
+		}
 		return nil, ErrNoiseHandshakeFailed
 	}
 
@@ -194,6 +207,9 @@ func (s *NoiseSession) Decrypt(ciphertext []byte) ([]byte, error) {
 func LoadNoiseStaticKey(privateKey []byte) (*NoiseStaticKey, error) {
 	key, err := noiseproto.LoadStaticKey(privateKey)
 	if err != nil {
+		if errors.Is(err, ErrNoiseFIPSUnsupported) {
+			return nil, err
+		}
 		return nil, ErrNoiseInvalidMessage
 	}
 	return key, nil
@@ -261,6 +277,12 @@ var noiseSessionErrors = map[error]error{
 // mapNoiseError translates a shared noise package error to the sentinel a
 // NoiseSession reports. It checks both direct equality and wrapped errors.
 func mapNoiseError(err error) error {
+	// go-truststrap wraps a FIPS refusal together with the failure it caused
+	// (ErrHandshakeFailed), so the refusal is matched before the map, whose
+	// iteration order is random.
+	if errors.Is(err, ErrNoiseFIPSUnsupported) {
+		return ErrNoiseFIPSUnsupported
+	}
 	for noiseErr, sessionErr := range noiseSessionErrors {
 		if errors.Is(err, noiseErr) {
 			return sessionErr

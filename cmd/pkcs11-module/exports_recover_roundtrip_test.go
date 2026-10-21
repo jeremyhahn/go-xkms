@@ -190,6 +190,10 @@ func rsaPublicKeyViaC(t *testing.T, m *module.Module, session module.SessionHand
 // was given -- checked against an independent crypto/rsa.VerifyPKCS1v15(...,
 // crypto.Hash(0), ...) oracle, not merely a non-empty result.
 func TestRSASignRecoverVerifyRecover_RoundTrip(t *testing.T) {
+	// Drives a construction FIPS mode refuses; see exports_fips_test.go.
+	if !runsOutsideFIPSMode(t) {
+		return
+	}
 	m, session := newCryptoFixture(t)
 	pub, priv := generateRSAKeyPairViaC(t, session)
 	enableRecoverAttributes(t, m, session, pub, priv)
@@ -238,6 +242,10 @@ func TestRSASignRecoverVerifyRecover_RoundTrip(t *testing.T) {
 // reports the real RSA-2048 signature size (256 bytes) rather than a fixed
 // placeholder.
 func TestCSignRecover_BufferTooSmall(t *testing.T) {
+	// Drives a construction FIPS mode refuses; see exports_fips_test.go.
+	if !runsOutsideFIPSMode(t) {
+		return
+	}
 	m, session := newCryptoFixture(t)
 	pub, priv := generateRSAKeyPairViaC(t, session)
 	enableRecoverAttributes(t, m, session, pub, priv)

@@ -62,7 +62,7 @@ func TestNewGenerator_Success(t *testing.T) {
 				Algorithm: AlgorithmSHA256,
 				Digits:    8,
 				Counter:   0,
-			}, "JBSWY3DPEHPK3PXP"),
+			}, rfcTestSecret),
 		},
 		{
 			name: "SHA512 credential",
@@ -72,7 +72,7 @@ func TestNewGenerator_Success(t *testing.T) {
 				Algorithm: AlgorithmSHA512,
 				Digits:    7,
 				Period:    60,
-			}, "JBSWY3DPEHPK3PXP"),
+			}, rfcTestSecret),
 		},
 	}
 
@@ -186,7 +186,7 @@ func TestGenerator_GenerateCounter_DifferentAlgorithms(t *testing.T) {
 				Type:      TypeHOTP,
 				Algorithm: tc.algorithm,
 				Digits:    6,
-			}, "JBSWY3DPEHPK3PXP")
+			}, rfcTestSecret)
 
 			gen, err := NewGenerator(cred)
 			if err != nil {

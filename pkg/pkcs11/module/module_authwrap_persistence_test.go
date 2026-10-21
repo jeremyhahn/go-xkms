@@ -56,7 +56,7 @@ func authWrapPersistenceFixture(t *testing.T, m *Module, kek, material []byte, l
 	session := loginAsNormalUser(t, m)
 	wrappingKey, targetKey := authWrapKeyPair(t, m, session, label, kek, material)
 
-	mech := NewMechanismWithTypedParams(CKM_AES_GCM, NewAESGCMParams(uniqueTestIV(t), 128))
+	mech := NewMechanismWithTypedParams(CKM_AES_GCM, NewAESGCMParams(callerIVOutsideFIPS(uniqueTestIV(t)), 128))
 	blob, err := m.WrapKeyAuthenticated(session, mech, wrappingKey, targetKey, nil)
 	require.NoError(t, err)
 

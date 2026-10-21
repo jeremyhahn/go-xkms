@@ -26,6 +26,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"slices"
 	"testing"
 
 	"github.com/jeremyhahn/go-xkms/pkg/testutil/secrettest"
@@ -573,14 +574,31 @@ func installAESKeyWithUsage(t *testing.T, b *Backend, cn string, key []byte, can
 }
 
 // softwareGCM returns the AES-GCM AEAD for a known key, used as the oracle.
+// It is cipher.NewGCMWithRandomNonce, the only GCM construction a
+// GODEBUG=fips140=only process may build, so its sealed form is
+// nonce || ciphertext || tag and it never takes a caller's nonce.
 func softwareGCM(t *testing.T, key []byte) cipher.AEAD {
 	t.Helper()
 
 	block, err := aes.NewCipher(key)
 	require.NoError(t, err)
-	aead, err := cipher.NewGCM(block)
+	aead, err := cipher.NewGCMWithRandomNonce(block)
 	require.NoError(t, err)
 	return aead
+}
+
+// openInSoftware opens a token-produced AES-GCM result with the software
+// oracle. Opening nonce || ciphertext || tag to the expected plaintext proves
+// the token's ciphertext and tag are AES-GCM over (key, nonce, aad): the
+// ciphertext is the plaintext XOR the keystream that key and nonce fix, and
+// the tag is the one GHASH value that authenticates it.
+func openInSoftware(t *testing.T, key []byte, encrypted *types.EncryptedData, aad []byte) []byte {
+	t.Helper()
+
+	sealed := slices.Concat(encrypted.Nonce, encrypted.Ciphertext, encrypted.Tag)
+	opened, err := softwareGCM(t, key).Open(nil, nil, sealed, aad)
+	require.NoError(t, err, "the token's output does not open as AES-GCM in software")
+	return opened
 }
 
 // TestSymmetricEncrypter_MatchesSoftwareGCM asserts the token's ciphertext is
@@ -628,14 +646,12 @@ func TestSymmetricEncrypter_MatchesSoftwareGCM(t *testing.T) {
 				})
 				require.NoError(t, err)
 
-				// Oracle: the same AEAD computed by crypto/cipher.
-				want := softwareGCM(t, key).Seal(nil, nonce, plaintext, aad)
-
-				assert.Equal(t, want[:len(want)-16], encrypted.Ciphertext,
-					"the token's ciphertext differs from AES-GCM")
-				assert.Equal(t, want[len(want)-16:], encrypted.Tag,
-					"the token's authentication tag differs from AES-GCM")
+				// Oracle: crypto/cipher opens the token's output.
 				assert.Equal(t, nonce, encrypted.Nonce)
+				assert.Len(t, encrypted.Ciphertext, len(plaintext))
+				// bytes.Equal: an empty plaintext opens to nil, not []byte{}.
+				assert.True(t, bytes.Equal(plaintext, openInSoftware(t, key, encrypted, aad)),
+					"the token's ciphertext and tag are not AES-GCM")
 				assert.Equal(t, string(attrs.SymmetricAlgorithm), encrypted.Algorithm)
 			}
 		})
@@ -657,16 +673,17 @@ func TestSymmetricEncrypter_DecryptsSoftwareCiphertext(t *testing.T) {
 	encrypter, err := b.SymmetricEncrypter(context.Background(), attrs)
 	require.NoError(t, err)
 
-	nonce := bytes.Repeat([]byte{0x11}, 12)
 	aad := []byte("bound context")
 	plaintext := []byte("sealed in software, opened in hardware")
 
-	sealed := softwareGCM(t, key).Seal(nil, nonce, plaintext, aad)
+	// The oracle draws its own nonce and prefixes it: nonce || ct || tag.
+	sealed := softwareGCM(t, key).Seal(nil, nil, plaintext, aad)
+	nonce, body := sealed[:12], sealed[12:]
 
 	opened, err := encrypter.Decrypt(&types.EncryptedData{
-		Ciphertext: sealed[:len(sealed)-16],
+		Ciphertext: body[:len(body)-16],
 		Nonce:      nonce,
-		Tag:        sealed[len(sealed)-16:],
+		Tag:        body[len(body)-16:],
 	}, &types.DecryptOptions{AdditionalData: aad})
 	require.NoError(t, err)
 	assert.Equal(t, plaintext, opened)
@@ -1142,8 +1159,7 @@ func TestSymmetricEncrypter_GeneratesFreshNonces(t *testing.T) {
 		seen[string(encrypted.Nonce)] = struct{}{}
 
 		// Each message must still verify against the oracle under its own nonce.
-		want := softwareGCM(t, key).Seal(nil, encrypted.Nonce, plaintext, nil)
-		assert.Equal(t, want[len(want)-16:], encrypted.Tag)
+		assert.Equal(t, plaintext, openInSoftware(t, key, encrypted, nil))
 	}
 }
 
