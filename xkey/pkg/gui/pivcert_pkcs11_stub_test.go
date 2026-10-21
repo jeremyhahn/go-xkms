@@ -16,6 +16,7 @@
 package gui
 
 import (
+	"log/slog"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -24,13 +25,17 @@ import (
 	xkms "github.com/jeremyhahn/go-xkms/sdk/go"
 )
 
-// TestNewPKCS11PIVCertStorageFromConnection_NotAvailable verifies the
-// non-pkcs11 build's stub fails closed with a typed error rather than
-// returning a usable (nil) storage silently, when PKCS#11 support was not
-// compiled in.
-func TestNewPKCS11PIVCertStorageFromConnection_NotAvailable(t *testing.T) {
-	storage, err := newPKCS11PIVCertStorageFromConnection(nil, "so-pin", "user-pin")
-	assert.Nil(t, storage)
-	require.Error(t, err)
-	assert.ErrorIs(t, err, xkms.ErrPIVPKCS11NotAvailable)
+// TestApp_RegisterPKCS11PIVStore_NotAvailable verifies the non-pkcs11 build
+// registers no on-token PIV storage and logs the typed reason, without the
+// PINs it was handed.
+func TestApp_RegisterPKCS11PIVStore_NotAvailable(t *testing.T) {
+	logs := &logBuffer{}
+	app := &App{log: slog.New(slog.NewTextHandler(logs, &slog.HandlerOptions{Level: slog.LevelDebug}))}
+
+	app.registerPKCS11PIVStore("softhsm", &xkms.PKCS11Connection{}, "so-pin", "user-pin")
+
+	require.True(t, logs.Contains("PKCS#11 PIV cert storage not available"))
+	assert.True(t, logs.Contains(xkms.ErrPIVPKCS11NotAvailable.Error()))
+	assert.False(t, logs.Contains("registered PKCS#11 PIV cert storage"))
+	assert.False(t, logs.Contains("so-pin"), "a PIN must never reach the log")
 }

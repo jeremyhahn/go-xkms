@@ -19,7 +19,9 @@ import (
 	xkms "github.com/jeremyhahn/go-xkms/sdk/go"
 )
 
-// newPKCS11PIVCertStorageFromConnection returns an error when PKCS#11 support is not compiled in.
-func newPKCS11PIVCertStorageFromConnection(conn *xkms.PKCS11Connection, soPin, userPin string) (xkms.PIVCertificateStorage, error) {
-	return nil, xkms.NewPIVStorageTypeError("newPKCS11PIVCertStorageFromConnection", xkms.PIVStorageTypePKCS11, xkms.ErrPIVPKCS11NotAvailable)
+// registerPKCS11PIVStore registers no on-token PIV certificate storage when
+// PKCS#11 support is not compiled in; it logs why instead.
+func (a *App) registerPKCS11PIVStore(moduleID string, _ *xkms.PKCS11Connection, _, _ string) {
+	a.log.Debug("PKCS#11 PIV cert storage not available", "module_id", moduleID,
+		"error", xkms.NewPIVStorageTypeError("registerPKCS11PIVStore", xkms.PIVStorageTypePKCS11, xkms.ErrPIVPKCS11NotAvailable))
 }

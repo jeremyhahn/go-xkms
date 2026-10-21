@@ -2225,19 +2225,7 @@ func NewApp(cfg *GUIConfig) *App {
 		mgr := a.pkcs11Service.GetManager()
 		if mgr != nil {
 			if conn, connErr := mgr.GetConnection(moduleID, slotID); connErr == nil {
-				p11Store, p11Err := newPKCS11PIVCertStorageFromConnection(conn, soPin, userPIN)
-				if p11Err == nil {
-					if pivErr := xkmssdk.RegisterPIVStore("pkcs11", p11Store); pivErr != nil {
-						a.log.Warn("failed to register PKCS#11 PIV store", "error", pivErr)
-					} else {
-						a.log.Info("registered PKCS#11 PIV cert storage (on-device)")
-					}
-					if pivErr := xkmssdk.RegisterPIVStore(moduleID, p11Store); pivErr != nil {
-						a.log.Debug("failed to register PIV store under module ID", "error", pivErr)
-					}
-				} else {
-					a.log.Debug("PKCS#11 PIV cert storage not available", "error", p11Err)
-				}
+				a.registerPKCS11PIVStore(moduleID, conn, soPin, userPIN)
 
 				// Register the PKCS#11 token as a FIDO2 key backend by wrapping the
 				// go-xkms PKCS#11 KeyProvider via the BackendAdapter. YubiKey PIV's
