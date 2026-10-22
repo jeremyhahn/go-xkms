@@ -86,3 +86,34 @@ func Option() qrdbnode.NodeOption {
 	})
 	return qrdbnode.WithServicePrincipal(Name)
 }
+
+// ceremonyGrant is what the principal additionally holds during `xkmsd init`,
+// whose admin enrollment is xkms's own work with no end user behind it yet:
+//
+//   - users:get_by_cert_thumbprint -- resolving the administrator first-boot
+//     just created from its certificate's SPKI thumbprint.
+//   - user_authfactors:add -- persisting the administrator's enrolled login
+//     factors.
+//
+// It is registered only by the init process (RegisterCeremonyGrant), so a
+// running xkmsd's principal never holds it.
+var ceremonyGrant = []qrdbsdk.Permission{
+	"users:get_by_cert_thumbprint",
+	"user_authfactors:add",
+}
+
+var registerCeremonyOnce sync.Once
+
+// CeremonyGrant returns a copy of the permissions RegisterCeremonyGrant adds.
+func CeremonyGrant() []qrdbsdk.Permission {
+	return append([]qrdbsdk.Permission(nil), ceremonyGrant...)
+}
+
+// RegisterCeremonyGrant adds the init ceremony's permissions to the
+// principal, once per process. Only `xkmsd init` calls it; go-qrdb honours
+// the grant from the next Node.ServiceContext on.
+func RegisterCeremonyGrant() {
+	registerCeremonyOnce.Do(func() {
+		qrdbsdk.RegisterPermissionRoleGrant(Name, ceremonyGrant...)
+	})
+}

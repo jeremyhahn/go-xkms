@@ -185,7 +185,23 @@ func TestAdminRoutes_PathBuilders(t *testing.T) {
 			name:     "tenant create (static path)",
 			routeKey: "admin.tenant/create",
 			request:  map[string]string{"name": "Test Tenant"},
-			wantPath: baseURL + "/api/v1/tenants",
+			wantPath: baseURL + "/api/v1/tenants/",
+		},
+		{
+			name:     "tenant list carries its pagination as the core query",
+			routeKey: "admin.tenant/list",
+			request: &struct {
+				Page    int    `json:"page,omitempty"`
+				PerPage int    `json:"per_page,omitempty"`
+				Status  string `json:"status,omitempty"`
+			}{Page: 2, PerPage: 25, Status: "active"},
+			wantPath: baseURL + "/api/v1/tenants/?page=2&page_size=25&status=active",
+		},
+		{
+			name:     "tenant list without pagination",
+			routeKey: "admin.tenant/list",
+			request:  &struct{}{},
+			wantPath: baseURL + "/api/v1/tenants/",
 		},
 		{
 			name:     "EAB get with two IDs",
@@ -284,6 +300,11 @@ func TestAdminRoutes_PathBuilder_MissingFields(t *testing.T) {
 			request: &struct {
 				TenantID string `json:"tenantId"`
 			}{TenantID: "tenant-1"},
+		},
+		{
+			name:     "tenant list with a request that is not an object",
+			routeKey: "admin.tenant/list",
+			request:  []int{1},
 		},
 	}
 

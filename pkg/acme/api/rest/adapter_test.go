@@ -207,13 +207,13 @@ func TestCreateTenant(t *testing.T) {
 				Name: "Test Tenant",
 			},
 			statusCode: http.StatusCreated,
-			response: &admin.TenantInfo{
+			response: map[string]any{"tenant": &admin.TenantInfo{
 				ID:        "tenant-1",
 				Name:      "Test Tenant",
 				Status:    "active",
 				CreatedAt: time.Now(),
 				UpdatedAt: time.Now(),
-			},
+			}},
 			wantError: false,
 		},
 		{
@@ -256,8 +256,8 @@ func TestCreateTenant(t *testing.T) {
 				if r.Method != http.MethodPost {
 					t.Errorf("expected POST method, got %s", r.Method)
 				}
-				if r.URL.Path != "/api/v1/tenants" {
-					t.Errorf("expected path /api/v1/tenants, got %s", r.URL.Path)
+				if r.URL.Path != "/api/v1/tenants/" {
+					t.Errorf("expected path /api/v1/tenants/, got %s", r.URL.Path)
 				}
 				if r.Header.Get("Content-Type") != "application/json" {
 					t.Errorf("expected Content-Type application/json, got %s", r.Header.Get("Content-Type"))
@@ -322,11 +322,11 @@ func TestGetTenant(t *testing.T) {
 			name:       "successful get",
 			tenantID:   "tenant-1",
 			statusCode: http.StatusOK,
-			response: &admin.TenantInfo{
+			response: map[string]any{"tenant": &admin.TenantInfo{
 				ID:     "tenant-1",
 				Name:   "Test Tenant",
 				Status: "active",
-			},
+			}},
 			wantError: false,
 		},
 		{
@@ -579,30 +579,32 @@ func TestListTenants(t *testing.T) {
 	tests := []struct {
 		name       string
 		request    *admin.ListTenantsRequest
+		wantQuery  string
 		statusCode int
 		response   interface{}
 		wantError  bool
 		errContain string
 		wantCount  int
+		wantTotal  int
 	}{
 		{
 			name: "successful list",
 			request: &admin.ListTenantsRequest{
 				Page:    1,
 				PerPage: 10,
+				Status:  "active",
 			},
+			wantQuery:  "page=1&page_size=10&status=active",
 			statusCode: http.StatusOK,
 			response: map[string]interface{}{
-				"items": []*admin.TenantInfo{
+				"tenants": []*admin.TenantInfo{
 					{ID: "tenant-1", Name: "Tenant 1"},
 					{ID: "tenant-2", Name: "Tenant 2"},
 				},
-				"total":    2,
-				"page":     1,
-				"per_page": 10,
+				"pagination": map[string]interface{}{"page": 1, "page_size": 10, "total": 2},
 			},
-			wantError: false,
 			wantCount: 2,
+			wantTotal: 2,
 		},
 		{
 			name: "empty list",
@@ -610,15 +612,12 @@ func TestListTenants(t *testing.T) {
 				Page:    1,
 				PerPage: 10,
 			},
+			wantQuery:  "page=1&page_size=10",
 			statusCode: http.StatusOK,
 			response: map[string]interface{}{
-				"items":    []*admin.TenantInfo{},
-				"total":    0,
-				"page":     1,
-				"per_page": 10,
+				"tenants":    []*admin.TenantInfo{},
+				"pagination": map[string]interface{}{"page": 1, "page_size": 10, "total": 0},
 			},
-			wantError: false,
-			wantCount: 0,
 		},
 		{
 			name: "internal server error",
@@ -626,10 +625,19 @@ func TestListTenants(t *testing.T) {
 				Page:    1,
 				PerPage: 10,
 			},
+			wantQuery:  "page=1&page_size=10",
 			statusCode: http.StatusInternalServerError,
 			response:   `{"error": "internal error"}`,
 			wantError:  true,
 			errContain: "500",
+		},
+		{
+			name:       "malformed body",
+			request:    &admin.ListTenantsRequest{Page: 1, PerPage: 10},
+			wantQuery:  "page=1&page_size=10",
+			statusCode: http.StatusOK,
+			response:   `{"tenants": "not an array"}`,
+			wantError:  true,
 		},
 	}
 
@@ -639,8 +647,11 @@ func TestListTenants(t *testing.T) {
 				if r.Method != http.MethodGet {
 					t.Errorf("expected GET method, got %s", r.Method)
 				}
-				if !strings.HasPrefix(r.URL.Path, "/api/v1/tenants") {
-					t.Errorf("expected path to start with /api/v1/tenants, got %s", r.URL.Path)
+				if r.URL.Path != "/api/v1/tenants/" {
+					t.Errorf("expected path /api/v1/tenants/, got %s", r.URL.Path)
+				}
+				if r.URL.RawQuery != tt.wantQuery {
+					t.Errorf("expected query %q, got %q", tt.wantQuery, r.URL.RawQuery)
 				}
 
 				w.WriteHeader(tt.statusCode)
@@ -680,7 +691,10 @@ func TestListTenants(t *testing.T) {
 			}
 
 			if pagination == nil {
-				t.Error("expected pagination, got nil")
+				t.Fatal("expected pagination, got nil")
+			}
+			if pagination.Total != tt.wantTotal || pagination.PerPage != tt.request.PerPage {
+				t.Errorf("unexpected pagination %+v", pagination)
 			}
 		})
 	}
@@ -3420,8 +3434,8 @@ func TestDecodeListResponseErrorPaths(t *testing.T) {
 				t.Fatalf("unexpected error creating adapter: %v", err)
 			}
 
-			// Use ListTenants which calls decodeListResponse
-			_, _, err = adapter.ListTenants(context.Background(), &admin.ListTenantsRequest{Page: 1, PerPage: 10})
+			// Use ListAccounts which calls decodeListResponse
+			_, _, err = adapter.ListAccounts(context.Background(), &admin.ListAccountsRequest{Page: 1, PerPage: 10})
 
 			if tt.wantError {
 				if err == nil {
@@ -3504,8 +3518,8 @@ func TestDecodeListResponseWithPagination(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusOK)
 		response := map[string]interface{}{
-			"items": []*admin.TenantInfo{
-				{ID: "tenant-1", Name: "Tenant 1"},
+			"items": []*admin.AccountInfo{
+				{ID: 1, Status: "valid"},
 			},
 			"total":    1,
 			"page":     1,
@@ -3520,13 +3534,13 @@ func TestDecodeListResponseWithPagination(t *testing.T) {
 		t.Fatalf("unexpected error creating adapter: %v", err)
 	}
 
-	tenants, pagination, err := adapter.ListTenants(context.Background(), &admin.ListTenantsRequest{Page: 1, PerPage: 10})
+	accounts, pagination, err := adapter.ListAccounts(context.Background(), &admin.ListAccountsRequest{Page: 1, PerPage: 10})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
 
-	if len(tenants) != 1 {
-		t.Errorf("expected 1 tenant, got %d", len(tenants))
+	if len(accounts) != 1 {
+		t.Errorf("expected 1 account, got %d", len(accounts))
 	}
 
 	if pagination == nil {
@@ -3542,7 +3556,7 @@ func TestDecodeListResponseEmptyItems(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusOK)
 		response := map[string]interface{}{
-			"items":    []*admin.TenantInfo{},
+			"items":    []*admin.AccountInfo{},
 			"total":    0,
 			"page":     1,
 			"per_page": 10,
@@ -3556,13 +3570,13 @@ func TestDecodeListResponseEmptyItems(t *testing.T) {
 		t.Fatalf("unexpected error creating adapter: %v", err)
 	}
 
-	tenants, pagination, err := adapter.ListTenants(context.Background(), &admin.ListTenantsRequest{Page: 1, PerPage: 10})
+	accounts, pagination, err := adapter.ListAccounts(context.Background(), &admin.ListAccountsRequest{Page: 1, PerPage: 10})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
 
-	if len(tenants) != 0 {
-		t.Errorf("expected 0 tenants, got %d", len(tenants))
+	if len(accounts) != 0 {
+		t.Errorf("expected 0 accounts, got %d", len(accounts))
 	}
 
 	if pagination == nil {

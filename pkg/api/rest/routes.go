@@ -16,6 +16,8 @@ package rest
 import (
 	"net/http"
 
+	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
+
 	"github.com/jeremyhahn/go-xkms/pkg/auth"
 )
 
@@ -31,6 +33,29 @@ const (
 	// RouteAuthPermission requires an authenticated identity holding the
 	// route's Resource:Action permission when RBAC is enabled.
 	RouteAuthPermission
+	// RouteAuthTenant requires an authenticated identity holding the
+	// permission the route's TenantReach selects: Resource:Action within the
+	// caller's own tenant, CrossPermission beyond it. It is checked by the
+	// TenantGate whether or not RBAC is enabled for the other routes.
+	RouteAuthTenant
+)
+
+// TenantReach says which tenants a RouteAuthTenant route reaches, and so
+// which permission its caller needs.
+type TenantReach int
+
+const (
+	// TenantReachCross reaches beyond any one tenant (creating a tenant):
+	// the caller always needs CrossPermission.
+	TenantReachCross TenantReach = iota
+	// TenantReachList reaches the tenant collection: a caller confined to
+	// its own tenant needs Resource:Action, a cross-tenant caller
+	// CrossPermission.
+	TenantReachList
+	// TenantReachTarget reaches the tenant the {tenantID} path parameter
+	// names: the caller's own tenant needs Resource:Action, any other
+	// CrossPermission.
+	TenantReachTarget
 )
 
 // RouteGroup names the middleware profile a route is served under. The
@@ -81,6 +106,11 @@ type RouteSpec struct {
 	// RouteAuthPermission routes (pkg/auth vocabulary).
 	Resource string
 	Action   string
+
+	// Reach and CrossPermission complete the permission of a
+	// RouteAuthTenant route (TenantGate).
+	Reach           TenantReach
+	CrossPermission qrdbsdk.Permission
 
 	// MaxBodyBytes bounds the request body; zero selects
 	// DefaultMaxBodyBytes. Only routes that carry caller data set it
@@ -298,10 +328,16 @@ func Routes() []RouteSpec {
 	// management and carry their own qrdb permissions
 	// (tenants:set_entitlements, tenants:set_quotas), never tenants:update. ---
 	hasTenants := func(s *Server) bool { return s.tenantHandlers != nil }
-	permIf("POST", "/tenants/", auth.ResourceTenants, auth.ActionCreate, hasTenants, func(s *Server) http.HandlerFunc { return s.tenantHandlers.CreateTenantHandler })
-	permIf("GET", "/tenants/", auth.ResourceTenants, auth.ActionList, hasTenants, func(s *Server) http.HandlerFunc { return s.tenantHandlers.ListTenantsHandler })
-	permIf("GET", "/tenants/{tenantID}", auth.ResourceTenants, auth.ActionRead, hasTenants, func(s *Server) http.HandlerFunc { return s.tenantHandlers.GetTenantHandler })
-	permIf("DELETE", "/tenants/{tenantID}", auth.ResourceTenants, auth.ActionDelete, hasTenants, func(s *Server) http.HandlerFunc { return s.tenantHandlers.DeleteTenantHandler })
+	// The tenant lifecycle has one owner, this table (go-xkms#794): the ACME
+	// admin plane keeps only its record updates under /api/v1/tenants/{id}.
+	// Each route is gated by the tenants it reaches (TenantGate).
+	tenant := func(method, pattern, action string, reach TenantReach, cross qrdbsdk.Permission, h func(s *Server) http.HandlerFunc) {
+		specs = append(specs, RouteSpec{Method: method, Pattern: "/api/v1" + pattern, Group: GroupAPIv1, Auth: RouteAuthTenant, Resource: auth.ResourceTenants, Action: action, Reach: reach, CrossPermission: cross, Enabled: hasTenants, Handler: h})
+	}
+	tenant("POST", "/tenants/", auth.ActionCreate, TenantReachCross, qrdbsdk.PermissionTenantsCreateCross, func(s *Server) http.HandlerFunc { return s.tenantHandlers.CreateTenantHandler })
+	tenant("GET", "/tenants/", auth.ActionList, TenantReachList, qrdbsdk.PermissionTenantsListCross, func(s *Server) http.HandlerFunc { return s.tenantHandlers.ListTenantsHandler })
+	tenant("GET", "/tenants/{tenantID}", auth.ActionRead, TenantReachTarget, qrdbsdk.PermissionTenantsReadCross, func(s *Server) http.HandlerFunc { return s.tenantHandlers.GetTenantHandler })
+	tenant("DELETE", "/tenants/{tenantID}", auth.ActionDelete, TenantReachTarget, qrdbsdk.PermissionTenantsDeleteCross, func(s *Server) http.HandlerFunc { return s.tenantHandlers.DeleteTenantHandler })
 	permIf("PUT", "/tenants/{tenantID}/entitlements", auth.ResourceTenants, auth.ActionSetEntitlements, hasTenants, func(s *Server) http.HandlerFunc { return s.tenantHandlers.UpdateTenantEntitlementsHandler })
 	permIf("PUT", "/tenants/{tenantID}/quotas", auth.ResourceTenants, auth.ActionSetQuotas, hasTenants, func(s *Server) http.HandlerFunc { return s.tenantHandlers.UpdateTenantQuotasHandler })
 

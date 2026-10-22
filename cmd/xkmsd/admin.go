@@ -140,6 +140,17 @@ func finalizeAdminModule(srv *server.Server, acme *acmeServer, logger *slog.Logg
 	}
 	adminSvc.SetTenantService(srv.TenantService())
 
+	// The core /api/v1/tenants routes own the tenant lifecycle; the admin
+	// service keeps each tenant's CA record beside it (go-xkms#794).
+	xkmsService := srv.XKMSService()
+	if xkmsService == nil {
+		return &acmeInitError{
+			Stage:    "resolve xkms service for the tenant records",
+			Sentinel: ErrAdminXKMSServiceRequired,
+		}
+	}
+	xkmsService.SetTenantRecords(adminSvc)
+
 	handlers := admin.NewHandlers(adminSvc, logger)
 	tenantHandlers := admin.NewTenantHandlers(adminSvc, logger)
 

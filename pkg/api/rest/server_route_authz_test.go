@@ -89,11 +89,8 @@ var gatedRoutePermissions = []gatedRoute{
 	{http.MethodPost, "/api/v1/ca/tcg/enroll", "certs", "issue"},
 	{http.MethodPost, "/api/v1/ca/tcg/lak", "certs", "issue"},
 
-	// Tenants — service_tenant.go.
-	{http.MethodPost, "/api/v1/tenants/", "tenants", "create"},
-	{http.MethodGet, "/api/v1/tenants/", "tenants", "list"},
-	{http.MethodGet, "/api/v1/tenants/t1", "tenants", "read"},
-	{http.MethodDelete, "/api/v1/tenants/t1", "tenants", "delete"},
+	// Tenants — service_tenant.go. The lifecycle routes (create, list, get,
+	// delete) are tenant-gated, not permission-gated; TestTenantGate_* covers them.
 	{http.MethodPut, "/api/v1/tenants/t1/entitlements", "tenants", "set_entitlements"},
 	{http.MethodPut, "/api/v1/tenants/t1/quotas", "tenants", "set_quotas"},
 
@@ -242,15 +239,16 @@ func newGatedRouteServer(t *testing.T, rbac qrdbtransport.RBACClient, authn auth
 	svc.SetCredentialService(&credentialspkg.Service{})
 
 	server, err := NewServer(&Config{
-		Authenticator:   authn,
-		Backends:        map[string]xkms.Backend{"test": ks},
-		Logger:          logger,
-		XKMSService:     svc,
-		BarrierRegistry: registry,
-		PasswordStore:   newTestPasswordStore(t),
-		CA:              ca,
-		EnableRBAC:      true,
-		RBACAuthorizer:  auth.NewAuthorizer(rbac),
+		Authenticator:    authn,
+		Backends:         map[string]xkms.Backend{"test": ks},
+		Logger:           logger,
+		XKMSService:      svc,
+		BarrierRegistry:  registry,
+		PasswordStore:    newTestPasswordStore(t),
+		CA:               ca,
+		EnableRBAC:       true,
+		RBACAuthorizer:   auth.NewAuthorizer(rbac),
+		TenantAuthorizer: auth.NewAuthorizer(rbac),
 	})
 	require.NoError(t, err)
 	return server
@@ -310,14 +308,14 @@ func TestGatedRoutes_RequirePermission(t *testing.T) {
 // TestGatedRoutes_WrongGrantDenied proves holding a sibling permission is not
 // enough: a caller granted only the read half of a family is refused the
 // write half. pin:read must not reach SetSOPIN; tenants:read must not reach
-// DeleteTenant.
+// SetQuotas.
 func TestGatedRoutes_WrongGrantDenied(t *testing.T) {
 	cases := []struct {
 		grant gatedRoute
 		route gatedRoute
 	}{
 		{gatedRoute{resource: "pin", action: "read"}, gatedRoute{method: http.MethodPost, path: "/api/v1/pin/so/set"}},
-		{gatedRoute{resource: "tenants", action: "read"}, gatedRoute{method: http.MethodDelete, path: "/api/v1/tenants/t1"}},
+		{gatedRoute{resource: "tenants", action: "read"}, gatedRoute{method: http.MethodPut, path: "/api/v1/tenants/t1/quotas"}},
 		{gatedRoute{resource: "passwords", action: "read"}, gatedRoute{method: http.MethodPost, path: "/api/v1/password-vault/unlock"}},
 	}
 	rbac := &routeAuthzRecordingClient{}
@@ -375,41 +373,35 @@ func (a tenantScopedAuthenticator) AuthenticateGRPC(context.Context, metadata.MD
 	return &auth.Identity{Subject: "tenant-user", TenantID: a.tenantID}, nil
 }
 
-// TestTenantRoutes_AntiEnumerationPreserved proves the permission gate adds no
-// tenant-existence oracle. A tenant-scoped caller holding tenants:read still
-// receives the handler's identical 404 for another tenant's ID and for an ID
-// that does not exist; a caller without the grant receives the identical 403
-// for both, because the gate decides before any tenant lookup.
+// TestTenantRoutes_AntiEnumerationPreserved proves the tenant gate adds no
+// tenant-existence oracle. A tenant-scoped caller without the cross permission
+// receives the identical 404 for another tenant's ID and for an ID that does
+// not exist, whether or not it holds tenants:read for its own tenant.
 func TestTenantRoutes_AntiEnumerationPreserved(t *testing.T) {
 	const own, other = "tenant-a", "tenant-b"
 	authn := tenantScopedAuthenticator{tenantID: own}
 
-	t.Run("granted caller cannot tell another tenant from a missing one", func(t *testing.T) {
-		rbac := &routeAuthzRecordingClient{allowResource: "tenants", allowAction: "read"}
-		server := newGatedRouteServer(t, rbac, authn, nil, own)
-		_, err := server.barrierRegistry.RegisterTenantDefault(other)
-		require.NoError(t, err)
+	cases := []struct {
+		name string
+		rbac qrdbtransport.RBACClient
+	}{
+		{"granted caller", &routeAuthzRecordingClient{allowResource: "tenants", allowAction: "read"}},
+		{"ungranted caller", denyingRBACClient{}},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name+" cannot tell another tenant from a missing one", func(t *testing.T) {
+			server := newGatedRouteServer(t, tc.rbac, authn, nil, own)
+			_, err := server.barrierRegistry.RegisterTenantDefault(other)
+			require.NoError(t, err)
 
-		existing := serveRoute(server, http.MethodGet, "/api/v1/tenants/"+other)
-		missing := serveRoute(server, http.MethodGet, "/api/v1/tenants/no-such-tenant")
+			existing := serveRoute(server, http.MethodGet, "/api/v1/tenants/"+other)
+			missing := serveRoute(server, http.MethodGet, "/api/v1/tenants/no-such-tenant")
 
-		assert.Equal(t, http.StatusNotFound, existing.Code)
-		assert.Equal(t, http.StatusNotFound, missing.Code)
-		assert.Equal(t, missing.Body.String(), existing.Body.String())
-	})
-
-	t.Run("ungranted caller is refused before any lookup", func(t *testing.T) {
-		server := newGatedRouteServer(t, denyingRBACClient{}, authn, nil, own)
-		_, err := server.barrierRegistry.RegisterTenantDefault(other)
-		require.NoError(t, err)
-
-		existing := serveRoute(server, http.MethodGet, "/api/v1/tenants/"+other)
-		missing := serveRoute(server, http.MethodGet, "/api/v1/tenants/no-such-tenant")
-
-		assert.Equal(t, http.StatusForbidden, existing.Code)
-		assert.Equal(t, http.StatusForbidden, missing.Code)
-		assert.Equal(t, missing.Body.String(), existing.Body.String())
-	})
+			assert.Equal(t, http.StatusNotFound, existing.Code)
+			assert.Equal(t, http.StatusNotFound, missing.Code)
+			assert.Equal(t, missing.Body.String(), existing.Body.String())
+		})
+	}
 }
 
 // TestRoutes_SessionOnlySurfaceIsPinned pins the exact set of routes the

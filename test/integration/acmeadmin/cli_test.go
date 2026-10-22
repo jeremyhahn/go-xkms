@@ -120,30 +120,19 @@ func testCLICertList(t *testing.T, cfg *xkmsctlConfig) {
 // so the rename assertion cactl's TenantCRUD test made has no equivalent
 // and is dropped rather than invented.
 //
-// This test is what first caught a real production bug (fixed alongside
-// it): pkg/api/transport/rest/transport.go's CreateTenant/ListTenants
-// requested the tenant collection root without xkmsd's own
-// pkg/api/rest/routes.go route table's trailing slash
-// ("/api/v1/tenants" vs the registered "/api/v1/tenants/"). That gap was
-// silently bridged by a slash redirect as long as nothing else claimed the
-// exact, no-slash path — until the ACME admin plane (required for this
-// whole suite; cmd/xkmsd/admin.go's adminAPIPrefixes,
-// pkg/apimodule/admin_module.go) registered precisely that literal path
-// for its own, differently-shaped tenant surface
-// (pkg/acme/admin/tenant_handlers.go), which then answered first with no
-// error, no redirect, and no indication anything was wrong beyond an
-// all-zero-value response body. See pkg/api/transport/rest/transport.go's
-// CreateTenant doc comment and
-// transport_tenant_test.go's TestCreateTenant_CollectionRootRequiresTrailingSlash
-// / TestListTenants_CollectionRootRequiresTrailingSlash for the full trace
-// and regression coverage.
+// This test first caught "xkmsctl tenant create"/"list" requesting the
+// collection root without the trailing slash pkg/api/rest/routes.go
+// registers ("/api/v1/tenants" vs "/api/v1/tenants/"), while the ACME admin
+// plane still mounted its own tenant surface at the bare path and answered
+// with an all-zero body. The client now sends the slash
+// (pkg/api/transport/rest/transport.go's CreateTenant, regression tests in
+// transport_tenant_test.go), and core is the one owner of the tenant
+// collection: the admin plane keeps only the tenant sub-resources.
 func testCLITenantLifecycle(t *testing.T, cfg *xkmsctlConfig) {
 	tenantID := fmt.Sprintf("%stenant-%d", testTenantPrefix, time.Now().UnixNano())
 	tenantName := tenantID
 
-	// Create tenant. Unlike the ACME admin REST plane's own CreateTenant
-	// (which auto-generates an ID, pkg/acme/admin/tenant_handlers.go:163),
-	// "xkmsctl tenant create" requires --id explicitly
+	// Create tenant. "xkmsctl tenant create" requires --id explicitly
 	// (cmd/xkmsctl/tenant.go: ErrTenantIDRequired).
 	createOutput := requireSuccess(t, cfg, "tenant", "create",
 		"--id", tenantID, "--name", tenantName, "-o", "json")

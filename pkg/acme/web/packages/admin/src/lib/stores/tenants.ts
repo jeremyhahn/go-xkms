@@ -11,9 +11,13 @@ export const selectedTenant = writable<TenantInfo | null>(null);
 export async function fetchTenants(params?: { page?: number; per_page?: number; status?: string }): Promise<void> {
   tenantsLoading.set(true);
   try {
-    const res = await adminApi.listTenants(params) as any;
-    tenants.set(res.items ?? res.data ?? []);
-    tenantsPagination.set(res.pagination ?? { page: res.page ?? 1, per_page: res.per_page ?? 20, total: res.total ?? 0 });
+    const res = await adminApi.listTenants(params);
+    tenants.set(res.tenants ?? []);
+    tenantsPagination.set({
+      page: res.pagination.page,
+      per_page: res.pagination.page_size,
+      total: res.pagination.total,
+    });
   } catch (e) {
     notifyError(`Failed to fetch tenants: ${(e as Error).message}`);
   } finally {

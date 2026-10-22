@@ -82,6 +82,12 @@ type XKMSService struct {
 	// barrier-registry operations.
 	tenantService qrdbsdk.ServiceTenantServicer
 
+	// tenantRecords keeps the CA record each tenant carries beside its
+	// go-qrdb identity. The hosted ACME CA wires it after start-up
+	// (SetTenantRecords); until then tenants have no record and read as
+	// active.
+	tenantRecords subsystem[TenantRecords]
+
 	pinManager    subsystem[qrdbsdk.PINBackend]
 	passwordStore subsystem[*staticpw.DAOStore]
 
@@ -346,6 +352,10 @@ func (s *XKMSService) SetTenantService(t qrdbsdk.ServiceTenantServicer) { s.tena
 // TenantService returns the composed go-qrdb TenantService, or nil when it has
 // not been wired.
 func (s *XKMSService) TenantService() qrdbsdk.ServiceTenantServicer { return s.tenantService }
+
+// SetTenantRecords wires the keeper of the tenants' CA records into the
+// tenant lifecycle. It may run while transports already serve requests.
+func (s *XKMSService) SetTenantRecords(r TenantRecords) { s.tenantRecords.store(r) }
 
 // SetPasswordStoreManager sets the per-tenant password store manager.
 func (s *XKMSService) SetPasswordStoreManager(m *staticpw.TenantPasswordStoreManager) {

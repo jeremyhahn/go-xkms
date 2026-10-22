@@ -32,7 +32,7 @@ import (
 // set into qrdb's role-grant registry.
 var roleGrantOnce sync.Once
 
-// registerRoleGrants contributes every permission the xkms module declares —
+// RegisterRoleGrants contributes every permission the xkms module declares —
 // across its gRPC proto options, its REST route table, and its MCP method
 // specs — into go-qrdb's built-in role-grant registry. Admin holds the full
 // set and Owner holds it as every registered permission; Operator, User and
@@ -59,7 +59,12 @@ var roleGrantOnce sync.Once
 // The Security Officer role deliberately receives nothing here: xkms's
 // surface is overwhelmingly cryptographic and qrdb's SoD invariant
 // (FIPS 140-3 AS10.03) forbids crypto grants to SO.
-func registerRoleGrants() {
+//
+// RegisterRoleGrants is exported for a first boot that runs on a node built
+// without this module (`xkmsd init`): the roles it seeds must carry the same
+// grants `xkmsd run` seeds after mounting the module, or run's first boot
+// refuses the stored built-in roles as conflicting (go-xkms#794).
+func RegisterRoleGrants() {
 	roleGrantOnce.Do(func() {
 		perms := modulePermissions()
 
@@ -217,7 +222,8 @@ func modulePermissions() []qrdbsdk.Permission {
 	set := map[string]struct{}{}
 
 	for _, spec := range xkmsrest.Routes() {
-		if spec.Auth == xkmsrest.RouteAuthPermission && spec.Resource != "" && spec.Action != "" {
+		gated := spec.Auth == xkmsrest.RouteAuthPermission || spec.Auth == xkmsrest.RouteAuthTenant
+		if gated && spec.Resource != "" && spec.Action != "" {
 			set[spec.Resource+":"+spec.Action] = struct{}{}
 		}
 	}

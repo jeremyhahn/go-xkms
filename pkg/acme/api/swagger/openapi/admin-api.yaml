@@ -78,115 +78,11 @@ paths:
   # ============================================================================
   # Tenant Management Endpoints
   # ============================================================================
-  /api/v1/tenants:
-    get:
-      tags:
-        - Tenants
-      summary: List all tenants
-      description: |
-        Returns a paginated list of all tenants in the system.
-        Requires super-admin role.
-      operationId: listTenants
-      parameters:
-        - $ref: '#/components/parameters/PageParam'
-        - $ref: '#/components/parameters/PerPageParam'
-        - name: status
-          in: query
-          description: Filter by tenant status
-          schema:
-            type: string
-            enum: [active, suspended, deleted]
-      responses:
-        '200':
-          description: List of tenants
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/ListTenantsResponse'
-        '401':
-          $ref: '#/components/responses/ProblemUnauthorized'
-        '403':
-          $ref: '#/components/responses/ProblemForbidden'
-        '500':
-          $ref: '#/components/responses/ProblemInternalError'
-    post:
-      tags:
-        - Tenants
-      summary: Create a new tenant
-      description: |
-        Creates a new tenant with optional settings configuration.
-        Requires super-admin role.
-      operationId: createTenant
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              $ref: '#/components/schemas/CreateTenantRequest'
-            example:
-              id: "acme-corp"
-              name: "ACME Corporation"
-              settings:
-                max_certificates: 1000
-                max_accounts: 100
-                allowed_key_algorithms: ["ECDSA-P256", "ECDSA-P384", "RSA-2048"]
-                certificate_validity_days: 90
-                require_eab: true
-                allow_endorse_01: true
-                allow_enroll_01: true
-      responses:
-        '201':
-          description: Tenant created successfully
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/TenantInfo'
-        '400':
-          $ref: '#/components/responses/ProblemBadRequest'
-        '401':
-          $ref: '#/components/responses/ProblemUnauthorized'
-        '403':
-          $ref: '#/components/responses/ProblemForbidden'
-        '409':
-          description: Tenant already exists
-          content:
-            application/problem+json:
-              schema:
-                $ref: '#/components/schemas/ProblemDetail'
-              example:
-                type: "urn:trusted-ca:error:conflict"
-                title: "Conflict"
-                detail: "Tenant already exists"
-                status: 409
-        '500':
-          $ref: '#/components/responses/ProblemInternalError'
-
+  # Tenant create, list, get and delete belong to xkmsd's core API
+  # (pkg/api/rest/routes.go: /api/v1/tenants/ and /api/v1/tenants/{id}),
+  # which is their one owner; this plane adds the rename and the
+  # sub-resources below.
   /api/v1/tenants/{tenantId}:
-    get:
-      tags:
-        - Tenants
-      summary: Get tenant by ID
-      description: |
-        Retrieves detailed information about a specific tenant.
-        Admin can view their own tenant; super-admin can view all.
-      operationId: getTenant
-      parameters:
-        - $ref: '#/components/parameters/TenantIdParam'
-      responses:
-        '200':
-          description: Tenant details
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/TenantInfo'
-        '401':
-          $ref: '#/components/responses/ProblemUnauthorized'
-        '403':
-          $ref: '#/components/responses/ProblemForbidden'
-        '404':
-          $ref: '#/components/responses/ProblemNotFound'
-        '500':
-          $ref: '#/components/responses/ProblemInternalError'
     put:
       tags:
         - Tenants
@@ -212,35 +108,6 @@ paths:
                 $ref: '#/components/schemas/TenantInfo'
         '400':
           $ref: '#/components/responses/ProblemBadRequest'
-        '401':
-          $ref: '#/components/responses/ProblemUnauthorized'
-        '403':
-          $ref: '#/components/responses/ProblemForbidden'
-        '404':
-          $ref: '#/components/responses/ProblemNotFound'
-        '500':
-          $ref: '#/components/responses/ProblemInternalError'
-    delete:
-      tags:
-        - Tenants
-      summary: Delete tenant
-      description: |
-        Permanently deletes a tenant and all associated resources.
-        Requires super-admin role. This operation cannot be undone.
-      operationId: deleteTenant
-      parameters:
-        - $ref: '#/components/parameters/TenantIdParam'
-      responses:
-        '200':
-          description: Tenant deleted successfully
-          content:
-            application/json:
-              schema:
-                type: object
-                properties:
-                  message:
-                    type: string
-                    example: "Tenant deleted successfully"
         '401':
           $ref: '#/components/responses/ProblemUnauthorized'
         '403':
@@ -1686,23 +1553,6 @@ components:
   # ============================================================================
   schemas:
     # Tenant Schemas
-    ListTenantsResponse:
-      description: >-
-        The literal shape ListTenants writes: admin.ListResponse{Items:
-        tenants, Total, Page, PerPage} (pkg/acme/admin/tenant_handlers.go).
-      type: object
-      properties:
-        items:
-          type: array
-          items:
-            $ref: '#/components/schemas/TenantInfo'
-        total:
-          type: integer
-        page:
-          type: integer
-        per_page:
-          type: integer
-
     TenantInfo:
       type: object
       properties:
@@ -1911,26 +1761,6 @@ components:
           type: boolean
           description: Whether the tenant can issue certificates
           example: true
-
-    CreateTenantRequest:
-      type: object
-      required:
-        - id
-        - name
-      properties:
-        id:
-          type: string
-          description: Unique tenant identifier (lowercase alphanumeric with hyphens)
-          pattern: '^[a-z0-9][a-z0-9-]*[a-z0-9]$'
-          minLength: 2
-          maxLength: 63
-          example: "acme-corp"
-        name:
-          type: string
-          description: Human-readable tenant name
-          example: "ACME Corporation"
-        settings:
-          $ref: '#/components/schemas/TenantSettingsInfo'
 
     UpdateTenantRequest:
       type: object

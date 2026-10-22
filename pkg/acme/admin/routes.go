@@ -63,7 +63,6 @@ func Routes() []Route {
 type grant struct {
 	perm qrdbsdk.Permission
 	self qrdbsdk.Permission
-	list bool
 }
 
 // route binds one table entry to the handler method that serves it. H is
@@ -82,14 +81,10 @@ type guardFunc func(g grant, next http.HandlerFunc) http.Handler
 // guardRoute is the guardFunc of a standalone host: the gate authorizes
 // every route.
 func (g *PermissionGate) guardRoute(gr grant, next http.HandlerFunc) http.Handler {
-	switch {
-	case gr.self == "":
+	if gr.self == "" {
 		return g.WrapPermission(gr.perm, next)
-	case gr.list:
-		return g.WrapTenantList(qrdbsdk.PermissionResource(gr.self), qrdbsdk.PermissionAction(gr.self), gr.perm, next)
-	default:
-		return g.WrapTenant(qrdbsdk.PermissionResource(gr.self), qrdbsdk.PermissionAction(gr.self), gr.perm, next)
 	}
+	return g.WrapTenant(qrdbsdk.PermissionResource(gr.self), qrdbsdk.PermissionAction(gr.self), gr.perm, next)
 }
 
 // guardReachRoute is the guardFunc of a host that authorizes every route
@@ -138,15 +133,6 @@ func tenantReachRoute(method, path, resource, action string, cross qrdbsdk.Permi
 	}
 }
 
-// tenantListRoute declares the tenant enumeration route: resource:action for
-// a caller confined to its own tenant, cross for a system-tenant caller
-// (PermissionGate.WrapTenantList).
-func tenantListRoute(method, path, resource, action string, cross qrdbsdk.Permission, serve func(*TenantHandlers, http.ResponseWriter, *http.Request)) route[*TenantHandlers] {
-	rt := tenantReachRoute(method, path, resource, action, cross, serve)
-	rt.list = true
-	return rt
-}
-
 // adminRoutes is the /admin route table.
 func adminRoutes() []route[*Handlers] {
 	return []route[*Handlers]{
@@ -182,15 +168,12 @@ func adminRoutes() []route[*Handlers] {
 // tenantRoutes is the /api/v1/tenants route table.
 func tenantRoutes() []route[*TenantHandlers] {
 	return []route[*TenantHandlers]{
-		// Tenant lifecycle. A call within the caller's own tenant needs the
-		// self-scoped tenants:* grant; a call reaching any other tenant needs
-		// qrdb's cross-scope grant, which only a system-tenant caller holds.
-		// Creating a tenant always reaches beyond the caller's own.
-		tenantListRoute("GET", "", auth.ResourceTenants, auth.ActionList, qrdbsdk.PermissionTenantsListCross, (*TenantHandlers).ListTenants),
-		tenantCrossRoute("POST", "", qrdbsdk.PermissionTenantsCreateCross, (*TenantHandlers).CreateTenant),
-		tenantReachRoute("GET", "/{id}", auth.ResourceTenants, auth.ActionRead, qrdbsdk.PermissionTenantsReadCross, (*TenantHandlers).GetTenant),
+		// Tenant record updates. Create, list, get and delete belong to the
+		// core xkms module's /api/v1/tenants routes (go-xkms#794). A call
+		// within the caller's own tenant needs the self-scoped tenants:*
+		// grant; a call reaching any other tenant needs qrdb's cross-scope
+		// grant, which only a system-tenant caller holds.
 		tenantReachRoute("PUT", "/{id}", auth.ResourceTenants, auth.ActionUpdate, qrdbsdk.PermissionTenantsUpdateCross, (*TenantHandlers).UpdateTenant),
-		tenantReachRoute("DELETE", "/{id}", auth.ResourceTenants, auth.ActionDelete, qrdbsdk.PermissionTenantsDeleteCross, (*TenantHandlers).DeleteTenant),
 		tenantReachRoute("PUT", "/{id}/status", auth.ResourceTenants, auth.ActionUpdate, qrdbsdk.PermissionTenantsUpdateCross, (*TenantHandlers).UpdateTenantStatus),
 
 		// Tenant CA hierarchy. Creating or retiring a signing CA is strictly

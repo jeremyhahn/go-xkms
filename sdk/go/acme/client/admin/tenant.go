@@ -53,6 +53,30 @@ type tenantIDRequest struct {
 	TenantID string `json:"tenantId"`
 }
 
+// tenantEnvelope is the core /api/v1/tenants body for one tenant. The HTTP
+// transports reach the core routes and get the envelope; gRPC and MCP
+// answer with the tenant itself.
+type tenantEnvelope struct {
+	Tenant *TenantInfo `json:"tenant"`
+}
+
+// mapTenantResponse decodes a single-tenant response in either shape.
+func mapTenantResponse(raw interface{}) (*TenantInfo, error) {
+	var envelope tenantEnvelope
+	if err := mapResponse(raw, &envelope); err != nil {
+		return nil, err
+	}
+	if envelope.Tenant != nil {
+		return envelope.Tenant, nil
+	}
+
+	var tenant TenantInfo
+	if err := mapResponse(raw, &tenant); err != nil {
+		return nil, err
+	}
+	return &tenant, nil
+}
+
 // updateTenantTransportRequest wraps the tenant ID with the update payload.
 type updateTenantTransportRequest struct {
 	TenantID string              `json:"tenantId"`
@@ -69,12 +93,7 @@ func (c *tenantClient) Create(ctx context.Context, req *CreateTenantRequest) (*T
 	if err != nil {
 		return nil, err
 	}
-
-	var result TenantInfo
-	if err := mapResponse(raw, &result); err != nil {
-		return nil, err
-	}
-	return &result, nil
+	return mapTenantResponse(raw)
 }
 
 func (c *tenantClient) Get(ctx context.Context, tenantID string) (*TenantInfo, error) {
@@ -86,12 +105,7 @@ func (c *tenantClient) Get(ctx context.Context, tenantID string) (*TenantInfo, e
 	if err != nil {
 		return nil, err
 	}
-
-	var result TenantInfo
-	if err := mapResponse(raw, &result); err != nil {
-		return nil, err
-	}
-	return &result, nil
+	return mapTenantResponse(raw)
 }
 
 func (c *tenantClient) Update(ctx context.Context, tenantID string, req *UpdateTenantRequest) (*TenantInfo, error) {
