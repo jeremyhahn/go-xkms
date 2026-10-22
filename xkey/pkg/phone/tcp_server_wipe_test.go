@@ -45,6 +45,9 @@ func (h *retainingHandler) HandleRequest(_ context.Context, request []byte) ([]b
 // are zeroed once Noise has encrypted the response, and that the client still
 // receives the response intact.
 func TestTCPPairingServer_WipesRequestAndResponsePlaintext(t *testing.T) {
+	if !noiseOutsideFIPS(t) {
+		return
+	}
 	handler := &retainingHandler{}
 	srv, err := NewTCPPairingServer(&TCPPairingConfig{
 		ListenAddr:     "127.0.0.1:0",

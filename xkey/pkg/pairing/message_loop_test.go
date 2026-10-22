@@ -175,6 +175,9 @@ func newPipeTransports() (*mockPipeTransport, *mockPipeTransport) {
 
 // TestNewMessageRouter_NilLogger verifies the constructor defaults to slog.Default().
 func TestNewMessageRouter_NilLogger(t *testing.T) {
+	if !noiseOutsideFIPS(t) {
+		return
+	}
 	t.Parallel()
 
 	transport, _ := newPipeTransports()
@@ -189,6 +192,9 @@ func TestNewMessageRouter_NilLogger(t *testing.T) {
 
 // TestNewMessageRouter_WithLogger verifies the constructor uses a provided logger.
 func TestNewMessageRouter_WithLogger(t *testing.T) {
+	if !noiseOutsideFIPS(t) {
+		return
+	}
 	t.Parallel()
 
 	transport, _ := newPipeTransports()
@@ -204,6 +210,9 @@ func TestNewMessageRouter_WithLogger(t *testing.T) {
 // request through the router, simulate the remote side decrypting and
 // replying, and verify the correct response is returned.
 func TestMessageRouter_SendRequest_Response(t *testing.T) {
+	if !noiseOutsideFIPS(t) {
+		return
+	}
 	t.Parallel()
 
 	initiatorTransport, remoteTransport := newPipeTransports()
@@ -259,6 +268,9 @@ func TestMessageRouter_SendRequest_Response(t *testing.T) {
 // an inbound request from the remote peer to the RequestHandler and sends
 // the encrypted response back.
 func TestMessageRouter_InboundRequest(t *testing.T) {
+	if !noiseOutsideFIPS(t) {
+		return
+	}
 	t.Parallel()
 
 	initiatorTransport, remoteTransport := newPipeTransports()
@@ -328,6 +340,9 @@ func TestMessageRouter_InboundRequest(t *testing.T) {
 }
 
 func TestMessageRouter_InboundRequest_WipesEncodedResult(t *testing.T) {
+	if !noiseOutsideFIPS(t) {
+		return
+	}
 	t.Parallel()
 
 	initiatorTransport, remoteTransport := newPipeTransports()
@@ -368,6 +383,9 @@ func TestMessageRouter_InboundRequest_WipesEncodedResult(t *testing.T) {
 // TestMessageRouter_Stop_CancelsPending verifies that stopping the router
 // while a request is pending causes the SendRequest to return ErrBackendClosed.
 func TestMessageRouter_Stop_CancelsPending(t *testing.T) {
+	if !noiseOutsideFIPS(t) {
+		return
+	}
 	t.Parallel()
 
 	initiatorTransport, _ := newPipeTransports()
@@ -413,6 +431,9 @@ func TestMessageRouter_Stop_CancelsPending(t *testing.T) {
 // inbound request with no handler configured does not panic and the
 // receive loop continues.
 func TestMessageRouter_NilHandler_InboundRequest(t *testing.T) {
+	if !noiseOutsideFIPS(t) {
+		return
+	}
 	t.Parallel()
 
 	initiatorTransport, remoteTransport := newPipeTransports()
@@ -477,6 +498,9 @@ func TestMessageRouter_NilHandler_InboundRequest(t *testing.T) {
 // (that fails decryption) does not crash the receive loop and it continues
 // processing subsequent valid messages.
 func TestMessageRouter_InvalidDecrypt(t *testing.T) {
+	if !noiseOutsideFIPS(t) {
+		return
+	}
 	t.Parallel()
 
 	initiatorTransport, remoteTransport := newPipeTransports()
@@ -527,6 +551,9 @@ func TestMessageRouter_InvalidDecrypt(t *testing.T) {
 // TestMessageRouter_ContextCancel verifies that cancelling the context
 // while waiting for a response returns the context error.
 func TestMessageRouter_ContextCancel(t *testing.T) {
+	if !noiseOutsideFIPS(t) {
+		return
+	}
 	t.Parallel()
 
 	initiatorTransport, _ := newPipeTransports()
@@ -550,6 +577,9 @@ func TestMessageRouter_ContextCancel(t *testing.T) {
 // TestMessageRouter_SendRequest_Closed verifies that calling SendRequest
 // on a closed router returns ErrBackendClosed immediately.
 func TestMessageRouter_SendRequest_Closed(t *testing.T) {
+	if !noiseOutsideFIPS(t) {
+		return
+	}
 	t.Parallel()
 
 	transport, _ := newPipeTransports()
@@ -569,6 +599,9 @@ func TestMessageRouter_SendRequest_Closed(t *testing.T) {
 // TestMessageRouter_Stop_Idempotent verifies that calling Stop multiple
 // times does not panic.
 func TestMessageRouter_Stop_Idempotent(t *testing.T) {
+	if !noiseOutsideFIPS(t) {
+		return
+	}
 	t.Parallel()
 
 	transport, _ := newPipeTransports()
@@ -588,6 +621,9 @@ func TestMessageRouter_Stop_Idempotent(t *testing.T) {
 // TestMessageRouter_UnknownResponseID verifies that a response with an
 // unknown ID is logged and dropped without affecting the router.
 func TestMessageRouter_UnknownResponseID(t *testing.T) {
+	if !noiseOutsideFIPS(t) {
+		return
+	}
 	t.Parallel()
 
 	initiatorTransport, remoteTransport := newPipeTransports()
@@ -647,6 +683,9 @@ func TestMessageRouter_UnknownResponseID(t *testing.T) {
 // TestMessageRouter_InvalidJSON verifies that receiving valid ciphertext
 // containing invalid JSON is handled gracefully (logged and skipped).
 func TestMessageRouter_InvalidJSON(t *testing.T) {
+	if !noiseOutsideFIPS(t) {
+		return
+	}
 	t.Parallel()
 
 	initiatorTransport, remoteTransport := newPipeTransports()
@@ -699,6 +738,9 @@ func TestMessageRouter_InvalidJSON(t *testing.T) {
 // TestMessageRouter_InboundRequest_NilResponse verifies that if the handler
 // returns nil, no response is sent back and the loop continues.
 func TestMessageRouter_InboundRequest_NilResponse(t *testing.T) {
+	if !noiseOutsideFIPS(t) {
+		return
+	}
 	t.Parallel()
 
 	initiatorTransport, remoteTransport := newPipeTransports()
@@ -824,6 +866,9 @@ func TestBridge_ImplementsRequestHandler(t *testing.T) {
 // TestMessageRouter_TransportError verifies that a transport receive error
 // (non-closed) causes the receive loop to exit.
 func TestMessageRouter_TransportError(t *testing.T) {
+	if !noiseOutsideFIPS(t) {
+		return
+	}
 	t.Parallel()
 
 	initiatorTransport, _ := newPipeTransports()
@@ -853,6 +898,9 @@ func TestMessageRouter_TransportError(t *testing.T) {
 // TestMessageRouter_ConcurrentSendRequests verifies that multiple concurrent
 // SendRequest calls are correctly multiplexed and each gets the right response.
 func TestMessageRouter_ConcurrentSendRequests(t *testing.T) {
+	if !noiseOutsideFIPS(t) {
+		return
+	}
 	t.Parallel()
 
 	initiatorTransport, remoteTransport := newPipeTransports()
@@ -962,6 +1010,9 @@ func (n *testNotifier) getCalls() []notify.TouchRequest {
 // TestNewMessageRouterWithNotifier verifies the constructor creates a router
 // with a BiometricPendingHandler.
 func TestNewMessageRouterWithNotifier(t *testing.T) {
+	if !noiseOutsideFIPS(t) {
+		return
+	}
 	t.Parallel()
 
 	transport, _ := newPipeTransports()
@@ -976,6 +1027,9 @@ func TestNewMessageRouterWithNotifier(t *testing.T) {
 // TestNewMessageRouterWithNotifier_NilNotifier verifies the constructor does
 // not create a biometric handler when notifier is nil.
 func TestNewMessageRouterWithNotifier_NilNotifier(t *testing.T) {
+	if !noiseOutsideFIPS(t) {
+		return
+	}
 	t.Parallel()
 
 	transport, _ := newPipeTransports()
@@ -988,6 +1042,9 @@ func TestNewMessageRouterWithNotifier_NilNotifier(t *testing.T) {
 
 // TestMessageRouter_SetBiometricHandler verifies the setter method.
 func TestMessageRouter_SetBiometricHandler(t *testing.T) {
+	if !noiseOutsideFIPS(t) {
+		return
+	}
 	t.Parallel()
 
 	transport, _ := newPipeTransports()
@@ -1005,6 +1062,9 @@ func TestMessageRouter_SetBiometricHandler(t *testing.T) {
 // TestMessageRouter_BiometricPendingNotification verifies that the router
 // correctly handles local.biometricPending notifications (fire-and-forget).
 func TestMessageRouter_BiometricPendingNotification(t *testing.T) {
+	if !noiseOutsideFIPS(t) {
+		return
+	}
 	t.Parallel()
 
 	initiatorTransport, remoteTransport := newPipeTransports()
@@ -1055,6 +1115,9 @@ func TestMessageRouter_BiometricPendingNotification(t *testing.T) {
 // TestMessageRouter_BiometricPendingNotification_NoHandler verifies that
 // receiving a biometric pending notification without a handler doesn't crash.
 func TestMessageRouter_BiometricPendingNotification_NoHandler(t *testing.T) {
+	if !noiseOutsideFIPS(t) {
+		return
+	}
 	t.Parallel()
 
 	initiatorTransport, remoteTransport := newPipeTransports()
@@ -1125,6 +1188,9 @@ func TestMessageRouter_BiometricPendingNotification_NoHandler(t *testing.T) {
 // verifies that the request handler is NOT called for biometric pending
 // notifications (fire-and-forget, no response needed).
 func TestMessageRouter_BiometricPendingNotification_RequestHandlerNotCalled(t *testing.T) {
+	if !noiseOutsideFIPS(t) {
+		return
+	}
 	t.Parallel()
 
 	initiatorTransport, remoteTransport := newPipeTransports()

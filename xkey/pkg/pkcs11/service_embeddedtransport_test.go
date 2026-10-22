@@ -318,6 +318,7 @@ func TestEmbeddedTransport_EncryptDecrypt(t *testing.T) {
 		decResp, err := tr.Decrypt(ctx, &transport.DecryptRequest{
 			Backend: deriveBackend, KeyID: "encrypt-key",
 			Ciphertext: encResp.Ciphertext, Nonce: encResp.Nonce, Tag: encResp.Tag,
+			GCMNonceMode: encResp.GCMNonceMode,
 		})
 		if err != nil {
 			t.Fatalf("Decrypt() error = %v", err)
@@ -347,6 +348,7 @@ func TestEmbeddedTransport_EncryptDecrypt(t *testing.T) {
 		_, err = tr.Decrypt(ctx, &transport.DecryptRequest{
 			Backend: deriveBackend, KeyID: "encrypt-key",
 			Ciphertext: corrupted, Nonce: encResp.Nonce, Tag: encResp.Tag,
+			GCMNonceMode: encResp.GCMNonceMode,
 		})
 		if !errors.Is(err, ErrDecryptionFailed) {
 			t.Fatalf("Decrypt(corrupted) error = %v, want ErrDecryptionFailed", err)

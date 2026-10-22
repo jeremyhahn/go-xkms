@@ -207,6 +207,9 @@ func TestP5C_Connect_InvalidDeviceFingerprint(t *testing.T) {
 
 	svc := NewPhoneService()
 	err := svc.Connect("Test Phone")
+	if !serviceNoiseOutsideFIPS(t, err) {
+		return
+	}
 	require.Error(t, err)
 	assert.True(t, errors.Is(err, ErrPhoneInvalidFingerprint),
 		"a malformed stored fingerprint must be refused, got: %v", err)

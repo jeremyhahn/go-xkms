@@ -383,7 +383,7 @@ func TestOATHService_AddAccount_DuplicateURI(t *testing.T) {
 	store := oath.NewMemoryStore()
 	svc := NewOATHService(store)
 
-	uri := "otpauth://totp/GitHub:user@example.com?secret=JBSWY3DPEHPK3PXP&issuer=GitHub"
+	uri := "otpauth://totp/GitHub:user@example.com?secret=GEZDGNBVGY3TQOJQGEZDGNBVGY3TQOJQ&algorithm=SHA256&issuer=GitHub"
 	acct1, err := svc.AddAccount(uri)
 	require.NoError(t, err)
 	assert.NotNil(t, acct1)
@@ -412,7 +412,7 @@ func TestOATHService_SetStore_DeferredInit(t *testing.T) {
 	svc.SetStore(store)
 
 	// Now add and verify.
-	uri := "otpauth://totp/Test:user?secret=JBSWY3DPEHPK3PXP&issuer=Test"
+	uri := "otpauth://totp/Test:user?secret=GEZDGNBVGY3TQOJQGEZDGNBVGY3TQOJQ&algorithm=SHA256&issuer=Test"
 	acct, err := svc.AddAccount(uri)
 	require.NoError(t, err)
 

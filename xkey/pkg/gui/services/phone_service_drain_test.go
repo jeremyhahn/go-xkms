@@ -93,6 +93,10 @@ func destroyed(key *bootstrap.NoiseStaticKey) bool {
 // the wait for it used to be unconditional — an application that could not
 // close because a phone went out of range.
 func TestCloseActiveConnection_BoundsTheDrain(t *testing.T) {
+	if !noiseOutsideFIPS(t) {
+		return
+	}
+
 	original := connShutdownTimeout
 	connShutdownTimeout = 100 * time.Millisecond
 	t.Cleanup(func() { connShutdownTimeout = original })
@@ -116,6 +120,10 @@ func TestCloseActiveConnection_BoundsTheDrain(t *testing.T) {
 // TestCloseActiveConnection_DestroysTheKeyOnACleanDrain is the other half,
 // and it is what stops the retention above from being unconditional.
 func TestCloseActiveConnection_DestroysTheKeyOnACleanDrain(t *testing.T) {
+	if !noiseOutsideFIPS(t) {
+		return
+	}
+
 	original := connShutdownTimeout
 	connShutdownTimeout = 5 * time.Second
 	t.Cleanup(func() { connShutdownTimeout = original })
@@ -151,6 +159,10 @@ func TestCloseActiveConnection_DestroysTheKeyOnACleanDrain(t *testing.T) {
 // The test publishes a second generation from inside the drain window, which
 // is exactly what a user reconnecting during a slow disconnect does.
 func TestCloseActiveConnection_DoesNotDestroyANewGeneration(t *testing.T) {
+	if !noiseOutsideFIPS(t) {
+		return
+	}
+
 	original := connShutdownTimeout
 	connShutdownTimeout = 2 * time.Second
 	t.Cleanup(func() { connShutdownTimeout = original })

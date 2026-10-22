@@ -74,6 +74,9 @@ func TestProveLivenessSkipsWhenNotRequired(t *testing.T) {
 // error reaching the caller so the operator learns WHY rather than "handshake
 // failed".
 func TestProveLivenessPropagatesTheVerifiersRefusal(t *testing.T) {
+	if !noiseOutsideFIPS(t) {
+		return
+	}
 	refused := errors.New("device could not prove possession")
 
 	session, err := bootstrap.NewNoiseSession(&bootstrap.NoiseSessionConfig{IsInitiator: true})

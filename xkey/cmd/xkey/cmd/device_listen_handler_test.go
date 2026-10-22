@@ -15,6 +15,7 @@ package cmd
 
 import (
 	"context"
+	"crypto/rand"
 	"encoding/base64"
 	"testing"
 
@@ -28,30 +29,28 @@ import (
 )
 
 // validNoisePublicKeyForTest and validLocalNoisePrivateKeyForTest return a
-// freshly generated key pair's public half (base64, for NoisePublicKey) and
-// private half (base64 plaintext, for LocalNoisePrivateKey) respectively --
-// two independent keys' halves are fine here, since resolveListenTargetDevice
-// only decodes each field on its own and never checks they came from the
-// same pair.
+// random 32-byte Noise key (base64), for NoisePublicKey and
+// LocalNoisePrivateKey respectively. Every 32-byte string is an X25519
+// private key and a well-formed public key, and resolveListenTargetDevice
+// only decodes each field on its own, so the fixture runs no X25519: that
+// keeps these tests about device resolution under GODEBUG=fips140=only,
+// where crypto/ecdh refuses X25519.
 func validNoisePublicKeyForTest(t *testing.T) string {
 	t.Helper()
-	key, err := bootstrap.GenerateNoiseStaticKey()
-	require.NoError(t, err)
-	defer key.Destroy()
-	return base64.StdEncoding.EncodeToString(key.PublicBytes())
+	return randomNoiseKeyForTest(t)
 }
 
 func validLocalNoisePrivateKeyForTest(t *testing.T) string {
 	t.Helper()
-	key, err := bootstrap.GenerateNoiseStaticKey()
+	return randomNoiseKeyForTest(t)
+}
+
+func randomNoiseKeyForTest(t *testing.T) string {
+	t.Helper()
+	key := make([]byte, bootstrap.NoiseKeySize)
+	_, err := rand.Read(key)
 	require.NoError(t, err)
-	defer key.Destroy()
-	var encoded string
-	require.NoError(t, bootstrap.WithNoisePrivateKey(key, func(privateKey []byte) error {
-		encoded = base64.StdEncoding.EncodeToString(privateKey)
-		return nil
-	}))
-	return encoded
+	return base64.StdEncoding.EncodeToString(key)
 }
 
 // --- allowPhoneSyncExport ---

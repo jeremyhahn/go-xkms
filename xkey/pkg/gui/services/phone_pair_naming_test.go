@@ -88,6 +88,10 @@ func TestPhoneService_Connect_AmbiguousNameRefuses(t *testing.T) {
 // name is untrusted input, and an empty or unprintable name must be refused
 // before it is ever persisted as the record's lookup key.
 func TestPairRefusesInvalidDeviceName(t *testing.T) {
+	if !noiseOutsideFIPS(t) {
+		return
+	}
+
 	h := newPairingHarness(t)
 	ca := attesttest.NewCA(t, "Trusted Attestation Root")
 	h.trust(ca)
@@ -107,6 +111,10 @@ func TestPairRefusesInvalidDeviceName(t *testing.T) {
 // different pinned key) must be refused rather than persisted, which would
 // make every later name lookup ambiguous between the two devices.
 func TestPairRefusesNameCollisionWithDifferentDevice(t *testing.T) {
+	if !noiseOutsideFIPS(t) {
+		return
+	}
+
 	h := newPairingHarness(t)
 	ca := attesttest.NewCA(t, "Trusted Attestation Root")
 	h.trust(ca)
@@ -142,6 +150,10 @@ attestation_policy:
 // rotation -- must replace the stale record rather than leave it behind as
 // a duplicate.
 func TestPairReplacesStaleRecordAcrossAddressRotation(t *testing.T) {
+	if !noiseOutsideFIPS(t) {
+		return
+	}
+
 	h := newPairingHarness(t)
 	ca := attesttest.NewCA(t, "Trusted Attestation Root")
 	h.trust(ca)

@@ -36,6 +36,9 @@ import (
 // SendAndReceive is never inside two calls at once. Without it, concurrent
 // requests overlap there almost immediately.
 func TestDirectRequestPathSerializesTheCipherState(t *testing.T) {
+	if !noiseOutsideFIPS(t) {
+		return
+	}
 	backend, responder := setupNoiseSessionPair(t)
 	defer backend.Close()
 

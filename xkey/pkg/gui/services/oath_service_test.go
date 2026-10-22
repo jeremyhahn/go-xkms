@@ -21,6 +21,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/jeremyhahn/go-xkms/pkg/testing/fipstest"
 	"github.com/jeremyhahn/go-xkms/xkey/pkg/oath"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -55,7 +56,7 @@ func TestOATHService_AddAccount(t *testing.T) {
 	store := oath.NewMemoryStore()
 	svc := NewOATHService(store)
 
-	uri := "otpauth://totp/GitHub:user@example.com?secret=JBSWY3DPEHPK3PXP&issuer=GitHub"
+	uri := "otpauth://totp/GitHub:user@example.com?secret=GEZDGNBVGY3TQOJQGEZDGNBVGY3TQOJQ&algorithm=SHA256&issuer=GitHub"
 	acct, err := svc.AddAccount(uri)
 	require.NoError(t, err)
 	assert.NotNil(t, acct)
@@ -94,7 +95,7 @@ func TestOATHService_DeleteAccount(t *testing.T) {
 	store := oath.NewMemoryStore()
 	svc := NewOATHService(store)
 
-	uri := "otpauth://totp/GitHub:user@example.com?secret=JBSWY3DPEHPK3PXP&issuer=GitHub"
+	uri := "otpauth://totp/GitHub:user@example.com?secret=GEZDGNBVGY3TQOJQGEZDGNBVGY3TQOJQ&algorithm=SHA256&issuer=GitHub"
 	acct, err := svc.AddAccount(uri)
 	require.NoError(t, err)
 
@@ -125,7 +126,7 @@ func TestOATHService_GenerateTOTP(t *testing.T) {
 	store := oath.NewMemoryStore()
 	svc := NewOATHService(store)
 
-	uri := "otpauth://totp/GitHub:user@example.com?secret=JBSWY3DPEHPK3PXP&issuer=GitHub"
+	uri := "otpauth://totp/GitHub:user@example.com?secret=GEZDGNBVGY3TQOJQGEZDGNBVGY3TQOJQ&algorithm=SHA256&issuer=GitHub"
 	acct, err := svc.AddAccount(uri)
 	require.NoError(t, err)
 
@@ -156,7 +157,7 @@ func TestOATHService_GenerateTOTP_WrongType(t *testing.T) {
 	svc := NewOATHService(store)
 
 	// Add an HOTP account.
-	uri := "otpauth://hotp/Test:user?secret=JBSWY3DPEHPK3PXP&counter=0"
+	uri := "otpauth://hotp/Test:user?secret=GEZDGNBVGY3TQOJQGEZDGNBVGY3TQOJQ&algorithm=SHA256&counter=0"
 	acct, err := svc.AddAccount(uri)
 	require.NoError(t, err)
 
@@ -169,7 +170,7 @@ func TestOATHService_GenerateHOTP(t *testing.T) {
 	store := oath.NewMemoryStore()
 	svc := NewOATHService(store)
 
-	uri := "otpauth://hotp/Test:user?secret=JBSWY3DPEHPK3PXP&counter=0"
+	uri := "otpauth://hotp/Test:user?secret=GEZDGNBVGY3TQOJQGEZDGNBVGY3TQOJQ&algorithm=SHA256&counter=0"
 	acct, err := svc.AddAccount(uri)
 	require.NoError(t, err)
 
@@ -198,7 +199,7 @@ func TestOATHService_GenerateHOTP_WrongType(t *testing.T) {
 	store := oath.NewMemoryStore()
 	svc := NewOATHService(store)
 
-	uri := "otpauth://totp/GitHub:user@example.com?secret=JBSWY3DPEHPK3PXP&issuer=GitHub"
+	uri := "otpauth://totp/GitHub:user@example.com?secret=GEZDGNBVGY3TQOJQGEZDGNBVGY3TQOJQ&algorithm=SHA256&issuer=GitHub"
 	acct, err := svc.AddAccount(uri)
 	require.NoError(t, err)
 
@@ -219,7 +220,7 @@ func TestOATHService_AddAccountFromURI_Valid(t *testing.T) {
 	store := oath.NewMemoryStore()
 	svc := NewOATHService(store)
 
-	uri := "otpauth://totp/GitHub:user@example.com?secret=JBSWY3DPEHPK3PXP&issuer=GitHub"
+	uri := "otpauth://totp/GitHub:user@example.com?secret=GEZDGNBVGY3TQOJQGEZDGNBVGY3TQOJQ&algorithm=SHA256&issuer=GitHub"
 	acct, err := svc.AddAccountFromURI(uri)
 	require.NoError(t, err)
 	assert.NotNil(t, acct)
@@ -259,7 +260,7 @@ func TestOATHService_FullLifecycle_TOTP(t *testing.T) {
 	svc := NewOATHService(store)
 
 	// Add an account.
-	uri := "otpauth://totp/GitHub:alice@example.com?secret=JBSWY3DPEHPK3PXP&issuer=GitHub&digits=6&period=30"
+	uri := "otpauth://totp/GitHub:alice@example.com?secret=GEZDGNBVGY3TQOJQGEZDGNBVGY3TQOJQ&algorithm=SHA256&issuer=GitHub&digits=6&period=30"
 	acct, err := svc.AddAccount(uri)
 	require.NoError(t, err)
 	assert.Equal(t, "GitHub", acct.Issuer)
@@ -296,7 +297,7 @@ func TestOATHService_FullLifecycle_HOTP(t *testing.T) {
 	svc := NewOATHService(store)
 
 	// Add an HOTP account.
-	uri := "otpauth://hotp/AWS:admin@corp.com?secret=JBSWY3DPEHPK3PXP&issuer=AWS&counter=0"
+	uri := "otpauth://hotp/AWS:admin@corp.com?secret=GEZDGNBVGY3TQOJQGEZDGNBVGY3TQOJQ&algorithm=SHA256&issuer=AWS&counter=0"
 	acct, err := svc.AddAccount(uri)
 	require.NoError(t, err)
 	assert.Equal(t, "hotp", acct.Type)
@@ -325,9 +326,9 @@ func TestOATHService_MultipleAccounts(t *testing.T) {
 	svc := NewOATHService(store)
 
 	uris := []string{
-		"otpauth://totp/GitHub:user1@test.com?secret=JBSWY3DPEHPK3PXP&issuer=GitHub",
-		"otpauth://totp/Google:user2@test.com?secret=HXDMVJECJJWSRB3HWIZR4IFUGFTMXBOZ&issuer=Google",
-		"otpauth://totp/AWS:admin@corp.com?secret=JBSWY3DPEHPK3PXP&issuer=AWS",
+		"otpauth://totp/GitHub:user1@test.com?secret=GEZDGNBVGY3TQOJQGEZDGNBVGY3TQOJQ&algorithm=SHA256&issuer=GitHub",
+		"otpauth://totp/Google:user2@test.com?secret=HXDMVJECJJWSRB3HWIZR4IFUGFTMXBOZ&algorithm=SHA256&issuer=Google",
+		"otpauth://totp/AWS:admin@corp.com?secret=GEZDGNBVGY3TQOJQGEZDGNBVGY3TQOJQ&algorithm=SHA256&issuer=AWS",
 	}
 
 	ids := make([]string, 0, len(uris))
@@ -371,7 +372,7 @@ func TestOATHService_AddAccountFromURI_CaseInsensitive(t *testing.T) {
 	svc := NewOATHService(store)
 
 	// otpauth:// scheme should be case-insensitive.
-	acct, err := svc.AddAccountFromURI("OTPAUTH://totp/Test:user?secret=JBSWY3DPEHPK3PXP&issuer=Test")
+	acct, err := svc.AddAccountFromURI("OTPAUTH://totp/Test:user?secret=GEZDGNBVGY3TQOJQGEZDGNBVGY3TQOJQ&algorithm=SHA256&issuer=Test")
 	require.NoError(t, err)
 	assert.Equal(t, "Test", acct.Issuer)
 }
@@ -398,6 +399,11 @@ func TestOATHService_AddAccountManual_Success(t *testing.T) {
 	svc := NewOATHService(store)
 
 	acct, err := svc.AddAccountManual("user@okta.com", "Okta", "AENQRKXVV3NCGL73")
+	// Manual entry takes the RFC 6238 default, HMAC-SHA-1, which
+	// fips140=only refuses.
+	if !fipstest.OutsideFIPSAfterRefusal(t, err, oath.ErrAlgorithmNotFIPSApproved) {
+		return
+	}
 	require.NoError(t, err)
 	require.NotNil(t, acct)
 
@@ -425,6 +431,9 @@ func TestOATHService_AddAccountManual_Errors(t *testing.T) {
 		secret      string
 		wantErr     string
 		setupFunc   func(svc *OATHService)
+		// sha1Refused marks a case that reaches the HMAC-SHA-1 default of
+		// manual entry, which fips140=only refuses.
+		sha1Refused bool
 	}{
 		{
 			name:        "nil store",
@@ -457,6 +466,7 @@ func TestOATHService_AddAccountManual_Errors(t *testing.T) {
 			issuer:      "Dup",
 			secret:      "JBSWY3DPEHPK3PXP",
 			wantErr:     oath.ErrCredentialExists.Error(),
+			sha1Refused: true,
 			setupFunc: func(svc *OATHService) {
 				_, _ = svc.AddAccountManual("user@test.com", "Dup", "JBSWY3DPEHPK3PXP")
 			},
@@ -471,6 +481,9 @@ func TestOATHService_AddAccountManual_Errors(t *testing.T) {
 			}
 
 			_, err := svc.AddAccountManual(tc.accountName, tc.issuer, tc.secret)
+			if tc.sha1Refused && !fipstest.OutsideFIPSAfterRefusal(t, err, oath.ErrAlgorithmNotFIPSApproved) {
+				return
+			}
 			require.Error(t, err)
 			assert.True(t, strings.Contains(err.Error(), tc.wantErr),
 				"expected error containing %q, got %q", tc.wantErr, err.Error())
@@ -490,12 +503,12 @@ func TestOATHService_BackendID_MappedToAccount(t *testing.T) {
 		Issuer:      "BackendSvcTest",
 		AccountName: "admin",
 		Type:        oath.TypeTOTP,
-		Algorithm:   oath.AlgorithmSHA1,
+		Algorithm:   oath.AlgorithmSHA256,
 		Digits:      oath.DefaultDigits,
 		Period:      oath.DefaultPeriod,
 		CreatedAt:   time.Now(),
 		BackendID:   "tpm2-default",
-	}, "JBSWY3DPEHPK3PXP")
+	}, "GEZDGNBVGY3TQOJQGEZDGNBVGY3TQOJQ")
 
 	require.NoError(t, store.Add(cred))
 
@@ -513,7 +526,7 @@ func TestOATHService_BackendID_EmptyByDefault(t *testing.T) {
 	svc := NewOATHService(store)
 
 	// Add via URI (no BackendID set).
-	uri := "otpauth://totp/DefaultBackend:user@test.com?secret=JBSWY3DPEHPK3PXP&issuer=DefaultBackend"
+	uri := "otpauth://totp/DefaultBackend:user@test.com?secret=GEZDGNBVGY3TQOJQGEZDGNBVGY3TQOJQ&algorithm=SHA256&issuer=DefaultBackend"
 	acct, err := svc.AddAccount(uri)
 	require.NoError(t, err)
 	assert.Equal(t, "", acct.BackendID)

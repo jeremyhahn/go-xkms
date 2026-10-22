@@ -251,6 +251,9 @@ func newBLEConnectFixture(t *testing.T, cfg *PhoneKeyBackendConfig, fake *fakeBL
 }
 
 func TestPhoneKeyBackend_ConnectBLE_ScanThenHandshakeSucceeds(t *testing.T) {
+	if !noiseOutsideFIPS(t) {
+		return
+	}
 	t.Parallel()
 
 	fake := &fakeBLETransport{scanResults: []ScanResult{{Address: "AA:BB:CC:DD:EE:FF", LocalName: "xKey"}}}
@@ -297,6 +300,9 @@ func TestPhoneKeyBackend_ConnectBLE_ScanThenHandshakeSucceeds(t *testing.T) {
 }
 
 func TestPhoneKeyBackend_ConnectBLE_RetriesAfterHandshakeFailure(t *testing.T) {
+	if !noiseOutsideFIPS(t) {
+		return
+	}
 	t.Parallel()
 
 	fake := &fakeBLETransport{scanResults: []ScanResult{{Address: "AA:BB:CC:DD:EE:FF"}}}
@@ -318,6 +324,9 @@ func TestPhoneKeyBackend_ConnectBLE_RetriesAfterHandshakeFailure(t *testing.T) {
 }
 
 func TestPhoneKeyBackend_ConnectBLE_HandshakeFailsOnEveryAttempt(t *testing.T) {
+	if !noiseOutsideFIPS(t) {
+		return
+	}
 	t.Parallel()
 
 	fake := &fakeBLETransport{scanResults: []ScanResult{{Address: "AA:BB:CC:DD:EE:FF"}}}
@@ -340,6 +349,9 @@ func TestPhoneKeyBackend_ConnectBLE_HandshakeFailsOnEveryAttempt(t *testing.T) {
 }
 
 func TestPhoneKeyBackend_ConnectBLE_StaleDBusObjectRescansAndFails(t *testing.T) {
+	if !noiseOutsideFIPS(t) {
+		return
+	}
 	t.Parallel()
 
 	fake := &fakeBLETransport{
@@ -365,6 +377,9 @@ func TestPhoneKeyBackend_ConnectBLE_StaleDBusObjectRescansAndFails(t *testing.T)
 }
 
 func TestPhoneKeyBackend_ConnectBLE_GenericConnectErrorForcesRemoveThenSucceeds(t *testing.T) {
+	if !noiseOutsideFIPS(t) {
+		return
+	}
 	t.Parallel()
 
 	fake := &fakeBLETransport{
@@ -387,6 +402,9 @@ func TestPhoneKeyBackend_ConnectBLE_GenericConnectErrorForcesRemoveThenSucceeds(
 }
 
 func TestPhoneKeyBackend_ConnectBLE_GenericConnectErrorOnLastAttemptReturnsError(t *testing.T) {
+	if !noiseOutsideFIPS(t) {
+		return
+	}
 	t.Parallel()
 
 	fake := &fakeBLETransport{
@@ -408,6 +426,9 @@ func TestPhoneKeyBackend_ConnectBLE_GenericConnectErrorOnLastAttemptReturnsError
 }
 
 func TestPhoneKeyBackend_ConnectBLE_ScanFailureFallsBackToSavedAddress(t *testing.T) {
+	if !noiseOutsideFIPS(t) {
+		return
+	}
 	t.Parallel()
 
 	fake := &fakeBLETransport{scanErr: ErrAdapterDisabled}
@@ -428,6 +449,9 @@ func TestPhoneKeyBackend_ConnectBLE_ScanFailureFallsBackToSavedAddress(t *testin
 }
 
 func TestPhoneKeyBackend_ConnectBLE_ScanFailureWithoutSavedAddressFails(t *testing.T) {
+	if !noiseOutsideFIPS(t) {
+		return
+	}
 	t.Parallel()
 
 	fake := &fakeBLETransport{scanErr: ErrAdapterDisabled}
@@ -447,6 +471,9 @@ func TestPhoneKeyBackend_ConnectBLE_ScanFailureWithoutSavedAddressFails(t *testi
 }
 
 func TestPhoneKeyBackend_ConnectBLE_NoDevicesFoundWithoutSavedAddress(t *testing.T) {
+	if !noiseOutsideFIPS(t) {
+		return
+	}
 	t.Parallel()
 
 	fake := &fakeBLETransport{scanResults: nil}
@@ -465,6 +492,9 @@ func TestPhoneKeyBackend_ConnectBLE_NoDevicesFoundWithoutSavedAddress(t *testing
 }
 
 func TestPhoneKeyBackend_ConnectBLE_NoDevicesFoundFallsBackToSavedAddress(t *testing.T) {
+	if !noiseOutsideFIPS(t) {
+		return
+	}
 	t.Parallel()
 
 	fake := &fakeBLETransport{scanResults: []ScanResult{}}
@@ -484,6 +514,9 @@ func TestPhoneKeyBackend_ConnectBLE_NoDevicesFoundFallsBackToSavedAddress(t *tes
 }
 
 func TestPhoneKeyBackend_Connect_ClosedBackend(t *testing.T) {
+	if !noiseOutsideFIPS(t) {
+		return
+	}
 	t.Parallel()
 
 	fake := &fakeBLETransport{scanResults: []ScanResult{{Address: "AA:BB:CC:DD:EE:FF"}}}

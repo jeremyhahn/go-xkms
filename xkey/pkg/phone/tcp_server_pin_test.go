@@ -30,6 +30,9 @@ import (
 // to pin". An omitted (nil) ExpectedRemoteStatic is the one value that
 // legitimately means unpinned, and must still construct successfully.
 func TestNewTCPPairingServer_RejectsInvalidPin(t *testing.T) {
+	if !noiseOutsideFIPS(t) {
+		return
+	}
 	tests := []struct {
 		name    string
 		pin     []byte
@@ -67,6 +70,9 @@ func TestNewTCPPairingServer_RejectsInvalidPin(t *testing.T) {
 // handshake, and the request loop is never reached (go-xkms#1306 closes the
 // gap where the relay "pinned nothing").
 func TestTCPPairingServer_PinRefusesAnUnexpectedInitiator(t *testing.T) {
+	if !noiseOutsideFIPS(t) {
+		return
+	}
 	// The key the server expects -- NOT the one the test client below uses.
 	expectedKey, err := bootstrap.GenerateNoiseStaticKey()
 	if err != nil {

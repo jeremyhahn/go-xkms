@@ -46,6 +46,9 @@ func destroyed(key *bootstrap.NoiseStaticKey) bool {
 // must release the key: there is no backend to Close afterwards, and locked
 // pages that nothing can free accumulate with every failed attempt.
 func TestNewPhoneKeyBackend_OwnedKeyDestroyedOnTrustFailure(t *testing.T) {
+	if !noiseOutsideFIPS(t) {
+		return
+	}
 	key, err := bootstrap.GenerateNoiseStaticKey()
 	if err != nil {
 		t.Fatalf("GenerateStaticKey: %v", err)
@@ -71,6 +74,9 @@ func TestNewPhoneKeyBackend_OwnedKeyDestroyedOnTrustFailure(t *testing.T) {
 // OwnsStaticKey the caller still holds the key, and destroying it would free
 // pages the caller's next attempt is about to read.
 func TestNewPhoneKeyBackend_BorrowedKeySurvivesFailure(t *testing.T) {
+	if !noiseOutsideFIPS(t) {
+		return
+	}
 	key, err := bootstrap.GenerateNoiseStaticKey()
 	if err != nil {
 		t.Fatalf("GenerateStaticKey: %v", err)
@@ -95,6 +101,9 @@ func TestNewPhoneKeyBackend_BorrowedKeySurvivesFailure(t *testing.T) {
 // backend accepted ownership at construction, so Close is where the key is
 // released.
 func TestPhoneKeyBackend_CloseDestroysOwnedKey(t *testing.T) {
+	if !noiseOutsideFIPS(t) {
+		return
+	}
 	key, err := bootstrap.GenerateNoiseStaticKey()
 	if err != nil {
 		t.Fatalf("GenerateStaticKey: %v", err)
@@ -132,6 +141,9 @@ func TestPhoneKeyBackend_CloseDestroysOwnedKey(t *testing.T) {
 // caller's wipe is the only thing standing between a stored private key and
 // garbage-collected memory that may be handed out again.
 func TestWipeBytes(t *testing.T) {
+	if !noiseOutsideFIPS(t) {
+		return
+	}
 	secret := []byte{1, 2, 3, 4, 5, 6, 7, 8}
 
 	key, err := bootstrap.LoadNoiseStaticKey(append(make([]byte, 0, bootstrap.NoiseKeySize), bytes.Repeat([]byte{7}, bootstrap.NoiseKeySize)...))
@@ -158,6 +170,9 @@ func TestWipeBytes_Empty(t *testing.T) {
 // middle used to clear the session and free the static key's protected pages
 // while that request was still reading them.
 func TestClose_WaitsForInFlightRequest(t *testing.T) {
+	if !noiseOutsideFIPS(t) {
+		return
+	}
 	key, err := bootstrap.GenerateNoiseStaticKey()
 	if err != nil {
 		t.Fatalf("GenerateStaticKey: %v", err)
@@ -215,6 +230,9 @@ func TestClose_WaitsForInFlightRequest(t *testing.T) {
 // TestAcquireSession_RefusedAfterClose stops a leaseholder appearing after
 // teardown has already drained and freed the key.
 func TestAcquireSession_RefusedAfterClose(t *testing.T) {
+	if !noiseOutsideFIPS(t) {
+		return
+	}
 	key, err := bootstrap.GenerateNoiseStaticKey()
 	if err != nil {
 		t.Fatalf("GenerateStaticKey: %v", err)
@@ -285,6 +303,9 @@ func (b *blockingReceiveTransport) SendAndReceive(ctx context.Context, _ []byte)
 // backend burned the whole routerShutdownTimeout, concluded the loop was still
 // running, and kept the owned key resident forever.
 func TestClose_UnblocksRouterBeforeJoining(t *testing.T) {
+	if !noiseOutsideFIPS(t) {
+		return
+	}
 	key, err := bootstrap.GenerateNoiseStaticKey()
 	if err != nil {
 		t.Fatalf("GenerateStaticKey: %v", err)
@@ -347,6 +368,9 @@ func (nopRequestHandler) HandleRequest(_ context.Context, req *pairingproto.Requ
 // ever destroy it — the default configuration silently opted out of the whole
 // protected-key lifecycle.
 func TestNewPhoneKeyBackend_NilKeyIsGeneratedAndOwned(t *testing.T) {
+	if !noiseOutsideFIPS(t) {
+		return
+	}
 	local, _ := newPipeTransports()
 
 	cfg := &PhoneKeyBackendConfig{
@@ -387,6 +411,9 @@ func TestNewPhoneKeyBackend_NilKeyIsGeneratedAndOwned(t *testing.T) {
 // transferred with the config, so rejecting the arguments still has to release
 // the key — there is no backend to Close afterwards.
 func TestNewPhoneKeyBackend_NilTransportReleasesOwnedKey(t *testing.T) {
+	if !noiseOutsideFIPS(t) {
+		return
+	}
 	key, err := bootstrap.GenerateNoiseStaticKey()
 	if err != nil {
 		t.Fatalf("GenerateStaticKey: %v", err)
@@ -410,6 +437,9 @@ func TestNewPhoneKeyBackend_NilTransportReleasesOwnedKey(t *testing.T) {
 // still decrypted through it; calling after Close started a loop over a nil
 // transport.
 func TestEnableBidirectional_IdempotentAndRefusedAfterClose(t *testing.T) {
+	if !noiseOutsideFIPS(t) {
+		return
+	}
 	key, err := bootstrap.GenerateNoiseStaticKey()
 	if err != nil {
 		t.Fatalf("GenerateStaticKey: %v", err)
@@ -469,6 +499,9 @@ func TestEnableBidirectional_IdempotentAndRefusedAfterClose(t *testing.T) {
 // exact use-after-free this whole change exists to eliminate, relocated into
 // the caller's lap.
 func TestReusedConfigDoesNotShareAnOwnedKey(t *testing.T) {
+	if !noiseOutsideFIPS(t) {
+		return
+	}
 	t1, _ := newPipeTransports()
 	t2, _ := newPipeTransports()
 
@@ -524,6 +557,9 @@ func TestReusedConfigDoesNotShareAnOwnedKey(t *testing.T) {
 // clears transport and session under the same lock — so a post-Close Connect
 // fell through to performHandshake and dereferenced a nil session.
 func TestConnectAfterCloseIsRefused(t *testing.T) {
+	if !noiseOutsideFIPS(t) {
+		return
+	}
 	key, err := bootstrap.GenerateNoiseStaticKey()
 	if err != nil {
 		t.Fatalf("GenerateStaticKey: %v", err)
@@ -567,6 +603,9 @@ func TestConnectAfterCloseIsRefused(t *testing.T) {
 // bookkeeping being right rather than about a crash: after the inner guard
 // releases, the config must no longer name a key for anyone else to free.
 func TestConstructorFailureDestroysTransferredKeyOnce(t *testing.T) {
+	if !noiseOutsideFIPS(t) {
+		return
+	}
 	key, err := bootstrap.GenerateNoiseStaticKey()
 	if err != nil {
 		t.Fatalf("GenerateStaticKey: %v", err)

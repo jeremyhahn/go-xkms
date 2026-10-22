@@ -73,6 +73,9 @@ func newFailingConnectBackend(t *testing.T) *PhoneKeyBackend {
 // ---------------------------------------------------------------------------
 
 func TestListFido2Credentials_BackendClosed(t *testing.T) {
+	if !noiseOutsideFIPS(t) {
+		return
+	}
 	t.Parallel()
 
 	backend := newClosedBackend(t)
@@ -84,6 +87,9 @@ func TestListFido2Credentials_BackendClosed(t *testing.T) {
 }
 
 func TestListFido2Credentials_EmptyRpID(t *testing.T) {
+	if !noiseOutsideFIPS(t) {
+		return
+	}
 	t.Parallel()
 
 	backend, _ := newTestBackend(t)
@@ -96,6 +102,9 @@ func TestListFido2Credentials_EmptyRpID(t *testing.T) {
 }
 
 func TestListFido2Credentials_NotConnected_ConnectFails(t *testing.T) {
+	if !noiseOutsideFIPS(t) {
+		return
+	}
 	t.Parallel()
 
 	backend := newFailingConnectBackend(t)
@@ -117,6 +126,9 @@ func TestListFido2Credentials_NotConnected_ConnectFails(t *testing.T) {
 // ---------------------------------------------------------------------------
 
 func TestSignFido2Assertion_BackendClosed(t *testing.T) {
+	if !noiseOutsideFIPS(t) {
+		return
+	}
 	t.Parallel()
 
 	backend := newClosedBackend(t)
@@ -134,6 +146,9 @@ func TestSignFido2Assertion_BackendClosed(t *testing.T) {
 }
 
 func TestSignFido2Assertion_NilParams(t *testing.T) {
+	if !noiseOutsideFIPS(t) {
+		return
+	}
 	t.Parallel()
 
 	backend, _ := newTestBackend(t)
@@ -146,6 +161,9 @@ func TestSignFido2Assertion_NilParams(t *testing.T) {
 }
 
 func TestSignFido2Assertion_EmptyCredentialID(t *testing.T) {
+	if !noiseOutsideFIPS(t) {
+		return
+	}
 	t.Parallel()
 
 	backend, _ := newTestBackend(t)
@@ -164,6 +182,9 @@ func TestSignFido2Assertion_EmptyCredentialID(t *testing.T) {
 }
 
 func TestSignFido2Assertion_EmptyClientDataHash(t *testing.T) {
+	if !noiseOutsideFIPS(t) {
+		return
+	}
 	t.Parallel()
 
 	backend, _ := newTestBackend(t)
@@ -182,6 +203,9 @@ func TestSignFido2Assertion_EmptyClientDataHash(t *testing.T) {
 }
 
 func TestSignFido2Assertion_EmptyRpID(t *testing.T) {
+	if !noiseOutsideFIPS(t) {
+		return
+	}
 	t.Parallel()
 
 	backend, _ := newTestBackend(t)
@@ -200,6 +224,9 @@ func TestSignFido2Assertion_EmptyRpID(t *testing.T) {
 }
 
 func TestSignFido2Assertion_NotConnected_ConnectFails(t *testing.T) {
+	if !noiseOutsideFIPS(t) {
+		return
+	}
 	t.Parallel()
 
 	backend := newFailingConnectBackend(t)
@@ -228,6 +255,9 @@ func TestSignFido2Assertion_NotConnected_ConnectFails(t *testing.T) {
 // ---------------------------------------------------------------------------
 
 func TestSignFido2Assertion_ClosedTakesPrecedenceOverNilParams(t *testing.T) {
+	if !noiseOutsideFIPS(t) {
+		return
+	}
 	t.Parallel()
 
 	backend := newClosedBackend(t)
@@ -240,6 +270,9 @@ func TestSignFido2Assertion_ClosedTakesPrecedenceOverNilParams(t *testing.T) {
 }
 
 func TestListFido2Credentials_ClosedTakesPrecedenceOverEmptyRpID(t *testing.T) {
+	if !noiseOutsideFIPS(t) {
+		return
+	}
 	t.Parallel()
 
 	backend := newClosedBackend(t)

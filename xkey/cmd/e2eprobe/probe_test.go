@@ -11,6 +11,7 @@ import (
 	"testing"
 
 	"github.com/jeremyhahn/go-xkms/pkg/pairingproto"
+	"github.com/jeremyhahn/go-xkms/pkg/testing/fipstest"
 	"github.com/jeremyhahn/go-xkms/sdk/go/bootstrap"
 )
 
@@ -160,13 +161,29 @@ func answerAs(ph *phone) answerFunc {
 	}
 }
 
-// runProbe runs probe against a handset answering with answer, and returns
-// probe's verdict and output once both sides have finished.
-func runProbe(t *testing.T, answer answerFunc) (bool, string) {
+// noiseStaticKey generates the probe's Noise static key. It is X25519, which
+// fips140=only refuses: there ok is false once the refusal is asserted and the
+// test has re-run itself under fips140=off, and the caller returns.
+func noiseStaticKey(t *testing.T) (key *bootstrap.NoiseStaticKey, ok bool) {
 	t.Helper()
-	staticKey, err := bootstrap.GenerateNoiseStaticKey()
+	key, err := bootstrap.GenerateNoiseStaticKey()
+	if !fipstest.OutsideFIPSAfterRefusal(t, err, nil) {
+		return nil, false
+	}
 	if err != nil {
 		t.Fatalf("generate static key: %v", err)
+	}
+	return key, true
+}
+
+// runProbe runs probe against a handset answering with answer, and returns
+// probe's verdict and output once both sides have finished. The last result is
+// false when fips140=only refused the Noise key (see noiseStaticKey).
+func runProbe(t *testing.T, answer answerFunc) (bool, string, bool) {
+	t.Helper()
+	staticKey, ok := noiseStaticKey(t)
+	if !ok {
+		return false, "", false
 	}
 	probeEnd, phoneEnd := newPipePair()
 	ctx, cancel := context.WithCancel(context.Background())
@@ -183,11 +200,14 @@ func runProbe(t *testing.T, answer answerFunc) (bool, string) {
 	if probeEnd.IsConnected() {
 		t.Fatal("probe returned without closing the transport")
 	}
-	return passed, out.String()
+	return passed, out.String(), true
 }
 
 func TestProbe_PassesOverARealPairingSession(t *testing.T) {
-	passed, out := runProbe(t, answerAs(conformantPhone(t)))
+	passed, out, ok := runProbe(t, answerAs(conformantPhone(t)))
+	if !ok {
+		return
+	}
 
 	if !passed {
 		t.Fatalf("probe failed against a conformant phone:\n%s", out)
@@ -208,7 +228,10 @@ func TestProbe_FailsAStepOnAMalformedResult(t *testing.T) {
 		return conformant(req)
 	}
 
-	passed, out := runProbe(t, answer)
+	passed, out, ok := runProbe(t, answer)
+	if !ok {
+		return
+	}
 
 	if passed {
 		t.Fatalf("probe passed although ping returned a non-object result:\n%s", out)
@@ -219,9 +242,9 @@ func TestProbe_FailsAStepOnAMalformedResult(t *testing.T) {
 }
 
 func TestProbe_FailsWhenTheHandshakeFails(t *testing.T) {
-	staticKey, err := bootstrap.GenerateNoiseStaticKey()
-	if err != nil {
-		t.Fatalf("generate static key: %v", err)
+	staticKey, ok := noiseStaticKey(t)
+	if !ok {
+		return
 	}
 	probeEnd, phoneEnd := newPipePair()
 	// The handset hangs up before answering the identity message.

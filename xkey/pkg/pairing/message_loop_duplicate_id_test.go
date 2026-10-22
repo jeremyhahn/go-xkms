@@ -33,6 +33,9 @@ import (
 // On a signing backend that is the wrong signature returned to the wrong
 // caller, so the collision is refused rather than resolved.
 func TestMessageRouter_SendRequest_DuplicateIDRefused(t *testing.T) {
+	if !noiseOutsideFIPS(t) {
+		return
+	}
 	t.Parallel()
 
 	initiatorTransport, remoteTransport := newPipeTransports()
@@ -112,6 +115,9 @@ func TestMessageRouter_SendRequest_DuplicateIDRefused(t *testing.T) {
 // Once the first request completes its ID is free again — the refusal is
 // scoped to requests actually in flight, not a permanent ban on the value.
 func TestMessageRouter_SendRequest_IDReusableAfterCompletion(t *testing.T) {
+	if !noiseOutsideFIPS(t) {
+		return
+	}
 	t.Parallel()
 
 	initiatorTransport, remoteTransport := newPipeTransports()
@@ -165,6 +171,9 @@ func TestMessageRouter_SendRequest_IDReusableAfterCompletion(t *testing.T) {
 // Two senders racing on the same ID must not both pass the check: exactly one
 // registers and the other is refused. Run this under -race.
 func TestMessageRouter_SendRequest_DuplicateIDRaceAdmitsOne(t *testing.T) {
+	if !noiseOutsideFIPS(t) {
+		return
+	}
 	t.Parallel()
 
 	initiatorTransport, remoteTransport := newPipeTransports()
@@ -232,6 +241,9 @@ func TestMessageRouter_SendRequest_DuplicateIDRaceAdmitsOne(t *testing.T) {
 // An ID abandoned without a response is therefore retired for the rest of the
 // connection.
 func TestMessageRouter_SendRequest_AbandonedIDCannotBeReused(t *testing.T) {
+	if !noiseOutsideFIPS(t) {
+		return
+	}
 	t.Parallel()
 
 	initiatorTransport, remoteTransport := newPipeTransports()
@@ -307,6 +319,9 @@ func TestMessageRouter_SendRequest_AbandonedIDCannotBeReused(t *testing.T) {
 // delivered cannot be answered a second time, so it stays reusable — otherwise
 // a long-lived connection would exhaust a caller's ID space.
 func TestMessageRouter_SendRequest_AnsweredIDIsNotRetired(t *testing.T) {
+	if !noiseOutsideFIPS(t) {
+		return
+	}
 	t.Parallel()
 
 	initiatorTransport, remoteTransport := newPipeTransports()
@@ -360,6 +375,9 @@ func TestMessageRouter_SendRequest_AnsweredIDIsNotRetired(t *testing.T) {
 // The path exercised here is the most ordinary one there is: a cancelled
 // request.
 func TestMessageRouterWithNotifier_AbandonedRequestDoesNotPanic(t *testing.T) {
+	if !noiseOutsideFIPS(t) {
+		return
+	}
 	t.Parallel()
 
 	initiatorTransport, remoteTransport := newPipeTransports()
@@ -399,6 +417,9 @@ func TestMessageRouterWithNotifier_AbandonedRequestDoesNotPanic(t *testing.T) {
 // evicting -- evicting a tombstone would restore the cross-talk it exists to
 // prevent.
 func TestMessageRouter_RetiredIDsAreBounded(t *testing.T) {
+	if !noiseOutsideFIPS(t) {
+		return
+	}
 	t.Parallel()
 
 	initiatorTransport, _ := newPipeTransports()
@@ -443,6 +464,9 @@ func TestMessageRouter_RetiredIDsAreBounded(t *testing.T) {
 // second answer would cross-talk into the reuser. So an abandoned ID stays
 // retired for the connection lifetime, and the cap forces a reconnect instead.
 func TestMessageRouter_LateResponseKeepsTheTombstone(t *testing.T) {
+	if !noiseOutsideFIPS(t) {
+		return
+	}
 	t.Parallel()
 
 	initiatorTransport, remoteTransport := newPipeTransports()
@@ -553,6 +577,9 @@ func TestMessageRouter_LateResponseKeepsTheTombstone(t *testing.T) {
 // would let a burst of locally-invalid requests fill the tombstone cap and wedge
 // an otherwise healthy connection.
 func TestMessageRouter_PreSendFailureDoesNotRetire(t *testing.T) {
+	if !noiseOutsideFIPS(t) {
+		return
+	}
 	t.Parallel()
 
 	initiatorTransport, _ := newPipeTransports()
@@ -591,6 +618,9 @@ func TestMessageRouter_PreSendFailureDoesNotRetire(t *testing.T) {
 // core: given (sent, answered, whether a response is sitting in respCh) it
 // decides whether an ID is tombstoned.
 func TestMessageRouter_FinalizeAbandon(t *testing.T) {
+	if !noiseOutsideFIPS(t) {
+		return
+	}
 	t.Parallel()
 
 	newRouter := func() *MessageRouter {

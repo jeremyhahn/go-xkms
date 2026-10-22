@@ -71,7 +71,9 @@ func NewSessionCrypto() (*SessionCrypto, []byte, error) {
 	curve := ecdh.X25519()
 	privKey, err := curve.GenerateKey(rand.Reader)
 	if err != nil {
-		return nil, nil, ErrHandshakeFailed
+		// Keep crypto/ecdh's cause: under GODEBUG=fips140=only it is the
+		// stdlib's X25519 refusal, which callers must be able to see.
+		return nil, nil, &SentinelCauseError{Sentinel: ErrHandshakeFailed, Cause: err}
 	}
 	pubBytes := privKey.PublicKey().Bytes()
 	sc := &SessionCrypto{

@@ -683,7 +683,9 @@ func (s *PhoneService) Pair(address string) (*PairedDevice, error) {
 	localKey, err := bootstrap.GenerateNoiseStaticKey()
 	if err != nil {
 		s.log.Error("failed to generate local key", "error", err)
-		return nil, ErrPhonePairFailed
+		// Keep the cause: under GODEBUG=fips140=only it is the X25519
+		// refusal (bootstrap.ErrNoiseFIPSUnsupported), which callers must see.
+		return nil, errors.Join(ErrPhonePairFailed, err)
 	}
 	defer localKey.Destroy()
 
@@ -694,7 +696,7 @@ func (s *PhoneService) Pair(address string) (*PairedDevice, error) {
 	})
 	if err != nil {
 		s.log.Error("failed to create noise session", "error", err)
-		return nil, ErrPhonePairFailed
+		return nil, errors.Join(ErrPhonePairFailed, err)
 	}
 
 	// Create BLE transport.
@@ -1213,7 +1215,9 @@ func (s *PhoneService) Connect(name string) error {
 	localKey, err := bootstrap.LoadNoiseStaticKeyFromBuffer(localPrivateKey)
 	if err != nil {
 		s.log.Error("failed to load local static key", "device", name, "error", err)
-		return ErrPhoneMissingKeys
+		// Keep the cause: under GODEBUG=fips140=only it is the X25519
+		// refusal (bootstrap.ErrNoiseFIPSUnsupported), which callers must see.
+		return errors.Join(ErrPhoneMissingKeys, err)
 	}
 	published := false
 	defer func() {
@@ -1240,7 +1244,7 @@ func (s *PhoneService) Connect(name string) error {
 	})
 	if err != nil {
 		s.log.Error("failed to create noise session", "device", name, "error", err)
-		return ErrPhoneConnectFailed
+		return errors.Join(ErrPhoneConnectFailed, err)
 	}
 
 	// Create BLE transport.

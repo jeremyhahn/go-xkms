@@ -92,6 +92,9 @@ func TestChannelBinding_MatchesTheProductionDerivation(t *testing.T) {
 // binding must agree with the initiator's, or the handshake or the signature
 // fails.
 func TestPhoneRun_ServesAProductionInitiator(t *testing.T) {
+	if !noiseOutsideFIPS(t) {
+		return
+	}
 	for _, known := range []bool{false, true} {
 		name := "new device"
 		if known {
@@ -141,6 +144,9 @@ func TestPhoneRun_ServesAProductionInitiator(t *testing.T) {
 }
 
 func TestPhoneRun_MutateDamagesTheResponseOnTheWire(t *testing.T) {
+	if !noiseOutsideFIPS(t) {
+		return
+	}
 	dak := NewDAK(t, NewCA(t, "root"), GenesisChallenge(), xkms.AndroidSecurityLevelStrongBox, AttestedBootState())
 	phone := NewPhone(t, dak)
 	phone.Mutate = func(res *pairingproto.LocalAttestDeviceResult) { res.Purpose = pairingproto.AttestPurposeReattest }
@@ -165,6 +171,9 @@ func TestPhoneRun_MutateDamagesTheResponseOnTheWire(t *testing.T) {
 }
 
 func TestPhoneRun_RefusesWhatTheContractDoesNotAllow(t *testing.T) {
+	if !noiseOutsideFIPS(t) {
+		return
+	}
 	tests := map[string]struct {
 		method string
 		params any
@@ -187,6 +196,9 @@ func TestPhoneRun_RefusesWhatTheContractDoesNotAllow(t *testing.T) {
 }
 
 func TestPhoneRun_RefusesGarbageOnTheWire(t *testing.T) {
+	if !noiseOutsideFIPS(t) {
+		return
+	}
 	t.Run("handshake message", func(t *testing.T) {
 		dak := NewDAK(t, nil, GenesisChallenge(), xkms.AndroidSecurityLevelStrongBox, AttestedBootState())
 		session, tr, done := startPhone(t, NewPhone(t, dak), false, 1)
@@ -211,6 +223,9 @@ func TestPhoneRun_RefusesGarbageOnTheWire(t *testing.T) {
 }
 
 func TestPhoneRun_RefusesAMalformedIdentityMessage(t *testing.T) {
+	if !noiseOutsideFIPS(t) {
+		return
+	}
 	phone := NewPhone(t, NewDAK(t, nil, GenesisChallenge(), xkms.AndroidSecurityLevelStrongBox, AttestedBootState()))
 	initiator, responder := NewMemTransportPair()
 	require.NoError(t, initiator.Send(context.Background(), []byte{0x02, 0x00}))
@@ -219,6 +234,9 @@ func TestPhoneRun_RefusesAMalformedIdentityMessage(t *testing.T) {
 }
 
 func TestPhoneRun_StopsWhenTheContextEnds(t *testing.T) {
+	if !noiseOutsideFIPS(t) {
+		return
+	}
 	phone := NewPhone(t, NewDAK(t, nil, GenesisChallenge(), xkms.AndroidSecurityLevelStrongBox, AttestedBootState()))
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()

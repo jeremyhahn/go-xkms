@@ -78,6 +78,9 @@ func TestNewPhoneKeyBackendWithTransport_NilTransport(t *testing.T) {
 }
 
 func TestNewPhoneKeyBackendWithTransport_UntrustedDeviceClosesTransport(t *testing.T) {
+	if !noiseOutsideFIPS(t) {
+		return
+	}
 	t.Parallel()
 
 	transport, _ := newPipeTransports()
@@ -91,6 +94,9 @@ func TestNewPhoneKeyBackendWithTransport_UntrustedDeviceClosesTransport(t *testi
 }
 
 func TestNewPhoneKeyBackendWithTransport_NilConfigDefaultsToUntrusted(t *testing.T) {
+	if !noiseOutsideFIPS(t) {
+		return
+	}
 	t.Parallel()
 
 	transport, _ := newPipeTransports()
@@ -103,6 +109,9 @@ func TestNewPhoneKeyBackendWithTransport_NilConfigDefaultsToUntrusted(t *testing
 }
 
 func TestNewPhoneKeyBackendWithTransport_ExpectedRemoteStaticIsTrusted(t *testing.T) {
+	if !noiseOutsideFIPS(t) {
+		return
+	}
 	t.Parallel()
 
 	transport, _ := newPipeTransports()
@@ -127,6 +136,9 @@ func TestNewPhoneKeyBackendWithTransport_ExpectedRemoteStaticIsTrusted(t *testin
 // ---------------------------------------------------------------------------
 
 func TestPhoneKeyBackend_TypeAndCapabilities(t *testing.T) {
+	if !noiseOutsideFIPS(t) {
+		return
+	}
 	t.Parallel()
 
 	transport, _ := newPipeTransports()
@@ -162,6 +174,9 @@ func TestPhoneKeyBackend_TypeAndCapabilities(t *testing.T) {
 // ---------------------------------------------------------------------------
 
 func TestPhoneKeyBackend_ClosedBackendRejectsEveryOperation(t *testing.T) {
+	if !noiseOutsideFIPS(t) {
+		return
+	}
 	t.Parallel()
 
 	transport, _ := newPipeTransports()
@@ -211,6 +226,9 @@ func TestPhoneKeyBackend_ClosedBackendRejectsEveryOperation(t *testing.T) {
 }
 
 func TestPhoneKeyBackend_DisconnectedGuards(t *testing.T) {
+	if !noiseOutsideFIPS(t) {
+		return
+	}
 	t.Parallel()
 
 	transport, _ := newPipeTransports()
@@ -232,6 +250,9 @@ func TestPhoneKeyBackend_DisconnectedGuards(t *testing.T) {
 }
 
 func TestPhoneKeyBackend_InvalidArguments(t *testing.T) {
+	if !noiseOutsideFIPS(t) {
+		return
+	}
 	t.Parallel()
 
 	transport, _ := newPipeTransports()
@@ -276,6 +297,9 @@ func (foreignHandle) BackendID() xkms.BackendType { return xkms.BackendTypeSoftw
 // ---------------------------------------------------------------------------
 
 func TestPhoneKeyBackend_UndecryptableResponse(t *testing.T) {
+	if !noiseOutsideFIPS(t) {
+		return
+	}
 	t.Parallel()
 
 	backend, responder := setupNoiseSessionPair(t)
@@ -292,6 +316,9 @@ func TestPhoneKeyBackend_UndecryptableResponse(t *testing.T) {
 }
 
 func TestPhoneKeyBackend_MalformedResponseJSON(t *testing.T) {
+	if !noiseOutsideFIPS(t) {
+		return
+	}
 	t.Parallel()
 
 	backend, responder := setupNoiseSessionPair(t)
@@ -307,6 +334,9 @@ func TestPhoneKeyBackend_MalformedResponseJSON(t *testing.T) {
 }
 
 func TestPhoneKeyBackend_ResultTypeMismatchIsInvalidResponse(t *testing.T) {
+	if !noiseOutsideFIPS(t) {
+		return
+	}
 	t.Parallel()
 
 	// A well-formed JSON-RPC envelope whose result is not the expected object.
@@ -363,6 +393,9 @@ func TestPhoneKeyBackend_ResultTypeMismatchIsInvalidResponse(t *testing.T) {
 }
 
 func TestPhoneKeyBackend_PhoneErrorsAreMappedPerOperation(t *testing.T) {
+	if !noiseOutsideFIPS(t) {
+		return
+	}
 	t.Parallel()
 
 	tests := []struct {
@@ -418,6 +451,9 @@ func TestPhoneKeyBackend_PhoneErrorsAreMappedPerOperation(t *testing.T) {
 // unlike the other operations. It must still fail rather than return a
 // zero-valued device description.
 func TestPhoneKeyBackend_GetDeviceInfoResultTypeMismatch(t *testing.T) {
+	if !noiseOutsideFIPS(t) {
+		return
+	}
 	t.Parallel()
 
 	backend, responder := setupNoiseSessionPair(t)
@@ -434,6 +470,9 @@ func TestPhoneKeyBackend_GetDeviceInfoResultTypeMismatch(t *testing.T) {
 }
 
 func TestPhoneKeyBackend_TransportSendFailurePropagates(t *testing.T) {
+	if !noiseOutsideFIPS(t) {
+		return
+	}
 	t.Parallel()
 
 	backend, _ := setupNoiseSessionPair(t)
@@ -456,6 +495,9 @@ func TestPhoneKeyBackend_TransportSendFailurePropagates(t *testing.T) {
 // slice the hex-encoded credential ID at a fixed offset for logging and
 // panicked for credential IDs shorter than 8 bytes.
 func TestPhoneKeyBackend_SignShortCredentialID(t *testing.T) {
+	if !noiseOutsideFIPS(t) {
+		return
+	}
 	t.Parallel()
 
 	backend, responder := setupNoiseSessionPair(t)
@@ -472,6 +514,9 @@ func TestPhoneKeyBackend_SignShortCredentialID(t *testing.T) {
 // TestPhoneKeyBackend_LoadKeyShortCredentialID covers the same fixed-offset
 // slicing hazard on the LoadKey path.
 func TestPhoneKeyBackend_LoadKeyShortCredentialID(t *testing.T) {
+	if !noiseOutsideFIPS(t) {
+		return
+	}
 	t.Parallel()
 
 	backend, responder := setupNoiseSessionPair(t)
@@ -506,6 +551,9 @@ func TestShortCredID(t *testing.T) {
 }
 
 func TestPhoneKeyBackend_LoadKeyCacheAlgorithmMismatch(t *testing.T) {
+	if !noiseOutsideFIPS(t) {
+		return
+	}
 	t.Parallel()
 
 	backend, responder := setupNoiseSessionPair(t)
@@ -524,6 +572,9 @@ func TestPhoneKeyBackend_LoadKeyCacheAlgorithmMismatch(t *testing.T) {
 }
 
 func TestPhoneKeyBackend_DeleteKeyEvictsCachedHandle(t *testing.T) {
+	if !noiseOutsideFIPS(t) {
+		return
+	}
 	t.Parallel()
 
 	backend, responder := setupNoiseSessionPair(t)
@@ -581,6 +632,9 @@ func newAuditedPair(t *testing.T) (*PhoneKeyBackend, *mockPhoneResponder, *recor
 }
 
 func TestPhoneKeyBackend_SendPairingConfirm_Approved(t *testing.T) {
+	if !noiseOutsideFIPS(t) {
+		return
+	}
 	t.Parallel()
 
 	backend, responder, auditLog := newAuditedPair(t)
@@ -612,6 +666,9 @@ func TestPhoneKeyBackend_SendPairingConfirm_Approved(t *testing.T) {
 }
 
 func TestPhoneKeyBackend_SendPairingConfirm_UserRejected(t *testing.T) {
+	if !noiseOutsideFIPS(t) {
+		return
+	}
 	t.Parallel()
 
 	backend, responder, auditLog := newAuditedPair(t)
@@ -635,6 +692,9 @@ func TestPhoneKeyBackend_SendPairingConfirm_UserRejected(t *testing.T) {
 }
 
 func TestPhoneKeyBackend_SendPairingConfirm_PhoneError(t *testing.T) {
+	if !noiseOutsideFIPS(t) {
+		return
+	}
 	t.Parallel()
 
 	backend, responder, auditLog := newAuditedPair(t)
@@ -658,6 +718,9 @@ func TestPhoneKeyBackend_SendPairingConfirm_PhoneError(t *testing.T) {
 }
 
 func TestPhoneKeyBackend_CloseAuditsConnectionClosed(t *testing.T) {
+	if !noiseOutsideFIPS(t) {
+		return
+	}
 	t.Parallel()
 
 	backend, _, auditLog := newAuditedPair(t)
@@ -676,6 +739,9 @@ func TestPhoneKeyBackend_CloseAuditsConnectionClosed(t *testing.T) {
 }
 
 func TestPhoneKeyBackend_ConnectAuditsNonBLETransport(t *testing.T) {
+	if !noiseOutsideFIPS(t) {
+		return
+	}
 	t.Parallel()
 
 	backend, _, auditLog := newAuditedPair(t)
@@ -692,6 +758,9 @@ func TestPhoneKeyBackend_ConnectAuditsNonBLETransport(t *testing.T) {
 // ---------------------------------------------------------------------------
 
 func TestPhoneKeyBackend_EnableBidirectionalRoutesRequests(t *testing.T) {
+	if !noiseOutsideFIPS(t) {
+		return
+	}
 	t.Parallel()
 
 	backend, responder := setupNoiseSessionPair(t)
@@ -771,6 +840,9 @@ func newDisconnectedPair(t *testing.T) (*PhoneKeyBackend, *mockPipeTransport) {
 }
 
 func TestPhoneKeyBackend_OperationsConnectOnDemand(t *testing.T) {
+	if !noiseOutsideFIPS(t) {
+		return
+	}
 	t.Parallel()
 
 	tests := []struct {
@@ -850,6 +922,9 @@ func TestPhoneKeyBackend_OperationsConnectOnDemand(t *testing.T) {
 }
 
 func TestPhoneKeyBackend_TransportFailurePropagatesPerOperation(t *testing.T) {
+	if !noiseOutsideFIPS(t) {
+		return
+	}
 	t.Parallel()
 
 	tests := []struct {
@@ -907,6 +982,9 @@ func TestPhoneKeyBackend_TransportFailurePropagatesPerOperation(t *testing.T) {
 // whose parameters cannot be serialized is refused locally with a protocol
 // error instead of being sent as a malformed frame.
 func TestPhoneKeyBackend_SendRequestRejectsUnencodableParams(t *testing.T) {
+	if !noiseOutsideFIPS(t) {
+		return
+	}
 	t.Parallel()
 
 	backend, _ := setupNoiseSessionPair(t)

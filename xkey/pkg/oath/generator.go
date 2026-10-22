@@ -24,7 +24,6 @@ import (
 	"fmt"
 	"hash"
 	"math"
-	"sync"
 	"time"
 
 	secure "github.com/jeremyhahn/go-xkms/sdk/go/secure"
@@ -33,30 +32,6 @@ import (
 // fipsMinSecretBytes is the shortest HMAC key crypto/hmac accepts under
 // GODEBUG=fips140=only: 112 bits.
 const fipsMinSecretBytes = 14
-
-// shortHMACKeysRefused reports whether crypto/hmac in THIS process refuses a
-// key shorter than fipsMinSecretBytes.
-//
-// It answers by trying one, with a throwaway key, and seeing whether the
-// standard library panics. That is worth the oddity: the limit is enforced
-// under GODEBUG=fips140=only but not fips140=on, both of which report the same
-// crypto/fips140.Enabled(), and the setting can arrive from the environment, a
-// //go:debug directive, or the GOFIPS140 build setting. Any rule derived from
-// those inputs is a second implementation of a policy the library already
-// holds, and getting it wrong costs either a process kill or a working
-// credential refused. Asking cannot be wrong.
-//
-// Evaluated once; the mode cannot change during the life of the process.
-var shortHMACKeysRefused = sync.OnceValue(func() (refused bool) {
-	defer func() {
-		if recover() != nil {
-			refused = true
-		}
-	}()
-
-	hmac.New(sha256.New, make([]byte, fipsMinSecretBytes-1)).Sum(nil)
-	return false
-})
 
 // Generator errors.
 var (
@@ -170,18 +145,13 @@ func (g *Generator) GenerateCounter(counter uint64) (string, error) {
 	// crypto/hmac refuses a key below 112 bits by PANICKING, for SHA-256 and
 	// SHA-512 just as much as SHA-1.
 	//
-	// Note this is deliberately NOT gated on fipsMode(). Measured against Go
-	// 1.26, the limit applies under GODEBUG=fips140=only and NOT under
-	// fips140=on, where a 10-byte secret still HMACs happily. Refusing
-	// whenever FIPS is active would withdraw working credentials from
-	// fips140=on deployments -- the opposite failure, and one every enrolment
-	// in the field would hit, since the 16-character Base32 secret of every
-	// TOTP worked example decodes to 10 bytes.
-	//
-	// So the condition is what the library will actually DO in this process,
-	// which shortHMACKeysRefused establishes by asking it rather than by
-	// inferring it from a mode name.
-	if len(secret) < fipsMinSecretBytes && shortHMACKeysRefused() {
+	// The limit applies under GODEBUG=fips140=only and NOT under fips140=on,
+	// where a 10-byte secret still HMACs, so the gate is fipsMode -- the same
+	// crypto/fips140.Enforced flag crypto/hmac checks. Refusing whenever FIPS
+	// is merely enabled would withdraw working credentials from fips140=on
+	// deployments, since the 16-character Base32 secret of every TOTP worked
+	// example decodes to 10 bytes.
+	if len(secret) < fipsMinSecretBytes && fipsMode() {
 		return "", ErrSecretTooShortForFIPS
 	}
 

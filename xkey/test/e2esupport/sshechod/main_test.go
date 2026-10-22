@@ -12,6 +12,8 @@ import (
 	"testing"
 
 	"golang.org/x/crypto/ssh"
+
+	"github.com/jeremyhahn/go-xkms/pkg/testing/fipstest"
 )
 
 var errListenerClosed = errors.New("listener closed")
@@ -121,7 +123,13 @@ func startServer(t *testing.T, args []string, out io.Writer) (*memListener, <-ch
 	return ln, asked, done
 }
 
-func sshClient(t *testing.T, ln *memListener) *ssh.Client {
+// sshClient completes an SSH handshake with the server listening on ln.
+//
+// It reports false when the calling test must return: x/crypto/ssh's default
+// key exchange is curve25519, whose X25519 crypto/ecdh refuses under
+// GODEBUG=fips140=only (owner ruling 116: refuse what the stdlib refuses).
+// There the refusal is asserted and the test re-run under fips140=off.
+func sshClient(t *testing.T, ln *memListener) (*ssh.Client, bool) {
 	t.Helper()
 	_, priv, err := ed25519.GenerateKey(rand.Reader)
 	if err != nil {
@@ -141,6 +149,9 @@ func sshClient(t *testing.T, ln *memListener) *ssh.Client {
 		},
 	}
 	conn, chans, reqs, err := ssh.NewClientConn(newQueuedConn(ln.dial(t)), "127.0.0.9:2222", cfg)
+	if !fipstest.OutsideFIPSAfterRefusal(t, err, nil) {
+		return nil, false
+	}
 	if err != nil {
 		t.Fatalf("ssh handshake: %v", err)
 	}
@@ -149,7 +160,7 @@ func sshClient(t *testing.T, ln *memListener) *ssh.Client {
 	}
 	client := ssh.NewClient(conn, chans, reqs)
 	t.Cleanup(func() { _ = client.Close() })
-	return client
+	return client, true
 }
 
 // shell opens a session with a PTY and a shell, as the embedded console does.
@@ -189,7 +200,10 @@ func TestRun_EchoesTheSessionUntilExit(t *testing.T) {
 	if err := ln.dial(t).Close(); err != nil {
 		t.Fatalf("close: %v", err)
 	}
-	client := sshClient(t, ln)
+	client, ok := sshClient(t, ln)
+	if !ok {
+		return
+	}
 	_, stdin, stdout := shell(t, client)
 
 	// Longer than the 16-byte window the server scans for "exit".
@@ -225,7 +239,10 @@ func TestRun_EchoesTheSessionUntilExit(t *testing.T) {
 
 func TestRun_EndsTheSessionWhenTheClientStopsSending(t *testing.T) {
 	ln, asked, _ := startServer(t, nil, io.Discard)
-	client := sshClient(t, ln)
+	client, ok := sshClient(t, ln)
+	if !ok {
+		return
+	}
 	_, stdin, stdout := shell(t, client)
 
 	if _, err := io.WriteString(stdin, "bye"); err != nil {
@@ -245,7 +262,10 @@ func TestRun_EndsTheSessionWhenTheClientStopsSending(t *testing.T) {
 
 func TestRun_RefusesExecAndNonSessionChannels(t *testing.T) {
 	ln, _, _ := startServer(t, []string{""}, io.Discard)
-	client := sshClient(t, ln)
+	client, ok := sshClient(t, ln)
+	if !ok {
+		return
+	}
 
 	session, err := client.NewSession()
 	if err != nil {

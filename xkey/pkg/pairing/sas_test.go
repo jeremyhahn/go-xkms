@@ -46,6 +46,9 @@ func TestFormatShortAuthString_FixedVector(t *testing.T) {
 // from their own completed sessions, which is what lets an operator compare
 // one device's screen against the other's.
 func TestShortAuthString_BothPeersComputeTheSameCode(t *testing.T) {
+	if !noiseOutsideFIPS(t) {
+		return
+	}
 	initiator, responder := newHandshakenSessionPairForTest(t)
 
 	initiatorCode, err := ShortAuthString(initiator)
@@ -62,6 +65,9 @@ func TestShortAuthString_BothPeersComputeTheSameCode(t *testing.T) {
 // which is what makes an active MITM substituting its own static key
 // visible as a mismatch rather than as a fixed, always-matching string.
 func TestShortAuthString_DiffersForDifferentPeers(t *testing.T) {
+	if !noiseOutsideFIPS(t) {
+		return
+	}
 	initiatorA, _ := newHandshakenSessionPairForTest(t)
 	initiatorB, _ := newHandshakenSessionPairForTest(t)
 
@@ -77,6 +83,9 @@ func TestShortAuthString_DiffersForDifferentPeers(t *testing.T) {
 // AttestChannelBinding's own precondition: there is no authenticated peer
 // static key to bind to before the handshake finishes.
 func TestShortAuthString_RefusesBeforeHandshakeCompletes(t *testing.T) {
+	if !noiseOutsideFIPS(t) {
+		return
+	}
 	key, err := bootstrap.GenerateNoiseStaticKey()
 	require.NoError(t, err)
 	defer key.Destroy()

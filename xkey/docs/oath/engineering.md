@@ -124,11 +124,13 @@ func ScanScreenForOTP() (string, error)
   way to wipe it, and hand-rolling HMAC to avoid that would forfeit FIPS
   validation on the exact path this package makes FIPS-safe. Documented at
   the call site in `Generator.GenerateCounter`
-  (`xkey/pkg/oath/generator.go:98`).
+  (`xkey/pkg/oath/generator.go:73`).
 - **Under `GODEBUG=fips140=only`, SHA-1 and secrets shorter than 112 bits
   (14 bytes) are refused with a typed error, not a stdlib panic.**
-  `shortHMACKeysRefused` (`generator.go:50`) probes the running process once
-  to decide which mode is active; see `ErrAlgorithmNotFIPSApproved` and
+  `fipsMode` (`xkey/pkg/oath/fips.go:22`) is `crypto/fips140.Enforced`, the
+  flag `crypto/hmac` itself checks, so the package refuses exactly what the
+  stdlib refuses (owner ruling 116). Under `fips140=on` the stdlib still
+  computes both, so they are accepted there. See `ErrAlgorithmNotFIPSApproved` and
   `ErrSecretTooShortForFIPS` below. SHA-1 stays the non-FIPS default: RFC
   6238 and every mainstream authenticator (Google Authenticator, Authy,
   1Password, the `otpauth://` default) assume it.

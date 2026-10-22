@@ -1300,7 +1300,7 @@ func TestFA_OATHService_AddAccountFromURI_InvalidScheme(t *testing.T) {
 // TestFA_OATHService_AddAccountFromURI_ValidURI covers L259.
 func TestFA_OATHService_AddAccountFromURI_ValidURI(t *testing.T) {
 	svc := NewOATHService(oath.NewMemoryStore())
-	acct, err := svc.AddAccountFromURI("otpauth://totp/Test:user@test.com?secret=JBSWY3DPEHPK3PXP&issuer=Test")
+	acct, err := svc.AddAccountFromURI("otpauth://totp/Test:user@test.com?secret=GEZDGNBVGY3TQOJQGEZDGNBVGY3TQOJQ&algorithm=SHA256&issuer=Test")
 	require.NoError(t, err)
 	assert.NotNil(t, acct)
 	assert.Equal(t, "totp", acct.Type)
@@ -1342,10 +1342,10 @@ func TestFA_OATHService_GenerateHOTP_UpdateError(t *testing.T) {
 			ID:        "test-id",
 			Name:      "Test",
 			Type:      oath.TypeHOTP,
-			Algorithm: "SHA1",
+			Algorithm: "SHA256",
 			Digits:    6,
 			Counter:   0,
-		}, "JBSWY3DPEHPK3PXP"),
+		}, "GEZDGNBVGY3TQOJQGEZDGNBVGY3TQOJQ"),
 		updateErr: errors.New("update failed"),
 	}
 	svc := NewOATHService(store)
@@ -1363,10 +1363,10 @@ func TestFA_OATHService_GenerateTOTP_Success(t *testing.T) {
 			ID:        "test-id",
 			Name:      "Test",
 			Type:      oath.TypeTOTP,
-			Algorithm: "SHA1",
+			Algorithm: "SHA256",
 			Digits:    6,
 			Period:    30,
-		}, "JBSWY3DPEHPK3PXP"),
+		}, "GEZDGNBVGY3TQOJQGEZDGNBVGY3TQOJQ"),
 	}
 	svc := NewOATHService(store)
 
@@ -1386,10 +1386,10 @@ func TestFA_OATHService_GenerateHOTP_Success(t *testing.T) {
 			ID:        "test-id",
 			Name:      "Test",
 			Type:      oath.TypeHOTP,
-			Algorithm: "SHA1",
+			Algorithm: "SHA256",
 			Digits:    6,
 			Counter:   0,
-		}, "JBSWY3DPEHPK3PXP"),
+		}, "GEZDGNBVGY3TQOJQGEZDGNBVGY3TQOJQ"),
 	}
 	svc := NewOATHService(store)
 

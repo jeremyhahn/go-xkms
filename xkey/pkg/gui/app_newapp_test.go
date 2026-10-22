@@ -164,7 +164,7 @@ func TestNewApp_DashboardCountsLocalCredentials(t *testing.T) {
 	require.NotNil(t, app.oathStore, "precondition: the data directory opens the OATH store")
 	require.NotNil(t, app.fido2Storage, "precondition: the data directory opens the FIDO2 store")
 
-	_, err := app.oathService.AddAccountManual("alice@example.com", "Example", "JBSWY3DPEHPK3PXP")
+	_, err := app.oathService.AddAccount("otpauth://totp/Example:alice@example.com?secret=GEZDGNBVGY3TQOJQGEZDGNBVGY3TQOJQ&algorithm=SHA256&issuer=Example")
 	require.NoError(t, err)
 
 	status := app.appService.GetStatus()

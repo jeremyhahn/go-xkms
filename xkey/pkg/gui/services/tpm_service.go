@@ -17,6 +17,7 @@ import (
 	"context"
 	"crypto/ecdsa"
 	"crypto/ed25519"
+	"crypto/fips140"
 	"crypto/md5"
 	"crypto/rsa"
 	"crypto/sha1"
@@ -404,7 +405,8 @@ type CertificateDetails struct {
 	SignatureAlgorithm string `json:"signature_algorithm"`
 	SignatureHex       string `json:"signature_hex"`
 
-	// Fingerprints (colon-separated uppercase hex)
+	// Fingerprints (colon-separated uppercase hex). SHA-1 and MD5 are empty
+	// under GODEBUG=fips140=only, whose module refuses both digests.
 	FingerprintSHA256 string `json:"fingerprint_sha256"`
 	FingerprintSHA1   string `json:"fingerprint_sha1"`
 	FingerprintMD5    string `json:"fingerprint_md5"`
@@ -3154,6 +3156,19 @@ func formatFingerprint(hash []byte) string {
 	return strings.Join(parts, ":")
 }
 
+// legacyCertFingerprints returns the SHA-1 and MD5 fingerprints of a DER
+// certificate, or two empty strings under GODEBUG=fips140=only: the Go
+// FIPS 140-3 module refuses both digests, and the SHA-256 fingerprint
+// identifies the certificate on its own.
+func legacyCertFingerprints(der []byte) (sha1Fingerprint, md5Fingerprint string) {
+	if fips140.Enforced() {
+		return "", ""
+	}
+	sha1Hash := sha1.Sum(der)
+	md5Hash := md5.Sum(der)
+	return formatFingerprint(sha1Hash[:]), formatFingerprint(md5Hash[:])
+}
+
 // publicKeyBitSize returns the key size in bits for the given public key.
 func publicKeyBitSize(pub interface{}) int {
 	switch key := pub.(type) {
@@ -3211,8 +3226,7 @@ func (s *TPMService) ParseCertificate(certPEM string) (retVal *CertificateDetail
 
 	// Compute fingerprints from the raw DER bytes.
 	sha256Hash := sha256.Sum256(cert.Raw)
-	sha1Hash := sha1.Sum(cert.Raw)
-	md5Hash := md5.Sum(cert.Raw)
+	fingerprintSHA1, fingerprintMD5 := legacyCertFingerprints(cert.Raw)
 
 	// Build extended key usage strings.
 	extKeyUsageStrs := make([]string, len(cert.ExtKeyUsage))
@@ -3261,8 +3275,8 @@ func (s *TPMService) ParseCertificate(certPEM string) (retVal *CertificateDetail
 
 		// Fingerprints
 		FingerprintSHA256: formatFingerprint(sha256Hash[:]),
-		FingerprintSHA1:   formatFingerprint(sha1Hash[:]),
-		FingerprintMD5:    formatFingerprint(md5Hash[:]),
+		FingerprintSHA1:   fingerprintSHA1,
+		FingerprintMD5:    fingerprintMD5,
 
 		// Public Key
 		PublicKeyAlgorithm: xkms.PublicKeyTypeString(cert.PublicKey),

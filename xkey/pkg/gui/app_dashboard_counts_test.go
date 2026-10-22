@@ -21,7 +21,7 @@ func TestNewApp_StatusCountsLocalInventory(t *testing.T) {
 	assert.Zero(t, empty.FIDO2CredCount)
 	assert.Zero(t, empty.PIVCertCount, "no slot is occupied yet")
 
-	_, err := app.oathService.AddAccount("otpauth://totp/Example:alice@example.com?secret=JBSWY3DPEHPK3PXP&issuer=Example")
+	_, err := app.oathService.AddAccount("otpauth://totp/Example:alice@example.com?secret=GEZDGNBVGY3TQOJQGEZDGNBVGY3TQOJQ&algorithm=SHA256&issuer=Example")
 	require.NoError(t, err)
 	storePIVCert(t, "software")
 

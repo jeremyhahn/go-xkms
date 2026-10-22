@@ -15,12 +15,11 @@ package oath
 
 import "crypto/fips140"
 
-// fipsMode reports whether this process is under FIPS 140 rules, by asking
-// the Go standard library directly (go-xkms #21): GODEBUG=fips140=on|only at
-// runtime, or a GOFIPS140 build, both surface through crypto/fips140.Enabled.
-//
-// It is a variable rather than a direct call so a test can drive both sides of
-// the gate: the alternative is running the suite twice under different
-// environments, which no CI job here does, and an ungated branch is one nobody
-// ever executes.
-var fipsMode = fips140.Enabled
+// fipsMode reports whether crypto/hmac in this process refuses SHA-1, by
+// asking the Go standard library directly. That is GODEBUG=fips140=only:
+// crypto/fips140.Enforced is the flag crypto/hmac checks. Under fips140=on the
+// stdlib still computes an HMAC-SHA-1, so this package does too (owner ruling
+// 116: refuse exactly what the stdlib refuses, no allowlist of our own).
+func fipsMode() bool {
+	return fips140.Enforced()
+}

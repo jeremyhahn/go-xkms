@@ -2750,6 +2750,9 @@ func waitForPipeDrain(t *testing.T, tx *mockPipeTransport) {
 }
 
 func TestMessageRouter_HandleInboundRequest_NoHandler(t *testing.T) {
+	if !noiseOutsideFIPS(t) {
+		return
+	}
 	t.Parallel()
 
 	initiatorTransport, remoteTransport := newPipeTransports()
@@ -2774,6 +2777,9 @@ func TestMessageRouter_HandleInboundRequest_NoHandler(t *testing.T) {
 }
 
 func TestMessageRouter_HandleInboundRequest_BadJSON(t *testing.T) {
+	if !noiseOutsideFIPS(t) {
+		return
+	}
 	t.Parallel()
 
 	initiatorTransport, remoteTransport := newPipeTransports()
@@ -2803,6 +2809,9 @@ func TestMessageRouter_HandleInboundRequest_BadJSON(t *testing.T) {
 }
 
 func TestMessageRouter_HandleInboundRequest_HandlerReturnsNil(t *testing.T) {
+	if !noiseOutsideFIPS(t) {
+		return
+	}
 	t.Parallel()
 
 	initiatorTransport, remoteTransport := newPipeTransports()
@@ -2832,6 +2841,9 @@ func TestMessageRouter_HandleInboundRequest_HandlerReturnsNil(t *testing.T) {
 // --- Coverage gap tests: SendRequest edge cases ---
 
 func TestMessageRouter_SendRequest_EncodeError(t *testing.T) {
+	if !noiseOutsideFIPS(t) {
+		return
+	}
 	t.Parallel()
 
 	transport, _ := newPipeTransports()
@@ -2855,6 +2867,9 @@ func TestMessageRouter_SendRequest_EncodeError(t *testing.T) {
 // --- Coverage gap tests: routeResponse edge cases ---
 
 func TestMessageRouter_RouteResponse_BadJSON(t *testing.T) {
+	if !noiseOutsideFIPS(t) {
+		return
+	}
 	t.Parallel()
 
 	initiatorTransport, remoteTransport := newPipeTransports()
@@ -2875,6 +2890,9 @@ func TestMessageRouter_RouteResponse_BadJSON(t *testing.T) {
 }
 
 func TestMessageRouter_RouteResponse_UnknownID(t *testing.T) {
+	if !noiseOutsideFIPS(t) {
+		return
+	}
 	t.Parallel()
 
 	initiatorTransport, remoteTransport := newPipeTransports()
@@ -2903,6 +2921,9 @@ func TestMessageRouter_RouteResponse_UnknownID(t *testing.T) {
 // --- Coverage gap tests: handleBiometricPending edge cases ---
 
 func TestMessageRouter_HandleBiometricPending_BadJSON(t *testing.T) {
+	if !noiseOutsideFIPS(t) {
+		return
+	}
 	t.Parallel()
 
 	initiatorTransport, remoteTransport := newPipeTransports()
@@ -2924,6 +2945,9 @@ func TestMessageRouter_HandleBiometricPending_BadJSON(t *testing.T) {
 }
 
 func TestMessageRouter_HandleBiometricPending_BadParams(t *testing.T) {
+	if !noiseOutsideFIPS(t) {
+		return
+	}
 	t.Parallel()
 
 	initiatorTransport, remoteTransport := newPipeTransports()
@@ -2947,6 +2971,9 @@ func TestMessageRouter_HandleBiometricPending_BadParams(t *testing.T) {
 // --- Coverage gap: SendRequest encrypt and send error paths ---
 
 func TestMessageRouter_SendRequest_SendError(t *testing.T) {
+	if !noiseOutsideFIPS(t) {
+		return
+	}
 	t.Parallel()
 
 	initiatorTransport, _ := newPipeTransports()
@@ -2968,6 +2995,9 @@ func TestMessageRouter_SendRequest_SendError(t *testing.T) {
 }
 
 func TestMessageRouter_SendRequest_ChannelClosed(t *testing.T) {
+	if !noiseOutsideFIPS(t) {
+		return
+	}
 	t.Parallel()
 
 	initiatorTransport, remoteTransport := newPipeTransports()
@@ -3009,6 +3039,9 @@ func TestMessageRouter_SendRequest_ChannelClosed(t *testing.T) {
 // --- Coverage gap: receiveLoop closed during read ---
 
 func TestMessageRouter_ReceiveLoop_ClosedDuringRead(t *testing.T) {
+	if !noiseOutsideFIPS(t) {
+		return
+	}
 	t.Parallel()
 
 	initiatorTransport, _ := newPipeTransports()

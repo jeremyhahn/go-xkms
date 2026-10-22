@@ -500,8 +500,7 @@ func TestP4A_ParseCertificate_ECDSACert(t *testing.T) {
 	assert.Equal(t, "phase4-ecdsa", details.SubjectCN)
 	assert.True(t, details.IsCA)
 	assert.NotEmpty(t, details.FingerprintSHA256)
-	assert.NotEmpty(t, details.FingerprintSHA1)
-	assert.NotEmpty(t, details.FingerprintMD5)
+	assertLegacyFingerprints(t, details.FingerprintSHA1, details.FingerprintMD5)
 	assert.Contains(t, details.SubjectAltNames, "DNS:test.example.com")
 	assert.Greater(t, details.PublicKeySize, 0)
 }

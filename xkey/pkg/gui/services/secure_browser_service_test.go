@@ -247,6 +247,10 @@ func TestClassifyBrowserUnknown(t *testing.T) {
 
 // TestFirefoxPoliciesGeneration verifies correct policies.json structure.
 func TestFirefoxPoliciesGeneration(t *testing.T) {
+	if !nssdbOutsideFIPS(t) {
+		return
+	}
+
 	cert := testSecureBrowserCA(t, "Firefox Test CA")
 	svc, baseDir := newTestSecureBrowserService(t, []*x509.Certificate{cert})
 
@@ -269,6 +273,10 @@ func TestFirefoxPoliciesGeneration(t *testing.T) {
 
 // TestFirefoxPoliciesMultipleCerts verifies policies with multiple certs.
 func TestFirefoxPoliciesMultipleCerts(t *testing.T) {
+	if !nssdbOutsideFIPS(t) {
+		return
+	}
+
 	cert1 := testSecureBrowserCA(t, "FF CA 1")
 	cert2 := testSecureBrowserCA2(t)
 	svc, baseDir := newTestSecureBrowserService(t, []*x509.Certificate{cert1, cert2})
@@ -287,6 +295,10 @@ func TestFirefoxPoliciesMultipleCerts(t *testing.T) {
 
 // TestFirefoxPEMExport verifies individual PEM files are created.
 func TestFirefoxPEMExport(t *testing.T) {
+	if !nssdbOutsideFIPS(t) {
+		return
+	}
+
 	cert := testSecureBrowserCA(t, "PEM Export CA")
 	svc, baseDir := newTestSecureBrowserService(t, []*x509.Certificate{cert})
 
@@ -307,6 +319,10 @@ func TestFirefoxPEMExport(t *testing.T) {
 
 // TestFirefoxPEMExportCleansOldFiles verifies stale PEM files are removed.
 func TestFirefoxPEMExportCleansOldFiles(t *testing.T) {
+	if !nssdbOutsideFIPS(t) {
+		return
+	}
+
 	cert1 := testSecureBrowserCA(t, "PEM Clean CA 1")
 	cert2 := testSecureBrowserCA2(t)
 	svc, baseDir := newTestSecureBrowserService(t, []*x509.Certificate{cert1, cert2})
@@ -331,6 +347,10 @@ func TestFirefoxPEMExportCleansOldFiles(t *testing.T) {
 
 // TestChromeNSSDB verifies NSS database creation for Chrome.
 func TestChromeNSSDB(t *testing.T) {
+	if !nssdbOutsideFIPS(t) {
+		return
+	}
+
 	cert := testSecureBrowserCA(t, "Chrome NSS CA")
 	svc, baseDir := newTestSecureBrowserService(t, []*x509.Certificate{cert})
 
@@ -349,6 +369,10 @@ func TestChromeNSSDB(t *testing.T) {
 
 // TestChromeNSSDBMultipleCerts verifies adding multiple certs to NSS DB.
 func TestChromeNSSDBMultipleCerts(t *testing.T) {
+	if !nssdbOutsideFIPS(t) {
+		return
+	}
+
 	cert1 := testSecureBrowserCA(t, "Chrome CA 1")
 	cert2 := testSecureBrowserCA2(t)
 	svc, _ := newTestSecureBrowserService(t, []*x509.Certificate{cert1, cert2})
@@ -363,6 +387,10 @@ func TestChromeNSSDBMultipleCerts(t *testing.T) {
 
 // TestLaunchBrowserChrome verifies Chrome launch with correct arguments.
 func TestLaunchBrowserChrome(t *testing.T) {
+	if !nssdbOutsideFIPS(t) {
+		return
+	}
+
 	cert := testSecureBrowserCA(t, "Launch Chrome CA")
 	svc, baseDir := newTestSecureBrowserService(t, []*x509.Certificate{cert})
 	svc.SetContext(context.Background())
@@ -386,6 +414,10 @@ func TestLaunchBrowserChrome(t *testing.T) {
 
 // TestLaunchBrowserFirefox verifies Firefox launch with correct arguments.
 func TestLaunchBrowserFirefox(t *testing.T) {
+	if !nssdbOutsideFIPS(t) {
+		return
+	}
+
 	cert := testSecureBrowserCA(t, "Launch Firefox CA")
 	svc, baseDir := newTestSecureBrowserService(t, []*x509.Certificate{cert})
 	svc.SetContext(context.Background())
@@ -411,6 +443,10 @@ func TestLaunchBrowserFirefox(t *testing.T) {
 
 // TestLaunchBrowserSharedMode verifies shared profile mode omits profile flags.
 func TestLaunchBrowserSharedMode(t *testing.T) {
+	if !nssdbOutsideFIPS(t) {
+		return
+	}
+
 	// Shared profile mode writes the NSS database at $HOME/.pki/nssdb. The
 	// helper below isolates baseDir and the browser config, not HOME, so
 	// without this the test populated the developer's real NSS store.
@@ -543,6 +579,10 @@ func TestDetectBrowsersFiltering(t *testing.T) {
 
 // TestRebuild verifies forced rebuild updates the trust hash.
 func TestRebuild(t *testing.T) {
+	if !nssdbOutsideFIPS(t) {
+		return
+	}
+
 	cert := testSecureBrowserCA(t, "Rebuild CA")
 	svc, baseDir := newTestSecureBrowserService(t, []*x509.Certificate{cert})
 
@@ -565,6 +605,10 @@ func TestRebuild(t *testing.T) {
 // TestRebuildUpdatesHash verifies that rebuild writes a new hash when
 // certs change.
 func TestRebuildUpdatesHash(t *testing.T) {
+	if !nssdbOutsideFIPS(t) {
+		return
+	}
+
 	cert1 := testSecureBrowserCA(t, "Rebuild CA 1")
 	svc, baseDir := newTestSecureBrowserService(t, []*x509.Certificate{cert1})
 
@@ -589,6 +633,10 @@ func TestRebuildUpdatesHash(t *testing.T) {
 
 // TestSyncIfChangedSkipsWhenUnchanged verifies no-op when hash matches.
 func TestSyncIfChangedSkipsWhenUnchanged(t *testing.T) {
+	if !nssdbOutsideFIPS(t) {
+		return
+	}
+
 	cert := testSecureBrowserCA(t, "Skip CA")
 	svc, baseDir := newTestSecureBrowserService(t, []*x509.Certificate{cert})
 
@@ -613,6 +661,10 @@ func TestSyncIfChangedSkipsWhenUnchanged(t *testing.T) {
 
 // TestSyncIfChangedTriggersOnNewHash verifies rebuild when hash differs.
 func TestSyncIfChangedTriggersOnNewHash(t *testing.T) {
+	if !nssdbOutsideFIPS(t) {
+		return
+	}
+
 	cert := testSecureBrowserCA(t, "New Hash CA")
 	svc, baseDir := newTestSecureBrowserService(t, []*x509.Certificate{cert})
 
@@ -640,6 +692,10 @@ func TestSyncIfChangedTriggersOnNewHash(t *testing.T) {
 // treats it as "changed" and proceeds to sync — the pre-existing, safe
 // fallback behavior this fix must not disturb.
 func TestSyncIfChanged_TrustHashReadFailureLogsAndForcesResync(t *testing.T) {
+	if !nssdbOutsideFIPS(t) {
+		return
+	}
+
 	cert := testSecureBrowserCA(t, "Read Failure CA")
 	baseDir := filepath.Join(t.TempDir(), "browsers")
 	require.NoError(t, os.MkdirAll(baseDir, 0o700))
@@ -679,6 +735,10 @@ func TestSyncIfChanged_TrustHashReadFailureLogsAndForcesResync(t *testing.T) {
 // case (no hash file yet) is not logged as a failure: it is the expected,
 // benign condition that already forces a resync via an empty stored hash.
 func TestSyncIfChanged_MissingTrustHashDoesNotLog(t *testing.T) {
+	if !nssdbOutsideFIPS(t) {
+		return
+	}
+
 	cert := testSecureBrowserCA(t, "Missing Hash CA")
 	baseDir := filepath.Join(t.TempDir(), "browsers")
 	require.NoError(t, os.MkdirAll(baseDir, 0o700))
@@ -862,6 +922,10 @@ func TestSetContextSecureBrowser(t *testing.T) {
 
 // TestRebuildWithEmptyStore verifies rebuild with no certs is a no-op.
 func TestRebuildWithEmptyStore(t *testing.T) {
+	if !nssdbOutsideFIPS(t) {
+		return
+	}
+
 	svc, baseDir := newTestSecureBrowserService(t, []*x509.Certificate{})
 
 	err := svc.Rebuild()
@@ -926,6 +990,10 @@ func expectedCertLabel(cert *x509.Certificate) string {
 // without the current CAs. Change detection is now per resolved target store,
 // so the isolated store MUST be re-synced.
 func TestSyncIfChangedReSyncsOnModeFlipSharedToIsolated(t *testing.T) {
+	if !nssdbOutsideFIPS(t) {
+		return
+	}
+
 	// Redirect HOME so shared-mode chrome targets a hermetic ~/.pki/nssdb and
 	// never the real user store.
 	home := t.TempDir()
@@ -979,6 +1047,10 @@ func TestSyncIfChangedReSyncsOnModeFlipSharedToIsolated(t *testing.T) {
 // to shared; the shared store (~/.pki/nssdb) must be synced even though the
 // trust contents are unchanged.
 func TestSyncIfChangedReSyncsOnModeFlipIsolatedToShared(t *testing.T) {
+	if !nssdbOutsideFIPS(t) {
+		return
+	}
+
 	home := t.TempDir()
 	t.Setenv("HOME", home)
 
@@ -1013,6 +1085,10 @@ func TestSyncIfChangedReSyncsOnModeFlipIsolatedToShared(t *testing.T) {
 // behavior: the per-target hash matches the current trust contents, but the
 // target store's cert9.db was deleted externally — the sync must still run.
 func TestSyncIfChangedReSyncsWhenStoreWiped(t *testing.T) {
+	if !nssdbOutsideFIPS(t) {
+		return
+	}
+
 	cert := testSecureBrowserCA(t, "Wiped Store CA")
 	svc, baseDir := newTestSecureBrowserService(t, []*x509.Certificate{cert})
 
@@ -1034,6 +1110,10 @@ func TestSyncIfChangedReSyncsWhenStoreWiped(t *testing.T) {
 // path: same mode, same trust contents, store present => the sync is skipped
 // and no redundant write touches the target store.
 func TestSyncIfChangedFastPathSkipsRedundantWrite(t *testing.T) {
+	if !nssdbOutsideFIPS(t) {
+		return
+	}
+
 	cert := testSecureBrowserCA(t, "Fast Path CA")
 	svc, baseDir := newTestSecureBrowserService(t, []*x509.Certificate{cert})
 

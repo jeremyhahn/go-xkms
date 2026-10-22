@@ -97,6 +97,9 @@ func callThroughExchange(gotResp **pairingproto.Response, gotErr *error) pairing
 }
 
 func TestProveLiveness_ExchangeTransportFailure(t *testing.T) {
+	if !noiseOutsideFIPS(t) {
+		return
+	}
 	client, _ := establishedNoiseSessionPair(t)
 	transportErr := errors.New("link dropped")
 
@@ -119,6 +122,9 @@ func TestProveLiveness_ExchangeTransportFailure(t *testing.T) {
 }
 
 func TestProveLiveness_ExchangeUndecryptableResponse(t *testing.T) {
+	if !noiseOutsideFIPS(t) {
+		return
+	}
 	client, _ := establishedNoiseSessionPair(t)
 
 	var gotResp *pairingproto.Response
@@ -142,6 +148,9 @@ func TestProveLiveness_ExchangeUndecryptableResponse(t *testing.T) {
 }
 
 func TestProveLiveness_ExchangeMalformedResponseJSON(t *testing.T) {
+	if !noiseOutsideFIPS(t) {
+		return
+	}
 	client, server := establishedNoiseSessionPair(t)
 
 	var gotResp *pairingproto.Response
@@ -169,6 +178,9 @@ func TestProveLiveness_ExchangeMalformedResponseJSON(t *testing.T) {
 // well-formed encrypted response comes back decrypted and decoded, exactly
 // as attestation.NewLiveAttestor's exchange call expects to receive it.
 func TestProveLiveness_ExchangeSuccessRoundTrip(t *testing.T) {
+	if !noiseOutsideFIPS(t) {
+		return
+	}
 	client, server := establishedNoiseSessionPair(t)
 
 	var gotResp *pairingproto.Response

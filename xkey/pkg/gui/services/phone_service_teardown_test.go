@@ -118,6 +118,10 @@ func awaitDrain(t *testing.T, svc *PhoneService) {
 // the UI saw as down. Publication and status are one transition under connMu
 // now, so there is no window to land in.
 func TestTeardownLeavesAConnectionPublishedDuringItsDrainReportedConnected(t *testing.T) {
+	if !noiseOutsideFIPS(t) {
+		return
+	}
+
 	original := connShutdownTimeout
 	connShutdownTimeout = 5 * time.Second
 	t.Cleanup(func() { connShutdownTimeout = original })
@@ -261,6 +265,10 @@ func TestTeardownAndPublicationNeverDisagreeAboutTheConnection(t *testing.T) {
 // clause above from being unconditional: with an empty slot, teardown must
 // still take the service down.
 func TestTeardownReportsDisconnectedWhenNothingReplacedIt(t *testing.T) {
+	if !noiseOutsideFIPS(t) {
+		return
+	}
+
 	svc := NewPhoneService()
 	key := publishGeneration(t, svc, "Pixel 9")
 
@@ -301,6 +309,10 @@ func TestTeardownReportsDisconnectedWhenNothingReplacedIt(t *testing.T) {
 // through the return value it also lied by omission in the other direction: a
 // caller retrying on error would find the record already gone.
 func TestUnpairReportsTheRecordRemovalAndSurfacesRetentionInServiceState(t *testing.T) {
+	if !noiseOutsideFIPS(t) {
+		return
+	}
+
 	original := connShutdownTimeout
 	connShutdownTimeout = 100 * time.Millisecond
 	t.Cleanup(func() { connShutdownTimeout = original })
@@ -359,6 +371,10 @@ func TestUnpairReportsTheRecordRemovalAndSurfacesRetentionInServiceState(t *test
 // nothing in flight the key is destroyed and no retention is reported, so the
 // count above cannot pass by being unconditional.
 func TestUnpairSucceedsAndRetainsNothingOnACleanDrain(t *testing.T) {
+	if !noiseOutsideFIPS(t) {
+		return
+	}
+
 	covSetupHomeWithDevicesConfig(t, &phoneConfig{
 		Devices:       []phoneConfigDevice{{Name: "Pixel 9", Address: "AA:BB:CC:DD:EE:01"}},
 		DefaultDevice: "Pixel 9",
@@ -394,6 +410,10 @@ func TestUnpairSucceedsAndRetainsNothingOnACleanDrain(t *testing.T) {
 // publication step consults, so the two compose without either having to
 // reproduce an interleaving that the fix itself makes unschedulable.
 func TestUnpairMarksTheDeviceForTheWholeOfItsTeardown(t *testing.T) {
+	if !noiseOutsideFIPS(t) {
+		return
+	}
+
 	original := connShutdownTimeout
 	connShutdownTimeout = 5 * time.Second
 	t.Cleanup(func() { connShutdownTimeout = original })
@@ -460,6 +480,10 @@ func TestUnpairMarksTheDeviceForTheWholeOfItsTeardown(t *testing.T) {
 // step's half of that contract on its own, without the concurrency: the mark
 // alone is enough to refuse.
 func TestPublishConnectionRefusesWhileTheDeviceIsBeingUnpaired(t *testing.T) {
+	if !noiseOutsideFIPS(t) {
+		return
+	}
+
 	svc := NewPhoneService()
 	svc.beginUnpair("Pixel 9")
 
@@ -503,6 +527,10 @@ func TestPublishConnectionRefusesWhileTheDeviceIsBeingUnpaired(t *testing.T) {
 // exists. That is the exact divergence this contract exists to prevent, so the
 // refusal settles the status and emits the transition.
 func TestPublishConnectionRefusesAnUnpairThatBeganDuringItsDrain(t *testing.T) {
+	if !noiseOutsideFIPS(t) {
+		return
+	}
+
 	original := connShutdownTimeout
 	connShutdownTimeout = 5 * time.Second
 	t.Cleanup(func() { connShutdownTimeout = original })
@@ -585,6 +613,10 @@ func TestPublishConnectionRefusesAnUnpairThatBeganDuringItsDrain(t *testing.T) {
 // the failure this is looking for, so it runs on its own goroutine with a
 // deadline rather than wedging the whole suite.
 func TestAStatusCallbackMayReEnterTheService(t *testing.T) {
+	if !noiseOutsideFIPS(t) {
+		return
+	}
+
 	svc := NewPhoneService()
 
 	var reentered atomic.Bool
@@ -740,6 +772,10 @@ var overtakeObservationWindow = 250 * time.Millisecond
 // nothing behind it. The refusal comes first now, because the teardown is
 // destructive.
 func TestARefusedPublicationLeavesAnotherDevicesConnectionAlone(t *testing.T) {
+	if !noiseOutsideFIPS(t) {
+		return
+	}
+
 	svc := NewPhoneService()
 	live := publishGeneration(t, svc, "Galaxy S25")
 	t.Cleanup(live.Destroy)
@@ -787,6 +823,10 @@ func TestARefusedPublicationLeavesAnotherDevicesConnectionAlone(t *testing.T) {
 // never existed. The drain is still incomplete and still says so; what it must
 // not do is invent a protected page.
 func TestATimedOutDrainOverAnEmptySlotRecordsNoRetainedKey(t *testing.T) {
+	if !noiseOutsideFIPS(t) {
+		return
+	}
+
 	original := connShutdownTimeout
 	connShutdownTimeout = 50 * time.Millisecond
 	t.Cleanup(func() { connShutdownTimeout = original })
@@ -833,6 +873,10 @@ func TestATimedOutDrainOverAnEmptySlotRecordsNoRetainedKey(t *testing.T) {
 // is still resident — and autoAttest dropped it on the floor, so Connect
 // returned success over it.
 func TestAutoAttestPropagatesTheTeardownItForces(t *testing.T) {
+	if !noiseOutsideFIPS(t) {
+		return
+	}
+
 	original := connShutdownTimeout
 	connShutdownTimeout = 100 * time.Millisecond
 	t.Cleanup(func() { connShutdownTimeout = original })

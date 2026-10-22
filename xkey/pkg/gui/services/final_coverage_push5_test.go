@@ -500,7 +500,7 @@ func TestP7_OATHService_GenerateHOTP_WrongType(t *testing.T) {
 	svc := NewOATHService(oathStore)
 
 	// Add a TOTP credential.
-	_, err := svc.AddAccountManual("test-account", "test-issuer", "JBSWY3DPEHPK3PXP")
+	_, err := svc.AddAccount("otpauth://totp/test-issuer:test-account?secret=GEZDGNBVGY3TQOJQGEZDGNBVGY3TQOJQ&algorithm=SHA256&issuer=test-issuer")
 	require.NoError(t, err)
 
 	accounts, err := svc.ListAccounts()
@@ -534,7 +534,7 @@ func TestP7_OATHService_GenerateTOTP_WrongType_HOTP(t *testing.T) {
 	svc := NewOATHService(oathStore)
 
 	// Add an HOTP credential via URI.
-	_, err := svc.AddAccountFromURI("otpauth://hotp/testissuer:testuser?secret=JBSWY3DPEHPK3PXP&counter=0&issuer=testissuer")
+	_, err := svc.AddAccountFromURI("otpauth://hotp/testissuer:testuser?secret=GEZDGNBVGY3TQOJQGEZDGNBVGY3TQOJQ&algorithm=SHA256&counter=0&issuer=testissuer")
 	require.NoError(t, err)
 
 	accounts, err := svc.ListAccounts()

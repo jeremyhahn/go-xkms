@@ -920,7 +920,7 @@ func TestP3B_OATHService_SetStore_ReplaceNil(t *testing.T) {
 	require.NoError(t, err)
 	assert.Empty(t, accounts)
 
-	uri := "otpauth://totp/Test:user?secret=JBSWY3DPEHPK3PXP&issuer=Test"
+	uri := "otpauth://totp/Test:user?secret=GEZDGNBVGY3TQOJQGEZDGNBVGY3TQOJQ&algorithm=SHA256&issuer=Test"
 	acct, err := svc.AddAccount(uri)
 	require.NoError(t, err)
 	assert.Equal(t, "Test", acct.Issuer)

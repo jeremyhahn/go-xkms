@@ -248,7 +248,9 @@ func NewTCPPairingServer(cfg *TCPPairingConfig) (*TCPPairingServer, error) {
 	case localKey == nil:
 		generated, err := bootstrap.GenerateNoiseStaticKey()
 		if err != nil {
-			return nil, ErrTCPServerStartFailed
+			// Keep the cause: under GODEBUG=fips140=only it is the stdlib's
+			// X25519 refusal, which callers must be able to see.
+			return nil, &SentinelCauseError{Sentinel: ErrTCPServerStartFailed, Cause: err}
 		}
 		localKey = generated
 		owns = true

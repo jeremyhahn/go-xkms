@@ -20,6 +20,7 @@ import (
 	"crypto/x509"
 	"testing"
 
+	"github.com/jeremyhahn/go-xkms/pkg/testing/fipstest"
 	xkms "github.com/jeremyhahn/go-xkms/sdk/go"
 	"github.com/jeremyhahn/go-xkms/xkey/pkg/attestation/attesttest"
 )
@@ -134,10 +135,15 @@ func TestIssueProbeCredential_RefusesABadCSR(t *testing.T) {
 	}
 }
 
+// The Noise static key is X25519, which fips140=only refuses: the probe must
+// report that as an error, and outside FIPS produce a usable key.
 func TestProbeStaticKey_GeneratesAFreshKeyWhenUnset(t *testing.T) {
 	t.Setenv("XKEY_PROBE_STATIC_KEY", "")
 
 	key, err := probeStaticKey()
+	if !fipstest.OutsideFIPSAfterRefusal(t, err, nil) {
+		return
+	}
 	if err != nil {
 		t.Fatalf("probeStaticKey: %v", err)
 	}
@@ -152,18 +158,21 @@ func TestProbeStaticKey_LoadsTheSuppliedKey(t *testing.T) {
 	if _, err := rand.Read(raw); err != nil {
 		t.Fatalf("rand: %v", err)
 	}
-	want, err := ecdh.X25519().NewPrivateKey(raw)
-	if err != nil {
-		t.Fatalf("X25519 key: %v", err)
-	}
 	// Surrounding whitespace, as a value pasted into an env file carries.
 	t.Setenv("XKEY_PROBE_STATIC_KEY", " "+b64(raw)+"\n")
 
 	key, err := probeStaticKey()
+	if !fipstest.OutsideFIPSAfterRefusal(t, err, nil) {
+		return
+	}
 	if err != nil {
 		t.Fatalf("probeStaticKey: %v", err)
 	}
 	defer key.Destroy()
+	want, err := ecdh.X25519().NewPrivateKey(raw)
+	if err != nil {
+		t.Fatalf("X25519 key: %v", err)
+	}
 	if !bytes.Equal(key.PublicBytes(), want.PublicKey().Bytes()) {
 		t.Fatal("the loaded key's public half is not the supplied key's")
 	}

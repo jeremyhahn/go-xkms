@@ -92,6 +92,9 @@ func handleMockConn(conn net.Conn) {
 }
 
 func TestHost_Handshake_Success(t *testing.T) {
+	if !x25519OutsideFIPS(t) {
+		return
+	}
 	tmpDir := privateTempDir(t)
 	socketPath := filepath.Join(tmpDir, "test.sock")
 
@@ -193,6 +196,9 @@ func TestHost_Handshake_InvalidBase64PubKey(t *testing.T) {
 }
 
 func TestHost_Handshake_InvalidPubKeySize(t *testing.T) {
+	if !x25519OutsideFIPS(t) {
+		return
+	}
 	tmpDir := privateTempDir(t)
 	socketPath := filepath.Join(tmpDir, "test.sock")
 
@@ -215,6 +221,9 @@ func TestHost_Handshake_InvalidPubKeySize(t *testing.T) {
 }
 
 func TestHost_EncryptedRelay_EndToEnd(t *testing.T) {
+	if !x25519OutsideFIPS(t) {
+		return
+	}
 	tmpDir := privateTempDir(t)
 	socketPath := filepath.Join(tmpDir, "test.sock")
 
@@ -298,6 +307,9 @@ func TestHost_EncryptedRelay_EndToEnd(t *testing.T) {
 }
 
 func TestHost_StdinEOF_CleanlyShutsDown(t *testing.T) {
+	if !x25519OutsideFIPS(t) {
+		return
+	}
 	tmpDir := privateTempDir(t)
 	socketPath := filepath.Join(tmpDir, "test.sock")
 
@@ -343,6 +355,9 @@ func TestHost_StdinEOF_CleanlyShutsDown(t *testing.T) {
 }
 
 func TestHost_ContextCancellation_StopsHost(t *testing.T) {
+	if !x25519OutsideFIPS(t) {
+		return
+	}
 	tmpDir := privateTempDir(t)
 	socketPath := filepath.Join(tmpDir, "test.sock")
 
@@ -414,6 +429,9 @@ func TestHost_NewHost_DefaultIO(t *testing.T) {
 }
 
 func TestHost_IPCConnectionFailure(t *testing.T) {
+	if !x25519OutsideFIPS(t) {
+		return
+	}
 	tmpDir := privateTempDir(t)
 	// Use a socket path where no server is listening.
 	socketPath := filepath.Join(tmpDir, "nonexistent.sock")
@@ -554,6 +572,9 @@ func startMockIPCServerWithPairing(t *testing.T, socketPath string) (net.Listene
 }
 
 func TestHost_Pairing_FullCeremony(t *testing.T) {
+	if !x25519OutsideFIPS(t) {
+		return
+	}
 	tmpDir := privateTempDir(t)
 	socketPath := filepath.Join(tmpDir, "test.sock")
 	statePath := filepath.Join(tmpDir, "pairing.json")
@@ -637,6 +658,9 @@ func TestHost_Pairing_FullCeremony(t *testing.T) {
 }
 
 func TestHost_Pairing_InvalidCode(t *testing.T) {
+	if !x25519OutsideFIPS(t) {
+		return
+	}
 	tmpDir := privateTempDir(t)
 	socketPath := filepath.Join(tmpDir, "test.sock")
 	statePath := filepath.Join(tmpDir, "pairing.json")
@@ -710,6 +734,9 @@ func TestHost_Pairing_InvalidCode(t *testing.T) {
 }
 
 func TestHost_Pairing_IdentityMismatchTriggersRepairing(t *testing.T) {
+	if !x25519OutsideFIPS(t) {
+		return
+	}
 	tmpDir := privateTempDir(t)
 	socketPath := filepath.Join(tmpDir, "test.sock")
 	statePath := filepath.Join(tmpDir, "pairing.json")
@@ -808,6 +835,9 @@ func TestHost_Pairing_IdentityMismatchTriggersRepairing(t *testing.T) {
 }
 
 func TestHost_Pairing_BadSignatureRejectsNotRepairs(t *testing.T) {
+	if !x25519OutsideFIPS(t) {
+		return
+	}
 	tmpDir := privateTempDir(t)
 	socketPath := filepath.Join(tmpDir, "test.sock")
 	statePath := filepath.Join(tmpDir, "pairing.json")
@@ -869,6 +899,9 @@ func TestHost_Pairing_BadSignatureRejectsNotRepairs(t *testing.T) {
 }
 
 func TestHost_Pairing_ExtensionDisconnectsDuringPairing(t *testing.T) {
+	if !x25519OutsideFIPS(t) {
+		return
+	}
 	tmpDir := privateTempDir(t)
 	socketPath := filepath.Join(tmpDir, "test.sock")
 	statePath := filepath.Join(tmpDir, "pairing.json")
@@ -943,6 +976,9 @@ func TestHost_Pairing_ExtensionDisconnectsDuringPairing(t *testing.T) {
 }
 
 func TestHost_RelayLoop_RevokedPairing(t *testing.T) {
+	if !x25519OutsideFIPS(t) {
+		return
+	}
 	tmpDir := privateTempDir(t)
 	socketPath := filepath.Join(tmpDir, "test.sock")
 	statePath := filepath.Join(tmpDir, "pairing.json")
@@ -1037,6 +1073,9 @@ func TestHost_RelayLoop_RevokedPairing(t *testing.T) {
 }
 
 func TestHost_PairingCodeNotifyFailure(t *testing.T) {
+	if !x25519OutsideFIPS(t) {
+		return
+	}
 	tmpDir := privateTempDir(t)
 	statePath := filepath.Join(tmpDir, "pairing.json")
 

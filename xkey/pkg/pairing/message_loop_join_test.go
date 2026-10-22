@@ -93,6 +93,9 @@ func (g *gatedSendTransport) SendAndReceive(ctx context.Context, m []byte) ([]by
 // encrypting through the session after Join reported success and the owner
 // freed the key's protected pages.
 func TestJoinWaitsForInFlightSendRequest(t *testing.T) {
+	if !noiseOutsideFIPS(t) {
+		return
+	}
 	session, _ := setupHandshakedNoiseSessions(t)
 
 	transport := newGatedSendTransport()
@@ -151,6 +154,9 @@ func TestJoinWaitsForInFlightSendRequest(t *testing.T) {
 // bottom — so "an error came back" cannot distinguish being refused up front
 // from encrypting through the session and only then noticing.
 func TestSendRequestRefusedAfterStop(t *testing.T) {
+	if !noiseOutsideFIPS(t) {
+		return
+	}
 	session, _ := setupHandshakedNoiseSessions(t)
 
 	transport := newGatedSendTransport()
@@ -185,6 +191,9 @@ func TestSendRequestRefusedAfterStop(t *testing.T) {
 // Per-call waiters did not have this failure, which is why bounding the leak
 // had to be paired with this guard rather than shipped alone.
 func TestJoinBeforeStopDoesNotLatchADrain(t *testing.T) {
+	if !noiseOutsideFIPS(t) {
+		return
+	}
 	session, _ := setupHandshakedNoiseSessions(t)
 
 	transport := newGatedSendTransport()
@@ -231,6 +240,9 @@ func (t immediateErrorTransport) SendAndReceive(ctx context.Context, m []byte) (
 // combines Stop and Join correctly: a router whose receive loop has already
 // exited drains within the timeout.
 func TestStopAndJoin_DrainsIdleRouter(t *testing.T) {
+	if !noiseOutsideFIPS(t) {
+		return
+	}
 	session, _ := setupHandshakedNoiseSessions(t)
 
 	router := NewMessageRouter(immediateErrorTransport{}, session, nil, slog.Default())
@@ -245,6 +257,9 @@ func TestStopAndJoin_DrainsIdleRouter(t *testing.T) {
 // invariant: once Stop has run, nothing may take the WaitGroup from zero to
 // one, because a waiter may already be parked on it.
 func TestStartAfterStopDoesNotRegister(t *testing.T) {
+	if !noiseOutsideFIPS(t) {
+		return
+	}
 	session, _ := setupHandshakedNoiseSessions(t)
 
 	transport := newGatedSendTransport()

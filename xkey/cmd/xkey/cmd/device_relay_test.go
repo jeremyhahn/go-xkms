@@ -21,6 +21,9 @@ import (
 	"github.com/spf13/cobra"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+
+	"github.com/jeremyhahn/go-xkms/pkg/testing/fipstest"
+	"github.com/jeremyhahn/go-xkms/pkg/trust/bootstrap"
 )
 
 // relayCommand builds a *cobra.Command carrying the same flags
@@ -162,6 +165,17 @@ func pairedRelayCommand(t *testing.T, timeout string) (*cobra.Command, *bytes.Bu
 	return cmd, out
 }
 
+// relayOutsideFIPS reports whether the calling test can check runDeviceRelay's
+// result err in this process. The relay loads the paired device's local Noise
+// static key, an X25519 key that crypto/ecdh refuses under
+// GODEBUG=fips140=only (owner ruling 116: refuse what the stdlib refuses), so
+// there it asserts the typed refusal, re-runs the test under fips140=off and
+// returns false; the caller then returns.
+func relayOutsideFIPS(t *testing.T, err error) bool {
+	t.Helper()
+	return fipstest.OutsideFIPSAfterRefusal(t, err, bootstrap.ErrNoiseFIPSUnsupported)
+}
+
 // TestRunDeviceRelay_ServesUntilTimeoutInSoftwareMode pins the relay's whole
 // session: it binds the configured address, reports software attestation,
 // a disabled bridge and refused sync, then stops cleanly at the timeout.
@@ -169,7 +183,11 @@ func TestRunDeviceRelay_ServesUntilTimeoutInSoftwareMode(t *testing.T) {
 	cmd, out := pairedRelayCommand(t, "50ms")
 	require.NoError(t, setFlagForTest(t, cmd.Flags(), "attestation-mode", "software"))
 
-	require.NoError(t, runDeviceRelay(cmd, nil))
+	err := runDeviceRelay(cmd, nil)
+	if !relayOutsideFIPS(t, err) {
+		return
+	}
+	require.NoError(t, err)
 
 	got := out.String()
 	assert.Contains(t, got, "TCP pairing relay listening on 127.0.0.1:")
@@ -190,7 +208,11 @@ func TestRunDeviceRelay_AutoModeFallsBackToSoftwareWithoutATPM(t *testing.T) {
 	require.NoError(t, setFlagForTest(t, cmd.Flags(), "tpm-device", filepath.Join(t.TempDir(), "no-tpm")))
 	require.NoError(t, setFlagForTest(t, cmd.Flags(), "allow-sync", "true"))
 
-	require.NoError(t, runDeviceRelay(cmd, nil))
+	err := runDeviceRelay(cmd, nil)
+	if !relayOutsideFIPS(t, err) {
+		return
+	}
+	require.NoError(t, err)
 
 	assert.Contains(t, out.String(), "Attestation mode: software")
 	assert.Contains(t, out.String(), "Phone sync: allowed for this session")
@@ -204,6 +226,9 @@ func TestRunDeviceRelay_TPM2ModeRefusesWithoutATPM(t *testing.T) {
 	require.NoError(t, setFlagForTest(t, cmd.Flags(), "tpm-device", filepath.Join(t.TempDir(), "no-tpm")))
 
 	err := runDeviceRelay(cmd, nil)
+	if !relayOutsideFIPS(t, err) {
+		return
+	}
 
 	require.ErrorIs(t, err, ErrTPM2InitFailed)
 	assert.NotContains(t, out.String(), "TCP pairing relay listening")
@@ -217,6 +242,9 @@ func TestRunDeviceRelay_UnbindableAddressFailsToStart(t *testing.T) {
 	require.NoError(t, setFlagForTest(t, cmd.Flags(), "listen", "127.0.0.1:not-a-port"))
 
 	err := runDeviceRelay(cmd, nil)
+	if !relayOutsideFIPS(t, err) {
+		return
+	}
 
 	require.ErrorIs(t, err, ErrDeviceRelayStartFailed)
 }

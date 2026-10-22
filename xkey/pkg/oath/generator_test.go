@@ -17,6 +17,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/jeremyhahn/go-xkms/pkg/testing/fipstest"
 )
 
 // RFC 4226 test vectors
@@ -49,10 +51,10 @@ func TestNewGenerator_Success(t *testing.T) {
 			cred: withSecret(&Credential{
 				Name:      "test",
 				Type:      TypeTOTP,
-				Algorithm: AlgorithmSHA1,
+				Algorithm: AlgorithmSHA256,
 				Digits:    6,
 				Period:    30,
-			}, "JBSWY3DPEHPK3PXP"),
+			}, rfcTestSecret),
 		},
 		{
 			name: "HOTP credential",
@@ -100,10 +102,10 @@ func TestNewGenerator_Errors(t *testing.T) {
 			cred: withSecret(&Credential{
 				Name:      "",
 				Type:      TypeTOTP,
-				Algorithm: AlgorithmSHA1,
+				Algorithm: AlgorithmSHA256,
 				Digits:    6,
 				Period:    30,
-			}, "JBSWY3DPEHPK3PXP"),
+			}, rfcTestSecret),
 			wantErr: ErrInvalidCredential,
 		},
 		{
@@ -111,7 +113,7 @@ func TestNewGenerator_Errors(t *testing.T) {
 			cred: withSecret(&Credential{
 				Name:      "test",
 				Type:      TypeTOTP,
-				Algorithm: AlgorithmSHA1,
+				Algorithm: AlgorithmSHA256,
 				Digits:    6,
 				Period:    30,
 			}, ""),
@@ -122,10 +124,10 @@ func TestNewGenerator_Errors(t *testing.T) {
 			cred: withSecret(&Credential{
 				Name:      "test",
 				Type:      "invalid",
-				Algorithm: AlgorithmSHA1,
+				Algorithm: AlgorithmSHA256,
 				Digits:    6,
 				Period:    30,
-			}, "JBSWY3DPEHPK3PXP"),
+			}, rfcTestSecret),
 			wantErr: ErrInvalidType,
 		},
 	}
@@ -152,6 +154,11 @@ func TestGenerator_GenerateCounter_RFC4226(t *testing.T) {
 	}, rfcTestSecret)
 
 	gen, err := NewGenerator(cred)
+	// The RFC 4226 Appendix D vectors are HMAC-SHA-1, which fips140=only
+	// refuses.
+	if !fipstest.OutsideFIPSAfterRefusal(t, err, ErrAlgorithmNotFIPSApproved) {
+		return
+	}
 	if err != nil {
 		t.Fatalf("failed to create generator: %v", err)
 	}
@@ -174,7 +181,6 @@ func TestGenerator_GenerateCounter_DifferentAlgorithms(t *testing.T) {
 		name      string
 		algorithm string
 	}{
-		{name: "SHA1", algorithm: AlgorithmSHA1},
 		{name: "SHA256", algorithm: AlgorithmSHA256},
 		{name: "SHA512", algorithm: AlgorithmSHA512},
 	}
@@ -219,9 +225,9 @@ func TestGenerator_GenerateCounter_DifferentDigits(t *testing.T) {
 			cred := withSecret(&Credential{
 				Name:      "test",
 				Type:      TypeHOTP,
-				Algorithm: AlgorithmSHA1,
+				Algorithm: AlgorithmSHA256,
 				Digits:    tc.digits,
-			}, "JBSWY3DPEHPK3PXP")
+			}, rfcTestSecret)
 
 			gen, err := NewGenerator(cred)
 			if err != nil {
@@ -244,9 +250,9 @@ func TestGenerator_GenerateCounter_Errors(t *testing.T) {
 	cred := withSecret(&Credential{
 		Name:      "test",
 		Type:      TypeHOTP,
-		Algorithm: AlgorithmSHA1,
+		Algorithm: AlgorithmSHA256,
 		Digits:    6,
-	}, "JBSWY3DPEHPK3PXP")
+	}, rfcTestSecret)
 
 	gen, err := NewGenerator(cred)
 	if err != nil {
@@ -268,9 +274,9 @@ func TestGenerator_GenerateCounter_InvalidSecret(t *testing.T) {
 	cred := withSecret(&Credential{
 		Name:      "test",
 		Type:      TypeHOTP,
-		Algorithm: AlgorithmSHA1,
+		Algorithm: AlgorithmSHA256,
 		Digits:    6,
-	}, "JBSWY3DPEHPK3PXP")
+	}, rfcTestSecret)
 
 	gen, err := NewGenerator(cred)
 	if err != nil {
@@ -292,10 +298,10 @@ func TestGenerator_Generate_TOTP(t *testing.T) {
 	cred := withSecret(&Credential{
 		Name:      "test",
 		Type:      TypeTOTP,
-		Algorithm: AlgorithmSHA1,
+		Algorithm: AlgorithmSHA256,
 		Digits:    6,
 		Period:    30,
-	}, "JBSWY3DPEHPK3PXP")
+	}, rfcTestSecret)
 
 	gen, err := NewGenerator(cred)
 	if err != nil {
@@ -321,6 +327,11 @@ func TestGenerator_Generate_HOTP(t *testing.T) {
 	}, rfcTestSecret)
 
 	gen, err := NewGenerator(cred)
+	// The RFC 4226 Appendix D vectors are HMAC-SHA-1, which fips140=only
+	// refuses.
+	if !fipstest.OutsideFIPSAfterRefusal(t, err, ErrAlgorithmNotFIPSApproved) {
+		return
+	}
 	if err != nil {
 		t.Fatalf("failed to create generator: %v", err)
 	}
@@ -339,10 +350,10 @@ func TestGenerator_GenerateAt_Success(t *testing.T) {
 	cred := withSecret(&Credential{
 		Name:      "test",
 		Type:      TypeTOTP,
-		Algorithm: AlgorithmSHA1,
+		Algorithm: AlgorithmSHA256,
 		Digits:    6,
 		Period:    30,
-	}, "JBSWY3DPEHPK3PXP")
+	}, rfcTestSecret)
 
 	gen, err := NewGenerator(cred)
 	if err != nil {
@@ -373,10 +384,10 @@ func TestGenerator_GenerateAt_Error_HOTP(t *testing.T) {
 	cred := withSecret(&Credential{
 		Name:      "test",
 		Type:      TypeHOTP,
-		Algorithm: AlgorithmSHA1,
+		Algorithm: AlgorithmSHA256,
 		Digits:    6,
 		Counter:   0,
-	}, "JBSWY3DPEHPK3PXP")
+	}, rfcTestSecret)
 
 	gen, err := NewGenerator(cred)
 	if err != nil {
@@ -393,10 +404,10 @@ func TestGenerator_Validate_TOTP_Success(t *testing.T) {
 	cred := withSecret(&Credential{
 		Name:      "test",
 		Type:      TypeTOTP,
-		Algorithm: AlgorithmSHA1,
+		Algorithm: AlgorithmSHA256,
 		Digits:    6,
 		Period:    30,
-	}, "JBSWY3DPEHPK3PXP")
+	}, rfcTestSecret)
 
 	gen, err := NewGenerator(cred)
 	if err != nil {
@@ -419,10 +430,10 @@ func TestGenerator_Validate_TOTP_Invalid(t *testing.T) {
 	cred := withSecret(&Credential{
 		Name:      "test",
 		Type:      TypeTOTP,
-		Algorithm: AlgorithmSHA1,
+		Algorithm: AlgorithmSHA256,
 		Digits:    6,
 		Period:    30,
-	}, "JBSWY3DPEHPK3PXP")
+	}, rfcTestSecret)
 
 	gen, err := NewGenerator(cred)
 	if err != nil {
@@ -443,10 +454,10 @@ func TestGenerator_Validate_WrongLength(t *testing.T) {
 	cred := withSecret(&Credential{
 		Name:      "test",
 		Type:      TypeTOTP,
-		Algorithm: AlgorithmSHA1,
+		Algorithm: AlgorithmSHA256,
 		Digits:    6,
 		Period:    30,
-	}, "JBSWY3DPEHPK3PXP")
+	}, rfcTestSecret)
 
 	gen, err := NewGenerator(cred)
 	if err != nil {
@@ -475,10 +486,10 @@ func TestGenerator_ValidateWithSkew_TOTP(t *testing.T) {
 	cred := withSecret(&Credential{
 		Name:      "test",
 		Type:      TypeTOTP,
-		Algorithm: AlgorithmSHA1,
+		Algorithm: AlgorithmSHA256,
 		Digits:    6,
 		Period:    30,
-	}, "JBSWY3DPEHPK3PXP")
+	}, rfcTestSecret)
 
 	gen, err := NewGenerator(cred)
 	if err != nil {
@@ -518,6 +529,11 @@ func TestGenerator_Validate_HOTP_Success(t *testing.T) {
 	}, rfcTestSecret)
 
 	gen, err := NewGenerator(cred)
+	// The RFC 4226 Appendix D vectors are HMAC-SHA-1, which fips140=only
+	// refuses.
+	if !fipstest.OutsideFIPSAfterRefusal(t, err, ErrAlgorithmNotFIPSApproved) {
+		return
+	}
 	if err != nil {
 		t.Fatalf("failed to create generator: %v", err)
 	}
@@ -544,6 +560,11 @@ func TestGenerator_Validate_HOTP_LookAhead(t *testing.T) {
 	}, rfcTestSecret)
 
 	gen, err := NewGenerator(cred)
+	// The RFC 4226 Appendix D vectors are HMAC-SHA-1, which fips140=only
+	// refuses.
+	if !fipstest.OutsideFIPSAfterRefusal(t, err, ErrAlgorithmNotFIPSApproved) {
+		return
+	}
 	if err != nil {
 		t.Fatalf("failed to create generator: %v", err)
 	}
@@ -564,7 +585,7 @@ func TestGenerator_Validate_HOTP_Invalid(t *testing.T) {
 	cred := withSecret(&Credential{
 		Name:      "test",
 		Type:      TypeHOTP,
-		Algorithm: AlgorithmSHA1,
+		Algorithm: AlgorithmSHA256,
 		Digits:    6,
 		Counter:   0,
 	}, rfcTestSecret)
@@ -592,10 +613,10 @@ func TestGenerator_TimeRemaining_TOTP(t *testing.T) {
 	cred := withSecret(&Credential{
 		Name:      "test",
 		Type:      TypeTOTP,
-		Algorithm: AlgorithmSHA1,
+		Algorithm: AlgorithmSHA256,
 		Digits:    6,
 		Period:    30,
-	}, "JBSWY3DPEHPK3PXP")
+	}, rfcTestSecret)
 
 	gen, err := NewGenerator(cred)
 	if err != nil {
@@ -612,10 +633,10 @@ func TestGenerator_TimeRemaining_HOTP(t *testing.T) {
 	cred := withSecret(&Credential{
 		Name:      "test",
 		Type:      TypeHOTP,
-		Algorithm: AlgorithmSHA1,
+		Algorithm: AlgorithmSHA256,
 		Digits:    6,
 		Counter:   0,
-	}, "JBSWY3DPEHPK3PXP")
+	}, rfcTestSecret)
 
 	gen, err := NewGenerator(cred)
 	if err != nil {
@@ -632,10 +653,10 @@ func TestGenerator_Counter_TOTP(t *testing.T) {
 	cred := withSecret(&Credential{
 		Name:      "test",
 		Type:      TypeTOTP,
-		Algorithm: AlgorithmSHA1,
+		Algorithm: AlgorithmSHA256,
 		Digits:    6,
 		Period:    30,
-	}, "JBSWY3DPEHPK3PXP")
+	}, rfcTestSecret)
 
 	gen, err := NewGenerator(cred)
 	if err != nil {
@@ -658,10 +679,10 @@ func TestGenerator_Counter_HOTP(t *testing.T) {
 	cred := withSecret(&Credential{
 		Name:      "test",
 		Type:      TypeHOTP,
-		Algorithm: AlgorithmSHA1,
+		Algorithm: AlgorithmSHA256,
 		Digits:    6,
 		Counter:   42,
-	}, "JBSWY3DPEHPK3PXP")
+	}, rfcTestSecret)
 
 	gen, err := NewGenerator(cred)
 	if err != nil {
@@ -678,10 +699,10 @@ func TestGenerator_IncrementCounter_HOTP(t *testing.T) {
 	cred := withSecret(&Credential{
 		Name:      "test",
 		Type:      TypeHOTP,
-		Algorithm: AlgorithmSHA1,
+		Algorithm: AlgorithmSHA256,
 		Digits:    6,
 		Counter:   0,
-	}, "JBSWY3DPEHPK3PXP")
+	}, rfcTestSecret)
 
 	gen, err := NewGenerator(cred)
 	if err != nil {
@@ -703,10 +724,10 @@ func TestGenerator_IncrementCounter_TOTP(t *testing.T) {
 	cred := withSecret(&Credential{
 		Name:      "test",
 		Type:      TypeTOTP,
-		Algorithm: AlgorithmSHA1,
+		Algorithm: AlgorithmSHA256,
 		Digits:    6,
 		Period:    30,
-	}, "JBSWY3DPEHPK3PXP")
+	}, rfcTestSecret)
 
 	gen, err := NewGenerator(cred)
 	if err != nil {
@@ -725,7 +746,7 @@ func TestGenerator_LeadingZeros(t *testing.T) {
 	cred := withSecret(&Credential{
 		Name:      "test",
 		Type:      TypeHOTP,
-		Algorithm: AlgorithmSHA1,
+		Algorithm: AlgorithmSHA256,
 		Digits:    6,
 		Counter:   0,
 	}, rfcTestSecret)
@@ -751,10 +772,10 @@ func TestGenerator_TimeBasedConsistency(t *testing.T) {
 	cred := withSecret(&Credential{
 		Name:      "test",
 		Type:      TypeTOTP,
-		Algorithm: AlgorithmSHA1,
+		Algorithm: AlgorithmSHA256,
 		Digits:    6,
 		Period:    30,
-	}, "JBSWY3DPEHPK3PXP")
+	}, rfcTestSecret)
 
 	gen, err := NewGenerator(cred)
 	if err != nil {
@@ -804,10 +825,10 @@ func TestGenerator_DifferentPeriods(t *testing.T) {
 			cred := withSecret(&Credential{
 				Name:      "test",
 				Type:      TypeTOTP,
-				Algorithm: AlgorithmSHA1,
+				Algorithm: AlgorithmSHA256,
 				Digits:    6,
 				Period:    tc.period,
-			}, "JBSWY3DPEHPK3PXP")
+			}, rfcTestSecret)
 
 			gen, err := NewGenerator(cred)
 			if err != nil {

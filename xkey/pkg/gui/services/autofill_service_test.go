@@ -114,13 +114,13 @@ func newTestAutoFillService(t *testing.T) (*AutoFillService, *audit.BackendStore
 		Issuer:      "GitHub",
 		AccountName: "octocat",
 		Type:        oath.TypeTOTP,
-		Algorithm:   oath.AlgorithmSHA1,
+		Algorithm:   oath.AlgorithmSHA256,
 		Digits:      6,
 		Period:      30,
 	}
 	// The secret lives in protected memory behind SetSecret (#210); it is no
 	// longer a literal field.
-	require.NoError(t, githubCred.SetSecret([]byte("JBSWY3DPEHPK3PXP")))
+	require.NoError(t, githubCred.SetSecret([]byte("GEZDGNBVGY3TQOJQGEZDGNBVGY3TQOJQ")))
 	require.NoError(t, oathStore.Add(githubCred))
 	oathSvc := NewOATHService(oathStore)
 

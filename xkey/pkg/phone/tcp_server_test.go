@@ -125,6 +125,9 @@ func clientHandshake(t *testing.T, conn net.Conn) *bootstrap.NoiseSession {
 }
 
 func TestTCPPairingServer_StartStop(t *testing.T) {
+	if !noiseOutsideFIPS(t) {
+		return
+	}
 	srv, err := NewTCPPairingServer(&TCPPairingConfig{
 		ListenAddr: "127.0.0.1:0",
 	})
@@ -157,6 +160,9 @@ func TestTCPPairingServer_StartStop(t *testing.T) {
 }
 
 func TestTCPPairingServer_NilConfig(t *testing.T) {
+	if !noiseOutsideFIPS(t) {
+		return
+	}
 	srv, err := NewTCPPairingServer(nil)
 	if err != nil {
 		t.Fatalf("NewTCPPairingServer(nil): %v", err)
@@ -173,6 +179,9 @@ func TestTCPPairingServer_NilConfig(t *testing.T) {
 }
 
 func TestTCPPairingServer_DoubleStart(t *testing.T) {
+	if !noiseOutsideFIPS(t) {
+		return
+	}
 	srv, err := NewTCPPairingServer(&TCPPairingConfig{
 		ListenAddr: "127.0.0.1:0",
 	})
@@ -192,6 +201,9 @@ func TestTCPPairingServer_DoubleStart(t *testing.T) {
 }
 
 func TestTCPPairingServer_StopNotRunning(t *testing.T) {
+	if !noiseOutsideFIPS(t) {
+		return
+	}
 	srv, err := NewTCPPairingServer(&TCPPairingConfig{
 		ListenAddr: "127.0.0.1:0",
 	})
@@ -206,6 +218,9 @@ func TestTCPPairingServer_StopNotRunning(t *testing.T) {
 }
 
 func TestTCPPairingServer_HandshakeAndRequest(t *testing.T) {
+	if !noiseOutsideFIPS(t) {
+		return
+	}
 	// Prepare a handler that returns a known JSON-RPC response.
 	expectedResponse := `{"jsonrpc":"2.0","id":1,"result":{"pong":true}}`
 	handler := &mockRequestHandler{
@@ -271,6 +286,9 @@ func TestTCPPairingServer_HandshakeAndRequest(t *testing.T) {
 }
 
 func TestTCPPairingServer_MultipleConnections(t *testing.T) {
+	if !noiseOutsideFIPS(t) {
+		return
+	}
 	handler := &mockRequestHandler{}
 
 	srv, err := NewTCPPairingServer(&TCPPairingConfig{
@@ -328,6 +346,9 @@ func TestTCPPairingServer_MultipleConnections(t *testing.T) {
 }
 
 func TestTCPPairingServer_StopDrainsConnections(t *testing.T) {
+	if !noiseOutsideFIPS(t) {
+		return
+	}
 	// Use a handler that blocks until we signal it, proving the server
 	// waits for active connections to finish.
 	blockCh := make(chan struct{})
@@ -393,6 +414,9 @@ func TestTCPPairingServer_StopDrainsConnections(t *testing.T) {
 }
 
 func TestTCPPairingServer_LocalStaticPublicKey(t *testing.T) {
+	if !noiseOutsideFIPS(t) {
+		return
+	}
 	key, err := bootstrap.GenerateNoiseStaticKey()
 	if err != nil {
 		t.Fatalf("GenerateStaticKey: %v", err)
@@ -440,6 +464,9 @@ func TestTCPPairingServer_LocalStaticPublicKey(t *testing.T) {
 }
 
 func TestTCPPairingServer_AddrBeforeStart(t *testing.T) {
+	if !noiseOutsideFIPS(t) {
+		return
+	}
 	srv, err := NewTCPPairingServer(&TCPPairingConfig{
 		ListenAddr: "127.0.0.1:0",
 	})
@@ -454,6 +481,9 @@ func TestTCPPairingServer_AddrBeforeStart(t *testing.T) {
 }
 
 func TestTCPPairingServer_NoHandler(t *testing.T) {
+	if !noiseOutsideFIPS(t) {
+		return
+	}
 	// Server with no RequestHandler should return a "method not found" error.
 	srv, err := NewTCPPairingServer(&TCPPairingConfig{
 		ListenAddr: "127.0.0.1:0",
@@ -515,6 +545,9 @@ func TestTCPPairingServer_NoHandler(t *testing.T) {
 }
 
 func TestTCPPairingServer_HandlerError(t *testing.T) {
+	if !noiseOutsideFIPS(t) {
+		return
+	}
 	// Server handler that returns an error should produce an internal error response.
 	handler := &mockRequestHandler{
 		returnErr: errors.New("handler failure"),
@@ -578,6 +611,9 @@ func TestTCPPairingServer_HandlerError(t *testing.T) {
 }
 
 func TestTCPPairingServer_StartAfterStop(t *testing.T) {
+	if !noiseOutsideFIPS(t) {
+		return
+	}
 	srv, err := NewTCPPairingServer(&TCPPairingConfig{
 		ListenAddr: "127.0.0.1:0",
 	})
@@ -600,6 +636,9 @@ func TestTCPPairingServer_StartAfterStop(t *testing.T) {
 }
 
 func TestTCPPairingServer_StartBadAddress(t *testing.T) {
+	if !noiseOutsideFIPS(t) {
+		return
+	}
 	srv, err := NewTCPPairingServer(&TCPPairingConfig{
 		ListenAddr: "invalid-address-no-port",
 	})
@@ -614,6 +653,9 @@ func TestTCPPairingServer_StartBadAddress(t *testing.T) {
 }
 
 func TestTCPPairingServer_ConcurrentConnections(t *testing.T) {
+	if !noiseOutsideFIPS(t) {
+		return
+	}
 	handler := &mockRequestHandler{}
 
 	srv, err := NewTCPPairingServer(&TCPPairingConfig{
@@ -692,6 +734,9 @@ func TestTCPPairingServer_ConcurrentConnections(t *testing.T) {
 }
 
 func TestTCPPairingServer_DefaultTimeouts(t *testing.T) {
+	if !noiseOutsideFIPS(t) {
+		return
+	}
 	srv, err := NewTCPPairingServer(nil)
 	if err != nil {
 		t.Fatalf("NewTCPPairingServer: %v", err)
@@ -735,6 +780,9 @@ func TestTCPPairingServer_DefaultTimeouts(t *testing.T) {
 }
 
 func TestTCPPairingServer_MaxConnections(t *testing.T) {
+	if !noiseOutsideFIPS(t) {
+		return
+	}
 	handler := &mockRequestHandler{}
 
 	srv, err := NewTCPPairingServer(&TCPPairingConfig{
@@ -792,6 +840,9 @@ func TestTCPPairingServer_MaxConnections(t *testing.T) {
 }
 
 func TestTCPPairingServer_HandshakeTimeout(t *testing.T) {
+	if !noiseOutsideFIPS(t) {
+		return
+	}
 	srv, err := NewTCPPairingServer(&TCPPairingConfig{
 		ListenAddr:       "127.0.0.1:0",
 		HandshakeTimeout: 150 * time.Millisecond,
@@ -864,6 +915,9 @@ func (c *failingDeadlineConn) SetWriteDeadline(t time.Time) error {
 // connection, that read blocks forever instead of ever timing out. Here nothing
 // is ever written to the pipe, so the old behavior would hang this test.
 func TestTCPPairingServer_HandshakeDeadlineFailureReturnsPromptly(t *testing.T) {
+	if !noiseOutsideFIPS(t) {
+		return
+	}
 	srv, err := NewTCPPairingServer(&TCPPairingConfig{
 		HandshakeTimeout: time.Second,
 	})
@@ -902,6 +956,9 @@ func TestTCPPairingServer_HandshakeDeadlineFailureReturnsPromptly(t *testing.T) 
 // reason: silently reading with no idle-timeout deadline set would hang this
 // test forever since nothing is ever written to the pipe.
 func TestTCPPairingServer_RequestLoopReadDeadlineFailureReturnsPromptly(t *testing.T) {
+	if !noiseOutsideFIPS(t) {
+		return
+	}
 	srv, err := NewTCPPairingServer(&TCPPairingConfig{
 		IdleTimeout: time.Second,
 	})
@@ -1007,6 +1064,9 @@ func TestTCPReceive_ConnectionClosed(t *testing.T) {
 // caller, so Stop must leave it usable. Destroying a borrowed key would free
 // pages another session is still reading.
 func TestTCPPairingServer_StopKeepsSuppliedKey(t *testing.T) {
+	if !noiseOutsideFIPS(t) {
+		return
+	}
 	key, err := bootstrap.GenerateNoiseStaticKey()
 	if err != nil {
 		t.Fatalf("GenerateStaticKey: %v", err)
@@ -1042,6 +1102,9 @@ func TestTCPPairingServer_StopKeepsSuppliedKey(t *testing.T) {
 // server generated itself has no other owner, so Stop must release it rather
 // than leave a locked page resident.
 func TestTCPPairingServer_StopReleasesGeneratedKey(t *testing.T) {
+	if !noiseOutsideFIPS(t) {
+		return
+	}
 	srv, err := NewTCPPairingServer(&TCPPairingConfig{
 		ListenAddr:     "127.0.0.1:0",
 		RequestHandler: &mockRequestHandler{},
@@ -1094,6 +1157,9 @@ func TestTCPPairingServer_StopReleasesGeneratedKey(t *testing.T) {
 // the key, so a Start that cannot bind would otherwise strand a locked page
 // with no cleanup path — Stop reported "not running" and returned early.
 func TestTCPPairingServer_StopReleasesKeyAfterFailedStart(t *testing.T) {
+	if !noiseOutsideFIPS(t) {
+		return
+	}
 	// Occupy an address so the server's bind is guaranteed to fail.
 	occupied, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
@@ -1150,6 +1216,9 @@ func (h *hangingHandler) HandleRequest(context.Context, []byte) ([]byte, error) 
 // handler that called LocalStaticPublicKey would take the read side of
 // lifecycleMu and deadlock against the Stop waiting for it.
 func TestStopBoundsTheHandlerJoin(t *testing.T) {
+	if !noiseOutsideFIPS(t) {
+		return
+	}
 	original := serverShutdownTimeout
 	serverShutdownTimeout = 150 * time.Millisecond
 	t.Cleanup(func() { serverShutdownTimeout = original })
@@ -1203,6 +1272,9 @@ func TestStopBoundsTheHandlerJoin(t *testing.T) {
 // use-after-free the bounded join exists to prevent. Both callers now observe
 // the same latched outcome.
 func TestSecondStopDoesNotDestroyARetainedKey(t *testing.T) {
+	if !noiseOutsideFIPS(t) {
+		return
+	}
 	original := serverShutdownTimeout
 	serverShutdownTimeout = 100 * time.Millisecond
 	t.Cleanup(func() { serverShutdownTimeout = original })
@@ -1253,6 +1325,9 @@ func TestSecondStopDoesNotDestroyARetainedKey(t *testing.T) {
 // config cannot hand the same protected pages to a second owner, and destroy
 // it on Stop exactly like a key it generated itself.
 func TestTCPPairingServer_OwnsSuppliedKey(t *testing.T) {
+	if !noiseOutsideFIPS(t) {
+		return
+	}
 	key, err := bootstrap.GenerateNoiseStaticKey()
 	if err != nil {
 		t.Fatalf("GenerateStaticKey: %v", err)
@@ -1298,6 +1373,9 @@ func TestTCPPairingServer_OwnsSuppliedKey(t *testing.T) {
 // constructor must still register connections correctly rather than panic
 // on a nil map write.
 func TestTCPPairingServer_TrackConnInitializesNilMap(t *testing.T) {
+	if !noiseOutsideFIPS(t) {
+		return
+	}
 	s := &TCPPairingServer{}
 	if s.conns != nil {
 		t.Fatal("test setup: expected a nil conns map")
@@ -1338,6 +1416,9 @@ func (l *flakyOnceListener) Accept() (net.Conn, error) {
 // loop: a listener that errors once, then a real client that completes a
 // full handshake afterward, shows the loop kept serving.
 func TestAcceptLoop_TransientErrorContinuesAccepting(t *testing.T) {
+	if !noiseOutsideFIPS(t) {
+		return
+	}
 	real, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
 		t.Fatalf("net.Listen: %v", err)

@@ -577,7 +577,7 @@ func (c *Credential) Validate() error {
 	// decoding it. Base32 without padding is exactly five bits per character,
 	// so the decoded size is arithmetic and the key itself is never
 	// materialised here. Validate runs on every store write.
-	if shortHMACKeysRefused() &&
+	if fipsMode() &&
 		base32.StdEncoding.WithPadding(base32.NoPadding).DecodedLen(len(normalized)) < fipsMinSecretBytes {
 		return ErrSecretTooShortForFIPS
 	}

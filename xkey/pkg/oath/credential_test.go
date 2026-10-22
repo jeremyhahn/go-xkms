@@ -14,6 +14,7 @@
 package oath
 
 import (
+	"encoding/base32"
 	"encoding/json"
 	"errors"
 	"strings"
@@ -73,8 +74,10 @@ func TestNewCredential_Success(t *testing.T) {
 			if secretText(cred) == "" {
 				t.Error("expected non-empty secret")
 			}
-			if cred.Algorithm != DefaultAlgorithm {
-				t.Errorf("expected algorithm %q, got %q", DefaultAlgorithm, cred.Algorithm)
+			// The mode-dependent choice itself is pinned by
+			// TestNewCredential_AlgorithmFollowsFIPSMode.
+			if want := defaultAlgorithmForMode(); cred.Algorithm != want {
+				t.Errorf("expected algorithm %q, got %q", want, cred.Algorithm)
 			}
 			if cred.Digits != DefaultDigits {
 				t.Errorf("expected digits %d, got %d", DefaultDigits, cred.Digits)
@@ -594,10 +597,10 @@ func TestCredential_Validate_Success(t *testing.T) {
 			cred: withSecret(&Credential{
 				Name:      "test",
 				Type:      TypeTOTP,
-				Algorithm: AlgorithmSHA1,
+				Algorithm: AlgorithmSHA256,
 				Digits:    6,
 				Period:    30,
-			}, "JBSWY3DPEHPK3PXP"),
+			}, rfcTestSecret),
 		},
 		{
 			name: "valid HOTP credential",
@@ -641,10 +644,10 @@ func TestCredential_Validate_Errors(t *testing.T) {
 			cred: withSecret(&Credential{
 				Name:      "",
 				Type:      TypeTOTP,
-				Algorithm: AlgorithmSHA1,
+				Algorithm: AlgorithmSHA256,
 				Digits:    6,
 				Period:    30,
-			}, "JBSWY3DPEHPK3PXP"),
+			}, rfcTestSecret),
 			wantErr: ErrInvalidCredential,
 		},
 		{
@@ -652,7 +655,7 @@ func TestCredential_Validate_Errors(t *testing.T) {
 			cred: withSecret(&Credential{
 				Name:      "test",
 				Type:      TypeTOTP,
-				Algorithm: AlgorithmSHA1,
+				Algorithm: AlgorithmSHA256,
 				Digits:    6,
 				Period:    30,
 			}, ""),
@@ -663,10 +666,10 @@ func TestCredential_Validate_Errors(t *testing.T) {
 			cred: withSecret(&Credential{
 				Name:      "test",
 				Type:      "invalid",
-				Algorithm: AlgorithmSHA1,
+				Algorithm: AlgorithmSHA256,
 				Digits:    6,
 				Period:    30,
-			}, "JBSWY3DPEHPK3PXP"),
+			}, rfcTestSecret),
 			wantErr: ErrInvalidType,
 		},
 		{
@@ -685,10 +688,10 @@ func TestCredential_Validate_Errors(t *testing.T) {
 			cred: withSecret(&Credential{
 				Name:      "test",
 				Type:      TypeTOTP,
-				Algorithm: AlgorithmSHA1,
+				Algorithm: AlgorithmSHA256,
 				Digits:    5,
 				Period:    30,
-			}, "JBSWY3DPEHPK3PXP"),
+			}, rfcTestSecret),
 			wantErr: ErrInvalidDigits,
 		},
 		{
@@ -696,10 +699,10 @@ func TestCredential_Validate_Errors(t *testing.T) {
 			cred: withSecret(&Credential{
 				Name:      "test",
 				Type:      TypeTOTP,
-				Algorithm: AlgorithmSHA1,
+				Algorithm: AlgorithmSHA256,
 				Digits:    9,
 				Period:    30,
-			}, "JBSWY3DPEHPK3PXP"),
+			}, rfcTestSecret),
 			wantErr: ErrInvalidDigits,
 		},
 		{
@@ -707,10 +710,10 @@ func TestCredential_Validate_Errors(t *testing.T) {
 			cred: withSecret(&Credential{
 				Name:      "test",
 				Type:      TypeTOTP,
-				Algorithm: AlgorithmSHA1,
+				Algorithm: AlgorithmSHA256,
 				Digits:    6,
 				Period:    0,
-			}, "JBSWY3DPEHPK3PXP"),
+			}, rfcTestSecret),
 			wantErr: ErrInvalidPeriod,
 		},
 		{
@@ -718,10 +721,10 @@ func TestCredential_Validate_Errors(t *testing.T) {
 			cred: withSecret(&Credential{
 				Name:      "test",
 				Type:      TypeTOTP,
-				Algorithm: AlgorithmSHA1,
+				Algorithm: AlgorithmSHA256,
 				Digits:    6,
 				Period:    -1,
-			}, "JBSWY3DPEHPK3PXP"),
+			}, rfcTestSecret),
 			wantErr: ErrInvalidPeriod,
 		},
 		{
@@ -729,7 +732,7 @@ func TestCredential_Validate_Errors(t *testing.T) {
 			cred: withSecret(&Credential{
 				Name:      "test",
 				Type:      TypeTOTP,
-				Algorithm: AlgorithmSHA1,
+				Algorithm: AlgorithmSHA256,
 				Digits:    6,
 				Period:    30,
 			}, "invalid!!!secret"),
@@ -772,16 +775,15 @@ func TestGenerateSecret_Success(t *testing.T) {
 				t.Error("expected non-empty secret")
 			}
 
-			// Verify it's valid base32
-			cred := withSecret(&Credential{
-				Name:      "test",
-				Type:      TypeTOTP,
-				Algorithm: AlgorithmSHA1,
-				Digits:    6,
-				Period:    30,
-			}, secret)
-			if err := cred.Validate(); err != nil {
-				t.Errorf("generated secret is not valid base32: %v", err)
+			// Verify it's valid base32 encoding exactly tc.length bytes. Decoded
+			// directly rather than through Validate, which under fips140=only
+			// also refuses the 10-byte case as too short for HMAC.
+			raw, err := base32.StdEncoding.WithPadding(base32.NoPadding).DecodeString(strings.TrimRight(secret, "="))
+			if err != nil {
+				t.Fatalf("generated secret is not valid base32: %v", err)
+			}
+			if len(raw) != tc.length {
+				t.Errorf("generated secret decodes to %d bytes, want %d", len(raw), tc.length)
 			}
 		})
 	}
@@ -865,11 +867,11 @@ func TestCredential_HOTP_ZeroPeriod(t *testing.T) {
 	cred := withSecret(&Credential{
 		Name:      "test",
 		Type:      TypeHOTP,
-		Algorithm: AlgorithmSHA1,
+		Algorithm: AlgorithmSHA256,
 		Digits:    6,
 		Period:    0, // HOTP doesn't use period
 		Counter:   0,
-	}, "JBSWY3DPEHPK3PXP")
+	}, rfcTestSecret)
 
 	// HOTP with zero period should still fail because period validation
 	// only applies to TOTP. Let's check the actual behavior.
@@ -1360,12 +1362,12 @@ func TestCredential_BackendID_StoreRoundTrip(t *testing.T) {
 		Issuer:      "BackendTest",
 		AccountName: "user",
 		Type:        TypeTOTP,
-		Algorithm:   AlgorithmSHA1,
+		Algorithm:   AlgorithmSHA256,
 		Digits:      DefaultDigits,
 		Period:      DefaultPeriod,
 		CreatedAt:   time.Now(),
 		BackendID:   "pkcs11-slot-3",
-	}, "JBSWY3DPEHPK3PXP")
+	}, rfcTestSecret)
 
 	if err := store.Add(cred); err != nil {
 		t.Fatalf("failed to add credential: %v", err)

@@ -178,6 +178,9 @@ func dialPhoneBackend(t *testing.T, srv *TCPPairingServer, cfg *PhoneKeyBackendC
 // path: TCPTransport -> identity exchange -> Noise XX -> encrypted JSON-RPC for
 // every PhoneKeyBackend operation, against a real listener.
 func TestTCPPairingServer_EndToEndWithPhoneBackend(t *testing.T) {
+	if !noiseOutsideFIPS(t) {
+		return
+	}
 	t.Parallel()
 
 	handler := &rpcTestHandler{}
@@ -251,6 +254,9 @@ func TestTCPPairingServer_EndToEndWithPhoneBackend(t *testing.T) {
 // TestTCPPairingServer_RemoteKeyMismatchAbortsHandshake proves the backend
 // refuses a server whose static key differs from the pinned one.
 func TestTCPPairingServer_RemoteKeyMismatchAbortsHandshake(t *testing.T) {
+	if !noiseOutsideFIPS(t) {
+		return
+	}
 	t.Parallel()
 
 	srv := startTCPPairingServer(t, &TCPPairingConfig{RequestHandler: &rpcTestHandler{}})
@@ -308,6 +314,9 @@ func TestTCPPairingServer_RemoteKeyMismatchAbortsHandshake(t *testing.T) {
 // any I/O. No polling and no sleep: the ordering is established by the
 // preceding call, not waited for.
 func TestTCPPairingServer_MidStreamTransportFailure(t *testing.T) {
+	if !noiseOutsideFIPS(t) {
+		return
+	}
 	t.Parallel()
 
 	srv := startTCPPairingServer(t, &TCPPairingConfig{RequestHandler: &rpcTestHandler{}})
@@ -341,6 +350,9 @@ func TestTCPPairingServer_MidStreamTransportFailure(t *testing.T) {
 // TestTCPPairingServer_PhoneErrorResponseIsMapped verifies a JSON-RPC error
 // from the peripheral is mapped to the corresponding typed error.
 func TestTCPPairingServer_PhoneErrorResponseIsMapped(t *testing.T) {
+	if !noiseOutsideFIPS(t) {
+		return
+	}
 	t.Parallel()
 
 	handler := &rpcTestHandler{failMethod: pairingproto.MethodSign, failCode: pairingproto.ErrorCodeUserCancelled}
@@ -363,6 +375,9 @@ func TestTCPPairingServer_PhoneErrorResponseIsMapped(t *testing.T) {
 // TestTCPPairingServer_HandshakeMsg1GarbageClosesConnection ensures the server
 // drops a peer that sends a malformed Noise msg1 rather than proceeding.
 func TestTCPPairingServer_HandshakeMsg1GarbageClosesConnection(t *testing.T) {
+	if !noiseOutsideFIPS(t) {
+		return
+	}
 	t.Parallel()
 
 	srv := startTCPPairingServer(t, &TCPPairingConfig{RequestHandler: &rpcTestHandler{}})
@@ -390,6 +405,9 @@ func TestTCPPairingServer_HandshakeMsg1GarbageClosesConnection(t *testing.T) {
 // TestTCPPairingServer_HandshakeMsg3GarbageClosesConnection ensures a peer that
 // completes msg1/msg2 but sends a corrupt msg3 is dropped.
 func TestTCPPairingServer_HandshakeMsg3GarbageClosesConnection(t *testing.T) {
+	if !noiseOutsideFIPS(t) {
+		return
+	}
 	t.Parallel()
 
 	srv := startTCPPairingServer(t, &TCPPairingConfig{RequestHandler: &rpcTestHandler{}})
@@ -420,6 +438,9 @@ func TestTCPPairingServer_HandshakeMsg3GarbageClosesConnection(t *testing.T) {
 // TestTCPPairingServer_UndecryptableRequestClosesConnection ensures a forged or
 // replayed ciphertext terminates the session instead of being processed.
 func TestTCPPairingServer_UndecryptableRequestClosesConnection(t *testing.T) {
+	if !noiseOutsideFIPS(t) {
+		return
+	}
 	t.Parallel()
 
 	handler := &rpcTestHandler{}
@@ -460,6 +481,9 @@ func TestTCPPairingServer_UndecryptableRequestClosesConnection(t *testing.T) {
 // TestTCPPairingServer_IdleTimeoutClosesConnection verifies the idle timeout is
 // enforced on an established encrypted session.
 func TestTCPPairingServer_IdleTimeoutClosesConnection(t *testing.T) {
+	if !noiseOutsideFIPS(t) {
+		return
+	}
 	t.Parallel()
 
 	srv := startTCPPairingServer(t, &TCPPairingConfig{
@@ -481,6 +505,9 @@ func TestTCPPairingServer_IdleTimeoutClosesConnection(t *testing.T) {
 // TestTCPPairingServer_SkipsIdentityExchange verifies the documented tolerance
 // for peers that jump straight to Noise msg1 without the identity preamble.
 func TestTCPPairingServer_SkipsIdentityExchange(t *testing.T) {
+	if !noiseOutsideFIPS(t) {
+		return
+	}
 	t.Parallel()
 
 	handler := &rpcTestHandler{}
@@ -515,6 +542,9 @@ func TestTCPPairingServer_SkipsIdentityExchange(t *testing.T) {
 // TestTCPPairingServer_IdentityAckThenDisconnect covers the server's handling
 // of a peer that starts the identity exchange and then vanishes.
 func TestTCPPairingServer_IdentityAckThenDisconnect(t *testing.T) {
+	if !noiseOutsideFIPS(t) {
+		return
+	}
 	t.Parallel()
 
 	srv := startTCPPairingServer(t, &TCPPairingConfig{RequestHandler: &rpcTestHandler{}})
@@ -547,6 +577,9 @@ func TestTCPPairingServer_IdentityAckThenDisconnect(t *testing.T) {
 // TestTCPPairingServer_LocalStaticPublicKeyNilKey covers the defensive nil-key
 // branch of LocalStaticPublicKey.
 func TestTCPPairingServer_LocalStaticPublicKeyNilKey(t *testing.T) {
+	if !noiseOutsideFIPS(t) {
+		return
+	}
 	t.Parallel()
 
 	srv := &TCPPairingServer{}
@@ -558,6 +591,9 @@ func TestTCPPairingServer_LocalStaticPublicKeyNilKey(t *testing.T) {
 // timeout expires. Before the fix, Stop blocked for the full IdleTimeout
 // (5 minutes by default) whenever a peer stayed connected without sending.
 func TestTCPPairingServer_StopClosesIdleConnection(t *testing.T) {
+	if !noiseOutsideFIPS(t) {
+		return
+	}
 	t.Parallel()
 
 	srv := startTCPPairingServer(t, &TCPPairingConfig{
@@ -591,6 +627,9 @@ func TestTCPPairingServer_StopClosesIdleConnection(t *testing.T) {
 // TestTCPPairingServer_DisconnectBeforeMsg3 covers the server's handling of a
 // peer that abandons the handshake after receiving msg2.
 func TestTCPPairingServer_DisconnectBeforeMsg3(t *testing.T) {
+	if !noiseOutsideFIPS(t) {
+		return
+	}
 	t.Parallel()
 
 	srv := startTCPPairingServer(t, &TCPPairingConfig{RequestHandler: &rpcTestHandler{}})
@@ -633,6 +672,9 @@ func TestTCPPairingServer_DisconnectBeforeMsg3(t *testing.T) {
 // session whose framing is inconsistent instead of blocking forever on a
 // length prefix that will never be satisfied.
 func TestTCPPairingServer_TruncatedRequestFrame(t *testing.T) {
+	if !noiseOutsideFIPS(t) {
+		return
+	}
 	t.Parallel()
 
 	handler := &rpcTestHandler{}

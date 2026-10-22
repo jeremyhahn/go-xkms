@@ -376,6 +376,10 @@ func TestImportMissingSourceProfile(t *testing.T) {
 // TestLaunchIncludeExtensionsSharedModeRejected verifies that requesting
 // extension import in shared mode returns the unsupported sentinel error.
 func TestLaunchIncludeExtensionsSharedModeRejected(t *testing.T) {
+	if !nssdbOutsideFIPS(t) {
+		return
+	}
+
 	cert := testSecureBrowserCA(t, "Shared Ext CA")
 	svc, _ := newTestSecureBrowserService(t, []*x509.Certificate{cert})
 	svc.SetContext(context.Background())
@@ -397,6 +401,10 @@ func TestLaunchIncludeExtensionsSharedModeRejected(t *testing.T) {
 // TestLaunchIncludeExtensionsFirefoxRejected verifies that requesting
 // extension import for Firefox returns the unsupported sentinel error.
 func TestLaunchIncludeExtensionsFirefoxRejected(t *testing.T) {
+	if !nssdbOutsideFIPS(t) {
+		return
+	}
+
 	cert := testSecureBrowserCA(t, "Firefox Ext CA")
 	svc, _ := newTestSecureBrowserService(t, []*x509.Certificate{cert})
 	svc.SetContext(context.Background())
@@ -414,6 +422,10 @@ func TestLaunchIncludeExtensionsFirefoxRejected(t *testing.T) {
 // TestLaunchWithExtensionsEndToEnd verifies the full Chrome isolated launch
 // path imports extensions and reports the count on the result.
 func TestLaunchWithExtensionsEndToEnd(t *testing.T) {
+	if !nssdbOutsideFIPS(t) {
+		return
+	}
+
 	cert := testSecureBrowserCA(t, "E2E Ext CA")
 	svc, baseDir := newTestSecureBrowserService(t, []*x509.Certificate{cert})
 	svc.SetContext(context.Background())
@@ -558,6 +570,10 @@ func TestImportNoNativeMessagingHosts(t *testing.T) {
 // TestLaunchExtensionsViaConfigField verifies the persisted config field
 // enables import even without the per-launch option override.
 func TestLaunchExtensionsViaConfigField(t *testing.T) {
+	if !nssdbOutsideFIPS(t) {
+		return
+	}
+
 	cert := testSecureBrowserCA(t, "Config Ext CA")
 	svc, _ := newTestSecureBrowserService(t, []*x509.Certificate{cert})
 	svc.SetContext(context.Background())

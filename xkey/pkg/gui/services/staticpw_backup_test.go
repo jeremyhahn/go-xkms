@@ -59,11 +59,15 @@ func TestPasswordBackup_HeaderCarriesSaltAndParams(t *testing.T) {
 	assert.Equal(t, passwordBackupVersion, envelope.Version)
 	assert.Equal(t, "aes-128", envelope.Algorithm)
 	require.NotNil(t, envelope.KDF)
-	assert.EqualValues(t, "Argon2id", envelope.KDF.Algorithm)
-	assert.EqualValues(t, 3, envelope.KDF.Time)
-	assert.EqualValues(t, 64*1024, envelope.KDF.MemoryKiB)
-	assert.EqualValues(t, 4, envelope.KDF.Threads)
 	assert.GreaterOrEqual(t, len(envelope.KDF.Salt), 16)
+
+	// The header records exactly the FIPS-aware hasher's parameters:
+	// Argon2id normally, PBKDF2-SHA256 when the FIPS 140 module is on.
+	want, err := xkms.NewFIPSAwareHasher().NewKeyParams()
+	require.NoError(t, err)
+	got := *envelope.KDF
+	got.Salt, want.Salt = nil, nil
+	assert.Equal(t, *want, got)
 }
 
 func TestPasswordBackup_SamePasswordAndDataDiffer(t *testing.T) {

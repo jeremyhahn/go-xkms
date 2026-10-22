@@ -1619,7 +1619,7 @@ func TestP5B_OATHService_AddAccountFromURI_CaseInsensitive(t *testing.T) {
 	store := oath.NewMemoryStore()
 	svc := NewOATHService(store)
 
-	acct, err := svc.AddAccountFromURI("OTPAUTH://totp/Test:user@example.com?secret=JBSWY3DPEHPK3PXP&issuer=Test")
+	acct, err := svc.AddAccountFromURI("OTPAUTH://totp/Test:user@example.com?secret=GEZDGNBVGY3TQOJQGEZDGNBVGY3TQOJQ&algorithm=SHA256&issuer=Test")
 	assert.NoError(t, err)
 	require.NotNil(t, acct)
 }
@@ -1641,7 +1641,7 @@ func TestP5B_OATHService_GenerateTOTP_WrongType(t *testing.T) {
 	svc := NewOATHService(store)
 
 	// Add an HOTP credential.
-	_, err := svc.AddAccount("otpauth://hotp/Test:user@example.com?secret=JBSWY3DPEHPK3PXP&issuer=Test&counter=0")
+	_, err := svc.AddAccount("otpauth://hotp/Test:user@example.com?secret=GEZDGNBVGY3TQOJQGEZDGNBVGY3TQOJQ&algorithm=SHA256&issuer=Test&counter=0")
 	require.NoError(t, err)
 
 	accounts, err := svc.ListAccounts()
@@ -1659,7 +1659,7 @@ func TestP5B_OATHService_GenerateHOTP_WrongType(t *testing.T) {
 	svc := NewOATHService(store)
 
 	// Add a TOTP credential.
-	_, err := svc.AddAccount("otpauth://totp/Test:user@example.com?secret=JBSWY3DPEHPK3PXP&issuer=Test")
+	_, err := svc.AddAccount("otpauth://totp/Test:user@example.com?secret=GEZDGNBVGY3TQOJQGEZDGNBVGY3TQOJQ&algorithm=SHA256&issuer=Test")
 	require.NoError(t, err)
 
 	accounts, err := svc.ListAccounts()
@@ -1673,7 +1673,7 @@ func TestP5B_OATHService_GenerateHOTP_WrongType(t *testing.T) {
 // TestP5B_OATHService_GenerateHOTP_UpdateError verifies that GenerateHOTP
 // returns an error when the counter update fails.
 func TestP5B_OATHService_GenerateHOTP_UpdateError(t *testing.T) {
-	cred, err := oath.ParseURI("otpauth://hotp/Test:user@example.com?secret=JBSWY3DPEHPK3PXP&issuer=Test&counter=0")
+	cred, err := oath.ParseURI("otpauth://hotp/Test:user@example.com?secret=GEZDGNBVGY3TQOJQGEZDGNBVGY3TQOJQ&algorithm=SHA256&issuer=Test&counter=0")
 	require.NoError(t, err)
 
 	store := &p5bMockOATHStore{

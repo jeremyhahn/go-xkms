@@ -51,6 +51,9 @@ func addOATHCredential(t *testing.T, name, backend string) (string, error) {
 	if backend != "" {
 		require.NoError(t, setFlagForTest(t, cmd.Flags(), "backend", backend))
 	}
+	// SHA-256, not the SHA-1 default: crypto/hmac refuses SHA-1 under
+	// GODEBUG=fips140=only, and these tests are about backend routing.
+	require.NoError(t, setFlagForTest(t, cmd.Flags(), "algorithm", oath.AlgorithmSHA256))
 	t.Setenv("XKEY_OATH_SECRET", multiBackendTestSecret)
 	err := runOATHAdd(cmd, nil)
 	return out.String(), err
@@ -159,6 +162,7 @@ func TestOATH864_ExistingDefaultBackendCredential(t *testing.T) {
 	cred, err := oath.NewCredentialFromManualEntry("Legacy", "", multiBackendTestSecret)
 	require.NoError(t, err)
 	require.Empty(t, cred.BackendID)
+	cred.Algorithm = oath.AlgorithmSHA256
 	require.NoError(t, legacy.Add(cred))
 	require.NoError(t, legacy.Close())
 

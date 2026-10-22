@@ -31,6 +31,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	"github.com/jeremyhahn/go-xkms/pkg/testing/fipstest"
 	xkms "github.com/jeremyhahn/go-xkms/sdk/go"
 	"github.com/jeremyhahn/go-xkms/sdk/go/transport"
 	"github.com/jeremyhahn/go-xkms/xkey/pkg/ipc"
@@ -183,6 +184,7 @@ func TestPKCS11IPCRoundTrip_EncryptDecrypt(t *testing.T) {
 	decrypted, err := rt.client.Decrypt(ctx, &transport.DecryptRequest{
 		Backend: roundTripBackend, KeyID: "rt-aes",
 		Ciphertext: encrypted.Ciphertext, Nonce: encrypted.Nonce, Tag: encrypted.Tag,
+		GCMNonceMode: encrypted.GCMNonceMode,
 	})
 	require.NoError(t, err)
 	assert.Equal(t, plaintext, decrypted.Plaintext)
@@ -200,6 +202,7 @@ func TestPKCS11IPCRoundTrip_Decrypt_TamperedCiphertext(t *testing.T) {
 	_, err = rt.client.Decrypt(ctx, &transport.DecryptRequest{
 		Backend: roundTripBackend, KeyID: "rt-aes",
 		Ciphertext: encrypted.Ciphertext, Nonce: encrypted.Nonce, Tag: encrypted.Tag,
+		GCMNonceMode: encrypted.GCMNonceMode,
 	})
 	assert.ErrorIs(t, err, pkcs11svc.ErrDecryptionFailed)
 }
@@ -271,6 +274,11 @@ func TestPKCS11IPCRoundTrip_EncryptDecrypt_GCMAdditionalDataAndTagSize(t *testin
 	encrypted, err := rt.client.Encrypt(ctx, &transport.EncryptRequest{
 		Backend: roundTripBackend, KeyID: "rt-aes", Plaintext: plaintext, AdditionalData: aad, TagSize: 12,
 	})
+	// A truncated tag needs the arbitrary-IV GCM construction, which the
+	// FIPS 140-3 module refuses.
+	if !fipstest.OutsideFIPSAfterRefusal(t, err, pkcs11svc.ErrEncryptionFailed) {
+		return
+	}
 	require.NoError(t, err)
 	assert.Len(t, encrypted.Tag, 12, "the caller's tag size must reach the cipher")
 
@@ -348,6 +356,10 @@ func TestPKCS11IPCRoundTrip_EncryptDecrypt_GCMCallerNonce(t *testing.T) {
 	encrypted, err := rt.client.Encrypt(ctx, &transport.EncryptRequest{
 		Backend: roundTripBackend, KeyID: "rt-aes", Plaintext: plaintext, Nonce: nonce, AdditionalData: aad,
 	})
+	// The FIPS 140-3 module seals AES-GCM only under its own nonce.
+	if !fipstest.OutsideFIPSAfterRefusal(t, err, pkcs11svc.ErrEncryptionFailed) {
+		return
+	}
 	require.NoError(t, err)
 	assert.Equal(t, nonce, encrypted.Nonce, "the caller's nonce must reach the cipher")
 

@@ -739,6 +739,9 @@ func TestPhoneService_Connect_MalformedFingerprintIsRefused(t *testing.T) {
 
 	svc := NewPhoneService()
 	err = svc.Connect("Pixel 9")
+	if !serviceNoiseOutsideFIPS(t, err) {
+		return
+	}
 	require.Error(t, err)
 	assert.True(t, errors.Is(err, ErrPhoneInvalidFingerprint),
 		"a malformed stored fingerprint must be refused, got %v", err)
@@ -773,6 +776,9 @@ func TestPhoneService_Coverage_Connect_ValidFingerprint(t *testing.T) {
 
 	svc := NewPhoneService()
 	err = svc.Connect("Pixel 9")
+	if !serviceNoiseOutsideFIPS(t, err) {
+		return
+	}
 	require.Error(t, err)
 	// Should get past fingerprint decode successfully, then fail at BLE.
 	assert.True(t,

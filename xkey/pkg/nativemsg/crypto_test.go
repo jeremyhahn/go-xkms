@@ -23,6 +23,9 @@ import (
 )
 
 func TestSessionCrypto_NewSessionCrypto(t *testing.T) {
+	if !x25519OutsideFIPS(t) {
+		return
+	}
 	sc, pubKey, err := NewSessionCrypto()
 	require.NoError(t, err)
 	require.NotNil(t, sc)
@@ -31,6 +34,9 @@ func TestSessionCrypto_NewSessionCrypto(t *testing.T) {
 }
 
 func TestSessionCrypto_NewSessionCrypto_UniqueKeys(t *testing.T) {
+	if !x25519OutsideFIPS(t) {
+		return
+	}
 	_, pub1, err := NewSessionCrypto()
 	require.NoError(t, err)
 
@@ -42,6 +48,9 @@ func TestSessionCrypto_NewSessionCrypto_UniqueKeys(t *testing.T) {
 }
 
 func TestSessionCrypto_PublicKey_ReturnsCopy(t *testing.T) {
+	if !x25519OutsideFIPS(t) {
+		return
+	}
 	sc, pubKey, err := NewSessionCrypto()
 	require.NoError(t, err)
 
@@ -54,6 +63,9 @@ func TestSessionCrypto_PublicKey_ReturnsCopy(t *testing.T) {
 }
 
 func TestSessionCrypto_CompleteHandshake_Success(t *testing.T) {
+	if !x25519OutsideFIPS(t) {
+		return
+	}
 	host, hostPub, err := NewSessionCrypto()
 	require.NoError(t, err)
 
@@ -68,6 +80,9 @@ func TestSessionCrypto_CompleteHandshake_Success(t *testing.T) {
 }
 
 func TestSessionCrypto_CompleteHandshake_InvalidPublicKeySize(t *testing.T) {
+	if !x25519OutsideFIPS(t) {
+		return
+	}
 	sc, _, err := NewSessionCrypto()
 	require.NoError(t, err)
 
@@ -90,6 +105,9 @@ func TestSessionCrypto_CompleteHandshake_InvalidPublicKeySize(t *testing.T) {
 // rather than silently producing an all-zero shared secret. Go's crypto/ecdh
 // detects this at the ECDH step, after the length check has already passed.
 func TestSessionCrypto_CompleteHandshake_LowOrderPeerKey(t *testing.T) {
+	if !x25519OutsideFIPS(t) {
+		return
+	}
 	sc, _, err := NewSessionCrypto()
 	require.NoError(t, err)
 
@@ -100,6 +118,9 @@ func TestSessionCrypto_CompleteHandshake_LowOrderPeerKey(t *testing.T) {
 }
 
 func TestSessionCrypto_CompleteHandshake_DoubleHandshake(t *testing.T) {
+	if !x25519OutsideFIPS(t) {
+		return
+	}
 	host, _, err := NewSessionCrypto()
 	require.NoError(t, err)
 
@@ -115,6 +136,9 @@ func TestSessionCrypto_CompleteHandshake_DoubleHandshake(t *testing.T) {
 }
 
 func TestSessionCrypto_EncryptDecrypt_RoundTrip(t *testing.T) {
+	if !x25519OutsideFIPS(t) {
+		return
+	}
 	host, hostPub, err := NewSessionCrypto()
 	require.NoError(t, err)
 
@@ -146,6 +170,9 @@ func TestSessionCrypto_EncryptDecrypt_RoundTrip(t *testing.T) {
 }
 
 func TestSessionCrypto_EncryptDecrypt_EmptyMessage(t *testing.T) {
+	if !x25519OutsideFIPS(t) {
+		return
+	}
 	host, hostPub, err := NewSessionCrypto()
 	require.NoError(t, err)
 
@@ -164,6 +191,9 @@ func TestSessionCrypto_EncryptDecrypt_EmptyMessage(t *testing.T) {
 }
 
 func TestSessionCrypto_EncryptDecrypt_LargeMessage(t *testing.T) {
+	if !x25519OutsideFIPS(t) {
+		return
+	}
 	host, hostPub, err := NewSessionCrypto()
 	require.NoError(t, err)
 
@@ -188,6 +218,9 @@ func TestSessionCrypto_EncryptDecrypt_LargeMessage(t *testing.T) {
 }
 
 func TestSessionCrypto_Encrypt_BeforeHandshake(t *testing.T) {
+	if !x25519OutsideFIPS(t) {
+		return
+	}
 	sc, _, err := NewSessionCrypto()
 	require.NoError(t, err)
 
@@ -196,6 +229,9 @@ func TestSessionCrypto_Encrypt_BeforeHandshake(t *testing.T) {
 }
 
 func TestSessionCrypto_Decrypt_BeforeHandshake(t *testing.T) {
+	if !x25519OutsideFIPS(t) {
+		return
+	}
 	sc, _, err := NewSessionCrypto()
 	require.NoError(t, err)
 
@@ -204,6 +240,9 @@ func TestSessionCrypto_Decrypt_BeforeHandshake(t *testing.T) {
 }
 
 func TestSessionCrypto_ReplayProtection(t *testing.T) {
+	if !x25519OutsideFIPS(t) {
+		return
+	}
 	host, hostPub, err := NewSessionCrypto()
 	require.NoError(t, err)
 
@@ -226,6 +265,9 @@ func TestSessionCrypto_ReplayProtection(t *testing.T) {
 }
 
 func TestSessionCrypto_ReplayProtection_OutOfOrderLowNonce(t *testing.T) {
+	if !x25519OutsideFIPS(t) {
+		return
+	}
 	host, hostPub, err := NewSessionCrypto()
 	require.NoError(t, err)
 
@@ -252,6 +294,9 @@ func TestSessionCrypto_ReplayProtection_OutOfOrderLowNonce(t *testing.T) {
 }
 
 func TestSessionCrypto_NonceMonotonicallyIncreases(t *testing.T) {
+	if !x25519OutsideFIPS(t) {
+		return
+	}
 	host, hostPub, err := NewSessionCrypto()
 	require.NoError(t, err)
 
@@ -272,6 +317,9 @@ func TestSessionCrypto_NonceMonotonicallyIncreases(t *testing.T) {
 }
 
 func TestSessionCrypto_NonceStartsAtOne(t *testing.T) {
+	if !x25519OutsideFIPS(t) {
+		return
+	}
 	host, hostPub, err := NewSessionCrypto()
 	require.NoError(t, err)
 
@@ -288,6 +336,9 @@ func TestSessionCrypto_NonceStartsAtOne(t *testing.T) {
 }
 
 func TestSessionCrypto_TamperedCiphertext(t *testing.T) {
+	if !x25519OutsideFIPS(t) {
+		return
+	}
 	host, hostPub, err := NewSessionCrypto()
 	require.NoError(t, err)
 
@@ -310,6 +361,9 @@ func TestSessionCrypto_TamperedCiphertext(t *testing.T) {
 }
 
 func TestSessionCrypto_ForgedHighCounterFrame_DoesNotPoisonReplayWindow(t *testing.T) {
+	if !x25519OutsideFIPS(t) {
+		return
+	}
 	host, hostPub, err := NewSessionCrypto()
 	require.NoError(t, err)
 
@@ -355,6 +409,9 @@ func TestSessionCrypto_ForgedHighCounterFrame_DoesNotPoisonReplayWindow(t *testi
 }
 
 func TestSessionCrypto_TruncatedCiphertext(t *testing.T) {
+	if !x25519OutsideFIPS(t) {
+		return
+	}
 	host, hostPub, err := NewSessionCrypto()
 	require.NoError(t, err)
 
@@ -373,6 +430,9 @@ func TestSessionCrypto_TruncatedCiphertext(t *testing.T) {
 }
 
 func TestSessionCrypto_CrossDecryptFails(t *testing.T) {
+	if !x25519OutsideFIPS(t) {
+		return
+	}
 	// Verify that the directional keys work correctly: a message encrypted
 	// with the host's sendKey cannot be decrypted by the host itself using
 	// its recvKey (which is the extension's sendKey).
@@ -394,6 +454,9 @@ func TestSessionCrypto_CrossDecryptFails(t *testing.T) {
 }
 
 func TestSessionCrypto_DirectionalKeySymmetry(t *testing.T) {
+	if !x25519OutsideFIPS(t) {
+		return
+	}
 	// Verify that regardless of which peer has the "lower" public key,
 	// bidirectional communication works correctly.
 	for i := 0; i < 10; i++ {
@@ -423,6 +486,9 @@ func TestSessionCrypto_DirectionalKeySymmetry(t *testing.T) {
 }
 
 func TestSessionCrypto_WrongPeerDecryptFails(t *testing.T) {
+	if !x25519OutsideFIPS(t) {
+		return
+	}
 	// A message from host->ext should not be decryptable by a third party.
 	host, _, err := NewSessionCrypto()
 	require.NoError(t, err)
@@ -450,6 +516,9 @@ func TestSessionCrypto_WrongPeerDecryptFails(t *testing.T) {
 }
 
 func TestSessionCrypto_DecryptWithNonceZero(t *testing.T) {
+	if !x25519OutsideFIPS(t) {
+		return
+	}
 	host, hostPub, err := NewSessionCrypto()
 	require.NoError(t, err)
 

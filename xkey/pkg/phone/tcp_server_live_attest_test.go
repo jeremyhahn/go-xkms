@@ -29,6 +29,9 @@ import (
 // the gap where a phone-initiated session served the full bridge on Noise
 // static-key possession alone.
 func TestTCPPairingServer_LiveAttestNil_RefusesConnection(t *testing.T) {
+	if !noiseOutsideFIPS(t) {
+		return
+	}
 	handler := &mockRequestHandler{response: []byte(`{"jsonrpc":"2.0","id":1,"result":{"pong":true}}`)}
 	srv, err := NewTCPPairingServer(&TCPPairingConfig{
 		ListenAddr:     "127.0.0.1:0",
@@ -65,6 +68,9 @@ func TestTCPPairingServer_LiveAttestNil_RefusesConnection(t *testing.T) {
 // configured verifier which refuses the request closes the connection before
 // the request loop starts, and never runs the RequestHandler.
 func TestTCPPairingServer_LiveAttest_DeniedRefusesConnection(t *testing.T) {
+	if !noiseOutsideFIPS(t) {
+		return
+	}
 	handler := &mockRequestHandler{response: []byte(`{"jsonrpc":"2.0","id":1,"result":{"pong":true}}`)}
 	denyErr := errors.New("test: attestation refused")
 	srv, err := NewTCPPairingServer(&TCPPairingConfig{
@@ -110,6 +116,9 @@ func TestTCPPairingServer_LiveAttest_DeniedRefusesConnection(t *testing.T) {
 // the wire content here is deliberately just something InlineExchange must
 // round-trip correctly, not the real attestation protocol.
 func TestTCPPairingServer_LiveAttest_ChallengeExchange(t *testing.T) {
+	if !noiseOutsideFIPS(t) {
+		return
+	}
 	handler := &mockRequestHandler{response: []byte(`{"jsonrpc":"2.0","id":1,"result":{"pong":true}}`)}
 
 	var sawMethod string

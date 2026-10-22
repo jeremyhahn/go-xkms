@@ -47,6 +47,9 @@ import (
 // become the use-after-free they were written to avoid — and this fails
 // instead.
 func TestRetainedPagesSurviveLosingEveryGoReference(t *testing.T) {
+	if !noiseOutsideFIPS(t) {
+		return
+	}
 	key, err := bootstrap.GenerateNoiseStaticKey()
 	if err != nil {
 		t.Fatalf("GenerateStaticKey: %v", err)

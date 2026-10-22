@@ -44,6 +44,6 @@ These are not GCM, but they come up in the same suite.
 
 - `pkg/testing/pkcs11test` (oracle and mock) and `pkg/pkcs11`: see
   [README.md](README.md).
-- `xkey/pkg/nativemsg/crypto.go`.
+- The xkey module, including `xkey/pkg/nativemsg/crypto.go`: see [xkey.md](xkey.md).
 - `pkg/acme`.
 - SHA-1 refusals inside go-qrdb.

@@ -131,6 +131,10 @@ func (e *extension) unlock(origin string, fingerprints []string) ipc.Response {
 // the extension receives only "unlocked"; a request from another origin is
 // refused before the user is asked.
 func TestBrowserBridge_EndToEndThroughTheNativeHost(t *testing.T) {
+	if !nativeMessagingOutsideFIPS(t) {
+		return
+	}
+
 	b := newBrowserBridge(t)
 	b.answer = func(id string) { assert.NoError(t, b.svc.ApproveBrowserVaultRequest(id)) }
 	ext := connectExtension(t, bridgeIPCHandler{svc: b.svc, ctx: b.ctx})

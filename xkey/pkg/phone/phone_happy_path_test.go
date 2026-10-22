@@ -226,6 +226,9 @@ func setupNoiseSessionPair(t *testing.T) (*PhoneKeyBackend, *mockPhoneResponder)
 // ---------------------------------------------------------------------------
 
 func TestPhoneKeyBackend_Ping_HappyPath(t *testing.T) {
+	if !noiseOutsideFIPS(t) {
+		return
+	}
 	t.Parallel()
 
 	backend, responder := setupNoiseSessionPair(t)
@@ -241,6 +244,9 @@ func TestPhoneKeyBackend_Ping_HappyPath(t *testing.T) {
 }
 
 func TestPhoneKeyBackend_GetDeviceInfo_HappyPath(t *testing.T) {
+	if !noiseOutsideFIPS(t) {
+		return
+	}
 	t.Parallel()
 
 	backend, responder := setupNoiseSessionPair(t)
@@ -261,6 +267,9 @@ func TestPhoneKeyBackend_GetDeviceInfo_HappyPath(t *testing.T) {
 }
 
 func TestPhoneKeyBackend_GenerateCredentialKey_HappyPath(t *testing.T) {
+	if !noiseOutsideFIPS(t) {
+		return
+	}
 	t.Parallel()
 
 	backend, responder := setupNoiseSessionPair(t)
@@ -277,6 +286,9 @@ func TestPhoneKeyBackend_GenerateCredentialKey_HappyPath(t *testing.T) {
 }
 
 func TestPhoneKeyBackend_Sign_HappyPath(t *testing.T) {
+	if !noiseOutsideFIPS(t) {
+		return
+	}
 	t.Parallel()
 
 	backend, responder := setupNoiseSessionPair(t)
@@ -295,6 +307,9 @@ func TestPhoneKeyBackend_Sign_HappyPath(t *testing.T) {
 }
 
 func TestPhoneKeyBackend_LoadKey_HappyPath(t *testing.T) {
+	if !noiseOutsideFIPS(t) {
+		return
+	}
 	t.Parallel()
 
 	backend, responder := setupNoiseSessionPair(t)
@@ -310,6 +325,9 @@ func TestPhoneKeyBackend_LoadKey_HappyPath(t *testing.T) {
 }
 
 func TestPhoneKeyBackend_LoadKey_CacheHit(t *testing.T) {
+	if !noiseOutsideFIPS(t) {
+		return
+	}
 	t.Parallel()
 
 	backend, responder := setupNoiseSessionPair(t)
@@ -330,6 +348,9 @@ func TestPhoneKeyBackend_LoadKey_CacheHit(t *testing.T) {
 }
 
 func TestPhoneKeyBackend_DeleteKey_HappyPath(t *testing.T) {
+	if !noiseOutsideFIPS(t) {
+		return
+	}
 	t.Parallel()
 
 	backend, responder := setupNoiseSessionPair(t)
@@ -347,6 +368,9 @@ func TestPhoneKeyBackend_DeleteKey_HappyPath(t *testing.T) {
 }
 
 func TestPhoneKeyBackend_ListFido2Credentials_HappyPath(t *testing.T) {
+	if !noiseOutsideFIPS(t) {
+		return
+	}
 	t.Parallel()
 
 	backend, responder := setupNoiseSessionPair(t)
@@ -366,6 +390,9 @@ func TestPhoneKeyBackend_ListFido2Credentials_HappyPath(t *testing.T) {
 }
 
 func TestPhoneKeyBackend_SignFido2Assertion_HappyPath(t *testing.T) {
+	if !noiseOutsideFIPS(t) {
+		return
+	}
 	t.Parallel()
 
 	backend, responder := setupNoiseSessionPair(t)
@@ -392,6 +419,9 @@ func TestPhoneKeyBackend_SignFido2Assertion_HappyPath(t *testing.T) {
 // ---------------------------------------------------------------------------
 
 func TestPhoneKeyBackend_MultipleOperations_HappyPath(t *testing.T) {
+	if !noiseOutsideFIPS(t) {
+		return
+	}
 	t.Parallel()
 
 	backend, responder := setupNoiseSessionPair(t)
@@ -436,6 +466,9 @@ func TestPhoneKeyBackend_MultipleOperations_HappyPath(t *testing.T) {
 // ---------------------------------------------------------------------------
 
 func TestPhoneKeyBackend_Ping_PhoneReturnsError(t *testing.T) {
+	if !noiseOutsideFIPS(t) {
+		return
+	}
 	t.Parallel()
 
 	backend, responder := setupNoiseSessionPair(t)
@@ -456,6 +489,9 @@ func TestPhoneKeyBackend_Ping_PhoneReturnsError(t *testing.T) {
 }
 
 func TestPhoneKeyBackend_GetDeviceInfo_PhoneReturnsError(t *testing.T) {
+	if !noiseOutsideFIPS(t) {
+		return
+	}
 	t.Parallel()
 
 	backend, responder := setupNoiseSessionPair(t)
@@ -476,6 +512,9 @@ func TestPhoneKeyBackend_GetDeviceInfo_PhoneReturnsError(t *testing.T) {
 }
 
 func TestPhoneKeyBackend_GenerateCredentialKey_PhoneReturnsError(t *testing.T) {
+	if !noiseOutsideFIPS(t) {
+		return
+	}
 	t.Parallel()
 
 	backend, responder := setupNoiseSessionPair(t)
@@ -494,6 +533,9 @@ func TestPhoneKeyBackend_GenerateCredentialKey_PhoneReturnsError(t *testing.T) {
 }
 
 func TestPhoneKeyBackend_Sign_PhoneReturnsError(t *testing.T) {
+	if !noiseOutsideFIPS(t) {
+		return
+	}
 	t.Parallel()
 
 	backend, responder := setupNoiseSessionPair(t)
@@ -517,6 +559,9 @@ func TestPhoneKeyBackend_Sign_PhoneReturnsError(t *testing.T) {
 }
 
 func TestPhoneKeyBackend_LoadKey_KeyNotFound(t *testing.T) {
+	if !noiseOutsideFIPS(t) {
+		return
+	}
 	t.Parallel()
 
 	backend, responder := setupNoiseSessionPair(t)
@@ -535,6 +580,9 @@ func TestPhoneKeyBackend_LoadKey_KeyNotFound(t *testing.T) {
 }
 
 func TestPhoneKeyBackend_Ping_PongFalse(t *testing.T) {
+	if !noiseOutsideFIPS(t) {
+		return
+	}
 	t.Parallel()
 
 	backend, responder := setupNoiseSessionPair(t)
@@ -555,6 +603,9 @@ func TestPhoneKeyBackend_Ping_PongFalse(t *testing.T) {
 }
 
 func TestPhoneKeyBackend_ExportPrivateKey_NotSupported(t *testing.T) {
+	if !noiseOutsideFIPS(t) {
+		return
+	}
 	t.Parallel()
 
 	backend, _ := setupNoiseSessionPair(t)
@@ -567,6 +618,9 @@ func TestPhoneKeyBackend_ExportPrivateKey_NotSupported(t *testing.T) {
 }
 
 func TestPhoneKeyBackend_ImportPrivateKey_NotSupported(t *testing.T) {
+	if !noiseOutsideFIPS(t) {
+		return
+	}
 	t.Parallel()
 
 	backend, _ := setupNoiseSessionPair(t)

@@ -588,7 +588,8 @@ the wire protocol or reopens an already-settled design decision:
 - `xkey/pkg/nativemsg`'s browser-extension handshake is X25519 ECDH
   (`crypto/ecdh`), refused under `fips140=only`, with no approved curve
   pinned; see "xkey AES-GCM call sites" above for why its GCM nonce
-  changes with it.
+  changes with it. `NewSessionCrypto` returns `ErrHandshakeFailed` wrapping
+  that refusal; see [xkey.md](xkey.md).
 
 ## See Also
 

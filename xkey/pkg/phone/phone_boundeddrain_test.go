@@ -44,6 +44,9 @@ func shrinkOpsTimeout(t *testing.T, d time.Duration) {
 // The lease here is taken directly rather than through a round trip, because
 // the lease IS the window a round trip holds open.
 func TestClose_BoundsTheLeaseDrain(t *testing.T) {
+	if !noiseOutsideFIPS(t) {
+		return
+	}
 	shrinkOpsTimeout(t, 100*time.Millisecond)
 
 	key, err := bootstrap.GenerateNoiseStaticKey()
@@ -96,6 +99,9 @@ func TestClose_BoundsTheLeaseDrain(t *testing.T) {
 // who can decide not to free it, and Close's return value is the only way
 // they find out there is still a reader.
 func TestClose_ReportsIncompleteShutdownForABorrowedKey(t *testing.T) {
+	if !noiseOutsideFIPS(t) {
+		return
+	}
 	shrinkOpsTimeout(t, 100*time.Millisecond)
 
 	key, err := bootstrap.GenerateNoiseStaticKey()
@@ -144,6 +150,9 @@ func TestClose_ReportsIncompleteShutdownForABorrowedKey(t *testing.T) {
 // contract, and it is what stops the error above from being returned
 // unconditionally: a clean shutdown must still report nil and free the key.
 func TestClose_ReportsSuccessWhenEveryLeaseDrains(t *testing.T) {
+	if !noiseOutsideFIPS(t) {
+		return
+	}
 	shrinkOpsTimeout(t, testWait)
 
 	key, err := bootstrap.GenerateNoiseStaticKey()
@@ -235,6 +244,9 @@ func TestConstructorFailureWithOwnedNilKey(t *testing.T) {
 // took ownership of the same protected pages. Whichever backend closed first
 // would free pages the other's session was still reading.
 func TestReusedConfigDoesNotShareASuppliedOwnedKey(t *testing.T) {
+	if !noiseOutsideFIPS(t) {
+		return
+	}
 	key, err := bootstrap.GenerateNoiseStaticKey()
 	if err != nil {
 		t.Fatalf("GenerateStaticKey: %v", err)
@@ -294,6 +306,9 @@ func TestReusedConfigDoesNotShareASuppliedOwnedKey(t *testing.T) {
 // that nil is the whole hazard: it tells the owner destroying the protected
 // pages is safe while an operation may still be encrypting through them.
 func TestSecondCloseDoesNotReportSuccessAfterIncompleteShutdown(t *testing.T) {
+	if !noiseOutsideFIPS(t) {
+		return
+	}
 	shrinkOpsTimeout(t, 100*time.Millisecond)
 
 	key, err := bootstrap.GenerateNoiseStaticKey()
@@ -338,6 +353,9 @@ func TestSecondCloseDoesNotReportSuccessAfterIncompleteShutdown(t *testing.T) {
 // arriving while the first Close is draining must wait for it and receive its
 // result, not be told success immediately.
 func TestConcurrentCloseObservesTheSameOutcome(t *testing.T) {
+	if !noiseOutsideFIPS(t) {
+		return
+	}
 	shrinkOpsTimeout(t, 300*time.Millisecond)
 
 	key, err := bootstrap.GenerateNoiseStaticKey()
@@ -463,6 +481,9 @@ func (l *leaseObservingTransport) SendAndReceive(ctx context.Context, msg []byte
 // This one drives the real method and observes the backend's own counter from
 // inside the bus call, so the lease under test is the one production takes.
 func TestSendRequestHoldsALeaseForItsRoundTrip(t *testing.T) {
+	if !noiseOutsideFIPS(t) {
+		return
+	}
 	key, err := bootstrap.GenerateNoiseStaticKey()
 	if err != nil {
 		t.Fatalf("GenerateStaticKey: %v", err)

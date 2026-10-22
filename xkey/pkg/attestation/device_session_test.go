@@ -25,6 +25,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/jeremyhahn/go-xkms/pkg/pairingproto"
+	"github.com/jeremyhahn/go-xkms/pkg/testing/fipstest"
 	"github.com/jeremyhahn/go-xkms/pkg/trust/bootstrap"
 	xkms "github.com/jeremyhahn/go-xkms/sdk/go"
 	"github.com/jeremyhahn/go-xkms/xkey/pkg/attestation"
@@ -47,10 +48,15 @@ import (
 // needs to derive a channel binding and encrypt/decrypt the exchange. It
 // skips the identity-exchange framing pairingproto.PerformHandshake performs,
 // because AttestOverSession itself never touches that layer.
-func establishedSessionPair(t *testing.T) (client, server *bootstrap.NoiseSession) {
+func establishedSessionPair(t *testing.T) (client, server *bootstrap.NoiseSession, ok bool) {
 	t.Helper()
 
+	// The Noise static key is X25519, which crypto/ecdh refuses under
+	// fips140=only; the session then runs in a fips140=off child.
 	client, err := bootstrap.NewNoiseSession(&bootstrap.NoiseSessionConfig{IsInitiator: true})
+	if !fipstest.OutsideFIPSAfterRefusal(t, err, bootstrap.ErrNoiseFIPSUnsupported) {
+		return nil, nil, false
+	}
 	require.NoError(t, err)
 	server, err = bootstrap.NewNoiseSession(&bootstrap.NoiseSessionConfig{IsInitiator: false})
 	require.NoError(t, err)
@@ -74,7 +80,7 @@ func establishedSessionPair(t *testing.T) (client, server *bootstrap.NoiseSessio
 	require.NoError(t, err)
 	require.True(t, complete, "the responder completes on receiving the third message")
 
-	return client, server
+	return client, server, true
 }
 
 // scriptedTransport implements pairingproto.Transport with a caller-supplied
@@ -148,7 +154,10 @@ func TestAttestOverSession_Success(t *testing.T) {
 	dak := attesttest.NewDAK(t, ca, attesttest.GenesisChallenge(), xkms.AndroidSecurityLevelStrongBox, attesttest.AttestedBootState())
 	trust := &xkms.AndroidDeviceTrust{Roots: ca.Pool(), Applications: attesttest.Applications()}
 
-	client, server := establishedSessionPair(t)
+	client, server, ok := establishedSessionPair(t)
+	if !ok {
+		return
+	}
 	transport := honestResponder(t, server, dak)
 
 	verified, err := attestation.AttestOverSession(context.Background(), transport, client, trust, pairingproto.AttestPurposePair, discardLogger())
@@ -163,6 +172,9 @@ func TestAttestOverSession_Success(t *testing.T) {
 // there is no authenticated peer key yet for the binding to commit to.
 func TestAttestOverSession_ChannelBindingUnavailable(t *testing.T) {
 	session, err := bootstrap.NewNoiseSession(&bootstrap.NoiseSessionConfig{IsInitiator: true})
+	if !fipstest.OutsideFIPSAfterRefusal(t, err, bootstrap.ErrNoiseFIPSUnsupported) {
+		return
+	}
 	require.NoError(t, err)
 
 	transport := &scriptedTransport{respond: func(context.Context, []byte) ([]byte, error) {
@@ -180,7 +192,10 @@ func TestAttestOverSession_ChannelBindingUnavailable(t *testing.T) {
 // TestAttestOverSession_TransportError pins the wrap around a transport
 // failure -- the RPC never got an answer at all.
 func TestAttestOverSession_TransportError(t *testing.T) {
-	client, _ := establishedSessionPair(t)
+	client, _, ok := establishedSessionPair(t)
+	if !ok {
+		return
+	}
 	transportErr := errors.New("link dropped")
 	transport := &scriptedTransport{respond: func(context.Context, []byte) ([]byte, error) {
 		return nil, transportErr
@@ -198,7 +213,10 @@ func TestAttestOverSession_TransportError(t *testing.T) {
 // branch: bytes that never went through the peer's cipher state must be
 // refused rather than crash the caller.
 func TestAttestOverSession_UndecryptableResponse(t *testing.T) {
-	client, _ := establishedSessionPair(t)
+	client, _, ok := establishedSessionPair(t)
+	if !ok {
+		return
+	}
 	transport := &scriptedTransport{respond: func(context.Context, []byte) ([]byte, error) {
 		return []byte("not a noise ciphertext"), nil
 	}}
@@ -213,7 +231,10 @@ func TestAttestOverSession_UndecryptableResponse(t *testing.T) {
 // TestAttestOverSession_MalformedResponseJSON pins the decode-response
 // branch: a correctly-decrypted but non-JSON-RPC payload must be refused.
 func TestAttestOverSession_MalformedResponseJSON(t *testing.T) {
-	client, server := establishedSessionPair(t)
+	client, server, ok := establishedSessionPair(t)
+	if !ok {
+		return
+	}
 	transport := &scriptedTransport{respond: func(context.Context, []byte) ([]byte, error) {
 		return server.Encrypt([]byte("not json at all"))
 	}}
@@ -228,7 +249,10 @@ func TestAttestOverSession_MalformedResponseJSON(t *testing.T) {
 // TestAttestOverSession_RPCError pins that an RPC-level refusal from the
 // peer surfaces as ErrDeviceAttestFailed carrying the peer's message.
 func TestAttestOverSession_RPCError(t *testing.T) {
-	client, server := establishedSessionPair(t)
+	client, server, ok := establishedSessionPair(t)
+	if !ok {
+		return
+	}
 	transport := &scriptedTransport{respond: func(context.Context, []byte) ([]byte, error) {
 		raw, err := pairingproto.EncodeErrorResponse(1, 1000, "user declined attestation", nil)
 		require.NoError(t, err)
@@ -247,7 +271,10 @@ func TestAttestOverSession_RPCError(t *testing.T) {
 // well-formed JSON-RPC envelope whose result cannot unmarshal into
 // LocalAttestDeviceResult must be refused.
 func TestAttestOverSession_MalformedResult(t *testing.T) {
-	client, server := establishedSessionPair(t)
+	client, server, ok := establishedSessionPair(t)
+	if !ok {
+		return
+	}
 	transport := &scriptedTransport{respond: func(context.Context, []byte) ([]byte, error) {
 		resp := &pairingproto.Response{JSONRPC: "2.0", ID: 1, Result: json.RawMessage("123")}
 		raw, err := json.Marshal(resp)
@@ -287,7 +314,10 @@ func TestVerifyReattestation_Success(t *testing.T) {
 	trust := &xkms.AndroidDeviceTrust{Roots: ca.Pool(), Applications: attesttest.Applications()}
 	binding := attestation.DeviceBinding{Fingerprint: hexFingerprint(dak), ProtocolVersion: pairingproto.AttestProtocolV2}
 
-	client, server := establishedSessionPair(t)
+	client, server, ok := establishedSessionPair(t)
+	if !ok {
+		return
+	}
 	transport := honestResponder(t, server, dak)
 
 	err := attestation.VerifyReattestation(context.Background(), transport, client, binding, trust, discardLogger())
@@ -305,7 +335,10 @@ func TestVerifyReattestation_IdentityChangedRefusesAfterAValidProof(t *testing.T
 	trust := &xkms.AndroidDeviceTrust{Roots: ca.Pool(), Applications: attesttest.Applications()}
 	binding := attestation.DeviceBinding{Fingerprint: hexFingerprint(dak), ProtocolVersion: pairingproto.AttestProtocolV2}
 
-	client, server := establishedSessionPair(t)
+	client, server, ok := establishedSessionPair(t)
+	if !ok {
+		return
+	}
 	transport := honestResponder(t, server, other)
 
 	err := attestation.VerifyReattestation(context.Background(), transport, client, binding, trust, discardLogger())
@@ -326,7 +359,10 @@ func TestVerifyReattestation_RefusesAnotherApplication(t *testing.T) {
 	trust := &xkms.AndroidDeviceTrust{Roots: ca.Pool(), Applications: attesttest.Applications()}
 	binding := attestation.DeviceBinding{Fingerprint: hexFingerprint(dak), ProtocolVersion: pairingproto.AttestProtocolV2}
 
-	client, server := establishedSessionPair(t)
+	client, server, ok := establishedSessionPair(t)
+	if !ok {
+		return
+	}
 	transport := honestResponder(t, server, dak)
 
 	err := attestation.VerifyReattestation(context.Background(), transport, client, binding, trust, discardLogger())

@@ -57,6 +57,9 @@ func (p *echoPhone) receive(context.Context) ([]byte, error) {
 }
 
 func TestInlineExchange_RoundTripsThroughTheSession(t *testing.T) {
+	if !noiseOutsideFIPS(t) {
+		return
+	}
 	laptop, phoneSession := setupHandshakedNoiseSessions(t)
 	phone := &echoPhone{t: t, session: phoneSession}
 	exchange := InlineExchange(laptop, phone.send, phone.receive)
@@ -73,6 +76,9 @@ func TestInlineExchange_RoundTripsThroughTheSession(t *testing.T) {
 }
 
 func TestInlineExchange_PropagatesTransportErrors(t *testing.T) {
+	if !noiseOutsideFIPS(t) {
+		return
+	}
 	// Each case needs its own session pair: a failed send consumes a nonce
 	// the phone never sees.
 	laptop, phoneSession := setupHandshakedNoiseSessions(t)
@@ -92,6 +98,9 @@ func TestInlineExchange_PropagatesTransportErrors(t *testing.T) {
 }
 
 func TestInlineExchange_RefusesAReplyTheSessionCannotDecrypt(t *testing.T) {
+	if !noiseOutsideFIPS(t) {
+		return
+	}
 	laptop, _ := setupHandshakedNoiseSessions(t)
 	sent := false
 	send := func(context.Context, []byte) error { sent = true; return nil }
@@ -106,6 +115,9 @@ func TestInlineExchange_RefusesAReplyTheSessionCannotDecrypt(t *testing.T) {
 }
 
 func TestInlineExchange_RefusesARequestThatDoesNotEncode(t *testing.T) {
+	if !noiseOutsideFIPS(t) {
+		return
+	}
 	laptop, _ := setupHandshakedNoiseSessions(t)
 	send := func(context.Context, []byte) error {
 		t.Fatal("an unencodable request must not reach the transport")

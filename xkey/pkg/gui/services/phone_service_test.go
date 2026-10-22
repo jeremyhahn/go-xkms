@@ -1972,6 +1972,9 @@ func TestPhoneService_Connect_InvalidFingerprint(t *testing.T) {
 
 	svc := NewPhoneService()
 	err = svc.Connect("Pixel 8")
+	if !serviceNoiseOutsideFIPS(t, err) {
+		return
+	}
 	// A malformed stored fingerprint is a hard error, not a warning: proceeding
 	// would hand PerformHandshake a nil expected fingerprint, which means no
 	// identity binding at all (#38).

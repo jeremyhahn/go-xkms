@@ -113,6 +113,10 @@ func TestRebuildReportsUnreadableTrustStore(t *testing.T) {
 }
 
 func TestRebuildReportsUnwritableTrustHash(t *testing.T) {
+	if !nssdbOutsideFIPS(t) {
+		return
+	}
+
 	svc, _ := newTestSecureBrowserService(t, []*x509.Certificate{testSecureBrowserCA(t, "Rebuild CA")})
 	// A non-empty directory where Chrome's hash file goes: the sync
 	// succeeds, but recording it does not.

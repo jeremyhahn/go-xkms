@@ -271,6 +271,8 @@ func TestOATHProtectedSecretFlows_NoDeadlock(t *testing.T) {
 func TestGenerateCounterWipesScratch(t *testing.T) {
 	cred, err := NewCredentialFromManualEntry("u", "I", "GEZDGNBVGY3TQOJQGEZDGNBVGY3TQOJQ")
 	require.NoError(t, err)
+	// The wipe is under test, not the hash: SHA-256 runs in every FIPS mode.
+	cred.Algorithm = AlgorithmSHA256
 
 	gen, err := NewGenerator(cred)
 	require.NoError(t, err)

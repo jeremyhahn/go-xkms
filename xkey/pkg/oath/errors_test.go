@@ -58,7 +58,7 @@ func TestMessageError(t *testing.T) {
 }
 
 func TestGenerator_GenerateAt_RejectsHOTP(t *testing.T) {
-	cred, err := ParseURI("otpauth://hotp/Example:alice?secret=" + testBase32Secret + "&issuer=Example&counter=0")
+	cred, err := ParseURI("otpauth://hotp/Example:alice?secret=" + rfcTestSecret + "&issuer=Example&counter=0&algorithm=SHA256")
 	require.NoError(t, err)
 	gen, err := NewGenerator(cred)
 	require.NoError(t, err)

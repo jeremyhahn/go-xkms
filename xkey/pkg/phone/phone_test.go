@@ -158,6 +158,9 @@ func TestHandlesCaching(t *testing.T) {
 }
 
 func TestPhoneKeyBackendConfig_Validation(t *testing.T) {
+	if !noiseOutsideFIPS(t) {
+		return
+	}
 	t.Run("valid config with device address", func(t *testing.T) {
 		cfg := &PhoneKeyBackendConfig{
 			DeviceAddress:    "AA:BB:CC:DD:EE:FF",
@@ -261,6 +264,9 @@ func TestPingResult(t *testing.T) {
 }
 
 func TestPhoneKeyBackend_LocalStaticPublicKey_NilSession(t *testing.T) {
+	if !noiseOutsideFIPS(t) {
+		return
+	}
 	// Create backend with nil session (before connection)
 	backend := &PhoneKeyBackend{
 		session: nil,
@@ -271,6 +277,9 @@ func TestPhoneKeyBackend_LocalStaticPublicKey_NilSession(t *testing.T) {
 }
 
 func TestPhoneKeyBackend_RemoteStaticPublicKey_NilSession(t *testing.T) {
+	if !noiseOutsideFIPS(t) {
+		return
+	}
 	// Create backend with nil session (before connection)
 	backend := &PhoneKeyBackend{
 		session: nil,
@@ -281,6 +290,9 @@ func TestPhoneKeyBackend_RemoteStaticPublicKey_NilSession(t *testing.T) {
 }
 
 func TestPhoneKeyBackend_Notifier_Nil(t *testing.T) {
+	if !noiseOutsideFIPS(t) {
+		return
+	}
 	backend := &PhoneKeyBackend{
 		notifier: nil,
 	}
@@ -290,6 +302,9 @@ func TestPhoneKeyBackend_Notifier_Nil(t *testing.T) {
 }
 
 func TestPhoneKeyBackend_Notifier_Set(t *testing.T) {
+	if !noiseOutsideFIPS(t) {
+		return
+	}
 	// Create a mock notifier for testing
 	mockNotifier := &mockNotifierImpl{}
 	backend := &PhoneKeyBackend{
