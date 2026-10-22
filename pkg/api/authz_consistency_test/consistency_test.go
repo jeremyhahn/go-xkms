@@ -63,6 +63,7 @@ var restSeams = []authzscan.Seam{
 	{Method: "permIf", Args: 6, ResourceArg: 2, ActionArg: 3, Bare: true, LabelArgs: []int{0, 1}, LabelPrefix: "/api/v1"},
 	{Method: "user", Args: 5, ResourceArg: 2, ActionArg: 3, Bare: true, LabelArgs: []int{0, 1}, LabelPrefix: "/api/v1/users"},
 	{Method: "ssh", Args: 4, ResourceArg: -1, ActionArg: 2, FixedResource: "ResourceSSH", Bare: true, LabelArgs: []int{0, 1}, LabelPrefix: "/xkms/v1/ssh"},
+	{Method: "tenant", Args: 6, ResourceArg: -1, ActionArg: 2, FixedResource: "ResourceTenants", Bare: true, LabelArgs: []int{0, 1}, LabelPrefix: "/api/v1"},
 }
 
 // capability names one operation's identity on each transport that exposes
