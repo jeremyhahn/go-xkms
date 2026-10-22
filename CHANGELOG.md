@@ -7,6 +7,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.60.0-alpha] - 2026-10-22
+
+### Added
+
+- **`xkey oath` stores credentials per backend (`--backend`).** The CLI and the GUI now open OATH as a `CompositeStore` with one partition per OATH-capable backend in the unified config (`software`, plus every `backends.local` entry of category `software` or `pkcs11`, via `backendregistry.ConfiguredFor`). `xkey oath add --backend <id>` stores the credential in that backend; without it the credential goes to `backends.defaults.oath`, else `software`. `list`, `generate` and `remove` reach every backend, and `list` shows each credential's backend. An unknown backend is refused with a typed `*oath.BackendError` naming it, and a name or ID already held by any backend is refused. The `software` partition is the historical location (`oath/` barrier keys, `oath.json`), so existing credentials keep working; other backends use `oath@<id>/` keys or a `<stem>@<id><ext>` file beside the store file (`oath@token1.json` beside `oath.json`; `--store /tmp/a.json` gets `/tmp/a@token1.json`), and a store path whose file name contains `@` is refused with `oath.ErrInvalidStorePath`. One constructor, `oath.OpenStores`, opens the partitions for the CLI, the GUI, `xkey extension serve` and `xkey backup`: backups carry every partition and record each credential's backend, and restore returns it to that backend. `CompositeStore.Add` holds its write lock across the duplicate check and the insertion, so concurrent adds of one name to two backends cannot both succeed. New `xkey/pkg/oath/backends.go` (`OpenStores`, `FilePartitionPath`), `xkey/pkg/backendregistry/capabilities.go`; wired in `cmd/xkey/cmd/oath.go`, `backup.go`, `extension_serve.go` and `pkg/gui/app.go`. Tested by `oath_multibackend_864_test.go`, `backends_test.go`, `capabilities_test.go`. (#864)
+
+### Changed
+
+- **go-qrdb v0.51.0-alpha** (#1635): the tenant is now the SPIFFE trust domain, so issued SANs take go-qrdb's `spiffe://<tenantID>/<kind>/<name>` form, and PIV login and ACME admin mTLS bind the tenant through `TenantFromClientCert`'s two-value form, which requires the OU and the SAN to name the same tenant. A certificate logs in only when its first OU and its SPIFFE ID SAN name the same tenant: OU-only and SAN-only certificates are refused, and there is no implicit system tenant. A system identity is OU `system` plus `spiffe://system/user/<cn>`. Tenant names must be valid SPIFFE trust-domain names. `ca.SignOptions.RawSubjectURIs` carries the ceremony's SPIFFE ID onto raw-subject holder certificates, and the init CA adapter refuses to issue a login certificate without a SPIFFE trust domain (`ErrNoSPIFFETrustDomain`).
+
+### Fixed
+
+- **SDK clients and `xkmsctl` send the `xkmsd init` admin certificate (go-xkms#794).** `xkmsd run` advertises the init ceremony root from `<datastore.path>/ca-bundle.pem` among its client CAs, so a static client-certificate list no longer withholds the init-issued admin certificate; identity still binds by SPKI thumbprint. A present but unparsable bundle, or a malformed `tls.ca_file`/`tls.client_cas`, now fails start-up instead of being skipped. Docs: `docs/init-ceremony/architecture.md`.
+
 ## [0.59.0-alpha] - 2026-10-21
 
 ### Added
