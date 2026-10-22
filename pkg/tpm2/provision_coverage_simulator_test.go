@@ -61,8 +61,10 @@ func TestMinimalInstallOptions_EnablesOnlyEKAndSSRK(t *testing.T) {
 
 // TestFactoryResetWithClear_EmptyLockout_ClearSucceeds proves
 // FactoryResetWithClear's TPM2_Clear pre-pass succeeds against a fresh
-// simulator (empty Lockout auth, matching createSim's Provision(nil)) and
-// still preserves the TCG-standard EK afterward.
+// simulator (empty Lockout auth, matching createSim's Provision(nil)).
+// TPM2_Clear evicts the persistent EK with the rest of the Endorsement
+// hierarchy (TCG TPM 2.0 Part 3, section 24.6), so EKAttributes reports it
+// missing instead of answering from its pre-clear cache.
 func TestFactoryResetWithClear_EmptyLockout_ClearSucceeds(t *testing.T) {
 	_, tpm := createSim(t, false)
 	defer func() { _ = tpm.Close() }()
@@ -73,8 +75,11 @@ func TestFactoryResetWithClear_EmptyLockout_ClearSucceeds(t *testing.T) {
 	err := tpmImpl.FactoryResetWithClear(nil)
 	require.NoError(t, err)
 
+	_, err = tpm2.ReadPublic{ObjectHandle: tpm2.TPMHandle(tpmImpl.config.EK.Handle)}.Execute(tpmImpl.transport)
+	require.Error(t, err, "TPM2_Clear evicts the persistent EK")
+
 	_, err = tpmImpl.EKAttributes()
-	require.NoError(t, err, "EK must survive FactoryResetWithClear per TCG EK-preservation guidance")
+	assert.Error(t, err, "without an EK or a manufacturer certificate there is nothing to describe")
 }
 
 // TestFactoryResetWithClear_LockoutSet_FallsThroughToEvictControl proves

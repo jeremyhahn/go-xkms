@@ -26,11 +26,34 @@ import (
 // https://trustedcomputinggroup.org/wp-content/uploads/TPM-Rev-2.0-Part-3-Commands-01.38.pdf
 // This command clears Owner, Endorsement, and Lockout hierarchy auth values.
 // Authorization must be provided using either the Lockout or Platform hierarchy.
+// A successful clear drops the cached hierarchy attributes (see
+// dropHierarchyCache); a refused one leaves them, since the TPM is unchanged.
 func (tpm *TPM2) Clear(lockoutAuth []byte) error {
-	return tpm.withHierarchyAuth(tpm2.TPMRHLockout, lockoutAuth, encryptNone, func(authHandle tpm2.AuthHandle) error {
+	err := tpm.withHierarchyAuth(tpm2.TPMRHLockout, lockoutAuth, encryptNone, func(authHandle tpm2.AuthHandle) error {
 		_, err := tpm2.Clear{AuthHandle: authHandle}.Execute(tpm.transport)
 		return err
 	})
+	if err != nil {
+		return err
+	}
+	tpm.dropHierarchyCache()
+	return nil
+}
+
+// dropHierarchyCache drops every cached value that describes an object under
+// the Owner or Endorsement hierarchy: the EK, IAK, IDevID, LAK, SSRK and
+// Platform SRK attributes and the EK public keys. TPM2_Clear (TCG TPM 2.0
+// Part 3, section 24.6) flushes those hierarchies' objects and resets their
+// authorizations, so each accessor re-derives its value on the next call.
+func (tpm *TPM2) dropHierarchyCache() {
+	tpm.ekAttrs = nil
+	tpm.ekECCPubKey = nil
+	tpm.ekRSAPubKey = nil
+	tpm.iakAttrs = nil
+	tpm.idevidAttrs = nil
+	tpm.lakAttrs = nil
+	tpm.platformSRKAttrs = nil
+	tpm.ssrkAttrs = nil
 }
 
 // ppiRequestWriter is the seam through which ForceClear performs its single
@@ -70,7 +93,8 @@ func (tpm *TPM2) ForceClear() error {
 // firmware has left the platform hierarchy's auth empty at the point this
 // runs -- true on U-Boot and Raspberry Pi UEFI, neither of which implements
 // the PPI ClearForReprovision falls back to -- and refused by firmware that
-// locks the platform hierarchy during POST.
+// locks the platform hierarchy during POST. A successful clear drops the
+// cached hierarchy attributes, as Clear does.
 func (tpm *TPM2) clearViaPlatform() error {
 	_, err := tpm2.Clear{
 		AuthHandle: tpm2.AuthHandle{
@@ -78,7 +102,11 @@ func (tpm *TPM2) clearViaPlatform() error {
 			Auth:   tpm2.PasswordAuth(nil),
 		},
 	}.Execute(tpm.transport)
-	return err
+	if err != nil {
+		return err
+	}
+	tpm.dropHierarchyCache()
+	return nil
 }
 
 // ClearForReprovision returns the TPM to factory-fresh hierarchy state so a
@@ -339,9 +367,7 @@ func (tpm *TPM2) factoryResetInternal(ownerAuth []byte, attemptClear bool) error
 	}
 
 	// 4. Clear cached attributes
-	tpm.iakAttrs = nil
-	tpm.idevidAttrs = nil
-	tpm.ssrkAttrs = nil
+	tpm.dropHierarchyCache()
 
 	return firstErr
 }
