@@ -69,8 +69,11 @@ func (c *CompositeStore) SetDefault(backendID string) {
 // If BackendID is empty, the default store is used and BackendID is set
 // on the credential before delegating.
 func (c *CompositeStore) Add(cred *Credential) error {
-	c.mu.RLock()
-	defer c.mu.RUnlock()
+	// The write lock spans the duplicate check and the insertion, so two
+	// concurrent Adds of one ID or name to different backends cannot both
+	// pass the check.
+	c.mu.Lock()
+	defer c.mu.Unlock()
 
 	backendID := cred.BackendID
 	if backendID == "" {
@@ -80,7 +83,13 @@ func (c *CompositeStore) Add(cred *Credential) error {
 
 	store, ok := c.stores[backendID]
 	if !ok {
-		return ErrStoreNotFound
+		return &BackendError{Err: ErrStoreNotFound, BackendID: backendID}
+	}
+
+	// Get and Delete look a credential up by ID or name across every
+	// backend, so an ID or name may be held by only one of them.
+	if err := c.checkDuplicate(cred); err != nil {
+		return err
 	}
 
 	return store.Add(cred)
@@ -157,7 +166,7 @@ func (c *CompositeStore) Update(cred *Credential) error {
 
 	store, ok := c.stores[backendID]
 	if !ok {
-		return ErrStoreNotFound
+		return &BackendError{Err: ErrStoreNotFound, BackendID: backendID}
 	}
 
 	return store.Update(cred)
@@ -212,4 +221,22 @@ func (c *CompositeStore) findOwner(idOrName string) (string, error) {
 		}
 	}
 	return "", ErrCredentialNotFound
+}
+
+// checkDuplicate returns ErrCredentialExists when any registered store
+// already holds a credential with cred's ID or name. Callers must hold c.mu.
+func (c *CompositeStore) checkDuplicate(cred *Credential) error {
+	for _, key := range []string{cred.ID, cred.Name} {
+		if key == "" {
+			continue
+		}
+		_, err := c.findOwner(key)
+		if err == nil {
+			return ErrCredentialExists
+		}
+		if !errors.Is(err, ErrCredentialNotFound) {
+			return err
+		}
+	}
+	return nil
 }
