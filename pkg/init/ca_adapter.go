@@ -48,19 +48,18 @@ type CeremonyCA interface {
 type CAAdapter struct {
 	ca CeremonyCA
 
-	// spiffeTrustDomain, when non-empty, causes the adapter to stamp a
-	// system-tenant SPIFFE SAN (spiffe://<td>/tenant/system/user/<CN>) onto
-	// the SO / bootstrap certificates issued during the init ceremony. This is
-	// the control-plane exception in the login tenant-derivation order: the SO
-	// cert explicitly carries tenant/system so the control plane works before
-	// any tenant barrier unseals.
+	// spiffeTrustDomain is the cluster's SPIFFE trust domain. The login
+	// certificates the adapter issues (the SO / bootstrap certificate and the
+	// first-boot admin certificate) carry the SPIFFE ID SAN go-qrdb binds
+	// the tenant through, spiffe://<tenant>/user/<CN>; without a trust
+	// domain they are refused with ErrNoSPIFFETrustDomain.
 	spiffeTrustDomain string
 }
 
 // NewCAAdapter creates a new CAAdapter wrapping the given CeremonyCA
 // instance (any ca.TrustedCA satisfies CeremonyCA). trustDomain is the
-// operator-configured SPIFFE trust domain; when empty no SPIFFE SAN is
-// stamped (legacy behavior).
+// cluster's SPIFFE trust domain, which every login certificate the adapter
+// issues requires.
 func NewCAAdapter(xkmsCA CeremonyCA, trustDomain string) *CAAdapter {
 	return &CAAdapter{ca: xkmsCA, spiffeTrustDomain: trustDomain}
 }
@@ -70,17 +69,21 @@ func NewCAAdapter(xkmsCA CeremonyCA, trustDomain string) *CAAdapter {
 //
 // It honours go-qrdb's SignCSROptions contract: the certificate's Subject is
 // exactly opts.RawSubject() -- CN=<registered holder>, OU=<scope tenant>,
-// OU=<profile>, one RDN each -- with no Subject Alternative Name, and the CSR
-// contributes only its key. Copying the CSR's subject or names would let
-// whoever registers an officer mint a login as any account the CA's trust
-// reaches (go-qrdb's ceremony re-checks the result and refuses one that
-// differs). No SPIFFE SAN is stamped here either: the holder's tenant is the
-// first OU, which is what the authenticator reads for a holder certificate.
+// OU=<profile>, one RDN each -- its only Subject Alternative Names are
+// opts.URIs(), the tenant's SPIFFE ID that must agree with the first OU, and
+// the CSR contributes only its key. Copying the CSR's subject or names would
+// let whoever registers an officer mint a login as any account the CA's
+// trust reaches (go-qrdb's ceremony re-checks the result and refuses one
+// that differs).
 func (a *CAAdapter) SignCSR(ctx context.Context, csrPEM []byte, opts *qrdbsdk.SignCSROptions) (*x509.Certificate, error) {
 	if opts == nil {
 		return nil, ErrNilSignOptions
 	}
 	raw, err := opts.RawSubject()
+	if err != nil {
+		return nil, err
+	}
+	uris, err := opts.URIs()
 	if err != nil {
 		return nil, err
 	}
@@ -90,11 +93,12 @@ func (a *CAAdapter) SignCSR(ctx context.Context, csrPEM []byte, opts *qrdbsdk.Si
 		// key usage, extended key usage and validity the options state
 		// directly. opts.TenantID is the first OU in raw, the tenant the
 		// CA stamps.
-		ValidityDays: opts.ValidityDays,
-		TenantID:     opts.TenantID,
-		KeyUsage:     opts.KeyUsage,
-		ExtKeyUsage:  opts.ExtKeyUsage,
-		RawSubject:   raw,
+		ValidityDays:   opts.ValidityDays,
+		TenantID:       opts.TenantID,
+		KeyUsage:       opts.KeyUsage,
+		ExtKeyUsage:    opts.ExtKeyUsage,
+		RawSubject:     raw,
+		RawSubjectURIs: uris,
 	})
 }
 

@@ -81,6 +81,10 @@ func (f *fakeRBAC) ListPermissions(ctx context.Context, identity *qrdbtransport.
 	return nil, errors.New("not implemented in fake")
 }
 
+func (f *fakeRBAC) ListOwnPermissions(ctx context.Context) ([]qrdbtransport.PermissionInfo, error) {
+	return f.ListPermissions(ctx, nil)
+}
+
 // lastCall returns the most recent resource:action pair evaluated.
 func (f *fakeRBAC) lastCall() string {
 	f.mu.Lock()

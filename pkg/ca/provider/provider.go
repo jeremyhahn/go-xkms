@@ -46,7 +46,7 @@ type CA interface {
 
 	// SignCSRWithSPIFFE signs a CSR and, when trustDomain and tenantID are
 	// both non-empty, synthesizes a tenant-scoped SPIFFE URI SAN of the form
-	// spiffe://<trustDomain>/tenant/<tenantID>/<kind>/<name> onto the issued
+	// spiffe://<tenantID>/<kind>/<name> onto the issued
 	// certificate. kind defaults to "user" and name defaults to the subject
 	// CommonName when empty. When trustDomain or tenantID is empty this
 	// behaves exactly like SignCSRRaw.

@@ -52,6 +52,10 @@ func (f *fakeRBACClient) ListPermissions(ctx context.Context, identity *qrdbtran
 	return f.perms, f.err
 }
 
+func (f *fakeRBACClient) ListOwnPermissions(ctx context.Context) ([]qrdbtransport.PermissionInfo, error) {
+	return f.ListPermissions(ctx, nil)
+}
+
 func TestNewAuthorizer_NilRBAC_Disabled(t *testing.T) {
 	a := NewAuthorizer(nil)
 	require.NotNil(t, a)

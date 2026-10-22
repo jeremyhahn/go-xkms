@@ -21,8 +21,8 @@ import (
 
 // StampTenant returns subject, and rawSubject when it is set, with tenantID as
 // the subject's first organizational unit: Subject.OrganizationalUnit[0], the
-// tenant key on every layer, which qrdbsdk.TenantFromClientCert reads when a
-// certificate carries no SPIFFE tenant SAN. It is the one place an issued
+// tenant key on every layer, which qrdbsdk.TenantFromClientCert requires to
+// match the trust domain of the certificate's SPIFFE SAN. It is the one place an issued
 // certificate gets its tenant, and every issuance path calls it.
 //
 // tenantID is the request's tenant: the authenticated caller's or the issuing

@@ -146,6 +146,23 @@ func (f *grpcFakeUserClient) DisableUser(_ context.Context, id uint64) error {
 	return nil
 }
 
+func (f *grpcFakeUserClient) SuspendUser(_ context.Context, id uint64) error {
+	return f.setLifecycle(id, "suspended")
+}
+
+func (f *grpcFakeUserClient) UnsuspendUser(_ context.Context, id uint64) error {
+	return f.setLifecycle(id, "active")
+}
+
+func (f *grpcFakeUserClient) setLifecycle(id uint64, lifecycle string) error {
+	u, ok := f.byID[id]
+	if !ok {
+		return &qrdbtransport.UserNotFoundError{ID: id}
+	}
+	u.Lifecycle = lifecycle
+	return nil
+}
+
 // grpcFakeRoleClient is an in-memory qrdbtransport.RoleClient covering only
 // ListRoles, the one method the xkms user servicer calls to resolve a role
 // name to an id.

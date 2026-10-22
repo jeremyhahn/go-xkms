@@ -22,7 +22,6 @@ import (
 	"encoding/pem"
 	"testing"
 
-	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -43,13 +42,10 @@ func csrClaimingOrganizationalUnits(t *testing.T, cn string, ous ...string) []by
 }
 
 // requireTenant asserts that cert carries tenant as its only organizational
-// unit and that go-qrdb reads the same tenant back from it.
+// unit, the Subject.OrganizationalUnit[0] go-qrdb reads its tenant from.
 func requireTenant(t *testing.T, cert *x509.Certificate, tenant string) {
 	t.Helper()
 	require.Equal(t, []string{tenant}, cert.Subject.OrganizationalUnit)
-	got, _, err := qrdbsdk.TenantFromClientCert(cert, "")
-	require.NoError(t, err)
-	assert.Equal(t, tenant, got)
 }
 
 func TestStampTenant_ReplacesTheSubjectsOrganizationalUnits(t *testing.T) {
@@ -141,9 +137,6 @@ func TestSignCSR_RawSubjectCarriesTheRequestsTenant(t *testing.T) {
 	cert, err := ca.SignCSR(context.Background(), csrPEM, &SignOptions{RawSubject: raw, TenantID: testTenant})
 	require.NoError(t, err)
 	assert.Equal(t, []string{testTenant, "custodian"}, cert.Subject.OrganizationalUnit)
-	got, _, err := qrdbsdk.TenantFromClientCert(cert, "")
-	require.NoError(t, err)
-	assert.Equal(t, testTenant, got)
 }
 
 func TestIssueCertificateRaw_StampsTheTenant(t *testing.T) {

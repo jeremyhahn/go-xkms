@@ -90,6 +90,10 @@ var (
 	// whole name, so any other source of names would contradict it.
 	ErrRawSubjectWithNames = errors.New("ca: a raw subject cannot be combined with another source of certificate names")
 
+	// ErrInvalidRawSubjectURIs reports SignOptions.RawSubjectURIs without a
+	// RawSubject, or holding a nil URI.
+	ErrInvalidRawSubjectURIs = errors.New("ca: raw subject URIs need a raw subject and may not hold a nil URI")
+
 	// ErrInvalidRawSubject reports a SignOptions.RawSubject that is not a
 	// DER-encoded RDNSequence.
 	ErrInvalidRawSubject = errors.New("ca: raw subject is not a DER-encoded distinguished name")

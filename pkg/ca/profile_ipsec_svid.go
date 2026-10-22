@@ -191,7 +191,7 @@ type x509SVIDProfile struct {
 //
 // Issue it under a subordinate CA whose PermittedURIDomains names the trust
 // domain. That constraint binds only the trust domain; scoping an issuer to a
-// path such as /tenant/<t>/ is the issuing caller's policy.
+// path such as /svc/ is the issuing caller's policy.
 func NewX509SVIDProfile() ProfileProvider {
 	return &x509SVIDProfile{
 		baseProfile: baseProfile{

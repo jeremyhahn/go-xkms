@@ -52,7 +52,7 @@ func (ca *CA) SignCSRRaw(ctx context.Context, csrPEM []byte, profile string, val
 
 // SignCSRWithSPIFFE signs a CSR and optionally stamps a tenant-scoped SPIFFE
 // URI SAN onto the issued certificate. When trustDomain and tenantID are both
-// non-empty, the SAN spiffe://<trustDomain>/tenant/<tenantID>/<kind>/<name> is
+// non-empty, the SAN spiffe://<tenantID>/<kind>/<name> is
 // appended (kind defaults to "user", name defaults to the subject CN). When
 // either is empty, this is identical to SignCSRRaw.
 //

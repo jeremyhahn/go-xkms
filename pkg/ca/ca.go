@@ -80,6 +80,7 @@ import (
 	"io"
 	"math/big"
 	"net/http"
+	"net/url"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -1817,6 +1818,9 @@ func (ca *CA) signVerifiedCSR(ctx context.Context, csr *x509.CertificateRequest,
 		notAfter = notBefore.Add(lifetime)
 	}
 
+	if opts != nil && opts.RawSubject == nil && opts.RawSubjectURIs != nil {
+		return nil, ErrInvalidRawSubjectURIs
+	}
 	if opts != nil && opts.RawSubject != nil {
 		return ca.signRawSubjectCSR(ctx, csr, opts, request, profile, &signContext{
 			signer:       signer,
@@ -1935,8 +1939,8 @@ func (ca *CA) checkBoundKey(ctx context.Context, csr *x509.CertificateRequest, a
 }
 
 // signRawSubjectCSR signs a CSR under a caller-chosen raw subject: the
-// certificate carries exactly opts.RawSubject and no subject alternative
-// name, and the CSR contributes only its public key.
+// certificate carries exactly opts.RawSubject, no subject alternative name
+// but opts.RawSubjectURIs, and the CSR contributes only its public key.
 func (ca *CA) signRawSubjectCSR(
 	ctx context.Context,
 	csr *x509.CertificateRequest,
@@ -1951,6 +1955,14 @@ func (ca *CA) signRawSubjectCSR(
 		opts.SPIFFEKind != "" || opts.SPIFFEName != "" || isCallerSANProfile(profile) {
 		return nil, ErrRawSubjectWithNames
 	}
+	uris := make([]*url.URL, 0, len(opts.RawSubjectURIs))
+	for _, uri := range opts.RawSubjectURIs {
+		if uri == nil {
+			return nil, ErrInvalidRawSubjectURIs
+		}
+		clone := *uri
+		uris = append(uris, &clone)
+	}
 	var rdns pkix.RDNSequence
 	rest, err := asn1.Unmarshal(opts.RawSubject, &rdns)
 	if err != nil || len(rest) != 0 || len(rdns) == 0 {
@@ -1963,6 +1975,7 @@ func (ca *CA) signRawSubjectCSR(
 		Serial:             serial,
 		Subject:            subject,
 		RawSubject:         bytes.Clone(opts.RawSubject),
+		URIs:               uris,
 		NotBefore:          notBefore,
 		NotAfter:           notAfter,
 		PublicKey:          csr.PublicKey,

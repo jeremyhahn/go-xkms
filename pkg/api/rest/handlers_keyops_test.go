@@ -780,6 +780,10 @@ func (denyingRBACClient) ListPermissions(_ context.Context, _ *qrdbtransport.Ide
 	return nil, errors.New("permission denied")
 }
 
+func (d denyingRBACClient) ListOwnPermissions(ctx context.Context) ([]qrdbtransport.PermissionInfo, error) {
+	return d.ListPermissions(ctx, nil)
+}
+
 // requireRBACDenied builds a full REST server with RBAC enabled and a
 // denying RBACClient, drives the given request through the real chi router
 // (not a bare handler call), and asserts the RequirePermission decorator

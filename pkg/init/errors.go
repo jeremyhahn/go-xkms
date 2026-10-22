@@ -96,3 +96,9 @@ func (e *AdminKeyGenerationError) Is(target error) bool { return target == ErrAd
 // SignCSROptions: without them there is no registered holder and no tenant
 // to name, and signing would fall back to whatever the CSR asked for.
 var ErrNilSignOptions = errors.New("init: holder certificate signing requires the ceremony's sign options")
+
+// ErrNoSPIFFETrustDomain is returned when a CAAdapter built without a SPIFFE
+// trust domain is asked for a login certificate. go-qrdb binds a login's
+// tenant only through the certificate's SPIFFE ID SAN, so a certificate
+// issued without one could never authenticate.
+var ErrNoSPIFFETrustDomain = errors.New("init: login certificate issuance requires a SPIFFE trust domain")

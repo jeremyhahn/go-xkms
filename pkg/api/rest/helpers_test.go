@@ -72,6 +72,10 @@ func (c *recordingRBACClient) ListPermissions(_ context.Context, _ *qrdbtranspor
 	}}, nil
 }
 
+func (c *recordingRBACClient) ListOwnPermissions(ctx context.Context) ([]qrdbtransport.PermissionInfo, error) {
+	return c.ListPermissions(ctx, nil)
+}
+
 func initTestBarrier(t *testing.T) *seal.Barrier {
 	t.Helper()
 	base := storage.NewMemory()

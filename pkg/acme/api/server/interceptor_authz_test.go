@@ -85,6 +85,10 @@ func (q *qrdbRoleRBAC) ListPermissions(_ context.Context, _ *qrdbtransport.Ident
 	return nil, nil
 }
 
+func (q *qrdbRoleRBAC) ListOwnPermissions(ctx context.Context) ([]qrdbtransport.PermissionInfo, error) {
+	return q.ListPermissions(ctx, nil)
+}
+
 func testLogger() *slog.Logger {
 	return slog.New(slog.NewTextHandler(io.Discard, nil))
 }

@@ -105,6 +105,14 @@ func (f *fakeQRDBUserClient) DisableUser(ctx context.Context, id uint64) error {
 	return errors.New("not implemented in fake")
 }
 
+func (f *fakeQRDBUserClient) SuspendUser(ctx context.Context, id uint64) error {
+	return errors.New("not implemented in fake")
+}
+
+func (f *fakeQRDBUserClient) UnsuspendUser(ctx context.Context, id uint64) error {
+	return errors.New("not implemented in fake")
+}
+
 func TestNewQRDBUserStore(t *testing.T) {
 	users := newFakeQRDBUserClient()
 	users.getErr = errors.New("client reached")

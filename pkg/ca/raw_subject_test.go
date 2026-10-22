@@ -79,6 +79,46 @@ func TestSignCSR_RawSubjectIsTheWholeName(t *testing.T) {
 	assert.True(t, key.PublicKey.Equal(cert.PublicKey), "the CSR's key is certified")
 }
 
+func TestSignCSR_RawSubjectCarriesExactlyItsURIs(t *testing.T) {
+	ca := setupTestCA(t)
+	csrPEM, _ := hostileCSR(t)
+	raw := holderRawSubject(t, "officer-1", testTenant, "custodian")
+	spiffeID := &url.URL{Scheme: "spiffe", Host: testTenant, Path: "/user/officer-1"}
+
+	cert, err := ca.SignCSR(context.Background(), csrPEM, &SignOptions{
+		TenantID:       testTenant,
+		RawSubject:     raw,
+		RawSubjectURIs: []*url.URL{spiffeID},
+	})
+	require.NoError(t, err)
+	assert.Equal(t, raw, cert.RawSubject)
+	require.Len(t, cert.URIs, 1)
+	assert.Equal(t, spiffeID.String(), cert.URIs[0].String())
+	assert.Empty(t, cert.DNSNames, "the CSR's names are not copied")
+	assert.Empty(t, cert.EmailAddresses)
+	assert.Empty(t, cert.IPAddresses)
+}
+
+func TestSignCSR_RawSubjectURIsAreRefusedWhenInvalid(t *testing.T) {
+	ca := setupTestCA(t)
+	csrPEM, _ := hostileCSR(t)
+	spiffeID := &url.URL{Scheme: "spiffe", Host: testTenant, Path: "/user/officer-1"}
+
+	for name, opts := range map[string]*SignOptions{
+		"without a raw subject": {TenantID: testTenant, RawSubjectURIs: []*url.URL{spiffeID}},
+		"holding a nil URI": {
+			TenantID:       testTenant,
+			RawSubject:     holderRawSubject(t, "officer-1", testTenant, "custodian"),
+			RawSubjectURIs: []*url.URL{spiffeID, nil},
+		},
+	} {
+		t.Run(name, func(t *testing.T) {
+			_, err := ca.SignCSR(context.Background(), csrPEM, opts)
+			require.ErrorIs(t, err, ErrInvalidRawSubjectURIs)
+		})
+	}
+}
+
 func TestSignCSR_RawSubjectRefusesAnotherSourceOfNames(t *testing.T) {
 	ca := setupTestCA(t)
 	csrPEM, _ := hostileCSR(t)

@@ -24,7 +24,7 @@ func TestBuildURI_Canonical(t *testing.T) {
 	if err != nil {
 		t.Fatalf("BuildURI: %v", err)
 	}
-	if got, want := u.String(), "spiffe://example.com/tenant/tenant-acme/user/alice"; got != want {
+	if got, want := u.String(), "spiffe://tenant-acme/user/alice"; got != want {
 		t.Fatalf("URI = %q, want %q", got, want)
 	}
 }
@@ -42,6 +42,9 @@ func TestBuildURI_Validation(t *testing.T) {
 		{"empty tenant", "td", "", KindUser, "n", ErrTenantEmpty},
 		{"bad kind", "td", "t", "bogus", "n", ErrKindInvalid},
 		{"empty name", "td", "t", KindUser, "", ErrNameEmpty},
+		{"tenant is the cluster trust domain", "td", "td", KindUser, "n", ErrTenantIsClusterTrustDomain},
+		{"tenant is not a trust domain name", "td", "Tenant A", KindUser, "n", ErrTrustDomainCharacters},
+		{"name is not a path segment", "td", "t", KindUser, "a/b", ErrSegmentCharacters},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -59,7 +62,7 @@ func TestParseID_RoundTrip(t *testing.T) {
 	if err != nil || !ok {
 		t.Fatalf("ParseID ok=%v err=%v", ok, err)
 	}
-	if id.TenantID != "t1" || id.Kind != KindService || id.Name != "billing" || id.TrustDomain != "trust.internal" {
+	if id.TenantID != "t1" || id.Kind != KindService || id.Name != "billing" {
 		t.Fatalf("parsed = %+v", id)
 	}
 }
@@ -94,14 +97,24 @@ func TestTenantFromURIs_TrustDomainPin(t *testing.T) {
 		t.Fatalf("tenant = %q", id.TenantID)
 	}
 
-	// Wrong pin is rejected.
-	if _, err := TenantFromURIs([]*url.URL{good}, "evil.example"); !errors.Is(err, ErrTrustDomainMismatch) {
-		t.Fatalf("expected ErrTrustDomainMismatch, got %v", err)
+	// A tenant naming the cluster trust domain is refused.
+	cluster, err := ID{TenantID: "example.com", Kind: KindUser, Name: "alice"}.URI()
+	if err != nil {
+		t.Fatalf("URI: %v", err)
+	}
+	if _, err := TenantFromURIs([]*url.URL{cluster}, "example.com"); !errors.Is(err, ErrTenantIsClusterTrustDomain) {
+		t.Fatalf("expected ErrTenantIsClusterTrustDomain, got %v", err)
+	}
+
+	// SANs naming two tenants are refused rather than resolved to either.
+	other, _ := BuildURI("example.com", "tenant-globex", KindUser, "alice")
+	if _, err := TenantFromURIs([]*url.URL{good, other}, "example.com"); !errors.Is(err, ErrAmbiguousTenant) {
+		t.Fatalf("expected ErrAmbiguousTenant, got %v", err)
 	}
 
 	// No SPIFFE SAN present.
-	other, _ := url.Parse("https://example.com/x")
-	if _, err := TenantFromURIs([]*url.URL{other}, "example.com"); !errors.Is(err, ErrNoTenantSPIFFEID) {
+	https, _ := url.Parse("https://example.com/x")
+	if _, err := TenantFromURIs([]*url.URL{https}, "example.com"); !errors.Is(err, ErrNoTenantSPIFFEID) {
 		t.Fatalf("expected ErrNoTenantSPIFFEID, got %v", err)
 	}
 }
