@@ -21,6 +21,7 @@ import (
 	"time"
 
 	"github.com/jeremyhahn/go-xkms/pkg/acme/audit"
+	"github.com/jeremyhahn/go-xkms/pkg/api/transport"
 	"github.com/jeremyhahn/go-xkms/pkg/errs"
 
 	xkmssdk "github.com/jeremyhahn/go-xkms/sdk/go"
@@ -336,63 +337,19 @@ type TenantInfo struct {
 	CreatedBy               string              `json:"created_by,omitempty"`
 }
 
-// TenantRootCAInfo represents tenant root CA information
-type TenantRootCAInfo struct {
-	CommonName   string    `json:"common_name"`
-	SerialNumber string    `json:"serial_number,omitempty"`
-	KeyAlgorithm string    `json:"key_algorithm"`
-	Keys         []KeyInfo `json:"keys,omitempty"`
-	NotBefore    time.Time `json:"not_before"`
-	NotAfter     time.Time `json:"not_after"`
-	Status       string    `json:"status"`
-	CreatedAt    time.Time `json:"created_at"`
-}
+// TenantRootCAInfo is the tenant record's root CA, defined beside the tenant
+// lifecycle routes that return it.
+type TenantRootCAInfo = transport.TenantRootCAInfo
 
-// TenantIntCAInfo represents tenant intermediate CA information
-type TenantIntCAInfo struct {
-	ID           string    `json:"id"`
-	CommonName   string    `json:"common_name"`
-	SerialNumber string    `json:"serial_number,omitempty"`
-	ParentType   string    `json:"parent_type"`       // "global" or "tenant"
-	Purpose      string    `json:"purpose,omitempty"` // "general", "server-auth", "client-auth", etc.
-	KeyAlgorithm string    `json:"key_algorithm"`
-	Keys         []KeyInfo `json:"keys,omitempty"`
-	NotBefore    time.Time `json:"not_before"`
-	NotAfter     time.Time `json:"not_after"`
-	Status       string    `json:"status"`
-	CreatedAt    time.Time `json:"created_at"`
-	UpdatedAt    time.Time `json:"updated_at,omitempty"`
-}
+// TenantIntCAInfo is the tenant record's intermediate CA.
+type TenantIntCAInfo = transport.TenantIntCAInfo
 
-// TenantSettingsInfo represents tenant settings
-type TenantSettingsInfo struct {
-	MaxCertificates         int                   `json:"max_certificates,omitempty"`
-	MaxAccounts             int                   `json:"max_accounts,omitempty"`
-	AllowedKeyAlgorithms    []string              `json:"allowed_key_algorithms,omitempty"`
-	AllowedChallengeTypes   []string              `json:"allowed_challenge_types,omitempty"`
-	CertificateValidityDays int                   `json:"certificate_validity_days,omitempty"`
-	RequireEAB              bool                  `json:"require_eab,omitempty"`
-	AllowEndorse01          bool                  `json:"allow_endorse_01,omitempty"`
-	AllowEnroll01           bool                  `json:"allow_enroll_01,omitempty"`
-	ComplianceConfig        *ComplianceConfigInfo `json:"compliance_config,omitempty"`
-}
+// TenantSettingsInfo is the tenant record's issuance settings.
+type TenantSettingsInfo = transport.TenantSettingsInfo
 
-// ComplianceConfigInfo represents compliance configuration for certificate issuance
-type ComplianceConfigInfo struct {
-	// Enabled indicates whether compliance validation is active
-	Enabled bool `json:"enabled"`
-
-	// RequireSignedReport indicates whether the compliance report must be signed
-	RequireSignedReport bool `json:"require_signed_report"`
-
-	// CustomPolicyPath is the path to a custom Rego policy file
-	CustomPolicyPath string `json:"custom_policy_path,omitempty"`
-
-	// FailOpen determines behavior when compliance data is missing
-	// If true, missing report = pass (fail-open)
-	// If false, missing report = fail (fail-closed)
-	FailOpen bool `json:"fail_open"`
-}
+// ComplianceConfigInfo is the compliance configuration for certificate
+// issuance.
+type ComplianceConfigInfo = transport.ComplianceConfigInfo
 
 // GlobalComplianceConfigInfo is the server-wide default compliance configuration
 type GlobalComplianceConfigInfo struct {

@@ -84,6 +84,9 @@ type EndpointInfo struct {
 
 	// RequiresBody indicates if the request should include a body.
 	RequiresBody bool
+
+	// Query lists the request fields sent as the URL query string.
+	Query []transport.QueryParam
 }
 
 // endpointKey creates a lookup key from service and method.
@@ -266,6 +269,12 @@ func (t *Transport) Request(ctx context.Context, service, method string, req int
 
 	// Handle path parameters by extracting fields from the request
 	url = substitutePathParams(url, req)
+
+	query, err := transport.EncodeQuery(req, endpoint.Query)
+	if err != nil {
+		return nil, caerrors.Wrap(err, caerrors.CodeInvalidInput, op, "failed to encode request query")
+	}
+	url += query
 
 	// Build the HTTP request
 	var body io.Reader

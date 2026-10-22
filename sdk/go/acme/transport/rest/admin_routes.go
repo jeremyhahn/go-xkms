@@ -18,6 +18,8 @@ import (
 	"fmt"
 	"net/http"
 	"strings"
+
+	"github.com/jeremyhahn/go-xkms/sdk/go/acme/transport"
 )
 
 const (
@@ -62,6 +64,19 @@ func extractField(req interface{}, field string) string {
 func adminPath(path string) PathBuilder {
 	return func(baseURL string, _ interface{}) string {
 		return baseURL + path
+	}
+}
+
+// adminPathWithQuery creates a PathBuilder for a static path that carries
+// the request's params as a query string. It returns "" when the request
+// cannot be encoded, which the transport reports as an unbuildable path.
+func adminPathWithQuery(path string, params []transport.QueryParam) PathBuilder {
+	return func(baseURL string, req interface{}) string {
+		query, err := transport.EncodeQuery(req, params)
+		if err != nil {
+			return ""
+		}
+		return baseURL + path + query
 	}
 }
 
@@ -142,11 +157,11 @@ func buildAdminRouteMap() map[string]RouteInfo {
 		// Tenant service
 		"admin.tenant/create": {
 			Method:      MethodPOST,
-			PathBuilder: adminPath("/api/v1/tenants"),
+			PathBuilder: adminPath("/api/v1/tenants/"),
 		},
 		"admin.tenant/list": {
 			Method:      MethodGET,
-			PathBuilder: adminPath("/api/v1/tenants"),
+			PathBuilder: adminPathWithQuery("/api/v1/tenants/", transport.TenantListQuery),
 		},
 		"admin.tenant/get": {
 			Method:      MethodGET,

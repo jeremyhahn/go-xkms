@@ -13,7 +13,11 @@
 
 package unix
 
-import "net/http"
+import (
+	"net/http"
+
+	"github.com/jeremyhahn/go-xkms/sdk/go/acme/transport"
+)
 
 // adminEndpointRegistry maps admin service/method pairs to REST endpoints.
 // This provides O(1) constant-time lookup for admin route routing.
@@ -33,8 +37,8 @@ var adminEndpointRegistry = map[string]EndpointInfo{
 	endpointKey("admin.account", "disable"): {Path: "/admin/accounts/{accountId}", Method: http.MethodDelete, RequiresBody: false},
 
 	// Tenant service
-	endpointKey("admin.tenant", "create"):       {Path: "/api/v1/tenants", Method: http.MethodPost, RequiresBody: true},
-	endpointKey("admin.tenant", "list"):         {Path: "/api/v1/tenants", Method: http.MethodGet, RequiresBody: false},
+	endpointKey("admin.tenant", "create"):       {Path: "/api/v1/tenants/", Method: http.MethodPost, RequiresBody: true},
+	endpointKey("admin.tenant", "list"):         {Path: "/api/v1/tenants/", Method: http.MethodGet, RequiresBody: false, Query: transport.TenantListQuery},
 	endpointKey("admin.tenant", "get"):          {Path: "/api/v1/tenants/{tenantId}", Method: http.MethodGet, RequiresBody: false},
 	endpointKey("admin.tenant", "update"):       {Path: "/api/v1/tenants/{tenantId}", Method: http.MethodPut, RequiresBody: true},
 	endpointKey("admin.tenant", "delete"):       {Path: "/api/v1/tenants/{tenantId}", Method: http.MethodDelete, RequiresBody: false},

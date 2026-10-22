@@ -39,8 +39,8 @@ import (
 const minModulePermissions = 69
 
 // upstreamDeclared records which of this module's permissions already had a
-// scope BEFORE registerRoleGrants ran — that is, the ones go-qrdb declares
-// itself. It is captured in init() because registerRoleGrants is a sync.Once
+// scope BEFORE RegisterRoleGrants ran — that is, the ones go-qrdb declares
+// itself. It is captured in init() because RegisterRoleGrants is a sync.Once
 // reached from NewModule, so any test that constructs a module would
 // otherwise blur the two layers together and make the ownership assertion in
 // TestModuleDeclaresOnlyItsOwnScopes unable to fail.
@@ -91,7 +91,7 @@ func TestEveryModulePermissionDeclaresItsScope(t *testing.T) {
 	}
 
 	// The module's own declarations land in the process-global layer here.
-	registerRoleGrants()
+	RegisterRoleGrants()
 
 	resolver, err := testutil.NewPermissionScopeResolver()
 	if err != nil {
@@ -226,7 +226,7 @@ func ownedScopedPermissions() []qrdbsdk.Permission {
 // ScopeCross, so only a system-tenant identity can hold it, while the
 // tpm_policy:* family resolves to ScopeSelf.
 func TestTenantTPMModeIsCrossScoped(t *testing.T) {
-	registerRoleGrants()
+	RegisterRoleGrants()
 	resolver, err := testutil.NewPermissionScopeResolver()
 	if err != nil {
 		t.Fatalf("NewPermissionScopeResolver: %v", err)
@@ -254,7 +254,7 @@ func TestTenantTPMModeIsCrossScoped(t *testing.T) {
 // to ScopeSelf like ssh:read/write/delete, and is granted to Admin -- without
 // the grant no role could ever reach a service-scoped asset.
 func TestSSHServiceIsSelfScopedAndGranted(t *testing.T) {
-	registerRoleGrants()
+	RegisterRoleGrants()
 	perm := qrdbsdk.Permission("ssh:service")
 
 	found := false

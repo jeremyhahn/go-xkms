@@ -38,10 +38,12 @@ var (
 // / volume / raft; default prefix) and BarrierAutoUnseal opts a dedicated-
 // isolation tenant into system-managed auto-unseal (entitlement-gated).
 type createTenantRequest struct {
-	ID                string `json:"id"`
-	Name              string `json:"name"`
-	IsolationType     string `json:"isolation_type,omitempty"`
-	BarrierAutoUnseal bool   `json:"barrier_auto_unseal,omitempty"`
+	// ID is optional; the service generates one when it is empty.
+	ID                string                        `json:"id,omitempty"`
+	Name              string                        `json:"name"`
+	IsolationType     string                        `json:"isolation_type,omitempty"`
+	BarrierAutoUnseal bool                          `json:"barrier_auto_unseal,omitempty"`
+	Settings          *transport.TenantSettingsInfo `json:"settings,omitempty"`
 }
 
 // tenantInfoResponse represents tenant information.
@@ -52,6 +54,10 @@ type tenantInfoResponse struct {
 	IsolationType string `json:"isolation_type,omitempty"`
 	CreatedAt     string `json:"created_at,omitempty"`
 	UpdatedAt     string `json:"updated_at,omitempty"`
+
+	// The CA record kept beside the tenant (status, CA hierarchy, issuance
+	// settings), inlined; absent when no record is kept.
+	*transport.TenantRecord
 }
 
 // wrappedTenantResponse wraps a single tenant for SDK compatibility.
@@ -117,24 +123,28 @@ func (h *TenantHandlers) CreateTenantHandler(w http.ResponseWriter, r *http.Requ
 	// TenantService so the requested isolation mode and the system-managed
 	// auto-unseal key-management mode are entitlement-gated and the per-tenant
 	// barrier is sealed by the composed hardware strategies.
-	createResp, err := h.xkmsService.CreateTenant(r.Context(), &transport.CreateTenantRequest{
+	detail, err := h.xkmsService.CreateTenantDetail(r.Context(), &transport.CreateTenantRequest{
 		ID:                req.ID,
 		Name:              req.Name,
 		IsolationType:     transport.TenantIsolationType(req.IsolationType),
 		BarrierAutoUnseal: req.BarrierAutoUnseal,
-	})
+	}, req.Settings)
 	if err != nil {
 		handleTenantError(w, err)
 		return
 	}
-	writeJSON(w, wrappedTenantResponse{
-		Tenant: tenantInfoResponse{
-			ID:            createResp.Tenant.ID,
-			Name:          createResp.Tenant.Name,
-			Sealed:        h.tenantSealed(req.ID),
-			IsolationType: string(createResp.Tenant.IsolationType),
-		},
-	}, http.StatusCreated)
+	writeJSON(w, wrappedTenantResponse{Tenant: h.tenantResponse(detail)}, http.StatusCreated)
+}
+
+// tenantResponse renders a tenant and its CA record.
+func (h *TenantHandlers) tenantResponse(detail *transport.TenantDetail) tenantInfoResponse {
+	return tenantInfoResponse{
+		ID:            detail.Tenant.ID,
+		Name:          detail.Tenant.Name,
+		Sealed:        h.tenantSealed(detail.Tenant.ID),
+		IsolationType: string(detail.Tenant.IsolationType),
+		TenantRecord:  detail.Record,
+	}
 }
 
 // tenantSealed reports the live sealed state of a tenant's barrier. Prefix-
@@ -162,39 +172,29 @@ func (h *TenantHandlers) ListTenantsHandler(w http.ResponseWriter, r *http.Reque
 		return
 	}
 
-	tenants := make([]tenantInfoResponse, 0)
-
-	// List through the XKMS tenant service so prefix-isolated (default)
-	// tenants — which are not in the barrier registry — are included,
-	// consistent with the create/get paths. The service already confines a
-	// tenant-scoped caller to its own tenant.
-	listResp, err := h.xkmsService.ListTenants(r.Context())
-	if err != nil {
-		handleTenantError(w, err)
-		return
-	}
-	for _, ti := range listResp.Tenants {
-		tenants = append(tenants, tenantInfoResponse{
-			ID:            ti.ID,
-			Name:          ti.Name,
-			Sealed:        h.tenantSealed(ti.ID),
-			IsolationType: string(ti.IsolationType),
-		})
-	}
-	sort.Slice(tenants, func(i, j int) bool { return tenants[i].ID < tenants[j].ID })
-
 	pageReq, err := transport.PageRequestFromQuery(r)
 	if err != nil {
 		writeError(w, err, http.StatusBadRequest)
 		return
 	}
-	paged, pageResp := transport.ApplyPagination(tenants, pageReq)
 
-	resp := listTenantsResponse{
-		Tenants:    paged,
-		Pagination: pageResp,
+	// List through the XKMS tenant service so prefix-isolated (default)
+	// tenants — which are not in the barrier registry — are included,
+	// consistent with the create/get paths. The service already confines a
+	// tenant-scoped caller to its own tenant and applies the status filter.
+	details, err := h.xkmsService.ListTenantDetails(r.Context(), r.URL.Query().Get("status"))
+	if err != nil {
+		handleTenantError(w, err)
+		return
 	}
-	writeJSON(w, resp, http.StatusOK)
+	tenants := make([]tenantInfoResponse, 0, len(details))
+	for i := range details {
+		tenants = append(tenants, h.tenantResponse(&details[i]))
+	}
+	sort.Slice(tenants, func(i, j int) bool { return tenants[i].ID < tenants[j].ID })
+
+	paged, pageResp := transport.ApplyPagination(tenants, pageReq)
+	writeJSON(w, listTenantsResponse{Tenants: paged, Pagination: pageResp}, http.StatusOK)
 }
 
 // GetTenantHandler handles GET /tenants/{id} requests.
@@ -218,19 +218,12 @@ func (h *TenantHandlers) GetTenantHandler(w http.ResponseWriter, r *http.Request
 	// Prefix-isolated (default) tenants share the system store and are NOT
 	// registered in the barrier registry, so a registry-only lookup would
 	// 404 them even though CreateTenant persisted their metadata.
-	getResp, err := h.xkmsService.GetTenant(r.Context(), tenantID)
+	detail, err := h.xkmsService.GetTenantDetail(r.Context(), tenantID)
 	if err != nil {
 		handleTenantError(w, err)
 		return
 	}
-	writeJSON(w, wrappedTenantResponse{
-		Tenant: tenantInfoResponse{
-			ID:            getResp.Tenant.ID,
-			Name:          getResp.Tenant.Name,
-			Sealed:        h.tenantSealed(tenantID),
-			IsolationType: string(getResp.Tenant.IsolationType),
-		},
-	}, http.StatusOK)
+	writeJSON(w, wrappedTenantResponse{Tenant: h.tenantResponse(detail)}, http.StatusOK)
 }
 
 // DeleteTenantHandler handles DELETE /tenants/{id} requests.

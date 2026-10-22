@@ -14,8 +14,12 @@
 package rest
 
 import (
+	"errors"
 	"log/slog"
 	"net/http"
+
+	"github.com/go-chi/chi/v5"
+	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
 
 	"github.com/jeremyhahn/go-xkms/pkg/auth"
 )
@@ -95,4 +99,89 @@ func (m *RBACMiddleware) RequirePermission(resource, action string) func(http.Ha
 			next.ServeHTTP(w, r)
 		})
 	}
+}
+
+// TenantGate authorizes the tenant lifecycle routes (RouteAuthTenant) by the
+// tenants each request reaches, as the ACME admin plane's tenant gate did
+// before the routes moved here (go-xkms#794). A caller acting on its own
+// tenant needs the route's Resource:Action; reaching any other tenant, or
+// creating one, needs the route's cross-tenant permission
+// (qrdbsdk.PermissionTenants*Cross). A caller confined to its own tenant that
+// names another one is answered exactly as for an absent tenant (404), so the
+// gate does not reveal which tenants exist.
+//
+// The gate runs whether or not RBAC is enabled for the other routes, and
+// fails closed (503 ErrTenantAuthorizerUnavailable) without a qrdb-backed
+// authorizer.
+type TenantGate struct {
+	authorizer *auth.Authorizer
+	logger     *slog.Logger
+}
+
+// NewTenantGate returns the tenant lifecycle gate over authorizer.
+func NewTenantGate(authorizer *auth.Authorizer, logger *slog.Logger) *TenantGate {
+	return &TenantGate{authorizer: authorizer, logger: logger}
+}
+
+// Require returns middleware gating spec, a RouteAuthTenant route.
+func (g *TenantGate) Require(spec RouteSpec) func(http.Handler) http.Handler {
+	return func(next http.Handler) http.Handler {
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			ctx := r.Context()
+			identity := auth.GetIdentity(ctx)
+			if identity == nil {
+				writeErrorWithMessage(w, ErrUnauthorized, "Authentication required", http.StatusUnauthorized)
+				return
+			}
+			if !g.authorizer.Enabled() {
+				writeError(w, ErrTenantAuthorizerUnavailable, http.StatusServiceUnavailable)
+				return
+			}
+
+			resource, action, hidden := g.permission(spec, identity, r)
+			err := g.authorizer.Authorize(ctx, identity, resource, action)
+			if err == nil {
+				next.ServeHTTP(w, r)
+				return
+			}
+			g.logger.Warn("tenant route access denied",
+				slog.String("subject", identity.Subject),
+				slog.String("resource", resource),
+				slog.String("action", action),
+				slog.String("method", r.Method),
+				slog.String("path", r.URL.Path),
+				slog.String("error", err.Error()))
+			switch {
+			case errors.Is(err, auth.ErrUnauthenticated):
+				writeErrorWithMessage(w, ErrUnauthorized, "Authentication required", http.StatusUnauthorized)
+			case hidden:
+				handleTenantError(w, qrdbsdk.ErrTenantMissing)
+			default:
+				writeErrorWithMessage(w, ErrForbidden, "Access denied: insufficient permissions", http.StatusForbidden)
+			}
+		})
+	}
+}
+
+// permission returns the permission identity needs for spec on r, and
+// whether a refusal must read as an absent tenant: the request names another
+// tenant than the caller's, and the caller is confined to its own.
+func (g *TenantGate) permission(spec RouteSpec, identity *auth.Identity, r *http.Request) (resource, action string, hidden bool) {
+	cross := func() (string, string) {
+		return qrdbsdk.PermissionResource(spec.CrossPermission), qrdbsdk.PermissionAction(spec.CrossPermission)
+	}
+	switch spec.Reach {
+	case TenantReachTarget:
+		if identity.TenantID == chi.URLParam(r, "tenantID") {
+			return spec.Resource, spec.Action, false
+		}
+		resource, action = cross()
+		return resource, action, !auth.IsCrossTenant(identity)
+	case TenantReachList:
+		if !auth.IsCrossTenant(identity) {
+			return spec.Resource, spec.Action, false
+		}
+	}
+	resource, action = cross()
+	return resource, action, false
 }

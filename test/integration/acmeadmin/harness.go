@@ -27,24 +27,13 @@
 // coverage (gRPC/QUIC/MCP/Unix) is dropped, not adapted, because xkmsd does
 // not serve those transports (go-xkms#743 tracks wiring them).
 //
-// PRODUCTION BUG FOUND AND FIXED WHILE BUILDING THIS SUITE (see
-// cli_test.go's testCLITenantLifecycle doc comment for the full trace):
-// "xkmsctl tenant create"/"list" requested the tenant collection root as
-// "/api/v1/tenants", without the trailing slash xkmsd's own route table
-// registers it under ("/api/v1/tenants/", pkg/api/rest/routes.go — the
-// same convention every other collection-root route in that file uses).
-// That gap was silently bridged by a slash redirect as long as nothing
-// else claimed the exact, no-slash path — until the ACME admin plane
-// (required for this whole suite) registered precisely that literal path
-// for its own, differently-shaped tenant surface
-// (pkg/apimodule/admin_module.go, cmd/xkmsd/admin.go's adminAPIPrefixes),
-// which then answered first with no error and no redirect, just an
-// all-zero-value response body. Fixed in
-// pkg/api/transport/rest/transport.go's CreateTenant/ListTenants; see that
-// file's doc comments and transport_tenant_test.go's
-// TestCreateTenant_CollectionRootRequiresTrailingSlash /
-// TestListTenants_CollectionRootRequiresTrailingSlash for the regression
-// coverage.
+// TENANT ROUTE OWNERSHIP (see cli_test.go's testCLITenantLifecycle doc
+// comment): xkmsd's core route table (pkg/api/rest/routes.go) is the one
+// owner of the tenant collection "/api/v1/tenants/" and of GET/DELETE
+// "/api/v1/tenants/{id}". The ACME admin plane (pkg/apimodule/
+// admin_module.go, cmd/xkmsd/admin.go's adminAPIPrefixes) mounts only its
+// tenant sub-resources (status, CA, EAB, roles, users) and the rename PUT,
+// so "xkmsctl tenant ..." and "xkmsctl acme ..." reach the same tenant.
 //
 // Environment variables:
 //   - XKMSCTL_BINARY: path to the xkmsctl binary (default: xkmsctl, resolved from PATH)

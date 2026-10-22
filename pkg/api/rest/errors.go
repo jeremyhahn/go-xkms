@@ -59,6 +59,12 @@ var (
 	// really want an open gate leave EnableRBAC false.
 	ErrAuthorizerRequired = errors.New("rest: authorizer is required when rbac is enabled")
 
+	// ErrTenantAuthorizerUnavailable is answered (503) on a tenant lifecycle
+	// route when the server holds no qrdb-backed authorizer to check the
+	// route's tenant permissions (Config.TenantAuthorizer). The gate fails
+	// closed: creating, reading and deleting tenants is never open.
+	ErrTenantAuthorizerUnavailable = errors.New("rest: tenant routes need a qrdb-backed authorizer")
+
 	// ErrTokenIssuerBackendRequired is returned by BuildTokenIssuer when
 	// TokenIssuerParams carries a nil signing Backend.
 	ErrTokenIssuerBackendRequired = errors.New("rest: token issuer requires a non-nil signing backend")

@@ -136,6 +136,10 @@ func mapListResponse(raw interface{}, itemsKey string, items interface{}, pagina
 			if perPage, ok := pagMap["per_page"].(float64); ok {
 				p.PerPage = int(perPage)
 			}
+			// The core xkms collections (/api/v1/tenants/) name it page_size.
+			if pageSize, ok := pagMap["page_size"].(float64); ok {
+				p.PerPage = int(pageSize)
+			}
 			if p.Total > 0 || p.Page > 0 {
 				*pagination = p
 			}

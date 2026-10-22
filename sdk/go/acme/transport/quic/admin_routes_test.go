@@ -125,6 +125,27 @@ func TestResolveAdminURL(t *testing.T) {
 			t.Fatalf("resolveAdminURL with a missing field = %q, want empty", got)
 		}
 	})
+
+	t.Run("tenant list carries its pagination as the core query", func(t *testing.T) {
+		type listReq struct {
+			Page    int    `json:"page,omitempty"`
+			PerPage int    `json:"per_page,omitempty"`
+			Status  string `json:"status,omitempty"`
+		}
+		key := routeKey{service: "admin.tenant", method: "list"}
+		got := resolveAdminURL("https://ca.example.test", key, listReq{Page: 2, PerPage: 25, Status: "active"})
+		want := "https://ca.example.test/api/v1/tenants/?page=2&page_size=25&status=active"
+		if got != want {
+			t.Fatalf("resolveAdminURL = %q, want %q", got, want)
+		}
+	})
+
+	t.Run("tenant list with a request that is not an object", func(t *testing.T) {
+		key := routeKey{service: "admin.tenant", method: "list"}
+		if got := resolveAdminURL("https://ca.example.test", key, []int{1}); got != "" {
+			t.Fatalf("resolveAdminURL with an unencodable request = %q, want empty", got)
+		}
+	})
 }
 
 // TestAdminDynamicPath_BodyEncoder pins that the dynamic-path route's body

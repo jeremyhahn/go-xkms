@@ -55,6 +55,7 @@ type Server struct {
 	xkmsService     *xkms.XKMSService
 	webauthnHandler *webauthnhttp.Handler
 	rbacMiddleware  *RBACMiddleware
+	tenantGate      *TenantGate
 
 	// Custodian handlers
 	tenantHandlers          *TenantHandlers
@@ -172,6 +173,12 @@ type Config struct {
 	// Production wiring passes auth.NewAuthorizer with the node's RBAC client;
 	// deployments that really want an open gate leave EnableRBAC false.
 	RBACAuthorizer *auth.Authorizer
+
+	// TenantAuthorizer is the qrdb-backed authorizer the tenant lifecycle
+	// routes are gated on (TenantGate). Unlike RBACAuthorizer it applies
+	// whether or not EnableRBAC is set: creating, reading and deleting
+	// tenants is never open. Without a usable one those routes answer 503.
+	TenantAuthorizer *auth.Authorizer
 
 	// EnableRBAC enables role-based access control on API endpoints (default: false)
 	// When enabled, users must have appropriate permissions for each operation.
@@ -340,6 +347,7 @@ func NewServer(cfg *Config) (*Server, error) {
 		authUsers:       cfg.AuthUserStore,
 		pivLogin:        cfg.PIVLogin,
 		rbacAuthorizer:  cfg.RBACAuthorizer,
+		tenantGate:      NewTenantGate(cfg.TenantAuthorizer, log),
 		authRateLimiter: cfg.AuthRateLimiter,
 		trustedProxies:  cfg.TrustedProxies,
 		ui:              cfg.UI,
@@ -563,7 +571,10 @@ func (s *Server) registerRoutes(r chi.Router) {
 	// MaxBodyBytes); permission routes are additionally RBAC-decorated.
 	register := func(g chi.Router, spec RouteSpec) {
 		var chain []func(http.Handler) http.Handler
-		if spec.Auth == RouteAuthPermission && s.rbacMiddleware != nil {
+		switch {
+		case spec.Auth == RouteAuthTenant:
+			chain = append(chain, s.tenantGate.Require(spec))
+		case spec.Auth == RouteAuthPermission && s.rbacMiddleware != nil:
 			chain = append(chain, s.rbacMiddleware.RequirePermission(spec.Resource, spec.Action))
 		}
 		chain = append(chain, BodyLimitMiddleware(spec.bodyLimit()))

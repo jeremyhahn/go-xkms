@@ -17,6 +17,7 @@ import (
 	"errors"
 	"fmt"
 
+	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
 	qrdbtransport "github.com/jeremyhahn/go-qrdb/sdk/go/transport"
 
 	"github.com/jeremyhahn/go-xkms/pkg/backend"
@@ -420,6 +421,11 @@ var (
 	// not been wired. There is no fallback: every tenant operation requires
 	// the TenantService.
 	ErrTenantServiceNotConfigured = errors.New("keystore: tenant service not configured")
+
+	// ErrTenantRecordsNotConfigured is returned when a tenant is created with
+	// CA issuance settings but no keeper of tenant records is wired to hold
+	// them (SetTenantRecords).
+	ErrTenantRecordsNotConfigured = errors.New("keystore: tenant records not configured")
 
 	// ErrTenantPassphraseRequired is returned when a tenant barrier is
 	// initialized or unsealed with the passphrase (software) strategy but the
@@ -1095,6 +1101,35 @@ func (e *ClusterLeaderEndpointError) Error() string {
 }
 
 func (e *ClusterLeaderEndpointError) Unwrap() error { return e.Err }
+
+// TenantRecordError is returned when a tenant's CA record cannot be created,
+// read or removed during the tenant's lifecycle (TenantRecords).
+type TenantRecordError struct {
+	Op       string
+	TenantID string
+	Err      error
+}
+
+// Error implements the error interface.
+func (e *TenantRecordError) Error() string {
+	return "keystore: " + e.Op + " " + e.TenantID + ": " + e.Err.Error()
+}
+
+// Unwrap returns the cause.
+func (e *TenantRecordError) Unwrap() error { return e.Err }
+
+// TenantDeletedError is returned for a tenant whose CA record marks it
+// deleted. It unwraps to qrdbsdk.ErrTenantMissing, so a soft-deleted tenant
+// reads exactly as an absent one.
+type TenantDeletedError struct {
+	TenantID string
+}
+
+// Error implements the error interface.
+func (e *TenantDeletedError) Error() string { return qrdbsdk.ErrTenantMissing.Error() }
+
+// Unwrap returns qrdbsdk.ErrTenantMissing.
+func (e *TenantDeletedError) Unwrap() error { return qrdbsdk.ErrTenantMissing }
 
 // PIVRekeyError is returned when a slot's previous key cannot be listed or
 // removed before the slot is re-keyed.

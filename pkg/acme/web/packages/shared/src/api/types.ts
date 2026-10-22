@@ -150,6 +150,17 @@ export interface TenantInfo {
   created_by?: string;
 }
 
+/** A page of the core tenant collection (GET /api/v1/tenants/). */
+export interface TenantListResponse {
+  tenants: TenantInfo[];
+  pagination: {
+    page: number;
+    page_size: number;
+    total: number;
+    has_more: boolean;
+  };
+}
+
 export interface TenantRootCAInfo {
   common_name: string;
   serial_number?: string;

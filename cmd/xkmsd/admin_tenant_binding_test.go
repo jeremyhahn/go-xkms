@@ -196,7 +196,10 @@ func TestAdminPlane_TenantCallerCannotReachAnotherTenant(t *testing.T) {
 
 	// A genuinely missing tenant, as the tenant caller sees it: the answer
 	// every cross-tenant refusal below must be indistinguishable from.
-	missing := f.do(t, f.callerA, http.MethodGet, "/api/v1/tenants/no-such-tenant-1225", nil)
+	// Reading, listing, creating and deleting tenants are the core
+	// /api/v1/tenants routes, gated by rest.TenantGate (go-xkms#794); the
+	// admin plane keeps updates and the per-tenant sub-resources.
+	missing := f.do(t, f.callerA, http.MethodPut, "/api/v1/tenants/no-such-tenant-1225", map[string]string{"name": "pwned"})
 	require.Equal(t, http.StatusNotFound, missing.Code, missing.Body.String())
 	missingDetail := problemDetail(t, missing)
 
@@ -206,10 +209,8 @@ func TestAdminPlane_TenantCallerCannotReachAnotherTenant(t *testing.T) {
 		path   string
 		body   any
 	}{
-		{"get tenant", http.MethodGet, "/api/v1/tenants/" + bindingTenantB, nil},
 		{"update tenant", http.MethodPut, "/api/v1/tenants/" + bindingTenantB, map[string]string{"name": "pwned"}},
 		{"update tenant status", http.MethodPut, "/api/v1/tenants/" + bindingTenantB + "/status", map[string]string{"status": "suspended"}},
-		{"delete tenant", http.MethodDelete, "/api/v1/tenants/" + bindingTenantB, nil},
 		{"list roles", http.MethodGet, "/api/v1/tenants/" + bindingTenantB + "/roles", nil},
 		{"create role", http.MethodPost, "/api/v1/tenants/" + bindingTenantB + "/roles", map[string]any{"name": "planted", "permissions": []string{"kv:get"}}},
 		{"get role", http.MethodGet, "/api/v1/tenants/" + bindingTenantB + "/roles/" + f.roleB.ID, nil},
@@ -276,41 +277,6 @@ func TestAdminPlane_TenantCallerCannotReachAnotherTenant(t *testing.T) {
 	}
 }
 
-// TestAdminPlane_TenantCallerListsOnlyItsOwnTenant proves tenant enumeration
-// is confined: the list shows the caller's tenant and nothing else.
-func TestAdminPlane_TenantCallerListsOnlyItsOwnTenant(t *testing.T) {
-	f := newTenantBindingFixture(t)
-
-	rec := f.do(t, f.callerA, http.MethodGet, "/api/v1/tenants", nil)
-	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
-	var list struct {
-		Items []struct {
-			ID string `json:"id"`
-		} `json:"items"`
-		Total int `json:"total"`
-	}
-	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &list))
-	ids := make([]string, 0, len(list.Items))
-	for _, item := range list.Items {
-		ids = append(ids, item.ID)
-	}
-	assert.Equal(t, []string{bindingTenantA}, ids)
-	assert.Equal(t, 1, list.Total)
-}
-
-// TestAdminPlane_TenantCallerCannotCreateTenants proves tenant creation is a
-// platform operation: a tenant-scoped caller is refused exactly like a caller
-// lacking the grant.
-func TestAdminPlane_TenantCallerCannotCreateTenants(t *testing.T) {
-	f := newTenantBindingFixture(t)
-
-	rec := f.do(t, f.callerA, http.MethodPost, "/api/v1/tenants",
-		map[string]string{"id": "tenant-c-1225", "name": "Tenant C"})
-	assert.Equal(t, http.StatusForbidden, rec.Code, rec.Body.String())
-	_, err := f.srv.TenantService().GetTenant(oracleContext(qrdbsdk.SystemTenantID), "tenant-c-1225")
-	assert.ErrorIs(t, err, qrdbsdk.ErrTenantMissing, "a tenant-a caller created a tenant")
-}
-
 // TestAdminPlane_TenantCallerManagesItsOwnTenant proves the binding confines
 // without disabling: the tenant caller still administers its own users.
 func TestAdminPlane_TenantCallerManagesItsOwnTenant(t *testing.T) {
@@ -333,17 +299,16 @@ func TestAdminPlane_TenantCallerManagesItsOwnTenant(t *testing.T) {
 }
 
 // TestAdminPlane_PlatformAdminReachesEveryTenant proves the system identity
-// keeps its cross-tenant reach, including the destructive operations the
-// tenant caller is refused.
+// keeps its cross-tenant reach over the tenant records the tenant caller is
+// refused.
 func TestAdminPlane_PlatformAdminReachesEveryTenant(t *testing.T) {
 	f := newTenantBindingFixture(t)
-	ctx := oracleContext(qrdbsdk.SystemTenantID)
 	userBID := strconv.FormatUint(f.userB.ID, 10)
 
-	rec := f.do(t, f.platform, http.MethodGet, "/api/v1/tenants", nil)
+	rec := f.do(t, f.platform, http.MethodPut, "/api/v1/tenants/"+bindingTenantB,
+		map[string]string{"name": "Renamed Tenant B"})
 	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
-	assert.Contains(t, rec.Body.String(), bindingTenantA)
-	assert.Contains(t, rec.Body.String(), bindingTenantB)
+	assert.Contains(t, rec.Body.String(), "Renamed Tenant B")
 
 	// qrdb's strict tenant isolation keeps the platform out of a tenant's own
 	// users and roles: it manages tenants, the tenant's administrators manage
@@ -366,9 +331,4 @@ func TestAdminPlane_PlatformAdminReachesEveryTenant(t *testing.T) {
 	assert.Equal(t, http.StatusForbidden, rec.Code, rec.Body.String())
 	_, err = f.client.Users().GetUser(oracleContext(bindingTenantB), f.userB.ID)
 	require.NoError(t, err, "the platform deleted a tenant's user")
-
-	rec = f.do(t, f.platform, http.MethodDelete, "/api/v1/tenants/"+bindingTenantB, nil)
-	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
-	_, err = f.srv.TenantService().GetTenant(ctx, bindingTenantB)
-	assert.ErrorIs(t, err, qrdbsdk.ErrTenantMissing)
 }

@@ -16,11 +16,9 @@ package admin
 import (
 	"encoding/json"
 	"errors"
-	"fmt"
 	"log/slog"
 	"net/http"
 	"strconv"
-	"time"
 
 	"github.com/gorilla/mux"
 	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
@@ -47,7 +45,7 @@ func NewTenantHandlers(service TenantService, logger *slog.Logger) *TenantHandle
 // user sub-trees are gated on qrdb's canonical roles:* and users:*
 // permissions — the same grants the main REST/gRPC/QUIC/MCP transports
 // require for identity administration. The tenant lifecycle routes are gated
-// by the tenant they reach (PermissionGate.WrapTenant, WrapTenantList).
+// by the tenant they reach (PermissionGate.WrapTenant).
 func (h *TenantHandlers) RegisterRoutes(router *mux.Router, authMiddleware AuthHandler, gate *PermissionGate) {
 	mountRoutes(router, tenantsPathPrefix, authMiddleware, h, tenantRoutes(), gate.guardRoute)
 }
@@ -114,68 +112,6 @@ func writeIdentityError(w http.ResponseWriter, err error, failure string) {
 	default:
 		writeProblem(w, http.StatusInternalServerError, "urn:trusted-ca:error:internal", failure)
 	}
-}
-
-// CreateTenant handles POST /api/v1/tenants.
-func (h *TenantHandlers) CreateTenant(w http.ResponseWriter, r *http.Request) {
-	ctx := r.Context()
-
-	var req CreateTenantRequest
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		writeProblem(w, http.StatusBadRequest, "urn:trusted-ca:error:bad-request", "Invalid request body")
-		return
-	}
-
-	// Auto-generate ID if not provided
-	if req.ID == "" {
-		req.ID = fmt.Sprintf("tenant-%d", time.Now().UnixNano())
-	}
-
-	if req.Name == "" {
-		writeProblem(w, http.StatusBadRequest, "urn:trusted-ca:error:bad-request", "Tenant name is required")
-		return
-	}
-
-	tenant, err := h.service.CreateTenant(ctx, req)
-	if err != nil {
-		if errors.Is(err, ErrTenantAlreadyExists) {
-			writeProblem(w, http.StatusConflict, "urn:trusted-ca:error:conflict", "Tenant already exists")
-			return
-		}
-		if errors.Is(err, ErrForbidden) {
-			writeProblem(w, http.StatusForbidden, problemForbidden, "Creating a tenant requires a platform identity")
-			return
-		}
-		h.logger.Error("failed to create tenant", slog.String("id", req.ID), slog.String("error", err.Error()))
-		writeProblem(w, http.StatusInternalServerError, "urn:trusted-ca:error:internal", "Failed to create tenant")
-		return
-	}
-
-	writeJSON(w, http.StatusCreated, tenant)
-}
-
-// GetTenant handles GET /api/v1/tenants/{id}
-func (h *TenantHandlers) GetTenant(w http.ResponseWriter, r *http.Request) {
-	ctx := r.Context()
-	vars := mux.Vars(r)
-	tenantID := vars["id"]
-
-	if !h.checkTenantAccess(w, r, "get tenant", tenantID) {
-		return
-	}
-
-	tenant, err := h.service.GetTenant(ctx, tenantID)
-	if err != nil {
-		if errors.Is(err, ErrTenantNotFound) {
-			writeTenantNotFound(w)
-			return
-		}
-		h.logger.Error("failed to get tenant", slog.String("id", tenantID), slog.String("error", err.Error()))
-		writeProblem(w, http.StatusInternalServerError, "urn:trusted-ca:error:internal", "Failed to get tenant")
-		return
-	}
-
-	writeJSON(w, http.StatusOK, tenant)
 }
 
 // UpdateTenant handles PUT /api/v1/tenants/{id}
@@ -247,53 +183,6 @@ func (h *TenantHandlers) UpdateTenantStatus(w http.ResponseWriter, r *http.Reque
 	}
 
 	writeJSON(w, http.StatusOK, map[string]string{"message": "Tenant status updated successfully"})
-}
-
-// DeleteTenant handles DELETE /api/v1/tenants/{id}
-func (h *TenantHandlers) DeleteTenant(w http.ResponseWriter, r *http.Request) {
-	ctx := r.Context()
-	vars := mux.Vars(r)
-	tenantID := vars["id"]
-
-	if !h.checkTenantAccess(w, r, "delete tenant", tenantID) {
-		return
-	}
-
-	if err := h.service.DeleteTenant(ctx, tenantID); err != nil {
-		if errors.Is(err, ErrTenantNotFound) {
-			writeTenantNotFound(w)
-			return
-		}
-		h.logger.Error("failed to delete tenant", slog.String("id", tenantID), slog.String("error", err.Error()))
-		writeProblem(w, http.StatusInternalServerError, "urn:trusted-ca:error:internal", "Failed to delete tenant")
-		return
-	}
-
-	writeJSON(w, http.StatusOK, map[string]string{"message": "Tenant deleted successfully"})
-}
-
-// ListTenants handles GET /api/v1/tenants
-func (h *TenantHandlers) ListTenants(w http.ResponseWriter, r *http.Request) {
-	ctx := r.Context()
-
-	query := r.URL.Query()
-	req := ListTenantsRequest{
-		Page:    parseInt(query.Get("page"), 1),
-		PerPage: parseInt(query.Get("per_page"), 20),
-		Status:  query.Get("status"),
-	}
-
-	tenants, pagination, err := h.service.ListTenants(ctx, req)
-	if err != nil {
-		h.logger.Error("failed to list tenants", slog.String("error", err.Error()))
-		writeProblem(w, http.StatusInternalServerError, "urn:trusted-ca:error:internal", "Failed to list tenants")
-		return
-	}
-	if tenants == nil {
-		tenants = []*TenantInfo{}
-	}
-
-	writeJSON(w, http.StatusOK, ListResponse{Items: tenants, Total: pagination.Total, Page: pagination.Page, PerPage: pagination.PerPage})
 }
 
 // CreateTenantRootCA handles POST /api/v1/tenants/{id}/root-ca

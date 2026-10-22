@@ -99,7 +99,7 @@ func (m *Module) RegisterHTTP(r *qrdbsdk.ModuleHTTPRegistrar) {
 		switch lead.Auth {
 		case rest.RouteAuthPublic:
 			r.HandlePublic(lead.Method, lead.Pattern, h)
-		case rest.RouteAuthSession:
+		case rest.RouteAuthSession, rest.RouteAuthTenant:
 			r.Handle(lead.Method, lead.Pattern, identityGatedPermission, h)
 		default:
 			r.Handle(lead.Method, lead.Pattern,

@@ -736,7 +736,7 @@ func TestAdapterDoRequest(t *testing.T) {
 	ctx := context.Background()
 
 	t.Run("request with body marshalling", func(t *testing.T) {
-		responseBody := `{"id":"tenant-1","name":"Test Tenant","status":"active"}`
+		responseBody := `{"tenant":{"id":"tenant-1","name":"Test Tenant","status":"active"}}`
 		response := &http.Response{
 			StatusCode: http.StatusOK,
 			Body:       io.NopCloser(strings.NewReader(responseBody)),
@@ -757,7 +757,7 @@ func TestAdapterDoRequest(t *testing.T) {
 	})
 
 	t.Run("request without body", func(t *testing.T) {
-		responseBody := `{"id":"tenant-1","name":"Test Tenant","status":"active"}`
+		responseBody := `{"tenant":{"id":"tenant-1","name":"Test Tenant","status":"active"}}`
 		response := &http.Response{
 			StatusCode: http.StatusOK,
 			Body:       io.NopCloser(strings.NewReader(responseBody)),
@@ -788,7 +788,7 @@ func TestTenantOperations(t *testing.T) {
 	ctx := context.Background()
 
 	t.Run("CreateTenant success", func(t *testing.T) {
-		responseBody := `{"id":"new-tenant","name":"New Tenant","status":"active"}`
+		responseBody := `{"tenant":{"id":"new-tenant","name":"New Tenant","status":"active"}}`
 		response := &http.Response{
 			StatusCode: http.StatusCreated,
 			Body:       io.NopCloser(strings.NewReader(responseBody)),
@@ -840,7 +840,7 @@ func TestTenantOperations(t *testing.T) {
 	})
 
 	t.Run("GetTenant success", func(t *testing.T) {
-		responseBody := `{"id":"tenant-1","name":"Tenant One","status":"active"}`
+		responseBody := `{"tenant":{"id":"tenant-1","name":"Tenant One","status":"active"}}`
 		response := &http.Response{
 			StatusCode: http.StatusOK,
 			Body:       io.NopCloser(strings.NewReader(responseBody)),
@@ -942,7 +942,7 @@ func TestTenantOperations(t *testing.T) {
 	})
 
 	t.Run("ListTenants success", func(t *testing.T) {
-		responseBody := `{"items":[{"id":"t1","name":"Tenant 1"},{"id":"t2","name":"Tenant 2"}],"total":2,"page":1,"per_page":10}`
+		responseBody := `{"tenants":[{"id":"t1","name":"Tenant 1"},{"id":"t2","name":"Tenant 2"}],"pagination":{"page":1,"page_size":10,"total":2}}`
 		response := &http.Response{
 			StatusCode: http.StatusOK,
 			Body:       io.NopCloser(strings.NewReader(responseBody)),
@@ -2089,7 +2089,7 @@ func TestRequestURLConstruction(t *testing.T) {
 		},
 		{
 			name:        "ListTenants URL with pagination",
-			expectedURL: "https://localhost:9444/api/v1/tenants?page=2&per_page=25",
+			expectedURL: "https://localhost:9444/api/v1/tenants/?page=2&page_size=25",
 			execute: func(a *Adapter) error {
 				_, _, err := a.ListTenants(context.Background(), &admin.ListTenantsRequest{Page: 2, PerPage: 25})
 				return err
@@ -2672,7 +2672,7 @@ func TestAdapterURLPaths(t *testing.T) {
 	}{
 		{
 			name:        "CreateTenant URL",
-			expectedURL: "https://localhost:9444/api/v1/tenants",
+			expectedURL: "https://localhost:9444/api/v1/tenants/",
 			execute: func(a *Adapter) error {
 				_, err := a.CreateTenant(context.Background(), &admin.CreateTenantRequest{ID: "t1"})
 				return err

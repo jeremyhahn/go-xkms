@@ -30,6 +30,7 @@ import (
 	"github.com/jeremyhahn/go-xkms/pkg/config"
 	"github.com/jeremyhahn/go-xkms/pkg/dao"
 	"github.com/jeremyhahn/go-xkms/pkg/embeddednode"
+	"github.com/jeremyhahn/go-xkms/pkg/embeddednode/serviceprincipal"
 	pkgfido2 "github.com/jeremyhahn/go-xkms/pkg/fido2"
 	initialize "github.com/jeremyhahn/go-xkms/pkg/init"
 	xkmsserver "github.com/jeremyhahn/go-xkms/pkg/server"
@@ -85,6 +86,11 @@ var (
 	// user record cannot be resolved after first-boot, so no admin factor can
 	// be attached to a userID.
 	ErrAdminUserResolveFailed = errors.New("init: failed to resolve the administrator's durable user record")
+
+	// ErrServiceContextFailed is returned when the durable node cannot bind
+	// its service principal, which the administrator lookup and factor
+	// persistence run as.
+	ErrServiceContextFailed = errors.New("init: failed to bind the durable node's service principal")
 
 	// ErrUserAuthFactorsUnavailable is returned when the durable node's
 	// client exposes no user-side auth-factor transport to persist admin
@@ -286,7 +292,16 @@ func bootstrapDurableAdmin(ctx context.Context, caInstance initialize.CeremonyCA
 		return &WrappedError{Sentinel: ErrAdminCredentialPersistFailed, Err: err}
 	}
 
-	adminUser, err := node.Client().Users().GetUserByCertThumbprint(ctx, fbResult.AdminCertThumbprint)
+	// Resolving the administrator and persisting its factors is xkms's own
+	// work, so it runs as the node's service principal; the embedded client
+	// refuses a bare context.
+	serviceprincipal.RegisterCeremonyGrant()
+	svcCtx, err := node.ServiceContext(ctx)
+	if err != nil {
+		return &WrappedError{Sentinel: ErrServiceContextFailed, Err: err}
+	}
+
+	adminUser, err := node.Client().Users().GetUserByCertThumbprint(svcCtx, fbResult.AdminCertThumbprint)
 	if err != nil {
 		return &WrappedError{Sentinel: ErrAdminUserResolveFailed, Err: err}
 	}
@@ -300,7 +315,7 @@ func bootstrapDurableAdmin(ctx context.Context, caInstance initialize.CeremonyCA
 	env.adminUserID = adminUser.ID
 	env.persister = &nodeFactorPersister{client: factorsClient, userID: adminUser.ID}
 
-	return enrollAdminFactors(ctx, env)
+	return enrollAdminFactors(svcCtx, env)
 }
 
 // newBootstrapCA builds a fully initialized software-backed TrustedCA

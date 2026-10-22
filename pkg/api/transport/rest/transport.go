@@ -2700,18 +2700,11 @@ func (t *Transport) OIDCCredentialDevicePoll(ctx context.Context, req *transport
 // collection-root route in this file's resource families with one
 // (permIf("POST", "/tenants/", ...), matching "/custodian/groups/",
 // "/shares/", "/passwords/"), to distinguish the collection from
-// "/tenants/{tenantID}". Omitting it here used to still reach the handler
-// because nothing else on the unified listener claimed the bare
-// "/api/v1/tenants" path, so chi's slash redirect silently bridged the
-// gap. It stopped working the moment something else registered that exact
-// literal path too (the ACME admin plane's own, unrelated
-// "/api/v1/tenants" tenant surface, pkg/apimodule/admin_module.go +
-// cmd/xkmsd/admin.go's adminAPIPrefixes): that registration is an exact,
-// non-redirecting match, so it now answers first, and this client
-// silently unmarshals that handler's differently-shaped response body
-// into transport.CreateTenantResponse — every field comes back its zero
-// value, with no error, because the JSON simply has no "tenant" key at
-// its top level. See transport_tenant_test.go's
+// "/tenants/{tenantID}". Without it the request depends on a slash
+// redirect, and any exact match registered at the bare "/api/v1/tenants"
+// would answer instead — the ACME admin plane once did, with a
+// differently-shaped body this client decoded into an all-zero
+// transport.CreateTenantResponse and no error. See transport_tenant_test.go's
 // TestCreateTenant_CollectionRootRequiresTrailingSlash for the regression
 // coverage.
 func (t *Transport) CreateTenant(ctx context.Context, req *transport.CreateTenantRequest) (*transport.CreateTenantResponse, error) {

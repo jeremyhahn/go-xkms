@@ -220,32 +220,32 @@ func decodeListResponse(resp *http.Response, target interface{}) (*admin.Paginat
 
 // CreateTenant creates a new tenant.
 func (a *Adapter) CreateTenant(ctx context.Context, req *admin.CreateTenantRequest) (*admin.TenantInfo, error) {
-	resp, err := a.doRequest(ctx, http.MethodPost, "/api/v1/tenants", req)
+	resp, err := a.doRequest(ctx, http.MethodPost, api.TenantsPath, req)
 	if err != nil {
 		return nil, err
 	}
 	defer api.CloseResponseBody(resp)
 
-	var tenant admin.TenantInfo
-	if err := decodeResponse(resp, &tenant); err != nil {
+	var wrapped api.TenantEnvelope
+	if err := decodeResponse(resp, &wrapped); err != nil {
 		return nil, err
 	}
-	return &tenant, nil
+	return &wrapped.Tenant, nil
 }
 
 // GetTenant retrieves a tenant by ID.
 func (a *Adapter) GetTenant(ctx context.Context, tenantID string) (*admin.TenantInfo, error) {
-	resp, err := a.doRequest(ctx, http.MethodGet, "/api/v1/tenants/"+tenantID, nil)
+	resp, err := a.doRequest(ctx, http.MethodGet, api.TenantPath(tenantID), nil)
 	if err != nil {
 		return nil, err
 	}
 	defer api.CloseResponseBody(resp)
 
-	var tenant admin.TenantInfo
-	if err := decodeResponse(resp, &tenant); err != nil {
+	var wrapped api.TenantEnvelope
+	if err := decodeResponse(resp, &wrapped); err != nil {
 		return nil, err
 	}
-	return &tenant, nil
+	return &wrapped.Tenant, nil
 }
 
 // UpdateTenant updates an existing tenant.
@@ -265,7 +265,7 @@ func (a *Adapter) UpdateTenant(ctx context.Context, tenantID string, req *admin.
 
 // DeleteTenant deletes a tenant.
 func (a *Adapter) DeleteTenant(ctx context.Context, tenantID string) error {
-	resp, err := a.doRequest(ctx, http.MethodDelete, "/api/v1/tenants/"+tenantID, nil)
+	resp, err := a.doRequest(ctx, http.MethodDelete, api.TenantPath(tenantID), nil)
 	if err != nil {
 		return err
 	}
@@ -276,19 +276,17 @@ func (a *Adapter) DeleteTenant(ctx context.Context, tenantID string) error {
 
 // ListTenants lists all tenants.
 func (a *Adapter) ListTenants(ctx context.Context, req *admin.ListTenantsRequest) ([]*admin.TenantInfo, *admin.Pagination, error) {
-	path := fmt.Sprintf("/api/v1/tenants?page=%d&per_page=%d", req.Page, req.PerPage)
-	resp, err := a.doRequest(ctx, http.MethodGet, path, nil)
+	resp, err := a.doRequest(ctx, http.MethodGet, api.TenantListPath(req), nil)
 	if err != nil {
 		return nil, nil, err
 	}
 	defer api.CloseResponseBody(resp)
 
-	var tenants []*admin.TenantInfo
-	pagination, err := decodeListResponse(resp, &tenants)
-	if err != nil {
+	var list api.TenantListEnvelope
+	if err := decodeResponse(resp, &list); err != nil {
 		return nil, nil, err
 	}
-	return tenants, pagination, nil
+	return list.Tenants, list.Pagination.AdminPagination(), nil
 }
 
 // EAB Operations

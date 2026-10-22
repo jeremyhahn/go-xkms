@@ -18,6 +18,8 @@ import (
 	"fmt"
 	"net/http"
 	"strings"
+
+	"github.com/jeremyhahn/go-xkms/sdk/go/acme/transport"
 )
 
 // extractAdminField extracts a string field from a request by JSON marshaling it to a map.
@@ -95,8 +97,8 @@ func buildAdminRouteMap() map[routeKey]*routeConfig {
 		{service: "admin.account", method: "disable"}: adminDynamicPath(http.MethodDelete, "/admin/accounts/{accountId}", "accountId"),
 
 		// Tenant service
-		{service: "admin.tenant", method: "create"}:       adminStaticPath(http.MethodPost, "/api/v1/tenants"),
-		{service: "admin.tenant", method: "list"}:         adminStaticPathNoBody(http.MethodGet, "/api/v1/tenants"),
+		{service: "admin.tenant", method: "create"}:       adminStaticPath(http.MethodPost, "/api/v1/tenants/"),
+		{service: "admin.tenant", method: "list"}:         adminDynamicFields(http.MethodGet, "/api/v1/tenants/"),
 		{service: "admin.tenant", method: "get"}:          adminDynamicPath(http.MethodGet, "/api/v1/tenants/{tenantId}", "tenantId"),
 		{service: "admin.tenant", method: "update"}:       adminDynamicPath(http.MethodPut, "/api/v1/tenants/{tenantId}", "tenantId"),
 		{service: "admin.tenant", method: "delete"}:       adminDynamicPath(http.MethodDelete, "/api/v1/tenants/{tenantId}", "tenantId"),
@@ -178,6 +180,7 @@ var adminPathTemplates = map[routeKey]adminPathInfo{
 	{service: "admin.account", method: "disable"}: {template: "/admin/accounts/{accountId}", fields: []string{"accountId"}},
 
 	// Tenant
+	{service: "admin.tenant", method: "list"}:         {template: "/api/v1/tenants/", query: transport.TenantListQuery},
 	{service: "admin.tenant", method: "get"}:          {template: "/api/v1/tenants/{tenantId}", fields: []string{"tenantId"}},
 	{service: "admin.tenant", method: "update"}:       {template: "/api/v1/tenants/{tenantId}", fields: []string{"tenantId"}},
 	{service: "admin.tenant", method: "delete"}:       {template: "/api/v1/tenants/{tenantId}", fields: []string{"tenantId"}},
@@ -215,10 +218,12 @@ var adminPathTemplates = map[routeKey]adminPathInfo{
 	{service: "admin.tenant.ca", method: "updateIntermediateCAStatus"}: {template: "/api/v1/tenants/{tenantId}/intermediate-cas/{caId}", fields: []string{"tenantId", "caId"}},
 }
 
-// adminPathInfo holds template and field info for dynamic admin URL resolution.
+// adminPathInfo holds template, field and query info for dynamic admin URL
+// resolution.
 type adminPathInfo struct {
 	template string
 	fields   []string
+	query    []transport.QueryParam
 }
 
 // resolveAdminURL resolves a dynamic admin URL by substituting fields from the request.
@@ -236,7 +241,11 @@ func resolveAdminURL(baseURL string, key routeKey, req interface{}) string {
 		}
 		path = strings.Replace(path, "{"+field+"}", id, 1)
 	}
-	return baseURL + path
+	query, err := transport.EncodeQuery(req, info.query)
+	if err != nil {
+		return ""
+	}
+	return baseURL + path + query
 }
 
 // isAdminRoute returns true if the service name is an admin service.

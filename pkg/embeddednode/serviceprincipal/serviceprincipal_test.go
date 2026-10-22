@@ -150,3 +150,30 @@ func TestGrant_IsLeastPrivilegeCopy(t *testing.T) {
 	got[0] = "admin:*"
 	assert.NotEqual(t, got[0], Grant()[0], "Grant returns a copy")
 }
+
+// TestRegisterCeremonyGrant_AuthorizesAdminLookup proves the ceremony grant
+// reaches the principal: the cert-thumbprint lookup `xkmsd init` makes is
+// authorized, so an unknown thumbprint fails as not-found, never as denied.
+func TestRegisterCeremonyGrant_AuthorizesAdminLookup(t *testing.T) {
+	node := newNode(t, Option())
+	RegisterCeremonyGrant()
+	ctx, err := node.ServiceContext(context.Background())
+	require.NoError(t, err)
+
+	_, err = node.Client().Users().GetUserByCertThumbprint(ctx, "unknown-thumbprint")
+	require.Error(t, err)
+	var denied *qrdbsdk.PermissionDeniedError
+	assert.NotErrorAs(t, err, &denied)
+}
+
+func TestCeremonyGrant_IsLeastPrivilegeCopy(t *testing.T) {
+	got := CeremonyGrant()
+	assert.Equal(t, ceremonyGrant, got)
+	for _, p := range got {
+		assert.NotContains(t, string(p), "*", "the ceremony grant never holds a wildcard")
+		assert.NotContains(t, Grant(), p, "a running xkmsd's grant never holds a ceremony permission")
+	}
+
+	got[0] = "admin:*"
+	assert.NotEqual(t, got[0], CeremonyGrant()[0], "CeremonyGrant returns a copy")
+}

@@ -124,7 +124,7 @@ func TestRegisterAuthorizedRoutes_UnknownPathIsNotFound(t *testing.T) {
 func TestRegisterAuthorizedRoutes_UnauthenticatedCallerRejected(t *testing.T) {
 	router := authorizedRouter(newTestAuthMiddlewareInvalid())
 
-	for _, path := range []string{"/admin/certificates", "/api/v1/tenants"} {
+	for _, path := range []string{"/admin/certificates", "/api/v1/tenants/t1/ca-status"} {
 		rec := httptest.NewRecorder()
 		router.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, path, nil))
 
@@ -138,10 +138,7 @@ func TestRegisterAuthorizedRoutes_UnauthenticatedCallerRejected(t *testing.T) {
 // name or list the caller's own tenant, each with its self-scoped grant.
 func TestRoutes_TenantLifecycleRoutesCarrySelfPermission(t *testing.T) {
 	want := map[string]qrdbsdk.Permission{
-		"GET /api/v1/tenants":             "tenants:list",
-		"GET /api/v1/tenants/{id}":        "tenants:read",
 		"PUT /api/v1/tenants/{id}":        "tenants:update",
-		"DELETE /api/v1/tenants/{id}":     "tenants:delete",
 		"PUT /api/v1/tenants/{id}/status": "tenants:update",
 	}
 	got := make(map[string]qrdbsdk.Permission)
@@ -158,18 +155,18 @@ func TestRoutes_TenantLifecycleRoutesCarrySelfPermission(t *testing.T) {
 // reach: the self-scoped grant within the caller's own tenant, and beyond it
 // a refusal that reads as a missing tenant (go-xkms#1225).
 func TestRegisterAuthorizedRoutes_GatesTenantLifecycleRoutes(t *testing.T) {
-	own := routeCase{name: "get own tenant", method: http.MethodGet, path: "/api/v1/tenants/t1"}
+	own := routeCase{name: "update own tenant", method: http.MethodPut, path: "/api/v1/tenants/t1"}
 	router, client := newAuthorizedRouter(nil)
 	rec := httptest.NewRecorder()
-	router.ServeHTTP(rec, requestWithRoles(own, qrdbsdk.RoleNameAuditor))
+	router.ServeHTTP(rec, requestWithRoles(own, qrdbsdk.RoleNameAdmin))
 	assert.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
-	assert.Equal(t, []string{"tenants:read"}, client.requests())
+	assert.Equal(t, []string{"tenants:update"}, client.requests())
 
-	foreign := routeCase{name: "get foreign tenant", method: http.MethodGet, path: "/api/v1/tenants/t2"}
+	foreign := routeCase{name: "update foreign tenant", method: http.MethodPut, path: "/api/v1/tenants/t2"}
 	router, client = newAuthorizedRouter(nil)
 	rec = httptest.NewRecorder()
 	router.ServeHTTP(rec, requestWithRoles(foreign, qrdbsdk.RoleNameAdmin))
 	assert.Equal(t, http.StatusNotFound, rec.Code, rec.Body.String())
 	assert.Contains(t, rec.Body.String(), "Tenant not found")
-	assert.Equal(t, []string{"tenants:read:cross"}, client.requests())
+	assert.Equal(t, []string{"tenants:update:cross"}, client.requests())
 }
