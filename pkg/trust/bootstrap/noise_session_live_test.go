@@ -18,6 +18,7 @@ import (
 	"testing"
 
 	"github.com/flynn/noise"
+	"github.com/jeremyhahn/go-xkms/pkg/testing/fipstest"
 	"github.com/stretchr/testify/require"
 	"golang.org/x/crypto/curve25519"
 )
@@ -27,6 +28,9 @@ import (
 func TestSimulatedLiveHandshake(t *testing.T) {
 	// Generate Go's static key (like phone_pair.go does)
 	goStaticKey, err := GenerateNoiseStaticKey()
+	if !fipstest.OutsideFIPSAfterRefusal(t, err, ErrNoiseFIPSUnsupported) {
+		return
+	}
 	require.NoError(t, err)
 	defer goStaticKey.Destroy()
 	t.Logf("Go static pub: %x", goStaticKey.PublicBytes())
@@ -136,6 +140,9 @@ func TestAndroidLikeHandshake(t *testing.T) {
 	// derives the public half itself, so the fixture only names the scalar.
 	goStaticPriv, _ := hex.DecodeString("1000000000000000000000000000000000000000000000000000000000000001")
 	goStaticKey, err := LoadNoiseStaticKey(goStaticPriv)
+	if !fipstest.OutsideFIPSAfterRefusal(t, err, ErrNoiseFIPSUnsupported) {
+		return
+	}
 	require.NoError(t, err)
 	defer goStaticKey.Destroy()
 	t.Logf("Go static: pub=%x", goStaticKey.PublicBytes())

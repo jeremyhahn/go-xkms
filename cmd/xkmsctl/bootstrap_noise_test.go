@@ -18,6 +18,7 @@ import (
 	"crypto"
 	"crypto/ecdsa"
 	"crypto/elliptic"
+	"crypto/fips140"
 	"crypto/rand"
 	"crypto/x509"
 	"encoding/pem"
@@ -32,21 +33,48 @@ import (
 	"github.com/stretchr/testify/require"
 
 	noiseproto "github.com/jeremyhahn/go-truststrap/pkg/noiseproto"
+
+	"github.com/jeremyhahn/go-xkms/pkg/testing/fipstest"
 )
 
 // newTestStaticKeyHex generates a static key and returns its hex encoding for
 // use as test input. Production code writes the encoding to a file instead;
 // tests need it as a value, and there is no encode-to-string helper by design.
-func newTestStaticKeyHex(t *testing.T) string {
+func newTestStaticKeyHex(t *testing.T) (string, bool) {
 	t.Helper()
 
+	// Noise keys are X25519, which GODEBUG=fips140=only refuses: there the
+	// refusal is asserted, the test re-runs outside FIPS and the caller returns.
 	key, err := noiseproto.GenerateStaticKey()
+	if !fipstest.OutsideFIPSAfterRefusal(t, err, noiseproto.ErrFIPSUnsupported) {
+		return "", false
+	}
 	require.NoError(t, err)
 	defer key.Destroy()
 
 	encoded := make([]byte, noiseproto.HexKeySize)
 	require.NoError(t, noiseproto.EncodeStaticKey(encoded, key))
-	return string(encoded)
+	return string(encoded), true
+}
+
+// noiseKeygenOutsideFIPS reports whether a test may go on to generate a
+// Noise key. Noise keys are X25519, which GODEBUG=fips140=only refuses: there
+// it runs generate, requires exit code 1 with the module's refusal and no key
+// file written, re-runs the test outside FIPS and reports false.
+func noiseKeygenOutsideFIPS(t *testing.T, keyFile string, generate func()) bool {
+	t.Helper()
+	if !fips140.Enforced() {
+		return true
+	}
+
+	var stderr string
+	code := captureExit(t, func() { stderr = captureStderr(t, generate) })
+
+	assert.Equal(t, 1, code)
+	assert.Contains(t, stderr, "not allowed in FIPS 140-only mode")
+	assert.NoFileExists(t, keyFile)
+	fipstest.OutsideFIPS(t)
+	return false
 }
 
 // TestNoiseGenerateKey_RequiresOutputFile covers the ruling that the private
@@ -104,6 +132,10 @@ func captureStderr(t *testing.T, fn func()) string {
 func TestNoiseGenerateKey_OutputFile(t *testing.T) {
 	tmpDir := t.TempDir()
 	keyFile := filepath.Join(tmpDir, "noise.key")
+
+	if !noiseKeygenOutsideFIPS(t, keyFile, func() { generateNoiseKey(keyFile) }) {
+		return
+	}
 
 	// Capture stdout
 	old := os.Stdout
@@ -168,7 +200,10 @@ func TestNoiseGenerateKey_RefusesExistingFile(t *testing.T) {
 
 func TestNoiseShowKey_FromHex(t *testing.T) {
 	// First generate a key to get valid hex
-	hexKey := newTestStaticKeyHex(t)
+	hexKey, ok := newTestStaticKeyHex(t)
+	if !ok {
+		return
+	}
 
 	old := os.Stdout
 	r, w, _ := os.Pipe()
@@ -187,7 +222,10 @@ func TestNoiseShowKey_FromHex(t *testing.T) {
 }
 
 func TestNoiseShowKey_FromFile(t *testing.T) {
-	hexKey := newTestStaticKeyHex(t)
+	hexKey, ok := newTestStaticKeyHex(t)
+	if !ok {
+		return
+	}
 
 	tmpDir := t.TempDir()
 	keyFile := filepath.Join(tmpDir, "test.key")

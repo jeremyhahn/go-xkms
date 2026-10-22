@@ -11,6 +11,7 @@ package fipstest
 
 import (
 	"crypto/fips140"
+	"errors"
 	"os"
 	"os/exec"
 	"strings"
@@ -35,6 +36,49 @@ func OutsideFIPS(t testing.TB) bool {
 	}
 	rerun(t, os.Args[0])
 	return false
+}
+
+// moduleRefusal is the phrase in every refusal the Go Cryptographic Module
+// returns under GODEBUG=fips140=only, as in "crypto/ecdh: use of X25519 is not
+// allowed in FIPS 140-only mode". The standard library exports no sentinel.
+const moduleRefusal = "not allowed in FIPS 140-only mode"
+
+// OutsideFIPSAfterRefusal is OutsideFIPS for a test whose first step, which
+// returned err, used an algorithm the FIPS 140-3 module does not approve.
+// Under GODEBUG=fips140=only it first asserts that err is the refusal --
+// errors.Is(err, want) for a package's typed error, or the module's own
+// refusal when want is nil -- then re-runs the test with fips140=off and
+// reports false. The caller carries on with its round trip only on true:
+//
+//	key, err := noiseproto.GenerateStaticKey()
+//	if !fipstest.OutsideFIPSAfterRefusal(t, err, noiseproto.ErrFIPSUnsupported) {
+//		return
+//	}
+//	require.NoError(t, err)
+func OutsideFIPSAfterRefusal(t testing.TB, err, want error) bool {
+	t.Helper()
+	if !fips140.Enforced() {
+		return true
+	}
+	if !isRefusal(err, want) {
+		t.Fatalf("%s under GODEBUG=fips140=only: got error %v, want the refusal of a non-approved algorithm (%v)", t.Name(), err, want)
+		return false
+	}
+	rerun(t, os.Args[0])
+	return false
+}
+
+// isRefusal reports whether err is the refusal OutsideFIPSAfterRefusal
+// expects: want anywhere in its chain, or the module's own refusal when want
+// is nil.
+func isRefusal(err, want error) bool {
+	if err == nil {
+		return false
+	}
+	if want != nil {
+		return errors.Is(err, want)
+	}
+	return strings.Contains(err.Error(), moduleRefusal)
 }
 
 // rerun runs the test named t.Name() from the test binary at binary under

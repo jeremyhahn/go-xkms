@@ -17,12 +17,14 @@ package vault
 
 import (
 	"context"
+	"crypto/fips140"
 	"crypto/rand"
 	"crypto/x509"
 	"errors"
 	"testing"
 
 	"github.com/jeremyhahn/go-xkms/pkg/backend"
+	"github.com/jeremyhahn/go-xkms/pkg/crypto/aead"
 	"github.com/jeremyhahn/go-xkms/pkg/storage"
 	"github.com/jeremyhahn/go-xkms/pkg/types"
 	"github.com/stretchr/testify/assert"
@@ -61,6 +63,13 @@ func TestImportKey_BYOKRoundTrip(t *testing.T) {
 	assert.Equal(t, backend.WrappingAlgorithmVaultTransitBYOK, params.Algorithm)
 
 	wrapped, err := b.WrapKey(ctx, keyMaterial, params)
+	if fips140.Enforced() {
+		// Vault's BYOK format seals the key under a fixed all-zero nonce, an
+		// arbitrary-IV GCM construction GODEBUG=fips140=only refuses.
+		require.ErrorIs(t, err, aead.ErrArbitraryIVGCMUnavailable)
+		assert.Nil(t, wrapped)
+		return
+	}
 	require.NoError(t, err)
 	require.NotEmpty(t, wrapped.WrappedKey)
 

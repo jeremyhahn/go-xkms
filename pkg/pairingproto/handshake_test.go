@@ -21,6 +21,7 @@ import (
 	"sync/atomic"
 	"testing"
 
+	"github.com/jeremyhahn/go-xkms/pkg/testing/fipstest"
 	"github.com/jeremyhahn/go-xkms/pkg/trust/bootstrap"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -165,6 +166,9 @@ func TestPerformHandshake_Success(t *testing.T) {
 	initiatorTransport, responderTransport := newPipeTransports()
 
 	initiatorSession, err := bootstrap.NewNoiseSession(&bootstrap.NoiseSessionConfig{IsInitiator: true})
+	if !fipstest.OutsideFIPSAfterRefusal(t, err, bootstrap.ErrNoiseFIPSUnsupported) {
+		return
+	}
 	require.NoError(t, err)
 
 	// Run responder in background.
@@ -207,6 +211,9 @@ func TestPerformHandshake_NilLogger(t *testing.T) {
 	initiatorTransport, responderTransport := newPipeTransports()
 
 	initiatorSession, err := bootstrap.NewNoiseSession(&bootstrap.NoiseSessionConfig{IsInitiator: true})
+	if !fipstest.OutsideFIPSAfterRefusal(t, err, bootstrap.ErrNoiseFIPSUnsupported) {
+		return
+	}
 	require.NoError(t, err)
 
 	responderDone := make(chan *bootstrap.NoiseSession, 1)
@@ -235,6 +242,9 @@ func TestPerformHandshake_InvalidMsg2(t *testing.T) {
 	initiatorTransport, _ := newPipeTransports()
 
 	session, err := bootstrap.NewNoiseSession(&bootstrap.NoiseSessionConfig{IsInitiator: true})
+	if !fipstest.OutsideFIPSAfterRefusal(t, err, bootstrap.ErrNoiseFIPSUnsupported) {
+		return
+	}
 	require.NoError(t, err)
 
 	// Simulate a responder that sends garbage as msg2.
@@ -262,6 +272,9 @@ func TestPerformHandshake_SendError(t *testing.T) {
 	initiatorTransport.sendErr = errMockSend
 
 	session, err := bootstrap.NewNoiseSession(&bootstrap.NoiseSessionConfig{IsInitiator: true})
+	if !fipstest.OutsideFIPSAfterRefusal(t, err, bootstrap.ErrNoiseFIPSUnsupported) {
+		return
+	}
 	require.NoError(t, err)
 
 	err = PerformHandshake(context.Background(), &HandshakeConfig{
@@ -280,6 +293,9 @@ func TestPerformHandshake_ReceiveError(t *testing.T) {
 	initiatorTransport.recvErr = errMockRecv
 
 	session, err := bootstrap.NewNoiseSession(&bootstrap.NoiseSessionConfig{IsInitiator: true})
+	if !fipstest.OutsideFIPSAfterRefusal(t, err, bootstrap.ErrNoiseFIPSUnsupported) {
+		return
+	}
 	require.NoError(t, err)
 
 	// We need the send to succeed (msg1 goes into the channel) but the
@@ -306,6 +322,9 @@ func TestPerformHandshake_SendMsg3Error(t *testing.T) {
 	initiatorTransport, responderTransport := newPipeTransports()
 
 	session, err := bootstrap.NewNoiseSession(&bootstrap.NoiseSessionConfig{IsInitiator: true})
+	if !fipstest.OutsideFIPSAfterRefusal(t, err, bootstrap.ErrNoiseFIPSUnsupported) {
+		return
+	}
 	require.NoError(t, err)
 
 	responderSession, err := bootstrap.NewNoiseSession(&bootstrap.NoiseSessionConfig{IsInitiator: false})
@@ -395,6 +414,9 @@ func TestHandshakeConfig_DefaultEnvelopeHeaderSize(t *testing.T) {
 	initiatorTransport, responderTransport := newPipeTransports()
 
 	session, err := bootstrap.NewNoiseSession(&bootstrap.NoiseSessionConfig{IsInitiator: true})
+	if !fipstest.OutsideFIPSAfterRefusal(t, err, bootstrap.ErrNoiseFIPSUnsupported) {
+		return
+	}
 	require.NoError(t, err)
 
 	responderDone := make(chan struct{}, 1)
@@ -771,6 +793,9 @@ func TestPerformHandshake_NoFingerprintNeedsNoIdentityExchange(t *testing.T) {
 	initiator, responder := newPipeTransports()
 
 	initiatorSession, err := bootstrap.NewNoiseSession(&bootstrap.NoiseSessionConfig{IsInitiator: true})
+	if !fipstest.OutsideFIPSAfterRefusal(t, err, bootstrap.ErrNoiseFIPSUnsupported) {
+		return
+	}
 	require.NoError(t, err)
 
 	responderDone := make(chan *bootstrap.NoiseSession, 1)

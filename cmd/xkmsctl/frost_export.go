@@ -40,11 +40,15 @@ const frostRecipientKeyCN = "frost-share-recipient"
 // frostPackageKeyAlgorithm and frostPackageContentAlgorithm are the JWE
 // (RFC 7516/7518) algorithms a dealer package is encrypted with: an
 // ephemeral-static ECDH-ES key agreement to the recipient's P-256 key, the
-// derived key wrapping a random AES-256-GCM content key. The JWE protected
-// header, which names the recipient key, is authenticated by the GCM tag.
+// derived key wrapping a random AES_256_CBC_HMAC_SHA_512 content key (RFC 7518
+// §5.2.5). The JWE protected header, which names the recipient key, is
+// authenticated by the HMAC tag. The content algorithm is CBC-HMAC rather than
+// A256GCM because the JWE library seals GCM under an IV it draws itself, an
+// arbitrary-IV construction GODEBUG=fips140=only refuses; AES-CBC and
+// HMAC-SHA-512 are both approved, so a dealer package is sealed in either mode.
 const (
 	frostPackageKeyAlgorithm     = "ECDH-ES+A256KW"
-	frostPackageContentAlgorithm = "A256GCM"
+	frostPackageContentAlgorithm = "A256CBC-HS512"
 )
 
 // EncryptedKeyPackageExport is the file dealer keygen writes for each

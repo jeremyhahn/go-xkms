@@ -15,6 +15,7 @@ package staticpw
 
 import (
 	"context"
+	"crypto/hkdf"
 	"crypto/rand"
 	"crypto/sha256"
 	"encoding/base32"
@@ -26,7 +27,6 @@ import (
 	"time"
 
 	"golang.org/x/crypto/argon2"
-	"golang.org/x/crypto/hkdf"
 
 	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
 
@@ -571,8 +571,11 @@ func (f *vaultFactor) deriveKEK(plaintext []byte) ([]byte, error) {
 
 // hkdfKey derives an AES-256 key with HKDF-SHA256.
 func hkdfKey(secret, salt []byte, info string) ([]byte, error) {
-	key := make([]byte, aesgcm.KeySize)
-	if _, err := hkdf.New(sha256.New, secret, salt, []byte(info)).Read(key); err != nil {
+	// crypto/hkdf returns the FIPS module's refusal of a secret shorter than
+	// 112 bits under GODEBUG=fips140=only as an error, where x/crypto/hkdf
+	// panics on it.
+	key, err := hkdf.Key(sha256.New, secret, salt, info, aesgcm.KeySize)
+	if err != nil {
 		return nil, &VaultCryptoError{Op: "hkdf", Err: err}
 	}
 	return key, nil
