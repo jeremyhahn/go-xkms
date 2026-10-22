@@ -164,7 +164,7 @@ func TestApplyProfile_CAProfileSetsBasicConstraints(t *testing.T) {
 // =============================================================================
 
 func TestCertificateRequestFromTemplate_CarriesTemplateContext(t *testing.T) {
-	uri, err := url.Parse("spiffe://example.com/tenant/acme/user/alice")
+	uri, err := url.Parse("spiffe://acme/user/alice")
 	require.NoError(t, err)
 
 	template := &x509.Certificate{
@@ -214,7 +214,7 @@ func TestCertificateRequestFromTemplate_CarriesTemplateContext(t *testing.T) {
 	assert.Equal(t, []string{"leaf.example.com"}, request.SANS.DNS)
 	assert.Equal(t, []string{"alice@example.com"}, request.SANS.Email)
 	assert.Equal(t, []string{"10.0.0.1"}, request.SANS.IPs)
-	assert.Equal(t, []string{"spiffe://example.com/tenant/acme/user/alice"}, request.SANS.URIs)
+	assert.Equal(t, []string{"spiffe://acme/user/alice"}, request.SANS.URIs)
 
 	assert.Equal(t, "acme", request.TenantID)
 	assert.Equal(t, "example.com", request.SPIFFETrustDomain)

@@ -369,16 +369,17 @@ func fileExists(path string) bool {
 	return err == nil && !info.IsDir()
 }
 
-// TrustDomain returns the deployment's SPIFFE trust domain: the one stamped
-// into the administrator's certificate and into every tenant-scoped client
-// certificate the CA signs (XKMSService.SignCSR), and the one the ACME admin
-// plane pins when it reads a client certificate's tenant.
+// TrustDomain returns the deployment's cluster SPIFFE trust domain: the pin
+// login verifies client certificates under, which no tenant may equal, and
+// the trust domain node identities spiffe://<trust-domain>/node/<addr> live
+// in. Being set, it switches the tenant SPIFFE SAN
+// spiffe://<tenant>/<kind>/<name> on for the administrator's certificate and
+// every tenant client certificate the CA signs (XKMSService.SignCSR); the
+// tenant, not this value, is those IDs' trust domain (docs/SPEC.md
+// trust-domain-grammar).
 //
-// It reuses the operator's cluster enrollment trust domain so a node
-// certificate and a user certificate issued by the same deployment live in
-// one trust domain; a deployment that has not configured one gets the
-// same default the enrollment path uses, rather than an empty domain that would
-// produce an unusable SPIFFE ID.
+// It reuses the operator's cluster enrollment trust domain; a deployment that
+// has not configured one gets the same default the enrollment path uses.
 func (s *Server) TrustDomain() string {
 	if td := s.config.Cluster.RaftEnrollment.TrustDomain; td != "" {
 		return td

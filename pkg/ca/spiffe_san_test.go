@@ -87,6 +87,35 @@ func TestSignCSRWithSPIFFE_Raw(t *testing.T) {
 	assert.Equal(t, "spiffe://tenant-b/user/bob", cert.URIs[0].String())
 }
 
+// TestSignCSRWithSPIFFE_NonLoginProfiles pins the contract the xkms servicer
+// relies on to request the tenant SPIFFE SAN only for login certificates:
+// code-signing and server certificates, including a server CSR with an empty
+// or wildcard CN, issue with no URI SAN when no trust domain is passed, and
+// would be refused if the SAN were requested.
+func TestSignCSRWithSPIFFE_NonLoginProfiles(t *testing.T) {
+	cases := map[string]struct {
+		profile string
+		cn      string
+	}{
+		"code-signing":    {profile: "code-signing", cn: "release-signer"},
+		"server empty CN": {profile: "server", cn: ""},
+		"server wildcard": {profile: "server", cn: "*.example.com"},
+	}
+	for name, tc := range cases {
+		t.Run(name, func(t *testing.T) {
+			ca := setupTestCA(t)
+			csrPEM, _ := makeLeafCSR(t, tc.cn)
+
+			cert, err := ca.SignCSRWithSPIFFE(context.Background(), csrPEM, tc.profile, 30, "", "tenant-b", "", "")
+			require.NoError(t, err)
+			assert.Empty(t, cert.URIs, "no SPIFFE SAN without a trust domain")
+
+			_, err = ca.SignCSRWithSPIFFE(context.Background(), csrPEM, tc.profile, 30, "example.com", "tenant-b", "", "")
+			require.Error(t, err, "a SPIFFE SAN is not due on a %s certificate", tc.profile)
+		})
+	}
+}
+
 // A tenant user's certificate carries its tenant in exactly the form qrdb's
 // certificate-to-tenant rule reads, so the ACME admin plane, which applies
 // that rule pinned to the deployment's trust domain, resolves the user in

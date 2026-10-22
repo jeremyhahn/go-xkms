@@ -314,6 +314,42 @@ xkmsctl acme --acme-server https://ca.example.com:8443 status
 xkmsctl acme --acme-server https://ca.example.com:8443 stats
 ```
 
+### `xkmsctl acme gui`
+
+Opens the Wails desktop admin GUI (`pkg/acme/gui/admin`). The verb exists only
+in a binary built with the `gui` tag (`cmd/xkmsctl/acme_gui.go:14`); the
+default `xkmsctl` has no `acme gui`. Build it with `make build-cli-gui`
+(`Makefile:551`), which adds `gui production webkit2_41` to the CLI tags and
+needs cgo and webkit2gtk-4.1.
+
+It takes the same connection flags as every other `acme` verb and connects
+through the same SDK client (`newACMEClient`, `cmd/xkmsctl/acme.go:247`), with
+one difference: `--tls-cert` and `--tls-key` are required, because the admin
+API identifies the operator by client certificate
+(`cmd/xkmsctl/acme_gui.go:127`).
+
+```
+xkmsctl --tls-cert admin.crt --tls-key admin.key --tls-ca ca.crt \
+    acme --acme-server grpcs://ca.example.com:9443 gui
+```
+
+`acmeGUIConfig` (`cmd/xkmsctl/acme_gui.go:122`) resolves the flags into the
+admin app's `GUIConfig`: the transport (`rest` for `http(s)://`, `grpc` for
+`grpc(s)://` or a bare address, `quic`, `mcp`; `acme_gui.go:143`), the address
+and the TLS files, keeping the window defaults. The window serves the embedded
+admin SPA (`pkg/acme/web/packages/admin/dist`, `acme_gui.go:105`) and the
+admin REST router in-process; no listening socket is opened. `acmeGUI` blocks
+until the window closes (`acme_gui.go:116`).
+
+| Refusal | Typed error |
+|---|---|
+| no `--acme-server` | `ACMEAdminAddressRequiredError` |
+| `unix://` or an unknown transport | `ACMEAdminUnsupportedTransportError` |
+| `--tls-cert` or `--tls-key` missing | `ACMEGUIIdentityRequiredError` (`acme_gui.go:76`) |
+| embedded frontend unreadable | `ACMEGUIAssetsError` |
+
+Every refusal is returned before a client is built or a window opened.
+
 ### Errors
 
 A permission-denied response from the admin API's `PermissionGate`

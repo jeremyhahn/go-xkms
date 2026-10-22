@@ -544,6 +544,16 @@ build-cli:
 	@CGO_ENABLED=0 $(GO) build -buildvcs=false -tags "$(CLI_TAGS)" -ldflags "$(LDFLAGS)" -o $(BIN_DIR)/xkmsctl ./cmd/xkmsctl
 	@echo "$(GREEN)✓ CLI binary built: $(BIN_DIR)/xkmsctl$(RESET)"
 
+.PHONY: build-cli-gui
+## build-cli-gui: Build xkmsctl with `xkmsctl acme gui`, the Wails desktop ACME admin GUI
+## Wails needs cgo + WebKit (webkit2gtk-4.1); the admin frontend is embedded from
+## pkg/acme/web/packages/admin/dist.
+build-cli-gui:
+	@echo "$(CYAN)$(BOLD)→ Building xkmsctl CLI with the desktop admin GUI...$(RESET)"
+	@mkdir -p $(BIN_DIR)
+	@CGO_ENABLED=1 $(GO) build -buildvcs=false -tags "$(CLI_TAGS) gui production webkit2_41" -ldflags "$(LDFLAGS)" -o $(BIN_DIR)/xkmsctl ./cmd/xkmsctl
+	@echo "$(GREEN)✓ CLI binary built with GUI: $(BIN_DIR)/xkmsctl$(RESET)"
+
 .PHONY: build-server
 ## build-server: Build the unified xkmsd server binary (uses Docker for CGO deps)
 build-server: builder-image

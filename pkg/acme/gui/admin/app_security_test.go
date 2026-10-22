@@ -24,7 +24,6 @@ import (
 	"net/http/httptest"
 	"os"
 	"reflect"
-	"sort"
 	"strings"
 	"testing"
 	"testing/fstest"
@@ -68,49 +67,6 @@ func request(t *testing.T, handler http.Handler, method, path string) *httptest.
 	return rec
 }
 
-// adminRoutes is the complete admin API surface — the tenant, user, role and
-// CA operations that used to be reachable, unguarded, from every process on
-// the machine.
-var adminRoutes = []string{
-	"GET /api/v1/status",
-	"GET /api/v1/stats",
-	"GET /api/v1/certificates/expiring",
-	"GET /api/v1/certificates",
-	"GET /api/v1/certificates/{serial}",
-	"POST /api/v1/certificates/{serial}/revoke",
-	"GET /api/v1/orders",
-	"GET /api/v1/orders/{id}",
-	"GET /api/v1/accounts",
-	"GET /api/v1/accounts/{id}",
-	"DELETE /api/v1/accounts/{id}",
-	"GET /api/v1/tenants",
-	"POST /api/v1/tenants",
-	"GET /api/v1/tenants/{id}",
-	"PUT /api/v1/tenants/{id}",
-	"DELETE /api/v1/tenants/{id}",
-	"PUT /api/v1/tenants/{id}/status",
-	"POST /api/v1/tenants/{id}/root-ca",
-	"GET /api/v1/tenants/{id}/ca-status",
-	"GET /api/v1/tenants/{id}/intermediate-cas",
-	"POST /api/v1/tenants/{id}/intermediate-cas",
-	"GET /api/v1/tenants/{id}/intermediate-cas/{caId}",
-	"PUT /api/v1/tenants/{id}/intermediate-cas/{caId}",
-	"GET /api/v1/tenants/{id}/eab",
-	"POST /api/v1/tenants/{id}/eab",
-	"GET /api/v1/tenants/{id}/eab/{eabId}",
-	"DELETE /api/v1/tenants/{id}/eab/{eabId}",
-	"GET /api/v1/tenants/{id}/roles",
-	"POST /api/v1/tenants/{id}/roles",
-	"GET /api/v1/tenants/{id}/roles/{roleId}",
-	"PUT /api/v1/tenants/{id}/roles/{roleId}",
-	"DELETE /api/v1/tenants/{id}/roles/{roleId}",
-	"GET /api/v1/tenants/{id}/users",
-	"POST /api/v1/tenants/{id}/users",
-	"GET /api/v1/tenants/{id}/users/{userId}",
-	"PUT /api/v1/tenants/{id}/users/{userId}",
-	"DELETE /api/v1/tenants/{id}/users/{userId}",
-}
-
 // =============================================================================
 // The API is mounted in the asset server, alongside the frontend
 // =============================================================================
@@ -146,43 +102,6 @@ func TestApp_AssetServerWiring(t *testing.T) {
 	}
 }
 
-func TestApp_MountedAPIExposesEveryAdminRoute(t *testing.T) {
-	router, ok := mountedAPI(t, newTestApp()).(*mux.Router)
-	if !ok {
-		t.Fatal("the admin API handler must be the mux router")
-	}
-
-	var mounted []string
-	err := router.Walk(func(route *mux.Route, _ *mux.Router, _ []*mux.Route) error {
-		methods, err := route.GetMethods()
-		if err != nil {
-			// The /api/v1 PathPrefix route that carries the subrouter has no
-			// methods of its own; only the leaves are API routes.
-			return nil
-		}
-		path, err := route.GetPathTemplate()
-		if err != nil {
-			return err
-		}
-		for _, method := range methods {
-			mounted = append(mounted, method+" "+path)
-		}
-		return nil
-	})
-	if err != nil {
-		t.Fatalf("walking the router: %v", err)
-	}
-
-	sort.Strings(mounted)
-	want := append([]string(nil), adminRoutes...)
-	sort.Strings(want)
-
-	if strings.Join(mounted, "\n") != strings.Join(want, "\n") {
-		t.Errorf("mounted routes differ from the expected admin surface:\ngot:\n%s\nwant:\n%s",
-			strings.Join(mounted, "\n"), strings.Join(want, "\n"))
-	}
-}
-
 // routes reports whether the mounted router routes the given request to a
 // handler. Matching rather than serving is deliberate: it proves reachability
 // through the mounted handler without invoking an admin handler against the
@@ -202,15 +121,15 @@ func TestApp_MountedAPIRoutesRequests(t *testing.T) {
 	// The privileged operations that used to answer on a loopback port with
 	// no guard at all: each must still route, and now only from in-process.
 	reachable := []struct{ method, path string }{
-		{http.MethodGet, "/api/v1/status"},
-		{http.MethodPost, "/api/v1/tenants"},
+		{http.MethodGet, "/admin/status"},
+		{http.MethodPost, "/api/v1/tenants/"},
 		{http.MethodDelete, "/api/v1/tenants/t1"},
 		{http.MethodPost, "/api/v1/tenants/t1/root-ca"},
 		{http.MethodPost, "/api/v1/tenants/t1/intermediate-cas"},
 		{http.MethodPost, "/api/v1/tenants/t1/users"},
 		{http.MethodDelete, "/api/v1/tenants/t1/users/u1"},
 		{http.MethodPost, "/api/v1/tenants/t1/roles"},
-		{http.MethodPost, "/api/v1/certificates/abc123/revoke"},
+		{http.MethodPost, "/admin/certificates/abc123/revoke"},
 	}
 	for _, rt := range reachable {
 		t.Run(rt.method+" "+rt.path, func(t *testing.T) {
@@ -245,7 +164,7 @@ func TestApp_OpensNoListeningSocket(t *testing.T) {
 	if !ok {
 		t.Fatal("the admin API handler must be the mux router")
 	}
-	if !routes(t, router, http.MethodPost, "/api/v1/tenants") {
+	if !routes(t, router, http.MethodPost, "/api/v1/tenants/") {
 		t.Fatal("the admin API must be mounted before this proves anything")
 	}
 	if rec := request(t, handlerOf(router), http.MethodGet, "/api/v1/nonexistent"); rec.Code != http.StatusNotFound {
@@ -267,7 +186,7 @@ func TestApp_HoldsNoListenerOrServer(t *testing.T) {
 	for i := 0; i < appType.NumField(); i++ {
 		field := appType.Field(i)
 		typ := field.Type
-		if typ.Kind() == reflect.Ptr {
+		if typ.Kind() == reflect.Pointer {
 			typ = typ.Elem()
 		}
 		if field.Type.Implements(listenerType) || typ == serverType {
@@ -282,7 +201,8 @@ func TestApp_HoldsNoListenerOrServer(t *testing.T) {
 
 // TestApp_GetApiBaseUrl_IsSameOriginRelative proves the binding hands the
 // frontend a relative base: no host and no port, so the Svelte transport
-// fetches "/api/v1/..." against the window's own origin.
+// fetches "/admin/..." and "/api/v1/tenants/..." against the window's own
+// origin.
 func TestApp_GetApiBaseUrl_IsSameOriginRelative(t *testing.T) {
 	if base := newTestApp().GetApiBaseUrl(); base != "" {
 		t.Fatalf("expected an empty, same-origin base, got %q", base)

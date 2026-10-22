@@ -184,14 +184,16 @@ type x509SVIDProfile struct {
 //     keyCertSign or cRLSign (§4.3).
 //   - Extended key usage: serverAuth and clientAuth (§4.4).
 //   - Names: taken only from the issuing caller, never from the CSR. Exactly
-//     one URI SAN, which must be a valid SPIFFE ID (§2); DNS names are
-//     allowed; IP and email names are refused.
+//     one URI SAN, which must be a valid SPIFFE ID (§2) whose trust domain
+//     is the tenant, the subject's OU[0] (spiffe://<tenant>/...); DNS names
+//     are allowed; IP and email names are refused.
 //   - Keys: ECDSA P-256/P-384/P-521, RSA of at least 2048 bits, or Ed25519.
 //   - Lifetime: 1 hour by default, 24 hours at most.
 //
-// Issue it under a subordinate CA whose PermittedURIDomains names the trust
-// domain. That constraint binds only the trust domain; scoping an issuer to a
-// path such as /svc/ is the issuing caller's policy.
+// Issue it under a subordinate CA whose PermittedURIDomains names the
+// tenant's trust domain, so each tenant's bundle is its own CA. That
+// constraint binds only the trust domain; scoping an issuer to a path such as
+// /svc/ is the issuing caller's policy.
 func NewX509SVIDProfile() ProfileProvider {
 	return &x509SVIDProfile{
 		baseProfile: baseProfile{
@@ -235,8 +237,12 @@ func (p *x509SVIDProfile) ValidateTemplate(template *x509.Certificate) error {
 	if len(template.URIs) != 1 {
 		return &errs.Detail{Err: ErrInvalidSAN, Detail: p.name + ": exactly one URI SAN is required, got " + strconv.Itoa(len(template.URIs))}
 	}
-	if _, err := spiffe.WorkloadIDFromURL(template.URIs[0]); err != nil {
+	id, err := spiffe.WorkloadIDFromURL(template.URIs[0])
+	if err != nil {
 		return &errs.Joined{Lead: ErrInvalidSAN, Detail: p.name + ": URI SAN is not a SPIFFE ID", Cause: err}
+	}
+	if id.TrustDomain().Name() != firstOrEmpty(template.Subject.OrganizationalUnit) {
+		return &errs.Detail{Err: ErrInvalidSAN, Detail: p.name + ": the SPIFFE trust domain must be the tenant (subject OU[0])"}
 	}
 	if len(template.IPAddresses) > 0 || len(template.EmailAddresses) > 0 {
 		return &errs.Detail{Err: ErrInvalidSAN, Detail: p.name + ": IP and email names are not permitted"}

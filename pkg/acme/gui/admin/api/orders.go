@@ -23,7 +23,7 @@ import (
 	sdkadmin "github.com/jeremyhahn/go-xkms/sdk/go/acme/client/admin"
 )
 
-// listOrders handles GET /api/v1/orders.
+// listOrders handles GET /admin/orders.
 func (h *handlers) listOrders(w http.ResponseWriter, r *http.Request) {
 	query := r.URL.Query()
 	req := &sdkadmin.ListOrdersRequest{
@@ -51,7 +51,7 @@ func (h *handlers) listOrders(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, resp.Orders, resp.Pagination)
 }
 
-// getOrder handles GET /api/v1/orders/{id}.
+// getOrder handles GET /admin/orders/{id}.
 func (h *handlers) getOrder(w http.ResponseWriter, r *http.Request) {
 	orderID, err := strconv.ParseUint(mux.Vars(r)["id"], 10, 64)
 	if err != nil {

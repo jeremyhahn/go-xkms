@@ -71,7 +71,7 @@ The **`system` tenant** is the control-plane exception. The SO/bootstrap
 certificate is always scoped to it so the control plane functions before any
 tenant barrier unseals,
 and when a SPIFFE trust domain is configured the SAN is
-`spiffe://<td>/tenant/system/user/<CN>`.
+`spiffe://system/user/<CN>`.
 
 The system tenant is a tenant, not a skeleton key. Outside the tenant
 registry and plan management a system-tenant identity is confined to the

@@ -163,7 +163,7 @@ func TestSDK_OverlayProfilesUnderNameConstrainedSubordinates(t *testing.T) {
 		svidCA, err := subIssuer.IssueSubordinateCA(ctx, &SubordinateCARequest{
 			Subject:         pkix.Name{CommonName: "SPIFFE Intermediate"},
 			PublicKey:       svidKey.Public(),
-			NameConstraints: &NameConstraints{Critical: true, PermittedURIDomains: []string{"example.org"}},
+			NameConstraints: &NameConstraints{Critical: true, PermittedURIDomains: []string{sdkTestTenant}},
 		})
 		if err != nil {
 			t.Fatalf("subordinate: %v", err)
@@ -173,7 +173,7 @@ func TestSDK_OverlayProfilesUnderNameConstrainedSubordinates(t *testing.T) {
 			Profile:    ProfileNameX509SVID,
 			Signer:     svidKey,
 			IssuerCert: svidCA,
-			SANS:       &TrustedCASubjectAlternativeNames{URIs: []string{"spiffe://example.org/tenant/t1/svc/web"}},
+			SANS:       &TrustedCASubjectAlternativeNames{URIs: []string{"spiffe://tenant-sdk/svc/web"}},
 		})
 		if err != nil {
 			t.Fatalf("sign: %v", err)

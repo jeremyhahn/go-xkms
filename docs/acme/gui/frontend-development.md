@@ -83,7 +83,9 @@ The client automatically:
 - prefixes `getApiBaseUrl()` (empty, same-origin, unless `window.__API_BASE_URL__` is set)
 - sets `Content-Type: application/json` and `Accept: application/json`
 - adds `Authorization: Bearer ...` and `X-Tenant-ID` when set
-- unwraps `data` from the JSON response
+- unwraps `data` from the JSON response, except a list (`data` is an array),
+  which keeps its `{ data, pagination }` envelope for the list callers
+  (`ApiResponse<T[]>`)
 - throws `ApiClientError` (`status`, `code`, `message`) on failure
 - clears auth state on 401
 

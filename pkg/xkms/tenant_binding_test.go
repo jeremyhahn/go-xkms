@@ -27,6 +27,7 @@ import (
 	"github.com/jeremyhahn/go-xkms/pkg/api/transport"
 	"github.com/jeremyhahn/go-xkms/pkg/auth"
 	"github.com/jeremyhahn/go-xkms/pkg/seal"
+	"github.com/jeremyhahn/go-xkms/pkg/spiffe"
 	"github.com/jeremyhahn/go-xkms/pkg/storage"
 )
 
@@ -281,6 +282,124 @@ func TestSignCSR_TenantBinding(t *testing.T) {
 	_, err = svc.SignCSR(platformAdmin, &transport.SignCSRRequest{CSRPEM: csr, TenantID: "tenant-b"})
 	requireBindingRefusal(t, err, "system tenant naming another tenant")
 	assert.Empty(t, ca.signCSRTenant, "the system tenant must not mint another tenant's credential")
+}
+
+// TestSignCSR_TenantSPIFFE checks that a configured trust domain makes SignCSR
+// ask the CA for the tenant SPIFFE SAN, spiffe://<tenant>/user/<CN>, for the
+// caller's tenant, under that cluster trust domain, whether or not the request
+// names the tenant: go-qrdb's TenantFromClientCert refuses a certificate whose
+// OU has no matching SPIFFE SAN, so a CSR naming no tenant (xkmsctl ca sign,
+// the xkey agent) must still be issued a certificate that can log in.
+func TestSignCSR_TenantSPIFFE(t *testing.T) {
+	csr := []byte("-----BEGIN CERTIFICATE REQUEST-----\ntest\n-----END CERTIFICATE REQUEST-----")
+	cases := map[string]struct {
+		identity   *auth.Identity
+		tenantID   string
+		wantTenant string
+	}{
+		"tenant named": {
+			identity:   &auth.Identity{Subject: "admin-a", TenantID: "tenant-a", Roles: []string{"admin"}},
+			tenantID:   "tenant-a",
+			wantTenant: "tenant-a",
+		},
+		"tenant implied by the caller": {
+			identity:   &auth.Identity{Subject: "admin-a", TenantID: "tenant-a", Roles: []string{"admin"}},
+			wantTenant: "tenant-a",
+		},
+		"system caller naming no tenant": {
+			identity:   &auth.Identity{Subject: "so@example.com", TenantID: qrdbsdk.SystemTenantID, Roles: []string{"admin"}},
+			wantTenant: qrdbsdk.SystemTenantID,
+		},
+	}
+	for name, tc := range cases {
+		t.Run(name, func(t *testing.T) {
+			ca := &mockCA{signCSRCert: createSelfSignedCert(t), cert: createSelfSignedCert(t)}
+			svc := setupServiceWithCA(t, ca)
+			svc.SetSPIFFETrustDomain("cluster.example")
+			ctx := auth.WithIdentity(context.Background(), tc.identity)
+
+			_, err := svc.SignCSR(ctx, &transport.SignCSRRequest{CSRPEM: csr, TenantID: tc.tenantID})
+			require.NoError(t, err)
+			assert.Equal(t, "cluster.example", ca.signCSRTrustDomain, "a configured trust domain asks for the login certificate's tenant SPIFFE SAN")
+			assert.Equal(t, tc.wantTenant, ca.signCSRTenant)
+		})
+	}
+}
+
+// TestSignCSR_TenantSPIFFEOnlyForLogin pins that, under a configured trust
+// domain, the tenant SPIFFE SAN is requested only for a login certificate
+// (the client profile or no profile) or when the request names a tenant.
+// Code-signing forbids URI SANs and a server CN is no SPIFFE path segment,
+// so asking for the SAN there would refuse certificates that carry no user
+// identity.
+func TestSignCSR_TenantSPIFFEOnlyForLogin(t *testing.T) {
+	csr := []byte("-----BEGIN CERTIFICATE REQUEST-----\ntest\n-----END CERTIFICATE REQUEST-----")
+	cases := map[string]struct {
+		profile         string
+		tenantID        string
+		wantTrustDomain string
+	}{
+		"default leaf":             {wantTrustDomain: "cluster.example"},
+		"client":                   {profile: "client", wantTrustDomain: "cluster.example"},
+		"client, registry casing":  {profile: " Client ", wantTrustDomain: "cluster.example"},
+		"code-signing":             {profile: "code-signing"},
+		"server":                   {profile: "server"},
+		"server naming its tenant": {profile: "server", tenantID: "tenant-a", wantTrustDomain: "cluster.example"},
+	}
+	for name, tc := range cases {
+		t.Run(name, func(t *testing.T) {
+			ca := &mockCA{signCSRCert: createSelfSignedCert(t), cert: createSelfSignedCert(t)}
+			svc := setupServiceWithCA(t, ca)
+			svc.SetSPIFFETrustDomain("cluster.example")
+			ctx := auth.WithIdentity(context.Background(), &auth.Identity{
+				Subject: "admin-a", TenantID: "tenant-a", Roles: []string{"admin"},
+			})
+
+			_, err := svc.SignCSR(ctx, &transport.SignCSRRequest{CSRPEM: csr, Profile: tc.profile, TenantID: tc.tenantID})
+			require.NoError(t, err)
+			assert.Equal(t, tc.wantTrustDomain, ca.signCSRTrustDomain)
+			assert.Equal(t, "tenant-a", ca.signCSRTenant, "every certificate carries the caller's tenant")
+		})
+	}
+}
+
+// TestSignCSR_TenantSPIFFERefused checks that the CA's refusal to build the
+// caller's tenant SPIFFE SAN -- a tenant equal to the cluster trust domain --
+// reaches the caller as a typed *ErrCAOperation wrapping the SPIFFE sentinel,
+// and that no certificate is returned.
+func TestSignCSR_TenantSPIFFERefused(t *testing.T) {
+	ca := &mockCA{signCSRErr: spiffe.ErrTenantIsClusterTrustDomain, cert: createSelfSignedCert(t)}
+	svc := setupServiceWithCA(t, ca)
+	svc.SetSPIFFETrustDomain("cluster.example")
+	ctx := auth.WithIdentity(context.Background(), &auth.Identity{
+		Subject: "admin-a", TenantID: "cluster.example", Roles: []string{"admin"},
+	})
+	csr := []byte("-----BEGIN CERTIFICATE REQUEST-----\ntest\n-----END CERTIFICATE REQUEST-----")
+
+	for _, profile := range []string{"", "client"} {
+		resp, err := svc.SignCSR(ctx, &transport.SignCSRRequest{CSRPEM: csr, Profile: profile})
+		assert.Nil(t, resp, "profile %q", profile)
+		var caErr *ErrCAOperation
+		require.ErrorAs(t, err, &caErr, "profile %q", profile)
+		assert.ErrorIs(t, err, spiffe.ErrTenantIsClusterTrustDomain, "profile %q", profile)
+		assert.Equal(t, "cluster.example", ca.signCSRTrustDomain, "profile %q", profile)
+	}
+}
+
+// TestSignCSR_NoTenantSPIFFE checks that SignCSR asks for no SPIFFE SAN when
+// no trust domain is configured, and still stamps the caller's tenant.
+func TestSignCSR_NoTenantSPIFFE(t *testing.T) {
+	csr := []byte("-----BEGIN CERTIFICATE REQUEST-----\ntest\n-----END CERTIFICATE REQUEST-----")
+	ctx := auth.WithIdentity(context.Background(), &auth.Identity{
+		Subject: "admin-a", TenantID: "tenant-a", Roles: []string{"admin"},
+	})
+	ca := &mockCA{signCSRCert: createSelfSignedCert(t), cert: createSelfSignedCert(t)}
+	svc := setupServiceWithCA(t, ca)
+
+	_, err := svc.SignCSR(ctx, &transport.SignCSRRequest{CSRPEM: csr, TenantID: "tenant-a"})
+	require.NoError(t, err)
+	assert.Empty(t, ca.signCSRTrustDomain)
+	assert.Equal(t, "tenant-a", ca.signCSRTenant, "the certificate still carries the caller's tenant")
 }
 
 func TestTenantBinding_CrossTenantRefusedAsNotFound(t *testing.T) {

@@ -233,17 +233,29 @@ func acmeAdminClient(ctx context.Context) (acmeadmin.Client, func() error, error
 // --acme-server/--acme-transport (plus the CLI's usual --tls-cert/--tls-key/
 // --tls-ca material) and connects.
 func defaultACMEAdminClientFactory(ctx context.Context) (acmeadmin.Client, func() error, error) {
-	address, opts, err := acmeClientOptions(getConfig())
+	cl, err := newACMEClient(getConfig())
 	if err != nil {
 		return nil, nil, err
 	}
 
-	cl, err := trustedca.NewClient(address, opts...)
+	return cl.Admin(), cl.Close, nil
+}
+
+// newACMEClient connects the SDK client for the ACME admin API from
+// --acme-server, --acme-transport and the global mTLS identity flags. Every
+// acme subcommand, the desktop GUI included, connects through it.
+func newACMEClient(cfg *Config) (trustedca.Client, error) {
+	address, opts, err := acmeClientOptions(cfg)
 	if err != nil {
-		return nil, nil, &ACMEAdminConnectError{Cause: err}
+		return nil, err
 	}
 
-	return cl.Admin(), cl.Close, nil
+	cl, err := trustedca.NewClient(address, opts...)
+	if err != nil {
+		return nil, &ACMEAdminConnectError{Cause: err}
+	}
+
+	return cl, nil
 }
 
 // acmeClientOptions maps --acme-server/--acme-transport (and the CLI's TLS

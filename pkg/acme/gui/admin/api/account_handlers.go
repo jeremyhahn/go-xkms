@@ -24,7 +24,7 @@ import (
 	sdkerrors "github.com/jeremyhahn/go-xkms/sdk/go/acme/errors"
 )
 
-// listAccounts handles GET /api/v1/accounts.
+// listAccounts handles GET /admin/accounts.
 func (h *handlers) listAccounts(w http.ResponseWriter, r *http.Request) {
 	query := r.URL.Query()
 	req := &adminsdk.ListAccountsRequest{
@@ -43,7 +43,7 @@ func (h *handlers) listAccounts(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, resp.Accounts, resp.Pagination)
 }
 
-// getAccount handles GET /api/v1/accounts/{id}.
+// getAccount handles GET /admin/accounts/{id}.
 func (h *handlers) getAccount(w http.ResponseWriter, r *http.Request) {
 	accountID, err := strconv.ParseUint(mux.Vars(r)["id"], 10, 64)
 	if err != nil {
@@ -68,7 +68,7 @@ func (h *handlers) getAccount(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, account, nil)
 }
 
-// disableAccount handles DELETE /api/v1/accounts/{id}.
+// disableAccount handles DELETE /admin/accounts/{id}.
 func (h *handlers) disableAccount(w http.ResponseWriter, r *http.Request) {
 	accountID, err := strconv.ParseUint(mux.Vars(r)["id"], 10, 64)
 	if err != nil {

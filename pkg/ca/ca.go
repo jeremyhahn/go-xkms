@@ -1864,10 +1864,13 @@ func (ca *CA) signVerifiedCSR(ctx context.Context, csr *x509.CertificateRequest,
 		uris = append(uris, opts.SANS.ParseURIs()...)
 	}
 
-	// Synthesize a tenant-scoped SPIFFE URI SAN when requested. This binds the
-	// issued client certificate to its tenant so login can derive the tenant
-	// from the verified peer certificate (SPIFFE SAN -> tenant). The format is
-	// owned by pkg/spiffe; we never hand-assemble the path here.
+	// Synthesize the tenant SPIFFE URI SAN, spiffe://<tenant>/<kind>/<name>,
+	// when requested. This binds the issued client certificate to its tenant
+	// so login can derive the tenant from the verified peer certificate: the
+	// same tenant is the subject's OU[0] (StampTenant), and go-qrdb's
+	// TenantFromClientCert requires the two to agree, under a cluster trust
+	// domain (opts.SPIFFETrustDomain) no tenant may equal. The format is owned
+	// by pkg/spiffe; we never hand-assemble the ID here.
 	if opts != nil && opts.SPIFFETrustDomain != "" && opts.TenantID != "" {
 		kind := opts.SPIFFEKind
 		if kind == "" {
@@ -1879,7 +1882,7 @@ func (ca *CA) signVerifiedCSR(ctx context.Context, csr *x509.CertificateRequest,
 		}
 		spiffeURI, err := spiffe.BuildURI(opts.SPIFFETrustDomain, opts.TenantID, kind, name)
 		if err != nil {
-			return nil, &errs.Detail{Err: ErrSigningFailed, Detail: fmt.Sprintf("%v", err)}
+			return nil, &errs.Joined{Lead: ErrSigningFailed, Detail: "tenant SPIFFE ID", Cause: err}
 		}
 		uris = append(uris, spiffeURI)
 	}

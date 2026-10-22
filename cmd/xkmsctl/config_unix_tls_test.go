@@ -73,10 +73,13 @@ func TestConfig_backendConfig_PKCS11ModuleError(t *testing.T) {
 // certificate fails on verification, and with the CA trusted it completes.
 func TestConfig_CreateClient_UnixURLSpeaksTLS(t *testing.T) {
 	socketPath, caFile := startTLSUnixServer(t)
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-	defer cancel()
 
+	// Each subtest owns its deadline: a refused handshake can spend its
+	// whole budget, and a shared one would leave the next subtest none.
 	t.Run("untrusted certificate is refused", func(t *testing.T) {
+		ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
+		defer cancel()
+
 		cfg := NewConfig()
 		cfg.Server = "unix://" + socketPath
 
@@ -93,6 +96,9 @@ func TestConfig_CreateClient_UnixURLSpeaksTLS(t *testing.T) {
 	})
 
 	t.Run("trusted CA completes the handshake", func(t *testing.T) {
+		ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
+		defer cancel()
+
 		cfg := NewConfig()
 		cfg.Server = "unix://" + socketPath
 		cfg.TLSCACert = caFile

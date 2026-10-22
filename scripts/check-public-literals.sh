@@ -40,7 +40,10 @@ PATTERN='192\.168\.101\.[0-9]{1,3}|dellemc-?[0-9]*|omega-docker|/home/jhahn|~jha
 # agent-instruction files the owner publishes on their own schedule, and this
 # repository's own CLAUDE.md forbids editing them from a task like this one.
 # This script excludes itself because PATTERN's own text would otherwise
-# match its own source.
+# match its own source. code-review.yml is the handbook's fleet workflow
+# template, kept byte-identical to it outside its CUSTOMIZE lines (Company
+# Agent m826); its comments and the opencode job's default OLLAMA_URL name
+# fleet hosts, so it is excluded rather than edited away from the template.
 GREP_EXCLUDES=(
 	--exclude-dir=.git   # ordinary checkout: .git is a directory
 	--exclude=.git       # worktree checkout: .git is a plain gitdir-pointer file
@@ -48,6 +51,7 @@ GREP_EXCLUDES=(
 	--exclude=CLAUDE.md
 	--exclude=AGENTS.md
 	--exclude=check-public-literals.sh
+	--exclude=code-review.yml
 )
 
 # -r recursive, -I skip binary files, -n line numbers, -i case-insensitive

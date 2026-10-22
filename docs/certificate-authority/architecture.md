@@ -254,7 +254,7 @@ relying party enforces both during path validation.
 **URI constraints bind the trust domain, not the path.** RFC 5280 §4.2.1.10
 constrains a URI by its host only. For a SPIFFE ID that host is the trust
 domain, so no X.509 constraint can confine a subordinate to
-`spiffe://<td>/tenant/<t>/`. Path scoping belongs to the issuing caller, which
+a path such as `spiffe://<t>/svc/`. Path scoping belongs to the issuing caller, which
 checks the requested ID before it asks for a certificate
 (`spiffe.WorkloadID.HasPathPrefix`). This is a property of the standard, not a
 gap in this implementation.
@@ -276,9 +276,9 @@ cannot inject its own evidence.
 ## SPIFFE identities
 
 `pkg/spiffe` is the one place SPIFFE IDs are built and checked, re-exported as
-`sdk/go/spiffe`. It has two shapes. The tenant-scoped identity
-`spiffe://<td>/tenant/<t>/<kind>/<name>` (`ID`, `BuildURI`, `ParseID`,
-`TenantFromURIs`) is what the CA stamps on broker-issued certificates and what
+`sdk/go/spiffe`. It has two shapes. The tenant identity
+`spiffe://<t>/<kind>/<name>`, whose trust domain is the tenant (`ID`,
+`BuildURI`, `ParseID`, `TenantFromURIs`), is what the CA stamps on broker-issued certificates and what
 mTLS login reads back. The general builder and validator (`TrustDomain`,
 `WorkloadID`) accepts any trust domain and path the SPIFFE-ID specification
 allows, and nothing else. The `x509-svid` profile validates its URI SAN with

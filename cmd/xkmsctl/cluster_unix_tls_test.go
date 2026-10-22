@@ -31,10 +31,13 @@ import (
 // completes.
 func TestNewQRDBControlTransport_UnixSpeaksTLS(t *testing.T) {
 	socketPath, caFile := startTLSUnixServer(t)
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-	defer cancel()
 
+	// Each subtest owns its deadline: a refused handshake can spend its
+	// whole budget, and a shared one would leave the next subtest none.
 	t.Run("untrusted certificate is refused", func(t *testing.T) {
+		ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
+		defer cancel()
+
 		tr, err := newQRDBControlTransport(&Config{Server: "unix://" + socketPath})
 		if err != nil {
 			t.Fatalf("newQRDBControlTransport() error = %v", err)
@@ -48,6 +51,9 @@ func TestNewQRDBControlTransport_UnixSpeaksTLS(t *testing.T) {
 	})
 
 	t.Run("trusted CA completes the handshake", func(t *testing.T) {
+		ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
+		defer cancel()
+
 		tr, err := newQRDBControlTransport(&Config{Server: "unix://" + socketPath, TLSCACert: caFile})
 		if err != nil {
 			t.Fatalf("newQRDBControlTransport() error = %v", err)

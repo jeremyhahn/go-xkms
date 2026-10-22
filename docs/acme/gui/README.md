@@ -14,11 +14,12 @@ workspace at `pkg/acme/web/packages/{admin,client,shared}`:
 - **Client SPA** (`pkg/acme/web/packages/client`). The `trusted-acme-client`
   desktop GUI (`cmd/acme-client/gui.go`, built with `-tags gui`) hosts it.
 
-Two hosts for the admin SPA exist in code but no binary uses them:
+- **Admin desktop** (`pkg/acme/gui/admin`). `xkmsctl acme gui`, built with
+  `-tags gui` (`make build-cli-gui`), hosts it (`cmd/xkmsctl/acme_gui.go:99`).
+  See [acme-issuance/cli.md](../../acme-issuance/cli.md#xkmsctl-acme-gui).
 
-- `pkg/acme/gui/admin` is a Wails desktop host. No `cmd/` package calls its
-  `NewApp`, and there is no `cactl` binary. go-xkms#743 and go-xkms#746 track
-  which binary should host it.
+One host for the admin SPA exists in code but no binary uses it:
+
 - `pkg/acme/api/server` mounts the SPA at `/ui/admin/` through
   `webui.RegisterRoutes` (`pkg/acme/api/server/server.go:670`). Nothing outside
   that package calls `server.NewMultiProtocolServer`

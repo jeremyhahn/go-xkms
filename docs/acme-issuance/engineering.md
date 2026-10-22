@@ -350,7 +350,7 @@ once, to the externally visible base.
   itself rather than trusting the module boundary.
   `MTLSAuthHandler` (`pkg/acme/admin/auth_mtls.go:85-108`) applies qrdb's
   own rule, `qrdbsdk.TenantFromClientCert`, pinned to the deployment's trust
-  domain (`Server.TrustDomain`, `pkg/server/firstboot.go:376`, passed at
+  domain (`Server.TrustDomain`, `pkg/server/firstboot.go:377`, passed at
   `cmd/xkmsd/admin.go:158`): a tenant SPIFFE SAN wins, else the first
   Subject OU, else the system tenant. It binds that tenant and looks the
   SPKI thumbprint up in it alone — a certificate is never searched for in

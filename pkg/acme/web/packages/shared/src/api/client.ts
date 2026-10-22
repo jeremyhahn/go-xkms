@@ -178,6 +178,13 @@ export class ApiClient {
       );
     }
 
+    // A list keeps its { data, pagination } envelope: list callers are typed
+    // ApiResponse<T[]> and read data and pagination from it, and unwrapping
+    // it would drop the pagination.
+    if (Array.isArray(json.data)) {
+      return json as unknown as T;
+    }
+
     // Unwrap { data: ... } envelope when present
     if (json.data !== undefined) {
       return json.data;

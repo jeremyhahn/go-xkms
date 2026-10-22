@@ -48,7 +48,7 @@ func hostileCSR(t *testing.T) ([]byte, *ecdsa.PrivateKey) {
 	t.Helper()
 	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
 	require.NoError(t, err)
-	spiffeID, err := url.Parse("spiffe://example.com/tenant/globex/user/admin")
+	spiffeID, err := url.Parse("spiffe://globex/user/admin")
 	require.NoError(t, err)
 	der, err := x509.CreateCertificateRequest(rand.Reader, &x509.CertificateRequest{
 		Subject:  pkix.Name{CommonName: "admin", OrganizationalUnit: []string{"system"}},

@@ -87,7 +87,7 @@ func newOverlayFixture(t *testing.T) *overlayFixture {
 		PublicKey: svidKey.Public(),
 		NameConstraints: &NameConstraints{
 			Critical:            true,
-			PermittedURIDomains: []string{"example.org"},
+			PermittedURIDomains: []string{testTenant},
 		},
 	})
 	if err != nil {
@@ -143,7 +143,7 @@ func TestIssueSubordinateCA_EncodesNameConstraints(t *testing.T) {
 	if !got["10.4.0.0/24"] || !got["fd00:4::/64"] || len(got) != 2 {
 		t.Errorf("PermittedIPRanges = %v", f.tunnel.PermittedIPRanges)
 	}
-	if len(f.svid.PermittedURIDomains) != 1 || f.svid.PermittedURIDomains[0] != "example.org" {
+	if len(f.svid.PermittedURIDomains) != 1 || f.svid.PermittedURIDomains[0] != testTenant {
 		t.Errorf("PermittedURIDomains = %v", f.svid.PermittedURIDomains)
 	}
 	if err := f.tunnel.CheckSignatureFrom(f.ca.rootCert); err != nil {
@@ -362,7 +362,7 @@ func TestX509SVID_Shape(t *testing.T) {
 		Profile:    ProfileNameX509SVID,
 		Signer:     f.svidKey,
 		IssuerCert: f.svid,
-		SANS:       &SubjectAlternativeNames{URIs: []string{"spiffe://example.org/tenant/t1/svc/web"}},
+		SANS:       &SubjectAlternativeNames{URIs: []string{"spiffe://tenant-test/svc/web"}},
 	})
 	if err != nil {
 		t.Fatalf("sign: %v", err)
@@ -376,7 +376,7 @@ func TestX509SVID_Shape(t *testing.T) {
 	if len(cert.ExtKeyUsage) != 2 || cert.ExtKeyUsage[0] != x509.ExtKeyUsageServerAuth || cert.ExtKeyUsage[1] != x509.ExtKeyUsageClientAuth {
 		t.Errorf("ExtKeyUsage = %v", cert.ExtKeyUsage)
 	}
-	if len(cert.URIs) != 1 || cert.URIs[0].String() != "spiffe://example.org/tenant/t1/svc/web" {
+	if len(cert.URIs) != 1 || cert.URIs[0].String() != "spiffe://tenant-test/svc/web" {
 		t.Errorf("URIs = %v, want only the caller's SPIFFE ID", cert.URIs)
 	}
 	if cert.Subject.CommonName != "" {
@@ -399,7 +399,7 @@ func TestX509SVID_RSAKeyAddsKeyEncipherment(t *testing.T) {
 	cert, err := f.ca.SignCSR(context.Background(), csrFor(t, key, "", nil, nil, nil), &SignOptions{
 		TenantID: testTenant,
 		Profile:  ProfileNameX509SVID, Signer: f.svidKey, IssuerCert: f.svid, Validity: 10 * time.Minute,
-		SANS: &SubjectAlternativeNames{URIs: []string{"spiffe://example.org/w"}},
+		SANS: &SubjectAlternativeNames{URIs: []string{"spiffe://tenant-test/w"}},
 	})
 	if err != nil {
 		t.Fatalf("sign: %v", err)
@@ -422,14 +422,15 @@ func TestX509SVID_Refusals(t *testing.T) {
 		want error
 	}{
 		{"no names", nil, nil, ErrCallerSANsRequired},
-		{"two URIs", &SubjectAlternativeNames{URIs: []string{"spiffe://example.org/a", "spiffe://example.org/b"}}, nil, ErrInvalidSAN},
+		{"two URIs", &SubjectAlternativeNames{URIs: []string{"spiffe://tenant-test/a", "spiffe://tenant-test/b"}}, nil, ErrInvalidSAN},
 		{"dns only", &SubjectAlternativeNames{DNS: []string{"web.example.org"}}, nil, ErrInvalidSAN},
-		{"not spiffe", &SubjectAlternativeNames{URIs: []string{"https://example.org/a"}}, nil, ErrInvalidSAN},
-		{"bad segment", &SubjectAlternativeNames{URIs: []string{"spiffe://example.org/a/../b"}}, nil, ErrInvalidSAN},
-		{"ip refused", &SubjectAlternativeNames{URIs: []string{"spiffe://example.org/a"}, IPs: []string{"10.0.0.1"}}, nil, ErrInvalidSAN},
+		{"not spiffe", &SubjectAlternativeNames{URIs: []string{"https://tenant-test/a"}}, nil, ErrInvalidSAN},
+		{"bad segment", &SubjectAlternativeNames{URIs: []string{"spiffe://tenant-test/a/../b"}}, nil, ErrInvalidSAN},
+		{"ip refused", &SubjectAlternativeNames{URIs: []string{"spiffe://tenant-test/a"}, IPs: []string{"10.0.0.1"}}, nil, ErrInvalidSAN},
 		{"foreign trust domain", &SubjectAlternativeNames{URIs: []string{"spiffe://other.org/a"}}, nil, ErrNameConstraintViolation},
-		{"above 24h", &SubjectAlternativeNames{URIs: []string{"spiffe://example.org/a"}}, func(o *SignOptions) { o.ValidityDays = 2 }, ErrValidityExceedsProfile},
-		{"spiffe kind", &SubjectAlternativeNames{URIs: []string{"spiffe://example.org/a"}}, func(o *SignOptions) { o.SPIFFEKind = "svc" }, ErrTenantSPIFFEWithCallerSANs},
+		{"trust domain is not the tenant", &SubjectAlternativeNames{URIs: []string{"spiffe://tenant-test/a"}}, func(o *SignOptions) { o.TenantID = "tenant-other" }, ErrInvalidSAN},
+		{"above 24h", &SubjectAlternativeNames{URIs: []string{"spiffe://tenant-test/a"}}, func(o *SignOptions) { o.ValidityDays = 2 }, ErrValidityExceedsProfile},
+		{"spiffe kind", &SubjectAlternativeNames{URIs: []string{"spiffe://tenant-test/a"}}, func(o *SignOptions) { o.SPIFFEKind = "svc" }, ErrTenantSPIFFEWithCallerSANs},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -451,8 +452,8 @@ func TestX509SVID_TenantIDAloneRecordsOwnership(t *testing.T) {
 	f := newOverlayFixture(t)
 	ec := newECKey(t, elliptic.P256())
 	cert, err := f.ca.SignCSR(context.Background(), csrFor(t, ec, "", nil, nil, nil), &SignOptions{
-		Profile: ProfileNameX509SVID, Signer: f.svidKey, IssuerCert: f.svid, TenantID: "t1",
-		SANS: &SubjectAlternativeNames{URIs: []string{"spiffe://example.org/tenant/t1/w"}},
+		Profile: ProfileNameX509SVID, Signer: f.svidKey, IssuerCert: f.svid, TenantID: testTenant,
+		SANS: &SubjectAlternativeNames{URIs: []string{"spiffe://tenant-test/w"}},
 	})
 	if err != nil {
 		t.Fatalf("sign: %v", err)

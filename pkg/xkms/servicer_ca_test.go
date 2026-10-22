@@ -50,11 +50,14 @@ type mockCA struct {
 	// signCSRTenant records the tenant SignCSRWithSPIFFE or SignCSRRaw was
 	// asked to stamp.
 	signCSRTenant string
-	issueCertPEM  []byte
-	issueChainPEM []byte
-	issueKeyPEM   []byte
-	issueSerial   string
-	issueErr      error
+	// signCSRTrustDomain records the cluster trust domain SignCSRWithSPIFFE
+	// was given; "" asks for no tenant SPIFFE SAN.
+	signCSRTrustDomain string
+	issueCertPEM       []byte
+	issueChainPEM      []byte
+	issueKeyPEM        []byte
+	issueSerial        string
+	issueErr           error
 	// issueTenant records the tenantID IssueCertificateRaw was asked to
 	// stamp.
 	issueTenant string
@@ -81,6 +84,7 @@ func (m *mockCA) SignCSRRaw(_ context.Context, csrPEM []byte, profile string, va
 }
 func (m *mockCA) SignCSRWithSPIFFE(_ context.Context, csrPEM []byte, profile string, validityDays int, trustDomain, tenantID, kind, name string) (*x509.Certificate, error) {
 	m.signCSRTenant = tenantID
+	m.signCSRTrustDomain = trustDomain
 	return m.signCSRCert, m.signCSRErr
 }
 func (m *mockCA) IssueCertificateRaw(_ context.Context, commonName, organization string, sans []string, validityDays int, profile, algorithm, tenantID string) (certPEM, chainPEM, keyPEM []byte, serialHex string, err error) {

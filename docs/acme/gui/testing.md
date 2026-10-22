@@ -14,19 +14,21 @@ cd pkg/acme/web && npm run check     # svelte-check, admin and client
 
 ## Go API routers
 
-The `/api/v1` routers are plain `http.Handler`s, tested with `httptest` in
+The API routers are plain `http.Handler`s, tested with `httptest` in
 `pkg/acme/gui/admin/api/admin_api_test.go` and
-`pkg/acme/gui/client/api/{client_api_test,security_test}.go`:
+`pkg/acme/gui/client/api/{client_api_test,security_test}.go`.
+`pkg/acme/gui/admin/spa_routes_test.go` (`gui` tag) checks that the admin
+router serves exactly the paths the admin SPA's client calls:
 
 ```go
 router := adminapi.NewRouter(client, logger, adminapi.WithInProcessTransport())
-req := httptest.NewRequest(http.MethodGet, "/api/v1/status", nil)
+req := httptest.NewRequest(http.MethodGet, "/admin/status", nil)
 w := httptest.NewRecorder()
 router.ServeHTTP(w, req)
 ```
 
 `NewRouter` takes a `trustedca.Client` for admin
-(`pkg/acme/gui/admin/api/router.go:32`). For the client router it takes a
+(`pkg/acme/gui/admin/api/router.go:39`). For the client router it takes a
 `workflow.Workflow` and the client `*service.Service`
 (`pkg/acme/gui/client/api/router.go:42`).
 

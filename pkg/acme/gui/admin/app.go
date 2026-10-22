@@ -84,7 +84,7 @@ func (a *App) wailsOptions(assets fs.FS) *options.App {
 		OnStartup:     a.startup,
 		Bind:          []interface{}{a},
 		Linux: &linux.Options{
-			ProgramName: "cactl",
+			ProgramName: "xkmsctl",
 		},
 		AssetServer: &assetserver.Options{
 			// A GET request is served from Assets first and falls back to

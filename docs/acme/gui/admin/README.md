@@ -1,6 +1,6 @@
 # CA Admin GUI
 
-> **Status: REFERENCE** · Last verified: 2026-10-12
+> **Status: REFERENCE** · Last verified: 2026-10-21
 > Legacy, unabsorbed notes on the admin SPA (`pkg/acme/web/packages/admin`) and its hosts.
 
 The admin SPA is a single Svelte bundle. Three hosts can serve it:
@@ -8,13 +8,17 @@ The admin SPA is a single Svelte bundle. Three hosts can serve it:
 | Host | Where | In a binary |
 |------|-------|-------------|
 | xkmsd admin module | `/admin-ui` (`cmd/xkmsd/admin.go:55`, `:92`, `:104`) | yes |
-| Wails desktop (`pkg/acme/gui/admin`) | native window | no: there is no `cactl` binary (go-xkms#743, go-xkms#746) |
+| Wails desktop (`pkg/acme/gui/admin`) | native window | `xkmsctl acme gui`, `gui` tag only (`cmd/xkmsctl/acme_gui.go:99`; [cli.md](../../../acme-issuance/cli.md#xkmsctl-acme-gui)) |
 | ACME API server (`pkg/acme/gui/webui`) | `/ui/admin/` | no: only tests build that server |
 
 The SPA's API calls (`src/lib/api/admin-api.ts`) target `/admin/*` and
-`/api/v1/tenants/...`. That is the xkmsd admin surface. The desktop host's
-router serves `/api/v1/status`, `/api/v1/certificates` and so on (see
-[api.md](api.md)), so most SPA calls would not match it.
+`/api/v1/tenants/...`: the ACME admin API's routes (`pkg/acme/admin/routes.go`).
+xkmsd mounts that API itself. The desktop host's router serves the same paths
+through the SDK (see [api.md](api.md)), and
+`pkg/acme/gui/admin/spa_routes_test.go` checks the SPA client against it. On
+the desktop, `GET /admin/audit` and
+`PUT /api/v1/tenants/{id}/default-intermediate-ca` answer 404 until the SDK
+has operations for them.
 
 ## Desktop defaults (`pkg/acme/gui/admin/config.go:17-24`)
 
@@ -27,7 +31,10 @@ router serves `/api/v1/status`, `/api/v1/certificates` and so on (see
 | Address | `/run/trusted-ca-grpc.sock` |
 | Timeout | 30 s |
 
-The Linux `ProgramName` is still `cactl` (`pkg/acme/gui/admin/app.go:87`).
+The Linux `ProgramName` is `xkmsctl` (`pkg/acme/gui/admin/app.go:87`). The
+transport, address and TLS defaults above are overwritten by `xkmsctl acme gui`
+from `--acme-server`, `--acme-transport` and `--tls-*`
+(`cmd/xkmsctl/acme_gui.go:122`).
 
 ## Navigation
 

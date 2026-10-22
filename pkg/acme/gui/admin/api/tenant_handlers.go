@@ -195,30 +195,6 @@ func (h *handlers) createEAB(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusCreated, eab, nil)
 }
 
-// getEAB handles GET /api/v1/tenants/{id}/eab/{eabId}.
-func (h *handlers) getEAB(w http.ResponseWriter, r *http.Request) {
-	vars := mux.Vars(r)
-	tenantID := vars["id"]
-	eabID := vars["eabId"]
-
-	eab, err := h.client.Admin().EAB().Get(r.Context(), tenantID, eabID)
-	if err != nil {
-		if sdkerrors.IsNotFound(err) {
-			writeErrorResponse(w, http.StatusNotFound, "NOT_FOUND", "EAB not found")
-			return
-		}
-		h.logger.Error("failed to get EAB",
-			slog.String("tenant_id", tenantID),
-			slog.String("eab_id", eabID),
-			slog.String("error", err.Error()),
-		)
-		writeErrorResponse(w, http.StatusInternalServerError, "INTERNAL_ERROR", "failed to get EAB")
-		return
-	}
-
-	writeJSON(w, http.StatusOK, eab, nil)
-}
-
 // deleteEAB handles DELETE /api/v1/tenants/{id}/eab/{eabId}.
 func (h *handlers) deleteEAB(w http.ResponseWriter, r *http.Request) {
 	vars := mux.Vars(r)

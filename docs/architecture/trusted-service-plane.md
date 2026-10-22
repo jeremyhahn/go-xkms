@@ -68,8 +68,8 @@ Facts are from go-xkms c9a1cdb25, go-qrdb b65df70 and #722, go-quicbaas 0f45b54 
 
 **Today.**
 - `x509-svid` profile: `profile_ipsec_svid.go:38` (one URI SAN, 1h default, 24h max).
-- `SignCSRWithSPIFFE` stamps `spiffe://<td>/tenant/<tenant>/<kind>/<name>` (`service_adapter.go:56`).
-- go-qrdb verifies that form against one pinned trust domain (`pkg/auth/spiffe/spiffe.go:170`).
+- `SignCSRWithSPIFFE` stamps `spiffe://<tenant>/<kind>/<name>` under the cluster trust domain, which no tenant may equal (`service_adapter.go:63`); the `x509-svid` profile refuses a SPIFFE ID whose trust domain is not the tenant in OU[0] (`profile_ipsec_svid.go:242`).
+- go-qrdb v0.51 `TenantFromClientCert` reads that form under the cluster trust-domain pin and requires the SAN and OU[0] to name the same tenant; ACME admin mTLS (`auth_mtls.go:143`) and PIV login (`handlers_auth.go:446`) both resolve the tenant through it.
 
 **Design.**
 - `SignCSRWithSPIFFE` stamps the tenant as the trust domain.

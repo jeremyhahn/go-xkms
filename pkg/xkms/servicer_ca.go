@@ -182,15 +182,19 @@ func (s *XKMSService) SignCSR(ctx context.Context, req *transport.SignCSRRequest
 		return nil, err
 	}
 
-	// When a trust domain is configured and the request carries a tenant, the
-	// issued client certificate is stamped with a tenant-scoped SPIFFE SAN so
-	// login can derive the tenant from the verified peer certificate. The
-	// SPIFFE kind defaults to "user" and the name defaults to the CSR subject
-	// CommonName (resolved inside the CA). Every certificate carries the
-	// caller's tenant, which a named tenant was bound to above, as the
-	// subject's first organizational unit.
+	// Every issued certificate carries the caller's tenant (which a named
+	// tenant was bound to above) as the subject's first organizational unit.
+	// A login certificate is also stamped, under a configured trust domain,
+	// with the same tenant's SPIFFE SAN: go-qrdb's TenantFromClientCert names
+	// a tenant only when the two agree, so a login certificate without the
+	// SAN cannot log in, and its tenant comes from the authenticated caller,
+	// never only from an explicit request tenant. Other profiles carry no user
+	// identity and get the SAN only when the request names a tenant: code
+	// signing forbids URI SANs, and a server name (an empty or wildcard CN) is
+	// no SPIFFE path segment. The SPIFFE kind defaults to "user" and the name
+	// to the CSR subject CommonName (resolved inside the CA).
 	trustDomain := ""
-	if req.TenantID != "" {
+	if req.TenantID != "" || issuesLoginCertificate(req.Profile) {
 		trustDomain = s.SPIFFETrustDomain()
 	}
 	cert, err := ca.SignCSRWithSPIFFE(ctx, req.CSRPEM, req.Profile, req.ValidityDays, trustDomain, callerTenant(ctx), "", "")
@@ -217,6 +221,18 @@ func (s *XKMSService) SignCSR(ctx context.Context, req *transport.SignCSRRequest
 		ChainPEM:       chainPEM,
 		SerialNumber:   cert.SerialNumber.Text(16),
 	}, nil
+}
+
+// loginProfile is the CA profile of TLS client (login) certificates, the
+// profile the xkey agent and device enrollment request.
+const loginProfile = "client"
+
+// issuesLoginCertificate reports whether a CSR signed under profile is a
+// login certificate: the client profile, or no profile at all, which selects
+// the CA's default TLS leaf with client authentication. Profile names match
+// case-insensitively, as the CA's profile registry matches them.
+func issuesLoginCertificate(profile string) bool {
+	return profile == "" || strings.EqualFold(strings.TrimSpace(profile), loginProfile)
 }
 
 // SetAttestationVerifiers wires the per-format hardware-attestation verifiers

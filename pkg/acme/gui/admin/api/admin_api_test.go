@@ -626,7 +626,7 @@ func TestParseInt(t *testing.T) {
 // ACME client GUI API's in-process policy.
 func TestGuard_InProcessSetsPermissiveCORSHeaders(t *testing.T) {
 	router := newTestRouter(t, defaultFakeAdmin())
-	req := httptest.NewRequest(http.MethodGet, "/api/v1/status", nil)
+	req := httptest.NewRequest(http.MethodGet, "/admin/status", nil)
 	req.Header.Set("Origin", "wails://wails")
 	rec := httptest.NewRecorder()
 	router.ServeHTTP(rec, req)
@@ -648,7 +648,7 @@ func TestGuard_InProcessAcceptsEveryWebviewOrigin(t *testing.T) {
 	origins := []string{"wails://wails", "http://wails.localhost", "https://wails.localhost", "null", ""}
 	for _, origin := range origins {
 		t.Run(origin, func(t *testing.T) {
-			req := httptest.NewRequest(http.MethodGet, "/api/v1/status", nil)
+			req := httptest.NewRequest(http.MethodGet, "/admin/status", nil)
 			if origin != "" {
 				req.Header.Set("Origin", origin)
 			}
@@ -668,7 +668,7 @@ func TestGuard_InProcessAcceptsEveryWebviewOrigin(t *testing.T) {
 // matched, so an unmatched OPTIONS request never reaches it.
 func TestGuard_UnmatchedOPTIONSNotAnswered(t *testing.T) {
 	router := newTestRouter(t, defaultFakeAdmin())
-	req := httptest.NewRequest(http.MethodOptions, "/api/v1/status", nil)
+	req := httptest.NewRequest(http.MethodOptions, "/admin/status", nil)
 	rec := httptest.NewRecorder()
 	router.ServeHTTP(rec, req)
 
@@ -683,7 +683,7 @@ func TestGuard_UnmatchedOPTIONSNotAnswered(t *testing.T) {
 // router does.
 func TestGuard_NetworkModeRejectsCrossOrigin(t *testing.T) {
 	router := networkTestRouter(t, defaultFakeAdmin())
-	req := httptest.NewRequest(http.MethodGet, "/api/v1/status", nil)
+	req := httptest.NewRequest(http.MethodGet, "/admin/status", nil)
 	req.Header.Set("Origin", "https://evil.example.com")
 	rec := httptest.NewRecorder()
 	router.ServeHTTP(rec, req)
@@ -704,7 +704,7 @@ func TestGuard_NetworkModeRejectsCrossOrigin(t *testing.T) {
 // serves a same-origin caller normally.
 func TestGuard_NetworkModeAcceptsSameOrigin(t *testing.T) {
 	router := networkTestRouter(t, defaultFakeAdmin())
-	req := httptest.NewRequest(http.MethodGet, "/api/v1/status", nil)
+	req := httptest.NewRequest(http.MethodGet, "/admin/status", nil)
 	req.Host = "ca.example.com:8443"
 	req.Header.Set("Origin", "https://ca.example.com:8443")
 	rec := httptest.NewRecorder()
@@ -731,7 +731,7 @@ func TestGetStatus_Success(t *testing.T) {
 	}
 	router := newTestRouter(t, admin)
 
-	req := httptest.NewRequest(http.MethodGet, "/api/v1/status", nil)
+	req := httptest.NewRequest(http.MethodGet, "/admin/status", nil)
 	rec := httptest.NewRecorder()
 	router.ServeHTTP(rec, req)
 
@@ -753,7 +753,7 @@ func TestGetStatus_Error(t *testing.T) {
 	}
 	router := newTestRouter(t, admin)
 
-	req := httptest.NewRequest(http.MethodGet, "/api/v1/status", nil)
+	req := httptest.NewRequest(http.MethodGet, "/admin/status", nil)
 	rec := httptest.NewRecorder()
 	router.ServeHTTP(rec, req)
 
@@ -771,7 +771,7 @@ func TestGetStats_Success(t *testing.T) {
 	}
 	router := newTestRouter(t, admin)
 
-	req := httptest.NewRequest(http.MethodGet, "/api/v1/stats", nil)
+	req := httptest.NewRequest(http.MethodGet, "/admin/stats", nil)
 	rec := httptest.NewRecorder()
 	router.ServeHTTP(rec, req)
 
@@ -789,7 +789,7 @@ func TestGetStats_Error(t *testing.T) {
 	}
 	router := newTestRouter(t, admin)
 
-	req := httptest.NewRequest(http.MethodGet, "/api/v1/stats", nil)
+	req := httptest.NewRequest(http.MethodGet, "/admin/stats", nil)
 	rec := httptest.NewRecorder()
 	router.ServeHTTP(rec, req)
 
@@ -813,7 +813,7 @@ func TestListCertificates_DefaultPagination(t *testing.T) {
 	}
 	router := newTestRouter(t, admin)
 
-	req := httptest.NewRequest(http.MethodGet, "/api/v1/certificates", nil)
+	req := httptest.NewRequest(http.MethodGet, "/admin/certificates", nil)
 	rec := httptest.NewRecorder()
 	router.ServeHTTP(rec, req)
 
@@ -842,7 +842,7 @@ func TestListCertificates_QueryParams(t *testing.T) {
 	}
 	router := newTestRouter(t, admin)
 
-	req := httptest.NewRequest(http.MethodGet, "/api/v1/certificates?page=3&per_page=5&status=valid&subject=test", nil)
+	req := httptest.NewRequest(http.MethodGet, "/admin/certificates?page=3&per_page=5&status=valid&subject=test", nil)
 	rec := httptest.NewRecorder()
 	router.ServeHTTP(rec, req)
 
@@ -863,7 +863,7 @@ func TestListCertificates_Error(t *testing.T) {
 	}
 	router := newTestRouter(t, admin)
 
-	req := httptest.NewRequest(http.MethodGet, "/api/v1/certificates", nil)
+	req := httptest.NewRequest(http.MethodGet, "/admin/certificates", nil)
 	rec := httptest.NewRecorder()
 	router.ServeHTTP(rec, req)
 
@@ -881,7 +881,7 @@ func TestGetCertificate_Success(t *testing.T) {
 	}
 	router := newTestRouter(t, admin)
 
-	req := httptest.NewRequest(http.MethodGet, "/api/v1/certificates/abc123", nil)
+	req := httptest.NewRequest(http.MethodGet, "/admin/certificates/abc123", nil)
 	rec := httptest.NewRecorder()
 	router.ServeHTTP(rec, req)
 
@@ -899,7 +899,7 @@ func TestGetCertificate_NotFound(t *testing.T) {
 	}
 	router := newTestRouter(t, admin)
 
-	req := httptest.NewRequest(http.MethodGet, "/api/v1/certificates/missing", nil)
+	req := httptest.NewRequest(http.MethodGet, "/admin/certificates/missing", nil)
 	rec := httptest.NewRecorder()
 	router.ServeHTTP(rec, req)
 
@@ -917,7 +917,7 @@ func TestGetCertificate_InternalError(t *testing.T) {
 	}
 	router := newTestRouter(t, admin)
 
-	req := httptest.NewRequest(http.MethodGet, "/api/v1/certificates/err", nil)
+	req := httptest.NewRequest(http.MethodGet, "/admin/certificates/err", nil)
 	rec := httptest.NewRecorder()
 	router.ServeHTTP(rec, req)
 
@@ -936,7 +936,7 @@ func TestRevokeCertificate_Success(t *testing.T) {
 	router := newTestRouter(t, admin)
 
 	body := bytes.NewBufferString(`{"reason":"keyCompromise"}`)
-	req := httptest.NewRequest(http.MethodPost, "/api/v1/certificates/abc123/revoke", body)
+	req := httptest.NewRequest(http.MethodPost, "/admin/certificates/abc123/revoke", body)
 	req.Header.Set("Content-Type", "application/json")
 	rec := httptest.NewRecorder()
 	router.ServeHTTP(rec, req)
@@ -949,7 +949,7 @@ func TestRevokeCertificate_Success(t *testing.T) {
 func TestRevokeCertificate_InvalidBody(t *testing.T) {
 	router := newTestRouter(t, defaultFakeAdmin())
 
-	req := httptest.NewRequest(http.MethodPost, "/api/v1/certificates/abc/revoke", bytes.NewBufferString("not-json"))
+	req := httptest.NewRequest(http.MethodPost, "/admin/certificates/abc/revoke", bytes.NewBufferString("not-json"))
 	req.Header.Set("Content-Type", "application/json")
 	rec := httptest.NewRecorder()
 	router.ServeHTTP(rec, req)
@@ -969,7 +969,7 @@ func TestRevokeCertificate_NotFound(t *testing.T) {
 	router := newTestRouter(t, admin)
 
 	body := bytes.NewBufferString(`{}`)
-	req := httptest.NewRequest(http.MethodPost, "/api/v1/certificates/abc/revoke", body)
+	req := httptest.NewRequest(http.MethodPost, "/admin/certificates/abc/revoke", body)
 	req.Header.Set("Content-Type", "application/json")
 	rec := httptest.NewRecorder()
 	router.ServeHTTP(rec, req)
@@ -989,7 +989,7 @@ func TestRevokeCertificate_InternalError(t *testing.T) {
 	router := newTestRouter(t, admin)
 
 	body := bytes.NewBufferString(`{}`)
-	req := httptest.NewRequest(http.MethodPost, "/api/v1/certificates/abc/revoke", body)
+	req := httptest.NewRequest(http.MethodPost, "/admin/certificates/abc/revoke", body)
 	req.Header.Set("Content-Type", "application/json")
 	rec := httptest.NewRecorder()
 	router.ServeHTTP(rec, req)
@@ -999,29 +999,9 @@ func TestRevokeCertificate_InternalError(t *testing.T) {
 	}
 }
 
-// =============================================================================
-// Expiring certificates handler
-// =============================================================================
-
-func TestListExpiringCertificates_Success(t *testing.T) {
-	admin := defaultFakeAdmin()
-	admin.certClient = &fakeCertificateClient{
-		listFunc: func(ctx context.Context, req *sdkadmin.ListCertificatesRequest) (*sdkadmin.ListCertificatesResponse, error) {
-			return &sdkadmin.ListCertificatesResponse{}, nil
-		},
-	}
-	router := newTestRouter(t, admin)
-
-	req := httptest.NewRequest(http.MethodGet, "/api/v1/certificates/expiring?days=7", nil)
-	rec := httptest.NewRecorder()
-	router.ServeHTTP(rec, req)
-
-	if rec.Code != http.StatusOK {
-		t.Errorf("expected 200, got %d", rec.Code)
-	}
-}
-
-func TestListExpiringCertificates_DefaultDays(t *testing.T) {
+// TestListCertificates_ExpiresDays checks the Dashboard's
+// expires_days filter reaches the SDK request.
+func TestListCertificates_ExpiresDays(t *testing.T) {
 	var capturedReq *sdkadmin.ListCertificatesRequest
 	admin := defaultFakeAdmin()
 	admin.certClient = &fakeCertificateClient{
@@ -1032,45 +1012,44 @@ func TestListExpiringCertificates_DefaultDays(t *testing.T) {
 	}
 	router := newTestRouter(t, admin)
 
-	req := httptest.NewRequest(http.MethodGet, "/api/v1/certificates/expiring", nil)
+	req := httptest.NewRequest(http.MethodGet, "/admin/certificates?expires_days=30&per_page=5", nil)
 	rec := httptest.NewRecorder()
 	router.ServeHTTP(rec, req)
 
 	if rec.Code != http.StatusOK {
 		t.Errorf("expected 200, got %d", rec.Code)
 	}
-	if capturedReq.ExpiresDays != 30 {
-		t.Errorf("expected default 30 days, got %d", capturedReq.ExpiresDays)
+	if capturedReq.ExpiresDays != 30 || capturedReq.PerPage != 5 {
+		t.Errorf("unexpected request values: %+v", capturedReq)
 	}
 }
 
-func TestListExpiringCertificates_InvalidDays(t *testing.T) {
-	router := newTestRouter(t, defaultFakeAdmin())
+// TestListCertificates_InvalidExpiresDays checks a non-positive or
+// non-numeric expires_days is refused before the SDK is called.
+func TestListCertificates_InvalidExpiresDays(t *testing.T) {
+	for _, value := range []string{"0", "-5", "soon"} {
+		t.Run(value, func(t *testing.T) {
+			called := false
+			admin := defaultFakeAdmin()
+			admin.certClient = &fakeCertificateClient{
+				listFunc: func(ctx context.Context, req *sdkadmin.ListCertificatesRequest) (*sdkadmin.ListCertificatesResponse, error) {
+					called = true
+					return &sdkadmin.ListCertificatesResponse{}, nil
+				},
+			}
+			router := newTestRouter(t, admin)
 
-	req := httptest.NewRequest(http.MethodGet, "/api/v1/certificates/expiring?days=-5", nil)
-	rec := httptest.NewRecorder()
-	router.ServeHTTP(rec, req)
+			req := httptest.NewRequest(http.MethodGet, "/admin/certificates?expires_days="+value, nil)
+			rec := httptest.NewRecorder()
+			router.ServeHTTP(rec, req)
 
-	if rec.Code != http.StatusBadRequest {
-		t.Errorf("expected 400, got %d", rec.Code)
-	}
-}
-
-func TestListExpiringCertificates_Error(t *testing.T) {
-	admin := defaultFakeAdmin()
-	admin.certClient = &fakeCertificateClient{
-		listFunc: func(ctx context.Context, req *sdkadmin.ListCertificatesRequest) (*sdkadmin.ListCertificatesResponse, error) {
-			return nil, internalErr()
-		},
-	}
-	router := newTestRouter(t, admin)
-
-	req := httptest.NewRequest(http.MethodGet, "/api/v1/certificates/expiring?days=10", nil)
-	rec := httptest.NewRecorder()
-	router.ServeHTTP(rec, req)
-
-	if rec.Code != http.StatusInternalServerError {
-		t.Errorf("expected 500, got %d", rec.Code)
+			if rec.Code != http.StatusBadRequest {
+				t.Errorf("expected 400, got %d", rec.Code)
+			}
+			if called {
+				t.Error("SDK called despite an invalid expires_days")
+			}
+		})
 	}
 }
 
@@ -1080,7 +1059,7 @@ func TestListExpiringCertificates_Error(t *testing.T) {
 
 func TestListAccounts_Success(t *testing.T) {
 	router := newTestRouter(t, defaultFakeAdmin())
-	req := httptest.NewRequest(http.MethodGet, "/api/v1/accounts", nil)
+	req := httptest.NewRequest(http.MethodGet, "/admin/accounts", nil)
 	rec := httptest.NewRecorder()
 	router.ServeHTTP(rec, req)
 
@@ -1097,7 +1076,7 @@ func TestListAccounts_Error(t *testing.T) {
 		},
 	}
 	router := newTestRouter(t, admin)
-	req := httptest.NewRequest(http.MethodGet, "/api/v1/accounts", nil)
+	req := httptest.NewRequest(http.MethodGet, "/admin/accounts", nil)
 	rec := httptest.NewRecorder()
 	router.ServeHTTP(rec, req)
 
@@ -1108,7 +1087,7 @@ func TestListAccounts_Error(t *testing.T) {
 
 func TestGetAccount_Success(t *testing.T) {
 	router := newTestRouter(t, defaultFakeAdmin())
-	req := httptest.NewRequest(http.MethodGet, "/api/v1/accounts/42", nil)
+	req := httptest.NewRequest(http.MethodGet, "/admin/accounts/42", nil)
 	rec := httptest.NewRecorder()
 	router.ServeHTTP(rec, req)
 
@@ -1119,7 +1098,7 @@ func TestGetAccount_Success(t *testing.T) {
 
 func TestGetAccount_InvalidID(t *testing.T) {
 	router := newTestRouter(t, defaultFakeAdmin())
-	req := httptest.NewRequest(http.MethodGet, "/api/v1/accounts/notanumber", nil)
+	req := httptest.NewRequest(http.MethodGet, "/admin/accounts/notanumber", nil)
 	rec := httptest.NewRecorder()
 	router.ServeHTTP(rec, req)
 
@@ -1136,7 +1115,7 @@ func TestGetAccount_NotFound(t *testing.T) {
 		},
 	}
 	router := newTestRouter(t, admin)
-	req := httptest.NewRequest(http.MethodGet, "/api/v1/accounts/99", nil)
+	req := httptest.NewRequest(http.MethodGet, "/admin/accounts/99", nil)
 	rec := httptest.NewRecorder()
 	router.ServeHTTP(rec, req)
 
@@ -1153,7 +1132,7 @@ func TestGetAccount_InternalError(t *testing.T) {
 		},
 	}
 	router := newTestRouter(t, admin)
-	req := httptest.NewRequest(http.MethodGet, "/api/v1/accounts/1", nil)
+	req := httptest.NewRequest(http.MethodGet, "/admin/accounts/1", nil)
 	rec := httptest.NewRecorder()
 	router.ServeHTTP(rec, req)
 
@@ -1164,7 +1143,7 @@ func TestGetAccount_InternalError(t *testing.T) {
 
 func TestDisableAccount_Success(t *testing.T) {
 	router := newTestRouter(t, defaultFakeAdmin())
-	req := httptest.NewRequest(http.MethodDelete, "/api/v1/accounts/1", nil)
+	req := httptest.NewRequest(http.MethodDelete, "/admin/accounts/1", nil)
 	rec := httptest.NewRecorder()
 	router.ServeHTTP(rec, req)
 
@@ -1175,7 +1154,7 @@ func TestDisableAccount_Success(t *testing.T) {
 
 func TestDisableAccount_InvalidID(t *testing.T) {
 	router := newTestRouter(t, defaultFakeAdmin())
-	req := httptest.NewRequest(http.MethodDelete, "/api/v1/accounts/bad", nil)
+	req := httptest.NewRequest(http.MethodDelete, "/admin/accounts/bad", nil)
 	rec := httptest.NewRecorder()
 	router.ServeHTTP(rec, req)
 
@@ -1192,7 +1171,7 @@ func TestDisableAccount_NotFound(t *testing.T) {
 		},
 	}
 	router := newTestRouter(t, admin)
-	req := httptest.NewRequest(http.MethodDelete, "/api/v1/accounts/7", nil)
+	req := httptest.NewRequest(http.MethodDelete, "/admin/accounts/7", nil)
 	rec := httptest.NewRecorder()
 	router.ServeHTTP(rec, req)
 
@@ -1209,7 +1188,7 @@ func TestDisableAccount_InternalError(t *testing.T) {
 		},
 	}
 	router := newTestRouter(t, admin)
-	req := httptest.NewRequest(http.MethodDelete, "/api/v1/accounts/1", nil)
+	req := httptest.NewRequest(http.MethodDelete, "/admin/accounts/1", nil)
 	rec := httptest.NewRecorder()
 	router.ServeHTTP(rec, req)
 
@@ -1224,7 +1203,7 @@ func TestDisableAccount_InternalError(t *testing.T) {
 
 func TestListOrders_Success(t *testing.T) {
 	router := newTestRouter(t, defaultFakeAdmin())
-	req := httptest.NewRequest(http.MethodGet, "/api/v1/orders", nil)
+	req := httptest.NewRequest(http.MethodGet, "/admin/orders", nil)
 	rec := httptest.NewRecorder()
 	router.ServeHTTP(rec, req)
 
@@ -1243,7 +1222,7 @@ func TestListOrders_WithAccountID(t *testing.T) {
 		},
 	}
 	router := newTestRouter(t, admin)
-	req := httptest.NewRequest(http.MethodGet, "/api/v1/orders?account_id=5", nil)
+	req := httptest.NewRequest(http.MethodGet, "/admin/orders?account_id=5", nil)
 	rec := httptest.NewRecorder()
 	router.ServeHTTP(rec, req)
 
@@ -1257,7 +1236,7 @@ func TestListOrders_WithAccountID(t *testing.T) {
 
 func TestListOrders_InvalidAccountID(t *testing.T) {
 	router := newTestRouter(t, defaultFakeAdmin())
-	req := httptest.NewRequest(http.MethodGet, "/api/v1/orders?account_id=notanumber", nil)
+	req := httptest.NewRequest(http.MethodGet, "/admin/orders?account_id=notanumber", nil)
 	rec := httptest.NewRecorder()
 	router.ServeHTTP(rec, req)
 
@@ -1274,7 +1253,7 @@ func TestListOrders_Error(t *testing.T) {
 		},
 	}
 	router := newTestRouter(t, admin)
-	req := httptest.NewRequest(http.MethodGet, "/api/v1/orders", nil)
+	req := httptest.NewRequest(http.MethodGet, "/admin/orders", nil)
 	rec := httptest.NewRecorder()
 	router.ServeHTTP(rec, req)
 
@@ -1285,7 +1264,7 @@ func TestListOrders_Error(t *testing.T) {
 
 func TestGetOrder_Success(t *testing.T) {
 	router := newTestRouter(t, defaultFakeAdmin())
-	req := httptest.NewRequest(http.MethodGet, "/api/v1/orders/1", nil)
+	req := httptest.NewRequest(http.MethodGet, "/admin/orders/1", nil)
 	rec := httptest.NewRecorder()
 	router.ServeHTTP(rec, req)
 
@@ -1296,7 +1275,7 @@ func TestGetOrder_Success(t *testing.T) {
 
 func TestGetOrder_InvalidID(t *testing.T) {
 	router := newTestRouter(t, defaultFakeAdmin())
-	req := httptest.NewRequest(http.MethodGet, "/api/v1/orders/bad", nil)
+	req := httptest.NewRequest(http.MethodGet, "/admin/orders/bad", nil)
 	rec := httptest.NewRecorder()
 	router.ServeHTTP(rec, req)
 
@@ -1313,7 +1292,7 @@ func TestGetOrder_NotFound(t *testing.T) {
 		},
 	}
 	router := newTestRouter(t, admin)
-	req := httptest.NewRequest(http.MethodGet, "/api/v1/orders/99", nil)
+	req := httptest.NewRequest(http.MethodGet, "/admin/orders/99", nil)
 	rec := httptest.NewRecorder()
 	router.ServeHTTP(rec, req)
 
@@ -1330,7 +1309,7 @@ func TestGetOrder_InternalError(t *testing.T) {
 		},
 	}
 	router := newTestRouter(t, admin)
-	req := httptest.NewRequest(http.MethodGet, "/api/v1/orders/1", nil)
+	req := httptest.NewRequest(http.MethodGet, "/admin/orders/1", nil)
 	rec := httptest.NewRecorder()
 	router.ServeHTTP(rec, req)
 
@@ -1345,7 +1324,7 @@ func TestGetOrder_InternalError(t *testing.T) {
 
 func TestListTenants_Success(t *testing.T) {
 	router := newTestRouter(t, defaultFakeAdmin())
-	req := httptest.NewRequest(http.MethodGet, "/api/v1/tenants", nil)
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/tenants/", nil)
 	rec := httptest.NewRecorder()
 	router.ServeHTTP(rec, req)
 
@@ -1362,7 +1341,7 @@ func TestListTenants_Error(t *testing.T) {
 		},
 	}
 	router := newTestRouter(t, admin)
-	req := httptest.NewRequest(http.MethodGet, "/api/v1/tenants", nil)
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/tenants/", nil)
 	rec := httptest.NewRecorder()
 	router.ServeHTTP(rec, req)
 
@@ -1374,7 +1353,7 @@ func TestListTenants_Error(t *testing.T) {
 func TestCreateTenant_Success(t *testing.T) {
 	router := newTestRouter(t, defaultFakeAdmin())
 	body := bytes.NewBufferString(`{"id":"t1","name":"Tenant One"}`)
-	req := httptest.NewRequest(http.MethodPost, "/api/v1/tenants", body)
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/tenants/", body)
 	req.Header.Set("Content-Type", "application/json")
 	rec := httptest.NewRecorder()
 	router.ServeHTTP(rec, req)
@@ -1386,7 +1365,7 @@ func TestCreateTenant_Success(t *testing.T) {
 
 func TestCreateTenant_InvalidBody(t *testing.T) {
 	router := newTestRouter(t, defaultFakeAdmin())
-	req := httptest.NewRequest(http.MethodPost, "/api/v1/tenants", bytes.NewBufferString("bad"))
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/tenants/", bytes.NewBufferString("bad"))
 	req.Header.Set("Content-Type", "application/json")
 	rec := httptest.NewRecorder()
 	router.ServeHTTP(rec, req)
@@ -1405,7 +1384,7 @@ func TestCreateTenant_AlreadyExists(t *testing.T) {
 	}
 	router := newTestRouter(t, admin)
 	body := bytes.NewBufferString(`{"id":"t1","name":"Tenant One"}`)
-	req := httptest.NewRequest(http.MethodPost, "/api/v1/tenants", body)
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/tenants/", body)
 	req.Header.Set("Content-Type", "application/json")
 	rec := httptest.NewRecorder()
 	router.ServeHTTP(rec, req)
@@ -1424,7 +1403,7 @@ func TestCreateTenant_ValidationError(t *testing.T) {
 	}
 	router := newTestRouter(t, admin)
 	body := bytes.NewBufferString(`{"id":"","name":""}`)
-	req := httptest.NewRequest(http.MethodPost, "/api/v1/tenants", body)
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/tenants/", body)
 	req.Header.Set("Content-Type", "application/json")
 	rec := httptest.NewRecorder()
 	router.ServeHTTP(rec, req)
@@ -1443,7 +1422,7 @@ func TestCreateTenant_InternalError(t *testing.T) {
 	}
 	router := newTestRouter(t, admin)
 	body := bytes.NewBufferString(`{"id":"t1","name":"T1"}`)
-	req := httptest.NewRequest(http.MethodPost, "/api/v1/tenants", body)
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/tenants/", body)
 	req.Header.Set("Content-Type", "application/json")
 	rec := httptest.NewRecorder()
 	router.ServeHTTP(rec, req)
@@ -1792,51 +1771,6 @@ func TestCreateEAB_InternalError(t *testing.T) {
 	body := bytes.NewBufferString(`{"purpose":"e"}`)
 	req := httptest.NewRequest(http.MethodPost, "/api/v1/tenants/t1/eab", body)
 	req.Header.Set("Content-Type", "application/json")
-	rec := httptest.NewRecorder()
-	router.ServeHTTP(rec, req)
-
-	if rec.Code != http.StatusInternalServerError {
-		t.Errorf("expected 500, got %d", rec.Code)
-	}
-}
-
-func TestGetEAB_Success(t *testing.T) {
-	router := newTestRouter(t, defaultFakeAdmin())
-	req := httptest.NewRequest(http.MethodGet, "/api/v1/tenants/t1/eab/e1", nil)
-	rec := httptest.NewRecorder()
-	router.ServeHTTP(rec, req)
-
-	if rec.Code != http.StatusOK {
-		t.Errorf("expected 200, got %d", rec.Code)
-	}
-}
-
-func TestGetEAB_NotFound(t *testing.T) {
-	admin := defaultFakeAdmin()
-	admin.eabClient = &fakeEABClient{
-		getFunc: func(ctx context.Context, tenantID, eabID string) (*sdkadmin.EABInfo, error) {
-			return nil, notFoundErr()
-		},
-	}
-	router := newTestRouter(t, admin)
-	req := httptest.NewRequest(http.MethodGet, "/api/v1/tenants/t1/eab/missing", nil)
-	rec := httptest.NewRecorder()
-	router.ServeHTTP(rec, req)
-
-	if rec.Code != http.StatusNotFound {
-		t.Errorf("expected 404, got %d", rec.Code)
-	}
-}
-
-func TestGetEAB_InternalError(t *testing.T) {
-	admin := defaultFakeAdmin()
-	admin.eabClient = &fakeEABClient{
-		getFunc: func(ctx context.Context, tenantID, eabID string) (*sdkadmin.EABInfo, error) {
-			return nil, internalErr()
-		},
-	}
-	router := newTestRouter(t, admin)
-	req := httptest.NewRequest(http.MethodGet, "/api/v1/tenants/t1/eab/e1", nil)
 	rec := httptest.NewRecorder()
 	router.ServeHTTP(rec, req)
 
@@ -2373,51 +2307,6 @@ func TestGetTenantCAStatus_InternalError(t *testing.T) {
 	}
 }
 
-func TestListIntermediateCAs_Success(t *testing.T) {
-	router := newTestRouter(t, defaultFakeAdmin())
-	req := httptest.NewRequest(http.MethodGet, "/api/v1/tenants/t1/intermediate-cas", nil)
-	rec := httptest.NewRecorder()
-	router.ServeHTTP(rec, req)
-
-	if rec.Code != http.StatusOK {
-		t.Errorf("expected 200, got %d", rec.Code)
-	}
-}
-
-func TestListIntermediateCAs_NotFound(t *testing.T) {
-	admin := defaultFakeAdmin()
-	admin.tenantCAClient = &fakeTenantCAClient{
-		listIntermediateCAsFunc: func(ctx context.Context, tenantID string) ([]*sdkadmin.TenantIntCAInfo, error) {
-			return nil, sdkadmin.NewTenantNotFound("test", "not found")
-		},
-	}
-	router := newTestRouter(t, admin)
-	req := httptest.NewRequest(http.MethodGet, "/api/v1/tenants/missing/intermediate-cas", nil)
-	rec := httptest.NewRecorder()
-	router.ServeHTTP(rec, req)
-
-	if rec.Code != http.StatusNotFound {
-		t.Errorf("expected 404, got %d", rec.Code)
-	}
-}
-
-func TestListIntermediateCAs_InternalError(t *testing.T) {
-	admin := defaultFakeAdmin()
-	admin.tenantCAClient = &fakeTenantCAClient{
-		listIntermediateCAsFunc: func(ctx context.Context, tenantID string) ([]*sdkadmin.TenantIntCAInfo, error) {
-			return nil, internalErr()
-		},
-	}
-	router := newTestRouter(t, admin)
-	req := httptest.NewRequest(http.MethodGet, "/api/v1/tenants/t1/intermediate-cas", nil)
-	rec := httptest.NewRecorder()
-	router.ServeHTTP(rec, req)
-
-	if rec.Code != http.StatusInternalServerError {
-		t.Errorf("expected 500, got %d", rec.Code)
-	}
-}
-
 func TestCreateIntermediateCA_Success(t *testing.T) {
 	router := newTestRouter(t, defaultFakeAdmin())
 	body := bytes.NewBufferString(`{"common_name":"Issuing CA","key_algorithm":"ECDSA-P256"}`)
@@ -2500,55 +2389,10 @@ func TestCreateIntermediateCA_InternalError(t *testing.T) {
 	}
 }
 
-func TestGetIntermediateCA_Success(t *testing.T) {
-	router := newTestRouter(t, defaultFakeAdmin())
-	req := httptest.NewRequest(http.MethodGet, "/api/v1/tenants/t1/intermediate-cas/ca1", nil)
-	rec := httptest.NewRecorder()
-	router.ServeHTTP(rec, req)
-
-	if rec.Code != http.StatusOK {
-		t.Errorf("expected 200, got %d", rec.Code)
-	}
-}
-
-func TestGetIntermediateCA_NotFound(t *testing.T) {
-	admin := defaultFakeAdmin()
-	admin.tenantCAClient = &fakeTenantCAClient{
-		getIntermediateCAFunc: func(ctx context.Context, tenantID, caID string) (*sdkadmin.TenantIntCAInfo, error) {
-			return nil, sdkadmin.NewIntermediateCANotFound("test", "not found")
-		},
-	}
-	router := newTestRouter(t, admin)
-	req := httptest.NewRequest(http.MethodGet, "/api/v1/tenants/t1/intermediate-cas/missing", nil)
-	rec := httptest.NewRecorder()
-	router.ServeHTTP(rec, req)
-
-	if rec.Code != http.StatusNotFound {
-		t.Errorf("expected 404, got %d", rec.Code)
-	}
-}
-
-func TestGetIntermediateCA_InternalError(t *testing.T) {
-	admin := defaultFakeAdmin()
-	admin.tenantCAClient = &fakeTenantCAClient{
-		getIntermediateCAFunc: func(ctx context.Context, tenantID, caID string) (*sdkadmin.TenantIntCAInfo, error) {
-			return nil, internalErr()
-		},
-	}
-	router := newTestRouter(t, admin)
-	req := httptest.NewRequest(http.MethodGet, "/api/v1/tenants/t1/intermediate-cas/ca1", nil)
-	rec := httptest.NewRecorder()
-	router.ServeHTTP(rec, req)
-
-	if rec.Code != http.StatusInternalServerError {
-		t.Errorf("expected 500, got %d", rec.Code)
-	}
-}
-
 func TestUpdateIntermediateCAStatus_Success(t *testing.T) {
 	router := newTestRouter(t, defaultFakeAdmin())
 	body := bytes.NewBufferString(`{"status":"active"}`)
-	req := httptest.NewRequest(http.MethodPut, "/api/v1/tenants/t1/intermediate-cas/ca1", body)
+	req := httptest.NewRequest(http.MethodPut, "/api/v1/tenants/t1/intermediate-cas/ca1/status", body)
 	req.Header.Set("Content-Type", "application/json")
 	rec := httptest.NewRecorder()
 	router.ServeHTTP(rec, req)
@@ -2560,7 +2404,7 @@ func TestUpdateIntermediateCAStatus_Success(t *testing.T) {
 
 func TestUpdateIntermediateCAStatus_InvalidBody(t *testing.T) {
 	router := newTestRouter(t, defaultFakeAdmin())
-	req := httptest.NewRequest(http.MethodPut, "/api/v1/tenants/t1/intermediate-cas/ca1", bytes.NewBufferString("bad"))
+	req := httptest.NewRequest(http.MethodPut, "/api/v1/tenants/t1/intermediate-cas/ca1/status", bytes.NewBufferString("bad"))
 	req.Header.Set("Content-Type", "application/json")
 	rec := httptest.NewRecorder()
 	router.ServeHTTP(rec, req)
@@ -2573,7 +2417,7 @@ func TestUpdateIntermediateCAStatus_InvalidBody(t *testing.T) {
 func TestUpdateIntermediateCAStatus_MissingStatus(t *testing.T) {
 	router := newTestRouter(t, defaultFakeAdmin())
 	body := bytes.NewBufferString(`{}`)
-	req := httptest.NewRequest(http.MethodPut, "/api/v1/tenants/t1/intermediate-cas/ca1", body)
+	req := httptest.NewRequest(http.MethodPut, "/api/v1/tenants/t1/intermediate-cas/ca1/status", body)
 	req.Header.Set("Content-Type", "application/json")
 	rec := httptest.NewRecorder()
 	router.ServeHTTP(rec, req)
@@ -2592,7 +2436,7 @@ func TestUpdateIntermediateCAStatus_NotFound(t *testing.T) {
 	}
 	router := newTestRouter(t, admin)
 	body := bytes.NewBufferString(`{"status":"active"}`)
-	req := httptest.NewRequest(http.MethodPut, "/api/v1/tenants/t1/intermediate-cas/missing", body)
+	req := httptest.NewRequest(http.MethodPut, "/api/v1/tenants/t1/intermediate-cas/missing/status", body)
 	req.Header.Set("Content-Type", "application/json")
 	rec := httptest.NewRecorder()
 	router.ServeHTTP(rec, req)
@@ -2611,7 +2455,7 @@ func TestUpdateIntermediateCAStatus_InternalError(t *testing.T) {
 	}
 	router := newTestRouter(t, admin)
 	body := bytes.NewBufferString(`{"status":"active"}`)
-	req := httptest.NewRequest(http.MethodPut, "/api/v1/tenants/t1/intermediate-cas/ca1", body)
+	req := httptest.NewRequest(http.MethodPut, "/api/v1/tenants/t1/intermediate-cas/ca1/status", body)
 	req.Header.Set("Content-Type", "application/json")
 	rec := httptest.NewRecorder()
 	router.ServeHTTP(rec, req)

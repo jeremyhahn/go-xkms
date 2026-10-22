@@ -20,6 +20,7 @@ import (
 	"crypto/rand"
 	"crypto/x509"
 	"crypto/x509/pkix"
+	"encoding/pem"
 	"errors"
 	"io"
 	"math/big"
@@ -35,6 +36,13 @@ import (
 
 	"github.com/jeremyhahn/go-xkms/pkg/audit"
 	"github.com/jeremyhahn/go-xkms/pkg/auth"
+	"github.com/jeremyhahn/go-xkms/pkg/backend/software"
+	"github.com/jeremyhahn/go-xkms/pkg/ca"
+	"github.com/jeremyhahn/go-xkms/pkg/certstore"
+	"github.com/jeremyhahn/go-xkms/pkg/storage"
+	"github.com/jeremyhahn/go-xkms/pkg/testutil"
+	"github.com/jeremyhahn/go-xkms/pkg/types"
+	"github.com/jeremyhahn/go-xkms/pkg/xkms"
 )
 
 const pivTenantTrustDomain = "xkms.test"
@@ -139,6 +147,66 @@ func TestPIVLogin_TenantUserLogsInWithinTheCertificateTenant(t *testing.T) {
 
 	require.Equal(t, http.StatusOK, w.Code, w.Body.String())
 	assert.Equal(t, []string{"acme"}, f.store.lookedUp, "the thumbprint is looked up in the certificate's tenant only")
+	assert.Equal(t, audit.OutcomeAllow, lastPIVAudit(t, auditLog).Outcome)
+}
+
+// pivIssuingCA is an initialized in-memory TrustedCA, the issuer of the
+// certificates a PIV card carries.
+func pivIssuingCA(t *testing.T) ca.TrustedCA {
+	t.Helper()
+	swBackend, err := software.NewBackend(&software.Config{KeyStorage: storage.NewMemory()})
+	require.NoError(t, err)
+	backend, err := xkms.New(&xkms.BackendConfig{Backend: swBackend, CertStorage: storage.NewMemory()})
+	require.NoError(t, err)
+	certs, err := certstore.New(&certstore.Config{DAOs: testutil.NewMemoryDAOFactory()})
+	require.NoError(t, err)
+	config := ca.DefaultMultiIdentityCAConfig()
+	config.Identity[0].Subject.CommonName = "PIV Test Root CA"
+	config.Identity[0].Keys[0].KeyType = "CA"
+	issuer, err := ca.NewFromMultiIdentityConfig(&ca.MultiIdentityParams{
+		Config:   config,
+		KeyStore: backend,
+		BackendForStore: func(string, types.StoreType) (xkms.Backend, error) {
+			return backend, nil
+		},
+		RevocationStore: storage.NewMemory(),
+		CertStore:       certs,
+	})
+	require.NoError(t, err)
+	require.NoError(t, issuer.Init(context.Background()))
+	return issuer
+}
+
+// TestPIVLogin_CAIssuedCertificateUnderTrustDomainPin proves issuance and PIV
+// login agree under a non-empty cluster trust-domain pin (go-xkms#1602): a
+// client certificate the CA issues for tenant acme under the pin login
+// verifies with carries spiffe://acme/user/<cn> with acme as OU[0], and
+// handleLoginPIV resolves it through go-qrdb's verifier to acme, looking the
+// thumbprint up there alone.
+func TestPIVLogin_CAIssuedCertificateUnderTrustDomainPin(t *testing.T) {
+	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	require.NoError(t, err)
+	csrDER, err := x509.CreateCertificateRequest(rand.Reader, &x509.CertificateRequest{
+		Subject: pkix.Name{CommonName: "admin"},
+	}, key)
+	require.NoError(t, err)
+	csrPEM := pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE REQUEST", Bytes: csrDER})
+
+	cert, err := pivIssuingCA(t).SignCSR(context.Background(), csrPEM, &ca.SignOptions{
+		Profile: "client", ValidityDays: 30, TenantID: "acme", SPIFFETrustDomain: pivTenantTrustDomain,
+	})
+	require.NoError(t, err)
+	require.Len(t, cert.URIs, 1)
+	assert.Equal(t, "spiffe://acme/user/admin", cert.URIs[0].String())
+
+	store := &tenantAuthUserStore{bindings: map[string]map[string]auth.MTLSUser{
+		"acme": {qrdbsdk.ComputeSPKIThumbprint(cert): {Username: "admin", Roles: []string{"admin"}, TenantID: "acme", Enabled: true}},
+	}}
+	server, auditLog := pivTenantServer(t, store)
+	w := doAuthRequest(t, server, pivRequest(cert))
+
+	require.Equal(t, http.StatusOK, w.Code, w.Body.String())
+	assert.Equal(t, []string{"acme"}, store.lookedUp)
 	assert.Equal(t, audit.OutcomeAllow, lastPIVAudit(t, auditLog).Outcome)
 }
 

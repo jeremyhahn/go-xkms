@@ -29,7 +29,7 @@ type revokeRequest struct {
 	Reason string `json:"reason,omitempty"`
 }
 
-// listCertificates handles GET /api/v1/certificates.
+// listCertificates handles GET /admin/certificates.
 func (h *handlers) listCertificates(w http.ResponseWriter, r *http.Request) {
 	query := r.URL.Query()
 	req := &adminsdk.ListCertificatesRequest{
@@ -37,6 +37,13 @@ func (h *handlers) listCertificates(w http.ResponseWriter, r *http.Request) {
 		PerPage: parseInt(query.Get("per_page"), 20),
 		Status:  query.Get("status"),
 		Subject: query.Get("subject"),
+	}
+	if query.Has("expires_days") {
+		req.ExpiresDays = parseInt(query.Get("expires_days"), 0)
+		if req.ExpiresDays <= 0 {
+			writeErrorResponse(w, http.StatusBadRequest, "VALIDATION_ERROR", "expires_days must be a positive integer")
+			return
+		}
 	}
 
 	resp, err := h.client.Admin().Certificate().List(r.Context(), req)
@@ -49,7 +56,7 @@ func (h *handlers) listCertificates(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, resp.Certificates, resp.Pagination)
 }
 
-// getCertificate handles GET /api/v1/certificates/{serial}.
+// getCertificate handles GET /admin/certificates/{serial}.
 func (h *handlers) getCertificate(w http.ResponseWriter, r *http.Request) {
 	serial := mux.Vars(r)["serial"]
 
@@ -70,7 +77,7 @@ func (h *handlers) getCertificate(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, cert, nil)
 }
 
-// revokeCertificate handles POST /api/v1/certificates/{serial}/revoke.
+// revokeCertificate handles POST /admin/certificates/{serial}/revoke.
 func (h *handlers) revokeCertificate(w http.ResponseWriter, r *http.Request) {
 	serial := mux.Vars(r)["serial"]
 

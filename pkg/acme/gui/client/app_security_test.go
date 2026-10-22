@@ -227,7 +227,7 @@ func TestApp_HoldsNoListenerOrServer(t *testing.T) {
 	for i := 0; i < appType.NumField(); i++ {
 		field := appType.Field(i)
 		typ := field.Type
-		if typ.Kind() == reflect.Ptr {
+		if typ.Kind() == reflect.Pointer {
 			typ = typ.Elem()
 		}
 		if field.Type.Implements(listenerType) || typ == serverType {

@@ -109,54 +109,7 @@ func (h *handlers) createIntermediateCA(w http.ResponseWriter, r *http.Request) 
 	writeJSON(w, http.StatusCreated, intCA, nil)
 }
 
-// listIntermediateCAs handles GET /api/v1/tenants/{id}/intermediate-cas.
-func (h *handlers) listIntermediateCAs(w http.ResponseWriter, r *http.Request) {
-	tenantID := mux.Vars(r)["id"]
-
-	cas, err := h.client.Admin().TenantCA().ListIntermediateCAs(r.Context(), tenantID)
-	if err != nil {
-		var notFound *sdkadmin.TenantNotFoundError
-		if isErrorType(err, &notFound) {
-			writeErrorResponse(w, http.StatusNotFound, "NOT_FOUND", "tenant not found")
-			return
-		}
-		h.logger.Error("failed to list intermediate CAs",
-			slog.String("tenant_id", tenantID),
-			slog.String("error", err.Error()),
-		)
-		writeErrorResponse(w, http.StatusInternalServerError, "INTERNAL_ERROR", "failed to list intermediate CAs")
-		return
-	}
-
-	writeJSON(w, http.StatusOK, cas, nil)
-}
-
-// getIntermediateCA handles GET /api/v1/tenants/{id}/intermediate-cas/{caId}.
-func (h *handlers) getIntermediateCA(w http.ResponseWriter, r *http.Request) {
-	vars := mux.Vars(r)
-	tenantID := vars["id"]
-	caID := vars["caId"]
-
-	intCA, err := h.client.Admin().TenantCA().GetIntermediateCA(r.Context(), tenantID, caID)
-	if err != nil {
-		var notFound *sdkadmin.IntermediateCANotFoundError
-		if isErrorType(err, &notFound) {
-			writeErrorResponse(w, http.StatusNotFound, "NOT_FOUND", "intermediate CA not found")
-			return
-		}
-		h.logger.Error("failed to get intermediate CA",
-			slog.String("tenant_id", tenantID),
-			slog.String("ca_id", caID),
-			slog.String("error", err.Error()),
-		)
-		writeErrorResponse(w, http.StatusInternalServerError, "INTERNAL_ERROR", "failed to get intermediate CA")
-		return
-	}
-
-	writeJSON(w, http.StatusOK, intCA, nil)
-}
-
-// updateIntermediateCAStatus handles PUT /api/v1/tenants/{id}/intermediate-cas/{caId}.
+// updateIntermediateCAStatus handles PUT /api/v1/tenants/{id}/intermediate-cas/{caId}/status.
 func (h *handlers) updateIntermediateCAStatus(w http.ResponseWriter, r *http.Request) {
 	vars := mux.Vars(r)
 	tenantID := vars["id"]

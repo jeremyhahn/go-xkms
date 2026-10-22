@@ -24,6 +24,7 @@ import (
 	"crypto/x509"
 	"crypto/x509/pkix"
 	"encoding/asn1"
+	"encoding/pem"
 	"math/big"
 	"net"
 	"net/http"
@@ -39,6 +40,8 @@ import (
 
 	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
 	xkmsauth "github.com/jeremyhahn/go-xkms/pkg/auth"
+	"github.com/jeremyhahn/go-xkms/pkg/ca"
+	"github.com/jeremyhahn/go-xkms/pkg/spiffe"
 )
 
 // testTrustDomain is the trust domain the deployment's CA issues under in
@@ -164,6 +167,46 @@ func TestMTLSAuthHandler_TenantUserAuthenticates(t *testing.T) {
 	assert.Equal(t, "tenant-a", identity.TenantID)
 
 	assert.NoError(t, admitTenant(ctx, "list roles", "tenant-a"))
+}
+
+// TestMTLSAuthHandler_CAIssuedCertificateUnderTrustDomainPin proves issuance
+// and the go-qrdb verifier agree under a non-empty cluster trust-domain pin
+// (go-xkms#1602): a client certificate the CA issues for tenant-a under the
+// pin carries spiffe://tenant-a/user/<cn> with tenant-a as OU[0], and the
+// admin plane, verifying under the same pin, resolves it to tenant-a. A
+// tenant equal to the pin is refused at issuance, before login could.
+func TestMTLSAuthHandler_CAIssuedCertificateUnderTrustDomainPin(t *testing.T) {
+	issuer := createRootOnlyTestCA(t)
+	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	require.NoError(t, err)
+	csrDER, err := x509.CreateCertificateRequest(rand.Reader, &x509.CertificateRequest{
+		Subject: pkix.Name{CommonName: "alice"},
+	}, key)
+	require.NoError(t, err)
+	csrPEM := pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE REQUEST", Bytes: csrDER})
+
+	cert, err := issuer.SignCSR(context.Background(), csrPEM, &ca.SignOptions{
+		Profile: "client", ValidityDays: 30, TenantID: "tenant-a", SPIFFETrustDomain: testTrustDomain,
+	})
+	require.NoError(t, err)
+	require.Len(t, cert.URIs, 1)
+	assert.Equal(t, "spiffe://tenant-a/user/alice", cert.URIs[0].String())
+
+	store := &tenantMTLSUserStore{}
+	store.bind("tenant-a", cert, xkmsauth.MTLSUser{
+		Username: "alice", TenantID: "tenant-a", Enabled: true, Roles: []string{"role-id-operator"},
+	})
+	code, ctx := serve(newTestMTLSAuthHandler(store), mtlsRequest("/api/v1/tenants/tenant-a/roles", cert))
+	require.Equal(t, http.StatusOK, code)
+	user := GetUserFromContext(ctx)
+	require.NotNil(t, user)
+	assert.Equal(t, "alice", user.Username)
+	assert.Equal(t, "tenant-a", user.TenantID)
+
+	_, err = issuer.SignCSR(context.Background(), csrPEM, &ca.SignOptions{
+		Profile: "client", ValidityDays: 30, TenantID: testTrustDomain, SPIFFETrustDomain: testTrustDomain,
+	})
+	assert.ErrorIs(t, err, spiffe.ErrTenantIsClusterTrustDomain)
 }
 
 // TestMTLSAuthHandler_TenantUserRefusedOnOtherTenantRoutes proves a tenant-a

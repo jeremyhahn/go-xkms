@@ -55,31 +55,3 @@ func (h *handlers) updateTenantStatus(w http.ResponseWriter, r *http.Request) {
 
 	writeJSON(w, http.StatusOK, map[string]string{"message": "tenant status updated successfully"}, nil)
 }
-
-// listExpiringCertificates handles GET /api/v1/certificates/expiring.
-func (h *handlers) listExpiringCertificates(w http.ResponseWriter, r *http.Request) {
-	query := r.URL.Query()
-	days := parseInt(query.Get("days"), 30)
-	if days <= 0 {
-		writeErrorResponse(w, http.StatusBadRequest, "VALIDATION_ERROR", "days must be a positive integer")
-		return
-	}
-
-	req := &sdkadmin.ListCertificatesRequest{
-		Page:        parseInt(query.Get("page"), 1),
-		PerPage:     parseInt(query.Get("per_page"), 20),
-		ExpiresDays: days,
-	}
-
-	resp, err := h.client.Admin().Certificate().List(r.Context(), req)
-	if err != nil {
-		h.logger.Error("failed to list expiring certificates",
-			slog.Int("days", days),
-			slog.String("error", err.Error()),
-		)
-		writeErrorResponse(w, http.StatusInternalServerError, "INTERNAL_ERROR", "failed to list expiring certificates")
-		return
-	}
-
-	writeJSON(w, http.StatusOK, resp.Certificates, resp.Pagination)
-}

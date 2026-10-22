@@ -18,7 +18,7 @@ import (
 	"net/http"
 )
 
-// getStatus handles GET /api/v1/status.
+// getStatus handles GET /admin/status.
 func (h *handlers) getStatus(w http.ResponseWriter, r *http.Request) {
 	status, err := h.client.Admin().Status().Status(r.Context())
 	if err != nil {
@@ -30,7 +30,7 @@ func (h *handlers) getStatus(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, status, nil)
 }
 
-// getStats handles GET /api/v1/stats.
+// getStats handles GET /admin/stats.
 func (h *handlers) getStats(w http.ResponseWriter, r *http.Request) {
 	stats, err := h.client.Admin().Status().Stats(r.Context())
 	if err != nil {
