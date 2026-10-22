@@ -268,6 +268,132 @@ func TestFrostPackageExport_ImportRoundTrip(t *testing.T) {
 	}
 }
 
+// goldenFrostRecipientScalar and goldenFrostPackage pin the stored dealer
+// package format: a compact JWE with alg ECDH-ES+A256KW and enc
+// A256CBC-HS512 (RFC 7518 §4.6.2, §5.2.5), sealed to the P-256 recipient
+// whose private scalar is goldenFrostRecipientScalar. The package decrypts to
+// goldenFrostExport.
+const (
+	goldenFrostRecipientScalar = "878505b225522d62df37297b4933e1e654281f69bcaa63e85bded4f5b425f857"
+	goldenFrostPackage         = "eyJhbGciOiJFQ0RILUVTK0EyNTZLVyIsImVuYyI6IkEyNTZDQkMtSFM1MTIiLCJlcGsiOnsia3R5IjoiRUMiLCJjcnYiOiJQLTI1NiIsIngiOiJTellyeFEteXpBWnVraDRWY002U0s5Uy1IZzAyeDdtcG5SbExWcndZRUlnIiwieSI6IkhDYm9sZUFueUFLVFNZYzc5dTQweHd1TExvdkNkN2hXbXVFR25GTGlzckEifSwia2lkIjoieDRyNEZPX1NoejlLRHA1UFI3cWlyVFMzaHAzTGI2UDJJeTVIelNvZU5KRSJ9." +
+		"G2OUx9_dGZXezGwUPIrjkWCJJZ_9PTE3pAcWNgKsFELhn0aRzhWUU_04PHutcyEoF-tRvo1bPHeMfII67LKVXByW4wR9nisL." +
+		"WQ-n0FQaLrWD1w1pdrp1pA." +
+		"uuJ6wU697eVzJy8Tm9YRVionMxU-ET2M9sw0zK0JVlMoHxBjnIr13cG40pmDdNVzVSkubgValIwU6tkJHHReiVDnQMndwPoVIpirSvFv0nQgQWbGNSotV65zPt_W1IgQmICs2pIlmIwo88T8ujhb3A1h5YahdBk_MWpER5mWcOXAk-CszXGwT7wpStIfp6oDDuxVDPIwtSENKRe0SFcQ5kPtIBmhD9lUIfS4yQWJ66Xcozm09955WTgKD-TW_etHj8TTTeF9W6W0-QnGHZz14kCv1A1TvalTyctg-7H3y2E_Fn8c1wj9ftDwAMg7MH0zeelcYO_BZQZgbIe483XYkWC8TEtH4c7VeVAauIVg_OFG5UvlRlv1ECu3x7j3p4IMg6Tk_BHrzYm41KL5p8vukaKr-tRAR7T-gc6P0UYDE4775LghSTh8FFWxHeTFfD940AWnaJTWPh7bDmhyWzP0vvESJM9psuWyCdmuB_sweaZvY9GjdZl5hHCuxxZhdbwRVMtG_GiWIRbEb2MTQh5hoUy2L_comA2ZGUi4V823Ehvb4M0DVUZ4ALfHpIQwKIvHxYE4zYMPAmq5S5hfANAawWqbyZO6clqpWn78gp4aKrkOSHtcUfC-nq7b0auIsliAB5UT-_4GQkImcM7oVKGAHIY9bXv3sucKtgiJ4mlneJu-RZsbp6_R3B0iPCvUt1SoSaCLbxq3Vux5Gzax1BLRwA." +
+		"1irp2U5LUwNUMfcbWOwZtncTyiwhF7Gk_EO_D1MbOlY"
+)
+
+// goldenFrostExport is the plaintext sealed in goldenFrostPackage.
+func goldenFrostExport() *KeyPackageExport {
+	return &KeyPackageExport{
+		KeyID:           "golden-frost-key",
+		Algorithm:       string(client.FrostAlgorithmEd25519),
+		Threshold:       2,
+		Total:           3,
+		ParticipantID:   1,
+		ParticipantName: "alice",
+		SecretShare:     strings.Repeat("01", 32),
+		GroupPublicKey:  strings.Repeat("02", 32),
+		VerificationShares: map[uint32]string{
+			1: strings.Repeat("03", 32),
+			2: strings.Repeat("04", 32),
+			3: strings.Repeat("05", 32),
+		},
+	}
+}
+
+func goldenFrostRecipientKey(t *testing.T) *ecdsa.PrivateKey {
+	t.Helper()
+	scalar, err := hex.DecodeString(goldenFrostRecipientScalar)
+	if err != nil {
+		t.Fatalf("decode golden scalar: %v", err)
+	}
+	key, err := ecdsa.ParseRawPrivateKey(elliptic.P256(), scalar)
+	if err != nil {
+		t.Fatalf("ParseRawPrivateKey: %v", err)
+	}
+	return key
+}
+
+// frostPackageHeader decodes the protected header of a compact JWE.
+func frostPackageHeader(t *testing.T, jwe string) map[string]any {
+	t.Helper()
+	encoded, _, found := strings.Cut(jwe, ".")
+	if !found {
+		t.Fatal("package is not a compact JWE")
+	}
+	raw, err := base64.RawURLEncoding.DecodeString(encoded)
+	if err != nil {
+		t.Fatalf("decode protected header: %v", err)
+	}
+	var header map[string]any
+	if err := json.Unmarshal(raw, &header); err != nil {
+		t.Fatalf("parse protected header: %v", err)
+	}
+	return header
+}
+
+func TestFrostPackageExport_GoldenFixture(t *testing.T) {
+	recipientKey := goldenFrostRecipientKey(t)
+	encrypted := &EncryptedKeyPackageExport{
+		KeyID:           "golden-frost-key",
+		ParticipantID:   1,
+		ParticipantName: "alice",
+		Package:         goldenFrostPackage,
+	}
+
+	got, err := decryptKeyPackageExport(encrypted, recipientKey)
+	if err != nil {
+		t.Fatalf("decryptKeyPackageExport: %v", err)
+	}
+	gotJSON, err := json.Marshal(got)
+	if err != nil {
+		t.Fatalf("marshal decrypted export: %v", err)
+	}
+	wantJSON, err := json.Marshal(goldenFrostExport())
+	if err != nil {
+		t.Fatalf("marshal golden export: %v", err)
+	}
+	if !bytes.Equal(gotJSON, wantJSON) {
+		t.Fatalf("golden package decrypted to %s, want %s", gotJSON, wantJSON)
+	}
+
+	// A freshly sealed package uses the same algorithms as the fixture.
+	fresh, err := encryptKeyPackageExport(goldenFrostExport(), &recipientKey.PublicKey)
+	if err != nil {
+		t.Fatalf("encryptKeyPackageExport: %v", err)
+	}
+	for _, jwe := range []string{goldenFrostPackage, fresh.Package} {
+		header := frostPackageHeader(t, jwe)
+		if header["alg"] != frostPackageKeyAlgorithm || header["enc"] != frostPackageContentAlgorithm {
+			t.Fatalf("package header alg=%v enc=%v, want %s and %s",
+				header["alg"], header["enc"], frostPackageKeyAlgorithm, frostPackageContentAlgorithm)
+		}
+	}
+}
+
+func TestFrostPackageExport_GoldenFixtureTampered(t *testing.T) {
+	segments := strings.Split(goldenFrostPackage, ".")
+	if len(segments) != 5 {
+		t.Fatalf("golden package has %d segments, want 5", len(segments))
+	}
+	ciphertext := []byte(segments[3])
+	middle := len(ciphertext) / 2
+	if ciphertext[middle] == 'A' {
+		ciphertext[middle] = 'B'
+	} else {
+		ciphertext[middle] = 'A'
+	}
+	segments[3] = string(ciphertext)
+
+	_, err := decryptKeyPackageExport(&EncryptedKeyPackageExport{
+		KeyID:   "golden-frost-key",
+		Package: strings.Join(segments, "."),
+	}, goldenFrostRecipientKey(t))
+	if !errors.Is(err, ErrFrostPackageDecryptFailed) {
+		t.Fatalf("tampered package: got %v, want ErrFrostPackageDecryptFailed", err)
+	}
+}
+
 func TestFrostPackageExport_ImportRefusals(t *testing.T) {
 	setFrostPassphraseEnv(t, frostExportTestPassphrase)
 	aliceCfg, alice := newTestFrostRecipient(t)

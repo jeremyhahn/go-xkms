@@ -19,6 +19,7 @@ import (
 	"crypto"
 	"crypto/ecdsa"
 	"crypto/elliptic"
+	"crypto/fips140"
 	"crypto/rand"
 	"crypto/tls"
 	"crypto/x509"
@@ -40,6 +41,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	"github.com/jeremyhahn/go-xkms/pkg/testing/fipstest"
 	"github.com/jeremyhahn/go-xkms/pkg/xkms"
 )
 
@@ -403,6 +405,15 @@ func TestProvision_FoundingNodeAdvertisesAfterCachedRestart(t *testing.T) {
 		DataDir:     t.TempDir(),
 		Bootstrap:   clusterenroll.BootstrapOptions{NoiseKey: noiseKey, NoiseAddr: noiseAddr},
 	}, testLogger())
+	if fips140.Enforced() {
+		// Noise NK needs X25519, which GODEBUG=fips140=only refuses, so go-qrdb
+		// refuses a join configured with Noise alone.
+		require.False(t, clusterenroll.NoiseAvailable())
+		var fetchErr *clusterenroll.FetchError
+		require.ErrorAs(t, err, &fetchErr, "a Noise-only join is refused under FIPS")
+		fipstest.OutsideFIPS(t)
+		return
+	}
 	require.NoError(t, err, "a joiner bootstraps over Noise from the restarted founding node")
 	assert.Equal(t, res.MTLS.CACert, anchorPEM)
 }

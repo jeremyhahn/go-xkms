@@ -285,6 +285,9 @@ func TestGenerateNoiseKey_ToFile(t *testing.T) {
 	defer func() { exitFunc = origExit }()
 
 	outputFile := filepath.Join(t.TempDir(), "noise.key")
+	if !noiseKeygenOutsideFIPS(t, outputFile, func() { generateNoiseKey(outputFile) }) {
+		return
+	}
 	generateNoiseKey(outputFile)
 
 	data, err := os.ReadFile(outputFile)

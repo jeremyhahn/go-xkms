@@ -26,6 +26,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/jeremyhahn/go-xkms/pkg/testing/fipstest"
 	"github.com/jeremyhahn/go-xkms/pkg/trust/bootstrap"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -476,6 +477,9 @@ func TestAttestHelpersRefuseANilCertificateRatherThanPanicking(t *testing.T) {
 // is an authenticated peer static key to bind to.
 func TestNoiseSessionChannelBindingRefusesBeforeTheHandshake(t *testing.T) {
 	session, err := bootstrap.NewNoiseSession(&bootstrap.NoiseSessionConfig{IsInitiator: true})
+	if !fipstest.OutsideFIPSAfterRefusal(t, err, bootstrap.ErrNoiseFIPSUnsupported) {
+		return
+	}
 	require.NoError(t, err)
 
 	binding, err := AttestChannelBinding(session)
@@ -490,6 +494,9 @@ func TestNoiseSessionChannelBindingRefusesBeforeTheHandshake(t *testing.T) {
 // the binding from the prologue the handshake actually ran under.
 func TestNoiseSessionPrologueIsCopiedOut(t *testing.T) {
 	session, err := bootstrap.NewNoiseSession(&bootstrap.NoiseSessionConfig{IsInitiator: true})
+	if !fipstest.OutsideFIPSAfterRefusal(t, err, bootstrap.ErrNoiseFIPSUnsupported) {
+		return
+	}
 	require.NoError(t, err)
 
 	prologue := fixed(0x55, 32)

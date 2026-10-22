@@ -18,6 +18,7 @@ package bootstrap
 import (
 	"testing"
 
+	"github.com/jeremyhahn/go-xkms/pkg/testing/fipstest"
 	"github.com/stretchr/testify/require"
 )
 
@@ -26,5 +27,12 @@ import (
 // suite_fips_test.go, which asserts the opposite under the tag: together they
 // pin that the answer is derived from the build rather than guessed.
 func TestEnsureSuiteAvailable_NoiseAvailableWithoutFIPSTag(t *testing.T) {
-	require.NoError(t, EnsureSuiteAvailable(SuiteNoiseNK))
+	err := EnsureSuiteAvailable(SuiteNoiseNK)
+	// Without the fips tag, Noise is still refused at run time under
+	// GODEBUG=fips140=only, because the module rejects X25519.
+	if !fipstest.OutsideFIPSAfterRefusal(t, err, ErrNoiseFIPSUnsupported) {
+		require.ErrorIs(t, err, ErrSuiteUnavailable)
+		return
+	}
+	require.NoError(t, err)
 }
