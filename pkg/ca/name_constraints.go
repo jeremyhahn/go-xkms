@@ -32,8 +32,9 @@ import (
 // URI constraints bind the URI's host only (RFC 5280 §4.2.1.10: "the
 // constraint MUST be specified as a fully qualified domain name and MAY
 // specify a host or a domain"). For a SPIFFE ID the host is the trust domain,
-// so a URI constraint confines a subordinate to one trust domain and cannot
-// confine it to a path such as spiffe://<td>/tenant/<t>/. Path scoping is the
+// so a URI constraint confines a subordinate to one trust domain, which is one
+// tenant (spiffe://<tenantID>/<kind>/<name>), and cannot confine it to a path
+// such as /svc/. Path scoping is the
 // issuing caller's policy, enforced before it asks for a certificate (see
 // spiffe.WorkloadID.HasPathPrefix).
 type NameConstraints struct {

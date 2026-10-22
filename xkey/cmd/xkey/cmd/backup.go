@@ -33,6 +33,7 @@ import (
 	"github.com/jeremyhahn/go-enclave"
 	xkms "github.com/jeremyhahn/go-xkms/sdk/go"
 	"github.com/jeremyhahn/go-xkms/sdk/go/truststore"
+	"github.com/jeremyhahn/go-xkms/xkey/pkg/backendregistry"
 	"github.com/jeremyhahn/go-xkms/xkey/pkg/backup"
 	"github.com/jeremyhahn/go-xkms/xkey/pkg/oath"
 	xkeysync "github.com/jeremyhahn/go-xkms/xkey/pkg/sync"
@@ -899,7 +900,7 @@ func resolveOATHBackupStore(cmd *cobra.Command, dataDir, oathPath string, strict
 		if err := requireExplicitSource(strict, backup.ItemOATH, oathPath); err != nil {
 			return nil, oathPath, false, err
 		}
-		store, err := oath.NewFileStore(oathPath)
+		store, err := openOATHStores(nil, oathPath)
 		if err != nil {
 			return nil, oathPath, false, backupStoreError(backup.ItemOATH, oathPath, err)
 		}
@@ -913,14 +914,14 @@ func resolveOATHBackupStore(cmd *cobra.Command, dataDir, oathPath string, strict
 		return nil, defaultPath, false, backupStoreError(backup.ItemOATH, defaultPath, err)
 	}
 	if opened {
-		store, err := oath.NewBackendStore(backend, "oath/")
+		store, err := openOATHStores(backend, "")
 		if err != nil {
 			return nil, "barrier:oath/", false, backupStoreError(backup.ItemOATH, "barrier:oath/", err)
 		}
 		return store, "barrier:oath/", false, nil
 	}
 
-	oathMissing, err := defaultSourceMissing(strict, backup.ItemOATH, defaultPath)
+	oathMissing, err := oathPartitionsMissing(strict, defaultPath)
 	if err != nil {
 		return nil, defaultPath, false, err
 	}
@@ -928,11 +929,32 @@ func resolveOATHBackupStore(cmd *cobra.Command, dataDir, oathPath string, strict
 		return nil, defaultPath, true, nil
 	}
 
-	store, err = oath.NewFileStore(defaultPath)
+	store, err = openOATHStores(nil, defaultPath)
 	if err != nil {
 		return nil, defaultPath, false, backupStoreError(backup.ItemOATH, defaultPath, err)
 	}
 	return store, defaultPath, false, nil
+}
+
+// oathPartitionsMissing is defaultSourceMissing for the OATH file store set:
+// the source is missing only when no backend's partition file beside path
+// exists, so credentials held only by a non-default backend are backed up.
+func oathPartitionsMissing(strict bool, path string) (bool, error) {
+	if !strict {
+		return false, nil
+	}
+	ids, _ := backendregistry.ConfiguredFor(loadedConfig, backendregistry.CapOATH)
+	for _, id := range ids {
+		partition, err := oath.FilePartitionPath(path, id)
+		if err != nil {
+			return false, backupStoreError(backup.ItemOATH, path, err)
+		}
+		missing, err := defaultSourceMissing(strict, backup.ItemOATH, partition)
+		if err != nil || !missing {
+			return false, err
+		}
+	}
+	return true, nil
 }
 
 // ---------------------------------------------------------------------------
@@ -1059,6 +1081,9 @@ func (a *oathStoreAdapter) Update(info *backup.OATHCredentialInfo) error {
 	if err != nil {
 		return err
 	}
+	// An update never moves a credential: it stays in the backend that
+	// holds it, whatever backend (or none) the incoming record names.
+	cred.BackendID = existing.BackendID
 	return a.store.Update(cred)
 }
 
@@ -1075,6 +1100,7 @@ func oathCredentialToInfo(cred *oath.Credential) (*backup.OATHCredentialInfo, er
 		Name:        cred.Name,
 		Issuer:      cred.Issuer,
 		AccountName: cred.AccountName,
+		BackendID:   cred.BackendID,
 		Type:        cred.Type,
 		Algorithm:   cred.Algorithm,
 		Digits:      cred.Digits,
@@ -1103,6 +1129,7 @@ func oathInfoToCredential(info *backup.OATHCredentialInfo, createdAt time.Time) 
 		Name:        info.Name,
 		Issuer:      info.Issuer,
 		AccountName: info.AccountName,
+		BackendID:   info.BackendID,
 		Type:        info.Type,
 		Algorithm:   info.Algorithm,
 		Digits:      info.Digits,

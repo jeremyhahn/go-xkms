@@ -26,6 +26,8 @@ import (
 	"path/filepath"
 	"testing"
 	"time"
+
+	"github.com/jeremyhahn/go-xkms/pkg/config"
 )
 
 // writeTLSPoolTestCA emits a self-signed CA PEM into path and returns
@@ -211,19 +213,11 @@ func TestServer_BuildTLSConfig_MalformedPrimaryCAReturnsLegacySentinel(t *testin
 
 	certFile, keyFile, _ := createTestTLSFiles(t)
 
-	cfg := createMinimalConfig(t)
-	cfg.TLS.Enabled = true
-	cfg.TLS.CertFile = certFile
-	cfg.TLS.KeyFile = keyFile
-	cfg.TLS.CAFile = bad
+	srv := newTLSTestServer(t, &config.Config{
+		TLS: config.TLSConfig{Enabled: true, CertFile: certFile, KeyFile: keyFile, CAFile: bad},
+	})
 
-	srv, err := New(cfg)
-	if err != nil {
-		t.Fatalf("New: %v", err)
-	}
-	defer func() { _ = srv.Shutdown() }()
-
-	_, err = srv.buildTLSConfig()
+	_, err := srv.buildTLSConfig()
 	if err == nil {
 		t.Fatal("expected error for malformed primary CA")
 	}

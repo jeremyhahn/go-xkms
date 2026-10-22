@@ -20,6 +20,7 @@ package oath
 import (
 	"fmt"
 	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -39,9 +40,8 @@ func TestOATHCLI_FullWorkflow(t *testing.T) {
 
 	// Step 1: Add credential
 	t.Run("Add", func(t *testing.T) {
-		result := helper.RunOATH("add",
+		result := helper.RunOATHWithSecret(credSecret, "add",
 			"--name", credName,
-			"--secret", credSecret,
 			"--issuer", credIssuer)
 		require.True(t, result.Success(),
 			"Add command failed: stdout=%s stderr=%s", result.Stdout, result.Stderr)
@@ -179,9 +179,8 @@ func TestOATHCLI_AddVariousConfigs(t *testing.T) {
 
 	for _, tc := range testCases {
 		t.Run(tc.name, func(t *testing.T) {
-			result := helper.RunOATH("add",
+			result := helper.RunOATHWithSecret("JBSWY3DPEHPK3PXP", "add",
 				"--name", tc.credName,
-				"--secret", "JBSWY3DPEHPK3PXP",
 				"--type", tc.otpType,
 				"--algorithm", tc.algorithm,
 				"--digits", tc.digits)
@@ -216,9 +215,8 @@ func TestOATHCLI_GenerateAll(t *testing.T) {
 	// Add multiple credentials
 	credentials := []string{"Credential1", "Credential2", "Credential3"}
 	for _, name := range credentials {
-		result := helper.RunOATH("add",
+		result := helper.RunOATHWithSecret("JBSWY3DPEHPK3PXP", "add",
 			"--name", name,
-			"--secret", "JBSWY3DPEHPK3PXP",
 			"--issuer", "Test")
 		require.True(t, result.Success(), "Add %s failed: %s", name, result.Combined())
 	}
@@ -242,9 +240,8 @@ func TestOATHCLI_GenerateMultiple(t *testing.T) {
 	// Add multiple credentials
 	credentials := []string{"CredA", "CredB", "CredC"}
 	for _, name := range credentials {
-		result := helper.RunOATH("add",
-			"--name", name,
-			"--secret", "JBSWY3DPEHPK3PXP")
+		result := helper.RunOATHWithSecret("JBSWY3DPEHPK3PXP", "add",
+			"--name", name)
 		require.True(t, result.Success())
 	}
 
@@ -282,9 +279,8 @@ func TestOATHCLI_ListWithSecrets(t *testing.T) {
 	helper := NewOATHTestHelper(t)
 
 	secret := "JBSWY3DPEHPK3PXP"
-	result := helper.RunOATH("add",
-		"--name", "SecretTest",
-		"--secret", secret)
+	result := helper.RunOATHWithSecret(secret, "add",
+		"--name", "SecretTest")
 	require.True(t, result.Success())
 
 	// List without --secrets (secret should be hidden)
@@ -304,9 +300,8 @@ func TestOATHCLI_ListWithSecrets(t *testing.T) {
 func TestOATHCLI_ListWithURI(t *testing.T) {
 	helper := NewOATHTestHelper(t)
 
-	result := helper.RunOATH("add",
+	result := helper.RunOATHWithSecret("JBSWY3DPEHPK3PXP", "add",
 		"--name", "URITest",
-		"--secret", "JBSWY3DPEHPK3PXP",
 		"--issuer", "TestIssuer")
 	require.True(t, result.Success())
 
@@ -322,9 +317,8 @@ func TestOATHCLI_RemoveMultiple(t *testing.T) {
 
 	// Add credentials
 	for _, name := range []string{"Remove1", "Remove2", "Remove3"} {
-		result := helper.RunOATH("add",
-			"--name", name,
-			"--secret", "JBSWY3DPEHPK3PXP")
+		result := helper.RunOATHWithSecret("JBSWY3DPEHPK3PXP", "add",
+			"--name", name)
 		require.True(t, result.Success())
 	}
 
@@ -362,9 +356,8 @@ func TestOATHCLI_InvalidSecret(t *testing.T) {
 		t.Run(fmt.Sprintf("InvalidSecret_%d", i), func(t *testing.T) {
 			// Use unique name for each subtest to avoid duplicate detection
 			name := fmt.Sprintf("InvalidSecretTest-%d-%d", i, time.Now().UnixNano())
-			result := helper.RunOATH("add",
-				"--name", name,
-				"--secret", tc.secret)
+			result := helper.RunOATHWithSecret(tc.secret, "add",
+				"--name", name)
 			assert.False(t, result.Success(),
 				"Add with invalid secret should fail (%s): %s", tc.reason, tc.secret)
 		})
@@ -379,9 +372,8 @@ func TestOATHCLI_InvalidDigits(t *testing.T) {
 
 	for _, digits := range invalidDigits {
 		t.Run("InvalidDigits_"+digits, func(t *testing.T) {
-			result := helper.RunOATH("add",
+			result := helper.RunOATHWithSecret("JBSWY3DPEHPK3PXP", "add",
 				"--name", "InvalidDigitsTest",
-				"--secret", "JBSWY3DPEHPK3PXP",
 				"--digits", digits)
 			assert.False(t, result.Success(),
 				"Add with invalid digits %s should fail", digits)
@@ -393,9 +385,8 @@ func TestOATHCLI_InvalidDigits(t *testing.T) {
 func TestOATHCLI_InvalidAlgorithm(t *testing.T) {
 	helper := NewOATHTestHelper(t)
 
-	result := helper.RunOATH("add",
+	result := helper.RunOATHWithSecret("JBSWY3DPEHPK3PXP", "add",
 		"--name", "InvalidAlgTest",
-		"--secret", "JBSWY3DPEHPK3PXP",
 		"--algorithm", "MD5")
 	assert.False(t, result.Success(),
 		"Add with invalid algorithm should fail")
@@ -405,9 +396,8 @@ func TestOATHCLI_InvalidAlgorithm(t *testing.T) {
 func TestOATHCLI_InvalidType(t *testing.T) {
 	helper := NewOATHTestHelper(t)
 
-	result := helper.RunOATH("add",
+	result := helper.RunOATHWithSecret("JBSWY3DPEHPK3PXP", "add",
 		"--name", "InvalidTypeTest",
-		"--secret", "JBSWY3DPEHPK3PXP",
 		"--type", "invalid")
 	assert.False(t, result.Success(),
 		"Add with invalid type should fail")
@@ -460,15 +450,13 @@ func TestOATHCLI_DuplicateAdd(t *testing.T) {
 	helper := NewOATHTestHelper(t)
 
 	// First add should succeed
-	result := helper.RunOATH("add",
-		"--name", "Duplicate",
-		"--secret", "JBSWY3DPEHPK3PXP")
+	result := helper.RunOATHWithSecret("JBSWY3DPEHPK3PXP", "add",
+		"--name", "Duplicate")
 	require.True(t, result.Success(), "First add should succeed: %s", result.Combined())
 
 	// Second add with same name should fail
-	result = helper.RunOATH("add",
-		"--name", "Duplicate",
-		"--secret", "GEZDGNBVGY3TQOJQ")
+	result = helper.RunOATHWithSecret("GEZDGNBVGY3TQOJQ", "add",
+		"--name", "Duplicate")
 	assert.False(t, result.Success(),
 		"Duplicate add should fail")
 	assert.True(t, result.OutputContains("exist") || result.OutputContains("Exist") ||
@@ -482,7 +470,7 @@ func TestOATHCLI_MissingRequiredArgs(t *testing.T) {
 
 	// Missing name
 	t.Run("MissingName", func(t *testing.T) {
-		result := helper.RunOATH("add", "--secret", "JBSWY3DPEHPK3PXP")
+		result := helper.RunOATHWithSecret("JBSWY3DPEHPK3PXP", "add")
 		assert.False(t, result.Success(),
 			"Add without name should fail")
 	})
@@ -514,9 +502,8 @@ func TestOATHCLI_HOTPCounterIncrement(t *testing.T) {
 	helper := NewOATHTestHelper(t)
 
 	// Add HOTP credential
-	result := helper.RunOATH("add",
+	result := helper.RunOATHWithSecret("JBSWY3DPEHPK3PXP", "add",
 		"--name", "HOTPCounter",
-		"--secret", "JBSWY3DPEHPK3PXP",
 		"--type", "hotp")
 	require.True(t, result.Success(), "Add HOTP failed: %s", result.Combined())
 
@@ -541,9 +528,8 @@ func TestOATHCLI_TOTPConsistency(t *testing.T) {
 	helper := NewOATHTestHelper(t)
 
 	// Add TOTP credential
-	result := helper.RunOATH("add",
+	result := helper.RunOATHWithSecret("JBSWY3DPEHPK3PXP", "add",
 		"--name", "TOTPConsistent",
-		"--secret", "JBSWY3DPEHPK3PXP",
 		"--type", "totp")
 	require.True(t, result.Success(), "Add TOTP failed: %s", result.Combined())
 
@@ -604,9 +590,8 @@ func TestOATHCLI_CommandAliases(t *testing.T) {
 	helper := NewOATHTestHelper(t)
 
 	// Add a credential first
-	result := helper.RunOATH("add",
-		"--name", "AliasTest",
-		"--secret", "JBSWY3DPEHPK3PXP")
+	result := helper.RunOATHWithSecret("JBSWY3DPEHPK3PXP", "add",
+		"--name", "AliasTest")
 	require.True(t, result.Success())
 
 	// Test 'ls' alias for list
@@ -652,9 +637,8 @@ func TestOATHCLI_CaseSensitiveLookup(t *testing.T) {
 	helper := NewOATHTestHelper(t)
 
 	// Add credential
-	result := helper.RunOATH("add",
-		"--name", "CaseTest",
-		"--secret", "JBSWY3DPEHPK3PXP")
+	result := helper.RunOATHWithSecret("JBSWY3DPEHPK3PXP", "add",
+		"--name", "CaseTest")
 	require.True(t, result.Success())
 
 	// Try various case variations
@@ -678,9 +662,8 @@ func TestOATHCLI_StoreFilePersistence(t *testing.T) {
 	helper := NewOATHTestHelper(t)
 
 	// Add credential
-	result := helper.RunOATH("add",
-		"--name", "PersistTest",
-		"--secret", "JBSWY3DPEHPK3PXP")
+	result := helper.RunOATHWithSecret("JBSWY3DPEHPK3PXP", "add",
+		"--name", "PersistTest")
 	require.True(t, result.Success())
 
 	// Verify store file exists
@@ -692,4 +675,57 @@ func TestOATHCLI_StoreFilePersistence(t *testing.T) {
 	require.True(t, result.Success())
 	assert.True(t, result.OutputContains("PersistTest"),
 		"Credential should persist: %s", result.Combined())
+}
+
+// multiBackendConfig declares one PKCS#11 backend, token1, beside the
+// always-present software backend.
+const multiBackendConfig = `backends:
+  local:
+    - id: token1
+      category: pkcs11
+      name: Token 1
+`
+
+// TestOATHCLI_MultiBackend drives the xkey binary through add/list/generate/
+// remove across two backends, and the unknown-backend refusal (#864).
+func TestOATHCLI_MultiBackend(t *testing.T) {
+	helper := NewOATHTestHelper(t)
+	configPath := filepath.Join(filepath.Dir(helper.StorePath()), "xkey.yaml")
+	require.NoError(t, os.WriteFile(configPath, []byte(multiBackendConfig), 0o600))
+	withConfig := func(args ...string) []string {
+		return append(args, "--config", configPath)
+	}
+
+	result := helper.RunOATHWithSecret("JBSWY3DPEHPK3PXP", withConfig("add", "--name", "GitHub")...)
+	require.True(t, result.Success(), result.Combined())
+	assert.True(t, result.OutputContains("(backend software)"), result.Combined())
+
+	result = helper.RunOATHWithSecret("JBSWY3DPEHPK3PXP", withConfig("add", "--name", "VPN", "--backend", "token1")...)
+	require.True(t, result.Success(), result.Combined())
+	assert.True(t, result.OutputContains("(backend token1)"), result.Combined())
+	assert.FileExists(t, filepath.Join(filepath.Dir(helper.StorePath()), "oath@token1.json"))
+
+	result = helper.RunOATHWithSecret("JBSWY3DPEHPK3PXP", withConfig("add", "--name", "Other", "--backend", "nosuch")...)
+	assert.False(t, result.Success())
+	assert.True(t, result.OutputContains(`"nosuch"`), "refusal must name the backend: %s", result.Combined())
+
+	result = helper.RunOATH(withConfig("list")...)
+	require.True(t, result.Success(), result.Combined())
+	assert.True(t, result.OutputContainsAll("Backend:   software", "Backend:   token1"), result.Combined())
+	assert.False(t, result.OutputContains("Other"), result.Combined())
+
+	for _, name := range []string{"GitHub", "VPN"} {
+		result = helper.RunOATH(withConfig("generate", name)...)
+		require.True(t, result.Success(), result.Combined())
+		code, ok := ExtractOTPCode(result.Stdout)
+		assert.True(t, ok && IsValidOTPCode(code), "%s: %s", name, result.Combined())
+
+		result = helper.RunOATH(withConfig("remove", "--force", name)...)
+		require.True(t, result.Success(), result.Combined())
+		assert.True(t, result.OutputContains("Removed: "+name), result.Combined())
+	}
+
+	result = helper.RunOATH(withConfig("list")...)
+	require.True(t, result.Success(), result.Combined())
+	assert.True(t, result.OutputContains("No OATH credentials found."), result.Combined())
 }

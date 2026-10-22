@@ -650,12 +650,12 @@ func TestServer_BuildTLSConfig_InvalidCA(t *testing.T) {
 	cfg.TLS.KeyFile = keyFile
 	cfg.TLS.CAFile = "/nonexistent/ca.pem"
 
-	server, err := New(cfg)
-	require.NoError(t, err)
-	require.NotNil(t, server)
-	defer func() { _ = server.Shutdown() }()
+	// Start-up refuses a client CA file it cannot read.
+	_, err := New(cfg)
+	var readErr *ErrFileRead
+	require.ErrorAs(t, err, &readErr)
 
-	_, err = server.buildTLSConfig()
+	_, err = newTLSTestServer(t, cfg).buildTLSConfig()
 	assert.Error(t, err)
 	assert.Contains(t, err.Error(), "/nonexistent/ca.pem")
 }
@@ -759,12 +759,12 @@ func TestServer_BuildTLSConfig_InvalidClientCA(t *testing.T) {
 	cfg.TLS.KeyFile = keyFile
 	cfg.TLS.ClientCAs = []string{"/nonexistent/client-ca.pem"}
 
-	server, err := New(cfg)
-	require.NoError(t, err)
-	require.NotNil(t, server)
-	defer func() { _ = server.Shutdown() }()
+	// Start-up refuses a client CA file it cannot read.
+	_, err := New(cfg)
+	var readErr *ErrFileRead
+	require.ErrorAs(t, err, &readErr)
 
-	_, err = server.buildTLSConfig()
+	_, err = newTLSTestServer(t, cfg).buildTLSConfig()
 	assert.Error(t, err)
 	assert.Contains(t, err.Error(), "/nonexistent/client-ca.pem")
 }
@@ -1387,12 +1387,12 @@ func TestServer_BuildTLSConfig_InvalidCAContent(t *testing.T) {
 	cfg.TLS.KeyFile = keyFile
 	cfg.TLS.CAFile = invalidCAFile
 
-	server, err := New(cfg)
-	require.NoError(t, err)
-	require.NotNil(t, server)
-	defer func() { _ = server.Shutdown() }()
+	// Start-up refuses a client CA file that does not parse.
+	_, err = New(cfg)
+	var parseErr *ErrCertParse
+	require.ErrorAs(t, err, &parseErr)
 
-	_, err = server.buildTLSConfig()
+	_, err = newTLSTestServer(t, cfg).buildTLSConfig()
 	assert.Error(t, err)
 	assert.Contains(t, err.Error(), "failed to parse CA certificate")
 }
@@ -1415,12 +1415,12 @@ func TestServer_BuildTLSConfig_InvalidClientCAContent(t *testing.T) {
 	cfg.TLS.KeyFile = keyFile
 	cfg.TLS.ClientCAs = []string{invalidClientCAFile}
 
-	server, err := New(cfg)
-	require.NoError(t, err)
-	require.NotNil(t, server)
-	defer func() { _ = server.Shutdown() }()
+	// Start-up refuses a client CA file that does not parse.
+	_, err = New(cfg)
+	var parseErr *ErrCertParse
+	require.ErrorAs(t, err, &parseErr)
 
-	_, err = server.buildTLSConfig()
+	_, err = newTLSTestServer(t, cfg).buildTLSConfig()
 	assert.Error(t, err)
 	assert.Contains(t, err.Error(), "failed to parse additional client CA certificate")
 }

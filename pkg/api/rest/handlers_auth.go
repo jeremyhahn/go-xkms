@@ -95,8 +95,10 @@ type PIVLoginOptions struct {
 	// TrustDomain is the SPIFFE trust domain the server pins; production
 	// hosts must set it. The exchange reads the login certificate's tenant
 	// with qrdb's TenantFromClientCert under this pin and looks the user up
-	// within that tenant only. Empty accepts a SPIFFE SAN from any trust
-	// domain, which qrdb reserves for tests and single-domain labs.
+	// within that tenant only. The tenant is a SPIFFE trust domain named by
+	// both the certificate's first OU and its spiffe://<tenant>/<kind>/<name>
+	// SAN, and no tenant may be this pin. Empty skips the pin, which qrdb
+	// reserves for tests.
 	TrustDomain string
 }
 
@@ -439,9 +441,9 @@ func (s *Server) handlePIVLogin(w http.ResponseWriter, r *http.Request) {
 	// tenant only, as go-qrdb's pkg/auth/mtls.go TenantFromClientCert
 	// requires of a composing host. These are the four steps of
 	// pkg/acme/admin/auth_mtls.go authenticateCertificate (go-xkms#1240).
-	// A certificate that names no tenant resolves to the system tenant; a
-	// tenant in a header or the body is never read.
-	tenantID, _, err := qrdbsdk.TenantFromClientCert(cert, s.pivLogin.TrustDomain)
+	// A certificate whose OU and SPIFFE SAN do not name the same tenant is
+	// refused; a tenant in a header or the body is never read.
+	tenantID, err := qrdbsdk.TenantFromClientCert(cert, s.pivLogin.TrustDomain)
 	if err != nil {
 		s.logger.Info("piv login refused on certificate tenant", "subject", cert.Subject.CommonName, "error", err)
 		if s.auditAuthDenyOrFail(w, r, cert.Subject.CommonName, "auth.login.piv", "certificate tenant refused") {

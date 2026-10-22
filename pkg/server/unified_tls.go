@@ -88,14 +88,14 @@ func (s *Server) buildUnifiedTLSConfig() (*tls.Config, error) {
 		provider.cert.Store(cert)
 	}
 
-	// Seed the client-CA pool from operator-supplied files when configured;
-	// the embedded CA's bundle replaces it after composition
-	// (upgradeUnifiedTLSCert).
-	primary := []string{}
-	if s.config.TLS.CAFile != "" {
-		primary = append(primary, s.config.TLS.CAFile)
+	// Seed the client-CA pool from operator-supplied files and the init
+	// ceremony root when present; the embedded CA's bundle joins it after
+	// composition (upgradeUnifiedTLSCert).
+	pool, err := s.configuredClientCAs()
+	if err != nil {
+		return nil, err
 	}
-	if pool, err := loadClientCAsUnion(primary, s.config.TLS.ClientCAs); err == nil && pool != nil {
+	if pool != nil {
 		provider.clientCAs.Store(pool)
 	}
 
@@ -196,11 +196,7 @@ func (s *Server) upgradeUnifiedTLSCert(bundle caBundleSource) error {
 // operator-configured client CA silently stopped verifying, even though
 // tls.client_cas still named that CA (go-xkms#794).
 func (s *Server) unifiedClientCAPool(bundle caBundleSource) (*x509.CertPool, error) {
-	primary := []string{}
-	if s.config.TLS.CAFile != "" {
-		primary = append(primary, s.config.TLS.CAFile)
-	}
-	configured, err := loadClientCAsUnion(primary, s.config.TLS.ClientCAs)
+	configured, err := s.configuredClientCAs()
 	if err != nil {
 		return nil, err
 	}

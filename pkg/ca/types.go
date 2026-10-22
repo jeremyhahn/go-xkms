@@ -358,7 +358,7 @@ type CertificateRequest struct {
 
 	// SPIFFETrustDomain, when non-empty alongside TenantID, instructs the CA to
 	// synthesize a tenant-scoped SPIFFE URI SAN of the form
-	// spiffe://<trust-domain>/tenant/<tenantID>/<kind>/<name> and append it to
+	// spiffe://<tenantID>/<kind>/<name> and append it to
 	// the issued certificate. This is symmetric with the CSR-sign path's
 	// SignOptions.SPIFFETrustDomain: it is how broker-issued (generate-and-
 	// distribute) client certificates carry their tenant binding for login-time
@@ -551,6 +551,12 @@ type SignOptions struct {
 	// options, OtherNames or a caller-supplied-SAN profile: ErrRawSubjectWithNames.
 	RawSubject []byte
 
+	// RawSubjectURIs are the only subject alternative names a RawSubject
+	// certificate carries, as uniformResourceIdentifier entries: the SPIFFE
+	// ID go-qrdb's ceremony fixes with SignCSROptions.URIs. They are valid
+	// only with RawSubject, and none may be nil: ErrInvalidRawSubjectURIs.
+	RawSubjectURIs []*url.URL
+
 	// SANS provides additional SANs to include beyond those in the CSR.
 	// Under a CallerSANProfile it is the only source of names: the CSR's own
 	// names are ignored, and every entry must parse (ErrInvalidSAN).
@@ -571,7 +577,7 @@ type SignOptions struct {
 
 	// SPIFFETrustDomain, when non-empty alongside TenantID, instructs the CA
 	// to synthesize a tenant-scoped SPIFFE URI SAN of the form
-	// spiffe://<trust-domain>/tenant/<tenantID>/<kind>/<name> and append it to
+	// spiffe://<tenantID>/<kind>/<name> and append it to
 	// the issued certificate. This is how broker-issued client certificates
 	// carry their tenant binding for login-time tenant derivation. The trust
 	// domain is operator-configured and supplied per issuance.

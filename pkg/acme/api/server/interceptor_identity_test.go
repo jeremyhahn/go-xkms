@@ -23,6 +23,7 @@ import (
 	"crypto/tls"
 	"crypto/x509"
 	"crypto/x509/pkix"
+	"encoding/asn1"
 	"math/big"
 	"net"
 	"net/url"
@@ -169,10 +170,16 @@ func signedClientCert(t *testing.T, commonName string, organizationalUnit []stri
 	require.NoError(t, err)
 	template := &x509.Certificate{
 		SerialNumber: big.NewInt(time.Now().UnixNano()),
-		Subject:      pkix.Name{CommonName: commonName, OrganizationalUnit: organizationalUnit},
+		Subject:      pkix.Name{CommonName: commonName},
 		NotBefore:    time.Now().Add(-time.Hour),
 		NotAfter:     time.Now().Add(time.Hour),
 		ExtKeyUsage:  []x509.ExtKeyUsage{x509.ExtKeyUsageClientAuth},
+	}
+	// Each OU is its own RDN, so the first stays first: OUs sharing one RDN
+	// are a DER SET, which encoding sorts.
+	for _, ou := range organizationalUnit {
+		template.Subject.ExtraNames = append(template.Subject.ExtraNames,
+			pkix.AttributeTypeAndValue{Type: asn1.ObjectIdentifier{2, 5, 4, 11}, Value: ou})
 	}
 	for _, raw := range uris {
 		u, err := url.Parse(raw)
@@ -216,7 +223,7 @@ func runInterceptor(t *testing.T, interceptor grpc.UnaryServerInterceptor, ctx c
 // bound on the context the handler sees.
 func TestUnaryMTLSIdentityInterceptor_RolesComeFromTheBoundUser(t *testing.T) {
 	store := &tenantUserStore{}
-	cert := signedClientCert(t, "grpc-client", []string{"tenant-a"})
+	cert := signedClientCert(t, "grpc-client", []string{"tenant-a"}, "spiffe://tenant-a/user/grpc-client")
 	store.bind("tenant-a", cert, auth.MTLSUser{
 		Username: "carol", TenantID: "tenant-a", Enabled: true, Roles: []string{"role-id-operator"},
 	})
@@ -236,7 +243,7 @@ func TestUnaryMTLSIdentityInterceptor_RolesComeFromTheBoundUser(t *testing.T) {
 func TestUnaryMTLSIdentityInterceptor_OUNamingARoleGrantsNoRole(t *testing.T) {
 	store := &tenantUserStore{}
 	cert := signedClientCert(t, "grpc-client", []string{"tenant-a", "Admin"},
-		"spiffe://"+testTrustDomain+"/tenant/tenant-a/user/grpc-client")
+		"spiffe://tenant-a/user/grpc-client")
 	store.bind("tenant-a", cert, auth.MTLSUser{Username: "erin", TenantID: "tenant-a", Enabled: true})
 
 	identity, tenantID := runInterceptor(t, UnaryMTLSIdentityInterceptor(newTestCertAuth(store), testLogger()), peerContextWithCert(cert))
@@ -252,8 +259,8 @@ func TestUnaryMTLSIdentityInterceptor_OUNamingARoleGrantsNoRole(t *testing.T) {
 // authorization interceptor.
 func TestUnaryMTLSIdentityInterceptor_RefusedCertificateGetsNoIdentity(t *testing.T) {
 	store := &tenantUserStore{}
-	unbound := signedClientCert(t, "stranger", []string{"tenant-a"})
-	crossTenant := signedClientCert(t, "mallory", []string{"tenant-a"})
+	unbound := signedClientCert(t, "stranger", []string{"tenant-a"}, "spiffe://tenant-a/user/stranger")
+	crossTenant := signedClientCert(t, "mallory", []string{"tenant-a"}, "spiffe://tenant-a/user/mallory")
 	store.bind("tenant-a", crossTenant, auth.MTLSUser{Username: "mallory", TenantID: "tenant-b", Enabled: true})
 	interceptor := UnaryMTLSIdentityInterceptor(newTestCertAuth(store), testLogger())
 

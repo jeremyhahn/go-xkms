@@ -61,6 +61,10 @@ func (f *fakeRBACClient) ListPermissions(_ context.Context, _ *qrdbtransport.Ide
 	return nil, nil
 }
 
+func (f *fakeRBACClient) ListOwnPermissions(ctx context.Context) ([]qrdbtransport.PermissionInfo, error) {
+	return f.ListPermissions(ctx, nil)
+}
+
 func discardLogger() *slog.Logger {
 	return slog.New(slog.NewTextHandler(io.Discard, nil))
 }

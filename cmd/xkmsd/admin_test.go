@@ -45,7 +45,8 @@ func newCaptureModuleRegistrar() (*qrdbsdk.ModuleHTTPRegistrar, *[]capturedModul
 		},
 		func(method, pattern string, h http.HandlerFunc) {
 			recs = append(recs, capturedModuleRoute{method: method, pattern: pattern, public: true, handler: h})
-		})
+		},
+		func(string, string, http.HandlerFunc) {})
 	return r, &recs
 }
 

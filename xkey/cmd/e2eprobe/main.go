@@ -34,6 +34,7 @@ import (
 	"encoding/pem"
 	"fmt"
 	"hash"
+	"io"
 	"log/slog"
 	"math/big"
 	"os"
@@ -122,53 +123,64 @@ func main() {
 	fatalIf(err, "load static key")
 	fmt.Println("OK   static public key:", base64.StdEncoding.EncodeToString(staticKey.PublicBytes()))
 
-	// Teardown is one ordered block rather than three defers, because defer
-	// LIFO gave Stop -> Close -> Destroy with no join in between: Stop does not
-	// wait for the receive loop, so the probe could free the key's protected
-	// pages while that loop was still decrypting through the session. The
-	// order that is actually correct is signal, unblock, join, release.
-	var (
-		tr     *pairing.TCPTransport
-		router *pairing.MessageRouter
-	)
-	defer func() {
-		if router != nil {
-			router.Stop()
-		}
-		if tr != nil {
-			if err := tr.Close(); err != nil {
-				logger.Warn("failed to close transport during teardown", "error", err)
-			}
-		}
-		if router != nil && !router.Join(probeShutdownTimeout) {
-			logger.Warn("message router did not exit within the shutdown window; " +
-				"retaining the static key rather than freeing pages it may still read")
-			// Surfaced, not just logged. A probe whose whole purpose is to
-			// verify the pairing path must not exit 0 over a shutdown it
-			// could not confirm — that is the same fail-open the components
-			// below it were fixed to stop reporting.
-			fmt.Fprintln(os.Stderr,
-				"FAIL message router did not exit within the shutdown window; "+
-					"the static key was retained")
-			probeExit = 1
-			return
-		}
-		staticKey.Destroy()
-	}()
-
-	tr, err = pairing.NewTCPTransport(&pairing.TCPTransportConfig{
+	tr, err := pairing.NewTCPTransport(&pairing.TCPTransportConfig{
 		Address: addr, ConnectTimeout: 10 * time.Second, OperationTimeout: 30 * time.Second,
 	})
 	fatalIf(err, "create transport")
 	fatalIf(tr.Connect(ctx), "tcp connect to "+addr)
 	fmt.Println("OK   tcp connected:", addr)
 
+	if !probe(ctx, tr, staticKey, logger, os.Stdout) {
+		probeExit = 1
+	}
+}
+
+// probe pairs with the phone over tr, runs the conformance families and
+// reports them to out. It takes ownership of tr and staticKey, and reports
+// whether every required step passed and teardown released the key.
+func probe(ctx context.Context, tr pairingproto.Transport, staticKey *bootstrap.NoiseStaticKey,
+	logger *slog.Logger, out io.Writer) (passed bool) {
+	c := &console{w: out}
+	// Teardown is one ordered block rather than three defers, because defer
+	// LIFO gave Stop -> Close -> Destroy with no join in between: Stop does not
+	// wait for the receive loop, so the probe could free the key's protected
+	// pages while that loop was still decrypting through the session. The
+	// order that is actually correct is signal, unblock, join, release.
+	var router *pairing.MessageRouter
+	defer func() {
+		if router != nil {
+			router.Stop()
+		}
+		if err := tr.Close(); err != nil {
+			logger.Warn("failed to close transport during teardown", "error", err)
+		}
+		if router != nil && !router.Join(probeShutdownTimeout) {
+			logger.Warn("message router did not exit within the shutdown window; " +
+				"retaining the static key rather than freeing pages it may still read")
+			// Surfaced, not just logged. A probe whose whole purpose is to
+			// verify the pairing path must not pass over a shutdown it
+			// could not confirm — that is the same fail-open the components
+			// below it were fixed to stop reporting.
+			c.printf("FAIL message router did not exit within the shutdown window; " +
+				"the static key was retained\n")
+			passed = false
+			return
+		}
+		staticKey.Destroy()
+	}()
+
 	session, err := bootstrap.NewNoiseSession(&bootstrap.NoiseSessionConfig{LocalStaticKey: staticKey, IsInitiator: true})
-	fatalIf(err, "create noise session")
-	fatalIf(pairingproto.PerformHandshake(ctx, &pairingproto.HandshakeConfig{
+	if err != nil {
+		c.printf("FAIL create noise session: %v\n", err)
+		return false
+	}
+	if err := pairingproto.PerformHandshake(ctx, &pairingproto.HandshakeConfig{
 		Transport: tr, Session: session, Logger: logger, LocalStaticPublicKey: staticKey.PublicBytes(),
-	}), "noise handshake")
-	fmt.Println("OK   noise handshake (identity exchange + XX)")
+	}); err != nil {
+		c.printf("FAIL noise handshake: %v\n", err)
+		return false
+	}
+	c.printf("OK   noise handshake (identity exchange + XX)\n")
 
 	router = pairing.NewMessageRouter(tr, session, noopHandler{}, logger)
 	router.Start()
@@ -182,45 +194,36 @@ func main() {
 		if resp.Error != nil {
 			return nil, &MessageError{Msg: fmt.Sprintf("rpc error %d: %s", resp.Error.Code, resp.Error.Message)}
 		}
-		out := map[string]json.RawMessage{}
-		if err := json.Unmarshal(resp.Result, &out); err != nil {
+		result := map[string]json.RawMessage{}
+		if err := json.Unmarshal(resp.Result, &result); err != nil {
 			// A malformed result must fail the step, not be silently
 			// treated as an empty (all fields missing) response: this
 			// probe exists to catch exactly this kind of wire deviation
 			// from the phone.
 			return nil, &MessageError{Msg: fmt.Sprintf("malformed rpc result for %s: %v", method, err)}
 		}
-		return out, nil
+		return result, nil
 	}
 
 	runID := fmt.Sprintf("%x", time.Now().UnixMilli())
+	conformance(p, runID, staticKey.PublicBytes())
+	return report(c, p.steps)
+}
 
+// conformance drives every method family against the paired phone, in the
+// order a real xkey session reaches them, recording one step per check.
+func conformance(p *prober, runID string, staticPublicKey []byte) {
 	// --- Pairing ---
 	p.requiredCall("pairing.confirm", "pairing.confirm", map[string]interface{}{
 		"deviceName":   "e2eprobe",
-		"publicKeyHex": hex.EncodeToString(staticKey.PublicBytes()),
+		"publicKeyHex": hex.EncodeToString(staticPublicKey),
 	})
 
 	// --- Base methods ---
 	p.requiredCall("ping", "ping", nil)
-	// Decode into the REAL pairing structs, not an ad-hoc map. A probe that
-	// hand-writes the JSON it expects proves only that the probe and the phone
-	// agree with each other — it cannot catch a field the Go contract renamed.
-	decodeInto := func(name, method string, params interface{}, target interface{}) {
-		resp, err := router.SendRequest(ctx, pairingproto.NewRequest(method, params))
-		if err != nil {
-			p.record(name, true, err, "")
-			return
-		}
-		if resp.Error != nil {
-			p.record(name, true, &MessageError{Msg: fmt.Sprintf("rpc error %d: %s", resp.Error.Code, resp.Error.Message)}, "")
-			return
-		}
-		p.record(name, true, json.Unmarshal(resp.Result, target), "")
-	}
 
 	var info pairingproto.GetInfoResult
-	decodeInto("getInfo", "getInfo", nil, &info)
+	decodeResult(p, "getInfo", "getInfo", nil, &info)
 	p.record("getInfo carries deviceName", true, requireNonEmpty("deviceName", info.DeviceName), "")
 	p.record("getInfo carries supportedAlgorithms", true,
 		requireNonZero("supportedAlgorithms", len(info.SupportedAlgorithms)), "")
@@ -228,7 +231,7 @@ func main() {
 		requireNonZero("maxCredentials", info.MaxCredentials), "")
 
 	var caps pairingproto.LocalGetCapabilitiesResult
-	decodeInto("local.getCapabilities", "local.getCapabilities", map[string]interface{}{}, &caps)
+	decodeResult(p, "local.getCapabilities", "local.getCapabilities", map[string]interface{}{}, &caps)
 	p.record("getCapabilities carries deviceName", true, requireNonEmpty("deviceName", caps.DeviceName), "")
 	p.record("getCapabilities carries supportedAlgorithms", true,
 		requireNonZero("supportedAlgorithms", len(caps.SupportedAlgorithms)), "")
@@ -394,8 +397,21 @@ func main() {
 
 	// --- Cleanup ---
 	_, _ = p.call("local.deleteKey", map[string]interface{}{"keyId": ecKeyID})
+}
 
-	report(p.steps)
+// decodeResult decodes a method's result into the real pairing struct, not
+// an ad-hoc map. A probe that hand-writes the JSON it expects proves only that
+// the probe and the phone agree with each other: it cannot catch a field the
+// Go contract renamed.
+func decodeResult(p *prober, name, method string, params, target interface{}) {
+	result, err := p.call(method, params)
+	if err == nil {
+		var encoded []byte
+		if encoded, err = json.Marshal(result); err == nil {
+			err = json.Unmarshal(encoded, target)
+		}
+	}
+	p.record(name, true, err, "")
 }
 
 // symRoundtrip generates an AES-256 key (hardware or software/exportable) and
@@ -768,8 +784,10 @@ func decodeB64(raw json.RawMessage) []byte {
 	return out
 }
 
-func report(steps []step) {
-	fmt.Println("\n=== E2E conformance results ===")
+// report writes every step's outcome to c and reports whether all required
+// steps passed and the report was written.
+func report(c *console, steps []step) bool {
+	c.printf("\n=== E2E conformance results ===\n")
 	failed := 0
 	for _, s := range steps {
 		mark := "PASS"
@@ -785,13 +803,27 @@ func report(steps []step) {
 		if !s.required {
 			req = " (optional)"
 		}
-		fmt.Printf("  [%s] %s%s %s\n", mark, s.name, req, s.detail)
+		c.printf("  [%s] %s%s %s\n", mark, s.name, req, s.detail)
 	}
 	if failed > 0 {
-		fmt.Printf("\nE2E FAILED: %d required step(s) failed\n", failed)
-		os.Exit(1)
+		c.printf("\nE2E FAILED: %d required step(s) failed\n", failed)
+		return false
 	}
-	fmt.Println("\nE2E PASSED: all required steps succeeded")
+	c.printf("\nE2E PASSED: all required steps succeeded\n")
+	return c.err == nil
+}
+
+// console writes the probe's progress lines, latching the first write error
+// so a report that could not be written fails the run instead of passing it.
+type console struct {
+	w   io.Writer
+	err error
+}
+
+func (c *console) printf(format string, args ...interface{}) {
+	if c.err == nil {
+		_, c.err = fmt.Fprintf(c.w, format, args...)
+	}
 }
 
 func fatalIf(err error, what string) {

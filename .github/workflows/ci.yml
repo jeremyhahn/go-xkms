@@ -70,8 +70,9 @@
 #
 #   docs_only   true when every changed path is docs/**, **/*.md or
 #               .changelog/** (see pr-scope.sh). Skips every Go-compiling
-#               job (build, build-raft, test, race, security, docker, the
-#               nested-module jobs) on both tiers -- a documentation change
+#               job (build, build-raft, test, race, security, docker,
+#               static-analysis, the nested-module jobs) on both tiers -- a
+#               documentation change
 #               cannot regress code no matter which tier would otherwise
 #               apply. `lint` and `arch-gates` are NOT skipped: `lint` is
 #               where the xkey agent-skill reference check lives
@@ -1167,6 +1168,8 @@ jobs:
     name: Static Analysis
     runs-on: ubuntu-latest
     timeout-minutes: 120  # #1587: ~2x 58m, slowest green (forge API, last 60 CI runs, 2026-10-17)
+    needs: [changes]
+    if: needs.changes.outputs.docs_only != 'true'
 
     steps:
       - name: Checkout code
@@ -2006,7 +2009,7 @@ jobs:
 
           check pr   changes             "${{ needs.changes.result }}"
           check pr   lint                "${{ needs.lint.result }}"
-          check pr   static-analysis     "${{ needs.static-analysis.result }}"
+          check pr   static-analysis     "${{ needs.static-analysis.result }}"     docs
           check pr   arch-gates          "${{ needs.arch-gates.result }}"
           check pr   build               "${{ needs.build.result }}"               docs
           check pr   nested-module-build "${{ needs.nested-module-build.result }}" docs

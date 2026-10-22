@@ -59,6 +59,10 @@ func (f *fakeRBACClient) ListPermissions(_ context.Context, _ *qrdbtransport.Ide
 	return nil, nil
 }
 
+func (f *fakeRBACClient) ListOwnPermissions(ctx context.Context) ([]qrdbtransport.PermissionInfo, error) {
+	return f.ListPermissions(ctx, nil)
+}
+
 func (f *fakeRBACClient) Last() (id *qrdbtransport.Identity, resource, action string, seen bool) {
 	f.mu.Lock()
 	defer f.mu.Unlock()

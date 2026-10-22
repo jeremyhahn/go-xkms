@@ -1234,6 +1234,7 @@ Usage: `xkey oath add [flags]`
 | Flag | Type | Default | Description |
 |---|---|---|---|
 | `--algorithm` | string | SHA1 | Hash algorithm: SHA1, SHA256, SHA512 |
+| `--backend` | string |  | Backend to store the credential in (default: backends.defaults.oath, else software) |
 | `--barrier-password-file` | string |  | Read barrier password from file (first line) |
 | `--barrier-password-stdin` | bool | false | Read the barrier password from standard input |
 | `--digits` | int | 6 | Number of digits (6, 7, or 8) |

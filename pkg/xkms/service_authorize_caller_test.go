@@ -56,6 +56,10 @@ func (r *recordingRBAC) ListPermissions(_ context.Context, _ *qrdbtransport.Iden
 	return nil, errGrantMissing
 }
 
+func (r *recordingRBAC) ListOwnPermissions(ctx context.Context) ([]qrdbtransport.PermissionInfo, error) {
+	return r.ListPermissions(ctx, nil)
+}
+
 // TestAuthorizeCaller_AsksTheAuthorizerForTheCaller proves the below-gate
 // check resolves the identity on ctx and the named permission, and refuses
 // what the authorizer refuses.

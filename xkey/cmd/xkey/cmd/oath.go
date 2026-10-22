@@ -25,6 +25,8 @@ import (
 	"time"
 
 	"github.com/jeremyhahn/go-enclave"
+	xkms "github.com/jeremyhahn/go-xkms/sdk/go"
+	"github.com/jeremyhahn/go-xkms/xkey/pkg/backendregistry"
 	"github.com/jeremyhahn/go-xkms/xkey/pkg/oath"
 	"github.com/jeremyhahn/go-xkms/xkey/pkg/qrscan"
 	"github.com/spf13/cobra"
@@ -134,7 +136,10 @@ Examples:
   xkey oath add --uri "otpauth://totp/GitHub:user@example.com?secret=JBSWY3DPEHPK3PXP&issuer=GitHub"
 
   # Override name when using URI
-  xkey oath add --uri "otpauth://totp/..." --name "My GitHub"`,
+  xkey oath add --uri "otpauth://totp/..." --name "My GitHub"
+
+  # Store the credential in a configured backend other than the default
+  echo JBSWY3DPEHPK3PXP | xkey oath add --name "VPN" --secret-stdin --backend token1`,
 	RunE: runOATHAdd,
 }
 
@@ -251,9 +256,14 @@ Examples:
 // An explicit --store value always selects the plain file at that path: the
 // operator asked for a specific file, so the barrier auto-detection does not
 // apply, matching how `xkey backup`'s --oath-store override behaves.
+//
+// Either way the result is an oath.CompositeStore with one store per
+// OATH-capable backend in the unified config (backendregistry.ConfiguredFor); the default
+// backend's store is the location described above, so credentials written
+// before multi-backend routing keep working.
 func openOATHStore(cmd *cobra.Command, storePath string) (oath.Store, error) {
 	if cmd.Flags().Changed("store") {
-		store, err := oath.NewFileStore(storePath)
+		store, err := openOATHStores(nil, storePath)
 		if err != nil {
 			return nil, &SentinelCauseError{Sentinel: ErrOATHStoreOpenFailed, Cause: err}
 		}
@@ -265,23 +275,26 @@ func openOATHStore(cmd *cobra.Command, storePath string) (oath.Store, error) {
 		return nil, &SentinelCauseError{Sentinel: ErrOATHStoreOpenFailed, Cause: err}
 	}
 
-	backend, opened, err := resolveSecretStoreBackend(cmd, dataDir, "OATH", slog.Default())
+	backend, _, err := resolveSecretStoreBackend(cmd, dataDir, "OATH", slog.Default())
 	if err != nil {
 		return nil, &SentinelCauseError{Sentinel: ErrOATHStoreOpenFailed, Cause: err}
 	}
-	if opened {
-		store, err := oath.NewBackendStore(backend, "oath/")
-		if err != nil {
-			return nil, &SentinelCauseError{Sentinel: ErrOATHStoreOpenFailed, Cause: err}
-		}
-		return store, nil
-	}
 
-	store, err := oath.NewFileStore(filepath.Join(dataDir, oathStoreFilename))
+	store, err := openOATHStores(backend, filepath.Join(dataDir, oathStoreFilename))
 	if err != nil {
 		return nil, &SentinelCauseError{Sentinel: ErrOATHStoreOpenFailed, Cause: err}
 	}
 	return store, nil
+}
+
+// openOATHStores opens the OATH store set, one partition per OATH-capable
+// backend in the unified config (backendregistry.ConfiguredFor): over
+// storage (the unsealed barrier) when it is non-nil, else as files beside
+// path. Every xkey command that reads or writes OATH credentials, backups
+// and the extension server included, opens them here.
+func openOATHStores(storage xkms.StorageBackend, path string) (*oath.CompositeStore, error) {
+	ids, defaultID := backendregistry.ConfiguredFor(loadedConfig, backendregistry.CapOATH)
+	return oath.OpenStores(storage, path, ids, defaultID)
 }
 
 // runOATHAdd executes the oath add command.
@@ -300,6 +313,7 @@ func runOATHAdd(cmd *cobra.Command, args []string) (err error) {
 	digits, _ := cmd.Flags().GetInt("digits")
 	period, _ := cmd.Flags().GetInt("period")
 	storePath, _ := cmd.Flags().GetString("store")
+	backendID, _ := cmd.Flags().GetString("backend")
 
 	store, err := openOATHStore(cmd, storePath)
 	if err != nil {
@@ -356,11 +370,14 @@ func runOATHAdd(cmd *cobra.Command, args []string) (err error) {
 		}
 	}
 
+	// An empty --backend leaves BackendID empty, so the store's default
+	// backend receives the credential.
+	cred.BackendID = backendID
 	if err := store.Add(cred); err != nil {
 		return &SentinelCauseError{Sentinel: ErrOATHAddFailed, Cause: err}
 	}
 
-	_, _ = fmt.Fprintf(out, "Added OATH credential: %s\n", cred.Name)
+	_, _ = fmt.Fprintf(out, "Added OATH credential: %s (backend %s)\n", cred.Name, cred.BackendID)
 	return nil
 }
 
@@ -403,6 +420,7 @@ func runOATHList(cmd *cobra.Command, args []string) (err error) {
 		if cred.Issuer != "" {
 			_, _ = fmt.Fprintf(out, "  Issuer:    %s\n", cred.Issuer)
 		}
+		_, _ = fmt.Fprintf(out, "  Backend:   %s\n", cred.BackendID)
 		_, _ = fmt.Fprintf(out, "  Type:      %s\n", strings.ToUpper(cred.Type))
 		_, _ = fmt.Fprintf(out, "  Algorithm: %s\n", cred.Algorithm)
 		_, _ = fmt.Fprintf(out, "  Digits:    %d\n", cred.Digits)
@@ -759,6 +777,7 @@ func init() {
 	oathAddCmd.Flags().Int("digits", 6, "Number of digits (6, 7, or 8)")
 	oathAddCmd.Flags().Int("period", 30, "Time period in seconds (TOTP only)")
 	oathAddCmd.Flags().String("store", "", "Path to credential store (default: ~/.xkey/data/oath.json)")
+	oathAddCmd.Flags().String("backend", "", "Backend to store the credential in (default: backends.defaults.oath, else software)")
 	addBarrierPasswordFlags(oathAddCmd)
 
 	// oath list flags

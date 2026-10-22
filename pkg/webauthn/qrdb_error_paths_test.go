@@ -158,6 +158,14 @@ func (f *faultyUserClient) DisableUser(ctx context.Context, id uint64) error {
 	return f.inner.DisableUser(ctx, id)
 }
 
+func (f *faultyUserClient) SuspendUser(ctx context.Context, id uint64) error {
+	return f.inner.SuspendUser(ctx, id)
+}
+
+func (f *faultyUserClient) UnsuspendUser(ctx context.Context, id uint64) error {
+	return f.inner.UnsuspendUser(ctx, id)
+}
+
 func (f *faultyUserClient) RemoveCertBinding(ctx context.Context, userID uint64, thumbprint string) (*qrdbtransport.User, error) {
 	return f.inner.RemoveCertBinding(ctx, userID, thumbprint)
 }

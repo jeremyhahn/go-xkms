@@ -134,7 +134,7 @@ func TestPIVLogin_TenantUserLogsInWithinTheCertificateTenant(t *testing.T) {
 	f := newPIVTenantFixture(t)
 	server, auditLog := pivTenantServer(t, f.store)
 
-	cert := pivTenantCert(t, f.tenantKey, "spiffe://"+pivTenantTrustDomain+"/tenant/acme/user/admin")
+	cert := pivTenantCert(t, f.tenantKey, "spiffe://acme/user/admin", "acme")
 	w := doAuthRequest(t, server, pivRequest(cert))
 
 	require.Equal(t, http.StatusOK, w.Code, w.Body.String())
@@ -142,21 +142,22 @@ func TestPIVLogin_TenantUserLogsInWithinTheCertificateTenant(t *testing.T) {
 	assert.Equal(t, audit.OutcomeAllow, lastPIVAudit(t, auditLog).Outcome)
 }
 
-func TestPIVLogin_TenantFromSubjectOU(t *testing.T) {
+func TestPIVLogin_OUWithoutSPIFFESANIsRefused(t *testing.T) {
 	f := newPIVTenantFixture(t)
-	server, _ := pivTenantServer(t, f.store)
+	server, auditLog := pivTenantServer(t, f.store)
 
 	w := doAuthRequest(t, server, pivRequest(pivTenantCert(t, f.tenantKey, "", "acme")))
 
-	require.Equal(t, http.StatusOK, w.Code, w.Body.String())
-	assert.Equal(t, []string{"acme"}, f.store.lookedUp)
+	assert.Equal(t, http.StatusUnauthorized, w.Code)
+	assert.Empty(t, f.store.lookedUp, "an OU alone names no tenant, so nothing is looked up")
+	assert.Equal(t, "certificate tenant refused", lastPIVAudit(t, auditLog).Details["reason"])
 }
 
 func TestPIVLogin_CertificateNamingAnotherTenantIsRefused(t *testing.T) {
 	f := newPIVTenantFixture(t)
 	server, auditLog := pivTenantServer(t, f.store)
 
-	cert := pivTenantCert(t, f.tenantKey, "spiffe://"+pivTenantTrustDomain+"/tenant/globex/user/admin")
+	cert := pivTenantCert(t, f.tenantKey, "spiffe://globex/user/admin", "globex")
 	w := doAuthRequest(t, server, pivRequest(cert))
 
 	assert.Equal(t, http.StatusUnauthorized, w.Code)
@@ -167,11 +168,11 @@ func TestPIVLogin_CertificateNamingAnotherTenantIsRefused(t *testing.T) {
 	assert.Equal(t, "no user binding", last.Details["reason"])
 }
 
-func TestPIVLogin_ForeignTrustDomainIsRefused(t *testing.T) {
+func TestPIVLogin_OUAndSANNamingDifferentTenantsIsRefused(t *testing.T) {
 	f := newPIVTenantFixture(t)
 	server, auditLog := pivTenantServer(t, f.store)
 
-	cert := pivTenantCert(t, f.tenantKey, "spiffe://other.example.com/tenant/acme/user/admin", "acme")
+	cert := pivTenantCert(t, f.tenantKey, "spiffe://globex/user/admin", "acme")
 	w := doAuthRequest(t, server, pivRequest(cert))
 
 	assert.Equal(t, http.StatusUnauthorized, w.Code)
@@ -196,7 +197,7 @@ func TestPIVLogin_ResolvedUserInAnotherTenantIsRefused(t *testing.T) {
 	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
 	require.NoError(t, err)
 
-	cert := pivTenantCert(t, key, "spiffe://"+pivTenantTrustDomain+"/tenant/acme/user/admin")
+	cert := pivTenantCert(t, key, "spiffe://acme/user/admin", "acme")
 	w := doAuthRequest(t, server, pivRequest(cert))
 
 	assert.Equal(t, http.StatusUnauthorized, w.Code)
@@ -206,11 +207,12 @@ func TestPIVLogin_ResolvedUserInAnotherTenantIsRefused(t *testing.T) {
 	assert.Equal(t, "certificate tenant mismatch", last.Details["reason"])
 }
 
-func TestPIVLogin_CertificateWithoutTenantUsesSystemTenant(t *testing.T) {
+func TestPIVLogin_SystemIdentityLogsInWithinTheSystemTenant(t *testing.T) {
 	f := newPIVTenantFixture(t)
 	server, _ := pivTenantServer(t, f.store)
 
-	w := doAuthRequest(t, server, pivRequest(pivTenantCert(t, f.systemKey, "")))
+	cert := pivTenantCert(t, f.systemKey, "spiffe://"+qrdbsdk.SystemTenantID+"/user/root", qrdbsdk.SystemTenantID)
+	w := doAuthRequest(t, server, pivRequest(cert))
 
 	require.Equal(t, http.StatusOK, w.Code, w.Body.String())
 	assert.Equal(t, []string{qrdbsdk.SystemTenantID}, f.store.lookedUp)
@@ -220,10 +222,10 @@ func TestPIVLogin_IgnoresTenantInHeaderAndBody(t *testing.T) {
 	f := newPIVTenantFixture(t)
 	server, _ := pivTenantServer(t, f.store)
 
-	// The acme user's key with a certificate naming no tenant: a request
-	// that names acme in a header and the body is still looked up in the
-	// system tenant, so it finds no binding.
-	req := pivRequest(pivTenantCert(t, f.tenantKey, ""))
+	// The acme user's key with a certificate naming the system tenant: a
+	// request that names acme in a header and the body is still looked up in
+	// the system tenant, so it finds no binding.
+	req := pivRequest(pivTenantCert(t, f.tenantKey, "spiffe://"+qrdbsdk.SystemTenantID+"/user/admin", qrdbsdk.SystemTenantID))
 	req.Header.Set("X-Tenant-ID", "acme")
 	req.Header.Set("X-Tenant", "acme")
 	req.Header.Set("Content-Type", "application/json")

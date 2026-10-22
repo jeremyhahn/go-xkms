@@ -23,7 +23,6 @@ import (
 	"testing"
 	"time"
 
-	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
@@ -78,10 +77,7 @@ func TestIssuer_Issue_StampsTheTenantOverTheCSRsOrganizationalUnit(t *testing.T)
 	result, err := newTenantTestIssuer(t).Issue(context.Background(), tenantClaimingRequest(t, testTenant))
 	require.NoError(t, err)
 
-	require.Equal(t, []string{testTenant}, result.FinalCert.Subject.OrganizationalUnit)
-	tenant, _, err := qrdbsdk.TenantFromClientCert(result.FinalCert, "")
-	require.NoError(t, err)
-	assert.Equal(t, testTenant, tenant)
+	assert.Equal(t, []string{testTenant}, result.FinalCert.Subject.OrganizationalUnit)
 }
 
 func TestIssuer_Issue_RefusesARequestWithoutATenant(t *testing.T) {

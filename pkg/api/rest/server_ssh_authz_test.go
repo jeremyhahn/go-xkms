@@ -83,6 +83,10 @@ func (c *grantSetRBACClient) ListPermissions(_ context.Context, _ *qrdbtransport
 	return nil, errors.New("not implemented")
 }
 
+func (c *grantSetRBACClient) ListOwnPermissions(ctx context.Context) ([]qrdbtransport.PermissionInfo, error) {
+	return c.ListPermissions(ctx, nil)
+}
+
 // serveSSHRouteWithGrants sends one request to a full REST server whose
 // caller holds exactly held, and returns the status and the RBAC client.
 func serveSSHRouteWithGrants(t *testing.T, method, path string, held ...string) (int, *grantSetRBACClient) {

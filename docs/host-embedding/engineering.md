@@ -92,9 +92,10 @@ On xkmsd the unified server's TLS certificate is the operator's
 `cert_file`/`key_file` or, without them, a bootstrap certificate that
 `upgradeUnifiedTLSCert` replaces once the CA composes
 (`pkg/server/unified_tls.go:159`). The upgrade also widens the mTLS client-CA
-pool to the configured `tls.ca_file`/`tls.client_cas` plus the CA's own bundle
-(`unifiedClientCAPool`, `unified_tls.go:198`), so a client anchored by either
-stays accepted (go-xkms#794).
+pool to the configured `tls.ca_file`/`tls.client_cas` and the `xkmsd init`
+ceremony root (`configuredClientCAs`, `pkg/server/tls_pool.go:86`) plus the
+CA's own bundle (`unifiedClientCAPool`, `unified_tls.go:198`), so a client
+anchored by either stays accepted (go-xkms#794).
 
 ### Self-built REST surface audit (`pkg/api/rest`)
 

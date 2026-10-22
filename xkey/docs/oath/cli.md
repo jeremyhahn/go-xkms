@@ -18,6 +18,7 @@ Every flag below is read from `cmd/xkey/cmd/oath.go`'s `init()` and matches
 | `--digits` | `6` | `6`, `7`, or `8` |
 | `--period` | `30` | TOTP time step, seconds |
 | `--store` | `~/.xkey/data/oath.json` (resolved via `resolveDataDir`, go-xkms#929) | Store path. An explicit value always selects a plain file, bypassing the barrier — see [architecture.md](architecture.md) |
+| `--backend` | `backends.defaults.oath`, else `software` | Backend to store the credential in; any OATH-capable backend in the unified config (`software`, or a `backends.local` entry of category `software` or `pkcs11`). An unknown name is refused with an error naming it |
 | `--barrier-password-stdin` | `false` | Read the barrier password from standard input, when the default store resolves to the barrier |
 | `--barrier-password-file` | | Read the barrier password from a file (first line) |
 
@@ -33,7 +34,10 @@ XKEY_OATH_SECRET=JBSWY3DPEHPK3PXP xkey oath add --name "AWS" --algorithm SHA256 
 echo JBSWY3DPEHPK3PXP | xkey oath add --name "MyService" --secret-stdin --type hotp
 xkey oath add --uri "otpauth://totp/GitHub:user@example.com?secret=JBSWY3DPEHPK3PXP&issuer=GitHub"
 xkey oath add --uri "otpauth://totp/..." --name "My GitHub"
+echo JBSWY3DPEHPK3PXP | xkey oath add --name "VPN" --secret-stdin --backend token1
 ```
+
+A credential name or ID must be unique across every backend.
 
 ## `xkey oath list` (alias `ls`)
 
@@ -43,6 +47,8 @@ xkey oath add --uri "otpauth://totp/..." --name "My GitHub"
 | `--secrets` | `false` | Show secret keys |
 | `--uri` | `false` | Show `otpauth://` URIs |
 | `--barrier-password-stdin`, `--barrier-password-file` | | Same as `add` |
+
+Lists credentials from every backend; each entry shows its `Backend:`.
 
 ```bash
 xkey oath list
@@ -115,11 +121,18 @@ otpauth://TYPE/LABEL?secret=...&issuer=...&algorithm=...&digits=...&period=...
 Shared by every verb above (`openOATHStore`, `cmd/xkey/cmd/oath.go`):
 
 1. `--store` explicitly set (`cmd.Flags().Changed("store")`) → plain
-   `FileStore` at that path, no barrier involved.
+   files at that path (`software`) and beside it, named after it
+   (`--store /tmp/a.json` → `/tmp/a@<id>.json`), no barrier involved. A
+   store file name containing `@` is refused.
 2. Otherwise, the default data directory's barrier-or-file decision
    (`resolveSecretStoreBackend`, shared with `xkey backup` and `xkey oath
    sync`) — see [architecture.md](architecture.md) and
    [seal/cli.md](../seal/cli.md).
+
+Either way the store holds one partition per OATH-capable backend, so
+`list`, `generate` and `remove` reach every backend. `xkey backup` and
+`xkey extension serve` open the same partitions, and a restored credential
+returns to the backend it was backed up from.
 
 ## Phone sync
 

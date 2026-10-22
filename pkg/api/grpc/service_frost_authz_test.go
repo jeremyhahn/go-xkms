@@ -145,6 +145,10 @@ func (c *pairAllowingRBAC) ListPermissions(_ context.Context, _ *qrdbtransport.I
 	return nil, nil
 }
 
+func (c *pairAllowingRBAC) ListOwnPermissions(ctx context.Context) ([]qrdbtransport.PermissionInfo, error) {
+	return c.ListPermissions(ctx, nil)
+}
+
 // errFrostPermissionDenied is the refusal the test RBAC client returns.
 var errFrostPermissionDenied = errors.New("denied by test")
 

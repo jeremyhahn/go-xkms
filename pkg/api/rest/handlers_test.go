@@ -30,6 +30,7 @@ import (
 	"math/big"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"strings"
 	"testing"
 	"time"
@@ -134,11 +135,15 @@ func generateTestCertificate(t *testing.T, key crypto.PrivateKey) *x509.Certific
 		t.Fatalf("unsupported key type: %T", key)
 	}
 
+	// A system-tenant identity in go-qrdb's form: the first OU and the
+	// SPIFFE SAN's trust domain both name the system tenant.
 	template := &x509.Certificate{
 		SerialNumber: big.NewInt(1),
 		Subject: pkix.Name{
-			CommonName: "test-cert",
+			CommonName:         "test-cert",
+			OrganizationalUnit: []string{qrdbsdk.SystemTenantID},
 		},
+		URIs:      []*url.URL{{Scheme: "spiffe", Host: qrdbsdk.SystemTenantID, Path: "/user/test-cert"}},
 		NotBefore: time.Now(),
 		NotAfter:  time.Now().Add(24 * time.Hour),
 		KeyUsage:  x509.KeyUsageDigitalSignature,

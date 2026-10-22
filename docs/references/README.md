@@ -36,5 +36,11 @@ implementation work does not depend on the publisher's site staying up.
 - `pkcs11-3.2.html`, `pkcs11-v3.0-to-v3.2-changes.md` — OASIS PKCS#11
   Cryptographic Token Interface, version 3.2, and its changes from 3.0, the
   API `pkg/pkcs11` and `cmd/pkcs11-module` implement.
+- `c2sp-tlog-checkpoint.md`, `c2sp-signed-note.md` — C2SP "Transparency Log
+  Checkpoints" and "Note" (signed note), copied verbatim from
+  https://github.com/C2SP/C2SP at commit
+  `e5746a0bcda86413310119abb2972e6f78c374fa`. The transparency-log
+  checkpoint format and its signature key-type encoding (SPEC row
+  `transparency-log`).
 - `rats/` — the IETF RATS, EAT, CoRIM, CMW, CSR-attestation and ACME
   device-attestation specifications, indexed in [rats/README.md](rats/README.md).

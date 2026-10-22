@@ -3383,15 +3383,11 @@ func (s *Server) buildTLSConfig() (*tls.Config, error) {
 		}
 	}
 
-	// Build the unified ClientCAs pool from the primary CA file plus
-	// any additional client CAs configured via TLS.ClientCAs. The helper
-	// canonicalizes each path and deduplicates by filename so the same
-	// CA referenced from multiple sources is loaded only once.
-	primary := []string{}
-	if s.config.TLS.CAFile != "" {
-		primary = append(primary, s.config.TLS.CAFile)
-	}
-	clientPool, err := loadClientCAsUnion(primary, s.config.TLS.ClientCAs)
+	// Build the ClientCAs pool from the primary CA file, any additional
+	// client CAs configured via TLS.ClientCAs, and the init ceremony root
+	// (configuredClientCAs). Each path is canonicalized and deduplicated so
+	// the same CA referenced from multiple sources is loaded only once.
+	clientPool, err := s.configuredClientCAs()
 	if err != nil {
 		// Map the helper's typed error into the legacy CA parse sentinel
 		// when the failure is the primary CAFile entry to keep callers

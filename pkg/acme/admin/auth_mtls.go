@@ -73,8 +73,8 @@ type MTLSAuthHandler struct {
 }
 
 // NewMTLSAuthHandler wraps an *auth.MTLSAuthenticator as an AuthHandler for
-// the admin surface. trustDomain is the SPIFFE trust domain the deployment's
-// CA issues under; a SPIFFE SAN from any other trust domain is refused.
+// the admin surface. trustDomain is the cluster SPIFFE trust domain the
+// deployment's CA issues under; no tenant may be it.
 func NewMTLSAuthHandler(authenticator *auth.MTLSAuthenticator, trustDomain string) *MTLSAuthHandler {
 	return &MTLSAuthHandler{authenticator: authenticator, trustDomain: trustDomain}
 }
@@ -123,8 +123,9 @@ func (h *MTLSAuthHandler) AuthenticateGRPC(ctx context.Context, cert *x509.Certi
 
 // authenticateCertificate is the admin surface's one certificate-to-identity
 // rule. The tenant is the one qrdbsdk.TenantFromClientCert names under the
-// deployment's trust domain, normalized as qrdb's middleware does (a
-// certificate naming no tenant is the system tenant's). lookup then resolves
+// deployment's trust domain -- the trust domain of its
+// spiffe://<tenant>/<kind>/<name> SAN, which its first Subject OU must also
+// name -- normalized as qrdb's middleware does. lookup then resolves
 // the go-qrdb user the certificate binds to within that tenant alone, and the
 // caller's roles are that user's roles: nothing in the certificate, its OU
 // least of all, is ever read as a role.
@@ -139,7 +140,7 @@ func (h *MTLSAuthHandler) authenticateCertificate(ctx context.Context, cert *x50
 	if h == nil || h.authenticator == nil {
 		return nil, ErrAuthenticatorNotConfigured
 	}
-	tenantID, _, err := qrdbsdk.TenantFromClientCert(cert, h.trustDomain)
+	tenantID, err := qrdbsdk.TenantFromClientCert(cert, h.trustDomain)
 	if err != nil {
 		return nil, err
 	}

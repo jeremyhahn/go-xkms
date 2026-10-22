@@ -14,7 +14,14 @@ echo JBSWY3DPEHPK3PXP | xkey oath add --name "GitHub" --secret-stdin --issuer "G
 
 # Or paste the otpauth:// URI from the QR code
 xkey oath add --uri "otpauth://totp/GitHub:user@example.com?secret=JBSWY3DPEHPK3PXP&issuer=GitHub"
+
+# Keep a credential with a configured backend (e.g. a PKCS#11 token "token1")
+echo JBSWY3DPEHPK3PXP | xkey oath add --name "VPN" --secret-stdin --backend token1
 ```
+
+Without `--backend`, a credential goes to `backends.defaults.oath` in the
+config, else `software`. `list`, `generate` and `remove` work across every
+backend.
 
 ## Generate a code
 

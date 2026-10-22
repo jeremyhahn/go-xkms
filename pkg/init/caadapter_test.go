@@ -33,7 +33,7 @@ func TestCAAdapter_CABundle_Error(t *testing.T) {
 		mockCA:      newMockCA(t),
 		caBundleErr: errors.New("bundle unavailable"),
 	}
-	adapter := NewCAAdapter(errCA, "")
+	adapter := NewCAAdapter(errCA, "xkms.example.com")
 
 	_, err := adapter.CABundle()
 	assert.Error(t, err)
@@ -43,14 +43,14 @@ func TestCAAdapter_CACertificate_Error(t *testing.T) {
 		mockCA:    newMockCA(t),
 		caCertErr: errors.New("cert unavailable"),
 	}
-	adapter := NewCAAdapter(errCA, "")
+	adapter := NewCAAdapter(errCA, "xkms.example.com")
 
 	_, err := adapter.CACertificate(t.Context())
 	assert.Error(t, err)
 }
 func TestCAAdapter_CACertificate_ReturnsCACertificate(t *testing.T) {
 	base := newMockCA(t)
-	adapter := NewCAAdapter(base, "")
+	adapter := NewCAAdapter(base, "xkms.example.com")
 
 	got, err := adapter.CACertificate(t.Context())
 	require.NoError(t, err)
@@ -59,7 +59,7 @@ func TestCAAdapter_CACertificate_ReturnsCACertificate(t *testing.T) {
 	assert.True(t, got.Equal(want))
 }
 func TestCAAdapter_CACertificate_CanceledContext(t *testing.T) {
-	adapter := NewCAAdapter(newMockCA(t), "")
+	adapter := NewCAAdapter(newMockCA(t), "xkms.example.com")
 	ctx, cancel := context.WithCancel(t.Context())
 	cancel()
 
@@ -69,7 +69,7 @@ func TestCAAdapter_CACertificate_CanceledContext(t *testing.T) {
 func TestCAAdapter_IssueCertificate_EmptySANsNotMapped(t *testing.T) {
 	base := newMockCA(t)
 	sanCA := &mockCAWithSANs{mockCA: base}
-	adapter := NewCAAdapter(sanCA, "")
+	adapter := NewCAAdapter(sanCA, "xkms.example.com")
 
 	req := &qrdbsdk.IssueCertRequest{
 		PublicKey:  newTestPublicKey(t),
@@ -78,14 +78,17 @@ func TestCAAdapter_IssueCertificate_EmptySANsNotMapped(t *testing.T) {
 
 	_, err := adapter.IssueCertificate(context.Background(), req)
 	require.NoError(t, err)
-	assert.Nil(t, sanCA.lastSANs)
+	require.NotNil(t, sanCA.lastSANs)
+	assert.Empty(t, sanCA.lastSANs.DNS, "no requested SAN maps to a DNS name")
+	assert.Equal(t, []string{"spiffe://" + qrdbsdk.SystemTenantID + "/user/no-sans"}, sanCA.lastSANs.URIs,
+		"the system SPIFFE ID is the only SAN")
 }
 func TestCAAdapter_IssueCertificate_Error(t *testing.T) {
 	errCA := &errorCA{
 		mockCA:       newMockCA(t),
 		issueCertErr: errors.New("issuance failed"),
 	}
-	adapter := NewCAAdapter(errCA, "")
+	adapter := NewCAAdapter(errCA, "xkms.example.com")
 
 	req := &qrdbsdk.IssueCertRequest{
 		PublicKey:    newTestPublicKey(t),
@@ -99,7 +102,7 @@ func TestCAAdapter_IssueCertificate_Error(t *testing.T) {
 func TestCAAdapter_IssueCertificate_SANsPassedThrough(t *testing.T) {
 	base := newMockCA(t)
 	sanCA := &mockCAWithSANs{mockCA: base}
-	adapter := NewCAAdapter(sanCA, "")
+	adapter := NewCAAdapter(sanCA, "xkms.example.com")
 
 	req := &qrdbsdk.IssueCertRequest{
 		PublicKey:  newTestPublicKey(t),
@@ -133,7 +136,7 @@ func TestCAAdapter_IssueCertificate_SPIFFEStampFailurePropagates(t *testing.T) {
 }
 func TestCAAdapter_IssueCertificate_WithoutSANs(t *testing.T) {
 	mCA := newMockCA(t)
-	adapter := NewCAAdapter(mCA, "")
+	adapter := NewCAAdapter(mCA, "xkms.example.com")
 
 	req := &qrdbsdk.IssueCertRequest{
 		PublicKey:    newTestPublicKey(t),
@@ -148,7 +151,7 @@ func TestCAAdapter_IssueCertificate_WithoutSANs(t *testing.T) {
 }
 func TestCAAdapter_IssueCertificate_WithSANs(t *testing.T) {
 	mCA := newMockCA(t)
-	adapter := NewCAAdapter(mCA, "")
+	adapter := NewCAAdapter(mCA, "xkms.example.com")
 
 	publicKey := newTestPublicKey(t)
 	req := &qrdbsdk.IssueCertRequest{
@@ -169,7 +172,7 @@ func TestCAAdapter_IssueCertificate_WithSANs(t *testing.T) {
 // TestCAAdapter_IssueCertificate_RequiresPublicKey verifies that a request
 // naming no key is refused rather than certifying a key the CA invents.
 func TestCAAdapter_IssueCertificate_RequiresPublicKey(t *testing.T) {
-	adapter := NewCAAdapter(newMockCA(t), "")
+	adapter := NewCAAdapter(newMockCA(t), "xkms.example.com")
 
 	issued, err := adapter.IssueCertificate(context.Background(), &qrdbsdk.IssueCertRequest{CommonName: "keyless"})
 	assert.ErrorIs(t, err, ca.ErrPublicKeyRequired)
@@ -189,7 +192,7 @@ func TestCAAdapter_SignCSR_Error(t *testing.T) {
 		mockCA:     newMockCA(t),
 		signCSRErr: errors.New("sign failed"),
 	}
-	adapter := NewCAAdapter(errCA, "")
+	adapter := NewCAAdapter(errCA, "xkms.example.com")
 
 	csrPEM, _ := generateTestCSR(t, "test-cn")
 	_, err := adapter.SignCSR(context.Background(), csrPEM, &qrdbsdk.SignCSROptions{
@@ -211,13 +214,22 @@ func TestCAAdapter_SignCSR_IssuesTheHolderSubject(t *testing.T) {
 	adapter := NewCAAdapter(rec, "xkms.example.com")
 
 	csrPEM, _ := generateTestCSR(t, "requested-cn")
-	opts := &qrdbsdk.SignCSROptions{TenantID: "acme", Username: "officer-1", Profile: "security-officer", ValidityDays: 365}
+	opts := &qrdbsdk.SignCSROptions{
+		TenantID:     "acme",
+		Username:     "officer-1",
+		TrustDomain:  "xkms.example.com",
+		Profile:      "security-officer",
+		ValidityDays: 365,
+	}
 	_, err := adapter.SignCSR(context.Background(), csrPEM, opts)
 	require.NoError(t, err)
 	require.NotNil(t, rec.lastSignOpts)
 	want, err := opts.RawSubject()
 	require.NoError(t, err)
 	assert.Equal(t, want, rec.lastSignOpts.RawSubject)
+	wantURIs, err := opts.URIs()
+	require.NoError(t, err)
+	assert.Equal(t, wantURIs, rec.lastSignOpts.RawSubjectURIs, "the tenant's SPIFFE ID is the only SAN")
 	assert.Empty(t, rec.lastSignOpts.SPIFFETrustDomain)
 	assert.Equal(t, "acme", rec.lastSignOpts.TenantID, "the tenant the CA stamps as the first OU")
 	assert.Nil(t, rec.lastSignOpts.SANS)
@@ -228,12 +240,14 @@ func TestCAAdapter_SignCSR_IssuesTheHolderSubject(t *testing.T) {
 // and tenant there is nothing to name, and nothing is signed.
 func TestCAAdapter_SignCSR_RefusesAnUnnamedHolder(t *testing.T) {
 	rec := newRecordingCA(t)
-	adapter := NewCAAdapter(rec, "")
+	adapter := NewCAAdapter(rec, "xkms.example.com")
 	csrPEM, _ := generateTestCSR(t, "requested-cn")
 
 	_, err := adapter.SignCSR(context.Background(), csrPEM, nil)
 	require.ErrorIs(t, err, ErrNilSignOptions)
 	_, err = adapter.SignCSR(context.Background(), csrPEM, &qrdbsdk.SignCSROptions{Username: "officer-1"})
 	require.Error(t, err, "no tenant")
+	_, err = adapter.SignCSR(context.Background(), csrPEM, &qrdbsdk.SignCSROptions{TenantID: "acme", Username: "officer-1"})
+	require.Error(t, err, "no trust domain, so no SPIFFE ID")
 	assert.Nil(t, rec.lastSignOpts, "nothing reached the CA")
 }

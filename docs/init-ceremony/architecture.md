@@ -21,7 +21,8 @@ interface (`CALifecycle`, `CAIssuer`, `CATrustChain`) wrapped by
 `executeBootstrap`, `bootstrapDurableAdmin`):
 
 1. Build a software-backed bootstrap CA and write its public artifacts
-   (`ca-bundle.pem`, `spki-pin.txt`) to the data directory.
+   (`ca-bundle.pem`, `spki-pin.txt`) to the data directory
+   (`persistCABundle`, `cmd/xkmsd/init_ceremony.go:376`).
 2. Open the durable qrdb node from the same storage and seal configuration
    `xkmsd run` resolves, and unseal it.
 3. Run `RunFirstBoot` (system tenant, built-in roles, the administrator and its
@@ -31,6 +32,16 @@ interface (`CALifecycle`, `CAIssuer`, `CATrustChain`) wrapped by
    `pkcs11`, `fido2`), persisting each through the node's user auth-factor
    store.
 5. Close the node so `xkmsd run` can reopen the same Pebble directory.
+
+The bootstrap CA's key is discarded when init exits, but its root stays in
+`ca-bundle.pem`, and the administrator certificate chains to it. `xkmsd run`
+adds `<datastore.path>/ca-bundle.pem` to the client CAs it advertises
+(`configuredClientCAs`, `pkg/server/tls_pool.go:86`), because a `crypto/tls`
+client with a static certificate list, as every SDK transport and `xkmsctl`
+use, withholds a certificate whose issuer the server does not list
+(go-xkms#794). The root grants nothing: the administrator is still identified
+by SPKI thumbprint (`userIdentity`, `pkg/auth/mtls.go:226`). A missing bundle
+is skipped; a bundle that does not parse fails start-up with `*ErrCertParse`.
 
 Rejected alternatives:
 
