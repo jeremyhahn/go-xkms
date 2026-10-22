@@ -2630,6 +2630,12 @@ func (s *Server) buildRESTConfig() (*rest.Config, error) {
 		SSHClient:       s.ensureSSHClient(),
 	}
 
+	// The tenant lifecycle routes are always authorized against qrdb's RBAC,
+	// whatever EnableRBAC says (go-xkms#794).
+	if s.qrdbClient != nil {
+		restConfig.TenantAuthorizer = auth.NewAuthorizer(s.qrdbClient.RBAC())
+	}
+
 	// Embedded web UI: serve the compiled SPA (installed via SetUIAssets)
 	// unless the configuration explicitly disables it. The prefix and root
 	// redirect come from the ui config section; empty prefix selects the

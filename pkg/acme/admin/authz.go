@@ -193,21 +193,6 @@ func (g *PermissionGate) WrapTenant(resource, action string, cross qrdbsdk.Permi
 	})
 }
 
-// WrapTenantList gates a tenant listing by the reach of the call. A
-// tenant-scoped caller's listing holds only its own tenant, so it needs the
-// self-scoped resource:action grant; a system-tenant caller's listing reaches
-// every tenant, so it needs the cross-scope grant (go-xkms#1557).
-func (g *PermissionGate) WrapTenantList(resource, action string, cross qrdbsdk.Permission, next http.HandlerFunc) http.Handler {
-	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		identity := auth.GetIdentity(r.Context())
-		if identity != nil && !auth.IsCrossTenant(identity) {
-			g.serve(w, r, resource, action, writePermissionDenied, next)
-			return
-		}
-		g.serve(w, r, qrdbsdk.PermissionResource(cross), qrdbsdk.PermissionAction(cross), writePermissionDenied, next)
-	})
-}
-
 // writePermissionDenied writes the single response for a caller that may not
 // perform an operation: the gate's denial, and the system-tenant refusal of
 // ListAuditLogs that must read exactly like it.

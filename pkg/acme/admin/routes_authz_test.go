@@ -65,19 +65,12 @@ var adminRouteCases = []routeCase{
 // tenantRouteCases covers every route registered by
 // TenantHandlers.RegisterRoutes.
 var tenantRouteCases = []routeCase{
-	crossRouteCase("list tenants", http.MethodGet, "/api/v1/tenants", qrdbsdk.PermissionTenantsListCross, qrdbsdk.RoleNameUser),
-	crossRouteCase("create tenant", http.MethodPost, "/api/v1/tenants", qrdbsdk.PermissionTenantsCreateCross, qrdbsdk.RoleNameAuditor),
-	crossRouteCase("get tenant", http.MethodGet, "/api/v1/tenants/t1", qrdbsdk.PermissionTenantsReadCross, qrdbsdk.RoleNameUser),
 	crossRouteCase("update tenant", http.MethodPut, "/api/v1/tenants/t1", qrdbsdk.PermissionTenantsUpdateCross, qrdbsdk.RoleNameAuditor),
-	crossRouteCase("delete tenant", http.MethodDelete, "/api/v1/tenants/t1", qrdbsdk.PermissionTenantsDeleteCross, qrdbsdk.RoleNameOperator),
 	crossRouteCase("update tenant status", http.MethodPut, "/api/v1/tenants/t1/status", qrdbsdk.PermissionTenantsUpdateCross, qrdbsdk.RoleNameOperator),
 
 	// The same lifecycle routes called by a tenant-scoped caller on its own
 	// tenant need only the self-scoped grant (go-xkms#1225).
-	{"list own tenant", http.MethodGet, "/api/v1/tenants", auth.ResourceTenants, auth.ActionList, qrdbsdk.RoleNameAdmin, qrdbsdk.RoleNameUser},
-	{"get own tenant", http.MethodGet, "/api/v1/tenants/t1", auth.ResourceTenants, auth.ActionRead, qrdbsdk.RoleNameAuditor, qrdbsdk.RoleNameUser},
 	{"update own tenant", http.MethodPut, "/api/v1/tenants/t1", auth.ResourceTenants, auth.ActionUpdate, qrdbsdk.RoleNameAdmin, qrdbsdk.RoleNameAuditor},
-	{"delete own tenant", http.MethodDelete, "/api/v1/tenants/t1", auth.ResourceTenants, auth.ActionDelete, qrdbsdk.RoleNameAdmin, qrdbsdk.RoleNameOperator},
 	{"update own tenant status", http.MethodPut, "/api/v1/tenants/t1/status", auth.ResourceTenants, auth.ActionUpdate, qrdbsdk.RoleNameAdmin, qrdbsdk.RoleNameOperator},
 
 	{"create tenant root CA", http.MethodPost, "/api/v1/tenants/t1/root-ca", auth.ResourceCA, auth.ActionCreate, qrdbsdk.RoleNameAdmin, qrdbsdk.RoleNameOperator},
@@ -154,11 +147,7 @@ func requestWithRoles(tc routeCase, roles ...string) *http.Request {
 // qrdb's cross-scope tenant grants, and reading the audit trail (refused
 // outside the system tenant), which records no tenant to confine it by.
 var platformOnlyRoutes = map[string]bool{
-	"list tenants":         true,
-	"create tenant":        true,
-	"get tenant":           true,
 	"update tenant":        true,
-	"delete tenant":        true,
 	"update tenant status": true,
 	"list audit logs":      true,
 }
@@ -332,9 +321,7 @@ func TestACMEAdminRoutes_UnknownPathIsNotFound(t *testing.T) {
 // (go-xkms#1225).
 func TestACMEAdminRoutes_TenantCallerForeignTenantIsNotFound(t *testing.T) {
 	foreign := []routeCase{
-		crossRouteCase("get foreign tenant", http.MethodGet, "/api/v1/tenants/t2", qrdbsdk.PermissionTenantsReadCross, ""),
 		crossRouteCase("update foreign tenant", http.MethodPut, "/api/v1/tenants/t2", qrdbsdk.PermissionTenantsUpdateCross, ""),
-		crossRouteCase("delete foreign tenant", http.MethodDelete, "/api/v1/tenants/t2", qrdbsdk.PermissionTenantsDeleteCross, ""),
 		crossRouteCase("update foreign tenant status", http.MethodPut, "/api/v1/tenants/t2/status", qrdbsdk.PermissionTenantsUpdateCross, ""),
 	}
 	for _, tc := range foreign {

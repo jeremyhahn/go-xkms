@@ -382,71 +382,6 @@ func TestOpenAPIResponses_Tenants(t *testing.T) {
 
 	tenant := &TenantInfo{ID: "acme-corp", Name: "ACME Corporation", Status: "active"}
 
-	t.Run("list_success", func(t *testing.T) {
-		h := NewTenantHandlers(&mockTenantService{
-			listTenantsFunc: func(context.Context, ListTenantsRequest) ([]*TenantInfo, *Pagination, error) {
-				return []*TenantInfo{tenant}, &Pagination{Page: 1, PerPage: 20, Total: 1}, nil
-			},
-		}, logger)
-		req := httptest.NewRequest(http.MethodGet, "/api/v1/tenants", nil)
-		w := httptest.NewRecorder()
-		h.ListTenants(w, req)
-		require.Equal(t, http.StatusOK, w.Code)
-		requireResponseMatchesSpec(t, router, http.MethodGet, "/api/v1/tenants", w)
-	})
-
-	t.Run("create_success", func(t *testing.T) {
-		h := NewTenantHandlers(&mockTenantService{
-			createTenantFunc: func(context.Context, CreateTenantRequest) (*TenantInfo, error) { return tenant, nil },
-		}, logger)
-		req := httptest.NewRequest(http.MethodPost, "/api/v1/tenants",
-			bytes.NewBufferString(`{"id":"acme-corp","name":"ACME Corporation"}`))
-		w := httptest.NewRecorder()
-		h.CreateTenant(w, req)
-		require.Equal(t, http.StatusCreated, w.Code)
-		requireResponseMatchesSpec(t, router, http.MethodPost, "/api/v1/tenants", w)
-	})
-
-	t.Run("create_conflict", func(t *testing.T) {
-		h := NewTenantHandlers(&mockTenantService{
-			createTenantFunc: func(context.Context, CreateTenantRequest) (*TenantInfo, error) {
-				return nil, ErrTenantAlreadyExists
-			},
-		}, logger)
-		req := httptest.NewRequest(http.MethodPost, "/api/v1/tenants",
-			bytes.NewBufferString(`{"id":"acme-corp","name":"ACME Corporation"}`))
-		w := httptest.NewRecorder()
-		h.CreateTenant(w, req)
-		require.Equal(t, http.StatusConflict, w.Code)
-		requireResponseMatchesSpec(t, router, http.MethodPost, "/api/v1/tenants", w)
-	})
-
-	t.Run("get_success", func(t *testing.T) {
-		h := NewTenantHandlers(&mockTenantService{
-			getTenantFunc: func(context.Context, string) (*TenantInfo, error) { return tenant, nil },
-		}, logger)
-		req := httptest.NewRequest(http.MethodGet, "/api/v1/tenants/acme-corp", nil)
-		req = mux.SetURLVars(req, map[string]string{"id": "acme-corp"})
-		req = addUserToRequest(req, createAdminUser("acme-corp"))
-		w := httptest.NewRecorder()
-		h.GetTenant(w, req)
-		require.Equal(t, http.StatusOK, w.Code)
-		requireResponseMatchesSpec(t, router, http.MethodGet, "/api/v1/tenants/acme-corp", w)
-	})
-
-	t.Run("get_not_found", func(t *testing.T) {
-		h := NewTenantHandlers(&mockTenantService{
-			getTenantFunc: func(context.Context, string) (*TenantInfo, error) { return nil, ErrTenantNotFound },
-		}, logger)
-		req := httptest.NewRequest(http.MethodGet, "/api/v1/tenants/missing", nil)
-		req = mux.SetURLVars(req, map[string]string{"id": "missing"})
-		req = addUserToRequest(req, createAdminUser("missing"))
-		w := httptest.NewRecorder()
-		h.GetTenant(w, req)
-		require.Equal(t, http.StatusNotFound, w.Code)
-		requireResponseMatchesSpec(t, router, http.MethodGet, "/api/v1/tenants/missing", w)
-	})
-
 	t.Run("update_success", func(t *testing.T) {
 		h := NewTenantHandlers(&mockTenantService{
 			updateTenantFunc: func(context.Context, string, UpdateTenantRequest) (*TenantInfo, error) { return tenant, nil },
@@ -458,19 +393,6 @@ func TestOpenAPIResponses_Tenants(t *testing.T) {
 		h.UpdateTenant(w, req)
 		require.Equal(t, http.StatusOK, w.Code)
 		requireResponseMatchesSpec(t, router, http.MethodPut, "/api/v1/tenants/acme-corp", w)
-	})
-
-	t.Run("delete_success", func(t *testing.T) {
-		h := NewTenantHandlers(&mockTenantService{
-			deleteTenantFunc: func(context.Context, string) error { return nil },
-		}, logger)
-		req := httptest.NewRequest(http.MethodDelete, "/api/v1/tenants/acme-corp", nil)
-		req = mux.SetURLVars(req, map[string]string{"id": "acme-corp"})
-		req = addUserToRequest(req, createAdminUser("acme-corp"))
-		w := httptest.NewRecorder()
-		h.DeleteTenant(w, req)
-		require.Equal(t, http.StatusOK, w.Code)
-		requireResponseMatchesSpec(t, router, http.MethodDelete, "/api/v1/tenants/acme-corp", w)
 	})
 
 	t.Run("status_update_success", func(t *testing.T) {

@@ -14,6 +14,7 @@ import type {
   AccountInfo,
   OrderInfo,
   TenantInfo,
+  TenantListResponse,
   TenantCAStatusInfo,
   TenantRootCAInfo,
   TenantIntCAInfo,
@@ -83,14 +84,21 @@ export const adminApi = {
   // =========================================================================
   // Tenants  (/api/v1/tenants/*)
   // =========================================================================
+  // Create, list, get and delete are the core xkms tenant routes: the
+  // collection keeps its trailing slash, pages by page_size, and a single
+  // tenant comes wrapped as {tenant: ...}.
   listTenants: (params?: { page?: number; per_page?: number; status?: string }) =>
-    apiClient.get<ApiResponse<TenantInfo[]>>('/api/v1/tenants', params as Record<string, unknown>),
+    apiClient.get<TenantListResponse>('/api/v1/tenants/', {
+      page: params?.page,
+      page_size: params?.per_page,
+      status: params?.status,
+    }),
 
-  getTenant: (id: string) =>
-    apiClient.get<TenantInfo>(`/api/v1/tenants/${id}`),
+  getTenant: async (id: string) =>
+    (await apiClient.get<{ tenant: TenantInfo }>(`/api/v1/tenants/${id}`)).tenant,
 
-  createTenant: (req: CreateTenantRequest) =>
-    apiClient.post<TenantInfo>('/api/v1/tenants', req),
+  createTenant: async (req: CreateTenantRequest) =>
+    (await apiClient.post<{ tenant: TenantInfo }>('/api/v1/tenants/', req)).tenant,
 
   updateTenant: (id: string, req: UpdateTenantRequest) =>
     apiClient.put<TenantInfo>(`/api/v1/tenants/${id}`, req),

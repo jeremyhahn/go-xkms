@@ -599,11 +599,11 @@ func TestTenantHandlers_ForeignTenantAnswersNotFound(t *testing.T) {
 		return rec
 	}
 
-	missing := serve(http.MethodGet, "/api/v1/tenants/no-such-tenant")
+	missing := serve(http.MethodGet, "/api/v1/tenants/no-such-tenant/ca-status")
 	require.Equal(t, http.StatusNotFound, missing.Code)
 
 	for _, tc := range []struct{ method, path string }{
-		{http.MethodDelete, "/api/v1/tenants/" + boundTenantB},
+		{http.MethodPut, "/api/v1/tenants/" + boundTenantB},
 		{http.MethodPut, "/api/v1/tenants/" + boundTenantB + "/status"},
 		{http.MethodPut, "/api/v1/tenants/" + boundTenantB + "/users/" + userBID},
 		{http.MethodDelete, "/api/v1/tenants/" + boundTenantB + "/roles/" + f.roleB.ID},

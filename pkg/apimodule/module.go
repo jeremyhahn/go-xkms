@@ -415,7 +415,7 @@ func NewModule(resolve ServiceResolver, opts ...Option) (*Module, error) {
 	}
 	// Contribute the module's permission set into qrdb's role-grant
 	// registry before the embedded node seeds roles (module_grants.go).
-	registerRoleGrants()
+	RegisterRoleGrants()
 	return m, nil
 }
 

@@ -22,6 +22,7 @@ import (
 	"testing"
 
 	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
+	qrdbnode "github.com/jeremyhahn/go-qrdb/sdk/go/node"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -88,6 +89,32 @@ func TestRunFirstBoot_Idempotent(t *testing.T) {
 	require.NoError(t, err)
 	require.NotNil(t, second)
 	assert.False(t, second.AdminCreated, "a node whose administrator already exists must be a no-op")
+}
+
+// TestRunFirstBoot_SeedsTheModuleRoleGrants proves the first boot `xkmsd init`
+// runs on its bare node seeds the built-in roles with the xkms module's role
+// grants, the definition `xkmsd run` seeds after mounting the module. A seed
+// without them leaves an admin role that run's first boot refuses as
+// "role: name already exists: admin" (go-xkms#794).
+func TestRunFirstBoot_SeedsTheModuleRoleGrants(t *testing.T) {
+	cfg := standaloneUnsealedNode(t)
+	node, _, err := embeddednode.OpenEmbeddedNode(context.Background(), embeddednode.EmbeddedNodeOptions{
+		Config: cfg,
+		Logger: embeddedNodeTestLogger(),
+	})
+	require.NoError(t, err)
+	defer func() { _ = node.Close() }()
+
+	moduleGrant := qrdbsdk.Permission("keys:update")
+	granted := false
+	swapFirstBootInitialize(t, func(context.Context, *qrdbnode.Node, qrdbsdk.FirstBootDependencies) (*qrdbsdk.FirstBootResult, error) {
+		granted = qrdbsdk.HasPermissionRoleGrant(qrdbsdk.PermissionRoleAdmin, moduleGrant)
+		return &qrdbsdk.FirstBootResult{}, nil
+	})
+
+	_, err = RunFirstBoot(context.Background(), node, FirstBootParams{Logger: embeddedNodeTestLogger()})
+	require.NoError(t, err)
+	assert.True(t, granted, "first boot must seed the admin role with the module's %s grant", moduleGrant)
 }
 
 // TestRunFirstBoot_NoServicesAvailable proves that a node exposing no

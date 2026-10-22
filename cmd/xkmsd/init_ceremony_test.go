@@ -258,6 +258,37 @@ func TestExecuteBootstrap_NodeConfigRequired(t *testing.T) {
 	}
 }
 
+// TestExecuteBootstrap_AuthEnabledResolvesAdmin opens the durable node with
+// authentication on, as a deployed xkmsd does: the embedded client refuses a
+// bare context, so the admin-user lookup and the mtls factor write succeed
+// only when they run as the node's service principal (#794).
+func TestExecuteBootstrap_AuthEnabledResolvesAdmin(t *testing.T) {
+	dataDir := t.TempDir()
+	nodeCfg := testNodeConfig(dataDir)
+	nodeCfg.Auth.Enabled = true
+	plan, err := qrdbsdk.NewAdminEnrollmentPlan([]qrdbsdk.AdminFactor{qrdbsdk.FactorMTLS})
+	if err != nil {
+		t.Fatalf("NewAdminEnrollmentPlan: %v", err)
+	}
+	env := &ceremonyEnv{
+		logger:         silentLogger(),
+		hostname:       "test.example.com",
+		dataDir:        dataDir,
+		nodeCfg:        nodeCfg,
+		enrollmentPlan: plan,
+	}
+
+	if _, err := executeBootstrap(context.Background(), env); err != nil {
+		t.Fatalf("executeBootstrap: %v", err)
+	}
+	if env.adminUserID == 0 {
+		t.Error("expected the administrator's durable user ID to be resolved")
+	}
+	if len(env.enrolledFactors) == 0 {
+		t.Error("expected the mtls factor to be enrolled and persisted")
+	}
+}
+
 // =============================================================================
 // persistCABundle / persistSPKIPin
 // =============================================================================

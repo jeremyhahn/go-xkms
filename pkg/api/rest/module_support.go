@@ -42,6 +42,14 @@ func (s *Server) BindRoute(spec RouteSpec) http.Handler {
 	// the legacy router's (registerRoutes).
 	h := BodyLimitMiddleware(spec.bodyLimit())(spec.Handler(s))
 
+	// A tenant lifecycle route's decision depends on the tenant it targets
+	// (own tenant, or another one under a cross permission), which the
+	// router's flat resource:action check cannot express; the module mounts
+	// it identity-gated and TenantGate renders it here (go-xkms#794).
+	if spec.Auth == RouteAuthTenant {
+		h = s.tenantGate.Require(spec)(h)
+	}
+
 	// Authentication is NOT applied here: on the unified server go-qrdb's
 	// middleware authenticates every non-public route — its own mTLS chain
 	// first, then the module's fallback (Server.AuthenticateHTTP, the

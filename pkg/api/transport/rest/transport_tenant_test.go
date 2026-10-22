@@ -318,13 +318,11 @@ func TestTransport_DeleteTenant_NotFound(t *testing.T) {
 // "/api/v1/tenants/" (with a trailing slash, permIf("POST", "/tenants/",
 // ...) / permIf("GET", "/tenants/", ...)), consistently with every other
 // collection-root route in that file ("/custodian/groups/", "/shares/",
-// "/passwords/"). On xkmsd's real unified listener with the ACME admin
-// plane enabled, something else registers the exact, no-trailing-slash
-// "/api/v1/tenants" (cmd/xkmsd/admin.go's adminAPIPrefixes,
-// pkg/apimodule/admin_module.go), and that exact match answers instead of
-// this client's request ever reaching the tenant handler's redirect target
-// — silently, because both handlers return 200 with a JSON body, just
-// shaped differently.
+// "/passwords/"). Any exact match registered at the bare "/api/v1/tenants"
+// answers a no-slash request before the slash redirect can reach the tenant
+// handler — silently, when it too returns 200 with a differently-shaped
+// JSON body, as the ACME admin plane's tenant surface once did on xkmsd's
+// unified listener.
 //
 // newTenantTestTransport's own server (above) cannot reproduce this: it
 // mounts the tenant routes with chi's Route("/api/v1/tenants", ...)
@@ -344,7 +342,7 @@ func TestCreateTenant_CollectionRootRequiresTrailingSlash(t *testing.T) {
 	})
 
 	// Decoy: an unrelated handler claiming the exact, slash-less collection
-	// path, the way the ACME admin plane's own "/api/v1/tenants" does in
+	// path, the way the ACME admin plane's own "/api/v1/tenants" once did in
 	// production. If CreateTenant ever regresses to the no-slash request
 	// path, this is what would answer, and the test fails on the response
 	// shape, not a connection error.

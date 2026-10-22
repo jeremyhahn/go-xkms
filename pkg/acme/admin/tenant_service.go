@@ -40,6 +40,7 @@ import (
 	"github.com/jeremyhahn/go-xkms/pkg/acme/entities"
 	caerrors "github.com/jeremyhahn/go-xkms/pkg/acme/errors"
 	"github.com/jeremyhahn/go-xkms/pkg/acme/storage"
+	"github.com/jeremyhahn/go-xkms/pkg/api/transport"
 	"github.com/jeremyhahn/go-xkms/pkg/auth"
 	"github.com/jeremyhahn/go-xkms/pkg/ca"
 	xkmssdk "github.com/jeremyhahn/go-xkms/sdk/go"
@@ -229,23 +230,11 @@ func (s *TenantAwareAdminService) createTenantQRDB(ctx context.Context, req Crea
 		return nil, caerrors.StorageFailureError("admin: failed to create tenant: %s", err)
 	}
 
-	now := time.Now()
-	tenant := &entities.Tenant{
-		ID:        qt.ID,
-		Name:      qt.Name,
-		Status:    entities.TenantStatusActive,
-		CreatedAt: now,
-		UpdatedAt: now,
-	}
-	if req.Settings != nil {
-		tenant.Settings = tenantSettingsInfoToEntity(req.Settings)
-	}
-	if s.tenantDAO != nil {
-		if err := s.tenantDAO.Save(ctx, tenant); err != nil {
-			s.logger.Warn("failed to save tenant linkage record",
-				slog.String("tenant_id", req.ID),
-				slog.String("error", err.Error()))
-		}
+	tenant := newTenantEntity(qt.ID, qt.Name, req.Settings)
+	if err := s.saveTenantEntity(ctx, tenant); err != nil {
+		s.logger.Warn("failed to save tenant linkage record",
+			slog.String("tenant_id", req.ID),
+			slog.String("error", err.Error()))
 	}
 
 	s.logger.Info("tenant created",
@@ -253,6 +242,140 @@ func (s *TenantAwareAdminService) createTenantQRDB(ctx context.Context, req Crea
 		slog.String("name", req.Name))
 
 	return tenantEntityToInfo(tenant), nil
+}
+
+// newTenantEntity returns the local linkage record of a tenant just created
+// in go-qrdb: active, with the given issuance settings.
+func newTenantEntity(id, name string, settings *TenantSettingsInfo) *entities.Tenant {
+	now := time.Now()
+	tenant := &entities.Tenant{
+		ID:        id,
+		Name:      name,
+		Status:    entities.TenantStatusActive,
+		CreatedAt: now,
+		UpdatedAt: now,
+	}
+	if settings != nil {
+		tenant.Settings = tenantSettingsInfoToEntity(settings)
+	}
+	return tenant
+}
+
+// saveTenantEntity stores a local linkage record; without a tenant DAO there
+// is nothing to store.
+func (s *TenantAwareAdminService) saveTenantEntity(ctx context.Context, tenant *entities.Tenant) error {
+	if s.tenantDAO == nil {
+		return nil
+	}
+	return s.tenantDAO.Save(ctx, tenant)
+}
+
+// CreateTenantRecord saves the CA record of a tenant the core tenant service
+// has just created in go-qrdb: active, with the given issuance settings.
+// With CreateTenantRecord, TenantRecord, ReleaseTenant and DeleteTenantRecord
+// the service is the xkms.TenantRecords the core /api/v1/tenants routes
+// compose.
+func (s *TenantAwareAdminService) CreateTenantRecord(ctx context.Context, id, name string, settings *TenantSettingsInfo) error {
+	return s.saveTenantEntity(ctx, newTenantEntity(id, name, settings))
+}
+
+// TenantRecord returns the CA record kept for tenantID, or nil when there is
+// none. A soft-deleted tenant's record is returned with its deleted status;
+// the caller decides how a deleted tenant reads.
+func (s *TenantAwareAdminService) TenantRecord(ctx context.Context, tenantID string) (*transport.TenantRecord, error) {
+	if s.tenantDAO == nil {
+		return nil, nil
+	}
+	local, err := s.tenantDAO.Get(ctx, entities.StringToEntityID(tenantID))
+	if err != nil {
+		if isNotFoundError(err) {
+			return nil, nil
+		}
+		return nil, caerrors.StorageFailureError("admin: failed to load tenant record: %s", err)
+	}
+	info := tenantEntityToInfo(local)
+	return &transport.TenantRecord{
+		Status:                  info.Status,
+		RootCA:                  info.RootCA,
+		IntermediateCAs:         info.IntermediateCAs,
+		DefaultIntermediateCAID: info.DefaultIntermediateCAID,
+		Settings:                info.Settings,
+		CreatedBy:               info.CreatedBy,
+	}, nil
+}
+
+// ReleaseTenant removes what the CA keeps for tenantID outside its record,
+// ahead of the tenant's deletion: the tenant's non-system RBAC roles, its
+// cached CAs and the CA data in KV storage. Each removal is best-effort and
+// logged when it fails, so one stuck key does not keep the tenant alive.
+func (s *TenantAwareAdminService) ReleaseTenant(ctx context.Context, tenantID string) {
+	// Clean up RBAC roles for the tenant, within the tenant: qrdb resolves a
+	// role within the context's tenant.
+	if s.qrdbService != nil && s.qrdbService.Roles() != nil {
+		tenantCtx := qrdbsdk.ContextWithTenant(ctx, tenantID)
+		roles, err := s.qrdbService.Roles().ListRoles(tenantCtx, &db.ListRolesRequest{TenantID: tenantID})
+		if err == nil && roles != nil {
+			for _, role := range roles.Roles {
+				if !role.System {
+					if err := s.qrdbService.Roles().DeleteRole(tenantCtx, role.ID); err != nil {
+						s.logger.Warn("failed to delete tenant RBAC role",
+							slog.String("tenant_id", tenantID),
+							slog.String("role_id", role.ID),
+							slog.String("error", err.Error()))
+					}
+				}
+			}
+		}
+	}
+
+	// Clean up tenant CAs from cache
+	s.mu.Lock()
+	delete(s.tenantCAs, tenantID)
+	s.mu.Unlock()
+
+	// Clean up tenant CA data from KV storage
+	if s.qrdbService != nil && s.qrdbService.KV() != nil {
+		// Delete CA metadata stored in KV
+		caPrefix := fmt.Sprintf("tenants/%s/cas/", tenantID)
+		keys, err := s.qrdbService.KV().List(ctx, caPrefix)
+		if err == nil {
+			for _, key := range keys {
+				if err := s.qrdbService.KV().Delete(ctx, key); err != nil {
+					s.logger.Warn("failed to delete tenant CA data",
+						slog.String("key", key),
+						slog.String("error", err.Error()))
+				}
+			}
+		}
+
+		// Delete default CA setting
+		defaultCAKey := fmt.Sprintf("tenants/%s/default_intermediate_ca", tenantID)
+		if err := s.qrdbService.KV().Delete(ctx, defaultCAKey); err != nil {
+			s.logger.Warn("failed to delete tenant default CA setting",
+				slog.String("tenant_id", tenantID),
+				slog.String("key", defaultCAKey),
+				slog.String("error", err.Error()))
+		}
+	}
+}
+
+// DeleteTenantRecord removes the CA record of a tenant already deleted from
+// go-qrdb. A tenant without a record has nothing to remove.
+func (s *TenantAwareAdminService) DeleteTenantRecord(ctx context.Context, tenantID string) error {
+	if s.tenantDAO == nil {
+		return nil
+	}
+	tenant, err := s.tenantDAO.Get(ctx, entities.StringToEntityID(tenantID))
+	if err != nil {
+		if isNotFoundError(err) {
+			return nil
+		}
+		return caerrors.StorageFailureError("admin: failed to load tenant record for deletion: %s", err)
+	}
+	if err := s.tenantDAO.Delete(ctx, tenant); err != nil {
+		return caerrors.StorageFailureError("admin: failed to delete tenant record: %s", err)
+	}
+	return nil
 }
 
 // GetTenant retrieves a tenant by ID, delegating existence to qrdb and
@@ -436,54 +559,7 @@ func (s *TenantAwareAdminService) DeleteTenant(ctx context.Context, tenantID str
 		return caerrors.StorageFailureError("admin: failed to check tenant existence: %s", err)
 	}
 
-	// Clean up RBAC roles for the tenant, within the tenant: qrdb resolves a
-	// role within the context's tenant.
-	if s.qrdbService != nil && s.qrdbService.Roles() != nil {
-		tenantCtx := qrdbsdk.ContextWithTenant(ctx, tenantID)
-		roles, err := s.qrdbService.Roles().ListRoles(tenantCtx, &db.ListRolesRequest{TenantID: tenantID})
-		if err == nil && roles != nil {
-			for _, role := range roles.Roles {
-				if !role.System {
-					if err := s.qrdbService.Roles().DeleteRole(tenantCtx, role.ID); err != nil {
-						s.logger.Warn("failed to delete tenant RBAC role",
-							slog.String("tenant_id", tenantID),
-							slog.String("role_id", role.ID),
-							slog.String("error", err.Error()))
-					}
-				}
-			}
-		}
-	}
-
-	// Clean up tenant CAs from cache
-	s.mu.Lock()
-	delete(s.tenantCAs, tenantID)
-	s.mu.Unlock()
-
-	// Clean up tenant CA data from KV storage
-	if s.qrdbService != nil && s.qrdbService.KV() != nil {
-		// Delete CA metadata stored in KV
-		caPrefix := fmt.Sprintf("tenants/%s/cas/", tenantID)
-		keys, err := s.qrdbService.KV().List(ctx, caPrefix)
-		if err == nil {
-			for _, key := range keys {
-				if err := s.qrdbService.KV().Delete(ctx, key); err != nil {
-					s.logger.Warn("failed to delete tenant CA data",
-						slog.String("key", key),
-						slog.String("error", err.Error()))
-				}
-			}
-		}
-
-		// Delete default CA setting
-		defaultCAKey := fmt.Sprintf("tenants/%s/default_intermediate_ca", tenantID)
-		if err := s.qrdbService.KV().Delete(ctx, defaultCAKey); err != nil {
-			s.logger.Warn("failed to delete tenant default CA setting",
-				slog.String("tenant_id", tenantID),
-				slog.String("key", defaultCAKey),
-				slog.String("error", err.Error()))
-		}
-	}
+	s.ReleaseTenant(ctx, tenantID)
 
 	// Canonical deletion: hard delete of the tenant's identity record in qrdb.
 	if err := s.tenantSvc.DeleteTenant(ctx, tenantID); err != nil {
@@ -495,17 +571,9 @@ func (s *TenantAwareAdminService) DeleteTenant(ctx context.Context, tenantID str
 
 	// Remove the local linkage row (best-effort: the tenant is already gone
 	// from qrdb at this point regardless of whether this succeeds).
-	if s.tenantDAO != nil {
-		tenant, err := s.tenantDAO.Get(ctx, entities.StringToEntityID(tenantID))
-		if err != nil {
-			if !isNotFoundError(err) {
-				s.logger.Warn("failed to load tenant linkage record for deletion",
-					slog.String("tenant_id", tenantID), slog.String("error", err.Error()))
-			}
-		} else if err := s.tenantDAO.Delete(ctx, tenant); err != nil {
-			s.logger.Warn("failed to delete tenant linkage record",
-				slog.String("tenant_id", tenantID), slog.String("error", err.Error()))
-		}
+	if err := s.DeleteTenantRecord(ctx, tenantID); err != nil {
+		s.logger.Warn("failed to delete tenant linkage record",
+			slog.String("tenant_id", tenantID), slog.String("error", err.Error()))
 	}
 
 	s.logger.Info("tenant deleted", slog.String("id", tenantID))

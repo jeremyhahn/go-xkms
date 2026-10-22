@@ -1181,3 +1181,40 @@ func TestTransport_Request_AllEndpoints(t *testing.T) {
 		})
 	}
 }
+
+// TestTransport_Request_TenantListQuery proves the tenant list reaches the
+// core collection with its pagination as the query, and that a request the
+// query cannot be built from fails before anything is sent.
+func TestTransport_Request_TenantListQuery(t *testing.T) {
+	t.Parallel()
+
+	socketPath := filepath.Join(t.TempDir(), "test.sock")
+	got := make(chan string, 1)
+	handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/api/v1/tenants/" {
+			got <- r.URL.RequestURI()
+		}
+		w.WriteHeader(http.StatusOK)
+	})
+	_, cleanup := setupTestServer(t, socketPath, handler)
+	defer cleanup()
+
+	tr, err := NewTransport(&transport.Config{Address: socketPath, Timeout: 5 * time.Second})
+	if err != nil {
+		t.Fatalf("NewTransport() error = %v", err)
+	}
+	defer tr.Close()
+
+	req := map[string]interface{}{"page": 2, "per_page": 25, "status": "active"}
+	if _, err := tr.Request(context.Background(), "admin.tenant", "list", req); err != nil {
+		t.Fatalf("Request() error = %v", err)
+	}
+	want := "/api/v1/tenants/?page=2&page_size=25&status=active"
+	if uri := <-got; uri != want {
+		t.Errorf("request URI = %q, want %q", uri, want)
+	}
+
+	if _, err := tr.Request(context.Background(), "admin.tenant", "list", []int{1}); err == nil {
+		t.Error("Request() with a request that is not an object: want an error")
+	}
+}

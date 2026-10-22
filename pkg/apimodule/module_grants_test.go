@@ -52,7 +52,7 @@ var restOnlyPermissions = map[string]struct{}{}
 func restPermissionPairs() []string {
 	set := map[string]struct{}{}
 	for _, spec := range xkmsrest.Routes() {
-		if spec.Auth == xkmsrest.RouteAuthPermission {
+		if spec.Auth == xkmsrest.RouteAuthPermission || spec.Auth == xkmsrest.RouteAuthTenant {
 			set[spec.Resource+":"+spec.Action] = struct{}{}
 		}
 	}

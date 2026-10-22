@@ -24,6 +24,7 @@ import (
 	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
 	qrdbnode "github.com/jeremyhahn/go-qrdb/sdk/go/node"
 
+	"github.com/jeremyhahn/go-xkms/pkg/apimodule"
 	"github.com/jeremyhahn/go-xkms/pkg/embeddednode"
 	initialize "github.com/jeremyhahn/go-xkms/pkg/init"
 	"github.com/jeremyhahn/go-xkms/sdk/go/fsutil"
@@ -233,6 +234,11 @@ func (b userCertBinder) BindAdminCert(ctx context.Context, _ string, userID uint
 // dependency wiring through BuildFirstBootDependencies and adds the cluster
 // retry.
 func RunFirstBoot(ctx context.Context, node *qrdbnode.Node, p FirstBootParams) (*qrdbsdk.FirstBootResult, error) {
+	// The node may be built without the xkms module (`xkmsd init`), so its
+	// role grants are registered here: the built-in roles must be seeded with
+	// the definition `xkmsd run` seeds, which first boot then adopts on
+	// every later start instead of refusing as conflicting (go-xkms#794).
+	apimodule.RegisterRoleGrants()
 	deps, err := BuildFirstBootDependencies(node, p)
 	if err != nil {
 		return nil, err

@@ -31,7 +31,6 @@ import (
 //   - tenantRoute(method, path, resource, action, serve)
 //   - tenantCrossRoute(method, path, permission, serve)
 //   - tenantReachRoute(method, path, resource, action, cross, serve)
-//   - tenantListRoute(method, path, resource, action, cross, serve)
 //
 // The tenant-reach routes are pinned by their cross-scope grant; the
 // self-scoped pair they take on the caller's own tenant is pinned by the
@@ -47,7 +46,6 @@ var authzSeams = []authzscan.Seam{
 	{Method: "tenantRoute", Args: 5, ResourceArg: 2, ActionArg: 3, Bare: true, LabelArgs: []int{4}},
 	{Method: "tenantCrossRoute", Args: 4, ResourceArg: 2, Permission: true, Bare: true, LabelArgs: []int{3}},
 	{Method: "tenantReachRoute", Args: 6, ResourceArg: 4, Permission: true, Bare: true, LabelArgs: []int{5}},
-	{Method: "tenantListRoute", Args: 6, ResourceArg: 4, Permission: true, Bare: true, LabelArgs: []int{5}},
 }
 
 // goldenAdminPermissions is the complete, literal resource:action pair every
@@ -59,13 +57,11 @@ var authzSeams = []authzscan.Seam{
 // retyped, repointed, or swapped for a different one. It is the ACME admin
 // counterpart of pkg/api/grpc's goldenRPCPermissions.
 var goldenAdminPermissions = map[string]string{
-	"CreateTenant":                     "tenants:create:cross",
 	"CreateTenantEAB":                  "acme_eab:create",
 	"CreateTenantIntermediateCA":       "ca:create",
 	"CreateTenantRole":                 "roles:create",
 	"CreateTenantRootCA":               "ca:create",
 	"CreateTenantUser":                 "users:create",
-	"DeleteTenant":                     "tenants:delete:cross",
 	"DeleteTenantEAB":                  "acme_eab:delete",
 	"DeleteTenantRole":                 "roles:delete",
 	"DeleteTenantUser":                 "users:delete",
@@ -76,7 +72,6 @@ var goldenAdminPermissions = map[string]string{
 	"GetOrder":                         "acme_orders:read",
 	"GetStats":                         "admin:status",
 	"GetStatus":                        "admin:status",
-	"GetTenant":                        "tenants:read:cross",
 	"GetTenantCAStatus":                "ca:read",
 	"GetTenantEAB":                     "acme_eab:read",
 	"GetTenantIntermediateCA":          "ca:read",
@@ -91,7 +86,6 @@ var goldenAdminPermissions = map[string]string{
 	"ListTenantIntermediateCAs":        "ca:list",
 	"ListTenantRoles":                  "roles:list",
 	"ListTenantUsers":                  "users:list",
-	"ListTenants":                      "tenants:list:cross",
 	"RevokeCertificate":                "certs:revoke",
 	"SetTenantDefaultIntermediateCA":   "ca:update",
 	"UpdateTenant":                     "tenants:update:cross",

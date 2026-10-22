@@ -102,7 +102,7 @@ func TestRegisterHTTP_FullSurface(t *testing.T) {
 		switch spec.Auth {
 		case rest.RouteAuthPublic:
 			assert.True(t, rec.public, "%s %s must register public", k.m, k.p)
-		case rest.RouteAuthSession:
+		case rest.RouteAuthSession, rest.RouteAuthTenant:
 			assert.Equal(t, qrdbsdk.Permission("identity:gated"), rec.perm,
 				"%s %s must register identity-gated", k.m, k.p)
 		default:

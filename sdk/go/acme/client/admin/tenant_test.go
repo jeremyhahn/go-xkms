@@ -44,6 +44,34 @@ func TestTenantClient_Create(t *testing.T) {
 		}
 	})
 
+	t.Run("core envelope", func(t *testing.T) {
+		mt := newMockTransportWithResponse(map[string]interface{}{
+			"tenant": map[string]interface{}{"id": "tenant-1", "name": "Test Tenant", "status": "active"},
+		})
+		c := newTenantClient(mt)
+
+		result, err := c.Create(context.Background(), &CreateTenantRequest{ID: "tenant-1", Name: "Test Tenant"})
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if result.ID != "tenant-1" || result.Name != "Test Tenant" {
+			t.Errorf("expected tenant-1/Test Tenant from the envelope, got %s/%s", result.ID, result.Name)
+		}
+	})
+
+	t.Run("nil response", func(t *testing.T) {
+		mt := &mockTransport{
+			requestFunc: func(_ context.Context, _, _ string, _ interface{}) (interface{}, error) {
+				return nil, nil
+			},
+		}
+		c := newTenantClient(mt)
+
+		if _, err := c.Create(context.Background(), &CreateTenantRequest{ID: "tenant-1"}); err == nil {
+			t.Fatal("expected error for a nil transport response")
+		}
+	})
+
 	t.Run("nil request", func(t *testing.T) {
 		mt := newMockTransportWithResponse(nil)
 		c := newTenantClient(mt)
@@ -86,6 +114,21 @@ func TestTenantClient_Get(t *testing.T) {
 		}
 		if result.ID != "tenant-1" {
 			t.Errorf("expected ID tenant-1, got %s", result.ID)
+		}
+	})
+
+	t.Run("core envelope", func(t *testing.T) {
+		mt := newMockTransportWithResponse(map[string]interface{}{
+			"tenant": map[string]interface{}{"id": "tenant-1", "name": "Test Tenant", "status": "active"},
+		})
+		c := newTenantClient(mt)
+
+		result, err := c.Get(context.Background(), "tenant-1")
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if result.ID != "tenant-1" || result.Status != "active" {
+			t.Errorf("expected active tenant-1 from the envelope, got %s/%s", result.ID, result.Status)
 		}
 	})
 
@@ -171,6 +214,16 @@ func TestTenantClient_Delete(t *testing.T) {
 		}
 	})
 
+	t.Run("no content", func(t *testing.T) {
+		// The core delete answers 204 with no body.
+		mt := newMockTransportWithResponse(nil)
+		c := newTenantClient(mt)
+
+		if err := c.Delete(context.Background(), "tenant-1"); err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+	})
+
 	t.Run("empty tenant ID", func(t *testing.T) {
 		mt := newMockTransportWithResponse(nil)
 		c := newTenantClient(mt)
@@ -220,6 +273,29 @@ func TestTenantClient_List(t *testing.T) {
 		}
 		if result.Pagination.Total != 2 {
 			t.Errorf("expected total 2, got %d", result.Pagination.Total)
+		}
+	})
+
+	t.Run("core pagination", func(t *testing.T) {
+		mt := newMockTransportWithResponse(map[string]interface{}{
+			"tenants": []map[string]interface{}{
+				{"id": "tenant-1", "name": "Tenant One", "status": "active"},
+			},
+			"pagination": map[string]interface{}{
+				"page": 2, "page_size": 25, "total": 26, "has_more": false,
+			},
+		})
+		c := newTenantClient(mt)
+
+		result, err := c.List(context.Background(), &ListTenantsRequest{Page: 2, PerPage: 25})
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if result.Pagination == nil {
+			t.Fatal("expected pagination to be present")
+		}
+		if *result.Pagination != (Pagination{Page: 2, PerPage: 25, Total: 26}) {
+			t.Errorf("expected page 2, page size 25, total 26, got %+v", *result.Pagination)
 		}
 	})
 
