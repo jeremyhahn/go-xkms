@@ -38,7 +38,6 @@ import (
 	"github.com/jeremyhahn/go-xkms/xkey/pkg/config"
 	"github.com/jeremyhahn/go-xkms/xkey/pkg/gui/services"
 	"github.com/jeremyhahn/go-xkms/xkey/pkg/ipc"
-	"github.com/jeremyhahn/go-xkms/xkey/pkg/oath"
 	"github.com/jeremyhahn/go-xkms/xkey/pkg/staticpw"
 	"github.com/jeremyhahn/go-xkms/xkey/pkg/xhome"
 )
@@ -752,8 +751,9 @@ func initPlainStores(dataDir string, passwordSvc *services.StaticPasswordService
 		return nil, err
 	}
 
-	// OATH store: same as CLI default (data/oath.json file).
-	oathStore, err := oath.NewFileStore(filepath.Join(dataDir, "oath.json"))
+	// OATH store: the CLI's store set, every backend partition beside
+	// data/oath.json.
+	oathStore, err := openOATHStores(nil, filepath.Join(dataDir, oathStoreFilename))
 	if err != nil {
 		return nil, errors.Join(err, pwStore.Close())
 	}
@@ -775,7 +775,7 @@ func initBarrierStores(barrierSvc *services.BarrierService, passwordSvc *service
 	}
 	passwordSvc.SetStore(pwStore)
 
-	oathStore, err := oath.NewBackendStore(backend, "oath/")
+	oathStore, err := openOATHStores(backend, "")
 	if err != nil {
 		return err
 	}

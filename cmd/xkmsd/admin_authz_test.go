@@ -54,6 +54,7 @@ import (
 	"math/big"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -227,13 +228,16 @@ func firstBootAdminCert(t *testing.T, cfg *config.Config) *x509.Certificate {
 // newClientCert returns a self-signed client certificate for commonName. The
 // admin plane's authenticator resolves a certificate by its SPKI thumbprint;
 // chain verification is the TLS listener's job and is not exercised here.
-func newClientCert(t *testing.T, commonName string, organizationalUnits ...string) *x509.Certificate {
+func newClientCert(t *testing.T, commonName, tenantID string) *x509.Certificate {
 	t.Helper()
 	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
 	require.NoError(t, err)
+	// go-qrdb v0.51 binds the tenant only when the first OU and the SPIFFE
+	// SAN's trust domain agree.
 	tmpl := &x509.Certificate{
 		SerialNumber: big.NewInt(time.Now().UnixNano()),
-		Subject:      pkix.Name{CommonName: commonName, OrganizationalUnit: organizationalUnits},
+		Subject:      pkix.Name{CommonName: commonName, OrganizationalUnit: []string{tenantID}},
+		URIs:         []*url.URL{{Scheme: "spiffe", Host: tenantID, Path: "/user/" + commonName}},
 		NotBefore:    time.Now().Add(-time.Hour),
 		NotAfter:     time.Now().Add(time.Hour),
 		ExtKeyUsage:  []x509.ExtKeyUsage{x509.ExtKeyUsageClientAuth},
@@ -384,7 +388,7 @@ func TestAdminPlane_PublishedRoutesAreTheMountedRoutes(t *testing.T) {
 // CN and OU as its Subject and TenantID (go-xkms#1096).
 func TestAdminPlane_UnboundCertificateRefusedAtAuthentication(t *testing.T) {
 	f := newAdminAuthzFixture(t)
-	cert := newClientCert(t, "nobody-1096")
+	cert := newClientCert(t, "nobody-1096", qrdbsdk.SystemTenantID)
 
 	for _, route := range f.routes {
 		assert.Equal(t, http.StatusUnauthorized, serveAdminRoute(t, f.router, route, cert), "%s", route)

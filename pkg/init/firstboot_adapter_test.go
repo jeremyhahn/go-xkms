@@ -157,7 +157,7 @@ func TestGenerateAdminCert_EmptyTenantFallsBackToSystem(t *testing.T) {
 func TestGenerateAdminCert_PropagatesSignError(t *testing.T) {
 	rec := newRecordingCA(t)
 	rec.signErr = errors.New("keystore sealed")
-	adapter := NewCAAdapter(rec, "")
+	adapter := NewCAAdapter(rec, "xkms.example.com")
 
 	certPEM, keyPEM, err := adapter.GenerateAdminCert(context.Background(), "t", "admin")
 
@@ -199,25 +199,27 @@ func TestSignAdminCSR_PathB(t *testing.T) {
 // TestSignAdminCSR_NoTrustDomainOmitsSPIFFE pins that, with no trust domain
 // configured, no SPIFFE fields are requested; the admin's tenant is still
 // requested, as the subject's first organizational unit.
-func TestSignAdminCSR_NoTrustDomainOmitsSPIFFE(t *testing.T) {
+func TestCAAdapter_LoginCertificatesRequireATrustDomain(t *testing.T) {
 	rec := newRecordingCA(t)
 	adapter := NewCAAdapter(rec, "")
-
-	_, err := adapter.SignAdminCSR(context.Background(), "tenant-7", "ops-admin", adminCSR(t, "ops-admin"))
+	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
 	require.NoError(t, err)
 
-	opts := rec.lastSignOpts
-	require.NotNil(t, opts)
-	assert.Empty(t, opts.SPIFFETrustDomain)
-	assert.Equal(t, "tenant-7", opts.TenantID)
-	assert.Empty(t, opts.SPIFFEName)
+	_, err = adapter.SignAdminCSR(context.Background(), "tenant-7", "ops-admin", adminCSR(t, "ops-admin"))
+	require.ErrorIs(t, err, ErrNoSPIFFETrustDomain)
+	_, _, err = adapter.GenerateAdminCert(context.Background(), "tenant-7", "ops-admin")
+	require.ErrorIs(t, err, ErrNoSPIFFETrustDomain)
+	_, err = adapter.IssueCertificate(context.Background(), &qrdbsdk.IssueCertRequest{CommonName: "so-officer", PublicKey: key.Public()})
+	require.ErrorIs(t, err, ErrNoSPIFFETrustDomain)
+	assert.Nil(t, rec.lastSignOpts, "nothing reached the CA")
+	assert.Nil(t, rec.lastIssueReq, "nothing reached the CA")
 }
 
 // TestSignAdminCSR_NoTenantIssuesForTheSystemTenant pins that a bootstrap
 // admin named without a tenant is the system tenant's.
 func TestSignAdminCSR_NoTenantIssuesForTheSystemTenant(t *testing.T) {
 	rec := newRecordingCA(t)
-	adapter := NewCAAdapter(rec, "")
+	adapter := NewCAAdapter(rec, "xkms.example.com")
 
 	_, err := adapter.SignAdminCSR(context.Background(), "", "ops-admin", adminCSR(t, "ops-admin"))
 	require.NoError(t, err)
@@ -230,7 +232,7 @@ func TestSignAdminCSR_NoTenantIssuesForTheSystemTenant(t *testing.T) {
 func TestSignAdminCSR_PropagatesSignError(t *testing.T) {
 	rec := newRecordingCA(t)
 	rec.signErr = errors.New("csr rejected")
-	adapter := NewCAAdapter(rec, "")
+	adapter := NewCAAdapter(rec, "xkms.example.com")
 
 	certPEM, err := adapter.SignAdminCSR(context.Background(), "t", "a", adminCSR(t, "a"))
 
@@ -255,5 +257,5 @@ func TestCeremonyIssuePath_StillPinsSystemTenant(t *testing.T) {
 
 	require.NotNil(t, rec.lastIssueReq.SANS)
 	require.Len(t, rec.lastIssueReq.SANS.URIs, 1)
-	assert.Equal(t, "spiffe://example.org/tenant/system/user/so-officer", rec.lastIssueReq.SANS.URIs[0])
+	assert.Equal(t, "spiffe://"+qrdbsdk.SystemTenantID+"/user/so-officer", rec.lastIssueReq.SANS.URIs[0])
 }

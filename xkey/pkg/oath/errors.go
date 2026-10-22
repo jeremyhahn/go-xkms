@@ -13,6 +13,8 @@
 
 package oath
 
+import "strconv"
+
 // DetailError appends detail text directly after a wrapped error while
 // preserving errors.Is / errors.As matching of the wrapped error through
 // Unwrap. The detail text carries its own leading separator.
@@ -74,5 +76,22 @@ func (e *WrappedError) Error() string {
 
 // Unwrap returns the wrapped cause.
 func (e *WrappedError) Unwrap() error {
+	return e.Err
+}
+
+// BackendError ties a sentinel to the OATH backend it concerns, so the
+// message names the backend (an unknown --backend, an invalid configured ID).
+type BackendError struct {
+	Err       error
+	BackendID string
+}
+
+// Error implements the error interface.
+func (e *BackendError) Error() string {
+	return e.Err.Error() + ": " + strconv.Quote(e.BackendID)
+}
+
+// Unwrap returns the underlying sentinel for errors.Is.
+func (e *BackendError) Unwrap() error {
 	return e.Err
 }

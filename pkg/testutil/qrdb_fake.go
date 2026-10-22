@@ -467,6 +467,37 @@ func (f *QRDBFakeTransport) DisableUser(ctx context.Context, id uint64) error {
 	return nil
 }
 
+// SuspendUser moves an active user to suspended. Suspending a suspended user
+// succeeds; any other source state is refused with
+// *qrdbsdk.LifecycleTransitionError, as qrdb's user service does.
+func (f *QRDBFakeTransport) SuspendUser(ctx context.Context, id uint64) error {
+	return f.transitionUser(id, qrdbsdk.LifecycleActive, qrdbsdk.LifecycleSuspended)
+}
+
+// UnsuspendUser moves a suspended user back to active. Unsuspending an active
+// user succeeds; any other source state is refused with
+// *qrdbsdk.LifecycleTransitionError.
+func (f *QRDBFakeTransport) UnsuspendUser(ctx context.Context, id uint64) error {
+	return f.transitionUser(id, qrdbsdk.LifecycleSuspended, qrdbsdk.LifecycleActive)
+}
+
+// transitionUser moves user id from the from state to the to state. A user
+// already in the to state is left as it is.
+func (f *QRDBFakeTransport) transitionUser(id uint64, from, to qrdbsdk.Lifecycle) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	u, ok := f.users[id]
+	if !ok {
+		return &qrdbtransport.UserNotFoundError{ID: id}
+	}
+	current := qrdbsdk.Lifecycle(u.Lifecycle)
+	if current != from && current != to {
+		return &qrdbsdk.LifecycleTransitionError{ID: id, From: current, To: to}
+	}
+	u.Lifecycle = string(to)
+	return nil
+}
+
 // --- transport.RoleClient ---
 
 // CreateRole implements transport.RoleClient.

@@ -37,7 +37,8 @@ type (
 
 // Tenant-scoped identities.
 type (
-	// ID is the tenant-scoped identity spiffe://<td>/tenant/<t>/<kind>/<name>.
+	// ID is a tenant's principal spiffe://<tenant>/<kind>/<name>: the tenant
+	// is the SPIFFE trust domain.
 	ID = pkgspiffe.ID
 )
 
@@ -58,7 +59,8 @@ var (
 	// ValidatePathPrefix validates a path prefix used to scope issuance.
 	ValidatePathPrefix = pkgspiffe.ValidatePathPrefix
 
-	// BuildURI builds the tenant-scoped SPIFFE URI.
+	// BuildURI builds a tenant principal's SPIFFE URI under a cluster trust
+	// domain the tenant must not equal.
 	BuildURI = pkgspiffe.BuildURI
 
 	// ParseID extracts a tenant-scoped identity from a URI.
@@ -82,7 +84,6 @@ var (
 	ErrTrustDomainEmpty      = pkgspiffe.ErrTrustDomainEmpty
 	ErrTrustDomainCharacters = pkgspiffe.ErrTrustDomainCharacters
 	ErrTrustDomainTooLong    = pkgspiffe.ErrTrustDomainTooLong
-	ErrTrustDomainMismatch   = pkgspiffe.ErrTrustDomainMismatch
 	ErrSchemeInvalid         = pkgspiffe.ErrSchemeInvalid
 	ErrSegmentEmpty          = pkgspiffe.ErrSegmentEmpty
 	ErrSegmentDotted         = pkgspiffe.ErrSegmentDotted
@@ -94,4 +95,7 @@ var (
 	ErrKindInvalid           = pkgspiffe.ErrKindInvalid
 	ErrNameEmpty             = pkgspiffe.ErrNameEmpty
 	ErrNoTenantSPIFFEID      = pkgspiffe.ErrNoTenantSPIFFEID
+
+	ErrTenantIsClusterTrustDomain = pkgspiffe.ErrTenantIsClusterTrustDomain
+	ErrAmbiguousTenant            = pkgspiffe.ErrAmbiguousTenant
 )

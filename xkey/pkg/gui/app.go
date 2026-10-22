@@ -526,39 +526,10 @@ func (a *App) registerDefaultSoftwareBackend() {
 
 // defaultCapabilities returns a default capability set for the given
 // backend category. Additional capabilities can be discovered at runtime
-// (e.g., after PKCS#11 token enumeration).
+// (e.g., after PKCS#11 token enumeration). The table is
+// backendregistry.DefaultCapabilities, shared with the CLI.
 func defaultCapabilities(cat backendregistry.BackendCategory) map[backendregistry.Capability]bool {
-	caps := map[backendregistry.Capability]bool{
-		backendregistry.CapSigning:    true,
-		backendregistry.CapEncryption: true,
-		// Every signing-capable backend can mint SSH keys (ed25519/ecdsa/rsa),
-		// so SSH capability tracks signing capability.
-		backendregistry.CapSSH: true,
-	}
-	switch cat {
-	case backendregistry.CategorySoftware:
-		caps[backendregistry.CapFIDO2] = true
-		caps[backendregistry.CapOATH] = true
-		caps[backendregistry.CapPasswords] = true
-		caps[backendregistry.CapSealing] = true
-		caps[backendregistry.CapPIV] = true
-	case backendregistry.CategoryTPM2:
-		caps[backendregistry.CapFIDO2] = true
-		caps[backendregistry.CapSealing] = true
-		caps[backendregistry.CapAttestation] = true
-		caps[backendregistry.CapPasswords] = true
-		caps[backendregistry.CapPIV] = true
-	case backendregistry.CategoryPKCS11:
-		caps[backendregistry.CapFIDO2] = true
-		caps[backendregistry.CapPIV] = true
-		caps[backendregistry.CapSealing] = true
-		caps[backendregistry.CapOATH] = true
-		caps[backendregistry.CapPasswords] = true
-	case backendregistry.CategoryPhone:
-		caps[backendregistry.CapFIDO2] = true
-		caps[backendregistry.CapAttestation] = true
-	}
-	return caps
+	return backendregistry.DefaultCapabilities(cat)
 }
 
 // restorePKCS11Modules re-registers PKCS#11 modules from the persisted
@@ -833,23 +804,23 @@ func (a *App) initializeDataDir() error {
 	// call to initializeDataDir (e.g. before the very first unseal).
 	a.phoneService.SetBarrierService(a.barrierService)
 
-	// OATH store — encrypted via barrier or plain file fallback.
-	if barrierBackend != nil {
-		oathStore, oathErr := oath.NewBackendStore(barrierBackend, "oath/")
-		if oathErr != nil {
-			a.log.Warn("failed to create OATH backend store", "error", oathErr)
-		} else {
-			a.oathStore = oathStore
-			a.oathService.SetStore(oathStore)
-		}
+	// OATH store — one partition per OATH-capable backend
+	// (backendregistry.ConfiguredFor),
+	// encrypted via barrier or plain file fallback; the same construction
+	// as the CLI's openOATHStore.
+	var oathCfg *config.Config
+	if ucfg, cfgErr := config.Load(); cfgErr == nil {
+		oathCfg = ucfg
 	} else {
-		oathStore, oathErr := oath.NewFileStore(filepath.Join(dir, "oath.json"))
-		if oathErr != nil {
-			a.log.Warn("failed to open OATH store", "error", oathErr)
-		} else {
-			a.oathStore = oathStore
-			a.oathService.SetStore(oathStore)
-		}
+		a.log.Debug("unified config not available, OATH uses the default backend only", "error", cfgErr)
+	}
+	oathIDs, oathDefault := backendregistry.ConfiguredFor(oathCfg, backendregistry.CapOATH)
+	oathStore, oathErr := oath.OpenStores(barrierBackend, filepath.Join(dir, "oath.json"), oathIDs, oathDefault)
+	if oathErr != nil {
+		a.log.Warn("failed to open OATH store", "error", oathErr)
+	} else {
+		a.oathStore = oathStore
+		a.oathService.SetStore(oathStore)
 	}
 
 	// FIDO2 credential storage — encrypted via barrier or plain file fallback.

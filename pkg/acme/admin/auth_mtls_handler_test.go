@@ -23,6 +23,7 @@ import (
 	"crypto/tls"
 	"crypto/x509"
 	"crypto/x509/pkix"
+	"encoding/asn1"
 	"math/big"
 	"net"
 	"net/http"
@@ -85,11 +86,17 @@ func clientCert(t *testing.T, cn string, ous []string, uris ...string) *x509.Cer
 	require.NoError(t, err)
 	template := &x509.Certificate{
 		SerialNumber: big.NewInt(time.Now().UnixNano()),
-		Subject:      pkix.Name{CommonName: cn, OrganizationalUnit: ous},
+		Subject:      pkix.Name{CommonName: cn},
 		NotBefore:    time.Now().Add(-time.Hour),
 		NotAfter:     time.Now().Add(time.Hour),
 		KeyUsage:     x509.KeyUsageDigitalSignature,
 		ExtKeyUsage:  []x509.ExtKeyUsage{x509.ExtKeyUsageClientAuth},
+	}
+	// Each OU is its own RDN, so the first stays first: OUs sharing one RDN
+	// are a DER SET, which encoding sorts.
+	for _, ou := range ous {
+		template.Subject.ExtraNames = append(template.Subject.ExtraNames,
+			pkix.AttributeTypeAndValue{Type: asn1.ObjectIdentifier{2, 5, 4, 11}, Value: ou})
 	}
 	for _, raw := range uris {
 		u, err := url.Parse(raw)
@@ -134,7 +141,7 @@ func serve(handler *MTLSAuthHandler, req *http.Request) (int, context.Context) {
 // the AuthenticatedUser, the qrdb context tenant and the identity all carry
 // tenant-a, and go-xkms#1225's binding admits tenant-a's routes.
 func TestMTLSAuthHandler_TenantUserAuthenticates(t *testing.T) {
-	cert := clientCert(t, "alice", []string{"tenant-a"}, "spiffe://"+testTrustDomain+"/tenant/tenant-a/user/alice")
+	cert := clientCert(t, "alice", []string{"tenant-a"}, "spiffe://tenant-a/user/alice")
 	store := &tenantMTLSUserStore{}
 	store.bind("tenant-a", cert, xkmsauth.MTLSUser{
 		Username: "alice", TenantID: "tenant-a", Enabled: true, Roles: []string{"role-id-operator"},
@@ -159,23 +166,10 @@ func TestMTLSAuthHandler_TenantUserAuthenticates(t *testing.T) {
 	assert.NoError(t, admitTenant(ctx, "list roles", "tenant-a"))
 }
 
-// TestMTLSAuthHandler_TenantUserByOU proves the OU fallback of qrdb's rule:
-// a certificate with no SPIFFE SAN is read as the tenant its first OU names.
-func TestMTLSAuthHandler_TenantUserByOU(t *testing.T) {
-	cert := clientCert(t, "bob", []string{"tenant-a"})
-	store := &tenantMTLSUserStore{}
-	store.bind("tenant-a", cert, xkmsauth.MTLSUser{Username: "bob", TenantID: "tenant-a", Enabled: true})
-
-	code, ctx := serve(newTestMTLSAuthHandler(store), mtlsRequest("/api/v1/tenants/tenant-a/roles", cert))
-
-	require.Equal(t, http.StatusOK, code)
-	assert.Equal(t, "tenant-a", GetUserFromContext(ctx).TenantID)
-}
-
 // TestMTLSAuthHandler_TenantUserRefusedOnOtherTenantRoutes proves a tenant-a
 // certificate gets go-xkms#1225's refusal on tenant-b's routes.
 func TestMTLSAuthHandler_TenantUserRefusedOnOtherTenantRoutes(t *testing.T) {
-	cert := clientCert(t, "alice", nil, "spiffe://"+testTrustDomain+"/tenant/tenant-a/user/alice")
+	cert := clientCert(t, "alice", []string{"tenant-a"}, "spiffe://tenant-a/user/alice")
 	store := &tenantMTLSUserStore{}
 	store.bind("tenant-a", cert, xkmsauth.MTLSUser{Username: "alice", TenantID: "tenant-a", Enabled: true})
 
@@ -189,10 +183,10 @@ func TestMTLSAuthHandler_TenantUserRefusedOnOtherTenantRoutes(t *testing.T) {
 }
 
 // TestMTLSAuthHandler_SystemTenantIdentityAuthenticates proves a
-// system-tenant identity -- no OU, no SPIFFE SAN -- is looked up in the
-// system tenant and keeps authenticating.
+// system-tenant identity -- OU system and spiffe://system/user/<cn> -- is
+// looked up in the system tenant and keeps authenticating.
 func TestMTLSAuthHandler_SystemTenantIdentityAuthenticates(t *testing.T) {
-	cert := clientCert(t, "root", nil)
+	cert := clientCert(t, "root", []string{qrdbsdk.SystemTenantID}, "spiffe://"+qrdbsdk.SystemTenantID+"/user/root")
 	store := &tenantMTLSUserStore{}
 	store.bind(qrdbsdk.SystemTenantID, cert, xkmsauth.MTLSUser{
 		Username: "root", Enabled: true, Roles: []string{"role-id-platform-admin"},
@@ -211,7 +205,7 @@ func TestMTLSAuthHandler_SystemTenantIdentityAuthenticates(t *testing.T) {
 // naming tenant-a whose thumbprint is bound in the system tenant is refused,
 // never resolved by falling back to the system tenant.
 func TestMTLSAuthHandler_CertificateNotSearchedInOtherTenants(t *testing.T) {
-	cert := clientCert(t, "alice", []string{"tenant-a"})
+	cert := clientCert(t, "alice", []string{"tenant-a"}, "spiffe://tenant-a/user/alice")
 	store := &tenantMTLSUserStore{}
 	store.bind(qrdbsdk.SystemTenantID, cert, xkmsauth.MTLSUser{Username: "alice", Enabled: true})
 	handler := newTestMTLSAuthHandler(store)
@@ -227,7 +221,7 @@ func TestMTLSAuthHandler_CertificateNotSearchedInOtherTenants(t *testing.T) {
 // bound to no user is refused with 401, never admitted with a
 // certificate-derived identity (go-xkms#1096).
 func TestMTLSAuthHandler_UnknownCertificateIsUnauthorized(t *testing.T) {
-	cert := clientCert(t, "mallory", []string{"tenant-a"})
+	cert := clientCert(t, "mallory", []string{"tenant-a"}, "spiffe://tenant-a/user/mallory")
 	handler := newTestMTLSAuthHandler(&tenantMTLSUserStore{})
 
 	_, err := handler.authenticate(mtlsRequest("/admin/tenants", cert))
@@ -252,27 +246,72 @@ func TestMTLSAuthHandler_NoCertificateIsUnauthorized(t *testing.T) {
 	assert.Nil(t, ctx)
 }
 
-// TestMTLSAuthHandler_ForeignTrustDomainIsUnauthorized proves a certificate
-// whose SPIFFE SAN is from another trust domain is refused with qrdb's typed
-// refusal before any lookup -- even though its OU names a tenant where the
-// thumbprint is bound -- rather than falling back to the OU or the system
-// tenant.
-func TestMTLSAuthHandler_ForeignTrustDomainIsUnauthorized(t *testing.T) {
-	cert := clientCert(t, "eve", []string{"tenant-a"}, "spiffe://other.example.com/tenant/tenant-a/user/eve")
-	store := &tenantMTLSUserStore{}
-	store.bind("tenant-a", cert, xkmsauth.MTLSUser{Username: "eve", TenantID: "tenant-a", Enabled: true})
-	store.bind(qrdbsdk.SystemTenantID, cert, xkmsauth.MTLSUser{Username: "eve", Enabled: true})
-	handler := newTestMTLSAuthHandler(store)
+// TestMTLSAuthHandler_CertificateTenantRefusals proves a certificate that
+// names no tenant under qrdb's rule -- an OU or a SPIFFE SAN alone, OU and SAN
+// naming different tenants, or a tenant that is the cluster trust domain -- is
+// refused with qrdb's typed refusal before any lookup, even though the
+// thumbprint is bound in every tenant it could name, rather than falling back
+// to the OU, the SAN or the system tenant.
+func TestMTLSAuthHandler_CertificateTenantRefusals(t *testing.T) {
+	cases := []struct {
+		name    string
+		ous     []string
+		sans    []string
+		wantErr func(t *testing.T, err error)
+	}{
+		{
+			name: "OU without a SPIFFE SAN",
+			ous:  []string{"tenant-a"},
+			wantErr: func(t *testing.T, err error) {
+				assert.ErrorIs(t, err, qrdbsdk.ErrSpiffeNoTenantID)
+			},
+		},
+		{
+			name: "SPIFFE SAN without an OU",
+			sans: []string{"spiffe://tenant-a/user/eve"},
+			wantErr: func(t *testing.T, err error) {
+				assert.ErrorIs(t, err, qrdbsdk.ErrSpiffeTrustDomainMismatch)
+			},
+		},
+		{
+			name: "OU and SAN name different tenants",
+			ous:  []string{"tenant-a"},
+			sans: []string{"spiffe://tenant-b/user/eve"},
+			wantErr: func(t *testing.T, err error) {
+				var mismatch *qrdbsdk.ClientCertificateTenantNameMismatchError
+				assert.ErrorAs(t, err, &mismatch)
+			},
+		},
+		{
+			name: "tenant is the cluster trust domain",
+			ous:  []string{testTrustDomain},
+			sans: []string{"spiffe://" + testTrustDomain + "/user/eve"},
+			wantErr: func(t *testing.T, err error) {
+				assert.ErrorIs(t, err, qrdbsdk.ErrClientCertificateTenantIsClusterTrustDomain)
+			},
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			cert := clientCert(t, "eve", tc.ous, tc.sans...)
+			store := &tenantMTLSUserStore{}
+			for _, tenant := range []string{"tenant-a", "tenant-b", testTrustDomain} {
+				store.bind(tenant, cert, xkmsauth.MTLSUser{Username: "eve", TenantID: tenant, Enabled: true})
+			}
+			store.bind(qrdbsdk.SystemTenantID, cert, xkmsauth.MTLSUser{Username: "eve", Enabled: true})
+			handler := newTestMTLSAuthHandler(store)
 
-	_, err := handler.authenticate(mtlsRequest("/admin/tenants", cert))
-	var refusal *qrdbsdk.ClientCertificateTenantError
-	require.ErrorAs(t, err, &refusal)
-	assert.ErrorIs(t, err, qrdbsdk.ErrSpiffeTrustDomainMismatch)
+			_, err := handler.authenticate(mtlsRequest("/admin/tenants", cert))
+			var refusal *qrdbsdk.ClientCertificateTenantError
+			require.ErrorAs(t, err, &refusal)
+			tc.wantErr(t, err)
 
-	code, ctx := serve(handler, mtlsRequest("/admin/tenants", cert))
-	assert.Equal(t, http.StatusUnauthorized, code)
-	assert.Nil(t, ctx)
-	assert.Zero(t, store.lookups, "a refused certificate must never reach the user store")
+			code, ctx := serve(handler, mtlsRequest("/admin/tenants", cert))
+			assert.Equal(t, http.StatusUnauthorized, code)
+			assert.Nil(t, ctx)
+			assert.Zero(t, store.lookups, "a refused certificate must never reach the user store")
+		})
+	}
 }
 
 // TestMTLSAuthHandler_NilAuthenticatorIsUnauthorized proves the handler
@@ -294,7 +333,7 @@ func TestMTLSAuthHandler_NilAuthenticatorIsUnauthorized(t *testing.T) {
 // its tenant and never a role (SPEC authz-cert-ou-roles): an OU spelling a role
 // name grants nothing, and a bound user with no roles stays without any.
 func TestMTLSAuthHandler_OUNamingARoleGrantsNoRole(t *testing.T) {
-	cert := clientCert(t, "alice", []string{"tenant-a", "Admin"}, "spiffe://"+testTrustDomain+"/tenant/tenant-a/user/alice")
+	cert := clientCert(t, "alice", []string{"tenant-a", "Admin"}, "spiffe://tenant-a/user/alice")
 	store := &tenantMTLSUserStore{}
 	store.bind("tenant-a", cert, xkmsauth.MTLSUser{Username: "alice", TenantID: "tenant-a", Enabled: true})
 
@@ -306,13 +345,13 @@ func TestMTLSAuthHandler_OUNamingARoleGrantsNoRole(t *testing.T) {
 }
 
 // TestMTLSAuthHandler_RolesComeFromTheBoundUser proves the caller's roles are
-// exactly the bound qrdb user's role IDs, while its first OU, with no SPIFFE
-// tenant SAN, is the tenant qrdbsdk.TenantFromClientCert names.
+// exactly the bound qrdb user's role IDs, never the Operator its second OU
+// spells, while its first OU and SPIFFE SAN name the tenant.
 func TestMTLSAuthHandler_RolesComeFromTheBoundUser(t *testing.T) {
-	cert := clientCert(t, "bob", []string{"Admin", "Operator"})
+	cert := clientCert(t, "bob", []string{"tenant-b", "Operator"}, "spiffe://tenant-b/user/bob")
 	store := &tenantMTLSUserStore{}
-	store.bind("Admin", cert, xkmsauth.MTLSUser{
-		Username: "bob", TenantID: "Admin", Enabled: true, Roles: []string{"role-id-viewer"},
+	store.bind("tenant-b", cert, xkmsauth.MTLSUser{
+		Username: "bob", TenantID: "tenant-b", Enabled: true, Roles: []string{"role-id-viewer"},
 	})
 
 	code, ctx := serve(newTestMTLSAuthHandler(store), mtlsRequest("/admin/status", cert))
@@ -320,7 +359,7 @@ func TestMTLSAuthHandler_RolesComeFromTheBoundUser(t *testing.T) {
 	require.Equal(t, http.StatusOK, code)
 	user := GetUserFromContext(ctx)
 	require.NotNil(t, user)
-	assert.Equal(t, "Admin", user.TenantID)
+	assert.Equal(t, "tenant-b", user.TenantID)
 	assert.Equal(t, []string{"role-id-viewer"}, user.Roles)
 	assert.Equal(t, []string{"role-id-viewer"}, xkmsauth.GetIdentity(ctx).Roles)
 }
@@ -329,7 +368,7 @@ func TestMTLSAuthHandler_RolesComeFromTheBoundUser(t *testing.T) {
 // with a user outside the certificate's tenant is refused with a
 // *CertificateTenantMismatchError, never admitted with that user's roles.
 func TestMTLSAuthHandler_UserOfAnotherTenantIsRefused(t *testing.T) {
-	cert := clientCert(t, "carol", nil, "spiffe://"+testTrustDomain+"/tenant/tenant-a/user/carol")
+	cert := clientCert(t, "carol", []string{"tenant-a"}, "spiffe://tenant-a/user/carol")
 	store := &tenantMTLSUserStore{}
 	store.bind("tenant-a", cert, xkmsauth.MTLSUser{
 		Username: "carol", TenantID: "tenant-b", Enabled: true, Roles: []string{"role-id-admin"},
@@ -360,7 +399,7 @@ func grpcPeerContext(cert *x509.Certificate) context.Context {
 // same rule as the REST one: the tenant from the certificate, the roles from
 // the bound user, never from the OU.
 func TestMTLSAuthHandler_AuthenticateGRPC(t *testing.T) {
-	cert := clientCert(t, "dave", []string{"tenant-a", "Admin"}, "spiffe://"+testTrustDomain+"/tenant/tenant-a/user/dave")
+	cert := clientCert(t, "dave", []string{"tenant-a", "Admin"}, "spiffe://tenant-a/user/dave")
 	store := &tenantMTLSUserStore{}
 	store.bind("tenant-a", cert, xkmsauth.MTLSUser{
 		Username: "dave", TenantID: "tenant-a", Enabled: true, Roles: []string{"role-id-operator"},
@@ -377,7 +416,7 @@ func TestMTLSAuthHandler_AuthenticateGRPC(t *testing.T) {
 // TestMTLSAuthHandler_AuthenticateGRPCRefusals proves the gRPC entry point
 // refuses an unbound certificate and a nil handler with typed errors.
 func TestMTLSAuthHandler_AuthenticateGRPCRefusals(t *testing.T) {
-	cert := clientCert(t, "mallory", []string{"Admin"})
+	cert := clientCert(t, "mallory", []string{"tenant-a"}, "spiffe://tenant-a/user/mallory")
 
 	_, err := newTestMTLSAuthHandler(&tenantMTLSUserStore{}).AuthenticateGRPC(grpcPeerContext(cert), cert, nil)
 	assert.ErrorIs(t, err, xkmsauth.ErrCertNotBound)

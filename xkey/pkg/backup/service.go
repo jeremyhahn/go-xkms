@@ -96,6 +96,11 @@ type OATHCredentialInfo struct {
 	Issuer      string
 	AccountName string
 
+	// BackendID names the OATH backend partition holding the credential, so
+	// a restore writes it back to the same backend. Empty selects the
+	// restoring store's default backend.
+	BackendID string
+
 	// secret holds the Base32-encoded shared secret in mlocked,
 	// guard-paged protected memory (go-xkms#587), matching the same
 	// oath.Credential.secret field this value is routed into by an
@@ -157,7 +162,7 @@ func (c *OATHCredentialInfo) Clone() (*OATHCredentialInfo, error) {
 		return nil, nil
 	}
 	clone := &OATHCredentialInfo{
-		ID: c.ID, Name: c.Name, Issuer: c.Issuer, AccountName: c.AccountName,
+		ID: c.ID, Name: c.Name, Issuer: c.Issuer, AccountName: c.AccountName, BackendID: c.BackendID,
 		Type: c.Type, Algorithm: c.Algorithm, Digits: c.Digits, Period: c.Period, Counter: c.Counter,
 	}
 	secret, err := c.Secret()
@@ -206,6 +211,7 @@ type oathCredentialInfoJSON struct {
 	Name        string           `json:"Name"`
 	Issuer      string           `json:"Issuer"`
 	AccountName string           `json:"AccountName"`
+	BackendID   string           `json:"BackendID,omitempty"`
 	Secret      xkms.SecretBytes `json:"Secret"`
 	Type        string           `json:"Type"`
 	Algorithm   string           `json:"Algorithm"`
@@ -229,6 +235,7 @@ func (c *OATHCredentialInfo) MarshalJSON() ([]byte, error) {
 		Name:        c.Name,
 		Issuer:      c.Issuer,
 		AccountName: c.AccountName,
+		BackendID:   c.BackendID,
 		Secret:      secret,
 		Type:        c.Type,
 		Algorithm:   c.Algorithm,
@@ -251,6 +258,7 @@ func (c *OATHCredentialInfo) UnmarshalJSON(data []byte) error {
 	c.Name = aux.Name
 	c.Issuer = aux.Issuer
 	c.AccountName = aux.AccountName
+	c.BackendID = aux.BackendID
 	c.Type = aux.Type
 	c.Algorithm = aux.Algorithm
 	c.Digits = aux.Digits
@@ -552,6 +560,7 @@ type OATHCredential struct {
 	Name        string          `json:"name"`
 	Issuer      string          `json:"issuer"`
 	AccountName string          `json:"account_name"`
+	BackendID   string          `json:"backend_id,omitempty"`
 	Secret      xkms.SecretText `json:"secret"`
 	Type        string          `json:"type"`
 	Algorithm   string          `json:"algorithm"`
@@ -847,6 +856,7 @@ func (s *Service) RestoreOATH(archive *Archive, writer OATHWriter) (*RestoreResu
 			Name:        c.Name,
 			Issuer:      c.Issuer,
 			AccountName: c.AccountName,
+			BackendID:   c.BackendID,
 			Type:        c.Type,
 			Algorithm:   c.Algorithm,
 			Digits:      c.Digits,
@@ -1066,6 +1076,7 @@ func (s *Service) collectOATH(a *Archive) (bool, error) {
 			Name:        c.Name,
 			Issuer:      c.Issuer,
 			AccountName: c.AccountName,
+			BackendID:   c.BackendID,
 			Secret:      secret,
 			Type:        c.Type,
 			Algorithm:   c.Algorithm,

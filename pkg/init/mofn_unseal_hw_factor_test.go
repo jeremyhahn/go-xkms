@@ -105,6 +105,9 @@ func newMofnRig(t *testing.T) *mofnRig {
 	ceremony, err := qrdbsdk.NewCeremonyService(&qrdbsdk.CeremonyConfig{DataDir: t.TempDir()}, barrier, logger)
 	require.NoError(t, err)
 	t.Cleanup(ceremony.Cleanup)
+	// The holder certificate's SPIFFE SAN is under its tenant's trust
+	// domain; the cluster's is the one no tenant may name.
+	ceremony.SetTrustDomain("example.org")
 	ceremony.SetCA(NewCAAdapter(newMockCA(t), ""))
 	ceremony.SetFactorRegistry(registry)
 

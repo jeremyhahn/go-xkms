@@ -40,6 +40,10 @@ func (allowAllRBACClient) ListPermissions(context.Context, *qrdbtransport.Identi
 	return nil, nil
 }
 
+func (a allowAllRBACClient) ListOwnPermissions(ctx context.Context) ([]qrdbtransport.PermissionInfo, error) {
+	return a.ListPermissions(ctx, nil)
+}
+
 // newPasswordRouteServer is the real REST server with every password route
 // mounted, a permissive RBAC client and an anonymous caller, who is served
 // from the unscoped system store.

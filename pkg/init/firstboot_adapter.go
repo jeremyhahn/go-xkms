@@ -49,7 +49,7 @@ var (
 // CommonName.
 //
 // When a SPIFFE trust domain is configured, the certificate carries
-// spiffe://<td>/tenant/<tenantID>/user/<subject> so login derives the admin's
+// spiffe://<tenantID>/user/<subject> so login derives the admin's
 // tenant from the certificate. An empty tenantID falls back to the system
 // tenant, matching the ceremony SO certificates.
 func (a *CAAdapter) GenerateAdminCert(ctx context.Context, tenantID, subject string) ([]byte, []byte, error) {
@@ -88,18 +88,20 @@ func (a *CAAdapter) GenerateAdminCert(ctx context.Context, tenantID, subject str
 // not to rewrite the CSR's distinguished name.
 //
 // The certificate shape (key usage, extended key usage) comes from the
-// canonical client profile, exactly as in GenerateAdminCert.
+// canonical client profile, exactly as in GenerateAdminCert. Without a SPIFFE
+// trust domain it refuses with ErrNoSPIFFETrustDomain.
 func (a *CAAdapter) SignAdminCSR(ctx context.Context, tenantID, subject string, csrPEM []byte) ([]byte, error) {
+	if a.spiffeTrustDomain == "" {
+		return nil, ErrNoSPIFFETrustDomain
+	}
 	profile := ca.NewClientProfile()
 	opts := &ca.SignOptions{
-		KeyUsage:    profile.KeyUsage(),
-		ExtKeyUsage: profile.ExtKeyUsage(),
-		TenantID:    tenantOrSystem(tenantID),
-	}
-	if a.spiffeTrustDomain != "" {
-		opts.SPIFFETrustDomain = a.spiffeTrustDomain
-		opts.SPIFFEKind = spiffe.KindUser
-		opts.SPIFFEName = subject
+		KeyUsage:          profile.KeyUsage(),
+		ExtKeyUsage:       profile.ExtKeyUsage(),
+		TenantID:          tenantOrSystem(tenantID),
+		SPIFFETrustDomain: a.spiffeTrustDomain,
+		SPIFFEKind:        spiffe.KindUser,
+		SPIFFEName:        subject,
 	}
 
 	cert, err := a.ca.SignCSR(ctx, csrPEM, opts)
@@ -109,13 +111,14 @@ func (a *CAAdapter) SignAdminCSR(ctx context.Context, tenantID, subject string, 
 	return pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: cert.Raw}), nil
 }
 
-// stampSPIFFE appends the tenant-scoped SPIFFE URI SAN for cn onto req when a
-// trust domain is configured. It is shared by the ceremony issuance path
+// stampSPIFFE appends the tenant-scoped SPIFFE URI SAN for cn onto req, and
+// refuses with ErrNoSPIFFETrustDomain when the adapter has no trust domain:
+// the certificate could not log in without it. It is shared by the ceremony issuance path
 // (which pins the system tenant) and the firstboot admin path (which carries
 // the admin's own tenant).
 func (a *CAAdapter) stampSPIFFE(req *ca.CertificateRequest, tenantID, cn string) error {
 	if a.spiffeTrustDomain == "" {
-		return nil
+		return ErrNoSPIFFETrustDomain
 	}
 	spiffeURI, err := spiffe.BuildURI(a.spiffeTrustDomain, tenantOrSystem(tenantID), spiffe.KindUser, cn)
 	if err != nil {

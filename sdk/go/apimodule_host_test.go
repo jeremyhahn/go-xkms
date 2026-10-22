@@ -65,6 +65,7 @@ func TestServiceModule_HostCompositionThroughSDK(t *testing.T) {
 				handler = h
 			}
 		},
+		func(string, string, http.HandlerFunc) {},
 		func(string, string, http.HandlerFunc) {})
 	module.RegisterHTTP(registrar)
 	require.NotNil(t, handler)

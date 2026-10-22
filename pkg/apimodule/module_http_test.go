@@ -50,7 +50,8 @@ func newCaptureRegistrar() (*qrdbsdk.ModuleHTTPRegistrar, *[]captured) {
 		},
 		func(method, pattern string, h http.HandlerFunc) {
 			recs = append(recs, captured{method: method, pattern: pattern, public: true, handler: h})
-		})
+		},
+		func(string, string, http.HandlerFunc) {})
 	return r, &recs
 }
 

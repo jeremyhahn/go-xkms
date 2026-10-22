@@ -59,4 +59,7 @@ func TestReexportedValidationErrors(t *testing.T) {
 	if _, err := spiffe.BuildURI("example.org", "", spiffe.KindService, "web"); !errors.Is(err, spiffe.ErrTenantEmpty) {
 		t.Fatalf("BuildURI error = %v, want ErrTenantEmpty", err)
 	}
+	if _, err := spiffe.BuildURI("example.org", "example.org", spiffe.KindService, "web"); !errors.Is(err, spiffe.ErrTenantIsClusterTrustDomain) {
+		t.Fatalf("BuildURI error = %v, want ErrTenantIsClusterTrustDomain", err)
+	}
 }

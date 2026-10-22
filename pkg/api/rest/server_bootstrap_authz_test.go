@@ -105,6 +105,10 @@ func (c *bootstrapRecordingRBACClient) ListPermissions(_ context.Context, _ *qrd
 	return nil, errors.New("not implemented")
 }
 
+func (c *bootstrapRecordingRBACClient) ListOwnPermissions(ctx context.Context) ([]qrdbtransport.PermissionInfo, error) {
+	return c.ListPermissions(ctx, nil)
+}
+
 // TestBootstrapKeysRoute_RequiresBootstrapRead proves the route demands
 // exactly bootstrap:read — the same pair pkg/api/mcp's rpcMethods and
 // pkg/api/grpc's proto option declare for the equivalent call — and that a

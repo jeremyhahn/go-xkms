@@ -192,6 +192,10 @@ func (c *routeAuthzRecordingClient) ListPermissions(_ context.Context, _ *qrdbtr
 	return nil, &routeAuthzDeniedError{resource: "permissions", action: "list"}
 }
 
+func (c *routeAuthzRecordingClient) ListOwnPermissions(ctx context.Context) ([]qrdbtransport.PermissionInfo, error) {
+	return c.ListPermissions(ctx, nil)
+}
+
 // routeAuthzDeniedError is the recording client's refusal.
 type routeAuthzDeniedError struct {
 	resource string

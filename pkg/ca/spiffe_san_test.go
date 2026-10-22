@@ -39,7 +39,7 @@ func TestSignCSR_StampsTenantSPIFFESAN(t *testing.T) {
 
 	require.Len(t, cert.URIs, 1, "exactly one SPIFFE URI SAN expected")
 	got := cert.URIs[0].String()
-	want := "spiffe://example.com/tenant/tenant-acme/user/alice"
+	want := "spiffe://tenant-acme/user/alice"
 	assert.Equal(t, want, got, "SPIFFE SAN must use the canonical tenant path")
 
 	// And it must round-trip through the shared parser, enforcing the pin.
@@ -63,7 +63,7 @@ func TestSignCSR_SPIFFEKindAndNameOverride(t *testing.T) {
 	})
 	require.NoError(t, err)
 	require.Len(t, cert.URIs, 1)
-	assert.Equal(t, "spiffe://trust.internal/tenant/t1/svc/billing-api", cert.URIs[0].String())
+	assert.Equal(t, "spiffe://t1/svc/billing-api", cert.URIs[0].String())
 }
 
 // Without a trust domain or tenant, no SPIFFE SAN is added (legacy behavior).
@@ -84,14 +84,14 @@ func TestSignCSRWithSPIFFE_Raw(t *testing.T) {
 	cert, err := ca.SignCSRWithSPIFFE(context.Background(), csrPEM, "client", 30, "example.com", "tenant-b", "", "")
 	require.NoError(t, err)
 	require.Len(t, cert.URIs, 1)
-	assert.Equal(t, "spiffe://example.com/tenant/tenant-b/user/bob", cert.URIs[0].String())
+	assert.Equal(t, "spiffe://tenant-b/user/bob", cert.URIs[0].String())
 }
 
 // A tenant user's certificate carries its tenant in exactly the form qrdb's
 // certificate-to-tenant rule reads, so the ACME admin plane, which applies
 // that rule pinned to the deployment's trust domain, resolves the user in
-// its own tenant (go-xkms#1240). The same certificate is refused under any
-// other pin rather than falling back to its OU.
+// its own tenant (go-xkms#1240). A pin naming the certificate's own tenant
+// refuses it: no tenant may be the cluster trust domain.
 func TestSignCSR_TenantResolvesThroughQRDBRule(t *testing.T) {
 	ca := setupTestCA(t)
 	csrPEM, _ := makeLeafCSR(t, "dave")
@@ -99,14 +99,15 @@ func TestSignCSR_TenantResolvesThroughQRDBRule(t *testing.T) {
 	cert, err := ca.SignCSRWithSPIFFE(context.Background(), csrPEM, "client", 30, "kms.example.com", "tenant-a", "", "")
 	require.NoError(t, err)
 
-	tenantID, fromSPIFFE, err := qrdbsdk.TenantFromClientCert(cert, "kms.example.com")
+	tenantID, err := qrdbsdk.TenantFromClientCert(cert, "kms.example.com")
 	require.NoError(t, err)
 	assert.Equal(t, "tenant-a", tenantID)
-	assert.True(t, fromSPIFFE, "the tenant must come from the SPIFFE SAN, not the OU")
 
-	_, _, err = qrdbsdk.TenantFromClientCert(cert, "other.example.com")
+	_, err = qrdbsdk.TenantFromClientCert(cert, "tenant-a")
 	var refusal *qrdbsdk.ClientCertificateTenantError
-	assert.ErrorAs(t, err, &refusal, "a foreign pin must refuse the certificate")
+	require.ErrorAs(t, err, &refusal)
+	assert.ErrorIs(t, err, qrdbsdk.ErrClientCertificateTenantIsClusterTrustDomain,
+		"a tenant naming the cluster trust domain must be refused")
 }
 
 // Scenario (b): the keypair-issuance path (generate-and-distribute) must stamp
@@ -128,7 +129,7 @@ func TestIssueCertificate_StampsTenantSPIFFESAN(t *testing.T) {
 
 	require.Len(t, issued.Certificate.URIs, 1, "exactly one SPIFFE URI SAN expected")
 	got := issued.Certificate.URIs[0].String()
-	want := "spiffe://example.com/tenant/tenant-acme/user/carol"
+	want := "spiffe://tenant-acme/user/carol"
 	assert.Equal(t, want, got, "keypair path must use the canonical tenant SPIFFE path")
 
 	// It must round-trip through the shared parser, enforcing the pin.
@@ -153,7 +154,7 @@ func TestIssueCertificate_SPIFFEKindAndNameOverride(t *testing.T) {
 	}, "client")
 	require.NoError(t, err)
 	require.Len(t, issued.Certificate.URIs, 1)
-	assert.Equal(t, "spiffe://trust.internal/tenant/t1/svc/billing-api",
+	assert.Equal(t, "spiffe://t1/svc/billing-api",
 		issued.Certificate.URIs[0].String())
 }
 

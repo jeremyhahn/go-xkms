@@ -53,6 +53,8 @@ type restMockUserClient struct {
 	deleteUser        func(ctx context.Context, id uint64) error
 	enableUser        func(ctx context.Context, id uint64) error
 	disableUser       func(ctx context.Context, id uint64) error
+	suspendUser       func(ctx context.Context, id uint64) error
+	unsuspendUser     func(ctx context.Context, id uint64) error
 	addCertBinding    func(ctx context.Context, userID uint64, thumbprint string, notAfterUnix int64) (*qrdbtransport.User, error)
 	updateUser        func(ctx context.Context, req *qrdbtransport.UpdateUserRequest) (*qrdbtransport.User, error)
 }
@@ -117,6 +119,14 @@ func (m *restMockUserClient) EnableUser(ctx context.Context, id uint64) error {
 
 func (m *restMockUserClient) DisableUser(ctx context.Context, id uint64) error {
 	return m.disableUser(ctx, id)
+}
+
+func (m *restMockUserClient) SuspendUser(ctx context.Context, id uint64) error {
+	return m.suspendUser(ctx, id)
+}
+
+func (m *restMockUserClient) UnsuspendUser(ctx context.Context, id uint64) error {
+	return m.unsuspendUser(ctx, id)
 }
 
 type restMockRoleClient struct {

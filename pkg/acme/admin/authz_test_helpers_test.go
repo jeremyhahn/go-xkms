@@ -92,6 +92,10 @@ func (q *qrdbRoleRBAC) ListPermissions(_ context.Context, _ *qrdbtransport.Ident
 	return nil, nil
 }
 
+func (q *qrdbRoleRBAC) ListOwnPermissions(ctx context.Context) ([]qrdbtransport.PermissionInfo, error) {
+	return q.ListPermissions(ctx, nil)
+}
+
 // requests returns a copy of every resource:action the gate asked this client
 // to evaluate.
 func (q *qrdbRoleRBAC) requests() []string {

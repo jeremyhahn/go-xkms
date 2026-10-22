@@ -197,21 +197,10 @@ type OATHTestHelper struct {
 func NewOATHTestHelper(t *testing.T) *OATHTestHelper {
 	t.Helper()
 
-	tmpDir, err := os.MkdirTemp("", "oath-cli-test-*")
-	if err != nil {
-		t.Fatalf("Failed to create temp directory: %v", err)
-	}
-
-	storePath := filepath.Join(tmpDir, "oath.json")
-
-	t.Cleanup(func() {
-		os.RemoveAll(tmpDir)
-	})
-
 	return &OATHTestHelper{
 		t:          t,
 		binaryPath: getBinary(t),
-		storePath:  storePath,
+		storePath:  filepath.Join(t.TempDir(), "oath.json"),
 	}
 }
 
@@ -243,8 +232,30 @@ func (h *OATHTestHelper) RunOATH(args ...string) *CommandResult {
 // RunCommand executes the xkey binary with the given arguments.
 func (h *OATHTestHelper) RunCommand(args ...string) *CommandResult {
 	h.t.Helper()
+	return h.runCommand(nil, args...)
+}
+
+// RunOATHWithSecret runs an oath subcommand like RunOATH, handing the
+// credential secret to xkey through XKEY_OATH_SECRET: xkey has no --secret
+// value flag, since a value on the command line is visible to every process
+// on the host.
+func (h *OATHTestHelper) RunOATHWithSecret(secret string, args ...string) *CommandResult {
+	h.t.Helper()
+
+	fullArgs := []string{"oath", args[0], "--store", h.storePath}
+	fullArgs = append(fullArgs, args[1:]...)
+	return h.runCommand([]string{"XKEY_OATH_SECRET=" + secret}, fullArgs...)
+}
+
+// runCommand runs the xkey binary with args, adding env to the inherited
+// environment.
+func (h *OATHTestHelper) runCommand(env []string, args ...string) *CommandResult {
+	h.t.Helper()
 
 	cmd := exec.Command(h.binaryPath, args...)
+	if len(env) > 0 {
+		cmd.Env = append(os.Environ(), env...)
+	}
 
 	var stdout, stderr bytes.Buffer
 	cmd.Stdout = &stdout
@@ -319,7 +330,6 @@ func (h *OATHTestHelper) AddCredential(cred TestCredential) *CommandResult {
 	args := []string{
 		"add",
 		"--name", cred.Name,
-		"--secret", cred.Secret,
 	}
 
 	if cred.Issuer != "" {
@@ -338,7 +348,7 @@ func (h *OATHTestHelper) AddCredential(cred TestCredential) *CommandResult {
 		args = append(args, "--period", intToString(cred.Period))
 	}
 
-	return h.RunOATH(args...)
+	return h.RunOATHWithSecret(cred.Secret, args...)
 }
 
 // intToString converts an integer to a string.
