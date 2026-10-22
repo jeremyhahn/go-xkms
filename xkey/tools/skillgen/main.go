@@ -20,8 +20,8 @@ package main
 
 import (
 	"bufio"
-	"errors"
 	"fmt"
+	"io"
 	"os"
 	"sort"
 	"strings"
@@ -33,25 +33,36 @@ import (
 )
 
 func main() {
-	if len(os.Args) == 3 && os.Args[1] == "-check" {
-		problems, err := checkSkill(os.Args[2], cmd.RootCmd)
-		if err != nil {
-			fail(err)
-		}
-		if len(problems) > 0 {
-			fail(errors.New(strings.Join(problems, "\n")))
-		}
-		return
-	}
-	bw := bufio.NewWriter(os.Stdout)
-	w := &writer{w: bw}
-	render(w, cmd.RootCmd)
-	if w.err != nil {
-		fail(w.err)
-	}
-	if err := bw.Flush(); err != nil {
+	if err := run(os.Args[1:], cmd.RootCmd, os.Stdout); err != nil {
 		fail(err)
 	}
+}
+
+// problemsError lists the skill invocations the command tree does not know.
+type problemsError struct{ problems []string }
+
+func (e *problemsError) Error() string { return strings.Join(e.problems, "\n") }
+
+// run checks the skill named by "-check <path>" against root, or otherwise
+// writes the reference for root to out.
+func run(args []string, root *cobra.Command, out io.Writer) error {
+	if len(args) == 2 && args[0] == "-check" {
+		problems, err := checkSkill(args[1], root)
+		if err != nil {
+			return err
+		}
+		if len(problems) > 0 {
+			return &problemsError{problems: problems}
+		}
+		return nil
+	}
+	bw := bufio.NewWriter(out)
+	w := &writer{w: bw}
+	render(w, root)
+	if w.err != nil {
+		return w.err
+	}
+	return bw.Flush()
 }
 
 // fail reports err on stderr and exits non-zero. A failed write to stderr

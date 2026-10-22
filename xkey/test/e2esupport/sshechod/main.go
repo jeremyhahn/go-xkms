@@ -31,6 +31,7 @@ import (
 	"crypto/ed25519"
 	"crypto/rand"
 	"fmt"
+	"io"
 	"net"
 	"os"
 
@@ -38,10 +39,36 @@ import (
 )
 
 func main() {
+	if err := run(os.Args[1:], net.Listen, os.Stdout); err != nil {
+		fmt.Fprintf(os.Stderr, "sshechod: %v\n", err)
+		os.Exit(1)
+	}
+}
+
+// listenFunc opens the server's listener; main passes net.Listen.
+type listenFunc func(network, address string) (net.Listener, error)
+
+// startError reports the startup step that failed.
+type startError struct {
+	what string
+	err  error
+}
+
+func (e *startError) Error() string { return e.what + ": " + e.err.Error() }
+
+func (e *startError) Unwrap() error { return e.err }
+
+// run listens on the bind IP in args (default 127.0.0.1), announces the
+// address on out and serves sessions until the listener stops accepting.
+func run(args []string, listen listenFunc, out io.Writer) error {
 	_, hostPriv, err := ed25519.GenerateKey(rand.Reader)
-	fatalIf(err, "generate host key")
+	if err != nil {
+		return &startError{what: "generate host key", err: err}
+	}
 	hostSigner, err := ssh.NewSignerFromKey(hostPriv)
-	fatalIf(err, "host signer")
+	if err != nil {
+		return &startError{what: "host signer", err: err}
+	}
 
 	cfg := &ssh.ServerConfig{
 		// Accept any client key — the tests exercise the console byte
@@ -53,18 +80,23 @@ func main() {
 	cfg.AddHostKey(hostSigner)
 
 	bindIP := "127.0.0.1"
-	if len(os.Args) > 1 && os.Args[1] != "" {
-		bindIP = os.Args[1]
+	if len(args) > 0 && args[0] != "" {
+		bindIP = args[0]
 	}
-	ln, err := net.Listen("tcp", net.JoinHostPort(bindIP, "0"))
-	fatalIf(err, "listen")
+	ln, err := listen("tcp", net.JoinHostPort(bindIP, "0"))
+	if err != nil {
+		return &startError{what: "listen", err: err}
+	}
+	defer func() { _ = ln.Close() }()
 	addr := ln.Addr().(*net.TCPAddr)
-	fmt.Printf("SSHECHO LISTEN %s %d\n", addr.IP.String(), addr.Port)
+	if _, err := fmt.Fprintf(out, "SSHECHO LISTEN %s %d\n", addr.IP.String(), addr.Port); err != nil {
+		return &startError{what: "announce", err: err}
+	}
 
 	for {
 		conn, aerr := ln.Accept()
 		if aerr != nil {
-			return
+			return nil
 		}
 		go handle(conn, cfg)
 	}
@@ -129,12 +161,5 @@ func echoUntilExit(ch ssh.Channel) {
 			_ = ch.Close()
 			return
 		}
-	}
-}
-
-func fatalIf(err error, what string) {
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "sshechod: %s: %v\n", what, err)
-		os.Exit(1)
 	}
 }
