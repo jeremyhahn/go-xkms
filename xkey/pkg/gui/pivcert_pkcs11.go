@@ -21,6 +21,25 @@ import (
 	xkms "github.com/jeremyhahn/go-xkms/sdk/go"
 )
 
+// registerPKCS11PIVStore registers PIV certificate storage that reads and
+// writes certificates directly on the connected token (NIST SP 800-73-5),
+// under the "pkcs11" name and under the module ID.
+func (a *App) registerPKCS11PIVStore(moduleID string, conn *xkms.PKCS11Connection, soPin, userPin string) {
+	p11Store, err := newPKCS11PIVCertStorageFromConnection(conn, soPin, userPin)
+	if err != nil {
+		a.log.Debug("PKCS#11 PIV cert storage not available", "error", err)
+		return
+	}
+	if err := xkms.RegisterPIVStore("pkcs11", p11Store); err != nil {
+		a.log.Warn("failed to register PKCS#11 PIV store", "error", err)
+	} else {
+		a.log.Info("registered PKCS#11 PIV cert storage (on-device)")
+	}
+	if err := xkms.RegisterPIVStore(moduleID, p11Store); err != nil {
+		a.log.Debug("failed to register PIV store under module ID", "error", err)
+	}
+}
+
 // newPKCS11PIVCertStorageFromConnection creates a PKCS#11 PIV cert storage
 // that reuses the already-initialized context and session from the PKCS#11
 // module manager. This avoids CKR_CRYPTOKI_ALREADY_INITIALIZED errors and

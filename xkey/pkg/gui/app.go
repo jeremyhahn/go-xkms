@@ -1490,6 +1490,13 @@ func (a *App) initLocalKeyStore(barrierBackend xkmssdk.StorageBackend) {
 	a.log.Info("local key store initialized", "barrier_active", barrierBackend != nil)
 }
 
+// pkcs11BackendFactory looks up the PKCS#11 KeyProvider factory, which the
+// pkcs11 build registers from the backend's init. The SDK registry has no
+// unregister, so tests replace this lookup for the length of one test.
+var pkcs11BackendFactory = func() (xkmssdk.ServiceBackendFactory, bool) {
+	return xkmssdk.GetBackendFactory(xkmssdk.BackendPKCS11)
+}
+
 // registerPKCS11XKMSBackend dynamically creates and registers a PKCS#11 backend
 // with the xkms service. Called when a PKCS#11 token is connected via the admin
 // area so PIV key generation and key operations can use the hardware token.
@@ -1523,7 +1530,7 @@ func (a *App) registerPKCS11XKMSBackend(libraryPath string, slotID uint, userPIN
 		xkmssdk.UnregisterBackend("pkcs11")
 	}
 
-	factory, ok := xkmssdk.GetBackendFactory(xkmssdk.BackendPKCS11)
+	factory, ok := pkcs11BackendFactory()
 	if !ok {
 		a.log.Warn("PKCS#11 backend factory not registered")
 		return
@@ -2196,19 +2203,7 @@ func NewApp(cfg *GUIConfig) *App {
 		mgr := a.pkcs11Service.GetManager()
 		if mgr != nil {
 			if conn, connErr := mgr.GetConnection(moduleID, slotID); connErr == nil {
-				p11Store, p11Err := newPKCS11PIVCertStorageFromConnection(conn, soPin, userPIN)
-				if p11Err == nil {
-					if pivErr := xkmssdk.RegisterPIVStore("pkcs11", p11Store); pivErr != nil {
-						a.log.Warn("failed to register PKCS#11 PIV store", "error", pivErr)
-					} else {
-						a.log.Info("registered PKCS#11 PIV cert storage (on-device)")
-					}
-					if pivErr := xkmssdk.RegisterPIVStore(moduleID, p11Store); pivErr != nil {
-						a.log.Debug("failed to register PIV store under module ID", "error", pivErr)
-					}
-				} else {
-					a.log.Debug("PKCS#11 PIV cert storage not available", "error", p11Err)
-				}
+				a.registerPKCS11PIVStore(moduleID, conn, soPin, userPIN)
 
 				// Register the PKCS#11 token as a FIDO2 key backend by wrapping the
 				// go-xkms PKCS#11 KeyProvider via the BackendAdapter. YubiKey PIV's
