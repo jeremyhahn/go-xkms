@@ -1110,14 +1110,12 @@ func TestP3A_AdminService_ExportEntries_CSV(t *testing.T) {
 }
 
 func TestP3A_AdminService_ExportAuditLogs_NotAuthorized_JSON(t *testing.T) {
-	asUnprivileged(t)
 	svc := NewAdminService()
 	_, err := svc.ExportAuditLogs("json")
 	assert.ErrorIs(t, err, ErrAdminNotAuthorized)
 }
 
 func TestP3A_AdminService_ExportAuditLogs_NotAuthorized_CSV(t *testing.T) {
-	asUnprivileged(t)
 	svc := NewAdminService()
 	_, err := svc.ExportAuditLogs("csv")
 	assert.ErrorIs(t, err, ErrAdminNotAuthorized)
@@ -1130,7 +1128,6 @@ func TestP3A_AdminService_ExportAuditLogs_InvalidFormat(t *testing.T) {
 }
 
 func TestP3A_AdminService_GetAuditLogs_NonAdmin(t *testing.T) {
-	asUnprivileged(t)
 	svc := NewAdminService()
 	svc.SetContext(context.Background())
 	store, storeErr := audit.NewBackendStore(xkms.NewStorageMemory(), 100, nil)

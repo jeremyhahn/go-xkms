@@ -311,6 +311,27 @@ type (
 	QRDBAuditLogger = qrdb.AuditLogger
 )
 
+// Identity and RBAC types: the go-qrdb authorizer and the identity it
+// decides for. Consumers authorize over these instead of keeping a local
+// authorizer (SPEC row authz-xkey-uid0).
+type (
+	QRDBAuthorizer = qrdb.Authorizer
+	QRDBIdentity   = qrdb.Identity
+)
+
+// QRDBPermissionAuditRead is go-qrdb's permission to read audit events
+// ("audit:read").
+const QRDBPermissionAuditRead = qrdb.PermissionAuditRead
+
+// Identity and permission helpers: the identity bound to a request context,
+// and the resource and action halves of a "resource:action" permission.
+var (
+	QRDBIdentityFromContext = qrdb.IdentityFromContext
+	QRDBWithIdentity        = qrdb.WithIdentity
+	QRDBPermissionResource  = qrdb.PermissionResource
+	QRDBPermissionAction    = qrdb.PermissionAction
+)
+
 // Seal strategy ID constants are exported from the xkms SDK's seal.go
 // (StrategyTPM2/PKCS11/AWSKMS/GCPKMS/AzureKV/Vault/Shamir/Passphrase). The
 // former QRDBStrategy* re-exports here were redundant and unused; removed.

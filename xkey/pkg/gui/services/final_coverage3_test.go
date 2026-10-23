@@ -63,8 +63,8 @@ func TestFC3_AdminService_GetBackendInfo_AllLocalIDs(t *testing.T) {
 
 // TestFC3_AdminService_ExportAuditLogs_FormatValidation exercises the
 // format validation path at L241-246 (validFormats check). Since ExportAuditLogs
-// checks IsAdmin() first and we are not root, we test the equivalent logic
-// via the underlying AuditService.ExportEntries.
+// authorizes the caller first, we test the equivalent logic via the
+// underlying AuditService.ExportEntries.
 func TestFC3_AdminService_ExportAuditLogs_FormatValidation(t *testing.T) {
 	store, storeErr := audit.NewBackendStore(xkms.NewStorageMemory(), 100, nil)
 	require.NoError(t, storeErr)

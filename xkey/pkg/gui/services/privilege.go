@@ -16,7 +16,6 @@ package services
 import (
 	"os"
 	"os/exec"
-	"os/user"
 )
 
 // Privilege detection is routed through package-level function variables so
@@ -26,9 +25,6 @@ import (
 
 // geteuid returns the effective user ID of the calling process.
 var geteuid = os.Geteuid
-
-// currentUser returns the current OS user.
-var currentUser = user.Current
 
 // sudoLookPath resolves the sudo binary. Tests replace this to exercise the
 // available and unavailable branches without depending on whether sudo is

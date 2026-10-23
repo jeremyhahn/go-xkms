@@ -24,6 +24,7 @@ import (
 	"strconv"
 	"strings"
 
+	xkmssdk "github.com/jeremyhahn/go-xkms/sdk/go"
 	"github.com/jeremyhahn/go-xkms/xkey/pkg/audit"
 	"github.com/jeremyhahn/go-xkms/xkey/pkg/backendregistry"
 	"github.com/jeremyhahn/go-xkms/xkey/pkg/config"
@@ -144,6 +145,7 @@ type AdminService struct {
 	configUpdateFunc func(backendID string) error
 	pivRegisterFn    func(backendID, category string)
 	keyLister        BackendKeyLister
+	authorizer       xkmssdk.QRDBAuthorizer
 }
 
 // NewAdminService creates a new AdminService. The cloud connection tester is
@@ -218,14 +220,33 @@ func (s *AdminService) SetContext(ctx context.Context) {
 	s.ctx = ctx
 }
 
-// IsAdmin returns true if the current user has administrative privileges.
-func (s *AdminService) IsAdmin() bool {
-	u, err := currentUser()
-	if err != nil {
-		return false
+// SetAuthorizer sets the go-qrdb authorizer that decides audit reads. Without
+// one every audit read is refused: xkey keeps no local authorizer.
+func (s *AdminService) SetAuthorizer(authorizer xkmssdk.QRDBAuthorizer) {
+	s.authorizer = authorizer
+}
+
+// authorizeAuditRead asks the go-qrdb authorizer whether the identity bound
+// to the service context holds audit:read. A missing authorizer, a missing
+// identity and a denial are all refusals.
+func (s *AdminService) authorizeAuditRead() error {
+	if s.authorizer == nil {
+		return &AuditReadDeniedError{Reason: "no authorizer"}
 	}
-	// On Unix, root (uid 0) is admin. On Windows, check group membership.
-	return u.Uid == "0"
+	ctx := s.ctx
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	identity := xkmssdk.QRDBIdentityFromContext(ctx)
+	if identity == nil {
+		return &AuditReadDeniedError{Reason: "no identity"}
+	}
+	perm := xkmssdk.QRDBPermissionAuditRead
+	if err := s.authorizer.Authorize(ctx, identity,
+		xkmssdk.QRDBPermissionResource(perm), xkmssdk.QRDBPermissionAction(perm)); err != nil {
+		return &AuditReadDeniedError{Reason: "denied", Err: err}
+	}
+	return nil
 }
 
 // GetServerStatus returns the xkmsd server status.
@@ -805,13 +826,14 @@ func (s *AdminService) GetBackendInfo(id string) (*BackendInfo, error) {
 	return nil, ErrAdminBackendNotFound
 }
 
-// GetAuditLogs returns audit entries via the admin interface. Callers must
-// hold the admin role; unauthorized callers receive ErrAdminNotAuthorized.
-// The query itself is delegated to AuditService over the same audit store so
-// both surfaces report identical entries.
+// GetAuditLogs returns audit entries via the admin interface. The caller's
+// go-qrdb identity must hold audit:read; a refusal is an
+// *AuditReadDeniedError matching ErrAdminNotAuthorized. The query itself is
+// delegated to AuditService over the same audit store so both surfaces
+// report identical entries.
 func (s *AdminService) GetAuditLogs(filter *AuditFilter) ([]AuditEntry, error) {
-	if !s.IsAdmin() {
-		return nil, ErrAdminNotAuthorized
+	if err := s.authorizeAuditRead(); err != nil {
+		return nil, err
 	}
 	// Delegate to shared audit query logic.
 	auditSvc := NewAuditService(s.auditStore)
@@ -900,10 +922,11 @@ func (s *AdminService) GetSystemDefaultBackend() string {
 }
 
 // ExportAuditLogs exports audit entries in the specified format.
-// Supported formats: "json", "csv".
+// Supported formats: "json", "csv". The caller's go-qrdb identity must hold
+// audit:read, as for GetAuditLogs.
 func (s *AdminService) ExportAuditLogs(format string) ([]byte, error) {
-	if !s.IsAdmin() {
-		return nil, ErrAdminNotAuthorized
+	if err := s.authorizeAuditRead(); err != nil {
+		return nil, err
 	}
 	validFormats := map[string]struct{}{
 		"json": {},

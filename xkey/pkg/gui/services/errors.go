@@ -50,6 +50,29 @@ func (e *SSHServerUnavailableError) Error() string {
 // Unwrap returns the dial failure.
 func (e *SSHServerUnavailableError) Unwrap() error { return e.Err }
 
+// AuditReadDeniedError refuses an audit read the go-qrdb authorizer did not
+// allow: no authorizer is set, no identity is bound to the context, or the
+// identity lacks audit:read. It matches ErrAdminNotAuthorized.
+type AuditReadDeniedError struct {
+	// Reason names why the read was refused.
+	Reason string
+	// Err is the authorizer's denial, nil when no decision was made.
+	Err error
+}
+
+func (e *AuditReadDeniedError) Error() string {
+	if e.Err != nil {
+		return fmt.Sprintf("admin_service: audit read refused (%s): %v", e.Reason, e.Err)
+	}
+	return fmt.Sprintf("admin_service: audit read refused (%s)", e.Reason)
+}
+
+// Is reports ErrAdminNotAuthorized as the refusal's class.
+func (e *AuditReadDeniedError) Is(target error) bool { return target == ErrAdminNotAuthorized }
+
+// Unwrap returns the authorizer's denial.
+func (e *AuditReadDeniedError) Unwrap() error { return e.Err }
+
 // SSHLocalBackendConnectedError indicates a local backend was chosen
 // explicitly for an SSH key while a server is connected, where keys live
 // on the server.

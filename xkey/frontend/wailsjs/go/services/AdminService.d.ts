@@ -21,8 +21,6 @@ export function GetServerStatus():Promise<services.ServerStatus>;
 
 export function GetSystemDefaultBackend():Promise<string>;
 
-export function IsAdmin():Promise<boolean>;
-
 export function ListBackends():Promise<Array<services.BackendInfo>>;
 
 export function RenameBackend(arg1:string,arg2:string):Promise<void>;

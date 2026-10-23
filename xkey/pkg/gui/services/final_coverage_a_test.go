@@ -762,20 +762,6 @@ func TestFA_OIDCService_LoadProviders_ReadError(t *testing.T) {
 // admin_service.go tests
 // =========================================================================
 
-// TestFA_AdminService_IsAdmin_ReturnsValue covers L112-118: IsAdmin
-// should return false for non-root (or true for root, but either way
-// it exercises the user.Current() path).
-func TestFA_AdminService_IsAdmin_ReturnsValue(t *testing.T) {
-	svc := NewAdminService()
-	result := svc.IsAdmin()
-	// The expectation is DERIVED from the real condition rather than assumed.
-	// The comment here used to read "we are not root in CI, so expect false"
-	// — and CI runs this job as root, so the test failed the moment the gate
-	// ran it. A yardstick that restates an assumption about the environment
-	// cannot notice the environment contradicting it.
-	assert.Equal(t, os.Geteuid() == 0, result)
-}
-
 // TestFA_AdminService_GetBackendInfo_ListError covers L211-213: when
 // ListBackends returns an error (it actually never does with current impl,
 // but we exercise the code path anyway).
@@ -790,7 +776,6 @@ func TestFA_AdminService_GetBackendInfo_ListError(t *testing.T) {
 // TestFA_AdminService_GetAuditLogs_NonAdmin covers L226-228: GetAuditLogs
 // when not admin.
 func TestFA_AdminService_GetAuditLogs_NonAdmin(t *testing.T) {
-	asUnprivileged(t)
 	svc := NewAdminService()
 	svc.SetContext(context.Background())
 	_, err := svc.GetAuditLogs(nil)
@@ -800,7 +785,6 @@ func TestFA_AdminService_GetAuditLogs_NonAdmin(t *testing.T) {
 // TestFA_AdminService_ExportAuditLogs_NonAdmin covers L238-239: ExportAuditLogs
 // when not admin.
 func TestFA_AdminService_ExportAuditLogs_NonAdmin(t *testing.T) {
-	asUnprivileged(t)
 	svc := NewAdminService()
 	svc.SetContext(context.Background())
 	_, err := svc.ExportAuditLogs("json")
@@ -809,11 +793,10 @@ func TestFA_AdminService_ExportAuditLogs_NonAdmin(t *testing.T) {
 
 // TestFA_AdminService_ExportAuditLogs_InvalidFormat covers L245-246.
 func TestFA_AdminService_ExportAuditLogs_InvalidFormat(t *testing.T) {
-	asUnprivileged(t)
 	svc := NewAdminService()
+	asAuditReader(svc)
 	_, err := svc.ExportAuditLogs("xml")
-	// Non-admin gets ErrAdminNotAuthorized first.
-	assert.Error(t, err)
+	assert.ErrorIs(t, err, ErrAdminInvalidFormat)
 }
 
 // =========================================================================

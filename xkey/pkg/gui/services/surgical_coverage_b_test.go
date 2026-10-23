@@ -97,14 +97,6 @@ func (m *sbMockStaticPWStore) RemoveFolder(_ string) error { return nil }
 // admin_service.go tests
 // ---------------------------------------------------------------------------
 
-// TestSB_AdminService_IsAdmin covers L112-118: the IsAdmin method.
-// Running as non-root exercises L112-118. If run as root, L118 is hit.
-// L114-116 (user.Current error) is only triggerable in broken envs.
-func TestSB_AdminService_IsAdmin(t *testing.T) {
-	svc := NewAdminService()
-	_ = svc.IsAdmin()
-}
-
 // TestSB_AdminService_GetBackendInfo_ListError covers L211-213:
 // ListBackends succeeds via local fallback, then L214-219 loops.
 func TestSB_AdminService_GetBackendInfo_ListError(t *testing.T) {

@@ -35,7 +35,6 @@ import (
 // ---------------------------------------------------------------------------
 
 func TestAdminService_GetAuditLogs_NonAdmin(t *testing.T) {
-	asUnprivileged(t)
 	svc := NewAdminService()
 	svc.SetContext(context.Background())
 
@@ -47,11 +46,9 @@ func TestAdminService_GetAuditLogs_NonAdmin(t *testing.T) {
 
 func TestAdminService_ExportAuditLogs_InvalidFormatBeforeAuth(t *testing.T) {
 	// "xml" is invalid. Authorization is checked before the format, so a
-	// non-admin must see the auth error and an admin must see the format
-	// error. Both directions are asserted via the privilege seam rather than
-	// branching on whichever uid the test binary happens to run under.
-	t.Run("non admin sees auth error first", func(t *testing.T) {
-		asUnprivileged(t)
+	// caller without audit:read must see the auth error and an audit reader
+	// must see the format error.
+	t.Run("caller without audit:read sees auth error first", func(t *testing.T) {
 		svc := NewAdminService()
 		svc.SetContext(context.Background())
 
@@ -59,10 +56,9 @@ func TestAdminService_ExportAuditLogs_InvalidFormatBeforeAuth(t *testing.T) {
 		assert.ErrorIs(t, err, ErrAdminNotAuthorized)
 	})
 
-	t.Run("admin sees invalid format error", func(t *testing.T) {
-		asPrivileged(t)
+	t.Run("audit reader sees invalid format error", func(t *testing.T) {
 		svc := NewAdminService()
-		svc.SetContext(context.Background())
+		asAuditReader(svc)
 
 		_, err := svc.ExportAuditLogs("xml")
 		assert.ErrorIs(t, err, ErrAdminInvalidFormat)
@@ -70,7 +66,6 @@ func TestAdminService_ExportAuditLogs_InvalidFormatBeforeAuth(t *testing.T) {
 }
 
 func TestAdminService_GetAuditLogs_WithFilter(t *testing.T) {
-	asUnprivileged(t)
 	svc := NewAdminService()
 	svc.SetContext(context.Background())
 

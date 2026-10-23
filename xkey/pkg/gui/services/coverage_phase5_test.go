@@ -1097,17 +1097,6 @@ func TestP5B_SetupWizard_EmitProgress_NilEmitter(t *testing.T) {
 // 3. Admin Service Tests
 // ---------------------------------------------------------------------------
 
-// TestP5B_AdminService_IsAdmin_NonRoot verifies that IsAdmin returns false
-// for non-root users.
-func TestP5B_AdminService_IsAdmin_NonRoot(t *testing.T) {
-	svc := NewAdminService()
-	// In a test environment, we are typically not root.
-	result := svc.IsAdmin()
-	// Can't assert the exact value as it depends on test environment,
-	// but the function should not panic.
-	_ = result
-}
-
 // TestP5B_AdminService_GetAuditLogs_WithStore verifies that GetAuditLogs
 // delegates to the audit service with a real store.
 func TestP5B_AdminService_GetAuditLogs_WithStore(t *testing.T) {
@@ -1117,14 +1106,12 @@ func TestP5B_AdminService_GetAuditLogs_WithStore(t *testing.T) {
 
 	svc := NewAdminService()
 	svc.SetAuditStore(store)
-	svc.SetContext(context.Background())
+	asAuditReader(svc)
 
-	// GetAuditLogs checks IsAdmin first. In non-root environment, this will
-	// return ErrAdminNotAuthorized.
-	_, err := svc.GetAuditLogs(nil)
-	if err != nil {
-		assert.True(t, errors.Is(err, ErrAdminNotAuthorized))
-	}
+	entries, err := svc.GetAuditLogs(nil)
+	require.NoError(t, err)
+	require.Len(t, entries, 1)
+	assert.Equal(t, "key-1", entries[0].KeyID)
 }
 
 // TestP5B_AdminService_ExportAuditLogs_InvalidFormat verifies that

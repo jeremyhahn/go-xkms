@@ -34,10 +34,6 @@ export function GetSystemDefaultBackend() {
   return window['go']['services']['AdminService']['GetSystemDefaultBackend']();
 }
 
-export function IsAdmin() {
-  return window['go']['services']['AdminService']['IsAdmin']();
-}
-
 export function ListBackends() {
   return window['go']['services']['AdminService']['ListBackends']();
 }

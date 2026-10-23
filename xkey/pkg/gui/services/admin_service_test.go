@@ -42,11 +42,90 @@ func TestAdminService_SetContext(t *testing.T) {
 	assert.Equal(t, context.Background(), svc.ctx)
 }
 
-func TestAdminService_IsAdmin(t *testing.T) {
-	svc := NewAdminService()
-	// In test environments we are typically not root.
-	// Just verify it returns a bool without panicking.
-	_ = svc.IsAdmin()
+// recordingAuthorizer is a go-qrdb Authorizer that renders a fixed decision
+// and records the request it was asked to decide.
+type recordingAuthorizer struct {
+	denial   error
+	identity *xkms.QRDBIdentity
+	resource string
+	action   string
+}
+
+func (a *recordingAuthorizer) Authorize(_ context.Context, identity *xkms.QRDBIdentity, resource, action string) error {
+	a.identity, a.resource, a.action = identity, resource, action
+	return a.denial
+}
+
+// auditReaderIdentity is the caller bound to the service context in tests.
+var auditReaderIdentity = &xkms.QRDBIdentity{Subject: "auditor", TenantID: "system"}
+
+// asAuditReader binds auditReaderIdentity to svc and installs an authorizer
+// that grants it audit:read.
+func asAuditReader(svc *AdminService) *recordingAuthorizer {
+	authorizer := &recordingAuthorizer{}
+	svc.SetAuthorizer(authorizer)
+	svc.SetContext(xkms.QRDBWithIdentity(context.Background(), auditReaderIdentity))
+	return authorizer
+}
+
+func TestAdminService_AuthorizeAuditRead(t *testing.T) {
+	t.Run("caller holding audit:read is allowed", func(t *testing.T) {
+		svc := NewAdminService()
+		authorizer := asAuditReader(svc)
+
+		require.NoError(t, svc.authorizeAuditRead())
+		assert.Same(t, auditReaderIdentity, authorizer.identity)
+		assert.Equal(t, "audit", authorizer.resource)
+		assert.Equal(t, "read", authorizer.action)
+	})
+
+	t.Run("caller without audit:read is refused", func(t *testing.T) {
+		denial := errors.New("permission denied")
+		svc := NewAdminService()
+		asAuditReader(svc).denial = denial
+
+		err := svc.authorizeAuditRead()
+
+		var refused *AuditReadDeniedError
+		require.ErrorAs(t, err, &refused)
+		assert.Equal(t, "denied", refused.Reason)
+		assert.ErrorIs(t, err, ErrAdminNotAuthorized)
+		assert.ErrorIs(t, err, denial)
+	})
+
+	t.Run("missing authorizer refuses", func(t *testing.T) {
+		svc := NewAdminService()
+		svc.SetContext(xkms.QRDBWithIdentity(context.Background(), auditReaderIdentity))
+
+		err := svc.authorizeAuditRead()
+
+		var refused *AuditReadDeniedError
+		require.ErrorAs(t, err, &refused)
+		assert.Equal(t, "no authorizer", refused.Reason)
+		assert.ErrorIs(t, err, ErrAdminNotAuthorized)
+	})
+
+	t.Run("missing identity refuses without asking the authorizer", func(t *testing.T) {
+		svc := NewAdminService()
+		authorizer := &recordingAuthorizer{}
+		svc.SetAuthorizer(authorizer)
+
+		err := svc.authorizeAuditRead()
+
+		var refused *AuditReadDeniedError
+		require.ErrorAs(t, err, &refused)
+		assert.Equal(t, "no identity", refused.Reason)
+		assert.Nil(t, authorizer.identity)
+	})
+}
+
+func TestAuditReadDeniedError_Error(t *testing.T) {
+	withCause := &AuditReadDeniedError{Reason: "denied", Err: errors.New("permission denied")}
+	assert.Equal(t, "admin_service: audit read refused (denied): permission denied", withCause.Error())
+
+	withoutCause := &AuditReadDeniedError{Reason: "no authorizer"}
+	assert.Equal(t, "admin_service: audit read refused (no authorizer)", withoutCause.Error())
+	assert.NoError(t, withoutCause.Unwrap())
 }
 
 func TestAdminService_SetAuditStore(t *testing.T) {
@@ -325,23 +404,20 @@ func TestAdminService_GetBackendInfo_EmptyID(t *testing.T) {
 }
 
 func TestAdminService_GetAuditLogs(t *testing.T) {
-	t.Run("non admin returns error", func(t *testing.T) {
-		asUnprivileged(t)
+	t.Run("caller without audit:read is refused", func(t *testing.T) {
 		svc := NewAdminService()
-		svc.SetContext(context.Background())
+		asAuditReader(svc).denial = errors.New("permission denied")
 		_, err := svc.GetAuditLogs(nil)
 		assert.True(t, errors.Is(err, ErrAdminNotAuthorized))
 	})
 
-	t.Run("admin delegates to the audit store", func(t *testing.T) {
-		asPrivileged(t)
-
+	t.Run("audit reader delegates to the audit store", func(t *testing.T) {
 		store, storeErr := audit.NewBackendStore(xkms.NewStorageMemory(), 100, nil)
 		require.NoError(t, storeErr)
 		store.LogKeyOperation(audit.OpKeyCreated, "software", "admin-key", true, nil, 7)
 
 		svc := NewAdminService()
-		svc.SetContext(context.Background())
+		asAuditReader(svc)
 		svc.SetAuditStore(store)
 
 		entries, err := svc.GetAuditLogs(nil)
@@ -354,37 +430,35 @@ func TestAdminService_GetAuditLogs(t *testing.T) {
 
 func TestAdminService_ExportAuditLogs_InvalidFormat(t *testing.T) {
 	svc := NewAdminService()
+	asAuditReader(svc)
 	_, err := svc.ExportAuditLogs("yaml")
-	// Non-admin gets ErrAdminNotAuthorized, admin gets ErrAdminInvalidFormat.
-	assert.Error(t, err)
+	assert.ErrorIs(t, err, ErrAdminInvalidFormat)
 }
 
 func TestAdminService_ExportAuditLogs_NotAuthorized(t *testing.T) {
-	asUnprivileged(t)
 	svc := NewAdminService()
 	_, err := svc.ExportAuditLogs("json")
 	assert.True(t, errors.Is(err, ErrAdminNotAuthorized))
 }
 
 func TestAdminService_ExportAuditLogs_CSV_NotAuthorized(t *testing.T) {
-	asUnprivileged(t)
 	svc := NewAdminService()
 	_, err := svc.ExportAuditLogs("csv")
 	assert.True(t, errors.Is(err, ErrAdminNotAuthorized))
 }
 
-// TestAdminService_ExportAuditLogs_Admin drives ExportAuditLogs end to end
-// as an admin: past the authorization and format-validation guards, into
-// the real AuditService.ExportEntries delegation.
-func TestAdminService_ExportAuditLogs_Admin(t *testing.T) {
+// TestAdminService_ExportAuditLogs_AuditReader drives ExportAuditLogs end to
+// end as a caller holding audit:read: past the authorization and
+// format-validation guards, into the real AuditService.ExportEntries
+// delegation.
+func TestAdminService_ExportAuditLogs_AuditReader(t *testing.T) {
 	newSvc := func(t *testing.T) *AdminService {
-		asPrivileged(t)
 		store, storeErr := audit.NewBackendStore(xkms.NewStorageMemory(), 100, nil)
 		require.NoError(t, storeErr)
 		store.LogKeyOperation(audit.OpKeyCreated, "software", "admin-key", true, nil, 7)
 
 		svc := NewAdminService()
-		svc.SetContext(context.Background())
+		asAuditReader(svc)
 		svc.SetAuditStore(store)
 		return svc
 	}

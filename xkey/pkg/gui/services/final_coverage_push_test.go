@@ -526,18 +526,11 @@ func TestFinalCoveragePush_AdminService_GetAuditLogs_WithEntries(t *testing.T) {
 	}
 	svc := NewAdminService()
 	svc.SetAuditStore(store)
-	svc.SetContext(context.Background())
+	asAuditReader(svc)
 
-	// GetAuditLogs requires admin. Since tests don't run as root,
-	// this should return ErrAdminNotAuthorized.
 	entries, err := svc.GetAuditLogs(nil)
-	if errors.Is(err, ErrAdminNotAuthorized) {
-		assert.Nil(t, entries)
-	} else {
-		// If we happen to run as root.
-		require.NoError(t, err)
-		assert.Len(t, entries, 2)
-	}
+	require.NoError(t, err)
+	assert.Len(t, entries, 2)
 }
 
 func TestFinalCoveragePush_AdminService_GetAuditLogs_WithFilter(t *testing.T) {
@@ -552,33 +545,25 @@ func TestFinalCoveragePush_AdminService_GetAuditLogs_WithFilter(t *testing.T) {
 	}
 	svc := NewAdminService()
 	svc.SetAuditStore(store)
-	svc.SetContext(context.Background())
+	asAuditReader(svc)
 
 	filter := &AuditFilter{
 		Operation: string(audit.OpBarrierInitialized),
 		Limit:     10,
 	}
 	entries, err := svc.GetAuditLogs(filter)
-	if errors.Is(err, ErrAdminNotAuthorized) {
-		assert.Nil(t, entries)
-	} else {
-		require.NoError(t, err)
-		assert.Len(t, entries, 1)
-	}
+	require.NoError(t, err)
+	assert.Len(t, entries, 1)
 }
 
 func TestFinalCoveragePush_AdminService_GetAuditLogs_NilStore(t *testing.T) {
 	svc := NewAdminService()
-	svc.SetContext(context.Background())
+	asAuditReader(svc)
 
 	entries, err := svc.GetAuditLogs(nil)
-	if errors.Is(err, ErrAdminNotAuthorized) {
-		assert.Nil(t, entries)
-	} else {
-		// Nil store returns empty slice.
-		require.NoError(t, err)
-		assert.Empty(t, entries)
-	}
+	// Nil store returns empty slice.
+	require.NoError(t, err)
+	assert.Empty(t, entries)
 }
 
 // ---------------------------------------------------------------------------
@@ -587,15 +572,11 @@ func TestFinalCoveragePush_AdminService_GetAuditLogs_NilStore(t *testing.T) {
 
 func TestFinalCoveragePush_AdminService_ExportAuditLogs_InvalidFormat(t *testing.T) {
 	svc := NewAdminService()
-	svc.SetContext(context.Background())
+	asAuditReader(svc)
 
 	data, err := svc.ExportAuditLogs("xml")
-	if errors.Is(err, ErrAdminNotAuthorized) {
-		assert.Nil(t, data)
-	} else {
-		assert.ErrorIs(t, err, ErrAdminInvalidFormat)
-		assert.Nil(t, data)
-	}
+	assert.ErrorIs(t, err, ErrAdminInvalidFormat)
+	assert.Nil(t, data)
 }
 
 func TestFinalCoveragePush_AdminService_ExportAuditLogs_JSONWithEntries(t *testing.T) {
@@ -611,15 +592,11 @@ func TestFinalCoveragePush_AdminService_ExportAuditLogs_JSONWithEntries(t *testi
 	}
 	svc := NewAdminService()
 	svc.SetAuditStore(store)
-	svc.SetContext(context.Background())
+	asAuditReader(svc)
 
 	data, err := svc.ExportAuditLogs("json")
-	if errors.Is(err, ErrAdminNotAuthorized) {
-		assert.Nil(t, data)
-	} else {
-		require.NoError(t, err)
-		assert.Contains(t, string(data), "barrier_initialized")
-	}
+	require.NoError(t, err)
+	assert.Contains(t, string(data), "barrier_initialized")
 }
 
 func TestFinalCoveragePush_AdminService_ExportAuditLogs_CSVWithEntries(t *testing.T) {
@@ -635,30 +612,22 @@ func TestFinalCoveragePush_AdminService_ExportAuditLogs_CSVWithEntries(t *testin
 	}
 	svc := NewAdminService()
 	svc.SetAuditStore(store)
-	svc.SetContext(context.Background())
+	asAuditReader(svc)
 
 	data, err := svc.ExportAuditLogs("csv")
-	if errors.Is(err, ErrAdminNotAuthorized) {
-		assert.Nil(t, data)
-	} else {
-		require.NoError(t, err)
-		assert.Contains(t, string(data), "timestamp")
-	}
+	require.NoError(t, err)
+	assert.Contains(t, string(data), "timestamp")
 }
 
 func TestFinalCoveragePush_AdminService_ExportAuditLogs_EmptyStore(t *testing.T) {
 	store := &fcpMockAuditStore{entries: nil}
 	svc := NewAdminService()
 	svc.SetAuditStore(store)
-	svc.SetContext(context.Background())
+	asAuditReader(svc)
 
 	data, err := svc.ExportAuditLogs("json")
-	if errors.Is(err, ErrAdminNotAuthorized) {
-		assert.Nil(t, data)
-	} else {
-		assert.ErrorIs(t, err, ErrAuditNoEntries)
-		assert.Nil(t, data)
-	}
+	assert.ErrorIs(t, err, ErrAuditNoEntries)
+	assert.Nil(t, data)
 }
 
 // ---------------------------------------------------------------------------

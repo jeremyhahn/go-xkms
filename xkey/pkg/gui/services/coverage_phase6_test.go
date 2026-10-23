@@ -649,51 +649,35 @@ func TestP6B_OIDCService_SaveProviders_Success(t *testing.T) {
 }
 
 // ===========================================================================
-// 5. Admin Service - IsAdmin, GetAuditLogs, ExportAuditLogs
+// 5. Admin Service - GetAuditLogs, ExportAuditLogs
 // ===========================================================================
-
-func TestP6B_AdminService_IsAdmin(t *testing.T) {
-	svc := NewAdminService()
-	svc.SetContext(context.Background())
-
-	// In test environment, IsAdmin returns based on current UID.
-	// We just test it doesn't panic.
-	_ = svc.IsAdmin()
-}
 
 func TestP6B_AdminService_GetAuditLogs_NotAdmin(t *testing.T) {
 	svc := NewAdminService()
 	svc.SetContext(context.Background())
 
-	// Unless running as root, this should fail.
-	if os.Geteuid() != 0 {
-		entries, err := svc.GetAuditLogs(nil)
-		assert.Nil(t, entries)
-		assert.ErrorIs(t, err, ErrAdminNotAuthorized)
-	}
+	// No identity is bound to the context, so audit reads are refused.
+	entries, err := svc.GetAuditLogs(nil)
+	assert.Nil(t, entries)
+	assert.ErrorIs(t, err, ErrAdminNotAuthorized)
 }
 
 func TestP6B_AdminService_ExportAuditLogs_NotAdmin(t *testing.T) {
 	svc := NewAdminService()
 	svc.SetContext(context.Background())
 
-	if os.Geteuid() != 0 {
-		data, err := svc.ExportAuditLogs("json")
-		assert.Nil(t, data)
-		assert.ErrorIs(t, err, ErrAdminNotAuthorized)
-	}
+	data, err := svc.ExportAuditLogs("json")
+	assert.Nil(t, data)
+	assert.ErrorIs(t, err, ErrAdminNotAuthorized)
 }
 
 func TestP6B_AdminService_ExportAuditLogs_InvalidFormat(t *testing.T) {
 	svc := NewAdminService()
-	svc.SetContext(context.Background())
+	asAuditReader(svc)
 
-	if os.Geteuid() != 0 {
-		data, err := svc.ExportAuditLogs("xml")
-		assert.Nil(t, data)
-		// Not admin first, so this returns ErrAdminNotAuthorized.
-		assert.Error(t, err)
-	}
+	data, err := svc.ExportAuditLogs("xml")
+	assert.Nil(t, data)
+	assert.ErrorIs(t, err, ErrAdminInvalidFormat)
 }
 
 func TestP6B_AdminService_GetBackendInfo_EmptyID(t *testing.T) {
