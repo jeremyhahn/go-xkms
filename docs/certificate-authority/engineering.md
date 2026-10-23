@@ -382,6 +382,68 @@ Overlay-profile invariants:
 - A relying party verifying an `ipsec-vtep` certificate with `crypto/x509` must
   pass `ExtKeyUsageAny`; Go's default EKU check requires serverAuth.
 
+### Fleet agent claim
+
+The fleet agent claim marks a certificate as issued to a fleet agent. Only the
+issuing call stamps it; it is never copied from a CSR (go-xkms#1686, CA m1077
+(1)). go-quicbaas's fleet enrolment row (go-quicbaas#1821) consumes it through
+`sdk/go`.
+
+The claim is `tp-fleetAgent`, OID 1.3.6.1.4.1.29377.101.25. It is a private
+extension (RFC 5280 §4.2), non-critical, and its value is DER NULL
+(`05 00`). The claim is the extension's presence, as with id-pkix-ocsp-nocheck
+(RFC 6960 §4.2.2.2.1) (`pkg/ca/fleet_agent.go:37`, `:41`):
+
+```asn1
+FleetAgent ::= NULL
+```
+
+A standard form was considered first. None fits:
+
+| Form | Why it does not fit |
+|---|---|
+| SPIFFE ID URI SAN | An X.509-SVID carries exactly one URI SAN (X.509-SVID §2), already used for the workload's identity. The SPIFFE kind is chosen by the caller and CSR URIs are copied, so it cannot be issuer-only. |
+| Extended key usage (RFC 5280 §4.2.1.12) | An EKU states what the key may be used for, and the issuance profile owns the EKU extension. Being a fleet agent is a role of the subject, not a purpose of the key. |
+| Subject OU | OU[0] is the tenant (ruling 62(a)), and the other OUs come from the CSR. |
+| subjectDirectoryAttributes (RFC 5280 §4.2.1.8) | RFC 5280 says it is not recommended as an essential part of the profile, so relying parties need not process it. |
+
+| Symbol | Purpose |
+|---|---|
+| `SignOptions.FleetAgent` | stamps the claim (`pkg/ca/types.go:610`) |
+| `OIDFleetAgent` | the extension's OID (`pkg/ca/fleet_agent.go:37`) |
+| `VerifyFleetAgentClaim(cert, opts)` | accepts the claim only on a certificate that chains to `opts.Roots` (`pkg/ca/fleet_agent.go:112`) |
+| `ErrFleetAgentClaimRequested` | a CSR requested the claim (`pkg/ca/fleet_agent.go:47`) |
+| `ErrFleetAgentClaimReserved` | `SignOptions.ExtraExtensions` carried the claim (`:52`) |
+| `ErrFleetAgentClaimAbsent`, `ErrFleetAgentClaimMalformed`, `ErrFleetAgentClaimUntrusted` | verifier outcomes (`:55-64`) |
+
+`sdk/go` re-exports these names as `OIDFleetAgent`, `VerifyFleetAgentClaim` and
+`ErrCAFleetAgentClaim*` (`sdk/go/ca.go:784-798`). `FleetAgent` comes through
+the `TrustedCASignOptions` alias.
+
+Fleet agent invariants:
+
+- Every PKCS#10 path reaches the CA through `signVerifiedCSR`. That covers
+  `SignCSR`, `SignCSRRaw`, `SignCSRWithSPIFFE`, and so every transport and
+  ACME. It refuses a CSR whose extensionRequest attribute (RFC 2986 §4.1,
+  RFC 2985 §5.4.2) carries the claim, before any profile runs
+  (`pkg/ca/ca.go:1707`, `pkg/ca/fleet_agent.go:75`). The CSR is refused, not
+  filtered, so a client that asked for the claim learns it was not granted.
+  The refusal is 400 on REST, `InvalidArgument` on gRPC and unix, and invalid
+  params on MCP (`pkg/api/rest/handlers_ca.go:94`,
+  `pkg/api/grpc/service_ca.go:181`, `pkg/api/mcp/errors_cert.go:61`).
+- `issueSignedSpec` adds the claim only from `SignOptions.FleetAgent`, on every
+  issuance branch. It refuses `ExtraExtensions` that already carry it, and it
+  never writes into the caller's slice (`pkg/ca/ca.go:2080`,
+  `pkg/ca/fleet_agent.go:87`).
+- `FleetAgent` is in-process only: no transport request field sets it, so it
+  needs no permission.
+- The claim is only as good as its issuer. `VerifyFleetAgentClaim` requires
+  `opts.Roots`, so it never falls back to the system trust store. It rejects a
+  critical or non-NULL claim before checking the chain, and it rejects a
+  certificate that does not chain to those roots with
+  `ErrFleetAgentClaimUntrusted`, even if it carries the same extension.
+  `opts.KeyUsages` defaults to `ExtKeyUsageAny`.
+
 ## Exported surface — `pkg/spiffe` (re-exported by `sdk/go/spiffe`)
 
 | Name | Contract |

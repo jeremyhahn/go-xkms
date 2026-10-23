@@ -20,6 +20,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	"github.com/jeremyhahn/go-xkms/pkg/ca"
 	"github.com/jeremyhahn/go-xkms/pkg/xkms"
 	sdkssh "github.com/jeremyhahn/go-xkms/sdk/go/client/ssh"
 )
@@ -37,6 +38,7 @@ func TestMapCAError_DomainSentinels(t *testing.T) {
 		{"CA not configured", xkms.ErrNotConfigured, ErrCodeServiceUnavailable},
 		{"nil request", xkms.ErrNilRequest, ErrCodeInvalidParams},
 		{"nil data", xkms.ErrNilData, ErrCodeInvalidParams},
+		{"fleet agent claim requested", &xkms.ErrCAOperation{Operation: "sign csr", Err: ca.ErrFleetAgentClaimRequested}, ErrCodeInvalidParams},
 		{"validation failure", &xkms.ErrValidation{Sentinel: xkms.ErrMissingRequiredField, Detail: "common_name is required"}, ErrCodeInvalidParams},
 		{"tenant binding refusal", &xkms.TenantBindingError{Op: "sign csr", CallerTenantID: "a", TargetTenantID: "b"}, sdkssh.JSONRPCCodeNotFound},
 		{"spiffe kind refusal", &xkms.ErrValidation{Sentinel: xkms.ErrSPIFFEKindWithoutTenant}, ErrCodeInvalidParams},

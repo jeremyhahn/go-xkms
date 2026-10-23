@@ -1703,6 +1703,12 @@ func (ca *CA) signCSR(ctx context.Context, csrPEM []byte, opts *SignOptions, req
 // checked, or a request IssueCertificateForKey assembled for a public key
 // the caller vouches for.
 func (ca *CA) signVerifiedCSR(ctx context.Context, csr *x509.CertificateRequest, opts *SignOptions, request *CertificateRequest) (*x509.Certificate, error) {
+	// Every PKCS#10 path reaches the CA here, so this is where a CSR asking
+	// for the issuer's fleet agent claim is refused.
+	if err := checkCSRFleetAgentClaim(csr); err != nil {
+		return nil, err
+	}
+
 	// Determine the signing key and issuer certificate. When the caller
 	// supplies an external Signer on SignOptions, we use it instead of the
 	// CA's own key — this is the multi-tenant signing path where a tenant's
@@ -2061,14 +2067,22 @@ func (ca *CA) issueSignedSpec(
 
 	tenantID := ""
 	precertificate := false
+	fleetAgent := false
 	var linter Linter
 	if opts != nil {
 		spec.ExtraExtensions = opts.ExtraExtensions
 		spec.OtherNames = opts.OtherNames
 		tenantID = opts.TenantID
 		precertificate = opts.Precertificate
+		fleetAgent = opts.FleetAgent
 		linter = opts.Linter
 	}
+	// The fleet agent claim comes only from the issuing call's FleetAgent.
+	extensions, err := stampFleetAgentClaim(spec.ExtraExtensions, fleetAgent)
+	if err != nil {
+		return nil, err
+	}
+	spec.ExtraExtensions = extensions
 	// A precertificate carries the RFC 6962 §3.1 poison extension, a
 	// critical extension no RFC 5280 relying party accepts.
 	if precertificate {

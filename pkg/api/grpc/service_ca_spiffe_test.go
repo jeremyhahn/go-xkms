@@ -25,6 +25,7 @@ import (
 	"google.golang.org/grpc/status"
 
 	pb "github.com/jeremyhahn/go-xkms/pkg/api/grpc/proto/xkmsv1"
+	"github.com/jeremyhahn/go-xkms/pkg/ca"
 	"github.com/jeremyhahn/go-xkms/pkg/spiffe"
 	"github.com/jeremyhahn/go-xkms/pkg/xkms"
 )
@@ -59,6 +60,7 @@ func TestSignCSR_MapsSPIFFEKindRefusals(t *testing.T) {
 		{"kind without tenant", &xkms.ErrValidation{Sentinel: xkms.ErrSPIFFEKindWithoutTenant}, codes.InvalidArgument},
 		{"kind without trust domain", &xkms.ErrValidation{Sentinel: xkms.ErrSPIFFEKindWithoutTrustDomain}, codes.InvalidArgument},
 		{"invalid name", &xkms.ErrValidation{Sentinel: xkms.ErrSPIFFENameInvalid}, codes.InvalidArgument},
+		{"fleet agent claim requested", &xkms.ErrCAOperation{Operation: "sign csr", Err: ca.ErrFleetAgentClaimRequested}, codes.InvalidArgument},
 		{"svc without permission", &xkms.SPIFFEKindPermissionError{
 			Kind: spiffe.KindService, Permission: "certs:issue_service", Err: errors.New("denied"),
 		}, codes.PermissionDenied},

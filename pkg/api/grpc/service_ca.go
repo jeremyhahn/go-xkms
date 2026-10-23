@@ -22,6 +22,7 @@ import (
 	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
 
 	"github.com/jeremyhahn/go-xkms/pkg/auth"
+	"github.com/jeremyhahn/go-xkms/pkg/ca"
 	"github.com/jeremyhahn/go-xkms/pkg/errs"
 	"github.com/jeremyhahn/go-xkms/pkg/xkms"
 
@@ -178,6 +179,8 @@ func mapSignCSRError(ctx context.Context, xkmsService *xkms.XKMSService, err err
 		return status.Error(codes.InvalidArgument, validationMessage(validation))
 	case errors.Is(err, xkms.ErrSPIFFEKindForbidden):
 		return status.Error(codes.PermissionDenied, err.Error())
+	case errors.Is(err, ca.ErrFleetAgentClaimRequested):
+		return status.Error(codes.InvalidArgument, err.Error())
 	case errors.Is(err, qrdbsdk.ErrTenantMissing):
 		return status.Error(codes.NotFound, err.Error())
 	}

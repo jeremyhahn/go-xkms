@@ -778,3 +778,22 @@ var (
 	ErrCABoundKeyMismatch           = pkgca.ErrBoundKeyMismatch
 	ErrCATenantRequired             = pkgca.ErrTenantRequired
 )
+
+// OIDFleetAgent identifies the tp-fleetAgent extension
+// (1.3.6.1.4.1.29377.101.25), the fleet agent claim the issuer stamps from
+// TrustedCASignOptions.FleetAgent and never copies from a CSR.
+var OIDFleetAgent = pkgca.OIDFleetAgent
+
+// VerifyFleetAgentClaim reports whether a certificate carries the fleet agent
+// claim and chains to the given roots, which are required.
+var VerifyFleetAgentClaim = pkgca.VerifyFleetAgentClaim
+
+// Errors returned when a CSR or TrustedCASignOptions.ExtraExtensions carry
+// the fleet agent claim, and by VerifyFleetAgentClaim.
+var (
+	ErrCAFleetAgentClaimRequested = pkgca.ErrFleetAgentClaimRequested
+	ErrCAFleetAgentClaimReserved  = pkgca.ErrFleetAgentClaimReserved
+	ErrCAFleetAgentClaimAbsent    = pkgca.ErrFleetAgentClaimAbsent
+	ErrCAFleetAgentClaimMalformed = pkgca.ErrFleetAgentClaimMalformed
+	ErrCAFleetAgentClaimUntrusted = pkgca.ErrFleetAgentClaimUntrusted
+)

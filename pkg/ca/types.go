@@ -603,6 +603,13 @@ type SignOptions struct {
 	// a dedicated field per extension type.
 	ExtraExtensions []pkix.Extension
 
+	// FleetAgent stamps the fleet agent claim, the tp-fleetAgent extension
+	// (OIDFleetAgent), into the certificate. It is set only by the issuing
+	// call: the CA refuses a CSR that requests the claim
+	// (ErrFleetAgentClaimRequested) and ExtraExtensions that carry it
+	// (ErrFleetAgentClaimReserved). VerifyFleetAgentClaim checks it.
+	FleetAgent bool
+
 	// Serial is a serial number the caller reserved with ReserveSerial. A
 	// nil Serial has the CA generate one. A precertificate and its final
 	// certificate share one reserved serial (RFC 6962 §3.1); the caller

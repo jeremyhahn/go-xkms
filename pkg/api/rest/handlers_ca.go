@@ -91,6 +91,8 @@ var caErrorStatusMap = map[error]int{
 	xkms.ErrSPIFFENameInvalid:            http.StatusBadRequest,
 	xkms.ErrCSRMalformed:                 http.StatusBadRequest,
 	xkms.ErrSPIFFEKindForbidden:          http.StatusForbidden,
+	// A CSR may not request the issuer's fleet agent claim (go-xkms#1686).
+	ca.ErrFleetAgentClaimRequested: http.StatusBadRequest,
 }
 
 // CAHandlers provides HTTP handlers for the CA operations API.

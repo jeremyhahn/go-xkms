@@ -18,6 +18,7 @@ import (
 
 	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
 
+	"github.com/jeremyhahn/go-xkms/pkg/ca"
 	"github.com/jeremyhahn/go-xkms/pkg/xkms"
 	sdkssh "github.com/jeremyhahn/go-xkms/sdk/go/client/ssh"
 )
@@ -57,7 +58,8 @@ func mapCAError(err error) error {
 		return &KeyOpError{Code: ErrCodeInvalidParams, Err: validation}
 	}
 
-	if errors.Is(err, xkms.ErrNilRequest) || errors.Is(err, xkms.ErrNilData) {
+	// A CSR may not request the issuer's fleet agent claim (go-xkms#1686).
+	if errors.Is(err, xkms.ErrNilRequest) || errors.Is(err, xkms.ErrNilData) || errors.Is(err, ca.ErrFleetAgentClaimRequested) {
 		return &KeyOpError{Code: ErrCodeInvalidParams, Err: err}
 	}
 
