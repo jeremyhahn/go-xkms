@@ -266,3 +266,102 @@ func TestRun_ChecksASkill(t *testing.T) {
 		t.Fatalf("run -check on a missing skill = %v, want os.ErrNotExist", err)
 	}
 }
+
+// goldenTree is a command tree whose whole reference is pinned below: an
+// aliased group with an inherited flag, a command whose local flags must
+// come out in name order with the hidden one left out, and a hidden command.
+func goldenTree(t *testing.T) *cobra.Command {
+	t.Helper()
+	run := func(*cobra.Command, []string) {}
+	root := &cobra.Command{Use: "xkey"}
+	root.PersistentFlags().StringP("config", "c", "", "config file")
+
+	key := &cobra.Command{Use: "key", Short: "Manage keys", Aliases: []string{"keys", "k"}}
+	key.PersistentFlags().String("backend", "pkcs11", "key backend")
+
+	gen := &cobra.Command{Use: "gen <name>", Short: "  Generate a key  ", Run: run}
+	gen.Flags().String("type", "ecdsa", "rsa | ecdsa")
+	gen.Flags().IntP("bits", "b", 256, "key\nsize")
+	gen.Flags().Bool("debug", false, "debug output")
+	if err := gen.Flags().MarkHidden("debug"); err != nil {
+		t.Fatal(err)
+	}
+
+	secret := &cobra.Command{Use: "secret", Hidden: true, Run: run}
+	alpha := &cobra.Command{Use: "alpha", Run: run}
+
+	key.AddCommand(gen, secret)
+	root.AddCommand(key, alpha)
+	return root
+}
+
+// goldenReference is the exact reference goldenTree renders. Pinning every
+// byte catches what the fragment checks above cannot: the generated-file
+// header, the blank lines between sections and the order of a command's flags.
+const goldenReference = "# xkey CLI reference\n" +
+	"\n" +
+	"Generated from the xkey cobra command tree by `make skill-reference`; do not edit by hand.\n" +
+	"\n" +
+	"## Global flags\n" +
+	"\n" +
+	"| Flag | Type | Default | Description |\n" +
+	"|---|---|---|---|\n" +
+	"| `--config`, `-c` | string |  | config file |\n" +
+	"\n" +
+	"## xkey alpha\n" +
+	"\n" +
+	"Usage: `xkey alpha`\n" +
+	"\n" +
+	"## xkey key\n" +
+	"\n" +
+	"Manage keys\n" +
+	"\n" +
+	"Usage: `xkey key`\n" +
+	"\n" +
+	"Aliases: keys, k\n" +
+	"\n" +
+	"Inherited by subcommands:\n" +
+	"\n" +
+	"| Flag | Type | Default | Description |\n" +
+	"|---|---|---|---|\n" +
+	"| `--backend` | string | pkcs11 | key backend |\n" +
+	"\n" +
+	"## xkey key gen\n" +
+	"\n" +
+	"Generate a key\n" +
+	"\n" +
+	"Usage: `xkey key gen <name> [flags]`\n" +
+	"\n" +
+	"| Flag | Type | Default | Description |\n" +
+	"|---|---|---|---|\n" +
+	"| `--bits`, `-b` | int | 256 | key size |\n" +
+	"| `--type` | string | ecdsa | rsa \\| ecdsa |\n" +
+	"\n"
+
+func TestRun_WritesTheGoldenReference(t *testing.T) {
+	var out bytes.Buffer
+
+	if err := run(nil, goldenTree(t), &out); err != nil {
+		t.Fatalf("run: %v", err)
+	}
+	if got := out.String(); got != goldenReference {
+		t.Fatalf("reference mismatch\ngot:\n%s\nwant:\n%s", got, goldenReference)
+	}
+}
+
+func TestFail_ReportsTheErrorOnStderr(t *testing.T) {
+	var stderr bytes.Buffer
+
+	if code := fail(&stderr, errFailingWriter); code != 1 {
+		t.Fatalf("fail = %d, want 1", code)
+	}
+	if got, want := stderr.String(), "skillgen: write failed\n"; got != want {
+		t.Fatalf("stderr = %q, want %q", got, want)
+	}
+}
+
+func TestFail_ExitsTwoWhenStderrFails(t *testing.T) {
+	if code := fail(&failingWriter{}, errFailingWriter); code != 2 {
+		t.Fatalf("fail = %d with an unwritable stderr, want 2", code)
+	}
+}

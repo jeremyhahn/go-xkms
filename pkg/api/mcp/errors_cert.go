@@ -38,7 +38,9 @@ import (
 // xkms.ErrNotConfigured -- returned by XKMSService.getCA when no CA is
 // wired -- is Service unavailable, matching gRPC's Unavailable-for-nil-CA
 // check; a validation failure (*xkms.ErrValidation, xkms.ErrNilRequest,
-// xkms.ErrNilData) is Invalid params, matching gRPC's pre-validation. Every
+// xkms.ErrNilData) is Invalid params, matching gRPC's pre-validation; a
+// SPIFFE kind the caller may not issue is Forbidden, matching gRPC's
+// PermissionDenied. Every
 // other error, including a wrapped *xkms.ErrCAOperation, is internal,
 // matching gRPC's fallback.
 func mapCAError(err error) error {
@@ -63,6 +65,11 @@ func mapCAError(err error) error {
 	// binding refuses a foreign one as not-found (xkms.TenantBindingError).
 	if errors.Is(err, qrdbsdk.ErrTenantMissing) {
 		return &KeyOpError{Code: sdkssh.JSONRPCCodeNotFound, Err: err}
+	}
+
+	// A svc SPIFFE kind without certs:issue_service (go-xkms#1659).
+	if errors.Is(err, xkms.ErrSPIFFEKindForbidden) {
+		return &KeyOpError{Code: ErrCodeForbidden, Err: err}
 	}
 
 	return &KeyOpError{Code: ErrCodeInternalError, Err: err}

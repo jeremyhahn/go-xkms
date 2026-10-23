@@ -10467,10 +10467,17 @@ func (x *GetCACertificateResponse) GetIsCa() bool {
 
 // SignCSRRequest contains a CSR to be signed.
 type SignCSRRequest struct {
-	state         protoimpl.MessageState `protogen:"open.v1"`
-	CsrPem        []byte                 `protobuf:"bytes,1,opt,name=csr_pem,json=csrPem,proto3" json:"csr_pem,omitempty"`
-	Profile       string                 `protobuf:"bytes,2,opt,name=profile,proto3" json:"profile,omitempty"`
-	ValidityDays  int32                  `protobuf:"varint,3,opt,name=validity_days,json=validityDays,proto3" json:"validity_days,omitempty"`
+	state        protoimpl.MessageState `protogen:"open.v1"`
+	CsrPem       []byte                 `protobuf:"bytes,1,opt,name=csr_pem,json=csrPem,proto3" json:"csr_pem,omitempty"`
+	Profile      string                 `protobuf:"bytes,2,opt,name=profile,proto3" json:"profile,omitempty"`
+	ValidityDays int32                  `protobuf:"varint,3,opt,name=validity_days,json=validityDays,proto3" json:"validity_days,omitempty"`
+	// tenant_id names the tenant stamped into the certificate's SPIFFE URI SAN;
+	// a tenant-scoped caller may name only its own tenant.
+	TenantId string `protobuf:"bytes,4,opt,name=tenant_id,json=tenantId,proto3" json:"tenant_id,omitempty"`
+	// spiffe_kind selects the SPIFFE URI's workload kind, "user" or "svc";
+	// empty keeps the default. "svc" requires certs:issue_service
+	// (go-xkms#1659).
+	SpiffeKind    string `protobuf:"bytes,5,opt,name=spiffe_kind,json=spiffeKind,proto3" json:"spiffe_kind,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -10524,6 +10531,20 @@ func (x *SignCSRRequest) GetValidityDays() int32 {
 		return x.ValidityDays
 	}
 	return 0
+}
+
+func (x *SignCSRRequest) GetTenantId() string {
+	if x != nil {
+		return x.TenantId
+	}
+	return ""
+}
+
+func (x *SignCSRRequest) GetSpiffeKind() string {
+	if x != nil {
+		return x.SpiffeKind
+	}
+	return ""
 }
 
 // SignCSRResponse contains the signed certificate.
@@ -23416,11 +23437,14 @@ const file_pkg_api_grpc_proto_xkmsv1_xkms_proto_rawDesc = "" +
 	"\n" +
 	"not_before\x18\x05 \x01(\tR\tnotBefore\x12\x1b\n" +
 	"\tnot_after\x18\x06 \x01(\tR\bnotAfter\x12\x13\n" +
-	"\x05is_ca\x18\a \x01(\bR\x04isCa\"h\n" +
+	"\x05is_ca\x18\a \x01(\bR\x04isCa\"\xa6\x01\n" +
 	"\x0eSignCSRRequest\x12\x17\n" +
 	"\acsr_pem\x18\x01 \x01(\fR\x06csrPem\x12\x18\n" +
 	"\aprofile\x18\x02 \x01(\tR\aprofile\x12#\n" +
-	"\rvalidity_days\x18\x03 \x01(\x05R\fvalidityDays\"|\n" +
+	"\rvalidity_days\x18\x03 \x01(\x05R\fvalidityDays\x12\x1b\n" +
+	"\ttenant_id\x18\x04 \x01(\tR\btenantId\x12\x1f\n" +
+	"\vspiffe_kind\x18\x05 \x01(\tR\n" +
+	"spiffeKind\"|\n" +
 	"\x0fSignCSRResponse\x12'\n" +
 	"\x0fcertificate_pem\x18\x01 \x01(\fR\x0ecertificatePem\x12\x1b\n" +
 	"\tchain_pem\x18\x02 \x01(\fR\bchainPem\x12#\n" +

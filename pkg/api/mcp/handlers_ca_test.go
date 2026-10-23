@@ -20,6 +20,8 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+
+	"github.com/jeremyhahn/go-xkms/pkg/xkms"
 )
 
 func TestHandleGetCABundle(t *testing.T) {
@@ -82,6 +84,18 @@ func TestHandleSignCSR(t *testing.T) {
 		req := &JSONRPCRequest{JSONRPC: "2.0", Method: "xkms.ca.sign-csr", Params: paramsJSON, ID: 1}
 		_, err := server.handleSignCSR(ctx, req)
 		_ = err
+	})
+
+	t.Run("refuses an unknown spiffe kind as invalid params", func(t *testing.T) {
+		params := map[string]string{"csr_pem": "dGVzdA==", "spiffe_kind": "node"}
+		paramsJSON, err := json.Marshal(params)
+		require.NoError(t, err)
+		req := &JSONRPCRequest{JSONRPC: "2.0", Method: "xkms.ca.sign-csr", Params: paramsJSON, ID: 1}
+		_, err = server.handleSignCSR(ctx, req)
+		require.ErrorIs(t, err, xkms.ErrSPIFFEKindUnknown)
+		var opErr *KeyOpError
+		require.ErrorAs(t, err, &opErr)
+		assert.Equal(t, ErrCodeInvalidParams, opErr.Code)
 	})
 }
 

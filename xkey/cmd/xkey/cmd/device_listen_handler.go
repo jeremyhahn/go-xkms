@@ -181,6 +181,11 @@ func newSessionSyncApproval(deviceName string, allowed bool, logger *slog.Logger
 	}
 }
 
+// newAttestationTPM opens the TPM initTPMForAttestation quotes with. It is
+// xkms.NewTPM2; tests replace it to drive the open's outcomes without a TPM
+// device.
+var newAttestationTPM = xkms.NewTPM2
+
 // initTPMForAttestation attempts to initialize a TPM2 connection for attestation.
 func initTPMForAttestation(devicePath string, logger *slog.Logger) (xkms.TrustedPlatformModule, error) {
 	if devicePath == "" {
@@ -194,7 +199,7 @@ func initTPMForAttestation(devicePath string, logger *slog.Logger) (xkms.Trusted
 		Hash:   "SHA-256",
 	}
 
-	tpmModule, err := xkms.NewTPM2(&xkms.TPMParams{
+	tpmModule, err := newAttestationTPM(&xkms.TPMParams{
 		Config: tpmCfg,
 		Logger: logger,
 	})

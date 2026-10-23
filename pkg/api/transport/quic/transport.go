@@ -1552,6 +1552,9 @@ func (t *Transport) SignCSR(ctx context.Context, req *transport.SignCSRRequest) 
 	if req.TenantID != "" {
 		body["tenant_id"] = req.TenantID
 	}
+	if req.SPIFFEKind != "" {
+		body["spiffe_kind"] = req.SPIFFEKind
+	}
 
 	data, err := t.doRawRequest(ctx, http.MethodPost, "/api/v1/ca/sign-csr", body)
 	if err != nil {

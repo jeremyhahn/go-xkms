@@ -209,6 +209,15 @@ const (
 	// owns it and declares its scope (pkg/apimodule/module_scopes.go).
 	ActionService = "service"
 
+	// ActionIssueService is the explicit permission to issue a certificate
+	// whose SPIFFE URI SAN names the svc (service) kind (certs:issue_service,
+	// go-xkms#1659). A svc identity is a workload credential other services
+	// trust as a node or agent, so it is a privilege beyond certs:issue. It
+	// is checked below the transport gate, in addition to certs:issue, when a
+	// SignCSR request asks for the svc kind. qrdb does not know the name;
+	// xkms owns it and declares its scope (pkg/apimodule/module_scopes.go).
+	ActionIssueService = "issue_service"
+
 	// ActionUse authorizes a cryptographic operation with a slot key whose
 	// material never leaves the card (piv:use). It is deliberately distinct
 	// from piv:read, which returns only slot metadata and certificates.

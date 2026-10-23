@@ -214,6 +214,47 @@ the CSR's names. They are reached in-process, through the SDK's `TrustedCA`:
 - `TrustedCASignOptions.SANS` and `TrustedCASignOptions.Validity`;
 - `CreateAttestationEvidenceExtension`.
 
+### SPIFFE kind (`spiffe_kind`)
+
+SPEC row certificate-authority. Consumer: go-quicbaas fleet enrolment, which
+needs agent certificates of kind `svc` (go-xkms#1659).
+
+`SignCSRRequest.SPIFFEKind` (`json:"spiffe_kind,omitempty"`,
+`pkg/api/transport/types.go:1498`) names the kind stamped into the URI SAN
+`spiffe://<tenant>/<kind>/<CommonName>`: `user` or `svc`
+(`sdk/go/spiffe` `KindUser`, `KindService`). Empty keeps the CA's default.
+Every transport carries it: REST and QUIC send `spiffe_kind` in the JSON
+body when set, gRPC and the Unix socket send the protobuf `spiffe_kind`
+(with `tenant_id`), and MCP and the embedded transport pass the request
+struct through. The TS SDK's `SignCSRRequest` has `spiffe_kind`.
+
+The service validates it before the CA sees the CSR
+(`checkSPIFFEKind`, `pkg/xkms/servicer_ca_spiffe.go:82`):
+
+| Refusal | Cause | REST / QUIC | gRPC / Unix | MCP |
+|---|---|---|---|---|
+| `ErrSPIFFEKindUnknown` | kind other than `user` or `svc` | 400 | `InvalidArgument` | `InvalidParams` |
+| `ErrSPIFFEKindWithoutTenant` | no `tenant_id`: the tenant is the trust domain | 400 | `InvalidArgument` | `InvalidParams` |
+| `ErrSPIFFEKindWithoutTrustDomain` | no cluster trust domain configured | 400 | `InvalidArgument` | `InvalidParams` |
+| `ErrCSRMalformed` | CSR is not well-formed PKCS#10 | 400 | `InvalidArgument` | `InvalidParams` |
+| `ErrSPIFFENameInvalid` | CSR CommonName is not a SPIFFE segment (`spiffe.ValidateName`) | 400 | `InvalidArgument` | `InvalidParams` |
+| `ErrSPIFFEKindForbidden` | `svc` without `certs:issue_service` | 403 | `PermissionDenied` | `Forbidden` |
+
+The validation sentinels arrive wrapped in `*xkms.ErrValidation`; the
+permission refusal is a `*xkms.SPIFFEKindPermissionError` naming the kind
+and the permission. `sdk/go` re-exports them as `ServiceErrSPIFFEKind*`,
+`ServiceErrCSRMalformed` and `ServiceSPIFFEKindPermissionError`. The mappings
+are `pkg/api/rest/handlers_ca.go:92`, `pkg/api/grpc/service_ca.go:173` and
+`pkg/api/mcp/errors_cert.go:69`.
+
+`svc` mints a workload identity, so it needs `certs:issue_service`
+(`pkg/auth/permissions.go:218`) on top of the route's own gate. No route
+names it, since only the request body shows it is needed; the service checks
+it below the transport gate, as it does `ssh:service`
+(`pkg/apimodule/module_grants.go:209`). Admin and Owner hold it by default;
+no other built-in role does, so a tenant grants it explicitly to the role
+that enrols fleet agents. `user` needs nothing beyond the route's gate.
+
 ### Key binding is in-process only
 
 The `code-signing` profile is issuable on every transport: its CSR checks

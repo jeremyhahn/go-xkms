@@ -63,3 +63,17 @@ func TestReexportedValidationErrors(t *testing.T) {
 		t.Fatalf("BuildURI error = %v, want ErrTenantIsClusterTrustDomain", err)
 	}
 }
+
+// TestReexportedValidateName proves SDK callers can check a CSR CommonName
+// before asking for a SPIFFE kind (go-xkms#1659).
+func TestReexportedValidateName(t *testing.T) {
+	if err := spiffe.ValidateName("agent-01"); err != nil {
+		t.Fatalf("ValidateName(agent-01) = %v, want nil", err)
+	}
+	if err := spiffe.ValidateName("agent 01"); !errors.Is(err, spiffe.ErrSegmentCharacters) {
+		t.Fatalf("ValidateName(agent 01) = %v, want ErrSegmentCharacters", err)
+	}
+	if err := spiffe.ValidateName(""); !errors.Is(err, spiffe.ErrNameEmpty) {
+		t.Fatalf("ValidateName(\"\") = %v, want ErrNameEmpty", err)
+	}
+}

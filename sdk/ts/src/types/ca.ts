@@ -40,6 +40,11 @@ export interface SignCSRRequest {
   profile?: string;
   validity_days?: number;
   tenant_id?: string;
+  /**
+   * SPIFFE kind stamped into the URI SAN spiffe://<tenant>/<kind>/<CN>:
+   * "user" or "svc". Needs tenant_id; "svc" also needs certs:issue_service.
+   */
+  spiffe_kind?: 'user' | 'svc';
   attestation_format?: string;
   attestation_chain?: Base64[];
   attestation_data?: Base64;

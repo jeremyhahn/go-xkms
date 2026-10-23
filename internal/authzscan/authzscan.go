@@ -253,6 +253,7 @@ func Constants() map[string]string {
 		"ActionClaimShareBegin":    auth.ActionClaimShareBegin,
 		"ActionClaimShareComplete": auth.ActionClaimShareComplete,
 		"ActionSignCSR":            auth.ActionSignCSR,
+		"ActionIssueService":       auth.ActionIssueService,
 		"ActionEnrollCustodian":    auth.ActionEnrollCustodian,
 		"ActionRevokeCustodian":    auth.ActionRevokeCustodian,
 		"ActionSubmit":             auth.ActionSubmit,

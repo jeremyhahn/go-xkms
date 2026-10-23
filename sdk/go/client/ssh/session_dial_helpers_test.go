@@ -15,15 +15,39 @@ package ssh_test
 
 import (
 	"crypto/ed25519"
+	"crypto/fips140"
 	"crypto/rand"
+	"errors"
 	"fmt"
 	"net"
 	"strings"
 	"sync"
 	"testing"
 
+	pkgsession "github.com/jeremyhahn/go-xkms/pkg/ssh/session"
+	"github.com/jeremyhahn/go-xkms/pkg/testing/fipstest"
 	gossh "golang.org/x/crypto/ssh"
 )
+
+// handshakeBlockedByFIPS reports whether err is the expected outcome of a
+// Session.Dial under GODEBUG=fips140=only: x/crypto/ssh's preferred
+// curve25519 key exchange is refused by the FIPS 140-3 module before
+// host-key verification or authentication runs, and the dial surfaces the
+// refusal as a typed *session.HandshakeError. It then re-runs the test under
+// fips140=off (fipstest.OutsideFIPSAfterRefusal), so the caller returns on
+// true. Any other error under fips140=only fails the test; outside FIPS mode
+// it reports false so the caller asserts as usual.
+func handshakeBlockedByFIPS(t *testing.T, err error) bool {
+	t.Helper()
+	if !fips140.Enforced() {
+		return false
+	}
+	var hs *pkgsession.HandshakeError
+	if !errors.As(err, &hs) {
+		t.Fatalf("expected *session.HandshakeError under fips140=only, got %T: %v", err, err)
+	}
+	return !fipstest.OutsideFIPSAfterRefusal(t, err, nil)
+}
 
 // targetSSHServer is a minimal in-process SSH server used as the dial
 // target for Session.Dial integration tests across every network

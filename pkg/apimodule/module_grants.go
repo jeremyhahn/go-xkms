@@ -202,10 +202,15 @@ func governancePermissions() []qrdbsdk.Permission {
 // belowGatePermissions returns the permissions xkms checks below the
 // transport gate, which no route, MCP method or RPC names because only the
 // request's content reveals they are needed: ssh:service, required to address
-// a service-scoped SSH asset (pkg/ssh/tenancy).
+// a service-scoped SSH asset (pkg/ssh/tenancy); certs:issue_service, required
+// to sign a CSR for the svc SPIFFE kind (pkg/xkms SignCSR). Admin holds both
+// through modulePermissions and Owner through registration;
+// certs:issue_service, which mints workload identities, is granted to no
+// other role by default.
 func belowGatePermissions() []qrdbsdk.Permission {
 	return []qrdbsdk.Permission{
 		qrdbsdk.Permission(auth.ResourceSSH + ":" + auth.ActionService),
+		qrdbsdk.Permission(auth.ResourceCerts + ":" + auth.ActionIssueService),
 	}
 }
 

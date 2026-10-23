@@ -147,6 +147,8 @@ func (s *XKMSService) GetCACertificate(ctx context.Context, req *transport.GetCA
 // the same certs:issue check (pkg/api/grpc/service_ca.go). A second, local decision here once
 // compared the identity's roles against role NAMES while identities carry
 // role IDENTIFIERS, and so refused every authenticated caller (go-xkms#1074).
+// The one decision made here is below that gate: a request for the svc SPIFFE
+// kind also needs certs:issue_service (checkSPIFFEKind, go-xkms#1659).
 func (s *XKMSService) SignCSR(ctx context.Context, req *transport.SignCSRRequest) (resp *transport.SignCSRResponse, err error) {
 	start := time.Now()
 	defer func() { recordServiceOp(metrics.OpSign, caMetricsBackend, start, err) }()
@@ -176,6 +178,9 @@ func (s *XKMSService) SignCSR(ctx context.Context, req *transport.SignCSRRequest
 			return nil, err
 		}
 	}
+	if err := s.checkSPIFFEKind(ctx, req); err != nil {
+		return nil, err
+	}
 
 	ca, err := s.getCA()
 	if err != nil {
@@ -192,12 +197,13 @@ func (s *XKMSService) SignCSR(ctx context.Context, req *transport.SignCSRRequest
 	// identity and get the SAN only when the request names a tenant: code
 	// signing forbids URI SANs, and a server name (an empty or wildcard CN) is
 	// no SPIFFE path segment. The SPIFFE kind defaults to "user" and the name
-	// to the CSR subject CommonName (resolved inside the CA).
+	// to the CSR subject CommonName (resolved inside the CA); a request kind
+	// was checked above.
 	trustDomain := ""
 	if req.TenantID != "" || issuesLoginCertificate(req.Profile) {
 		trustDomain = s.SPIFFETrustDomain()
 	}
-	cert, err := ca.SignCSRWithSPIFFE(ctx, req.CSRPEM, req.Profile, req.ValidityDays, trustDomain, callerTenant(ctx), "", "")
+	cert, err := ca.SignCSRWithSPIFFE(ctx, req.CSRPEM, req.Profile, req.ValidityDays, trustDomain, callerTenant(ctx), req.SPIFFEKind, "")
 	if err != nil {
 		return nil, &ErrCAOperation{Operation: "sign csr", Err: err}
 	}

@@ -89,8 +89,7 @@ func TestListKeys_ReportsImportedKeyExportablePolicy(t *testing.T) {
 
 		params, err := b.GetImportParameters(ctx, attrs, tokenHybridAlgorithm)
 		require.NoError(t, err)
-		wrapped, err := b.WrapKey(ctx, pkcs8, params)
-		require.NoError(t, err)
+		wrapped := wrapAsKeyOwner(t, b, pkcs8, params)
 		require.NoError(t, b.ImportKey(ctx, attrs, wrapped))
 	}
 

@@ -39,6 +39,7 @@ type mockCAServicer struct {
 	getCertErr      error
 	signCSRResp     *transport.SignCSRResponse
 	signCSRErr      error
+	signCSRReq      *transport.SignCSRRequest
 	issueCertResp   *transport.IssueCertificateResponse
 	issueCertErr    error
 	revokeCertResp  *transport.RevokeCertificateResponse
@@ -57,7 +58,8 @@ func (m *mockCAServicer) GetCABundle(_ context.Context, _ *transport.GetCABundle
 func (m *mockCAServicer) GetCACertificate(_ context.Context, _ *transport.GetCACertificateRequest) (*transport.GetCACertificateResponse, error) {
 	return m.getCertResp, m.getCertErr
 }
-func (m *mockCAServicer) SignCSR(_ context.Context, _ *transport.SignCSRRequest) (*transport.SignCSRResponse, error) {
+func (m *mockCAServicer) SignCSR(_ context.Context, req *transport.SignCSRRequest) (*transport.SignCSRResponse, error) {
+	m.signCSRReq = req
 	return m.signCSRResp, m.signCSRErr
 }
 func (m *mockCAServicer) IssueCertificate(_ context.Context, _ *transport.IssueCertificateRequest) (*transport.IssueCertificateResponse, error) {
@@ -131,6 +133,28 @@ func TestHandleSignCSR_Success(t *testing.T) {
 	w := httptest.NewRecorder()
 	h.HandleSignCSR(w, req)
 	assert.Equal(t, http.StatusOK, w.Code)
+}
+
+// TestHandleSignCSR_SPIFFEKind proves the request's spiffe_kind reaches the
+// servicer and a svc kind refused for want of certs:issue_service answers 403
+// (go-xkms#1659).
+func TestHandleSignCSR_SPIFFEKind(t *testing.T) {
+	body := `{"csr_pem":"LS0tLS1CRUdJTi0tLS0t","tenant_id":"tenant-a","spiffe_kind":"svc"}`
+
+	servicer := &mockCAServicer{signCSRResp: &transport.SignCSRResponse{CertificatePEM: []byte("cert")}}
+	w := httptest.NewRecorder()
+	newTestCAHandlers(servicer).HandleSignCSR(w, httptest.NewRequest(http.MethodPost, "/api/v1/ca/sign-csr", strings.NewReader(body)))
+	assert.Equal(t, http.StatusOK, w.Code)
+	require.NotNil(t, servicer.signCSRReq)
+	assert.Equal(t, "tenant-a", servicer.signCSRReq.TenantID)
+	assert.Equal(t, "svc", servicer.signCSRReq.SPIFFEKind)
+
+	refused := &mockCAServicer{signCSRErr: &xkms.SPIFFEKindPermissionError{
+		Kind: "svc", Permission: "certs:issue_service", Err: errors.New("denied"),
+	}}
+	w = httptest.NewRecorder()
+	newTestCAHandlers(refused).HandleSignCSR(w, httptest.NewRequest(http.MethodPost, "/api/v1/ca/sign-csr", strings.NewReader(body)))
+	assert.Equal(t, http.StatusForbidden, w.Code)
 }
 
 func TestHandleSignCSR_InvalidJSON(t *testing.T) {
@@ -341,6 +365,12 @@ func TestMapCAError_AllCases(t *testing.T) {
 		{"CertNotFound", xkms.ErrCertNotFound, http.StatusNotFound},
 		{"InvalidEncodingPEM", xkms.ErrInvalidEncodingPEM, http.StatusBadRequest},
 		{"TenantBindingRefusal", &xkms.TenantBindingError{Op: "sign csr", CallerTenantID: "a", TargetTenantID: "b"}, http.StatusNotFound},
+		{"SPIFFEKindUnknown", &xkms.ErrValidation{Sentinel: xkms.ErrSPIFFEKindUnknown}, http.StatusBadRequest},
+		{"SPIFFEKindWithoutTenant", &xkms.ErrValidation{Sentinel: xkms.ErrSPIFFEKindWithoutTenant}, http.StatusBadRequest},
+		{"SPIFFEKindWithoutTrustDomain", &xkms.ErrValidation{Sentinel: xkms.ErrSPIFFEKindWithoutTrustDomain}, http.StatusBadRequest},
+		{"SPIFFENameInvalid", &xkms.ErrValidation{Sentinel: xkms.ErrSPIFFENameInvalid}, http.StatusBadRequest},
+		{"CSRMalformed", &xkms.ErrValidation{Sentinel: xkms.ErrCSRMalformed}, http.StatusBadRequest},
+		{"SPIFFEKindForbidden", &xkms.SPIFFEKindPermissionError{Kind: "svc", Permission: "certs:issue_service", Err: errors.New("denied")}, http.StatusForbidden},
 		{"Unknown", errors.New("unknown"), http.StatusInternalServerError},
 	}
 	for _, tt := range tests {

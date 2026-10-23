@@ -62,9 +62,12 @@ type mockCASignCSR struct {
 	err    error
 	caCert *x509.Certificate
 	caErr  error
+	// got records the request the servicer was asked to sign.
+	got *transport.SignCSRRequest
 }
 
 func (m *mockCASignCSR) SignCSR(ctx context.Context, req *transport.SignCSRRequest) (*transport.SignCSRResponse, error) {
+	m.got = req
 	if m.err != nil {
 		return nil, m.err
 	}

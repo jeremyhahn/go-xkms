@@ -283,3 +283,40 @@ func TestSSHServiceIsSelfScopedAndGranted(t *testing.T) {
 		t.Fatalf("SO must not hold %s", perm)
 	}
 }
+
+// TestCertsIssueServiceIsSelfScopedAndAdminOnly proves certs:issue_service,
+// the below-gate permission SignCSR requires for the svc SPIFFE kind
+// (go-xkms#1659), is registered, self-scoped, held by Admin, and granted to
+// no role that does not administer the CA or the tenant.
+func TestCertsIssueServiceIsSelfScopedAndAdminOnly(t *testing.T) {
+	RegisterRoleGrants()
+	perm := qrdbsdk.Permission("certs:issue_service")
+
+	found := false
+	for _, p := range modulePermissions() {
+		found = found || p == perm
+	}
+	if !found {
+		t.Fatalf("modulePermissions() omits %s", perm)
+	}
+
+	resolver, err := testutil.NewPermissionScopeResolver()
+	if err != nil {
+		t.Fatalf("NewPermissionScopeResolver: %v", err)
+	}
+	scope, err := resolver.Scope(context.Background(), perm)
+	if err != nil {
+		t.Fatalf("Scope(%s): %v", perm, err)
+	}
+	if scope != qrdbsdk.PermissionScopeSelf {
+		t.Fatalf("%s scope = %v, want self", perm, scope)
+	}
+	if !qrdbsdk.HasPermissionRoleGrant(qrdbsdk.PermissionRoleAdmin, perm) {
+		t.Fatalf("Admin does not hold %s", perm)
+	}
+	for _, role := range []string{qrdbsdk.PermissionRoleOperator, qrdbsdk.PermissionRoleUser, qrdbsdk.PermissionRoleAuditor, qrdbsdk.RoleNameSO} {
+		if qrdbsdk.HasPermissionRoleGrant(role, perm) {
+			t.Fatalf("%s must not hold %s", role, perm)
+		}
+	}
+}

@@ -2607,6 +2607,13 @@ message SignCSRRequest {
   bytes csr_pem = 1;
   string profile = 2;
   int32 validity_days = 3;
+  // tenant_id names the tenant stamped into the certificate's SPIFFE URI SAN;
+  // a tenant-scoped caller may name only its own tenant.
+  string tenant_id = 4;
+  // spiffe_kind selects the SPIFFE URI's workload kind, "user" or "svc";
+  // empty keeps the default. "svc" requires certs:issue_service
+  // (go-xkms#1659).
+  string spiffe_kind = 5;
 }
 
 // SignCSRResponse contains the signed certificate.

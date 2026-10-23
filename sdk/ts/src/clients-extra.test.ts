@@ -264,6 +264,13 @@ describe('PinClient (set/change/verify)', () => {
 });
 
 describe('CaClient (issue/revoke/tcg endpoints)', () => {
+  it('sends the tenant and SPIFFE kind in the sign-csr body (go-xkms#1659)', async () => {
+    const fake = newFakeFetch({ body: {} });
+    const c = make(fake);
+    await c.ca.signCSR({ csr_pem: 'Q1NS', tenant_id: 'tenant-a', spiffe_kind: 'svc' });
+    expect(fake.calls[0]?.body).toEqual({ csr_pem: 'Q1NS', tenant_id: 'tenant-a', spiffe_kind: 'svc' });
+  });
+
   it('routes certificate lookup and sign-csr/issue/revoke/crl', async () => {
     const fake = newFakeFetch({ body: {} });
     const c = make(fake);

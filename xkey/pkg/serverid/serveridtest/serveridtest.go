@@ -25,6 +25,7 @@ import (
 	"crypto/x509"
 	"crypto/x509/pkix"
 	"encoding/pem"
+	"io"
 	"math/big"
 	"net"
 	"net/http"
@@ -36,16 +37,25 @@ import (
 	"github.com/jeremyhahn/go-xkms/sdk/go/fsutil"
 )
 
+// generateKey and serialRandom are the server key and serial number sources;
+// tests replace them to drive NewTLSServer's failure paths.
+var (
+	generateKey = func() (*ecdsa.PrivateKey, error) {
+		return ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	}
+	serialRandom io.Reader = rand.Reader
+)
+
 // NewTLSServer starts an HTTPS server for handler on 127.0.0.1 with a fresh
 // self-signed certificate (localhost and 127.0.0.1) and returns it with a
 // PEM CA file trusting that certificate. The server closes at test end.
 func NewTLSServer(t testing.TB, handler http.Handler) (*httptest.Server, string) {
 	t.Helper()
-	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	key, err := generateKey()
 	if err != nil {
 		t.Fatalf("serveridtest: key: %v", err)
 	}
-	serial, err := rand.Int(rand.Reader, new(big.Int).Lsh(big.NewInt(1), 62))
+	serial, err := rand.Int(serialRandom, new(big.Int).Lsh(big.NewInt(1), 62))
 	if err != nil {
 		t.Fatalf("serveridtest: serial: %v", err)
 	}

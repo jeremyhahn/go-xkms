@@ -56,6 +56,37 @@ func TestBuildURI_Validation(t *testing.T) {
 	}
 }
 
+// TestValidateName_AcceptsSegmentNames checks the names a workload may carry:
+// one path segment of [A-Za-z0-9._-].
+func TestValidateName_AcceptsSegmentNames(t *testing.T) {
+	for _, name := range []string{"fleet-agent", "node_01", "a.b", "X9"} {
+		if err := ValidateName(name); err != nil {
+			t.Fatalf("ValidateName(%q) = %v, want nil", name, err)
+		}
+	}
+}
+
+// TestValidateName_RefusesNonSegmentNames checks each refusal carries the
+// sentinel naming its cause.
+func TestValidateName_RefusesNonSegmentNames(t *testing.T) {
+	cases := []struct {
+		name    string
+		wantErr error
+	}{
+		{"", ErrNameEmpty},
+		{"  ", ErrNameEmpty},
+		{"a/b", ErrSegmentCharacters},
+		{"agent one", ErrSegmentCharacters},
+		{"agent@x", ErrSegmentCharacters},
+		{"..", ErrSegmentDotted},
+	}
+	for _, tc := range cases {
+		if err := ValidateName(tc.name); !errors.Is(err, tc.wantErr) {
+			t.Fatalf("ValidateName(%q) = %v, want %v", tc.name, err, tc.wantErr)
+		}
+	}
+}
+
 func TestParseID_RoundTrip(t *testing.T) {
 	u, _ := BuildURI("trust.internal", "t1", KindService, "billing")
 	id, ok, err := ParseID(u)

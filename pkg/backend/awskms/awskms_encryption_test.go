@@ -20,6 +20,7 @@ import (
 	"crypto"
 	"crypto/rand"
 	"crypto/rsa"
+	"crypto/sha256"
 	"crypto/x509"
 	"testing"
 
@@ -143,8 +144,10 @@ func TestDecrypter(t *testing.T) {
 	}
 }
 
-// TestRSADecrypt_PKCS1v15 tests RSA PKCS#1 v1.5 decryption.
-func TestRSADecrypt_PKCS1v15(t *testing.T) {
+// TestRSADecrypt_NilOptsDefaultsToOAEP checks that a Decrypt with nil
+// options asks KMS for RSAES_OAEP_SHA_256: AWS KMS has no PKCS#1 v1.5
+// decryption, so the backend never requests it.
+func TestRSADecrypt_NilOptsDefaultsToOAEP(t *testing.T) {
 	// Generate a test RSA key pair for mocking
 	testRSAKey, err := rsa.GenerateKey(rand.Reader, 2048)
 	require.NoError(t, err, "Failed to generate test RSA key")
@@ -160,7 +163,7 @@ func TestRSADecrypt_PKCS1v15(t *testing.T) {
 		wantErr   bool
 	}{
 		{
-			name: "decrypt RSA-2048 PKCS#1 v1.5",
+			name: "decrypt RSA-2048 with nil opts",
 			attrs: &types.KeyAttributes{
 				CN:           "test-decrypt-pkcs1",
 				KeyAlgorithm: x509.RSA,
@@ -170,7 +173,7 @@ func TestRSADecrypt_PKCS1v15(t *testing.T) {
 					KeySize: 2048,
 				},
 			},
-			plaintext: []byte("Test message for PKCS#1 v1.5 decryption"),
+			plaintext: []byte("Test message for RSA-2048 decryption"),
 			setupMock: func(m *MockKMSClient, plaintext []byte) {
 				m.GetPublicKeyFunc = func(ctx context.Context, params *kms.GetPublicKeyInput, optFns ...func(*kms.Options)) (*kms.GetPublicKeyOutput, error) {
 					keySpec := kmstypes.KeySpecRsa2048
@@ -184,6 +187,7 @@ func TestRSADecrypt_PKCS1v15(t *testing.T) {
 				}
 
 				m.DecryptFunc = func(ctx context.Context, params *kms.DecryptInput, optFns ...func(*kms.Options)) (*kms.DecryptOutput, error) {
+					assert.Equal(t, kmstypes.EncryptionAlgorithmSpecRsaesOaepSha256, params.EncryptionAlgorithm)
 					// Mock decryption - in real AWS, this would actually decrypt
 					// For testing, we just return the plaintext
 					return &kms.DecryptOutput{
@@ -195,7 +199,7 @@ func TestRSADecrypt_PKCS1v15(t *testing.T) {
 			wantErr: false,
 		},
 		{
-			name: "decrypt RSA-3072 PKCS#1 v1.5",
+			name: "decrypt RSA-3072 with nil opts",
 			attrs: &types.KeyAttributes{
 				CN:           "test-decrypt-pkcs1-3072",
 				KeyAlgorithm: x509.RSA,
@@ -205,7 +209,7 @@ func TestRSADecrypt_PKCS1v15(t *testing.T) {
 					KeySize: 3072,
 				},
 			},
-			plaintext: []byte("Test message for RSA-3072 PKCS#1 v1.5"),
+			plaintext: []byte("Test message for RSA-3072 decryption"),
 			setupMock: func(m *MockKMSClient, plaintext []byte) {
 				m.GetPublicKeyFunc = func(ctx context.Context, params *kms.GetPublicKeyInput, optFns ...func(*kms.Options)) (*kms.GetPublicKeyOutput, error) {
 					keySpec := kmstypes.KeySpecRsa3072
@@ -219,6 +223,7 @@ func TestRSADecrypt_PKCS1v15(t *testing.T) {
 				}
 
 				m.DecryptFunc = func(ctx context.Context, params *kms.DecryptInput, optFns ...func(*kms.Options)) (*kms.DecryptOutput, error) {
+					assert.Equal(t, kmstypes.EncryptionAlgorithmSpecRsaesOaepSha256, params.EncryptionAlgorithm)
 					return &kms.DecryptOutput{
 						Plaintext: plaintext,
 						KeyId:     aws.String("test-key-id-3072"),
@@ -247,14 +252,15 @@ func TestRSADecrypt_PKCS1v15(t *testing.T) {
 			require.NoError(t, err, "Failed to get Decrypter")
 			require.NotNil(t, decrypter, "Decrypter should not be nil")
 
-			// Encrypt with the public key using PKCS#1 v1.5
+			// Encrypt with the public key the way KMS will decrypt it
 			rsaPub, ok := decrypter.Public().(*rsa.PublicKey)
 			require.True(t, ok, "Public key should be an RSA public key")
 
-			ciphertext, err := rsa.EncryptPKCS1v15(rand.Reader, rsaPub, tt.plaintext) //nolint:staticcheck // SA1019: only produces ciphertext bytes for MockKMSClient.DecryptFunc, which returns tt.plaintext unconditionally rather than actually decrypting; the algorithm choice here does not exercise AWS KMS's real (OAEP-only) wire behavior
-			require.NoError(t, err, "Failed to encrypt with PKCS#1 v1.5")
+			ciphertext, err := rsa.EncryptOAEP(sha256.New(), rand.Reader, rsaPub, tt.plaintext, nil)
+			require.NoError(t, err, "Failed to encrypt with RSAES-OAEP SHA-256")
 
-			// Decrypt using Decrypter interface with nil opts (PKCS#1 v1.5)
+			// Decrypt using Decrypter interface with nil opts, which asks KMS
+			// for RSAES_OAEP_SHA_256.
 			decrypted, err := decrypter.Decrypt(rand.Reader, ciphertext, nil)
 
 			if tt.wantErr {

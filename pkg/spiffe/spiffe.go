@@ -100,10 +100,18 @@ func (id ID) Validate() error {
 	if id.Kind != KindUser && id.Kind != KindService {
 		return ErrKindInvalid
 	}
-	if strings.TrimSpace(id.Name) == "" {
+	return ValidateName(id.Name)
+}
+
+// ValidateName verifies name is a usable workload name: non-empty and one
+// SPIFFE-ID §2.2 path segment ([A-Za-z0-9._-], neither "." nor ".."). It is
+// the rule ID.Validate applies to Name, exported so a caller can refuse a
+// name before it reaches issuance.
+func ValidateName(name string) error {
+	if strings.TrimSpace(name) == "" {
 		return ErrNameEmpty
 	}
-	return validateSegment(id.Name)
+	return validateSegment(name)
 }
 
 // URI renders the SPIFFE identity as a *url.URL ready to append to a

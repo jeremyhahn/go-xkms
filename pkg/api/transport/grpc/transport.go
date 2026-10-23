@@ -1395,6 +1395,8 @@ func (t *Transport) SignCSR(ctx context.Context, req *transport.SignCSRRequest) 
 		CsrPem:       req.CSRPEM,
 		Profile:      req.Profile,
 		ValidityDays: int32(req.ValidityDays),
+		TenantId:     req.TenantID,
+		SpiffeKind:   req.SPIFFEKind,
 	})
 	if err != nil {
 		return nil, &errs.Wrapped{Msg: "sign CSR failed", Err: err}

@@ -1490,6 +1490,13 @@ type SignCSRRequest struct {
 	ValidityDays int    `json:"validity_days,omitempty"` // Override default validity
 	// TenantID optionally scopes this operation to a specific tenant.
 	TenantID string `json:"tenant_id,omitempty"`
+	// SPIFFEKind optionally selects the workload kind of the certificate's
+	// tenant SPIFFE URI SAN, spiffe://<tenant>/<kind>/<CSR CommonName>:
+	// "user" (spiffe.KindUser) or "svc" (spiffe.KindService). Empty keeps
+	// the default, a user identity when the request names a tenant. A kind
+	// requires TenantID and a configured trust domain, and "svc" requires
+	// the certs:issue_service permission (go-xkms#1659).
+	SPIFFEKind string `json:"spiffe_kind,omitempty"`
 	// Attestation fields (optional). When present, the server verifies the
 	// attestation proof before signing. This proves the CSR's private key
 	// is stored in hardware (YubiKey PIV, TPM2, etc.).

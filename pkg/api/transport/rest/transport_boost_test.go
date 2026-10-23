@@ -1281,11 +1281,15 @@ func TestGetCACertificate_WithAllParams(t *testing.T) {
 }
 
 func TestSignCSR_WithAllOptionalFields(t *testing.T) {
+	var body map[string]interface{}
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path == "/health" {
 			w.Header().Set("Content-Type", "application/json")
 			json.NewEncoder(w).Encode(map[string]string{"status": "ok", "version": "1.0.0"})
 			return
+		}
+		if r.URL.Path == "/api/v1/ca/sign-csr" {
+			assert.NoError(t, json.NewDecoder(r.Body).Decode(&body))
 		}
 		w.Header().Set("Content-Type", "application/json")
 		json.NewEncoder(w).Encode(map[string]interface{}{"certificate_pem": "cert"})
@@ -1302,9 +1306,12 @@ func TestSignCSR_WithAllOptionalFields(t *testing.T) {
 		Profile:      "server",
 		ValidityDays: 365,
 		TenantID:     "t1",
+		SPIFFEKind:   "svc",
 	})
 	require.NoError(t, err)
 	assert.NotNil(t, resp)
+	assert.Equal(t, "t1", body["tenant_id"])
+	assert.Equal(t, "svc", body["spiffe_kind"], "the SPIFFE kind must reach the server (go-xkms#1659)")
 }
 
 func TestIssueCertificate_WithAllOptionalFields(t *testing.T) {

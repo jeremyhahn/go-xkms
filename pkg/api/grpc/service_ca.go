@@ -19,8 +19,11 @@ import (
 	"math/big"
 	"strings"
 
+	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
+
 	"github.com/jeremyhahn/go-xkms/pkg/auth"
 	"github.com/jeremyhahn/go-xkms/pkg/errs"
+	"github.com/jeremyhahn/go-xkms/pkg/xkms"
 
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
@@ -150,9 +153,11 @@ func (s *Service) SignCSR(ctx context.Context, req *pb.SignCSRRequest) (*pb.Sign
 		CSRPEM:       req.GetCsrPem(),
 		Profile:      req.GetProfile(),
 		ValidityDays: int(req.GetValidityDays()),
+		TenantID:     req.GetTenantId(),
+		SPIFFEKind:   req.GetSpiffeKind(),
 	})
 	if err != nil {
-		return nil, wrapWriteError(ctx, s.xkmsService, err, codes.Internal, "failed to sign CSR: %v", err)
+		return nil, mapSignCSRError(ctx, s.xkmsService, err)
 	}
 
 	return &pb.SignCSRResponse{
@@ -160,6 +165,23 @@ func (s *Service) SignCSR(ctx context.Context, req *pb.SignCSRRequest) (*pb.Sign
 		ChainPem:       resp.ChainPEM,
 		SerialNumber:   resp.SerialNumber,
 	}, nil
+}
+
+// mapSignCSRError maps a SignCSR refusal to its gRPC status: a malformed
+// request or SPIFFE kind is InvalidArgument, a SPIFFE kind the caller may not
+// issue is PermissionDenied, a foreign tenant reads as NotFound, and anything
+// else is the CA failure it always was.
+func mapSignCSRError(ctx context.Context, xkmsService *xkms.XKMSService, err error) error {
+	var validation *xkms.ErrValidation
+	switch {
+	case errors.As(err, &validation):
+		return status.Error(codes.InvalidArgument, validationMessage(validation))
+	case errors.Is(err, xkms.ErrSPIFFEKindForbidden):
+		return status.Error(codes.PermissionDenied, err.Error())
+	case errors.Is(err, qrdbsdk.ErrTenantMissing):
+		return status.Error(codes.NotFound, err.Error())
+	}
+	return wrapWriteError(ctx, xkmsService, err, codes.Internal, "failed to sign CSR: %v", err)
 }
 
 // IssueCertificate issues a new certificate with the specified parameters.

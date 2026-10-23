@@ -87,6 +87,19 @@ func TestSignCSRWithSPIFFE_Raw(t *testing.T) {
 	assert.Equal(t, "spiffe://tenant-b/user/bob", cert.URIs[0].String())
 }
 
+// A service kind with no explicit name takes the CSR CommonName, and the
+// tenant URI is the certificate's only URI SAN (go-xkms#1659: the svc kind a
+// SignCSR request carries reaches the CA this way).
+func TestSignCSRWithSPIFFE_ServiceKindNamesTheCommonName(t *testing.T) {
+	ca := setupTestCA(t)
+	csrPEM, _ := makeLeafCSR(t, "agent-01")
+
+	cert, err := ca.SignCSRWithSPIFFE(context.Background(), csrPEM, "client", 30, "kms.example.com", "tenant-b", spiffe.KindService, "")
+	require.NoError(t, err)
+	require.Len(t, cert.URIs, 1)
+	assert.Equal(t, "spiffe://tenant-b/svc/agent-01", cert.URIs[0].String())
+}
+
 // TestSignCSRWithSPIFFE_NonLoginProfiles pins the contract the xkms servicer
 // relies on to request the tenant SPIFFE SAN only for login certificates:
 // code-signing and server certificates, including a server CSR with an empty

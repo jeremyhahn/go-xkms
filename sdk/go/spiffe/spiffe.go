@@ -59,6 +59,10 @@ var (
 	// ValidatePathPrefix validates a path prefix used to scope issuance.
 	ValidatePathPrefix = pkgspiffe.ValidatePathPrefix
 
+	// ValidateName validates a principal name, the SPIFFE URI's last segment
+	// and the CSR CommonName a SPIFFE kind is issued for.
+	ValidateName = pkgspiffe.ValidateName
+
 	// BuildURI builds a tenant principal's SPIFFE URI under a cluster trust
 	// domain the tenant must not equal.
 	BuildURI = pkgspiffe.BuildURI

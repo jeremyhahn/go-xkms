@@ -19,6 +19,8 @@ import (
 	"net"
 	"testing"
 	"time"
+
+	"github.com/jeremyhahn/go-xkms/pkg/testing/fipstest"
 )
 
 // TestSDKNoiseSurfaceComposes walks the whole protected-key flow using only
@@ -26,9 +28,14 @@ import (
 // are allowed to use.
 //
 // A test that only constructs a key proves nothing here. This one performs
-// every step a consumer performs, in order.
+// every step a consumer performs, in order. Under GODEBUG=fips140=only the
+// first step must be the typed X25519 refusal, re-exported here so a
+// consumer can recognise it; the flow then runs under fips140=off.
 func TestSDKNoiseSurfaceComposes(t *testing.T) {
 	key, err := GenerateNoiseStaticKey()
+	if !fipstest.OutsideFIPSAfterRefusal(t, err, ErrNoiseFIPSUnsupported) {
+		return
+	}
 	if err != nil {
 		t.Fatalf("GenerateNoiseStaticKey: %v", err)
 	}

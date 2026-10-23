@@ -129,6 +129,14 @@ func selfScopedPermissions() []qrdbsdk.Permission {
 		// assets, a system-tenant identity any tenant's. qrdb does not
 		// declare this name; xkms owns it.
 		qrdbsdk.Permission(auth.ResourceSSH + ":" + auth.ActionService),
+
+		// certs:issue_service admits a SignCSR request for the svc SPIFFE
+		// kind (checked in pkg/xkms SignCSR, go-xkms#1659). It is ScopeSelf
+		// like certs:issue, which qrdb declares: the service binds the
+		// request to the caller's own tenant, so a tenant identity mints svc
+		// identities only in its own trust domain. qrdb does not declare
+		// this name; xkms owns it.
+		qrdbsdk.Permission(auth.ResourceCerts + ":" + auth.ActionIssueService),
 	}
 }
 

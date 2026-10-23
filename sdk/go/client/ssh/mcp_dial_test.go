@@ -195,6 +195,9 @@ func TestMCPSessionDial_Success(t *testing.T) {
 		Host: host, Port: port, User: "testuser", TimeoutSeconds: 5,
 	})
 	if err != nil {
+		if handshakeBlockedByFIPS(t, err) {
+			return
+		}
 		t.Fatalf("Session.Dial: %v", err)
 	}
 	defer func() { _ = sess.Close() }()
@@ -235,6 +238,9 @@ func TestMCPSessionDial_UnknownHostRefused(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected dial to fail for an unpinned host")
 	}
+	if handshakeBlockedByFIPS(t, err) {
+		return
+	}
 	var protoErr *sdkssh.ProtocolError
 	if !errors.As(err, &protoErr) {
 		t.Fatalf("expected *ProtocolError in the chain, got %T: %v", err, err)
@@ -269,6 +275,9 @@ func TestMCPSessionDial_HostKeyMismatchRefused(t *testing.T) {
 	})
 	if err == nil {
 		t.Fatal("expected dial to fail for a mismatched host key")
+	}
+	if handshakeBlockedByFIPS(t, err) {
+		return
 	}
 	var protoErr *sdkssh.ProtocolError
 	if !errors.As(err, &protoErr) {

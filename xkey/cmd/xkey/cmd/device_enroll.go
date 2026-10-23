@@ -342,6 +342,11 @@ func probeMasterWithClientCert(address string, clientCert tls.Certificate, roots
 	return err
 }
 
+// notifySignals registers the channel the device commands wait on for the
+// operator's Ctrl+C or a SIGTERM. It is signal.Notify; tests replace it to
+// deliver the signal without raising one in the test process.
+var notifySignals = signal.Notify
+
 // runDeviceConnect connects to a previously enrolled master.
 func runDeviceConnect(cmd *cobra.Command, args []string) error {
 	out := cmd.OutOrStdout()
@@ -390,7 +395,7 @@ func runDeviceConnect(cmd *cobra.Command, args []string) error {
 
 	// Wait for signal.
 	sigCh := make(chan os.Signal, 1)
-	signal.Notify(sigCh, syscall.SIGINT, syscall.SIGTERM)
+	notifySignals(sigCh, syscall.SIGINT, syscall.SIGTERM)
 
 	<-sigCh
 	_, _ = fmt.Fprintln(out, "\nDisconnecting...")

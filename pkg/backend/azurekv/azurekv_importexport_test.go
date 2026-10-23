@@ -31,6 +31,7 @@ import (
 	"github.com/jeremyhahn/go-xkms/pkg/backend/importtoken"
 	"github.com/jeremyhahn/go-xkms/pkg/crypto/wrapping"
 	"github.com/jeremyhahn/go-xkms/pkg/storage"
+	"github.com/jeremyhahn/go-xkms/pkg/testing/fipstest"
 	"github.com/jeremyhahn/go-xkms/pkg/types"
 )
 
@@ -264,6 +265,10 @@ func TestWrapKey_RoundTripsAgainstKEK(t *testing.T) {
 
 			keyMaterial := []byte("super-secret-key-material-1234567890")
 			wrapped, err := b.WrapKey(context.Background(), keyMaterial, params)
+			// The stdlib refuses SHA-1 in RSA-OAEP under fips140=only.
+			if alg == backend.WrappingAlgorithmRSA_AES_KEY_WRAP_SHA_1 && !fipstest.OutsideFIPSAfterRefusal(t, err, nil) {
+				return
+			}
 			if err != nil {
 				t.Fatalf("WrapKey() error = %v", err)
 			}

@@ -34,7 +34,7 @@ import (
 
 func main() {
 	if err := run(os.Args[1:], cmd.RootCmd, os.Stdout); err != nil {
-		fail(err)
+		os.Exit(fail(os.Stderr, err))
 	}
 }
 
@@ -65,13 +65,14 @@ func run(args []string, root *cobra.Command, out io.Writer) error {
 	return bw.Flush()
 }
 
-// fail reports err on stderr and exits non-zero. A failed write to stderr
-// cannot be reported anywhere, so the exit status carries the failure.
-func fail(err error) {
-	if _, werr := fmt.Fprintln(os.Stderr, "skillgen:", err); werr != nil {
-		os.Exit(2)
+// fail reports err on stderr and returns the non-zero exit status. A failed
+// write to stderr cannot be reported anywhere, so the status carries it: 2
+// rather than 1.
+func fail(stderr io.Writer, err error) int {
+	if _, werr := fmt.Fprintln(stderr, "skillgen:", err); werr != nil {
+		return 2
 	}
-	os.Exit(1)
+	return 1
 }
 
 // writer records the first write error and turns every later write into a

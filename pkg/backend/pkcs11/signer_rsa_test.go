@@ -18,6 +18,7 @@ package pkcs11
 import (
 	"crypto"
 	"crypto/elliptic"
+	"crypto/fips140"
 	"crypto/rand"
 	"crypto/rsa"
 	"crypto/sha1"
@@ -54,6 +55,31 @@ func newRSATestSigner(t *testing.T, b *Backend, cn string) *pkcs11RSASigner {
 	return signer
 }
 
+// asRemoteParty runs a software-oracle step outside this process's FIPS 140
+// enforcement. The token signs over SHA-1 digests and decrypts PKCS#1 v1.5
+// and SHA-1 RSA-OAEP on request (SoftHSM2 implements CKM_RSA_PKCS_OAEP for
+// SHA-1 only); those operations run in the token, not in the stdlib, so the
+// backend serves them in every FIPS mode. The oracle's hashing, encryption and
+// verification stand in for the remote party and must not meet this process's
+// refusal (#23).
+func asRemoteParty(step func()) {
+	fips140.WithoutEnforcement(step)
+}
+
+// encryptOAEPSHA1 is the oracle's SHA-1 RSA-OAEP encryption, the only OAEP
+// hash SoftHSM2 decrypts; it runs as the remote party.
+func encryptOAEPSHA1(t *testing.T, pub *rsa.PublicKey, plaintext []byte) []byte {
+	t.Helper()
+
+	var ciphertext []byte
+	var err error
+	asRemoteParty(func() {
+		ciphertext, err = rsa.EncryptOAEP(sha1.New(), rand.Reader, pub, plaintext, nil)
+	})
+	require.NoError(t, err)
+	return ciphertext
+}
+
 // digestFor hashes msg with h and returns the digest. PKCS#11 CKM_RSA_PKCS and
 // CKM_RSA_PKCS_PSS both operate on a caller-supplied hash (PKCS#11 v3.2
 // §6.1.10: the mechanism "does not compute a hash value on the message"), so
@@ -63,7 +89,8 @@ func digestFor(t *testing.T, h crypto.Hash, msg []byte) []byte {
 
 	switch h {
 	case crypto.SHA1:
-		sum := sha1.Sum(msg)
+		var sum [sha1.Size]byte
+		asRemoteParty(func() { sum = sha1.Sum(msg) })
 		return sum[:]
 	case crypto.SHA224:
 		sum := sha256.Sum224(msg)
@@ -152,17 +179,19 @@ func TestRSASigner_SignPKCS1v15_VerifiesUnderRequestedHash(t *testing.T) {
 			require.NoError(t, err)
 			require.Len(t, sig, rsaTestKeySize/8, "an RSA signature is exactly one modulus wide")
 
-			require.NoError(t, rsa.VerifyPKCS1v15(pub, tc.hash, digest, sig),
-				"signature must verify as PKCS#1 v1.5 under the requested hash")
+			asRemoteParty(func() {
+				require.NoError(t, rsa.VerifyPKCS1v15(pub, tc.hash, digest, sig),
+					"signature must verify as PKCS#1 v1.5 under the requested hash")
 
-			require.ErrorIs(t,
-				rsa.VerifyPSS(pub, tc.hash, digest, sig, &rsa.PSSOptions{SaltLength: rsa.PSSSaltLengthEqualsHash}),
-				rsa.ErrVerification,
-				"a PKCS#1 v1.5 signature must not verify as PSS")
+				require.ErrorIs(t,
+					rsa.VerifyPSS(pub, tc.hash, digest, sig, &rsa.PSSOptions{SaltLength: rsa.PSSSaltLengthEqualsHash}),
+					rsa.ErrVerification,
+					"a PKCS#1 v1.5 signature must not verify as PSS")
 
-			otherDigest := digestFor(t, tc.otherHash, msg)
-			require.ErrorIs(t, rsa.VerifyPKCS1v15(pub, tc.otherHash, otherDigest, sig), rsa.ErrVerification,
-				"the DigestInfo prefix must identify the hash that was requested")
+				otherDigest := digestFor(t, tc.otherHash, msg)
+				require.ErrorIs(t, rsa.VerifyPKCS1v15(pub, tc.otherHash, otherDigest, sig), rsa.ErrVerification,
+					"the DigestInfo prefix must identify the hash that was requested")
+			})
 		})
 	}
 }
@@ -221,8 +250,10 @@ func TestRSASigner_SignPKCS1v15_NoneHashSignsVerbatim(t *testing.T) {
 			sig, err := signer.Sign(rand.Reader, info, crypto.Hash(0))
 			require.NoError(t, err, "the token must accept a caller-built DigestInfo")
 
-			require.NoError(t, rsa.VerifyPKCS1v15(pub, h, digest, sig),
-				"a signature over a caller-built %v DigestInfo must verify under %v", h, h)
+			asRemoteParty(func() {
+				require.NoError(t, rsa.VerifyPKCS1v15(pub, h, digest, sig),
+					"a signature over a caller-built %v DigestInfo must verify under %v", h, h)
+			})
 
 			// The same padded block reached through the backend's own prefix
 			// table. Any extra prefixing on the crypto.Hash(0) path changes the
@@ -296,19 +327,21 @@ func TestRSASigner_SignPSS_IsPSSNotPKCS1v15(t *testing.T) {
 			require.NoError(t, err)
 			require.Len(t, sig, rsaTestKeySize/8)
 
-			require.NoError(t, rsa.VerifyPSS(pub, tc.hash, digest, sig, opts),
-				"signature must verify as PSS with the requested hash and salt length")
+			asRemoteParty(func() {
+				require.NoError(t, rsa.VerifyPSS(pub, tc.hash, digest, sig, opts),
+					"signature must verify as PSS with the requested hash and salt length")
 
-			require.ErrorIs(t, rsa.VerifyPKCS1v15(pub, tc.hash, digest, sig), rsa.ErrVerification,
-				"a PSS request must not yield a PKCS#1 v1.5 signature")
+				require.ErrorIs(t, rsa.VerifyPKCS1v15(pub, tc.hash, digest, sig), rsa.ErrVerification,
+					"a PSS request must not yield a PKCS#1 v1.5 signature")
 
-			// The PSS hashAlg/mgf parameters must reach the token: verifying
-			// under a different hash has to fail.
-			otherDigest := digestFor(t, tc.otherHash, msg)
-			require.ErrorIs(t,
-				rsa.VerifyPSS(pub, tc.otherHash, otherDigest, sig, &rsa.PSSOptions{Hash: tc.otherHash, SaltLength: rsa.PSSSaltLengthEqualsHash}),
-				rsa.ErrVerification,
-				"PSS hashAlg must match the hash the caller requested")
+				// The PSS hashAlg/mgf parameters must reach the token: verifying
+				// under a different hash has to fail.
+				otherDigest := digestFor(t, tc.otherHash, msg)
+				require.ErrorIs(t,
+					rsa.VerifyPSS(pub, tc.otherHash, otherDigest, sig, &rsa.PSSOptions{Hash: tc.otherHash, SaltLength: rsa.PSSSaltLengthEqualsHash}),
+					rsa.ErrVerification,
+					"PSS hashAlg must match the hash the caller requested")
+			})
 		})
 	}
 }
@@ -488,8 +521,7 @@ func TestRSASigner_DecryptPKCS1v15_RoundTrip(t *testing.T) {
 	pub := signer.Public().(*rsa.PublicKey)
 
 	plaintext := []byte("pkcs1 v1.5 secret")
-	ciphertext, err := rsa.EncryptPKCS1v15(rand.Reader, pub, plaintext) //nolint:staticcheck // SA1019: exercises the decrypter's PKCS#1 v1.5 path, which the pkcs11 backend supports for real via CKM_RSA_PKCS
-	require.NoError(t, err)
+	ciphertext := encryptPKCS1v15(t, pub, plaintext)
 
 	t.Run("nil opts", func(t *testing.T) {
 		got, err := signer.Decrypt(rand.Reader, ciphertext, nil)
@@ -557,8 +589,7 @@ func TestRSASigner_DecryptOAEP_RoundTrip(t *testing.T) {
 
 	plaintext := []byte("oaep secret")
 
-	ciphertext, err := rsa.EncryptOAEP(sha1.New(), rand.Reader, pub, plaintext, nil)
-	require.NoError(t, err)
+	ciphertext := encryptOAEPSHA1(t, pub, plaintext)
 
 	got, err := signer.Decrypt(rand.Reader, ciphertext, &rsa.OAEPOptions{Hash: crypto.SHA1})
 	require.NoError(t, err)
@@ -701,8 +732,7 @@ func TestGenerateRSAWrappingKeyPair_UsableForWrapping(t *testing.T) {
 	// MGF1-SHA-1 only; the property under test is that the generated pair is a
 	// real pair, not which digest the token supports.
 	secret := []byte("wrapped material")
-	ciphertext, err := rsa.EncryptOAEP(sha1.New(), rand.Reader, pub, secret, nil)
-	require.NoError(t, err)
+	ciphertext := encryptOAEPSHA1(t, pub, secret)
 
 	got, err := signer.Decrypt(rand.Reader, ciphertext, &rsa.OAEPOptions{Hash: crypto.SHA1})
 	require.NoError(t, err)
@@ -798,10 +828,14 @@ func TestDigestInfoPrefixes(t *testing.T) {
 		// crypto.Hash(0) means "sign this DigestInfo verbatim", so the
 		// signature is produced from our prefix but verified with the
 		// standard library's own prefix table.
-		sig, err := rsa.SignPKCS1v15(rand.Reader, hostKey, crypto.Hash(0), info)
-		require.NoError(t, err)
-		require.NoError(t, rsa.VerifyPKCS1v15(&hostKey.PublicKey, h, digest, sig),
-			"DigestInfo prefix for %v does not match RFC 8017", h)
+		var sig []byte
+		var signErr, verifyErr error
+		asRemoteParty(func() {
+			sig, signErr = rsa.SignPKCS1v15(rand.Reader, hostKey, crypto.Hash(0), info)
+			verifyErr = rsa.VerifyPKCS1v15(&hostKey.PublicKey, h, digest, sig)
+		})
+		require.NoError(t, signErr)
+		require.NoError(t, verifyErr, "DigestInfo prefix for %v does not match RFC 8017", h)
 	}
 }
 
@@ -1060,8 +1094,7 @@ func TestGenerateRSAKeyPair_SealedKeyStillSignsAndDecrypts(t *testing.T) {
 
 	// SoftHSM2 implements OAEP with MGF1-SHA-1 only, which is why the decrypt
 	// half uses SHA-1 rather than the SHA-256 used for the signature above.
-	ciphertext, err := rsa.EncryptOAEP(sha1.New(), rand.Reader, signer.publicKey, message, nil)
-	require.NoError(t, err)
+	ciphertext := encryptOAEPSHA1(t, signer.publicKey, message)
 
 	plaintext, err := signer.Decrypt(rand.Reader, ciphertext, &rsa.OAEPOptions{Hash: crypto.SHA1})
 	require.NoError(t, err, "a non-extractable key must still decrypt")

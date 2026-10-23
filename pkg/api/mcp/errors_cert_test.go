@@ -39,6 +39,8 @@ func TestMapCAError_DomainSentinels(t *testing.T) {
 		{"nil data", xkms.ErrNilData, ErrCodeInvalidParams},
 		{"validation failure", &xkms.ErrValidation{Sentinel: xkms.ErrMissingRequiredField, Detail: "common_name is required"}, ErrCodeInvalidParams},
 		{"tenant binding refusal", &xkms.TenantBindingError{Op: "sign csr", CallerTenantID: "a", TargetTenantID: "b"}, sdkssh.JSONRPCCodeNotFound},
+		{"spiffe kind refusal", &xkms.ErrValidation{Sentinel: xkms.ErrSPIFFEKindWithoutTenant}, ErrCodeInvalidParams},
+		{"svc kind without permission", &xkms.SPIFFEKindPermissionError{Kind: "svc", Permission: "certs:issue_service", Err: errors.New("denied")}, ErrCodeForbidden},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {

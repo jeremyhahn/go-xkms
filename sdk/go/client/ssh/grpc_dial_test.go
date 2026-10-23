@@ -104,6 +104,9 @@ func TestGRPCSessionDial_Success(t *testing.T) {
 		Host: host, Port: port, User: "testuser", TimeoutSeconds: 5,
 	})
 	if err != nil {
+		if handshakeBlockedByFIPS(t, err) {
+			return
+		}
 		t.Fatalf("Session.Dial: %v", err)
 	}
 	defer func() { _ = sess.Close() }()
@@ -140,6 +143,9 @@ func TestGRPCSessionDial_UnknownHostRefused(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected dial to fail for an unpinned host")
 	}
+	if handshakeBlockedByFIPS(t, err) {
+		return
+	}
 	var notFound *sdkssh.NotFoundError
 	if !errors.As(err, &notFound) {
 		t.Fatalf("expected *NotFoundError in the chain, got %T: %v", err, err)
@@ -174,6 +180,9 @@ func TestGRPCSessionDial_HostKeyMismatchRefused(t *testing.T) {
 	})
 	if err == nil {
 		t.Fatal("expected dial to fail for a mismatched host key")
+	}
+	if handshakeBlockedByFIPS(t, err) {
+		return
 	}
 	var mismatch *sdkssh.MismatchError
 	if !errors.As(err, &mismatch) {
@@ -267,6 +276,9 @@ func TestUnixSessionDial_Success(t *testing.T) {
 		Host: host, Port: port, User: "testuser", TimeoutSeconds: 5,
 	})
 	if err != nil {
+		if handshakeBlockedByFIPS(t, err) {
+			return
+		}
 		t.Fatalf("Session.Dial: %v", err)
 	}
 	defer func() { _ = sess.Close() }()

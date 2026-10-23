@@ -21,6 +21,7 @@ import (
 	"crypto/ecdsa"
 	"crypto/ed25519"
 	"crypto/elliptic"
+	"crypto/fips140"
 	"crypto/rand"
 	"crypto/rsa"
 	"crypto/sha256"
@@ -453,6 +454,23 @@ func TestBackend_GetSignerByID_NotFound(t *testing.T) {
 
 // TestBackend_GetDecrypterByID proves the by-name decrypter lookup returns a
 // key that actually decrypts, using crypto/rsa as the encryption oracle.
+// encryptPKCS1v15 is the software oracle for the decrypter's PKCS#1 v1.5 path
+// (nil opts). The token performs that decryption (CKM_RSA_PKCS), outside the
+// stdlib's FIPS 140 module, so the backend serves it in every FIPS mode; the
+// oracle stands in for the remote sender and encrypts outside this process's
+// enforcement (#23).
+func encryptPKCS1v15(t *testing.T, pub *rsa.PublicKey, plaintext []byte) []byte {
+	t.Helper()
+
+	var ciphertext []byte
+	var err error
+	fips140.WithoutEnforcement(func() {
+		ciphertext, err = rsa.EncryptPKCS1v15(rand.Reader, pub, plaintext) //nolint:staticcheck // SA1019: exercises the decrypter's PKCS#1 v1.5 path (nil opts), which the pkcs11 backend supports for real via CKM_RSA_PKCS
+	})
+	require.NoError(t, err)
+	return ciphertext
+}
+
 func TestBackend_GetDecrypterByID(t *testing.T) {
 	b := newProvisionedBackend(t, "decrypter-by-id")
 
@@ -471,8 +489,7 @@ func TestBackend_GetDecrypterByID(t *testing.T) {
 	require.True(t, ok)
 
 	plaintext := []byte("decrypter-by-id secret")
-	ciphertext, err := rsa.EncryptPKCS1v15(rand.Reader, pub, plaintext) //nolint:staticcheck // SA1019: exercises the decrypter's PKCS#1 v1.5 path (nil opts), which the pkcs11 backend supports for real via CKM_RSA_PKCS
-	require.NoError(t, err)
+	ciphertext := encryptPKCS1v15(t, pub, plaintext)
 
 	recovered, err := decrypter.Decrypt(rand.Reader, ciphertext, nil)
 	require.NoError(t, err)
@@ -506,8 +523,7 @@ func TestBackend_Decrypter_RSARoundTrip(t *testing.T) {
 	require.True(t, ok)
 
 	plaintext := []byte("hardware-protected plaintext")
-	ciphertext, err := rsa.EncryptPKCS1v15(rand.Reader, pub, plaintext) //nolint:staticcheck // SA1019: exercises the decrypter's PKCS#1 v1.5 path (nil opts), which the pkcs11 backend supports for real via CKM_RSA_PKCS
-	require.NoError(t, err)
+	ciphertext := encryptPKCS1v15(t, pub, plaintext)
 
 	recovered, err := decrypter.Decrypt(rand.Reader, ciphertext, nil)
 	require.NoError(t, err)

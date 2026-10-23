@@ -327,4 +327,10 @@ var (
 	ErrNoiseEncryptionFailed  = pkgbootstrap.ErrNoiseEncryptionFailed
 	ErrNoiseDecryptionFailed  = pkgbootstrap.ErrNoiseDecryptionFailed
 	ErrNoiseInvalidMessage    = pkgbootstrap.ErrNoiseInvalidMessage
+
+	// ErrNoiseFIPSUnsupported is the refusal every Noise key and session
+	// entry point returns when FIPS is enforced: the Noise_NK suite needs
+	// X25519, which the FIPS 140-3 module does not approve. Test for it with
+	// errors.Is.
+	ErrNoiseFIPSUnsupported = pkgbootstrap.ErrNoiseFIPSUnsupported
 )

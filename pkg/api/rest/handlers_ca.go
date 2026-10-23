@@ -82,6 +82,15 @@ var caErrorStatusMap = map[error]int{
 	// SignCSR's SPIFFE tenant is caller-supplied; the service's tenant
 	// binding refuses a foreign one as not-found (xkms.TenantBindingError).
 	qrdbsdk.ErrTenantMissing: http.StatusNotFound,
+	// SignCSR's SPIFFE kind refusals (go-xkms#1659): a malformed request is
+	// the caller's error, a svc kind without certs:issue_service is
+	// forbidden.
+	xkms.ErrSPIFFEKindUnknown:            http.StatusBadRequest,
+	xkms.ErrSPIFFEKindWithoutTenant:      http.StatusBadRequest,
+	xkms.ErrSPIFFEKindWithoutTrustDomain: http.StatusBadRequest,
+	xkms.ErrSPIFFENameInvalid:            http.StatusBadRequest,
+	xkms.ErrCSRMalformed:                 http.StatusBadRequest,
+	xkms.ErrSPIFFEKindForbidden:          http.StatusForbidden,
 }
 
 // CAHandlers provides HTTP handlers for the CA operations API.

@@ -493,3 +493,36 @@ var ServiceErrKeyNotFound = pkgxkms.ErrKeyNotFound
 // ServiceErrBackendNotFound is returned when the named backend is not
 // registered.
 var ServiceErrBackendNotFound = pkgxkms.ErrBackendNotFound
+
+// SPIFFE kind refusals for CSR signing, re-exported from pkg/xkms
+// (go-xkms#1659). The validation sentinels arrive wrapped in a validation
+// error; ServiceErrSPIFFEKindForbidden arrives in a
+// ServiceSPIFFEKindPermissionError.
+var (
+	// ServiceErrSPIFFEKindUnknown is a SPIFFE kind other than user or svc.
+	ServiceErrSPIFFEKindUnknown = pkgxkms.ErrSPIFFEKindUnknown
+
+	// ServiceErrSPIFFEKindWithoutTenant is a SPIFFE kind on a request that
+	// names no tenant.
+	ServiceErrSPIFFEKindWithoutTenant = pkgxkms.ErrSPIFFEKindWithoutTenant
+
+	// ServiceErrSPIFFEKindWithoutTrustDomain is a SPIFFE kind on a node with
+	// no cluster trust domain configured.
+	ServiceErrSPIFFEKindWithoutTrustDomain = pkgxkms.ErrSPIFFEKindWithoutTrustDomain
+
+	// ServiceErrSPIFFENameInvalid is a CSR CommonName that is not a valid
+	// SPIFFE name.
+	ServiceErrSPIFFENameInvalid = pkgxkms.ErrSPIFFENameInvalid
+
+	// ServiceErrCSRMalformed is a CSR that is not a well-formed PKCS#10
+	// request.
+	ServiceErrCSRMalformed = pkgxkms.ErrCSRMalformed
+
+	// ServiceErrSPIFFEKindForbidden is a SPIFFE kind the caller holds no
+	// permission to issue.
+	ServiceErrSPIFFEKindForbidden = pkgxkms.ErrSPIFFEKindForbidden
+)
+
+// ServiceSPIFFEKindPermissionError refuses a CSR whose SPIFFE kind needs a
+// permission the caller does not hold (svc needs certs:issue_service).
+type ServiceSPIFFEKindPermissionError = pkgxkms.SPIFFEKindPermissionError

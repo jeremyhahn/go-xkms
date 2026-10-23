@@ -18,10 +18,9 @@ package pkcs11
 import (
 	"context"
 	"crypto"
-	"crypto/aes"
-	"crypto/cipher"
 	"crypto/ecdsa"
 	"crypto/elliptic"
+	"crypto/fips140"
 	"crypto/rand"
 	"crypto/rsa"
 	"crypto/sha256"
@@ -150,12 +149,29 @@ func importAESKey(t *testing.T, b *Backend, attrs *types.KeyAttributes, algorith
 
 	material := randomAESKey(t)
 
-	wrapped, err := b.WrapKey(ctx, material, params)
-	require.NoError(t, err)
+	wrapped := wrapAsKeyOwner(t, b, material, params)
 
 	require.NoError(t, b.ImportKey(ctx, attrs, wrapped))
 
 	return material
+}
+
+// wrapAsKeyOwner wraps key material for import the way the key owner does.
+// SoftHSM2 unwraps only SHA-1 RSA-OAEP (see tokenOAEPAlgorithm), so the
+// owner's wrap runs outside this process's FIPS 140 enforcement: the owner is
+// a remote party, and the token's unwrap is not the stdlib's (#23).
+// TestWrapKey_SHA1UnderFIPS asserts the stdlib's refusal of an in-process
+// SHA-1 wrap.
+func wrapAsKeyOwner(t *testing.T, b *Backend, material []byte, params *backend.ImportParameters) *backend.WrappedKeyMaterial {
+	t.Helper()
+
+	var wrapped *backend.WrappedKeyMaterial
+	var err error
+	fips140.WithoutEnforcement(func() {
+		wrapped, err = b.WrapKey(context.Background(), material, params)
+	})
+	require.NoError(t, err)
+	return wrapped
 }
 
 // createSecretKeyFixture puts an AES key of known value on the token with the
@@ -376,13 +392,11 @@ func TestGetImportParameters_ReturnsTheTokensOwnWrappingKey(t *testing.T) {
 
 	// Encrypt under the published public key, using the same OAEP parameters
 	// the import path uses, then let the token decrypt it.
-	offline := offlineBackend()
-	wrapped, err := offline.WrapKey(context.Background(), probe, &backend.ImportParameters{
+	wrapped := wrapAsKeyOwner(t, offlineBackend(), probe, &backend.ImportParameters{
 		WrappingPublicKey: publicKey,
 		Algorithm:         tokenOAEPAlgorithm,
 		ImportToken:       params.ImportToken,
 	})
-	require.NoError(t, err)
 
 	assert.Equal(t, probe, decryptInHSM(t, b, wrapped.WrappedKey),
 		"the returned public key must be the public half of the token's wrapping key")
@@ -482,6 +496,36 @@ func TestWrapKey(t *testing.T) {
 	recovered, err := rsa.DecryptOAEP(sha256.New(), rand.Reader, wrappingKey, wrapped.WrappedKey, nil)
 	require.NoError(t, err, "the wrapped blob must be RSA-OAEP under the supplied public key")
 	assert.Equal(t, material, recovered, "unwrapping must yield the original key material byte for byte")
+}
+
+// TestWrapKey_SHA1UnderFIPS pins that an in-process SHA-1 wrap meets the
+// stdlib's own FIPS 140 refusal under GODEBUG=fips140=only and succeeds
+// otherwise; the backend keeps no allowlist of its own (#23).
+func TestWrapKey_SHA1UnderFIPS(t *testing.T) {
+	b := offlineBackend()
+
+	wrappingKey, err := rsa.GenerateKey(rand.Reader, 2048)
+	require.NoError(t, err)
+
+	for _, algorithm := range []backend.WrappingAlgorithm{
+		backend.WrappingAlgorithmRSAES_OAEP_SHA_1,
+		backend.WrappingAlgorithmRSA_AES_KEY_WRAP_SHA_1,
+	} {
+		t.Run(string(algorithm), func(t *testing.T) {
+			wrapped, err := b.WrapKey(context.Background(), randomAESKey(t), &backend.ImportParameters{
+				WrappingPublicKey: &wrappingKey.PublicKey,
+				Algorithm:         algorithm,
+				ImportToken:       []byte(wrappingKeyLabel),
+			})
+			if fips140.Enforced() {
+				require.Error(t, err, "the stdlib refuses SHA-1 RSA-OAEP under fips140=only")
+				assert.Nil(t, wrapped)
+				return
+			}
+			require.NoError(t, err)
+			assert.Equal(t, algorithm, wrapped.Algorithm)
+		})
+	}
 }
 
 // TestWrapKey_HybridCarriesAnEphemeralAESKey checks the framing of the hybrid
@@ -669,18 +713,8 @@ func assertTokenHoldsKey(t *testing.T, b *Backend, attrs *types.KeyAttributes, m
 	encrypted, err := encrypter.Encrypt(plaintext, nil)
 	require.NoError(t, err)
 
-	block, err := aes.NewCipher(material)
-	require.NoError(t, err)
-	gcm, err := cipher.NewGCM(block)
-	require.NoError(t, err)
-
-	sealed := make([]byte, 0, len(encrypted.Ciphertext)+len(encrypted.Tag))
-	sealed = append(sealed, encrypted.Ciphertext...)
-	sealed = append(sealed, encrypted.Tag...)
-
-	opened, err := gcm.Open(nil, encrypted.Nonce, sealed, nil)
-	require.NoError(t, err, "AES-GCM must authenticate under the original key material")
-	assert.Equal(t, plaintext, opened)
+	assert.Equal(t, plaintext, openInSoftware(t, material, encrypted, nil),
+		"AES-GCM must authenticate under the original key material")
 }
 
 // TestImportKey_ExportablePolicyReachesTheToken is the regression test for an
@@ -779,8 +813,7 @@ func TestImportKey_RSAPrivateKeyIsTheSameKey(t *testing.T) {
 
 	params, err := b.GetImportParameters(ctx, attrs, tokenHybridAlgorithm)
 	require.NoError(t, err)
-	wrapped, err := b.WrapKey(ctx, pkcs8, params)
-	require.NoError(t, err)
+	wrapped := wrapAsKeyOwner(t, b, pkcs8, params)
 	require.NoError(t, b.ImportKey(ctx, attrs, wrapped))
 
 	session := openIntrospectionSession(t, b)
@@ -833,8 +866,7 @@ func TestImportKey_ECDSAPrivateKeyIsTheSameKey(t *testing.T) {
 
 	params, err := b.GetImportParameters(ctx, attrs, tokenHybridAlgorithm)
 	require.NoError(t, err)
-	wrapped, err := b.WrapKey(ctx, pkcs8, params)
-	require.NoError(t, err)
+	wrapped := wrapAsKeyOwner(t, b, pkcs8, params)
 	require.NoError(t, b.ImportKey(ctx, attrs, wrapped))
 
 	session := openIntrospectionSession(t, b)
@@ -874,8 +906,7 @@ func TestImportExport_AuthenticateAndReleaseTheToken(t *testing.T) {
 	params, err := b.GetImportParameters(ctx, attrs, tokenHybridAlgorithm)
 	require.NoError(t, err)
 	material := randomAESKey(t)
-	wrapped, err := b.WrapKey(ctx, material, params)
-	require.NoError(t, err)
+	wrapped := wrapAsKeyOwner(t, b, material, params)
 
 	// Drop the application's authenticated state so ImportKey has to establish
 	// it itself. C_Logout applies to every session on the token.
@@ -906,8 +937,7 @@ func TestImportKey_InvalidInput(t *testing.T) {
 
 	params, err := b.GetImportParameters(ctx, attrs, tokenHybridAlgorithm)
 	require.NoError(t, err)
-	valid, err := b.WrapKey(ctx, randomAESKey(t), params)
-	require.NoError(t, err)
+	valid := wrapAsKeyOwner(t, b, randomAESKey(t), params)
 
 	t.Run("uninitialized backend", func(t *testing.T) {
 		assert.ErrorIs(t, offlineBackend().ImportKey(ctx, attrs, valid), ErrNotInitialized)
@@ -1341,13 +1371,11 @@ func TestImportKey_RefusesAnImportTokenNamingAnotherKey(t *testing.T) {
 
 	params, err := b.GetImportParameters(ctx, victim, tokenHybridAlgorithm)
 	require.NoError(t, err)
-	victimWrapped, err := b.WrapKey(ctx, pkcs8, params)
-	require.NoError(t, err)
+	victimWrapped := wrapAsKeyOwner(t, b, pkcs8, params)
 	require.NoError(t, b.ImportKey(ctx, victim, victimWrapped))
 
 	attrs := aesAttributes("aimed-at-another-key", false)
-	wrapped, err := b.WrapKey(ctx, randomAESKey(t), params)
-	require.NoError(t, err)
+	wrapped := wrapAsKeyOwner(t, b, randomAESKey(t), params)
 
 	// Aim the ceremony at the unrelated RSA key by name.
 	wrapped.ImportToken = []byte(createKeyID(victim))
@@ -1383,8 +1411,7 @@ func TestImportKey_RollsBackWhenMetadataCannotBeStored(t *testing.T) {
 
 	params, err := b.GetImportParameters(ctx, attrs, tokenHybridAlgorithm)
 	require.NoError(t, err)
-	wrapped, err := b.WrapKey(ctx, randomAESKey(t), params)
-	require.NoError(t, err)
+	wrapped := wrapAsKeyOwner(t, b, randomAESKey(t), params)
 
 	b.config.KeyStorage = &failingKeyStorage{Backend: storage.New()}
 

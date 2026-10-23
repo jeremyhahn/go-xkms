@@ -619,3 +619,33 @@ func resolvePairedDevices(devices []PairedDevice, pairedDevice PairedDevice) ([]
 	}
 	return append(devices, pairedDevice), nil
 }
+
+// printUnattestablePairingWarning tells the operator what they now have, in the
+// terms the record actually supports.
+//
+// It is deliberately not softened. The default is to refuse; reaching this
+// point means someone chose to pair a device whose hardware claims could not be
+// checked, and the one thing they must not take away is that the pairing
+// carries a verified device identity. It does not carry any device identity.
+func printUnattestablePairingWarning() {
+	fmt.Println()
+	fmt.Println("  WARNING: paired WITHOUT a verified attestation.")
+	fmt.Println()
+	fmt.Println("  Policy allows pairing an unattestable device, so this pairing")
+	fmt.Println("  completed. Nothing about the device's hardware was verified, so")
+	fmt.Println("  the record stores no security level, no boot state and no device")
+	fmt.Println("  fingerprint -- there is nothing trustworthy to store.")
+	fmt.Println()
+	fmt.Println("  This device is NOT known to be a hardware-backed security key.")
+	fmt.Println("  Run `xkey device attest-device` to attempt attestation again.")
+	fmt.Println()
+}
+
+// hostname returns the local hostname, or "unknown" if it cannot be determined.
+func hostname() string {
+	name, err := os.Hostname()
+	if err != nil {
+		return "unknown"
+	}
+	return name
+}

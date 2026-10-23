@@ -55,6 +55,9 @@ func TestEmbeddedSession_DialRunClose(t *testing.T) {
 		Host: host, Port: port, User: "testuser", TimeoutSeconds: 5,
 	})
 	if err != nil {
+		if handshakeBlockedByFIPS(t, err) {
+			return
+		}
 		t.Fatalf("Session.Dial: %v", err)
 	}
 

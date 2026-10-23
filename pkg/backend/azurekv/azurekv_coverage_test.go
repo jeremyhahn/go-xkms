@@ -20,6 +20,7 @@ import (
 	"crypto"
 	"crypto/ecdsa"
 	"crypto/elliptic"
+	"crypto/fips140"
 	"crypto/rand"
 	"crypto/rsa"
 	"crypto/x509"
@@ -594,18 +595,24 @@ func TestSignerAndDecrypter_RSAOAEPBranches(t *testing.T) {
 		return ct
 	}
 
-	// nil opts -> PKCS#1 v1.5.
-	pkcs1ct, err := rsa.EncryptPKCS1v15(rand.Reader, rsaPub, []byte("secret")) //nolint:staticcheck // SA1019: exercises azurekvDecrypter.Decrypt's nil-opts path, which maps to Azure Key Vault's real EncryptionAlgorithmRSA15
-	if err != nil {
-		t.Fatalf("EncryptPKCS1v15() error = %v", err)
-	}
-	if _, err := decrypter.Decrypt(nil, pkcs1ct, nil); err != nil {
-		t.Errorf("Decrypt(nil opts) error = %v", err)
-	}
+	// Key Vault performs RSA1_5 (nil opts) and SHA-1 RSA-OAEP remotely, so
+	// the Decrypter forwards them in every FIPS mode; FIPS enforcement is the
+	// stdlib's, not ours (#23). The client-side encryption and the mock
+	// vault's decryption stand in for that remote service and run outside the
+	// local module's enforcement.
+	fips140.WithoutEnforcement(func() {
+		pkcs1ct, err := rsa.EncryptPKCS1v15(rand.Reader, rsaPub, []byte("secret")) //nolint:staticcheck // SA1019: exercises azurekvDecrypter.Decrypt's nil-opts path, which maps to Azure Key Vault's real EncryptionAlgorithmRSA15
+		if err != nil {
+			t.Fatalf("EncryptPKCS1v15() error = %v", err)
+		}
+		if got, err := decrypter.Decrypt(nil, pkcs1ct, nil); err != nil || string(got) != "secret" {
+			t.Errorf("Decrypt(nil opts) = %q, %v; want the plaintext", got, err)
+		}
 
-	if _, err := decrypter.Decrypt(nil, encrypt(crypto.SHA1), &rsa.OAEPOptions{Hash: crypto.SHA1}); err != nil {
-		t.Errorf("Decrypt(SHA1 OAEP) error = %v", err)
-	}
+		if got, err := decrypter.Decrypt(nil, encrypt(crypto.SHA1), &rsa.OAEPOptions{Hash: crypto.SHA1}); err != nil || string(got) != "secret" {
+			t.Errorf("Decrypt(SHA1 OAEP) = %q, %v; want the plaintext", got, err)
+		}
+	})
 	if _, err := decrypter.Decrypt(nil, encrypt(crypto.SHA256), &rsa.OAEPOptions{Hash: crypto.SHA256}); err != nil {
 		t.Errorf("Decrypt(SHA256 OAEP) error = %v", err)
 	}

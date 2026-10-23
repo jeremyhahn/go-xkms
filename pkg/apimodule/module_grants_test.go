@@ -270,7 +270,7 @@ func TestNewModule_DataPlanePermissionsStayUndeclared(t *testing.T) {
 	_, err := NewModule(func() *xkms.XKMSService { return nil })
 	require.NoError(t, err)
 
-	for _, p := range []string{"oidc_credentials:token", "peer_attestation:submit", "ssh:service"} {
+	for _, p := range []string{"oidc_credentials:token", "peer_attestation:submit", "ssh:service", "certs:issue_service"} {
 		assert.Equal(t, qrdbsdk.PermissionDutyUndeclared, qrdbsdk.LookupPermissionDuty(qrdbsdk.Permission(p)), "duty of %s", p)
 	}
 }
