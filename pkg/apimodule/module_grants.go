@@ -173,7 +173,8 @@ func auditorPermissions() []qrdbsdk.Permission {
 }
 
 // governancePermissions returns the xkms-owned permissions of the governance
-// duty: key-store state, TPM policy and trust-root administration, the
+// duty: key-store state, TPM policy and trust-root administration, the trust
+// write verbs (DANE TLSA publication, AIA issuer import), the
 // tenant TPM mode, and the reads of that state, which qrdb also files under
 // governance (seal:status, ca:read, keys:get). None of them uses a key. The
 // rest xkms owns -- oidc_credentials, peer_attestation and ssh:service --
@@ -196,6 +197,8 @@ func governancePermissions() []qrdbsdk.Permission {
 		qrdbsdk.Permission(auth.ResourceTrustRoots + ":" + auth.ActionImport),
 		qrdbsdk.Permission(auth.ResourceTrustRoots + ":" + auth.ActionUpdate),
 		qrdbsdk.Permission(auth.ResourceTrustRoots + ":" + auth.ActionDelete),
+		qrdbsdk.Permission(auth.ResourceTrust + ":" + auth.ActionPublishDANE),
+		qrdbsdk.Permission(auth.ResourceTrust + ":" + auth.ActionAutoImportAIA),
 	}
 }
 
@@ -214,11 +217,24 @@ func belowGatePermissions() []qrdbsdk.Permission {
 	}
 }
 
+// trustWritePermissions returns the trust write permissions xkms owns but no
+// xkms route, MCP method or RPC serves: trust:publish_dane and
+// trust:auto_import_aia. go-quicbaas serves both verbs and gates them with
+// these names, so xkms registers them here; without the registration no role
+// could hold them and the consumer's routes would be refused for everyone.
+func trustWritePermissions() []qrdbsdk.Permission {
+	return []qrdbsdk.Permission{
+		qrdbsdk.Permission(auth.ResourceTrust + ":" + auth.ActionPublishDANE),
+		qrdbsdk.Permission(auth.ResourceTrust + ":" + auth.ActionAutoImportAIA),
+	}
+}
+
 // modulePermissions returns, sorted and de-duplicated, every permission the
 // xkms module declares across its three declaration surfaces: the REST route
 // table, the MCP method specs, and the qrdb.v1.permission options on its gRPC
 // method descriptors; plus the permissions it checks below the gate
-// (belowGatePermissions).
+// (belowGatePermissions) and the trust write permissions its consumer gates
+// (trustWritePermissions).
 //
 // It is DERIVED rather than hand-copied so a new RPC, route, or tool is
 // granted — and scope-checked — the moment it is declared, and so the
@@ -254,6 +270,10 @@ func modulePermissions() []qrdbsdk.Permission {
 	}
 
 	for _, p := range belowGatePermissions() {
+		set[string(p)] = struct{}{}
+	}
+
+	for _, p := range trustWritePermissions() {
 		set[string(p)] = struct{}{}
 	}
 

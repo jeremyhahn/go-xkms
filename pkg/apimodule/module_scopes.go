@@ -156,6 +156,13 @@ func selfScopedPermissions() []qrdbsdk.Permission {
 // platform operator may hold any member. qrdb does not declare this name;
 // xkms owns it. PIN EACH MEMBER: a family helper here would tag a future
 // action nobody reviewed.
+//
+// trust:publish_dane and trust:auto_import_aia are the trust write verbs a
+// consumer serves (pkg/auth ResourceTrust): publishing the CA's DANE TLSA
+// records to the platform's DNS zone and importing an issuer CA into the
+// platform trust pool. Both change state every tenant relies on, so only a
+// platform operator may hold them. qrdb does not declare this name; xkms
+// owns it.
 func crossScopedPermissions() []qrdbsdk.Permission {
 	return []qrdbsdk.Permission{
 		qrdbsdk.Permission(auth.ResourceTenants + ":" + auth.ActionSetTPMMode),
@@ -164,5 +171,7 @@ func crossScopedPermissions() []qrdbsdk.Permission {
 		qrdbsdk.Permission(auth.ResourceTrustRoots + ":" + auth.ActionImport),
 		qrdbsdk.Permission(auth.ResourceTrustRoots + ":" + auth.ActionUpdate),
 		qrdbsdk.Permission(auth.ResourceTrustRoots + ":" + auth.ActionDelete),
+		qrdbsdk.Permission(auth.ResourceTrust + ":" + auth.ActionPublishDANE),
+		qrdbsdk.Permission(auth.ResourceTrust + ":" + auth.ActionAutoImportAIA),
 	}
 }

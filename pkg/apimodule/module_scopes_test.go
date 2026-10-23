@@ -284,6 +284,65 @@ func TestSSHServiceIsSelfScopedAndGranted(t *testing.T) {
 	}
 }
 
+// TestTrustWritePermissionsAreCrossScopedAndAdminOnly pins the trust write
+// verbs go-quicbaas gates (go-xkms#1674): no xkms route names them, yet they
+// must be registered, cross-scoped and governance duty, held by Admin like
+// trust_roots:import, and held by no role that lacks the trust_roots writes.
+func TestTrustWritePermissionsAreCrossScopedAndAdminOnly(t *testing.T) {
+	RegisterRoleGrants()
+	resolver, err := testutil.NewPermissionScopeResolver()
+	if err != nil {
+		t.Fatalf("NewPermissionScopeResolver: %v", err)
+	}
+
+	registered := map[qrdbsdk.Permission]bool{}
+	for _, p := range modulePermissions() {
+		registered[p] = true
+	}
+
+	for _, perm := range []qrdbsdk.Permission{"trust:publish_dane", "trust:auto_import_aia"} {
+		if !registered[perm] {
+			t.Fatalf("modulePermissions() omits %s", perm)
+		}
+		scope, err := resolver.Scope(context.Background(), perm)
+		if err != nil {
+			t.Fatalf("Scope(%s): %v", perm, err)
+		}
+		if scope != qrdbsdk.PermissionScopeCross {
+			t.Fatalf("%s scope = %v, want cross", perm, scope)
+		}
+		if duty := qrdbsdk.LookupPermissionDuty(perm); duty != qrdbsdk.PermissionDutyGovernance {
+			t.Fatalf("%s duty = %v, want governance", perm, duty)
+		}
+		if !qrdbsdk.HasPermissionRoleGrant(qrdbsdk.PermissionRoleAdmin, perm) {
+			t.Fatalf("Admin does not hold %s", perm)
+		}
+		for _, role := range []string{qrdbsdk.PermissionRoleOperator, qrdbsdk.PermissionRoleUser, qrdbsdk.PermissionRoleAuditor} {
+			if qrdbsdk.HasPermissionRoleGrant(role, perm) {
+				t.Fatalf("%s must not hold %s", role, perm)
+			}
+		}
+	}
+}
+
+// TestUnknownTrustActionIsNotRegistered is the negative case: only the two
+// declared trust write actions exist, so an undeclared trust:* name has no
+// scope and no role holds it.
+func TestUnknownTrustActionIsNotRegistered(t *testing.T) {
+	RegisterRoleGrants()
+	resolver, err := testutil.NewPermissionScopeResolver()
+	if err != nil {
+		t.Fatalf("NewPermissionScopeResolver: %v", err)
+	}
+	perm := qrdbsdk.Permission("trust:publish")
+	if _, err := resolver.Scope(context.Background(), perm); err == nil {
+		t.Fatalf("Scope(%s) succeeded for an undeclared permission", perm)
+	}
+	if qrdbsdk.HasPermissionRoleGrant(qrdbsdk.PermissionRoleAdmin, perm) {
+		t.Fatalf("Admin holds undeclared %s", perm)
+	}
+}
+
 // TestCertsIssueServiceIsSelfScopedAndAdminOnly proves certs:issue_service,
 // the below-gate permission SignCSR requires for the svc SPIFFE kind
 // (go-xkms#1659), is registered, self-scoped, held by Admin, and granted to

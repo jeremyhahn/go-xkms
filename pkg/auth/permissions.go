@@ -131,6 +131,16 @@ const (
 	// identity may exercise it.
 	ResourceTrustRoots = "trust_roots"
 
+	// ResourceTrust is the platform trust plane's write verbs that act
+	// outside the trust-root store: publishing the CA's DANE TLSA records to
+	// DNS (pkg/trust/dane Publisher.PublishDANE, trust:publish_dane) and
+	// importing an issuer CA from a certificate's AIA caIssuers URL
+	// (trust:auto_import_aia). No go-xkms transport serves either verb; the
+	// consumer that does (go-quicbaas) gates it with these names, so xkms
+	// declares and registers them (pkg/apimodule/module_grants.go). Both act
+	// on process-wide state, so they are cross-scoped like trust_roots.
+	ResourceTrust = "trust"
+
 	// ResourceBackup is whole-node backup and restore: capturing shard
 	// snapshots of the embedded go-qrdb node's replicated state, listing and
 	// inspecting them, verifying their integrity, and restoring from one.
@@ -190,6 +200,14 @@ const (
 	// xkms owns and declares (pkg/apimodule/module_scopes.go); qrdb does not
 	// know it.
 	ActionSetTPMMode = "set_tpm_mode"
+
+	// Trust write actions (ResourceTrust). ActionPublishDANE writes the CA's
+	// DANE TLSA records (RFC 6698) to the configured DNS provider;
+	// ActionAutoImportAIA fetches an issuer CA from an AIA caIssuers URL
+	// (RFC 5280 §4.2.2.1) and adds it to the trust pool. Neither is implied
+	// by trust_roots:import, which takes a root the caller supplies.
+	ActionPublishDANE   = "publish_dane"
+	ActionAutoImportAIA = "auto_import_aia"
 
 	// ActionToken reads a credential's current access token
 	// (oidc_credentials:token). It is the secret-bearing read, distinct

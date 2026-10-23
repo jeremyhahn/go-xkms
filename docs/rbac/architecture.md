@@ -168,9 +168,20 @@ declares the scope of every name it knows; xkms declares only the names it owns
 |---|---|---|
 | `ScopeSelf` | exercised in the identity's own tenant; a system-tenant identity reaches any tenant | `admin` (peers, status) · `audit` (read) · `backends` (list, read) · `barrier` (unseal-share) · `bootstrap`† (read) · `ceremony` (claim_cert, claim_share_begin, claim_share_complete, enroll_custodian, revoke_custodian, sign_csr, status) · `certs` (generate, list, read, revoke) · `keys` (create, decrypt, delete, derive, encrypt, export, get, import, list, rotate, sign, unwrap, update†, verify, wrap) · `passwords` (delete, generate, lock, read, unlock, write) · `pin` (read, write) · `piv` (delete, read, use, write) · `seal` (bootstrap, enable_encryption, generate_recovery, initialize_shamir, recover_with_keys, rekey, rotate_root_key, seal, status, unseal) · `ssh` (delete, read, write, service†) · `tenants` (create, delete, list, read, set_entitlements, set_quotas) · `tpm_policy`† (create, delete, get, list, revoke, rotate, update, verify) · `users` (create, delete, disable, enable, list, read, update) |
 | `ScopeTenantOnly` | exercised only in the identity's own tenant, never lifted across tenants | `tenant_barrier` (init, status, unseal) |
-| `ScopeCross` | exercised only by a system-tenant identity | `credentials` (strategy, submit) · `tenants` (set_tpm_mode†) · `trust_roots`† (delete, get, import, list, update) |
+| `ScopeCross` | exercised only by a system-tenant identity | `credentials` (strategy, submit) · `tenants` (set_tpm_mode†) · `trust`† (auto_import_aia, publish_dane) · `trust_roots`† (delete, get, import, list, update) |
 
 † declared by xkms; every other entry is go-qrdb's declaration.
+
+`trust:publish_dane` and `trust:auto_import_aia` (`pkg/auth/permissions.go:142`,
+`:209-210`) gate the trust write verbs — DANE TLSA publication and AIA issuer
+import — that go-quicbaas serves; no go-xkms REST route, RPC or MCP method
+exposes either verb. The module registers them anyway
+(`trustWritePermissions`, `pkg/apimodule/module_grants.go:220`), cross-scoped and of
+governance duty, so Admin and Owner hold them like the `trust_roots` writes; a
+verb with no registered permission would be refused on every transport. The
+SDK re-exports the names as `PermissionResourceTrust`,
+`PermissionActionPublishDANE` and `PermissionActionAutoImportAIA`
+(`sdk/go/permissions.go`).
 
 A permission's scope decides the tenant an identity may exercise it in; it does
 not decide which objects in that tenant it reaches. Object reach is the
