@@ -1515,14 +1515,6 @@ func TestCoveragePush_EncodeCertificatePEM(t *testing.T) {
 	assert.Contains(t, string(pem), "-----END CERTIFICATE-----")
 }
 
-func TestCoveragePush_EncodeCSRToPEM(t *testing.T) {
-	derBytes := []byte("mock-csr-der")
-	pem := encodeCSRToPEM(derBytes)
-
-	assert.Contains(t, string(pem), "-----BEGIN CERTIFICATE REQUEST-----")
-	assert.Contains(t, string(pem), "-----END CERTIFICATE REQUEST-----")
-}
-
 // =============================================================================
 // Tenant Signing CA Resolution Tests
 // =============================================================================

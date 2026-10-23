@@ -22,6 +22,9 @@ import (
 
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
+
+	"github.com/jeremyhahn/go-xkms/pkg/crypto/aead"
+	"github.com/jeremyhahn/go-xkms/pkg/types"
 )
 
 // CK_RV represents a PKCS#11 return value (Cryptoki Return Value).
@@ -1092,6 +1095,21 @@ var errorToCKR = map[error]CK_RV{
 	ErrTokenNotInitialized:           CKR_TOKEN_NOT_INITIALIZED,
 	ErrParameterSetNotSupported:      CKR_PARAMETER_SET_NOT_SUPPORTED,
 	ErrVendorDefined:                 CKR_VENDOR_DEFINED,
+
+	// The Go Cryptographic Module's own refusals under fips140=only, each
+	// mapped to the code PKCS#11 v3.2 §5.1.6 defines for the condition.
+	//
+	// CKM_RSA_PKCS signing over data that is not a DigestInfo (§6.1.6) is
+	// raw PKCS#1 v1.5, which crypto/rsa will not compute without a hash: the
+	// module cannot perform the mechanism, so CKR_MECHANISM_INVALID.
+	types.ErrRawPKCS1v15Enforced: CKR_MECHANISM_INVALID,
+
+	// CKM_AES_GCM with a caller-chosen IV in CK_GCM_PARAMS (§6.13.2): the
+	// module only seals GCM under an IV it generates itself, so the IV
+	// parameter the caller supplied is unacceptable — CKR_MECHANISM_PARAM_INVALID.
+	// The approved form is the message-based API with ivGenerator
+	// CKG_GENERATE_RANDOM in CK_GCM_MESSAGE_PARAMS (§6.13.7).
+	aead.ErrArbitraryIVGCMUnavailable: CKR_MECHANISM_PARAM_INVALID,
 }
 
 // ToError converts a CK_RV return value to a Go error.

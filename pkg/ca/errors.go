@@ -219,6 +219,25 @@ var (
 
 	// ErrSerialCollision indicates a serial number collision was detected.
 	ErrSerialCollision = errors.New("ca: serial number collision")
+
+	// ErrInvalidSerial indicates a caller-supplied serial number that is not
+	// a positive integer of at most 20 octets (RFC 5280 §4.1.2.2).
+	ErrInvalidSerial = errors.New("ca: invalid serial number")
+
+	// ErrSerialNotReserved indicates a caller-supplied serial number this CA
+	// did not reserve with ReserveSerial.
+	ErrSerialNotReserved = errors.New("ca: serial number not reserved")
+)
+
+// Pre-signing lint errors (CA/Browser Forum Baseline Requirements §4.3.1.2).
+var (
+	// ErrLintKey indicates the CA could not generate the throwaway key that
+	// signs the lint certificate.
+	ErrLintKey = errors.New("ca: lint key generation failed")
+
+	// ErrLintFailed indicates the linter refused the to-be-signed
+	// certificate; the CA did not sign it.
+	ErrLintFailed = errors.New("ca: certificate lint failed")
 )
 
 // Profile errors indicate issues with certificate profiles.

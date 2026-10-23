@@ -15,13 +15,20 @@ package session_test
 
 import (
 	"crypto/fips140"
+	"errors"
+	"net"
 	"testing"
+
+	"github.com/jeremyhahn/go-xkms/pkg/ssh/session"
+	"github.com/jeremyhahn/go-xkms/pkg/testing/fipstest"
 )
 
-// requireHandshake reports whether a session.Dial error is nil -- the
-// caller should proceed -- and otherwise reports whether that error is the
-// expected outcome of an SSH handshake under GODEBUG=fips140=only, failing
-// the test if it is any other kind of failure.
+// requireHandshake reports whether a session.Dial or session.DialClient
+// error is nil, so the caller should carry on. Under GODEBUG=fips140=only it
+// instead asserts that the error is a *session.HandshakeError carrying the
+// Go Cryptographic Module's own refusal and nothing else -- in particular
+// not the net.ErrClosed of closing a connection golang.org/x/crypto/ssh has
+// already closed -- re-runs the test with fips140=off, and returns false.
 //
 // buildClientConfig (config.go) deliberately defers to golang.org/x/crypto/ssh's
 // own default key-exchange list rather than pinning one: "Overriding here
@@ -37,12 +44,20 @@ import (
 // fips140=only is the expected, asserted outcome here.
 func requireHandshake(t *testing.T, err error) bool {
 	t.Helper()
-	if err == nil {
-		return true
-	}
 	if fips140.Enforced() {
+		var hsErr *session.HandshakeError
+		if !errors.As(err, &hsErr) {
+			t.Fatalf("%s under GODEBUG=fips140=only: got error %T (%v), want *session.HandshakeError", t.Name(), err, err)
+		}
+		if errors.Is(err, net.ErrClosed) {
+			t.Fatalf("%s under GODEBUG=fips140=only: the handshake refusal carries a stray closed-connection error: %v", t.Name(), err)
+		}
+	}
+	if !fipstest.OutsideFIPSAfterRefusal(t, err, nil) {
 		return false
 	}
-	t.Fatalf("unexpected handshake error: %v", err)
-	return false
+	if err != nil {
+		t.Fatalf("unexpected handshake error: %v", err)
+	}
+	return true
 }

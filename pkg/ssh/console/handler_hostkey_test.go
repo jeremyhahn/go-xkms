@@ -48,8 +48,8 @@ func freshHostStore(t *testing.T) known_hosts.Store {
 func dialWS(t *testing.T, ts *httptest.Server) (*websocket.Conn, bool) {
 	t.Helper()
 	wsURL := "ws" + strings.TrimPrefix(ts.URL, "http")
-	conn, _, err := websocket.DefaultDialer.Dial(wsURL, nil)
-	if !requireWSUpgrade(t, err) {
+	conn, resp, err := websocket.DefaultDialer.Dial(wsURL, nil)
+	if !requireWSUpgrade(t, resp, err) {
 		return nil, false
 	}
 	return conn, true

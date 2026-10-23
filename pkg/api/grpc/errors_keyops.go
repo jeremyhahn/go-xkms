@@ -166,7 +166,8 @@ func mapKeyOpError(ctx context.Context, xkmsService *xkms.XKMSService, err error
 
 	// aead.ErrNonceReuse and aead.ErrNonceTrackerFull reach here wrapped in
 	// pkg/xkms's ErrKeyOperation from Encrypt's and WrapKeyByID's AEAD nonce
-	// guard; see apierrors.AEADSentinelClasses.
+	// guard; see apierrors.AEADSentinelClasses. The same table classifies a
+	// refused AES-GCM nonce or tag size (fips140=only) as InvalidArgument.
 	if class, ok := apierrors.ClassOf(apierrors.AEADSentinelClasses, err); ok {
 		return status.Error(grpcCodeForClass(class), err.Error())
 	}

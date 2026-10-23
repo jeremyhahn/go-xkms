@@ -386,9 +386,17 @@ func runIAKCSR(cmd *cobra.Command, args []string) (err error) {
 		return &WrappedError{Msg: "IAK not found - run 'tpm provision' first", Err: err}
 	}
 
+	// TCG "TPM 2.0 Keys for Device Identity and Attestation" section 13.1:
+	// a TCG_CSR_IDEVID always carries the IDevID signing key (signingPub,
+	// sgnCertifyInfo) beside the IAK, so the CSR cannot be built without it.
+	idevidAttrs, err := tpm.IDevIDAttributes()
+	if err != nil {
+		return &DetailError{Err: ErrKeyNotFound, Detail: ": IDevID not found - create with 'tpm idevid create' first"}
+	}
+
 	// Create TCG-CSR-IDEVID for IAK
 	_, _ = fmt.Fprintln(out, "Generating IAK CSR...")
-	csr, err := tpm.CreateTCG_CSR_IDEVID(ekCert, iakAttrs, nil)
+	csr, err := tpm.CreateTCG_CSR_IDEVID(ekCert, iakAttrs, idevidAttrs)
 	if err != nil {
 		return &SentinelCauseError{Sentinel: ErrCSRGenerationFailed, Cause: err}
 	}

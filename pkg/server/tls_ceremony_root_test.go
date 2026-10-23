@@ -208,6 +208,41 @@ func TestUnifiedTLS_AdvertisesInitCeremonyRoot(t *testing.T) {
 	assert.Contains(t, acceptable, node.rootCert.RawSubject)
 }
 
+// qrdb's client-trust pool captures the listener config's static ClientCAs
+// once, when the node wires it, and verifies every client chain the
+// authenticator sees against that set. A pool supplied only per connection
+// is invisible to it, so the init admin's certificate authenticated nowhere
+// but through the REST fallback (#794).
+func TestBuildUnifiedTLSConfig_StaticClientCAsTrustInitCeremonyRoot(t *testing.T) {
+	node := newCeremonyServer(t)
+	cfg, err := node.server.buildUnifiedTLSConfig()
+	require.NoError(t, err)
+	require.NotNil(t, cfg.ClientCAs)
+
+	admin := issueClientCert(t, node.rootCert, node.rootKey, ceremonyAdminUsername)
+	_, err = admin.Leaf.Verify(x509.VerifyOptions{
+		Roots:     cfg.ClientCAs,
+		KeyUsages: []x509.ExtKeyUsage{x509.ExtKeyUsageClientAuth},
+	})
+	assert.NoError(t, err)
+}
+
+func TestBuildUnifiedTLSConfig_StaticClientCAsRefuseForeignIssuer(t *testing.T) {
+	node := newCeremonyServer(t)
+	cfg, err := node.server.buildUnifiedTLSConfig()
+	require.NoError(t, err)
+	require.NotNil(t, cfg.ClientCAs)
+
+	foreignKey, foreignCert, _ := generateCAKeyAndCert(t, "foreign Root CA")
+	intruder := issueClientCert(t, foreignCert, foreignKey, ceremonyAdminUsername)
+	_, err = intruder.Leaf.Verify(x509.VerifyOptions{
+		Roots:     cfg.ClientCAs,
+		KeyUsages: []x509.ExtKeyUsage{x509.ExtKeyUsageClientAuth},
+	})
+	var unknown x509.UnknownAuthorityError
+	assert.ErrorAs(t, err, &unknown)
+}
+
 // TestUnifiedTLS_StaticCertificatesSendInitAdminCert proves a client holding
 // the init-issued admin certificate in a static Certificates list, the way
 // every SDK transport and xkmsctl configure it, now sends it and is

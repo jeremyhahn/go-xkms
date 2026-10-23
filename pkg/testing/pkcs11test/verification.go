@@ -15,6 +15,7 @@ package pkcs11test
 
 import (
 	"bytes"
+	"crypto/fips140"
 	"testing"
 
 	"github.com/jeremyhahn/go-xkms/pkg/pkcs11/module"
@@ -29,6 +30,18 @@ func tamper(b []byte) []byte {
 	out := append([]byte(nil), b...)
 	out[0] ^= 0x01
 	return out
+}
+
+// verifyRSAMechanism is the RSA signature mechanism the C_Verify tests sign
+// and verify with. Their subject is C_Verify, not the signature encoding, so
+// under fips140=only, where crypto/rsa refuses CKM_RSA_PKCS over undigested
+// data (v3.2 §6.1.6), they use the approved CKM_SHA256_RSA_PKCS (§6.1.14).
+// testSignRecover covers the refusal itself.
+func verifyRSAMechanism() *module.Mechanism {
+	if fips140.Enforced() {
+		return &module.Mechanism{Type: module.CKM_SHA256_RSA_PKCS}
+	}
+	return &module.Mechanism{Type: module.CKM_RSA_PKCS}
 }
 
 // RunVerificationTests runs PKCS#11 v3.0 Section 5.12 Verification Functions
@@ -138,7 +151,7 @@ func (s *Suite) testVerify(t *testing.T) {
 		pubKey, privKey := generateRSAKeyPair(t, m, sh)
 
 		data := []byte("test-data")
-		mech := &module.Mechanism{Type: module.CKM_RSA_PKCS}
+		mech := verifyRSAMechanism()
 
 		// Sign the data first so we have a valid signature to verify
 		rv := m.SignInit(sh, mech, privKey)
@@ -170,7 +183,7 @@ func (s *Suite) testVerify(t *testing.T) {
 		pubKey, privKey := generateRSAKeyPair(t, m, sh)
 
 		data := []byte("test-data")
-		mech := &module.Mechanism{Type: module.CKM_RSA_PKCS}
+		mech := verifyRSAMechanism()
 
 		rv := m.SignInit(sh, mech, privKey)
 		requireRV(t, module.CKR_OK, rv, "SignInit should succeed")
@@ -196,7 +209,7 @@ func (s *Suite) testVerify(t *testing.T) {
 		pubKey, privKey := generateRSAKeyPair(t, m, sh)
 
 		data := []byte("test-data")
-		mech := &module.Mechanism{Type: module.CKM_RSA_PKCS}
+		mech := verifyRSAMechanism()
 
 		rv := m.SignInit(sh, mech, privKey)
 		requireRV(t, module.CKR_OK, rv, "SignInit should succeed")
@@ -225,7 +238,7 @@ func (s *Suite) testVerify(t *testing.T) {
 		otherPub, _ := generateRSAKeyPair(t, m, sh)
 
 		data := []byte("test-data")
-		mech := &module.Mechanism{Type: module.CKM_RSA_PKCS}
+		mech := verifyRSAMechanism()
 
 		rv := m.SignInit(sh, mech, privKey)
 		requireRV(t, module.CKR_OK, rv, "SignInit should succeed")
@@ -276,7 +289,7 @@ func (s *Suite) testVerify(t *testing.T) {
 		pubKey, privKey := generateRSAKeyPair(t, m, sh)
 
 		data := []byte("test-data")
-		mech := &module.Mechanism{Type: module.CKM_RSA_PKCS}
+		mech := verifyRSAMechanism()
 
 		// Sign to get a valid signature
 		rv := m.SignInit(sh, mech, privKey)
@@ -449,6 +462,10 @@ func (s *Suite) testVerifyRecover(t *testing.T) {
 
 		data := []byte("recoverable data")
 		signature, rv := m.SignRecover(sh, data)
+		if !outsideFIPSAfterRefusal(t, module.CKR_MECHANISM_INVALID, rv,
+			"fips140=only refuses raw PKCS#1 v1.5 over undigested data") {
+			return
+		}
 		requireRV(t, module.CKR_OK, rv, "SignRecover should succeed")
 
 		rv = m.VerifyRecoverInit(sh, mech, pubKey)
@@ -484,6 +501,10 @@ func (s *Suite) testVerifyRecover(t *testing.T) {
 
 		data := []byte("recoverable data")
 		signature, rv := m.SignRecover(sh, data)
+		if !outsideFIPSAfterRefusal(t, module.CKR_MECHANISM_INVALID, rv,
+			"fips140=only refuses raw PKCS#1 v1.5 over undigested data") {
+			return
+		}
 		requireRV(t, module.CKR_OK, rv, "SignRecover should succeed")
 		requireRV(t, module.CKR_OK, m.FinishOperation(sh, module.OperationSign),
 			"FinishOperation should terminate the sign-recover operation")

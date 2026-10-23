@@ -42,9 +42,13 @@ import (
 	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
 	"github.com/jeremyhahn/go-xkms/pkg/acme/audit"
 	"github.com/jeremyhahn/go-xkms/pkg/acme/common"
+	"github.com/jeremyhahn/go-xkms/pkg/acme/ct"
 	"github.com/jeremyhahn/go-xkms/pkg/acme/entities"
 	caerrors "github.com/jeremyhahn/go-xkms/pkg/acme/errors"
+	"github.com/jeremyhahn/go-xkms/pkg/acme/goodkey"
+	"github.com/jeremyhahn/go-xkms/pkg/acme/issuance"
 	"github.com/jeremyhahn/go-xkms/pkg/acme/kms"
+	"github.com/jeremyhahn/go-xkms/pkg/acme/linter"
 	acmenonce "github.com/jeremyhahn/go-xkms/pkg/acme/nonce"
 	"github.com/jeremyhahn/go-xkms/pkg/acme/policy"
 	"github.com/jeremyhahn/go-xkms/pkg/acme/server"
@@ -342,6 +346,26 @@ type Params struct {
 	// is only appropriate outside a compliance-controlled deployment.
 	AuditLogger audit.AuditLogger
 
+	// Lint selects the zlint lints finalize runs on every certificate before
+	// the CA signs it (CA/Browser Forum Baseline Requirements §4.3.1.2). The
+	// zero value runs every registered lint; the go-xkms ACME CA runs
+	// linter.PrivatePKIConfig. NewRestService admits the identifiers Policy
+	// authorizes (linter.Config.Admit).
+	Lint linter.Config
+
+	// CT configures Certificate Transparency at finalize: the precertificate
+	// is submitted to every enabled log and the final certificate embeds the
+	// verified SCTs (RFC 6962 §3.3). Finalize fails when the verified SCTs do
+	// not meet MinSCTs, MinOperators or RequireRFC6962Log. With no enabled
+	// log, the zero value included, CT is off.
+	CT ct.PolicyConfig
+
+	// CTBreaker configures the circuit breaker created from Breakers to
+	// guard every CT log submission. Nil selects
+	// circuitbreaker.DefaultConfig("ct_submitter"). Ignored when Breakers is
+	// nil or CT is off.
+	CTBreaker *circuitbreaker.Config
+
 	// ClusterCACN, when set, routes TCG-CSR-IDEVID (enroll-01) issuance through
 	// the named CA identity — a dedicated cluster intermediate — instead of the
 	// CA's default issuing identity. This keeps Raft node transport certificates
@@ -455,6 +479,8 @@ type RestService struct {
 	baseRESTURI             string
 	blocklist               *policy.Blocklist
 	ca                      ca.TCGCA
+	issuer                  *issuance.Issuer
+	deviceIssuer            *issuance.Issuer // device-attest-01 certificates only
 	caaIdentities           []string
 	caaValidator            CAAValidatorInterface
 	challengeMap            map[string]common.ChallengeVerifierFunc
@@ -613,10 +639,7 @@ func defaultPolicyConfig() *policy.PolicyConfig {
 // supplied configuration's IdentifierChallengeTypes so a caller that does
 // not override a given identifier type keeps today's behavior for it.
 func buildIdentifierPolicy(params *Params) (*policy.Blocklist, *policy.ChallengePolicy, bool, bool, error) {
-	cfg := params.Policy
-	if cfg == nil {
-		cfg = defaultPolicyConfig()
-	}
+	cfg := identifierPolicyConfig(params)
 
 	merged := xkmsDefaultIdentifierChallengeTypes()
 	for k, v := range cfg.IdentifierChallengeTypes {
@@ -634,6 +657,70 @@ func buildIdentifierPolicy(params *Params) (*policy.Blocklist, *policy.Challenge
 	}
 
 	return blocklist, challengePolicy, cfg.RequirePublicSuffix, cfg.RejectReservedIPs, nil
+}
+
+// identifierPolicyConfig returns params.Policy, or defaultPolicyConfig() when
+// the caller did not supply one.
+func identifierPolicyConfig(params *Params) *policy.PolicyConfig {
+	if params.Policy != nil {
+		return params.Policy
+	}
+	return defaultPolicyConfig()
+}
+
+// newIssuer returns the finalize Issuer: goodkey's Baseline Requirements key
+// policy, zlint under params.Lint, and serials and signatures from the CA
+// (RFC 8555 §7.4). The linter admits the internal names and reserved IP
+// addresses the identifier policy authorizes, so finalize issues every
+// identifier an order was authorized for. With deviceIdentity it also admits
+// the permanentIdentifier otherName a verified device-attest-01 certificate
+// carries; finalize uses that issuer for those orders only.
+func newIssuer(params *Params, auditLog audit.AuditLogger, deviceIdentity bool) (*issuance.Issuer, error) {
+	cfg := identifierPolicyConfig(params)
+	lint, err := linter.New(params.Lint.Admit(linter.Identifiers{
+		InternalNames:  !cfg.RequirePublicSuffix,
+		ReservedIPs:    !cfg.RejectReservedIPs,
+		DeviceIdentity: deviceIdentity,
+	}))
+	if err != nil {
+		return nil, caerrors.MalformedError("handlers: failed to build certificate linter: %v", err)
+	}
+	config := issuance.Config{
+		Signer:       params.CA,
+		Serials:      params.CA,
+		KeyValidator: goodkey.New(goodkey.DefaultPolicy()),
+		Linter:       lint,
+		AuditLogger:  auditLog,
+		Logger:       params.Logger,
+	}
+	if params.CT.Enabled() {
+		policy, err := newCTPolicy(params)
+		if err != nil {
+			return nil, caerrors.MalformedError("handlers: failed to build certificate transparency policy: %v", err)
+		}
+		config.CT = policy
+		config.Chain = params.CA
+	}
+	issuer, err := issuance.New(config)
+	if err != nil {
+		return nil, caerrors.MalformedError("handlers: failed to build issuer: %v", err)
+	}
+	return issuer, nil
+}
+
+// newCTPolicy builds the CT policy submitting to params.CT's enabled logs
+// over RFC 6962 §4.2 HTTP, each submission behind the ct_submitter circuit
+// breaker when params.Breakers is set.
+func newCTPolicy(params *Params) (*ct.CTPolicy, error) {
+	var submitter ct.LogSubmitter = ct.NewHTTPLogSubmitter(nil)
+	if params.Breakers != nil {
+		breakerCfg := params.CTBreaker
+		if breakerCfg == nil {
+			breakerCfg = circuitbreaker.DefaultConfig("ct_submitter")
+		}
+		submitter = circuitbreaker.WrapLogSubmitter(params.Breakers.GetOrCreate(breakerCfg), submitter)
+	}
+	return ct.NewCTPolicy(params.CT, submitter)
 }
 
 // NewRestService creates a new ACME REST service with the provided parameters.
@@ -668,6 +755,15 @@ func NewRestService(params *Params) (RestServicer, error) {
 	auditLog := params.AuditLogger
 	if auditLog == nil {
 		auditLog = audit.NewNoOpLogger()
+	}
+
+	issuer, err := newIssuer(params, auditLog, false)
+	if err != nil {
+		return nil, err
+	}
+	deviceIssuer, err := newIssuer(params, auditLog, true)
+	if err != nil {
+		return nil, err
 	}
 
 	// The nonce encryption key MUST be identical on every node for a nonce
@@ -754,6 +850,8 @@ func NewRestService(params *Params) (RestServicer, error) {
 		baseRESTURI:             params.BaseRESTURI,
 		blocklist:               blocklist,
 		ca:                      params.CA,
+		issuer:                  issuer,
+		deviceIssuer:            deviceIssuer,
 		caaIdentities:           params.CAAIdentities,
 		caaValidator:            params.CAAValidator,
 		challengeMap:            params.ChallengeMap,

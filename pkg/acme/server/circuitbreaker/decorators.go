@@ -101,15 +101,10 @@ type breakerLogSubmitter struct {
 
 // SubmitPrecert implements ct.LogSubmitter.
 func (s *breakerLogSubmitter) SubmitPrecert(
-	ctx interface{}, precertDER []byte, chain [][]byte, log ct.LogGroup,
+	ctx context.Context, precertDER []byte, chain [][]byte, log ct.LogGroup,
 ) (*ct.SignedCertificateTimestamp, error) {
-	goCtx, ok := ctx.(context.Context)
-	if !ok {
-		goCtx = context.Background()
-	}
-
 	var sct *ct.SignedCertificateTimestamp
-	err := s.cb.ExecuteContext(goCtx, func() error {
+	err := s.cb.ExecuteContext(ctx, func() error {
 		var submitErr error
 		sct, submitErr = s.inner.SubmitPrecert(ctx, precertDER, chain, log)
 		return submitErr

@@ -4744,12 +4744,7 @@ func (m *Module) EncryptMessage(sessionHandle SessionHandle, params *AESGCMMessa
 		if rv := validateGCMMessageIVGeneration(params); rv != CKR_OK {
 			return nil, rv
 		}
-		if params.IVGenerator == CKG_NO_GENERATE {
-			encOp.SetIV(params.IV)
-		} else {
-			// Leaving the operation's IV empty asks the backend to generate one.
-			encOp.SetIV(nil)
-		}
+		applyGCMMessageIV(encOp, params)
 
 		// CK_GCM_MESSAGE_PARAMS.ulTagBits is a PER-MESSAGE parameter (v3.2
 		// §6.13.5): a message-based operation binds only the mechanism and the
@@ -4883,6 +4878,23 @@ func validateGCMMessageIVGeneration(params *AESGCMMessageParams) CK_RV {
 	return CKR_OK
 }
 
+// applyGCMMessageIV settles the IV a message-based GCM encryption uses from
+// its CK_GCM_MESSAGE_PARAMS (v3.2 §6.13.7). CKG_NO_GENERATE takes the
+// caller's pIv. Any generator empties the operation's IV, which asks the
+// backend to generate one, so the IV handed back in pIv is the token's and
+// never the one the operation was initialised with. A nil params leaves the
+// operation's IV unchanged.
+func applyGCMMessageIV(op *EncryptOperation, params *AESGCMMessageParams) {
+	if params == nil {
+		return
+	}
+	if params.IVGenerator == CKG_NO_GENERATE {
+		op.SetIV(params.IV)
+		return
+	}
+	op.SetIV(nil)
+}
+
 // EncryptMessageBegin begins a multiple-part message encryption operation.
 // Implements C_EncryptMessageBegin behavior per PKCS#11 v3.0 specification.
 func (m *Module) EncryptMessageBegin(sessionHandle SessionHandle, params *AESGCMMessageParams, associatedData []byte) CK_RV {
@@ -4926,9 +4938,7 @@ func (m *Module) EncryptMessageBegin(sessionHandle SessionHandle, params *AESGCM
 	if !ok || op == nil {
 		return CKR_OPERATION_NOT_INITIALIZED
 	}
-	if params != nil && params.IVGenerator == CKG_NO_GENERATE {
-		op.SetIV(params.IV)
-	}
+	applyGCMMessageIV(op, params)
 	if len(associatedData) > 0 {
 		op.SetAAD(associatedData)
 	}
@@ -5003,9 +5013,7 @@ func (m *Module) EncryptMessageNext(sessionHandle SessionHandle, params *AESGCMM
 	if rv := validateGCMMessageIVGeneration(params); rv != CKR_OK {
 		return nil, rv
 	}
-	if params != nil && params.IVGenerator == CKG_NO_GENERATE {
-		encOp.SetIV(params.IV)
-	}
+	applyGCMMessageIV(encOp, params)
 	if params != nil && params.TagBits != 0 {
 		// Per-message tag length; see EncryptMessage.
 		if err := encOp.SetTagSize(params.TagBits); err != nil {

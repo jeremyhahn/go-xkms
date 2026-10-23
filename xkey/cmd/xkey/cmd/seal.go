@@ -100,9 +100,10 @@ func runSeal(cmd *cobra.Command, args []string) error {
 	if err != nil {
 		return err
 	}
+	ops := openLUKSVolume(vol)
 
 	// Check if LUKS file already exists
-	if vol.Exists() {
+	if ops.Exists() {
 		return luks.ErrVolumeAlreadyExists
 	}
 
@@ -123,26 +124,26 @@ func runSeal(cmd *cobra.Command, args []string) error {
 
 	// Create the volume
 	_, _ = fmt.Fprintf(cmd.OutOrStdout(), "Creating encrypted volume at %s...\n", vol.LUKSPath)
-	if err := vol.Create(sizeBytes, passphrase); err != nil {
+	if err := ops.Create(sizeBytes, passphrase); err != nil {
 		return &SealError{Operation: "create_volume", Err: err}
 	}
 
 	// If there's existing data, migrate it (unless --skip-migrate is set)
 	if existingData && !sealSkipMigrate {
-		if err := migrateExistingData(cmd.OutOrStdout(), vol, passphrase); err != nil {
+		if err := migrateExistingData(cmd.OutOrStdout(), ops, passphrase); err != nil {
 			return err
 		}
 	}
 
 	// If --unseal is set, unlock and mount the volume so it's ready for use.
 	if sealUnseal {
-		mounted, err := vol.IsMounted()
+		mounted, err := ops.IsMounted()
 		if err != nil {
 			return &SealError{Operation: "check_mounted", Err: err}
 		}
 		if !mounted {
 			_, _ = fmt.Fprintln(cmd.OutOrStdout(), "Unlocking volume...")
-			if err := vol.Unlock(passphrase); err != nil {
+			if err := ops.Unlock(passphrase); err != nil {
 				return &SealError{Operation: "unseal_after_create", Err: err}
 			}
 		}

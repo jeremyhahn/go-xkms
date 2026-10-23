@@ -18,11 +18,11 @@
   (`Service`), plus prefix-routed multi-node dispatch (`MultiService`).
   `RestService` wires it as described under Configuration and Persistence
   below.
-- `pkg/acme/issuance` — **not on any production path.** It exists as a
-  standalone bridge type to `pkg/ca`, but nothing outside its own tests
-  imports it; `OrderFinalizeHandler` calls `s.ca.SignCSR` /
-  `s.ca.IssueEKCertificate` / `s.ca.SignTCGCSRIDevID`
-  (`pkg/acme/server/handlers/order_finalize.go:677,752,1343`) directly.
+- `pkg/acme/issuance` — the issuance pipeline (goodkey, reserved serial,
+  precertificate, CT, final certificate) behind `pkg/ca`. `OrderFinalizeHandler`
+  issues CSR orders through it (`pkg/acme/server/handlers/order_finalize.go:900`);
+  EK and TCG-CSR-IDEVID issuance still call `s.ca.IssueEKCertificate` /
+  `s.ca.SignTCGCSRIDevID` (`order_finalize.go:805,1606`) directly.
 - `pkg/acme/storage` — persistence, through the injected go-qrdb DAO factory
   (see Persistence below).
 - `pkg/acme/policy`, `pkg/acme/server/caa.go` — issuance policy (blocklist,
@@ -59,7 +59,8 @@
   with an in-memory implementation (`memory.go:32`), consumed by the admin
   `AuthMiddleware` (`pkg/acme/admin/auth.go:105-111`) and by
   `pkg/acme/client`'s `WithAuthClient` (`options.go:44`).
-- `pkg/acme/ct` — Certificate Transparency types.
+- `pkg/acme/ct` — Certificate Transparency: per-log config, RFC 6962
+  submission and SCT verification (see [Certificate Transparency](#certificate-transparency)).
 
 ### Client
 
@@ -1178,6 +1179,219 @@ One client is built per ACME server: `buildChallengeMap`
 own with `NewACMEChallengeClient` (`sdk/go/acme`) and passes it to
 `http01.Verify` / `ACMEAttestingVerifiers(client, enroll, endorse, deviceAttest)`.
 
+## Certificate Transparency
+
+`pkg/acme/ct` submits precertificates to RFC 6962 logs
+([rfc-6962.txt](../references/rfc-6962.txt)) and verifies every SCT a log
+returns. Finalize submits every precertificate through it and embeds the
+verified SCTs in the final certificate (see [At finalize](#ct-at-finalize)).
+
+**CT is off by default and enabled per log.** A log is a `LogGroup`
+(`pkg/acme/ct/types.go:128`) with a base URL, the log's public key and an
+`Enabled` flag (`types.go:150`). `PolicyConfig.Enabled`
+(`types.go:261`) is true only when at least one log is enabled;
+`validatePolicyConfig` (`pkg/acme/ct/policy.go:45`) returns
+`ErrNoLogsConfigured` otherwise (`policy.go:68`), and `filterEligibleLogs`
+never submits to a disabled log (`policy.go:130`).
+
+**Log configuration is validated before use.** `LogGroup.validate`
+(`types.go:191`) runs for every configured log and for `AddLog`
+(`policy.go:293`). It refuses:
+
+| Problem | Error |
+|---|---|
+| URL not an absolute `http`/`https` URL | `ErrLogURLInvalid` |
+| No public key | `ErrLogPublicKeyMissing` |
+| Key other than ECDSA P-256 or RSA ≥ 2048 (RFC 6962 §2.1.4), `checkLogPublicKey` (`types.go:216`) | `ErrLogPublicKeyUnsupported` |
+| Configured `LogID` not the SHA-256 of the key's SPKI (§3.2) | `ErrLogIDMismatch` |
+| Same URL or log ID as another log, `checkDuplicateLog` (`policy.go:84`) | `ErrDuplicateLog` |
+
+Each is wrapped in `*LogConfigError` (`pkg/acme/ct/errors.go:137`), which
+matches `ErrInvalidLogConfig` under `errors.Is` and names the log. A log ID
+left zero is derived from the key with `KeyToLogID` (`types.go:313`).
+
+**Every SCT is verified.** `HTTPLogSubmitter.SubmitPrecert`
+(`pkg/acme/ct/submitter.go:61`) refuses a log without a usable key before
+sending anything (`submitter.go:63`). It posts to `add-pre-chain` (§4.2) and
+returns an SCT only after `VerifySCT` accepts it (`submitter.go:133`).
+`VerifySCT` (`pkg/acme/ct/verify.go:74`) rebuilds the §3.2 `digitally-signed`
+struct for a `precert_entry`, encoded per RFC 5246 §4
+([rfc-5246.txt](../references/rfc-5246.txt)), in `sctSignedData`
+(`verify.go:114`):
+
+- `issuer_key_hash` is the SHA-256 of the issuing CA's SPKI, `precertEntry`
+  (`verify.go:167`). When the precertificate was signed by a Precertificate
+  Signing Certificate (§3.1, EKU 1.3.6.1.4.1.11129.2.4.4), the issuer is the
+  next certificate in the chain, `newTBSRewrite` (`verify.go:228`).
+- `tbs_certificate` is the precertificate's TBSCertificate without the poison
+  extension, `precertTBS` (`verify.go:246`) and `precertExtensions`
+  (`verify.go:291`). With a Precertificate Signing Certificate, the issuer
+  and Authority Key Identifier are replaced with the final issuer's, as §3.2
+  requires.
+
+`verifyDigitallySigned` (`verify.go:138`) accepts only SHA-256 with the
+algorithm matching the log's key (RFC 5246 §4.7). The refusals:
+
+| Problem | Error |
+|---|---|
+| Nil SCT or empty precertificate | `ErrNilInput` |
+| SCT version other than v1 | `ErrInvalidSCT` |
+| SCT log ID not the configured log's | `ErrSCTLogIDMismatch` |
+| Hash other than SHA-256, or signature algorithm not the key's | `ErrUnsupportedSCTAlgorithm` |
+| Signature does not verify (including another issuer, TBS, timestamp or extensions) | `ErrInvalidSignature` |
+| Precertificate not DER | `ErrPrecertMalformed` |
+| Poison extension missing or not critical NULL | `ErrPrecertPoisonMissing` / `ErrPrecertPoisonInvalid` |
+| Issuer (or the final issuer after a Precertificate Signing Certificate) missing or not DER | `ErrPrecertIssuerMissing` |
+
+Transport and decoding failures stay `*caerrors.TrustedCAError`
+(connection, serialization, malformed).
+
+**Tests.** `pkg/acme/ct/ctlog_test.go` runs an httptest RFC 6962 log that
+signs real SCTs with P-256 or RSA-2048 keys over a `precert_entry` it builds
+from the final certificate, not from the code under test.
+`submitter_test.go` and `verify_test.go` verify them end to end, including the
+Precertificate Signing Certificate chain, and cover every refusal above.
+`MockLogSubmitter` is test-only (`mock_submitter_test.go`).
+
+<a id="ct-at-finalize"></a>
+### At finalize
+
+With CT enabled, `Issuer.Issue` (`pkg/acme/issuance/issuance.go:105`) logs
+the precertificate before it signs the final certificate:
+
+1. **Submit.** `submitPrecertificate` (`issuance.go:169`) sends the
+   precertificate and its issuing chain to every enabled log whose temporal
+   window holds the precertificate's `notAfter`, through `CTPolicy.Submit`
+   (`pkg/acme/ct/policy.go:101`), the RFC 6962 §4.2 `add-pre-chain` call.
+   The chain is built by `issuingChain` (`issuance.go:211`): the order's
+   tenant issuer first when the order is signed by one, then the CA bundle
+   (`Config.Chain`, `issuance.go:59`; `pkg/ca` `CABundle`), with duplicates
+   dropped. On the wire the precertificate leads and each certificate
+   chains to the one before it (§4.1, §4.2).
+2. **Wait for every log.** `submitToLogs` (`policy.go:147`) submits in
+   parallel (at most `MaxParallelSubmissions`), each submission bounded by
+   `SubmissionTimeout`, and waits for every log to answer or time out, so each
+   failure is reported. Each SCT is verified against its log's key (§3.2,
+   above) before it counts.
+3. **Apply the policy.** `collectSCTs` (`policy.go:226`) requires at least
+   `MinSCTs` verified SCTs from at least `MinOperators` distinct operators,
+   and one from an RFC 6962 (not tiled) log when `RequireRFC6962Log` is set.
+   A shortfall is a `*PolicyViolationError` or `ErrNoRFC6962Log`, joined with
+   each failed log's `*CTSubmissionError`. Logs that failed while the policy
+   was still met are returned in `Submission.Failures` (`types.go:297`):
+   each is logged at warn level and named in the audit event, and issuance
+   continues.
+4. **Embed.** `ct.MakeSCTListExtension` (`pkg/acme/ct/sct.go:37`) encodes the
+   verified SCTs as a `SignedCertificateTimestampList` in an OCTET STRING
+   under OID 1.3.6.1.4.1.11129.2.4.2 (§3.3), and `Issue` appends it to a copy
+   of `SignOptions.ExtraExtensions` (`issuance.go:146`) for the final
+   certificate. The final certificate keeps the precertificate's serial and
+   `notBefore` (§3.1), and `matchPrecertificate` (`issuance.go:292`) still
+   requires the two tbsCertificates to be equal once the poison and SCT list
+   extensions are removed.
+
+Every submission is audited as `CERTIFICATE_TRANSPARENCY`
+(`pkg/acme/audit/types.go:82`): `success` with the SCT count and the failed
+logs, or `failure` with the cause. A refused submission, a chain that cannot
+be built, or an SCT list that cannot be encoded fails issuance with
+`issuance.ErrCertificateTransparency` (`pkg/acme/issuance/errors.go:34`); no
+final certificate is signed, and finalize moves the order to `invalid`. Audit
+fails closed here as for the other stages.
+
+**The CT problem document.** `issuanceProblem`
+(`pkg/acme/server/handlers/order_finalize.go:1774`) maps
+`ErrCertificateTransparency` to `certificateTransparencyProblem`
+(`order_finalize.go:1794`). RFC 8555 §6.7 has no CT type: the CSR is sound
+and the CA could not obtain the SCTs it embeds, so the type is
+`serverInternal`. The detail names the unmet requirement and adds whether a
+log refused or timed out. It never includes a log's URL or error:
+
+| Cause | Detail |
+|---|---|
+| `*PolicyViolationError` | `Certificate transparency policy not met: <n> <SCTs\|operators> obtained, <m> required` |
+| `ErrNoRFC6962Log` | `Certificate transparency policy not met: no SCT from an RFC 6962 log` |
+| `ErrNoEligibleLogs` | `Certificate transparency policy not met: no log accepts the certificate's expiry` |
+| any other CT failure | `Certificate transparency submission failed` |
+| plus a log timed out (`ErrCTSubmissionTimeout`) | `; a log did not respond in time` |
+| plus another `*CTSubmissionError` | `; a log returned no valid SCT` |
+
+**What is not logged.** Only certificates issued through `Issuer.Issue` are
+CT-logged:
+
+- EK certificates (endorse-01) are not logged. `s.ca.IssueEKCertificate`
+  (`order_finalize.go:814`) bypasses the issuer because the EK is the TPM's
+  own key, not the CSR's subject key.
+- IAK and IDevID certificates from a TCG-CSR-IDEVID enrollment are not
+  logged either; `finalizeTCGCSR` (`order_finalize.go:1454`) issues them.
+
+Both identify a device: the EK certificate identifies the TPM (TCG DevID v1.1
+§3.11), and TCG DevID v1.1 §11 keeps device identity private. CT exists to
+audit Web PKI certificates (RFC 6962 §1), and a public log would make these
+identifiers permanent and correlatable. device-attest-01 certificates go
+through the device-identity issuer and are logged when CT is enabled.
+
+**Wiring.** `issuance.New` (`issuance.go:71`) refuses `Config.CT` without
+`Config.Chain` (`ErrInvalidConfig`). `newIssuer`
+(`pkg/acme/server/handlers/service.go:678`) sets both, for the default and
+the device-identity issuer, only when `Params.CT.Enabled()` (`service.go:361`);
+`newCTPolicy` (`service.go:714`) submits over HTTP through
+`ct.NewHTTPLogSubmitter`, wrapped by `circuitbreaker.WrapLogSubmitter`
+(`pkg/acme/server/circuitbreaker/decorators.go:92`) when `Params.Breakers`
+is set, with `Params.CTBreaker` (`service.go:367`) or the `ct_submitter`
+defaults. An invalid policy fails `NewRestService`. xkmsd
+(`cmd/xkmsd/acme.go:352`) and the standalone `TrustedCA`
+(`pkg/acme/client/trustedca.go:395`) both build `Params.CT` from
+`config.ACMECTConfig.PolicyConfig` (`pkg/config/acme_ct.go:115`) and the
+breaker from `acme.resilience.ct_submitter`.
+
+**Configuration.** `acme.ct` (`pkg/config/acme.go:216`; `ct` under the
+`TrustedCA` ACME config) is off unless a log is enabled:
+
+```yaml
+acme:
+  ct:
+    min_scts: 2                 # zero selects 1
+    min_operators: 2            # zero selects 1
+    require_rfc6962_log: false
+    submission_timeout: 10s     # zero selects 10s
+    max_parallel_submissions: 10
+    logs:
+      - name: example-log-2026
+        operator: example
+        url: https://ct.example.com/2026
+        public_key: MFkwEwYHKoZIzj0CAQYIKoZIzj0DAQcDQgAE...   # PEM or base64 DER SPKI
+        enabled: true
+        start_time: "2026-01-01T00:00:00Z"   # temporal shard, RFC 3339; empty is open
+        end_time: "2027-01-01T00:00:00Z"
+```
+
+`ACMECTConfig.Validate` (`acme_ct.go:108`) runs from `ACMEConfig.Validate`
+and refuses a key that is not a PEM or base64 DER SubjectPublicKeyInfo
+(`ErrACMECTLogPublicKey`), a bound that is not RFC 3339
+(`ErrACMECTLogTime`), and every `LogGroup` refusal above.
+
+**Tests.** `cttest.NewLog` (`pkg/acme/ct/cttest/log.go:56`) is an
+in-process RFC 6962 §4.2 log. It either signs real SCTs or refuses, returns a
+bad signature, or hangs. `pkg/acme/issuance/ct_test.go` issues through a real
+CA against it:
+
+- the SCTs are embedded and verify against the final certificate's issuer;
+- a failed log is named and issuance proceeds;
+- an unmet policy and an unbuildable chain fail;
+- a tenant issuer is submitted first.
+
+`pkg/acme/server/handlers/order_finalize_ct_test.go` covers finalize:
+
+- the problem detail for every cause (`TestIssuanceProblemNamesTheUnmetCTPolicy`);
+- policy met, not met and log unreachable, end to end
+  (`TestFinalizeEnforcesTheCTPolicy`);
+- an EK certificate and a TCG-CSR-IDEVID enrollment issued under a policy no
+  log can meet, with nothing submitted (`TestFinalizeEKCertificateIsNotCTLogged`,
+  `TestFinalizeTCGCSRIsNotCTLogged`).
+
+`pkg/config/acme_ct_test.go` covers the configuration, and
+`pkg/acme/server/handlers/ct_issuer_test.go` the wiring.
+
 ## Circuit breakers and degradation
 
 `pkg/acme/server/circuitbreaker` is the one circuit breaker implementation
@@ -1405,6 +1619,99 @@ CA purposes are `general`, `server-auth`, `client-auth`, `code-signing` and
   No issuance path reads it: EAB, endorse-01 and challenge policy come from the
   server configuration (see Configuration).
 
+## Certificate issuance pipeline
+
+Every non-TCG finalize (RFC 8555 §7.4) issues through
+`pkg/acme/issuance.Issuer`; the handler calls `Issue` at
+`pkg/acme/server/handlers/order_finalize.go:900` and `NewRestService` builds
+the issuer in `newIssuer` (`pkg/acme/server/handlers/service.go:678`).
+`Issue` (`pkg/acme/issuance/issuance.go:105`) runs, in order:
+
+1. **goodkey.** The CSR's public key passes
+   `goodkey.New(goodkey.DefaultPolicy())` (`pkg/acme/goodkey/goodkey.go:91`,
+   `:122`) or the order fails with `badPublicKey`: RSA 2048/3072/4096,
+   P-256/384/521 and Ed25519 only.
+2. **Reserved serial.** `ReserveSerial` (`pkg/ca/ca.go:1985`) reserves one
+   serial (RFC 5280 §4.1.2.2) that the precertificate and the certificate
+   share (RFC 6962 §3.1); `Issue` also fixes one `notBefore` for both
+   (`pkg/acme/issuance/issuance.go:122`).
+3. **Precertificate.** `ca.SignCSR` with `SignOptions.Precertificate`
+   (`pkg/ca/types.go:610`) adds the critical poison extension
+   (`pkg/ca/ca.go:2058`) and neither stores nor records the result.
+4. **Certificate.** `ca.SignCSR` signs and stores the final certificate on
+   the same profile and SAN path as the precertificate.
+5. **TBS match.** `matchPrecertificate`
+   (`pkg/acme/issuance/issuance.go:292`) requires the two tbsCertificates to
+   be equal once the poison and SCT list extensions are removed, else
+   `ErrTBSMismatch`.
+
+With CT enabled, the precertificate is submitted to the CT logs between steps
+3 and 4 and the final certificate embeds the verified SCTs (RFC 6962 §3.3;
+see [At finalize](#ct-at-finalize)).
+
+**Lint before signing** (CA/Browser Forum Baseline Requirements §4.3.1.2).
+For steps 3 and 4 the CA signs a copy of the final tbsCertificate with a
+throwaway key of the issuing key's algorithm and passes it to
+`SignOptions.Linter`; it signs with the issuing key only if the linter
+returns nil (`pkg/ca/presign_lint.go:58`). The issuer's linter
+(`lintStage`, `pkg/acme/issuance/issuance.go:237`) runs zlint
+(`pkg/acme/linter/linter.go:179`):
+
+- an error or fatal finding refuses the certificate (`ca.ErrLintFailed`,
+  `linter.ErrRefused`); it is logged at error level, audited as
+  `CERTIFICATE_LINTED` with result `failure`, and the order fails with
+  `badCSR`;
+- a warning is logged at warn level and audited as `CERTIFICATE_LINTED`
+  with result `success`, and issuance continues.
+
+Each signed precertificate is audited as `PRECERTIFICATE_SIGNED`
+(`pkg/acme/audit/types.go:72`, `:77`). Audit fails closed: an event that
+cannot be recorded stops issuance (`ErrAudit`, `serverInternal`;
+`pkg/acme/issuance/issuance.go:266`).
+
+**Lint configuration.** `handlers.Params.Lint`
+(`pkg/acme/server/handlers/service.go:353`) selects the lints; its zero
+value runs every lint zlint registers. The go-xkms CA is a private PKI, so
+both xkmsd (`cmd/xkmsd/acme.go:364`) and the client's `TrustedCA`
+(`pkg/acme/client/trustedca.go:405`) run `linter.PrivatePKIConfig`
+(`pkg/acme/linter/linter.go:61`). It excludes the Baseline Requirements
+lints that policy decides differently: the tenant is the subject OU with no
+O; there is no certificate-policy OID; AIA and CRL distribution points
+appear only when the CA identity configures them; the validity period is
+the operator's; and the signature algorithm is the CA key's, which may be
+Ed25519 (`pkg/ca/ca.go:1615`), not only RSA or ECDSA. xkmsd adds the operator's exclusions from `acme.lint`
+(`pkg/config/acme.go:221`, merged by `acmeLintConfig`,
+`cmd/xkmsd/acme.go:982`):
+
+```yaml
+acme:
+  lint:
+    exclude_lints: ["w_subject_common_name_included"]
+    exclude_sources: ["Mozilla"]
+```
+
+Finalize issues every identifier authorization accepted: when the
+identifier policy does not require a public suffix or does not reject
+reserved IP addresses, `newIssuer`
+(`pkg/acme/server/handlers/service.go:678`) also excludes the lints that
+refuse internal names or reserved IPs (`linter.Config.Admit`,
+`pkg/acme/linter/linter.go:104`).
+
+A device-attest-01 certificate asserts the verified device identity as an
+RFC 4043 permanentIdentifier otherName, which `e_ext_san_other_name_present`
+refuses. `NewRestService` builds a second issuer whose linter also excludes
+that lint (`linter.Identifiers.DeviceIdentity`), and finalize uses it only
+when the order's attestation verified a device identity
+(`pkg/acme/server/handlers/order_finalize.go:897`); every other order keeps
+the lint.
+
+An unknown lint name or source fails `linter.New`
+(`pkg/acme/linter/linter.go:158`, `ErrConfig`), so xkmsd does not start.
+
+**Key usage.** Without a profile or `SignOptions.KeyUsage`, the CA asserts
+`digitalSignature`, plus `keyEncipherment` only for an RSA subject key
+(RFC 5480 §3, RFC 8410 §5; `pkg/ca/ca.go:1755`).
+
 ## Error semantics
 
 ACME errors are RFC 8555 problem documents with URN types (`urn:ietf:params:acme:error:*`).
@@ -1430,6 +1737,9 @@ The mapping an implementer needs:
 | permanent-identifier CSR missing/malformed/extra otherName | `badCSR` | 400 |
 | permanent-identifier or DNS/IP SAN not authorized by the order (`ErrCSRIdentifierMismatch`) | `badCSR` | 400 |
 | `dice` finalize CSR not signed by the attested key, missing its UCCS evidence, or carrying another order's nonce | `badCSR` | 400 |
+| finalize CSR key refused by goodkey (`issuance.ErrBadPublicKey`) | `badPublicKey` | 400 |
+| certificate fails lint with an error or fatal (`linter.ErrRefused`) | `badCSR` | 400 |
+| issuance audit event not recorded (`issuance.ErrAudit`) | `serverInternal` | 500 |
 
 **Fail closed:** unvalidated authorization, failed CAA, an undetermined CAA
 RRset (DNS failure), failed attestation, an exceeded rate limit (standalone

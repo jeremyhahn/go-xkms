@@ -218,14 +218,7 @@ func (t *Transport) buildTLSConfig() (*tls.Config, error) {
 
 	// SPKI pin verification
 	if t.config.SPKIPin != "" {
-		if t.config.TLSCAFile == "" && tlsConfig.RootCAs == nil {
-			// Trust bootstrap: no CA cert available, SPKI pin IS the trust anchor
-			tlsConfig = spki.NewPinnedTLSConfig(t.config.SPKIPin)
-			tlsConfig.NextProtos = []string{alpnHTTP3}
-		} else {
-			// Additive: CA chain validated first, pin adds extra verification
-			tlsConfig.VerifyConnection = spki.VerifyConnection(t.config.SPKIPin)
-		}
+		tlsConfig = spki.PinTLSConfig(tlsConfig, t.config.SPKIPin)
 	}
 
 	return tlsConfig, nil

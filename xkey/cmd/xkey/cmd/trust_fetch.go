@@ -233,7 +233,7 @@ func executeTrustFetch(cmd *cobra.Command, target string) (err error) {
 		return nil
 	}
 
-	osStore, err := truststore.NewOSCertStore()
+	osStore, err := newOSCertStore()
 	if err != nil {
 		return &DetailError{Err: ErrTrustFetchFailed, Detail: fmt.Sprintf(": OS trust store unavailable: %v", err)}
 	}

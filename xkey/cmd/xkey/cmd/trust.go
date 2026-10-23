@@ -651,6 +651,11 @@ func runTrustClassify(cmd *cobra.Command, args []string) (err error) {
 }
 
 // runTrustInstall installs a certificate from the trust store to the OS trust store.
+// newOSCertStore opens the operating system's certificate trust store for
+// trust install, uninstall and fetch --install-system. Tests replace it so
+// the flows run without root or a system store refresh.
+var newOSCertStore = truststore.NewOSCertStore
+
 func runTrustInstall(cmd *cobra.Command, args []string) (err error) {
 	out := cmd.OutOrStdout()
 	fingerprint := strings.ToLower(strings.TrimSpace(args[0]))
@@ -683,7 +688,7 @@ func runTrustInstall(cmd *cobra.Command, args []string) (err error) {
 	}
 
 	// Create the OS cert store.
-	osCertStore, err := truststore.NewOSCertStore()
+	osCertStore, err := newOSCertStore()
 	if err != nil {
 		return &SentinelCauseError{Sentinel: ErrTrustInstallFailed, Cause: err}
 	}
@@ -729,7 +734,7 @@ func runTrustUninstall(cmd *cobra.Command, args []string) (err error) {
 	}
 
 	// Create the OS cert store.
-	osCertStore, err := truststore.NewOSCertStore()
+	osCertStore, err := newOSCertStore()
 	if err != nil {
 		return &SentinelCauseError{Sentinel: ErrTrustUninstallFailed, Cause: err}
 	}

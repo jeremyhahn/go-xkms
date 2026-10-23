@@ -25,6 +25,7 @@ import (
 	"github.com/jeremyhahn/go-xkms/pkg/api/transport"
 	"github.com/jeremyhahn/go-xkms/pkg/crypto/aead"
 	"github.com/jeremyhahn/go-xkms/pkg/pkcs11/module"
+	"github.com/jeremyhahn/go-xkms/pkg/testing/fipstest"
 	"github.com/jeremyhahn/go-xkms/pkg/types"
 )
 
@@ -211,5 +212,28 @@ func TestCryptoMockClient_Encrypt_FIPS140Only(t *testing.T) {
 	}
 	if !strings.Contains(string(out), "PASS") {
 		t.Errorf("fips140=only child did not pass:\n%s", out)
+	}
+}
+
+// TestCryptoMockClient_DeriveKey_ShortSecret pins where HKDF's FIPS limit
+// lives: crypto/hkdf refuses input keying material shorter than 112 bits under
+// fips140=only, and the mock returns that refusal as an error rather than
+// panicking, as the x/crypto Reader it replaced did inside crypto/hmac.
+func TestCryptoMockClient_DeriveKey_ShortSecret(t *testing.T) {
+	c := NewCryptoMockClient()
+	req := &transport.DeriveKeyRequest{InputKeyMaterial: make([]byte, 13), KeyLength: 32}
+
+	resp, err := c.DeriveKey(context.Background(), req)
+	if fips140.Enforced() && !errors.Is(err, ErrHKDFRead) {
+		t.Fatalf("DeriveKey(104-bit secret) under fips140=only = %v, want ErrHKDFRead", err)
+	}
+	if !fipstest.OutsideFIPS(t) {
+		return
+	}
+	if err != nil {
+		t.Fatalf("DeriveKey(104-bit secret) outside FIPS = %v, want a key", err)
+	}
+	if len(resp.DerivedKey) != 32 {
+		t.Errorf("derived %d bytes, want 32", len(resp.DerivedKey))
 	}
 }

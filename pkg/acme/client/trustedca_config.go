@@ -147,6 +147,11 @@ type TCAACMEConfig struct {
 	// and the degradation cache fall back to their package defaults (see
 	// ACMECircuitBreakerConfig / ACMEDegradationConfig).
 	Resilience config.ACMEResilienceConfig `yaml:"resilience" json:"resilience"`
+
+	// CT configures Certificate Transparency at finalize, the same
+	// config.ACMECTConfig xkmsd's embedded ACME listener (acme.ct) uses. It
+	// is off unless a log is enabled.
+	CT config.ACMECTConfig `yaml:"ct" json:"ct"`
 }
 
 // TLSConfig holds TLS configuration for HTTPS.
@@ -309,7 +314,10 @@ func (a *TCAACMEConfig) Validate() error {
 	if err := a.TLS.Validate(); err != nil {
 		return err
 	}
-	return a.Resilience.Validate()
+	if err := a.Resilience.Validate(); err != nil {
+		return err
+	}
+	return a.CT.Validate()
 }
 
 // Validate validates the TLS configuration.

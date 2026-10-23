@@ -69,6 +69,19 @@ const (
 	EventCertificateRenewed EventType = "CERTIFICATE_RENEWED"
 	EventCertificateSigned  EventType = "CERTIFICATE_SIGNED"
 
+	// EventCertificateLinted records a zlint run that found warnings
+	// (ResultSuccess) or refused the certificate (ResultFailure), CA/Browser
+	// Forum Baseline Requirements §4.3.1.2.
+	EventCertificateLinted EventType = "CERTIFICATE_LINTED"
+
+	// EventPrecertificateSigned records an RFC 6962 §3.1 precertificate.
+	EventPrecertificateSigned EventType = "PRECERTIFICATE_SIGNED"
+
+	// EventCertificateTransparency records a precertificate's submission to
+	// the Certificate Transparency logs (RFC 6962 §4.2): the SCTs embedded
+	// and each log that failed.
+	EventCertificateTransparency EventType = "CERTIFICATE_TRANSPARENCY"
+
 	// CA Lifecycle Events
 	//
 	// EventCAKeyRotated was removed (issue #688): go-xkms has no CA signing

@@ -14,12 +14,15 @@
 package rest
 
 import (
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"testing"
 
 	"github.com/jeremyhahn/go-xkms/pkg/backend"
 	"github.com/jeremyhahn/go-xkms/pkg/crypto/aead"
+	"github.com/jeremyhahn/go-xkms/pkg/errs"
+	"github.com/jeremyhahn/go-xkms/pkg/keyprovider/symmetric"
 	"github.com/jeremyhahn/go-xkms/pkg/xkms"
 )
 
@@ -44,6 +47,37 @@ func TestMapKeyOpError_AEADNonceSentinels(t *testing.T) {
 		{"nonce reuse via WrapKeyByID", &xkms.ErrKeyOperation{Operation: "aes-gcm wrap", KeyID: "k1", Err: aead.ErrNonceReuse}, http.StatusConflict},
 		{"nonce tracker full via Encrypt", &xkms.ErrKeyOperation{Operation: "aead encrypt", KeyID: "k1", Err: aead.ErrNonceTrackerFull}, http.StatusServiceUnavailable},
 		{"nonce tracker full via WrapKeyByID", &xkms.ErrKeyOperation{Operation: "aes-gcm wrap", KeyID: "k1", Err: aead.ErrNonceTrackerFull}, http.StatusServiceUnavailable},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			w := httptest.NewRecorder()
+			mapKeyOpError(w, tt.err)
+			if w.Code != tt.want {
+				t.Errorf("status = %d, want %d", w.Code, tt.want)
+			}
+		})
+	}
+}
+
+// TestMapKeyOpError_FIPSGCMRefusals pins go-xkms#23: under fips140=only an
+// AES-GCM AEAD over a caller-supplied nonce or a truncated tag is refused,
+// and that refusal, like an unapproved tag size, is a parameter the caller
+// can correct. It must report 400 through apierrors.AEADSentinelClasses,
+// the table gRPC and MCP read too, while a genuine backend fault behind the
+// same wrapper still reports 500.
+func TestMapKeyOpError_FIPSGCMRefusals(t *testing.T) {
+	tests := []struct {
+		name string
+		err  error
+		want int
+	}{
+		{"caller nonce refused via Encrypt", &xkms.ErrOperationWrap{Sentinel: xkms.ErrEncryptionFailed, Err: &errs.Detail{
+			Err: aead.ErrArbitraryIVGCMUnavailable, Detail: "caller-supplied nonce=true",
+		}}, http.StatusBadRequest},
+		{"caller nonce refused by the symmetric provider", &xkms.ErrOperationWrap{Sentinel: xkms.ErrEncryptionFailed, Err: symmetric.ErrArbitraryIVGCMUnavailable}, http.StatusBadRequest},
+		{"unapproved tag size via WrapKeyByID", &xkms.ErrKeyOperation{Operation: "aes-gcm wrap", KeyID: "k1", Err: aead.ErrInvalidGCMTagSize}, http.StatusBadRequest},
+		{"unapproved tag size from the symmetric provider", &xkms.ErrOperationWrap{Sentinel: xkms.ErrEncryptionFailed, Err: symmetric.ErrInvalidTagSize}, http.StatusBadRequest},
+		{"backend fault stays internal", &xkms.ErrOperationWrap{Sentinel: xkms.ErrEncryptionFailed, Err: errors.New("hsm session lost")}, http.StatusInternalServerError},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {

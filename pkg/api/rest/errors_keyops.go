@@ -154,6 +154,13 @@ func mapKeyOpError(w http.ResponseWriter, err error) {
 		}
 	}
 
+	// A refused AES-GCM nonce or tag size (fips140=only) is a request fault;
+	// see apierrors.AEADSentinelClasses, which gRPC and MCP read too.
+	if class, ok := apierrors.ClassOf(apierrors.AEADSentinelClasses, err); ok {
+		writeError(w, err, classToHTTPStatus[class])
+		return
+	}
+
 	// A TPM2 key or seal routed to a tenant's TPM scope surfaces the TPM
 	// policy service's errors (an unknown named policy, a tenant whose TPM
 	// mode is none, a name reserved for the service's own objects), which

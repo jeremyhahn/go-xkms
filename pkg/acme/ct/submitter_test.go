@@ -15,8 +15,10 @@ package ct
 
 import (
 	"context"
+	"crypto"
+	"crypto/sha256"
+	"crypto/x509"
 	"encoding/base64"
-	"encoding/json"
 	"errors"
 	"net/http"
 	"net/http/httptest"
@@ -44,313 +46,225 @@ func TestNewHTTPLogSubmitter(t *testing.T) {
 }
 
 func TestHTTPLogSubmitter_SubmitPrecert(t *testing.T) {
-	t.Run("invalid context type", func(t *testing.T) {
-		submitter := NewHTTPLogSubmitter(nil)
-		log := LogGroup{URL: "https://test.example.com"}
+	ca, caKey := newTestCA(t, "Test CA")
+	entry := newTestPrecert(t, ca, caKey, nil, nil)
+	submitter := NewHTTPLogSubmitter(nil)
+	ctx := context.Background()
 
-		_, err := submitter.SubmitPrecert("not a context", []byte("test"), nil, log)
-		assert.Error(t, err)
-		var caErr *caerrors.TrustedCAError
-		require.ErrorAs(t, err, &caErr)
-		assert.Equal(t, caerrors.Malformed, caErr.Type)
-	})
-
-	t.Run("successful submission", func(t *testing.T) {
-		// Create mock server
-		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			// Verify request
-			assert.Equal(t, "/ct/v1/add-pre-chain", r.URL.Path)
-			assert.Equal(t, "application/json", r.Header.Get("Content-Type"))
-			assert.Equal(t, http.MethodPost, r.Method)
-
-			// Parse request body
-			var req addPrecertChainRequest
-			err := json.NewDecoder(r.Body).Decode(&req)
-			require.NoError(t, err)
-			assert.NotEmpty(t, req.Chain)
-
-			// Return mock SCT response
-			logID := make([]byte, 32)
-			for i := range logID {
-				logID[i] = byte(i)
-			}
-
-			// Build signature: hashAlg(1) + sigAlg(1) + sigLen(2) + sig(N)
-			sig := []byte{0x04, 0x03, 0x00, 0x08} // SHA256 + ECDSA + 8-byte signature
-			sig = append(sig, []byte("mocksig!")...)
-
-			resp := addPrecertChainResponse{
-				SCTVersion: V1,
-				ID:         base64.StdEncoding.EncodeToString(logID),
-				Timestamp:  uint64(time.Now().UnixMilli()),
-				Extensions: "",
-				Signature:  base64.StdEncoding.EncodeToString(sig),
-			}
-
-			w.Header().Set("Content-Type", "application/json")
-			json.NewEncoder(w).Encode(resp)
-		}))
-		defer server.Close()
-
-		submitter := NewHTTPLogSubmitter(nil)
-		log := LogGroup{URL: server.URL}
-
-		sct, err := submitter.SubmitPrecert(context.Background(), []byte("precert-der"), [][]byte{[]byte("issuer")}, log)
+	// submitVerified submits entry to a log holding key and checks the
+	// verified SCT it returns.
+	submitVerified := func(t *testing.T, key crypto.Signer, entry testPrecert, sigAlg SignatureAlgorithm) {
+		t.Helper()
+		log := newTestCTLog(t, key, entry)
+		sct, err := submitter.SubmitPrecert(ctx, entry.der, entry.chain, log.group())
 		require.NoError(t, err)
-		require.NotNil(t, sct)
+
+		spki, err := x509.MarshalPKIXPublicKey(key.Public())
+		require.NoError(t, err)
 		assert.Equal(t, V1, sct.Version)
-		assert.NotZero(t, sct.Timestamp)
+		assert.Equal(t, sha256.Sum256(spki), sct.LogID)
+		assert.Equal(t, testTimestamp, sct.Timestamp)
+		assert.Equal(t, HashAlgorithmSHA256, sct.Signature.HashAlgorithm)
+		assert.Equal(t, sigAlg, sct.Signature.SigAlgorithm)
+	}
+
+	t.Run("ECDSA P-256 log", func(t *testing.T) {
+		submitVerified(t, newP256Key(t), entry, SignatureAlgorithmECDSA)
 	})
 
-	t.Run("submission with trailing slash URL", func(t *testing.T) {
-		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			assert.Equal(t, "/ct/v1/add-pre-chain", r.URL.Path)
+	t.Run("RSA-2048 log", func(t *testing.T) {
+		submitVerified(t, newRSAKey(t, 2048), entry, SignatureAlgorithmRSA)
+	})
 
-			logID := make([]byte, 32)
-			sig := []byte{0x04, 0x03, 0x00, 0x04, 'm', 'o', 'c', 'k'}
+	t.Run("precertificate signing certificate", func(t *testing.T) {
+		psc, pscKey := newPrecertSigningCert(t, ca, caKey)
+		submitVerified(t, newP256Key(t), newTestPrecert(t, ca, caKey, psc, pscKey), SignatureAlgorithmECDSA)
+	})
 
-			resp := addPrecertChainResponse{
-				SCTVersion: V1,
-				ID:         base64.StdEncoding.EncodeToString(logID),
-				Timestamp:  uint64(time.Now().UnixMilli()),
-				Signature:  base64.StdEncoding.EncodeToString(sig),
-			}
-			json.NewEncoder(w).Encode(resp)
-		}))
-		defer server.Close()
-
-		submitter := NewHTTPLogSubmitter(nil)
-		log := LogGroup{URL: server.URL + "/"} // Trailing slash
-
-		sct, err := submitter.SubmitPrecert(context.Background(), []byte("precert-der"), nil, log)
+	t.Run("trailing slash URL", func(t *testing.T) {
+		log := newTestCTLog(t, newP256Key(t), entry)
+		group := log.group()
+		group.URL += "/"
+		_, err := submitter.SubmitPrecert(ctx, entry.der, entry.chain, group)
 		require.NoError(t, err)
-		require.NotNil(t, sct)
 	})
 
-	t.Run("HTTP error response", func(t *testing.T) {
-		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			w.WriteHeader(http.StatusBadRequest)
-			w.Write([]byte("invalid request"))
-		}))
-		defer server.Close()
-
-		submitter := NewHTTPLogSubmitter(nil)
-		log := LogGroup{URL: server.URL}
-
-		_, err := submitter.SubmitPrecert(context.Background(), []byte("test"), nil, log)
-		assert.Error(t, err)
-		var caErr *caerrors.TrustedCAError
-		require.ErrorAs(t, err, &caErr)
-		assert.Equal(t, caerrors.ConnectionFailure, caErr.Type)
-	})
-
-	t.Run("invalid JSON response", func(t *testing.T) {
-		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			w.WriteHeader(http.StatusOK)
-			w.Write([]byte("not json"))
-		}))
-		defer server.Close()
-
-		submitter := NewHTTPLogSubmitter(nil)
-		log := LogGroup{URL: server.URL}
-
-		_, err := submitter.SubmitPrecert(context.Background(), []byte("test"), nil, log)
-		assert.Error(t, err)
-		var caErr *caerrors.TrustedCAError
-		require.ErrorAs(t, err, &caErr)
-		assert.Equal(t, caerrors.SerializationFailure, caErr.Type)
-	})
-
-	t.Run("invalid log ID in response", func(t *testing.T) {
-		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			resp := addPrecertChainResponse{
-				SCTVersion: V1,
-				ID:         "not-valid-base64!!!",
-				Timestamp:  uint64(time.Now().UnixMilli()),
-				Signature:  base64.StdEncoding.EncodeToString([]byte{0x04, 0x03, 0x00, 0x01, 0x00}),
-			}
-			json.NewEncoder(w).Encode(resp)
-		}))
-		defer server.Close()
-
-		submitter := NewHTTPLogSubmitter(nil)
-		log := LogGroup{URL: server.URL}
-
-		_, err := submitter.SubmitPrecert(context.Background(), []byte("test"), nil, log)
-		assert.Error(t, err)
-		var caErr *caerrors.TrustedCAError
-		require.ErrorAs(t, err, &caErr)
-		assert.Equal(t, caerrors.SerializationFailure, caErr.Type)
-	})
-
-	t.Run("wrong log ID length", func(t *testing.T) {
-		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			resp := addPrecertChainResponse{
-				SCTVersion: V1,
-				ID:         base64.StdEncoding.EncodeToString([]byte("too-short")),
-				Timestamp:  uint64(time.Now().UnixMilli()),
-				Signature:  base64.StdEncoding.EncodeToString([]byte{0x04, 0x03, 0x00, 0x01, 0x00}),
-			}
-			json.NewEncoder(w).Encode(resp)
-		}))
-		defer server.Close()
-
-		submitter := NewHTTPLogSubmitter(nil)
-		log := LogGroup{URL: server.URL}
-
-		_, err := submitter.SubmitPrecert(context.Background(), []byte("test"), nil, log)
-		assert.Error(t, err)
-		var caErr *caerrors.TrustedCAError
-		require.ErrorAs(t, err, &caErr)
-		assert.Equal(t, caerrors.Malformed, caErr.Type)
-	})
-
-	t.Run("invalid extensions in response", func(t *testing.T) {
-		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			logID := make([]byte, 32)
-			resp := addPrecertChainResponse{
-				SCTVersion: V1,
-				ID:         base64.StdEncoding.EncodeToString(logID),
-				Timestamp:  uint64(time.Now().UnixMilli()),
-				Extensions: "not-valid-base64!!!",
-				Signature:  base64.StdEncoding.EncodeToString([]byte{0x04, 0x03, 0x00, 0x01, 0x00}),
-			}
-			json.NewEncoder(w).Encode(resp)
-		}))
-		defer server.Close()
-
-		submitter := NewHTTPLogSubmitter(nil)
-		log := LogGroup{URL: server.URL}
-
-		_, err := submitter.SubmitPrecert(context.Background(), []byte("test"), nil, log)
-		assert.Error(t, err)
-		var caErr *caerrors.TrustedCAError
-		require.ErrorAs(t, err, &caErr)
-		assert.Equal(t, caerrors.SerializationFailure, caErr.Type)
-	})
-
-	t.Run("invalid signature in response", func(t *testing.T) {
-		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			logID := make([]byte, 32)
-			resp := addPrecertChainResponse{
-				SCTVersion: V1,
-				ID:         base64.StdEncoding.EncodeToString(logID),
-				Timestamp:  uint64(time.Now().UnixMilli()),
-				Signature:  "not-valid-base64!!!",
-			}
-			json.NewEncoder(w).Encode(resp)
-		}))
-		defer server.Close()
-
-		submitter := NewHTTPLogSubmitter(nil)
-		log := LogGroup{URL: server.URL}
-
-		_, err := submitter.SubmitPrecert(context.Background(), []byte("test"), nil, log)
-		assert.Error(t, err)
-		var caErr *caerrors.TrustedCAError
-		require.ErrorAs(t, err, &caErr)
-		assert.Equal(t, caerrors.SerializationFailure, caErr.Type)
-	})
-
-	t.Run("signature too short", func(t *testing.T) {
-		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			logID := make([]byte, 32)
-			resp := addPrecertChainResponse{
-				SCTVersion: V1,
-				ID:         base64.StdEncoding.EncodeToString(logID),
-				Timestamp:  uint64(time.Now().UnixMilli()),
-				Signature:  base64.StdEncoding.EncodeToString([]byte{0x04, 0x03}), // Only 2 bytes
-			}
-			json.NewEncoder(w).Encode(resp)
-		}))
-		defer server.Close()
-
-		submitter := NewHTTPLogSubmitter(nil)
-		log := LogGroup{URL: server.URL}
-
-		_, err := submitter.SubmitPrecert(context.Background(), []byte("test"), nil, log)
-		assert.Error(t, err)
-		var caErr *caerrors.TrustedCAError
-		require.ErrorAs(t, err, &caErr)
-		assert.Equal(t, caerrors.Malformed, caErr.Type)
-	})
-
-	t.Run("signature data incomplete", func(t *testing.T) {
-		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			logID := make([]byte, 32)
-			// sigLen claims 100 bytes but only 1 is provided
-			resp := addPrecertChainResponse{
-				SCTVersion: V1,
-				ID:         base64.StdEncoding.EncodeToString(logID),
-				Timestamp:  uint64(time.Now().UnixMilli()),
-				Signature:  base64.StdEncoding.EncodeToString([]byte{0x04, 0x03, 0x00, 0x64, 0x00}), // Claims 100 bytes
-			}
-			json.NewEncoder(w).Encode(resp)
-		}))
-		defer server.Close()
-
-		submitter := NewHTTPLogSubmitter(nil)
-		log := LogGroup{URL: server.URL}
-
-		_, err := submitter.SubmitPrecert(context.Background(), []byte("test"), nil, log)
-		assert.Error(t, err)
-		var caErr *caerrors.TrustedCAError
-		require.ErrorAs(t, err, &caErr)
-		assert.Equal(t, caerrors.Malformed, caErr.Type)
-	})
-
-	t.Run("with extensions in response", func(t *testing.T) {
-		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			logID := make([]byte, 32)
-			sig := []byte{0x04, 0x03, 0x00, 0x04, 'm', 'o', 'c', 'k'}
-			ext := []byte{0x01, 0x02, 0x03}
-
-			resp := addPrecertChainResponse{
-				SCTVersion: V1,
-				ID:         base64.StdEncoding.EncodeToString(logID),
-				Timestamp:  uint64(time.Now().UnixMilli()),
-				Extensions: base64.StdEncoding.EncodeToString(ext),
-				Signature:  base64.StdEncoding.EncodeToString(sig),
-			}
-			json.NewEncoder(w).Encode(resp)
-		}))
-		defer server.Close()
-
-		submitter := NewHTTPLogSubmitter(nil)
-		log := LogGroup{URL: server.URL}
-
-		sct, err := submitter.SubmitPrecert(context.Background(), []byte("test"), nil, log)
+	t.Run("signed extensions", func(t *testing.T) {
+		log := newTestCTLog(t, newP256Key(t), entry)
+		log.extensions = []byte{0x00, 0x01, 0x02}
+		sct, err := submitter.SubmitPrecert(ctx, entry.der, entry.chain, log.group())
 		require.NoError(t, err)
-		assert.Equal(t, []byte{0x01, 0x02, 0x03}, sct.Extensions)
+		assert.Equal(t, log.extensions, sct.Extensions)
 	})
 
-	t.Run("context cancelled", func(t *testing.T) {
-		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			time.Sleep(1 * time.Second)
-			w.WriteHeader(http.StatusOK)
-		}))
-		defer server.Close()
+	t.Run("log configuration refused before submitting", func(t *testing.T) {
+		tests := []struct {
+			name string
+			key  crypto.PublicKey
+			want error
+		}{
+			{"no public key", nil, ErrLogPublicKeyMissing},
+			{"P-384 key", newP384Key(t).Public(), ErrLogPublicKeyUnsupported},
+		}
+		for _, tt := range tests {
+			t.Run(tt.name, func(t *testing.T) {
+				log := newTestCTLog(t, newP256Key(t), entry)
+				group := log.group()
+				group.PublicKey = tt.key
+				_, err := submitter.SubmitPrecert(ctx, entry.der, entry.chain, group)
+				assert.ErrorIs(t, err, tt.want)
+				assert.ErrorIs(t, err, ErrInvalidLogConfig)
+				assert.Zero(t, log.requests.Load())
+			})
+		}
+	})
 
-		submitter := NewHTTPLogSubmitter(nil)
-		log := LogGroup{URL: server.URL}
+	t.Run("SCT refused", func(t *testing.T) {
+		otherSPKI, err := x509.MarshalPKIXPublicKey(newP256Key(t).Public())
+		require.NoError(t, err)
+		otherLogID := sha256.Sum256(otherSPKI)
 
-		ctx, cancel := context.WithTimeout(context.Background(), 50*time.Millisecond)
+		tests := []struct {
+			name string
+			edit func(*addPrecertChainResponse)
+			want error
+		}{
+			{"log ID of another log", func(resp *addPrecertChainResponse) {
+				resp.ID = base64.StdEncoding.EncodeToString(otherLogID[:])
+			}, ErrSCTLogIDMismatch},
+			{"SHA-384 hash", withSignature(func(sig []byte) {
+				sig[0] = byte(HashAlgorithmSHA384)
+			}), ErrUnsupportedSCTAlgorithm},
+			{"RSA signature from an ECDSA log", withSignature(func(sig []byte) {
+				sig[1] = byte(SignatureAlgorithmRSA)
+			}), ErrUnsupportedSCTAlgorithm},
+			{"tampered signature", withSignature(func(sig []byte) {
+				sig[len(sig)-1] ^= 0x01
+			}), ErrInvalidSignature},
+			{"tampered timestamp", func(resp *addPrecertChainResponse) {
+				resp.Timestamp++
+			}, ErrInvalidSignature},
+			{"unsigned extensions", func(resp *addPrecertChainResponse) {
+				resp.Extensions = base64.StdEncoding.EncodeToString([]byte{0x01})
+			}, ErrInvalidSignature},
+			{"unknown SCT version", func(resp *addPrecertChainResponse) {
+				resp.SCTVersion = V1 + 1
+			}, ErrInvalidSCT},
+		}
+		for _, tt := range tests {
+			t.Run(tt.name, func(t *testing.T) {
+				log := newTestCTLog(t, newP256Key(t), entry)
+				log.edit = tt.edit
+				sct, err := submitter.SubmitPrecert(ctx, entry.der, entry.chain, log.group())
+				assert.ErrorIs(t, err, tt.want)
+				assert.Nil(t, sct)
+			})
+		}
+	})
+
+	t.Run("SCT signed over another precertificate", func(t *testing.T) {
+		other := newTestPrecert(t, ca, caKey, nil, nil)
+		log := newTestCTLog(t, newP256Key(t), other)
+		log.entry.der = entry.der
+		_, err := submitter.SubmitPrecert(ctx, entry.der, entry.chain, log.group())
+		assert.ErrorIs(t, err, ErrInvalidSignature)
+	})
+
+	t.Run("malformed response", func(t *testing.T) {
+		tests := []struct {
+			name string
+			edit func(*addPrecertChainResponse)
+		}{
+			{"log ID not base64", func(resp *addPrecertChainResponse) {
+				resp.ID = "!!"
+			}},
+			{"log ID wrong length", func(resp *addPrecertChainResponse) {
+				resp.ID = base64.StdEncoding.EncodeToString(make([]byte, 16))
+			}},
+			{"extensions not base64", func(resp *addPrecertChainResponse) {
+				resp.Extensions = "!!"
+			}},
+			{"signature not base64", func(resp *addPrecertChainResponse) {
+				resp.Signature = "!!"
+			}},
+			{"signature too short", func(resp *addPrecertChainResponse) {
+				resp.Signature = base64.StdEncoding.EncodeToString([]byte{0x04, 0x03})
+			}},
+			{"signature data incomplete", func(resp *addPrecertChainResponse) {
+				resp.Signature = base64.StdEncoding.EncodeToString([]byte{0x04, 0x03, 0x00, 0x10, 0x01})
+			}},
+		}
+		for _, tt := range tests {
+			t.Run(tt.name, func(t *testing.T) {
+				log := newTestCTLog(t, newP256Key(t), entry)
+				log.edit = tt.edit
+				_, err := submitter.SubmitPrecert(ctx, entry.der, entry.chain, log.group())
+				var caErr *caerrors.TrustedCAError
+				assert.ErrorAs(t, err, &caErr)
+			})
+		}
+	})
+
+	t.Run("deadline exceeded", func(t *testing.T) {
+		log := newTestCTLog(t, newP256Key(t), entry)
+		expired, cancel := context.WithDeadline(ctx, time.Unix(0, 0))
 		defer cancel()
-
-		_, err := submitter.SubmitPrecert(ctx, []byte("test"), nil, log)
-		assert.Error(t, err)
+		_, err := submitter.SubmitPrecert(expired, entry.der, entry.chain, log.group())
+		assert.ErrorIs(t, err, ErrCTSubmissionTimeout)
+		assert.ErrorIs(t, err, context.DeadlineExceeded)
+		assert.Zero(t, log.requests.Load())
 	})
 
-	t.Run("network error", func(t *testing.T) {
-		submitter := NewHTTPLogSubmitter(nil)
-		log := LogGroup{URL: "http://localhost:1"} // Port 1 should not be open
+	t.Run("transport failure", func(t *testing.T) {
+		failing := func(t *testing.T, handler http.HandlerFunc) LogGroup {
+			t.Helper()
+			server := httptest.NewServer(handler)
+			t.Cleanup(server.Close)
+			return LogGroup{URL: server.URL, PublicKey: newP256Key(t).Public(), Enabled: true}
+		}
+		closed := httptest.NewServer(http.NotFoundHandler())
+		closed.Close()
+		cancelled, cancel := context.WithCancel(ctx)
+		cancel()
 
-		_, err := submitter.SubmitPrecert(context.Background(), []byte("test"), nil, log)
-		assert.Error(t, err)
-		var caErr *caerrors.TrustedCAError
-		require.ErrorAs(t, err, &caErr)
-		assert.Equal(t, caerrors.ConnectionFailure, caErr.Type)
+		tests := []struct {
+			name string
+			ctx  context.Context
+			log  LogGroup
+		}{
+			{"HTTP error status", ctx, failing(t, func(w http.ResponseWriter, r *http.Request) {
+				http.Error(w, "log unavailable", http.StatusServiceUnavailable)
+			})},
+			{"invalid JSON", ctx, failing(t, func(w http.ResponseWriter, r *http.Request) {
+				w.Header().Set("Content-Type", "application/json")
+				_, err := w.Write([]byte("{not json"))
+				assert.NoError(t, err)
+			})},
+			{"cancelled context", cancelled, newTestCTLog(t, newP256Key(t), entry).group()},
+			{"log unreachable", ctx, LogGroup{URL: closed.URL, PublicKey: newP256Key(t).Public(), Enabled: true}},
+		}
+		for _, tt := range tests {
+			t.Run(tt.name, func(t *testing.T) {
+				_, err := submitter.SubmitPrecert(tt.ctx, entry.der, entry.chain, tt.log)
+				var caErr *caerrors.TrustedCAError
+				assert.ErrorAs(t, err, &caErr)
+			})
+		}
 	})
+}
+
+// withSignature returns a response edit that changes the encoded
+// digitally-signed struct: hash, signature algorithm, length, signature.
+func withSignature(edit func(sig []byte)) func(*addPrecertChainResponse) {
+	return func(resp *addPrecertChainResponse) {
+		sig, err := base64.StdEncoding.DecodeString(resp.Signature)
+		if err != nil {
+			resp.Signature = ""
+			return
+		}
+		edit(sig)
+		resp.Signature = base64.StdEncoding.EncodeToString(sig)
+	}
 }
 
 func TestMockLogSubmitter(t *testing.T) {
@@ -428,15 +342,6 @@ func TestMockLogSubmitter(t *testing.T) {
 
 		_, err := submitter.SubmitPrecert(ctx, []byte("test"), nil, log)
 		assert.ErrorIs(t, err, context.DeadlineExceeded)
-	})
-
-	t.Run("invalid context type", func(t *testing.T) {
-		submitter := NewMockLogSubmitter()
-		log := LogGroup{URL: "https://test.example.com"}
-
-		// Pass invalid context type
-		_, err := submitter.SubmitPrecert("not a context", []byte("test"), nil, log)
-		assert.Error(t, err)
 	})
 
 	t.Run("submission tracking", func(t *testing.T) {

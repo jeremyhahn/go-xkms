@@ -90,6 +90,20 @@ func init() {
 
 // runBrowserLaunch opens the trust store, detects or resolves the target
 // browser, injects CA certificates, and launches the browser process.
+// secureBrowser is the part of the secure browser service browser launch
+// drives: finding installed browsers and starting one with the trust store
+// injected.
+type secureBrowser interface {
+	DetectBrowsers() []services.BrowserInfo
+	LaunchBrowserWithOptions(browserPath, url string, opts services.LaunchOptions) (*services.LaunchResult, error)
+}
+
+// newSecureBrowser builds the secure browser service. Tests replace it so a
+// launch runs without detecting or starting a browser on the host.
+var newSecureBrowser = func(baseDir string, browserSvc *services.BrowserService, trustSvc *services.TrustService, logger *slog.Logger) secureBrowser {
+	return services.NewSecureBrowserService(baseDir, browserSvc, trustSvc, logger)
+}
+
 func runBrowserLaunch(cmd *cobra.Command, args []string) (err error) {
 	url := "about:blank"
 	if len(args) > 0 {
@@ -135,7 +149,7 @@ func runBrowserLaunch(cmd *cobra.Command, args []string) (err error) {
 	}
 
 	browsersDir := filepath.Join(xkeyDir, "browsers")
-	secureSvc := services.NewSecureBrowserService(browsersDir, browserSvc, trustSvc, logger)
+	secureSvc := newSecureBrowser(browsersDir, browserSvc, trustSvc, logger)
 
 	// Determine browser path: explicit flag or auto-detect.
 	browserPath := browserBinary

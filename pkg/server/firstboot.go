@@ -381,8 +381,5 @@ func fileExists(path string) bool {
 // It reuses the operator's cluster enrollment trust domain; a deployment that
 // has not configured one gets the same default the enrollment path uses.
 func (s *Server) TrustDomain() string {
-	if td := s.config.Cluster.RaftEnrollment.TrustDomain; td != "" {
-		return td
-	}
-	return embeddednode.DefaultTrustDomain
+	return embeddednode.TrustDomain(s.config)
 }

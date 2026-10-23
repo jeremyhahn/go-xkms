@@ -129,4 +129,38 @@ func TestDialClient_HandshakeError(t *testing.T) {
 	if !errors.As(err, &he) {
 		t.Fatalf("expected HandshakeError, got %v", err)
 	}
+	// ssh.NewClientConn closed the connection itself; closing it again must
+	// not join a "use of closed network connection" error to the refusal.
+	if errors.Is(err, net.ErrClosed) {
+		t.Fatalf("handshake error carries a stray closed-connection error: %v", err)
+	}
+}
+
+// closeFailConn is a net.Conn whose Close returns err.
+type closeFailConn struct {
+	net.Conn
+	err error
+}
+
+func (c closeFailConn) Close() error { return c.err }
+
+// closeFailure is a Close failure other than net.ErrClosed.
+type closeFailure struct{}
+
+func (closeFailure) Error() string { return "close failed" }
+
+func TestCloseAfterFailedHandshake_DropsErrClosed(t *testing.T) {
+	conn := closeFailConn{err: &net.OpError{Op: "close", Net: "tcp", Err: net.ErrClosed}}
+	if err := closeAfterFailedHandshake(conn); err != nil {
+		t.Fatalf("closeAfterFailedHandshake returned %v, want nil for net.ErrClosed", err)
+	}
+}
+
+func TestCloseAfterFailedHandshake_ReturnsOtherCloseErrors(t *testing.T) {
+	conn := closeFailConn{err: &net.OpError{Op: "close", Net: "tcp", Err: closeFailure{}}}
+	err := closeAfterFailedHandshake(conn)
+	var failure closeFailure
+	if !errors.As(err, &failure) {
+		t.Fatalf("closeAfterFailedHandshake returned %v, want the close failure", err)
+	}
 }

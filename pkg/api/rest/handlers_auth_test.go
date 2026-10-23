@@ -380,6 +380,80 @@ func TestAuthMe_ReturnsIdentityPermissionsCapabilities(t *testing.T) {
 	assert.False(t, resp.Capabilities["ssh"])
 }
 
+// authMeAs serves GET /api/v1/auth/me for identity and decodes the response.
+func authMeAs(t *testing.T, server *Server, identity *auth.Identity) authMeResponse {
+	t.Helper()
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/auth/me", nil)
+	req = req.WithContext(auth.WithIdentity(req.Context(), identity))
+	w := httptest.NewRecorder()
+	server.handleAuthMe(w, req)
+	require.Equal(t, http.StatusOK, w.Code, w.Body.String())
+
+	var resp authMeResponse
+	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))
+	return resp
+}
+
+// TestAuthMe_ReportsBoundAccountUsername covers an identity the qrdb node
+// bound to a user account (an mTLS login on the unified listener): the
+// username lives in Identity.Username, not in Metadata (#794).
+func TestAuthMe_ReportsBoundAccountUsername(t *testing.T) {
+	server := newAuthTestServer(t, nil)
+	identity := &auth.Identity{
+		TenantID: "system",
+		Metadata: map[string]string{"auth_method": "mtls"},
+	}
+	identity.BindUser(42, "admin")
+
+	resp := authMeAs(t, server, identity)
+	assert.Equal(t, "admin", resp.Username)
+	assert.Equal(t, identity.Subject, resp.Subject)
+	assert.Equal(t, "mtls", resp.AuthMethod)
+}
+
+// TestAuthMe_UnboundIdentityHasNoUsername covers an identity that resolved to
+// no account: no username is invented from its subject.
+func TestAuthMe_UnboundIdentityHasNoUsername(t *testing.T) {
+	server := newAuthTestServer(t, nil)
+	identity := &auth.Identity{
+		Subject:  "device-7",
+		TenantID: "system",
+		Metadata: map[string]string{"auth_method": "mtls"},
+	}
+
+	resp := authMeAs(t, server, identity)
+	assert.Empty(t, resp.Username)
+	assert.Equal(t, "device-7", resp.Subject)
+}
+
+// The qrdb node's mTLS authenticator stamps no auth_method, so /auth/me reads
+// the method from the client certificate the request presented (#794).
+func TestIdentityAuthMethod(t *testing.T) {
+	withCert := httptest.NewRequest(http.MethodGet, "/api/v1/auth/me", nil)
+	withCert.TLS = &tls.ConnectionState{PeerCertificates: []*x509.Certificate{{}}}
+	tlsNoCert := httptest.NewRequest(http.MethodGet, "/api/v1/auth/me", nil)
+	tlsNoCert.TLS = &tls.ConnectionState{}
+	plain := httptest.NewRequest(http.MethodGet, "/api/v1/auth/me", nil)
+
+	tests := []struct {
+		name     string
+		req      *http.Request
+		metadata map[string]string
+		want     string
+	}{
+		{"stamped method wins over the certificate", withCert, map[string]string{"auth_method": "jwt"}, "jwt"},
+		{"unstamped identity with a client certificate is mtls", withCert, nil, qrdbsdk.MethodMTLS},
+		{"unstamped identity over TLS without a certificate", tlsNoCert, nil, ""},
+		{"unstamped identity without TLS", plain, nil, ""},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			identity := &auth.Identity{Subject: "admin", Metadata: tt.metadata}
+			assert.Equal(t, tt.want, identityAuthMethod(tt.req, identity))
+		})
+	}
+}
+
 // TestAuthMe_PermissionsReflectRBACGrant proves /auth/me reports exactly the
 // permissions qrdb's RBAC lists for the identity (go-xkms#846, #1557).
 func TestAuthMe_PermissionsReflectRBACGrant(t *testing.T) {

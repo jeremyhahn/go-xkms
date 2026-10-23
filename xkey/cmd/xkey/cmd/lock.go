@@ -69,19 +69,20 @@ func runLock(cmd *cobra.Command, args []string) error {
 	if err != nil {
 		return err
 	}
+	ops := openLUKSVolume(vol)
 
 	// Check if mounted or open
-	mounted, err := vol.IsMounted()
+	mounted, err := ops.IsMounted()
 	if err != nil {
 		return &LockError{Operation: "check_mounted", Err: err}
 	}
-	if !mounted && !vol.IsOpen() {
+	if !mounted && !ops.IsOpen() {
 		return ErrLockNoVolume
 	}
 
 	// Lock the volume
 	_, _ = fmt.Fprintln(cmd.OutOrStdout(), "Locking encrypted storage...")
-	if err := vol.Lock(); err != nil {
+	if err := ops.Lock(); err != nil {
 		return &LockError{Operation: "lock", Err: err}
 	}
 

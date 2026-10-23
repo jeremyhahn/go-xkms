@@ -26,6 +26,7 @@ import (
 	"github.com/jeremyhahn/go-xkms/pkg/backend"
 	"github.com/jeremyhahn/go-xkms/pkg/crypto/aead"
 	"github.com/jeremyhahn/go-xkms/pkg/errs"
+	"github.com/jeremyhahn/go-xkms/pkg/keyprovider/symmetric"
 	"github.com/jeremyhahn/go-xkms/pkg/xkms"
 )
 
@@ -167,6 +168,51 @@ func TestMapKeyOpError_AEADNonceSentinels(t *testing.T) {
 		"nonce tracker full via WrapKeyByID": {
 			err:  &xkms.ErrKeyOperation{Operation: "aes-gcm wrap", KeyID: "k1", Err: aead.ErrNonceTrackerFull},
 			want: codes.ResourceExhausted,
+		},
+	}
+	for name, tt := range tests {
+		t.Run(name, func(t *testing.T) {
+			got := status.Code(mapKeyOpError(context.Background(), nil, tt.err))
+			if got != tt.want {
+				t.Fatalf("code = %v, want %v", got, tt.want)
+			}
+		})
+	}
+}
+
+// TestMapKeyOpError_FIPSGCMRefusals pins go-xkms#23: under fips140=only an
+// AES-GCM AEAD over a caller-supplied nonce or a truncated tag is refused,
+// and that refusal, like an unapproved tag size, is a parameter the caller
+// can correct. It must reach the client as InvalidArgument through
+// apierrors.AEADSentinelClasses, wrapped the way the Encrypt RPC and
+// WrapKeyByID wrap it, while a genuine backend fault behind the same wrapper
+// still falls through to Internal.
+func TestMapKeyOpError_FIPSGCMRefusals(t *testing.T) {
+	tests := map[string]struct {
+		err  error
+		want codes.Code
+	}{
+		"caller nonce refused via Encrypt": {
+			err: &xkms.ErrOperationWrap{Sentinel: xkms.ErrEncryptionFailed, Err: &errs.Detail{
+				Err: aead.ErrArbitraryIVGCMUnavailable, Detail: "caller-supplied nonce=true",
+			}},
+			want: codes.InvalidArgument,
+		},
+		"caller nonce refused by the symmetric provider": {
+			err:  &xkms.ErrOperationWrap{Sentinel: xkms.ErrEncryptionFailed, Err: symmetric.ErrArbitraryIVGCMUnavailable},
+			want: codes.InvalidArgument,
+		},
+		"unapproved tag size via WrapKeyByID": {
+			err:  &xkms.ErrKeyOperation{Operation: "aes-gcm wrap", KeyID: "k1", Err: aead.ErrInvalidGCMTagSize},
+			want: codes.InvalidArgument,
+		},
+		"unapproved tag size from the symmetric provider": {
+			err:  &xkms.ErrOperationWrap{Sentinel: xkms.ErrEncryptionFailed, Err: symmetric.ErrInvalidTagSize},
+			want: codes.InvalidArgument,
+		},
+		"backend fault stays internal": {
+			err:  &xkms.ErrOperationWrap{Sentinel: xkms.ErrEncryptionFailed, Err: errors.New("hsm session lost")},
+			want: codes.Internal,
 		},
 	}
 	for name, tt := range tests {

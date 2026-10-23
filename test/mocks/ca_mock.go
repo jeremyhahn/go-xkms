@@ -96,6 +96,15 @@ func (m *MockCertificateAuthority) SignCSR(ctx context.Context, csrPEM []byte, o
 	return args.Get(0).(*x509.Certificate), args.Error(1)
 }
 
+// ReserveSerial reserves a serial number for a later SignCSR.
+func (m *MockCertificateAuthority) ReserveSerial(ctx context.Context) (*big.Int, error) {
+	args := m.Called()
+	if args.Get(0) == nil {
+		return nil, args.Error(1)
+	}
+	return args.Get(0).(*big.Int), args.Error(1)
+}
+
 // CreateCSR generates a CSR for the given request.
 func (m *MockCertificateAuthority) CreateCSR(ctx context.Context, request *ca.CertificateRequest) ([]byte, error) {
 	args := m.Called(request)

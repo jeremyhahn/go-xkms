@@ -107,6 +107,11 @@ func (s *Server) buildUnifiedTLSConfig() (*tls.Config, error) {
 		GetCertificate: provider.getCertificate,
 		MinVersion:     tls.VersionTLS13,
 		ClientAuth:     parseClientAuthMode(s.config.TLS.ClientAuth),
+		// qrdb's client-trust pool captures this static set when the node
+		// wires the config, and verifies every client chain its mTLS
+		// authenticator sees against it, so the seeded pool -- the init
+		// ceremony root among it -- must be here, not only per connection.
+		ClientCAs: pool,
 	}
 	if cfg.ClientAuth != tls.NoClientCert {
 		// The client-CA pool rotates (bootstrap -> CA-issued), and

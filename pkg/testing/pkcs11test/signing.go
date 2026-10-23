@@ -301,6 +301,10 @@ func (s *Suite) testSignRecover(t *testing.T) {
 
 		data := []byte("recoverable data")
 		signature, rv := m.SignRecover(sh, data)
+		if !outsideFIPSAfterRefusal(t, module.CKR_MECHANISM_INVALID, rv,
+			"fips140=only refuses raw PKCS#1 v1.5 over undigested data") {
+			return
+		}
 		requireRV(t, module.CKR_OK, rv, "SignRecover should return CKR_OK")
 
 		// CKM_RSA_PKCS carries the data itself inside the PKCS#1 v1.5 block

@@ -28,7 +28,7 @@ func TestNewCTPolicy(t *testing.T) {
 		config := PolicyConfig{
 			MinSCTs:      2,
 			MinOperators: 2,
-			LogGroups:    createTestLogGroups(),
+			LogGroups:    createTestLogGroups(t),
 		}
 
 		submitter := NewMockLogSubmitter()
@@ -53,7 +53,7 @@ func TestNewCTPolicy(t *testing.T) {
 		config := PolicyConfig{
 			MinSCTs:      0,
 			MinOperators: 2,
-			LogGroups:    createTestLogGroups(),
+			LogGroups:    createTestLogGroups(t),
 		}
 
 		submitter := NewMockLogSubmitter()
@@ -65,7 +65,7 @@ func TestNewCTPolicy(t *testing.T) {
 		config := PolicyConfig{
 			MinSCTs:      2,
 			MinOperators: 0,
-			LogGroups:    createTestLogGroups(),
+			LogGroups:    createTestLogGroups(t),
 		}
 
 		submitter := NewMockLogSubmitter()
@@ -77,7 +77,7 @@ func TestNewCTPolicy(t *testing.T) {
 		config := PolicyConfig{
 			MinSCTs:      1,
 			MinOperators: 1,
-			LogGroups:    createTestLogGroups(),
+			LogGroups:    createTestLogGroups(t),
 			// SubmissionTimeout and MaxParallelSubmissions are 0
 		}
 
@@ -91,9 +91,9 @@ func TestNewCTPolicy(t *testing.T) {
 	})
 }
 
-func TestCTPolicy_GetSCTs(t *testing.T) {
+func TestCTPolicy_Submit(t *testing.T) {
 	t.Run("success", func(t *testing.T) {
-		logs := createTestLogGroups()
+		logs := createTestLogGroups(t)
 		config := PolicyConfig{
 			MinSCTs:           2,
 			MinOperators:      2,
@@ -109,20 +109,20 @@ func TestCTPolicy_GetSCTs(t *testing.T) {
 		precertDER := []byte("test-precert")
 		expiry := time.Now().AddDate(1, 0, 0)
 
-		scts, err := policy.GetSCTs(ctx, precertDER, nil, expiry)
+		submission, err := policy.Submit(ctx, precertDER, nil, expiry)
 		require.NoError(t, err)
-		assert.GreaterOrEqual(t, len(scts), 2)
+		assert.GreaterOrEqual(t, len(submission.SCTs), 2)
 	})
 
 	t.Run("nil precert", func(t *testing.T) {
 		policy, err := NewCTPolicy(PolicyConfig{
 			MinSCTs:      2,
 			MinOperators: 2,
-			LogGroups:    createTestLogGroups(),
+			LogGroups:    createTestLogGroups(t),
 		}, NewMockLogSubmitter())
 		require.NoError(t, err)
 
-		_, err = policy.GetSCTs(context.Background(), nil, nil, time.Now())
+		_, err = policy.Submit(context.Background(), nil, nil, time.Now())
 		assert.ErrorIs(t, err, ErrNilInput)
 	})
 
@@ -141,7 +141,7 @@ func TestCTPolicy_GetSCTs(t *testing.T) {
 		config := PolicyConfig{
 			MinSCTs:      1,
 			MinOperators: 1,
-			LogGroups:    logs,
+			LogGroups:    enableLogs(t, logs),
 		}
 
 		submitter := NewMockLogSubmitter()
@@ -150,7 +150,7 @@ func TestCTPolicy_GetSCTs(t *testing.T) {
 
 		// Certificate expires next year, but log ended a year ago
 		expiry := time.Now().AddDate(1, 0, 0)
-		_, err = policy.GetSCTs(context.Background(), []byte("test"), nil, expiry)
+		_, err = policy.Submit(context.Background(), []byte("test"), nil, expiry)
 		assert.ErrorIs(t, err, ErrNoEligibleLogs)
 	})
 
@@ -174,7 +174,7 @@ func TestCTPolicy_GetSCTs(t *testing.T) {
 		config := PolicyConfig{
 			MinSCTs:      2,
 			MinOperators: 2, // Require 2 operators
-			LogGroups:    logs,
+			LogGroups:    enableLogs(t, logs),
 		}
 
 		submitter := NewMockLogSubmitter()
@@ -182,12 +182,12 @@ func TestCTPolicy_GetSCTs(t *testing.T) {
 		require.NoError(t, err)
 
 		expiry := time.Now().AddDate(1, 0, 0)
-		_, err = policy.GetSCTs(context.Background(), []byte("test"), nil, expiry)
+		_, err = policy.Submit(context.Background(), []byte("test"), nil, expiry)
 		assert.Error(t, err)
 	})
 
 	t.Run("submission errors handled", func(t *testing.T) {
-		logs := createTestLogGroups()
+		logs := createTestLogGroups(t)
 		config := PolicyConfig{
 			MinSCTs:           2,
 			MinOperators:      2,
@@ -203,14 +203,14 @@ func TestCTPolicy_GetSCTs(t *testing.T) {
 		require.NoError(t, err)
 
 		expiry := time.Now().AddDate(1, 0, 0)
-		scts, err := policy.GetSCTs(context.Background(), []byte("test"), nil, expiry)
+		submission, err := policy.Submit(context.Background(), []byte("test"), nil, expiry)
 		// Should still succeed with remaining logs
 		require.NoError(t, err)
-		assert.GreaterOrEqual(t, len(scts), 2)
+		assert.GreaterOrEqual(t, len(submission.SCTs), 2)
 	})
 
 	t.Run("context cancellation", func(t *testing.T) {
-		logs := createTestLogGroups()
+		logs := createTestLogGroups(t)
 		config := PolicyConfig{
 			MinSCTs:           2,
 			MinOperators:      2,
@@ -228,7 +228,7 @@ func TestCTPolicy_GetSCTs(t *testing.T) {
 		defer cancel()
 
 		expiry := time.Now().AddDate(1, 0, 0)
-		_, err = policy.GetSCTs(ctx, []byte("test"), nil, expiry)
+		_, err = policy.Submit(ctx, []byte("test"), nil, expiry)
 		assert.Error(t, err) // Should fail due to timeout
 	})
 
@@ -253,7 +253,7 @@ func TestCTPolicy_GetSCTs(t *testing.T) {
 		config := PolicyConfig{
 			MinSCTs:           2,
 			MinOperators:      2,
-			LogGroups:         logs,
+			LogGroups:         enableLogs(t, logs),
 			RequireRFC6962Log: true,
 			SubmissionTimeout: 5 * time.Second,
 		}
@@ -263,9 +263,9 @@ func TestCTPolicy_GetSCTs(t *testing.T) {
 		require.NoError(t, err)
 
 		expiry := time.Now().AddDate(1, 0, 0)
-		scts, err := policy.GetSCTs(context.Background(), []byte("test"), nil, expiry)
+		submission, err := policy.Submit(context.Background(), []byte("test"), nil, expiry)
 		require.NoError(t, err)
-		assert.Len(t, scts, 2)
+		assert.Len(t, submission.SCTs, 2)
 	})
 
 	t.Run("require RFC6962 log failure", func(t *testing.T) {
@@ -289,7 +289,7 @@ func TestCTPolicy_GetSCTs(t *testing.T) {
 		config := PolicyConfig{
 			MinSCTs:           2,
 			MinOperators:      2,
-			LogGroups:         logs,
+			LogGroups:         enableLogs(t, logs),
 			RequireRFC6962Log: true,
 			SubmissionTimeout: 5 * time.Second,
 		}
@@ -299,7 +299,7 @@ func TestCTPolicy_GetSCTs(t *testing.T) {
 		require.NoError(t, err)
 
 		expiry := time.Now().AddDate(1, 0, 0)
-		_, err = policy.GetSCTs(context.Background(), []byte("test"), nil, expiry)
+		_, err = policy.Submit(context.Background(), []byte("test"), nil, expiry)
 		assert.ErrorIs(t, err, ErrNoRFC6962Log)
 	})
 
@@ -322,7 +322,7 @@ func TestCTPolicy_GetSCTs(t *testing.T) {
 		config := PolicyConfig{
 			MinSCTs:           3, // Require 3 SCTs but only 2 logs available
 			MinOperators:      2,
-			LogGroups:         logs,
+			LogGroups:         enableLogs(t, logs),
 			SubmissionTimeout: 5 * time.Second,
 		}
 
@@ -331,7 +331,7 @@ func TestCTPolicy_GetSCTs(t *testing.T) {
 		require.NoError(t, err)
 
 		expiry := time.Now().AddDate(1, 0, 0)
-		_, err = policy.GetSCTs(context.Background(), []byte("test"), nil, expiry)
+		_, err = policy.Submit(context.Background(), []byte("test"), nil, expiry)
 		assert.Error(t, err)
 	})
 
@@ -360,7 +360,7 @@ func TestCTPolicy_GetSCTs(t *testing.T) {
 		config := PolicyConfig{
 			MinSCTs:           2,
 			MinOperators:      2,
-			LogGroups:         logs,
+			LogGroups:         enableLogs(t, logs),
 			SubmissionTimeout: 5 * time.Second,
 		}
 
@@ -372,13 +372,13 @@ func TestCTPolicy_GetSCTs(t *testing.T) {
 		require.NoError(t, err)
 
 		expiry := time.Now().AddDate(1, 0, 0)
-		_, err = policy.GetSCTs(context.Background(), []byte("test"), nil, expiry)
+		_, err = policy.Submit(context.Background(), []byte("test"), nil, expiry)
 		// Should fail because we can only get SCTs from one operator
 		assert.Error(t, err)
 	})
 
 	t.Run("stagger delay", func(t *testing.T) {
-		logs := createTestLogGroups()
+		logs := createTestLogGroups(t)
 		config := PolicyConfig{
 			MinSCTs:           2,
 			MinOperators:      2,
@@ -393,17 +393,17 @@ func TestCTPolicy_GetSCTs(t *testing.T) {
 
 		start := time.Now()
 		expiry := time.Now().AddDate(1, 0, 0)
-		scts, err := policy.GetSCTs(context.Background(), []byte("test"), nil, expiry)
+		submission, err := policy.Submit(context.Background(), []byte("test"), nil, expiry)
 		elapsed := time.Since(start)
 
 		require.NoError(t, err)
-		assert.GreaterOrEqual(t, len(scts), 2)
+		assert.GreaterOrEqual(t, len(submission.SCTs), 2)
 		// With stagger delay, should take at least some time
 		assert.GreaterOrEqual(t, elapsed, 10*time.Millisecond)
 	})
 
 	t.Run("with certificate chain", func(t *testing.T) {
-		logs := createTestLogGroups()
+		logs := createTestLogGroups(t)
 		config := PolicyConfig{
 			MinSCTs:           2,
 			MinOperators:      2,
@@ -423,9 +423,9 @@ func TestCTPolicy_GetSCTs(t *testing.T) {
 		}
 		expiry := time.Now().AddDate(1, 0, 0)
 
-		scts, err := policy.GetSCTs(ctx, precertDER, chain, expiry)
+		submission, err := policy.Submit(ctx, precertDER, chain, expiry)
 		require.NoError(t, err)
-		assert.GreaterOrEqual(t, len(scts), 2)
+		assert.GreaterOrEqual(t, len(submission.SCTs), 2)
 
 		// Verify chain was passed to submitter
 		submissions := submitter.GetSubmissions()
@@ -438,16 +438,16 @@ func TestCTPolicy_GetSCTs(t *testing.T) {
 		policy, err := NewCTPolicy(PolicyConfig{
 			MinSCTs:      2,
 			MinOperators: 2,
-			LogGroups:    createTestLogGroups(),
+			LogGroups:    createTestLogGroups(t),
 		}, NewMockLogSubmitter())
 		require.NoError(t, err)
 
-		_, err = policy.GetSCTs(context.Background(), []byte{}, nil, time.Now())
+		_, err = policy.Submit(context.Background(), []byte{}, nil, time.Now())
 		assert.ErrorIs(t, err, ErrNilInput)
 	})
 
 	t.Run("context cancelled during stagger delay", func(t *testing.T) {
-		logs := createTestLogGroups()
+		logs := createTestLogGroups(t)
 		config := PolicyConfig{
 			MinSCTs:                2,
 			MinOperators:           2,
@@ -469,13 +469,13 @@ func TestCTPolicy_GetSCTs(t *testing.T) {
 		}()
 
 		expiry := time.Now().AddDate(1, 0, 0)
-		_, _ = policy.GetSCTs(ctx, []byte("test"), nil, expiry)
+		_, _ = policy.Submit(ctx, []byte("test"), nil, expiry)
 		// May or may not get enough SCTs depending on timing
 		// The important thing is it doesn't hang
 	})
 
 	t.Run("context cancelled during semaphore acquisition", func(t *testing.T) {
-		logs := createTestLogGroups()
+		logs := createTestLogGroups(t)
 		config := PolicyConfig{
 			MinSCTs:                4, // Need all 4 logs
 			MinOperators:           4, // Need all 4 operators
@@ -495,13 +495,13 @@ func TestCTPolicy_GetSCTs(t *testing.T) {
 		defer cancel()
 
 		expiry := time.Now().AddDate(1, 0, 0)
-		_, err = policy.GetSCTs(ctx, []byte("test"), nil, expiry)
+		_, err = policy.Submit(ctx, []byte("test"), nil, expiry)
 		// Should fail because context cancelled while waiting for semaphore
 		assert.Error(t, err)
 	})
 
 	t.Run("context cancelled after semaphore acquired", func(t *testing.T) {
-		logs := createTestLogGroups()
+		logs := createTestLogGroups(t)
 		config := PolicyConfig{
 			MinSCTs:                2,
 			MinOperators:           2,
@@ -522,7 +522,7 @@ func TestCTPolicy_GetSCTs(t *testing.T) {
 		defer cancel()
 
 		expiry := time.Now().AddDate(1, 0, 0)
-		_, err = policy.GetSCTs(ctx, []byte("test"), nil, expiry)
+		_, err = policy.Submit(ctx, []byte("test"), nil, expiry)
 		assert.Error(t, err)
 	})
 
@@ -545,7 +545,7 @@ func TestCTPolicy_GetSCTs(t *testing.T) {
 		config := PolicyConfig{
 			MinSCTs:           2,
 			MinOperators:      2,
-			LogGroups:         logs,
+			LogGroups:         enableLogs(t, logs),
 			SubmissionTimeout: 5 * time.Second,
 		}
 
@@ -559,7 +559,7 @@ func TestCTPolicy_GetSCTs(t *testing.T) {
 		require.NoError(t, err)
 
 		expiry := time.Now().AddDate(1, 0, 0)
-		_, err = policy.GetSCTs(context.Background(), []byte("test"), nil, expiry)
+		_, err = policy.Submit(context.Background(), []byte("test"), nil, expiry)
 		require.Error(t, err)
 
 		// The policy violation ("not enough SCTs") is reported...
@@ -602,7 +602,7 @@ func TestCTPolicy_GetSCTs(t *testing.T) {
 		config := PolicyConfig{
 			MinSCTs:           2,
 			MinOperators:      2,
-			LogGroups:         logs,
+			LogGroups:         enableLogs(t, logs),
 			RequireRFC6962Log: true,
 			SubmissionTimeout: 5 * time.Second,
 		}
@@ -615,7 +615,7 @@ func TestCTPolicy_GetSCTs(t *testing.T) {
 		require.NoError(t, err)
 
 		expiry := time.Now().AddDate(1, 0, 0)
-		_, err = policy.GetSCTs(context.Background(), []byte("test"), nil, expiry)
+		_, err = policy.Submit(context.Background(), []byte("test"), nil, expiry)
 		// Should fail because no RFC6962 log returned an SCT
 		assert.ErrorIs(t, err, ErrNoRFC6962Log)
 	})
@@ -635,7 +635,7 @@ func TestCTPolicy_GetSCTs(t *testing.T) {
 		config := PolicyConfig{
 			MinSCTs:           1,
 			MinOperators:      1,
-			LogGroups:         logs,
+			LogGroups:         enableLogs(t, logs),
 			StaggerDelay:      0,
 			SubmissionTimeout: 5 * time.Second,
 		}
@@ -650,7 +650,7 @@ func TestCTPolicy_GetSCTs(t *testing.T) {
 
 		expiry := time.Now().AddDate(1, 0, 0)
 		// Context is already cancelled
-		_, err = policy.GetSCTs(ctx, []byte("test"), nil, expiry)
+		_, err = policy.Submit(ctx, []byte("test"), nil, expiry)
 		// Should fail because context is cancelled
 		assert.Error(t, err)
 	})
@@ -681,6 +681,13 @@ func TestCTPolicy_EligibleLogs(t *testing.T) {
 			EndTime:   now.AddDate(-1, 0, 0), // Ended a year ago
 		},
 	}
+	logs = append(enableLogs(t, logs), LogGroup{
+		Name:      "Disabled Log",
+		Operator:  "Op4",
+		URL:       "https://disabled.example.com",
+		StartTime: now.AddDate(-1, 0, 0),
+		PublicKey: newP256Key(t).Public(),
+	})
 
 	config := PolicyConfig{
 		MinSCTs:      2,
@@ -702,20 +709,26 @@ func TestCTPolicy_EligibleLogs(t *testing.T) {
 		eligible := policy.EligibleLogs(expiry)
 		assert.Len(t, eligible, 1) // Only Active log
 	})
+
+	t.Run("disabled log is never eligible", func(t *testing.T) {
+		for _, log := range policy.EligibleLogs(now.AddDate(0, 1, 0)) {
+			assert.NotEqual(t, "Disabled Log", log.Name)
+		}
+	})
 }
 
 func TestCTPolicy_Operators(t *testing.T) {
 	logs := []LogGroup{
-		{Operator: "Google"},
-		{Operator: "Cloudflare"},
-		{Operator: "Google"}, // Duplicate
-		{Operator: "DigiCert"},
+		{Operator: "Google", URL: "https://google1.example.com"},
+		{Operator: "Cloudflare", URL: "https://cloudflare.example.com"},
+		{Operator: "Google", URL: "https://google2.example.com"}, // Duplicate operator
+		{Operator: "DigiCert", URL: "https://digicert.example.com"},
 	}
 
 	config := PolicyConfig{
 		MinSCTs:      1,
 		MinOperators: 1,
-		LogGroups:    logs,
+		LogGroups:    enableLogs(t, logs),
 	}
 
 	policy, err := NewCTPolicy(config, NewMockLogSubmitter())
@@ -729,7 +742,7 @@ func TestCTPolicy_AddRemoveLog(t *testing.T) {
 	config := PolicyConfig{
 		MinSCTs:      1,
 		MinOperators: 1,
-		LogGroups:    createTestLogGroups(),
+		LogGroups:    createTestLogGroups(t),
 	}
 
 	policy, err := NewCTPolicy(config, NewMockLogSubmitter())
@@ -739,9 +752,11 @@ func TestCTPolicy_AddRemoveLog(t *testing.T) {
 
 	// Add log
 	newLog := LogGroup{
-		Name:     "New Log",
-		Operator: "NewOp",
-		URL:      "https://new.example.com",
+		Name:      "New Log",
+		Operator:  "NewOp",
+		URL:       "https://new.example.com",
+		PublicKey: newP256Key(t).Public(),
+		Enabled:   true,
 	}
 	err = policy.AddLog(newLog)
 	require.NoError(t, err)
@@ -750,6 +765,19 @@ func TestCTPolicy_AddRemoveLog(t *testing.T) {
 	// Add duplicate should fail
 	err = policy.AddLog(newLog)
 	assert.ErrorIs(t, err, ErrInvalidLogConfig)
+	assert.ErrorIs(t, err, ErrDuplicateLog)
+
+	// The same key under another URL is the same log
+	sameKey := newLog
+	sameKey.URL = "https://alias.example.com"
+	err = policy.AddLog(sameKey)
+	assert.ErrorIs(t, err, ErrDuplicateLog)
+
+	// A log without a key cannot verify its SCTs
+	keyless := LogGroup{Name: "Keyless", URL: "https://keyless.example.com", Enabled: true}
+	err = policy.AddLog(keyless)
+	assert.ErrorIs(t, err, ErrLogPublicKeyMissing)
+	assert.Len(t, policy.Config().LogGroups, initialCount+1)
 
 	// Remove log
 	policy.RemoveLog("https://new.example.com")
@@ -764,7 +792,7 @@ func TestCTPolicy_UpdateConfig(t *testing.T) {
 	config := PolicyConfig{
 		MinSCTs:      1,
 		MinOperators: 1,
-		LogGroups:    createTestLogGroups(),
+		LogGroups:    createTestLogGroups(t),
 	}
 
 	policy, err := NewCTPolicy(config, NewMockLogSubmitter())
@@ -774,7 +802,7 @@ func TestCTPolicy_UpdateConfig(t *testing.T) {
 		newConfig := PolicyConfig{
 			MinSCTs:      2,
 			MinOperators: 2,
-			LogGroups:    createTestLogGroups(),
+			LogGroups:    createTestLogGroups(t),
 		}
 
 		err := policy.UpdateConfig(newConfig)
@@ -789,7 +817,7 @@ func TestCTPolicy_UpdateConfig(t *testing.T) {
 		newConfig := PolicyConfig{
 			MinSCTs:      0,
 			MinOperators: 1,
-			LogGroups:    createTestLogGroups(),
+			LogGroups:    createTestLogGroups(t),
 		}
 
 		err := policy.UpdateConfig(newConfig)
@@ -800,7 +828,7 @@ func TestCTPolicy_UpdateConfig(t *testing.T) {
 		newConfig := PolicyConfig{
 			MinSCTs:      1,
 			MinOperators: 0,
-			LogGroups:    createTestLogGroups(),
+			LogGroups:    createTestLogGroups(t),
 		}
 
 		err := policy.UpdateConfig(newConfig)
@@ -882,58 +910,65 @@ func TestDefaultPolicyConfig(t *testing.T) {
 	assert.NotZero(t, config.MaxParallelSubmissions)
 }
 
-func TestIsPolicySatisfied(t *testing.T) {
-	policy, err := NewCTPolicy(PolicyConfig{
-		MinSCTs:      2,
-		MinOperators: 2,
-		LogGroups:    createTestLogGroups(),
-	}, NewMockLogSubmitter())
-	require.NoError(t, err)
-
-	t.Run("all requirements met", func(t *testing.T) {
-		config := PolicyConfig{
-			MinSCTs:           2,
-			MinOperators:      2,
-			RequireRFC6962Log: true,
+func TestCollectSCTs(t *testing.T) {
+	google := LogGroup{Name: "google", URL: "https://google.example/", Operator: "Google"}
+	cloudflare := LogGroup{Name: "cloudflare", URL: "https://cloudflare.example/", Operator: "Cloudflare"}
+	refused := errors.New("log refused the chain")
+	feed := func(results ...SCTResult) <-chan SCTResult {
+		ch := make(chan SCTResult, len(results))
+		for _, result := range results {
+			ch <- result
 		}
-		assert.True(t, policy.isPolicySatisfied(2, 2, true, config))
-		assert.True(t, policy.isPolicySatisfied(3, 3, true, config))
+		close(ch)
+		return ch
+	}
+
+	t.Run("policy met reports the failed log", func(t *testing.T) {
+		config := PolicyConfig{MinSCTs: 1, MinOperators: 1}
+		submission, err := collectSCTs(feed(
+			SCTResult{Log: google, SCT: &SignedCertificateTimestamp{Timestamp: 1}},
+			SCTResult{Log: cloudflare, Error: refused},
+		), config)
+		require.NoError(t, err)
+		require.Len(t, submission.SCTs, 1)
+		require.Len(t, submission.Failures, 1)
+		assert.Equal(t, "cloudflare", submission.Failures[0].LogName)
+		assert.ErrorIs(t, submission.Failures[0], refused)
 	})
 
-	t.Run("insufficient SCTs", func(t *testing.T) {
-		config := PolicyConfig{
-			MinSCTs:           2,
-			MinOperators:      2,
-			RequireRFC6962Log: false,
-		}
-		assert.False(t, policy.isPolicySatisfied(1, 2, false, config))
+	t.Run("policy unmet joins every failure", func(t *testing.T) {
+		config := PolicyConfig{MinSCTs: 2, MinOperators: 1}
+		_, err := collectSCTs(feed(
+			SCTResult{Log: google, SCT: &SignedCertificateTimestamp{Timestamp: 1}},
+			SCTResult{Log: cloudflare, Error: refused},
+		), config)
+		var violation *PolicyViolationError
+		require.ErrorAs(t, err, &violation)
+		assert.ErrorIs(t, err, refused)
+		var submissionErr *CTSubmissionError
+		require.ErrorAs(t, err, &submissionErr)
+		assert.Equal(t, "cloudflare", submissionErr.LogName)
 	})
 
-	t.Run("insufficient operators", func(t *testing.T) {
-		config := PolicyConfig{
-			MinSCTs:           2,
-			MinOperators:      2,
-			RequireRFC6962Log: false,
-		}
-		assert.False(t, policy.isPolicySatisfied(2, 1, false, config))
+	t.Run("operators unmet", func(t *testing.T) {
+		config := PolicyConfig{MinSCTs: 1, MinOperators: 2}
+		_, err := collectSCTs(feed(SCTResult{Log: google, SCT: &SignedCertificateTimestamp{}}), config)
+		var violation *PolicyViolationError
+		require.ErrorAs(t, err, &violation)
 	})
 
-	t.Run("missing RFC6962 when required", func(t *testing.T) {
-		config := PolicyConfig{
-			MinSCTs:           2,
-			MinOperators:      2,
-			RequireRFC6962Log: true,
-		}
-		assert.False(t, policy.isPolicySatisfied(2, 2, false, config))
+	t.Run("RFC 6962 log required", func(t *testing.T) {
+		tiled := google
+		tiled.IsTiled = true
+		config := PolicyConfig{MinSCTs: 1, MinOperators: 1, RequireRFC6962Log: true}
+		_, err := collectSCTs(feed(SCTResult{Log: tiled, SCT: &SignedCertificateTimestamp{}}), config)
+		assert.ErrorIs(t, err, ErrNoRFC6962Log)
 	})
 
-	t.Run("RFC6962 not required", func(t *testing.T) {
-		config := PolicyConfig{
-			MinSCTs:           2,
-			MinOperators:      2,
-			RequireRFC6962Log: false,
-		}
-		assert.True(t, policy.isPolicySatisfied(2, 2, false, config))
+	t.Run("a result with neither SCT nor error is a failure", func(t *testing.T) {
+		config := PolicyConfig{MinSCTs: 1, MinOperators: 1}
+		_, err := collectSCTs(feed(SCTResult{Log: google}), config)
+		assert.ErrorIs(t, err, ErrInvalidSCT)
 	})
 }
 
@@ -979,9 +1014,11 @@ func TestCountOperators(t *testing.T) {
 }
 
 // createTestLogGroups creates a set of test log groups with multiple operators.
-func createTestLogGroups() []LogGroup {
+// createTestLogGroups returns four enabled logs from different operators.
+func createTestLogGroups(t *testing.T) []LogGroup {
+	t.Helper()
 	now := time.Now()
-	return []LogGroup{
+	return enableLogs(t, []LogGroup{
 		{
 			Name:      "Google Argon 2025",
 			Operator:  "Google",
@@ -1010,5 +1047,16 @@ func createTestLogGroups() []LogGroup {
 			StartTime: now.AddDate(-1, 0, 0),
 			IsTiled:   false,
 		},
+	})
+}
+
+// enableLogs gives every log its own P-256 key and enables it, as a
+// deployment's per-log configuration does.
+func enableLogs(t *testing.T, logs []LogGroup) []LogGroup {
+	t.Helper()
+	for i := range logs {
+		logs[i].PublicKey = newP256Key(t).Public()
+		logs[i].Enabled = true
 	}
+	return logs
 }

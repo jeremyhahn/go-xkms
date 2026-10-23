@@ -130,20 +130,38 @@ func VerifyConnection(pin string) func(tls.ConnectionState) error {
 // This is the standard Go pattern for custom TLS verification and is used
 // during truststrap bootstrap to establish initial trust with a remote server.
 func NewPinnedTLSConfig(spkiPin string) *tls.Config {
-	return &tls.Config{
-		MinVersion: tls.VersionTLS13,
-		// InsecureSkipVerify bypasses CA chain validation, which is impossible
-		// during trust bootstrap (the CA cert is what we are trying to fetch).
-		// VerifyConnection provides the actual peer authentication via SPKI pin.
-		// This is the standard Go pattern for custom TLS verification.
-		InsecureSkipVerify: true, // #nosec G402 -- CA chain skipped; VerifyConnection is sole verifier
-		// SessionTicketsDisabled prevents TLS session resumption (tickets/PSK).
-		// On a resumed session the stack does NOT invoke VerifyConnection,
-		// which would silently bypass the SPKI pin. Disabling resumption forces
-		// a full handshake every time so VerifyConnection always runs (CWE-295).
-		SessionTicketsDisabled: true,
-		VerifyConnection:       VerifyConnection(spkiPin),
+	return PinTLSConfig(&tls.Config{MinVersion: tls.VersionTLS13}, spkiPin)
+}
+
+// PinTLSConfig returns a copy of cfg that verifies the server against
+// spkiPin, keeping cfg's client certificates and protocol settings, so a
+// pinned connection still authenticates the client by mTLS. With cfg.RootCAs
+// set the pin is checked after CA chain validation; without it the pin is
+// the sole trust anchor. A nil cfg is treated as an empty configuration.
+func PinTLSConfig(cfg *tls.Config, spkiPin string) *tls.Config {
+	pinned := &tls.Config{}
+	if cfg != nil {
+		pinned = cfg.Clone()
 	}
+	pinned.VerifyConnection = VerifyConnection(spkiPin)
+	if pinned.RootCAs != nil {
+		return pinned
+	}
+
+	// InsecureSkipVerify bypasses CA chain validation, which is impossible
+	// during trust bootstrap (the CA cert is what we are trying to fetch).
+	// VerifyConnection provides the actual peer authentication via SPKI pin.
+	// This is the standard Go pattern for custom TLS verification.
+	pinned.InsecureSkipVerify = true // #nosec G402 -- CA chain skipped; VerifyConnection is sole verifier
+	// SessionTicketsDisabled prevents TLS session resumption (tickets/PSK).
+	// On a resumed session the stack does NOT invoke VerifyConnection,
+	// which would silently bypass the SPKI pin. Disabling resumption forces
+	// a full handshake every time so VerifyConnection always runs (CWE-295).
+	pinned.SessionTicketsDisabled = true
+	if pinned.MinVersion < tls.VersionTLS13 {
+		pinned.MinVersion = tls.VersionTLS13
+	}
+	return pinned
 }
 
 // FetchServerPin connects to the given server address (host:port) using the

@@ -31,18 +31,22 @@
 //
 // Example usage:
 //
-//	policy := ct.NewCTPolicy(ct.PolicyConfig{
+//	policy, err := ct.NewCTPolicy(ct.PolicyConfig{
 //	    MinSCTs:      2,
 //	    MinOperators: 2,
 //	    LogGroups:    myLogGroups,
-//	})
-//
-//	scts, err := policy.GetSCTs(ctx, precertDER, expiry)
+//	}, ct.NewHTTPLogSubmitter(nil))
 //	if err != nil {
 //	    return err
 //	}
 //
-//	ext, err := ct.MakeSCTListExtension(scts)
+//	// chain is the issuing chain, issuer first (RFC 6962 §4.2).
+//	submission, err := policy.Submit(ctx, precertDER, chain, notAfter)
+//	if err != nil {
+//	    return err
+//	}
+//
+//	ext, err := ct.MakeSCTListExtension(submission.SCTs)
 //	if err != nil {
 //	    return err
 //	}

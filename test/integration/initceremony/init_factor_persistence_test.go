@@ -31,6 +31,7 @@ package initceremony
 import (
 	"context"
 	"crypto/tls"
+	"encoding/json"
 	"fmt"
 	"io"
 	"net"
@@ -44,6 +45,7 @@ import (
 	"testing"
 	"time"
 
+	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
 	"github.com/jeremyhahn/go-xkms/sdk/go/bootstrap"
 )
 
@@ -51,42 +53,53 @@ import (
 // integration fixture in this repo (see the devcontainer compose files).
 const buildTags = "codec_cbor codec_json codec_msgpack tpm_simulator"
 
+// binaries holds the paths of the built xkmsd server and xkmsctl client.
+type binaries struct {
+	xkmsd   string
+	xkmsctl string
+}
+
 var (
 	buildOnce sync.Once
-	builtBin  string
+	built     binaries
 	buildErr  error
 )
 
-// buildXKMSD compiles the xkmsd binary once per test process and returns its
-// path. Building once keeps a multi-test suite fast; each test still gets an
+// buildBinaries compiles xkmsd and xkmsctl once per test process and returns
+// their paths. Building once keeps a multi-test suite fast; each test still gets an
 // independent data directory and port set.
-func buildXKMSD(t *testing.T) string {
+func buildBinaries(t *testing.T) binaries {
 	t.Helper()
 	buildOnce.Do(func() {
 		root := projectRoot(t)
 		// t.TempDir() is scoped to this subtest and removed when it ends, but
-		// buildOnce makes the binary shared by every test in this process; it
-		// must outlive any one test, so it is built into its own directory
-		// under the OS temp root instead.
+		// buildOnce makes the binaries shared by every test in this process;
+		// they must outlive any one test, so they are built into their own
+		// directory under the OS temp root instead.
 		out, err := os.MkdirTemp("", "xkmsd-initceremony-bin")
 		if err != nil {
 			buildErr = err
 			return
 		}
-		binPath := filepath.Join(out, "xkmsd")
-		cmd := exec.Command("go", "build", "-tags", buildTags, "-o", binPath, "./cmd/xkmsd")
-		cmd.Dir = root
-		cmd.Env = append(os.Environ(), "GOWORK=off")
-		if output, err := cmd.CombinedOutput(); err != nil {
-			buildErr = fmt.Errorf("go build ./cmd/xkmsd: %w\n%s", err, output)
-			return
+		bins := binaries{
+			xkmsd:   filepath.Join(out, "xkmsd"),
+			xkmsctl: filepath.Join(out, "xkmsctl"),
 		}
-		builtBin = binPath
+		for pkg, binPath := range map[string]string{"./cmd/xkmsd": bins.xkmsd, "./cmd/xkmsctl": bins.xkmsctl} {
+			cmd := exec.Command("go", "build", "-tags", buildTags, "-o", binPath, pkg)
+			cmd.Dir = root
+			cmd.Env = append(os.Environ(), "GOWORK=off")
+			if output, err := cmd.CombinedOutput(); err != nil {
+				buildErr = fmt.Errorf("go build %s: %w\n%s", pkg, err, output)
+				return
+			}
+		}
+		built = bins
 	})
 	if buildErr != nil {
-		t.Fatalf("build xkmsd: %v", buildErr)
+		t.Fatalf("build binaries: %v", buildErr)
 	}
-	return builtBin
+	return built
 }
 
 // projectRoot walks up from the working directory to the module root.
@@ -122,6 +135,26 @@ func freePort(t *testing.T) int {
 	return l.Addr().(*net.TCPAddr).Port
 }
 
+// nodePorts are the listeners one xkmsd run serves its clients on.
+type nodePorts struct {
+	rest       int
+	grpc       int
+	mcp        int
+	unixSocket string
+}
+
+// newNodePorts allocates a free TCP port per network listener and places the
+// Unix socket in dataDir.
+func newNodePorts(t *testing.T, dataDir string) nodePorts {
+	t.Helper()
+	return nodePorts{
+		rest:       freePort(t),
+		grpc:       freePort(t),
+		mcp:        freePort(t),
+		unixSocket: filepath.Join(dataDir, "xkmsd.sock"),
+	}
+}
+
 // writeMinimalConfig writes an xkmsd config with just enough surface to run
 // `init` and then `run` against a software backend: a qrdb-backed data
 // directory with the node barrier's "tpm2" strategy, REST only, and TLS with
@@ -153,19 +186,33 @@ func freePort(t *testing.T) int {
 // record (qrdb's stack-wide convention -- see
 // user.ComputeSPKIThumbprint), not CA chain trust, so "request" (send the
 // cert, do not chain-verify it) is enough for that lookup to run.
-func writeMinimalConfig(t *testing.T, dataDir string, restPort, tpmPort int) string {
+func writeMinimalConfig(t *testing.T, dataDir string, ports nodePorts, tpmPort int) string {
 	t.Helper()
+	// Every client transport xkmsd serves is enabled, so the admin credential
+	// init issues is proven on each of them (#794). QUIC is HTTP/3 on the
+	// REST port (see config.NodeServing), so quic_port only satisfies
+	// Config.Validate.
 	cfg := fmt.Sprintf(`
 server:
   host: "127.0.0.1"
   rest_port: %d
+  grpc_port: %d
+  quic_port: %d
+  mcp_port: %d
 
 logging:
   level: "info"
   format: "json"
 
 protocols:
+  unix: true
   rest: true
+  grpc: true
+  quic: true
+  mcp: true
+
+unix:
+  socket_path: %q
 
 tls:
   enabled: true
@@ -234,7 +281,8 @@ ca:
   selected-ca: 0
   default-validity-days: 365
   home-dir: %q
-`, restPort, dataDir, filepath.Join(dataDir, "keys"), tpmPort, filepath.Join(dataDir, "ca"))
+`, ports.rest, ports.grpc, ports.rest, ports.mcp, ports.unixSocket,
+		dataDir, filepath.Join(dataDir, "keys"), tpmPort, filepath.Join(dataDir, "ca"))
 
 	path := filepath.Join(dataDir, "xkmsd.yaml")
 	if err := os.WriteFile(path, []byte(cfg), 0o600); err != nil {
@@ -275,6 +323,9 @@ func runInit(t *testing.T, bin, cfgPath, dataDir, soPin string) {
 // xkmsdProcess wraps a running `xkmsd run` invocation.
 type xkmsdProcess struct {
 	cmd *exec.Cmd
+	// spkiPin is the hex SHA-256 SPKI pin of the TLS certificate this run
+	// serves on every listener, captured on first contact.
+	spkiPin string
 }
 
 // startRun launches xkmsd's default (daemon) command against cfgPath and
@@ -289,7 +340,7 @@ type xkmsdProcess struct {
 // so a literal "run" positional here would have silently discarded
 // --config and every flag after it, leaving xkmsd to fall back to
 // /etc/xkms/xkmsd.yaml and fail to start.
-func startRun(t *testing.T, bin, cfgPath string, restPort int) *xkmsdProcess {
+func startRun(t *testing.T, bin, cfgPath string, ports nodePorts) *xkmsdProcess {
 	t.Helper()
 	cmd := exec.Command(bin, "--config", cfgPath)
 	cmd.Stdout = &testLogWriter{t: t, prefix: "xkmsd run: "}
@@ -299,14 +350,60 @@ func startRun(t *testing.T, bin, cfgPath string, restPort int) *xkmsdProcess {
 	}
 	proc := &xkmsdProcess{cmd: cmd}
 
-	if !waitForPort(restPort, 30*time.Second) {
-		_ = proc.stop()
-		t.Fatalf("xkmsd run never opened REST port %d within 30s", restPort)
+	// An open port does not mean the server behind it has finished composing
+	// (CA, first-boot, the capability module), so readiness is the REST
+	// readiness probe answering 200 and every other listener accepting.
+	pinStore := bootstrap.NewMemoryPinStore()
+	probe := &http.Client{
+		Timeout:   time.Second,
+		Transport: &http.Transport{TLSClientConfig: tofuTLSConfig(t, pinStore, ports.rest)},
 	}
-	// The port opening does not guarantee the HTTP server behind it has
-	// finished composing (CA, first-boot, etc.); give it a moment to settle.
-	time.Sleep(500 * time.Millisecond)
+	readyURL := fmt.Sprintf("https://127.0.0.1:%d/health/ready", ports.rest)
+	ready := func() bool {
+		return httpOK(probe, readyURL) &&
+			listenerAccepts("tcp", net.JoinHostPort("127.0.0.1", strconv.Itoa(ports.grpc))) &&
+			listenerAccepts("tcp", net.JoinHostPort("127.0.0.1", strconv.Itoa(ports.mcp))) &&
+			listenerAccepts("unix", ports.unixSocket)
+	}
+	if !waitUntil(30*time.Second, ready) {
+		_ = proc.stop()
+		t.Fatalf("xkmsd run was not ready on every listener within 30s")
+	}
+
+	// A first boot serves a bootstrap certificate until composition installs
+	// the CA-issued one, and the probe's kept-alive connection still carries
+	// the bootstrap certificate, so the pin comes from a fresh handshake made
+	// once the server is ready.
+	pin, err := captureSPKIPin(t, ports.rest)
+	if err != nil {
+		_ = proc.stop()
+		t.Fatalf("capture the server SPKI pin: %v", err)
+	}
+	proc.spkiPin = pin
 	return proc
+}
+
+// captureSPKIPin makes a fresh TLS handshake with the REST listener on a
+// trust-on-first-use pin store and returns the SPKI pin it recorded.
+func captureSPKIPin(t *testing.T, restPort int) (string, error) {
+	t.Helper()
+	pinStore := bootstrap.NewMemoryPinStore()
+	addr := net.JoinHostPort("127.0.0.1", strconv.Itoa(restPort))
+	conn, err := tls.Dial("tcp", addr, tofuTLSConfig(t, pinStore, restPort))
+	if err != nil {
+		return "", err
+	}
+	if err := conn.Close(); err != nil {
+		return "", err
+	}
+	pins, err := pinStore.List(context.Background())
+	if err != nil {
+		return "", err
+	}
+	if len(pins) != 1 {
+		return "", fmt.Errorf("%d pins recorded, want 1", len(pins))
+	}
+	return pins[0].SPKISHA256, nil
 }
 
 // stop sends SIGTERM and waits for the process to exit, matching how an
@@ -328,20 +425,39 @@ func (p *xkmsdProcess) stop() error {
 	}
 }
 
-// waitForPort polls until something accepts TCP connections on port, or the
-// timeout elapses.
-func waitForPort(port int, timeout time.Duration) bool {
-	deadline := time.Now().Add(timeout)
-	addr := net.JoinHostPort("127.0.0.1", strconv.Itoa(port))
-	for time.Now().Before(deadline) {
-		conn, err := net.DialTimeout("tcp", addr, time.Second)
-		if err == nil {
-			_ = conn.Close()
-			return true
+// waitUntil polls ready until it reports true, or the timeout elapses.
+func waitUntil(timeout time.Duration, ready func() bool) bool {
+	deadline := time.After(timeout)
+	tick := time.NewTicker(200 * time.Millisecond)
+	defer tick.Stop()
+	for !ready() {
+		select {
+		case <-deadline:
+			return false
+		case <-tick.C:
 		}
-		time.Sleep(200 * time.Millisecond)
 	}
-	return false
+	return true
+}
+
+// listenerAccepts reports whether something accepts connections on address.
+func listenerAccepts(network, address string) bool {
+	conn, err := net.DialTimeout(network, address, time.Second)
+	if err != nil {
+		return false
+	}
+	_ = conn.Close()
+	return true
+}
+
+// httpOK reports whether a GET of url answers 200.
+func httpOK(client *http.Client, url string) bool {
+	resp, err := client.Get(url)
+	if err != nil {
+		return false
+	}
+	_ = resp.Body.Close()
+	return resp.StatusCode == http.StatusOK
 }
 
 // mtlsClient builds an HTTP client presenting the admin's enrolled
@@ -399,12 +515,7 @@ func mtlsClient(t *testing.T, certPath, keyPath string, restPort int) *http.Clie
 		t.Fatalf("load admin credential: %v", err)
 	}
 
-	endpoint := net.JoinHostPort("127.0.0.1", strconv.Itoa(restPort))
-	pinStore := bootstrap.NewMemoryPinStore()
-	tlsConfig, err := bootstrap.NewTOFUTLSConfig(context.Background(), pinStore, endpoint, nil)
-	if err != nil {
-		t.Fatalf("build TOFU TLS config for %s: %v", endpoint, err)
-	}
+	tlsConfig := tofuTLSConfig(t, bootstrap.NewMemoryPinStore(), restPort)
 	// The static Certificates list every SDK transport and xkmsctl use:
 	// crypto/tls's client sends an entry only when its issuer is among the
 	// server's advertised acceptable CAs, and the server advertises the
@@ -417,14 +528,27 @@ func mtlsClient(t *testing.T, certPath, keyPath string, restPort int) *http.Clie
 	}
 }
 
+// tofuTLSConfig returns a client TLS config that pins the server's SPKI into
+// pinStore on first contact with the REST port.
+func tofuTLSConfig(t *testing.T, pinStore bootstrap.PinStore, restPort int) *tls.Config {
+	t.Helper()
+	endpoint := net.JoinHostPort("127.0.0.1", strconv.Itoa(restPort))
+	tlsConfig, err := bootstrap.NewTOFUTLSConfig(context.Background(), pinStore, endpoint, nil)
+	if err != nil {
+		t.Fatalf("build TOFU TLS config for %s: %v", endpoint, err)
+	}
+	return tlsConfig
+}
+
 // assertAdminAuthenticates proves the admin credential authenticates a
-// session-gated REST route, mirroring
+// session-gated REST route, and that the identity the server reports for it
+// is the init admin, mirroring
 // test/integration/logins/mtls_test.go's TestMTLS_AdminCredentialAuthenticates
 // but against a self-managed, restartable server instead of a fixed
 // docker-compose target.
-func assertAdminAuthenticates(t *testing.T, restPort int, certPath, keyPath string) {
+func assertAdminAuthenticates(t *testing.T, restPort int, admin initAdmin) {
 	t.Helper()
-	client := mtlsClient(t, certPath, keyPath, restPort)
+	client := mtlsClient(t, admin.certPath, admin.keyPath, restPort)
 	url := fmt.Sprintf("https://127.0.0.1:%d/api/v1/auth/me", restPort)
 
 	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
@@ -440,9 +564,28 @@ func assertAdminAuthenticates(t *testing.T, restPort int, certPath, keyPath stri
 	}
 	defer func() { _ = resp.Body.Close() }()
 
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		t.Fatalf("read %s response: %v", url, err)
+	}
 	if resp.StatusCode != http.StatusOK {
-		body, _ := io.ReadAll(resp.Body)
 		t.Fatalf("expected 200 from %s with the admin credential, got %d: %s", url, resp.StatusCode, body)
+	}
+
+	// Roles carries role identifiers (the qrdb identity contract), so the
+	// administrator check reads a permission only an administrator holds.
+	var me struct {
+		Username    string          `json:"username"`
+		AuthMethod  string          `json:"auth_method"`
+		Permissions map[string]bool `json:"permissions"`
+	}
+	if err := json.Unmarshal(body, &me); err != nil {
+		t.Fatalf("decode %s response: %v", url, err)
+	}
+	if me.Username != admin.username || me.AuthMethod != qrdbsdk.MethodMTLS || !me.Permissions[adminOnlyPermission] {
+		t.Fatalf("%s reports username %q, auth method %q, %s=%t; want the init admin %q over %s holding %s",
+			url, me.Username, me.AuthMethod, adminOnlyPermission, me.Permissions[adminOnlyPermission],
+			admin.username, qrdbsdk.MethodMTLS, adminOnlyPermission)
 	}
 }
 
@@ -463,26 +606,26 @@ func (w *testLogWriter) Write(p []byte) (int, error) {
 // authenticate after `xkmsd run` restarts, with no second init and no
 // re-enrollment.
 func TestInitPersistsAdminFactor_SurvivesRestart(t *testing.T) {
-	bin := buildXKMSD(t)
+	bins := buildBinaries(t)
 	dataDir := t.TempDir()
-	restPort := freePort(t)
+	ports := newNodePorts(t, dataDir)
 	tpmPort := startTPM2Simulator(t)
-	cfgPath := writeMinimalConfig(t, dataDir, restPort, tpmPort)
+	cfgPath := writeMinimalConfig(t, dataDir, ports, tpmPort)
 
-	runInit(t, bin, cfgPath, dataDir, "test-so-pin-0123456789")
-
-	certPath := filepath.Join(dataDir, "admin-cert.pem")
-	keyPath := filepath.Join(dataDir, "admin-key.pem")
+	runInit(t, bins.xkmsd, cfgPath, dataDir, "test-so-pin-0123456789")
+	admin := loadInitAdmin(t, dataDir)
 
 	t.Log("starting xkmsd run (first boot of the durable node init just wrote to)")
-	proc := startRun(t, bin, cfgPath, restPort)
-	assertAdminAuthenticates(t, restPort, certPath, keyPath)
+	proc := startRun(t, bins.xkmsd, cfgPath, ports)
+	assertAdminAuthenticates(t, ports.rest, admin)
+	assertAdminOnEveryTransport(t, bins.xkmsctl, proc, ports, admin)
 	if err := proc.stop(); err != nil {
 		t.Fatalf("stop xkmsd run: %v", err)
 	}
 
 	t.Log("restarting xkmsd run against the SAME data directory -- no second init")
-	proc2 := startRun(t, bin, cfgPath, restPort)
+	proc2 := startRun(t, bins.xkmsd, cfgPath, ports)
 	defer func() { _ = proc2.stop() }()
-	assertAdminAuthenticates(t, restPort, certPath, keyPath)
+	assertAdminAuthenticates(t, ports.rest, admin)
+	assertAdminOnEveryTransport(t, bins.xkmsctl, proc2, ports, admin)
 }

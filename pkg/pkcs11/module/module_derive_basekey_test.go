@@ -81,26 +81,12 @@ func hkdfMechanism(salt, info []byte) *Mechanism {
 	}
 }
 
-// availableDeriveMechanism builds a derivation the token performs in the
-// current mode, for tests whose subject is the base key or the template rather
-// than the KDF. FIPS mode withholds HKDF over an arbitrary base key (see
-// TestFIPSMode), so the SP 800-108 counter KDF stands in for it there.
+// availableDeriveMechanism builds a derivation the token performs in either
+// mode, for tests whose subject is the base key or the template rather than
+// the KDF. HKDF over SHA-256 is inside the Go Cryptographic Module, so FIPS
+// mode performs it too.
 func availableDeriveMechanism() *Mechanism {
-	if !fipsModeEnabled() {
-		return hkdfMechanism([]byte("salt"), []byte("info"))
-	}
-	return &Mechanism{
-		Type: CKM_SP800_108_COUNTER_KDF,
-		TypedParameter: &SP800108KDFParams{
-			PRF: CKM_SHA256_HMAC,
-			DataParams: []SP800108DataParam{
-				{Type: SP800108IterationVariable},
-				{Type: SP800108ByteArray, Value: []byte("label")},
-				{Type: SP800108ByteArray, Value: []byte{0x00}},
-				{Type: SP800108ByteArray, Value: []byte("context")},
-			},
-		},
-	}
+	return hkdfMechanism([]byte("salt"), []byte("info"))
 }
 
 // derivedKeyTemplate is the template C_DeriveKey is given for the new key.
@@ -152,11 +138,6 @@ func TestDeriveKeySendsTheBaseKeyIdentityNotItsName(t *testing.T) {
 	base := generateDerivableSecret(t, m, session, "derive-base")
 
 	_, rv := m.DeriveKey(session, hkdfMechanism([]byte("salt"), []byte("info")), base, derivedKeyTemplate(32))
-	if fipsModeEnabled() {
-		// TestDeriveKeySP800108SendsTheBaseKeyIdentity covers the identity there.
-		assert.Equal(t, CKR_MECHANISM_INVALID, rv, "FIPS mode withholds HKDF over an arbitrary base key")
-		return
-	}
 	require.Equal(t, CKR_OK, rv)
 
 	req := client.lastDerive

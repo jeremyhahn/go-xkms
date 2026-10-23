@@ -52,7 +52,7 @@ import (
 // A deliberate policy change updates these; an accidental one fails the build.
 var caPolicyGoldens = map[string]string{
 	"root":                "7bba11261e267fe9de786327a6a90ed919943b949d9071fc7192ddc3a5cb8b5f",
-	"leaf_no_profile":     "f3504bb4896ac1d445b3791e146d845ebded6bdbd6fa7584e547e2a43d580418",
+	"leaf_no_profile":     "64b4b1090fe2092d7babdde53c13fbde2e08e8b290fcf663fb23f87ee9c7ceb9",
 	"leaf_server_profile": "9aa2c2df622bd5a7f4a5e587b882bc9788a7d5b5c1adb2c55ea28154cb55ec6b",
 	"leaf_ca_profile":     "685341dd3605b6bed20fa3258383844c72cdbec64004eb2e2340a5a9a97e9bd1",
 	// tcg_ek changed 2026-09-08 (TCG DevID §8.1 conformance): the permanent

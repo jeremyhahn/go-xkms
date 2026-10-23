@@ -16,7 +16,6 @@ package console
 import (
 	"context"
 	"crypto/ed25519"
-	"crypto/fips140"
 	"crypto/rand"
 	"errors"
 	"io"
@@ -265,13 +264,16 @@ func TestConsole_DialFailsWhenPTYRefused(t *testing.T) {
 		t.Fatal("Dial must fail when the server refuses a PTY")
 	}
 	// Under GODEBUG=fips140=only the handshake itself is refused (see
-	// requireHandshake) before the client ever reaches the PTY request this
-	// test targets, so the error is a handshake failure, not *SessionError.
-	if !fips140.Enforced() {
-		var sessErr *SessionError
-		if !errors.As(err, &sessErr) {
-			t.Fatalf("error = %T (%v), want *SessionError", err, err)
-		}
+	// outsideFIPSAfterDialRefusal) before the client ever reaches the PTY
+	// request this test targets, so the error is a *DialError carrying the
+	// module's refusal, not *SessionError, and the test re-runs with
+	// fips140=off to reach it.
+	if !outsideFIPSAfterDialRefusal(t, err) {
+		return
+	}
+	var sessErr *SessionError
+	if !errors.As(err, &sessErr) {
+		t.Fatalf("error = %T (%v), want *SessionError", err, err)
 	}
 	if c != nil {
 		t.Error("no console may be returned when session setup fails")
@@ -289,14 +291,16 @@ func TestConsole_DialFailsWhenShellRefused(t *testing.T) {
 		t.Fatal("Dial must fail when the server refuses to start a shell")
 	}
 	// Under GODEBUG=fips140=only the handshake itself is refused (see
-	// requireHandshake) before the client ever reaches the shell request
-	// this test targets, so the error is a handshake failure, not
-	// *SessionError.
-	if !fips140.Enforced() {
-		var sessErr *SessionError
-		if !errors.As(err, &sessErr) {
-			t.Fatalf("error = %T (%v), want *SessionError", err, err)
-		}
+	// outsideFIPSAfterDialRefusal) before the client ever reaches the shell
+	// request this test targets, so the error is a *DialError carrying the
+	// module's refusal, not *SessionError, and the test re-runs with
+	// fips140=off to reach it.
+	if !outsideFIPSAfterDialRefusal(t, err) {
+		return
+	}
+	var sessErr *SessionError
+	if !errors.As(err, &sessErr) {
+		t.Fatalf("error = %T (%v), want *SessionError", err, err)
 	}
 }
 
@@ -312,7 +316,7 @@ func TestOpen_FailsOnClosedClient(t *testing.T) {
 		HostKeyCallback: ssh.InsecureIgnoreHostKey(), //nolint:gosec // test server key is generated per test
 		Timeout:         10 * time.Second,
 	})
-	if !requireHandshake(t, err) {
+	if !requireSSHHandshake(t, err) {
 		return
 	}
 	_ = client.Close()

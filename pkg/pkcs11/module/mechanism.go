@@ -2042,6 +2042,14 @@ var mechanismRegistry = map[MechanismType]*MechanismDescriptor{
 	// (see types.SymmetricKeyDeriver). A base key that resolves to neither is
 	// refused with CKR_KEY_TYPE_INCONSISTENT.
 	//
+	// The two HKDF mechanisms are FIPSApproved because FIPS enforcement is the
+	// Go Cryptographic Module's, not this registry's. HKDF (RFC 5869, the
+	// SP 800-56C Rev. 2 §5 two-step KDF) is inside that module, and under
+	// fips140=only crypto/hkdf itself refuses what it does not approve: a
+	// PRF hash other than SHA-2 or SHA-3, and input keying material shorter
+	// than 112 bits. Withholding the mechanism here would be a second,
+	// narrower allowlist kept beside the stdlib's.
+	//
 	// ulMinKeySize/ulMaxKeySize are the base key's size in bits. RFC 5869
 	// places no bound on the length of HKDF's input keying material, and
 	// SP 800-108r1 places none on the length of its key-derivation key, so
@@ -2059,6 +2067,7 @@ var mechanismRegistry = map[MechanismType]*MechanismDescriptor{
 		RequiresParams: true,
 		ParamsType:     "HKDFParams",
 		Advertised:     true,
+		FIPSApproved:   true,
 	},
 	CKM_HKDF_DATA: {
 		Type:           CKM_HKDF_DATA,
@@ -2070,6 +2079,7 @@ var mechanismRegistry = map[MechanismType]*MechanismDescriptor{
 		RequiresParams: true,
 		ParamsType:     "HKDFParams",
 		Advertised:     true,
+		FIPSApproved:   true,
 	},
 
 	// SP800-108 Key Derivation Functions (NIST SP 800-108)

@@ -206,6 +206,29 @@ type ACMEConfig struct {
 	// applied to every ACME endpoint. It is on unless the operator turns it
 	// off; see ACMERateLimitConfig.
 	RateLimit ACMERateLimitConfig `yaml:"rate_limit"`
+
+	// Lint names the certificate lints the ACME CA skips on top of its
+	// private-PKI exclusions. See ACMELintConfig.
+	Lint ACMELintConfig `yaml:"lint"`
+
+	// CT configures Certificate Transparency at finalize; it is off unless
+	// a log is enabled. See ACMECTConfig.
+	CT ACMECTConfig `yaml:"ct"`
+}
+
+// ACMELintConfig names zlint lints and lint sources the ACME CA does not run,
+// on top of the private-PKI exclusions it always applies
+// (pkg/acme/linter.PrivatePKIConfig). Every other lint runs on each
+// certificate before it is signed: an error or fatal finding refuses the
+// certificate and a warning is logged and audited (CA/Browser Forum Baseline
+// Requirements §4.3.1.2). An unknown name stops the daemon at startup.
+type ACMELintConfig struct {
+	// ExcludeLints names lints that do not run, such as
+	// "w_subject_common_name_included".
+	ExcludeLints []string `yaml:"exclude_lints,omitempty"`
+
+	// ExcludeSources names lint sources that do not run, such as "Mozilla".
+	ExcludeSources []string `yaml:"exclude_sources,omitempty"`
 }
 
 // ACMEEnrollmentConfig configures behavior specific to TPM-attestation
@@ -898,6 +921,9 @@ func (c *ACMEConfig) Validate() error {
 		return err
 	}
 	if err := c.RateLimit.Validate(); err != nil {
+		return err
+	}
+	if err := c.CT.Validate(); err != nil {
 		return err
 	}
 	return nil

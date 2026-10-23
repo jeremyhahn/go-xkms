@@ -36,44 +36,42 @@ func (s *Suite) RunDecryptionTests(t *testing.T) {
 	t.Run("C_DecryptUpdate_C_DecryptFinal", s.testDecryptMultiPart)
 }
 
-// encryptTestData encrypts plaintext using single-part EncryptInit + Encrypt
-// so that the resulting ciphertext can be fed into decryption tests. Returns
-// the ciphertext and true on success, or nil and false if the backend does
-// not support the operation (in which case the calling test is skipped).
-func (s *Suite) encryptTestData(t *testing.T, m *module.Module, sh module.SessionHandle, key module.ObjectHandle, plaintext []byte) ([]byte, bool) {
+// sealTestData seals plaintext under key so that decryption tests have a
+// ciphertext to open, and returns that ciphertext with the CKM_AES_GCM
+// mechanism that decrypts it.
+//
+// Single-part C_Encrypt takes its IV from the application (v3.2 §6.13.2), and
+// a FIPS 140-only token refuses a caller-chosen GCM IV. The fixture therefore
+// seals through the message-based API with ivGenerator CKG_GENERATE_RANDOM
+// (§6.13.7), which hands the token's IV and tag back in CK_GCM_MESSAGE_PARAMS,
+// and returns ciphertext‖tag with that IV in CK_GCM_PARAMS — the form single-
+// and multi-part C_Decrypt take. The same fixture serves in both modes.
+func (s *Suite) sealTestData(t *testing.T, m *module.Module, sh module.SessionHandle, key module.ObjectHandle, plaintext []byte) ([]byte, *module.Mechanism) {
 	t.Helper()
 
-	mech := module.NewMechanismWithTypedParams(module.CKM_AES_GCM, module.NewAESGCMParams(suiteGCMIV(), 128))
+	initMech := module.NewMechanismWithTypedParams(module.CKM_AES_GCM, module.NewAESGCMParams(suiteGCMIV(), 128))
+	rv := m.MessageEncryptInit(sh, initMech, key)
+	requireRV(t, module.CKR_OK, rv, "MessageEncryptInit for test data failed")
 
-	rv := m.EncryptInit(sh, mech, key)
-	requireRV(t, module.CKR_OK, rv, "EncryptInit for test data failed")
+	params := &module.AESGCMMessageParams{IVGenerator: module.CKG_GENERATE_RANDOM, TagBits: 128}
+	body, rv := m.EncryptMessage(sh, params, nil, plaintext)
+	requireRV(t, module.CKR_OK, rv, "EncryptMessage for test data failed")
+	if len(params.IV) != 12 || len(params.Tag) != 16 {
+		t.Fatalf("EncryptMessage returned a %d-byte IV and a %d-byte tag, want 12 and 16",
+			len(params.IV), len(params.Tag))
+	}
 
-	ciphertext, rv := m.Encrypt(sh, plaintext)
-	requireRV(t, module.CKR_OK, rv, "Encrypt for test data failed")
+	// EncryptMessage may already have finalised the operation (see
+	// testMessageEncrypt), so either outcome of the Final is acceptable.
+	rv = m.MessageEncryptFinal(sh)
+	if rv != module.CKR_OK && rv != module.CKR_OPERATION_NOT_INITIALIZED &&
+		rv != module.CKR_FUNCTION_FAILED {
+		t.Fatalf("MessageEncryptFinal for test data failed: %v", rv)
+	}
 
-	return ciphertext, true
-}
-
-// encryptTestDataMultiPart encrypts plaintext using multi-part EncryptInit +
-// EncryptUpdate + EncryptFinal so that the resulting ciphertext can be fed
-// into multi-part decryption tests. Returns the ciphertext and true on success,
-// or nil and false if the backend does not support the operation (in which case
-// the calling test is skipped).
-func (s *Suite) encryptTestDataMultiPart(t *testing.T, m *module.Module, sh module.SessionHandle, key module.ObjectHandle, plaintext []byte) ([]byte, bool) {
-	t.Helper()
-
-	mech := module.NewMechanismWithTypedParams(module.CKM_AES_GCM, module.NewAESGCMParams(suiteGCMIV(), 128))
-
-	rv := m.EncryptInit(sh, mech, key)
-	requireRV(t, module.CKR_OK, rv, "EncryptInit for multi-part test data failed")
-
-	_, rv = m.EncryptUpdate(sh, plaintext)
-	requireRV(t, module.CKR_OK, rv, "EncryptUpdate for multi-part test data failed")
-
-	ciphertext, rv := m.EncryptFinal(sh)
-	requireRV(t, module.CKR_OK, rv, "EncryptFinal for multi-part test data failed")
-
-	return ciphertext, true
+	ciphertext := append(append([]byte{}, body...), params.Tag...)
+	decryptMech := module.NewMechanismWithTypedParams(module.CKM_AES_GCM, module.NewAESGCMParams(params.IV, 128))
+	return ciphertext, decryptMech
 }
 
 // testDecryptInit verifies C_DecryptInit behavior per PKCS#11 v3.0 Section 5.9.
@@ -163,12 +161,8 @@ func (s *Suite) testDecrypt(t *testing.T) {
 		plaintext := []byte("conformance-test-plaintext-data")
 
 		// Encrypt the plaintext so we have valid ciphertext to decrypt.
-		ciphertext, ok := s.encryptTestData(t, m, sh, key, plaintext)
-		if !ok {
-			return
-		}
+		ciphertext, mech := s.sealTestData(t, m, sh, key, plaintext)
 
-		mech := module.NewMechanismWithTypedParams(module.CKM_AES_GCM, module.NewAESGCMParams(suiteGCMIV(), 128))
 		rv := m.DecryptInit(sh, mech, key)
 		requireRV(t, module.CKR_OK, rv, "DecryptInit should succeed")
 
@@ -202,10 +196,7 @@ func (s *Suite) testDecrypt(t *testing.T) {
 		key := generateSecretKey(t, m, sh)
 		plaintext := []byte("authenticated-decryption-test-data")
 
-		ciphertext, ok := s.encryptTestData(t, m, sh, key, plaintext)
-		if !ok {
-			return
-		}
+		ciphertext, mech := s.sealTestData(t, m, sh, key, plaintext)
 
 		// Flip a bit in the ciphertext body. AES-GCM authenticates every byte
 		// it covers, so the tag check must fail; a decrypt that ignores the
@@ -213,7 +204,6 @@ func (s *Suite) testDecrypt(t *testing.T) {
 		tampered := append([]byte(nil), ciphertext...)
 		tampered[0] ^= 0x01
 
-		mech := module.NewMechanismWithTypedParams(module.CKM_AES_GCM, module.NewAESGCMParams(suiteGCMIV(), 128))
 		rv := m.DecryptInit(sh, mech, key)
 		requireRV(t, module.CKR_OK, rv, "DecryptInit should succeed")
 
@@ -237,12 +227,8 @@ func (s *Suite) testDecrypt(t *testing.T) {
 		other := generateSecretKey(t, m, sh)
 		plaintext := []byte("wrong-key-decryption-test-data")
 
-		ciphertext, ok := s.encryptTestData(t, m, sh, key, plaintext)
-		if !ok {
-			return
-		}
+		ciphertext, mech := s.sealTestData(t, m, sh, key, plaintext)
 
-		mech := module.NewMechanismWithTypedParams(module.CKM_AES_GCM, module.NewAESGCMParams(suiteGCMIV(), 128))
 		rv := m.DecryptInit(sh, mech, other)
 		requireRV(t, module.CKR_OK, rv, "DecryptInit with the other key should succeed")
 
@@ -290,12 +276,8 @@ func (s *Suite) testDecrypt(t *testing.T) {
 		plaintext := []byte("state-cleanup-test-data")
 
 		// Encrypt the plaintext so we have valid ciphertext to decrypt.
-		ciphertext, ok := s.encryptTestData(t, m, sh, key, plaintext)
-		if !ok {
-			return
-		}
+		ciphertext, mech := s.sealTestData(t, m, sh, key, plaintext)
 
-		mech := module.NewMechanismWithTypedParams(module.CKM_AES_GCM, module.NewAESGCMParams(suiteGCMIV(), 128))
 		rv := m.DecryptInit(sh, mech, key)
 		requireRV(t, module.CKR_OK, rv, "DecryptInit should succeed")
 
@@ -447,12 +429,8 @@ func (s *Suite) testDecryptMultiPart(t *testing.T) {
 		plaintext := []byte("multi-part-decryption-test-data")
 
 		// Encrypt using multi-part to produce ciphertext compatible with multi-part decrypt.
-		ciphertext, ok := s.encryptTestDataMultiPart(t, m, sh, key, plaintext)
-		if !ok {
-			return
-		}
+		ciphertext, mech := s.sealTestData(t, m, sh, key, plaintext)
 
-		mech := module.NewMechanismWithTypedParams(module.CKM_AES_GCM, module.NewAESGCMParams(suiteGCMIV(), 128))
 		rv := m.DecryptInit(sh, mech, key)
 		requireRV(t, module.CKR_OK, rv, "DecryptInit for multi-part should succeed")
 

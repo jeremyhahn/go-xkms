@@ -351,13 +351,7 @@ func (c *Client) buildTLSConfig() (*tls.Config, error) {
 	}
 
 	if c.config.SPKIPin != "" {
-		if c.config.TLSCAFile == "" && tlsConfig.RootCAs == nil {
-			// Trust bootstrap: no CA cert available, SPKI pin IS the trust anchor.
-			tlsConfig = spki.NewPinnedTLSConfig(c.config.SPKIPin)
-		} else {
-			// Additive: CA chain validated first, pin adds extra verification.
-			tlsConfig.VerifyConnection = spki.VerifyConnection(c.config.SPKIPin)
-		}
+		tlsConfig = spki.PinTLSConfig(tlsConfig, c.config.SPKIPin)
 	}
 
 	return tlsConfig, nil

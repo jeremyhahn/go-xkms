@@ -3197,7 +3197,14 @@ func TestDecrypt_SymmetricKeyInvalidCiphertext(t *testing.T) {
 	require.Error(t, err)
 	st, ok := status.FromError(err)
 	require.True(t, ok)
-	assert.Equal(t, codes.Internal, st.Code())
+	// Under fips140=only the caller-supplied nonce is refused before any
+	// authentication runs, and that refusal is the caller's to correct
+	// (go-xkms#23); outside it the forged ciphertext fails authentication.
+	want := codes.Internal
+	if fips140.Enforced() {
+		want = codes.InvalidArgument
+	}
+	assert.Equal(t, want, st.Code())
 }
 
 // ===================== ExportKey with non-exportable key =====================

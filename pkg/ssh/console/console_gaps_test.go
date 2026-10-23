@@ -62,6 +62,14 @@ func TestErrorTypes(t *testing.T) {
 		t.Fatal("SessionError.Unwrap did not expose inner")
 	}
 
+	de := &DialError{Host: "h", Err: inner}
+	if !strings.Contains(de.Error(), "h") || !strings.Contains(de.Error(), inner.Error()) {
+		t.Fatalf("DialError.Error = %q, want the host and the cause", de.Error())
+	}
+	if !errors.Is(de, inner) {
+		t.Fatal("DialError.Unwrap did not expose inner")
+	}
+
 	ce := &ClosedError{}
 	if ce.Error() == "" {
 		t.Fatal("ClosedError.Error empty")
@@ -105,7 +113,7 @@ func TestConsole_OpenOnClient(t *testing.T) {
 		Timeout:         5 * time.Second,
 	}
 	client, err := ssh.Dial("tcp", net.JoinHostPort(srv.host, strconv.Itoa(srv.port)), cfg)
-	if !requireHandshake(t, err) {
+	if !requireSSHHandshake(t, err) {
 		return
 	}
 	defer client.Close()

@@ -26,6 +26,7 @@ import (
 	"crypto/ecdsa"
 	"crypto/ed25519"
 	"crypto/elliptic"
+	"crypto/hkdf"
 	"crypto/rand"
 	"crypto/rsa"
 	"crypto/sha256"
@@ -37,8 +38,6 @@ import (
 	"strings"
 	"sync"
 	"testing"
-
-	"golang.org/x/crypto/hkdf"
 
 	"github.com/jeremyhahn/go-xkms/pkg/api/transport"
 	"github.com/jeremyhahn/go-xkms/pkg/crypto/aead"
@@ -363,13 +362,10 @@ func (c *CryptoMockClient) Verify(ctx context.Context, req *transport.VerifyRequ
 // combination cipher.NewGCMWithRandomNonce supports -- CK_GCM_PARAMS.pIv
 // left empty (the token generates the IV) and the default full 128-bit tag
 // -- and this mock previously did not, so it understated what a real
-// deployment actually does in that mode. A caller-supplied pIv (the
-// suiteGCMIV() fixture every other CKM_AES_GCM conformance test in this
-// package uses) still fails closed with aead.ErrArbitraryIVGCMUnavailable,
-// matching the module's own documented posture: CKM_AES_GCM's CK_GCM_PARAMS
-// carries the IV to the token with no random-nonce mode to opt into (see
-// docs/fips/README.md "Integration Points"), so most of this suite's
-// CKM_AES_GCM coverage is unaffected and continues to fail the same way.
+// deployment actually does in that mode. A caller-supplied pIv fails closed
+// with aead.ErrArbitraryIVGCMUnavailable, which the module reports as
+// CKR_MECHANISM_PARAM_INVALID (see docs/fips/README.md); outside FIPS mode it
+// is honoured.
 func (c *CryptoMockClient) Encrypt(ctx context.Context, req *transport.EncryptRequest) (*transport.EncryptResponse, error) {
 	key, err := c.getOrCreateSymKey(req.KeyID)
 	if err != nil {
@@ -396,9 +392,10 @@ func (c *CryptoMockClient) Encrypt(ctx context.Context, req *transport.EncryptRe
 			return nil, splitErr
 		}
 		return &transport.EncryptResponse{
-			Ciphertext: ciphertext,
-			Nonce:      nonce,
-			Tag:        tag,
+			Ciphertext:   ciphertext,
+			Nonce:        nonce,
+			Tag:          tag,
+			GCMNonceMode: string(types.GCMNonceModeRandom),
 		}, nil
 	}
 
@@ -478,23 +475,11 @@ func (c *CryptoMockClient) decryptOAEP(req *transport.DecryptRequest) (*transpor
 // decryptAESGCM performs real AES-GCM decryption using the stored or
 // lazily-generated symmetric key.
 //
-// Unlike Encrypt, this intentionally still builds its AEAD with
-// newGCMWithTagSize (plain cipher.NewGCM/NewGCMWithTagSize) rather than
-// pkg/crypto/aead's FIPS-aware selector, and so still fails under
-// GODEBUG=fips140=only for every request: CK_GCM_PARAMS.pIv is mandatory on
-// decrypt regardless of how the matching encrypt chose its IV (PKCS#11 v3.0
-// §6.15.1), so req.Nonce is always a caller-supplied value here, and
-// aead.NewGCMForDecrypt's randomNonce=true path is defined for reopening a
-// ciphertext this process's own Encrypt produced with a random nonce it
-// still remembers choosing (see pkg/crypto/aead.NewGCMForDecrypt), not for
-// re-deriving that guarantee retroactively from an externally supplied
-// nonce of unknown provenance. Recovering the token-generated IV Encrypt
-// returned above and matching it back to a subsequent Decrypt call would
-// need a public way to retrieve it from a live C_EncryptInit/C_Encrypt
-// operation, which pkg/pkcs11/module's Module does not currently expose
-// (EncryptOperation.IV() is internal-only) -- a mechanism-table-wide change
-// to the module's public surface, not a test-only fix. Tracked as a known
-// gap (see docs/fips/README.md), not fixed under go-xkms#23.
+// It opens the construction req.GCMNonceMode names, as the real servicer
+// does: the module sends GCMNonceModeRandom for a 12-byte IV under the full
+// tag (CryptoManager.Decrypt), and the random-nonce AEAD opens any such
+// ciphertext. That is the one GCM decryption a FIPS 140-only process can
+// build; the explicit construction stays for truncated tags.
 func (c *CryptoMockClient) decryptAESGCM(req *transport.DecryptRequest) (*transport.DecryptResponse, error) {
 	key, err := c.getOrCreateSymKey(req.KeyID)
 	if err != nil {
@@ -506,31 +491,38 @@ func (c *CryptoMockClient) decryptAESGCM(req *transport.DecryptRequest) (*transp
 		return nil, err
 	}
 
-	// The tag length comes from the request, never from the tag that arrived:
-	// SP 800-38D section 5.2.2 verifies a t-bit tag by recomputing it at t
-	// bits, so a full-length verifier rejects every truncated tag.
-	gcm, err := newGCMWithTagSize(block, req.TagSize)
-	if err != nil {
-		return nil, err
-	}
-	if len(req.Tag) != gcm.Overhead() {
-		return nil, ErrInvalidTagLength
-	}
-
 	// crypto/cipher panics rather than returning an error when the nonce is
-	// not exactly NonceSize bytes. The nonce arrives from the caller, so
-	// without this check any request carrying a short nonce panics the
-	// process (mirrors the real PKCS#11 module's C_Decrypt path).
-	if len(req.Nonce) != gcm.NonceSize() {
+	// not exactly 12 bytes. The nonce arrives from the caller, so without
+	// this check any request carrying a short nonce panics the process
+	// (mirrors the real PKCS#11 module's C_Decrypt path).
+	if len(req.Nonce) != aead.GCMRandomNonceSize {
 		return nil, ErrInvalidNonceSize
 	}
 
-	// Reconstruct the sealed blob: ciphertext || tag
-	sealed := make([]byte, 0, len(req.Ciphertext)+len(req.Tag))
-	sealed = append(sealed, req.Ciphertext...)
-	sealed = append(sealed, req.Tag...)
+	// The tag length comes from the request, never from the tag that arrived:
+	// SP 800-38D section 5.2.2 verifies a t-bit tag by recomputing it at t
+	// bits, so a full-length verifier rejects every truncated tag.
+	randomNonce := req.GCMNonceMode == string(types.GCMNonceModeRandom)
+	gcm, tagSize, err := newGCMForDecrypt(block, req.TagSize, randomNonce)
+	if err != nil {
+		return nil, err
+	}
+	if len(req.Tag) != tagSize {
+		return nil, ErrInvalidTagLength
+	}
 
-	plaintext, err := gcm.Open(nil, req.Nonce, sealed, req.AdditionalData)
+	// A random-nonce AEAD reads the nonce from the head of its input, so it
+	// takes nonce || ciphertext || tag and no separate nonce argument.
+	var plaintext []byte
+	if randomNonce {
+		sealed := aead.JoinGCMWithRandomNonce(req.Nonce, req.Ciphertext, req.Tag)
+		plaintext, err = gcm.Open(nil, nil, sealed, req.AdditionalData)
+	} else {
+		sealed := make([]byte, 0, len(req.Ciphertext)+len(req.Tag))
+		sealed = append(sealed, req.Ciphertext...)
+		sealed = append(sealed, req.Tag...)
+		plaintext, err = gcm.Open(nil, req.Nonce, sealed, req.AdditionalData)
+	}
 	if err != nil {
 		return nil, err
 	}
@@ -581,21 +573,14 @@ func (c *CryptoMockClient) WrapKeyByID(ctx context.Context, req *transport.WrapK
 		return nil, err
 	}
 
-	gcm, err := cipher.NewGCM(block)
+	// The random-nonce AEAD generates the nonce inside the FIPS module and
+	// prepends it, so the blob is the self-contained nonce || ciphertext ||
+	// tag, and it is the GCM construction fips140=only permits.
+	gcm, err := cipher.NewGCMWithRandomNonce(block)
 	if err != nil {
 		return nil, err
 	}
-
-	nonce := make([]byte, gcm.NonceSize())
-	if _, err := io.ReadFull(rand.Reader, nonce); err != nil {
-		return nil, err
-	}
-
-	// Prepend nonce to the sealed blob for self-contained wrapping
-	sealed := gcm.Seal(nil, nonce, targetKey, nil)
-	wrappedKey := make([]byte, 0, len(nonce)+len(sealed))
-	wrappedKey = append(wrappedKey, nonce...)
-	wrappedKey = append(wrappedKey, sealed...)
+	wrappedKey := gcm.Seal(nil, nil, targetKey, nil)
 
 	return &transport.WrapKeyByIDResponse{
 		WrappedKey: wrappedKey,
@@ -615,19 +600,17 @@ func (c *CryptoMockClient) UnwrapKeyByID(ctx context.Context, req *transport.Unw
 		return nil, err
 	}
 
-	gcm, err := cipher.NewGCM(block)
+	// WrapKeyByID's blob is nonce || ciphertext || tag, which the
+	// random-nonce AEAD opens directly.
+	gcm, err := cipher.NewGCMWithRandomNonce(block)
 	if err != nil {
 		return nil, err
 	}
-
-	if len(req.WrappedKey) < gcm.NonceSize() {
+	if len(req.WrappedKey) < gcm.Overhead() {
 		return nil, ErrInvalidCiphertext
 	}
 
-	nonce := req.WrappedKey[:gcm.NonceSize()]
-	sealed := req.WrappedKey[gcm.NonceSize():]
-
-	keyMaterial, err := gcm.Open(nil, nonce, sealed, nil)
+	keyMaterial, err := gcm.Open(nil, nil, req.WrappedKey, nil)
 	if err != nil {
 		return nil, err
 	}
@@ -654,9 +637,11 @@ func (c *CryptoMockClient) DeriveKey(ctx context.Context, req *transport.DeriveK
 	salt := req.Salt
 	info := req.Info
 
-	hkdfReader := hkdf.New(sha256.New, req.InputKeyMaterial, salt, info)
-	derivedKey := make([]byte, keyLength)
-	if _, err := io.ReadFull(hkdfReader, derivedKey); err != nil {
+	// crypto/hkdf, as kdf.HKDFAdapter uses on the daemon: under fips140=only
+	// it returns the stdlib's refusal (a short secret) where the x/crypto
+	// Reader would panic inside crypto/hmac.
+	derivedKey, err := hkdf.Key(sha256.New, req.InputKeyMaterial, salt, string(info), keyLength)
+	if err != nil {
 		return nil, ErrHKDFRead
 	}
 
@@ -684,9 +669,8 @@ func (c *CryptoMockClient) DeriveKeyECDH(ctx context.Context, req *transport.Der
 	sharedSecret := ephemeral.D.Bytes() //nolint:staticcheck // mock ECDH needs raw private scalar
 
 	// Derive key from shared secret using HKDF
-	hkdfReader := hkdf.New(sha256.New, sharedSecret, req.KDFSalt, req.KDFInfo)
-	derivedKey := make([]byte, keyLength)
-	if _, err := io.ReadFull(hkdfReader, derivedKey); err != nil {
+	derivedKey, err := hkdf.Key(sha256.New, sharedSecret, req.KDFSalt, string(req.KDFInfo), keyLength)
+	if err != nil {
 		return nil, ErrHKDFRead
 	}
 
@@ -876,19 +860,47 @@ func (c *CryptoMockClient) getOrCreateSymKey(keyID string) ([]byte, error) {
 	return key, nil
 }
 
-// newGCMWithTagSize builds an AES-GCM AEAD producing a tagSize-byte
-// authentication tag, with zero selecting the full 16-byte tag. It refuses a
+// gcmTagSize resolves a requested AES-GCM authentication tag length in
+// bytes, with zero selecting the full 16-byte tag. It refuses a
 // length outside the set NIST SP 800-38D section 5.2.1.2 approves, as a real
 // backend must: substituting the nearest permitted length would hand back a
 // tag the caller's peer cannot verify.
-func newGCMWithTagSize(block cipher.Block, tagSize int) (cipher.AEAD, error) {
+// newGCMForDecrypt returns the AEAD that opens a ciphertext sealed in the
+// given nonce mode, and the tag length that ciphertext carries. A
+// random-nonce AEAD counts the nonce in its Overhead and always carries the
+// full tag, so its tag length is not gcm.Overhead().
+// gcmTagSize resolves a requested AES-GCM authentication tag length in
+// bytes, with zero selecting the full 16-byte tag. It refuses a
+// length outside the set NIST SP 800-38D section 5.2.1.2 approves, as a real
+// backend must: substituting the nearest permitted length would hand back a
+// tag the caller's peer cannot verify.
+func gcmTagSize(tagSize int) (int, error) {
 	if tagSize == 0 {
-		return cipher.NewGCM(block)
+		return aead.GCMFullTagSize, nil
 	}
-	if tagSize < 12 || tagSize > 16 {
-		return nil, ErrInvalidTagSize
+	if !aead.ValidGCMTagSize(tagSize) {
+		return 0, ErrInvalidTagSize
 	}
-	return cipher.NewGCMWithTagSize(block, tagSize)
+	return tagSize, nil
+}
+
+func newGCMForDecrypt(block cipher.Block, tagSize int, randomNonce bool) (cipher.AEAD, int, error) {
+	if randomNonce {
+		gcm, err := aead.NewGCMForDecrypt(block, tagSize, true)
+		return gcm, aead.GCMFullTagSize, err
+	}
+	size, err := gcmTagSize(tagSize)
+	if err != nil {
+		return nil, 0, err
+	}
+	// The explicit construction takes a caller's IV, which fips140=only
+	// refuses: aead.NewGCMForDecrypt returns that refusal as the typed
+	// aead.ErrArbitraryIVGCMUnavailable.
+	gcm, err := aead.NewGCMForDecrypt(block, size, false)
+	if err != nil {
+		return nil, 0, err
+	}
+	return gcm, size, nil
 }
 
 // getSymKey returns an existing symmetric key without lazy creation.

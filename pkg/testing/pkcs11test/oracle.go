@@ -30,6 +30,10 @@ import (
 // produces is exactly len(plaintext)+gcmTagLen bytes.
 const gcmTagLen = 16
 
+// gcmNonceLen is the length in bytes of the 96-bit AES-GCM IV the module
+// generates and the random-nonce oracle prefixes to its output.
+const gcmNonceLen = 12
+
 // attributeValue reads a single attribute off an object and fails the test if
 // the token will not reveal it.
 //
@@ -155,4 +159,25 @@ func aesGCMSeal(t *testing.T, key, iv, plaintext, aad []byte) []byte {
 		t.Fatalf("IV is %d bytes, want %d", len(iv), gcm.NonceSize())
 	}
 	return gcm.Seal(nil, iv, plaintext, aad)
+}
+
+// aesGCMSealGeneratedIV is the AES-GCM oracle for fixtures a test decrypts: it
+// seals under an IV it generates itself, the only form fips140=only permits
+// (crypto/cipher.NewGCMWithRandomNonce), and returns that 12-byte IV and the
+// ciphertext || 16-byte tag the module's CKM_AES_GCM decryption takes
+// (v3.2 §6.13.2). It works the same with fips140=off.
+func aesGCMSealGeneratedIV(t *testing.T, key, plaintext, aad []byte) (iv, ciphertext []byte) {
+	t.Helper()
+
+	block, err := aes.NewCipher(key)
+	if err != nil {
+		t.Fatalf("building the AES oracle failed: %v", err)
+	}
+	gcm, err := cipher.NewGCMWithRandomNonce(block)
+	if err != nil {
+		t.Fatalf("building the random-nonce GCM oracle failed: %v", err)
+	}
+	// Seal returns nonce || ciphertext || tag.
+	sealed := gcm.Seal(nil, nil, plaintext, aad)
+	return sealed[:gcmNonceLen], sealed[gcmNonceLen:]
 }

@@ -233,7 +233,7 @@ require (
 	github.com/samber/lo v1.53.0 // indirect
 	github.com/santhosh-tekuri/jsonschema/v6 v6.0.3 // indirect
 	github.com/segmentio/asm v1.2.1 // indirect
-	github.com/sirupsen/logrus v1.9.4 // indirect
+	github.com/sirupsen/logrus v1.10.2 // indirect
 	github.com/soypat/cyw43439 v0.1.1 // indirect
 	github.com/soypat/lneto v0.1.0 // indirect
 	github.com/soypat/seqs v0.0.0-20260125140838-2c1c6b1bd69e // indirect
@@ -261,7 +261,7 @@ require (
 	github.com/vmihailenco/msgpack/v5 v5.4.1 // indirect
 	github.com/vmihailenco/tagparser/v2 v2.0.0 // indirect
 	github.com/wailsapp/go-webview2 v1.0.23 // indirect
-	github.com/weppos/publicsuffix-go v0.50.3 // indirect
+	github.com/weppos/publicsuffix-go v0.50.4-0.20260821095816-b0fdb5c2d345 // indirect
 	github.com/x448/float16 v0.8.4 // indirect
 	github.com/yosida95/uritemplate/v3 v3.0.2 // indirect
 	github.com/youmark/pkcs8 v0.0.0-20240726163527-a2c0da244d78 // indirect

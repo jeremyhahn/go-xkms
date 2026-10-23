@@ -110,8 +110,8 @@ func TestWSHandler_AskMalformedResponseAborts(t *testing.T) {
 	httpSrv := httptest.NewServer(handler)
 	defer httpSrv.Close()
 
-	conn, _, err := websocket.DefaultDialer.Dial("ws"+strings.TrimPrefix(httpSrv.URL, "http"), nil)
-	if !requireWSUpgrade(t, err) {
+	conn, resp, err := websocket.DefaultDialer.Dial("ws"+strings.TrimPrefix(httpSrv.URL, "http"), nil)
+	if !requireWSUpgrade(t, resp, err) {
 		return
 	}
 	defer func() { _ = conn.Close() }()
@@ -284,7 +284,7 @@ func TestBridge_RejectedResizeFailedWriteAndCloseWriteAreLoggedNotFatal(t *testi
 	bridgeDone := make(chan struct{})
 	upgrader := websocket.Upgrader{}
 	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		conn, err := upgrader.Upgrade(w, r, nil)
+		conn, err := upgradeWS(&upgrader, w, r)
 		if err != nil {
 			return
 		}
@@ -294,8 +294,8 @@ func TestBridge_RejectedResizeFailedWriteAndCloseWriteAreLoggedNotFatal(t *testi
 	}))
 	defer ts.Close()
 
-	conn, _, err := websocket.DefaultDialer.Dial("ws"+strings.TrimPrefix(ts.URL, "http"), nil)
-	if !requireWSUpgrade(t, err) {
+	conn, resp, err := websocket.DefaultDialer.Dial("ws"+strings.TrimPrefix(ts.URL, "http"), nil)
+	if !requireWSUpgrade(t, resp, err) {
 		return
 	}
 	defer func() { _ = conn.Close() }()

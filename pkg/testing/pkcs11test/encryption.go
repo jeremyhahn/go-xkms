@@ -122,6 +122,9 @@ func (s *Suite) testEncrypt(t *testing.T) {
 
 		plaintext := []byte("conformance test plaintext data!")
 		ciphertext, rv := m.Encrypt(sh, plaintext)
+		if !outsideFIPSAfterRefusal(t, module.CKR_MECHANISM_PARAM_INVALID, rv, fipsCallerIVRefusal) {
+			return
+		}
 		requireRV(t, module.CKR_OK, rv, "Encrypt should return CKR_OK")
 
 		// A module that returned the plaintext untouched passed the previous
@@ -183,6 +186,9 @@ func (s *Suite) testEncrypt(t *testing.T) {
 
 		plaintext := []byte("conformance test plaintext data!")
 		first, rv := m.Encrypt(sh, plaintext)
+		if !outsideFIPSAfterRefusal(t, module.CKR_MECHANISM_PARAM_INVALID, rv, fipsCallerIVRefusal) {
+			return
+		}
 		requireRV(t, module.CKR_OK, rv, "first Encrypt should succeed")
 
 		// The operation stays active until the caller confirms it received
@@ -231,6 +237,9 @@ func (s *Suite) testEncryptMultiPart(t *testing.T) {
 		requireRV(t, module.CKR_OK, rv, "EncryptUpdate (part 2) should return CKR_OK")
 
 		finalPart, rv := m.EncryptFinal(sh)
+		if !outsideFIPSAfterRefusal(t, module.CKR_MECHANISM_PARAM_INVALID, rv, fipsCallerIVRefusal) {
+			return
+		}
 		requireRV(t, module.CKR_OK, rv, "EncryptFinal should return CKR_OK")
 
 		// The ciphertext is the concatenation of everything the chain emitted

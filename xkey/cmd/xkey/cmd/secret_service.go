@@ -173,7 +173,8 @@ func runSecretService(cmd *cobra.Command, args []string) (err error) {
 		}
 	}
 
-	if err := daemon.Start(); err != nil {
+	bus := secretServiceOnBus(daemon)
+	if err := bus.Start(); err != nil {
 		return &SentinelCauseError{Sentinel: ErrSecretServiceStartFailed, Cause: err}
 	}
 
@@ -194,8 +195,19 @@ func runSecretService(cmd *cobra.Command, args []string) (err error) {
 	case <-ctx.Done():
 	}
 
-	return daemon.Stop()
+	return bus.Stop()
 }
+
+// secretServiceBusHost is the part of the daemon that claims and releases
+// the Secret Service name on the D-Bus session bus.
+type secretServiceBusHost interface {
+	Start() error
+	Stop() error
+}
+
+// secretServiceOnBus returns the bus side of daemon. Tests replace it so the
+// command runs to its signal wait without a session bus.
+var secretServiceOnBus = func(daemon *secretservice.Daemon) secretServiceBusHost { return daemon }
 
 // secretServiceUnlockFunc returns the secretservice.UnlockFunc this command
 // registers on the daemon: it resolves a password the same way `xkey

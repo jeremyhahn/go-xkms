@@ -35,9 +35,11 @@
 package pkcs11test
 
 import (
+	"crypto/fips140"
 	"testing"
 
 	"github.com/jeremyhahn/go-xkms/pkg/pkcs11/module"
+	"github.com/jeremyhahn/go-xkms/pkg/testing/fipstest"
 )
 
 // ModuleFactory creates a fresh Module instance for testing.
@@ -93,6 +95,24 @@ func requireRV(t *testing.T, expected, actual module.CK_RV, msgAndArgs ...interf
 		t.Fatalf("expected %s, got %s", expected, actual)
 	}
 }
+
+// outsideFIPSAfterRefusal splits a test whose operation the Go Cryptographic
+// Module refuses under fips140=only. There it requires rv to be the code the
+// module maps that refusal to, has the same test pass again with
+// GODEBUG=fips140=off, and returns false so the caller stops. Outside FIPS it
+// returns true and the caller asserts the operation's result as usual.
+func outsideFIPSAfterRefusal(t *testing.T, refusal, rv module.CK_RV, msg string) bool {
+	t.Helper()
+	if fips140.Enforced() {
+		requireRV(t, refusal, rv, msg)
+	}
+	return fipstest.OutsideFIPS(t)
+}
+
+// fipsCallerIVRefusal describes the fips140=only refusal of CKM_AES_GCM under
+// an IV the caller chose in CK_GCM_PARAMS (v3.2 §6.13.2): the module seals GCM
+// only under an IV it generates, and reports CKR_MECHANISM_PARAM_INVALID.
+const fipsCallerIVRefusal = "fips140=only refuses AES-GCM under a caller-chosen IV"
 
 // assertRV asserts that the return value matches the expected value (non-fatal).
 func assertRV(t *testing.T, expected, actual module.CK_RV, msgAndArgs ...interface{}) {

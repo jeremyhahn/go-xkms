@@ -216,7 +216,7 @@ func DialClient(ctx context.Context, p ClientParams) (*ssh.Client, error) {
 
 	sshConn, chans, reqs, hsErr := ssh.NewClientConn(netConn, addr, cfg)
 	if hsErr != nil {
-		closeErr := netConn.Close()
+		closeErr := closeAfterFailedHandshake(netConn)
 		if ctx.Err() != nil {
 			return nil, errors.Join(&TimeoutError{Host: p.Host, Duration: timeout, Err: ctx.Err()}, closeErr)
 		}
@@ -230,4 +230,16 @@ func DialClient(ctx context.Context, p ClientParams) (*ssh.Client, error) {
 	}
 
 	return ssh.NewClient(sshConn, chans, reqs), nil
+}
+
+// closeAfterFailedHandshake closes conn after ssh.NewClientConn has failed.
+// NewClientConn has already closed conn by then, so the net.ErrClosed the
+// second Close returns is expected and dropped: it would only sit next to
+// the handshake error (under GODEBUG=fips140=only, the module's refusal) as
+// noise. Any other close error is returned.
+func closeAfterFailedHandshake(conn net.Conn) error {
+	if err := conn.Close(); err != nil && !errors.Is(err, net.ErrClosed) {
+		return err
+	}
+	return nil
 }

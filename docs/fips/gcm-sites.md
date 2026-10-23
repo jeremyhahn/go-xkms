@@ -22,7 +22,13 @@ lists every GCM site and how each one behaves in that mode (#23).
 | TPM symmetric encrypt ([symmetric.go:416](../../pkg/tpm2/symmetric.go#L416)) | Same. |
 | Symmetric key provider ([backend.go:887](../../pkg/keyprovider/symmetric/backend.go#L887)) | Same. |
 | Vault BYOK import ([vault_importexport.go:175](../../pkg/backend/vault/vault_importexport.go#L175)) | Vault's BYOK wrap fixes a zero nonce, so the import is refused with `ErrArbitraryIVGCMUnavailable` before `cipher.NewGCM` runs. |
-| xkmsctl FROST dealer packages ([frost_export.go:50](../../cmd/xkmsctl/frost_export.go#L50)) | Sealed as JWE `ECDH-ES+A256KW` / `A256CBC-HS512` (RFC 7518 §4.6.2, §5.2.5). go-jose builds `A*GCM` with `cipher.NewGCM`, so a GCM content algorithm would be refused. A package sealed as `A256GCM` no longer imports, so re-export it. `TestFrostPackageExport_GoldenFixture` pins the format. |
+| `pkcs11test` mock decrypt ([crypto_mock_client.go:483](../../pkg/testing/pkcs11test/crypto_mock_client.go#L483)) | Opens the construction the request's `GCMNonceMode` names, as the service does. A random-nonce ciphertext opens; an explicit-IV one is refused with `ErrArbitraryIVGCMUnavailable`, after the nonce length is checked. |
+
+Over the API the refusal is a request fault the caller corrects by omitting the
+nonce or the tag length: `apierrors.AEADSentinelClasses`
+([tables.go:102](../../pkg/api/apierrors/tables.go#L102)) classes it, and an
+unapproved tag size, as `ClassInvalidArgument`, so gRPC returns
+`InvalidArgument`, REST `400` and MCP Invalid params, never `Internal`.
 
 Every JWE `A*GCM` content encryption goes through go-jose and is refused under
 FIPS. `pkg/encoding/jwe` callers that need FIPS use `A256CBC-HS512`.
@@ -42,7 +48,7 @@ These are not GCM, but they come up in the same suite.
 
 ## Not covered here
 
-- `pkg/testing/pkcs11test` (oracle and mock) and `pkg/pkcs11`: see
+- The `pkg/testing/pkcs11test` oracle, its other mock mechanisms, and `pkg/pkcs11`: see
   [README.md](README.md).
 - The xkey module, including `xkey/pkg/nativemsg/crypto.go`: see [xkey.md](xkey.md).
 - `pkg/acme`.

@@ -39,9 +39,16 @@ adds `<datastore.path>/ca-bundle.pem` to the client CAs it advertises
 (`configuredClientCAs`, `pkg/server/tls_pool.go:86`), because a `crypto/tls`
 client with a static certificate list, as every SDK transport and `xkmsctl`
 use, withholds a certificate whose issuer the server does not list
-(go-xkms#794). The root grants nothing: the administrator is still identified
-by SPKI thumbprint (`userIdentity`, `pkg/auth/mtls.go:226`). A missing bundle
-is skipped; a bundle that does not parse fails start-up with `*ErrCertParse`.
+(go-xkms#794). The same pool is the listener config's static `ClientCAs`
+(`buildUnifiedTLSConfig`, `pkg/server/unified_tls.go:114`): go-qrdb's
+client-trust pool captures that set when the node wires the config and
+verifies every client chain against it, so the node's mTLS authenticator
+accepts the administrator on REST, gRPC, QUIC, MCP and unix alike. `/auth/me`
+reports that identity's method as `mtls` (`identityAuthMethod`,
+`pkg/api/rest/handlers_auth.go:579`). The root grants nothing: the
+administrator is still identified by the SPKI thumbprint enrolled on the
+account (`userIdentity`, `pkg/auth/mtls.go:226`). A missing bundle is
+skipped; a bundle that does not parse fails start-up with `*ErrCertParse`.
 
 Rejected alternatives:
 

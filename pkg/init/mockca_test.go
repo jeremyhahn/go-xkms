@@ -123,6 +123,10 @@ func (m *mockCA) CreateCSR(_ context.Context, _ *ca.CertificateRequest) ([]byte,
 // SignCSR signs as the real CA does under go-qrdb's holder contract: a raw
 // subject in the options is the whole Subject and the CSR contributes only
 // its key; without one the CSR's subject is copied.
+func (m *mockCA) ReserveSerial(_ context.Context) (*big.Int, error) {
+	return big.NewInt(time.Now().UnixNano()), nil
+}
+
 func (m *mockCA) SignCSR(_ context.Context, csrPEM []byte, opts *ca.SignOptions) (*x509.Certificate, error) {
 	block, _ := pem.Decode(csrPEM)
 	if block == nil {

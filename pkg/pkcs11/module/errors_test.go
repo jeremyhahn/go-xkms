@@ -15,7 +15,9 @@ package module
 
 import (
 	"errors"
+	"github.com/jeremyhahn/go-xkms/pkg/crypto/aead"
 	"github.com/jeremyhahn/go-xkms/pkg/errs"
+	"github.com/jeremyhahn/go-xkms/pkg/types"
 	"testing"
 )
 
@@ -484,6 +486,36 @@ func TestFromError(t *testing.T) {
 		rv := FromError(err)
 		if rv != CKR_SESSION_CLOSED {
 			t.Errorf("expected CKR_SESSION_CLOSED, got %v", rv)
+		}
+	})
+}
+
+// TestFromError_MapsFIPSRefusals pins the codes the module returns when the Go
+// Cryptographic Module refuses an operation under fips140=only. The error is
+// wrapped as a backend returns it, and resolved through backendCKRV, the path
+// every crypto call site takes, so the refusal never degrades to the
+// CKR_FUNCTION_FAILED fallback.
+func TestFromError_MapsFIPSRefusals(t *testing.T) {
+	tests := []struct {
+		name string
+		err  error
+		want CK_RV
+	}{
+		{"raw PKCS#1 v1.5 signing", types.ErrRawPKCS1v15Enforced, CKR_MECHANISM_INVALID},
+		{"caller-IV AES-GCM", aead.ErrArbitraryIVGCMUnavailable, CKR_MECHANISM_PARAM_INVALID},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			wrapped := errors.Join(errors.New("backend: operation refused"), tc.err)
+			if rv := backendCKRV(wrapped, CKR_FUNCTION_FAILED); rv != tc.want {
+				t.Errorf("backendCKRV(%v) = %v, want %v", tc.err, rv, tc.want)
+			}
+		})
+	}
+
+	t.Run("an unrelated failure keeps the call site's fallback", func(t *testing.T) {
+		if rv := backendCKRV(errors.New("backend: disk full"), CKR_FUNCTION_FAILED); rv != CKR_FUNCTION_FAILED {
+			t.Errorf("backendCKRV(unrelated) = %v, want CKR_FUNCTION_FAILED", rv)
 		}
 	})
 }

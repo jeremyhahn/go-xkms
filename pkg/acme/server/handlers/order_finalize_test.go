@@ -54,7 +54,6 @@ type MockCAForFinalize struct {
 	shouldFailVerify          bool
 	shouldFailIssueEK         bool
 	returnedSerialNum         *big.Int
-	returnedCert              *x509.Certificate
 	returnCertWithNilSerial   bool
 	returnCertWithLargeSerial bool
 	lastEKRequest             *ca.CertificateRequest
@@ -67,49 +66,19 @@ func (m *MockCAForFinalize) SignCSR(_ context.Context, csrPEM []byte, opts *ca.S
 		return nil, caerrors.SigningFailureError("mock sign CSR error")
 	}
 
-	// Parse the CSR to get subject information
-	block, _ := pem.Decode(csrPEM)
-	if block == nil {
-		return nil, caerrors.SerializationFailureError("failed to decode PEM")
-	}
-
-	csr, err := x509.ParseCertificateRequest(block.Bytes)
-	if err != nil {
-		return nil, err
-	}
-
-	// Create a mock certificate with proper serial number
 	serialNumber := m.returnedSerialNum
-	if serialNumber == nil {
-		serialNumber = big.NewInt(12345)
-	}
-
 	if m.returnCertWithLargeSerial {
 		// Create a serial number larger than uint64 max
 		serialNumber = new(big.Int)
 		serialNumber.SetString("18446744073709551616999999999999999", 10) // > 2^64
 	}
-
-	cert := &x509.Certificate{
-		SerialNumber: serialNumber,
-		Subject:      csr.Subject,
-		NotBefore:    time.Now(),
-		NotAfter:     time.Now().Add(90 * 24 * time.Hour),
-		KeyUsage:     x509.KeyUsageDigitalSignature,
-		ExtKeyUsage:  []x509.ExtKeyUsage{x509.ExtKeyUsageServerAuth},
-		DNSNames:     csr.DNSNames,
-		IPAddresses:  csr.IPAddresses,
-		Raw:          []byte("mock-cert-der"),
+	cert, err := mockCertificate(csrPEM, opts, serialNumber)
+	if err != nil {
+		return nil, err
 	}
-
 	if m.returnCertWithNilSerial {
 		cert.SerialNumber = nil
 	}
-
-	if m.returnedCert != nil {
-		cert = m.returnedCert
-	}
-
 	return cert, nil
 }
 
@@ -161,7 +130,7 @@ func setupTestServiceWithMockCA(t *testing.T) (*RestService, *MockCAForFinalize,
 	service, _, cleanup := setupTestService(t)
 
 	mockCA := &MockCAForFinalize{}
-	service.ca = mockCA
+	setCA(t, service, mockCA)
 
 	return service, mockCA, cleanup
 }
@@ -716,16 +685,6 @@ func TestEncodeCertificatePEM(t *testing.T) {
 	block, _ := pem.Decode(pemBytes)
 	require.NotNil(t, block)
 	assert.Equal(t, "CERTIFICATE", block.Type)
-	assert.Equal(t, derBytes, block.Bytes)
-}
-
-func TestEncodeCSRToPEM(t *testing.T) {
-	derBytes := []byte("test-csr-der")
-	pemBytes := encodeCSRToPEM(derBytes)
-
-	block, _ := pem.Decode(pemBytes)
-	require.NotNil(t, block)
-	assert.Equal(t, "CERTIFICATE REQUEST", block.Type)
 	assert.Equal(t, derBytes, block.Bytes)
 }
 

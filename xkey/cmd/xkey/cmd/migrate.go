@@ -164,19 +164,21 @@ func runMigrate(cmd *cobra.Command, args []string) error {
 		}
 	}
 
+	sourceVolOps := openLUKSVolume(sourceVol)
+
 	// Check source exists
-	if !sourceVol.Exists() {
+	if !sourceVolOps.Exists() {
 		return ErrMigrateNoSource
 	}
 
 	// Lock source if mounted
-	mounted, err := sourceVol.IsMounted()
+	mounted, err := sourceVolOps.IsMounted()
 	if err != nil {
 		return &MigrateError{Operation: "check_mounted", Err: err}
 	}
-	if mounted || sourceVol.IsOpen() {
+	if mounted || sourceVolOps.IsOpen() {
 		_, _ = fmt.Fprintln(cmd.OutOrStdout(), "Locking current container...")
-		if err := sourceVol.Lock(); err != nil {
+		if err := sourceVolOps.Lock(); err != nil {
 			// If lock fails, try to continue (might already be locked)
 			_, _ = fmt.Fprintf(cmd.OutOrStdout(), "Warning: could not lock container: %v\n", err)
 		}
@@ -229,12 +231,14 @@ func runMigrate(cmd *cobra.Command, args []string) error {
 	// Create old volume reference for unlocking
 	oldVol := luks.NewVolumeWithPaths(oldPath, sourceVol.MountPoint+".old-migrate")
 	oldVol.MapperName = "xkey_old"
+	oldVolOps := openLUKSVolume(oldVol)
 
 	// Create new volume
 	newVol := luks.NewVolumeWithPaths(newPath, sourceVol.MountPoint)
+	newVolOps := openLUKSVolume(newVol)
 
 	_, _ = fmt.Fprintf(cmd.OutOrStdout(), "Creating new container (%s)...\n", formatSize(newSize))
-	if err := newVol.Create(newSize, string(newPassphrase)); err != nil {
+	if err := newVolOps.Create(newSize, string(newPassphrase)); err != nil {
 		// Restore old container on failure
 		restoreErr := os.Rename(oldPath, sourceVol.LUKSPath)
 		if restoreErr != nil {
@@ -280,7 +284,7 @@ func runMigrate(cmd *cobra.Command, args []string) error {
 	newVol.MountPoint = newMount
 
 	// Unlock old container
-	if err := oldVol.Unlock(string(oldPassphrase)); err != nil {
+	if err := oldVolOps.Unlock(string(oldPassphrase)); err != nil {
 		restoreErr := os.Rename(oldPath, sourceVol.LUKSPath)
 		if restoreErr != nil {
 			_, _ = fmt.Fprintf(cmd.OutOrStdout(), "Warning: could not restore original container: %v\n", restoreErr)
@@ -289,8 +293,8 @@ func runMigrate(cmd *cobra.Command, args []string) error {
 	}
 
 	// Unlock new container
-	if err := newVol.Unlock(string(newPassphrase)); err != nil {
-		lockErr := oldVol.Lock()
+	if err := newVolOps.Unlock(string(newPassphrase)); err != nil {
+		lockErr := oldVolOps.Lock()
 		if lockErr != nil {
 			_, _ = fmt.Fprintf(cmd.OutOrStdout(), "Warning: could not lock old container: %v\n", lockErr)
 		}
@@ -303,12 +307,12 @@ func runMigrate(cmd *cobra.Command, args []string) error {
 
 	// Copy data
 	_, _ = fmt.Fprintln(cmd.OutOrStdout(), "Copying data to new container...")
-	if err := newVol.CopyDataToVolume(oldMount); err != nil {
-		lockErr := oldVol.Lock()
+	if err := newVolOps.CopyDataToVolume(oldMount); err != nil {
+		lockErr := oldVolOps.Lock()
 		if lockErr != nil {
 			_, _ = fmt.Fprintf(cmd.OutOrStdout(), "Warning: could not lock old container: %v\n", lockErr)
 		}
-		lockErr = newVol.Lock()
+		lockErr = newVolOps.Lock()
 		if lockErr != nil {
 			_, _ = fmt.Fprintf(cmd.OutOrStdout(), "Warning: could not lock new container: %v\n", lockErr)
 		}
@@ -325,11 +329,11 @@ func runMigrate(cmd *cobra.Command, args []string) error {
 
 	// Lock both containers
 	_, _ = fmt.Fprintln(cmd.OutOrStdout(), "Locking containers...")
-	lockErr := oldVol.Lock()
+	lockErr := oldVolOps.Lock()
 	if lockErr != nil {
 		_, _ = fmt.Fprintf(cmd.OutOrStdout(), "Warning: could not lock old container: %v\n", lockErr)
 	}
-	lockErr = newVol.Lock()
+	lockErr = newVolOps.Lock()
 	if lockErr != nil {
 		_, _ = fmt.Fprintf(cmd.OutOrStdout(), "Warning: could not lock new container: %v\n", lockErr)
 	}

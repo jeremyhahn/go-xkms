@@ -24,6 +24,7 @@ import (
 	"github.com/jeremyhahn/go-xkms/pkg/backend"
 	tpm2backend "github.com/jeremyhahn/go-xkms/pkg/backend/tpm2"
 	"github.com/jeremyhahn/go-xkms/pkg/crypto/aead"
+	"github.com/jeremyhahn/go-xkms/pkg/keyprovider/symmetric"
 	"github.com/jeremyhahn/go-xkms/pkg/keyversion"
 	"github.com/jeremyhahn/go-xkms/pkg/oidc"
 	"github.com/jeremyhahn/go-xkms/pkg/oidc/credential"
@@ -83,12 +84,28 @@ var ImportExportSentinelClasses = []SentinelClass{
 // this process has already consumed under this key is the caller's request
 // repeating a value that must never repeat, not a fault in the server, and
 // a full guard is a resource limit reached rather than a permanent refusal.
-// Both pkg/api/grpc's mapKeyOpError and pkg/api/mcp's mirror of it read this
-// table (go-xkms#1223), mirroring pkg/api/rest/errors_keyops.go's
-// keyOpSentinelStatus entries for the same two sentinels.
+//
+// It also classifies the AES-GCM parameter refusals. Under
+// GODEBUG=fips140=only the stdlib refuses an AES-GCM AEAD over a
+// caller-supplied nonce or a truncated tag, which pkg/crypto/aead and
+// pkg/keyprovider/symmetric report as ErrArbitraryIVGCMUnavailable; a tag
+// length NIST SP 800-38D section 5.2.1.2 does not approve is refused in any
+// mode. Each is the caller asking for a parameter this process cannot honour
+// and can correct by omitting the nonce or the tag length, the same request
+// fault as ImportExportSentinelClasses' backend.ErrCallerNonceNotSupported,
+// so it is ClassInvalidArgument rather than a server fault (go-xkms#23).
+//
+// pkg/api/grpc's mapKeyOpError, pkg/api/mcp's mirror of it and
+// pkg/api/rest's mapKeyOpError all read this table (go-xkms#1223); REST
+// answers the two nonce-guard sentinels from its own keyOpSentinelStatus
+// first.
 var AEADSentinelClasses = []SentinelClass{
 	{aead.ErrNonceReuse, ClassAlreadyExists},
 	{aead.ErrNonceTrackerFull, ClassResourceExhausted},
+	{aead.ErrArbitraryIVGCMUnavailable, ClassInvalidArgument},
+	{symmetric.ErrArbitraryIVGCMUnavailable, ClassInvalidArgument},
+	{aead.ErrInvalidGCMTagSize, ClassInvalidArgument},
+	{symmetric.ErrInvalidTagSize, ClassInvalidArgument},
 }
 
 // PIVSentinelClasses classifies the PIV domain errors pkg/xkms's PIV

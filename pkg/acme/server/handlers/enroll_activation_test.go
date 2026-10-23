@@ -73,7 +73,7 @@ func newEnrollFinalizeSetup(t *testing.T, validatedBy string, withRecord bool) *
 		iakDER:    selfSignedDER(t, ca.IAKCommonName(enrollProdModel, enrollProdSerial), big.NewInt(31), 30*24*time.Hour),
 		idevidDER: selfSignedDER(t, enrollProdModel+"-"+enrollProdSerial, big.NewInt(32), 60*24*time.Hour),
 	}
-	service.ca = enrollCA
+	setCA(t, service, enrollCA)
 
 	accountKey := generateTestKey(t)
 	account := createTestAccount(t, service, accountKey)

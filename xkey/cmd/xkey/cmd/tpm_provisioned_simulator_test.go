@@ -762,11 +762,34 @@ func TestRunIAKCommands_ProvisionedSimulator(t *testing.T) {
 		assert.ErrorIs(t, err, ErrCertificateNotFound)
 	})
 
-	t.Run("csr", func(t *testing.T) {
-		setVar(t, &iakCSROutput, filepath.Join(t.TempDir(), "iak.csr"))
-		_, _, err := runTPMSubcommand(runIAKCSR)
-		assert.ErrorIs(t, err, ErrCSRGenerationFailed)
+	t.Run("csr needs the IDevID", func(t *testing.T) {
+		output := filepath.Join(t.TempDir(), "iak.csr")
+		setVar(t, &iakCSROutput, output)
+		stdout, _, err := runTPMSubcommand(runIAKCSR)
+		assert.ErrorIs(t, err, ErrKeyNotFound)
+		assert.NotContains(t, stdout, "Generating IAK CSR")
+		assert.NoFileExists(t, output)
 	})
+}
+
+// TestRunIAKCSR_ProvisionedSimulator proves the IAK CSR is built once the
+// IDevID it must carry exists, and that an unwritable output is reported.
+func TestRunIAKCSR_ProvisionedSimulator(t *testing.T) {
+	sim := withProvisionedSimulatorTPM(t)
+	sim.withIDevID(t)
+	path := filepath.Join(t.TempDir(), "iak.csr")
+	setVar(t, &iakCSROutput, path)
+
+	stdout, _, err := runTPMSubcommand(runIAKCSR)
+	require.NoError(t, err)
+	assert.Contains(t, stdout, "IAK CSR written to: "+path)
+	data, err := os.ReadFile(path)
+	require.NoError(t, err)
+	assert.NotEmpty(t, data)
+
+	setVar(t, &iakCSROutput, filepath.Join(t.TempDir(), "missing", "iak.csr"))
+	_, _, err = runTPMSubcommand(runIAKCSR)
+	assert.ErrorIs(t, err, ErrExportFailed)
 }
 
 func TestRunIAKCreate_RejectsUnknownTemplate(t *testing.T) {

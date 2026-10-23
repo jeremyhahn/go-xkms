@@ -176,7 +176,7 @@ func Dial(ctx context.Context, req DialRequest, cfg Config) (Console, error) {
 		HostKeyCallback: hostCallback,
 	})
 	if err != nil {
-		return nil, err
+		return nil, &DialError{Host: req.Host, Err: err}
 	}
 	c, err := open(client, cfg, true)
 	if err != nil {

@@ -16,7 +16,6 @@ package pkcs11test
 import (
 	"bytes"
 	"context"
-	"crypto/fips140"
 	"errors"
 	"testing"
 
@@ -125,24 +124,16 @@ func TestCryptoMockClient_Decrypt_UnsupportedPadding(t *testing.T) {
 }
 
 // requireMockEncrypt runs CryptoMockClient.Encrypt for a test that needs the
-// result to exercise further behavior, and reports whether the caller can
-// continue using it. The mock always builds its AES-GCM AEAD with
-// crypto/cipher's classic, arbitrary-IV-capable constructor -- see
-// newGCMWithTagSize in crypto_mock_client.go -- which GODEBUG=fips140=only
-// refuses outright regardless of whether this particular call supplied its
-// own nonce or let the mock generate one; only cipher.NewGCMWithRandomNonce
-// is usable in that mode, and the mock does not use it (see
-// docs/fips/README.md "AEAD construction").
-func requireMockEncrypt(t *testing.T, c *CryptoMockClient, ctx context.Context, req *transport.EncryptRequest) (*transport.EncryptResponse, bool) {
+// result to exercise further behavior. Its requests leave the IV empty, so
+// the mock generates it with the random-nonce AEAD and the seal succeeds
+// under fips140=only as well.
+func requireMockEncrypt(t *testing.T, c *CryptoMockClient, ctx context.Context, req *transport.EncryptRequest) *transport.EncryptResponse {
 	t.Helper()
 	resp, err := c.Encrypt(ctx, req)
 	if err != nil {
-		if fips140.Enforced() {
-			return nil, false
-		}
 		t.Fatalf("Encrypt() error = %v", err)
 	}
-	return resp, true
+	return resp
 }
 
 // TestCryptoMockClient_EncryptDecrypt verifies the round trip works and
@@ -151,22 +142,22 @@ func TestCryptoMockClient_EncryptDecrypt(t *testing.T) {
 	c := NewCryptoMockClient()
 	ctx := context.Background()
 
-	encResp, ok := requireMockEncrypt(t, c, ctx, &transport.EncryptRequest{
+	encResp := requireMockEncrypt(t, c, ctx, &transport.EncryptRequest{
 		KeyID:     "test-key",
 		Plaintext: []byte("mock pkcs11 plaintext"),
 	})
-	if !ok {
-		return
-	}
 	if len(encResp.Nonce) != 12 {
 		t.Fatalf("Nonce length = %d, want 12", len(encResp.Nonce))
 	}
 
+	// The nonce mode travels back with the ciphertext, as the module does:
+	// it selects the AEAD construction that sealed it.
 	decResp, err := c.Decrypt(ctx, &transport.DecryptRequest{
-		KeyID:      "test-key",
-		Ciphertext: encResp.Ciphertext,
-		Nonce:      encResp.Nonce,
-		Tag:        encResp.Tag,
+		KeyID:        "test-key",
+		Ciphertext:   encResp.Ciphertext,
+		Nonce:        encResp.Nonce,
+		Tag:          encResp.Tag,
+		GCMNonceMode: encResp.GCMNonceMode,
 	})
 	if err != nil {
 		t.Fatalf("Decrypt() error = %v", err)
@@ -185,13 +176,10 @@ func TestCryptoMockClient_Decrypt_WrongNonceLength(t *testing.T) {
 	c := NewCryptoMockClient()
 	ctx := context.Background()
 
-	encResp, ok := requireMockEncrypt(t, c, ctx, &transport.EncryptRequest{
+	encResp := requireMockEncrypt(t, c, ctx, &transport.EncryptRequest{
 		KeyID:     "test-key",
 		Plaintext: []byte("mock pkcs11 plaintext"),
 	})
-	if !ok {
-		return
-	}
 
 	tests := []struct {
 		name      string
@@ -206,10 +194,11 @@ func TestCryptoMockClient_Decrypt_WrongNonceLength(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			_, err := c.Decrypt(ctx, &transport.DecryptRequest{
-				KeyID:      "test-key",
-				Ciphertext: encResp.Ciphertext,
-				Nonce:      make([]byte, tt.nonceSize),
-				Tag:        encResp.Tag,
+				KeyID:        "test-key",
+				Ciphertext:   encResp.Ciphertext,
+				Nonce:        make([]byte, tt.nonceSize),
+				Tag:          encResp.Tag,
+				GCMNonceMode: encResp.GCMNonceMode,
 			})
 			if err == nil {
 				t.Fatalf("Decrypt() with %d-byte nonce should return an error, not panic", tt.nonceSize)

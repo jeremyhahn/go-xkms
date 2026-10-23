@@ -36,6 +36,7 @@ import (
 
 	deviceattest01 "github.com/jeremyhahn/go-xkms/pkg/acme/challenges/device-attest-01"
 	"github.com/jeremyhahn/go-xkms/pkg/acme/common"
+	"github.com/jeremyhahn/go-xkms/pkg/acme/ct"
 	"github.com/jeremyhahn/go-xkms/pkg/acme/server/handlers"
 	"github.com/jeremyhahn/go-xkms/pkg/acme/storage/objstore"
 	"github.com/jeremyhahn/go-xkms/pkg/ca"
@@ -60,7 +61,9 @@ type attestingCA struct {
 // otherNames the server asks the CA to assert (SignOptions.OtherNames: the
 // permanentIdentifier read from the verified evidence, never from the CSR)
 // become the certificate's subjectAltName, as in the production CA, so a test
-// can read the identity the certificate is bound to.
+// can read the identity the certificate is bound to. It uses the issuer's
+// reserved serial and notBefore and poisons a precertificate, as the
+// production CA does (RFC 6962 §3.1), and records the final certificate only.
 func (a *attestingCA) SignCSR(_ context.Context, csrPEM []byte, opts *ca.SignOptions) (*x509.Certificate, error) {
 	block, _ := pem.Decode(csrPEM)
 	csr, err := x509.ParseCertificateRequest(block.Bytes)
@@ -68,12 +71,15 @@ func (a *attestingCA) SignCSR(_ context.Context, csrPEM []byte, opts *ca.SignOpt
 		return nil, err
 	}
 	template := &x509.Certificate{
-		SerialNumber: big.NewInt(time.Now().UnixNano()),
+		SerialNumber: opts.Serial,
 		Subject:      csr.Subject,
-		NotBefore:    time.Now().Add(-time.Minute),
-		NotAfter:     time.Now().Add(time.Hour),
+		NotBefore:    opts.NotBefore,
+		NotAfter:     opts.NotBefore.Add(time.Hour),
 	}
-	if opts != nil && len(opts.OtherNames) > 0 {
+	if opts.Precertificate {
+		template.ExtraExtensions = append(template.ExtraExtensions, ct.MakePrecertPoisonExtension())
+	}
+	if len(opts.OtherNames) > 0 {
 		san, err := ca.BuildSubjectAltName(csr.Subject, nil, nil, nil, nil, opts.OtherNames, nil)
 		if err != nil {
 			return nil, err
@@ -88,8 +94,16 @@ func (a *attestingCA) SignCSR(_ context.Context, csrPEM []byte, opts *ca.SignOpt
 	if err != nil {
 		return nil, err
 	}
-	a.issued <- cert
+	if !opts.Precertificate {
+		a.issued <- cert
+	}
 	return cert, nil
+}
+
+// ReserveSerial reserves the serial the issuer signs the precertificate and
+// the certificate with.
+func (a *attestingCA) ReserveSerial(_ context.Context) (*big.Int, error) {
+	return big.NewInt(time.Now().UnixNano()), nil
 }
 
 // deviceAttestServer is a real ACME server with only device-attest-01 offered.

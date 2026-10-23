@@ -259,10 +259,9 @@ func TestIsMechanismSupported(t *testing.T) {
 			want:     true,
 		},
 		{
-			// FIPS mode withholds HKDF over an arbitrary base key (see TestFIPSMode).
-			name:     "HKDF derive supported outside FIPS mode",
+			name:     "HKDF derive supported",
 			mechType: CKM_HKDF_DERIVE,
-			want:     !fips140.Enabled(),
+			want:     true,
 		},
 		{
 			name:     "unknown mechanism not supported",
@@ -845,10 +844,9 @@ func TestCanDerive(t *testing.T) {
 		want     bool
 	}{
 		{
-			// FIPS mode withholds HKDF over an arbitrary base key (see TestFIPSMode).
-			name:     "HKDF derive outside FIPS mode",
+			name:     "HKDF derive",
 			mechType: CKM_HKDF_DERIVE,
-			want:     !fips140.Enabled(),
+			want:     true,
 		},
 		{
 			name:     "ECDH derive",
@@ -3063,9 +3061,10 @@ func TestAdvertisedMechanismsAreDeliberate(t *testing.T) {
 		// substituted the base key's identifier string for its input keying
 		// material; the derivation now runs over the base key's own material,
 		// either bytes the application supplied through C_CreateObject or, for
-		// a backend-held key, inside the backend that holds it.
-		CKM_HKDF_DERIVE:                   outsideFIPS,
-		CKM_HKDF_DATA:                     outsideFIPS,
+		// a backend-held key, inside the backend that holds it. HKDF stays
+		// offered in FIPS mode: crypto/hkdf enforces its own approval there.
+		CKM_HKDF_DERIVE:                   true,
+		CKM_HKDF_DATA:                     true,
 		CKM_SP800_108_COUNTER_KDF:         true,
 		CKM_SP800_108_FEEDBACK_KDF:        true,
 		CKM_SP800_108_DOUBLE_PIPELINE_KDF: true,
@@ -3245,20 +3244,18 @@ func TestFIPSMode(t *testing.T) {
 		// expectation with more than one member would be order-dependent and
 		// flaky.
 		//
-		// The two HKDF mechanisms join SHA-1 signature generation here on
-		// purpose. SP 800-56C Rev. 2 approves extract-then-expand for deriving
-		// from a shared secret an approved key-establishment scheme produced;
-		// C_DeriveKey applies it to an arbitrary base key, which that document
-		// does not cover. The SP 800-108 modes are approved and are marked so.
+		// HKDF and the SP 800-108 modes are not here: the Go Cryptographic
+		// Module approves them and crypto/hkdf enforces its own limits under
+		// fips140=only, so this registry keeps no narrower list beside it.
 		//
 		// CKM_ECDSA_SHA1 joins CKM_SHA1_RSA_PKCS for the same reason the latter
 		// is here: SP 800-131A Rev. 2 disallows SHA-1 for signature generation,
 		// whichever signature algorithm consumes the digest.
 		assert.ElementsMatch(t,
-			[]MechanismType{nonApproved, CKM_ECDSA_SHA1, CKM_HKDF_DERIVE, CKM_HKDF_DATA},
+			[]MechanismType{nonApproved, CKM_ECDSA_SHA1},
 			withheld,
-			"only SHA-1 signature generation and the two HKDF derivations are expected to be "+
-				"non-approved; a new entry here means a mechanism will vanish in FIPS mode")
+			"only SHA-1 signature generation is expected to be non-approved; "+
+				"a new entry here means a mechanism will vanish in FIPS mode")
 	})
 }
 

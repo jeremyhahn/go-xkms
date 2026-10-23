@@ -24,27 +24,25 @@ import (
 	"github.com/jeremyhahn/go-xkms/pkg/pkcs11/module"
 )
 
-// encryptUnderKey runs a single-part CKM_AES_GCM encryption of plaintext under
-// key with the suite's fixed IV and returns the ciphertext.
+// decryptUnderKey runs a single-part decryption of ciphertext under key with
+// mechanism and returns the plaintext and C_Decrypt's return value.
 //
-// Two keys hold the same material if and only if they turn the same plaintext
-// into the same ciphertext under the same IV. That equivalence is what proves a
-// C_UnwrapKey actually reconstructed the wrapped key rather than inventing a
-// fresh one, and it works even when neither key's value may be read back.
-func encryptUnderKey(t *testing.T, m *module.Module, sh module.SessionHandle,
-	key module.ObjectHandle, plaintext []byte) []byte {
+// Two AES keys hold the same material if and only if a CKM_AES_GCM ciphertext
+// sealed under one opens under the other: the GCM tag fails under any other
+// key. That equivalence is what proves a C_UnwrapKey actually reconstructed the
+// wrapped key rather than inventing a fresh one, and it works even when neither
+// key's value may be read back.
+func decryptUnderKey(t *testing.T, m *module.Module, sh module.SessionHandle,
+	key module.ObjectHandle, mechanism *module.Mechanism, ciphertext []byte) ([]byte, module.CK_RV) {
 	t.Helper()
 
-	mech := module.NewMechanismWithTypedParams(module.CKM_AES_GCM, module.NewAESGCMParams(suiteGCMIV(), 128))
-	requireRV(t, module.CKR_OK, m.EncryptInit(sh, mech, key), "EncryptInit failed")
-
-	ciphertext, rv := m.Encrypt(sh, plaintext)
-	requireRV(t, module.CKR_OK, rv, "Encrypt failed")
-
-	requireRV(t, module.CKR_OK, m.FinishOperation(sh, module.OperationEncrypt),
-		"FinishOperation should terminate the encryption operation")
-
-	return ciphertext
+	requireRV(t, module.CKR_OK, m.DecryptInit(sh, mechanism, key), "DecryptInit failed")
+	plaintext, rv := m.Decrypt(sh, ciphertext)
+	if rv == module.CKR_OK {
+		requireRV(t, module.CKR_OK, m.FinishOperation(sh, module.OperationDecrypt),
+			"FinishOperation should terminate the decryption operation")
+	}
+	return plaintext, rv
 }
 
 // RunKeyManagementTests verifies Section 5.14 Key Management Functions of the
@@ -312,18 +310,20 @@ func (s *Suite) testUnwrapKey(t *testing.T) {
 		// random key would return one too, and the caller would silently be
 		// using a different key than the one it unwrapped.
 		//
-		// Encrypting the same plaintext under the target and under the
-		// unwrapped key with the same IV settles it. AES-GCM is deterministic
-		// given (key, IV, plaintext), so identical ciphertext means identical
-		// key material and nothing else.
+		// Sealing a probe under the unwrapped key and opening it under the
+		// target settles it, because the GCM tag only verifies under the key
+		// that sealed it. The probe is sealed under an IV the token generates
+		// (CKG_GENERATE_RANDOM, v3.2 §6.13.7), the form fips140=only permits.
 		probe := []byte("unwrap-identity-probe-plaintext!")
-		fromTarget := encryptUnderKey(t, m, sh, targetKey, probe)
-		fromUnwrapped := encryptUnderKey(t, m, sh, unwrappedHandle, probe)
-
-		if !bytes.Equal(fromTarget, fromUnwrapped) {
-			t.Fatalf("the unwrapped key is not the key that was wrapped: the same plaintext "+
-				"encrypts to\n %x under the target key and\n %x under the unwrapped key",
-				fromTarget, fromUnwrapped)
+		sealed, decryptMech := s.sealTestData(t, m, sh, unwrappedHandle, probe)
+		recovered, rv := decryptUnderKey(t, m, sh, targetKey, decryptMech, sealed)
+		if rv != module.CKR_OK {
+			t.Fatalf("the unwrapped key is not the key that was wrapped: a probe sealed "+
+				"under it does not open under the target key (%v)", rv)
+		}
+		if !bytes.Equal(recovered, probe) {
+			t.Fatalf("the target key opened the probe sealed under the unwrapped key to %q, want %q",
+				recovered, probe)
 		}
 	})
 

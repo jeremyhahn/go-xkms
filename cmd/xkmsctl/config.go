@@ -237,6 +237,7 @@ func (c *Config) backendConfig() (*client.BackendConfig, error) {
 		TLSCertFile: c.TLSCert,
 		TLSKeyFile:  c.TLSKey,
 		TLSCAFile:   c.TLSCACert,
+		SPKIPin:     c.SPKIPin,
 		JWTToken:    c.JWTToken,
 	}
 

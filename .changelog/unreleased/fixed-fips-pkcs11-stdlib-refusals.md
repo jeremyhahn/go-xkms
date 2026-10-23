@@ -1,0 +1,1 @@
+- **PKCS#11 refusals under `GODEBUG=fips140=only` (go-xkms#23).** The PKCS#11 module refuses exactly what the Go standard library refuses (HKDF `C_DeriveKey`, unhashed `CKM_RSA_PKCS` Sign/SignRecover and caller-IV `CKM_AES_GCM`), returning `CKR_MECHANISM_INVALID` or `CKR_MECHANISM_PARAM_INVALID`.

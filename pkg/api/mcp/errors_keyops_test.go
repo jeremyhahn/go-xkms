@@ -23,6 +23,7 @@ import (
 	"github.com/jeremyhahn/go-xkms/pkg/backend"
 	"github.com/jeremyhahn/go-xkms/pkg/crypto/aead"
 	"github.com/jeremyhahn/go-xkms/pkg/errs"
+	"github.com/jeremyhahn/go-xkms/pkg/keyprovider/symmetric"
 	"github.com/jeremyhahn/go-xkms/pkg/xkms"
 	sdkssh "github.com/jeremyhahn/go-xkms/sdk/go/client/ssh"
 )
@@ -122,6 +123,37 @@ func TestMapKeyOpError_AEADNonceSentinels(t *testing.T) {
 			assert.Equal(t, tt.want, keyErr.Code)
 			assert.False(t, keyErr.Internal(),
 				"an AEAD nonce-safety refusal must not be reported with the withheld internal-fault text")
+		})
+	}
+}
+
+// TestMapKeyOpError_FIPSGCMRefusals pins go-xkms#23: under fips140=only an
+// AES-GCM AEAD over a caller-supplied nonce or a truncated tag is refused,
+// and that refusal, like an unapproved tag size, is a parameter the caller
+// can correct. It must render as Invalid params through
+// apierrors.AEADSentinelClasses, with its text kept, while a genuine backend
+// fault behind the same wrapper still renders as a withheld internal error.
+func TestMapKeyOpError_FIPSGCMRefusals(t *testing.T) {
+	tests := []struct {
+		name     string
+		err      error
+		want     int
+		internal bool
+	}{
+		{"caller nonce refused via Encrypt", &xkms.ErrOperationWrap{Sentinel: xkms.ErrEncryptionFailed, Err: &errs.Detail{
+			Err: aead.ErrArbitraryIVGCMUnavailable, Detail: "caller-supplied nonce=true",
+		}}, ErrCodeInvalidParams, false},
+		{"caller nonce refused by the symmetric provider", &xkms.ErrOperationWrap{Sentinel: xkms.ErrEncryptionFailed, Err: symmetric.ErrArbitraryIVGCMUnavailable}, ErrCodeInvalidParams, false},
+		{"unapproved tag size via WrapKeyByID", &xkms.ErrKeyOperation{Operation: "aes-gcm wrap", KeyID: "k1", Err: aead.ErrInvalidGCMTagSize}, ErrCodeInvalidParams, false},
+		{"unapproved tag size from the symmetric provider", &xkms.ErrOperationWrap{Sentinel: xkms.ErrEncryptionFailed, Err: symmetric.ErrInvalidTagSize}, ErrCodeInvalidParams, false},
+		{"backend fault stays internal", &xkms.ErrOperationWrap{Sentinel: xkms.ErrEncryptionFailed, Err: errors.New("hsm session lost")}, ErrCodeInternalError, true},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			var keyErr *KeyOpError
+			require.ErrorAs(t, mapKeyOpError(tt.err), &keyErr)
+			assert.Equal(t, tt.want, keyErr.Code)
+			assert.Equal(t, tt.internal, keyErr.Internal())
 		})
 	}
 }

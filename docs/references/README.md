@@ -29,6 +29,11 @@ implementation work does not depend on the publisher's site staying up.
   Environment (ACME)", the protocol `pkg/acme/server` implements.
   [RFC_8555_COMPLIANCE.md](RFC_8555_COMPLIANCE.md) maps each section to its
   implementation and conformance test.
+- `rfc-6455.txt` — IETF RFC 6455, "The WebSocket Protocol", copied verbatim
+  from https://www.rfc-editor.org/rfc/rfc6455.txt. The browser SSH console
+  of `pkg/ssh/console` is served over it; §4.2.2's SHA-1
+  `Sec-WebSocket-Accept` is why `upgradeWS` refuses the handshake under
+  `GODEBUG=fips140=only` (see [../fips/README.md](../fips/README.md)).
 - `NIST.SP.800-76-2.pdf` — NIST SP 800-76-2, "Biometric Specifications for
   Personal Identity Verification".
 - `NIST.SP.800-78-5.pdf` — NIST SP 800-78-5, "Cryptographic Algorithms and Key

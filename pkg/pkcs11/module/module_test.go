@@ -4029,11 +4029,6 @@ func TestDeriveKeyExtended(t *testing.T) {
 		// be refused rather than silently derived under fabricated
 		// salt/info/hash defaults.
 		_, rv := m.DeriveKey(handle, &Mechanism{Type: CKM_HKDF_DERIVE}, keyHandle, template)
-		if fipsModeEnabled() {
-			assert.Equal(t, CKR_MECHANISM_INVALID, rv,
-				"FIPS mode withholds HKDF over an arbitrary base key before reading its parameters")
-			return
-		}
 		assert.Equal(t, CKR_MECHANISM_PARAM_INVALID, rv)
 	})
 
@@ -4060,10 +4055,6 @@ func TestDeriveKeyExtended(t *testing.T) {
 		}
 
 		derivedHandle, rv := m.DeriveKey(handle, mech, keyHandle, template)
-		if fipsModeEnabled() {
-			assert.Equal(t, CKR_MECHANISM_INVALID, rv, "FIPS mode withholds HKDF over an arbitrary base key")
-			return
-		}
 		assert.Equal(t, CKR_OK, rv)
 		assert.NotEqual(t, ObjectHandle(InvalidHandle), derivedHandle)
 	})

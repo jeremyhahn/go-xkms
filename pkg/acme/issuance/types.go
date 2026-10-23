@@ -1,16 +1,3 @@
-// Copyright (c) 2025 Jeremy Hahn
-// Copyright (c) 2025 Automate The Things, LLC
-//
-// This file is part of go-xkms.
-//
-// go-xkms is dual-licensed:
-//
-// 1. GNU Affero General Public License v3.0 (AGPL-3.0)
-//    See LICENSE file or visit https://www.gnu.org/licenses/agpl-3.0.html
-//
-// 2. Commercial License
-//    Contact licensing@automatethethings.com for commercial licensing options.
-
 package issuance
 
 import (
@@ -21,270 +8,72 @@ import (
 	"time"
 
 	"github.com/jeremyhahn/go-xkms/pkg/acme/ct"
+	"github.com/jeremyhahn/go-xkms/pkg/acme/linter"
+	"github.com/jeremyhahn/go-xkms/pkg/ca"
 )
 
-// Request contains the parameters for certificate issuance.
+// Request is one certificate to issue.
 type Request struct {
-	// CSR is the certificate signing request.
+	// CSR is the finalize request's certificate request (RFC 8555 §7.4).
 	CSR *x509.CertificateRequest
 
-	// Template is the certificate template with desired extensions.
-	// If nil, a template is generated from the CSR.
-	Template *x509.Certificate
+	// Options are the CA sign options of the certificate: tenant, profile,
+	// issuer and extensions. The Issuer sets Serial, Precertificate, Linter
+	// and, when it is zero, NotBefore.
+	Options ca.SignOptions
 
-	// NotBefore is the start of the certificate validity period.
-	NotBefore time.Time
-
-	// NotAfter is the end of the certificate validity period.
-	NotAfter time.Time
-
-	// Profile is the issuance profile to use (e.g., "default", "tls", "ca").
-	Profile string
-
-	// TenantID is the tenant the certificate is issued to: the ACME
-	// account's, or qrdbsdk.SystemTenantID for an account that is not
-	// tenant-bound. The certificate carries it as its subject's first
-	// organizational unit, in place of any the CSR or Template names. It is
-	// required.
-	TenantID string
-
-	// SkipCT skips Certificate Transparency if true.
-	// Should only be used for internal/private certificates.
-	SkipCT bool
-
-	// SkipLint skips certificate linting if true.
-	// Should only be used for testing or special cases.
-	SkipLint bool
-
-	// RequestMetadata contains optional metadata for audit logging.
-	RequestMetadata map[string]string
+	// Actor and Resource name the requester and the order in audit events,
+	// such as "account:12" and "order:34".
+	Actor    string
+	Resource string
 }
 
-// Result contains the results of certificate issuance.
+// Result is an issued certificate and its precertificate.
 type Result struct {
-	// Precert is the precertificate (with poison extension).
-	Precert *x509.Certificate
+	// Precertificate is the RFC 6962 §3.1 precertificate.
+	Precertificate *x509.Certificate
 
-	// FinalCert is the final certificate (with SCT list extension).
-	FinalCert *x509.Certificate
-
-	// Serial is the certificate serial number.
-	Serial *big.Int
-
-	// SCTs contains the SCTs obtained from CT logs.
-	SCTs []ct.SignedCertificateTimestamp
-
-	// IssuanceTime is when issuance completed.
-	IssuanceTime time.Time
-
-	// IssuanceID is a unique identifier for this issuance.
-	IssuanceID string
+	// Certificate is the final certificate; the CA has stored it.
+	Certificate *x509.Certificate
 }
 
-// Issuer defines the interface for certificate issuance.
-type Issuer interface {
-	// Issue performs two-phase certificate issuance.
-	Issue(ctx context.Context, req *Request) (*Result, error)
-}
-
-// CertificateSigner defines the interface for certificate signing operations.
+// CertificateSigner signs certificate requests; pkg/ca.CA is the one
+// implementation, and stores every certificate it signs other than a
+// precertificate.
 type CertificateSigner interface {
-	// Signer returns the crypto.Signer for signing.
-	Signer() (crypto.Signer, error)
-
-	// Certificate returns the issuing certificate.
-	Certificate() (*x509.Certificate, error)
-
-	// SignCertificate signs a certificate template.
-	SignCertificate(template, parent *x509.Certificate, pub, priv interface{}) ([]byte, error)
+	SignCSR(ctx context.Context, csrPEM []byte, opts *ca.SignOptions) (*x509.Certificate, error)
 }
 
-// SerialStorage defines the interface for serial number persistence.
+// SerialStorage reserves serial numbers (RFC 5280 §4.1.2.2) before anything
+// is signed with them; pkg/ca.CA implements it over its serial store.
 type SerialStorage interface {
-	// ReserveSerial reserves a serial number before signing.
-	// Returns an error if the serial is already reserved.
-	ReserveSerial(ctx context.Context, serial *big.Int, metadata SerialMetadata) error
-
-	// ConfirmSerial confirms a serial was used for issuance.
-	ConfirmSerial(ctx context.Context, serial *big.Int) error
-
-	// RevokeReservation revokes a serial reservation (for cleanup on failure).
-	RevokeReservation(ctx context.Context, serial *big.Int) error
-
-	// IsSerialUsed checks if a serial has been used.
-	IsSerialUsed(ctx context.Context, serial *big.Int) (bool, error)
+	ReserveSerial(ctx context.Context) (*big.Int, error)
 }
 
-// SerialMetadata contains metadata for serial reservation.
-type SerialMetadata struct {
-	// ReservedAt is when the serial was reserved.
-	ReservedAt time.Time
-
-	// RequestID identifies the issuance request.
-	RequestID string
-
-	// Subject is the certificate subject.
-	Subject string
-
-	// Profile is the issuance profile.
-	Profile string
-}
-
-// CertificateStorage defines the interface for certificate persistence.
-type CertificateStorage interface {
-	// StoreCertificate stores a certificate.
-	StoreCertificate(ctx context.Context, cert *x509.Certificate) error
-
-	// StorePrecert stores a precertificate for audit.
-	StorePrecert(ctx context.Context, precert *x509.Certificate) error
-
-	// GetCertificateBySerial retrieves a certificate by serial.
-	GetCertificateBySerial(ctx context.Context, serial *big.Int) (*x509.Certificate, error)
-}
-
-// AuditLogger defines the interface for audit logging.
-type AuditLogger interface {
-	// LogIssuanceIntent logs the intent to issue a certificate.
-	LogIssuanceIntent(ctx context.Context, req *Request, serial *big.Int) error
-
-	// LogPrecertCreated logs precertificate creation.
-	LogPrecertCreated(ctx context.Context, precert *x509.Certificate) error
-
-	// LogCTSubmission logs CT submission results.
-	LogCTSubmission(ctx context.Context, scts []ct.SignedCertificateTimestamp, errors []error) error
-
-	// LogIssuanceComplete logs successful issuance.
-	LogIssuanceComplete(ctx context.Context, result *Result) error
-
-	// LogIssuanceFailure logs issuance failure.
-	LogIssuanceFailure(ctx context.Context, req *Request, phase IssuancePhase, err error) error
-}
-
-// KeyValidator defines the interface for key validation.
+// KeyValidator refuses weak public keys; pkg/acme/goodkey.Validator
+// implements it.
 type KeyValidator interface {
-	// CheckKey validates a public key.
 	CheckKey(ctx context.Context, key crypto.PublicKey) error
 }
 
-// CertificateLinter defines the interface for certificate linting.
+// TransparencyLogs submits a precertificate and its issuing chain to every
+// enabled Certificate Transparency log (RFC 6962 §4.2). *ct.CTPolicy
+// implements it: the SCTs it returns are verified against each log's key
+// (RFC 6962 §3.2), each failed log is named in Submission.Failures, and it
+// returns an error when the verified SCTs do not meet its policy.
+type TransparencyLogs interface {
+	Submit(ctx context.Context, precertDER []byte, chain [][]byte, expiry time.Time) (*ct.Submission, error)
+}
+
+// IssuerChain returns the CA's PEM chain from its issuing certificate to its
+// root; pkg/ca.CA implements it.
+type IssuerChain interface {
+	CABundle() ([]byte, error)
+}
+
+// CertificateLinter lints a DER certificate; pkg/acme/linter.Linter
+// implements it. Lint returns an error when the certificate has a lint
+// error or fatal, and the findings either way.
 type CertificateLinter interface {
-	// LintCertificate lints a certificate.
-	LintCertificate(cert *x509.Certificate) (LintResult, error)
-
-	// LintDER lints a DER-encoded certificate.
-	LintDER(der []byte) (LintResult, error)
-}
-
-// LintResult contains the results of certificate linting.
-type LintResult interface {
-	// Passed returns true if linting passed.
-	Passed() bool
-
-	// Summary returns a summary of lint results.
-	Summary() string
-
-	// Errors returns lint errors.
-	Errors() []string
-
-	// Warnings returns lint warnings.
-	Warnings() []string
-}
-
-// CTSubmitter defines the interface for CT log submission.
-type CTSubmitter interface {
-	// GetSCTs submits a precert to CT logs and returns SCTs.
-	GetSCTs(ctx context.Context, precertDER []byte, chain [][]byte, expiry time.Time) ([]ct.SignedCertificateTimestamp, error)
-}
-
-// Profile defines an issuance profile configuration.
-type Profile struct {
-	// Name is the profile identifier.
-	Name string
-
-	// MaxValidityDays is the maximum validity period in days.
-	MaxValidityDays int
-
-	// AllowedKeyAlgorithms lists allowed key algorithms.
-	AllowedKeyAlgorithms []x509.PublicKeyAlgorithm
-
-	// AllowedKeyUsages lists allowed key usages.
-	AllowedKeyUsages []x509.KeyUsage
-
-	// AllowedExtKeyUsages lists allowed extended key usages.
-	AllowedExtKeyUsages []x509.ExtKeyUsage
-
-	// RequireCT requires Certificate Transparency.
-	RequireCT bool
-
-	// LintProfile is the lint profile to use.
-	LintProfile string
-}
-
-// DefaultProfile returns the default issuance profile.
-func DefaultProfile() Profile {
-	return Profile{
-		Name:            "default",
-		MaxValidityDays: 398, // 13 months per CABF
-		AllowedKeyAlgorithms: []x509.PublicKeyAlgorithm{
-			x509.RSA,
-			x509.ECDSA,
-			x509.Ed25519,
-		},
-		AllowedKeyUsages: []x509.KeyUsage{
-			x509.KeyUsageDigitalSignature,
-			x509.KeyUsageKeyEncipherment,
-		},
-		AllowedExtKeyUsages: []x509.ExtKeyUsage{
-			x509.ExtKeyUsageServerAuth,
-			x509.ExtKeyUsageClientAuth,
-		},
-		RequireCT:   true,
-		LintProfile: "default",
-	}
-}
-
-// TLSProfile returns a profile for TLS server certificates.
-func TLSProfile() Profile {
-	return Profile{
-		Name:            "tls",
-		MaxValidityDays: 398,
-		AllowedKeyAlgorithms: []x509.PublicKeyAlgorithm{
-			x509.RSA,
-			x509.ECDSA,
-		},
-		AllowedKeyUsages: []x509.KeyUsage{
-			x509.KeyUsageDigitalSignature,
-			x509.KeyUsageKeyEncipherment,
-		},
-		AllowedExtKeyUsages: []x509.ExtKeyUsage{
-			x509.ExtKeyUsageServerAuth,
-		},
-		RequireCT:   true,
-		LintProfile: "tls",
-	}
-}
-
-// InternalProfile returns a profile for internal/private certificates.
-func InternalProfile() Profile {
-	return Profile{
-		Name:            "internal",
-		MaxValidityDays: 365 * 2, // 2 years for internal certs
-		AllowedKeyAlgorithms: []x509.PublicKeyAlgorithm{
-			x509.RSA,
-			x509.ECDSA,
-			x509.Ed25519,
-		},
-		AllowedKeyUsages: []x509.KeyUsage{
-			x509.KeyUsageDigitalSignature,
-			x509.KeyUsageKeyEncipherment,
-			x509.KeyUsageCertSign,
-		},
-		AllowedExtKeyUsages: []x509.ExtKeyUsage{
-			x509.ExtKeyUsageServerAuth,
-			x509.ExtKeyUsageClientAuth,
-			x509.ExtKeyUsageCodeSigning,
-		},
-		RequireCT:   false, // No CT for internal certs
-		LintProfile: "lenient",
-	}
+	Lint(der []byte) (*linter.Result, error)
 }

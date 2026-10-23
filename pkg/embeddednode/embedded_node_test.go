@@ -134,6 +134,29 @@ func TestOpenEmbeddedNode_EngineNormalised(t *testing.T) {
 	t.Cleanup(func() { require.NoError(t, node.Close()) })
 }
 
+func TestTrustDomain(t *testing.T) {
+	assert.Equal(t, DefaultTrustDomain, TrustDomain(&config.Config{}),
+		"no configured trust domain falls back to the default")
+
+	cfg := &config.Config{Cluster: config.ClusterConfig{
+		RaftEnrollment: config.RaftEnrollmentConfig{TrustDomain: "example.org"},
+	}}
+	assert.Equal(t, "example.org", TrustDomain(cfg))
+}
+
+// The qrdb mTLS authenticator pins the SPIFFE trust domain the CA issues
+// client certificates under, so a SAN under a foreign trust domain is rejected.
+func TestEmbeddedNodeStorageConfig_PinsSPIFFETrustDomain(t *testing.T) {
+	qcfg := EmbeddedNodeStorageConfig(&config.Config{}, ResolvedNodeSeal{})
+	assert.Equal(t, DefaultTrustDomain, qcfg.Auth.SPIFFETrustDomain)
+
+	cfg := &config.Config{Cluster: config.ClusterConfig{
+		RaftEnrollment: config.RaftEnrollmentConfig{TrustDomain: "example.org"},
+	}}
+	qcfg = EmbeddedNodeStorageConfig(cfg, ResolvedNodeSeal{})
+	assert.Equal(t, "example.org", qcfg.Auth.SPIFFETrustDomain)
+}
+
 // TestOpenEmbeddedNode_OverridesFactorRegistryAndAuditSink proves that a
 // caller-supplied FactorRegistry/AuditSink is used as-is rather than built
 // from a default -- the seam xkmsd init and xkmsd run rely on to share one

@@ -35,8 +35,8 @@ var (
 	// ErrInvalidLogConfig indicates invalid CT log configuration.
 	ErrInvalidLogConfig = errors.New("ct: invalid log configuration")
 
-	// ErrNoLogsConfigured indicates no CT logs are configured.
-	ErrNoLogsConfigured = errors.New("ct: no logs configured")
+	// ErrNoLogsConfigured indicates no CT log is enabled, so CT is off.
+	ErrNoLogsConfigured = errors.New("ct: no enabled logs configured")
 
 	// ErrNoEligibleLogs indicates no logs are eligible for the certificate.
 	ErrNoEligibleLogs = errors.New("ct: no eligible logs for certificate expiry")
@@ -70,6 +70,40 @@ var (
 
 	// ErrPrecertPoisonInvalid indicates the precert poison extension is invalid.
 	ErrPrecertPoisonInvalid = errors.New("ct: precert poison extension invalid")
+
+	// ErrPrecertMalformed indicates the precertificate is not a parseable
+	// X.509 certificate or its TBSCertificate cannot be re-encoded.
+	ErrPrecertMalformed = errors.New("ct: precertificate malformed")
+
+	// ErrPrecertIssuerMissing indicates the chain carries no certificate
+	// that issues the precertificate (RFC 6962 §3.2 issuer_key_hash).
+	ErrPrecertIssuerMissing = errors.New("ct: precertificate issuer missing from chain")
+
+	// ErrSCTLogIDMismatch indicates the SCT's log ID is not the SHA-256 hash
+	// of the log's public key (RFC 6962 §3.2).
+	ErrSCTLogIDMismatch = errors.New("ct: SCT log ID does not match the log's public key")
+
+	// ErrUnsupportedSCTAlgorithm indicates the SCT's hash or signature
+	// algorithm is not one RFC 6962 §2.1.4 allows for the log's key.
+	ErrUnsupportedSCTAlgorithm = errors.New("ct: unsupported SCT hash or signature algorithm")
+
+	// ErrLogURLInvalid indicates a log URL that is not an absolute http or
+	// https URL.
+	ErrLogURLInvalid = errors.New("ct: log URL must be an absolute http or https URL")
+
+	// ErrLogPublicKeyMissing indicates a log without a public key.
+	ErrLogPublicKeyMissing = errors.New("ct: log public key missing")
+
+	// ErrLogPublicKeyUnsupported indicates a log key that is neither ECDSA
+	// P-256 nor RSA of at least 2048 bits (RFC 6962 §2.1.4).
+	ErrLogPublicKeyUnsupported = errors.New("ct: log public key must be ECDSA P-256 or RSA of at least 2048 bits")
+
+	// ErrLogIDMismatch indicates a configured log ID that is not the SHA-256
+	// hash of the log's public key (RFC 6962 §3.2).
+	ErrLogIDMismatch = errors.New("ct: configured log ID does not match the log's public key")
+
+	// ErrDuplicateLog indicates two configured logs share a URL or log ID.
+	ErrDuplicateLog = errors.New("ct: duplicate log")
 )
 
 // CTSubmissionError wraps a CT log submission error with additional context.
@@ -94,6 +128,38 @@ func NewCTSubmissionError(logName, logURL string, cause error) *CTSubmissionErro
 	return &CTSubmissionError{
 		LogName: logName,
 		LogURL:  logURL,
+		Cause:   cause,
+	}
+}
+
+// LogConfigError reports a CT log entry that failed validation. It matches
+// ErrInvalidLogConfig under errors.Is, and Cause names the defect.
+type LogConfigError struct {
+	LogName string
+	LogURL  string
+	Cause   error
+}
+
+// Error implements the error interface.
+func (e *LogConfigError) Error() string {
+	return fmt.Sprintf("ct: invalid configuration for log %s (%s): %v", e.LogName, e.LogURL, e.Cause)
+}
+
+// Unwrap returns the defect that failed validation.
+func (e *LogConfigError) Unwrap() error {
+	return e.Cause
+}
+
+// Is reports whether target is ErrInvalidLogConfig.
+func (e *LogConfigError) Is(target error) bool {
+	return target == ErrInvalidLogConfig
+}
+
+// NewLogConfigError creates a LogConfigError for log.
+func NewLogConfigError(log LogGroup, cause error) *LogConfigError {
+	return &LogConfigError{
+		LogName: log.Name,
+		LogURL:  log.URL,
 		Cause:   cause,
 	}
 }

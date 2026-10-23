@@ -147,7 +147,7 @@ func TestAuditTrail_TPMEnrollmentIsRecorded(t *testing.T) {
 		iakDER:    selfSignedDER(t, "iak-"+prodModel+"-"+prodSerial, big.NewInt(11), 30*24*time.Hour),
 		idevidDER: selfSignedDER(t, prodModel+"-"+prodSerial, idevidSerial, 60*24*time.Hour),
 	}
-	service.ca = enrollCA
+	setCA(t, service, enrollCA)
 
 	ekCertDER := selfSignedDER(t, "ek-"+prodSerial, big.NewInt(22), 365*24*time.Hour)
 	csrDER := packTCGCSR(t, prodModel, prodSerial, ekCertDER)

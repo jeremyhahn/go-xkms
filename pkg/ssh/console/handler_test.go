@@ -14,6 +14,7 @@
 package console
 
 import (
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -23,6 +24,7 @@ import (
 	"github.com/gorilla/websocket"
 
 	"github.com/jeremyhahn/go-xkms/pkg/ssh/scope"
+	"github.com/jeremyhahn/go-xkms/pkg/testing/fipstest"
 )
 
 func TestWSHandler_BridgeEchoAndResize(t *testing.T) {
@@ -47,8 +49,8 @@ func TestWSHandler_BridgeEchoAndResize(t *testing.T) {
 	defer ts.Close()
 
 	wsURL := "ws" + strings.TrimPrefix(ts.URL, "http")
-	conn, _, err := websocket.DefaultDialer.Dial(wsURL, nil)
-	if !requireWSUpgrade(t, err) {
+	conn, resp, err := websocket.DefaultDialer.Dial(wsURL, nil)
+	if !requireWSUpgrade(t, resp, err) {
 		return
 	}
 	defer conn.Close()
@@ -116,5 +118,71 @@ func TestWSHandler_ResolverRejectBeforeUpgrade(t *testing.T) {
 	}
 	if resp == nil || resp.StatusCode != http.StatusForbidden {
 		t.Fatalf("expected 403, got %v", resp)
+	}
+}
+
+// TestUpgradeWS_RefusesSHA1UnderFIPSOtherwiseUpgrades checks that upgradeWS
+// returns the typed refusal and answers 501 when the standard library refuses
+// the SHA-1 RFC 6455 §4.2.2 requires (GODEBUG=fips140=only), and completes the
+// upgrade outside it.
+func TestUpgradeWS_RefusesSHA1UnderFIPSOtherwiseUpgrades(t *testing.T) {
+	serverErr := make(chan error, 1)
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		conn, err := upgradeWS(&websocket.Upgrader{}, w, r)
+		serverErr <- err
+		if err == nil {
+			_ = conn.Close()
+		}
+	}))
+	defer ts.Close()
+
+	conn, resp, err := websocket.DefaultDialer.Dial("ws"+strings.TrimPrefix(ts.URL, "http"), nil)
+	if !fipstest.OutsideFIPSAfterRefusal(t, <-serverErr, &UpgradeRefusedError{}) {
+		if resp == nil || resp.StatusCode != http.StatusNotImplemented {
+			t.Fatalf("refused upgrade: dial err = %v, want a %d response", err, http.StatusNotImplemented)
+		}
+		return
+	}
+	if err != nil {
+		t.Fatalf("ws dial: %v", err)
+	}
+	_ = conn.Close()
+}
+
+// TestUpgradeWS_NonWebSocketRequestKeepsBadRequest checks that a request that
+// is not a WebSocket handshake gets gorilla's 400 in every FIPS mode, since it
+// never reaches SHA-1.
+func TestUpgradeWS_NonWebSocketRequestKeepsBadRequest(t *testing.T) {
+	rec := httptest.NewRecorder()
+	conn, err := upgradeWS(&websocket.Upgrader{}, rec, httptest.NewRequest(http.MethodGet, "/ssh/console", nil))
+	if err == nil {
+		_ = conn.Close()
+		t.Fatal("a non-WebSocket request must not be upgraded")
+	}
+	if errors.Is(err, &UpgradeRefusedError{}) {
+		t.Fatalf("err = %v, want gorilla's handshake error, not a SHA-1 refusal", err)
+	}
+	if rec.Code != http.StatusBadRequest {
+		t.Errorf("status = %d, want %d", rec.Code, http.StatusBadRequest)
+	}
+}
+
+// TestUpgradeRefusedError_MatchesAnyRefusalAndUnwraps checks errors.Is and
+// errors.Unwrap on the typed refusal.
+func TestUpgradeRefusedError_MatchesAnyRefusalAndUnwraps(t *testing.T) {
+	cause := errors.New("crypto/sha1: use of SHA-1 is not allowed in FIPS 140-only mode")
+	err := error(&UpgradeRefusedError{Err: cause})
+
+	if !errors.Is(err, &UpgradeRefusedError{}) {
+		t.Error("errors.Is must match any *UpgradeRefusedError")
+	}
+	if !errors.Is(err, cause) {
+		t.Error("errors.Is must reach the standard library's refusal")
+	}
+	if errors.Is(err, &ClosedError{}) {
+		t.Error("errors.Is must not match an unrelated typed error")
+	}
+	if want := "ssh/console: websocket upgrade refused: " + cause.Error(); err.Error() != want {
+		t.Errorf("Error() = %q, want %q", err.Error(), want)
 	}
 }

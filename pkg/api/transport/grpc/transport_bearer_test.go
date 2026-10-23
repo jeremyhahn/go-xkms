@@ -23,6 +23,7 @@ import (
 	"crypto/x509/pkix"
 	"math/big"
 	"net"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -35,6 +36,7 @@ import (
 
 	pb "github.com/jeremyhahn/go-xkms/pkg/api/grpc/proto/xkmsv1"
 	"github.com/jeremyhahn/go-xkms/pkg/api/transport"
+	"github.com/jeremyhahn/go-xkms/pkg/crypto/spki"
 )
 
 // authRecordingServer records the authorization metadata of each Health
@@ -57,6 +59,16 @@ func (s *authRecordingServer) Health(ctx context.Context, _ *pb.HealthRequest) (
 // certificate, and returns its address and a pool trusting it.
 func tlsServer(t *testing.T, srv pb.KeystoreServiceServer) (string, *x509.CertPool) {
 	t.Helper()
+	addr, leaf := tlsServerLeaf(t, srv)
+	pool := x509.NewCertPool()
+	pool.AddCert(leaf)
+	return addr, pool
+}
+
+// tlsServerLeaf serves srv over TLS with a fresh self-signed certificate and
+// returns the listen address and that certificate.
+func tlsServerLeaf(t *testing.T, srv pb.KeystoreServiceServer) (string, *x509.Certificate) {
+	t.Helper()
 	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
 	require.NoError(t, err)
 	tmpl := &x509.Certificate{
@@ -74,8 +86,6 @@ func tlsServer(t *testing.T, srv pb.KeystoreServiceServer) (string, *x509.CertPo
 	require.NoError(t, err)
 	leaf, err := x509.ParseCertificate(der)
 	require.NoError(t, err)
-	pool := x509.NewCertPool()
-	pool.AddCert(leaf)
 
 	lis, err := net.Listen("tcp", "127.0.0.1:0")
 	require.NoError(t, err)
@@ -90,7 +100,7 @@ func tlsServer(t *testing.T, srv pb.KeystoreServiceServer) (string, *x509.CertPo
 		}
 	}()
 	t.Cleanup(server.Stop)
-	return lis.Addr().String(), pool
+	return lis.Addr().String(), leaf
 }
 
 // TestConnect_UsesCallerTLSConfigAndBearerToken proves the two settings a
@@ -134,6 +144,29 @@ func TestConnect_NoTokenSendsNoAuthorization(t *testing.T) {
 func TestConnect_UntrustedServerIsRefused(t *testing.T) {
 	addr, _ := tlsServer(t, &authRecordingServer{})
 	tr, err := New(transport.WithAddress(addr), transport.WithTLSConfig(&tls.Config{RootCAs: x509.NewCertPool()}))
+	require.NoError(t, err)
+	assert.Error(t, tr.Connect(context.Background()))
+}
+
+// TestConnect_SPKIPinTrustsServerWithoutCA covers a server whose certificate
+// chains to no CA the client holds: the SPKI pin is the trust anchor (#794).
+func TestConnect_SPKIPinTrustsServerWithoutCA(t *testing.T) {
+	addr, leaf := tlsServerLeaf(t, &authRecordingServer{})
+	pin, err := spki.ComputePin(leaf)
+	require.NoError(t, err)
+
+	tr, err := New(transport.WithAddress(addr), transport.WithSPKIPin(pin))
+	require.NoError(t, err)
+	require.NoError(t, tr.Connect(context.Background()))
+	t.Cleanup(func() { assert.NoError(t, tr.Close()) })
+}
+
+// TestConnect_SPKIPinMismatchIsRefused proves the pin is enforced: a server
+// presenting a different key is refused.
+func TestConnect_SPKIPinMismatchIsRefused(t *testing.T) {
+	addr, _ := tlsServerLeaf(t, &authRecordingServer{})
+
+	tr, err := New(transport.WithAddress(addr), transport.WithSPKIPin(strings.Repeat("00", 32)))
 	require.NoError(t, err)
 	assert.Error(t, tr.Connect(context.Background()))
 }

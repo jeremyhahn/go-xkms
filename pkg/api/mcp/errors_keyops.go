@@ -209,7 +209,9 @@ func mapKeyOpError(err error) error {
 
 	// aead.ErrNonceReuse and aead.ErrNonceTrackerFull reach here wrapped in
 	// pkg/xkms's ErrKeyOperation from Encrypt's and WrapKeyByID's AEAD nonce
-	// guard; see apierrors.AEADSentinelClasses. classified is used rather
+	// guard; see apierrors.AEADSentinelClasses, which also classifies a
+	// refused AES-GCM nonce or tag size (fips140=only) as Invalid params.
+	// classified is used rather
 	// than the bare *KeyOpError literal above: ClassResourceExhausted has no
 	// dedicated JSON-RPC code and renders through the same ErrCodeInternalError
 	// floor an unclassified fault does, so Classified is what keeps a nonce

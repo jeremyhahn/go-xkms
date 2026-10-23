@@ -17,13 +17,12 @@ package main
 //
 // Several round trips in this package drive constructions the FIPS module
 // refuses: CKM_AES_GCM over a caller-supplied IV (Go's crypto/cipher refuses
-// arbitrary-IV GCM under GODEBUG=fips140=only), CKM_HKDF_DERIVE over an
-// arbitrary base key (withheld in FIPS mode, see pkg/pkcs11/module's
-// mechanism registry) and CKM_RSA_PKCS sign-recover over raw data (PKCS#1
-// v1.5 with no digest). Those tests re-run themselves under
-// GODEBUG=fips140=off through runsOutsideFIPSMode, and
+// arbitrary-IV GCM under GODEBUG=fips140=only) and CKM_RSA_PKCS sign-recover
+// over raw data (PKCS#1 v1.5 with no digest). Those tests re-run themselves
+// under GODEBUG=fips140=off through runsOutsideFIPSMode, and
 // TestFIPSOnlyRefusesNonApprovedConstructions proves the refusals in a
-// fips140=only child.
+// fips140=only child. CKM_HKDF_DERIVE follows crypto/hkdf's own verdict:
+// TestFIPSOnlyDerivesHKDF derives RFC 5869 Test Case 1 under fips140=only.
 
 import (
 	"crypto/fips140"
@@ -131,30 +130,15 @@ func TestFIPSOnlyRefusesNonApprovedConstructions(t *testing.T) {
 		}
 	})
 
-	t.Run("C_DeriveKey CKM_HKDF_DERIVE", func(t *testing.T) {
+	// crypto/hkdf refuses an input key shorter than 112 bits under
+	// fips140=only (src/crypto/hkdf/hkdf.go, checkFIPS140Only), and
+	// C_DeriveKey passes that verdict on: the module keeps no HKDF rule of
+	// its own.
+	t.Run("C_DeriveKey CKM_HKDF_DERIVE over a short input key", func(t *testing.T) {
 		_, session := newCryptoFixture(t)
-		baseKey := createSecretKeyObjectViaC(t, session, []byte("0123456789ABCDEF0123456789ABCDEF"))
-		hkdfParams := buildHKDFParams(t, true, true, module.CKM_SHA256, module.CKF_HKDF_SALT_DATA, []byte("fips-only-hkdf-salt"), 0, nil)
-		mechBuf := buildCMechanismWithParam(t, module.CKM_HKDF_DERIVE, hkdfParams)
-		template := buildCAttributeArray(t, []module.Attribute{
-			module.NewUint32Attribute(module.CKA_CLASS, uint32(module.CKO_SECRET_KEY)),
-			module.NewUint32Attribute(module.CKA_KEY_TYPE, uint32(module.CKK_AES)),
-			module.NewUint32Attribute(module.CKA_VALUE_LEN, 16),
-			module.NewBoolAttribute(module.CKA_TOKEN, false),
-		})
-
-		fn := reflect.ValueOf(C_DeriveKey)
-		ft := fn.Type()
-		out := fn.Call([]reflect.Value{
-			scalarOf(ft, 0, uint64(session)),
-			cMechanismPtr(mechBuf, ft, 1),
-			scalarOf(ft, 2, uint64(baseKey)),
-			cAttributePtr(template, ft, 3),
-			scalarOf(ft, 4, attrCount(template)),
-			allocOf(ft, 5),
-		})
-		if rv := module.CK_RV(out[0].Uint()); rv != module.CKR_MECHANISM_INVALID {
-			t.Fatalf("C_DeriveKey(CKM_HKDF_DERIVE) under fips140=only = %s, want CKR_MECHANISM_INVALID", rv)
+		baseKey := createSecretKeyObjectViaC(t, session, module.CKK_GENERIC_SECRET, rfc5869TestCase1.ikm[:13])
+		if rv, _ := deriveHKDFViaC(t, session, baseKey, rfc5869TestCase1.salt, rfc5869TestCase1.info, 32); rv == module.CKR_OK {
+			t.Fatal("C_DeriveKey(CKM_HKDF_DERIVE, 104-bit key) = CKR_OK under fips140=only, want a refusal")
 		}
 	})
 
@@ -169,4 +153,15 @@ func TestFIPSOnlyRefusesNonApprovedConstructions(t *testing.T) {
 			t.Fatal("C_SignRecover(CKM_RSA_PKCS, raw data) = CKR_OK under fips140=only, want a refusal")
 		}
 	})
+}
+
+// TestFIPSOnlyDerivesHKDF proves CKM_HKDF_DERIVE stays available under
+// GODEBUG=fips140=only: HKDF is part of the Go Cryptographic Module, and
+// crypto/hkdf allows HKDF-SHA256 over a key of 112 bits or more.
+func TestFIPSOnlyDerivesHKDF(t *testing.T) {
+	if !fips140.Enforced() {
+		rerunUnderGODEBUG(t, "fips140=only")
+		return
+	}
+	assertDerivesRFC5869TestCase1(t)
 }

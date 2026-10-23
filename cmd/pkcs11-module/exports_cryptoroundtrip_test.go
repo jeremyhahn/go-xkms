@@ -47,13 +47,9 @@ package main
 import (
 	"bytes"
 	"crypto/rand"
-	"crypto/sha256"
-	"io"
 	"reflect"
 	"runtime"
 	"testing"
-
-	"golang.org/x/crypto/hkdf"
 
 	"github.com/jeremyhahn/go-xkms/pkg/pkcs11/module"
 	"github.com/jeremyhahn/go-xkms/pkg/testing/pkcs11test"
@@ -611,12 +607,12 @@ func TestAESWrapUnwrapKey_RoundTrip(t *testing.T) {
 // CKA_VALUE secret key object, for tests that need a base key whose material
 // is known exactly (an imported key gets no backend id, so CKM_HKDF_DERIVE's
 // local computation is the only path that can consume it).
-func createSecretKeyObjectViaC(t *testing.T, session module.SessionHandle, value []byte) module.ObjectHandle {
+func createSecretKeyObjectViaC(t *testing.T, session module.SessionHandle, keyType module.KeyType, value []byte) module.ObjectHandle {
 	t.Helper()
 
 	template := buildCAttributeArray(t, []module.Attribute{
 		module.NewUint32Attribute(module.CKA_CLASS, uint32(module.CKO_SECRET_KEY)),
-		module.NewUint32Attribute(module.CKA_KEY_TYPE, uint32(module.CKK_AES)),
+		module.NewUint32Attribute(module.CKA_KEY_TYPE, uint32(keyType)),
 		module.NewStringAttribute(module.CKA_LABEL, "roundtrip-hkdf-base-key"),
 		module.NewAttribute(module.CKA_VALUE, value),
 		module.NewBoolAttribute(module.CKA_DERIVE, true),
@@ -644,24 +640,57 @@ func createSecretKeyObjectViaC(t *testing.T, session module.SessionHandle, value
 // checked against an independent golang.org/x/crypto/hkdf computation, not
 // merely against a non-zero object handle.
 func TestDeriveKeyHKDF_RoundTrip(t *testing.T) {
-	// Drives a construction FIPS mode refuses; see exports_fips_test.go.
-	if !runsOutsideFIPSMode(t) {
-		return
-	}
+	assertDerivesRFC5869TestCase1(t)
+}
+
+// rfc5869TestCase1 is RFC 5869 Appendix A.1, Test Case 1: HKDF-SHA256 over a
+// 22-octet IKM, a 13-octet salt and 10 octets of info, with a 42-octet OKM.
+var rfc5869TestCase1 = struct {
+	ikm, salt, info, okm []byte
+}{
+	ikm:  bytes.Repeat([]byte{0x0b}, 22),
+	salt: []byte{0x00, 0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08, 0x09, 0x0a, 0x0b, 0x0c},
+	info: []byte{0xf0, 0xf1, 0xf2, 0xf3, 0xf4, 0xf5, 0xf6, 0xf7, 0xf8, 0xf9},
+	okm: []byte{
+		0x3c, 0xb2, 0x5f, 0x25, 0xfa, 0xac, 0xd5, 0x7a, 0x90, 0x43, 0x4f, 0x64, 0xd0, 0x36, 0x2f, 0x2a,
+		0x2d, 0x2d, 0x0a, 0x90, 0xcf, 0x1a, 0x5a, 0x4c, 0x5d, 0xb0, 0x2d, 0x56, 0xec, 0xc4, 0xc5, 0xbf,
+		0x34, 0x00, 0x72, 0x08, 0xd5, 0xb8, 0x87, 0x18, 0x58, 0x65,
+	},
+}
+
+// assertDerivesRFC5869TestCase1 derives RFC 5869 Test Case 1 through
+// C_DeriveKey with CKM_HKDF_DERIVE and checks the derived key against the
+// RFC's OKM.
+func assertDerivesRFC5869TestCase1(t *testing.T) {
+	t.Helper()
 	m, session := newCryptoFixture(t)
+	tc := rfc5869TestCase1
+	baseKey := createSecretKeyObjectViaC(t, session, module.CKK_GENERIC_SECRET, tc.ikm)
 
-	ikm := []byte("0123456789ABCDEF0123456789ABCDEF")
-	salt := []byte("roundtrip-hkdf-salt")
-	info := []byte("roundtrip-hkdf-info")
-	baseKey := createSecretKeyObjectViaC(t, session, ikm)
+	rv, derivedKey := deriveHKDFViaC(t, session, baseKey, tc.salt, tc.info, len(tc.okm))
+	if rv != module.CKR_OK {
+		t.Fatalf("C_DeriveKey(CKM_HKDF_DERIVE) = %s, want CKR_OK", rv)
+	}
+	if derivedKey == 0 {
+		t.Fatal("C_DeriveKey returned a zero object handle")
+	}
+	if derived := secretValueViaC(t, m, session, derivedKey); !bytes.Equal(derived, tc.okm) {
+		t.Fatalf("C_DeriveKey disagrees with RFC 5869 Test Case 1\n got %x\nwant %x", derived, tc.okm)
+	}
+}
 
+// deriveHKDFViaC derives an extractable CKK_GENERIC_SECRET of valueLen bytes
+// from baseKey through C_DeriveKey with CKM_HKDF_DERIVE (extract and expand,
+// HMAC-SHA256), returning C_DeriveKey's return value and the new handle.
+func deriveHKDFViaC(t *testing.T, session module.SessionHandle, baseKey module.ObjectHandle, salt, info []byte, valueLen int) (module.CK_RV, module.ObjectHandle) {
+	t.Helper()
 	hkdfParams := buildHKDFParams(t, true, true, module.CKM_SHA256, module.CKF_HKDF_SALT_DATA, salt, 0, info)
 	mechBuf := buildCMechanismWithParam(t, module.CKM_HKDF_DERIVE, hkdfParams)
 	derivedTemplate := buildCAttributeArray(t, []module.Attribute{
 		module.NewUint32Attribute(module.CKA_CLASS, uint32(module.CKO_SECRET_KEY)),
-		module.NewUint32Attribute(module.CKA_KEY_TYPE, uint32(module.CKK_AES)),
+		module.NewUint32Attribute(module.CKA_KEY_TYPE, uint32(module.CKK_GENERIC_SECRET)),
 		module.NewStringAttribute(module.CKA_LABEL, "roundtrip-derived-key"),
-		module.NewUint32Attribute(module.CKA_VALUE_LEN, 16),
+		module.NewUint32Attribute(module.CKA_VALUE_LEN, uint32(valueLen)),
 		module.NewBoolAttribute(module.CKA_SENSITIVE, false),
 		module.NewBoolAttribute(module.CKA_EXTRACTABLE, true),
 		module.NewBoolAttribute(module.CKA_TOKEN, false),
@@ -678,28 +707,7 @@ func TestDeriveKeyHKDF_RoundTrip(t *testing.T) {
 		allocOf(ft, 5),
 	}
 	out := fn.Call(args)
-	if rv := module.CK_RV(out[0].Uint()); rv != module.CKR_OK {
-		t.Fatalf("C_DeriveKey = %s, want CKR_OK", rv)
-	}
-	derivedKey := handleOf(args[5])
-	if derivedKey == 0 {
-		t.Fatal("C_DeriveKey returned a zero object handle")
-	}
-
-	attrs, rv := m.GetAttributeValue(session, derivedKey, []module.Attribute{{Type: module.CKA_VALUE}})
-	if rv != module.CKR_OK {
-		t.Fatalf("GetAttributeValue(derived CKA_VALUE) = %s, want CKR_OK", rv)
-	}
-	derived := attrs[0].Value
-
-	expected := make([]byte, len(derived))
-	reader := hkdf.New(sha256.New, ikm, salt, info)
-	if _, err := io.ReadFull(reader, expected); err != nil {
-		t.Fatalf("building the HKDF oracle failed: %v", err)
-	}
-	if !bytes.Equal(derived, expected) {
-		t.Fatalf("C_DeriveKey disagrees with RFC 5869 HKDF-SHA256\n got %x\nwant %x", derived, expected)
-	}
+	return module.CK_RV(out[0].Uint()), handleOf(args[5])
 }
 
 // ============================================================================
@@ -729,7 +737,7 @@ func TestWrapUnwrapKeyAuthenticated_RoundTrip(t *testing.T) {
 	if _, err := rand.Read(wrappingMaterial); err != nil {
 		t.Fatalf("rand.Read(wrapping key): %v", err)
 	}
-	wrappingKey := createSecretKeyObjectViaC(t, session, wrappingMaterial)
+	wrappingKey := createSecretKeyObjectViaC(t, session, module.CKK_AES, wrappingMaterial)
 	// CKA_WRAP and CKA_UNWRAP must both be set (v3.2 §5.18.6/§5.18.7):
 	// this test wraps and unwraps under the same key object, so it needs
 	// permission for both directions. createSecretKeyObjectViaC sets
@@ -737,7 +745,7 @@ func TestWrapUnwrapKeyAuthenticated_RoundTrip(t *testing.T) {
 	setAuthWrapAttributes(t, session, wrappingKey, true, true)
 
 	targetValue := []byte("the-target-key-material-16b!")[:16]
-	targetKey := createSecretKeyObjectViaC(t, session, targetValue)
+	targetKey := createSecretKeyObjectViaC(t, session, module.CKK_AES, targetValue)
 	setAuthWrapAttributes(t, session, targetKey, false, true)
 
 	iv := make([]byte, 12)

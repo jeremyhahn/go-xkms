@@ -292,6 +292,16 @@ func datastoreModeIsStandalone(cfg *config.Config) bool {
 	return mode == "" || mode == "standalone"
 }
 
+// TrustDomain returns the SPIFFE trust domain the deployment issues and pins
+// identities under: the configured Raft enrollment trust domain, or
+// DefaultTrustDomain when none is configured.
+func TrustDomain(cfg *config.Config) string {
+	if td := cfg.Cluster.RaftEnrollment.TrustDomain; td != "" {
+		return td
+	}
+	return DefaultTrustDomain
+}
+
 // EmbeddedNodeStorageConfig builds the storage+seal portion of the qrdb
 // daemon config that determines a node's on-disk identity: Auth, Raft.DataDir,
 // Databases, Seal.*, Storage.VolumePools.
@@ -307,9 +317,10 @@ func EmbeddedNodeStorageConfig(cfg *config.Config, sealRes ResolvedNodeSeal) *qr
 	qcfg := &qrdbsdk.DaemonConfig{}
 
 	qcfg.Auth.Enabled = qrdbsdk.BoolPtr(cfg.Auth.Enabled)
-	if td := cfg.Cluster.RaftEnrollment.TrustDomain; td != "" {
-		qcfg.Auth.SPIFFETrustDomain = td
-	}
+	// The CA stamps every client certificate's tenant into a SPIFFE SAN under
+	// this trust domain, so qrdb's mTLS authenticator pins the same one and
+	// rejects a SAN under a foreign trust domain.
+	qcfg.Auth.SPIFFETrustDomain = TrustDomain(cfg)
 
 	qcfg.Raft.DataDir = cfg.Datastore.Path
 

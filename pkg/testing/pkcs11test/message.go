@@ -295,7 +295,12 @@ func (s *Suite) testMultiPartMessage(t *testing.T) {
 
 		// Feed the final (and only) part with final=true
 		plaintext := []byte("multi-part-message-plaintext-data")
+		// With nil parameters the message keeps the IV the CK_GCM_PARAMS of
+		// C_MessageEncryptInit chose, which fips140=only refuses to seal under.
 		ciphertext, rv := m.EncryptMessageNext(sh, nil, plaintext, true)
+		if !outsideFIPSAfterRefusal(t, module.CKR_MECHANISM_PARAM_INVALID, rv, fipsCallerIVRefusal) {
+			return
+		}
 		requireRV(t, module.CKR_OK, rv, "EncryptMessageNext(final=true) should return CKR_OK")
 
 		if len(ciphertext) == 0 {
@@ -309,6 +314,63 @@ func (s *Suite) testMultiPartMessage(t *testing.T) {
 		if rv != module.CKR_OK && rv != module.CKR_OPERATION_NOT_INITIALIZED &&
 			rv != module.CKR_FUNCTION_FAILED {
 			t.Fatalf("MessageEncryptFinal unexpected error: %v", rv)
+		}
+	})
+
+	// A message whose IV the token generates (CKG_GENERATE_RANDOM in
+	// CK_GCM_MESSAGE_PARAMS, v3.2 §6.13.7) is sealed in both FIPS modes. The
+	// generator is named on C_EncryptMessageBegin and on the final
+	// C_EncryptMessageNext, which hands back the generated IV and the tag; the
+	// message must open under exactly those.
+	t.Run("encrypt_message_begin_next_generates_the_iv", func(t *testing.T) {
+		m, cleanup := s.createInitializedModule(t)
+		defer cleanup()
+
+		sh := openAuthenticatedRWSession(t, m)
+		keyHandle := generateSecretKey(t, m, sh)
+
+		mech := module.NewMechanismWithTypedParams(module.CKM_AES_GCM, module.NewAESGCMParams(suiteGCMIV(), 128))
+		requireRV(t, module.CKR_OK, m.MessageEncryptInit(sh, mech, keyHandle),
+			"MessageEncryptInit should return CKR_OK")
+
+		aad := []byte("multi-part-aad")
+		encParams := &module.AESGCMMessageParams{IVGenerator: module.CKG_GENERATE_RANDOM, TagBits: 128}
+		requireRV(t, module.CKR_OK, m.EncryptMessageBegin(sh, encParams, aad),
+			"EncryptMessageBegin should return CKR_OK")
+
+		plaintext := []byte("multi-part-message-plaintext-data")
+		ciphertext, rv := m.EncryptMessageNext(sh, encParams, plaintext, true)
+		requireRV(t, module.CKR_OK, rv, "EncryptMessageNext(final=true) should return CKR_OK")
+		if len(encParams.IV) != gcmNonceLen || len(encParams.Tag) != gcmTagLen {
+			t.Fatalf("EncryptMessageNext returned a %d-byte IV and a %d-byte tag, want %d and %d",
+				len(encParams.IV), len(encParams.Tag), gcmNonceLen, gcmTagLen)
+		}
+		if bytes.Equal(encParams.IV, suiteGCMIV()) {
+			t.Fatal("EncryptMessageNext sealed under the IV of C_MessageEncryptInit, not a generated one")
+		}
+		if bytes.Equal(ciphertext, plaintext) {
+			t.Fatal("EncryptMessageNext returned the plaintext unchanged")
+		}
+
+		rv = m.MessageEncryptFinal(sh)
+		if rv != module.CKR_OK && rv != module.CKR_OPERATION_NOT_INITIALIZED &&
+			rv != module.CKR_FUNCTION_FAILED {
+			t.Fatalf("MessageEncryptFinal unexpected error: %v", rv)
+		}
+
+		requireRV(t, module.CKR_OK, m.MessageDecryptInit(sh, mech, keyHandle),
+			"MessageDecryptInit should return CKR_OK")
+		decParams := &module.AESGCMMessageParams{
+			IV:          encParams.IV,
+			IVGenerator: module.CKG_NO_GENERATE,
+			Tag:         encParams.Tag,
+			TagBits:     128,
+		}
+		decrypted, rv := m.DecryptMessage(sh, decParams, aad, ciphertext)
+		requireRV(t, module.CKR_OK, rv, "DecryptMessage under the generated IV should return CKR_OK")
+		if !bytes.Equal(decrypted, plaintext) {
+			t.Fatalf("the generated-IV message did not open to its plaintext\n got %q\nwant %q",
+				decrypted, plaintext)
 		}
 	})
 }

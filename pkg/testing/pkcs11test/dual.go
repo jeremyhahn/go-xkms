@@ -107,9 +107,10 @@ type dualEncryptSideRun struct {
 
 // runDigestEncrypt drives one complete C_DigestEncryptUpdate pass over
 // plaintext, split into several unaligned parts, and returns both halves'
-// output with both operations terminated.
+// output with both operations terminated. It returns false, and the caller
+// stops, when fips140=only refused the caller-chosen IV (see dualEncryptFinal).
 func runDigestEncrypt(t *testing.T, m *module.Module, sh module.SessionHandle,
-	key module.ObjectHandle, iv, plaintext []byte) dualEncryptSideRun {
+	key module.ObjectHandle, iv, plaintext []byte) (dualEncryptSideRun, bool) {
 	t.Helper()
 
 	requireRV(t, module.CKR_OK, m.DigestInit(sh, dualDigestMechanism()),
@@ -121,9 +122,11 @@ func runDigestEncrypt(t *testing.T, m *module.Module, sh module.SessionHandle,
 		return m.DigestEncryptUpdate(sh, part)
 	}, "C_DigestEncryptUpdate")
 
-	finalOut, rv := m.EncryptFinal(sh)
-	requireRV(t, module.CKR_OK, rv,
+	finalOut, ok := dualEncryptFinal(t, m, sh,
 		"EncryptFinal must complete the encryption half of the dual operation")
+	if !ok {
+		return dualEncryptSideRun{}, false
+	}
 	dualFinish(t, m, sh, module.OperationEncrypt, "FinishOperation after EncryptFinal")
 
 	digest, rv := m.DigestFinal(sh)
@@ -136,14 +139,15 @@ func runDigestEncrypt(t *testing.T, m *module.Module, sh module.SessionHandle,
 		finalOut:          finalOut,
 		ciphertext:        dualConcat(updateOut, finalOut),
 		digestOrSignature: digest,
-	}
+	}, true
 }
 
 // runSignEncrypt drives one complete C_SignEncryptUpdate pass over plaintext,
 // split into several unaligned parts, and returns both halves' output with both
-// operations terminated.
+// operations terminated. It returns false, and the caller stops, when
+// fips140=only refused the caller-chosen IV (see dualEncryptFinal).
 func runSignEncrypt(t *testing.T, m *module.Module, sh module.SessionHandle,
-	secretKey, privKey module.ObjectHandle, iv, plaintext []byte) dualEncryptSideRun {
+	secretKey, privKey module.ObjectHandle, iv, plaintext []byte) (dualEncryptSideRun, bool) {
 	t.Helper()
 
 	requireRV(t, module.CKR_OK, m.SignInit(sh, dualSignMechanism(), privKey),
@@ -155,9 +159,11 @@ func runSignEncrypt(t *testing.T, m *module.Module, sh module.SessionHandle,
 		return m.SignEncryptUpdate(sh, part)
 	}, "C_SignEncryptUpdate")
 
-	finalOut, rv := m.EncryptFinal(sh)
-	requireRV(t, module.CKR_OK, rv,
+	finalOut, ok := dualEncryptFinal(t, m, sh,
 		"EncryptFinal must complete the encryption half of the dual operation")
+	if !ok {
+		return dualEncryptSideRun{}, false
+	}
 	dualFinish(t, m, sh, module.OperationEncrypt, "FinishOperation after EncryptFinal")
 
 	signature, rv := m.SignFinal(sh)
@@ -170,7 +176,7 @@ func runSignEncrypt(t *testing.T, m *module.Module, sh module.SessionHandle,
 		finalOut:          finalOut,
 		ciphertext:        dualConcat(updateOut, finalOut),
 		digestOrSignature: signature,
-	}
+	}, true
 }
 
 // dualDecryptSideRun records what one decryption-side dual pass
@@ -231,7 +237,10 @@ func (s *Suite) testDigestEncryptUpdate(t *testing.T) {
 		keyValue := attributeValue(t, m, sh, key, module.CKA_VALUE)
 
 		plaintext := dualPlaintext()
-		run := runDigestEncrypt(t, m, sh, key, suiteGCMIV(), plaintext)
+		run, ok := runDigestEncrypt(t, m, sh, key, suiteGCMIV(), plaintext)
+		if !ok {
+			return
+		}
 
 		wantCiphertext := aesGCMSeal(t, keyValue, suiteGCMIV(), plaintext, nil)
 		assertUpdateFinalAccounting(t, run.updateOut, run.finalOut, wantCiphertext,
@@ -263,7 +272,10 @@ func (s *Suite) testDigestEncryptUpdate(t *testing.T) {
 		keyValue := attributeValue(t, m, sh, key, module.CKA_VALUE)
 
 		plaintext := dualPlaintext()
-		dual := runDigestEncrypt(t, m, sh, key, dualGCMIVFor(0), plaintext)
+		dual, ok := runDigestEncrypt(t, m, sh, key, dualGCMIVFor(0), plaintext)
+		if !ok {
+			return
+		}
 
 		// The separate path: the same key, the same parts, but C_DigestUpdate
 		// and C_EncryptUpdate driven independently, under a second IV.
@@ -342,9 +354,11 @@ func (s *Suite) testDigestEncryptUpdate(t *testing.T) {
 		dualFinish(t, m, sh, module.OperationDigest, "FinishOperation after DigestFinal")
 		assertSHA256(t, digest, plaintext, "C_DigestFinal after C_DigestEncryptUpdate")
 
-		finalOut, rv := m.EncryptFinal(sh)
-		requireRV(t, module.CKR_OK, rv,
+		finalOut, ok := dualEncryptFinal(t, m, sh,
 			"the encryption operation must still be live after the digest was finalized")
+		if !ok {
+			return
+		}
 		dualFinish(t, m, sh, module.OperationEncrypt, "FinishOperation after EncryptFinal")
 
 		wantCiphertext := aesGCMSeal(t, keyValue, suiteGCMIV(), plaintext, nil)
@@ -382,8 +396,14 @@ func (s *Suite) testDigestEncryptUpdate(t *testing.T) {
 			t.Fatal("the mutated fixture is identical to the original")
 		}
 
-		first := runDigestEncrypt(t, m, sh, key, dualGCMIVFor(0), original)
-		second := runDigestEncrypt(t, m, sh, key, dualGCMIVFor(1), mutated)
+		first, ok := runDigestEncrypt(t, m, sh, key, dualGCMIVFor(0), original)
+		if !ok {
+			return
+		}
+		second, ok := runDigestEncrypt(t, m, sh, key, dualGCMIVFor(1), mutated)
+		if !ok {
+			return
+		}
 
 		if bytes.Equal(first.digestOrSignature, second.digestOrSignature) {
 			t.Fatalf("the digest is %x for both inputs; the digesting half of "+
@@ -427,9 +447,9 @@ func (s *Suite) testDecryptDigestUpdate(t *testing.T) {
 		keyValue := attributeValue(t, m, sh, key, module.CKA_VALUE)
 
 		plaintext := dualPlaintext()
-		ciphertext := aesGCMSeal(t, keyValue, suiteGCMIV(), plaintext, nil)
+		iv, ciphertext := aesGCMSealGeneratedIV(t, keyValue, plaintext, nil)
 
-		requireRV(t, module.CKR_OK, m.DecryptInit(sh, dualGCMMechanism(), key),
+		requireRV(t, module.CKR_OK, m.DecryptInit(sh, dualGCMMechanismWithIV(iv), key),
 			"DecryptInit should succeed")
 		requireRV(t, module.CKR_OK, m.DigestInit(sh, dualDigestMechanism()),
 			"DigestInit should succeed")
@@ -471,9 +491,9 @@ func (s *Suite) testDecryptDigestUpdate(t *testing.T) {
 		keyValue := attributeValue(t, m, sh, key, module.CKA_VALUE)
 
 		plaintext := dualPlaintext()
-		ciphertext := aesGCMSeal(t, keyValue, suiteGCMIV(), plaintext, nil)
+		iv, ciphertext := aesGCMSealGeneratedIV(t, keyValue, plaintext, nil)
 
-		requireRV(t, module.CKR_OK, m.DecryptInit(sh, dualGCMMechanism(), key),
+		requireRV(t, module.CKR_OK, m.DecryptInit(sh, dualGCMMechanismWithIV(iv), key),
 			"DecryptInit should succeed")
 		requireRV(t, module.CKR_OK, m.DigestInit(sh, dualDigestMechanism()),
 			"DigestInit should succeed")
@@ -510,11 +530,11 @@ func (s *Suite) testDecryptDigestUpdate(t *testing.T) {
 		keyValue := attributeValue(t, m, sh, key, module.CKA_VALUE)
 
 		plaintext := dualPlaintext()
-		ciphertext := aesGCMSeal(t, keyValue, suiteGCMIV(), plaintext, nil)
+		iv, ciphertext := aesGCMSealGeneratedIV(t, keyValue, plaintext, nil)
 		tampered := append([]byte(nil), ciphertext...)
 		tampered[0] ^= 0x01
 
-		requireRV(t, module.CKR_OK, m.DecryptInit(sh, dualGCMMechanism(), key),
+		requireRV(t, module.CKR_OK, m.DecryptInit(sh, dualGCMMechanismWithIV(iv), key),
 			"DecryptInit should succeed")
 		requireRV(t, module.CKR_OK, m.DigestInit(sh, dualDigestMechanism()),
 			"DigestInit should succeed")
@@ -549,9 +569,9 @@ func (s *Suite) testDecryptDigestUpdate(t *testing.T) {
 
 		recoverAndDigest := func(plaintext []byte) (recovered, digest []byte) {
 			t.Helper()
-			ciphertext := aesGCMSeal(t, keyValue, suiteGCMIV(), plaintext, nil)
+			iv, ciphertext := aesGCMSealGeneratedIV(t, keyValue, plaintext, nil)
 
-			requireRV(t, module.CKR_OK, m.DecryptInit(sh, dualGCMMechanism(), key),
+			requireRV(t, module.CKR_OK, m.DecryptInit(sh, dualGCMMechanismWithIV(iv), key),
 				"DecryptInit should succeed")
 			requireRV(t, module.CKR_OK, m.DigestInit(sh, dualDigestMechanism()),
 				"DigestInit should succeed")
@@ -607,7 +627,10 @@ func (s *Suite) testSignEncryptUpdate(t *testing.T) {
 		pubKey, privKey := generateRSAKeyPair(t, m, sh)
 
 		plaintext := dualPlaintext()
-		run := runSignEncrypt(t, m, sh, secretKey, privKey, suiteGCMIV(), plaintext)
+		run, ok := runSignEncrypt(t, m, sh, secretKey, privKey, suiteGCMIV(), plaintext)
+		if !ok {
+			return
+		}
 
 		wantCiphertext := aesGCMSeal(t, keyValue, suiteGCMIV(), plaintext, nil)
 		assertUpdateFinalAccounting(t, run.updateOut, run.finalOut, wantCiphertext,
@@ -639,7 +662,10 @@ func (s *Suite) testSignEncryptUpdate(t *testing.T) {
 		_, privKey := generateRSAKeyPair(t, m, sh)
 
 		plaintext := dualPlaintext()
-		dual := runSignEncrypt(t, m, sh, secretKey, privKey, dualGCMIVFor(0), plaintext)
+		dual, ok := runSignEncrypt(t, m, sh, secretKey, privKey, dualGCMIVFor(0), plaintext)
+		if !ok {
+			return
+		}
 
 		requireRV(t, module.CKR_OK, m.SignInit(sh, dualSignMechanism(), privKey),
 			"SignInit for the separate path should succeed")
@@ -711,9 +737,11 @@ func (s *Suite) testSignEncryptUpdate(t *testing.T) {
 		pub := rsaPublicKeyFor(t, m, sh, pubKey)
 		assertRSASignature(t, pub, crypto.SHA256, plaintext, signature)
 
-		finalOut, rv := m.EncryptFinal(sh)
-		requireRV(t, module.CKR_OK, rv,
+		finalOut, ok := dualEncryptFinal(t, m, sh,
 			"the encryption operation must still be live after the signature was finalized")
+		if !ok {
+			return
+		}
 		dualFinish(t, m, sh, module.OperationEncrypt, "FinishOperation after EncryptFinal")
 
 		wantCiphertext := aesGCMSeal(t, keyValue, suiteGCMIV(), plaintext, nil)
@@ -740,8 +768,14 @@ func (s *Suite) testSignEncryptUpdate(t *testing.T) {
 		original := dualPlaintext()
 		mutated := dualMutatedPlaintext()
 
-		first := runSignEncrypt(t, m, sh, secretKey, privKey, dualGCMIVFor(0), original)
-		second := runSignEncrypt(t, m, sh, secretKey, privKey, dualGCMIVFor(1), mutated)
+		first, ok := runSignEncrypt(t, m, sh, secretKey, privKey, dualGCMIVFor(0), original)
+		if !ok {
+			return
+		}
+		second, ok := runSignEncrypt(t, m, sh, secretKey, privKey, dualGCMIVFor(1), mutated)
+		if !ok {
+			return
+		}
 
 		if bytes.Equal(first.digestOrSignature, second.digestOrSignature) {
 			t.Fatal("the signature is identical for both inputs; the signing half of " +
@@ -787,10 +821,10 @@ func (s *Suite) testDecryptVerifyUpdate(t *testing.T) {
 		pubKey, privKey := generateRSAKeyPair(t, m, sh)
 
 		plaintext := dualPlaintext()
-		ciphertext := aesGCMSeal(t, keyValue, suiteGCMIV(), plaintext, nil)
+		iv, ciphertext := aesGCMSealGeneratedIV(t, keyValue, plaintext, nil)
 		signature := dualSignatureOver(t, m, sh, privKey, pubKey, plaintext)
 
-		requireRV(t, module.CKR_OK, m.DecryptInit(sh, dualGCMMechanism(), secretKey),
+		requireRV(t, module.CKR_OK, m.DecryptInit(sh, dualGCMMechanismWithIV(iv), secretKey),
 			"DecryptInit should succeed")
 		requireRV(t, module.CKR_OK, m.VerifyInit(sh, dualSignMechanism(), pubKey),
 			"VerifyInit should succeed")
@@ -827,11 +861,11 @@ func (s *Suite) testDecryptVerifyUpdate(t *testing.T) {
 		pubKey, privKey := generateRSAKeyPair(t, m, sh)
 
 		plaintext := dualPlaintext()
-		ciphertext := aesGCMSeal(t, keyValue, suiteGCMIV(), plaintext, nil)
+		iv, ciphertext := aesGCMSealGeneratedIV(t, keyValue, plaintext, nil)
 		wrongSignature := dualSignatureOver(t, m, sh, privKey, pubKey,
 			[]byte("data the dual operation never processed"))
 
-		requireRV(t, module.CKR_OK, m.DecryptInit(sh, dualGCMMechanism(), secretKey),
+		requireRV(t, module.CKR_OK, m.DecryptInit(sh, dualGCMMechanismWithIV(iv), secretKey),
 			"DecryptInit should succeed")
 		requireRV(t, module.CKR_OK, m.VerifyInit(sh, dualSignMechanism(), pubKey),
 			"VerifyInit should succeed")
@@ -875,9 +909,9 @@ func (s *Suite) testDecryptVerifyUpdate(t *testing.T) {
 		// signature over the ORIGINAL plaintext.
 		verdictFor := func(plaintext []byte) (recovered []byte, rv module.CK_RV) {
 			t.Helper()
-			ciphertext := aesGCMSeal(t, keyValue, suiteGCMIV(), plaintext, nil)
+			iv, ciphertext := aesGCMSealGeneratedIV(t, keyValue, plaintext, nil)
 
-			requireRV(t, module.CKR_OK, m.DecryptInit(sh, dualGCMMechanism(), secretKey),
+			requireRV(t, module.CKR_OK, m.DecryptInit(sh, dualGCMMechanismWithIV(iv), secretKey),
 				"DecryptInit should succeed")
 			requireRV(t, module.CKR_OK, m.VerifyInit(sh, dualSignMechanism(), pubKey),
 				"VerifyInit should succeed")
@@ -961,7 +995,10 @@ func (s *Suite) testDualRoundTripPairing(t *testing.T) {
 		key := generateSecretKey(t, m, sh)
 
 		plaintext := dualPlaintext()
-		forward := runDigestEncrypt(t, m, sh, key, suiteGCMIV(), plaintext)
+		forward, ok := runDigestEncrypt(t, m, sh, key, suiteGCMIV(), plaintext)
+		if !ok {
+			return
+		}
 		assertSHA256(t, forward.digestOrSignature, plaintext, "C_DigestEncryptUpdate")
 
 		requireRV(t, module.CKR_OK, m.DecryptInit(sh, dualGCMMechanism(), key),
@@ -1009,7 +1046,10 @@ func (s *Suite) testDualRoundTripPairing(t *testing.T) {
 		pubKey, privKey := generateRSAKeyPair(t, m, sh)
 
 		plaintext := dualPlaintext()
-		forward := runSignEncrypt(t, m, sh, secretKey, privKey, suiteGCMIV(), plaintext)
+		forward, ok := runSignEncrypt(t, m, sh, secretKey, privKey, suiteGCMIV(), plaintext)
+		if !ok {
+			return
+		}
 
 		pub := rsaPublicKeyFor(t, m, sh, pubKey)
 		assertRSASignature(t, pub, crypto.SHA256, plaintext, forward.digestOrSignature)
@@ -1295,10 +1335,10 @@ func (s *Suite) testDualHalfFinalizedMidStream(t *testing.T) {
 		sh := openAuthenticatedRWSession(t, m)
 		key := generateSecretKey(t, m, sh)
 		keyValue := attributeValue(t, m, sh, key, module.CKA_VALUE)
-		ciphertext := aesGCMSeal(t, keyValue, suiteGCMIV(), dualPlaintext(), nil)
+		iv, ciphertext := aesGCMSealGeneratedIV(t, keyValue, dualPlaintext(), nil)
 		parts := dualPartsOf(t, ciphertext)
 
-		requireRV(t, module.CKR_OK, m.DecryptInit(sh, dualGCMMechanism(), key),
+		requireRV(t, module.CKR_OK, m.DecryptInit(sh, dualGCMMechanismWithIV(iv), key),
 			"DecryptInit should succeed")
 		requireRV(t, module.CKR_OK, m.DigestInit(sh, dualDigestMechanism()),
 			"DigestInit should succeed")
@@ -1327,7 +1367,7 @@ func (s *Suite) testDualHalfFinalizedMidStream(t *testing.T) {
 		secretKey := generateSecretKey(t, m, sh)
 		keyValue := attributeValue(t, m, sh, secretKey, module.CKA_VALUE)
 		pubKey, privKey := generateRSAKeyPair(t, m, sh)
-		ciphertext := aesGCMSeal(t, keyValue, suiteGCMIV(), dualPlaintext(), nil)
+		iv, ciphertext := aesGCMSealGeneratedIV(t, keyValue, dualPlaintext(), nil)
 		parts := dualPartsOf(t, ciphertext)
 
 		// A signature over data the verifier will never accumulate, used only
@@ -1335,7 +1375,7 @@ func (s *Suite) testDualHalfFinalizedMidStream(t *testing.T) {
 		unrelated := dualSignatureOver(t, m, sh, privKey, pubKey,
 			[]byte("data the verifier never accumulates"))
 
-		requireRV(t, module.CKR_OK, m.DecryptInit(sh, dualGCMMechanism(), secretKey),
+		requireRV(t, module.CKR_OK, m.DecryptInit(sh, dualGCMMechanismWithIV(iv), secretKey),
 			"DecryptInit should succeed")
 		requireRV(t, module.CKR_OK, m.VerifyInit(sh, dualSignMechanism(), pubKey),
 			"VerifyInit should succeed")

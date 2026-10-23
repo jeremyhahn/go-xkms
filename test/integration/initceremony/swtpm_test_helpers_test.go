@@ -50,9 +50,11 @@ package initceremony
 
 import (
 	"fmt"
+	"net"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strconv"
 	"sync"
 	"testing"
 	"time"
@@ -130,7 +132,8 @@ func launchSwtpm(t *testing.T) (int, error) {
 		return 0, fmt.Errorf("start swtpm socket: %w", err)
 	}
 
-	if !waitForPort(cmdPort, 10*time.Second) {
+	cmdAddr := net.JoinHostPort("127.0.0.1", strconv.Itoa(cmdPort))
+	if !waitUntil(10*time.Second, func() bool { return listenerAccepts("tcp", cmdAddr) }) {
 		logContents, _ := os.ReadFile(logPath)
 		_ = proc.Process.Kill()
 		_, _ = proc.Process.Wait()

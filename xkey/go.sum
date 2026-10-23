@@ -544,8 +544,8 @@ github.com/santhosh-tekuri/jsonschema/v6 v6.0.3/go.mod h1:JXeL+ps8p7/KNMjDQk3TCw
 github.com/segmentio/asm v1.2.1 h1:DTNbBqs57ioxAD4PrArqftgypG4/qNpXoJx8TVXxPR0=
 github.com/segmentio/asm v1.2.1/go.mod h1:BqMnlJP91P8d+4ibuonYZw9mfnzI9HfxselHZr5aAcs=
 github.com/sirupsen/logrus v1.5.0/go.mod h1:+F7Ogzej0PZc/94MaYx/nvG9jOFMD2osvC3s+Squfpo=
-github.com/sirupsen/logrus v1.9.4 h1:TsZE7l11zFCLZnZ+teH4Umoq5BhEIfIzfRDZ1Uzql2w=
-github.com/sirupsen/logrus v1.9.4/go.mod h1:ftWc9WdOfJ0a92nsE2jF5u5ZwH8Bv2zdeOC42RjbV2g=
+github.com/sirupsen/logrus v1.10.2 h1:G2SED73/qrAu6YwbdxOD6peLkCBI3z7L+ykJFTXJBBo=
+github.com/sirupsen/logrus v1.10.2/go.mod h1:SLEg8TqYulVKKfIGHldVp2K2aYz2DKSVBq4g/H5bR7Q=
 github.com/soypat/cyw43439 v0.1.1 h1:vcaTiVzfuz3keK7lJpVxStZ6tV8HCw7Ugzsh1k4mneE=
 github.com/soypat/cyw43439 v0.1.1/go.mod h1:R2uSILRwSPmcmmKy5Z0FtK4ypgiPf5YqK+F+IKmXqxc=
 github.com/soypat/lneto v0.1.0 h1:VAHCJ33hvC3wDqhM0Vm7w0k6vwNsOCAsQ8XTrXJpS7I=
@@ -629,8 +629,8 @@ github.com/wailsapp/go-webview2 v1.0.23 h1:jmv8qhz1lHibCc79bMM/a/FqOnnzOGEisLav+
 github.com/wailsapp/go-webview2 v1.0.23/go.mod h1:qJmWAmAmaniuKGZPWwne+uor3AHMB5PFhqiK0Bbj8kc=
 github.com/wailsapp/wails/v2 v2.17.0 h1:pJqX9ogqW4PPE/gSeCQUcYmpPghxEpHajONw9rPj1pg=
 github.com/wailsapp/wails/v2 v2.17.0/go.mod h1:WUqCTXDAPqkcYhjUawowutjzCEgx6Ri8P51E9SozpZw=
-github.com/weppos/publicsuffix-go v0.50.3 h1:eT5dcjHQcVDNc0igpFEsGHKIip30feuB2zuuI9eJxiE=
-github.com/weppos/publicsuffix-go v0.50.3/go.mod h1:/rOa781xBykZhHK/I3QeHo92qdDKVmKZKF7s8qAEM/4=
+github.com/weppos/publicsuffix-go v0.50.4-0.20260821095816-b0fdb5c2d345 h1:hJZP+OOgu8pORqJKySfSrzEzMmyJUfG9/Khm/Jom0E8=
+github.com/weppos/publicsuffix-go v0.50.4-0.20260821095816-b0fdb5c2d345/go.mod h1:/rOa781xBykZhHK/I3QeHo92qdDKVmKZKF7s8qAEM/4=
 github.com/x448/float16 v0.8.4 h1:qLwI1I70+NjRFUR3zs1JPUCgaCXSh3SW62uAKT1mSBM=
 github.com/x448/float16 v0.8.4/go.mod h1:14CWIYCyZA/cWjXOioeEpHeN/83MdbZDRQHoFcYsOfg=
 github.com/yosida95/uritemplate/v3 v3.0.2 h1:Ed3Oyj9yrmi9087+NczuL5BwkIc4wvTb5zIM+UJPGz4=

@@ -81,12 +81,14 @@ import (
 	"math/big"
 	"net/http"
 	"net/url"
+	"slices"
 	"sync"
 	"sync/atomic"
 	"time"
 
 	"github.com/jeremyhahn/go-xkms/pkg/errs"
 
+	"github.com/jeremyhahn/go-xkms/pkg/acme/ct"
 	backendpkg "github.com/jeremyhahn/go-xkms/pkg/backend"
 	"github.com/jeremyhahn/go-xkms/pkg/certstore"
 	"github.com/jeremyhahn/go-xkms/pkg/spiffe"
@@ -1734,10 +1736,9 @@ func (ca *CA) signVerifiedCSR(ctx context.Context, csr *x509.CertificateRequest,
 		}
 	}
 
-	// Generate serial number
-	serial, err := ca.serialGen.Generate(ctx)
+	serial, err := ca.signingSerial(ctx, opts)
 	if err != nil {
-		return nil, &errs.Detail{Err: ErrSerialGenerationFailed, Detail: fmt.Sprintf("%v", err)}
+		return nil, err
 	}
 
 	// Determine validity period
@@ -1752,8 +1753,13 @@ func (ca *CA) signVerifiedCSR(ctx context.Context, csr *x509.CertificateRequest,
 		notBefore = opts.NotBefore
 	}
 
-	// Determine key usage
-	keyUsage := x509.KeyUsageDigitalSignature | x509.KeyUsageKeyEncipherment
+	// Determine key usage. keyEncipherment is an RSA key usage: an ECDSA or
+	// Ed25519 subject key asserts digitalSignature only (RFC 5480 §3,
+	// RFC 8410 §5).
+	keyUsage := x509.KeyUsageDigitalSignature
+	if _, isRSA := csr.PublicKey.(*rsa.PublicKey); isRSA {
+		keyUsage |= x509.KeyUsageKeyEncipherment
+	}
 	if opts != nil && opts.KeyUsage != 0 {
 		keyUsage = opts.KeyUsage
 	}
@@ -1988,6 +1994,37 @@ func (ca *CA) signRawSubjectCSR(
 	return ca.issueSignedSpec(ctx, spec, csr, opts, request, sc)
 }
 
+// ReserveSerial generates and records a serial number for a later SignCSR
+// that names it in SignOptions.Serial. The serial is recorded as used before
+// anything is signed with it, so a crash between reservation and signing
+// can never hand the same serial to two certificates (RFC 5280 §4.1.2.2).
+func (ca *CA) ReserveSerial(ctx context.Context) (*big.Int, error) {
+	serial, err := ca.serialGen.Generate(ctx)
+	if err != nil {
+		return nil, &errs.Detail{Err: ErrSerialGenerationFailed, Detail: err.Error()}
+	}
+	return serial, nil
+}
+
+// signingSerial returns the serial a SignCSR call signs with: the caller's
+// reserved serial when it names one, a freshly generated one otherwise.
+func (ca *CA) signingSerial(ctx context.Context, opts *SignOptions) (*big.Int, error) {
+	if opts == nil || opts.Serial == nil {
+		return ca.ReserveSerial(ctx)
+	}
+	if err := validateReservedSerial(opts.Serial); err != nil {
+		return nil, err
+	}
+	reserved, err := ca.serialGen.IsUsed(ctx, opts.Serial)
+	if err != nil {
+		return nil, &errs.Detail{Err: ErrSerialGenerationFailed, Detail: err.Error()}
+	}
+	if !reserved {
+		return nil, &errs.Detail{Err: ErrSerialNotReserved, Detail: opts.Serial.Text(16)}
+	}
+	return opts.Serial, nil
+}
+
 // issueSignedSpec finishes a CSR-signed issuance: it attaches the issuance
 // context the profile sees, signs through Issuer.Issue, stores the
 // certificate and records its tenant. signCSR and signCallerNamedCSR both end
@@ -2023,10 +2060,19 @@ func (ca *CA) issueSignedSpec(
 	spec.Request.CSRExtensions = csr.Extensions
 
 	tenantID := ""
+	precertificate := false
+	var linter Linter
 	if opts != nil {
 		spec.ExtraExtensions = opts.ExtraExtensions
 		spec.OtherNames = opts.OtherNames
 		tenantID = opts.TenantID
+		precertificate = opts.Precertificate
+		linter = opts.Linter
+	}
+	// A precertificate carries the RFC 6962 §3.1 poison extension, a
+	// critical extension no RFC 5280 relying party accepts.
+	if precertificate {
+		spec.ExtraExtensions = append(slices.Clip(spec.ExtraExtensions), ct.MakePrecertPoisonExtension())
 	}
 
 	// The certificate carries its tenant as the subject's first
@@ -2041,7 +2087,7 @@ func (ca *CA) issueSignedSpec(
 	// issuer whose CRL and OCSP services this CA cannot speak for, so that
 	// path carries no identity and keeps whatever the caller or its profile
 	// supplied.
-	issuer := &Issuer{Signer: sc.signer, Certificate: sc.issuingCert}
+	issuer := &Issuer{Signer: sc.signer, Certificate: sc.issuingCert, Linter: linter}
 	if opts == nil || opts.Signer == nil {
 		issuer.Identity = ca.config.IssuingIdentity()
 	}
@@ -2049,6 +2095,12 @@ func (ca *CA) issueSignedSpec(
 	cert, err := issuer.Issue(rand.Reader, spec)
 	if err != nil {
 		return nil, err
+	}
+
+	// A precertificate is not a certificate (RFC 6962 §3.1): its final
+	// certificate, which shares its serial, is the one stored and recorded.
+	if precertificate {
+		return cert, nil
 	}
 
 	// Store the certificate. The store is keyed by Common Name, so a

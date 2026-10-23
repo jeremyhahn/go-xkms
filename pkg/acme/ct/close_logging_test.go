@@ -16,15 +16,11 @@ package ct
 import (
 	"bytes"
 	"context"
-	"encoding/base64"
-	"encoding/json"
 	"errors"
 	"io"
 	"log/slog"
 	"net/http"
-	"net/http/httptest"
 	"testing"
-	"time"
 
 	"github.com/stretchr/testify/require"
 )
@@ -61,22 +57,10 @@ func (t failingCloseTransport) RoundTrip(req *http.Request) (*http.Response, err
 // the SCT the log server issued, unchanged, exactly like it does when Close
 // succeeds (go-xkms#866).
 func TestSubmitPrecert_ClosingResponseBodyFails(t *testing.T) {
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		logID := make([]byte, 32)
-		sig := []byte{0x04, 0x03, 0x00, 0x08}
-		sig = append(sig, []byte("mocksig!")...)
-
-		resp := addPrecertChainResponse{
-			SCTVersion: V1,
-			ID:         base64.StdEncoding.EncodeToString(logID),
-			Timestamp:  uint64(time.Now().UnixMilli()),
-			Signature:  base64.StdEncoding.EncodeToString(sig),
-		}
-
-		w.Header().Set("Content-Type", "application/json")
-		_ = json.NewEncoder(w).Encode(resp)
-	}))
-	defer server.Close()
+	ca, caKey := newTestCA(t, "Test CA")
+	entry := newTestPrecert(t, ca, caKey, nil, nil)
+	ctLog := newTestCTLog(t, newP256Key(t), entry)
+	server := ctLog.server
 
 	var logBuf bytes.Buffer
 	restore := slog.Default()
@@ -87,9 +71,7 @@ func TestSubmitPrecert_ClosingResponseBodyFails(t *testing.T) {
 	httpClient.Transport = failingCloseTransport{inner: httpClient.Transport}
 
 	submitter := NewHTTPLogSubmitter(httpClient)
-	log := LogGroup{URL: server.URL}
-
-	sct, err := submitter.SubmitPrecert(context.Background(), []byte("precert-der"), [][]byte{[]byte("issuer")}, log)
+	sct, err := submitter.SubmitPrecert(context.Background(), entry.der, entry.chain, ctLog.group())
 	require.NoError(t, err)
 	require.NotNil(t, sct)
 

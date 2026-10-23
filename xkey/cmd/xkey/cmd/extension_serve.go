@@ -284,6 +284,11 @@ func runExtensionServe(cmd *cobra.Command, _ []string) error {
 					barrierSvc.SetTPMSealerFunc(func() xkms.Sealer { return sealer })
 
 					if err := barrierSvc.Unseal("", string(strategy)); err != nil {
+						// The release below is deferred only once the barrier
+						// is open, so a failed unseal releases the TPM here.
+						if closer != nil {
+							err = errors.Join(err, closer.Close())
+						}
 						return &SentinelCauseError{Sentinel: ErrServeBarrierUnsealFailed, Cause: err}
 					}
 				}
@@ -295,7 +300,7 @@ func runExtensionServe(cmd *cobra.Command, _ []string) error {
 				tpmDevice, _ := cmd.Flags().GetString("tpm-device")
 				tpmSimulator, _ := cmd.Flags().GetBool("tpm-simulator")
 				closer, err := unsealWithExternalStrategy(barrierSvc, strategy, func() (xkms.SealingStrategy, io.Closer, error) {
-					return buildPKCS11BarrierStrategy(context.Background(), dataDir, tpmDevice, tpmSimulator)
+					return pkcs11BarrierStrategy(context.Background(), dataDir, tpmDevice, tpmSimulator)
 				})
 				if err != nil {
 					return err
@@ -312,7 +317,7 @@ func runExtensionServe(cmd *cobra.Command, _ []string) error {
 				// root key, and BuildCloudKMSStrategy resolves its wrapping
 				// key deterministically by CN (go-xkms#757).
 				closer, err := unsealWithExternalStrategy(barrierSvc, strategy, func() (xkms.SealingStrategy, io.Closer, error) {
-					return buildCloudKMSBarrierStrategy(context.Background(), strategy, dataDir)
+					return cloudKMSBarrierStrategy(context.Background(), strategy, dataDir)
 				})
 				if err != nil {
 					return err
@@ -998,6 +1003,15 @@ func probeTPMModule(logger *slog.Logger, dataDir, device string, useSimulator bo
 func probeTPMSealer(logger *slog.Logger, dataDir, device string, useSimulator bool) (xkms.Sealer, io.Closer) {
 	return probeTPMModule(logger, dataDir, device, useSimulator)
 }
+
+// pkcs11BarrierStrategy and cloudKMSBarrierStrategy build the external
+// strategies serve unseals a pkcs11 or cloud KMS barrier with. Tests replace
+// them with in-process strategies; outside tests they are the HSM and cloud
+// KMS builders.
+var (
+	pkcs11BarrierStrategy   = buildPKCS11BarrierStrategy
+	cloudKMSBarrierStrategy = buildCloudKMSBarrierStrategy
+)
 
 // Compile-time interface satisfaction checks.
 var _ ipc.Handler = (*headlessHandler)(nil)

@@ -101,14 +101,15 @@ Facts are from go-xkms c9a1cdb25, go-qrdb b65df70 and #722, go-quicbaas 0f45b54 
 - Verbs: append; read the signed tree head; inclusion proof; consistency proof.
 - New permissions follow go-qrdb's built-in role placement.
 
-**Head signing (correction 5).**
-- go-xkms implements go-qrdb's `HeadSignerProvider` (#722 §6). For the transparency log it returns a signer over the CA key, the same `crypto.Signer` that `pkg/cakey.Provider` exposes.
-- Checkpoint signature type, proposed to the qrdb coordinator through the Department:
-  - **ECDSA P-256 with SHA-256 at least**. This is go-xkms's CA default (`pkg/ca/config.go:38-40`).
-  - P-384 with SHA-384 is allowed when the CA key is P-384.
-  - The checkpoint is #722's C2SP signed note (its open question 2, recommendation (a)), carrying the note signature type for RFC 6962 tree-head signatures.
-  - RSA and Ed25519 CA keys are not used to sign checkpoints, and P-224 is refused.
-- Recorded on both pages once the qrdb coordinator agrees. Until then it is a proposal.
+**Head signing (correction 5, owner ruling 122).** Normative in the `transparency-log` row of [SPEC.md](../SPEC.md); none of it is implemented on main yet.
+- go-xkms implements go-qrdb's `HeadSignerProvider` (#722 §6). For the transparency log it returns a signer over the CA key, the `crypto.Signer` the SPEC row names.
+- The checkpoint body is a C2SP tlog-checkpoint ([c2sp-tlog-checkpoint.md](../references/c2sp-tlog-checkpoint.md) §Note text), carried in a C2SP signed note ([c2sp-signed-note.md](../references/c2sp-signed-note.md) §Format, §Signatures). Both are pinned at C2SP commit `e5746a0b`.
+- The signing algorithm is never hardcoded:
+  - configuration chooses the key, which may be any key go-xkms offers: RSA, ECDSA, Ed25519 or the PQC algorithms;
+  - an application extending go-xkms registers its own algorithm.
+- The note's key-type encoding is extended per algorithm:
+  - an algorithm with an assigned signature type byte uses it ([c2sp-signed-note.md](../references/c2sp-signed-note.md) §Signature types);
+  - every other algorithm, built-in or registered, uses the `0xff` byte followed by its own identifier (same section).
 
 ## 5. Moves
 

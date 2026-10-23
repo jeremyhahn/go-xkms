@@ -77,14 +77,15 @@ func runUnseal(cmd *cobra.Command, args []string) error {
 	if err != nil {
 		return err
 	}
+	ops := openLUKSVolume(vol)
 
 	// Check if LUKS file exists
-	if !vol.Exists() {
+	if !ops.Exists() {
 		return ErrUnsealNoVolume
 	}
 
 	// Check if already mounted
-	mounted, err := vol.IsMounted()
+	mounted, err := ops.IsMounted()
 	if err != nil {
 		return &UnsealError{Operation: "check_mounted", Err: err}
 	}
@@ -101,7 +102,7 @@ func runUnseal(cmd *cobra.Command, args []string) error {
 
 	// Unlock the volume
 	_, _ = fmt.Fprintln(cmd.OutOrStdout(), "Unlocking encrypted storage...")
-	if err := vol.Unlock(string(passphrase)); err != nil {
+	if err := ops.Unlock(string(passphrase)); err != nil {
 		return &UnsealError{Operation: "unlock", Err: err}
 	}
 

@@ -309,12 +309,7 @@ func runSSHConnect(cmd *cobra.Command, args []string) error {
 
 	// Run ssh inheriting the current terminal so the native first-contact prompt
 	// works inline; sync pins back when it exits.
-	sshCmd := exec.Command("ssh", session.Args...)
-	sshCmd.Env = append(os.Environ(), session.Env...)
-	sshCmd.Stdin = os.Stdin
-	sshCmd.Stdout = os.Stdout
-	sshCmd.Stderr = os.Stderr
-	runErr := sshCmd.Run()
+	runErr := runSSHClient(session.Args, append(os.Environ(), session.Env...))
 
 	// Bounded: ssh may have died with a request still parked in Signer.Sign on
 	// a hardware key awaiting touch, and closing its connection cannot
@@ -396,8 +391,15 @@ func runSSHConnectLocal(host string, port int, user, alias, identity string) err
 		return err
 	}
 
-	sshCmd := exec.Command("ssh", sshArgs...)
-	sshCmd.Env = os.Environ()
+	return runSSHClient(sshArgs, os.Environ())
+}
+
+// runSSHClient runs the native ssh client with args and env on the current
+// terminal and returns its exit. Tests replace it so a connection runs to its
+// host-key sync without an ssh binary or a server.
+var runSSHClient = func(args, env []string) error {
+	sshCmd := exec.Command("ssh", args...)
+	sshCmd.Env = env
 	sshCmd.Stdin = os.Stdin
 	sshCmd.Stdout = os.Stdout
 	sshCmd.Stderr = os.Stderr

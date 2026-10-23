@@ -43,6 +43,7 @@ import (
 	acmecommon "github.com/jeremyhahn/go-xkms/pkg/acme/common"
 	caerrors "github.com/jeremyhahn/go-xkms/pkg/acme/errors"
 	"github.com/jeremyhahn/go-xkms/pkg/acme/kms"
+	"github.com/jeremyhahn/go-xkms/pkg/acme/linter"
 	"github.com/jeremyhahn/go-xkms/pkg/acme/server"
 	"github.com/jeremyhahn/go-xkms/pkg/acme/server/circuitbreaker"
 	"github.com/jeremyhahn/go-xkms/pkg/acme/server/handlers"
@@ -390,6 +391,13 @@ func (tca *TrustedCA) Serve(ctx context.Context) error {
 	// unchanged.
 	challengeMap := server.WrapChallengeVerifiers(tca.challengeMap, tca.config.ACME.Resilience, breakers)
 
+	// The CT logs finalize submits each precertificate to (RFC 6962 §4.2);
+	// handlers.NewRestService builds the submitter, as it does for xkmsd.
+	ctPolicy, err := tca.config.ACME.CT.PolicyConfig()
+	if err != nil {
+		return caerrors.MalformedError("invalid certificate transparency configuration: %v", err)
+	}
+
 	// Initialize ACME REST service
 	restService, err := handlers.NewRestService(&handlers.Params{
 		AllowLoopbackIdentifier: tca.config.ACME.AllowLoopbackIdentifier,
@@ -400,7 +408,10 @@ func (tca *TrustedCA) Serve(ctx context.Context) error {
 		CAAIdentities:           tca.config.ACME.CAIdentifiers,
 		CAAValidator:            caaValidator,
 		ChallengeMap:            challengeMap,
+		CT:                      ctPolicy,
+		CTBreaker:               tca.config.ACME.Resilience.CTSubmitter.CircuitBreakerConfig("ct_submitter"),
 		KMSService:              tca.kmsService,
+		Lint:                    linter.PrivatePKIConfig(),
 		Logger:                  tca.logger,
 		StorageFactory:          tca.storageFactory,
 		TermsOfService:          tca.config.ACME.TermsOfService,

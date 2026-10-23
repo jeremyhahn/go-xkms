@@ -294,13 +294,12 @@ through ACME against an existing node's directory.
 ## What this feature deliberately does not do
 
 - **It does not run a public web PKI.** OCSP stapling, CRL distribution-point
-  automation, CT log submission and cross-signing automation are on the roadmap,
-  not in the tree; `pkg/acme/ct` and `pkg/acme/issuance` (the bridge that would
-  call it) are present but neither is wired into `OrderFinalizeHandler`, which
-  issues through `TrustedCA.SignCSR` directly. `circuitbreaker.WrapLogSubmitter`
-  exists so whatever wires CT submission in does not have to build its own
-  resilience layer, but there is no production call site to wrap yet; SCT
-  handling at issuance is tracked separately as go-xkms#745.
+  automation and cross-signing automation are on the roadmap, not in the tree.
+  CT is off unless a log is enabled under `acme.ct`; with one enabled,
+  `OrderFinalizeHandler` issues through `pkg/acme/issuance`, which submits the
+  precertificate to every enabled log behind `circuitbreaker.WrapLogSubmitter`,
+  verifies every SCT and embeds them in the final certificate (see
+  engineering.md, "Certificate Transparency").
 - **It does not own the CA.** Issuance is `TrustedCA`'s; ACME is the protocol in
   front of it.
 - **It does not define identity.** Accounts are ACME accounts. Platform users,

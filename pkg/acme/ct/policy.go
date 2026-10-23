@@ -51,7 +51,20 @@ func validatePolicyConfig(config *PolicyConfig) error {
 		return NewPolicyViolationError("MinOperators", config.MinOperators, 1)
 	}
 
-	if len(config.LogGroups) == 0 {
+	// Validate a copy so deriving log IDs never writes to the caller's slice.
+	logs := make([]LogGroup, 0, len(config.LogGroups))
+	for _, log := range config.LogGroups {
+		if err := log.validate(); err != nil {
+			return err
+		}
+		if err := checkDuplicateLog(logs, log); err != nil {
+			return err
+		}
+		logs = append(logs, log)
+	}
+	config.LogGroups = logs
+
+	if !config.Enabled() {
 		return ErrNoLogsConfigured
 	}
 
@@ -67,18 +80,25 @@ func validatePolicyConfig(config *PolicyConfig) error {
 	return nil
 }
 
-// GetSCTs fetches SCTs from CT logs with policy enforcement.
-// It submits the precertificate to eligible logs and collects SCTs
-// until the policy requirements are satisfied.
-//
-// Parameters:
-//   - ctx: Context for cancellation
-//   - precertDER: DER-encoded precertificate
-//   - chain: Certificate chain (issuer certificates in DER format)
-//   - expiry: Certificate expiry time for temporal filtering
-//
-// Returns the list of SCTs or an error if policy requirements cannot be met.
-func (p *CTPolicy) GetSCTs(ctx context.Context, precertDER []byte, chain [][]byte, expiry time.Time) ([]SignedCertificateTimestamp, error) {
+// checkDuplicateLog refuses log when a log in logs has its URL or log ID.
+func checkDuplicateLog(logs []LogGroup, log LogGroup) error {
+	for _, existing := range logs {
+		if existing.URL == log.URL || existing.LogID == log.LogID {
+			return NewLogConfigError(log, ErrDuplicateLog)
+		}
+	}
+	return nil
+}
+
+// Submit submits precertDER, with the issuing chain (issuer first), to every
+// enabled log whose temporal window holds expiry (RFC 6962 §4.2
+// add-pre-chain) and waits for every log to answer or time out, so each
+// failure is reported. It succeeds when the verified SCTs meet MinSCTs,
+// MinOperators and RequireRFC6962Log; Submission.Failures then names each log
+// that refused the precertificate, timed out or returned an SCT that failed
+// verification. Otherwise it fails with a PolicyViolationError, or
+// ErrNoRFC6962Log, joined with each log's CTSubmissionError.
+func (p *CTPolicy) Submit(ctx context.Context, precertDER []byte, chain [][]byte, expiry time.Time) (*Submission, error) {
 	if len(precertDER) == 0 {
 		return nil, ErrNilInput
 	}
@@ -99,18 +119,15 @@ func (p *CTPolicy) GetSCTs(ctx context.Context, precertDER []byte, chain [][]byt
 		return nil, NewPolicyViolationError("available operators", operators, config.MinOperators)
 	}
 
-	// Submit to logs concurrently
 	results := p.submitToLogs(ctx, precertDER, chain, eligibleLogs)
-
-	// Collect and validate SCTs
-	return p.collectSCTs(results, config)
+	return collectSCTs(results, config)
 }
 
 // filterEligibleLogs returns logs that are temporally valid for the certificate.
 func (p *CTPolicy) filterEligibleLogs(expiry time.Time) []LogGroup {
 	var eligible []LogGroup
 	for _, log := range p.config.LogGroups {
-		if log.IsTemporallyValid(expiry) {
+		if log.Enabled && log.IsTemporallyValid(expiry) {
 			eligible = append(eligible, log)
 		}
 	}
@@ -206,63 +223,45 @@ func (p *CTPolicy) submitToLogs(ctx context.Context, precertDER []byte, chain []
 }
 
 // collectSCTs collects SCTs from results and validates against policy.
-func (p *CTPolicy) collectSCTs(results <-chan SCTResult, config PolicyConfig) ([]SignedCertificateTimestamp, error) {
-	var scts []SignedCertificateTimestamp
-	var submissionErrs []error
+func collectSCTs(results <-chan SCTResult, config PolicyConfig) (*Submission, error) {
+	submission := &Submission{}
 	operators := make(map[string]struct{})
 	hasRFC6962 := false
 
 	for result := range results {
-		if result.Error != nil {
-			// Track errors but continue collecting SCTs from other logs. If
-			// the policy ultimately can't be satisfied, these explain why.
-			submissionErrs = append(submissionErrs,
-				NewCTSubmissionError(result.Log.Name, result.Log.URL, result.Error))
+		if result.Error != nil || result.SCT == nil {
+			cause := result.Error
+			if cause == nil {
+				cause = ErrInvalidSCT
+			}
+			submission.Failures = append(submission.Failures,
+				NewCTSubmissionError(result.Log.Name, result.Log.URL, cause))
 			continue
 		}
-
-		if result.SCT != nil {
-			scts = append(scts, *result.SCT)
-			operators[result.Log.Operator] = struct{}{}
-			if result.Log.IsRFC6962Compliant() {
-				hasRFC6962 = true
-			}
-
-			// Check if policy is satisfied
-			if p.isPolicySatisfied(len(scts), len(operators), hasRFC6962, config) {
-				return scts, nil
-			}
+		submission.SCTs = append(submission.SCTs, *result.SCT)
+		operators[result.Log.Operator] = struct{}{}
+		if result.Log.IsRFC6962Compliant() {
+			hasRFC6962 = true
 		}
 	}
 
-	// Check final state
-	if len(scts) < config.MinSCTs {
-		return nil, errors.Join(append([]error{NewPolicyViolationError("SCTs", len(scts), config.MinSCTs)}, submissionErrs...)...)
+	var violation error
+	switch {
+	case len(submission.SCTs) < config.MinSCTs:
+		violation = NewPolicyViolationError("SCTs", len(submission.SCTs), config.MinSCTs)
+	case len(operators) < config.MinOperators:
+		violation = NewPolicyViolationError("operators", len(operators), config.MinOperators)
+	case config.RequireRFC6962Log && !hasRFC6962:
+		violation = ErrNoRFC6962Log
 	}
-
-	if len(operators) < config.MinOperators {
-		return nil, errors.Join(append([]error{NewPolicyViolationError("operators", len(operators), config.MinOperators)}, submissionErrs...)...)
+	if violation != nil {
+		errs := []error{violation}
+		for _, failure := range submission.Failures {
+			errs = append(errs, failure)
+		}
+		return nil, errors.Join(errs...)
 	}
-
-	if config.RequireRFC6962Log && !hasRFC6962 {
-		return nil, errors.Join(append([]error{ErrNoRFC6962Log}, submissionErrs...)...)
-	}
-
-	return scts, nil
-}
-
-// isPolicySatisfied checks if the current SCTs satisfy the policy.
-func (p *CTPolicy) isPolicySatisfied(numSCTs, numOperators int, hasRFC6962 bool, config PolicyConfig) bool {
-	if numSCTs < config.MinSCTs {
-		return false
-	}
-	if numOperators < config.MinOperators {
-		return false
-	}
-	if config.RequireRFC6962Log && !hasRFC6962 {
-		return false
-	}
-	return true
+	return submission, nil
 }
 
 // Config returns a copy of the current policy configuration.
@@ -291,14 +290,15 @@ func (p *CTPolicy) UpdateConfig(config PolicyConfig) error {
 
 // AddLog adds a new log to the policy.
 func (p *CTPolicy) AddLog(log LogGroup) error {
+	if err := log.validate(); err != nil {
+		return err
+	}
+
 	p.mu.Lock()
 	defer p.mu.Unlock()
 
-	// Check for duplicate
-	for _, existing := range p.config.LogGroups {
-		if existing.URL == log.URL {
-			return ErrInvalidLogConfig
-		}
+	if err := checkDuplicateLog(p.config.LogGroups, log); err != nil {
+		return err
 	}
 
 	p.config.LogGroups = append(p.config.LogGroups, log)

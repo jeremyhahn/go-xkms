@@ -571,6 +571,21 @@ func (s *Server) handleAuthRefresh(w http.ResponseWriter, r *http.Request) {
 	}, http.StatusOK)
 }
 
+// identityAuthMethod names the method that authenticated identity. Every xkms
+// authenticator stamps it into Metadata; the qrdb node's own mTLS
+// authenticator, which decides any request presenting a verified client
+// certificate (ChainAfterMTLS), stamps nothing, so an unstamped identity on a
+// request that carries a client certificate was authenticated by mTLS.
+func identityAuthMethod(r *http.Request, identity *auth.Identity) string {
+	if method := identity.Metadata["auth_method"]; method != "" {
+		return method
+	}
+	if r.TLS != nil && len(r.TLS.PeerCertificates) > 0 {
+		return qrdbsdk.MethodMTLS
+	}
+	return ""
+}
+
 // handleAuthMe returns the authenticated identity, its effective UI
 // permissions, and the server's capability flags.
 func (s *Server) handleAuthMe(w http.ResponseWriter, r *http.Request) {
@@ -597,13 +612,21 @@ func (s *Server) handleAuthMe(w http.ResponseWriter, r *http.Request) {
 		permissions[name] = true
 	}
 
+	// An identity the qrdb node bound to a user account carries the account's
+	// username in Username (BindUser) and its immutable id in Subject; an
+	// identity minted from an xkms token carries the username in Metadata.
+	username := identity.Username
+	if username == "" {
+		username = identity.Metadata["username"]
+	}
+
 	resp := authMeResponse{
 		Subject:      identity.Subject,
 		TenantID:     identity.TenantID,
-		Username:     identity.Metadata["username"],
+		Username:     username,
 		Email:        identity.Metadata["email"],
 		DisplayName:  identity.Metadata["display_name"],
-		AuthMethod:   identity.Metadata["auth_method"],
+		AuthMethod:   identityAuthMethod(r, identity),
 		Roles:        identity.Roles,
 		Permissions:  permissions,
 		Capabilities: s.capabilityFlags(),

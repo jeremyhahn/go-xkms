@@ -163,6 +163,22 @@ func dualFinish(t *testing.T, m *module.Module, sh module.SessionHandle,
 	requireRV(t, module.CKR_OK, m.FinishOperation(sh, opType), what)
 }
 
+// dualEncryptFinal completes the encryption half of a dual operation with
+// C_EncryptFinal and requires CKR_OK, reporting msg otherwise. The suite's
+// CKM_AES_GCM carries a caller-chosen IV, which fips140=only refuses at
+// C_EncryptFinal with CKR_MECHANISM_PARAM_INVALID; there it returns false once
+// the test has passed again with fips140=off, and the caller stops.
+func dualEncryptFinal(t *testing.T, m *module.Module, sh module.SessionHandle, msg string) ([]byte, bool) {
+	t.Helper()
+
+	out, rv := m.EncryptFinal(sh)
+	if !outsideFIPSAfterRefusal(t, module.CKR_MECHANISM_PARAM_INVALID, rv, fipsCallerIVRefusal) {
+		return nil, false
+	}
+	requireRV(t, module.CKR_OK, rv, msg)
+	return out, true
+}
+
 // dualFeed drives one of the four dual-function update calls over the parts of
 // data and returns everything those calls emitted, concatenated.
 //

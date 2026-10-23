@@ -130,7 +130,8 @@ func runImportData(cmd *cobra.Command, args []string) (err error) {
 
 	// Validate LUKS volume exists
 	vol := luks.NewVolumeWithPaths(luksPath, "")
-	if !vol.Exists() {
+	ops := openLUKSVolume(vol)
+	if !ops.Exists() {
 		return ErrImportDataNoVolume
 	}
 
@@ -149,11 +150,11 @@ func runImportData(cmd *cobra.Command, args []string) (err error) {
 	// Only remove the temporary mount point once it's confirmed unmounted.
 	// A directory that is still mounted (e.g. because Lock failed) holds
 	// the volume's contents; removing it would destroy them.
-	defer removeTempMount(cmd.OutOrStdout(), vol, tmpMount)
+	defer removeTempMount(cmd.OutOrStdout(), ops, tmpMount)
 
 	// Unlock the volume at the temp mount point
 	vol.MountPoint = tmpMount
-	if err := importDataToVolume(cmd.OutOrStdout(), vol, sourceDir, tmpMount, passphrase); err != nil {
+	if err := importDataToVolume(cmd.OutOrStdout(), ops, sourceDir, tmpMount, passphrase); err != nil {
 		return err
 	}
 
@@ -171,7 +172,7 @@ func runImportData(cmd *cobra.Command, args []string) (err error) {
 	// cleanup ensures no window exists for the app to recreate data.
 	if importDataUnseal {
 		_, _ = fmt.Fprintf(cmd.OutOrStdout(), "Unlocking volume at %s...\n", mountPoint)
-		finalVol := luks.NewVolumeWithPaths(luksPath, mountPoint)
+		finalVol := openLUKSVolume(luks.NewVolumeWithPaths(luksPath, mountPoint))
 		if err := finalVol.Unlock(passphrase); err != nil {
 			return &ImportDataError{Operation: "final_unlock", Err: err}
 		}

@@ -158,6 +158,14 @@ func init() {
 	// whole subtree is covered by group, so nothing is registered here.
 }
 
+// The image operations partition, format, encrypt and mount the target, so
+// tests replace them.
+var (
+	usbCreateImage    = usb.CreateImage
+	usbStatus         = usb.Status
+	usbUpdateBinaries = usb.UpdateBinaries
+)
+
 func runUSBCreate(cmd *cobra.Command, args []string) error {
 	targetPath := args[0]
 
@@ -213,7 +221,7 @@ func runUSBCreate(cmd *cobra.Command, args []string) error {
 	_, _ = fmt.Fprintf(cmd.OutOrStdout(), "  Binaries: %d\n", len(binaries))
 	_, _ = fmt.Fprintln(cmd.OutOrStdout())
 
-	if err := usb.CreateImage(cmd.Context(), cfg); err != nil {
+	if err := usbCreateImage(cmd.Context(), cfg); err != nil {
 		return &USBCmdError{Operation: "create_image", Err: err}
 	}
 
@@ -240,7 +248,7 @@ func runUSBCreate(cmd *cobra.Command, args []string) error {
 func runUSBStatus(cmd *cobra.Command, args []string) error {
 	targetPath := args[0]
 
-	status, err := usb.Status(cmd.Context(), targetPath)
+	status, err := usbStatus(cmd.Context(), targetPath)
 	if err != nil {
 		return &USBCmdError{Operation: "get_status", Err: err}
 	}
@@ -306,7 +314,7 @@ func runUSBUpdate(cmd *cobra.Command, args []string) error {
 
 	_, _ = fmt.Fprintf(cmd.OutOrStdout(), "Updating binaries on %s...\n", targetPath)
 
-	if err := usb.UpdateBinaries(cmd.Context(), targetPath, binaries); err != nil {
+	if err := usbUpdateBinaries(cmd.Context(), targetPath, binaries); err != nil {
 		return &USBCmdError{Operation: "update_binaries", Err: err}
 	}
 

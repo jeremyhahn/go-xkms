@@ -34,6 +34,7 @@ import (
 	dns01 "github.com/jeremyhahn/go-xkms/pkg/acme/challenges/dns-01"
 	http01 "github.com/jeremyhahn/go-xkms/pkg/acme/challenges/http-01"
 	"github.com/jeremyhahn/go-xkms/pkg/acme/common"
+	"github.com/jeremyhahn/go-xkms/pkg/acme/linter"
 	acmenonce "github.com/jeremyhahn/go-xkms/pkg/acme/nonce"
 	acmesdk "github.com/jeremyhahn/go-xkms/sdk/go/acme"
 	clustercasdk "github.com/jeremyhahn/go-xkms/sdk/go/clusterca"
@@ -111,6 +112,11 @@ var (
 	// parsed. Config.Validate rejects a malformed list before xkmsd starts,
 	// so this only fires if that invariant is ever broken.
 	ErrACMETrustedProxies = errors.New("acme: failed to parse trusted proxies")
+
+	// ErrACMECTConfig is returned when acme.ct cannot be converted to a CT
+	// policy. Config.Validate rejects a malformed log key or shard time
+	// before xkmsd starts, so this only fires if that invariant is broken.
+	ErrACMECTConfig = errors.New("acme: invalid certificate transparency configuration")
 )
 
 // acmeServer holds the runtime state of the embedded ACME HTTPS server so it
@@ -342,6 +348,13 @@ func startACMEServer(srv *server.Server, cfg *config.Config, logger *slog.Logger
 	// or escape its own.
 	routerLimiters := buildACMERouterLimiters(&acmeCfg.RateLimit, logger)
 
+	// The CT logs finalize submits each precertificate to (RFC 6962 §4.2);
+	// CT is off unless acme.ct enables a log.
+	ctPolicy, err := acmeCfg.CT.PolicyConfig()
+	if err != nil {
+		return nil, &acmeInitError{Stage: "build CT policy", Sentinel: ErrACMECTConfig, Err: err}
+	}
+
 	// Construct the REST service that implements all ACME HTTP handlers.
 	// tcgCA is the primary xkmsd TrustedCA asserted to TCGCA above; the
 	// ACME handlers rely on the TCG extensions (IssueEKCertificate,
@@ -356,10 +369,13 @@ func startACMEServer(srv *server.Server, cfg *config.Config, logger *slog.Logger
 		CAAValidator:                caaValidator,
 		ChallengeMap:                challengeMap,
 		ClusterCACN:                 clusterACMEIssuerCN(cfg),
+		CT:                          ctPolicy,
+		CTBreaker:                   acmeCfg.Resilience.CTSubmitter.CircuitBreakerConfig("ct_submitter"),
 		EndorseEABOptional:          !acmeCfg.EndorseEABIsRequired(),
 		EndorseDeviceIDMetaKey:      acmeCfg.EndorseDeviceIDMetaKey,
 		ExternalAccountRequired:     acmeCfg.ExternalAccountRequired,
 		FailedValidationRateLimiter: routerLimiters.failedValidation,
+		Lint:                        acmeLintConfig(&acmeCfg.Lint),
 		Logger:                      logger,
 		NoncePrefix:                 clusterNoncePrefix(cfg),
 		NonceLifetime:               acmeCfg.Nonce.ResolveLifetime(),
@@ -973,4 +989,13 @@ func (e *acmeInitError) Unwrap() []error {
 		return []error{e.Sentinel}
 	}
 	return []error{e.Err}
+}
+
+// acmeLintConfig returns the ACME CA's linter configuration: the private-PKI
+// exclusions plus the ones the operator configures.
+func acmeLintConfig(c *config.ACMELintConfig) linter.Config {
+	lint := linter.PrivatePKIConfig()
+	lint.ExcludeLints = append(lint.ExcludeLints, c.ExcludeLints...)
+	lint.ExcludeSources = append(lint.ExcludeSources, c.ExcludeSources...)
+	return lint
 }

@@ -330,7 +330,7 @@ func handleAWSOutput(outputMode string, data *handlers.TokenData, profile, crede
 // runAWSAutoRefresh runs the auto-refresh loop for AWS credentials.
 func runAWSAutoRefresh(client *aws.Client, refreshToken, region, profile, credentialsFile, output, execCmd, sessionStore, providerName string, interval time.Duration) error {
 	return runAWSAutoRefreshWithWriter(client, refreshToken, region, profile,
-		credentialsFile, output, execCmd, sessionStore, providerName, interval, os.Stdout, nil)
+		credentialsFile, output, execCmd, sessionStore, providerName, interval, os.Stdout, refreshLoopStop)
 }
 
 // runAWSAutoRefreshWithWriter runs the auto-refresh loop for AWS credentials with a custom writer.
@@ -666,7 +666,7 @@ func runAWSBackgroundWorker(cmd *cobra.Command, args []string) (err error) {
 	}
 	_, _ = fmt.Fprintf(logWriter, "\n")
 
-	return runAWSAutoRefreshWithWriter(client, session.RefreshToken, region, profile, credentialsFile, output, execCmd, sessionStore, providerName, time.Duration(autoRefresh)*time.Second, logWriter, nil)
+	return runAWSAutoRefreshWithWriter(client, session.RefreshToken, region, profile, credentialsFile, output, execCmd, sessionStore, providerName, time.Duration(autoRefresh)*time.Second, logWriter, refreshLoopStop)
 }
 
 // isAWSProcessRunning checks if an AWS background process is running.

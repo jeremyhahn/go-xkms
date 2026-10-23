@@ -353,6 +353,45 @@ func TestNewPinnedTLSConfig_RejectsWrongPin(t *testing.T) {
 	assert.ErrorIs(t, err, ErrInvalidPin)
 }
 
+// TestPinTLSConfig_KeepsClientCertificate covers pinned mTLS: the pin
+// replaces CA validation but the client certificate and ALPN survive, so the
+// client still authenticates (#794).
+func TestPinTLSConfig_KeepsClientCertificate(t *testing.T) {
+	cert, key := generateTestCert(t)
+	pin, err := ComputePin(cert)
+	require.NoError(t, err)
+	clientCert := tls.Certificate{Certificate: [][]byte{cert.Raw}, PrivateKey: key}
+
+	cfg := PinTLSConfig(&tls.Config{Certificates: []tls.Certificate{clientCert}, NextProtos: []string{"h3"}}, pin)
+	require.Len(t, cfg.Certificates, 1)
+	assert.Equal(t, []string{"h3"}, cfg.NextProtos)
+	assert.True(t, cfg.InsecureSkipVerify)
+	assert.True(t, cfg.SessionTicketsDisabled)
+	assert.Equal(t, uint16(tls.VersionTLS13), cfg.MinVersion)
+	assert.NoError(t, cfg.VerifyConnection(tls.ConnectionState{PeerCertificates: []*x509.Certificate{cert}}))
+}
+
+// TestPinTLSConfig_WithRootCAsKeepsChainValidation proves the pin is additive
+// when a CA pool is configured, and a wrong pin is still refused.
+func TestPinTLSConfig_WithRootCAsKeepsChainValidation(t *testing.T) {
+	cert, _ := generateTestCert(t)
+	base := &tls.Config{RootCAs: buildCertPool(t, cert)}
+
+	cfg := PinTLSConfig(base, "wrong-pin-value")
+	assert.False(t, cfg.InsecureSkipVerify)
+	assert.Nil(t, base.VerifyConnection, "the caller's configuration must not be modified")
+	err := cfg.VerifyConnection(tls.ConnectionState{PeerCertificates: []*x509.Certificate{cert}})
+	assert.ErrorIs(t, err, ErrInvalidPin)
+}
+
+// TestPinTLSConfig_NilConfig treats a nil configuration as empty.
+func TestPinTLSConfig_NilConfig(t *testing.T) {
+	cfg := PinTLSConfig(nil, "wrong-pin-value")
+	require.NotNil(t, cfg)
+	assert.True(t, cfg.InsecureSkipVerify)
+	assert.ErrorIs(t, cfg.VerifyConnection(tls.ConnectionState{}), ErrNoPeerCertificates)
+}
+
 func TestComputePinFromPEM(t *testing.T) {
 	cert, _ := generateTestCert(t)
 	pemData := encodeCertPEM(t, cert)

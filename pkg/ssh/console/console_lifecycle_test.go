@@ -445,7 +445,7 @@ func TestConsole_OpenLeavesClientUsable(t *testing.T) {
 		HostKeyCallback: ssh.FixedHostKey(srv.hostPub),
 		Timeout:         10 * time.Second,
 	})
-	if !requireHandshake(t, err) {
+	if !requireSSHHandshake(t, err) {
 		return
 	}
 	defer func() { _ = client.Close() }()

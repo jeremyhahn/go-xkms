@@ -14,10 +14,14 @@
 package ct
 
 import (
+	"context"
 	"crypto"
 	"crypto/ecdsa"
+	"crypto/elliptic"
+	"crypto/rsa"
 	"crypto/x509"
 	"encoding/asn1"
+	"net/url"
 	"time"
 )
 
@@ -128,14 +132,22 @@ type LogGroup struct {
 	// Operator identifies the log operator (e.g., "Google", "Cloudflare").
 	Operator string
 
-	// URL is the log's submission endpoint.
+	// URL is the log's base URL; RFC 6962 §4 methods are appended to it
+	// (<URL>/ct/v1/add-pre-chain).
 	URL string
 
-	// PublicKey is the log's public key for signature verification.
+	// PublicKey is the log's public key, used to verify every SCT the log
+	// returns (RFC 6962 §3.2).
 	PublicKey crypto.PublicKey
 
-	// LogID is the SHA-256 hash of the log's SubjectPublicKeyInfo.
+	// LogID is the SHA-256 hash of the log's SubjectPublicKeyInfo (RFC 6962
+	// §3.2). Left zero, it is derived from PublicKey when the policy is
+	// built; set, it must match the derived value.
 	LogID [32]byte
+
+	// Enabled selects the log for submission. CT is off unless at least one
+	// configured log is enabled.
+	Enabled bool
 
 	// StartTime is when the log started accepting certificates (temporal shard start).
 	StartTime time.Time
@@ -174,6 +186,52 @@ func (lg *LogGroup) IsRFC6962Compliant() bool {
 	return !lg.IsTiled
 }
 
+// validate checks the log's URL and public key and derives its log ID from
+// the key (RFC 6962 §3.2), refusing a configured log ID that differs.
+func (lg *LogGroup) validate() error {
+	u, err := url.Parse(lg.URL)
+	if err != nil || (u.Scheme != "http" && u.Scheme != "https") || u.Host == "" {
+		return NewLogConfigError(*lg, ErrLogURLInvalid)
+	}
+
+	if err := checkLogPublicKey(lg.PublicKey); err != nil {
+		return NewLogConfigError(*lg, err)
+	}
+
+	logID, err := KeyToLogID(lg.PublicKey)
+	if err != nil {
+		return NewLogConfigError(*lg, ErrLogPublicKeyUnsupported)
+	}
+	if lg.LogID != ([32]byte{}) && lg.LogID != logID {
+		return NewLogConfigError(*lg, ErrLogIDMismatch)
+	}
+	lg.LogID = logID
+
+	return nil
+}
+
+// checkLogPublicKey enforces RFC 6962 §2.1.4: a log signs with ECDSA on the
+// NIST P-256 curve or with RSASSA-PKCS1-v1_5 using a key of at least 2048
+// bits.
+func checkLogPublicKey(pub crypto.PublicKey) error {
+	switch key := pub.(type) {
+	case nil:
+		return ErrLogPublicKeyMissing
+	case *ecdsa.PublicKey:
+		if key.Curve != elliptic.P256() {
+			return ErrLogPublicKeyUnsupported
+		}
+		return nil
+	case *rsa.PublicKey:
+		if key.N == nil || key.N.BitLen() < 2048 {
+			return ErrLogPublicKeyUnsupported
+		}
+		return nil
+	default:
+		return ErrLogPublicKeyUnsupported
+	}
+}
+
 // PolicyConfig configures CT policy requirements.
 type PolicyConfig struct {
 	// LogGroups contains the available CT logs.
@@ -196,6 +254,17 @@ type PolicyConfig struct {
 
 	// MaxParallelSubmissions limits concurrent submissions.
 	MaxParallelSubmissions int
+}
+
+// Enabled reports whether CT submission is on: at least one configured log
+// is enabled. CT is off by default.
+func (c *PolicyConfig) Enabled() bool {
+	for _, log := range c.LogGroups {
+		if log.Enabled {
+			return true
+		}
+	}
+	return false
 }
 
 // DefaultPolicyConfig returns a default CT policy configuration.
@@ -222,10 +291,21 @@ type SCTResult struct {
 	Error error
 }
 
+// Submission is the outcome of CTPolicy.Submit: the verified SCTs, and each
+// log that refused the precertificate, timed out or returned an SCT that
+// failed verification (RFC 6962 §3.2).
+type Submission struct {
+	// SCTs are the verified SCTs, in the order the logs answered.
+	SCTs []SignedCertificateTimestamp
+
+	// Failures names each log that returned no verified SCT.
+	Failures []*CTSubmissionError
+}
+
 // LogSubmitter defines the interface for submitting certificates to CT logs.
 type LogSubmitter interface {
 	// SubmitPrecert submits a precertificate to the CT log and returns an SCT.
-	SubmitPrecert(ctx interface{}, precertDER []byte, chain [][]byte, log LogGroup) (*SignedCertificateTimestamp, error)
+	SubmitPrecert(ctx context.Context, precertDER []byte, chain [][]byte, log LogGroup) (*SignedCertificateTimestamp, error)
 }
 
 // KeyToLogID computes the log ID from a public key.

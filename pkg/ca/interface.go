@@ -192,6 +192,12 @@ type CAIssuer interface {
 	// Thread-safe: Yes
 	SignCSR(ctx context.Context, csrPEM []byte, opts *SignOptions) (*x509.Certificate, error)
 
+	// ReserveSerial generates and records a serial number for a SignCSR
+	// call that names it in SignOptions.Serial, so the serial is persisted
+	// before anything is signed with it (RFC 5280 §4.1.2.2). An RFC 6962
+	// precertificate and its final certificate share one reservation.
+	ReserveSerial(ctx context.Context) (*big.Int, error)
+
 	// CreateCSR creates a new certificate signing request for the given request.
 	//
 	// The CSR is generated using a newly created private key based on the

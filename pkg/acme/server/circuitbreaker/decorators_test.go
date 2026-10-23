@@ -196,7 +196,7 @@ type fakeLogSubmitter struct {
 	err error
 }
 
-func (f *fakeLogSubmitter) SubmitPrecert(ctx interface{}, precertDER []byte, chain [][]byte, log ct.LogGroup) (*ct.SignedCertificateTimestamp, error) {
+func (f *fakeLogSubmitter) SubmitPrecert(ctx context.Context, precertDER []byte, chain [][]byte, log ct.LogGroup) (*ct.SignedCertificateTimestamp, error) {
 	if f.err != nil {
 		return nil, f.err
 	}

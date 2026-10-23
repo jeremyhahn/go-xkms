@@ -31,8 +31,11 @@ import (
 	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
 	"github.com/jeremyhahn/go-xkms/pkg/acme/audit"
 	"github.com/jeremyhahn/go-xkms/pkg/acme/common"
+	"github.com/jeremyhahn/go-xkms/pkg/acme/ct"
 	"github.com/jeremyhahn/go-xkms/pkg/acme/entities"
+	"github.com/jeremyhahn/go-xkms/pkg/acme/issuance"
 	"github.com/jeremyhahn/go-xkms/pkg/acme/kms"
+	"github.com/jeremyhahn/go-xkms/pkg/acme/linter"
 	"github.com/jeremyhahn/go-xkms/pkg/acme/server"
 	"github.com/jeremyhahn/go-xkms/pkg/acme/server/metrics"
 	"github.com/jeremyhahn/go-xkms/pkg/acme/storage"
@@ -510,9 +513,6 @@ func (s *RestService) OrderFinalizeHandler(w http.ResponseWriter, r *http.Reques
 
 	// ... continue processing x509 certificate request
 
-	// Encode the CSR to PEM
-	csrPEM := encodeCSRToPEM(csrDER)
-
 	// Determine whether this is an endorse-01 order (x509 CSR + permanent-identifier
 	// whose value is the EK public key being certified, not a name in the CSR). The
 	// permanent identifier itself was already authorized when the endorse-01
@@ -804,6 +804,13 @@ func (s *RestService) OrderFinalizeHandler(w http.ResponseWriter, r *http.Reques
 			ekRequest.Signer = tenantSigner
 			ekRequest.IssuerCert = issuerCert
 		}
+		// The EK certificate bypasses the issuer and is never CT-logged.
+		// The EK is the TPM's own key, not the CSR's subject key, so the
+		// issuer's CSR pipeline cannot apply. Its certificate identifies
+		// the TPM itself (TCG DevID v1.1 §3.11), and logging it would
+		// publish a permanent, correlatable device identifier that TCG
+		// DevID v1.1 §11 keeps private. CT exists to audit Web PKI
+		// certificates (RFC 6962 §1), not private device identities.
 		cert, err = s.ca.IssueEKCertificate(r.Context(), ekRequest, ekPubKey)
 		if err != nil {
 			s.logger.Error("Failed to issue EK certificate", "error", err)
@@ -890,11 +897,30 @@ func (s *RestService) OrderFinalizeHandler(w http.ResponseWriter, r *http.Reques
 			signOpts.ExtraExtensions = append(signOpts.ExtraExtensions, extraExts...)
 		}
 
-		cert, err = s.ca.SignCSR(r.Context(), csrPEM, signOpts)
-		if err != nil {
-			s.failOrder(ctx, orderDAO, order, account, start, w, common.ServerInternal("Failed to sign CSR"))
+		// RFC 8555 §7.4: the Issuer checks the key with goodkey, reserves the
+		// serial (RFC 5280 §4.1.2.2) and has the CA sign a linted
+		// precertificate and then the linted final certificate. Only a
+		// verified device identity gets the issuer whose linter admits its
+		// permanentIdentifier otherName.
+		issuer := s.issuer
+		if attestedIdentity != "" {
+			issuer = s.deviceIssuer
+		}
+		issued, issueErr := issuer.Issue(r.Context(), &issuance.Request{
+			CSR:      csr,
+			Options:  *signOpts,
+			Actor:    "account:" + auditAccountID(account.ID),
+			Resource: "order:" + strconv.FormatUint(order.ID, 10),
+		})
+		if issueErr != nil {
+			s.logger.Warn("Certificate issuance refused",
+				"error", issueErr,
+				"order_id", order.ID,
+				"account_id", account.ID)
+			s.failOrder(ctx, orderDAO, order, account, start, w, issuanceProblem(issueErr))
 			return
 		}
+		cert = issued.Certificate
 	}
 
 	// The certificate's full serial number - never truncated - is its
@@ -1419,6 +1445,12 @@ func (s *RestService) caaValidationMethod(
 // Finalize a TCG-CSR-IDEVID for a successful enroll-01 challenge verification.
 // validatedChallenges are the attestation challenge types that validated the
 // order; they reach the pre-sign hooks as OrderPreSignHookContext.ValidatedChallenges.
+//
+// The IAK and IDevID certificates issued here are never CT-logged. They
+// bind a device's model and serial number to keys rooted in its EK (TCG
+// DevID v1.1 §3.11), and TCG DevID v1.1 §11 keeps that identity private.
+// CT exists to audit Web PKI certificates (RFC 6962 §1), and a public log
+// would make the device identity permanent and correlatable.
 func (s *RestService) finalizeTCGCSR(
 	ip string,
 	csrDER []byte,
@@ -1735,13 +1767,51 @@ func encodeCertificatePEM(derBytes []byte) []byte {
 	return pem.EncodeToMemory(block)
 }
 
-// encodeCSRToPEM encodes DER-encoded CSR data to PEM format.
-func encodeCSRToPEM(derBytes []byte) []byte {
-	block := &pem.Block{
-		Type:  "CERTIFICATE REQUEST",
-		Bytes: derBytes,
+// issuanceProblem maps an Issuer error to its RFC 8555 §6.7 problem: a key
+// goodkey refuses is badPublicKey, a certificate zlint refuses (CA/Browser
+// Forum Baseline Requirements §4.3.1.2) is badCSR, and anything else -- an
+// audit or signing failure included -- is serverInternal.
+func issuanceProblem(err error) *entities.Error {
+	switch {
+	case errors.Is(err, issuance.ErrBadPublicKey):
+		return common.BadPublicKey(err.Error())
+	case errors.Is(err, issuance.ErrAudit):
+		return common.ServerInternal("Failed to record certificate issuance")
+	case errors.Is(err, issuance.ErrCertificateTransparency):
+		return certificateTransparencyProblem(err)
+	case errors.Is(err, linter.ErrRefused):
+		return common.BadCSR("Certificate request yields a certificate that fails lint")
+	default:
+		return common.ServerInternal("Failed to sign CSR")
 	}
-	return pem.EncodeToMemory(block)
+}
+
+// certificateTransparencyProblem is the problem document (RFC 8555 §6.7)
+// for an order the Certificate Transparency policy refused. The CSR is
+// sound: the CA could not obtain the SCTs its certificates embed (RFC 6962
+// §3.3), so the type is serverInternal. The detail names the unmet policy
+// requirement and whether a log failed, never a log's URL or error.
+func certificateTransparencyProblem(err error) *entities.Error {
+	detail := "Certificate transparency submission failed"
+	var violation *ct.PolicyViolationError
+	switch {
+	case errors.As(err, &violation):
+		detail = fmt.Sprintf("Certificate transparency policy not met: %d %s obtained, %d required",
+			violation.Obtained, violation.Requirement, violation.Required)
+	case errors.Is(err, ct.ErrNoRFC6962Log):
+		detail = "Certificate transparency policy not met: no SCT from an RFC 6962 log"
+	case errors.Is(err, ct.ErrNoEligibleLogs):
+		detail = "Certificate transparency policy not met: no log accepts the certificate's expiry"
+	}
+
+	var failure *ct.CTSubmissionError
+	switch {
+	case errors.Is(err, ct.ErrCTSubmissionTimeout):
+		detail += "; a log did not respond in time"
+	case errors.As(err, &failure):
+		detail += "; a log returned no valid SCT"
+	}
+	return common.ServerInternal(detail)
 }
 
 // ErrClusterIssuerUnsupported is returned when cluster CA issuance is configured

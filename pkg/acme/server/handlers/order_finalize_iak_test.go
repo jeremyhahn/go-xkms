@@ -46,7 +46,7 @@ func TestFinalizeTCGCSR_IAKDERReachesHooksAndClientUnchanged(t *testing.T) {
 	iakDER := selfSignedDER(t, ca.IAKCommonName(prodModel, prodSerial), big.NewInt(31), 30*24*time.Hour)
 	idevidDER := selfSignedDER(t, prodModel+"-"+prodSerial, big.NewInt(32), 60*24*time.Hour)
 	enrollCA := &tcgEnrollmentCA{iakDER: iakDER, idevidDER: idevidDER}
-	service.ca = enrollCA
+	setCA(t, service, enrollCA)
 
 	var hookIAKDER, hookIDevIDDER []byte
 	hookCalls := 0

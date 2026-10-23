@@ -276,13 +276,9 @@ func bootstrapDurableAdmin(ctx context.Context, caInstance initialize.CeremonyCA
 		return err
 	}
 
-	trustDomain := env.nodeCfg.Cluster.RaftEnrollment.TrustDomain
-	if trustDomain == "" {
-		trustDomain = embeddednode.DefaultTrustDomain
-	}
 	fbResult, err := xkmsserver.RunFirstBoot(ctx, node, xkmsserver.FirstBootParams{
 		CA:          caInstance,
-		TrustDomain: trustDomain,
+		TrustDomain: embeddednode.TrustDomain(env.nodeCfg),
 		Logger:      env.logger,
 	})
 	if err != nil {

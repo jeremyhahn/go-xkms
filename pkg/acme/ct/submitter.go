@@ -16,16 +16,16 @@ package ct
 import (
 	"bytes"
 	"context"
-	"crypto/sha256"
 	"encoding/base64"
 	"encoding/json"
+	"errors"
 	"io"
 	"log/slog"
 	"net/http"
-	"sync"
 	"time"
 
 	caerrors "github.com/jeremyhahn/go-xkms/pkg/acme/errors"
+	"github.com/jeremyhahn/go-xkms/pkg/errs"
 )
 
 // HTTPLogSubmitter implements LogSubmitter using HTTP.
@@ -58,10 +58,10 @@ type addPrecertChainResponse struct {
 }
 
 // SubmitPrecert submits a precertificate to a CT log.
-func (s *HTTPLogSubmitter) SubmitPrecert(ctx interface{}, precertDER []byte, chain [][]byte, log LogGroup) (*SignedCertificateTimestamp, error) {
-	goCtx, ok := ctx.(context.Context)
-	if !ok {
-		return nil, caerrors.MalformedError("ct: log submission failed: invalid context type")
+func (s *HTTPLogSubmitter) SubmitPrecert(ctx context.Context, precertDER []byte, chain [][]byte, log LogGroup) (*SignedCertificateTimestamp, error) {
+	// Refuse a log whose SCTs could not be verified before submitting to it.
+	if err := checkLogPublicKey(log.PublicKey); err != nil {
+		return nil, NewLogConfigError(log, err)
 	}
 
 	// Build the chain (precert + issuing chain)
@@ -86,7 +86,7 @@ func (s *HTTPLogSubmitter) SubmitPrecert(ctx interface{}, precertDER []byte, cha
 	url += "ct/v1/add-pre-chain"
 
 	// Create HTTP request
-	req, err := http.NewRequestWithContext(goCtx, http.MethodPost, url, bytes.NewReader(jsonBody))
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, url, bytes.NewReader(jsonBody))
 	if err != nil {
 		return nil, caerrors.ConnectionFailureError("ct: log submission failed: creating request: %v", err)
 	}
@@ -95,6 +95,9 @@ func (s *HTTPLogSubmitter) SubmitPrecert(ctx interface{}, precertDER []byte, cha
 	// Send request
 	resp, err := s.client.Do(req)
 	if err != nil {
+		if errors.Is(ctx.Err(), context.DeadlineExceeded) {
+			return nil, &errs.Joined{Lead: ErrCTSubmissionTimeout, Cause: ctx.Err()}
+		}
 		return nil, caerrors.ConnectionFailureError("ct: log submission failed: sending request: %v", err)
 	}
 	defer func() {
@@ -120,8 +123,17 @@ func (s *HTTPLogSubmitter) SubmitPrecert(ctx interface{}, precertDER []byte, cha
 		return nil, caerrors.SerializationFailureError("ct: log submission failed: parsing response: %v", err)
 	}
 
-	// Convert to SCT
-	return s.responseToSCT(&sctResp, log)
+	sct, err := s.responseToSCT(&sctResp, log)
+	if err != nil {
+		return nil, err
+	}
+
+	// RFC 6962 §3.2: verify the SCT's signature over the precert_entry
+	// before relying on it.
+	if err := VerifySCT(sct, log, precertDER, chain); err != nil {
+		return nil, err
+	}
+	return sct, nil
 }
 
 // responseToSCT converts the API response to an SCT.
@@ -170,133 +182,4 @@ func (s *HTTPLogSubmitter) responseToSCT(resp *addPrecertChainResponse, log LogG
 	sct.Signature.Signature = sigBytes[4 : 4+sigLen]
 
 	return sct, nil
-}
-
-// MockLogSubmitter implements LogSubmitter for testing.
-type MockLogSubmitter struct {
-	// SCTs maps log URL to the SCT that should be returned.
-	SCTs map[string]*SignedCertificateTimestamp
-
-	// Errors maps log URL to the error that should be returned.
-	Errors map[string]error
-
-	// Delay is the simulated submission delay.
-	Delay time.Duration
-
-	// Submissions tracks all submission attempts.
-	Submissions []MockSubmission
-
-	mu sync.Mutex
-}
-
-// MockSubmission records a submission attempt.
-type MockSubmission struct {
-	PrecertDER []byte
-	Chain      [][]byte
-	Log        LogGroup
-	Timestamp  time.Time
-}
-
-// NewMockLogSubmitter creates a new mock log submitter.
-func NewMockLogSubmitter() *MockLogSubmitter {
-	return &MockLogSubmitter{
-		SCTs:   make(map[string]*SignedCertificateTimestamp),
-		Errors: make(map[string]error),
-	}
-}
-
-// SubmitPrecert implements LogSubmitter for testing.
-func (m *MockLogSubmitter) SubmitPrecert(ctx interface{}, precertDER []byte, chain [][]byte, log LogGroup) (*SignedCertificateTimestamp, error) {
-	goCtx, ok := ctx.(context.Context)
-	if !ok {
-		return nil, caerrors.MalformedError("ct: log submission failed: invalid context type")
-	}
-
-	// Record submission
-	m.mu.Lock()
-	m.Submissions = append(m.Submissions, MockSubmission{
-		PrecertDER: precertDER,
-		Chain:      chain,
-		Log:        log,
-		Timestamp:  time.Now(),
-	})
-	m.mu.Unlock()
-
-	// Simulate delay
-	if m.Delay > 0 {
-		select {
-		case <-goCtx.Done():
-			return nil, goCtx.Err()
-		case <-time.After(m.Delay):
-		}
-	}
-
-	// Check for error
-	if err, ok := m.Errors[log.URL]; ok {
-		return nil, err
-	}
-
-	// Return configured SCT or generate one
-	if sct, ok := m.SCTs[log.URL]; ok {
-		return sct, nil
-	}
-
-	// Generate a mock SCT
-	return m.generateMockSCT(precertDER, log), nil
-}
-
-// generateMockSCT creates a mock SCT for testing.
-func (m *MockLogSubmitter) generateMockSCT(precertDER []byte, log LogGroup) *SignedCertificateTimestamp {
-	// Use log's LogID or compute from URL
-	var logID [32]byte
-	if log.LogID != [32]byte{} {
-		logID = log.LogID
-	} else {
-		logID = sha256.Sum256([]byte(log.URL))
-	}
-
-	return &SignedCertificateTimestamp{
-		Version:   V1,
-		LogID:     logID,
-		Timestamp: uint64(time.Now().UnixMilli()),
-		Signature: DigitallySigned{
-			HashAlgorithm: HashAlgorithmSHA256,
-			SigAlgorithm:  SignatureAlgorithmECDSA,
-			Signature:     []byte("mock-signature"),
-		},
-	}
-}
-
-// SetSCT configures an SCT to return for a specific log.
-func (m *MockLogSubmitter) SetSCT(logURL string, sct *SignedCertificateTimestamp) {
-	m.mu.Lock()
-	defer m.mu.Unlock()
-	m.SCTs[logURL] = sct
-}
-
-// SetError configures an error to return for a specific log.
-func (m *MockLogSubmitter) SetError(logURL string, err error) {
-	m.mu.Lock()
-	defer m.mu.Unlock()
-	m.Errors[logURL] = err
-}
-
-// GetSubmissions returns all recorded submissions.
-func (m *MockLogSubmitter) GetSubmissions() []MockSubmission {
-	m.mu.Lock()
-	defer m.mu.Unlock()
-
-	result := make([]MockSubmission, len(m.Submissions))
-	copy(result, m.Submissions)
-	return result
-}
-
-// Reset clears all configured responses and recorded submissions.
-func (m *MockLogSubmitter) Reset() {
-	m.mu.Lock()
-	defer m.mu.Unlock()
-
-	m.SCTs = make(map[string]*SignedCertificateTimestamp)
-	m.Errors = make(map[string]error)
-	m.Submissions = nil
 }

@@ -58,6 +58,11 @@ type Issuer struct {
 	// issues certificates without revocation or Authority Information Access
 	// endpoints.
 	Identity *Identity
+
+	// Linter, when set, lints every certificate Issue builds before it is
+	// signed (CA/Browser Forum Baseline Requirements §4.3.1.2); a refusal
+	// means nothing is signed with Signer. A nil Linter issues unlinted.
+	Linter Linter
 }
 
 // SelfSigned reports whether this issuer signs with its own key under its own
@@ -300,7 +305,11 @@ func (iss *Issuer) Issue(randReader io.Reader, spec *CertificateSpec) (*x509.Cer
 		return nil, err
 	}
 
-	der, err := iss.Sign(randReader, template, spec.PublicKey)
+	sign := iss.Sign
+	if iss.Linter != nil {
+		sign = iss.lintAndSign
+	}
+	der, err := sign(randReader, template, spec.PublicKey)
 	if err != nil {
 		return nil, err
 	}

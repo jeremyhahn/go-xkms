@@ -602,4 +602,23 @@ type SignOptions struct {
 	// (e.g. the SDN network-zone extension OIDTPNetworkZone) without requiring
 	// a dedicated field per extension type.
 	ExtraExtensions []pkix.Extension
+
+	// Serial is a serial number the caller reserved with ReserveSerial. A
+	// nil Serial has the CA generate one. A precertificate and its final
+	// certificate share one reserved serial (RFC 6962 §3.1); the caller
+	// uses a reservation for no other certificate, keeping serials unique
+	// per issuer (RFC 5280 §4.1.2.2).
+	Serial *big.Int
+
+	// Precertificate signs an RFC 6962 §3.1 precertificate: the certificate
+	// carries the critical poison extension and is neither stored nor
+	// recorded, since it is not a certificate a relying party may accept.
+	Precertificate bool
+
+	// Linter, when set, lints the certificate before the CA signs it
+	// (CA/Browser Forum Baseline Requirements §4.3.1.2). The CA signs a
+	// copy of the final tbsCertificate with a throwaway key of the issuing
+	// key's algorithm, passes it to Linter, and signs with the issuing key
+	// only when Linter returns nil.
+	Linter Linter
 }

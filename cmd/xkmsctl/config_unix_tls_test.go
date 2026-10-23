@@ -41,6 +41,7 @@ func TestConfig_backendConfig_MapsCredentialFlags(t *testing.T) {
 	cfg.TLSKey = "/etc/xkms/client-key.pem"
 	cfg.TLSCACert = "/etc/xkms/ca.pem"
 	cfg.JWTToken = "session-token"
+	cfg.SPKIPin = strings.Repeat("ab", 32)
 
 	bc, err := cfg.backendConfig()
 	if err != nil {
@@ -48,6 +49,11 @@ func TestConfig_backendConfig_MapsCredentialFlags(t *testing.T) {
 	}
 	if bc.TLSCertFile != cfg.TLSCert || bc.TLSKeyFile != cfg.TLSKey || bc.TLSCAFile != cfg.TLSCACert {
 		t.Errorf("backendConfig() TLS files = %q/%q/%q, want the flag values", bc.TLSCertFile, bc.TLSKeyFile, bc.TLSCAFile)
+	}
+	// --spki-pin must reach the SDK, or a server whose certificate does not
+	// chain to --tls-ca is unreachable from every protocol (#794).
+	if bc.SPKIPin != cfg.SPKIPin {
+		t.Errorf("backendConfig() SPKIPin = %q, want %q", bc.SPKIPin, cfg.SPKIPin)
 	}
 	if bc.JWTToken != cfg.JWTToken {
 		t.Errorf("backendConfig() JWTToken = %q, want %q", bc.JWTToken, cfg.JWTToken)

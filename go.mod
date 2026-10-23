@@ -59,8 +59,10 @@ require (
 	github.com/veraison/swid v1.1.1-0.20230911094910-8ffdd07a22ca
 	github.com/vmihailenco/msgpack/v5 v5.4.1
 	github.com/wailsapp/wails/v2 v2.17.0
-	github.com/weppos/publicsuffix-go v0.50.3
+	github.com/weppos/publicsuffix-go v0.50.4-0.20260821095816-b0fdb5c2d345
 	github.com/youmark/pkcs8 v0.0.0-20240726163527-a2c0da244d78
+	github.com/zmap/zcrypto v0.0.0-20260906180147-3ed30b1e9340
+	github.com/zmap/zlint/v3 v3.7.2
 	golang.org/x/crypto v0.58.0
 	golang.org/x/net v0.61.0
 	golang.org/x/oauth2 v0.37.0
@@ -216,6 +218,7 @@ require (
 	github.com/munnerz/goautoneg v0.0.0-20191010083416-a7dc8b61c822 // indirect
 	github.com/oasdiff/yaml v0.1.1 // indirect
 	github.com/oasdiff/yaml3 v0.0.14 // indirect
+	github.com/pelletier/go-toml v1.9.5 // indirect
 	github.com/pelletier/go-toml/v2 v2.4.3 // indirect
 	github.com/philhofer/fwd v1.2.0 // indirect
 	github.com/pkg/browser v0.0.0-20240102092130-5ac0b6a4141c // indirect
@@ -232,7 +235,7 @@ require (
 	github.com/samber/lo v1.53.0 // indirect
 	github.com/santhosh-tekuri/jsonschema/v6 v6.0.3 // indirect
 	github.com/segmentio/asm v1.2.1 // indirect
-	github.com/sirupsen/logrus v1.9.4 // indirect
+	github.com/sirupsen/logrus v1.10.2 // indirect
 	github.com/spf13/afero v1.15.0 // indirect
 	github.com/spf13/cast v1.10.0 // indirect
 	github.com/spiffe/go-spiffe/v2 v2.8.1 // indirect

@@ -27,9 +27,11 @@ import (
 	"crypto/sha256"
 	"crypto/tls"
 	"crypto/x509"
+	"crypto/x509/pkix"
 	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
+	"encoding/pem"
 	"fmt"
 	"io"
 	"log/slog"
@@ -41,6 +43,7 @@ import (
 	"os"
 	"strconv"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -48,7 +51,9 @@ import (
 	"github.com/go-jose/go-jose/v4"
 	deviceattest01 "github.com/jeremyhahn/go-xkms/pkg/acme/challenges/device-attest-01"
 	"github.com/jeremyhahn/go-xkms/pkg/acme/common"
+	"github.com/jeremyhahn/go-xkms/pkg/acme/ct"
 	"github.com/jeremyhahn/go-xkms/pkg/acme/entities"
+	"github.com/jeremyhahn/go-xkms/pkg/acme/linter"
 	"github.com/jeremyhahn/go-xkms/pkg/acme/policy"
 	"github.com/jeremyhahn/go-xkms/pkg/acme/storage/objstore"
 	"github.com/jeremyhahn/go-xkms/pkg/attestation/dice"
@@ -98,8 +103,95 @@ func (m *MockCA) IsInitialized() bool          { return true }
 
 // CSR / Issuance
 
-func (m *MockCA) SignCSR(_ context.Context, _ []byte, _ *ca.SignOptions) (*x509.Certificate, error) {
-	return &x509.Certificate{}, nil
+func (m *MockCA) SignCSR(_ context.Context, csrPEM []byte, opts *ca.SignOptions) (*x509.Certificate, error) {
+	return mockCertificate(csrPEM, opts, nil)
+}
+
+// mockIssuerKey signs the mock CAs' certificates.
+var mockIssuerKey = sync.OnceValues(func() (*ecdsa.PrivateKey, error) {
+	return ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+})
+
+// mockCertificate signs csrPEM as a real certificate under mockIssuerKey. It
+// uses serial, else opts.Serial, and honors opts.NotBefore and
+// opts.Precertificate, so the issuer's precertificate check (RFC 6962 §3.1)
+// compares real tbsCertificates.
+func mockCertificate(csrPEM []byte, opts *ca.SignOptions, serial *big.Int) (*x509.Certificate, error) {
+	block, _ := pem.Decode(csrPEM)
+	if block == nil {
+		return nil, caerrors.SerializationFailureError("failed to decode PEM")
+	}
+	csr, err := x509.ParseCertificateRequest(block.Bytes)
+	if err != nil {
+		return nil, err
+	}
+	key, err := mockIssuerKey()
+	if err != nil {
+		return nil, err
+	}
+	if opts == nil {
+		opts = &ca.SignOptions{}
+	}
+	if serial == nil {
+		serial = opts.Serial
+	}
+	if serial == nil {
+		serial = big.NewInt(1)
+	}
+	notBefore := opts.NotBefore
+	if notBefore.IsZero() {
+		notBefore = time.Now().UTC().Truncate(time.Second)
+	}
+	template := &x509.Certificate{
+		SerialNumber: serial,
+		Subject:      csr.Subject,
+		NotBefore:    notBefore,
+		NotAfter:     notBefore.Add(90 * 24 * time.Hour),
+		KeyUsage:     x509.KeyUsageDigitalSignature,
+		ExtKeyUsage:  []x509.ExtKeyUsage{x509.ExtKeyUsageServerAuth},
+		DNSNames:     csr.DNSNames,
+		IPAddresses:  csr.IPAddresses,
+	}
+	if opts.Precertificate {
+		template.ExtraExtensions = []pkix.Extension{ct.MakePrecertPoisonExtension()}
+	}
+	der, err := x509.CreateCertificate(rand.Reader, template, template, csr.PublicKey, key)
+	if err != nil {
+		return nil, err
+	}
+	return x509.ParseCertificate(der)
+}
+
+// setCA swaps the service's CA and rebuilds the issuer over it, as
+// NewRestService builds it over Params.CA.
+func setCA(t *testing.T, service *RestService, c ca.TCGCA) {
+	t.Helper()
+	setCAWithLint(t, service, c, linter.Config{})
+}
+
+// setCAWithLint is setCA with the issuer's lint configuration (Params.Lint).
+func setCAWithLint(t *testing.T, service *RestService, c ca.TCGCA, lint linter.Config) {
+	t.Helper()
+	setCAWithParams(t, service, c, &Params{Lint: lint})
+}
+
+// setCAWithParams is setCA with the issuer built from params' Lint and
+// Policy, as NewRestService builds it.
+func setCAWithParams(t *testing.T, service *RestService, c ca.TCGCA, params *Params) {
+	t.Helper()
+	params.CA = c
+	params.Logger = service.logger
+	issuer, err := newIssuer(params, service.auditLog, false)
+	require.NoError(t, err)
+	deviceIssuer, err := newIssuer(params, service.auditLog, true)
+	require.NoError(t, err)
+	service.ca = c
+	service.issuer = issuer
+	service.deviceIssuer = deviceIssuer
+}
+
+func (m *MockCA) ReserveSerial(_ context.Context) (*big.Int, error) {
+	return big.NewInt(1), nil
 }
 
 func (m *MockCA) CreateCSR(_ context.Context, _ *ca.CertificateRequest) ([]byte, error) {

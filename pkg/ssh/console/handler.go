@@ -15,6 +15,7 @@ package console
 
 import (
 	"context"
+	"crypto/sha1"
 	"encoding/json"
 	"errors"
 	"log/slog"
@@ -188,9 +189,9 @@ func (h *wsHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	conn, err := h.upgrader.Upgrade(w, r, nil)
+	conn, err := upgradeWS(&h.upgrader, w, r)
 	if err != nil {
-		return // Upgrade already wrote the response
+		return // upgradeWS already wrote the response
 	}
 	defer func() {
 		if cerr := conn.Close(); cerr != nil {
@@ -231,6 +232,30 @@ func (h *wsHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}()
 
 	bridge(conn, cons)
+}
+
+// upgradeWS upgrades r to a WebSocket connection with u, or refuses it with
+// 501 Not Implemented and an *UpgradeRefusedError when the standard library
+// refuses SHA-1. Either way the response has been written when it returns.
+//
+// RFC 6455 §4.2.2 (step 5, item 4; docs/references/rfc-6455.txt) makes the
+// server answer the handshake with Sec-WebSocket-Accept, the base64 SHA-1 of
+// the client's key and the RFC's GUID. gorilla/websocket computes it with
+// crypto/sha1, whose Sum panics under GODEBUG=fips140=only. crypto/sha1
+// reports the same refusal as an error from Write, so the handler asks it
+// first and lets the standard library decide, rather than keep a list of its
+// own. A request that is not a WebSocket handshake never reaches SHA-1 and
+// keeps gorilla's 400.
+func upgradeWS(u *websocket.Upgrader, w http.ResponseWriter, r *http.Request) (*websocket.Conn, error) {
+	if !websocket.IsWebSocketUpgrade(r) {
+		return u.Upgrade(w, r, nil)
+	}
+	if _, err := sha1.New().Write(nil); err != nil {
+		refused := &UpgradeRefusedError{Err: err}
+		http.Error(w, refused.Error(), http.StatusNotImplemented)
+		return nil, refused
+	}
+	return u.Upgrade(w, r, nil)
 }
 
 // buildHostKeyConfirm returns the known_hosts.Confirmer wired to the

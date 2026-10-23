@@ -104,6 +104,11 @@ func openLaunchURL(rawURL string) error {
 // flow never starts a real browser.
 var launchBrowser = browser.OpenURL
 
+// refreshLoopStop ends the foreground and background-worker refresh loops
+// the way SIGINT or SIGTERM does. It is nil, so never ready, outside tests,
+// which close it to stop a loop without signalling the test process.
+var refreshLoopStop <-chan struct{}
+
 // OIDCExecPayload is the JSON structure passed to exec scripts. The tokens
 // are SecretBytes so they stay wipeable until the script has run; they encode
 // as the same JSON strings the fields held before. The owner calls Wipe.
@@ -791,7 +796,7 @@ func runOIDCLogin(cmd *cobra.Command, args []string) error {
 		// tokenCLIStore is opened once, here, and reused for every refresh
 		// tick below -- not reopened (and, for a barrier-backed store, not
 		// re-unsealed) on every interval.
-		return runAutoRefresh(discovery.TokenEndpoint, clientID, tokenCLIStore, tokenStore, execCmd, providerName, time.Duration(autoRefresh)*time.Second, nil, tokenEncoding, nil)
+		return runAutoRefresh(discovery.TokenEndpoint, clientID, tokenCLIStore, tokenStore, execCmd, providerName, time.Duration(autoRefresh)*time.Second, nil, tokenEncoding, refreshLoopStop)
 	}
 
 	return nil
@@ -2146,7 +2151,7 @@ func runBackgroundWorker(cmd *cobra.Command, args []string) (err error) {
 		return err
 	}
 
-	return runAutoRefresh(tokenEndpoint, clientID, tokenCLIStore, tokenStore, execCmd, providerName, time.Duration(autoRefresh)*time.Second, logWriter, tokenEncoding, nil)
+	return runAutoRefresh(tokenEndpoint, clientID, tokenCLIStore, tokenStore, execCmd, providerName, time.Duration(autoRefresh)*time.Second, logWriter, tokenEncoding, refreshLoopStop)
 }
 
 // isProcessRunning checks if a process with the given PID file is running.
