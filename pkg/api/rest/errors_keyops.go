@@ -118,6 +118,10 @@ func mapKeyOpError(w http.ResponseWriter, err error) {
 		writeError(w, err, classToHTTPStatus[class])
 		return
 	}
+	if class, ok := apierrors.KeyPolicyClassOf(err); ok {
+		writeError(w, err, classToHTTPStatus[class])
+		return
+	}
 
 	var role *xkms.ErrRoleLookup
 	if errors.As(err, &role) {

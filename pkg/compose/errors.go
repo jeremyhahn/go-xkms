@@ -61,6 +61,11 @@ const (
 	// each rotated key has and which one is current (pkg/keyversion).
 	FeatureKeyVersions Feature = "key-versions"
 
+	// FeatureKeyPolicies is the key-policy record store: each key's status,
+	// metadata, access and rotation policies and AEAD usage limits
+	// (pkg/keypolicy).
+	FeatureKeyPolicies Feature = "key-policies"
+
 	// FeatureOIDCCredentials is the server-side OIDC credential service
 	// (pkg/oidc/credential) and its refresh scheduler.
 	FeatureOIDCCredentials Feature = "oidc-credentials"

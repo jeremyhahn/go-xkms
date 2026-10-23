@@ -264,6 +264,9 @@ func (b *Backend) Capabilities() types.Capabilities {
 		QuantumSigning:      false,
 		KeyEncapsulation:    false,
 		SecurityLevel:       trust.security,
+		// The device attests; it generates no keys (see Algorithms for what
+		// its crypto provider performs).
+		KeyAlgorithms: types.KeyAlgorithms{},
 	}
 }
 

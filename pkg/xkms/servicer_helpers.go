@@ -24,6 +24,7 @@ import (
 	"fmt"
 
 	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
+	"github.com/jeremyhahn/go-xkms/pkg/crypto/x25519"
 	"github.com/jeremyhahn/go-xkms/pkg/storage"
 	"github.com/jeremyhahn/go-xkms/pkg/types"
 	"strings"
@@ -249,23 +250,9 @@ func ResolveOAEPHash(hash string) (crypto.Hash, error) {
 
 // pubKeyPEM extracts the public key from a private key and encodes it as PEM.
 func pubKeyPEM(privKey crypto.PrivateKey) (string, error) {
-	if privKey == nil {
-		return "", ErrNilPrivateKey
-	}
-
-	var pubKey crypto.PublicKey
-
-	switch k := privKey.(type) {
-	case *rsa.PrivateKey:
-		pubKey = &k.PublicKey
-	case *ecdsa.PrivateKey:
-		pubKey = &k.PublicKey
-	case ed25519.PrivateKey:
-		pubKey = k.Public()
-	case crypto.Signer:
-		pubKey = k.Public()
-	default:
-		return "", &ErrUnsupportedPrivateKeyType{KeyType: fmt.Sprintf("%T", privKey)}
+	pubKey, err := publicKeyOf(privKey)
+	if err != nil {
+		return "", err
 	}
 
 	der, err := x509.MarshalPKIXPublicKey(pubKey)
@@ -279,4 +266,37 @@ func pubKeyPEM(privKey crypto.PrivateKey) (string, error) {
 	}
 
 	return string(pem.EncodeToMemory(block)), nil
+}
+
+// publicKeyOf returns the public half of privKey. Every key that exposes
+// Public, a crypto.Signer or an *ecdh.PrivateKey, has one.
+func publicKeyOf(privKey crypto.PrivateKey) (crypto.PublicKey, error) {
+	if privKey == nil {
+		return nil, ErrNilPrivateKey
+	}
+
+	switch k := privKey.(type) {
+	case *rsa.PrivateKey:
+		return &k.PublicKey, nil
+	case *ecdsa.PrivateKey:
+		return &k.PublicKey, nil
+	case ed25519.PrivateKey:
+		return k.Public(), nil
+	case interface{ Public() crypto.PublicKey }:
+		return standardPublicKey(k.Public())
+	}
+	return nil, &ErrUnsupportedPrivateKeyType{KeyType: fmt.Sprintf("%T", privKey)}
+}
+
+// standardPublicKey returns the standard library key x509 marshals for pub:
+// an X25519 key's storage wrapper is unwrapped to its *ecdh.PublicKey.
+func standardPublicKey(pub crypto.PublicKey) (crypto.PublicKey, error) {
+	wrapped, ok := pub.(*x25519.PublicKeyStorage)
+	if !ok {
+		return pub, nil
+	}
+	if key := wrapped.PublicKey(); key != nil {
+		return key, nil
+	}
+	return nil, &ErrMalformedPublicKey{KeyType: fmt.Sprintf("%T", pub)}
 }

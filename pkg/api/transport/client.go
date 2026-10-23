@@ -138,6 +138,104 @@ type KeyVersionService interface {
 	RotateScopeKeys(ctx context.Context, req *RotateScopeKeysRequest) (*RotateScopeKeysResponse, error)
 }
 
+// CryptoUtilityService defines the envelope, batch, HMAC, random and hash
+// operations.
+type CryptoUtilityService interface {
+	// Rewrap decrypts a ciphertext under its source key and encrypts the
+	// plaintext under a target key; the plaintext is never returned.
+	Rewrap(ctx context.Context, req *RewrapRequest) (*RewrapResponse, error)
+
+	// EncryptBatch encrypts up to MaxBatchItems plaintexts with one key and
+	// reports each item's result.
+	EncryptBatch(ctx context.Context, req *EncryptBatchRequest) (*EncryptBatchResponse, error)
+
+	// DecryptBatch decrypts up to MaxBatchItems ciphertexts with one key and
+	// reports each item's result.
+	DecryptBatch(ctx context.Context, req *DecryptBatchRequest) (*DecryptBatchResponse, error)
+
+	// GenerateDataKey returns a random data key in plaintext and wrapped
+	// under the named key.
+	GenerateDataKey(ctx context.Context, req *GenerateDataKeyRequest) (*GenerateDataKeyResponse, error)
+
+	// GenerateWrappedDataKey returns a random data key only wrapped under
+	// the named key.
+	GenerateWrappedDataKey(ctx context.Context, req *GenerateDataKeyRequest) (*GenerateWrappedDataKeyResponse, error)
+
+	// GenerateHMAC computes an HMAC (RFC 2104) with a symmetric key.
+	GenerateHMAC(ctx context.Context, req *GenerateHMACRequest) (*GenerateHMACResponse, error)
+
+	// VerifyHMAC verifies an HMAC (RFC 2104) with a symmetric key.
+	VerifyHMAC(ctx context.Context, req *VerifyHMACRequest) (*VerifyHMACResponse, error)
+
+	// GenerateRandom returns up to MaxRandomBytes random bytes.
+	GenerateRandom(ctx context.Context, req *GenerateRandomRequest) (*GenerateRandomResponse, error)
+
+	// Hash computes the digest of data with a named hash function.
+	Hash(ctx context.Context, req *HashRequest) (*HashResponse, error)
+}
+
+// KeyManagementService manages keys without using them: their public keys,
+// status, metadata, access and rotation policies, AEAD usage limits, and the
+// backends that hold them.
+type KeyManagementService interface {
+	// GetPublicKey returns the PKIX, DER-encoded public key of an asymmetric
+	// key.
+	GetPublicKey(ctx context.Context, req *GetPublicKeyRequest) (*GetPublicKeyResponse, error)
+
+	// RevokeKey revokes a key for good.
+	RevokeKey(ctx context.Context, req *RevokeKeyRequest) (*RevokeKeyResponse, error)
+
+	// UpdateKeyStatus enables or disables a key or one of its versions.
+	UpdateKeyStatus(ctx context.Context, req *UpdateKeyStatusRequest) (*UpdateKeyStatusResponse, error)
+
+	// GetKeyMetadata returns a key's metadata.
+	GetKeyMetadata(ctx context.Context, req *KeyManagementRequest) (*KeyMetadataResponse, error)
+
+	// UpdateKeyMetadata changes a key's mutable metadata.
+	UpdateKeyMetadata(ctx context.Context, req *UpdateKeyMetadataRequest) (*KeyMetadataResponse, error)
+
+	// SetKeyPolicy sets a key's access policy.
+	SetKeyPolicy(ctx context.Context, req *SetKeyPolicyRequest) (*SetKeyPolicyResponse, error)
+
+	// GetKeyPolicy returns a key's access policy.
+	GetKeyPolicy(ctx context.Context, req *KeyManagementRequest) (*GetKeyPolicyResponse, error)
+
+	// DeleteKeyPolicy removes a key's access policy; the key falls back to
+	// RBAC alone.
+	DeleteKeyPolicy(ctx context.Context, req *KeyManagementRequest) (*KeyManagementResponse, error)
+
+	// SetKeyRotationPolicy sets a key's rotation policy.
+	SetKeyRotationPolicy(ctx context.Context, req *SetKeyRotationPolicyRequest) (*KeyRotationPolicyResponse, error)
+
+	// GetKeyRotationPolicy returns a key's rotation policy.
+	GetKeyRotationPolicy(ctx context.Context, req *KeyManagementRequest) (*KeyRotationPolicyResponse, error)
+
+	// DeleteKeyRotationPolicy removes a key's rotation policy.
+	DeleteKeyRotationPolicy(ctx context.Context, req *KeyManagementRequest) (*KeyManagementResponse, error)
+
+	// GetSupportedAlgorithms lists the algorithms a backend supports.
+	GetSupportedAlgorithms(ctx context.Context, req *BackendRequest) (*GetSupportedAlgorithmsResponse, error)
+
+	// BackendStatus reports a backend's type, health and capabilities.
+	BackendStatus(ctx context.Context, req *BackendRequest) (*BackendStatusResponse, error)
+
+	// BackendTest runs a non-destructive seal and unseal round trip on a
+	// backend.
+	BackendTest(ctx context.Context, req *BackendRequest) (*BackendTestResponse, error)
+
+	// SetKeySafety sets a symmetric AEAD key's usage limits.
+	SetKeySafety(ctx context.Context, req *SetKeySafetyRequest) (*KeyManagementResponse, error)
+
+	// ClearKeySafety removes a key's usage limits.
+	ClearKeySafety(ctx context.Context, req *KeyManagementRequest) (*KeyManagementResponse, error)
+
+	// SafetyCheck lists the keys at or past their warning threshold.
+	SafetyCheck(ctx context.Context, req *SafetyCheckRequest) (*SafetyCheckResponse, error)
+
+	// SafetyReport reports the usage of every key with usage limits.
+	SafetyReport(ctx context.Context, req *SafetyReportRequest) (*SafetyReportResponse, error)
+}
+
 // CryptoService provides cryptographic operations.
 type CryptoService interface {
 	// Sign signs data with the specified key.
@@ -598,6 +696,8 @@ type Client interface {
 	BackendService
 	KeyService
 	KeyVersionService
+	CryptoUtilityService
+	KeyManagementService
 	CryptoService
 	CertService
 	SealService

@@ -18,6 +18,7 @@ import (
 
 	"github.com/jeremyhahn/go-xkms/pkg/api/transport"
 	"github.com/jeremyhahn/go-xkms/pkg/crypto/kdf"
+	"github.com/jeremyhahn/go-xkms/pkg/keypolicy"
 	"github.com/jeremyhahn/go-xkms/pkg/types"
 )
 
@@ -108,6 +109,9 @@ func (s *XKMSService) deriveFromStoredKey(ctx context.Context, req *transport.De
 	version, err := k.use(req.KeyVersion)
 	if err != nil {
 		return nil, 0, roleLookupError("key", req.KeyID, err)
+	}
+	if err := s.admitKey(ctx, k, keypolicy.OpDeriveKey); err != nil {
+		return nil, 0, err
 	}
 
 	derived, err := deriver.DeriveFromSymmetricKey(ctx, version.attrs, params)

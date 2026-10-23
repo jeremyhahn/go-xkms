@@ -62,6 +62,7 @@ import (
 	_ "github.com/jeremyhahn/go-xkms/pkg/escrow/kmip" // registers the "kmip" escrow agent factory
 	_ "github.com/jeremyhahn/go-xkms/pkg/escrow/xkms" // registers the "xkms" escrow agent factory
 	"github.com/jeremyhahn/go-xkms/pkg/factor"
+	"github.com/jeremyhahn/go-xkms/pkg/keypolicy"
 	"github.com/jeremyhahn/go-xkms/pkg/keyprovider/pkcs8"
 	"github.com/jeremyhahn/go-xkms/pkg/keyversion"
 	"github.com/jeremyhahn/go-xkms/pkg/metrics"
@@ -362,6 +363,10 @@ type Server struct {
 	// keyVersions is the key-version record store. See
 	// initializeKeyVersionStore.
 	keyVersions *keyversion.Store
+
+	// keyPolicies is the key-policy record store. See
+	// initializeKeyPolicyStore.
+	keyPolicies *keypolicy.Store
 
 	// Health checker
 	healthChecker *qrdbsdk.HealthChecker
@@ -832,6 +837,13 @@ func New(cfg *config.Config, opts ...Option) (*Server, error) {
 		return nil, &ErrServiceInit{Service: "key version store", Err: err}
 	}
 
+	// Initialize the key-policy record store
+	if err := s.initializeKeyPolicyStore(); err != nil {
+		cancel()
+		s.closeBackends()
+		return nil, &ErrServiceInit{Service: "key policy store", Err: err}
+	}
+
 	// Initialize the TPM policy service
 	if err := s.initTPMPolicyService(); err != nil {
 		cancel()
@@ -1021,6 +1033,7 @@ func (s *Server) composedStores() *compose.Stores {
 		CA:              s.ca,
 		TPMPolicies:     s.tpmPolicies,
 		KeyVersions:     s.keyVersions,
+		KeyPolicies:     s.keyPolicies,
 		OIDCCredentials: s.oidcCredentials,
 	}
 	if invite, err := compose.BuildInviteStore(s.createStorage); err != nil {
@@ -1663,6 +1676,24 @@ func (s *Server) initializeKeyVersionStore() error {
 	}
 	s.keyVersions = store
 	s.logger.Info("xkms feature on", "feature", compose.FeatureKeyVersions)
+	return nil
+}
+
+// initializeKeyPolicyStore builds the key-policy record store through
+// compose.BuildKeyPolicyStore over its database on the server's datastore.
+// The key-management RPCs and the policy check on every key use need it, so
+// it is always built.
+func (s *Server) initializeKeyPolicyStore() error {
+	daos, err := s.daoFactory(keypolicy.DatabaseName)
+	if err != nil {
+		return err
+	}
+	store, err := compose.BuildKeyPolicyStore(daos)
+	if err != nil {
+		return &ErrStorageCreate{Resource: "key policy storage", Err: err}
+	}
+	s.keyPolicies = store
+	s.logger.Info("xkms feature on", "feature", compose.FeatureKeyPolicies)
 	return nil
 }
 

@@ -375,6 +375,14 @@ func algorithmBackends(algorithms []AlgorithmInfo, name string) []string {
 
 // discovererFor builds a discoverer over a fixed backend capability set, the
 // same way the xkms service reports its configured backends.
+// softwareKeyAlgorithms is the classical key-algorithm declaration of the
+// software backend.
+var softwareKeyAlgorithms = xkmssdk.KeyAlgorithms{
+	RSAKeySizes: []int{xkmssdk.RSAKeySize2048, xkmssdk.RSAKeySize3072, xkmssdk.RSAKeySize4096},
+	ECDSACurves: []string{"P-256", "P-384", "P-521"},
+	Ed25519:     true,
+}
+
 func discovererFor(caps map[string]xkmssdk.Capabilities) AlgorithmDiscoverer {
 	backends := make([]xkmssdk.ServiceBackendType, 0, len(caps))
 	for name := range caps {
@@ -397,7 +405,7 @@ func discovererFor(caps map[string]xkmssdk.Capabilities) AlgorithmDiscoverer {
 func TestHandlers_GetAlgorithms_SoftwareOnlyDeployment(t *testing.T) {
 	h := NewHandlers(nil, slog.Default(), WithAlgorithmDiscoverer(discovererFor(
 		map[string]xkmssdk.Capabilities{
-			"software": {Keys: true},
+			"software": {Keys: true, KeyAlgorithms: softwareKeyAlgorithms},
 		})))
 
 	resp := getAlgorithms(t, h)
@@ -421,8 +429,11 @@ func TestHandlers_GetAlgorithms_SoftwareOnlyDeployment(t *testing.T) {
 func TestHandlers_GetAlgorithms_QuantumProvider(t *testing.T) {
 	h := NewHandlers(nil, slog.Default(), WithAlgorithmDiscoverer(discovererFor(
 		map[string]xkmssdk.Capabilities{
-			"software": {Keys: true},
-			"quantum":  {QuantumSigning: true, KeyEncapsulation: true},
+			"software": {Keys: true, KeyAlgorithms: softwareKeyAlgorithms},
+			"quantum": {QuantumSigning: true, KeyEncapsulation: true, KeyAlgorithms: xkmssdk.KeyAlgorithms{
+				MLDSA: []xkmssdk.QuantumAlgorithm{xkmssdk.QuantumAlgorithmMLDSA65, xkmssdk.QuantumAlgorithmMLDSA87},
+				MLKEM: []xkmssdk.QuantumAlgorithm{xkmssdk.QuantumAlgorithmMLKEM1024},
+			}},
 		})))
 
 	resp := getAlgorithms(t, h)
@@ -442,8 +453,11 @@ func TestHandlers_GetAlgorithms_QuantumProvider(t *testing.T) {
 func TestHandlers_GetAlgorithms_HardwareDeployment(t *testing.T) {
 	h := NewHandlers(nil, slog.Default(), WithAlgorithmDiscoverer(discovererFor(
 		map[string]xkmssdk.Capabilities{
-			"software": {Keys: true},
-			"tpm2":     {Keys: true, HardwareBacked: true},
+			"software": {Keys: true, KeyAlgorithms: softwareKeyAlgorithms},
+			"tpm2": {Keys: true, HardwareBacked: true, KeyAlgorithms: xkmssdk.KeyAlgorithms{
+				RSAKeySizes: []int{xkmssdk.RSAKeySize2048},
+				ECDSACurves: []string{"P-256"},
+			}},
 		})))
 
 	resp := getAlgorithms(t, h)

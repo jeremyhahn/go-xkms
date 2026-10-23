@@ -38,6 +38,8 @@ type XKMSServicer interface {
 	BackendServicer
 	KeyServicer
 	KeyVersionServicer
+	CryptoUtilityServicer
+	KeyManagementServicer
 	CryptoServicer
 	CertServicer
 	SealServicer
@@ -131,6 +133,18 @@ type KeyServicer interface {
 // KeyVersionService's: every transport calls through it unchanged.
 type KeyVersionServicer interface {
 	KeyVersionService
+}
+
+// CryptoUtilityServicer runs the envelope, batch, HMAC, random and hash
+// operations. Its method set is CryptoUtilityService's.
+type CryptoUtilityServicer interface {
+	CryptoUtilityService
+}
+
+// KeyManagementServicer manages keys, their policies and usage limits, and
+// reports on backends. Its method set is KeyManagementService's.
+type KeyManagementServicer interface {
+	KeyManagementService
 }
 
 // CryptoServicer provides cryptographic operations.

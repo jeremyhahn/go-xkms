@@ -214,6 +214,33 @@ var collectionRouteCases = []collectionRouteCase{
 		},
 	},
 	{
+		name:   "Rewrap",
+		method: http.MethodPost,
+		base:   "/api/v1/keys/rewrap",
+		call: func(ctx context.Context, tr *Transport) error {
+			_, err := tr.Rewrap(ctx, &transport.RewrapRequest{Source: &transport.DecryptRequest{KeyID: "k1"}})
+			return err
+		},
+	},
+	{
+		name:   "GenerateRandom",
+		method: http.MethodPost,
+		base:   "/api/v1/random",
+		call: func(ctx context.Context, tr *Transport) error {
+			_, err := tr.GenerateRandom(ctx, &transport.GenerateRandomRequest{Length: 32})
+			return err
+		},
+	},
+	{
+		name:   "Hash",
+		method: http.MethodPost,
+		base:   "/api/v1/hash",
+		call: func(ctx context.Context, tr *Transport) error {
+			_, err := tr.Hash(ctx, &transport.HashRequest{Data: []byte("data"), Hash: "SHA-256"})
+			return err
+		},
+	},
+	{
 		name:   "TPMPolicyCreate",
 		method: http.MethodPost,
 		base:   "/api/v1/tpm/policies",

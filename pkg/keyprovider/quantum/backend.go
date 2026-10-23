@@ -30,6 +30,8 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"maps"
+	"slices"
 	"strings"
 	"sync"
 
@@ -185,7 +187,24 @@ func (b *QuantumBackend) Capabilities() types.Capabilities {
 		Export:              true,
 		KeyAgreement:        true,
 		ECIES:               false,
+		// ML-DSA and ML-KEM keys only: the parameter sets the generators
+		// dispatch to.
+		KeyAlgorithms: types.KeyAlgorithms{
+			MLDSA: parameterSets(mldsaKeyGenerators),
+			MLKEM: parameterSets(mlkemGenerators),
+		},
 	}
+}
+
+// parameterSets returns the parameter sets a generator map dispatches to,
+// sorted by name.
+func parameterSets[Generator any](generators map[string]Generator) []types.QuantumAlgorithm {
+	names := slices.Sorted(maps.Keys(generators))
+	sets := make([]types.QuantumAlgorithm, len(names))
+	for i, name := range names {
+		sets[i] = types.QuantumAlgorithm(name)
+	}
+	return sets
 }
 
 // GenerateKey generates a new quantum-safe key with the given attributes.

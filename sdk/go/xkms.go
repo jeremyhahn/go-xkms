@@ -530,6 +530,62 @@ type (
 	RotateScopeKeysResponse = transport.RotateScopeKeysResponse
 	KeyRotationResult       = transport.KeyRotationResult
 
+	// Crypto utility types
+	RewrapRequest                  = transport.RewrapRequest
+	RewrapResponse                 = transport.RewrapResponse
+	EncryptBatchItem               = transport.EncryptBatchItem
+	EncryptBatchRequest            = transport.EncryptBatchRequest
+	EncryptBatchResult             = transport.EncryptBatchResult
+	EncryptBatchResponse           = transport.EncryptBatchResponse
+	DecryptBatchItem               = transport.DecryptBatchItem
+	DecryptBatchRequest            = transport.DecryptBatchRequest
+	DecryptBatchResult             = transport.DecryptBatchResult
+	DecryptBatchResponse           = transport.DecryptBatchResponse
+	GenerateDataKeyRequest         = transport.GenerateDataKeyRequest
+	GenerateDataKeyResponse        = transport.GenerateDataKeyResponse
+	GenerateWrappedDataKeyResponse = transport.GenerateWrappedDataKeyResponse
+	GenerateHMACRequest            = transport.GenerateHMACRequest
+	GenerateHMACResponse           = transport.GenerateHMACResponse
+	VerifyHMACRequest              = transport.VerifyHMACRequest
+	VerifyHMACResponse             = transport.VerifyHMACResponse
+	GenerateRandomRequest          = transport.GenerateRandomRequest
+	GenerateRandomResponse         = transport.GenerateRandomResponse
+	HashRequest                    = transport.HashRequest
+	HashResponse                   = transport.HashResponse
+
+	// Key management types
+	KeyStatus                      = transport.KeyStatus
+	KeyUsage                       = transport.KeyUsage
+	KeyAlgorithm                   = transport.KeyAlgorithm
+	KeyManagementRequest           = transport.KeyManagementRequest
+	KeyManagementResponse          = transport.KeyManagementResponse
+	GetPublicKeyRequest            = transport.GetPublicKeyRequest
+	GetPublicKeyResponse           = transport.GetPublicKeyResponse
+	RevokeKeyRequest               = transport.RevokeKeyRequest
+	RevokeKeyResponse              = transport.RevokeKeyResponse
+	UpdateKeyStatusRequest         = transport.UpdateKeyStatusRequest
+	UpdateKeyStatusResponse        = transport.UpdateKeyStatusResponse
+	KeyMetadata                    = transport.KeyMetadata
+	KeyMetadataResponse            = transport.KeyMetadataResponse
+	UpdateKeyMetadataRequest       = transport.UpdateKeyMetadataRequest
+	KeyPolicy                      = transport.KeyPolicy
+	SetKeyPolicyRequest            = transport.SetKeyPolicyRequest
+	SetKeyPolicyResponse           = transport.SetKeyPolicyResponse
+	GetKeyPolicyResponse           = transport.GetKeyPolicyResponse
+	RotationPolicy                 = transport.RotationPolicy
+	SetKeyRotationPolicyRequest    = transport.SetKeyRotationPolicyRequest
+	KeyRotationPolicyResponse      = transport.KeyRotationPolicyResponse
+	BackendRequest                 = transport.BackendRequest
+	GetSupportedAlgorithmsResponse = transport.GetSupportedAlgorithmsResponse
+	BackendStatusResponse          = transport.BackendStatusResponse
+	BackendTestResponse            = transport.BackendTestResponse
+	SetKeySafetyRequest            = transport.SetKeySafetyRequest
+	SafetyWarning                  = transport.SafetyWarning
+	SafetyCheckRequest             = transport.SafetyCheckRequest
+	SafetyCheckResponse            = transport.SafetyCheckResponse
+	SafetyReportRequest            = transport.SafetyReportRequest
+	SafetyReportResponse           = transport.SafetyReportResponse
+
 	// TPM Policy Operations
 	TPMPolicy                   = transport.TPMPolicy
 	TPMPolicyBranch             = transport.TPMPolicyBranch

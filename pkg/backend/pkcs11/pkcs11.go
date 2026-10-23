@@ -211,6 +211,22 @@ func (b *Backend) Capabilities() types.Capabilities {
 	caps.KeyEncapsulation = false
 
 	caps.SecurityLevel = types.SecurityLevelHigh // Explicit for clarity
+
+	// GenerateKey dispatches RSA, ECDSA and Ed25519; symmetric keys run
+	// CKM_AES_KEY_GEN and CKM_AES_GCM only (see aesGCMAlgorithms).
+	caps.KeyAlgorithms = types.KeyAlgorithms{
+		RSAKeySizes: []int{types.RSAKeySize2048, types.RSAKeySize3072, types.RSAKeySize4096},
+		ECDSACurves: []string{"P-256", "P-384", "P-521"},
+		Ed25519:     true,
+		Symmetric:   []types.SymmetricAlgorithm{types.SymmetricAES128GCM, types.SymmetricAES192GCM, types.SymmetricAES256GCM},
+	}
+	// ML-DSA keys sign when the token has the mechanism; ML-KEM keys are
+	// not declared, for the reason KeyEncapsulation is false above.
+	if b.supportsMLDSA {
+		caps.KeyAlgorithms.MLDSA = []types.QuantumAlgorithm{
+			types.QuantumAlgorithmMLDSA44, types.QuantumAlgorithmMLDSA65, types.QuantumAlgorithmMLDSA87,
+		}
+	}
 	return caps
 }
 

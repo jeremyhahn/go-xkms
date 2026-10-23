@@ -478,6 +478,9 @@ func (s *XKMSService) rotateKey(ctx context.Context, b Backend, backendName, key
 		// key stays exactly as it was.
 		return nil, errors.Join(err, b.DeleteKey(ctx, attrs))
 	}
+	if err := s.keyRotated(ctx, k); err != nil {
+		return nil, err
+	}
 	return &rotation{version: next, attrs: attrs, key: priv}, nil
 }
 

@@ -28,6 +28,7 @@ import (
 
 	"github.com/jeremyhahn/go-xkms/pkg/api/transport"
 	"github.com/jeremyhahn/go-xkms/pkg/backend"
+	"github.com/jeremyhahn/go-xkms/pkg/keypolicy"
 	"github.com/jeremyhahn/go-xkms/pkg/keyversion"
 	"github.com/jeremyhahn/go-xkms/pkg/metrics"
 	"github.com/jeremyhahn/go-xkms/pkg/types"
@@ -361,6 +362,10 @@ func publicKeyPEMOf(ctx context.Context, b Backend, attrs *types.KeyAttributes) 
 // The key is described by its current version, whose number KeyVersion
 // reports and whose public key PublicKeyPEM carries; ListKeyVersions reports
 // every version's public key.
+//
+// GetKey is not admitted through the key's policy: it releases no key
+// material and performs no operation with the key, and an operator needs a
+// revoked or disabled key's description to manage it, so it stays readable.
 func (s *XKMSService) GetKey(ctx context.Context, backendName, keyID string) (resp *transport.GetKeyResponse, err error) {
 	start := time.Now()
 	metricsBackend := s.metricsBackendName(backendName)
@@ -411,6 +416,9 @@ func (s *XKMSService) DeleteKey(ctx context.Context, backendName, keyID string) 
 	}
 
 	if err := s.deleteAllVersions(ctx, k); err != nil {
+		return err
+	}
+	if err := s.deletePolicyRecord(ctx, k); err != nil {
 		return err
 	}
 
@@ -532,6 +540,9 @@ func (s *XKMSService) ExportKey(ctx context.Context, req *transport.ExportKeyReq
 		return nil, err
 	}
 	keyAttrs := cur.attrs
+	if err := s.admitKey(ctx, k, keypolicy.OpExportKey); err != nil {
+		return nil, err
+	}
 
 	algorithm := backend.WrappingAlgorithm(req.Algorithm)
 	wrapped, err := exporter.ExportKey(ctx, keyAttrs, algorithm)
@@ -803,6 +814,9 @@ func (s *XKMSService) CopyKey(ctx context.Context, req *transport.CopyKeyRequest
 	// names by ITS OWN token -- meaningless to any other backend instance's
 	// ImportKey, which looks the token up in its own state and finds nothing
 	// (go-xkms#154, go-xkms#222).
+	if err := s.admitKey(ctx, srcKey, keypolicy.OpExportKey); err != nil {
+		return nil, err
+	}
 	dstParams, err := dstImporter.GetImportParameters(ctx, dstAttrs, algorithm)
 	if err != nil {
 		return nil, &ErrKeyOperation{Operation: "get destination import parameters", Err: err}
@@ -889,6 +903,9 @@ func (s *XKMSService) ExportKeyMaterial(ctx context.Context, req *transport.Expo
 			Sentinel: ErrExportKeyMaterialFailed,
 			Err:      ErrKeySensitive,
 		}
+	}
+	if err := s.admitKey(ctx, k, keypolicy.OpExportKey); err != nil {
+		return nil, err
 	}
 
 	keyMaterial, err := exporter.ExportKeyMaterial(ctx, attrs)
@@ -1104,6 +1121,9 @@ func (s *XKMSService) WrapKeyByID(ctx context.Context, req *transport.WrapKeyByI
 	if err != nil {
 		return nil, roleLookupError("wrapping key", req.WrappingKeyID, err)
 	}
+	if err := s.admitKey(ctx, wrappingKey, keypolicy.OpWrapKey, uint64(len(keyMaterial))); err != nil {
+		return nil, err
+	}
 	wrappingVersion, err := wrappingKey.current()
 	if err != nil {
 		return nil, roleLookupError("wrapping key", req.WrappingKeyID, err)
@@ -1199,6 +1219,10 @@ func (s *XKMSService) wrapTargetKeyMaterial(ctx context.Context, req *transport.
 	if !targetVersion.attrs.IsSymmetric() {
 		return nil, &ErrWrapTarget{KeyID: req.TargetKeyID, Err: ErrWrapTargetNotSymmetric}
 	}
+	// The wrapped key's material leaves the keystore under the wrapping key.
+	if err := s.admitKey(ctx, targetKey, keypolicy.OpExportKey); err != nil {
+		return nil, err
+	}
 	keyMaterial, err := targetExporter.ExportKeyMaterial(ctx, targetVersion.attrs)
 	if err != nil {
 		return nil, &ErrOperationWrap{Sentinel: ErrExportKeyMaterialFailed, Detail: "target key", Err: err}
@@ -1292,6 +1316,9 @@ func (s *XKMSService) UnwrapKeyByID(ctx context.Context, req *transport.UnwrapKe
 	unwrappingKey, err := s.resolveKey(ctx, unwrappingBackend, req.UnwrappingKeyBackend, req.UnwrappingKeyID)
 	if err != nil {
 		return nil, roleLookupError("unwrapping key", req.UnwrappingKeyID, err)
+	}
+	if err := s.admitKey(ctx, unwrappingKey, keypolicy.OpUnwrapKey); err != nil {
+		return nil, err
 	}
 	mech, err := resolveWrapMechanism(req.Algorithm, "unwrap")
 	if err != nil {

@@ -253,6 +253,13 @@ func (b *Backend) Capabilities() types.Capabilities {
 		Import:              true,  // GCP KMS supports key import via wrapping
 		Export:              false, // GCP KMS does not allow key extraction
 		SecurityLevel:       types.SecurityLevelMedium,
+		// The RSA_SIGN_PKCS1 and EC_SIGN algorithms the backend creates, and
+		// GOOGLE_SYMMETRIC_ENCRYPTION (AES-256-GCM).
+		KeyAlgorithms: types.KeyAlgorithms{
+			RSAKeySizes: []int{types.RSAKeySize2048, types.RSAKeySize3072, types.RSAKeySize4096},
+			ECDSACurves: []string{"P-256", "P-384"},
+			Symmetric:   []types.SymmetricAlgorithm{types.SymmetricAES256GCM},
+		},
 	}
 }
 

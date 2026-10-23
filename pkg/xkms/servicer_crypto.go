@@ -32,6 +32,7 @@ import (
 	"github.com/jeremyhahn/go-xkms/pkg/backend"
 	tpm2backend "github.com/jeremyhahn/go-xkms/pkg/backend/tpm2"
 	"github.com/jeremyhahn/go-xkms/pkg/crypto/kdf"
+	"github.com/jeremyhahn/go-xkms/pkg/keypolicy"
 	"github.com/jeremyhahn/go-xkms/pkg/metrics"
 	"github.com/jeremyhahn/go-xkms/pkg/types"
 )
@@ -319,6 +320,9 @@ func (s *XKMSService) Sign(ctx context.Context, req *transport.SignRequest) (res
 	if err != nil {
 		return nil, err
 	}
+	if err := s.admitKey(ctx, k, keypolicy.OpSign); err != nil {
+		return nil, err
+	}
 	cur, err := k.current()
 	if err != nil {
 		return nil, err
@@ -541,6 +545,9 @@ func (s *XKMSService) Verify(ctx context.Context, req *transport.VerifyRequest) 
 	if err != nil {
 		return nil, err
 	}
+	if err := s.admitKey(ctx, k, keypolicy.OpVerify); err != nil {
+		return nil, err
+	}
 	versions, err := k.trialVersions(req.KeyVersion)
 	if err != nil {
 		return nil, err
@@ -698,16 +705,23 @@ func (s *XKMSService) Encrypt(ctx context.Context, req *transport.EncryptRequest
 	if err != nil {
 		return nil, err
 	}
+	if err := s.admitKey(ctx, k, keypolicy.OpEncrypt, uint64(len(req.Plaintext))); err != nil {
+		return nil, err
+	}
 	cur, err := k.current()
 	if err != nil {
 		return nil, err
 	}
+	return encryptVersion(ctx, k.backend, cur, req)
+}
 
-	resp, err = encryptWith(ctx, k.backend, cur.attrs, req)
+// encryptVersion encrypts req with one key version and reports that version.
+func encryptVersion(ctx context.Context, b Backend, v keyVersion, req *transport.EncryptRequest) (*transport.EncryptResponse, error) {
+	resp, err := encryptWith(ctx, b, v.attrs, req)
 	if err != nil {
 		return nil, err
 	}
-	resp.KeyVersion = cur.number
+	resp.KeyVersion = v.number
 	return resp, nil
 }
 
@@ -869,6 +883,15 @@ func (s *XKMSService) Decrypt(ctx context.Context, req *transport.DecryptRequest
 	if err != nil {
 		return nil, err
 	}
+	if err := s.admitKey(ctx, k, keypolicy.OpDecrypt); err != nil {
+		return nil, err
+	}
+	return decryptVersioned(ctx, k, req)
+}
+
+// decryptVersioned decrypts req with the resolved key's selected versions and
+// reports the version that succeeded.
+func decryptVersioned(ctx context.Context, k *versionedKey, req *transport.DecryptRequest) (*transport.DecryptResponse, error) {
 	versions, err := k.selectVersions(req.KeyVersion, decryptionAuthenticated(k.representative(), req))
 	if err != nil {
 		return nil, err
@@ -1068,6 +1091,9 @@ func (s *XKMSService) EncryptAsym(ctx context.Context, req *transport.EncryptAsy
 
 	k, err := s.resolveKeyIn(ctx, req.Backend, req.TenantID, req.KeyID)
 	if err != nil {
+		return nil, err
+	}
+	if err := s.admitKey(ctx, k, keypolicy.OpEncrypt, uint64(len(req.Plaintext))); err != nil {
 		return nil, err
 	}
 	cur, err := k.current()
@@ -1471,6 +1497,9 @@ func (s *XKMSService) DeriveKeyECDH(ctx context.Context, req *transport.DeriveKe
 	if err != nil {
 		return nil, err
 	}
+	if err := s.admitKey(ctx, k, keypolicy.OpDeriveKey); err != nil {
+		return nil, err
+	}
 
 	derivedKey, err := agreement.DeriveKeyECDH(ctx, attrs, req.PeerPublicKey, params)
 	if err != nil {
@@ -1490,6 +1519,10 @@ func (s *XKMSService) DeriveKeyECDH(ctx context.Context, req *transport.DeriveKe
 // types.AttestingKeyProvider (TPM 2.0, PKCS#11). Software and cloud providers
 // that cannot attest yield ErrOperationNotSupported — a real capability
 // boundary, not a stub.
+//
+// AttestKey is not admitted through the key's policy: an attestation proves
+// where the key resides and releases no key material, and a revoked or
+// disabled key's provenance still has to be provable to audit it.
 // Implements the CryptoServicer interface.
 func (s *XKMSService) AttestKey(ctx context.Context, req *transport.AttestKeyRequest) (resp *transport.AttestKeyResponse, err error) {
 	start := time.Now()

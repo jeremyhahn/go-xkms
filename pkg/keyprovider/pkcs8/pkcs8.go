@@ -77,6 +77,12 @@ func (b *PKCS8Backend) Capabilities() types.Capabilities {
 		Export:              true, // PKCS#8 supports key export via standard encoding
 		KeyAgreement:        true, // PKCS#8 supports ECDH key agreement (P-256, P-384, P-521, X25519)
 		ECIES:               false,
+		KeyAlgorithms: types.KeyAlgorithms{
+			RSAKeySizes: []int{types.RSAKeySize2048, types.RSAKeySize3072, types.RSAKeySize4096},
+			ECDSACurves: []string{"P-256", "P-384", "P-521"},
+			Ed25519:     true,
+			X25519:      true,
+		},
 	}
 }
 

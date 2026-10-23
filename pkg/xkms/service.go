@@ -35,6 +35,7 @@ import (
 	"github.com/jeremyhahn/go-xkms/pkg/backend"
 	"github.com/jeremyhahn/go-xkms/pkg/ca/provider"
 	"github.com/jeremyhahn/go-xkms/pkg/escrow"
+	"github.com/jeremyhahn/go-xkms/pkg/keypolicy"
 	"github.com/jeremyhahn/go-xkms/pkg/keyversion"
 	"github.com/jeremyhahn/go-xkms/pkg/oidc/credential"
 	"github.com/jeremyhahn/go-xkms/pkg/pkcs11state"
@@ -105,6 +106,7 @@ type XKMSService struct {
 	platformStore   subsystem[seal.PlatformStore]
 	tpmPolicies     subsystem[*tpmpolicy.Service]
 	keyVersions     subsystem[*keyversion.Store]
+	keyPolicies     subsystem[*keypolicy.Store]
 	oidcCredentials subsystem[*credential.Service]
 	trustRoots      subsystem[*truststore.DAOStore]
 	peerEvidence    subsystem[*peergate.Collector]

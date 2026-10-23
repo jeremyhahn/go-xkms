@@ -227,6 +227,90 @@ type RotateScopeKeysRequest = pkgtransport.RotateScopeKeysRequest
 type RotateScopeKeysResponse = pkgtransport.RotateScopeKeysResponse
 type KeyRotationResult = pkgtransport.KeyRotationResult
 
+// Crypto utility types
+type RewrapRequest = pkgtransport.RewrapRequest
+type RewrapResponse = pkgtransport.RewrapResponse
+type EncryptBatchItem = pkgtransport.EncryptBatchItem
+type EncryptBatchRequest = pkgtransport.EncryptBatchRequest
+type EncryptBatchResult = pkgtransport.EncryptBatchResult
+type EncryptBatchResponse = pkgtransport.EncryptBatchResponse
+type DecryptBatchItem = pkgtransport.DecryptBatchItem
+type DecryptBatchRequest = pkgtransport.DecryptBatchRequest
+type DecryptBatchResult = pkgtransport.DecryptBatchResult
+type DecryptBatchResponse = pkgtransport.DecryptBatchResponse
+type GenerateDataKeyRequest = pkgtransport.GenerateDataKeyRequest
+type GenerateDataKeyResponse = pkgtransport.GenerateDataKeyResponse
+type GenerateWrappedDataKeyResponse = pkgtransport.GenerateWrappedDataKeyResponse
+type GenerateHMACRequest = pkgtransport.GenerateHMACRequest
+type GenerateHMACResponse = pkgtransport.GenerateHMACResponse
+type VerifyHMACRequest = pkgtransport.VerifyHMACRequest
+type VerifyHMACResponse = pkgtransport.VerifyHMACResponse
+type GenerateRandomRequest = pkgtransport.GenerateRandomRequest
+type GenerateRandomResponse = pkgtransport.GenerateRandomResponse
+type HashRequest = pkgtransport.HashRequest
+type HashResponse = pkgtransport.HashResponse
+
+// Key management types
+type KeyStatus = pkgtransport.KeyStatus
+type KeyUsage = pkgtransport.KeyUsage
+type KeyAlgorithm = pkgtransport.KeyAlgorithm
+type KeyManagementRequest = pkgtransport.KeyManagementRequest
+type KeyManagementResponse = pkgtransport.KeyManagementResponse
+type GetPublicKeyRequest = pkgtransport.GetPublicKeyRequest
+type GetPublicKeyResponse = pkgtransport.GetPublicKeyResponse
+type RevokeKeyRequest = pkgtransport.RevokeKeyRequest
+type RevokeKeyResponse = pkgtransport.RevokeKeyResponse
+type UpdateKeyStatusRequest = pkgtransport.UpdateKeyStatusRequest
+type UpdateKeyStatusResponse = pkgtransport.UpdateKeyStatusResponse
+type KeyMetadata = pkgtransport.KeyMetadata
+type KeyMetadataResponse = pkgtransport.KeyMetadataResponse
+type UpdateKeyMetadataRequest = pkgtransport.UpdateKeyMetadataRequest
+type KeyPolicy = pkgtransport.KeyPolicy
+type SetKeyPolicyRequest = pkgtransport.SetKeyPolicyRequest
+type SetKeyPolicyResponse = pkgtransport.SetKeyPolicyResponse
+type GetKeyPolicyResponse = pkgtransport.GetKeyPolicyResponse
+type RotationPolicy = pkgtransport.RotationPolicy
+type SetKeyRotationPolicyRequest = pkgtransport.SetKeyRotationPolicyRequest
+type KeyRotationPolicyResponse = pkgtransport.KeyRotationPolicyResponse
+type BackendRequest = pkgtransport.BackendRequest
+type GetSupportedAlgorithmsResponse = pkgtransport.GetSupportedAlgorithmsResponse
+type BackendStatusResponse = pkgtransport.BackendStatusResponse
+type BackendTestResponse = pkgtransport.BackendTestResponse
+type SetKeySafetyRequest = pkgtransport.SetKeySafetyRequest
+type SafetyWarning = pkgtransport.SafetyWarning
+type SafetyCheckRequest = pkgtransport.SafetyCheckRequest
+type SafetyCheckResponse = pkgtransport.SafetyCheckResponse
+type SafetyReportRequest = pkgtransport.SafetyReportRequest
+type SafetyReportResponse = pkgtransport.SafetyReportResponse
+
+// Key statuses.
+const (
+	KeyStatusEnabled         = pkgtransport.KeyStatusEnabled
+	KeyStatusDisabled        = pkgtransport.KeyStatusDisabled
+	KeyStatusPendingDeletion = pkgtransport.KeyStatusPendingDeletion
+	KeyStatusDeleted         = pkgtransport.KeyStatusDeleted
+	KeyStatusRotating        = pkgtransport.KeyStatusRotating
+	KeyStatusCompromised     = pkgtransport.KeyStatusCompromised
+)
+
+// Key usages a key policy allows.
+const (
+	KeyUsageEncrypt     = pkgtransport.KeyUsageEncrypt
+	KeyUsageDecrypt     = pkgtransport.KeyUsageDecrypt
+	KeyUsageSign        = pkgtransport.KeyUsageSign
+	KeyUsageVerify      = pkgtransport.KeyUsageVerify
+	KeyUsageWrapKey     = pkgtransport.KeyUsageWrapKey
+	KeyUsageDeriveKey   = pkgtransport.KeyUsageDeriveKey
+	KeyUsageGenerateMAC = pkgtransport.KeyUsageGenerateMAC
+	KeyUsageVerifyMAC   = pkgtransport.KeyUsageVerifyMAC
+)
+
+// Crypto utility limits
+const (
+	MaxBatchItems  = pkgtransport.MaxBatchItems
+	MaxRandomBytes = pkgtransport.MaxRandomBytes
+)
+
 // Key version states.
 const (
 	KeyVersionEnabled  = pkgtransport.KeyVersionEnabled

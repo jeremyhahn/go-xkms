@@ -579,6 +579,13 @@ func (b *Backend) Capabilities() types.Capabilities {
 		Import:              true,  // AWS KMS supports key import via wrapping
 		Export:              false, // AWS KMS does not allow key extraction
 		SecurityLevel:       types.SecurityLevelMedium,
+		// getKeySpec creates RSA_2048, ECC_NIST_P256 and SYMMETRIC_DEFAULT
+		// (AES-256-GCM) keys only.
+		KeyAlgorithms: types.KeyAlgorithms{
+			RSAKeySizes: []int{types.RSAKeySize2048},
+			ECDSACurves: []string{"P-256"},
+			Symmetric:   []types.SymmetricAlgorithm{types.SymmetricAES256GCM},
+		},
 	}
 }
 

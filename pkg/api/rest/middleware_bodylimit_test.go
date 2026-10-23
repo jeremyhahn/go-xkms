@@ -169,8 +169,14 @@ func TestRoutes_BodyLimits(t *testing.T) {
 		"POST /api/v1/keys/{id}/verify":  true,
 		"POST /api/v1/keys/{id}/encrypt": true,
 		"POST /api/v1/keys/{id}/decrypt": true,
-		"POST /api/v1/seal":              true,
-		"POST /api/v1/unseal":            true,
+		// The crypto utility routes that carry caller data.
+		"POST /api/v1/keys/{id}/encrypt-batch": true,
+		"POST /api/v1/keys/{id}/decrypt-batch": true,
+		"POST /api/v1/keys/{id}/hmac":          true,
+		"POST /api/v1/keys/{id}/hmac/verify":   true,
+		"POST /api/v1/hash":                    true,
+		"POST /api/v1/seal":                    true,
+		"POST /api/v1/unseal":                  true,
 		// An OTA image is signed whole unless the caller sends its digest.
 		"POST /api/v1/ota-image-keys/{board}/sign": true,
 	}

@@ -1704,6 +1704,39 @@ type Capabilities struct {
 	// Used for sorting backends by security preference in UIs.
 	// Values: 0=Low (software), 1=Medium (cloud), 2=High (PKCS11), 3=VeryHigh (TPM2)
 	SecurityLevel SecurityLevel
+
+	// KeyAlgorithms declares the key algorithms the backend generates and
+	// operates. The flags above say which kinds of operation a backend has;
+	// this says which concrete key shapes it accepts.
+	KeyAlgorithms KeyAlgorithms
+}
+
+// KeyAlgorithms declares the key shapes a backend generates and operates.
+// The zero value declares none.
+type KeyAlgorithms struct {
+	// RSAKeySizes lists the RSA modulus sizes, in bits.
+	RSAKeySizes []int
+
+	// ECDSACurves lists the ECDSA curves by NIST name ("P-256").
+	ECDSACurves []string
+
+	// Ed25519 reports Ed25519 signing keys.
+	Ed25519 bool
+
+	// X25519 reports X25519 key-agreement keys.
+	X25519 bool
+
+	// Symmetric lists the AEAD algorithms of symmetric keys.
+	Symmetric []SymmetricAlgorithm
+
+	// HMAC lists the hash functions of HMAC keys.
+	HMAC []crypto.Hash
+
+	// MLDSA lists the ML-DSA (FIPS 204) parameter sets of signing keys.
+	MLDSA []QuantumAlgorithm
+
+	// MLKEM lists the ML-KEM (FIPS 203) parameter sets of encapsulation keys.
+	MLKEM []QuantumAlgorithm
 }
 
 // SupportsSymmetricEncryption returns true if the backend implements symmetric operations.

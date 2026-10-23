@@ -46,6 +46,33 @@ const (
 	KeystoreService_Encrypt_FullMethodName                      = "/xkms.v1.KeystoreService/Encrypt"
 	KeystoreService_Decrypt_FullMethodName                      = "/xkms.v1.KeystoreService/Decrypt"
 	KeystoreService_EncryptAsym_FullMethodName                  = "/xkms.v1.KeystoreService/EncryptAsym"
+	KeystoreService_Rewrap_FullMethodName                       = "/xkms.v1.KeystoreService/Rewrap"
+	KeystoreService_EncryptBatch_FullMethodName                 = "/xkms.v1.KeystoreService/EncryptBatch"
+	KeystoreService_DecryptBatch_FullMethodName                 = "/xkms.v1.KeystoreService/DecryptBatch"
+	KeystoreService_GenerateDataKey_FullMethodName              = "/xkms.v1.KeystoreService/GenerateDataKey"
+	KeystoreService_GenerateWrappedDataKey_FullMethodName       = "/xkms.v1.KeystoreService/GenerateWrappedDataKey"
+	KeystoreService_GenerateHMAC_FullMethodName                 = "/xkms.v1.KeystoreService/GenerateHMAC"
+	KeystoreService_VerifyHMAC_FullMethodName                   = "/xkms.v1.KeystoreService/VerifyHMAC"
+	KeystoreService_GenerateRandom_FullMethodName               = "/xkms.v1.KeystoreService/GenerateRandom"
+	KeystoreService_Hash_FullMethodName                         = "/xkms.v1.KeystoreService/Hash"
+	KeystoreService_GetPublicKey_FullMethodName                 = "/xkms.v1.KeystoreService/GetPublicKey"
+	KeystoreService_RevokeKey_FullMethodName                    = "/xkms.v1.KeystoreService/RevokeKey"
+	KeystoreService_UpdateKeyStatus_FullMethodName              = "/xkms.v1.KeystoreService/UpdateKeyStatus"
+	KeystoreService_GetKeyMetadata_FullMethodName               = "/xkms.v1.KeystoreService/GetKeyMetadata"
+	KeystoreService_UpdateKeyMetadata_FullMethodName            = "/xkms.v1.KeystoreService/UpdateKeyMetadata"
+	KeystoreService_SetKeyPolicy_FullMethodName                 = "/xkms.v1.KeystoreService/SetKeyPolicy"
+	KeystoreService_GetKeyPolicy_FullMethodName                 = "/xkms.v1.KeystoreService/GetKeyPolicy"
+	KeystoreService_DeleteKeyPolicy_FullMethodName              = "/xkms.v1.KeystoreService/DeleteKeyPolicy"
+	KeystoreService_SetKeyRotationPolicy_FullMethodName         = "/xkms.v1.KeystoreService/SetKeyRotationPolicy"
+	KeystoreService_GetKeyRotationPolicy_FullMethodName         = "/xkms.v1.KeystoreService/GetKeyRotationPolicy"
+	KeystoreService_DeleteKeyRotationPolicy_FullMethodName      = "/xkms.v1.KeystoreService/DeleteKeyRotationPolicy"
+	KeystoreService_GetSupportedAlgorithms_FullMethodName       = "/xkms.v1.KeystoreService/GetSupportedAlgorithms"
+	KeystoreService_BackendStatus_FullMethodName                = "/xkms.v1.KeystoreService/BackendStatus"
+	KeystoreService_BackendTest_FullMethodName                  = "/xkms.v1.KeystoreService/BackendTest"
+	KeystoreService_SetKeySafety_FullMethodName                 = "/xkms.v1.KeystoreService/SetKeySafety"
+	KeystoreService_ClearKeySafety_FullMethodName               = "/xkms.v1.KeystoreService/ClearKeySafety"
+	KeystoreService_SafetyCheck_FullMethodName                  = "/xkms.v1.KeystoreService/SafetyCheck"
+	KeystoreService_SafetyReport_FullMethodName                 = "/xkms.v1.KeystoreService/SafetyReport"
 	KeystoreService_DeriveKey_FullMethodName                    = "/xkms.v1.KeystoreService/DeriveKey"
 	KeystoreService_DeriveKeyECDH_FullMethodName                = "/xkms.v1.KeystoreService/DeriveKeyECDH"
 	KeystoreService_DeriveKeyECDHSecure_FullMethodName          = "/xkms.v1.KeystoreService/DeriveKeyECDHSecure"
@@ -272,6 +299,74 @@ type KeystoreServiceClient interface {
 	Decrypt(ctx context.Context, in *DecryptRequest, opts ...grpc.CallOption) (*DecryptResponse, error)
 	// EncryptAsym encrypts data using asymmetric encryption (RSA-OAEP)
 	EncryptAsym(ctx context.Context, in *EncryptAsymRequest, opts ...grpc.CallOption) (*EncryptAsymResponse, error)
+	// Rewrap decrypts a ciphertext under its source key and encrypts the
+	// plaintext under a target key (the source key's current version when no
+	// target is named). The plaintext never leaves the service.
+	Rewrap(ctx context.Context, in *RewrapRequest, opts ...grpc.CallOption) (*RewrapResponse, error)
+	// EncryptBatch encrypts up to MaxBatchItems plaintexts with one key and
+	// reports each item's result.
+	EncryptBatch(ctx context.Context, in *EncryptBatchRequest, opts ...grpc.CallOption) (*EncryptBatchResponse, error)
+	// DecryptBatch decrypts up to MaxBatchItems ciphertexts with one key and
+	// reports each item's result.
+	DecryptBatch(ctx context.Context, in *DecryptBatchRequest, opts ...grpc.CallOption) (*DecryptBatchResponse, error)
+	// GenerateDataKey generates a random data key and returns it in plaintext
+	// and wrapped under the named key, for envelope encryption.
+	GenerateDataKey(ctx context.Context, in *GenerateDataKeyRequest, opts ...grpc.CallOption) (*GenerateDataKeyResponse, error)
+	// GenerateWrappedDataKey generates a random data key and returns it only
+	// wrapped under the named key.
+	GenerateWrappedDataKey(ctx context.Context, in *GenerateDataKeyRequest, opts ...grpc.CallOption) (*GenerateWrappedDataKeyResponse, error)
+	// GenerateHMAC computes an HMAC (RFC 2104) of data with a symmetric key.
+	GenerateHMAC(ctx context.Context, in *GenerateHMACRequest, opts ...grpc.CallOption) (*GenerateHMACResponse, error)
+	// VerifyHMAC verifies an HMAC (RFC 2104) of data with a symmetric key.
+	VerifyHMAC(ctx context.Context, in *VerifyHMACRequest, opts ...grpc.CallOption) (*VerifyHMACResponse, error)
+	// GenerateRandom returns up to MaxRandomBytes bytes from the service's
+	// cryptographic random source.
+	GenerateRandom(ctx context.Context, in *GenerateRandomRequest, opts ...grpc.CallOption) (*GenerateRandomResponse, error)
+	// Hash computes the digest of data with a named hash function.
+	Hash(ctx context.Context, in *HashRequest, opts ...grpc.CallOption) (*HashResponse, error)
+	// GetPublicKey retrieves the DER-encoded public key component of an
+	// asymmetric key without exposing private key material.
+	GetPublicKey(ctx context.Context, in *GetPublicKeyRequest, opts ...grpc.CallOption) (*GetPublicKeyResponse, error)
+	// RevokeKey marks a key as revoked and unusable. Revocation is terminal.
+	RevokeKey(ctx context.Context, in *RevokeKeyRequest, opts ...grpc.CallOption) (*RevokeKeyResponse, error)
+	// UpdateKeyStatus enables or disables a key or key version.
+	UpdateKeyStatus(ctx context.Context, in *UpdateKeyStatusRequest, opts ...grpc.CallOption) (*UpdateKeyStatusResponse, error)
+	// GetKeyMetadata retrieves metadata for a key without exposing key material.
+	GetKeyMetadata(ctx context.Context, in *GetKeyMetadataRequest, opts ...grpc.CallOption) (*GetKeyMetadataResponse, error)
+	// UpdateKeyMetadata updates mutable metadata fields for a key.
+	UpdateKeyMetadata(ctx context.Context, in *UpdateKeyMetadataRequest, opts ...grpc.CallOption) (*UpdateKeyMetadataResponse, error)
+	// SetKeyPolicy sets the access control policy for a key. The policy
+	// narrows what RBAC already grants; it never widens it.
+	SetKeyPolicy(ctx context.Context, in *SetKeyPolicyRequest, opts ...grpc.CallOption) (*SetKeyPolicyResponse, error)
+	// GetKeyPolicy retrieves the access control policy for a key.
+	GetKeyPolicy(ctx context.Context, in *GetKeyPolicyRequest, opts ...grpc.CallOption) (*GetKeyPolicyResponse, error)
+	// DeleteKeyPolicy removes the access control policy for a key; the key
+	// falls back to RBAC alone, never to unauthenticated access.
+	DeleteKeyPolicy(ctx context.Context, in *DeleteKeyPolicyRequest, opts ...grpc.CallOption) (*DeleteKeyPolicyResponse, error)
+	// SetKeyRotationPolicy sets or replaces the automatic rotation policy for a key.
+	SetKeyRotationPolicy(ctx context.Context, in *SetKeyRotationPolicyRequest, opts ...grpc.CallOption) (*SetKeyRotationPolicyResponse, error)
+	// GetKeyRotationPolicy retrieves the current automatic rotation policy for a key.
+	GetKeyRotationPolicy(ctx context.Context, in *GetKeyRotationPolicyRequest, opts ...grpc.CallOption) (*GetKeyRotationPolicyResponse, error)
+	// DeleteKeyRotationPolicy removes the rotation policy for a key, disabling
+	// automatic rotation.
+	DeleteKeyRotationPolicy(ctx context.Context, in *DeleteKeyRotationPolicyRequest, opts ...grpc.CallOption) (*DeleteKeyRotationPolicyResponse, error)
+	// GetSupportedAlgorithms returns the cryptographic algorithms the named
+	// backend supports, so a caller can check before attempting an operation.
+	GetSupportedAlgorithms(ctx context.Context, in *GetSupportedAlgorithmsRequest, opts ...grpc.CallOption) (*GetSupportedAlgorithmsResponse, error)
+	// BackendStatus returns health and capability information about a backend.
+	BackendStatus(ctx context.Context, in *BackendStatusRequest, opts ...grpc.CallOption) (*BackendStatusResponse, error)
+	// BackendTest performs a non-destructive seal/unseal round trip to verify
+	// backend functionality.
+	BackendTest(ctx context.Context, in *BackendTestRequest, opts ...grpc.CallOption) (*BackendTestResponse, error)
+	// SetKeySafety configures AEAD usage limits (NIST SP 800-38D §8.3,
+	// RFC 8439 §4) for a symmetric key.
+	SetKeySafety(ctx context.Context, in *SetKeySafetyRequest, opts ...grpc.CallOption) (*SetKeySafetyResponse, error)
+	// ClearKeySafety removes custom AEAD usage limits from a key.
+	ClearKeySafety(ctx context.Context, in *ClearKeySafetyRequest, opts ...grpc.CallOption) (*ClearKeySafetyResponse, error)
+	// SafetyCheck returns warnings for keys approaching their usage limits.
+	SafetyCheck(ctx context.Context, in *SafetyCheckRequest, opts ...grpc.CallOption) (*SafetyCheckResponse, error)
+	// SafetyReport returns a safety report for every key with usage limits.
+	SafetyReport(ctx context.Context, in *SafetyReportRequest, opts ...grpc.CallOption) (*SafetyReportResponse, error)
 	// DeriveKey derives a key using the specified algorithm and parameters
 	// Supports HKDF, ECDH, DH, SP800-108, PBKDF2, and other key derivation mechanisms
 	DeriveKey(ctx context.Context, in *DeriveKeyRequest, opts ...grpc.CallOption) (*DeriveKeyResponse, error)
@@ -876,6 +971,276 @@ func (c *keystoreServiceClient) EncryptAsym(ctx context.Context, in *EncryptAsym
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
 	out := new(EncryptAsymResponse)
 	err := c.cc.Invoke(ctx, KeystoreService_EncryptAsym_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *keystoreServiceClient) Rewrap(ctx context.Context, in *RewrapRequest, opts ...grpc.CallOption) (*RewrapResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(RewrapResponse)
+	err := c.cc.Invoke(ctx, KeystoreService_Rewrap_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *keystoreServiceClient) EncryptBatch(ctx context.Context, in *EncryptBatchRequest, opts ...grpc.CallOption) (*EncryptBatchResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(EncryptBatchResponse)
+	err := c.cc.Invoke(ctx, KeystoreService_EncryptBatch_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *keystoreServiceClient) DecryptBatch(ctx context.Context, in *DecryptBatchRequest, opts ...grpc.CallOption) (*DecryptBatchResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(DecryptBatchResponse)
+	err := c.cc.Invoke(ctx, KeystoreService_DecryptBatch_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *keystoreServiceClient) GenerateDataKey(ctx context.Context, in *GenerateDataKeyRequest, opts ...grpc.CallOption) (*GenerateDataKeyResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(GenerateDataKeyResponse)
+	err := c.cc.Invoke(ctx, KeystoreService_GenerateDataKey_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *keystoreServiceClient) GenerateWrappedDataKey(ctx context.Context, in *GenerateDataKeyRequest, opts ...grpc.CallOption) (*GenerateWrappedDataKeyResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(GenerateWrappedDataKeyResponse)
+	err := c.cc.Invoke(ctx, KeystoreService_GenerateWrappedDataKey_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *keystoreServiceClient) GenerateHMAC(ctx context.Context, in *GenerateHMACRequest, opts ...grpc.CallOption) (*GenerateHMACResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(GenerateHMACResponse)
+	err := c.cc.Invoke(ctx, KeystoreService_GenerateHMAC_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *keystoreServiceClient) VerifyHMAC(ctx context.Context, in *VerifyHMACRequest, opts ...grpc.CallOption) (*VerifyHMACResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(VerifyHMACResponse)
+	err := c.cc.Invoke(ctx, KeystoreService_VerifyHMAC_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *keystoreServiceClient) GenerateRandom(ctx context.Context, in *GenerateRandomRequest, opts ...grpc.CallOption) (*GenerateRandomResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(GenerateRandomResponse)
+	err := c.cc.Invoke(ctx, KeystoreService_GenerateRandom_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *keystoreServiceClient) Hash(ctx context.Context, in *HashRequest, opts ...grpc.CallOption) (*HashResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(HashResponse)
+	err := c.cc.Invoke(ctx, KeystoreService_Hash_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *keystoreServiceClient) GetPublicKey(ctx context.Context, in *GetPublicKeyRequest, opts ...grpc.CallOption) (*GetPublicKeyResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(GetPublicKeyResponse)
+	err := c.cc.Invoke(ctx, KeystoreService_GetPublicKey_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *keystoreServiceClient) RevokeKey(ctx context.Context, in *RevokeKeyRequest, opts ...grpc.CallOption) (*RevokeKeyResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(RevokeKeyResponse)
+	err := c.cc.Invoke(ctx, KeystoreService_RevokeKey_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *keystoreServiceClient) UpdateKeyStatus(ctx context.Context, in *UpdateKeyStatusRequest, opts ...grpc.CallOption) (*UpdateKeyStatusResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(UpdateKeyStatusResponse)
+	err := c.cc.Invoke(ctx, KeystoreService_UpdateKeyStatus_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *keystoreServiceClient) GetKeyMetadata(ctx context.Context, in *GetKeyMetadataRequest, opts ...grpc.CallOption) (*GetKeyMetadataResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(GetKeyMetadataResponse)
+	err := c.cc.Invoke(ctx, KeystoreService_GetKeyMetadata_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *keystoreServiceClient) UpdateKeyMetadata(ctx context.Context, in *UpdateKeyMetadataRequest, opts ...grpc.CallOption) (*UpdateKeyMetadataResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(UpdateKeyMetadataResponse)
+	err := c.cc.Invoke(ctx, KeystoreService_UpdateKeyMetadata_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *keystoreServiceClient) SetKeyPolicy(ctx context.Context, in *SetKeyPolicyRequest, opts ...grpc.CallOption) (*SetKeyPolicyResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(SetKeyPolicyResponse)
+	err := c.cc.Invoke(ctx, KeystoreService_SetKeyPolicy_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *keystoreServiceClient) GetKeyPolicy(ctx context.Context, in *GetKeyPolicyRequest, opts ...grpc.CallOption) (*GetKeyPolicyResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(GetKeyPolicyResponse)
+	err := c.cc.Invoke(ctx, KeystoreService_GetKeyPolicy_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *keystoreServiceClient) DeleteKeyPolicy(ctx context.Context, in *DeleteKeyPolicyRequest, opts ...grpc.CallOption) (*DeleteKeyPolicyResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(DeleteKeyPolicyResponse)
+	err := c.cc.Invoke(ctx, KeystoreService_DeleteKeyPolicy_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *keystoreServiceClient) SetKeyRotationPolicy(ctx context.Context, in *SetKeyRotationPolicyRequest, opts ...grpc.CallOption) (*SetKeyRotationPolicyResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(SetKeyRotationPolicyResponse)
+	err := c.cc.Invoke(ctx, KeystoreService_SetKeyRotationPolicy_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *keystoreServiceClient) GetKeyRotationPolicy(ctx context.Context, in *GetKeyRotationPolicyRequest, opts ...grpc.CallOption) (*GetKeyRotationPolicyResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(GetKeyRotationPolicyResponse)
+	err := c.cc.Invoke(ctx, KeystoreService_GetKeyRotationPolicy_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *keystoreServiceClient) DeleteKeyRotationPolicy(ctx context.Context, in *DeleteKeyRotationPolicyRequest, opts ...grpc.CallOption) (*DeleteKeyRotationPolicyResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(DeleteKeyRotationPolicyResponse)
+	err := c.cc.Invoke(ctx, KeystoreService_DeleteKeyRotationPolicy_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *keystoreServiceClient) GetSupportedAlgorithms(ctx context.Context, in *GetSupportedAlgorithmsRequest, opts ...grpc.CallOption) (*GetSupportedAlgorithmsResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(GetSupportedAlgorithmsResponse)
+	err := c.cc.Invoke(ctx, KeystoreService_GetSupportedAlgorithms_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *keystoreServiceClient) BackendStatus(ctx context.Context, in *BackendStatusRequest, opts ...grpc.CallOption) (*BackendStatusResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(BackendStatusResponse)
+	err := c.cc.Invoke(ctx, KeystoreService_BackendStatus_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *keystoreServiceClient) BackendTest(ctx context.Context, in *BackendTestRequest, opts ...grpc.CallOption) (*BackendTestResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(BackendTestResponse)
+	err := c.cc.Invoke(ctx, KeystoreService_BackendTest_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *keystoreServiceClient) SetKeySafety(ctx context.Context, in *SetKeySafetyRequest, opts ...grpc.CallOption) (*SetKeySafetyResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(SetKeySafetyResponse)
+	err := c.cc.Invoke(ctx, KeystoreService_SetKeySafety_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *keystoreServiceClient) ClearKeySafety(ctx context.Context, in *ClearKeySafetyRequest, opts ...grpc.CallOption) (*ClearKeySafetyResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(ClearKeySafetyResponse)
+	err := c.cc.Invoke(ctx, KeystoreService_ClearKeySafety_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *keystoreServiceClient) SafetyCheck(ctx context.Context, in *SafetyCheckRequest, opts ...grpc.CallOption) (*SafetyCheckResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(SafetyCheckResponse)
+	err := c.cc.Invoke(ctx, KeystoreService_SafetyCheck_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *keystoreServiceClient) SafetyReport(ctx context.Context, in *SafetyReportRequest, opts ...grpc.CallOption) (*SafetyReportResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(SafetyReportResponse)
+	err := c.cc.Invoke(ctx, KeystoreService_SafetyReport_FullMethodName, in, out, cOpts...)
 	if err != nil {
 		return nil, err
 	}
@@ -2564,6 +2929,74 @@ type KeystoreServiceServer interface {
 	Decrypt(context.Context, *DecryptRequest) (*DecryptResponse, error)
 	// EncryptAsym encrypts data using asymmetric encryption (RSA-OAEP)
 	EncryptAsym(context.Context, *EncryptAsymRequest) (*EncryptAsymResponse, error)
+	// Rewrap decrypts a ciphertext under its source key and encrypts the
+	// plaintext under a target key (the source key's current version when no
+	// target is named). The plaintext never leaves the service.
+	Rewrap(context.Context, *RewrapRequest) (*RewrapResponse, error)
+	// EncryptBatch encrypts up to MaxBatchItems plaintexts with one key and
+	// reports each item's result.
+	EncryptBatch(context.Context, *EncryptBatchRequest) (*EncryptBatchResponse, error)
+	// DecryptBatch decrypts up to MaxBatchItems ciphertexts with one key and
+	// reports each item's result.
+	DecryptBatch(context.Context, *DecryptBatchRequest) (*DecryptBatchResponse, error)
+	// GenerateDataKey generates a random data key and returns it in plaintext
+	// and wrapped under the named key, for envelope encryption.
+	GenerateDataKey(context.Context, *GenerateDataKeyRequest) (*GenerateDataKeyResponse, error)
+	// GenerateWrappedDataKey generates a random data key and returns it only
+	// wrapped under the named key.
+	GenerateWrappedDataKey(context.Context, *GenerateDataKeyRequest) (*GenerateWrappedDataKeyResponse, error)
+	// GenerateHMAC computes an HMAC (RFC 2104) of data with a symmetric key.
+	GenerateHMAC(context.Context, *GenerateHMACRequest) (*GenerateHMACResponse, error)
+	// VerifyHMAC verifies an HMAC (RFC 2104) of data with a symmetric key.
+	VerifyHMAC(context.Context, *VerifyHMACRequest) (*VerifyHMACResponse, error)
+	// GenerateRandom returns up to MaxRandomBytes bytes from the service's
+	// cryptographic random source.
+	GenerateRandom(context.Context, *GenerateRandomRequest) (*GenerateRandomResponse, error)
+	// Hash computes the digest of data with a named hash function.
+	Hash(context.Context, *HashRequest) (*HashResponse, error)
+	// GetPublicKey retrieves the DER-encoded public key component of an
+	// asymmetric key without exposing private key material.
+	GetPublicKey(context.Context, *GetPublicKeyRequest) (*GetPublicKeyResponse, error)
+	// RevokeKey marks a key as revoked and unusable. Revocation is terminal.
+	RevokeKey(context.Context, *RevokeKeyRequest) (*RevokeKeyResponse, error)
+	// UpdateKeyStatus enables or disables a key or key version.
+	UpdateKeyStatus(context.Context, *UpdateKeyStatusRequest) (*UpdateKeyStatusResponse, error)
+	// GetKeyMetadata retrieves metadata for a key without exposing key material.
+	GetKeyMetadata(context.Context, *GetKeyMetadataRequest) (*GetKeyMetadataResponse, error)
+	// UpdateKeyMetadata updates mutable metadata fields for a key.
+	UpdateKeyMetadata(context.Context, *UpdateKeyMetadataRequest) (*UpdateKeyMetadataResponse, error)
+	// SetKeyPolicy sets the access control policy for a key. The policy
+	// narrows what RBAC already grants; it never widens it.
+	SetKeyPolicy(context.Context, *SetKeyPolicyRequest) (*SetKeyPolicyResponse, error)
+	// GetKeyPolicy retrieves the access control policy for a key.
+	GetKeyPolicy(context.Context, *GetKeyPolicyRequest) (*GetKeyPolicyResponse, error)
+	// DeleteKeyPolicy removes the access control policy for a key; the key
+	// falls back to RBAC alone, never to unauthenticated access.
+	DeleteKeyPolicy(context.Context, *DeleteKeyPolicyRequest) (*DeleteKeyPolicyResponse, error)
+	// SetKeyRotationPolicy sets or replaces the automatic rotation policy for a key.
+	SetKeyRotationPolicy(context.Context, *SetKeyRotationPolicyRequest) (*SetKeyRotationPolicyResponse, error)
+	// GetKeyRotationPolicy retrieves the current automatic rotation policy for a key.
+	GetKeyRotationPolicy(context.Context, *GetKeyRotationPolicyRequest) (*GetKeyRotationPolicyResponse, error)
+	// DeleteKeyRotationPolicy removes the rotation policy for a key, disabling
+	// automatic rotation.
+	DeleteKeyRotationPolicy(context.Context, *DeleteKeyRotationPolicyRequest) (*DeleteKeyRotationPolicyResponse, error)
+	// GetSupportedAlgorithms returns the cryptographic algorithms the named
+	// backend supports, so a caller can check before attempting an operation.
+	GetSupportedAlgorithms(context.Context, *GetSupportedAlgorithmsRequest) (*GetSupportedAlgorithmsResponse, error)
+	// BackendStatus returns health and capability information about a backend.
+	BackendStatus(context.Context, *BackendStatusRequest) (*BackendStatusResponse, error)
+	// BackendTest performs a non-destructive seal/unseal round trip to verify
+	// backend functionality.
+	BackendTest(context.Context, *BackendTestRequest) (*BackendTestResponse, error)
+	// SetKeySafety configures AEAD usage limits (NIST SP 800-38D §8.3,
+	// RFC 8439 §4) for a symmetric key.
+	SetKeySafety(context.Context, *SetKeySafetyRequest) (*SetKeySafetyResponse, error)
+	// ClearKeySafety removes custom AEAD usage limits from a key.
+	ClearKeySafety(context.Context, *ClearKeySafetyRequest) (*ClearKeySafetyResponse, error)
+	// SafetyCheck returns warnings for keys approaching their usage limits.
+	SafetyCheck(context.Context, *SafetyCheckRequest) (*SafetyCheckResponse, error)
+	// SafetyReport returns a safety report for every key with usage limits.
+	SafetyReport(context.Context, *SafetyReportRequest) (*SafetyReportResponse, error)
 	// DeriveKey derives a key using the specified algorithm and parameters
 	// Supports HKDF, ECDH, DH, SP800-108, PBKDF2, and other key derivation mechanisms
 	DeriveKey(context.Context, *DeriveKeyRequest) (*DeriveKeyResponse, error)
@@ -3012,6 +3445,87 @@ func (UnimplementedKeystoreServiceServer) Decrypt(context.Context, *DecryptReque
 }
 func (UnimplementedKeystoreServiceServer) EncryptAsym(context.Context, *EncryptAsymRequest) (*EncryptAsymResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "method EncryptAsym not implemented")
+}
+func (UnimplementedKeystoreServiceServer) Rewrap(context.Context, *RewrapRequest) (*RewrapResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method Rewrap not implemented")
+}
+func (UnimplementedKeystoreServiceServer) EncryptBatch(context.Context, *EncryptBatchRequest) (*EncryptBatchResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method EncryptBatch not implemented")
+}
+func (UnimplementedKeystoreServiceServer) DecryptBatch(context.Context, *DecryptBatchRequest) (*DecryptBatchResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method DecryptBatch not implemented")
+}
+func (UnimplementedKeystoreServiceServer) GenerateDataKey(context.Context, *GenerateDataKeyRequest) (*GenerateDataKeyResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method GenerateDataKey not implemented")
+}
+func (UnimplementedKeystoreServiceServer) GenerateWrappedDataKey(context.Context, *GenerateDataKeyRequest) (*GenerateWrappedDataKeyResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method GenerateWrappedDataKey not implemented")
+}
+func (UnimplementedKeystoreServiceServer) GenerateHMAC(context.Context, *GenerateHMACRequest) (*GenerateHMACResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method GenerateHMAC not implemented")
+}
+func (UnimplementedKeystoreServiceServer) VerifyHMAC(context.Context, *VerifyHMACRequest) (*VerifyHMACResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method VerifyHMAC not implemented")
+}
+func (UnimplementedKeystoreServiceServer) GenerateRandom(context.Context, *GenerateRandomRequest) (*GenerateRandomResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method GenerateRandom not implemented")
+}
+func (UnimplementedKeystoreServiceServer) Hash(context.Context, *HashRequest) (*HashResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method Hash not implemented")
+}
+func (UnimplementedKeystoreServiceServer) GetPublicKey(context.Context, *GetPublicKeyRequest) (*GetPublicKeyResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method GetPublicKey not implemented")
+}
+func (UnimplementedKeystoreServiceServer) RevokeKey(context.Context, *RevokeKeyRequest) (*RevokeKeyResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method RevokeKey not implemented")
+}
+func (UnimplementedKeystoreServiceServer) UpdateKeyStatus(context.Context, *UpdateKeyStatusRequest) (*UpdateKeyStatusResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method UpdateKeyStatus not implemented")
+}
+func (UnimplementedKeystoreServiceServer) GetKeyMetadata(context.Context, *GetKeyMetadataRequest) (*GetKeyMetadataResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method GetKeyMetadata not implemented")
+}
+func (UnimplementedKeystoreServiceServer) UpdateKeyMetadata(context.Context, *UpdateKeyMetadataRequest) (*UpdateKeyMetadataResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method UpdateKeyMetadata not implemented")
+}
+func (UnimplementedKeystoreServiceServer) SetKeyPolicy(context.Context, *SetKeyPolicyRequest) (*SetKeyPolicyResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method SetKeyPolicy not implemented")
+}
+func (UnimplementedKeystoreServiceServer) GetKeyPolicy(context.Context, *GetKeyPolicyRequest) (*GetKeyPolicyResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method GetKeyPolicy not implemented")
+}
+func (UnimplementedKeystoreServiceServer) DeleteKeyPolicy(context.Context, *DeleteKeyPolicyRequest) (*DeleteKeyPolicyResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method DeleteKeyPolicy not implemented")
+}
+func (UnimplementedKeystoreServiceServer) SetKeyRotationPolicy(context.Context, *SetKeyRotationPolicyRequest) (*SetKeyRotationPolicyResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method SetKeyRotationPolicy not implemented")
+}
+func (UnimplementedKeystoreServiceServer) GetKeyRotationPolicy(context.Context, *GetKeyRotationPolicyRequest) (*GetKeyRotationPolicyResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method GetKeyRotationPolicy not implemented")
+}
+func (UnimplementedKeystoreServiceServer) DeleteKeyRotationPolicy(context.Context, *DeleteKeyRotationPolicyRequest) (*DeleteKeyRotationPolicyResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method DeleteKeyRotationPolicy not implemented")
+}
+func (UnimplementedKeystoreServiceServer) GetSupportedAlgorithms(context.Context, *GetSupportedAlgorithmsRequest) (*GetSupportedAlgorithmsResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method GetSupportedAlgorithms not implemented")
+}
+func (UnimplementedKeystoreServiceServer) BackendStatus(context.Context, *BackendStatusRequest) (*BackendStatusResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method BackendStatus not implemented")
+}
+func (UnimplementedKeystoreServiceServer) BackendTest(context.Context, *BackendTestRequest) (*BackendTestResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method BackendTest not implemented")
+}
+func (UnimplementedKeystoreServiceServer) SetKeySafety(context.Context, *SetKeySafetyRequest) (*SetKeySafetyResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method SetKeySafety not implemented")
+}
+func (UnimplementedKeystoreServiceServer) ClearKeySafety(context.Context, *ClearKeySafetyRequest) (*ClearKeySafetyResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method ClearKeySafety not implemented")
+}
+func (UnimplementedKeystoreServiceServer) SafetyCheck(context.Context, *SafetyCheckRequest) (*SafetyCheckResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method SafetyCheck not implemented")
+}
+func (UnimplementedKeystoreServiceServer) SafetyReport(context.Context, *SafetyReportRequest) (*SafetyReportResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method SafetyReport not implemented")
 }
 func (UnimplementedKeystoreServiceServer) DeriveKey(context.Context, *DeriveKeyRequest) (*DeriveKeyResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "method DeriveKey not implemented")
@@ -3930,6 +4444,492 @@ func _KeystoreService_EncryptAsym_Handler(srv interface{}, ctx context.Context, 
 	}
 	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
 		return srv.(KeystoreServiceServer).EncryptAsym(ctx, req.(*EncryptAsymRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _KeystoreService_Rewrap_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(RewrapRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(KeystoreServiceServer).Rewrap(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: KeystoreService_Rewrap_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(KeystoreServiceServer).Rewrap(ctx, req.(*RewrapRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _KeystoreService_EncryptBatch_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(EncryptBatchRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(KeystoreServiceServer).EncryptBatch(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: KeystoreService_EncryptBatch_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(KeystoreServiceServer).EncryptBatch(ctx, req.(*EncryptBatchRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _KeystoreService_DecryptBatch_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(DecryptBatchRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(KeystoreServiceServer).DecryptBatch(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: KeystoreService_DecryptBatch_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(KeystoreServiceServer).DecryptBatch(ctx, req.(*DecryptBatchRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _KeystoreService_GenerateDataKey_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(GenerateDataKeyRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(KeystoreServiceServer).GenerateDataKey(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: KeystoreService_GenerateDataKey_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(KeystoreServiceServer).GenerateDataKey(ctx, req.(*GenerateDataKeyRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _KeystoreService_GenerateWrappedDataKey_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(GenerateDataKeyRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(KeystoreServiceServer).GenerateWrappedDataKey(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: KeystoreService_GenerateWrappedDataKey_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(KeystoreServiceServer).GenerateWrappedDataKey(ctx, req.(*GenerateDataKeyRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _KeystoreService_GenerateHMAC_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(GenerateHMACRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(KeystoreServiceServer).GenerateHMAC(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: KeystoreService_GenerateHMAC_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(KeystoreServiceServer).GenerateHMAC(ctx, req.(*GenerateHMACRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _KeystoreService_VerifyHMAC_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(VerifyHMACRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(KeystoreServiceServer).VerifyHMAC(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: KeystoreService_VerifyHMAC_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(KeystoreServiceServer).VerifyHMAC(ctx, req.(*VerifyHMACRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _KeystoreService_GenerateRandom_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(GenerateRandomRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(KeystoreServiceServer).GenerateRandom(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: KeystoreService_GenerateRandom_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(KeystoreServiceServer).GenerateRandom(ctx, req.(*GenerateRandomRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _KeystoreService_Hash_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(HashRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(KeystoreServiceServer).Hash(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: KeystoreService_Hash_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(KeystoreServiceServer).Hash(ctx, req.(*HashRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _KeystoreService_GetPublicKey_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(GetPublicKeyRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(KeystoreServiceServer).GetPublicKey(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: KeystoreService_GetPublicKey_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(KeystoreServiceServer).GetPublicKey(ctx, req.(*GetPublicKeyRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _KeystoreService_RevokeKey_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(RevokeKeyRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(KeystoreServiceServer).RevokeKey(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: KeystoreService_RevokeKey_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(KeystoreServiceServer).RevokeKey(ctx, req.(*RevokeKeyRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _KeystoreService_UpdateKeyStatus_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(UpdateKeyStatusRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(KeystoreServiceServer).UpdateKeyStatus(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: KeystoreService_UpdateKeyStatus_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(KeystoreServiceServer).UpdateKeyStatus(ctx, req.(*UpdateKeyStatusRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _KeystoreService_GetKeyMetadata_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(GetKeyMetadataRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(KeystoreServiceServer).GetKeyMetadata(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: KeystoreService_GetKeyMetadata_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(KeystoreServiceServer).GetKeyMetadata(ctx, req.(*GetKeyMetadataRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _KeystoreService_UpdateKeyMetadata_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(UpdateKeyMetadataRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(KeystoreServiceServer).UpdateKeyMetadata(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: KeystoreService_UpdateKeyMetadata_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(KeystoreServiceServer).UpdateKeyMetadata(ctx, req.(*UpdateKeyMetadataRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _KeystoreService_SetKeyPolicy_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(SetKeyPolicyRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(KeystoreServiceServer).SetKeyPolicy(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: KeystoreService_SetKeyPolicy_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(KeystoreServiceServer).SetKeyPolicy(ctx, req.(*SetKeyPolicyRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _KeystoreService_GetKeyPolicy_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(GetKeyPolicyRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(KeystoreServiceServer).GetKeyPolicy(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: KeystoreService_GetKeyPolicy_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(KeystoreServiceServer).GetKeyPolicy(ctx, req.(*GetKeyPolicyRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _KeystoreService_DeleteKeyPolicy_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(DeleteKeyPolicyRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(KeystoreServiceServer).DeleteKeyPolicy(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: KeystoreService_DeleteKeyPolicy_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(KeystoreServiceServer).DeleteKeyPolicy(ctx, req.(*DeleteKeyPolicyRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _KeystoreService_SetKeyRotationPolicy_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(SetKeyRotationPolicyRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(KeystoreServiceServer).SetKeyRotationPolicy(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: KeystoreService_SetKeyRotationPolicy_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(KeystoreServiceServer).SetKeyRotationPolicy(ctx, req.(*SetKeyRotationPolicyRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _KeystoreService_GetKeyRotationPolicy_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(GetKeyRotationPolicyRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(KeystoreServiceServer).GetKeyRotationPolicy(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: KeystoreService_GetKeyRotationPolicy_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(KeystoreServiceServer).GetKeyRotationPolicy(ctx, req.(*GetKeyRotationPolicyRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _KeystoreService_DeleteKeyRotationPolicy_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(DeleteKeyRotationPolicyRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(KeystoreServiceServer).DeleteKeyRotationPolicy(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: KeystoreService_DeleteKeyRotationPolicy_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(KeystoreServiceServer).DeleteKeyRotationPolicy(ctx, req.(*DeleteKeyRotationPolicyRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _KeystoreService_GetSupportedAlgorithms_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(GetSupportedAlgorithmsRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(KeystoreServiceServer).GetSupportedAlgorithms(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: KeystoreService_GetSupportedAlgorithms_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(KeystoreServiceServer).GetSupportedAlgorithms(ctx, req.(*GetSupportedAlgorithmsRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _KeystoreService_BackendStatus_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(BackendStatusRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(KeystoreServiceServer).BackendStatus(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: KeystoreService_BackendStatus_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(KeystoreServiceServer).BackendStatus(ctx, req.(*BackendStatusRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _KeystoreService_BackendTest_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(BackendTestRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(KeystoreServiceServer).BackendTest(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: KeystoreService_BackendTest_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(KeystoreServiceServer).BackendTest(ctx, req.(*BackendTestRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _KeystoreService_SetKeySafety_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(SetKeySafetyRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(KeystoreServiceServer).SetKeySafety(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: KeystoreService_SetKeySafety_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(KeystoreServiceServer).SetKeySafety(ctx, req.(*SetKeySafetyRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _KeystoreService_ClearKeySafety_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(ClearKeySafetyRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(KeystoreServiceServer).ClearKeySafety(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: KeystoreService_ClearKeySafety_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(KeystoreServiceServer).ClearKeySafety(ctx, req.(*ClearKeySafetyRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _KeystoreService_SafetyCheck_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(SafetyCheckRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(KeystoreServiceServer).SafetyCheck(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: KeystoreService_SafetyCheck_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(KeystoreServiceServer).SafetyCheck(ctx, req.(*SafetyCheckRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _KeystoreService_SafetyReport_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(SafetyReportRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(KeystoreServiceServer).SafetyReport(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: KeystoreService_SafetyReport_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(KeystoreServiceServer).SafetyReport(ctx, req.(*SafetyReportRequest))
 	}
 	return interceptor(ctx, in, info, handler)
 }
@@ -6948,6 +7948,114 @@ var KeystoreService_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "EncryptAsym",
 			Handler:    _KeystoreService_EncryptAsym_Handler,
+		},
+		{
+			MethodName: "Rewrap",
+			Handler:    _KeystoreService_Rewrap_Handler,
+		},
+		{
+			MethodName: "EncryptBatch",
+			Handler:    _KeystoreService_EncryptBatch_Handler,
+		},
+		{
+			MethodName: "DecryptBatch",
+			Handler:    _KeystoreService_DecryptBatch_Handler,
+		},
+		{
+			MethodName: "GenerateDataKey",
+			Handler:    _KeystoreService_GenerateDataKey_Handler,
+		},
+		{
+			MethodName: "GenerateWrappedDataKey",
+			Handler:    _KeystoreService_GenerateWrappedDataKey_Handler,
+		},
+		{
+			MethodName: "GenerateHMAC",
+			Handler:    _KeystoreService_GenerateHMAC_Handler,
+		},
+		{
+			MethodName: "VerifyHMAC",
+			Handler:    _KeystoreService_VerifyHMAC_Handler,
+		},
+		{
+			MethodName: "GenerateRandom",
+			Handler:    _KeystoreService_GenerateRandom_Handler,
+		},
+		{
+			MethodName: "Hash",
+			Handler:    _KeystoreService_Hash_Handler,
+		},
+		{
+			MethodName: "GetPublicKey",
+			Handler:    _KeystoreService_GetPublicKey_Handler,
+		},
+		{
+			MethodName: "RevokeKey",
+			Handler:    _KeystoreService_RevokeKey_Handler,
+		},
+		{
+			MethodName: "UpdateKeyStatus",
+			Handler:    _KeystoreService_UpdateKeyStatus_Handler,
+		},
+		{
+			MethodName: "GetKeyMetadata",
+			Handler:    _KeystoreService_GetKeyMetadata_Handler,
+		},
+		{
+			MethodName: "UpdateKeyMetadata",
+			Handler:    _KeystoreService_UpdateKeyMetadata_Handler,
+		},
+		{
+			MethodName: "SetKeyPolicy",
+			Handler:    _KeystoreService_SetKeyPolicy_Handler,
+		},
+		{
+			MethodName: "GetKeyPolicy",
+			Handler:    _KeystoreService_GetKeyPolicy_Handler,
+		},
+		{
+			MethodName: "DeleteKeyPolicy",
+			Handler:    _KeystoreService_DeleteKeyPolicy_Handler,
+		},
+		{
+			MethodName: "SetKeyRotationPolicy",
+			Handler:    _KeystoreService_SetKeyRotationPolicy_Handler,
+		},
+		{
+			MethodName: "GetKeyRotationPolicy",
+			Handler:    _KeystoreService_GetKeyRotationPolicy_Handler,
+		},
+		{
+			MethodName: "DeleteKeyRotationPolicy",
+			Handler:    _KeystoreService_DeleteKeyRotationPolicy_Handler,
+		},
+		{
+			MethodName: "GetSupportedAlgorithms",
+			Handler:    _KeystoreService_GetSupportedAlgorithms_Handler,
+		},
+		{
+			MethodName: "BackendStatus",
+			Handler:    _KeystoreService_BackendStatus_Handler,
+		},
+		{
+			MethodName: "BackendTest",
+			Handler:    _KeystoreService_BackendTest_Handler,
+		},
+		{
+			MethodName: "SetKeySafety",
+			Handler:    _KeystoreService_SetKeySafety_Handler,
+		},
+		{
+			MethodName: "ClearKeySafety",
+			Handler:    _KeystoreService_ClearKeySafety_Handler,
+		},
+		{
+			MethodName: "SafetyCheck",
+			Handler:    _KeystoreService_SafetyCheck_Handler,
+		},
+		{
+			MethodName: "SafetyReport",
+			Handler:    _KeystoreService_SafetyReport_Handler,
 		},
 		{
 			MethodName: "DeriveKey",

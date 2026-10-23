@@ -237,6 +237,17 @@ func TestQuantumBackend_Capabilities(t *testing.T) {
 	assert.False(t, caps.Decryption)
 	assert.False(t, caps.SymmetricEncryption)
 	assert.False(t, caps.ECIES)
+
+	// The declared key shapes are exactly the parameter sets GenerateKey accepts.
+	assert.Equal(t, []types.QuantumAlgorithm{
+		types.QuantumAlgorithmMLDSA44, types.QuantumAlgorithmMLDSA65, types.QuantumAlgorithmMLDSA87,
+	}, caps.KeyAlgorithms.MLDSA)
+	assert.Equal(t, []types.QuantumAlgorithm{
+		types.QuantumAlgorithmMLKEM1024, types.QuantumAlgorithmMLKEM768,
+	}, caps.KeyAlgorithms.MLKEM)
+	assert.Empty(t, caps.KeyAlgorithms.RSAKeySizes)
+	assert.Empty(t, caps.KeyAlgorithms.ECDSACurves)
+	assert.False(t, caps.KeyAlgorithms.Ed25519)
 }
 
 // --- NewWithConfig error paths ---

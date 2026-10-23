@@ -24,6 +24,7 @@ import (
 	"github.com/jeremyhahn/go-xkms/pkg/backend"
 	tpm2backend "github.com/jeremyhahn/go-xkms/pkg/backend/tpm2"
 	"github.com/jeremyhahn/go-xkms/pkg/crypto/aead"
+	"github.com/jeremyhahn/go-xkms/pkg/keypolicy"
 	"github.com/jeremyhahn/go-xkms/pkg/keyprovider/symmetric"
 	"github.com/jeremyhahn/go-xkms/pkg/keyversion"
 	"github.com/jeremyhahn/go-xkms/pkg/oidc"
@@ -413,4 +414,50 @@ func KeyVersionClassOf(err error) (Class, bool) {
 		}
 	}
 	return ClassOf(KeyVersionSentinelClasses, err)
+}
+
+// KeyPolicyTypedClasses classifies the typed errors of the key management
+// API (pkg/xkms's key management operations over pkg/keypolicy) and of the
+// policy gate every key operation passes. Every transport's key-operation
+// mapper reads it through KeyPolicyClassOf:
+//
+//   - A field the service cannot store, an operation the key's kind does not
+//     support, or a record key that cannot be named is a fault in the request.
+//   - A policy field the service cannot enforce (per-operation MFA, automatic
+//     rotation) and a backend BackendTest cannot round-trip are capabilities
+//     the service lacks.
+//   - A revoked key changing status, and a disabled or revoked key used for
+//     an operation, conflict with the key's current state.
+//   - An operation the key's policy refuses is the caller's lack of
+//     permission; a key past its AEAD usage limit (NIST SP 800-38D §8.3) has
+//     used up a resource and must be rotated.
+var KeyPolicyTypedClasses = []TypedClass{
+	{As[*xkms.InvalidKeyPolicyError], ClassInvalidArgument},
+	{As[*xkms.KeyKindError], ClassInvalidArgument},
+	{As[*keypolicy.InvalidRecordKeyError], ClassInvalidArgument},
+	{As[*xkms.UnenforceablePolicyError], ClassUnimplemented},
+	{As[*xkms.BackendTestUnsupportedError], ClassUnimplemented},
+	{As[*xkms.KeyStatusTransitionError], ClassFailedPrecondition},
+	{As[*keypolicy.KeyUnavailableError], ClassFailedPrecondition},
+	{As[*keypolicy.PolicyDeniedError], ClassPermissionDenied},
+	{As[*keypolicy.SafetyLimitError], ClassResourceExhausted},
+}
+
+// KeyPolicySentinelClasses classifies the key management API's sentinels.
+var KeyPolicySentinelClasses = []SentinelClass{
+	{xkms.ErrKeyPoliciesNotConfigured, ClassUnavailable},
+}
+
+// KeyPolicyClassOf classifies an error of the key management API: its typed
+// errors first, then its sentinels.
+func KeyPolicyClassOf(err error) (Class, bool) {
+	if err == nil {
+		return ClassInternal, false
+	}
+	for _, entry := range KeyPolicyTypedClasses {
+		if entry.Match(err) {
+			return entry.Class, true
+		}
+	}
+	return ClassOf(KeyPolicySentinelClasses, err)
 }

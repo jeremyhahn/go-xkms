@@ -93,6 +93,9 @@ func (b *FrostBackend) Capabilities() types.Capabilities {
 		Export:              false, // Secret shares should not be exported
 		KeyAgreement:        false,
 		ECIES:               false,
+		// A FROST key is a threshold key whose ciphersuite comes from
+		// FrostAttributes, not a single-party key algorithm.
+		KeyAlgorithms: types.KeyAlgorithms{},
 	}
 }
 

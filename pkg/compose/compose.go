@@ -25,6 +25,7 @@ import (
 	"github.com/jeremyhahn/go-xkms/pkg/ca"
 	"github.com/jeremyhahn/go-xkms/pkg/ca/provider"
 	"github.com/jeremyhahn/go-xkms/pkg/certstore"
+	"github.com/jeremyhahn/go-xkms/pkg/keypolicy"
 	"github.com/jeremyhahn/go-xkms/pkg/keyversion"
 	"github.com/jeremyhahn/go-xkms/pkg/oidc/credential"
 	"github.com/jeremyhahn/go-xkms/pkg/seal"
@@ -154,6 +155,9 @@ type Stores struct {
 	// KeyVersions is the key-version record store.
 	KeyVersions *keyversion.Store
 
+	// KeyPolicies is the key-policy record store.
+	KeyPolicies *keypolicy.Store
+
 	// OIDCCredentials is the server-side OIDC credential service, its
 	// refresh scheduler running.
 	OIDCCredentials *credential.Service
@@ -174,7 +178,7 @@ type Stores struct {
 // each on its datastore and sets d.DAOs to the factory serving them before
 // Build; a root that opens none leaves those features off.
 func Databases(d Deps) []string {
-	databases := []string{keyversion.DatabaseName, sshrecords.DatabaseName, staticpw.DatabaseName, truststore.DatabaseName}
+	databases := []string{keyversion.DatabaseName, keypolicy.DatabaseName, sshrecords.DatabaseName, staticpw.DatabaseName, truststore.DatabaseName}
 	if d.CA != nil {
 		databases = append(databases, certstore.DatabaseName)
 	}
@@ -270,6 +274,12 @@ func Build(ctx context.Context, d Deps) (*Stores, error) {
 		})
 	}
 
+	if b.need(FeatureKeyPolicies, d.DAOs != nil, "DAO factory") {
+		st.KeyPolicies = built(b, FeatureKeyPolicies, func() (*keypolicy.Store, error) {
+			return BuildKeyPolicyStore(d.DAOs)
+		})
+	}
+
 	if b.need(FeatureTrustRoots, d.DAOs != nil, "DAO factory") {
 		st.TrustRoots = built(b, FeatureTrustRoots, func() (*truststore.DAOStore, error) {
 			return BuildTrustRootStore(d.DAOs)
@@ -321,6 +331,9 @@ func (st *Stores) Wire(svc *xkms.XKMSService) {
 	}
 	if st.KeyVersions != nil {
 		svc.SetKeyVersionStore(st.KeyVersions)
+	}
+	if st.KeyPolicies != nil {
+		svc.SetKeyPolicyStore(st.KeyPolicies)
 	}
 	if st.TrustRoots != nil {
 		svc.SetTrustRootStore(st.TrustRoots)

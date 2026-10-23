@@ -26,6 +26,7 @@ import (
 	tpm2backend "github.com/jeremyhahn/go-xkms/pkg/backend/tpm2"
 	"github.com/jeremyhahn/go-xkms/pkg/certstore"
 	"github.com/jeremyhahn/go-xkms/pkg/dao"
+	"github.com/jeremyhahn/go-xkms/pkg/keypolicy"
 	"github.com/jeremyhahn/go-xkms/pkg/keyversion"
 	credentialspkg "github.com/jeremyhahn/go-xkms/pkg/server/credentials"
 	sshrecords "github.com/jeremyhahn/go-xkms/pkg/ssh/records"
@@ -157,6 +158,7 @@ func TestBuild_StorageFailureIsABuildErrorPerFeature(t *testing.T) {
 	assert.NotNil(t, st.Credentials)
 	assert.NotNil(t, st.PasswordManager, "password records persist through DAOs, not storage")
 	assert.NotNil(t, st.KeyVersions, "key versions persist through DAOs, not storage")
+	assert.NotNil(t, st.KeyPolicies, "key policies persist through DAOs, not storage")
 	assert.NotNil(t, st.SSH, "SSH records persist through DAOs, not storage")
 }
 
@@ -332,7 +334,7 @@ func TestBuilders_RejectNilDependencies(t *testing.T) {
 // feature's other dependency — the CA's for a CA configuration, the TPM policy
 // registry's for a TPM2 backend.
 func TestDatabases_FollowTheSuppliedDependencies(t *testing.T) {
-	always := []string{keyversion.DatabaseName, sshrecords.DatabaseName, staticpw.DatabaseName, truststore.DatabaseName}
+	always := []string{keyversion.DatabaseName, keypolicy.DatabaseName, sshrecords.DatabaseName, staticpw.DatabaseName, truststore.DatabaseName}
 	assert.Equal(t, always, Databases(Deps{}))
 	assert.Equal(t, append(always, certstore.DatabaseName), Databases(Deps{CA: hostdeps.NewCAConfig("Root")}))
 	assert.Equal(t, append(always, tpmpolicy.DatabaseName, tpmstore.DatabaseName), Databases(Deps{TPMBackend: &tpm2backend.Backend{}}))
@@ -445,6 +447,24 @@ func TestBuildKeyVersionStore(t *testing.T) {
 	var buildErr *FeatureBuildError
 	require.ErrorAs(t, err, &buildErr)
 	assert.Equal(t, FeatureKeyVersions, buildErr.Feature)
+	var unavailable *dao.DatabaseUnavailableError
+	assert.ErrorAs(t, err, &unavailable)
+}
+
+func TestBuildKeyPolicyStore(t *testing.T) {
+	store, err := BuildKeyPolicyStore(testutil.NewMemoryDAOFactory())
+	require.NoError(t, err)
+	require.NotNil(t, store)
+
+	_, err = BuildKeyPolicyStore(nil)
+	var nilDep *NilDependencyError
+	require.ErrorAs(t, err, &nilDep)
+	assert.Equal(t, FeatureKeyPolicies, nilDep.Feature)
+
+	_, err = BuildKeyPolicyStore(dao.NewStoreFactory(nil))
+	var buildErr *FeatureBuildError
+	require.ErrorAs(t, err, &buildErr)
+	assert.Equal(t, FeatureKeyPolicies, buildErr.Feature)
 	var unavailable *dao.DatabaseUnavailableError
 	assert.ErrorAs(t, err, &unavailable)
 }

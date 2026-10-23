@@ -232,6 +232,14 @@ func (b *Backend) Capabilities() types.Capabilities {
 	caps.Sealing = true             // TPM supports seal/unseal operations
 	caps.Attestation = true         // TPM supports key attestation via TPM2_Certify
 	caps.SecurityLevel = types.SecurityLevelVeryHigh
+	// RSA 2048 is the modulus every TPM 2.0 implements; larger moduli are
+	// optional in the silicon. Symmetric keys are AES-128 or AES-256
+	// (see GenerateSymmetricKeyIn).
+	caps.KeyAlgorithms = types.KeyAlgorithms{
+		RSAKeySizes: []int{types.RSAKeySize2048},
+		ECDSACurves: b.SupportedCurves(),
+		Symmetric:   []types.SymmetricAlgorithm{types.SymmetricAES128GCM, types.SymmetricAES256GCM},
+	}
 	return caps
 }
 

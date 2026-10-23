@@ -100,6 +100,21 @@ var (
 	// ErrInvalidHashFunction indicates an unsupported or invalid hash function.
 	ErrInvalidHashFunction = errors.New("keystore: invalid hash function")
 
+	// ErrBatchSize indicates an EncryptBatch or DecryptBatch request with no
+	// items or more than transport.MaxBatchItems.
+	ErrBatchSize = errors.New("keystore: invalid batch size")
+
+	// ErrRandomLength indicates a GenerateRandom length outside 1 to
+	// transport.MaxRandomBytes.
+	ErrRandomLength = errors.New("keystore: invalid random length")
+
+	// ErrDataKeySize indicates a data key size other than 16, 24 or 32 bytes.
+	ErrDataKeySize = errors.New("keystore: invalid data key size")
+
+	// ErrHMACRefused indicates an HMAC the standard library refuses, such as
+	// a key shorter than FIPS 140-3 allows under GODEBUG=fips140=only.
+	ErrHMACRefused = errors.New("keystore: hmac refused")
+
 	// ErrEd25519DigestInput indicates a request handed an Ed25519 key a
 	// digest (data_is_digest). Ed25519 signs the message itself (RFC 8032),
 	// so a signature over a digest would verify only against that digest.
@@ -915,6 +930,16 @@ type ErrPublicKeyExtraction struct {
 // Error returns the error message.
 func (e *ErrPublicKeyExtraction) Error() string {
 	return fmt.Sprintf("failed to extract public key from generated %s key", e.Algorithm)
+}
+
+// ErrMalformedPublicKey reports a public key wrapper that holds no key.
+type ErrMalformedPublicKey struct {
+	KeyType string
+}
+
+// Error returns the error message.
+func (e *ErrMalformedPublicKey) Error() string {
+	return fmt.Sprintf("keystore: %s holds no public key", e.KeyType)
 }
 
 // ErrCopyKeyBackend represents an error resolving a source or destination backend during key copy.

@@ -116,6 +116,7 @@ Scope and boundaries: [docs/SPEC.md](docs/SPEC.md).
 - **transparency-log** — CA transparency log on go-qrdb's verifiable-log type — [Dev complete](../../milestone/14) — blocked: go-qrdb #721/#722
 - **workload-identity** — tenant as SPIFFE trust domain, SVIDs through ACME — [Dev complete](../../milestone/14) — blocked: go-qrdb `spiffe://<tenant>/...` support
 - **ota-image-keys** — one OTA image-signing key per trusted-firmware board id — [Dev complete](../../milestone/14) — blocked: go-qrdb #737 (OTA activate/confirm permissions)
+- **key-policy-and-crypto** — key-management, key-policy, key-safety and crypto-utility RPCs in `xkms.v1` for go-quicbaas (DEK is go-qrdb's `DEKClient`) — [#1681](../../issues/1681), [Dev complete](../../milestone/14) — open
 
 ## Later
 

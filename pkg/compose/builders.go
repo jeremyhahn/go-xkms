@@ -25,6 +25,7 @@ import (
 	tpm2backend "github.com/jeremyhahn/go-xkms/pkg/backend/tpm2"
 	"github.com/jeremyhahn/go-xkms/pkg/ca"
 	"github.com/jeremyhahn/go-xkms/pkg/certstore"
+	"github.com/jeremyhahn/go-xkms/pkg/keypolicy"
 	"github.com/jeremyhahn/go-xkms/pkg/keyversion"
 	"github.com/jeremyhahn/go-xkms/pkg/oidc/credential"
 	"github.com/jeremyhahn/go-xkms/pkg/seal"
@@ -97,6 +98,20 @@ func BuildKeyVersionStore(daos *qrdbsdk.DAOFactory) (*keyversion.Store, error) {
 	store, err := keyversion.NewStore(daos)
 	if err != nil {
 		return nil, &FeatureBuildError{Feature: FeatureKeyVersions, Err: err}
+	}
+	return store, nil
+}
+
+// BuildKeyPolicyStore builds the key-policy record store over the
+// keypolicy.DatabaseName database daos serves. The XKMSService it is wired
+// into (SetKeyPolicyStore) needs it to serve the key-management RPCs.
+func BuildKeyPolicyStore(daos *qrdbsdk.DAOFactory) (*keypolicy.Store, error) {
+	if daos == nil {
+		return nil, &NilDependencyError{Feature: FeatureKeyPolicies, Dependency: "DAO factory"}
+	}
+	store, err := keypolicy.NewStore(daos)
+	if err != nil {
+		return nil, &FeatureBuildError{Feature: FeatureKeyPolicies, Err: err}
 	}
 	return store, nil
 }

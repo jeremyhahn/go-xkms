@@ -1023,7 +1023,7 @@ func TestBoostDiscoverAlgorithms_EmptyBackends(t *testing.T) {
 	// registered without corresponding service initialization. We test
 	// BuildAlgorithmsResponse directly for deterministic behavior.
 	provider := func(name string) (types.Capabilities, error) {
-		return types.Capabilities{Keys: true}, nil
+		return types.Capabilities{Keys: true, KeyAlgorithms: classicalKeys}, nil
 	}
 	resp := BuildAlgorithmsResponse([]BackendType{BackendSoftware}, provider)
 	require.NotNil(t, resp)
@@ -1505,6 +1505,7 @@ func TestBoostBuildAlgorithmsResponse_WithQuantumAndKEM(t *testing.T) {
 				Keys:             true,
 				QuantumSigning:   true,
 				KeyEncapsulation: true,
+				KeyAlgorithms:    quantumKeys,
 			}, nil
 		}
 		return types.Capabilities{}, errors.New("unknown backend")
@@ -1535,7 +1536,7 @@ func TestBoostBuildAlgorithmsResponse_BackendError(t *testing.T) {
 
 func TestBoostBuildAlgorithmsResponse_MultipleBackendsMerge(t *testing.T) {
 	provider := func(name string) (types.Capabilities, error) {
-		return types.Capabilities{Keys: true}, nil
+		return types.Capabilities{Keys: true, KeyAlgorithms: classicalKeys}, nil
 	}
 
 	resp := BuildAlgorithmsResponse(
@@ -1543,6 +1544,7 @@ func TestBoostBuildAlgorithmsResponse_MultipleBackendsMerge(t *testing.T) {
 		provider,
 	)
 	require.NotNil(t, resp)
+	require.NotEmpty(t, resp.Signing)
 
 	for _, alg := range resp.Signing {
 		assert.Len(t, alg.Backends, 2, "algorithm %s should have 2 backends", alg.Algorithm)

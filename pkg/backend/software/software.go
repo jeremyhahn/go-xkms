@@ -221,7 +221,18 @@ func (b *SoftwareBackend) Capabilities() types.Capabilities {
 		QuantumSigning:      true,  // Post-quantum signatures via ML-DSA
 		KeyEncapsulation:    true,  // Key encapsulation via ML-KEM
 		SecurityLevel:       types.SecurityLevelLow,
+		KeyAlgorithms:       b.keyAlgorithms(),
 	}
+}
+
+// keyAlgorithms joins the asymmetric keys of the PKCS#8 provider and the
+// symmetric keys of the symmetric provider.
+func (b *SoftwareBackend) keyAlgorithms() types.KeyAlgorithms {
+	algorithms := b.pkcs8Backend.Capabilities().KeyAlgorithms
+	symmetricKeys := b.symmetricBackend.Capabilities().KeyAlgorithms
+	algorithms.Symmetric = symmetricKeys.Symmetric
+	algorithms.HMAC = symmetricKeys.HMAC
+	return algorithms
 }
 
 // GenerateKey generates a new asymmetric private key with the given attributes.

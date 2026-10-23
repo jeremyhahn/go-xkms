@@ -208,6 +208,17 @@ func (b *Backend) Capabilities() types.Capabilities {
 		KeyAgreement:        true,
 		Attestation:         true,
 		SecurityLevel:       types.SecurityLevelHigh,
+		// The key algorithms of algorithmMapping and the AEADs of
+		// symmetricAlgorithmMapping.
+		KeyAlgorithms: types.KeyAlgorithms{
+			RSAKeySizes: []int{types.RSAKeySize2048, types.RSAKeySize3072, types.RSAKeySize4096},
+			ECDSACurves: phoneSupportedCurves,
+			Ed25519:     true,
+			Symmetric: []types.SymmetricAlgorithm{
+				types.SymmetricAES128GCM, types.SymmetricAES192GCM, types.SymmetricAES256GCM,
+				types.SymmetricChaCha20Poly1305, types.SymmetricXChaCha20Poly1305,
+			},
+		},
 	}
 }
 

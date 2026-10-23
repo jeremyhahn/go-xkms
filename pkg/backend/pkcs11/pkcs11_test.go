@@ -25,6 +25,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"slices"
 	"sync"
 	"testing"
 
@@ -1925,6 +1926,10 @@ func TestCapabilities_QuantumDetection(t *testing.T) {
 		if caps.KeyEncapsulation {
 			t.Error("Capabilities().KeyEncapsulation should be false when only ML-DSA is supported")
 		}
+		wantMLDSA := []types.QuantumAlgorithm{types.QuantumAlgorithmMLDSA44, types.QuantumAlgorithmMLDSA65, types.QuantumAlgorithmMLDSA87}
+		if !slices.Equal(caps.KeyAlgorithms.MLDSA, wantMLDSA) {
+			t.Errorf("Capabilities().KeyAlgorithms.MLDSA = %v, want %v", caps.KeyAlgorithms.MLDSA, wantMLDSA)
+		}
 	})
 
 	t.Run("ML-KEM support detected", func(t *testing.T) {
@@ -1970,6 +1975,9 @@ func TestCapabilities_QuantumDetection(t *testing.T) {
 		// See above: the token's ML-KEM support is recorded, not advertised.
 		if caps.KeyEncapsulation {
 			t.Error("Capabilities().KeyEncapsulation must stay false until Encapsulate/Decapsulate exist")
+		}
+		if len(caps.KeyAlgorithms.MLKEM) != 0 {
+			t.Errorf("Capabilities().KeyAlgorithms.MLKEM = %v, want none until Encapsulate/Decapsulate exist", caps.KeyAlgorithms.MLKEM)
 		}
 	})
 }

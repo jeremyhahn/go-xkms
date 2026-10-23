@@ -178,6 +178,13 @@ func (b *Backend) Capabilities() types.Capabilities {
 		SymmetricEncryption: true,
 		Import:              true, // Supports key import
 		Export:              true, // Supports key export
+		KeyAlgorithms: types.KeyAlgorithms{
+			Symmetric: []types.SymmetricAlgorithm{
+				types.SymmetricAES128GCM, types.SymmetricAES192GCM, types.SymmetricAES256GCM,
+				types.SymmetricChaCha20Poly1305, types.SymmetricXChaCha20Poly1305,
+			},
+			HMAC: []crypto.Hash{crypto.SHA256, crypto.SHA384, crypto.SHA512},
+		},
 	}
 }
 

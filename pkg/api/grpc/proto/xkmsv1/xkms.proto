@@ -136,6 +136,164 @@ service KeystoreService {
     option (qrdb.v1.permission) = "keys:encrypt";
   }
 
+  // ==================== Crypto Utility Operations ====================
+
+  // Rewrap decrypts a ciphertext under its source key and encrypts the
+  // plaintext under a target key (the source key's current version when no
+  // target is named). The plaintext never leaves the service.
+  rpc Rewrap(RewrapRequest) returns (RewrapResponse) {
+    option (qrdb.v1.permission) = "keys:decrypt";
+  }
+
+  // EncryptBatch encrypts up to MaxBatchItems plaintexts with one key and
+  // reports each item's result.
+  rpc EncryptBatch(EncryptBatchRequest) returns (EncryptBatchResponse) {
+    option (qrdb.v1.permission) = "keys:encrypt";
+  }
+
+  // DecryptBatch decrypts up to MaxBatchItems ciphertexts with one key and
+  // reports each item's result.
+  rpc DecryptBatch(DecryptBatchRequest) returns (DecryptBatchResponse) {
+    option (qrdb.v1.permission) = "keys:decrypt";
+  }
+
+  // GenerateDataKey generates a random data key and returns it in plaintext
+  // and wrapped under the named key, for envelope encryption.
+  rpc GenerateDataKey(GenerateDataKeyRequest) returns (GenerateDataKeyResponse) {
+    option (qrdb.v1.permission) = "keys:encrypt";
+  }
+
+  // GenerateWrappedDataKey generates a random data key and returns it only
+  // wrapped under the named key.
+  rpc GenerateWrappedDataKey(GenerateDataKeyRequest) returns (GenerateWrappedDataKeyResponse) {
+    option (qrdb.v1.permission) = "keys:encrypt";
+  }
+
+  // GenerateHMAC computes an HMAC (RFC 2104) of data with a symmetric key.
+  rpc GenerateHMAC(GenerateHMACRequest) returns (GenerateHMACResponse) {
+    option (qrdb.v1.permission) = "keys:sign";
+  }
+
+  // VerifyHMAC verifies an HMAC (RFC 2104) of data with a symmetric key.
+  rpc VerifyHMAC(VerifyHMACRequest) returns (VerifyHMACResponse) {
+    option (qrdb.v1.permission) = "keys:verify";
+  }
+
+  // GenerateRandom returns up to MaxRandomBytes bytes from the service's
+  // cryptographic random source.
+  rpc GenerateRandom(GenerateRandomRequest) returns (GenerateRandomResponse) {
+    option (qrdb.v1.permission) = "keys:verify";
+  }
+
+  // Hash computes the digest of data with a named hash function.
+  rpc Hash(HashRequest) returns (HashResponse) {
+    option (qrdb.v1.permission) = "keys:verify";
+  }
+
+  // ==================== Key Management Operations ====================
+  //
+  // Adopted from go-quicbaas api/proto/kms.proto (service KeyManagement),
+  // field names and numbers kept; every key-scoped request gains a backend
+  // field at its next free number. Policies, rotation policies, safety
+  // limits, status and metadata persist in go-xkms's key-policy store.
+
+  // GetPublicKey retrieves the DER-encoded public key component of an
+  // asymmetric key without exposing private key material.
+  rpc GetPublicKey(GetPublicKeyRequest) returns (GetPublicKeyResponse) {
+    option (qrdb.v1.permission) = "keys:get";
+  }
+
+  // RevokeKey marks a key as revoked and unusable. Revocation is terminal.
+  rpc RevokeKey(RevokeKeyRequest) returns (RevokeKeyResponse) {
+    option (qrdb.v1.permission) = "keys:delete";
+  }
+
+  // UpdateKeyStatus enables or disables a key or key version.
+  rpc UpdateKeyStatus(UpdateKeyStatusRequest) returns (UpdateKeyStatusResponse) {
+    option (qrdb.v1.permission) = "keys:rotate";
+  }
+
+  // GetKeyMetadata retrieves metadata for a key without exposing key material.
+  rpc GetKeyMetadata(GetKeyMetadataRequest) returns (GetKeyMetadataResponse) {
+    option (qrdb.v1.permission) = "keys:get";
+  }
+
+  // UpdateKeyMetadata updates mutable metadata fields for a key.
+  rpc UpdateKeyMetadata(UpdateKeyMetadataRequest) returns (UpdateKeyMetadataResponse) {
+    option (qrdb.v1.permission) = "keys:rotate";
+  }
+
+  // SetKeyPolicy sets the access control policy for a key. The policy
+  // narrows what RBAC already grants; it never widens it.
+  rpc SetKeyPolicy(SetKeyPolicyRequest) returns (SetKeyPolicyResponse) {
+    option (qrdb.v1.permission) = "keys:rotate";
+  }
+
+  // GetKeyPolicy retrieves the access control policy for a key.
+  rpc GetKeyPolicy(GetKeyPolicyRequest) returns (GetKeyPolicyResponse) {
+    option (qrdb.v1.permission) = "keys:get";
+  }
+
+  // DeleteKeyPolicy removes the access control policy for a key; the key
+  // falls back to RBAC alone, never to unauthenticated access.
+  rpc DeleteKeyPolicy(DeleteKeyPolicyRequest) returns (DeleteKeyPolicyResponse) {
+    option (qrdb.v1.permission) = "keys:delete";
+  }
+
+  // SetKeyRotationPolicy sets or replaces the automatic rotation policy for a key.
+  rpc SetKeyRotationPolicy(SetKeyRotationPolicyRequest) returns (SetKeyRotationPolicyResponse) {
+    option (qrdb.v1.permission) = "keys:rotate";
+  }
+
+  // GetKeyRotationPolicy retrieves the current automatic rotation policy for a key.
+  rpc GetKeyRotationPolicy(GetKeyRotationPolicyRequest) returns (GetKeyRotationPolicyResponse) {
+    option (qrdb.v1.permission) = "keys:get";
+  }
+
+  // DeleteKeyRotationPolicy removes the rotation policy for a key, disabling
+  // automatic rotation.
+  rpc DeleteKeyRotationPolicy(DeleteKeyRotationPolicyRequest) returns (DeleteKeyRotationPolicyResponse) {
+    option (qrdb.v1.permission) = "keys:delete";
+  }
+
+  // GetSupportedAlgorithms returns the cryptographic algorithms the named
+  // backend supports, so a caller can check before attempting an operation.
+  rpc GetSupportedAlgorithms(GetSupportedAlgorithmsRequest) returns (GetSupportedAlgorithmsResponse) {
+    option (qrdb.v1.permission) = "keys:list";
+  }
+
+  // BackendStatus returns health and capability information about a backend.
+  rpc BackendStatus(BackendStatusRequest) returns (BackendStatusResponse) {
+    option (qrdb.v1.permission) = "backends:read";
+  }
+
+  // BackendTest performs a non-destructive seal/unseal round trip to verify
+  // backend functionality.
+  rpc BackendTest(BackendTestRequest) returns (BackendTestResponse) {
+    option (qrdb.v1.permission) = "backends:read";
+  }
+
+  // SetKeySafety configures AEAD usage limits (NIST SP 800-38D §8.3,
+  // RFC 8439 §4) for a symmetric key.
+  rpc SetKeySafety(SetKeySafetyRequest) returns (SetKeySafetyResponse) {
+    option (qrdb.v1.permission) = "keys:rotate";
+  }
+
+  // ClearKeySafety removes custom AEAD usage limits from a key.
+  rpc ClearKeySafety(ClearKeySafetyRequest) returns (ClearKeySafetyResponse) {
+    option (qrdb.v1.permission) = "keys:rotate";
+  }
+
+  // SafetyCheck returns warnings for keys approaching their usage limits.
+  rpc SafetyCheck(SafetyCheckRequest) returns (SafetyCheckResponse) {
+    option (qrdb.v1.permission) = "keys:get";
+  }
+
+  // SafetyReport returns a safety report for every key with usage limits.
+  rpc SafetyReport(SafetyReportRequest) returns (SafetyReportResponse) {
+    option (qrdb.v1.permission) = "keys:get";
+  }
+
   // DeriveKey derives a key using the specified algorithm and parameters
   // Supports HKDF, ECDH, DH, SP800-108, PBKDF2, and other key derivation mechanisms
   rpc DeriveKey(DeriveKeyRequest) returns (DeriveKeyResponse) {
@@ -1575,6 +1733,507 @@ message DecryptResponse {
   bytes plaintext = 1;
   // key_version is the key version that decrypted the ciphertext.
   uint32 key_version = 2;
+}
+
+// ==================== Crypto Utility Messages ====================
+
+// RewrapRequest names the ciphertext to unwrap, as a DecryptRequest, and the
+// key to wrap its plaintext under. An empty target_key_id rewraps under the
+// source key's current version; an empty target_backend uses the source
+// backend. The source additional_data authenticates the new ciphertext too.
+message RewrapRequest {
+  DecryptRequest source = 1;
+  string target_key_id = 2;
+  string target_backend = 3;
+}
+
+message RewrapResponse {
+  // source_key_version is the source key version that decrypted the input.
+  uint32 source_key_version = 1;
+  // wrapped is the ciphertext under the target key.
+  EncryptResponse wrapped = 2;
+}
+
+message EncryptBatchItem {
+  bytes plaintext = 1;
+  bytes additional_data = 2;
+}
+
+message EncryptBatchRequest {
+  string key_id = 1;
+  string backend = 2;
+  repeated EncryptBatchItem items = 3;
+}
+
+// EncryptBatchResult is one item's outcome: result on success, error
+// otherwise.
+message EncryptBatchResult {
+  EncryptResponse result = 1;
+  string error = 2;
+}
+
+message EncryptBatchResponse {
+  repeated EncryptBatchResult results = 1;
+}
+
+message DecryptBatchItem {
+  bytes ciphertext = 1;
+  bytes additional_data = 2;
+  bytes nonce = 3;
+  bytes tag = 4;
+  string gcm_nonce_mode = 5;
+  uint32 key_version = 6;
+}
+
+message DecryptBatchRequest {
+  string key_id = 1;
+  string backend = 2;
+  repeated DecryptBatchItem items = 3;
+}
+
+// DecryptBatchResult is one item's outcome: plaintext and key_version on
+// success, error otherwise.
+message DecryptBatchResult {
+  bytes plaintext = 1;
+  uint32 key_version = 2;
+  string error = 3;
+}
+
+message DecryptBatchResponse {
+  repeated DecryptBatchResult results = 1;
+}
+
+// GenerateDataKeyRequest names the wrapping key and the data key's size in
+// bytes (16, 24 or 32; 0 means 32).
+message GenerateDataKeyRequest {
+  string key_id = 1;
+  string backend = 2;
+  int32 key_size = 3;
+  bytes additional_data = 4;
+}
+
+message GenerateDataKeyResponse {
+  bytes plaintext = 1;
+  EncryptResponse wrapped = 2;
+}
+
+message GenerateWrappedDataKeyResponse {
+  EncryptResponse wrapped = 1;
+}
+
+// GenerateHMACRequest names a symmetric key and the hash function (empty
+// means SHA-256).
+message GenerateHMACRequest {
+  string key_id = 1;
+  string backend = 2;
+  bytes data = 3;
+  string hash = 4;
+}
+
+message GenerateHMACResponse {
+  bytes mac = 1;
+  uint32 key_version = 2;
+  string hash = 3;
+}
+
+// VerifyHMACRequest checks mac against data; key_version 0 tries the enabled
+// versions newest first.
+message VerifyHMACRequest {
+  string key_id = 1;
+  string backend = 2;
+  bytes data = 3;
+  bytes mac = 4;
+  string hash = 5;
+  uint32 key_version = 6;
+}
+
+message VerifyHMACResponse {
+  bool valid = 1;
+  uint32 key_version = 2;
+}
+
+message GenerateRandomRequest {
+  int32 length = 1;
+}
+
+message GenerateRandomResponse {
+  bytes random = 1;
+}
+
+// HashRequest names the hash function (empty means SHA-256).
+message HashRequest {
+  bytes data = 1;
+  string hash = 2;
+}
+
+message HashResponse {
+  bytes digest = 1;
+  string hash = 2;
+}
+
+// ==================== Key Management Messages ====================
+//
+// Adopted from go-quicbaas api/proto/kms.proto with field names and numbers
+// kept; backend is added at the next free number of each request.
+
+// GetPublicKeyRequest retrieves the public key component of an asymmetric key.
+message GetPublicKeyRequest {
+  string key_id = 1;
+  // version optionally targets a specific key version (0 = current).
+  uint64 version = 2;
+  string backend = 3;
+}
+
+// GetPublicKeyResponse returns the DER-encoded public key.
+message GetPublicKeyResponse {
+  string key_id = 1;
+  // public_key is the DER-encoded (PKIX) public key.
+  bytes public_key = 2;
+  KeyAlgorithm algorithm = 3;
+  uint64 version = 4;
+  int64 timestamp = 5;
+}
+
+message RevokeKeyRequest {
+  string key_id = 1;
+  string reason = 2;
+  string backend = 3;
+}
+
+message RevokeKeyResponse {
+  string key_id = 1;
+  KeyStatus status = 2;
+  int64 timestamp = 3;
+}
+
+message UpdateKeyStatusRequest {
+  string key_id = 1;
+  uint64 version = 2; // Optional: 0 means the key as a whole
+  KeyStatus status = 3;
+  string backend = 4;
+}
+
+message UpdateKeyStatusResponse {
+  string key_id = 1;
+  uint64 version = 2;
+  KeyStatus status = 3;
+  int64 timestamp = 4;
+}
+
+message GetKeyMetadataRequest {
+  string key_id = 1;
+  string backend = 2;
+}
+
+message GetKeyMetadataResponse {
+  KeyMetadata metadata = 1;
+  int64 timestamp = 2;
+}
+
+message UpdateKeyMetadataRequest {
+  string key_id = 1;
+  string name = 2;
+  string description = 3;
+  map<string, string> tags = 4;
+  repeated string remove_tags = 5;
+  string backend = 6;
+}
+
+message UpdateKeyMetadataResponse {
+  KeyMetadata metadata = 1;
+  int64 timestamp = 2;
+}
+
+message SetKeyPolicyRequest {
+  string key_id = 1;
+  KeyPolicy policy = 2;
+  string backend = 3;
+}
+
+message SetKeyPolicyResponse {
+  string key_id = 1;
+  uint64 policy_version = 2;
+  int64 timestamp = 3;
+}
+
+message GetKeyPolicyRequest {
+  string key_id = 1;
+  string backend = 2;
+}
+
+message GetKeyPolicyResponse {
+  KeyPolicy policy = 1;
+  int64 timestamp = 2;
+}
+
+// DeleteKeyPolicyRequest removes the access control policy for a key.
+message DeleteKeyPolicyRequest {
+  string key_id = 1;
+  string backend = 2;
+}
+
+// DeleteKeyPolicyResponse confirms that the policy was removed.
+message DeleteKeyPolicyResponse {
+  string key_id = 1;
+  int64 timestamp = 2;
+}
+
+// SetKeyRotationPolicyRequest sets the automatic rotation policy for a key.
+message SetKeyRotationPolicyRequest {
+  string key_id = 1;
+  RotationPolicy policy = 2;
+  string backend = 3;
+}
+
+// SetKeyRotationPolicyResponse confirms the rotation policy was applied.
+message SetKeyRotationPolicyResponse {
+  string key_id = 1;
+  // policy is the stored rotation policy (with computed next_rotation).
+  RotationPolicy policy = 2;
+  int64 timestamp = 3;
+}
+
+// GetKeyRotationPolicyRequest retrieves the rotation policy for a key.
+message GetKeyRotationPolicyRequest {
+  string key_id = 1;
+  string backend = 2;
+}
+
+// GetKeyRotationPolicyResponse returns the current rotation policy.
+message GetKeyRotationPolicyResponse {
+  string key_id = 1;
+  // policy is the current rotation policy; absent when none is configured.
+  RotationPolicy policy = 2;
+  int64 timestamp = 3;
+}
+
+// DeleteKeyRotationPolicyRequest removes the rotation policy for a key,
+// disabling automatic rotation.
+message DeleteKeyRotationPolicyRequest {
+  string key_id = 1;
+  string backend = 2;
+}
+
+// DeleteKeyRotationPolicyResponse confirms the rotation policy was removed.
+message DeleteKeyRotationPolicyResponse {
+  string key_id = 1;
+  int64 timestamp = 2;
+}
+
+// GetSupportedAlgorithmsRequest names the backend to query (empty means the
+// default backend).
+message GetSupportedAlgorithmsRequest {
+  string backend = 1;
+}
+
+// GetSupportedAlgorithmsResponse contains the list of cryptographic algorithms
+// supported by the backend.
+message GetSupportedAlgorithmsResponse {
+  // algorithms is the list of supported algorithm names (e.g., "AES-256-GCM", "ChaCha20-Poly1305").
+  repeated string algorithms = 1;
+}
+
+// BackendStatusRequest names the backend to query (empty means the default
+// backend).
+message BackendStatusRequest {
+  string backend = 1;
+}
+
+// BackendStatusResponse contains information about the KMS backend.
+message BackendStatusResponse {
+  // backend_type is the backend type (tpm2, awskms, azurekms, gcpkms, software, etc.)
+  string backend_type = 1;
+  // status is the backend status (healthy, degraded, unavailable)
+  string status = 2;
+  // device is the device path for TPM backends
+  string device = 3;
+  // region is the region for cloud KMS backends
+  string region = 4;
+  // key_id is the key identifier
+  string key_id = 5;
+  // pcr_banks are the PCR banks available (TPM only)
+  repeated string pcr_banks = 6;
+  // pcr_registers are the PCR registers in use (TPM only)
+  repeated int32 pcr_registers = 7;
+  // capabilities indicate what operations the backend supports
+  map<string, bool> capabilities = 8;
+  // timestamp is when the status was retrieved
+  int64 timestamp = 9;
+}
+
+// BackendTestRequest names the backend to test (empty means the default
+// backend).
+message BackendTestRequest {
+  string backend = 1;
+}
+
+// BackendTestResponse contains the result of a backend test cycle.
+message BackendTestResponse {
+  // success indicates if the test succeeded
+  bool success = 1;
+  // duration_ms is how long the test took in milliseconds
+  int64 duration_ms = 2;
+  // message contains additional information or error details
+  string message = 3;
+  // timestamp is when the test was performed
+  int64 timestamp = 4;
+}
+
+message SetKeySafetyRequest {
+  string key_id = 1;
+  uint64 max_operations = 2;
+  uint64 max_bytes = 3;
+  int32 warning_percent = 4;
+  string backend = 5;
+}
+
+message SetKeySafetyResponse {
+  string key_id = 1;
+  int64 timestamp = 2;
+}
+
+message ClearKeySafetyRequest {
+  string key_id = 1;
+  string backend = 2;
+}
+
+message ClearKeySafetyResponse {
+  string key_id = 1;
+  int64 timestamp = 2;
+}
+
+message SafetyCheckRequest {}
+
+message SafetyCheckResponse {
+  repeated SafetyWarning warnings = 1;
+  int64 timestamp = 2;
+}
+
+message SafetyReportRequest {
+  string format = 1; // "json", "table", "prometheus"
+}
+
+message SafetyReportResponse {
+  repeated SafetyWarning all_items = 1;
+  int32 total_keys = 2;
+  int32 total_deks = 3;
+  int32 keys_at_warning = 4;
+  int32 keys_at_critical = 5;
+  int32 deks_at_warning = 6;
+  int32 deks_at_critical = 7;
+  int64 timestamp = 8;
+}
+
+// KeyAlgorithm specifies the cryptographic algorithm for a key.
+enum KeyAlgorithm {
+  KEY_ALG_UNSPECIFIED = 0;
+
+  // Symmetric Encryption
+  KEY_ALG_AES_128_GCM = 1;
+  KEY_ALG_AES_192_GCM = 2;
+  KEY_ALG_AES_256_GCM = 3;
+  KEY_ALG_CHACHA20_POLY1305 = 4;
+  KEY_ALG_XCHACHA20_POLY1305 = 5;
+
+  // RSA
+  KEY_ALG_RSA_2048 = 10;
+  KEY_ALG_RSA_3072 = 11;
+  KEY_ALG_RSA_4096 = 12;
+
+  // ECDSA
+  KEY_ALG_ECDSA_P256 = 20;
+  KEY_ALG_ECDSA_P384 = 21;
+  KEY_ALG_ECDSA_P521 = 22;
+
+  // EdDSA
+  KEY_ALG_ED25519 = 30;
+  KEY_ALG_ED448 = 31;
+
+  // Key Exchange
+  KEY_ALG_X25519 = 40;
+  KEY_ALG_X448 = 41;
+
+  // HMAC
+  KEY_ALG_HMAC_SHA256 = 50;
+  KEY_ALG_HMAC_SHA384 = 51;
+  KEY_ALG_HMAC_SHA512 = 52;
+}
+
+// KeyStatus represents the lifecycle state of a key.
+enum KeyStatus {
+  KEY_STATUS_UNSPECIFIED = 0;
+  KEY_STATUS_ENABLED = 1;
+  KEY_STATUS_DISABLED = 2;
+  KEY_STATUS_PENDING_DELETION = 3;
+  KEY_STATUS_DELETED = 4;
+  KEY_STATUS_ROTATING = 5;
+  KEY_STATUS_COMPROMISED = 6;
+}
+
+// KeyMetadata contains non-sensitive metadata about a key.
+message KeyMetadata {
+  string key_id = 1;
+  string name = 2;
+  string description = 3;
+  KeyAlgorithm algorithm = 4;
+  KeyStatus status = 5;
+  repeated KeyUsage usage = 6;
+  uint64 version = 7;
+  bool exportable = 8;
+  bool deletion_protection = 9;
+  int64 created_at = 10; // Unix timestamp
+  int64 updated_at = 11; // Unix timestamp
+  int64 last_used_at = 12; // Unix timestamp (optional)
+  RotationPolicy rotation_policy = 13;
+  map<string, string> tags = 14;
+  string owner = 15;
+}
+
+// KeyPolicy defines access control and usage policies.
+message KeyPolicy {
+  string key_id = 1;
+  uint64 version = 2;
+  repeated KeyUsage allowed_operations = 3;
+  repeated string allowed_principals = 4;
+  repeated string denied_principals = 5;
+  int64 expires_at = 6; // Unix timestamp (optional)
+  bool rotation_required = 7;
+  uint64 max_usage_count = 8;
+  bool require_mfa = 9;
+  int64 updated_at = 10; // Unix timestamp
+}
+
+// RotationPolicy defines automatic key rotation behavior.
+message RotationPolicy {
+  bool enabled = 1;
+  int64 interval_seconds = 2;
+  int64 next_rotation = 3; // Unix timestamp
+  int32 retain_versions = 4;
+  bool auto_rotate = 5;
+}
+
+message SafetyWarning {
+  string type = 1;           // "key" or "dek"
+  string path = 2;           // key_id or dek path
+  double usage_percent = 3;
+  string status = 4;         // "warning", "critical", "exceeded"
+  uint64 operations_used = 5;
+  uint64 bytes_used = 6;
+  uint64 max_operations = 7;
+  uint64 max_bytes = 8;
+}
+
+// KeyUsage specifies permitted operations for a key.
+enum KeyUsage {
+  KEY_USAGE_UNSPECIFIED = 0;
+  KEY_USAGE_ENCRYPT = 1;
+  KEY_USAGE_DECRYPT = 2;
+  KEY_USAGE_SIGN = 3;
+  KEY_USAGE_VERIFY = 4;
+  KEY_USAGE_WRAP_KEY = 5;
+  KEY_USAGE_DERIVE_KEY = 6;
+  KEY_USAGE_GENERATE_MAC = 7;
+  KEY_USAGE_VERIFY_MAC = 8;
 }
 
 // EncryptAsymRequest requests asymmetric encryption (RSA-OAEP)

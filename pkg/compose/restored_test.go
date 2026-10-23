@@ -45,6 +45,7 @@ func TestBuild_EveryDependencyComposesEveryFeature(t *testing.T) {
 	assert.NotNil(t, st.CA)
 	assert.Nil(t, st.TPMPolicies)
 	assert.NotNil(t, st.KeyVersions)
+	assert.NotNil(t, st.KeyPolicies)
 	assert.NotNil(t, st.Invite)
 	assert.NotNil(t, st.TrustRoots)
 	assert.NotNil(t, st.OIDCCredentials)
@@ -116,6 +117,7 @@ func TestBuild_NoDependenciesLeavesEveryFeatureOffWithTypedReasons(t *testing.T)
 		FeatureCA:              "CA configuration",
 		FeatureTPMPolicies:     "TPM2 backend",
 		FeatureKeyVersions:     "DAO factory",
+		FeatureKeyPolicies:     "DAO factory",
 		FeatureOIDCCredentials: "barrier registry",
 		FeatureInvite:          "storage",
 		FeatureTrustRoots:      "DAO factory",
@@ -128,6 +130,7 @@ func TestBuild_NoDependenciesLeavesEveryFeatureOffWithTypedReasons(t *testing.T)
 	assert.Nil(t, st.CA)
 	assert.Nil(t, st.TPMPolicies)
 	assert.Nil(t, st.KeyVersions)
+	assert.Nil(t, st.KeyPolicies)
 	assert.Nil(t, st.Invite)
 	assert.Nil(t, st.TrustRoots)
 

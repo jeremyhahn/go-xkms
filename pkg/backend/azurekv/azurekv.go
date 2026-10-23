@@ -328,6 +328,13 @@ func (b *Backend) Capabilities() types.Capabilities {
 	caps.Import = true              // Supported via ImportKey API
 	caps.Export = false             // Azure KV does not allow key extraction for security
 	caps.SecurityLevel = types.SecurityLevelMedium
+	// getKeyParameters creates RSA 2048 and EC P-256 keys only; symmetric
+	// keys are AES secrets of any GCM size.
+	caps.KeyAlgorithms = types.KeyAlgorithms{
+		RSAKeySizes: []int{types.RSAKeySize2048},
+		ECDSACurves: []string{"P-256"},
+		Symmetric:   []types.SymmetricAlgorithm{types.SymmetricAES128GCM, types.SymmetricAES192GCM, types.SymmetricAES256GCM},
+	}
 	return caps
 }
 

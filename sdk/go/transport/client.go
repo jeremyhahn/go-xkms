@@ -22,6 +22,7 @@ type ConnectionService = pkgtransport.ConnectionService
 type BackendService = pkgtransport.BackendService
 type KeyService = pkgtransport.KeyService
 type KeyVersionService = pkgtransport.KeyVersionService
+type CryptoUtilityService = pkgtransport.CryptoUtilityService
 type CryptoService = pkgtransport.CryptoService
 type CertService = pkgtransport.CertService
 type SealService = pkgtransport.SealService

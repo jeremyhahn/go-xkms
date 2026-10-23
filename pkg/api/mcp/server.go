@@ -285,6 +285,39 @@ var rpcMethods = map[string]rpcMethod{
 	"xkms.disableAllKeyVersions": handle(auth.ResourceKeys, auth.ActionRotate, (*Server).handleDisableAllKeyVersions),
 	"xkms.rotateScopeKeys":       handle(auth.ResourceKeys, auth.ActionRotate, (*Server).handleRotateScopeKeys),
 
+	// Crypto utility operations
+	"xkms.rewrap":                 handle(auth.ResourceKeys, auth.ActionDecrypt, (*Server).handleRewrap),
+	"xkms.encryptBatch":           handle(auth.ResourceKeys, auth.ActionEncrypt, (*Server).handleEncryptBatch),
+	"xkms.decryptBatch":           handle(auth.ResourceKeys, auth.ActionDecrypt, (*Server).handleDecryptBatch),
+	"xkms.generateDataKey":        handle(auth.ResourceKeys, auth.ActionEncrypt, (*Server).handleGenerateDataKey),
+	"xkms.generateWrappedDataKey": handle(auth.ResourceKeys, auth.ActionEncrypt, (*Server).handleGenerateWrappedDataKey),
+	"xkms.generateHMAC":           handle(auth.ResourceKeys, auth.ActionSign, (*Server).handleGenerateHMAC),
+	"xkms.verifyHMAC":             handle(auth.ResourceKeys, auth.ActionVerify, (*Server).handleVerifyHMAC),
+	"xkms.generateRandom":         handle(auth.ResourceKeys, auth.ActionVerify, (*Server).handleGenerateRandom),
+	"xkms.hash":                   handle(auth.ResourceKeys, auth.ActionVerify, (*Server).handleHash),
+
+	// Key management (go-xkms#1681), matching pkg/api/rest/routes.go's
+	// decorators: reads are keys:get, removals keys:delete, changes
+	// keys:rotate; backend probes are backends:read.
+	"xkms.getPublicKey":            handle(auth.ResourceKeys, auth.ActionGet, (*Server).handleGetPublicKey),
+	"xkms.revokeKey":               handle(auth.ResourceKeys, auth.ActionDelete, (*Server).handleRevokeKey),
+	"xkms.updateKeyStatus":         handle(auth.ResourceKeys, auth.ActionRotate, (*Server).handleUpdateKeyStatus),
+	"xkms.getKeyMetadata":          handle(auth.ResourceKeys, auth.ActionGet, (*Server).handleGetKeyMetadata),
+	"xkms.updateKeyMetadata":       handle(auth.ResourceKeys, auth.ActionRotate, (*Server).handleUpdateKeyMetadata),
+	"xkms.setKeyPolicy":            handle(auth.ResourceKeys, auth.ActionRotate, (*Server).handleSetKeyPolicy),
+	"xkms.getKeyPolicy":            handle(auth.ResourceKeys, auth.ActionGet, (*Server).handleGetKeyPolicy),
+	"xkms.deleteKeyPolicy":         handle(auth.ResourceKeys, auth.ActionDelete, (*Server).handleDeleteKeyPolicy),
+	"xkms.setKeyRotationPolicy":    handle(auth.ResourceKeys, auth.ActionRotate, (*Server).handleSetKeyRotationPolicy),
+	"xkms.getKeyRotationPolicy":    handle(auth.ResourceKeys, auth.ActionGet, (*Server).handleGetKeyRotationPolicy),
+	"xkms.deleteKeyRotationPolicy": handle(auth.ResourceKeys, auth.ActionDelete, (*Server).handleDeleteKeyRotationPolicy),
+	"xkms.getSupportedAlgorithms":  handle(auth.ResourceKeys, auth.ActionList, (*Server).handleGetSupportedAlgorithms),
+	"xkms.backendStatus":           handle(auth.ResourceBackends, auth.ActionRead, (*Server).handleBackendStatus),
+	"xkms.backendTest":             handle(auth.ResourceBackends, auth.ActionRead, (*Server).handleBackendTest),
+	"xkms.setKeySafety":            handle(auth.ResourceKeys, auth.ActionRotate, (*Server).handleSetKeySafety),
+	"xkms.clearKeySafety":          handle(auth.ResourceKeys, auth.ActionRotate, (*Server).handleClearKeySafety),
+	"xkms.safetyCheck":             handle(auth.ResourceKeys, auth.ActionGet, (*Server).handleSafetyCheck),
+	"xkms.safetyReport":            handle(auth.ResourceKeys, auth.ActionGet, (*Server).handleSafetyReport),
+
 	"xkms.sign":                handle(auth.ResourceKeys, auth.ActionSign, (*Server).handleSign),
 	"xkms.verify":              handle(auth.ResourceKeys, auth.ActionVerify, (*Server).handleVerify),
 	"xkms.encrypt":             handle(auth.ResourceKeys, auth.ActionEncrypt, (*Server).handleEncrypt),

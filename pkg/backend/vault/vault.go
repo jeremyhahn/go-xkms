@@ -173,6 +173,14 @@ func (b *Backend) Capabilities() types.Capabilities {
 		Import:              true,
 		Export:              true,
 		SecurityLevel:       types.SecurityLevelMedium,
+		// The Transit key types the backend creates: rsa-2048/3072/4096,
+		// ecdsa-p256/p384/p521, ed25519 and aes256-gcm96.
+		KeyAlgorithms: types.KeyAlgorithms{
+			RSAKeySizes: []int{types.RSAKeySize2048, types.RSAKeySize3072, types.RSAKeySize4096},
+			ECDSACurves: []string{"P-256", "P-384", "P-521"},
+			Ed25519:     true,
+			Symmetric:   []types.SymmetricAlgorithm{types.SymmetricAES256GCM},
+		},
 	}
 }
 

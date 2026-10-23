@@ -23,6 +23,7 @@ import (
 	"github.com/google/uuid"
 
 	"github.com/jeremyhahn/go-xkms/pkg/api/transport"
+	"github.com/jeremyhahn/go-xkms/pkg/keypolicy"
 	"github.com/jeremyhahn/go-xkms/pkg/types"
 )
 
@@ -228,6 +229,9 @@ func (s *XKMSService) Seal(ctx context.Context, req *transport.SealRequest) (*tr
 	}
 	var version uint32
 	if k != nil {
+		if err := s.admitKey(ctx, k, keypolicy.OpEncrypt, uint64(len(req.Data))); err != nil {
+			return nil, err
+		}
 		cur, err := k.current()
 		if err != nil {
 			return nil, err
@@ -308,6 +312,9 @@ func (s *XKMSService) Unseal(ctx context.Context, req *transport.UnsealRequest) 
 	}
 	versions := []keyVersion{{attrs: attrs}}
 	if k != nil {
+		if err := s.admitKey(ctx, k, keypolicy.OpDecrypt); err != nil {
+			return nil, err
+		}
 		// Every seal construction authenticates its ciphertext, so a blob
 		// that records no version can try each enabled one.
 		if versions, err = k.trialVersions(req.KeyVersion); err != nil {

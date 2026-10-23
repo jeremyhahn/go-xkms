@@ -15,6 +15,7 @@ package xkms
 
 import (
 	"fmt"
+	"slices"
 	"testing"
 
 	"github.com/jeremyhahn/go-xkms/pkg/errs"
@@ -27,7 +28,7 @@ import (
 func TestBuildAlgorithmsResponse_SoftwareOnly(t *testing.T) {
 	backends := []BackendType{BackendSoftware}
 	provider := stubCapabilities(map[string]types.Capabilities{
-		"software": {Keys: true},
+		"software": {Keys: true, KeyAlgorithms: classicalKeys},
 	})
 
 	resp := BuildAlgorithmsResponse(backends, provider)
@@ -48,7 +49,7 @@ func TestBuildAlgorithmsResponse_SoftwareOnly(t *testing.T) {
 	if ecdsa == nil {
 		t.Fatal("ECDSA not found")
 	}
-	expectedCurves := []string{"P-224", "P-256", "P-384", "P-521"}
+	expectedCurves := []string{"P-256", "P-384", "P-521"}
 	if len(ecdsa.Curves) != len(expectedCurves) {
 		t.Fatalf("expected %d curves, got %d", len(expectedCurves), len(ecdsa.Curves))
 	}
@@ -77,8 +78,8 @@ func TestBuildAlgorithmsResponse_SoftwareOnly(t *testing.T) {
 func TestBuildAlgorithmsResponse_SoftwareAndTPM2(t *testing.T) {
 	backends := []BackendType{BackendSoftware, BackendTPM2}
 	provider := stubCapabilities(map[string]types.Capabilities{
-		"software": {Keys: true},
-		"tpm2":     {Keys: true, HardwareBacked: true},
+		"software": {Keys: true, KeyAlgorithms: classicalKeys},
+		"tpm2":     {Keys: true, HardwareBacked: true, KeyAlgorithms: tpm2Keys},
 	})
 
 	resp := BuildAlgorithmsResponse(backends, provider)
@@ -89,32 +90,41 @@ func TestBuildAlgorithmsResponse_SoftwareAndTPM2(t *testing.T) {
 
 	assertAlgorithm(t, resp.Signing, "ECDSA", []string{"software", "tpm2"}, false)
 	assertAlgorithm(t, resp.Signing, "RSA", []string{"software", "tpm2"}, false)
-	assertAlgorithm(t, resp.Signing, "Ed25519", []string{"software", "tpm2"}, false)
+	// The TPM declares no Ed25519, so only the software backend offers it.
+	assertAlgorithm(t, resp.Signing, "Ed25519", []string{"software"}, false)
+
+	// Merged entries carry the union of the backends' sizes, once each.
+	rsa := findAlgorithm(resp.Signing, "RSA")
+	if !slices.Equal(rsa.KeySizes, []int{2048, 3072, 4096}) {
+		t.Errorf("RSA key sizes = %v, want the union [2048 3072 4096]", rsa.KeySizes)
+	}
 }
 
 func TestBuildAlgorithmsResponse_QuantumBackend(t *testing.T) {
 	backends := []BackendType{BackendSoftware, BackendQuantum}
 	provider := stubCapabilities(map[string]types.Capabilities{
-		"software": {Keys: true},
-		"quantum":  {Keys: true, QuantumSigning: true, KeyEncapsulation: true},
+		"software": {Keys: true, KeyAlgorithms: classicalKeys},
+		"quantum":  {Keys: true, QuantumSigning: true, KeyEncapsulation: true, KeyAlgorithms: quantumKeys},
 	})
 
 	resp := BuildAlgorithmsResponse(backends, provider)
 
-	// 3 classical + 2 PQ signing
-	if len(resp.Signing) != 5 {
-		t.Fatalf("expected 5 signing algorithms, got %d", len(resp.Signing))
+	// 3 classical + 3 ML-DSA parameter sets
+	if len(resp.Signing) != 6 {
+		t.Fatalf("expected 6 signing algorithms, got %d", len(resp.Signing))
 	}
-	if len(resp.KeyEncapsulation) != 1 {
-		t.Fatalf("expected 1 key encapsulation algorithm, got %d", len(resp.KeyEncapsulation))
+	if len(resp.KeyEncapsulation) != 2 {
+		t.Fatalf("expected 2 key encapsulation algorithms, got %d", len(resp.KeyEncapsulation))
 	}
 
+	assertAlgorithm(t, resp.Signing, "ML-DSA-44", []string{"quantum"}, true)
 	assertAlgorithm(t, resp.Signing, "ML-DSA-65", []string{"quantum"}, true)
 	assertAlgorithm(t, resp.Signing, "ML-DSA-87", []string{"quantum"}, true)
+	assertAlgorithm(t, resp.KeyEncapsulation, "ML-KEM-768", []string{"quantum"}, true)
 	assertAlgorithm(t, resp.KeyEncapsulation, "ML-KEM-1024", []string{"quantum"}, true)
 
-	// Classical algorithms should only list software, not quantum (quantum has Keys:true so it also contributes)
-	assertAlgorithm(t, resp.Signing, "ECDSA", []string{"software", "quantum"}, false)
+	// The quantum backend declares no classical keys.
+	assertAlgorithm(t, resp.Signing, "ECDSA", []string{"software"}, false)
 }
 
 func TestBuildAlgorithmsResponse_EmptyBackends(t *testing.T) {
@@ -134,7 +144,7 @@ func TestBuildAlgorithmsResponse_CapabilitiesError(t *testing.T) {
 	backends := []BackendType{BackendSoftware, BackendTPM2}
 	provider := func(name string) (types.Capabilities, error) {
 		if name == "software" {
-			return types.Capabilities{Keys: true}, nil
+			return types.Capabilities{Keys: true, KeyAlgorithms: classicalKeys}, nil
 		}
 		return types.Capabilities{}, &errs.Message{Msg: fmt.Sprintf("backend unavailable: %s", name)}
 	}
@@ -151,7 +161,7 @@ func TestBuildAlgorithmsResponse_CapabilitiesError(t *testing.T) {
 func TestBuildAlgorithmsResponse_SortOrder(t *testing.T) {
 	backends := []BackendType{BackendSoftware}
 	provider := stubCapabilities(map[string]types.Capabilities{
-		"software": {Keys: true},
+		"software": {Keys: true, KeyAlgorithms: classicalKeys},
 	})
 
 	resp := BuildAlgorithmsResponse(backends, provider)
@@ -168,30 +178,31 @@ func TestBuildAlgorithmsResponse_SortOrder(t *testing.T) {
 	}
 }
 
-func TestBuildAlgorithmsResponse_NoKeysCapability(t *testing.T) {
+func TestBuildAlgorithmsResponse_FlagsWithoutDeclaration(t *testing.T) {
 	backends := []BackendType{BackendSoftware}
 	provider := stubCapabilities(map[string]types.Capabilities{
-		"software": {Keys: false, Signing: true},
+		"software": {Keys: true, Signing: true, QuantumSigning: true, KeyEncapsulation: true},
 	})
 
 	resp := BuildAlgorithmsResponse(backends, provider)
 
-	if len(resp.Signing) != 0 {
-		t.Fatalf("expected 0 signing algorithms when Keys=false, got %d", len(resp.Signing))
+	// Capability flags alone advertise nothing: only declared algorithms are.
+	if len(resp.Signing) != 0 || len(resp.KeyEncapsulation) != 0 {
+		t.Fatalf("expected no algorithms without a declaration, got %+v", resp)
 	}
 }
 
 func TestBuildAlgorithmsResponse_QuantumSigningOnly(t *testing.T) {
 	backends := []BackendType{BackendQuantum}
 	provider := stubCapabilities(map[string]types.Capabilities{
-		"quantum": {Keys: false, QuantumSigning: true, KeyEncapsulation: false},
+		"quantum": {QuantumSigning: true, KeyAlgorithms: types.KeyAlgorithms{MLDSA: quantumKeys.MLDSA}},
 	})
 
 	resp := BuildAlgorithmsResponse(backends, provider)
 
-	// No classical since Keys=false, but PQ signing should appear
-	if len(resp.Signing) != 2 {
-		t.Fatalf("expected 2 PQ signing algorithms, got %d", len(resp.Signing))
+	// No classical keys and no ML-KEM declared, only the ML-DSA parameter sets.
+	if len(resp.Signing) != 3 {
+		t.Fatalf("expected 3 PQ signing algorithms, got %d", len(resp.Signing))
 	}
 	if len(resp.KeyEncapsulation) != 0 {
 		t.Fatalf("expected 0 key encapsulation algorithms, got %d", len(resp.KeyEncapsulation))
@@ -203,9 +214,9 @@ func TestBuildAlgorithmsResponse_QuantumSigningOnly(t *testing.T) {
 func BenchmarkBuildAlgorithmsResponse(b *testing.B) {
 	backends := []BackendType{BackendSoftware, BackendTPM2, BackendQuantum}
 	provider := stubCapabilities(map[string]types.Capabilities{
-		"software": {Keys: true},
-		"tpm2":     {Keys: true, HardwareBacked: true},
-		"quantum":  {Keys: true, QuantumSigning: true, KeyEncapsulation: true},
+		"software": {Keys: true, KeyAlgorithms: classicalKeys},
+		"tpm2":     {Keys: true, HardwareBacked: true, KeyAlgorithms: tpm2Keys},
+		"quantum":  {Keys: true, QuantumSigning: true, KeyEncapsulation: true, KeyAlgorithms: quantumKeys},
 	})
 
 	b.ResetTimer()
@@ -216,6 +227,24 @@ func BenchmarkBuildAlgorithmsResponse(b *testing.B) {
 }
 
 // stubCapabilities returns a CapabilitiesProvider backed by a static map.
+// classicalKeys, tpm2Keys and quantumKeys are the key-algorithm declarations
+// of the stub backends.
+var (
+	classicalKeys = types.KeyAlgorithms{
+		RSAKeySizes: []int{types.RSAKeySize2048, types.RSAKeySize3072, types.RSAKeySize4096},
+		ECDSACurves: []string{"P-256", "P-384", "P-521"},
+		Ed25519:     true,
+	}
+	tpm2Keys = types.KeyAlgorithms{
+		RSAKeySizes: []int{types.RSAKeySize2048},
+		ECDSACurves: []string{"P-384", "P-256"},
+	}
+	quantumKeys = types.KeyAlgorithms{
+		MLDSA: []types.QuantumAlgorithm{types.QuantumAlgorithmMLDSA44, types.QuantumAlgorithmMLDSA65, types.QuantumAlgorithmMLDSA87},
+		MLKEM: []types.QuantumAlgorithm{types.QuantumAlgorithmMLKEM768, types.QuantumAlgorithmMLKEM1024},
+	}
+)
+
 func stubCapabilities(m map[string]types.Capabilities) CapabilitiesProvider {
 	return func(name string) (types.Capabilities, error) {
 		caps, ok := m[name]

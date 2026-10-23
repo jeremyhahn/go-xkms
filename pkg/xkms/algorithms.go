@@ -14,6 +14,8 @@
 package xkms
 
 import (
+	"cmp"
+	"slices"
 	"sort"
 
 	"github.com/jeremyhahn/go-xkms/pkg/types"
@@ -28,8 +30,11 @@ type CapabilitiesProvider func(name string) (types.Capabilities, error)
 // provider and returns an AlgorithmsResponse that describes every supported
 // algorithm along with the backends that offer it.
 //
-// The function deduplicates algorithms by name: when multiple backends
-// support the same algorithm, their identifiers are merged into a single
+// Each backend contributes the signing and key-encapsulation algorithms its
+// Capabilities.KeyAlgorithms declares, the same declaration
+// GetSupportedAlgorithms reads, so the two never disagree. The function
+// deduplicates algorithms by name: when multiple backends support the same
+// algorithm, their identifiers, curves and key sizes are merged into a single
 // AlgorithmInfo entry.
 func BuildAlgorithmsResponse(
 	backends []BackendType,
@@ -47,47 +52,34 @@ func BuildAlgorithmsResponse(
 		if err != nil {
 			continue
 		}
+		declared := caps.KeyAlgorithms
 
-		if caps.Keys {
+		if len(declared.ECDSACurves) > 0 {
 			mergeAlgorithm(signingMap, types.AlgorithmInfo{
 				Algorithm: types.AlgorithmECDSA.String(),
-				Curves: []string{
-					types.CurveP224.String(),
-					types.CurveP256.String(),
-					types.CurveP384.String(),
-					types.CurveP521.String(),
-				},
+				Curves:    declared.ECDSACurves,
 			}, name)
-
+		}
+		if len(declared.RSAKeySizes) > 0 {
 			mergeAlgorithm(signingMap, types.AlgorithmInfo{
 				Algorithm: types.AlgorithmRSA.String(),
-				KeySizes: []int{
-					types.RSAKeySize2048,
-					types.RSAKeySize3072,
-					types.RSAKeySize4096,
-				},
+				KeySizes:  declared.RSAKeySizes,
 			}, name)
-
+		}
+		if declared.Ed25519 {
 			mergeAlgorithm(signingMap, types.AlgorithmInfo{
 				Algorithm: types.AlgorithmEd25519.String(),
 			}, name)
 		}
-
-		if caps.QuantumSigning {
+		for _, parameterSet := range declared.MLDSA {
 			mergeAlgorithm(signingMap, types.AlgorithmInfo{
-				Algorithm:   "ML-DSA-65",
-				PostQuantum: true,
-			}, name)
-
-			mergeAlgorithm(signingMap, types.AlgorithmInfo{
-				Algorithm:   "ML-DSA-87",
+				Algorithm:   string(parameterSet),
 				PostQuantum: true,
 			}, name)
 		}
-
-		if caps.KeyEncapsulation {
+		for _, parameterSet := range declared.MLKEM {
 			mergeAlgorithm(kemMap, types.AlgorithmInfo{
-				Algorithm:   "ML-KEM-1024",
+				Algorithm:   string(parameterSet),
 				PostQuantum: true,
 			}, name)
 		}
@@ -99,16 +91,25 @@ func BuildAlgorithmsResponse(
 	}
 }
 
-// mergeAlgorithm adds the backend name to an existing entry in the map, or
-// creates a new entry if one does not yet exist.
+// mergeAlgorithm adds the backend name, curves and key sizes to an existing
+// entry in the map, or creates a new entry if one does not yet exist.
 func mergeAlgorithm(m map[string]*types.AlgorithmInfo, info types.AlgorithmInfo, backend string) {
 	existing, ok := m[info.Algorithm]
 	if !ok {
+		info.Curves = slices.Sorted(slices.Values(info.Curves))
+		info.KeySizes = slices.Sorted(slices.Values(info.KeySizes))
 		info.Backends = []string{backend}
 		m[info.Algorithm] = &info
 		return
 	}
+	existing.Curves = sortedUnion(existing.Curves, info.Curves)
+	existing.KeySizes = sortedUnion(existing.KeySizes, info.KeySizes)
 	existing.Backends = append(existing.Backends, backend)
+}
+
+// sortedUnion returns the sorted union of a and b, each value once.
+func sortedUnion[T cmp.Ordered](a, b []T) []T {
+	return slices.Compact(slices.Sorted(slices.Values(slices.Concat(a, b))))
 }
 
 // sortedAlgorithms converts the map values to a sorted slice for

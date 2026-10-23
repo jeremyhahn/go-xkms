@@ -129,6 +129,9 @@ func mapKeyOpError(ctx context.Context, xkmsService *xkms.XKMSService, err error
 	if class, ok := apierrors.KeyVersionClassOf(err); ok {
 		return status.Error(grpcCodeForClass(class), err.Error())
 	}
+	if class, ok := apierrors.KeyPolicyClassOf(err); ok {
+		return status.Error(grpcCodeForClass(class), err.Error())
+	}
 
 	var role *xkms.ErrRoleLookup
 	if errors.As(err, &role) {

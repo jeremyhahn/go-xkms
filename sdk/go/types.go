@@ -103,6 +103,9 @@ type (
 	// Capabilities describes what operations a backend supports.
 	Capabilities = types.Capabilities
 
+	// KeyAlgorithms declares the key shapes a backend generates and operates.
+	KeyAlgorithms = types.KeyAlgorithms
+
 	// KeyProvider is the interface for key management operations.
 	KeyProvider = types.KeyProvider
 
@@ -370,6 +373,10 @@ const (
 	QuantumAlgorithmMLDSA44 = types.QuantumAlgorithmMLDSA44
 	QuantumAlgorithmMLDSA65 = types.QuantumAlgorithmMLDSA65
 	QuantumAlgorithmMLDSA87 = types.QuantumAlgorithmMLDSA87
+
+	QuantumAlgorithmMLKEM512  = types.QuantumAlgorithmMLKEM512
+	QuantumAlgorithmMLKEM768  = types.QuantumAlgorithmMLKEM768
+	QuantumAlgorithmMLKEM1024 = types.QuantumAlgorithmMLKEM1024
 )
 
 // Symmetric algorithm constants.

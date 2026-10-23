@@ -780,3 +780,111 @@ func (m *MockXKMSService) UpdateTenantEntitlements(_ context.Context, _ *transpo
 func (m *MockXKMSService) UpdateTenantQuotas(_ context.Context, _ *transport.UpdateTenantQuotasRequest) (*transport.UpdateTenantQuotasResponse, error) {
 	return nil, nil
 }
+
+func (m *MockXKMSService) Rewrap(context.Context, *transport.RewrapRequest) (*transport.RewrapResponse, error) {
+	return nil, &mockUnsupportedError{capability: "crypto utility"}
+}
+
+func (m *MockXKMSService) EncryptBatch(context.Context, *transport.EncryptBatchRequest) (*transport.EncryptBatchResponse, error) {
+	return nil, &mockUnsupportedError{capability: "crypto utility"}
+}
+
+func (m *MockXKMSService) DecryptBatch(context.Context, *transport.DecryptBatchRequest) (*transport.DecryptBatchResponse, error) {
+	return nil, &mockUnsupportedError{capability: "crypto utility"}
+}
+
+func (m *MockXKMSService) GenerateDataKey(context.Context, *transport.GenerateDataKeyRequest) (*transport.GenerateDataKeyResponse, error) {
+	return nil, &mockUnsupportedError{capability: "crypto utility"}
+}
+
+func (m *MockXKMSService) GenerateWrappedDataKey(context.Context, *transport.GenerateDataKeyRequest) (*transport.GenerateWrappedDataKeyResponse, error) {
+	return nil, &mockUnsupportedError{capability: "crypto utility"}
+}
+
+func (m *MockXKMSService) GenerateHMAC(context.Context, *transport.GenerateHMACRequest) (*transport.GenerateHMACResponse, error) {
+	return nil, &mockUnsupportedError{capability: "crypto utility"}
+}
+
+func (m *MockXKMSService) VerifyHMAC(context.Context, *transport.VerifyHMACRequest) (*transport.VerifyHMACResponse, error) {
+	return nil, &mockUnsupportedError{capability: "crypto utility"}
+}
+
+func (m *MockXKMSService) GenerateRandom(context.Context, *transport.GenerateRandomRequest) (*transport.GenerateRandomResponse, error) {
+	return nil, &mockUnsupportedError{capability: "crypto utility"}
+}
+
+func (m *MockXKMSService) Hash(context.Context, *transport.HashRequest) (*transport.HashResponse, error) {
+	return nil, &mockUnsupportedError{capability: "crypto utility"}
+}
+
+func (m *MockXKMSService) GetPublicKey(context.Context, *transport.GetPublicKeyRequest) (*transport.GetPublicKeyResponse, error) {
+	return nil, &mockUnsupportedError{capability: "key management"}
+}
+
+func (m *MockXKMSService) RevokeKey(context.Context, *transport.RevokeKeyRequest) (*transport.RevokeKeyResponse, error) {
+	return nil, &mockUnsupportedError{capability: "key management"}
+}
+
+func (m *MockXKMSService) UpdateKeyStatus(context.Context, *transport.UpdateKeyStatusRequest) (*transport.UpdateKeyStatusResponse, error) {
+	return nil, &mockUnsupportedError{capability: "key management"}
+}
+
+func (m *MockXKMSService) GetKeyMetadata(context.Context, *transport.KeyManagementRequest) (*transport.KeyMetadataResponse, error) {
+	return nil, &mockUnsupportedError{capability: "key management"}
+}
+
+func (m *MockXKMSService) UpdateKeyMetadata(context.Context, *transport.UpdateKeyMetadataRequest) (*transport.KeyMetadataResponse, error) {
+	return nil, &mockUnsupportedError{capability: "key management"}
+}
+
+func (m *MockXKMSService) SetKeyPolicy(context.Context, *transport.SetKeyPolicyRequest) (*transport.SetKeyPolicyResponse, error) {
+	return nil, &mockUnsupportedError{capability: "key management"}
+}
+
+func (m *MockXKMSService) GetKeyPolicy(context.Context, *transport.KeyManagementRequest) (*transport.GetKeyPolicyResponse, error) {
+	return nil, &mockUnsupportedError{capability: "key management"}
+}
+
+func (m *MockXKMSService) DeleteKeyPolicy(context.Context, *transport.KeyManagementRequest) (*transport.KeyManagementResponse, error) {
+	return nil, &mockUnsupportedError{capability: "key management"}
+}
+
+func (m *MockXKMSService) SetKeyRotationPolicy(context.Context, *transport.SetKeyRotationPolicyRequest) (*transport.KeyRotationPolicyResponse, error) {
+	return nil, &mockUnsupportedError{capability: "key management"}
+}
+
+func (m *MockXKMSService) GetKeyRotationPolicy(context.Context, *transport.KeyManagementRequest) (*transport.KeyRotationPolicyResponse, error) {
+	return nil, &mockUnsupportedError{capability: "key management"}
+}
+
+func (m *MockXKMSService) DeleteKeyRotationPolicy(context.Context, *transport.KeyManagementRequest) (*transport.KeyManagementResponse, error) {
+	return nil, &mockUnsupportedError{capability: "key management"}
+}
+
+func (m *MockXKMSService) GetSupportedAlgorithms(context.Context, *transport.BackendRequest) (*transport.GetSupportedAlgorithmsResponse, error) {
+	return nil, &mockUnsupportedError{capability: "key management"}
+}
+
+func (m *MockXKMSService) BackendStatus(context.Context, *transport.BackendRequest) (*transport.BackendStatusResponse, error) {
+	return nil, &mockUnsupportedError{capability: "key management"}
+}
+
+func (m *MockXKMSService) BackendTest(context.Context, *transport.BackendRequest) (*transport.BackendTestResponse, error) {
+	return nil, &mockUnsupportedError{capability: "key management"}
+}
+
+func (m *MockXKMSService) SetKeySafety(context.Context, *transport.SetKeySafetyRequest) (*transport.KeyManagementResponse, error) {
+	return nil, &mockUnsupportedError{capability: "key management"}
+}
+
+func (m *MockXKMSService) ClearKeySafety(context.Context, *transport.KeyManagementRequest) (*transport.KeyManagementResponse, error) {
+	return nil, &mockUnsupportedError{capability: "key management"}
+}
+
+func (m *MockXKMSService) SafetyCheck(context.Context, *transport.SafetyCheckRequest) (*transport.SafetyCheckResponse, error) {
+	return nil, &mockUnsupportedError{capability: "key management"}
+}
+
+func (m *MockXKMSService) SafetyReport(context.Context, *transport.SafetyReportRequest) (*transport.SafetyReportResponse, error) {
+	return nil, &mockUnsupportedError{capability: "key management"}
+}
