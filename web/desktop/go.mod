@@ -12,7 +12,7 @@ replace (
 )
 
 require (
-	github.com/jeremyhahn/go-xkms v0.61.0-alpha
+	github.com/jeremyhahn/go-xkms v0.62.0-alpha
 	github.com/wailsapp/wails/v2 v2.17.0
 )
 
@@ -153,7 +153,7 @@ require (
 	github.com/jeremyhahn/go-qrdb/sdk/go v0.51.0-alpha // indirect
 	github.com/jeremyhahn/go-quicraft v0.22.0-alpha // indirect
 	github.com/jeremyhahn/go-truststrap v0.6.0-alpha // indirect
-	github.com/jeremyhahn/go-xkms/sdk/go v0.61.0-alpha // indirect
+	github.com/jeremyhahn/go-xkms/sdk/go v0.62.0-alpha // indirect
 	github.com/jeroenrinzema/psql-wire v0.20.0 // indirect
 	github.com/jmespath/go-jmespath v0.4.0 // indirect
 	github.com/json-iterator/go v1.1.12 // indirect
