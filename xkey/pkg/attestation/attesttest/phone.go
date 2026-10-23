@@ -316,7 +316,7 @@ func (p *Phone) serveExchange(
 		return err
 	}
 
-	response, err := pairingproto.EncodeResponse(req.ID, result)
+	response, err := pairingproto.EncodeResponse(req.ID, req.Generation, result)
 	if err != nil {
 		return err
 	}

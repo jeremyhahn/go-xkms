@@ -74,7 +74,7 @@ func TestBridge_HandleOATHAdd_NotConfigured(t *testing.T) {
 		},
 	})
 	resp := b.HandleRequest(context.Background(), req)
-	assertErrorResponse(t, resp, req.ID, pairingproto.ErrorCodeFeatureUnavailable)
+	assertErrorResponse(t, resp, req.ID, req.Generation, pairingproto.ErrorCodeFeatureUnavailable)
 }
 
 // TestBridge_HandleOATHAdd_Success verifies the real round trip through the
@@ -134,7 +134,7 @@ func TestBridge_HandleOATHAdd_Duplicate(t *testing.T) {
 	decodeResult[pairingproto.RemoteOATHAddResult](t, first)
 
 	second := b.HandleRequest(context.Background(), newRemoteRequest(pairingproto.MethodRemoteOATHAdd, params))
-	assertErrorResponse(t, second, 1, pairingproto.ErrorCodeKeyExists)
+	assertErrorResponse(t, second, 1, testRequestGeneration, pairingproto.ErrorCodeKeyExists)
 }
 
 func TestBridge_HandleOATHAdd_InvalidParams(t *testing.T) {
@@ -145,7 +145,7 @@ func TestBridge_HandleOATHAdd_InvalidParams(t *testing.T) {
 	// Nil params
 	req := newRemoteRequest(pairingproto.MethodRemoteOATHAdd, nil)
 	resp := b.HandleRequest(context.Background(), req)
-	assertErrorResponse(t, resp, req.ID, pairingproto.ErrorCodeInvalidParams)
+	assertErrorResponse(t, resp, req.ID, req.Generation, pairingproto.ErrorCodeInvalidParams)
 }
 
 func TestBridge_HandleOATHAdd_EmptyName(t *testing.T) {
@@ -161,7 +161,7 @@ func TestBridge_HandleOATHAdd_EmptyName(t *testing.T) {
 		},
 	})
 	resp := b.HandleRequest(context.Background(), req)
-	assertErrorResponse(t, resp, req.ID, pairingproto.ErrorCodeInvalidParams)
+	assertErrorResponse(t, resp, req.ID, req.Generation, pairingproto.ErrorCodeInvalidParams)
 }
 
 func TestBridge_HandleOATHAdd_EmptySecret(t *testing.T) {
@@ -177,7 +177,7 @@ func TestBridge_HandleOATHAdd_EmptySecret(t *testing.T) {
 		},
 	})
 	resp := b.HandleRequest(context.Background(), req)
-	assertErrorResponse(t, resp, req.ID, pairingproto.ErrorCodeInvalidParams)
+	assertErrorResponse(t, resp, req.ID, req.Generation, pairingproto.ErrorCodeInvalidParams)
 }
 
 // --- handleOATHGenerate tests ---
@@ -194,7 +194,7 @@ func TestBridge_HandleOATHGenerate_NotConfigured(t *testing.T) {
 		CredentialID: "cred-001",
 	})
 	resp := b.HandleRequest(context.Background(), req)
-	assertErrorResponse(t, resp, req.ID, pairingproto.ErrorCodeFeatureUnavailable)
+	assertErrorResponse(t, resp, req.ID, req.Generation, pairingproto.ErrorCodeFeatureUnavailable)
 }
 
 // TestBridge_HandleOATHGenerate_NotFound verifies that a credential ID absent
@@ -210,7 +210,7 @@ func TestBridge_HandleOATHGenerate_NotFound(t *testing.T) {
 		CredentialID: "cred-001",
 	})
 	resp := b.HandleRequest(context.Background(), req)
-	assertErrorResponse(t, resp, req.ID, pairingproto.ErrorCodeOATHNotFound)
+	assertErrorResponse(t, resp, req.ID, req.Generation, pairingproto.ErrorCodeOATHNotFound)
 }
 
 // TestBridge_HandleOATHGenerate_Success verifies the real round trip through
@@ -246,7 +246,7 @@ func TestBridge_HandleOATHGenerate_InvalidParams(t *testing.T) {
 	// Nil params
 	req := newRemoteRequest(pairingproto.MethodRemoteOATHGenerate, nil)
 	resp := b.HandleRequest(context.Background(), req)
-	assertErrorResponse(t, resp, req.ID, pairingproto.ErrorCodeInvalidParams)
+	assertErrorResponse(t, resp, req.ID, req.Generation, pairingproto.ErrorCodeInvalidParams)
 }
 
 func TestBridge_HandleOATHGenerate_EmptyCredentialID(t *testing.T) {
@@ -258,7 +258,7 @@ func TestBridge_HandleOATHGenerate_EmptyCredentialID(t *testing.T) {
 		CredentialID: "",
 	})
 	resp := b.HandleRequest(context.Background(), req)
-	assertErrorResponse(t, resp, req.ID, pairingproto.ErrorCodeInvalidParams)
+	assertErrorResponse(t, resp, req.ID, req.Generation, pairingproto.ErrorCodeInvalidParams)
 }
 
 // --- Error mapping tests ---
@@ -298,7 +298,7 @@ func TestBridge_NilParams_OATHHandlers(t *testing.T) {
 		t.Run(method, func(t *testing.T) {
 			req := newRemoteRequest(method, nil)
 			resp := b.HandleRequest(context.Background(), req)
-			assertErrorResponse(t, resp, req.ID, pairingproto.ErrorCodeInvalidParams)
+			assertErrorResponse(t, resp, req.ID, req.Generation, pairingproto.ErrorCodeInvalidParams)
 		})
 	}
 }

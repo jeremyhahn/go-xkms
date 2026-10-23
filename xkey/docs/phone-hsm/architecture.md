@@ -1,6 +1,6 @@
 # Phone as HSM — Architecture
 
-> **Status: NORMATIVE** · Feature: `phone-hsm` · Module: `go-xkms/xkey` · Last verified: 2026-09-25
+> **Status: NORMATIVE** · Feature: `phone-hsm` · Module: `go-xkms/xkey` · Last verified: 2026-10-23
 
 ## The problem
 
@@ -132,6 +132,10 @@ phone's attestation fingerprint into the Noise prologue.
   transport takes a mutex and says why: *"a Noise cipherstate advances a
   monotonic nonce per message, so concurrent senders would put frames on the
   wire out of nonce order and the phone would reject them."*
+- **A response must match the request it answers on both `id` and
+  `generation`** (#128). `generation` is not a secret -- it disambiguates two
+  attempts that share an `id`, which Noise's peer authentication does not by
+  itself do. See *Request generation matching* in `engineering.md`.
 - **Pairing is the moment of trust.** Everything afterwards rests on the keys
   exchanged then; re-pairing is a deliberate act (`--force`).
 - **A lost phone is a lost credential holder.** Unpair it; keys inside it cannot

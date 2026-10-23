@@ -305,7 +305,7 @@ func TestDecodeRequest_EmptyData(t *testing.T) {
 func TestEncodeResponse_Success(t *testing.T) {
 	result := &PingResult{Pong: true}
 
-	data, err := EncodeResponse(123, result)
+	data, err := EncodeResponse(123, 7, result)
 	require.NoError(t, err)
 	require.NotEmpty(t, data)
 
@@ -315,6 +315,7 @@ func TestEncodeResponse_Success(t *testing.T) {
 
 	assert.Equal(t, JSONRPCVersion, decoded["jsonrpc"])
 	assert.Equal(t, float64(123), decoded["id"])
+	assert.Equal(t, float64(7), decoded["generation"])
 	assert.NotNil(t, decoded["result"])
 	assert.Nil(t, decoded["error"])
 
@@ -332,13 +333,14 @@ func TestEncodeResponse_ComplexResult(t *testing.T) {
 		CurrentCredentials:  5,
 	}
 
-	data, err := EncodeResponse(456, result)
+	data, err := EncodeResponse(456, 9, result)
 	require.NoError(t, err)
 
 	// Decode and verify
 	resp, err := DecodeResponse(data)
 	require.NoError(t, err)
 	assert.Equal(t, uint64(456), resp.ID)
+	assert.Equal(t, uint64(9), resp.Generation)
 	assert.Nil(t, resp.Error)
 
 	decoded, err := DecodeResult[GetInfoResult](resp)
@@ -349,7 +351,7 @@ func TestEncodeResponse_ComplexResult(t *testing.T) {
 }
 
 func TestEncodeResponse_NilResult(t *testing.T) {
-	data, err := EncodeResponse(789, nil)
+	data, err := EncodeResponse(789, 0, nil)
 	require.NoError(t, err)
 
 	var decoded map[string]interface{}
@@ -359,7 +361,7 @@ func TestEncodeResponse_NilResult(t *testing.T) {
 }
 
 func TestEncodeErrorResponse_Basic(t *testing.T) {
-	data, err := EncodeErrorResponse(100, ErrorCodeKeyNotFound, "key not found", nil)
+	data, err := EncodeErrorResponse(100, 3, ErrorCodeKeyNotFound, "key not found", nil)
 	require.NoError(t, err)
 	require.NotEmpty(t, data)
 
@@ -367,6 +369,7 @@ func TestEncodeErrorResponse_Basic(t *testing.T) {
 	require.NoError(t, err)
 
 	assert.Equal(t, uint64(100), resp.ID)
+	assert.Equal(t, uint64(3), resp.Generation, "an error response must echo the request's generation")
 	assert.Nil(t, resp.Result)
 	require.NotNil(t, resp.Error)
 	assert.Equal(t, ErrorCodeKeyNotFound, resp.Error.Code)
@@ -375,7 +378,7 @@ func TestEncodeErrorResponse_Basic(t *testing.T) {
 }
 
 func TestEncodeErrorResponse_WithStringData(t *testing.T) {
-	data, err := EncodeErrorResponse(200, ErrorCodeInvalidParams, "invalid params", "credentialId is required")
+	data, err := EncodeErrorResponse(200, 4, ErrorCodeInvalidParams, "invalid params", "credentialId is required")
 	require.NoError(t, err)
 
 	resp, err := DecodeResponse(data)
@@ -393,7 +396,7 @@ func TestEncodeErrorResponse_WithStructData(t *testing.T) {
 		"allowed": "-7,-8,-257",
 	}
 
-	data, err := EncodeErrorResponse(300, ErrorCodeUnsupportedAlg, "unsupported algorithm", additionalInfo)
+	data, err := EncodeErrorResponse(300, 5, ErrorCodeUnsupportedAlg, "unsupported algorithm", additionalInfo)
 	require.NoError(t, err)
 
 	resp, err := DecodeResponse(data)
@@ -420,7 +423,7 @@ func TestEncodeErrorResponse_AllStandardCodes(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			data, err := EncodeErrorResponse(1, tt.code, tt.message, nil)
+			data, err := EncodeErrorResponse(1, 1, tt.code, tt.message, nil)
 			require.NoError(t, err)
 
 			resp, err := DecodeResponse(data)
@@ -459,7 +462,7 @@ func TestEncodeErrorResponse_AllApplicationCodes(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			data, err := EncodeErrorResponse(1, tt.code, tt.message, nil)
+			data, err := EncodeErrorResponse(1, 1, tt.code, tt.message, nil)
 			require.NoError(t, err)
 
 			resp, err := DecodeResponse(data)

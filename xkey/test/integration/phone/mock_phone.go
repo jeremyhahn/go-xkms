@@ -124,8 +124,9 @@ func (m *MockPhone) ProcessRequest(encrypted []byte) ([]byte, error) {
 
 func (m *MockPhone) handleRequest(req *pairingproto.Request) *pairingproto.Response {
 	resp := &pairingproto.Response{
-		JSONRPC: pairingproto.JSONRPCVersion,
-		ID:      req.ID,
+		JSONRPC:    pairingproto.JSONRPCVersion,
+		ID:         req.ID,
+		Generation: req.Generation,
 	}
 
 	switch req.Method {
@@ -160,8 +161,9 @@ func (m *MockPhone) handleRequest(req *pairingproto.Request) *pairingproto.Respo
 
 func (m *MockPhone) handleGenerateKey(req *pairingproto.Request) *pairingproto.Response {
 	resp := &pairingproto.Response{
-		JSONRPC: pairingproto.JSONRPCVersion,
-		ID:      req.ID,
+		JSONRPC:    pairingproto.JSONRPCVersion,
+		ID:         req.ID,
+		Generation: req.Generation,
 	}
 
 	var params pairingproto.GenerateKeyParams
@@ -211,8 +213,9 @@ func (m *MockPhone) handleGenerateKey(req *pairingproto.Request) *pairingproto.R
 
 func (m *MockPhone) handleSign(req *pairingproto.Request) *pairingproto.Response {
 	resp := &pairingproto.Response{
-		JSONRPC: pairingproto.JSONRPCVersion,
-		ID:      req.ID,
+		JSONRPC:    pairingproto.JSONRPCVersion,
+		ID:         req.ID,
+		Generation: req.Generation,
 	}
 
 	var params pairingproto.SignParams
@@ -258,8 +261,9 @@ func (m *MockPhone) handleSign(req *pairingproto.Request) *pairingproto.Response
 
 func (m *MockPhone) handleDeleteKey(req *pairingproto.Request) *pairingproto.Response {
 	resp := &pairingproto.Response{
-		JSONRPC: pairingproto.JSONRPCVersion,
-		ID:      req.ID,
+		JSONRPC:    pairingproto.JSONRPCVersion,
+		ID:         req.ID,
+		Generation: req.Generation,
 	}
 
 	var params pairingproto.DeleteKeyParams
@@ -287,8 +291,9 @@ func (m *MockPhone) handleDeleteKey(req *pairingproto.Request) *pairingproto.Res
 
 func (m *MockPhone) handleLoadKey(req *pairingproto.Request) *pairingproto.Response {
 	resp := &pairingproto.Response{
-		JSONRPC: pairingproto.JSONRPCVersion,
-		ID:      req.ID,
+		JSONRPC:    pairingproto.JSONRPCVersion,
+		ID:         req.ID,
+		Generation: req.Generation,
 	}
 
 	var params pairingproto.LoadKeyParams

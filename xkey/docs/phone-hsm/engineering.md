@@ -1,6 +1,6 @@
 # Phone as HSM — Engineering Contract
 
-> **Status: NORMATIVE** · Feature: `phone-hsm` · Module: `go-xkms/xkey` · Last verified: 2026-09-29
+> **Status: NORMATIVE** · Feature: `phone-hsm` · Module: `go-xkms/xkey` · Last verified: 2026-10-23
 
 ## Exported surface — `xkey/pkg/pairing`
 
@@ -622,6 +622,113 @@ defect and the shape of the fix is what the current design is for.
    The `Nonce` echoed in the RPC result is deliberately **not** checked: it is
    an unsigned field the peer controls, so matching it would prove only that
    the peer can copy. Freshness rests on the challenge signature (below).
+
+## Request generation matching (#128)
+
+`Request` and `Response` (`pkg/pairingproto/protocol.go` in the root module,
+re-exported to xkey by `sdk/go/pairingproto`) each carry a
+top-level `Generation uint64` field, JSON tag `generation`, beside `id`:
+
+```go
+type Request struct {
+	JSONRPC    string      `json:"jsonrpc"`
+	ID         uint64      `json:"id"`
+	Generation uint64      `json:"generation"`
+	Method     string      `json:"method"`
+	Params     interface{} `json:"params,omitempty"`
+}
+
+type Response struct {
+	JSONRPC    string          `json:"jsonrpc"`
+	ID         uint64          `json:"id"`
+	Generation uint64          `json:"generation"`
+	Result     json.RawMessage `json:"result,omitempty"`
+	Error      *RPCError       `json:"error,omitempty"`
+}
+```
+
+`MessageRouter.SendRequest` assigns `Generation` from a per-connection
+`atomic.Uint64` counter (`generationCounter`, distinct from the
+package-level `requestIDCounter` that assigns `id`) immediately before
+registering the pending route; it is never reused for the life of one
+connection, even across different `id` values. `routeResponse` requires
+**both** `id` and `generation` to match the pending entry before delivering:
+a response whose `id` matches but whose `generation` does not, or whose
+`generation` is the wire zero value (valid generations start at 1, so a
+peer that omits the field cannot accidentally match), is dropped and logged
+at `Warn` exactly like the pre-existing unknown-id and full-channel drops.
+
+`generation` is not a secret. Its only job is disambiguating one attempt from
+another that happens to reuse the same `id`; the Noise channel already
+authenticates the peer, so there is nothing to gain from hiding it. Every
+Go-side responder echoes the answered request's `generation` verbatim,
+including on error responses: `Bridge.HandleRequest` (`bridge.go`), `xkey
+device listen`'s `listenRequestHandler`
+(`cmd/xkey/cmd/device_listen_handler.go`), and the phone-role test fakes
+(`test/integration/phone`, `pkg/attestation/attesttest`,
+`pkg/phone/phone_happy_path_test.go`'s `mockPhoneResponder`).
+
+`attestation.AttestOverSession` (`xkey/pkg/attestation/device.go`) is the one
+exchange that runs outside the `MessageRouter`: it sends `local.attestDevice`
+and reads the answer directly, before any router starts on the connection.
+No router assigns its generation, so it stamps the fixed
+`attestRequestGeneration` (`math.MaxUint64`), the top of the generation
+space: a router later started on the same connection counts up from 1 and
+never reaches it, so the value is not reused within the connection. It
+applies the router's rule by hand. A response whose `id` or `generation`
+does not match the request is refused with a `ResponseMismatchError`
+(carrying both pairs) wrapped in `ErrDeviceAttestFailed`, before its RPC
+error or result is read, since an answer to another request is not this
+exchange's.
+
+### Why `retired` (#39/#66) was deleted rather than kept alongside it
+
+Before this change, an ID whose request was abandoned without a response
+(cancelled or timed out after the bytes may have reached the peer) was
+permanently tombstoned in a per-connection `retired` map, capped at
+`maxRetiredIDs` (4096); reaching the cap refused all new requests and forced
+a reconnect. The tombstone existed because `pending` is keyed only by `id`:
+without it, a late answer to an abandoned request could be delivered to
+whichever later request happened to reuse that `id` -- the wrong result (or
+signature) returned to the wrong caller. Its own doc comment named the
+residual gap explicitly: *"this protects abandoned IDs, not a
+normally-completed ID that the caller later reuses -- a duplicate response
+there could still cross-talk. Closing that needs a per-request
+generation/nonce validated in every response ... tracked as go-xkms#128."*
+
+Generation matching closes that gap directly, at the point of delivery,
+for **every** reused `id` -- abandoned or normally completed -- not only the
+abandoned case `retired` covered:
+
+- A late or duplicate answer to an abandoned request carries that request's
+  (now stale) generation. If the `id` has since been reused by a live
+  request, `routeResponse` finds a pending entry but the generations differ,
+  so the stale answer is dropped and the live request is unaffected.
+- If the `id` has not been reused, the pending entry no longer exists at
+  all (`finalize` deleted it when the abandoned request exited), so the late
+  answer is dropped as an unknown `id` -- exactly as it always was for a
+  never-reused id.
+
+Because generation checking subsumes it in both cases, `retired`, its
+`maxRetiredIDs` cap, the `ErrTooManyAbandonedRequests` reconnect-forcing
+error, and the answered/sent bookkeeping `finalizeAbandon` used to compute a
+retirement decision are deleted rather than kept as a second, now-redundant
+guard; `finalizeAbandon` is replaced by `finalize`, which only frees the
+pending route. The **duplicate-ID-while-in-flight** refusal
+(`ErrDuplicateRequestID`, checked against `pending` before a second
+registration for the same live `id`) is unrelated and stays: it prevents a
+second concurrent `SendRequest` call from silently overwriting -- and
+thereby orphaning -- a still-in-flight request's route, which generation
+matching does not address (both requests would still each get assigned a
+distinct generation; the problem is the map entry itself being overwritten,
+not which generation a response carries).
+
+This is a wire-protocol change with no compatibility path (the project
+carries no backward-compatibility code): a peer that omits `generation`
+answers with the zero value, which never matches a real pending entry's
+assigned generation, so every response from an unpatched peer is dropped.
+It ships as a coordinated flag day with `jeremyhahn/xkey-android#10`, per
+*Wire compatibility with xkey-android is binding* in `architecture.md`.
 
 ## Challenge-response attestation (#129)
 

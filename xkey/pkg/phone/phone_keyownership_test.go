@@ -359,7 +359,7 @@ func TestClose_UnblocksRouterBeforeJoining(t *testing.T) {
 type nopRequestHandler struct{}
 
 func (nopRequestHandler) HandleRequest(_ context.Context, req *pairingproto.Request) *pairingproto.Response {
-	return &pairingproto.Response{JSONRPC: "2.0", ID: req.ID}
+	return &pairingproto.Response{JSONRPC: "2.0", ID: req.ID, Generation: req.Generation}
 }
 
 // TestNewPhoneKeyBackend_NilKeyIsGeneratedAndOwned covers the config's

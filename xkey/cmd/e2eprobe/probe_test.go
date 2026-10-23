@@ -9,6 +9,7 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/jeremyhahn/go-xkms/pkg/pairingproto"
 	"github.com/jeremyhahn/go-xkms/pkg/testing/fipstest"
@@ -155,9 +156,9 @@ func answerAs(ph *phone) answerFunc {
 		defer mu.Unlock()
 		result, err := ph.call(req.Method, req.Params)
 		if err != nil {
-			return pairingproto.EncodeErrorResponse(req.ID, -32000, err.Error(), nil)
+			return pairingproto.EncodeErrorResponse(req.ID, req.Generation, -32000, err.Error(), nil)
 		}
-		return pairingproto.EncodeResponse(req.ID, result)
+		return pairingproto.EncodeResponse(req.ID, req.Generation, result)
 	}
 }
 
@@ -181,12 +182,19 @@ func noiseStaticKey(t *testing.T) (key *bootstrap.NoiseStaticKey, ok bool) {
 // false when fips140=only refused the Noise key (see noiseStaticKey).
 func runProbe(t *testing.T, answer answerFunc) (bool, string, bool) {
 	t.Helper()
+	return runProbeIn(t, context.Background(), answer)
+}
+
+// runProbeIn is runProbe with the probe and the fake phone bound to parent,
+// so a test can give the whole run a deadline.
+func runProbeIn(t *testing.T, parent context.Context, answer answerFunc) (bool, string, bool) {
+	t.Helper()
 	staticKey, ok := noiseStaticKey(t)
 	if !ok {
 		return false, "", false
 	}
 	probeEnd, phoneEnd := newPipePair()
-	ctx, cancel := context.WithCancel(context.Background())
+	ctx, cancel := context.WithCancel(parent)
 	defer cancel()
 
 	served := make(chan error, 1)
@@ -223,7 +231,7 @@ func TestProbe_FailsAStepOnAMalformedResult(t *testing.T) {
 	conformant := answerAs(conformantPhone(t))
 	answer := func(req *pairingproto.Request) ([]byte, error) {
 		if req.Method == "ping" {
-			return json.Marshal(map[string]interface{}{"jsonrpc": "2.0", "id": req.ID, "result": "pong"})
+			return json.Marshal(map[string]interface{}{"jsonrpc": "2.0", "id": req.ID, "generation": req.Generation, "result": "pong"})
 		}
 		return conformant(req)
 	}
@@ -238,6 +246,34 @@ func TestProbe_FailsAStepOnAMalformedResult(t *testing.T) {
 	}
 	if !strings.Contains(out, "[FAIL] ping  -> malformed rpc result for ping") {
 		t.Fatalf("probe output does not fail ping as malformed:\n%s", out)
+	}
+}
+
+// A phone that answers without echoing the request's generation is answering
+// nobody: the router drops the response (issue #128). The probe must fail
+// that step with a typed no-response error inside its deadline, not wait on
+// it forever.
+func TestProbe_FailsAStepWhoseResponseIsNeverRouted(t *testing.T) {
+	conformant := answerAs(conformantPhone(t))
+	answer := func(req *pairingproto.Request) ([]byte, error) {
+		if req.Method == "ping" {
+			return pairingproto.EncodeResponse(req.ID, 0, map[string]string{"status": "pong"})
+		}
+		return conformant(req)
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+
+	passed, out, ok := runProbeIn(t, ctx, answer)
+	if !ok {
+		return
+	}
+
+	if passed {
+		t.Fatalf("probe passed although ping was never answered:\n%s", out)
+	}
+	if !strings.Contains(out, "[FAIL] ping  -> no routable response to ping") {
+		t.Fatalf("probe output does not fail ping as unanswered:\n%s", out)
 	}
 }
 

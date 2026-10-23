@@ -13,6 +13,25 @@
 
 package attestation
 
+import "fmt"
+
+// ResponseMismatchError reports a response that does not answer the request
+// it was read for: its ID or its generation differs from the request's. The
+// MessageRouter drops such a response (go-xkms#128); a one-shot exchange
+// outside the router refuses it with this error instead.
+type ResponseMismatchError struct {
+	RequestID          uint64
+	RequestGeneration  uint64
+	ResponseID         uint64
+	ResponseGeneration uint64
+}
+
+// Error implements the error interface.
+func (e *ResponseMismatchError) Error() string {
+	return fmt.Sprintf("response id %d generation %d does not answer request id %d generation %d",
+		e.ResponseID, e.ResponseGeneration, e.RequestID, e.RequestGeneration)
+}
+
 // SentinelCauseError attaches an underlying cause to a package sentinel
 // error so errors.Is matches both the sentinel and the cause.
 type SentinelCauseError struct {

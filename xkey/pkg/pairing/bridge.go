@@ -279,7 +279,7 @@ func NewBridge(client transport.Client, config *BridgeConfig) (*Bridge, error) {
 // responsible for encrypting/decrypting with Noise.
 func (b *Bridge) HandleRequest(ctx context.Context, req *pairingproto.Request) *pairingproto.Response {
 	if req == nil {
-		return b.errorResponse(0, pairingproto.ErrorCodeInvalidRequest, "nil request")
+		return b.errorResponse(0, 0, pairingproto.ErrorCodeInvalidRequest, "nil request")
 	}
 
 	b.logger.Debug("handling remote request",
@@ -290,7 +290,7 @@ func (b *Bridge) HandleRequest(ctx context.Context, req *pairingproto.Request) *
 	handler, ok := b.handlers[req.Method]
 	if !ok {
 		b.logger.Warn("unknown remote method", "method", req.Method)
-		return b.errorResponse(req.ID, pairingproto.ErrorCodeMethodNotFound, "unknown method: "+req.Method)
+		return b.errorResponse(req.ID, req.Generation, pairingproto.ErrorCodeMethodNotFound, "unknown method: "+req.Method)
 	}
 
 	// Marshal params to json.RawMessage for handler consumption.
@@ -299,7 +299,7 @@ func (b *Bridge) HandleRequest(ctx context.Context, req *pairingproto.Request) *
 		data, err := json.Marshal(req.Params)
 		if err != nil {
 			b.logger.Error("failed to marshal request params", "error", err)
-			return b.errorResponse(req.ID, pairingproto.ErrorCodeInvalidParams, "invalid parameters")
+			return b.errorResponse(req.ID, req.Generation, pairingproto.ErrorCodeInvalidParams, "invalid parameters")
 		}
 		rawParams = data
 	}
@@ -311,7 +311,7 @@ func (b *Bridge) HandleRequest(ctx context.Context, req *pairingproto.Request) *
 	// Call handler.
 	result, err := handler(ctx, rawParams)
 	if err != nil {
-		return b.handleError(req.ID, err)
+		return b.handleError(req.ID, req.Generation, err)
 	}
 
 	// A result that carries secrets (synced OATH secrets and passwords) is
@@ -324,13 +324,17 @@ func (b *Bridge) HandleRequest(ctx context.Context, req *pairingproto.Request) *
 	resultData, err := json.Marshal(result)
 	if err != nil {
 		b.logger.Error("failed to marshal result", "error", err)
-		return b.errorResponse(req.ID, pairingproto.ErrorCodeInternalError, "failed to encode result")
+		return b.errorResponse(req.ID, req.Generation, pairingproto.ErrorCodeInternalError, "failed to encode result")
 	}
 
+	// Generation is echoed verbatim: routeResponse on the initiator's side
+	// requires it to match the pending request's, on every response shape,
+	// not just success -- see Request.Generation.
 	return &pairingproto.Response{
-		JSONRPC: pairingproto.JSONRPCVersion,
-		ID:      req.ID,
-		Result:  resultData,
+		JSONRPC:    pairingproto.JSONRPCVersion,
+		ID:         req.ID,
+		Generation: req.Generation,
+		Result:     resultData,
 	}
 }
 
@@ -993,16 +997,18 @@ func (b *Bridge) computeDeviceFingerprint(backends []transport.BackendInfo, hasT
 }
 
 // handleError maps Go errors to JSON-RPC error responses.
-func (b *Bridge) handleError(id uint64, err error) *pairingproto.Response {
+func (b *Bridge) handleError(id, generation uint64, err error) *pairingproto.Response {
 	code, message := mapErrorToRPC(err)
-	return b.errorResponse(id, code, message)
+	return b.errorResponse(id, generation, code, message)
 }
 
-// errorResponse constructs a JSON-RPC error response.
-func (b *Bridge) errorResponse(id uint64, code int, message string) *pairingproto.Response {
+// errorResponse constructs a JSON-RPC error response. generation must echo
+// the answered request's Generation verbatim -- see Request.Generation.
+func (b *Bridge) errorResponse(id, generation uint64, code int, message string) *pairingproto.Response {
 	return &pairingproto.Response{
-		JSONRPC: pairingproto.JSONRPCVersion,
-		ID:      id,
+		JSONRPC:    pairingproto.JSONRPCVersion,
+		ID:         id,
+		Generation: generation,
 		Error: &pairingproto.RPCError{
 			Code:    code,
 			Message: message,
@@ -1015,7 +1021,7 @@ func (b *Bridge) errorResponse(id uint64, code int, message string) *pairingprot
 func mapErrorToRPC(err error) (int, string) {
 	// errors.Is, not `switch err`: the handlers wrap their causes (tpmError
 	// returns a *SentinelCauseError), and identity comparison silently drops
-	// every wrapped error through to ErrorCodeInternalError. That was observed
+	// every wrapped error through to pairingproto.ErrorCodeInternalError. That was observed
 	// on real hardware — an unprovisioned IAK reported -32603 instead of an
 	// attestation code, with only the cause text to go on.
 	switch {

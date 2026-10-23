@@ -411,7 +411,6 @@ var (
 	ErrTPMOperationFailed       = pairingproto.ErrTPMOperationFailed
 	ErrTPMUnavailable           = pairingproto.ErrTPMUnavailable
 	ErrTimeout                  = pairingproto.ErrTimeout
-	ErrTooManyAbandonedRequests = pairingproto.ErrTooManyAbandonedRequests
 	ErrUnsupportedAlgorithm     = pairingproto.ErrUnsupportedAlgorithm
 	ErrUntrustedDevice          = pairingproto.ErrUntrustedDevice
 	ErrUserCancelled            = pairingproto.ErrUserCancelled

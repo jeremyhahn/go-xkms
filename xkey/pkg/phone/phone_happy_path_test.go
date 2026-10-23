@@ -96,10 +96,12 @@ func (r *mockPhoneResponder) handleOne() {
 
 	result, handlerErr := handler(rawParams)
 
-	// Build the JSON-RPC response.
+	// Build the JSON-RPC response. Generation must echo the request's
+	// verbatim, on error responses too -- see pairingproto.Request.Generation.
 	var resp pairingproto.Response
 	resp.JSONRPC = pairingproto.JSONRPCVersion
 	resp.ID = req.ID
+	resp.Generation = req.Generation
 
 	if handlerErr != nil {
 		resp.Error = &pairingproto.RPCError{Code: -32000, Message: handlerErr.Error()}

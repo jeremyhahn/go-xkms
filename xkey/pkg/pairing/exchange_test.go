@@ -45,7 +45,7 @@ func (p *echoPhone) send(_ context.Context, ciphertext []byte) error {
 	require.NoError(p.t, err)
 	p.method = req.Method
 
-	resp, err := pairingproto.EncodeResponse(req.ID, map[string]string{"echo": req.Method})
+	resp, err := pairingproto.EncodeResponse(req.ID, req.Generation, map[string]string{"echo": req.Method})
 	require.NoError(p.t, err)
 	p.reply, err = p.session.Encrypt(resp)
 	require.NoError(p.t, err)

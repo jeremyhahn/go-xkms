@@ -494,7 +494,7 @@ func (h *listenRequestHandler) HandleRequest(ctx context.Context, request []byte
 	req, err := pairingproto.DecodeRequest(request)
 	if err != nil {
 		h.logger.Error("failed to decode request", slog.String("error", err.Error()))
-		return pairingproto.EncodeErrorResponse(0, pairingproto.ErrorCodeParseError, "Failed to parse request", nil)
+		return pairingproto.EncodeErrorResponse(0, 0, pairingproto.ErrorCodeParseError, "Failed to parse request", nil)
 	}
 
 	h.logger.Info("processing request",
@@ -515,7 +515,7 @@ func (h *listenRequestHandler) HandleRequest(ctx context.Context, request []byte
 	}
 
 	h.logger.Warn("unsupported method", slog.String("method", req.Method))
-	return pairingproto.EncodeErrorResponse(req.ID, pairingproto.ErrorCodeMethodNotFound, "Method not supported", nil)
+	return pairingproto.EncodeErrorResponse(req.ID, req.Generation, pairingproto.ErrorCodeMethodNotFound, "Method not supported", nil)
 }
 
 // handleViaBridge dispatches a request to the xkmsd bridge and encodes the
@@ -524,7 +524,7 @@ func (h *listenRequestHandler) handleViaBridge(ctx context.Context, req *pairing
 	resp := h.bridge.HandleRequest(ctx, req)
 	if resp == nil {
 		h.logger.Error("bridge returned no response", slog.String("method", req.Method))
-		return pairingproto.EncodeErrorResponse(req.ID, pairingproto.ErrorCodeInternalError, "Bridge returned no response", nil)
+		return pairingproto.EncodeErrorResponse(req.ID, req.Generation, pairingproto.ErrorCodeInternalError, "Bridge returned no response", nil)
 	}
 	return encodeBridgeResponse(resp)
 }
@@ -552,7 +552,7 @@ func (h *listenRequestHandler) methodHandlers() map[string]methodHandler {
 
 // handlePing handles the ping method.
 func (h *listenRequestHandler) handlePing(_ context.Context, req *pairingproto.Request) ([]byte, error) {
-	return pairingproto.EncodeResponse(req.ID, &pairingproto.PingResult{
+	return pairingproto.EncodeResponse(req.ID, req.Generation, &pairingproto.PingResult{
 		Pong: true,
 	})
 }
@@ -565,12 +565,12 @@ func (h *listenRequestHandler) handleRemoteAttestDevice(_ context.Context, req *
 	// Decode the parameters
 	paramsJSON, err := json.Marshal(req.Params)
 	if err != nil {
-		return pairingproto.EncodeErrorResponse(req.ID, pairingproto.ErrorCodeInvalidParams, "Invalid parameters", nil)
+		return pairingproto.EncodeErrorResponse(req.ID, req.Generation, pairingproto.ErrorCodeInvalidParams, "Invalid parameters", nil)
 	}
 
 	var params pairingproto.RemoteAttestDeviceParams
 	if err := json.Unmarshal(paramsJSON, &params); err != nil {
-		return pairingproto.EncodeErrorResponse(req.ID, pairingproto.ErrorCodeInvalidParams, "Failed to decode parameters", nil)
+		return pairingproto.EncodeErrorResponse(req.ID, req.Generation, pairingproto.ErrorCodeInvalidParams, "Failed to decode parameters", nil)
 	}
 
 	h.logger.Info("laptop attestation requested by phone",
@@ -587,11 +587,11 @@ func (h *listenRequestHandler) handleRemoteAttestDevice(_ context.Context, req *
 		// Map errors to appropriate RPC error codes
 		switch {
 		case errors.Is(err, phone.ErrInvalidAttestationNonce):
-			return pairingproto.EncodeErrorResponse(req.ID, pairingproto.ErrorCodeInvalidParams, "Nonce must be 32 bytes", nil)
+			return pairingproto.EncodeErrorResponse(req.ID, req.Generation, pairingproto.ErrorCodeInvalidParams, "Nonce must be 32 bytes", nil)
 		case errors.Is(err, phone.ErrTPM2Required):
-			return pairingproto.EncodeErrorResponse(req.ID, pairingproto.ErrorCodeAttestUnsupported, "TPM2 required but not available", nil)
+			return pairingproto.EncodeErrorResponse(req.ID, req.Generation, pairingproto.ErrorCodeAttestUnsupported, "TPM2 required but not available", nil)
 		default:
-			return pairingproto.EncodeErrorResponse(req.ID, pairingproto.ErrorCodeAttestFailed, err.Error(), nil)
+			return pairingproto.EncodeErrorResponse(req.ID, req.Generation, pairingproto.ErrorCodeAttestFailed, err.Error(), nil)
 		}
 	}
 
@@ -602,5 +602,5 @@ func (h *listenRequestHandler) handleRemoteAttestDevice(_ context.Context, req *
 		slog.Bool("boot_verified", result.BootStateVerified),
 	)
 
-	return pairingproto.EncodeResponse(req.ID, result)
+	return pairingproto.EncodeResponse(req.ID, req.Generation, result)
 }

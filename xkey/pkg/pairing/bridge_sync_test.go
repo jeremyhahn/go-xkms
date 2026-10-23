@@ -244,7 +244,7 @@ func TestBridge_HandleSyncTrustStore_NotConfigured(t *testing.T) {
 		},
 	})
 	resp := b.HandleRequest(context.Background(), req)
-	assertErrorResponse(t, resp, req.ID, pairingproto.ErrorCodeFeatureUnavailable)
+	assertErrorResponse(t, resp, req.ID, req.Generation, pairingproto.ErrorCodeFeatureUnavailable)
 }
 
 // TestBridge_HandleSyncTrustStore_Success verifies the real round trip
@@ -384,7 +384,7 @@ func TestBridge_HandleSyncTrustStore_AuditFailureFailsTheCall(t *testing.T) {
 	})
 	resp := b.HandleRequest(context.Background(), req)
 
-	assertErrorResponse(t, resp, req.ID, pairingproto.ErrorCodeSyncFailed)
+	assertErrorResponse(t, resp, req.ID, req.Generation, pairingproto.ErrorCodeSyncFailed)
 	assert.NotContains(t, resp.Error.Message, "audit sink unavailable")
 }
 
@@ -410,7 +410,7 @@ func TestBridge_HandleSyncOATH_AuditsAFailedApply(t *testing.T) {
 		Credentials: []pairingproto.SyncOATHCredential{{ID: "cred-1", Name: "example"}},
 	})
 	resp := b.HandleRequest(context.Background(), req)
-	assertErrorResponse(t, resp, req.ID, pairingproto.ErrorCodeSyncFailed)
+	assertErrorResponse(t, resp, req.ID, req.Generation, pairingproto.ErrorCodeSyncFailed)
 
 	require.Len(t, auditLog.entries, 1)
 	entry := auditLog.entries[0]
@@ -428,7 +428,7 @@ func TestBridge_HandleSyncTrustStore_InvalidParams(t *testing.T) {
 
 	req := newRemoteRequest(pairingproto.MethodRemoteSyncTrustStore, nil)
 	resp := b.HandleRequest(context.Background(), req)
-	assertErrorResponse(t, resp, req.ID, pairingproto.ErrorCodeInvalidParams)
+	assertErrorResponse(t, resp, req.ID, req.Generation, pairingproto.ErrorCodeInvalidParams)
 }
 
 func TestBridge_HandleSyncTrustStore_EmptyCertificates(t *testing.T) {
@@ -463,7 +463,7 @@ func TestBridge_HandleSyncOATH_NotConfigured(t *testing.T) {
 		},
 	})
 	resp := b.HandleRequest(context.Background(), req)
-	assertErrorResponse(t, resp, req.ID, pairingproto.ErrorCodeFeatureUnavailable)
+	assertErrorResponse(t, resp, req.ID, req.Generation, pairingproto.ErrorCodeFeatureUnavailable)
 }
 
 // TestBridge_HandleSyncOATH_Success verifies the real round trip through the
@@ -504,7 +504,7 @@ func TestBridge_HandleSyncOATH_InvalidParams(t *testing.T) {
 
 	req := newRemoteRequest(pairingproto.MethodRemoteSyncOATH, nil)
 	resp := b.HandleRequest(context.Background(), req)
-	assertErrorResponse(t, resp, req.ID, pairingproto.ErrorCodeInvalidParams)
+	assertErrorResponse(t, resp, req.ID, req.Generation, pairingproto.ErrorCodeInvalidParams)
 }
 
 // --- handleSyncPasswords tests ---
@@ -523,7 +523,7 @@ func TestBridge_HandleSyncPasswords_NotConfigured(t *testing.T) {
 		},
 	})
 	resp := b.HandleRequest(context.Background(), req)
-	assertErrorResponse(t, resp, req.ID, pairingproto.ErrorCodeFeatureUnavailable)
+	assertErrorResponse(t, resp, req.ID, req.Generation, pairingproto.ErrorCodeFeatureUnavailable)
 }
 
 // TestBridge_HandleSyncPasswords_Success verifies the real round trip
@@ -559,7 +559,7 @@ func TestBridge_HandleSyncPasswords_InvalidParams(t *testing.T) {
 
 	req := newRemoteRequest(pairingproto.MethodRemoteSyncPasswords, nil)
 	resp := b.HandleRequest(context.Background(), req)
-	assertErrorResponse(t, resp, req.ID, pairingproto.ErrorCodeInvalidParams)
+	assertErrorResponse(t, resp, req.ID, req.Generation, pairingproto.ErrorCodeInvalidParams)
 }
 
 // --- handleSyncAll tests ---
@@ -578,7 +578,7 @@ func TestBridge_HandleSyncAll_NotConfigured(t *testing.T) {
 		IncludePasswords:  true,
 	})
 	resp := b.HandleRequest(context.Background(), req)
-	assertErrorResponse(t, resp, req.ID, pairingproto.ErrorCodeFeatureUnavailable)
+	assertErrorResponse(t, resp, req.ID, req.Generation, pairingproto.ErrorCodeFeatureUnavailable)
 }
 
 // TestBridge_HandleSyncAll_AllIncluded verifies the real round trip through
@@ -663,7 +663,7 @@ func TestBridge_HandleSyncAll_InvalidParams(t *testing.T) {
 
 	req := newRemoteRequest(pairingproto.MethodRemoteSyncAll, nil)
 	resp := b.HandleRequest(context.Background(), req)
-	assertErrorResponse(t, resp, req.ID, pairingproto.ErrorCodeInvalidParams)
+	assertErrorResponse(t, resp, req.ID, req.Generation, pairingproto.ErrorCodeInvalidParams)
 }
 
 // --- Sync approval gating tests (go-xkms#1306) ---
@@ -696,7 +696,7 @@ func TestBridge_SyncApproval_NilRefusesEveryGatedMethod(t *testing.T) {
 
 			req := newRemoteRequest(tc.method, tc.params)
 			resp := b.HandleRequest(context.Background(), req)
-			assertErrorResponse(t, resp, req.ID, pairingproto.ErrorCodeSyncApprovalRequired)
+			assertErrorResponse(t, resp, req.ID, req.Generation, pairingproto.ErrorCodeSyncApprovalRequired)
 		})
 	}
 }
@@ -720,7 +720,7 @@ func TestBridge_SyncApproval_DenialRefusesTheCall(t *testing.T) {
 
 			req := newRemoteRequest(tc.method, tc.params)
 			resp := b.HandleRequest(context.Background(), req)
-			assertErrorResponse(t, resp, req.ID, pairingproto.ErrorCodeSyncNotApproved)
+			assertErrorResponse(t, resp, req.ID, req.Generation, pairingproto.ErrorCodeSyncNotApproved)
 		})
 	}
 }
@@ -875,7 +875,7 @@ func TestBridge_NilParams_SyncHandlers(t *testing.T) {
 		t.Run(method, func(t *testing.T) {
 			req := newRemoteRequest(method, nil)
 			resp := b.HandleRequest(context.Background(), req)
-			assertErrorResponse(t, resp, req.ID, pairingproto.ErrorCodeInvalidParams)
+			assertErrorResponse(t, resp, req.ID, req.Generation, pairingproto.ErrorCodeInvalidParams)
 		})
 	}
 }

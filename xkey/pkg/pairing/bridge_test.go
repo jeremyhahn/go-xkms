@@ -413,13 +413,20 @@ func generateTestPEM(t *testing.T) string {
 	return string(pemBlock)
 }
 
+// testRequestGeneration is a fixed, nonzero generation used by
+// newRemoteRequest so every HandleRequest test that checks a response via
+// assertErrorResponse also proves the generation was echoed, not merely
+// defaulted to zero on both sides.
+const testRequestGeneration = 77
+
 // newRemoteRequest constructs a JSON-RPC request for handler tests.
 func newRemoteRequest(method string, params interface{}) *pairingproto.Request {
 	return &pairingproto.Request{
-		JSONRPC: pairingproto.JSONRPCVersion,
-		ID:      1,
-		Method:  method,
-		Params:  params,
+		JSONRPC:    pairingproto.JSONRPCVersion,
+		ID:         1,
+		Generation: testRequestGeneration,
+		Method:     method,
+		Params:     params,
 	}
 }
 
@@ -448,12 +455,15 @@ func decodeResult[T any](t *testing.T, resp *pairingproto.Response) T {
 	return result
 }
 
-// assertErrorResponse validates a JSON-RPC error response.
-func assertErrorResponse(t *testing.T, resp *pairingproto.Response, expectedID uint64, expectedCode int) {
+// assertErrorResponse validates a JSON-RPC error response, including that
+// the response echoes the request's generation verbatim -- see
+// pairingproto.Request.Generation and go-xkms#128.
+func assertErrorResponse(t *testing.T, resp *pairingproto.Response, expectedID, expectedGeneration uint64, expectedCode int) {
 	t.Helper()
 	require.NotNil(t, resp)
 	assert.Equal(t, pairingproto.JSONRPCVersion, resp.JSONRPC)
 	assert.Equal(t, expectedID, resp.ID)
+	assert.Equal(t, expectedGeneration, resp.Generation, "error response must echo the request's generation")
 	require.NotNil(t, resp.Error)
 	assert.Equal(t, expectedCode, resp.Error.Code)
 	assert.NotEmpty(t, resp.Error.Message)
@@ -555,7 +565,7 @@ func TestHandleRequest_NilRequest(t *testing.T) {
 	require.NoError(t, err)
 
 	resp := b.HandleRequest(context.Background(), nil)
-	assertErrorResponse(t, resp, 0, pairingproto.ErrorCodeInvalidRequest)
+	assertErrorResponse(t, resp, 0, 0, pairingproto.ErrorCodeInvalidRequest)
 }
 
 func TestHandleRequest_UnknownMethod(t *testing.T) {
@@ -565,7 +575,7 @@ func TestHandleRequest_UnknownMethod(t *testing.T) {
 
 	req := newRemoteRequest("unknown.method", nil)
 	resp := b.HandleRequest(context.Background(), req)
-	assertErrorResponse(t, resp, req.ID, pairingproto.ErrorCodeMethodNotFound)
+	assertErrorResponse(t, resp, req.ID, req.Generation, pairingproto.ErrorCodeMethodNotFound)
 	assert.Contains(t, resp.Error.Message, "unknown.method")
 }
 
@@ -664,10 +674,12 @@ func TestBridge_ListBackends(t *testing.T) {
 
 	req := newRemoteRequest(pairingproto.MethodRemoteListBackends, nil)
 	resp := b.HandleRequest(context.Background(), req)
+	assert.Equal(t, req.Generation, resp.Generation, "a success response must echo the request's generation")
 
 	result := decodeResult[pairingproto.RemoteListBackendsResult](t, resp)
 	assert.Equal(t, pairingproto.JSONRPCVersion, resp.JSONRPC)
 	assert.Equal(t, uint64(1), resp.ID)
+	assert.Equal(t, req.Generation, resp.Generation, "a success response must echo the request's generation")
 	require.Len(t, result.Backends, 2)
 
 	assert.Equal(t, "tpm2", result.Backends[0].Name)
@@ -723,7 +735,7 @@ func TestBridge_ListBackends_ClientError(t *testing.T) {
 
 	req := newRemoteRequest(pairingproto.MethodRemoteListBackends, nil)
 	resp := b.HandleRequest(context.Background(), req)
-	assertErrorResponse(t, resp, req.ID, pairingproto.ErrorCodeInternalError)
+	assertErrorResponse(t, resp, req.ID, req.Generation, pairingproto.ErrorCodeInternalError)
 	assert.Contains(t, resp.Error.Message, "connection refused")
 }
 
@@ -767,7 +779,7 @@ func TestBridge_ListKeys_BackendDenied(t *testing.T) {
 		Backend: "secret",
 	})
 	resp := b.HandleRequest(context.Background(), req)
-	assertErrorResponse(t, resp, req.ID, pairingproto.ErrorCodeBackendDenied)
+	assertErrorResponse(t, resp, req.ID, req.Generation, pairingproto.ErrorCodeBackendDenied)
 }
 
 func TestBridge_ListKeys_AlgorithmFilter(t *testing.T) {
@@ -804,7 +816,7 @@ func TestBridge_ListKeys_NilParams(t *testing.T) {
 
 	req := newRemoteRequest(pairingproto.MethodRemoteListKeys, nil)
 	resp := b.HandleRequest(context.Background(), req)
-	assertErrorResponse(t, resp, req.ID, pairingproto.ErrorCodeInvalidParams)
+	assertErrorResponse(t, resp, req.ID, req.Generation, pairingproto.ErrorCodeInvalidParams)
 }
 
 func TestBridge_GetPublicKey_DER(t *testing.T) {
@@ -945,7 +957,7 @@ func TestBridge_Sign_BackendDenied(t *testing.T) {
 		Algorithm: "SHA-256",
 	})
 	resp := b.HandleRequest(context.Background(), req)
-	assertErrorResponse(t, resp, req.ID, pairingproto.ErrorCodeBackendDenied)
+	assertErrorResponse(t, resp, req.ID, req.Generation, pairingproto.ErrorCodeBackendDenied)
 }
 
 func TestBridge_Verify_Success(t *testing.T) {
@@ -1082,7 +1094,7 @@ func TestBridge_DeriveKey_BackendDenied(t *testing.T) {
 		PeerPublicKey: []byte("peer-pubkey"),
 	})
 	resp := b.HandleRequest(context.Background(), req)
-	assertErrorResponse(t, resp, req.ID, pairingproto.ErrorCodeBackendDenied)
+	assertErrorResponse(t, resp, req.ID, req.Generation, pairingproto.ErrorCodeBackendDenied)
 }
 
 func TestBridge_DeriveKey_NilParams(t *testing.T) {
@@ -1092,7 +1104,7 @@ func TestBridge_DeriveKey_NilParams(t *testing.T) {
 
 	req := newRemoteRequest(pairingproto.MethodRemoteDeriveKey, nil)
 	resp := b.HandleRequest(context.Background(), req)
-	assertErrorResponse(t, resp, req.ID, pairingproto.ErrorCodeInvalidParams)
+	assertErrorResponse(t, resp, req.ID, req.Generation, pairingproto.ErrorCodeInvalidParams)
 }
 
 func TestBridge_DeriveKey_ClientError(t *testing.T) {
@@ -1110,7 +1122,7 @@ func TestBridge_DeriveKey_ClientError(t *testing.T) {
 		PeerPublicKey: []byte("peer-pubkey"),
 	})
 	resp := b.HandleRequest(context.Background(), req)
-	assertErrorResponse(t, resp, req.ID, pairingproto.ErrorCodeInternalError)
+	assertErrorResponse(t, resp, req.ID, req.Generation, pairingproto.ErrorCodeInternalError)
 }
 
 func TestBridge_GenerateKey_Success(t *testing.T) {
@@ -1153,7 +1165,7 @@ func TestBridge_GenerateKey_BackendDenied(t *testing.T) {
 		Algorithm: "ECDSA-P256",
 	})
 	resp := b.HandleRequest(context.Background(), req)
-	assertErrorResponse(t, resp, req.ID, pairingproto.ErrorCodeBackendDenied)
+	assertErrorResponse(t, resp, req.ID, req.Generation, pairingproto.ErrorCodeBackendDenied)
 }
 
 func TestBridge_GenerateKey_NilParams(t *testing.T) {
@@ -1163,7 +1175,7 @@ func TestBridge_GenerateKey_NilParams(t *testing.T) {
 
 	req := newRemoteRequest(pairingproto.MethodRemoteGenerateKey, nil)
 	resp := b.HandleRequest(context.Background(), req)
-	assertErrorResponse(t, resp, req.ID, pairingproto.ErrorCodeInvalidParams)
+	assertErrorResponse(t, resp, req.ID, req.Generation, pairingproto.ErrorCodeInvalidParams)
 }
 
 func TestBridge_GenerateKey_ClientError(t *testing.T) {
@@ -1181,7 +1193,7 @@ func TestBridge_GenerateKey_ClientError(t *testing.T) {
 		Algorithm: "RSA-2048",
 	})
 	resp := b.HandleRequest(context.Background(), req)
-	assertErrorResponse(t, resp, req.ID, pairingproto.ErrorCodeInternalError)
+	assertErrorResponse(t, resp, req.ID, req.Generation, pairingproto.ErrorCodeInternalError)
 }
 
 func TestBridge_GetKeyInfo_Success(t *testing.T) {
@@ -1231,7 +1243,7 @@ func TestBridge_GetKeyInfo_BackendDenied(t *testing.T) {
 		KeyID:   "key1",
 	})
 	resp := b.HandleRequest(context.Background(), req)
-	assertErrorResponse(t, resp, req.ID, pairingproto.ErrorCodeBackendDenied)
+	assertErrorResponse(t, resp, req.ID, req.Generation, pairingproto.ErrorCodeBackendDenied)
 }
 
 func TestBridge_GetKeyInfo_NilParams(t *testing.T) {
@@ -1241,7 +1253,7 @@ func TestBridge_GetKeyInfo_NilParams(t *testing.T) {
 
 	req := newRemoteRequest(pairingproto.MethodRemoteGetKeyInfo, nil)
 	resp := b.HandleRequest(context.Background(), req)
-	assertErrorResponse(t, resp, req.ID, pairingproto.ErrorCodeInvalidParams)
+	assertErrorResponse(t, resp, req.ID, req.Generation, pairingproto.ErrorCodeInvalidParams)
 }
 
 func TestBridge_GetKeyInfo_ClientError(t *testing.T) {
@@ -1258,7 +1270,7 @@ func TestBridge_GetKeyInfo_ClientError(t *testing.T) {
 		KeyID:   "missing-key",
 	})
 	resp := b.HandleRequest(context.Background(), req)
-	assertErrorResponse(t, resp, req.ID, pairingproto.ErrorCodeInternalError)
+	assertErrorResponse(t, resp, req.ID, req.Generation, pairingproto.ErrorCodeInternalError)
 }
 
 func TestBridge_GetKeyInfo_BackendInfoError(t *testing.T) {
@@ -1323,7 +1335,7 @@ func TestBridge_DeleteKey_BackendDenied(t *testing.T) {
 		KeyID:   "key1",
 	})
 	resp := b.HandleRequest(context.Background(), req)
-	assertErrorResponse(t, resp, req.ID, pairingproto.ErrorCodeBackendDenied)
+	assertErrorResponse(t, resp, req.ID, req.Generation, pairingproto.ErrorCodeBackendDenied)
 }
 
 func TestBridge_DeleteKey_NilParams(t *testing.T) {
@@ -1333,7 +1345,7 @@ func TestBridge_DeleteKey_NilParams(t *testing.T) {
 
 	req := newRemoteRequest(pairingproto.MethodRemoteDeleteKey, nil)
 	resp := b.HandleRequest(context.Background(), req)
-	assertErrorResponse(t, resp, req.ID, pairingproto.ErrorCodeInvalidParams)
+	assertErrorResponse(t, resp, req.ID, req.Generation, pairingproto.ErrorCodeInvalidParams)
 }
 
 func TestBridge_DeleteKey_ClientError(t *testing.T) {
@@ -1350,7 +1362,7 @@ func TestBridge_DeleteKey_ClientError(t *testing.T) {
 		KeyID:   "key1",
 	})
 	resp := b.HandleRequest(context.Background(), req)
-	assertErrorResponse(t, resp, req.ID, pairingproto.ErrorCodeInternalError)
+	assertErrorResponse(t, resp, req.ID, req.Generation, pairingproto.ErrorCodeInternalError)
 }
 
 func TestBridge_AttestKey_Success(t *testing.T) {
@@ -1396,7 +1408,7 @@ func TestBridge_AttestKey_BackendDenied(t *testing.T) {
 		Nonce:   []byte("nonce"),
 	})
 	resp := b.HandleRequest(context.Background(), req)
-	assertErrorResponse(t, resp, req.ID, pairingproto.ErrorCodeBackendDenied)
+	assertErrorResponse(t, resp, req.ID, req.Generation, pairingproto.ErrorCodeBackendDenied)
 }
 
 func TestBridge_AttestKey_NilParams(t *testing.T) {
@@ -1406,7 +1418,7 @@ func TestBridge_AttestKey_NilParams(t *testing.T) {
 
 	req := newRemoteRequest(pairingproto.MethodRemoteAttestKey, nil)
 	resp := b.HandleRequest(context.Background(), req)
-	assertErrorResponse(t, resp, req.ID, pairingproto.ErrorCodeInvalidParams)
+	assertErrorResponse(t, resp, req.ID, req.Generation, pairingproto.ErrorCodeInvalidParams)
 }
 
 func TestBridge_AttestKey_ClientError(t *testing.T) {
@@ -1424,7 +1436,7 @@ func TestBridge_AttestKey_ClientError(t *testing.T) {
 		Nonce:   []byte("nonce"),
 	})
 	resp := b.HandleRequest(context.Background(), req)
-	assertErrorResponse(t, resp, req.ID, pairingproto.ErrorCodeInternalError)
+	assertErrorResponse(t, resp, req.ID, req.Generation, pairingproto.ErrorCodeInternalError)
 }
 
 func TestBridge_AttestDevice_SoftwareOnly(t *testing.T) {
@@ -1496,7 +1508,7 @@ func TestBridge_AttestDevice_InvalidNonce(t *testing.T) {
 		Nonce: []byte("short"),
 	})
 	resp := b.HandleRequest(context.Background(), req)
-	assertErrorResponse(t, resp, req.ID, pairingproto.ErrorCodeInvalidParams)
+	assertErrorResponse(t, resp, req.ID, req.Generation, pairingproto.ErrorCodeInvalidParams)
 }
 
 func TestBridge_AttestDevice_NilParams(t *testing.T) {
@@ -1506,7 +1518,7 @@ func TestBridge_AttestDevice_NilParams(t *testing.T) {
 
 	req := newRemoteRequest(pairingproto.MethodRemoteAttestDevice, nil)
 	resp := b.HandleRequest(context.Background(), req)
-	assertErrorResponse(t, resp, req.ID, pairingproto.ErrorCodeInvalidParams)
+	assertErrorResponse(t, resp, req.ID, req.Generation, pairingproto.ErrorCodeInvalidParams)
 }
 
 func TestBridge_AttestDevice_ListBackendsError(t *testing.T) {
@@ -1523,7 +1535,7 @@ func TestBridge_AttestDevice_ListBackendsError(t *testing.T) {
 		Nonce: nonce,
 	})
 	resp := b.HandleRequest(context.Background(), req)
-	assertErrorResponse(t, resp, req.ID, pairingproto.ErrorCodeInternalError)
+	assertErrorResponse(t, resp, req.ID, req.Generation, pairingproto.ErrorCodeInternalError)
 }
 
 // --- TCG-CSR-IDEVID Handler Tests ---
@@ -1537,7 +1549,7 @@ func TestBridge_GetTCGCSRIDevID_WithoutATPM_ReportsUnsupported(t *testing.T) {
 		Backend: "tpm2",
 	})
 	resp := b.HandleRequest(context.Background(), req)
-	assertErrorResponse(t, resp, req.ID, pairingproto.ErrorCodeAttestUnsupported)
+	assertErrorResponse(t, resp, req.ID, req.Generation, pairingproto.ErrorCodeAttestUnsupported)
 }
 
 func TestBridge_GetTCGCSRIDevID_DefaultBackend(t *testing.T) {
@@ -1548,7 +1560,7 @@ func TestBridge_GetTCGCSRIDevID_DefaultBackend(t *testing.T) {
 	// Empty backend should default to "tpm2".
 	req := newRemoteRequest(pairingproto.MethodRemoteGetTCGCSRIDevID, pairingproto.RemoteGetTCGCSRIDevIDParams{})
 	resp := b.HandleRequest(context.Background(), req)
-	assertErrorResponse(t, resp, req.ID, pairingproto.ErrorCodeAttestUnsupported)
+	assertErrorResponse(t, resp, req.ID, req.Generation, pairingproto.ErrorCodeAttestUnsupported)
 }
 
 func TestBridge_GetTCGCSRIDevID_BackendDenied(t *testing.T) {
@@ -1565,7 +1577,7 @@ func TestBridge_GetTCGCSRIDevID_BackendDenied(t *testing.T) {
 		Backend: "tpm2",
 	})
 	resp := b.HandleRequest(context.Background(), req)
-	assertErrorResponse(t, resp, req.ID, pairingproto.ErrorCodeBackendDenied)
+	assertErrorResponse(t, resp, req.ID, req.Generation, pairingproto.ErrorCodeBackendDenied)
 }
 
 func TestBridge_ActivateCredential_WithoutATPM_ReportsUnsupported(t *testing.T) {
@@ -1579,7 +1591,7 @@ func TestBridge_ActivateCredential_WithoutATPM_ReportsUnsupported(t *testing.T) 
 		EncryptedSecret: []byte("secret"),
 	})
 	resp := b.HandleRequest(context.Background(), req)
-	assertErrorResponse(t, resp, req.ID, pairingproto.ErrorCodeAttestUnsupported)
+	assertErrorResponse(t, resp, req.ID, req.Generation, pairingproto.ErrorCodeAttestUnsupported)
 }
 
 func TestBridge_ActivateCredential_BackendDenied(t *testing.T) {
@@ -1598,7 +1610,7 @@ func TestBridge_ActivateCredential_BackendDenied(t *testing.T) {
 		EncryptedSecret: []byte("secret"),
 	})
 	resp := b.HandleRequest(context.Background(), req)
-	assertErrorResponse(t, resp, req.ID, pairingproto.ErrorCodeBackendDenied)
+	assertErrorResponse(t, resp, req.ID, req.Generation, pairingproto.ErrorCodeBackendDenied)
 }
 
 func TestBridge_GetAttestationQuote_WithoutATPM_ReportsUnsupported(t *testing.T) {
@@ -1613,7 +1625,7 @@ func TestBridge_GetAttestationQuote_WithoutATPM_ReportsUnsupported(t *testing.T)
 		PCRBank:    "sha256",
 	})
 	resp := b.HandleRequest(context.Background(), req)
-	assertErrorResponse(t, resp, req.ID, pairingproto.ErrorCodeAttestUnsupported)
+	assertErrorResponse(t, resp, req.ID, req.Generation, pairingproto.ErrorCodeAttestUnsupported)
 }
 
 func TestBridge_GetAttestationQuote_BackendDenied(t *testing.T) {
@@ -1631,7 +1643,7 @@ func TestBridge_GetAttestationQuote_BackendDenied(t *testing.T) {
 		Nonce:   []byte("nonce"),
 	})
 	resp := b.HandleRequest(context.Background(), req)
-	assertErrorResponse(t, resp, req.ID, pairingproto.ErrorCodeBackendDenied)
+	assertErrorResponse(t, resp, req.ID, req.Generation, pairingproto.ErrorCodeBackendDenied)
 }
 
 // --- Helper Function Tests ---
@@ -2346,7 +2358,7 @@ func TestBridge_CheckBackendAccess_WithAuditLogger(t *testing.T) {
 		Backend: "restricted",
 	})
 	resp := b.HandleRequest(context.Background(), req)
-	assertErrorResponse(t, resp, req.ID, pairingproto.ErrorCodeBackendDenied)
+	assertErrorResponse(t, resp, req.ID, req.Generation, pairingproto.ErrorCodeBackendDenied)
 	require.Len(t, auditLog.cryptoOps, 1)
 	assert.Equal(t, string(audit.OpPolicyDenied), auditLog.cryptoOps[0])
 }
@@ -2366,7 +2378,7 @@ func TestBridge_GetPublicKey_ClientError(t *testing.T) {
 		Format:  "der",
 	})
 	resp := b.HandleRequest(context.Background(), req)
-	assertErrorResponse(t, resp, req.ID, pairingproto.ErrorCodeInternalError)
+	assertErrorResponse(t, resp, req.ID, req.Generation, pairingproto.ErrorCodeInternalError)
 }
 
 func TestBridge_GetPublicKey_NilParams(t *testing.T) {
@@ -2376,7 +2388,7 @@ func TestBridge_GetPublicKey_NilParams(t *testing.T) {
 
 	req := newRemoteRequest(pairingproto.MethodRemoteGetPublicKey, nil)
 	resp := b.HandleRequest(context.Background(), req)
-	assertErrorResponse(t, resp, req.ID, pairingproto.ErrorCodeInvalidParams)
+	assertErrorResponse(t, resp, req.ID, req.Generation, pairingproto.ErrorCodeInvalidParams)
 }
 
 func TestBridge_GetPublicKey_BackendDenied(t *testing.T) {
@@ -2395,7 +2407,7 @@ func TestBridge_GetPublicKey_BackendDenied(t *testing.T) {
 		Format:  "der",
 	})
 	resp := b.HandleRequest(context.Background(), req)
-	assertErrorResponse(t, resp, req.ID, pairingproto.ErrorCodeBackendDenied)
+	assertErrorResponse(t, resp, req.ID, req.Generation, pairingproto.ErrorCodeBackendDenied)
 }
 
 func TestBridge_GetPublicKey_InvalidFormat(t *testing.T) {
@@ -2419,7 +2431,7 @@ func TestBridge_GetPublicKey_InvalidFormat(t *testing.T) {
 		Format:  "jwk",
 	})
 	resp := b.HandleRequest(context.Background(), req)
-	assertErrorResponse(t, resp, req.ID, pairingproto.ErrorCodeInvalidFormat)
+	assertErrorResponse(t, resp, req.ID, req.Generation, pairingproto.ErrorCodeInvalidFormat)
 }
 
 func TestBridge_Verify_NilParams(t *testing.T) {
@@ -2429,7 +2441,7 @@ func TestBridge_Verify_NilParams(t *testing.T) {
 
 	req := newRemoteRequest(pairingproto.MethodRemoteVerify, nil)
 	resp := b.HandleRequest(context.Background(), req)
-	assertErrorResponse(t, resp, req.ID, pairingproto.ErrorCodeInvalidParams)
+	assertErrorResponse(t, resp, req.ID, req.Generation, pairingproto.ErrorCodeInvalidParams)
 }
 
 func TestBridge_Verify_ClientError(t *testing.T) {
@@ -2447,7 +2459,7 @@ func TestBridge_Verify_ClientError(t *testing.T) {
 		Signature: []byte("sig"),
 	})
 	resp := b.HandleRequest(context.Background(), req)
-	assertErrorResponse(t, resp, req.ID, pairingproto.ErrorCodeInternalError)
+	assertErrorResponse(t, resp, req.ID, req.Generation, pairingproto.ErrorCodeInternalError)
 }
 
 func TestBridge_Encrypt_NilParams(t *testing.T) {
@@ -2457,7 +2469,7 @@ func TestBridge_Encrypt_NilParams(t *testing.T) {
 
 	req := newRemoteRequest(pairingproto.MethodRemoteEncrypt, nil)
 	resp := b.HandleRequest(context.Background(), req)
-	assertErrorResponse(t, resp, req.ID, pairingproto.ErrorCodeInvalidParams)
+	assertErrorResponse(t, resp, req.ID, req.Generation, pairingproto.ErrorCodeInvalidParams)
 }
 
 func TestBridge_Encrypt_ClientError(t *testing.T) {
@@ -2474,7 +2486,7 @@ func TestBridge_Encrypt_ClientError(t *testing.T) {
 		Plaintext: []byte("data"),
 	})
 	resp := b.HandleRequest(context.Background(), req)
-	assertErrorResponse(t, resp, req.ID, pairingproto.ErrorCodeInternalError)
+	assertErrorResponse(t, resp, req.ID, req.Generation, pairingproto.ErrorCodeInternalError)
 }
 
 func TestBridge_Encrypt_BackendDenied(t *testing.T) {
@@ -2493,7 +2505,7 @@ func TestBridge_Encrypt_BackendDenied(t *testing.T) {
 		Plaintext: []byte("data"),
 	})
 	resp := b.HandleRequest(context.Background(), req)
-	assertErrorResponse(t, resp, req.ID, pairingproto.ErrorCodeBackendDenied)
+	assertErrorResponse(t, resp, req.ID, req.Generation, pairingproto.ErrorCodeBackendDenied)
 }
 
 func TestBridge_Decrypt_NilParams(t *testing.T) {
@@ -2503,7 +2515,7 @@ func TestBridge_Decrypt_NilParams(t *testing.T) {
 
 	req := newRemoteRequest(pairingproto.MethodRemoteDecrypt, nil)
 	resp := b.HandleRequest(context.Background(), req)
-	assertErrorResponse(t, resp, req.ID, pairingproto.ErrorCodeInvalidParams)
+	assertErrorResponse(t, resp, req.ID, req.Generation, pairingproto.ErrorCodeInvalidParams)
 }
 
 func TestBridge_Decrypt_ClientError(t *testing.T) {
@@ -2520,7 +2532,7 @@ func TestBridge_Decrypt_ClientError(t *testing.T) {
 		Ciphertext: []byte("ct"),
 	})
 	resp := b.HandleRequest(context.Background(), req)
-	assertErrorResponse(t, resp, req.ID, pairingproto.ErrorCodeInternalError)
+	assertErrorResponse(t, resp, req.ID, req.Generation, pairingproto.ErrorCodeInternalError)
 }
 
 func TestBridge_Decrypt_BackendDenied(t *testing.T) {
@@ -2539,7 +2551,7 @@ func TestBridge_Decrypt_BackendDenied(t *testing.T) {
 		Ciphertext: []byte("ct"),
 	})
 	resp := b.HandleRequest(context.Background(), req)
-	assertErrorResponse(t, resp, req.ID, pairingproto.ErrorCodeBackendDenied)
+	assertErrorResponse(t, resp, req.ID, req.Generation, pairingproto.ErrorCodeBackendDenied)
 }
 
 func TestBridge_Sign_NilParams(t *testing.T) {
@@ -2549,7 +2561,7 @@ func TestBridge_Sign_NilParams(t *testing.T) {
 
 	req := newRemoteRequest(pairingproto.MethodRemoteSign, nil)
 	resp := b.HandleRequest(context.Background(), req)
-	assertErrorResponse(t, resp, req.ID, pairingproto.ErrorCodeInvalidParams)
+	assertErrorResponse(t, resp, req.ID, req.Generation, pairingproto.ErrorCodeInvalidParams)
 }
 
 func TestBridge_Sign_ClientError(t *testing.T) {
@@ -2566,7 +2578,7 @@ func TestBridge_Sign_ClientError(t *testing.T) {
 		Data:    []byte("data"),
 	})
 	resp := b.HandleRequest(context.Background(), req)
-	assertErrorResponse(t, resp, req.ID, pairingproto.ErrorCodeInternalError)
+	assertErrorResponse(t, resp, req.ID, req.Generation, pairingproto.ErrorCodeInternalError)
 }
 
 func TestBridge_Verify_BackendDenied(t *testing.T) {
@@ -2586,7 +2598,7 @@ func TestBridge_Verify_BackendDenied(t *testing.T) {
 		Signature: []byte("sig"),
 	})
 	resp := b.HandleRequest(context.Background(), req)
-	assertErrorResponse(t, resp, req.ID, pairingproto.ErrorCodeBackendDenied)
+	assertErrorResponse(t, resp, req.ID, req.Generation, pairingproto.ErrorCodeBackendDenied)
 }
 
 func TestBridge_ListKeys_ClientError(t *testing.T) {
@@ -2601,7 +2613,7 @@ func TestBridge_ListKeys_ClientError(t *testing.T) {
 		Backend: "software",
 	})
 	resp := b.HandleRequest(context.Background(), req)
-	assertErrorResponse(t, resp, req.ID, pairingproto.ErrorCodeInternalError)
+	assertErrorResponse(t, resp, req.ID, req.Generation, pairingproto.ErrorCodeInternalError)
 }
 
 // --- Coverage gap tests: HandleRequest edge cases ---
@@ -2634,7 +2646,7 @@ func TestBridge_ActivateCredential_NilParams(t *testing.T) {
 
 	req := newRemoteRequest(pairingproto.MethodRemoteActivateCredential, nil)
 	resp := b.HandleRequest(context.Background(), req)
-	assertErrorResponse(t, resp, req.ID, pairingproto.ErrorCodeInvalidParams)
+	assertErrorResponse(t, resp, req.ID, req.Generation, pairingproto.ErrorCodeInvalidParams)
 }
 
 func TestBridge_ActivateCredential_EmptyBackendDefaultsToTPM2(t *testing.T) {
@@ -2650,7 +2662,7 @@ func TestBridge_ActivateCredential_EmptyBackendDefaultsToTPM2(t *testing.T) {
 	})
 	resp := b.HandleRequest(context.Background(), req)
 	// Should hit ErrTPM2DirectAccessRequired since backend defaults to allowed tpm2.
-	assertErrorResponse(t, resp, req.ID, pairingproto.ErrorCodeAttestUnsupported)
+	assertErrorResponse(t, resp, req.ID, req.Generation, pairingproto.ErrorCodeAttestUnsupported)
 }
 
 func TestBridge_GetAttestationQuote_NilParams(t *testing.T) {
@@ -2660,7 +2672,7 @@ func TestBridge_GetAttestationQuote_NilParams(t *testing.T) {
 
 	req := newRemoteRequest(pairingproto.MethodRemoteGetAttestationQuote, nil)
 	resp := b.HandleRequest(context.Background(), req)
-	assertErrorResponse(t, resp, req.ID, pairingproto.ErrorCodeInvalidParams)
+	assertErrorResponse(t, resp, req.ID, req.Generation, pairingproto.ErrorCodeInvalidParams)
 }
 
 func TestBridge_GetAttestationQuote_EmptyBackendDefaultsToTPM2(t *testing.T) {
@@ -2673,7 +2685,7 @@ func TestBridge_GetAttestationQuote_EmptyBackendDefaultsToTPM2(t *testing.T) {
 		Nonce:   []byte("nonce"),
 	})
 	resp := b.HandleRequest(context.Background(), req)
-	assertErrorResponse(t, resp, req.ID, pairingproto.ErrorCodeAttestUnsupported)
+	assertErrorResponse(t, resp, req.ID, req.Generation, pairingproto.ErrorCodeAttestUnsupported)
 }
 
 func TestBridge_GetTCGCSRIDevID_NilParams(t *testing.T) {
@@ -2683,7 +2695,7 @@ func TestBridge_GetTCGCSRIDevID_NilParams(t *testing.T) {
 
 	req := newRemoteRequest(pairingproto.MethodRemoteGetTCGCSRIDevID, nil)
 	resp := b.HandleRequest(context.Background(), req)
-	assertErrorResponse(t, resp, req.ID, pairingproto.ErrorCodeInvalidParams)
+	assertErrorResponse(t, resp, req.ID, req.Generation, pairingproto.ErrorCodeInvalidParams)
 }
 
 // --- Coverage gap tests: mapErrorToRPC ErrKeyNotFound ---
@@ -2709,7 +2721,7 @@ func TestBridge_GetPublicKey_KeyNotFound(t *testing.T) {
 		Format:  "der",
 	})
 	resp := b.HandleRequest(context.Background(), req)
-	assertErrorResponse(t, resp, req.ID, pairingproto.ErrorCodeKeyNotFound)
+	assertErrorResponse(t, resp, req.ID, req.Generation, pairingproto.ErrorCodeKeyNotFound)
 }
 
 // --- Coverage gap tests: PIV handlePIVListSlots bad JSON ---
@@ -2722,14 +2734,14 @@ func TestBridge_HandlePIVListSlots_BadJSON(t *testing.T) {
 
 	req := pairingproto.NewRequest(pairingproto.MethodRemotePIVListSlots, 42)
 	resp := b.HandleRequest(context.Background(), req)
-	assertErrorResponse(t, resp, req.ID, pairingproto.ErrorCodeInvalidParams)
+	assertErrorResponse(t, resp, req.ID, req.Generation, pairingproto.ErrorCodeInvalidParams)
 }
 
 // --- Coverage gap tests: EncodeResponse marshal error ---
 
 func TestEncodeResponse_MarshalError(t *testing.T) {
 	// Pass a value that cannot be marshaled to JSON.
-	_, err := pairingproto.EncodeResponse(1, make(chan int))
+	_, err := pairingproto.EncodeResponse(1, 1, make(chan int))
 	require.Error(t, err)
 }
 

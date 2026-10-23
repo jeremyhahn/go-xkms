@@ -204,7 +204,7 @@ func TestProveLiveness_ExchangeSuccessRoundTrip(t *testing.T) {
 			if err != nil {
 				return nil, err
 			}
-			respBytes, err := pairingproto.EncodeResponse(req.ID, json.RawMessage(resultJSON))
+			respBytes, err := pairingproto.EncodeResponse(req.ID, req.Generation, json.RawMessage(resultJSON))
 			if err != nil {
 				return nil, err
 			}

@@ -20,6 +20,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"math"
 	"time"
 
 	xkms "github.com/jeremyhahn/go-xkms/sdk/go"
@@ -431,6 +432,14 @@ func VerifyDeviceAttestation(
 	}, nil
 }
 
+// attestRequestGeneration is the generation AttestOverSession stamps on its
+// request (go-xkms#128). The exchange runs outside the MessageRouter, so no
+// router assigns one. It is the top of the generation space: a router later
+// started on the same connection counts up from 1 and never reaches it, so
+// the value is not reused within the connection, and it is non-zero because
+// zero means a response that echoed no generation at all.
+const attestRequestGeneration = math.MaxUint64
+
 // AttestOverSession runs one complete challenge-response attestation exchange
 // on an already-established Noise session and returns what was verified (#129).
 //
@@ -480,6 +489,7 @@ func AttestOverSession(
 		"purpose", purpose, "binding", hex.EncodeToString(channelBinding))
 
 	req := pairingproto.NewRequest(pairingproto.MethodLocalAttestDevice, challenge.Params())
+	req.Generation = attestRequestGeneration
 
 	plaintext, err := pairingproto.EncodeRequest(req)
 	if err != nil {
@@ -509,6 +519,18 @@ func AttestOverSession(
 	if err != nil {
 		logger.Error("attestation refused: response decode failed", "error", err)
 		return nil, fmt.Errorf("%w: %w", ErrDeviceAttestFailed, err)
+	}
+
+	// The router's contract, applied by hand: a response answers this request
+	// only if it echoes both its ID and its generation. Checked before the
+	// RPC error too, since a refusal of some other request is not ours.
+	if resp.ID != req.ID || resp.Generation != req.Generation {
+		mismatch := &ResponseMismatchError{
+			RequestID: req.ID, RequestGeneration: req.Generation,
+			ResponseID: resp.ID, ResponseGeneration: resp.Generation,
+		}
+		logger.Error("attestation refused: response does not answer the request", "error", mismatch)
+		return nil, &SentinelCauseError{Sentinel: ErrDeviceAttestFailed, Cause: mismatch}
 	}
 
 	if resp.Error != nil {

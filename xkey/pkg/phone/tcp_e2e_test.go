@@ -79,14 +79,14 @@ func (h *rpcTestHandler) HandleRequest(_ context.Context, request []byte) ([]byt
 	h.record(req.Method, rawParams)
 
 	if h.failMethod != "" && req.Method == h.failMethod {
-		return pairingproto.EncodeErrorResponse(req.ID, h.failCode, "rejected by test handler", nil)
+		return pairingproto.EncodeErrorResponse(req.ID, req.Generation, h.failCode, "rejected by test handler", nil)
 	}
 
 	switch req.Method {
 	case pairingproto.MethodPing:
-		return pairingproto.EncodeResponse(req.ID, &pairingproto.PingResult{Pong: true})
+		return pairingproto.EncodeResponse(req.ID, req.Generation, &pairingproto.PingResult{Pong: true})
 	case pairingproto.MethodGetInfo:
-		return pairingproto.EncodeResponse(req.ID, &pairingproto.GetInfoResult{
+		return pairingproto.EncodeResponse(req.ID, req.Generation, &pairingproto.GetInfoResult{
 			Version:             "2.0",
 			DeviceName:          "tcp-phone",
 			SupportedAlgorithms: []int{pairingproto.COSEAlgES256},
@@ -94,17 +94,17 @@ func (h *rpcTestHandler) HandleRequest(_ context.Context, request []byte) ([]byt
 			CurrentCredentials:  1,
 		})
 	case pairingproto.MethodGenerateKey:
-		return pairingproto.EncodeResponse(req.ID, &pairingproto.GenerateKeyResult{PublicKeyCOSE: []byte{0xa5, 0x01, 0x02}})
+		return pairingproto.EncodeResponse(req.ID, req.Generation, &pairingproto.GenerateKeyResult{PublicKeyCOSE: []byte{0xa5, 0x01, 0x02}})
 	case pairingproto.MethodSign:
-		return pairingproto.EncodeResponse(req.ID, &pairingproto.SignResult{Signature: []byte{0x30, 0x45, 0x02}})
+		return pairingproto.EncodeResponse(req.ID, req.Generation, &pairingproto.SignResult{Signature: []byte{0x30, 0x45, 0x02}})
 	case pairingproto.MethodLoadKey:
-		return pairingproto.EncodeResponse(req.ID, &pairingproto.LoadKeyResult{Exists: true})
+		return pairingproto.EncodeResponse(req.ID, req.Generation, &pairingproto.LoadKeyResult{Exists: true})
 	case pairingproto.MethodDeleteKey:
-		return pairingproto.EncodeResponse(req.ID, &pairingproto.DeleteKeyResult{Deleted: true})
+		return pairingproto.EncodeResponse(req.ID, req.Generation, &pairingproto.DeleteKeyResult{Deleted: true})
 	case pairingproto.MethodPairingConfirm:
-		return pairingproto.EncodeResponse(req.ID, &pairingproto.PairingConfirmResult{Confirmed: true, DeviceName: "tcp-phone"})
+		return pairingproto.EncodeResponse(req.ID, req.Generation, &pairingproto.PairingConfirmResult{Confirmed: true, DeviceName: "tcp-phone"})
 	default:
-		return pairingproto.EncodeErrorResponse(req.ID, -32601, "method not found", req.Method)
+		return pairingproto.EncodeErrorResponse(req.ID, req.Generation, -32601, "method not found", req.Method)
 	}
 }
 

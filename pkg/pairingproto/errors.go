@@ -60,17 +60,13 @@ var (
 	// ErrDuplicateRequestID indicates a request reused the ID of another
 	// request still awaiting its response. The second request is refused
 	// rather than registered: the router routes responses by ID, so allowing
-	// the collision would deliver one operation's response to the other. On a
-	// signing backend that is the wrong signature returned to the wrong
-	// caller.
+	// the collision would silently orphan whichever request registered first
+	// -- it would never see its channel again, since the second registration
+	// overwrites it in the pending map. A late or duplicate answer that does
+	// reach a reused ID is separately guarded by generation matching (see
+	// Request.Generation); this check is about not losing a route at all,
+	// which generation does not protect against.
 	ErrDuplicateRequestID = errors.New("pairing: request ID already in flight")
-
-	// ErrTooManyAbandonedRequests reports that too many requests on this
-	// connection exited without a response. The router keeps a tombstone per
-	// abandoned ID so a late answer cannot be delivered to whoever reuses the
-	// number; at the cap it refuses new requests rather than dropping a
-	// tombstone, because dropping one restores that cross-talk. Reconnect.
-	ErrTooManyAbandonedRequests = errors.New("pairing: too many abandoned requests on this connection")
 
 	// ErrInvalidCredentialID indicates the credential ID is invalid or empty.
 	ErrInvalidCredentialID = errors.New("pairing: invalid credential ID")

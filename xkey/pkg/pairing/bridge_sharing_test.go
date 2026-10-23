@@ -93,7 +93,7 @@ func TestBridge_HandleSharePublicKey_InvalidParams(t *testing.T) {
 	// Nil params
 	req := newRemoteRequest(pairingproto.MethodRemoteSharePublicKey, nil)
 	resp := b.HandleRequest(context.Background(), req)
-	assertErrorResponse(t, resp, req.ID, pairingproto.ErrorCodeInvalidParams)
+	assertErrorResponse(t, resp, req.ID, req.Generation, pairingproto.ErrorCodeInvalidParams)
 }
 
 func TestBridge_HandleSharePublicKey_EmptyPublicKey(t *testing.T) {
@@ -107,7 +107,7 @@ func TestBridge_HandleSharePublicKey_EmptyPublicKey(t *testing.T) {
 		// PublicKeyPEM intentionally empty
 	})
 	resp := b.HandleRequest(context.Background(), req)
-	assertErrorResponse(t, resp, req.ID, pairingproto.ErrorCodeInvalidPublicKey)
+	assertErrorResponse(t, resp, req.ID, req.Generation, pairingproto.ErrorCodeInvalidPublicKey)
 }
 
 func TestBridge_HandleSharePublicKey_EmptyAlgorithm(t *testing.T) {
@@ -121,7 +121,7 @@ func TestBridge_HandleSharePublicKey_EmptyAlgorithm(t *testing.T) {
 		// Algorithm intentionally empty
 	})
 	resp := b.HandleRequest(context.Background(), req)
-	assertErrorResponse(t, resp, req.ID, pairingproto.ErrorCodeInvalidParams)
+	assertErrorResponse(t, resp, req.ID, req.Generation, pairingproto.ErrorCodeInvalidParams)
 }
 
 func TestBridge_HandleSharePublicKey_BackendDenied(t *testing.T) {
@@ -141,7 +141,7 @@ func TestBridge_HandleSharePublicKey_BackendDenied(t *testing.T) {
 		Backend:      "restricted",
 	})
 	resp := b.HandleRequest(context.Background(), req)
-	assertErrorResponse(t, resp, req.ID, pairingproto.ErrorCodeBackendDenied)
+	assertErrorResponse(t, resp, req.ID, req.Generation, pairingproto.ErrorCodeBackendDenied)
 }
 
 func TestBridge_HandleSharePublicKey_ImportError(t *testing.T) {
@@ -158,7 +158,7 @@ func TestBridge_HandleSharePublicKey_ImportError(t *testing.T) {
 		Algorithm:    "ECDSA-P256",
 	})
 	resp := b.HandleRequest(context.Background(), req)
-	assertErrorResponse(t, resp, req.ID, pairingproto.ErrorCodeInternalError)
+	assertErrorResponse(t, resp, req.ID, req.Generation, pairingproto.ErrorCodeInternalError)
 }
 
 func TestBridge_HandleSharePublicKey_WithCertificate(t *testing.T) {
@@ -290,7 +290,7 @@ func TestBridge_HandleShareSymmetric_InvalidParams(t *testing.T) {
 
 	req := newRemoteRequest(pairingproto.MethodRemoteShareSymmetric, nil)
 	resp := b.HandleRequest(context.Background(), req)
-	assertErrorResponse(t, resp, req.ID, pairingproto.ErrorCodeInvalidParams)
+	assertErrorResponse(t, resp, req.ID, req.Generation, pairingproto.ErrorCodeInvalidParams)
 }
 
 func TestBridge_HandleShareSymmetric_EmptyWrappedKey(t *testing.T) {
@@ -304,7 +304,7 @@ func TestBridge_HandleShareSymmetric_EmptyWrappedKey(t *testing.T) {
 		// WrappedKey intentionally empty
 	})
 	resp := b.HandleRequest(context.Background(), req)
-	assertErrorResponse(t, resp, req.ID, pairingproto.ErrorCodeInvalidParams)
+	assertErrorResponse(t, resp, req.ID, req.Generation, pairingproto.ErrorCodeInvalidParams)
 }
 
 func TestBridge_HandleShareSymmetric_EmptyAlgorithm(t *testing.T) {
@@ -318,7 +318,7 @@ func TestBridge_HandleShareSymmetric_EmptyAlgorithm(t *testing.T) {
 		// Algorithm intentionally empty
 	})
 	resp := b.HandleRequest(context.Background(), req)
-	assertErrorResponse(t, resp, req.ID, pairingproto.ErrorCodeInvalidParams)
+	assertErrorResponse(t, resp, req.ID, req.Generation, pairingproto.ErrorCodeInvalidParams)
 }
 
 func TestBridge_HandleShareSymmetric_BackendDenied(t *testing.T) {
@@ -338,7 +338,7 @@ func TestBridge_HandleShareSymmetric_BackendDenied(t *testing.T) {
 		Backend:    "restricted",
 	})
 	resp := b.HandleRequest(context.Background(), req)
-	assertErrorResponse(t, resp, req.ID, pairingproto.ErrorCodeBackendDenied)
+	assertErrorResponse(t, resp, req.ID, req.Generation, pairingproto.ErrorCodeBackendDenied)
 }
 
 func TestBridge_HandleShareSymmetric_ImportError(t *testing.T) {
@@ -355,7 +355,7 @@ func TestBridge_HandleShareSymmetric_ImportError(t *testing.T) {
 		Algorithm:  "AES-256-GCM",
 	})
 	resp := b.HandleRequest(context.Background(), req)
-	assertErrorResponse(t, resp, req.ID, pairingproto.ErrorCodeInternalError)
+	assertErrorResponse(t, resp, req.ID, req.Generation, pairingproto.ErrorCodeInternalError)
 }
 
 func TestBridge_HandleShareSymmetric_WithLabel(t *testing.T) {
@@ -447,7 +447,7 @@ func TestBridge_HandleImportSharedKey_InvalidParams(t *testing.T) {
 
 	req := newRemoteRequest(pairingproto.MethodRemoteImportSharedKey, nil)
 	resp := b.HandleRequest(context.Background(), req)
-	assertErrorResponse(t, resp, req.ID, pairingproto.ErrorCodeInvalidParams)
+	assertErrorResponse(t, resp, req.ID, req.Generation, pairingproto.ErrorCodeInvalidParams)
 }
 
 func TestBridge_HandleImportSharedKey_MissingBackend(t *testing.T) {
@@ -460,7 +460,7 @@ func TestBridge_HandleImportSharedKey_MissingBackend(t *testing.T) {
 		// Backend intentionally empty
 	})
 	resp := b.HandleRequest(context.Background(), req)
-	assertErrorResponse(t, resp, req.ID, pairingproto.ErrorCodeInvalidParams)
+	assertErrorResponse(t, resp, req.ID, req.Generation, pairingproto.ErrorCodeInvalidParams)
 }
 
 func TestBridge_HandleImportSharedKey_MissingKeyID(t *testing.T) {
@@ -473,7 +473,7 @@ func TestBridge_HandleImportSharedKey_MissingKeyID(t *testing.T) {
 		// KeyID intentionally empty
 	})
 	resp := b.HandleRequest(context.Background(), req)
-	assertErrorResponse(t, resp, req.ID, pairingproto.ErrorCodeInvalidParams)
+	assertErrorResponse(t, resp, req.ID, req.Generation, pairingproto.ErrorCodeInvalidParams)
 }
 
 func TestBridge_HandleImportSharedKey_BackendDenied(t *testing.T) {
@@ -491,7 +491,7 @@ func TestBridge_HandleImportSharedKey_BackendDenied(t *testing.T) {
 		KeyID:   "key1",
 	})
 	resp := b.HandleRequest(context.Background(), req)
-	assertErrorResponse(t, resp, req.ID, pairingproto.ErrorCodeBackendDenied)
+	assertErrorResponse(t, resp, req.ID, req.Generation, pairingproto.ErrorCodeBackendDenied)
 }
 
 func TestBridge_HandleImportSharedKey_GetKeyError(t *testing.T) {
@@ -509,7 +509,7 @@ func TestBridge_HandleImportSharedKey_GetKeyError(t *testing.T) {
 		KeyID:   "key1",
 	})
 	resp := b.HandleRequest(context.Background(), req)
-	assertErrorResponse(t, resp, req.ID, pairingproto.ErrorCodeInternalError)
+	assertErrorResponse(t, resp, req.ID, req.Generation, pairingproto.ErrorCodeInternalError)
 }
 
 func TestBridge_HandleImportSharedKey_SymmetricKey(t *testing.T) {

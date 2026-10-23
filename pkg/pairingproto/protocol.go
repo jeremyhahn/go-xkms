@@ -148,19 +148,33 @@ func nextRequestID() uint64 {
 }
 
 // Request represents a JSON-RPC 2.0 request message.
+//
+// Generation disambiguates a response from a stale or duplicate answer to an
+// earlier request that reused the same ID (go-xkms#128). It is assigned by
+// MessageRouter.SendRequest from a per-connection monotonic counter and is
+// never reused within the life of a connection. It is not a secret: its job
+// is disambiguation, and the Noise channel already authenticates the peer.
 type Request struct {
-	JSONRPC string      `json:"jsonrpc"`
-	ID      uint64      `json:"id"`
-	Method  string      `json:"method"`
-	Params  interface{} `json:"params,omitempty"`
+	JSONRPC    string      `json:"jsonrpc"`
+	ID         uint64      `json:"id"`
+	Generation uint64      `json:"generation"`
+	Method     string      `json:"method"`
+	Params     interface{} `json:"params,omitempty"`
 }
 
 // Response represents a JSON-RPC 2.0 response message.
+//
+// Generation must echo the Generation of the request it answers verbatim,
+// including on error responses. MessageRouter.routeResponse drops any
+// response whose Generation does not match the pending request's, or whose
+// Generation is missing (the zero value, since valid generations start at 1)
+// -- see Request.Generation and go-xkms#128.
 type Response struct {
-	JSONRPC string          `json:"jsonrpc"`
-	ID      uint64          `json:"id"`
-	Result  json.RawMessage `json:"result,omitempty"`
-	Error   *RPCError       `json:"error,omitempty"`
+	JSONRPC    string          `json:"jsonrpc"`
+	ID         uint64          `json:"id"`
+	Generation uint64          `json:"generation"`
+	Result     json.RawMessage `json:"result,omitempty"`
+	Error      *RPCError       `json:"error,omitempty"`
 }
 
 // RPCError represents a JSON-RPC 2.0 error object.
@@ -375,21 +389,26 @@ func DecodeRequest(data []byte) (*Request, error) {
 }
 
 // EncodeResponse creates and encodes a successful JSON-RPC response.
-func EncodeResponse(id uint64, result interface{}) ([]byte, error) {
+// generation must echo the Generation of the request being answered -- see
+// Response.Generation.
+func EncodeResponse(id, generation uint64, result interface{}) ([]byte, error) {
 	resultJSON, err := json.Marshal(result)
 	if err != nil {
 		return nil, err
 	}
 	resp := &Response{
-		JSONRPC: JSONRPCVersion,
-		ID:      id,
-		Result:  resultJSON,
+		JSONRPC:    JSONRPCVersion,
+		ID:         id,
+		Generation: generation,
+		Result:     resultJSON,
 	}
 	return json.Marshal(resp)
 }
 
 // EncodeErrorResponse creates and encodes a JSON-RPC error response.
-func EncodeErrorResponse(id uint64, code int, message string, data interface{}) ([]byte, error) {
+// generation must echo the Generation of the request being answered, exactly
+// as EncodeResponse does for a success -- see Response.Generation.
+func EncodeErrorResponse(id, generation uint64, code int, message string, data interface{}) ([]byte, error) {
 	rpcErr := &RPCError{
 		Code:    code,
 		Message: message,
@@ -402,9 +421,10 @@ func EncodeErrorResponse(id uint64, code int, message string, data interface{}) 
 		}
 	}
 	resp := &Response{
-		JSONRPC: JSONRPCVersion,
-		ID:      id,
-		Error:   rpcErr,
+		JSONRPC:    JSONRPCVersion,
+		ID:         id,
+		Generation: generation,
+		Error:      rpcErr,
 	}
 	return json.Marshal(resp)
 }

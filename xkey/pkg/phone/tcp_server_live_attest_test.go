@@ -174,7 +174,7 @@ func TestTCPPairingServer_LiveAttest_ChallengeExchange(t *testing.T) {
 	}
 	sawMethod = req.Method
 
-	respBytes, err := pairingproto.EncodeResponse(req.ID, map[string]bool{"ok": true})
+	respBytes, err := pairingproto.EncodeResponse(req.ID, req.Generation, map[string]bool{"ok": true})
 	if err != nil {
 		t.Fatalf("encode response: %v", err)
 	}

@@ -32,6 +32,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"encoding/pem"
+	"errors"
 	"fmt"
 	"hash"
 	"io"
@@ -84,6 +85,11 @@ func (p *prober) requiredCall(name, method string, params interface{}) map[strin
 // It parks in an uncancellable Receive and only observes shutdown between
 // messages, so this cannot be an unbounded join; see go-xkms#30.
 const probeShutdownTimeout = 5 * time.Second
+
+// probeCallTimeout bounds the wait for one step's response. It matches the
+// transport's operation timeout: a phone that has not answered by then is
+// not going to.
+const probeCallTimeout = 30 * time.Second
 
 // probeExit carries a non-zero status out of the teardown defer. Registered
 // first below so it runs LAST, after teardown has had its say.
@@ -187,7 +193,16 @@ func probe(ctx context.Context, tr pairingproto.Transport, staticKey *bootstrap.
 
 	p := &prober{}
 	p.call = func(method string, params interface{}) (map[string]json.RawMessage, error) {
-		resp, err := router.SendRequest(ctx, pairingproto.NewRequest(method, params))
+		// Each step gets its own deadline. The router drops a response
+		// whose ID or generation does not match (issue #128), so without
+		// one a single dropped answer would hang the step until the whole
+		// run's context expired, starving every step after it.
+		callCtx, cancel := context.WithTimeout(ctx, probeCallTimeout)
+		defer cancel()
+		resp, err := router.SendRequest(callCtx, pairingproto.NewRequest(method, params))
+		if errors.Is(err, context.DeadlineExceeded) {
+			return nil, &NoResponseError{Method: method, Err: err}
+		}
 		if err != nil {
 			return nil, err
 		}

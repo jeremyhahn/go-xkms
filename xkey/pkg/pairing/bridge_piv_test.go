@@ -161,7 +161,7 @@ func TestBridge_HandlePIVListSlots_NotConfigured(t *testing.T) {
 		Backend: "pkcs11",
 	})
 	resp := b.HandleRequest(context.Background(), req)
-	assertErrorResponse(t, resp, req.ID, pairingproto.ErrorCodeFeatureUnavailable)
+	assertErrorResponse(t, resp, req.ID, req.Generation, pairingproto.ErrorCodeFeatureUnavailable)
 }
 
 // TestBridge_HandlePIVListSlots_Success verifies the real round trip through
@@ -274,7 +274,7 @@ func TestBridge_HandlePIVSign_TransportFailure(t *testing.T) {
 		Data: []byte("data to sign"),
 	})
 	resp := b.HandleRequest(context.Background(), req)
-	assertErrorResponse(t, resp, req.ID, pairingproto.ErrorCodePIVSignFailed)
+	assertErrorResponse(t, resp, req.ID, req.Generation, pairingproto.ErrorCodePIVSignFailed)
 }
 
 func TestBridge_HandlePIVSign_InvalidParams(t *testing.T) {
@@ -285,7 +285,7 @@ func TestBridge_HandlePIVSign_InvalidParams(t *testing.T) {
 	// Nil params
 	req := newRemoteRequest(pairingproto.MethodRemotePIVSign, nil)
 	resp := b.HandleRequest(context.Background(), req)
-	assertErrorResponse(t, resp, req.ID, pairingproto.ErrorCodeInvalidParams)
+	assertErrorResponse(t, resp, req.ID, req.Generation, pairingproto.ErrorCodeInvalidParams)
 }
 
 func TestBridge_HandlePIVSign_EmptySlot(t *testing.T) {
@@ -297,7 +297,7 @@ func TestBridge_HandlePIVSign_EmptySlot(t *testing.T) {
 		Data: []byte("data to sign"),
 	})
 	resp := b.HandleRequest(context.Background(), req)
-	assertErrorResponse(t, resp, req.ID, pairingproto.ErrorCodePIVInvalidSlot)
+	assertErrorResponse(t, resp, req.ID, req.Generation, pairingproto.ErrorCodePIVInvalidSlot)
 }
 
 func TestBridge_HandlePIVSign_EmptyData(t *testing.T) {
@@ -310,7 +310,7 @@ func TestBridge_HandlePIVSign_EmptyData(t *testing.T) {
 		Data: []byte{},
 	})
 	resp := b.HandleRequest(context.Background(), req)
-	assertErrorResponse(t, resp, req.ID, pairingproto.ErrorCodeInvalidParams)
+	assertErrorResponse(t, resp, req.ID, req.Generation, pairingproto.ErrorCodeInvalidParams)
 }
 
 // --- handlePIVGetCert tests ---
@@ -328,7 +328,7 @@ func TestBridge_HandlePIVGetCert_NotConfigured(t *testing.T) {
 		Backend: "pkcs11",
 	})
 	resp := b.HandleRequest(context.Background(), req)
-	assertErrorResponse(t, resp, req.ID, pairingproto.ErrorCodeFeatureUnavailable)
+	assertErrorResponse(t, resp, req.ID, req.Generation, pairingproto.ErrorCodeFeatureUnavailable)
 }
 
 // TestBridge_HandlePIVGetCert_Success verifies the real round trip through
@@ -373,7 +373,7 @@ func TestBridge_HandlePIVGetCert_NotFound(t *testing.T) {
 		Slot: pairingproto.PIVSlotAuthentication,
 	})
 	resp := b.HandleRequest(context.Background(), req)
-	assertErrorResponse(t, resp, req.ID, pairingproto.ErrorCodePIVSlotNotFound)
+	assertErrorResponse(t, resp, req.ID, req.Generation, pairingproto.ErrorCodePIVSlotNotFound)
 }
 
 func TestBridge_HandlePIVGetCert_InvalidParams(t *testing.T) {
@@ -384,7 +384,7 @@ func TestBridge_HandlePIVGetCert_InvalidParams(t *testing.T) {
 	// Nil params
 	req := newRemoteRequest(pairingproto.MethodRemotePIVGetCert, nil)
 	resp := b.HandleRequest(context.Background(), req)
-	assertErrorResponse(t, resp, req.ID, pairingproto.ErrorCodeInvalidParams)
+	assertErrorResponse(t, resp, req.ID, req.Generation, pairingproto.ErrorCodeInvalidParams)
 }
 
 func TestBridge_HandlePIVGetCert_EmptySlot(t *testing.T) {
@@ -396,7 +396,7 @@ func TestBridge_HandlePIVGetCert_EmptySlot(t *testing.T) {
 		Backend: "pkcs11",
 	})
 	resp := b.HandleRequest(context.Background(), req)
-	assertErrorResponse(t, resp, req.ID, pairingproto.ErrorCodePIVInvalidSlot)
+	assertErrorResponse(t, resp, req.ID, req.Generation, pairingproto.ErrorCodePIVInvalidSlot)
 }
 
 // --- Error mapping tests ---
@@ -442,7 +442,7 @@ func TestBridge_NilParams_PIVHandlers(t *testing.T) {
 		t.Run(method, func(t *testing.T) {
 			req := newRemoteRequest(method, nil)
 			resp := b.HandleRequest(context.Background(), req)
-			assertErrorResponse(t, resp, req.ID, pairingproto.ErrorCodeInvalidParams)
+			assertErrorResponse(t, resp, req.ID, req.Generation, pairingproto.ErrorCodeInvalidParams)
 		})
 	}
 }

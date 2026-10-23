@@ -240,9 +240,10 @@ func TestMessageRouter_SendRequest_Response(t *testing.T) {
 		}
 
 		resp := &pairingproto.Response{
-			JSONRPC: pairingproto.JSONRPCVersion,
-			ID:      req.ID,
-			Result:  json.RawMessage(`{"pong":true}`),
+			JSONRPC:    pairingproto.JSONRPCVersion,
+			ID:         req.ID,
+			Generation: req.Generation,
+			Result:     json.RawMessage(`{"pong":true}`),
 		}
 		respBytes, _ := json.Marshal(resp)
 		respCiphertext, _ := remoteSession.Encrypt(respBytes)
@@ -284,9 +285,10 @@ func TestMessageRouter_InboundRequest(t *testing.T) {
 				Backends: []pairingproto.BackendInfo{{Name: "tpm2", Type: "tpm2"}},
 			})
 			return &pairingproto.Response{
-				JSONRPC: pairingproto.JSONRPCVersion,
-				ID:      req.ID,
-				Result:  resultData,
+				JSONRPC:    pairingproto.JSONRPCVersion,
+				ID:         req.ID,
+				Generation: req.Generation,
+				Result:     resultData,
 			}
 		},
 	}
@@ -297,9 +299,10 @@ func TestMessageRouter_InboundRequest(t *testing.T) {
 
 	// Remote side sends an inbound request.
 	inboundReq := &pairingproto.Request{
-		JSONRPC: pairingproto.JSONRPCVersion,
-		ID:      42,
-		Method:  pairingproto.MethodRemoteListBackends,
+		JSONRPC:    pairingproto.JSONRPCVersion,
+		ID:         42,
+		Generation: 7,
+		Method:     pairingproto.MethodRemoteListBackends,
 	}
 	reqBytes, err := json.Marshal(inboundReq)
 	require.NoError(t, err)
@@ -330,6 +333,7 @@ func TestMessageRouter_InboundRequest(t *testing.T) {
 	require.NoError(t, err)
 
 	assert.Equal(t, uint64(42), resp.ID)
+	assert.Equal(t, uint64(7), resp.Generation, "the inbound handler must echo the request's generation verbatim")
 	assert.Nil(t, resp.Error)
 
 	var result pairingproto.RemoteListBackendsResult
@@ -352,7 +356,7 @@ func TestMessageRouter_InboundRequest_WipesEncodedResult(t *testing.T) {
 	require.NoError(t, err)
 	handler := &mockRequestHandler{
 		handleFunc: func(_ context.Context, req *pairingproto.Request) *pairingproto.Response {
-			return &pairingproto.Response{JSONRPC: pairingproto.JSONRPCVersion, ID: req.ID, Result: encodedResult}
+			return &pairingproto.Response{JSONRPC: pairingproto.JSONRPCVersion, ID: req.ID, Generation: req.Generation, Result: encodedResult}
 		},
 	}
 
@@ -478,7 +482,7 @@ func TestMessageRouter_NilHandler_InboundRequest(t *testing.T) {
 		if err := json.Unmarshal(pt, &req); err != nil {
 			return
 		}
-		resp := &pairingproto.Response{JSONRPC: pairingproto.JSONRPCVersion, ID: req.ID, Result: json.RawMessage(`{"pong":true}`)}
+		resp := &pairingproto.Response{JSONRPC: pairingproto.JSONRPCVersion, ID: req.ID, Generation: req.Generation, Result: json.RawMessage(`{"pong":true}`)}
 		rb, _ := json.Marshal(resp)
 		rc, _ := remoteSession.Encrypt(rb)
 		remoteTransport.Send(context.Background(), rc)
@@ -532,7 +536,7 @@ func TestMessageRouter_InvalidDecrypt(t *testing.T) {
 		if err := json.Unmarshal(pt, &req); err != nil {
 			return
 		}
-		resp := &pairingproto.Response{JSONRPC: pairingproto.JSONRPCVersion, ID: req.ID, Result: json.RawMessage(`{"pong":true}`)}
+		resp := &pairingproto.Response{JSONRPC: pairingproto.JSONRPCVersion, ID: req.ID, Generation: req.Generation, Result: json.RawMessage(`{"pong":true}`)}
 		rb, _ := json.Marshal(resp)
 		rc, _ := remoteSession.Encrypt(rb)
 		remoteTransport.Send(context.Background(), rc)
@@ -665,7 +669,7 @@ func TestMessageRouter_UnknownResponseID(t *testing.T) {
 		if err := json.Unmarshal(pt, &req); err != nil {
 			return
 		}
-		resp := &pairingproto.Response{JSONRPC: pairingproto.JSONRPCVersion, ID: req.ID, Result: json.RawMessage(`{"pong":true}`)}
+		resp := &pairingproto.Response{JSONRPC: pairingproto.JSONRPCVersion, ID: req.ID, Generation: req.Generation, Result: json.RawMessage(`{"pong":true}`)}
 		rb, _ := json.Marshal(resp)
 		rc, _ := remoteSession.Encrypt(rb)
 		remoteTransport.Send(context.Background(), rc)
@@ -720,7 +724,7 @@ func TestMessageRouter_InvalidJSON(t *testing.T) {
 		if err := json.Unmarshal(pt, &req); err != nil {
 			return
 		}
-		resp := &pairingproto.Response{JSONRPC: pairingproto.JSONRPCVersion, ID: req.ID, Result: json.RawMessage(`{"pong":true}`)}
+		resp := &pairingproto.Response{JSONRPC: pairingproto.JSONRPCVersion, ID: req.ID, Generation: req.Generation, Result: json.RawMessage(`{"pong":true}`)}
 		rb, _ := json.Marshal(resp)
 		rc, _ := remoteSession.Encrypt(rb)
 		remoteTransport.Send(context.Background(), rc)
@@ -792,7 +796,7 @@ func TestMessageRouter_InboundRequest_NilResponse(t *testing.T) {
 		if err := json.Unmarshal(pt, &req); err != nil {
 			return
 		}
-		resp := &pairingproto.Response{JSONRPC: pairingproto.JSONRPCVersion, ID: req.ID, Result: json.RawMessage(`{"pong":true}`)}
+		resp := &pairingproto.Response{JSONRPC: pairingproto.JSONRPCVersion, ID: req.ID, Generation: req.Generation, Result: json.RawMessage(`{"pong":true}`)}
 		rb, _ := json.Marshal(resp)
 		rc, _ := remoteSession.Encrypt(rb)
 		remoteTransport.Send(context.Background(), rc)
@@ -933,9 +937,10 @@ func TestMessageRouter_ConcurrentSendRequests(t *testing.T) {
 				"echo": req.ID,
 			})
 			resp := &pairingproto.Response{
-				JSONRPC: pairingproto.JSONRPCVersion,
-				ID:      req.ID,
-				Result:  resultJSON,
+				JSONRPC:    pairingproto.JSONRPCVersion,
+				ID:         req.ID,
+				Generation: req.Generation,
+				Result:     resultJSON,
 			}
 			rb, _ := json.Marshal(resp)
 			rc, _ := remoteSession.Encrypt(rb)
@@ -1169,7 +1174,7 @@ func TestMessageRouter_BiometricPendingNotification_NoHandler(t *testing.T) {
 		if err := json.Unmarshal(pt, &req); err != nil {
 			return
 		}
-		resp := &pairingproto.Response{JSONRPC: pairingproto.JSONRPCVersion, ID: req.ID, Result: json.RawMessage(`{"pong":true}`)}
+		resp := &pairingproto.Response{JSONRPC: pairingproto.JSONRPCVersion, ID: req.ID, Generation: req.Generation, Result: json.RawMessage(`{"pong":true}`)}
 		rb, _ := json.Marshal(resp)
 		rc, _ := remoteSession.Encrypt(rb)
 		remoteTransport.Send(context.Background(), rc)

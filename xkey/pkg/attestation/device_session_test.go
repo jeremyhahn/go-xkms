@@ -112,16 +112,22 @@ func discardLogger() *slog.Logger {
 // honestResponder builds a scriptedTransport that answers exactly like a
 // contract-faithful phone: it decrypts the request the caller sent, signs
 // the nonce it finds there with dak, and encrypts a valid result back.
+// sentRequest decrypts and decodes the request AttestOverSession sent, so a
+// scripted reply can answer it with the request's own ID and generation.
+func sentRequest(server *bootstrap.NoiseSession, sent []byte) (*pairingproto.Request, error) {
+	plaintext, err := server.Decrypt(sent)
+	if err != nil {
+		return nil, err
+	}
+	return pairingproto.DecodeRequest(plaintext)
+}
+
 func honestResponder(t *testing.T, server *bootstrap.NoiseSession, dak *attesttest.DAK) *scriptedTransport {
 	t.Helper()
 
 	return &scriptedTransport{
 		respond: func(_ context.Context, sent []byte) ([]byte, error) {
-			plaintext, err := server.Decrypt(sent)
-			if err != nil {
-				return nil, err
-			}
-			req, err := pairingproto.DecodeRequest(plaintext)
+			req, err := sentRequest(server, sent)
 			if err != nil {
 				return nil, err
 			}
@@ -138,7 +144,7 @@ func honestResponder(t *testing.T, server *bootstrap.NoiseSession, dak *attestte
 				return nil, err
 			}
 			result := dak.Respond(t, params.Purpose, params.Nonce, binding)
-			respBytes, err := pairingproto.EncodeResponse(req.ID, result)
+			respBytes, err := pairingproto.EncodeResponse(req.ID, req.Generation, result)
 			if err != nil {
 				return nil, err
 			}
@@ -253,8 +259,10 @@ func TestAttestOverSession_RPCError(t *testing.T) {
 	if !ok {
 		return
 	}
-	transport := &scriptedTransport{respond: func(context.Context, []byte) ([]byte, error) {
-		raw, err := pairingproto.EncodeErrorResponse(1, 1000, "user declined attestation", nil)
+	transport := &scriptedTransport{respond: func(_ context.Context, sent []byte) ([]byte, error) {
+		req, err := sentRequest(server, sent)
+		require.NoError(t, err)
+		raw, err := pairingproto.EncodeErrorResponse(req.ID, req.Generation, 1000, "user declined attestation", nil)
 		require.NoError(t, err)
 		return server.Encrypt(raw)
 	}}
@@ -275,8 +283,12 @@ func TestAttestOverSession_MalformedResult(t *testing.T) {
 	if !ok {
 		return
 	}
-	transport := &scriptedTransport{respond: func(context.Context, []byte) ([]byte, error) {
-		resp := &pairingproto.Response{JSONRPC: "2.0", ID: 1, Result: json.RawMessage("123")}
+	transport := &scriptedTransport{respond: func(_ context.Context, sent []byte) ([]byte, error) {
+		req, err := sentRequest(server, sent)
+		require.NoError(t, err)
+		resp := &pairingproto.Response{
+			JSONRPC: "2.0", ID: req.ID, Generation: req.Generation, Result: json.RawMessage("123"),
+		}
 		raw, err := json.Marshal(resp)
 		require.NoError(t, err)
 		return server.Encrypt(raw)
@@ -287,6 +299,61 @@ func TestAttestOverSession_MalformedResult(t *testing.T) {
 	require.Error(t, err)
 	assert.ErrorIs(t, err, attestation.ErrDeviceAttestFailed)
 	assert.Nil(t, verified)
+}
+
+// TestAttestOverSession_RefusesMismatchedIDOrGeneration proves a response
+// that does not echo both the request's ID and its generation is refused
+// (#128), even when it carries an otherwise well-formed result.
+func TestAttestOverSession_RefusesMismatchedIDOrGeneration(t *testing.T) {
+	tests := []struct {
+		name   string
+		answer func(req *pairingproto.Request) (id, generation uint64)
+	}{
+		{
+			name: "wrong ID",
+			answer: func(req *pairingproto.Request) (uint64, uint64) {
+				return req.ID + 1, req.Generation
+			},
+		},
+		{
+			name: "wrong generation",
+			answer: func(req *pairingproto.Request) (uint64, uint64) {
+				return req.ID, req.Generation - 1
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			client, server, ok := establishedSessionPair(t)
+			if !ok {
+				return
+			}
+			var sentID, sentGeneration, answeredID, answeredGeneration uint64
+			transport := &scriptedTransport{respond: func(_ context.Context, sent []byte) ([]byte, error) {
+				req, err := sentRequest(server, sent)
+				require.NoError(t, err)
+				sentID, sentGeneration = req.ID, req.Generation
+				answeredID, answeredGeneration = tt.answer(req)
+				raw, err := pairingproto.EncodeResponse(answeredID, answeredGeneration,
+					&pairingproto.LocalAttestDeviceResult{})
+				require.NoError(t, err)
+				return server.Encrypt(raw)
+			}}
+
+			verified, err := attestation.AttestOverSession(context.Background(), transport, client, &xkms.AndroidDeviceTrust{}, pairingproto.AttestPurposePair, discardLogger())
+
+			require.Error(t, err)
+			assert.ErrorIs(t, err, attestation.ErrDeviceAttestFailed)
+			var mismatch *attestation.ResponseMismatchError
+			require.ErrorAs(t, err, &mismatch)
+			assert.Equal(t, sentID, mismatch.RequestID)
+			assert.Equal(t, sentGeneration, mismatch.RequestGeneration)
+			assert.Equal(t, answeredID, mismatch.ResponseID)
+			assert.Equal(t, answeredGeneration, mismatch.ResponseGeneration)
+			assert.Nil(t, verified)
+		})
+	}
 }
 
 // hexFingerprint hex-encodes a DAK's fingerprint the way the verified result

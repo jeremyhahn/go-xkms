@@ -93,7 +93,7 @@ func (f *fakeDeviceTransport) SendRequest(_ context.Context, req *pairingproto.R
 	}
 
 	if rpcErr, ok := f.rpcErrors[req.Method]; ok {
-		return &pairingproto.Response{ID: req.ID, Error: rpcErr}, nil
+		return &pairingproto.Response{ID: req.ID, Generation: req.Generation, Error: rpcErr}, nil
 	}
 
 	var payload any
@@ -105,7 +105,7 @@ func (f *fakeDeviceTransport) SendRequest(_ context.Context, req *pairingproto.R
 	default:
 		result, ok := f.results[req.Method]
 		if !ok {
-			return &pairingproto.Response{Error: &pairingproto.RPCError{Code: -32601, Message: "method not found"}}, nil
+			return &pairingproto.Response{Generation: req.Generation, Error: &pairingproto.RPCError{Code: -32601, Message: "method not found"}}, nil
 		}
 		payload = result
 	}
@@ -115,7 +115,7 @@ func (f *fakeDeviceTransport) SendRequest(_ context.Context, req *pairingproto.R
 		return nil, err
 	}
 
-	return &pairingproto.Response{ID: req.ID, Result: raw}, nil
+	return &pairingproto.Response{ID: req.ID, Generation: req.Generation, Result: raw}, nil
 }
 
 func (f *fakeDeviceTransport) Close() error {

@@ -1,6 +1,6 @@
 # Device Pairing and Enrollment — API
 
-> **Status: NORMATIVE** · Feature: `device` · Module: `go-xkms/xkey` · Last verified: 2026-09-27
+> **Status: NORMATIVE** · Feature: `device` · Module: `go-xkms/xkey` · Last verified: 2026-10-23
 
 No REST, gRPC or MCP transport surface of its own, and — unlike most
 CLI-fronted xkey features — **no GUI (Wails) binding either.**
@@ -45,3 +45,16 @@ or drives the agent-enrollment CA client on this device's behalf. The
 surface (`local.*`/`remote.*` JSON-RPC over the paired Noise session) that
 *is* reachable once pairing has completed; this feature is only the
 bootstrap that gets a device into that state.
+
+Every request and response on that session carries a top-level `generation`
+beside `id` (#128). The requester assigns it from a per-connection counter
+starting at 1, and the responder echoes it verbatim, including on errors. A
+response is delivered only when both `id` and `generation` match; a missing
+(`0`) or stale value is dropped. There is no compatibility path for a peer
+that omits it. The one-shot `local.attestDevice` exchange
+(`attestation.AttestOverSession`, used by pairing, reattestation and
+`device attest-device`) runs outside the router and stamps the fixed generation
+`math.MaxUint64`, which a router's counter never reaches, and refuses a
+response whose `id` or `generation` differs with a `ResponseMismatchError`
+wrapped in `ErrDeviceAttestFailed`. See
+[phone-hsm/engineering.md](../phone-hsm/engineering.md#request-generation-matching-128).

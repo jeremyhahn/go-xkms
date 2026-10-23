@@ -90,8 +90,9 @@ func (h *MockPhoneRequestHandler) HandleRequest(_ context.Context, request []byt
 	handler, ok := h.handlers[req.Method]
 	if !ok {
 		resp := &pairingproto.Response{
-			JSONRPC: pairingproto.JSONRPCVersion,
-			ID:      req.ID,
+			JSONRPC:    pairingproto.JSONRPCVersion,
+			ID:         req.ID,
+			Generation: req.Generation,
 			Error: &pairingproto.RPCError{
 				Code:    pairingproto.ErrorCodeMethodNotFound,
 				Message: fmt.Sprintf("method not found: %s", req.Method),
@@ -113,25 +114,28 @@ func (h *MockPhoneRequestHandler) KeyCount() int {
 
 func (h *MockPhoneRequestHandler) handlePing(req *pairingproto.Request) *pairingproto.Response {
 	return &pairingproto.Response{
-		JSONRPC: pairingproto.JSONRPCVersion,
-		ID:      req.ID,
-		Result:  mustMarshal(pairingproto.PingResult{Pong: true}),
+		JSONRPC:    pairingproto.JSONRPCVersion,
+		ID:         req.ID,
+		Generation: req.Generation,
+		Result:     mustMarshal(pairingproto.PingResult{Pong: true}),
 	}
 }
 
 func (h *MockPhoneRequestHandler) handleGetInfo(req *pairingproto.Request) *pairingproto.Response {
 	h.capabilities.CurrentCredentials = len(h.keys)
 	return &pairingproto.Response{
-		JSONRPC: pairingproto.JSONRPCVersion,
-		ID:      req.ID,
-		Result:  mustMarshal(h.capabilities),
+		JSONRPC:    pairingproto.JSONRPCVersion,
+		ID:         req.ID,
+		Generation: req.Generation,
+		Result:     mustMarshal(h.capabilities),
 	}
 }
 
 func (h *MockPhoneRequestHandler) handleGenerateKey(req *pairingproto.Request) *pairingproto.Response {
 	resp := &pairingproto.Response{
-		JSONRPC: pairingproto.JSONRPCVersion,
-		ID:      req.ID,
+		JSONRPC:    pairingproto.JSONRPCVersion,
+		ID:         req.ID,
+		Generation: req.Generation,
 	}
 
 	var params pairingproto.GenerateKeyParams
@@ -176,8 +180,9 @@ func (h *MockPhoneRequestHandler) handleGenerateKey(req *pairingproto.Request) *
 
 func (h *MockPhoneRequestHandler) handleSign(req *pairingproto.Request) *pairingproto.Response {
 	resp := &pairingproto.Response{
-		JSONRPC: pairingproto.JSONRPCVersion,
-		ID:      req.ID,
+		JSONRPC:    pairingproto.JSONRPCVersion,
+		ID:         req.ID,
+		Generation: req.Generation,
 	}
 
 	var params pairingproto.SignParams
@@ -217,8 +222,9 @@ func (h *MockPhoneRequestHandler) handleSign(req *pairingproto.Request) *pairing
 
 func (h *MockPhoneRequestHandler) handleDeleteKey(req *pairingproto.Request) *pairingproto.Response {
 	resp := &pairingproto.Response{
-		JSONRPC: pairingproto.JSONRPCVersion,
-		ID:      req.ID,
+		JSONRPC:    pairingproto.JSONRPCVersion,
+		ID:         req.ID,
+		Generation: req.Generation,
 	}
 
 	var params pairingproto.DeleteKeyParams
@@ -246,8 +252,9 @@ func (h *MockPhoneRequestHandler) handleDeleteKey(req *pairingproto.Request) *pa
 
 func (h *MockPhoneRequestHandler) handleLoadKey(req *pairingproto.Request) *pairingproto.Response {
 	resp := &pairingproto.Response{
-		JSONRPC: pairingproto.JSONRPCVersion,
-		ID:      req.ID,
+		JSONRPC:    pairingproto.JSONRPCVersion,
+		ID:         req.ID,
+		Generation: req.Generation,
 	}
 
 	var params pairingproto.LoadKeyParams
