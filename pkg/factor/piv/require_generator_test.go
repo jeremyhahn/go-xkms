@@ -97,14 +97,14 @@ func TestFactor_EnrollRefusesWhenAGeneratorIsRequiredButAbsent(t *testing.T) {
 	}
 }
 
-// TestFactor_SignNonceRefusesWhenAGeneratorIsRequiredButAbsent verifies the
+// TestFactor_SignChallengeRefusesWhenAGeneratorIsRequiredButAbsent verifies the
 // custodian-side signing helper refuses too, so no code path in the package
 // dereferences a deliberately absent generator.
-func TestFactor_SignNonceRefusesWhenAGeneratorIsRequiredButAbsent(t *testing.T) {
+func TestFactor_SignChallengeRefusesWhenAGeneratorIsRequiredButAbsent(t *testing.T) {
 	f := New(Config{RequireGenerator: true})
-	sig, err := f.SignNonce(context.Background(), pivcert.PIVSlotAuthentication, []byte("nonce"))
+	sig, err := f.SignChallenge(context.Background(), pivcert.PIVSlotAuthentication, "challenge-id", "", []byte("nonce"))
 	if err == nil {
-		t.Fatal("SignNonce must refuse when a generator is required and none is attached")
+		t.Fatal("SignChallenge must refuse when a generator is required and none is attached")
 	}
 	if sig != nil {
 		t.Error("a refused signature must return no bytes")

@@ -19,7 +19,9 @@
 // Enrollment captures the DER (PKIX) public key of an asymmetric key pair
 // living on a PKCS#11 token together with the slot, token label, key id and
 // signing algorithm. Challenge issues a random nonce. Verify checks the
-// custodian's signature over the nonce against the enrolled public key using
+// custodian's signature over go-qrdb's challenge message
+// (qrdbsdk.QuorumChallengeMessage of the challenge ID, its purpose and the
+// nonce; never the bare nonce) against the enrolled public key using
 // stdlib crypto (ECDSA or RSA). Verification deliberately does NOT require a
 // live token: once enrolled, the public key is sufficient to validate any
 // signature, exactly as the canonical PIV factor does. Signing (the private-key
@@ -52,6 +54,8 @@ import (
 	"time"
 
 	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
+
+	challengemsg "github.com/jeremyhahn/go-xkms/pkg/factor/internal/challenge"
 )
 
 // FactorName is the canonical Factor.Name() return value for PKCS#11.
@@ -196,8 +200,9 @@ func (f *Factor) Enroll(_ context.Context, params *qrdbsdk.AuthFactorEnrollParam
 	}, nil
 }
 
-// Challenge produces a 32-byte random nonce the custodian must sign with the
-// private key on their PKCS#11 token. The enrolled public key is carried in
+// Challenge produces a 32-byte random nonce the custodian answers with the
+// private key on their PKCS#11 token: a signature over go-qrdb's challenge
+// message once go-qrdb has bound the challenge to its purpose. The enrolled public key is carried in
 // MethodData["enrolled_public_key_der"] (standard base64 of the PKIX DER) and
 // the enrolled mechanism is carried in MethodData["mechanism"], so Verify
 // authenticates against the server-held enrollment — key and mechanism alike
@@ -233,12 +238,14 @@ func (f *Factor) Challenge(_ context.Context, enrollment *qrdbsdk.AuthFactorEnro
 	}, nil
 }
 
-// Verify checks the signature in response.Value against the challenge nonce
-// using the enrolled public key. The key is read from
+// Verify checks the signature in response.Value against go-qrdb's challenge
+// message, qrdbsdk.QuorumChallengeMessage(ChallengeID,
+// MethodData[qrdbsdk.QuorumChallengePurposeKey], Nonce), using the enrolled
+// public key, so a proof made for another challenge or purpose never verifies. The key is read from
 // challenge.MethodData["enrolled_public_key_der"] — never from the response —
 // so an attacker cannot pass verification by signing with a key of their own
 // and presenting it alongside the signature. ECDSA signatures are ASN.1 DER
-// (r,s); RSA signatures are PKCS#1 v1.5; both are over SHA-256 of the nonce.
+// (r,s); RSA signatures are PKCS#1 v1.5; both are over SHA-256 of the message.
 //
 // The mechanism follows the same rule as the key: it is read from
 // challenge.MethodData["mechanism"] — the mechanism recorded at enrollment —
@@ -299,7 +306,12 @@ func (f *Factor) Verify(_ context.Context, challenge *qrdbsdk.AuthFactorChalleng
 		}
 	}
 
-	digest := sha256.Sum256(challenge.Nonce)
+	if len(challenge.Nonce) == 0 {
+		return &qrdbsdk.AuthFactorVerificationFailedError{FactorName: FactorName, Reason: "challenge carries no nonce"}
+	}
+	// The token signs go-qrdb's challenge message, which binds the challenge
+	// ID and purpose, never the bare nonce.
+	digest := sha256.Sum256(challengemsg.Message(challenge))
 	switch key := pub.(type) {
 	case *ecdsa.PublicKey:
 		return verifyECDSA(key, digest[:], response.Value)
@@ -314,7 +326,7 @@ func (f *Factor) Verify(_ context.Context, challenge *qrdbsdk.AuthFactorChalleng
 }
 
 // verifyECDSA verifies an ASN.1 DER (r,s) ECDSA signature over the pre-hashed
-// digest of the nonce.
+// digest of the challenge message.
 func verifyECDSA(pub *ecdsa.PublicKey, digest, sig []byte) error {
 	var dsaSig struct{ R, S *big.Int }
 	if _, err := asn1.Unmarshal(sig, &dsaSig); err != nil {

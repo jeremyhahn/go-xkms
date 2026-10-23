@@ -41,6 +41,7 @@ import (
 	"time"
 
 	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
+	challengemsg "github.com/jeremyhahn/go-xkms/pkg/factor/internal/challenge"
 	"github.com/jeremyhahn/go-xkms/pkg/factor/internal/decoy"
 )
 
@@ -491,7 +492,7 @@ func TestDecoyEnrollmentFailsVerification(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Challenge: %v", err)
 	}
-	digest := sha256.Sum256(ch.Nonce)
+	digest := sha256.Sum256(challengemsg.Message(ch))
 	holderSig, err := holderKey.Sign(rand.Reader, digest[:], crypto.SHA256)
 	if err != nil {
 		t.Fatalf("sign: %v", err)
@@ -571,7 +572,7 @@ func TestDecoyChallengeExposesNoCASignature(t *testing.T) {
 	}
 
 	sign := func(ch *qrdbsdk.AuthFactorChallenge) *qrdbsdk.AuthFactorResponse {
-		digest := sha256.Sum256(ch.Nonce)
+		digest := sha256.Sum256(challengemsg.Message(ch))
 		sig, err := holderKey.Sign(rand.Reader, digest[:], crypto.SHA256)
 		if err != nil {
 			t.Fatalf("sign: %v", err)

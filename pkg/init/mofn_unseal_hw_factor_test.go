@@ -15,11 +15,9 @@ package initialize
 
 import (
 	"context"
-	"crypto"
 	"crypto/ecdsa"
 	"crypto/elliptic"
 	"crypto/rand"
-	"crypto/sha256"
 	"crypto/x509"
 	"crypto/x509/pkix"
 	"encoding/hex"
@@ -199,12 +197,16 @@ func (r *mofnRig) submit(t *testing.T, h *mofnHolder, forge *mofnForgery) (*qrdb
 	case forge != nil && forge.response != nil:
 		response = forge.response(challenge)
 	case h.factor == xkmspiv.FactorName:
-		response, err = r.piv.SignNonce(ctx, pivcert.PIVSlotAuthentication, challenge.Nonce)
+		purpose := challenge.MethodData[qrdbsdk.QuorumChallengePurposeKey]
+		require.NotEmpty(t, purpose, "a piv quorum challenge carries its purpose")
+		response, err = r.piv.SignChallenge(ctx, pivcert.PIVSlotAuthentication, challenge.ChallengeID, purpose, challenge.Nonce)
 		require.NoError(t, err)
 	case h.factor == qrdbsdk.QuorumFactorMTLS:
 		response = signQuorumChallenge(t, h.key, challenge)
 	default:
-		response = signNonce(t, h.tokenKey, challenge.Nonce)
+		// The PKCS#11 token's ECDSA key answers over the same challenge
+		// message as an mtls holder's key.
+		response = signQuorumChallenge(t, h.tokenKey, challenge)
 	}
 
 	peer := h.cert
@@ -221,16 +223,6 @@ func (r *mofnRig) submit(t *testing.T, h *mofnHolder, forge *mofnForgery) (*qrdb
 		PeerCertThumbprint: qrdbsdk.CertThumbprint(peer.Raw),
 		Share:              append([]byte(nil), h.share...),
 	})
-}
-
-// signNonce is a token's answer to a PKCS#11 or PIV challenge: an ASN.1 ECDSA
-// signature over SHA-256(nonce).
-func signNonce(t *testing.T, key *ecdsa.PrivateKey, nonce []byte) []byte {
-	t.Helper()
-	digest := sha256.Sum256(nonce)
-	sig, err := key.Sign(rand.Reader, digest[:], crypto.SHA256)
-	require.NoError(t, err)
-	return sig
 }
 
 // signQuorumChallenge is an mtls holder's answer to its quorum challenge,
@@ -291,7 +283,7 @@ func TestMofNUnseal_InvalidHardwareFactorAssertionIsRefused(t *testing.T) {
 	impostor, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
 	require.NoError(t, err)
 	forged := &mofnForgery{response: func(ch *qrdbsdk.QuorumChallenge) []byte {
-		return signNonce(t, impostor, ch.Nonce)
+		return signQuorumChallenge(t, impostor, ch)
 	}}
 
 	_, err = rig.submit(t, rig.holders["holder-piv"], forged)

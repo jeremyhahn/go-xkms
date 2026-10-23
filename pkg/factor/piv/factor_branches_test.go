@@ -259,15 +259,15 @@ func TestPIVFactor_Verify_RejectsNonECDSAPublicKey(t *testing.T) {
 }
 
 // =============================================================================
-// SignNonce
+// SignChallenge
 // =============================================================================
 
-func TestPIVFactor_SignNonce_PropagatesGetPIVSignerError(t *testing.T) {
+func TestPIVFactor_SignChallenge_PropagatesGetPIVSignerError(t *testing.T) {
 	stub := &stubGenerator{signerErr: errors.New("no signer registered for slot")}
 	f := New(Config{Generator: stub})
-	_, err := f.SignNonce(context.Background(), pivcert.PIVSlotAuthentication, []byte("nonce"))
+	_, err := f.SignChallenge(context.Background(), pivcert.PIVSlotAuthentication, "challenge-id", "", []byte("nonce"))
 	if err == nil {
-		t.Fatal("expected error from SignNonce when GetPIVSigner fails")
+		t.Fatal("expected error from SignChallenge when GetPIVSigner fails")
 	}
 }
 
@@ -348,9 +348,9 @@ func TestVerifyECDSA_RejectsWrongNonceSignature(t *testing.T) {
 		t.Fatalf("Enroll: %v", err)
 	}
 	signedNonce := []byte("the original nonce")
-	sig, err := f.SignNonce(context.Background(), pivcert.PIVSlotAuthentication, signedNonce)
+	sig, err := f.SignChallenge(context.Background(), pivcert.PIVSlotAuthentication, "challenge-id", "", signedNonce)
 	if err != nil {
-		t.Fatalf("SignNonce: %v", err)
+		t.Fatalf("SignChallenge: %v", err)
 	}
 
 	verifyNonce := []byte("a different nonce entirely")

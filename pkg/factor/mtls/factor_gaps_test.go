@@ -30,6 +30,7 @@ import (
 	"time"
 
 	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
+	challengemsg "github.com/jeremyhahn/go-xkms/pkg/factor/internal/challenge"
 )
 
 // ---------------------------------------------------------------------------
@@ -295,7 +296,7 @@ func TestMTLSFactor_Verify_RSA_RejectsWrongSignature(t *testing.T) {
 	otherKP := rsaKeyPair(t, time.Now().Add(24*time.Hour))
 
 	var failed *qrdbsdk.AuthFactorVerificationFailedError
-	if err := f.Verify(ctx, challenge, &qrdbsdk.AuthFactorResponse{Value: otherKP.sign(challenge.Nonce)}); !errors.As(err, &failed) {
+	if err := f.Verify(ctx, challenge, &qrdbsdk.AuthFactorResponse{Value: otherKP.sign(challengemsg.Message(challenge))}); !errors.As(err, &failed) {
 		t.Fatalf("Verify(rsa wrong key) err = %v, want VerificationFailedError", err)
 	}
 }
@@ -323,7 +324,7 @@ func TestMTLSFactor_Verify_Ed25519_RejectsWrongSignature(t *testing.T) {
 	if err != nil {
 		t.Fatalf("generate ed25519 key: %v", err)
 	}
-	wrongSig := ed25519.Sign(wrongPriv, challenge.Nonce)
+	wrongSig := ed25519.Sign(wrongPriv, challengemsg.Message(challenge))
 
 	var failed *qrdbsdk.AuthFactorVerificationFailedError
 	if err := f.Verify(ctx, challenge, &qrdbsdk.AuthFactorResponse{Value: wrongSig}); !errors.As(err, &failed) {

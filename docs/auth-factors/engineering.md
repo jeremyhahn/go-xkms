@@ -35,8 +35,9 @@ node is built with it (`server.NewNodeFactorRegistry`,
 holder by its certificate's public key, binds it by `qrdbsdk.CertThumbprint`,
 and has it answer with `qrdbsdk.SignQuorumChallenge`. go-qrdb's own `mtls`
 factor verifies exactly that whenever the registry does not override it. The
-xkms `mtls` factor verifies a signature over the bare nonce against a PEM
-certificate, so registering it on a node would refuse every ceremony mTLS
+xkms `mtls` factor verifies the same challenge message
+(`pkg/factor/mtls/factor.go:262`), but it enrols a PEM certificate rather than
+a public key, so registering it on a node would refuse every ceremony mTLS
 holder. Leaving it out adds no second verify or binding scheme.
 
 Per-factor constructors and configs:

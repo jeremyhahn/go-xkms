@@ -57,9 +57,9 @@ func TestPIVFactor_Verify_MultiAlgorithm(t *testing.T) {
 			}
 
 			t.Run("genuine signature passes", func(t *testing.T) {
-				sig, err := f.SignNonce(context.Background(), slot, challenge.Nonce)
+				sig, err := f.SignChallenge(context.Background(), slot, challenge.ChallengeID, "", challenge.Nonce)
 				if err != nil {
-					t.Fatalf("SignNonce: %v", err)
+					t.Fatalf("SignChallenge: %v", err)
 				}
 				err = f.Verify(context.Background(), challenge, &qrdbsdk.AuthFactorResponse{
 					Value: sig,
@@ -73,9 +73,9 @@ func TestPIVFactor_Verify_MultiAlgorithm(t *testing.T) {
 				// Sign a different message than the one being verified, so the
 				// signature is well-formed for the algorithm but mathematically
 				// invalid against challenge.Nonce.
-				sig, err := f.SignNonce(context.Background(), slot, []byte("not the challenge nonce"))
+				sig, err := f.SignChallenge(context.Background(), slot, "challenge-id", "", []byte("not the challenge nonce"))
 				if err != nil {
-					t.Fatalf("SignNonce: %v", err)
+					t.Fatalf("SignChallenge: %v", err)
 				}
 				var failed *qrdbsdk.AuthFactorVerificationFailedError
 				err = f.Verify(context.Background(), challenge, &qrdbsdk.AuthFactorResponse{
@@ -87,9 +87,9 @@ func TestPIVFactor_Verify_MultiAlgorithm(t *testing.T) {
 			})
 
 			t.Run("key-type mismatch fails", func(t *testing.T) {
-				sig, err := f.SignNonce(context.Background(), slot, challenge.Nonce)
+				sig, err := f.SignChallenge(context.Background(), slot, challenge.ChallengeID, "", challenge.Nonce)
 				if err != nil {
-					t.Fatalf("SignNonce: %v", err)
+					t.Fatalf("SignChallenge: %v", err)
 				}
 				// The enrolled key (read only from the challenge) is of a
 				// different algorithm than the key that signed.
@@ -112,9 +112,9 @@ func TestPIVFactor_Verify_MultiAlgorithm(t *testing.T) {
 					t.Fatalf("Enroll other: %v", err)
 				}
 				otherSlot := pivcert.PIVSlot(otherEnrollment.Metadata["slot"])
-				sig, err := other.SignNonce(context.Background(), otherSlot, challenge.Nonce)
+				sig, err := other.SignChallenge(context.Background(), otherSlot, challenge.ChallengeID, "", challenge.Nonce)
 				if err != nil {
-					t.Fatalf("SignNonce other: %v", err)
+					t.Fatalf("SignChallenge other: %v", err)
 				}
 				var failed *qrdbsdk.AuthFactorVerificationFailedError
 				err = f.Verify(context.Background(), challenge, &qrdbsdk.AuthFactorResponse{

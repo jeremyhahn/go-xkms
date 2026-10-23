@@ -33,6 +33,7 @@ import (
 	"time"
 
 	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
+	challengemsg "github.com/jeremyhahn/go-xkms/pkg/factor/internal/challenge"
 )
 
 // ---------------------------------------------------------------------------
@@ -41,7 +42,7 @@ import (
 
 type keyPair struct {
 	certPEM string
-	sign    func(nonce []byte) []byte
+	sign    func(message []byte) []byte
 }
 
 func ecdsaKeyPair(t *testing.T, notAfter time.Time) keyPair {
@@ -53,8 +54,8 @@ func ecdsaKeyPair(t *testing.T, notAfter time.Time) keyPair {
 	certPEM := selfSignedCert(t, priv, priv.Public(), notAfter)
 	return keyPair{
 		certPEM: certPEM,
-		sign: func(nonce []byte) []byte {
-			digest := sha256.Sum256(nonce)
+		sign: func(message []byte) []byte {
+			digest := sha256.Sum256(message)
 			sig, signErr := priv.Sign(rand.Reader, digest[:], crypto.SHA256)
 			if signErr != nil {
 				t.Fatalf("ecdsa sign: %v", signErr)
@@ -73,8 +74,8 @@ func rsaKeyPair(t *testing.T, notAfter time.Time) keyPair {
 	certPEM := selfSignedCert(t, priv, priv.Public(), notAfter)
 	return keyPair{
 		certPEM: certPEM,
-		sign: func(nonce []byte) []byte {
-			digest := sha256.Sum256(nonce)
+		sign: func(message []byte) []byte {
+			digest := sha256.Sum256(message)
 			sig, signErr := rsa.SignPKCS1v15(rand.Reader, priv, crypto.SHA256, digest[:])
 			if signErr != nil {
 				t.Fatalf("rsa sign: %v", signErr)
@@ -93,8 +94,8 @@ func ed25519KeyPair(t *testing.T, notAfter time.Time) keyPair {
 	certPEM := selfSignedCert(t, priv, pub, notAfter)
 	return keyPair{
 		certPEM: certPEM,
-		sign: func(nonce []byte) []byte {
-			return ed25519.Sign(priv, nonce)
+		sign: func(message []byte) []byte {
+			return ed25519.Sign(priv, message)
 		},
 	}
 }
@@ -309,7 +310,7 @@ func TestMTLSFactor_RoundTrip_ECDSA(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Challenge: %v", err)
 	}
-	if err := f.Verify(ctx, challenge, &qrdbsdk.AuthFactorResponse{Value: kp.sign(challenge.Nonce)}); err != nil {
+	if err := f.Verify(ctx, challenge, &qrdbsdk.AuthFactorResponse{Value: kp.sign(challengemsg.Message(challenge))}); err != nil {
 		t.Fatalf("Verify ECDSA: %v", err)
 	}
 }
@@ -330,7 +331,7 @@ func TestMTLSFactor_RoundTrip_RSA(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Challenge: %v", err)
 	}
-	if err := f.Verify(ctx, challenge, &qrdbsdk.AuthFactorResponse{Value: kp.sign(challenge.Nonce)}); err != nil {
+	if err := f.Verify(ctx, challenge, &qrdbsdk.AuthFactorResponse{Value: kp.sign(challengemsg.Message(challenge))}); err != nil {
 		t.Fatalf("Verify RSA: %v", err)
 	}
 }
@@ -351,7 +352,7 @@ func TestMTLSFactor_RoundTrip_Ed25519(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Challenge: %v", err)
 	}
-	if err := f.Verify(ctx, challenge, &qrdbsdk.AuthFactorResponse{Value: kp.sign(challenge.Nonce)}); err != nil {
+	if err := f.Verify(ctx, challenge, &qrdbsdk.AuthFactorResponse{Value: kp.sign(challengemsg.Message(challenge))}); err != nil {
 		t.Fatalf("Verify Ed25519: %v", err)
 	}
 }
@@ -386,7 +387,7 @@ func TestMTLSFactor_Verify_RejectsExpiredChallenge(t *testing.T) {
 	challenge.ExpiresAt = challenge.ExpiresAt.Add(-time.Hour)
 
 	var expired *qrdbsdk.AuthFactorChallengeExpiredError
-	if err := f.Verify(ctx, challenge, &qrdbsdk.AuthFactorResponse{Value: kp.sign(challenge.Nonce)}); !errors.As(err, &expired) {
+	if err := f.Verify(ctx, challenge, &qrdbsdk.AuthFactorResponse{Value: kp.sign(challengemsg.Message(challenge))}); !errors.As(err, &expired) {
 		t.Fatalf("Verify(expired) err = %v, want ChallengeExpiredError", err)
 	}
 }
@@ -404,7 +405,7 @@ func TestMTLSFactor_Verify_RejectsMissingEnrolledCertPEM(t *testing.T) {
 	delete(challenge.MethodData, methodDataEnrolledKey)
 
 	var failed *qrdbsdk.AuthFactorVerificationFailedError
-	if err := f.Verify(ctx, challenge, &qrdbsdk.AuthFactorResponse{Value: kp.sign(challenge.Nonce)}); !errors.As(err, &failed) {
+	if err := f.Verify(ctx, challenge, &qrdbsdk.AuthFactorResponse{Value: kp.sign(challengemsg.Message(challenge))}); !errors.As(err, &failed) {
 		t.Fatalf("Verify(missing cert) err = %v, want VerificationFailedError", err)
 	}
 }
@@ -439,7 +440,7 @@ func TestMTLSFactor_Verify_RejectsWrongKey(t *testing.T) {
 
 	// Sign with a different key — must fail.
 	var failed *qrdbsdk.AuthFactorVerificationFailedError
-	if err := f.Verify(ctx, challenge, &qrdbsdk.AuthFactorResponse{Value: otherKP.sign(challenge.Nonce)}); !errors.As(err, &failed) {
+	if err := f.Verify(ctx, challenge, &qrdbsdk.AuthFactorResponse{Value: otherKP.sign(challengemsg.Message(challenge))}); !errors.As(err, &failed) {
 		t.Fatalf("Verify(wrong key) err = %v, want VerificationFailedError", err)
 	}
 }
@@ -457,13 +458,13 @@ func TestMTLSFactor_Verify_RejectsCorruptEnrolledKey(t *testing.T) {
 	// corruption: once not base64, once base64 of bytes that are no PKIX key.
 	challenge.MethodData[methodDataEnrolledKey] = "!not base64!"
 	var notBase64 *qrdbsdk.AuthFactorVerificationFailedError
-	if err := f.Verify(ctx, challenge, &qrdbsdk.AuthFactorResponse{Value: kp.sign(challenge.Nonce)}); !errors.As(err, &notBase64) {
+	if err := f.Verify(ctx, challenge, &qrdbsdk.AuthFactorResponse{Value: kp.sign(challengemsg.Message(challenge))}); !errors.As(err, &notBase64) {
 		t.Fatalf("Verify(non-base64 key) err = %v, want VerificationFailedError", err)
 	}
 	challenge.MethodData[methodDataEnrolledKey] = base64.StdEncoding.EncodeToString([]byte("garbage"))
 
 	var failed *qrdbsdk.AuthFactorVerificationFailedError
-	if err := f.Verify(ctx, challenge, &qrdbsdk.AuthFactorResponse{Value: kp.sign(challenge.Nonce)}); !errors.As(err, &failed) {
+	if err := f.Verify(ctx, challenge, &qrdbsdk.AuthFactorResponse{Value: kp.sign(challengemsg.Message(challenge))}); !errors.As(err, &failed) {
 		t.Fatalf("Verify(corrupt key) err = %v, want VerificationFailedError", err)
 	}
 }
@@ -479,12 +480,85 @@ func TestMTLSFactor_Verify_RejectsTamperedNonce(t *testing.T) {
 	challenge, _ := f.Challenge(ctx, enrollment)
 
 	// Sign the original nonce, then tamper so the signature no longer matches.
-	sig := kp.sign(challenge.Nonce)
+	sig := kp.sign(challengemsg.Message(challenge))
 	challenge.Nonce[0] ^= 0xFF
 
 	var failed *qrdbsdk.AuthFactorVerificationFailedError
 	if err := f.Verify(ctx, challenge, &qrdbsdk.AuthFactorResponse{Value: sig}); !errors.As(err, &failed) {
 		t.Fatalf("Verify(tampered nonce) err = %v, want VerificationFailedError", err)
+	}
+}
+
+// TestMTLSFactor_Verify_BindsTheChallengeMessage pins the proof to go-qrdb's
+// challenge message (#1684): a signature over the message for the challenge's
+// own ID, purpose and nonce verifies, while the old proof over the bare nonce
+// and a proof made for another purpose with the same nonce are both refused.
+func TestMTLSFactor_Verify_BindsTheChallengeMessage(t *testing.T) {
+	ctx := context.Background()
+	keyPairs := map[string]func(*testing.T, time.Time) keyPair{
+		"ecdsa":   ecdsaKeyPair,
+		"rsa":     rsaKeyPair,
+		"ed25519": ed25519KeyPair,
+	}
+	for name, newKeyPair := range keyPairs {
+		t.Run(name, func(t *testing.T) {
+			f := New(Config{})
+			kp := newKeyPair(t, time.Now().Add(24*time.Hour))
+			enrollment, err := f.Enroll(ctx, &qrdbsdk.AuthFactorEnrollParams{
+				UserID:       "u1",
+				MethodParams: map[string]any{"cert_pem": kp.certPEM},
+			})
+			if err != nil {
+				t.Fatalf("Enroll: %v", err)
+			}
+			challenge, err := f.Challenge(ctx, enrollment)
+			if err != nil {
+				t.Fatalf("Challenge: %v", err)
+			}
+			challenge.MethodData[qrdbsdk.QuorumChallengePurposeKey] = "quorum:a"
+
+			valid := kp.sign(qrdbsdk.QuorumChallengeMessage(challenge.ChallengeID, "quorum:a", challenge.Nonce))
+			if err := f.Verify(ctx, challenge, &qrdbsdk.AuthFactorResponse{Value: valid}); err != nil {
+				t.Fatalf("Verify(challenge message) = %v, want nil", err)
+			}
+
+			refused := map[string][]byte{
+				"bare nonce":    kp.sign(challenge.Nonce),
+				"other purpose": kp.sign(qrdbsdk.QuorumChallengeMessage(challenge.ChallengeID, "quorum:b", challenge.Nonce)),
+			}
+			for proof, sig := range refused {
+				var failed *qrdbsdk.AuthFactorVerificationFailedError
+				if err := f.Verify(ctx, challenge, &qrdbsdk.AuthFactorResponse{Value: sig}); !errors.As(err, &failed) {
+					t.Errorf("Verify(%s) err = %v, want VerificationFailedError", proof, err)
+				}
+			}
+		})
+	}
+}
+
+// TestMTLSFactor_Verify_RejectsEmptyNonce verifies that a challenge carrying
+// no nonce is refused, as go-qrdb's own mtls factor refuses it.
+func TestMTLSFactor_Verify_RejectsEmptyNonce(t *testing.T) {
+	ctx := context.Background()
+	f := New(Config{})
+	kp := ecdsaKeyPair(t, time.Now().Add(24*time.Hour))
+	enrollment, err := f.Enroll(ctx, &qrdbsdk.AuthFactorEnrollParams{
+		UserID:       "u1",
+		MethodParams: map[string]any{"cert_pem": kp.certPEM},
+	})
+	if err != nil {
+		t.Fatalf("Enroll: %v", err)
+	}
+	challenge, err := f.Challenge(ctx, enrollment)
+	if err != nil {
+		t.Fatalf("Challenge: %v", err)
+	}
+	challenge.Nonce = nil
+
+	var failed *qrdbsdk.AuthFactorVerificationFailedError
+	sig := kp.sign(challengemsg.Message(challenge))
+	if err := f.Verify(ctx, challenge, &qrdbsdk.AuthFactorResponse{Value: sig}); !errors.As(err, &failed) {
+		t.Fatalf("Verify(empty nonce) err = %v, want VerificationFailedError", err)
 	}
 }
 

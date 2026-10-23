@@ -15,6 +15,7 @@ package piv
 
 import (
 	"context"
+	"crypto"
 	"crypto/ecdsa"
 	"crypto/elliptic"
 	"crypto/rand"
@@ -26,6 +27,7 @@ import (
 	"testing"
 
 	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
+	challengemsg "github.com/jeremyhahn/go-xkms/pkg/factor/internal/challenge"
 	"github.com/jeremyhahn/go-xkms/pkg/pivcert"
 )
 
@@ -106,9 +108,9 @@ func TestPIVFactor_FullRoundTrip_Software(t *testing.T) {
 		t.Fatalf("challenge.EnrollmentID = %q, want %q", challenge.EnrollmentID, enrollment.EnrollmentID)
 	}
 
-	sig, err := f.SignNonce(ctx, pivcert.PIVSlotAuthentication, challenge.Nonce)
+	sig, err := f.SignChallenge(ctx, pivcert.PIVSlotAuthentication, challenge.ChallengeID, "", challenge.Nonce)
 	if err != nil {
-		t.Fatalf("SignNonce: %v", err)
+		t.Fatalf("SignChallenge: %v", err)
 	}
 
 	if got := challenge.MethodData[methodDataEnrolledCert]; got != string(enrollment.PublicKey) {
@@ -168,7 +170,7 @@ func TestPIVFactor_Verify_RejectsAttackerKeyInResponse(t *testing.T) {
 	if err != nil {
 		t.Fatalf("buildSelfSignedCert: %v", err)
 	}
-	digest := sha256.Sum256(challenge.Nonce)
+	digest := sha256.Sum256(challengemsg.Message(challenge))
 	sig, err := ecdsa.SignASN1(rand.Reader, attackerKey, digest[:])
 	if err != nil {
 		t.Fatalf("ecdsa.SignASN1: %v", err)
@@ -198,9 +200,9 @@ func TestPIVFactor_Verify_RejectsChallengeWithoutEnrolledCert(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Challenge: %v", err)
 	}
-	sig, err := f.SignNonce(ctx, pivcert.PIVSlotAuthentication, challenge.Nonce)
+	sig, err := f.SignChallenge(ctx, pivcert.PIVSlotAuthentication, challenge.ChallengeID, "", challenge.Nonce)
 	if err != nil {
-		t.Fatalf("SignNonce: %v", err)
+		t.Fatalf("SignChallenge: %v", err)
 	}
 	delete(challenge.MethodData, methodDataEnrolledCert)
 
@@ -225,6 +227,82 @@ func TestPIVFactor_Verify_RejectsBadSignature(t *testing.T) {
 	})
 	if !errors.As(err, &failed) {
 		t.Fatalf("Verify(bad sig) err = %v, want VerificationFailedError", err)
+	}
+}
+
+// TestPIVFactor_Verify_BindsTheChallengeMessage pins the proof to go-qrdb's
+// challenge message (#1684): SignChallenge over the challenge's own ID,
+// purpose and nonce verifies, while the old proof over SHA-256(nonce) and a
+// proof made for another purpose with the same nonce are both refused.
+func TestPIVFactor_Verify_BindsTheChallengeMessage(t *testing.T) {
+	ctx := context.Background()
+	f := New(Config{})
+	slot := pivcert.PIVSlotAuthentication
+	enrollment, err := f.Enroll(ctx, &qrdbsdk.AuthFactorEnrollParams{UserID: "u1"})
+	if err != nil {
+		t.Fatalf("Enroll: %v", err)
+	}
+	challenge, err := f.Challenge(ctx, enrollment)
+	if err != nil {
+		t.Fatalf("Challenge: %v", err)
+	}
+	challenge.MethodData[qrdbsdk.QuorumChallengePurposeKey] = "quorum:a"
+
+	valid, err := f.SignChallenge(ctx, slot, challenge.ChallengeID, "quorum:a", challenge.Nonce)
+	if err != nil {
+		t.Fatalf("SignChallenge: %v", err)
+	}
+	if err := f.Verify(ctx, challenge, &qrdbsdk.AuthFactorResponse{Value: valid}); err != nil {
+		t.Fatalf("Verify(challenge message) = %v, want nil", err)
+	}
+
+	signer, err := f.cfg.Generator.GetPIVSigner(slot, "PIV "+string(slot))
+	if err != nil {
+		t.Fatalf("GetPIVSigner: %v", err)
+	}
+	digest := sha256.Sum256(challenge.Nonce)
+	bareNonce, err := signer.Sign(rand.Reader, digest[:], crypto.SHA256)
+	if err != nil {
+		t.Fatalf("sign bare nonce: %v", err)
+	}
+	otherPurpose, err := f.SignChallenge(ctx, slot, challenge.ChallengeID, "quorum:b", challenge.Nonce)
+	if err != nil {
+		t.Fatalf("SignChallenge(other purpose): %v", err)
+	}
+	for proof, sig := range map[string][]byte{"bare nonce": bareNonce, "other purpose": otherPurpose} {
+		var failed *qrdbsdk.AuthFactorVerificationFailedError
+		if err := f.Verify(ctx, challenge, &qrdbsdk.AuthFactorResponse{Value: sig}); !errors.As(err, &failed) {
+			t.Errorf("Verify(%s) err = %v, want VerificationFailedError", proof, err)
+		}
+	}
+}
+
+// TestPIVFactor_EmptyNonceIsRefused verifies that neither the prover nor the
+// verifier accepts a challenge carrying no nonce.
+func TestPIVFactor_EmptyNonceIsRefused(t *testing.T) {
+	ctx := context.Background()
+	f := New(Config{})
+	var empty *EmptyNonceError
+	if _, err := f.SignChallenge(ctx, pivcert.PIVSlotAuthentication, "challenge-id", "", nil); !errors.As(err, &empty) {
+		t.Fatalf("SignChallenge(empty nonce) err = %v, want EmptyNonceError", err)
+	}
+
+	enrollment, err := f.Enroll(ctx, &qrdbsdk.AuthFactorEnrollParams{UserID: "u1"})
+	if err != nil {
+		t.Fatalf("Enroll: %v", err)
+	}
+	challenge, err := f.Challenge(ctx, enrollment)
+	if err != nil {
+		t.Fatalf("Challenge: %v", err)
+	}
+	sig, err := f.SignChallenge(ctx, pivcert.PIVSlotAuthentication, challenge.ChallengeID, "", challenge.Nonce)
+	if err != nil {
+		t.Fatalf("SignChallenge: %v", err)
+	}
+	challenge.Nonce = nil
+	var failed *qrdbsdk.AuthFactorVerificationFailedError
+	if err := f.Verify(ctx, challenge, &qrdbsdk.AuthFactorResponse{Value: sig}); !errors.As(err, &failed) {
+		t.Fatalf("Verify(empty nonce) err = %v, want VerificationFailedError", err)
 	}
 }
 

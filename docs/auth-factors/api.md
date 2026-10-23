@@ -70,15 +70,41 @@ take one from the response.
 
 | Factor | Challenge `MethodData` | Response |
 |---|---|---|
-| `piv` | `enrolled_cert_pem` (enrolled certificate, PEM), `slot`, `algorithm` | `Value`: DER ECDSA signature over SHA-256(nonce) |
-| `pkcs11` | `enrolled_public_key_der` (enrolled PKIX key, standard base64), `mechanism`, `algorithm`, `key_id` | `Value`: DER ECDSA or PKCS#1 v1.5 RSA signature over SHA-256(nonce) |
+| `piv` | `enrolled_cert_pem` (enrolled certificate, PEM), `slot`, `algorithm` | `Value`: signature over the challenge message (see below) |
+| `pkcs11` | `enrolled_public_key_der` (enrolled PKIX key, standard base64), `mechanism`, `algorithm`, `key_id` | `Value`: DER ECDSA or PKCS#1 v1.5 RSA signature over SHA-256(challenge message) |
 | `fido2` | `enrolled_cose_public_key` (enrolled COSE key, standard base64), `rp_id`, `origins` (`[]string`), `require_uv` (`bool`), `credential_id`, `challenge_base64` | `Value`: assertion signature; `Metadata`: `authenticator_data`, `client_data` (base64) |
-| `mtls` | `enrolled_public_key_der` (the enrolled certificate's public key, standard base64 PKIX DER; never the certificate), `cert_spki_thumbprint`, `cert_cn` | `Value`: ECDSA or RSA signature over SHA-256(nonce), or Ed25519 over the nonce |
+| `mtls` | `enrolled_public_key_der` (the enrolled certificate's public key, standard base64 PKIX DER; never the certificate), `cert_spki_thumbprint`, `cert_cn` | `Value`: ECDSA or RSA signature over SHA-256(challenge message), or Ed25519 over the challenge message |
 
 A response carries **no public key**. Verification uses only the key in the
 stored challenge. Key material placed in a response's metadata
 (`public_key_pem`, `public_key_der`, `cose_public_key`) is ignored, and a
 challenge without the enrolled key is refused.
+
+### The challenge message
+
+The `piv`, `pkcs11` and `mtls` factors verify a signature over go-qrdb's
+challenge message, never over the bare nonce (#1684).
+`challenge.Message` (`pkg/factor/internal/challenge/challenge.go:31`) builds it
+as `qrdbsdk.QuorumChallengeMessage(ChallengeID, purpose, Nonce)`. The purpose
+is `MethodData[qrdbsdk.QuorumChallengePurposeKey]`, which go-qrdb sets on a
+quorum challenge, and `""` when there is none. This is how go-qrdb's own `mtls`
+factor reads it. So a proof binds the challenge ID and purpose, and a proof
+made for one quorum operation never answers a challenge for another with the
+same nonce. Each factor also refuses a challenge with an empty nonce.
+
+| Factor | Verifies at |
+|---|---|
+| `mtls` | `pkg/factor/mtls/factor.go:262` |
+| `pkcs11` | `pkg/factor/pkcs11/factor.go:314` |
+| `piv` | `pkg/factor/piv/factor.go:261` |
+
+The prover is `qrdbsdk.SignQuorumChallenge(signer, challengeID, purpose,
+nonce)`. The `piv` factor's own prover, `Factor.SignChallenge`
+(`pkg/factor/piv/factor.go:277`), signs the same message with the slot's key.
+
+The `fido2` factor is not changed. Its WebAuthn challenge is the nonce
+(`challenge_base64`), and go-qrdb ships no `fido2` factor whose message it
+could follow.
 ### PIV factor signature verification
 
 The `piv` factor's `Verify` (`pkg/factor/piv/factor.go`) accepts every
@@ -87,9 +113,9 @@ algorithm its `Enroll` can produce — `rsa2048`, `rsa4096`, `ecdsap256`,
 
 | Algorithm | Signature format |
 |---|---|
-| ECDSA (P-256, P-384) | ASN.1 DER `(r, s)` over SHA-256(nonce) |
-| RSA (2048 bits or larger) | PKCS#1 v1.5 over SHA-256(nonce); moduli under 2048 bits are refused |
-| Ed25519 | raw signature over the raw nonce — Ed25519 hashes its own input and does not accept a pre-hashed digest for standard (non-Ed25519ph) signing |
+| ECDSA (P-256, P-384) | ASN.1 DER `(r, s)` over SHA-256(challenge message) |
+| RSA (2048 bits or larger) | PKCS#1 v1.5 over SHA-256(challenge message); moduli under 2048 bits are refused |
+| Ed25519 | raw signature over the raw challenge message — Ed25519 hashes its own input and does not accept a pre-hashed digest for standard (non-Ed25519ph) signing |
 
 ## The authentication surface that consumes them
 

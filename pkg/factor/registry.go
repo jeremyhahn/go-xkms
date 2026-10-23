@@ -100,9 +100,9 @@ func NewDefaultRegistry(cfg Config) (*qrdbsdk.AuthFactorRegistry, error) {
 // qrdbsdk.CertThumbprint and has it answer a quorum challenge with
 // qrdbsdk.SignQuorumChallenge; go-qrdb's own mtls factor verifies exactly
 // that whenever the registry does not override it. The xkms mtls factor
-// enrols a PEM certificate and verifies a bare-nonce signature, so it stays
-// the admin-enrolment factor (NewDefaultRegistry) and never answers for a
-// node's share holders.
+// verifies the same challenge message but enrols a PEM certificate rather
+// than a public key, so it stays the admin-enrolment factor
+// (NewDefaultRegistry) and never answers for a node's share holders.
 func NewNodeRegistry(cfg Config) (*qrdbsdk.AuthFactorRegistry, error) {
 	var factors []qrdbsdk.AuthFactorPlugin
 	for _, f := range DefaultFactors(cfg) {

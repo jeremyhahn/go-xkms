@@ -278,9 +278,9 @@ func TestDecoyEnrollmentFailsVerify(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Challenge: %v", err)
 	}
-	sig, err := holder.SignNonce(ctx, pivcert.PIVSlotAuthentication, challenge.Nonce)
+	sig, err := holder.SignChallenge(ctx, pivcert.PIVSlotAuthentication, challenge.ChallengeID, "", challenge.Nonce)
 	if err != nil {
-		t.Fatalf("SignNonce: %v", err)
+		t.Fatalf("SignChallenge: %v", err)
 	}
 	var verr *qrdbsdk.AuthFactorVerificationFailedError
 	if err := holder.Verify(ctx, challenge, &qrdbsdk.AuthFactorResponse{Value: sig}); !errors.As(err, &verr) {

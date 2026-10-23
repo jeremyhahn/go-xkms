@@ -33,3 +33,13 @@ type GeneratorUnattachedError struct{}
 func (e *GeneratorUnattachedError) Error() string {
 	return "piv: " + NoGeneratorReason
 }
+
+// EmptyNonceError reports that SignChallenge was asked to answer a challenge
+// that carries no nonce. go-qrdb refuses such an answer (an empty nonce binds
+// nothing fresh), so it is refused before the card is asked to sign.
+type EmptyNonceError struct{}
+
+// Error implements error.
+func (e *EmptyNonceError) Error() string {
+	return "piv: challenge carries no nonce"
+}

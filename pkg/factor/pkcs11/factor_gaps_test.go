@@ -31,6 +31,7 @@ import (
 	"time"
 
 	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
+	challengemsg "github.com/jeremyhahn/go-xkms/pkg/factor/internal/challenge"
 )
 
 // ecP256 returns a freshly generated P-256 key together with its PKIX DER
@@ -48,11 +49,11 @@ func ecP256(t *testing.T) (*ecdsa.PrivateKey, []byte) {
 	return key, der
 }
 
-// signNonce produces the ASN.1 DER ECDSA signature over SHA-256(nonce) that
-// the factor expects from a PKCS#11 token.
-func signNonce(t *testing.T, key *ecdsa.PrivateKey, nonce []byte) []byte {
+// signMessage produces the ASN.1 DER ECDSA signature over SHA-256(message)
+// that the factor expects from a PKCS#11 token.
+func signMessage(t *testing.T, key *ecdsa.PrivateKey, message []byte) []byte {
 	t.Helper()
-	digest := sha256.Sum256(nonce)
+	digest := sha256.Sum256(message)
 	sig, err := ecdsa.SignASN1(rand.Reader, key, digest[:])
 	if err != nil {
 		t.Fatalf("SignASN1: %v", err)
@@ -330,7 +331,7 @@ func TestVerify_RejectsBadEnrolledKeyMaterial(t *testing.T) {
 
 			// The response offers the genuine key; it must not be consulted.
 			err = f.Verify(ctx, challenge, &qrdbsdk.AuthFactorResponse{
-				Value:    signNonce(t, key, challenge.Nonce),
+				Value:    signMessage(t, key, challengemsg.Message(challenge)),
 				Metadata: map[string]string{"public_key_der": base64.StdEncoding.EncodeToString(der)},
 			})
 			if err == nil {
@@ -382,7 +383,7 @@ func TestVerify_RejectsUnsupportedKeyType(t *testing.T) {
 	challenge.MethodData[methodDataEnrolledKey] = base64.StdEncoding.EncodeToString(edDER)
 
 	err = f.Verify(ctx, challenge, &qrdbsdk.AuthFactorResponse{
-		Value: signNonce(t, key, challenge.Nonce),
+		Value: signMessage(t, key, challengemsg.Message(challenge)),
 	})
 	if err == nil {
 		t.Fatal("Verify accepted an Ed25519 public key")
@@ -662,7 +663,7 @@ func TestVerify_RejectsResponseNamingADifferentMechanism(t *testing.T) {
 	}
 
 	err = f.Verify(ctx, challenge, &qrdbsdk.AuthFactorResponse{
-		Value:    signNonce(t, key, challenge.Nonce),
+		Value:    signMessage(t, key, challengemsg.Message(challenge)),
 		Metadata: map[string]string{responseMechanism: "CKM_RSA_PKCS"},
 	})
 	var failed *qrdbsdk.AuthFactorVerificationFailedError
@@ -696,7 +697,7 @@ func TestVerify_AcceptsResponseNamingTheEnrolledMechanism(t *testing.T) {
 	}
 
 	err = f.Verify(ctx, challenge, &qrdbsdk.AuthFactorResponse{
-		Value:    signNonce(t, key, challenge.Nonce),
+		Value:    signMessage(t, key, challengemsg.Message(challenge)),
 		Metadata: map[string]string{responseMechanism: defaultMechanism},
 	})
 	if err != nil {
@@ -726,7 +727,7 @@ func TestVerify_RejectsChallengeWithoutMechanism(t *testing.T) {
 	delete(challenge.MethodData, methodDataMechanism)
 
 	err = f.Verify(ctx, challenge, &qrdbsdk.AuthFactorResponse{
-		Value: signNonce(t, key, challenge.Nonce),
+		Value: signMessage(t, key, challengemsg.Message(challenge)),
 	})
 	var failed *qrdbsdk.AuthFactorVerificationFailedError
 	if !errors.As(err, &failed) {
@@ -761,7 +762,7 @@ func TestVerify_RejectsChallengeWithInconsistentMechanism(t *testing.T) {
 	challenge.MethodData[methodDataMechanism] = "CKM_RSA_PKCS"
 
 	err = f.Verify(ctx, challenge, &qrdbsdk.AuthFactorResponse{
-		Value: signNonce(t, key, challenge.Nonce),
+		Value: signMessage(t, key, challengemsg.Message(challenge)),
 	})
 	var failed *qrdbsdk.AuthFactorVerificationFailedError
 	if !errors.As(err, &failed) {

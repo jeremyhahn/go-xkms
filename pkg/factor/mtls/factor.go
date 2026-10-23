@@ -16,7 +16,8 @@
 // Shamir-unseal ceremonies. It implements qrdb's qrdbsdk.AuthFactorPlugin
 // interface (Enroll, Challenge, Verify) by binding a PEM certificate to an
 // enrollment and verifying that the respondent possesses the corresponding
-// private key via a signature over a random nonce.
+// private key via a signature over go-qrdb's challenge message, which binds
+// a random nonce to the challenge and its purpose.
 //
 // Enrollment requires MethodParams["cert_pem"] containing a PEM CERTIFICATE
 // block. The certificate PEM bytes are stored as Enrollment.PublicKey.
@@ -35,9 +36,10 @@
 //
 // Verify reads the enrolled key from challenge.MethodData
 // ["enrolled_public_key_der"] — never from the response — and checks that
-// response.Value is a valid signature over the nonce. ECDSA (ASN.1 DER,
-// SHA-256 digest), RSA PKCS#1 v1.5 (SHA-256 digest), and Ed25519 (raw nonce)
-// are all supported.
+// response.Value is a valid signature over go-qrdb's challenge message
+// (qrdbsdk.QuorumChallengeMessage of the challenge ID, its purpose and its
+// nonce), never over the bare nonce. ECDSA (ASN.1 DER, SHA-256 digest), RSA
+// PKCS#1 v1.5 (SHA-256 digest), and Ed25519 (raw message) are all supported.
 //
 // Usage:
 //
@@ -62,6 +64,8 @@ import (
 	"time"
 
 	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
+
+	challengemsg "github.com/jeremyhahn/go-xkms/pkg/factor/internal/challenge"
 )
 
 // FactorName is the canonical Factor.Name() return value for mTLS.
@@ -160,8 +164,9 @@ func (f *Factor) Enroll(_ context.Context, params *qrdbsdk.AuthFactorEnrollParam
 	}, nil
 }
 
-// Challenge produces a 32-byte random nonce the custodian must sign with the
-// private key corresponding to their enrolled certificate. The certificate's
+// Challenge produces a 32-byte random nonce the custodian answers, with
+// qrdbsdk.SignQuorumChallenge and the private key corresponding to their
+// enrolled certificate, once go-qrdb has bound the challenge to its purpose. The certificate's
 // public key is embedded in MethodData["enrolled_public_key_der"] so Verify
 // can authenticate against the server-issued key without trusting the
 // response. Only the key is exposed, never the certificate: a CA-issued
@@ -205,16 +210,21 @@ func (f *Factor) Challenge(_ context.Context, enrollment *qrdbsdk.AuthFactorEnro
 }
 
 // Verify checks that response.Value is a valid signature over the challenge
-// nonce, produced by the private key corresponding to the enrolled
+// message, produced by the private key corresponding to the enrolled
 // certificate. The enrolled public key is read from
 // challenge.MethodData["enrolled_public_key_der"] — never from the response —
 // ensuring the key cannot be substituted by an attacker.
 //
-// Checks in order: challenge expiry, enrolled key decode, then
+// The message is go-qrdb's: qrdbsdk.QuorumChallengeMessage(ChallengeID,
+// MethodData[qrdbsdk.QuorumChallengePurposeKey], Nonce), matching go-qrdb's
+// own mtls factor byte for byte, so a proof made for another challenge or
+// another purpose never verifies. qrdbsdk.SignQuorumChallenge produces it.
+//
+// Checks in order: challenge expiry, enrolled key decode, nonce present, then
 // algorithm-specific signature verification:
-//   - ECDSA: ASN.1 DER (r,s) over SHA-256(nonce)
-//   - RSA:   PKCS#1 v1.5 over SHA-256(nonce)
-//   - Ed25519: raw signature over the raw nonce
+//   - ECDSA: ASN.1 DER (r,s) over SHA-256(message)
+//   - RSA:   PKCS#1 v1.5 over SHA-256(message)
+//   - Ed25519: raw signature over the raw message
 func (f *Factor) Verify(_ context.Context, challenge *qrdbsdk.AuthFactorChallenge, response *qrdbsdk.AuthFactorResponse) error {
 	if challenge == nil {
 		return &qrdbsdk.AuthFactorEnrollmentInvalidError{Reason: "challenge must not be nil"}
@@ -243,7 +253,14 @@ func (f *Factor) Verify(_ context.Context, challenge *qrdbsdk.AuthFactorChalleng
 		return &qrdbsdk.AuthFactorVerificationFailedError{FactorName: FactorName, Reason: "parse enrolled public key: " + err.Error()}
 	}
 
-	digest := sha256.Sum256(challenge.Nonce)
+	if len(challenge.Nonce) == 0 {
+		return &qrdbsdk.AuthFactorVerificationFailedError{FactorName: FactorName, Reason: "challenge carries no nonce"}
+	}
+	// The proof is a signature over go-qrdb's challenge message, which binds
+	// the challenge ID and purpose, never over the bare nonce
+	// (qrdbsdk.SignQuorumChallenge is the prover).
+	message := challengemsg.Message(challenge)
+	digest := sha256.Sum256(message)
 
 	switch pub := enrolled.(type) {
 	case *ecdsa.PublicKey:
@@ -254,8 +271,8 @@ func (f *Factor) Verify(_ context.Context, challenge *qrdbsdk.AuthFactorChalleng
 		}
 		return nil
 	case ed25519.PublicKey:
-		// Ed25519 signs the raw nonce (not the SHA-256 digest).
-		if !ed25519.Verify(pub, challenge.Nonce, response.Value) {
+		// Ed25519 signs the message itself (not its SHA-256 digest).
+		if !ed25519.Verify(pub, message, response.Value) {
 			return &qrdbsdk.AuthFactorVerificationFailedError{FactorName: FactorName, Reason: "ed25519 signature invalid"}
 		}
 		return nil

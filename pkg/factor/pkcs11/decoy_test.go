@@ -30,6 +30,7 @@ import (
 	"time"
 
 	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
+	challengemsg "github.com/jeremyhahn/go-xkms/pkg/factor/internal/challenge"
 	"github.com/jeremyhahn/go-xkms/pkg/factor/internal/decoy"
 )
 
@@ -256,7 +257,7 @@ func TestDecoyEnrollmentFailsVerify(t *testing.T) {
 		t.Fatalf("Challenge: %v", err)
 	}
 	_, sign := ecKeyPair(t)
-	err = f.Verify(ctx, challenge, &qrdbsdk.AuthFactorResponse{Value: sign(challenge.Nonce)})
+	err = f.Verify(ctx, challenge, &qrdbsdk.AuthFactorResponse{Value: sign(challengemsg.Message(challenge))})
 	var verr *qrdbsdk.AuthFactorVerificationFailedError
 	if !errors.As(err, &verr) {
 		t.Fatalf("want verification failure against a decoy, got %v", err)
