@@ -35,6 +35,8 @@ func TestSigningKey_RefusesANilRequest(t *testing.T) {
 	assert.ErrorIs(t, err, wire.ErrNilRequest)
 	_, err = tr.GetSigningKeyBinding(context.Background(), nil)
 	assert.ErrorIs(t, err, wire.ErrNilRequest)
+	_, err = tr.SignCoRIM(context.Background(), nil)
+	assert.ErrorIs(t, err, wire.ErrNilRequest)
 }
 
 // TestSigningKey_NotConnected proves every signing-key method refuses
