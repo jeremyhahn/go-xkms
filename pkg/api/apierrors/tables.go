@@ -21,6 +21,7 @@ import (
 	"github.com/jeremyhahn/go-xkms/pkg/attestation/appraisal"
 	"github.com/jeremyhahn/go-xkms/pkg/attestation/peer"
 	"github.com/jeremyhahn/go-xkms/pkg/attestation/peergate"
+	"github.com/jeremyhahn/go-xkms/pkg/attestation/refvalue"
 	"github.com/jeremyhahn/go-xkms/pkg/attestation/truststore"
 	"github.com/jeremyhahn/go-xkms/pkg/backend"
 	tpm2backend "github.com/jeremyhahn/go-xkms/pkg/backend/tpm2"
@@ -326,7 +327,8 @@ func PeerAttestationClassOf(err error) (Class, bool) {
 // has nothing to answer with; a binding change by a caller without
 // attestation_signing_keys:bind is refused below the gate too. The
 // appraisal's typed errors (RepositoryError, SigningKeyError) wrap these
-// sentinels, so this one table classifies them.
+// sentinels, so this one table classifies them, and xkms.CoRIMSignError
+// wraps the refvalue sentinels SignCoRIM fails with.
 var SigningKeySentinelClasses = []SentinelClass{
 	{xkms.ErrNotConfigured, ClassUnavailable},
 	{xkms.ErrSigningKeyForbidden, ClassPermissionDenied},
@@ -336,6 +338,13 @@ var SigningKeySentinelClasses = []SentinelClass{
 	{appraisal.ErrInvalidTenant, ClassInvalidArgument},
 	{appraisal.ErrRecordNotFound, ClassNotFound},
 	{appraisal.ErrStoreUnavailable, ClassUnavailable},
+	// SignCoRIM: the CoRIM or corim-meta the caller sent is invalid; the
+	// key the repository resolves to is absent or of a type a signed CoRIM
+	// cannot carry, which the tenant fixes by provisioning or rebinding.
+	{refvalue.ErrMalformed, ClassInvalidArgument},
+	{refvalue.ErrMeta, ClassInvalidArgument},
+	{refvalue.ErrSignerKey, ClassFailedPrecondition},
+	{xkms.ErrKeyNotFound, ClassFailedPrecondition},
 }
 
 // SigningKeyClassOf classifies an error of the repository signing-key verbs.

@@ -1024,6 +1024,12 @@ service KeystoreService {
     option (qrdb.v1.permission) = "attestation_signing_keys:get";
   }
 
+  // SignCoRIM signs a repository's CoRIM with the key ResolveSigningKey
+  // returns, as a draft-ietf-rats-corim-11 §4.2 signed CoRIM.
+  rpc SignCoRIM(SignCoRIMRequest) returns (SignedCoRIM) {
+    option (qrdb.v1.permission) = "attestation_signing_keys:sign";
+  }
+
   // ==================== PKCS#11 State Operations ====================
   // Durable token and object state for a PKCS#11 module running with
   // StorageType "remote". Values are opaque module-serialised records.
@@ -4609,6 +4615,27 @@ message SigningKeyResolution {
   // default is true when no binding names the repository, so the key is
   // the tenant's release key.
   bool default = 4;
+}
+
+// SignCoRIMRequest is a repository's unsigned CoRIM and the corim-meta of
+// its signature, draft-ietf-rats-corim-11 §4.2.3.
+message SignCoRIMRequest {
+  string repository = 1;
+  // corim is the CBOR unsigned-corim-map, tagged #6.501 or not (§4.1).
+  bytes corim = 2;
+  string signer_name = 3;
+  string signer_uri = 4;
+  // not_before and not_after bound the signature validity (§7.3); an
+  // unset not_after omits it.
+  google.protobuf.Timestamp not_before = 5;
+  google.protobuf.Timestamp not_after = 6;
+}
+
+// SignedCoRIM is the signed CoRIM and the key that signed it.
+message SignedCoRIM {
+  SigningKeyResolution key = 1;
+  // corim is the COSE_Sign1 signed-corim (§4.2).
+  bytes corim = 2;
 }
 
 // ==================== FIDO2/WebAuthn Registration ====================

@@ -19,6 +19,7 @@ import (
 	"errors"
 
 	"github.com/jeremyhahn/go-xkms/pkg/attestation/appraisal"
+	"github.com/jeremyhahn/go-xkms/pkg/attestation/refvalue"
 	"github.com/jeremyhahn/go-xkms/pkg/auth"
 )
 
@@ -61,6 +62,28 @@ func (e *SigningKeyPermissionError) Unwrap() []error {
 
 // authorizeSigningKeys refuses a caller that does not hold
 // attestation_signing_keys:action.
+// CoRIMSignError reports a CoRIM that could not be signed for a repository.
+// Err is the refvalue sentinel chain (ErrMalformed, ErrMeta, ErrSignerKey,
+// ErrSign), so callers match the cause with errors.Is.
+type CoRIMSignError struct {
+	// Repository is the repository the CoRIM was to be signed for.
+	Repository string
+	// KeyID is the signing key ResolveSigningKey named.
+	KeyID string
+	// Err is the signer's failure.
+	Err error
+}
+
+// Error reports the repository, key and failure.
+func (e *CoRIMSignError) Error() string {
+	return "attestation: signing the CoRIM of repository " + e.Repository + " with key " + e.KeyID + ": " + e.Err.Error()
+}
+
+// Unwrap returns the signer's failure.
+func (e *CoRIMSignError) Unwrap() error {
+	return e.Err
+}
+
 func (s *XKMSService) authorizeSigningKeys(ctx context.Context, action string) error {
 	if err := s.AuthorizeCaller(ctx, auth.ResourceAttestationSigningKeys, action); err != nil {
 		return &SigningKeyPermissionError{Permission: auth.ResourceAttestationSigningKeys + ":" + action, Err: err}
@@ -134,6 +157,16 @@ func (s *XKMSService) DeleteSigningKeyBinding(ctx context.Context, req *appraisa
 // key comes from the backend's signer: the cloud KMS backends return no
 // private key from GetKey for a non-extractable key.
 func (s *XKMSService) SigningPublicKey(ctx context.Context, tenant string, key *appraisal.SigningKeyResolution) (crypto.PublicKey, error) {
+	signer, err := s.repositorySigner(ctx, tenant, key)
+	if err != nil {
+		return nil, err
+	}
+	return signer.Public(), nil
+}
+
+// repositorySigner returns the tenant-scoped backend signer of a resolved
+// repository signing key.
+func (s *XKMSService) repositorySigner(ctx context.Context, tenant string, key *appraisal.SigningKeyResolution) (crypto.Signer, error) {
 	if key == nil {
 		return nil, appraisal.ErrNilRequest
 	}
@@ -157,7 +190,7 @@ func (s *XKMSService) SigningPublicKey(ctx context.Context, tenant string, key *
 	if err != nil {
 		return nil, &ErrKeyOperation{Operation: "read repository signing key", KeyID: key.KeyID, Err: err}
 	}
-	return signer.Public(), nil
+	return signer, nil
 }
 
 // ResolveSigningKey returns the key that signs one of the caller's tenant's
@@ -173,4 +206,48 @@ func (s *XKMSService) ResolveSigningKey(ctx context.Context, req *appraisal.Reso
 		return nil, err
 	}
 	return appraiser.ResolveSigningKey(ctx, tenant, req)
+}
+
+// SignCoRIM signs CoRIM reference values of one of the caller's tenant's
+// repositories as a draft-ietf-rats-corim-11 §4.2 signed CoRIM, with the key
+// ResolveSigningKey names: the repository's bound key, or else the tenant's
+// release key (owner ruling 134). The key is the tenant-scoped backend's
+// signer, restricted to the caller's tenant as SigningPublicKey restricts
+// it, so the output verifies under the key the Verifier trusts for the
+// repository.
+//
+// Permission: attestation_signing_keys:sign.
+func (s *XKMSService) SignCoRIM(ctx context.Context, req *appraisal.SignCoRIMRequest) (*appraisal.SignedCoRIM, error) {
+	if req == nil {
+		return nil, appraisal.ErrNilRequest
+	}
+	appraiser, tenant, err := s.attestationAppraiser(ctx)
+	if err != nil {
+		return nil, err
+	}
+	if err := s.authorizeSigningKeys(ctx, auth.ActionSign); err != nil {
+		return nil, err
+	}
+	if err := appraisal.ValidateRepository(req.Repository); err != nil {
+		return nil, err
+	}
+	key, err := appraiser.ResolveSigningKey(ctx, tenant, &appraisal.ResolveSigningKeyRequest{Repository: req.Repository})
+	if err != nil {
+		return nil, err
+	}
+	signer, err := s.repositorySigner(ctx, tenant, key)
+	if err != nil {
+		return nil, err
+	}
+	meta := refvalue.Meta{
+		SignerName: req.SignerName,
+		SignerURI:  req.SignerURI,
+		NotBefore:  req.NotBefore,
+		NotAfter:   req.NotAfter,
+	}
+	signed, err := refvalue.Sign(req.CoRIM, meta, signer)
+	if err != nil {
+		return nil, &CoRIMSignError{Repository: req.Repository, KeyID: key.KeyID, Err: err}
+	}
+	return &appraisal.SignedCoRIM{Key: *key, CoRIM: signed}, nil
 }

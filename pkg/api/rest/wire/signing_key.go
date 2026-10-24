@@ -16,10 +16,12 @@ import (
 const SigningKeysPath = "/api/v1/attestation/signing-keys"
 
 // SigningKeyBindingPath is a repository's binding; SigningKeyResolvePath is
-// the key that signs a repository.
+// the key that signs a repository; SigningKeySignCoRIMPath signs a
+// repository's CoRIM with that key.
 const (
-	SigningKeyBindingPath = SigningKeysPath + "/binding"
-	SigningKeyResolvePath = SigningKeysPath + "/resolve"
+	SigningKeyBindingPath   = SigningKeysPath + "/binding"
+	SigningKeyResolvePath   = SigningKeysPath + "/resolve"
+	SigningKeySignCoRIMPath = SigningKeysPath + "/sign-corim"
 )
 
 // SigningKeyRepositoryParam names the repository on the routes that take
@@ -90,6 +92,19 @@ func (c SigningKeyClient) ResolveSigningKey(ctx context.Context, req *transport.
 	}
 	var resp transport.SigningKeyResolution
 	if err := callJSON(ctx, c.Do, http.MethodGet, signingKeyPath(SigningKeyResolvePath, req.Repository), nil, &resp); err != nil {
+		return nil, err
+	}
+	return &resp, nil
+}
+
+// SignCoRIM signs a repository's CoRIM with the key that signs the
+// repository.
+func (c SigningKeyClient) SignCoRIM(ctx context.Context, req *transport.SignCoRIMRequest) (*transport.SignedCoRIM, error) {
+	if req == nil {
+		return nil, ErrNilRequest
+	}
+	var resp transport.SignedCoRIM
+	if err := callJSON(ctx, c.Do, http.MethodPost, SigningKeySignCoRIMPath, req, &resp); err != nil {
 		return nil, err
 	}
 	return &resp, nil

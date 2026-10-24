@@ -198,6 +198,50 @@ var swidHashAlgs = map[crypto.Hash]uint64{
 // SignCoRIMDigests is SignCoRIM over digests in any mix of PCR banks: one
 // measurement per PCR, carrying every digest given for it.
 func SignCoRIMDigests(digests []PCRDigest, signer crypto.Signer, chain []*x509.Certificate) ([]byte, error) {
+	payload, err := UnsignedCoRIMDigests(digests)
+	if err != nil {
+		return nil, err
+	}
+	meta, err := corim.NewMeta().SetSigner("Example Reference Value Provider", nil).ToCBOR()
+	if err != nil {
+		return nil, &FixtureError{Step: "corim meta", Cause: err}
+	}
+
+	msg := cose.NewSign1Message()
+	msg.Payload = payload
+	msg.Headers.Protected.SetAlgorithm(cose.AlgorithmES256)
+	msg.Headers.Protected[cose.HeaderLabelContentType] = corim.ContentType
+	msg.Headers.Protected[corim.HeaderLabelCorimMeta] = meta
+	if chain != nil {
+		ders := make([]any, len(chain))
+		for i, cert := range chain {
+			ders[i] = cert.Raw
+		}
+		msg.Headers.Protected[cose.HeaderLabelX5Chain] = ders
+	}
+	coseSigner, err := cose.NewSigner(cose.AlgorithmES256, signer)
+	if err != nil {
+		return nil, &FixtureError{Step: "cose signer", Cause: err}
+	}
+	if err := msg.Sign(rand.Reader, nil, coseSigner); err != nil {
+		return nil, &FixtureError{Step: "cose sign", Cause: err}
+	}
+	out, err := msg.MarshalCBOR()
+	if err != nil {
+		return nil, &FixtureError{Step: "cose marshal", Cause: err}
+	}
+	return out, nil
+}
+
+// UnsignedCoRIM builds the CBOR unsigned-corim-map whose reference values are
+// the given SHA-256 PCR digests, for a signer to sign.
+func UnsignedCoRIM(pcrs map[uint32][]byte) ([]byte, error) {
+	return UnsignedCoRIMDigests(SHA256Digests(pcrs))
+}
+
+// UnsignedCoRIMDigests builds the CBOR unsigned-corim-map whose reference
+// values are the given PCR digests, any mix of banks.
+func UnsignedCoRIMDigests(digests []PCRDigest) ([]byte, error) {
 	byIndex := make(map[uint32][]PCRDigest)
 	for _, d := range digests {
 		byIndex[d.Index] = append(byIndex[d.Index], d)
@@ -243,35 +287,7 @@ func SignCoRIMDigests(digests []PCRDigest, signer crypto.Signer, chain []*x509.C
 	if err != nil {
 		return nil, &FixtureError{Step: "corim cbor", Cause: err}
 	}
-	meta, err := corim.NewMeta().SetSigner("Example Reference Value Provider", nil).ToCBOR()
-	if err != nil {
-		return nil, &FixtureError{Step: "corim meta", Cause: err}
-	}
-
-	msg := cose.NewSign1Message()
-	msg.Payload = payload
-	msg.Headers.Protected.SetAlgorithm(cose.AlgorithmES256)
-	msg.Headers.Protected[cose.HeaderLabelContentType] = corim.ContentType
-	msg.Headers.Protected[corim.HeaderLabelCorimMeta] = meta
-	if chain != nil {
-		ders := make([]any, len(chain))
-		for i, cert := range chain {
-			ders[i] = cert.Raw
-		}
-		msg.Headers.Protected[cose.HeaderLabelX5Chain] = ders
-	}
-	coseSigner, err := cose.NewSigner(cose.AlgorithmES256, signer)
-	if err != nil {
-		return nil, &FixtureError{Step: "cose signer", Cause: err}
-	}
-	if err := msg.Sign(rand.Reader, nil, coseSigner); err != nil {
-		return nil, &FixtureError{Step: "cose sign", Cause: err}
-	}
-	out, err := msg.MarshalCBOR()
-	if err != nil {
-		return nil, &FixtureError{Step: "cose marshal", Cause: err}
-	}
-	return out, nil
+	return payload, nil
 }
 
 // SignerUnder issues a leaf signing certificate under ca for a reference-value

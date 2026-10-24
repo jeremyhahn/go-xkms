@@ -42,6 +42,11 @@ type SigningKeyService interface {
 	// ResolveSigningKey returns the key that signs a repository.
 	// Permission: attestation_signing_keys:get.
 	ResolveSigningKey(ctx context.Context, req *ResolveSigningKeyRequest) (*SigningKeyResolution, error)
+
+	// SignCoRIM signs CoRIM reference values of a repository as a
+	// draft-ietf-rats-corim-11 §4.2 signed CoRIM with the key
+	// ResolveSigningKey names. Permission: attestation_signing_keys:sign.
+	SignCoRIM(ctx context.Context, req *SignCoRIMRequest) (*SignedCoRIM, error)
 }
 
 // SigningKeyServicer is the server side of SigningKeyService.
@@ -60,4 +65,6 @@ type (
 	DeleteSigningKeyBindingRequest = appraisal.DeleteSigningKeyBindingRequest
 	ResolveSigningKeyRequest       = appraisal.ResolveSigningKeyRequest
 	SigningKeyResolution           = appraisal.SigningKeyResolution
+	SignCoRIMRequest               = appraisal.SignCoRIMRequest
+	SignedCoRIM                    = appraisal.SignedCoRIM
 )

@@ -47,3 +47,8 @@ func (t *Transport) DeleteSigningKeyBinding(_ context.Context, _ *transport.Dele
 func (t *Transport) ResolveSigningKey(_ context.Context, _ *transport.ResolveSigningKeyRequest) (*transport.SigningKeyResolution, error) {
 	return nil, ErrNotSupported
 }
+
+// SignCoRIM is not available over USB.
+func (t *Transport) SignCoRIM(_ context.Context, _ *transport.SignCoRIMRequest) (*transport.SignedCoRIM, error) {
+	return nil, ErrNotSupported
+}

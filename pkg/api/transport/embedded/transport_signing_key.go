@@ -61,3 +61,12 @@ func (t *Transport) ResolveSigningKey(ctx context.Context, req *transport.Resolv
 	}
 	return t.service.ResolveSigningKey(ctx, req)
 }
+
+// SignCoRIM signs a repository's CoRIM with the key that signs the
+// repository.
+func (t *Transport) SignCoRIM(ctx context.Context, req *transport.SignCoRIMRequest) (*transport.SignedCoRIM, error) {
+	if !t.connected {
+		return nil, ErrNotConnected
+	}
+	return t.service.SignCoRIM(ctx, req)
+}
