@@ -1,6 +1,6 @@
 # Password Vault — API
 
-> **Status: NORMATIVE** · Feature: `password-vault` · Repo: `go-xkms` · Last verified: 2026-10-09
+> **Status: NORMATIVE** · Feature: `password-vault` · Repo: `go-xkms` · Last verified: 2026-10-24
 
 Transport shapes: [`../key-management/api.md`](../key-management/api.md)
 §"How the six transports are shaped".
@@ -118,6 +118,40 @@ envelope (`Request`/`Response`) as its other operations, with method names
 matching the servicer verbatim (`PasswordAdd`, `PasswordGet`, ...). The tenth,
 `PasswordStoreSetAccessMode`, still returns `ErrNotSupported` — access-mode
 changes are scoped separately (go-xkms#691).
+
+## USB transport: vault verbs (planned)
+
+SPEC row `password-vault-usb`. The design that answers the seven questions of
+xkey-android #15 (who calls it, what the phone's vault is, whose vault it is,
+the factors, PRF and the recovery code) is in
+[architecture.md](architecture.md#design-decisions-15-the-vault-over-usb).
+
+The USB transport has no vault methods today: its password method names stop
+at `PasswordGenerate` (`pkg/api/transport/usb/transport.go:87`-`95`). The five
+verbs are declared on `transport.Client`
+(`pkg/api/transport/client.go:490`-`506`) and every other transport serves
+them. The USB transport adds them with the same envelope as
+`PasswordStoreUnlock` (`pkg/api/transport/usb/transport.go:649`-`651`). The
+method name is the servicer verb verbatim, the params are the `transport`
+request type, and the result decodes into the `transport` response type
+(`pkg/api/transport/types.go`):
+
+| Verb | JSON-RPC method | Params | Result |
+|---|---|---|---|
+| Vault status | `PasswordVaultStatus` | none (`client.go:490`) | `PasswordVaultStatusResponse` (`types.go:2054`) |
+| Enroll factor | `PasswordVaultEnroll` | `PasswordVaultEnrollRequest` (`types.go:2067`) | `PasswordVaultEnrollResponse` (`types.go:2073`) |
+| Rotate factor | `PasswordVaultRotate` | `PasswordVaultRotateRequest` (`types.go:2080`) | `PasswordVaultEnrollResponse` |
+| Remove factor | `PasswordVaultRemoveFactor` | `PasswordVaultRemoveFactorRequest` (`types.go:2086`) | none (`client.go:502`) |
+| Recover | `PasswordVaultRecover` | `PasswordVaultRecoverRequest` (`types.go:2092`) | `PasswordVaultEnrollResponse` |
+
+The params are the JSON shapes above: a `PasswordVaultCredential` embedded
+flat, with `factor_id` on rotate and remove and `recovery_code` on recover.
+The errors are the phone's answers to the conditions in the vault table
+above. A JSON-RPC error from the phone reaches the caller as
+`ErrRequestFailed`, carrying the phone's code and message
+(`pkg/api/transport/usb/transport.go:588`-`592`), as it does for every other
+USB password method. The phone side is xkey-android #55. The method names and
+params must stay wire-compatible with `xkey/pkg/pairing`.
 
 ## `PasswordGet` returns entries exactly as stored
 

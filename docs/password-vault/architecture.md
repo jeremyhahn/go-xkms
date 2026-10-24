@@ -1,6 +1,6 @@
 # Password Vault — Architecture
 
-> **Status: NORMATIVE** · Feature: `password-vault` · Repo: `go-xkms` · Last verified: 2026-10-12
+> **Status: NORMATIVE** · Feature: `password-vault` · Repo: `go-xkms` · Last verified: 2026-10-24
 
 ## The problem
 
@@ -296,6 +296,80 @@ Rejected alternatives:
   logic lands in `go-xkms/pkg/*` and xkey consumes it through
   `go-xkms/sdk/go`. xkey is a shell, never a second implementation.
 - **One access policy.** Rejected — see above.
+
+## Design decisions (#15): the vault over USB
+
+SPEC row `password-vault-usb` (planned; owner item 148 (a), ruling 130). It
+answers the seven questions of xkey-android #15, which closed at the unlock
+body; xkey-android #55 builds the phone side. The wire table is in
+[api.md](api.md#usb-transport-vault-verbs-planned). The rule throughout is
+DRY: the phone runs the vault described above and does not design a second
+one.
+
+1. **Method names.** `PasswordVaultStatus`, `PasswordVaultEnroll`,
+   `PasswordVaultRotate`, `PasswordVaultRemoveFactor` and
+   `PasswordVaultRecover`. These are the `transport.Client` verbs
+   (`pkg/api/transport/client.go:490`-`506`), sent verbatim as the USB
+   transport sends its other password methods
+   (`pkg/api/transport/usb/transport.go:87`-`95`).
+2. **USB vault traffic is in the product.** The desktop caller is the xkey
+   CLI. Its vault commands already take a `PasswordStoreClientService`
+   (`xkey/cmd/xkey/cmd/password.go:105`-`117`), which the USB transport
+   satisfies once it has the five methods. The scheme table has no `usb`
+   entry (`xkey/cmd/xkey/cmd/xkmsd_client.go:141`-`150`), so the row adds a
+   `usb://` scheme that routes `xkey password` commands to
+   `sdk/go/transport/usb`. Without that scheme the methods would have no
+   caller, which is the gap #15 reported. USB vault traffic stays out of
+   the product until the go-trusted-platform needs are met (owner item
+   148 (a), ruling 130): nothing here is dev-complete before
+   go-trusted-platform, and this decision is the design that ships after
+   that.
+3. **A real vault on the phone, not a gate.** The USB transport proxies to
+   the phone's embedded xkmsd (`pkg/api/transport/usb/transport.go:80`).
+   That xkmsd runs `pkg/staticpw`'s personal vault unchanged: a random
+   32-byte DEK (`pkg/staticpw/vault.go:109`) seals the user's entries. The
+   DEK is wrapped once per factor with AES-256-GCM under a KEK derived from
+   that factor's secret (`vault.go:554`-`570`). The phone's encrypted store
+   (Android Keystore-backed) stays the layer below, as the tenant barrier
+   is on a server. A Keystore gate in front of the store is rejected for
+   the reason a barrier-only wrap is rejected above: the device key alone
+   would then open every entry.
+4. **"Per-user" is the paired desktop identity.** The JSON-RPC envelope
+   carries no identity (`pkg/pairingproto/protocol.go:157`-`163`). The only
+   authenticated peer identity on the channel is the desktop's Noise static
+   public key, pinned at pairing
+   (`pkg/trust/bootstrap/noise_session.go:133`). The phone's xkmsd keys the
+   vault to the subject that key names: the hex SHA-256 of the 32-byte
+   static key, in the phone's system tenant. So two desktops paired with
+   one phone hold two vaults. A user ID inside the params is rejected
+   because the caller asserts it and nothing authenticates it. This
+   follows the transports ruling of 2026-10-18: local mode verifies
+   pairing devices.
+5. **Neither side verifies PRF as a separate check.** As on a server, the
+   32-byte hmac-secret output is key material. It is checked by the KEK's
+   HKDF (`vault.go:562`) and the AES-GCM unwrap, which refuses a wrong
+   secret (`ErrVaultCredentialRejected`). The desktop evaluates hmac-secret
+   with `pkg/vaultpasskey`, with user verification required ("Passkey salt
+   handling" above). The phone advertises its xkmsd's configured
+   `passkey_rp_id`. With none configured it answers
+   `ErrVaultPasskeyUnavailable`, and the desktop refuses before it touches
+   the key.
+6. **Every factor `pkg/staticpw` takes.** These are passphrase, passkey,
+   PIV, certificate and TPM, plus the recovery code
+   (`vault.go:74`-`86`). For a key factor the phone only seals S to the
+   enrolled public key (`vaultkey.Seal`, "Key factors" above). The private
+   key operation runs on the desktop's token through `pkg/vaulttoken`, so
+   PIV, certificate and TPM need no hardware on the phone. The phone refuses
+   what `VaultCredential.validate` refuses (`vault.go:264`-`305`):
+   enrolling the recovery factor gets `ErrVaultRecoveryFactor`, and an
+   unknown factor or malformed secret gets `ErrVaultInvalidCredential`.
+7. **The recovery code is `pkg/staticpw`'s.** It is 20 random bytes
+   (160 bits, `vault.go:111`), base32 without padding, in groups of four
+   joined by `-` (`vault.go:586`-`601`). It is read case-insensitively,
+   with `-` and spaces ignored (`vault.go:605`-`614`). It is one-time,
+   and the KEK is `HKDF-SHA256(code, salt, "xkms/staticpw/vault/v1/recovery")`
+   (`vault.go:117`). A code minted on a server and one minted on the phone
+   have the same format.
 
 ## Component boundaries
 

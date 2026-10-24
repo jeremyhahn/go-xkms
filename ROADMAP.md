@@ -132,6 +132,7 @@ Scope and boundaries: [docs/SPEC.md](docs/SPEC.md).
 - **device-share-policy** — device sharing under the `device:*` permissions of tenant Admin and Owner — [SPEC](docs/SPEC.md#features) — blocked: go-qrdb gap
 - **device-policy-source** — xkey applies the stricter of its SO-sealed and the go-xkms device policy — [SPEC](docs/SPEC.md#features) — open
 - **verifier-appraisal-seam** — the go-quicbaas appraisal code and reference-values store moved into go-xkms `pkg/attestation` with history, re-exported by go-quicbaas — [SPEC](docs/SPEC.md#features) — open
+- **password-vault-usb** — the five per-user vault verbs over the USB transport to the paired phone's `pkg/staticpw` vault, called by the xkey CLI over `usb://`, consumed by xkey-android #15 and #55 (owner ruling 130) — sequenced after the go-trusted-platform needs (ruling 130, item 148 (a)) — [SPEC](docs/SPEC.md#features) — open
 - **release-signing-key** — the tenant release signing key as default signer of images and CoRIM reference values, with per-repository key naming for go-quicbaas (owner ruling 134) — [SPEC](docs/SPEC.md#features) — open
 - **authz-claim-roles** — roles from go-qrdb, not IdP or token claims — [Dev complete](../../milestone/14) — blocked: go-qrdb gap
 - **authz-device-onboarding** — onboarding as users:invite and device-onboarding permissions — [Dev complete](../../milestone/14) — blocked: go-qrdb gap
