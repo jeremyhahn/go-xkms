@@ -50,6 +50,10 @@ type mockCAClient struct {
 	// it.
 	transport.TrustRootService
 
+	// SigningKeyService completes transport.Client; these tests never call
+	// it.
+	transport.SigningKeyService
+
 	getCACertificateResp  *transport.GetCACertificateResponse
 	getCACertificateErr   error
 	issueCertificateResp  *transport.IssueCertificateResponse

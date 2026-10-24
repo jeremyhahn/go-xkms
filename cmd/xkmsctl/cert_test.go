@@ -3291,3 +3291,19 @@ func (m *mockCertClient) BindUserCert(_ context.Context, _, _ string, _ int64) e
 func (m *mockCertClient) ListUserCredentials(_ context.Context, _ string) (*transport.ListUserCredentialsResponse, error) {
 	return nil, nil
 }
+
+func (*mockCertClient) SetSigningKeyBinding(context.Context, *transport.SetSigningKeyBindingRequest) (*transport.SigningKeyBinding, error) {
+	return nil, nil
+}
+func (*mockCertClient) GetSigningKeyBinding(context.Context, *transport.GetSigningKeyBindingRequest) (*transport.SigningKeyBinding, error) {
+	return nil, nil
+}
+func (*mockCertClient) ListSigningKeyBindings(context.Context) (*transport.ListSigningKeyBindingsResponse, error) {
+	return nil, nil
+}
+func (*mockCertClient) DeleteSigningKeyBinding(context.Context, *transport.DeleteSigningKeyBindingRequest) error {
+	return nil
+}
+func (*mockCertClient) ResolveSigningKey(context.Context, *transport.ResolveSigningKeyRequest) (*transport.SigningKeyResolution, error) {
+	return nil, nil
+}

@@ -1,6 +1,6 @@
 # Attestation Verifier — Engineering Contract
 
-> **Status: NORMATIVE** · Feature: `attestation-verifier` · Module: `go-xkms` · Last verified: 2026-09-25
+> **Status: NORMATIVE** · Feature: `attestation-verifier` · Module: `go-xkms` · Last verified: 2026-10-24
 
 ## Exported surface
 
@@ -196,6 +196,69 @@ surface never exposes one that does that silently.
   here — verify against `pkg/ca`'s suite, not this folder's, before relying
   on that case.
 - Run a single package: `go test ./pkg/attestation/...`.
+
+## Repository signing keys
+
+`pkg/attestation/appraisal` (`signing_keys.go`, #1697):
+
+| Symbol | Kind | Where |
+|---|---|---|
+| `ReleaseSigningKeyID` | const `"release-signing"` | `signing_keys.go:31` |
+| `SigningKeyBinding`, `SigningKeyResolution` | types | `signing_keys.go:44`, `:89` |
+| `ValidateRepository` | func | `signing_keys.go:101` |
+| `Appraiser.SetSigningKeyBinding` / `GetSigningKeyBinding` / `ListSigningKeyBindings` / `DeleteSigningKeyBinding` / `ResolveSigningKey` | methods | `signing_keys.go:125`–`:178` |
+| `SigningKeySource`, `WithSigningKeySource` | interface, option | `signing_keys.go:195`, `:202` |
+| `Appraiser.RepositorySigningKey`, `Appraiser.TenantSigningKeys` | methods | `signing_keys.go:208`, `:226` |
+| `XKMSService.SigningPublicKey` | method (a `SigningKeySource`) | `pkg/xkms/servicer_signing_keys.go:136` |
+| `image.SigningKeyResolver`, `VerifierConfig.SigningKeys` | interface, field | `pkg/image/verifier.go:68`, `:62` |
+
+`sdk/go` re-exports these under an `Attestation` prefix
+(`sdk/go/attestation_appraisal.go:46`–`:130`, `:182`–`:204`), plus
+`ImageSigningKeyResolver` and `ErrImageSigningKeyMismatch`
+(`sdk/go/image.go:101`, `:181`).
+
+Invariants:
+
+- An unbound repository resolves to `ReleaseSigningKeyID` with
+  `Default: true`; resolution never returns not-found.
+- A repository's CoRIM verifies under the repository's key alone. The
+  tenant's `reference-signer` endorsements do not apply to it
+  (`verifyReferenceValues`, `signing_keys.go:263`).
+- The Appraiser sees public keys only, through its `SigningKeySource`.
+  Verifying a repository's signature without one is a `*ConfigError`
+  (`signing_keys.go:208`).
+- Every `XKMSService` signing-key verb authorizes
+  `attestation_signing_keys:{bind,get,list}` itself
+  (`authorizeSigningKeys`, `pkg/xkms/servicer_signing_keys.go:64`), as well
+  as being gated on the wire. The permissions are in `pkg/auth/permissions.go:155`
+  and `:268`, and in the module scopes at `pkg/apimodule/module_scopes.go:147`–`:155`.
+
+Errors (`pkg/attestation/appraisal/errors.go:79`–`:121`):
+
+- `ErrInvalidRepository` / `*RepositoryError`;
+- `ErrInvalidSigningKey` / `*SigningKeyError`, for a bad key ID or backend
+  name;
+- `ErrSigningKeyRefused` / `*SignerRefusedError`, for a CoRIM signed by
+  another key;
+- in `pkg/xkms`, `ErrSigningKeyForbidden` / `*SigningKeyPermissionError`
+  (`servicer_signing_keys.go:40`, `:45`);
+- in `pkg/image`, `ErrSigningKeyMismatch` (`errors.go:182`).
+
+One table, `apierrors.SigningKeySentinelClasses`
+(`pkg/api/apierrors/tables.go:330`), classifies these errors for gRPC, MCP
+and REST.
+
+Tests:
+
+- `pkg/attestation/appraisal/signing_keys_test.go` and
+  `signing_keys_verify_test.go`: binding lifecycle, validation, resolution,
+  and CoRIM refusal under another key;
+- `pkg/image/verifier_signing_key_test.go`: image key mismatch;
+- `pkg/xkms/servicer_signing_keys_test.go`: permission refusals and
+  `ErrNotConfigured`;
+- `pkg/api/{rest,mcp}/handlers_signing_key_test.go` and each transport's
+  `transport_signing_key_test.go`: the wire round trip and error mapping;
+- `sdk/ts/src/signingKey.test.ts`: the TypeScript wire contract.
 
 ## Consumers
 

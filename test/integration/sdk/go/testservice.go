@@ -1390,3 +1390,19 @@ func (s *TestXKMSService) SubmitCredential(ctx context.Context, req *xkms.Creden
 func (s *TestXKMSService) GetCredentialStrategy(ctx context.Context) (*xkms.CredentialStrategyResponse, error) {
 	return nil, ErrNotImplemented
 }
+
+func (*TestXKMSService) SetSigningKeyBinding(context.Context, *xkms.SetAttestationSigningKeyBindingRequest) (*xkms.AttestationSigningKeyBinding, error) {
+	return nil, nil
+}
+func (*TestXKMSService) GetSigningKeyBinding(context.Context, *xkms.GetAttestationSigningKeyBindingRequest) (*xkms.AttestationSigningKeyBinding, error) {
+	return nil, nil
+}
+func (*TestXKMSService) ListSigningKeyBindings(context.Context) (*xkms.ListAttestationSigningKeyBindingsResponse, error) {
+	return nil, nil
+}
+func (*TestXKMSService) DeleteSigningKeyBinding(context.Context, *xkms.DeleteAttestationSigningKeyBindingRequest) error {
+	return nil
+}
+func (*TestXKMSService) ResolveSigningKey(context.Context, *xkms.ResolveAttestationSigningKeyRequest) (*xkms.AttestationSigningKeyResolution, error) {
+	return nil, nil
+}

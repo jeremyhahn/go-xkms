@@ -127,10 +127,13 @@ type DeleteEndorsementRequest struct {
 
 // ReferenceValues describes a stored, verified signed CoRIM.
 type ReferenceValues struct {
-	Name       string    `json:"name"`
-	ManifestID string    `json:"manifest_id"`
-	Profile    string    `json:"profile,omitempty"`
-	Signer     string    `json:"signer,omitempty"`
+	Name       string `json:"name"`
+	ManifestID string `json:"manifest_id"`
+	Profile    string `json:"profile,omitempty"`
+	Signer     string `json:"signer,omitempty"`
+	// Repository, when set, is the repository the reference values belong
+	// to: they verify under its signing key rather than the endorsements.
+	Repository string    `json:"repository,omitempty"`
 	NotBefore  time.Time `json:"not_before,omitzero"`
 	NotAfter   time.Time `json:"not_after,omitzero"`
 	// PCRIndices are the PCR indices the reference values cover, ascending.
@@ -145,6 +148,11 @@ type ReferenceValues struct {
 type PutReferenceValuesRequest struct {
 	Name        string `json:"name"`
 	SignedCoRIM []byte `json:"signed_corim"`
+	// Repository, when set, names the OCI repository the reference values
+	// belong to. They then verify under the repository's signing key alone:
+	// its bound key, or else the tenant's release key. Without it they
+	// verify against the tenant's reference-signer endorsements.
+	Repository string `json:"repository,omitempty"`
 }
 
 // GetReferenceValuesRequest names stored reference values.
@@ -232,8 +240,9 @@ type AttestationResult struct {
 // evidence against them. Every method is scoped to the tenant it is given;
 // the service layer passes the authenticated caller's.
 type Appraiser struct {
-	store *Store
-	now   func() time.Time
+	store       *Store
+	now         func() time.Time
+	signingKeys SigningKeySource
 }
 
 // Option configures an Appraiser.
@@ -367,7 +376,12 @@ func (a *Appraiser) PutReferenceValues(ctx context.Context, tenant string, req *
 	if len(req.SignedCoRIM) == 0 {
 		return nil, &ReferenceValuesRejectedError{Reason: "signed_corim is required"}
 	}
-	manifest, err := a.verifyCoRIM(ctx, tenant, req.SignedCoRIM)
+	if req.Repository != "" {
+		if err := ValidateRepository(req.Repository); err != nil {
+			return nil, err
+		}
+	}
+	manifest, err := a.verifyReferenceValues(ctx, tenant, req.Repository, req.SignedCoRIM)
 	if err != nil {
 		return nil, err
 	}
@@ -375,6 +389,7 @@ func (a *Appraiser) PutReferenceValues(ctx context.Context, tenant string, req *
 	if err != nil {
 		return nil, err
 	}
+	record.Repository = req.Repository
 	if err := a.store.PutReferenceValues(ctx, tenant, record); err != nil {
 		return nil, err
 	}
@@ -662,7 +677,7 @@ func (a *Appraiser) appraiseBaseline(ctx context.Context, tenant, name string, q
 		}
 		return AppraisalCheck{}, nil, err
 	}
-	manifest, err := a.verifyCoRIM(ctx, tenant, record.SignedCoRIM)
+	manifest, err := a.verifyReferenceValues(ctx, tenant, record.Repository, record.SignedCoRIM)
 	if err != nil {
 		var rejected *ReferenceValuesRejectedError
 		if errors.As(err, &rejected) {

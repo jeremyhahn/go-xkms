@@ -1878,3 +1878,19 @@ func TestInitOwnedToken_LeavesAnInitializedTokenAlone(t *testing.T) {
 		t.Fatal("the certificate on the token did not survive")
 	}
 }
+
+func (*authMockClient) SetSigningKeyBinding(context.Context, *transport.SetSigningKeyBindingRequest) (*transport.SigningKeyBinding, error) {
+	return nil, nil
+}
+func (*authMockClient) GetSigningKeyBinding(context.Context, *transport.GetSigningKeyBindingRequest) (*transport.SigningKeyBinding, error) {
+	return nil, nil
+}
+func (*authMockClient) ListSigningKeyBindings(context.Context) (*transport.ListSigningKeyBindingsResponse, error) {
+	return nil, nil
+}
+func (*authMockClient) DeleteSigningKeyBinding(context.Context, *transport.DeleteSigningKeyBindingRequest) error {
+	return nil
+}
+func (*authMockClient) ResolveSigningKey(context.Context, *transport.ResolveSigningKeyRequest) (*transport.SigningKeyResolution, error) {
+	return nil, nil
+}

@@ -670,3 +670,19 @@ func TestClientAssignableFromSubInterfaces(t *testing.T) {
 	// every embedded sub-interface in Client.
 	var _ Client = stub
 }
+
+func (*stubClient) SetSigningKeyBinding(context.Context, *SetSigningKeyBindingRequest) (*SigningKeyBinding, error) {
+	return nil, nil
+}
+func (*stubClient) GetSigningKeyBinding(context.Context, *GetSigningKeyBindingRequest) (*SigningKeyBinding, error) {
+	return nil, nil
+}
+func (*stubClient) ListSigningKeyBindings(context.Context) (*ListSigningKeyBindingsResponse, error) {
+	return nil, nil
+}
+func (*stubClient) DeleteSigningKeyBinding(context.Context, *DeleteSigningKeyBindingRequest) error {
+	return nil
+}
+func (*stubClient) ResolveSigningKey(context.Context, *ResolveSigningKeyRequest) (*SigningKeyResolution, error) {
+	return nil, nil
+}

@@ -3129,3 +3129,19 @@ func (*mockTransportClient) OIDCCredentialDeviceStart(context.Context, *transpor
 func (*mockTransportClient) OIDCCredentialDevicePoll(context.Context, *transport.OIDCCredentialRef) (*transport.OIDCCredential, error) {
 	return nil, nil
 }
+
+func (*mockTransportClient) SetSigningKeyBinding(context.Context, *transport.SetSigningKeyBindingRequest) (*transport.SigningKeyBinding, error) {
+	return nil, nil
+}
+func (*mockTransportClient) GetSigningKeyBinding(context.Context, *transport.GetSigningKeyBindingRequest) (*transport.SigningKeyBinding, error) {
+	return nil, nil
+}
+func (*mockTransportClient) ListSigningKeyBindings(context.Context) (*transport.ListSigningKeyBindingsResponse, error) {
+	return nil, nil
+}
+func (*mockTransportClient) DeleteSigningKeyBinding(context.Context, *transport.DeleteSigningKeyBindingRequest) error {
+	return nil
+}
+func (*mockTransportClient) ResolveSigningKey(context.Context, *transport.ResolveSigningKeyRequest) (*transport.SigningKeyResolution, error) {
+	return nil, nil
+}

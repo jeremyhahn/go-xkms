@@ -993,6 +993,37 @@ service KeystoreService {
     option (qrdb.v1.permission) = "peer_attestation:submit";
   }
 
+  // ==================== Repository Signing Keys ====================
+  // The key that signs a repository's images and CoRIM: the tenant release
+  // key unless a binding names another of the tenant's keys (go-xkms#1697).
+  // Every call acts on the caller's tenant.
+
+  // SetSigningKeyBinding names the key that signs a repository.
+  rpc SetSigningKeyBinding(SetSigningKeyBindingRequest) returns (SigningKeyBinding) {
+    option (qrdb.v1.permission) = "attestation_signing_keys:bind";
+  }
+
+  // GetSigningKeyBinding returns a repository's binding.
+  rpc GetSigningKeyBinding(GetSigningKeyBindingRequest) returns (SigningKeyBinding) {
+    option (qrdb.v1.permission) = "attestation_signing_keys:get";
+  }
+
+  // ListSigningKeyBindings returns the tenant's bindings.
+  rpc ListSigningKeyBindings(ListSigningKeyBindingsRequest) returns (ListSigningKeyBindingsResponse) {
+    option (qrdb.v1.permission) = "attestation_signing_keys:list";
+  }
+
+  // DeleteSigningKeyBinding removes a repository's binding, so the release
+  // key signs it again.
+  rpc DeleteSigningKeyBinding(DeleteSigningKeyBindingRequest) returns (DeleteSigningKeyBindingResponse) {
+    option (qrdb.v1.permission) = "attestation_signing_keys:bind";
+  }
+
+  // ResolveSigningKey returns the key that signs a repository.
+  rpc ResolveSigningKey(ResolveSigningKeyRequest) returns (SigningKeyResolution) {
+    option (qrdb.v1.permission) = "attestation_signing_keys:get";
+  }
+
   // ==================== PKCS#11 State Operations ====================
   // Durable token and object state for a PKCS#11 module running with
   // StorageType "remote". Values are opaque module-serialised records.
@@ -4527,6 +4558,58 @@ message SubmitPeerAttestationRequest {
 }
 
 message SubmitPeerAttestationResponse {}
+
+// SigningKeyBinding names the tenant key that signs a repository.
+message SigningKeyBinding {
+  string repository = 1;
+  string key_id = 2;
+  // backend is empty for the tenant's default backend.
+  string backend = 3;
+  google.protobuf.Timestamp updated_at = 4;
+}
+
+// SetSigningKeyBindingRequest binds a repository to a key.
+message SetSigningKeyBindingRequest {
+  string repository = 1;
+  string key_id = 2;
+  string backend = 3;
+}
+
+// GetSigningKeyBindingRequest names a repository's binding.
+message GetSigningKeyBindingRequest {
+  string repository = 1;
+}
+
+// ListSigningKeyBindingsRequest lists the caller's tenant's bindings.
+message ListSigningKeyBindingsRequest {}
+
+// ListSigningKeyBindingsResponse holds the tenant's bindings.
+message ListSigningKeyBindingsResponse {
+  repeated SigningKeyBinding bindings = 1;
+}
+
+// DeleteSigningKeyBindingRequest names the binding to remove.
+message DeleteSigningKeyBindingRequest {
+  string repository = 1;
+}
+
+// DeleteSigningKeyBindingResponse confirms a binding was removed.
+message DeleteSigningKeyBindingResponse {}
+
+// ResolveSigningKeyRequest names the repository to resolve.
+message ResolveSigningKeyRequest {
+  string repository = 1;
+}
+
+// SigningKeyResolution is the key that signs a repository.
+message SigningKeyResolution {
+  string repository = 1;
+  string key_id = 2;
+  string backend = 3;
+  // default is true when no binding names the repository, so the key is
+  // the tenant's release key.
+  bool default = 4;
+}
 
 // ==================== FIDO2/WebAuthn Registration ====================
 

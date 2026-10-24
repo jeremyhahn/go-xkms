@@ -19,6 +19,7 @@ import (
 	"strings"
 
 	"github.com/jeremyhahn/go-xkms/pkg/errs"
+	"github.com/jeremyhahn/go-xkms/pkg/validation"
 )
 
 const (
@@ -44,10 +45,6 @@ const (
 var (
 	// registryRegex matches a registry host with an optional port.
 	registryRegex = regexp.MustCompile(`^[a-zA-Z0-9]([a-zA-Z0-9.-]*[a-zA-Z0-9])?(:[0-9]+)?$`)
-
-	// repositoryRegex is the OCI distribution specification's repository
-	// name grammar.
-	repositoryRegex = regexp.MustCompile(`^[a-z0-9]+((\.|_|__|-+)[a-z0-9]+)*(/[a-z0-9]+((\.|_|__|-+)[a-z0-9]+)*)*$`)
 
 	// tagRegex is the OCI distribution specification's tag grammar, less
 	// the length limit.
@@ -135,7 +132,7 @@ func (r *Reference) Validate() error {
 	if !registryRegex.MatchString(r.Registry) {
 		return &errs.Detail{Err: ErrInvalidReference, Detail: "invalid registry " + strconv.Quote(r.Registry)}
 	}
-	if !repositoryRegex.MatchString(r.Repository) {
+	if !validation.ValidOCIRepository(r.Repository) {
 		return &errs.Detail{Err: ErrInvalidReference, Detail: "invalid repository " + strconv.Quote(r.Repository)}
 	}
 	if r.Tag == "" && r.Digest == "" {

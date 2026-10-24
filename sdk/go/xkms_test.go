@@ -1431,3 +1431,19 @@ func (m *mockXKMSService) BindUserCert(ctx context.Context, username, thumbprint
 func (m *mockXKMSService) ListUserCredentials(ctx context.Context, username string) (*transport.ListUserCredentialsResponse, error) {
 	return nil, nil
 }
+
+func (*mockXKMSService) SetSigningKeyBinding(context.Context, *transport.SetSigningKeyBindingRequest) (*transport.SigningKeyBinding, error) {
+	return nil, nil
+}
+func (*mockXKMSService) GetSigningKeyBinding(context.Context, *transport.GetSigningKeyBindingRequest) (*transport.SigningKeyBinding, error) {
+	return nil, nil
+}
+func (*mockXKMSService) ListSigningKeyBindings(context.Context) (*transport.ListSigningKeyBindingsResponse, error) {
+	return nil, nil
+}
+func (*mockXKMSService) DeleteSigningKeyBinding(context.Context, *transport.DeleteSigningKeyBindingRequest) error {
+	return nil
+}
+func (*mockXKMSService) ResolveSigningKey(context.Context, *transport.ResolveSigningKeyRequest) (*transport.SigningKeyResolution, error) {
+	return nil, nil
+}

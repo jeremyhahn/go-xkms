@@ -36,6 +36,7 @@ type PasswordService = pkgtransport.PasswordService
 type SealStoreService = pkgtransport.SealStoreService
 type TPMPolicyService = pkgtransport.TPMPolicyService
 type OIDCCredentialService = pkgtransport.OIDCCredentialService
+type SigningKeyService = pkgtransport.SigningKeyService
 type TrustRootService = pkgtransport.TrustRootService
 type CredentialManagementService = pkgtransport.CredentialManagementService
 type TenantService = pkgtransport.TenantService

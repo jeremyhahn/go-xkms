@@ -193,6 +193,11 @@ const (
 	KeystoreService_OIDCCredentialDevicePoll_FullMethodName     = "/xkms.v1.KeystoreService/OIDCCredentialDevicePoll"
 	KeystoreService_PeerAttestationChallenge_FullMethodName     = "/xkms.v1.KeystoreService/PeerAttestationChallenge"
 	KeystoreService_SubmitPeerAttestation_FullMethodName        = "/xkms.v1.KeystoreService/SubmitPeerAttestation"
+	KeystoreService_SetSigningKeyBinding_FullMethodName         = "/xkms.v1.KeystoreService/SetSigningKeyBinding"
+	KeystoreService_GetSigningKeyBinding_FullMethodName         = "/xkms.v1.KeystoreService/GetSigningKeyBinding"
+	KeystoreService_ListSigningKeyBindings_FullMethodName       = "/xkms.v1.KeystoreService/ListSigningKeyBindings"
+	KeystoreService_DeleteSigningKeyBinding_FullMethodName      = "/xkms.v1.KeystoreService/DeleteSigningKeyBinding"
+	KeystoreService_ResolveSigningKey_FullMethodName            = "/xkms.v1.KeystoreService/ResolveSigningKey"
 	KeystoreService_PKCS11StatePut_FullMethodName               = "/xkms.v1.KeystoreService/PKCS11StatePut"
 	KeystoreService_PKCS11StatePutIfAbsent_FullMethodName       = "/xkms.v1.KeystoreService/PKCS11StatePutIfAbsent"
 	KeystoreService_PKCS11StateCAS_FullMethodName               = "/xkms.v1.KeystoreService/PKCS11StateCAS"
@@ -665,6 +670,17 @@ type KeystoreServiceClient interface {
 	// SubmitPeerAttestation answers the caller's outstanding challenge with a
 	// TPM quote and stores the evidence the attested-caller gate checks.
 	SubmitPeerAttestation(ctx context.Context, in *SubmitPeerAttestationRequest, opts ...grpc.CallOption) (*SubmitPeerAttestationResponse, error)
+	// SetSigningKeyBinding names the key that signs a repository.
+	SetSigningKeyBinding(ctx context.Context, in *SetSigningKeyBindingRequest, opts ...grpc.CallOption) (*SigningKeyBinding, error)
+	// GetSigningKeyBinding returns a repository's binding.
+	GetSigningKeyBinding(ctx context.Context, in *GetSigningKeyBindingRequest, opts ...grpc.CallOption) (*SigningKeyBinding, error)
+	// ListSigningKeyBindings returns the tenant's bindings.
+	ListSigningKeyBindings(ctx context.Context, in *ListSigningKeyBindingsRequest, opts ...grpc.CallOption) (*ListSigningKeyBindingsResponse, error)
+	// DeleteSigningKeyBinding removes a repository's binding, so the release
+	// key signs it again.
+	DeleteSigningKeyBinding(ctx context.Context, in *DeleteSigningKeyBindingRequest, opts ...grpc.CallOption) (*DeleteSigningKeyBindingResponse, error)
+	// ResolveSigningKey returns the key that signs a repository.
+	ResolveSigningKey(ctx context.Context, in *ResolveSigningKeyRequest, opts ...grpc.CallOption) (*SigningKeyResolution, error)
 	PKCS11StatePut(ctx context.Context, in *PKCS11StatePutRequest, opts ...grpc.CallOption) (*PKCS11StatePutResponse, error)
 	PKCS11StatePutIfAbsent(ctx context.Context, in *PKCS11StatePutIfAbsentRequest, opts ...grpc.CallOption) (*PKCS11StatePutIfAbsentResponse, error)
 	PKCS11StateCAS(ctx context.Context, in *PKCS11StateCASRequest, opts ...grpc.CallOption) (*PKCS11StateCASResponse, error)
@@ -2447,6 +2463,56 @@ func (c *keystoreServiceClient) SubmitPeerAttestation(ctx context.Context, in *S
 	return out, nil
 }
 
+func (c *keystoreServiceClient) SetSigningKeyBinding(ctx context.Context, in *SetSigningKeyBindingRequest, opts ...grpc.CallOption) (*SigningKeyBinding, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(SigningKeyBinding)
+	err := c.cc.Invoke(ctx, KeystoreService_SetSigningKeyBinding_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *keystoreServiceClient) GetSigningKeyBinding(ctx context.Context, in *GetSigningKeyBindingRequest, opts ...grpc.CallOption) (*SigningKeyBinding, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(SigningKeyBinding)
+	err := c.cc.Invoke(ctx, KeystoreService_GetSigningKeyBinding_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *keystoreServiceClient) ListSigningKeyBindings(ctx context.Context, in *ListSigningKeyBindingsRequest, opts ...grpc.CallOption) (*ListSigningKeyBindingsResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(ListSigningKeyBindingsResponse)
+	err := c.cc.Invoke(ctx, KeystoreService_ListSigningKeyBindings_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *keystoreServiceClient) DeleteSigningKeyBinding(ctx context.Context, in *DeleteSigningKeyBindingRequest, opts ...grpc.CallOption) (*DeleteSigningKeyBindingResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(DeleteSigningKeyBindingResponse)
+	err := c.cc.Invoke(ctx, KeystoreService_DeleteSigningKeyBinding_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *keystoreServiceClient) ResolveSigningKey(ctx context.Context, in *ResolveSigningKeyRequest, opts ...grpc.CallOption) (*SigningKeyResolution, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(SigningKeyResolution)
+	err := c.cc.Invoke(ctx, KeystoreService_ResolveSigningKey_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 func (c *keystoreServiceClient) PKCS11StatePut(ctx context.Context, in *PKCS11StatePutRequest, opts ...grpc.CallOption) (*PKCS11StatePutResponse, error) {
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
 	out := new(PKCS11StatePutResponse)
@@ -3295,6 +3361,17 @@ type KeystoreServiceServer interface {
 	// SubmitPeerAttestation answers the caller's outstanding challenge with a
 	// TPM quote and stores the evidence the attested-caller gate checks.
 	SubmitPeerAttestation(context.Context, *SubmitPeerAttestationRequest) (*SubmitPeerAttestationResponse, error)
+	// SetSigningKeyBinding names the key that signs a repository.
+	SetSigningKeyBinding(context.Context, *SetSigningKeyBindingRequest) (*SigningKeyBinding, error)
+	// GetSigningKeyBinding returns a repository's binding.
+	GetSigningKeyBinding(context.Context, *GetSigningKeyBindingRequest) (*SigningKeyBinding, error)
+	// ListSigningKeyBindings returns the tenant's bindings.
+	ListSigningKeyBindings(context.Context, *ListSigningKeyBindingsRequest) (*ListSigningKeyBindingsResponse, error)
+	// DeleteSigningKeyBinding removes a repository's binding, so the release
+	// key signs it again.
+	DeleteSigningKeyBinding(context.Context, *DeleteSigningKeyBindingRequest) (*DeleteSigningKeyBindingResponse, error)
+	// ResolveSigningKey returns the key that signs a repository.
+	ResolveSigningKey(context.Context, *ResolveSigningKeyRequest) (*SigningKeyResolution, error)
 	PKCS11StatePut(context.Context, *PKCS11StatePutRequest) (*PKCS11StatePutResponse, error)
 	PKCS11StatePutIfAbsent(context.Context, *PKCS11StatePutIfAbsentRequest) (*PKCS11StatePutIfAbsentResponse, error)
 	PKCS11StateCAS(context.Context, *PKCS11StateCASRequest) (*PKCS11StateCASResponse, error)
@@ -3886,6 +3963,21 @@ func (UnimplementedKeystoreServiceServer) PeerAttestationChallenge(context.Conte
 }
 func (UnimplementedKeystoreServiceServer) SubmitPeerAttestation(context.Context, *SubmitPeerAttestationRequest) (*SubmitPeerAttestationResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "method SubmitPeerAttestation not implemented")
+}
+func (UnimplementedKeystoreServiceServer) SetSigningKeyBinding(context.Context, *SetSigningKeyBindingRequest) (*SigningKeyBinding, error) {
+	return nil, status.Error(codes.Unimplemented, "method SetSigningKeyBinding not implemented")
+}
+func (UnimplementedKeystoreServiceServer) GetSigningKeyBinding(context.Context, *GetSigningKeyBindingRequest) (*SigningKeyBinding, error) {
+	return nil, status.Error(codes.Unimplemented, "method GetSigningKeyBinding not implemented")
+}
+func (UnimplementedKeystoreServiceServer) ListSigningKeyBindings(context.Context, *ListSigningKeyBindingsRequest) (*ListSigningKeyBindingsResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method ListSigningKeyBindings not implemented")
+}
+func (UnimplementedKeystoreServiceServer) DeleteSigningKeyBinding(context.Context, *DeleteSigningKeyBindingRequest) (*DeleteSigningKeyBindingResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method DeleteSigningKeyBinding not implemented")
+}
+func (UnimplementedKeystoreServiceServer) ResolveSigningKey(context.Context, *ResolveSigningKeyRequest) (*SigningKeyResolution, error) {
+	return nil, status.Error(codes.Unimplemented, "method ResolveSigningKey not implemented")
 }
 func (UnimplementedKeystoreServiceServer) PKCS11StatePut(context.Context, *PKCS11StatePutRequest) (*PKCS11StatePutResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "method PKCS11StatePut not implemented")
@@ -7094,6 +7186,96 @@ func _KeystoreService_SubmitPeerAttestation_Handler(srv interface{}, ctx context
 	return interceptor(ctx, in, info, handler)
 }
 
+func _KeystoreService_SetSigningKeyBinding_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(SetSigningKeyBindingRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(KeystoreServiceServer).SetSigningKeyBinding(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: KeystoreService_SetSigningKeyBinding_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(KeystoreServiceServer).SetSigningKeyBinding(ctx, req.(*SetSigningKeyBindingRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _KeystoreService_GetSigningKeyBinding_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(GetSigningKeyBindingRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(KeystoreServiceServer).GetSigningKeyBinding(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: KeystoreService_GetSigningKeyBinding_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(KeystoreServiceServer).GetSigningKeyBinding(ctx, req.(*GetSigningKeyBindingRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _KeystoreService_ListSigningKeyBindings_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(ListSigningKeyBindingsRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(KeystoreServiceServer).ListSigningKeyBindings(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: KeystoreService_ListSigningKeyBindings_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(KeystoreServiceServer).ListSigningKeyBindings(ctx, req.(*ListSigningKeyBindingsRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _KeystoreService_DeleteSigningKeyBinding_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(DeleteSigningKeyBindingRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(KeystoreServiceServer).DeleteSigningKeyBinding(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: KeystoreService_DeleteSigningKeyBinding_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(KeystoreServiceServer).DeleteSigningKeyBinding(ctx, req.(*DeleteSigningKeyBindingRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _KeystoreService_ResolveSigningKey_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(ResolveSigningKeyRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(KeystoreServiceServer).ResolveSigningKey(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: KeystoreService_ResolveSigningKey_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(KeystoreServiceServer).ResolveSigningKey(ctx, req.(*ResolveSigningKeyRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
 func _KeystoreService_PKCS11StatePut_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
 	in := new(PKCS11StatePutRequest)
 	if err := dec(in); err != nil {
@@ -8536,6 +8718,26 @@ var KeystoreService_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "SubmitPeerAttestation",
 			Handler:    _KeystoreService_SubmitPeerAttestation_Handler,
+		},
+		{
+			MethodName: "SetSigningKeyBinding",
+			Handler:    _KeystoreService_SetSigningKeyBinding_Handler,
+		},
+		{
+			MethodName: "GetSigningKeyBinding",
+			Handler:    _KeystoreService_GetSigningKeyBinding_Handler,
+		},
+		{
+			MethodName: "ListSigningKeyBindings",
+			Handler:    _KeystoreService_ListSigningKeyBindings_Handler,
+		},
+		{
+			MethodName: "DeleteSigningKeyBinding",
+			Handler:    _KeystoreService_DeleteSigningKeyBinding_Handler,
+		},
+		{
+			MethodName: "ResolveSigningKey",
+			Handler:    _KeystoreService_ResolveSigningKey_Handler,
 		},
 		{
 			MethodName: "PKCS11StatePut",

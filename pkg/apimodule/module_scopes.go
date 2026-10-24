@@ -137,6 +137,22 @@ func selfScopedPermissions() []qrdbsdk.Permission {
 		// identities only in its own trust domain. qrdb does not declare
 		// this name; xkms owns it.
 		qrdbsdk.Permission(auth.ResourceCerts + ":" + auth.ActionIssueService),
+
+		// attestation_signing_keys:bind changes which key signs one of a
+		// tenant's repositories (pkg/xkms SetSigningKeyBinding,
+		// go-xkms#1697). The service binds every call to the caller's own
+		// tenant, so a tenant identity rebinds only its own repositories and
+		// a system-tenant identity any tenant's, which is ScopeSelf. qrdb
+		// does not declare this name; xkms owns it.
+		qrdbsdk.Permission(auth.ResourceAttestationSigningKeys + ":" + auth.ActionBind),
+
+		// attestation_signing_keys:get and :list read a tenant's bindings and
+		// resolve the key that signs one of its repositories (pkg/xkms
+		// GetSigningKeyBinding, ListSigningKeyBindings, ResolveSigningKey).
+		// The service binds them to the caller's own tenant like bind, which
+		// is ScopeSelf; xkms owns these names too.
+		qrdbsdk.Permission(auth.ResourceAttestationSigningKeys + ":" + auth.ActionGet),
+		qrdbsdk.Permission(auth.ResourceAttestationSigningKeys + ":" + auth.ActionList),
 	}
 }
 

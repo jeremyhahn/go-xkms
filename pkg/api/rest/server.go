@@ -65,6 +65,7 @@ type Server struct {
 	tpmPolicyHandlers       *TPMPolicyHandlers
 	trustRootHandlers       *TrustRootHandlers
 	oidcCredentialHandlers  *OIDCCredentialHandlers
+	signingKeyHandlers      *SigningKeyHandlers
 	peerAttestationHandlers *PeerAttestationHandlers
 	credentialHandlers      *CredentialHandlers
 	bootstrapHandlers       *BootstrapHandlers
@@ -455,6 +456,7 @@ func NewServer(cfg *Config) (*Server, error) {
 		server.tpmPolicyHandlers = NewTPMPolicyHandlers(cfg.XKMSService)
 		server.trustRootHandlers = NewTrustRootHandlers(cfg.XKMSService)
 		server.oidcCredentialHandlers = NewOIDCCredentialHandlers(cfg.XKMSService)
+		server.signingKeyHandlers = NewSigningKeyHandlers(cfg.XKMSService)
 		server.peerAttestationHandlers = NewPeerAttestationHandlers(cfg.XKMSService)
 		server.credentialHandlers = NewCredentialHandlers(cfg.XKMSService, log)
 	}

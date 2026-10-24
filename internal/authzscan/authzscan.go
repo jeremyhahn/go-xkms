@@ -212,6 +212,7 @@ func Constants() map[string]string {
 		"ResourceAttestationEndorsements":    auth.ResourceAttestationEndorsements,
 		"ResourceAttestationReferenceValues": auth.ResourceAttestationReferenceValues,
 		"ResourceAttestationVerifier":        auth.ResourceAttestationVerifier,
+		"ResourceAttestationSigningKeys":     auth.ResourceAttestationSigningKeys,
 
 		"ActionSign":               auth.ActionSign,
 		"ActionVerify":             auth.ActionVerify,
@@ -258,6 +259,7 @@ func Constants() map[string]string {
 		"ActionClaimShareComplete": auth.ActionClaimShareComplete,
 		"ActionSignCSR":            auth.ActionSignCSR,
 		"ActionIssueService":       auth.ActionIssueService,
+		"ActionBind":               auth.ActionBind,
 		"ActionEnrollCustodian":    auth.ActionEnrollCustodian,
 		"ActionRevokeCustodian":    auth.ActionRevokeCustodian,
 		"ActionSubmit":             auth.ActionSubmit,

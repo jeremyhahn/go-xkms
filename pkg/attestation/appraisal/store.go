@@ -35,10 +35,15 @@ const (
 	endorsementFeature     = "attestation-endorsements"
 	referenceValuesFeature = "attestation-reference-values"
 
-	// endorsementEntityType and referenceValuesEntityType are the DAO entity
-	// types of the two record kinds.
+	// signingKeyFeature is the pkg/scope feature segment a tenant's
+	// per-repository signing-key bindings are keyed under.
+	signingKeyFeature = "attestation-signing-keys"
+
+	// endorsementEntityType, referenceValuesEntityType and
+	// signingKeyEntityType are the DAO entity types of the record kinds.
 	endorsementEntityType     = "attestation_endorsements"
 	referenceValuesEntityType = "attestation_reference_values"
+	signingKeyEntityType      = "attestation_signing_keys"
 
 	// maxNameLen is the longest endorsement or reference-values name.
 	maxNameLen = 253
@@ -69,22 +74,28 @@ type StoreConfig struct {
 type Store struct {
 	endorsements    collection[Endorsement]
 	referenceValues collection[ReferenceValues]
+	signingKeys     collection[SigningKeyBinding]
 }
 
-// NewStore opens the endorsement and reference-values DAOs on cfg.DAOs.
+// NewStore opens the endorsement, reference-values and signing-key binding
+// DAOs on cfg.DAOs.
 func NewStore(cfg StoreConfig) (*Store, error) {
 	if cfg.DAOs == nil {
 		return nil, &ConfigError{Field: "DAOs", Reason: "is required"}
 	}
-	endorsements, err := openCollection[Endorsement](cfg.DAOs, endorsementFeature, endorsementEntityType)
+	endorsements, err := openCollection[Endorsement](cfg.DAOs, endorsementFeature, endorsementEntityType, ValidateName)
 	if err != nil {
 		return nil, err
 	}
-	referenceValues, err := openCollection[ReferenceValues](cfg.DAOs, referenceValuesFeature, referenceValuesEntityType)
+	referenceValues, err := openCollection[ReferenceValues](cfg.DAOs, referenceValuesFeature, referenceValuesEntityType, ValidateName)
 	if err != nil {
 		return nil, err
 	}
-	return &Store{endorsements: endorsements, referenceValues: referenceValues}, nil
+	signingKeys, err := openCollection[SigningKeyBinding](cfg.DAOs, signingKeyFeature, signingKeyEntityType, ValidateRepository)
+	if err != nil {
+		return nil, err
+	}
+	return &Store{endorsements: endorsements, referenceValues: referenceValues, signingKeys: signingKeys}, nil
 }
 
 // PutEndorsement stores (or replaces) the tenant's endorsement e.Name.
@@ -132,6 +143,33 @@ func (s *Store) DeleteReferenceValues(ctx context.Context, tenant, name string) 
 	return s.referenceValues.delete(ctx, tenant, name, "reference values")
 }
 
+// PutSigningKeyBinding stores (or replaces) the tenant's signing-key binding
+// for b.Repository.
+func (s *Store) PutSigningKeyBinding(ctx context.Context, tenant string, b *SigningKeyBinding) error {
+	if b == nil {
+		return ErrNilRequest
+	}
+	return s.signingKeys.put(ctx, tenant, b.Repository, b)
+}
+
+// GetSigningKeyBinding returns the tenant's signing-key binding for
+// repository. A missing binding is a *RecordNotFoundError.
+func (s *Store) GetSigningKeyBinding(ctx context.Context, tenant, repository string) (*SigningKeyBinding, error) {
+	return s.signingKeys.get(ctx, tenant, repository, signingKeyBindingKind)
+}
+
+// ListSigningKeyBindings returns the tenant's signing-key bindings, ordered
+// by repository.
+func (s *Store) ListSigningKeyBindings(ctx context.Context, tenant string) ([]*SigningKeyBinding, error) {
+	return s.signingKeys.list(ctx, tenant)
+}
+
+// DeleteSigningKeyBinding removes the tenant's signing-key binding for
+// repository. A missing binding is a *RecordNotFoundError.
+func (s *Store) DeleteSigningKeyBinding(ctx context.Context, tenant, repository string) error {
+	return s.signingKeys.delete(ctx, tenant, repository, signingKeyBindingKind)
+}
+
 // recordEntity is the DAO entity of one stored record: its tenant-scoped key
 // and the record.
 type recordEntity[T any] struct {
@@ -147,21 +185,24 @@ func (e *recordEntity[T]) EntityID() uint64 { return e.ID }
 func (e *recordEntity[T]) SetEntityID(id uint64) { e.ID = id }
 
 // collection is one record kind's DAO, keyed per tenant under a feature.
+// validate is the kind's record-name rule.
 type collection[T any] struct {
-	feature string
-	records qrdbsdk.GenericDAO[*recordEntity[T]]
+	feature  string
+	validate func(name string) error
+	records  qrdbsdk.GenericDAO[*recordEntity[T]]
 }
 
-// openCollection opens the DAO of one record kind. The entity ID is a hash of
-// the key, so putting a key again replaces its record.
-func openCollection[T any](daos *qrdbsdk.DAOFactory, feature, entityType string) (collection[T], error) {
+// openCollection opens the DAO of one record kind, whose names validate
+// accepts. The entity ID is a hash of the key, so putting a key again
+// replaces its record.
+func openCollection[T any](daos *qrdbsdk.DAOFactory, feature, entityType string, validate func(string) error) (collection[T], error) {
 	newEntity := func() *recordEntity[T] { return &recordEntity[T]{} }
 	records, err := dao.New(daos, DatabaseName, entityType, newEntity,
 		qrdbsdk.WithIDGenerator(qrdbsdk.NewCryptoFieldHashGenerator("Key")))
 	if err != nil {
 		return collection[T]{}, &ConfigError{Field: "DAOs", Reason: "cannot open the " + entityType + " DAO", Cause: err}
 	}
-	return collection[T]{feature: feature, records: records}, nil
+	return collection[T]{feature: feature, validate: validate, records: records}, nil
 }
 
 // prefix returns the tenant's key prefix.
@@ -175,7 +216,7 @@ func (c collection[T]) prefix(tenant string) (string, error) {
 
 // key returns the tenant-scoped key of name.
 func (c collection[T]) key(tenant, name string) (string, error) {
-	if err := ValidateName(name); err != nil {
+	if err := c.validate(name); err != nil {
 		return "", err
 	}
 	prefix, err := c.prefix(tenant)

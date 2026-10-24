@@ -29,6 +29,10 @@ var (
 	// backendPattern matches safe backend names (lowercase alphanumeric + hyphens)
 	backendPattern = regexp.MustCompile(`^[a-z0-9\-]+$`)
 
+	// ociRepositoryPattern is the OCI distribution specification's
+	// repository name grammar.
+	ociRepositoryPattern = regexp.MustCompile(`^[a-z0-9]+((\.|_|__|-+)[a-z0-9]+)*(/[a-z0-9]+((\.|_|__|-+)[a-z0-9]+)*)*$`)
+
 	// simpleKeyIDPattern matches a SIMPLE key ID: a name, with no structure.
 	//
 	// The colon is excluded deliberately. KeyAttributes.ID() joins its fields
@@ -284,6 +288,14 @@ func ValidateBackendName(backend string) error {
 	}
 
 	return nil
+}
+
+// ValidOCIRepository reports whether repository is a well-formed repository
+// path under the OCI distribution specification's name grammar, as in
+// "org/app": lowercase alphanumeric components joined by '/', each holding
+// only single separators.
+func ValidOCIRepository(repository string) bool {
+	return ociRepositoryPattern.MatchString(repository)
 }
 
 // SanitizeForLog sanitizes a string for safe logging (prevents log injection).

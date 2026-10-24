@@ -190,6 +190,19 @@ func TestValidateBackendNameTypedErrors(t *testing.T) {
 	}
 }
 
+func TestValidOCIRepository(t *testing.T) {
+	for _, repo := range []string{"app", "org/app", "org/team/app", "my-org/app_v2", "a.b/c__d", "a--b"} {
+		if !ValidOCIRepository(repo) {
+			t.Errorf("ValidOCIRepository(%q) = false, want true", repo)
+		}
+	}
+	for _, repo := range []string{"", "Org/app", "/app", "app/", "org//app", "org/../app", "-app", "a___b", "org/app:tag", "org/app@sha256"} {
+		if ValidOCIRepository(repo) {
+			t.Errorf("ValidOCIRepository(%q) = true, want false", repo)
+		}
+	}
+}
+
 func TestValidateKeyReference(t *testing.T) {
 	tests := []struct {
 		name    string

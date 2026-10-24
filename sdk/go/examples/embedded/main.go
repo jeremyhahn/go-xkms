@@ -888,3 +888,19 @@ func (m *MockXKMSService) SafetyCheck(context.Context, *transport.SafetyCheckReq
 func (m *MockXKMSService) SafetyReport(context.Context, *transport.SafetyReportRequest) (*transport.SafetyReportResponse, error) {
 	return nil, &mockUnsupportedError{capability: "key management"}
 }
+
+func (*MockXKMSService) SetSigningKeyBinding(context.Context, *transport.SetSigningKeyBindingRequest) (*transport.SigningKeyBinding, error) {
+	return nil, nil
+}
+func (*MockXKMSService) GetSigningKeyBinding(context.Context, *transport.GetSigningKeyBindingRequest) (*transport.SigningKeyBinding, error) {
+	return nil, nil
+}
+func (*MockXKMSService) ListSigningKeyBindings(context.Context) (*transport.ListSigningKeyBindingsResponse, error) {
+	return nil, nil
+}
+func (*MockXKMSService) DeleteSigningKeyBinding(context.Context, *transport.DeleteSigningKeyBindingRequest) error {
+	return nil
+}
+func (*MockXKMSService) ResolveSigningKey(context.Context, *transport.ResolveSigningKeyRequest) (*transport.SigningKeyResolution, error) {
+	return nil, nil
+}

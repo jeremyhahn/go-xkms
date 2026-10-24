@@ -43,6 +43,10 @@ var NewAttestationAppraiser = appraisal.NewAppraiser
 // and results with.
 var WithAttestationAppraiserClock = appraisal.WithClock
 
+// WithAttestationSigningKeySource sets the source of the public keys that
+// verify a repository's signatures; an XKMSService is one.
+var WithAttestationSigningKeySource = appraisal.WithSigningKeySource
+
 // AttestationAppraisalStore persists endorsements and reference values per
 // tenant through a qrdb DAO.
 type AttestationAppraisalStore = appraisal.Store
@@ -97,6 +101,34 @@ type (
 	DeleteAttestationReferenceValuesRequest = appraisal.DeleteReferenceValuesRequest
 )
 
+// Signing keys: the tenant release key signs every repository's images and
+// CoRIM unless a binding names another of the tenant's keys for it.
+type (
+	// AttestationSigningKeyBinding names the key that signs a repository.
+	AttestationSigningKeyBinding = appraisal.SigningKeyBinding
+	// SetAttestationSigningKeyBindingRequest binds a repository to a key.
+	SetAttestationSigningKeyBindingRequest = appraisal.SetSigningKeyBindingRequest
+	// GetAttestationSigningKeyBindingRequest names a repository's binding.
+	GetAttestationSigningKeyBindingRequest = appraisal.GetSigningKeyBindingRequest
+	// ListAttestationSigningKeyBindingsResponse holds the listed bindings.
+	ListAttestationSigningKeyBindingsResponse = appraisal.ListSigningKeyBindingsResponse
+	// DeleteAttestationSigningKeyBindingRequest names the binding to remove.
+	DeleteAttestationSigningKeyBindingRequest = appraisal.DeleteSigningKeyBindingRequest
+	// ResolveAttestationSigningKeyRequest names the repository to resolve.
+	ResolveAttestationSigningKeyRequest = appraisal.ResolveSigningKeyRequest
+	// AttestationSigningKeyResolution is the key that signs a repository.
+	AttestationSigningKeyResolution = appraisal.SigningKeyResolution
+	// AttestationSigningKeySource returns the public half of a tenant key.
+	AttestationSigningKeySource = appraisal.SigningKeySource
+	// AttestationTenantSigningKeys resolves the keys of one tenant's
+	// repositories; it is an ImageSigningKeyResolver.
+	AttestationTenantSigningKeys = appraisal.TenantSigningKeys
+)
+
+// AttestationReleaseSigningKeyID is the key ID of a tenant's release signing
+// key.
+const AttestationReleaseSigningKeyID = appraisal.ReleaseSigningKeyID
+
 // Appraisal: evidence in, an attestation result out.
 type (
 	// AppraiseAttestationQuoteRequest is a TPM quote and the reference values
@@ -147,6 +179,9 @@ type (
 	AttestationQuoteBindingError            = appraisal.QuoteBindingError
 	AttestationQuotedPCRDigestMismatchError = appraisal.QuotedPCRDigestMismatchError
 	AttestationPCRBankUnavailableError      = appraisal.PCRBankUnavailableError
+	AttestationRepositoryError              = appraisal.RepositoryError
+	AttestationSigningKeyError              = appraisal.SigningKeyError
+	AttestationSignerRefusedError           = appraisal.SignerRefusedError
 )
 
 var (
@@ -164,4 +199,7 @@ var (
 	ErrAttestationQuoteNotBound             = appraisal.ErrQuoteNotBound
 	ErrAttestationQuotedPCRDigestMismatch   = appraisal.ErrQuotedPCRDigestMismatch
 	ErrAttestationPCRBankUnavailable        = appraisal.ErrPCRBankUnavailable
+	ErrAttestationInvalidRepository         = appraisal.ErrInvalidRepository
+	ErrAttestationInvalidSigningKey         = appraisal.ErrInvalidSigningKey
+	ErrAttestationSigningKeyRefused         = appraisal.ErrSigningKeyRefused
 )

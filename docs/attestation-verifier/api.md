@@ -1,13 +1,15 @@
 # Attestation Verifier — API
 
-> **Status: NORMATIVE** · Feature: `attestation-verifier` · Module: `go-xkms` · Last verified: 2026-09-25
+> **Status: NORMATIVE** · Feature: `attestation-verifier` · Module: `go-xkms` · Last verified: 2026-10-24
 
 Transport shapes:
 [`../key-management/api.md`](../key-management/api.md).
 
 ## Not a transport of its own
 
-`pkg/attestation` has no REST route, gRPC method, QUIC handler or MCP tool.
+`pkg/attestation` has no REST route, gRPC method, QUIC handler or MCP tool
+(its `appraisal` subpackage's signing-key verbs do; see
+[below](#repository-signing-keys)).
 It runs inside the handler for one existing capability — `SignCSR` — gating
 whether that call succeeds, not exposing a new one. The route itself is
 documented in [`../certificate-authority/api.md`](../certificate-authority/api.md):
@@ -45,6 +47,42 @@ belong to the `AttestationStatement.Signature` shape this feature's
 not call (see [`architecture.md`](architecture.md) §"Two checks belong to
 different call paths"). Do not infer that setting them changes CSR-signing
 behavior today.
+
+## Repository signing keys
+
+The repository signing-key verbs (#1697) are the one appraisal capability
+served on every transport. Each acts on the caller's tenant. Without an
+Appraiser wired, each returns `ErrNotConfigured`.
+
+| Capability | REST | gRPC / Unix | QUIC | MCP | Embedded | Auth |
+|---|---|---|---|---|---|---|
+| Bind a repository | `PUT /api/v1/attestation/signing-keys` | `SetSigningKeyBinding` | same as REST | `attestation.signing_key.set` | `SetSigningKeyBinding` | `attestation_signing_keys:bind` |
+| List bindings | `GET /api/v1/attestation/signing-keys` | `ListSigningKeyBindings` | same as REST | `attestation.signing_key.list` | `ListSigningKeyBindings` | `attestation_signing_keys:list` |
+| Read a binding | `GET /api/v1/attestation/signing-keys/binding?repository=` | `GetSigningKeyBinding` | same as REST | `attestation.signing_key.get` | `GetSigningKeyBinding` | `attestation_signing_keys:get` |
+| Remove a binding | `DELETE /api/v1/attestation/signing-keys/binding?repository=` (204) | `DeleteSigningKeyBinding` | same as REST | `attestation.signing_key.delete` | `DeleteSigningKeyBinding` | `attestation_signing_keys:bind` |
+| Resolve a repository's key | `GET /api/v1/attestation/signing-keys/resolve?repository=` | `ResolveSigningKey` | same as REST | `attestation.signing_key.resolve` | `ResolveSigningKey` | `attestation_signing_keys:get` |
+
+USB returns `ErrNotSupported`. A repository path contains slashes
+(`"org/app"`), so the REST routes take it as the `repository` query
+parameter (`pkg/api/rest/wire/signing_key.go:16`–`:27`). The gRPC methods
+are `pkg/api/grpc/proto/xkmsv1/xkms.proto:1002`–`:1023`. MCP routes them in
+`pkg/api/mcp/server.go:535`–`:539`. The TypeScript SDK serves them as
+`client.signingKeys` (`sdk/ts/src/clients/signingKey.ts`).
+
+Fields (JSON): a binding is `repository`, `key_id`, `backend` (omitted when
+it is the default backend) and `updated_at`. A resolution is `repository`,
+`key_id`, `backend` and `default`, where `default` is true when the key is
+the release key `release-signing`.
+
+| Condition | Sentinel | Class (HTTP) |
+|---|---|---|
+| no Appraiser wired | `ErrNotConfigured` | unavailable (503) |
+| caller lacks the permission | `ErrSigningKeyForbidden` | permission denied (403) |
+| bad repository path, key ID or backend; nil request | `ErrInvalidRepository`, `ErrInvalidSigningKey`, `ErrNilRequest` | invalid argument (400) |
+| get or delete of an unbound repository | `ErrRecordNotFound` | not found (404) |
+
+The classes come from `apierrors.SigningKeySentinelClasses`
+(`pkg/api/apierrors/tables.go:330`).
 
 ## Generation is a separate capability, already documented
 

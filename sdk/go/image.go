@@ -96,6 +96,10 @@ type ImageRootStore[P ~string] = image.RootStore[P]
 // store and purpose, an optional predicate type and timestamp policy.
 type ImageVerifierConfig[P ~string] = image.VerifierConfig[P]
 
+// ImageSigningKeyResolver resolves the key that signs a repository's images
+// for an ImageVerifier, such as an AttestationAppraiser's TenantSigningKeys.
+type ImageSigningKeyResolver = image.SigningKeyResolver
+
 // PredicateTypeCosign is the predicate type of cosign's default attestation,
 // the one an ImageSigner signs when ImageSignOptions names none.
 const PredicateTypeCosign = image.PredicateTypeCosign
@@ -174,6 +178,7 @@ var (
 	ErrImagePredicateTypeMismatch     = image.ErrPredicateTypeMismatch
 	ErrImageSignatureInvalid          = image.ErrSignatureInvalid
 	ErrImageUntrustedSigner           = image.ErrUntrustedSigner
+	ErrImageSigningKeyMismatch        = image.ErrSigningKeyMismatch
 	ErrImageTimestampURLInvalid       = image.ErrTimestampURLInvalid
 	ErrImageTimestampDataRequired     = image.ErrTimestampDataRequired
 	ErrImageTimestampFailed           = image.ErrTimestampFailed

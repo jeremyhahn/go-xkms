@@ -176,6 +176,10 @@ var (
 	// ErrUntrustedSigner indicates a signing certificate that does not chain
 	// to a trusted image-signer root for code signing.
 	ErrUntrustedSigner = errors.New("image: signing certificate is not trusted")
+
+	// ErrSigningKeyMismatch indicates an attestation signed by a key other
+	// than the one that signs the image's repository.
+	ErrSigningKeyMismatch = errors.New("image: attestation is not signed by the repository's signing key")
 )
 
 // Timestamp errors.

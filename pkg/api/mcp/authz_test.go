@@ -748,6 +748,13 @@ var goldenMethodPermissions = map[string]string{
 	"oidc.credential.device.start": "oidc_credentials:update",
 	"oidc.credential.device.poll":  "oidc_credentials:update",
 
+	// Repository signing keys (go-xkms#1697).
+	"attestation.signing_key.set":     "attestation_signing_keys:bind",
+	"attestation.signing_key.get":     "attestation_signing_keys:get",
+	"attestation.signing_key.list":    "attestation_signing_keys:list",
+	"attestation.signing_key.delete":  "attestation_signing_keys:bind",
+	"attestation.signing_key.resolve": "attestation_signing_keys:get",
+
 	// Attested-caller evidence.
 	"peer.attestation.challenge": "peer_attestation:challenge",
 	"peer.attestation.submit":    "peer_attestation:submit",
@@ -851,11 +858,12 @@ func TestMethodPermissions_NoInventedVocabulary(t *testing.T) {
 		auth.ResourceBarrier: {}, auth.ResourceCeremony: {},
 		auth.ResourceCredentials: {}, auth.ResourcePasswords: {},
 		auth.ResourceAudit: {}, auth.ResourceBootstrap: {},
-		auth.ResourceTPMPolicy:       {},
-		auth.ResourceOIDCCredentials: {},
-		auth.ResourceTrustRoots:      {},
-		auth.ResourcePeerAttestation: {},
-		auth.ResourcePIN:             {}, auth.ResourceTenants: {}, auth.ResourceTenantBarrier: {},
+		auth.ResourceTPMPolicy:              {},
+		auth.ResourceOIDCCredentials:        {},
+		auth.ResourceAttestationSigningKeys: {},
+		auth.ResourceTrustRoots:             {},
+		auth.ResourcePeerAttestation:        {},
+		auth.ResourcePIN:                    {}, auth.ResourceTenants: {}, auth.ResourceTenantBarrier: {},
 		auth.ResourceUsers: {}, auth.ResourceBackup: {},
 	}
 

@@ -174,8 +174,18 @@ var goldenRPCPermissions = map[string]string{
 	"OIDCCredentialGetAccessToken": "oidc_credentials:token",
 	"OIDCCredentialDeviceStart":    "oidc_credentials:update",
 	"OIDCCredentialDevicePoll":     "oidc_credentials:update",
-	"PeerAttestationChallenge":     "peer_attestation:challenge",
-	"SubmitPeerAttestation":        "peer_attestation:submit",
+
+	// Repository signing keys (go-xkms#1697) --
+	// pkg/auth.ResourceAttestationSigningKeys, an xkms-owned resource family.
+	// Changing a binding is bind; reading one or resolving a repository's
+	// key is get.
+	"SetSigningKeyBinding":     "attestation_signing_keys:bind",
+	"GetSigningKeyBinding":     "attestation_signing_keys:get",
+	"ListSigningKeyBindings":   "attestation_signing_keys:list",
+	"DeleteSigningKeyBinding":  "attestation_signing_keys:bind",
+	"ResolveSigningKey":        "attestation_signing_keys:get",
+	"PeerAttestationChallenge": "peer_attestation:challenge",
+	"SubmitPeerAttestation":    "peer_attestation:submit",
 	// A tenant's TPM mode and vTPM (system scope only; tenants:set_tpm_mode
 	// is a cross-tenant permission xkms declares).
 	"GetTenantTPMMode": "tenants:read",

@@ -142,6 +142,11 @@ var gatedRoutePermissions = []gatedRoute{
 	{http.MethodPost, "/api/v1/oidc/credentials/tenant/ci/token", "oidc_credentials", "token"},
 	{http.MethodPost, "/api/v1/oidc/credentials/tenant/ci/device", "oidc_credentials", "update"},
 	{http.MethodPost, "/api/v1/oidc/credentials/tenant/ci/device/poll", "oidc_credentials", "update"},
+	{http.MethodPut, "/api/v1/attestation/signing-keys", "attestation_signing_keys", "bind"},
+	{http.MethodGet, "/api/v1/attestation/signing-keys", "attestation_signing_keys", "list"},
+	{http.MethodGet, "/api/v1/attestation/signing-keys/binding?repository=acme/app", "attestation_signing_keys", "get"},
+	{http.MethodDelete, "/api/v1/attestation/signing-keys/binding?repository=acme/app", "attestation_signing_keys", "bind"},
+	{http.MethodGet, "/api/v1/attestation/signing-keys/resolve?repository=acme/app", "attestation_signing_keys", "get"},
 	{http.MethodPost, "/api/v1/peer-attestation/challenge", "peer_attestation", "challenge"},
 	{http.MethodPost, "/api/v1/peer-attestation/evidence", "peer_attestation", "submit"},
 

@@ -15,6 +15,7 @@ package image
 
 import (
 	"context"
+	"crypto"
 	"crypto/x509"
 	"errors"
 	"time"
@@ -53,6 +54,19 @@ type VerifierConfig[P ~string] struct {
 	// RequireTimestamp refuses attestations without a timestamp. It needs
 	// TimestampRoots.
 	RequireTimestamp bool
+
+	// SigningKeys, when set, resolves the key that signs each repository,
+	// and an attestation whose signing certificate carries any other key is
+	// refused with ErrSigningKeyMismatch. The certificate must still chain
+	// to Roots.
+	SigningKeys SigningKeyResolver
+}
+
+// SigningKeyResolver returns the public key that signs a repository's
+// images, such as a tenant's per-repository signing-key binding over its
+// release key.
+type SigningKeyResolver interface {
+	SigningKey(ctx context.Context, repository string) (crypto.PublicKey, error)
 }
 
 // Verifier verifies image attestations against trust-roots.
@@ -62,6 +76,7 @@ type Verifier struct {
 	predicateType    string
 	timestampRoots   *x509.CertPool
 	requireTimestamp bool
+	signingKeys      SigningKeyResolver
 }
 
 // VerificationResult describes a verified image attestation.
@@ -100,6 +115,7 @@ func NewVerifier[P ~string](cfg *VerifierConfig[P]) (*Verifier, error) {
 		predicateType:    cfg.PredicateType,
 		timestampRoots:   cfg.TimestampRoots,
 		requireTimestamp: cfg.RequireTimestamp,
+		signingKeys:      cfg.SigningKeys,
 	}, nil
 }
 
@@ -133,6 +149,10 @@ func (v *Verifier) VerifyImage(ctx context.Context, ref string) (*VerificationRe
 	if err != nil {
 		return nil, err
 	}
+	signingKey, err := v.signingKey(ctx, reference.Repository)
+	if err != nil {
+		return nil, err
+	}
 	subject, err := v.registry.Resolve(ctx, reference)
 	if err != nil {
 		return nil, err
@@ -151,7 +171,7 @@ func (v *Verifier) VerifyImage(ctx context.Context, ref string) (*VerificationRe
 
 	failures := make([]error, 0, len(attestations))
 	for _, attestation := range attestations {
-		result, err := v.verifyAttestation(attestation, subject.Digest, roots)
+		result, err := v.verifyAttestation(attestation, subject.Digest, roots, signingKey)
 		if err == nil {
 			return result, nil
 		}
@@ -160,14 +180,36 @@ func (v *Verifier) VerifyImage(ctx context.Context, ref string) (*VerificationRe
 	return nil, &errs.Joined{Lead: ErrNoValidAttestation, Cause: errors.Join(failures...)}
 }
 
-// verifyAttestation verifies one attestation of the image digest.
-func (v *Verifier) verifyAttestation(attestation *Attestation, digest string, roots *x509.CertPool) (*VerificationResult, error) {
+// signingKey resolves the key that signs the repository; nil when the
+// Verifier has no SigningKeys.
+func (v *Verifier) signingKey(ctx context.Context, repository string) (crypto.PublicKey, error) {
+	if v.signingKeys == nil {
+		return nil, nil
+	}
+	return v.signingKeys.SigningKey(ctx, repository)
+}
+
+// equalPublicKey is the Equal method every standard library public key
+// has.
+type equalPublicKey interface {
+	Equal(crypto.PublicKey) bool
+}
+
+// verifyAttestation verifies one attestation of the image digest. A non-nil
+// signingKey is the only key the signing certificate may carry.
+func (v *Verifier) verifyAttestation(attestation *Attestation, digest string, roots *x509.CertPool, signingKey crypto.PublicKey) (*VerificationResult, error) {
 	if attestation.Invalid != nil {
 		return nil, attestation.Invalid
 	}
 	certificate, intermediates, err := attestationCertificates(attestation)
 	if err != nil {
 		return nil, err
+	}
+	if signingKey != nil {
+		key, ok := certificate.PublicKey.(equalPublicKey)
+		if !ok || !key.Equal(signingKey) {
+			return nil, &errs.Detail{Err: ErrSigningKeyMismatch, Detail: certificate.Subject.String()}
+		}
 	}
 	if err := checkCodeSigningUsage(certificate); err != nil {
 		return nil, err

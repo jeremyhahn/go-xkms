@@ -147,6 +147,13 @@ const (
 	// caller's tenant's endorsements and reference values.
 	ResourceAttestationVerifier = "attestation_verifier"
 
+	// ResourceAttestationSigningKeys is the attestation Verifier's
+	// per-repository signing-key bindings (pkg/attestation/appraisal):
+	// naming the key that signs one of the caller's tenant's repositories in
+	// place of the tenant release key, reading, listing and resolving them.
+	// Changing a binding is attestation_signing_keys:bind (ActionBind).
+	ResourceAttestationSigningKeys = "attestation_signing_keys"
+
 	// ResourceTrust is the platform trust plane's write verbs that act
 	// outside the trust-root store: publishing the CA's DANE TLSA records to
 	// DNS (pkg/trust/dane Publisher.PublishDANE, trust:publish_dane) and
@@ -251,6 +258,14 @@ const (
 	// SignCSR request asks for the svc kind. qrdb does not know the name;
 	// xkms owns it and declares its scope (pkg/apimodule/module_scopes.go).
 	ActionIssueService = "issue_service"
+
+	// ActionBind changes which key signs a repository: setting or removing a
+	// per-repository signing-key binding (attestation_signing_keys:bind,
+	// go-xkms#1697). A binding redirects every image and CoRIM verification
+	// of the repository to another key, so it is a privilege of its own,
+	// apart from reading the bindings. qrdb does not know the name; xkms owns
+	// it and declares its scope (pkg/apimodule/module_scopes.go).
+	ActionBind = "bind"
 
 	// ActionUse authorizes a cryptographic operation with a slot key whose
 	// material never leaves the card (piv:use). It is deliberately distinct

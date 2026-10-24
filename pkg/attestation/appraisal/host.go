@@ -111,7 +111,7 @@ func (a *Appraiser) ReferencePCRs(ctx context.Context, tenant, name string, bank
 	if err != nil {
 		return nil, err
 	}
-	manifest, err := a.verifyCoRIM(ctx, tenant, record.SignedCoRIM)
+	manifest, err := a.verifyReferenceValues(ctx, tenant, record.Repository, record.SignedCoRIM)
 	if err != nil {
 		return nil, err
 	}

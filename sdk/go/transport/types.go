@@ -358,6 +358,15 @@ type OIDCCredentialCreateRequest = pkgtransport.OIDCCredentialCreateRequest
 type OIDCCredentialImportRequest = pkgtransport.OIDCCredentialImportRequest
 type OIDCCredentialListRequest = pkgtransport.OIDCCredentialListRequest
 type OIDCCredentialListResponse = pkgtransport.OIDCCredentialListResponse
+
+// Repository signing-key binding types (go-xkms#1697).
+type SigningKeyBinding = pkgtransport.SigningKeyBinding
+type SetSigningKeyBindingRequest = pkgtransport.SetSigningKeyBindingRequest
+type GetSigningKeyBindingRequest = pkgtransport.GetSigningKeyBindingRequest
+type ListSigningKeyBindingsResponse = pkgtransport.ListSigningKeyBindingsResponse
+type DeleteSigningKeyBindingRequest = pkgtransport.DeleteSigningKeyBindingRequest
+type ResolveSigningKeyRequest = pkgtransport.ResolveSigningKeyRequest
+type SigningKeyResolution = pkgtransport.SigningKeyResolution
 type OIDCDeviceLogin = pkgtransport.OIDCDeviceLogin
 type OIDCAccessToken = pkgtransport.OIDCAccessToken
 

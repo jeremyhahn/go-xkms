@@ -466,6 +466,19 @@ func Routes() []RouteSpec {
 	permIf("DELETE", "/trust-roots/{fingerprint}", auth.ResourceTrustRoots, auth.ActionDelete, hasTrustRoots, func(s *Server) http.HandlerFunc { return s.trustRootHandlers.RemoveHandler })
 	permIf("POST", "/trust-roots/{fingerprint}/quarantine", auth.ResourceTrustRoots, auth.ActionUpdate, hasTrustRoots, func(s *Server) http.HandlerFunc { return s.trustRootHandlers.QuarantineHandler })
 
+	// --- Repository signing keys (go-xkms#1697). attestation_signing_keys:*
+	// is an xkms-owned permission family whose tenancy scope
+	// pkg/apimodule/module_scopes.go declares; the service binds each call to
+	// the caller's tenant. Changing a binding is bind; the service checks it
+	// below the gate too. A repository path holds slashes, so the routes that
+	// name one take it in the repository query parameter. ---
+	hasSigningKeys := func(s *Server) bool { return s.signingKeyHandlers != nil }
+	permIf("PUT", "/attestation/signing-keys", auth.ResourceAttestationSigningKeys, auth.ActionBind, hasSigningKeys, func(s *Server) http.HandlerFunc { return s.signingKeyHandlers.SetHandler })
+	permIf("GET", "/attestation/signing-keys", auth.ResourceAttestationSigningKeys, auth.ActionList, hasSigningKeys, func(s *Server) http.HandlerFunc { return s.signingKeyHandlers.ListHandler })
+	permIf("GET", "/attestation/signing-keys/binding", auth.ResourceAttestationSigningKeys, auth.ActionGet, hasSigningKeys, func(s *Server) http.HandlerFunc { return s.signingKeyHandlers.GetHandler })
+	permIf("DELETE", "/attestation/signing-keys/binding", auth.ResourceAttestationSigningKeys, auth.ActionBind, hasSigningKeys, func(s *Server) http.HandlerFunc { return s.signingKeyHandlers.DeleteHandler })
+	permIf("GET", "/attestation/signing-keys/resolve", auth.ResourceAttestationSigningKeys, auth.ActionGet, hasSigningKeys, func(s *Server) http.HandlerFunc { return s.signingKeyHandlers.ResolveHandler })
+
 	// --- Server-side OIDC credentials (pkg/oidc/credential).
 	// oidc_credentials:* is an xkms-owned permission family
 	// (pkg/auth.ResourceOIDCCredentials) whose tenancy scope

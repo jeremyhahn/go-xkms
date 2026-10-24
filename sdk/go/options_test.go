@@ -1534,3 +1534,19 @@ func (m *mockService) BindUserCert(ctx context.Context, username, thumbprint str
 func (m *mockService) ListUserCredentials(ctx context.Context, username string) (*ListUserCredentialsResponse, error) {
 	return nil, nil
 }
+
+func (*mockService) SetSigningKeyBinding(context.Context, *SetAttestationSigningKeyBindingRequest) (*AttestationSigningKeyBinding, error) {
+	return nil, nil
+}
+func (*mockService) GetSigningKeyBinding(context.Context, *GetAttestationSigningKeyBindingRequest) (*AttestationSigningKeyBinding, error) {
+	return nil, nil
+}
+func (*mockService) ListSigningKeyBindings(context.Context) (*ListAttestationSigningKeyBindingsResponse, error) {
+	return nil, nil
+}
+func (*mockService) DeleteSigningKeyBinding(context.Context, *DeleteAttestationSigningKeyBindingRequest) error {
+	return nil
+}
+func (*mockService) ResolveSigningKey(context.Context, *ResolveAttestationSigningKeyRequest) (*AttestationSigningKeyResolution, error) {
+	return nil, nil
+}

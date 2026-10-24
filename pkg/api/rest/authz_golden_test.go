@@ -257,8 +257,16 @@ var goldenRESTPermissions = map[string]string{
 	"POST /api/v1/oidc/credentials/{scope}/{name}/token":         "oidc_credentials:token",
 	"POST /api/v1/oidc/credentials/{scope}/{name}/device":        "oidc_credentials:update",
 	"POST /api/v1/oidc/credentials/{scope}/{name}/device/poll":   "oidc_credentials:update",
-	"POST /api/v1/peer-attestation/challenge":                    "peer_attestation:challenge",
-	"POST /api/v1/peer-attestation/evidence":                     "peer_attestation:submit",
+
+	// Repository signing keys (go-xkms#1697); a repository travels in the
+	// repository query parameter.
+	"PUT /api/v1/attestation/signing-keys":            "attestation_signing_keys:bind",
+	"GET /api/v1/attestation/signing-keys":            "attestation_signing_keys:list",
+	"GET /api/v1/attestation/signing-keys/binding":    "attestation_signing_keys:get",
+	"DELETE /api/v1/attestation/signing-keys/binding": "attestation_signing_keys:bind",
+	"GET /api/v1/attestation/signing-keys/resolve":    "attestation_signing_keys:get",
+	"POST /api/v1/peer-attestation/challenge":         "peer_attestation:challenge",
+	"POST /api/v1/peer-attestation/evidence":          "peer_attestation:submit",
 }
 
 // TestRESTPermissions_MatchWireContract pins the resource:action pair of

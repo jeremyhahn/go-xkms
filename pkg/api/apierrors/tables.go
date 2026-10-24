@@ -18,6 +18,7 @@ import (
 
 	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
 
+	"github.com/jeremyhahn/go-xkms/pkg/attestation/appraisal"
 	"github.com/jeremyhahn/go-xkms/pkg/attestation/peer"
 	"github.com/jeremyhahn/go-xkms/pkg/attestation/peergate"
 	"github.com/jeremyhahn/go-xkms/pkg/attestation/truststore"
@@ -317,6 +318,29 @@ func PeerAttestationClassOf(err error) (Class, bool) {
 		}
 	}
 	return ClassOf(PeerAttestationSentinelClasses, err)
+}
+
+// SigningKeySentinelClasses classifies the errors of the repository
+// signing-key verbs (pkg/xkms's SigningKey servicer methods over
+// pkg/attestation/appraisal, go-xkms#1697). A server without an Appraiser
+// has nothing to answer with; a binding change by a caller without
+// attestation_signing_keys:bind is refused below the gate too. The
+// appraisal's typed errors (RepositoryError, SigningKeyError) wrap these
+// sentinels, so this one table classifies them.
+var SigningKeySentinelClasses = []SentinelClass{
+	{xkms.ErrNotConfigured, ClassUnavailable},
+	{xkms.ErrSigningKeyForbidden, ClassPermissionDenied},
+	{appraisal.ErrNilRequest, ClassInvalidArgument},
+	{appraisal.ErrInvalidRepository, ClassInvalidArgument},
+	{appraisal.ErrInvalidSigningKey, ClassInvalidArgument},
+	{appraisal.ErrInvalidTenant, ClassInvalidArgument},
+	{appraisal.ErrRecordNotFound, ClassNotFound},
+	{appraisal.ErrStoreUnavailable, ClassUnavailable},
+}
+
+// SigningKeyClassOf classifies an error of the repository signing-key verbs.
+func SigningKeyClassOf(err error) (Class, bool) {
+	return ClassOf(SigningKeySentinelClasses, err)
 }
 
 // TypedClass classifies a typed error: Match reports whether an error's

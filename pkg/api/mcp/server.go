@@ -527,6 +527,17 @@ var rpcMethods = map[string]rpcMethod{
 	"oidc.credential.device.start": handle(auth.ResourceOIDCCredentials, auth.ActionUpdate, (*Server).handleOIDCCredentialDeviceStart),
 	"oidc.credential.device.poll":  handle(auth.ResourceOIDCCredentials, auth.ActionUpdate, (*Server).handleOIDCCredentialDevicePoll),
 
+	// Repository signing keys (go-xkms#1697) --
+	// pkg/auth.ResourceAttestationSigningKeys, an xkms-owned resource family
+	// scoped in pkg/apimodule/module_scopes.go. Mirrors the gRPC SigningKey
+	// RPCs' (qrdb.v1.permission) options one-for-one: changing a binding is
+	// bind, reading one or resolving a repository's key is get.
+	"attestation.signing_key.set":     handle(auth.ResourceAttestationSigningKeys, auth.ActionBind, (*Server).handleSigningKeySet),
+	"attestation.signing_key.get":     handle(auth.ResourceAttestationSigningKeys, auth.ActionGet, (*Server).handleSigningKeyGet),
+	"attestation.signing_key.list":    handle(auth.ResourceAttestationSigningKeys, auth.ActionList, (*Server).handleSigningKeyList),
+	"attestation.signing_key.delete":  handle(auth.ResourceAttestationSigningKeys, auth.ActionBind, (*Server).handleSigningKeyDelete),
+	"attestation.signing_key.resolve": handle(auth.ResourceAttestationSigningKeys, auth.ActionGet, (*Server).handleSigningKeyResolve),
+
 	// Attested-caller evidence (pkg/attestation/peergate) --
 	// pkg/auth.ResourcePeerAttestation, an xkms-owned resource family scoped
 	// in pkg/apimodule/module_scopes.go and exempt from the gate itself.

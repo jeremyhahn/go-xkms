@@ -73,7 +73,67 @@ var (
 	// ErrPCRBankUnavailable indicates a PCR bank the TPM did not report. See
 	// PCRBankUnavailableError.
 	ErrPCRBankUnavailable = errors.New("attestation: PCR bank unavailable")
+
+	// ErrInvalidRepository indicates a repository that names no signing-key
+	// binding. See RepositoryError.
+	ErrInvalidRepository = errors.New("attestation: invalid repository")
+
+	// ErrInvalidSigningKey indicates a binding whose key ID or backend is
+	// malformed. See SigningKeyError.
+	ErrInvalidSigningKey = errors.New("attestation: invalid signing key")
+
+	// ErrSigningKeyRefused indicates a signature by a key other than the one
+	// that signs the repository. See SignerRefusedError.
+	ErrSigningKeyRefused = errors.New("attestation: signature is not by the repository's signing key")
 )
+
+// RepositoryError reports a repository that is not an OCI repository path.
+type RepositoryError struct {
+	Repository string
+}
+
+// Error returns a human-readable description.
+func (e *RepositoryError) Error() string {
+	return "attestation: repository " + strconv.Quote(e.Repository) + " must be an OCI repository path of at most " +
+		strconv.Itoa(maxRepositoryLen) + " bytes"
+}
+
+// Unwrap returns ErrInvalidRepository.
+func (e *RepositoryError) Unwrap() error { return ErrInvalidRepository }
+
+// SigningKeyError reports a binding whose key ID or backend is malformed.
+type SigningKeyError struct {
+	KeyID string
+	Cause error
+}
+
+// Error returns a human-readable description.
+func (e *SigningKeyError) Error() string {
+	return "attestation: invalid signing key " + strconv.Quote(e.KeyID) + ": " + e.Cause.Error()
+}
+
+// Unwrap returns ErrInvalidSigningKey and the validation failure.
+func (e *SigningKeyError) Unwrap() []error { return []error{ErrInvalidSigningKey, e.Cause} }
+
+// SignerRefusedError refuses signed reference values of a repository that
+// the repository's signing key did not sign. It is the Cause of the
+// *ReferenceValuesRejectedError the refusal returns.
+type SignerRefusedError struct {
+	// Repository is the repository the reference values belong to.
+	Repository string
+	// KeyID is the key that signs the repository.
+	KeyID string
+	// Cause is the signature verification failure.
+	Cause error
+}
+
+// Error reports the repository, its key and the failure.
+func (e *SignerRefusedError) Error() string {
+	return "attestation: reference values of " + e.Repository + " are not signed by key " + e.KeyID + ": " + e.Cause.Error()
+}
+
+// Unwrap returns ErrSigningKeyRefused and the verification failure.
+func (e *SignerRefusedError) Unwrap() []error { return []error{ErrSigningKeyRefused, e.Cause} }
 
 // NameError reports an invalid endorsement or reference-values name.
 type NameError struct {
