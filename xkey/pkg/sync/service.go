@@ -66,12 +66,12 @@ type TrustStoreAccessor interface {
 // writes, so an operator listing the trust store can see where it came from.
 const syncedCertificateSource = "sync"
 
-// syncedImportOptions is the metadata every certificate arriving through sync
-// is stored with. PurposeSynced is a quarantine that no trust decision
+// QuarantineImportOptions is the metadata every certificate a paired device
+// supplies is stored with, through sync or a phone-initiated backup restore. PurposeSynced is a quarantine that no trust decision
 // consumes: a paired device is a peer, not an authority over this host's
 // roots, so what it sends is recorded and never trusted until the operator
 // reclassifies it.
-func syncedImportOptions() *truststore.AddCertificateOptions {
+func QuarantineImportOptions() *truststore.AddCertificateOptions {
 	return &truststore.AddCertificateOptions{
 		Purpose: truststore.PurposeSynced,
 		Source:  syncedCertificateSource,
@@ -359,7 +359,7 @@ func (s *Service) ApplyTrustStoreDelta(delta *TrustStoreDelta) (*SyncItemResult,
 			continue
 		}
 
-		imported, addErr := s.trustStore.ImportPEM([]byte(cert.PEM), syncedImportOptions())
+		imported, addErr := s.trustStore.ImportPEM([]byte(cert.PEM), QuarantineImportOptions())
 		if addErr != nil {
 			result.Errors = append(result.Errors,
 				fmt.Sprintf("cert %s: %v", cert.Fingerprint, addErr))
@@ -532,7 +532,7 @@ func (s *Service) ApplyCADelta(delta *CADelta) (*SyncItemResult, error) {
 		return result, &DetailError{Err: ErrCASyncFailed, Detail: ": trust store accessor not configured"}
 	}
 
-	imported, err := s.trustStore.ImportPEM([]byte(delta.CACertPEM), syncedImportOptions())
+	imported, err := s.trustStore.ImportPEM([]byte(delta.CACertPEM), QuarantineImportOptions())
 	if err != nil {
 		result.Errors = append(result.Errors,
 			fmt.Sprintf("ca cert: %v", err))
@@ -541,7 +541,7 @@ func (s *Service) ApplyCADelta(delta *CADelta) (*SyncItemResult, error) {
 	result.Added += imported.Added
 
 	if delta.CAChainPEM != "" {
-		chain, chainErr := s.trustStore.ImportPEM([]byte(delta.CAChainPEM), syncedImportOptions())
+		chain, chainErr := s.trustStore.ImportPEM([]byte(delta.CAChainPEM), QuarantineImportOptions())
 		if chainErr != nil {
 			result.Errors = append(result.Errors,
 				fmt.Sprintf("ca chain: %v", chainErr))

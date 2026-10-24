@@ -597,6 +597,9 @@ func TestTCPTransport_SendTooLarge(t *testing.T) {
 	oversized := make([]byte, MaxTCPMessageSize+1)
 	err = transport.Send(ctx, oversized)
 	assert.ErrorIs(t, err, pairingproto.ErrProtocolError)
+	var tooLarge *pairingproto.MessageTooLargeError
+	require.ErrorAs(t, err, &tooLarge)
+	assert.Equal(t, pairingproto.MessageTooLargeError{Size: MaxTCPMessageSize + 1, Limit: MaxTCPMessageSize}, *tooLarge)
 }
 
 func TestTCPTransport_SendNotConnected(t *testing.T) {

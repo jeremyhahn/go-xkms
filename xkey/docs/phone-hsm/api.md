@@ -113,10 +113,12 @@ service. A phone that calls one of these against a host where the
 collaborator was never configured gets a JSON-RPC error with code `-32035`
 (`ErrorCodeFeatureUnavailable`) rather than a fabricated empty success — treat
 it as "not offered here," the same as a phone declining an operation its
-hardware does not support. `remote.createBackup`/`restoreBackup`/`listBackups`
-currently answer this way unconditionally: see
-[`engineering.md`](engineering.md) §"Bridge collaborators are optional, and
-say so honestly" for why.
+hardware does not support. `remote.createBackup` and `remote.restoreBackup`
+answer this way when none of their requested categories has a store on this
+host. Both require a `password`, which seals and opens the backup exactly as
+`xkey backup` does. `remote.listBackups` answers this way unconditionally.
+See [`engineering.md`](engineering.md) §"Bridge collaborators are optional,
+and say so honestly".
 
 ## The cross-repo wire contract
 

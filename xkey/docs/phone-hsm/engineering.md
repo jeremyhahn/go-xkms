@@ -130,18 +130,74 @@ command wires these collaborators now, and exactly one place
 (`listenBridgeCollaborators.Close`, called from both `connectListenBridge`'s
 and `connectXKMSdBridge`'s shutdown paths) that releases them.
 
-**`remote.createBackup`/`restoreBackup`/`listBackups` are unimplemented**
-(go-xkms#690) pending an owner decision `bridge_backup.go` documents in
-detail: `backup.Service` encrypts every archive with a caller-supplied
-32-byte key, and neither the wire params nor the wire results for these three
-methods carry one, so the key has to come from a source the bridge does not
-yet have (a passphrase/key file the CLI supplies at `xkey device listen`
-start, or something derived from material the bridge does not currently
-hold) — and `remote.listBackups` additionally presumes a persistence
-location and ID/label scheme for phone-initiated backups that has no
-convention anywhere in this codebase yet. All three handlers return
-`ErrBackupNotConfigured` until that is decided; they never fabricate success
-or silently discard the phone's data.
+**`remote.createBackup` and `remote.restoreBackup` take a password**
+(go-xkms#1693, `bridge_backup.go`). Both params carry a required `password`,
+and an empty one is refused with `-32602` `ErrorCodeInvalidParams` wrapping
+`ErrBackupPasswordRequired`. The key is derived exactly as `xkey backup
+create --password` and `xkey backup restore` derive it:
+`backup.NewPasswordKey` on create, and on restore the KDF record stored in the
+envelope (`EncryptedBackup.PasswordKey`, which calls
+`backup.DerivePasswordKey`). A backup made on either side therefore opens on
+the other with the same password. The byte copy of the password is wiped once
+the key is derived; the wire value arrives as a Go string, which cannot be
+zeroed. The password and its length are never logged.
+
+`backup_data` in the create result and the restore params is the
+JSON-encoded `backup.EncryptedBackup` envelope (AES-256-GCM plus its KDF
+record). The archived stores come from `BridgeConfig.BackupTrustStore`,
+`BackupOATH` and `BackupPasswords`. `buildListenBridgeConfig` fills them from
+the stores `xkey device listen` already opens for sync. The live `remote.oath*`
+handlers use that same OATH store instance, which the sync sources own and close.
+A file-backed store reads its file only when it opens, so a second instance
+would back up a stale copy and overwrite restored credentials on its next
+write. The CA category is
+read from xkmsd through the bridge client and is never restored locally,
+because xkey keeps no CA store.
+
+The phone chooses the backup password, so encryption does not protect the
+secrets from the phone. A backup that includes a configured OATH or password
+store therefore needs the same desktop export decision as `remote.sync*`
+(`BridgeConfig.SyncApproval`, through `approveSync`). That decision comes
+from `--allow-sync`, and a sealed enterprise policy overrides it. The check
+runs before either store is read. When no approver is configured the call is
+refused with `-32038` `ErrSyncApprovalRequired`. When the decision refuses
+export, it is refused with `-32039` `ErrSyncNotApproved`. A backup of only the trust
+store or the CA exports no secret and is not gated.
+
+The handlers report errors as follows:
+- a request that asks for no category is refused with `ErrorCodeInvalidParams`;
+- when none of the requested categories is configured, the handler reports
+  `ErrBackupNotConfigured` (`-32035`);
+- a wrong password or a malformed envelope is refused with
+  `ErrorCodeBackupRestore`, and nothing is written;
+- a store that rejects an entry does not fail the restore. The result's
+  `items` lists each category's `restored` and `skipped` counts and the
+  per-entry `errors`, which name an entry by ID, never by its secret.
+  `success` is true only when no entry was skipped.
+
+A restored trust store is phone-supplied, so its certificates cross the same
+quarantine boundary as synced ones. `quarantinedTrustStore` imports each one
+with `xkeysync.QuarantineImportOptions()` (purpose `PurposeSynced`, source
+`sync`), whatever purpose the archive records, and never as trusted. The
+archive's recorded purposes are still validated before anything is written.
+The trust-store item reports these certificates as `quarantined`, not
+`restored`. They stay pending until the desktop reclassifies them, and
+`trust_store` is not listed in `restored`.
+
+A backup can outgrow one transport message. `MessageRouter.sendResponse`
+refuses a response larger than `bootstrap.NoiseMaxMessageSize` before it is
+encrypted, so no session nonce is spent. `TCPTransport` and `USBTransport`
+refuse an oversized frame with `*pairingproto.MessageTooLargeError`. When a
+response cannot be sent, the router answers the same request ID with an error
+response, so the phone does not wait on a reply that never comes. A size refusal
+maps to `-32040` `ErrorCodeMessageTooLarge`, whose message asks for fewer
+categories. The limit is a cap: responses are not chunked.
+
+**`remote.listBackups` is unimplemented.** A bridge-created backup is
+returned to the phone, not kept on the laptop, and no method fetches a
+laptop-side backup by ID. A list of local `xkey backup` files would therefore
+name backups the phone cannot use. The handler returns
+`ErrBackupNotConfigured`. It never fabricates success.
 
 ### USB transport — `go-xkms/pkg/api/transport/usb`
 

@@ -17,7 +17,10 @@
 // device types reuse this package.
 package pairingproto
 
-import "errors"
+import (
+	"errors"
+	"strconv"
+)
 
 // Pairing protocol errors.
 var (
@@ -50,6 +53,10 @@ var (
 
 	// ErrProtocolError indicates a protocol-level error in communication.
 	ErrProtocolError = errors.New("pairing: protocol error")
+
+	// ErrMessageTooLarge indicates a message exceeds the transport's frame
+	// limit. A transport reports it as a *MessageTooLargeError.
+	ErrMessageTooLarge = errors.New("pairing: message exceeds the transport limit")
 
 	// ErrFragmentationError indicates an error during message fragmentation or reassembly.
 	ErrFragmentationError = errors.New("pairing: fragmentation error")
@@ -214,6 +221,11 @@ var (
 	// ErrBackupRestoreFailed indicates backup restore failed.
 	ErrBackupRestoreFailed = errors.New("pairing: backup restore failed")
 
+	// ErrBackupPasswordRequired indicates a remote.createBackup or
+	// remote.restoreBackup request carried no password. It travels wrapped
+	// with ErrBridgeInvalidParams.
+	ErrBackupPasswordRequired = errors.New("pairing: backup password is required")
+
 	// ErrBackupNotFound indicates the requested backup was not found.
 	ErrBackupNotFound = errors.New("pairing: backup not found")
 
@@ -316,6 +328,24 @@ func (e *DetailError) Unwrap() error {
 
 // SentinelCauseError attaches an underlying cause to a package sentinel
 // error so errors.Is matches both the sentinel and the cause.
+// MessageTooLargeError reports a message a transport refused because it
+// exceeds the transport's frame limit. It matches ErrMessageTooLarge and,
+// like every framing refusal, ErrProtocolError.
+type MessageTooLargeError struct {
+	Size  int
+	Limit int
+}
+
+// Error implements error.
+func (e *MessageTooLargeError) Error() string {
+	return ErrMessageTooLarge.Error() + ": " + strconv.Itoa(e.Size) + " bytes, limit " + strconv.Itoa(e.Limit)
+}
+
+// Unwrap returns ErrMessageTooLarge and ErrProtocolError.
+func (e *MessageTooLargeError) Unwrap() []error {
+	return []error{ErrMessageTooLarge, ErrProtocolError}
+}
+
 type SentinelCauseError struct {
 	Sentinel error
 	Cause    error

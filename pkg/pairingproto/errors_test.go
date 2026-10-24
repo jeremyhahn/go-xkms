@@ -15,6 +15,7 @@ package pairingproto
 
 import (
 	"errors"
+	"fmt"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -33,6 +34,7 @@ func TestErrors_AllErrorsDefined(t *testing.T) {
 		ErrBiometricFailed,
 		ErrKeyNotFound,
 		ErrProtocolError,
+		ErrMessageTooLarge,
 		ErrFragmentationError,
 		ErrBackendClosed,
 		ErrInvalidCredentialID,
@@ -101,6 +103,7 @@ func TestErrors_Uniqueness(t *testing.T) {
 		ErrBiometricFailed,
 		ErrKeyNotFound,
 		ErrProtocolError,
+		ErrMessageTooLarge,
 		ErrFragmentationError,
 		ErrBackendClosed,
 		ErrInvalidCredentialID,
@@ -201,6 +204,16 @@ func TestSentinelCauseError_Error(t *testing.T) {
 	assert.Equal(t, "pairing: connection failed: connection reset", err.Error())
 	assert.True(t, errors.Is(err, ErrConnectionFailed))
 	assert.True(t, errors.Is(err, cause))
+}
+
+func TestMessageTooLargeError(t *testing.T) {
+	err := error(&MessageTooLargeError{Size: 70000, Limit: MaxUSBMessageSize})
+
+	assert.Contains(t, err.Error(), "70000 bytes")
+	assert.Contains(t, err.Error(), fmt.Sprintf("limit %d", MaxUSBMessageSize))
+	assert.ErrorIs(t, err, ErrMessageTooLarge)
+	assert.ErrorIs(t, err, ErrProtocolError, "a size refusal is still a protocol error")
+	assert.NotErrorIs(t, err, ErrConnectionFailed)
 }
 
 // TestUSBError_Error pins the message format and that the libusb cause stays

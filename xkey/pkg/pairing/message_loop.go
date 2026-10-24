@@ -407,29 +407,42 @@ func (r *MessageRouter) handleInboundRequest(plaintext []byte, method string) {
 		return
 	}
 
-	// Encode, encrypt, and send the response back. The encoded result can
-	// carry a shared secret or plaintext, so each plaintext copy is wiped as
-	// soon as it has been consumed.
+	if err := r.sendResponse(resp); err != nil {
+		r.logger.Error("failed to send inbound response", "error", err)
+		// Answer the caller rather than leave it waiting for a response that
+		// never comes: a response the transport refused -- too large for one
+		// frame -- is replaced by a small error response naming the cause.
+		code, message := mapErrorToRPC(err)
+		if answerErr := r.sendResponse(errorResponse(req.ID, req.Generation, code, message)); answerErr != nil {
+			r.logger.Error("failed to send inbound error response", "error", answerErr)
+		}
+	}
+}
+
+// sendResponse encodes, encrypts, and sends resp. A response larger than one
+// Noise message is refused with a *MessageTooLargeError before it is
+// encrypted, so no session nonce is spent on it. The encoded result can
+// carry a shared secret or plaintext, so each plaintext copy is wiped as soon
+// as it has been consumed.
+func (r *MessageRouter) sendResponse(resp *pairingproto.Response) error {
 	respBytes, err := json.Marshal(resp)
 	secure.Wipe(resp.Result)
 	if err != nil {
-		r.logger.Error("failed to marshal inbound response", "error", err)
-		return
+		return err
+	}
+	if len(respBytes) > bootstrap.NoiseMaxMessageSize {
+		secure.Wipe(respBytes)
+		return &pairingproto.MessageTooLargeError{Size: len(respBytes), Limit: bootstrap.NoiseMaxMessageSize}
 	}
 
 	r.sendMu.Lock()
+	defer r.sendMu.Unlock()
 	ciphertext, err := r.session.Encrypt(respBytes)
 	secure.Wipe(respBytes)
 	if err != nil {
-		r.sendMu.Unlock()
-		r.logger.Error("failed to encrypt inbound response", "error", err)
-		return
+		return err
 	}
-	sendErr := r.transport.Send(context.Background(), ciphertext)
-	r.sendMu.Unlock()
-	if sendErr != nil {
-		r.logger.Error("failed to send inbound response", "error", sendErr)
-	}
+	return r.transport.Send(context.Background(), ciphertext)
 }
 
 // biometricPendingRequest is used specifically for unmarshalling

@@ -36,6 +36,7 @@ import (
 
 	"github.com/jeremyhahn/go-xkms/pkg/attestation/truststore"
 	"github.com/jeremyhahn/go-xkms/pkg/pairingproto"
+	"github.com/jeremyhahn/go-xkms/xkey/pkg/backup"
 	"github.com/jeremyhahn/go-xkms/xkey/pkg/pairing"
 )
 
@@ -156,6 +157,98 @@ func TestBuildListenBridgeConfig_OATHRequestReachesRealStore(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, "GitHub", cred.Name)
 	assert.Equal(t, "GEZDGNBVGY3TQOJQGEZDGNBVGY3TQOJQ", secretText(cred))
+}
+
+// listenBridgeCall serves one request through bridge and decodes its result,
+// failing the test on an RPC error.
+func listenBridgeCall[T any](t *testing.T, bridge *pairing.Bridge, method string, params any) *T {
+	t.Helper()
+	resp := bridge.HandleRequest(context.Background(), pairingproto.NewRequest(method, params))
+	require.Nil(t, resp.Error, "%s failed: %v", method, resp.Error)
+	result, err := pairingproto.DecodeResult[T](resp)
+	require.NoError(t, err)
+	return result
+}
+
+// listenOATHAdd adds a TOTP credential through the bridge's live remote.oathAdd
+// handler and returns its ID.
+func listenOATHAdd(t *testing.T, bridge *pairing.Bridge, name, secret string) string {
+	t.Helper()
+	result := listenBridgeCall[pairingproto.RemoteOATHAddResult](t, bridge, pairingproto.MethodRemoteOATHAdd,
+		pairingproto.RemoteOATHAddParams{Credential: pairingproto.OATHCredentialInfo{
+			Name: name, Issuer: name, Secret: mustSecretText(secret), Type: "totp", Algorithm: "SHA1",
+		}})
+	require.NotEmpty(t, result.CredentialID)
+	return result.CredentialID
+}
+
+// TestBuildListenBridgeConfig_BackupSharesTheLiveOATHStore guards Codex 7044
+// on go-xkms#1693: the backup handlers and the live remote.oath* handlers
+// must use one OATH store. A file-backed store reads its file only when it
+// opens, so a second instance would back up a stale copy, hide restored
+// credentials from remote.oathGenerate, and overwrite them on the next write.
+func TestBuildListenBridgeConfig_BackupSharesTheLiveOATHStore(t *testing.T) {
+	const backupPassword = "listen-wiring-test-password"
+	cmd := &cobra.Command{}
+	xkmsdCfg := loadXKMSdBridgeConfig()
+
+	// The source host: a credential added after the bridge opened its stores
+	// is in the next backup.
+	isolatedListenHome(t)
+	srcCfg, srcCollaborators := buildListenBridgeConfig(cmd, newTestLogger(), xkmsdCfg, testListenDevice, nil, nil, pairing.AlwaysApproveSync)
+	defer srcCollaborators.Close()
+	require.NotNil(t, srcCollaborators.syncSources)
+	require.NotNil(t, srcCollaborators.syncSources.oath)
+	assert.Same(t, srcCollaborators.syncSources.oath.store, srcCfg.OATHStore, "remote.oath* must use the sync sources' store")
+	assert.Nil(t, srcCollaborators.oathStore, "the shared store has one owner: the sync sources")
+	src, err := pairing.NewBridge(&baseSDKClient{}, srcCfg)
+	require.NoError(t, err)
+	addedID := listenOATHAdd(t, src, "GitHub", "GEZDGNBVGY3TQOJQGEZDGNBVGY3TQOJQ")
+	created := listenBridgeCall[pairingproto.RemoteCreateBackupResult](t, src, pairingproto.MethodRemoteCreateBackup,
+		pairingproto.RemoteCreateBackupParams{IncludeOATH: true, Password: backupPassword})
+
+	// A fresh host: the restored credential is visible to remote.oathGenerate.
+	isolatedListenHome(t)
+	dstCfg, dstCollaborators := buildListenBridgeConfig(cmd, newTestLogger(), xkmsdCfg, testListenDevice, nil, nil, pairing.AlwaysApproveSync)
+	dst, err := pairing.NewBridge(&baseSDKClient{}, dstCfg)
+	require.NoError(t, err)
+	restored := listenBridgeCall[pairingproto.RemoteRestoreBackupResult](t, dst, pairingproto.MethodRemoteRestoreBackup,
+		pairingproto.RemoteRestoreBackupParams{BackupData: created.BackupData, Password: backupPassword})
+	assert.True(t, restored.Success)
+	assert.Contains(t, restored.Restored, string(backup.ItemOATH))
+	code := listenBridgeCall[pairingproto.RemoteOATHGenerateResult](t, dst, pairingproto.MethodRemoteOATHGenerate,
+		pairingproto.RemoteOATHGenerateParams{CredentialID: addedID})
+	assert.NotEmpty(t, code.Code)
+
+	// A write after the restore keeps the restored credential on disk.
+	laterID := listenOATHAdd(t, dst, "GitLab", "MFRGGZDFMZTWQ2LKMFRGGZDFMZTWQ2LK")
+	dstCollaborators.Close()
+
+	reopened, err := openOATHStore(cmd, "")
+	require.NoError(t, err)
+	defer func() { _ = reopened.Close() }()
+	for _, id := range []string{addedID, laterID} {
+		_, err := reopened.Get(id)
+		assert.NoError(t, err, "credential %s is missing from the store on disk", id)
+	}
+}
+
+// TestBuildListenBridgeConfig_SyncUnavailableOwnsItsOATHStore covers the
+// fallback: when the sync service cannot open (here the data directory is
+// barrier-encrypted), no backup or sync store is wired, and any OATH store
+// the bridge serves is the one the collaborators own and close.
+func TestBuildListenBridgeConfig_SyncUnavailableOwnsItsOATHStore(t *testing.T) {
+	home := isolatedListenHome(t)
+	writeBarrierRootKey(t, backupTestDataDir(home), []byte("sealed"))
+
+	bridgeCfg, collaborators := buildListenBridgeConfig(&cobra.Command{}, newTestLogger(),
+		loadXKMSdBridgeConfig(), testListenDevice, nil, nil, pairing.AlwaysApproveSync)
+	defer collaborators.Close()
+
+	assert.Nil(t, collaborators.syncSources)
+	assert.Nil(t, bridgeCfg.SyncService)
+	assert.Nil(t, bridgeCfg.BackupOATH)
+	assert.Equal(t, collaborators.oathStore, bridgeCfg.OATHStore)
 }
 
 // TestBuildListenBridgeConfig_SyncTrustStoreRequestReachesRealStore proves a

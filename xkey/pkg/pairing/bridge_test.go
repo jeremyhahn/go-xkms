@@ -75,6 +75,11 @@ type mockTransportClient struct {
 
 	attestKeyResp *transport.AttestKeyResponse
 	attestKeyErr  error
+
+	// caCertResp and caBundleResp are served by GetCACertificate and
+	// GetCABundle; when unset, those methods report errNotImplemented.
+	caCertResp   *transport.GetCACertificateResponse
+	caBundleResp *transport.GetCABundleResponse
 }
 
 var errNotImplemented = errors.New("not implemented")
@@ -338,11 +343,17 @@ func (m *mockTransportClient) ActivateInvitePIV(_ context.Context, _ *transport.
 }
 
 func (m *mockTransportClient) GetCABundle(_ context.Context, _ *transport.GetCABundleRequest) (*transport.GetCABundleResponse, error) {
-	return nil, errNotImplemented
+	if m.caBundleResp == nil {
+		return nil, errNotImplemented
+	}
+	return m.caBundleResp, nil
 }
 
 func (m *mockTransportClient) GetCACertificate(_ context.Context, _ *transport.GetCACertificateRequest) (*transport.GetCACertificateResponse, error) {
-	return nil, errNotImplemented
+	if m.caCertResp == nil {
+		return nil, errNotImplemented
+	}
+	return m.caCertResp, nil
 }
 
 func (m *mockTransportClient) SignCSR(_ context.Context, _ *transport.SignCSRRequest) (*transport.SignCSRResponse, error) {

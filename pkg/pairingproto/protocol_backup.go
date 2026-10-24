@@ -78,15 +78,21 @@ type LocalRestoreBackupResult struct {
 
 // RemoteCreateBackupParams contains parameters for remote.createBackup.
 // The phone asks the laptop to create an encrypted backup and return it.
+// Password seals the backup the way "xkey backup create --password" does
+// (backup.NewPasswordKey). It is required: the bridge has no channel to hand
+// the operator a generated key, so an empty password is refused.
 type RemoteCreateBackupParams struct {
 	IncludeTrustStore bool   `json:"include_trust_store"`
 	IncludeOATH       bool   `json:"include_oath"`
 	IncludePasswords  bool   `json:"include_passwords"`
 	IncludeCA         bool   `json:"include_ca"`
 	Label             string `json:"label,omitempty"`
+	Password          string `json:"password"`
 }
 
 // RemoteCreateBackupResult contains the result of remote.createBackup.
+// BackupData is the JSON encoding of a backup.EncryptedBackup envelope, the
+// same format "xkey backup create" writes to disk.
 type RemoteCreateBackupResult struct {
 	BackupData []byte `json:"backup_data"`
 	BackupID   string `json:"backup_id"`
@@ -96,16 +102,50 @@ type RemoteCreateBackupResult struct {
 // --- remote.restoreBackup ---
 
 // RemoteRestoreBackupParams contains parameters for remote.restoreBackup.
-// The phone sends an encrypted backup blob to the laptop for restoration.
+// The phone sends an encrypted backup blob to the laptop for restoration:
+// the JSON encoding of a backup.EncryptedBackup envelope, as returned in
+// RemoteCreateBackupResult.BackupData. Password must be the password the
+// backup was created with; the key is re-derived from it and the KDF record
+// in the envelope (backup.DerivePasswordKey). It is required.
 type RemoteRestoreBackupParams struct {
 	BackupData []byte `json:"backup_data"`
+	Password   string `json:"password"`
 }
 
 // RemoteRestoreBackupResult contains the result of remote.restoreBackup.
+// Restored lists the backup.Item* category names that had at least one entry
+// restored into a store this host has configured.
 type RemoteRestoreBackupResult struct {
 	Success  bool     `json:"success"`
 	Restored []string `json:"restored"`
 	Message  string   `json:"message,omitempty"`
+
+	// Items reports each category the laptop restored into one of its
+	// stores, with the entries that store rejected. Success is true only
+	// when no item has a skipped entry; a quarantined certificate is
+	// pending, not a failure.
+	Items []RemoteRestoreBackupItem `json:"items,omitempty"`
+}
+
+// RemoteRestoreBackupItem is the restore outcome of one backup category.
+type RemoteRestoreBackupItem struct {
+	// Item names the category, e.g. "trust_store", "oath" or "passwords".
+	Item string `json:"item"`
+
+	// Restored counts the entries written to the store.
+	Restored int `json:"restored"`
+
+	// Quarantined counts the certificates written to the trust store under
+	// the sync quarantine purpose. A phone-supplied certificate is never
+	// trusted as it arrives: it stays pending until the desktop operator
+	// reclassifies it, so a phone shows it as pending, not restored.
+	Quarantined int `json:"quarantined,omitempty"`
+
+	// Skipped counts the entries the store rejected or could not decode.
+	Skipped int `json:"skipped"`
+
+	// Errors describes each skipped entry by its ID, never its secret.
+	Errors []string `json:"errors,omitempty"`
 }
 
 // --- remote.listBackups ---

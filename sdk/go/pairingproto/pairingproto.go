@@ -161,6 +161,7 @@ const (
 	ErrorCodeSyncFailed           = pairingproto.ErrorCodeSyncFailed
 	ErrorCodeSyncNoData           = pairingproto.ErrorCodeSyncNoData
 	ErrorCodeSyncNotApproved      = pairingproto.ErrorCodeSyncNotApproved
+	ErrorCodeMessageTooLarge      = pairingproto.ErrorCodeMessageTooLarge
 	ErrorCodeSyncRemoteUnavail    = pairingproto.ErrorCodeSyncRemoteUnavail
 	ErrorCodeSyncVersionMismatch  = pairingproto.ErrorCodeSyncVersionMismatch
 	ErrorCodeUnsupportedAlg       = pairingproto.ErrorCodeUnsupportedAlg
@@ -168,17 +169,18 @@ const (
 
 // Envelope, transport, framing and error types.
 type (
-	DetailError        = pairingproto.DetailError
-	Fragmenter         = pairingproto.Fragmenter
-	HandshakeConfig    = pairingproto.HandshakeConfig
-	LiveAttestFunc     = pairingproto.LiveAttestFunc
-	RPCError           = pairingproto.RPCError
-	RPCExchange        = pairingproto.RPCExchange
-	Reassembler        = pairingproto.Reassembler
-	Request            = pairingproto.Request
-	Response           = pairingproto.Response
-	SentinelCauseError = pairingproto.SentinelCauseError
-	Transport          = pairingproto.Transport
+	DetailError          = pairingproto.DetailError
+	Fragmenter           = pairingproto.Fragmenter
+	HandshakeConfig      = pairingproto.HandshakeConfig
+	LiveAttestFunc       = pairingproto.LiveAttestFunc
+	RPCError             = pairingproto.RPCError
+	RPCExchange          = pairingproto.RPCExchange
+	Reassembler          = pairingproto.Reassembler
+	Request              = pairingproto.Request
+	Response             = pairingproto.Response
+	SentinelCauseError   = pairingproto.SentinelCauseError
+	MessageTooLargeError = pairingproto.MessageTooLargeError
+	Transport            = pairingproto.Transport
 )
 
 // Method parameter and result types.
@@ -253,6 +255,7 @@ type (
 	RemoteAttestKeyParams                 = pairingproto.RemoteAttestKeyParams
 	RemoteAttestKeyResult                 = pairingproto.RemoteAttestKeyResult
 	RemoteCreateBackupParams              = pairingproto.RemoteCreateBackupParams
+	RemoteCreateBackupResult              = pairingproto.RemoteCreateBackupResult
 	RemoteDecryptParams                   = pairingproto.RemoteDecryptParams
 	RemoteDecryptResult                   = pairingproto.RemoteDecryptResult
 	RemoteDeleteKeyParams                 = pairingproto.RemoteDeleteKeyParams
@@ -288,6 +291,8 @@ type (
 	RemotePIVSignParams                   = pairingproto.RemotePIVSignParams
 	RemotePIVSignResult                   = pairingproto.RemotePIVSignResult
 	RemoteRestoreBackupParams             = pairingproto.RemoteRestoreBackupParams
+	RemoteRestoreBackupResult             = pairingproto.RemoteRestoreBackupResult
+	RemoteRestoreBackupItem               = pairingproto.RemoteRestoreBackupItem
 	RemoteSharePublicKeyParams            = pairingproto.RemoteSharePublicKeyParams
 	RemoteSharePublicKeyResult            = pairingproto.RemoteSharePublicKeyResult
 	RemoteShareSymmetricParams            = pairingproto.RemoteShareSymmetricParams
@@ -347,6 +352,7 @@ var (
 	ErrBackupFailed             = pairingproto.ErrBackupFailed
 	ErrBackupNotConfigured      = pairingproto.ErrBackupNotConfigured
 	ErrBackupNotFound           = pairingproto.ErrBackupNotFound
+	ErrBackupPasswordRequired   = pairingproto.ErrBackupPasswordRequired
 	ErrBackupRestoreFailed      = pairingproto.ErrBackupRestoreFailed
 	ErrBiometricFailed          = pairingproto.ErrBiometricFailed
 	ErrBridgeBackendDenied      = pairingproto.ErrBridgeBackendDenied
@@ -390,6 +396,7 @@ var (
 	ErrPairingFailed            = pairingproto.ErrPairingFailed
 	ErrPairingRejected          = pairingproto.ErrPairingRejected
 	ErrProtocolError            = pairingproto.ErrProtocolError
+	ErrMessageTooLarge          = pairingproto.ErrMessageTooLarge
 	ErrSequenceNumber           = pairingproto.ErrSequenceNumber
 	ErrSessionExpired           = pairingproto.ErrSessionExpired
 	ErrShareDenied              = pairingproto.ErrShareDenied

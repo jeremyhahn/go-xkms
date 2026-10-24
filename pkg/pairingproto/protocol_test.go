@@ -220,6 +220,7 @@ func TestMapRPCError(t *testing.T) {
 		{"invalid format", &RPCError{Code: ErrorCodeInvalidFormat}, ErrInvalidFormat},
 		{"parse error", &RPCError{Code: ErrorCodeParseError}, ErrProtocolError},
 		{"internal error", &RPCError{Code: ErrorCodeInternalError}, ErrInvalidResponse},
+		{"message too large", &RPCError{Code: ErrorCodeMessageTooLarge}, ErrMessageTooLarge},
 		{"unknown", &RPCError{Code: -99999}, ErrProtocolError},
 	}
 

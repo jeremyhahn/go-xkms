@@ -275,6 +275,8 @@ func resolveListenEnroller(
 // them too, following resolveListenEnroller's own precedent of staying
 // "Listen"-named once shared rather than renaming for every new caller.
 type listenBridgeCollaborators struct {
+	// oathStore is set only when syncSources holds no OATH store; otherwise
+	// the bridge shares syncSources' store, which syncSources closes.
 	oathStore   oath.Store
 	syncSources *backupSources
 }
@@ -385,19 +387,28 @@ func buildListenBridgeConfig(
 ) (*pairing.BridgeConfig, *listenBridgeCollaborators) {
 	collaborators := &listenBridgeCollaborators{}
 
-	if oathStore, oathErr := openOATHStore(cmd, ""); oathErr != nil {
-		logger.Warn("OATH store unavailable; remote.oath* will report unconfigured",
-			slog.String("error", oathErr.Error()))
-	} else {
-		collaborators.oathStore = oathStore
-	}
-
 	syncService, syncSources, syncErr := openSyncService(cmd)
 	if syncErr != nil {
 		logger.Warn("sync service unavailable; remote.sync* will report unconfigured",
 			slog.String("error", syncErr.Error()))
 	} else {
 		collaborators.syncSources = syncSources
+	}
+
+	// remote.oath*, remote.sync* and the backup handlers share one OATH
+	// store. A file-backed store reads its file only when it opens, so a
+	// second instance would serve a stale copy and overwrite the other's
+	// writes (go-xkms#1693). The sync sources own the shared store; a store
+	// is opened here only when the sync service could not open one.
+	var oathStore oath.Store
+	if syncSources != nil && syncSources.oath != nil {
+		oathStore = syncSources.oath.store
+	} else if opened, oathErr := openOATHStore(cmd, ""); oathErr != nil {
+		logger.Warn("OATH store unavailable; remote.oath* will report unconfigured",
+			slog.String("error", oathErr.Error()))
+	} else {
+		oathStore = opened
+		collaborators.oathStore = opened
 	}
 
 	bridgeCfg := &pairing.BridgeConfig{
@@ -407,7 +418,7 @@ func buildListenBridgeConfig(
 		Logger:          logger,
 		TPM:             enroller,
 		TPMOpenErr:      enrollerErr,
-		OATHStore:       collaborators.oathStore,
+		OATHStore:       oathStore,
 		PIVStorage:      listenPIVStorageProvider(cmd, logger),
 		SyncService:     syncService,
 		SyncApproval:    syncApproval,
@@ -415,8 +426,28 @@ func buildListenBridgeConfig(
 		DeviceID:        device.Address,
 		DeviceName:      device.Name,
 	}
+	setBridgeBackupStores(bridgeCfg, collaborators.syncSources)
 
 	return bridgeCfg, collaborators
+}
+
+// setBridgeBackupStores points the bridge's remote.createBackup and
+// remote.restoreBackup at the stores the sync service already opened, which
+// are the stores "xkey backup" reads and writes. A store that is missing on
+// this host stays nil, so its category is left out rather than faked.
+func setBridgeBackupStores(cfg *pairing.BridgeConfig, sources *backupSources) {
+	if sources == nil {
+		return
+	}
+	if sources.trust != nil {
+		cfg.BackupTrustStore = sources.trust
+	}
+	if sources.oath != nil {
+		cfg.BackupOATH = sources.oath
+	}
+	if sources.passwords != nil {
+		cfg.BackupPasswords = sources.passwords
+	}
 }
 
 // connectListenBridge creates the xkmsd bridge that serves the phone's

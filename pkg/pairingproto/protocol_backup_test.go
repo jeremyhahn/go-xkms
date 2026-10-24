@@ -292,6 +292,7 @@ func TestRemoteCreateBackupParams_JSONRoundTrip(t *testing.T) {
 		IncludePasswords:  false,
 		IncludeCA:         true,
 		Label:             "full-backup",
+		Password:          "correct horse battery staple",
 	}
 
 	data, err := json.Marshal(original)
@@ -301,11 +302,17 @@ func TestRemoteCreateBackupParams_JSONRoundTrip(t *testing.T) {
 	err = json.Unmarshal(data, &decoded)
 	require.NoError(t, err)
 
-	assert.Equal(t, original.IncludeTrustStore, decoded.IncludeTrustStore)
-	assert.Equal(t, original.IncludeOATH, decoded.IncludeOATH)
-	assert.Equal(t, original.IncludePasswords, decoded.IncludePasswords)
-	assert.Equal(t, original.IncludeCA, decoded.IncludeCA)
-	assert.Equal(t, original.Label, decoded.Label)
+	assert.Equal(t, *original, decoded)
+}
+
+// TestRemoteBackupParams_PasswordWrongType verifies that a password that is
+// not a JSON string is refused when the params are decoded.
+func TestRemoteBackupParams_PasswordWrongType(t *testing.T) {
+	var create RemoteCreateBackupParams
+	require.Error(t, json.Unmarshal([]byte(`{"include_oath":true,"password":42}`), &create))
+
+	var restore RemoteRestoreBackupParams
+	require.Error(t, json.Unmarshal([]byte(`{"backup_data":"AQ==","password":["x"]}`), &restore))
 }
 
 func TestRemoteCreateBackupParams_JSONFieldNames(t *testing.T) {
@@ -315,6 +322,7 @@ func TestRemoteCreateBackupParams_JSONFieldNames(t *testing.T) {
 		IncludePasswords:  true,
 		IncludeCA:         true,
 		Label:             "test",
+		Password:          "pw",
 	}
 
 	data, err := json.Marshal(params)
@@ -326,7 +334,7 @@ func TestRemoteCreateBackupParams_JSONFieldNames(t *testing.T) {
 
 	expectedFields := []string{
 		"include_trust_store", "include_oath", "include_passwords",
-		"include_ca", "label",
+		"include_ca", "label", "password",
 	}
 	for _, field := range expectedFields {
 		assert.Contains(t, raw, field, "expected JSON field %q", field)
@@ -392,6 +400,7 @@ func TestRemoteCreateBackupResult_JSONFieldNames(t *testing.T) {
 func TestRemoteRestoreBackupParams_JSONRoundTrip(t *testing.T) {
 	original := &RemoteRestoreBackupParams{
 		BackupData: []byte{0xDE, 0xAD, 0xBE, 0xEF, 0xCA, 0xFE},
+		Password:   "correct horse battery staple",
 	}
 
 	data, err := json.Marshal(original)
@@ -401,12 +410,13 @@ func TestRemoteRestoreBackupParams_JSONRoundTrip(t *testing.T) {
 	err = json.Unmarshal(data, &decoded)
 	require.NoError(t, err)
 
-	assert.Equal(t, original.BackupData, decoded.BackupData)
+	assert.Equal(t, *original, decoded)
 }
 
 func TestRemoteRestoreBackupParams_JSONFieldNames(t *testing.T) {
 	params := RemoteRestoreBackupParams{
 		BackupData: []byte{0x01},
+		Password:   "pw",
 	}
 
 	data, err := json.Marshal(params)
@@ -417,13 +427,18 @@ func TestRemoteRestoreBackupParams_JSONFieldNames(t *testing.T) {
 	require.NoError(t, err)
 
 	assert.Contains(t, raw, "backup_data")
+	assert.Contains(t, raw, "password")
 }
 
 func TestRemoteRestoreBackupResult_JSONRoundTrip(t *testing.T) {
 	original := &RemoteRestoreBackupResult{
-		Success:  true,
-		Restored: []string{"trust_store", "oath", "ca"},
-		Message:  "restored 42 items",
+		Success:  false,
+		Restored: []string{"trust_store"},
+		Message:  "trust_store: 2 restored, 0 skipped; passwords: 0 restored, 1 skipped",
+		Items: []RemoteRestoreBackupItem{
+			{Item: "trust_store", Restored: 2},
+			{Item: "passwords", Skipped: 1, Errors: []string{"password router: store full"}},
+		},
 	}
 
 	data, err := json.Marshal(original)
@@ -433,9 +448,20 @@ func TestRemoteRestoreBackupResult_JSONRoundTrip(t *testing.T) {
 	err = json.Unmarshal(data, &decoded)
 	require.NoError(t, err)
 
-	assert.Equal(t, original.Success, decoded.Success)
-	assert.Equal(t, original.Restored, decoded.Restored)
-	assert.Equal(t, original.Message, decoded.Message)
+	assert.Equal(t, *original, decoded)
+
+	var raw map[string]interface{}
+	require.NoError(t, json.Unmarshal(data, &raw))
+	items, ok := raw["items"].([]interface{})
+	require.True(t, ok, "items must be a JSON array")
+	require.Len(t, items, 2)
+	assert.Equal(t, map[string]interface{}{"item": "trust_store", "restored": float64(2), "skipped": float64(0)}, items[0])
+	assert.Contains(t, items[1], "errors")
+}
+
+func TestRemoteRestoreBackupResult_ItemsWrongType(t *testing.T) {
+	var decoded RemoteRestoreBackupResult
+	require.Error(t, json.Unmarshal([]byte(`{"success":true,"restored":[],"items":[{"item":"oath","skipped":"one"}]}`), &decoded))
 }
 
 func TestRemoteRestoreBackupResult_OmitEmptyMessage(t *testing.T) {

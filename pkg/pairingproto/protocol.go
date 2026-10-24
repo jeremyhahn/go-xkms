@@ -137,6 +137,11 @@ const (
 	// specific request -- an operator declined, a session was not started
 	// with sync allowed, or enterprise policy locks it off.
 	ErrorCodeSyncNotApproved = -32039
+
+	// ErrorCodeMessageTooLarge means the answer to a request did not fit
+	// the transport's frame limit, so it was not sent. The caller asks for
+	// less data at once -- for remote.createBackup, fewer categories.
+	ErrorCodeMessageTooLarge = -32040
 )
 
 // requestIDCounter provides unique request IDs.
@@ -364,6 +369,8 @@ var rpcErrorMap = map[int]error{
 	// Sync approval error codes.
 	ErrorCodeSyncApprovalRequired: ErrSyncApprovalRequired,
 	ErrorCodeSyncNotApproved:      ErrSyncNotApproved,
+	// Transport error codes.
+	ErrorCodeMessageTooLarge: ErrMessageTooLarge,
 }
 
 // MapRPCError maps JSON-RPC error codes to package errors.

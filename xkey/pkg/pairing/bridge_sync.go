@@ -290,7 +290,8 @@ func (b *Bridge) handleSyncStatus(_ context.Context, _ json.RawMessage) (interfa
 	}, nil
 }
 
-// approveSync gates one secret-exporting remote.sync* call. A nil
+// approveSync gates one secret-exporting remote.sync* call, or a
+// remote.createBackup that includes the OATH or password store. A nil
 // SyncApproval refuses outright (ErrSyncApprovalRequired): the bridge never
 // exports the password vault or OATH secrets on the strength of the Noise
 // session alone. A configured approver that returns an error refuses with

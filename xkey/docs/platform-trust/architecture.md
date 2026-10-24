@@ -39,7 +39,7 @@ is not a universal trust anchor; it is an unclassified one.
 
 **Sync never chooses a purpose.** Certificates a paired device sends through
 `remote.syncTrustStore`, `xkey device sync`, or CA sync are stored as `synced`
-(`xkey/pkg/sync/service.go`, `syncedImportOptions`), never auto-classified: a
+(`xkey/pkg/sync/service.go`, `QuarantineImportOptions`), never auto-classified: a
 phone is a peer, not an authority over this host's roots. `synced` is absent
 from the TLS anchor set (`tlsAnchorPurposes`, `pkg/attestation/truststore/import.go`)
 and refused by the attestation verifier's pool builder

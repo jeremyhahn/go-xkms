@@ -307,6 +307,9 @@ type (
 // NoiseKeySize is the length of a Noise static public key.
 const NoiseKeySize = pkgbootstrap.NoiseKeySize
 
+// NoiseMaxMessageSize is the largest plaintext a NoiseSession encrypts.
+const NoiseMaxMessageSize = pkgbootstrap.NoiseMaxMessageSize
+
 var (
 	// NewNoiseSession constructs a Noise transport session.
 	NewNoiseSession = pkgbootstrap.NewNoiseSession

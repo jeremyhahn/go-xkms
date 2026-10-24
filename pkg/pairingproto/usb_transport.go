@@ -340,7 +340,7 @@ func (t *USBTransport) Send(ctx context.Context, message []byte) error {
 		return ErrNotConnected
 	}
 	if len(message) > MaxUSBMessageSize {
-		return ErrProtocolError
+		return &MessageTooLargeError{Size: len(message), Limit: MaxUSBMessageSize}
 	}
 
 	t.mu.Lock()

@@ -140,6 +140,7 @@ func TestUSBTransport_MessageTooLarge(t *testing.T) {
 	largeMessage := make([]byte, MaxUSBMessageSize+1)
 	err = transport.Send(t.Context(), largeMessage)
 	assert.ErrorIs(t, err, ErrProtocolError)
+	assert.ErrorIs(t, err, ErrMessageTooLarge)
 }
 
 func TestAOAConstants(t *testing.T) {

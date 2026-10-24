@@ -96,16 +96,29 @@ type BridgeConfig struct {
 	// SyncApproval gates remote.syncPasswords, remote.syncOATH and
 	// remote.syncAll -- the three methods that export this host's password
 	// vault or OATH secrets to the phone -- behind an explicit desktop-side
-	// decision. remote.syncTrustStore (public certificates) and
-	// remote.syncStatus (metadata) are not gated by it.
+	// decision. It gates remote.createBackup the same way whenever the backup
+	// would include the OATH or password store. remote.syncTrustStore
+	// (public certificates), remote.syncStatus (metadata), and a backup of
+	// only the trust store or CA are not gated by it.
 	//
-	// Required for those three methods to serve anything: nil fails every
-	// one of them closed with ErrSyncApprovalRequired rather than exporting
+	// Required for those methods to serve secrets: nil fails every one of
+	// them closed with ErrSyncApprovalRequired rather than exporting
 	// secrets with no desktop check at all. A caller that wants the
 	// existing "trust whoever the Noise session already pinned" behavior
 	// must say so explicitly, by supplying an approver that always allows
 	// (AlwaysApproveSync), not by leaving this nil.
 	SyncApproval SyncApprovalFunc
+
+	// BackupTrustStore, BackupOATH and BackupPasswords are the stores
+	// remote.createBackup archives and remote.restoreBackup restores into:
+	// the same stores "xkey backup create" and "xkey backup restore" use.
+	// Each is optional. A nil store's category is left out of a backup and
+	// is not restored; with all three nil, remote.restoreBackup and a
+	// remote.createBackup that asks for no CA data report
+	// ErrBackupNotConfigured.
+	BackupTrustStore BackupTrustStore
+	BackupOATH       BackupOATHStore
+	BackupPasswords  BackupPasswordStore
 }
 
 // SyncApprovalRequest describes one remote.sync* call the bridge is about to
@@ -113,7 +126,7 @@ type BridgeConfig struct {
 // against policy.
 type SyncApprovalRequest struct {
 	// Method is the JSON-RPC method being approved: remote.syncPasswords,
-	// remote.syncOATH, or remote.syncAll.
+	// remote.syncOATH, remote.syncAll, or remote.createBackup.
 	Method string
 
 	// DeviceName is the paired phone's name, from BridgeConfig.DeviceName.
@@ -180,9 +193,16 @@ type Bridge struct {
 	// remote.syncStatus which reports an empty status instead.
 	syncService *xkeysync.Service
 
-	// syncApproval gates the secret-exporting sync methods. nil refuses all
-	// three with ErrSyncApprovalRequired; see BridgeConfig.SyncApproval.
+	// syncApproval gates the secret-exporting sync and backup methods. nil
+	// refuses them with ErrSyncApprovalRequired; see BridgeConfig.SyncApproval.
 	syncApproval SyncApprovalFunc
+
+	// backupTrustStore, backupOATH and backupPasswords are the stores the
+	// remote.*Backup methods archive and restore. Each is optional; see
+	// BridgeConfig.BackupTrustStore.
+	backupTrustStore BackupTrustStore
+	backupOATH       BackupOATHStore
+	backupPasswords  BackupPasswordStore
 
 	// Pre-computed lookup sets for O(1) access control checks.
 	allowedSet map[string]struct{}
@@ -217,6 +237,10 @@ func NewBridge(client transport.Client, config *BridgeConfig) (*Bridge, error) {
 		pivStorage:   config.PIVStorage,
 		syncService:  config.SyncService,
 		syncApproval: config.SyncApproval,
+
+		backupTrustStore: config.BackupTrustStore,
+		backupOATH:       config.BackupOATH,
+		backupPasswords:  config.BackupPasswords,
 	}
 
 	// Build O(1) access control lookup sets.
@@ -279,7 +303,7 @@ func NewBridge(client transport.Client, config *BridgeConfig) (*Bridge, error) {
 // responsible for encrypting/decrypting with Noise.
 func (b *Bridge) HandleRequest(ctx context.Context, req *pairingproto.Request) *pairingproto.Response {
 	if req == nil {
-		return b.errorResponse(0, 0, pairingproto.ErrorCodeInvalidRequest, "nil request")
+		return errorResponse(0, 0, pairingproto.ErrorCodeInvalidRequest, "nil request")
 	}
 
 	b.logger.Debug("handling remote request",
@@ -290,7 +314,7 @@ func (b *Bridge) HandleRequest(ctx context.Context, req *pairingproto.Request) *
 	handler, ok := b.handlers[req.Method]
 	if !ok {
 		b.logger.Warn("unknown remote method", "method", req.Method)
-		return b.errorResponse(req.ID, req.Generation, pairingproto.ErrorCodeMethodNotFound, "unknown method: "+req.Method)
+		return errorResponse(req.ID, req.Generation, pairingproto.ErrorCodeMethodNotFound, "unknown method: "+req.Method)
 	}
 
 	// Marshal params to json.RawMessage for handler consumption.
@@ -299,7 +323,7 @@ func (b *Bridge) HandleRequest(ctx context.Context, req *pairingproto.Request) *
 		data, err := json.Marshal(req.Params)
 		if err != nil {
 			b.logger.Error("failed to marshal request params", "error", err)
-			return b.errorResponse(req.ID, req.Generation, pairingproto.ErrorCodeInvalidParams, "invalid parameters")
+			return errorResponse(req.ID, req.Generation, pairingproto.ErrorCodeInvalidParams, "invalid parameters")
 		}
 		rawParams = data
 	}
@@ -324,7 +348,7 @@ func (b *Bridge) HandleRequest(ctx context.Context, req *pairingproto.Request) *
 	resultData, err := json.Marshal(result)
 	if err != nil {
 		b.logger.Error("failed to marshal result", "error", err)
-		return b.errorResponse(req.ID, req.Generation, pairingproto.ErrorCodeInternalError, "failed to encode result")
+		return errorResponse(req.ID, req.Generation, pairingproto.ErrorCodeInternalError, "failed to encode result")
 	}
 
 	// Generation is echoed verbatim: routeResponse on the initiator's side
@@ -999,12 +1023,12 @@ func (b *Bridge) computeDeviceFingerprint(backends []transport.BackendInfo, hasT
 // handleError maps Go errors to JSON-RPC error responses.
 func (b *Bridge) handleError(id, generation uint64, err error) *pairingproto.Response {
 	code, message := mapErrorToRPC(err)
-	return b.errorResponse(id, generation, code, message)
+	return errorResponse(id, generation, code, message)
 }
 
 // errorResponse constructs a JSON-RPC error response. generation must echo
 // the answered request's Generation verbatim -- see Request.Generation.
-func (b *Bridge) errorResponse(id, generation uint64, code int, message string) *pairingproto.Response {
+func errorResponse(id, generation uint64, code int, message string) *pairingproto.Response {
 	return &pairingproto.Response{
 		JSONRPC:    pairingproto.JSONRPCVersion,
 		ID:         id,
@@ -1101,6 +1125,8 @@ func mapErrorToRPC(err error) (int, string) {
 		return pairingproto.ErrorCodeSyncApprovalRequired, "phone: exporting secrets to the phone requires desktop approval, which is not configured on this host"
 	case errors.Is(err, pairingproto.ErrSyncNotApproved):
 		return pairingproto.ErrorCodeSyncNotApproved, "phone: the desktop refused to export secrets to the phone"
+	case errors.Is(err, pairingproto.ErrMessageTooLarge):
+		return pairingproto.ErrorCodeMessageTooLarge, "the response exceeds the transport's message limit; request less data at once, such as a backup of fewer categories"
 	}
 
 	// Fall through to a generic internal error for unrecognized errors.

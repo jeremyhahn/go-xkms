@@ -150,6 +150,10 @@ OATH (`remote.oathAdd`, `remote.oathGenerate`, `protocol_oath.go:41-45`), PIV
 `remote.syncPasswords`, `remote.syncAll`, `remote.syncStatus`,
 `protocol_sync.go:43-59`) and backup (`remote.createBackup`,
 `remote.restoreBackup`, `remote.listBackups`, `protocol_backup.go:34-42`).
+`remote.createBackup` and `remote.restoreBackup` require a `password`. The
+laptop derives the backup key from it exactly as `xkey backup` does, and an
+empty one is refused with `-32602`. See
+[`../phone-hsm/engineering.md`](../phone-hsm/engineering.md).
 
 ### remote.listBackends
 
@@ -300,6 +304,7 @@ The FIDO2 methods are documented in the [BLE Protocol Specification](../ble/prot
 | -32037 | `ErrorCodeAttestProtocolDowngrade` |
 | -32038 | `ErrorCodeSyncApprovalRequired` |
 | -32039 | `ErrorCodeSyncNotApproved` |
+| -32040 | `ErrorCodeMessageTooLarge` |
 
 ---
 

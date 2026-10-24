@@ -29,7 +29,7 @@ general | tpm-manufacturer | android-hardware | user-ca | bootstrap-ca | idevid-
 ```
 
 `synced` is the quarantine every certificate arriving through sync is stored
-under (`xkey/pkg/sync/service.go`, `syncedImportOptions`, through
+under (`xkey/pkg/sync/service.go`, `QuarantineImportOptions`, through
 `TrustStoreAccessor.ImportPEM`). `truststore.IsAnchorPurpose` is false for it,
 and the attestation verifier's pool builder refuses it with
 `ErrUnsupportedPurpose`; it is absent from `tlsAnchorPurposes`.

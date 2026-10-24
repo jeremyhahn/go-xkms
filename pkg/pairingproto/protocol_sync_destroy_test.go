@@ -75,3 +75,50 @@ func TestLocalSync_DestroyOnEmptyCollectionsIsSafe(t *testing.T) {
 		(&LocalSyncPasswordsResult{}).Destroy()
 	})
 }
+
+func TestRemoteSyncParams_DestroyWipesEverySecret(t *testing.T) {
+	oath := &RemoteSyncOATHParams{Credentials: []SyncOATHCredential{
+		{ID: "a", Secret: mustSecretText("JBSWY3DPEHPK3PXP")},
+	}}
+	before := []xkms.SecretText{oath.Credentials[0].Secret}
+	oath.Destroy()
+	assertDestroyed(t, []xkms.SecretText{oath.Credentials[0].Secret}, before)
+
+	passwords := &RemoteSyncPasswordsParams{Passwords: []SyncPassword{
+		{ID: "b", Password: mustSecretText("hunter2")},
+	}}
+	before = []xkms.SecretText{passwords.Passwords[0].Password}
+	passwords.Destroy()
+	assertDestroyed(t, []xkms.SecretText{passwords.Passwords[0].Password}, before)
+}
+
+func TestRemoteResults_DestroyZeroesKeyMaterial(t *testing.T) {
+	plaintext := []byte("plaintext")
+	shared := []byte("shared secret")
+	credential := []byte("credential")
+	wrapped := []byte("wrapped key")
+
+	(&RemoteDecryptResult{Plaintext: plaintext}).Destroy()
+	(&RemoteDeriveKeyResult{SharedSecret: shared}).Destroy()
+	(&RemoteActivateCredentialResult{DecryptedSecret: credential}).Destroy()
+	(&RemoteImportSharedKeyResult{WrappedKey: wrapped}).Destroy()
+
+	for name, buf := range map[string][]byte{
+		"plaintext": plaintext, "shared secret": shared,
+		"credential": credential, "wrapped key": wrapped,
+	} {
+		assert.Equal(t, make([]byte, len(buf)), buf, "%s was not zeroed", name)
+	}
+}
+
+func TestRemoteResults_DestroyOnEmptyFieldsIsSafe(t *testing.T) {
+	// An error path encodes no key material but still runs the deferred Destroy.
+	assert.NotPanics(t, func() {
+		(&RemoteDecryptResult{}).Destroy()
+		(&RemoteDeriveKeyResult{}).Destroy()
+		(&RemoteActivateCredentialResult{}).Destroy()
+		(&RemoteImportSharedKeyResult{}).Destroy()
+		(&RemoteSyncOATHParams{}).Destroy()
+		(&RemoteSyncPasswordsParams{}).Destroy()
+	})
+}

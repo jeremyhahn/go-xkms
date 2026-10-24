@@ -170,7 +170,7 @@ func (t *TCPTransport) Send(ctx context.Context, message []byte) error {
 		return pairingproto.ErrNotConnected
 	}
 	if len(message) > MaxTCPMessageSize {
-		return pairingproto.ErrProtocolError
+		return &pairingproto.MessageTooLargeError{Size: len(message), Limit: MaxTCPMessageSize}
 	}
 
 	// Build the framed message: [2-byte big-endian length][payload]

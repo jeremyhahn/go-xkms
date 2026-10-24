@@ -294,8 +294,9 @@ The key-operation codes (`protocol.go:53-60`):
 | -32006 | `ErrorCodeStorageFull` |
 | -32007 | `ErrorCodeOperationTimeout` |
 
-Codes -32008 through -32039 cover backend denial, attestation, ECDH/HMAC,
-pairing, sharing, backup, OATH, PIV and sync (`protocol.go:61-138`).
+Codes -32008 through -32040 cover backend denial, attestation, ECDH/HMAC,
+pairing, sharing, backup, OATH, PIV, sync and the transport message limit
+(`protocol.go:62-144`).
 
 ## COSE Key Format
 
