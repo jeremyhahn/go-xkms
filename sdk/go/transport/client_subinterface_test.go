@@ -686,3 +686,6 @@ func (*stubClient) DeleteSigningKeyBinding(context.Context, *DeleteSigningKeyBin
 func (*stubClient) ResolveSigningKey(context.Context, *ResolveSigningKeyRequest) (*SigningKeyResolution, error) {
 	return nil, nil
 }
+func (*stubClient) SignCoRIM(context.Context, *SignCoRIMRequest) (*SignedCoRIM, error) {
+	return nil, nil
+}

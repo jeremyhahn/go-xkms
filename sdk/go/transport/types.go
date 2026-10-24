@@ -367,6 +367,8 @@ type ListSigningKeyBindingsResponse = pkgtransport.ListSigningKeyBindingsRespons
 type DeleteSigningKeyBindingRequest = pkgtransport.DeleteSigningKeyBindingRequest
 type ResolveSigningKeyRequest = pkgtransport.ResolveSigningKeyRequest
 type SigningKeyResolution = pkgtransport.SigningKeyResolution
+type SignCoRIMRequest = pkgtransport.SignCoRIMRequest
+type SignedCoRIM = pkgtransport.SignedCoRIM
 type OIDCDeviceLogin = pkgtransport.OIDCDeviceLogin
 type OIDCAccessToken = pkgtransport.OIDCAccessToken
 

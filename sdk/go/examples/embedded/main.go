@@ -904,3 +904,6 @@ func (*MockXKMSService) DeleteSigningKeyBinding(context.Context, *transport.Dele
 func (*MockXKMSService) ResolveSigningKey(context.Context, *transport.ResolveSigningKeyRequest) (*transport.SigningKeyResolution, error) {
 	return nil, nil
 }
+func (*MockXKMSService) SignCoRIM(context.Context, *transport.SignCoRIMRequest) (*transport.SignedCoRIM, error) {
+	return nil, nil
+}

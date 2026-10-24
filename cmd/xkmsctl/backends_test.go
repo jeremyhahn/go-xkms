@@ -1188,3 +1188,6 @@ func (*mockBackendsClient) DeleteSigningKeyBinding(context.Context, *transport.D
 func (*mockBackendsClient) ResolveSigningKey(context.Context, *transport.ResolveSigningKeyRequest) (*transport.SigningKeyResolution, error) {
 	return nil, nil
 }
+func (*mockBackendsClient) SignCoRIM(context.Context, *transport.SignCoRIMRequest) (*transport.SignedCoRIM, error) {
+	return nil, nil
+}

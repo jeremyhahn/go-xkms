@@ -118,6 +118,11 @@ type (
 	ResolveAttestationSigningKeyRequest = appraisal.ResolveSigningKeyRequest
 	// AttestationSigningKeyResolution is the key that signs a repository.
 	AttestationSigningKeyResolution = appraisal.SigningKeyResolution
+	// SignAttestationCoRIMRequest is a repository's CoRIM to sign with the
+	// key the repository resolves to, draft-ietf-rats-corim-11 §4.2.
+	SignAttestationCoRIMRequest = appraisal.SignCoRIMRequest
+	// SignedAttestationCoRIM is the signed CoRIM and the key that signed it.
+	SignedAttestationCoRIM = appraisal.SignedCoRIM
 	// AttestationSigningKeySource returns the public half of a tenant key.
 	AttestationSigningKeySource = appraisal.SigningKeySource
 	// AttestationTenantSigningKeys resolves the keys of one tenant's

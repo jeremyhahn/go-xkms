@@ -1833,3 +1833,6 @@ func (*mockCAClient) DeleteSigningKeyBinding(context.Context, *transport.DeleteS
 func (*mockCAClient) ResolveSigningKey(context.Context, *transport.ResolveSigningKeyRequest) (*transport.SigningKeyResolution, error) {
 	return nil, nil
 }
+func (*mockCAClient) SignCoRIM(context.Context, *transport.SignCoRIMRequest) (*transport.SignedCoRIM, error) {
+	return nil, nil
+}
