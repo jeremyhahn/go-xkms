@@ -1,6 +1,6 @@
 # Attestation Verifier — Architecture
 
-> **Status: NORMATIVE** · Feature: `attestation-verifier` · Module: `go-xkms` · Last verified: 2026-10-15
+> **Status: NORMATIVE** · Feature: `attestation-verifier` · Module: `go-xkms` · Last verified: 2026-10-24
 
 ## The problem
 
@@ -312,6 +312,47 @@ manifest that verification returned.
   `ErrAmbiguousReference`, and a CoRIM covering none of the selected PCRs
   `ErrNoReferencedPCR` (`pkg/attestation/errors.go:107-115`).
 
+## Appraisal: the RFC 9334 Verifier
+
+`pkg/attestation/appraisal` is the Verifier role of RFC 9334 §3. It appraises
+TPM evidence against a tenant's endorsements and signed reference values, and
+returns an attestation result. It moved here from go-quicbaas (#1608), and
+go-quicbaas now re-exports it.
+
+- **Store.** `NewStore` (`pkg/attestation/appraisal/store.go:74`) keeps
+  endorsements and reference values in the qrdb DAO database `attestation`,
+  keyed by tenant. A tenant that names no record scope is `ErrInvalidTenant`.
+- **Endorsements.** An endorsement is an `ak-root` (a CA the AK certificate
+  must chain to) or a `reference-signer` (a CA or pinned key a signed CoRIM
+  must verify under). They are managed with `PutEndorsement`,
+  `ListEndorsements` and `DeleteEndorsement`
+  (`pkg/attestation/appraisal/verifier.go:264`, `:317`, `:348`).
+- **Reference values.** `PutReferenceValues` (`verifier.go:359`) stores a
+  signed CoRIM only if a stored reference-signer verifies it; otherwise it
+  returns `ErrReferenceValuesRejected`. `GetReferenceValues`,
+  `ListReferenceValues` and `DeleteReferenceValues` (`verifier.go:478`,
+  `:487`, `:500`) read and remove them.
+- **Quote appraisal.** `AppraiseQuote` (`verifier.go:512`) runs four checks:
+  the AK certificate, the quote, the event log and the baseline. Each check
+  reports `pass`, `forged`, `absent` or `skipped`. The result is verified only
+  if every check that ran passed and none was absent.
+- **Hosts and containers.** `AppraiseHost` (`pkg/attestation/appraisal/host.go:140`)
+  refuses a host whose quoted PCRs diverge from the reference values, with a
+  `*HostAppraisalError` that unwraps to `ErrHostNotVerified`, and also to
+  `ErrPCRMismatch` when PCRs diverged. It also refuses PCR reads that do not
+  reproduce the quoted digest (`ErrQuoteNotBound`). `AppraiseContainer`
+  (`pkg/attestation/appraisal/container.go:68`) applies the same checks to a
+  container launch's evidence. go-xkms has no container runtime; the embedder
+  that launches the container calls these with the tenant directly.
+- **Service layer.** `XKMSService` holds the Appraiser in a subsystem
+  (`SetAttestationAppraiser`, `pkg/xkms/servicer_attestation.go:32`). Its
+  verbs (`:51`–`:136`) take the tenant from the caller's identity
+  (`callerTenant`), so one tenant cannot read or appraise against another's
+  records. Each verb names its permission: `attestation_endorsements`,
+  `attestation_reference_values` and `attestation_verifier`
+  (`pkg/auth/permissions.go:137`, `:142`, `:147`). The SDK re-exports the
+  package as `sdk/go/attestation_appraisal.go`.
+
 ## What this feature deliberately does not do
 
 - **It does not generate attestations.** `AttestKey` and
@@ -328,5 +369,6 @@ manifest that verification returned.
 - **It does not distribute or fetch trust anchors** — `pkg/attestation/truststore`
   loads what the operator configured (embedded well-known roots or local PEM
   files); nothing here walks AIA or ships vendor roots.
-- **It does not expose a CLI or network verb of its own.** See
-  [`cli.md`](cli.md) and [`api.md`](api.md).
+- **It does not yet expose the appraisal verbs on a transport.** The service
+  layer and its permissions exist; the REST, gRPC and MCP routes are open
+  work under #1608. See [`cli.md`](cli.md) and [`api.md`](api.md).
