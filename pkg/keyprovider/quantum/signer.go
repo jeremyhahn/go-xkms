@@ -37,6 +37,33 @@ type MLDSAPublicKey struct {
 	Key       []byte
 }
 
+// mldsaParameters maps ML-DSA algorithm names to their FIPS 204 parameter
+// sets.
+var mldsaParameters = map[string]mldsa.Parameters{
+	"ML-DSA-44": mldsa.MLDSA44(),
+	"ML-DSA-65": mldsa.MLDSA65(),
+	"ML-DSA-87": mldsa.MLDSA87(),
+}
+
+// MLDSA returns the key as a crypto/mldsa public key, so code outside this
+// package (a signed-note verifier key, for one) can encode and verify against
+// it. It refuses an algorithm name that is not an ML-DSA parameter set and an
+// encoding the parameter set does not accept.
+func (pk *MLDSAPublicKey) MLDSA() (*mldsa.PublicKey, error) {
+	if pk == nil {
+		return nil, ErrNotInitialized
+	}
+	params, ok := mldsaParameters[pk.Algorithm]
+	if !ok {
+		return nil, &errs.Detail{Err: ErrUnsupportedAlgorithm, Detail: pk.Algorithm}
+	}
+	key, err := mldsa.NewPublicKey(params, pk.Key)
+	if err != nil {
+		return nil, &errs.Joined{Lead: ErrUnsupportedAlgorithm, Detail: "invalid " + pk.Algorithm + " public key", Cause: err}
+	}
+	return key, nil
+}
+
 // MLDSAPrivateKey represents a post-quantum ML-DSA private key
 // that implements crypto.Signer for compatibility with Go's crypto interfaces.
 // The underlying key material is a crypto/mldsa private key reconstructed

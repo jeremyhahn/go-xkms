@@ -101,7 +101,7 @@ Facts are from go-xkms c9a1cdb25, go-qrdb b65df70 and #722, go-quicbaas 0f45b54 
 - Verbs: append; read the signed tree head; inclusion proof; consistency proof.
 - New permissions follow go-qrdb's built-in role placement.
 
-**Head signing (correction 5, owner ruling 122).** Normative in the `transparency-log` row of [SPEC.md](../SPEC.md); none of it is implemented on main yet.
+**Head signing (correction 5, owner ruling 122).** Normative in the `transparency-log` row of [SPEC.md](../SPEC.md). The checkpoint format and its algorithm registry are implemented in `pkg/ca/checkpoint` ([engineering contract](../transparency-log/engineering.md)); the `HeadSignerProvider` waits on go-qrdb's verifiable log.
 - go-xkms implements go-qrdb's `HeadSignerProvider` (#722 §6). For the transparency log it returns a signer over the CA key, the `crypto.Signer` the SPEC row names.
 - The checkpoint body is a C2SP tlog-checkpoint ([c2sp-tlog-checkpoint.md](../references/c2sp-tlog-checkpoint.md) §Note text), carried in a C2SP signed note ([c2sp-signed-note.md](../references/c2sp-signed-note.md) §Format, §Signatures). Both are pinned at C2SP commit `e5746a0b`.
 - The signing algorithm is never hardcoded:
