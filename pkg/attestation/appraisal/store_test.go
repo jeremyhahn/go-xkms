@@ -52,6 +52,34 @@ func (f *faultKV) Delete(ctx context.Context, key string) error {
 	return f.MemoryKVStore.Delete(ctx, key)
 }
 
+func (f *faultKV) CompareAndSwap(ctx context.Context, key string, expected, next []byte) (bool, error) {
+	if f.failWrites {
+		return false, f.err
+	}
+	return f.MemoryKVStore.CompareAndSwap(ctx, key, expected, next)
+}
+
+func (f *faultKV) CompareAndDelete(ctx context.Context, key string, expected []byte) (bool, error) {
+	if f.failWrites {
+		return false, f.err
+	}
+	return f.MemoryKVStore.CompareAndDelete(ctx, key, expected)
+}
+
+func (f *faultKV) PutIfAbsent(ctx context.Context, key string, value []byte) (bool, error) {
+	if f.failWrites {
+		return false, f.err
+	}
+	return f.MemoryKVStore.PutIfAbsent(ctx, key, value)
+}
+
+func (f *faultKV) PutIfAllAbsent(ctx context.Context, key string, value []byte, fences ...string) (bool, error) {
+	if f.failWrites {
+		return false, f.err
+	}
+	return f.MemoryKVStore.PutIfAllAbsent(ctx, key, value, fences...)
+}
+
 func (f *faultKV) Get(ctx context.Context, key string) ([]byte, error) {
 	if f.failReads {
 		return nil, f.err

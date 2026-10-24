@@ -17,146 +17,209 @@ package appraisal
 
 import (
 	"bytes"
-	"crypto"
-	"crypto/x509"
+	"crypto/sha256"
 	"errors"
+	"io"
+	"log/slog"
 	"testing"
 
+	"github.com/jeremyhahn/go-xkms/pkg/attestation/appraisal/appraisaltest"
 	"github.com/jeremyhahn/go-xkms/pkg/attestation/evidence"
-
-	"github.com/jeremyhahn/go-quicbaas/pkg/service/attestationtest"
-	"github.com/jeremyhahn/go-quicbaas/pkg/testutil/tpmsim"
+	xkmstpm2 "github.com/jeremyhahn/go-xkms/pkg/tpm2"
+	"github.com/jeremyhahn/go-xkms/pkg/tpm2/store"
+	"github.com/jeremyhahn/go-xkms/pkg/tpm2/tpm2test"
 )
 
-// These tests drive the production quote producer — a provisioned go-xkms
-// TPM on the in-process simulator — through the attesting runtime and the
-// Verifier, so nothing between TPM2_Quote and AppraiseQuote is a double.
+// simulatorBank is the PCR bank the simulator tests extend and appraise.
+const simulatorBank = "sha256"
 
-// simulatorReferencePCRs are the registers the reference values cover. PCR 16
-// is the platform PCR and the measured-launch PCR: the Verifier compares equal
-// sets, so every workload's reference values carry it.
-var simulatorReferencePCRs = []uint{0, 7, MeasurementPCRDefault}
+// simulatorReferencePCRs are the registers the simulator tests quote: two
+// boot registers and the container launch register.
+var simulatorReferencePCRs = []uint{0, 7, uint(launchPCR)}
 
-// enrolledSimulator provisions the simulator and enrolls its IAK under a
-// tenant AK root, returning the TPM and that root.
-func enrolledSimulator(t *testing.T) (*tpmsim.Simulator, *attestationtest.Authority) {
-	t.Helper()
-	if NewTestHostAppraiser == nil {
-		t.Fatal("NewTestHostAppraiser is not installed; host_appraisal_verifier_test.go installs it")
-	}
-	sim := tpmsim.Provision(t)
-	akRoot, err := attestationtest.NewAuthority("Tenant AK root")
-	if err != nil {
-		t.Fatal(err)
-	}
-	sim.EnrollIAK(t, func(pub crypto.PublicKey) (*x509.Certificate, error) {
-		return attestationtest.CertifyAttestationKey(akRoot, pub, true)
-	})
-	return sim, akRoot
+// simulatorHost is a provisioned TPM simulator whose IAK certificate chains
+// to the AK root endorsed in world.
+type simulatorHost struct {
+	tpm   xkmstpm2.TrustedPlatformModule
+	world *verifierWorld
 }
 
-// readSimulatorPCRs reads the SHA-256 register values the TPM holds now.
-func readSimulatorPCRs(t *testing.T, sim *tpmsim.Simulator) map[uint32][]byte {
+// newSimulatorHost provisions the TPM simulator, certifies its IAK under the
+// world's AK root and installs that certificate in the TPM.
+func newSimulatorHost(t *testing.T) *simulatorHost {
 	t.Helper()
-	banks, err := sim.TPM.ReadPCRs(simulatorReferencePCRs)
+	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
+
+	sim, err := xkmstpm2.OpenSimulator()
+	if err != nil {
+		t.Fatalf("OpenSimulator: %v", err)
+	}
+	t.Cleanup(func() {
+		if err := sim.Close(); err != nil {
+			t.Errorf("closing the TPM simulator: %v", err)
+		}
+	})
+
+	factory, err := store.NewMemoryStorageFactory(logger)
+	if err != nil {
+		t.Fatalf("NewMemoryStorageFactory: %v", err)
+	}
+	t.Cleanup(func() {
+		if err := factory.Close(); err != nil {
+			t.Errorf("closing the storage factory: %v", err)
+		}
+	})
+
+	config := xkmstpm2.DefaultConfig
+	config.UseSimulator = false // the transport is supplied explicitly
+	config.Device = ""
+	tpm, err := xkmstpm2.NewTPM2(&xkmstpm2.Params{
+		Config:    &config,
+		Logger:    logger,
+		Backend:   factory.KeyBackend(),
+		CertStore: store.NewMemoryCertStore(logger),
+		Transport: sim.Transport(),
+	})
+	if tpm != nil {
+		t.Cleanup(func() {
+			if err := tpm.Close(); err != nil {
+				t.Errorf("closing the TPM: %v", err)
+			}
+		})
+	}
+	if errors.Is(err, xkmstpm2.ErrNotInitialized) {
+		err = tpm.Provision(nil)
+	}
+	if err != nil {
+		t.Fatalf("provisioning the simulator: %v", err)
+	}
+	if err := tpm2test.EnrollPlatformSRK(tpm, &config); err != nil {
+		t.Fatalf("EnrollPlatformSRK: %v", err)
+	}
+
+	world := newHostWorld(t)
+	iak, err := tpm.IAK()
+	if err != nil {
+		t.Fatalf("IAK: %v", err)
+	}
+	cert, err := appraisaltest.CertifyAttestationKey(world.akCA, iak, true)
+	if err != nil {
+		t.Fatalf("CertifyAttestationKey: %v", err)
+	}
+	if err := tpm.ProvisionIAKCert(cert); err != nil {
+		t.Fatalf("ProvisionIAKCert: %v", err)
+	}
+	return &simulatorHost{tpm: tpm, world: world}
+}
+
+// readPCRs returns the simulator's current values of the quoted registers.
+func (h *simulatorHost) readPCRs(t *testing.T) map[uint32][]byte {
+	t.Helper()
+	banks, err := h.tpm.ReadPCRs(simulatorReferencePCRs)
 	if err != nil {
 		t.Fatalf("ReadPCRs: %v", err)
 	}
-	values, err := flattenPCRBanks(banks, DefaultMeasurementBank)
+	values, err := flattenPCRBanks(banks, simulatorBank)
 	if err != nil {
 		t.Fatalf("flattenPCRBanks: %v", err)
 	}
 	return values
 }
 
-func newSimulatorRuntime(t *testing.T, sim *tpmsim.Simulator, akRoot *attestationtest.Authority, reference map[uint32][]byte) *TPMAttestingRuntime {
+// containerEvidence quotes the simulator over nonce and returns the evidence
+// a container runtime hands the Appraiser.
+func (h *simulatorHost) containerEvidence(t *testing.T, nonce []byte, referenceValues string) *ContainerEvidence {
 	t.Helper()
-	rt, err := NewTPMAttestingRuntime(&recordingRuntime{}, sim.TPM, NewTestHostAppraiser(t, akRoot, attestationtest.SHA256Digests(reference)), newContainerTestLogger(t))
+	quote, err := h.tpm.Quote(simulatorReferencePCRs, nonce)
 	if err != nil {
-		t.Fatalf("NewTPMAttestingRuntime: %v", err)
+		t.Fatalf("Quote: %v", err)
 	}
-	return rt
+	// The simulator has no boot log; a log the host happens to expose does
+	// not describe the simulator's registers.
+	quote.EventLog = nil
+	banks, err := h.tpm.ReadPCRs(simulatorReferencePCRs)
+	if err != nil {
+		t.Fatalf("ReadPCRs: %v", err)
+	}
+	akCert, err := h.tpm.IAKCertificate()
+	if err != nil {
+		t.Fatalf("IAKCertificate: %v", err)
+	}
+	return &ContainerEvidence{
+		Image:           "alpine",
+		ReferenceValues: referenceValues,
+		AKCertificate:   akCert,
+		Nonce:           nonce,
+		Quote:           quote,
+		Banks:           banks,
+		LaunchPCRs:      []uint32{launchPCR},
+	}
 }
 
-func simulatorSpec(level TrustLevel) *ContainerSpec {
-	return &ContainerSpec{
-		Image:           "alpine@" + testDigest,
-		TrustLevel:      level,
-		TrustLabel:      "prod-agent",
-		ReferenceValues: "golden",
-	}
+func simulatorNonce(fill byte) []byte {
+	return bytes.Repeat([]byte{fill}, sha256.Size)
 }
 
 func TestSimulatorTPM_IAKCertificateCarriesVerifiedTPMRestricted(t *testing.T) {
-	sim, akRoot := enrolledSimulator(t)
+	host := newSimulatorHost(t)
 
-	cert, err := sim.TPM.IAKCertificate()
+	cert, err := host.tpm.IAKCertificate()
 	if err != nil {
 		t.Fatalf("IAKCertificate: %v", err)
 	}
 	if !evidence.CarriesVerifiedTPMRestricted(cert) {
 		t.Fatal("the enrolled IAK certificate must carry tcg-cap-verifiedTPMRestricted")
 	}
-	if err := cert.CheckSignatureFrom(akRoot.Certificate); err != nil {
+	if err := cert.CheckSignatureFrom(host.world.akCA.Certificate); err != nil {
 		t.Fatalf("the enrolled IAK certificate must chain to the tenant AK root: %v", err)
 	}
 }
 
 func TestSimulatorTPM_AttestedHostVerifies(t *testing.T) {
-	sim, akRoot := enrolledSimulator(t)
-	rt := newSimulatorRuntime(t, sim, akRoot, readSimulatorPCRs(t, sim))
+	host := newSimulatorHost(t)
+	host.world.putReferenceValues(t, "simulator", host.readPCRs(t))
 
-	result, err := rt.Attest(t.Context(), simulatorSpec(TrustLevelAttested), "container-1")
-	if err != nil {
-		t.Fatalf("Attest: %v", err)
-	}
-	if result.PCRBank != DefaultMeasurementBank {
-		t.Errorf("PCRBank = %q, want %q", result.PCRBank, DefaultMeasurementBank)
-	}
-	if len(result.PCRs) != len(simulatorReferencePCRs) {
-		t.Errorf("evidence carries %d PCRs, want %d", len(result.PCRs), len(simulatorReferencePCRs))
+	ev := host.containerEvidence(t, simulatorNonce(0x5A), "simulator")
+	if err := host.world.app.AppraiseContainer(host.world.ctx, host.world.tenant, ev); err != nil {
+		t.Fatalf("AppraiseContainer: %v", err)
 	}
 }
 
 func TestSimulatorTPM_MeasuredLaunchVerifies(t *testing.T) {
-	sim, akRoot := enrolledSimulator(t)
-	spec := simulatorSpec(TrustLevelMeasured)
+	host := newSimulatorHost(t)
 
 	// The reference values for a measured launch carry the value the launch
-	// extends the measurement PCR to, computed before the launch happens.
-	measurement, err := LaunchMeasurement(spec)
-	if err != nil {
-		t.Fatalf("LaunchMeasurement: %v", err)
-	}
-	reference := readSimulatorPCRs(t, sim)
-	reference[uint32(MeasurementPCRDefault)] = expectedExtend(reference[uint32(MeasurementPCRDefault)], measurement)
-	rt := newSimulatorRuntime(t, sim, akRoot, reference)
+	// extends the launch PCR to, computed before the launch happens.
+	measurement := []byte("alpine@sha256:launch-measurement")
+	digest := sha256.Sum256(measurement)
+	reference := host.readPCRs(t)
+	reference[launchPCR] = appraisaltest.ExtendSHA256(reference[launchPCR], digest[:])
+	host.world.putReferenceValues(t, "measured", reference)
 
-	if _, err := rt.Run(t.Context(), spec); err != nil {
-		t.Fatalf("Run: %v", err)
+	if err := host.tpm.ExtendPCR(int(launchPCR), simulatorBank, measurement); err != nil {
+		t.Fatalf("ExtendPCR: %v", err)
 	}
-	result, err := rt.Attest(t.Context(), spec, "container-1")
-	if err != nil {
-		t.Fatalf("Attest: %v", err)
+	if got := host.readPCRs(t)[launchPCR]; !bytes.Equal(got, reference[launchPCR]) {
+		t.Fatalf("launch PCR = %x, replay yields %x", got, reference[launchPCR])
 	}
-	if !result.Measured {
-		t.Error("Tier 2 evidence must report a measured launch")
-	}
-	if got := result.PCRs[uint32(MeasurementPCRDefault)]; !bytes.Equal(got, reference[uint32(MeasurementPCRDefault)]) {
-		t.Fatalf("quoted measurement PCR = %x, replay yields %x", got, reference[uint32(MeasurementPCRDefault)])
+
+	ev := host.containerEvidence(t, simulatorNonce(0x5A), "measured")
+	if err := host.world.app.AppraiseContainer(host.world.ctx, host.world.tenant, ev); err != nil {
+		t.Fatalf("AppraiseContainer: %v", err)
 	}
 }
 
 func TestSimulatorTPM_ChangedPCRIsRefused(t *testing.T) {
-	sim, akRoot := enrolledSimulator(t)
-	rt := newSimulatorRuntime(t, sim, akRoot, readSimulatorPCRs(t, sim))
+	host := newSimulatorHost(t)
+	host.world.putReferenceValues(t, "simulator", host.readPCRs(t))
 
 	// The register moves after the reference values were signed.
-	if err := sim.TPM.ExtendPCR(7, DefaultMeasurementBank, []byte("unexpected boot component")); err != nil {
+	if err := host.tpm.ExtendPCR(7, simulatorBank, []byte("unexpected boot component")); err != nil {
 		t.Fatalf("ExtendPCR: %v", err)
 	}
 
-	_, err := rt.Attest(t.Context(), simulatorSpec(TrustLevelAttested), "container-1")
+	ev := host.containerEvidence(t, simulatorNonce(0x5A), "simulator")
+	err := host.world.app.AppraiseContainer(host.world.ctx, host.world.tenant, ev)
 	if !errors.Is(err, ErrPCRMismatch) {
 		t.Fatalf("error %v does not wrap ErrPCRMismatch", err)
 	}
@@ -179,63 +242,58 @@ func TestSimulatorTPM_ChangedPCRIsRefused(t *testing.T) {
 }
 
 func TestSimulatorTPM_AKCertificateNotChainingToTheTenantRootIsRefused(t *testing.T) {
-	sim, _ := enrolledSimulator(t)
-	otherRoot, err := attestationtest.NewAuthority("Another tenant's AK root")
-	if err != nil {
-		t.Fatal(err)
-	}
-	rt := newSimulatorRuntime(t, sim, otherRoot, readSimulatorPCRs(t, sim))
+	host := newSimulatorHost(t)
+	host.world.putReferenceValues(t, "simulator", host.readPCRs(t))
 
-	_, err = rt.Attest(t.Context(), simulatorSpec(TrustLevelAttested), "container-1")
+	otherRoot, err := appraisaltest.NewAuthority("Another tenant's AK root")
+	if err != nil {
+		t.Fatalf("NewAuthority: %v", err)
+	}
+	iak, err := host.tpm.IAK()
+	if err != nil {
+		t.Fatalf("IAK: %v", err)
+	}
+	foreign, err := appraisaltest.CertifyAttestationKey(otherRoot, iak, true)
+	if err != nil {
+		t.Fatalf("CertifyAttestationKey: %v", err)
+	}
+
+	ev := host.containerEvidence(t, simulatorNonce(0x5A), "simulator")
+	ev.AKCertificate = foreign
+	err = host.world.app.AppraiseContainer(host.world.ctx, host.world.tenant, ev)
 	if !errors.Is(err, ErrHostNotVerified) {
 		t.Fatalf("error %v does not wrap ErrHostNotVerified", err)
 	}
 	if errors.Is(err, ErrPCRMismatch) {
-		t.Fatalf("an untrusted AK says nothing about PCRs, got %v", err)
+		t.Fatal("an untrusted AK certificate is not a PCR mismatch")
 	}
 	var appraisal *HostAppraisalError
 	if !errors.As(err, &appraisal) {
 		t.Fatalf("expected *HostAppraisalError, got %T", err)
-	}
-	if !appraisal.CryptographicFailure {
-		t.Error("an AK certificate that does not chain is a cryptographic failure")
 	}
 	if !hasFailedCheck(appraisal.Failures, "ak-certificate", "forged") {
 		t.Fatalf("failures %+v do not name a forged ak-certificate check", appraisal.Failures)
 	}
 }
 
-// The runtime draws its own nonce, so a quote over a different one is fed to
-// the Verifier directly: a real quote replayed against a fresh challenge.
 func TestSimulatorTPM_QuoteOverAnotherNonceIsRefusedByTheVerifier(t *testing.T) {
-	sim, akRoot := enrolledSimulator(t)
-	appraiser := NewTestHostAppraiser(t, akRoot, attestationtest.SHA256Digests(readSimulatorPCRs(t, sim)))
+	host := newSimulatorHost(t)
+	host.world.putReferenceValues(t, "simulator", host.readPCRs(t))
 
-	quotedNonce := bytes.Repeat([]byte{0x5A}, attestationNonceBytes)
-	quote, err := sim.TPM.Quote(simulatorReferencePCRs, quotedNonce)
-	if err != nil {
-		t.Fatalf("Quote: %v", err)
-	}
-	banks, err := sim.TPM.ReadPCRs(simulatorReferencePCRs)
-	if err != nil {
-		t.Fatalf("ReadPCRs: %v", err)
-	}
-	bound, err := bindQuotedPCRs("alpine", quote.Quoted, quotedNonce, banks)
+	quotedNonce := simulatorNonce(0x5A)
+	ev := host.containerEvidence(t, quotedNonce, "simulator")
+	bound, err := bindQuotedPCRs(ev.Image, ev.Quote.Quoted, quotedNonce, ev.Banks)
 	if err != nil {
 		t.Fatalf("bindQuotedPCRs: %v", err)
 	}
-	akCert, err := sim.TPM.IAKCertificate()
-	if err != nil {
-		t.Fatalf("IAKCertificate: %v", err)
-	}
 	appraise := func(nonce []byte) *HostAppraisal {
 		t.Helper()
-		appraisal, err := appraiser.AppraiseHost(t.Context(), &HostEvidence{
-			ReferenceValues: "golden",
-			AKCertificate:   akCert,
+		appraisal, err := host.world.app.AppraiseHost(host.world.ctx, host.world.tenant, &HostEvidence{
+			ReferenceValues: "simulator",
+			AKCertificate:   ev.AKCertificate,
 			Nonce:           nonce,
-			Quoted:          quote.Quoted,
-			Signature:       quote.Signature,
+			Quoted:          ev.Quote.Quoted,
+			Signature:       ev.Quote.Signature,
 			PCRs:            bound.values,
 		})
 		if err != nil {
@@ -248,8 +306,7 @@ func TestSimulatorTPM_QuoteOverAnotherNonceIsRefusedByTheVerifier(t *testing.T) 
 		t.Fatalf("the quote must verify against its own nonce, failures %+v", appraisal.Failures)
 	}
 
-	freshNonce := bytes.Repeat([]byte{0xA5}, attestationNonceBytes)
-	appraisal := appraise(freshNonce)
+	appraisal := appraise(simulatorNonce(0xA5))
 	if appraisal.Verified {
 		t.Fatal("a quote over another nonce must not verify")
 	}

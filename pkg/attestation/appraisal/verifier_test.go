@@ -556,7 +556,6 @@ func TestVerifierErrors_Messages(t *testing.T) {
 	}
 }
 
-// verifierCode returns the status code of a Verifier error.
 // BenchmarkAppraiseQuote measures one full appraisal: AK chain, quote
 // signature, PCR digest and the signed-baseline comparison (including the
 // CoRIM signature re-check).

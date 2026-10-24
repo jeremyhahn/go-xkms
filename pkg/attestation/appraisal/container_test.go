@@ -15,25 +15,16 @@ package appraisal
 
 import (
 	"bytes"
-	"context"
-	"crypto"
 	"crypto/sha256"
-	"crypto/sha512"
-	"crypto/x509"
 	"encoding/binary"
 	"errors"
-	"io"
+	"maps"
 	"reflect"
-	"sort"
-	"sync"
 	"testing"
 
-	"github.com/google/go-tpm/tpm2"
+	"github.com/jeremyhahn/go-xkms/pkg/attestation/appraisal/appraisaltest"
 	xkmsevidence "github.com/jeremyhahn/go-xkms/pkg/attestation/evidence"
 	xkmstpm2 "github.com/jeremyhahn/go-xkms/pkg/tpm2"
-	"github.com/jeremyhahn/go-xkms/pkg/types"
-
-	"github.com/jeremyhahn/go-quicbaas/pkg/service/attestationtest"
 )
 
 const (
@@ -53,15 +44,10 @@ type testSelection struct {
 	indices []uint32
 }
 
-// encodeTPMSAttest builds the signed body of a TPM2_Quote over indices in
-// bank, committing to pcrDigest and carrying nonce as qualifying data.
-func encodeTPMSAttest(t *testing.T, nonce []byte, bank string, indices []uint32, pcrDigest []byte) []byte {
-	t.Helper()
-	return encodeTPMSAttestSelections(t, nonce, []testSelection{{bank: bank, indices: indices}}, pcrDigest)
-}
-
-// encodeTPMSAttestSelections is the general form: a quote may select registers
-// across several banks, and the pcrDigest then covers them in selection order.
+// encodeTPMSAttestSelections builds the signed body of a TPM2_Quote over
+// selections, committing to pcrDigest and carrying nonce as qualifying data.
+// A quote may select registers across several banks, and the pcrDigest then
+// covers them in selection order.
 func encodeTPMSAttestSelections(t *testing.T, nonce []byte, selections []testSelection, pcrDigest []byte) []byte {
 	t.Helper()
 
@@ -396,4 +382,123 @@ func TestAttestationErrorsUnwrap(t *testing.T) {
 			}
 		})
 	}
+}
+
+// containerEvidence returns the evidence a container runtime hands the
+// Appraiser: the world's AK quoting pcrs over nonce, with the SHA-256 PCR
+// read taken alongside the quote.
+func (w *verifierWorld) containerEvidence(t *testing.T, pcrs map[uint32][]byte, nonce []byte) *ContainerEvidence {
+	t.Helper()
+	quote, err := appraisaltest.SignQuote(w.ak, pcrs, nonce)
+	if err != nil {
+		t.Fatalf("SignQuote: %v", err)
+	}
+	bank := xkmstpm2.PCRBank{Algorithm: "SHA256"}
+	for index, value := range pcrs {
+		bank.PCRs = append(bank.PCRs, xkmstpm2.PCR{ID: int32(index), Value: value})
+	}
+	return &ContainerEvidence{
+		Image:           "alpine",
+		ReferenceValues: "golden",
+		AKCertificate:   w.ak.Certificate,
+		Nonce:           nonce,
+		Quote:           xkmstpm2.Quote{Quoted: quote.Attest, Signature: quote.Signature},
+		Banks:           []xkmstpm2.PCRBank{bank},
+	}
+}
+
+func TestAppraiser_AppraiseContainer(t *testing.T) {
+	nonce := bytes.Repeat([]byte{0x5A}, sha256.Size)
+
+	t.Run("GenuineEvidencePasses", func(t *testing.T) {
+		w := newHostWorld(t)
+		if err := w.app.AppraiseContainer(w.ctx, w.tenant, w.containerEvidence(t, w.pcrs, nonce)); err != nil {
+			t.Fatalf("AppraiseContainer: %v", err)
+		}
+	})
+
+	t.Run("NilEvidenceIsRefused", func(t *testing.T) {
+		w := newHostWorld(t)
+		if err := w.app.AppraiseContainer(w.ctx, w.tenant, nil); !errors.Is(err, ErrNilRequest) {
+			t.Fatalf("error %v, want ErrNilRequest", err)
+		}
+	})
+
+	t.Run("QuoteOverAnotherNonceIsNotBound", func(t *testing.T) {
+		w := newHostWorld(t)
+		ev := w.containerEvidence(t, w.pcrs, nonce)
+		ev.Nonce = bytes.Repeat([]byte{0xA5}, sha256.Size)
+		err := w.app.AppraiseContainer(w.ctx, w.tenant, ev)
+		var binding *QuoteBindingError
+		if !errors.As(err, &binding) {
+			t.Fatalf("expected *QuoteBindingError, got %T: %v", err, err)
+		}
+		if !errors.Is(err, ErrQuoteNotBound) {
+			t.Fatalf("error %v does not wrap ErrQuoteNotBound", err)
+		}
+	})
+
+	t.Run("ReadDisagreeingWithTheQuoteIsRefused", func(t *testing.T) {
+		w := newHostWorld(t)
+		ev := w.containerEvidence(t, w.pcrs, nonce)
+		for i := range ev.Banks[0].PCRs {
+			if ev.Banks[0].PCRs[i].ID == 7 {
+				ev.Banks[0].PCRs[i].Value = bytes.Repeat([]byte{0xEE}, sha256.Size)
+			}
+		}
+		err := w.app.AppraiseContainer(w.ctx, w.tenant, ev)
+		var mismatch *QuotedPCRDigestMismatchError
+		if !errors.As(err, &mismatch) {
+			t.Fatalf("expected *QuotedPCRDigestMismatchError, got %T: %v", err, err)
+		}
+	})
+
+	t.Run("DriftedPCRIsAPCRMismatch", func(t *testing.T) {
+		w := newHostWorld(t)
+		drifted := maps.Clone(w.pcrs)
+		digest := sha256.Sum256([]byte("unexpected boot component"))
+		drifted[7] = digest[:]
+		err := w.app.AppraiseContainer(w.ctx, w.tenant, w.containerEvidence(t, drifted, nonce))
+		if !errors.Is(err, ErrPCRMismatch) || !errors.Is(err, ErrHostNotVerified) {
+			t.Fatalf("error %v does not wrap ErrPCRMismatch and ErrHostNotVerified", err)
+		}
+		var appraisal *HostAppraisalError
+		if !errors.As(err, &appraisal) {
+			t.Fatalf("expected *HostAppraisalError, got %T", err)
+		}
+		if appraisal.Image != "alpine" || appraisal.ReferenceValues != "golden" {
+			t.Errorf("error names %q against %q, want alpine against golden", appraisal.Image, appraisal.ReferenceValues)
+		}
+		if !appraisal.CryptographicFailure {
+			t.Error("a drifted PCR is a cryptographic failure")
+		}
+	})
+
+	t.Run("UnknownReferenceValuesAreNotVerified", func(t *testing.T) {
+		w := newHostWorld(t)
+		ev := w.containerEvidence(t, w.pcrs, nonce)
+		ev.ReferenceValues = "unknown"
+		err := w.app.AppraiseContainer(w.ctx, w.tenant, ev)
+		if !errors.Is(err, ErrHostNotVerified) {
+			t.Fatalf("error %v does not wrap ErrHostNotVerified", err)
+		}
+		if errors.Is(err, ErrPCRMismatch) {
+			t.Fatal("missing reference values are not a PCR mismatch")
+		}
+		var appraisal *HostAppraisalError
+		if !errors.As(err, &appraisal) {
+			t.Fatalf("expected *HostAppraisalError, got %T", err)
+		}
+		if appraisal.CryptographicFailure {
+			t.Error("missing reference values are absent evidence, not a cryptographic failure")
+		}
+	})
+
+	t.Run("InvalidTenantIsRefused", func(t *testing.T) {
+		w := newHostWorld(t)
+		err := w.app.AppraiseContainer(w.ctx, "a/b", w.containerEvidence(t, w.pcrs, nonce))
+		if !errors.Is(err, ErrInvalidTenant) {
+			t.Fatalf("error %v, want ErrInvalidTenant", err)
+		}
+	})
 }

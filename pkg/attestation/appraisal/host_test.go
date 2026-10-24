@@ -15,44 +15,39 @@ package appraisal
 
 import (
 	"bytes"
-	"context"
 	"crypto"
 	"crypto/sha256"
 	"crypto/sha512"
 	"crypto/x509"
-	stderrors "errors"
+	"errors"
 	"slices"
 	"testing"
 
-	"github.com/jeremyhahn/go-quicbaas/pkg/errors"
-	"github.com/jeremyhahn/go-quicbaas/pkg/orchestration"
-	"github.com/jeremyhahn/go-quicbaas/pkg/service/attestationtest"
-	"github.com/jeremyhahn/go-quicbaas/pkg/tenantctx"
+	"github.com/jeremyhahn/go-xkms/pkg/attestation/appraisal/appraisaltest"
 )
 
-// newHostAppraiserWorld returns an endorsed verifier world and a host
-// appraiser over the same store.
-func newHostAppraiserWorld(t *testing.T) (*verifierWorld, orchestration.HostAppraiser) {
+// launchPCR is the register these tests treat as the one a container runtime
+// extends at launch: a PCR the boot event log never records.
+const launchPCR = uint32(16)
+
+// newHostWorld returns a tenant with endorsed "golden" reference values.
+func newHostWorld(t *testing.T) *verifierWorld {
 	t.Helper()
 	w := newVerifierWorld(t)
 	w.endorse(t)
-	appraiser, err := NewHostAppraiser(w.store)
-	if err != nil {
-		t.Fatalf("NewHostAppraiser: %v", err)
-	}
-	return w, appraiser
+	return w
 }
 
-// hostEvidence signs pcrs with the world's attestation key and returns the
-// evidence a TPMAttestingRuntime would hand over.
-func (w *verifierWorld) hostEvidence(t *testing.T, pcrs map[uint32][]byte, referenceValues string) *orchestration.HostEvidence {
+// hostEvidence quotes pcrs under the world's attestation key and returns the
+// host evidence naming referenceValues.
+func (w *verifierWorld) hostEvidence(t *testing.T, pcrs map[uint32][]byte, referenceValues string) *HostEvidence {
 	t.Helper()
 	nonce := []byte("host-appraiser-nonce")
-	quote, err := attestationtest.SignQuote(w.ak, pcrs, nonce)
+	quote, err := appraisaltest.SignQuote(w.ak, pcrs, nonce)
 	if err != nil {
 		t.Fatal(err)
 	}
-	return &orchestration.HostEvidence{
+	return &HostEvidence{
 		ReferenceValues: referenceValues,
 		AKCertificate:   w.ak.Certificate,
 		Nonce:           nonce,
@@ -62,34 +57,31 @@ func (w *verifierWorld) hostEvidence(t *testing.T, pcrs map[uint32][]byte, refer
 	}
 }
 
-func TestNewHostAppraiser(t *testing.T) {
-	t.Run("RequiresAStore", func(t *testing.T) {
-		appraiser, err := NewHostAppraiser(nil)
-		if !stderrors.Is(err, ErrHostAppraiserNoStore) || appraiser != nil {
-			t.Fatalf("NewHostAppraiser(nil) = %v, %v; want ErrHostAppraiserNoStore", appraiser, err)
-		}
-		if codeOf(t, err) != errors.ErrInvalidInput {
-			t.Fatalf("code = %v, want ErrInvalidInput", codeOf(t, err))
-		}
-	})
-
-	t.Run("OptionsApply", func(t *testing.T) {
-		appraiser, err := NewHostAppraiser(attestationtest.NewMemoryStore(), WithAttestationStore(nil))
-		if err != nil {
-			t.Fatalf("NewHostAppraiser: %v", err)
-		}
-		// The store argument wins over an option that would clear it.
-		if appraiser.(*hostAppraiser).svc.store == nil {
-			t.Fatal("the store argument was overridden by an option")
-		}
-	})
+// putReferenceValues stores SHA-256 reference values for pcrs under name,
+// signed by the endorsed reference signer.
+func (w *verifierWorld) putReferenceValues(t *testing.T, name string, pcrs map[uint32][]byte) {
+	t.Helper()
+	w.putReferenceDigests(t, name, appraisaltest.SHA256Digests(pcrs))
 }
 
-func TestHostAppraiser_ReferencePCRs(t *testing.T) {
-	w, appraiser := newHostAppraiserWorld(t)
+// putReferenceDigests stores reference values holding digests under name,
+// signed by the endorsed reference signer.
+func (w *verifierWorld) putReferenceDigests(t *testing.T, name string, digests []appraisaltest.PCRDigest) {
+	t.Helper()
+	corim, err := appraisaltest.SignCoRIMDigests(digests, w.signerKey, []*x509.Certificate{w.signerCert})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := w.app.PutReferenceValues(w.ctx, w.tenant, &PutReferenceValuesRequest{Name: name, SignedCoRIM: corim}); err != nil {
+		t.Fatalf("PutReferenceValues(%s): %v", name, err)
+	}
+}
+
+func TestAppraiser_ReferencePCRs(t *testing.T) {
+	w := newHostWorld(t)
 
 	t.Run("ReadsTheStoredIndices", func(t *testing.T) {
-		indices, err := appraiser.ReferencePCRs(w.ctx, "golden", crypto.SHA256)
+		indices, err := w.app.ReferencePCRs(w.ctx, w.tenant, "golden", crypto.SHA256)
 		if err != nil {
 			t.Fatalf("ReferencePCRs: %v", err)
 		}
@@ -99,12 +91,12 @@ func TestHostAppraiser_ReferencePCRs(t *testing.T) {
 	})
 
 	t.Run("OnlyTheQuotedBankIsCounted", func(t *testing.T) {
-		w.putReferenceDigests(t, "mixed", []attestationtest.PCRDigest{
+		w.putReferenceDigests(t, "mixed", []appraisaltest.PCRDigest{
 			{Index: 0, Hash: crypto.SHA256, Value: bytes.Repeat([]byte{0x10}, sha256.Size)},
 			{Index: 7, Hash: crypto.SHA384, Value: bytes.Repeat([]byte{0x17}, sha512.Size384)},
 		})
 		for bank, want := range map[crypto.Hash][]uint32{crypto.SHA256: {0}, crypto.SHA384: {7}} {
-			indices, err := appraiser.ReferencePCRs(w.ctx, "mixed", bank)
+			indices, err := w.app.ReferencePCRs(w.ctx, w.tenant, "mixed", bank)
 			if err != nil {
 				t.Fatalf("ReferencePCRs(%s): %v", bank, err)
 			}
@@ -115,75 +107,71 @@ func TestHostAppraiser_ReferencePCRs(t *testing.T) {
 	})
 
 	t.Run("OtherBankOnlyIsRefused", func(t *testing.T) {
-		w.putReferenceDigests(t, "sha384-only", []attestationtest.PCRDigest{
+		w.putReferenceDigests(t, "sha384-only", []appraisaltest.PCRDigest{
 			{Index: 0, Hash: crypto.SHA384, Value: bytes.Repeat([]byte{0x20}, sha512.Size384)},
 			{Index: 7, Hash: crypto.SHA384, Value: bytes.Repeat([]byte{0x27}, sha512.Size384)},
 		})
-		_, err := appraiser.ReferencePCRs(w.ctx, "sha384-only", crypto.SHA256)
+		_, err := w.app.ReferencePCRs(w.ctx, w.tenant, "sha384-only", crypto.SHA256)
 		assertBankUncovered(t, err, "sha384-only", crypto.SHA256)
 	})
 
 	t.Run("SHA1BankIsRefused", func(t *testing.T) {
-		_, err := appraiser.ReferencePCRs(w.ctx, "golden", crypto.SHA1)
+		_, err := w.app.ReferencePCRs(w.ctx, w.tenant, "golden", crypto.SHA1)
 		assertBankUncovered(t, err, "golden", crypto.SHA1)
 	})
 
 	t.Run("UnknownNameIsNotFound", func(t *testing.T) {
-		_, err := appraiser.ReferencePCRs(w.ctx, "missing", crypto.SHA256)
-		if codeOf(t, err) != errors.ErrNotFound {
-			t.Fatalf("ReferencePCRs(missing) = %v, want ErrNotFound", err)
+		_, err := w.app.ReferencePCRs(w.ctx, w.tenant, "missing", crypto.SHA256)
+		if !errors.Is(err, ErrRecordNotFound) {
+			t.Fatalf("ReferencePCRs(missing) = %v, want ErrRecordNotFound", err)
 		}
 	})
 
 	t.Run("InvalidNameIsRefused", func(t *testing.T) {
-		_, err := appraiser.ReferencePCRs(w.ctx, "a/b", crypto.SHA256)
-		if codeOf(t, err) != errors.ErrInvalidInput {
-			t.Fatalf("ReferencePCRs(a/b) = %v, want ErrInvalidInput", err)
+		_, err := w.app.ReferencePCRs(w.ctx, w.tenant, "a/b", crypto.SHA256)
+		if !errors.Is(err, ErrInvalidName) {
+			t.Fatalf("ReferencePCRs(a/b) = %v, want ErrInvalidName", err)
 		}
 	})
 
-	t.Run("NoTenantIsRefused", func(t *testing.T) {
-		_, err := appraiser.ReferencePCRs(context.Background(), "golden", crypto.SHA256)
-		var missing *tenantctx.MissingTenantError
-		if !stderrors.As(err, &missing) {
-			t.Fatalf("ReferencePCRs with no tenant = %v, want *tenantctx.MissingTenantError", err)
+	t.Run("InvalidTenantIsRefused", func(t *testing.T) {
+		_, err := w.app.ReferencePCRs(w.ctx, "a/b", "golden", crypto.SHA256)
+		if !errors.Is(err, ErrInvalidTenant) {
+			t.Fatalf("ReferencePCRs with tenant a/b = %v, want ErrInvalidTenant", err)
 		}
 	})
 
 	t.Run("NoLongerEndorsedIsRefused", func(t *testing.T) {
-		w, appraiser := newHostAppraiserWorld(t)
-		if err := w.svc.DeleteEndorsement(w.ctx, &DeleteEndorsementRequest{Name: "rv-ca"}); err != nil {
+		w := newHostWorld(t)
+		if err := w.app.DeleteEndorsement(w.ctx, w.tenant, &DeleteEndorsementRequest{Name: "rv-ca"}); err != nil {
 			t.Fatalf("DeleteEndorsement: %v", err)
 		}
-		_, err := appraiser.ReferencePCRs(w.ctx, "golden", crypto.SHA256)
+		_, err := w.app.ReferencePCRs(w.ctx, w.tenant, "golden", crypto.SHA256)
 		var rejected *ReferenceValuesRejectedError
-		if !stderrors.As(err, &rejected) || codeOf(t, err) != errors.ErrInvalidInput {
-			t.Fatalf("ReferencePCRs with no reference signer = %v, want ErrInvalidInput *ReferenceValuesRejectedError", err)
+		if !errors.As(err, &rejected) || !errors.Is(err, ErrReferenceValuesRejected) {
+			t.Fatalf("ReferencePCRs with no reference signer = %v, want *ReferenceValuesRejectedError", err)
 		}
 	})
 }
 
-// assertBankUncovered requires err to be the typed refusal of reference
-// values that hold no digest in bank.
+// assertBankUncovered fails t unless err reports that the reference values
+// named name hold no digest in bank.
 func assertBankUncovered(t *testing.T, err error, name string, bank crypto.Hash) {
 	t.Helper()
-	var uncovered *orchestration.ReferenceBankUncoveredError
-	if !stderrors.As(err, &uncovered) || !stderrors.Is(err, orchestration.ErrReferenceBankUncovered) {
-		t.Fatalf("ReferencePCRs(%s, %s) = %v, want *orchestration.ReferenceBankUncoveredError", name, bank, err)
+	var uncovered *ReferenceBankUncoveredError
+	if !errors.As(err, &uncovered) || !errors.Is(err, ErrReferenceBankUncovered) {
+		t.Fatalf("ReferencePCRs(%s, %s) = %v, want *ReferenceBankUncoveredError", name, bank, err)
 	}
 	if uncovered.ReferenceValues != name || uncovered.Bank != bank {
 		t.Fatalf("uncovered = %+v, want %s in %s", uncovered, name, bank)
 	}
-	if codeOf(t, err) != errors.ErrInvalidInput {
-		t.Fatalf("code of %v, want ErrInvalidInput", err)
-	}
 }
 
-func TestHostAppraiser_AppraiseHost(t *testing.T) {
-	w, appraiser := newHostAppraiserWorld(t)
+func TestAppraiser_AppraiseHost(t *testing.T) {
+	w := newHostWorld(t)
 
 	t.Run("GenuineEvidencePasses", func(t *testing.T) {
-		appraisal, err := appraiser.AppraiseHost(w.ctx, w.hostEvidence(t, w.pcrs, "golden"))
+		appraisal, err := w.app.AppraiseHost(w.ctx, w.tenant, w.hostEvidence(t, w.pcrs, "golden"))
 		if err != nil {
 			t.Fatalf("AppraiseHost: %v", err)
 		}
@@ -193,9 +181,9 @@ func TestHostAppraiser_AppraiseHost(t *testing.T) {
 	})
 
 	t.Run("DriftedPCRIsACryptographicFailure", func(t *testing.T) {
-		drifted := attestationtest.PCRValues(0, 4, 7)
+		drifted := appraisaltest.PCRValues(0, 4, 7)
 		drifted[4] = bytes.Repeat([]byte{0xEE}, len(drifted[4]))
-		appraisal, err := appraiser.AppraiseHost(w.ctx, w.hostEvidence(t, drifted, "golden"))
+		appraisal, err := w.app.AppraiseHost(w.ctx, w.tenant, w.hostEvidence(t, drifted, "golden"))
 		if err != nil {
 			t.Fatalf("AppraiseHost: %v", err)
 		}
@@ -217,7 +205,7 @@ func TestHostAppraiser_AppraiseHost(t *testing.T) {
 	})
 
 	t.Run("UnknownNameIsAbsent", func(t *testing.T) {
-		appraisal, err := appraiser.AppraiseHost(w.ctx, w.hostEvidence(t, w.pcrs, "missing"))
+		appraisal, err := w.app.AppraiseHost(w.ctx, w.tenant, w.hostEvidence(t, w.pcrs, "missing"))
 		if err != nil {
 			t.Fatalf("AppraiseHost: %v", err)
 		}
@@ -233,7 +221,7 @@ func TestHostAppraiser_AppraiseHost(t *testing.T) {
 	t.Run("MissingAKCertificateIsAbsent", func(t *testing.T) {
 		ev := w.hostEvidence(t, w.pcrs, "golden")
 		ev.AKCertificate = nil
-		appraisal, err := appraiser.AppraiseHost(w.ctx, ev)
+		appraisal, err := w.app.AppraiseHost(w.ctx, w.tenant, ev)
 		if err != nil {
 			t.Fatalf("AppraiseHost: %v", err)
 		}
@@ -245,43 +233,22 @@ func TestHostAppraiser_AppraiseHost(t *testing.T) {
 		}
 	})
 
-	t.Run("NoTenantIsRefused", func(t *testing.T) {
-		_, err := appraiser.AppraiseHost(context.Background(), w.hostEvidence(t, w.pcrs, "golden"))
-		var missing *tenantctx.MissingTenantError
-		if !stderrors.As(err, &missing) || codeOf(t, err) != errors.ErrForbidden {
-			t.Fatalf("AppraiseHost with no tenant = %v, want ErrForbidden wrapping *tenantctx.MissingTenantError", err)
+	t.Run("InvalidTenantIsRefused", func(t *testing.T) {
+		_, err := w.app.AppraiseHost(w.ctx, "a/b", w.hostEvidence(t, w.pcrs, "golden"))
+		if !errors.Is(err, ErrInvalidTenant) {
+			t.Fatalf("AppraiseHost with tenant a/b = %v, want ErrInvalidTenant", err)
 		}
 	})
 
 	t.Run("NilEvidenceIsRefused", func(t *testing.T) {
-		if _, err := appraiser.AppraiseHost(w.ctx, nil); !stderrors.Is(err, ErrAttestationNilRequest) {
-			t.Fatalf("AppraiseHost(nil) = %v, want ErrAttestationNilRequest", err)
+		if _, err := w.app.AppraiseHost(w.ctx, w.tenant, nil); !errors.Is(err, ErrNilRequest) {
+			t.Fatalf("AppraiseHost(nil) = %v, want ErrNilRequest", err)
 		}
 	})
 }
 
-// putReferenceValues signs pcrs as a CoRIM under the world's endorsed
-// reference signer and stores it as name.
-func (w *verifierWorld) putReferenceValues(t *testing.T, name string, pcrs map[uint32][]byte) {
-	t.Helper()
-	w.putReferenceDigests(t, name, attestationtest.SHA256Digests(pcrs))
-}
-
-// putReferenceDigests signs digests in any mix of banks and stores them as
-// the reference values name.
-func (w *verifierWorld) putReferenceDigests(t *testing.T, name string, digests []attestationtest.PCRDigest) {
-	t.Helper()
-	corim, err := attestationtest.SignCoRIMDigests(digests, w.signerKey, []*x509.Certificate{w.signerCert})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if _, err := w.svc.PutReferenceValues(w.ctx, &PutReferenceValuesRequest{Name: name, SignedCoRIM: corim}); err != nil {
-		t.Fatalf("PutReferenceValues(%s): %v", name, err)
-	}
-}
-
-// failureOf returns the appraisal failure of check, or nil when it did not fail.
-func failureOf(appraisal *orchestration.HostAppraisal, check string) *orchestration.HostAppraisalFailure {
+// failureOf returns the failure of check in appraisal, or nil.
+func failureOf(appraisal *HostAppraisal, check string) *HostAppraisalFailure {
 	for i := range appraisal.Failures {
 		if appraisal.Failures[i].Check == check {
 			return &appraisal.Failures[i]
@@ -290,32 +257,30 @@ func failureOf(appraisal *orchestration.HostAppraisal, check string) *orchestrat
 	return nil
 }
 
-// TestHostAppraiser_EventLogLeavesTheLaunchPCROut drives a measured launch:
-// the firmware log explains the boot registers, and the runtime extended the
-// measurement PCR after boot, so the log cannot explain that register. The
-// replay covers every other quoted register; the reference values judge the
-// measurement PCR.
-func TestHostAppraiser_EventLogLeavesTheLaunchPCROut(t *testing.T) {
-	w, appraiser := newHostAppraiserWorld(t)
-	const launchPCR = uint32(orchestration.MeasurementPCRDefault)
+// TestAppraiser_EventLogLeavesTheLaunchPCROut drives host evidence whose
+// quote covers boot registers, which the event log explains, and the launch
+// register a container runtime extends, which only the signed reference
+// values judge.
+func TestAppraiser_EventLogLeavesTheLaunchPCROut(t *testing.T) {
+	w := newHostWorld(t)
 	digest := func(b byte) []byte { return bytes.Repeat([]byte{b}, sha256.Size) }
-	bootLog, boot := attestationtest.BootEventLog([]attestationtest.LogEvent{
+	bootLog, boot := appraisaltest.BootEventLog([]appraisaltest.LogEvent{
 		{PCR: 0, Digest: digest(0x01)},
 		{PCR: 7, Digest: digest(0x07)},
 		{PCR: 0, Digest: digest(0x02)},
 	})
-	launched := attestationtest.ExtendSHA256(make([]byte, sha256.Size), digest(0x16))
+	launched := appraisaltest.ExtendSHA256(make([]byte, sha256.Size), digest(0x16))
 	measured := func() map[uint32][]byte {
 		return map[uint32][]byte{0: boot[0], 7: boot[7], launchPCR: launched}
 	}
 	w.putReferenceValues(t, "measured", measured())
 
-	appraise := func(t *testing.T, pcrs map[uint32][]byte, eventLog []byte, launchPCRs []uint32) *orchestration.HostAppraisal {
+	appraise := func(t *testing.T, pcrs map[uint32][]byte, eventLog []byte, launchPCRs []uint32) *HostAppraisal {
 		t.Helper()
 		ev := w.hostEvidence(t, pcrs, "measured")
 		ev.EventLog = eventLog
 		ev.LaunchPCRs = launchPCRs
-		appraisal, err := appraiser.AppraiseHost(w.ctx, ev)
+		appraisal, err := w.app.AppraiseHost(w.ctx, w.tenant, ev)
 		if err != nil {
 			t.Fatalf("AppraiseHost: %v", err)
 		}
@@ -347,7 +312,7 @@ func TestHostAppraiser_EventLogLeavesTheLaunchPCROut(t *testing.T) {
 		ev := w.hostEvidence(t, tampered, "tampered-boot")
 		ev.EventLog = bootLog
 		ev.LaunchPCRs = []uint32{launchPCR}
-		appraisal, err := appraiser.AppraiseHost(w.ctx, ev)
+		appraisal, err := w.app.AppraiseHost(w.ctx, w.tenant, ev)
 		if err != nil {
 			t.Fatalf("AppraiseHost: %v", err)
 		}
@@ -363,7 +328,7 @@ func TestHostAppraiser_EventLogLeavesTheLaunchPCROut(t *testing.T) {
 		// A log that records the measurement PCR does not get to judge it:
 		// the runtime's extension is never in the firmware log, so the
 		// signed reference values are the only authority for that register.
-		withLaunch, _ := attestationtest.BootEventLog([]attestationtest.LogEvent{
+		withLaunch, _ := appraisaltest.BootEventLog([]appraisaltest.LogEvent{
 			{PCR: 0, Digest: digest(0x01)},
 			{PCR: 7, Digest: digest(0x07)},
 			{PCR: 0, Digest: digest(0x02)},
@@ -392,7 +357,7 @@ func TestHostAppraiser_EventLogLeavesTheLaunchPCROut(t *testing.T) {
 		ev := w.hostEvidence(t, launchOnly, "launch-only")
 		ev.EventLog = bootLog
 		ev.LaunchPCRs = []uint32{launchPCR}
-		appraisal, err := appraiser.AppraiseHost(w.ctx, ev)
+		appraisal, err := w.app.AppraiseHost(w.ctx, w.tenant, ev)
 		if err != nil {
 			t.Fatalf("AppraiseHost: %v", err)
 		}
