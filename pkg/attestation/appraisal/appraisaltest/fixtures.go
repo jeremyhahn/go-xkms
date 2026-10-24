@@ -1,9 +1,9 @@
 // Copyright (c) 2026 Jeremy Hahn
 // Copyright (c) 2026 Automate The Things, LLC
 //
-// This file is part of go-quicbaas.
+// This file is part of go-xkms.
 //
-// go-quicbaas is dual-licensed:
+// go-xkms is dual-licensed:
 //
 // 1. GNU Affero General Public License v3.0 (AGPL-3.0)
 //    See LICENSE file or visit https://www.gnu.org/licenses/agpl-3.0.html
@@ -11,14 +11,14 @@
 // 2. Commercial License
 //    Contact licensing@automatethethings.com for commercial licensing options.
 
-// Package attestationtest builds real attestation evidence for tests of the
+// Package appraisaltest builds real attestation evidence for tests of the
 // Verifier: an attestation-key CA and an AK certificate carrying
 // tcg-cap-verifiedTPMRestricted, a COSE_Sign1 signed CoRIM with PCR
 // reference digests, and a TPMS_ATTEST quote over those PCRs signed by the
 // AK. Every artifact is produced with the same libraries a real attester and
 // reference-value provider use, so a test exercises the go-xkms primitives
 // for real rather than through a double.
-package attestationtest
+package appraisaltest
 
 import (
 	"crypto"
@@ -53,9 +53,9 @@ type FixtureError struct {
 // Error returns a human-readable description.
 func (e *FixtureError) Error() string {
 	if e.Cause == nil {
-		return "attestationtest: " + e.Step
+		return "appraisaltest: " + e.Step
 	}
-	return "attestationtest: " + e.Step + ": " + e.Cause.Error()
+	return "appraisaltest: " + e.Step + ": " + e.Cause.Error()
 }
 
 // Unwrap returns the cause.

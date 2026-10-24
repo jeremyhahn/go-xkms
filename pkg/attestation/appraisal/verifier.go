@@ -1,9 +1,9 @@
 // Copyright (c) 2026 Jeremy Hahn
 // Copyright (c) 2026 Automate The Things, LLC
 //
-// This file is part of go-quicbaas.
+// This file is part of go-xkms.
 //
-// go-quicbaas is dual-licensed:
+// go-xkms is dual-licensed:
 //
 // 1. GNU Affero General Public License v3.0 (AGPL-3.0)
 //    See LICENSE file or visit https://www.gnu.org/licenses/agpl-3.0.html
@@ -11,29 +11,22 @@
 // 2. Commercial License
 //    Contact licensing@automatethethings.com for commercial licensing options.
 
-package service
+package appraisal
 
 import (
 	"context"
 	"crypto"
 	"crypto/subtle"
 	"crypto/x509"
-	"encoding/json"
 	"encoding/pem"
-	stderrors "errors"
+	"errors"
 	"sort"
-	"strconv"
-	"strings"
 	"time"
 
 	"github.com/google/go-tpm/tpm2"
-	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
-	qrdbtransport "github.com/jeremyhahn/go-qrdb/sdk/go/transport"
+
 	"github.com/jeremyhahn/go-xkms/pkg/attestation/evidence"
 	"github.com/jeremyhahn/go-xkms/pkg/attestation/refvalue"
-
-	"github.com/jeremyhahn/go-quicbaas/pkg/errors"
-	"github.com/jeremyhahn/go-quicbaas/pkg/tenantctx"
 )
 
 // This file is the attestation Verifier of RFC 9334 (handbook doc 00 §R:
@@ -231,214 +224,52 @@ type AttestationResult struct {
 }
 
 // =============================================================================
-// Typed errors
+// Appraiser
 // =============================================================================
 
-// AttestationNameError reports an invalid endorsement or reference-value name.
-type AttestationNameError struct {
-	Name string
+// Appraiser is the RFC 9334 Verifier's appraisal library: it keeps a tenant's
+// endorsements and signed reference values in a Store and appraises TPM
+// evidence against them. Every method is scoped to the tenant it is given;
+// the service layer passes the authenticated caller's.
+type Appraiser struct {
+	store *Store
+	now   func() time.Time
 }
 
-// Error returns a human-readable description.
-func (e *AttestationNameError) Error() string {
-	return "attestation: name " + strconv.Quote(e.Name) + " must be 1-253 bytes without '/'"
-}
+// Option configures an Appraiser.
+type Option func(*Appraiser)
 
-// EndorsementInvalidError reports an endorsement that cannot be stored.
-type EndorsementInvalidError struct {
-	Reason string
-}
-
-// Error returns a human-readable description.
-func (e *EndorsementInvalidError) Error() string {
-	return "attestation: invalid endorsement: " + e.Reason
-}
-
-// AttestationRecordNotFoundError reports a missing endorsement or reference
-// values.
-type AttestationRecordNotFoundError struct {
-	Kind string
-	Name string
-}
-
-// Error returns a human-readable description.
-func (e *AttestationRecordNotFoundError) Error() string {
-	return "attestation: " + e.Kind + " " + strconv.Quote(e.Name) + " not found"
-}
-
-// ReferenceValuesRejectedError reports a signed CoRIM that no stored
-// reference-signer endorsement verifies.
-type ReferenceValuesRejectedError struct {
-	Reason string
-	Cause  error
-}
-
-// Error returns a human-readable description.
-func (e *ReferenceValuesRejectedError) Error() string {
-	return "attestation: reference values rejected: " + e.Reason
-}
-
-// Unwrap returns the verification failure.
-func (e *ReferenceValuesRejectedError) Unwrap() error { return e.Cause }
-
-// AttestationStoreUnavailableError reports a Verifier with no store.
-type AttestationStoreUnavailableError struct{}
-
-// Error returns a human-readable description.
-func (e *AttestationStoreUnavailableError) Error() string {
-	return "attestation: the reference-value and endorsement store is not available"
-}
-
-// =============================================================================
-// Store
-// =============================================================================
-
-// AttestationStore is the persistence seam of the Verifier: opaque records
-// under string keys. The production store is the platform shard's qrdb KV;
-// tests supply an in-memory map.
-type AttestationStore interface {
-	// Put writes a record.
-	Put(ctx context.Context, key string, value []byte) error
-
-	// Get reads a record; found is false when the key does not exist.
-	Get(ctx context.Context, key string) (value []byte, found bool, err error)
-
-	// Scan returns every record under a prefix.
-	Scan(ctx context.Context, prefix string) (map[string][]byte, error)
-
-	// Delete removes a record.
-	Delete(ctx context.Context, key string) error
-}
-
-// qrdbAttestationStore stores Verifier records in qrdb KV.
-//
-// Raw KV is the sanctioned form here (handbook conventions/data-access.md §3
-// case 3): every record is an opaque blob — a certificate, a public key or a
-// signed CoRIM — with no fields to index and an externally chosen name.
-type qrdbAttestationStore struct {
-	client func() (*qrdbsdk.Client, error)
-}
-
-// NewQRDBAttestationStore returns an AttestationStore over a qrdb client
-// resolver.
-func NewQRDBAttestationStore(client func() (*qrdbsdk.Client, error)) AttestationStore {
-	return &qrdbAttestationStore{client: client}
-}
-
-func (s *qrdbAttestationStore) Put(ctx context.Context, key string, value []byte) error {
-	c, err := s.client()
-	if err != nil {
-		return err
-	}
-	return c.KV().Put(ctx, key, value)
-}
-
-func (s *qrdbAttestationStore) Get(ctx context.Context, key string) ([]byte, bool, error) {
-	c, err := s.client()
-	if err != nil {
-		return nil, false, err
-	}
-	value, err := c.KV().Get(ctx, key)
-	if err != nil {
-		var missing *qrdbtransport.KeyNotFoundError
-		if stderrors.As(err, &missing) {
-			return nil, false, nil
+// WithClock sets the clock that appraisal times and certificate and CoRIM
+// validity are judged against. The default is time.Now; nil keeps it.
+func WithClock(now func() time.Time) Option {
+	return func(a *Appraiser) {
+		if now != nil {
+			a.now = now
 		}
-		return nil, false, err
 	}
-	return value, true, nil
 }
 
-func (s *qrdbAttestationStore) Scan(ctx context.Context, prefix string) (map[string][]byte, error) {
-	c, err := s.client()
-	if err != nil {
+// NewAppraiser returns an Appraiser over store.
+func NewAppraiser(store *Store, opts ...Option) (*Appraiser, error) {
+	if store == nil {
+		return nil, &ConfigError{Field: "store", Reason: "is required"}
+	}
+	a := &Appraiser{store: store, now: time.Now}
+	for _, opt := range opts {
+		opt(a)
+	}
+	return a, nil
+}
+
+// PutEndorsement stores (or replaces) one of the tenant's endorsements.
+func (a *Appraiser) PutEndorsement(ctx context.Context, tenant string, req *PutEndorsementRequest) (*Endorsement, error) {
+	if req == nil {
+		return nil, ErrNilRequest
+	}
+	if err := ValidateName(req.Name); err != nil {
 		return nil, err
 	}
-	return c.KV().Scan(ctx, prefix)
-}
-
-func (s *qrdbAttestationStore) Delete(ctx context.Context, key string) error {
-	c, err := s.client()
-	if err != nil {
-		return err
-	}
-	return c.KV().Delete(ctx, key)
-}
-
-// attestationShardID is the qrdb shard the Verifier's records live on: the
-// platform shard every other system-namespace record uses.
-const attestationShardID = 1
-
-const (
-	attestationKeyPrefix       = "__sys:attest/"
-	attestationTenantKeyPrefix = "__sys:attest-t/"
-	endorsementSegment         = "endorsement/"
-	referenceValuesSegment     = "refval/"
-	maxAttestationNameLen      = 253
-)
-
-// attestationPrefix returns the request tenant's record prefix for a segment.
-// The tenant is the authenticated one (prepareTenantContext, which refuses a
-// request with none); the system tenant, bound explicitly, owns the unscoped
-// prefix.
-func attestationPrefix(ctx context.Context, segment string) (string, error) {
-	tenant, err := prepareTenantContext(ctx)
-	if err != nil {
-		return "", err
-	}
-	if tenant == "" {
-		return attestationKeyPrefix + segment, nil
-	}
-	return attestationTenantKeyPrefix + tenant + "/" + segment, nil
-}
-
-// validateAttestationName rejects names that could escape their prefix.
-func validateAttestationName(name string) error {
-	if name == "" || len(name) > maxAttestationNameLen || strings.ContainsRune(name, '/') {
-		return &AttestationNameError{Name: name}
-	}
-	return nil
-}
-
-// =============================================================================
-// Verifier
-// =============================================================================
-
-// verifierError wraps a Verifier failure with its transport status code.
-//
-// A tenant refusal (pkg/tenantctx) keeps its own ErrForbidden code: a caller
-// with no tenant, or naming another, is refused, not told the store failed.
-func verifierError(op string, code errors.ErrorCode, err error) error {
-	var missing *tenantctx.MissingTenantError
-	var cross *tenantctx.CrossTenantError
-	if stderrors.As(err, &missing) || stderrors.As(err, &cross) {
-		return err
-	}
-	return &errors.QBError{Code: code, Op: op, Err: err}
-}
-
-// store returns the Verifier store or the typed unavailable error.
-func (s *attestationService) verifierStore(op string) (AttestationStore, error) {
-	if s.store == nil {
-		return nil, verifierError(op, errors.ErrUnavailable, &AttestationStoreUnavailableError{})
-	}
-	return s.store, nil
-}
-
-// PutEndorsement stores (or replaces) an endorsement.
-func (s *attestationService) PutEndorsement(ctx context.Context, req *PutEndorsementRequest) (*Endorsement, error) {
-	const op = "AttestationService.PutEndorsement"
-	if req == nil {
-		return nil, ErrAttestationNilRequest
-	}
-	if err := validateAttestationName(req.Name); err != nil {
-		return nil, verifierError(op, errors.ErrInvalidInput, err)
-	}
 	if err := validateEndorsement(req); err != nil {
-		return nil, verifierError(op, errors.ErrInvalidInput, err)
-	}
-	store, err := s.verifierStore(op)
-	if err != nil {
 		return nil, err
 	}
 	endorsement := &Endorsement{
@@ -446,18 +277,10 @@ func (s *attestationService) PutEndorsement(ctx context.Context, req *PutEndorse
 		Kind:           req.Kind,
 		CertificatePEM: req.CertificatePEM,
 		PublicKeyPEM:   req.PublicKeyPEM,
-		CreatedAt:      s.now().UTC(),
+		CreatedAt:      a.now().UTC(),
 	}
-	data, err := json.Marshal(endorsement)
-	if err != nil {
-		return nil, verifierError(op, errors.ErrInternal, err)
-	}
-	prefix, err := attestationPrefix(ctx, endorsementSegment)
-	if err != nil {
+	if err := a.store.PutEndorsement(ctx, tenant, endorsement); err != nil {
 		return nil, err
-	}
-	if err := store.Put(ctx, prefix+req.Name, data); err != nil {
-		return nil, verifierError(op, errors.ErrUnavailable, err)
 	}
 	return endorsement, nil
 }
@@ -490,133 +313,85 @@ func validateEndorsement(req *PutEndorsementRequest) error {
 	return nil
 }
 
-// ListEndorsements lists the tenant's endorsements.
-func (s *attestationService) ListEndorsements(ctx context.Context, req *ListEndorsementsRequest) (*ListEndorsementsResponse, error) {
-	const op = "AttestationService.ListEndorsements"
+// ListEndorsements lists the tenant's endorsements, ordered by name. A nil
+// request or an empty kind lists every kind.
+func (a *Appraiser) ListEndorsements(ctx context.Context, tenant string, req *ListEndorsementsRequest) (*ListEndorsementsResponse, error) {
 	if req == nil {
 		req = &ListEndorsementsRequest{}
 	}
-	store, err := s.verifierStore(op)
+	endorsements, err := a.loadEndorsements(ctx, tenant, req.Kind)
 	if err != nil {
 		return nil, err
-	}
-	endorsements, err := s.loadEndorsements(ctx, store, req.Kind)
-	if err != nil {
-		return nil, verifierError(op, errors.ErrUnavailable, err)
 	}
 	return &ListEndorsementsResponse{Endorsements: endorsements}, nil
 }
 
 // loadEndorsements reads the tenant's endorsements, optionally of one kind.
-func (s *attestationService) loadEndorsements(ctx context.Context, store AttestationStore, kind EndorsementKind) ([]*Endorsement, error) {
-	prefix, err := attestationPrefix(ctx, endorsementSegment)
+func (a *Appraiser) loadEndorsements(ctx context.Context, tenant string, kind EndorsementKind) ([]*Endorsement, error) {
+	all, err := a.store.ListEndorsements(ctx, tenant)
 	if err != nil {
 		return nil, err
 	}
-	records, err := store.Scan(ctx, prefix)
-	if err != nil {
-		return nil, err
+	if kind == "" {
+		return all, nil
 	}
-	out := make([]*Endorsement, 0, len(records))
-	for _, data := range records {
-		var e Endorsement
-		if err := json.Unmarshal(data, &e); err != nil {
-			continue
-		}
-		if kind == "" || e.Kind == kind {
-			out = append(out, &e)
+	out := make([]*Endorsement, 0, len(all))
+	for _, e := range all {
+		if e.Kind == kind {
+			out = append(out, e)
 		}
 	}
-	sort.Slice(out, func(i, j int) bool { return out[i].Name < out[j].Name })
 	return out, nil
 }
 
-// DeleteEndorsement removes an endorsement.
-func (s *attestationService) DeleteEndorsement(ctx context.Context, req *DeleteEndorsementRequest) error {
-	const op = "AttestationService.DeleteEndorsement"
+// DeleteEndorsement removes one of the tenant's endorsements. A missing one
+// is a *RecordNotFoundError.
+func (a *Appraiser) DeleteEndorsement(ctx context.Context, tenant string, req *DeleteEndorsementRequest) error {
 	if req == nil {
-		return ErrAttestationNilRequest
+		return ErrNilRequest
 	}
-	return s.deleteRecord(ctx, op, endorsementSegment, "endorsement", req.Name)
-}
-
-// deleteRecord removes a named record, reporting a missing one as not found.
-func (s *attestationService) deleteRecord(ctx context.Context, op, segment, kind, name string) error {
-	if err := validateAttestationName(name); err != nil {
-		return verifierError(op, errors.ErrInvalidInput, err)
-	}
-	store, err := s.verifierStore(op)
-	if err != nil {
-		return err
-	}
-	prefix, err := attestationPrefix(ctx, segment)
-	if err != nil {
-		return err
-	}
-	key := prefix + name
-	_, found, err := store.Get(ctx, key)
-	if err != nil {
-		return verifierError(op, errors.ErrUnavailable, err)
-	}
-	if !found {
-		return verifierError(op, errors.ErrNotFound, &AttestationRecordNotFoundError{Kind: kind, Name: name})
-	}
-	if err := store.Delete(ctx, key); err != nil {
-		return verifierError(op, errors.ErrUnavailable, err)
-	}
-	return nil
+	return a.store.DeleteEndorsement(ctx, tenant, req.Name)
 }
 
 // PutReferenceValues verifies a signed CoRIM against the tenant's
-// reference-signer endorsements and stores it.
-func (s *attestationService) PutReferenceValues(ctx context.Context, req *PutReferenceValuesRequest) (*ReferenceValues, error) {
-	const op = "AttestationService.PutReferenceValues"
+// reference-signer endorsements and stores it. Reference values no stored
+// endorsement verifies are a *ReferenceValuesRejectedError: they are never
+// trusted on first use.
+func (a *Appraiser) PutReferenceValues(ctx context.Context, tenant string, req *PutReferenceValuesRequest) (*ReferenceValues, error) {
 	if req == nil {
-		return nil, ErrAttestationNilRequest
+		return nil, ErrNilRequest
 	}
-	if err := validateAttestationName(req.Name); err != nil {
-		return nil, verifierError(op, errors.ErrInvalidInput, err)
+	if err := ValidateName(req.Name); err != nil {
+		return nil, err
 	}
 	if len(req.SignedCoRIM) == 0 {
-		return nil, verifierError(op, errors.ErrInvalidInput, &ReferenceValuesRejectedError{Reason: "signed_corim is required"})
+		return nil, &ReferenceValuesRejectedError{Reason: "signed_corim is required"}
 	}
-	store, err := s.verifierStore(op)
+	manifest, err := a.verifyCoRIM(ctx, tenant, req.SignedCoRIM)
 	if err != nil {
 		return nil, err
 	}
-	manifest, err := s.verifyCoRIM(ctx, store, req.SignedCoRIM)
-	if err != nil {
-		return nil, verifierError(op, errors.ErrInvalidInput, err)
-	}
-	record, err := referenceValuesRecord(req.Name, req.SignedCoRIM, manifest, s.now().UTC())
-	if err != nil {
-		return nil, verifierError(op, errors.ErrInvalidInput, err)
-	}
-	data, err := json.Marshal(record)
-	if err != nil {
-		return nil, verifierError(op, errors.ErrInternal, err)
-	}
-	prefix, err := attestationPrefix(ctx, referenceValuesSegment)
+	record, err := referenceValuesRecord(req.Name, req.SignedCoRIM, manifest, a.now().UTC())
 	if err != nil {
 		return nil, err
 	}
-	if err := store.Put(ctx, prefix+req.Name, data); err != nil {
-		return nil, verifierError(op, errors.ErrUnavailable, err)
+	if err := a.store.PutReferenceValues(ctx, tenant, record); err != nil {
+		return nil, err
 	}
 	return record, nil
 }
 
 // verifyCoRIM verifies a signed CoRIM against the tenant's reference-signer
 // endorsements: CA certificates as the x5chain roots, then each pinned key.
-func (s *attestationService) verifyCoRIM(ctx context.Context, store AttestationStore, signed []byte) (*refvalue.Manifest, error) {
-	signers, err := s.loadEndorsements(ctx, store, EndorsementReferenceSigner)
+func (a *Appraiser) verifyCoRIM(ctx context.Context, tenant string, signed []byte) (*refvalue.Manifest, error) {
+	signers, err := a.loadEndorsements(ctx, tenant, EndorsementReferenceSigner)
 	if err != nil {
 		return nil, err
 	}
 	if len(signers) == 0 {
 		return nil, &ReferenceValuesRejectedError{Reason: "no reference-signer endorsement is stored; reference values are never trusted on first use"}
 	}
-	now := s.now()
+	now := a.now()
 	var failures []error
 	roots := x509.NewCertPool()
 	haveRoots := false
@@ -654,7 +429,7 @@ func (s *attestationService) verifyCoRIM(ctx context.Context, store AttestationS
 		}
 		failures = append(failures, err)
 	}
-	cause := stderrors.Join(failures...)
+	cause := errors.Join(failures...)
 	reason := "no reference-signer endorsement verifies the signed CoRIM"
 	if cause != nil {
 		reason += ": " + cause.Error()
@@ -699,98 +474,44 @@ func referenceValuesRecord(name string, signed []byte, manifest *refvalue.Manife
 	}, nil
 }
 
-// GetReferenceValues returns stored reference values, with the signed CoRIM.
-func (s *attestationService) GetReferenceValues(ctx context.Context, req *GetReferenceValuesRequest) (*ReferenceValues, error) {
-	const op = "AttestationService.GetReferenceValues"
+// GetReferenceValues returns the tenant's stored reference values, with the
+// signed CoRIM. A missing record is a *RecordNotFoundError.
+func (a *Appraiser) GetReferenceValues(ctx context.Context, tenant string, req *GetReferenceValuesRequest) (*ReferenceValues, error) {
 	if req == nil {
-		return nil, ErrAttestationNilRequest
+		return nil, ErrNilRequest
 	}
-	if err := validateAttestationName(req.Name); err != nil {
-		return nil, verifierError(op, errors.ErrInvalidInput, err)
-	}
-	store, err := s.verifierStore(op)
-	if err != nil {
-		return nil, err
-	}
-	record, err := s.loadReferenceValues(ctx, store, req.Name)
-	if err != nil {
-		return nil, verifierError(op, referenceValuesLoadCode(err), err)
-	}
-	return record, nil
+	return a.store.GetReferenceValues(ctx, tenant, req.Name)
 }
 
-// referenceValuesLoadCode maps a load failure to its status code.
-func referenceValuesLoadCode(err error) errors.ErrorCode {
-	var missing *AttestationRecordNotFoundError
-	if stderrors.As(err, &missing) {
-		return errors.ErrNotFound
-	}
-	return errors.ErrUnavailable
-}
-
-// loadReferenceValues reads one stored record.
-func (s *attestationService) loadReferenceValues(ctx context.Context, store AttestationStore, name string) (*ReferenceValues, error) {
-	prefix, err := attestationPrefix(ctx, referenceValuesSegment)
+// ListReferenceValues lists the tenant's stored reference values, ordered by
+// name, without their signed CoRIM bodies.
+func (a *Appraiser) ListReferenceValues(ctx context.Context, tenant string) (*ListReferenceValuesResponse, error) {
+	records, err := a.store.ListReferenceValues(ctx, tenant)
 	if err != nil {
 		return nil, err
 	}
-	data, found, err := store.Get(ctx, prefix+name)
-	if err != nil {
-		return nil, err
-	}
-	if !found {
-		return nil, &AttestationRecordNotFoundError{Kind: "reference values", Name: name}
-	}
-	var record ReferenceValues
-	if err := json.Unmarshal(data, &record); err != nil {
-		return nil, err
-	}
-	return &record, nil
-}
-
-// ListReferenceValues lists stored reference values without their bodies.
-func (s *attestationService) ListReferenceValues(ctx context.Context) (*ListReferenceValuesResponse, error) {
-	const op = "AttestationService.ListReferenceValues"
-	store, err := s.verifierStore(op)
-	if err != nil {
-		return nil, err
-	}
-	prefix, err := attestationPrefix(ctx, referenceValuesSegment)
-	if err != nil {
-		return nil, err
-	}
-	records, err := store.Scan(ctx, prefix)
-	if err != nil {
-		return nil, verifierError(op, errors.ErrUnavailable, err)
-	}
-	out := make([]*ReferenceValues, 0, len(records))
-	for _, data := range records {
-		var record ReferenceValues
-		if err := json.Unmarshal(data, &record); err != nil {
-			continue
-		}
+	for _, record := range records {
 		record.SignedCoRIM = nil
-		out = append(out, &record)
 	}
-	sort.Slice(out, func(i, j int) bool { return out[i].Name < out[j].Name })
-	return &ListReferenceValuesResponse{ReferenceValues: out}, nil
+	return &ListReferenceValuesResponse{ReferenceValues: records}, nil
 }
 
-// DeleteReferenceValues removes stored reference values.
-func (s *attestationService) DeleteReferenceValues(ctx context.Context, req *DeleteReferenceValuesRequest) error {
-	const op = "AttestationService.DeleteReferenceValues"
+// DeleteReferenceValues removes the tenant's stored reference values. A
+// missing record is a *RecordNotFoundError.
+func (a *Appraiser) DeleteReferenceValues(ctx context.Context, tenant string, req *DeleteReferenceValuesRequest) error {
 	if req == nil {
-		return ErrAttestationNilRequest
+		return ErrNilRequest
 	}
-	return s.deleteRecord(ctx, op, referenceValuesSegment, "reference values", req.Name)
+	return a.store.DeleteReferenceValues(ctx, tenant, req.Name)
 }
 
-// AppraiseQuote appraises TPM quote evidence against stored, signed
-// reference values and returns the attestation result. It returns an error
-// only when the request is unusable or the store is unreachable; evidence that
-// fails appraisal is a successful call whose result says Verified=false.
-func (s *attestationService) AppraiseQuote(ctx context.Context, req *AppraiseQuoteRequest) (*AttestationResult, error) {
-	result, _, err := s.appraiseQuote(ctx, req, nil)
+// AppraiseQuote appraises TPM quote evidence against the tenant's stored,
+// signed reference values and returns the attestation result. It returns an
+// error only when the request is unusable or the store is unreachable;
+// evidence that fails appraisal is a successful call whose result says
+// Verified=false.
+func (a *Appraiser) AppraiseQuote(ctx context.Context, tenant string, req *AppraiseQuoteRequest) (*AttestationResult, error) {
+	result, _, err := a.appraiseQuote(ctx, tenant, req, nil)
 	return result, err
 }
 
@@ -798,21 +519,16 @@ func (s *attestationService) AppraiseQuote(ctx context.Context, req *AppraiseQuo
 // divergent, which a host appraiser reports in detail. launchPCRs are quoted
 // registers extended at container launch: the event-log replay leaves them
 // to the baseline.
-func (s *attestationService) appraiseQuote(ctx context.Context, req *AppraiseQuoteRequest, launchPCRs []uint32) (*AttestationResult, []pcrDivergence, error) {
-	const op = "AttestationService.AppraiseQuote"
+func (a *Appraiser) appraiseQuote(ctx context.Context, tenant string, req *AppraiseQuoteRequest, launchPCRs []uint32) (*AttestationResult, []pcrDivergence, error) {
 	if req == nil {
-		return nil, nil, ErrAttestationNilRequest
+		return nil, nil, ErrNilRequest
 	}
-	store, err := s.verifierStore(op)
-	if err != nil {
-		return nil, nil, err
-	}
-	now := s.now()
+	now := a.now()
 	result := &AttestationResult{AppraisedAt: now.UTC(), ReferenceValues: req.ReferenceValues}
 
-	akKey, akCheck, err := s.appraiseAKCertificate(ctx, store, req.AKCertificatePEM, now)
+	akKey, akCheck, err := a.appraiseAKCertificate(ctx, tenant, req.AKCertificatePEM, now)
 	if err != nil {
-		return nil, nil, verifierError(op, errors.ErrUnavailable, err)
+		return nil, nil, err
 	}
 	result.Checks = append(result.Checks, akCheck)
 
@@ -840,9 +556,9 @@ func (s *attestationService) appraiseQuote(ctx context.Context, req *AppraiseQuo
 
 	result.Checks = append(result.Checks, appraiseEventLog(req.EventLog, quote, proven, launchPCRs))
 
-	baseline, divergences, err := s.appraiseBaseline(ctx, store, req.ReferenceValues, quote, proven, result)
+	baseline, divergences, err := a.appraiseBaseline(ctx, tenant, req.ReferenceValues, quote, proven, result)
 	if err != nil {
-		return nil, nil, verifierError(op, errors.ErrUnavailable, err)
+		return nil, nil, err
 	}
 	result.Checks = append(result.Checks, baseline)
 
@@ -861,11 +577,11 @@ func (s *attestationService) appraiseQuote(ctx context.Context, req *AppraiseQuo
 
 // appraiseAKCertificate chains the AK certificate to the tenant's ak-root
 // endorsements. It returns the certified key when the check passes.
-func (s *attestationService) appraiseAKCertificate(ctx context.Context, store AttestationStore, chainPEM []byte, now time.Time) (crypto.PublicKey, AppraisalCheck, error) {
+func (a *Appraiser) appraiseAKCertificate(ctx context.Context, tenant string, chainPEM []byte, now time.Time) (crypto.PublicKey, AppraisalCheck, error) {
 	if len(chainPEM) == 0 {
 		return nil, absentCheck(AppraisalCheckAKCertificate, "no attestation key certificate in evidence"), nil
 	}
-	roots, err := s.loadEndorsements(ctx, store, EndorsementAKRoot)
+	roots, err := a.loadEndorsements(ctx, tenant, EndorsementAKRoot)
 	if err != nil {
 		return nil, AppraisalCheck{}, err
 	}
@@ -931,25 +647,25 @@ func bootPCRs(proven map[int][]byte, launchPCRs []uint32) map[int][]byte {
 
 // appraiseBaseline compares the proven PCRs with the named reference values,
 // re-verifying their signature against the current endorsements first.
-func (s *attestationService) appraiseBaseline(ctx context.Context, store AttestationStore, name string, quote *evidence.Quote, proven map[int][]byte, result *AttestationResult) (AppraisalCheck, []pcrDivergence, error) {
+func (a *Appraiser) appraiseBaseline(ctx context.Context, tenant, name string, quote *evidence.Quote, proven map[int][]byte, result *AttestationResult) (AppraisalCheck, []pcrDivergence, error) {
 	if name == "" {
 		return absentCheck(AppraisalCheckBaseline, "no reference values named"), nil, nil
 	}
-	if err := validateAttestationName(name); err != nil {
+	if err := ValidateName(name); err != nil {
 		return absentCheck(AppraisalCheckBaseline, err.Error()), nil, nil
 	}
-	record, err := s.loadReferenceValues(ctx, store, name)
+	record, err := a.store.GetReferenceValues(ctx, tenant, name)
 	if err != nil {
-		var missing *AttestationRecordNotFoundError
-		if stderrors.As(err, &missing) {
+		var missing *RecordNotFoundError
+		if errors.As(err, &missing) {
 			return absentCheck(AppraisalCheckBaseline, missing.Error()), nil, nil
 		}
 		return AppraisalCheck{}, nil, err
 	}
-	manifest, err := s.verifyCoRIM(ctx, store, record.SignedCoRIM)
+	manifest, err := a.verifyCoRIM(ctx, tenant, record.SignedCoRIM)
 	if err != nil {
 		var rejected *ReferenceValuesRejectedError
-		if stderrors.As(err, &rejected) {
+		if errors.As(err, &rejected) {
 			return absentCheck(AppraisalCheckBaseline, "reference values are no longer endorsed: "+rejected.Reason), nil, nil
 		}
 		return AppraisalCheck{}, nil, err
@@ -1066,7 +782,7 @@ func evidenceCheck(name string, err error) AppraisalCheck {
 	if err == nil {
 		return AppraisalCheck{Name: name, Outcome: AppraisalPass}
 	}
-	if stderrors.Is(err, evidence.ErrAbsent) {
+	if errors.Is(err, evidence.ErrAbsent) {
 		return AppraisalCheck{Name: name, Outcome: AppraisalAbsent, Reason: err.Error()}
 	}
 	return AppraisalCheck{Name: name, Outcome: AppraisalForged, Reason: err.Error()}

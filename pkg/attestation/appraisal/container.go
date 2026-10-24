@@ -1,9 +1,9 @@
 // Copyright (c) 2026 Jeremy Hahn
 // Copyright (c) 2026 Automate The Things, LLC
 //
-// This file is part of go-quicbaas.
+// This file is part of go-xkms.
 //
-// go-quicbaas is dual-licensed:
+// go-xkms is dual-licensed:
 //
 // 1. GNU Affero General Public License v3.0 (AGPL-3.0)
 //    See LICENSE file or visit https://www.gnu.org/licenses/agpl-3.0.html
@@ -11,54 +11,91 @@
 // 2. Commercial License
 //    Contact licensing@automatethethings.com for commercial licensing options.
 
-package orchestration
+package appraisal
 
 import (
 	"bytes"
 	"context"
-	"crypto"
-	"crypto/rand"
 	"crypto/x509"
-	"sort"
+	"strconv"
 	"strings"
-	"time"
 
 	"github.com/jeremyhahn/go-xkms/pkg/attestation/evidence"
 	xkmstpm2 "github.com/jeremyhahn/go-xkms/pkg/tpm2"
-	"github.com/jeremyhahn/go-xkms/pkg/types"
-
-	"github.com/jeremyhahn/go-quicbaas/pkg/interfaces"
 )
 
-// appraise hands the bound evidence to the Verifier and turns anything short
-// of a verified appraisal into a HostAppraisalError.
-func (r *TPMAttestingRuntime) appraise(ctx context.Context, spec *ContainerSpec, nonce []byte, quote xkmstpm2.Quote, bound *boundPCRs) error {
-	akCert, err := r.tpm.IAKCertificate()
-	if err != nil {
-		return &ContainerQuoteError{Image: spec.Image, Cause: err}
+// supportedPCRBankNames are the PCR banks a container quote may select, the
+// banks reference values cover. SHA-1 is not one: a SHA-1 bank is never
+// appraised.
+var supportedPCRBankNames = []string{"sha256", "sha384", "sha512"}
+
+// ContainerEvidence is a container host's TPM evidence as a container
+// runtime collects it: the quote, the separate PCR read and the attestation
+// key certificate, before the read is bound to the quote.
+type ContainerEvidence struct {
+	// Image names the attested container image, for error reports.
+	Image string
+
+	// ReferenceValues names the tenant's stored reference values to compare
+	// against.
+	ReferenceValues string
+
+	// AKCertificate is the certificate of the attestation key that signed
+	// the quote.
+	AKCertificate *x509.Certificate
+
+	// Nonce is the qualifying data the caller generated for this quote. The
+	// signed quote body must carry it.
+	Nonce []byte
+
+	// Quote is the TPM2_Quote: the signed TPMS_ATTEST, its signature and
+	// the host's event log.
+	Quote xkmstpm2.Quote
+
+	// Banks is the TPM2_PCR_Read taken with the quote. Only values that
+	// reproduce the signed pcrDigest are appraised.
+	Banks []xkmstpm2.PCRBank
+
+	// LaunchPCRs are quoted registers the runtime extends at container
+	// launch, which the boot event log does not record.
+	LaunchPCRs []uint32
+}
+
+// AppraiseContainer binds a container host's PCR read to its signed quote
+// and appraises the bound evidence against the tenant's reference values. It
+// returns nil only for a verified appraisal: a read that does not bind is a
+// *QuoteBindingError or *QuotedPCRDigestMismatchError, and evidence that
+// fails appraisal is a *HostAppraisalError.
+func (a *Appraiser) AppraiseContainer(ctx context.Context, tenant string, ev *ContainerEvidence) error {
+	if ev == nil {
+		return ErrNilRequest
 	}
-	appraisal, err := r.appraiser.AppraiseHost(ctx, &HostEvidence{
-		ReferenceValues: spec.ReferenceValues,
-		AKCertificate:   akCert,
-		Nonce:           nonce,
-		Quoted:          quote.Quoted,
-		Signature:       quote.Signature,
+	bound, err := bindQuotedPCRs(ev.Image, ev.Quote.Quoted, ev.Nonce, ev.Banks)
+	if err != nil {
+		return err
+	}
+	appraisal, err := a.AppraiseHost(ctx, tenant, &HostEvidence{
+		ReferenceValues: ev.ReferenceValues,
+		AKCertificate:   ev.AKCertificate,
+		Nonce:           ev.Nonce,
+		Quoted:          ev.Quote.Quoted,
+		Signature:       ev.Quote.Signature,
 		PCRs:            bound.values,
-		EventLog:        quote.EventLog,
-		LaunchPCRs:      []uint32{uint32(spec.EffectiveMeasurementPCR())},
+		EventLog:        ev.Quote.EventLog,
+		LaunchPCRs:      ev.LaunchPCRs,
 	})
 	if err != nil {
 		return err
 	}
-	if appraisal != nil && appraisal.Verified {
+	if appraisal.Verified {
 		return nil
 	}
-	appraisalErr := &HostAppraisalError{Image: spec.Image, ReferenceValues: spec.ReferenceValues}
-	if appraisal != nil {
-		appraisalErr.CryptographicFailure = appraisal.CryptographicFailure
-		appraisalErr.Failures = appraisal.Failures
+	return &HostAppraisalError{
+		Image:                ev.Image,
+		ReferenceValues:      ev.ReferenceValues,
+		CryptographicFailure: appraisal.CryptographicFailure,
+		Failures:             appraisal.Failures,
 	}
-	return appraisalErr
 }
 
 // =============================================================================
@@ -103,12 +140,11 @@ type boundPCRs struct {
 // makes the values fail to reproduce the signed digest and is rejected.
 //
 // What this does NOT establish: that the signature over quoted verifies under
-// a trusted attestation key. That check needs the AK public key and its
-// certificate chain, neither of which the narrow HostTPM seam exposes, and it
-// belongs to the remote verifier that consumes ContainerAttestation.Quoted and
-// .Signature. Locally, the quote body is trusted because it came from the
-// host's own TPM handle; what is being defended against here is a divergence
-// between that body and the separate PCR read.
+// a trusted attestation key. That check needs the AK certificate chained to
+// the tenant's ak-root endorsements; AppraiseContainer runs it, with the
+// event-log and baseline checks, through AppraiseHost once the read is
+// bound. What is defended against here is a divergence between the signed
+// body and the separate PCR read.
 //
 // Every check is go-xkms's evidence primitive: ParseQuote (a TPM-generated
 // TPM2_Quote over exactly one accepted bank), VerifyQualifyingData (the nonce,
@@ -150,7 +186,7 @@ func bindQuotedPCRs(image string, quoted, nonce []byte, banks []xkmstpm2.PCRBank
 		if !ok {
 			return nil, &QuoteBindingError{
 				Image: image,
-				Reason: "PCR " + intToStr(index) + " is in the signed selection but absent from the " +
+				Reason: "PCR " + strconv.Itoa(index) + " is in the signed selection but absent from the " +
 					bankName + " read",
 			}
 		}
@@ -194,7 +230,7 @@ func pcrBankName(algID uint16) (string, error) {
 // map for the named bank.
 //
 // The match is case-insensitive: go-xkms ReadPCRs reports "SHA256" while every
-// bank name in this package (and in a ContainerSpec) is lowercase, and an
+// bank name in this package is lowercase, and an
 // exact comparison silently missed on every multi-bank host. A bank that is
 // genuinely absent is an error, never a fallback to whichever bank happened to
 // be first — reading PCRs from an unintended bank produces measurements that
