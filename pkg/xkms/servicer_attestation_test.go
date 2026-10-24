@@ -11,653 +11,224 @@
 // 2. Commercial License
 //    Contact licensing@automatethethings.com for commercial licensing options.
 
-package service
+package xkms
 
 import (
 	"context"
-	"crypto/ecdsa"
-	"crypto/elliptic"
-	"crypto/rand"
-	"crypto/sha256"
 	"crypto/x509"
-	"crypto/x509/pkix"
-	stderrors "errors"
-	"math/big"
 	"testing"
-	"time"
 
-	"github.com/jeremyhahn/go-quicbaas/pkg/errors"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
+
+	"github.com/jeremyhahn/go-xkms/pkg/attestation/appraisal"
+	"github.com/jeremyhahn/go-xkms/pkg/attestation/appraisal/appraisaltest"
+	"github.com/jeremyhahn/go-xkms/pkg/testutil"
 )
 
-// =============================================================================
-// Test fixtures
-// =============================================================================
-
-// attestationKeypair is a self-signed ECDSA attesting identity: the leaf
-// certificate plus the private key that signs attestation data with it. It
-// stands in for a TPM attestation key without requiring a TPM — the
-// verification path under test is pure x509 and ECDSA.
-type attestationKeypair struct {
-	cert    *x509.Certificate
-	certPEM []byte
-	key     *ecdsa.PrivateKey
+// verifierFixture is a service wired with an Appraiser over an in-memory DAO
+// store, plus the authorities and evidence a tenant needs to appraise.
+type verifierFixture struct {
+	svc   *XKMSService
+	akCA  *appraisaltest.Authority
+	rvCA  *appraisaltest.Authority
+	ak    *appraisaltest.AttestationKey
+	pcrs  map[uint32][]byte
+	corim []byte
 }
 
-// newAttestationKeypair mints a self-signed ECDSA certificate valid from an
-// hour ago to an hour from now.
-func newAttestationKeypair(t *testing.T, commonName string) *attestationKeypair {
+func newVerifierFixture(t *testing.T) *verifierFixture {
 	t.Helper()
+	store, err := appraisal.NewStore(appraisal.StoreConfig{DAOs: testutil.NewMemoryDAOFactory()})
+	require.NoError(t, err)
+	appraiser, err := appraisal.NewAppraiser(store)
+	require.NoError(t, err)
 
-	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
-	if err != nil {
-		t.Fatalf("GenerateKey: %v", err)
-	}
-
-	template := &x509.Certificate{
-		SerialNumber:          big.NewInt(time.Now().UnixNano()),
-		Subject:               pkix.Name{CommonName: commonName},
-		NotBefore:             time.Now().Add(-time.Hour),
-		NotAfter:              time.Now().Add(time.Hour),
-		KeyUsage:              x509.KeyUsageDigitalSignature | x509.KeyUsageCertSign,
-		BasicConstraintsValid: true,
-		IsCA:                  true,
-	}
-
-	der, err := x509.CreateCertificate(rand.Reader, template, template, &key.PublicKey, key)
-	if err != nil {
-		t.Fatalf("CreateCertificate: %v", err)
-	}
-	cert, err := x509.ParseCertificate(der)
-	if err != nil {
-		t.Fatalf("ParseCertificate: %v", err)
-	}
-
-	return &attestationKeypair{cert: cert, certPEM: der, key: key}
+	f := &verifierFixture{svc: &XKMSService{}, pcrs: appraisaltest.PCRValues(0, 4, 7)}
+	f.svc.SetAttestationAppraiser(appraiser)
+	f.akCA, err = appraisaltest.NewAuthority("AK CA")
+	require.NoError(t, err)
+	f.rvCA, err = appraisaltest.NewAuthority("Reference Value CA")
+	require.NoError(t, err)
+	f.ak, err = appraisaltest.IssueAttestationKey(f.akCA, true)
+	require.NoError(t, err)
+	signerCert, signerKey, err := appraisaltest.SignerUnder(f.rvCA)
+	require.NoError(t, err)
+	f.corim, err = appraisaltest.SignCoRIM(f.pcrs, signerKey, []*x509.Certificate{signerCert})
+	require.NoError(t, err)
+	return f
 }
 
-// sign produces an ASN.1 ECDSA signature over the SHA-256 of data, matching
-// what x509.ECDSAWithSHA256 denotes.
-func (k *attestationKeypair) sign(t *testing.T, data []byte) []byte {
+// endorse stores the fixture's trust anchors and its "golden" reference
+// values for the tenant ctx carries.
+func (f *verifierFixture) endorse(t *testing.T, ctx context.Context) {
 	t.Helper()
-	digest := sha256.Sum256(data)
-	sig, err := ecdsa.SignASN1(rand.Reader, k.key, digest[:])
-	if err != nil {
-		t.Fatalf("SignASN1: %v", err)
-	}
-	return sig
+	_, err := f.svc.PutAttestationEndorsement(ctx, &appraisal.PutEndorsementRequest{
+		Name: "ak-ca", Kind: appraisal.EndorsementAKRoot, CertificatePEM: f.akCA.CertificatePEM(),
+	})
+	require.NoError(t, err)
+	_, err = f.svc.PutAttestationEndorsement(ctx, &appraisal.PutEndorsementRequest{
+		Name: "rv-ca", Kind: appraisal.EndorsementReferenceSigner, CertificatePEM: f.rvCA.CertificatePEM(),
+	})
+	require.NoError(t, err)
+	_, err = f.svc.PutAttestationReferenceValues(ctx, &appraisal.PutReferenceValuesRequest{Name: "golden", SignedCoRIM: f.corim})
+	require.NoError(t, err)
 }
 
-// publicKeyDER returns the PKIX DER encoding of the keypair's public key.
-func (k *attestationKeypair) publicKeyDER(t *testing.T) []byte {
+func (f *verifierFixture) quoteRequest(t *testing.T) *appraisal.AppraiseQuoteRequest {
 	t.Helper()
-	der, err := x509.MarshalPKIXPublicKey(&k.key.PublicKey)
-	if err != nil {
-		t.Fatalf("MarshalPKIXPublicKey: %v", err)
+	nonce := []byte("verifier-service-nonce-000000000")
+	quote, err := appraisaltest.SignQuote(f.ak, f.pcrs, nonce)
+	require.NoError(t, err)
+	return &appraisal.AppraiseQuoteRequest{
+		AKCertificatePEM: f.ak.CertificatePEM(),
+		Quote:            quote.Attest,
+		Signature:        quote.Signature,
+		Nonce:            nonce,
+		PCRs:             f.pcrs,
+		ReferenceValues:  "golden",
 	}
-	return der
 }
 
-// newSelfSignedVerifyRequest builds a well-formed request that verifies
-// against a self-signed anchor, the shape a simulator or lab TPM produces.
-func newSelfSignedVerifyRequest(t *testing.T, kp *attestationKeypair, data []byte) *VerifyAttestationRequest {
-	t.Helper()
-	return &VerifyAttestationRequest{
-		Format:             "tpm2",
-		Backend:            "tpm2",
-		ChainPEM:           [][]byte{kp.certPEM},
-		AttestedKeyDER:     kp.publicKeyDER(t),
-		AttestationData:    data,
-		Signature:          kp.sign(t, data),
-		SignatureAlgorithm: x509.ECDSAWithSHA256.String(),
-		CreatedAt:          time.Now().UTC().Format(time.RFC3339),
-		Options: &VerifyAttestationOptions{
-			AllowSelfSigned: true,
+func TestXKMSService_AttestationVerifier_Lifecycle(t *testing.T) {
+	f := newVerifierFixture(t)
+	ctx := tenantCtx("acme")
+	f.endorse(t, ctx)
+	assert.Same(t, f.svc.appraiser.load(), f.svc.AttestationAppraiser())
+
+	endorsements, err := f.svc.ListAttestationEndorsements(ctx, nil)
+	require.NoError(t, err)
+	assert.Len(t, endorsements.Endorsements, 2)
+	roots, err := f.svc.ListAttestationEndorsements(ctx, &appraisal.ListEndorsementsRequest{Kind: appraisal.EndorsementAKRoot})
+	require.NoError(t, err)
+	require.Len(t, roots.Endorsements, 1)
+	assert.Equal(t, "ak-ca", roots.Endorsements[0].Name)
+
+	golden, err := f.svc.GetAttestationReferenceValues(ctx, &appraisal.GetReferenceValuesRequest{Name: "golden"})
+	require.NoError(t, err)
+	assert.Equal(t, "golden", golden.Name)
+	listed, err := f.svc.ListAttestationReferenceValues(ctx)
+	require.NoError(t, err)
+	assert.Len(t, listed.ReferenceValues, 1)
+
+	result, err := f.svc.AppraiseAttestationQuote(ctx, f.quoteRequest(t))
+	require.NoError(t, err)
+	assert.True(t, result.Verified, "genuine evidence must verify: %+v", result.Checks)
+	assert.Equal(t, "golden", result.ReferenceValues)
+
+	require.NoError(t, f.svc.DeleteAttestationReferenceValues(ctx, &appraisal.DeleteReferenceValuesRequest{Name: "golden"}))
+	_, err = f.svc.GetAttestationReferenceValues(ctx, &appraisal.GetReferenceValuesRequest{Name: "golden"})
+	assert.ErrorIs(t, err, appraisal.ErrRecordNotFound)
+
+	require.NoError(t, f.svc.DeleteAttestationEndorsement(ctx, &appraisal.DeleteEndorsementRequest{Name: "ak-ca"}))
+	endorsements, err = f.svc.ListAttestationEndorsements(ctx, nil)
+	require.NoError(t, err)
+	require.Len(t, endorsements.Endorsements, 1)
+	assert.Equal(t, "rv-ca", endorsements.Endorsements[0].Name)
+}
+
+// The service scopes every call to the caller's tenant: one tenant's
+// endorsements and reference values are invisible to another, so another
+// tenant's evidence cannot be appraised against them.
+func TestXKMSService_AttestationVerifier_TenantIsolation(t *testing.T) {
+	f := newVerifierFixture(t)
+	f.endorse(t, tenantCtx("acme"))
+	globex := tenantCtx("globex")
+
+	endorsements, err := f.svc.ListAttestationEndorsements(globex, nil)
+	require.NoError(t, err)
+	assert.Empty(t, endorsements.Endorsements)
+	listed, err := f.svc.ListAttestationReferenceValues(globex)
+	require.NoError(t, err)
+	assert.Empty(t, listed.ReferenceValues)
+	_, err = f.svc.GetAttestationReferenceValues(globex, &appraisal.GetReferenceValuesRequest{Name: "golden"})
+	assert.ErrorIs(t, err, appraisal.ErrRecordNotFound)
+
+	result, err := f.svc.AppraiseAttestationQuote(globex, f.quoteRequest(t))
+	require.NoError(t, err)
+	assert.False(t, result.Verified, "another tenant's baseline must not verify")
+
+	// A caller without an identity is the system tenant, which sees none of
+	// acme's records either.
+	listed, err = f.svc.ListAttestationReferenceValues(context.Background())
+	require.NoError(t, err)
+	assert.Empty(t, listed.ReferenceValues)
+}
+
+func TestXKMSService_AttestationVerifier_RequestErrors(t *testing.T) {
+	f := newVerifierFixture(t)
+	ctx := tenantCtx("acme")
+	calls := map[string]func() error{
+		"PutAttestationEndorsement": func() error {
+			_, err := f.svc.PutAttestationEndorsement(ctx, nil)
+			return err
+		},
+		"DeleteAttestationEndorsement": func() error { return f.svc.DeleteAttestationEndorsement(ctx, nil) },
+		"PutAttestationReferenceValues": func() error {
+			_, err := f.svc.PutAttestationReferenceValues(ctx, nil)
+			return err
+		},
+		"GetAttestationReferenceValues": func() error {
+			_, err := f.svc.GetAttestationReferenceValues(ctx, nil)
+			return err
+		},
+		"DeleteAttestationReferenceValues": func() error { return f.svc.DeleteAttestationReferenceValues(ctx, nil) },
+		"AppraiseAttestationQuote": func() error {
+			_, err := f.svc.AppraiseAttestationQuote(ctx, nil)
+			return err
 		},
 	}
-}
+	for name, call := range calls {
+		t.Run(name, func(t *testing.T) {
+			assert.ErrorIs(t, call(), appraisal.ErrNilRequest)
+		})
+	}
 
-// =============================================================================
-// Verify
-// =============================================================================
-
-func TestAttestationService_Verify(t *testing.T) {
-	kp := newAttestationKeypair(t, "attestation-key")
-	svc := NewAttestationService(nil, nil)
-
-	t.Run("ValidStatement", func(t *testing.T) {
-		req := newSelfSignedVerifyRequest(t, kp, []byte("tpms-attest"))
-
-		resp, err := svc.Verify(t.Context(), req)
-		if err != nil {
-			t.Fatalf("Verify: %v", err)
-		}
-		if !resp.Valid {
-			t.Fatalf("statement should verify, reason: %s", resp.Reason)
-		}
-		if !resp.ChainValid || !resp.SignatureValid {
-			t.Fatalf("component flags should both be set: %+v", resp)
-		}
-		if resp.Format != "tpm2" || resp.Backend != "tpm2" {
-			t.Errorf("format/backend not echoed: %+v", resp)
-		}
-	})
-
-	t.Run("TamperedDataFailsSignature", func(t *testing.T) {
-		req := newSelfSignedVerifyRequest(t, kp, []byte("tpms-attest"))
-		req.AttestationData = []byte("tampered")
-
-		resp, err := svc.Verify(t.Context(), req)
-		if err != nil {
-			t.Fatalf("Verify returned a transport error rather than a verdict: %v", err)
-		}
-		if resp.Valid {
-			t.Fatal("a tampered statement must not verify")
-		}
-		if !resp.ChainValid {
-			t.Error("the chain is untouched and should still validate")
-		}
-		if resp.SignatureValid {
-			t.Error("the signature must not validate over tampered data")
-		}
-		if resp.Reason == "" {
-			t.Error("an invalid result must carry a reason")
-		}
-	})
-
-	t.Run("WrongSignerFailsSignature", func(t *testing.T) {
-		other := newAttestationKeypair(t, "impostor")
-		req := newSelfSignedVerifyRequest(t, kp, []byte("tpms-attest"))
-		req.Signature = other.sign(t, []byte("tpms-attest"))
-
-		resp, err := svc.Verify(t.Context(), req)
-		if err != nil {
-			t.Fatalf("Verify: %v", err)
-		}
-		if resp.Valid || resp.SignatureValid {
-			t.Fatal("a signature from a different key must not verify")
-		}
-	})
-
-	t.Run("SelfSignedRejectedWithoutOptIn", func(t *testing.T) {
-		req := newSelfSignedVerifyRequest(t, kp, []byte("tpms-attest"))
-		req.Options.AllowSelfSigned = false
-
-		resp, err := svc.Verify(t.Context(), req)
-		if err != nil {
-			t.Fatalf("Verify: %v", err)
-		}
-		if resp.Valid {
-			t.Fatal("a self-signed chain must not verify without an explicit opt-in")
-		}
-	})
-
-	t.Run("AnchoredAgainstConfiguredRoot", func(t *testing.T) {
-		anchored := NewAttestationService([]*x509.Certificate{kp.cert}, nil)
-		req := newSelfSignedVerifyRequest(t, kp, []byte("tpms-attest"))
-		req.Options = &VerifyAttestationOptions{}
-
-		resp, err := anchored.Verify(t.Context(), req)
-		if err != nil {
-			t.Fatalf("Verify: %v", err)
-		}
-		if !resp.Valid {
-			t.Fatalf("statement should verify against the configured anchor, reason: %s", resp.Reason)
-		}
-	})
-
-	t.Run("PerRequestAnchor", func(t *testing.T) {
-		req := newSelfSignedVerifyRequest(t, kp, []byte("tpms-attest"))
-		req.Options = &VerifyAttestationOptions{TrustedRootsPEM: [][]byte{kp.certPEM}}
-
-		resp, err := svc.Verify(t.Context(), req)
-		if err != nil {
-			t.Fatalf("Verify: %v", err)
-		}
-		if !resp.Valid {
-			t.Fatalf("statement should verify against the per-request anchor, reason: %s", resp.Reason)
-		}
-	})
-
-	t.Run("InferredSignatureAlgorithm", func(t *testing.T) {
-		req := newSelfSignedVerifyRequest(t, kp, []byte("tpms-attest"))
-		req.SignatureAlgorithm = ""
-
-		resp, err := svc.Verify(t.Context(), req)
-		if err != nil {
-			t.Fatalf("Verify: %v", err)
-		}
-		if !resp.Valid {
-			t.Fatalf("algorithm should be inferred from the leaf, reason: %s", resp.Reason)
-		}
+	t.Run("ReferenceValuesFromAnUnendorsedSigner", func(t *testing.T) {
+		_, err := f.svc.PutAttestationReferenceValues(ctx, &appraisal.PutReferenceValuesRequest{Name: "golden", SignedCoRIM: f.corim})
+		assert.Error(t, err)
 	})
 }
 
-func TestAttestationService_Verify_InvalidInput(t *testing.T) {
-	kp := newAttestationKeypair(t, "attestation-key")
-	svc := NewAttestationService(nil, nil)
-
-	tests := []struct {
-		name   string
-		mutate func(*VerifyAttestationRequest)
-		wantIs error
-	}{
-		{name: "NoFormat", mutate: func(r *VerifyAttestationRequest) { r.Format = "" }, wantIs: ErrAttestationEmptyFormat},
-		{name: "NoSignature", mutate: func(r *VerifyAttestationRequest) { r.Signature = nil }, wantIs: ErrAttestationNoSignature},
-		{name: "NoAttestedKey", mutate: func(r *VerifyAttestationRequest) { r.AttestedKeyDER = nil }, wantIs: ErrAttestationNoAttestedKey},
-		{name: "NoChain", mutate: func(r *VerifyAttestationRequest) { r.ChainPEM = nil }, wantIs: ErrAttestationEmptyChain},
-		{name: "EmptyChainEntry", mutate: func(r *VerifyAttestationRequest) { r.ChainPEM = [][]byte{{}} }},
-		{name: "MalformedChainEntry", mutate: func(r *VerifyAttestationRequest) { r.ChainPEM = [][]byte{[]byte("not a certificate")} }},
-		{name: "MalformedAttestedKey", mutate: func(r *VerifyAttestationRequest) { r.AttestedKeyDER = []byte("not a key") }},
-		{
-			name:   "UnknownSignatureAlgorithm",
-			mutate: func(r *VerifyAttestationRequest) { r.SignatureAlgorithm = "PQC-Dilithium" },
+func TestXKMSService_AttestationVerifier_NotConfigured(t *testing.T) {
+	svc := &XKMSService{}
+	ctx := tenantCtx("acme")
+	assert.Nil(t, svc.AttestationAppraiser())
+	calls := map[string]func() error{
+		"PutAttestationEndorsement": func() error {
+			_, err := svc.PutAttestationEndorsement(ctx, &appraisal.PutEndorsementRequest{})
+			return err
 		},
-		{
-			name: "MalformedTrustAnchor",
-			mutate: func(r *VerifyAttestationRequest) {
-				r.Options = &VerifyAttestationOptions{TrustedRootsPEM: [][]byte{[]byte("nope")}}
-			},
+		"ListAttestationEndorsements": func() error {
+			_, err := svc.ListAttestationEndorsements(ctx, nil)
+			return err
+		},
+		"DeleteAttestationEndorsement": func() error {
+			return svc.DeleteAttestationEndorsement(ctx, &appraisal.DeleteEndorsementRequest{})
+		},
+		"PutAttestationReferenceValues": func() error {
+			_, err := svc.PutAttestationReferenceValues(ctx, &appraisal.PutReferenceValuesRequest{})
+			return err
+		},
+		"GetAttestationReferenceValues": func() error {
+			_, err := svc.GetAttestationReferenceValues(ctx, &appraisal.GetReferenceValuesRequest{})
+			return err
+		},
+		"ListAttestationReferenceValues": func() error {
+			_, err := svc.ListAttestationReferenceValues(ctx)
+			return err
+		},
+		"DeleteAttestationReferenceValues": func() error {
+			return svc.DeleteAttestationReferenceValues(ctx, &appraisal.DeleteReferenceValuesRequest{})
+		},
+		"AppraiseAttestationQuote": func() error {
+			_, err := svc.AppraiseAttestationQuote(ctx, &appraisal.AppraiseQuoteRequest{})
+			return err
 		},
 	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			req := newSelfSignedVerifyRequest(t, kp, []byte("data"))
-			tt.mutate(req)
-
-			_, err := svc.Verify(t.Context(), req)
-			if err == nil {
-				t.Fatal("expected an error")
-			}
-			if tt.wantIs != nil && !stderrors.Is(err, tt.wantIs) {
-				t.Fatalf("error %v is not %v", err, tt.wantIs)
-			}
+	for name, call := range calls {
+		t.Run(name, func(t *testing.T) {
+			assert.ErrorIs(t, call(), ErrNotConfigured)
 		})
 	}
-
-	t.Run("NilRequest", func(t *testing.T) {
-		if _, err := svc.Verify(t.Context(), nil); !stderrors.Is(err, ErrAttestationNilRequest) {
-			t.Fatalf("error %v is not ErrAttestationNilRequest", err)
-		}
-	})
-
-	t.Run("CanceledContext", func(t *testing.T) {
-		ctx, cancel := context.WithCancel(t.Context())
-		cancel()
-		req := newSelfSignedVerifyRequest(t, kp, []byte("data"))
-		if _, err := svc.Verify(ctx, req); err == nil {
-			t.Fatal("expected a canceled context to be refused")
-		}
-	})
-}
-
-// TestAttestationService_Verify_Freshness exercises the option pass-through:
-// the freshness window is enforced by go-xkms, and this proves the service
-// hands it the caller's parameters rather than dropping them.
-func TestAttestationService_Verify_Freshness(t *testing.T) {
-	kp := newAttestationKeypair(t, "attestation-key")
-	svc := NewAttestationService(nil, nil)
-	nonce := []byte("challenge")
-
-	t.Run("FreshAttestationPasses", func(t *testing.T) {
-		req := newSelfSignedVerifyRequest(t, kp, []byte("tpms-attest"))
-		req.Nonce = nonce
-		req.CreatedAt = time.Now().UTC().Format(time.RFC3339)
-		req.Options = &VerifyAttestationOptions{
-			AllowSelfSigned:        true,
-			CheckFreshness:         true,
-			ExpectedNonce:          nonce,
-			FreshnessWindowSeconds: 300,
-		}
-
-		resp, err := svc.Verify(t.Context(), req)
-		if err != nil {
-			t.Fatalf("Verify: %v", err)
-		}
-		if !resp.Valid {
-			t.Fatalf("a fresh attestation should verify, reason: %s", resp.Reason)
-		}
-		if !resp.FreshnessValid {
-			t.Error("freshness flag should be set when the check ran and passed")
-		}
-	})
-
-	t.Run("StaleAttestationFails", func(t *testing.T) {
-		req := newSelfSignedVerifyRequest(t, kp, []byte("tpms-attest"))
-		req.Nonce = nonce
-		req.CreatedAt = time.Now().Add(-24 * time.Hour).UTC().Format(time.RFC3339)
-		req.Options = &VerifyAttestationOptions{
-			AllowSelfSigned:        true,
-			CheckFreshness:         true,
-			ExpectedNonce:          nonce,
-			FreshnessWindowSeconds: 60,
-		}
-
-		resp, err := svc.Verify(t.Context(), req)
-		if err != nil {
-			t.Fatalf("Verify: %v", err)
-		}
-		if resp.Valid {
-			t.Fatal("a stale attestation must not verify")
-		}
-	})
-
-	t.Run("ReplayedNonceFails", func(t *testing.T) {
-		req := newSelfSignedVerifyRequest(t, kp, []byte("tpms-attest"))
-		req.Nonce = []byte("some-other-nonce")
-		req.Options = &VerifyAttestationOptions{
-			AllowSelfSigned:        true,
-			CheckFreshness:         true,
-			ExpectedNonce:          nonce,
-			FreshnessWindowSeconds: 300,
-		}
-
-		resp, err := svc.Verify(t.Context(), req)
-		if err != nil {
-			t.Fatalf("Verify: %v", err)
-		}
-		if resp.Valid {
-			t.Fatal("a nonce mismatch must not verify")
-		}
-	})
-}
-
-// =============================================================================
-// VerifyChain
-// =============================================================================
-
-func TestAttestationService_VerifyChain(t *testing.T) {
-	kp := newAttestationKeypair(t, "attestation-key")
-
-	t.Run("SelfSignedAcceptedWhenAllowed", func(t *testing.T) {
-		svc := NewAttestationService(nil, nil)
-		resp, err := svc.VerifyChain(t.Context(), &VerifyAttestationChainRequest{
-			Format:   "tpm2",
-			ChainPEM: [][]byte{kp.certPEM},
-			Options:  &VerifyAttestationOptions{AllowSelfSigned: true},
-		})
-		if err != nil {
-			t.Fatalf("VerifyChain: %v", err)
-		}
-		if !resp.Valid {
-			t.Fatalf("chain should validate, reason: %s", resp.Reason)
-		}
-	})
-
-	t.Run("SelfSignedRejectedByDefault", func(t *testing.T) {
-		svc := NewAttestationService(nil, nil)
-		resp, err := svc.VerifyChain(t.Context(), &VerifyAttestationChainRequest{
-			Format:   "tpm2",
-			ChainPEM: [][]byte{kp.certPEM},
-		})
-		if err != nil {
-			t.Fatalf("VerifyChain: %v", err)
-		}
-		if resp.Valid {
-			t.Fatal("an unanchored self-signed chain must not validate by default")
-		}
-		if resp.Reason == "" {
-			t.Error("an invalid result must carry a reason")
-		}
-	})
-
-	t.Run("AnchoredAccepted", func(t *testing.T) {
-		svc := NewAttestationService([]*x509.Certificate{kp.cert}, nil)
-		resp, err := svc.VerifyChain(t.Context(), &VerifyAttestationChainRequest{
-			Format:   "tpm2",
-			ChainPEM: [][]byte{kp.certPEM},
-		})
-		if err != nil {
-			t.Fatalf("VerifyChain: %v", err)
-		}
-		if !resp.Valid {
-			t.Fatalf("chain should validate against the anchor, reason: %s", resp.Reason)
-		}
-	})
-
-	t.Run("FormatDefaulted", func(t *testing.T) {
-		svc := NewAttestationService([]*x509.Certificate{kp.cert}, nil)
-		resp, err := svc.VerifyChain(t.Context(), &VerifyAttestationChainRequest{
-			ChainPEM: [][]byte{kp.certPEM},
-		})
-		if err != nil {
-			t.Fatalf("VerifyChain with no format must not error: %v", err)
-		}
-		if !resp.Valid {
-			t.Fatalf("chain should validate, reason: %s", resp.Reason)
-		}
-	})
-}
-
-func TestAttestationService_VerifyChain_InvalidInput(t *testing.T) {
-	svc := NewAttestationService(nil, nil)
-
-	t.Run("NilRequest", func(t *testing.T) {
-		if _, err := svc.VerifyChain(t.Context(), nil); !stderrors.Is(err, ErrAttestationNilRequest) {
-			t.Fatalf("error %v is not ErrAttestationNilRequest", err)
-		}
-	})
-
-	t.Run("EmptyChain", func(t *testing.T) {
-		_, err := svc.VerifyChain(t.Context(), &VerifyAttestationChainRequest{Format: "tpm2"})
-		if !stderrors.Is(err, ErrAttestationEmptyChain) {
-			t.Fatalf("error %v is not ErrAttestationEmptyChain", err)
-		}
-	})
-
-	t.Run("MalformedChain", func(t *testing.T) {
-		_, err := svc.VerifyChain(t.Context(), &VerifyAttestationChainRequest{
-			Format:   "tpm2",
-			ChainPEM: [][]byte{[]byte("not a certificate")},
-		})
-		if err == nil {
-			t.Fatal("expected an error for a malformed chain")
-		}
-	})
-
-	t.Run("CanceledContext", func(t *testing.T) {
-		kp := newAttestationKeypair(t, "attestation-key")
-		ctx, cancel := context.WithCancel(t.Context())
-		cancel()
-		_, err := svc.VerifyChain(ctx, &VerifyAttestationChainRequest{
-			Format:   "tpm2",
-			ChainPEM: [][]byte{kp.certPEM},
-		})
-		if err == nil {
-			t.Fatal("expected a canceled context to be refused")
-		}
-	})
-}
-
-// =============================================================================
-// AttestContainer — the orchestration seam
-// =============================================================================
-
-// stubAttestor is a ContainerAttestor that records its input and replays a
-// fixed response, standing in for go-trusted-platform's fleet attestor.
-type stubAttestor struct {
-	lastRequest *AttestContainerRequest
-	response    *AttestContainerResponse
-	err         error
-}
-
-func (s *stubAttestor) AttestContainer(_ context.Context, req *AttestContainerRequest) (*AttestContainerResponse, error) {
-	s.lastRequest = req
-	if s.err != nil {
-		return nil, s.err
-	}
-	return s.response, nil
-}
-
-// TestAttestationService_AttestContainer_NoAttestor pins the nil-seam
-// contract: with nothing registered the verb reports "not configured", not a
-// generic failure, so a caller can distinguish an unconfigured deployment from
-// a host that failed attestation.
-func TestAttestationService_AttestContainer_NoAttestor(t *testing.T) {
-	svc := NewAttestationService(nil, nil)
-
-	_, err := svc.AttestContainer(t.Context(), &AttestContainerRequest{Image: "alpine@sha256:abc"})
-	if !stderrors.Is(err, ErrAttestationNoAttestor) {
-		t.Fatalf("error %v is not ErrAttestationNoAttestor", err)
-	}
-
-	var qbErr *errors.QBError
-	if !stderrors.As(err, &qbErr) {
-		t.Fatalf("expected a *errors.QBError, got %T", err)
-	}
-	if qbErr.Code != errors.ErrUnavailable {
-		t.Fatalf("code = %v, want ErrUnavailable so callers can tell 'not configured' from 'failed'", qbErr.Code)
-	}
-}
-
-func TestAttestationService_AttestContainer(t *testing.T) {
-	t.Run("ForwardsToRegisteredAttestor", func(t *testing.T) {
-		attestor := &stubAttestor{
-			response: &AttestContainerResponse{
-				Attested:     true,
-				ContainerID:  "container-1",
-				Image:        "alpine@sha256:abc",
-				TrustLevel:   "measured",
-				Measured:     true,
-				ConfigDigest: "sha256:cfg",
-				AttestedAt:   time.Now().UTC(),
-			},
-		}
-		svc := NewAttestationService(nil, attestor)
-
-		req := &AttestContainerRequest{
-			DeviceID:        "device-1",
-			ContainerID:     "container-1",
-			Image:           "alpine@sha256:abc",
-			TrustLevel:      "measured",
-			ReferenceValues: "golden",
-		}
-
-		resp, err := svc.AttestContainer(t.Context(), req)
-		if err != nil {
-			t.Fatalf("AttestContainer: %v", err)
-		}
-		if !resp.Attested || !resp.Measured {
-			t.Fatalf("evidence not passed through: %+v", resp)
-		}
-		if attestor.lastRequest.DeviceID != "device-1" {
-			t.Errorf("device id not forwarded: %+v", attestor.lastRequest)
-		}
-		if attestor.lastRequest.ReferenceValues != "golden" {
-			t.Errorf("reference values not forwarded: %+v", attestor.lastRequest)
-		}
-	})
-
-	t.Run("AttestorErrorPropagates", func(t *testing.T) {
-		sentinel := stderrors.New("host quarantined")
-		svc := NewAttestationService(nil, &stubAttestor{err: sentinel})
-
-		_, err := svc.AttestContainer(t.Context(), &AttestContainerRequest{Image: "alpine@sha256:abc"})
-		if !stderrors.Is(err, sentinel) {
-			t.Fatalf("error %v does not wrap the attestor error", err)
-		}
-	})
-
-	t.Run("NilEvidenceIsAnError", func(t *testing.T) {
-		svc := NewAttestationService(nil, &stubAttestor{})
-
-		_, err := svc.AttestContainer(t.Context(), &AttestContainerRequest{Image: "alpine@sha256:abc"})
-		if err == nil {
-			t.Fatal("an attestor returning no evidence must be an error, not a silent success")
-		}
-	})
-
-	t.Run("InvalidInput", func(t *testing.T) {
-		svc := NewAttestationService(nil, &stubAttestor{})
-
-		if _, err := svc.AttestContainer(t.Context(), nil); !stderrors.Is(err, ErrAttestationNilRequest) {
-			t.Fatalf("error %v is not ErrAttestationNilRequest", err)
-		}
-		if _, err := svc.AttestContainer(t.Context(), &AttestContainerRequest{}); !stderrors.Is(err, ErrAttestationEmptyImage) {
-			t.Fatalf("error %v is not ErrAttestationEmptyImage", err)
-		}
-	})
-
-	t.Run("CanceledContext", func(t *testing.T) {
-		svc := NewAttestationService(nil, &stubAttestor{})
-		ctx, cancel := context.WithCancel(t.Context())
-		cancel()
-		if _, err := svc.AttestContainer(ctx, &AttestContainerRequest{Image: "alpine@sha256:abc"}); err == nil {
-			t.Fatal("expected a canceled context to be refused")
-		}
-	})
-}
-
-
-func TestSignatureAlgorithmIndex(t *testing.T) {
-	// The index is derived from x509's own String method, so every entry
-	// must round-trip. A drift here would silently reject a valid
-	// algorithm name.
-	for name, alg := range signatureAlgorithmByName {
-		if alg.String() != name {
-			t.Fatalf("index key %q does not match %v.String()", name, alg)
-		}
-	}
-	for _, name := range []string{"ECDSA-SHA256", "SHA256-RSA", "Ed25519"} {
-		if _, ok := signatureAlgorithmByName[name]; !ok {
-			t.Errorf("signature algorithm %q missing from the index", name)
-		}
-	}
-}
-
-func TestParseCertChainPEM(t *testing.T) {
-	kp := newAttestationKeypair(t, "leaf")
-
-	t.Run("AcceptsDER", func(t *testing.T) {
-		chain, err := parseCertChainPEM([][]byte{kp.certPEM}, "test")
-		if err != nil {
-			t.Fatalf("parseCertChainPEM: %v", err)
-		}
-		if len(chain) != 1 || chain[0].Subject.CommonName != "leaf" {
-			t.Fatalf("unexpected chain: %+v", chain)
-		}
-	})
-
-	t.Run("Errors", func(t *testing.T) {
-		if _, err := parseCertChainPEM(nil, "test"); !stderrors.Is(err, ErrAttestationEmptyChain) {
-			t.Fatalf("error %v is not ErrAttestationEmptyChain", err)
-		}
-		if _, err := parseCertChainPEM([][]byte{{}}, "test"); err == nil {
-			t.Fatal("expected an error for an empty chain entry")
-		}
-		if _, err := parseCertChainPEM([][]byte{[]byte("garbage")}, "test"); err == nil {
-			t.Fatal("expected an error for a malformed chain entry")
-		}
-	})
-}
-
-func TestVerifyOptions_Defaults(t *testing.T) {
-	t.Run("NilSelectsSecureDefaults", func(t *testing.T) {
-		opts, err := verifyOptions(nil)
-		if err != nil {
-			t.Fatalf("verifyOptions: %v", err)
-		}
-		if !opts.CheckFreshness {
-			t.Error("the default must check freshness")
-		}
-		if opts.AllowSelfSigned {
-			t.Error("the default must not accept self-signed chains")
-		}
-	})
-
-	t.Run("ExplicitOptionsPassThrough", func(t *testing.T) {
-		opts, err := verifyOptions(&VerifyAttestationOptions{
-			CheckFreshness:         true,
-			FreshnessWindowSeconds: 42,
-			VerifyPCRs:             true,
-			ExpectedPCRs:           map[uint32][]byte{7: {0x01}},
-			AllowSelfSigned:        true,
-		})
-		if err != nil {
-			t.Fatalf("verifyOptions: %v", err)
-		}
-		if opts.FreshnessWindow != 42 || !opts.VerifyPCRs || len(opts.ExpectedPCRs) != 1 || !opts.AllowSelfSigned {
-			t.Fatalf("options were not passed through: %+v", opts)
-		}
-	})
 }

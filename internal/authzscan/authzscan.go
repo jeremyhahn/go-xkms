@@ -209,6 +209,10 @@ func Constants() map[string]string {
 		"ResourceBackup":          auth.ResourceBackup,
 		"ResourceTrustRoots":      auth.ResourceTrustRoots,
 
+		"ResourceAttestationEndorsements":    auth.ResourceAttestationEndorsements,
+		"ResourceAttestationReferenceValues": auth.ResourceAttestationReferenceValues,
+		"ResourceAttestationVerifier":        auth.ResourceAttestationVerifier,
+
 		"ActionSign":               auth.ActionSign,
 		"ActionVerify":             auth.ActionVerify,
 		"ActionEncrypt":            auth.ActionEncrypt,
