@@ -15,6 +15,8 @@ import type { HttpCore } from '../http.js';
 import type {
   ListSigningKeyBindingsResponse,
   SetSigningKeyBindingRequest,
+  SignCoRIMRequest,
+  SignedCoRIM,
   SigningKeyBinding,
   SigningKeyResolution,
 } from '../types/signingKey.js';
@@ -52,5 +54,13 @@ export class SigningKeyClient {
   /** GET /api/v1/attestation/signing-keys/resolve?repository= — the key that signs a repository. */
   resolve(repository: string): Promise<SigningKeyResolution> {
     return this.http.request('GET', `${BASE}/resolve`, { query: { repository } });
+  }
+
+  /**
+   * POST /api/v1/attestation/signing-keys/sign-corim — signs a repository's
+   * CoRIM with the key it resolves to, draft-ietf-rats-corim-11 §4.2.
+   */
+  signCoRIM(req: SignCoRIMRequest): Promise<SignedCoRIM> {
+    return this.http.request('POST', `${BASE}/sign-corim`, { body: req });
   }
 }
