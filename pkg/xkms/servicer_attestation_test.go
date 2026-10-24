@@ -588,14 +588,6 @@ func TestAttestationService_AttestContainer(t *testing.T) {
 	})
 }
 
-func TestNewRuntimeContainerAttestor_NilRuntime(t *testing.T) {
-	// A nil runtime must yield a nil attestor so callers can pass an
-	// optional runtime straight through and inherit the not-configured
-	// contract.
-	if attestor := NewRuntimeContainerAttestor(nil); attestor != nil {
-		t.Fatalf("expected nil, got %T", attestor)
-	}
-}
 
 func TestSignatureAlgorithmIndex(t *testing.T) {
 	// The index is derived from x509's own String method, so every entry

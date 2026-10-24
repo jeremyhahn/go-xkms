@@ -38,10 +38,9 @@ import (
 //     transport.
 //
 //   - An ORCHESTRATION SEAM. AttestContainer forwards to an application-
-//     supplied ContainerAttestor. QuicBaaS ships the standalone tiers
-//     (digest pinning, host quote, measured launch) in pkg/orchestration and
-//     can fill this seam with them via NewRuntimeContainerAttestor; a fleet
-//     operator such as go-trusted-platform supplies its own implementation
+//     supplied ContainerAttestor. go-quicbaas fills this seam with its
+//     standalone container runtime (digest pinning, host quote, measured
+//     launch); a fleet operator such as go-trusted-platform supplies its own implementation
 //     with a device registry, scheduled re-attestation and quarantine. When
 //     nothing is registered the seam returns ErrAttestationNoAttestor, the
 //     same "not configured" contract Trust().PublishDANE uses for its DANE
@@ -105,9 +104,8 @@ type AttestationService interface {
 //
 // Two implementations are expected:
 //
-//   - The standalone one, built from an orchestration.AttestingContainerRuntime
-//     by NewRuntimeContainerAttestor. It attests the local host, which is all
-//     a single-node deployment needs.
+//   - The standalone one, supplied by go-quicbaas's container runtime. It
+//     attests the local host, which is all a single-node deployment needs.
 //   - A fleet one, supplied by go-trusted-platform, which resolves DeviceID
 //     against a device registry, applies golden-PCR policy, records the
 //     result for scheduled re-attestation, and quarantines hosts that drift.
@@ -374,74 +372,6 @@ func NewAttestationService(trustAnchors []*x509.Certificate, attestor ContainerA
 		opt(s)
 	}
 	return s
-}
-
-// NewRuntimeContainerAttestor adapts a standalone attesting container runtime
-// into a ContainerAttestor, so a single-node deployment can fill the
-// orchestration seam with QuicBaaS's own Tier 1 / Tier 2 implementation and
-// needs no fleet manager at all.
-//
-// Returns nil when rt is nil, so callers can pass an optional runtime through
-// without a nil check and get the "not configured" contract for free.
-func NewRuntimeContainerAttestor(rt orchestration.AttestingContainerRuntime) ContainerAttestor {
-	if rt == nil {
-		return nil
-	}
-	return &runtimeContainerAttestor{rt: rt}
-}
-
-// runtimeContainerAttestor bridges the AttestingContainerRuntime seam in
-// pkg/orchestration to the ContainerAttestor seam in the service layer.
-type runtimeContainerAttestor struct {
-	rt orchestration.AttestingContainerRuntime
-}
-
-// AttestContainer reconstructs a ContainerSpec from the request and delegates
-// to the runtime's Attest.
-func (a *runtimeContainerAttestor) AttestContainer(ctx context.Context, req *AttestContainerRequest) (*AttestContainerResponse, error) {
-	level, err := orchestration.ParseTrustLevel(req.TrustLevel)
-	if err != nil {
-		return nil, &errors.QBError{Code: errors.ErrInvalidInput, Op: "AttestationService.AttestContainer", Err: err}
-	}
-	if level == orchestration.TrustLevelDefault {
-		level = orchestration.TrustLevelAttested
-	}
-
-	spec := &orchestration.ContainerSpec{
-		Image:           req.Image,
-		ImageDigest:     req.ImageDigest,
-		ReferenceValues: req.ReferenceValues,
-		TrustLevel:      level,
-		TrustLabel:      req.TrustLabel,
-		MeasurementPCR:  req.MeasurementPCR,
-		MeasurementBank: req.MeasurementBank,
-	}
-
-	evidence, err := a.rt.Attest(ctx, spec, req.ContainerID)
-	if err != nil {
-		return nil, &errors.QBError{Code: errors.ErrInternal, Op: "AttestationService.AttestContainer", Err: err}
-	}
-
-	return &AttestContainerResponse{
-		Attested:          true,
-		DeviceID:          req.DeviceID,
-		ContainerID:       evidence.ContainerID,
-		Image:             evidence.Image,
-		ImageDigest:       evidence.ImageDigest,
-		ConfigDigest:      evidence.ConfigDigest,
-		TrustLabel:        evidence.TrustLabel,
-		TrustLevel:        evidence.TrustLevel.String(),
-		Nonce:             evidence.Nonce,
-		Quoted:            evidence.Quoted,
-		Signature:         evidence.Signature,
-		PCRs:              evidence.PCRs,
-		EventLog:          evidence.EventLog,
-		Measured:          evidence.Measured,
-		MeasurementPCR:    evidence.MeasurementPCR,
-		MeasurementBank:   evidence.MeasurementBank,
-		LaunchMeasurement: evidence.LaunchMeasurement,
-		AttestedAt:        evidence.AttestedAt,
-	}, nil
 }
 
 // Verify validates a full attestation statement through the xkms verifier.
