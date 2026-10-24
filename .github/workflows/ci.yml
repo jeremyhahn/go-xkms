@@ -192,8 +192,15 @@ on:
 #   - release.yml deliberately does NOT get this: cancelling a release
 #     mid-publish is destructive. nightly.yml, coverage.yml and
 #     docker-tests.yml are out of scope here too.
+#   - MAIN IS KEYED PER SHA (m1093): per-ref, each merge cancelled the main
+#     run still in progress (63327, 63426, 63430, 63465), so main had no
+#     completed run after 260e97586. Each main push now has a group of its
+#     own and is never cancelled; PR refs stay per-ref and keep cancelling
+#     superseded heads. The fix is in the group key because
+#     `cancel-in-progress` would not evaluate an expression: the literal
+#     `true` is deliberate.
 concurrency:
-  group: ${{ github.workflow }}-${{ github.ref }}
+  group: ${{ github.workflow }}-${{ github.ref == 'refs/heads/main' && github.sha || github.ref }}
   cancel-in-progress: true
 
 permissions:
