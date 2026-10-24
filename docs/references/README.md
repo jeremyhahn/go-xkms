@@ -34,6 +34,12 @@ implementation work does not depend on the publisher's site staying up.
   of `pkg/ssh/console` is served over it; §4.2.2's SHA-1
   `Sec-WebSocket-Accept` is why `upgradeWS` refuses the handshake under
   `GODEBUG=fips140=only` (see [../fips/README.md](../fips/README.md)).
+- `rfc-9053.txt` — IETF RFC 9053, "CBOR Object Signing and Encryption (COSE):
+  Initial Algorithms", copied verbatim from
+  https://www.rfc-editor.org/rfc/rfc9053.txt. §2.1 fixes the ECDSA signature
+  encoding `I2OSP(R, n) | I2OSP(S, n)` that `XKMSService.SignOTAImage` returns
+  for the OTA_AUTH image signature (ruling 136); every other signature stays
+  ASN.1 DER.
 - `NIST.SP.800-76-2.pdf` — NIST SP 800-76-2, "Biometric Specifications for
   Personal Identity Verification".
 - `NIST.SP.800-78-5.pdf` — NIST SP 800-78-5, "Cryptographic Algorithms and Key

@@ -942,6 +942,21 @@ func (e *ErrMalformedPublicKey) Error() string {
 	return fmt.Sprintf("keystore: %s holds no public key", e.KeyType)
 }
 
+// ErrOTASignatureEncoding reports a board-key ECDSA signature that does not
+// convert to the RFC 9053 §2.1 fixed-width r || s OTA_AUTH encoding
+// (ruling 136). It matches ErrInvalidSignature under errors.Is.
+type ErrOTASignatureEncoding struct {
+	Reason string
+}
+
+// Error returns the error message.
+func (e *ErrOTASignatureEncoding) Error() string {
+	return "keystore: OTA image signature: " + e.Reason
+}
+
+// Unwrap returns ErrInvalidSignature.
+func (e *ErrOTASignatureEncoding) Unwrap() error { return ErrInvalidSignature }
+
 // ErrCopyKeyBackend represents an error resolving a source or destination backend during key copy.
 type ErrCopyKeyBackend struct {
 	Role string

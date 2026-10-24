@@ -21,6 +21,7 @@ import (
 	"crypto/x509"
 	"encoding/pem"
 	"errors"
+	"math/big"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -68,6 +69,14 @@ func otaPublicKey(t *testing.T, pemText string) *ecdsa.PublicKey {
 	return ec
 }
 
+// verifyOTASignature checks an ES256 OTA_AUTH signature in the RFC 9053
+// §2.1 encoding: 32-byte big-endian r, then 32-byte big-endian s.
+func verifyOTASignature(t *testing.T, pub *ecdsa.PublicKey, digest, sig []byte) bool {
+	t.Helper()
+	require.Len(t, sig, 64, "an ES256 OTA signature is r || s, 64 bytes")
+	return ecdsa.Verify(pub, digest, new(big.Int).SetBytes(sig[:32]), new(big.Int).SetBytes(sig[32:]))
+}
+
 func TestOTAImageKeyMethods_Registered(t *testing.T) {
 	for method, action := range map[string]string{
 		"xkms.createOTAImageKey": auth.ActionCreate,
@@ -107,7 +116,7 @@ func TestOTAImageKeyMethods_CreateRotateSign(t *testing.T) {
 	assert.Equal(t, uint32(2), signed.KeyVersion, "signs with the current version")
 	signature, ok := signed.Signature.([]byte)
 	require.True(t, ok, "signature is %T", signed.Signature)
-	assert.True(t, ecdsa.VerifyASN1(otaPublicKey(t, rotated.PublicKeyPEM), digest[:], signature),
+	assert.True(t, verifyOTASignature(t, otaPublicKey(t, rotated.PublicKeyPEM), digest[:], signature),
 		"signature does not verify under the rotated key")
 }
 

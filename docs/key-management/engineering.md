@@ -650,8 +650,15 @@ under version 2, and both signatures verify against their own version.
 
 **Sign.** `SignOTAImage` signs with the current version. The hash is
 SHA-256, and with `DataIsDigest` the data is already the image's SHA-256
-digest (`ota_image_keys.go:109-116`). The response's `KeyVersion` names the
-version that signed (`:96-97`).
+digest (`ota_image_keys.go:114-121`). The response's `KeyVersion` names the
+version that signed (`:98-99`). The signature is the OTA_AUTH encoding of
+ruling 136: RFC 9053 §2.1 fixed-width `r || s`
+([rfc-9053.txt](../references/rfc-9053.txt)), each integer big-endian and
+left-padded with zeros to the curve's byte width, so 64 bytes for ES256. The
+trusted-firmware 328P and 32U4 boards carry no DER parser. `SignOTAImage`
+converts the backend's ASN.1 DER signature (`:125-128`,
+`fixedWidthECDSASignature` at `:162`). Every other signature the service
+returns, the generic `Sign` on the same key included, stays DER.
 
 **Tenancy.** Each request's `TenantID` scopes the key
 (`pkg/api/transport/types.go:649-650`, `:661-662`). REST fills it from the
@@ -663,7 +670,8 @@ wrapped in `ErrValidation`, so `errors.Is` reaches the sentinel:
 | Error | Returned when | REST | gRPC / Unix | MCP |
 |---|---|---|---|---|
 | `ErrInvalidBoardID` (`errors.go:185`) | malformed board id (`ota_image_keys.go:46`) | 400 | `InvalidArgument` | `-32602` |
-| `ErrOTAImageAlgorithm` (`errors.go:189`) | algorithm other than ES256 (`:57`), or the board key is not P-256 (`:140`) | 400 | `InvalidArgument` | `-32602` |
+| `ErrOTAImageAlgorithm` (`errors.go:189`) | algorithm other than ES256 (`:57`), or the board key is not P-256 (`:154`) | 400 | `InvalidArgument` | `-32602` |
+| `ErrOTASignatureEncoding` (`errors.go:948`), matches `ErrInvalidSignature` | the backend's signature is not DER, or `r` or `s` is outside `[1, n-1]` (`ota_image_keys.go:162-182`) | 500 | `Internal` (`pkg/api/grpc/errors_keyops.go:185`) | error object |
 | unknown board key | rotate or sign for a board with no key | 404 (`pkg/api/rest/handlers_ota_image_test.go:153-159`) | `NotFound` (`pkg/api/grpc/service_ota_image_test.go:142-148`) | not `-32602` (`pkg/api/mcp/handlers_ota_image_test.go:166-173`) |
 | `ErrKeyAlreadyExists` | create for a board that has a key | 409 | `AlreadyExists` | error object |
 

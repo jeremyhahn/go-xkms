@@ -20,7 +20,11 @@ import (
 	"crypto/elliptic"
 	"crypto/sha256"
 	"crypto/x509"
+	"encoding/asn1"
 	"encoding/pem"
+	"errors"
+	"io"
+	"math/big"
 	"strings"
 	"testing"
 
@@ -140,8 +144,9 @@ func TestRotateOTAImageKey_OldVersionStillVerifies(t *testing.T) {
 	keyID, err := OTAImageKeyID("cm4")
 	require.NoError(t, err)
 	for _, sig := range []*transport.SignResponse{v1, v2} {
+		// The generic Verify takes DER; the OTA signature is r || s.
 		resp, err := svc.Verify(ctx, &transport.VerifyRequest{
-			Backend: "software", KeyID: keyID, Data: image, Signature: sig.Signature,
+			Backend: "software", KeyID: keyID, Data: image, Signature: otaSignatureToDER(t, sig.Signature),
 		})
 		require.NoError(t, err)
 		assert.True(t, resp.Valid, "version %d still verifies", sig.KeyVersion)
@@ -195,6 +200,15 @@ func (nonExtractableProvider) GetKey(context.Context, *types.KeyAttributes) (cry
 // provider behind nonExtractableProvider.
 func setupNonExtractableService(t *testing.T) *XKMSService {
 	t.Helper()
+	return setupWrappedProviderService(t, func(p types.KeyProvider) types.KeyProvider {
+		return nonExtractableProvider{p}
+	})
+}
+
+// setupWrappedProviderService wires a single "software" backend whose
+// in-memory key provider is wrapped by wrap.
+func setupWrappedProviderService(t *testing.T, wrap func(types.KeyProvider) types.KeyProvider) *XKMSService {
+	t.Helper()
 	Reset()
 	t.Cleanup(Reset)
 
@@ -203,7 +217,7 @@ func setupNonExtractableService(t *testing.T) *XKMSService {
 	provider, err := factory(map[string]interface{}{"key_dir": "memory"})
 	require.NoError(t, err)
 
-	b, err := New(&BackendConfig{Backend: nonExtractableProvider{provider}, CertStorage: storage.New()})
+	b, err := New(&BackendConfig{Backend: wrap(provider), CertStorage: storage.New()})
 	require.NoError(t, err)
 	require.NoError(t, Initialize(&ServiceConfig{
 		Backends:       map[string]Backend{"software": b},
@@ -235,7 +249,7 @@ func TestOTAImageKey_NonExtractableBackend(t *testing.T) {
 	require.NotNil(t, block)
 	pub, err := x509.ParsePKIXPublicKey(block.Bytes)
 	require.NoError(t, err)
-	assert.True(t, ecdsa.VerifyASN1(pub.(*ecdsa.PublicKey), digest[:], resp.Signature),
+	assert.True(t, verifyOTASignature(t, pub.(*ecdsa.PublicKey), digest[:], resp.Signature),
 		"the image is signed by the rotated version")
 }
 
@@ -291,7 +305,7 @@ func TestSignOTAImage_Digest(t *testing.T) {
 	require.NotNil(t, block)
 	pub, err := x509.ParsePKIXPublicKey(block.Bytes)
 	require.NoError(t, err)
-	assert.True(t, ecdsa.VerifyASN1(pub.(*ecdsa.PublicKey), digest[:], resp.Signature),
+	assert.True(t, verifyOTASignature(t, pub.(*ecdsa.PublicKey), digest[:], resp.Signature),
 		"the signature is ECDSA P-256 over the SHA-256 digest")
 }
 
@@ -314,4 +328,146 @@ func TestSignOTAImage_Errors(t *testing.T) {
 		Backend: "software", BoardID: "cm4", Data: []byte("short"), DataIsDigest: true,
 	})
 	assert.Error(t, err, "a digest that is not 32 bytes is refused")
+}
+
+// verifyOTASignature checks an ES256 OTA_AUTH signature in the RFC 9053
+// §2.1 encoding: 32-byte big-endian r, then 32-byte big-endian s.
+func verifyOTASignature(t *testing.T, pub *ecdsa.PublicKey, digest, sig []byte) bool {
+	t.Helper()
+	require.Len(t, sig, 64, "an ES256 OTA signature is r || s, 64 bytes")
+	r := new(big.Int).SetBytes(sig[:32])
+	s := new(big.Int).SetBytes(sig[32:])
+	return ecdsa.Verify(pub, digest, r, s)
+}
+
+// otaSignatureToDER re-encodes an ES256 r || s OTA signature as the ASN.1
+// DER ECDSA-Sig-Value the generic Verify takes.
+func otaSignatureToDER(t *testing.T, sig []byte) []byte {
+	t.Helper()
+	require.Len(t, sig, 64)
+	der, err := asn1.Marshal(struct{ R, S *big.Int }{
+		R: new(big.Int).SetBytes(sig[:32]),
+		S: new(big.Int).SetBytes(sig[32:]),
+	})
+	require.NoError(t, err)
+	return der
+}
+
+func TestSignOTAImage_FixedWidthRSAndGenericSignStaysDER(t *testing.T) {
+	svc := setupDeriveService(t)
+	ctx := context.Background()
+	created, err := svc.CreateOTAImageKey(ctx, otaKey("software", "cm4"))
+	require.NoError(t, err)
+	block, _ := pem.Decode([]byte(created.PublicKeyPEM))
+	require.NotNil(t, block)
+	parsed, err := x509.ParsePKIXPublicKey(block.Bytes)
+	require.NoError(t, err)
+	pub := parsed.(*ecdsa.PublicKey)
+
+	digest := sha256.Sum256([]byte("firmware image"))
+	ota, err := svc.SignOTAImage(ctx, &transport.OTAImageSignRequest{
+		Backend: "software", BoardID: "cm4", Data: digest[:], DataIsDigest: true,
+	})
+	require.NoError(t, err)
+	assert.True(t, verifyOTASignature(t, pub, digest[:], ota.Signature),
+		"the OTA signature is r || s and verifies after splitting")
+	assert.False(t, ecdsa.VerifyASN1(pub, digest[:], ota.Signature), "the OTA signature is not DER")
+
+	keyID, err := OTAImageKeyID("cm4")
+	require.NoError(t, err)
+	generic, err := svc.Sign(ctx, &transport.SignRequest{
+		Backend: "software", KeyID: keyID, Data: digest[:], Hash: crypto.SHA256.String(), DataIsDigest: true,
+	})
+	require.NoError(t, err)
+	assert.True(t, ecdsa.VerifyASN1(pub, digest[:], generic.Signature),
+		"the generic Sign on the same key still returns DER")
+}
+
+func TestSignOTAImage_RefusesAMalformedSignerSignature(t *testing.T) {
+	svc := setupWrappedProviderService(t, func(p types.KeyProvider) types.KeyProvider {
+		return malformedSignatureProvider{p}
+	})
+	ctx := context.Background()
+	_, err := svc.CreateOTAImageKey(ctx, otaKey("software", "cm4"))
+	require.NoError(t, err)
+
+	digest := sha256.Sum256([]byte("firmware image"))
+	_, err = svc.SignOTAImage(ctx, &transport.OTAImageSignRequest{
+		Backend: "software", BoardID: "cm4", Data: digest[:], DataIsDigest: true,
+	})
+	var encErr *ErrOTASignatureEncoding
+	require.ErrorAs(t, err, &encErr)
+	assert.ErrorIs(t, err, ErrInvalidSignature)
+}
+
+// malformedSignatureProvider hands out signers that return bytes which are
+// not an ASN.1 DER ECDSA signature.
+type malformedSignatureProvider struct {
+	types.KeyProvider
+}
+
+func (p malformedSignatureProvider) Signer(ctx context.Context, attrs *types.KeyAttributes) (crypto.Signer, error) {
+	signer, err := p.KeyProvider.Signer(ctx, attrs)
+	if err != nil {
+		return nil, err
+	}
+	return malformedSigner{signer}, nil
+}
+
+type malformedSigner struct {
+	crypto.Signer
+}
+
+func (malformedSigner) Sign(io.Reader, []byte, crypto.SignerOpts) ([]byte, error) {
+	return []byte("not a DER signature"), nil
+}
+
+func TestFixedWidthECDSASignature(t *testing.T) {
+	curve := elliptic.P256()
+	order := curve.Params().N
+	der := func(r, s *big.Int) []byte {
+		out, err := asn1.Marshal(struct{ R, S *big.Int }{R: r, S: s})
+		require.NoError(t, err)
+		return out
+	}
+
+	t.Run("short r is left-padded to 32 bytes", func(t *testing.T) {
+		sMax := new(big.Int).Sub(order, big.NewInt(1))
+		got, err := fixedWidthECDSASignature(der(big.NewInt(1), sMax), curve)
+		require.NoError(t, err)
+		require.Len(t, got, 64)
+		want := make([]byte, 64)
+		want[31] = 1
+		sMax.FillBytes(want[32:])
+		assert.Equal(t, want, got)
+	})
+
+	t.Run("short s is left-padded to 32 bytes", func(t *testing.T) {
+		got, err := fixedWidthECDSASignature(der(big.NewInt(0x0102), big.NewInt(0x7f)), curve)
+		require.NoError(t, err)
+		want := make([]byte, 64)
+		want[30], want[31] = 0x01, 0x02
+		want[63] = 0x7f
+		assert.Equal(t, want, got)
+	})
+
+	valid := der(big.NewInt(1), big.NewInt(1))
+	for name, input := range map[string][]byte{
+		"not DER":        []byte("not a DER signature"),
+		"empty":          {},
+		"trailing data":  append(append([]byte{}, valid...), 0x00),
+		"zero r":         der(big.NewInt(0), big.NewInt(1)),
+		"negative s":     der(big.NewInt(1), big.NewInt(-1)),
+		"r equals order": der(order, big.NewInt(1)),
+		"s wider than the curve": der(big.NewInt(1),
+			new(big.Int).Lsh(big.NewInt(1), 300)),
+	} {
+		t.Run(name, func(t *testing.T) {
+			_, err := fixedWidthECDSASignature(input, curve)
+			var encErr *ErrOTASignatureEncoding
+			require.ErrorAs(t, err, &encErr)
+			assert.True(t, errors.Is(err, ErrInvalidSignature))
+			assert.NotEmpty(t, encErr.Error())
+		})
+	}
 }
