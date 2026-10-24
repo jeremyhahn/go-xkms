@@ -28,6 +28,7 @@ import (
 	qrdbtransport "github.com/jeremyhahn/go-qrdb/sdk/go/transport"
 	"github.com/jeremyhahn/go-xkms/pkg/api/transport"
 	"github.com/jeremyhahn/go-xkms/pkg/attestation"
+	"github.com/jeremyhahn/go-xkms/pkg/attestation/appraisal"
 	"github.com/jeremyhahn/go-xkms/pkg/attestation/peergate"
 	"github.com/jeremyhahn/go-xkms/pkg/attestation/truststore"
 	"github.com/jeremyhahn/go-xkms/pkg/auth"
@@ -110,6 +111,7 @@ type XKMSService struct {
 	oidcCredentials subsystem[*credential.Service]
 	trustRoots      subsystem[*truststore.DAOStore]
 	peerEvidence    subsystem[*peergate.Collector]
+	appraiser       subsystem[*appraisal.Appraiser]
 	webauthnService *webauthn.Service
 
 	// tokenIssuer mints and revokes the browser/desktop session token

@@ -131,6 +131,22 @@ const (
 	// identity may exercise it.
 	ResourceTrustRoots = "trust_roots"
 
+	// ResourceAttestationEndorsements is the attestation Verifier's
+	// trust anchors (pkg/attestation/appraisal): storing, listing and
+	// removing the attestation-key roots and reference-value signers of
+	// the caller's tenant.
+	ResourceAttestationEndorsements = "attestation_endorsements"
+
+	// ResourceAttestationReferenceValues is the attestation Verifier's
+	// reference values (pkg/attestation/appraisal): storing a signed CoRIM,
+	// reading, listing and removing the caller's tenant's baselines.
+	ResourceAttestationReferenceValues = "attestation_reference_values"
+
+	// ResourceAttestationVerifier is the attestation Verifier's appraisal
+	// verb (pkg/attestation/appraisal): appraising a TPM quote against the
+	// caller's tenant's endorsements and reference values.
+	ResourceAttestationVerifier = "attestation_verifier"
+
 	// ResourceTrust is the platform trust plane's write verbs that act
 	// outside the trust-root store: publishing the CA's DANE TLSA records to
 	// DNS (pkg/trust/dane Publisher.PublishDANE, trust:publish_dane) and
