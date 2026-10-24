@@ -260,13 +260,14 @@ var goldenRESTPermissions = map[string]string{
 
 	// Repository signing keys (go-xkms#1697); a repository travels in the
 	// repository query parameter.
-	"PUT /api/v1/attestation/signing-keys":            "attestation_signing_keys:bind",
-	"GET /api/v1/attestation/signing-keys":            "attestation_signing_keys:list",
-	"GET /api/v1/attestation/signing-keys/binding":    "attestation_signing_keys:get",
-	"DELETE /api/v1/attestation/signing-keys/binding": "attestation_signing_keys:bind",
-	"GET /api/v1/attestation/signing-keys/resolve":    "attestation_signing_keys:get",
-	"POST /api/v1/peer-attestation/challenge":         "peer_attestation:challenge",
-	"POST /api/v1/peer-attestation/evidence":          "peer_attestation:submit",
+	"PUT /api/v1/attestation/signing-keys":             "attestation_signing_keys:bind",
+	"GET /api/v1/attestation/signing-keys":             "attestation_signing_keys:list",
+	"GET /api/v1/attestation/signing-keys/binding":     "attestation_signing_keys:get",
+	"DELETE /api/v1/attestation/signing-keys/binding":  "attestation_signing_keys:bind",
+	"GET /api/v1/attestation/signing-keys/resolve":     "attestation_signing_keys:get",
+	"POST /api/v1/attestation/signing-keys/sign-corim": "attestation_signing_keys:sign",
+	"POST /api/v1/peer-attestation/challenge":          "peer_attestation:challenge",
+	"POST /api/v1/peer-attestation/evidence":           "peer_attestation:submit",
 }
 
 // TestRESTPermissions_MatchWireContract pins the resource:action pair of

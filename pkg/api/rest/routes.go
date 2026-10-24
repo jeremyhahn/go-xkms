@@ -478,6 +478,7 @@ func Routes() []RouteSpec {
 	permIf("GET", "/attestation/signing-keys/binding", auth.ResourceAttestationSigningKeys, auth.ActionGet, hasSigningKeys, func(s *Server) http.HandlerFunc { return s.signingKeyHandlers.GetHandler })
 	permIf("DELETE", "/attestation/signing-keys/binding", auth.ResourceAttestationSigningKeys, auth.ActionBind, hasSigningKeys, func(s *Server) http.HandlerFunc { return s.signingKeyHandlers.DeleteHandler })
 	permIf("GET", "/attestation/signing-keys/resolve", auth.ResourceAttestationSigningKeys, auth.ActionGet, hasSigningKeys, func(s *Server) http.HandlerFunc { return s.signingKeyHandlers.ResolveHandler })
+	permIf("POST", "/attestation/signing-keys/sign-corim", auth.ResourceAttestationSigningKeys, auth.ActionSign, hasSigningKeys, func(s *Server) http.HandlerFunc { return s.signingKeyHandlers.SignCoRIMHandler })
 
 	// --- Server-side OIDC credentials (pkg/oidc/credential).
 	// oidc_credentials:* is an xkms-owned permission family

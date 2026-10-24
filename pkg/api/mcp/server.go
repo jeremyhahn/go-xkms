@@ -531,12 +531,14 @@ var rpcMethods = map[string]rpcMethod{
 	// pkg/auth.ResourceAttestationSigningKeys, an xkms-owned resource family
 	// scoped in pkg/apimodule/module_scopes.go. Mirrors the gRPC SigningKey
 	// RPCs' (qrdb.v1.permission) options one-for-one: changing a binding is
-	// bind, reading one or resolving a repository's key is get.
-	"attestation.signing_key.set":     handle(auth.ResourceAttestationSigningKeys, auth.ActionBind, (*Server).handleSigningKeySet),
-	"attestation.signing_key.get":     handle(auth.ResourceAttestationSigningKeys, auth.ActionGet, (*Server).handleSigningKeyGet),
-	"attestation.signing_key.list":    handle(auth.ResourceAttestationSigningKeys, auth.ActionList, (*Server).handleSigningKeyList),
-	"attestation.signing_key.delete":  handle(auth.ResourceAttestationSigningKeys, auth.ActionBind, (*Server).handleSigningKeyDelete),
-	"attestation.signing_key.resolve": handle(auth.ResourceAttestationSigningKeys, auth.ActionGet, (*Server).handleSigningKeyResolve),
+	// bind, reading one or resolving a repository's key is get, and signing
+	// a repository's CoRIM with that key is sign.
+	"attestation.signing_key.set":        handle(auth.ResourceAttestationSigningKeys, auth.ActionBind, (*Server).handleSigningKeySet),
+	"attestation.signing_key.get":        handle(auth.ResourceAttestationSigningKeys, auth.ActionGet, (*Server).handleSigningKeyGet),
+	"attestation.signing_key.list":       handle(auth.ResourceAttestationSigningKeys, auth.ActionList, (*Server).handleSigningKeyList),
+	"attestation.signing_key.delete":     handle(auth.ResourceAttestationSigningKeys, auth.ActionBind, (*Server).handleSigningKeyDelete),
+	"attestation.signing_key.resolve":    handle(auth.ResourceAttestationSigningKeys, auth.ActionGet, (*Server).handleSigningKeyResolve),
+	"attestation.signing_key.sign_corim": handle(auth.ResourceAttestationSigningKeys, auth.ActionSign, (*Server).handleSigningKeySignCoRIM),
 
 	// Attested-caller evidence (pkg/attestation/peergate) --
 	// pkg/auth.ResourcePeerAttestation, an xkms-owned resource family scoped
