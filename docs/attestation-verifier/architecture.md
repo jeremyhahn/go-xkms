@@ -357,37 +357,48 @@ go-quicbaas now re-exports it.
 
 A tenant's images and signed CoRIM verify under its release key,
 `appraisal.ReleaseSigningKeyID` (`"release-signing"`,
-`pkg/attestation/appraisal/signing_keys.go:31`), unless a binding names
+`pkg/attestation/appraisal/signing_keys.go:30`), unless a binding names
 another tenant key for the repository (#1697, owner ruling 134). The
 binding changes which key a signature must be by, not which roots a
 certificate chains to.
 
-- **Binding.** `SetSigningKeyBinding` (`signing_keys.go:125`) stores a
+- **Binding.** `SetSigningKeyBinding` (`signing_keys.go:153`) stores a
   `SigningKeyBinding` — repository, key ID, optional backend — in the
   `signingKeys` collection of the same qrdb DAO database `attestation`
   (`pkg/attestation/appraisal/store.go:94`). A repository is an OCI
   repository path of at most 255 bytes (`ValidateRepository`,
-  `signing_keys.go:101`). Setting a repository again replaces its binding;
-  `DeleteSigningKeyBinding` (`:168`) returns it to the release key.
-- **Resolution.** `ResolveSigningKey` (`signing_keys.go:178`) answers with
+  `signing_keys.go:129`). Setting a repository again replaces its binding;
+  `DeleteSigningKeyBinding` (`:196`) returns it to the release key.
+- **Resolution.** `ResolveSigningKey` (`signing_keys.go:206`) answers with
   the bound key, or with the release key and `Default: true` when no binding
   names the repository. Resolution never fails for an unbound repository.
+- **CoRIM signing.** `XKMSService.SignCoRIM`
+  (`pkg/xkms/servicer_signing_keys.go:219`) is gated by
+  `attestation_signing_keys:sign` and acts on the caller's tenant. It resolves
+  the repository's key, takes its `crypto.Signer` from the backend, and calls
+  `refvalue.Sign` (`pkg/attestation/refvalue/sign.go:69`). That function wraps
+  the unsigned CoRIM (#6.501) in a COSE_Sign1 whose protected header carries
+  the algorithm, the content type `application/rim+cbor` and corim-meta
+  (label 8), as draft-ietf-rats-corim-11 §4.2 requires. A CoRIM signed this
+  way is accepted by the CoRIM check below. A refused signer key, bad meta or
+  a malformed CoRIM fails as a `*CoRIMSignError` that wraps
+  `refvalue.ErrSignerKey`, `ErrMeta` or `ErrMalformed`.
 - **Public keys only.** The Appraiser holds no keys. `WithSigningKeySource`
-  (`signing_keys.go:202`) gives it a `SigningKeySource`, and
-  `XKMSService.SigningPublicKey` (`pkg/xkms/servicer_signing_keys.go:136`)
+  (`signing_keys.go:230`) gives it a `SigningKeySource`, and
+  `XKMSService.SigningPublicKey` (`pkg/xkms/servicer_signing_keys.go:158`)
   implements it by returning the public half of the tenant key from the
   backend's signer. That works for non-extractable cloud KMS keys too.
 - **CoRIM.** A reference-values record that names a `Repository`
   (`pkg/attestation/appraisal/verifier.go:136`, `:155`) verifies under that
   repository's signing key alone (`verifyRepositoryCoRIM`,
-  `signing_keys.go:247`), on store (`verifier.go:384`) and again on
+  `signing_keys.go:275`), on store (`verifier.go:384`) and again on
   appraisal (`verifier.go:680`, `host.go:114`). A CoRIM signed by any other
   key is refused with a `*SignerRefusedError` (`ErrSigningKeyRefused`)
   inside a `*ReferenceValuesRejectedError`. Records with no repository still
   verify against the tenant's `reference-signer` endorsements.
 - **Images.** `image.VerifierConfig.SigningKeys`
   (`pkg/image/verifier.go:62`) takes a `SigningKeyResolver`;
-  `Appraiser.TenantSigningKeys(tenant)` (`signing_keys.go:226`) is one.
+  `Appraiser.TenantSigningKeys(tenant)` (`signing_keys.go:254`) is one.
   `VerifyImage` resolves the repository's key (`verifier.go:152`) and refuses
   an attestation whose signing certificate carries another key with
   `image.ErrSigningKeyMismatch`. The certificate must still chain to the
