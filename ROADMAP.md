@@ -114,6 +114,7 @@ Scope and boundaries: [docs/SPEC.md](docs/SPEC.md).
 - **trust-roots** — one purpose-classified root store on a qrdb DAO — [Dev complete](../../milestone/14) — open
 - **image-signing** — DSSE/in-toto image signatures as OCI referrers with `VerifyImage` — [Dev complete](../../milestone/14) — open
 - **transparency-log** — CA transparency log on go-qrdb's verifiable-log type — [Dev complete](../../milestone/14) — blocked: go-qrdb #721/#722
+- **qrdb-crypto-provider-seam** — go-xkms's hardware signer and key providers passed into the embedded go-qrdb node's crypto provider seams (owner ruling 131) — [SPEC](docs/SPEC.md#features) — blocked: go-qrdb item 144 (head-signer seam and the remaining provider seams)
 - **workload-identity** — tenant as SPIFFE trust domain, SVIDs through ACME — [Dev complete](../../milestone/14) — blocked: go-qrdb `spiffe://<tenant>/...` support
 - **ota-image-keys** — one OTA image-signing key per trusted-firmware board id — [Dev complete](../../milestone/14) — blocked: go-qrdb #737 (OTA activate/confirm permissions)
 - **key-policy-and-crypto** — key-management, key-policy, key-safety and crypto-utility RPCs in `xkms.v1` for go-quicbaas (DEK is go-qrdb's `DEKClient`) — [#1681](../../issues/1681), [Dev complete](../../milestone/14) — open
@@ -131,6 +132,7 @@ Scope and boundaries: [docs/SPEC.md](docs/SPEC.md).
 - **device-share-policy** — device sharing under the `device:*` permissions of tenant Admin and Owner — [SPEC](docs/SPEC.md#features) — blocked: go-qrdb gap
 - **device-policy-source** — xkey applies the stricter of its SO-sealed and the go-xkms device policy — [SPEC](docs/SPEC.md#features) — open
 - **verifier-appraisal-seam** — the go-quicbaas appraisal code and reference-values store moved into go-xkms `pkg/attestation` with history, re-exported by go-quicbaas — [SPEC](docs/SPEC.md#features) — open
+- **release-signing-key** — the tenant release signing key as default signer of images and CoRIM reference values, with per-repository key naming for go-quicbaas (owner ruling 134) — [SPEC](docs/SPEC.md#features) — open
 - **authz-claim-roles** — roles from go-qrdb, not IdP or token claims — [Dev complete](../../milestone/14) — blocked: go-qrdb gap
 - **authz-device-onboarding** — onboarding as users:invite and device-onboarding permissions — [Dev complete](../../milestone/14) — blocked: go-qrdb gap
 - **authz-holds-role** — role membership from go-qrdb — [Dev complete](../../milestone/14) — blocked: go-qrdb gap
