@@ -380,9 +380,9 @@ certificate chains to.
   the unsigned CoRIM (#6.501) in a COSE_Sign1 whose protected header carries
   the algorithm, the content type `application/rim+cbor` and corim-meta
   (label 8), as draft-ietf-rats-corim-11 §4.2 requires. A CoRIM signed this
-  way is accepted by the CoRIM check below. A refused signer key, bad meta or
-  a malformed CoRIM fails as a `*CoRIMSignError` that wraps
-  `refvalue.ErrSignerKey`, `ErrMeta` or `ErrMalformed`.
+  way is accepted by the CoRIM check below. A refused signer key, bad meta, a
+  malformed CoRIM or a failed signature fails as a `*CoRIMSignError` that
+  wraps `refvalue.ErrSignerKey`, `ErrMeta`, `ErrMalformed` or `ErrSign`.
 - **Public keys only.** The Appraiser holds no keys. `WithSigningKeySource`
   (`signing_keys.go:230`) gives it a `SigningKeySource`, and
   `XKMSService.SigningPublicKey` (`pkg/xkms/servicer_signing_keys.go:158`)
