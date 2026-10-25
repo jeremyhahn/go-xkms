@@ -318,6 +318,10 @@ KeyChange:  baseRESTURI + "/acme/key-change"
 doubled prefixes such as `https://host/api/v1/api/v1/acme/new-account`. Set it
 once, to the externally visible base.
 
+`meta.profiles` lists the order profiles a newOrder may name, with their
+descriptions (draft-aaron-acme-profiles; `directory.go:50`, from
+`orderProfiles`, `order_svid.go:35`). Today that is `x509-svid` only.
+
 ## Invariants
 
 - **An ACME certificate carries the account's tenant as its first subject OU
@@ -597,6 +601,24 @@ once, to the externally visible base.
   (`pkg/acme/server/handlers/new_order.go:36,68`). `malformed`, not
   `rejectedIdentifier`: the request as a whole is refused, not any one
   identifier in it.
+- **A newOrder names only an offered profile.** An unknown `profile` is
+  `invalidProfile` (400, `common.InvalidProfile`, `pkg/acme/common/errors.go:136`;
+  `new_order.go:81`). The order echoes its profile. An order with no profile
+  is issued as before.
+- **`x509-svid` orders are authorized by the account's tenant binding, not a
+  challenge.** The one `spiffe` identifier (`pkg/acme/common/types.go:41`)
+  must be `spiffe://<tenant>/svc/<name>` in the account's own tenant, and that
+  tenant must have its own signing CA. Its authorization is created valid and
+  the order `ready` (`authorizeSVIDOrder`, `order_svid.go:111`). Finalize
+  re-checks that and signs the SVID under the tenant CA
+  (`order_finalize.go:580`, `:783`), through its own issuer, whose linter
+  admits the URI SAN of a tenant trust domain (`order_finalize.go:956`;
+  `linter.Identifiers.SVID`, `pkg/acme/linter/linter.go:105`). A `spiffe` identifier without the profile
+  is `unsupportedIdentifier`. The refusal table is in
+  [`workload-identity/engineering.md`](../workload-identity/engineering.md#acme-issuance).
+- **A tenant-signed certificate is verified against the tenant CA.**
+  `verifyIssued` (`order_finalize.go:325`) anchors the check at the tenant
+  issuer. The global CA's pools never chain a tenant CA's certificates.
 - **Tenant admission control is keyed exclusively from an authenticated JWS
   "kid", never from a client-asserted header, host, or path (go-xkms#886).**
   `handlers.RestService.TenantAuthMiddleware`

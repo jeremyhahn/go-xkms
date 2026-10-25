@@ -48,6 +48,7 @@ func (s *RestService) DirectoryHandler(w http.ResponseWriter, r *http.Request) {
 				Website:            s.baseRESTURI,
 				CAAIdentities:      s.caaIdentities,
 				ExternalAccountReq: s.externalAccountRequired,
+				Profiles:           orderProfiles,
 			},
 		}
 		body, err := json.Marshal(directory)

@@ -37,6 +37,7 @@ const (
 	ErrTypeExternalAccountRequired = "externalAccountRequired"
 	ErrTypeIncorrectResponse       = "incorrectResponse"
 	ErrTypeInvalidContact          = "invalidContact"
+	ErrTypeInvalidProfile          = "invalidProfile"
 	ErrTypeMalformedError          = "malformed"
 	ErrTypeOrderNotReady           = "orderNotReady"
 	ErrTypeRateLimited             = "rateLimited"
@@ -129,6 +130,12 @@ func IncorrectResponse(detail string) *entities.Error {
 // InvalidContact creates an ACME error for invalid contact information.
 func InvalidContact(detail string) *entities.Error {
 	return entities.NewError(ErrTypeInvalidContact, detail, http.StatusBadRequest, nil)
+}
+
+// InvalidProfile creates an ACME error for a newOrder profile the server
+// does not offer (draft-aaron-acme-profiles).
+func InvalidProfile(detail string) *entities.Error {
+	return entities.NewError(ErrTypeInvalidProfile, detail, http.StatusBadRequest, nil)
 }
 
 // MalformedError creates an ACME error for malformed requests.

@@ -481,6 +481,7 @@ type RestService struct {
 	ca                      ca.TCGCA
 	issuer                  *issuance.Issuer
 	deviceIssuer            *issuance.Issuer // device-attest-01 certificates only
+	svidIssuer              *issuance.Issuer // x509-svid certificates only
 	caaIdentities           []string
 	caaValidator            CAAValidatorInterface
 	challengeMap            map[string]common.ChallengeVerifierFunc
@@ -675,13 +676,11 @@ func identifierPolicyConfig(params *Params) *policy.PolicyConfig {
 // identifier an order was authorized for. With deviceIdentity it also admits
 // the permanentIdentifier otherName a verified device-attest-01 certificate
 // carries; finalize uses that issuer for those orders only.
-func newIssuer(params *Params, auditLog audit.AuditLogger, deviceIdentity bool) (*issuance.Issuer, error) {
+func newIssuer(params *Params, auditLog audit.AuditLogger, identity linter.Identifiers) (*issuance.Issuer, error) {
 	cfg := identifierPolicyConfig(params)
-	lint, err := linter.New(params.Lint.Admit(linter.Identifiers{
-		InternalNames:  !cfg.RequirePublicSuffix,
-		ReservedIPs:    !cfg.RejectReservedIPs,
-		DeviceIdentity: deviceIdentity,
-	}))
+	identity.InternalNames = !cfg.RequirePublicSuffix
+	identity.ReservedIPs = !cfg.RejectReservedIPs
+	lint, err := linter.New(params.Lint.Admit(identity))
 	if err != nil {
 		return nil, caerrors.MalformedError("handlers: failed to build certificate linter: %v", err)
 	}
@@ -757,11 +756,15 @@ func NewRestService(params *Params) (RestServicer, error) {
 		auditLog = audit.NewNoOpLogger()
 	}
 
-	issuer, err := newIssuer(params, auditLog, false)
+	issuer, err := newIssuer(params, auditLog, linter.Identifiers{})
 	if err != nil {
 		return nil, err
 	}
-	deviceIssuer, err := newIssuer(params, auditLog, true)
+	deviceIssuer, err := newIssuer(params, auditLog, linter.Identifiers{DeviceIdentity: true})
+	if err != nil {
+		return nil, err
+	}
+	svidIssuer, err := newIssuer(params, auditLog, linter.Identifiers{SVID: true})
 	if err != nil {
 		return nil, err
 	}
@@ -852,6 +855,7 @@ func NewRestService(params *Params) (RestServicer, error) {
 		ca:                      params.CA,
 		issuer:                  issuer,
 		deviceIssuer:            deviceIssuer,
+		svidIssuer:              svidIssuer,
 		caaIdentities:           params.CAAIdentities,
 		caaValidator:            params.CAAValidator,
 		challengeMap:            params.ChallengeMap,
@@ -1148,6 +1152,7 @@ func (s *RestService) orderResponse(w http.ResponseWriter, order *entities.ACMEO
 		Authorizations []string                  `json:"authorizations"`
 		Finalize       string                    `json:"finalize"`
 		Certificate    string                    `json:"certificate,omitempty"`
+		Profile        string                    `json:"profile,omitempty"`
 	}{
 		Status:         order.Status,
 		Expires:        order.Expires,
@@ -1158,6 +1163,7 @@ func (s *RestService) orderResponse(w http.ResponseWriter, order *entities.ACMEO
 		Authorizations: order.Authorizations,
 		Finalize:       order.Finalize,
 		Certificate:    order.Certificate,
+		Profile:        order.Profile,
 	}
 
 	w.Header().Set("Content-Type", "application/json")

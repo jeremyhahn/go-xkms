@@ -11,6 +11,7 @@ import (
 	"errors"
 	"math/big"
 	"net"
+	"net/url"
 	"testing"
 	"time"
 
@@ -296,6 +297,14 @@ func reservedIPs(c *x509.Certificate) {
 	c.IPAddresses = []net.IP{net.ParseIP("10.0.0.1"), net.ParseIP("fd00::1")}
 }
 
+// svid makes the leaf's names those of an x509-svid: no subject common name
+// or DNS name, and the tenant SPIFFE ID as its one URI SAN.
+func svid(c *x509.Certificate) {
+	c.Subject = pkix.Name{}
+	c.DNSNames = nil
+	c.URIs = []*url.URL{{Scheme: "spiffe", Host: "acme", Path: "/svc/web"}}
+}
+
 // deviceIdentity returns a mutation that adds a device-attest-01 identity as
 // an RFC 4043 permanentIdentifier otherName to the subjectAltName.
 func deviceIdentity(t *testing.T) func(*x509.Certificate) {
@@ -322,6 +331,7 @@ func TestAdmitRunsNoLintRefusingAnAdmittedIdentifier(t *testing.T) {
 		"internal names":  {Identifiers{InternalNames: true}, internalNames},
 		"reserved IPs":    {Identifiers{ReservedIPs: true}, reservedIPs},
 		"device identity": {Identifiers{DeviceIdentity: true}, deviceIdentity(t)},
+		"svid":            {Identifiers{SVID: true}, svid},
 	}
 	for name, tc := range cases {
 		t.Run(name, func(t *testing.T) {
@@ -348,6 +358,9 @@ func TestAdmitKeepsTheLintsOfIdentifiersItDoesNotAdmit(t *testing.T) {
 		}},
 		"device identity": {Identifiers{InternalNames: true, ReservedIPs: true}, deviceIdentity(t),
 			[]string{"e_ext_san_other_name_present"}},
+		"svid": {Identifiers{DeviceIdentity: true}, svid, []string{
+			"e_ext_san_uniform_resource_identifier_present", "e_ext_san_uri_host_not_fqdn_or_ip",
+		}},
 	}
 	for name, tc := range cases {
 		t.Run(name, func(t *testing.T) {

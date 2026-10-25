@@ -279,7 +279,7 @@ cannot inject its own evidence.
 `sdk/go/spiffe`. It has two shapes. The tenant identity
 `spiffe://<t>/<kind>/<name>`, whose trust domain is the tenant (`ID`,
 `BuildURI`, `ParseID`, `TenantFromURIs`), is what the CA stamps on broker-issued certificates and what
-mTLS login reads back. The general builder and validator (`TrustDomain`,
+mTLS login reads back; see [workload identity](../workload-identity/engineering.md). The general builder and validator (`TrustDomain`,
 `WorkloadID`) accepts any trust domain and path the SPIFFE-ID specification
 allows, and nothing else. The `x509-svid` profile validates its URI SAN with
 it, and an issuing caller scopes a subordinate's paths with

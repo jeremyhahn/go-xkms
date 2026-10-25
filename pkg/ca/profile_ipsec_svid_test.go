@@ -463,6 +463,60 @@ func TestX509SVID_TenantIDAloneRecordsOwnership(t *testing.T) {
 	}
 }
 
+// TestX509SVID_TenantBundleIsolation pins the workload-identity row's
+// isolation claim: each tenant's trust bundle is its own CA, so one tenant's
+// bundle never verifies another tenant's SVID, and a tenant CA cannot issue
+// another tenant's identity.
+func TestX509SVID_TenantBundleIsolation(t *testing.T) {
+	c := setupTestCA(t)
+	ctx := context.Background()
+	tenantCA := func(tenant string) (*x509.Certificate, crypto.Signer) {
+		key := newECKey(t, elliptic.P256())
+		cert, err := c.IssueSubordinateCA(ctx, &SubordinateCARequest{
+			Subject:   pkix.Name{CommonName: tenant + " Tenant CA"},
+			PublicKey: key.Public(),
+			NameConstraints: &NameConstraints{
+				Critical:            true,
+				PermittedURIDomains: []string{tenant},
+			},
+		})
+		if err != nil {
+			t.Fatalf("issue %s tenant CA: %v", tenant, err)
+		}
+		return cert, key
+	}
+	caA, keyA := tenantCA("tenant-a")
+	caB, keyB := tenantCA("tenant-b")
+
+	issue := func(issuer *x509.Certificate, key crypto.Signer, tenant string) (*x509.Certificate, error) {
+		return c.SignCSR(ctx, csrFor(t, newECKey(t, elliptic.P256()), "", nil, nil, nil), &SignOptions{
+			Profile: ProfileNameX509SVID, Signer: key, IssuerCert: issuer, TenantID: tenant,
+			SANS: &SubjectAlternativeNames{URIs: []string{"spiffe://" + tenant + "/svc/web"}},
+		})
+	}
+	svidA, err := issue(caA, keyA, "tenant-a")
+	if err != nil {
+		t.Fatalf("issue tenant-a SVID: %v", err)
+	}
+
+	bundle := func(tenantCA *x509.Certificate) x509.VerifyOptions {
+		roots := x509.NewCertPool()
+		roots.AddCert(tenantCA)
+		return x509.VerifyOptions{Roots: roots, KeyUsages: []x509.ExtKeyUsage{x509.ExtKeyUsageAny}}
+	}
+	if _, err := svidA.Verify(bundle(caA)); err != nil {
+		t.Errorf("tenant-a's bundle must verify its own SVID: %v", err)
+	}
+	var unknown x509.UnknownAuthorityError
+	if _, err := svidA.Verify(bundle(caB)); !errors.As(err, &unknown) {
+		t.Errorf("tenant-b's bundle verified tenant-a's SVID: err = %v", err)
+	}
+
+	if _, err := issue(caB, keyB, "tenant-a"); !errors.Is(err, ErrNameConstraintViolation) {
+		t.Errorf("tenant-b's CA issued a tenant-a identity: err = %v", err)
+	}
+}
+
 func TestOverlayProfilesRegistered(t *testing.T) {
 	reg := NewDefaultProfileRegistry()
 	for _, name := range []string{ProfileNameIPsecVTEP, ProfileNameX509SVID} {

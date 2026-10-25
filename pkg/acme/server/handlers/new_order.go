@@ -27,6 +27,7 @@ import (
 	"github.com/jeremyhahn/go-xkms/pkg/acme/entities"
 	caerrors "github.com/jeremyhahn/go-xkms/pkg/acme/errors"
 	"github.com/jeremyhahn/go-xkms/pkg/acme/server/metrics"
+	"github.com/jeremyhahn/go-xkms/pkg/ca"
 )
 
 // maxOrderIdentifiers is the most identifiers one new-order request may
@@ -40,6 +41,10 @@ type NewOrderRequest struct {
 	Identifiers []entities.ACMEIdentifier `yaml:"identifiers" json:"identifiers"`
 	NotBefore   string                    `yaml:"not-before" json:"notBefore,omitempty"`
 	NotAfter    string                    `yaml:"not-after" json:"notAfter,omitempty"`
+
+	// Profile names a certificate profile from the directory's
+	// meta.profiles (draft-aaron-acme-profiles); empty is no profile.
+	Profile string `yaml:"profile" json:"profile,omitempty"`
 }
 
 func (s *RestService) NewOrderHandler(w http.ResponseWriter, r *http.Request) {
@@ -72,6 +77,20 @@ func (s *RestService) NewOrderHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	if req.Profile != "" {
+		if _, ok := orderProfiles[req.Profile]; !ok {
+			writeError(w, common.InvalidProfile(fmt.Sprintf("Profile %q is not offered by this server", req.Profile)))
+			return
+		}
+	}
+	isSVID := req.Profile == ca.ProfileNameX509SVID
+	if isSVID {
+		if err := s.authorizeSVIDOrder(ctx, account, req.Identifiers); err != nil {
+			writeError(w, svidOrderProblem(err))
+			return
+		}
+	}
+
 	authorizationDAO, err := s.storageFactory.AuthorizationDAO(account.ID)
 	if err != nil {
 		writeError(w, common.ServerInternal("Failed to create authorization DAO"))
@@ -96,6 +115,19 @@ func (s *RestService) NewOrderHandler(w http.ResponseWriter, r *http.Request) {
 	// Validate identifiers
 	authzURLs := []string{}
 	for _, id := range req.Identifiers {
+
+		// An x509-svid identifier was authorized by the account's tenant
+		// binding above; it has no challenges to create.
+		if isSVID {
+			authzURL, err := s.saveSVIDAuthorization(ctx, authorizationDAO, account.ID, orderID, id)
+			if err != nil {
+				s.logger.Error("Failed to save authorization", "error", err, "accountID", account.ID)
+				writeError(w, common.ServerInternal("Failed to save authorization"))
+				return
+			}
+			authzURLs = append(authzURLs, authzURL)
+			continue
+		}
 
 		// Validate the identifier type
 		switch id.Type {
@@ -185,10 +217,18 @@ func (s *RestService) NewOrderHandler(w http.ResponseWriter, r *http.Request) {
 		authzURLs = append(authzURLs, authzURL)
 	}
 
+	// Every authorization of an x509-svid order is already valid, so the
+	// order is ready for finalization from the start (RFC 8555 Section 7.1.6).
+	status := common.StatusPending
+	if isSVID {
+		status = common.StatusReady
+	}
+
 	order := &entities.ACMEOrder{
 		ID:             orderID,
 		AccountID:      account.ID,
-		Status:         common.StatusPending,
+		Status:         status,
+		Profile:        req.Profile,
 		Expires:        time.Now().Add(24 * time.Hour).Format(time.RFC3339),
 		Identifiers:    req.Identifiers,
 		NotBefore:      req.NotBefore,

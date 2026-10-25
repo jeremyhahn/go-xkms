@@ -87,15 +87,23 @@ type Identifiers struct {
 	// subjectAltName carries the verified device identity as an RFC 4043
 	// permanentIdentifier otherName. Set it only on that verified path.
 	DeviceIdentity bool
+
+	// SVID is true for an x509-svid certificate, whose one URI SAN is the
+	// tenant SPIFFE ID spiffe://<tenant>/svc/<name> (X509-SVID §2). The tenant
+	// trust domain need not be a fully qualified domain name. Set it only on
+	// the x509-svid order path.
+	SVID bool
 }
 
 // internalNameLints and reservedIPLints are the lints that refuse an
 // internal name or a reserved IP address in the subject or subjectAltName.
-// deviceIdentityLints refuses any otherName in the subjectAltName.
+// deviceIdentityLints refuses any otherName in the subjectAltName. svidLints
+// refuses a URI SAN, and one whose host is not a fully qualified domain name.
 var (
 	internalNameLints   = []string{"e_dnsname_not_valid_tld"}
 	reservedIPLints     = []string{"e_ext_san_contains_reserved_ip", "e_subject_contains_reserved_ip"}
 	deviceIdentityLints = []string{"e_ext_san_other_name_present"}
+	svidLints           = []string{"e_ext_san_uniform_resource_identifier_present", "e_ext_san_uri_host_not_fqdn_or_ip"}
 )
 
 // Admit returns c with the lints excluded that refuse the identifiers ids
@@ -114,6 +122,9 @@ func (c Config) Admit(ids Identifiers) Config {
 	}
 	if ids.DeviceIdentity {
 		admitted.ExcludeLints = append(admitted.ExcludeLints, deviceIdentityLints...)
+	}
+	if ids.SVID {
+		admitted.ExcludeLints = append(admitted.ExcludeLints, svidLints...)
 	}
 	return admitted
 }
