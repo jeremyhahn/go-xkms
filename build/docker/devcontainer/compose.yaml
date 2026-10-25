@@ -1,8 +1,8 @@
 # Compose project name. This MUST be set explicitly.
 #
 # Without it, compose derives the project name from the directory holding this
-# file — ".devcontainer" → "devcontainer" — which is exactly the name
-# go-trusted-platform's stack (build/docker/devcontainer) already uses. Both
+# file — "build/docker/devcontainer" → "devcontainer" — which is exactly the
+# name go-trusted-platform's stack (build/docker/devcontainer) already uses. Both
 # projects then share a namespace: `docker compose exec devcontainer ...` run
 # from go-xkms attaches to go-trusted-platform's container, `up -d xkms-server`
 # silently matches nothing, and the volumes collide. Naming the project pins
@@ -20,15 +20,77 @@
 # service name, which resolves inside the project network regardless.
 name: go-xkms
 
+# Hardened posture for the CI stages (handbook ci-standard.md): the toolchain
+# and integration services run with no capabilities, no network and a
+# read-only root. The interactive devcontainer harness below keeps its
+# privileged sidecars; the profiles keep `compose up` from starting the CI
+# services, and `compose run <service>` enables them.
+x-posture: &posture
+  init: true
+  read_only: true
+  network_mode: none
+  cap_drop: [ALL]
+  security_opt: ["no-new-privileges:true"]
+  pids_limit: 4096
+  mem_limit: 8g
+  memswap_limit: 8g
+  ulimits:
+    memlock: 67108864
+    core: 1048576
+    nofile: 65536
+  working_dir: /src
+
 services:
+  integration:
+    <<: *posture
+    profiles: [integration]
+    image: ${GO_XKMS_IT_IMAGE:-go-xkms-it:local}
+    pull_policy: never
+    user: "10001:10001"
+    tmpfs:
+      - /tmp:rw,exec,nosuid,nodev,size=3g,mode=1777
+    volumes:
+      - gocache:/gocache
+    environment:
+      GOTOOLCHAIN: local
+      GOFLAGS: -mod=readonly
+      GOPROXY: "off"
+
+  toolchain:
+    <<: *posture
+    profiles: [toolchain]
+    # Offline unless the caller opts in: make docker-run gives its default
+    # `make build` a bridge, for build-xkey-local's `npm ci`.
+    network_mode: ${GO_XKMS_TOOLCHAIN_NETWORK:-none}
+    image: go-xkms-toolchain:${GO_XKMS_TOOLCHAIN_TAG:-latest}
+    pull_policy: never
+    user: "${GO_XKMS_UID:-10001}:${GO_XKMS_GID:-10001}"
+    tmpfs:
+      - /tmp:rw,exec,nosuid,nodev,size=3g,mode=1777
+    volumes:
+      - ../../..:/src
+      - toolchain-gocache:/gocache
+    environment:
+      HOME: /tmp
+
   devcontainer:
+    # The interactive stage of the one devcontainer Dockerfile. Its context is
+    # the repository root, so the Dockerfile reads scripts/tool-pins.sh and the
+    # SoftHSM pin (scripts/build-softhsm.sh, go-xkms#1418) from the tree.
+    # GO_IMAGE comes from scripts/tool-pins.sh, which the Makefile exports;
+    # devcontainer.json's initializeCommand (make devcontainer-env) writes it
+    # into .env for a launch with no Makefile.
     build:
-      context: .
-      dockerfile: Dockerfile
-      # The SoftHSM pin lives in the repository's scripts/build-softhsm.sh;
-      # the Dockerfile copies it from this named context (go-xkms#1418).
-      additional_contexts:
-        softhsm-pin: ../scripts
+      context: ../../..
+      dockerfile: build/docker/devcontainer/Dockerfile
+      target: devcontainer
+      args:
+        GO_IMAGE: ${GO_IMAGE:?GO_IMAGE is unset; build through make, which exports scripts/tool-pins.sh}
+      # The Dockerfile's modules stage resolves in-house modules from Gitea
+      # tags through the gomodauth BuildKit secret (dependency-resolution.md
+      # §6), as xkms-server does; the Makefile stages it before every `up`.
+      secrets:
+        - gomodauth
     image: go-xkms-dev:${XKMS_IMAGE_TAG:-latest}
     # Privileged mode required for QEMU with KVM acceleration
     privileged: true
@@ -50,7 +112,7 @@ services:
         soft: -1
         hard: -1
     volumes:
-      - ..:/workspace:cached
+      - ../../..:/workspace:cached
       - go-mod-cache:/go/pkg/mod
       - go-build-cache:/home/vscode/.cache/go-build
       - /var/run/docker.sock:/var/run/docker.sock
@@ -64,7 +126,7 @@ services:
       - xkms-data:/xkms-data:ro
     environment:
       # Positive devcontainer identity marker, also baked into the image
-      # (.devcontainer/Dockerfile). Set here too so a container created from
+      # (build/docker/devcontainer/Dockerfile). Set here too so a container created from
       # a pre-marker image still carries it. The Makefile tests this instead
       # of /.dockerenv, which is true in ANY container and made the CI job
       # container impersonate the devcontainer (go-xkms #19).
@@ -73,7 +135,7 @@ services:
       # In-house modules resolve from Gitea tags (dependency-resolution.md §6).
       # Credentials: the Makefile's GOMODAUTH_* resolution (the CI runner's
       # injected rewrite first), else the read-only token from the gitignored
-      # .devcontainer/.env when compose is loaded directly.
+      # build/docker/devcontainer/.env when compose is loaded directly.
       - GOWORK=off
       - GOPRIVATE=github.com/jeremyhahn/*
       - GIT_CONFIG_COUNT=${GOMODAUTH_GIT_CONFIG_COUNT:-${GITEA_HOST:+1}}
@@ -152,7 +214,7 @@ services:
   # SWTPM TPM 2.0 Simulator (shared across all tests)
   swtpm:
     build:
-      context: ../test/docker/swtpm
+      context: ../../../test/docker/swtpm
       dockerfile: Dockerfile
     image: go-xkms-swtpm:${XKMS_IMAGE_TAG:-dev}
     volumes:
@@ -168,11 +230,11 @@ services:
   # SoftHSM PKCS#11 Service (shared across all tests)
   softhsm:
     build:
-      context: ../test/docker/softhsm
+      context: ../../../test/docker/softhsm
       dockerfile: Dockerfile
       # The SoftHSM pin (scripts/build-softhsm.sh, go-xkms#1418).
       additional_contexts:
-        softhsm-pin: ../scripts
+        softhsm-pin: ../../../scripts
     image: go-xkms-softhsm:${XKMS_IMAGE_TAG:-dev}
     volumes:
       - softhsm-tokens:/tokens
@@ -192,7 +254,7 @@ services:
   # XKMS server for integration tests (optional, started manually)
   xkms-server:
     build:
-      context: ..
+      context: ../../..
       dockerfile: Dockerfile
       # In-house modules resolve from Gitea tags at image build via the
       # gomodauth BuildKit secret (dependency-resolution.md §6). Stage it with
@@ -270,7 +332,7 @@ services:
     # admin-cert.pem/admin-key.pem pair it delivers is what marks the volume as
     # initialized. The daemon then boots sealed, and the Makefile's
     # devcontainer-server-wait unseals it through the sealed window with the same
-    # PIN (.devcontainer/scripts/open-server-barrier.sh) before the suites run,
+    # PIN (build/docker/devcontainer/scripts/open-server-barrier.sh) before the suites run,
     # so they need no unseal step of their own. The PIN reaches init only
     # through its environment, never argv, and is dropped before the daemon
     # starts. This instance is reachable from the private xkms-dev network, the
@@ -295,7 +357,7 @@ services:
   # part of the default stack.
   quicbaas-server:
     build:
-      context: ../../go-quicbaas
+      context: ../../../../go-quicbaas
       dockerfile: Dockerfile
       args:
         # The default BUILD_TAGS is gms_pure_go only, which compiles
@@ -311,7 +373,7 @@ services:
       - quicbaas
     volumes:
       - quicbaas-data:/data
-      - ../configs/quicbaasd-integration.yaml:/etc/quicbaas/quicbaas.yaml:ro
+      - ../../../configs/quicbaasd-integration.yaml:/etc/quicbaas/quicbaas.yaml:ro
     # "start" = single-node local PebbleDB backend (no Raft) — the right
     # shape for a login-matrix fixture.
     command: ["start", "--config", "/etc/quicbaas/quicbaas.yaml", "--data-dir", "/data"]
@@ -352,6 +414,8 @@ services:
       - xkms-dev
 
 volumes:
+  gocache:
+  toolchain-gocache:
   go-mod-cache:
   go-build-cache:
   swtpm-state:

@@ -1,11 +1,16 @@
 # Lint gates
 
-> **Status: REFERENCE** · Last verified: 2026-10-13
+> **Status: REFERENCE** · Last verified: 2026-10-16
 > Scope: the lint and static-analysis gates CI's Lint and Static Analysis jobs run, and the Make target behind each.
 
-What CI's Lint and Static Analysis jobs (`.github/workflows/ci.yml`) enforce
-on every push and pull request, in order, and the Make target behind each
-step so a developer runs the identical check locally before pushing.
+This page lists what CI's Lint and Static Analysis jobs
+(`.github/workflows/ci.yml`) enforce on every push and pull request, in
+order. Each step names its Make target, so a developer can run the same
+check locally before pushing. Both jobs run their steps in the toolchain
+image built from `build/docker/devcontainer/Dockerfile`, through
+`scripts/in-toolchain-image.sh`. Every tool version is pinned in
+`scripts/tool-pins.sh`. `make docker-run CMD='make lint'` runs a step in
+the same image locally.
 
 ## Gates
 
@@ -16,14 +21,15 @@ step so a developer runs the identical check locally before pushing.
 | 1 | gofmt | `make fmt-check` | Every `.go` file in every module is `gofmt -s` formatted. Path-based, so one run reaches all four modules. |
 | 2 | go vet | `make vet` | `go vet` passes for every module in `LINT_MODULES` (`.`, `sdk/go`, `xkey`, `web/desktop`; `Makefile:3792`), each under its own build tags: `LINT_TAGS_xkey` for `xkey`, `VET_BUILD_TAGS` for `web/desktop`, and `LINT_TAGS_root` (`TEST_TAGS`, comma-joined) plus `VET_BUILD_TAGS` for `.` and `sdk/go`. Two more passes vet the root module under `LINT_TAGS_root_backends` and `LINT_TAGS_root_raft` (`Makefile:3873`). Go tooling does not cross a module boundary, so this loops rather than running `go vet ./...` once from the root. |
 | 3 | actionlint | `make lint` (`make actionlint`) | Every workflow in `.github/workflows/` passes actionlint at `ACTIONLINT_VERSION` (Makefile): syntax, expressions, runner labels, and every `run:` script through shellcheck when it is installed. A missing or different actionlint is replaced by the pin (`make install-actionlint`); a pin that cannot be installed fails the target. The installed version must match the pin exactly. The target fails at once when `.github/actionlint.yaml` is missing: it lists the self-hosted runner labels the workflows request (`qwen`), and must name exactly those. `make install-trivy` builds Trivy at `TRIVY_VERSION` with `go install`, stamping the version as Trivy's release build does; no install script is piped into a shell. A missing Trivy, or one that does not report the pin, is replaced by the pin, and an install that does not report the pin fails the target. `.github/scripts/make-gates-test.sh` proves this gate, and `make trivy`/`make trivy-image`, fail closed with the tool absent (go-xkms#1434). |
-| 4 | golangci-lint | `make lint` | The pinned `golangci-lint` version (`GOLANGCI_LINT_VERSION` in `ci.yml`) against `.golangci.yml`, over the same `LINT_MODULES` × tags matrix as `go vet`. CI requires the exact pinned version (`.github/scripts/require-tool.sh`) rather than falling back to an install, so a version drift fails loudly instead of scanning with an unknown tool. |
+| 4 | golangci-lint | `make lint` | The pinned `golangci-lint` version (`GOLANGCI_VERSION` in `scripts/tool-pins.sh`, installed in the toolchain image) against `.golangci.yml`, over the same `LINT_MODULES` × tags matrix as `go vet`. |
 | 5 | xkey skill reference | `make -C xkey check-skill-reference` | Fails when the xkey skill's generated CLI reference is stale, or `SKILL.md` cites a command or flag that does not exist (`xkey/Makefile:1048`). |
-| 6 | internal literals | `make check-public-literals` | No lab-network address, fleet host name or owner workstation path anywhere in the tree (go-xkms#1030). |
+| 6 | internal literals | `make check-public-literals` | No lab-network address, fleet host name or owner workstation path in any tracked file, reported as `path:line` without the line's text (go-xkms#1030). |
 
 Between gates 2 and 3 the job also runs the CI scripts' own self-tests
-(`.github/scripts/require-tool-test.sh`, `make-gates-test.sh`,
-`apt-deps-test.sh`, `pr-scope-test.sh`, `changed-go-packages-test.sh`) and
-`make test-buildgates`.
+(`.github/scripts/disk-usage-test.sh`, `require-tool-test.sh`,
+`make-gates-test.sh`, `apt-deps-test.sh`) and `make test-buildgates`. The
+latter checks that every job in `ci.yml` appears in the CI Gate tagged `pr`
+or `full`, and that a `full` job carries the full-tier `if:`.
 
 ### Static Analysis job
 

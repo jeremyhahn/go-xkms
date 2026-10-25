@@ -1,5 +1,5 @@
 # Sample OpenSSL 4.0.1 configuration that activates the pkcs11-provider
-# module built against that OpenSSL (see .devcontainer/Dockerfile) so a
+# module built against that OpenSSL (see build/docker/devcontainer/Dockerfile) so a
 # PKCS#11 module can be driven through the provider interface, e.g.:
 #
 #   PKCS11_MODULE_PATH=/usr/lib/softhsm/libsofthsm2.so \

@@ -334,7 +334,11 @@ tree (generic private-range test data, an `example.com` address, a `$HOME`
 placeholder) passes; each of the five literal categories is caught with its
 own `file:line`; a bare fixture-style string built from the same word is not
 mistaken for the one known fleet name in that family; and `CLAUDE.md`,
-`AGENTS.md` and `.claude/` are excluded at any depth. The planted literals
+`AGENTS.md` and `.claude/` are excluded at any depth. Each scratch tree is
+a git repository with its files tracked, because the gate reads tracked files
+only: an untracked file holding a literal is not reported, a tracked one is
+reported as `path:line` without its text, and a tree outside git is refused
+with exit 2. The planted literals
 are themselves assembled from split fragments rather than written out whole,
 so this test's own source does not trip the gate it exercises.
 `release-assets.test.sh` stands up a local HTTP stub of the two Gitea endpoints the asset

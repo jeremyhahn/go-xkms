@@ -97,4 +97,4 @@ networks:
 
 secrets:
   gomodauth:
-    file: ../../../.devcontainer/gomodauth.env
+    file: ../../../build/docker/devcontainer/gomodauth.env

@@ -229,7 +229,7 @@ else\n\
 fi\n' > /usr/local/bin/entrypoint.sh && chmod +x /usr/local/bin/entrypoint.sh
 
 # Bake the integration-test server config into the image so the compose
-# xkms-server service (.devcontainer/docker-compose.yml) does not depend on
+# xkms-server service (build/docker/devcontainer/compose.yaml) does not depend on
 # a host bind mount for it. A relative bind-mount source
 # (../configs/xkmsd-integration.yaml) resolves against the Gitea Actions job
 # container's filesystem, not the actual docker daemon host backing that
