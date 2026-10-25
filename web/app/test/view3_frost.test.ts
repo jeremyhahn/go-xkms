@@ -163,14 +163,13 @@ describe("FrostView generation", () => {
 
     await userEvent.click(screen.getByRole("button", { name: "+ Generate" }));
     const dialog = screen.getByText("Generate FROST key").closest(".modal-box") as HTMLElement;
-    await userEvent.type(
-      dialog.querySelector('input[placeholder="Key ID (optional)"]') as HTMLElement,
-      "frost-9",
-    );
-    await userEvent.type(
-      dialog.querySelector('input[placeholder^="Participants"]') as HTMLElement,
-      "alice, bob , carol",
-    );
+    // Pasted rather than typed: the values are what is under test, and typing
+    // 25 characters one keystroke at a time (a Svelte flush and a timer tick
+    // each) took 0.4 s on an idle host and past 5 s on a loaded CI runner.
+    await userEvent.click(dialog.querySelector('input[placeholder="Key ID (optional)"]') as HTMLElement);
+    await userEvent.paste("frost-9");
+    await userEvent.click(dialog.querySelector('input[placeholder^="Participants"]') as HTMLElement);
+    await userEvent.paste("alice, bob , carol");
     await userEvent.click(screen.getByRole("button", { name: "Generate", hidden: true }));
 
     await waitFor(() => expect(generateKey).toHaveBeenCalled());

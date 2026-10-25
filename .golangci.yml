@@ -60,6 +60,14 @@ issues:
 
 version: "2"
 
+# Findings report path, line and message only, never the source line: a
+# finding must not echo a credential it matched (handbook ci-standard.md §5).
+output:
+  formats:
+    text:
+      path: stdout
+      print-issued-lines: false
+
 # Lint budget: 30m of WALL CLOCK, set here so `make lint`, the module
 # Makefiles and the golangci-lint-action workflows all share one value (#360,
 # #363). golangci-lint v2 disables the timeout by default; the previous bound

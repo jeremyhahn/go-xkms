@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 #
-# Tests for .devcontainer/scripts/open-server-barrier.sh (go-xkms#1055).
+# Tests for build/docker/devcontainer/scripts/open-server-barrier.sh (go-xkms#1055).
 #
 # The compose xkms-server is initialized by `xkmsd init` before it first boots,
 # and its sealed window refuses barrier initialization with HTTP 409, so the
@@ -10,7 +10,7 @@
 # request it is asked to make. No Docker, no network.
 set -uo pipefail
 ROOT=$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)
-SCRIPT="$ROOT/.devcontainer/scripts/open-server-barrier.sh"
+SCRIPT="$ROOT/build/docker/devcontainer/scripts/open-server-barrier.sh"
 set +e
 PASS=0
 FAIL=0

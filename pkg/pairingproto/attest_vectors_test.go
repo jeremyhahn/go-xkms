@@ -84,6 +84,16 @@ const (
 	vecGenesisChallengeHex = "786b65792d6465766963652d6174746573746174696f6e2d7631"
 	vecTranscriptDomainHex = "786b65792d6174746573742d7472616e7363726970742d7631"
 	vecChannelDomainHex    = "786b65792d6174746573742d6368616e6e656c2d7631"
+
+	// local.verifyUser (ruling 167): the version 2 transcript under the
+	// "verify-user" purpose, with the UVK fingerprint in the last field.
+	vecTranscriptVerifyUser = "786b65792d6174746573742d7472616e7363726970742d76310b7665726966792d75736572" +
+		"000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f" +
+		"404142434445464748494a4b4c4d4e4f505152535455565758595a5b5c5d5e5f" +
+		"808182838485868788898a8b8c8d8e8f909192939495969798999a9b9c9d9e9f"
+	vecTranscriptVerifyUserSHA256       = "30f3f98d0ccfa8302dbc2768119257aa0cbf18b5e2391fe8c08a1dca8dd11a04"
+	vecPurposeVerifyUserHex             = "7665726966792d75736572"
+	vecUserVerificationGenesisChallenge = "786b65792d757365722d766572696669636174696f6e2d7631"
 )
 
 // vecRamp returns 32 bytes counting up from start, the shape the published
@@ -161,5 +171,21 @@ func TestAttestVectorsMatchThePublishedBytes(t *testing.T) {
 		assert.Equal(t, vecGenesisChallengeHex, hex.EncodeToString([]byte(AttestGenesisChallenge)))
 		assert.Equal(t, vecTranscriptDomainHex, hex.EncodeToString([]byte(AttestTranscriptDomain)))
 		assert.Equal(t, vecChannelDomainHex, hex.EncodeToString([]byte(AttestChannelBindingDomain)))
+	})
+
+	t.Run("transcript verify-user", func(t *testing.T) {
+		transcript, err := BuildAttestTranscript(AttestPurposeVerifyUser, nonce, binding, fingerprint)
+		require.NoError(t, err)
+		assert.Equal(t, vecTranscriptVerifyUser, hex.EncodeToString(transcript))
+
+		digest := sha256.Sum256(transcript)
+		assert.Equal(t, vecTranscriptVerifyUserSHA256, hex.EncodeToString(digest[:]),
+			"the digest the UVK signs after a fresh biometric")
+	})
+
+	t.Run("verify-user constants", func(t *testing.T) {
+		assert.Equal(t, vecPurposeVerifyUserHex, hex.EncodeToString([]byte(AttestPurposeVerifyUser)))
+		assert.Equal(t, vecUserVerificationGenesisChallenge,
+			hex.EncodeToString([]byte(UserVerificationGenesisChallenge)))
 	})
 }

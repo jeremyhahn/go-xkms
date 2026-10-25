@@ -268,7 +268,7 @@ before anything is extracted. It installs at Debian's paths
 `/etc/softhsm/softhsm2.conf`, tokens under `/var/lib/softhsm/tokens`) — the
 Alpine sidecar passes `/usr/local` as its prefix, as before — so no test,
 config or path changed. Builds whose context cannot reach `scripts/`
-(`.devcontainer/`, `test/docker/softhsm/`) receive it as the named build
+(`build/docker/devcontainer/`, `test/docker/softhsm/`) receive it as the named build
 context `softhsm-pin` from their compose file. The module is stripped and
 built with the file object store only, the one every token here uses.
 

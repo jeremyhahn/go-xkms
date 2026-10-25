@@ -101,13 +101,16 @@ missing=$(cd "$ROOT" && git ls-files -- 'Dockerfile*' '*/Dockerfile*' |
 eq "no Dockerfile uses SoftHSM without scripts/build-softhsm.sh" "" "$missing"
 
 section "every workflow that initializes a token builds the pinned release"
+# A workflow that runs its commands in the toolchain image
+# (scripts/in-toolchain-image.sh) gets SoftHSM from that image, which the
+# Dockerfile check above holds to the pin.
 missing=$(cd "$ROOT" && git ls-files -- '.github/workflows/*.yml' |
 	while read -r f; do
-		if grep -q 'softhsm2-util' "$f" && ! grep -q 'scripts/build-softhsm.sh' "$f"; then
+		if grep -q 'softhsm2-util' "$f" && ! grep -qE 'scripts/(build-softhsm|in-toolchain-image)\.sh' "$f"; then
 			echo "$f"
 		fi
 	done)
-eq "no workflow runs softhsm2-util without scripts/build-softhsm.sh" "" "$missing"
+eq "no workflow runs softhsm2-util outside the pinned release" "" "$missing"
 
 printf '\npassed %d, failed %d\n' "$PASS" "$FAIL"
 [ "$FAIL" -eq 0 ]

@@ -1,9 +1,10 @@
 {
   "name": "go-xkms Development",
-  "dockerComposeFile": "docker-compose.yml",
+  "dockerComposeFile": "compose.yaml",
   "service": "devcontainer",
   "workspaceFolder": "/workspace",
   "shutdownAction": "stopCompose",
+  "initializeCommand": "make -s devcontainer-env",
   "features": {
     "ghcr.io/devcontainers/features/common-utils:2": {
       "installZsh": true,
@@ -36,8 +37,8 @@
       }
     }
   },
-  "postCreateCommand": "/workspace/.devcontainer/scripts/post-create.sh",
-  "postStartCommand": "/workspace/.devcontainer/scripts/post-start.sh",
+  "postCreateCommand": "/workspace/build/docker/devcontainer/scripts/post-create.sh",
+  "postStartCommand": "/workspace/build/docker/devcontainer/scripts/post-start.sh",
   "remoteUser": "vscode",
   "containerEnv": {
     "GOPATH": "/go",

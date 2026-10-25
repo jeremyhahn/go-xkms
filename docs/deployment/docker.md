@@ -465,7 +465,8 @@ The Docker targets live in the top-level `Makefile`; there is no separate
 | docker-build-quic | Build the QUIC image (`go-xkms-quic`) |
 | docker-build-mcp | Build the MCP-only image (`go-xkms-mcp`) |
 | docker-build-cli | Build the CLI image (`go-xkms-cli`) |
-| docker-build, docker-run, docker-test, docker-stop, docker-clean | The integration-test image and container (`Dockerfile`), not the deployment images |
+| docker-build, docker-build-toolchain, docker-build-it, toolchain-image, docker-run | The CI toolchain and integration images (`build/docker/devcontainer/Dockerfile`), not the deployment images. `docker-run` runs `CMD` in the toolchain image |
+| docker-test, docker-build-test-image, docker-stop, docker-clean | The root `Dockerfile` test image and its container |
 | compose-up, compose-down, compose-test, compose-integration, compose-dev | The development `docker-compose.yml` environment |
 
 `docker-compose.production.yml` has no corresponding `compose-*` Make
