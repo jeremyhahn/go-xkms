@@ -152,7 +152,7 @@ jobs:
     # The tag gate and the release job run on the dedicated `release` runner
     # (go-xkms#1332, owner ruling 130): it serves no pull_request job, so a
     # PR cannot poison the Docker daemon or workspace these jobs use.
-    runs-on: release
+    runs-on: ${{ github.server_url == 'https://github.com' && 'ubuntu-latest' || 'release' }}
     timeout-minutes: 10
     steps:
       # fetch-depth: 0 -- the cross-pin step reads the tag namespace to decide
@@ -257,7 +257,7 @@ jobs:
     name: Create Release
     needs: validate
     # The release runner (go-xkms#1332, ruling 130): see validate.
-    runs-on: release
+    runs-on: ${{ github.server_url == 'https://github.com' && 'ubuntu-latest' || 'release' }}
     timeout-minutes: 10
     outputs:
       version: ${{ steps.get_version.outputs.version }}
