@@ -315,6 +315,96 @@ func TestImporter_Import_GetErrorOtherThanNotFound(t *testing.T) {
 	}
 }
 
+// writeStoreErrorStore fails the store writes Import makes, so the tests
+// below can prove a failed write is reported per entry rather than aborting
+// the whole import or being counted as imported.
+type writeStoreErrorStore struct {
+	xkms.StaticPasswordStore
+	addErr         error
+	forceDeleteErr error
+}
+
+func (s *writeStoreErrorStore) Add(sp *xkms.StaticPassword) error {
+	if s.addErr != nil {
+		return s.addErr
+	}
+	return s.StaticPasswordStore.Add(sp)
+}
+
+func (s *writeStoreErrorStore) ForceDelete(idOrName string) error {
+	if s.forceDeleteErr != nil {
+		return s.forceDeleteErr
+	}
+	return s.StaticPasswordStore.ForceDelete(idOrName)
+}
+
+func writeImportCSV(t *testing.T) string {
+	t.Helper()
+	filePath := filepath.Join(t.TempDir(), "test.csv")
+	content := "\"Title\",\"Username\",\"Password\"\n\"Entry1\",\"user1\",\"pass1\"\n\"Entry2\",\"user2\",\"pass2\"\n"
+	if err := os.WriteFile(filePath, []byte(content), 0600); err != nil {
+		t.Fatalf("Failed to write test file: %v", err)
+	}
+	return filePath
+}
+
+func TestImporter_Import_AddErrorIsReportedPerEntry(t *testing.T) {
+	filePath := writeImportCSV(t)
+	addErr := errors.New("store full")
+	store := &writeStoreErrorStore{
+		StaticPasswordStore: newTestPasswordStore(t, xkms.NewStorageMemory()),
+		addErr:              addErr,
+	}
+
+	result, err := NewImporter(store).Import(t.Context(), &ImportOptions{FilePath: filePath})
+	if err != nil {
+		t.Fatalf("Import() error = %v", err)
+	}
+	if result.Imported != 0 || result.Failed != 2 {
+		t.Errorf("Imported, Failed = %d, %d, want 0, 2", result.Imported, result.Failed)
+	}
+	if len(result.Errors) != 2 || result.Errors[0].Error != addErr.Error() {
+		t.Errorf("Errors = %+v, want two entries reporting %q", result.Errors, addErr)
+	}
+}
+
+func TestImporter_Import_OverwriteDeleteErrorKeepsExisting(t *testing.T) {
+	filePath := writeImportCSV(t)
+	realStore := newTestPasswordStore(t, xkms.NewStorageMemory())
+	if _, err := NewImporter(realStore).Import(t.Context(), &ImportOptions{FilePath: filePath}); err != nil {
+		t.Fatalf("seed Import() error = %v", err)
+	}
+	deleteErr := errors.New("entry locked")
+	store := &writeStoreErrorStore{StaticPasswordStore: realStore, forceDeleteErr: deleteErr}
+
+	result, err := NewImporter(store).Import(t.Context(), &ImportOptions{
+		FilePath:            filePath,
+		OverwriteDuplicates: true,
+	})
+	if err != nil {
+		t.Fatalf("Import() error = %v", err)
+	}
+	if result.Imported != 0 || result.Failed != 2 {
+		t.Errorf("Imported, Failed = %d, %d, want 0, 2", result.Imported, result.Failed)
+	}
+	if len(result.Errors) != 2 || !strings.Contains(result.Errors[0].Error, "failed to delete existing: entry locked") {
+		t.Errorf("Errors = %+v, want the delete failure reported", result.Errors)
+	}
+}
+
+func TestImporter_Import_ParseErrorAbortsImport(t *testing.T) {
+	imp := newTestImporter(t)
+	missing := filepath.Join(t.TempDir(), "missing.csv")
+
+	result, err := imp.Import(t.Context(), &ImportOptions{FilePath: missing})
+	if err == nil {
+		t.Fatal("Import() of a missing file should fail")
+	}
+	if result != nil {
+		t.Errorf("Import() result = %+v, want nil on a parse failure", result)
+	}
+}
+
 func TestImporter_Import_UnsupportedFormat(t *testing.T) {
 	imp := newTestImporter(t)
 	_, err := imp.Import(t.Context(), &ImportOptions{
