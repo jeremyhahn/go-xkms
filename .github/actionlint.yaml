@@ -6,3 +6,4 @@ self-hosted-runner:
     - dells
     - ci-gate
     - release
+    - bigdisk
