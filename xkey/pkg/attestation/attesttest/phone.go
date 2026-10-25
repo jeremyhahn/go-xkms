@@ -114,6 +114,15 @@ type Phone struct {
 	// honest path is bypassed to produce it.
 	Mutate func(*pairingproto.LocalAttestDeviceResult)
 
+	// UVK is the user-verification key that answers local.verifyUser
+	// (ruling 167). Nil models a phone with no UVK: the responder fails the
+	// exchange instead of answering.
+	UVK *DAK
+
+	// MutateVerifyUser damages the local.verifyUser answer just before it is
+	// sent, as Mutate does for local.attestDevice.
+	MutateVerifyUser func(*pairingproto.LocalVerifyUserResult)
+
 	// staticKey is the phone's PERSISTENT Noise identity, the one written into
 	// the pairing record. It must be the same key on every leg: production
 	// reuses the paired static keys, and a phone that generated a fresh one per
@@ -285,6 +294,7 @@ type exchangeHandler func(p *Phone, req *pairingproto.Request, binding []byte) (
 var exchangeHandlers = map[string]exchangeHandler{
 	pairingproto.MethodPairingConfirm:    (*Phone).confirmPairing,
 	pairingproto.MethodLocalAttestDevice: (*Phone).attestDevice,
+	pairingproto.MethodLocalVerifyUser:   (*Phone).verifyUser,
 }
 
 // serveExchange handles one encrypted JSON-RPC round trip.
@@ -375,6 +385,38 @@ func (p *Phone) attestDevice(req *pairingproto.Request, binding []byte) (any, er
 
 	if p.Mutate != nil {
 		p.Mutate(result)
+	}
+	return result, nil
+}
+
+// verifyUser answers local.verifyUser with the UVK, signing the binding the
+// phone derived itself, as attestDevice does.
+func (p *Phone) verifyUser(req *pairingproto.Request, binding []byte) (any, error) {
+	var params pairingproto.LocalVerifyUserParams
+	if err := decodeParams(req, &params); err != nil {
+		return nil, err
+	}
+	if params.ProtocolVersion != pairingproto.AttestProtocolV2 {
+		return nil, fmt.Errorf("desktop asked for protocol version %d", params.ProtocolVersion)
+	}
+	if p.UVK == nil {
+		return nil, fmt.Errorf("phone has no user-verification key")
+	}
+
+	sig, err := p.UVK.SignRaw(pairingproto.AttestPurposeVerifyUser, params.Nonce, binding)
+	if err != nil {
+		return nil, err
+	}
+
+	result := &pairingproto.LocalVerifyUserResult{
+		ProtocolVersion:    pairingproto.AttestProtocolV2,
+		CertificateChain:   p.UVK.Chain,
+		Signature:          sig,
+		SignatureAlgorithm: pairingproto.AttestSignatureES256,
+	}
+
+	if p.MutateVerifyUser != nil {
+		p.MutateVerifyUser(result)
 	}
 	return result, nil
 }

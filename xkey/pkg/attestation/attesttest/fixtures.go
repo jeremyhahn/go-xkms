@@ -336,6 +336,44 @@ func (d *DAK) Respond(t *testing.T, purpose string, nonce, channelBinding []byte
 	}
 }
 
+// UserVerificationGenesis is the attestation challenge a user-verification
+// key (UVK) is generated with (ruling 167).
+func UserVerificationGenesis() []byte {
+	return []byte(pairingproto.UserVerificationGenesisChallenge)
+}
+
+// UserVerificationKeyClaims are DeviceKeyClaims plus what a UVK's
+// teeEnforced list must carry: userAuthType biometric, with no authTimeout,
+// so every signature needs a fresh biometric.
+func UserVerificationKeyClaims() *xkms.AndroidAttestationExtensionOptions {
+	claims := DeviceKeyClaims()
+	claims.UserAuthType = xkms.AndroidUserAuthTypeFingerprint
+	claims.RootOfTrust = AttestedBootState()
+	return claims
+}
+
+// NewUVK builds a StrongBox user-verification key under issuer carrying
+// claims. The returned key signs transcripts exactly as a DAK does; only its
+// genesis challenge and authorization list differ.
+func NewUVK(t *testing.T, issuer *CA, claims *xkms.AndroidAttestationExtensionOptions) *DAK {
+	t.Helper()
+
+	return NewDAKWithClaims(t, issuer, UserVerificationGenesis(), xkms.AndroidSecurityLevelStrongBox, claims)
+}
+
+// RespondVerifyUser is the phone's local.verifyUser answer: the UVK chain and
+// its signature over the verify-user transcript for nonce and channelBinding.
+func (d *DAK) RespondVerifyUser(t *testing.T, nonce, channelBinding []byte) *pairingproto.LocalVerifyUserResult {
+	t.Helper()
+
+	return &pairingproto.LocalVerifyUserResult{
+		ProtocolVersion:    pairingproto.AttestProtocolV2,
+		CertificateChain:   d.Chain,
+		Signature:          d.Sign(t, pairingproto.AttestPurposeVerifyUser, nonce, channelBinding),
+		SignatureAlgorithm: pairingproto.AttestSignatureES256,
+	}
+}
+
 // FixedBytes returns n bytes of b. Deterministic, distinguishable fillers make
 // a mismatch legible in a failure message; nothing in these tests needs
 // randomness, because the property under test is that the verifier rebuilds
