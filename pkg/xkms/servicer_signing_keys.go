@@ -68,8 +68,6 @@ func (e *SigningKeyPermissionError) Unwrap() []error {
 	return []error{ErrSigningKeyForbidden, e.Err}
 }
 
-// authorizeSigningKeys refuses a caller that does not hold
-// attestation_signing_keys:action.
 // CoRIMSignError reports a CoRIM that could not be signed for a repository.
 // Err is the refvalue sentinel chain (ErrMalformed, ErrMeta, ErrSignerKey,
 // ErrSign), so callers match the cause with errors.Is.
@@ -119,6 +117,37 @@ func (e *ImageSignError) Unwrap() error {
 	return e.Err
 }
 
+// ReleaseKeyProvisionError reports that a tenant's release key could not be
+// generated on its first use. Err is the backend's failure.
+type ReleaseKeyProvisionError struct {
+	// TenantID is the tenant whose release key was to be generated.
+	TenantID string
+	// Err is the generate failure.
+	Err error
+}
+
+// Error reports the tenant and the failure.
+func (e *ReleaseKeyProvisionError) Error() string {
+	return "attestation: provisioning the release signing key of tenant " + e.TenantID + ": " + e.Err.Error()
+}
+
+// Unwrap returns the generate failure.
+func (e *ReleaseKeyProvisionError) Unwrap() error {
+	return e.Err
+}
+
+// The algorithm of a provisioned release key. Neither the release-signing-key
+// row nor the image-signing docs name one, so it is the ECDSA P-256 the
+// service already generates its other use-named signing key with
+// (CreateOTAImageKey): COSE signs with it as ES256 (refvalue.Sign) and DSSE
+// over SHA-256 (pkg/image).
+const (
+	releaseKeyAlgorithm = "ecdsa"
+	releaseKeyCurve     = "P-256"
+)
+
+// authorizeSigningKeys refuses a caller that does not hold
+// attestation_signing_keys:action.
 func (s *XKMSService) authorizeSigningKeys(ctx context.Context, action string) error {
 	if err := s.AuthorizeCaller(ctx, auth.ResourceAttestationSigningKeys, action); err != nil {
 		return &SigningKeyPermissionError{Permission: auth.ResourceAttestationSigningKeys + ":" + action, Err: err}
@@ -228,6 +257,43 @@ func (s *XKMSService) repositorySigner(ctx context.Context, tenant string, key *
 	return signer, nil
 }
 
+// releaseKeySigner returns the signer of the repository's resolved key, as
+// repositorySigner does, and provisions a tenant's release key on its first
+// use (SPEC release-signing-key): an unbound repository of a tenant that
+// holds no release-signing key generates it in the tenant's scope of the
+// resolved backend. Only the default resolution provisions; a binding to a
+// key the tenant does not hold still fails with ErrKeyNotFound. The system
+// tenant is never provisioned, pending owner-queue item 153.
+func (s *XKMSService) releaseKeySigner(ctx context.Context, tenant string, key *appraisal.SigningKeyResolution) (crypto.Signer, error) {
+	signer, err := s.repositorySigner(ctx, tenant, key)
+	if !errors.Is(err, ErrKeyNotFound) || !key.Default || qrdbsdk.IsSystemTenant(tenant) {
+		return signer, err
+	}
+	if err := s.provisionReleaseKey(ctx, tenant, key.Backend); err != nil {
+		return nil, err
+	}
+	return s.repositorySigner(ctx, tenant, key)
+}
+
+// provisionReleaseKey generates tenant's release key in backendName, the
+// default backend when empty. An existing key is kept: every backend refuses
+// to generate over one with ErrKeyAlreadyExists, so of two concurrent first
+// uses one generates the key and the other signs with it.
+func (s *XKMSService) provisionReleaseKey(ctx context.Context, tenant, backendName string) error {
+	_, err := s.GenerateKey(ctx, &transport.GenerateKeyRequest{
+		KeyID:     appraisal.ReleaseSigningKeyID,
+		Backend:   backendName,
+		KeyType:   "signing",
+		Algorithm: releaseKeyAlgorithm,
+		Curve:     releaseKeyCurve,
+		TenantID:  tenant,
+	})
+	if err == nil || errors.Is(err, ErrKeyAlreadyExists) {
+		return nil
+	}
+	return &ReleaseKeyProvisionError{TenantID: tenant, Err: err}
+}
+
 // ResolveSigningKey returns the key that signs one of the caller's tenant's
 // repositories: its bound key, or else the release key.
 //
@@ -270,7 +336,7 @@ func (s *XKMSService) SignCoRIM(ctx context.Context, req *appraisal.SignCoRIMReq
 	if err != nil {
 		return nil, err
 	}
-	signer, err := s.repositorySigner(ctx, tenant, key)
+	signer, err := s.releaseKeySigner(ctx, tenant, key)
 	if err != nil {
 		return nil, err
 	}
@@ -340,7 +406,7 @@ func (s *XKMSService) SignImage(ctx context.Context, req *transport.SignImageReq
 	if err != nil {
 		return nil, err
 	}
-	signer, err := s.repositorySigner(ctx, tenant, key)
+	signer, err := s.releaseKeySigner(ctx, tenant, key)
 	if err != nil {
 		return nil, err
 	}

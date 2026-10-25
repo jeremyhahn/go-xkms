@@ -15,6 +15,7 @@ package xkms
 
 import (
 	"crypto"
+	"crypto/ecdsa"
 	"testing"
 	"time"
 
@@ -77,11 +78,15 @@ func TestSignCoRIM_BoundKeySigns(t *testing.T) {
 
 func TestSignCoRIM_NeverSignsWithAnotherTenantsKey(t *testing.T) {
 	svc := setupDeriveService(t)
-	generateSigningKey(t, svc, "tenant-b", appraisal.ReleaseSigningKeyID)
+	other := generateSigningKey(t, svc, "tenant-b", appraisal.ReleaseSigningKeyID)
 	ctx := withSigningKeys(t, svc, corimSignPermission)
 
-	_, err := svc.SignCoRIM(ctx, signCoRIMRequest(t))
-	require.ErrorIs(t, err, ErrKeyNotFound, "tenant-a holds no release key; tenant-b's is never used")
+	resp, err := svc.SignCoRIM(ctx, signCoRIMRequest(t))
+	require.NoError(t, err, "tenant-a's first signature provisions its own release key")
+	_, err = refvalue.VerifySigned(resp.CoRIM, refvalue.VerifyOptions{PublicKey: other})
+	require.Error(t, err, "tenant-b's key never signs for tenant-a")
+	verifyCoRIM(t, resp.CoRIM, releasePublicKey(t, svc, "tenant-a"))
+	assert.True(t, other.(*ecdsa.PublicKey).Equal(releasePublicKey(t, svc, "tenant-b")), "tenant-b's key is untouched")
 }
 
 func TestSignCoRIM_Errors(t *testing.T) {

@@ -58,7 +58,7 @@ passes every check wins; when none passes, the error joins every failure.
 | Trusted image-signer roots | The caller's root store | `pkg/image.RootStore[P]` (`pkg/image/verifier.go:29`) asks for certificates by purpose; any store with `CertificatesByPurpose` fits |
 | RSA PKCS#1 v1.5 verify | `pkg/signing.Verify` (`pkg/signing/verify.go:37`) | SHA-256, SHA-384 or SHA-512 over RSA keys only |
 | SDK edge | `sdk/go/image.go`, `sdk/go/crypto.go:60` | go-quicbaas consumes `VerifyImage` and `VerifySignature` here |
-| Signing service | `XKMSService.SignImage` (`pkg/xkms/servicer_signing_keys.go:302`) | Signs with the repository's resolved key (owner ruling 134), on every transport through `transport.SigningKeyService.SignImage` (`pkg/api/transport/types_signing_key.go:56`) |
+| Signing service | `XKMSService.SignImage` (`pkg/xkms/servicer_signing_keys.go:368`) | Signs with the repository's resolved key (owner ruling 134), on every transport through `transport.SigningKeyService.SignImage` (`pkg/api/transport/types_signing_key.go:56`) |
 
 ## The signing service
 
@@ -68,12 +68,13 @@ tenant's release key, `release-signing` (see the `release-signing-key` row of
 [SPEC.md](../SPEC.md)). Per call it:
 
 1. checks the `attestation_signing_keys` `sign` permission and refuses the
-   system tenant (`:317`);
+   system tenant (`:383`);
 2. parses the reference and validates its repository, then seals the
-   registry credentials (`registryAuth`, `:420`) before anything is issued;
+   registry credentials (`registryAuth`, `:486`) before anything is issued;
 3. resolves the key (`Appraiser.ResolveSigningKey`) and opens it through the
-   tenant-scoped backend (`repositorySigner`, `:204`), so it never leaves
-   the backend;
+   tenant-scoped backend (`repositorySigner`, `:233`), so it never leaves
+   the backend. A tenant that holds no release key gets one here, on its
+   first unbound signature (`releaseKeySigner`, `:267`; see below);
 4. has the service CA issue that key a code-signing certificate in the
    tenant (`image.RequestCodeSigningCertificate`);
 5. drives `pkg/image`'s `Signer`, which pushes the attestation to the
@@ -82,12 +83,33 @@ tenant's release key, `release-signing` (see the `release-signing-key` row of
 It returns the resolved key, the digest, the envelope, the PEM certificate
 and the push result (`SignedImage`, `pkg/api/transport/types_signing_key.go:86`).
 
+### The tenant's release key
+
+A tenant needs no step to get its release key. The first `SignImage` or
+`SignCoRIM` of an unbound repository, for a tenant that holds no
+`release-signing` key, generates one through the tenant-scoped backend
+(`provisionReleaseKey`, `pkg/xkms/servicer_signing_keys.go:282`) and signs
+with it. It is ECDSA P-256, the algorithm of the service's other use-named
+signing key (`CreateOTAImageKey`, `pkg/xkms/ota_image_keys.go:66`); COSE
+signs with it as ES256 and DSSE over SHA-256.
+
+- An existing key is kept, never replaced. Every backend refuses to generate
+  over a key with `ErrKeyAlreadyExists`, so of two concurrent first uses one
+  generates the key and the other signs with it.
+- Only the default resolution provisions. A repository bound to a key the
+  tenant does not hold fails with `ErrKeyNotFound`.
+- The system tenant is never provisioned (owner-queue item 153).
+- A generate failure is `ReleaseKeyProvisionError` (`:122`), which names the
+  tenant and unwraps to the backend's error.
+
+Verification never provisions: a tenant with no key has signed nothing.
+
 ### Registry credentials on each transport
 
 The request carries the registry username and password
 (`ImageRegistryCredentials`, `pkg/api/transport/types_signing_key.go:80`).
 The service uses them for that call only, wipes the password on every path
-(`pkg/xkms/servicer_signing_keys.go:306`) and names neither in an error. In
+(`pkg/xkms/servicer_signing_keys.go:372`) and names neither in an error. In
 transit they are as safe as the transport:
 
 | Transport | Carries the credentials over |
@@ -159,10 +181,8 @@ HTTP(S) by `pkg/image`; nothing is persisted locally.
   stubs it.
 - **No signing for the system tenant.** It has no release signing key, so
   `SignImage` refuses it with `ErrSystemTenantImageSigning`
-  (`pkg/xkms/servicer_signing_keys.go:98`, `:317`) until the owner decides
-  otherwise (owner-queue item 153).
-- **No automatic release key.** Nothing creates a tenant's `release-signing`
-  key; the tenant provisions it, or binds the repository to another key.
+  (`pkg/xkms/servicer_signing_keys.go:96`, `:383`) until the owner decides
+  otherwise (owner-queue item 153), and no release key is provisioned for it.
 - **No non-SHA-256 digests.** A `sha512-<hex>.att` tag would exceed the
   128-character OCI tag limit, so `AttestationTag` refuses any other
   algorithm (`pkg/image/reference.go:185`), and signing or verifying an image
