@@ -15,13 +15,16 @@ package services
 
 import (
 	"context"
+	"net"
 	"net/http"
 	"net/http/httptest"
+	"sync/atomic"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	"github.com/jeremyhahn/go-xkms/sdk/go/transport"
 	"github.com/jeremyhahn/go-xkms/xkey/pkg/gui/events"
 )
 
@@ -67,6 +70,39 @@ func TestConnectionServiceConnect_Success(t *testing.T) {
 
 	require.Len(t, emitted, 1)
 	assert.Equal(t, events.EventServerConnected, emitted[0].Type)
+}
+
+// TestConnectionServiceConnect_RefusesPlaintext proves the GUI never sends its
+// session token to a TLS-disabled TCP endpoint (ruling 152): with the opt-out
+// cleared, Connect fails with the SDK's ErrInsecureTransport before a single
+// connection reaches the server, and the service stays disconnected.
+func TestConnectionServiceConnect_RefusesPlaintext(t *testing.T) {
+	t.Setenv(transport.EnvAllowInsecureTransport, "")
+
+	var dialed atomic.Int32
+	srv := httptest.NewUnstartedServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusOK)
+	}))
+	srv.Config.ConnState = func(_ net.Conn, state http.ConnState) {
+		if state == http.StateNew {
+			dialed.Add(1)
+		}
+	}
+	srv.Start()
+	t.Cleanup(srv.Close)
+
+	for _, protocol := range []string{"rest", "grpc"} {
+		t.Run(protocol, func(t *testing.T) {
+			svc := NewConnectionService()
+			svc.SetContext(context.Background())
+
+			_, err := svc.Connect(protocol, srv.Listener.Addr().String(), false, "", "")
+			require.ErrorIs(t, err, transport.ErrInsecureTransport)
+			assert.False(t, svc.IsConnected())
+			assert.Nil(t, svc.GetClient())
+		})
+	}
+	assert.Zero(t, dialed.Load(), "no connection may reach the server")
 }
 
 func TestConnectionServiceConnect_SuccessThenAlreadyConnected(t *testing.T) {
