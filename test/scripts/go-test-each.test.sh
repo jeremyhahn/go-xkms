@@ -18,9 +18,9 @@ trap 'rm -rf "$WORK"' EXIT
 export STATE="$WORK/state"
 mkdir -p "$STATE"
 
-# fake go test [FLAG...] -coverprofile=FILE PKG — records its flags and
-# GOTMPDIR, counts earlier runs' GOTMPDIRs still on disk, leaves a file in
-# GOTMPDIR, tracks how many runs overlap, then acts
+# fake go test [FLAG...] -coverprofile=FILE PKG — records its flags, GOTMPDIR
+# and TMPDIR, counts earlier runs' GOTMPDIRs still on disk, leaves a file in
+# GOTMPDIR, tracks how many runs overlap (hang stays a second longer), then acts
 # on PKG: pass* writes one block, fail* writes one block and exits 1, notest
 # writes only the mode line, broken exits 2 without a profile.
 FAKE="$WORK/go"
@@ -40,8 +40,10 @@ stale=0
 for f in "$STATE"/gotmpdir.*; do [ -e "$f" ] && [ -e "$(cat "$f")" ] && stale=$((stale + 1)); done
 echo "$stale" >> "$STATE/stale"
 echo "$GOTMPDIR" > "$STATE/gotmpdir.$pkg"
+echo "$TMPDIR" > "$STATE/tmpdir.$pkg"
 touch "$GOTMPDIR/_pkg_.a"
 touch "$STATE/running.$pkg"
+[ "$pkg" = hang ] && sleep 1
 ls "$STATE" | grep -c '^running\.' >> "$STATE/overlap"
 sleep 0.2
 rm "$STATE/running.$pkg"
@@ -75,6 +77,45 @@ eq "each package gets its own GOTMPDIR" "3" "$(cat "$STATE"/gotmpdir.* | sort -u
 reset
 "$SCRIPT" --jobs 1 --coverprofile "$WORK/g/cover.out" -- pass1 pass2 pass3 >/dev/null 2>&1
 eq "a run's GOTMPDIR is gone before the next run starts" "0" "$(sort -n "$STATE/stale" | tail -1)"
+
+# --- the temp root is short, shared with TMPDIR and left nowhere -------------
+section "temp root"
+reset
+BASE="$WORK/base"
+mkdir -p "$BASE"
+TMPDIR="$BASE" "$SCRIPT" --coverprofile "$WORK/t/cover.out" -- pass1 >/dev/null 2>&1; RC=$?
+eq "exits 0 with its own TMPDIR" "0" "$RC"
+ROOT_DIR=$(cat "$STATE/gotmpdir.pass1")
+eq "GOTMPDIR is a gXXXX directory straight under TMPDIR" "$BASE/g" "${ROOT_DIR%????}"
+eq "TMPDIR is the same root as GOTMPDIR" "$ROOT_DIR" "$(cat "$STATE/tmpdir.pass1")"
+eq "nothing is left under TMPDIR after the run" "" "$(ls -A "$BASE")"
+
+# A root that cannot be created fails that package, not the whole run.
+reset
+FAKEBIN="$WORK/fakebin"
+mkdir -p "$FAKEBIN"
+REAL_MKTEMP=$(command -v mktemp)
+cat > "$FAKEBIN/mktemp" <<EOF
+#!/usr/bin/env bash
+case "\${*: -1}" in */gXXXX) echo "mktemp: no space left on device" >&2; exit 1 ;; esac
+exec "$REAL_MKTEMP" "\$@"
+EOF
+chmod +x "$FAKEBIN/mktemp"
+OUT=$(TMPDIR="$BASE" PATH="$FAKEBIN:$PATH" "$SCRIPT" --coverprofile "$WORK/t2/cover.out" -- pass1 2>&1); RC=$?
+eq "a root that cannot be created fails the run" "1" "$RC"
+eq "the package's log names the cause" "1" "$(grep -c "pass1: cannot create a temp root under '$BASE'" <<<"$OUT")"
+eq "go test never runs without a root" "" "$(ls "$STATE" | grep '^flags\.')"
+eq "nothing is left under TMPDIR after a refused root" "" "$(ls -A "$BASE")"
+
+# An interrupted run removes the live package's root.
+reset
+TMPDIR="$BASE" "$SCRIPT" --coverprofile "$WORK/t3/cover.out" -- hang >/dev/null 2>&1 &
+PID=$!
+for _ in $(seq 50); do [ -e "$STATE/running.hang" ] && break; sleep 0.1; done
+kill -TERM "$PID"
+wait "$PID"
+eq "a terminated run leaves nothing under TMPDIR" "" "$(ls -A "$BASE")"
+for _ in $(seq 50); do [ -e "$STATE/running.hang" ] || break; sleep 0.1; done
 
 # --- the job limit bounds concurrent runs ------------------------------------
 section "jobs"

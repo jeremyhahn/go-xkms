@@ -68,19 +68,43 @@ esac
 pkgs=("$@")
 go_bin=${GO:-go}
 
-# Short path: tests bind unix sockets under their temp dirs, and a socket path
-# is capped at 108 bytes.
-work=$(mktemp -d "${TMPDIR:-/tmp}/gte.XXXXXX")
-trap 'rm -rf "$work"' EXIT
+# $work holds each package's log, profile and exit code; $work/I/root names the
+# package's temp root while its run is live, so the trap removes a root an
+# interrupted run left behind.
+tmp_base=${TMPDIR:-/tmp}
+work=$(mktemp -d "$tmp_base/gte.XXXXXX")
+cleanup() {
+	local f
+	for f in "$work"/*/root; do
+		[ -f "$f" ] && rm -rf "$(cat "$f")"
+	done
+	rm -rf "$work"
+}
+trap cleanup EXIT
 
-# run_one I PKG — test one package in $work/I, keeping only its log, profile
-# and exit code, then print the log under a lock so outputs never interleave.
+# run_one I PKG — test one package with GOTMPDIR and TMPDIR both set to a fresh
+# temp root, remove the root, keep only the log, profile and exit code in
+# $work/I, then print the log under a lock so outputs never interleave.
+#
+# The root sits directly under $tmp_base with a short name because the test
+# binary roots t.TempDir under GOTMPDIR, tests bind unix sockets there, and a
+# socket path is capped at 107 bytes (sun_path is 108 with its NUL). gXXXX adds
+# six bytes to $tmp_base, which leaves the tests' socket paths short enough; a
+# root nested inside $work did not.
 run_one() {
 	local dir="$work/$1"
-	mkdir -p "$dir/tmp"
+	mkdir -p "$dir"
 	local rc=0
-	GOTMPDIR="$dir/tmp" "$go_bin" test "${flags[@]}" -coverprofile="$dir/cover.out" "$2" > "$dir/log" 2>&1 || rc=$?
-	rm -rf "$dir/tmp"
+	local root
+	if root=$(mktemp -d "$tmp_base/gXXXX"); then
+		echo "$root" > "$dir/root"
+		GOTMPDIR="$root" TMPDIR="$root" "$go_bin" test "${flags[@]}" -coverprofile="$dir/cover.out" "$2" > "$dir/log" 2>&1 || rc=$?
+		rm -rf "$root"
+		rm -f "$dir/root"
+	else
+		echo "go-test-each.sh: $2: cannot create a temp root under '$tmp_base'" > "$dir/log"
+		rc=1
+	fi
 	echo "$rc" > "$dir/rc"
 	flock "$work/lock" cat "$dir/log"
 }
