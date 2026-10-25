@@ -4,6 +4,7 @@ self-hosted-runner:
     - qwen
     - batch
     - dells
+    - bigdisk
     - ci-gate
     - release
     - bigdisk
