@@ -332,11 +332,18 @@ func TestSignImage_Errors(t *testing.T) {
 	require.ErrorIs(t, err, image.ErrInvalidReference)
 	assert.Nil(t, req.Registry.Password, "the password is wiped on a refused request")
 
+	req = signImageRequest()
+	req.Registry.Username = ""
+	_, err = svc.SignImage(ctx, req)
+	require.ErrorIs(t, err, image.ErrRegistryCredentials)
+	assert.NotContains(t, err.Error(), "registry-password")
+	assert.Nil(t, req.Registry.Password)
+	assert.Empty(t, ca.profile, "a password without a username is refused before the CA certifies anything")
+
 	for name, tc := range map[string]struct {
 		arrange func(*transport.SignImageRequest)
 		want    error
 	}{
-		"password without a username": {func(r *transport.SignImageRequest) { r.Registry.Username = "" }, image.ErrRegistryCredentials},
 		"certificate refused":         {func(*transport.SignImageRequest) { ca.signCSRErr = errCAUnavailable }, image.ErrCertificateRequestFailed},
 		"ca bundle unreadable":        {func(*transport.SignImageRequest) { ca.bundleErr = errCAUnavailable }, errCAUnavailable},
 		"registry unavailable":        {func(*transport.SignImageRequest) { registry.constructErr = image.ErrRegistryRequest }, image.ErrRegistryRequest},

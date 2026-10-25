@@ -323,6 +323,15 @@ func (s *XKMSService) SignImage(ctx context.Context, req *transport.SignImageReq
 	if err := appraisal.ValidateRepository(ref.Repository); err != nil {
 		return nil, err
 	}
+	// The credentials are checked before the CA certifies anything, so a
+	// malformed request costs no certificate.
+	credentials, err := registryAuth(ctx, req.Registry)
+	if err != nil {
+		return nil, err
+	}
+	if credentials != nil && credentials.Password != nil {
+		defer credentials.Password.Destroy()
+	}
 	issuer := s.ca.load()
 	if issuer == nil {
 		return nil, ErrNotConfigured
@@ -347,14 +356,7 @@ func (s *XKMSService) SignImage(ctx context.Context, req *transport.SignImageReq
 	if err != nil {
 		return nil, signImageErr(err)
 	}
-	auth, err := registryAuth(ctx, req.Registry)
-	if err != nil {
-		return nil, signImageErr(err)
-	}
-	if auth != nil && auth.Password != nil {
-		defer auth.Password.Destroy()
-	}
-	registry, err := s.newImageRegistry(auth)
+	registry, err := s.newImageRegistry(credentials)
 	if err != nil {
 		return nil, signImageErr(err)
 	}
