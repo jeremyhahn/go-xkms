@@ -11,6 +11,7 @@
   `SetAttestationAppraiser` wires an Appraiser. `sdk/go` re-exports the
   package as `NewAttestationAppraiser`, `NewAttestationAppraisalStore`, the
   request and result types and the `ErrAttestation*` errors, so go-quicbaas
-  can consume it. The REST, gRPC and MCP routes are not yet in. Code:
+  can consume it. The transports serve these verbs; see
+  `added-attestation-verifier-transports.md`. Code:
   `pkg/attestation/appraisal`, `pkg/xkms/servicer_attestation.go`; docs:
   `docs/attestation-verifier/architecture.md#appraisal-the-rfc-9334-verifier`.
