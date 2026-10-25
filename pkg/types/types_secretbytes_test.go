@@ -17,6 +17,8 @@ import (
 	"bytes"
 	"encoding/json"
 	"errors"
+	"fmt"
+	"strings"
 	"testing"
 )
 
@@ -271,5 +273,34 @@ func TestSecretBytes_DecodesInvalidUTF8LikeAString(t *testing.T) {
 		if string(got.PEM) != legacy.PEM {
 			t.Errorf("%q: SecretBytes decoded %q, string decoded %q", doc, got.PEM, legacy.PEM)
 		}
+	}
+}
+
+func TestSecretBytes_FormatRedactsEveryVerb(t *testing.T) {
+	secret := SecretBytes("hunter2")
+	for _, verb := range []string{"%v", "%+v", "%#v", "%s", "%x", "%X", "%q", "%d", "%10s"} {
+		got := fmt.Sprintf(verb, secret)
+		if got != PasswordRedacted {
+			t.Errorf("%s printed %q, want %q", verb, got, PasswordRedacted)
+		}
+	}
+	holder := struct{ Password SecretBytes }{Password: secret}
+	if got := fmt.Sprintf("%+v", holder); strings.Contains(got, "hunter2") || !strings.Contains(got, PasswordRedacted) {
+		t.Errorf("a struct field printed %q", got)
+	}
+	if secret.String() != PasswordRedacted || secret.GoString() != PasswordRedacted {
+		t.Errorf("String/GoString leak the secret")
+	}
+}
+
+func TestSecretBytes_FormatRedactsEmptyAndNil(t *testing.T) {
+	var nilSecret SecretBytes
+	for _, secret := range []SecretBytes{nilSecret, {}} {
+		if got := fmt.Sprintf("%v", secret); got != PasswordRedacted {
+			t.Errorf("%%v printed %q, want %q", got, PasswordRedacted)
+		}
+	}
+	if string(SecretBytes("x")) != "x" {
+		t.Errorf("a string conversion must still yield the secret for its owner")
 	}
 }
