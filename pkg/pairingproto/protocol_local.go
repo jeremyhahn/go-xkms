@@ -408,6 +408,7 @@ var localMethodNames = map[string]bool{
 	MethodLocalListFido2Credentials: true,
 	MethodLocalSignFido2Assertion:   true,
 	MethodLocalBiometricPending:     true,
+	MethodLocalVerifyUser:           true,
 
 	// Android-native device enrollment, this host acting as the CA.
 	MethodLocalGetDeviceEnrollmentRequest: true,
