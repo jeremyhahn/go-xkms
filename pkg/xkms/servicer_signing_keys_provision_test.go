@@ -98,7 +98,7 @@ func TestReleaseKeySigner_Errors(t *testing.T) {
 
 	for _, system := range []string{qrdbsdk.SystemTenantID, ""} {
 		_, err = svc.releaseKeySigner(ctx, system, releaseResolution())
-		require.ErrorIs(t, err, ErrKeyNotFound, "system tenant %q is never provisioned (owner-queue item 153)", system)
+		require.ErrorIs(t, err, ErrKeyNotFound, "system tenant %q is never provisioned (owner ruling 165)", system)
 	}
 	_, err = svc.SigningPublicKey(ctx, qrdbsdk.SystemTenantID, releaseResolution())
 	require.ErrorIs(t, err, ErrKeyNotFound)
@@ -133,7 +133,7 @@ func TestSignCoRIM_SystemTenantIsNeverProvisioned(t *testing.T) {
 	_, err := svc.SignCoRIM(ctx, signCoRIMRequest(t))
 	require.ErrorIs(t, err, ErrKeyNotFound)
 	_, err = svc.SigningPublicKey(context.Background(), qrdbsdk.SystemTenantID, releaseResolution())
-	require.ErrorIs(t, err, ErrKeyNotFound, "the system tenant's release key is owner-queue item 153")
+	require.ErrorIs(t, err, ErrKeyNotFound, "the system tenant never gets a release key (owner ruling 165)")
 }
 
 func TestSignCoRIM_ConcurrentFirstUsesProvisionOneKey(t *testing.T) {

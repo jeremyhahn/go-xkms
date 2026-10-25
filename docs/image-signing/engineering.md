@@ -274,7 +274,7 @@ servers map its errors through `SigningKeySentinelClasses` (`pkg/api/apierrors/t
 
 | Error | Class |
 |---|---|
-| `ErrSystemTenantImageSigning` (`pkg/xkms/servicer_signing_keys.go:96`): the caller is the system tenant, which has no release key (owner-queue item 153) | FailedPrecondition |
+| `ErrSystemTenantImageSigning` (`pkg/xkms/servicer_signing_keys.go:96`): the caller is the system tenant, which never signs images; a deployment creates a data tenant to sign (owner ruling 165) | FailedPrecondition |
 | `ErrSigningKeyForbidden` | PermissionDenied |
 | `ErrNotConfigured`: the service has no CA | Unavailable |
 | `ErrInvalidReference`, `ErrInvalidDigest`, `ErrInvalidStatement`, `ErrRegistryCredentials` (also a password without a username) | InvalidArgument |

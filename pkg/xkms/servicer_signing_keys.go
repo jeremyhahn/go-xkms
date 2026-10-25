@@ -91,8 +91,8 @@ func (e *CoRIMSignError) Unwrap() error {
 }
 
 // ErrSystemTenantImageSigning is returned by SignImage for the system tenant.
-// Ruling 134 makes the tenant release signing key the image signer, and the
-// system tenant has none.
+// Ruling 134 makes the tenant release signing key the image signer; the
+// system tenant has none and never signs images (owner ruling 165).
 var ErrSystemTenantImageSigning = errors.New("attestation: the system tenant has no release signing key to sign images with")
 
 // ImageSignError reports that SignImage resolved a signing key but could not
@@ -263,7 +263,7 @@ func (s *XKMSService) repositorySigner(ctx context.Context, tenant string, key *
 // holds no release-signing key generates it in the tenant's scope of the
 // resolved backend. Only the default resolution provisions; a binding to a
 // key the tenant does not hold still fails with ErrKeyNotFound. The system
-// tenant is never provisioned, pending owner-queue item 153.
+// tenant is never provisioned: it never signs images (owner ruling 165).
 func (s *XKMSService) releaseKeySigner(ctx context.Context, tenant string, key *appraisal.SigningKeyResolution) (crypto.Signer, error) {
 	signer, err := s.repositorySigner(ctx, tenant, key)
 	if !errors.Is(err, ErrKeyNotFound) || !key.Default || qrdbsdk.IsSystemTenant(tenant) {
