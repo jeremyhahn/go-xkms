@@ -538,6 +538,20 @@ var rpcMethods = map[string]rpcMethod{
 	"attestation.signing_key.delete":  handle(auth.ResourceAttestationSigningKeys, auth.ActionBind, (*Server).handleSigningKeyDelete),
 	"attestation.signing_key.resolve": handle(auth.ResourceAttestationSigningKeys, auth.ActionGet, (*Server).handleSigningKeyResolve),
 
+	// Attestation Verifier (go-xkms#1608) -- the xkms-owned
+	// attestation_endorsements, attestation_reference_values and
+	// attestation_verifier families, scoped in
+	// pkg/apimodule/module_scopes.go. Mirrors the gRPC Verifier RPCs'
+	// (qrdb.v1.permission) options one-for-one.
+	"attestation.endorsement.put":         handle(auth.ResourceAttestationEndorsements, auth.ActionCreate, (*Server).handleEndorsementPut),
+	"attestation.endorsement.list":        handle(auth.ResourceAttestationEndorsements, auth.ActionList, (*Server).handleEndorsementList),
+	"attestation.endorsement.delete":      handle(auth.ResourceAttestationEndorsements, auth.ActionDelete, (*Server).handleEndorsementDelete),
+	"attestation.reference_values.put":    handle(auth.ResourceAttestationReferenceValues, auth.ActionCreate, (*Server).handleReferenceValuesPut),
+	"attestation.reference_values.get":    handle(auth.ResourceAttestationReferenceValues, auth.ActionGet, (*Server).handleReferenceValuesGet),
+	"attestation.reference_values.list":   handle(auth.ResourceAttestationReferenceValues, auth.ActionList, (*Server).handleReferenceValuesList),
+	"attestation.reference_values.delete": handle(auth.ResourceAttestationReferenceValues, auth.ActionDelete, (*Server).handleReferenceValuesDelete),
+	"attestation.quote.appraise":          handle(auth.ResourceAttestationVerifier, auth.ActionVerify, (*Server).handleQuoteAppraise),
+
 	// Attested-caller evidence (pkg/attestation/peergate) --
 	// pkg/auth.ResourcePeerAttestation, an xkms-owned resource family scoped
 	// in pkg/apimodule/module_scopes.go and exempt from the gate itself.
