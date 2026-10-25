@@ -329,7 +329,13 @@ func (a *Authenticator) supportsPinUvAuthToken() bool {
 // userVerifier returns the key backend's on-demand user verification method,
 // or nil when the backend has none (ruling 167).
 func (a *Authenticator) userVerifier() keybackend.UserVerifier {
-	verifier, ok := a.keyBackend.(keybackend.UserVerifier)
+	backend := a.keyBackend
+	// NewAuthenticator decorates a non-attesting backend with an
+	// AttestingBackend, whose method set hides the inner VerifyUser.
+	if attesting, ok := backend.(*keybackend.AttestingBackend); ok {
+		backend = attesting.FIDO2KeyBackend
+	}
+	verifier, ok := backend.(keybackend.UserVerifier)
 	if !ok {
 		return nil
 	}
