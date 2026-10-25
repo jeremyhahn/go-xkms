@@ -9,6 +9,9 @@
 # (dependency-resolution.md §2). Immunizes against stray go.work files.
 export GOWORK=off
 
+# go_tags: the one GO_BUILD_TAGS join, shared with the root Makefile.
+include ../scripts/go-build-tags.mk
+
 # Version management (use parent VERSION file, fallback to local)
 VERSION := $(shell cat ../VERSION 2>/dev/null || cat VERSION 2>/dev/null || echo "0.0.1-alpha")
 GIT_COMMIT := $(shell git rev-parse --short HEAD 2>/dev/null || echo "unknown")
@@ -107,7 +110,7 @@ TEST_TAGS := production codec_json tpm_simulator $(PKCS11_TAG)$(WEBKIT_TAG) $(OB
 
 # Go parameters
 GO := go
-GOBUILD := $(GO) build -buildvcs=false -tags "$(BUILD_TAGS)" -ldflags "$(LDFLAGS)"
+GOBUILD := $(GO) build -buildvcs=false -tags "$(call go_tags,$(BUILD_TAGS))" -ldflags "$(LDFLAGS)"
 GOCLEAN := $(GO) clean
 GOTEST := $(GO) test -tags "$(TEST_TAGS)"
 GOVET := $(GO) vet -tags "$(BUILD_TAGS)"
