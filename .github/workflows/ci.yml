@@ -324,7 +324,9 @@ jobs:
   # Job 1: Unit Tests with Coverage Enforcement
   test:
     name: Unit Tests
-    runs-on: ubuntu-latest
+    # Bigdisk runners on Gitea (Infra m1227, DS-3705): `make coverage` wrote
+    # 11.5 GB and took a mini runner's disk to 0 MiB.
+    runs-on: ${{ github.server_url == 'https://github.com' && 'ubuntu-latest' || 'bigdisk' }}
     # #1587: ~2x 70m, slowest green (forge API, last 60 CI runs, 2026-10-17).
     timeout-minutes: 140
     needs: [changes]

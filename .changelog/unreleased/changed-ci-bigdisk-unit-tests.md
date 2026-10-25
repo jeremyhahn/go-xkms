@@ -1,0 +1,1 @@
+CI: the Unit Tests jobs (ci.yml, and docker-tests.yml, which builds the test image) run on bigdisk runners on Gitea, since `make coverage` wrote 11.5 GB and took a mini runner's disk to 0 MiB (Infra m1227, DS-3705).
