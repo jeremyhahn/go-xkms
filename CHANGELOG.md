@@ -7,6 +7,64 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.64.0-alpha] - 2026-10-25
+
+### Security
+
+- **echo bumped to v4.16.1.** `github.com/labstack/echo/v4` moves from v4.15.3 to v4.16.1 in every module (root, `sdk/go`, `web/desktop`, `xkey`) for GHSA-cxf3-9h37-7rr8 (critical) and the three high advisories trivy reports on v4.15.3.
+
+### Added
+
+- **`x509-svid` through ACME** (#1547) -- a newOrder may name `profile: "x509-svid"` (draft-aaron-acme-profiles, listed in the directory's `meta.profiles`) with one `spiffe` identifier, `spiffe://<tenant>/svc/<name>`. An account bound to that tenant is authorized without a challenge, and the tenant's own CA signs the SVID: the SPIFFE ID is its one URI SAN, OU[0] is the tenant, and the subject has no CN. Another tenant's name, an unbound account or a tenant without its own CA is `unauthorized`, and an unknown profile is `invalidProfile`. SVIDs are linted by their own issuer, which admits a URI SAN whose host is a tenant rather than an FQDN (`linter.Identifiers.SVID`). Tenant-signed ACME certificates are now verified against the tenant CA, not the global pools. A test pins that one tenant's bundle never verifies another tenant's SVID. See `docs/workload-identity/engineering.md`.
+
+- **Attestation Verifier and reference-values store (go-xkms#1608).** The
+  go-quicbaas Verifier moved here with its history, as
+  `pkg/attestation/appraisal`. It appraises TPM quotes (`AppraiseQuote`),
+  hosts (`AppraiseHost`) and container launches (`AppraiseContainer`) against
+  a tenant's endorsements (AK roots and reference-value signers) and signed
+  CoRIM reference values, kept per tenant in the qrdb DAO database
+  `attestation`. `XKMSService` serves the endorsement, reference-value and
+  appraisal verbs scoped to the caller's tenant. They are gated by the new
+  permissions `attestation_endorsements`, `attestation_reference_values` and
+  `attestation_verifier`, and return `ErrNotConfigured` until
+  `SetAttestationAppraiser` wires an Appraiser. `sdk/go` re-exports the
+  package as `NewAttestationAppraiser`, `NewAttestationAppraisalStore`, the
+  request and result types and the `ErrAttestation*` errors, so go-quicbaas
+  can consume it. The REST, gRPC and MCP routes are not yet in. Code:
+  `pkg/attestation/appraisal`, `pkg/xkms/servicer_attestation.go`; docs:
+  `docs/attestation-verifier/architecture.md#appraisal-the-rfc-9334-verifier`.
+- **SPEC row `password-vault-usb` (planned)**: the USB transport carries the five per-user vault verbs (`PasswordVaultStatus`, `PasswordVaultEnroll`, `PasswordVaultRotate`, `PasswordVaultRemoveFactor`, `PasswordVaultRecover`) to the paired phone, with the `transport` request and response types as params and results. The row answers the seven design questions of xkey-android #15: the xkey CLI calls it through a `usb://` scheme, and the phone's embedded xkmsd runs the `pkg/staticpw` vault keyed to the paired desktop's Noise static key. Every `pkg/staticpw` factor is accepted, passkey PRF is checked by the unwrap, and the recovery code is `pkg/staticpw`'s (owner item 148 (a), ruling 130; consumers xkey-android #15 and #55). Docs: `docs/password-vault/architecture.md` §"Design decisions (#15)", `docs/password-vault/api.md` §"USB transport: vault verbs (planned)".
+- **`remote.createBackup` and `remote.restoreBackup` take a password (#1693)** — both params carry a required `password`. The xkey bridge derives the backup key exactly as `xkey backup` does: `backup.NewPasswordKey` on create, and on restore the envelope's KDF record through `backup.DerivePasswordKey`. A phone-made backup therefore opens on the laptop, and the reverse, with the same password. An empty password is refused as invalid params (`ErrBackupPasswordRequired`). A wrong password or malformed envelope is refused as a restore failure, and nothing is written. A backup that includes the OATH or password store needs the same desktop export decision as `remote.sync*` (`--allow-sync`, overridden by a sealed enterprise policy), taken before either store is read. The restore result's new `items` field reports each category's restored and skipped counts and per-entry errors. `success` is true only when no entry was skipped. Restored trust-store certificates are phone-supplied, so they are quarantined under `PurposeSynced`, the same as synced certificates, and reported as `quarantined` rather than `restored`. A response larger than one transport message is refused with `-32040` `ErrorCodeMessageTooLarge`, which asks for fewer categories. The pairing router now answers a request whose response it cannot send with an error, instead of only logging the failure. The bridge archives and restores the trust store, OATH and password stores that `xkey device listen` opens for sync. The live `remote.oath*` handlers share that OATH store instance, so a credential added over `remote.oathAdd` is in the next backup and a restored one is served at once. It reads the CA category from xkmsd. `remote.listBackups` still reports the feature unavailable. Docs: `xkey/docs/phone-hsm/engineering.md`.
+- **Per-repository signing keys (go-xkms#1697).** A tenant's images and
+  signed CoRIM verify under its release key (`release-signing`) unless a
+  binding names another tenant key for the repository. The bindings are kept
+  in the qrdb DAO database `attestation`. A CoRIM that names a repository,
+  and an image verified with `image.VerifierConfig.SigningKeys`, must be
+  signed by that repository's key. Anything else is refused with
+  `ErrSigningKeyRefused` or `image.ErrSigningKeyMismatch`. `XKMSService`
+  serves set, get, list, delete and resolve on the caller's tenant over REST
+  (`/api/v1/attestation/signing-keys`), gRPC, Unix, QUIC, MCP
+  (`attestation.signing_key.*`) and embedded. They are gated by the new
+  permissions `attestation_signing_keys:{bind,get,list}`, which the service
+  enforces as well as the wire gate. `sdk/go` re-exports the types under an
+  `Attestation` prefix, and the TypeScript SDK adds `client.signingKeys`.
+  Code: `pkg/attestation/appraisal/signing_keys.go`,
+  `pkg/xkms/servicer_signing_keys.go`; docs:
+  `docs/attestation-verifier/architecture.md#repository-signing-keys`.
+- **Transparency log checkpoints as C2SP signed notes, with a registrable signature algorithm (#1546)** — `pkg/ca/checkpoint`, re-exported as `sdk/go/checkpoint`, encodes and strictly parses the c2sp.org/tlog-checkpoint body and signs and opens it as a c2sp.org/signed-note (owner ruling 122). It also builds and parses verifier keys. Open ignores unknown keys and refuses a known key's bad signature or a note with no verified signature. Signing goes only through a `crypto.Signer`, and the algorithm follows from the key: Ed25519 (`0x01`) and witness ECDSA (`0x02`) use their assigned type bytes; ECDSA P-224 and digest-bound P-384/P-521, RSA PKCS#1 v1.5 and PSS, and ML-DSA-44/65/87 use `0xff || len || identifier`. `Register` adds an application's own algorithm and refuses duplicates and reserved type bytes. The tests include the specification's Ed25519 known-answer vector. Docs: `docs/transparency-log/engineering.md`.
+
+### Changed
+
+CI: a push to main no longer cancels the main run still in progress; integration jobs run on the bigdisk runners.
+CI: the Security Scan job's timeout is 30 minutes, since gosec takes 9 to 15 minutes on the minis and omega and the 15-minute limit failed runs 64485, 64577 and 64578 (Infra #1206).
+- **Wire change for go-quicbaas and trusted-firmware: the OTA image signature is RFC 9053 §2.1 fixed-width `r || s` (ruling 136)** — `SignOTAImage` (REST `POST /api/v1/ota-image-keys/{board}/sign`, gRPC/Unix `SignOTAImage`, MCP `xkms.signOTAImage`, the SDK and `xkmsctl key ota-image sign`) now returns the OTA_AUTH signature as 32-byte big-endian `r` then 32-byte big-endian `s`, each left-padded with zeros: 64 bytes for ES256, where it returned ASN.1 DER. The 328P and 32U4 boards carry no DER parser. A backend signature that does not convert is refused with `ErrOTASignatureEncoding`. Every other signature, the generic sign on the same board key included, stays DER. Docs: `docs/key-management/engineering.md#per-board-ota-image-keys`.
+
+### Fixed
+
+- **Host and container appraisal keep AK intermediates.** `HostEvidence` and `ContainerEvidence` gain `AKIntermediates`, which `AppraiseHost` forwards after the AK certificate, so an attestation key issued by an intermediate CA now chains to a tenant's root-only `ak-root` endorsement instead of failing as forged. A nil intermediate is refused with `ErrInvalidAKIntermediate` (`sdk/go`: `ErrAttestationInvalidAKIntermediate`). (#1608)
+
+- **Make targets read `GO_BUILD_TAGS`.** `make lint|build|coverage|security|integration-test GO_BUILD_TAGS='a b'`, as ci-template calls them, now adds those tags to every `-tags` / `--build-tags` list the target already uses (comma-joined, duplicates dropped; gosec and govulncheck gain `-tags`), so tag-gated code is compiled, linted and covered in CI. One join, `scripts/go-build-tags.mk`, shared by the root Makefile and `xkey/Makefile`; an empty or unset `GO_BUILD_TAGS` leaves every command line unchanged. `test/scripts/go-build-tags.test.sh` (run by `make test-scripts`) checks it. (#1603)
+
 ## [0.63.0-alpha] - 2026-10-23
 
 ### Added
