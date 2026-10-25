@@ -36,6 +36,10 @@ const (
 	AuthzTypeDNS                 = "dns"
 	AuthzTypeIP                  = "ip"
 	AuthzTypePermanentIdentifier = "permanent-identifier"
+
+	// AuthzTypeSPIFFE is a SPIFFE ID, spiffe://<tenant>/svc/<name>, ordered
+	// under the x509-svid profile by an account bound to that tenant.
+	AuthzTypeSPIFFE = "spiffe"
 )
 
 // Challenge type constants.
@@ -76,6 +80,10 @@ type Meta struct {
 	Website            string   `json:"website,omitempty"`                 // Server website URL
 	CAAIdentities      []string `json:"caaIdentities,omitempty"`           // CAA identities for this server
 	ExternalAccountReq bool     `json:"externalAccountRequired,omitempty"` // Whether external account binding is required
+
+	// Profiles maps each certificate profile a newOrder may name to its
+	// description (draft-aaron-acme-profiles).
+	Profiles map[string]string `json:"profiles,omitempty"`
 }
 
 // CertificateAuthority is the opaque CA handle threaded through

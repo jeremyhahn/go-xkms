@@ -30,6 +30,10 @@ type ACMEOrder struct {
 	XSignedOrder   *ACMEOrder       `yaml:"x-signed-order" json:"x-signed-order,omitempty"`
 	AccountID      uint64           `yaml:"account-id" json:"account_id" index:"true"`
 	URL            string           `yaml:"url" json:"url"`
+
+	// Profile is the certificate profile the newOrder named
+	// (draft-aaron-acme-profiles); empty is no profile.
+	Profile string `yaml:"profile" json:"profile,omitempty"`
 }
 
 // SetEntityID sets the unique identifier for the order.

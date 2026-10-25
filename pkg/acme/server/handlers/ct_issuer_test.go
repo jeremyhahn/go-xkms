@@ -26,6 +26,7 @@ import (
 
 	"github.com/jeremyhahn/go-xkms/pkg/acme/audit"
 	"github.com/jeremyhahn/go-xkms/pkg/acme/ct"
+	"github.com/jeremyhahn/go-xkms/pkg/acme/linter"
 	"github.com/jeremyhahn/go-xkms/pkg/acme/server/circuitbreaker"
 )
 
@@ -64,7 +65,7 @@ func TestNewIssuerBuildsCTPolicy(t *testing.T) {
 	})
 	params.Breakers = circuitbreaker.NewManager()
 
-	issuer, err := newIssuer(params, audit.NewNoOpLogger(), false)
+	issuer, err := newIssuer(params, audit.NewNoOpLogger(), linter.Identifiers{})
 	require.NoError(t, err)
 	require.NotNil(t, issuer)
 	require.NotNil(t, ctBreaker(params.Breakers), "CT submission is not guarded by a breaker")
@@ -80,7 +81,7 @@ func TestNewIssuerLeavesCTOffWithoutEnabledLogs(t *testing.T) {
 	})
 	params.Breakers = circuitbreaker.NewManager()
 
-	issuer, err := newIssuer(params, audit.NewNoOpLogger(), false)
+	issuer, err := newIssuer(params, audit.NewNoOpLogger(), linter.Identifiers{})
 	require.NoError(t, err)
 	require.NotNil(t, issuer)
 	require.Nil(t, ctBreaker(params.Breakers), "CT off built a CT breaker")
@@ -126,7 +127,7 @@ func TestNewIssuerRefusesInvalidCTPolicy(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			issuer, err := newIssuer(ctParams(tt.policy(t)), audit.NewNoOpLogger(), false)
+			issuer, err := newIssuer(ctParams(tt.policy(t)), audit.NewNoOpLogger(), linter.Identifiers{})
 			require.ErrorContains(t, err, "certificate transparency")
 			require.Nil(t, issuer)
 		})

@@ -181,13 +181,16 @@ func setCAWithParams(t *testing.T, service *RestService, c ca.TCGCA, params *Par
 	t.Helper()
 	params.CA = c
 	params.Logger = service.logger
-	issuer, err := newIssuer(params, service.auditLog, false)
+	issuer, err := newIssuer(params, service.auditLog, linter.Identifiers{})
 	require.NoError(t, err)
-	deviceIssuer, err := newIssuer(params, service.auditLog, true)
+	deviceIssuer, err := newIssuer(params, service.auditLog, linter.Identifiers{DeviceIdentity: true})
+	require.NoError(t, err)
+	svidIssuer, err := newIssuer(params, service.auditLog, linter.Identifiers{SVID: true})
 	require.NoError(t, err)
 	service.ca = c
 	service.issuer = issuer
 	service.deviceIssuer = deviceIssuer
+	service.svidIssuer = svidIssuer
 }
 
 func (m *MockCA) ReserveSerial(_ context.Context) (*big.Int, error) {

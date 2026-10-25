@@ -40,6 +40,7 @@ import (
 	"github.com/jeremyhahn/go-xkms/pkg/acme/server/metrics"
 	"github.com/jeremyhahn/go-xkms/pkg/acme/storage"
 	"github.com/jeremyhahn/go-xkms/pkg/ca"
+	"github.com/jeremyhahn/go-xkms/pkg/spiffe"
 	xkmssdk "github.com/jeremyhahn/go-xkms/sdk/go"
 )
 
@@ -317,6 +318,25 @@ func tenantSigningCAProblem(err error) *entities.Error {
 	return common.ServerInternal("Failed to resolve tenant signing CA")
 }
 
+// verifyIssued checks that a freshly issued certificate chains to the CA
+// that signed it. A tenant's own CA is not in the global CA's pools, so a
+// certificate it signed is verified with that tenant's issuer certificate
+// as the trust anchor; anything else is verified by the global CA. No
+// signer is passed, since only the chain is checked.
+func (s *RestService) verifyIssued(cert, tenantIssuer *x509.Certificate) error {
+	if tenantIssuer == nil {
+		_, err := s.ca.Verify(cert, nil)
+		return err
+	}
+	roots := x509.NewCertPool()
+	roots.AddCert(tenantIssuer)
+	_, err := cert.Verify(x509.VerifyOptions{
+		Roots:     roots,
+		KeyUsages: []x509.ExtKeyUsage{x509.ExtKeyUsageAny},
+	})
+	return err
+}
+
 // issuanceTenant returns the tenant a certificate issued for account carries
 // as its subject's first organizational unit: the account's tenant, or the
 // system tenant for an account that is not tenant-bound. It never comes from
@@ -551,11 +571,23 @@ func (s *RestService) OrderFinalizeHandler(w http.ResponseWriter, r *http.Reques
 	// Ensure the CSR's identity set corresponds exactly to the order's
 	// authorized identifiers per RFC 8555 Section 7.4 before any certificate
 	// work begins.
+	// An x509-svid order is re-checked against the account's tenant binding
+	// as it stands now, and its CSR may ask only for the order's SPIFFE ID.
 	var matches bool
 	var matchErr error
-	if isEndorse01 {
+	var svid *spiffe.ID
+	switch {
+	case order.Profile == ca.ProfileNameX509SVID:
+		id, problem := svidFinalizeIdentity(account, order, csr)
+		if problem != nil {
+			writeError(w, problem)
+			return
+		}
+		svid = &id
+		matches = true
+	case isEndorse01:
 		matches, matchErr = matchesEndorse01Identifier(csr, order)
-	} else {
+	default:
 		matches, matchErr = matchesIdentifier(csr, order)
 	}
 	if matchErr != nil {
@@ -747,6 +779,13 @@ func (s *RestService) OrderFinalizeHandler(w http.ResponseWriter, r *http.Reques
 		}
 	}
 
+	// An SVID is signed only by its tenant's own CA, never the global one,
+	// so that each tenant's trust bundle is its own CA.
+	if svid != nil && tenantSigner == nil {
+		s.failOrder(ctx, orderDAO, order, account, start, w, svidOrderProblem(ErrSVIDTenantCARequired))
+		return
+	}
+
 	// An endorse-01 order is issued an EK certificate for the identifier's key.
 	// Whether this is one was decided above from the challenge that validated
 	// the order, so the request that was bound and checked is the request that
@@ -873,6 +912,14 @@ func (s *RestService) OrderFinalizeHandler(w http.ResponseWriter, r *http.Reques
 			signOpts.Signer = tenantSigner
 			signOpts.IssuerCert = issuerCert
 		}
+		// x509-svid takes its names from the issuer only: the order's SPIFFE
+		// ID is the one URI SAN, and the CA stamps the tenant in OU[0].
+		if svid != nil {
+			signOpts.Profile = ca.ProfileNameX509SVID
+			signOpts.TenantID = svid.TenantID
+			signOpts.Subject = &ca.Subject{}
+			signOpts.SANS = &ca.SubjectAlternativeNames{URIs: []string{svid.String()}}
+		}
 
 		// Execute pre-sign extension hooks and append returned extensions to signOpts.
 		if s.preSignHooks != nil && s.preSignHooks.Count() > 0 {
@@ -901,10 +948,14 @@ func (s *RestService) OrderFinalizeHandler(w http.ResponseWriter, r *http.Reques
 		// serial (RFC 5280 §4.1.2.2) and has the CA sign a linted
 		// precertificate and then the linted final certificate. Only a
 		// verified device identity gets the issuer whose linter admits its
-		// permanentIdentifier otherName.
+		// permanentIdentifier otherName, and only an x509-svid order the one
+		// whose linter admits its SPIFFE URI SAN.
 		issuer := s.issuer
-		if attestedIdentity != "" {
+		switch {
+		case attestedIdentity != "":
 			issuer = s.deviceIssuer
+		case svid != nil:
+			issuer = s.svidIssuer
 		}
 		issued, issueErr := issuer.Issue(r.Context(), &issuance.Request{
 			CSR:      csr,
@@ -937,9 +988,8 @@ func (s *RestService) OrderFinalizeHandler(w http.ResponseWriter, r *http.Reques
 	serialNumber = cert.SerialNumber.Text(16)
 
 	// Verify the certificate as a final sanity check before delivering to
-	// the client. We pass nil for the signer since we don't have access
-	// to the client's private key and we're just validating the chain.
-	if _, err := s.ca.Verify(cert, nil); err != nil {
+	// the client: it must chain to the CA that signed it.
+	if err := s.verifyIssued(cert, issuerCert); err != nil {
 		s.failOrder(ctx, orderDAO, order, account, start, w, common.ServerInternal("Failed to verify certificate"))
 		return
 	}
