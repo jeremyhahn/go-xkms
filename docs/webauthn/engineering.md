@@ -252,6 +252,20 @@ are short-lived and in memory; see §"Session lifetime and the session cap".
 go-xkms defines no user model of its own — `User` is an interface satisfied by
 qrdb's identity.
 
+**A registered user's qrdb `Username` is its qrdb user ID, never the email
+(owner ruling 166, go-xkms#1468).** qrdb uses `Username` as the certificate CN,
+so it carries no PII; the email stays in `Email`, qrdb's tenant-unique login
+key, and in the rfc822Name SAN. qrdb assigns the ID at create and refuses an
+empty `Username`, so `Create` (`qrdb_userstore.go:150`) creates the record under
+a random `webauthn-pending-` placeholder and then renames it with `UpdateUser`
+to the decimal ID (`qrdb_userstore.go:170`), which qrdb re-validates for
+uniqueness and re-indexes atomically. A failed rename deletes the record and
+returns `*QRDBUsernameAssignError` (`qrdb_userstore.go:361`), whose
+`RollbackErr` reports a failed delete. Nothing in the WebAuthn path reads
+`Username`: login resolves by email (`GetUserByEmail`), and a WebAuthn token's
+subject is the user handle (`SubjectKindUserHandle`), so records created
+before the change, with the email as `Username`, still log in unchanged.
+
 ### Credential-store decoration — the composed-host seam
 
 `rest.BuildWebAuthnService` (`pkg/api/rest/host.go:398`) derives the
