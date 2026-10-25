@@ -5,3 +5,4 @@ self-hosted-runner:
     - batch
     - dells
     - ci-gate
+    - bigdisk
