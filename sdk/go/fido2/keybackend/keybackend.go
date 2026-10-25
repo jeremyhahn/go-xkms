@@ -34,6 +34,7 @@ type (
 	FIDO2KeyBackend      = keybackend.FIDO2KeyBackend
 	FIDO2KeyCapabilities = keybackend.FIDO2KeyCapabilities
 	KeyHandle            = keybackend.KeyHandle
+	UserVerifier         = keybackend.UserVerifier
 )
 
 var (
