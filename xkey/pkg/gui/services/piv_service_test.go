@@ -1262,6 +1262,44 @@ func TestPIVService_LocalExportPublicKey_ListKeysFails(t *testing.T) {
 	assert.Contains(t, err.Error(), "export public key for slot 9a")
 }
 
+// TestPIVService_LocalExportPublicKey exports the public half of a key
+// generated into a slot as a PEM PUBLIC KEY block, and reports a slot that
+// holds no key instead of returning an empty export.
+func TestPIVService_LocalExportPublicKey(t *testing.T) {
+	xkms.Reset()
+	require.NoError(t, xkms.AutoInitialize(&xkms.AutoConfig{}))
+	t.Cleanup(xkms.Reset)
+	initTestPIVManager(t)
+	// Route PIV key generation through the xkms backends, as the GUI does
+	// (App.initLocalKeyStore), so the generated key is one ListKeys returns.
+	keystore, err := xkms.Get()
+	require.NoError(t, err)
+	require.NoError(t, keystore.InitPIVBackendResolver())
+
+	svc := NewPIVService(nil, "software")
+	svc.SetLocalEnabled(true)
+	svc.SetContext(context.Background())
+
+	_, err = svc.GenerateKey("9a", "ECCP256")
+	require.NoError(t, err)
+
+	pemText, err := svc.ExportPublicKey("9A")
+	require.NoError(t, err)
+	block, rest := pem.Decode([]byte(pemText))
+	require.NotNil(t, block)
+	assert.Empty(t, rest)
+	assert.Equal(t, "PUBLIC KEY", block.Type)
+	pub, err := x509.ParsePKIXPublicKey(block.Bytes)
+	require.NoError(t, err)
+	ecPub, ok := pub.(*ecdsa.PublicKey)
+	require.True(t, ok, "public key is %T, want *ecdsa.PublicKey", pub)
+	assert.Equal(t, elliptic.P256(), ecPub.Curve)
+
+	_, err = svc.ExportPublicKey("9c")
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "no key found in slot 9c")
+}
+
 func TestPIVService_LocalDeleteCertificate(t *testing.T) {
 	initTestPIVManager(t)
 
