@@ -95,6 +95,41 @@ describe('SigningKeyClient (wire contract)', () => {
     expect((err as XkmsApiError).status).toBe(400);
   });
 
+  it('signs an image with a POST of the reference and registry credentials', async () => {
+    const key = { repository: 'acme/app', key_id: 'release', default: true };
+    const fake = newFakeFetch({
+      body: {
+        key,
+        digest: 'sha256:abc',
+        envelope: 'e30=',
+        certificate: 'UEVN',
+        referrer: 'sha256:def',
+        referrer_indexed: true,
+        attestation_tag: 'sha256-abc.att',
+      },
+    });
+    const req = {
+      reference: 'registry.example.com/acme/app:v1',
+      registry: { username: 'ci', password: 'registry-password' },
+    };
+    const signed = await make(fake).signingKeys.signImage(req);
+    expect(fake.calls[0]?.method).toBe('POST');
+    expect(fake.calls[0]?.url).toBe(`${COLLECTION}/sign-image`);
+    expect(fake.calls[0]?.body).toEqual(req);
+    expect(signed.key.key_id).toBe('release');
+    expect(signed.digest).toBe('sha256:abc');
+    expect(signed.referrer_indexed).toBe(true);
+  });
+
+  it('rejects a refused image signing with the server\'s status', async () => {
+    const fake = newFakeFetch({ status: 503, body: { error: 'service unavailable' } });
+    const err = await make(fake)
+      .signingKeys.signImage({ reference: 'registry.example.com/acme/app:v1' })
+      .catch((e: unknown) => e);
+    expect(err).toBeInstanceOf(XkmsApiError);
+    expect((err as XkmsApiError).status).toBe(503);
+  });
+
   it('rejects with the server\'s status and message', async () => {
     const fake = newFakeFetch({ status: 404, body: { error: 'record not found' } });
     const c = make(fake);

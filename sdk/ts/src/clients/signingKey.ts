@@ -17,6 +17,8 @@ import type {
   SetSigningKeyBindingRequest,
   SignCoRIMRequest,
   SignedCoRIM,
+  SignImageRequest,
+  SignedImage,
   SigningKeyBinding,
   SigningKeyResolution,
 } from '../types/signingKey.js';
@@ -62,5 +64,14 @@ export class SigningKeyClient {
    */
   signCoRIM(req: SignCoRIMRequest): Promise<SignedCoRIM> {
     return this.http.request('POST', `${BASE}/sign-corim`, { body: req });
+  }
+
+  /**
+   * POST /api/v1/attestation/signing-keys/sign-image — signs an image with
+   * the key its repository resolves to and pushes the attestation to the
+   * image's registry with the request's credentials.
+   */
+  signImage(req: SignImageRequest): Promise<SignedImage> {
+    return this.http.request('POST', `${BASE}/sign-image`, { body: req });
   }
 }
