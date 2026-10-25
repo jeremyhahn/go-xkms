@@ -344,10 +344,10 @@ func TestSignImage_Errors(t *testing.T) {
 		arrange func(*transport.SignImageRequest)
 		want    error
 	}{
-		"certificate refused":         {func(*transport.SignImageRequest) { ca.signCSRErr = errCAUnavailable }, image.ErrCertificateRequestFailed},
-		"ca bundle unreadable":        {func(*transport.SignImageRequest) { ca.bundleErr = errCAUnavailable }, errCAUnavailable},
-		"registry unavailable":        {func(*transport.SignImageRequest) { registry.constructErr = image.ErrRegistryRequest }, image.ErrRegistryRequest},
-		"push refused":                {func(*transport.SignImageRequest) { registry.pushErr = errRegistryPush }, errRegistryPush},
+		"certificate refused":  {func(*transport.SignImageRequest) { ca.signCSRErr = errCAUnavailable }, image.ErrCertificateRequestFailed},
+		"ca bundle unreadable": {func(*transport.SignImageRequest) { ca.bundleErr = errCAUnavailable }, errCAUnavailable},
+		"registry unavailable": {func(*transport.SignImageRequest) { registry.constructErr = image.ErrRegistryRequest }, image.ErrRegistryRequest},
+		"push refused":         {func(*transport.SignImageRequest) { registry.pushErr = errRegistryPush }, errRegistryPush},
 	} {
 		ca.signCSRErr, ca.bundleErr = nil, nil
 		registry.constructErr, registry.pushErr, registry.closed = nil, nil, false
