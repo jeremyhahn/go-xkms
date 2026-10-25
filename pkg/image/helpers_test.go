@@ -40,7 +40,6 @@ import (
 	"time"
 
 	"github.com/stretchr/testify/require"
-
 )
 
 // testPurpose is the trust-roots purpose the tests verify images under.
