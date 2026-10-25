@@ -44,6 +44,11 @@ type ContainerEvidence struct {
 	// the quote.
 	AKCertificate *x509.Certificate
 
+	// AKIntermediates are the CA certificates between AKCertificate and the
+	// endorsed AK root, issuer first, without the leaf. Optional: an AK the
+	// endorsed root issued directly needs none.
+	AKIntermediates []*x509.Certificate
+
 	// Nonce is the qualifying data the caller generated for this quote. The
 	// signed quote body must carry it.
 	Nonce []byte
@@ -77,6 +82,7 @@ func (a *Appraiser) AppraiseContainer(ctx context.Context, tenant string, ev *Co
 	appraisal, err := a.AppraiseHost(ctx, tenant, &HostEvidence{
 		ReferenceValues: ev.ReferenceValues,
 		AKCertificate:   ev.AKCertificate,
+		AKIntermediates: ev.AKIntermediates,
 		Nonce:           ev.Nonce,
 		Quoted:          ev.Quote.Quoted,
 		Signature:       ev.Quote.Signature,

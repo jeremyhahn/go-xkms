@@ -16,6 +16,7 @@ package appraisal
 import (
 	"bytes"
 	"crypto/sha256"
+	"crypto/x509"
 	"encoding/binary"
 	"errors"
 	"maps"
@@ -499,6 +500,59 @@ func TestAppraiser_AppraiseContainer(t *testing.T) {
 		err := w.app.AppraiseContainer(w.ctx, "a/b", w.containerEvidence(t, w.pcrs, nonce))
 		if !errors.Is(err, ErrInvalidTenant) {
 			t.Fatalf("error %v, want ErrInvalidTenant", err)
+		}
+	})
+}
+
+func TestAppraiser_AppraiseContainerAKIntermediates(t *testing.T) {
+	nonce := bytes.Repeat([]byte{0x5A}, sha256.Size)
+
+	t.Run("SuppliedIntermediateChainsToTheEndorsedRoot", func(t *testing.T) {
+		w := newHostWorld(t)
+		intermediate := w.issueAKUnderIntermediate(t)
+		ev := w.containerEvidence(t, w.pcrs, nonce)
+		ev.AKIntermediates = []*x509.Certificate{intermediate}
+		if err := w.app.AppraiseContainer(w.ctx, w.tenant, ev); err != nil {
+			t.Fatalf("AppraiseContainer: %v", err)
+		}
+	})
+
+	t.Run("MissingIntermediateIsForged", func(t *testing.T) {
+		w := newHostWorld(t)
+		w.issueAKUnderIntermediate(t)
+		err := w.app.AppraiseContainer(w.ctx, w.tenant, w.containerEvidence(t, w.pcrs, nonce))
+		var appraisal *HostAppraisalError
+		if !errors.As(err, &appraisal) || !errors.Is(err, ErrHostNotVerified) {
+			t.Fatalf("error %v, want a *HostAppraisalError wrapping ErrHostNotVerified", err)
+		}
+		if !appraisal.CryptographicFailure || len(appraisal.Failures) == 0 ||
+			appraisal.Failures[0].Check != AppraisalCheckAKCertificate ||
+			appraisal.Failures[0].Outcome != string(AppraisalForged) {
+			t.Fatalf("appraisal = %+v, want a forged AK certificate check", appraisal)
+		}
+	})
+
+	t.Run("AnotherIntermediateIsForged", func(t *testing.T) {
+		w := newHostWorld(t)
+		w.issueAKUnderIntermediate(t)
+		ev := w.containerEvidence(t, w.pcrs, nonce)
+		ev.AKIntermediates = []*x509.Certificate{w.otherIntermediate(t)}
+		err := w.app.AppraiseContainer(w.ctx, w.tenant, ev)
+		var appraisal *HostAppraisalError
+		if !errors.As(err, &appraisal) || !appraisal.CryptographicFailure {
+			t.Fatalf("error %v, want a *HostAppraisalError with a cryptographic failure", err)
+		}
+	})
+
+	t.Run("NilIntermediateIsRefused", func(t *testing.T) {
+		w := newHostWorld(t)
+		w.issueAKUnderIntermediate(t)
+		ev := w.containerEvidence(t, w.pcrs, nonce)
+		ev.AKIntermediates = []*x509.Certificate{nil}
+		err := w.app.AppraiseContainer(w.ctx, w.tenant, ev)
+		var nilEntry *AKIntermediateError
+		if !errors.Is(err, ErrInvalidAKIntermediate) || !errors.As(err, &nilEntry) || nilEntry.Index != 0 {
+			t.Fatalf("error %v, want an *AKIntermediateError at index 0", err)
 		}
 	})
 }

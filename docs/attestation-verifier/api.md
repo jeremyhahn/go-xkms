@@ -84,6 +84,14 @@ the release key `release-signing`.
 The classes come from `apierrors.SigningKeySentinelClasses`
 (`pkg/api/apierrors/tables.go:330`).
 
+## Host and container evidence (embedded)
+
+`AppraiseHost` and `AppraiseContainer` are Go calls with no wire form. Their
+evidence takes the AK certificate in `AKCertificate` and, when an
+intermediate CA issued it, those CA certificates in `AKIntermediates`
+(issuer first, leaf excluded); the chain must reach a stored `ak-root`. A nil
+entry in `AKIntermediates` is refused with `ErrInvalidAKIntermediate`.
+
 ## Generation is a separate capability, already documented
 
 `AttestKey` (generating the statement this feature can verify) is a

@@ -257,6 +257,110 @@ func failureOf(appraisal *HostAppraisal, check string) *HostAppraisalFailure {
 	return nil
 }
 
+// issueAKUnderIntermediate makes the world's attestation key one an
+// intermediate of the endorsed AK root issued, and returns that intermediate.
+// The tenant endorses only the root.
+func (w *verifierWorld) issueAKUnderIntermediate(t *testing.T) *x509.Certificate {
+	t.Helper()
+	intermediate, err := appraisaltest.NewIntermediateAuthority(w.akCA, "AK Intermediate CA")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if w.ak, err = appraisaltest.IssueAttestationKey(intermediate, true); err != nil {
+		t.Fatal(err)
+	}
+	return intermediate.Certificate
+}
+
+// otherIntermediate returns an intermediate of the endorsed AK root that did
+// not issue the world's attestation key.
+func (w *verifierWorld) otherIntermediate(t *testing.T) *x509.Certificate {
+	t.Helper()
+	other, err := appraisaltest.NewIntermediateAuthority(w.akCA, "Other AK Intermediate CA")
+	if err != nil {
+		t.Fatal(err)
+	}
+	return other.Certificate
+}
+
+func TestAppraiser_AppraiseHostAKIntermediates(t *testing.T) {
+	t.Run("SuppliedIntermediateChainsToTheEndorsedRoot", func(t *testing.T) {
+		w := newHostWorld(t)
+		intermediate := w.issueAKUnderIntermediate(t)
+		ev := w.hostEvidence(t, w.pcrs, "golden")
+		ev.AKIntermediates = []*x509.Certificate{intermediate}
+		appraisal, err := w.app.AppraiseHost(w.ctx, w.tenant, ev)
+		if err != nil {
+			t.Fatalf("AppraiseHost: %v", err)
+		}
+		if !appraisal.Verified || len(appraisal.Failures) != 0 {
+			t.Fatalf("appraisal = %+v, want verified with no failures", appraisal)
+		}
+	})
+
+	forged := map[string]func(w *verifierWorld, t *testing.T, intermediate *x509.Certificate) []*x509.Certificate{
+		"MissingIntermediateIsForged": func(*verifierWorld, *testing.T, *x509.Certificate) []*x509.Certificate {
+			return nil
+		},
+		"AnotherIntermediateIsForged": func(w *verifierWorld, t *testing.T, _ *x509.Certificate) []*x509.Certificate {
+			return []*x509.Certificate{w.otherIntermediate(t)}
+		},
+		"UnrelatedCertificateIsForged": func(w *verifierWorld, _ *testing.T, _ *x509.Certificate) []*x509.Certificate {
+			return []*x509.Certificate{w.signerCert}
+		},
+	}
+	for name, intermediates := range forged {
+		t.Run(name, func(t *testing.T) {
+			w := newHostWorld(t)
+			intermediate := w.issueAKUnderIntermediate(t)
+			ev := w.hostEvidence(t, w.pcrs, "golden")
+			ev.AKIntermediates = intermediates(w, t, intermediate)
+			appraisal, err := w.app.AppraiseHost(w.ctx, w.tenant, ev)
+			if err != nil {
+				t.Fatalf("AppraiseHost: %v", err)
+			}
+			if appraisal.Verified || !appraisal.CryptographicFailure {
+				t.Fatalf("appraisal = %+v, want an unverified cryptographic failure", appraisal)
+			}
+			failure := failureOf(appraisal, AppraisalCheckAKCertificate)
+			if failure == nil || failure.Outcome != string(AppraisalForged) {
+				t.Fatalf("failures = %+v, want a forged AK certificate check", appraisal.Failures)
+			}
+		})
+	}
+
+	t.Run("IntermediatesWithoutTheLeafAreAbsent", func(t *testing.T) {
+		w := newHostWorld(t)
+		intermediate := w.issueAKUnderIntermediate(t)
+		ev := w.hostEvidence(t, w.pcrs, "golden")
+		ev.AKCertificate = nil
+		ev.AKIntermediates = []*x509.Certificate{intermediate}
+		appraisal, err := w.app.AppraiseHost(w.ctx, w.tenant, ev)
+		if err != nil {
+			t.Fatalf("AppraiseHost: %v", err)
+		}
+		failure := failureOf(appraisal, AppraisalCheckAKCertificate)
+		if appraisal.Verified || failure == nil || failure.Outcome != string(AppraisalAbsent) {
+			t.Fatalf("appraisal = %+v, want an absent AK certificate check", appraisal)
+		}
+	})
+
+	t.Run("NilIntermediateIsRefused", func(t *testing.T) {
+		w := newHostWorld(t)
+		intermediate := w.issueAKUnderIntermediate(t)
+		ev := w.hostEvidence(t, w.pcrs, "golden")
+		ev.AKIntermediates = []*x509.Certificate{intermediate, nil}
+		_, err := w.app.AppraiseHost(w.ctx, w.tenant, ev)
+		if !errors.Is(err, ErrInvalidAKIntermediate) {
+			t.Fatalf("AppraiseHost = %v, want ErrInvalidAKIntermediate", err)
+		}
+		var nilEntry *AKIntermediateError
+		if !errors.As(err, &nilEntry) || nilEntry.Index != 1 {
+			t.Fatalf("AppraiseHost = %v, want an *AKIntermediateError at index 1", err)
+		}
+	})
+}
+
 // TestAppraiser_EventLogLeavesTheLaunchPCROut drives host evidence whose
 // quote covers boot registers, which the event log explains, and the launch
 // register a container runtime extends, which only the signed reference
