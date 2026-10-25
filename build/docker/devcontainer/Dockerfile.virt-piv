@@ -8,7 +8,7 @@
 # repository's scripts/build-softhsm.sh (go-xkms#1418), which this build reads
 # from the named context "softhsm-pin". From the repository root:
 #   docker build --build-context softhsm-pin=scripts \
-#       -f .devcontainer/Dockerfile.virt-piv .devcontainer
+#       -f build/docker/devcontainer/Dockerfile.virt-piv build/docker/devcontainer
 
 FROM debian:bookworm-slim AS softhsm
 RUN apt-get update && apt-get install -y --no-install-recommends \

@@ -22,7 +22,11 @@ services:
   xkey-desktop:
     build:
       context: ../../../..
-      dockerfile: .devcontainer/Dockerfile
+      dockerfile: build/docker/devcontainer/Dockerfile
+      # The Dockerfile's base image pin (scripts/tool-pins.sh), which
+      # xkey's integration-test-phone-android target loads.
+      args:
+        GO_IMAGE: ${GO_IMAGE:?GO_IMAGE is unset; run make integration-test-phone-android, which loads scripts/tool-pins.sh}
       additional_contexts:
         go-qrdb: ../../../../../go-qrdb
         go-quicraft: ../../../../../go-quicraft

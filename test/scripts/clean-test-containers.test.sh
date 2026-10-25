@@ -165,7 +165,7 @@ start_case "the three deliberately-untouched projects stay untouched"
 # emulator-stop). `make integration-test` runs this script first, so tearing
 # the devcontainer down here would kill a developer's shell mid-suite.
 run_script 0 COMPOSE_RUN_ID=run42
-for owned_elsewhere in ".devcontainer/docker-compose.yml" "docker-compose.emulators.yml"; do
+for owned_elsewhere in "build/docker/devcontainer/compose.yaml" "docker-compose.emulators.yml"; do
     if grep -q -- "$owned_elsewhere" "$CALL_LOG"; then
         fail "tore down $owned_elsewhere, which another target owns"
     else
