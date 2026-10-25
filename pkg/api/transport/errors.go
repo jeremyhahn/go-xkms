@@ -60,6 +60,13 @@ var (
 
 	// ErrAuthenticationFailed is returned when authentication fails.
 	ErrAuthenticationFailed = errors.New("transport: authentication failed")
+
+	// ErrInsecureTransport indicates a gRPC or REST client is configured to
+	// reach a non-unix endpoint with TLS disabled and without the explicit
+	// opt-out, so its credentials (bearer token, request passwords and PINs,
+	// registry credentials) would leave the process in the clear (ruling 152).
+	ErrInsecureTransport = errors.New("transport: TLS is disabled for a non-unix endpoint; " +
+		"enable TLS or explicitly set AllowInsecureTransport (unsafe, loopback test/dev only)")
 )
 
 // ErrorCode represents the category of transport error.

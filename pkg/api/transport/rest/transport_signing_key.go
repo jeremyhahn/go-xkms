@@ -86,6 +86,13 @@ func (t *Transport) SignCoRIM(ctx context.Context, req *transport.SignCoRIMReque
 
 // SignImage signs an image with the key that signs its repository.
 func (t *Transport) SignImage(ctx context.Context, req *transport.SignImageRequest) (*transport.SignedImage, error) {
+	// The configuration is the caller's pointer, so the constructor's check
+	// is repeated before a registry credential is sent (ruling 152).
+	if req != nil && req.Registry != nil {
+		if err := t.requireSecureChannel(); err != nil {
+			return nil, err
+		}
+	}
 	c, err := t.signingKeys()
 	if err != nil {
 		return nil, err
