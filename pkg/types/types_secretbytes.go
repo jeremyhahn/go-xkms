@@ -17,6 +17,7 @@ import (
 	"bytes"
 	"encoding/json"
 	"fmt"
+	"io"
 	"unicode/utf16"
 	"unicode/utf8"
 
@@ -247,7 +248,11 @@ func (p SecretBytes) GoString() string {
 // consults String only for some verbs and formats a byte slice itself for
 // the rest.
 func (p SecretBytes) Format(f fmt.State, _ rune) {
-	fmt.Fprint(f, PasswordRedacted)
+	// Format cannot return an error; a failed write leaves the output short,
+	// and the redaction marker is all there was to write.
+	if _, err := io.WriteString(f, PasswordRedacted); err != nil {
+		return
+	}
 }
 
 // SecretBytesError reports a malformed JSON string for a SecretBytes.
