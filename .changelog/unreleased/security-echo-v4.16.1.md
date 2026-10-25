@@ -1,1 +1,0 @@
-- **echo bumped to v4.16.1.** `github.com/labstack/echo/v4` moves from v4.15.3 to v4.16.1 in every module (root, `sdk/go`, `web/desktop`, `xkey`) for GHSA-cxf3-9h37-7rr8 (critical) and the three high advisories trivy reports on v4.15.3.

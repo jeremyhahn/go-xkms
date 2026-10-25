@@ -1,0 +1,1 @@
+- **CI: Static Analysis and Race Detector run on `bigdisk` runners** — lab-node-4 cannot hold their disk use (Infra via CA m1232, rulings 108, 146); the GitHub mirror keeps `ubuntu-latest`.

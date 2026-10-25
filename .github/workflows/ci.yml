@@ -324,7 +324,9 @@ jobs:
   # Job 1: Unit Tests with Coverage Enforcement
   test:
     name: Unit Tests
-    runs-on: ubuntu-latest
+    # Bigdisk runners on Gitea (Infra m1227, DS-3705): `make coverage` wrote
+    # 11.5 GB and took a mini runner's disk to 0 MiB.
+    runs-on: ${{ github.server_url == 'https://github.com' && 'ubuntu-latest' || 'bigdisk' }}
     # #1587: ~2x 70m, slowest green (forge API, last 60 CI runs, 2026-10-17).
     timeout-minutes: 140
     needs: [changes]
@@ -1173,7 +1175,8 @@ jobs:
   # finding. These two whole-module sweeps run here, in parallel with Lint.
   static-analysis:
     name: Static Analysis
-    runs-on: ubuntu-latest
+    # lab-node-4 cannot hold this job's disk use (Infra via CA m1232).
+    runs-on: ${{ github.server_url == 'https://github.com' && 'ubuntu-latest' || 'bigdisk' }}
     timeout-minutes: 120  # #1587: ~2x 58m, slowest green (forge API, last 60 CI runs, 2026-10-17)
     needs: [changes]
     if: needs.changes.outputs.docs_only != 'true'
@@ -1738,7 +1741,8 @@ jobs:
   # Job 7: Race Detector
   race:
     name: Race Detector
-    runs-on: ubuntu-latest
+    # lab-node-4 cannot hold this job's disk use (Infra via CA m1232).
+    runs-on: ${{ github.server_url == 'https://github.com' && 'ubuntu-latest' || 'bigdisk' }}
     timeout-minutes: 145  # #1587: ~2x 71m, slowest green (forge API, last 60 CI runs, 2026-10-17)
     # No staging behind lint/build/arch-gates (ci-template v1.15): starts at
     # once; `changes` is needed only for its outputs.
