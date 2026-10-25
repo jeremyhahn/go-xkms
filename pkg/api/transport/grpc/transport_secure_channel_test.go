@@ -19,6 +19,8 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"google.golang.org/grpc"
+	"google.golang.org/grpc/credentials/insecure"
 
 	"github.com/jeremyhahn/go-xkms/pkg/api/transport"
 	"github.com/jeremyhahn/go-xkms/pkg/types"
@@ -100,4 +102,43 @@ func TestSignImage_GuardAdmitsCredentialFreeOrSecureRequests(t *testing.T) {
 		Registry:  &transport.ImageRegistryCredentials{Username: "ci", Password: types.SecretBytes("hunter2")},
 	})
 	assert.ErrorIs(t, err, ErrNotConnected, "credentials over TLS pass the guard")
+}
+
+func TestNotLeaderInterceptor_GuardsTheLeaderTarget(t *testing.T) {
+	guardOn(t)
+
+	const unixAddress = "unix:///run/xkms/xkms.sock"
+	tests := []struct {
+		name    string
+		cfg     *transport.Config
+		leader  string
+		wantErr bool
+	}{
+		{name: "tcp leader over insecure credentials", cfg: &transport.Config{Address: unixAddress}, leader: "10.0.0.2:9443", wantErr: true},
+		{name: "unix leader over insecure credentials", cfg: &transport.Config{Address: unixAddress}, leader: "unix:///run/xkms/leader.sock"},
+		{name: "tcp leader with the opt-out", cfg: &transport.Config{Address: unixAddress, AllowInsecureTransport: true}, leader: "10.0.0.2:9443"},
+		{name: "tcp leader over tls", cfg: &transport.Config{Address: "10.0.0.1:9443", TLSEnabled: true}, leader: "10.0.0.2:9443"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			tr := &Transport{config: tt.cfg, credsOpt: grpc.WithTransportCredentials(insecure.NewCredentials())}
+			calls := 0
+			invoker := func(_ context.Context, _ string, _, _ interface{}, _ *grpc.ClientConn, _ ...grpc.CallOption) error {
+				calls++
+				if calls == 1 {
+					return notLeaderStatus(t, notLeaderReason, tt.leader)
+				}
+				return nil
+			}
+
+			err := tr.notLeaderInterceptor(context.Background(), "/xkmsv1.KeystoreService/SignImage", nil, nil, nil, invoker)
+			if tt.wantErr {
+				require.ErrorIs(t, err, transport.ErrInsecureTransport)
+				assert.Equal(t, 1, calls, "the request is never replayed to the leader")
+				return
+			}
+			require.NoError(t, err)
+			assert.Equal(t, 2, calls, "the request is retried once on the leader")
+		})
+	}
 }

@@ -1,1 +1,2 @@
 Transport: the gRPC and REST clients refuse a TLS-disabled, non-unix endpoint with `ErrInsecureTransport`, and `SignImage` refuses registry credentials over one before sending (ruling 152); `AllowInsecureTransport` or `XKMS_TRANSPORT_ALLOW_INSECURE_TRANSPORT` opts out, for loopback test and dev only.
+Transport: the guard also covers server-supplied targets: the REST client refuses an HTTPS-to-HTTP redirect, and the gRPC client refuses to replay a request to an advertised TCP leader over insecure credentials, unless the configuration opts out (ruling 152, Codex #1706).

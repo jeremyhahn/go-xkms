@@ -100,6 +100,14 @@ func (t *Transport) notLeaderInterceptor(
 		return err
 	}
 
+	// The leader is a server-supplied target, so it passes the same
+	// secure-channel guard as the configured address: a unix initial address
+	// does not license replaying the request to a TCP leader in plaintext
+	// (ruling 152).
+	if guardErr := t.requireSecureTarget(leaderAddr); guardErr != nil {
+		return guardErr
+	}
+
 	leaderConn, dialErr := grpc.NewClient(leaderAddr, append([]grpc.DialOption{t.credsOpt}, t.authDialOptions()...)...)
 	if dialErr != nil {
 		// Dialing the leader is best-effort: if it fails, the caller still

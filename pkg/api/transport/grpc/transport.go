@@ -93,7 +93,14 @@ func NewWithConfig(cfg *transport.Config) (*Transport, error) {
 // password and registry credential a request carries would cross the
 // network in the clear.
 func (t *Transport) requireSecureChannel() error {
-	plaintext := !t.config.TLSEnabled && !transport.IsUnixEndpoint(t.config.Address)
+	return t.requireSecureTarget(t.config.Address)
+}
+
+// requireSecureTarget applies the secure-channel guard to one dial target:
+// the configured address or a leader the server advertises. With TLS
+// disabled, only a unix target passes without the opt-out.
+func (t *Transport) requireSecureTarget(target string) error {
+	plaintext := !t.config.TLSEnabled && !transport.IsUnixEndpoint(target)
 	return t.config.RequireSecureChannel("grpc", plaintext)
 }
 
