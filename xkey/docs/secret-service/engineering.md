@@ -184,7 +184,7 @@ specific names to decide whether to retry after a prompt:
   a live daemon under `dbus-run-session`; run via `make
   integration-test-secretservice` in the devcontainer. As of this writing
   the devcontainer image installs neither `libsecret-tools` nor git's
-  libsecret credential helper (see `.devcontainer/Dockerfile`); the test
+  libsecret credential helper (see `build/docker/devcontainer/Dockerfile`); the test
   fails loudly with that explanation (`requireTool`) rather than skip —
   installing those packages is a separate, owner-approved devcontainer
   change this issue's investigation flagged but did not make.

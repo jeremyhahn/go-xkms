@@ -1065,10 +1065,16 @@ clientPIN subcommand `0x06` calls `VerifyUser` before it mints the token
 and answers `CTAP2_ERR_UV_INVALID`, or `CTAP2_ERR_UV_BLOCKED` once the retries
 are spent; a cancelled request spends none.
 
-Status: shipped on the desktop. The wire definition, the verifier and the
-authenticator path are in place, tested end to end against the `attesttest`
-phone (`device_session_verify_user_test.go`). The phone side is xkey-android
-#13.
+
+Status: shipped on the desktop. The wire definition (`pkg/pairingproto/verify_user.go:50`),
+the verifier (`xkey/pkg/attestation/verify_user.go:206`) and the authenticator
+path (`pkg/fido2/authenticator/cmd_clientpin.go:854`) are in place, tested end
+to end against the `attesttest` phone (`device_session_verify_user_test.go`);
+the authenticator no longer refuses UV tokens when its key backend is a
+`UserVerifier` (#1145). Three choices of ruling 167 remain owner-open
+(handbook#465) and ship with these defaults: (a) the desktop persists nothing
+about the UVK, (b) biometric-only `userAuthType` 2, (c) no RP name on the
+phone prompt. The phone side is xkey-android #13.
 
 ## Configuration
 

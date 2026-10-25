@@ -30,13 +30,13 @@ Backends covered here:
 
 | Backend | Dependency | Make target |
 |---|---|---|
-| software | none; no compose file, runs `./pkg/backend/software/...` in the devcontainer | `integration-test-software` (`Makefile:1980`) |
-| tpm2 | `tpm-simulator` (swtpm) | `integration-test-tpm2` (`Makefile:2328`) |
-| pkcs11 | SoftHSM2 inside the test image | `integration-test-pkcs11` (`Makefile:2004`) |
-| awskms | `floci` (Floci AWS emulator) | `integration-test-awskms` (`Makefile:2417`) |
-| gcpkms | `floci-gcp` (Floci GCP emulator) plus a mock client | `integration-test-gcpkms` (`Makefile:2427`) |
-| azurekv | none; mock client | `integration-test-azurekv` (`Makefile:2436`) |
-| vault | `vault` (HashiCorp Vault, dev mode) | `integration-test-vault` (`Makefile:2445`) |
+| software | none; no compose file, runs `./pkg/backend/software/...` in the devcontainer | `integration-test-software` (`Makefile:2028`) |
+| tpm2 | `tpm-simulator` (swtpm) | `integration-test-tpm2` (`Makefile:2376`) |
+| pkcs11 | SoftHSM2 inside the test image | `integration-test-pkcs11` (`Makefile:2052`) |
+| awskms | `floci` (Floci AWS emulator) | `integration-test-awskms` (`Makefile:2465`) |
+| gcpkms | `floci-gcp` (Floci GCP emulator) plus a mock client | `integration-test-gcpkms` (`Makefile:2475`) |
+| azurekv | none; mock client | `integration-test-azurekv` (`Makefile:2484`) |
+| vault | `vault` (HashiCorp Vault, dev mode) | `integration-test-vault` (`Makefile:2493`) |
 
 ## Quick Start
 
@@ -46,10 +46,21 @@ Backends covered here:
 make integration-test
 ```
 
-`integration-test` (`Makefile:1752`) runs a much longer list than the seven
+`integration-test` (`Makefile:1800`) runs a much longer list than the seven
 backends above: pkcs8, the PKCS#11 barrier and module suites, ACME
 challenges, storage, quantum, FROST, WebAuthn, FIDO2, the CLI, API and SDK
 suites, and more. Read the target's prerequisites for the current list.
+
+### In CI
+
+CI's full-tier `integration` job (`.github/workflows/ci.yml`) runs
+`make integration-test COMPOSE_RUN_ID=ci-<run>-<attempt>`. Every compose
+project is then named `go-xkms-ci-<run>-<attempt>-<suite>` (`COMPOSE_NS`,
+`Makefile:341`). The job's first step,
+`scripts/reap-stale-ci-stacks.sh go-xkms-ci-`, removes stacks that a dead
+runner left behind. Its last step, `make clean-test-containers`, runs under
+`if: always()`. The job runs on a push to `main`, on `workflow_dispatch`,
+and on a pull request labelled `ci:full`.
 
 ### Run Individual Backend Tests
 
@@ -66,9 +77,9 @@ make integration-test-vault
 ## Backend-Specific Details
 
 The Make targets run Compose as `docker compose -p <namespace>-<backend>`
-(the `compose` macro, `Makefile:290`). Running Compose by hand works too,
+(the `compose` macro, `Makefile:341`). Running Compose by hand works too,
 but the test images mount the `gomodauth` build secret from
-`.devcontainer/gomodauth.env`: run `make stage-gomodauth` (`Makefile:3465`)
+`build/docker/devcontainer/gomodauth.env`: run `make stage-gomodauth` (`Makefile:3530`)
 first.
 
 ### Software
@@ -209,7 +220,7 @@ services:
 
 secrets:
   gomodauth:
-    file: ../../../.devcontainer/gomodauth.env
+    file: ../../../build/docker/devcontainer/gomodauth.env
 ```
 
 The test command lives in each `Dockerfile`'s `CMD` (for awskms:

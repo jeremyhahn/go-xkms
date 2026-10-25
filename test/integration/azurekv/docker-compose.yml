@@ -13,9 +13,9 @@ services:
     working_dir: /app
 
 # Staged by `make stage-gomodauth` (dependency-resolution.md §6) into the
-# gitignored .devcontainer/gomodauth.env; empty when no Gitea credentials are
+# gitignored build/docker/devcontainer/gomodauth.env; empty when no Gitea credentials are
 # available, in which case the Dockerfile's optional secret mount falls back
 # to public module resolution.
 secrets:
   gomodauth:
-    file: ../../../.devcontainer/gomodauth.env
+    file: ../../../build/docker/devcontainer/gomodauth.env

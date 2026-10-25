@@ -189,8 +189,8 @@ func TestTPMExtraDataRefusesWhatItCannotHash(t *testing.T) {
 	_, err := TPMExtraData(coseES256, "")
 	assert.ErrorIs(t, err, ErrTPMAttestationInvalid)
 
-	// HasherFromCOSEAlg would default an unknown identifier to SHA-256. That
-	// is a guess about what the device hashed, and a guess is not a check.
+	// An identifier that names no signature algorithm is refused, never
+	// defaulted to a hash: a guess about what the device hashed is not a check.
 	_, err = TPMExtraData(0, tpmKeyAuth)
 	assert.ErrorIs(t, err, ErrTPMAttestationInvalid)
 }

@@ -102,7 +102,8 @@ add_violations "$newcreds_matches"
 
 if [ -n "$violations" ]; then
 	echo "check-insecure-tls.sh: FORBIDDEN insecure TLS/transport usage outside allowlist (go-xkms#1284):" >&2
-	printf '%s\n' "$violations" | sed "s#^#  #" >&2
+	# path:line only, never the matched source line (handbook ci-standard.md §5).
+	printf '%s\n' "$violations" | cut -d: -f1,2 | sed "s#^#  #" >&2
 	exit 1
 fi
 

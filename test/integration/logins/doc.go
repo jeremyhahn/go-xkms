@@ -36,5 +36,5 @@
 //
 // Run via `make integration-test-logins` in the devcontainer, which starts
 // the compose xkms-server and publishes its CA and first-boot admin
-// credential to /tmp/xkms (see .devcontainer/scripts/ensure-server-ca.sh).
+// credential to /tmp/xkms (see build/docker/devcontainer/scripts/ensure-server-ca.sh).
 package logins
