@@ -368,18 +368,24 @@ func AttestedKeyFingerprintHex(leaf *x509.Certificate) (string, error) {
 // cannot be — that impossibility is why version 2 exists. What it still
 // usefully binds is purpose, which is why it is checked at all.
 func VerifyGenesisChallenge(challenge []byte) error {
-	prefix := []byte(AttestGenesisChallenge)
+	return verifyGenesisPrefix(challenge, AttestGenesisChallenge, ErrAttestGenesisChallenge, "device-key")
+}
+
+// verifyGenesisPrefix checks that challenge begins with prefix, the genesis
+// challenge a key role is generated under, and refuses with sentinel
+// otherwise. role names the key role in the refusal's detail.
+func verifyGenesisPrefix(challenge []byte, prefix string, sentinel error, role string) error {
 	if len(challenge) < len(prefix) {
 		return &DetailError{
-			Err:    ErrAttestGenesisChallenge,
+			Err:    sentinel,
 			Detail: ": challenge is " + strconv.Itoa(len(challenge)) + " bytes, want at least " + strconv.Itoa(len(prefix)),
 		}
 	}
 	// A plain comparison: the genesis challenge is a public, non-secret field
 	// of a certificate anyone can read, so there is no secret here for a
 	// timing side channel to leak.
-	if string(challenge[:len(prefix)]) != AttestGenesisChallenge {
-		return &DetailError{Err: ErrAttestGenesisChallenge, Detail: ": challenge does not carry the xkey device-key prefix"}
+	if string(challenge[:len(prefix)]) != prefix {
+		return &DetailError{Err: sentinel, Detail: ": challenge does not carry the xkey " + role + " prefix"}
 	}
 	return nil
 }

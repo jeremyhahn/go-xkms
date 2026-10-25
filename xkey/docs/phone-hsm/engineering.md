@@ -962,6 +962,102 @@ static public key, so an unrelated initiator's handshake fails
 (`ErrStaticKeyMismatch`) before the connection reaches the live-attestation
 step at all.
 
+## On-demand user verification (ruling 167)
+
+`local.verifyUser` is the desktop asking the phone to verify its user **now**
+and prove it did, so the FIDO2 authenticator can mint a `pinUvAuthToken`
+(CTAP 2.1 §6.5.5.7, `getPinUvAuthTokenUsingUvWithPermissions`). It is a
+desktop-to-phone request on an established Noise session. The wire definition
+is `pkg/pairingproto/verify_user.go`; the byte-exact values are pinned by
+`pkg/pairingproto/attest_vectors_test.go`.
+
+**The user-verification key (UVK).** The proof is a signature by a dedicated
+key, never the DAK: the DAK signs without a prompt, which reconnect liveness
+needs, and one key cannot do both. The phone MUST generate the UVK in Android
+Keystore as:
+
+| Property | Value |
+|---|---|
+| Algorithm | EC P-256, `PURPOSE_SIGN`, digest SHA-256 |
+| User authentication | `setUserAuthenticationRequired(true)` with `setUserAuthenticationParameters(0, AUTH_BIOMETRIC_STRONG)`: a timeout of 0, so every signature needs a fresh biometric |
+| Attestation challenge | begins with `xkey-user-verification-v1`; trailing bytes are reserved for the prover |
+| Hardware | TEE or StrongBox (StrongBox when available) |
+
+The UVK is persistent but not an identity: enrolling a new biometric
+invalidates it (`setInvalidatedByBiometricEnrollment`, the default), and the
+phone then generates a new one. Because the desktop verifies the chain on every
+use and persists nothing, a regenerated UVK needs no re-pairing.
+
+**Request** (`LocalVerifyUserParams`):
+
+| Field | Type | Value |
+|---|---|---|
+| `protocolVersion` | int | `2` |
+| `nonce` | bytes (base64) | 32 fresh random bytes from the desktop |
+
+It carries no purpose and no channel binding, for the reason given for
+`local.attestDevice` above: the purpose is fixed by the method, and each side
+derives the binding from its own session.
+
+**Transcript.** The version 2 transcript, unchanged, with the purpose
+`verify-user` and the UVK's fingerprint:
+
+```
+"xkey-attest-transcript-v1" || 0x0b || "verify-user"
+                            || nonce(32) || channelBinding(32) || SHA-256(UVK SPKI)(32)
+```
+
+`channelBinding` is `pairingproto.ComputeAttestChannelBinding` over this
+session. The phone shows the biometric prompt (a `BiometricPrompt` with a
+`CryptoObject` wrapping the UVK `Signature`) and signs the transcript as
+`SHA256withECDSA`, ASN.1 DER.
+
+**Result** (`LocalVerifyUserResult`):
+
+| Field | Type | Value |
+|---|---|---|
+| `protocolVersion` | int | `2` |
+| `certificateChain` | array of bytes (base64 DER) | the UVK's attestation chain, leaf first |
+| `signature` | bytes (base64) | the UVK's signature over the transcript |
+| `signatureAlgorithm` | string | `ES256` |
+
+A cancelled prompt, a lockout or a missing UVK is an RPC error, never a result.
+
+**Desktop verification.** The desktop mints nothing unless every check passes,
+in this order:
+
+1. The response echoes the request's `id` and `generation`, and carries no
+   RPC error.
+2. `protocolVersion` is 2; anything else is `ErrAttestProtocolDowngrade`.
+3. The chain verifies to a trusted Android hardware root with the DAK's
+   policy, `VerifyAndroidDeviceKey`: TEE or StrongBox, locked and verified
+   boot, generated origin, signing purpose, an allowed application.
+4. The leaf's attestation challenge begins with `xkey-user-verification-v1`
+   (`VerifyUserVerificationGenesisChallenge`), so a DAK chain cannot stand in
+   for a UVK.
+5. The leaf's `teeEnforced` list requires a fresh user authentication on every
+   use: `userAuthType` (tag 504) is `2` (biometric), `authTimeout` (tag 505)
+   and `allowWhileOnBody` (tag 506) are absent, and `noAuthRequired` (tag 503)
+   is absent from both lists.
+6. The transcript is rebuilt from the nonce the desktop sent, the binding it
+   derived and the fingerprint of the verified leaf, and the signature verifies
+   under the leaf as ES256 on P-256 (`VerifyAttestChallengeSignature`).
+7. The challenge is answered once: a nonce is consumed by its first
+   verification, and one that has outlived the biometric prompt's timeout is
+   refused.
+
+**Learning the key, and the version rule.** The UVK chain travels in every
+result and is verified every time, so the desktop learns the key on first use
+and keeps nothing. The pairing record does not change and
+`attestation_protocol_version` stays 2. A later revision that pins the UVK
+fingerprint in the pairing record changes the record and must bump that
+version, with the same only-moves-up rule.
+
+Status: the wire definition is in place; the desktop verifier (step 5 needs the
+Android extension parser to expose tags 503 to 506) and the authenticator's
+`pinUvAuthToken` minting are the next change. Until then the authenticator
+keeps refusing UV tokens (#1145).
+
 ## Configuration
 
 Pairing keys and the expected device fingerprint, from a completed pairing.
