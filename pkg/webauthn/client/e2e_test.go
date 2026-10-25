@@ -295,7 +295,8 @@ func TestE2E_TransportRelyingParty_Login_AuthenticatorFailure(t *testing.T) {
 func connectTransportClient(t *testing.T, serverURL string) *restclient.Transport {
 	t.Helper()
 
-	tr, err := restclient.NewWithConfig(&xkmstransport.Config{Address: serverURL})
+	// A plaintext loopback httptest server: the opt-out's one use (ruling 152).
+	tr, err := restclient.NewWithConfig(&xkmstransport.Config{Address: serverURL, AllowInsecureTransport: true})
 	require.NoError(t, err)
 	require.NoError(t, tr.Connect(context.Background()))
 	t.Cleanup(func() { _ = tr.Close() })
