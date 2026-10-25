@@ -99,3 +99,22 @@ func (h *SigningKeyHandlers) SignCoRIMHandler(w http.ResponseWriter, r *http.Req
 	resp, err := h.servicer.SignCoRIM(r.Context(), &req)
 	respondSigningKey(w, resp, err, http.StatusOK)
 }
+
+// SignImageHandler handles POST /api/v1/attestation/signing-keys/sign-image:
+// it signs the request's image with the key ResolveSigningKey names for the
+// image's repository and pushes the attestation to the registry. The
+// registry password in the body is wiped on every path.
+func (h *SigningKeyHandlers) SignImageHandler(w http.ResponseWriter, r *http.Request) {
+	var req transport.SignImageRequest
+	defer func() {
+		if req.Registry != nil {
+			req.Registry.Password.Wipe()
+		}
+	}()
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeError(w, ErrInvalidRequest, http.StatusBadRequest)
+		return
+	}
+	resp, err := h.servicer.SignImage(r.Context(), &req)
+	respondSigningKey(w, resp, err, http.StatusOK)
+}

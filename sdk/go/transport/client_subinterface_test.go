@@ -689,3 +689,7 @@ func (*stubClient) ResolveSigningKey(context.Context, *ResolveSigningKeyRequest)
 func (*stubClient) SignCoRIM(context.Context, *SignCoRIMRequest) (*SignedCoRIM, error) {
 	return nil, nil
 }
+
+func (*stubClient) SignImage(context.Context, *SignImageRequest) (*SignedImage, error) {
+	return nil, nil
+}

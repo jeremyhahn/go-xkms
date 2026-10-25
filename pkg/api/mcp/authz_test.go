@@ -755,6 +755,7 @@ var goldenMethodPermissions = map[string]string{
 	"attestation.signing_key.delete":     "attestation_signing_keys:bind",
 	"attestation.signing_key.resolve":    "attestation_signing_keys:get",
 	"attestation.signing_key.sign_corim": "attestation_signing_keys:sign",
+	"attestation.signing_key.sign_image": "attestation_signing_keys:sign",
 
 	// Attested-caller evidence.
 	"peer.attestation.challenge": "peer_attestation:challenge",

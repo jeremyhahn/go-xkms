@@ -369,6 +369,9 @@ type ResolveSigningKeyRequest = pkgtransport.ResolveSigningKeyRequest
 type SigningKeyResolution = pkgtransport.SigningKeyResolution
 type SignCoRIMRequest = pkgtransport.SignCoRIMRequest
 type SignedCoRIM = pkgtransport.SignedCoRIM
+type SignImageRequest = pkgtransport.SignImageRequest
+type ImageRegistryCredentials = pkgtransport.ImageRegistryCredentials
+type SignedImage = pkgtransport.SignedImage
 type OIDCDeviceLogin = pkgtransport.OIDCDeviceLogin
 type OIDCAccessToken = pkgtransport.OIDCAccessToken
 

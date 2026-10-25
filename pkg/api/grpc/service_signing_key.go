@@ -140,3 +140,19 @@ func (s *Service) SignCoRIM(ctx context.Context, req *pb.SignCoRIMRequest) (*pb.
 		return pbconv.SignedCoRIMToProto(signed), nil
 	})
 }
+
+// SignImage signs an image with the key ResolveSigningKey returns for the
+// image's repository. The audit record names the reference, never the
+// registry credentials.
+func (s *Service) SignImage(ctx context.Context, req *pb.SignImageRequest) (*pb.SignedImage, error) {
+	if err := s.authorize(ctx, auth.ResourceAttestationSigningKeys, auth.ActionSign, req.GetReference()); err != nil {
+		return nil, err
+	}
+	return signingKeyCall(s, func(x *xkms.XKMSService) (*pb.SignedImage, error) {
+		signed, err := x.SignImage(ctx, pbconv.SignImageRequestFromProto(req))
+		if err != nil {
+			return nil, err
+		}
+		return pbconv.SignedImageToProto(signed), nil
+	})
+}

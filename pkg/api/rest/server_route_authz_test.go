@@ -148,6 +148,7 @@ var gatedRoutePermissions = []gatedRoute{
 	{http.MethodDelete, "/api/v1/attestation/signing-keys/binding?repository=acme/app", "attestation_signing_keys", "bind"},
 	{http.MethodGet, "/api/v1/attestation/signing-keys/resolve?repository=acme/app", "attestation_signing_keys", "get"},
 	{http.MethodPost, "/api/v1/attestation/signing-keys/sign-corim", "attestation_signing_keys", "sign"},
+	{http.MethodPost, "/api/v1/attestation/signing-keys/sign-image", "attestation_signing_keys", "sign"},
 	{http.MethodPost, "/api/v1/peer-attestation/challenge", "peer_attestation", "challenge"},
 	{http.MethodPost, "/api/v1/peer-attestation/evidence", "peer_attestation", "submit"},
 

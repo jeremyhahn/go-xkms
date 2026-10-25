@@ -539,6 +539,7 @@ var rpcMethods = map[string]rpcMethod{
 	"attestation.signing_key.delete":     handle(auth.ResourceAttestationSigningKeys, auth.ActionBind, (*Server).handleSigningKeyDelete),
 	"attestation.signing_key.resolve":    handle(auth.ResourceAttestationSigningKeys, auth.ActionGet, (*Server).handleSigningKeyResolve),
 	"attestation.signing_key.sign_corim": handle(auth.ResourceAttestationSigningKeys, auth.ActionSign, (*Server).handleSigningKeySignCoRIM),
+	"attestation.signing_key.sign_image": handle(auth.ResourceAttestationSigningKeys, auth.ActionSign, (*Server).handleSigningKeySignImage),
 
 	// Attested-caller evidence (pkg/attestation/peergate) --
 	// pkg/auth.ResourcePeerAttestation, an xkms-owned resource family scoped

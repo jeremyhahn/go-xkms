@@ -1897,3 +1897,7 @@ func (*authMockClient) ResolveSigningKey(context.Context, *transport.ResolveSign
 func (*authMockClient) SignCoRIM(context.Context, *transport.SignCoRIMRequest) (*transport.SignedCoRIM, error) {
 	return nil, nil
 }
+
+func (*authMockClient) SignImage(context.Context, *transport.SignImageRequest) (*transport.SignedImage, error) {
+	return nil, nil
+}

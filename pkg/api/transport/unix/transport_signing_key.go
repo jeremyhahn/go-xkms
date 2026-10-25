@@ -87,3 +87,12 @@ func (t *Transport) SignCoRIM(ctx context.Context, req *transport.SignCoRIMReque
 	}
 	return c.SignCoRIM(ctx, req)
 }
+
+// SignImage signs an image with the key that signs its repository.
+func (t *Transport) SignImage(ctx context.Context, req *transport.SignImageRequest) (*transport.SignedImage, error) {
+	c, err := t.signingKeys()
+	if err != nil {
+		return nil, err
+	}
+	return c.SignImage(ctx, req)
+}

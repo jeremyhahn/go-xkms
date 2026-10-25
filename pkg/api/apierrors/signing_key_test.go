@@ -22,6 +22,7 @@ import (
 
 	"github.com/jeremyhahn/go-xkms/pkg/attestation/appraisal"
 	"github.com/jeremyhahn/go-xkms/pkg/attestation/refvalue"
+	"github.com/jeremyhahn/go-xkms/pkg/image"
 	"github.com/jeremyhahn/go-xkms/pkg/xkms"
 )
 
@@ -46,6 +47,12 @@ func TestSigningKeyClassOf(t *testing.T) {
 		{&xkms.CoRIMSignError{Repository: "acme/app", KeyID: "release-signing", Err: refvalue.ErrMeta}, ClassInvalidArgument},
 		{&xkms.CoRIMSignError{Repository: "acme/app", KeyID: "release-signing", Err: refvalue.ErrSignerKey}, ClassFailedPrecondition},
 		{xkms.ErrKeyNotFound, ClassFailedPrecondition},
+		{xkms.ErrSystemTenantImageSigning, ClassFailedPrecondition},
+		{&xkms.ImageSignError{Reference: "registry.example/acme/app:1", KeyID: "release-signing", Err: image.ErrRegistryCredentials}, ClassInvalidArgument},
+		{&xkms.ImageSignError{Reference: "registry.example/acme/app:1", KeyID: "release-signing", Err: image.ErrManifestNotFound}, ClassNotFound},
+		{&xkms.ImageSignError{Reference: "registry.example/acme/app:1", KeyID: "release-signing", Err: image.ErrRegistryUnavailable}, ClassUnavailable},
+		{&xkms.ImageSignError{Reference: "registry.example/acme/app:1", KeyID: "release-signing", Err: image.ErrRegistryAuth}, ClassFailedPrecondition},
+		{image.ErrInvalidReference, ClassInvalidArgument},
 	}
 	for _, tt := range tests {
 		got, ok := SigningKeyClassOf(tt.err)

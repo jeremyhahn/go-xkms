@@ -161,6 +161,76 @@ func SignedCoRIMFromProto(s *pb.SignedCoRIM) *transport.SignedCoRIM {
 	return out
 }
 
+// SignImageRequestToProto converts a transport SignImageRequest. The
+// password is shared with r, not copied, so wiping r wipes it.
+func SignImageRequestToProto(r *transport.SignImageRequest) *pb.SignImageRequest {
+	out := &pb.SignImageRequest{
+		Reference:     r.Reference,
+		PredicateType: r.PredicateType,
+		Predicate:     r.Predicate,
+	}
+	if r.Registry != nil {
+		out.Registry = &pb.ImageRegistryCredentials{
+			Username: r.Registry.Username,
+			Password: r.Registry.Password,
+		}
+	}
+	return out
+}
+
+// SignImageRequestFromProto converts a protobuf SignImageRequest. The
+// password is shared with r, not copied, so the service's wipe reaches the
+// decoded message too.
+func SignImageRequestFromProto(r *pb.SignImageRequest) *transport.SignImageRequest {
+	out := &transport.SignImageRequest{
+		Reference:     r.GetReference(),
+		PredicateType: r.GetPredicateType(),
+		Predicate:     r.GetPredicate(),
+	}
+	if registry := r.GetRegistry(); registry != nil {
+		out.Registry = &transport.ImageRegistryCredentials{
+			Username: registry.GetUsername(),
+			Password: registry.GetPassword(),
+		}
+	}
+	return out
+}
+
+// SignedImageToProto converts a transport SignedImage.
+func SignedImageToProto(s *transport.SignedImage) *pb.SignedImage {
+	if s == nil {
+		return nil
+	}
+	return &pb.SignedImage{
+		Key:             SigningKeyResolutionToProto(&s.Key),
+		Digest:          s.Digest,
+		Envelope:        s.Envelope,
+		Certificate:     s.Certificate,
+		Referrer:        s.Referrer,
+		ReferrerIndexed: s.ReferrerIndexed,
+		AttestationTag:  s.AttestationTag,
+	}
+}
+
+// SignedImageFromProto converts a protobuf SignedImage.
+func SignedImageFromProto(s *pb.SignedImage) *transport.SignedImage {
+	if s == nil {
+		return nil
+	}
+	out := &transport.SignedImage{
+		Digest:          s.GetDigest(),
+		Envelope:        s.GetEnvelope(),
+		Certificate:     s.GetCertificate(),
+		Referrer:        s.GetReferrer(),
+		ReferrerIndexed: s.GetReferrerIndexed(),
+		AttestationTag:  s.GetAttestationTag(),
+	}
+	if key := SigningKeyResolutionFromProto(s.GetKey()); key != nil {
+		out.Key = *key
+	}
+	return out
+}
+
 // Compile-time check that the client serves the whole signing-key API.
 var _ transport.SigningKeyService = SigningKeyClient{}
 
@@ -239,4 +309,16 @@ func (c SigningKeyClient) SignCoRIM(ctx context.Context, req *transport.SignCoRI
 		return nil, err
 	}
 	return SignedCoRIMFromProto(resp), nil
+}
+
+// SignImage implements transport.SigningKeyService.
+func (c SigningKeyClient) SignImage(ctx context.Context, req *transport.SignImageRequest) (*transport.SignedImage, error) {
+	if req == nil {
+		return nil, ErrNilRequest
+	}
+	resp, err := c.Client.SignImage(ctx, SignImageRequestToProto(req))
+	if err != nil {
+		return nil, err
+	}
+	return SignedImageFromProto(resp), nil
 }

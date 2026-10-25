@@ -1013,3 +1013,7 @@ func (*noopClient) ResolveSigningKey(context.Context, *transport.ResolveSigningK
 func (*noopClient) SignCoRIM(context.Context, *transport.SignCoRIMRequest) (*transport.SignedCoRIM, error) {
 	return nil, nil
 }
+
+func (*noopClient) SignImage(context.Context, *transport.SignImageRequest) (*transport.SignedImage, error) {
+	return nil, nil
+}

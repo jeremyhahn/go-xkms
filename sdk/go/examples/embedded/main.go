@@ -907,3 +907,7 @@ func (*MockXKMSService) ResolveSigningKey(context.Context, *transport.ResolveSig
 func (*MockXKMSService) SignCoRIM(context.Context, *transport.SignCoRIMRequest) (*transport.SignedCoRIM, error) {
 	return nil, nil
 }
+
+func (*MockXKMSService) SignImage(context.Context, *transport.SignImageRequest) (*transport.SignedImage, error) {
+	return nil, nil
+}

@@ -16,11 +16,19 @@ package xkms
 import (
 	"context"
 	"crypto"
+	"crypto/x509"
 	"errors"
 
+	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
+	"github.com/jeremyhahn/go-xkms/pkg/api/transport"
 	"github.com/jeremyhahn/go-xkms/pkg/attestation/appraisal"
 	"github.com/jeremyhahn/go-xkms/pkg/attestation/refvalue"
 	"github.com/jeremyhahn/go-xkms/pkg/auth"
+	"github.com/jeremyhahn/go-xkms/pkg/ca/provider"
+	"github.com/jeremyhahn/go-xkms/pkg/encoding"
+	"github.com/jeremyhahn/go-xkms/pkg/errs"
+	"github.com/jeremyhahn/go-xkms/pkg/image"
+	"github.com/jeremyhahn/go-xkms/sdk/go/secure"
 )
 
 // The per-repository signing-key binding service layer (SPEC
@@ -81,6 +89,33 @@ func (e *CoRIMSignError) Error() string {
 
 // Unwrap returns the signer's failure.
 func (e *CoRIMSignError) Unwrap() error {
+	return e.Err
+}
+
+// ErrSystemTenantImageSigning is returned by SignImage for the system tenant.
+// Ruling 134 makes the tenant release signing key the image signer, and the
+// system tenant has none.
+var ErrSystemTenantImageSigning = errors.New("attestation: the system tenant has no release signing key to sign images with")
+
+// ImageSignError reports that SignImage resolved a signing key but could not
+// sign the image with it: the certificate request, the registry or the
+// signer failed. It never carries the registry credentials.
+type ImageSignError struct {
+	// Reference is the image reference that was to be signed.
+	Reference string
+	// KeyID is the signing key ResolveSigningKey named.
+	KeyID string
+	// Err is the failure.
+	Err error
+}
+
+// Error returns the reference, the key and the failure.
+func (e *ImageSignError) Error() string {
+	return "attestation: signing image " + e.Reference + " with key " + e.KeyID + ": " + e.Err.Error()
+}
+
+// Unwrap returns the failure.
+func (e *ImageSignError) Unwrap() error {
 	return e.Err
 }
 
@@ -250,4 +285,159 @@ func (s *XKMSService) SignCoRIM(ctx context.Context, req *appraisal.SignCoRIMReq
 		return nil, &CoRIMSignError{Repository: req.Repository, KeyID: key.KeyID, Err: err}
 	}
 	return &appraisal.SignedCoRIM{Key: *key, CoRIM: signed}, nil
+}
+
+// SignImage signs the image req.Reference names with the key
+// ResolveSigningKey resolves for the reference's repository in the caller's
+// tenant: the repository's bound key, or the tenant's release signing key
+// (ruling 134). The key signs through its tenant-scoped backend Signer and
+// never leaves it. Each call has the service CA issue the key a code-signing
+// certificate, then drives the pkg/image Signer, which pushes the DSSE
+// attestation as an OCI 1.1 referrer and to the image's cosign ".att" tag.
+//
+// The registry credentials in req are used for this call only. The password
+// is wiped on every path, and neither it nor the username appears in an
+// error. The system tenant has no release key and is refused with
+// ErrSystemTenantImageSigning.
+func (s *XKMSService) SignImage(ctx context.Context, req *transport.SignImageRequest) (*transport.SignedImage, error) {
+	if req == nil {
+		return nil, appraisal.ErrNilRequest
+	}
+	if req.Registry != nil {
+		defer req.Registry.Password.Wipe()
+	}
+	appraiser, tenant, err := s.attestationAppraiser(ctx)
+	if err != nil {
+		return nil, err
+	}
+	if err := s.authorizeSigningKeys(ctx, auth.ActionSign); err != nil {
+		return nil, err
+	}
+	if qrdbsdk.IsSystemTenant(tenant) {
+		return nil, ErrSystemTenantImageSigning
+	}
+	ref, err := image.ParseReference(req.Reference)
+	if err != nil {
+		return nil, err
+	}
+	if err := appraisal.ValidateRepository(ref.Repository); err != nil {
+		return nil, err
+	}
+	issuer := s.ca.load()
+	if issuer == nil {
+		return nil, ErrNotConfigured
+	}
+	key, err := appraiser.ResolveSigningKey(ctx, tenant, &appraisal.ResolveSigningKeyRequest{Repository: ref.Repository})
+	if err != nil {
+		return nil, err
+	}
+	signer, err := s.repositorySigner(ctx, tenant, key)
+	if err != nil {
+		return nil, err
+	}
+	signImageErr := func(err error) error {
+		return &ImageSignError{Reference: ref.String(), KeyID: key.KeyID, Err: err}
+	}
+
+	certificate, err := image.RequestCodeSigningCertificate(ctx, issuer, signer, tenant, ref.Repository)
+	if err != nil {
+		return nil, signImageErr(err)
+	}
+	chain, err := caChain(issuer)
+	if err != nil {
+		return nil, signImageErr(err)
+	}
+	auth, err := registryAuth(ctx, req.Registry)
+	if err != nil {
+		return nil, signImageErr(err)
+	}
+	if auth != nil && auth.Password != nil {
+		defer auth.Password.Destroy()
+	}
+	registry, err := s.newImageRegistry(auth)
+	if err != nil {
+		return nil, signImageErr(err)
+	}
+	result, err := signImage(ctx, registry, &image.SignerConfig{
+		Signer:      signer,
+		Certificate: certificate,
+		Chain:       chain,
+		Registry:    registry,
+	}, req)
+	if err != nil {
+		return nil, signImageErr(err)
+	}
+	certificatePEM, err := encoding.EncodeCertificatePEM(certificate)
+	if err != nil {
+		return nil, signImageErr(err)
+	}
+	return &transport.SignedImage{
+		Key:             *key,
+		Digest:          result.Digest,
+		Envelope:        result.Envelope,
+		Certificate:     certificatePEM,
+		Referrer:        result.Push.Referrer.Digest,
+		ReferrerIndexed: result.Push.ReferrerIndexed,
+		AttestationTag:  result.Push.AttestationTag,
+	}, nil
+}
+
+// signImage signs req's image with a pkg/image Signer built from cfg and
+// closes registry afterwards; a failure to close is reported with any
+// signing failure.
+func signImage(ctx context.Context, registry image.RegistryClient, cfg *image.SignerConfig, req *transport.SignImageRequest) (*image.SignResult, error) {
+	signer, err := image.NewSigner(cfg)
+	if err != nil {
+		return nil, errors.Join(err, registry.Close())
+	}
+	result, err := signer.SignImage(ctx, req.Reference, &image.SignOptions{
+		PredicateType: req.PredicateType,
+		Predicate:     req.Predicate,
+	})
+	if err := errors.Join(err, registry.Close()); err != nil {
+		return nil, err
+	}
+	return result, nil
+}
+
+// caChain returns the service CA's certificate chain, the intermediates and
+// root an image verifier chains the code-signing certificate through.
+func caChain(issuer provider.CA) ([]*x509.Certificate, error) {
+	bundle, err := issuer.CABundle()
+	if err != nil {
+		return nil, err
+	}
+	return encoding.DecodeCertificateChainPEM(bundle)
+}
+
+// registryAuth seals the caller's registry credentials for one SignImage
+// call; nil credentials send none. The password is sealed into a
+// secure.Secret, which wipes the request's copy, and is opened only to build
+// each request's Authorization header. A password needs a username: the
+// registry client sends none without one.
+func registryAuth(ctx context.Context, credentials *transport.ImageRegistryCredentials) (*image.RegistryAuth, error) {
+	if credentials == nil || (credentials.Username == "" && len(credentials.Password) == 0) {
+		return nil, nil
+	}
+	if credentials.Username == "" {
+		return nil, &errs.Detail{Err: image.ErrRegistryCredentials, Detail: "password without a username"}
+	}
+	auth := &image.RegistryAuth{Username: credentials.Username}
+	if len(credentials.Password) > 0 {
+		password, err := secure.NewSecret(ctx, credentials.Password)
+		if err != nil {
+			return nil, &errs.Joined{Lead: image.ErrRegistryCredentials, Cause: err}
+		}
+		auth.Password = password
+	}
+	return auth, nil
+}
+
+// newImageRegistry builds the registry client for one SignImage call.
+func (s *XKMSService) newImageRegistry(auth *image.RegistryAuth) (image.RegistryClient, error) {
+	newRegistry := s.imageRegistry
+	if newRegistry == nil {
+		newRegistry = image.NewRegistryClient
+	}
+	return newRegistry(&image.RegistryOptions{Auth: auth})
 }

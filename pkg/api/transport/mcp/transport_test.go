@@ -443,6 +443,7 @@ var mockToolMethods = []string{
 	"attestation.signing_key.delete",
 	"attestation.signing_key.resolve",
 	"attestation.signing_key.sign_corim",
+	"attestation.signing_key.sign_image",
 	"xkms.resetLockout",
 	"xkms.rotateKey",
 	"xkms.createOTAImageKey",
