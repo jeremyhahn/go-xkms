@@ -267,6 +267,20 @@ Tests:
   `transport_signing_key_test.go`: the wire round trip and error mapping;
 - `sdk/ts/src/signingKey.test.ts`: the TypeScript wire contract.
 
+## Host and container evidence
+
+`HostEvidence.AKIntermediates` and `ContainerEvidence.AKIntermediates`
+(`pkg/attestation/appraisal/host.go:39`, `container.go:50`) carry the CA
+certificates between the AK certificate and the endorsed `ak-root`, issuer
+first, without the leaf. `akChainPEM` (`host.go:199`) forwards the leaf, then
+each intermediate, into `AppraiseQuoteRequest.AKCertificatePEM`, so an AK
+issued by an intermediate chains to a root-only endorsement. A nil entry is
+`ErrInvalidAKIntermediate` / `*AKIntermediateError` (`errors.go:91`, `:96`),
+re-exported by `sdk/go` as `ErrAttestationInvalidAKIntermediate` /
+`AttestationAKIntermediateError`. Tests:
+`TestAppraiser_AppraiseHostAKIntermediates` and
+`TestAppraiser_AppraiseContainerAKIntermediates`.
+
 ## Consumers
 
 - `pkg/config.AttestationConfig.Verifiers()` — config → `map[string]*Verifier`.

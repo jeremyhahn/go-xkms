@@ -85,7 +85,26 @@ var (
 	// ErrSigningKeyRefused indicates a signature by a key other than the one
 	// that signs the repository. See SignerRefusedError.
 	ErrSigningKeyRefused = errors.New("attestation: signature is not by the repository's signing key")
+
+	// ErrInvalidAKIntermediate indicates evidence whose attestation key
+	// intermediates hold a nil certificate. See AKIntermediateError.
+	ErrInvalidAKIntermediate = errors.New("attestation: invalid attestation key intermediate certificate")
 )
+
+// AKIntermediateError reports a nil entry in the attestation key
+// intermediates of host or container evidence.
+type AKIntermediateError struct {
+	// Index is the position of the nil entry.
+	Index int
+}
+
+// Error returns a human-readable description.
+func (e *AKIntermediateError) Error() string {
+	return "attestation: attestation key intermediate " + strconv.Itoa(e.Index) + " is nil"
+}
+
+// Unwrap returns ErrInvalidAKIntermediate.
+func (e *AKIntermediateError) Unwrap() error { return ErrInvalidAKIntermediate }
 
 // RepositoryError reports a repository that is not an OCI repository path.
 type RepositoryError struct {

@@ -197,6 +197,7 @@ type (
 	AttestationRepositoryError              = appraisal.RepositoryError
 	AttestationSigningKeyError              = appraisal.SigningKeyError
 	AttestationSignerRefusedError           = appraisal.SignerRefusedError
+	AttestationAKIntermediateError          = appraisal.AKIntermediateError
 )
 
 var (
@@ -217,4 +218,5 @@ var (
 	ErrAttestationInvalidRepository         = appraisal.ErrInvalidRepository
 	ErrAttestationInvalidSigningKey         = appraisal.ErrInvalidSigningKey
 	ErrAttestationSigningKeyRefused         = appraisal.ErrSigningKeyRefused
+	ErrAttestationInvalidAKIntermediate     = appraisal.ErrInvalidAKIntermediate
 )

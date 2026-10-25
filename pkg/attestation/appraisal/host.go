@@ -33,6 +33,11 @@ type HostEvidence struct {
 	// Quoted.
 	AKCertificate *x509.Certificate
 
+	// AKIntermediates are the CA certificates between AKCertificate and the
+	// endorsed AK root, issuer first, without the leaf. Optional: an AK the
+	// endorsed root issued directly needs none.
+	AKIntermediates []*x509.Certificate
+
 	// Nonce is the qualifying data the quote is bound to.
 	Nonce []byte
 
@@ -150,9 +155,11 @@ func (a *Appraiser) AppraiseHost(ctx context.Context, tenant string, ev *HostEvi
 		EventLog:        ev.EventLog,
 		ReferenceValues: ev.ReferenceValues,
 	}
-	if ev.AKCertificate != nil {
-		req.AKCertificatePEM = pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: ev.AKCertificate.Raw})
+	chainPEM, err := akChainPEM(ev.AKCertificate, ev.AKIntermediates)
+	if err != nil {
+		return nil, err
 	}
+	req.AKCertificatePEM = chainPEM
 	result, divergences, err := a.appraiseQuote(ctx, tenant, req, ev.LaunchPCRs)
 	if err != nil {
 		return nil, err
@@ -183,6 +190,26 @@ func (a *Appraiser) AppraiseHost(ctx context.Context, tenant string, ev *HostEvi
 		appraisal.Failures = append(appraisal.Failures, failure)
 	}
 	return appraisal, nil
+}
+
+// akChainPEM encodes the attestation key certificate, then each intermediate,
+// as the leaf-first PEM chain AppraiseQuoteRequest.AKCertificatePEM carries.
+// Without a leaf there is nothing to chain, and the AK certificate check
+// reports the certificate absent.
+func akChainPEM(leaf *x509.Certificate, intermediates []*x509.Certificate) ([]byte, error) {
+	for i, cert := range intermediates {
+		if cert == nil {
+			return nil, &AKIntermediateError{Index: i}
+		}
+	}
+	if leaf == nil {
+		return nil, nil
+	}
+	chainPEM := pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: leaf.Raw})
+	for _, cert := range intermediates {
+		chainPEM = append(chainPEM, pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: cert.Raw})...)
+	}
+	return chainPEM, nil
 }
 
 // ReferenceBankUncoveredError indicates the named reference values hold no

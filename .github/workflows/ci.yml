@@ -1235,7 +1235,7 @@ jobs:
   security:
     name: Security Scan
     runs-on: ubuntu-latest
-    timeout-minutes: 15   # #1587: ~2x 7.2m, slowest green (forge API, last 60 CI runs, 2026-10-17)
+    timeout-minutes: 30   # Infra #1206 (m1191): gosec takes 9-15m on the minis and omega; runs 64485, 64577, 64578 hit the old 15m at 15:02
     # No staging behind lint/build/arch-gates (ci-template v1.15): starts at
     # once; `changes` is needed only for its outputs.
     #

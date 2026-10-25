@@ -85,6 +85,21 @@ func (a *Authority) PublicKeyPEM() ([]byte, error) {
 
 // NewAuthority creates a self-signed CA.
 func NewAuthority(commonName string) (*Authority, error) {
+	return issueAuthority(commonName, nil)
+}
+
+// NewIntermediateAuthority creates a CA whose certificate parent signs, for
+// chains that run leaf, intermediate, root.
+func NewIntermediateAuthority(parent *Authority, commonName string) (*Authority, error) {
+	if parent == nil {
+		return nil, &FixtureError{Step: "issue intermediate CA: nil parent"}
+	}
+	return issueAuthority(commonName, parent)
+}
+
+// issueAuthority creates a CA signed by parent, or self-signed when parent is
+// nil.
+func issueAuthority(commonName string, parent *Authority) (*Authority, error) {
 	// local-keygen-ok: models an external AK or reference-value CA (a TPM vendor, a provider); the Verifier only verifies under it.
 	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
 	if err != nil {
@@ -99,7 +114,11 @@ func NewAuthority(commonName string) (*Authority, error) {
 		IsCA:                  true,
 		KeyUsage:              x509.KeyUsageCertSign | x509.KeyUsageDigitalSignature,
 	}
-	cert, err := createCertificate(tmpl, tmpl, &key.PublicKey, key)
+	issuer, signer := tmpl, crypto.Signer(key)
+	if parent != nil {
+		issuer, signer = parent.Certificate, parent.Key
+	}
+	cert, err := createCertificate(tmpl, issuer, &key.PublicKey, signer)
 	if err != nil {
 		return nil, err
 	}
