@@ -50,7 +50,14 @@ Thumbs.db
 
 # Module-fetch credentials are BuildKit secrets, never build context
 gomodauth*
+build/docker/devcontainer/.env
+build/docker/devcontainer/.env.tmp
+build/docker/devcontainer/gomodauth.env
+# The pre-#1558 location: a checkout upgraded across the move keeps its old,
+# untracked .devcontainer/.env (GITEA_GO_TOKEN), which `COPY . .` would bake
+# into an image layer.
 .devcontainer/.env
+.devcontainer/.env.tmp
 .devcontainer/gomodauth.env
 
 # Release tooling checked out by release.yml alongside the tagged source.

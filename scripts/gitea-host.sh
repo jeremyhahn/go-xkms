@@ -4,7 +4,7 @@
 #
 # Resolution order:
 #   1. GITEA_HOST in the environment.
-#   2. GITEA_HOST= in the gitignored .devcontainer/.env, beside GITEA_GO_TOKEN.
+#   2. GITEA_HOST= in the gitignored build/docker/devcontainer/.env, beside GITEA_GO_TOKEN.
 #   3. The repository's own origin remote, which in any real Gitea checkout
 #      names the server. An SSH origin (ssh://git@host:2222/... or
 #      git@host:...) maps its SSH port to the HTTP port (GITEA_HTTP_PORT,
@@ -22,7 +22,7 @@ if [ -n "${GITEA_HOST:-}" ]; then
 fi
 
 root=$(git rev-parse --show-toplevel 2>/dev/null || pwd)
-env_file="$root/.devcontainer/.env"
+env_file="$root/build/docker/devcontainer/.env"
 if [ -f "$env_file" ]; then
 	from_env=$(sed -n 's/^GITEA_HOST=//p' "$env_file" | tail -n 1)
 	if [ -n "$from_env" ]; then

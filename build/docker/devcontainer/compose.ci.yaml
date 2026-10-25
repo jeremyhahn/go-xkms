@@ -1,4 +1,4 @@
-# CI-only overlay for .devcontainer/docker-compose.yml (go-xkms #576).
+# CI-only overlay for build/docker/devcontainer/compose.yaml (go-xkms #576).
 #
 # The base file bind-mounts `..:/workspace:cached`, which is correct on a
 # developer host where the `docker compose` client and the Docker daemon

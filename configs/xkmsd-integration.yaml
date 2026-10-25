@@ -38,7 +38,7 @@ tls:
   # The first-boot admin credential is issued by `xkmsd init`'s one-shot
   # bootstrap CA, not by this server's embedded CA, so "verify" accepts it only
   # with that CA in the client-CA pool. init writes its bundle beside the
-  # credential, before the daemon starts (.devcontainer/docker-compose.yml).
+  # credential, before the daemon starts (build/docker/devcontainer/compose.yaml).
   client_cas:
     - "/data/storage/ca-bundle.pem"
   # The WebAuthn login matrix dials the compose service by its dotted
@@ -109,7 +109,7 @@ barrier:
   strategy: "passphrase"
   # `xkmsd init` initializes the barrier on a fresh volume (the compose
   # service's command); the server then boots sealed and serves the sealed
-  # window on server.host until .devcontainer/scripts/open-server-barrier.sh
+  # window on server.host until build/docker/devcontainer/scripts/open-server-barrier.sh
   # (run by the Makefile's devcontainer-server-wait) unseals it from the
   # devcontainer.
   # server.host must stay 0.0.0.0 -- the suites dial xkms-server:9443 over the
@@ -199,7 +199,7 @@ backends:
   # holds the swtpm connection for its whole lifetime and swtpm's mssim command
   # port serves exactly one client: a second connection blocks instead of being
   # refused, so the compose healthcheck ("nc -z localhost 2321",
-  # .devcontainer/docker-compose.yml) stops returning and swtpm is marked
+  # build/docker/devcontainer/compose.yaml) stops returning and swtpm is marked
   # unhealthy for as long as the daemon runs. Every integration target gates on
   # "swtpm: condition: service_healthy", so leaving this on takes out the whole
   # suite, not just the TPM lane — observed here as "dependency failed to start:

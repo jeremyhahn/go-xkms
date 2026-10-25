@@ -540,7 +540,7 @@ integration-test-phone-tcp:
 ## integration-test-phone-android: Run Go ↔ real Android app E2E tests (Docker emulator)
 integration-test-phone-android:
 	@echo "$(CYAN)$(BOLD)Starting Android emulator E2E tests...$(RESET)"
-	@docker compose -f test/integration/phone/docker-compose.yml up --build --abort-on-container-exit --exit-code-from test-runner
+	@. ../scripts/tool-pins.sh && GO_IMAGE="$$GO_IMAGE" docker compose -f test/integration/phone/docker-compose.yml up --build --abort-on-container-exit --exit-code-from test-runner
 	@echo "$(GREEN)Android E2E tests passed$(RESET)"
 
 .PHONY: integration-test-oath

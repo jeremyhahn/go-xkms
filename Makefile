@@ -13,6 +13,14 @@ LDFLAGS := -X github.com/jeremyhahn/go-xkms/pkg/cli.Version=$(VERSION) \
            -X github.com/jeremyhahn/go-xkms/pkg/cli.GitCommit=$(GIT_COMMIT) \
            -X github.com/jeremyhahn/go-xkms/pkg/cli.BuildDate=$(BUILD_DATE)
 
+# Every pinned tool version and download checksum: GO_IMAGE, GOLANGCI_VERSION,
+# ACTIONLINT_VERSION, TRIVY_VERSION and the rest. One file, also sourced by the
+# devcontainer image (build/docker/devcontainer/Dockerfile). GO_IMAGE is
+# exported for compose, whose devcontainer build requires it.
+TOOL_PINS := scripts/tool-pins.sh
+include $(TOOL_PINS)
+export GO_IMAGE
+
 # GO_BUILD_TAGS: the extra tag set ci-template passes to every stage (#1603).
 include scripts/go-build-tags.mk
 
@@ -206,24 +214,38 @@ DOCKER_CONTAINER := $(PROJECT_NAME)-container
 BUILDER_IMAGE = $(PROJECT_NAME)-builder:$(IMAGE_TAG)
 XKEY_BUILDER_IMAGE = $(PROJECT_NAME)-xkey-builder:$(IMAGE_TAG)
 
+# Inside the toolchain image (build/docker/devcontainer/Dockerfile sets
+# XKMS_NATIVE_BUILD=1) every native dependency is present and no Docker daemon
+# is, so the CGO builds run in place and `build` takes the local xkey build.
+# Everywhere else they run in the builder images, as before.
+ifeq ($(XKMS_NATIVE_BUILD),1)
+CGO_BUILDER_DEP :=
+CGO_RUN := bash -c
+BUILD_XKEY_TARGET := build-xkey-local
+else
+CGO_BUILDER_DEP := builder-image
+CGO_RUN = docker run --rm -v $(CURDIR):/workspace:cached $(BUILDER_MODULE_ENV) -w /workspace $(BUILDER_IMAGE) bash -c
+BUILD_XKEY_TARGET := build-xkey
+endif
+
 # Cross-repo first-party modules resolve from Gitea tags inside containers
 # (dependency-resolution.md §6) — no workspace, no sibling mounts. The
-# read-only fetch token comes from the gitignored .devcontainer/.env
+# read-only fetch token comes from the gitignored build/docker/devcontainer/.env
 # (pattern: go-qrdb/.devcontainer/); for the root builder containers the host
 # module cache is mounted (BUILDER_MODULE_ENV) so a warm host cache serves
 # container builds without refetching the graph. GOMODCACHE is pinned to the
 # mount path inside those containers: the golang base image keeps its cache
 # at /go/pkg/mod, so without the pin the mount sat unused, every container
-# build refetched the graph, and a checkout with no .devcontainer/.env failed
+# build refetched the graph, and a checkout with no build/docker/devcontainer/.env failed
 # on the first private module ("Failed to authenticate user") even with a
 # fully warm host cache.
-GITEA_GO_TOKEN ?= $(shell sed -n 's/^GITEA_GO_TOKEN=//p' .devcontainer/.env 2>/dev/null)
+GITEA_GO_TOKEN ?= $(shell sed -n 's/^GITEA_GO_TOKEN=//p' build/docker/devcontainer/.env 2>/dev/null)
 # Exported so docker compose invocations interpolate ${GITEA_GO_TOKEN} in
 # their environment blocks regardless of which directory compose runs from.
 export GITEA_GO_TOKEN
 # The Gitea server itself (host:port of its HTTP API) is never written into
 # this tree: scripts/gitea-host.sh derives it from the environment, from
-# .devcontainer/.env, or from this checkout's own origin remote (an SSH origin
+# build/docker/devcontainer/.env, or from this checkout's own origin remote (an SSH origin
 # maps its port to the HTTP port), and prints nothing for a GitHub origin --
 # the public resolution path, in which no insteadOf rewrite is emitted at
 # all. `make gitea-host` shows the resolved value. Exported for the same
@@ -240,21 +262,21 @@ GITEA_INSTEADOF_KEY = url.http://x:$(GITEA_GO_TOKEN)@$(GITEA_HOST)/jeremyhahn/.i
 #   1. GIT_CONFIG_KEY_0 already in the environment -- this is how Gitea Actions
 #      supplies them (runner.envs injects the composed insteadOf rewrite into
 #      every job's process env; dependency-resolution.md §6). There is no
-#      GITEA_GO_TOKEN on that runner and no .devcontainer/.env in its checkout,
+#      GITEA_GO_TOKEN on that runner and no build/docker/devcontainer/.env in its checkout,
 #      so this must be checked first or the job gets an empty-token rewrite
 #      ("Failed to authenticate user"). Only entry 0 is forwarded (the
 #      rewrite), so the count is always 1: git aborts with "missing config
 #      key GIT_CONFIG_KEY_1" when the caller's count of N > 1 crosses over
 #      without entries 1..N-1, which fails every module fetch.
 #   2. GITEA_GO_TOKEN and GITEA_HOST, composed into GITEA_INSTEADOF_KEY -- the
-#      devcontainer/host path, sourced from the gitignored .devcontainer/.env.
+#      devcontainer/host path, sourced from the gitignored build/docker/devcontainer/.env.
 # Otherwise the count is 0: git reads exactly GIT_CONFIG_COUNT entries, so
 # KEY_0/VALUE_0 stay inert and every module resolves publicly.
 #
 # The compose files read `${GOMODAUTH_GIT_CONFIG_COUNT:-${GITEA_HOST:+1}}` and
 # likewise for KEY_0/VALUE_0, falling back to the token rewrite when make is
-# not in the picture -- .devcontainer/devcontainer.json loads the compose file
-# DIRECTLY, so a devcontainer whose .devcontainer/.env supplies the token and
+# not in the picture -- build/docker/devcontainer/devcontainer.json loads the compose file
+# DIRECTLY, so a devcontainer whose build/docker/devcontainer/.env supplies the token and
 # host must still get the rewrite. These exports are the override for the
 # make path, not the only source.
 #
@@ -308,13 +330,17 @@ export GOMODAUTH_GOPRIVATE GOMODAUTH_GIT_CONFIG_COUNT GOMODAUTH_GIT_CONFIG_KEY_0
 # `container_name:`, `networks: name:` or a fixed host port binding in a
 # compose file is absolute and overrides the project prefix entirely. The
 # harness compose files therefore declare none of those -- see
-# .devcontainer/docker-compose.yml.
-COMPOSE_RUN_ID ?= $(shell echo "$${GITHUB_RUN_ID:-local}")
+# build/docker/devcontainer/compose.yaml.
+#
+# IT_PROJECT is the compose project ci-template v1.25's integration and soak
+# jobs pass, go-xkms-ci-<run>-<attempt>[-soak-<i>]; COMPOSE_RUN_ID is then that
+# name without the go-xkms- prefix, so COMPOSE_NS is IT_PROJECT exactly.
+COMPOSE_RUN_ID ?= $(if $(IT_PROJECT),$(patsubst go-xkms-%,%,$(IT_PROJECT)),$(shell echo "$${GITHUB_RUN_ID:-local}"))
 COMPOSE_NS := go-xkms-$(COMPOSE_RUN_ID)
 
 # Both -p and COMPOSE_PROJECT_NAME, deliberately:
 #   -p                    outranks a compose file's top-level `name:` in every
-#                         compose version -- .devcontainer/docker-compose.yml
+#                         compose version -- build/docker/devcontainer/compose.yaml
 #                         pins `name: go-xkms`, and the flag is the only way to
 #                         be certain the per-run namespace wins over it.
 #   COMPOSE_PROJECT_NAME  is inherited by child processes, so a script a recipe
@@ -393,7 +419,7 @@ PKCS11_SO_PIN ?= 12345678
 # Multi-protocol connection configuration
 # Unix socket (gRPC over UDS)
 XKMS_UNIX_SOCKET ?= /var/run/xkms/xkms.sock
-# Path to this repo inside go-xkms's OWN devcontainer (.devcontainer/, compose
+# Path to this repo inside go-xkms's OWN devcontainer (build/docker/devcontainer/, compose
 # project $(COMPOSE_NS)-devcontainer, service `devcontainer`), which bind-mounts
 # the repo at /workspace. Every in-container path below is derived from this
 # variable, so pointing it elsewhere is all that is needed to drive a container
@@ -512,7 +538,7 @@ deps:
 
 .PHONY: build
 ## build: Build the shared library, CLI, server binaries, and xkey (default)
-build: lib build-cli build-servers build-xkey
+build: lib build-cli build-servers $(BUILD_XKEY_TARGET)
 
 .PHONY: build-local
 ## build-local: Build everything locally without Docker (requires dev packages)
@@ -565,15 +591,10 @@ build-cli-gui:
 
 .PHONY: build-server
 ## build-server: Build the unified xkmsd server binary (uses Docker for CGO deps)
-build-server: builder-image
+build-server: $(CGO_BUILDER_DEP)
 	@echo "$(CYAN)$(BOLD)→ Building unified xkmsd server...$(RESET)"
 	@mkdir -p $(BIN_DIR)
-	@docker run --rm \
-		-v $(CURDIR):/workspace:cached \
-		$(BUILDER_MODULE_ENV) \
-		-w /workspace \
-		$(BUILDER_IMAGE) \
-		bash -c "CGO_ENABLED=1 go build -buildvcs=false -tags '$(call go_tags,$(BUILD_TAGS))' -ldflags '$(LDFLAGS)' -o $(BIN_DIR)/xkmsd ./cmd/xkmsd/"
+	@$(CGO_RUN) "CGO_ENABLED=1 go build -buildvcs=false -tags '$(call go_tags,$(BUILD_TAGS))' -ldflags '$(LDFLAGS)' -o $(BIN_DIR)/xkmsd ./cmd/xkmsd/"
 	@echo "$(GREEN)✓ Unified server binary built: $(BIN_DIR)/xkmsd$(RESET)"
 
 .PHONY: build-servers
@@ -1040,15 +1061,10 @@ release-server:
 
 .PHONY: lib
 ## lib: Build shared library (libxkms-VERSION.so) using Docker for CGO deps
-lib: builder-image
+lib: $(CGO_BUILDER_DEP)
 	@echo "$(CYAN)$(BOLD)→ Building shared object library (version $(VERSION))...$(RESET)"
 	@mkdir -p $(LIB_DIR)
-	@docker run --rm \
-		-v $(CURDIR):/workspace:cached \
-		$(BUILDER_MODULE_ENV) \
-		-w /workspace \
-		$(BUILDER_IMAGE) \
-		bash -c "CGO_ENABLED=1 go build -buildvcs=false -tags '$(call go_tags,$(BUILD_TAGS))' -ldflags '$(LDFLAGS)' -buildmode=c-shared -o $(SHARED_LIB) $(CGO_SOURCE)/main.go"
+	@$(CGO_RUN) "CGO_ENABLED=1 go build -buildvcs=false -tags '$(call go_tags,$(BUILD_TAGS))' -ldflags '$(LDFLAGS)' -buildmode=c-shared -o $(SHARED_LIB) $(CGO_SOURCE)/main.go"
 	@echo "$(GREEN)✓ Shared library built: $(SHARED_LIB)$(RESET)"
 	@rm -f $(SHARED_LIB_LINK)
 	@cd $(LIB_DIR) && ln -s libxkms-$(VERSION).so libxkms.so
@@ -1095,6 +1111,8 @@ test-scripts:
 	@bash test/scripts/xkey-build-tags.test.sh
 	@bash test/scripts/go-build-tags.test.sh
 	@bash test/scripts/gomodauth.test.sh
+	@bash test/scripts/credential-ignores.test.sh
+	@bash test/scripts/no-credential-echo.test.sh
 	@echo "$(GREEN)✓ Shell script tests passed$(RESET)"
 
 # test-buildgates: the CI tier gate (#1483) -- every ci.yml job is in CI Gate
@@ -1184,8 +1202,21 @@ race: agsim
 	@echo "$(GREEN)$(BOLD)✓ Race detector tests passed!$(RESET)"
 
 .PHONY: coverage
-## coverage: Generate test coverage report (unit tests only, fast)
+## coverage: Run the unit suite and fail when total coverage is below COVERAGE_THRESHOLD (CI's test stage)
+# GOMEMLIMIT and -p=2 bound the suite's memory: under -race the Argon2-heavy
+# REST/MCP packages exhaust a runner's memory without them. Under CI the suite
+# must leave the tree as it found it (#454). The per-package report is
+# advisory (#704).
+coverage: export GOMEMLIMIT := 10GiB
+coverage: export GOFLAGS := $(strip $(GOFLAGS) -p=2)
 coverage: test
+	@total=$$($(GO) tool cover -func=$(COVERAGE_FILE) | awk '/^total:/ {print $$3}' | tr -d %); \
+	echo "Total coverage: $${total}%"; \
+	awk -v c="$$total" -v t="$(COVERAGE_THRESHOLD)" 'BEGIN { if (c + 0 < t + 0) { print "coverage below " t "%"; exit 1 } }'
+	@if [ -n "$$CI" ] && [ -n "$$(git status --porcelain)" ]; then \
+		git status --porcelain; echo "make coverage left the tree dirty (#454)"; exit 1; \
+	fi
+	@$(MAKE) --no-print-directory coverage-threshold-report || echo "per-package report is non-blocking (#704)"
 
 .PHONY: coverage-full
 ## coverage-full: Generate comprehensive coverage report (unit + integration tests)
@@ -2117,7 +2148,7 @@ integration-test-pkcs11-module:
 ## integration-test-logins: Run the login-plane verification matrix (mTLS, PIV, FIDO2) against a real xkmsd (runs in devcontainer with xkms-server)
 # Mirrors integration-test-pkcs11-module's use of run_with_server: it starts
 # the compose xkms-server and publishes its CA + first-boot admin mTLS
-# credential to /tmp/xkms via .devcontainer/scripts/ensure-server-ca.sh,
+# credential to /tmp/xkms via build/docker/devcontainer/scripts/ensure-server-ca.sh,
 # which testutil.go in test/integration/logins reads. The xkey CLI is built
 # fresh (plain codec_json tag - no GUI/hardware tags needed for this suite)
 # and exported as XKEY_CLI_BIN for the fido2 leg, which drives it as a real
@@ -2157,7 +2188,7 @@ integration-test-logins-quicbaas:
 		sleep 2; \
 	done; [ -n "$$ok" ] || { echo "$(RED)✗ quicbaasd first boot never published /data/admin + /data/certs$(RESET)"; docker logs --tail 40 $$cid; exit 1; }
 	@chmod 0600 build/quicbaas-fixture/admin.key
-	$(call run_with_server,mkdir -p build/bin /tmp/quicbaas && cp $(DEVCONTAINER_REPO)/build/quicbaas-fixture/ca.crt /tmp/quicbaas/ca.crt && cp $(DEVCONTAINER_REPO)/build/quicbaas-fixture/admin.crt /tmp/quicbaas/admin.crt && cp $(DEVCONTAINER_REPO)/build/quicbaas-fixture/admin.key /tmp/quicbaas/admin.key && chmod 0600 /tmp/quicbaas/admin.key && bash .devcontainer/scripts/wait-quicbaas-login-planes.sh && cd xkey && /usr/local/go/bin/go build -buildvcs=false -tags='$(call go_tags,codec_json)' -o ../build/bin/xkey ./cmd/xkey && cd .. && XKEY_CLI_BIN=$(DEVCONTAINER_REPO)/build/bin/xkey QUICBAAS_REST_URL=https://quicbaas-server:8443 sudo -E /usr/local/go/bin/go test -v -tags='$(call go_tags,integration$(comma)logins)' ./test/integration/logins/... -timeout 15m,integration-test-logins-quicbaas)
+	$(call run_with_server,mkdir -p build/bin /tmp/quicbaas && cp $(DEVCONTAINER_REPO)/build/quicbaas-fixture/ca.crt /tmp/quicbaas/ca.crt && cp $(DEVCONTAINER_REPO)/build/quicbaas-fixture/admin.crt /tmp/quicbaas/admin.crt && cp $(DEVCONTAINER_REPO)/build/quicbaas-fixture/admin.key /tmp/quicbaas/admin.key && chmod 0600 /tmp/quicbaas/admin.key && bash build/docker/devcontainer/scripts/wait-quicbaas-login-planes.sh && cd xkey && /usr/local/go/bin/go build -buildvcs=false -tags='$(call go_tags,codec_json)' -o ../build/bin/xkey ./cmd/xkey && cd .. && XKEY_CLI_BIN=$(DEVCONTAINER_REPO)/build/bin/xkey QUICBAAS_REST_URL=https://quicbaas-server:8443 sudo -E /usr/local/go/bin/go test -v -tags='$(call go_tags,integration$(comma)logins)' ./test/integration/logins/... -timeout 15m,integration-test-logins-quicbaas)
 
 .PHONY: integration-test-pkcs11-conformance
 ## integration-test-pkcs11-conformance: Run the OASIS PKCS#11 v3.0 conformance suite (runs in devcontainer with xkms-server)
@@ -2582,15 +2613,10 @@ endif
 integration-test-webauthn: integration-test-webauthn-browser
 
 .PHONY: integration-test-webauthn-browser
-## integration-test-webauthn-browser: Drive Chrome's CDP virtual authenticator against the REAL xkmsd WebAuthn RP (host: needs Node + Chromium)
+## integration-test-webauthn-browser: Drive Chrome's CDP virtual authenticator against the REAL xkmsd WebAuthn RP (in the devcontainer, which carries Node and Chromium's libraries)
 integration-test-webauthn-browser:
-	@echo "$(CYAN)$(BOLD)→ Building xkmsd (software tags) for the WebAuthn browser ceremony test...$(RESET)"
-	@CGO_ENABLED=1 $(GO) build -tags "$(call go_tags,pkcs8 frost webauthn fido2 codec_cbor codec_json codec_msgpack)" -o $(BIN_DIR)/xkmsd ./cmd/xkmsd/
 	@echo "$(CYAN)$(BOLD)→ Chrome virtual authenticator → real RP (/api/v1/webauthn/*)$(RESET)"
-	@cd test/integration/webauthn-browser && \
-		npm ci --no-fund --no-audit && \
-		npx playwright install chromium chromium-headless-shell && \
-		XKMSD_BIN="$(abspath $(BIN_DIR)/xkmsd)" npx playwright test
+	$(call run_in_devcontainer,mkdir -p $(BIN_DIR) && CGO_ENABLED=1 $(GO) build -buildvcs=false -tags='$(call go_tags,pkcs8 frost webauthn fido2 codec_cbor codec_json codec_msgpack)' -o $(BIN_DIR)/xkmsd ./cmd/xkmsd/ && cd test/integration/webauthn-browser && npm ci --no-fund --no-audit && npx playwright install chromium chromium-headless-shell && XKMSD_BIN=../../../$(BIN_DIR)/xkmsd npx playwright test,integration-test-webauthn-browser)
 
 # Comma for use in function calls (Make escapes commas in function args)
 comma := ,
@@ -2598,7 +2624,7 @@ comma := ,
 # Docker compose command for devcontainer.
 #
 # The project name must always be set explicitly. Left to compose it derives
-# from the file's directory (".devcontainer" -> "devcontainer"), which is the
+# from the file's directory ("build/docker/devcontainer" -> "devcontainer"), which is the
 # same name go-trusted-platform's stack uses: sharing that namespace made
 # `exec devcontainer` attach to the OTHER project's container and made
 # `up -d xkms-server` match nothing at all. $(COMPOSE_NS) keeps that
@@ -2609,7 +2635,7 @@ comma := ,
 # is what actually sets it on the command line.
 COMPOSE_PROJECT := $(COMPOSE_NS)-devcontainer
 
-# .devcontainer/docker-compose.ci.yml is layered on top in CI only
+# build/docker/devcontainer/compose.ci.yaml is layered on top in CI only
 # (COMPOSE_RUN_ID != local, i.e. GITHUB_RUN_ID is set -- see COMPOSE_RUN_ID
 # above). It replaces the base file's `..:/workspace:cached` bind mount with
 # a named volume: the compose CLI resolves that relative bind source itself,
@@ -2620,16 +2646,16 @@ COMPOSE_PROJECT := $(COMPOSE_NS)-devcontainer
 # target path across -f files, so the overlay need only list the one mount
 # that changes.
 ifneq ($(COMPOSE_RUN_ID),local)
-DOCKER_COMPOSE := $(call compose,devcontainer) -f .devcontainer/docker-compose.yml -f .devcontainer/docker-compose.ci.yml
+DOCKER_COMPOSE := $(call compose,devcontainer) -f build/docker/devcontainer/compose.yaml -f build/docker/devcontainer/compose.ci.yaml
 else
-DOCKER_COMPOSE := $(call compose,devcontainer) -f .devcontainer/docker-compose.yml
+DOCKER_COMPOSE := $(call compose,devcontainer) -f build/docker/devcontainer/compose.yaml
 endif
 
 # Devcontainer identity is a POSITIVE marker, never an ambient side effect.
 #
 # XKMS_DEVCONTAINER=1 is baked into the devcontainer image
-# (.devcontainer/Dockerfile) and set again in its compose environment
-# (.devcontainer/docker-compose.yml), so it is present in every shell that
+# (build/docker/devcontainer/Dockerfile) and set again in its compose environment
+# (build/docker/devcontainer/compose.yaml), so it is present in every shell that
 # runs inside THE go-xkms devcontainer and nowhere else. These helpers used
 # to test `[ -f /.dockerenv ]` (plus $DEVCONTAINER), which answers "am I in
 # ANY container", not "am I the devcontainer": on a Gitea act_runner the job
@@ -2639,7 +2665,7 @@ endif
 # that was never started (go-xkms #19, red on 39 of 40 runs).
 
 # Populates a CI devcontainer's /workspace (the named volume from
-# .devcontainer/docker-compose.ci.yml, not the dev bind mount) from this
+# build/docker/devcontainer/compose.ci.yaml, not the dev bind mount) from this
 # job's own checkout. `docker compose cp` streams the tree over the Docker
 # API connection rather than depending on a shared filesystem, so it lands
 # correctly no matter which host the daemon runs on (go-xkms #576). A no-op
@@ -2657,6 +2683,7 @@ define run_in_devcontainer
 		$(1); \
 	else \
 		echo "$(CYAN)$(BOLD)→ Starting devcontainer...$(RESET)"; \
+		$(MAKE) --no-print-directory stage-gomodauth; \
 		$(DOCKER_COMPOSE) up -d devcontainer --wait 2>/dev/null || $(DOCKER_COMPOSE) up -d devcontainer; \
 		$(ci_sync_devcontainer_workspace); \
 		echo "$(CYAN)$(BOLD)→ Running in devcontainer: $(2)$(RESET)"; \
@@ -2706,6 +2733,7 @@ endef
 define run_with_server
 	@if [ -z "$$XKMS_DEVCONTAINER" ]; then \
 		echo "$(CYAN)$(BOLD)→ Starting devcontainer...$(RESET)"; \
+		$(MAKE) --no-print-directory stage-gomodauth && \
 		{ $(DOCKER_COMPOSE) up -d devcontainer --wait 2>/dev/null || $(DOCKER_COMPOSE) up -d devcontainer; } && \
 		$(ci_sync_devcontainer_workspace) && \
 		echo "$(CYAN)$(BOLD)→ Building PKCS#11 shared library in devcontainer...$(RESET)" && \
@@ -2721,13 +2749,13 @@ define run_with_server
 		echo "$(GREEN)✓ PKCS#11 module built: build/lib/libxkms_pkcs11.so$(RESET)"; \
 		echo "$(CYAN)$(BOLD)→ Ensuring an xkms server is listening...$(RESET)"; \
 		bash scripts/start-test-xkmsd.sh $(XKMS_UNIX_SOCKET); \
-		bash .devcontainer/scripts/ensure-server-ca.sh || true; \
+		bash build/docker/devcontainer/scripts/ensure-server-ca.sh || true; \
 		$(1); \
 	else \
 		echo "$(CYAN)$(BOLD)→ Running in devcontainer: $(2)$(RESET)"; \
 		$(DOCKER_COMPOSE) exec -T devcontainer bash -c "cd $(DEVCONTAINER_REPO) && \
 			bash scripts/start-test-xkmsd.sh $(XKMS_UNIX_SOCKET); \
-			bash .devcontainer/scripts/ensure-server-ca.sh || true; \
+			bash build/docker/devcontainer/scripts/ensure-server-ca.sh || true; \
 			$(1)"; \
 	fi
 endef
@@ -2763,13 +2791,13 @@ devcontainer-clean:
 
 .PHONY: devcontainer-shell
 ## devcontainer-shell: Open an interactive shell in go-xkms's devcontainer
-devcontainer-shell:
+devcontainer-shell: stage-gomodauth
 	@$(DOCKER_COMPOSE) up -d devcontainer >/dev/null 2>&1 || true
 	@$(DOCKER_COMPOSE) exec devcontainer bash
 
 .PHONY: devcontainer-verify
 ## devcontainer-verify: Print the toolchain versions the integration suites depend on
-devcontainer-verify:
+devcontainer-verify: stage-gomodauth
 	@$(DOCKER_COMPOSE) up -d devcontainer --wait >/dev/null 2>&1 || $(DOCKER_COMPOSE) up -d devcontainer
 	@$(DOCKER_COMPOSE) exec -T devcontainer bash -c '\
 		set -e; \
@@ -2830,7 +2858,7 @@ devcontainer-server-up:
 #
 # The server boots with its passphrase barrier sealed and serves no socket
 # until an operator opens it, so before probing, the devcontainer plays that
-# operator through the sealed window (.devcontainer/scripts/open-server-barrier.sh).
+# operator through the sealed window (build/docker/devcontainer/scripts/open-server-barrier.sh).
 devcontainer-server-wait:
 	@echo "$(CYAN)$(BOLD)→ Waiting for xkms-server on $(XKMS_UNIX_SOCKET)...$(RESET)"
 	@if [ -z "$$($(DOCKER_COMPOSE) ps -q devcontainer 2>/dev/null)" ]; then \
@@ -2841,7 +2869,7 @@ devcontainer-server-wait:
 	fi; \
 	cid=$$($(DOCKER_COMPOSE) ps -q xkms-server 2>/dev/null); \
 	if [ -n "$$cid" ] && [ "$$(docker inspect -f '{{.State.Running}}' $$cid 2>/dev/null)" = "true" ]; then \
-		$(DOCKER_COMPOSE) exec -T devcontainer bash $(DEVCONTAINER_REPO)/.devcontainer/scripts/open-server-barrier.sh || \
+		$(DOCKER_COMPOSE) exec -T devcontainer bash $(DEVCONTAINER_REPO)/build/docker/devcontainer/scripts/open-server-barrier.sh || \
 			echo "$(YELLOW)could not open the xkms-server barrier; the socket probe below reports why it is not serving$(RESET)"; \
 	fi; \
 	probe_err=""; \
@@ -2967,7 +2995,7 @@ integration-test-xkey-oath:
 # /dev/uhid for xkey's virtual FIDO2 authenticator.
 PASSWORD_VAULT_BIN := $(DEVCONTAINER_REPO)/build/bin
 integration-test-password-vault: stage-gomodauth
-	$(call run_in_devcontainer,if [ -s .devcontainer/gomodauth.env ]; then . .devcontainer/gomodauth.env; fi; mkdir -p build/bin && \
+	$(call run_in_devcontainer,if [ -s build/docker/devcontainer/gomodauth.env ]; then . build/docker/devcontainer/gomodauth.env; fi; mkdir -p build/bin && \
 		$(GO) build -buildvcs=false -tags '$(call go_tags,codec_cbor codec_json codec_msgpack)' -o build/bin/xkmsd ./cmd/xkmsd && \
 		$(GO) build -buildvcs=false -tags '$(call go_tags,codec_cbor codec_json codec_msgpack)' -o build/bin/xkmsctl ./cmd/xkmsctl && \
 		cd xkey && GOWORK=off $(GO) build -buildvcs=false -tags '$(call go_tags,codec_json pkcs11)' -o ../build/bin/xkey ./cmd/xkey && \
@@ -3002,6 +3030,7 @@ integration-test-xkey-ssh:
 		cd xkey && $(GO) test -v -tags='$(call go_tags,integration)' ./test/integration/ssh/... -timeout 5m; \
 	else \
 		echo "$(CYAN)$(BOLD)→ Starting devcontainer...$(RESET)"; \
+		$(MAKE) --no-print-directory stage-gomodauth; \
 		$(DOCKER_COMPOSE) up -d devcontainer 2>/dev/null || true; \
 		echo "$(CYAN)$(BOLD)→ Rebuilding xkms-server...$(RESET)"; \
 		$(DOCKER_COMPOSE) build xkms-server; \
@@ -3020,7 +3049,7 @@ integration-test-xkey-ssh:
 # The suite builds xkmsd, xkmsctl and xkey inside the devcontainer, so it
 # resolves the private first-party modules through the staged gomodauth env.
 integration-test-oidc-credentials: stage-gomodauth
-	$(call run_in_devcontainer,if [ -s .devcontainer/gomodauth.env ]; then . .devcontainer/gomodauth.env; fi; $(GO) test -v -count=1 -tags='$(call go_tags,integration codec_cbor codec_json codec_msgpack)' ./test/integration/oidccredentials/... -timeout 20m,integration-test-oidc-credentials)
+	$(call run_in_devcontainer,if [ -s build/docker/devcontainer/gomodauth.env ]; then . build/docker/devcontainer/gomodauth.env; fi; $(GO) test -v -count=1 -tags='$(call go_tags,integration codec_cbor codec_json codec_msgpack)' ./test/integration/oidccredentials/... -timeout 20m,integration-test-oidc-credentials)
 
 .PHONY: integration-test-xkey-ctap
 ## integration-test-xkey-ctap: Run FIDO2 CTAP protocol integration tests (MakeCredential, GetAssertion, etc.)
@@ -3553,14 +3582,14 @@ release: lib release-binaries
 
 # Stage the Gitea module-fetch credentials as a BuildKit secret file
 # (dependency-resolution.md §6): sourceable `export` lines, written 0600 into
-# .devcontainer/ (gitignored AND dockerignored — the Dockerfile ends with
+# build/docker/devcontainer/ (gitignored AND dockerignored — the Dockerfile ends with
 # `COPY . .`, so the file must never be plain build context). Written empty
 # when no token is configured, so the same build resolves from the public
 # proxy on hosts without Gitea access.
 #
 # The credentials are the GOMODAUTH_* resolution above; the recipe reads them
 # from its exported environment so no value is expanded into the recipe text.
-GOMODAUTH_FILE := .devcontainer/gomodauth.env
+GOMODAUTH_FILE := build/docker/devcontainer/gomodauth.env
 .PHONY: stage-gomodauth
 stage-gomodauth:
 	@umask 077; : > $(GOMODAUTH_FILE); \
@@ -3574,13 +3603,94 @@ stage-gomodauth:
 	fi
 
 .PHONY: gitea-host
-## gitea-host: Print the resolved in-house Gitea host (GITEA_HOST override, .devcontainer/.env, or the origin remote; empty for a GitHub origin)
+## gitea-host: Print the resolved in-house Gitea host (GITEA_HOST override, build/docker/devcontainer/.env, or the origin remote; empty for a GitHub origin)
 gitea-host:
 	@if [ -n "$(GITEA_HOST)" ]; then echo "$(GITEA_HOST)"; else echo "$(YELLOW)(none: modules resolve publicly)$(RESET)"; fi
 
+# The devcontainer image (build/docker/devcontainer/Dockerfile), which every CI
+# stage runs in (handbook ci-standard.md §2). TOOLCHAIN_TAG hashes everything
+# the toolchain stage is built from, so an unchanged tree reuses its image.
+DEVCONTAINER_DIR := build/docker/devcontainer
+DEVCONTAINER_COMPOSE := $(DEVCONTAINER_DIR)/compose.yaml
+TOOLCHAIN_INPUTS := $(DEVCONTAINER_DIR)/Dockerfile $(DEVCONTAINER_DIR)/openssl-pkcs11.cnf \
+	$(TOOL_PINS) scripts/build-softhsm.sh \
+	go.mod go.sum sdk/go/go.mod sdk/go/go.sum xkey/go.mod xkey/go.sum \
+	web/desktop/go.mod web/desktop/go.sum
+TOOLCHAIN_TAG = $(shell cat $(TOOLCHAIN_INPUTS) | sha256sum | cut -c1-16)
+TOOLCHAIN_IMAGE = go-xkms-toolchain:$(TOOLCHAIN_TAG)
+IT_IMAGE ?= go-xkms-it:local
+# IT_CI_IMAGE is the integration image CI names by its content (handbook
+# ci-standard.md §9): the committed tree, plus any uncommitted or untracked
+# change to it, which covers the Dockerfile, the pins and the build context.
+# Every job of every run on one runner names the same image for the same
+# tree, builds it once and reuses it; scripts/reap-stale-ci-stacks.sh removes
+# it once it is old and unused.
+IT_CI_IMAGE = go-xkms-ci-it:$(shell { git rev-parse 'HEAD^{tree}'; git diff HEAD; \
+	git ls-files -oz --exclude-standard | xargs -0r sha256sum; } 2>/dev/null | sha256sum | cut -c1-16)
+# MODULE_ENV_FILE is the gomodauth secret's source: CI writes its own outside
+# the checkout; locally it is the file stage-gomodauth writes.
+MODULE_ENV_FILE ?= $(GOMODAUTH_FILE)
+# GO_BUILD_PROXY_ARG hands the caller's GOPROXY (CI's fleet proxy first) to the
+# image's go install / go mod download stages; unset, the Dockerfile default
+# applies. The shell expands $$GOPROXY, so make never echoes its value.
+GO_BUILD_PROXY_ARG = $(if $(GOPROXY),--build-arg GO_BUILD_PROXY="$$GOPROXY")
+DEVCONTAINER_BUILD = DOCKER_BUILDKIT=1 docker buildx build --load \
+	--build-arg GO_IMAGE=$(GO_IMAGE) \
+	$(GO_BUILD_PROXY_ARG) \
+	--secret id=gomodauth,src=$(MODULE_ENV_FILE) \
+	-f $(DEVCONTAINER_DIR)/Dockerfile
+REQUIRE_BUILDX = @docker buildx version >/dev/null 2>&1 || { echo "docker buildx is required to build $(DEVCONTAINER_DIR)/Dockerfile" >&2; exit 1; }
+
 .PHONY: docker-build
-## docker-build: Build Docker container for integration testing
-docker-build: stage-gomodauth
+## docker-build: Build the toolchain and integration images (build/docker/devcontainer/Dockerfile)
+docker-build: docker-build-toolchain docker-build-it
+
+.PHONY: docker-build-toolchain
+## docker-build-toolchain: Build the toolchain image every CI stage runs in
+# The tag is content-addressed, so a present image is already current. Jobs on
+# one runner share its daemon and race to load the same tag; buildx refuses
+# the loser with "already exists", which is success once the image is there.
+docker-build-toolchain: stage-gomodauth
+	$(REQUIRE_BUILDX)
+	if docker image inspect $(TOOLCHAIN_IMAGE) >/dev/null 2>&1; then \
+		echo "$(TOOLCHAIN_IMAGE) is present"; \
+	else \
+		$(DEVCONTAINER_BUILD) --target toolchain -t $(TOOLCHAIN_IMAGE) . || \
+			docker image inspect $(TOOLCHAIN_IMAGE) >/dev/null 2>&1; \
+	fi
+
+.PHONY: docker-build-it
+## docker-build-it: Build the hardened integration image (compose service `integration`)
+# A content-addressed IT_IMAGE (`make -s it-image`) that is present is already
+# current, and a lost load race is success, as for the toolchain image. Any
+# other tag, go-xkms-it:local included, is rebuilt every time.
+docker-build-it: stage-gomodauth
+	$(REQUIRE_BUILDX)
+	if [ "$(IT_IMAGE)" = "$(IT_CI_IMAGE)" ] && docker image inspect $(IT_IMAGE) >/dev/null 2>&1; then \
+		echo "$(IT_IMAGE) is present"; \
+	else \
+		$(DEVCONTAINER_BUILD) --target integration -t $(IT_IMAGE) . || \
+			{ [ "$(IT_IMAGE)" = "$(IT_CI_IMAGE)" ] && docker image inspect $(IT_IMAGE) >/dev/null 2>&1; }; \
+	fi
+
+.PHONY: it-image
+## it-image: Print the content-addressed integration image tag CI builds (go-xkms-ci-it:<hash>)
+it-image:
+	@echo $(IT_CI_IMAGE)
+
+.PHONY: toolchain-image
+## toolchain-image: Print the toolchain image tag `make docker-build` builds
+toolchain-image:
+	@echo $(TOOLCHAIN_IMAGE)
+
+.PHONY: deps-check
+## deps-check: Fail when a direct dependency of the root, sdk/go or xkey module is behind its newest release
+deps-check:
+	@./scripts/deps-check.sh
+
+.PHONY: docker-build-test-image
+## docker-build-test-image: Build the root Dockerfile image `make docker-test` runs
+docker-build-test-image: stage-gomodauth
 	@echo "$(CYAN)$(BOLD)→ Building Docker image...$(RESET)"
 	@DOCKER_BUILDKIT=1 docker buildx build --load \
 		--secret id=gomodauth,src=$(GOMODAUTH_FILE) \
@@ -3676,21 +3786,38 @@ docker-build-cli: stage-gomodauth
 docker-build-all: docker-build-server docker-build-rest docker-build-grpc docker-build-quic docker-build-mcp docker-build-cli
 	@echo "$(GREEN)$(BOLD)✓ All Docker images built successfully!$(RESET)"
 
+# Runs CMD in the toolchain image as the invoking user, with the checkout
+# bind-mounted (compose service `toolchain`), under the integration service's
+# posture: make docker-run CMD='make lint'. It gets a bridge network, as CI's
+# make build and make test do, because build-xkey-local and test-web run
+# `npm ci`; DOCKER_RUN_NETWORK=none runs CMD offline. A workstation target; CI
+# copies the checkout in instead (scripts/in-toolchain-image.sh).
+CMD ?= make build
+DOCKER_RUN_NETWORK ?= bridge
 .PHONY: docker-run
-## docker-run: Run a new Docker container with the built image
-docker-run: docker-build
-	@echo "$(CYAN)$(BOLD)→ Starting Docker container...$(RESET)"
-	@docker run -it --rm \
-		-v $(PWD):/workspace \
-		$(GITEA_MODULE_ENV) \
-		-w /workspace \
-		--name $(DOCKER_CONTAINER) \
-		$(DOCKER_INTEGRATION_IMAGE) \
-		/bin/bash
+## docker-run: Run CMD (default `make build`) in the toolchain image with the checkout mounted
+docker-run: docker-build-toolchain
+	GO_XKMS_TOOLCHAIN_TAG=$(TOOLCHAIN_TAG) GO_XKMS_UID=$$(id -u) GO_XKMS_GID=$$(id -g) \
+		GO_XKMS_TOOLCHAIN_NETWORK=$(DOCKER_RUN_NETWORK) \
+		docker compose -f $(DEVCONTAINER_COMPOSE) --profile toolchain -p go-xkms-tc-$(IMAGE_TAG) \
+		run --rm toolchain sh -c '$(CMD)'
+
+# devcontainer.json starts compose itself, with no Makefile run to export
+# GO_IMAGE or stage the gomodauth secret, so its initializeCommand runs this
+# on the host first. Compose interpolates from $(DEVCONTAINER_DIR)/.env, so the
+# pin is kept there, beside the developer's GITEA_* lines, in step with
+# scripts/tool-pins.sh.
+DEVCONTAINER_ENV := $(DEVCONTAINER_DIR)/.env
+.PHONY: devcontainer-env
+## devcontainer-env: Write the GO_IMAGE pin into the devcontainer .env and stage gomodauth (devcontainer.json initializeCommand)
+devcontainer-env: stage-gomodauth
+	@umask 077; touch $(DEVCONTAINER_ENV); \
+	{ grep -v '^GO_IMAGE=' $(DEVCONTAINER_ENV) || true; echo 'GO_IMAGE=$(GO_IMAGE)'; } > $(DEVCONTAINER_ENV).tmp && \
+	mv $(DEVCONTAINER_ENV).tmp $(DEVCONTAINER_ENV)
 
 .PHONY: docker-test
 ## docker-test: Start a new container and run make test
-docker-test: docker-build
+docker-test: docker-build-test-image
 	@echo "$(CYAN)$(BOLD)→ Running tests in Docker container...$(RESET)"
 	@docker run --rm \
 		-v $(PWD):/workspace \
@@ -3717,6 +3844,7 @@ docker-clean: docker-stop
 	@docker rm $(DOCKER_CONTAINER) 2>/dev/null || true
 	@docker rmi $(DOCKER_IMAGE) 2>/dev/null || true
 	@docker rmi $(DOCKER_INTEGRATION_IMAGE) 2>/dev/null || true
+	@docker rmi $(TOOLCHAIN_IMAGE) $(IT_IMAGE) 2>/dev/null || true
 	@echo "$(GREEN)✓ Docker resources cleaned$(RESET)"
 
 # ==============================================================================
@@ -4004,13 +4132,16 @@ vet-integration:
 # shellcheck is installed) every run: script before CI sees them (go-xkms#1434).
 # yaml parsers accept what Gitea rejects -- a duplicate key makes Gitea create
 # no run at all, silently. Pinned; a missing or different version is replaced
-# by the pin, and a pin that cannot be installed fails the target.
-ACTIONLINT_VERSION := v1.7.12
+# by the pin (ACTIONLINT_VERSION, scripts/tool-pins.sh), and a pin that cannot
+# be installed fails the target.
 ACTIONLINT_MODULE := github.com/rhysd/actionlint/cmd/actionlint
 # actionlint takes files, not directories, and with no arguments lints whatever
 # .github/workflows is nearest the caller's working directory: name the files
 # and the config so the gate lints this repository from anywhere.
 ACTIONLINT_CONFIG := $(CURDIR)/.github/actionlint.yaml
+# Findings print path, line and message only, never the source excerpt
+# (handbook ci-standard.md §5).
+ACTIONLINT_FORMAT := {{range $$err := .}}{{$$err.Filepath}}:{{$$err.Line}}:{{$$err.Column}}: {{$$err.Message}} [{{$$err.Kind}}]{{println}}{{end}}
 # The recipe globs this directory when it runs, not when make parses the file,
 # so a workflow created after make started is still linted; none fails the gate.
 ACTIONLINT_WORKFLOW_DIR := $(CURDIR)/.github/workflows
@@ -4036,7 +4167,7 @@ actionlint:
 		$(MAKE) --no-print-directory install-actionlint || exit 1; \
 		ACTIONLINT_BIN="$$(go env GOPATH)/bin/actionlint"; \
 	fi; \
-	if ! $$ACTIONLINT_BIN -config-file "$(ACTIONLINT_CONFIG)" "$$@"; then \
+	if ! $$ACTIONLINT_BIN -config-file "$(ACTIONLINT_CONFIG)" -format '$(ACTIONLINT_FORMAT)' "$$@"; then \
 		echo "$(RED)$(BOLD)✗ actionlint found problems in $(ACTIONLINT_WORKFLOW_DIR)$(RESET)"; \
 		exit 1; \
 	fi; \
@@ -4283,9 +4414,8 @@ check: fmt vet lint gosec vuln
 # Tool Installation
 # ==============================================================================
 
-# The version the CI and release Trivy images run (TRIVY_DIGEST in ci.yml and
-# release.yml); bump every trivy pin together.
-TRIVY_VERSION := v0.75.0
+# TRIVY_VERSION (scripts/tool-pins.sh) is the version the toolchain image and
+# the release Trivy image run (TRIVY_DIGEST in release.yml); bump them together.
 # Built from source through the module proxy and checksum database, like
 # actionlint, rather than by piping a remote install script into a shell.
 TRIVY_MODULE := github.com/aquasecurity/trivy/cmd/trivy
@@ -4318,7 +4448,7 @@ install-govulncheck:
 	@echo "$(CYAN)$(BOLD)→ Installing govulncheck...$(RESET)"
 	@if ! command -v govulncheck >/dev/null 2>&1; then \
 		echo "$(CYAN)  Installing govulncheck vulnerability scanner...$(RESET)"; \
-		go install golang.org/x/vuln/cmd/govulncheck@latest; \
+		go install golang.org/x/vuln/cmd/govulncheck@$(GOVULNCHECK_VERSION); \
 		echo "$(GREEN)  ✓ govulncheck installed$(RESET)"; \
 	else \
 		echo "$(GREEN)  ✓ govulncheck already installed$(RESET)"; \
@@ -4330,7 +4460,7 @@ install-gosec:
 	@echo "$(CYAN)$(BOLD)→ Installing gosec...$(RESET)"
 	@if ! command -v gosec >/dev/null 2>&1; then \
 		echo "$(CYAN)  Installing gosec security scanner...$(RESET)"; \
-		go install github.com/securego/gosec/v2/cmd/gosec@latest; \
+		go install github.com/securego/gosec/v2/cmd/gosec@$(GOSEC_VERSION); \
 		echo "$(GREEN)  ✓ gosec installed$(RESET)"; \
 	else \
 		echo "$(GREEN)  ✓ gosec already installed$(RESET)"; \
@@ -4354,16 +4484,9 @@ install-actionlint:
 ## install-tools: Install development tools (golangci-lint, gosec, govulncheck, trivy, actionlint, etc.)
 install-tools: install-gosec install-govulncheck install-trivy install-actionlint
 	@echo "$(CYAN)$(BOLD)→ Installing development tools...$(RESET)"
-	@echo "$(CYAN)  Installing golangci-lint v2.14.0 (same as CI)...$(RESET)"
-	@cd /tmp && \
-		wget -q https://github.com/golangci/golangci-lint/releases/download/v2.14.0/golangci-lint-2.14.0-linux-amd64.tar.gz && \
-		tar -xzf golangci-lint-2.14.0-linux-amd64.tar.gz && \
-		sudo mkdir -p $(shell go env GOPATH)/bin && \
-		sudo cp golangci-lint-2.14.0-linux-amd64/golangci-lint $(shell go env GOPATH)/bin/ && \
-		sudo chmod +x $(shell go env GOPATH)/bin/golangci-lint && \
-		sudo chown $(shell whoami):$(shell whoami) $(shell go env GOPATH)/bin/golangci-lint && \
-		rm -rf golangci-lint-2.14.0-linux-amd64*
-	@echo "$(GREEN)  ✓ golangci-lint v2.14.0 installed$(RESET)"
+	@echo "$(CYAN)  Installing golangci-lint $(GOLANGCI_VERSION) (same as the toolchain image)...$(RESET)"
+	@go install github.com/golangci/golangci-lint/v2/cmd/golangci-lint@$(GOLANGCI_VERSION)
+	@echo "$(GREEN)  ✓ golangci-lint $(GOLANGCI_VERSION) installed$(RESET)"
 	@echo "$(GREEN)✓ Development tools installed$(RESET)"
 
 # ==============================================================================
@@ -4422,7 +4545,7 @@ ci: docker-ci
 clean:
 	@echo "$(CYAN)$(BOLD)→ Cleaning build artifacts...$(RESET)"
 	@$(GOCLEAN)
-	@rm -rf $(BUILD_DIR)
+	@$(MAKE) --no-print-directory clean-build-dir
 	@rm -rf $(COVERAGE_DIR)
 	@rm -f *.out *.log *.test *.prof
 	@rm -f $(SHARED_LIB)
@@ -4432,6 +4555,17 @@ clean:
 	@find . -name "*.out" -type f -delete 2>/dev/null || true
 	@find . -type d -name "tmp" -exec rm -rf {} + 2>/dev/null || true
 	@echo "$(GREEN)✓ Clean complete$(RESET)"
+
+.PHONY: clean-build-dir
+## clean-build-dir: Remove the generated entries under build/, keeping build/docker/
+# build/docker/ is source, not output: the tracked devcontainer Dockerfiles,
+# compose files and scripts, and the gitignored credentials stage-gomodauth and
+# the developer's .env keep beside them. Everything else under $(BUILD_DIR) is
+# generated (bin, lib, coverage, reports) and goes.
+clean-build-dir:
+	@if [ -d "$(BUILD_DIR)" ]; then \
+		find "$(BUILD_DIR)" -mindepth 1 -maxdepth 1 ! -name docker -exec rm -rf {} +; \
+	fi
 
 # ==============================================================================
 # Help Target

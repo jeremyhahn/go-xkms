@@ -209,7 +209,13 @@ func TPMExtraData(alg int64, keyAuth string) ([]byte, error) {
 	if _, err := coseSignatureAlgorithm(alg); err != nil {
 		return nil, err
 	}
-	hash := webauthncose.HasherFromCOSEAlg(webauthncose.COSEAlgorithmIdentifier(alg))
+	hash, ok := webauthncose.HasherFromCOSEAlg(webauthncose.COSEAlgorithmIdentifier(alg))
+	if !ok {
+		return nil, &errs.Detail{
+			Err:    ErrTPMAttestationInvalid,
+			Detail: "alg " + strconv.FormatInt(alg, 10) + " has no registered hash",
+		}
+	}
 	hash.Write([]byte(keyAuth))
 	return hash.Sum(nil), nil
 }
