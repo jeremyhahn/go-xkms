@@ -122,6 +122,7 @@ transit they are as safe as the transport:
 | gRPC | TLS 1.3 (`pkg/api/transport/grpc/transport.go:115`, `:122`); a TLS-disabled TCP endpoint is refused (`:95`) |
 | REST | TLS 1.3 over `https://` (`pkg/api/transport/rest/transport.go:129`, `:135`); any other base URL is refused (`:121`) |
 | USB | Refused: `SignImage` returns `ErrNotSupported` (`pkg/api/transport/usb/transport_signing_key.go:57`) |
+| TypeScript SDK | `https://` only, redirects refused (`sdk/ts/src/clients/signingKey.ts:79`, `sdk/ts/src/http.ts:113`, `:138`); any other URL throws `XkmsInsecureTransportError` before a request is sent, unless `allowInsecureTransport` is set |
 
 No client sends the password in clear (ruling 152). The gRPC and REST
 constructors refuse a TLS-disabled TCP endpoint with

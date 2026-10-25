@@ -14,6 +14,7 @@
 package refvalue
 
 import (
+	"bytes"
 	"crypto"
 	"crypto/ecdsa"
 	"crypto/ed25519"
@@ -132,6 +133,48 @@ func TestSign_TaggedInputAndRSAStrength(t *testing.T) {
 	checkProtectedHeader(t, data, cose.AlgorithmPS384)
 }
 
+// TestSign_PreservesExtensionEntries signs a corim-map holding a
+// $$corim-map-extension entry (draft-ietf-rats-corim-11 §4.1) and checks the
+// payload is the caller's map, byte for byte, not a re-encoding that drops it.
+func TestSign_PreservesExtensionEntries(t *testing.T) {
+	var entries map[uint64]cbor.RawMessage
+	if err := cbor.Unmarshal(buildUnsigned(t, buildCoMID(t), nil), &entries); err != nil {
+		t.Fatalf("decode corim-map: %v", err)
+	}
+	extension, err := cbor.Marshal("profile-specific")
+	if err != nil {
+		t.Fatalf("extension: %v", err)
+	}
+	entries[99] = extension
+	unsigned, err := cbor.Marshal(entries)
+	if err != nil {
+		t.Fatalf("encode corim-map: %v", err)
+	}
+	want, err := cbor.Marshal(cbor.RawTag{Number: tagUnsignedCorim, Content: unsigned})
+	if err != nil {
+		t.Fatalf("tag: %v", err)
+	}
+
+	key := newKey(t, elliptic.P256())
+	data, err := Sign(unsigned, signMeta(), key)
+	if err != nil {
+		t.Fatalf("Sign: %v", err)
+	}
+	if _, err := VerifySigned(data, VerifyOptions{PublicKey: key.Public(), Now: fixedNow}); err != nil {
+		t.Fatalf("VerifySigned: %v", err)
+	}
+	var msg cose.Sign1Message
+	if err := msg.UnmarshalCBOR(data); err != nil {
+		t.Fatalf("COSE_Sign1: %v", err)
+	}
+	if !bytes.Equal(msg.Payload, want) {
+		t.Fatalf("payload = %x, want the caller's corim-map %x", msg.Payload, want)
+	}
+	if !bytes.Contains(msg.Payload, extension) {
+		t.Fatal("payload lost the extension entry")
+	}
+}
+
 func TestRSAAlgorithm(t *testing.T) {
 	for bits, want := range map[int]cose.Algorithm{
 		2048: cose.AlgorithmPS256,
@@ -166,6 +209,18 @@ func TestSign_Errors(t *testing.T) {
 	if err != nil {
 		t.Fatalf("tag: %v", err)
 	}
+	tagged, err := cbor.Marshal(cbor.RawTag{Number: tagUnsignedCorim, Content: unsigned})
+	if err != nil {
+		t.Fatalf("tag: %v", err)
+	}
+	doubleTagged, err := cbor.Marshal(cbor.RawTag{Number: tagUnsignedCorim, Content: tagged})
+	if err != nil {
+		t.Fatalf("tag: %v", err)
+	}
+	notMap, err := cbor.Marshal([]string{"corim-1"})
+	if err != nil {
+		t.Fatalf("array: %v", err)
+	}
 	for _, tc := range []struct {
 		name     string
 		unsigned []byte
@@ -174,6 +229,10 @@ func TestSign_Errors(t *testing.T) {
 		want     error
 	}{
 		{"nil signer", unsigned, signMeta(), nil, ErrSignerKey},
+		{"empty", nil, signMeta(), key, ErrMalformed},
+		{"double tagged", doubleTagged, signMeta(), key, ErrMalformed},
+		{"trailing bytes", append(append([]byte{}, unsigned...), 0x00), signMeta(), key, ErrMalformed},
+		{"not a map", notMap, signMeta(), key, ErrMalformed},
 		{"P-224 key", unsigned, signMeta(), p224, ErrSignerKey},
 		{"short RSA key", unsigned, signMeta(), newRSAKey(t, 1024), ErrSignerKey},
 		{"not CBOR", []byte{0xff}, signMeta(), key, ErrMalformed},
