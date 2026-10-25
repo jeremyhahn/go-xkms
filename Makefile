@@ -1087,6 +1087,7 @@ test-scripts:
 	@bash test/scripts/release-assets.test.sh
 	@bash test/scripts/changelog-assemble.test.sh
 	@bash test/scripts/retry.test.sh
+	@bash test/scripts/go-test-each.test.sh
 	@bash test/scripts/softhsm-pin.test.sh
 	@bash test/scripts/open-server-barrier.test.sh
 	@bash test/scripts/check-public-literals.test.sh
@@ -1120,6 +1121,12 @@ test-buildgates:
 #   yubikey, smartcardhsm   - tests that need physical hardware to exercise
 UNIT_TEST_SCOPE := ./pkg/... ./cmd/... ./sdk/...
 UNIT_TEST_EXCLUDE := (pkg/tpm2$$|/mocks|/testutil|/proto|pkcs11test|yubikey|smartcardhsm)
+# test-go runs one `go test` per package through scripts/go-test-each.sh, so
+# each package's WORK directory is removed when it finishes instead of holding
+# every compiled archive until the whole run ends (3.5 GB on a cold cache,
+# m1261). UNIT_TEST_JOBS packages run at once with one build action each (-p=1),
+# the same two concurrent actions CI's GOFLAGS=-p=2 allowed the single run.
+UNIT_TEST_JOBS ?= 2
 
 ## unit-test-pkgs: Print test-go's package list (batch.yml's race scope)
 unit-test-pkgs:
@@ -1129,7 +1136,8 @@ test-go: check-insecure-tls agsim
 	@echo "$(CYAN)$(BOLD)→ Running unit tests...$(RESET)"
 	@mkdir -p $(COVERAGE_DIR)
 	@bash -c 'set -o pipefail; \
-	$(GO) test $(TEST_FLAGS) -coverprofile=$(COVERAGE_FILE) -covermode=atomic \
+	GO=$(GO) scripts/go-test-each.sh --jobs $(UNIT_TEST_JOBS) --coverprofile $(COVERAGE_FILE) \
+		$(TEST_FLAGS) -p=1 -covermode=atomic -- \
 		$$(go list -e $(UNIT_TEST_SCOPE) 2>/dev/null | grep -v -E "$(UNIT_TEST_EXCLUDE)") \
 		2>&1 | tee $(COVERAGE_DIR)/test.log; \
 	EXIT_CODE=$${PIPESTATUS[0]}; \
