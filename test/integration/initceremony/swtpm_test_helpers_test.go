@@ -28,7 +28,7 @@
 //
 // Why a PRIVATE swtpm rather than the devcontainer's shared instance
 // (/tmp/swtpm/swtpm.sock, started once per container by
-// .devcontainer/scripts/post-start.sh): this test's xkmsd subprocesses
+// build/docker/devcontainer/scripts/post-start.sh): this test's xkmsd subprocesses
 // provision themselves on first use through pkg/backend/tpm2/backend.go's
 // pkg/tpm2.ProvisionFresh, entered only when the backend config's
 // UseSimulator is true, which does nothing but ADD an EK and SRK to a blank

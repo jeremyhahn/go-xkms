@@ -23,7 +23,7 @@
 //
 // As of this writing the devcontainer image installs neither
 // libsecret-tools (secret-tool) nor git's libsecret credential helper
-// (git-credential-libsecret) -- see .devcontainer/Dockerfile, which has no
+// (git-credential-libsecret) -- see build/docker/devcontainer/Dockerfile, which has no
 // dbus/libsecret packages at all. requireTool below fails loudly with that
 // explanation rather than silently skipping, per project policy (no skip
 // guards): adding those packages to the devcontainer image is a separate,
@@ -47,7 +47,7 @@ func requireTool(t *testing.T, name string) string {
 	path, err := exec.LookPath(name)
 	if err != nil {
 		t.Fatalf("%s not found on PATH: the devcontainer image does not install it today "+
-			"(see .devcontainer/Dockerfile and docs/secret-service/engineering.md); "+
+			"(see build/docker/devcontainer/Dockerfile and docs/secret-service/engineering.md); "+
 			"install it in the devcontainer image to run this test, it is not skipped", name)
 	}
 	return path

@@ -1,0 +1,6 @@
+# compose.yaml builds softfido and virt-piv with this directory as the
+# context, and `make devcontainer-env` / `make stage-gomodauth` write the
+# module-fetch credentials here. They are BuildKit secrets, never context.
+.env
+.env.tmp
+gomodauth*

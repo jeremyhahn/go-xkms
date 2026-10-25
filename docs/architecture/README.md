@@ -62,7 +62,11 @@ test/integration/  integration suites, one directory per feature
 ## Make targets
 
 `make build`, `make build-server`, `make build-cli`, `make test`,
-`make integration-test`, `make bench`, `make coverage`, `make proto`,
-`make docker-build`, `make docker-run`, `make docker-test`. Per-package
+`make integration-test`, `make security`, `make deps-check`, `make bench`,
+`make coverage`, `make proto`, `make docker-build`, `make docker-run`,
+`make docker-test`. CI runs the five stage targets (`build`, `test`,
+`integration-test`, `security`, `deps-check`) in images built from
+`build/docker/devcontainer/Dockerfile`.
+Per-package
 targets follow `test-<pkg>`, `integration-test-<pkg>`, `bench-<pkg>` and
 `coverage-<pkg>`.

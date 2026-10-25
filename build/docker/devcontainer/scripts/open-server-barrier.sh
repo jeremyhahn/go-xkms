@@ -9,7 +9,7 @@
 # test/integration/xkmsdtest.OpenBarrier is for the Go harnesses.
 #
 # It only ever unseals. The barrier is initialized by `xkmsd init` before the
-# daemon first starts (the xkms-server command in .devcontainer/docker-compose.yml),
+# daemon first starts (the xkms-server command in build/docker/devcontainer/compose.yaml),
 # with the SO PIN as its passphrase; the sealed window refuses initialization
 # outright (HTTP 409). Any answer but 204 fails with the server's own message.
 # An unsealed server is left alone.
