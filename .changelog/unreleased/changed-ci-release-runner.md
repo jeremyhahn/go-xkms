@@ -1,0 +1,1 @@
+- **Release jobs on the release runner (go-xkms#1332).** release.yml's tag gate (`validate`) and release job (`create-release`) run on the dedicated `release` runner, which serves no pull_request job (owner ruling 130).
