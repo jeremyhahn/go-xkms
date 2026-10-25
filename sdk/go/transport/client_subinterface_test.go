@@ -16,13 +16,19 @@ package transport
 import (
 	"context"
 	"testing"
+
+	"github.com/jeremyhahn/go-xkms/pkg/testutil/appraisaltest"
 )
 
 // stubClient is a minimal implementation of Client used for compile-time
 // interface satisfaction checks. All methods panic because they are never
 // called at runtime; they exist solely to prove that a single concrete
 // type satisfying Client also satisfies every sub-interface.
-type stubClient struct{}
+type stubClient struct {
+	// Unserved serves the attestation Verifier API, which these tests do
+	// not exercise.
+	appraisaltest.Unserved
+}
 
 func (s *stubClient) Connect(context.Context) error { panic("stub") }
 func (s *stubClient) Close() error                  { panic("stub") }

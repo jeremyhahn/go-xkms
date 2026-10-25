@@ -710,6 +710,7 @@ type Client interface {
 	PasswordService
 	SealStoreService
 	TPMPolicyService
+	AttestationAppraisalService
 	SigningKeyService
 	TrustRootService
 	OIDCCredentialService
