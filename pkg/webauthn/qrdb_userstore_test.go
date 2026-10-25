@@ -157,6 +157,15 @@ func (f *fakeUserClient) UpdateUser(ctx context.Context, req *qrdbtransport.Upda
 	if !ok {
 		return nil, errFakeUserNotFound
 	}
+	if req.Username != "" && req.Username != u.Username {
+		nk := f.keyFor(u.TenantID, req.Username)
+		if _, taken := f.byUname[nk]; taken {
+			return nil, errors.New("already exists")
+		}
+		delete(f.byUname, f.keyFor(u.TenantID, u.Username))
+		u.Username = req.Username
+		f.byUname[nk] = u
+	}
 	if req.Name != "" {
 		u.Name = req.Name
 	}
@@ -186,6 +195,9 @@ func (f *fakeUserClient) DeleteUser(ctx context.Context, id uint64) error {
 	}
 	delete(f.byID, id)
 	delete(f.byUname, f.keyFor(u.TenantID, u.Username))
+	if u.Email != "" {
+		delete(f.byEmail, f.emailKeyFor(u.TenantID, u.Email))
+	}
 	return nil
 }
 
@@ -303,6 +315,58 @@ func TestQRDBAdapter_CreateAndGetByEmail(t *testing.T) {
 	}
 	if string(got.WebAuthnID()) != string(user.WebAuthnID()) {
 		t.Fatalf("ID mismatch")
+	}
+}
+
+// TestQRDBAdapter_Create_UsernameIsUserID pins owner ruling 166
+// (go-xkms#1468): the qrdb Username, the certificate CN, carries the qrdb
+// user ID and never the email, while login still resolves by email.
+func TestQRDBAdapter_Create_UsernameIsUserID(t *testing.T) {
+	us, _, fake := newTestAdapter(t)
+	ctx := context.Background()
+	for _, email := range []string{"alice@example.com", "bob@example.com"} {
+		user, err := us.Create(ctx, email, "")
+		if err != nil {
+			t.Fatalf("Create(%s): %v", email, err)
+		}
+		id, err := UserIDFromHandle(user.WebAuthnID())
+		if err != nil {
+			t.Fatalf("UserIDFromHandle: %v", err)
+		}
+		rec, err := fake.GetUser(ctx, id)
+		if err != nil {
+			t.Fatalf("GetUser(%d): %v", id, err)
+		}
+		if want := strconv.FormatUint(id, 10); rec.Username != want {
+			t.Fatalf("Username = %q, want the user ID %q", rec.Username, want)
+		}
+		if rec.Email != email {
+			t.Fatalf("Email = %q, want %q", rec.Email, email)
+		}
+
+		got, err := us.GetByEmail(ctx, email)
+		if err != nil {
+			t.Fatalf("GetByEmail(%s): %v", email, err)
+		}
+		if string(got.WebAuthnID()) != string(user.WebAuthnID()) {
+			t.Fatalf("GetByEmail(%s) resolved a different user", email)
+		}
+	}
+}
+
+// TestQRDBAdapter_Create_DuplicateEmail checks a second registration of the
+// same email is refused and leaves no extra record behind.
+func TestQRDBAdapter_Create_DuplicateEmail(t *testing.T) {
+	us, _, fake := newTestAdapter(t)
+	ctx := context.Background()
+	if _, err := us.Create(ctx, "alice@example.com", "Alice"); err != nil {
+		t.Fatalf("first Create: %v", err)
+	}
+	if _, err := us.Create(ctx, "alice@example.com", "Alice"); err == nil {
+		t.Fatal("second Create with the same email succeeded")
+	}
+	if n := len(fake.byID); n != 1 {
+		t.Fatalf("records after a refused duplicate = %d, want 1", n)
 	}
 }
 
