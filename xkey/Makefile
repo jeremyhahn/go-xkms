@@ -663,8 +663,43 @@ coverage:
 		-covermode=atomic \
 		./cmd/... ./pkg/...
 	@$(GO) tool cover -html=$(COVERAGE_FILE) -o $(COVERAGE_HTML)
-	@$(GO) tool cover -func=$(COVERAGE_FILE) | tail -1
 	@echo "$(GREEN)Coverage report: $(COVERAGE_HTML)$(RESET)"
+	@$(MAKE) --no-print-directory coverage-check
+
+# COVERAGE_PROFILES lists the raw `go test -coverprofile` files coverage-check
+# merges. It defaults to the profile `coverage` writes. CI's Nested Module
+# Tests job passes one profile per tag set it runs (codec_json, ble, ...):
+# a file behind a build tag is only measured by the run that compiles it,
+# and merging the profiles counts each statement once, covered if any run
+# covered it.
+COVERAGE_PROFILES ?= $(COVERAGE_FILE)
+COVERAGE_MERGED := $(COVERAGE_DIR)/merged.out
+
+.PHONY: coverage-check
+## coverage-check: Fail unless the merged COVERAGE_PROFILES total reaches COVERAGE_THRESHOLD
+coverage-check:
+	@mkdir -p $(COVERAGE_DIR)
+	@echo "mode: atomic" > $(COVERAGE_MERGED)
+	@for p in $(COVERAGE_PROFILES); do \
+		if [ ! -s "$$p" ]; then \
+			echo "$(RED)✗ Coverage profile missing or empty: $$p$(RESET)"; \
+			exit 1; \
+		fi; \
+		tail -n +2 "$$p" >> $(COVERAGE_MERGED); \
+	done
+	@echo "$(CYAN)Packages below $(COVERAGE_THRESHOLD)% (report only, the gate is the total):$(RESET)"
+	@bash $(WORKSPACE_ROOT)/scripts/check-coverage.sh $(COVERAGE_THRESHOLD) $(COVERAGE_MERGED) || true
+	@total=$$($(GO) tool cover -func=$(COVERAGE_MERGED) | tail -1 | awk '{print $$NF}' | tr -d '%'); \
+	if [ -z "$$total" ]; then \
+		echo "$(RED)✗ Could not read the total from $(COVERAGE_MERGED)$(RESET)"; \
+		exit 1; \
+	fi; \
+	if awk -v total="$$total" -v min="$(COVERAGE_THRESHOLD)" 'BEGIN { exit !(total + 0 >= min) }'; then \
+		echo "$(GREEN)PASS: xkey coverage $$total% meets threshold $(COVERAGE_THRESHOLD)%$(RESET)"; \
+	else \
+		echo "$(RED)FAIL: xkey coverage $$total% is below threshold $(COVERAGE_THRESHOLD)%$(RESET)"; \
+		exit 1; \
+	fi
 
 .PHONY: coverage-full
 ## coverage-full: Generate comprehensive coverage (unit + integration tests)

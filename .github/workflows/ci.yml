@@ -632,7 +632,9 @@ jobs:
       # so the compile-time proof it carries goes dark, not just unrun.
       - name: xkey lifecycle tests
         working-directory: xkey
-        run: go test -race -timeout 60m -v -tags "codec_json tpm_simulator" ./internal/lifecycle/... ./pkg/phone/... ./pkg/pairing/...
+        run: |
+          mkdir -p build/coverage
+          go test -race -timeout 60m -v -tags "codec_json tpm_simulator" -covermode=atomic -coverprofile=build/coverage/lifecycle.out ./internal/lifecycle/... ./pkg/phone/... ./pkg/pairing/...
 
       # pkg/oath's FIPS gate tests (#22) run here because `go vet -tags ble
       # ./...` below COMPILES a test but never runs it, and a test that is
@@ -645,7 +647,7 @@ jobs:
       # a user-driven path.
       - name: xkey oath tests
         working-directory: xkey
-        run: go test -race -timeout 60m -v -tags codec_json ./pkg/oath/...
+        run: go test -race -timeout 60m -v -tags codec_json -covermode=atomic -coverprofile=build/coverage/oath.out ./pkg/oath/...
 
       # Every other xkey unit package (#147). Before this step CI executed
       # 2,483 of the module's 13,725 test functions: the 41 packages below had
@@ -725,6 +727,7 @@ jobs:
           dir="$modcache"
           while [ "$dir" != / ]; do sudo chmod o+x "$dir"; dir="$(dirname "$dir")"; done
           sudo chown -R xkey-ci: "$modcache"
+          sudo chown xkey-ci: build/coverage
           # sudo exports SUDO_USER/SUDO_UID/SUDO_GID (root, here) into the
           # child, and the CLI honours them by design: a command run through
           # sudo resolves the INVOKING user's home so pair and fido2 share one
@@ -754,6 +757,7 @@ jobs:
           # compiled and ran the ble variant of this package (go-xkms#1318).
           # Both tag sets now run here so that drift fails the build again.
           as_xkey_ci go test -race -timeout 60m -tags "codec_json tpm_simulator" -count=1 \
+            -covermode=atomic -coverprofile=build/coverage/unit.out \
             ./cmd/e2eprobe ./cmd/xkey ./cmd/xkey/cmd \
             ./pkg/agent ./pkg/audit ./pkg/backendregistry ./pkg/backup \
             ./pkg/ccid ./pkg/cdp ./pkg/config ./pkg/gadget \
@@ -774,6 +778,7 @@ jobs:
           # drives the auto-unseal path against the in-process simulator
           # (#985); no host TPM or swtpm is touched.
           as_xkey_ci go test -race -timeout 60m -tags "ble codec_json tpm_simulator" -count=1 \
+            -covermode=atomic -coverprofile=build/coverage/unit-ble.out \
             ./cmd/xkey/cmd ./pkg/gui/services
 
       # Compile-check EVERY ble-tagged package, tests included.
@@ -829,7 +834,7 @@ jobs:
       # rather than going back to naming tests.
       - name: xkey peripheral lifecycle (-race -tags ble)
         working-directory: xkey
-        run: go test -race -timeout 60m -tags ble ./pkg/phone/ -count=1
+        run: go test -race -timeout 60m -tags ble -covermode=atomic -coverprofile=build/coverage/phone-ble.out ./pkg/phone/ -count=1
 
       # The attestation DECISION's own suite. It used to live in cmd/xkey/cmd
       # behind `//go:build ble`, reachable only through the named list above --
@@ -840,7 +845,18 @@ jobs:
       # most expensive.
       - name: xkey device attestation decision
         working-directory: xkey
-        run: go test -timeout 60m ./pkg/attestation/... -count=1
+        run: go test -timeout 60m -covermode=atomic -coverprofile=build/coverage/attestation.out ./pkg/attestation/... -count=1
+
+      # Every xkey step above writes a coverage profile; this merges them and
+      # fails the job below xkey's Makefile COVERAGE_THRESHOLD (SPEC row
+      # xkey-ci-coverage). One profile per tag set, because a file behind a
+      # build tag is only measured by the run that compiles it.
+      - name: xkey coverage gate
+        working-directory: xkey
+        run: |
+          make coverage-check COVERAGE_PROFILES="build/coverage/lifecycle.out build/coverage/oath.out \
+            build/coverage/unit.out build/coverage/unit-ble.out build/coverage/phone-ble.out \
+            build/coverage/attestation.out"
 
   # Job 1c: Nested Module Build (fast tier) -- sdk/go, xkey and web/desktop
   # still have to COMPILE on every ordinary PR; `go vet` for all three is
