@@ -153,21 +153,8 @@ func BuildTokenIssuer(ctx context.Context, p TokenIssuerParams) (*token.Issuer, 
 		return nil, &TokenIssuerBackendError{Backend: p.BackendName, Err: ErrTokenIssuerBackendRequired}
 	}
 
-	cn := p.SigningKeyCN
-	if cn == "" {
-		cn = DefaultJWTSigningKeyCN
-	}
-
-	attrs := &types.KeyAttributes{
-		CN:                 cn,
-		Backend:            p.BackendName,
-		StoreType:          p.Backend.Type(),
-		KeyType:            types.KeyTypeSigning,
-		KeyAlgorithm:       x509.ECDSA,
-		SignatureAlgorithm: x509.ECDSAWithSHA256,
-		Hash:               stdcrypto.SHA256,
-		ECCAttributes:      &types.ECCAttributes{Curve: elliptic.P256()},
-	}
+	cn := sessionSigningKeyCN(p.SigningKeyCN)
+	attrs := sessionSigningKeyAttributes(cn, p.BackendName, p.Backend.Type())
 
 	// Reuse the key across restarts; generate it on first boot.
 	provision := func() error {
@@ -242,6 +229,33 @@ func BuildTokenIssuer(ctx context.Context, p TokenIssuerParams) (*token.Issuer, 
 		return nil, &TokenIssuerConfigError{Err: err}
 	}
 	return issuer, nil
+}
+
+// sessionSigningKeyCN resolves the session signing key's CN, which is also
+// the kid the issuer stamps on every token: empty selects
+// DefaultJWTSigningKeyCN.
+func sessionSigningKeyCN(cn string) string {
+	if cn == "" {
+		return DefaultJWTSigningKeyCN
+	}
+	return cn
+}
+
+// sessionSigningKeyAttributes describes the ES256 (ECDSA P-256, SHA-256)
+// session signing key under cn on the named backend. BuildTokenIssuer signs
+// with the key these attributes select and SessionSigningJWK publishes its
+// public half, so both always address the same key.
+func sessionSigningKeyAttributes(cn, backendName string, storeType types.StoreType) *types.KeyAttributes {
+	return &types.KeyAttributes{
+		CN:                 cn,
+		Backend:            backendName,
+		StoreType:          storeType,
+		KeyType:            types.KeyTypeSigning,
+		KeyAlgorithm:       x509.ECDSA,
+		SignatureAlgorithm: x509.ECDSAWithSHA256,
+		Hash:               stdcrypto.SHA256,
+		ECCAttributes:      &types.ECCAttributes{Curve: elliptic.P256()},
+	}
 }
 
 // Compile-time check: pkg/auth's QRDBUserResolver cannot declare this

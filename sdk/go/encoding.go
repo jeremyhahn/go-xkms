@@ -102,6 +102,9 @@ var (
 	JWKThumbprintSHA256 = jwk.ThumbprintSHA256
 )
 
+// JWK is an RFC 7517 JSON Web Key, re-exported from pkg/encoding/jwk.
+type JWK = jwk.JWK
+
 // JWT types re-exported from pkg/encoding/jwt.
 // These allow SDK consumers to sign and verify JWTs without importing
 // internal packages.
