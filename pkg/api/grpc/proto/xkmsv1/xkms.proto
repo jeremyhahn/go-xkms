@@ -79,6 +79,13 @@ service KeystoreService {
     option (qrdb.v1.permission) = "keys:sign";
   }
 
+  // ExportOTAImageKey returns the public half of the current version of a
+  // board's OTA image-signing key; it reads a public key, so the get
+  // permission applies.
+  rpc ExportOTAImageKey(OTAImageKeyRequest) returns (ExportOTAImageKeyResponse) {
+    option (qrdb.v1.permission) = "keys:get";
+  }
+
   // ListKeyVersions lists every version of a key and marks the current one.
   // A key that was never rotated lists version 1 alone.
   rpc ListKeyVersions(ListKeyVersionsRequest) returns (ListKeyVersionsResponse) {
@@ -1528,6 +1535,23 @@ message SignOTAImageRequest {
   bytes data = 3;
   // data_is_digest states that data is already the image's SHA-256 digest.
   bool data_is_digest = 4;
+}
+
+// ExportOTAImageKeyResponse is the public half of a board's OTA image-signing
+// key and the record of which board id its key ID belongs to.
+message ExportOTAImageKeyResponse {
+  string board_id = 1;
+  string key_id = 2;
+  // key_version is the exported version, always the current one.
+  uint32 key_version = 3;
+  // algorithm is always ES256.
+  string algorithm = 4;
+  // public_key is the raw 64-byte X || Y, each coordinate 32 bytes
+  // big-endian, left-padded.
+  bytes public_key = 5;
+  // cose_key is the RFC 9052 §7 COSE_Key (RFC 9053 §7.1.1 EC2) in RFC 8949
+  // §4.2.1 deterministic CBOR.
+  bytes cose_key = 6;
 }
 
 // KeyVersionInfo contains information about a key version

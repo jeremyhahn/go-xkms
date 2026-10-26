@@ -156,3 +156,26 @@ func (h *HandlerContext) SignOTAImageHandler(w http.ResponseWriter, r *http.Requ
 		KeyVersion: resp.KeyVersion,
 	}, http.StatusOK)
 }
+
+// ExportOTAImageKeyHandler handles POST /api/v1/ota-image-keys/{board}/export:
+// the public half of the current version of the board's key.
+func (h *HandlerContext) ExportOTAImageKeyHandler(w http.ResponseWriter, r *http.Request) {
+	var req OTAImageKeyRequest
+	backendID, ok := h.decodeOTARequest(w, r, &req)
+	if !ok {
+		return
+	}
+
+	resp, err := h.xkmsService.ExportOTAImageKey(r.Context(), &transport.OTAImageKeyRequest{
+		Backend:   backendID,
+		BoardID:   chi.URLParam(r, "board"),
+		Algorithm: req.Algorithm,
+		TenantID:  callerTenantID(r.Context()),
+	})
+	if err != nil {
+		mapKeyOpError(w, err)
+		return
+	}
+
+	writeJSON(w, resp, http.StatusOK)
+}

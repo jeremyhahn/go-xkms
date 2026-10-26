@@ -106,3 +106,24 @@ func (s *Server) handleSignOTAImage(ctx context.Context, req *JSONRPCRequest) (i
 
 	return SignResult{Signature: resp.Signature, Algorithm: resp.Algorithm, KeyVersion: resp.KeyVersion}, nil
 }
+
+// handleExportOTAImageKey returns the public half of the current version of
+// the board's key.
+func (s *Server) handleExportOTAImageKey(ctx context.Context, req *JSONRPCRequest) (interface{}, error) {
+	var params OTAImageKeyParams
+	if err := decodeParams(req, &params); err != nil {
+		return nil, err
+	}
+
+	resp, err := s.xkmsService.ExportOTAImageKey(ctx, &transport.OTAImageKeyRequest{
+		Backend:   params.Backend,
+		BoardID:   params.BoardID,
+		Algorithm: params.Algorithm,
+		TenantID:  callerTenantID(ctx),
+	})
+	if err != nil {
+		return nil, mapKeyOpError(err)
+	}
+
+	return resp, nil
+}
