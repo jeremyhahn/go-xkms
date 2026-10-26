@@ -979,7 +979,7 @@ Keystore as:
 | Property | Value |
 |---|---|
 | Algorithm | EC P-256, `PURPOSE_SIGN`, digest SHA-256 |
-| User authentication | `setUserAuthenticationRequired(true)` with `setUserAuthenticationParameters(0, AUTH_BIOMETRIC_STRONG)`: a timeout of 0, so every signature needs a fresh biometric |
+| User authentication | `setUserAuthenticationRequired(true)` with `setUserAuthenticationParameters(0, AUTH_BIOMETRIC_STRONG \| AUTH_DEVICE_CREDENTIAL)`: a timeout of 0, so every signature needs a fresh strong biometric or the device credential (PIN, pattern or password) (ruling 180) |
 | Attestation challenge | begins with `xkey-user-verification-v1`; trailing bytes are reserved for the prover |
 | Hardware | TEE or StrongBox (StrongBox when available) |
 
@@ -994,6 +994,12 @@ use and persists nothing, a regenerated UVK needs no re-pairing.
 |---|---|---|
 | `protocolVersion` | int | `2` |
 | `nonce` | bytes (base64) | 32 fresh random bytes from the desktop |
+| `rpName` | string, required | the relying party the token is for, 1 to 255 bytes of UTF-8 (`VerifyUserRPNameMaxLen`); bound into the transcript (ruling 180) |
+
+`rpName` is the CTAP `rpId` of the token request. A request whose permissions
+are not RP-scoped carries no `rpId`; the desktop then names itself, `xkey`
+(`phone.VerifyUserAuthenticatorName`). An empty or over-long name is refused
+on both sides with `ErrVerifyUserRPName` (`pkg/pairingproto/verify_user.go:148`).
 
 It carries no purpose and no channel binding, for the reason given for
 `local.attestDevice` above: the purpose is fixed by the method, and each side
@@ -1005,11 +1011,19 @@ derives the binding from its own session.
 ```
 "xkey-attest-transcript-v1" || 0x0b || "verify-user"
                             || nonce(32) || channelBinding(32) || SHA-256(UVK SPKI)(32)
+                            || len(rpName)(1) || rpName
 ```
 
+The RP name is appended after the fingerprint, length-prefixed
+(`BuildVerifyUserTranscript`, `pkg/pairingproto/verify_user.go:170`), so a
+signature made for one RP does not verify for another. The published vector
+(`rpName` `example.com`) has SHA-256
+`73b6c51c106924a452dac3bd4075c2110e36f9f50b15ae3f82c3b2c0ae796c17`.
+
 `channelBinding` is `pairingproto.ComputeAttestChannelBinding` over this
-session. The phone shows the biometric prompt (a `BiometricPrompt` with a
-`CryptoObject` wrapping the UVK `Signature`) and signs the transcript as
+session. The phone shows the prompt (a `BiometricPrompt` with a `CryptoObject`
+wrapping the UVK `Signature`, allowing `BIOMETRIC_STRONG | DEVICE_CREDENTIAL`),
+names `rpName` in it, and signs the transcript as
 `SHA256withECDSA`, ASN.1 DER.
 
 **Result** (`LocalVerifyUserResult`):
@@ -1036,11 +1050,14 @@ in this order:
    (`VerifyUserVerificationGenesisChallenge`), so a DAK chain cannot stand in
    for a UVK.
 5. The leaf's `teeEnforced` list requires a fresh user authentication on every
-   use: `userAuthType` (tag 504) is `2` (biometric), `authTimeout` (tag 505)
-   and `allowWhileOnBody` (tag 506) are absent, and `noAuthRequired` (tag 503)
-   is absent from both lists.
+   use: `userAuthType` (tag 504) is `1` (device credential), `2` (biometric)
+   or `3` (either), and `0` or any other bit is
+   `ErrAndroidKeyUserAuthTypeNotUserVerification`
+   (`pkg/attestation/android/device.go:165`, ruling 180); `authTimeout`
+   (tag 505) and `allowWhileOnBody` (tag 506) are absent, and `noAuthRequired`
+   (tag 503) is absent from both lists.
 6. The transcript is rebuilt from the nonce the desktop sent, the binding it
-   derived and the fingerprint of the verified leaf, and the signature verifies
+   derived, the fingerprint of the verified leaf and the RP name it sent, and the signature verifies
    under the leaf as ES256 on P-256 (`VerifyAttestChallengeSignature`).
 7. The challenge is answered once: a nonce is consumed by its first
    verification, and one that has outlived the biometric prompt's timeout is
@@ -1060,21 +1077,27 @@ connected session through `PhoneKeyBackendConfig.VerifyUser`, which
 `attestation.NewUserVerifier` over the pairing attestation trust. A backend
 without that function refuses with `ErrUserVerifierUnavailable`. When the key
 backend is a `UserVerifier`, `getInfo` reports `uv` and `pinUvAuthToken`, and
-clientPIN subcommand `0x06` calls `VerifyUser` before it mints the token
-(`pkg/fido2/authenticator/cmd_clientpin.go`). A refusal spends one `uvRetries`
+clientPIN subcommand `0x06` calls `VerifyUser` with the request's `rpId`
+before it mints the token (`pkg/fido2/authenticator/cmd_clientpin.go:867`). A refusal spends one `uvRetries`
 and answers `CTAP2_ERR_UV_INVALID`, or `CTAP2_ERR_UV_BLOCKED` once the retries
 are spent; a cancelled request spends none.
 
+**Trust and revocation.** The chain is built from the presented certificates
+with only the embedded Google Hardware Attestation roots as anchors
+(`pkg/attestation/android/extension.go:775`,
+`pkg/attestation/truststore/classify.go:46`); no intermediate is pinned. The
+Google attestation revocation list is not yet consulted.
 
-Status: shipped on the desktop. The wire definition (`pkg/pairingproto/verify_user.go:50`),
-the verifier (`xkey/pkg/attestation/verify_user.go:206`) and the authenticator
-path (`pkg/fido2/authenticator/cmd_clientpin.go:854`) are in place, tested end
+Status: shipped on the desktop. The wire definition (`pkg/pairingproto/verify_user.go:102`),
+the verifier (`xkey/pkg/attestation/verify_user.go:216`), the phone backend
+(`xkey/pkg/phone/phone.go:771`) and the authenticator path
+(`pkg/fido2/authenticator/cmd_clientpin.go:867`) are in place, tested end
 to end against the `attesttest` phone (`device_session_verify_user_test.go`);
 the authenticator no longer refuses UV tokens when its key backend is a
-`UserVerifier` (#1145). Three choices of ruling 167 remain owner-open
-(handbook#465) and ship with these defaults: (a) the desktop persists nothing
-about the UVK, (b) biometric-only `userAuthType` 2, (c) no RP name on the
-phone prompt. The phone side is xkey-android #13.
+`UserVerifier` (#1145). Ruling 180 settled two of ruling 167's open choices:
+the UVK accepts biometric or device credential (`userAuthType` 1, 2 or 3), and
+the request names the RP, bound into the transcript. The desktop still
+persists nothing about the UVK. The phone side is xkey-android #13.
 
 ## Configuration
 
