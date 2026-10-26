@@ -94,6 +94,11 @@ type EnrollmentPolicy struct {
 	// TrustedRoots verifies the attestation chain. Nil denies every
 	// enrollment: without roots the chain proves nothing.
 	TrustedRoots *x509.CertPool `json:"-" yaml:"-"`
+
+	// Revocation is the Android attestation status list every chain
+	// certificate is checked against (ruling 180). Nil denies every
+	// enrollment: a revoked attestation key proves nothing either.
+	Revocation xkms.AndroidStatusListSource `json:"-" yaml:"-"`
 }
 
 // DefaultEnrollmentValidity is the default LDevID lifetime, and so the default
@@ -198,6 +203,9 @@ func (p *EnrollmentPolicy) Evaluate(
 		return nil, fmt.Errorf("%w: no trusted attestation roots configured",
 			ErrEnrollmentChainUntrusted)
 	}
+	if p.Revocation == nil {
+		return nil, fmt.Errorf("%w: %w", ErrEnrollmentChainUntrusted, xkms.ErrNoAndroidRevocationSource)
+	}
 	if !p.Configured() {
 		return nil, ErrApplicationPolicyUnconfigured
 	}
@@ -214,9 +222,10 @@ func (p *EnrollmentPolicy) Evaluate(
 		// carries its own sentinel; the verifier collapses them into one error.
 		MinSecurityLevel: xkms.AndroidSecurityLevelSoftware,
 		VerifyBootState:  false,
+		Revocation:       p.Revocation,
 	})
 	if err != nil {
-		return nil, fmt.Errorf("%w: %v", ErrEnrollmentChainUntrusted, err)
+		return nil, fmt.Errorf("%w: %w", ErrEnrollmentChainUntrusted, err)
 	}
 
 	// Re-check the challenge rather than trusting the verifier to have done it:
