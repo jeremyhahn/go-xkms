@@ -20,7 +20,6 @@ import (
 	"crypto/rand"
 	"crypto/x509"
 	"encoding/pem"
-	"math/big"
 	"testing"
 
 	"github.com/fxamacker/cbor/v2"
@@ -179,6 +178,6 @@ func TestOTAImagePublicKeyEncodings_LeftPadsCoordinates(t *testing.T) {
 }
 
 func TestOTAImagePublicKeyEncodings_RefusesAnInvalidKey(t *testing.T) {
-	_, _, err := otaImagePublicKeyEncodings("ota-image-cm4", &ecdsa.PublicKey{Curve: elliptic.P256(), X: big.NewInt(1), Y: big.NewInt(1)})
-	assert.Error(t, err, "a point not on P-256 is refused")
+	_, _, err := otaImagePublicKeyEncodings("ota-image-cm4", &ecdsa.PublicKey{Curve: elliptic.P224()})
+	assert.Error(t, err, "a key that is not a P-256 point is refused")
 }
