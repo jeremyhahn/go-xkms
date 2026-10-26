@@ -25,8 +25,11 @@ type c704cLUKSHost struct {
 	open    map[string]bool // mapper name -> open
 	// fail maps a call ("unlock xkey.luks") to the error it returns; a
 	// "#n" suffix fails only the n-th identical call.
-	fail  map[string]error
-	calls []string
+	fail map[string]error
+	// before maps a call to a side effect run as the call is made, before
+	// any injected failure is returned.
+	before map[string]func()
+	calls  []string
 }
 
 // c704cLUKS routes every volume the commands open through a fresh fake host.
@@ -49,6 +52,9 @@ type c704cVolume struct {
 func (v c704cVolume) call(op string) error {
 	name := op + " " + filepath.Base(v.vol.LUKSPath)
 	v.host.calls = append(v.host.calls, name)
+	if effect := v.host.before[name]; effect != nil {
+		effect()
+	}
 	n := 0
 	for _, c := range v.host.calls {
 		if c == name {
