@@ -214,6 +214,10 @@ func (m *mockTransportClient) SignOTAImage(_ context.Context, _ *transport.OTAIm
 	return nil, nil
 }
 
+func (m *mockTransportClient) ExportOTAImageKey(_ context.Context, _ *transport.OTAImageKeyRequest) (*transport.ExportOTAImageKeyResponse, error) {
+	return nil, nil
+}
+
 func (m *mockTransportClient) GetImportParameters(_ context.Context, _ *transport.GetImportParametersRequest) (*transport.GetImportParametersResponse, error) {
 	return nil, errNotImplemented
 }
