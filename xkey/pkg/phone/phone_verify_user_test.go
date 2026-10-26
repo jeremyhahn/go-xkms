@@ -29,7 +29,7 @@ var errVerifierRefused = errors.New("verifier refused the answer")
 
 // connectedVerifyUserBackend is a backend connected over an established
 // Noise session whose phone answers every request with {"ok": true}.
-func connectedVerifyUserBackend(t *testing.T, verify pairingproto.LiveAttestFunc) *PhoneKeyBackend {
+func connectedVerifyUserBackend(t *testing.T, verify pairingproto.VerifyUserFunc) *PhoneKeyBackend {
 	t.Helper()
 	client, server := establishedNoiseSessionPair(t)
 	backend := &PhoneKeyBackend{
@@ -68,21 +68,41 @@ func TestVerifyUser_RoundTripsOverTheSessionWithItsBinding(t *testing.T) {
 		return
 	}
 	var gotBinding []byte
+	var gotRPName string
 	var gotResp *pairingproto.Response
-	backend := connectedVerifyUserBackend(t, func(ctx context.Context, exchange pairingproto.RPCExchange, binding []byte) error {
+	backend := connectedVerifyUserBackend(t, func(ctx context.Context, exchange pairingproto.RPCExchange, binding []byte, rpName string) error {
 		gotBinding = binding
+		gotRPName = rpName
 		resp, err := exchange(ctx, pairingproto.NewRequest(pairingproto.MethodLocalVerifyUser, nil))
 		gotResp = resp
 		return err
 	})
 
-	require.NoError(t, backend.VerifyUser(context.Background()))
+	require.NoError(t, backend.VerifyUser(context.Background(), "example.com"))
 
 	want, err := pairingproto.AttestChannelBinding(backend.session)
 	require.NoError(t, err)
 	require.Equal(t, want, gotBinding)
+	require.Equal(t, "example.com", gotRPName, "the RP the token is for is sent as asked")
 	require.NotNil(t, gotResp)
 	require.Nil(t, gotResp.Error)
+}
+
+// TestVerifyUser_NoRPNamesTheAuthenticator proves a token with no RP scope
+// is asked for on behalf of the authenticator, never with an empty RP name
+// the verifier would refuse.
+func TestVerifyUser_NoRPNamesTheAuthenticator(t *testing.T) {
+	if !noiseOutsideFIPS(t) {
+		return
+	}
+	var gotRPName string
+	backend := connectedVerifyUserBackend(t, func(_ context.Context, _ pairingproto.RPCExchange, _ []byte, rpName string) error {
+		gotRPName = rpName
+		return nil
+	})
+
+	require.NoError(t, backend.VerifyUser(context.Background(), ""))
+	require.Equal(t, VerifyUserAuthenticatorName, gotRPName)
 }
 
 // TestVerifyUser_VerifierRefusalIsReturned proves a refused answer is never
@@ -91,11 +111,11 @@ func TestVerifyUser_VerifierRefusalIsReturned(t *testing.T) {
 	if !noiseOutsideFIPS(t) {
 		return
 	}
-	backend := connectedVerifyUserBackend(t, func(context.Context, pairingproto.RPCExchange, []byte) error {
+	backend := connectedVerifyUserBackend(t, func(context.Context, pairingproto.RPCExchange, []byte, string) error {
 		return errVerifierRefused
 	})
 
-	require.ErrorIs(t, backend.VerifyUser(context.Background()), errVerifierRefused)
+	require.ErrorIs(t, backend.VerifyUser(context.Background(), "example.com"), errVerifierRefused)
 }
 
 // TestVerifyUser_NoVerifierRefuses proves a backend built without a
@@ -107,7 +127,7 @@ func TestVerifyUser_NoVerifierRefuses(t *testing.T) {
 	}
 	backend.connected.Store(true)
 
-	require.ErrorIs(t, backend.VerifyUser(context.Background()), ErrUserVerifierUnavailable)
+	require.ErrorIs(t, backend.VerifyUser(context.Background(), "example.com"), ErrUserVerifierUnavailable)
 }
 
 // TestVerifyUser_NotConnectedNeverCallsTheVerifier proves no exchange is
@@ -115,13 +135,13 @@ func TestVerifyUser_NoVerifierRefuses(t *testing.T) {
 func TestVerifyUser_NotConnectedNeverCallsTheVerifier(t *testing.T) {
 	called := false
 	backend := &PhoneKeyBackend{
-		cfg: &PhoneKeyBackendConfig{VerifyUser: func(context.Context, pairingproto.RPCExchange, []byte) error {
+		cfg: &PhoneKeyBackendConfig{VerifyUser: func(context.Context, pairingproto.RPCExchange, []byte, string) error {
 			called = true
 			return nil
 		}},
 		log: slog.New(slog.NewTextHandler(io.Discard, nil)),
 	}
 
-	require.ErrorIs(t, backend.VerifyUser(context.Background()), ErrNotConnected)
+	require.ErrorIs(t, backend.VerifyUser(context.Background(), "example.com"), ErrNotConnected)
 	require.False(t, called)
 }

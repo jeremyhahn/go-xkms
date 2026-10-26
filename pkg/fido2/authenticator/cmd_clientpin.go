@@ -864,7 +864,7 @@ func (a *Authenticator) handleGetPinUvAuthTokenUsingUvWithPermissions(req *Clien
 		return nil, err
 	}
 
-	verifyErr := verifier.VerifyUser(a.commandContext())
+	verifyErr := verifier.VerifyUser(a.commandContext(), req.RPID)
 
 	a.mu.Lock()
 	defer a.mu.Unlock()
