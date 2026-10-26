@@ -62,6 +62,43 @@ runner left behind. Its last step, `make clean-test-containers`, runs under
 `if: always()`. The job runs on a push to `main`, on `workflow_dispatch`,
 and on a pull request labelled `ci:full`.
 
+### CI images
+
+The stages run in two images built from `build/docker/devcontainer/Dockerfile`:
+the toolchain image and the integration image. Each is named by a hash of its
+inputs (`make -s toolchain-image`, `make -s it-image`). One job, `ci-images`,
+hands them to every job that runs a stage, through `scripts/ci-registry.sh`
+(ruling 169):
+
+- **Push to `main`** (`CI_PUBLISH=true`): `ci-images` runs on the `release`
+  runner. It pushes each image whose hash main has not published yet, as
+  `<registry>/<owner>/go-xkms-ci-{toolchain,it}:<hash>-main`. It outputs
+  `toolchain_ref` and `it_ref` as `@sha256:` digest references and validates
+  each one. The forge push logs in with the runner's own `RELEASE_REGISTRY`,
+  `RELEASE_REGISTRY_USER` and `RELEASE_REGISTRY_TOKEN` (ruling 173); no
+  workflow env sets those names.
+- **Any other event**: `ci-images` resolves `<hash>-main` to a digest.
+  - If main published the same content, the consumers pull it.
+  - If not, or if the registry cannot be read, the output is empty and each
+    consumer builds the image on its own runner, with no push.
+  - The read uses the run's token under `packages: read`. When the registry
+    refuses it, the read falls back to anonymous; when both fail, the step
+    warns that the pull credential is the gap.
+- **Consumers** (`image`, `lint-gates`, `static-analysis`, `build`,
+  `nested-module-build`, `nested-module-test`, `build-raft`, `race`,
+  `tpm2-simulator`) run `scripts/ci-registry.sh use` before their first
+  stage. It pulls the digest (3 attempts) and holds it with a never-started
+  container until the job's `if: always()` teardown releases it. A consumer
+  on a push to `main` never rebuilds an image `ci-images` published.
+
+The registry is derived from `github.server_url` (GHCR on GitHub; on the
+forge, the same host as its web UI), so no address is written in the tree.
+`scripts/reap-stale-ci-stacks.sh` also removes stale registry-named CI images
+and keeps any image a container uses, a hold included. The gate
+`internal/buildgates/ci_image_digest_test.go` fails the build when a consumer
+stops taking its image from `ci-images`.
+`test/scripts/ci-registry.test.sh` covers the script.
+
 ### Run Individual Backend Tests
 
 ```bash
