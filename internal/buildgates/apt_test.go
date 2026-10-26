@@ -13,7 +13,7 @@ import (
 )
 
 const (
-	// dockerImagesDir holds every CI and devcontainer image definition.
+	// dockerImagesDir holds the devcontainer and its sidecar images.
 	dockerImagesDir = "../../build/docker"
 	// aptConfigFile is the shared apt configuration (go-xkms#342): retries
 	// with backoff and fetch timeouts, so an archive outage costs retries
@@ -32,6 +32,28 @@ var aptConfigKeys = []string{
 	"Acquire::Retries::Delay::Maximum",
 	"Acquire::http::Timeout",
 	"Acquire::https::Timeout",
+}
+
+// ciBuiltDockerfiles are the images .github/workflows/ci.yml builds outside
+// dockerImagesDir: Dockerfile.cli in the image job on every pull request, and
+// the root Dockerfile and the backend test images in the full-tier
+// integration job's `make integration-test`. Each builds from the repository
+// root, so each copies the shared file from dockerImagesDir.
+var ciBuiltDockerfiles = []string{
+	"../../Dockerfile",
+	"../../Dockerfile.cli",
+	"../../test/integration/awskms/Dockerfile",
+	"../../test/integration/azurekv/Dockerfile",
+	"../../test/integration/bootstrap/Dockerfile.test",
+	"../../test/integration/frost/Dockerfile",
+	"../../test/integration/gcpkms/Dockerfile",
+	"../../test/integration/pkcs11/Dockerfile",
+	"../../test/integration/pkcs11/module/Dockerfile",
+	"../../test/integration/pkcs8/Dockerfile",
+	"../../test/integration/quantum/Dockerfile",
+	"../../test/integration/storage/Dockerfile",
+	"../../test/integration/tpm2/Dockerfile",
+	"../../test/integration/vault/Dockerfile",
 }
 
 var (
@@ -133,8 +155,16 @@ func fromStage(args string) (base, name string) {
 // outage-tolerant: one that runs before its stage (or a stage it is built
 // FROM) installs the shared apt configuration, one that sets apt options
 // inline instead, one that splits apt-get update from the install (a cached
-// update layer goes stale), and one that installs recommends.
+// update layer goes stale), and, in a Dockerfile that already installs with
+// --no-install-recommends, one that installs recommends.
 func aptLayerProblems(name, body string) []string {
+	instructions := dockerInstructions(body)
+	var noRecommends bool
+	for _, in := range instructions {
+		if in.op == "RUN" && strings.Contains(in.args, "--no-install-recommends") {
+			noRecommends = true
+		}
+	}
 	configured := map[string]bool{}
 	var problems []string
 	var stage string
@@ -142,7 +172,7 @@ func aptLayerProblems(name, body string) []string {
 	report := func(in instruction, problem string) {
 		problems = append(problems, fmt.Sprintf("%s:%d: %s", name, in.line, problem))
 	}
-	for _, in := range dockerInstructions(body) {
+	for _, in := range instructions {
 		switch in.op {
 		case "FROM":
 			var base string
@@ -169,8 +199,8 @@ func aptLayerProblems(name, body string) []string {
 			if update && !install {
 				report(in, "runs apt-get update without the install in the same RUN")
 			}
-			if install && !strings.Contains(in.args, "--no-install-recommends") {
-				report(in, "installs without --no-install-recommends")
+			if noRecommends && install && !strings.Contains(in.args, "--no-install-recommends") {
+				report(in, "installs recommends where the Dockerfile otherwise uses --no-install-recommends")
 			}
 		}
 		if stage != "" {
@@ -221,7 +251,7 @@ func TestDockerfileAptLayersUseTheSharedRetryConfig(t *testing.T) {
 	if len(files) == 0 {
 		t.Fatalf("no Dockerfile under %s", dockerImagesDir)
 	}
-	for _, f := range files {
+	for _, f := range append(files, ciBuiltDockerfiles...) {
 		body, err := os.ReadFile(f)
 		if err != nil {
 			t.Fatalf("read %s: %v", f, err)
@@ -279,7 +309,7 @@ func TestAptLayerProblemsCatchEachViolation(t *testing.T) {
 		{"config in an unrelated stage", "FROM debian AS a\n" + install + "FROM debian\nRUN apt-get update && apt-get install -y --no-install-recommends curl\n", "runs apt before"},
 		{"install without update", "FROM debian\n" + install + "RUN apt-get install -y --no-install-recommends curl\n", "installs without apt-get update"},
 		{"update in its own layer", "FROM debian\n" + install + "RUN apt-get update\n", "without the install"},
-		{"recommends", "FROM debian\n" + install + "RUN apt update && apt install -y curl\n", "--no-install-recommends"},
+		{"recommends", "FROM debian\n" + install + "RUN apt-get update && apt-get install -y --no-install-recommends jq\nRUN apt update && apt install -y curl\n", "installs recommends"},
 		{"inline option", "FROM debian\n" + install + "RUN echo 'Acquire::Retries \"3\";' > /etc/apt/apt.conf.d/90-x\n", "sets apt options inline"},
 	}
 	for _, tt := range tests {
@@ -308,6 +338,18 @@ RUN apt-get install -y curl
 EOF
 RUN echo done
 `
+	if problems := aptLayerProblems("Dockerfile", body); len(problems) != 0 {
+		t.Fatalf("want no problems, got %q", problems)
+	}
+}
+
+// TestAptLayerProblemsAcceptRecommendsWhereNotThePattern keeps the gate to
+// outage tolerance in a Dockerfile that never uses --no-install-recommends:
+// adding the flag there could drop a package the image relies on.
+func TestAptLayerProblemsAcceptRecommendsWhereNotThePattern(t *testing.T) {
+	const body = "FROM golang:1.27.3-bookworm\n" +
+		"COPY build/docker/devcontainer/apt-retries.conf " + aptConfigTarget + "\n" +
+		"RUN apt-get update && apt-get install -y ca-certificates && rm -rf /var/lib/apt/lists/*\n"
 	if problems := aptLayerProblems("Dockerfile", body); len(problems) != 0 {
 		t.Fatalf("want no problems, got %q", problems)
 	}

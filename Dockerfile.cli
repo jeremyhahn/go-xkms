@@ -13,6 +13,8 @@ ARG RUNTIME_IMAGE=debian:bookworm-slim@sha256:7c7b2c966bc9ee8cedfeef67e0e2791089
 
 # Stage 1: Builder
 FROM ${GO_IMAGE} AS builder
+# apt retries transient fetch errors with backoff (go-xkms#342).
+COPY build/docker/devcontainer/apt-retries.conf /etc/apt/apt.conf.d/80-retries
 
 ENV GOTOOLCHAIN=auto
 
@@ -87,6 +89,8 @@ RUN test -f /build/xkms-cli || (echo "ERROR: CLI binary not built" && exit 1)
 
 # Stage 2: Runtime
 FROM ${RUNTIME_IMAGE}
+# apt retries transient fetch errors with backoff (go-xkms#342).
+COPY build/docker/devcontainer/apt-retries.conf /etc/apt/apt.conf.d/80-retries
 
 LABEL maintainer="go-xkms"
 LABEL description="Production xkms CLI tool"
