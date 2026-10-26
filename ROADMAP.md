@@ -100,6 +100,7 @@ Scope and boundaries: [docs/SPEC.md](docs/SPEC.md).
 - **usb** — the virtual USB CCID smartcard and portable USB disk images — [v0.3.0-alpha](../../releases/tag/v0.3.0-alpha) — done
 - **virtual-authenticator** — the virtual FIDO2/CTAP2 authenticator over Linux UHID — [v0.9.0-alpha](../../releases/tag/v0.9.0-alpha) — done
 - **xkeysigner** — `crypto.Signer` over IPC to the GUI's PIV slot — [v0.3.0-alpha](../../releases/tag/v0.3.0-alpha) — done
+- **xkey-ci-coverage** — Nested Module Tests merges xkey's per-tag-set `-cover` profiles and fails below its `COVERAGE_THRESHOLD` of 90 — [Dev complete](../../milestone/14) — done
 
 ## Now
 
@@ -149,7 +150,6 @@ Scope and boundaries: [docs/SPEC.md](docs/SPEC.md).
 - **authz-ui-matrix** — UI permissions from a go-qrdb listing resolved for the caller — [Dev complete](../../milestone/14) — blocked: go-qrdb gap
 - **authz-xkey-uid0** — xkey audit access by `audit:read` — [Dev complete](../../milestone/14) — open
 - **xkey-sdk-only** — xkey on `sdk/go` only, every feature kept in both modes and nothing removed: standalone on the embedded transport, against a server on the remote transport. 176 xkey `.go` files, all `_test.go`, import 34 root `pkg/` packages, most `pkg/pairingproto` (70), `pkg/attestation/truststore` (35), `pkg/trust/bootstrap` (31), `pkg/oidc` (27) and `pkg/fido2/authenticator` (24). One PR per package set, in order: pairing and trust (`pairingproto`, `trust/bootstrap`, `attestation/*`), FIDO2 (`fido2/*`), OIDC (`oidc/*`), storage and keys (`storage`, `types`, `xkms`, `backend/software`, `auth`, `autofill`), CA and API (`ca/*`, `certstore`, `crypto/spki`, `api/*`), TPM (`tpm2/*`, `localtpm`), test helpers (`testutil/*`, `testing/enclavetest`) — [Dev complete](../../milestone/14) — open
-- **xkey-ci-coverage** — Nested Module Tests runs xkey with `-cover` against its `COVERAGE_THRESHOLD` of 90; today no CI workflow measures xkey coverage, and the root `make coverage` gate cannot reach the nested module — [Dev complete](../../milestone/14) — open
 - **xkey-sdk-only** — after RC, xkey moves to its own repository, pinned on a released go-xkms; xkey-android is already separate — [SPEC](docs/SPEC.md#features) — blocked: after RC
 
 ## Future
