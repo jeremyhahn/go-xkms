@@ -1045,7 +1045,21 @@ in this order:
 2. `protocolVersion` is 2; anything else is `ErrAttestProtocolDowngrade`.
 3. The chain verifies to a trusted Android hardware root with the DAK's
    policy, `VerifyAndroidDeviceKey`: TEE or StrongBox, locked and verified
-   boot, generated origin, signing purpose, an allowed application.
+   boot, generated origin, signing purpose, an allowed application. Every
+   certificate of the presented and the verified chain, the anchor included,
+   is checked against Google's attestation certificate revocation status list
+   (`docs/references/android-key-attestation.md` §Certificate revocation status
+   list; `CheckRevocation`, `pkg/attestation/android/revocation.go:295`). A
+   `REVOKED` or `SUSPENDED` entry is `ErrAndroidCertificateRevoked`. The list
+   comes from `phone.attestation_status_file` when set, else is fetched from
+   `phone.attestation_status_url` (default Google's
+   `https://android.googleapis.com/attestation/status`) and cached for the
+   freshness the response allows (RFC 9111 §4.2); `attestation.RevocationSource`
+   (`xkey/pkg/attestation/revocation.go:34`) resolves it. The check fails
+   closed: no source is `ErrNoAndroidRevocationSource`
+   (`pkg/attestation/android_device.go:81`), and a list that cannot be read or
+   fetched fresh is `ErrAndroidStatusListUnavailable`; there is no fail-open
+   setting (ruling 180).
 4. The leaf's attestation challenge begins with `xkey-user-verification-v1`
    (`VerifyUserVerificationGenesisChallenge`), so a DAK chain cannot stand in
    for a UVK.
@@ -1085,8 +1099,9 @@ are spent; a cancelled request spends none.
 **Trust and revocation.** The chain is built from the presented certificates
 with only the embedded Google Hardware Attestation roots as anchors
 (`pkg/attestation/android/extension.go:775`,
-`pkg/attestation/truststore/classify.go:46`); no intermediate is pinned. The
-Google attestation revocation list is not yet consulted.
+`pkg/attestation/truststore/classify.go:46`); no intermediate is pinned. Every
+chain certificate is then checked against the revocation status list, as step
+3 describes.
 
 Status: shipped on the desktop. The wire definition (`pkg/pairingproto/verify_user.go:102`),
 the verifier (`xkey/pkg/attestation/verify_user.go:216`), the phone backend
