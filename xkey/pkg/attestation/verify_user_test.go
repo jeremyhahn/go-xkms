@@ -35,7 +35,7 @@ import (
 
 // uvTrust is the trust material every user-verification test judges under.
 func uvTrust(ca *attesttest.CA) *xkms.AndroidDeviceTrust {
-	return &xkms.AndroidDeviceTrust{Roots: ca.Pool(), Applications: attesttest.Applications()}
+	return &xkms.AndroidDeviceTrust{Roots: ca.Pool(), Applications: attesttest.Applications(), Revocation: attesttest.NoRevocations()}
 }
 
 // uvRPName is the relying party every user-verification test names.
@@ -302,7 +302,8 @@ func TestVerifyUserVerification_RefusesMissingInputs(t *testing.T) {
 	}{
 		{"no trust", result, challenge, nil, attestation.ErrUserVerificationIncomplete},
 		{"no roots", result, challenge, &xkms.AndroidDeviceTrust{Applications: attesttest.Applications()}, attestation.ErrUserVerificationIncomplete},
-		{"no application policy", result, challenge, &xkms.AndroidDeviceTrust{Roots: ca.Pool()}, pairing.ErrApplicationPolicyUnconfigured},
+		{"no application policy", result, challenge, &xkms.AndroidDeviceTrust{Roots: ca.Pool(), Revocation: attesttest.NoRevocations()}, pairing.ErrApplicationPolicyUnconfigured},
+		{"no revocation status list", result, challenge, &xkms.AndroidDeviceTrust{Roots: ca.Pool(), Applications: attesttest.Applications()}, xkms.ErrNoAndroidRevocationSource},
 		{"no answer", nil, challenge, uvTrust(ca), attestation.ErrUserVerificationIncomplete},
 		{"no challenge", result, nil, uvTrust(ca), attestation.ErrUserVerificationIncomplete},
 		{"a short nonce", result, &attestation.UserVerificationChallenge{Nonce: []byte{1}}, uvTrust(ca), attestation.ErrUserVerificationIncomplete},

@@ -258,9 +258,17 @@ type Verified struct {
 // The same holds for apps, the application allow-list: an empty one refuses
 // here with pairing.ErrApplicationPolicyUnconfigured, before any phone is
 // asked for evidence that could only be refused (#1305).
-func LoadTrust(store truststore.TrustStore, apps pairing.ApplicationPolicy) (*xkms.AndroidDeviceTrust, error) {
+//
+// revocation is the attestation certificate revocation status list every
+// chain certificate is checked against (RevocationSource resolves the
+// configured one); nil refuses with xkms.ErrNoAndroidRevocationSource, as
+// the check is not optional (ruling 180).
+func LoadTrust(store truststore.TrustStore, apps pairing.ApplicationPolicy, revocation xkms.AndroidStatusListSource) (*xkms.AndroidDeviceTrust, error) {
 	if !apps.Configured() {
 		return nil, &SentinelCauseError{Sentinel: ErrDeviceAttestVerifyFailed, Cause: pairing.ErrApplicationPolicyUnconfigured}
+	}
+	if revocation == nil {
+		return nil, &SentinelCauseError{Sentinel: ErrDeviceAttestVerifyFailed, Cause: xkms.ErrNoAndroidRevocationSource}
 	}
 
 	verifier := xkms.NewAttestationVerifier(nil, xkms.WithAttestationTrustStore(store, truststore.LoadEmbeddedRoots))
@@ -270,7 +278,7 @@ func LoadTrust(store truststore.TrustStore, apps pairing.ApplicationPolicy) (*xk
 		return nil, fmt.Errorf("%w: %w", ErrDeviceAttestVerifyFailed, err)
 	}
 
-	return &xkms.AndroidDeviceTrust{Roots: pool, Applications: apps}, nil
+	return &xkms.AndroidDeviceTrust{Roots: pool, Applications: apps, Revocation: revocation}, nil
 }
 
 // Challenge is what the verifier committed to when it issued a challenge: the

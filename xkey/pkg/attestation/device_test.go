@@ -74,7 +74,7 @@ func TestPairingRefusesASelfSignedAttestationChain(t *testing.T) {
 
 	dak := attesttest.NewDAK(t, nil, attesttest.GenesisChallenge(), xkms.AndroidSecurityLevelStrongBox, attesttest.AttestedBootState())
 
-	verified, err := attestation.VerifyDeviceAttestation(respond(t, dak, challenge), challenge, &xkms.AndroidDeviceTrust{Roots: ca.Pool(), Applications: attesttest.Applications()})
+	verified, err := attestation.VerifyDeviceAttestation(respond(t, dak, challenge), challenge, &xkms.AndroidDeviceTrust{Roots: ca.Pool(), Applications: attesttest.Applications(), Revocation: attesttest.NoRevocations()})
 
 	require.Error(t, err, "a self-signed chain must be refused")
 	require.ErrorIs(t, err, attestation.ErrDeviceAttestVerifyFailed)
@@ -102,7 +102,7 @@ func TestPairingRefusesALeafNotIssuedByTheAnchorItPresents(t *testing.T) {
 	response := respond(t, dak, challenge)
 	response.CertificateChain = [][]byte{dak.Chain[0], ca.Cert.Raw}
 
-	verified, err := attestation.VerifyDeviceAttestation(response, challenge, &xkms.AndroidDeviceTrust{Roots: ca.Pool(), Applications: attesttest.Applications()})
+	verified, err := attestation.VerifyDeviceAttestation(response, challenge, &xkms.AndroidDeviceTrust{Roots: ca.Pool(), Applications: attesttest.Applications(), Revocation: attesttest.NoRevocations()})
 
 	require.Error(t, err, "a leaf not issued under the presented anchor must be refused")
 	require.ErrorIs(t, err, attestation.ErrDeviceAttestVerifyFailed)
@@ -131,7 +131,7 @@ func TestPairingRefusesAReplayedChallengeSignature(t *testing.T) {
 	response := respond(t, dak, thisPairing)
 	response.Signature = dak.Sign(t, captured.Purpose, captured.Nonce, captured.ChannelBinding)
 
-	verified, err := attestation.VerifyDeviceAttestation(response, thisPairing, &xkms.AndroidDeviceTrust{Roots: ca.Pool(), Applications: attesttest.Applications()})
+	verified, err := attestation.VerifyDeviceAttestation(response, thisPairing, &xkms.AndroidDeviceTrust{Roots: ca.Pool(), Applications: attesttest.Applications(), Revocation: attesttest.NoRevocations()})
 
 	require.Error(t, err, "a signature answering an older challenge must be refused")
 	require.ErrorIs(t, err, attestation.ErrDeviceAttestVerifyFailed)
@@ -157,7 +157,7 @@ func TestPairingRefusesASignatureRelayedFromAnotherConnection(t *testing.T) {
 
 	response := respond(t, dak, relayed)
 
-	verified, err := attestation.VerifyDeviceAttestation(response, ours, &xkms.AndroidDeviceTrust{Roots: ca.Pool(), Applications: attesttest.Applications()})
+	verified, err := attestation.VerifyDeviceAttestation(response, ours, &xkms.AndroidDeviceTrust{Roots: ca.Pool(), Applications: attesttest.Applications(), Revocation: attesttest.NoRevocations()})
 
 	require.Error(t, err, "a signature bound to another connection must be refused")
 	require.ErrorIs(t, err, pairingproto.ErrAttestSignatureInvalid)
@@ -179,7 +179,7 @@ func TestPairingRefusesASignatureForAnotherPurpose(t *testing.T) {
 	response := respond(t, dak, challenge)
 	response.Signature = dak.Sign(t, pairingproto.AttestPurposeReattest, challenge.Nonce, challenge.ChannelBinding)
 
-	verified, err := attestation.VerifyDeviceAttestation(response, challenge, &xkms.AndroidDeviceTrust{Roots: ca.Pool(), Applications: attesttest.Applications()})
+	verified, err := attestation.VerifyDeviceAttestation(response, challenge, &xkms.AndroidDeviceTrust{Roots: ca.Pool(), Applications: attesttest.Applications(), Revocation: attesttest.NoRevocations()})
 
 	require.Error(t, err, "a signature for a different purpose must be refused")
 	require.ErrorIs(t, err, pairingproto.ErrAttestSignatureInvalid)
@@ -205,7 +205,7 @@ func TestPairingRefusesAChainWithoutAMatchingSignature(t *testing.T) {
 	response := respond(t, impostor, challenge)
 	response.CertificateChain = genuine.Chain
 
-	verified, err := attestation.VerifyDeviceAttestation(response, challenge, &xkms.AndroidDeviceTrust{Roots: ca.Pool(), Applications: attesttest.Applications()})
+	verified, err := attestation.VerifyDeviceAttestation(response, challenge, &xkms.AndroidDeviceTrust{Roots: ca.Pool(), Applications: attesttest.Applications(), Revocation: attesttest.NoRevocations()})
 
 	require.Error(t, err, "replaying another device's chain must be refused")
 	require.ErrorIs(t, err, pairingproto.ErrAttestSignatureInvalid)
@@ -222,7 +222,7 @@ func TestPairingRefusesAMissingSignature(t *testing.T) {
 	response := respond(t, dak, challenge)
 	response.Signature = nil
 
-	verified, err := attestation.VerifyDeviceAttestation(response, challenge, &xkms.AndroidDeviceTrust{Roots: ca.Pool(), Applications: attesttest.Applications()})
+	verified, err := attestation.VerifyDeviceAttestation(response, challenge, &xkms.AndroidDeviceTrust{Roots: ca.Pool(), Applications: attesttest.Applications(), Revocation: attesttest.NoRevocations()})
 
 	require.Error(t, err)
 	require.ErrorIs(t, err, pairingproto.ErrAttestSignatureMissing)
@@ -252,7 +252,7 @@ func TestPairingRefusesAProtocolDowngrade(t *testing.T) {
 			response := respond(t, dak, challenge)
 			response.ProtocolVersion = version
 
-			verified, err := attestation.VerifyDeviceAttestation(response, challenge, &xkms.AndroidDeviceTrust{Roots: ca.Pool(), Applications: attesttest.Applications()})
+			verified, err := attestation.VerifyDeviceAttestation(response, challenge, &xkms.AndroidDeviceTrust{Roots: ca.Pool(), Applications: attesttest.Applications(), Revocation: attesttest.NoRevocations()})
 
 			require.Error(t, err, "a downgraded attestation must be refused, never accommodated")
 			require.ErrorIs(t, err, attestation.ErrDeviceAttestVerifyFailed)
@@ -276,7 +276,7 @@ func TestPairingRefusesAKeyNotGeneratedForThisProtocol(t *testing.T) {
 		xkms.AndroidSecurityLevelStrongBox, attesttest.AttestedBootState())
 	challenge := testChallenge(pairingproto.AttestPurposePair, 0xa1, 0xa2)
 
-	verified, err := attestation.VerifyDeviceAttestation(respond(t, dak, challenge), challenge, &xkms.AndroidDeviceTrust{Roots: ca.Pool(), Applications: attesttest.Applications()})
+	verified, err := attestation.VerifyDeviceAttestation(respond(t, dak, challenge), challenge, &xkms.AndroidDeviceTrust{Roots: ca.Pool(), Applications: attesttest.Applications(), Revocation: attesttest.NoRevocations()})
 
 	require.Error(t, err)
 	require.ErrorIs(t, err, pairingproto.ErrAttestGenesisChallenge)
@@ -290,7 +290,7 @@ func TestPairingAcceptsAVerifiedDeviceAndRecordsTheAttestedKey(t *testing.T) {
 	dak := attesttest.NewDAK(t, ca, attesttest.GenesisChallenge(), xkms.AndroidSecurityLevelStrongBox, attesttest.AttestedBootState())
 	challenge := testChallenge(pairingproto.AttestPurposePair, 0xc1, 0xc2)
 
-	verified, err := attestation.VerifyDeviceAttestation(respond(t, dak, challenge), challenge, &xkms.AndroidDeviceTrust{Roots: ca.Pool(), Applications: attesttest.Applications()})
+	verified, err := attestation.VerifyDeviceAttestation(respond(t, dak, challenge), challenge, &xkms.AndroidDeviceTrust{Roots: ca.Pool(), Applications: attesttest.Applications(), Revocation: attesttest.NoRevocations()})
 	require.NoError(t, err)
 	require.NotNil(t, verified)
 
@@ -333,7 +333,7 @@ func TestAttestedKeyFingerprintIsStableAcrossReAttestation(t *testing.T) {
 	dak := attesttest.NewDAK(t, ca, attesttest.GenesisChallenge(), xkms.AndroidSecurityLevelStrongBox, attesttest.AttestedBootState())
 
 	first := testChallenge(pairingproto.AttestPurposePair, 0xd1, 0xd2)
-	firstVerified, err := attestation.VerifyDeviceAttestation(respond(t, dak, first), first, &xkms.AndroidDeviceTrust{Roots: ca.Pool(), Applications: attesttest.Applications()})
+	firstVerified, err := attestation.VerifyDeviceAttestation(respond(t, dak, first), first, &xkms.AndroidDeviceTrust{Roots: ca.Pool(), Applications: attesttest.Applications(), Revocation: attesttest.NoRevocations()})
 	require.NoError(t, err)
 
 	// A second attestation of the same key: a new leaf, same key.
@@ -345,7 +345,7 @@ func TestAttestedKeyFingerprintIsStableAcrossReAttestation(t *testing.T) {
 	reissued := respond(t, dak, second)
 	reissued.CertificateChain = [][]byte{reissuedDER, ca.Cert.Raw}
 
-	secondVerified, err := attestation.VerifyDeviceAttestation(reissued, second, &xkms.AndroidDeviceTrust{Roots: ca.Pool(), Applications: attesttest.Applications()})
+	secondVerified, err := attestation.VerifyDeviceAttestation(reissued, second, &xkms.AndroidDeviceTrust{Roots: ca.Pool(), Applications: attesttest.Applications(), Revocation: attesttest.NoRevocations()})
 	require.NoError(t, err)
 
 	assert.Equal(t, firstVerified.Result.DeviceFingerprint, secondVerified.Result.DeviceFingerprint,
@@ -354,7 +354,7 @@ func TestAttestedKeyFingerprintIsStableAcrossReAttestation(t *testing.T) {
 	// A genuinely different key must move it, or the value identifies nothing.
 	rotated := attesttest.NewDAK(t, ca, attesttest.GenesisChallenge(), xkms.AndroidSecurityLevelStrongBox, attesttest.AttestedBootState())
 	third := testChallenge(pairingproto.AttestPurposeReattest, 0xd5, 0xd6)
-	rotatedVerified, err := attestation.VerifyDeviceAttestation(respond(t, rotated, third), third, &xkms.AndroidDeviceTrust{Roots: ca.Pool(), Applications: attesttest.Applications()})
+	rotatedVerified, err := attestation.VerifyDeviceAttestation(respond(t, rotated, third), third, &xkms.AndroidDeviceTrust{Roots: ca.Pool(), Applications: attesttest.Applications(), Revocation: attesttest.NoRevocations()})
 	require.NoError(t, err)
 
 	assert.NotEqual(t, firstVerified.Result.DeviceFingerprint, rotatedVerified.Result.DeviceFingerprint,
@@ -406,7 +406,7 @@ func TestPairingRefusesAnAttestationThatClaimsNothingAboutBoot(t *testing.T) {
 			dak := attesttest.NewDAK(t, ca, attesttest.GenesisChallenge(), xkms.AndroidSecurityLevelStrongBox, tc.rot)
 			challenge := testChallenge(pairingproto.AttestPurposePair, 0xe1, 0xe2)
 
-			verified, err := attestation.VerifyDeviceAttestation(respond(t, dak, challenge), challenge, &xkms.AndroidDeviceTrust{Roots: ca.Pool(), Applications: attesttest.Applications()})
+			verified, err := attestation.VerifyDeviceAttestation(respond(t, dak, challenge), challenge, &xkms.AndroidDeviceTrust{Roots: ca.Pool(), Applications: attesttest.Applications(), Revocation: attesttest.NoRevocations()})
 			require.Error(t, err, tc.why)
 			require.Nil(t, verified,
 				"a refused attestation must yield no record; everything in it would be "+
@@ -425,7 +425,7 @@ func TestPairingAcceptsAKeyGeneratedInTEEAndAuthorizedToSign(t *testing.T) {
 	dak := attesttest.NewDAK(t, ca, attesttest.GenesisChallenge(), xkms.AndroidSecurityLevelStrongBox, attesttest.AttestedBootState())
 	challenge := testChallenge(pairingproto.AttestPurposePair, 0x51, 0x52)
 
-	verified, err := attestation.VerifyDeviceAttestation(respond(t, dak, challenge), challenge, &xkms.AndroidDeviceTrust{Roots: ca.Pool(), Applications: attesttest.Applications()})
+	verified, err := attestation.VerifyDeviceAttestation(respond(t, dak, challenge), challenge, &xkms.AndroidDeviceTrust{Roots: ca.Pool(), Applications: attesttest.Applications(), Revocation: attesttest.NoRevocations()})
 
 	require.NoError(t, err, "a TEE-enforced GENERATED origin and a SIGN purpose must be accepted")
 	require.NotNil(t, verified)
@@ -480,7 +480,7 @@ func TestPairingRefusesAnAttestedKeyNotGeneratedInTEEOrNotAuthorizedToSign(t *te
 			dak := attesttest.NewDAKWithClaims(t, ca, attesttest.GenesisChallenge(), xkms.AndroidSecurityLevelStrongBox, tc.claims)
 			challenge := testChallenge(pairingproto.AttestPurposePair, 0x61, 0x62)
 
-			verified, err := attestation.VerifyDeviceAttestation(respond(t, dak, challenge), challenge, &xkms.AndroidDeviceTrust{Roots: ca.Pool(), Applications: attesttest.Applications()})
+			verified, err := attestation.VerifyDeviceAttestation(respond(t, dak, challenge), challenge, &xkms.AndroidDeviceTrust{Roots: ca.Pool(), Applications: attesttest.Applications(), Revocation: attesttest.NoRevocations()})
 
 			require.Error(t, err, tc.why)
 			require.ErrorIs(t, err, attestation.ErrDeviceAttestVerifyFailed)
@@ -534,7 +534,7 @@ func TestPairingRefusesAnAttestationFromAnotherApplication(t *testing.T) {
 			challenge := testChallenge(pairingproto.AttestPurposePair, 0x71, 0x72)
 
 			verified, err := attestation.VerifyDeviceAttestation(respond(t, dak, challenge), challenge,
-				&xkms.AndroidDeviceTrust{Roots: ca.Pool(), Applications: attesttest.Applications()})
+				&xkms.AndroidDeviceTrust{Roots: ca.Pool(), Applications: attesttest.Applications(), Revocation: attesttest.NoRevocations()})
 
 			require.Error(t, err, tc.why)
 			require.ErrorIs(t, err, attestation.ErrDeviceAttestVerifyFailed)
@@ -552,7 +552,7 @@ func TestPairingAcceptsTheAllowListedApplication(t *testing.T) {
 	challenge := testChallenge(pairingproto.AttestPurposePair, 0x73, 0x74)
 
 	verified, err := attestation.VerifyDeviceAttestation(respond(t, dak, challenge), challenge,
-		&xkms.AndroidDeviceTrust{Roots: ca.Pool(), Applications: attesttest.Applications()})
+		&xkms.AndroidDeviceTrust{Roots: ca.Pool(), Applications: attesttest.Applications(), Revocation: attesttest.NoRevocations()})
 
 	require.NoError(t, err)
 	require.NotNil(t, verified)
@@ -568,7 +568,7 @@ func TestPairingRefusesWhenNoApplicationIsAllowListed(t *testing.T) {
 	challenge := testChallenge(pairingproto.AttestPurposePair, 0x75, 0x76)
 
 	verified, err := attestation.VerifyDeviceAttestation(respond(t, dak, challenge), challenge,
-		&xkms.AndroidDeviceTrust{Roots: ca.Pool()})
+		&xkms.AndroidDeviceTrust{Roots: ca.Pool(), Revocation: attesttest.NoRevocations()})
 
 	require.ErrorIs(t, err, attestation.ErrDeviceAttestVerifyFailed)
 	require.ErrorIs(t, err, pairing.ErrApplicationPolicyUnconfigured)
@@ -599,7 +599,7 @@ func TestPairingIgnoresACertificateAppendedAfterTheVerifiedAnchor(t *testing.T) 
 	response := respond(t, dak, challenge)
 	response.CertificateChain = [][]byte{dak.Chain[0], ca.Cert.Raw, otherPurpose.Cert.Raw}
 
-	verified, err := attestation.VerifyDeviceAttestation(response, challenge, &xkms.AndroidDeviceTrust{Roots: ca.Pool(), Applications: attesttest.Applications()})
+	verified, err := attestation.VerifyDeviceAttestation(response, challenge, &xkms.AndroidDeviceTrust{Roots: ca.Pool(), Applications: attesttest.Applications(), Revocation: attesttest.NoRevocations()})
 
 	require.NoError(t, err, "an unused trailing certificate must not break a valid chain")
 	require.NotNil(t, verified)
@@ -622,7 +622,7 @@ func TestPairingRefusesASoftwareProtectedKey(t *testing.T) {
 	dak := attesttest.NewDAK(t, ca, attesttest.GenesisChallenge(), xkms.AndroidSecurityLevelSoftware, attesttest.AttestedBootState())
 	challenge := testChallenge(pairingproto.AttestPurposePair, 0x21, 0x22)
 
-	verified, err := attestation.VerifyDeviceAttestation(respond(t, dak, challenge), challenge, &xkms.AndroidDeviceTrust{Roots: ca.Pool(), Applications: attesttest.Applications()})
+	verified, err := attestation.VerifyDeviceAttestation(respond(t, dak, challenge), challenge, &xkms.AndroidDeviceTrust{Roots: ca.Pool(), Applications: attesttest.Applications(), Revocation: attesttest.NoRevocations()})
 
 	require.Error(t, err, "a software-protected key must not pair as a hardware-backed device")
 	require.ErrorIs(t, err, attestation.ErrDeviceAttestVerifyFailed)
@@ -637,7 +637,7 @@ func TestPairingAcceptsATrustedEnvironmentKey(t *testing.T) {
 	dak := attesttest.NewDAK(t, ca, attesttest.GenesisChallenge(), xkms.AndroidSecurityLevelTrustedEnvironment, attesttest.AttestedBootState())
 	challenge := testChallenge(pairingproto.AttestPurposePair, 0x31, 0x32)
 
-	verified, err := attestation.VerifyDeviceAttestation(respond(t, dak, challenge), challenge, &xkms.AndroidDeviceTrust{Roots: ca.Pool(), Applications: attesttest.Applications()})
+	verified, err := attestation.VerifyDeviceAttestation(respond(t, dak, challenge), challenge, &xkms.AndroidDeviceTrust{Roots: ca.Pool(), Applications: attesttest.Applications(), Revocation: attesttest.NoRevocations()})
 
 	require.NoError(t, err)
 	require.NotNil(t, verified)
@@ -661,11 +661,11 @@ func TestVerifyPairingAttestationRefusesMissingTrustMaterial(t *testing.T) {
 	}{
 		"nil trust":        {trust: nil, challenge: good, response: response},
 		"nil pool":         {trust: &xkms.AndroidDeviceTrust{}, challenge: good, response: response},
-		"empty pool":       {trust: &xkms.AndroidDeviceTrust{Roots: x509.NewCertPool(), Applications: attesttest.Applications()}, challenge: good, response: response},
-		"nil challenge":    {trust: &xkms.AndroidDeviceTrust{Roots: ca.Pool(), Applications: attesttest.Applications()}, challenge: nil, response: response},
-		"empty nonce":      {trust: &xkms.AndroidDeviceTrust{Roots: ca.Pool(), Applications: attesttest.Applications()}, challenge: &attestation.Challenge{Purpose: pairingproto.AttestPurposePair}, response: response},
-		"no response":      {trust: &xkms.AndroidDeviceTrust{Roots: ca.Pool(), Applications: attesttest.Applications()}, challenge: good, response: nil},
-		"empty cert chain": {trust: &xkms.AndroidDeviceTrust{Roots: ca.Pool(), Applications: attesttest.Applications()}, challenge: good, response: &pairingproto.LocalAttestDeviceResult{ProtocolVersion: pairingproto.AttestProtocolV2}},
+		"empty pool":       {trust: &xkms.AndroidDeviceTrust{Roots: x509.NewCertPool(), Applications: attesttest.Applications(), Revocation: attesttest.NoRevocations()}, challenge: good, response: response},
+		"nil challenge":    {trust: &xkms.AndroidDeviceTrust{Roots: ca.Pool(), Applications: attesttest.Applications(), Revocation: attesttest.NoRevocations()}, challenge: nil, response: response},
+		"empty nonce":      {trust: &xkms.AndroidDeviceTrust{Roots: ca.Pool(), Applications: attesttest.Applications(), Revocation: attesttest.NoRevocations()}, challenge: &attestation.Challenge{Purpose: pairingproto.AttestPurposePair}, response: response},
+		"no response":      {trust: &xkms.AndroidDeviceTrust{Roots: ca.Pool(), Applications: attesttest.Applications(), Revocation: attesttest.NoRevocations()}, challenge: good, response: nil},
+		"empty cert chain": {trust: &xkms.AndroidDeviceTrust{Roots: ca.Pool(), Applications: attesttest.Applications(), Revocation: attesttest.NoRevocations()}, challenge: good, response: &pairingproto.LocalAttestDeviceResult{ProtocolVersion: pairingproto.AttestProtocolV2}},
 	}
 
 	for name, tc := range cases {
@@ -721,7 +721,7 @@ func TestReattestationAppliesTheSamePolicyAsPairing(t *testing.T) {
 			dak := attesttest.NewDAK(t, ca, attesttest.GenesisChallenge(), xkms.AndroidSecurityLevelStrongBox, rot)
 			challenge := testChallenge(pairingproto.AttestPurposeReattest, 0xb1, 0xb2)
 
-			verified, err := attestation.VerifyDeviceAttestation(respond(t, dak, challenge), challenge, &xkms.AndroidDeviceTrust{Roots: ca.Pool(), Applications: attesttest.Applications()})
+			verified, err := attestation.VerifyDeviceAttestation(respond(t, dak, challenge), challenge, &xkms.AndroidDeviceTrust{Roots: ca.Pool(), Applications: attesttest.Applications(), Revocation: attesttest.NoRevocations()})
 
 			require.Error(t, err,
 				"re-attestation must not admit a boot claim pairing refuses; otherwise the "+
@@ -742,7 +742,7 @@ func TestReattestationOfAHealthyDeviceRecordsTheProtocolVersion(t *testing.T) {
 	dak := attesttest.NewDAK(t, ca, attesttest.GenesisChallenge(), xkms.AndroidSecurityLevelStrongBox, attesttest.AttestedBootState())
 	challenge := testChallenge(pairingproto.AttestPurposeReattest, 0xb3, 0xb4)
 
-	verified, err := attestation.VerifyDeviceAttestation(respond(t, dak, challenge), challenge, &xkms.AndroidDeviceTrust{Roots: ca.Pool(), Applications: attesttest.Applications()})
+	verified, err := attestation.VerifyDeviceAttestation(respond(t, dak, challenge), challenge, &xkms.AndroidDeviceTrust{Roots: ca.Pool(), Applications: attesttest.Applications(), Revocation: attesttest.NoRevocations()})
 	require.NoError(t, err)
 	require.NotNil(t, verified)
 
@@ -775,7 +775,7 @@ func TestAVersionTwoBindingWithoutAFingerprintIsRefused(t *testing.T) {
 	// The evidence is genuine throughout — only the record is incomplete.
 	response := respond(t, dak, challenge)
 	verified, err := attestation.VerifyDeviceAttestation(response, challenge,
-		&xkms.AndroidDeviceTrust{Roots: ca.Pool(), Applications: attesttest.Applications()})
+		&xkms.AndroidDeviceTrust{Roots: ca.Pool(), Applications: attesttest.Applications(), Revocation: attesttest.NoRevocations()})
 	require.NoError(t, err, "the device's own evidence is valid; the record is what is wrong")
 
 	for name, binding := range map[string]attestation.DeviceBinding{
