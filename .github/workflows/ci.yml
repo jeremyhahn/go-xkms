@@ -424,6 +424,11 @@ env:
   # event pulls main's copy by digest or builds its own with no push
   # (scripts/ci-registry.sh, docs/testing/docker-testing.md "CI images").
   CI_PUBLISH: ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' }}
+  # The namespace the CI images live in. On the forge, agent-ci-images: the
+  # release runner's registry user and public, since Gitea 1.27 lets only a
+  # user namespace's owner or an admin write it (ruling 217). Empty on
+  # GitHub, where it is the repository's owner.
+  CI_REGISTRY_OWNER: ${{ github.server_url != 'https://github.com' && 'agent-ci-images' || '' }}
   # <<< CUSTOMIZE
 
 jobs:
@@ -508,6 +513,10 @@ jobs:
   # "" when main has none or the registry cannot be read. The consumers take
   # the outputs through `scripts/ci-registry.sh use`: a digest is pulled and
   # held; "" builds the image on the consumer's own runner, with no push.
+  # Main publishes under the forge's public agent-ci-images namespace
+  # (go-xkms #1730), so on the forge the resolve and every pull are
+  # anonymous. On GHCR a package is private when published, so every read
+  # step hands the script the run's token and a GHCR read logs in with it.
   ci-images:
     name: CI images [publish on main, resolve on pull requests]
     if: ${{ !github.event.pull_request.draft }}
