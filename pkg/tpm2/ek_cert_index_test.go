@@ -107,6 +107,34 @@ func TestEKKeyType_InvalidConfigFails(t *testing.T) {
 	assert.Error(t, err, "unknown curve")
 }
 
+// TestConfiguredEKKeyType_DefaultsToEKTemplate covers a config that names
+// no key size or curve: the EK is created from the default template, so its
+// certificate index is the RSA 2048 or the NIST P-256 one.
+func TestConfiguredEKKeyType_DefaultsToEKTemplate(t *testing.T) {
+	rsa, err := configuredEKKeyType(EKConfig{KeyAlgorithm: "RSA"})
+	require.NoError(t, err)
+	assert.Equal(t, 2048, rsa.RSAAttributes.KeySize)
+
+	ecc, err := configuredEKKeyType(EKConfig{KeyAlgorithm: "ECDSA"})
+	require.NoError(t, err)
+	assert.Equal(t, elliptic.P256(), ecc.ECCAttributes.Curve)
+
+	rsa4096, err := configuredEKKeyType(EKConfig{KeyAlgorithm: "RSA", RSAConfig: &store.RSAConfig{KeySize: 4096}})
+	require.NoError(t, err)
+	assert.Equal(t, 4096, rsa4096.RSAAttributes.KeySize, "a configured key size is kept")
+
+	assert.Equal(t, tpm2.TPMHandle(ekCertIndexECCP256),
+		configuredEKCertIndex(EKConfig{CertHandle: ekCertIndexRSA2048, KeyAlgorithm: "ECDSA"}))
+}
+
+func TestConfiguredEKKeyType_InvalidConfigFails(t *testing.T) {
+	_, err := configuredEKKeyType(EKConfig{})
+	assert.Error(t, err, "no algorithm and no RSA or ECC config")
+
+	_, err = configuredEKKeyType(EKConfig{KeyAlgorithm: "ECDSA", ECCConfig: &store.ECCConfig{Curve: "P-999"}})
+	assert.Error(t, err, "unknown curve")
+}
+
 // TestConfiguredEKCertIndex_FollowsConfiguredKeyType checks the index the EK
 // certificate is looked for at, before the EK exists, is the one the write
 // path (ekCertIndex) resolves for the configured key type.

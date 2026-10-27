@@ -797,7 +797,7 @@ func (tpm *TPM2) ProvisionEKCert(hierarchyAuth, ekCertDER []byte) error {
 		return nil
 	}
 
-	nvIndex, err := tpm.checkEKCertForNV(ekAttrs, ekCertDER)
+	nvIndex, err := tpm.checkEKCertForNV(ekCertDER)
 	if err != nil {
 		return err
 	}
@@ -805,21 +805,28 @@ func (tpm *TPM2) ProvisionEKCert(hierarchyAuth, ekCertDER []byte) error {
 }
 
 // checkEKCertForNV validates ekCertDER for the NV index the configured EK
-// cert-handle names for ekAttrs' key type (see ekCertIndex) and returns that
-// index. It sends no command that changes the TPM: the cert-handle must lie
-// in the NV index range, and the certificate must be a parseable X.509
-// certificate that fits an NV index.
-func (tpm *TPM2) checkEKCertForNV(ekAttrs *types.KeyAttributes, ekCertDER []byte) (tpm2.TPMHandle, error) {
+// cert-handle names for the configured EK key type (see ekCertIndex) and
+// returns that index. The key type comes from the EK config, not from the
+// TPM, so a certificate can be restored before the EK is persisted, and it
+// lands at the index configuredEKCertIndex reads it back from (TCG EK
+// Credential Profile v2.1 §2.2.1.4). It sends no command to the TPM: the
+// cert-handle must lie in the NV index range, and the certificate must be
+// a parseable X.509 certificate that fits an NV index.
+func (tpm *TPM2) checkEKCertForNV(ekCertDER []byte) (tpm2.TPMHandle, error) {
 	configured := tpm2.TPMHandle(tpm.config.EK.CertHandle)
 	if configured>>24 != tpm2.TPMHandle(tpm2.TPMHTNVIndex) {
 		tpm.logger.Error("EK cert-handle is not an NV index",
 			slog.String("index", fmt.Sprintf("0x%08X", configured)))
 		return 0, ErrEKCertIndexInvalid
 	}
-	nvIndex, err := ekCertIndex(configured, ekAttrs)
+	keyType, err := configuredEKKeyType(*tpm.config.EK)
+	if err != nil {
+		return 0, err
+	}
+	nvIndex, err := ekCertIndex(configured, keyType)
 	if err != nil {
 		tpm.logger.Error("EK key type has no TCG EK certificate index",
-			slog.String("key_algorithm", ekAttrs.KeyAlgorithm.String()))
+			slog.String("key_algorithm", keyType.KeyAlgorithm.String()))
 		return 0, err
 	}
 	if err := tpm.checkCertFitsNV(ekCertDER); err != nil {
@@ -868,6 +875,25 @@ func ekCertIndex(configured tpm2.TPMHandle, ekAttrs *types.KeyAttributes) (tpm2.
 	return 0, ErrEKCertKeyType
 }
 
+// configuredEKKeyType returns the key type of the EK that config describes.
+// A config that names no RSA key size or ECC curve gets the default EK
+// template's: EKAttributesFromConfig creates the EK from tpm2.RSAEKTemplate
+// (RSA 2048, TCG EK Credential Profile v2.1 Annex B.3.3, template L-1) or
+// tpm2.ECCEKTemplate (NIST P-256, Annex B.3.4, template L-2).
+func configuredEKKeyType(config EKConfig) (*types.KeyAttributes, error) {
+	keyType, err := ekKeyType(config)
+	if err != nil {
+		return nil, err
+	}
+	if keyType.KeyAlgorithm == x509.RSA && keyType.RSAAttributes == nil {
+		keyType.RSAAttributes = &types.RSAAttributes{KeySize: 2048}
+	}
+	if keyType.KeyAlgorithm == x509.ECDSA && keyType.ECCAttributes == nil {
+		keyType.ECCAttributes = &types.ECCAttributes{Curve: elliptic.P256()}
+	}
+	return keyType, nil
+}
+
 // configuredEKCertIndex returns the NV index at which to look for the EK
 // certificate the EK config names before the EK itself exists. It resolves
 // the configured cert-handle by the configured key type with ekCertIndex, as
@@ -878,7 +904,7 @@ func ekCertIndex(configured tpm2.TPMHandle, ekAttrs *types.KeyAttributes) (tpm2.
 // reported where the EK attributes are built (EKAttributesFromConfig).
 func configuredEKCertIndex(config EKConfig) tpm2.TPMHandle {
 	configured := tpm2.TPMHandle(config.CertHandle)
-	keyType, err := ekKeyType(config)
+	keyType, err := configuredEKKeyType(config)
 	if err != nil {
 		return configured
 	}
@@ -889,9 +915,7 @@ func configuredEKCertIndex(config EKConfig) tpm2.TPMHandle {
 	return index
 }
 
-// isECCEKCertIndex reports whether index is one of the ECC EK certificate
-// indices of ekCertIndexByCurve.
-// writeEKCertToNV defines nvIndex under hierarchy and writes ekCertDER to
+// writeEKCertToNV defines nvIndex under the owner hierarchy and writes ekCertDER to
 // it. An index that is already defined is refused with ErrEKCertExists.
 func (tpm *TPM2) writeEKCertToNV(nvIndex tpm2.TPMHandle, hierarchyAuth, ekCertDER []byte) error {
 	tpm.logger.Debug("NVDefineSpace: EK Certificate",
@@ -931,11 +955,7 @@ func (tpm *TPM2) ReplaceEKCert(hierarchyAuth, ekCertDER []byte) error {
 		return tpm.ProvisionEKCert(hierarchyAuth, ekCertDER)
 	}
 
-	ekAttrs, err := tpm.EKAttributes()
-	if err != nil {
-		return err
-	}
-	nvIndex, err := tpm.checkEKCertForNV(ekAttrs, ekCertDER)
+	nvIndex, err := tpm.checkEKCertForNV(ekCertDER)
 	if err != nil {
 		return err
 	}
