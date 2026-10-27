@@ -225,7 +225,9 @@ func (m *mockTPM) ProvisionIAKCert(_ []byte, cert *x509.Certificate) error { ret
 func (m *mockTPM) IDevIDCertificate() (*x509.Certificate, error) {
 	return m.idevidCert, m.idevidCertErr
 }
-func (m *mockTPM) ProvisionIDevIDCert(_ []byte, cert *x509.Certificate) error { return m.writeIDevIDErr }
+func (m *mockTPM) ProvisionIDevIDCert(_ []byte, cert *x509.Certificate) error {
+	return m.writeIDevIDErr
+}
 func (m *mockTPM) SupportedAlgorithms() ([]string, error) {
 	return m.supportedAlgos, m.supportedAlgosErr
 }
