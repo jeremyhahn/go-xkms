@@ -801,7 +801,7 @@ func (tpm *TPM2) ProvisionEKCert(hierarchyAuth, ekCertDER []byte) error {
 	if err != nil {
 		return err
 	}
-	return tpm.writeEKCertToNV(nvIndex, ekAttrs.TPMAttributes.Hierarchy, hierarchyAuth, ekCertDER)
+	return tpm.writeEKCertToNV(nvIndex, hierarchyAuth, ekCertDER)
 }
 
 // checkEKCertForNV validates ekCertDER for the NV index the configured EK
@@ -848,7 +848,9 @@ var ekCertIndexByCurve = map[elliptic.Curve]tpm2.TPMHandle{
 // index is used as configured. An EK key type the profile gives no index is
 // ErrEKCertKeyType.
 func ekCertIndex(configured tpm2.TPMHandle, ekAttrs *types.KeyAttributes) (tpm2.TPMHandle, error) {
-	if configured != ekCertIndexRSA2048 && !isECCEKCertIndex(configured) {
+	// Only the RSA 2048 default is resolved by key type; any other index,
+	// the ECC ones included, is an explicit operator choice and kept.
+	if configured != ekCertIndexRSA2048 {
 		return configured, nil
 	}
 	switch ekAttrs.KeyAlgorithm {
@@ -868,23 +870,18 @@ func ekCertIndex(configured tpm2.TPMHandle, ekAttrs *types.KeyAttributes) (tpm2.
 
 // isECCEKCertIndex reports whether index is one of the ECC EK certificate
 // indices of ekCertIndexByCurve.
-func isECCEKCertIndex(index tpm2.TPMHandle) bool {
-	for _, eccIndex := range ekCertIndexByCurve {
-		if index == eccIndex {
-			return true
-		}
-	}
-	return false
-}
-
 // writeEKCertToNV defines nvIndex under hierarchy and writes ekCertDER to
 // it. An index that is already defined is refused with ErrEKCertExists.
-func (tpm *TPM2) writeEKCertToNV(nvIndex, hierarchy tpm2.TPMHandle, hierarchyAuth, ekCertDER []byte) error {
+func (tpm *TPM2) writeEKCertToNV(nvIndex tpm2.TPMHandle, hierarchyAuth, ekCertDER []byte) error {
 	tpm.logger.Debug("NVDefineSpace: EK Certificate",
 		slog.String("index", fmt.Sprintf("0x%08X", nvIndex)),
 		slog.Int("size", len(ekCertDER)))
 
-	err := tpm.defineAndWriteCert(nvIndex, ekCertDER, tpm.hierarchyAuthorizer(hierarchy, hierarchyAuth))
+	// TPM 2.0 Part 3 §31.3.1: NV_DefineSpace takes TPM_RH_OWNER or
+	// TPM_RH_PLATFORM, never the endorsement hierarchy the EK belongs to,
+	// so the EK certificate index is owner-created like every other
+	// certificate index.
+	err := tpm.defineAndWriteCert(nvIndex, ekCertDER, tpm.hierarchyAuthorizer(tpm2.TPMRHOwner, hierarchyAuth))
 	if errors.Is(err, tpmRCNVDefined) {
 		return &errs.Joined{Lead: ErrEKCertExists, Cause: err}
 	}
@@ -934,7 +931,7 @@ func (tpm *TPM2) ReplaceEKCert(hierarchyAuth, ekCertDER []byte) error {
 			return err
 		}
 	}
-	return tpm.writeEKCertToNV(nvIndex, tpm2.TPMRHOwner, hierarchyAuth, ekCertDER)
+	return tpm.writeEKCertToNV(nvIndex, hierarchyAuth, ekCertDER)
 }
 
 // undefineEKCertIndex undefines the EK certificate NV index whose public
