@@ -202,11 +202,10 @@ func (s *Server) initEmbeddedQRDBNode() error {
 	// and first-boot) — and when node transports are enabled, node
 	// construction below invokes RegisterGRPC immediately. The module
 	// therefore takes lazy resolvers and binds on the first RPC: until
-	// s.xkmsService is set, every module RPC answers Unavailable. The SSH
-	// resolver runs only after that binding, so ensureSSHClient's sync.Once
-	// cannot latch nil. NOTE for the Phase 4 cutover: an RPC arriving during
-	// server composition reads s.xkmsService without synchronization; the
-	// cutover must publish it safely (or enable transports post-composition).
+	// s.xkmsService is set, every module RPC answers Unavailable. New publishes
+	// it last, under s.mu, after the SSH client is composed, so the first
+	// RPC binds a fully wired service and never creates the "ssh" database
+	// on its own deadline (DS-4012).
 	moduleOpts := []apimodule.Option{
 		apimodule.WithSSHClient(func() sdkssh.Client { return s.ensureSSHClient() }),
 		apimodule.WithRESTServer(func() *rest.Server { return s.ModuleRESTServer() }),
