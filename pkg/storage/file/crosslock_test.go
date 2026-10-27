@@ -317,3 +317,134 @@ func TestWithCrossProcessLock_MissingDirectory(t *testing.T) {
 		t.Fatal("fn ran without the lock")
 	}
 }
+
+// TestWithCrossProcessLock_WaiterAcquiresAfterRelease proves a caller that
+// finds the lock held waits for it and runs fn only after the holder has
+// released, never while the holder's section is still open (DS-4012).
+func TestWithCrossProcessLock_WaiterAcquiresAfterRelease(t *testing.T) {
+	dir := t.TempDir()
+	waiting := make(chan struct{})
+	holderLeft := make(chan struct{})
+	waited := make(chan error, 1)
+	ranWhileHeld := false
+
+	err := withCrossProcessLock(context.Background(), dir, func() error {
+		go func() {
+			close(waiting)
+			waited <- withCrossProcessLock(context.Background(), dir, func() error {
+				select {
+				case <-holderLeft:
+				default:
+					ranWhileHeld = true
+				}
+				return nil
+			})
+		}()
+		<-waiting
+		close(holderLeft)
+		return nil
+	})
+	if err != nil {
+		t.Fatalf("withCrossProcessLock: %v", err)
+	}
+
+	select {
+	case waitErr := <-waited:
+		if waitErr != nil {
+			t.Fatalf("waiter: %v", waitErr)
+		}
+	case <-time.After(10 * time.Second):
+		t.Fatal("waiter never acquired the released lock")
+	}
+	if ranWhileHeld {
+		t.Fatal("waiter ran fn while the holder had the lock")
+	}
+}
+
+// TestWithCrossProcessLock_ContextEndsWhileWaiting proves a waiter whose
+// context ends returns the context error without running fn, and that the
+// wait it abandons hands the lock back rather than keeping it: a later
+// caller still acquires it (DS-4012).
+func TestWithCrossProcessLock_ContextEndsWhileWaiting(t *testing.T) {
+	dir := t.TempDir()
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+
+	var waitErr error
+	ran := false
+	err := withCrossProcessLock(context.Background(), dir, func() error {
+		waitErr = withCrossProcessLock(ctx, dir, func() error {
+			ran = true
+			return nil
+		})
+		return nil
+	})
+	if err != nil {
+		t.Fatalf("withCrossProcessLock: %v", err)
+	}
+	if !errors.Is(waitErr, context.Canceled) {
+		t.Fatalf("waiter error = %v, want context.Canceled", waitErr)
+	}
+	if ran {
+		t.Fatal("fn ran although the waiter's context had ended")
+	}
+
+	bounded, stop := context.WithTimeout(context.Background(), 10*time.Second)
+	defer stop()
+	if err := withCrossProcessLock(bounded, dir, func() error { return nil }); err != nil {
+		t.Fatalf("lock not handed back after an abandoned wait: %v", err)
+	}
+}
+
+// TestDirLock_LockExcludesOtherHandles proves the blocking lock call takes
+// the same exclusive lock tryLock contends for.
+func TestDirLock_LockExcludesOtherHandles(t *testing.T) {
+	dir := t.TempDir()
+	holder, err := openDirLock(dir)
+	if err != nil {
+		t.Fatalf("openDirLock: %v", err)
+	}
+	defer func() { _ = holder.close() }()
+	if err := holder.lock(); err != nil {
+		t.Fatalf("lock: %v", err)
+	}
+
+	other, err := openDirLock(dir)
+	if err != nil {
+		t.Fatalf("openDirLock: %v", err)
+	}
+	defer func() { _ = other.close() }()
+	acquired, err := other.tryLock()
+	if err != nil {
+		t.Fatalf("tryLock: %v", err)
+	}
+	if acquired {
+		t.Fatal("a second handle acquired the lock while lock() held it")
+	}
+
+	if err := holder.unlock(); err != nil {
+		t.Fatalf("unlock: %v", err)
+	}
+	acquired, err = other.tryLock()
+	if err != nil {
+		t.Fatalf("tryLock after unlock: %v", err)
+	}
+	if !acquired {
+		t.Fatal("the lock was not free after unlock")
+	}
+}
+
+// TestDirLock_LockClosedHandle proves lock reports a failure on a handle
+// that can no longer lock instead of blocking or claiming success.
+func TestDirLock_LockClosedHandle(t *testing.T) {
+	lock, err := openDirLock(t.TempDir())
+	if err != nil {
+		t.Fatalf("openDirLock: %v", err)
+	}
+	if err := lock.close(); err != nil {
+		t.Fatalf("close: %v", err)
+	}
+	if err := lock.lock(); err == nil {
+		t.Fatal("lock on a closed handle returned nil")
+	}
+}

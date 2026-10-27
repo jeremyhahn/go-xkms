@@ -15,18 +15,9 @@ package file
 
 import (
 	"context"
-	"time"
 
 	"github.com/jeremyhahn/go-xkms/pkg/errs"
 )
-
-// lockPollInterval bounds how long withCrossProcessLock waits between
-// attempts to acquire the advisory lock. The critical sections it protects
-// are an engine open or a handful of small reads and writes, not a
-// long-held section, so a short fixed poll keeps contention latency low
-// without the complexity of a blocking lock call plus a second mechanism (a
-// signal, or a watcher goroutine) to make it obey ctx.
-const lockPollInterval = time.Millisecond
 
 // withCrossProcessLock runs fn while holding an exclusive advisory lock on
 // the store directory dir. It guards every write this package performs --
@@ -57,26 +48,67 @@ func withCrossProcessLock(ctx context.Context, dir string, fn func() error) erro
 	if err != nil {
 		return &errs.Wrapped{Msg: "file storage: failed to open store directory for locking", Err: err}
 	}
-	defer func() { _ = lock.close() }()
-
-	for {
-		acquired, lockErr := lock.tryLock()
-		if lockErr != nil {
-			return &errs.Wrapped{Msg: "file storage: failed to acquire cross-process lock", Err: lockErr}
-		}
-		if acquired {
-			break
-		}
-		select {
-		case <-ctx.Done():
-			return &errs.Wrapped{Msg: "file storage: acquiring cross-process lock", Err: ctx.Err()}
-		case <-time.After(lockPollInterval):
-		}
+	if err := acquireLock(ctx, lock); err != nil {
+		return err
 	}
+	defer func() { _ = lock.close() }()
 	// Unlocked explicitly, ahead of the deferred close above, so release is
 	// deterministic the instant fn returns rather than left to close/GC
 	// ordering.
 	defer func() { _ = lock.unlock() }()
 
 	return fn()
+}
+
+// acquireLock takes the exclusive lock on lock's handle, waiting until it is
+// free or ctx ends. On success the caller owns the held handle; on failure
+// the handle is no longer the caller's to use or close.
+//
+// A contended lock is waited for in the kernel (flock(2) without LOCK_NB,
+// LockFileEx without LOCKFILE_FAIL_IMMEDIATELY), which wakes the waiter the
+// moment the holder releases. Polling a non-blocking attempt on a timer
+// instead starves a waiter whenever writers keep the lock busy: a holder
+// that releases and immediately re-acquires wins every time, because the
+// poller only looks between its sleeps, so on a loaded host a waiter could
+// miss every release until its deadline (DS-4012).
+//
+// The kernel wait cannot observe ctx, so it runs on its own goroutine. When
+// ctx ends first, acquireLock returns and leaves the handle to that
+// goroutine, which releases and closes it once the kernel grants the lock:
+// an abandoned wait never keeps the lock from the next caller.
+func acquireLock(ctx context.Context, lock *dirLock) error {
+	acquired, err := lock.tryLock()
+	if err != nil {
+		_ = lock.close()
+		return &errs.Wrapped{Msg: "file storage: failed to acquire cross-process lock", Err: err}
+	}
+	if acquired {
+		return nil
+	}
+
+	granted := make(chan error)
+	abandoned := make(chan struct{})
+	go func() {
+		lockErr := lock.lock()
+		select {
+		case granted <- lockErr:
+		case <-abandoned:
+			if lockErr == nil {
+				_ = lock.unlock()
+			}
+			_ = lock.close()
+		}
+	}()
+
+	select {
+	case lockErr := <-granted:
+		if lockErr != nil {
+			_ = lock.close()
+			return &errs.Wrapped{Msg: "file storage: failed to acquire cross-process lock", Err: lockErr}
+		}
+		return nil
+	case <-ctx.Done():
+		close(abandoned)
+		return &errs.Wrapped{Msg: "file storage: acquiring cross-process lock", Err: ctx.Err()}
+	}
 }
