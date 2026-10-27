@@ -37,4 +37,8 @@ var (
 
 	// ErrNilDAOFactory indicates a nil DAO factory was supplied.
 	ErrNilDAOFactory = errors.New("ssh/sessions: nil DAO factory")
+
+	// ErrLegacyRecord indicates a pre-DAO session record that does not
+	// decode, is not stored under its own ID, or fails validation.
+	ErrLegacyRecord = errors.New("ssh/sessions: invalid legacy record")
 )

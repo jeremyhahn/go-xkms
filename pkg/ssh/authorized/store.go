@@ -165,6 +165,23 @@ func (s *DAOStore) Remove(ctx context.Context, sc scope.Scope, owner, name strin
 	return nil
 }
 
+// ImportLegacy upserts an entry the pre-DAO sealed-KV store wrote: rel is
+// its old key below the tenant root and data its JSON. It is the per-record
+// step of the SSH store migrator (pkg/ssh/migrate) and returns the
+// records.Table.Import errors.
+func (s *DAOStore) ImportLegacy(ctx context.Context, rel string, data []byte) error {
+	return s.table.Import(ctx, rel, data, checkLegacy)
+}
+
+// checkLegacy refuses a pre-DAO entry whose name or line Add would refuse.
+func checkLegacy(e *records.Entity[envelope]) error {
+	if err := validate(e.Scope, e.Owner, e.Name); err != nil {
+		return err
+	}
+	_, err := ParseLine(e.Body.Line)
+	return err
+}
+
 // validate checks the coordinates of an entry. The name is validated first
 // so a malformed name reports *InvalidNameError; the rest is validated as
 // scope.KindAuthorizedKeys.RecordPath validates it.
