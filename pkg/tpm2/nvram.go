@@ -1316,7 +1316,13 @@ func (tpm *TPM2) readCertFromNVRAM(nvIndex tpm2.TPMHandle) ([]byte, error) {
 // client with "missing Name for 'NVIndex' parameter" before any command
 // reaches the TPM, which is indistinguishable from a genuinely undefined
 // index unless the caller inspects the message.
-func (tpm *TPM2) deleteCertFromNVRAM(nvIndex tpm2.TPMHandle) error {
+//
+// TPM2_NV_UndefineSpace takes TPM_RH_OWNER as authHandle for an index the
+// owner defined (TCG Part 3 §31.4.1), so hierarchyAuth is the owner auth: the
+// SO PIN on an owned TPM, empty on an unowned one. It is supplied by the
+// caller at use time and never stored. A wrong value returns
+// ErrNVCertHierarchyAuth.
+func (tpm *TPM2) deleteCertFromNVRAM(nvIndex tpm2.TPMHandle, hierarchyAuth []byte) error {
 	tpm.logger.Debug("deleting certificate from NV index",
 		slog.String("nv_index", fmt.Sprintf("0x%08X", nvIndex)))
 
@@ -1328,19 +1334,20 @@ func (tpm *TPM2) deleteCertFromNVRAM(nvIndex tpm2.TPMHandle) error {
 		return err
 	}
 
-	_, err = tpm2.NVUndefineSpace{
-		AuthHandle: tpm2.AuthHandle{
-			Handle: tpm2.TPMRHOwner,
-			Auth:   tpm2.PasswordAuth(nil),
-		},
-		NVIndex: tpm2.NamedHandle{
-			Handle: nvIndex,
-			Name:   nvPubRsp.NVName,
-		},
-	}.Execute(tpm.transport)
+	authorize := tpm.hierarchyAuthorizer(tpm2.TPMRHOwner, hierarchyAuth)
+	err = authorize(encryptNone, func(authHandle tpm2.AuthHandle) error {
+		_, err := tpm2.NVUndefineSpace{
+			AuthHandle: authHandle,
+			NVIndex: tpm2.NamedHandle{
+				Handle: nvIndex,
+				Name:   nvPubRsp.NVName,
+			},
+		}.Execute(tpm.transport)
+		return err
+	})
 	if err != nil {
 		tpm.logger.Error("failed to undefine NV space", slog.String("error", err.Error()))
 	}
 
-	return err
+	return nvCertAuthError(err)
 }

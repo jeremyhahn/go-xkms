@@ -945,7 +945,7 @@ func (m *mockXKMSTPM) ProvisionIDevIDCert(_ []byte, cert *x509.Certificate) erro
 	return nil
 }
 
-func (m *mockXKMSTPM) DeleteIDevIDCertificate() error {
+func (m *mockXKMSTPM) DeleteIDevIDCertificate(hierarchyAuth []byte) error {
 	return nil
 }
 
@@ -961,7 +961,7 @@ func (m *mockXKMSTPM) ProvisionIAKCert(_ []byte, cert *x509.Certificate) error {
 	return nil
 }
 
-func (m *mockXKMSTPM) DeleteIAKCertificate() error {
+func (m *mockXKMSTPM) DeleteIAKCertificate(hierarchyAuth []byte) error {
 	return nil
 }
 
@@ -993,7 +993,7 @@ func (m *mockXKMSTPM) ProvisionLAKCert(_ []byte, cert *x509.Certificate) error {
 	return nil
 }
 
-func (m *mockXKMSTPM) DeleteLAKCertificate() error {
+func (m *mockXKMSTPM) DeleteLAKCertificate(hierarchyAuth []byte) error {
 	return nil
 }
 

@@ -913,7 +913,7 @@ func TestCertificateNVRAMOperations(t *testing.T) {
 		nvIndex := tpm2.TPMHandle(0x01C90100)
 
 		require.NoError(t, tpmImpl.writeCertToNVRAM(nvIndex, nil, cert.Raw))
-		defer func() { _ = tpmImpl.deleteCertFromNVRAM(nvIndex) }()
+		defer func() { _ = tpmImpl.deleteCertFromNVRAM(nvIndex, nil) }()
 
 		got, err := tpmImpl.readCertFromNVRAM(nvIndex)
 		require.NoError(t, err)
@@ -931,7 +931,7 @@ func TestCertificateNVRAMOperations(t *testing.T) {
 		nvIndex := tpm2.TPMHandle(0x01C90101)
 
 		require.NoError(t, tpmImpl.writeCertToNVRAM(nvIndex, nil, cert.Raw))
-		defer func() { _ = tpmImpl.deleteCertFromNVRAM(nvIndex) }()
+		defer func() { _ = tpmImpl.deleteCertFromNVRAM(nvIndex, nil) }()
 
 		rsp, err := tpm2.NVReadPublic{NVIndex: nvIndex}.Execute(tpmImpl.transport)
 		require.NoError(t, err)
@@ -954,7 +954,7 @@ func TestCertificateNVRAMOperations(t *testing.T) {
 
 		nvIndex := tpm2.TPMHandle(0x01C90102)
 		require.NoError(t, tpmImpl.writeCertToNVRAM(nvIndex, nil, cert.Raw))
-		defer func() { _ = tpmImpl.deleteCertFromNVRAM(nvIndex) }()
+		defer func() { _ = tpmImpl.deleteCertFromNVRAM(nvIndex, nil) }()
 
 		got, err := tpmImpl.readCertFromNVRAM(nvIndex)
 		require.NoError(t, err)
@@ -986,7 +986,7 @@ func TestCertificateNVRAMOperations(t *testing.T) {
 	t.Run("deleteCertFromNVRAM returns error for undefined index", func(t *testing.T) {
 		nvIndex := tpm2.TPMHandle(0x01C90998)
 
-		err := tpmImpl.deleteCertFromNVRAM(nvIndex)
+		err := tpmImpl.deleteCertFromNVRAM(nvIndex, nil)
 		assert.Error(t, err)
 	})
 }

@@ -33,7 +33,7 @@ func TestLAKCertificate_NotConfigured(t *testing.T) {
 	assert.ErrorIs(t, h.TPM.ProvisionLAKCert(nil, nil), ErrNotConfigured)
 	_, err := h.TPM.LAKCertificate()
 	assert.ErrorIs(t, err, ErrNotConfigured)
-	assert.ErrorIs(t, h.TPM.DeleteLAKCertificate(), ErrNotConfigured)
+	assert.ErrorIs(t, h.TPM.DeleteLAKCertificate(nil), ErrNotConfigured)
 }
 
 // TestLAKCertificate_NotCreated pins that provisioning or reading a
@@ -64,7 +64,7 @@ func TestLAKCertificate_StoreRoundTrip(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, cert.Raw, stored.Raw)
 
-	require.NoError(t, h.TPM.DeleteLAKCertificate())
+	require.NoError(t, h.TPM.DeleteLAKCertificate(nil))
 	_, err = h.TPM.LAKCertificate()
 	assert.ErrorIs(t, err, ErrLAKCertNotFound)
 }
@@ -84,7 +84,7 @@ func TestLAKCertificate_NVRAMRoundTrip(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, cert.Raw, stored.Raw)
 
-	require.NoError(t, h.TPM.DeleteLAKCertificate())
+	require.NoError(t, h.TPM.DeleteLAKCertificate(nil))
 	_, err = h.TPM.LAKCertificate()
 	assert.Error(t, err, "the NV index is gone after delete")
 }
@@ -108,5 +108,5 @@ func TestLAKCertificate_StoreNotConfigured(t *testing.T) {
 
 	_, err := h.TPM.LAKCertificate()
 	assert.ErrorIs(t, err, ErrCertStoreNotConfigured)
-	assert.ErrorIs(t, h.TPM.DeleteLAKCertificate(), ErrCertStoreNotConfigured)
+	assert.ErrorIs(t, h.TPM.DeleteLAKCertificate(nil), ErrCertStoreNotConfigured)
 }

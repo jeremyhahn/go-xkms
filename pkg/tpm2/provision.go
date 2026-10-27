@@ -868,6 +868,27 @@ func ekCertIndex(configured tpm2.TPMHandle, ekAttrs *types.KeyAttributes) (tpm2.
 	return 0, ErrEKCertKeyType
 }
 
+// configuredEKCertIndex returns the NV index at which to look for the EK
+// certificate the EK config names before the EK itself exists. It resolves
+// the configured cert-handle by the configured key type with ekCertIndex, as
+// the write path does, so an ECC EK's certificate is found at its TCG index
+// (TCG EK Credential Profile v2.1 §2.2.1.4). A config whose key type has no
+// TCG index, or does not parse, keeps the configured index: a manufacturer
+// may still have provisioned a certificate there, and the bad key type is
+// reported where the EK attributes are built (EKAttributesFromConfig).
+func configuredEKCertIndex(config EKConfig) tpm2.TPMHandle {
+	configured := tpm2.TPMHandle(config.CertHandle)
+	keyType, err := ekKeyType(config)
+	if err != nil {
+		return configured
+	}
+	index, err := ekCertIndex(configured, keyType)
+	if err != nil {
+		return configured
+	}
+	return index
+}
+
 // isECCEKCertIndex reports whether index is one of the ECC EK certificate
 // indices of ekCertIndexByCurve.
 // writeEKCertToNV defines nvIndex under hierarchy and writes ekCertDER to

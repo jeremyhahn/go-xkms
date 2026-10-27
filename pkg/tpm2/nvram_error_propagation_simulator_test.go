@@ -286,7 +286,7 @@ func TestDeleteCertFromNVRAM_EveryCommandFailurePropagates(t *testing.T) {
 
 		return h.TPM.transport, func(tr transport.TPM) error {
 			h.TPM.transport = tr
-			return h.TPM.deleteCertFromNVRAM(tpm2.TPMHandle(nvramOwnerIndex))
+			return h.TPM.deleteCertFromNVRAM(tpm2.TPMHandle(nvramOwnerIndex), nil)
 		}
 	})
 }

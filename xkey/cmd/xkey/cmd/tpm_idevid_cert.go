@@ -358,8 +358,9 @@ func runIDevIDCertImport(cmd *cobra.Command, args []string) (err error) {
 		_, _ = fmt.Fprintln(out, "Public key verification: SKIPPED (--force)")
 	}
 
-	// Store the certificate
-	if err := tpm.ProvisionIDevIDCert(nil, cert); err != nil {
+	// Store the certificate. An NV cert-handle is defined under the owner
+	// hierarchy, authorized with --hierarchy-auth (empty on an unowned TPM).
+	if err := tpm.ProvisionIDevIDCert([]byte(tpmCfg.hierarchyAuth), cert); err != nil {
 		return &SentinelCauseError{Sentinel: ErrIDevIDCertImportFailed, Cause: err}
 	}
 

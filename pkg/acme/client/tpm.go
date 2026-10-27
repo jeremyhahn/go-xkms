@@ -489,7 +489,8 @@ func (a *XKMSTPMAdapter) ActivateCredential(credentialBlob, encryptedSecret []by
 
 // ProvisionEKCert provisions an EK certificate
 func (a *XKMSTPMAdapter) ProvisionEKCert(certDER []byte) error {
-	// Pass nil for hierarchy auth - go-xkms handles this internally
+	// The adapter holds no owner auth, so the EK certificate index is
+	// defined with empty owner auth: this succeeds on an unowned TPM only.
 	if err := a.tpm.ProvisionEKCert(nil, certDER); err != nil {
 		return caerrors.StorageFailureError("failed to provision EK certificate: %v", err)
 	}

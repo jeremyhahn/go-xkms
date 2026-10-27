@@ -139,3 +139,25 @@ func TestProvisionEKCert_OwnedTPMWithoutAuthFailsTyped(t *testing.T) {
 	err := h.TPM.ProvisionEKCert(nil, createTestCertDER(t))
 	assert.ErrorIs(t, err, ErrNVCertHierarchyAuth)
 }
+
+// TestDeleteCertFromNVRAM_OwnedTPMDeletesWithSuppliedAuth checks a certificate
+// index on an owned TPM is undefined under the SO PIN as owner auth (TCG
+// Part 3 §31.4.1), and that a wrong or missing auth fails typed and leaves
+// the index in place.
+func TestDeleteCertFromNVRAM_OwnedTPMDeletesWithSuppliedAuth(t *testing.T) {
+	soPIN := []byte("so-pin-1725-delete")
+	h := newOwnedSimHarness(t, nil, soPIN)
+	index := tpm2.TPMHandle(nvramOwnerIndex)
+	require.NoError(t, h.TPM.writeCertToNVRAM(index, soPIN, nvramTestCert(t).Raw))
+
+	for name, auth := range map[string][]byte{"wrong": []byte("not-the-so-pin"), "missing": nil} {
+		err := h.TPM.deleteCertFromNVRAM(index, auth)
+		assert.ErrorIs(t, err, ErrNVCertHierarchyAuth, name)
+	}
+	_, err := tpm2.NVReadPublic{NVIndex: index}.Execute(h.TPM.transport)
+	require.NoError(t, err, "a rejected undefine must leave the index")
+
+	require.NoError(t, h.TPM.deleteCertFromNVRAM(index, soPIN))
+	_, err = tpm2.NVReadPublic{NVIndex: index}.Execute(h.TPM.transport)
+	assert.ErrorIs(t, err, tpmRCHandle)
+}

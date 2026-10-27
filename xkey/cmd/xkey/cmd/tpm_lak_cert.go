@@ -248,7 +248,9 @@ func runLAKCertImport(cmd *cobra.Command, args []string) (err error) {
 		_, _ = fmt.Fprintln(out, "Public key verification: SKIPPED (--force)")
 	}
 
-	if err := tpm.ProvisionLAKCert(nil, cert); err != nil {
+	// An NV cert-handle is defined under the owner hierarchy, authorized
+	// with --hierarchy-auth (empty on an unowned TPM).
+	if err := tpm.ProvisionLAKCert([]byte(tpmCfg.hierarchyAuth), cert); err != nil {
 		return &SentinelCauseError{Sentinel: ErrLAKCertImportFailed, Cause: err}
 	}
 

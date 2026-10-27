@@ -94,8 +94,9 @@ func (tpm *TPM2) IDevIDCertificate() (*x509.Certificate, error) {
 
 // DeleteIDevIDCertificate removes the IDevID certificate.
 // If CertHandle is 0, the certificate is deleted from the certificate store.
-// If CertHandle is set, the NV index is undefined from TPM NVRAM.
-func (tpm *TPM2) DeleteIDevIDCertificate() error {
+// If CertHandle is set, the NV index is undefined from TPM NVRAM under the
+// owner hierarchy, authorized with hierarchyAuth (deleteCertFromNVRAM).
+func (tpm *TPM2) DeleteIDevIDCertificate(hierarchyAuth []byte) error {
 	if tpm.config.IDevID == nil {
 		return ErrNotConfigured
 	}
@@ -111,7 +112,7 @@ func (tpm *TPM2) DeleteIDevIDCertificate() error {
 		return tpm.certStore.Delete(idevidAttrs)
 	}
 
-	return tpm.deleteCertFromNVRAM(tpm2.TPMHandle(tpm.config.IDevID.CertHandle))
+	return tpm.deleteCertFromNVRAM(tpm2.TPMHandle(tpm.config.IDevID.CertHandle), hierarchyAuth)
 }
 
 // ProvisionIAKCert stores the IAK certificate.
@@ -179,8 +180,9 @@ func (tpm *TPM2) IAKCertificate() (*x509.Certificate, error) {
 
 // DeleteIAKCertificate removes the IAK certificate.
 // If CertHandle is 0, the certificate is deleted from the certificate store.
-// If CertHandle is set, the NV index is undefined from TPM NVRAM.
-func (tpm *TPM2) DeleteIAKCertificate() error {
+// If CertHandle is set, the NV index is undefined from TPM NVRAM under the
+// owner hierarchy, authorized with hierarchyAuth (deleteCertFromNVRAM).
+func (tpm *TPM2) DeleteIAKCertificate(hierarchyAuth []byte) error {
 	if tpm.config.IAK == nil {
 		return ErrNotConfigured
 	}
@@ -196,7 +198,7 @@ func (tpm *TPM2) DeleteIAKCertificate() error {
 		return tpm.certStore.Delete(iakAttrs)
 	}
 
-	return tpm.deleteCertFromNVRAM(tpm2.TPMHandle(tpm.config.IAK.CertHandle))
+	return tpm.deleteCertFromNVRAM(tpm2.TPMHandle(tpm.config.IAK.CertHandle), hierarchyAuth)
 }
 
 // ProvisionLAKCert stores the Local Attestation Key certificate (go-xkms#715).
@@ -264,8 +266,9 @@ func (tpm *TPM2) LAKCertificate() (*x509.Certificate, error) {
 
 // DeleteLAKCertificate removes the Local Attestation Key certificate.
 // If CertHandle is 0, the certificate is deleted from the certificate store.
-// If CertHandle is set, the NV index is undefined from TPM NVRAM.
-func (tpm *TPM2) DeleteLAKCertificate() error {
+// If CertHandle is set, the NV index is undefined from TPM NVRAM under the
+// owner hierarchy, authorized with hierarchyAuth (deleteCertFromNVRAM).
+func (tpm *TPM2) DeleteLAKCertificate(hierarchyAuth []byte) error {
 	if tpm.config.LAK == nil {
 		return ErrNotConfigured
 	}
@@ -281,5 +284,5 @@ func (tpm *TPM2) DeleteLAKCertificate() error {
 		return tpm.certStore.Delete(lakAttrs)
 	}
 
-	return tpm.deleteCertFromNVRAM(tpm2.TPMHandle(tpm.config.LAK.CertHandle))
+	return tpm.deleteCertFromNVRAM(tpm2.TPMHandle(tpm.config.LAK.CertHandle), hierarchyAuth)
 }

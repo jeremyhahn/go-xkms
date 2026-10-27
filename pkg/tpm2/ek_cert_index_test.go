@@ -6,6 +6,7 @@ import (
 	"testing"
 
 	"github.com/google/go-tpm/tpm2"
+	"github.com/jeremyhahn/go-xkms/pkg/tpm2/store"
 	"github.com/jeremyhahn/go-xkms/pkg/types"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -80,4 +81,62 @@ func TestEKCertIndex_UnmappedKeyTypeFails(t *testing.T) {
 			assert.ErrorIs(t, err, ErrEKCertKeyType)
 		})
 	}
+}
+
+// TestEKKeyType_ResolvesConfiguredKeyType checks the algorithm is parsed, or
+// inferred from the RSA or ECC config present, with the key parameters.
+func TestEKKeyType_ResolvesConfiguredKeyType(t *testing.T) {
+	rsa, err := ekKeyType(EKConfig{KeyAlgorithm: "RSA", RSAConfig: &store.RSAConfig{KeySize: 2048}})
+	require.NoError(t, err)
+	assert.Equal(t, x509.RSA, rsa.KeyAlgorithm)
+	assert.Equal(t, 2048, rsa.RSAAttributes.KeySize)
+
+	ecc, err := ekKeyType(EKConfig{ECCConfig: &store.ECCConfig{Curve: "P-384"}})
+	require.NoError(t, err)
+	assert.Equal(t, x509.ECDSA, ecc.KeyAlgorithm, "inferred from the ECC config")
+	assert.Equal(t, elliptic.P384(), ecc.ECCAttributes.Curve)
+}
+
+// TestEKKeyType_InvalidConfigFails checks an EK config naming no usable key
+// type, or an unknown curve, is an error.
+func TestEKKeyType_InvalidConfigFails(t *testing.T) {
+	_, err := ekKeyType(EKConfig{})
+	assert.Error(t, err, "no algorithm and no RSA or ECC config")
+
+	_, err = ekKeyType(EKConfig{KeyAlgorithm: "ECDSA", ECCConfig: &store.ECCConfig{Curve: "P-999"}})
+	assert.Error(t, err, "unknown curve")
+}
+
+// TestConfiguredEKCertIndex_FollowsConfiguredKeyType checks the index the EK
+// certificate is looked for at, before the EK exists, is the one the write
+// path (ekCertIndex) resolves for the configured key type.
+func TestConfiguredEKCertIndex_FollowsConfiguredKeyType(t *testing.T) {
+	ecc := EKConfig{
+		CertHandle:   ekCertIndexRSA2048,
+		KeyAlgorithm: x509.ECDSA.String(),
+		ECCConfig:    &store.ECCConfig{Curve: "P-256"},
+	}
+	assert.Equal(t, tpm2.TPMHandle(ekCertIndexECCP256), configuredEKCertIndex(ecc))
+
+	rsa := EKConfig{
+		CertHandle:   ekCertIndexRSA2048,
+		KeyAlgorithm: x509.RSA.String(),
+		RSAConfig:    &store.RSAConfig{KeySize: 2048},
+	}
+	assert.Equal(t, tpm2.TPMHandle(ekCertIndexRSA2048), configuredEKCertIndex(rsa))
+}
+
+// TestConfiguredEKCertIndex_UnresolvedKeyTypeKeepsConfigured checks a key
+// type without a TCG index, or one that does not parse, keeps the configured
+// index, where a manufacturer may still have provisioned a certificate.
+func TestConfiguredEKCertIndex_UnresolvedKeyTypeKeepsConfigured(t *testing.T) {
+	rsa4096 := EKConfig{
+		CertHandle:   ekCertIndexRSA2048,
+		KeyAlgorithm: x509.RSA.String(),
+		RSAConfig:    &store.RSAConfig{KeySize: 4096},
+	}
+	assert.Equal(t, tpm2.TPMHandle(ekCertIndexRSA2048), configuredEKCertIndex(rsa4096))
+
+	unparsed := EKConfig{CertHandle: ekCertIndexRSA2048}
+	assert.Equal(t, tpm2.TPMHandle(ekCertIndexRSA2048), configuredEKCertIndex(unparsed))
 }

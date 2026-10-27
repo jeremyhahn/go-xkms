@@ -303,14 +303,18 @@ func (m *allPanicTPM) IDevIDCertificate() (*x509.Certificate, error) {
 func (m *allPanicTPM) ProvisionIDevIDCert(_ []byte, _ *x509.Certificate) error {
 	panic("allPanicTPM: ProvisionIDevIDCert")
 }
-func (m *allPanicTPM) DeleteIDevIDCertificate() error { panic("allPanicTPM: DeleteIDevIDCertificate") }
+func (m *allPanicTPM) DeleteIDevIDCertificate(_ []byte) error {
+	panic("allPanicTPM: DeleteIDevIDCertificate")
+}
 func (m *allPanicTPM) IAKCertificate() (*x509.Certificate, error) {
 	panic("allPanicTPM: IAKCertificate")
 }
 func (m *allPanicTPM) ProvisionIAKCert(_ []byte, _ *x509.Certificate) error {
 	panic("allPanicTPM: ProvisionIAKCert")
 }
-func (m *allPanicTPM) DeleteIAKCertificate() error { panic("allPanicTPM: DeleteIAKCertificate") }
+func (m *allPanicTPM) DeleteIAKCertificate(_ []byte) error {
+	panic("allPanicTPM: DeleteIAKCertificate")
+}
 func (m *allPanicTPM) CreateLAK(_ xkms.Password, _ xkms.TPMKeyBackend, _ bool) (*xkms.KeyAttributes, error) {
 	panic("allPanicTPM: CreateLAK")
 }
@@ -330,7 +334,9 @@ func (m *allPanicTPM) LAKCertificate() (*x509.Certificate, error) {
 func (m *allPanicTPM) ProvisionLAKCert(_ []byte, _ *x509.Certificate) error {
 	panic("allPanicTPM: ProvisionLAKCert")
 }
-func (m *allPanicTPM) DeleteLAKCertificate() error { panic("allPanicTPM: DeleteLAKCertificate") }
+func (m *allPanicTPM) DeleteLAKCertificate(_ []byte) error {
+	panic("allPanicTPM: DeleteLAKCertificate")
+}
 func (m *allPanicTPM) VerifyTCGCSR(_ *xkms.TCG_CSR_IDEVID, _ x509.SignatureAlgorithm) (*xkms.KeyAttributes, *xkms.UNPACKED_TCG_CSR_IDEVID, error) {
 	panic("allPanicTPM: VerifyTCGCSR")
 }

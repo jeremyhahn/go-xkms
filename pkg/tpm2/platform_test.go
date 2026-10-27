@@ -449,10 +449,10 @@ func (m *mockTPMForPKS) IDevIDCertificate() (*x509.Certificate, error) {
 	return nil, nil
 }
 func (m *mockTPMForPKS) ProvisionIDevIDCert(_ []byte, _ *x509.Certificate) error { return nil }
-func (m *mockTPMForPKS) DeleteIDevIDCertificate() error                          { return nil }
+func (m *mockTPMForPKS) DeleteIDevIDCertificate(hierarchyAuth []byte) error      { return nil }
 func (m *mockTPMForPKS) IAKCertificate() (*x509.Certificate, error)              { return nil, nil }
 func (m *mockTPMForPKS) ProvisionIAKCert(_ []byte, _ *x509.Certificate) error    { return nil }
-func (m *mockTPMForPKS) DeleteIAKCertificate() error                             { return nil }
+func (m *mockTPMForPKS) DeleteIAKCertificate(hierarchyAuth []byte) error         { return nil }
 func (m *mockTPMForPKS) CreateLAK(_ types.Password, _ store.KeyBackend, _ bool) (*types.KeyAttributes, error) {
 	return nil, nil
 }
@@ -466,7 +466,7 @@ func (m *mockTPMForPKS) CertifyKeyWithLAK(_ *types.KeyAttributes, _ []byte, _ st
 }
 func (m *mockTPMForPKS) LAKCertificate() (*x509.Certificate, error)           { return nil, nil }
 func (m *mockTPMForPKS) ProvisionLAKCert(_ []byte, _ *x509.Certificate) error { return nil }
-func (m *mockTPMForPKS) DeleteLAKCertificate() error                          { return nil }
+func (m *mockTPMForPKS) DeleteLAKCertificate(hierarchyAuth []byte) error      { return nil }
 func (m *mockTPMForPKS) VerifyTCGCSR(_ *TCG_CSR_IDEVID, _ x509.SignatureAlgorithm) (*types.KeyAttributes, *UNPACKED_TCG_CSR_IDEVID, error) {
 	return nil, nil, nil
 }
