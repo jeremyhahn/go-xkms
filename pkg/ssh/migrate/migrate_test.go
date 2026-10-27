@@ -397,10 +397,10 @@ func TestRunStopsWhenCancelled(t *testing.T) {
 func TestErrorMessages(t *testing.T) {
 	boom := errors.New("boom")
 	tests := map[string]error{
-		"ssh/migrate: legacy is nil":                       &migrate.NilInputError{Field: "legacy"},
-		"ssh/migrate: open keys store: boom":               &migrate.OpenError{Store: "keys", Err: boom},
-		"ssh/migrate: list legacy store: boom":             &migrate.ListError{Err: boom},
-		"ssh/migrate: read ssh/sessions/x: boom":           &migrate.RecordError{Path: "ssh/sessions/x", Op: "read", Err: boom},
+		"ssh/migrate: legacy is nil":                      &migrate.NilInputError{Field: "legacy"},
+		"ssh/migrate: open keys store: boom":              &migrate.OpenError{Store: "keys", Err: boom},
+		"ssh/migrate: list legacy store: boom":            &migrate.ListError{Err: boom},
+		"ssh/migrate: read ssh/sessions/x: boom":          &migrate.RecordError{Path: "ssh/sessions/x", Op: "read", Err: boom},
 		"ssh/migrate: 1 record(s) failed; ssh/migrate: x": &migrate.RecordsFailedError{Errs: []error{errors.New("ssh/migrate: x")}},
 	}
 	for want, err := range tests {
