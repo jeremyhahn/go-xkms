@@ -729,6 +729,10 @@ func TestBrowserService_SetTrustBundlePath(t *testing.T) {
 }
 
 func TestBrowserService_ApplyTrustBundle_SetsSSLCertFile(t *testing.T) {
+	// An SSL_CERT_FILE already in the environment (the devcontainer sets one)
+	// must be replaced by the bundle, not shadowed by a second entry.
+	t.Setenv("SSL_CERT_FILE", "/etc/ssl/certs/inherited.crt")
+
 	dir := t.TempDir()
 	configPath := filepath.Join(dir, "browser.json")
 
@@ -751,17 +755,52 @@ func TestBrowserService_ApplyTrustBundle_SetsSSLCertFile(t *testing.T) {
 	cmd := exec.CommandContext(context.Background(), "true")
 	svc.applyTrustBundle(cmd)
 
-	// Verify SSL_CERT_FILE is set in the command environment.
 	require.NotNil(t, cmd.Env, "command environment must be set")
-	found := false
-	for _, envVar := range cmd.Env {
-		if strings.HasPrefix(envVar, "SSL_CERT_FILE=") {
-			assert.Equal(t, "SSL_CERT_FILE="+bundlePath, envVar)
-			found = true
-			break
+	assert.Equal(t, []string{"SSL_CERT_FILE=" + bundlePath}, sslCertFileEntries(cmd.Env))
+}
+
+// sslCertFileEntries returns every SSL_CERT_FILE entry in env, in order.
+func sslCertFileEntries(env []string) []string {
+	var entries []string
+	for _, kv := range env {
+		if strings.HasPrefix(kv, "SSL_CERT_FILE=") {
+			entries = append(entries, kv)
 		}
 	}
-	assert.True(t, found, "SSL_CERT_FILE must be present in command environment")
+	return entries
+}
+
+func TestBrowserService_ApplyTrustBundle_NoBundleKeepsInheritedSSLCertFile(t *testing.T) {
+	t.Setenv("SSL_CERT_FILE", "/etc/ssl/certs/inherited.crt")
+
+	dir := t.TempDir()
+	svc, err := NewBrowserService(filepath.Join(dir, "browser.json"), testLogger())
+	require.NoError(t, err)
+	require.NoError(t, svc.SetConfig(BrowserConfig{
+		DefaultBrowser:     BrowserSystem,
+		IncludeTrustBundle: true,
+	}))
+	// A configured bundle path that does not exist is the same as none.
+	svc.SetTrustBundlePath(filepath.Join(dir, "missing.pem"))
+
+	cmd := exec.CommandContext(context.Background(), "true")
+	svc.applyTrustBundle(cmd)
+
+	assert.Nil(t, cmd.Env, "the child inherits the parent environment untouched")
+	assert.Equal(t, []string{"SSL_CERT_FILE=/etc/ssl/certs/inherited.crt"}, sslCertFileEntries(cmd.Environ()))
+}
+
+func TestEnvWith_ReplacesEveryExistingEntry(t *testing.T) {
+	env := []string{"A=1", "SSL_CERT_FILE=/one", "B=2", "SSL_CERT_FILE=/two", "SSL_CERT_FILEX=keep"}
+
+	got := envWith(env, "SSL_CERT_FILE", "/bundle")
+
+	assert.Equal(t, []string{"A=1", "B=2", "SSL_CERT_FILEX=keep", "SSL_CERT_FILE=/bundle"}, got)
+	assert.Equal(t, "SSL_CERT_FILE=/two", env[3], "the input slice is not modified")
+}
+
+func TestEnvWith_EmptyEnv(t *testing.T) {
+	assert.Equal(t, []string{"SSL_CERT_FILE=/bundle"}, envWith(nil, "SSL_CERT_FILE", "/bundle"))
 }
 
 func TestBrowserService_ApplyTrustBundle_NoBundlePath(t *testing.T) {
@@ -907,6 +946,7 @@ func TestApplyTrustBundle_Disabled(t *testing.T) {
 }
 
 func TestApplyTrustBundle_Enabled(t *testing.T) {
+	t.Setenv("SSL_CERT_FILE", "/etc/ssl/certs/ca-certificates.crt")
 	dir := t.TempDir()
 	configPath := filepath.Join(dir, "browser.json")
 	svc, err := NewBrowserService(configPath, testLogger())
@@ -928,15 +968,7 @@ func TestApplyTrustBundle_Enabled(t *testing.T) {
 
 	// Env should contain SSL_CERT_FILE.
 	require.NotNil(t, cmd.Env, "Env should be set when IncludeTrustBundle is true")
-	found := false
-	for _, env := range cmd.Env {
-		if strings.HasPrefix(env, "SSL_CERT_FILE=") {
-			found = true
-			assert.Contains(t, env, bundlePath)
-			break
-		}
-	}
-	assert.True(t, found, "SSL_CERT_FILE should be in Env")
+	assert.Equal(t, []string{"SSL_CERT_FILE=" + bundlePath}, sslCertFileEntries(cmd.Env))
 }
 
 func TestApplyTrustBundle_Enabled_BundleNotExist(t *testing.T) {
