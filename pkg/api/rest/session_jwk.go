@@ -17,7 +17,6 @@ import (
 	"context"
 	"crypto/ecdsa"
 	"crypto/elliptic"
-	"encoding/base64"
 	"fmt"
 
 	"github.com/jeremyhahn/go-xkms/pkg/encoding/jwk"
@@ -27,10 +26,6 @@ import (
 // sessionSigningJWKAlg is the JWS algorithm of the session signing key:
 // ECDSA P-256 with SHA-256, RFC 7518 §3.4 "ES256".
 const sessionSigningJWKAlg = "ES256"
-
-// p256CoordinateSize is the octet length of a P-256 coordinate. RFC 7518
-// §6.2.1.2 and §6.2.1.3 require "x" and "y" to be exactly this long.
-const p256CoordinateSize = 32
 
 // SessionSigningKeyMissingError reports that the session signing key cannot
 // be found: the XKMSService has no default backend, or the backend holds no
@@ -132,28 +127,12 @@ func SessionSigningJWK(ctx context.Context, svc *xkms.XKMSService, opts *Session
 	if ecPub.Curve != elliptic.P256() {
 		return nil, &SessionSigningKeyTypeError{CN: cn, KeyType: "ECDSA " + ecPub.Curve.Params().Name}
 	}
-	return es256PublicJWK(cn, ecPub)
-}
-
-// es256PublicJWK encodes a P-256 public key as an RFC 7518 §6.2.1 EC public
-// JWK for ES256 signature verification.
-func es256PublicJWK(kid string, pub *ecdsa.PublicKey) (*jwk.JWK, error) {
-	// The SEC 1 uncompressed point 0x04 || X || Y carries each coordinate
-	// left-padded to the full coordinate size, as RFC 7518 §6.2.1.2 and
-	// §6.2.1.3 require of "x" and "y".
-	point, err := pub.Bytes()
+	key, err := jwk.FromPublicKey(ecPub)
 	if err != nil {
-		return nil, &SessionSigningKeyTypeError{CN: kid, KeyType: "an invalid ECDSA P-256 point"}
+		return nil, &SessionSigningKeyTypeError{CN: cn, KeyType: "an invalid ECDSA P-256 point"}
 	}
-	x := point[1 : 1+p256CoordinateSize]
-	y := point[1+p256CoordinateSize:]
-	return &jwk.JWK{
-		Kty: string(jwk.KeyTypeEC),                   // RFC 7518 §6.1
-		Use: "sig",                                   // RFC 7517 §4.2
-		Alg: sessionSigningJWKAlg,                    // RFC 7517 §4.4, RFC 7518 §3.4
-		Kid: kid,                                     // RFC 7517 §4.5
-		Crv: string(jwk.CurveP256),                   // RFC 7518 §6.2.1.1
-		X:   base64.RawURLEncoding.EncodeToString(x), // RFC 7518 §6.2.1.2
-		Y:   base64.RawURLEncoding.EncodeToString(y), // RFC 7518 §6.2.1.3
-	}, nil
+	key.Use = "sig"                // RFC 7517 §4.2
+	key.Alg = sessionSigningJWKAlg // RFC 7517 §4.4, RFC 7518 §3.4
+	key.Kid = cn                   // RFC 7517 §4.5: the kid BuildTokenIssuer stamps
+	return key, nil
 }

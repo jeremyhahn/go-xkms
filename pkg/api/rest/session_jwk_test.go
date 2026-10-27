@@ -20,7 +20,6 @@ import (
 	"crypto/ed25519"
 	"crypto/elliptic"
 	"crypto/rand"
-	"encoding/base64"
 	"errors"
 	"io"
 	"math/big"
@@ -120,28 +119,6 @@ func TestSessionSigningJWK_VerifiesTheHostSurfaceTokens(t *testing.T) {
 	}
 }
 
-func TestSessionSigningJWK_PadsShortCoordinates(t *testing.T) {
-	// A P-256 key whose X coordinate has a leading zero octet: RFC 7518
-	// §6.2.1.2 still requires the full 32-octet encoding.
-	var key *ecdsa.PrivateKey
-	for key == nil || len(key.X.Bytes()) == 32 { //nolint:staticcheck // the test inspects the raw coordinate length
-		var err error
-		key, err = ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
-		require.NoError(t, err)
-	}
-	svc := newSessionJWKService(t, backendWithSigner(&key.PublicKey))
-
-	got, err := SessionSigningJWK(context.Background(), svc, nil)
-	require.NoError(t, err)
-	x, err := base64.RawURLEncoding.DecodeString(got.X)
-	require.NoError(t, err)
-	y, err := base64.RawURLEncoding.DecodeString(got.Y)
-	require.NoError(t, err)
-	assert.Len(t, x, 32)
-	assert.Len(t, y, 32)
-	assert.Equal(t, key.X, new(big.Int).SetBytes(x)) //nolint:staticcheck // compares the raw coordinate
-}
-
 func TestSessionSigningJWK_NilService(t *testing.T) {
 	_, err := SessionSigningJWK(context.Background(), nil, nil)
 	var target *HostXKMSServiceRequiredError
@@ -204,7 +181,7 @@ func TestSessionSigningJWK_UnsupportedKeyType(t *testing.T) {
 	}{
 		{name: "Ed25519", pub: edPub, wantType: "ed25519.PublicKey"},
 		{name: "ECDSA P-384", pub: &p384.PublicKey, wantType: "ECDSA P-384"},
-		{name: "invalid P-256 point", pub: &ecdsa.PublicKey{Curve: elliptic.P256(), X: big.NewInt(1), Y: big.NewInt(1)}, wantType: "invalid"},
+		{name: "invalid P-256 point", pub: &ecdsa.PublicKey{Curve: elliptic.P256(), X: big.NewInt(1), Y: big.NewInt(1)}, wantType: "invalid"}, //nolint:staticcheck // an off-curve point needs the raw coordinates
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {

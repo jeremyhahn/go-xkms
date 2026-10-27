@@ -1,6 +1,6 @@
 # WebAuthn Relying Party — API
 
-> **Status: NORMATIVE** · Feature: `webauthn` · Repo: `go-xkms` · Last verified: 2026-09-29
+> **Status: NORMATIVE** · Feature: `webauthn` · Repo: `go-xkms` · Last verified: 2026-10-27
 
 Transport shapes: [`../key-management/api.md`](../key-management/api.md)
 §"How the six transports are shaped".
@@ -134,6 +134,43 @@ handlers return an access/refresh pair; with a plain `JWTGenerator` they return
 a single token. The selection is a type assertion in the handler, so the same
 route serves both shapes depending on server configuration — a client must
 handle the shape its deployment produces.
+
+### Publishing the session signing key (JWKS)
+
+A host that embeds the `xkms` ServiceModule and verifies the module's session
+tokens itself (go-quicbaas does, against its own JWKS) publishes the module's
+signing key with:
+
+```go
+func ServiceModuleSessionSigningJWK(ctx context.Context, svc *xkms.XKMSService,
+    opts *ServiceModuleSessionOptions) (*JWK, error)
+```
+
+`sdk/go/apimodule.go:142` re-exports `rest.SessionSigningJWK`
+(`pkg/api/rest/session_jwk.go:93`). It returns the public key only, as an RFC
+7517 JWK: `kty` `EC`, `crv` `P-256`, `use` `sig` (§4.2), `alg` `ES256` (§4.4,
+RFC 7518 §3.4), with `x` and `y` at the full 32 octets (RFC 7518 §6.2.1.2,
+§6.2.1.3). The encoding is `pkg/encoding/jwk`'s `FromPublicKey`. The private
+key stays in the backend.
+
+**The `kid` rule.** Pass the same `opts` the module was built with
+(`WithServiceModuleSession`; nil selects the defaults). The JWK's `kid` (§4.5)
+is the signing CN they resolve to, `sessionSigningKeyCN`
+(`pkg/api/rest/host.go:237`). `BuildTokenIssuer` uses the same function to set
+the `kid` in every token's JWS header, so the two always match. That CN is
+`SigningKeyCN`, or `xkms-jwt-signing` when it is empty.
+
+The call reads the key and never creates it. The module creates the key when
+it builds its REST surface, on the first request it serves. Call the accessor
+after that, or retry it on `ServiceModuleSessionSigningKeyMissingError`.
+
+| Error | When |
+|---|---|
+| `ServiceModuleSessionSigningKeyMissingError` (`CN`, `Backend`, wrapped cause) | The service has no default backend, or that backend holds no key under the CN |
+| `ServiceModuleSessionSigningKeyExportError` (`CN`, `Backend`, wrapped cause) | The backend holds the key but cannot return its public half. A signer with no public key wraps `ErrServiceModuleSessionSigningKeyNoPublicKey` |
+| `ServiceModuleSessionSigningKeyTypeError` (`CN`, `KeyType`) | The key is not a valid ECDSA P-256 key, so no ES256 JWK describes it |
+
+A nil service fails with `rest.HostXKMSServiceRequiredError`.
 
 ### `GET /api/v1/auth/me`
 
